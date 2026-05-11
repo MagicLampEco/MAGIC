@@ -1,0 +1,22 @@
+{
+  "name": "@magiclamp/scripts",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Deploy + test scripts for MagicLamp Preview testnet",
+  "scripts": {
+    "deploy:all":    "npm run deploy:lamp && npm run deploy:um && npm run deploy:shards && npm run deploy:vault",
+    "deploy:lamp":   "npx tsx deploy/01_mint_lamp.ts",
+    "deploy:um":     "npx tsx deploy/02_deploy_um.ts",
+    "deploy:shards": "npx tsx deploy/03_deploy_shards.ts",
+    "deploy:vault":  "npx tsx deploy/04_create_vault.ts",
+    "test:e2e":      "npx tsx test/e2e_flow.ts"
+  },
+  "dependencies": {
+    "@lucid-evolution/lucid": "^0.4.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "tsx":        "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

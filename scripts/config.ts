@@ -1,0 +1,61 @@
+// scripts/config.ts — Shared testnet config
+// Điền vào sau khi hoàn thành từng bước deploy
+// KHÔNG commit file này nếu chứa private key thật
+
+import "dotenv/config";
+
+// ── Network ───────────────────────────────────────────────────
+export const NETWORK = (process.env.NETWORK ?? "Preview") as "Preview" | "Preprod" | "Mainnet";
+export const BLOCKFROST_URL = `https://cardano-${NETWORK.toLowerCase()}.blockfrost.io/api/v0`;
+export const BLOCKFROST_KEY = process.env.BLOCKFROST_KEY ?? "";
+export const PRIVATE_KEY    = process.env.PRIVATE_KEY ?? "";
+
+if (!BLOCKFROST_KEY) throw new Error("BLOCKFROST_KEY missing in .env");
+if (!PRIVATE_KEY)    throw new Error("PRIVATE_KEY missing in .env");
+
+// ── Script hashes (điền sau khi aiken build) ──────────────────
+// Lấy từ: cat [Module]/onchain/plutus.json | jq '.validators[0].hash'
+export const SCRIPT_HASHES = {
+  vault_instant:   process.env.VAULT_INSTANT_HASH   ?? "FILL_AFTER_AIKEN_BUILD",
+  vault_snapshot:  process.env.VAULT_SNAPSHOT_HASH  ?? "FILL_AFTER_AIKEN_BUILD",
+  vault_vacuum:    process.env.VAULT_VACUUM_HASH     ?? "FILL_AFTER_AIKEN_BUILD",
+  vault_schedule:  process.env.VAULT_SCHEDULE_HASH  ?? "FILL_AFTER_AIKEN_BUILD",
+  shard:           process.env.SHARD_HASH           ?? "FILL_AFTER_AIKEN_BUILD",
+  um_datum:        process.env.UM_DATUM_HASH        ?? "FILL_AFTER_AIKEN_BUILD",
+};
+
+// ── Token policy IDs (điền sau khi mint) ─────────────────────
+export const POLICY_IDS = {
+  lamp:     process.env.LAMP_POLICY_ID     ?? "FILL_AFTER_MINT",
+  um_nft:   process.env.UM_NFT_POLICY_ID   ?? "FILL_AFTER_DEPLOY_UM",
+  shard_nft:process.env.SHARD_NFT_POLICY_ID ?? "FILL_AFTER_DEPLOY_SHARDS",
+};
+
+// ── Asset names (hex) ─────────────────────────────────────────
+export const ASSET_NAMES = {
+  lamp:      "4c414d50",   // "LAMP"
+  um_nft:    "554d44",     // "UMD"
+  shard_nft: "5348415244", // "SHARD"
+};
+
+// ── Addresses (điền sau khi deploy) ──────────────────────────
+export const ADDRESSES = {
+  treasury: process.env.TREASURY_ADDRESS ?? "FILL_AFTER_DEPLOY",
+};
+
+// ── Protocol constants (không thay đổi) ──────────────────────
+export const PROTOCOL = {
+  SHARD_COUNT:  16,
+  SHARD_CAP:    450_000_000_000_000n,  // 4.5×10^14 oil = 450M LAMP
+  SLOTS_PER_EPOCH: 432_000n,
+  Q:            1_000_000_000n,
+};
+
+// ── Helpers ───────────────────────────────────────────────────
+export function toUnit(policyId: string, assetName: string): string {
+  return policyId + assetName;
+}
+
+export function lampToOil(lamp: bigint): bigint {
+  return lamp * 1_000_000n;
+}

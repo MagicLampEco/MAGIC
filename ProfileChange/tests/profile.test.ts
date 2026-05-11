@@ -1,6 +1,6 @@
 // tests/profile.test.ts — ProfileChange unit tests (§12)
 import { describe, it, expect } from "vitest";
-import { applyPendingProfile, canChangeProfile } from "../offchain/src/profile.js";
+import { applyPendingProfile, canChangeProfile } from "../offchain/src/math.js";
 
 describe("applyPendingProfile — §12.2", () => {
   it("No pending → unchanged", () => {

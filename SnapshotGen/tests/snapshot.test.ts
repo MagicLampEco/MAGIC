@@ -110,7 +110,12 @@ describe("SnapshotGen full flow", () => {
   describe("Happy path", () => {
 
     it("1000 LAMP, Flame, LF≈1.0, OAC=0.8, Δe=1 → 4.62 MAGIC", () => {
-      const vault = makeVault({ profile: "Flame" });
+      // TV-SNAPGEN-01 exact conditions: 1000 LAMP, age=0 → LF=1.00, OAC=0.80 (no burns)
+      const vault = makeVault({
+        profile:          "Flame",
+        lamp_balance:     1_000_000_000n,   // 1000 LAMP in oil
+        loyalty_holdings: [{ amount: 1_000_000_000n, acquired_epoch: 100n, is_locked: false }], // age=0 → LF=1.0
+      });
       const result = simulateSnapshot(vault, 100n);
       expect(result.deltaEpochs).toBe(1n);
       expect(result.mPerEpoch).toBe(4_620_000_000n);   // TV-SNAPGEN-01 ✓

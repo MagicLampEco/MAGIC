@@ -13,6 +13,7 @@ import {
   TV_SNAPGEN_01, TV_SNAPGEN_MATURE,
   TV_CATCHUP_01, TV_SAMENESS_01, TV_OAC_BOUNDARY,
 } from "./vectors.js";
+import { PROFILE_PARAMS } from "../offchain/src/constants.js";
 
 // ═══════════════════════════════════════════════════════════════
 // §4.2 Snapshot batch decay
@@ -242,10 +243,10 @@ describe("computeSnapshotMagic — §8.1, T16, C-SS-5", () => {
     expect(result).toBe(expected_nanogic);
     expect(nanogicToMagicStr(result)).toBe("4.6200");
 
-    // Verify step-by-step (L4 audit)
-    const { Q, SNAPSHOT_BASE_RATE_Q, PROFILE_PARAMS } = await import("../offchain/src/constants.js");
+    // Verify step-by-step (L4 audit) — use imported constants directly
+    const Q = 1_000_000_000n, R = 5_000_000_000n;
     const { B_Q, PM_Q } = PROFILE_PARAMS[profile]!;
-    const s1 = lamp_oil * SNAPSHOT_BASE_RATE_Q / Q;
+    const s1 = lamp_oil * R / Q;
     const s2 = s1 * lf_q / Q;
     const s3 = s2 * oac_q / Q;
     const s4 = s3 * PM_Q / Q;
@@ -286,12 +287,11 @@ describe("computeSnapshotMagic — §8.1, T16, C-SS-5", () => {
   });
 
   it("L4: error ≤ 5 nanogic; M_actual ≤ M_true", () => {
-    const { Q, SNAPSHOT_BASE_RATE_Q, PROFILE_PARAMS } = await import("../offchain/src/constants.js");
+    const Q = 1_000_000_000n, R = 5_000_000_000n;
     const L = 1_000_000_000n, lf = 1_100_000_000n, oac = 900_000_000n;
     const { B_Q, PM_Q } = PROFILE_PARAMS["Flame"]!;
     const m_actual = computeSnapshotMagic(L, lf, oac, "Flame");
-    // True value = L × R × lf × oac × PM × B / Q^5 (no floors)
-    const true_num = L * SNAPSHOT_BASE_RATE_Q * lf * oac * PM_Q * B_Q;
+    const true_num = L * R * lf * oac * PM_Q * B_Q;
     const true_den = Q * Q * Q * Q * Q;
     const m_true = true_num / true_den;
     expect(m_actual).toBeLessThanOrEqual(m_true);

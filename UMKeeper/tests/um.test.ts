@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeUMRaw, clampUM, appendHistory,
   computeSMA, computeNewUM,
-} from "../offchain/src/keeper.js";
+} from "../offchain/src/math.js";
 
 const Q        = 1_000_000_000n;
 const UM_MIN_Q = 500_000_000n;

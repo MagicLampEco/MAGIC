@@ -6,20 +6,18 @@ import {
   Lucid, Blockfrost, Data,
   type LucidEvolution, type UTxO, type Tx,
 } from "@lucid-evolution/lucid";
+import { SLOTS_PER_EPOCH, slotToEpoch } from "@magiclamp/protocol-utils";
+import {
+  computeUMRaw, clampUM, appendHistory, computeSMA, computeNewUM,
+  type UMDatum,
+} from "./math.js";
 
-// ── Constants ─────────────────────────────────────────────────
-const Q              = 1_000_000_000n;
-const UM_MIN_Q       = 500_000_000n;
-const UM_MAX_Q       = 2_000_000_000n;
-const UM_WINDOW      = 6;
-const SLOTS_PER_EPOCH = 432_000n;
+export {
+  computeUMRaw, clampUM, appendHistory, computeSMA, computeNewUM, type UMDatum,
+};
 
-// ── Types ─────────────────────────────────────────────────────
-export interface UMDatum {
-  smoothed_q         : bigint;
-  last_updated_epoch : bigint;
-  history            : bigint[];
-}
+// ── Local constants used for tx serialization only ────────────
+const Q = 1_000_000_000n;
 
 export interface EpochStats {
   epoch      : bigint;
@@ -34,48 +32,6 @@ export interface UMUpdateResult {
   newRaw       : bigint;
   epoch        : bigint;
   summary      : string;
-}
-
-// ══════════════════════════════════════════════════════════════
-// §14.1 UM Math (BigInt — C-OVERFLOW)
-// ══════════════════════════════════════════════════════════════
-
-/** C-UM-1: um_raw = ⌊epoch_burns × Q / max(epoch_mints, 1)⌋ */
-export function computeUMRaw(epochBurns: bigint, epochMints: bigint): bigint {
-  const denominator = epochMints > 0n ? epochMints : 1n;
-  return epochBurns * Q / denominator;
-}
-
-/** Clamp to [UM_MIN_Q, UM_MAX_Q] */
-export function clampUM(x: bigint): bigint {
-  if (x < UM_MIN_Q) return UM_MIN_Q;
-  if (x > UM_MAX_Q) return UM_MAX_Q;
-  return x;
-}
-
-/** C-UM-2: append new_raw to history, keep last ≤ 6 entries */
-export function appendHistory(history: bigint[], newRaw: bigint): bigint[] {
-  const appended = [...history, clampUM(newRaw)];
-  return appended.slice(-UM_WINDOW);   // keep last 6
-}
-
-/** C-UM-1: SMA over history */
-export function computeSMA(history: bigint[]): bigint {
-  if (history.length === 0) return Q;
-  const total = history.reduce((s, x) => s + x, 0n);
-  return total / BigInt(history.length);
-}
-
-/** Full UM update: given epoch stats, compute new smoothed UM */
-export function computeNewUM(
-  datum       : UMDatum,
-  epochBurns  : bigint,
-  epochMints  : bigint,
-): { newSmoothed: bigint; newHistory: bigint[]; newRaw: bigint } {
-  const newRaw      = computeUMRaw(epochBurns, epochMints);
-  const newHistory  = appendHistory(datum.history, newRaw);
-  const newSmoothed = clampUM(computeSMA(newHistory));
-  return { newSmoothed, newHistory, newRaw };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -210,8 +166,7 @@ export function startUMKeeper(config: KeeperConfig): () => void {
 
       const datum       = Data.from(umUtxo.datum, UMDatumSchema);
       const tip         = await (lucid.provider as any).getBlock("latest");
-      const currentSlot = BigInt(tip.slot ?? 0);
-      const currentEpoch = currentSlot / SLOTS_PER_EPOCH;
+      const currentEpoch = slotToEpoch(BigInt(tip.slot ?? 0));
 
       // Check if update needed
       if (currentEpoch <= datum.last_updated_epoch) return;

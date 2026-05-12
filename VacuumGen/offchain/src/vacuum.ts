@@ -16,6 +16,7 @@ import {
   isVacuumExpired, slotToEpoch, lampToOil, lAvail,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
+import { getTipSlot } from "@magiclamp/protocol-utils";
 import {
   VaultDatumSchema, UMDatumSchema, VaultRedeemerSchema,
   type VaultDatum, type UMDatum, type MagicBatch,
@@ -289,11 +290,4 @@ function toU64(n: bigint): Buffer {
   return b;
 }
 
-async function getTipSlot(lucid: LucidEvolution): Promise<number> {
-  try {
-    const tip = await (lucid.provider as any).getBlock("latest");
-    return tip.slot ?? 0;
-  } catch {
-    return Math.max(0, Math.floor(Date.now() / 1000) - 1666656000);
-  }
-}
+// getTipSlot moved to @magiclamp/protocol-utils — network-aware fallback (P8).

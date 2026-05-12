@@ -239,6 +239,17 @@ describe("ActivityState — Appendix B.6, §5.4", () => {
     expect(countActiveAppsInWindow(TV_ACT_003.state, 104n)).toBe(2);
   });
 
+  // Regression: OAC upper bound is EXCLUSIVE (§6.4). Burns at the current
+  // epoch must not be counted; they apply from epoch e+1.
+  it("TV-ACT-003b: OAC upper bound exclusive — burn at ep=e not counted", () => {
+    const state = {
+      recent_burn_epochs: [["app_now", 100n], ["app_prev", 99n]] as [string, bigint][],
+      total_burns_count: 2n,
+    };
+    expect(countActiveAppsInWindow(state, 100n)).toBe(1);   // app_now excluded
+    expect(countActiveAppsInWindow(state, 101n)).toBe(2);   // counted next epoch
+  });
+
   it("TV-ACT-004: C-ACTIVITY-DEDUP — 3 burns same (app_A, 103) → 1 entry", () => {
     let state = TV_ACT_004.start_state;
     for (let i = 0; i < TV_ACT_004.burns; i++) {

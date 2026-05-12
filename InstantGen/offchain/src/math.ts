@@ -4,9 +4,14 @@
 
 import {
   Q, INSTANT_BASE_RATE_Q, PM_Q, UM_FALLBACK_Q, UM_MAX_STALENESS,
-  SLOTS_PER_EPOCH, NANOGIC_PER_MAGIC, OIL_PER_LAMP,
 } from "./constants.js";
+import {
+  slotToEpoch, nanogicToMagicStr, qToStr, lampToOil, oilToLamp,
+} from "@magiclamp/protocol-utils";
 import type { UMDatum } from "./types.js";
+
+// Re-export shared primitives to preserve module's public API
+export { slotToEpoch, nanogicToMagicStr, qToStr, lampToOil, oilToLamp };
 
 // ── §6.1 Q-format operations ─────────────────────────────────
 
@@ -21,11 +26,6 @@ export function multiplyQ(aQ: bigint, bQ: bigint): bigint {
 }
 
 // ── Epoch helpers ────────────────────────────────────────────
-
-/** Convert slot number to epoch (432,000 slots per epoch) */
-export function slotToEpoch(slot: bigint): bigint {
-  return slot / SLOTS_PER_EPOCH;
-}
 
 /** Batch age k = current_epoch - created_epoch */
 export function batchAge(createdEpoch: bigint, currentEpoch: bigint): bigint {
@@ -130,26 +130,5 @@ export function isExpired(
   return (currentEpoch - createdEpoch) >= decayWindow;
 }
 
-// ── Unit conversions ─────────────────────────────────────────
-
-/** tLAMP to oil (1 LAMP = 10^6 oil) */
-export function lampToOil(lamp: bigint): bigint {
-  return lamp * OIL_PER_LAMP;
-}
-
-/** oil to LAMP (for display) */
-export function oilToLamp(oil: bigint): bigint {
-  return oil / OIL_PER_LAMP;
-}
-
-/** nanogic to MAGIC string (e.g. "3.1500") */
-export function nanogicToMagicStr(ng: bigint, decimals = 4): string {
-  const whole = ng / NANOGIC_PER_MAGIC;
-  const frac  = (ng % NANOGIC_PER_MAGIC).toString().padStart(9, "0").slice(0, decimals);
-  return `${whole}.${frac}`;
-}
-
-/** Q-format value to decimal string (e.g. "1.05") */
-export function qToStr(q_val: bigint, decimals = 2): string {
-  return (Number(q_val) / 1e9).toFixed(decimals);
-}
+// (unit conversions and display helpers are re-exported from
+// @magiclamp/protocol-utils — see top of file)

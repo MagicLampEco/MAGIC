@@ -2,12 +2,19 @@
 // ALL arithmetic uses BigInt. No Number for oil/nanogic/Q-format (C-OVERFLOW).
 
 import {
-  Q, SNAPSHOT_BASE_RATE_Q, NANOGIC_PER_MAGIC, OIL_PER_LAMP, SLOTS_PER_EPOCH,
+  Q, SNAPSHOT_BASE_RATE_Q,
   S_SEG1_INTERCEPT_Q, S_SEG1_SLOPE_Q,
   S_SEG2_KNEE, S_SEG2_INTERCEPT_Q, S_SEG2_SLOPE_Q,
   S_SEG3_KNEE, S_SEG3_INTERCEPT_Q, S_SEG3_SLOPE_Q,
 } from "./constants.js";
+import {
+  slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr,
+  selectLampForLock, removeLockedAmount,
+} from "@magiclamp/protocol-utils";
 import { blake2b } from "@noble/hashes/blake2b";
+
+export { slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr };
+export { selectLampForLock, removeLockedAmount };
 
 // ══════════════════════════════════════════════════════════════
 // §11.3 S(L) — Schedule bonus multiplier (piecewise, T11, T12)
@@ -115,55 +122,5 @@ export function countEligibleFires(
 
 import { MAX_BATCHES_PER_VAULT } from "./constants.js";
 
-// ══════════════════════════════════════════════════════════════
-// Utility
-// ══════════════════════════════════════════════════════════════
-
-export function slotToEpoch(slot: bigint): bigint { return slot / SLOTS_PER_EPOCH; }
-export function lampToOil(lamp: bigint): bigint   { return lamp * OIL_PER_LAMP; }
-
-export function nanogicToMagicStr(ng: bigint, dec = 4): string {
-  if (ng <= 0n) return "0." + "0".repeat(dec);
-  return `${ng / NANOGIC_PER_MAGIC}.${(ng % NANOGIC_PER_MAGIC).toString().padStart(9, "0").slice(0, dec)}`;
-}
-
-export function qToStr(qv: bigint, dec = 3): string {
-  return (Number(qv) / 1e9).toFixed(dec);
-}
-
-// Lock helpers (same algorithm as VacuumGen)
-import type { LoyaltyHolding } from "./types.js";
-
-export function selectLampForLock(holdings: LoyaltyHolding[], amount: bigint): LoyaltyHolding[] {
-  const sorted = [...holdings].sort((a, b) => Number(b.acquired_epoch - a.acquired_epoch));
-  let remaining = amount;
-  const result: LoyaltyHolding[] = [];
-  for (const h of sorted) {
-    if (remaining <= 0n) { result.push(h); continue; }
-    if (remaining >= h.amount) {
-      result.push({ ...h, is_locked: true }); remaining -= h.amount;
-    } else {
-      result.push({ amount: remaining, acquired_epoch: h.acquired_epoch, is_locked: true });
-      result.push({ amount: h.amount - remaining, acquired_epoch: h.acquired_epoch, is_locked: false });
-      remaining = 0n;
-    }
-  }
-  if (remaining > 0n) throw new Error(`GEN-SCH-003: insufficient L_avail (${remaining} short)`);
-  return result;
-}
-
-export function removeLockedAmount(holdings: LoyaltyHolding[], amount: bigint): LoyaltyHolding[] {
-  const unlocked = holdings.filter(h => !h.is_locked);
-  const locked   = holdings.filter(h =>  h.is_locked)
-    .sort((a, b) => Number(a.acquired_epoch - b.acquired_epoch));
-  let remaining = amount;
-  const result: LoyaltyHolding[] = [];
-  for (const h of locked) {
-    if (remaining <= 0n) { result.push(h); continue; }
-    if (remaining >= h.amount) { remaining -= h.amount; }
-    else { result.push({ ...h, amount: h.amount - remaining }); remaining = 0n; }
-  }
-  return [...unlocked, ...result];
-}
-
-export function lAvail(balance: bigint, locked: bigint): bigint { return balance - locked; }
+// Utility + lock helpers are re-exported from @magiclamp/protocol-utils
+// (single source of truth, P8). See imports/re-exports at top of file.

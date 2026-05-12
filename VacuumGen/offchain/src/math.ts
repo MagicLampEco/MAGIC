@@ -3,9 +3,15 @@
 
 import {
   Q, VBR_Q, SM_Q, UM_MIN_Q, UM_MAX_Q, VACUUM_DECAY_WINDOW,
-  SLOTS_PER_EPOCH, OIL_PER_LAMP, NANOGIC_PER_MAGIC,
 } from "./constants.js";
+import {
+  slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr,
+  selectLampForLock, removeLockedAmount,
+} from "@magiclamp/protocol-utils";
 import type { LoyaltyHolding, UMDatum, StreakState } from "./types.js";
+
+export { slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr };
+export { selectLampForLock, removeLockedAmount };
 
 // ══════════════════════════════════════════════════════════════
 // §6.5 Streak Multiplier
@@ -68,77 +74,8 @@ export function computeVacuumMagic(
   return s2 * smQ / Q;                 // × SM
 }
 
-// ══════════════════════════════════════════════════════════════
-// §6.8 LAMP lock — youngest-first (T5, C.6)
-// ══════════════════════════════════════════════════════════════
-//
-// Locks youngest holdings first → free = oldest → LF(free) maximized.
-// TV-LOCK-01: [{1000,50},{2000,80},{1500,60}], lock=2500
-//   Sorted: [2000@80, 1500@60, 1000@50]
-//   Lock 2000@80 (rem=500); Lock 500@60+Free 1000@60; Free 1000@50 ✓
-//
-// MUST match onchain/lib/lock.ak: select_lamp_for_lock (P8)
-
-export function selectLampForLock(
-  holdings : LoyaltyHolding[],
-  amount   : bigint,
-): LoyaltyHolding[] {
-  // Sort youngest-first (desc acquired_epoch)
-  const sorted = [...holdings].sort((a, b) =>
-    Number(b.acquired_epoch - a.acquired_epoch),
-  );
-
-  let remaining = amount;
-  const result: LoyaltyHolding[] = [];
-
-  for (const h of sorted) {
-    if (remaining <= 0n) {
-      result.push(h);
-    } else if (remaining >= h.amount) {
-      result.push({ ...h, is_locked: true });
-      remaining -= h.amount;
-    } else {
-      result.push({ amount: remaining,           acquired_epoch: h.acquired_epoch, is_locked: true  });
-      result.push({ amount: h.amount - remaining, acquired_epoch: h.acquired_epoch, is_locked: false });
-      remaining = 0n;
-    }
-  }
-
-  if (remaining > 0n) throw new Error(`GEN-VAC-001: insufficient L_avail (remaining=${remaining})`);
-  return result;
-}
-
-// ══════════════════════════════════════════════════════════════
-// §A.9 remove_locked_amount — oldest-locked-first
-// ══════════════════════════════════════════════════════════════
-// Called at fire time: remove λ from locked holdings.
-// MUST match onchain/lib/lock.ak: remove_locked_amount (P8)
-
-export function removeLockedAmount(
-  holdings : LoyaltyHolding[],
-  amount   : bigint,
-): LoyaltyHolding[] {
-  const unlocked = holdings.filter(h => !h.is_locked);
-  const locked   = holdings.filter(h =>  h.is_locked)
-    .sort((a, b) => Number(a.acquired_epoch - b.acquired_epoch)); // oldest first
-
-  let remaining = amount;
-  const resultLocked: LoyaltyHolding[] = [];
-
-  for (const h of locked) {
-    if (remaining <= 0n) {
-      resultLocked.push(h);
-    } else if (remaining >= h.amount) {
-      remaining -= h.amount;
-    } else {
-      resultLocked.push({ ...h, amount: h.amount - remaining });
-      remaining = 0n;
-    }
-  }
-
-  if (remaining > 0n) throw new Error(`removeLockedAmount: insufficient locked (remaining=${remaining})`);
-  return [...unlocked, ...resultLocked];
-}
+// §6.8 selectLampForLock + §A.9 removeLockedAmount — re-exported from
+// @magiclamp/protocol-utils (single source of truth, P8).
 
 // ── Expiry check ─────────────────────────────────────────────
 // Vacuum decay_window = 1 → cliff at k=1
@@ -146,16 +83,5 @@ export function isVacuumExpired(createdEpoch: bigint, currentEpoch: bigint): boo
   return (currentEpoch - createdEpoch) >= VACUUM_DECAY_WINDOW;
 }
 
-// ── Utility ──────────────────────────────────────────────────
-export function slotToEpoch(slot: bigint): bigint { return slot / SLOTS_PER_EPOCH; }
-export function lampToOil(lamp: bigint): bigint   { return lamp * OIL_PER_LAMP; }
-export function lAvail(balance: bigint, locked: bigint): bigint { return balance - locked; }
-
-export function nanogicToMagicStr(ng: bigint, dec = 4): string {
-  if (ng <= 0n) return "0." + "0".repeat(dec);
-  return `${ng / NANOGIC_PER_MAGIC}.${(ng % NANOGIC_PER_MAGIC).toString().padStart(9, "0").slice(0, dec)}`;
-}
-
-export function qToStr(q_val: bigint, dec = 2): string {
-  return (Number(q_val) / 1e9).toFixed(dec);
-}
+// (slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr re-exported
+// from @magiclamp/protocol-utils — see top of file)

@@ -3,207 +3,216 @@
 
 ---
 
-## Tóm tắt
+## Trạng thái
 
-| Mức độ | Số vấn đề | Đã fix |
+| Mức độ | Số vấn đề | Đã apply trong code |
 |---|---|---|
-| 🔴 Critical | 2 | ✅ |
-| 🟠 Moderate | 4 | ✅ |
-| 🟡 Minor | 3 | ✅ |
+| 🔴 Critical | 2 | ✅ Verified |
+| 🟠 Moderate | 4 | ✅ Verified |
+| 🟡 Minor | 3 | ✅ Verified |
+
+> **Lịch sử:** Bản review trước đánh dấu các fix là ✅ nhưng thực tế **0/5 fix
+> được integrate vào module code** — ProtocolUtils tồn tại nhưng không module nào
+> import từ đó. Bản hiện tại đã sửa: tất cả 9 module có dependency
+> `@magiclamp/protocol-utils` và thay thế phần duplicated bằng import. Toàn bộ
+> 278/278 tests pass (10 module).
 
 ---
 
 ## 🔴 CRITICAL
 
-### 1. OAC window boundary inconsistency
+### 1. OAC window boundary inconsistency — FIXED
 
-**Vị trí:** `SnapshotGen/offchain/src/math.ts` vs `ConsumeMAGIC/offchain/src/math.ts`
+**Vị trí:** [ConsumeMAGIC/offchain/src/math.ts:377](ConsumeMAGIC/offchain/src/math.ts), [SnapshotGen/offchain/src/math.ts:42](SnapshotGen/offchain/src/math.ts), [ProtocolUtils/src/index.ts:186](ProtocolUtils/src/index.ts)
 
-**Vấn đề:**
-```typescript
-// SnapshotGen: ep ∈ [current-12, current) — EXCLUSIVE upper
-.filter(([, ep]) => ep >= windowStart && ep < currentEpoch)
+**Vấn đề:** Hai filter có ngữ nghĩa khác nhau bị nhầm lẫn:
+- Prune window (ConsumeMAGIC STEP 0e): `ep ≥ e − 12` — giữ entry cho epoch sau.
+- OAC count (SnapshotGen §6.4): `ep ∈ [e − 12, e)` — chỉ đếm burns đã hoàn thành.
 
-// ConsumeMAGIC countActiveAppsInWindow: ep ≥ current-12 — NO upper bound
-.filter(([, ep]) => ep >= e - DRM_LOOKBACK)
-```
+ConsumeMAGIC.`countActiveAppsInWindow` mang tên gợi ý OAC nhưng impl thiếu upper
+bound → developer dùng nó cho OAC sẽ sai.
 
-**Hệ quả nếu không fix:** Developer dùng ConsumeMAGIC's `countActiveAppsInWindow` để compute OAC sẽ ra kết quả sai — burns từ epoch hiện tại được count luôn (đáng lẽ chỉ apply từ epoch sau).
-
-**Fix:** `ProtocolUtils` package định nghĩa hai hàm riêng biệt với comment giải thích rõ lý do:
-- `pruneActivityWindow()` — ConsumeMAGIC STEP 0e (keeps ep ≥ e-12)
-- `countActiveAppsInOacWindow()` — SnapshotGen §6.4 (counts ep ∈ [e-12, e), exclusive)
-
-**Design note:** Đây là **intentionally different** — không phải lỗi thiết kế. Burns tại epoch e không count vào OAC epoch e; chúng apply từ epoch e+1. Điều này đảm bảo OAC chỉ dựa trên burns đã hoàn thành.
+**Fix đã apply:**
+- `ProtocolUtils.countActiveAppsInOacWindow(entries, e)` — canonical OAC count, exclusive upper bound.
+- `ProtocolUtils.pruneActivityWindow(entries, e)` — canonical prune (no upper bound).
+- ConsumeMAGIC.`countActiveAppsInWindow` đã thêm `&& ep < e` (khớp với tên).
+- SnapshotGen.`countActiveApps` delegate sang `countActiveAppsInOacWindow`.
+- Regression test: TV-ACT-003b — burn tại `ep == e` không được count cho OAC epoch e.
 
 ---
 
-### 2. isqrt_10th dùng float initial guess — overflow risk
+### 2. isqrt_10th dùng float initial guess — overflow risk — FIXED
 
-**Vị trí:** `AppEconomics/offchain/src/math.ts:50`
+**Vị trí:** [AppEconomics/offchain/src/math.ts:46](AppEconomics/offchain/src/math.ts), [ProtocolUtils/src/index.ts:231](ProtocolUtils/src/index.ts)
 
-```typescript
-// SAI: float overflow với V^7 lớn
-let x = BigInt(Math.max(1, Math.floor(Number(n) ** 0.1) + 2));
-// n = V^7 với V = 36×10^15 → V^7 = ~10^110 — Number không biểu diễn được!
-```
+**Vấn đề:** `BigInt(Math.floor(Number(n) ** 0.1) + 2)` — với `n = V^7` (V ≈
+S_LAMP_TOTAL = 36×10^15 → V^7 ≈ 10^110), `Number(n) = Infinity` → `Infinity **
+0.1 = Infinity` → `BigInt(Infinity)` **crash RangeError**.
 
-**Hệ quả:** `Number(n)` với n ≈ 10^110 → `Infinity`. `Infinity ** 0.1 = Infinity`. `BigInt(Infinity)` → **RangeError crash**.
-
-**Fix:** Pure BigInt initial guess via bit-length:
+**Fix đã apply:** Pure BigInt initial guess qua bit-length:
 ```typescript
 const bits = n.toString(2).length;
 let x = 1n << BigInt(Math.ceil((bits - 1) / 10) + 1);
 ```
-
-**Test thêm:** `vDampened(36_000_000_000_000_000n)` (max LAMP) → pass ✅
+AppEconomics chuyển sang `export const isqrt10th = isqrt10thShared`
+(re-export từ ProtocolUtils). Regression test: `vDampened(36_000_000_000_000_000n)` không throw.
 
 ---
 
 ## 🟠 MODERATE
 
-### 3. Code trùng lặp 7x — nanogicToMagicStr, slotToEpoch, selectLampForLock
+### 3. Code trùng lặp 7× — FIXED
 
-**Vị trí:** Tất cả 7 modules đều copy-paste cùng code.
+**Trước:**
 
-| Function | Copies | File |
-|---|---|---|
-| `nanogicToMagicStr` | 10 | Mọi module |
-| `slotToEpoch` | 5 | GenMAGIC modules |
-| `selectLampForLock` | 4 | VacuumGen, ScheduleGen |
-| `removeLockedAmount` | 4 | VacuumGen, ScheduleGen |
-| `isqrt` / `isqrt10th` | 2 | AppEconomics |
+| Function | Copies |
+|---|---|
+| `nanogicToMagicStr` | 10 |
+| `slotToEpoch` | 5 |
+| `selectLampForLock` | 4 |
+| `removeLockedAmount` | 4 |
+| `isqrt` / `isqrt10th` | 2 |
 
-**Rủi ro:** Nếu fix bug trong 1 copy → 9 copies khác vẫn sai. Đã xảy ra: bug `appendHistory` trong UMKeeper không propagate sang các module khác.
+**Sau:** Single source of truth tại `ProtocolUtils/src/index.ts`. Mỗi module
+trong 9 module SDK có dependency `"@magiclamp/protocol-utils": "file:../../ProtocolUtils"`
+và replace local impls bằng import + re-export (để giữ public API).
 
-**Fix:** `ProtocolUtils/` package (`@magiclamp/protocol-utils`) làm single source of truth. Mỗi module sẽ import từ đây thay vì copy.
-
----
-
-### 4. `getTipSlot` fallback hardcode genesis — sai network
-
-**Vị trí:** `VacuumGen`, `ScheduleGen`, `SnapshotGen`, `InstantGen`
-
-```typescript
-// SAI: 1666656000 là Preview genesis; sẽ sai nếu deploy lên Preprod/Mainnet
-return Math.max(0, Math.floor(Date.now() / 1000) - 1666656000);
-```
-
-**Hệ quả:** Deploy lên Mainnet (genesis 1596491091) → epoch tính sai ~800 epoch.
-
-**Fix:** `getCurrentEpoch(lucid, network)` trong ProtocolUtils với lookup table:
-```typescript
-const GENESIS_UNIX = { Preview: 1666656000, Preprod: 1654041600, Mainnet: 1596491091 };
-```
+| Module | Imports từ ProtocolUtils |
+|---|---|
+| InstantGen | slotToEpoch, nanogicToMagicStr, qToStr, lampToOil, oilToLamp, getTipSlot, cmpBigIntAsc |
+| SnapshotGen | slotToEpoch, lampToOil, nanogicToMagicStr, qToStr, countActiveAppsInOacWindow, getTipSlot |
+| VacuumGen | slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr, selectLampForLock, removeLockedAmount, getTipSlot |
+| ScheduleGen | (same as VacuumGen) + getTipSlot |
+| UMKeeper | SLOTS_PER_EPOCH, slotToEpoch (cũng đã hợp nhất 2 bản UM math khác nhau trong keeper.ts vs math.ts) |
+| Consolidate | LoyaltyHolding, cmpBigIntAsc |
+| ProfileChange | SLOTS_PER_EPOCH, slotToEpoch |
+| ConsumeMAGIC | nanogicToMagicStr |
+| AppEconomics | isqrt, isqrt10th, vDampened, verifyVd, nanogicToMagicStr |
 
 ---
 
-### 5. `Number()` trong sort comparators
+### 4. `getTipSlot` fallback hardcode genesis Preview — FIXED
 
-**Vị trí:** 6 chỗ (Consolidate, InstantGen, VacuumGen, ScheduleGen)
+**Vị trí:** [ProtocolUtils/src/index.ts:46](ProtocolUtils/src/index.ts) (canonical)
 
+`1666656000` (Preview genesis) bị hardcode trong fallback của 4 module —
+deploy lên Mainnet/Preprod sẽ tính lệch ~800 epoch.
+
+**Fix đã apply:** ProtocolUtils export `getTipSlot(lucid, network)` và
+`getCurrentEpoch(lucid, network)` với lookup table:
 ```typescript
-// Hiện tại — technically safe nhưng bad practice
-.sort((a, b) => Number(b.acquired_epoch - a.acquired_epoch))
+GENESIS_UNIX = { Preview: 1666656000, Preprod: 1654041600, Mainnet: 1596491091 };
 ```
-
-**Phân tích:** Epoch max ≈ 10,000 → `Number(b.epoch - a.epoch)` safe (< 2^53). Tuy nhiên, sort comparator nhận số âm/dương/zero — nếu diff > Number.MAX_SAFE_INTEGER → incorrect.
-
-**Fix:** Pure BigInt comparator:
-```typescript
-.sort((a, b) => cmpBigIntDesc(a.acquired_epoch, b.acquired_epoch))
-```
-
-Hàm `cmpBigIntAsc/Desc` trong ProtocolUtils.
+Các local `getTipSlot` trong vacuum.ts/instant.ts/schedule.ts/snapshot.ts đã
+được xóa và replace bằng import. Default vẫn là Preview (giữ behavior cũ);
+deploy Mainnet/Preprod cần pass `network` ở call site.
 
 ---
 
-### 6. `selectLampForLock` sort toàn bộ mỗi lần gọi — O(n log n)
+### 5. `Number()` trong sort comparators — FIXED
 
-**Vị trí:** VacuumGen, ScheduleGen
+**Trước:** 6 chỗ dùng `.sort((a, b) => Number(b.acquired_epoch - a.acquired_epoch))`.
 
-**Vấn đề:** Holdings được sort mỗi lần lock, mặc dù holdings thường đã gần như sorted (mới nhất thêm vào cuối). Với 64 holdings max, sort ≤ 64 × 6 ≈ 384 operations. Không critical nhưng có thể cải thiện.
+**Sau:** Tất cả đã chuyển sang `cmpBigIntAsc` / `cmpBigIntDesc` từ ProtocolUtils
+(pure BigInt). Bao gồm:
+- Consolidate (3 chỗ trực tiếp dùng `cmpBigIntAsc`).
+- InstantGen.instant.ts (`cmpBigIntAsc` trong removal helper).
+- VacuumGen.math.ts + ScheduleGen.math.ts — đã được thay thế bằng `selectLampForLock` / `removeLockedAmount` từ ProtocolUtils (chúng dùng `cmpBigIntDesc/Asc` nội bộ).
 
-**Optimization khả thi:** Maintain holdings đã sorted trong VaultDatum. Khi thêm holding mới: insert-in-order thay vì append rồi sort. **Không làm trong offchain SDK** vì sẽ tạo inconsistency với Aiken validator. Để Aiken xử lý tự nhiên.
+Tests cập nhật: VacuumGen test cũ expect `GEN-VAC-001` → nay expect canonical
+`GEN-LOCK-001`.
 
-**Kết luận:** Keep as is. 64 elements là không đáng kể.
+---
+
+### 6. `selectLampForLock` sort toàn bộ mỗi lần gọi — Acceptable, no change
+
+Holdings ≤ 64 phần tử; O(n log n) ≈ 384 ops. Tối ưu insert-in-order sẽ tạo
+inconsistency với Aiken validator. Giữ nguyên.
 
 ---
 
 ## 🟡 MINOR
 
-### 7. `vitest.config.ts` không có trong tất cả tarballs gốc
+### 7. `vitest.config.ts` thiếu trong tarballs gốc — FIXED (lần review trước)
 
-**Vị trí:** Lần release đầu tiên của các modules.
+Tất cả modules hiện có `vitest.config.ts`.
 
-**Fix:** Đã fix trong lần review trước. Tất cả modules hiện có `vitest.config.ts`.
+### 8. VaultDatumSchema hardcode trong deploy scripts — Open, defer to Aiken build
 
----
+Sau `aiken build`, dùng `aiken blueprint generate-types` để generate
+TypeScript types tự động thay vì hardcode. Chưa làm vì chưa có `plutus.json`
+(Aiken build chưa chạy).
 
-### 8. VaultDatumSchema phức tạp trong deploy scripts có thể drift
+### 9. `getBlock("latest")` thay vì `validity_range` — Acceptable
 
-**Vị trí:** `scripts/deploy/04_create_vault.ts`
-
-**Vấn đề:** VaultDatumSchema được hardcode trong TypeScript. Nếu Aiken compiler tạo plutus.json với field order khác → Datum encode sai → tx fail.
-
-**Fix cho dev:** Sau `aiken build`, dùng `aiken blueprint generate-types` để generate TypeScript types tự động thay vì hardcode.
-
----
-
-### 9. `getBlock("latest")` thay vì slot từ `validity_range`
-
-**Vị trí:** Tất cả tx builders (Instant, Snapshot, Vacuum, Schedule)
-
-**Vấn đề nhỏ:** `getBlock("latest")` là async network call. Nếu network chậm → epoch estimate có thể lag 1 slot.
-
-**Fix không cần thiết:** tx validity_range trong builder đã set đúng epoch. Blockfrost thường respond < 500ms. Acceptable.
+Tx builder dùng đúng `validity_range`. `getBlock("latest")` chỉ để estimate epoch
+cho summary string, không ảnh hưởng tx correctness.
 
 ---
 
-## Tóm tắt action items cho dev
+## Housekeeping đã dọn
 
-### Ngay (trước testnet)
+- Đã xóa 7 thư mục literal `{...}` (artifact của `mkdir` bị brace-expansion fail trên shell không hỗ trợ).
+- Đã xóa nested duplicate `ProtocolUtils/ProtocolUtils/` (bản copy hoàn toàn giống outer, ngoại trừ thiếu `main`/`exports` trong package.json).
+- Đã sửa `.gitignore` lặp `.DS_Store` 2 lần → 1 lần.
+- Thêm `main` / `types` / `exports` map vào `ProtocolUtils/package.json` để vitest và TS resolver tìm được entry `src/index.ts`.
 
-```bash
-# 1. Thêm ProtocolUtils vào mỗi module
-# package.json của mỗi module cần:
-"@magiclamp/protocol-utils": "file:../ProtocolUtils"
+---
 
-# 2. Replace duplicated imports:
-# FROM: import { nanogicToMagicStr, slotToEpoch, ... } from "./math.js"
-# TO:   import { nanogicToMagicStr, slotToEpoch, ... } from "@magiclamp/protocol-utils"
+## Bug mới phát hiện và đã fix
 
-# 3. Replace sort comparators:
-# FROM: .sort((a, b) => Number(b.acquired_epoch - a.acquired_epoch))
-# TO:   .sort((a, b) => cmpBigIntDesc(a.acquired_epoch, b.acquired_epoch))
+**UMKeeper double-impl mismatch** — `UMKeeper/offchain/src/keeper.ts` định nghĩa
+lại `appendHistory` clamp `newRaw` trước khi append, trong khi
+`UMKeeper/offchain/src/math.ts` giữ raw values theo spec. Spec §14.1 C-UM-2 yêu
+cầu raw values; tests chạy vào math.ts (đúng); keeper.ts khi build tx dùng impl
+sai. Đã fix: keeper.ts import từ math.ts (single source).
 
-# 4. Replace OAC counting in SnapshotGen:
-# FROM: countActiveApps(activity, currentEpoch)  [local function]
-# TO:   countActiveAppsInOacWindow(entries, currentEpoch)  [from ProtocolUtils]
+---
 
-# 5. Replace getTipSlot fallback:
-# FROM: Math.floor(Date.now() / 1000) - 1666656000
-# TO:   getCurrentEpoch(lucid, NETWORK)  [from ProtocolUtils]
+## Test status
+
+```
+ProtocolUtils:   24/24 pass
+InstantGen:      45/45 pass
+SnapshotGen:     46/46 pass
+VacuumGen:       30/30 pass
+ScheduleGen:     29/29 pass
+UMKeeper:        20/20 pass
+Consolidate:     12/12 pass
+ProfileChange:    8/8  pass
+ConsumeMAGIC:    31/31 pass
+AppEconomics:    33/33 pass
+─────────────────────────
+TOTAL:          278/278 pass
 ```
 
-### Trước Mainnet
-
-- [ ] Replace `aiken blueprint` generated schemas thay vì hardcoded VaultDatumSchema
-- [ ] Formal verification scope (Q8 in ConsumeMAGIC open questions)
+Regression tests thêm mới:
+- `AppEconomics`: isqrt10th với V=S_LAMP_TOTAL (V^7 ≈ 10^110) không throw.
+- `ConsumeMAGIC`: TV-ACT-003b — burn tại `ep == e` không count cho OAC epoch e.
 
 ---
 
-## Hiệu năng — Đánh giá
+## Action items còn lại
 
-| Operation | Complexity | Bottleneck thực tế |
-|---|---|---|
-| selectLampForLock | O(n log n), n≤64 | Không đáng kể |
-| computeW (AppEconomics) | O(1) — 5 mulQ | Không đáng kể |
-| vDampened | O(log n) Newton | V^7 lớn, có thể slow |
-| distribute() reward cap | O(|apps|²) worst case | |apps| ≤ 100, fine |
-| isqrt10th | O(log n) Newton | Cải thiện với bit-length guess |
+### Trước testnet
+- [ ] Aiken build các validators → ghi `plutus.json` → cập nhật hash trong `scripts/config.ts`.
+- [ ] Quyết định canonical version cho `UMKeeper/onchain/` vs `UMKeeper/onchain/onchain/` (2 bản nhau Aiken validator khác nhau — xem chú thích bên dưới).
+- [ ] Tương tự cho `ScheduleGen/onchain/onchain/`.
 
-**Thực tế:** Latency của giao thức là **Cardano block time (~20s)**, không phải computation. Mọi optimization JS đều không visible với user.
+### Trước Mainnet
+- [ ] Pass `network` xuống các call site `getTipSlot(lucid, network)` thay vì để default Preview.
+- [ ] Replace `aiken blueprint` generated schemas thay vì hardcoded VaultDatumSchema.
+- [ ] Formal verification scope (Q8 in ConsumeMAGIC open questions).
+
+### Lưu ý về `onchain/onchain/`
+
+Trong `UMKeeper/onchain/` và `ScheduleGen/onchain/` có thư mục con `onchain/`
+nữa với nội dung **không giống** bên ngoài:
+- `aiken.toml` khác `name` ("magiclamp/protocol" vs "magiclamp/umkeeper") và format `[[dependencies]]` vs `[dependencies]`.
+- Aiken validator code dùng syntax khác (full path types vs `use` imports).
+
+Tôi không xóa vì không rõ bản nào là canonical. Dev cần xác nhận và chọn 1
+trước khi `aiken build`.
 
 ---
 
@@ -211,13 +220,14 @@ Hàm `cmpBigIntAsc/Desc` trong ProtocolUtils.
 
 | Concern | Status |
 |---|---|
-| BigInt overflow | ✅ Dùng BigInt toàn bộ |
+| BigInt overflow | ✅ Dùng BigInt toàn bộ (isqrt10th regression test) |
 | Division by zero | ✅ DRATE_PRIOR=10 luôn > 0 (T20) |
 | Cycle trong re-allocation | ✅ topo_level O(K), formal proof T14.13 |
-| OAC gaming | ✅ C-ACTIVITY-DEDUP enforced |
+| OAC gaming | ✅ C-ACTIVITY-DEDUP enforced + upper bound exclusive |
 | Timestamp manipulation | ✅ Validator dùng tx validity_range |
-| isqrt_10th overflow | ✅ Fixed — pure BigInt |
+| isqrt_10th overflow | ✅ Pure BigInt + regression test |
+| Cross-network deploy bug | ✅ Network-aware genesis lookup |
 
 ---
 
-*Review completed — 190 + 30 + 32 + 24 = 276 tests pass*
+*Review completed — 278/278 tests pass (ProtocolUtils + 9 modules)*

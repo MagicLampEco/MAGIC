@@ -2,9 +2,9 @@
 // Normative: C-PC-V1..6, T4, §3.5
 
 import { Data, type LucidEvolution, type UTxO, type Tx } from "@lucid-evolution/lucid";
+import { SLOTS_PER_EPOCH, slotToEpoch } from "@magiclamp/protocol-utils";
 
 const PROFILE_COOLDOWN  = 2n;   // epochs [Significant]
-const SLOTS_PER_EPOCH   = 432_000n;
 
 export type ActivityProfile = "Ember" | "Flame" | "Lantern";
 
@@ -36,7 +36,7 @@ export async function buildProfileChangeTx(
 ): Promise<ProfileChangeResult> {
   const datum = Data.from(vaultUtxo.datum!, vaultSchema);
   const tip   = await (lucid.provider as any).getBlock("latest");
-  const currentEpoch = BigInt(tip.slot ?? 0) / SLOTS_PER_EPOCH;
+  const currentEpoch = slotToEpoch(BigInt(tip.slot ?? 0));
 
   // C-PC-V2: cooldown ≥ 2 epochs
   const lastChange = datum.profile_changed_epoch;

@@ -2,6 +2,9 @@
 // NORMATIVE: spec §3-§12, Appendix C formal proofs
 // ALL arithmetic BigInt. No Number for nanogic/oil (C8).
 
+import { nanogicToMagicStr } from "@magiclamp/protocol-utils";
+export { nanogicToMagicStr };
+
 // ── Genesis constants (§16.1) ────────────────────────────────
 export const Q                      = 1_000_000_000n;
 export const DELEGATION_FEE_BPS     = 100n;    // 1% [Significant]
@@ -365,13 +368,13 @@ export function validateDelegationCap(
 // ══════════════════════════════════════════════════════════════
 // Utility
 // ══════════════════════════════════════════════════════════════
-export function nanogicToMagicStr(ng: bigint, dec = 4): string {
-  if (ng === 0n) return "0." + "0".repeat(dec);
-  const NANOGIC_PER_MAGIC = 1_000_000_000n;
-  return `${ng / NANOGIC_PER_MAGIC}.${(ng % NANOGIC_PER_MAGIC).toString().padStart(9, "0").slice(0, dec)}`;
-}
+// nanogicToMagicStr re-exported from @magiclamp/protocol-utils — see top of file.
 
+// OAC window — §6.4: ep ∈ [e − DRM_LOOKBACK, e). Upper bound EXCLUSIVE.
+// Burns at epoch e are not yet completed; they affect OAC of epoch e+1.
+// (Do not confuse with the STEP 0e prune window which keeps ep ≥ e − 12.)
 export function countActiveAppsInWindow(state: ActivityState, e: bigint): number {
-  const inWindow = state.recent_burn_epochs.filter(([, ep]) => ep >= e - DRM_LOOKBACK);
+  const lo = e - DRM_LOOKBACK;
+  const inWindow = state.recent_burn_epochs.filter(([, ep]) => ep >= lo && ep < e);
   return new Set(inWindow.map(([id]) => id)).size;
 }

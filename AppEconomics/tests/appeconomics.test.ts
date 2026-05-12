@@ -294,6 +294,15 @@ describe("TV-009: isqrt_10th — §3.3, Lemma 3.5", () => {
       expect((r + 1n) * (r + 1n) > n, `isqrt(${n})=${r}: (r+1)²>n`).toBe(true);
     }
   });
+
+  // Regression: V near S_LAMP_TOTAL (36×10^15) — V^7 ≈ 10^110 overflows Number.
+  // Previous impl crashed with BigInt(Infinity) RangeError on the float guess.
+  it("isqrt_10th does not overflow when V = S_LAMP_TOTAL", () => {
+    const V = 36_000_000_000_000_000n;
+    const Vd = vDampened(V);
+    expect(Vd ** 10n <= V ** 7n).toBe(true);
+    expect((Vd + 1n) ** 10n > V ** 7n).toBe(true);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════

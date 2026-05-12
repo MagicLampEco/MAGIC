@@ -24,30 +24,40 @@ export function slotToEpoch(slot: bigint): bigint {
   return slot / SLOTS_PER_EPOCH;
 }
 
-/** Get current epoch from Blockfrost provider with correct Preview genesis.
- *  Preview testnet Shelley started at slot 0, epoch 0 (2022-10-25).
- *  Unix: 1666656000. Slot 0 = block 1. Safe fallback uses correct genesis.
- */
-export async function getCurrentEpoch(
-  lucid: { provider: unknown },
-  network: "Preview" | "Preprod" | "Mainnet" = "Preview",
-): Promise<bigint> {
-  // Cardano genesis UNIX timestamps per network
-  const GENESIS_UNIX: Record<string, number> = {
-    Preview:  1666656000,  // 2022-10-25
-    Preprod:  1654041600,  // 2022-06-01
-    Mainnet:  1596491091,  // 2020-08-03
-  };
+// Cardano genesis UNIX timestamps per network (used as fallback when Blockfrost
+// is unavailable). Preview Shelley genesis: slot 0 = block 1 (2022-10-25).
+export const GENESIS_UNIX: Record<"Preview" | "Preprod" | "Mainnet", number> = {
+  Preview:  1666656000,  // 2022-10-25
+  Preprod:  1654041600,  // 2022-06-01
+  Mainnet:  1596491091,  // 2020-08-03
+};
 
+export type Network = "Preview" | "Preprod" | "Mainnet";
+
+/** Get current tip slot from a Lucid-compatible provider.
+ *  Falls back to wall-clock estimate using the network's genesis UNIX time.
+ *  Hardcoding 1666656000 in callers breaks Preprod/Mainnet — always pass `network`.
+ */
+export async function getTipSlot(
+  lucid   : { provider: unknown },
+  network : Network = "Preview",
+): Promise<number> {
   try {
     const tip = await (lucid.provider as { getBlock: (s: string) => Promise<{ slot?: number }> })
       .getBlock("latest");
-    return slotToEpoch(BigInt(tip.slot ?? 0));
+    return tip.slot ?? 0;
   } catch {
-    const genesis = GENESIS_UNIX[network] ?? GENESIS_UNIX["Preview"]!;
-    const nowSlot = Math.floor(Date.now() / 1000) - genesis;
-    return slotToEpoch(BigInt(Math.max(0, nowSlot)));
+    const genesis = GENESIS_UNIX[network] ?? GENESIS_UNIX.Preview;
+    return Math.max(0, Math.floor(Date.now() / 1000) - genesis);
   }
+}
+
+/** Get current epoch from a Lucid-compatible provider. */
+export async function getCurrentEpoch(
+  lucid   : { provider: unknown },
+  network : Network = "Preview",
+): Promise<bigint> {
+  return slotToEpoch(BigInt(await getTipSlot(lucid, network)));
 }
 
 // ══════════════════════════════════════════════════════════════

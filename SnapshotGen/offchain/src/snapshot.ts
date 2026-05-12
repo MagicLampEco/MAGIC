@@ -14,6 +14,7 @@ import {
   computeLfQ, computeOacQ, computeSnapshotMagic, computeCatchupMagic,
   isExpired, slotToEpoch, nanogicToMagicStr, qToStr, lampToOil,
 } from "./math.js";
+import { getTipSlot } from "@magiclamp/protocol-utils";
 import {
   VaultDatumSchema, VaultRedeemerSchema,
   type VaultDatum, type MagicBatch,
@@ -225,15 +226,7 @@ function updateAttributionRoot(
   return Buffer.from(blake2b(Buffer.concat([old, enc]), { dkLen: 32 })).toString("hex");
 }
 
-async function getTipSlot(lucid: LucidEvolution): Promise<number> {
-  try {
-    const tip = await (lucid.provider as any).getBlock("latest");
-    return tip.slot ?? 0;
-  } catch {
-    const nowSec = Math.floor(Date.now() / 1000);
-    return Math.max(0, nowSec - 1666656000);  // Preview testnet genesis
-  }
-}
+// getTipSlot moved to @magiclamp/protocol-utils — network-aware fallback (P8).
 
 function buildSummary(p: {
   mTotal: bigint; mPerEpoch: bigint; deltaEpochs: bigint;

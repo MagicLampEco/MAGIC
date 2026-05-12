@@ -2,6 +2,15 @@
 // NORMATIVE: §3-§10, Appendix B TV-001 to TV-010
 // ALL BigInt arithmetic. No float (C8).
 
+import {
+  isqrt   as isqrtShared,
+  isqrt10th as isqrt10thShared,
+  vDampened as vDampenedShared,
+  verifyVd as verifyVdShared,
+  nanogicToMagicStr,
+} from "@magiclamp/protocol-utils";
+export { nanogicToMagicStr };
+
 // ── Constants (§19) ───────────────────────────────────────────
 export const Q                         = 1_000_000_000n;
 export const UTIL_DEAD_Q               = 50_000_000n;     // 5% [Routine]
@@ -24,51 +33,12 @@ export function mulQ(a: bigint, b: bigint): bigint {
   return a * b / Q;
 }
 
-// ══════════════════════════════════════════════════════════════
-// §3.3 isqrt — ⌊√n⌋ by Newton's method (Lemma 3.5)
-// ══════════════════════════════════════════════════════════════
-export function isqrt(n: bigint): bigint {
-  if (n <= 0n) return 0n;
-  let x = n;
-  let y = (n + 1n) / 2n;
-  while (y < x) {
-    x = y;
-    y = (x + n / x) / 2n;
-  }
-  return x;
-}
-
-// ══════════════════════════════════════════════════════════════
-// §9.1 isqrt_10th — ⌊n^(1/10)⌋ (Newton for 10th root, Lemma 9.1)
-// Used by V_dampened: V_d = isqrt_10th(V^7)
-// Off-chain computation; on-chain verification via verify_V_d
-// ══════════════════════════════════════════════════════════════
-export function isqrt10th(n: bigint): bigint {
-  if (n <= 0n) return 0n;
-  if (n < 10n) return 1n;
-  // Float initial guess (acceptable off-chain)
-  let x = BigInt(Math.max(1, Math.floor(Number(n) ** 0.1) + 2));
-  while (true) {
-    const x9 = x ** 9n;
-    const xNew = (9n * x + n / x9) / 10n;
-    if (xNew >= x) break;
-    x = xNew;
-  }
-  // Correct boundary
-  while ((x + 1n) ** 10n <= n) x++;
-  while (x ** 10n > n) x--;
-  return x;
-}
-
-// §9.1 V_dampened = ⌊V^(7/10)⌋ = isqrt_10th(V^7)
-export function vDampened(V: bigint): bigint {
-  return isqrt10th(V ** 7n);
-}
-
-// §9.1 On-chain verification: V_d^10 ≤ V^7 < (V_d+1)^10 (Lemma 9.2)
-export function verifyVd(V: bigint, Vd: bigint): boolean {
-  return Vd ** 10n <= V ** 7n && V ** 7n < (Vd + 1n) ** 10n;
-}
+// §3.3 isqrt, §9.1 isqrt_10th / V_dampened / verify_V_d — canonical
+// implementations live in @magiclamp/protocol-utils (single source of truth, P8).
+export const isqrt     = isqrtShared;
+export const isqrt10th = isqrt10thShared;
+export const vDampened = vDampenedShared;
+export const verifyVd  = verifyVdShared;
 
 // ══════════════════════════════════════════════════════════════
 // §9.2 Five Factors
@@ -230,7 +200,4 @@ export function sma6(history: bigint[]): bigint {
   return history.reduce((s, x) => s + x, 0n) / BigInt(history.length);
 }
 
-export function nanogicToMagicStr(ng: bigint, dec = 4): string {
-  if (ng === 0n) return "0." + "0".repeat(dec);
-  return `${ng / Q}.${(ng % Q).toString().padStart(9, "0").slice(0, dec)}`;
-}
+// nanogicToMagicStr re-exported from @magiclamp/protocol-utils — see top of file.

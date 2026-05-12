@@ -14,6 +14,7 @@ import {
   computeInstantMagic, getUmForInstant, shouldHalve, applyHalving,
   isExpired, lampToOil, slotToEpoch, nanogicToMagicStr, qToStr,
 } from "./math.js";
+import { getTipSlot, cmpBigIntAsc } from "@magiclamp/protocol-utils";
 import {
   VaultDatumSchema, UMDatumSchema, VaultRedeemerSchema,
   type VaultDatum, type UMDatum, type MagicBatch, type LoyaltyHolding,
@@ -292,9 +293,9 @@ function removeFromHoldings(
   const locked   = holdings.filter((h) =>  h.is_locked);
   const unlocked = holdings.filter((h) => !h.is_locked);
 
-  // Sort oldest-first for removal
+  // Sort oldest-first for removal (BigInt-safe comparator)
   const sorted = [...unlocked].sort((a, b) =>
-    Number(a.acquired_epoch - b.acquired_epoch),
+    cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch),
   );
 
   let remaining = amount;
@@ -340,19 +341,7 @@ function updateAttribution(
 
 // ── Utility: get current tip slot from Blockfrost ────────────
 
-async function getTipSlot(lucid: LucidEvolution): Promise<number> {
-  // Blockfrost-compatible: get current tip
-  try {
-    const tip = await (lucid.provider as any).getBlock("latest");
-    return tip.slot ?? 0;
-  } catch {
-    // Fallback: use current time-based estimate for Preview testnet
-    // Preview testnet started at UNIX 1666656000 (approx Oct 2022)
-    const nowSec = Math.floor(Date.now() / 1000);
-    const previewStart = 1666656000;
-    return Math.max(0, nowSec - previewStart);
-  }
-}
+// getTipSlot moved to @magiclamp/protocol-utils — network-aware fallback (P8).
 
 // ── Human-readable summary ────────────────────────────────────
 

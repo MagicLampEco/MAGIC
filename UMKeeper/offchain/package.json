@@ -6,7 +6,9 @@
     "test": "vitest run",
     "start": "node dist/src/run.js"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@magiclamp/protocol-utils": "file:../../ProtocolUtils"
+  },
   "devDependencies": {
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"

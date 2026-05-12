@@ -241,9 +241,9 @@ describe("selectLampForLock — §6.8, T5, TV-LOCK-01", () => {
     expect(result[0]!.amount).toBe(5000n);
   });
 
-  it("Insufficient holdings → throws GEN-VAC-001", () => {
+  it("Insufficient holdings → throws GEN-LOCK-001 (canonical)", () => {
     const holdings = [{ amount: 100n, acquired_epoch: 80n, is_locked: false }];
-    expect(() => selectLampForLock(holdings, 200n)).toThrow("GEN-VAC-001");
+    expect(() => selectLampForLock(holdings, 200n)).toThrow("GEN-LOCK-001");
   });
 });
 

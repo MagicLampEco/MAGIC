@@ -5,9 +5,14 @@
 import {
   Q, SNAPSHOT_BASE_RATE_Q, PROFILE_PARAMS,
   OAC_BASE_Q, OAC_INCREMENT_Q, OAC_CAP_APPS, DRM_LOOKBACK,
-  SLOTS_PER_EPOCH, OIL_PER_LAMP, NANOGIC_PER_MAGIC,
 } from "./constants.js";
+import {
+  slotToEpoch, lampToOil, nanogicToMagicStr, qToStr,
+  countActiveAppsInOacWindow,
+} from "@magiclamp/protocol-utils";
 import type { LoyaltyHolding, ActivityState } from "./types.js";
+
+export { slotToEpoch, lampToOil, nanogicToMagicStr, qToStr };
 
 // ══════════════════════════════════════════════════════════════
 // §6.3 Loyalty Factor (BigInt)
@@ -38,15 +43,10 @@ export function computeLfQ(holdings: LoyaltyHolding[], currentEpoch: bigint): bi
 // §6.4 OAC (BigInt)
 // ══════════════════════════════════════════════════════════════
 
-/** Count distinct apps active in window [current-12, current). TV-OAC-BOUNDARY. */
+/** Count distinct apps active in window [current-12, current). TV-OAC-BOUNDARY.
+ *  Delegates to canonical ProtocolUtils implementation. */
 export function countActiveApps(activity: ActivityState, currentEpoch: bigint): number {
-  const windowStart = currentEpoch - DRM_LOOKBACK;
-  const distinctApps = new Set(
-    activity.recent_burn_epochs
-      .filter(([, ep]) => ep >= windowStart && ep < currentEpoch)
-      .map(([appId]) => appId),
-  );
-  return distinctApps.size;
+  return countActiveAppsInOacWindow(activity.recent_burn_epochs, currentEpoch);
 }
 
 /** OAC in Q-format. */
@@ -178,20 +178,5 @@ export function burnSnapshot(
   return { newInitialAmount: newInitial, newBalance, isb, diff };
 }
 
-// ══════════════════════════════════════════════════════════════
-// Utility
-// ══════════════════════════════════════════════════════════════
-
-export function slotToEpoch(slot: bigint): bigint { return slot / SLOTS_PER_EPOCH; }
-export function lampToOil(lamp: bigint): bigint   { return lamp * OIL_PER_LAMP; }
-
-export function nanogicToMagicStr(ng: bigint, decimals = 4): string {
-  if (ng < 0n) throw new Error("Negative nanogic");
-  const w = ng / NANOGIC_PER_MAGIC;
-  const f = (ng % NANOGIC_PER_MAGIC).toString().padStart(9, "0").slice(0, decimals);
-  return `${w}.${f}`;
-}
-
-export function qToStr(qv: bigint, decimals = 2): string {
-  return (Number(qv) / 1e9).toFixed(decimals);
-}
+// (slotToEpoch, lampToOil, nanogicToMagicStr, qToStr are re-exported from
+// @magiclamp/protocol-utils — see top of file)

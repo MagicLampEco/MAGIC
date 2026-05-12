@@ -7,11 +7,8 @@
 //   Convergence: each pass reduces ≥1 entry → terminates in ≤⌊n/2⌋ passes
 //   Conservation: merge sums amounts; partition preserves locked/unlocked separation
 
-export interface LoyaltyHolding {
-  amount         : bigint;
-  acquired_epoch : bigint;
-  is_locked      : boolean;
-}
+import { cmpBigIntAsc, type LoyaltyHolding } from "@magiclamp/protocol-utils";
+export type { LoyaltyHolding };
 
 // ══════════════════════════════════════════════════════════════
 // §6.9 ConsolidateHoldings — sort-partition-merge
@@ -38,8 +35,8 @@ export function consolidateHoldings(holdings: LoyaltyHolding[]): LoyaltyHolding[
   // Step 3: Combine and sort by (acquired_epoch, is_locked) for canonical output
   return [...mergedLocked, ...mergedUnlocked]
     .sort((a, b) => {
-      const epDiff = Number(a.acquired_epoch - b.acquired_epoch);
-      if (epDiff !== 0) return epDiff;
+      const epCmp = cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch);
+      if (epCmp !== 0) return epCmp;
       return a.is_locked === b.is_locked ? 0 : a.is_locked ? -1 : 1;
     });
 }
@@ -52,7 +49,7 @@ export function consolidateHoldings(holdings: LoyaltyHolding[]): LoyaltyHolding[
  */
 function mergeGroup(group: LoyaltyHolding[]): LoyaltyHolding[] {
   // Sort ascending by acquired_epoch (canonical order)
-  let sorted = [...group].sort((a, b) => Number(a.acquired_epoch - b.acquired_epoch));
+  let sorted = [...group].sort((a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));
 
   let changed = true;
   while (changed) {
@@ -124,9 +121,9 @@ export function validateConsolidate(
 /** Returns true if at least one mergeable pair exists */
 export function canConsolidate(holdings: LoyaltyHolding[]): boolean {
   const locked   = holdings.filter(h =>  h.is_locked)
-    .sort((a, b) => Number(a.acquired_epoch - b.acquired_epoch));
+    .sort((a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));
   const unlocked = holdings.filter(h => !h.is_locked)
-    .sort((a, b) => Number(a.acquired_epoch - b.acquired_epoch));
+    .sort((a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));
 
   const hasMerge = (group: LoyaltyHolding[]) =>
     group.some((h, i) => i + 1 < group.length && group[i+1]!.acquired_epoch - h.acquired_epoch <= 1n);

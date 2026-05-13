@@ -8,24 +8,27 @@
 
 use aiken/collection/list
 use aiken/crypto
+use aiken/interval.{Finite, IntervalBoundType}
 use aiken/primitive/bytearray
 use cardano/address.{Address}
 use cardano/assets.{PolicyId}
+use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
-  Input, Output, OutputReference, ScriptContext, Transaction,
+  InlineDatum, Input, Output, OutputReference, Transaction,
 }
 
-use magiclamp/vacuumgen/lib/types.{
-  Instant, MagicBatch, UMDatum, VacuumOrder, VaultDatum, VaultRedeemer, Vacuum,
+use magiclamp/protocol/types.{
+  Instant, MagicBatch, UMDatum, Vacuum, VacuumCommit, VacuumFire,
+  VacuumOrder, VaultDatum, VaultRedeemer,
 }
-use magiclamp/vacuumgen/lib/constants.{
+use magiclamp/protocol/constants.{
   max_batches_per_vault, max_vacuum_orders, min_vacuum_amount,
   vacuum_delay, vacuum_decay_window, q,
 }
-use magiclamp/vacuumgen/lib/math.{
+use magiclamp/protocol/math.{
   compute_vacuum_magic, compute_sm_q, get_um_for_vacuum, validate_um_range,
 }
-use magiclamp/vacuumgen/lib/lock.{
+use magiclamp/protocol/lock.{
   select_lamp_for_lock, remove_locked_amount, l_avail, sum_holdings, sum_locked,
 }
 
@@ -245,9 +248,9 @@ fn get_current_epoch(tx: Transaction) -> Int {
   lower_slot / 432_000
 }
 
-fn get_finite_slot(bt: cardano/interval.IntervalBoundType<Int>) -> Option<Int> {
+fn get_finite_slot(bt: IntervalBoundType<Int>) -> Option<Int> {
   when bt is {
-    cardano/interval.Finite(s) -> Some(s)
+    Finite(s) -> Some(s)
     _ -> None
   }
 }
@@ -259,7 +262,7 @@ fn find_own_address(own_ref: OutputReference, inputs: List<Input>) -> Address {
 
 fn find_vault_output_datum(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
   expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
-  expect cardano/transaction.InlineDatum(d) = o.datum
+  expect InlineDatum(d) = o.datum
   expect datum: VaultDatum = d
   datum
 }
@@ -268,7 +271,7 @@ fn find_um_datum(ref_inputs: List<Input>, um_nft_policy: PolicyId) -> UMDatum {
   expect Some(i) = list.find(ref_inputs, fn(x) {
     assets.quantity_of(x.output.value, um_nft_policy, #"554d44") > 0
   })
-  expect cardano/transaction.InlineDatum(d) = i.output.datum
+  expect InlineDatum(d) = i.output.datum
   expect um: UMDatum = d
   um
 }
@@ -279,7 +282,7 @@ fn treasury_receives_lamp(
   lamp_policy   : PolicyId,
   amount        : Int,
 ) -> Bool {
-  let received = list.foldl(outputs, 0, fn(acc, o) {
+  let received = list.foldl(outputs, 0, fn(o, acc) {
     if o.address == treasury_addr {
       acc + assets.quantity_of(o.value, lamp_policy, #"4c414d50")
     } else { acc }

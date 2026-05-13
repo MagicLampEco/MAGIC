@@ -6,7 +6,10 @@
 // Validator verify toán học SMA, không trust raw value từ keeper.
 
 use aiken/collection/list
-use cardano/transaction.{Input, Output, OutputReference, ScriptContext}
+use aiken/interval.{Finite, IntervalBoundType}
+use cardano/address.{Address}
+use cardano/script_context.{ScriptContext}
+use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction}
 
 // ── Constants ────────────────────────────────────────────────
 const q : Int = 1_000_000_000
@@ -79,7 +82,7 @@ fn compute_sma(history: List<Int>) -> Int {
   let len = list.length(history)
   if len == 0 { q }  // neutral fallback (never happens after first update)
   else {
-    let total = list.foldl(history, 0, fn(acc, x) { acc + x })
+    let total = list.foldl(history, 0, fn(x, acc) { acc + x })
     total / len
   }
 }
@@ -96,23 +99,26 @@ fn clamp(x: Int, lo: Int, hi: Int) -> Int {
   if x < lo { lo } else if x > hi { hi } else { x }
 }
 
-fn get_epoch(tx: cardano/transaction.Transaction) -> Int {
+fn get_epoch(tx: Transaction) -> Int {
   expect Some(s) = tx.validity_range.lower_bound.bound_type |> get_finite
   s / slots_per_epoch
 }
 
-fn get_finite(bt: cardano/interval.IntervalBoundType<Int>) -> Option<Int> {
-  when bt is { cardano/interval.Finite(s) -> Some(s) | _ -> None }
+fn get_finite(bt: IntervalBoundType<Int>) -> Option<Int> {
+  when bt is {
+    Finite(s) -> Some(s)
+    _ -> None
+  }
 }
 
-fn get_own_addr(own_ref: OutputReference, inputs: List<Input>) -> cardano/address.Address {
+fn get_own_addr(own_ref: OutputReference, inputs: List<Input>) -> Address {
   expect Some(i) = list.find(inputs, fn(x) { x.output_reference == own_ref })
   i.output.address
 }
 
-fn get_output_datum(outputs: List<Output>, addr: cardano/address.Address) -> UMDatum {
+fn get_output_datum(outputs: List<Output>, addr: Address) -> UMDatum {
   expect Some(o) = list.find(outputs, fn(x) { x.address == addr })
-  expect cardano/transaction.InlineDatum(d) = o.datum
+  expect InlineDatum(d) = o.datum
   expect datum: UMDatum = d
   datum
 }

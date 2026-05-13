@@ -7,28 +7,31 @@
 //   ScheduleFire:   permissionless, fires ≤8 orders, updates vault+shard+treasury
 
 use aiken/collection/list
+use aiken/interval.{Finite, IntervalBoundType}
 use cardano/address.{Address}
 use cardano/assets.{PolicyId}
+use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
-  Input, Output, OutputReference, ScriptContext, Transaction,
+  InlineDatum, Input, Output, OutputReference, Transaction,
 }
 
-use magiclamp/schedulegen/lib/types.{
-  MagicBatch, Schedule, GenSchedule, ScheduleAggregateShardDatum,
-  VaultDatum, VaultRedeemer, ShardRedeemer,
+use magiclamp/protocol/types.{
+  BurnBatch, GenSchedule, MagicBatch, Schedule, ScheduleAggregateShardDatum,
+  ScheduleCommit, ScheduleFire, ShardRedeemer, ShardUpdateCommit, ShardUpdateFire,
+  VaultDatum, VaultRedeemer,
 }
-use magiclamp/schedulegen/lib/constants.{
+use magiclamp/protocol/constants.{
   q, snapshot_base_rate_q, schedule_min_length, schedule_max_length,
   min_lamp_per_fire, schedule_delay, schedule_decay_window,
   max_fires_per_tx_catchup, max_gen_schedules, max_batches_per_vault,
   shard_count,
 }
-use magiclamp/schedulegen/lib/math.{
+use magiclamp/protocol/math.{
   compute_s_q, compute_rate_locked_q, compute_m_i,
   check_sch_rate, compute_shard_id, next_fire_epoch,
   compute_schedule_id, compute_batch_id,
 }
-use magiclamp/schedulegen/lib/lock.{
+use magiclamp/protocol/lock.{
   select_lamp_for_lock, remove_locked_amount, sum_holdings, l_avail,
 }
 
@@ -344,8 +347,11 @@ fn get_epoch(tx: Transaction) -> Int {
   s / 432_000
 }
 
-fn get_finite(bt: cardano/interval.IntervalBoundType<Int>) -> Option<Int> {
-  when bt is { cardano/interval.Finite(s) -> Some(s) | _ -> None }
+fn get_finite(bt: IntervalBoundType<Int>) -> Option<Int> {
+  when bt is {
+    Finite(s) -> Some(s)
+    _ -> None
+  }
 }
 
 fn own_addr(own_ref: OutputReference, inputs: List<Input>) -> Address {
@@ -355,7 +361,7 @@ fn own_addr(own_ref: OutputReference, inputs: List<Input>) -> Address {
 
 fn get_vault_output(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
   expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
-  expect cardano/transaction.InlineDatum(d) = o.datum
+  expect InlineDatum(d) = o.datum
   expect datum: VaultDatum = d
   datum
 }
@@ -369,10 +375,10 @@ fn find_shard_input(
   expect Some(i) = list.find(inputs, fn(x) {
     assets.quantity_of(x.output.value, shard_policy_id, #"5348415244") > 0  // "SHARD"
   })
-  expect cardano/transaction.InlineDatum(d) = i.output.datum
-  expect shard: ScheduleAggregateShardDatum = d
-  expect shard.shard_id == shard_id
-  shard
+  expect InlineDatum(d) = i.output.datum
+  expect sd: ScheduleAggregateShardDatum = d
+  expect sd.shard_id == shard_id
+  sd
 }
 
 fn find_shard_output(
@@ -381,10 +387,10 @@ fn find_shard_output(
   shard_id  : Int,
 ) -> ScheduleAggregateShardDatum {
   expect Some(o) = list.find(outputs, fn(x) { x.address == shard_addr })
-  expect cardano/transaction.InlineDatum(d) = o.datum
-  expect shard: ScheduleAggregateShardDatum = d
-  expect shard.shard_id == shard_id
-  shard
+  expect InlineDatum(d) = o.datum
+  expect sd: ScheduleAggregateShardDatum = d
+  expect sd.shard_id == shard_id
+  sd
 }
 
 fn treasury_lamp_received(
@@ -393,7 +399,7 @@ fn treasury_lamp_received(
   lamp_policy   : PolicyId,
   amount        : Int,
 ) -> Bool {
-  let received = list.foldl(outputs, 0, fn(acc, o) {
+  let received = list.foldl(outputs, 0, fn(o, acc) {
     if o.address == treasury_addr {
       acc + assets.quantity_of(o.value, lamp_policy, #"4c414d50")
     } else { acc }

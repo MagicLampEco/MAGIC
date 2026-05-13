@@ -14,28 +14,30 @@
 use aiken/collection/list
 use aiken/crypto
 use aiken/primitive/bytearray
+use aiken/interval.{Finite}
 use cardano/address.{Address}
 use cardano/assets.{PolicyId, Value}
-use cardano/interval.{Finite}
+use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, ScriptContext, Transaction,
+  InlineDatum, Input, Output, OutputReference, Transaction,
 }
 
-use magiclamp/instantgen/lib/types.{
-  ActivityProfile, Ember, Flame, Instant, LoyaltyHolding, MagicBatch,
-  UMDatum, VaultDatum, VaultRedeemer,
+use magiclamp/protocol/types.{
+  ActivityProfile, ApplyHalving, BurnBatch, Ember, Flame, Instant,
+  InstantGen, Lantern, LoyaltyHolding, MagicBatch, UMDatum, UpdateProfile,
+  VaultDatum, VaultRedeemer,
 }
-use magiclamp/instantgen/lib/constants.{
+use magiclamp/protocol/constants.{
   instant_decay_window, max_batches_per_vault, max_instant_purchase,
   max_loyalty_holdings, min_instant_purchase, pm_q_ember, pm_q_flame,
   pm_q_lantern, q,
 }
-use magiclamp/instantgen/lib/math.{compute_instant_magic, slot_to_epoch}
-use magiclamp/instantgen/lib/decay.{halve_then_prune, is_expired}
-use magiclamp/instantgen/lib/um.{
+use magiclamp/protocol/math.{compute_instant_magic, slot_to_epoch}
+use magiclamp/protocol/decay.{halve_then_prune, is_expired}
+use magiclamp/protocol/um.{
   get_um_for_instant, validate_um_history_length, validate_um_range,
 }
-use magiclamp/instantgen/lib/lamp.{
+use magiclamp/protocol/lamp.{
   l_avail, remove_from_holdings, validate_holdings_sum, validate_lamp_locked,
 }
 
@@ -292,7 +294,7 @@ fn find_um_datum(
     let qty = assets.quantity_of(i.output.value, um_nft_policy, #"554d44")  // "UMD"
     qty > 0
   })
-  expect cardano/transaction.InlineDatum(um_data) = um_input.output.datum
+  expect InlineDatum(um_data) = um_input.output.datum
   expect um: UMDatum = um_data
   um
 }
@@ -303,7 +305,7 @@ fn find_vault_output_datum(
   vault_addr : Address,
 ) -> VaultDatum {
   expect Some(vault_output) = list.find(outputs, fn(o) { o.address == vault_addr })
-  expect cardano/transaction.InlineDatum(datum_data) = vault_output.datum
+  expect InlineDatum(datum_data) = vault_output.datum
   expect datum: VaultDatum = datum_data
   datum
 }
@@ -317,7 +319,7 @@ fn treasury_receives_lamp(
   lamp_paid      : Int,
 ) -> Bool {
   let lamp_at_treasury =
-    list.foldl(outputs, 0, fn(acc, o) {
+    list.foldl(outputs, 0, fn(o, acc) {
       if o.address == treasury_addr {
         acc + assets.quantity_of(o.value, lamp_policy_id, #"4c414d50")  // "LAMP"
       } else {

@@ -6,7 +6,9 @@
 // Khi |loyalty_holdings| gần 64, ví cần consolidate trước khi thêm.
 
 use aiken/collection/list
-use cardano/transaction.{Input, Output, OutputReference, ScriptContext}
+use cardano/address.{Address}
+use cardano/script_context.{ScriptContext}
+use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction}
 
 // ── Types ─────────────────────────────────────────────────────
 type LoyaltyHolding {
@@ -53,8 +55,8 @@ validator vault_consolidate {
     expect list.length(output.loyalty_holdings) < list.length(datum.loyalty_holdings)
 
     // C-CONSOLIDATE-5: Σ(output.amount) = Σ(input.amount)
-    let sum_in  = list.foldl(datum.loyalty_holdings,   0, fn(acc, h) { acc + h.amount })
-    let sum_out = list.foldl(output.loyalty_holdings,  0, fn(acc, h) { acc + h.amount })
+    let sum_in  = list.foldl(datum.loyalty_holdings,   0, fn(h, acc) { acc + h.amount })
+    let sum_out = list.foldl(output.loyalty_holdings,  0, fn(h, acc) { acc + h.amount })
     expect sum_out == sum_in
 
     // C-CONSOLIDATE-6: Σ(locked output) = Σ(locked input)
@@ -77,17 +79,17 @@ validator vault_consolidate {
 }
 
 fn sum_locked(holdings: List<LoyaltyHolding>) -> Int {
-  list.foldl(holdings, 0, fn(acc, h) { if h.is_locked { acc + h.amount } else { acc } })
+  list.foldl(holdings, 0, fn(h, acc) { if h.is_locked { acc + h.amount } else { acc } })
 }
 
-fn get_own_addr(own_ref: OutputReference, inputs: List<Input>) -> cardano/address.Address {
+fn get_own_addr(own_ref: OutputReference, inputs: List<Input>) -> Address {
   expect Some(i) = list.find(inputs, fn(x) { x.output_reference == own_ref })
   i.output.address
 }
 
-fn get_output_datum(outputs: List<Output>, addr: cardano/address.Address) -> VaultDatum {
+fn get_output_datum(outputs: List<Output>, addr: Address) -> VaultDatum {
   expect Some(o) = list.find(outputs, fn(x) { x.address == addr })
-  expect cardano/transaction.InlineDatum(d) = o.datum
+  expect InlineDatum(d) = o.datum
   expect datum: VaultDatum = d
   datum
 }

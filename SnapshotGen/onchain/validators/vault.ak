@@ -11,28 +11,31 @@
 
 use aiken/collection/list
 use aiken/crypto
+use aiken/interval.{Finite, IntervalBoundType}
 use aiken/primitive/bytearray
 use cardano/address.{Address}
 use cardano/assets.{PolicyId}
+use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
-  Input, Output, OutputReference, ScriptContext, Transaction,
+  InlineDatum, Input, Output, OutputReference, Transaction,
 }
 
-use magiclamp/snapshotgen/lib/types.{
-  ActivityProfile, Snapshot, VaultDatum, VaultRedeemer, MagicBatch,
+use magiclamp/protocol/types.{
+  ActivityProfile, BurnBatch, MagicBatch, Snapshot, TriggerSnapshot,
+  UpdateProfile, VaultDatum, VaultRedeemer,
 }
-use magiclamp/snapshotgen/lib/constants.{
+use magiclamp/protocol/constants.{
   max_batches_per_vault, max_loyalty_holdings, q,
 }
-use magiclamp/snapshotgen/lib/lf_oac.{
+use magiclamp/protocol/lf_oac.{
   compute_lf_q, compute_oac_q, prune_stale_activity,
 }
-use magiclamp/snapshotgen/lib/snapshot.{
+use magiclamp/protocol/snapshot.{
   compute_snapshot_magic, compute_catchup_magic,
   can_add_batch, create_snapshot_batch,
   prune_expired_batches,
 }
-use magiclamp/snapshotgen/lib/decay.{is_snapshot_expired}
+use magiclamp/protocol/decay.{is_snapshot_expired}
 
 // ── Parameterized validator ───────────────────────────────────
 validator vault {
@@ -186,10 +189,10 @@ fn get_current_epoch(tx: Transaction) -> Int {
 }
 
 fn get_finite_slot(
-  bound_type: cardano/interval.IntervalBoundType<Int>,
+  bound_type: IntervalBoundType<Int>,
 ) -> Option<Int> {
   when bound_type is {
-    cardano/interval.Finite(s) -> Some(s)
+    Finite(s) -> Some(s)
     _ -> None
   }
 }
@@ -201,7 +204,7 @@ fn find_own_address(own_ref: OutputReference, inputs: List<Input>) -> Address {
 
 fn find_vault_output_datum(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
   expect Some(vault_output) = list.find(outputs, fn(o) { o.address == vault_addr })
-  expect cardano/transaction.InlineDatum(datum_data) = vault_output.datum
+  expect InlineDatum(datum_data) = vault_output.datum
   expect datum: VaultDatum = datum_data
   datum
 }

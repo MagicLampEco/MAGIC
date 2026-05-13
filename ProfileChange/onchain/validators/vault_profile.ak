@@ -6,7 +6,10 @@
 //   Step 2 (next tx):  any vault touch applies pending nếu effective_epoch ≤ current
 
 use aiken/collection/list
-use cardano/transaction.{Input, Output, OutputReference, ScriptContext}
+use aiken/interval.{Finite, IntervalBoundType}
+use cardano/address.{Address}
+use cardano/script_context.{ScriptContext}
+use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction}
 
 const slots_per_epoch : Int = 432_000
 const profile_cooldown : Int = 2   // [Significant]
@@ -103,23 +106,26 @@ validator vault_profile {
   }
 }
 
-fn get_epoch(tx: cardano/transaction.Transaction) -> Int {
+fn get_epoch(tx: Transaction) -> Int {
   expect Some(s) = tx.validity_range.lower_bound.bound_type |> get_finite
   s / slots_per_epoch
 }
 
-fn get_finite(bt: cardano/interval.IntervalBoundType<Int>) -> Option<Int> {
-  when bt is { cardano/interval.Finite(s) -> Some(s) | _ -> None }
+fn get_finite(bt: IntervalBoundType<Int>) -> Option<Int> {
+  when bt is {
+    Finite(s) -> Some(s)
+    _ -> None
+  }
 }
 
-fn get_own_addr(own_ref: OutputReference, inputs: List<Input>) -> cardano/address.Address {
+fn get_own_addr(own_ref: OutputReference, inputs: List<Input>) -> Address {
   expect Some(i) = list.find(inputs, fn(x) { x.output_reference == own_ref })
   i.output.address
 }
 
-fn get_output_datum(outputs: List<Output>, addr: cardano/address.Address) -> VaultDatum {
+fn get_output_datum(outputs: List<Output>, addr: Address) -> VaultDatum {
   expect Some(o) = list.find(outputs, fn(x) { x.address == addr })
-  expect cardano/transaction.InlineDatum(d) = o.datum
+  expect InlineDatum(d) = o.datum
   expect datum: VaultDatum = d
   datum
 }

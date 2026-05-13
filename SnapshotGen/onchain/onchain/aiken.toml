@@ -1,7 +1,0 @@
-name    = "magiclamp/snapshotgen"
-version = "0.0.1"
-plutus  = "v3"
-license = "Apache-2.0"
-
-[dependencies]
-aiken-lang/stdlib = { version = ">=2.0.0", source = "github" }

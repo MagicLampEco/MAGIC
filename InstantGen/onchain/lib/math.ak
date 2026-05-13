@@ -2,7 +2,7 @@
 // All operations use integer floor division (Aiken `/` = floor div) ✓
 // L4: chain of n multiplications → ≤ n nanogic error; M_actual ≤ M_true
 
-use magiclamp/instantgen/lib/constants.{q}
+use magiclamp/instantgen/lib/constants.{q, instant_base_rate_q}
 
 // ── §6.1 Core Q operations ───────────────────────────────────
 
@@ -57,7 +57,6 @@ pub fn compute_instant_magic(
   um_q      : Int,  // Q-format UM (after stale check)
   pm_q      : Int,  // Q-format Profile Multiplier
 ) -> Int {
-  use magiclamp/instantgen/lib/constants.{instant_base_rate_q}
   let s = lamp_paid * instant_base_rate_q / q   // step 1
   let s2 = s * um_q / q                          // step 2
   s2 * pm_q / q                                  // step 3

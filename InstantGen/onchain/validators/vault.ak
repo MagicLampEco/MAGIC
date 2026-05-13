@@ -16,8 +16,9 @@ use aiken/crypto
 use aiken/primitive/bytearray
 use cardano/address.{Address}
 use cardano/assets.{PolicyId, Value}
+use cardano/interval.{Finite}
 use cardano/transaction.{
-  Input, Output, OutputReference, ScriptContext, Transaction,
+  InlineDatum, Input, Output, OutputReference, ScriptContext, Transaction,
 }
 
 use magiclamp/instantgen/lib/types.{
@@ -255,9 +256,9 @@ fn get_current_epoch(tx: Transaction) -> Int {
   slot_to_epoch(lower_slot)
 }
 
-fn get_finite_slot(bound_type: cardano/interval.IntervalBoundType<Int>) -> Option<Int> {
+fn get_finite_slot(bound_type) -> Option<Int> {
   when bound_type is {
-    cardano/interval.Finite(s) -> Some(s)
+    Finite(s) -> Some(s)
     _ -> None
   }
 }
@@ -273,7 +274,7 @@ fn get_datum_owner(input: Input) -> Option<ByteArray> {
   // In a real implementation, decode the datum and return owner field.
   // Simplified: check that datum is present (inline datum).
   when input.output.datum is {
-    cardano/transaction/value.InlineDatum(d) -> {
+    InlineDatum(d) -> {
       // Decode VaultDatum and extract owner — simplified for testnet.
       // Full implementation requires Data.from.
       Some(#"") // placeholder — replace with actual datum decoding

@@ -1,6 +1,7 @@
 // lib/um.ak — Network Demand Multiplier (§14)
 // C-UM-6: Instant staleness check. C-UM-7: Vacuum uses smoothed always (different file).
 // This file implements ONLY the Instant path.
+use aiken/list
 
 use magiclamp/instantgen/lib/types.{UMDatum}
 use magiclamp/instantgen/lib/constants.{
@@ -61,4 +62,3 @@ pub fn validate_um_history_length(um: UMDatum) -> Bool {
   list.length(um.history) <= um_smoothing_window
 }
 
-use aiken/list

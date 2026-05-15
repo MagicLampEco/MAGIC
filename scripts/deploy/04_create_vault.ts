@@ -86,9 +86,15 @@ const VaultDatumSchema = Data.Object({
   }),
 });
 
-// Config: adjust as needed
+// Config: adjust as needed.
+// Override profile per-run via env: VAULT_PROFILE=Ember npm run deploy:vault
 const INITIAL_LAMP_DEPOSIT = lampToOil(10_000n);  // 10,000 LAMP
-const INITIAL_PROFILE      = "Flame";              // Default profile (§19.1)
+const VALID_PROFILES = ["Ember", "Flame", "Lantern"] as const;
+const envProfile = process.env.VAULT_PROFILE ?? "Flame";
+if (!VALID_PROFILES.includes(envProfile as typeof VALID_PROFILES[number])) {
+  throw new Error(`Invalid VAULT_PROFILE=${envProfile}. Must be Ember | Flame | Lantern.`);
+}
+const INITIAL_PROFILE = envProfile as typeof VALID_PROFILES[number];
 
 async function main() {
   console.log("=== Step 4: Create initial Vault UTxO ===\n");

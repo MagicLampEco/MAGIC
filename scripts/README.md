@@ -61,9 +61,11 @@ npm run test:e2e
 
 | Tầng | Lệnh | Cover | Thời gian | Khi nào dùng |
 |---|---|---|---|---|
-| 1 | `npm run demo:lamp` | Feature UX: LAMP→MAGIC, decay, profile | < 1 giây | Biz/QA xem tính năng hoạt động ra sao |
+| 1 | `npm run demo:lamp` | Feature UX local: LAMP→MAGIC, decay, profile | < 1 giây | Biz/QA xem nhanh tính năng (không cần testnet) |
 | 1 | `npm run test:emulator` | Math + state machine across epoch | < 1 giây | Dev iterate logic, mỗi commit |
-| 2 | `npm run test:e2e` | Tx thật trên Preview (CBOR, fee, validator) | giờ–ngày | Pre-release candidate |
+| 2 | `npm run test:profile-magic` ⭐ | **Tx thật trên Preview** — SnapshotGen + InstantGen với verbose output theo profile | ~30 giây/lần | Tuân test feature trên mạng thật, theo dõi decay |
+| 2 | `npm run test:show-vault` | Query datum on Preview, in batches + expected decay | giây | Check trạng thái vault giữa các epoch |
+| 2 | `npm run test:e2e` | Tx thật: Snapshot + Instant + VacuumCommit | phút | Smoke test toàn bộ flow |
 | 3 | `aiken check` (per module) | Validator types & properties | giây | Mỗi thay đổi onchain |
 
 Ba tầng bổ sung lẫn nhau — không cái nào thay thế cái nào. Để merge nhanh chỉ cần
@@ -85,6 +87,48 @@ In ra 5 section dễ đọc:
 
 Mọi con số dùng đúng SDK pure functions (`computeSnapshotMagic`, `computeInstantMagic`,
 `snapshotBatchBalance`, …) — cùng codebase với validator onchain, khớp spec §3/§6/§8/§9.
+
+### `test:profile-magic` ⭐ — TEST TRÊN PREVIEW + theo dõi decay
+
+Đây là cách Tuân (hoặc QA) **test thật trên mạng** SnapshotGen + InstantGen cho 1 profile cụ thể, với output dễ đọc:
+
+```bash
+# 1. Tạo vault với profile mong muốn (chỉ làm 1 lần):
+VAULT_PROFILE=Flame npm run deploy:vault
+
+# 2. Chạy test — submit Snapshot + Instant tx thật:
+npm run test:profile-magic
+```
+
+Output sẽ in:
+
+- **Trước tx:** profile (B/PM/r/N), LAMP balance, holdings + LF của từng holding, batches hiện có (initial/current/age/decay%)
+- **SnapshotGen step:** công thức `L × R_snap × LF × OAC × PM × B = expected MAGIC`, submit tx thật, verify expected khớp SDK
+- **InstantGen step:** công thức `L_paid × R_inst × UM × PM`, hiển thị UM staleness + fallback, submit tx, verify
+- **Sau tx:** đọc lại datum mới, in batches mới — confirm tx thực sự thay đổi state onchain
+- **Link cardanoscan** cho mỗi tx — Tuân click vào để thấy raw tx, datum, fee, slot
+
+**Workflow theo dõi decay:**
+
+| Ngày | Lệnh | Quan sát |
+|---|---|---|
+| Day 1 | `test:profile-magic` | Sinh batch Snapshot k=0, batch Instant k=0 |
+| Day 2 | `test:show-vault` | Snapshot batch k=1 → current = init × (10-r)/10; Instant batch k=1 → halved (÷2) |
+| Day 3 | `test:show-vault` | Snapshot k=2 → init × (10-r)²/10²; Instant k=2 → **0** (cliff) |
+| ... | ... | Snapshot tiếp tục đến k=N thì về 0 |
+
+**So sánh 3 profile:** mỗi profile cần 1 wallet riêng (vì 1 wallet chỉ tạo được 1 vault). Cách:
+- Tạo 3 ví Preview khác nhau, mỗi ví `VAULT_PROFILE=Ember/Flame/Lantern npm run deploy:vault`.
+- Switch `.env PRIVATE_KEY` giữa các ví khi chạy `test:profile-magic`.
+- Hoặc dùng module **ProfileChange** để chuyển profile của vault hiện tại (sau 1 epoch buffer).
+
+### `test:show-vault` — query state any time (read-only)
+
+```bash
+npm run test:show-vault
+```
+
+In nguyên trạng vault hiện tại trên Preview (không submit tx): batches với cột `current` (onchain) vs `expected` (SDK math) — nếu lệch, có bug giữa onchain validator và offchain SDK.
 
 ### `test:emulator` — protocol correctness checks
 

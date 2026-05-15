@@ -9,9 +9,11 @@
     "deploy:um":     "npx tsx deploy/02_deploy_um.ts",
     "deploy:shards": "npx tsx deploy/03_deploy_shards.ts",
     "deploy:vault":  "npx tsx deploy/04_create_vault.ts",
-    "test:e2e":      "npx tsx test/e2e_flow.ts",
-    "test:emulator": "npx tsx test/e2e_emulator.ts",
-    "demo:lamp":     "npx tsx test/demo_lamp_to_magic.ts"
+    "test:e2e":            "npx tsx test/e2e_flow.ts",
+    "test:emulator":       "npx tsx test/e2e_emulator.ts",
+    "test:profile-magic":  "npx tsx test/test_profile_magic.ts",
+    "test:show-vault":     "npx tsx test/show_vault_state.ts",
+    "demo:lamp":           "npx tsx test/demo_lamp_to_magic.ts"
   },
   "dependencies": {
     "@lucid-evolution/lucid": "^0.4.0",

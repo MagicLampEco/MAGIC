@@ -57,31 +57,45 @@ npm run test:e2e
 
 ---
 
-## Test nhanh không cần testnet — `test:emulator`
+## 3 tầng test — chọn đúng tầng cho mục đích
 
-`test:e2e` ở trên đụng vào commit-then-fire của VacuumGen, vốn cần chờ 2 epoch
-thật (≈ 2 ngày trên Preview, 10 ngày trên mainnet). Để test logic mà không phải
-chờ:
+| Tầng | Lệnh | Cover | Thời gian | Khi nào dùng |
+|---|---|---|---|---|
+| 1 | `npm run demo:lamp` | Feature UX: LAMP→MAGIC, decay, profile | < 1 giây | Biz/QA xem tính năng hoạt động ra sao |
+| 1 | `npm run test:emulator` | Math + state machine across epoch | < 1 giây | Dev iterate logic, mỗi commit |
+| 2 | `npm run test:e2e` | Tx thật trên Preview (CBOR, fee, validator) | giờ–ngày | Pre-release candidate |
+| 3 | `aiken check` (per module) | Validator types & properties | giây | Mỗi thay đổi onchain |
+
+Ba tầng bổ sung lẫn nhau — không cái nào thay thế cái nào. Để merge nhanh chỉ cần
+**tầng 1 + tầng 3** xanh; trước khi deploy mainnet phải có **tầng 2** trên Preview.
+
+### `demo:lamp` — feature walkthrough cho biz/QA
 
 ```bash
-npm run test:emulator
+npm run demo:lamp
 ```
 
-In-memory protocol simulator:
+In ra 5 section dễ đọc:
 
-- Re-use trực tiếp các pure function của SDK (`computeSnapshotMagic`,
-  `computeVacuumMagic`, `computeInstantMagic`, `getUmForInstant/Vacuum`, …).
-- "Time" là biến `epoch` mà ta tự tăng → mỗi VacuumCommit→Fire mất nano giây.
-- Cover 4 kịch bản chính:
-  1. SnapshotGen across 4 epochs (catch-up, batch pruning by profile N)
-  2. InstantGen với fresh vs stale UM (C-UM-6 fallback)
-  3. VacuumGen **commit → +2 epoch → fire** (kịch bản tốn 2 ngày trên Preview)
-  4. Stale-UM regression cho Vacuum (C-UM-7: luôn dùng smoothed)
+- **A.** Cùng 1000 LAMP, mỗi profile (Ember/Flame/Lantern) sinh bao nhiêu MAGIC/epoch.
+- **B.** Tuổi holding (LF) & độ active (OAC) tác động thế nào — bảng + bar chart ASCII.
+- **C.** Decay curve cụ thể từ k=0 đến k=N cho mỗi profile (snapshot batch).
+- **D.** InstantGen: halving ở k=1, cliff ở k=2; ảnh hưởng của UM stale (0.5×) vs hot (1.5×).
+- **E.** User journey 10 epoch: nắm 1000 LAMP, làm 3 Snapshot + 1 Instant, track tổng MAGIC sống.
+
+Mọi con số dùng đúng SDK pure functions (`computeSnapshotMagic`, `computeInstantMagic`,
+`snapshotBatchBalance`, …) — cùng codebase với validator onchain, khớp spec §3/§6/§8/§9.
+
+### `test:emulator` — protocol correctness checks
+
+In-memory simulator chạy 4 kịch bản kiểm chứng spec invariants:
+
+1. SnapshotGen across 4 epochs (catch-up C-SS-6, batch pruning by profile N)
+2. InstantGen với fresh vs stale UM (C-UM-6 fallback)
+3. VacuumGen **commit → +2 epoch → fire** (kịch bản tốn 2 ngày trên Preview)
+4. Stale-UM regression cho Vacuum (C-UM-7: luôn dùng smoothed)
 
 Run time: < 1 giây. Tương đương ~17 ngày real-time trên Preview.
-
-**Không thay thế** `aiken check` (validator onchain) hay `test:e2e` (real network);
-mục đích là cho phép Tuân iterate logic nhanh, không bị nghẽn bởi 1-ngày-một-epoch.
 
 ---
 

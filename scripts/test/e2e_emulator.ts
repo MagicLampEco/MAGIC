@@ -1,8 +1,27 @@
-// scripts/test/e2e_emulator.ts — In-memory protocol simulator
+// scripts/test/e2e_emulator.ts — In-memory protocol simulator (Tier 1)
 //
-// Mục đích: chạy full flow SnapshotGen → InstantGen → VacuumGen commit →
-// (nhảy 2 epoch) → VacuumGen fire trong < 1 giây, không cần testnet,
-// không cần aiken build, không cần Blockfrost.
+// ──────────────────────────────────────────────────────────────────────
+// SCOPE (đọc trước khi review):
+//
+// File này là TIER 1 — fast inner loop cho engineer/dev.
+// KHÔNG thay thế tx thật trên Preview. KHÔNG cover CBOR encoding, fee,
+// min-UTxO, validator onchain execution, hay network confirmation.
+//
+// Tier 1 (file này — e2e_emulator.ts):   pure math + state machine across
+//                                         epoch boundaries, < 1 giây/run.
+// Tier 2 (test:e2e — e2e_flow.ts):       tx thật trên Preview. Cần chờ
+//                                         epoch (1-5 ngày). Dùng trước
+//                                         mỗi release candidate.
+// Tier 3 (aiken check):                   validator types/properties.
+//
+// Nếu bạn cần xem TÍNH NĂNG hoạt động ra sao (user nắm LAMP sinh MAGIC,
+// MAGIC decay theo profile), chạy `npm run demo:lamp` thay vì file này —
+// demo đó in bảng dễ đọc cho biz/QA review.
+// ──────────────────────────────────────────────────────────────────────
+//
+// Mục đích kỹ thuật: chạy full flow SnapshotGen → InstantGen →
+// VacuumGen commit → (nhảy 2 epoch) → VacuumGen fire trong < 1 giây,
+// không cần testnet, không cần aiken build, không cần Blockfrost.
 //
 // Cách hoạt động:
 //   - State (vault datum + UM datum) giữ in-memory.
@@ -10,10 +29,6 @@
 //   - Math/quy tắc dùng đúng các pure function của SDK (computeSnapshotMagic,
 //     computeVacuumMagic, computeInstantMagic, getUmForInstant/Vacuum, ...).
 //   - State transition (datum mới sau mỗi op) viết minimal inline ở đây.
-//
-// Đây không thay thế cho aiken check (validator onchain) hay cho test trên
-// Preview thật. Mục tiêu là cho phép verify SDK + math + state machine across
-// epoch boundaries — phần mà mỗi epoch = 1-5 ngày real-time đang chặn.
 //
 // Run: npm run test:emulator (từ thư mục scripts/)
 

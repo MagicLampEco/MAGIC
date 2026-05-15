@@ -33,12 +33,13 @@ export interface CommitParams {
 }
 
 export interface CommitResult {
-  tx           : Tx;
-  orderId      : string;
-  fireEpoch    : bigint;
-  commitEpoch  : bigint;
-  lambdaOil    : bigint;
-  summary      : string;
+  tx             : Tx;
+  orderId        : string;
+  fireEpoch      : bigint;
+  commitEpoch    : bigint;
+  lambdaOil      : bigint;
+  newVaultDatum  : VaultDatum;
+  summary        : string;
 }
 
 export interface FireParams {
@@ -56,6 +57,7 @@ export interface FireResult {
   umUsedQ        : bigint;
   smUsedQ        : bigint;
   prunedCount    : number;
+  newVaultDatum  : VaultDatum;
   summary        : string;
 }
 
@@ -138,7 +140,7 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
     `⚠  Cannot cancel (C-VAC-12). LAMP will transfer to Treasury at fire.`,
   ].join("\n");
 
-  return { tx, orderId, fireEpoch, commitEpoch, lambdaOil, summary };
+  return { tx, orderId, fireEpoch, commitEpoch, lambdaOil, newVaultDatum, summary };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -255,7 +257,7 @@ export async function buildVacuumFireTx(params: FireParams): Promise<FireResult>
     `Note: This tx required NO owner signature (C-VAC-FIRE-PERMISSION).`,
   ].join("\n");
 
-  return { tx, mGenerated, batchCreated, umUsedQ: umQ, smUsedQ: smQ, prunedCount, summary };
+  return { tx, mGenerated, batchCreated, umUsedQ: umQ, smUsedQ: smQ, prunedCount, newVaultDatum, summary };
 }
 
 // ── Submit helper ────────────────────────────────────────────

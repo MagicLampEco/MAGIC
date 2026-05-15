@@ -57,6 +57,34 @@ npm run test:e2e
 
 ---
 
+## Test nhanh không cần testnet — `test:emulator`
+
+`test:e2e` ở trên đụng vào commit-then-fire của VacuumGen, vốn cần chờ 2 epoch
+thật (≈ 2 ngày trên Preview, 10 ngày trên mainnet). Để test logic mà không phải
+chờ:
+
+```bash
+npm run test:emulator
+```
+
+In-memory protocol simulator:
+
+- Re-use trực tiếp các pure function của SDK (`computeSnapshotMagic`,
+  `computeVacuumMagic`, `computeInstantMagic`, `getUmForInstant/Vacuum`, …).
+- "Time" là biến `epoch` mà ta tự tăng → mỗi VacuumCommit→Fire mất nano giây.
+- Cover 4 kịch bản chính:
+  1. SnapshotGen across 4 epochs (catch-up, batch pruning by profile N)
+  2. InstantGen với fresh vs stale UM (C-UM-6 fallback)
+  3. VacuumGen **commit → +2 epoch → fire** (kịch bản tốn 2 ngày trên Preview)
+  4. Stale-UM regression cho Vacuum (C-UM-7: luôn dùng smoothed)
+
+Run time: < 1 giây. Tương đương ~17 ngày real-time trên Preview.
+
+**Không thay thế** `aiken check` (validator onchain) hay `test:e2e` (real network);
+mục đích là cho phép Tuân iterate logic nhanh, không bị nghẽn bởi 1-ngày-một-epoch.
+
+---
+
 ## Định nghĩa thành công cho mỗi bước
 
 | Script | Thành công là |

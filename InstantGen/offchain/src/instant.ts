@@ -49,6 +49,8 @@ export interface InstantGenResult {
   umFallbackApplied: boolean;
   /** Estimated LAMP balance after tx */
   newLampBalance: bigint;
+  /** Full updated VaultDatum (useful for tests/simulation). */
+  newVaultDatum: VaultDatum;
   /** Human-readable summary */
   summary: string;
 }
@@ -247,6 +249,7 @@ export async function buildInstantGenTx(
     currentEpoch,
     umFallbackApplied,
     newLampBalance,
+    newVaultDatum,
     summary,
   };
 }

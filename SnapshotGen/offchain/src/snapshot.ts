@@ -40,6 +40,7 @@ export interface SnapshotGenResult {
   batchAdded       : boolean;  // false = vault was full (C-SS-8 skip)
   prunedCount      : number;
   newBatchCount    : number;
+  newVaultDatum    : VaultDatum;
   summary          : string;
 }
 
@@ -194,7 +195,7 @@ export async function buildSnapshotGenTx(
     tx, mGenerated: mTotal, mPerEpoch, deltaEpochs,
     currentEpoch, lfQ, oacQ, profile: vaultDatum.profile,
     batchAdded, prunedCount, newBatchCount: updatedBatches.length,
-    summary,
+    newVaultDatum, summary,
   };
 }
 

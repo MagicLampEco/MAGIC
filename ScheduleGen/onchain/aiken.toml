@@ -5,5 +5,5 @@ license = "Apache-2.0"
 
 [[dependencies]]
 name    = "aiken-lang/stdlib"
-version = "v2"
+version = "v3.1.0"
 source  = "github"

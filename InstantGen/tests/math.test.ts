@@ -265,11 +265,11 @@ describe("LAMP conservation — T14, C-INST-10", () => {
 
 describe("Utility — formatting & conversion", () => {
 
-  it("slotToEpoch: 432000 slots = 1 epoch", () => {
-    expect(slotToEpoch(0n)).toBe(0n);
-    expect(slotToEpoch(431_999n)).toBe(0n);
-    expect(slotToEpoch(432_000n)).toBe(1n);
-    expect(slotToEpoch(864_000n)).toBe(2n);
+  it("slotToEpoch Mainnet: 432000 slots = 1 epoch", () => {
+    expect(slotToEpoch(0n, "Mainnet")).toBe(0n);
+    expect(slotToEpoch(431_999n, "Mainnet")).toBe(0n);
+    expect(slotToEpoch(432_000n, "Mainnet")).toBe(1n);
+    expect(slotToEpoch(864_000n, "Mainnet")).toBe(2n);
   });
 
   it("lampToOil: 1 LAMP = 10^6 oil", () => {

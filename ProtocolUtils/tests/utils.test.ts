@@ -15,10 +15,18 @@ const MAGIC = Q;
 // Epoch + conversions
 // ══════════════════════════════════════════════════════════════
 describe("Epoch utilities", () => {
-  it("slotToEpoch: 432_000 slots = 1 epoch", () => {
-    expect(slotToEpoch(432_000n)).toBe(1n);
-    expect(slotToEpoch(863_999n)).toBe(1n);
-    expect(slotToEpoch(864_000n)).toBe(2n);
+  it("slotToEpoch Mainnet: 432_000 slots = 1 epoch", () => {
+    expect(slotToEpoch(432_000n, "Mainnet")).toBe(1n);
+    expect(slotToEpoch(863_999n, "Mainnet")).toBe(1n);
+    expect(slotToEpoch(864_000n, "Mainnet")).toBe(2n);
+  });
+  it("slotToEpoch Preview: 86_400 slots = 1 epoch", () => {
+    expect(slotToEpoch(86_400n, "Preview")).toBe(1n);
+    expect(slotToEpoch(172_799n, "Preview")).toBe(1n);
+    expect(slotToEpoch(172_800n, "Preview")).toBe(2n);
+  });
+  it("slotToEpoch Preprod: 86_400 slots = 1 epoch", () => {
+    expect(slotToEpoch(86_400n, "Preprod")).toBe(1n);
   });
   it("lampToOil: 1 LAMP = 10^6 oil", () => {
     expect(lampToOil(1n)).toBe(1_000_000n);

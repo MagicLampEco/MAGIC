@@ -1,14 +1,22 @@
-// scripts/deploy/02_deploy_um.ts — Deploy UM datum UTxO
-// Chạy: npx ts-node deploy/02_deploy_um.ts
-// Prerequisite: 01_mint_lamp.ts đã chạy xong + LAMP_POLICY_ID trong .env
+// scripts/deploy/02_deploy_um.ts — Deploy parameterized UM datum UTxO
+// Run: npx tsx deploy/02_deploy_um.ts
+// Prereq: 01_mint_lamp.ts done; UMKeeper/onchain/plutus.json built with ms_per_epoch param.
+//
+// Output: UM datum UTxO at applied UMKeeper validator address, with 1 UM NFT.
+// Prints: UM_DATUM_HASH (applied), UM_NFT_POLICY_ID — copy both into .env.
 
-import { Lucid, Blockfrost, Data } from "@lucid-evolution/lucid";
 import {
-  NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, PRIVATE_KEY,
-  SCRIPT_HASHES, POLICY_IDS, ASSET_NAMES, PROTOCOL,
+  Lucid, Blockfrost, Data,
+  applyParamsToScript, validatorToScriptHash,
+  credentialToAddress, scriptHashToCredential,
+  mintingPolicyToId, getAddressDetails, scriptFromNative,
+} from "@lucid-evolution/lucid";
+import { readFile } from "node:fs/promises";
+import {
+  NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
+  ASSET_NAMES, PROTOCOL,
 } from "../config.js";
 
-// UM datum initial state (§20.2: neutral UM = 1.0)
 const UMDatumSchema = Data.Object({
   smoothed_q:          Data.Integer(),
   last_updated_epoch:  Data.Integer(),
@@ -16,50 +24,66 @@ const UMDatumSchema = Data.Object({
 });
 
 async function main() {
-  console.log("=== Step 2: Deploy UM Datum UTxO ===\n");
+  console.log("=== Step 2: Deploy UM Datum UTxO (parameterized) ===\n");
 
-  if (SCRIPT_HASHES.um_datum === "FILL_AFTER_AIKEN_BUILD") {
-    throw new Error("Run: cd UMKeeper/onchain && aiken build\nThen copy hash to .env as UM_DATUM_HASH");
+  // Load and apply UMKeeper validator (1 param: ms_per_epoch)
+  const plutusJson = JSON.parse(
+    await readFile(new URL("../../UMKeeper/onchain/plutus.json", import.meta.url), "utf8"),
+  );
+  const unapplied = plutusJson.validators.find((v: any) =>
+    v.title === "um_datum.um_datum_validator.spend"
+    || v.title === "um_datum_validator.um_datum_validator.spend"
+    || v.title?.endsWith(".spend"),
+  );
+  if (!unapplied) {
+    console.error("Available validators:", plutusJson.validators.map((v: any) => v.title));
+    throw new Error("UMKeeper validator not found in UMKeeper/onchain/plutus.json");
   }
 
+  const appliedCbor    = applyParamsToScript(unapplied.compiledCode, [PROTOCOL.MS_PER_EPOCH]);
+  const umScript       = { type: "PlutusV3" as const, script: appliedCbor };
+  const umScriptHash   = validatorToScriptHash(umScript);
+  const umScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(umScriptHash));
+
+  console.log(`Network:             ${NETWORK}`);
+  console.log(`ms_per_epoch:        ${PROTOCOL.MS_PER_EPOCH}`);
+  console.log(`UM script hash:      ${umScriptHash}`);
+  console.log(`UM script address:   ${umScriptAddress}`);
+
+  // Lucid + wallet
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
-  lucid.selectWallet.fromPrivateKey(PRIVATE_KEY);
-
-  // Get current epoch from tip
-  const tip = await (lucid.provider as any).getBlock("latest");
-  const currentEpoch = BigInt(tip.slot ?? 0) / PROTOCOL.SLOTS_PER_EPOCH;
-  console.log(`Current epoch: ${currentEpoch}`);
-
-  // Initial UM state — neutral (§20.2)
-  const initialUM = {
-    smoothed_q:         PROTOCOL.Q,    // 1.0 = neutral
-    last_updated_epoch: currentEpoch,
-    history:            [] as bigint[],
-  };
-
-  const umDatum = Data.to(initialUM, UMDatumSchema);
-
-  // UM datum script address
-  const umScriptAddress = lucid.utils.validatorToAddress({
-    type:   "PlutusV3",
-    script: SCRIPT_HASHES.um_datum,
-  });
-
-  console.log(`UM script address: ${umScriptAddress}`);
-  console.log(`Initial smoothed_q: ${initialUM.smoothed_q} (1.0×)`);
-
-  // Mint UM NFT (1 token to identify this UTxO as the UM datum)
-  // Simple native script policy
+  selectWallet(lucid);
   const address = await lucid.wallet().address();
-  const { paymentCredential } = lucid.utils.getAddressDetails(address);
+  const { paymentCredential } = getAddressDetails(address);
   if (!paymentCredential) throw new Error("Cannot get payment credential");
 
-  const umNftPolicy = {
-    type: "Native" as const,
-    script: Data.to({ type: "sig", keyHash: paymentCredential.hash }),
+  // Mint a unique UM NFT (singleton, native sig-locked).
+  const umNftPolicy = scriptFromNative({ type: "sig", keyHash: paymentCredential.hash });
+  const umNftPolicyId = mintingPolicyToId(umNftPolicy);
+  const umNftUnit     = umNftPolicyId + ASSET_NAMES.um_nft;
+
+  // Current epoch from tip POSIX ms (matches validator semantics).
+  const tipRes = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
+    headers: { project_id: BLOCKFROST_KEY },
+  });
+  const tip = await tipRes.json() as { slot: number; time: number };
+  const tipPosixMs   = BigInt(tip.time) * 1000n;
+  const currentEpoch = tipPosixMs / PROTOCOL.MS_PER_EPOCH;
+
+  // Initial UM datum (neutral 1.0 = Q).
+  // UM_AGE env: how many epochs ago last_updated_epoch was. Default 0 = fresh.
+  // Use UM_AGE=2 (or more) to test C-UM-6 stale fallback (validator uses 0.5× when UM > 1 epoch old).
+  const umAge = BigInt(process.env.UM_AGE ?? "0");
+  const initialUM = {
+    smoothed_q:         PROTOCOL.Q,
+    last_updated_epoch: currentEpoch - umAge,
+    history:            [] as bigint[],
   };
-  const umNftPolicyId = lucid.utils.mintingPolicyToId(umNftPolicy);
-  const umNftUnit = umNftPolicyId + ASSET_NAMES.um_nft;
+  const umDatum = Data.to(initialUM, UMDatumSchema);
+
+  console.log(`Current epoch:       ${currentEpoch}`);
+  console.log(`Initial smoothed_q:  ${initialUM.smoothed_q} (1.000×)`);
+  console.log(`UM NFT policy:       ${umNftPolicyId}`);
 
   const tx = await lucid
     .newTx()
@@ -69,7 +93,7 @@ async function main() {
       umScriptAddress,
       { kind: "inline", value: umDatum },
       {
-        lovelace:   2_000_000n,   // min ADA
+        lovelace:    2_000_000n,
         [umNftUnit]: 1n,
       },
     )
@@ -82,8 +106,8 @@ async function main() {
   console.log(`   TX hash:   ${txHash}`);
   console.log(`   Explorer:  https://preview.cardanoscan.io/transaction/${txHash}`);
   console.log(`\n📋 Copy to .env:`);
+  console.log(`   UM_DATUM_HASH=${umScriptHash}      # applied for NETWORK=${NETWORK}`);
   console.log(`   UM_NFT_POLICY_ID=${umNftPolicyId}`);
-  console.log(`\nWait ~20 seconds, then run: npx ts-node deploy/03_deploy_shards.ts`);
 }
 
 main().catch(console.error);

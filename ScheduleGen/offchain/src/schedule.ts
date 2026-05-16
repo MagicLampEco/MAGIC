@@ -16,9 +16,10 @@ import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, nextFireEpoch, countEligibleFires,
   selectLampForLock, removeLockedAmount, lAvail,
-  slotToEpoch, lampToOil, nanogicToMagicStr, qToStr,
+  lampToOil, nanogicToMagicStr, qToStr,
 } from "./math.js";
-import { getTipSlot } from "@magiclamp/protocol-utils";
+import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatumSchema, VaultRedeemerSchema,
   type VaultDatum, type GenSchedule, type MagicBatch, type LoyaltyHolding,
@@ -46,6 +47,8 @@ export interface CommitParams {
   scheduleLength  : bigint;    // L ∈ [10,200]
   lampPerEpoch    : bigint;    // λ in oil
   userAddress     : string;
+  network?        : Network;
+  tipPosixMs?     : bigint;
 }
 
 export interface CommitResult {
@@ -66,6 +69,8 @@ export interface FireParams {
   shardUtxos  : UTxO[];
   scheduleId  : string;
   // No userAddress — permissionless (C-SCH-FIRE-PERMISSION)
+  network?    : Network;
+  tipPosixMs? : bigint;
 }
 
 export interface FireResult {
@@ -88,10 +93,12 @@ export async function createLucid(apiKey: string): Promise<LucidEvolution> {
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleCommitTx(params: CommitParams): Promise<CommitResult> {
   const { lucid, vaultUtxo, shardUtxos, scheduleLength: L, lampPerEpoch: lambda } = params;
+  const network = params.network ?? TESTNET_CONFIG.network;
 
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
-  const tipSlot    = await getTipSlot(lucid);
-  const commitEpoch = slotToEpoch(BigInt(tipSlot));
+  const tipPosixMs = params.tipPosixMs
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+  const commitEpoch = posixMsToEpoch(tipPosixMs, network);
 
   // ── Validations ──────────────────────────────────────────
   if (L < SCHEDULE_MIN_LENGTH || L > SCHEDULE_MAX_LENGTH)
@@ -173,7 +180,8 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   const shardAddr = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.shardScriptHash });
   const redeemer  = Data.to({ ScheduleCommit: { schedule_length: L, lamp_per_epoch: lambda } }, VaultRedeemerSchema);
   const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: totalLock, delta_committed: totalLock } });
-  const epochStart = Number(commitEpoch * 432_000n);
+  const lowerTime = Number(tipPosixMs);
+  const upperTime = Number((commitEpoch + 1n) * msPerEpoch(network) - 1n);
 
   const tx = await lucid
     .newTx()
@@ -182,8 +190,8 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) }, vaultUtxo.assets)
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
     .addSignerKey(vaultDatum.owner)       // C-SCH-1 equivalent: user signs
-    .validFrom(epochStart)
-    .validTo(epochStart + 432_000 - 1)
+    .validFrom(lowerTime)
+    .validTo(upperTime)
     .complete();
 
   const summary = [
@@ -217,10 +225,12 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleFireTx(params: FireParams): Promise<FireResult> {
   const { lucid, vaultUtxo, shardUtxos, scheduleId } = params;
+  const network = params.network ?? TESTNET_CONFIG.network;
 
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
-  const tipSlot    = await getTipSlot(lucid);
-  const currentEpoch = slotToEpoch(BigInt(tipSlot));
+  const tipPosixMs = params.tipPosixMs
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
 
   const sched = vaultDatum.gen_schedules.find(s => s.schedule_id === scheduleId);
   if (!sched) throw new Error(`Schedule ${scheduleId} not found`);
@@ -304,7 +314,8 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const lampUnit   = toUnit(TESTNET_CONFIG.lampPolicyId, TESTNET_CONFIG.lampAssetName);
   const redeemer   = Data.to({ ScheduleFire: { schedule_id: scheduleId } }, VaultRedeemerSchema);
   const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(firesInTx), lambda: sched.lamp_per_epoch } });
-  const epochStart = Number(currentEpoch * 432_000n);
+  const lowerTime  = Number(tipPosixMs);
+  const upperTime  = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
   const tx = await lucid
     .newTx()
@@ -315,8 +326,8 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
     .pay.ToAddress(TESTNET_CONFIG.treasuryAddress, { [lampUnit]: lampTransfer })
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless
-    .validFrom(epochStart)
-    .validTo(epochStart + 432_000 - 1)
+    .validFrom(lowerTime)
+    .validTo(upperTime)
     .complete();
 
   const summary = [

@@ -8,8 +8,38 @@
 export const Q                   = 1_000_000_000n;   // [Immutable]
 export const OIL_PER_LAMP        = 1_000_000n;
 export const NANOGIC_PER_MAGIC   = 1_000_000_000n;
-export const SLOTS_PER_EPOCH     = 432_000n;
 export const S_LAMP_TOTAL        = 36_000_000_000_000_000n;  // 36×10^15 oil
+
+// `slots_per_epoch` is network-specific (used for slot-based epoch math and SDK display).
+export const SLOTS_PER_EPOCH_BY_NETWORK = {
+  Preview:  86_400n,
+  Preprod:  86_400n,
+  Mainnet:  432_000n,
+} as const;
+
+/** Slots-per-epoch for a given Cardano network. */
+export function slotsPerEpoch(network: Network): bigint {
+  return SLOTS_PER_EPOCH_BY_NETWORK[network];
+}
+
+// `ms_per_epoch` is what the Aiken validator's epoch-from-validity-range math uses,
+// because PlutusV3 validity_range carries POSIX milliseconds (not slots).
+// All current Cardano networks use slot_length = 1000 ms, so ms_per_epoch = slots_per_epoch × 1000.
+export const MS_PER_EPOCH_BY_NETWORK = {
+  Preview:  86_400_000n,
+  Preprod:  86_400_000n,
+  Mainnet:  432_000_000n,
+} as const;
+
+/** Milliseconds-per-epoch for a given Cardano network (used by validator + SDK). */
+export function msPerEpoch(network: Network): bigint {
+  return MS_PER_EPOCH_BY_NETWORK[network];
+}
+
+/** POSIX ms → POSIX-derived epoch number (matches Aiken validator's get_current_epoch). */
+export function posixMsToEpoch(posixMs: bigint, network: Network): bigint {
+  return posixMs / msPerEpoch(network);
+}
 
 // OAC [GenMAGIC §6.4, Constitutional]
 export const DRM_LOOKBACK        = 12n;   // epochs
@@ -18,11 +48,6 @@ export const MIN_BURN_FOR_OAC    = 1_000_000_000n;  // 1 MAGIC
 // ══════════════════════════════════════════════════════════════
 // §2.4 Epoch utilities
 // ══════════════════════════════════════════════════════════════
-
-/** slot → epoch (integer division) */
-export function slotToEpoch(slot: bigint): bigint {
-  return slot / SLOTS_PER_EPOCH;
-}
 
 // Cardano genesis UNIX timestamps per network (used as fallback when Blockfrost
 // is unavailable). Preview Shelley genesis: slot 0 = block 1 (2022-10-25).
@@ -33,6 +58,14 @@ export const GENESIS_UNIX: Record<"Preview" | "Preprod" | "Mainnet", number> = {
 };
 
 export type Network = "Preview" | "Preprod" | "Mainnet";
+
+/** slot → epoch (integer division). Must pass the network because slots/epoch differs:
+ *    Mainnet:        432_000
+ *    Preview/Preprod: 86_400
+ */
+export function slotToEpoch(slot: bigint, network: Network): bigint {
+  return slot / slotsPerEpoch(network);
+}
 
 /** Get current tip slot from a Lucid-compatible provider.
  *  Falls back to wall-clock estimate using the network's genesis UNIX time.
@@ -57,7 +90,7 @@ export async function getCurrentEpoch(
   lucid   : { provider: unknown },
   network : Network = "Preview",
 ): Promise<bigint> {
-  return slotToEpoch(BigInt(await getTipSlot(lucid, network)));
+  return slotToEpoch(BigInt(await getTipSlot(lucid, network)), network);
 }
 
 // ══════════════════════════════════════════════════════════════

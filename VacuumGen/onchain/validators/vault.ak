@@ -12,7 +12,6 @@ use aiken/interval.{Finite, IntervalBoundType}
 use aiken/primitive/bytearray
 use cardano/address.{Address}
 use cardano/assets.{PolicyId}
-use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
@@ -33,20 +32,23 @@ use magiclamp/protocol/lock.{
 }
 
 // ── Parameterized validator ───────────────────────────────────
+// `ms_per_epoch` is applied per-network (Plutus validity_range is POSIX ms):
+//   Mainnet:        432_000_000
+//   Preview/Preprod: 86_400_000
 validator vault(
   lamp_policy_id : PolicyId,
   treasury_addr  : Address,
   um_nft_policy  : PolicyId,
+  ms_per_epoch   : Int,
 ) {
   spend(
     datum_opt : Option<VaultDatum>,
     redeemer  : VaultRedeemer,
     own_ref   : OutputReference,
-    ctx       : ScriptContext,
+    tx        : Transaction,
   ) {
     expect Some(input_datum) = datum_opt
-    let tx            = ctx.transaction
-    let current_epoch = get_current_epoch(tx)
+    let current_epoch = get_current_epoch(tx, ms_per_epoch)
 
     when redeemer is {
       VacuumCommit { lambda } ->
@@ -242,13 +244,13 @@ fn validate_vacuum_fire(
 // Helpers
 // ═══════════════════════════════════════════════════════════════
 
-fn get_current_epoch(tx: Transaction) -> Int {
-  expect Some(lower_slot) =
+fn get_current_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+  expect Some(lower_ms) =
     tx.validity_range.lower_bound.bound_type |> get_finite_slot
-  lower_slot / 432_000
+  lower_ms / ms_per_epoch
 }
 
-fn get_finite_slot(bt: IntervalBoundType<Int>) -> Option<Int> {
+fn get_finite_slot(bt: IntervalBoundType) -> Option<Int> {
   when bt is {
     Finite(s) -> Some(s)
     _ -> None

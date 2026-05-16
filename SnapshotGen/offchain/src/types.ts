@@ -162,13 +162,14 @@ export const UMDatumSchema = Data.Object({
 export type UMDatum = Data.Static<typeof UMDatumSchema>;
 
 // ── VaultRedeemer ────────────────────────────────────────────
+// Constructor order must match Aiken `pub type VaultRedeemer` in
+// SnapshotGen/onchain/lib/magiclamp/protocol/types.ak (P8 invariant).
 export const VaultRedeemerSchema = Data.Enum([
-  Data.Object({ InstantGen:   Data.Object({ lamp_paid: Data.Integer() }) }),
-  Data.Literal("ApplyHalving"),
-  Data.Object({ BurnBatch: Data.Object({
+  Data.Literal("TriggerSnapshot"),                                       // constr 0
+  Data.Object({ BurnBatch: Data.Object({                                 // constr 1
     burns: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
   })}),
-  Data.Object({ UpdateProfile: Data.Object({
+  Data.Object({ UpdateProfile: Data.Object({                             // constr 2
     new_profile: ActivityProfileSchema,
   })}),
 ]);

@@ -49,14 +49,27 @@ async function findUMUtxo(lucid: Lucid): Promise<any> {
 // ══════════════════════════════════════════════════════════════
 async function testSnapshotGen(lucid: Lucid, vaultUtxo: any, epoch: bigint) {
   console.log(`\n── Test A: SnapshotGen ──`);
-  console.log(`  Vault has ${JSON.parse(vaultUtxo.datum || "{}").magic_batches?.length ?? 0} batches`);
 
-  // Import SnapshotGen SDK
+  // Import SnapshotGen SDK + Lucid Evolution helpers for param application
   const { buildSnapshotGenTx } = await import("../../SnapshotGen/offchain/src/snapshot.js");
+  const { applyParamsToScript } = await import("@lucid-evolution/lucid");
+  const { readFile } = await import("node:fs/promises");
+
+  // Load unapplied vault validator from plutus.json and apply slots_per_epoch for NETWORK
+  const plutusJson = JSON.parse(
+    await readFile(new URL("../../SnapshotGen/onchain/plutus.json", import.meta.url), "utf8"),
+  );
+  const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
+  if (!unapplied) throw new Error("vault.vault.spend not found in SnapshotGen plutus.json");
+  const vaultScript = {
+    type: "PlutusV3" as const,
+    script: applyParamsToScript(unapplied.compiledCode, [PROTOCOL.SLOTS_PER_EPOCH]),
+  };
+
   const address = await lucid.wallet().address();
 
   const result = await buildSnapshotGenTx({
-    lucid, vaultUtxo, userAddress: address,
+    lucid, vaultUtxo, userAddress: address, network: NETWORK, vaultScript,
   });
 
   console.log(result.summary);

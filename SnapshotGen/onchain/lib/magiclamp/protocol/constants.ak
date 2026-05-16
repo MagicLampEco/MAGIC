@@ -5,7 +5,8 @@
 pub const q : Int = 1_000_000_000
 
 // ── Epoch ────────────────────────────────────────────────────
-pub const slots_per_epoch : Int = 432_000
+// `slots_per_epoch` is a parameterized argument to validators (per-network).
+// See `validators/vault.ak:validator vault(slots_per_epoch: Int)`.
 
 // ── SnapshotGen (§19.1) ──────────────────────────────────────
 pub const snapshot_base_rate_q : Int = 5_000_000_000  // [Constitutional]

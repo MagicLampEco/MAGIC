@@ -13,10 +13,11 @@ import {
 import {
   computeVacuumMagic, getUmForVacuum, computeSmQ,
   selectLampForLock, removeLockedAmount,
-  isVacuumExpired, slotToEpoch, lampToOil, lAvail,
+  isVacuumExpired, lampToOil, lAvail,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
-import { getTipSlot } from "@magiclamp/protocol-utils";
+import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatumSchema, UMDatumSchema, VaultRedeemerSchema,
   type VaultDatum, type UMDatum, type MagicBatch,
@@ -30,6 +31,10 @@ export interface CommitParams {
   vaultUtxo    : UTxO;
   lambdaOil    : bigint;   // oil to lock (1 LAMP = 10^6 oil, min 10^6)
   userAddress  : string;
+  /** Network — picks ms_per_epoch for POSIX-based epoch math (must match validator). */
+  network?     : Network;
+  /** Optional tip POSIX ms. If omitted, derived from `getTipSlot`. */
+  tipPosixMs?  : bigint;
 }
 
 export interface CommitResult {
@@ -47,6 +52,8 @@ export interface FireParams {
   orderId      : string;
   umDatumUtxo  : UTxO;
   // No userAddress — fire is permissionless (C-VAC-FIRE-PERMISSION)
+  network?     : Network;
+  tipPosixMs?  : bigint;
 }
 
 export interface FireResult {
@@ -69,10 +76,12 @@ export async function createLucid(blockfrostApiKey: string): Promise<LucidEvolut
 // ══════════════════════════════════════════════════════════════
 export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitResult> {
   const { lucid, vaultUtxo, lambdaOil } = params;
+  const network    = params.network ?? TESTNET_CONFIG.network;
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
 
-  const tipSlot     = await getTipSlot(lucid);
-  const commitEpoch = slotToEpoch(BigInt(tipSlot));
+  const tipPosixMs = params.tipPosixMs
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+  const commitEpoch = posixMsToEpoch(tipPosixMs, network);
   const fireEpoch   = commitEpoch + VACUUM_DELAY;  // C-VAC-4: = commit + 2
 
   // ── C-VAC-3: λ ≥ 1 LAMP ──────────────────────────────────
@@ -112,7 +121,9 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
 
   const vaultAddr = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.vaultScriptHash });
   const redeemer  = Data.to({ VacuumCommit: { lambda: lambdaOil } }, VaultRedeemerSchema);
-  const epochStart = Number(commitEpoch * 432_000n);
+  // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
+  const lowerTime = Number(tipPosixMs);
+  const upperTime = Number((commitEpoch + 1n) * msPerEpoch(network) - 1n);
 
   const tx = await lucid
     .newTx()
@@ -123,8 +134,8 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
       vaultUtxo.assets,   // LAMP stays on vault (no transfer yet)
     )
     .addSignerKey(vaultDatum.owner)     // C-VAC-1: user signs
-    .validFrom(epochStart)
-    .validTo(epochStart + 432_000 - 1)
+    .validFrom(lowerTime)
+    .validTo(upperTime)
     .complete();
 
   const summary = [
@@ -146,12 +157,14 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
 // ══════════════════════════════════════════════════════════════
 export async function buildVacuumFireTx(params: FireParams): Promise<FireResult> {
   const { lucid, vaultUtxo, orderId, umDatumUtxo } = params;
+  const network = params.network ?? TESTNET_CONFIG.network;
 
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
   const umDatum    = Data.from(umDatumUtxo.datum!, UMDatumSchema);
 
-  const tipSlot     = await getTipSlot(lucid);
-  const currentEpoch = slotToEpoch(BigInt(tipSlot));
+  const tipPosixMs = params.tipPosixMs
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
 
   // Find the order
   const order = vaultDatum.vacuum_orders.find(o => o.order_id === orderId);
@@ -219,7 +232,9 @@ export async function buildVacuumFireTx(params: FireParams): Promise<FireResult>
   const vaultAddr  = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.vaultScriptHash });
   const lampUnit   = toUnit(TESTNET_CONFIG.lampPolicyId, TESTNET_CONFIG.lampAssetName);
   const redeemer   = Data.to({ VacuumFire: { order_id: orderId } }, VaultRedeemerSchema);
-  const epochStart = Number(currentEpoch * 432_000n);
+  // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
+  const lowerTime = Number(tipPosixMs);
+  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
   const tx = await lucid
     .newTx()
@@ -235,8 +250,8 @@ export async function buildVacuumFireTx(params: FireParams): Promise<FireResult>
       { [lampUnit]: order.lamp_amount },  // C-VAC-7/INV-43: ALWAYS transfer
     )
     // C-VAC-FIRE-PERMISSION: NO .addSignerKey() — permissionless!
-    .validFrom(epochStart)
-    .validTo(epochStart + 432_000 - 1)
+    .validFrom(lowerTime)
+    .validTo(upperTime)
     .complete();
 
   const summary = [

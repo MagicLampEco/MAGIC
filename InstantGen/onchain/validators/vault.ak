@@ -17,7 +17,6 @@ use aiken/primitive/bytearray
 use aiken/interval.{Finite}
 use cardano/address.{Address}
 use cardano/assets.{PolicyId, Value}
-use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
@@ -32,7 +31,7 @@ use magiclamp/protocol/constants.{
   max_loyalty_holdings, min_instant_purchase, pm_q_ember, pm_q_flame,
   pm_q_lantern, q,
 }
-use magiclamp/protocol/math.{compute_instant_magic, slot_to_epoch}
+use magiclamp/protocol/math.{compute_instant_magic}
 use magiclamp/protocol/decay.{halve_then_prune, is_expired}
 use magiclamp/protocol/um.{
   get_um_for_instant, validate_um_history_length, validate_um_range,
@@ -42,26 +41,27 @@ use magiclamp/protocol/lamp.{
 }
 
 // ── Validator parameters ─────────────────────────────────────
+// `ms_per_epoch` is applied per-network (Plutus validity_range is POSIX ms):
+//   Mainnet:        432_000_000
+//   Preview/Preprod: 86_400_000
 validator vault(
   lamp_policy_id : PolicyId,
   treasury_addr  : Address,
   um_nft_policy  : PolicyId,
+  ms_per_epoch   : Int,
 ) {
   spend(
     datum_opt : Option<VaultDatum>,
     redeemer  : VaultRedeemer,
     own_ref   : OutputReference,
-    ctx       : ScriptContext,
+    tx        : Transaction,
   ) {
     // Datum must always be present on vault UTxOs
     expect Some(input_datum) = datum_opt
 
-    let tx = ctx.transaction
-
     // ── Derive current epoch from tx validity range ──────────
-    // Use lower bound to be conservative (tx valid from this slot).
-    // The tx should be submitted within one epoch.
-    let current_epoch = get_current_epoch(tx)
+    // Plutus V3 validity_range carries POSIX milliseconds, not slots.
+    let current_epoch = get_current_epoch(tx, ms_per_epoch)
 
     when redeemer is {
       // ── InstantGen redeemer ──────────────────────────────
@@ -110,13 +110,11 @@ fn validate_instant_gen(
 ) -> Bool {
 
   // ── C-VAULT-DS-1: exactly one vault input ────────────────
-  // Prevents Double Satisfaction attack (T20, A1).
+  // Prevents Double Satisfaction attack (T20, A1). Address match alone is
+  // sufficient — each vault UTxO has a unique own_ref enforced by Cardano.
   let vault_addr = find_own_address(own_ref, tx.inputs)
   let vault_input_count =
-    list.count(tx.inputs, fn(i) {
-      i.output.address == vault_addr &&
-      get_datum_owner(i) == Some(input_datum.owner)
-    })
+    list.count(tx.inputs, fn(i) { i.output.address == vault_addr })
   expect vault_input_count == 1
 
   // ── User must sign (C-PC-V1) ─────────────────────────────
@@ -251,11 +249,10 @@ fn get_pm_q(profile: ActivityProfile) -> Int {
 }
 
 /// Derive current epoch from transaction validity range lower bound.
-/// The tx should be constrained to a single epoch (upper - lower < 432000).
-fn get_current_epoch(tx: Transaction) -> Int {
-  // Use lower_bound of validity range to get epoch conservatively
-  expect Some(lower_slot) = tx.validity_range.lower_bound.bound_type |> get_finite_slot
-  slot_to_epoch(lower_slot)
+/// Plutus V3 validity_range is POSIX milliseconds, so epoch = posix_ms / ms_per_epoch.
+fn get_current_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+  expect Some(lower_ms) = tx.validity_range.lower_bound.bound_type |> get_finite_slot
+  lower_ms / ms_per_epoch
 }
 
 fn get_finite_slot(bound_type) -> Option<Int> {
@@ -269,20 +266,6 @@ fn get_finite_slot(bound_type) -> Option<Int> {
 fn find_own_address(own_ref: OutputReference, inputs: List<Input>) -> Address {
   expect Some(own_input) = list.find(inputs, fn(i) { i.output_reference == own_ref })
   own_input.output.address
-}
-
-/// Get the owner field from an input's datum (used for DS-1 check).
-fn get_datum_owner(input: Input) -> Option<ByteArray> {
-  // In a real implementation, decode the datum and return owner field.
-  // Simplified: check that datum is present (inline datum).
-  when input.output.datum is {
-    InlineDatum(d) -> {
-      // Decode VaultDatum and extract owner — simplified for testnet.
-      // Full implementation requires Data.from.
-      Some(#"") // placeholder — replace with actual datum decoding
-    }
-    _ -> None
-  }
 }
 
 /// Find the UM datum from reference inputs (identified by um_nft_policy).

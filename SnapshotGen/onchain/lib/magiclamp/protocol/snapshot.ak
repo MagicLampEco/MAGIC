@@ -15,7 +15,7 @@ use magiclamp/protocol/types.{
   MagicBatch, VaultDatum, ActivityProfile,
   Ember, Flame, Lantern, Snapshot,
 }
-use magiclamp/protocol/lf_oac.{compute_lf_q, compute_oac_q, prune_stale_activity}
+use magiclamp/protocol/lf_oac.{compute_lf_q, compute_oac_q}
 use magiclamp/protocol/decay.{snapshot_decay_window, is_snapshot_expired}
 
 // ══════════════════════════════════════════════════════════════

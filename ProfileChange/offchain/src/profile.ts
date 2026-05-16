@@ -1,8 +1,18 @@
 // src/profile.ts — ProfileChange flow (§12)
 // Normative: C-PC-V1..6, T4, §3.5
+//
+// NOTE: ProfileChange/onchain/ is a partial validator (no aiken.toml — not built
+// standalone). When integrated into a deployable module, migrate this SDK to:
+//   • POSIX-ms epoch math via `posixMsToEpoch(tipPosixMs, network)`
+//   • applyParamsToScript + vaultScript param + .attach.SpendingValidator
+// matching SnapshotGen/InstantGen pattern. This file currently uses the
+// slot-based path for compilation completeness.
 
-import { Data, type LucidEvolution, type UTxO, type Tx } from "@lucid-evolution/lucid";
-import { SLOTS_PER_EPOCH, slotToEpoch } from "@magiclamp/protocol-utils";
+import {
+  Data, validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  type LucidEvolution, type UTxO, type Tx, type Validator,
+} from "@lucid-evolution/lucid";
+import { slotToEpoch, slotsPerEpoch, type Network } from "@magiclamp/protocol-utils";
 
 const PROFILE_COOLDOWN  = 2n;   // epochs [Significant]
 
@@ -32,11 +42,12 @@ export async function buildProfileChangeTx(
   vaultUtxo     : UTxO,
   newProfile    : ActivityProfile,
   vaultSchema   : any,
-  vaultScriptHash: string,
+  vaultScript   : Validator,
+  network       : Network,
 ): Promise<ProfileChangeResult> {
   const datum = Data.from(vaultUtxo.datum!, vaultSchema);
   const tip   = await (lucid.provider as any).getBlock("latest");
-  const currentEpoch = slotToEpoch(BigInt(tip.slot ?? 0));
+  const currentEpoch = slotToEpoch(BigInt(tip.slot ?? 0), network);
 
   // C-PC-V2: cooldown ≥ 2 epochs
   const lastChange = datum.profile_changed_epoch;
@@ -65,17 +76,24 @@ export async function buildProfileChangeTx(
     // magic_batches unchanged (T4, C-PC-V4)
   };
 
-  const vaultAddr  = lucid.utils.validatorToAddress({ type: "PlutusV3", script: vaultScriptHash });
+  const vaultAddr  = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(vaultScript)),
+  );
   const redeemer   = Data.to({ UpdateProfile: { new_profile: newProfile } });
-  const epochStart = Number(currentEpoch * SLOTS_PER_EPOCH);
+  // NOTE: slot-based validity range used here because the (currently un-deployable)
+  // ProfileChange validator still expects slot-based bounds. Migrate to POSIX-ms
+  // when integrating into a deployable module — see file header.
+  const epochStart = Number(currentEpoch * slotsPerEpoch(network));
 
   const tx = await lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
+    .attach.SpendingValidator(vaultScript)
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newDatum, vaultSchema) }, vaultUtxo.assets)
     .addSignerKey(datum.owner)   // C-PC-V1
     .validFrom(epochStart)
-    .validTo(epochStart + Number(SLOTS_PER_EPOCH) - 1)
+    .validTo(epochStart + Number(slotsPerEpoch(network)) - 1)
     .complete();
 
   const oldInfo = PROFILE_INFO[datum.profile as ActivityProfile];

@@ -3,7 +3,9 @@
 
 import {
   Lucid, Blockfrost, Data, toUnit,
-  type LucidEvolution, type UTxO, type Tx,
+  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  slotToUnixTime,
+  type LucidEvolution, type UTxO, type Tx, type Validator,
 } from "@lucid-evolution/lucid";
 import { blake2b } from "@noble/hashes/blake2b";
 import {
@@ -17,7 +19,6 @@ import {
   nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
-import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatumSchema, UMDatumSchema, VaultRedeemerSchema,
   type VaultDatum, type UMDatum, type MagicBatch,
@@ -33,6 +34,10 @@ export interface CommitParams {
   userAddress  : string;
   /** Network — picks ms_per_epoch for POSIX-based epoch math (must match validator). */
   network?     : Network;
+  /** Compiled vault validator with `ms_per_epoch` already applied per-network.
+   *  Caller obtains via `applyParamsToScript(unapplied, [msPerEpoch(network)])`.
+   *  Required to derive the per-network vault address AND to attach as spending witness. */
+  vaultScript  : Validator;
   /** Optional tip POSIX ms. If omitted, derived from `getTipSlot`. */
   tipPosixMs?  : bigint;
 }
@@ -53,6 +58,9 @@ export interface FireParams {
   umDatumUtxo  : UTxO;
   // No userAddress — fire is permissionless (C-VAC-FIRE-PERMISSION)
   network?     : Network;
+  /** Compiled vault validator with `ms_per_epoch` applied. Same script object
+   *  used at Commit must be used at Fire — its hash defines the vault address. */
+  vaultScript  : Validator;
   tipPosixMs?  : bigint;
 }
 
@@ -75,7 +83,7 @@ export async function createLucid(blockfrostApiKey: string): Promise<LucidEvolut
 // Phase 1: buildVacuumCommitTx
 // ══════════════════════════════════════════════════════════════
 export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitResult> {
-  const { lucid, vaultUtxo, lambdaOil } = params;
+  const { lucid, vaultUtxo, lambdaOil, vaultScript } = params;
   const network    = params.network ?? TESTNET_CONFIG.network;
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
 
@@ -119,7 +127,13 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
     last_updated_epoch: commitEpoch,
   };
 
-  const vaultAddr = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.vaultScriptHash });
+  // Vault address derived from applied script (hash differs per-network).
+  // CRITICAL: must match the actual deployed validator — use the SAME `vaultScript`
+  // that was used at vault-creation time (else outputs land at a script-less address).
+  const vaultAddr = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(vaultScript)),
+  );
   const redeemer  = Data.to({ VacuumCommit: { lambda: lambdaOil } }, VaultRedeemerSchema);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const lowerTime = Number(tipPosixMs);
@@ -128,6 +142,7 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
   const tx = await lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
+    .attach.SpendingValidator(vaultScript)   // include validator code as tx witness
     .pay.ToAddressWithData(
       vaultAddr,
       { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
@@ -156,7 +171,7 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
 // Phase 2: buildVacuumFireTx — PERMISSIONLESS
 // ══════════════════════════════════════════════════════════════
 export async function buildVacuumFireTx(params: FireParams): Promise<FireResult> {
-  const { lucid, vaultUtxo, orderId, umDatumUtxo } = params;
+  const { lucid, vaultUtxo, orderId, umDatumUtxo, vaultScript } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
 
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
@@ -229,7 +244,11 @@ export async function buildVacuumFireTx(params: FireParams): Promise<FireResult>
     last_updated_epoch: currentEpoch,
   };
 
-  const vaultAddr  = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.vaultScriptHash });
+  // Address from applied vaultScript (same hash as Commit) — see CommitParams notes.
+  const vaultAddr  = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(vaultScript)),
+  );
   const lampUnit   = toUnit(TESTNET_CONFIG.lampPolicyId, TESTNET_CONFIG.lampAssetName);
   const redeemer   = Data.to({ VacuumFire: { order_id: orderId } }, VaultRedeemerSchema);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
@@ -239,6 +258,7 @@ export async function buildVacuumFireTx(params: FireParams): Promise<FireResult>
   const tx = await lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
+    .attach.SpendingValidator(vaultScript)
     .readFrom([umDatumUtxo])        // C-UM-7: reference input (not spent)
     .pay.ToAddressWithData(
       vaultAddr,

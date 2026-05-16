@@ -1,6 +1,6 @@
 // src/constants.ts — GenMAGIC v3.3 Constants (ScheduleGen)
+// SLOTS_PER_EPOCH removed — use `slotsPerEpoch(network)` from @magiclamp/protocol-utils.
 export const Q                   = 1_000_000_000n;
-export const SLOTS_PER_EPOCH     = 432_000n;
 export const OIL_PER_LAMP        = 1_000_000n;
 export const NANOGIC_PER_MAGIC   = 1_000_000_000n;
 export const SNAPSHOT_BASE_RATE_Q = 5_000_000_000n;   // R_snap [Constitutional]

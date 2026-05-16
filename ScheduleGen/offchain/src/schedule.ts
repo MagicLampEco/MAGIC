@@ -3,7 +3,9 @@
 
 import {
   Lucid, Blockfrost, Data, toUnit,
-  type LucidEvolution, type UTxO, type Tx,
+  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  slotToUnixTime,
+  type LucidEvolution, type UTxO, type Tx, type Validator,
 } from "@lucid-evolution/lucid";
 import { blake2b } from "@noble/hashes/blake2b";
 import {
@@ -19,7 +21,6 @@ import {
   lampToOil, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
-import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatumSchema, VaultRedeemerSchema,
   type VaultDatum, type GenSchedule, type MagicBatch, type LoyaltyHolding,
@@ -48,6 +49,11 @@ export interface CommitParams {
   lampPerEpoch    : bigint;    // λ in oil
   userAddress     : string;
   network?        : Network;
+  /** Compiled vault validator with `ms_per_epoch` already applied per-network.
+   *  Required to derive vault address AND attach as spending witness. */
+  vaultScript     : Validator;
+  /** Compiled shard validator with `ms_per_epoch` already applied per-network. */
+  shardScript     : Validator;
   tipPosixMs?     : bigint;
 }
 
@@ -70,6 +76,9 @@ export interface FireParams {
   scheduleId  : string;
   // No userAddress — permissionless (C-SCH-FIRE-PERMISSION)
   network?    : Network;
+  /** Same applied scripts as Commit (hash defines address). */
+  vaultScript : Validator;
+  shardScript : Validator;
   tipPosixMs? : bigint;
 }
 
@@ -92,7 +101,10 @@ export async function createLucid(apiKey: string): Promise<LucidEvolution> {
 // Phase 1: buildScheduleCommitTx
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleCommitTx(params: CommitParams): Promise<CommitResult> {
-  const { lucid, vaultUtxo, shardUtxos, scheduleLength: L, lampPerEpoch: lambda } = params;
+  const {
+    lucid, vaultUtxo, shardUtxos, scheduleLength: L, lampPerEpoch: lambda,
+    vaultScript, shardScript,
+  } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
 
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
@@ -175,9 +187,15 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     last_updated_epoch:         commitEpoch,
   };
 
-  // Build tx
-  const vaultAddr = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.vaultScriptHash });
-  const shardAddr = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.shardScriptHash });
+  // Build tx — addresses from applied scripts (hashes differ per-network).
+  const vaultAddr = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(vaultScript)),
+  );
+  const shardAddr = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(shardScript)),
+  );
   const redeemer  = Data.to({ ScheduleCommit: { schedule_length: L, lamp_per_epoch: lambda } }, VaultRedeemerSchema);
   const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: totalLock, delta_committed: totalLock } });
   const lowerTime = Number(tipPosixMs);
@@ -187,6 +205,8 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
     .collectFrom([shardUtxo], shardRed)
+    .attach.SpendingValidator(vaultScript)
+    .attach.SpendingValidator(shardScript)
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) }, vaultUtxo.assets)
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
     .addSignerKey(vaultDatum.owner)       // C-SCH-1 equivalent: user signs
@@ -224,6 +244,7 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
 // Phase 2: buildScheduleFireTx — PERMISSIONLESS (C-SCH-FIRE-PERMISSION)
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleFireTx(params: FireParams): Promise<FireResult> {
+  const { vaultScript, shardScript } = params;
   const { lucid, vaultUtxo, shardUtxos, scheduleId } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
 
@@ -308,9 +329,15 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     last_updated_epoch:     currentEpoch,
   };
 
-  // Build tx
-  const vaultAddr  = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.vaultScriptHash });
-  const shardAddr  = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.shardScriptHash });
+  // Build tx — addresses from applied scripts (same as Commit).
+  const vaultAddr  = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(vaultScript)),
+  );
+  const shardAddr  = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(shardScript)),
+  );
   const lampUnit   = toUnit(TESTNET_CONFIG.lampPolicyId, TESTNET_CONFIG.lampAssetName);
   const redeemer   = Data.to({ ScheduleFire: { schedule_id: scheduleId } }, VaultRedeemerSchema);
   const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(firesInTx), lambda: sched.lamp_per_epoch } });
@@ -321,6 +348,8 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
     .collectFrom([shardUtxo], shardRed)
+    .attach.SpendingValidator(vaultScript)
+    .attach.SpendingValidator(shardScript)
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
       { lovelace: vaultUtxo.assets.lovelace, [lampUnit]: newLampBalance })
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)

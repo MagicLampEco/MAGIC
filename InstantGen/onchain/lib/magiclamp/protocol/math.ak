@@ -19,11 +19,11 @@ pub fn multiply_q(a_q: Int, b_q: Int) -> Int {
 }
 
 // ── Epoch helpers ────────────────────────────────────────────
-
-/// Convert slot number to epoch (Cardano: 1 epoch = 432,000 slots)
-pub fn slot_to_epoch(slot: Int) -> Int {
-  slot / 432_000
-}
+//
+// Note: epoch is derived inside each validator from tx.validity_range
+// using the parameterized `ms_per_epoch` (POSIX ms). See
+// `validators/vault.ak:get_current_epoch`. No standalone helper here —
+// avoids hard-coded `slots_per_epoch` that would mis-divide on Preview.
 
 /// Compute batch age k = current_epoch - created_epoch
 /// Fails if current_epoch < created_epoch (C-DECAY-2)

@@ -140,12 +140,14 @@ async function main() {
 
   // Tamper helpers (negative tests).
   const tamper = process.env.TAMPER;
-  const tamperOutputDatum = tamper ? ((d: any) => {
+  const tamperOutputDatum = tamper && tamper !== "half_treasury" ? ((d: any) => {
     if (tamper === "lamp_balance") return { ...d, lamp_balance: d.lamp_balance + 1n };
     if (tamper === "no_lamp_transfer") return { ...d, lamp_balance: d.lamp_balance }; // skip the reduction
     if (tamper === "wrong_owner") return { ...d, owner: "ff".repeat(28) };
     throw new Error(`Unknown TAMPER: ${tamper}`);
   }) : undefined;
+  // TAMPER=half_treasury sends only half of LAMP_PAID to treasury (rest disappears via balancing).
+  const treasuryAmountOverride = tamper === "half_treasury" ? LAMP_PAID / 2n : undefined;
 
   try {
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
@@ -165,6 +167,7 @@ async function main() {
       network:         NETWORK,
       tipPosixMs:      tip.posixMs,
       tamperOutputDatum,
+      treasuryAmountOverride,
       skipOwnerSig:    process.env.SKIP_OWNER_SIG === "1",
     });
 

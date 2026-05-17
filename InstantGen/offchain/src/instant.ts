@@ -53,6 +53,8 @@ export interface InstantGenParams {
   tamperOutputDatum?: (d: any) => any;
   /** TEST ONLY: skip required-signer for owner-sig negative test. */
   skipOwnerSig?: boolean;
+  /** TEST ONLY: override treasury LAMP amount (default = lampPaidOil). */
+  treasuryAmountOverride?: bigint;
 }
 
 export interface InstantGenResult {
@@ -254,7 +256,7 @@ export async function buildInstantGenTx(
     )
     .pay.ToAddress(
       treasuryAddress,
-      { [lampUnit]: lampPaidOil },              // C-INST-4: LAMP → Treasury
+      { [lampUnit]: params.treasuryAmountOverride ?? lampPaidOil },  // C-INST-4
     )
     .validFrom(lowerTime)
     .validTo(upperTime);

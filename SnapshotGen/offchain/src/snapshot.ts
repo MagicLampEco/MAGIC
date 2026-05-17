@@ -28,7 +28,7 @@ export interface SnapshotGenParams {
   lucid       : LucidEvolution;
   vaultUtxo   : UTxO;
   userAddress : string;
-  /** Network the tx runs on. Picks SLOTS_PER_EPOCH for epoch arithmetic. */
+  /** Network the tx runs on. Picks ms_per_epoch for POSIX-based epoch math. */
   network?    : Network;
   /** Compiled vault validator with `slots_per_epoch` already applied per-network.
    *  Caller obtains via `applyParamsToScript(unapplied, [slotsPerEpoch(network)])`.

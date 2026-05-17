@@ -1,8 +1,13 @@
 // src/profile.ts — ProfileChange flow (§12)
 // Normative: C-PC-V1..6, T4, §3.5
 
-import { Data, type LucidEvolution, type UTxO, type Tx } from "@lucid-evolution/lucid";
-import { SLOTS_PER_EPOCH, slotToEpoch } from "@magiclamp/protocol-utils";
+import {
+  Data, type LucidEvolution, type UTxO, type Tx,
+  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  slotToUnixTime,
+  type Validator,
+} from "@lucid-evolution/lucid";
+import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 
 const PROFILE_COOLDOWN  = 2n;   // epochs [Significant]
 
@@ -32,11 +37,14 @@ export async function buildProfileChangeTx(
   vaultUtxo     : UTxO,
   newProfile    : ActivityProfile,
   vaultSchema   : any,
-  vaultScriptHash: string,
+  vaultScript   : Validator,
+  network       : Network = "Preview",
+  tipPosixMs?   : bigint,
 ): Promise<ProfileChangeResult> {
   const datum = Data.from(vaultUtxo.datum!, vaultSchema);
-  const tip   = await (lucid.provider as any).getBlock("latest");
-  const currentEpoch = slotToEpoch(BigInt(tip.slot ?? 0));
+  const tipMs = tipPosixMs
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+  const currentEpoch = posixMsToEpoch(tipMs, network);
 
   // C-PC-V2: cooldown ≥ 2 epochs
   const lastChange = datum.profile_changed_epoch;
@@ -65,17 +73,20 @@ export async function buildProfileChangeTx(
     // magic_batches unchanged (T4, C-PC-V4)
   };
 
-  const vaultAddr  = lucid.utils.validatorToAddress({ type: "PlutusV3", script: vaultScriptHash });
+  const vaultAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const redeemer   = Data.to({ UpdateProfile: { new_profile: newProfile } });
-  const epochStart = Number(currentEpoch * SLOTS_PER_EPOCH);
+  // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
+  const lowerTime = Number(tipMs);
+  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
   const tx = await lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
+    .attach.SpendingValidator(vaultScript)
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newDatum, vaultSchema) }, vaultUtxo.assets)
     .addSignerKey(datum.owner)   // C-PC-V1
-    .validFrom(epochStart)
-    .validTo(epochStart + Number(SLOTS_PER_EPOCH) - 1)
+    .validFrom(lowerTime)
+    .validTo(upperTime)
     .complete();
 
   const oldInfo = PROFILE_INFO[datum.profile as ActivityProfile];

@@ -162,14 +162,31 @@ export const UMDatumSchema = Data.Object({
 export type UMDatum = Data.Static<typeof UMDatumSchema>;
 
 // ── VaultRedeemer ────────────────────────────────────────────
+// Constructor order MUST match Aiken `pub type VaultRedeemer` in
+// ScheduleGen/onchain/lib/magiclamp/protocol/types.ak (P8 invariant).
 export const VaultRedeemerSchema = Data.Enum([
-  Data.Object({ InstantGen:   Data.Object({ lamp_paid: Data.Integer() }) }),
-  Data.Literal("ApplyHalving"),
-  Data.Object({ BurnBatch: Data.Object({
-    burns: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
+  Data.Object({ ScheduleCommit: Data.Object({                                // constr 0
+    schedule_length: Data.Integer(),
+    lamp_per_epoch:  Data.Integer(),
   })}),
-  Data.Object({ UpdateProfile: Data.Object({
-    new_profile: ActivityProfileSchema,
+  Data.Object({ ScheduleFire: Data.Object({                                  // constr 1
+    schedule_id: Data.Bytes(),
+  })}),
+  Data.Object({ BurnBatch: Data.Object({                                     // constr 2
+    burns: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
   })}),
 ]);
 export type VaultRedeemer = Data.Static<typeof VaultRedeemerSchema>;
+
+// ── ShardRedeemer ──────────────────────────────────────────────
+export const ShardRedeemerSchema = Data.Enum([
+  Data.Object({ ShardUpdateCommit: Data.Object({                             // constr 0
+    delta_locked:    Data.Integer(),
+    delta_committed: Data.Integer(),
+  })}),
+  Data.Object({ ShardUpdateFire: Data.Object({                               // constr 1
+    fires_in_tx: Data.Integer(),
+    lambda:      Data.Integer(),
+  })}),
+]);
+export type ShardRedeemer = Data.Static<typeof ShardRedeemerSchema>;

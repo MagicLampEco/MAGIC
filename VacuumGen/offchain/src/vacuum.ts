@@ -3,7 +3,8 @@
 
 import {
   Lucid, Blockfrost, Data, toUnit,
-  type LucidEvolution, type UTxO, type Tx,
+  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  type LucidEvolution, type UTxO, type Tx, type Validator,
 } from "@lucid-evolution/lucid";
 import { blake2b } from "@noble/hashes/blake2b";
 import {
@@ -31,10 +32,16 @@ export interface CommitParams {
   vaultUtxo    : UTxO;
   lambdaOil    : bigint;   // oil to lock (1 LAMP = 10^6 oil, min 10^6)
   userAddress  : string;
+  /** Compiled vault validator with 4 params already applied per-network. Required. */
+  vaultScript  : Validator;
   /** Network — picks ms_per_epoch for POSIX-based epoch math (must match validator). */
   network?     : Network;
   /** Optional tip POSIX ms. If omitted, derived from `getTipSlot`. */
   tipPosixMs?  : bigint;
+  /** TEST ONLY: mutate output datum. */
+  tamperOutputDatum?: (d: any) => any;
+  /** TEST ONLY: skip required-signer for owner-sig negative test. */
+  skipOwnerSig?: boolean;
 }
 
 export interface CommitResult {
@@ -52,8 +59,17 @@ export interface FireParams {
   orderId      : string;
   umDatumUtxo  : UTxO;
   // No userAddress — fire is permissionless (C-VAC-FIRE-PERMISSION)
-  network?     : Network;
-  tipPosixMs?  : bigint;
+  /** Compiled vault validator with 4 params already applied per-network. Required. */
+  vaultScript     : Validator;
+  /** LAMP policy id and asset name. */
+  lampPolicyId    : string;
+  lampAssetName?  : string;
+  /** Treasury address (must match treasury_addr param applied to validator). */
+  treasuryAddress : string;
+  network?        : Network;
+  tipPosixMs?     : bigint;
+  /** TEST ONLY: mutate output datum. */
+  tamperOutputDatum?: (d: any) => any;
 }
 
 export interface FireResult {
@@ -111,32 +127,35 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
   const newHoldings = selectLampForLock(vaultDatum.loyalty_holdings, lambdaOil);
 
   // Build updated datum (A02)
-  const newVaultDatum: VaultDatum = {
+  let newVaultDatum: VaultDatum = {
     ...vaultDatum,
     lamp_locked:      vaultDatum.lamp_locked + lambdaOil,
     loyalty_holdings: newHoldings,
     vacuum_orders:    [...vaultDatum.vacuum_orders, newOrder],
     last_updated_epoch: commitEpoch,
   };
+  if (params.tamperOutputDatum) newVaultDatum = params.tamperOutputDatum(newVaultDatum);
 
-  const vaultAddr = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.vaultScriptHash });
+  const { vaultScript } = params;
+  const vaultAddr = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const redeemer  = Data.to({ VacuumCommit: { lambda: lambdaOil } }, VaultRedeemerSchema);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((commitEpoch + 1n) * msPerEpoch(network) - 1n);
 
-  const tx = await lucid
+  let txBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
+    .attach.SpendingValidator(vaultScript)
     .pay.ToAddressWithData(
       vaultAddr,
       { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
       vaultUtxo.assets,   // LAMP stays on vault (no transfer yet)
     )
-    .addSignerKey(vaultDatum.owner)     // C-VAC-1: user signs
     .validFrom(lowerTime)
-    .validTo(upperTime)
-    .complete();
+    .validTo(upperTime);
+  if (!params.skipOwnerSig) txBuilder = txBuilder.addSignerKey(vaultDatum.owner);
+  const tx = await txBuilder.complete();
 
   const summary = [
     `═══ VacuumGen Commit ═══`,
@@ -218,7 +237,7 @@ export async function buildVacuumFireTx(params: FireParams): Promise<FireResult>
   const newLampLocked   = vaultDatum.lamp_locked  - order.lamp_amount;
 
   // Updated datum
-  const newVaultDatum: VaultDatum = {
+  let newVaultDatum: VaultDatum = {
     ...vaultDatum,
     lamp_balance:       newLampBalance,
     lamp_locked:        newLampLocked,
@@ -228,9 +247,12 @@ export async function buildVacuumFireTx(params: FireParams): Promise<FireResult>
     vacuum_orders:      remainingOrders,
     last_updated_epoch: currentEpoch,
   };
+  if (params.tamperOutputDatum) newVaultDatum = params.tamperOutputDatum(newVaultDatum);
 
-  const vaultAddr  = lucid.utils.validatorToAddress({ type: "PlutusV3", script: TESTNET_CONFIG.vaultScriptHash });
-  const lampUnit   = toUnit(TESTNET_CONFIG.lampPolicyId, TESTNET_CONFIG.lampAssetName);
+  const { vaultScript, lampPolicyId, treasuryAddress } = params;
+  const lampAssetName = params.lampAssetName ?? TESTNET_CONFIG.lampAssetName;
+  const vaultAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
+  const lampUnit   = toUnit(lampPolicyId, lampAssetName);
   const redeemer   = Data.to({ VacuumFire: { order_id: orderId } }, VaultRedeemerSchema);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const lowerTime = Number(tipPosixMs);
@@ -239,6 +261,7 @@ export async function buildVacuumFireTx(params: FireParams): Promise<FireResult>
   const tx = await lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
+    .attach.SpendingValidator(vaultScript)
     .readFrom([umDatumUtxo])        // C-UM-7: reference input (not spent)
     .pay.ToAddressWithData(
       vaultAddr,
@@ -246,7 +269,7 @@ export async function buildVacuumFireTx(params: FireParams): Promise<FireResult>
       { lovelace: vaultUtxo.assets.lovelace, [lampUnit]: newLampBalance },
     )
     .pay.ToAddress(
-      TESTNET_CONFIG.treasuryAddress,
+      treasuryAddress,
       { [lampUnit]: order.lamp_amount },  // C-VAC-7/INV-43: ALWAYS transfer
     )
     // C-VAC-FIRE-PERMISSION: NO .addSignerKey() — permissionless!

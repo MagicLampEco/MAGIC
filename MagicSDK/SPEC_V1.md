@@ -10,7 +10,7 @@
 
 | # | Item | Module | Loại | Trạng thái hiện tại | Mức |
 |---|---|---|---|---|---|
-| 1 | `WithdrawLamp { amount }` | Snapshot + Instant + Vacuum + Schedule vault | NEW redeemer | Chưa tồn tại | 🔴 Block production |
+| 1 | `WithdrawLamp { amount }` | Snapshot + Instant + Vacuum + Schedule vault | NEW redeemer | Chưa tồn tại | 🔴 Chặn production |
 | 2 | `UpdateProfile { new_profile }` đầy đủ | SnapshotGen vault | STUB → full impl | Stub chỉ check owner sign | 🟡 |
 | 3 | `UpdateProfile { new_profile }` thêm vào Instant | InstantGen vault | NEW (Option A) | Chưa tồn tại | 🟡 |
 
@@ -22,7 +22,7 @@ Không thay đổi datum shape. Vault hash sẽ đổi vì validator code đổi
 
 ### Use case
 
-User rút LAMP unlocked từ vault về ví (hoặc địa chỉ chỉ định). Là 1 chiều ra duy nhất ngoài flow Treasury (Vacuum/Schedule). Không có withdraw thì LAMP locked vĩnh viễn trong vault — UX không chấp nhận được cho production.
+User rút LAMP unlocked từ vault về ví (hoặc địa chỉ chỉ định). Là 1 chiều ra duy nhất ngoài flow Treasury (Vacuum/Schedule). Không có withdraw thì LAMP locked vĩnh viễn trong vault — blocker cho production.
 
 ### Validator rules
 
@@ -77,7 +77,7 @@ WithdrawLamp { amount: Natural } -> {
 
 ### Helper: `remove_newest_first`
 
-Chọn holding **mới nhất** (acquired_epoch cao nhất) trước → preserve loyalty của holdings cũ → max LF cho Snapshot/Instant sau này. Locked holdings không bao giờ bị touch.
+Chọn holding **mới nhất** (acquired_epoch cao nhất) trước → preserve loyalty của holdings cũ → max LF cho Snapshot/Instant sau này. Locked holdings không bao giờ bị động vào.
 
 ```aiken
 // Implement tương tự select_lamp_for_lock trong protocol/lock.ak
@@ -96,7 +96,7 @@ pub fn remove_newest_first(
     else { Equal }
   })
 
-  // 3. Iterate, consume từ newest, partial trên cuối
+  // 3. Iterate, consume from newest first; partial-consume the last item if needed
   let (consumed, remaining_unlocked) = consume_loop(sorted, amount)
   expect consumed == amount   // W-3 guarantees this
 
@@ -105,7 +105,7 @@ pub fn remove_newest_first(
 }
 ```
 
-SDK mirror: `MagicSDK/src/withdrawLamp.ts:removeNewestFirst` — cùng algorithm, P8 cross-check.
+SDK đối chiếu: `MagicSDK/src/withdrawLamp.ts:removeNewestFirst` — cùng thuật toán, P8 cross-check.
 
 ### Edge cases
 
@@ -114,8 +114,9 @@ SDK mirror: `MagicSDK/src/withdrawLamp.ts:removeNewestFirst` — cùng algorithm
 | `amount = 0` | W-1 reject |
 | `amount > lamp_balance` | W-3 reject (avail < amount) |
 | `amount > L_avail` (do locked) | W-3 reject |
-| `amount = L_avail` (drain all unlocked) | OK; unlocked holdings empty after |
-| `amount = lamp_balance` (vault chỉ còn locked) | OK nếu `lamp_locked == lamp_balance`, else W-3 reject |
+| `amount = L_avail` (drain hết unlocked) | OK; sau tx, vault chỉ còn locked holdings |
+| `amount = lamp_balance` khi `lamp_locked > 0` | W-3 reject (avail < amount vì có locked) |
+| `amount = lamp_balance` khi `lamp_locked = 0` | OK; vault còn 0 LAMP, holdings rỗng |
 | No owner sign | W-2 reject |
 | Output datum tamper bất kỳ field | W-5 reject |
 | Output vault value khác `lamp_balance` mới | W-6 reject |
@@ -137,7 +138,7 @@ SDK mirror: `MagicSDK/src/withdrawLamp.ts:removeNewestFirst` — cùng algorithm
 
 ## §2. `UpdateProfile { new_profile: ActivityProfile }` — SnapshotGen impl đầy đủ
 
-### Trạng thái hiện tại — security bug
+### Trạng thái hiện tại — lỗi bảo mật
 
 ```aiken
 // SnapshotGen/onchain/validators/vault.ak (CURRENT — STUB)
@@ -147,7 +148,7 @@ UpdateProfile { .. } -> {
 }
 ```
 
-Stub này cho phép redeemer UpdateProfile tamper bất cứ datum field nào (lamp_balance, magic_batches, …) — bypass mọi A02 check. Phải fix trước v1.0.
+Stub hiện tại cho phép tx UpdateProfile thay đổi bất kỳ field nào trong output datum (`lamp_balance`, `magic_batches`, …) — bypass toàn bộ A02 integrity check. Phải fix trước v1.0.
 
 ### Spec đã có
 
@@ -210,7 +211,7 @@ UpdateProfile { new_profile } -> {
 `pending_profile` được set ở tx UpdateProfile. Mọi validator handler khác (TriggerSnapshot, InstantGen, …) tự áp dụng pending khi `current_epoch >= pending.effective_epoch`:
 
 ```aiken
-// Add vào shared helper
+// Thêm vào shared helper
 fn apply_pending_profile(datum: VaultDatum, current_epoch: Int) -> VaultDatum {
   when datum.pending_profile is {
     Some(pp) ->
@@ -224,7 +225,21 @@ fn apply_pending_profile(datum: VaultDatum, current_epoch: Int) -> VaultDatum {
 }
 ```
 
-Mỗi handler (TriggerSnapshot, InstantGen, …) gọi `apply_pending_profile` trước khi compute M để dùng đúng profile mới.
+**Quan trọng — handler usage pattern:**
+
+```aiken
+// Mỗi handler (TriggerSnapshot, InstantGen, …) làm như sau:
+let applied_input = apply_pending_profile(input_datum, current_epoch)
+
+// 1. Dùng applied_input cho M computation
+let m = compute_snapshot_magic(..., applied_input.profile, ...)
+
+// 2. Dùng applied_input cho A02 output datum check
+expect output_datum.profile == applied_input.profile             // = new nếu pending đã áp dụng
+expect output_datum.pending_profile == applied_input.pending_profile  // = None nếu đã áp dụng
+```
+
+Nếu chỉ apply cho M compute mà không cho output datum check → output datum vẫn giữ `pending_profile` cũ → tx kế tiếp lại apply nữa → infinite pending. Cả 2 phải dùng `applied_input`.
 
 ### Negative test cases
 
@@ -247,7 +262,7 @@ PM_Q dùng ở cả Snapshot + Instant. User có thể có vault Snap profile=Fl
 
 ### Implementation
 
-Copy y nguyên logic §2 vào InstantGen vault. Thêm enum variant `UpdateProfile { new_profile: ActivityProfile }` vào `InstantGen/onchain/lib/magiclamp/protocol/types.ak` (constructor index 3, sau `InstantGen=0`, `ApplyHalving=1`, `BurnBatch=2`).
+Sao chép nguyên logic §2 vào InstantGen vault. Thêm enum variant `UpdateProfile { new_profile: ActivityProfile }` vào `InstantGen/onchain/lib/magiclamp/protocol/types.ak` (constructor index 3, sau `InstantGen=0`, `ApplyHalving=1`, `BurnBatch=2`).
 
 `apply_pending_profile` cũng add vào InstantGen vault handler `InstantGen { lamp_paid }` trước khi compute `M = lamp_paid × R_inst × UM × PM[apply_pending(input_datum).profile]`.
 
@@ -262,7 +277,7 @@ Copy y nguyên logic §2 vào InstantGen vault. Thêm enum variant `UpdateProfil
 expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
 ```
 
-Không có check "1 vault per owner". User có thể có N vault tại cùng vault address với cùng owner PKH — mỗi vault 1 UTxO riêng, datum riêng, holdings riêng. Cardano support natively.
+Không có check "1 vault per owner". User có thể có N vault tại cùng vault address với cùng owner PKH — mỗi vault 1 UTxO riêng, datum riêng, holdings riêng. Cardano hỗ trợ sẵn pattern này.
 
 ### Use case
 
@@ -297,7 +312,7 @@ Mỗi action (snapshot / instant / withdraw / updateProfile) chỉ định vault
 
 ### Cardano property
 
-Vault hash đổi → vault cũ stuck ở địa chỉ cũ. Validator cũ vẫn chạy được (immutable). User có private key + biết validator CBOR cũ vẫn spend được.
+Vault hash đổi → vault cũ bị kẹt ở địa chỉ cũ. Validator cũ vẫn chạy được (immutable). User có private key + biết validator CBOR cũ vẫn spend được UTxO.
 
 ### Lựa chọn
 
@@ -308,23 +323,23 @@ Vault hash đổi → vault cũ stuck ở địa chỉ cũ. Validator cũ vẫn 
 | **(c) 1-tx atomic migration** | Spend v0 vault + create v1 vault trong 1 tx | Cần custom redeemer "MigrateOut" ở v0 — v0 chưa có. Không khả thi cho v0 hiện tại |
 | **(d) Không migrate** | v0 chỉ trên Preview, không lên mainnet | **Recommend** |
 
-**Recommend hướng (d):**
+**Đề xuất hướng (d):**
 
-- v0 (current state) chỉ trên Preview testnet
+- v0 (trạng thái hiện tại) chỉ trên Preview testnet
 - KHÔNG launch v0 lên mainnet
 - v1.0 = v0 + WithdrawLamp + UpdateProfile (đầy đủ) → đóng gói stable → audit → mainnet
-- Sau mainnet, mỗi thay đổi onchain (= validator hash đổi) = migration event nghiêm túc với plan riêng
+- Sau mainnet, mỗi thay đổi onchain (= validator hash đổi) = đợt migration nghiêm túc với kế hoạch riêng
 
 ### Preview testnet hiện tại
 
-Khi v1.0 ready:
+Khi v1.0 sẵn sàng:
 - Redeploy validator → vault address mới
 - Test users tự tạo vault mới (tLAMP testnet vẫn còn — re-mint nếu cần qua `01_mint_lamp`)
-- v0 vault cũ trên Preview stuck — ignore. Rút kinh nghiệm, không mất production data
+- v0 vault cũ trên Preview bị kẹt — bỏ qua. Rút kinh nghiệm, không mất production data
 
 ### Mainnet launch
 
-Chỉ launch v1.0 (đã có Withdraw + UpdateProfile đầy đủ). Add 2 redeemer + Aiken test pass → audit → deploy production. Sau deploy, validator hash đóng cứng cho mọi mainnet user.
+Chỉ launch v1.0 (đã có Withdraw + UpdateProfile đầy đủ). Quy trình: thêm 2 redeemer + Aiken test pass → audit → deploy production. Sau deploy, validator hash đóng cứng cho mọi mainnet user.
 
 ---
 
@@ -340,7 +355,7 @@ Chỉ launch v1.0 (đã có Withdraw + UpdateProfile đầy đủ). Add 2 redeem
 - [ ] ScheduleGen vault: thêm `WithdrawLamp { amount }` redeemer (§1)
 - [ ] Helper `remove_newest_first` add vào `protocol/lock.ak` (shared)
 - [ ] Helper `apply_pending_profile` add vào shared lib
-- [ ] Mọi handler (TriggerSnapshot, InstantGen, ApplyHalving, BurnBatch) gọi `apply_pending_profile` trước compute M
+- [ ] Mọi handler (TriggerSnapshot, InstantGen, ApplyHalving, BurnBatch) gọi `apply_pending_profile` rồi dùng `applied_input` cho cả M computation và A02 output datum check (xem §2 handler usage pattern)
 - [ ] `aiken check` pass 0 errors cho 4 module
 - [ ] `aiken build` → cập nhật plutus.json cho 4 module
 
@@ -355,12 +370,12 @@ Chỉ launch v1.0 (đã có Withdraw + UpdateProfile đầy đủ). Add 2 redeem
 
 - ✅ `MagicSDK/src/withdrawLamp.ts` — `removeNewestFirst` algorithm khớp §1 spec
 - ✅ `MagicSDK/src/updateProfile.ts` — cooldown + lazy apply
-- ✅ `MagicSDK/src/listVaults.ts` — multi-vault discovery (works ngay trên v0)
+- ✅ `MagicSDK/src/listVaults.ts` — multi-vault discovery (chạy ngay trên v0)
 - ✅ Unit tests 18/18 pass
 
 ### Redeemer constructor indices đề xuất
 
-Implementer có thể adjust khi cần. SDK hiện đang dùng:
+Implementer có thể chỉnh khi cần. SDK hiện đang dùng:
 
 | Vault type | Index | Redeemer |
 |---|---|---|

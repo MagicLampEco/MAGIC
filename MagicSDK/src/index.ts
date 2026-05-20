@@ -12,6 +12,26 @@ export {
   VaultDatumSchema,
 } from "./createVault.js";
 
+export {
+  listVaultsForOwner,
+  type VaultRecord,
+  type ListVaultsParams,
+} from "./listVaults.js";
+
+export {
+  withdrawLamp,
+  removeNewestFirst,
+  type WithdrawLampParams,
+  type WithdrawLampResult,
+} from "./withdrawLamp.js";
+
+export {
+  updateProfile,
+  PROFILE_COOLDOWN,
+  type UpdateProfileParams,
+  type UpdateProfileResult,
+} from "./updateProfile.js";
+
 export type {
   Profile,
   VaultType,

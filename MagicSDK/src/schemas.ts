@@ -1,0 +1,127 @@
+// MagicSDK/src/schemas.ts — Plutus Data schemas (must mirror Aiken types exactly)
+// Field order = constructor index. Renaming a field is OK; reordering BREAKS the contract.
+//
+// P8 invariant: this schema must produce the same CBOR as Aiken's
+// `pub type VaultDatum { ... }` definition in
+// `<Module>/onchain/lib/magiclamp/protocol/types.ak`.
+//
+// All 4 vault types (Snapshot/Instant/Vacuum/Schedule) use the SAME VaultDatum
+// shape — the only thing that differs is the validator code (and hence the
+// vault address per-network).
+
+import { Data } from "@lucid-evolution/lucid";
+
+const LoyaltyHoldingSchema = Data.Object({
+  amount:         Data.Integer(),
+  acquired_epoch: Data.Integer(),
+  is_locked:      Data.Boolean(),
+});
+
+const MagicBatchSchema = Data.Object({
+  batch_id:            Data.Bytes(),
+  source:              Data.Enum([
+    Data.Literal("Snapshot"),
+    Data.Literal("Instant"),
+    Data.Literal("Vacuum"),
+    Data.Literal("Schedule"),
+  ]),
+  created_epoch:       Data.Integer(),
+  initial_amount:      Data.Integer(),
+  current_amount:      Data.Integer(),
+  decay_window:        Data.Integer(),
+  profile_at_creation: Data.Nullable(Data.Enum([
+    Data.Literal("Ember"), Data.Literal("Flame"), Data.Literal("Lantern"),
+  ])),
+  contract_id:         Data.Nullable(Data.Bytes()),
+  halved:              Data.Boolean(),
+});
+
+const VacuumOrderSchema = Data.Object({
+  order_id:     Data.Bytes(),
+  commit_epoch: Data.Integer(),
+  fire_epoch:   Data.Integer(),
+  lamp_amount:  Data.Integer(),
+});
+
+const GenScheduleSchema = Data.Object({
+  schedule_id:              Data.Bytes(),
+  commit_epoch:             Data.Integer(),
+  start_fire_epoch:         Data.Integer(),
+  end_fire_epoch:           Data.Integer(),
+  schedule_length:          Data.Integer(),
+  lamp_per_epoch:           Data.Integer(),
+  rate_locked_q:            Data.Integer(),
+  baseline_at_commit_q:     Data.Integer(),
+  multiplier_at_commit_q:   Data.Integer(),
+  fired_count:              Data.Integer(),
+  auto_burn_target:         Data.Nullable(Data.Object({
+    delegate:          Data.Bytes(),
+    target_app_id:     Data.Nullable(Data.Bytes()),
+    max_burn_per_fire: Data.Integer(),
+  })),
+});
+
+const ActivityProfileSchema = Data.Enum([
+  Data.Literal("Ember"), Data.Literal("Flame"), Data.Literal("Lantern"),
+]);
+
+const PendingProfileSchema = Data.Object({
+  new_profile:     ActivityProfileSchema,
+  effective_epoch: Data.Integer(),
+});
+
+const DelegationCertificateSchema = Data.Object({
+  current: Data.Array(Data.Object({
+    app_id:     Data.Bytes(),
+    weight_bps: Data.Integer(),
+  })),
+  pending: Data.Nullable(Data.Object({
+    allocations:     Data.Array(Data.Object({
+      app_id:     Data.Bytes(),
+      weight_bps: Data.Integer(),
+    })),
+    effective_epoch: Data.Integer(),
+  })),
+  current_effective_epoch: Data.Integer(),
+  last_changed_epoch:      Data.Integer(),
+});
+
+const ActivityStateSchema = Data.Object({
+  recent_burn_epochs: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
+  total_burns_count:  Data.Integer(),
+});
+
+const StreakStateSchema = Data.Object({
+  current_streak:    Data.Integer(),
+  last_active_epoch: Data.Integer(),
+});
+
+const VaultAttributionSchema = Data.Object({
+  attribution_root: Data.Bytes(),
+  last_event_epoch: Data.Integer(),
+  total_events:     Data.Integer(),
+});
+
+/** Full VaultDatum schema — used to serialize the initial datum at vault creation
+ *  and to decode existing vault UTxOs in downstream builders (Snapshot/Instant/...). */
+export const VaultDatumSchema = Data.Object({
+  owner:                 Data.Bytes(),
+  lamp_balance:          Data.Integer(),
+  lamp_locked:           Data.Integer(),
+  loyalty_holdings:      Data.Array(LoyaltyHoldingSchema),
+  magic_batches:         Data.Array(MagicBatchSchema),
+  next_batch_index:      Data.Integer(),
+  vacuum_orders:         Data.Array(VacuumOrderSchema),
+  gen_schedules:         Data.Array(GenScheduleSchema),
+  profile:               ActivityProfileSchema,
+  profile_changed_epoch: Data.Integer(),
+  pending_profile:       Data.Nullable(PendingProfileSchema),
+  last_updated_epoch:    Data.Integer(),
+  delegation_cert:       DelegationCertificateSchema,
+  activity_state:        ActivityStateSchema,
+  streak_state:          StreakStateSchema,
+  personal_delegate:     Data.Nullable(Data.Bytes()),
+  attribution:           VaultAttributionSchema,
+});
+
+export type VaultDatum = ReturnType<typeof Data.from<typeof VaultDatumSchema>>;

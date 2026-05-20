@@ -232,14 +232,25 @@ export function removeNewestFirst(
 /**
  * Encode the `WithdrawLamp { amount }` redeemer.
  *
- * Constructor index depends on Aiken VaultRedeemer enum order per vault type.
- * Proposed v1.0 order (Tuân may adjust during implementation; SDK then bumps):
- *   SnapshotGen: TriggerSnapshot=0, BurnBatch=1, UpdateProfile=2, WithdrawLamp=3
- *   InstantGen:  InstantGen=0, ApplyHalving=1, BurnBatch=2, UpdateProfile=3, WithdrawLamp=4
- *   VacuumGen:   VacuumCommit=0, VacuumFire=1, BurnBatch=2, WithdrawLamp=3 (no UpdateProfile)
- *   ScheduleGen: ScheduleCommit=0, ScheduleFire=1, BurnBatch=2, WithdrawLamp=3 (no UpdateProfile)
+ * Indices = NEXT slot after existing variants per actual Aiken enum on main:
  *
- * Implementation uses untyped Constr — Tuân review + confirm indices before merge.
+ *   SnapshotGen/onchain/lib/magiclamp/protocol/types.ak:
+ *     0 TriggerSnapshot · 1 BurnBatch · 2 UpdateProfile (stub)
+ *     → WithdrawLamp = 3
+ *
+ *   InstantGen/onchain/lib/magiclamp/protocol/types.ak:
+ *     0 InstantGen · 1 ApplyHalving · 2 BurnBatch · 3 UpdateProfile (stub)
+ *     → WithdrawLamp = 4
+ *
+ *   VacuumGen/onchain/lib/magiclamp/protocol/types.ak (6 variants — shares Instant/Halving/Burn/Update):
+ *     0 VacuumCommit · 1 VacuumFire · 2 InstantGen · 3 ApplyHalving · 4 BurnBatch · 5 UpdateProfile
+ *     → WithdrawLamp = 6
+ *
+ *   ScheduleGen/onchain/lib/magiclamp/protocol/types.ak:
+ *     0 ScheduleCommit · 1 ScheduleFire · 2 BurnBatch
+ *     → WithdrawLamp = 3
+ *
+ * If onchain enum order changes during v1.0 implementation, update the table below.
  */
 function encodeWithdrawLampRedeemer(vaultType: VaultType, amount: bigint): string {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -251,7 +262,7 @@ function encodeWithdrawLampRedeemer(vaultType: VaultType, amount: bigint): strin
 const WITHDRAW_LAMP_CONSTR_INDEX: Record<VaultType, number> = {
   Snapshot: 3,
   Instant:  4,
-  Vacuum:   3,
+  Vacuum:   6,   // Vacuum enum has 6 variants — shares Inst/Halving/Burn/Update
   Schedule: 3,
 };
 

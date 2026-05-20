@@ -32,6 +32,12 @@ export {
   type UpdateProfileResult,
 } from "./updateProfile.js";
 
+export {
+  resolveConstrIndex,
+  loadPlutusJson,
+  type PlutusJson,
+} from "./redeemerIndex.js";
+
 export type {
   Profile,
   VaultType,

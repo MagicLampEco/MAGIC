@@ -1,6 +1,7 @@
 // MagicSDK/src/types.ts — public types for createVault and friends
 import type { LucidEvolution, TxSignBuilder, Validator } from "@lucid-evolution/lucid";
 import type { Network } from "@magiclamp/protocol-utils";
+import type { PlutusJson } from "./redeemerIndex.js";
 
 export type Profile = "Ember" | "Flame" | "Lantern";
 
@@ -33,6 +34,14 @@ export interface ValidatorBundle {
   vaultUnappliedCbor: string;
   /** Unapplied shard validator CBOR hex (REQUIRED for vaultType "Schedule"). */
   shardUnappliedCbor?: string;
+  /** Full plutus.json content for the vault module. REQUIRED for actions that
+   *  use a redeemer (withdrawLamp, updateProfile, trigger…) — SDK reads
+   *  `validators[].redeemer.schema.$ref` → `definitions[].anyOf[]` to resolve
+   *  constructor indices by title. Avoids hardcoded indices that desync when
+   *  the Aiken enum reorders. Optional for createVault (no redeemer needed). */
+  vaultPlutusJson?: PlutusJson;
+  /** Shard module plutus.json (REQUIRED for ScheduleGen actions). */
+  shardPlutusJson?: PlutusJson;
 }
 
 /**

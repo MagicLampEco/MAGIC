@@ -25,13 +25,13 @@ import {
 
 import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { VaultType } from "./types.js";
+import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
 
-/**
- * Redeemer enum index for `WithdrawLamp` per vault type. Must match Aiken
- * enum constructor order in each module's `types.ak`. Tuân finalizes these
- * during v1.0 onchain implementation — update here if order differs.
- */
+/** Aiken redeemer variant title. Matches `pub type VaultRedeemer { WithdrawLamp ... }`. */
 const WITHDRAW_LAMP_TAG = "WithdrawLamp";
+
+/** Validator title in plutus.json — same across all 4 vault modules. */
+const VAULT_VALIDATOR_TITLE = "vault.vault.spend";
 
 export interface WithdrawLampParams {
   lucid:           LucidEvolution;
@@ -41,8 +41,13 @@ export interface WithdrawLampParams {
   amountOil:       bigint;
   /** Applied vault validator (same one used at createVault). */
   vaultScript:     Validator;
-  /** Vault type — picks the right validator redeemer enum. */
+  /** Vault type — for logging / error messages only. Constructor index for
+   *  the WithdrawLamp redeemer is resolved at runtime from `vaultPlutusJson`
+   *  (so SDK can't desync with onchain enum order). */
   vaultType:       VaultType;
+  /** Full plutus.json of the vault module — SDK reads redeemer enum to
+   *  resolve the WithdrawLamp constructor index at runtime. */
+  vaultPlutusJson: PlutusJson;
   /** Network. */
   network:         Network;
   /** LAMP minting policy + asset name. */
@@ -86,7 +91,7 @@ const DEFAULT_LAMP_ASSET_NAME = "4c414d50";
 export async function withdrawLamp(params: WithdrawLampParams): Promise<WithdrawLampResult> {
   const {
     lucid, vaultUtxo, amountOil, vaultScript, network,
-    lampPolicyId,
+    lampPolicyId, vaultPlutusJson,
   } = params;
   const lampAssetName = params.lampAssetName ?? DEFAULT_LAMP_ASSET_NAME;
 
@@ -135,12 +140,11 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   const destination = params.destinationAddress ?? (await lucid.wallet().address());
   const lampUnit = toUnit(lampPolicyId, lampAssetName);
 
-  // ── Build redeemer (Constr depends on vault type's enum index) ──
-  // Tuân finalizes the Aiken enum order in v1.0 — keep as labeled object
-  // here, Lucid Evolution maps via Data.to with the schema (TODO: add
-  // schema). For now, encode via Constr index pattern matching existing
-  // vault redeemer codes.
-  const redeemer = encodeWithdrawLampRedeemer(params.vaultType, amountOil);
+  // ── Build redeemer — resolve constr index from plutus.json at runtime ──
+  // No hardcoded indices: SDK reads the Aiken enum from plutus.json, finds
+  // the "WithdrawLamp" variant by title, uses its .index. If onchain enum
+  // reorders, the new plutus.json reflects it; SDK auto-updates.
+  const redeemer = encodeWithdrawLampRedeemer(vaultPlutusJson, amountOil);
 
   // ── Vault output assets: same lovelace, reduced LAMP ────────────
   const remainingLamp = vaultDatum.lamp_balance - amountOil;
@@ -232,39 +236,16 @@ export function removeNewestFirst(
 /**
  * Encode the `WithdrawLamp { amount }` redeemer.
  *
- * Indices = NEXT slot after existing variants per actual Aiken enum on main:
- *
- *   SnapshotGen/onchain/lib/magiclamp/protocol/types.ak:
- *     0 TriggerSnapshot · 1 BurnBatch · 2 UpdateProfile (stub)
- *     → WithdrawLamp = 3
- *
- *   InstantGen/onchain/lib/magiclamp/protocol/types.ak:
- *     0 InstantGen · 1 ApplyHalving · 2 BurnBatch · 3 UpdateProfile (stub)
- *     → WithdrawLamp = 4
- *
- *   VacuumGen/onchain/lib/magiclamp/protocol/types.ak (6 variants — shares Instant/Halving/Burn/Update):
- *     0 VacuumCommit · 1 VacuumFire · 2 InstantGen · 3 ApplyHalving · 4 BurnBatch · 5 UpdateProfile
- *     → WithdrawLamp = 6
- *
- *   ScheduleGen/onchain/lib/magiclamp/protocol/types.ak:
- *     0 ScheduleCommit · 1 ScheduleFire · 2 BurnBatch
- *     → WithdrawLamp = 3
- *
- * If onchain enum order changes during v1.0 implementation, update the table below.
+ * Constructor index resolved at runtime from `plutusJson` (no hardcoded table —
+ * see `redeemerIndex.ts:resolveConstrIndex`). Throws if `WithdrawLamp` variant
+ * is missing from the plutus.json (e.g. you forgot to rebuild after the Aiken
+ * change landed).
  */
-function encodeWithdrawLampRedeemer(vaultType: VaultType, amount: bigint): string {
+function encodeWithdrawLampRedeemer(plutusJson: PlutusJson, amount: bigint): string {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { Constr } = require("@lucid-evolution/lucid") as typeof import("@lucid-evolution/lucid");
-  const idx = WITHDRAW_LAMP_CONSTR_INDEX[vaultType];
+  const idx = resolveConstrIndex(plutusJson, VAULT_VALIDATOR_TITLE, WITHDRAW_LAMP_TAG);
   return Data.to(new Constr(idx, [amount]));
 }
 
-const WITHDRAW_LAMP_CONSTR_INDEX: Record<VaultType, number> = {
-  Snapshot: 3,
-  Instant:  4,
-  Vacuum:   6,   // Vacuum enum has 6 variants — shares Inst/Halving/Burn/Update
-  Schedule: 3,
-};
-
-// Re-export for tests + future spec evolution.
-export { WITHDRAW_LAMP_TAG, WITHDRAW_LAMP_CONSTR_INDEX };
+export { WITHDRAW_LAMP_TAG, VAULT_VALIDATOR_TITLE };

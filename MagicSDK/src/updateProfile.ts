@@ -8,14 +8,13 @@
 // Cooldown: 2 epoch giữa các lần đổi (C-PC-V2). Tránh user flip-flop.
 //
 // ⚠ ONCHAIN STATUS:
-//   - SnapshotGen vault: `UpdateProfile` redeemer EXISTS nhưng STUB (chỉ check
-//     owner sign, không enforce cooldown / lazy apply / datum integrity).
-//   - InstantGen vault: redeemer CHƯA EXISTS — Tuân add trong v1.0 (Option A).
-//   - VacuumGen + ScheduleGen: không cần UpdateProfile (validator không dùng
+//   - SnapshotGen + InstantGen vault: `UpdateProfile` enum variant đã có; handler
+//     trong validator là STUB (chỉ check owner sign, không enforce cooldown /
+//     lazy apply / datum integrity). Cần Tuân implement full per SPEC_V1.md §2/§3.
+//   - VacuumGen + ScheduleGen: không support UpdateProfile (validator không dùng
 //     profile cho compute).
 //
-// SDK code complete + match spec §12 — chỉ chờ validator Tuân implement full
-// per §12.1..12.4.
+// SDK code complete + match spec §12 — đợi validator full impl.
 
 import {
   Data,
@@ -30,16 +29,23 @@ import {
 
 import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { Profile, VaultType } from "./types.js";
+import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
 
 const PROFILE_COOLDOWN = 2n; // epochs (C-PC-V2)
+const UPDATE_PROFILE_TAG = "UpdateProfile";
+const VAULT_VALIDATOR_TITLE = "vault.vault.spend";
 
 export interface UpdateProfileParams {
   lucid:        LucidEvolution;
   vaultUtxo:    UTxO;
   newProfile:   Profile;
   vaultScript:  Validator;
-  /** Vault type — for redeemer enum index lookup. */
+  /** Vault type — for error/logging only; only "Snapshot" and "Instant" support
+   *  UpdateProfile (Vacuum/Schedule don't use profile in M computation). */
   vaultType:    VaultType;
+  /** Full plutus.json of the vault module — SDK resolves UpdateProfile
+   *  constructor index at runtime (no hardcoded table). */
+  vaultPlutusJson: PlutusJson;
   network:      Network;
   tipPosixMs?:  bigint;
 }
@@ -69,7 +75,7 @@ export interface UpdateProfileResult {
  *       - All other fields: unchanged
  */
 export async function updateProfile(params: UpdateProfileParams): Promise<UpdateProfileResult> {
-  const { lucid, vaultUtxo, newProfile, vaultScript, vaultType, network } = params;
+  const { lucid, vaultUtxo, newProfile, vaultScript, vaultType, network, vaultPlutusJson } = params;
 
   if (vaultType === "Vacuum" || vaultType === "Schedule") {
     throw new Error(
@@ -117,7 +123,7 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
     network,
     scriptHashToCredential(validatorToScriptHash(vaultScript)),
   );
-  const redeemer = encodeUpdateProfileRedeemer(vaultType, newProfile);
+  const redeemer = encodeUpdateProfileRedeemer(vaultPlutusJson, newProfile);
 
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
@@ -164,32 +170,27 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
 /**
  * Encode the `UpdateProfile { new_profile }` redeemer.
  *
- * Constructor index per vault type's Aiken VaultRedeemer enum:
- *   SnapshotGen: UpdateProfile = 2 (already in enum, stub impl — Tuân implements full per §12)
- *   InstantGen:  UpdateProfile = 3 (NEW in v1.0 — Tuân adds enum variant + handler)
+ * Constructor index resolved at runtime from `plutusJson` (no hardcoded table).
+ * Throws if `UpdateProfile` variant missing (e.g. used on Vacuum/Schedule vault
+ * where the enum doesn't include it).
  *
- * ActivityProfile inner constructor: Ember=0, Flame=1, Lantern=2 (Aiken order).
+ * ActivityProfile inner constructor: Ember=0, Flame=1, Lantern=2 (Aiken order
+ * is invariant since it's defined as `type ActivityProfile { Ember Flame Lantern }`
+ * — kept hardcoded as the enum is closed and pre-dates v1.0).
  */
-function encodeUpdateProfileRedeemer(vaultType: VaultType, newProfile: Profile): string {
-  if (vaultType !== "Snapshot" && vaultType !== "Instant") {
-    throw new Error(`encodeUpdateProfileRedeemer: unsupported vaultType=${vaultType}`);
-  }
+function encodeUpdateProfileRedeemer(plutusJson: PlutusJson, newProfile: Profile): string {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { Constr } = require("@lucid-evolution/lucid") as typeof import("@lucid-evolution/lucid");
   const profileConstr = new Constr(PROFILE_CONSTR_INDEX[newProfile], []);
-  const idx = UPDATE_PROFILE_CONSTR_INDEX[vaultType];
+  const idx = resolveConstrIndex(plutusJson, VAULT_VALIDATOR_TITLE, UPDATE_PROFILE_TAG);
   return Data.to(new Constr(idx, [profileConstr]));
 }
 
-const UPDATE_PROFILE_CONSTR_INDEX: Record<"Snapshot" | "Instant", number> = {
-  Snapshot: 2,   // existing stub — Tuân implements full
-  Instant:  3,   // NEW in v1.0 — Tuân adds
-};
-
+/** ActivityProfile enum order — fixed since v0 (not subject to v1.0 churn). */
 const PROFILE_CONSTR_INDEX: Record<Profile, number> = {
   Ember:   0,
   Flame:   1,
   Lantern: 2,
 };
 
-export { PROFILE_COOLDOWN, UPDATE_PROFILE_CONSTR_INDEX, PROFILE_CONSTR_INDEX };
+export { PROFILE_COOLDOWN, UPDATE_PROFILE_TAG, PROFILE_CONSTR_INDEX };

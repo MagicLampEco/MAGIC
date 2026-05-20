@@ -144,17 +144,26 @@ Mỗi network có `ms_per_epoch` khác nhau (PlutusV3 validity_range = POSIX ms)
 
 Vault validator được apply với `ms_per_epoch` tương ứng → hash khác per-network → địa chỉ vault khác. **Vault tạo trên Preview KHÔNG tương thích với Mainnet.**
 
-## Limitations đã biết (sẽ fix sau)
+## Trạng thái v1.0
 
-| Hạng mục | Status | Workaround |
+Xem [`SPEC_V1.md`](./SPEC_V1.md) — đầy đủ scope onchain changes (Withdraw + UpdateProfile full impl) đã được anh chốt.
+
+Sẵn sàng integrate trên Preview testnet với v0 (current onchain). Production mainnet chỉ launch sau khi Tuân ship v1.0 đầy đủ.
+
+### SDK functions
+
+| Function | Hoạt động với v0? | Hoạt động với v1.0? |
 |---|---|---|
-| **Withdraw LAMP về ví** | ❌ Không có redeemer | LAMP locked vào vault chỉ flow sang Treasury qua Vacuum/Schedule, hoặc stay forever |
-| **Key rotation (đổi owner PKH)** | ❌ Không có redeemer | User rotate key = tạo vault mới với PKH mới |
-| **Session key** | ⚠ `personal_delegate` field tồn tại nhưng validator chưa enforce | Reserved cho future spec |
-| **ProfileChange** | ⚠ Validator partial (chưa có `aiken.toml`) | User chọn profile lúc tạo vault, không đổi được |
-| **UMKeeper agent** | ⚠ keeper.ts còn `lucid.utils.*` cũ | InstantGen UM sẽ stale → fallback 0.5× sau >1 epoch không update |
+| `createVault()` | ✅ | ✅ |
+| `listVaultsForOwner()` | ✅ (multi-vault native) | ✅ |
+| `updateProfile()` | ⚠ Stub validator chỉ check sign — không enforce | ✅ Full per spec §12 |
+| `withdrawLamp()` | ❌ Validator reject (no redeemer) | ✅ |
 
-Xem MAGIC repo PR #3 + roadmap cho timeline.
+### Nằm ngoài scope MAGIC (PhoenixKey hoặc app layer)
+
+- **Username → PKH mapping** — PhoenixKey DID resolver
+- **Session key cho web login** — PhoenixKey wallet abstraction (CIP-30 hoặc custodial). MAGIC validator chỉ thấy tx signed by owner PKH, không phân biệt cơ chế signing
+- **Key rotation (đổi master key)** — chưa có spec; sau v1.0 nếu cần
 
 ## Stability contract
 

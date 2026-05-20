@@ -4,10 +4,11 @@
 
 import {
   Lucid, Blockfrost, Data,
-  type LucidEvolution, type UTxO, type Tx,
+  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  slotToUnixTime,
+  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
 } from "@lucid-evolution/lucid";
 import { posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
-import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   computeUMRaw, clampUM, appendHistory, computeSMA, computeNewUM,
   type UMDatum,
@@ -27,7 +28,7 @@ export interface EpochStats {
 }
 
 export interface UMUpdateResult {
-  tx           : Tx;
+  tx           : TxSignBuilder;
   oldSmoothed  : bigint;
   newSmoothed  : bigint;
   newRaw       : bigint;
@@ -78,7 +79,7 @@ export async function buildUMUpdateTx(
   lucid          : LucidEvolution,
   umUtxo         : UTxO,
   epochStats     : EpochStats,
-  umScriptHash   : string,
+  umScript       : Validator,         // applied script (ms_per_epoch baked in)
   network        : Network = "Preview",
   tipPosixMs?    : bigint,
 ): Promise<UMUpdateResult> {
@@ -101,7 +102,11 @@ export async function buildUMUpdateTx(
     history:            newHistory,
   };
 
-  const umAddr   = lucid.utils.validatorToAddress({ type: "PlutusV3", script: umScriptHash });
+  // UM address derived from applied script (hash differs per-network).
+  const umAddr   = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(umScript)),
+  );
   const redeemer = Data.to({ UMUpdate: { new_raw: newRaw } }, UMRedeemerSchema);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const tipMs    = tipPosixMs ?? BigInt(Date.now());
@@ -111,6 +116,7 @@ export async function buildUMUpdateTx(
   const tx = await lucid
     .newTx()
     .collectFrom([umUtxo], redeemer)
+    .attach.SpendingValidator(umScript)
     .pay.ToAddressWithData(
       umAddr,
       { kind: "inline", value: Data.to(newDatum, UMDatumSchema) },
@@ -147,7 +153,7 @@ export async function buildUMUpdateTx(
 export interface KeeperConfig {
   lucid          : LucidEvolution;
   umUtxoUnit     : string;     // NFT unit to identify UM UTxO
-  umScriptHash   : string;
+  umScript       : Validator;  // applied script (ms_per_epoch baked in)
   shardAddresses : string[];   // for epoch stats query
   intervalMs     : number;     // polling interval (e.g. 60_000 = 1 min)
   network?       : Network;    // for POSIX-based epoch math
@@ -162,7 +168,7 @@ export interface KeeperConfig {
  * Returns a stop function.
  */
 export function startUMKeeper(config: KeeperConfig): () => void {
-  const { lucid, umUtxoUnit, umScriptHash, shardAddresses, intervalMs } = config;
+  const { lucid, umUtxoUnit, umScript, shardAddresses, intervalMs } = config;
   let running = true;
 
   async function tick() {
@@ -183,7 +189,7 @@ export function startUMKeeper(config: KeeperConfig): () => void {
       console.log(`[UM Keeper] New epoch ${currentEpoch} detected. Updating UM...`);
 
       const stats  = await getEpochStats(lucid, currentEpoch, shardAddresses);
-      const result = await buildUMUpdateTx(lucid, umUtxo, stats, umScriptHash);
+      const result = await buildUMUpdateTx(lucid, umUtxo, stats, umScript, network);
       const signed = await result.tx.sign.withWallet().complete();
       const txHash = await signed.submit();
 

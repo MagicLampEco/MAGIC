@@ -385,48 +385,28 @@ Chỉ launch v1.0 (đã có Withdraw + UpdateProfile đầy đủ). Quy trình: 
 - ✅ `MagicSDK/src/listVaults.ts` — multi-vault discovery (chạy ngay trên v0)
 - ✅ Unit tests 18/18 pass
 
-### Redeemer constructor indices
+### Redeemer constructor indices — SDK tự resolve runtime
 
-Indices = NEXT slot sau các variant đã có trong Aiken enum thực tế trên main. SDK đã align với bảng dưới:
+SDK KHÔNG còn hardcode index. Thay vì duy trì bảng đếm tay (dễ desync khi Aiken enum reorders), SDK đọc trực tiếp từ `plutus.json` mà Aiken sinh ra:
 
-**SnapshotGen** (`SnapshotGen/onchain/lib/magiclamp/protocol/types.ak`)
+```
+plutus.json
+├── validators[].title = "vault.vault.spend"
+│   └── redeemer.schema.$ref → "#/definitions/<path>/VaultRedeemer"
+└── definitions["…/VaultRedeemer"].anyOf[]
+    ├── { title: "WithdrawLamp",  index: 6, ... }
+    └── ...
+```
 
-| Index | Redeemer | Trạng thái |
+Caller pass `vaultPlutusJson` qua `ValidatorBundle.vaultPlutusJson`; SDK helper `resolveConstrIndex(plutusJson, validatorTitle, variantTitle)` tự lookup index. Nếu enum reorders trong v1.0 hoặc tương lai → SDK pick up tự động qua plutus.json mới.
+
+Implementation hiện tại (Aiken enum trên main, để tham khảo — SDK không hardcode):
+
+| Module | Enum variant trên main | WithdrawLamp index (sau khi add) |
 |---|---|---|
-| 0 | TriggerSnapshot | existing |
-| 1 | BurnBatch | existing |
-| 2 | UpdateProfile | existing (stub → full impl §2) |
-| **3** | **WithdrawLamp** | **NEW** |
+| SnapshotGen | 0 Trigger · 1 Burn · 2 UpdateProfile | 3 (NEW) |
+| InstantGen | 0 Instant · 1 Halving · 2 Burn · 3 UpdateProfile | 4 (NEW) |
+| VacuumGen | 0 VCommit · 1 VFire · 2 Instant · 3 Halving · 4 Burn · 5 UpdateProfile | 6 (NEW) |
+| ScheduleGen | 0 SCommit · 1 SFire · 2 Burn | 3 (NEW) |
 
-**InstantGen** (`InstantGen/onchain/lib/magiclamp/protocol/types.ak`)
-
-| Index | Redeemer | Trạng thái |
-|---|---|---|
-| 0 | InstantGen | existing |
-| 1 | ApplyHalving | existing |
-| 2 | BurnBatch | existing |
-| 3 | UpdateProfile | existing (stub → full impl §3) |
-| **4** | **WithdrawLamp** | **NEW** |
-
-**VacuumGen** (`VacuumGen/onchain/lib/magiclamp/protocol/types.ak`) — enum có 6 variant vì share Instant/Halving/Burn/Update với module khác
-
-| Index | Redeemer | Trạng thái |
-|---|---|---|
-| 0 | VacuumCommit | existing |
-| 1 | VacuumFire | existing |
-| 2 | InstantGen | existing (shared, unhandled trong Vacuum vault) |
-| 3 | ApplyHalving | existing (shared) |
-| 4 | BurnBatch | existing |
-| 5 | UpdateProfile | existing (shared) |
-| **6** | **WithdrawLamp** | **NEW** |
-
-**ScheduleGen** (`ScheduleGen/onchain/lib/magiclamp/protocol/types.ak`)
-
-| Index | Redeemer | Trạng thái |
-|---|---|---|
-| 0 | ScheduleCommit | existing |
-| 1 | ScheduleFire | existing |
-| 2 | BurnBatch | existing |
-| **3** | **WithdrawLamp** | **NEW** |
-
-Nếu enum order thay đổi → update 2 chỗ trong SDK: `MagicSDK/src/withdrawLamp.ts:WITHDRAW_LAMP_CONSTR_INDEX` và `updateProfile.ts:UPDATE_PROFILE_CONSTR_INDEX`.
+→ Implementer thêm `WithdrawLamp` ở cuối enum mỗi module. SDK không cần update khi index khác kỳ vọng — chỉ cần `aiken build` sinh plutus.json mới, SDK tự resolve.

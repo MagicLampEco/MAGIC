@@ -38,18 +38,26 @@ use magiclamp/protocol/snapshot.{
 use magiclamp/protocol/decay.{is_snapshot_expired}
 
 // ── Parameterized validator ───────────────────────────────────
-validator vault {
+// Parameter `ms_per_epoch` is applied at deploy time per-network:
+//   Mainnet:        432_000_000  (slot_length 1s × 432_000 slots)
+//   Preview/Preprod: 86_400_000  (slot_length 1s ×  86_400 slots)
+// See ProtocolUtils MS_PER_EPOCH_BY_NETWORK for the offchain mirror.
+// Plutus validity_range is in POSIX milliseconds since 1970-01-01 — see
+// aiken-lang/stdlib transaction.ak comment on ValidityRange.
+// Epoch numbering becomes POSIX-derived (not Cardano-genesis-relative); both
+// validator and SDK use the same formula `posix_ms / ms_per_epoch` so deltas
+// and ordering are consistent.
+validator vault(ms_per_epoch: Int) {
   spend(
     datum_opt : Option<VaultDatum>,
     redeemer  : VaultRedeemer,
     own_ref   : OutputReference,
-    ctx       : ScriptContext,
+    tx        : Transaction,
   ) {
     expect Some(input_datum) = datum_opt
-    let tx = ctx.transaction
 
-    // Current epoch from tx validity range lower bound
-    let current_epoch = get_current_epoch(tx)
+    // Current epoch from tx validity range lower bound (POSIX ms)
+    let current_epoch = get_current_epoch(tx, ms_per_epoch)
 
     when redeemer is {
 
@@ -181,15 +189,17 @@ fn validate_snapshot(
 // Helpers
 // ═══════════════════════════════════════════════════════════════
 
-fn get_current_epoch(tx: Transaction) -> Int {
-  expect Some(lower_slot) =
+// Plutus validity_range carries POSIX MILLISECONDS, not slots. Both validator
+// and SDK divide by `ms_per_epoch` to obtain a monotonic epoch counter.
+fn get_current_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+  expect Some(lower_ms) =
     tx.validity_range.lower_bound.bound_type
     |> get_finite_slot
-  lower_slot / 432_000
+  lower_ms / ms_per_epoch
 }
 
 fn get_finite_slot(
-  bound_type: IntervalBoundType<Int>,
+  bound_type: IntervalBoundType,
 ) -> Option<Int> {
   when bound_type is {
     Finite(s) -> Some(s)

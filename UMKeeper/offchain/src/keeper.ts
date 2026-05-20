@@ -6,7 +6,8 @@ import {
   Lucid, Blockfrost, Data,
   type LucidEvolution, type UTxO, type Tx,
 } from "@lucid-evolution/lucid";
-import { SLOTS_PER_EPOCH, slotToEpoch } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   computeUMRaw, clampUM, appendHistory, computeSMA, computeNewUM,
   type UMDatum,
@@ -78,6 +79,8 @@ export async function buildUMUpdateTx(
   umUtxo         : UTxO,
   epochStats     : EpochStats,
   umScriptHash   : string,
+  network        : Network = "Preview",
+  tipPosixMs?    : bigint,
 ): Promise<UMUpdateResult> {
   const datum    = Data.from(umUtxo.datum!, UMDatumSchema);
   const currentEpoch = epochStats.epoch;
@@ -100,7 +103,10 @@ export async function buildUMUpdateTx(
 
   const umAddr   = lucid.utils.validatorToAddress({ type: "PlutusV3", script: umScriptHash });
   const redeemer = Data.to({ UMUpdate: { new_raw: newRaw } }, UMRedeemerSchema);
-  const epochStart = Number(currentEpoch * SLOTS_PER_EPOCH);
+  // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
+  const tipMs    = tipPosixMs ?? BigInt(Date.now());
+  const lowerTime = Number(tipMs);
+  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
   const tx = await lucid
     .newTx()
@@ -111,8 +117,8 @@ export async function buildUMUpdateTx(
       umUtxo.assets,
     )
     // Permissionless — no .addSignerKey()
-    .validFrom(epochStart)
-    .validTo(epochStart + Number(SLOTS_PER_EPOCH) - 1)
+    .validFrom(lowerTime)
+    .validTo(upperTime)
     .complete();
 
   const arrow = newSmoothed > datum.smoothed_q ? "▲" : newSmoothed < datum.smoothed_q ? "▼" : "─";
@@ -144,6 +150,7 @@ export interface KeeperConfig {
   umScriptHash   : string;
   shardAddresses : string[];   // for epoch stats query
   intervalMs     : number;     // polling interval (e.g. 60_000 = 1 min)
+  network?       : Network;    // for POSIX-based epoch math
   onUpdate?      : (result: UMUpdateResult) => void;
   onError?       : (err: Error) => void;
 }
@@ -166,7 +173,9 @@ export function startUMKeeper(config: KeeperConfig): () => void {
 
       const datum       = Data.from(umUtxo.datum, UMDatumSchema);
       const tip         = await (lucid.provider as any).getBlock("latest");
-      const currentEpoch = slotToEpoch(BigInt(tip.slot ?? 0));
+      const network     = config.network ?? "Preview";
+      const tipPosixMs  = BigInt(slotToUnixTime(network, tip.slot ?? 0));
+      const currentEpoch = posixMsToEpoch(tipPosixMs, network);
 
       // Check if update needed
       if (currentEpoch <= datum.last_updated_epoch) return;

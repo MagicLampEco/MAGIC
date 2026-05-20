@@ -8,7 +8,6 @@
 use aiken/collection/list
 use aiken/interval.{Finite, IntervalBoundType}
 use cardano/address.{Address}
-use cardano/script_context.{ScriptContext}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction}
 
 // ── Constants ────────────────────────────────────────────────
@@ -16,7 +15,6 @@ const q : Int = 1_000_000_000
 const um_min_q : Int = 500_000_000    // [Constitutional]
 const um_max_q : Int = 2_000_000_000  // [Constitutional]
 const um_window : Int = 6             // [Significant]
-const slots_per_epoch : Int = 432_000
 
 // ── Types ─────────────────────────────────────────────────────
 pub type UMDatum {
@@ -32,16 +30,18 @@ pub type UMRedeemer {
 }
 
 // ── Validator ─────────────────────────────────────────────────
-validator um_datum_validator {
+// `ms_per_epoch` is applied per-network (Plutus validity_range is POSIX ms):
+//   Mainnet:        432_000_000
+//   Preview/Preprod: 86_400_000
+validator um_datum_validator(ms_per_epoch: Int) {
   spend(
     datum_opt : Option<UMDatum>,
     redeemer  : UMRedeemer,
     own_ref   : OutputReference,
-    ctx       : ScriptContext,
+    tx        : Transaction,
   ) {
     expect Some(datum) = datum_opt
-    let tx            = ctx.transaction
-    let current_epoch = get_epoch(tx)
+    let current_epoch = get_epoch(tx, ms_per_epoch)
     let own_addr      = get_own_addr(own_ref, tx.inputs)
 
     when redeemer is {
@@ -99,12 +99,12 @@ fn clamp(x: Int, lo: Int, hi: Int) -> Int {
   if x < lo { lo } else if x > hi { hi } else { x }
 }
 
-fn get_epoch(tx: Transaction) -> Int {
+fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
   expect Some(s) = tx.validity_range.lower_bound.bound_type |> get_finite
-  s / slots_per_epoch
+  s / ms_per_epoch
 }
 
-fn get_finite(bt: IntervalBoundType<Int>) -> Option<Int> {
+fn get_finite(bt: IntervalBoundType) -> Option<Int> {
   when bt is {
     Finite(s) -> Some(s)
     _ -> None

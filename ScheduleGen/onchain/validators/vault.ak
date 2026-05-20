@@ -10,7 +10,6 @@ use aiken/collection/list
 use aiken/interval.{Finite, IntervalBoundType}
 use cardano/address.{Address}
 use cardano/assets.{PolicyId}
-use cardano/script_context.{ScriptContext}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
@@ -38,20 +37,23 @@ use magiclamp/protocol/lock.{
 // ══════════════════════════════════════════════════════════════
 // Vault validator
 // ══════════════════════════════════════════════════════════════
+// `ms_per_epoch` is applied per-network (Plutus validity_range is POSIX ms):
+//   Mainnet:        432_000_000
+//   Preview/Preprod: 86_400_000
 validator vault(
   lamp_policy_id    : PolicyId,
   treasury_addr     : Address,
   shard_policy_id   : PolicyId,  // identifies shard UTxOs by NFT
+  ms_per_epoch      : Int,
 ) {
   spend(
     datum_opt : Option<VaultDatum>,
     redeemer  : VaultRedeemer,
     own_ref   : OutputReference,
-    ctx       : ScriptContext,
+    tx        : Transaction,
   ) {
     expect Some(datum) = datum_opt
-    let tx            = ctx.transaction
-    let current_epoch = get_epoch(tx)
+    let current_epoch = get_epoch(tx, ms_per_epoch)
     let vault_addr    = own_addr(own_ref, tx.inputs)
 
     // C-VAULT-DS-1
@@ -83,10 +85,9 @@ validator shard {
     datum_opt : Option<ScheduleAggregateShardDatum>,
     redeemer  : ShardRedeemer,
     own_ref   : OutputReference,
-    ctx       : ScriptContext,
+    tx        : Transaction,
   ) {
     expect Some(shard_datum) = datum_opt
-    let tx         = ctx.transaction
     let shard_addr = own_addr(own_ref, tx.inputs)
     let output_shard = find_shard_output(tx.outputs, shard_addr, shard_datum.shard_id)
 
@@ -342,12 +343,12 @@ fn create_batches_rec(
 
 // ── Helpers ───────────────────────────────────────────────────
 
-fn get_epoch(tx: Transaction) -> Int {
+fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
   expect Some(s) = tx.validity_range.lower_bound.bound_type |> get_finite
-  s / 432_000
+  s / ms_per_epoch
 }
 
-fn get_finite(bt: IntervalBoundType<Int>) -> Option<Int> {
+fn get_finite(bt: IntervalBoundType) -> Option<Int> {
   when bt is {
     Finite(s) -> Some(s)
     _ -> None

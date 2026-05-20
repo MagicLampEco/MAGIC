@@ -3,15 +3,24 @@
 // KHÔNG commit file này nếu chứa private key thật
 
 import "dotenv/config";
+import { slotsPerEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import type { LucidEvolution } from "@lucid-evolution/lucid";
 
 // ── Network ───────────────────────────────────────────────────
-export const NETWORK = (process.env.NETWORK ?? "Preview") as "Preview" | "Preprod" | "Mainnet";
+export const NETWORK: Network = (process.env.NETWORK ?? "Preview") as Network;
 export const BLOCKFROST_URL = `https://cardano-${NETWORK.toLowerCase()}.blockfrost.io/api/v0`;
 export const BLOCKFROST_KEY = process.env.BLOCKFROST_KEY ?? "";
 export const PRIVATE_KEY    = process.env.PRIVATE_KEY ?? "";
+export const WALLET_SEED    = (process.env.WALLET_SEED ?? "").trim().replace(/\s+/g, " ");
 
-if (!BLOCKFROST_KEY) throw new Error("BLOCKFROST_KEY missing in .env");
-if (!PRIVATE_KEY)    throw new Error("PRIVATE_KEY missing in .env");
+if (!BLOCKFROST_KEY)              throw new Error("BLOCKFROST_KEY missing in .env");
+if (!PRIVATE_KEY && !WALLET_SEED) throw new Error("Either PRIVATE_KEY or WALLET_SEED required in .env");
+
+/** Select wallet from whichever credential is available. CRLF-safe for Windows. */
+export function selectWallet(lucid: LucidEvolution): void {
+  if (PRIVATE_KEY)      lucid.selectWallet.fromPrivateKey(PRIVATE_KEY);
+  else if (WALLET_SEED) lucid.selectWallet.fromSeed(WALLET_SEED);
+}
 
 // ── Script hashes (điền sau khi aiken build) ──────────────────
 // Lấy từ: cat [Module]/onchain/plutus.json | jq '.validators[0].hash'
@@ -43,12 +52,15 @@ export const ADDRESSES = {
   treasury: process.env.TREASURY_ADDRESS ?? "FILL_AFTER_DEPLOY",
 };
 
-// ── Protocol constants (không thay đổi) ──────────────────────
+// ── Protocol constants ───────────────────────────────────────
+// SLOTS_PER_EPOCH is network-specific — derived from NETWORK env at runtime.
+// Mainnet=432_000, Preview/Preprod=86_400 (1 day).
 export const PROTOCOL = {
-  SHARD_COUNT:  16,
-  SHARD_CAP:    450_000_000_000_000n,  // 4.5×10^14 oil = 450M LAMP
-  SLOTS_PER_EPOCH: 432_000n,
-  Q:            1_000_000_000n,
+  SHARD_COUNT:     16,
+  SHARD_CAP:       450_000_000_000_000n,  // 4.5×10^14 oil = 450M LAMP
+  SLOTS_PER_EPOCH: slotsPerEpoch(NETWORK),
+  MS_PER_EPOCH:    msPerEpoch(NETWORK),    // = slots_per_epoch × 1000 (slot_length 1s)
+  Q:               1_000_000_000n,
 };
 
 // ── Helpers ───────────────────────────────────────────────────

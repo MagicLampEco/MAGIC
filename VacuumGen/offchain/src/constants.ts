@@ -1,6 +1,7 @@
 // src/constants.ts — GenMAGIC v3.3 Constants (VacuumGen)
 export const Q = 1_000_000_000n;
-export const SLOTS_PER_EPOCH    = 432_000n;
+// SLOTS_PER_EPOCH removed — network-specific. Use slotsPerEpoch(network) / msPerEpoch(network)
+// from @magiclamp/protocol-utils.
 export const OIL_PER_LAMP       = 1_000_000n;
 export const NANOGIC_PER_MAGIC  = 1_000_000_000n;
 

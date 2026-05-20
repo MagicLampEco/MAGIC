@@ -4,7 +4,8 @@
 
 import {
   Lucid, Blockfrost, Data, fromText, toUnit,
-  type LucidEvolution, type UTxO, type Tx,
+  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  type LucidEvolution, type UTxO, type Tx, type Validator,
 } from "@lucid-evolution/lucid";
 import {
   TESTNET_CONFIG, MAX_BATCHES_PER_VAULT, INSTANT_DECAY_WINDOW,
@@ -14,7 +15,8 @@ import {
   computeInstantMagic, getUmForInstant, shouldHalve, applyHalving,
   isExpired, lampToOil, slotToEpoch, nanogicToMagicStr, qToStr,
 } from "./math.js";
-import { getTipSlot, cmpBigIntAsc } from "@magiclamp/protocol-utils";
+import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network, cmpBigIntAsc } from "@magiclamp/protocol-utils";
+import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatumSchema, UMDatumSchema, VaultRedeemerSchema,
   type VaultDatum, type UMDatum, type MagicBatch, type LoyaltyHolding,
@@ -34,6 +36,25 @@ export interface InstantGenParams {
   umDatumUtxo: UTxO;
   /** User's wallet address (must match vault.owner) */
   userAddress: string;
+  /** Compiled vault validator with all 4 params already applied per-network
+   *  (lamp_policy_id, treasury_addr, um_nft_policy, ms_per_epoch). Required to spend the vault UTxO. */
+  vaultScript: Validator;
+  /** LAMP policy id (hex) — must match `lamp_policy_id` param applied to validator. */
+  lampPolicyId: string;
+  /** LAMP asset name (hex). Defaults to TESTNET_CONFIG.lampAssetName. */
+  lampAssetName?: string;
+  /** Treasury address (Bech32) — must match `treasury_addr` param applied to validator. */
+  treasuryAddress: string;
+  /** Network — picks ms_per_epoch for POSIX-based epoch math (must match validator). */
+  network?: Network;
+  /** Optional tip POSIX ms. If omitted, derived from `getTipSlot(lucid, network)`. */
+  tipPosixMs?: bigint;
+  /** TEST ONLY: mutate output datum (negative tests). */
+  tamperOutputDatum?: (d: any) => any;
+  /** TEST ONLY: skip required-signer for owner-sig negative test. */
+  skipOwnerSig?: boolean;
+  /** TEST ONLY: override treasury LAMP amount (default = lampPaidOil). */
+  treasuryAmountOverride?: bigint;
 }
 
 export interface InstantGenResult {
@@ -81,7 +102,12 @@ export async function createLucid(blockfrostApiKey: string): Promise<LucidEvolut
 export async function buildInstantGenTx(
   params: InstantGenParams,
 ): Promise<InstantGenResult> {
-  const { lucid, vaultUtxo, lampPaidOil, umDatumUtxo, userAddress } = params;
+  const {
+    lucid, vaultUtxo, lampPaidOil, umDatumUtxo, userAddress,
+    vaultScript, lampPolicyId, treasuryAddress,
+  } = params;
+  const network = params.network ?? TESTNET_CONFIG.network;
+  const lampAssetName = params.lampAssetName ?? TESTNET_CONFIG.lampAssetName;
 
   // ── Decode vault datum ───────────────────────────────────────
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
@@ -89,11 +115,10 @@ export async function buildInstantGenTx(
   // ── Decode UM datum ──────────────────────────────────────────
   const umDatum = Data.from(umDatumUtxo.datum!, UMDatumSchema);
 
-  // ── Get current slot / epoch ─────────────────────────────────
-  const { slot: currentSlot } = await lucid.provider.getProtocolParameters();
-  // Use tip slot — adjust as needed based on your Blockfrost version
-  const tipSlot = await getTipSlot(lucid);
-  const currentEpoch = slotToEpoch(BigInt(tipSlot));
+  // ── Get current epoch (POSIX-ms-based, matches Aiken validator) ──
+  const tipPosixMs = params.tipPosixMs
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
 
   // ── C-INST-1: MIN purchase ───────────────────────────────────
   if (lampPaidOil < MIN_INSTANT_PURCHASE) {
@@ -191,25 +216,35 @@ export async function buildInstantGenTx(
   };
 
   // ── Build transaction ─────────────────────────────────────────
-  const vaultScriptAddress = lucid.utils.validatorToAddress({
-    type:   "PlutusV3",
-    script: TESTNET_CONFIG.vaultScriptHash,
-  });
+  // Address derived from applied vault script (4-param: lamp_policy_id, treasury_addr,
+  // um_nft_policy, ms_per_epoch). Hash differs per network.
+  const vaultScriptAddress = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(vaultScript)),
+  );
+
+  // TEST ONLY: mutate output datum if tamper provided
+  if (params.tamperOutputDatum) {
+    Object.assign(newVaultDatum, params.tamperOutputDatum(newVaultDatum));
+  }
 
   const redeemer = Data.to(
     { InstantGen: { lamp_paid: lampPaidOil } },
     VaultRedeemerSchema,
   );
 
-  const lampUnit = toUnit(TESTNET_CONFIG.lampPolicyId, TESTNET_CONFIG.lampAssetName);
+  const lampUnit = toUnit(lampPolicyId, lampAssetName);
 
-  // Validity range: constrain tx to current epoch only (one epoch slot range)
-  const epochStartSlot = Number(currentEpoch * 432_000n);
-  const epochEndSlot   = epochStartSlot + 432_000 - 1;
+  // Validity range: lower bound = current tip POSIX ms; upper = end of POSIX-epoch.
+  // Lucid Evolution's validFrom/validTo take POSIX ms and convert to slot internally.
+  // Validator computes epoch = posix_ms / ms_per_epoch (same as off-chain).
+  const lowerTime = Number(tipPosixMs);
+  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
-  const tx = await lucid
+  let txBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
+    .attach.SpendingValidator(vaultScript)
     .readFrom([umDatumUtxo])        // UM datum as reference input (not spent)
     .pay.ToAddressWithData(
       vaultScriptAddress,
@@ -220,13 +255,14 @@ export async function buildInstantGenTx(
       },
     )
     .pay.ToAddress(
-      TESTNET_CONFIG.treasuryAddress,
-      { [lampUnit]: lampPaidOil },              // C-INST-4: LAMP → Treasury
+      treasuryAddress,
+      { [lampUnit]: params.treasuryAmountOverride ?? lampPaidOil },  // C-INST-4
     )
-    .addSignerKey(vaultDatum.owner)             // User must sign (C-PC-V1)
-    .validFrom(epochStartSlot)
-    .validTo(epochEndSlot)
-    .complete();
+    .validFrom(lowerTime)
+    .validTo(upperTime);
+
+  if (!params.skipOwnerSig) txBuilder = txBuilder.addSignerKey(vaultDatum.owner);
+  const tx = await txBuilder.complete();
 
   const summary = buildSummary({
     lampPaidOil,
@@ -328,7 +364,7 @@ function updateAttribution(
   event : { type: string; source: string; epoch: bigint },
 ): VaultDatum["attribution"] {
   const oldRoot  = Buffer.from(attr.attribution_root, "hex");
-  const eventEnc = Buffer.from(JSON.stringify(event));
+  const eventEnc = Buffer.from(JSON.stringify({ ...event, epoch: event.epoch.toString() }));
   const preimage = Buffer.concat([oldRoot, eventEnc]);
   const newRoot  = Buffer.from(blake2b(preimage, { dkLen: 32 })).toString("hex");
 

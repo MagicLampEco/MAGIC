@@ -3,7 +3,9 @@
 
 import {
   Lucid, Blockfrost, Data,
-  type LucidEvolution, type UTxO, type Tx,
+  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  slotToUnixTime,
+  type LucidEvolution, type UTxO, type Tx, type Validator,
 } from "@lucid-evolution/lucid";
 import { blake2b } from "@noble/hashes/blake2b";
 import {
@@ -14,7 +16,7 @@ import {
   computeLfQ, computeOacQ, computeSnapshotMagic, computeCatchupMagic,
   isExpired, slotToEpoch, nanogicToMagicStr, qToStr, lampToOil,
 } from "./math.js";
-import { getTipSlot } from "@magiclamp/protocol-utils";
+import { getTipSlot, slotsPerEpoch, msPerEpoch, posixMsToEpoch, type Network } from "@magiclamp/protocol-utils";
 import {
   VaultDatumSchema, VaultRedeemerSchema,
   type VaultDatum, type MagicBatch,
@@ -26,6 +28,21 @@ export interface SnapshotGenParams {
   lucid       : LucidEvolution;
   vaultUtxo   : UTxO;
   userAddress : string;
+  /** Network the tx runs on. Picks ms_per_epoch for POSIX-based epoch math. */
+  network?    : Network;
+  /** Compiled vault validator with `slots_per_epoch` already applied per-network.
+   *  Caller obtains via `applyParamsToScript(unapplied, [slotsPerEpoch(network)])`.
+   *  Required to spend the vault UTxO (Lucid attach.SpendingValidator). */
+  vaultScript : Validator;
+  /** Absolute Cardano tip slot. If omitted, falls back to `getTipSlot(lucid, network)`.
+   *  Recommended to fetch via Blockfrost REST `/blocks/latest` to avoid Lucid provider quirks. */
+  tipSlot?    : bigint;
+  /** Tip POSIX ms (absolute). If omitted, derived from `tipSlot` via `slotToUnixTime`. */
+  tipPosixMs? : bigint;
+  /** TEST ONLY: mutate the output datum before serialization (negative tests). */
+  tamperOutputDatum? : (d: VaultDatum) => VaultDatum;
+  /** TEST ONLY: do not add owner key as required signer (negative test for owner-sig). */
+  skipOwnerSig? : boolean;
 }
 
 export interface SnapshotGenResult {
@@ -68,14 +85,16 @@ export async function createLucid(blockfrostApiKey: string): Promise<LucidEvolut
 export async function buildSnapshotGenTx(
   params: SnapshotGenParams,
 ): Promise<SnapshotGenResult> {
-  const { lucid, vaultUtxo } = params;
+  const { lucid, vaultUtxo, vaultScript, network = TESTNET_CONFIG.network } = params;
 
   // Decode vault datum
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
 
-  // Get current epoch
-  const tipSlot    = await getTipSlot(lucid);
-  const currentEpoch = slotToEpoch(BigInt(tipSlot));
+  // Get current epoch from POSIX ms (must match validator's get_current_epoch).
+  // Plutus validity_range is POSIX milliseconds, so epoch = posix_ms / ms_per_epoch.
+  const tipSlot     = params.tipSlot ?? BigInt(await getTipSlot(lucid, network));
+  const tipPosixMs  = params.tipPosixMs ?? BigInt(slotToUnixTime(network, Number(tipSlot)));
+  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
 
   // C-SS-1: must be a new epoch
   if (currentEpoch <= vaultDatum.last_updated_epoch) {
@@ -150,7 +169,7 @@ export async function buildSnapshotGenTx(
   } : vaultDatum.attribution;
 
   // Build updated VaultDatum (A02: field-by-field)
-  const newVaultDatum: VaultDatum = {
+  let newVaultDatum: VaultDatum = {
     ...vaultDatum,
     magic_batches:     updatedBatches,
     next_batch_index:  batchAdded ? vaultDatum.next_batch_index + 1n : vaultDatum.next_batch_index,
@@ -159,29 +178,39 @@ export async function buildSnapshotGenTx(
     attribution:       newAttribution,
   };
 
+  // TEST ONLY: apply mutator to verify validator rejects tampered datum.
+  if (params.tamperOutputDatum) newVaultDatum = params.tamperOutputDatum(newVaultDatum);
+
   // Build tx — no Treasury output (T16: no LAMP cost for Snapshot)
-  const vaultScriptAddress = lucid.utils.validatorToAddress({
-    type:   "PlutusV3",
-    script: TESTNET_CONFIG.vaultScriptHash,
-  });
+  // Address derived from the applied vault script (hash differs per-network).
+  const vaultScriptAddress = credentialToAddress(
+    network,
+    scriptHashToCredential(validatorToScriptHash(vaultScript)),
+  );
 
   const redeemer = Data.to("TriggerSnapshot", VaultRedeemerSchema);
 
-  const epochStartSlot = Number(currentEpoch * 432_000n);
-  const epochEndSlot   = epochStartSlot + 432_000 - 1;
+  // Lucid Evolution's validFrom/validTo take POSIX ms and convert to slot internally.
+  // Lower bound = current tip POSIX ms; upper bound = end of current POSIX-epoch.
+  const lowerTime = Number(tipPosixMs);
+  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
-  const tx = await lucid
+  let txBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
+    .attach.SpendingValidator(vaultScript)
     .pay.ToAddressWithData(
       vaultScriptAddress,
       { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
       vaultUtxo.assets,    // all assets stay on vault — no LAMP movement
     )
-    .addSignerKey(vaultDatum.owner)
-    .validFrom(epochStartSlot)
-    .validTo(epochEndSlot)
-    .complete();
+    .validFrom(lowerTime)
+    .validTo(upperTime);
+
+  // TEST ONLY: skip required-signer for owner-sig negative test
+  if (!params.skipOwnerSig) txBuilder = txBuilder.addSignerKey(vaultDatum.owner);
+
+  const tx = await txBuilder.complete();
 
   const summary = buildSummary({
     mTotal, mPerEpoch, deltaEpochs, lfQ, oacQ,

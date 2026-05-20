@@ -5,7 +5,8 @@
 export const Q = 1_000_000_000n; // Q = 10^9 [Immutable]
 
 // ── Cardano epoch ────────────────────────────────────────────
-export const SLOTS_PER_EPOCH = 432_000n; // mainnet + preview testnet
+// SLOTS_PER_EPOCH is network-specific — use slotsPerEpoch(network) / msPerEpoch(network)
+// from @magiclamp/protocol-utils instead of hardcoding.
 
 // ── LAMP / MAGIC units ───────────────────────────────────────
 export const LAMP_DECIMALS  = 6n;

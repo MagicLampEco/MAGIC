@@ -12,7 +12,7 @@
 |---|---|---|---|---|---|
 | 1 | `WithdrawLamp { amount }` | Snapshot + Instant + Vacuum + Schedule vault | NEW redeemer | Chưa tồn tại | 🔴 Chặn production |
 | 2 | `UpdateProfile { new_profile }` đầy đủ | SnapshotGen vault | STUB → full impl | Stub chỉ check owner sign | 🟡 |
-| 3 | `UpdateProfile { new_profile }` thêm vào Instant | InstantGen vault | NEW (Option A) | Chưa tồn tại | 🟡 |
+| 3 | `UpdateProfile { new_profile }` đầy đủ | InstantGen vault | STUB → full impl | Stub chỉ check owner sign (giống Snap) | 🟡 |
 
 Không thay đổi datum shape. Vault hash sẽ đổi vì validator code đổi → migration plan riêng (xem §6).
 
@@ -254,17 +254,29 @@ Nếu chỉ apply cho M compute mà không cho output datum check → output dat
 
 ---
 
-## §3. `UpdateProfile` thêm vào InstantGen vault
+## §3. `UpdateProfile` đầy đủ — InstantGen vault
 
 ### Lý do (Option A)
 
-PM_Q dùng ở cả Snapshot + Instant. User có thể có vault Snap profile=Flame và vault Instant profile=Ember (mỗi vault độc lập, datum riêng). Để cho user đổi profile vault Instant: cần `UpdateProfile` redeemer trên InstantGen vault.
+PM_Q dùng ở cả Snapshot + Instant. User có thể có vault Snap profile=Flame và vault Instant profile=Ember (mỗi vault độc lập, datum riêng). Cần đổi được profile riêng cho từng vault.
+
+### Trạng thái hiện tại — cùng lỗi như §2
+
+Enum `InstantGen/onchain/lib/magiclamp/protocol/types.ak` **đã có** `UpdateProfile { new_profile }` (constructor index 3). Handler trong `InstantGen/onchain/validators/vault.ak`:
+
+```aiken
+UpdateProfile { .. } -> {
+  // TODO: §12 Profile change.
+  expect list.has(tx.extra_signatories, input_datum.owner)
+  True
+}
+```
+
+Stub PASS mọi tamper — cùng security bug như SnapshotGen §2.
 
 ### Implementation
 
-Sao chép nguyên logic §2 vào InstantGen vault. Thêm enum variant `UpdateProfile { new_profile: ActivityProfile }` vào `InstantGen/onchain/lib/magiclamp/protocol/types.ak` (constructor index 3, sau `InstantGen=0`, `ApplyHalving=1`, `BurnBatch=2`).
-
-`apply_pending_profile` cũng add vào InstantGen vault handler `InstantGen { lamp_paid }` trước khi compute `M = lamp_paid × R_inst × UM × PM[apply_pending(input_datum).profile]`.
+Sao chép nguyên logic §2 vào InstantGen vault handler. `apply_pending_profile` add vào InstantGen vault handler `InstantGen { lamp_paid }` trước khi compute `M = lamp_paid × R_inst × UM × PM[apply_pending(input_datum).profile]`.
 
 ---
 
@@ -373,28 +385,48 @@ Chỉ launch v1.0 (đã có Withdraw + UpdateProfile đầy đủ). Quy trình: 
 - ✅ `MagicSDK/src/listVaults.ts` — multi-vault discovery (chạy ngay trên v0)
 - ✅ Unit tests 18/18 pass
 
-### Redeemer constructor indices đề xuất
+### Redeemer constructor indices
 
-Implementer có thể chỉnh khi cần. SDK hiện đang dùng:
+Indices = NEXT slot sau các variant đã có trong Aiken enum thực tế trên main. SDK đã align với bảng dưới:
 
-| Vault type | Index | Redeemer |
+**SnapshotGen** (`SnapshotGen/onchain/lib/magiclamp/protocol/types.ak`)
+
+| Index | Redeemer | Trạng thái |
 |---|---|---|
-| SnapshotGen | 0 | TriggerSnapshot |
-| SnapshotGen | 1 | BurnBatch |
-| SnapshotGen | 2 | UpdateProfile (existing — full impl) |
-| SnapshotGen | **3** | **WithdrawLamp** (NEW) |
-| InstantGen | 0 | InstantGen |
-| InstantGen | 1 | ApplyHalving |
-| InstantGen | 2 | BurnBatch (existing) |
-| InstantGen | **3** | **UpdateProfile** (NEW Option A) |
-| InstantGen | **4** | **WithdrawLamp** (NEW) |
-| VacuumGen | 0 | VacuumCommit |
-| VacuumGen | 1 | VacuumFire |
-| VacuumGen | 2 | BurnBatch |
-| VacuumGen | **3** | **WithdrawLamp** (NEW) |
-| ScheduleGen | 0 | ScheduleCommit |
-| ScheduleGen | 1 | ScheduleFire |
-| ScheduleGen | 2 | BurnBatch |
-| ScheduleGen | **3** | **WithdrawLamp** (NEW) |
+| 0 | TriggerSnapshot | existing |
+| 1 | BurnBatch | existing |
+| 2 | UpdateProfile | existing (stub → full impl §2) |
+| **3** | **WithdrawLamp** | **NEW** |
 
-Nếu indices thay đổi → update 2 chỗ trong SDK: `MagicSDK/src/withdrawLamp.ts:WITHDRAW_LAMP_CONSTR_INDEX` và `updateProfile.ts:UPDATE_PROFILE_CONSTR_INDEX`.
+**InstantGen** (`InstantGen/onchain/lib/magiclamp/protocol/types.ak`)
+
+| Index | Redeemer | Trạng thái |
+|---|---|---|
+| 0 | InstantGen | existing |
+| 1 | ApplyHalving | existing |
+| 2 | BurnBatch | existing |
+| 3 | UpdateProfile | existing (stub → full impl §3) |
+| **4** | **WithdrawLamp** | **NEW** |
+
+**VacuumGen** (`VacuumGen/onchain/lib/magiclamp/protocol/types.ak`) — enum có 6 variant vì share Instant/Halving/Burn/Update với module khác
+
+| Index | Redeemer | Trạng thái |
+|---|---|---|
+| 0 | VacuumCommit | existing |
+| 1 | VacuumFire | existing |
+| 2 | InstantGen | existing (shared, unhandled trong Vacuum vault) |
+| 3 | ApplyHalving | existing (shared) |
+| 4 | BurnBatch | existing |
+| 5 | UpdateProfile | existing (shared) |
+| **6** | **WithdrawLamp** | **NEW** |
+
+**ScheduleGen** (`ScheduleGen/onchain/lib/magiclamp/protocol/types.ak`)
+
+| Index | Redeemer | Trạng thái |
+|---|---|---|
+| 0 | ScheduleCommit | existing |
+| 1 | ScheduleFire | existing |
+| 2 | BurnBatch | existing |
+| **3** | **WithdrawLamp** | **NEW** |
+
+Nếu enum order thay đổi → update 2 chỗ trong SDK: `MagicSDK/src/withdrawLamp.ts:WITHDRAW_LAMP_CONSTR_INDEX` và `updateProfile.ts:UPDATE_PROFILE_CONSTR_INDEX`.

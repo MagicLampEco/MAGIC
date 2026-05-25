@@ -1,6 +1,6 @@
 # MAGIC v1.0 — Testnet Plan
 
-Plan test em chạy sau khi implement xong `WithdrawLamp` + `UpdateProfile` full theo `SPEC_V1.md`. Cùng pattern với 37 case v0 mà em đã làm (xem `MASTER_TESTNET_REPORT.md`).
+Plan test em chạy sau khi implement xong `WithdrawLamp` + `UpdateProfile` full theo [`SPEC_V1.md`](./SPEC_V1.md). Cùng pattern với 37 case v0 mà em đã làm (xem [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md)).
 
 **Phạm vi:** 4 vault module × 2 redeemer mới + multi-vault scenarios + lazy apply scenarios + regression cho 37 case cũ.
 
@@ -17,13 +17,13 @@ v1.0 testnet pass khi:
 | 3 | `aiken check` 0 error 0 warning cho 4 module có v1.0 changes |
 | 4 | `aiken build` thành công, plutus.json sinh ra cho 4 module |
 | 5 | SDK unit test 28/28 pass với `vaultPlutusJson` mới (do redeemer index resolve runtime — index thay đổi không break SDK) |
-| 6 | Hash report per-network bằng `scripts/verify_per_network.ts` chạy được, ghi nhận hash mới cho 4 module |
+| 6 | Hash report per-network bằng [`scripts/verify_per_network.ts`](../scripts/verify_per_network.ts) chạy được, ghi nhận hash mới cho 4 module |
 
 ---
 
 ## §2. Smoke test script template
 
-Theo pattern `scripts/test/snapshot_only.ts` hiện tại — mỗi case là 1 file riêng để dễ tách isolated rerun.
+Theo pattern [`scripts/test/snapshot_only.ts`](../scripts/test/snapshot_only.ts) hiện tại — mỗi case là 1 file riêng để dễ tách isolated rerun.
 
 ```ts
 // scripts/test/withdraw_only.ts (NEW)
@@ -150,7 +150,7 @@ npm run test:schedule-commit # ScheduleGen commit
 npm run test:schedule-fire   # ScheduleGen fire
 ```
 
-Cộng các script anh em đã thêm khi test 37 case (xem từng `*_TESTNET_REPORT.md` để biết list đầy đủ).
+Cộng các script anh em đã thêm khi test 37 case (xem [`SNAPSHOTGEN_TESTNET_REPORT.md`](../SNAPSHOTGEN_TESTNET_REPORT.md), [`INSTANTGEN_TESTNET_REPORT.md`](../INSTANTGEN_TESTNET_REPORT.md), [`VACUUMGEN_TESTNET_REPORT.md`](../VACUUMGEN_TESTNET_REPORT.md), [`SCHEDULEGEN_TESTNET_REPORT.md`](../SCHEDULEGEN_TESTNET_REPORT.md) để biết list đầy đủ).
 
 **Đặc biệt cần re-verify sau khi thêm `apply_pending_profile` vào mọi handler:**
 - TriggerSnapshot M compute không đổi khi `pending_profile = None` (mặc định)
@@ -158,7 +158,7 @@ Cộng các script anh em đã thêm khi test 37 case (xem từng `*_TESTNET_REP
 - BurnBatch không bị ảnh hưởng (batch đã có `profile_at_creation` riêng)
 - ApplyHalving không bị ảnh hưởng
 
-Nếu 1 trong 37 case cũ fail → quay lại check handler usage pattern (xem `SPEC_V1.md` §2 "Lazy apply cơ chế — handler usage pattern").
+Nếu 1 trong 37 case cũ fail → quay lại check handler usage pattern (xem [`SPEC_V1.md` §2 "Lazy apply cơ chế — handler usage pattern"](./SPEC_V1.md#lazy-apply-cơ-chế)).
 
 ---
 
@@ -204,13 +204,13 @@ function tamperOutputDatum(tx: TxSignBuilder, mutator: (datum: VaultDatum) => Va
 
 Sau khi test xong, em update:
 
-| File | Nội dung |
+| File (path so với repo root) | Nội dung |
 |---|---|
-| `MASTER_TESTNET_REPORT.md` | Thêm section "v1.0 changes — 36+ new cases" với link tới các report sau |
-| `WITHDRAW_TESTNET_REPORT.md` (NEW) | 20 case withdraw đầy đủ, tx hash, datum snapshots |
-| `UPDATE_PROFILE_TESTNET_REPORT.md` (NEW) | 16 case UpdateProfile + lazy apply scenarios |
-| `MULTI_VAULT_TESTNET_REPORT.md` (NEW) | 4 case multi-vault |
-| Per-module `*_TESTNET_REPORT.md` | Append v1.0 specific case của module đó |
+| [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md) | Thêm section "v1.0 changes — 36+ new cases" với link tới các report sau |
+| `WITHDRAW_TESTNET_REPORT.md` (NEW — repo root) | 20 case withdraw đầy đủ, tx hash, datum snapshots |
+| `UPDATE_PROFILE_TESTNET_REPORT.md` (NEW — repo root) | 16 case UpdateProfile + lazy apply scenarios |
+| `MULTI_VAULT_TESTNET_REPORT.md` (NEW — repo root) | 4 case multi-vault |
+| Per-module — [`SNAPSHOTGEN`](../SNAPSHOTGEN_TESTNET_REPORT.md) · [`INSTANTGEN`](../INSTANTGEN_TESTNET_REPORT.md) · [`VACUUMGEN`](../VACUUMGEN_TESTNET_REPORT.md) · [`SCHEDULEGEN`](../SCHEDULEGEN_TESTNET_REPORT.md) `_TESTNET_REPORT.md` | Append v1.0 specific case của module đó |
 
 Format report cùng như 4 report v0 cũ — anh đã quen pattern: header (TX hash, datum before/after, value diff) + body (rule trace + expected).
 
@@ -220,10 +220,10 @@ Format report cùng như 4 report v0 cũ — anh đã quen pattern: header (TX h
 
 - [ ] All 32+ new case pass
 - [ ] All 37 regression case pass
-- [ ] 4 module có v1.0 hash mới + log vào `scripts/verify_per_network.ts` output (3 network)
+- [ ] 4 module có v1.0 hash mới + log vào [`scripts/verify_per_network.ts`](../scripts/verify_per_network.ts) output (3 network)
 - [ ] PR gửi anh review → merge main
-- [ ] Update `MagicSDK/SPEC_V1.md` flip checklist § §7 từ `[ ]` → `[x]` cho mọi item em làm
-- [ ] Update `MagicSDK/README.md` table v0 vs v1.0 — flip cột v1.0 từ "target" sang "current"
+- [ ] Update [`MagicSDK/SPEC_V1.md`](./SPEC_V1.md) flip checklist § §7 từ `[ ]` → `[x]` cho mọi item em làm
+- [ ] Update [`MagicSDK/README.md`](./README.md) table v0 vs v1.0 — flip cột v1.0 từ "target" sang "current"
 
 Sau merge, anh chạy E2E thật trên Preview với SDK + Blockfrost để confirm flow user thấy. Đó là gate cuối cùng trước khi audit + mainnet.
 

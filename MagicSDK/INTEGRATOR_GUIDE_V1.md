@@ -33,7 +33,7 @@ Tài liệu cho dev tích hợp MagicSDK vào app (PhoenixKey, ví Cardano khác
 | Lưu ở đâu | Trong ví Cardano hoặc khoá trong vault | Trong vault datum (không phải native token) |
 | Transfer giữa ví | ✅ Cardano transfer tx bình thường | ❌ MAGIC không transfer được — gắn với vault |
 
-User nạp LAMP vào vault → vault giữ LAMP làm "collateral" → vault sinh MAGIC theo công thức (LAMP × profile × loyalty × UM × …). MAGIC được "burn" (claim) bằng `BurnBatch` redeemer — đây là off-scope guide này, xem `SnapshotGen/offchain/src/burn.ts`.
+User nạp LAMP vào vault → vault giữ LAMP làm "collateral" → vault sinh MAGIC theo công thức (LAMP × profile × loyalty × UM × …). MAGIC được "burn" (claim) bằng `BurnBatch` redeemer trên mỗi vault validator — đây là off-scope guide này; xem handler `BurnBatch { .. }` trong [`SnapshotGen/onchain/validators/vault.ak`](../SnapshotGen/onchain/validators/vault.ak) (hiện stub, sẽ implement đầy đủ ở bản sau v1.0).
 
 ### Vault types
 
@@ -518,7 +518,7 @@ Mỗi rule trong `SPEC_V1.md` ánh xạ 1-1 với 1 trace label trong validator.
 | **Vacuum** (2-phase commit/fire) | Vacuum vault | Transfer tại fire → Treasury | Lock-in LAMP, fire epoch tiếp |
 | **Schedule** (forward contract) | Schedule vault | Transfer per fire → Treasury | Rate-locked DCA stream |
 
-Tất cả 4 đều enabled trên Preview testnet v0. Tuân đã chạy 37 test case pass cho cả 4 module (xem `MASTER_TESTNET_REPORT.md`).
+Tất cả 4 đều enabled trên Preview testnet v0. Tuân đã chạy 37 test case pass cho cả 4 module (xem [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md)).
 
 **Sau v1.0 thay đổi:**
 - 4 phương thức trên: không đổi
@@ -577,4 +577,4 @@ await lucid.newTx()
 - [`SPEC_V1.md`](./SPEC_V1.md) — onchain spec cho Tuân: validator rules, helper, A02 datum checks, lazy apply pattern
 - [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md) — test matrix Tuân chạy sau implement
 - [`README.md`](./README.md) — quick start
-- `MASTER_TESTNET_REPORT.md` (MAGIC repo root) — 37 case v0 đã pass trên Preview
+- [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md) (MAGIC repo root) — 37 case v0 đã pass trên Preview

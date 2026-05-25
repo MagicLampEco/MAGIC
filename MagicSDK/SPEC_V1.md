@@ -387,8 +387,8 @@ Chỉ launch v1.0 (đã có Withdraw + UpdateProfile đầy đủ). Quy trình: 
 - [ ] `scripts/test/update_profile_only.ts` — 11 case UpdateProfile + lazy apply scenarios cho Snap + Inst
 - [ ] `scripts/test/multi_vault_only.ts` — 4 case multi-vault (W-CROSS + MV)
 - [ ] Regression run — 37 case v0 vẫn pass sau khi merge v1.0 code
-- [ ] Update `MASTER_TESTNET_REPORT.md` với section v1.0 (~32+ case mới)
-- [ ] 3 report mới: `WITHDRAW_TESTNET_REPORT.md`, `UPDATE_PROFILE_TESTNET_REPORT.md`, `MULTI_VAULT_TESTNET_REPORT.md`
+- [ ] Update [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md) với section v1.0 (~32+ case mới)
+- [ ] 3 report mới (repo root): `WITHDRAW_TESTNET_REPORT.md`, `UPDATE_PROFILE_TESTNET_REPORT.md`, `MULTI_VAULT_TESTNET_REPORT.md`
 
 ### Offchain SDK (đã hoàn tất)
 

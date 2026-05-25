@@ -144,9 +144,14 @@ Mỗi network có `ms_per_epoch` khác nhau (PlutusV3 validity_range = POSIX ms)
 
 Vault validator được apply với `ms_per_epoch` tương ứng → hash khác per-network → địa chỉ vault khác. **Vault tạo trên Preview KHÔNG tương thích với Mainnet.**
 
-## Trạng thái v1.0
+## Tài liệu v1.0
 
-Xem [`SPEC_V1.md`](./SPEC_V1.md) — đầy đủ scope onchain changes (Withdraw + UpdateProfile full impl) đã được anh chốt.
+| File | Audience | Nội dung |
+|---|---|---|
+| [`SPEC_V1.md`](./SPEC_V1.md) | Onchain dev (Aiken) | Validator rules + helper + A02 datum check + lazy apply pattern |
+| [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md) | Onchain dev | Test matrix (32+ case mới) sau khi implement |
+| [`INTEGRATOR_GUIDE_V1.md`](./INTEGRATOR_GUIDE_V1.md) | Offchain dev (app/PhoenixKey) | Full lifecycle: create → profile → 4 cách sinh MAGIC → withdraw. Code samples + error reference + FAQ |
+| `README.md` (file này) | Quick start | API reference SDK |
 
 Sẵn sàng integrate trên Preview testnet với v0 (current onchain). Production mainnet chỉ launch sau khi Tuân ship v1.0 đầy đủ.
 

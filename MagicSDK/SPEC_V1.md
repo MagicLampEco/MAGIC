@@ -4,6 +4,8 @@
 
 **Scope:** 2 redeemer mới + 1 stub cần implement đầy đủ. Không đụng vault datum shape (tránh re-build) ngoài việc thêm enum variant.
 
+**Audience:** dev onchain (Aiken). Cho integrator dev offchain xem [`INTEGRATOR_GUIDE_V1.md`](./INTEGRATOR_GUIDE_V1.md). Cho test matrix xem [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md).
+
 ---
 
 ## Tổng quan
@@ -252,6 +254,14 @@ Nếu chỉ apply cho M compute mà không cho output datum check → output dat
 | Mutate `magic_batches` (vd: change `profile_at_creation` của batch cũ) | A02 + T4 |
 | Mutate `lamp_balance` | A02 |
 
+### Design call — UpdateProfile khi đang có pending
+
+Nếu user gọi `UpdateProfile` lần 2 trước khi `pending_profile` của lần 1 được apply (chưa có handler nào chạm vào vault sau effective_epoch của pending) — chấp nhận hay reject?
+
+**Quyết định:** **chấp nhận override.** Pending mới thay pending cũ. Vẫn enforce C-PC-V2 cooldown tính từ `profile_changed_epoch` (đã được set ở lần 1) → không bypass được cooldown. Lý do: user đổi ý sớm hơn là use case hợp lệ; bắt user đợi pending fire xong thì kẹt.
+
+Implement: validator không có branch `if pending == None`. Mọi tx UpdateProfile xử lý cùng pattern, set pending mới. Test case `UP-EDGE-1` trong `V1_TESTNET_PLAN.md` verify behavior này.
+
 ---
 
 ## §3. `UpdateProfile` đầy đủ — InstantGen vault
@@ -371,12 +381,14 @@ Chỉ launch v1.0 (đã có Withdraw + UpdateProfile đầy đủ). Quy trình: 
 - [ ] `aiken check` pass 0 errors cho 4 module
 - [ ] `aiken build` → cập nhật plutus.json cho 4 module
 
-### Offchain test (theo per-module smoke test pattern hiện tại)
+### Offchain test (xem chi tiết trong [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md))
 
-- [ ] `scripts/test/withdraw_only.ts` — smoke test WithdrawLamp (positive + 5 negative tampers)
-- [ ] `scripts/test/update_profile_only.ts` — smoke test UpdateProfile (positive + 5 negative)
-- [ ] `scripts/test/multi_vault_only.ts` — verify 1 owner có 2 vault, tiêu vault1 không ảnh hưởng vault2's LF
-- [ ] Update `MASTER_TESTNET_REPORT.md` với 11+ case mới (Withdraw × 4 module × ~3 case + UpdateProfile × 2 module × 2 case)
+- [ ] `scripts/test/withdraw_only.ts` — 11 case withdraw (3 positive + 8 negative) cho mỗi vault module
+- [ ] `scripts/test/update_profile_only.ts` — 11 case UpdateProfile + lazy apply scenarios cho Snap + Inst
+- [ ] `scripts/test/multi_vault_only.ts` — 4 case multi-vault (W-CROSS + MV)
+- [ ] Regression run — 37 case v0 vẫn pass sau khi merge v1.0 code
+- [ ] Update `MASTER_TESTNET_REPORT.md` với section v1.0 (~32+ case mới)
+- [ ] 3 report mới: `WITHDRAW_TESTNET_REPORT.md`, `UPDATE_PROFILE_TESTNET_REPORT.md`, `MULTI_VAULT_TESTNET_REPORT.md`
 
 ### Offchain SDK (đã hoàn tất)
 

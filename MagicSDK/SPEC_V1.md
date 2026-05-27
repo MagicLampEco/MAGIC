@@ -356,7 +356,10 @@ Vault hash đổi → vault cũ bị kẹt ở địa chỉ cũ. Validator cũ v
 
 Khi v1.0 sẵn sàng:
 - Redeploy validator → vault address mới
-- Test users tự tạo vault mới (tLAMP testnet vẫn còn — re-mint nếu cần qua `01_mint_lamp`)
+- Test users tạo vault mới với tLAMP còn trong ví. Nếu ví trống, dev distribute thêm
+  từ ví dev (đang hold full Preview supply) qua transfer thường. LAMP tổng cung cố định
+  36 × 10^15 oil — mint 1 lần lúc bootstrap testnet qua `01_mint_lamp` (dev-only, native
+  sig lock theo keyHash ví dev), KHÔNG có khái niệm user mint hay re-mint.
 - v0 vault cũ trên Preview bị kẹt — bỏ qua. Rút kinh nghiệm, không mất production data
 
 ### Mainnet launch

@@ -23,13 +23,13 @@ use cardano/transaction.{
 
 use magiclamp/protocol/types.{
   ActivityProfile, ApplyHalving, BurnBatch, Ember, Flame, Instant,
-  InstantGen, Lantern, LoyaltyHolding, MagicBatch, UMDatum, UpdateProfile,
-  VaultDatum, VaultRedeemer,
+  InstantGen, Lantern, LoyaltyHolding, MagicBatch, PendingProfile, UMDatum,
+  UpdateProfile, VaultDatum, VaultRedeemer, WithdrawLamp,
 }
 use magiclamp/protocol/constants.{
   instant_decay_window, max_batches_per_vault, max_instant_purchase,
   max_loyalty_holdings, min_instant_purchase, pm_q_ember, pm_q_flame,
-  pm_q_lantern, q,
+  pm_q_lantern, profile_change_cooldown, q,
 }
 use magiclamp/protocol/math.{compute_instant_magic}
 use magiclamp/protocol/decay.{halve_then_prune, is_expired}
@@ -37,8 +37,10 @@ use magiclamp/protocol/um.{
   get_um_for_instant, validate_um_history_length, validate_um_range,
 }
 use magiclamp/protocol/lamp.{
-  l_avail, remove_from_holdings, validate_holdings_sum, validate_lamp_locked,
+  l_avail, remove_from_holdings, remove_newest_first, sum_holdings,
+  validate_holdings_sum, validate_lamp_locked,
 }
+use magiclamp/protocol/profile.{apply_pending_profile}
 
 // ── Validator parameters ─────────────────────────────────────
 // `ms_per_epoch` is applied per-network (Plutus validity_range is POSIX ms):
@@ -71,26 +73,36 @@ validator vault(
           own_ref, lamp_policy_id, treasury_addr, um_nft_policy, tx,
         )
 
-      // ── Other redeemers (stub for testnet v1) ────────────
+      // ── ApplyHalving (stub) ──────────────────────────────
       ApplyHalving -> {
-        // Standalone halving tx — useful for gas efficiency.
-        // TODO: implement full halving redeemer for testnet v1.
-        // For now: only allowed if owner signs.
+        // TODO v1.1: call apply_pending_profile(input_datum, current_epoch)
+        //           and use applied_input for any profile-dependent halving
+        //           computation + A02 datum check.
+        //           Pattern: SPEC_V1 §2 handler usage.
         expect list.has(tx.extra_signatories, input_datum.owner)
         True
       }
 
+      // ── BurnBatch (stub) ─────────────────────────────────
       BurnBatch { .. } -> {
-        // TODO: ConsumeMAGIC v1.0 scope.
+        // TODO v1.1: call apply_pending_profile + use applied_input for
+        //           M computation + A02 datum check. SPEC_V1 §2 pattern.
+        //           Full ConsumeMAGIC scope arrives in v1.1.
         expect list.has(tx.extra_signatories, input_datum.owner)
         True
       }
 
-      UpdateProfile { .. } -> {
-        // TODO: §12 Profile change.
-        expect list.has(tx.extra_signatories, input_datum.owner)
-        True
-      }
+      // ── UpdateProfile (full impl — SPEC_V1 §2/§3) ────────
+      UpdateProfile { new_profile } ->
+        validate_update_profile(
+          input_datum, new_profile, current_epoch, own_ref, tx,
+        )
+
+      // ── WithdrawLamp (SPEC_V1 §1) ────────────────────────
+      WithdrawLamp { amount } ->
+        validate_withdraw_lamp(
+          input_datum, amount, current_epoch, own_ref, lamp_policy_id, tx,
+        )
     }
   }
 }
@@ -120,6 +132,13 @@ fn validate_instant_gen(
   // ── User must sign (C-PC-V1) ─────────────────────────────
   expect list.has(tx.extra_signatories, input_datum.owner)
 
+  // ── Lazy profile apply (SPEC_V1 §2/§3) ────────────────────
+  // If pending_profile has reached effective_epoch, switch profile field
+  // and clear pending. applied_input is used for BOTH the M-compute (PM
+  // depends on profile) AND the A02 output datum check so pending clears
+  // on the output (otherwise next tx would apply it again — infinite loop).
+  let applied_input = apply_pending_profile(input_datum, current_epoch)
+
   // ── C-INST-1: lamp_paid ≥ 10 LAMP = 10^7 oil ────────────
   expect lamp_paid >= min_instant_purchase
 
@@ -127,13 +146,13 @@ fn validate_instant_gen(
   expect lamp_paid <= max_instant_purchase
 
   // ── C-INST-3: lamp_paid ≤ L_avail ───────────────────────
-  let avail = l_avail(input_datum.lamp_balance, input_datum.lamp_locked)
+  let avail = l_avail(applied_input.lamp_balance, applied_input.lamp_locked)
   expect lamp_paid <= avail
 
   // ── C-INST-7: |active_batches| + 1 ≤ 32 ─────────────────
   // Count non-expired batches BEFORE this tx (post-prune).
   let pre_prune_count =
-    list.count(input_datum.magic_batches, fn(b) {
+    list.count(applied_input.magic_batches, fn(b) {
       !is_expired(b, current_epoch)
     })
   expect pre_prune_count < max_batches_per_vault
@@ -144,17 +163,17 @@ fn validate_instant_gen(
   expect validate_um_history_length(um_datum)
   let um_q = get_um_for_instant(um_datum, current_epoch)
 
-  // ── C-INST-5: Compute expected M ─────────────────────────
-  let pm_q = get_pm_q(input_datum.profile)
+  // ── C-INST-5: Compute expected M (uses applied profile) ───
+  let pm_q = get_pm_q(applied_input.profile)
   let expected_m = compute_instant_magic(lamp_paid, um_q, pm_q)
   expect expected_m > 0   // sanity: M must be positive
 
   // ── Compute expected batch list ───────────────────────────
   // Step 1: Halve (C-PRUNE-2), then Prune (C-PRUNE-1)
-  let cleaned_batches = halve_then_prune(input_datum.magic_batches, current_epoch)
+  let cleaned_batches = halve_then_prune(applied_input.magic_batches, current_epoch)
 
   // Step 2: Create new Instant batch (C-INST-6)
-  let new_batch_id = compute_batch_id(own_ref, input_datum.next_batch_index)
+  let new_batch_id = compute_batch_id(own_ref, applied_input.next_batch_index)
   let new_batch =
     MagicBatch {
       batch_id:            new_batch_id,
@@ -176,23 +195,23 @@ fn validate_instant_gen(
   // ── A02: Field-by-field output datum validation ───────────
   let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
 
-  // Unchanged fields
-  expect output_datum.owner == input_datum.owner
-  expect output_datum.lamp_locked == input_datum.lamp_locked
-  expect output_datum.vacuum_orders == input_datum.vacuum_orders
-  expect output_datum.gen_schedules == input_datum.gen_schedules
-  expect output_datum.profile == input_datum.profile
-  expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
-  expect output_datum.pending_profile == input_datum.pending_profile
-  expect output_datum.delegation_cert == input_datum.delegation_cert
-  expect output_datum.streak_state == input_datum.streak_state
-  expect output_datum.personal_delegate == input_datum.personal_delegate
+  // Unchanged fields (compared against applied_input — see top comment)
+  expect output_datum.owner == applied_input.owner
+  expect output_datum.lamp_locked == applied_input.lamp_locked
+  expect output_datum.vacuum_orders == applied_input.vacuum_orders
+  expect output_datum.gen_schedules == applied_input.gen_schedules
+  expect output_datum.profile == applied_input.profile
+  expect output_datum.profile_changed_epoch == applied_input.profile_changed_epoch
+  expect output_datum.pending_profile == applied_input.pending_profile
+  expect output_datum.delegation_cert == applied_input.delegation_cert
+  expect output_datum.streak_state == applied_input.streak_state
+  expect output_datum.personal_delegate == applied_input.personal_delegate
 
   // Changed: lamp_balance decremented (C-INST-10: supply unchanged via eUTxO)
-  expect output_datum.lamp_balance == input_datum.lamp_balance - lamp_paid
+  expect output_datum.lamp_balance == applied_input.lamp_balance - lamp_paid
 
   // Changed: loyalty_holdings reduced by lamp_paid
-  let expected_holdings = remove_from_holdings(input_datum.loyalty_holdings, lamp_paid)
+  let expected_holdings = remove_from_holdings(applied_input.loyalty_holdings, lamp_paid)
   expect output_datum.loyalty_holdings == expected_holdings
 
   // C-VAULT-10: Σholdings.amount == new lamp_balance
@@ -211,7 +230,7 @@ fn validate_instant_gen(
   expect list.length(output_datum.magic_batches) <= max_batches_per_vault
 
   // Changed: next_batch_index must increment by exactly 1 (C-VAULT-3)
-  expect output_datum.next_batch_index == input_datum.next_batch_index + 1
+  expect output_datum.next_batch_index == applied_input.next_batch_index + 1
 
   // Changed: last_updated_epoch = current epoch
   expect output_datum.last_updated_epoch == current_epoch
@@ -219,7 +238,7 @@ fn validate_instant_gen(
   // Attribution hash-chain updated (C-ATT-1, C-ATT-2)
   // Note: exact event encoding must match the attribution module.
   // For testnet v1, we verify total_events incremented.
-  expect output_datum.attribution.total_events == input_datum.attribution.total_events + 1
+  expect output_datum.attribution.total_events == applied_input.attribution.total_events + 1
   expect output_datum.attribution.last_event_epoch == current_epoch
 
   // ── C-INST-10: LAMP supply unchanged ─────────────────────
@@ -282,15 +301,139 @@ fn find_um_datum(
   um
 }
 
+/// Find the vault's output (used for value check in WithdrawLamp W-6).
+fn find_vault_output(outputs: List<Output>, vault_addr: Address) -> Output {
+  expect Some(vault_output) = list.find(outputs, fn(o) { o.address == vault_addr })
+  vault_output
+}
+
 /// Find the vault's output datum (A02: used for field-by-field validation).
 fn find_vault_output_datum(
   outputs    : List<Output>,
   vault_addr : Address,
 ) -> VaultDatum {
-  expect Some(vault_output) = list.find(outputs, fn(o) { o.address == vault_addr })
+  let vault_output = find_vault_output(outputs, vault_addr)
   expect InlineDatum(datum_data) = vault_output.datum
   expect datum: VaultDatum = datum_data
   datum
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_withdraw_lamp — W-1..W-7 (SPEC_V1 §1)
+// ═══════════════════════════════════════════════════════════════
+fn validate_withdraw_lamp(
+  input_datum    : VaultDatum,
+  amount         : Int,
+  current_epoch  : Int,
+  own_ref        : OutputReference,
+  lamp_policy_id : PolicyId,
+  tx             : Transaction,
+) -> Bool {
+
+  // W-1: amount > 0
+  expect amount > 0
+
+  // W-2: owner signs
+  expect list.has(tx.extra_signatories, input_datum.owner)
+
+  // W-3: amount ≤ L_avail
+  let avail = l_avail(input_datum.lamp_balance, input_datum.lamp_locked)
+  expect amount <= avail
+
+  // W-4: exactly 1 vault input
+  let vault_addr = find_own_address(own_ref, tx.inputs)
+  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+
+  // W-5: A02 field-by-field output datum check
+  let output_datum     = find_vault_output_datum(tx.outputs, vault_addr)
+  let new_holdings     = remove_newest_first(input_datum.loyalty_holdings, amount)
+  let new_lamp_balance = input_datum.lamp_balance - amount
+
+  expect output_datum.owner == input_datum.owner
+  expect output_datum.lamp_balance == new_lamp_balance
+  expect output_datum.lamp_locked == input_datum.lamp_locked
+  expect output_datum.loyalty_holdings == new_holdings
+  expect output_datum.magic_batches == input_datum.magic_batches
+  expect output_datum.next_batch_index == input_datum.next_batch_index
+  expect output_datum.vacuum_orders == input_datum.vacuum_orders
+  expect output_datum.gen_schedules == input_datum.gen_schedules
+  expect output_datum.profile == input_datum.profile
+  expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
+  expect output_datum.pending_profile == input_datum.pending_profile
+  expect output_datum.delegation_cert == input_datum.delegation_cert
+  expect output_datum.activity_state == input_datum.activity_state
+  expect output_datum.streak_state == input_datum.streak_state
+  expect output_datum.personal_delegate == input_datum.personal_delegate
+  expect output_datum.attribution == input_datum.attribution
+  expect output_datum.last_updated_epoch == current_epoch
+
+  // W-6: vault output value carries the new lamp_balance worth of LAMP
+  let vault_output = find_vault_output(tx.outputs, vault_addr)
+  let vault_lamp_qty =
+    assets.quantity_of(vault_output.value, lamp_policy_id, #"4c414d50")  // "LAMP"
+  expect vault_lamp_qty == new_lamp_balance
+
+  // W-7: Σholdings == lamp_balance
+  expect sum_holdings(output_datum.loyalty_holdings) == output_datum.lamp_balance
+
+  expect list.length(output_datum.loyalty_holdings) <= max_loyalty_holdings
+
+  True
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_update_profile — C-PC-V1..V6 (SPEC_V1 §2/§3)
+// ═══════════════════════════════════════════════════════════════
+fn validate_update_profile(
+  input_datum   : VaultDatum,
+  new_profile   : ActivityProfile,
+  current_epoch : Int,
+  own_ref       : OutputReference,
+  tx            : Transaction,
+) -> Bool {
+
+  let vault_addr = find_own_address(own_ref, tx.inputs)
+  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+
+  // C-PC-V1: owner signs
+  expect list.has(tx.extra_signatories, input_datum.owner)
+
+  // C-PC-V2: cooldown ≥ 2 epochs
+  expect current_epoch - input_datum.profile_changed_epoch >= profile_change_cooldown
+
+  // C-PC-V3: must actually change
+  expect new_profile != input_datum.profile
+
+  // C-PC-V4..V6: lazy apply — profile stays, pending set
+  let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
+
+  expect output_datum.owner == input_datum.owner
+  expect output_datum.lamp_balance == input_datum.lamp_balance
+  expect output_datum.lamp_locked == input_datum.lamp_locked
+  expect output_datum.loyalty_holdings == input_datum.loyalty_holdings
+  expect output_datum.magic_batches == input_datum.magic_batches         // T4 immutable
+  expect output_datum.next_batch_index == input_datum.next_batch_index
+  expect output_datum.vacuum_orders == input_datum.vacuum_orders
+  expect output_datum.gen_schedules == input_datum.gen_schedules
+  expect output_datum.delegation_cert == input_datum.delegation_cert
+  expect output_datum.activity_state == input_datum.activity_state
+  expect output_datum.streak_state == input_datum.streak_state
+  expect output_datum.personal_delegate == input_datum.personal_delegate
+  expect output_datum.attribution == input_datum.attribution
+
+  // KEY: profile stay old (lazy)
+  expect output_datum.profile == input_datum.profile
+
+  // KEY: pending_profile SET with effective = current + 1 (override any existing)
+  expect output_datum.pending_profile == Some(PendingProfile {
+    new_profile,
+    effective_epoch: current_epoch + 1,
+  })
+
+  expect output_datum.profile_changed_epoch == current_epoch
+  expect output_datum.last_updated_epoch == current_epoch
+
+  True
 }
 
 /// Verify Treasury receives exactly lamp_paid of LAMP token (C-INST-4).

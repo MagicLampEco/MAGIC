@@ -17,13 +17,13 @@ use cardano/transaction.{
 use magiclamp/protocol/types.{
   BurnBatch, GenSchedule, MagicBatch, Schedule, ScheduleAggregateShardDatum,
   ScheduleCommit, ScheduleFire, ShardRedeemer, ShardUpdateCommit, ShardUpdateFire,
-  VaultDatum, VaultRedeemer,
+  VaultDatum, VaultRedeemer, WithdrawLamp,
 }
 use magiclamp/protocol/constants.{
   q, snapshot_base_rate_q, schedule_min_length, schedule_max_length,
   min_lamp_per_fire, schedule_delay, schedule_decay_window,
   max_fires_per_tx_catchup, max_gen_schedules, max_batches_per_vault,
-  shard_count,
+  max_loyalty_holdings, shard_count,
 }
 use magiclamp/protocol/math.{
   compute_s_q, compute_rate_locked_q, compute_m_i,
@@ -31,7 +31,8 @@ use magiclamp/protocol/math.{
   compute_schedule_id, compute_batch_id,
 }
 use magiclamp/protocol/lock.{
-  select_lamp_for_lock, remove_locked_amount, sum_holdings, l_avail,
+  select_lamp_for_lock, remove_locked_amount, remove_newest_first,
+  sum_holdings, l_avail,
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -69,10 +70,19 @@ validator vault(
         validate_fire(datum, schedule_id, current_epoch, own_ref, vault_addr,
                       lamp_policy_id, treasury_addr, shard_policy_id, tx)
 
+      // ── BurnBatch (stub) ─────────────────────────────────────
       BurnBatch { .. } -> {
+        // TODO v1.1: call apply_pending_profile(datum, current_epoch) and use
+        //           applied_input for M computation + A02 datum check.
+        //           Pattern: SPEC_V1 §2. Full ConsumeMAGIC scope = v1.1.
         expect list.has(tx.extra_signatories, datum.owner)
         True
       }
+
+      // ── WithdrawLamp (SPEC_V1 §1) ────────────────────────────
+      WithdrawLamp { amount } ->
+        validate_withdraw_lamp(datum, amount, current_epoch, vault_addr,
+                               lamp_policy_id, tx)
     }
   }
 }
@@ -361,10 +371,73 @@ fn own_addr(own_ref: OutputReference, inputs: List<Input>) -> Address {
 }
 
 fn get_vault_output(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
-  expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
+  let o = find_vault_output_raw(outputs, vault_addr)
   expect InlineDatum(d) = o.datum
   expect datum: VaultDatum = d
   datum
+}
+
+fn find_vault_output_raw(outputs: List<Output>, vault_addr: Address) -> Output {
+  expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
+  o
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_withdraw_lamp — W-1..W-7 (SPEC_V1 §1)
+// ═══════════════════════════════════════════════════════════════
+fn validate_withdraw_lamp(
+  input_datum    : VaultDatum,
+  amount         : Int,
+  current_epoch  : Int,
+  vault_addr     : Address,
+  lamp_policy_id : PolicyId,
+  tx             : Transaction,
+) -> Bool {
+
+  // W-1
+  expect amount > 0
+  // W-2
+  expect list.has(tx.extra_signatories, input_datum.owner)
+  // W-3
+  let avail = l_avail(input_datum.lamp_balance, input_datum.lamp_locked)
+  expect amount <= avail
+  // W-4 — already enforced at top of validator (C-VAULT-DS-1)
+
+  // W-5: A02 field-by-field
+  let output_datum     = get_vault_output(tx.outputs, vault_addr)
+  let new_holdings     = remove_newest_first(input_datum.loyalty_holdings, amount)
+  let new_lamp_balance = input_datum.lamp_balance - amount
+
+  expect output_datum.owner == input_datum.owner
+  expect output_datum.lamp_balance == new_lamp_balance
+  expect output_datum.lamp_locked == input_datum.lamp_locked
+  expect output_datum.loyalty_holdings == new_holdings
+  expect output_datum.magic_batches == input_datum.magic_batches
+  expect output_datum.next_batch_index == input_datum.next_batch_index
+  expect output_datum.vacuum_orders == input_datum.vacuum_orders
+  expect output_datum.gen_schedules == input_datum.gen_schedules
+  expect output_datum.profile == input_datum.profile
+  expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
+  expect output_datum.pending_profile == input_datum.pending_profile
+  expect output_datum.delegation_cert == input_datum.delegation_cert
+  expect output_datum.activity_state == input_datum.activity_state
+  expect output_datum.streak_state == input_datum.streak_state
+  expect output_datum.personal_delegate == input_datum.personal_delegate
+  expect output_datum.attribution == input_datum.attribution
+  expect output_datum.last_updated_epoch == current_epoch
+
+  // W-6: vault output LAMP value
+  let vault_output = find_vault_output_raw(tx.outputs, vault_addr)
+  let vault_lamp_qty =
+    assets.quantity_of(vault_output.value, lamp_policy_id, #"4c414d50")
+  expect vault_lamp_qty == new_lamp_balance
+
+  // W-7: Σholdings == lamp_balance
+  expect sum_holdings(output_datum.loyalty_holdings) == output_datum.lamp_balance
+
+  expect list.length(output_datum.loyalty_holdings) <= max_loyalty_holdings
+
+  True
 }
 
 fn find_shard_input(

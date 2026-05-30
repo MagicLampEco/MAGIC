@@ -18,17 +18,18 @@ use cardano/transaction.{
 
 use magiclamp/protocol/types.{
   Instant, MagicBatch, UMDatum, Vacuum, VacuumCommit, VacuumFire,
-  VacuumOrder, VaultDatum, VaultRedeemer,
+  VacuumOrder, VaultDatum, VaultRedeemer, WithdrawLamp,
 }
 use magiclamp/protocol/constants.{
-  max_batches_per_vault, max_vacuum_orders, min_vacuum_amount,
-  vacuum_delay, vacuum_decay_window, q,
+  max_batches_per_vault, max_loyalty_holdings, max_vacuum_orders,
+  min_vacuum_amount, vacuum_delay, vacuum_decay_window, q,
 }
 use magiclamp/protocol/math.{
   compute_vacuum_magic, compute_sm_q, get_um_for_vacuum, validate_um_range,
 }
 use magiclamp/protocol/lock.{
-  select_lamp_for_lock, remove_locked_amount, l_avail, sum_holdings, sum_locked,
+  select_lamp_for_lock, remove_locked_amount, remove_newest_first,
+  l_avail, sum_holdings, sum_locked,
 }
 
 // ── Parameterized validator ───────────────────────────────────
@@ -58,6 +59,14 @@ validator vault(
         validate_vacuum_fire(input_datum, order_id, current_epoch, own_ref,
                              lamp_policy_id, treasury_addr, um_nft_policy, tx)
 
+      WithdrawLamp { amount } ->
+        validate_withdraw_lamp(input_datum, amount, current_epoch, own_ref,
+                               lamp_policy_id, tx)
+
+      // Other shared redeemers (InstantGen / ApplyHalving / BurnBatch /
+      // UpdateProfile) are intentionally rejected by VacuumGen — those flows
+      // live on their respective module's vault. Catch-all stays as a hard
+      // anti-tamper guard.
       _ -> fail @"unimplemented redeemer for VacuumGen module"
     }
   }
@@ -262,11 +271,76 @@ fn find_own_address(own_ref: OutputReference, inputs: List<Input>) -> Address {
   i.output.address
 }
 
-fn find_vault_output_datum(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
+fn find_vault_output(outputs: List<Output>, vault_addr: Address) -> Output {
   expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
+  o
+}
+
+fn find_vault_output_datum(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
+  let o = find_vault_output(outputs, vault_addr)
   expect InlineDatum(d) = o.datum
   expect datum: VaultDatum = d
   datum
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_withdraw_lamp — W-1..W-7 (SPEC_V1 §1)
+// ═══════════════════════════════════════════════════════════════
+fn validate_withdraw_lamp(
+  input_datum    : VaultDatum,
+  amount         : Int,
+  current_epoch  : Int,
+  own_ref        : OutputReference,
+  lamp_policy_id : PolicyId,
+  tx             : Transaction,
+) -> Bool {
+
+  // W-1
+  expect amount > 0
+  // W-2
+  expect list.has(tx.extra_signatories, input_datum.owner)
+  // W-3
+  let avail = l_avail(input_datum.lamp_balance, input_datum.lamp_locked)
+  expect amount <= avail
+  // W-4
+  let vault_addr = find_own_address(own_ref, tx.inputs)
+  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+
+  // W-5: A02 field-by-field
+  let output_datum     = find_vault_output_datum(tx.outputs, vault_addr)
+  let new_holdings     = remove_newest_first(input_datum.loyalty_holdings, amount)
+  let new_lamp_balance = input_datum.lamp_balance - amount
+
+  expect output_datum.owner == input_datum.owner
+  expect output_datum.lamp_balance == new_lamp_balance
+  expect output_datum.lamp_locked == input_datum.lamp_locked
+  expect output_datum.loyalty_holdings == new_holdings
+  expect output_datum.magic_batches == input_datum.magic_batches
+  expect output_datum.next_batch_index == input_datum.next_batch_index
+  expect output_datum.vacuum_orders == input_datum.vacuum_orders
+  expect output_datum.gen_schedules == input_datum.gen_schedules
+  expect output_datum.profile == input_datum.profile
+  expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
+  expect output_datum.pending_profile == input_datum.pending_profile
+  expect output_datum.delegation_cert == input_datum.delegation_cert
+  expect output_datum.activity_state == input_datum.activity_state
+  expect output_datum.streak_state == input_datum.streak_state
+  expect output_datum.personal_delegate == input_datum.personal_delegate
+  expect output_datum.attribution == input_datum.attribution
+  expect output_datum.last_updated_epoch == current_epoch
+
+  // W-6: vault output LAMP value
+  let vault_output = find_vault_output(tx.outputs, vault_addr)
+  let vault_lamp_qty =
+    assets.quantity_of(vault_output.value, lamp_policy_id, #"4c414d50")
+  expect vault_lamp_qty == new_lamp_balance
+
+  // W-7: Σholdings == lamp_balance
+  expect sum_holdings(output_datum.loyalty_holdings) == output_datum.lamp_balance
+
+  expect list.length(output_datum.loyalty_holdings) <= max_loyalty_holdings
+
+  True
 }
 
 fn find_um_datum(ref_inputs: List<Input>, um_nft_policy: PolicyId) -> UMDatum {

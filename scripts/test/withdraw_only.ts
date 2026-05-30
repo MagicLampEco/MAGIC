@@ -28,33 +28,27 @@ import {
 } from "../config.js";
 
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
-import type { VaultType } from "../../MagicSDK/src/types.js";
+import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
+import type { VaultType, ProtocolParams } from "../../MagicSDK/src/types.js";
 
 type Module = "Snapshot" | "Instant" | "Vacuum" | "Schedule";
 
-interface ModuleSpec {
-  plutusJsonPath: string;
-  params: () => unknown[];
-}
-
-const MODULE_SPECS: Record<Module, ModuleSpec> = {
-  Snapshot: {
-    plutusJsonPath: "../../SnapshotGen/onchain/plutus.json",
-    params: () => [POLICY_IDS.lamp, PROTOCOL.MS_PER_EPOCH],
-  },
-  Instant: {
-    plutusJsonPath: "../../InstantGen/onchain/plutus.json",
-    params: () => [POLICY_IDS.lamp, ADDRESSES.treasury, POLICY_IDS.um_nft, PROTOCOL.MS_PER_EPOCH],
-  },
-  Vacuum: {
-    plutusJsonPath: "../../VacuumGen/onchain/plutus.json",
-    params: () => [POLICY_IDS.lamp, ADDRESSES.treasury, POLICY_IDS.um_nft, PROTOCOL.MS_PER_EPOCH],
-  },
-  Schedule: {
-    plutusJsonPath: "../../ScheduleGen/onchain/plutus.json",
-    params: () => [POLICY_IDS.lamp, ADDRESSES.treasury, POLICY_IDS.shard_nft, PROTOCOL.MS_PER_EPOCH],
-  },
+const PLUTUS_PATH: Record<Module, string> = {
+  Snapshot: "../../SnapshotGen/onchain/plutus.json",
+  Instant:  "../../InstantGen/onchain/plutus.json",
+  Vacuum:   "../../VacuumGen/onchain/plutus.json",
+  Schedule: "../../ScheduleGen/onchain/plutus.json",
 };
+
+function buildProtocol(): ProtocolParams {
+  return {
+    network: NETWORK,
+    lampPolicyId: POLICY_IDS.lamp,
+    umNftPolicyId: POLICY_IDS.um_nft,
+    treasuryAddress: ADDRESSES.treasury,
+    shardPolicyId: POLICY_IDS.shard_nft,
+  };
+}
 
 async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -67,8 +61,7 @@ async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
 
 async function main() {
   const moduleName = (process.env.MODULE ?? "Snapshot") as Module;
-  const spec = MODULE_SPECS[moduleName];
-  if (!spec) throw new Error(`Unknown MODULE: ${moduleName}. Use Snapshot|Instant|Vacuum|Schedule.`);
+  if (!PLUTUS_PATH[moduleName]) throw new Error(`Unknown MODULE: ${moduleName}. Use Snapshot|Instant|Vacuum|Schedule.`);
 
   const amountLamp = BigInt(process.env.AMOUNT_LAMP ?? "5");
   const amountOil = amountLamp * 1_000_000n;
@@ -78,21 +71,18 @@ async function main() {
   console.log(`║  WithdrawLamp smoke — ${moduleName.padEnd(20)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
 
-  // ── 1. Load + apply vault script ─────────────────────────────
+  // ── 1. Load + apply vault script (uses SDK helper — handles treasury
+  //     bech32 → Plutus Constr conversion for Instant/Vacuum/Schedule)
   const plutusJson = JSON.parse(
-    await readFile(new URL(spec.plutusJsonPath, import.meta.url), "utf8"),
+    await readFile(new URL(PLUTUS_PATH[moduleName], import.meta.url), "utf8"),
   );
   const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
-  if (!unapplied) throw new Error(`vault.vault.spend not found in ${spec.plutusJsonPath}`);
+  if (!unapplied) throw new Error(`vault.vault.spend not found in ${PLUTUS_PATH[moduleName]}`);
 
-  const vaultScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(unapplied.compiledCode, spec.params() as never),
-  };
-  const vaultScriptHash = validatorToScriptHash(vaultScript);
-  const vaultAddr = credentialToAddress(
-    NETWORK,
-    scriptHashToCredential(vaultScriptHash),
+  const { vaultScript, vaultScriptHash, vaultAddress: vaultAddr } = applyVaultValidator(
+    moduleName as VaultType,
+    { vaultUnappliedCbor: unapplied.compiledCode },
+    buildProtocol(),
   );
 
   console.log(`Network:           ${NETWORK}`);

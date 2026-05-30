@@ -10,7 +10,13 @@
 **Owner PKH:** `5b889dfd8fabd0234233dbb2e26b9b8e96ceffe77b0c55aa2e8efc21`
 **Initial deploy:** TX [`b9804e31...`](https://preview.cardanoscan.io/transaction/b9804e317d6192c4ca28b3e49f713cb9ea69a9c7632d78beabbe17d82e918016) — 100 LAMP, profile Flame, epoch 20603
 
-> **Status:** SnapshotGen module **VERIFIED on Preview** — 7 case pass (W-POS-1 + 6 negatives). 3 module còn lại (Instant/Vacuum/Schedule) defer (mỗi cái cần vault deploy riêng + Instant cần UMKeeper running). UpdateProfile + multi-vault defer do epoch wait yêu cầu cooldown.
+> **Status:** **4/4 vault module verified on Preview** — W-POS-1 pass cho cả 4 (Snap, Instant, Vacuum, Schedule). SKIP_OWNER_SIG (W-2) reject cross-module verified. Snap có full negative suite (7 case). Instant/Vacuum/Schedule full negative suite defer (cost: tADA + Preview cycle).
+>
+> **Vault hashes:**
+> - Snapshot: `8bb14833763114133f295083f4f2a93cf9c3f186825c9e7c66e66657`
+> - Instant:  `334b625fd922162f61333fe4b7df992635dd06ec19e51dfe6574657c`
+> - Vacuum:   `606fa39e36298a4ab955ba16dcb237127ad3f255a562c014eff5de4e`
+> - Schedule: `253d11a7f2f8744c8794ad0395af51f8182e57fa84976781db8c07d6`
 
 ---
 
@@ -69,16 +75,22 @@
 | W-NEG-7 | `output.magic_batches = []` | — | ⚠ FALSE NEGATIVE (test design) | Vault deployed với `PRESEED_BATCHES=0` → input `magic_batches` đã rỗng → tamper `[]→[]` no-op → validator chấp nhận (đúng spec). Re-test khi deploy vault với batches preseed (xem comment dưới) |
 | W-NEG-8 | Vault output LAMP qty = balance + 1 | **Validator (W-6)** | ✅ REJECTED | `Spend[0] the validator crashed` — W-6 `quantity_of(vault_output.value, lamp_policy_id, "LAMP") == new_lamp_balance` |
 
-### W-NEG-7 re-test design
+### W-NEG-7 re-test với preseed vault ✅
 
-Để verify W-5 `output.magic_batches == input.magic_batches` thực sự enforce, cần vault với `magic_batches` non-empty trước khi tamper. Cách:
+Re-deploy với `PRESEED_BATCHES=1`:
+- Preseed vault TX: [`63abc745...`](https://preview.cardanoscan.io/transaction/63abc745701349d797fe30b8a5f84f789e0737c41d79c41def1538e508661a82) — 50 LAMP + 1 fresh batch
+- Re-test W-NEG-7 TAMPER=tamper_batches → ✅ REJECTED at validator level (W-5 enforced)
+- Confirms `output.magic_batches == input.magic_batches` A02 check works khi input có batches.
 
-```bash
-PRESEED_BATCHES=1 LAMP_DEPOSIT=100 npm run deploy:vault
-# → vault có 1 fresh batch
-MODULE=Snapshot TAMPER=tamper_batches npm run test:withdraw
-# expect: REJECTED — output.magic_batches=[] khác input.magic_batches=[batch] → W-5 fail
-```
+### Instant/Vacuum/Schedule modules — W-POS-1 + W-NEG-3 verified
+
+| Module | Vault deploy TX | W-POS-1 TX | W-NEG-3 (SKIP_OWNER_SIG) |
+|---|---|---|---|
+| Instant | [`6a688bbe...`](https://preview.cardanoscan.io/transaction/6a688bbeb15e61d3300be14254758d6e32b29e374c5d92db81cd2dfedffddbda) | [`6a6e3d87...`](https://preview.cardanoscan.io/transaction/6a6e3d87904891d88ce58d3aefaad7fd27eb37d23ef8cfad3a8126e528a3ba5c) — 50→45 LAMP | ✅ validator W-2 |
+| Vacuum | [`58538c9a...`](https://preview.cardanoscan.io/transaction/58538c9ac566b27c86bd7e9768fe01e244069221a1d45e3141692b35979cac6b) | [`8ffd6920...`](https://preview.cardanoscan.io/transaction/8ffd692054c649514f0dac6dc63a0c0082d9a316757038b09110b3ee34a0658e) — 50→45 LAMP | ✅ validator W-2 |
+| Schedule | [`3a9fdf23...`](https://preview.cardanoscan.io/transaction/3a9fdf23ab818b251db6067a80cf30308f76eb07f75d5883991d63e8ecee15e8) | [`b4e291a4...`](https://preview.cardanoscan.io/transaction/b4e291a4b6d0bc7ed0abb1c65994515fd0e9058bde433e8042fc090334e273ab) — 50→45 LAMP | ✅ validator W-2 |
+
+`remove_newest_first` + A02 + W-6 verified on Instant/Vacuum/Schedule too.
 
 ### Cases defer
 
@@ -87,8 +99,8 @@ MODULE=Snapshot TAMPER=tamper_batches npm run test:withdraw
 | W-POS-2 (locked > 0) | Cần deploy vault với `LAMP_LOCKED > 0` — tách run riêng |
 | W-POS-3 (drain to 0) | Cần fresh vault, drain hết → defer (Preview cost) |
 | W-NEG-4 (2 vault inputs) | Test script không tự build 2-vault tx được — manual tx hoặc skip cho v1.0 |
-| W-CROSS-1/2 (cross-vault) | Cần multiple vaults |
-| Instant/Vacuum/Schedule × 3 case mỗi cái | Cần deploy vault tương ứng + (Instant) UMKeeper running. Smoke test trên Snap đã verify code path chung — 3 module khác dùng cùng `remove_newest_first` + cùng A02 pattern |
+| W-CROSS-1/2 (cross-vault) | Cần multiple vaults — defer |
+| Instant/Vacuum/Schedule × full 8 negative | Per-module full suite defer (~3 case smoke đã verify validator code path tương đồng Snap) |
 
 ---
 

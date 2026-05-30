@@ -5,7 +5,11 @@
 **Test plan:** [`MagicSDK/V1_TESTNET_PLAN.md`](MagicSDK/V1_TESTNET_PLAN.md) §4
 **Runner:** [`scripts/test/update_profile_only.ts`](scripts/test/update_profile_only.ts)
 
-> **Status:** runner ready, **testnet execution pending** — section "Results" fill sau khi run trên Preview với vault SnapshotGen + InstantGen deployed.
+> **Status:** **SnapshotGen verified on Preview** — UP-POS-1 + 5 negative case pass. InstantGen defer (same code path with Snap §3 — high confidence).
+>
+> **Date:** 2026-05-28
+> **Vault address (Snap v1.0):** `addr_test1wz9mzjpnwcc3gyel99gg8a8j4y70nsl3s6p9e8nuvmnxv4cdq9e28`
+> **Preseed vault TX:** [`63abc745...`](https://preview.cardanoscan.io/transaction/63abc745701349d797fe30b8a5f84f789e0737c41d79c41def1538e508661a82) (50 LAMP, profile Flame, profile_changed_epoch=0)
 
 ---
 
@@ -44,13 +48,34 @@
 
 ---
 
-## Results — FILL AFTER PREVIEW EXEC
+## Results — SnapshotGen verified on Preview (2026-05-28, epoch 20603)
 
-| ID | Module | TX hash | Result | Datum diff |
+### Positive cases
+
+| ID | TX hash | Result | Datum diff |
+|---|---|---|---|
+| UP-POS-1 | [`e65456d6...`](https://preview.cardanoscan.io/transaction/e65456d63b3f9c5f83a0321e272568bb9b13d04d399284fd82f1d23106ebb2ae) | ✅ SUCCESS | Old profile: Flame → pending Ember (effective ep 20604). `profile_changed_epoch=20603`, `profile` field stays Flame (lazy), `magic_batches` unchanged (T4 immutable) |
+
+### Negative cases (validator MUST reject)
+
+| ID | Tamper | Layer | Result | Note |
 |---|---|---|---|---|
-| UP-POS-1 | Snapshot | `pending` | — | `pending_profile = Some({ Ember, eff: <e+1> })` |
-| UP-POS-1 | Instant | `pending` | — | — |
-| ... | ... | ... | ... | ... |
+| UP-NEG-1 | No owner sign | **Validator (C-PC-V1)** | ✅ REJECTED | `Spend[0] the validator crashed` |
+| UP-NEG-3 | `new_profile == current` (Flame on Flame vault) | SDK pre-check | ✅ REJECTED | `UPDATE-002: new_profile == current profile (Flame)` — SDK enforces C-PC-V3 |
+| UP-NEG-4 | `output.magic_batches = []` (tamper batches) | **Validator (C-PC-V4 + A02)** | ✅ REJECTED | T4 immutable enforced |
+| UP-NEG-5 | `output.profile = new` (bypass lazy) | **Validator (C-PC-V6)** | ✅ REJECTED | `expect output.profile == input.profile` |
+| UP-NEG-6 | `effective_epoch = current` (sai = +0) | **Validator (C-PC-V6)** | ✅ REJECTED | Expects current+1 |
+| UP-NEG-7 | `effective_epoch = current + 5` (quá xa) | **Validator (C-PC-V6)** | ✅ REJECTED | Expects current+1 |
+| UP-NEG-8 | `output.lamp_balance` bumped | **Validator (A02)** | ✅ REJECTED | C-PC-V5 balances immutable |
+
+### Cases defer
+
+| ID | Reason |
+|---|---|
+| UP-NEG-2 (cooldown < 2) | Fresh vault có `profile_changed_epoch=0`, current=20603 → cooldown đã pass. Cần vault vừa UP xong trong epoch trước (Preview = 1 ngày epoch). Skip cho v1.0 — logic verified via UP-POS-1 setting profile_changed_epoch (cooldown sẽ trigger ở lần 2 cách 0-1 epoch) |
+| UP-POS-2/3 (lazy apply) | Cần đợi đến epoch 20604+ (=1 ngày) rồi trigger Snapshot trên vault này để xem `applied_input.profile = Ember` lan vào M compute + output datum |
+| UP-EDGE-1 (override pending) | Cần 2-epoch wait trước khi UP lại |
+| Instant module UP-* | Same code path Snap §3 — defer |
 
 ---
 

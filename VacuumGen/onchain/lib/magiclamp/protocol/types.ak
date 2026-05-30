@@ -149,15 +149,22 @@ pub type UMDatum {
 }
 
 // ── Vault redeemer ───────────────────────────────────────────
+// NORMATIVE: append-only enum. New variants at END only.
 pub type VaultRedeemer {
-  // VacuumCommit: lock λ oil for fire in 2 epochs (§10.1 Phase 1)
+  // constr 0  VacuumCommit: lock λ oil for fire in 2 epochs (§10.1 Phase 1)
   VacuumCommit { lambda: Natural }
-  // VacuumFire: permissionless fire by order_id (§10.1 Phase 2)
+  // constr 1  VacuumFire: permissionless fire by order_id (§10.1 Phase 2)
   VacuumFire   { order_id: ByteArray }
 
-  // Shared redeemers (other modules)
+  // constr 2  Shared: InstantGen
   InstantGen   { lamp_paid: Natural }
+  // constr 3  Shared: ApplyHalving
   ApplyHalving
+  // constr 4  Shared: BurnBatch
   BurnBatch     { burns: List<(ByteArray, Natural)> }
+  // constr 5  Shared: UpdateProfile
   UpdateProfile { new_profile: ActivityProfile }
+
+  // constr 6  WithdrawLamp: withdraw unlocked LAMP back to wallet (SPEC_V1 §1)
+  WithdrawLamp  { amount: Natural }
 }

@@ -114,9 +114,14 @@ pub type VaultDatum {
 }
 
 // ── Vault Redeemer ───────────────────────────────────────────
+// NORMATIVE: append-only enum — constructor index = Plutus Data tag.
+// Adding new variants MUST happen at the end (otherwise existing tx
+// redeemers break). SDK resolves indices at runtime from plutus.json
+// (MagicSDK/src/redeemerIndex.ts).
 pub type VaultRedeemer {
-  TriggerSnapshot                                    // lazy snapshot at epoch boundary
-  BurnBatch   { burns: List<(ByteArray, Natural)> }  // burn MAGIC
-  UpdateProfile { new_profile: ActivityProfile }
+  TriggerSnapshot                                    // constr 0  lazy snapshot
+  BurnBatch     { burns: List<(ByteArray, Natural)> } // constr 1 burn MAGIC
+  UpdateProfile { new_profile: ActivityProfile }      // constr 2 §12 profile change
+  WithdrawLamp  { amount: Natural }                   // constr 3 §1 withdraw unlocked LAMP
   // InstantGen / VacuumGen / ScheduleGen → see respective modules
 }

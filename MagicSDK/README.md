@@ -153,16 +153,16 @@ Vault validator được apply với `ms_per_epoch` tương ứng → hash khác
 | [`INTEGRATOR_GUIDE_V1.md`](./INTEGRATOR_GUIDE_V1.md) | Offchain dev (app/PhoenixKey) | Full lifecycle: create → profile → 4 cách sinh MAGIC → withdraw. Code samples + error reference + FAQ |
 | `README.md` (file này) | Quick start | API reference SDK |
 
-Sẵn sàng integrate trên Preview testnet với v0 (current onchain). Production mainnet chỉ launch sau khi Tuân ship v1.0 đầy đủ.
+**Onchain status:** v1.0 đã ship trên branch `feat/v1.0-onchain` (WithdrawLamp + UpdateProfile full impl, 4 module). Đang chờ testnet exec + audit trước mainnet launch.
 
 ### SDK functions
 
-| Function | Hoạt động với v0? | Hoạt động với v1.0? |
+| Function | v0 (legacy) | v1.0 (current branch) |
 |---|---|---|
 | `createVault()` | ✅ | ✅ |
 | `listVaultsForOwner()` | ✅ (multi-vault native) | ✅ |
-| `updateProfile()` | ⚠ Stub validator chỉ check sign — không enforce | ✅ Full per spec §12 |
-| `withdrawLamp()` | ❌ Validator reject (no redeemer) | ✅ |
+| `updateProfile()` | ⚠ Stub validator chỉ check sign — không enforce | ✅ Full per spec §12 — cooldown + lazy apply enforced onchain |
+| `withdrawLamp()` | ❌ Validator reject (no redeemer) | ✅ Full per spec §1 — W-1..W-7 enforced onchain |
 
 ### Nằm ngoài scope MAGIC (PhoenixKey hoặc app layer)
 

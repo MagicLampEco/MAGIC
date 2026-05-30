@@ -308,4 +308,46 @@ Total spend across 4 modules:
 
 ---
 
-**GenMAGIC v3.3 protocol is testnet-verified and ready for the next phase (production hardening + Mainnet deploy planning).**
+## 11. v1.0 changes (branch `feat/v1.0-onchain`)
+
+**Status:** code ship, **testnet exec pending** for the 32+ new cases.
+
+**Scope:** issue #9 — close 2 mainnet blockers + 1 stub-handler decision.
+
+### New onchain features
+
+| # | Feature | Module | Spec |
+|---|---|---|---|
+| 1 | `WithdrawLamp { amount }` redeemer (W-1..W-7) | All 4 vault | `MagicSDK/SPEC_V1.md` §1 |
+| 2 | `UpdateProfile` full impl (C-PC-V1..V6) | Snapshot + Instant | `MagicSDK/SPEC_V1.md` §2/§3 |
+| 3 | `apply_pending_profile` lazy apply wired into TriggerSnapshot + InstantGen handlers | Snapshot + Instant | `MagicSDK/SPEC_V1.md` §2 lazy apply pattern |
+| 4 | TODO comments in BurnBatch + ApplyHalving stubs (skip wire — anh chốt option 2) | 4 modules where stubs exist | issue #9 comment thread |
+
+### Test coverage (Preview, pending exec)
+
+| Suite | Cases | Runner | Report |
+|---|---|---|---|
+| WithdrawLamp | 20 | `scripts/test/withdraw_only.ts` | [`WITHDRAW_TESTNET_REPORT.md`](WITHDRAW_TESTNET_REPORT.md) |
+| UpdateProfile | 16 | `scripts/test/update_profile_only.ts` | [`UPDATE_PROFILE_TESTNET_REPORT.md`](UPDATE_PROFILE_TESTNET_REPORT.md) |
+| Multi-vault | 4 | `scripts/test/multi_vault_only.ts` | [`MULTI_VAULT_TESTNET_REPORT.md`](MULTI_VAULT_TESTNET_REPORT.md) |
+| Regression (37 v0) | 37 | existing scripts | per-module reports |
+| **Total** | **77+** | | |
+
+### Build status
+
+- `aiken check` **0 error 0 warning** for 4 modules ✓
+- `aiken build` produces plutus.json for 4 modules ✓
+- 218/218 TS unit tests pass (190 module + 28 MagicSDK) ✓
+- New plutus.json constructor indices auto-resolved by SDK runtime (no SDK code change needed) ✓
+
+### Open items (after Preview exec)
+
+- [ ] Fill tx hashes in the 3 new reports
+- [ ] Confirm 37 regression cases still pass on v1.0 vault address
+- [ ] `npm run verify:hashes` for hash log per network
+- [ ] PR review + merge to main
+- [ ] Mainnet audit prep
+
+---
+
+**GenMAGIC v3.3 protocol is testnet-verified and v1.0 onchain ship — pending Preview exec of 32+ new cases before audit + Mainnet deploy.**

@@ -57,6 +57,14 @@ export interface ClaimParams {
   committeeKeyHashes: string[];
   threshold?:        number;
   signerKeyHashes?:  string[];
+
+  /**
+   * POSIX ms cho lower_bound của validity_range (BẮT BUỘC để live tx hợp lệ).
+   * Validator get_epoch đọc lower_bound.bound_type = Finite(s); epoch = s / ms_per_epoch
+   * phải khớp `currentEpoch` (C-CLAIM-4). Truyền `currentEpoch * ms_per_epoch`.
+   * Bỏ trống → KHÔNG set (chỉ dùng cho unit test off-chain; live sẽ fail get_epoch).
+   */
+  validFromMs?: bigint;
 }
 
 export interface ClaimResult {
@@ -144,6 +152,11 @@ export async function buildClaimTx(params: ClaimParams): Promise<ClaimResult> {
   );
 
   for (const k of signers) txb = txb.addSignerKey(k);
+
+  // validity_range lower_bound → validator get_epoch (C-CLAIM-4). Live tx bắt buộc.
+  if (params.validFromMs !== undefined) {
+    txb = txb.validFrom(Number(params.validFromMs));
+  }
 
   const tx = await txb.complete();
 

@@ -1,0 +1,27 @@
+{
+  "name": "@magiclamp/lampdist-scripts",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Deploy + e2e live test runner cho LampDistribution trên Cardano Preview",
+  "scripts": {
+    "deploy": "tsx 01_deploy.ts",
+    "mint-lamp": "tsx 02_mint_test_lamp.ts",
+    "genesis": "tsx 03_genesis.ts",
+    "e2e": "tsx 04_e2e.ts",
+    "all": "npm run deploy && npm run mint-lamp && npm run genesis && npm run e2e",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lucid-evolution/lucid": "^0.4.0",
+    "@magiclamp/lampdist-sdk": "file:../offchain",
+    "@magiclamp/protocol-utils": "file:../../ProtocolUtils",
+    "@noble/hashes": "^1.4.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.41",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

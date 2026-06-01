@@ -19,11 +19,11 @@ import type { BeaconDatum, BeaconKind } from "./types.js";
 import { beaconDatumToCbor, beaconRedeemerToCbor } from "./datum.js";
 import { assertCommitteeSigners } from "./committee.js";
 
-/** Asset-name hex mặc định cho NFT từng kind ("LMPP"/"LMPR"/"LMPM" → hex). */
+/** Asset-name hex NFT từng kind — PHẢI khớp onchain util.beacon_name. */
 export const DEFAULT_BEACON_ASSET_NAMES: Record<BeaconKind, string> = {
-  PParam:     "4c4d5050", // "LMPP"
-  Randomness: "4c4d5052", // "LMPR"
-  MerkleRoot: "4c4d504d", // "LMPM"
+  PParam:     "505041524d", // "PPARAM"
+  Randomness: "4e4f4e4345", // "NONCE"
+  MerkleRoot: "4d524f4f54", // "MROOT"
 };
 
 export interface PostBeaconParams {

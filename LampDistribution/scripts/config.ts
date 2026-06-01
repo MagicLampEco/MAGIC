@@ -14,7 +14,7 @@
 //     Đây là lựa chọn thiết kế MVP (4 trục: tối ưu — 1 ví đủ demo; bền vững —
 //     production vẫn 3-of-N qua env). Ghi vào deployed.json để audit.
 
-import "dotenv/config";
+import dotenv from "dotenv";
 import {
   Lucid, Blockfrost,
   getAddressDetails, validatorToScriptHash,
@@ -29,10 +29,14 @@ import { dirname, resolve } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Load .env từ repo root (../../.env so với LampDistribution/scripts/),
+// không phụ thuộc cwd lúc chạy tsx.
+dotenv.config({ path: resolve(__dirname, "../../.env") });
+
 // ── Network + provider ─────────────────────────────────────────
 export const NETWORK: Network = (process.env.NETWORK ?? "Preview") as Network;
 export const BLOCKFROST_URL = `https://cardano-${NETWORK.toLowerCase()}.blockfrost.io/api/v0`;
-export const BLOCKFROST_KEY = process.env.BLOCKFROST_KEY ?? "";
+export const BLOCKFROST_KEY = process.env.BLOCKFROST_KEY ?? process.env.BLOCKFROST_TOKEN_GREENSUN ?? "";
 export const PRIVATE_KEY    = process.env.PRIVATE_KEY ?? "";
 export const WALLET_SEED    = (process.env.WALLET_SEED ?? "").trim().replace(/\s+/g, " ");
 
@@ -112,10 +116,11 @@ export const LAMP_ASSET_NAME = "4c414d50"; // "LAMP"
 // song song). MVP self-contained: 03_genesis.ts mint 3 beacon NFT bằng NATIVE
 // sig policy của ví deploy (one-shot), ghi policy id vào deployed.json. Khi
 // agent kia ship beacon_nft policy, đọc từ blueprint thay native (xem TODO genesis).
+// PHẢI khớp onchain util.beacon_name (validator hardcode các tên này).
 export const BEACON_ASSET_NAMES = {
-  PParam:     "4c4d5050", // "LMPP"
-  Randomness: "4c4d5052", // "LMPR"
-  MerkleRoot: "4c4d504d", // "LMPM"
+  PParam:     "505041524d", // "PPARAM"
+  Randomness: "4e4f4e4345", // "NONCE"
+  MerkleRoot: "4d524f4f54", // "MROOT"
 } as const;
 
 /**

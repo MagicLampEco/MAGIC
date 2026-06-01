@@ -170,7 +170,7 @@ describe("buildClaimTx — UPDATE path", () => {
 // ── buildPostBeaconTx ───────────────────────────────────────────────────
 describe("buildPostBeaconTx", () => {
   const NFT_POLICY = "cd".repeat(28);
-  const NFT_UNIT   = toUnit(NFT_POLICY, "4c4d504d"); // MerkleRoot default asset name
+  const NFT_UNIT   = toUnit(NFT_POLICY, "4d524f4f54"); // MerkleRoot ("MROOT") default asset name
 
   function beaconUtxo(kind: any, epoch: bigint, value: string, assets: Record<string, bigint>): UTxO {
     return {

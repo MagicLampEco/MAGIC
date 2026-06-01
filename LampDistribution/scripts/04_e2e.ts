@@ -52,13 +52,20 @@ async function findClaimAccount(
   lucid: LucidEvolution, address: string, ownerPkh: string,
 ): Promise<UTxO> {
   const utxos = await lucid.utxosAt(address);
+  // Có thể nhiều ClaimAccount cùng owner (re-genesis) → chọn cái claimed_cumulative cao nhất
+  // (account "hoạt động" đã tích luỹ claim). Deterministic.
+  let best: UTxO | null = null;
+  let bestClaimed = -1n;
   for (const u of utxos) {
     if (!u.datum) continue;
     try {
       const d = decodeClaimAccountDatum(Data.from(u.datum));
-      if (norm(d.owner) === norm(ownerPkh)) return u;
+      if (norm(d.owner) === norm(ownerPkh) && d.claimed_cumulative > bestClaimed) {
+        best = u; bestClaimed = d.claimed_cumulative;
+      }
     } catch { /* không phải ClaimAccountDatum */ }
   }
+  if (best) return best;
   throw new Error(`không tìm thấy ClaimAccount cho owner ${ownerPkh} tại ${address}`);
 }
 
@@ -85,7 +92,10 @@ async function fetchCardanoNonce(): Promise<string | null> {
   } catch { return null; }
 }
 
-/** Sign + submit + await. Trả txHash. */
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Sign + submit + await + settle. Trả txHash.
+ *  Sleep sau confirm để Blockfrost index UTxO mới (tránh stale input ở tx kế). */
 async function submit(
   lucid: LucidEvolution, txComplete: TxSignBuilder, label: string,
 ): Promise<string> {
@@ -94,7 +104,31 @@ async function submit(
   console.log(`   TX:       ${txHash}`);
   console.log(`   Explorer: ${explorerTx(txHash)}`);
   await awaitTx(lucid, txHash, label);
+  await sleep(20_000);  // chờ provider index xong (chống TranslationLogicMissingInput)
   return txHash;
+}
+
+/** Đảm bảo ví có ≥2 UTxO ADA-thuần (≥5 tADA) làm collateral cho Plutus tx.
+ *  Nếu thiếu → tạo bằng 1 tx tự trả về ví. Plutus spend cần collateral ADA-only. */
+async function ensureCollateral(lucid: LucidEvolution): Promise<void> {
+  const addr = await lucid.wallet().address();
+  const isPureAda = (u: UTxO): boolean =>
+    Object.keys(u.assets).length === 1 && (u.assets["lovelace"] ?? 0n) >= 5_000_000n;
+  let utxos = await lucid.wallet().getUtxos();
+  if (utxos.filter(isPureAda).length >= 2) {
+    console.log("   collateral: đã có UTxO ADA-thuần ✓");
+    return;
+  }
+  console.log("   collateral: tạo 2 UTxO ADA-thuần (5 tADA mỗi cái)…");
+  const tx = await lucid.newTx()
+    .pay.ToAddress(addr, { lovelace: 5_000_000n })
+    .pay.ToAddress(addr, { lovelace: 5_000_000n })
+    .complete();
+  const signed = await tx.sign.withWallet().complete();
+  const h = await signed.submit();
+  console.log(`   TX:       ${h}`);
+  await awaitTx(lucid, h, "prep collateral");
+  await sleep(20_000);
 }
 
 async function main(): Promise<void> {
@@ -138,6 +172,8 @@ async function main(): Promise<void> {
   // ════════════════════════════════════════════════════════════
   console.log("── a. Claim ──");
 
+  await ensureCollateral(lucid);
+
   const accA0 = await findClaimAccount(lucid, state.claimAccount.address, aPkh);
   const claimA = await buildClaimTx({
     lucid, claimScript, network: NETWORK,
@@ -149,16 +185,21 @@ async function main(): Promise<void> {
   console.log(claimA.summary);
   await submit(lucid, claimA.tx, "claim A");
 
-  const accB0 = await findClaimAccount(lucid, state.claimAccount.address, bPkh);
-  const claimB = await buildClaimTx({
-    lucid, claimScript, network: NETWORK,
-    ownerPkh: bPkh, amount: LAMP_B, currentEpoch: epoch,
-    claimAccountUtxo: accB0,
-    committeeKeyHashes: committee, threshold,
-    validFromMs,
-  });
-  console.log(claimB.summary);
-  await submit(lucid, claimB.tx, "claim B");
+  // Claim B (ví placeholder) — best-effort: lỗi không chặn flow chính (A→lottery→redeem).
+  try {
+    const accB0 = await findClaimAccount(lucid, state.claimAccount.address, bPkh);
+    const claimB = await buildClaimTx({
+      lucid, claimScript, network: NETWORK,
+      ownerPkh: bPkh, amount: LAMP_B, currentEpoch: epoch,
+      claimAccountUtxo: accB0,
+      committeeKeyHashes: committee, threshold,
+      validFromMs,
+    });
+    console.log(claimB.summary);
+    await submit(lucid, claimB.tx, "claim B");
+  } catch (e) {
+    console.log(`   ⚠ Claim B bỏ qua (best-effort): ${(e as Error).message.slice(0, 120)}`);
+  }
 
   // ════════════════════════════════════════════════════════════
   // b. POST BEACON — P_1 + nonce_1

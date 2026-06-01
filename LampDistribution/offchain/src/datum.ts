@@ -52,8 +52,17 @@ function normHex(hex: string): string {
 }
 
 function asConstr(d: Data, ctx: string): Constr<Data> {
-  if (!(d instanceof Constr)) throw new Error(`DATUM-000: expected Constr for ${ctx}`);
-  return d;
+  if (d instanceof Constr) return d;
+  // Robust với trường hợp có 2 bản @lucid-evolution/lucid khác nhau (offchain vs scripts):
+  // `instanceof` fail vì khác class identity, dù object đúng cấu trúc Constr {index:number, fields:[]}.
+  if (
+    d !== null && typeof d === "object" &&
+    typeof (d as { index?: unknown }).index === "number" &&
+    Array.isArray((d as { fields?: unknown }).fields)
+  ) {
+    return d as unknown as Constr<Data>;
+  }
+  throw new Error(`DATUM-000: expected Constr for ${ctx}`);
 }
 
 function asBytes(d: Data, ctx: string): string {

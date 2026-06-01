@@ -1,0 +1,9 @@
+name    = "magiclamp/protocol"
+version = "0.0.1"
+plutus  = "v3"
+license = "Apache-2.0"
+
+[[dependencies]]
+name    = "aiken-lang/stdlib"
+version = "v3.1.0"
+source  = "github"

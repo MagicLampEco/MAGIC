@@ -14,32 +14,35 @@
 
 import {
   Lucid, Blockfrost, Data,
-  applyParamsToScript, validatorToScriptHash,
-  credentialToAddress, scriptHashToCredential,
   getAddressDetails,
   type UTxO,
 } from "@lucid-evolution/lucid";
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  PROTOCOL, POLICY_IDS, ADDRESSES,
+  POLICY_IDS, ADDRESSES,
 } from "../config.js";
 
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
-import type { Profile, VaultType } from "../../MagicSDK/src/types.js";
+import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
+import type { Profile, VaultType, ProtocolParams } from "../../MagicSDK/src/types.js";
 
 type Module = "Snapshot" | "Instant";
 
-const MODULE_SPECS: Record<Module, { plutusJsonPath: string; params: () => unknown[] }> = {
-  Snapshot: {
-    plutusJsonPath: "../../SnapshotGen/onchain/plutus.json",
-    params: () => [POLICY_IDS.lamp, PROTOCOL.MS_PER_EPOCH],
-  },
-  Instant: {
-    plutusJsonPath: "../../InstantGen/onchain/plutus.json",
-    params: () => [POLICY_IDS.lamp, ADDRESSES.treasury, POLICY_IDS.um_nft, PROTOCOL.MS_PER_EPOCH],
-  },
+const PLUTUS_PATH: Record<Module, string> = {
+  Snapshot: "../../SnapshotGen/onchain/plutus.json",
+  Instant:  "../../InstantGen/onchain/plutus.json",
 };
+
+function buildProtocol(): ProtocolParams {
+  return {
+    network: NETWORK,
+    lampPolicyId: POLICY_IDS.lamp,
+    umNftPolicyId: POLICY_IDS.um_nft,
+    treasuryAddress: ADDRESSES.treasury,
+    shardPolicyId: POLICY_IDS.shard_nft,
+  };
+}
 
 async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -52,8 +55,7 @@ async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
 
 async function main() {
   const moduleName = (process.env.MODULE ?? "Snapshot") as Module;
-  const spec = MODULE_SPECS[moduleName];
-  if (!spec) throw new Error(`MODULE=${moduleName} not supported (only Snapshot|Instant).`);
+  if (!PLUTUS_PATH[moduleName]) throw new Error(`MODULE=${moduleName} not supported (only Snapshot|Instant).`);
 
   const newProfile = (process.env.NEW_PROFILE ?? "Ember") as Profile;
   const tamper = process.env.TAMPER ?? "";
@@ -62,18 +64,19 @@ async function main() {
   console.log(`║  UpdateProfile smoke — ${moduleName.padEnd(19)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
 
+  // Load + apply vault script via SDK helper (handles treasury bech32 → Plutus
+  // Constr conversion for Instant — raw bech32 breaks applyParamsToScript).
   const plutusJson = JSON.parse(
-    await readFile(new URL(spec.plutusJsonPath, import.meta.url), "utf8"),
+    await readFile(new URL(PLUTUS_PATH[moduleName], import.meta.url), "utf8"),
   );
   const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
   if (!unapplied) throw new Error("vault.vault.spend not found");
 
-  const vaultScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(unapplied.compiledCode, spec.params() as never),
-  };
-  const vaultScriptHash = validatorToScriptHash(vaultScript);
-  const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(vaultScriptHash));
+  const { vaultScript, vaultScriptHash, vaultAddress: vaultAddr } = applyVaultValidator(
+    moduleName as VaultType,
+    { vaultUnappliedCbor: unapplied.compiledCode },
+    buildProtocol(),
+  );
 
   console.log(`Network:           ${NETWORK}`);
   console.log(`Vault hash:        ${vaultScriptHash}`);

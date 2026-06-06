@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@lucid-evolution/lucid": "^0.4.0",
+    "@magiclamp/protocol-utils": "file:../ProtocolUtils",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {

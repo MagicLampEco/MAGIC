@@ -5,11 +5,12 @@
 **Test plan:** [`MagicSDK/V1_TESTNET_PLAN.md`](MagicSDK/V1_TESTNET_PLAN.md) §4
 **Runner:** [`scripts/test/update_profile_only.ts`](scripts/test/update_profile_only.ts)
 
-> **Status:** **SnapshotGen verified on Preview** — UP-POS-1 + 5 negative case pass. InstantGen defer (same code path with Snap §3 — high confidence).
+> **Status:** **SnapshotGen + InstantGen verified on Preview** — Snap UP-POS-1 + 6 negative; Instant UP-POS-1 + 3 negative pass.
 >
-> **Date:** 2026-05-28
+> **Date:** 2026-05-28 (Snapshot), 2026-06-06 (Instant)
 > **Vault address (Snap v1.0):** `addr_test1wz9mzjpnwcc3gyel99gg8a8j4y70nsl3s6p9e8nuvmnxv4cdq9e28`
-> **Preseed vault TX:** [`63abc745...`](https://preview.cardanoscan.io/transaction/63abc745701349d797fe30b8a5f84f789e0737c41d79c41def1538e508661a82) (50 LAMP, profile Flame, profile_changed_epoch=0)
+> **Vault hash (Instant v1.0):** `334b625fd922162f61333fe4b7df992635dd06ec19e51dfe6574657c`
+> **Preseed vault TX:** [`63abc745...`](https://preview.cardanoscan.io/transaction/63abc745701349d797fe30b8a5f84f789e0737c41d79c41def1538e508661a82) (Snap — 50 LAMP, Flame, pce=0); Instant deploy [`13c6f21c...`](https://preview.cardanoscan.io/transaction/13c6f21c44ab2d7433e66c0a8e45d5e986ef031b18efd3f93abd9e2ba24688b5) (100 LAMP, Flame, pce=0)
 
 ---
 
@@ -68,14 +69,34 @@
 | UP-NEG-7 | `effective_epoch = current + 5` (quá xa) | **Validator (C-PC-V6)** | ✅ REJECTED | Expects current+1 |
 | UP-NEG-8 | `output.lamp_balance` bumped | **Validator (A02)** | ✅ REJECTED | C-PC-V5 balances immutable |
 
+## Results — InstantGen verified on Preview (2026-06-06, epoch 20610)
+
+Vault hash `334b625f…` (v1.0 applied: lamp_policy + treasury + um_nft + ms_per_epoch).
+
+### Positive case
+
+| ID | TX hash | Result | Datum diff |
+|---|---|---|---|
+| UP-POS-1 | [`c593b915...`](https://preview.cardanoscan.io/transaction/c593b915590d7781f8eefefd532c3a88368668a03ac16014f816885cb4b9c75f) | ✅ SUCCESS | Old profile Flame → pending Ember (effective ep 20611). `profile_changed_epoch=20610`, `profile` stays Flame (lazy), `magic_batches` unchanged (T4) |
+
+### Negative cases (validator MUST reject — run against fresh vault `13c6f21c`, cooldown-clear)
+
+| ID | Tamper | Layer | Result | Note |
+|---|---|---|---|---|
+| UP-NEG-1 | No owner sign | **Validator (C-PC-V1)** | ✅ REJECTED | `Spend[0] the validator crashed` |
+| UP-NEG-5 | `output.profile = new` (bypass lazy) | **Validator (C-PC-V6)** | ✅ REJECTED | `expect output.profile == input.profile` |
+| UP-NEG-8 | `output.lamp_balance` bumped | **Validator (A02)** | ✅ REJECTED | balances immutable |
+
+> **Tooling fix:** `update_profile_only.ts` now applies the vault script via the SDK `applyVaultValidator` helper (handles treasury bech32 → Plutus `Constr` for Instant) — the prior inline `applyParamsToScript([…, ADDRESSES.treasury, …])` passed raw bech32 and crashed on Instant. Same fix already shipped for `withdraw_only.ts` (commit `13be0932`).
+
 ### Cases defer
 
 | ID | Reason |
 |---|---|
-| UP-NEG-2 (cooldown < 2) | Fresh vault có `profile_changed_epoch=0`, current=20603 → cooldown đã pass. Cần vault vừa UP xong trong epoch trước (Preview = 1 ngày epoch). Skip cho v1.0 — logic verified via UP-POS-1 setting profile_changed_epoch (cooldown sẽ trigger ở lần 2 cách 0-1 epoch) |
-| UP-POS-2/3 (lazy apply) | Cần đợi đến epoch 20604+ (=1 ngày) rồi trigger Snapshot trên vault này để xem `applied_input.profile = Ember` lan vào M compute + output datum |
+| UP-NEG-2 (cooldown < 2) | Fresh vault có `profile_changed_epoch=0` → cooldown đã pass. Cần vault vừa UP xong trong epoch trước (Preview = 1 ngày epoch). Logic verified via UP-POS-1 setting profile_changed_epoch |
+| UP-POS-2/3 (lazy apply) | Cần đợi đến effective epoch (+1 ngày) rồi trigger Snapshot/Instant trên vault này để xem `applied_input.profile = Ember` lan vào M compute + output datum |
 | UP-EDGE-1 (override pending) | Cần 2-epoch wait trước khi UP lại |
-| Instant module UP-* | Same code path Snap §3 — defer |
+| Instant UP-NEG-3/4/6/7 | Same validator code path đã verify qua Snap full 6-negative + Instant 3-negative (C-PC-V1/V6/A02 covered); remaining tamper variants share the same A02/C-PC-V6 branch |
 
 ---
 

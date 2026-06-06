@@ -310,7 +310,7 @@ Total spend across 4 modules:
 
 ## 11. v1.0 changes (branch `feat/v1.0-onchain`)
 
-**Status:** code ship, **testnet exec pending** for the 32+ new cases.
+**Status:** code ship + build green. **Testnet (Preview):** WithdrawLamp 4/4 module + SnapshotGen UpdateProfile + **InstantGen UpdateProfile (UP-POS-1 + 3 negative)** verified on-chain; multi-vault MV1–4, full per-module negative withdraw matrices, and 37-case v0 regression on new vault hashes remain pragmatic-pending (runner-ready, need epoch waits + extra deploys).
 
 **Scope:** issue #9 — close 2 mainnet blockers + 1 stub-handler decision.
 
@@ -328,7 +328,7 @@ Total spend across 4 modules:
 | Suite | Cases | Runner | Report |
 |---|---|---|---|
 | WithdrawLamp | 20 | `scripts/test/withdraw_only.ts` | [`WITHDRAW_TESTNET_REPORT.md`](WITHDRAW_TESTNET_REPORT.md) |
-| UpdateProfile | 16 | `scripts/test/update_profile_only.ts` | [`UPDATE_PROFILE_TESTNET_REPORT.md`](UPDATE_PROFILE_TESTNET_REPORT.md) |
+| UpdateProfile | 16 | `scripts/test/update_profile_only.ts` | [`UPDATE_PROFILE_TESTNET_REPORT.md`](UPDATE_PROFILE_TESTNET_REPORT.md) — Snap + Instant verified |
 | Multi-vault | 4 | `scripts/test/multi_vault_only.ts` | [`MULTI_VAULT_TESTNET_REPORT.md`](MULTI_VAULT_TESTNET_REPORT.md) |
 | Regression (37 v0) | 37 | existing scripts | per-module reports |
 | **Total** | **77+** | | |
@@ -337,7 +337,7 @@ Total spend across 4 modules:
 
 - `aiken check` **0 error 0 warning** for 4 modules ✓
 - `aiken build` produces plutus.json for 4 modules ✓
-- 218/218 TS unit tests pass (190 module + 28 MagicSDK) ✓
+- 224/224 TS unit tests pass (190 module + 34 MagicSDK, incl. `updateProfile.test.ts`) ✓
 - New plutus.json constructor indices auto-resolved by SDK runtime (no SDK code change needed) ✓
 
 ### Open items (after Preview exec)

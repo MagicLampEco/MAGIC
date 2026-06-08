@@ -8,16 +8,17 @@
 
 use aiken/collection/list
 use aiken/interval.{Finite, IntervalBoundType}
-use cardano/address.{Address}
+use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, Transaction,
+  InlineDatum, Input, Output, OutputReference, Transaction, placeholder,
 }
 
 use magiclamp/protocol/types.{
-  BurnBatch, GenSchedule, MagicBatch, Schedule, ScheduleAggregateShardDatum,
+  ActivityState, BurnBatch, DelegationCertificate, Flame, GenSchedule,
+  LoyaltyHolding, MagicBatch, Schedule, ScheduleAggregateShardDatum,
   ScheduleCommit, ScheduleFire, ShardRedeemer, ShardUpdateCommit, ShardUpdateFire,
-  VaultDatum, VaultRedeemer, WithdrawLamp,
+  StreakState, VaultAttribution, VaultDatum, VaultRedeemer, WithdrawLamp,
 }
 use magiclamp/protocol/constants.{
   q, snapshot_base_rate_q, schedule_min_length, schedule_max_length,
@@ -72,11 +73,12 @@ validator vault(
 
       // ── BurnBatch (stub) ─────────────────────────────────────
       BurnBatch { .. } -> {
-        // TODO v1.1: call apply_pending_profile(datum, current_epoch) and use
-        //           applied_input for M computation + A02 datum check.
-        //           Pattern: SPEC_V1 §2. Full ConsumeMAGIC scope = v1.1.
-        expect list.has(tx.extra_signatories, datum.owner)
-        True
+        // v1.0 SECURITY LOCK (PR #11 review): BurnBatch (claim MAGIC) is
+        // unimplemented. The old `expect owner_sign; True` stub let an
+        // owner-signed spend rewrite the vault datum with NO output constraint
+        // (LAMP-drain / state-forge vector). Lock until v1.1 wires ConsumeMAGIC
+        // with full A02 + apply_pending_profile (SPEC_V1 §2).
+        fail @"BurnBatch locked until v1.1 (ConsumeMAGIC)"
       }
 
       // ── WithdrawLamp (SPEC_V1 §1) ────────────────────────────
@@ -237,6 +239,9 @@ fn validate_fire(
   let lamp_transfer = fires_in_tx * sched.lamp_per_epoch
 
   // C-FIRE-3: LAMP transfer atomic
+  // Treasury must be a SCRIPT custody address (PR #11 review pt3) — a wallet
+  // treasury_addr makes the `≥` aggregate check vacuously satisfiable.
+  expect Script(_) = treasury_addr.payment_credential
   expect treasury_lamp_received(tx.outputs, treasury_addr, lamp_policy_id, lamp_transfer)
 
   // Create new batches (one per fire)
@@ -378,6 +383,9 @@ fn get_vault_output(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
 }
 
 fn find_vault_output_raw(outputs: List<Output>, vault_addr: Address) -> Output {
+  // C-VAULT-OUT-1 (PR #11 review): exactly one continuing vault output, symmetric
+  // to the input==1 check. Blocks a phantom 2nd vault output carrying a forged datum.
+  expect list.count(outputs, fn(x) { x.address == vault_addr }) == 1
   expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
   o
 }
@@ -388,7 +396,7 @@ fn find_vault_output_raw(outputs: List<Output>, vault_addr: Address) -> Output {
 fn validate_withdraw_lamp(
   input_datum    : VaultDatum,
   amount         : Int,
-  current_epoch  : Int,
+  _current_epoch : Int,
   vault_addr     : Address,
   lamp_policy_id : PolicyId,
   tx             : Transaction,
@@ -424,7 +432,10 @@ fn validate_withdraw_lamp(
   expect output_datum.streak_state == input_datum.streak_state
   expect output_datum.personal_delegate == input_datum.personal_delegate
   expect output_datum.attribution == input_datum.attribution
-  expect output_datum.last_updated_epoch == current_epoch
+  // last_updated_epoch PRESERVED (PR #11 review pt4): withdraw must NOT advance
+  // it — doing so would reset the Snapshot catch-up window and forfeit MAGIC
+  // accrued over elapsed epochs. Withdraw is LAMP-only, orthogonal to snapshot.
+  expect output_datum.last_updated_epoch == input_datum.last_updated_epoch
 
   // W-6: vault output LAMP value
   let vault_output = find_vault_output_raw(tx.outputs, vault_addr)
@@ -485,4 +496,128 @@ fn compute_schedule_id_from_ref(own_ref: OutputReference, index: Int) -> ByteArr
   let tx_hash = own_ref.transaction_id
   let out_idx = own_ref.output_index
   compute_schedule_id(tx_hash, out_idx, index)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tests — WithdrawLamp (PR #11 review pt5). ScheduleGen has no UpdateProfile.
+// Negatives use the `fail` annotation: test passes iff the body errors.
+// validate_withdraw_lamp takes vault_addr directly (input==1 is enforced in
+// the spend block, not the handler), so tests pass t_vault_addr().
+// ═══════════════════════════════════════════════════════════════
+
+const t_owner: ByteArray =
+  #"00000000000000000000000000000000000000000000000000000000"
+const t_vault_hash: ByteArray =
+  #"11111111111111111111111111111111111111111111111111111111"
+const t_lamp_policy: ByteArray =
+  #"22222222222222222222222222222222222222222222222222222222"
+const t_tx_id: ByteArray =
+  #"3333333333333333333333333333333333333333333333333333333333333333"
+
+fn t_vault_addr() -> Address {
+  address.from_script(t_vault_hash)
+}
+
+fn t_own_ref() -> OutputReference {
+  OutputReference { transaction_id: t_tx_id, output_index: 0 }
+}
+
+fn t_holding(amount: Int, epoch: Int, locked: Bool) -> LoyaltyHolding {
+  LoyaltyHolding { amount, acquired_epoch: epoch, is_locked: locked }
+}
+
+fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDatum {
+  VaultDatum {
+    owner: t_owner,
+    lamp_balance: balance,
+    lamp_locked: locked,
+    loyalty_holdings: holdings,
+    magic_batches: [],
+    next_batch_index: 0,
+    vacuum_orders: [],
+    gen_schedules: [],
+    profile: Flame,
+    profile_changed_epoch: 0,
+    pending_profile: None,
+    last_updated_epoch: 0,
+    delegation_cert: DelegationCertificate {
+      current: [], pending: None,
+      current_effective_epoch: 0, last_changed_epoch: 0,
+    },
+    activity_state: ActivityState {
+      recent_burn_epochs: [], total_burns_count: 0,
+    },
+    streak_state: StreakState { current_streak: 0, last_active_epoch: 0 },
+    personal_delegate: None,
+    attribution: VaultAttribution {
+      attribution_root: #"", last_event_epoch: 0, total_events: 0,
+    },
+  }
+}
+
+fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
+  Output {
+    address: t_vault_addr(),
+    value: assets.from_asset(t_lamp_policy, #"4c414d50", balance),
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+}
+
+fn t_vault_input(datum: VaultDatum, balance: Int) -> Input {
+  Input { output_reference: t_own_ref(), output: t_vault_output(datum, balance) }
+}
+
+fn t_tx(ins: List<Input>, outs: List<Output>, signers: List<ByteArray>) -> Transaction {
+  Transaction { ..placeholder, inputs: ins, outputs: outs, extra_signatories: signers }
+}
+
+test w_positive_partial() {
+  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
+}
+
+test w_amount_zero() fail {
+  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(din, 100)], [t_owner])
+  validate_withdraw_lamp(din, 0, 0, t_vault_addr(), t_lamp_policy, tx)
+}
+
+test w_over_avail() fail {
+  let din = t_datum(100, 100, [t_holding(100, 5, True)])
+  let dout = t_datum(95, 100, [t_holding(95, 5, True)])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
+}
+
+test w_no_owner_sig() fail {
+  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [])
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
+}
+
+test w_phantom_second_output() fail {
+  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx =
+    t_tx(
+      [t_vault_input(din, 100)],
+      [t_vault_output(dout, 95), t_vault_output(dout, 95)],
+      [t_owner],
+    )
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
+}
+
+test w_advance_last_updated_rejected() fail {
+  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout =
+    VaultDatum {
+      ..t_datum(95, 0, [t_holding(95, 5, False)]),
+      last_updated_epoch: 5,
+    }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
 }

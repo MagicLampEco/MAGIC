@@ -69,15 +69,18 @@
 | UP-NEG-7 | `effective_epoch = current + 5` (quá xa) | **Validator (C-PC-V6)** | ✅ REJECTED | Expects current+1 |
 | UP-NEG-8 | `output.lamp_balance` bumped | **Validator (A02)** | ✅ REJECTED | C-PC-V5 balances immutable |
 
-## Results — InstantGen verified on Preview (2026-06-06, epoch 20610)
+## Results — InstantGen verified on Preview
 
-Vault hash `334b625f…` (v1.0 applied: lamp_policy + treasury + um_nft + ms_per_epoch).
+Re-verified on the **hardened validator** (PR #11 review fixes: output==1, BurnBatch
+lock, treasury Script-cred, preserve catch-up) — vault hash `59add779…` (applied:
+lamp_policy + treasury + um_nft + ms_per_epoch), deploy [`a4b0f717…`](https://preview.cardanoscan.io/transaction/a4b0f7175ea045a0e0aca826c63775c714d6e400f39d84dfa2e05a2caf3cbaa6).
 
 ### Positive case
 
 | ID | TX hash | Result | Datum diff |
 |---|---|---|---|
-| UP-POS-1 | [`c593b915...`](https://preview.cardanoscan.io/transaction/c593b915590d7781f8eefefd532c3a88368668a03ac16014f816885cb4b9c75f) | ✅ SUCCESS | Old profile Flame → pending Ember (effective ep 20611). `profile_changed_epoch=20610`, `profile` stays Flame (lazy), `magic_batches` unchanged (T4) |
+| UP-POS-1 (hardened) | [`593dfbba...`](https://preview.cardanoscan.io/transaction/593dfbba002ea001cd2999458d693adc95bef593b5fa080ef5f0d25e81b22041) | ✅ SUCCESS | Old profile Flame → pending Ember. `profile` stays Flame (lazy), `magic_batches` unchanged (T4). Confirms security fixes don't break the happy path. |
+| UP-POS-1 (pre-hardening) | [`c593b915...`](https://preview.cardanoscan.io/transaction/c593b915590d7781f8eefefd532c3a88368668a03ac16014f816885cb4b9c75f) | ✅ SUCCESS | original validator (hash `334b625f…`) |
 
 ### Negative cases (validator MUST reject — run against fresh vault `13c6f21c`, cooldown-clear)
 

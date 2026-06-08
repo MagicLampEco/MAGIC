@@ -335,10 +335,11 @@ Total spend across 4 modules:
 
 ### Build status
 
-- `aiken check` **0 error 0 warning** for 4 modules ✓
+- `aiken check` **0 error 0 warning** for 4 modules ✓ — now incl. **32 onchain aiken tests** (Snapshot 10, Instant 10, Vacuum 6, Schedule 6) covering WithdrawLamp/UpdateProfile positives + negatives (PR #11 review pt5) ✓
 - `aiken build` produces plutus.json for 4 modules ✓
-- 224/224 TS unit tests pass (190 module + 34 MagicSDK, incl. `updateProfile.test.ts`) ✓
+- **314 TS unit tests** pass: 254 module offchain (9 modules) + 34 MagicSDK (incl. `updateProfile.test.ts`) + 26 ProtocolUtils ✓
 - New plutus.json constructor indices auto-resolved by SDK runtime (no SDK code change needed) ✓
+- **PR #11 security review fixes** applied (commit `635fa0b0`): C-VAULT-OUT-1 output==1, BurnBatch lock, treasury Script-cred, WithdrawLamp preserves catch-up ✓
 
 ### Open items (after Preview exec)
 

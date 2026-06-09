@@ -74,15 +74,9 @@ validator vault(
           own_ref, lamp_policy_id, treasury_addr, um_nft_policy, tx,
         )
 
-      // ── ApplyHalving (stub) ──────────────────────────────
-      ApplyHalving -> {
-        // TODO v1.1: call apply_pending_profile(input_datum, current_epoch)
-        //           and use applied_input for any profile-dependent halving
-        //           computation + A02 datum check.
-        //           Pattern: SPEC_V1 §2 handler usage.
-        expect list.has(tx.extra_signatories, input_datum.owner)
-        True
-      }
+      // ── ApplyHalving — permissionless pending-profile apply ─
+      ApplyHalving ->
+        validate_apply_halving(input_datum, current_epoch, own_ref, tx)
 
       // ── BurnBatch (stub) ─────────────────────────────────
       BurnBatch { .. } -> {
@@ -251,6 +245,68 @@ fn validate_instant_gen(
   // ── C-INST-10: LAMP supply unchanged ─────────────────────
   // Guaranteed by eUTxO conservation: lamp_paid moves vault→Treasury.
   // The treasury_receives_lamp check above enforces the exact amount.
+  True
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_apply_halving — H-1..H-6
+// Semantics: standalone tx that applies pending_profile (if due) and
+// lazily halves Instant batches at age k=1.  Permissionless — no owner
+// signature required (H-5).
+// ═══════════════════════════════════════════════════════════════
+fn validate_apply_halving(
+  input_datum   : VaultDatum,
+  current_epoch : Int,
+  own_ref       : OutputReference,
+  tx            : Transaction,
+) -> Bool {
+
+  // ── H-1: exactly one vault input (C-VAULT-DS-1) ─────────────
+  let vault_addr = find_own_address(own_ref, tx.inputs)
+  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+
+  // ── H-2: lazy profile apply (SPEC_V1 §2) ─────────────────────
+  // Must use applied_input for BOTH the batch computation (PM) AND the
+  // A02 output datum check so that pending_profile clears on the output.
+  let applied_input = apply_pending_profile(input_datum, current_epoch)
+
+  // ── H-3: apply halving across all batches ────────────────────
+  // halve_then_prune = apply_halving_all then prune_expired (C-PRUNE-2).
+  let expected_batches = halve_then_prune(applied_input.magic_batches, current_epoch)
+
+  // ── A02: field-by-field output datum check ────────────────────
+  let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
+
+  // H-4: LAMP balance and all LAMP-related fields UNCHANGED
+  expect output_datum.owner == applied_input.owner
+  expect output_datum.lamp_balance == applied_input.lamp_balance
+  expect output_datum.lamp_locked == applied_input.lamp_locked
+  expect output_datum.loyalty_holdings == applied_input.loyalty_holdings
+
+  // H-6: magic_batches = halve_then_prune(applied_input.magic_batches)
+  expect output_datum.magic_batches == expected_batches
+
+  // C-VAULT-1: batch count ≤ 32
+  expect list.length(output_datum.magic_batches) <= max_batches_per_vault
+
+  // next_batch_index UNCHANGED (no new batch created)
+  expect output_datum.next_batch_index == applied_input.next_batch_index
+
+  // Epoch advanced to signal the halving was performed
+  expect output_datum.last_updated_epoch == current_epoch
+
+  // Remaining fields UNCHANGED
+  expect output_datum.vacuum_orders == applied_input.vacuum_orders
+  expect output_datum.gen_schedules == applied_input.gen_schedules
+  expect output_datum.profile == applied_input.profile
+  expect output_datum.profile_changed_epoch == applied_input.profile_changed_epoch
+  expect output_datum.pending_profile == applied_input.pending_profile
+  expect output_datum.delegation_cert == applied_input.delegation_cert
+  expect output_datum.activity_state == applied_input.activity_state
+  expect output_datum.streak_state == applied_input.streak_state
+  expect output_datum.personal_delegate == applied_input.personal_delegate
+  expect output_datum.attribution == applied_input.attribution
+
   True
 }
 
@@ -644,4 +700,170 @@ test up_same_profile() fail {
   let dout = up_output(din, Flame, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_update_profile(din, Flame, 10, t_own_ref(), tx)
+}
+
+// ── ApplyHalving ──────────────────────────────────────────────
+
+fn t_instant_batch(epoch_created: Int, amount: Int, halved: Bool) -> MagicBatch {
+  MagicBatch {
+    batch_id:            #"aabbcc",
+    source:              Instant,
+    created_epoch:       epoch_created,
+    initial_amount:      amount,
+    current_amount:      amount,
+    decay_window:        2,
+    profile_at_creation: None,
+    contract_id:         None,
+    halved:              halved,
+  }
+}
+
+fn t_datum_with_batches(batches: List<MagicBatch>) -> VaultDatum {
+  VaultDatum {
+    ..t_datum(100, 0, [t_holding(100, 5, False)]),
+    magic_batches: batches,
+  }
+}
+
+// H-POS-1: batch at k=1 (not yet halved) — current_amount halves; halved=True
+test ah_positive_halves_k1() {
+  let batch_in  = t_instant_batch(9, 1000, False)   // created_epoch=9, current=10 → k=1
+  let batch_out = MagicBatch { ..batch_in, current_amount: 500, halved: True }
+  let din  = t_datum_with_batches([batch_in])
+  let dout = VaultDatum {
+    ..t_datum_with_batches([batch_out]),
+    last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_apply_halving(din, 10, t_own_ref(), tx)
+}
+
+// H-POS-2: batch at k=0 (fresh this epoch) — not halved, not pruned
+test ah_positive_k0_unchanged() {
+  let batch_in = t_instant_batch(10, 1000, False)   // created_epoch=10, current=10 → k=0
+  let din  = t_datum_with_batches([batch_in])
+  let dout = VaultDatum {
+    ..t_datum_with_batches([batch_in]),
+    last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_apply_halving(din, 10, t_own_ref(), tx)
+}
+
+// H-POS-3: batch at k=2 (decay_window=2 → expired) — pruned from output
+test ah_positive_expired_pruned() {
+  let batch_in = t_instant_batch(8, 1000, True)   // created_epoch=8, current=10 → k=2 ≥ decay_window
+  let din  = t_datum_with_batches([batch_in])
+  let dout = VaultDatum {
+    ..t_datum_with_batches([]),
+    last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_apply_halving(din, 10, t_own_ref(), tx)
+}
+
+// H-POS-4: permissionless — no signature required (empty signers)
+test ah_positive_no_signature_needed() {
+  let batch_in  = t_instant_batch(9, 800, False)
+  let batch_out = MagicBatch { ..batch_in, current_amount: 400, halved: True }
+  let din  = t_datum_with_batches([batch_in])
+  let dout = VaultDatum {
+    ..t_datum_with_batches([batch_out]),
+    last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  // Note: no signers — permissionless
+  validate_apply_halving(din, 10, t_own_ref(), tx)
+}
+
+// H-NEG-1: output retains un-halved batch (should have been halved at k=1)
+test ah_neg_halving_not_applied() fail {
+  let batch_in = t_instant_batch(9, 1000, False)
+  let din  = t_datum_with_batches([batch_in])
+  // output keeps the un-halved batch — validator must reject
+  let dout = VaultDatum {
+    ..t_datum_with_batches([batch_in]),
+    last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_apply_halving(din, 10, t_own_ref(), tx)
+}
+
+// H-NEG-2: expired batch NOT pruned from output
+test ah_neg_expired_not_pruned() fail {
+  let batch_in = t_instant_batch(8, 500, True)   // k=2 → should be pruned
+  let din  = t_datum_with_batches([batch_in])
+  // output incorrectly keeps the expired batch
+  let dout = VaultDatum {
+    ..t_datum_with_batches([batch_in]),
+    last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_apply_halving(din, 10, t_own_ref(), tx)
+}
+
+// H-NEG-3: lamp_balance mutated during ApplyHalving
+test ah_neg_lamp_balance_mutated() fail {
+  let batch_in  = t_instant_batch(9, 1000, False)
+  let batch_out = MagicBatch { ..batch_in, current_amount: 500, halved: True }
+  let din = t_datum_with_batches([batch_in])
+  // tamper: reduce lamp_balance by 10
+  let dout = VaultDatum {
+    ..VaultDatum {
+      ..t_datum_with_batches([batch_out]),
+      lamp_balance: 90,
+    },
+    last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_apply_halving(din, 10, t_own_ref(), tx)
+}
+
+// H-NEG-4: last_updated_epoch not set to current_epoch
+test ah_neg_epoch_not_advanced() fail {
+  let batch_in  = t_instant_batch(9, 1000, False)
+  let batch_out = MagicBatch { ..batch_in, current_amount: 500, halved: True }
+  let din  = t_datum_with_batches([batch_in])
+  let dout = VaultDatum {
+    ..t_datum_with_batches([batch_out]),
+    last_updated_epoch: 0,   // stale — should be 10
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_apply_halving(din, 10, t_own_ref(), tx)
+}
+
+// H-NEG-5: phantom second vault output
+test ah_neg_phantom_second_output() fail {
+  let batch_in  = t_instant_batch(9, 1000, False)
+  let batch_out = MagicBatch { ..batch_in, current_amount: 500, halved: True }
+  let din  = t_datum_with_batches([batch_in])
+  let dout = VaultDatum {
+    ..t_datum_with_batches([batch_out]),
+    last_updated_epoch: 10,
+  }
+  let tx =
+    t_tx(
+      [t_vault_input(din, 100)],
+      [t_vault_output(dout, 100), t_vault_output(dout, 100)],
+      [],
+    )
+  validate_apply_halving(din, 10, t_own_ref(), tx)
+}
+
+// H-POS-5: apply pending_profile when it fires (epoch 10 >= effective 10)
+test ah_positive_applies_pending_profile() {
+  let din_base = t_datum(100, 0, [t_holding(100, 5, False)])
+  let din = VaultDatum {
+    ..din_base,
+    pending_profile: Some(PendingProfile { new_profile: Ember, effective_epoch: 10 }),
+  }
+  // After apply_pending_profile: profile=Ember, pending=None
+  let dout = VaultDatum {
+    ..din,
+    profile:         Ember,
+    pending_profile: None,
+    last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_apply_halving(din, 10, t_own_ref(), tx)
 }

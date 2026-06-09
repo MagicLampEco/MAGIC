@@ -17,7 +17,7 @@
 // SDK code complete + match spec §12 — đợi validator full impl.
 
 import {
-  Data,
+  Constr, Data,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
   slotToUnixTime,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
@@ -179,8 +179,6 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
  * — kept hardcoded as the enum is closed and pre-dates v1.0).
  */
 function encodeUpdateProfileRedeemer(plutusJson: PlutusJson, newProfile: Profile): string {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { Constr } = require("@lucid-evolution/lucid") as typeof import("@lucid-evolution/lucid");
   const profileConstr = new Constr(PROFILE_CONSTR_INDEX[newProfile], []);
   const idx = resolveConstrIndex(plutusJson, VAULT_VALIDATOR_TITLE, UPDATE_PROFILE_TAG);
   return Data.to(new Constr(idx, [profileConstr]));

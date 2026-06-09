@@ -107,3 +107,43 @@ pub fn sum_locked(holdings: List<LoyaltyHolding>) -> Int {
 pub fn l_avail(lamp_balance: Int, lamp_locked: Int) -> Int {
   lamp_balance - lamp_locked
 }
+
+// ══════════════════════════════════════════════════════════════
+// remove_newest_first — WithdrawLamp selection (SPEC_V1 §1)
+// ══════════════════════════════════════════════════════════════
+//
+// Pick NEWEST unlocked holdings first → preserve loyalty of older
+// holdings (LF-favorable). Locked holdings never touched.
+//
+// Algorithm mirrors MagicSDK/src/withdrawLamp.ts:206 byte-for-byte
+// (P8 invariant). Distinct from `remove_locked_amount` (oldest-locked-first
+// at fire time) and `select_lamp_for_lock` (youngest-first at lock time).
+pub fn remove_newest_first(
+  holdings : List<LoyaltyHolding>,
+  amount   : Int,
+) -> List<LoyaltyHolding> {
+  let locked   = list.filter(holdings, fn(h) {  h.is_locked })
+  let unlocked = list.filter(holdings, fn(h) { !h.is_locked })
+  let sorted   = list.sort(unlocked, fn(a, b) { int.compare(b.acquired_epoch, a.acquired_epoch) })
+  let remaining_unlocked = consume_newest(sorted, amount)
+  list.concat(locked, remaining_unlocked)
+}
+
+fn consume_newest(
+  holdings  : List<LoyaltyHolding>,
+  remaining : Int,
+) -> List<LoyaltyHolding> {
+  when holdings is {
+    [] -> {
+      expect remaining == 0
+      []
+    }
+    [h, ..rest] ->
+      if remaining <= 0 { holdings }
+      else if remaining >= h.amount {
+        consume_newest(rest, remaining - h.amount)
+      } else {
+        [LoyaltyHolding { ..h, amount: h.amount - remaining }, ..rest]
+      }
+  }
+}

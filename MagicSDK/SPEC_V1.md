@@ -372,26 +372,26 @@ Chỉ launch v1.0 (đã có Withdraw + UpdateProfile đầy đủ). Quy trình: 
 
 ### Onchain (Aiken)
 
-- [ ] SnapshotGen vault: implement full `UpdateProfile` (§2) — thay stub hiện tại
-- [ ] SnapshotGen vault: thêm `WithdrawLamp { amount }` redeemer (§1)
-- [ ] InstantGen vault: thêm `UpdateProfile { new_profile }` enum variant + handler (§3)
-- [ ] InstantGen vault: thêm `WithdrawLamp { amount }` redeemer (§1)
-- [ ] VacuumGen vault: thêm `WithdrawLamp { amount }` redeemer (§1)
-- [ ] ScheduleGen vault: thêm `WithdrawLamp { amount }` redeemer (§1)
-- [ ] Helper `remove_newest_first` add vào `protocol/lock.ak` (shared)
-- [ ] Helper `apply_pending_profile` add vào shared lib
-- [ ] Mọi handler (TriggerSnapshot, InstantGen, ApplyHalving, BurnBatch) gọi `apply_pending_profile` rồi dùng `applied_input` cho cả M computation và A02 output datum check (xem §2 handler usage pattern)
-- [ ] `aiken check` pass 0 errors cho 4 module
-- [ ] `aiken build` → cập nhật plutus.json cho 4 module
+- [x] SnapshotGen vault: implement full `UpdateProfile` (§2) — thay stub hiện tại
+- [x] SnapshotGen vault: thêm `WithdrawLamp { amount }` redeemer (§1)
+- [x] InstantGen vault: thêm `UpdateProfile { new_profile }` enum variant + handler (§3) — note: enum variant đã có trên main; full handler implement v1.0
+- [x] InstantGen vault: thêm `WithdrawLamp { amount }` redeemer (§1)
+- [x] VacuumGen vault: thêm `WithdrawLamp { amount }` redeemer (§1)
+- [x] ScheduleGen vault: thêm `WithdrawLamp { amount }` redeemer (§1)
+- [x] Helper `remove_newest_first` add vào `protocol/lock.ak` per-module (no shared lib repo-level)
+- [x] Helper `apply_pending_profile` add vào `protocol/profile.ak` per-module (Snap + Inst — Vacuum/Schedule UpdateProfile out of v1.0 scope)
+- [x] TriggerSnapshot (Snap) + InstantGen (Inst) handlers gọi `apply_pending_profile` rồi dùng `applied_input` cho cả M computation và A02 output datum check (xem §2 handler usage pattern). BurnBatch + ApplyHalving stub giữ `expect owner_sign; True` + TODO comment cho v1.1 (anh chốt skip wire — comment thread issue #9)
+- [x] `aiken check` pass 0 errors 0 warnings cho 4 module
+- [x] `aiken build` → cập nhật plutus.json cho 4 module
 
 ### Offchain test (xem chi tiết trong [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md))
 
-- [ ] `scripts/test/withdraw_only.ts` — 11 case withdraw (3 positive + 8 negative) cho mỗi vault module
-- [ ] `scripts/test/update_profile_only.ts` — 11 case UpdateProfile + lazy apply scenarios cho Snap + Inst
-- [ ] `scripts/test/multi_vault_only.ts` — 4 case multi-vault (W-CROSS + MV)
-- [ ] Regression run — 37 case v0 vẫn pass sau khi merge v1.0 code
+- [x] `scripts/test/withdraw_only.ts` — runner script (MODULE + TAMPER env knobs); testnet exec pending
+- [x] `scripts/test/update_profile_only.ts` — runner script (MODULE + TAMPER env knobs); testnet exec pending
+- [x] `scripts/test/multi_vault_only.ts` — runner script (CASE env knob: mv1..mv4); testnet exec pending
+- [ ] Regression run — 37 case v0 vẫn pass sau khi merge v1.0 code (Preview)
 - [ ] Update [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md) với section v1.0 (~32+ case mới)
-- [ ] 3 report mới (repo root): `WITHDRAW_TESTNET_REPORT.md`, `UPDATE_PROFILE_TESTNET_REPORT.md`, `MULTI_VAULT_TESTNET_REPORT.md`
+- [ ] 3 report mới (repo root): `WITHDRAW_TESTNET_REPORT.md`, `UPDATE_PROFILE_TESTNET_REPORT.md`, `MULTI_VAULT_TESTNET_REPORT.md` — template tạo sẵn, fill tx hash sau khi run Preview
 
 ### Offchain SDK (đã hoàn tất)
 

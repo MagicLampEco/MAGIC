@@ -13,7 +13,7 @@
 import {
   applyParamsToScript, validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
-  Constr, Data,
+  Constr, Data, getAddressDetails,
   type Validator,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch } from "@magiclamp/protocol-utils";
@@ -117,9 +117,6 @@ function requireField(v: unknown, name: string, vaultType: string): void {
  * we extract the payment credential and serialize with no stake credential.
  */
 function addressToPlutusData(addressBech32: string): Data {
-  // Lazy import to avoid pulling in addr utilities until needed.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { getAddressDetails } = require("@lucid-evolution/lucid") as typeof import("@lucid-evolution/lucid");
   const details = getAddressDetails(addressBech32);
   const pc = details.paymentCredential;
   if (!pc) throw new Error(`addressToPlutusData: no payment credential in ${addressBech32}`);

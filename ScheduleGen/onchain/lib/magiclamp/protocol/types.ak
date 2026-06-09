@@ -125,21 +125,25 @@ pub type VaultDatum {
 }
 
 // ── Vault Redeemer (ScheduleGen operations) ───────────────────
+// NORMATIVE: append-only enum. New variants at END only.
 pub type VaultRedeemer {
-  // Phase 1: User commits — locks L×λ LAMP, creates GenSchedule
+  // constr 0  Phase 1: User commits — locks L×λ LAMP, creates GenSchedule
   ScheduleCommit {
     schedule_length  : Natural,   // L ∈ [10,200]
     lamp_per_epoch   : Natural,   // λ (oil)
   }
 
-  // Phase 2: Fire — permissionless (C-SCH-FIRE-PERMISSION)
+  // constr 1  Phase 2: Fire — permissionless (C-SCH-FIRE-PERMISSION)
   // Fires up to 8 pending orders for a specific schedule.
   ScheduleFire {
     schedule_id  : ByteArray,
   }
 
-  // Stubs for other redeemers
+  // constr 2  Stubs for other redeemers
   BurnBatch { burns: List<(ByteArray, Natural)> }
+
+  // constr 3  WithdrawLamp: withdraw unlocked LAMP back to wallet (SPEC_V1 §1)
+  WithdrawLamp { amount: Natural }
 }
 
 // ── Shard Redeemer ────────────────────────────────────────────

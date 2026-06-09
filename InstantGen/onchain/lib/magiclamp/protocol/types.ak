@@ -149,18 +149,20 @@ pub type UMDatum {
 }
 
 // ── Vault redeemer ───────────────────────────────────────────
+// NORMATIVE: append-only enum. New variants at END only.
 pub type VaultRedeemer {
-  // InstantGen: user pays lamp_paid oil → receives MAGIC batch
-  // lamp_paid is in oil (1 LAMP = 10^6 oil)
+  // constr 0  InstantGen: user pays lamp_paid oil → receives MAGIC batch
   InstantGen    { lamp_paid: Natural }
 
-  // ApplyHalving: lazily apply halving to Instant batches at k=1
-  // (typically included as part of another tx, not standalone)
+  // constr 1  ApplyHalving: lazily apply halving to Instant batches at k=1
   ApplyHalving
 
-  // BurnBatch: burn MAGIC from specified batches
+  // constr 2  BurnBatch: burn MAGIC from specified batches
   BurnBatch     { burns: List<(ByteArray, Natural)> }
 
-  // UpdateProfile: change activity profile (§12)
+  // constr 3  UpdateProfile: change activity profile (§12)
   UpdateProfile { new_profile: ActivityProfile }
+
+  // constr 4  WithdrawLamp: withdraw unlocked LAMP back to wallet (SPEC_V1 §1)
+  WithdrawLamp  { amount: Natural }
 }

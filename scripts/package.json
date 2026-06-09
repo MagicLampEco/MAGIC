@@ -18,10 +18,14 @@
     "test:vacuum-fire":      "npx tsx test/vacuum_fire_only.ts",
     "deploy:schedule-vault": "npx tsx deploy/07_create_schedule_vault.ts",
     "test:schedule-commit":  "npx tsx test/schedule_commit_only.ts",
-    "test:schedule-fire":    "npx tsx test/schedule_fire_only.ts"
+    "test:schedule-fire":    "npx tsx test/schedule_fire_only.ts",
+    "test:withdraw":         "npx tsx test/withdraw_only.ts",
+    "test:update-profile":   "npx tsx test/update_profile_only.ts",
+    "test:multi-vault":      "npx tsx test/multi_vault_only.ts"
   },
   "dependencies": {
     "@lucid-evolution/lucid": "^0.4.0",
+    "@magiclamp/protocol-utils": "file:../ProtocolUtils",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {

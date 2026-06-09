@@ -134,11 +134,14 @@ async function main() {
   const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
   if (!unapplied) throw new Error("vault.vault.spend not found in SnapshotGen/onchain/plutus.json");
 
-  const appliedCbor = applyParamsToScript(unapplied.compiledCode, [PROTOCOL.MS_PER_EPOCH]);
+  // v1.0: SnapshotGen vault signature thêm lamp_policy_id (cho W-6 value check
+  // trong WithdrawLamp). Order phải khớp với Aiken `validator vault(lamp_policy_id, ms_per_epoch)`.
+  const appliedCbor = applyParamsToScript(unapplied.compiledCode, [POLICY_IDS.lamp, PROTOCOL.MS_PER_EPOCH]);
   const vaultScript = { type: "PlutusV3" as const, script: appliedCbor };
   const vaultScriptHash = validatorToScriptHash(vaultScript);
   console.log(`Network:           ${NETWORK}`);
   console.log(`ms_per_epoch:      ${PROTOCOL.MS_PER_EPOCH}`);
+  console.log(`lamp_policy_id:    ${POLICY_IDS.lamp}`);
   console.log(`Vault script hash: ${vaultScriptHash}`);
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);

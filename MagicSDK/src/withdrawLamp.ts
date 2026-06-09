@@ -12,7 +12,7 @@
 // Submit tx này TRƯỚC khi onchain v1.0 deploy sẽ bị validator reject.
 
 import {
-  Data, toUnit,
+  Constr, Data, toUnit,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
   slotToUnixTime,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
@@ -242,8 +242,6 @@ export function removeNewestFirst(
  * change landed).
  */
 function encodeWithdrawLampRedeemer(plutusJson: PlutusJson, amount: bigint): string {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { Constr } = require("@lucid-evolution/lucid") as typeof import("@lucid-evolution/lucid");
   const idx = resolveConstrIndex(plutusJson, VAULT_VALIDATOR_TITLE, WITHDRAW_LAMP_TAG);
   return Data.to(new Constr(idx, [amount]));
 }

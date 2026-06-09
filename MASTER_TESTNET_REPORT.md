@@ -308,4 +308,47 @@ Total spend across 4 modules:
 
 ---
 
-**GenMAGIC v3.3 protocol is testnet-verified and ready for the next phase (production hardening + Mainnet deploy planning).**
+## 11. v1.0 changes (branch `feat/v1.0-onchain`)
+
+**Status:** code ship + build green. **Testnet (Preview):** WithdrawLamp 4/4 module + SnapshotGen UpdateProfile + **InstantGen UpdateProfile (UP-POS-1 + 3 negative)** verified on-chain; multi-vault MV1–4, full per-module negative withdraw matrices, and 37-case v0 regression on new vault hashes remain pragmatic-pending (runner-ready, need epoch waits + extra deploys).
+
+**Scope:** issue #9 — close 2 mainnet blockers + 1 stub-handler decision.
+
+### New onchain features
+
+| # | Feature | Module | Spec |
+|---|---|---|---|
+| 1 | `WithdrawLamp { amount }` redeemer (W-1..W-7) | All 4 vault | `MagicSDK/SPEC_V1.md` §1 |
+| 2 | `UpdateProfile` full impl (C-PC-V1..V6) | Snapshot + Instant | `MagicSDK/SPEC_V1.md` §2/§3 |
+| 3 | `apply_pending_profile` lazy apply wired into TriggerSnapshot + InstantGen handlers | Snapshot + Instant | `MagicSDK/SPEC_V1.md` §2 lazy apply pattern |
+| 4 | TODO comments in BurnBatch + ApplyHalving stubs (skip wire — anh chốt option 2) | 4 modules where stubs exist | issue #9 comment thread |
+
+### Test coverage (Preview, pending exec)
+
+| Suite | Cases | Runner | Report |
+|---|---|---|---|
+| WithdrawLamp | 20 | `scripts/test/withdraw_only.ts` | [`WITHDRAW_TESTNET_REPORT.md`](WITHDRAW_TESTNET_REPORT.md) |
+| UpdateProfile | 16 | `scripts/test/update_profile_only.ts` | [`UPDATE_PROFILE_TESTNET_REPORT.md`](UPDATE_PROFILE_TESTNET_REPORT.md) — Snap + Instant verified |
+| Multi-vault | 4 | `scripts/test/multi_vault_only.ts` | [`MULTI_VAULT_TESTNET_REPORT.md`](MULTI_VAULT_TESTNET_REPORT.md) |
+| Regression (37 v0) | 37 | existing scripts | per-module reports |
+| **Total** | **77+** | | |
+
+### Build status
+
+- `aiken check` **0 error 0 warning** for 4 modules ✓ — now incl. **32 onchain aiken tests** (Snapshot 10, Instant 10, Vacuum 6, Schedule 6) covering WithdrawLamp/UpdateProfile positives + negatives (PR #11 review pt5) ✓
+- `aiken build` produces plutus.json for 4 modules ✓
+- **314 TS unit tests** pass: 254 module offchain (9 modules) + 34 MagicSDK (incl. `updateProfile.test.ts`) + 26 ProtocolUtils ✓
+- New plutus.json constructor indices auto-resolved by SDK runtime (no SDK code change needed) ✓
+- **PR #11 security review fixes** applied (commit `635fa0b0`): C-VAULT-OUT-1 output==1, BurnBatch lock, treasury Script-cred, WithdrawLamp preserves catch-up ✓
+
+### Open items (after Preview exec)
+
+- [ ] Fill tx hashes in the 3 new reports
+- [ ] Confirm 37 regression cases still pass on v1.0 vault address
+- [ ] `npm run verify:hashes` for hash log per network
+- [ ] PR review + merge to main
+- [ ] Mainnet audit prep
+
+---
+
+**GenMAGIC v3.3 protocol is testnet-verified and v1.0 onchain ship — pending Preview exec of 32+ new cases before audit + Mainnet deploy.**

@@ -66,3 +66,7 @@ pub const max_fires_per_tx_catchup: Int = 8
 // ── Snapshot base rate (§19.1) ───────────────────────────────
 // [Constitutional]
 pub const snapshot_base_rate_q : Int = 5_000_000_000
+
+// ── Profile change cooldown (§12, C-PC-V2) ──────────────────
+// [Routine] Minimum epochs between UpdateProfile calls
+pub const profile_change_cooldown : Int = 2

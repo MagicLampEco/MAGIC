@@ -207,7 +207,7 @@ async function rebuildWithTamper(
   const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
   const { resolveConstrIndex } = await import("../../MagicSDK/src/redeemerIndex.js");
   const { Constr, toUnit } = await import("@lucid-evolution/lucid");
-  const lampUnit = toUnit(POLICY_IDS.lamp, "4c414d50");
+  const lampUnit = toUnit(POLICY_IDS.lamp, "744c414d50");
 
   let mutatedDatum = { ...newVaultDatum };
   let outputLamp = vaultUtxo.assets[lampUnit] ?? 0n;

@@ -52,7 +52,7 @@ export interface WithdrawLampParams {
   network:         Network;
   /** LAMP minting policy + asset name. */
   lampPolicyId:    string;
-  lampAssetName?:  string;        // default "4c414d50" = "LAMP"
+  lampAssetName?:  string;        // default "744c414d50" = "tLAMP"
   /** Where the withdrawn LAMP goes. Default = wallet's own address. */
   destinationAddress?: string;
   /** Override tip POSIX ms for deterministic testing. */
@@ -67,7 +67,7 @@ export interface WithdrawLampResult {
   summary:         string;
 }
 
-const DEFAULT_LAMP_ASSET_NAME = "4c414d50";
+const DEFAULT_LAMP_ASSET_NAME = "744c414d50";
 
 /**
  * Build an unsigned tx that withdraws `amountOil` LAMP from `vaultUtxo`

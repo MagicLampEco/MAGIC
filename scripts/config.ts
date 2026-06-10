@@ -42,7 +42,7 @@ export const POLICY_IDS = {
 
 // ── Asset names (hex) ─────────────────────────────────────────
 export const ASSET_NAMES = {
-  lamp:      "4c414d50",   // "LAMP"
+  lamp:      "744c414d50", // "tLAMP"
   um_nft:    "554d44",     // "UMD"
   shard_nft: "5348415244", // "SHARD"
 };

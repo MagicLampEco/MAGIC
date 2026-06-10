@@ -35,7 +35,7 @@ export const TESTNET_CONFIG = {
   blockfrostUrl:    "https://cardano-preview.blockfrost.io/api/v0",
   vaultScriptHash:  "REPLACE_WITH_VAULT_SCRIPT_HASH",
   lampPolicyId:     "REPLACE_WITH_LAMP_POLICY_ID",
-  lampAssetName:    "4c414d50",
+  lampAssetName:    "744c414d50",  // "tLAMP"
   umNftPolicyId:    "REPLACE_WITH_UM_NFT_POLICY_ID",
   umNftAssetName:   "554d44",
   treasuryAddress:  "REPLACE_WITH_TREASURY_ADDRESS",

@@ -39,7 +39,7 @@ export const TESTNET_CONFIG = {
   vaultScriptHash:  "REPLACE_WITH_VAULT_SCRIPT_HASH",
   shardScriptHash:  "REPLACE_WITH_SHARD_SCRIPT_HASH",
   lampPolicyId:     "REPLACE_WITH_LAMP_POLICY_ID",
-  lampAssetName:    "4c414d50",    // "LAMP"
+  lampAssetName:    "744c414d50",   // "tLAMP"
   shardNftPolicyId: "REPLACE_WITH_SHARD_NFT_POLICY_ID",
   shardNftAssetName:"5348415244",  // "SHARD"
   treasuryAddress:  "REPLACE_WITH_TREASURY_ADDRESS",

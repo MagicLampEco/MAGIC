@@ -75,7 +75,7 @@ Build unsigned tx tạo vault mới. Không sign, không submit — caller làm.
 | `vaultType` | `"Snapshot"` \| `"Instant"` \| `"Vacuum"` \| `"Schedule"` | ✅ | |
 | `protocol.network` | `"Preview"` \| `"Preprod"` \| `"Mainnet"` | ✅ | Quyết định `ms_per_epoch` |
 | `protocol.lampPolicyId` | `string` (56-hex) | ✅ | LAMP minting policy |
-| `protocol.lampAssetName` | `string` (hex) | | Default `"4c414d50"` = `"LAMP"` |
+| `protocol.lampAssetName` | `string` (hex) | | Default `"744c414d50"` = `"tLAMP"` |
 | `protocol.treasuryAddress` | `string` (bech32) | Instant/Vacuum/Schedule | Phải là địa chỉ TÁCH RIÊNG khỏi ví user |
 | `protocol.umNftPolicyId` | `string` (56-hex) | Instant/Vacuum | UM datum NFT |
 | `protocol.shardPolicyId` | `string` (56-hex) | Schedule | Shard NFT |

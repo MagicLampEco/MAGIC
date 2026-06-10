@@ -60,7 +60,7 @@ export interface ProtocolParams {
   /** LAMP minting-policy ID. Required for Instant/Vacuum/Schedule;
    *  required for Snapshot for the vault's LAMP UTxO asset unit. */
   lampPolicyId: string;
-  /** LAMP asset name as hex (default "4c414d50" = "LAMP"). */
+  /** LAMP asset name as hex (default "744c414d50" = "tLAMP"). */
   lampAssetName?: string;
   /** UM datum NFT policy ID. Required for Instant + Vacuum. */
   umNftPolicyId?: string;

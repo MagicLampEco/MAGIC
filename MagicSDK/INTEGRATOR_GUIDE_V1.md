@@ -99,7 +99,7 @@ const plutus = JSON.parse(await readFile("SnapshotGen/onchain/plutus.json", "utf
 const protocolPreview = {
   network:           "Preview" as const,
   lampPolicyId:      "4942de4a226f43c524c1273d752712366511d5fd7ae28bc1a1576077",
-  lampAssetName:     "4c414d50",  // hex của "LAMP", default trong SDK
+  lampAssetName:     "744c414d50", // hex của "tLAMP", default trong SDK
   umNftPolicyId:     "...",       // cần cho Instant + Vacuum
   shardPolicyId:     "...",       // cần cho Schedule
   treasuryAddress:   "addr_test1...",

@@ -9,6 +9,8 @@
 - Keeper update UM mỗi epoch → users nhận rate đúng thực tế (0.5× – 2.0×)
 - Không có keeper → mọi InstantGen luôn nhận rate tệ nhất (0.5×)
 
+**Cập nhật PERMISSIONLESS** (khớp pattern VacuumFire/ScheduleFire): bất kỳ ai cũng có thể trigger UMUpdate — không cần whitelist, không cần chữ ký keeper. An toàn vì validator tính lại `smoothed_q` từ `history` rồi double-clamp `[UM_MIN_Q, UM_MAX_Q]` → người trigger KHÔNG hưởng lợi, chỉ làm tươi rate theo công thức. Biến số duy nhất họ cấp là `new_raw` (tính off-chain), đã bị clamp + SMA 6-epoch làm mịn. `keeper.ts` chỉ là bot tiện ích chạy đều đặn, không phải tác nhân đặc quyền.
+
 ---
 
 ## Formula (§14.1)

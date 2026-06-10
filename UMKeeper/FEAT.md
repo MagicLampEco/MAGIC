@@ -5,7 +5,7 @@
 
 ## 1. Mục đích
 
-UMKeeper duy trì giá trị **UM (Network Demand Multiplier)** — tham số Constitutional phản ánh tỷ lệ cung/cầu MAGIC toàn mạng. UM được lưu trong một UTxO riêng biệt (UM datum UTxO), cập nhật mỗi epoch bởi keeper được uỷ quyền (M-of-N whitelist).
+UMKeeper duy trì giá trị **UM (Network Demand Multiplier)** — tham số Constitutional phản ánh tỷ lệ cung/cầu MAGIC toàn mạng. UM được lưu trong một UTxO riêng biệt (UM datum UTxO), cập nhật mỗi epoch theo cơ chế **permissionless** (khớp pattern VacuumFire/ScheduleFire): bất kỳ ai cũng có thể trigger update, validator tính lại SMA + double-clamp nên người trigger không hưởng lợi.
 
 **Vai trò của UM trong hệ sinh thái:**
 - InstantGen (§9) nhân UM vào công thức tính MAGIC output: `M = L × BASE × UM × PM / Q³`
@@ -20,10 +20,10 @@ UMKeeper duy trì giá trị **UM (Network Demand Multiplier)** — tham số Co
 
 | Actor | Vai trò |
 |---|---|
-| **Keeper** | Tác nhân được whitelist (M-of-N), submit UMUpdate tx mỗi epoch. Thường là bot chạy tự động (`keeper.ts`). Không cần phép đặc biệt ngoài chữ ký. |
-| **Protocol Deployer** | Khởi tạo UM datum UTxO với `smoothed_q = Q = 1.0×`, `history = []`, `last_updated_epoch = genesisEpoch`. Bake `keepers` và `threshold` vào tham số validator. |
-| **InstantGen user** | Đọc UM datum (reference input hoặc UTxO lookup) trước khi submit Instant purchase — để biết rate hiện tại. Không interact trực tiếp với UMKeeper validator. |
-| **IndexerOperator** | Cung cấp `getEpochStats()` (burns/mints epoch trước) cho keeper. Testnet v1: stub neutral. Production: query từ `MagicSupplyShard` UTxOs hoặc Blockfrost tx history. |
+| **Keeper** | Tác nhân BẤT KỲ (permissionless), submit UMUpdate tx mỗi epoch. Thường là bot chạy tự động (`keeper.ts`) nhưng không có đặc quyền — user nào cũng trigger được. Không cần chữ ký whitelist. |
+| **Protocol Deployer** | Khởi tạo UM datum UTxO với `smoothed_q = Q = 1.0×`, `history = []`, `last_updated_epoch = genesisEpoch`. Bake `ms_per_epoch`, `um_policy`, `um_name` vào tham số validator (KHÔNG còn keepers/threshold). |
+| **InstantGen user** | Đọc UM datum (reference input hoặc UTxO lookup) trước khi submit Instant purchase — để biết rate hiện tại. Không interact trực tiếp với UMKeeper validator. Cũng có thể tự trigger UMUpdate (permissionless) nếu rate stale. |
+| **IndexerOperator** | Cung cấp `getEpochStats()` (burns/mints epoch trước) cho người trigger. Testnet v1: stub neutral. Production: query từ `MagicSupplyShard` UTxOs hoặc Blockfrost tx history. |
 
 ---
 
@@ -47,7 +47,7 @@ Keeper bot (mỗi intervalMs = 60s):
      - Input: UM UTxO (redeemer UMUpdate { new_raw: newRaw })
      - Output: UM UTxO cùng địa chỉ, value giữ nguyên, datum mới
      - Validity range: [currentEpoch × msPerEpoch, (currentEpoch+1) × msPerEpoch - 1]
-     - extra_signatories: ≥ threshold keepers ký
+     - extra_signatories: KHÔNG cần keeper ký (permissionless; wallet người trigger vẫn ký để chi phí collateral/fee qua balancer)
   10. Sign + Submit → txHash
   11. Emit onUpdate callback
 ```
@@ -59,11 +59,12 @@ Keeper bot (mỗi intervalMs = 60s):
 - Keeper có thể update bù một lần duy nhất khi quay lại: validator chỉ yêu cầu `current_epoch > last_updated_epoch` (bất kỳ khoảng nhảy bao nhiêu). Lịch sử SMA ghi nhận 1 điểm raw (không điền giả cho epoch bị bỏ).
 - Hệ quả kinh tế: history bị thiếu → SMA ít điểm hơn → ít smooth hơn.
 
-### 3.3 Edge — Keeper bị chiếm: chữ ký không đủ threshold
+### 3.3 Edge — Permissionless: rủi ro `new_raw` cấp off-chain
 
-- Validator check `count_keeper_sigs(keepers, tx.extra_signatories) >= threshold`
-- Transaction bị từ chối on-chain. UM datum không thay đổi.
-- Keeper không trong whitelist (stranger) cũng bị từ chối (test `um_stranger_signer`).
+- Validator KHÔNG kiểm tra chữ ký — bất kỳ ai cũng submit được UMUpdate.
+- Người trigger cấp `new_raw` (tính off-chain từ epoch stats) → validator KHÔNG verify được con số này tự thân (không có on-chain accumulator burns/mints trong v1).
+- **Phòng thủ:** (1) `new_raw` bị clamp về `[UM_MIN_Q, UM_MAX_Q] = [0.5×, 2.0×]` → tác động bị chặn trần/sàn; (2) SMA 6-epoch làm mịn → cần 6 epoch liên tiếp chọn raw cực trị mới đẩy `smoothed_q` chạm biên (xem MATH.md §TV-UM-04). Trade-off chấp nhận để đổi lấy liveness tối đa (không phụ thuộc 1 keeper).
+- v-next: thêm on-chain epoch accumulator (MagicSupplyShard) để validator verify `new_raw` trực tiếp → bỏ được rủi ro này.
 
 ### 3.4 Edge — Attacker cố đè `smoothed_q` thủ công
 
@@ -100,14 +101,14 @@ Keeper bot (mỗi intervalMs = 60s):
 
 | ID | Phát biểu | Nguồn |
 |---|---|---|
-| **C-UM-1** | `smoothed_q = clamp(SMA(history), UM_MIN_Q, UM_MAX_Q)` — SMA tính từ history sau khi append new_raw đã clamp | `um_datum.ak:112-116`, `math.ts:38-41` |
-| **C-UM-2** | `len(history) ≤ 6` tại mọi thời điểm | `um_datum.ak:124`, `math.ts:23` |
-| **C-UM-3** | `UM_MIN_Q ≤ smoothed_q ≤ UM_MAX_Q` (double clamp: raw + smoothed) | `um_datum.ak:116`, `constants.ts:24-25` |
-| **C-UM-4** | `current_epoch > last_updated_epoch` tại mỗi update | `um_datum.ak:103` |
-| **C-UM-5** | UM NFT luôn còn trong output, value không đổi | `um_datum.ak:98-100` |
-| **C-UM-6** | Staleness = `currentEpoch - last_updated_epoch`; nếu > 1 → fallback 0.5× (chỉ InstantGen) | `math.ts (InstantGen):75-80`, `constants.ts:26` |
-| **W-AUTH** | Chỉ keeper trong whitelist mới ký được, cần ≥ threshold chữ ký | `um_datum.ak:82-83` |
-| **W-SINGLE** | Đúng 1 input và 1 output tại script hash (đếm theo payment credential) | `um_datum.ak:88-89` |
+| **C-UM-1** | `smoothed_q = clamp(SMA(history), UM_MIN_Q, UM_MAX_Q)` — SMA tính từ history sau khi append `clamped_raw` (clamp-before-append, P8) | `um_datum.ak`, `math.ts:computeNewUM` |
+| **C-UM-2** | `len(history) ≤ 6` tại mọi thời điểm | `um_datum.ak`, `math.ts:appendHistory` |
+| **C-UM-3** | `UM_MIN_Q ≤ smoothed_q ≤ UM_MAX_Q` (double clamp: clamped_raw vào history + smoothed output) | `um_datum.ak`, `math.ts:clampUM` |
+| **C-UM-4** | `current_epoch > last_updated_epoch` tại mỗi update | `um_datum.ak` |
+| **C-UM-5** | UM NFT luôn còn trong output, value không đổi (`um_out.value == um_in.value`) | `um_datum.ak` |
+| **C-UM-6** | Staleness = `currentEpoch - last_updated_epoch`; nếu > 1 → fallback 0.5× (chỉ InstantGen) | `math.ts (InstantGen)`, `constants.ts` |
+| **W-PERM** | Permissionless — KHÔNG kiểm tra chữ ký (an toàn nhờ SMA recompute + double-clamp) | `um_datum.ak` |
+| **W-SINGLE** | Đúng 1 input và 1 output tại script hash (đếm theo payment credential) | `um_datum.ak` |
 
 ---
 
@@ -115,6 +116,6 @@ Keeper bot (mỗi intervalMs = 60s):
 
 - UMKeeper KHÔNG tính MAGIC, KHÔNG tương tác vault, KHÔNG đụng LAMP token.
 - UM datum KHÔNG phải vault — không có `magic_batches`, không có loyalty holdings.
-- Keeper KHÔNG được permissionless theo thiết kế hiện tại (audit fix Bug 3). Đây là lựa chọn có chủ ý để chống thao túng rate.
+- Keeper được permissionless theo thiết kế (khớp VacuumFire/ScheduleFire). An toàn vì validator recompute SMA + double-clamp; rủi ro còn lại là `new_raw` cấp off-chain (xem §3.3).
 - `getEpochStats()` là stub trong testnet v1 — production cần indexer thực.
-- Không hỗ trợ thêm/xoá keeper on-chain (cần redeploy validator nếu muốn đổi whitelist).
+- Không có whitelist keeper → không cần quản lý thêm/xoá keeper on-chain.

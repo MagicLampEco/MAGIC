@@ -18,8 +18,48 @@
 //   3. Giữ conservation C-CONSOLIDATE-4/5/6.
 //   4. Đếm input/output theo PAYMENT CREDENTIAL (script hash) → chống
 //      double-satisfaction qua stake credential.
+//
+// ── AUDIT FIX (Bug 2 — HIGH: LF-inflation qua acquired_epoch) ──────────────
+// Cũ: conservation chỉ ràng buộc Σamount và Σlocked. KHÔNG có ràng buộc nào
+//   trên `output.loyalty_holdings[i].acquired_epoch`. Ví chủ ký 1 consolidate
+//   hợp lệ (Σ giữ, giảm entries) NHƯNG đặt acquired_epoch=0 cho holding merged.
+//   → age = current_epoch − 0 lớn vọt → Loyalty Factor LF → cap 1.5 → các cơ
+//   chế sinh MAGIC (Snapshot/Instant) sinh MAGIC VƯỢT MỨC từ cùng lượng LAMP.
+//   Consolidate "chế tạo" loyalty cũ mà vault chưa từng nắm giữ.
+// Fix — 2 ràng buộc verify được on-chain, không cần dựng lại sort-partition-merge:
+//   (a) C-CONSOLIDATE-2 (bảo thủ LF, MATH §4): output merged epoch = min của 1
+//       tập con input → BỊ CHẶN DƯỚI bởi min(tất cả input epoch). Ép
+//         min(output.acquired_epoch) ≥ min(input.acquired_epoch)
+//       → KHÔNG thể chế tạo loyalty cũ hơn vault từng có (chặn acquired_epoch=0).
+//   (b) Không epoch tương lai: max(output.acquired_epoch) ≤ current_epoch
+//       → age ≥ 0, không nonsense. current_epoch đọc từ tx.validity_range.
+//   ms_per_epoch là param mạng (POSIX-ms như InstantGen vault) — deploy phải
+//   apply đúng giá trị mạng (Preview/mainnet) khớp các vault khác.
+//
+// ── AUDIT FIX (Bug 2b — HIGH: non-adjacent LF-inflation, council LENS-SEC) ──
+// Cũ (chỉ guard (a)(b)): ví chủ KHÔNG vượt min-input, nhưng vẫn dời 1 holding
+//   TRẺ về 1 epoch CŨ HỢP LỆ đã có trong input. Vd input [100@5, 50@9] → output
+//   [150@5]: 50 LAMP epoch 9 (trẻ) bị gán epoch 5 (cũ) → age +4 → LF cao hơn.
+//   Guard (a) bất lực vì epoch tấn công (5) = min-input. Đây là biến thể khó của
+//   Bug 2: dùng lại epoch cũ HỢP LỆ thay vì chế tạo epoch dưới min.
+// Bản chất luật kề (adjacency) của spec: merge CHỈ gộp holdings |epoch_diff| ≤ 1,
+//   epoch merged = min của nhóm → MỖI holding chỉ tụt XUỐNG ≤ 1 epoch. Suy ra
+//   tổng "tuổi-LAMP" tụt xuống của 1 consolidate hợp lệ:
+//       Σ(amount × epoch)_in − Σ(amount × epoch)_out  ≤  Σ(amount)
+//   (mỗi LAMP tụt ≤ 1 epoch → tổng tụt ≤ Σamount). Đã verify trên merge đa-pass
+//   (sort-partition-merge offchain): max tụt của bất kỳ holding nào = 1 epoch.
+// Fix (rẻ — 1 fold, KHÔNG dựng lại sort-partition-merge):
+//   (c) Σ(amount × epoch)_out ≥ Σ(amount × epoch)_in − Σ(amount)
+//   → SOUND: không bao giờ cản consolidate hợp lệ (loss ≤ Σamount luôn thoả).
+//   → Chặn council attack (dời 50 LAMP xuống 4 epoch: loss 200 > Σamount 150).
+//   Trần residual sau fix: tổng tuổi-LAMP tụt ≤ Σamount = tổng balance → trung
+//   bình ≤ 1 epoch/LAMP = đúng dung sai C-CONSOLIDATE-2 (gộp epoch kề ±1). So
+//   pre-fix (chỉ guard (a)): 1 holding lớn tụt nhiều epoch không bị chặn (vd dời
+//   1tr LAMP từ epoch 9 → 5, inflation 4tr tuổi-LAMP qua guard (a)). Fix thu trần
+//   inflation từ "không giới hạn theo span" về "≤ Σamount, span trung bình ≤1".
 
 use aiken/collection/list
+use aiken/interval.{Finite, after}
 use cardano/assets
 use cardano/transaction.{InlineDatum, OutputReference, Transaction, placeholder}
 use magiclamp/protocol/types.{
@@ -33,7 +73,9 @@ pub type ConsolidateRedeemer {
 }
 
 // ── Validator ─────────────────────────────────────────────────
-validator vault_consolidate {
+// Param: ms_per_epoch — POSIX-ms per epoch (network-specific). Phải khớp giá
+// trị các vault khác (InstantGen vault dùng cùng tham số). Deploy apply theo mạng.
+validator vault_consolidate(ms_per_epoch: Int) {
   spend(
     datum_opt : Option<VaultDatum>,
     _redeemer : ConsolidateRedeemer,
@@ -43,6 +85,9 @@ validator vault_consolidate {
     expect Some(datum) = datum_opt
     let own_addr = util.own_address(own_ref, tx.inputs)
     let own_hash = util.own_script_hash(own_addr)
+
+    // Epoch hiện tại từ validity range (Plutus V3: POSIX-ms, không phải slot).
+    let current_epoch = get_current_epoch(tx, ms_per_epoch)
 
     // C-PC-V1: user signs
     expect list.has(tx.extra_signatories, datum.owner)
@@ -89,6 +134,27 @@ validator vault_consolidate {
     let locked_out = sum_locked(output.loyalty_holdings)
     expect locked_out == locked_in
 
+    // ── C-CONSOLIDATE-2 GUARD (chống LF-inflation) ────────────
+    // (a) KHÔNG chế tạo loyalty cũ hơn vault từng nắm: mọi output epoch ≥
+    //     min(input epoch). C-CONSOLIDATE-2 (output = min của 1 tập con input)
+    //     luôn thoả; acquired_epoch=0 (khi min input > 0) bị chặn.
+    let min_in = min_epoch(datum.loyalty_holdings)
+    expect list.all(
+      output.loyalty_holdings,
+      fn(h) { h.acquired_epoch >= min_in },
+    )
+    // (b) KHÔNG epoch tương lai: mọi output epoch ≤ current_epoch (age ≥ 0).
+    expect list.all(
+      output.loyalty_holdings,
+      fn(h) { h.acquired_epoch <= current_epoch },
+    )
+    // (c) CHỐNG non-adjacent inflation (Bug 2b): tổng tuổi-LAMP tụt xuống của 1
+    //     consolidate hợp lệ ≤ Σamount (mỗi LAMP tụt ≤ 1 epoch theo luật kề).
+    //     Σ(amount×epoch)_out ≥ Σ(amount×epoch)_in − Σamount.
+    let we_in  = sum_amount_epoch(datum.loyalty_holdings)
+    let we_out = sum_amount_epoch(output.loyalty_holdings)
+    expect we_out >= we_in - sum_in
+
     // C-VAULT-10: Σholdings = lamp_balance
     expect sum_out == datum.lamp_balance
 
@@ -111,6 +177,41 @@ fn sum_locked(holdings: List<LoyaltyHolding>) -> Int {
   )
 }
 
+/// Σ(amount × acquired_epoch) — "tuổi-LAMP" có trọng số. Dùng cho guard (c)
+/// chống non-adjacent inflation: merge hợp lệ (luật kề ≤1) chỉ làm giảm tổng này
+/// ≤ Σamount; dời holding trẻ xuống >1 epoch làm giảm vượt mức → bị chặn.
+fn sum_amount_epoch(holdings: List<LoyaltyHolding>) -> Int {
+  list.foldl(holdings, 0, fn(h, acc) { acc + h.amount * h.acquired_epoch })
+}
+
+/// min(acquired_epoch) trên danh sách holdings.
+/// Danh sách input luôn không rỗng ở đây (sum_in == lamp_balance > 0 trong thực
+/// tế, và |input| > |output| ≥ 0 nên |input| ≥ 1). Seed an toàn: phần tử đầu.
+fn min_epoch(holdings: List<LoyaltyHolding>) -> Int {
+  when holdings is {
+    [] -> 0
+    [first, ..rest] ->
+      list.foldl(
+        rest,
+        first.acquired_epoch,
+        fn(h, acc) { if h.acquired_epoch < acc { h.acquired_epoch } else { acc } },
+      )
+  }
+}
+
+/// Plutus V3 validity_range là POSIX-ms → epoch = lower_bound_ms / ms_per_epoch.
+fn get_current_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+  expect Some(lower_ms) = tx.validity_range.lower_bound.bound_type |> get_finite_slot
+  lower_ms / ms_per_epoch
+}
+
+fn get_finite_slot(bound_type) -> Option<Int> {
+  when bound_type is {
+    Finite(s) -> Some(s)
+    _ -> None
+  }
+}
+
 // ══════════════════════════════════════════════════════════════
 // Validator tests (mock Transaction)
 // ══════════════════════════════════════════════════════════════
@@ -118,6 +219,13 @@ fn sum_locked(holdings: List<LoyaltyHolding>) -> Int {
 const t_sh: ByteArray = #"a1a1a1a1"
 
 const t_owner: ByteArray = #"0a0a"
+
+// Preview ms_per_epoch (Plutus validity_range = POSIX ms). Mainnet = 432_000_000.
+const t_mspe: Int = 86_400_000
+
+// Mọi case dùng holdings epoch ≤ 10 → đặt validity range tại epoch 10 để
+// current_epoch = 10 ≥ tất cả output epoch hợp lệ (không vướng guard (b)).
+const t_epoch_now: Int = 10
 
 fn hold(amount: Int, epoch: Int, locked: Bool) -> LoyaltyHolding {
   LoyaltyHolding { amount, acquired_epoch: epoch, is_locked: locked }
@@ -177,6 +285,7 @@ fn cons_tx(
     inputs: [v_in],
     outputs: [v_out],
     extra_signatories: sigs,
+    validity_range: after(t_epoch_now * t_mspe),
   }
 }
 
@@ -187,7 +296,7 @@ test consolidate_happy_path() {
   let in_d = vault(in_h, 180, Flame, 7)
   let out_d = vault(out_h, 180, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 1 — tamper field KHÁC loyalty_holdings: đổi profile (Flame→Ember).
@@ -198,7 +307,7 @@ test consolidate_profile_tamper() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Ember, 7)   // profile bị đổi → reject
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 1b — tamper streak_state (reset streak 7→0).
@@ -208,7 +317,7 @@ test consolidate_streak_tamper() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 0)   // streak reset → reject
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 2 — double-satisfaction qua stake credential.
@@ -230,8 +339,9 @@ test consolidate_double_satisfaction_stake_cred() fail {
     inputs: [in_a, in_b],
     outputs: [out_a, out_b],
     extra_signatories: [t_owner],
+    validity_range: after(t_epoch_now * t_mspe),
   }
-  vault_consolidate.spend(Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 3 — conservation vỡ: Σ output ≠ Σ input (rút 50 LAMP lén).
@@ -241,7 +351,7 @@ test consolidate_conservation_break() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 4 — không giảm entries (|output| !< |input|).
@@ -251,7 +361,7 @@ test consolidate_no_reduction() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 5 — owner không ký.
@@ -261,5 +371,103 @@ test consolidate_no_owner_sig() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [])
-  vault_consolidate.spend(Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 6 — LF-INFLATION (Bug 2): output đặt acquired_epoch=0 trong khi
+// min(input epoch)=5. Σamount/Σlocked/giảm-entries đều hợp lệ → CŨ qua được,
+// sinh MAGIC vượt mức. Guard (a) min_out(0) < min_in(5) → reject.
+test consolidate_acquired_epoch_inflation() fail {
+  let in_h = [hold(100, 5, False), hold(50, 5, False)]
+  let out_h = [hold(150, 0, False)]   // epoch giả 0 → age vọt → LF cap → reject
+  let in_d = vault(in_h, 150, Flame, 7)
+  let out_d = vault(out_h, 150, Flame, 7)
+  let tx = cons_tx(in_d, out_d, [t_owner])
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 6b — inflation tinh vi: hạ epoch xuống 4 (dưới min_in=5 nhưng > 0).
+// Vẫn "chế tạo" loyalty cũ hơn vault từng có → guard (a) chặn.
+test consolidate_acquired_epoch_below_min() fail {
+  let in_h = [hold(100, 5, False), hold(50, 6, False)]
+  let out_h = [hold(150, 4, False)]   // 4 < min_in(5) → reject
+  let in_d = vault(in_h, 150, Flame, 7)
+  let out_d = vault(out_h, 150, Flame, 7)
+  let tx = cons_tx(in_d, out_d, [t_owner])
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 7 — epoch TƯƠNG LAI: output epoch 11 > current_epoch(10) → age âm.
+// Guard (b) chặn.
+test consolidate_acquired_epoch_future() fail {
+  let in_h = [hold(100, 5, False), hold(50, 6, False)]
+  let out_h = [hold(150, 11, False)]   // 11 > current_epoch(10) → reject
+  let in_d = vault(in_h, 150, Flame, 7)
+  let out_d = vault(out_h, 150, Flame, 7)
+  let tx = cons_tx(in_d, out_d, [t_owner])
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// HAPPY 2 — C-CONSOLIDATE-2 đúng chuẩn: merge epoch 5+6 → min=5 (≥ min_in=5,
+// ≤ current 10). Guard mới KHÔNG cản consolidate hợp lệ.
+test consolidate_min_epoch_ok() {
+  let in_h = [hold(100, 5, False), hold(50, 6, False), hold(30, 9, True)]
+  let out_h = [hold(150, 5, False), hold(30, 9, True)]   // min=5 bảo thủ ✓
+  let in_d = vault(in_h, 180, Flame, 7)
+  let out_d = vault(out_h, 180, Flame, 7)
+  let tx = cons_tx(in_d, out_d, [t_owner])
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 8 — NON-ADJACENT INFLATION (Bug 2b, council LENS-SEC HIGH):
+// input [100@5, 50@9] (diff=4, KHÔNG được merge theo luật kề), output [150@5].
+// Qua guard (a) (min_out=5 ≥ min_in=5), (b) (5 ≤ 10), Σamount/Σlocked/giảm-entries.
+// 50 LAMP epoch 9 (trẻ) bị gán epoch 5 (cũ) → age +4 → LF cao hơn = inflation.
+// Guard (c): Σ(a×e)_in = 100*5+50*9 = 950; Σ(a×e)_out = 150*5 = 750;
+//   Σamount = 150. 750 ≥ 950−150=800? KHÔNG → reject.
+test consolidate_nonadjacent_inflation() fail {
+  let in_h = [hold(100, 5, False), hold(50, 9, False)]
+  let out_h = [hold(150, 5, False)]   // dời 50 LAMP xuống 4 epoch → reject
+  let in_d = vault(in_h, 150, Flame, 7)
+  let out_d = vault(out_h, 150, Flame, 7)
+  let tx = cons_tx(in_d, out_d, [t_owner])
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 8b — inflation tinh vi: holding lớn dời nhiều epoch (pre-fix qua guard (a)).
+// input [1@5, 1000@9] → output [1001@5]: dời 1000 LAMP xuống 4 epoch.
+// Σ(a×e)_in = 5+9000 = 9005; _out = 1001*5 = 5005; Σamount=1001.
+//   5005 ≥ 9005−1001=8004? KHÔNG → reject (pre-fix guard (a) min_out=5≥5 sẽ qua).
+test consolidate_nonadjacent_large_inflation() fail {
+  let in_h = [hold(1, 5, False), hold(1000, 9, False)]
+  let out_h = [hold(1001, 5, False)]
+  let in_d = vault(in_h, 1001, Flame, 7)
+  let out_d = vault(out_h, 1001, Flame, 7)
+  let tx = cons_tx(in_d, out_d, [t_owner])
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// HAPPY 3 — luật kề tụt ĐÚNG 1 epoch (dung sai C-CONSOLIDATE-2): merge 5+6 → 5.
+// Guard (c) KHÔNG cản: Σ(a×e)_in = 100*5+50*6 = 800; _out = 150*5 = 750;
+//   Σamount=150. 750 ≥ 800−150=650? CÓ → pass. (loss đúng = 50 ≤ Σamount).
+test consolidate_adjacent_diff1_ok() {
+  let in_h = [hold(100, 5, False), hold(50, 6, False)]
+  let out_h = [hold(150, 5, False)]
+  let in_d = vault(in_h, 150, Flame, 7)
+  let out_d = vault(out_h, 150, Flame, 7)
+  let tx = cons_tx(in_d, out_d, [t_owner])
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// HAPPY 4 — multi-pass merge dày đặc [5,6,7,8] → [{5},{7}] (offchain TV mẫu).
+// Verify guard (c) ôm trọn merge đa-pass: Σ(a×e)_in = 10*5+10*6+10*7+10*8 = 260;
+//   _out = 20*5+20*7 = 240; Σamount=40. 240 ≥ 260−40=220? CÓ → pass.
+test consolidate_multipass_dense_ok() {
+  let in_h =
+    [hold(10, 5, False), hold(10, 6, False), hold(10, 7, False), hold(10, 8, False)]
+  let out_h = [hold(20, 5, False), hold(20, 7, False)]
+  let in_d = vault(in_h, 40, Flame, 7)
+  let out_d = vault(out_h, 40, Flame, 7)
+  let tx = cons_tx(in_d, out_d, [t_owner])
+  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }

@@ -342,6 +342,99 @@ describe("TV-010: CoStakePool distribution — §7.2, Lemma 7.1", () => {
 // ══════════════════════════════════════════════════════════════
 // Additional: Φ_users accuracy (Bổ đề 9.4)
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// TV-011: computeW emergencyPen guard (W-3) — kap_eff ∈ [0, κ], W ≥ 0
+// ══════════════════════════════════════════════════════════════
+describe("TV-011: emergencyPen guard — W-3 (W ≥ 0)", () => {
+  const baseArgs = () =>
+    [50_000n * Q, [Q, Q, Q, Q, Q, Q], 200n, 30_000_000n, "Tier2", 20n] as const;
+
+  it("emergencyPen=1.5Q → W clamped (kap_eff=0), W=0, NOT negative", () => {
+    const [V, util, n, d, tier, age] = baseArgs();
+    const W = computeW(V, util, n, d, tier as any, age, 3n * Q / 2n);  // 1.5Q
+    expect(W).toBe(0n);            // kap_eff clamped to 0 → W = 0
+    expect(W).toBeGreaterThanOrEqual(0n);  // W-3: never negative ✓
+  });
+
+  it("emergencyPen=Q (boundary) → kap_eff=0 → W=0", () => {
+    const [V, util, n, d, tier, age] = baseArgs();
+    expect(computeW(V, util, n, d, tier as any, age, Q)).toBe(0n);
+  });
+
+  it("emergencyPen=2Q (well over Q) → W still ≥ 0 (not negative)", () => {
+    const [V, util, n, d, tier, age] = baseArgs();
+    const W = computeW(V, util, n, d, tier as any, age, 2n * Q);
+    expect(W).toBeGreaterThanOrEqual(0n);
+    expect(W).toBe(0n);
+  });
+
+  it("emergencyPen negative → clamped to 0 (no penalty applied)", () => {
+    const [V, util, n, d, tier, age] = baseArgs();
+    const wNoPen  = computeW(V, util, n, d, tier as any, age, 0n);
+    const wNegPen = computeW(V, util, n, d, tier as any, age, -5n * Q);
+    expect(wNegPen).toBe(wNoPen);  // negative clamped to 0 ⇒ identical
+  });
+
+  it("emergencyPen=0.5Q (valid) → W halved relative to no penalty (monotone)", () => {
+    const [V, util, n, d, tier, age] = baseArgs();
+    const wNoPen  = computeW(V, util, n, d, tier as any, age, 0n);
+    const wHalf   = computeW(V, util, n, d, tier as any, age, Q / 2n);
+    expect(wHalf).toBeGreaterThan(0n);
+    expect(wHalf).toBeLessThan(wNoPen);  // valid penalty reduces W ✓
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// TV-012: distribute negative-weight guard (W-10) — reject malformed W
+// ══════════════════════════════════════════════════════════════
+describe("TV-012: distribute negative-weight guard — W-10", () => {
+  const X = 1_000_000n * Q;
+
+  it("negative weight → throws (app cannot grab cap via negative W)", () => {
+    const weights = { Aladin: 700_000n * Q, Evil: -100_000n * Q };
+    expect(() => distribute(weights, X, 3000n)).toThrow(/negative weight/);
+  });
+
+  it("error names the offending app id", () => {
+    const weights = { Good: 1n * Q, Bad: -1n };
+    expect(() => distribute(weights, X)).toThrow(/"Bad"/);
+  });
+
+  it("all non-negative weights → no throw (regression: valid path intact)", () => {
+    const weights = { A: 700_000n * Q, B: 200_000n * Q, C: 100_000n * Q };
+    expect(() => distribute(weights, X, 3000n)).not.toThrow();
+  });
+
+  it("zero weights allowed (0 is non-negative) → all rewards 0", () => {
+    const weights = { A: 0n, B: 0n };
+    const r = distribute(weights, X, 3000n);
+    expect(r["A"]).toBe(0n);
+    expect(r["B"]).toBe(0n);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// TV-013: distribute negative-X guard (W-11) — reject malformed pool
+// ══════════════════════════════════════════════════════════════
+describe("TV-013: distribute negative-pool guard — W-11", () => {
+  it("negative X → throws (no negative rewards emitted)", () => {
+    const weights = { A: 1n * Q };
+    expect(() => distribute(weights, -100n)).toThrow(/negative pool/);
+  });
+
+  it("X = 0 allowed (0 is non-negative) → all rewards 0", () => {
+    const weights = { A: 1n * Q, B: 1n * Q };
+    const r = distribute(weights, 0n, 3000n);
+    expect(r["A"]).toBe(0n);
+    expect(r["B"]).toBe(0n);
+  });
+
+  it("positive X → no throw (regression: valid path intact)", () => {
+    const weights = { A: 1n * Q };
+    expect(() => distribute(weights, 1_000n * Q)).not.toThrow();
+  });
+});
+
 describe("Φ_users — §9.2, Lemma 9.4", () => {
 
   it("|Φ_users − Q√(N̄/100)| ≤ 1 (Lemma 9.4 — scope: N̄ ≤ USERS_TARGET)", () => {

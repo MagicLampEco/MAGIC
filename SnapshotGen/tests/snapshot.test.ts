@@ -294,3 +294,12 @@ describe("SnapshotGen full flow", () => {
     });
   });
 });
+
+// NOTE: a runtime VaultRedeemer codec round-trip (Data.to/from) would be the
+// ideal P8 check, but importing @lucid-evolution/lucid here crashes on a broken
+// libsodium-wrappers-sumo ESM install in this module's node_modules (missing
+// dist/modules-sumo-esm/libsodium-sumo.mjs) — a pre-existing dependency issue,
+// not the redeemer schema. The constructor-index ordering (WithdrawLamp=3,
+// SetDelegate=4 appended after TriggerSnapshot=0/BurnBatch=1/UpdateProfile=2) is
+// instead enforced statically against the Aiken type and verified by the on-chain
+// `aiken check` (validators/vault.ak BurnBatch/SetDelegate handlers pass).

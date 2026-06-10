@@ -1,12 +1,21 @@
 // ConsumeMAGIC onchain types — interface contract (CONTRACT.md §B1/§B2).
 // Constr index theo thứ tự khai báo — phải khớp byte-perfect với offchain codec.
+//
+// ── MÔ HÌNH (rewrite D1, thay mô hình token-burn cũ) ──────────────────────────
+// MAGIC KHÔNG là token, KHÔNG MintingPolicy. Tiêu MAGIC = GIẢM current_amount của
+// MagicBatch trong VaultDatum của generator vault (handler BurnBatch của vault).
+// ConsumeMAGIC KHÔNG còn chạm tx.mint. Module này = PRICING + ENGAGEMENT/ATTRIBUTION:
+//   - pricing.ak  : nguồn `required` có thẩm quyền (đọc PriceParam beacon).
+//   - consume.ak  : spend Engage UTxO (state per-app), ép cùng tx có 1 vault input
+//                   spend bằng BurnBatch với Σburns == required (validator vault là
+//                   nơi DUY NHẤT giảm MAGIC). KHÔNG mint.
 
 use cardano/transaction.{OutputReference}
 
 /// Một dòng giá danh nghĩa per loại nghiệp vụ (governance param).
 /// `base_price` đơn vị nanogic (1 MAGIC = 1e9). Ví dụ MVP:
-///   xử lý 1 ảnh  → op_type=0, base_price=10_000_000  (0.01 MAGIC)
-///   neo 1 CID    → op_type=1, base_price= 1_000_000  (0.001 MAGIC)
+///   xử lý 1 ảnh  → op_type=1, base_price=10_000_000  (0.01 MAGIC)
+///   neo 1 CID    → op_type=2, base_price= 1_000_000  (0.001 MAGIC)
 pub type OpPrice {
   op_type    : Int,
   base_price : Int,
@@ -25,21 +34,36 @@ pub type PriceParam {
   epoch       : Int,
 }
 
-/// State engagement neo vào continuing output của vault (chống replay — C-CM-4).
-/// Mỗi consume tăng `consumed_count` đúng 1 và `last_epoch = current_epoch`.
+/// State engagement per-app (UTxO RIÊNG do consume validator quản, TÁCH khỏi
+/// VaultDatum — quyết định D1: khác chủ thể, song song hoá, không tràn datum vault).
 /// Thread token (NFT one-shot) gắn UTxO này → không UTxO giả nào thay thế được.
+///
+/// `did_commit` (field 3, APPEND-ONLY — giữ tương thích decode genesis cũ):
+///   MVP = #"" (rỗng). Tương lai = blake2b256 commitment liên kết engagement ↔ DID
+///   sinh trắc (PhoenixKey, Governance C1/C3). Đặt 1 lần lúc genesis, IMMUTABLE sau đó
+///   (validator ép output.did_commit == input.did_commit). Validator KHÔNG ràng buộc
+///   NỘI DUNG ở MVP (rỗng-được), chỉ ràng buộc bất biến.
 pub type EngageDatum {
   owner          : ByteArray,
   consumed_count : Int,
   last_epoch     : Int,
+  did_commit     : ByteArray,
 }
 
-/// Redeemer validator consume (CONTRACT.md §B2).
+/// Redeemer validator consume (engagement spend — CONTRACT.md §B2).
 ///   op_type   : loại nghiệp vụ (khớp 1 OpPrice trong PriceParam.op_prices)
 ///   op_count  : số lượng nghiệp vụ trong consume này (≥ 1)
 ///   price_ref : OutputReference của beacon PriceParam (reference input)
+///   vault_ref : OutputReference của vault input co-spend bằng BurnBatch trong CÙNG
+///               tx; validator đọc redeemer BurnBatch của input này để khớp
+///               Σburns == required (liên kết 2 validator, không lệch giá).
 pub type ConsumeRedeemer {
-  Consume { op_type: Int, op_count: Int, price_ref: OutputReference }
+  Consume {
+    op_type   : Int,
+    op_count  : Int,
+    price_ref : OutputReference,
+    vault_ref : OutputReference,
+  }
 }
 
 /// Redeemer cho beacon PriceParam (committee/keeper post giá mới).

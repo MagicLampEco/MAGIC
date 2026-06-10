@@ -44,9 +44,9 @@
 | Consolidate | §6.9 | ✅ 12/12 | partial validator | ⬜ |
 | ProfileChange | §12 | ✅ 8/8 | partial validator | ⬜ |
 | ConsumeMAGIC | v2.2 | ✅ 31/31 | offchain only | ⬜ |
-| AppEconomics | v2.1 | ✅ 33/33 | offchain only | ⬜ |
+| AppEconomics | v2.1 | ✅ 42/42 | offchain only | ⬜ |
 | ProtocolUtils | shared | ✅ 24/24 | offchain library | — |
-| **TỔNG** | | **✅ 278/278** | **5/5 modules clean** | |
+| **TỔNG** | | **✅ 287/287** | **5/5 modules clean** | |
 
 > Aiken `aiken check` đã pass 0 errors trên 5 module có `aiken.toml`. Còn warnings về unused imports — không block deploy nhưng dev có thể cleanup. Bước tiếp theo là `aiken build` để sinh `plutus.json` rồi deploy lên Preview testnet (xem DEVELOPER_GUIDE.md).
 

@@ -2,6 +2,8 @@
 // Run: npx vitest run tests/vacuum.test.ts
 
 import { describe, it, expect } from "vitest";
+import { Data } from "@lucid-evolution/plutus";
+import { VaultRedeemerSchema } from "../offchain/src/types.js";
 import {
   computeVacuumMagic, getSmQ, computeSmQ,
   getUmForVacuum, selectLampForLock, removeLockedAmount,
@@ -386,5 +388,59 @@ describe("Vacuum batch decay — §4.4 cliff", () => {
   });
   it("k=2: expired", () => {
     expect(isVacuumExpired(100n, 102n)).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// VaultRedeemer schema — constructor-tag round trip (P8)
+// Tags MUST match Aiken VaultRedeemer order:
+//   0 VacuumCommit, 1 VacuumFire, 2 InstantGen, 3 ApplyHalving,
+//   4 BurnBatch, 5 UpdateProfile, 6 WithdrawLamp, 7 SetDelegate
+// ═══════════════════════════════════════════════════════════════
+
+describe("VaultRedeemer schema — P8 constructor tags", () => {
+  // Constructor-tag prefixes pin the index (compact form 121+n for n≤6,
+  // general tag 1280+n for n≥7). These pin P8 ordering, not just symmetry.
+  it("VacuumCommit is constr 0 (d8799f)", () => {
+    expect(Data.to({ VacuumCommit: { lambda: 1n } }, VaultRedeemerSchema).startsWith("d8799f")).toBe(true);
+  });
+
+  it("BurnBatch is constr 4 (d87d9f) and round-trips", () => {
+    const cbor = Data.to(
+      { BurnBatch: { burns: [["aaaa", 400n], ["bbbb", 300n]] } },
+      VaultRedeemerSchema,
+    );
+    expect(cbor.startsWith("d87d9f")).toBe(true);  // constr 4 = 121+4 = 125 = 0xd87d
+    const back = Data.from(cbor, VaultRedeemerSchema) as any;
+    expect(back.BurnBatch.burns.length).toBe(2);
+    expect(back.BurnBatch.burns[0][0]).toBe("aaaa");
+    expect(back.BurnBatch.burns[0][1]).toBe(400n);
+  });
+
+  it("WithdrawLamp is constr 6 (d87f9f) and round-trips", () => {
+    const cbor = Data.to({ WithdrawLamp: { amount: 500_000n } }, VaultRedeemerSchema);
+    expect(cbor.startsWith("d87f9f")).toBe(true);  // constr 6 = 121+6 = 127 = 0xd87f
+    const back = Data.from(cbor, VaultRedeemerSchema) as any;
+    expect(back.WithdrawLamp.amount).toBe(500_000n);
+  });
+
+  it("SetDelegate is constr 7 (tag 1280, d90500) — Some round-trips", () => {
+    const cbor = Data.to(
+      { SetDelegate: { new_delegate: "deadbeef" } },
+      VaultRedeemerSchema,
+    );
+    expect(cbor.startsWith("d90500")).toBe(true);  // constr 7 → general tag 1280 = 0xd90500
+    const back = Data.from(cbor, VaultRedeemerSchema) as any;
+    expect(back.SetDelegate.new_delegate).toBe("deadbeef");
+  });
+
+  it("SetDelegate(None) (constr 7) round-trips", () => {
+    const cbor = Data.to(
+      { SetDelegate: { new_delegate: null } },
+      VaultRedeemerSchema,
+    );
+    expect(cbor.startsWith("d90500")).toBe(true);
+    const back = Data.from(cbor, VaultRedeemerSchema) as any;
+    expect(back.SetDelegate.new_delegate).toBe(null);
   });
 });

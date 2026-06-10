@@ -139,11 +139,17 @@ pub type VaultRedeemer {
     schedule_id  : ByteArray,
   }
 
-  // constr 2  Stubs for other redeemers
+  // constr 2  BurnBatch: datum-consume MAGIC (D1) — giảm current_amount của
+  //           các batch theo `burns = [(batch_id, amount)]`. KHÔNG tx.mint,
+  //           KHÔNG token. Auth: owner HOẶC personal_delegate (consume-delegate).
   BurnBatch { burns: List<(ByteArray, Natural)> }
 
   // constr 3  WithdrawLamp: withdraw unlocked LAMP back to wallet (SPEC_V1 §1)
   WithdrawLamp { amount: Natural }
+
+  // constr 4  SetDelegate: owner đặt/đổi consume-delegate (personal_delegate).
+  //           Tách concern khỏi commit/withdraw; KHÔNG cooldown (đổi rẻ).
+  SetDelegate { new_delegate: Option<ByteArray> }
 }
 
 // ── Shard Redeemer ────────────────────────────────────────────

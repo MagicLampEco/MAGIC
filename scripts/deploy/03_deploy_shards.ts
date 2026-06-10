@@ -2,13 +2,19 @@
 // Run: npx tsx deploy/03_deploy_shards.ts
 // Prereq: 02_deploy_um done.
 //
-// Loads ScheduleGen plutus.json, picks shard validator (0 params), creates 16 UTxOs
-// each with unique shard NFT (asset name = "SHARD" + shardId hex) and ScheduleAggregateShardDatum.
+// Loads ScheduleGen plutus.json, picks shard validator (1 param: shard NFT
+// policy id), applies the param, creates 16 UTxOs each with unique shard NFT
+// (asset name = "SHARD") and ScheduleAggregateShardDatum.
+//
+// SHARD now takes the shard NFT policy id as a param (anti-forgery + co-spend
+// guard). The NFT policy is a native `sig` script derived from the deployer key
+// and is independent of both vault and shard hashes — no param hash-cycle. The
+// SAME policy id is applied to the vault in 07_create_schedule_vault.ts.
 
 import {
   Lucid, Blockfrost, Data,
-  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
-  mintingPolicyToId, getAddressDetails, scriptFromNative,
+  applyParamsToScript, validatorToScriptHash, credentialToAddress,
+  scriptHashToCredential, mintingPolicyToId, getAddressDetails, scriptFromNative,
 } from "@lucid-evolution/lucid";
 import { readFile } from "node:fs/promises";
 import {
@@ -29,7 +35,7 @@ const ShardDatumSchema = Data.Object({
 async function main() {
   console.log("=== Step 3: Deploy 16 Shard UTxOs ===\n");
 
-  // Load ScheduleGen plutus.json and find the shard validator (no params).
+  // Load ScheduleGen plutus.json and find the shard validator (1 param).
   const plutusJson = JSON.parse(
     await readFile(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url), "utf8"),
   );
@@ -41,23 +47,28 @@ async function main() {
     throw new Error("Shard validator not found in ScheduleGen plutus.json");
   }
 
-  // Shard validator has NO params — script is the unapplied compiledCode directly.
-  const shardScript = { type: "PlutusV3" as const, script: shardUnapplied.compiledCode };
-  const shardScriptHash = validatorToScriptHash(shardScript);
-  const shardScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(shardScriptHash));
-
-  console.log(`Network:              ${NETWORK}`);
-  console.log(`Shard script hash:    ${shardScriptHash}`);
-  console.log(`Shard script address: ${shardScriptAddress}`);
-
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
   const address = await lucid.wallet().address();
   const { paymentCredential } = getAddressDetails(address);
   if (!paymentCredential) throw new Error("Cannot get payment credential");
 
+  // Shard NFT policy (native `sig`) — independent of vault/shard hashes (no cycle).
   const shardNftPolicy = scriptFromNative({ type: "sig", keyHash: paymentCredential.hash });
   const shardNftPolicyId = mintingPolicyToId(shardNftPolicy);
+
+  // Shard validator takes 1 param: shard NFT policy id. Apply it BEFORE hashing.
+  const shardAppliedCbor = applyParamsToScript(shardUnapplied.compiledCode, [
+    shardNftPolicyId,
+  ]);
+  const shardScript = { type: "PlutusV3" as const, script: shardAppliedCbor };
+  const shardScriptHash = validatorToScriptHash(shardScript);
+  const shardScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(shardScriptHash));
+
+  console.log(`Network:              ${NETWORK}`);
+  console.log(`Shard NFT policy:     ${shardNftPolicyId}`);
+  console.log(`Shard script hash:    ${shardScriptHash}  (NFT-policy applied)`);
+  console.log(`Shard script address: ${shardScriptAddress}`);
 
   // Tip POSIX ms for current epoch.
   const tipRes = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -68,7 +79,6 @@ async function main() {
   const currentEpoch = tipPosixMs / PROTOCOL.MS_PER_EPOCH;
 
   console.log(`Current epoch:        ${currentEpoch}`);
-  console.log(`Shard NFT policy:     ${shardNftPolicyId}`);
   console.log(`Deploying shards 0-15...\n`);
 
   // Validator identifies shards by asset name = exactly "SHARD" (5 bytes hex `5348415244`).

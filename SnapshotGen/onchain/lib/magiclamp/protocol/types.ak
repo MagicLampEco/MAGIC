@@ -120,8 +120,9 @@ pub type VaultDatum {
 // (MagicSDK/src/redeemerIndex.ts).
 pub type VaultRedeemer {
   TriggerSnapshot                                    // constr 0  lazy snapshot
-  BurnBatch     { burns: List<(ByteArray, Natural)> } // constr 1 burn MAGIC
+  BurnBatch     { burns: List<(ByteArray, Natural)> } // constr 1 datum-consume MAGIC
   UpdateProfile { new_profile: ActivityProfile }      // constr 2 §12 profile change
   WithdrawLamp  { amount: Natural }                   // constr 3 §1 withdraw unlocked LAMP
+  SetDelegate   { new_delegate: Option<ByteArray> }   // constr 4 set/clear consume-delegate
   // InstantGen / VacuumGen / ScheduleGen → see respective modules
 }

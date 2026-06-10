@@ -62,15 +62,14 @@ const UMRedeemerSchema = Data.Enum([
 ## 2. Validator parameters (baked at deploy time)
 
 ```aiken
-// um_datum.ak:60-66
 validator um_datum_validator(
   ms_per_epoch : Int,          // 86_400_000 (Preview) hoặc 432_000_000 (Mainnet)
-  keepers      : List<ByteArray>,  // payment key hash của từng keeper
-  threshold    : Int,          // M trong M-of-N (thường = ceil(N/2)+1)
   um_policy    : PolicyId,     // policy ID của UM authority NFT
   um_name      : ByteArray,    // asset name của UM NFT (e.g. #"554d44" = "UMD")
 )
 ```
+
+KHÔNG còn `keepers`/`threshold` — update là permissionless (khớp VacuumFire/ScheduleFire). An toàn nhờ validator recompute SMA + double-clamp.
 
 Tất cả params được bake vào script hash qua `applyParamsToScript` trong Lucid. Đây là `PlutusScript` applied — phải lưu lại applied script bytes để sử dụng lại khi build tx.
 
@@ -84,7 +83,7 @@ Thứ tự kiểm tra trong validator (`um_datum.ak:79-126`):
 
 | Bước | Invariant | Code | Lý do |
 |---|---|---|---|
-| 1 | **W-AUTH** | `count_keeper_sigs(keepers, tx.extra_signatories) >= threshold` | Chỉ keeper whitelist có thể update |
+| 1 | **W-PERM** | _(không kiểm tra chữ ký)_ | Permissionless — ai cũng trigger được; an toàn nhờ recompute SMA + double-clamp |
 | 2 | **W-SINGLE-IN** | `count_inputs_at_script(tx.inputs, own_hash) == 1` | Chống double-satisfaction — đếm theo payment credential, không full Address |
 | 3 | **W-SINGLE-OUT** | `count_outputs_at_script(tx.outputs, own_hash) == 1` | Đúng 1 output UM (không fork datum) |
 | 4 | **C-UM-5a** | `assets.quantity_of(um_out.value, um_policy, um_name) == 1` | UM NFT authority phải còn trong output |
@@ -125,8 +124,8 @@ Mọi script purpose khác (mint, withdrawal, cert, vote) đều fail — valida
 │  Validity range: [currentEpoch×msPerEpoch,                  │
 │                   (currentEpoch+1)×msPerEpoch - 1]          │
 │                                                             │
-│  extra_signatories: [keeper_pkh_1, keeper_pkh_2, ...]       │
-│    (≥ threshold keepers từ whitelist)                       │
+│  extra_signatories: (không bắt buộc — permissionless)       │
+│    chỉ wallet người trigger ký cho collateral/fee           │
 │                                                             │
 │  Scripts attached: um_datum_validator (applied)             │
 └─────────────────────────────────────────────────────────────┘
@@ -164,8 +163,9 @@ const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 Bước 1: aiken build → plutus.json
   Output: validator "um_datum_validator" → cbor bytes (un-applied)
 
-Bước 2: applyParamsToScript(cbor, [ms_per_epoch, keepers, threshold, um_policy, um_name])
+Bước 2: applyParamsToScript(cbor, [ms_per_epoch, um_policy, um_name])
   → applied script hash = UM_SCRIPT_HASH (lưu vào .env)
+  (KHÔNG còn keepers/threshold — permissionless)
 
 Bước 3: Mint UM authority NFT
   policy_id = UM_NFT_POLICY_ID  (one-shot minting policy)
@@ -183,8 +183,8 @@ Bước 4: Deploy UM UTxO
         history: [],
       }
 
-Bước 5: Start keeper bot
-  env vars cần: BLOCKFROST_KEY, KEEPER_KEY (signing key), UM_NFT_UNIT, UM_SCRIPT_HASH
+Bước 5: Start keeper bot (tiện ích — không đặc quyền)
+  env vars cần: BLOCKFROST_KEY, KEEPER_KEY (signing key bất kỳ ví nào), UM_NFT_UNIT, UM_SCRIPT_HASH
 ```
 
 ---
@@ -193,12 +193,12 @@ Bước 5: Start keeper bot
 
 | Hàm | Aiken | TypeScript |
 |---|---|---|
-| `um_raw` | `um_datum.ak:106` (`new_raw` từ keeper, clamped) | `math.ts:9-12` (`computeUMRaw` — raw chưa clamp) |
-| `append_capped` | `um_datum.ak:149-154` (nhận `clamped_raw`) | `math.ts:20-23` (`appendHistory` — nhận `new_raw` chưa clamp) |
-| `compute_sma` | `um_datum.ak:139-145` | `math.ts:26-29` (`computeSMA`) |
-| `clamp` | `um_datum.ak:156-158` | `math.ts:14-18` (`clampUM`) |
+| `um_raw` | `new_raw` redeemer (raw từ caller, validator tự clamp) | `computeUMRaw` (raw — gửi vào redeemer `new_raw`) |
+| clamp-before-append | `append_capped(history, clamped_raw, W)` | `computeNewUM`: `clampedRaw = clampUM(newRaw)` → `appendHistory(history, clampedRaw)` |
+| `compute_sma` | `compute_sma` | `computeSMA` |
+| `clamp` | `clamp` | `clampUM` |
 
-**Lưu ý không nhất quán (cần theo dõi):** Aiken `append_capped` nhận `clamped_raw` (đã clamp); TypeScript `appendHistory` nhận `new_raw` nguyên bản và clamp xảy ra muộn hơn trong `computeNewUM`. Kết quả `smoothed_q` cuối cùng vẫn đúng (double clamp), nhưng `history` trong datum có thể chứa giá trị khác nhau giữa 2 bên nếu `new_raw` ngoài `[UM_MIN_Q, UM_MAX_Q]`. Nên đồng bộ về 1 convention (clamp trước khi append) cho P8 hoàn chỉnh.
+**P8 ĐÃ ĐỒNG BỘ (clamp-before-append):** cả hai bên lưu giá trị **đã clamp** vào `history`. Trước đây TS `appendHistory` nhận raw chưa clamp (lệch HIGH với Aiken khi `new_raw` ngoài `[UM_MIN_Q, UM_MAX_Q]`); nay `computeNewUM` clamp `newRaw` TRƯỚC khi gọi `appendHistory` → `history` trong datum bit-identical. Redeemer `new_raw` vẫn là giá trị raw; validator on-chain clamp lại để bảo đảm bounds dù caller gian.
 
 ---
 

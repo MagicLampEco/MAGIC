@@ -25,14 +25,13 @@ Trong `scripts/` (hoặc script riêng):
 ```typescript
 import { applyParamsToScript, validatorToScriptHash } from "@lucid-evolution/lucid";
 
-const keepers     = [process.env.KEEPER_1_PKH!, process.env.KEEPER_2_PKH!];
-const threshold   = 2;
 const msPerEpoch  = 86_400_000;  // Preview testnet
 const umPolicy    = process.env.UM_NFT_POLICY_ID!;
 const umName      = "554d44";    // "UMD" hex
 
+// Permissionless — KHÔNG còn keepers/threshold.
 const appliedScript = applyParamsToScript(UM_VALIDATOR_CBOR, [
-  msPerEpoch, keepers, threshold, umPolicy, umName
+  msPerEpoch, umPolicy, umName
 ]);
 const scriptHash = validatorToScriptHash({ type: "PlutusV3", script: appliedScript });
 ```
@@ -113,11 +112,11 @@ UMKeeper deploy PHẢI trước:
 
 ### 3.1 Tests dương tính (happy path)
 
-**P1 — Aiken test: happy path với 2 keeper ký hợp lệ**
+**P1 — Aiken test: happy path permissionless (KHÔNG cần chữ ký)**
 ```bash
 cd /Users/ductiger/Projects/MAGIC/UMKeeper/onchain
 aiken check
-# Test: um_happy_path (um_datum.ak:285-301)
+# Test: um_happy_path — extra_signatories = []
 # Expected: PASS
 # Verify: history = [Q, 1.2Q], smoothed = 1.1Q, epoch = 5
 ```
@@ -154,40 +153,29 @@ npm test -- --reporter=verbose
 
 ### 3.2 Tests âm tính (rejection)
 
-**N1 — Aiken: chỉ 1 keeper ký (dưới threshold)**
-```bash
-# Test: um_unauthorized (um_datum.ak:304-319) — test fail expected
-# aiken check bắt bằng `test ... fail`
-# Expected: tx rejected (count=1 < threshold=2)
-```
+Lưu ý: KHÔNG còn test auth (um_unauthorized/um_stranger_signer) vì permissionless. An toàn được đảm bảo bằng các guard eUTXO + recompute SMA dưới đây.
 
-**N2 — Aiken: kẻ lạ ký (không trong whitelist)**
+**N1 — Aiken: double-satisfaction qua stake credential**
 ```bash
-# Test: um_stranger_signer (um_datum.ak:322-337)
-# Expected: rejected (count_keeper_sigs = 0 < threshold)
-```
-
-**N3 — Aiken: double-satisfaction qua stake credential**
-```bash
-# Test: um_double_satisfaction_stake_cred (um_datum.ak:341-367)
+# Test: um_double_satisfaction_stake_cred
 # Expected: rejected (count_inputs = 2 ≠ 1)
 ```
 
-**N4 — Aiken: UM NFT bị rút (authority strip)**
+**N2 — Aiken: UM NFT bị rút (authority strip)**
 ```bash
-# Test: um_authority_nft_stripped (um_datum.ak:370-386)
+# Test: um_authority_nft_stripped
 # Expected: rejected (quantity_of = 0 ≠ 1)
 ```
 
-**N5 — Aiken: update cùng epoch (replay)**
+**N3 — Aiken: update cùng epoch (replay)**
 ```bash
-# Test: um_same_epoch (um_datum.ak:389-404)
+# Test: um_same_epoch
 # Expected: rejected (current_epoch = last_updated_epoch = 5)
 ```
 
-**N6 — Aiken: khai gian smoothed_q trong output datum**
+**N4 — Aiken: khai gian smoothed_q trong output datum**
 ```bash
-# Test: um_forged_smoothed (um_datum.ak:406-421)
+# Test: um_forged_smoothed
 # Expected: rejected (output_datum.smoothed_q = 2e9 ≠ computed 1.1e9)
 ```
 
@@ -208,17 +196,17 @@ npm test -- --reporter=verbose
 ### 3.3 Chạy toàn bộ tests
 
 ```bash
-# Aiken (on-chain — 6 tests: 1 happy + 5 reject)
+# Aiken (on-chain — 5 tests: 1 happy + 4 reject; KHÔNG còn test auth)
 cd /Users/ductiger/Projects/MAGIC/UMKeeper/onchain
 aiken check
 
-# TypeScript (off-chain — 14 test cases)
+# TypeScript (off-chain — 20 test cases)
 cd /Users/ductiger/Projects/MAGIC/UMKeeper/offchain
 npm install && npm test
 
 # Expected output:
-#   Aiken: 6/6 PASS
-#   TS:    14/14 PASS
+#   Aiken: 5/5 PASS
+#   TS:    20/20 PASS
 ```
 
 ---
@@ -228,10 +216,10 @@ npm install && npm test
 | Giới hạn | Mô tả | Tác động |
 |---|---|---|
 | **Stub epoch stats** | `getEpochStats()` trả về neutral (1:1) — không đọc dữ liệu thực | UM luôn drift về 1.0× trong testnet; production cần indexer |
-| **Whitelist cố định** | Keepers bake vào script hash — không thể thêm/xoá on-chain | Cần redeploy validator + migrate UM UTxO nếu muốn đổi keeper |
-| **Không có keeper incentive on-chain** | Keeper tự trả gas; nếu không có incentive → có thể delay | v-next: thêm fee reward cho keeper từ protocol fee |
-| **Single-epoch catch-up** | Nếu keeper offline nhiều epoch, chỉ update 1 điểm raw khi quay lại | History SMA ít điểm hơn → ít smooth hơn (punishment tự nhiên) |
-| **No on-chain epoch stats** | Burns/mints không được tích luỹ on-chain trong UMKeeper | Keeper phải tin vào off-chain indexer hoặc MagicSupplyShard |
+| **`new_raw` cấp off-chain** | Permissionless → ai cũng trigger; validator KHÔNG verify được `new_raw` tự thân (chỉ clamp + SMA) | Người trigger có thể chọn raw trong `[0.5×, 2.0×]`; tác động bị SMA 6-epoch làm mịn. v-next: on-chain epoch accumulator |
+| **Không có keeper incentive on-chain** | Người trigger tự trả gas; nếu không ai trigger → UM stale, InstantGen fallback 0.5× | v-next: thêm fee reward cho người trigger từ protocol fee |
+| **Single-epoch catch-up** | Nếu không ai trigger nhiều epoch, chỉ update 1 điểm raw khi quay lại | History SMA ít điểm hơn → ít smooth hơn (punishment tự nhiên) |
+| **No on-chain epoch stats** | Burns/mints không được tích luỹ on-chain trong UMKeeper | Phải tin vào off-chain indexer hoặc MagicSupplyShard |
 
 ---
 
@@ -239,9 +227,10 @@ npm install && npm test
 
 | Item | Mô tả |
 |---|---|
+| **On-chain epoch accumulator** | Tích luỹ burns/mints on-chain (MagicSupplyShard) để validator verify `new_raw` trực tiếp → loại bỏ rủi ro `new_raw` cấp off-chain của permissionless |
 | **Real epoch stats** | Thay stub bằng query từ `MagicSupplyShard` UTxOs (shard_minted + shard_burned per epoch) |
-| **On-chain keeper registry** | Cho phép governance thêm/xoá keeper mà không cần redeploy validator |
-| **Keeper fee incentive** | Protocol trả fee nhỏ cho keeper từ treasury khi update thành công |
+| **Trigger fee incentive** | Protocol trả fee nhỏ cho người trigger từ treasury khi update thành công → đảm bảo liveness |
 | **Reference input cho InstantGen** | Để InstantGen read UM datum mà không cần separate lookup, tránh contention |
-| **P8 consistency fix** | Đồng bộ convention clamp-before-append giữa Aiken (`append_capped` nhận `clamped_raw`) và TypeScript (`appendHistory` nhận raw) |
-| **Multi-epoch fill** | Nếu keeper offline N epoch, có thể submit N transactions liên tiếp để fill history đầy đủ |
+| **Multi-epoch fill** | Nếu không ai trigger N epoch, có thể submit N transactions liên tiếp để fill history đầy đủ |
+
+> P8 clamp-before-append đã ĐỒNG BỘ trong v1.0 này (Aiken + TS đều lưu `clamped_raw` vào history) — không còn là mục v-next.

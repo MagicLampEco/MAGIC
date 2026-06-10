@@ -136,7 +136,13 @@ export function computeW(
   const fn  = phiUsers(nBar);
   const fd  = phiDispute(deltaQ);
   let   kap = TIER_KAPPA[tier];
-  if (emergencyPen > 0n) kap = kap * (Q - emergencyPen) / Q;
+  // W-3 guard: emergencyPen ∈ [0, Q]. Clamp >Q to Q (kap_eff=0) so W can never
+  // go negative. Negative values clamp to 0 (no penalty). Without this guard a
+  // caller passing emergencyPen>Q would make (Q-emergencyPen)<0 → kap_eff<0 → W<0.
+  let ep = emergencyPen;
+  if (ep < 0n) ep = 0n;
+  if (ep > Q)  ep = Q;
+  if (ep > 0n) kap = kap * (Q - ep) / Q;
   const fa  = phiAge(age);
 
   // Sequential multiplications — error ≤ 7 nanogic (Lemma 3.2)
@@ -159,6 +165,24 @@ export function distribute(
   capBps   : bigint = MAX_SINGLE_APP_REWARD_BPS,
 ): Record<string, bigint> {
   const apps = Object.keys(weights);
+  // W-11 guard: reject negative pool X. X (epoch reward pool, nanogic) is ≥ 0 by
+  // construction, but a negative X would flip the sign of every reward via the
+  // `weight*X/Wtotal` step (X<0 → reward<0) and corrupt the cap/conservation
+  // logic. Defense-in-depth: fail loud on malformed input rather than emit
+  // negative rewards.
+  if (X < 0n) {
+    throw new Error(`distribute: negative pool X (${X}); reward pool must be ≥ 0`);
+  }
+  // W-10 guard: reject negative weights. W is always ≥ 0 by W-3, so a negative
+  // weight is malformed input. Allowing it would let an app with a negative
+  // weight pull positive reward via the cap-redistribution loop (Wunc could turn
+  // a negative contributor into a cap grab), and could make Wtotal misrepresent
+  // the true share denominator. Fail loud rather than silently mis-allocate.
+  for (const a of apps) {
+    if ((weights[a] ?? 0n) < 0n) {
+      throw new Error(`distribute: negative weight for app "${a}" (${weights[a]}); W must be ≥ 0 (W-3)`);
+    }
+  }
   const Wtotal = apps.reduce((s, a) => s + (weights[a] ?? 0n), 0n);
   if (Wtotal === 0n) return Object.fromEntries(apps.map(a => [a, 0n]));
 

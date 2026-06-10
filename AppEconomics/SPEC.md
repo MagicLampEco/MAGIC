@@ -46,7 +46,9 @@ AppEconomics định nghĩa cách phân bổ phần thưởng MAGIC mỗi epoch 
 | deltaQ ≥ Q² / DISPUTE_BETA_Q (= 200_000_000n, tức 20%) | Φ_dispute = 0n → W = 0n |
 | age < GRACE_PERIOD | Φ_age < Q, app nhận thưởng giảm dần |
 | emergencyPen > 0 và emergencyPen ≤ Q | κ giảm theo penalty, W giảm tỷ lệ |
-| emergencyPen > Q | **Không hợp lệ** — kap_eff < 0n → W < 0n, vi phạm W-3. Caller phải đảm bảo emergencyPen ∈ [0, Q] |
+| emergencyPen > Q | **Được guard** — clamp về Q (kap_eff = 0n → W = 0n). W không bao giờ âm (W-3) |
+| emergencyPen < 0 | **Được guard** — clamp về 0 (không phạt), W = W(emergencyPen=0) |
+| weights[a] < 0 trong `distribute` | **Được guard** — throw lỗi (W luôn ≥ 0 theo W-3; weight âm = input dị dạng) |
 
 **Out-of-scope:**
 - On-chain validator tính W (xem lý do offchain-only ở trên).
@@ -158,10 +160,16 @@ Nguồn: `AppEconomics/offchain/src/math.ts:105–108`.
 
 ```
 κ = { Tier1: Q, Tier2: 1.2Q, Tier3: 1.5Q }
-κ_effective = κ × (Q − emergencyPen) / Q   nếu emergencyPen > 0
+ep_clamped  = clamp(emergencyPen, 0, Q)          — guard W-3 (xem dưới)
+κ_effective = κ × (Q − ep_clamped) / Q           nếu ep_clamped > 0
 ```
 
-Nguồn: `AppEconomics/offchain/src/math.ts:25`.
+**Guard W-3 (emergencyPen):** `computeW` clamp `emergencyPen` về `[0, Q]` trước khi
+tính `kap_eff`. `emergencyPen > Q` → clamp về Q → `kap_eff = 0` → W = 0 (không âm);
+`emergencyPen < 0` → clamp về 0 (không phạt). Không còn là "caller invariant" — code
+tự đảm bảo W ≥ 0 với mọi giá trị `emergencyPen`.
+
+Nguồn: `AppEconomics/offchain/src/math.ts:25`, guard tại `computeW`.
 
 ### §9.3 W — Hàm phần thưởng
 
@@ -193,7 +201,13 @@ Lặp cho đến khi excess = 0:
 **Theorem 10.1 Hội tụ:** Vòng lặp kết thúc sau ≤ |A| + 1 bước vì mỗi iteration, ít nhất một app hit cap và ra khỏi tập uncapped.  
 **MAX_SINGLE_APP_REWARD_BPS = 3000n** (30%) [Constitutional]  
 
-Nguồn: `AppEconomics/offchain/src/math.ts:156–193`.
+**Guard W-10 (weight âm):** `distribute` throw lỗi nếu bất kỳ `weights[a] < 0`. W
+luôn ≥ 0 theo W-3, nên weight âm là input dị dạng. Nếu cho phép, một app weight-âm
+có thể bị tái phân phối thành reward dương qua vòng lặp cap (Wunc biến contributor âm
+thành kẻ chiếm cap), và Wtotal sẽ sai lệch mẫu số chia phần. Fail loud thay vì phân
+bổ sai âm thầm.
+
+Nguồn: `AppEconomics/offchain/src/math.ts:156–193`, guard ở đầu `distribute`.
 
 ### Boundary conditions
 
@@ -323,7 +337,7 @@ Cây Merkle blake2b256. Forging proof đòi second preimage — độ khó 2^256
 Implementation tại `scripts/deploy/` (ngoài scope module này).  
 Nguồn: `AppEconomics/tests/appeconomics.test.ts:237–242`.
 
-> **Lưu ý thực thi:** Test TV-007 hiện là stub `expect(true).toBe(true)` — T11 Soundness **không được kiểm tra** trong bộ 33/33 tests. Merkle verification thực tế nằm trong `scripts/deploy/` và chưa được tích hợp vào test suite AppEconomics. Integrator không nên dựa vào TV-007 như bằng chứng kiểm thử T11.
+> **Lưu ý thực thi:** Test TV-007 hiện là stub `expect(true).toBe(true)` — T11 Soundness **không được kiểm tra** trong bộ 45/45 tests. Merkle verification thực tế nằm trong `scripts/deploy/` và chưa được tích hợp vào test suite AppEconomics. Integrator không nên dựa vào TV-007 như bằng chứng kiểm thử T11.
 
 ### TV-008: Sai số Q-format ≤ 7 nanogic
 
@@ -378,13 +392,15 @@ Không có Datum/Redeemer Aiken type vì module offchain-only.
 |---|---|---|
 | W-1 | V = 0 → W = 0 (guard) | `math.ts:133` |
 | W-2 | W ≤ W_exact (user-unfavorable, Lemma 3.2) | `math.ts:142–149` |
-| W-3 | W ≥ 0 (BigInt không âm với input hợp lệ) — **điều kiện cần:** emergencyPen ∈ [0, Q]; nếu emergencyPen > Q thì kap_eff < 0n và W < 0n (caller invariant, không được guard trong code) | cấu trúc BigInt + caller |
+| W-3 | W ≥ 0 với **mọi** giá trị emergencyPen — `computeW` clamp emergencyPen về [0, Q] (>Q→Q, <0→0), kap_eff ∈ [0, κ] ⇒ W không bao giờ âm | guard trong `computeW` |
 | W-4 | Wtotal = 0 → distribute trả về tất cả 0, không panic | `math.ts:163` |
 | W-5 | Σ rewards ≤ X (T3 Conservation) | `math.ts:165–191` |
 | W-6 | rewards[a] ≤ cap với mọi a (§10) | `math.ts:173–174` |
 | W-7 | Vòng lặp distribute kết thúc trong ≤ |A|+1 bước (T10.1) | `math.ts:177` |
 | W-8 | δ_q denominator ≥ DRATE_PRIOR = 10 > 0 (T20, không chia 0) | `math.ts:113` |
 | W-9 | BigInt everywhere — không dùng Number cho amounts (C-OVERFLOW) | toàn bộ math.ts |
+| W-10 | `distribute` throw nếu bất kỳ `weights[a] < 0` — weight âm là input dị dạng (W luôn ≥ 0 theo W-3); fail-loud thay vì mis-allocate qua vòng cap | guard trong `distribute` |
+| W-11 | `distribute` throw nếu pool `X < 0` — pool reward (nanogic) ≥ 0 theo cấu tạo; X âm sẽ lật dấu mọi reward, phòng thủ-theo-tầng | guard trong `distribute` |
 
 ### eUTXO flow
 
@@ -445,12 +461,16 @@ npm install
 | T-5 | TV-002: utilHistory=[Q,Q,Q,0,0,0] | Φ_util_adj=Q/2 (burst penalty) |
 | T-6 | weights={} hoặc Wtotal=0 | Tất cả rewards=0, không panic |
 | T-7 | verifyVd(V, Vd+1) | false (over-claim bị bắt) |
+| T-8 | TV-011: emergencyPen=1.5Q (>Q) | W=0, KHÔNG âm (W-3 guard) |
+| T-9 | TV-011: emergencyPen<0 | W=W(emergencyPen=0) (clamp về 0) |
+| T-10 | TV-012: weights có app weight âm | throw `negative weight` (W-10 guard) |
+| T-11 | TV-013: pool X < 0 | throw `negative pool` (W-11 guard); X=0 → tất cả 0 |
 
 **Chạy tests:**
 ```bash
 cd /Users/ductiger/Projects/MAGIC/AppEconomics/offchain
 npm test
-# Expected: 33/33 pass
+# Expected: 45/45 pass
 ```
 
 ### Known limits

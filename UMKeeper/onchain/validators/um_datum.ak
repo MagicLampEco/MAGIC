@@ -2,25 +2,28 @@
 // Normative: C-UM-1..4, §14.1, §14.3
 //
 // UM datum là UTxO riêng (không phải vault).
-// Update do KEEPER được uỷ quyền trigger (KHÔNG permissionless — xem AUDIT bên dưới).
-// Validator verify toán học SMA, không trust raw value từ keeper.
+// Update PERMISSIONLESS — bất kỳ ai cũng có thể trigger (khớp pattern
+// VacuumFire/ScheduleFire). Validator verify toán học SMA + ràng buộc
+// eUTXO, KHÔNG cần chữ ký keeper.
 //
-// ── AUDIT FIX (Bug 3 — CRITICAL) ──────────────────────────────────────────
-// Cũ: UMUpdate "permissionless" → bất kỳ ai cũng đè smoothed_q mỗi epoch.
-//   Dù SMA math bị verify, attacker vẫn chọn được new_raw (trong clamp [MIN,MAX])
-//   và bơm history theo hướng có lợi → thao túng Instant/Vacuum rate.
-//   Đây là tham số Constitutional của cả mạng → KHÔNG được để hở.
+// ── THIẾT KẾ: PERMISSIONLESS (khớp VacuumFire/ScheduleFire) ──────────────
+// Cập nhật UM không trao quyền lợi cho người trigger — chỉ làm tươi rate
+// theo công thức đã được verify on-chain. Vì vậy mở permissionless như các
+// handler *Fire khác để keeper bất kỳ (kể cả user) cập nhật đúng giờ.
 //
-// Fix (lý do theo 4 trục):
-//   1. Định hướng dài hạn: UM là rate gốc cho mọi app dùng SDK → phải đáng tin,
-//      nếu thao túng được thì LAMP mất giá trị (mục tiêu cuối thất bại).
-//   2. First-principles: keeper KHÔNG cần là 1 người; whitelist M-of-N keeper ký
-//      → decentralize được, không single point, vẫn chống Sybil đè rate.
-//   3. Tối ưu: chỉ cần M chữ ký + 1 input/1 output theo script hash → ít ExUnit,
-//      không cần oracle phức tạp.
-//   4. An toàn user + bền vững: value preservation (UM NFT không rời output) chống
-//      rút token thẩm quyền; single-input theo PAYMENT CREDENTIAL (script hash)
-//      chống double-satisfaction qua stake credential.
+// Lý do theo 4 trục:
+//   1. Định hướng dài hạn: UM là rate gốc cho mọi app dùng SDK → cần được
+//      cập nhật đều đặn; permissionless tối đa hoá liveness, không phụ thuộc
+//      1 keeper bot duy nhất (single point of liveness failure).
+//   2. First-principles: validator tính lại smoothed_q từ history + clamp →
+//      người trigger KHÔNG chọn được kết quả; biến số duy nhất họ cấp là
+//      new_raw, đã bị double-clamp [UM_MIN_Q, UM_MAX_Q] + SMA 6-epoch làm mịn.
+//   3. Tối ưu: bỏ count_keeper_sigs → ít ExUnit hơn, không cần whitelist param.
+//   4. An toàn user + bền vững: value preservation (UM NFT không rời output)
+//      chống rút token thẩm quyền; single-input theo PAYMENT CREDENTIAL
+//      (script hash) chống double-satisfaction qua stake credential. Rủi ro
+//      còn lại: new_raw được cấp off-chain (không verify được tự thân) → giới
+//      hạn bằng clamp + SMA, ghi chú rõ trong MATH.md §TV-UM-04 / TECH.md.
 
 use aiken/collection/list
 use aiken/interval.{Finite, IntervalBoundType, after}
@@ -43,8 +46,9 @@ pub type UMDatum {
 }
 
 pub type UMRedeemer {
-  // Keeper được uỷ quyền submit new raw UM value (computed off-chain từ epoch stats).
-  // Validator verify SMA math đúng — không verify được raw value tự thân.
+  // Bất kỳ ai (permissionless) submit new raw UM value (computed off-chain từ
+  // epoch stats). Validator verify SMA math đúng — KHÔNG verify được raw value
+  // tự thân; new_raw bị giới hạn bằng clamp [UM_MIN_Q, UM_MAX_Q] + SMA 6-epoch.
   UMUpdate { new_raw: Int }
 }
 
@@ -53,14 +57,10 @@ pub type UMRedeemer {
 //   Mainnet:        432_000_000
 //   Preview/Preprod: 86_400_000
 //
-// `keepers`   : whitelist payment key hash của keeper được phép update.
-// `threshold` : số chữ ký keeper tối thiểu (M-of-N, Byzantine fault tolerance).
 // `um_policy` / `um_name` : NFT thẩm quyền của UM datum — phải còn ở output
 //   (value preservation → chống chuyển UM authority sang UTxO của attacker).
 validator um_datum_validator(
   ms_per_epoch : Int,
-  keepers      : List<ByteArray>,
-  threshold    : Int,
   um_policy    : PolicyId,
   um_name      : ByteArray,
 ) {
@@ -77,10 +77,10 @@ validator um_datum_validator(
 
     when redeemer is {
       UMUpdate { new_raw } -> {
-        // ── AUTH: keeper M-of-N ký ────────────────────────────
-        // Chống đè rate permissionless. Đếm số keeper whitelist có mặt
-        // trong extra_signatories, yêu cầu ≥ threshold.
-        expect count_keeper_sigs(keepers, tx.extra_signatories) >= threshold
+        // ── PERMISSIONLESS ────────────────────────────────────
+        // Không yêu cầu chữ ký (khớp VacuumFire/ScheduleFire). An toàn vì
+        // validator tính lại smoothed_q từ history + double-clamp → người
+        // trigger không hưởng lợi, chỉ làm tươi rate theo công thức.
 
         // ── Single-input/output theo SCRIPT HASH (payment credential) ─
         // Chống double-satisfaction: cùng script hash + khác stake credential
@@ -91,6 +91,15 @@ validator um_datum_validator(
 
         let um_in  = input_at_script(tx.inputs, own_hash)
         let um_out = output_at_script(tx.outputs, own_hash)
+
+        // ── ADDRESS PRESERVATION: pin FULL Address của output đã chọn ─
+        // Count-by-script-hash (line 89-90) chống double-satisfaction, nhưng
+        // KHÔNG ràng buộc stake_credential. Nếu chỉ pin payment credential,
+        // người trigger permissionless có thể đặt stake_credential của họ vào
+        // output → chiếm staking reward trên ADA khoá ở UTxO. Pin full Address
+        // (payment + stake) của output ĐÃ chọn = input → stake_credential bất
+        // biến. Vẫn giữ count-by-script-hash ở trên cho double-satisfaction.
+        expect um_out.address == um_in.address
 
         // ── VALUE PRESERVATION: UM NFT thẩm quyền còn nguyên ở output ─
         // NFT UM authenticity không được rời UTxO → attacker không thể tách
@@ -157,11 +166,6 @@ fn clamp(x: Int, lo: Int, hi: Int) -> Int {
   if x < lo { lo } else if x > hi { hi } else { x }
 }
 
-// ── Auth helper ───────────────────────────────────────────────
-fn count_keeper_sigs(keepers: List<ByteArray>, sigs: List<ByteArray>) -> Int {
-  list.count(keepers, fn(k) { list.has(sigs, k) })
-}
-
 // ── eUTXO helpers ─────────────────────────────────────────────
 fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
   expect Some(s) = tx.validity_range.lower_bound.bound_type |> get_finite
@@ -221,15 +225,9 @@ const t_mspe: Int = 86_400_000   // Preview
 
 const t_sh: ByteArray = #"a1a1a1a1"
 
-fn t_keepers() -> List<ByteArray> {
-  [#"a1", #"a2", #"a3"]
-}
-
-const t_threshold: Int = 2
-
 const t_um_policy: ByteArray = #"00aa"
 
-const t_um_name: ByteArray = #"554d"   // "UM"
+const t_um_name: ByteArray = #"554d44"   // "UMD" — tên NFT UM chính thức cross-module (InstantGen/VacuumGen/scripts)
 
 // Address builders
 fn script_address(hash: ByteArray) -> Address {
@@ -257,7 +255,9 @@ fn mk_ref(ix: Int) -> OutputReference {
   OutputReference { transaction_id: #"00", output_index: ix }
 }
 
-// tx chuẩn: 1 UM input + 1 UM output, value preserved, keeper sigs, epoch.
+// tx chuẩn: 1 UM input + 1 UM output, value preserved, epoch.
+// `sigs` giữ lại để dựng extra_signatories nhưng KHÔNG còn được validator
+// kiểm tra (permissionless) — chỉ là field placeholder của Transaction.
 fn um_tx(
   in_d  : UMDatum,
   out_d : UMDatum,
@@ -281,7 +281,7 @@ fn um_tx(
   }
 }
 
-// happy: 2 keeper ký, value preserved, SMA đúng.
+// happy: permissionless (không cần chữ ký), value preserved, SMA đúng.
 test um_happy_path() {
   let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
   let raw = 1_200_000_000
@@ -293,49 +293,15 @@ test um_happy_path() {
     history: new_hist,
   }
   let v = um_value()
-  let tx = um_tx(in_d, out_d, [#"a1", #"a2"], 5, v, v)
+  // không có chữ ký nào — permissionless vẫn pass.
+  let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_keepers(), t_threshold, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
 
-// REJECT 1 — unauthorized: chỉ 1 keeper ký < threshold 2.
-test um_unauthorized() fail {
-  let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
-  let raw = 1_200_000_000
-  let out_d = UMDatum {
-    smoothed_q: 1_100_000_000,
-    last_updated_epoch: 5,
-    history: [q, raw],
-  }
-  let v = um_value()
-  // chỉ #"a1" ký → 1 < threshold 2 → reject
-  let tx = um_tx(in_d, out_d, [#"a1"], 5, v, v)
-  um_datum_validator.spend(
-    t_mspe, t_keepers(), t_threshold, t_um_policy, t_um_name,
-    Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
-  )
-}
-
-// REJECT 1b — kẻ lạ ký (không trong whitelist).
-test um_stranger_signer() fail {
-  let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
-  let raw = 1_200_000_000
-  let out_d = UMDatum {
-    smoothed_q: 1_100_000_000,
-    last_updated_epoch: 5,
-    history: [q, raw],
-  }
-  let v = um_value()
-  let tx = um_tx(in_d, out_d, [#"ff", #"ee"], 5, v, v)
-  um_datum_validator.spend(
-    t_mspe, t_keepers(), t_threshold, t_um_policy, t_um_name,
-    Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
-  )
-}
-
-// REJECT 2 — double-satisfaction qua stake credential.
+// REJECT 1 — double-satisfaction qua stake credential.
 // 2 UM input cùng script hash, khác stake credential → count theo script hash
 // thấy 2 ≠ 1 → reject (full-Address equality sẽ bỏ sót).
 test um_double_satisfaction_stake_cred() fail {
@@ -357,16 +323,16 @@ test um_double_satisfaction_stake_cred() fail {
     ..placeholder,
     inputs: [in_a, in_b],
     outputs: [out_a, out_b],
-    extra_signatories: [#"a1", #"a2"],
+    extra_signatories: [],
     validity_range: after(5 * t_mspe),
   }
   um_datum_validator.spend(
-    t_mspe, t_keepers(), t_threshold, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
 
-// REJECT 3 — UM NFT thẩm quyền bị rút khỏi output (value không bảo toàn).
+// REJECT 2 — UM NFT thẩm quyền bị rút khỏi output (value không bảo toàn).
 test um_authority_nft_stripped() fail {
   let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
   let raw = 1_200_000_000
@@ -378,14 +344,14 @@ test um_authority_nft_stripped() fail {
   let v = um_value()
   // output KHÔNG có UM NFT (chỉ min-ADA) → reject
   let bad_out = assets.from_lovelace(2_000_000)
-  let tx = um_tx(in_d, out_d, [#"a1", #"a2"], 5, v, bad_out)
+  let tx = um_tx(in_d, out_d, [], 5, v, bad_out)
   um_datum_validator.spend(
-    t_mspe, t_keepers(), t_threshold, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
 
-// REJECT 4 — không phải epoch boundary (current_epoch == last_updated_epoch).
+// REJECT 3 — không phải epoch boundary (current_epoch == last_updated_epoch).
 test um_same_epoch() fail {
   let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 5, history: [q] }
   let raw = 1_200_000_000
@@ -395,14 +361,44 @@ test um_same_epoch() fail {
     history: [q, raw],
   }
   let v = um_value()
-  let tx = um_tx(in_d, out_d, [#"a1", #"a2"], 5, v, v)
+  let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_keepers(), t_threshold, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
 
-// REJECT 5 — output smoothed_q sai (keeper khai gian SMA).
+// REJECT 5 — output đổi stake_credential (chiếm staking reward).
+// 1 UM input (no stake) + 1 UM output cùng script hash NHƯNG stake_credential
+// của attacker → count-by-script-hash thấy 1 (pass) nhưng full-Address pin
+// (um_out.address == um_in.address) reject. Chứng minh fix LOW stake-cred.
+test um_output_stake_cred_hijack() fail {
+  let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
+  let raw = 1_200_000_000
+  let out_d = UMDatum {
+    smoothed_q: 1_100_000_000,
+    last_updated_epoch: 5,
+    history: [q, raw],
+  }
+  let v = um_value()
+  let addr_in  = script_address(t_sh)
+  let addr_out = script_address_staked(t_sh, #"cc")  // attacker stake cred
+  let um_in = Input { output_reference: mk_ref(0), output: mk_out(addr_in, v, in_d) }
+  let um_out = mk_out(addr_out, v, out_d)
+  let tx = Transaction {
+    ..placeholder,
+    inputs: [um_in],
+    outputs: [um_out],
+    extra_signatories: [],
+    validity_range: after(5 * t_mspe),
+  }
+  um_datum_validator.spend(
+    t_mspe, t_um_policy, t_um_name,
+    Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
+  )
+}
+
+// REJECT 4 — output smoothed_q sai (người trigger khai gian SMA).
 test um_forged_smoothed() fail {
   let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
   let raw = 1_200_000_000
@@ -413,9 +409,9 @@ test um_forged_smoothed() fail {
     history: [q, raw],
   }
   let v = um_value()
-  let tx = um_tx(in_d, out_d, [#"a1", #"a2"], 5, v, v)
+  let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_keepers(), t_threshold, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }

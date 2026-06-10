@@ -167,4 +167,8 @@ pub type VaultRedeemer {
 
   // constr 6  WithdrawLamp: withdraw unlocked LAMP back to wallet (SPEC_V1 §1)
   WithdrawLamp  { amount: Natural }
+
+  // constr 7  SetDelegate: set/clear consume-delegate (personal_delegate).
+  // Owner-only, no cooldown. Append-only — new variant at END (P8).
+  SetDelegate   { new_delegate: Option<ByteArray> }
 }

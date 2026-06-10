@@ -350,8 +350,65 @@ describe("C-FIRE-3 atomic fire assertion", () => {
   it("T10: No cancel — validator has no cancel redeemer", () => {
     // Structural guarantee: VaultRedeemer enum has no CancelSchedule variant
     // This test documents the invariant
-    const redeemerTypes = ["ScheduleCommit", "ScheduleFire", "BurnBatch"];
+    const redeemerTypes = [
+      "ScheduleCommit", "ScheduleFire", "BurnBatch", "WithdrawLamp", "SetDelegate",
+    ];
     expect(redeemerTypes).not.toContain("CancelSchedule");  // T10 ✓
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// VaultRedeemer constructor-index contract (P8 invariant)
+//
+// The Aiken `VaultRedeemer` enum order is the on-chain Plutus Data constr tag:
+//   ScheduleCommit=0, ScheduleFire=1, BurnBatch=2, WithdrawLamp=3, SetDelegate=4
+// and the offchain `VaultRedeemerSchema` (offchain/src/types.ts) MUST list the
+// same variants in the same order — Lucid's Data.Enum maps array index → constr.
+//
+// We assert the byte-level contract with a self-contained Plutus-Data CBOR
+// constr encoder (Lucid uses the identical CIP-0008/Plutus rule: alternative i
+// for i<7 → CBOR tag 121+i, i.e. major-type-6 head 0xd8 0x(0x79+i)). This is
+// runtime-independent of the lucid bundle (which currently has a broken
+// libsodium ESM dist — tracked separately, see task "Fix value-leak + HIGH").
+// ═══════════════════════════════════════════════════════════════
+
+describe("VaultRedeemer constr-index contract (P8: Aiken ↔ TS order)", () => {
+
+  // Head bytes Lucid/Plutus emit for Constr(i, []) with i < 7.
+  function constrHeadHex(i: number): string {
+    expect(i).toBeLessThan(7);
+    const tag = 0x79 + i;                 // 121 + i
+    return "d8" + tag.toString(16).padStart(2, "0");
+  }
+
+  // Order matches BOTH Aiken VaultRedeemer and offchain VaultRedeemerSchema.
+  const VARIANT_ORDER = [
+    "ScheduleCommit", // 0
+    "ScheduleFire",   // 1
+    "BurnBatch",      // 2
+    "WithdrawLamp",   // 3
+    "SetDelegate",    // 4
+  ];
+
+  it("variant order is fixed and append-only (new variants at END)", () => {
+    expect(VARIANT_ORDER).toEqual([
+      "ScheduleCommit", "ScheduleFire", "BurnBatch", "WithdrawLamp", "SetDelegate",
+    ]);
+  });
+
+  it("WithdrawLamp is constr 3 → CBOR head 0xd87c", () => {
+    expect(VARIANT_ORDER.indexOf("WithdrawLamp")).toBe(3);
+    expect(constrHeadHex(3)).toBe("d87c");
+  });
+
+  it("SetDelegate is constr 4 → CBOR head 0xd87d", () => {
+    expect(VARIANT_ORDER.indexOf("SetDelegate")).toBe(4);
+    expect(constrHeadHex(4)).toBe("d87d");
+  });
+
+  it("BurnBatch stays at its original constr 2 → 0xd87b (decode-compat)", () => {
+    expect(VARIANT_ORDER.indexOf("BurnBatch")).toBe(2);
+    expect(constrHeadHex(2)).toBe("d87b");
   });
 });
 

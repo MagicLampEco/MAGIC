@@ -51,7 +51,12 @@ async function main() {
       POLICY_IDS.lamp, treasuryAddrData, POLICY_IDS.shard_nft, PROTOCOL.MS_PER_EPOCH,
     ]),
   };
-  const shardScript = { type: "PlutusV3" as const, script: shardUnapplied.compiledCode };
+  // Shard validator now takes 1 param: shard NFT policy id (same value the vault
+  // is parameterized with). Apply it before hashing — hash changed vs v1.0.
+  const shardScript = {
+    type: "PlutusV3" as const,
+    script: applyParamsToScript(shardUnapplied.compiledCode, [POLICY_IDS.shard_nft]),
+  };
   const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(shardScript)));
 

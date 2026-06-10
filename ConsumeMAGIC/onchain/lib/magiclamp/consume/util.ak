@@ -5,7 +5,7 @@
 use aiken/collection/list
 use aiken/interval.{Finite, IntervalBoundType}
 use cardano/address.{Address, Inline, Script, VerificationKey}
-use cardano/assets.{AssetName, PolicyId, Value}
+use cardano/assets.{Value}
 use cardano/transaction.{InlineDatum, Input, NoDatum, Output, OutputReference, Transaction}
 
 /// Epoch từ validity_range lower_bound (POSIX ms). ms_per_epoch network-specific.

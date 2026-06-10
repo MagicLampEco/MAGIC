@@ -172,5 +172,11 @@ export const VaultRedeemerSchema = Data.Enum([
   Data.Object({ UpdateProfile: Data.Object({                             // constr 2
     new_profile: ActivityProfileSchema,
   })}),
+  Data.Object({ WithdrawLamp: Data.Object({                              // constr 3
+    amount: Data.Integer(),
+  })}),
+  Data.Object({ SetDelegate: Data.Object({                              // constr 4
+    new_delegate: Data.Nullable(Data.Bytes()),
+  })}),
 ]);
 export type VaultRedeemer = Data.Static<typeof VaultRedeemerSchema>;

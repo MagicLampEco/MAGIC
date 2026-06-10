@@ -237,8 +237,10 @@ fn validate_vacuum_fire(
   expect output_datum.pending_profile == input_datum.pending_profile
   expect output_datum.last_updated_epoch == current_epoch
   expect output_datum.delegation_cert == input_datum.delegation_cert
+  expect output_datum.activity_state == input_datum.activity_state
   expect output_datum.streak_state == input_datum.streak_state
   expect output_datum.personal_delegate == input_datum.personal_delegate
+  expect output_datum.attribution == input_datum.attribution
 
   // next_batch_index: increments only if batch was created
   if batch_created {

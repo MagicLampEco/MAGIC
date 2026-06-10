@@ -57,7 +57,7 @@ export const TESTNET_CONFIG = {
   // Replace with actual deployed values after `aiken build`
   vaultScriptHash:   "REPLACE_WITH_VAULT_SCRIPT_HASH",
   lampPolicyId:      "REPLACE_WITH_LAMP_POLICY_ID",
-  lampAssetName:     "4c414d50", // "LAMP" in hex
+  lampAssetName:     "744c414d50", // "tLAMP" in hex
   umNftPolicyId:     "REPLACE_WITH_UM_NFT_POLICY_ID",
   umNftAssetName:    "554d44",   // "UMD" in hex
   treasuryAddress:   "REPLACE_WITH_TREASURY_ADDRESS",

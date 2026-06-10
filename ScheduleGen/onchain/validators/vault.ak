@@ -440,7 +440,7 @@ fn validate_withdraw_lamp(
   // W-6: vault output LAMP value
   let vault_output = find_vault_output_raw(tx.outputs, vault_addr)
   let vault_lamp_qty =
-    assets.quantity_of(vault_output.value, lamp_policy_id, #"4c414d50")
+    assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")
   expect vault_lamp_qty == new_lamp_balance
 
   // W-7: Σholdings == lamp_balance
@@ -486,7 +486,7 @@ fn treasury_lamp_received(
 ) -> Bool {
   let received = list.foldl(outputs, 0, fn(o, acc) {
     if o.address == treasury_addr {
-      acc + assets.quantity_of(o.value, lamp_policy, #"4c414d50")
+      acc + assets.quantity_of(o.value, lamp_policy, #"744c414d50")
     } else { acc }
   })
   received >= amount
@@ -558,7 +558,7 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
 fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
   Output {
     address: t_vault_addr(),
-    value: assets.from_asset(t_lamp_policy, #"4c414d50", balance),
+    value: assets.from_asset(t_lamp_policy, #"744c414d50", balance),
     datum: InlineDatum(datum),
     reference_script: None,
   }

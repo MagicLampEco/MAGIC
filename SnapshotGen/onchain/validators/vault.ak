@@ -309,7 +309,7 @@ fn validate_withdraw_lamp(
   // W-6: vault output value carries the new lamp_balance worth of LAMP
   let vault_output = find_vault_output(tx.outputs, vault_addr)
   let vault_lamp_qty =
-    assets.quantity_of(vault_output.value, lamp_policy_id, #"4c414d50")  // "LAMP"
+    assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
   expect vault_lamp_qty == new_lamp_balance
 
   // W-7: Σholdings == lamp_balance
@@ -437,7 +437,7 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
 fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
   Output {
     address: address.from_script(t_vault_hash),
-    value: assets.from_asset(t_lamp_policy, #"4c414d50", balance),
+    value: assets.from_asset(t_lamp_policy, #"744c414d50", balance),
     datum: InlineDatum(datum),
     reference_script: None,
   }

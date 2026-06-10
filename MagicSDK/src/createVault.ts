@@ -43,7 +43,7 @@ import { VaultDatumSchema } from "./schemas.js";
 import { applyVaultValidator } from "./validatorScripts.js";
 import { buildInitialVaultDatum } from "./vaultDatum.js";
 
-const DEFAULT_LAMP_ASSET_NAME = "4c414d50"; // "LAMP" in hex
+const DEFAULT_LAMP_ASSET_NAME = "744c414d50"; // "tLAMP" in hex
 const DEFAULT_VAULT_LOVELACE  = 2_000_000n;
 const DEFAULT_PROFILE         = "Flame" as const;
 

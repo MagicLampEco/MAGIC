@@ -107,7 +107,7 @@ Mint testnet LAMP:
 cardano-cli transaction build \
   --testnet-magic 2 \
   --tx-in <your_utxo> \
-  --mint "1000000000000 <lamp_policy_id>.4c414d50" \
+  --mint "1000000000000 <lamp_policy_id>.744c414d50" \
   --mint-script-file lamp_policy.json \
   --change-address <your_address> \
   --out-file mint_tx.raw

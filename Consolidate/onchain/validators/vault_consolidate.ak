@@ -61,7 +61,10 @@
 use aiken/collection/list
 use aiken/interval.{Finite, after}
 use cardano/assets
-use cardano/transaction.{InlineDatum, OutputReference, Transaction, placeholder}
+use cardano/assets.{PolicyId}
+use cardano/transaction.{
+  InlineDatum, Input, Output, OutputReference, Transaction, placeholder,
+}
 use magiclamp/protocol/types.{
   ActivityProfile, ActivityState, DelegationCertificate, Ember, Flame,
   LoyaltyHolding, StreakState, VaultAttribution, VaultDatum,
@@ -72,10 +75,32 @@ pub type ConsolidateRedeemer {
   Consolidate
 }
 
+// ── AUDIT FIX (Bug 3 — MAINNET-BLOCK: VALUE-LEAK) ─────────────────────────
+// Cũ: validator chỉ ràng buộc DATUM (lamp_balance giữ nguyên, Σholdings khớp)
+//   nhưng KHÔNG bao giờ đọc `out_raw.value`. LAMP trong protocol là native token
+//   NẰM TRONG vault UTxO (policy lamp_policy_id, asset name 744c414d50) — xác nhận
+//   ở InstantGen vault.ak:284. Vì consolidate chỉ cần owner tự ký, ví chủ ký 1 tx
+//   hợp lệ về datum NHƯNG output vault UTxO chỉ mang min-ADA + 0 LAMP → RÚT toàn bộ
+//   LAMP token thật (kể cả phần locked back ScheduleGen/VacuumGen) ra ví mình,
+//   trong khi datum vẫn "nói" lamp_balance cũ. Đây CHÍNH là lỗ InstantGen đã vá
+//   ("CRIT value-leak fix / MAINNET-BLOCK", vault.ak:276-288).
+// Fix (đối xứng InstantGen):
+//   (1) thêm param `lamp_policy_id: PolicyId` → deploy apply đúng giá trị mạng.
+//   (2) bind datum↔value: quantity_of(out.value, lamp_policy_id, 744c414d50)
+//       == output.lamp_balance.
+//   (3) validate_vault_value: lovelace_out ≥ lovelace_in (chống rút ADA),
+//       |policies| ≤ 2 (chống dust-stuffing brick vault).
+//   (4) full-Address equality cho OUTPUT == own input address (chống re-delegate
+//       stake reward của LAMP khoá sang ví khác). Giữ count-by-hash cho INPUT
+//       (chống double-satisfaction qua stake cred).
+
 // ── Validator ─────────────────────────────────────────────────
-// Param: ms_per_epoch — POSIX-ms per epoch (network-specific). Phải khớp giá
-// trị các vault khác (InstantGen vault dùng cùng tham số). Deploy apply theo mạng.
-validator vault_consolidate(ms_per_epoch: Int) {
+// Param:
+//   lamp_policy_id — PolicyId của LAMP native asset (bind datum↔value).
+//   ms_per_epoch   — POSIX-ms per epoch (network-specific). Phải khớp giá trị các
+//                    vault khác (InstantGen vault dùng cùng tham số). Deploy apply
+//                    theo mạng (Preview 86_400_000 / Mainnet 432_000_000).
+validator vault_consolidate(lamp_policy_id: PolicyId, ms_per_epoch: Int) {
   spend(
     datum_opt : Option<VaultDatum>,
     _redeemer : ConsolidateRedeemer,
@@ -100,6 +125,14 @@ validator vault_consolidate(ms_per_epoch: Int) {
     let out_raw = util.output_at_script(tx.outputs, own_hash)
     expect InlineDatum(d) = out_raw.datum
     expect output: VaultDatum = d
+
+    // ── OUTPUT-ADDRESS conservation (MAINNET-BLOCK) ───────────
+    // count-by-hash (line trên) chỉ khớp PAYMENT CREDENTIAL → output có thể gửi
+    // tới CÙNG script hash nhưng STAKE CREDENTIAL khác (re-delegate stake reward
+    // của LAMP khoá sang ví khác). Ép full-Address equality cho OUTPUT == địa chỉ
+    // input. Lưu ý: count-by-hash vẫn giữ cho INPUT (chống double-satisfaction
+    // qua stake cred — full-Address equality ở input sẽ bỏ sót case đó).
+    expect out_raw.address == own_addr
 
     // ── MỌI field == input TRỪ loyalty_holdings ───────────────
     // (loyalty_holdings là cái duy nhất consolidate được phép đổi).
@@ -161,12 +194,39 @@ validator vault_consolidate(ms_per_epoch: Int) {
     // C-VAULT-8: lamp_locked ≤ lamp_balance (unchanged)
     expect datum.lamp_locked <= datum.lamp_balance
 
+    // ── VALUE-LEAK fix (MAINNET-BLOCK, đối xứng InstantGen vault.ak:276-288) ──
+    // Bind datum↔value: LAMP token thật trong vault output == lamp_balance datum.
+    // Consolidate không đổi lamp_balance → output phải mang đúng lượng LAMP cũ.
+    // Không có dòng này, ví chủ ký 1 consolidate hợp lệ về datum rồi rút sạch LAMP.
+    let out_lamp = assets.quantity_of(out_raw.value, lamp_policy_id, #"744c414d50")
+    expect out_lamp == output.lamp_balance
+
+    // ── ADA / token-set preservation (MAINNET-BLOCK) ──────────
+    // lovelace_out ≥ lovelace_in (không rút ADA dư); |policies| ≤ 2 (chỉ {ADA,
+    // LAMP} → chống dust-stuffing làm phình UTxO quá exec-unit limit → brick vault).
+    let own_input = util.own_input(own_ref, tx.inputs)
+    expect validate_vault_value(own_input, out_raw)
+
     True
   }
 
   else(_) {
     fail
   }
+}
+
+/// VALUE-PRESERVATION guard (MAINNET-BLOCK — ADA drain / token-set stuffing).
+/// Đối xứng InstantGen vault.ak:464. LAMP-quantity check (ở validator body) đã pin
+/// lượng LAMP; helper này khoá phần value còn lại:
+///   - lovelace_out ≥ lovelace_in → không siphon ADA dư (≥ cho phép top-up ADA).
+///   - |policies(out)| ≤ 2 → tối đa {ADA, LAMP}; chặn dust-stuffing brick vault.
+fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
+  expect
+    assets.lovelace_of(vault_output.value) >= assets.lovelace_of(
+      vault_input.output.value,
+    )
+  expect list.length(assets.policies(vault_output.value)) <= 2
+  True
 }
 
 fn sum_locked(holdings: List<LoyaltyHolding>) -> Int {
@@ -220,6 +280,12 @@ const t_sh: ByteArray = #"a1a1a1a1"
 
 const t_owner: ByteArray = #"0a0a"
 
+// LAMP policy + asset name (#"744c414d50" = "tLAMP") cho value-leak test.
+const t_lamp_policy: ByteArray = #"b2b2b2b2"
+
+// Lovelace nền của vault UTxO (min-ADA). Output phải giữ ≥ input.
+const t_lovelace: Int = 2_000_000
+
 // Preview ms_per_epoch (Plutus validity_range = POSIX ms). Mainnet = 432_000_000.
 const t_mspe: Int = 86_400_000
 
@@ -271,15 +337,37 @@ fn vault(
   }
 }
 
+/// Value = min-ADA + `lamp` LAMP token (native). Mặc định bind đúng lamp_balance.
+fn vault_value(lovelace: Int, lamp: Int) -> assets.Value {
+  assets.from_lovelace(lovelace)
+    |> assets.merge(assets.from_asset(t_lamp_policy, #"744c414d50", lamp))
+}
+
 fn cons_tx(
   in_d  : VaultDatum,
   out_d : VaultDatum,
   sigs  : List<ByteArray>,
 ) -> Transaction {
+  // Input + output mang LAMP token = lamp_balance của datum tương ứng (đúng luật
+  // value-leak: output phải mang đủ LAMP). Consolidate giữ balance nên 2 bên bằng.
+  cons_tx_val(
+    in_d, out_d, sigs,
+    vault_value(t_lovelace, in_d.lamp_balance),
+    vault_value(t_lovelace, out_d.lamp_balance),
+  )
+}
+
+/// cons_tx với value input/output tự chọn (dùng cho test value-leak/ADA-drain).
+fn cons_tx_val(
+  in_d   : VaultDatum,
+  out_d  : VaultDatum,
+  sigs   : List<ByteArray>,
+  in_val : assets.Value,
+  out_val: assets.Value,
+) -> Transaction {
   let addr = util.script_address(t_sh)
-  let val = assets.from_lovelace(2_000_000)
-  let v_in = util.mk_input(util.mk_ref(0), util.mk_output(addr, val, in_d))
-  let v_out = util.mk_output(addr, val, out_d)
+  let v_in = util.mk_input(util.mk_ref(0), util.mk_output(addr, in_val, in_d))
+  let v_out = util.mk_output(addr, out_val, out_d)
   Transaction {
     ..placeholder,
     inputs: [v_in],
@@ -296,7 +384,7 @@ test consolidate_happy_path() {
   let in_d = vault(in_h, 180, Flame, 7)
   let out_d = vault(out_h, 180, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 1 — tamper field KHÁC loyalty_holdings: đổi profile (Flame→Ember).
@@ -307,7 +395,7 @@ test consolidate_profile_tamper() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Ember, 7)   // profile bị đổi → reject
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 1b — tamper streak_state (reset streak 7→0).
@@ -317,7 +405,7 @@ test consolidate_streak_tamper() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 0)   // streak reset → reject
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 2 — double-satisfaction qua stake credential.
@@ -327,7 +415,7 @@ test consolidate_double_satisfaction_stake_cred() fail {
   let out_h = [hold(150, 5, False)]
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
-  let val = assets.from_lovelace(2_000_000)
+  let val = vault_value(t_lovelace, 150)
   let addr_a = util.script_address(t_sh)
   let addr_b = util.script_address_staked(t_sh, #"bb")
   let in_a = util.mk_input(util.mk_ref(0), util.mk_output(addr_a, val, in_d))
@@ -341,7 +429,7 @@ test consolidate_double_satisfaction_stake_cred() fail {
     extra_signatories: [t_owner],
     validity_range: after(t_epoch_now * t_mspe),
   }
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 3 — conservation vỡ: Σ output ≠ Σ input (rút 50 LAMP lén).
@@ -351,7 +439,7 @@ test consolidate_conservation_break() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 4 — không giảm entries (|output| !< |input|).
@@ -361,7 +449,7 @@ test consolidate_no_reduction() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 5 — owner không ký.
@@ -371,7 +459,7 @@ test consolidate_no_owner_sig() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 6 — LF-INFLATION (Bug 2): output đặt acquired_epoch=0 trong khi
@@ -383,7 +471,7 @@ test consolidate_acquired_epoch_inflation() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 6b — inflation tinh vi: hạ epoch xuống 4 (dưới min_in=5 nhưng > 0).
@@ -394,7 +482,7 @@ test consolidate_acquired_epoch_below_min() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 7 — epoch TƯƠNG LAI: output epoch 11 > current_epoch(10) → age âm.
@@ -405,7 +493,7 @@ test consolidate_acquired_epoch_future() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // HAPPY 2 — C-CONSOLIDATE-2 đúng chuẩn: merge epoch 5+6 → min=5 (≥ min_in=5,
@@ -416,7 +504,7 @@ test consolidate_min_epoch_ok() {
   let in_d = vault(in_h, 180, Flame, 7)
   let out_d = vault(out_h, 180, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 8 — NON-ADJACENT INFLATION (Bug 2b, council LENS-SEC HIGH):
@@ -431,7 +519,7 @@ test consolidate_nonadjacent_inflation() fail {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // REJECT 8b — inflation tinh vi: holding lớn dời nhiều epoch (pre-fix qua guard (a)).
@@ -444,7 +532,7 @@ test consolidate_nonadjacent_large_inflation() fail {
   let in_d = vault(in_h, 1001, Flame, 7)
   let out_d = vault(out_h, 1001, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // HAPPY 3 — luật kề tụt ĐÚNG 1 epoch (dung sai C-CONSOLIDATE-2): merge 5+6 → 5.
@@ -456,7 +544,7 @@ test consolidate_adjacent_diff1_ok() {
   let in_d = vault(in_h, 150, Flame, 7)
   let out_d = vault(out_h, 150, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }
 
 // HAPPY 4 — multi-pass merge dày đặc [5,6,7,8] → [{5},{7}] (offchain TV mẫu).
@@ -469,5 +557,98 @@ test consolidate_multipass_dense_ok() {
   let in_d = vault(in_h, 40, Flame, 7)
   let out_d = vault(out_h, 40, Flame, 7)
   let tx = cons_tx(in_d, out_d, [t_owner])
-  vault_consolidate.spend(t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 9 — VALUE-LEAK (MAINNET-BLOCK): datum hợp lệ (Σ giữ, giảm entries) NHƯNG
+// output vault UTxO chỉ mang min-ADA + 0 LAMP. Ví chủ rút toàn bộ 180 LAMP ra
+// ngoài, datum vẫn "nói" lamp_balance=180. Value-bind: out_lamp(0) ≠ 180 → reject.
+test consolidate_value_leak_no_lamp() fail {
+  let in_h = [hold(100, 5, False), hold(50, 5, False), hold(30, 9, True)]
+  let out_h = [hold(150, 5, False), hold(30, 9, True)]
+  let in_d = vault(in_h, 180, Flame, 7)
+  let out_d = vault(out_h, 180, Flame, 7)
+  // input mang đủ 180 LAMP; output RÚT sạch (chỉ min-ADA, 0 LAMP).
+  let tx =
+    cons_tx_val(
+      in_d, out_d, [t_owner],
+      vault_value(t_lovelace, 180),
+      assets.from_lovelace(t_lovelace),   // 0 LAMP → leak
+    )
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 9b — VALUE-LEAK một phần: output mang 150 LAMP nhưng datum nói 180.
+// 30 LAMP bị rút lén dù datum khớp datum-to-datum. out_lamp(150) ≠ 180 → reject.
+test consolidate_value_leak_partial() fail {
+  let in_h = [hold(100, 5, False), hold(50, 5, False), hold(30, 9, True)]
+  let out_h = [hold(150, 5, False), hold(30, 9, True)]
+  let in_d = vault(in_h, 180, Flame, 7)
+  let out_d = vault(out_h, 180, Flame, 7)
+  let tx =
+    cons_tx_val(
+      in_d, out_d, [t_owner],
+      vault_value(t_lovelace, 180),
+      vault_value(t_lovelace, 150),   // thiếu 30 LAMP → leak
+    )
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 10 — ADA-DRAIN (MAINNET-BLOCK): LAMP đúng nhưng output siphon ADA dư
+// (input 5_000_000 lovelace → output min 2_000_000). lovelace_out < lovelace_in
+// → validate_vault_value reject.
+test consolidate_ada_drain() fail {
+  let in_h = [hold(100, 5, False), hold(50, 5, False)]
+  let out_h = [hold(150, 5, False)]
+  let in_d = vault(in_h, 150, Flame, 7)
+  let out_d = vault(out_h, 150, Flame, 7)
+  let tx =
+    cons_tx_val(
+      in_d, out_d, [t_owner],
+      vault_value(5_000_000, 150),    // input có 5 ADA
+      vault_value(2_000_000, 150),    // output rút bớt → 2 ADA
+    )
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 11 — TOKEN-STUFFING (MAINNET-BLOCK): output nhét policy thứ 3 (dust)
+// → |policies| = 3 > 2 → brick vault. validate_vault_value reject.
+test consolidate_token_stuffing() fail {
+  let in_h = [hold(100, 5, False), hold(50, 5, False)]
+  let out_h = [hold(150, 5, False)]
+  let in_d = vault(in_h, 150, Flame, 7)
+  let out_d = vault(out_h, 150, Flame, 7)
+  let stuffed =
+    vault_value(t_lovelace, 150)
+      |> assets.merge(assets.from_asset(#"cccccccc", #"6475737400", 1))  // dust policy 3
+  let tx =
+    cons_tx_val(
+      in_d, out_d, [t_owner],
+      vault_value(t_lovelace, 150),
+      stuffed,
+    )
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
+}
+
+// REJECT 12 — OUTPUT-ADDRESS conservation (MAINNET-BLOCK): output gửi tới CÙNG
+// script hash nhưng STAKE CREDENTIAL khác (re-delegate stake reward LAMP khoá).
+// count_outputs_at_script vẫn = 1 (cùng hash) NHƯNG out.address ≠ own_addr → reject.
+test consolidate_output_restake() fail {
+  let in_h = [hold(100, 5, False), hold(50, 5, False)]
+  let out_h = [hold(150, 5, False)]
+  let in_d = vault(in_h, 150, Flame, 7)
+  let out_d = vault(out_h, 150, Flame, 7)
+  let addr_in = util.script_address(t_sh)
+  let addr_out = util.script_address_staked(t_sh, #"bb")   // khác stake cred
+  let val = vault_value(t_lovelace, 150)
+  let v_in = util.mk_input(util.mk_ref(0), util.mk_output(addr_in, val, in_d))
+  let v_out = util.mk_output(addr_out, val, out_d)
+  let tx = Transaction {
+    ..placeholder,
+    inputs: [v_in],
+    outputs: [v_out],
+    extra_signatories: [t_owner],
+    validity_range: after(t_epoch_now * t_mspe),
+  }
+  vault_consolidate.spend(t_lamp_policy, t_mspe, Some(in_d), Consolidate, util.mk_ref(0), tx)
 }

@@ -8,7 +8,6 @@ use magiclamp/protocol/constants.{
   s_seg1_intercept_q, s_seg1_slope_q,
   s_seg2_knee, s_seg2_intercept_q, s_seg2_slope_q,
   s_seg3_knee, s_seg3_intercept_q, s_seg3_slope_q,
-  snapshot_base_rate_q,
 }
 use magiclamp/protocol/types.{GenSchedule}
 
@@ -100,6 +99,24 @@ pub fn compute_shard_id(owner_pkh: ByteArray) -> Int {
   let hash = crypto.blake2b_256(owner_pkh)
   // first byte mod 16
   bytearray.at(hash, 0) % 16
+}
+
+// ══════════════════════════════════════════════════════════════
+// Shard NFT asset name (MAINNET-BLOCK fix: one-shot, distinct names)
+// ══════════════════════════════════════════════════════════════
+//
+// Each of the 16 shards carries a DISTINCT NFT asset name so its identity is
+// bound by the asset name (issued exactly once by the one-shot policy), NOT by
+// the self-declared `shard_id` field in the datum. This closes the forgery
+// where a re-mintable native-sig policy could create a second token under the
+// shared "SHARD" name and let a duplicate shard_id reset cap headroom.
+//
+//   shard_asset_name(id) = "SHARD" ∥ byte(id)     id ∈ [0,15]
+//
+// = #"5348415244" ∥ single byte 0x00..0x0f (6 bytes total).
+pub fn shard_asset_name(shard_id: Int) -> ByteArray {
+  expect shard_id >= 0 && shard_id < 16
+  bytearray.concat(#"5348415244", bytearray.from_int_big_endian(shard_id, 1))
 }
 
 // ══════════════════════════════════════════════════════════════

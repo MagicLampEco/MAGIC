@@ -105,6 +105,35 @@ deploy:lamp       → LAMP_POLICY_ID
 
 VacuumGen phụ thuộc: LAMP policy, UM NFT policy, Treasury script address. Không cần SHARD NFT (chỉ ScheduleGen cần).
 
+### 2.1 Tham số validator (5 params — `scripts/deploy/06_create_vacuum_vault.ts`)
+
+```
+vault(lamp_policy_id, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
+```
+
+| Param | Nguồn | Ghi chú |
+|---|---|---|
+| `lamp_policy_id` | step 01 | Policy LAMP |
+| `treasury_addr` | env `TREASURY_ADDRESS` | PHẢI Script-cred |
+| `um_nft_policy` | step 02 | Policy UM NFT |
+| `um_script_hash` | step 02 (`um_datum` hash) | Ghim UM ref input về `Script(um_script_hash)` (MAINNET-BLOCK phòng vệ b) |
+| `ms_per_epoch` | `PROTOCOL.MS_PER_EPOCH` | 432_000_000 mainnet / 86_400_000 preview |
+
+`um_script_hash` lấy từ bước 02 (UM_DATUM_HASH). Thiếu nó → deploy script `throw`.
+
+### 2.2 Cross-module runbook — ConsumeMAGIC coupling (BẮT BUỘC trước mainnet)
+
+BurnBatch (datum-consume) chỉ đảm bảo phép trừ đúng trong vault. Coupling giá
+(`Σ burns == required` theo PriceParam beacon) do validator **ConsumeMAGIC**
+co-spend cưỡng chế — bất biến CROSS-MODULE, không nằm trong vault.ak.
+
+- Vault CHỈ được khởi tạo cùng hệ với engagement validator ConsumeMAGIC; mọi
+  BurnBatch coupling-giá BẮT BUỘC co-spend PriceParam beacon. Thiếu ràng buộc
+  này, accounting "delegate-consume-right" bị bỏ qua (owner/delegate hạ MAGIC
+  tuỳ ý — vô hại kinh tế vì chỉ tự huỷ, NHƯNG bỏ qua giá engagement).
+- TRƯỚC MAINNET cần test integration cross-module (Vacuum vault ↔ ConsumeMAGIC)
+  — hiện CHƯA có trong module này (ghi nợ).
+
 ---
 
 ## 3. Test Plan
@@ -140,19 +169,26 @@ VacuumGen phụ thuộc: LAMP policy, UM NFT policy, Treasury script address. Kh
 | N-VAC-13 | Fire với 2 vault outputs (phantom output) | Reject C-VAULT-OUT-1 |
 | N-VAC-14 | Treasury không nhận đủ LAMP tại fire | Reject INV-43 |
 | N-VAC-15 | UM_smoothed_q ngoài range [0.5, 2.0] | Reject validate_um_range |
+| N-VAC-16 | BurnBatch không owner/delegate ký | Reject (AUTH) |
+| N-VAC-17 | BurnBatch over-burn / batch_id sai / rỗng | Reject (`apply_burns` / no-op) |
+| N-VAC-18 | BurnBatch siphon LAMP khỏi vault | Reject (value-leak guard) |
+| N-VAC-19 | SetDelegate do delegate (không phải owner) ký | Reject (chỉ owner) |
+| N-VAC-20 | Tx span nhiều epoch hoặc upper-bound mở (validity-range gaming) | Reject `get_current_epoch` |
+| N-VAC-21 | UM ref input đúng NFT nhưng sai script address | Reject `find_um_datum` (ghim script) |
 
 ### 3.3 Aiken Unit Tests (đã có trong vault.ak)
 
-**Lưu ý phạm vi**: 6 test sau chỉ cover `WithdrawLamp`. Chưa có Aiken unit test nào cho `VacuumCommit` hoặc `VacuumFire` on-chain logic — đây là gap đã biết (xem V-NEXT).
+Cover: `WithdrawLamp` (6), `BurnBatch` (14), `SetDelegate` (5), `get_current_epoch`
+validity-range (4). Tổng 29 (27 pass + 2 `fail`-annotated). Chưa có Aiken unit test
+on-chain trực tiếp cho `VacuumCommit`/`VacuumFire` (đường happy-path đó cover bằng
+35 test offchain P8/value-leak) — gap đã biết (xem V-NEXT-5).
 
-| Test | Redeemer | Mô tả |
+| Nhóm test | Redeemer | Bao phủ |
 |---|---|---|
-| `w_positive_partial` | WithdrawLamp | Withdraw 5 oil từ 100 oil unlocked — pass |
-| `w_amount_zero` | WithdrawLamp | Withdraw 0 — fail (W-1) |
-| `w_over_avail` | WithdrawLamp | Withdraw 5 khi fully locked — fail (W-3) |
-| `w_no_owner_sig` | WithdrawLamp | Withdraw không có chữ ký — fail (W-2) |
-| `w_phantom_second_output` | WithdrawLamp | 2 vault outputs — fail (C-VAULT-OUT-1) |
-| `w_advance_last_updated_rejected` | WithdrawLamp | Tăng `last_updated_epoch` trong withdraw — fail (W-5) |
+| `w_*` (6) | WithdrawLamp | partial/zero/over-avail/no-sig/phantom-output/advance-last-updated |
+| `bb_*` (14) | BurnBatch | partial/full-prune/delegate-auth/multi/no-auth/delegate-not-set/over-burn/unknown-batch/value-leak/lamp-mutated/attribution/empty/phantom/ref-script |
+| `sd_*` (5) | SetDelegate | set-some/clear/delegate-cannot-change/mismatch/tamper-field |
+| `vr_*` (4) | `get_current_epoch` | single-epoch/tight-bounds (pass); span-2-epochs/unbounded-upper (`fail`) — chống validity-range gaming |
 
 ---
 
@@ -195,8 +231,16 @@ SDK phát ra các event string trong `summary` field của `CommitResult` và `F
 | `VacuumGen Commit` | Commit thành công |
 | `VacuumGen Fire` | Fire thành công, batch tạo |
 | `VacuumFiredZeroMagic` | Fire thành công, vault full, M=0 |
+| `VacuumBurnBatch` | BurnBatch thành công — log `vaultRef`, `burns`, `totalBurned`, `actor` (owner/delegate) |
+| `VacuumSetDelegate` | SetDelegate thành công — log `vaultRef`, `oldDelegate`, `newDelegate` |
 
 Keeper nên log `orderId`, `fireEpoch`, `lambdaOil` sau mỗi commit để không bỏ lỡ fire window.
+
+**Giám sát UM keeper (phòng vệ kinh tế)**: VacuumFire đọc UM smoothed không stale
+check (C-UM-7). Nếu UM beacon bị giữ ở max (2.0×) do keeper thông đồng, mọi fire ăn
+UM=2.0×. Range-clamp `[0.5, 2.0]` (validate_um_range) chặn outlier, nhưng vẫn nên
+giám sát chuỗi `smoothed_q` theo epoch + cảnh báo khi giữ trần liên tục. Smoothing
+window là phòng vệ kinh tế chính.
 
 ---
 

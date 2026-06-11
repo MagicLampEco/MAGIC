@@ -2,8 +2,10 @@
 // Run: npx tsx deploy/06_create_vacuum_vault.ts
 // Prereq: 01 LAMP, 02 UM datum + UM NFT, .env: LAMP_POLICY_ID, UM_NFT_POLICY_ID, TREASURY_ADDRESS.
 //
-// VacuumGen validator parameterized with 4 args (same as InstantGen):
-//   lamp_policy_id, treasury_addr, um_nft_policy, ms_per_epoch
+// VacuumGen validator parameterized with 5 args (same as InstantGen):
+//   lamp_policy_id, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch
+//   um_script_hash pins the UM ref input to the UM script address
+//   (MAINNET-BLOCK fix, defense-in-depth layer b).
 //
 // Env vars:
 //   PROFILE                  — Ember/Flame/Lantern (default Flame)
@@ -24,7 +26,7 @@ import { readFile } from "node:fs/promises";
 import { blake2b } from "@noble/hashes/blake2b";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
+  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
   lampToOil,
 } from "../config.js";
 
@@ -132,6 +134,7 @@ async function main() {
 
   if (POLICY_IDS.lamp === "FILL_AFTER_MINT") throw new Error("Run step 01 first.");
   if (POLICY_IDS.um_nft === "FILL_AFTER_DEPLOY_UM") throw new Error("Run step 02 first.");
+  if (SCRIPT_HASHES.um_datum === "FILL_AFTER_AIKEN_BUILD") throw new Error("Run step 02 first; missing UM_DATUM_HASH (= um_script_hash).");
   if (ADDRESSES.treasury === "FILL_AFTER_DEPLOY") throw new Error("Set TREASURY_ADDRESS.");
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
@@ -166,6 +169,7 @@ async function main() {
     POLICY_IDS.lamp,
     treasuryAddrData,
     POLICY_IDS.um_nft,
+    SCRIPT_HASHES.um_datum,   // um_script_hash — pins UM ref input (layer b)
     PROTOCOL.MS_PER_EPOCH,
   ]);
   const vaultScript = { type: "PlutusV3" as const, script: appliedCbor };
@@ -174,6 +178,8 @@ async function main() {
 
   console.log(`Network:            ${NETWORK}`);
   console.log(`ms_per_epoch:       ${PROTOCOL.MS_PER_EPOCH}`);
+  console.log(`UM NFT policy:      ${POLICY_IDS.um_nft}`);
+  console.log(`UM script hash:     ${SCRIPT_HASHES.um_datum}`);
   console.log(`Treasury:           ${ADDRESSES.treasury}`);
   console.log(`Vault script hash:  ${vaultScriptHash}`);
   console.log(`Vault address:      ${vaultScriptAddress}`);

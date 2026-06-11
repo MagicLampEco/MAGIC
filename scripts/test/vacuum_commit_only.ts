@@ -17,7 +17,7 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ADDRESSES, PROTOCOL,
+  POLICY_IDS, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
   lampToOil,
 } from "../config.js";
 import { buildVacuumCommitTx } from "../../VacuumGen/offchain/src/vacuum.js";
@@ -58,7 +58,7 @@ async function main() {
   const vaultScript = {
     type: "PlutusV3" as const,
     script: applyParamsToScript(unapplied.compiledCode, [
-      POLICY_IDS.lamp, treasuryAddrData, POLICY_IDS.um_nft, PROTOCOL.MS_PER_EPOCH,
+      POLICY_IDS.lamp, treasuryAddrData, POLICY_IDS.um_nft, SCRIPT_HASHES.um_datum, PROTOCOL.MS_PER_EPOCH,
     ]),
   };
   const vaultScriptHash    = validatorToScriptHash(vaultScript);

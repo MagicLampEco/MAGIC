@@ -18,6 +18,7 @@
 // shard NFT policy id).
 
 use aiken/builtin
+use aiken/collection/dict
 use aiken/collection/list
 use aiken/interval.{Finite, IntervalBoundType}
 use cardano/address.{Address, Script}
@@ -29,20 +30,20 @@ use cardano/transaction.{
 use magiclamp/protocol/types.{
   ActivityState, BurnBatch, DelegationCertificate, Flame, GenSchedule,
   LoyaltyHolding, MagicBatch, Schedule, ScheduleAggregateShardDatum,
-  ScheduleCommit, ScheduleFire, SetDelegate, ShardRedeemer, ShardUpdateCommit,
-  ShardUpdateFire, StreakState, VaultAttribution, VaultDatum, VaultRedeemer,
+  ScheduleCommit, ScheduleFire, SetDelegate, ShardRedeemer,
+  StreakState, VaultAttribution, VaultDatum, VaultRedeemer,
   WithdrawLamp,
 }
 use magiclamp/protocol/constants.{
-  q, snapshot_base_rate_q, schedule_min_length, schedule_max_length,
+  snapshot_base_rate_q, schedule_min_length, schedule_max_length,
   min_lamp_per_fire, schedule_delay, schedule_decay_window,
   max_fires_per_tx_catchup, max_gen_schedules, max_batches_per_vault,
-  max_loyalty_holdings, shard_count,
+  max_loyalty_holdings, shard_cap,
 }
 use magiclamp/protocol/math.{
   compute_s_q, compute_rate_locked_q, compute_m_i,
-  check_sch_rate, compute_shard_id, next_fire_epoch,
-  compute_schedule_id, compute_batch_id,
+  check_sch_rate, compute_shard_id,
+  compute_schedule_id, compute_batch_id, shard_asset_name,
 }
 use magiclamp/protocol/lock.{
   select_lamp_for_lock, remove_locked_amount, remove_newest_first,
@@ -50,7 +51,9 @@ use magiclamp/protocol/lock.{
 }
 
 const lamp_asset_name: ByteArray = #"744c414d50"   // "tLAMP"
-const shard_asset_name: ByteArray = #"5348415244"  // "SHARD"
+// Shard NFT asset name is now PER-SHARD: shard_asset_name(shard_id) from math.ak
+// ("SHARD" ∥ byte(id)). Each shard carries a distinct one-shot NFT, so identity
+// is bound by asset name, not by the self-declared `shard_id` datum field.
 
 // ══════════════════════════════════════════════════════════════
 // Vault validator
@@ -124,15 +127,26 @@ validator shard(shard_policy_id_param: PolicyId) {
   ) {
     expect Some(shard_datum) = datum_opt
     let shard_addr = own_addr(own_ref, tx.inputs)
+    let name = shard_asset_name(shard_datum.shard_id)
 
-    // SHARD-DS-1: exactly one shard input + one shard output (this shard).
+    // SHARD-DS-1: exactly one shard input at this address.
     expect list.count(tx.inputs,  fn(i) { i.output.address == shard_addr }) == 1
-    let output_shard = find_shard_output(tx.outputs, shard_addr, shard_datum.shard_id)
 
-    // SHARD-NFT: this UTxO must actually carry the shard NFT (anti-forgery).
+    // SHARD-OUT-1: exactly ONE output carries THIS shard's distinct NFT, so the
+    // aggregate state cannot be split/duplicated across outputs.
+    expect
+      list.count(tx.outputs, fn(o) {
+        assets.quantity_of(o.value, shard_policy_id_param, name) == 1
+      }) == 1
+    let output_shard = find_shard_output_by_policy(tx.outputs, shard_policy_id_param, shard_datum.shard_id)
+
+    // SHARD-NFT: this UTxO must actually carry THIS shard's NFT (anti-forgery,
+    // bound by the distinct one-shot asset name).
     let own_input = own_input(own_ref, tx.inputs)
-    expect assets.quantity_of(own_input.output.value, shard_policy_id_param, shard_asset_name) == 1
-    expect assets.quantity_of(output_shard_value(tx.outputs, shard_addr), shard_policy_id_param, shard_asset_name) == 1
+    expect assets.quantity_of(own_input.output.value, shard_policy_id_param, name) == 1
+
+    // SHARD-NOMINT: no shard-policy token minted/burned (defence in depth).
+    expect no_shard_mint(tx, shard_policy_id_param)
 
     // SHARD-COSPEND: a matching vault must co-spend in this tx UNDER
     // ScheduleCommit (constr 0) or ScheduleFire (constr 1). Find a vault input
@@ -185,7 +199,6 @@ fn validate_commit(
   // Compute rate_locked_q from CURRENT R_snap (locked at commit — T8)
   let s_q           = compute_s_q(l)
   let rate_locked_q = compute_rate_locked_q(snapshot_base_rate_q, l)
-  let m_i           = compute_m_i(lambda, rate_locked_q)
 
   // C-SCH-5 / C-SCH-RATE: λ × rate_locked_q ≥ Q → M_i ≥ 1 (T19)
   expect check_sch_rate(lambda, rate_locked_q)
@@ -196,6 +209,16 @@ fn validate_commit(
   let shard_id_val = compute_shard_id(datum.owner)
   let shard_in  = find_shard_input(tx.inputs, shard_policy_id, shard_id_val)
   let shard_out = find_shard_output_by_policy(tx.outputs, shard_policy_id, shard_id_val)
+
+  // No shard NFT may be minted/burned in a commit tx (defence in depth: the
+  // one-shot policy already prevents re-mint, but the validator does not assume
+  // it; this also blocks any spoofed companion token under the shard policy).
+  expect no_shard_mint(tx, shard_policy_id)
+
+  // C-SCH-CAP genesis-pin (T13): the shard cap is a Constitutional constant. Pin
+  // it to the canonical value so a mis-deployed shard UTxO carrying an oversized
+  // cap can never relax the participation ceiling.
+  expect shard_in.shard_cap == shard_cap
 
   expect shard_out.shard_locked_lamp == shard_in.shard_locked_lamp + total_lock
   expect shard_out.shard_locked_lamp <= shard_in.shard_cap            // C-SCH-CAP (T13)
@@ -315,6 +338,11 @@ fn validate_fire(
   let shard_in  = find_shard_input(tx.inputs, shard_policy_id, shard_id_val)
   let shard_out = find_shard_output_by_policy(tx.outputs, shard_policy_id, shard_id_val)
   let schedule_completes = new_fired == sched.schedule_length
+
+  // No shard NFT minted/burned during a fire tx (defence in depth).
+  expect no_shard_mint(tx, shard_policy_id)
+  // C-SCH-CAP genesis-pin (T13): cap stays the Constitutional constant.
+  expect shard_in.shard_cap == shard_cap
 
   expect shard_out.shard_id == shard_id_val                          // correct shard ✓
   expect shard_out.shard_locked_lamp == shard_in.shard_locked_lamp - lamp_transfer
@@ -665,8 +693,11 @@ fn find_shard_input(
   shard_policy_id : PolicyId,
   shard_id        : Int,
 ) -> ScheduleAggregateShardDatum {
+  // Identify the shard by its DISTINCT one-shot NFT asset name (anti-forgery),
+  // not by a self-declared datum field.
+  let name = shard_asset_name(shard_id)
   expect Some(i) = list.find(inputs, fn(x) {
-    assets.quantity_of(x.output.value, shard_policy_id, shard_asset_name) > 0
+    assets.quantity_of(x.output.value, shard_policy_id, name) == 1
   })
   expect InlineDatum(d) = i.output.datum
   expect sd: ScheduleAggregateShardDatum = d
@@ -674,31 +705,29 @@ fn find_shard_input(
   sd
 }
 
-fn find_shard_output(
-  outputs   : List<Output>,
-  shard_addr: Address,
-  shard_id  : Int,
-) -> ScheduleAggregateShardDatum {
-  expect Some(o) = list.find(outputs, fn(x) { x.address == shard_addr })
-  expect InlineDatum(d) = o.datum
-  expect sd: ScheduleAggregateShardDatum = d
-  expect sd.shard_id == shard_id
-  sd
+// No token of the shard NFT policy is minted or burned in this tx. With the
+// one-shot policy, minting is already impossible after genesis; this guard makes
+// the vault/shard validators independent of that assumption and blocks any
+// spoofed companion token under the shard policy id.
+fn no_shard_mint(tx: Transaction, shard_policy_id: PolicyId) -> Bool {
+  dict.is_empty(assets.tokens(tx.mint, shard_policy_id))
 }
 
-fn output_shard_value(outputs: List<Output>, shard_addr: Address) -> assets.Value {
-  expect Some(o) = list.find(outputs, fn(x) { x.address == shard_addr })
-  o.value
-}
-
-// Find the continuing shard output by NFT policy + shard_id (vault-side check).
+// Find the continuing shard output by NFT policy + per-shard asset name
+// (vault-side check). Also asserts EXACTLY ONE output carries this shard's NFT,
+// so the aggregate state cannot be split across two outputs.
 fn find_shard_output_by_policy(
   outputs         : List<Output>,
   shard_policy_id : PolicyId,
   shard_id        : Int,
 ) -> ScheduleAggregateShardDatum {
+  let name = shard_asset_name(shard_id)
+  expect
+    list.count(outputs, fn(x) {
+      assets.quantity_of(x.value, shard_policy_id, name) == 1
+    }) == 1
   expect Some(o) = list.find(outputs, fn(x) {
-    assets.quantity_of(x.value, shard_policy_id, shard_asset_name) > 0
+    assets.quantity_of(x.value, shard_policy_id, name) == 1
   })
   expect InlineDatum(d) = o.datum
   expect sd: ScheduleAggregateShardDatum = d

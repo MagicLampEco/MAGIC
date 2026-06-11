@@ -528,7 +528,13 @@ fn run(
       reference_inputs: [ct_beacon_ref(pp_for_ref, nft_qty)],
       outputs: outputs,
       redeemers: redeemers,
-      validity_range: interval.after(cur_epoch * ct_mspe),
+      // Cửa sổ HẸP đúng 1 epoch quanh cur_epoch: lower tại đầu epoch, upper +1ms
+      // (vẫn cùng epoch sau floor) → epoch tham chiếu (từ upper) == cur_epoch.
+      // Chứng minh validator ăn cửa sổ chặt hợp lệ sau khi vá validity-range.
+      validity_range: interval.between(
+        cur_epoch * ct_mspe,
+        cur_epoch * ct_mspe + 1,
+      ),
     }
   consume.spend(
     ct_price_policy, ct_price_name, ct_engage_policy, ct_engage_name,
@@ -868,4 +874,91 @@ test consume_drain_other_token_fail() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
   run(pp, 1, 6, [eng], [vault], [ct_cont_output_v(11, 6, 100_000_000, 2)], reds, rd, eng_ref, ct_in_datum)
+}
+
+// ══════════════════════════════════════════════════════════════
+// VALIDITY-RANGE GAMING (vá MAINNET-BLOCK): epoch tham chiếu KHÔNG bịa được.
+//   build tx với validity_range tuỳ ý (không qua run() — run() ép cửa sổ hẹp).
+// ══════════════════════════════════════════════════════════════
+
+/// run nhưng tự đặt validity_range (test thao túng cửa sổ).
+fn run_vr(
+  pp_for_ref : PriceParam,
+  vr         : interval.Interval,
+  engage_inputs : List<Input>,
+  vault_inputs  : List<Input>,
+  outputs    : List<Output>,
+  redeemers  : Pairs<ScriptPurpose, Data>,
+  rd         : ConsumeRedeemer,
+  own_ref    : OutputReference,
+  in_datum   : EngageDatum,
+) -> Bool {
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: list.concat(engage_inputs, vault_inputs),
+      reference_inputs: [ct_beacon_ref(pp_for_ref, 1)],
+      outputs: outputs,
+      redeemers: redeemers,
+      validity_range: vr,
+    }
+  consume.spend(
+    ct_price_policy, ct_price_name, ct_engage_policy, ct_engage_name,
+    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe,
+    Some(in_datum), rd, own_ref, tx,
+  )
+}
+
+// ── NEGATIVE: upper_bound VÔ HẠN (interval.after) → get_finite(upper) fail.
+//    Trước vá: chỉ đọc lower → pass; attacker để upper hở. Sau vá: REJECT.
+test consume_unbounded_upper_fail() fail {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run_vr(
+    pp, interval.after(6 * ct_mspe), [eng], [vault],
+    [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum,
+  )
+}
+
+// ── NEGATIVE: cửa sổ RỘNG > 1 epoch (lower quá khứ, upper hiện tại) → fail.
+//    Đây CHÍNH LÀ đòn under-state: attacker đặt lower ở epoch 1 để current=lower/mspe
+//    nhỏ → dùng beacon cũ. Sau vá: upper−lower > ms_per_epoch → REJECT.
+test consume_wide_window_understate_fail() fail {
+  let pp = ct_pp(1)          // beacon epoch CŨ (giá rẻ giả định)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  // lower epoch 1, upper epoch 10 → cửa sổ 9 epoch >> 1 → fail ràng buộc cửa sổ.
+  run_vr(
+    pp, interval.between(1 * ct_mspe, 10 * ct_mspe), [eng], [vault],
+    [ct_cont_output(11, 1, 1)], reds, rd, eng_ref, ct_in_datum,
+  )
+}
+
+// ── HAPPY: cửa sổ chặt 1 epoch, epoch tham chiếu = upper. Beacon epoch == upper-epoch.
+//    Chứng minh đường đi hợp lệ vẫn chạy: upper tại epoch 6, beacon epoch 6 → stale 0.
+test consume_tight_window_upper_epoch_happy() {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  // lower cuối epoch 5, upper đầu epoch 6 → cửa sổ < 1 epoch; epoch ref = 6.
+  run_vr(
+    pp, interval.between(6 * ct_mspe - 1, 6 * ct_mspe), [eng], [vault],
+    [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum,
+  )
 }

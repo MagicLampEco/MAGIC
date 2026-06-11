@@ -2,10 +2,12 @@
 // Run: npx tsx deploy/05_create_instant_vault.ts
 // Prereq: 01 (LAMP), 02 (UM datum + UM NFT) done; .env has LAMP_POLICY_ID, UM_NFT_POLICY_ID, TREASURY_ADDRESS.
 //
-// InstantGen validator is parameterized with 4 args:
+// InstantGen validator is parameterized with 5 args:
 //   lamp_policy_id: PolicyId  — required for asset checks
 //   treasury_addr:  Address   — where LAMP transfer goes
 //   um_nft_policy:  PolicyId  — identifies the canonical UM UTxO via NFT
+//   um_script_hash: ByteArray — pins the UM ref input to the UM script address
+//                               (MAINNET-BLOCK fix, defense-in-depth layer b)
 //   ms_per_epoch:   Int       — POSIX-ms epoch math (network-specific)
 
 import {
@@ -17,7 +19,7 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
+  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
   lampToOil,
 } from "../config.js";
 
@@ -108,6 +110,7 @@ async function main() {
 
   if (POLICY_IDS.lamp === "FILL_AFTER_MINT") throw new Error("Run step 01 first; missing LAMP_POLICY_ID.");
   if (POLICY_IDS.um_nft === "FILL_AFTER_DEPLOY_UM") throw new Error("Run step 02 first; missing UM_NFT_POLICY_ID.");
+  if (SCRIPT_HASHES.um_datum === "FILL_AFTER_AIKEN_BUILD") throw new Error("Run step 02 first; missing UM_DATUM_HASH (= um_script_hash).");
   if (ADDRESSES.treasury === "FILL_AFTER_DEPLOY") throw new Error("Set TREASURY_ADDRESS in .env first.");
 
   // Lucid + wallet
@@ -143,11 +146,13 @@ async function main() {
     : new Constr(1, []);
   const treasuryAddrData = new Constr(0, [treasuryPaymentCred, treasuryStakeCred]);
 
-  // Apply parameters in order: lamp_policy_id, treasury_addr, um_nft_policy, ms_per_epoch.
+  // Apply params in order: lamp_policy_id, treasury_addr, um_nft_policy,
+  //                         um_script_hash, ms_per_epoch.
   const appliedCbor = applyParamsToScript(unapplied.compiledCode, [
     POLICY_IDS.lamp,
     treasuryAddrData,
     POLICY_IDS.um_nft,
+    SCRIPT_HASHES.um_datum,   // um_script_hash — pins UM ref input (layer b)
     PROTOCOL.MS_PER_EPOCH,
   ]);
   const vaultScript     = { type: "PlutusV3" as const, script: appliedCbor };
@@ -158,6 +163,7 @@ async function main() {
   console.log(`ms_per_epoch:       ${PROTOCOL.MS_PER_EPOCH}`);
   console.log(`LAMP policy:        ${POLICY_IDS.lamp}`);
   console.log(`UM NFT policy:      ${POLICY_IDS.um_nft}`);
+  console.log(`UM script hash:     ${SCRIPT_HASHES.um_datum}`);
   console.log(`Treasury address:   ${ADDRESSES.treasury}`);
   console.log(`Vault script hash:  ${vaultScriptHash}`);
   console.log(`Vault address:      ${vaultScriptAddress}`);

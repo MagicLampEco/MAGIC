@@ -1,5 +1,13 @@
-// src/math.ts — ConsumeMAGIC v2.2 Pure Math Engine
-// NORMATIVE: spec §3-§12, Appendix C formal proofs
+// src/_appeconomics_legacy.ts — LỚP V1 AppEconomics (KHÔNG phải engagement layer v2).
+//
+// ⚠️ CẢNH BÁO: file này là math reward/halving/delegation/attribution của model V1
+// (token-burn cũ, PR #13). Nó KHÔNG liên quan lớp ENGAGEMENT v2 (consume.ts builder +
+// types.ts codec EngageDatum/PriceParam). GIỮ vì test suite tests/consume.test.ts +
+// tests/vectors.ts (30+ TV vectors) vẫn phủ math này. KHÔNG import từ consume.ts/
+// types.ts v2 — tránh nhầm model. Builder tiêu MAGIC v2 ở src/consume.ts.
+//
+// (nguyên bản: "src/math.ts — ConsumeMAGIC v2.2 Pure Math Engine"; cô lập 2026-06-11
+//  để vá MAINNET-BLOCK "math.ts v1 lệch model engagement".)
 // ALL arithmetic BigInt. No Number for nanogic/oil (C8).
 
 import { nanogicToMagicStr } from "@magiclamp/protocol-utils";

@@ -51,7 +51,16 @@ use magiclamp/protocol/profile.{apply_pending_profile}
 // Epoch numbering becomes POSIX-derived (not Cardano-genesis-relative); both
 // validator and SDK use the same formula `posix_ms / ms_per_epoch` so deltas
 // and ordering are consistent.
-validator vault(lamp_policy_id: PolicyId, ms_per_epoch: Int) {
+// `lamp_asset_name` is the on-chain asset name of the LAMP token, applied at
+// deploy time per-network (MAINNET-BLOCK fix): mainnet LAMP and testnet tLAMP
+// carry DIFFERENT asset names, so the value-preservation check must read the
+// quantity of the network's actual LAMP asset — never a hardcoded literal.
+// Offchain mirror: scripts ASSET_NAMES.lamp / TESTNET_CONFIG.lampAssetName.
+validator vault(
+  lamp_policy_id   : PolicyId,
+  lamp_asset_name  : ByteArray,
+  ms_per_epoch     : Int,
+) {
   spend(
     datum_opt : Option<VaultDatum>,
     redeemer  : VaultRedeemer,
@@ -67,7 +76,7 @@ validator vault(lamp_policy_id: PolicyId, ms_per_epoch: Int) {
 
       // ── TriggerSnapshot ─────────────────────────────────────
       TriggerSnapshot ->
-        validate_snapshot(input_datum, current_epoch, own_ref, lamp_policy_id, tx)
+        validate_snapshot(input_datum, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx)
 
       // ── BurnBatch (datum-consume MAGIC — D1) ────────────────
       // Reduce magic_batches[].current_amount in-datum. NO token, NO mint.
@@ -78,7 +87,7 @@ validator vault(lamp_policy_id: PolicyId, ms_per_epoch: Int) {
       // The vault here owns the *datum mechanics* only (separation of concern).
       BurnBatch { burns } ->
         validate_burn_batch(
-          input_datum, burns, current_epoch, own_ref, lamp_policy_id, tx,
+          input_datum, burns, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx,
         )
 
       // ── UpdateProfile (full impl — SPEC_V1 §2) ───────────────
@@ -90,13 +99,13 @@ validator vault(lamp_policy_id: PolicyId, ms_per_epoch: Int) {
       // ── WithdrawLamp (SPEC_V1 §1) ────────────────────────────
       WithdrawLamp { amount } ->
         validate_withdraw_lamp(
-          input_datum, amount, current_epoch, own_ref, lamp_policy_id, tx,
+          input_datum, amount, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx,
         )
 
       // ── SetDelegate (consume-delegate — D1) ──────────────────
       SetDelegate { new_delegate } ->
         validate_set_delegate(
-          input_datum, new_delegate, current_epoch, own_ref, lamp_policy_id, tx,
+          input_datum, new_delegate, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx,
         )
     }
   }
@@ -106,11 +115,12 @@ validator vault(lamp_policy_id: PolicyId, ms_per_epoch: Int) {
 // validate_snapshot — all C-SS-* constraints
 // ═══════════════════════════════════════════════════════════════
 fn validate_snapshot(
-  input_datum    : VaultDatum,
-  current_epoch  : Int,
-  own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  tx             : Transaction,
+  input_datum     : VaultDatum,
+  current_epoch   : Int,
+  own_ref         : OutputReference,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
 
   // ── C-SS-1: Must be at a new epoch ─────────────────────────
@@ -224,7 +234,7 @@ fn validate_snapshot(
   // W-6 / InstantGen value check: the LEDGER value must back the datum.
   let vault_output   = find_vault_output(tx.outputs, vault_addr)
   let vault_lamp_qty =
-    assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+    assets.quantity_of(vault_output.value, lamp_policy_id, lamp_asset_name)
   expect vault_lamp_qty == output_datum.lamp_balance
 
   True
@@ -276,12 +286,13 @@ fn find_vault_output_datum(outputs: List<Output>, vault_addr: Address) -> VaultD
 // validate_withdraw_lamp — W-1..W-7 (SPEC_V1 §1)
 // ═══════════════════════════════════════════════════════════════
 fn validate_withdraw_lamp(
-  input_datum    : VaultDatum,
-  amount         : Int,
-  _current_epoch : Int,
-  own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  tx             : Transaction,
+  input_datum     : VaultDatum,
+  amount          : Int,
+  _current_epoch  : Int,
+  own_ref         : OutputReference,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
 
   // W-1: amount > 0
@@ -329,7 +340,7 @@ fn validate_withdraw_lamp(
   // W-6: vault output value carries the new lamp_balance worth of LAMP
   let vault_output = find_vault_output(tx.outputs, vault_addr)
   let vault_lamp_qty =
-    assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+    assets.quantity_of(vault_output.value, lamp_policy_id, lamp_asset_name)
   expect vault_lamp_qty == new_lamp_balance
 
   // W-7: Σholdings == lamp_balance
@@ -355,12 +366,13 @@ fn validate_withdraw_lamp(
 //   - full A02 (17 fields) + value preservation (LAMP cannot leak)
 //   - owner OR personal_delegate (consume-delegate) may trigger
 fn validate_burn_batch(
-  input_datum    : VaultDatum,
-  burns          : List<(ByteArray, Int)>,
-  current_epoch  : Int,
-  own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  tx             : Transaction,
+  input_datum     : VaultDatum,
+  burns           : List<(ByteArray, Int)>,
+  current_epoch   : Int,
+  own_ref         : OutputReference,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
 
   // ── DS-1: exactly one vault input + one vault output ────────
@@ -427,7 +439,7 @@ fn validate_burn_batch(
   // ── VALUE PRESERVATION (anti value-leak) ────────────────────
   let vault_output = find_vault_output(tx.outputs, vault_addr)
   let vault_lamp_qty =
-    assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+    assets.quantity_of(vault_output.value, lamp_policy_id, lamp_asset_name)
   expect vault_lamp_qty == output_datum.lamp_balance
 
   True
@@ -474,12 +486,13 @@ fn apply_burns(
 // Only the owner may change it (a delegate cannot re-delegate). No cooldown
 // (cheap, no economic effect). Everything else immutable; LAMP preserved.
 fn validate_set_delegate(
-  input_datum    : VaultDatum,
-  new_delegate   : Option<ByteArray>,
-  current_epoch  : Int,
-  own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  tx             : Transaction,
+  input_datum     : VaultDatum,
+  new_delegate    : Option<ByteArray>,
+  current_epoch   : Int,
+  own_ref         : OutputReference,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
 
   let vault_addr = find_own_address(own_ref, tx.inputs)
@@ -520,7 +533,7 @@ fn validate_set_delegate(
   // Value preserved (SetDelegate touches no LAMP)
   let vault_output = find_vault_output(tx.outputs, vault_addr)
   let vault_lamp_qty =
-    assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+    assets.quantity_of(vault_output.value, lamp_policy_id, lamp_asset_name)
   expect vault_lamp_qty == output_datum.lamp_balance
 
   True
@@ -599,6 +612,10 @@ const t_vault_hash: ByteArray =
   #"11111111111111111111111111111111111111111111111111111111"
 const t_lamp_policy: ByteArray =
   #"22222222222222222222222222222222222222222222222222222222"
+// Arbitrary asset name for tests — proves the value-check reads the PARAMETER,
+// not a hardcoded testnet literal (MAINNET-BLOCK fix). t_vault_output mints
+// this same name so the quantity_of lookup succeeds.
+const t_lamp_name: ByteArray = #"4c414d50"  // "LAMP"
 const t_tx_id: ByteArray =
   #"3333333333333333333333333333333333333333333333333333333333333333"
 
@@ -642,7 +659,7 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
 fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
   Output {
     address: address.from_script(t_vault_hash),
-    value: assets.from_asset(t_lamp_policy, #"744c414d50", balance),
+    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance),
     datum: InlineDatum(datum),
     reference_script: None,
   }
@@ -662,13 +679,13 @@ test w_positive_partial() {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_amount_zero() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(din, 100)], [t_owner])
-  validate_withdraw_lamp(din, 0, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 0, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_over_avail() fail {
@@ -676,14 +693,14 @@ test w_over_avail() fail {
   let din = t_datum(100, 100, [t_holding(100, 5, True)])
   let dout = t_datum(95, 100, [t_holding(95, 5, True)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_no_owner_sig() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_phantom_second_output() fail {
@@ -696,7 +713,7 @@ test w_phantom_second_output() fail {
       [t_vault_output(dout, 95), t_vault_output(dout, 95)],
       [t_owner],
     )
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_advance_last_updated_rejected() fail {
@@ -708,7 +725,7 @@ test w_advance_last_updated_rejected() fail {
       last_updated_epoch: 5,
     }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // ── UpdateProfile ─────────────────────────────────────────────
@@ -803,7 +820,7 @@ test bb_positive_partial() {
   let din  = t_datum_batches([in_b])
   let dout = t_burn_out([out_b], 5)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-POS-2: full burn → batch pruned from output
@@ -812,7 +829,7 @@ test bb_positive_full_prune() {
   let din  = t_datum_batches([t_snap_batch(bid, 4, 1000)])
   let dout = t_burn_out([], 5)                              // batch removed
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(bid, 1000)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 1000)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-POS-3: consume-delegate signs (owner absent) → allowed
@@ -828,7 +845,7 @@ test bb_positive_delegate_signs() {
   }
   // only the delegate signs, NOT the owner
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
-  validate_burn_batch(din, [(bid, 400)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 400)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-NEG-1: no authorization (neither owner nor delegate) → fail
@@ -837,7 +854,7 @@ test bb_neg_no_auth() fail {
   let din  = t_datum_batches([t_snap_batch(bid, 4, 1000)])
   let dout = t_burn_out([t_snap_batch(bid, 4, 700)], 5)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-NEG-2: burn amount exceeds current_amount → fail
@@ -846,7 +863,7 @@ test bb_neg_over_burn_batch() fail {
   let din  = t_datum_batches([t_snap_batch(bid, 4, 1000)])
   let dout = t_burn_out([], 5)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(bid, 1001)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 1001)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-NEG-3: output keeps un-burned amount (cheating the subtraction) → fail
@@ -855,7 +872,7 @@ test bb_neg_wrong_output_amount() fail {
   let din  = t_datum_batches([t_snap_batch(bid, 4, 1000)])
   let dout = t_burn_out([t_snap_batch(bid, 4, 1000)], 5)    // not reduced
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-NEG-4: LAMP value-leak — output carries less LAMP than lamp_balance → fail
@@ -865,7 +882,7 @@ test bb_neg_lamp_value_leak() fail {
   let dout = t_burn_out([t_snap_batch(bid, 4, 700)], 5)     // datum lamp_balance=100
   // ledger only carries 1 LAMP — siphon attempt
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 1)], [t_owner])
-  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-NEG-5: mutate a non-amount batch field (source) → T4 sameness fail
@@ -875,7 +892,7 @@ test bb_neg_mutate_other_field() fail {
   let tampered = MagicBatch { ..t_snap_batch(bid, 4, 700), created_epoch: 99 }
   let dout = t_burn_out([tampered], 5)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-NEG-6: unknown batch_id (no matching batch) → fail
@@ -884,7 +901,7 @@ test bb_neg_unknown_batch() fail {
   let din  = t_datum_batches([t_snap_batch(bid, 4, 1000)])
   let dout = t_burn_out([t_snap_batch(bid, 4, 1000)], 5)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"deadbeef", 300)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"deadbeef", 300)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-NEG-7: attribution not incremented → fail
@@ -897,7 +914,7 @@ test bb_neg_attribution_stale() fail {
     // total_events stays 0 (should be 1) — isolates the attribution check.
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-NEG-8 (HIGH rewind fix): output ADVANCES last_updated_epoch instead of
@@ -910,7 +927,7 @@ test bb_neg_advance_last_updated() fail {
   // input last_updated_epoch = 0; this output forces it to 5
   let dout = VaultDatum { ..t_burn_out([t_snap_batch(bid, 4, 700)], 5), last_updated_epoch: 5 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 300)], 5, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // BB-NEG-9 (HIGH rewind fix): the concrete attack — a vault already advanced to
@@ -930,7 +947,7 @@ test bb_neg_rewind_via_backdated_range() fail {
     },
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(bid, 300)], 3, t_own_ref(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(bid, 300)], 3, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // ── SetDelegate ───────────────────────────────────────────────
@@ -943,7 +960,7 @@ test sd_positive_set() {
     ..din, personal_delegate: Some(t_delegate),
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_set_delegate(din, Some(t_delegate), 7, t_own_ref(), t_lamp_policy, tx)
+  validate_set_delegate(din, Some(t_delegate), 7, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // SD-POS-2: owner clears the delegate (None). last_updated_epoch PRESERVED (0).
@@ -952,7 +969,7 @@ test sd_positive_clear() {
   let din  = VaultDatum { ..base, personal_delegate: Some(t_delegate) }
   let dout = VaultDatum { ..din, personal_delegate: None }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_set_delegate(din, None, 7, t_own_ref(), t_lamp_policy, tx)
+  validate_set_delegate(din, None, 7, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // SD-NEG-4 (HIGH rewind fix): owner sets delegate but ADVANCES last_updated_epoch
@@ -964,7 +981,7 @@ test sd_neg_advance_last_updated() fail {
     ..din, personal_delegate: Some(t_delegate), last_updated_epoch: 7,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_set_delegate(din, Some(t_delegate), 7, t_own_ref(), t_lamp_policy, tx)
+  validate_set_delegate(din, Some(t_delegate), 7, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // SD-NEG-5 (HIGH rewind fix): vault at epoch 10, owner submits a BACKDATED
@@ -976,7 +993,7 @@ test sd_neg_rewind_via_backdated_range() fail {
     ..din, personal_delegate: Some(t_delegate), last_updated_epoch: 3,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_set_delegate(din, Some(t_delegate), 3, t_own_ref(), t_lamp_policy, tx)
+  validate_set_delegate(din, Some(t_delegate), 3, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // SD-NEG-1: delegate (not owner) tries to change delegate → fail
@@ -988,7 +1005,7 @@ test sd_neg_delegate_cannot_set() fail {
   }
   // delegate signs, owner does not
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
-  validate_set_delegate(din, Some(t_owner), 7, t_own_ref(), t_lamp_policy, tx)
+  validate_set_delegate(din, Some(t_owner), 7, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // SD-NEG-2: SetDelegate must not move LAMP (value-leak) → fail
@@ -998,7 +1015,7 @@ test sd_neg_lamp_leak() fail {
     ..din, personal_delegate: Some(t_delegate), last_updated_epoch: 7,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 1)], [t_owner])
-  validate_set_delegate(din, Some(t_delegate), 7, t_own_ref(), t_lamp_policy, tx)
+  validate_set_delegate(din, Some(t_delegate), 7, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // SD-NEG-3: SetDelegate must not touch magic_batches → fail
@@ -1010,5 +1027,5 @@ test sd_neg_mutate_batches() fail {
     last_updated_epoch: 7,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_set_delegate(din, Some(t_delegate), 7, t_own_ref(), t_lamp_policy, tx)
+  validate_set_delegate(din, Some(t_delegate), 7, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }

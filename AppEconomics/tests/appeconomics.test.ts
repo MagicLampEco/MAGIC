@@ -7,6 +7,7 @@ import {
   computeW, distribute, mulQ, nanogicToMagicStr,
   UTIL_DEAD_Q, UTIL_TARGET_Q, USERS_TARGET,
   VARIANCE_BETA_Q, PENALTY_CAP_Q, GRACE_PERIOD, DRATE_PRIOR,
+  MAX_SINGLE_APP_REWARD_BPS, MIN_APP_SHARE_BPS,
 } from "../offchain/src/math.js";
 
 const MAGIC = Q;  // 1 MAGIC = 10^9 nanogic
@@ -457,5 +458,107 @@ describe("Φ_users — §9.2, Lemma 9.4", () => {
 
   it("Φ_users = 0 when N̄=0", () => {
     expect(phiUsers(0n)).toBe(0n);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// TV-014: dust-app gate (W-12) — minimum-activity floor
+// Vector: 1 real app capped at 30% releases 70% excess; without a floor a
+// dust app (W=1, no real MAGIC consumed) drains that 70%. The gate excludes
+// any app whose NATURAL share < MIN_APP_SHARE_BPS (0.5%) of X.
+// ══════════════════════════════════════════════════════════════
+describe("TV-014: dust-app gate — W-12 (minimum-activity floor)", () => {
+  const X = 1_000_000n * Q;
+  const sum = (r: Record<string, bigint>) =>
+    Object.values(r).reduce((s, v) => s + v, 0n);
+
+  it("MIN_APP_SHARE_BPS = 50 (0.5%), CAP = 3000 (30%)", () => {
+    expect(MIN_APP_SHARE_BPS).toBe(50n);
+    expect(MAX_SINGLE_APP_REWARD_BPS).toBe(3000n);
+  });
+
+  it("ATTACK: 1 real app (capped) + 10 dust(W=1) → dust get 0, NOT 70%", () => {
+    const weights: Record<string, bigint> = { Real: 1_000_000n * Q };
+    for (let i = 0; i < 10; i++) weights["D" + i] = 1n;
+
+    const r = distribute(weights, X);  // default gate = 50 bps
+
+    // Real app still capped at exactly 30%
+    expect(r["Real"]).toBe(X * 3000n / 10000n);  // 300K MAGIC
+
+    // Every dust app gated to 0 — the 70% excess does NOT leak to them
+    let dustTotal = 0n;
+    for (let i = 0; i < 10; i++) {
+      expect(r["D" + i]).toBe(0n);
+      dustTotal += r["D" + i]!;
+    }
+    expect(dustTotal).toBe(0n);
+
+    // Conservation still holds (excess → BountyPool, not over-allocated)
+    expect(sum(r)).toBeLessThanOrEqual(X);
+  });
+
+  it("REGRESSION: legit A70/B20/C10 distributes unchanged (all ≥ 0.5%)", () => {
+    const weights = { A: 700_000n * Q, B: 200_000n * Q, C: 100_000n * Q };
+    const r = distribute(weights, X);
+    const cap = X * 3000n / 10000n;
+    // None gated (each ≥ 10% ≫ 0.5%); all reach the 30% cap after redistribution
+    expect(r["A"]).toBeLessThanOrEqual(cap);
+    expect(r["B"]).toBeLessThanOrEqual(cap);
+    expect(r["C"]).toBeLessThanOrEqual(cap);
+    expect(r["A"]).toBeGreaterThan(0n);
+    expect(r["B"]).toBeGreaterThan(0n);
+    expect(r["C"]).toBeGreaterThan(0n);
+    expect(sum(r)).toBeLessThanOrEqual(X);
+  });
+
+  it("BOUNDARY: natural share exactly 0.5% survives; 0.49% gated", () => {
+    // Total weight 10_000: Edge=50 → 0.50% (≥ floor, survives); Dust=49 → 0.49% (gated)
+    const weights = { Big: 9_901n, Edge: 50n, Dust: 49n };
+    const r = distribute(weights, X);
+    expect(r["Edge"]).toBeGreaterThan(0n);  // exactly-at-floor participates
+    expect(r["Dust"]).toBe(0n);             // below floor → gated
+  });
+
+  it("a single dust app alone (Wtotal>0) still distributes — gate is RELATIVE", () => {
+    // Only one app: its natural share is 100% ≥ floor, so it is NOT dust here.
+    const r = distribute({ Solo: 5n }, X);
+    expect(r["Solo"]).toBe(X * 3000n / 10000n);  // capped at 30%, excess→BountyPool
+  });
+
+  it("ESCAPE HATCH: minShareBps=0n disables gate (legacy 70% leak returns)", () => {
+    const weights: Record<string, bigint> = { Real: 1_000_000n * Q };
+    for (let i = 0; i < 10; i++) weights["D" + i] = 1n;
+    const r = distribute(weights, X, 3000n, 0n);
+    let dustTotal = 0n;
+    for (let i = 0; i < 10; i++) dustTotal += r["D" + i]!;
+    // With gate off, dust reabsorbs the excess (documents the pre-fix behaviour)
+    expect(dustTotal).toBeGreaterThan(X * 6000n / 10000n);  // > 60% leaks
+  });
+
+  it("gate never resurrects a gated app via redistribution (monotone exclusion)", () => {
+    // 4 capped real apps + 1 dust. Even though survivors all hit cap (excess
+    // floats), the dust app stays 0 because gating is on the NATURAL share.
+    const weights = {
+      A: 400_000n * Q, B: 400_000n * Q, C: 400_000n * Q, D: 400_000n * Q, Dust: 1n,
+    };
+    const r = distribute(weights, X);
+    expect(r["Dust"]).toBe(0n);
+    expect(sum(r)).toBeLessThanOrEqual(X);
+  });
+
+  it("conservation: Σ rewards ≤ X with mixed gated + capped apps (W-5)", () => {
+    const weights: Record<string, bigint> = {
+      Whale: 5_000_000n * Q, Mid: 600_000n * Q,
+    };
+    for (let i = 0; i < 20; i++) weights["dust" + i] = 3n;  // all gated
+    const r = distribute(weights, X);
+    expect(sum(r)).toBeLessThanOrEqual(X);
+    for (let i = 0; i < 20; i++) expect(r["dust" + i]).toBe(0n);
+  });
+
+  it("all guards preserved: negative weight on a gated-out app still throws (W-10)", () => {
+    const weights = { Real: 1_000_000n * Q, Evil: -5n };
+    expect(() => distribute(weights, X)).toThrow(/negative weight/);
   });
 });

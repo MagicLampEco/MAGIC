@@ -11,10 +11,26 @@ use cardano/assets
 use cardano/assets.{Value}
 use cardano/transaction.{InlineDatum, Input, NoDatum, Output, OutputReference, Transaction}
 
-/// Epoch từ validity_range lower_bound (POSIX ms). ms_per_epoch network-specific.
+/// Epoch từ validity_range. ms_per_epoch network-specific (POSIX ms).
+///
+/// MAINNET-BLOCK fix: ràng buộc CẢ HAI biên (lower + upper) phải Finite VÀ nằm
+/// TRỌN trong 1 epoch (lo/ms_per_epoch == hi/ms_per_epoch). Lý do:
+///   - `lower_bound` owner-chọn (ledger chỉ ép lower_bound ≤ slot hiện tại, không
+///     cấm tx span nhiều epoch). Nếu chỉ đọc lower_bound mà bỏ upper_bound, tx có
+///     thể span [E, E+k] → `current_epoch` nhập nhằng, effective_epoch/cooldown
+///     ghi theo E nhưng tx vào block ở E+k. TECH.md:150 yêu cầu upper bound nằm
+///     trong epoch E nhưng off-chain (profile.ts) đặt — kẻ tấn công bỏ qua được.
+///   - Cưỡng chế on-chain: tx phải nằm gọn trong đúng 1 epoch → current_epoch
+///     không nhập nhằng. Cả hai biên Finite cũng chặn NegativeInfinity (fail-closed
+///     rõ lý do thay vì crash).
 pub fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
-  expect Some(s) = tx.validity_range.lower_bound.bound_type |> get_finite
-  s / ms_per_epoch
+  expect Some(lo) = tx.validity_range.lower_bound.bound_type |> get_finite
+  expect Some(hi) = tx.validity_range.upper_bound.bound_type |> get_finite
+  let e_lo = lo / ms_per_epoch
+  let e_hi = hi / ms_per_epoch
+  // tx phải nằm trọn trong 1 epoch — chặn span nhiều epoch + epoch nhập nhằng.
+  expect e_lo == e_hi
+  e_lo
 }
 
 pub fn get_finite(bt: IntervalBoundType) -> Option<Int> {

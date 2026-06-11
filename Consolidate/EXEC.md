@@ -14,16 +14,31 @@ cat scripts/.env | grep -E "BLOCKFROST_KEY|PRIVATE_KEY|NETWORK|LAMP_POLICY_ID"
 # LAMP_POLICY_ID phải đã có (từ deploy:lamp trước đó)
 ```
 
-### Bước 1 — Build Aiken validator
+### Bước 1 — Build + apply params Aiken validator
+
+`vault_consolidate` nhận 2 param THEO THỨ TỰ: `(lamp_policy_id: PolicyId, ms_per_epoch: Int)`.
+
+- `lamp_policy_id` — PolicyId của LAMP native asset (= `LAMP_POLICY_ID` trong `.env`).
+  BẮT BUỘC apply ĐÚNG giá trị mạng: value-leak guard bind LAMP token thật trong
+  vault output theo policy này. Sai policy → hash sai → guard vô hiệu.
+- `ms_per_epoch` — POSIX-ms/epoch: Preview/Preprod `86_400_000`, Mainnet `432_000_000`.
 
 ```bash
 cd /Users/ductiger/Projects/MAGIC/Consolidate/onchain
 aiken build
-# Tạo: plutus.json
-# Đọc script hash từ plutus.json → điền CONSOLIDATE_SCRIPT_HASH vào scripts/.env
+# Tạo: plutus.json (validator CHƯA apply param — còn 2 tham số tự do)
 ```
 
-Lấy script hash:
+Apply param khi build tx (Lucid `applyParamsToScript`) hoặc dùng `aiken blueprint apply`:
+```bash
+# Apply lamp_policy_id rồi ms_per_epoch (đúng thứ tự khai báo validator)
+aiken blueprint apply -v vault_consolidate.spend <LAMP_POLICY_ID_cbor>   > /tmp/c1.json
+aiken blueprint apply -m /tmp/c1.json <MS_PER_EPOCH_cbor>                > /tmp/c2.json
+# Đọc hash đã apply → điền CONSOLIDATE_SCRIPT_HASH vào scripts/.env
+cat /tmp/c2.json | jq -r '.validators[] | select(.title == "vault_consolidate.spend") | .hash'
+```
+
+Hoặc lấy hash chưa-apply (nếu offchain tự apply param qua Lucid):
 ```bash
 cat plutus.json | jq -r '.validators[] | select(.title == "vault_consolidate.spend") | .hash'
 ```
@@ -44,7 +59,9 @@ npm install
 
 ```bash
 npm test
-# Kỳ vọng: 9/9 pass (3 TV + 6 additional)
+# Kỳ vọng offchain: 12/12 pass
+# Onchain (cd ../onchain && aiken check): 21/21 pass, 0 warning
+#   gồm value-leak/ADA-drain/token-stuffing/output-restake guards (MAINNET-BLOCK)
 ```
 
 ### Bước 4 — Deploy script (nếu có tx deploy)

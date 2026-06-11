@@ -2,9 +2,12 @@
 //
 // Each of the 4 vault validators takes a DIFFERENT set of compile-time parameters:
 //   Snapshot: vault(ms_per_epoch)
-//   Instant:  vault(lamp_policy_id, treasury_addr, um_nft_policy, ms_per_epoch)
-//   Vacuum:   vault(lamp_policy_id, treasury_addr, um_nft_policy, ms_per_epoch)
+//   Instant:  vault(lamp_policy_id, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
+//   Vacuum:   vault(lamp_policy_id, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
 //   Schedule: vault(lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch)
+//
+// `um_script_hash` pins the UM reference input to the canonical UM script
+// address (MAINNET-BLOCK fix, defense-in-depth layer b).
 //
 // `applyParamsToScript` bakes them into the CBOR → produces a network-specific
 // validator hash. The hash defines the on-chain address, so every consumer
@@ -78,13 +81,15 @@ function buildParamsList(
 
     case "Instant":
     case "Vacuum": {
-      // vault(lamp_policy_id, treasury_addr, um_nft_policy, ms_per_epoch)
+      // vault(lamp_policy_id, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
       requireField(protocol.umNftPolicyId, "umNftPolicyId", vaultType);
+      requireField(protocol.umScriptHash, "umScriptHash", vaultType);
       requireField(protocol.treasuryAddress, "treasuryAddress", vaultType);
       return [
         protocol.lampPolicyId,
         addressToPlutusData(protocol.treasuryAddress!),
         protocol.umNftPolicyId!,
+        protocol.umScriptHash!,   // um_script_hash — pins UM ref input (layer b)
         msPer,
       ];
     }

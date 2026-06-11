@@ -6,15 +6,21 @@
 //   lamp_policy_id   : PolicyId of LAMP native asset
 //   treasury_addr    : Address of Treasury UTxO
 //   um_nft_policy    : PolicyId of UM datum NFT (identifies the UM UTxO)
+//   um_script_hash   : ByteArray = applied UMKeeper validator hash. Pins the UM
+//                      reference input to the canonical UM script address. Without
+//                      this, a forged UTxO at an attacker address carrying a fake
+//                      UMD NFT + fake UMDatum could be used as ref input (the UM
+//                      NFT alone is not a global singleton). MAINNET-BLOCK fix,
+//                      defense-in-depth layer (b).
 //
 // Build on testnet:
 //   aiken build
-//   # applies the 3 parameters, producing the script hash
+//   # applies the 4 parameters, producing the script hash
 
 use aiken/collection/list
 use aiken/crypto
 use aiken/primitive/bytearray
-use aiken/interval.{Finite}
+use aiken/interval.{Finite, after, between}
 use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{
@@ -51,6 +57,7 @@ validator vault(
   lamp_policy_id : PolicyId,
   treasury_addr  : Address,
   um_nft_policy  : PolicyId,
+  um_script_hash : ByteArray,
   ms_per_epoch   : Int,
 ) {
   spend(
@@ -71,7 +78,8 @@ validator vault(
       InstantGen { lamp_paid } ->
         validate_instant_gen(
           input_datum, lamp_paid, current_epoch,
-          own_ref, lamp_policy_id, treasury_addr, um_nft_policy, tx,
+          own_ref, lamp_policy_id, treasury_addr, um_nft_policy,
+          um_script_hash, tx,
         )
 
       // ── ApplyHalving — permissionless pending-profile apply ─
@@ -94,7 +102,7 @@ validator vault(
       // ── UpdateProfile (full impl — SPEC_V1 §2/§3) ────────
       UpdateProfile { new_profile } ->
         validate_update_profile(
-          input_datum, new_profile, current_epoch, own_ref, tx,
+          input_datum, new_profile, current_epoch, own_ref, lamp_policy_id, tx,
         )
 
       // ── WithdrawLamp (SPEC_V1 §1) ────────────────────────
@@ -123,6 +131,7 @@ fn validate_instant_gen(
   lamp_policy_id : PolicyId,
   treasury_addr  : Address,
   um_nft_policy  : PolicyId,
+  um_script_hash : ByteArray,
   tx             : Transaction,
 ) -> Bool {
 
@@ -144,6 +153,15 @@ fn validate_instant_gen(
   // on the output (otherwise next tx would apply it again — infinite loop).
   let applied_input = apply_pending_profile(input_datum, current_epoch)
 
+  // ── MONOTONIC EPOCH guard (MAINNET-BLOCK — epoch gaming) ──
+  // Even with the validity-range-in-one-epoch fix, a vault could be spent in a
+  // tx whose validity range legitimately sits in an epoch EARLIER than the
+  // vault's own last_updated_epoch (e.g. clock skew / a long-pending vault).
+  // Decay, halving and UM staleness all assume time only moves forward; a
+  // backwards epoch would let an attacker burn at a stale current_amount or
+  // skip halving. Enforce epoch monotonicity against the vault's own clock.
+  expect current_epoch >= input_datum.last_updated_epoch
+
   // ── C-INST-1: lamp_paid ≥ 10 LAMP = 10^7 oil ────────────
   expect lamp_paid >= min_instant_purchase
 
@@ -163,7 +181,7 @@ fn validate_instant_gen(
   expect pre_prune_count < max_batches_per_vault
 
   // ── Get UM from reference input (C-UM-6) ─────────────────
-  let um_datum = find_um_datum(tx.reference_inputs, um_nft_policy)
+  let um_datum = find_um_datum(tx.reference_inputs, um_nft_policy, um_script_hash)
   expect validate_um_range(um_datum)
   expect validate_um_history_length(um_datum)
   let um_q = get_um_for_instant(um_datum, current_epoch)
@@ -266,6 +284,9 @@ fn validate_instant_gen(
     assets.quantity_of(inst_vault_output.value, lamp_policy_id, #"744c414d50")
   expect inst_vault_lamp == output_datum.lamp_balance
 
+  // ── ADA / token-set preservation (MAINNET-BLOCK) ──────────
+  expect validate_vault_value(find_own_input(own_ref, tx.inputs), inst_vault_output)
+
   True
 }
 
@@ -344,6 +365,13 @@ fn validate_apply_halving(
     assets.quantity_of(halve_vault_output.value, lamp_policy_id, #"744c414d50")
   expect halve_vault_lamp == output_datum.lamp_balance
 
+  // ── ADA / token-set preservation (MAINNET-BLOCK) ──────────
+  // CRITICAL on this path: ApplyHalving is permissionless (H-5), so without
+  // this a third party builds a valid ApplyHalving tx that keeps LAMP correct
+  // but reroutes the victim's surplus ADA into their own output, or stuffs
+  // dust tokens to brick the vault. Bind lovelace >= input and policy-set ≤ 2.
+  expect validate_vault_value(find_own_input(own_ref, tx.inputs), halve_vault_output)
+
   True
 }
 
@@ -367,11 +395,30 @@ fn get_pm_q(profile: ActivityProfile) -> Int {
   }
 }
 
-/// Derive current epoch from transaction validity range lower bound.
-/// Plutus V3 validity_range is POSIX milliseconds, so epoch = posix_ms / ms_per_epoch.
+/// Derive current epoch from transaction validity range.
+///
+/// MAINNET-BLOCK fix — validity-range epoch gaming. The epoch is derived from
+/// `lower_bound`, but the caller picks the validity range freely. Without an
+/// `upper_bound` constraint the caller could set `lower_bound` to ANY past or
+/// future epoch (the tx is still valid on-chain as long as the node clock is
+/// inside the range), letting them:
+///   (a) replay a stale UM datum as if `staleness ≤ 1` → inflate UM,
+///   (b) dodge halving / extend a batch's lifetime by stamping a chosen epoch,
+///   (c) burn at an old `current_amount` by claiming a past epoch.
+///
+/// Fix: require the WHOLE validity range to sit inside ONE epoch:
+///   epoch*P ≤ lower_ms   AND   upper_ms < (epoch+1)*P
+/// so `lower_ms / P == upper_ms / P == epoch`. The on-chain clock then forces
+/// `current_epoch` to be the real epoch of the slot the tx lands in — the
+/// caller can no longer choose it. The `lower_ms / ms_per_epoch` definition of
+/// `epoch` already gives `epoch*P ≤ lower_ms`; we only need the upper bound.
 fn get_current_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
   expect Some(lower_ms) = tx.validity_range.lower_bound.bound_type |> get_finite_slot
-  lower_ms / ms_per_epoch
+  let epoch = lower_ms / ms_per_epoch
+  // upper_bound must be finite AND in the same epoch as lower_bound.
+  expect Some(upper_ms) = tx.validity_range.upper_bound.bound_type |> get_finite_slot
+  expect upper_ms < ( epoch + 1 ) * ms_per_epoch
+  epoch
 }
 
 fn get_finite_slot(bound_type) -> Option<Int> {
@@ -387,14 +434,59 @@ fn find_own_address(own_ref: OutputReference, inputs: List<Input>) -> Address {
   own_input.output.address
 }
 
-/// Find the UM datum from reference inputs (identified by um_nft_policy).
+/// Find the currently-being-spent vault Input (used for value preservation).
+fn find_own_input(own_ref: OutputReference, inputs: List<Input>) -> Input {
+  expect Some(own_input) = list.find(inputs, fn(i) { i.output_reference == own_ref })
+  own_input
+}
+
+/// VALUE-PRESERVATION guard (MAINNET-BLOCK — ADA drain / token-set stuffing).
+///
+/// Every handler already binds the vault output's LAMP quantity to the new
+/// lamp_balance, but nothing constrained the rest of the output value. Two
+/// distinct attacks remain, and the second one is exploitable WITHOUT the
+/// owner's signature because ApplyHalving is permissionless (H-5):
+///
+///   1. ADA drain: build an output whose datum + LAMP are correct but whose
+///      lovelace is set to the bare min-ADA, pocketing the vault's surplus ADA.
+///   2. Token-set bloat: stuff arbitrary dust tokens into the vault output,
+///      growing it past the eUTXO size / exec-unit limit so the vault can
+///      never be spent again (permanent griefing).
+///
+/// Fix (applied to ALL handlers, symmetric to the LAMP value lock):
+///   - lovelace(out) >= lovelace(in)        → no ADA siphoned ( `>=` lets an
+///     honest caller top up ADA, never let it shrink).
+///   - |policies(out)| <= 2                  → at most {ADA, LAMP}; rejects any
+///     extra policy. (`policies` lists ada_policy_id "" when lovelace > 0, so a
+///     normal vault has exactly 2.) This bounds the output token-set so dust
+///     stuffing cannot bloat the UTxO.
+/// The per-handler LAMP-quantity check still pins the LAMP amount itself.
+fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
+  expect assets.lovelace_of(vault_output.value) >= assets.lovelace_of(vault_input.output.value)
+  expect list.length(assets.policies(vault_output.value)) <= 2
+  True
+}
+
+/// Find the UM datum from reference inputs.
+///
+/// MAINNET-BLOCK defense-in-depth (b): the ref input must satisfy BOTH
+///   1. carry the UM NFT (um_nft_policy, "UMD"), AND
+///   2. sit at the canonical UM script address (payment credential ==
+///      Script(um_script_hash)).
+/// The UM NFT policy is not a guaranteed global singleton, so condition (1)
+/// alone is forgeable. Pinning the script address rejects any forged UM UTxO
+/// living at an attacker-controlled address even if the NFT is duplicated.
 fn find_um_datum(
-  ref_inputs    : List<Input>,
-  um_nft_policy : PolicyId,
+  ref_inputs     : List<Input>,
+  um_nft_policy  : PolicyId,
+  um_script_hash : ByteArray,
 ) -> UMDatum {
   expect Some(um_input) = list.find(ref_inputs, fn(i) {
-    let qty = assets.quantity_of(i.output.value, um_nft_policy, #"554d44")  // "UMD"
-    qty > 0
+    let has_nft =
+      assets.quantity_of(i.output.value, um_nft_policy, #"554d44") > 0  // "UMD"
+    let at_um_script =
+      i.output.address.payment_credential == Script(um_script_hash)
+    has_nft && at_um_script
   })
   expect InlineDatum(um_data) = um_input.output.datum
   expect um: UMDatum = um_data
@@ -484,6 +576,11 @@ fn validate_withdraw_lamp(
 
   expect list.length(output_datum.loyalty_holdings) <= max_loyalty_holdings
 
+  // ── ADA / token-set preservation (MAINNET-BLOCK) ──────────
+  // Owner-signed (self-harm for ADA), but the policy-set ≤ 2 bound still blocks
+  // dust-stuffing that would permanently brick the vault.
+  expect validate_vault_value(find_own_input(own_ref, tx.inputs), vault_output)
+
   True
 }
 
@@ -517,6 +614,12 @@ fn validate_burn_batch(
       None -> False
     }
   expect authed
+
+  // ── MONOTONIC EPOCH guard (MAINNET-BLOCK — epoch gaming) ──
+  // The delegate path means a non-owner can call this; a backwards epoch would
+  // skip halving (halve_then_prune keys on created_epoch vs current_epoch) and
+  // let the delegate burn at an inflated current_amount. Pin forward-only time.
+  expect current_epoch >= input_datum.last_updated_epoch
 
   // ── Lazy profile apply (like every handler) ───────────────
   let applied = apply_pending_profile(input_datum, current_epoch)
@@ -554,6 +657,11 @@ fn validate_burn_batch(
   let vault_lamp_qty =
     assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
   expect vault_lamp_qty == output_datum.lamp_balance
+
+  // ── ADA / token-set preservation (MAINNET-BLOCK) ──────────
+  // Delegate-callable path: bind ADA + policy-set so a delegate cannot siphon
+  // the victim's ADA or brick the vault with dust while burning their MAGIC.
+  expect validate_vault_value(find_own_input(own_ref, tx.inputs), vault_output)
 
   expect list.length(output_datum.magic_batches) <= max_batches_per_vault
   True
@@ -645,6 +753,9 @@ fn validate_set_delegate(
     assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")
   expect vault_lamp_qty == input_datum.lamp_balance
 
+  // ── ADA / token-set preservation (MAINNET-BLOCK) ──────────
+  expect validate_vault_value(find_own_input(own_ref, tx.inputs), vault_output)
+
   True
 }
 
@@ -652,11 +763,12 @@ fn validate_set_delegate(
 // validate_update_profile — C-PC-V1..V6 (SPEC_V1 §2/§3)
 // ═══════════════════════════════════════════════════════════════
 fn validate_update_profile(
-  input_datum   : VaultDatum,
-  new_profile   : ActivityProfile,
-  current_epoch : Int,
-  own_ref       : OutputReference,
-  tx            : Transaction,
+  input_datum    : VaultDatum,
+  new_profile    : ActivityProfile,
+  current_epoch  : Int,
+  own_ref        : OutputReference,
+  lamp_policy_id : PolicyId,
+  tx             : Transaction,
 ) -> Bool {
 
   let vault_addr = find_own_address(own_ref, tx.inputs)
@@ -699,6 +811,17 @@ fn validate_update_profile(
 
   expect output_datum.profile_changed_epoch == current_epoch
   expect output_datum.last_updated_epoch == current_epoch
+
+  // ── VALUE preservation: LAMP qty + ADA / token-set (MAINNET-BLOCK) ──
+  // UpdateProfile is owner-signed and LAMP-neutral, but previously bound NO
+  // output value at all (only the datum's lamp_balance). Bind LAMP to the
+  // unchanged balance and ADA/policy-set so the output cannot be drained or
+  // dust-stuffed.
+  let vault_output = find_vault_output(tx.outputs, vault_addr)
+  let vault_lamp_qty =
+    assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")
+  expect vault_lamp_qty == input_datum.lamp_balance
+  expect validate_vault_value(find_own_input(own_ref, tx.inputs), vault_output)
 
   True
 }
@@ -872,7 +995,7 @@ test up_positive() {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = up_output(din, Ember, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_update_profile(din, Ember, 10, t_own_ref(), tx)
+  validate_update_profile(din, Ember, 10, t_own_ref(), t_lamp_policy, tx)
 }
 
 test up_cooldown_not_met() fail {
@@ -883,21 +1006,21 @@ test up_cooldown_not_met() fail {
     }
   let dout = up_output(din, Ember, 11)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_update_profile(din, Ember, 11, t_own_ref(), tx)
+  validate_update_profile(din, Ember, 11, t_own_ref(), t_lamp_policy, tx)
 }
 
 test up_bypass_lazy() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = VaultDatum { ..up_output(din, Ember, 10), profile: Ember }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_update_profile(din, Ember, 10, t_own_ref(), tx)
+  validate_update_profile(din, Ember, 10, t_own_ref(), t_lamp_policy, tx)
 }
 
 test up_same_profile() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = up_output(din, Flame, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_update_profile(din, Flame, 10, t_own_ref(), tx)
+  validate_update_profile(din, Flame, 10, t_own_ref(), t_lamp_policy, tx)
 }
 
 // ── ApplyHalving ──────────────────────────────────────────────
@@ -1277,4 +1400,162 @@ test sd_neg_delegate_mismatch() fail {
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tests — VALUE preservation (MAINNET-BLOCK: ADA drain / token-set)
+// and epoch monotonicity (MAINNET-BLOCK: validity-range gaming).
+//
+// `t_vault_output`/`t_vault_input` carry NO lovelace and exactly one policy
+// (LAMP), so the default tests above satisfy validate_vault_value vacuously
+// (0 >= 0, 1 ≤ 2). These tests use lovelace-carrying / extra-token outputs to
+// exercise the new guard directly.
+// ═══════════════════════════════════════════════════════════════
+
+const t_other_policy: ByteArray =
+  #"55555555555555555555555555555555555555555555555555555555"
+
+/// Vault output with explicit lovelace + LAMP balance.
+fn t_vault_output_ada(datum: VaultDatum, lovelace: Int, balance: Int) -> Output {
+  Output {
+    address: address.from_script(t_vault_hash),
+    value: assets.from_lovelace(lovelace)
+      |> assets.add(t_lamp_policy, #"744c414d50", balance),
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+}
+
+fn t_vault_input_ada(datum: VaultDatum, lovelace: Int, balance: Int) -> Input {
+  Input { output_reference: t_own_ref(), output: t_vault_output_ada(datum, lovelace, balance) }
+}
+
+/// Vault output that smuggles an extra dust token under a 3rd policy.
+fn t_vault_output_dust(datum: VaultDatum, lovelace: Int, balance: Int) -> Output {
+  Output {
+    address: address.from_script(t_vault_hash),
+    value: assets.from_lovelace(lovelace)
+      |> assets.add(t_lamp_policy, #"744c414d50", balance)
+      |> assets.add(t_other_policy, #"6475737400", 1),  // "dust"
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+}
+
+// VAL-POS-1: ApplyHalving preserves ADA (in 2 ADA, out 2 ADA) → ok.
+test val_pos_ah_ada_preserved() {
+  let batch_in  = t_instant_batch(9, 1000, False)
+  let batch_out = MagicBatch { ..batch_in, current_amount: 500, halved: True }
+  let din  = t_datum_with_batches([batch_in])
+  let dout = t_datum_with_batches([batch_out])
+  let tx =
+    t_tx(
+      [t_vault_input_ada(din, 2_000_000, 100)],
+      [t_vault_output_ada(dout, 2_000_000, 100)],
+      [],
+    )
+  validate_apply_halving(din, 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// VAL-NEG-1: ApplyHalving (permissionless) drains ADA — out lovelace < in → reject.
+test val_neg_ah_ada_drained() fail {
+  let batch_in  = t_instant_batch(9, 1000, False)
+  let batch_out = MagicBatch { ..batch_in, current_amount: 500, halved: True }
+  let din  = t_datum_with_batches([batch_in])
+  let dout = t_datum_with_batches([batch_out])
+  let tx =
+    t_tx(
+      [t_vault_input_ada(din, 5_000_000, 100)],   // vault held 5 ADA
+      [t_vault_output_ada(dout, 2_000_000, 100)], // attacker pockets 3 ADA
+      [],
+    )
+  validate_apply_halving(din, 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// VAL-NEG-2: ApplyHalving stuffs a 3rd-policy dust token (UTxO bloat) → reject.
+test val_neg_ah_dust_stuffed() fail {
+  let batch_in  = t_instant_batch(9, 1000, False)
+  let batch_out = MagicBatch { ..batch_in, current_amount: 500, halved: True }
+  let din  = t_datum_with_batches([batch_in])
+  let dout = t_datum_with_batches([batch_out])
+  let tx =
+    t_tx(
+      [t_vault_input_ada(din, 2_000_000, 100)],
+      [t_vault_output_dust(dout, 2_000_000, 100)],  // 3 policies: ADA+LAMP+dust
+      [],
+    )
+  validate_apply_halving(din, 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// VAL-NEG-3: BurnBatch drains ADA on the delegate path → reject.
+test val_neg_burn_ada_drained() fail {
+  let din  = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
+  let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 10)
+  let tx =
+    t_tx(
+      [t_vault_input_ada(din, 5_000_000, 100)],
+      [t_vault_output_ada(dout, 2_000_000, 100)],
+      [t_delegate],
+    )
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// VAL-POS-2: ADA top-up (out > in) is allowed (honest min-ADA bump).
+test val_pos_ada_topup_ok() {
+  let din  = t_burn_din([t_burn_batch(bid_a, 1000)], None)
+  let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 10)
+  let tx =
+    t_tx(
+      [t_vault_input_ada(din, 2_000_000, 100)],
+      [t_vault_output_ada(dout, 3_000_000, 100)],  // owner adds ADA — fine
+      [t_owner],
+    )
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// EPOCH-NEG-1: BurnBatch with current_epoch < last_updated_epoch (backwards
+// time, delegate path) → reject by the monotonicity guard.
+test epoch_neg_burn_backwards() fail {
+  let din_base = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
+  // vault already at epoch 20; attacker claims epoch 10 to dodge decay.
+  let din = VaultDatum { ..din_base, last_updated_epoch: 20 }
+  let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// EPOCH-POS-1: get_current_epoch accepts a range inside ONE epoch and
+// derives the right epoch.
+test epoch_pos_range_in_one_epoch() {
+  let p = 86_400_000   // Preview ms_per_epoch
+  // epoch 10: [10*p, 11*p). lower=10*p, upper=11*p-1 → both in epoch 10.
+  let tx =
+    Transaction {
+      ..placeholder,
+      validity_range: interval.between(10 * p, 11 * p - 1),
+    }
+  get_current_epoch(tx, p) == 10
+}
+
+// EPOCH-NEG-2: upper_bound spills into the next epoch → reject (cannot pin
+// a single epoch, so the caller could otherwise game which epoch is "current").
+test epoch_neg_range_spans_two_epochs() fail {
+  let p = 86_400_000
+  let tx =
+    Transaction {
+      ..placeholder,
+      validity_range: interval.between(10 * p, 11 * p),  // upper == 11*p → epoch 11
+    }
+  get_current_epoch(tx, p) == 10
+}
+
+// EPOCH-NEG-3: unbounded upper (no finite upper_bound) → reject.
+test epoch_neg_unbounded_upper() fail {
+  let p = 86_400_000
+  let tx =
+    Transaction {
+      ..placeholder,
+      validity_range: interval.after(10 * p),  // upper = +inf
+    }
+  get_current_epoch(tx, p) == 10
 }

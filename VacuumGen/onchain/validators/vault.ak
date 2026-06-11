@@ -8,7 +8,7 @@
 
 use aiken/collection/list
 use aiken/crypto
-use aiken/interval.{Finite, IntervalBoundType}
+use aiken/interval.{Finite, IntervalBoundType, after, between}
 use aiken/primitive/bytearray
 use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId}
@@ -38,10 +38,15 @@ use magiclamp/protocol/lock.{
 // `ms_per_epoch` is applied per-network (Plutus validity_range is POSIX ms):
 //   Mainnet:        432_000_000
 //   Preview/Preprod: 86_400_000
+// um_script_hash : ByteArray = applied UMKeeper validator hash. Pins the UM
+//   reference input to the canonical UM script address (MAINNET-BLOCK fix,
+//   defense-in-depth (b)). The UM NFT alone is not a global singleton, so the
+//   ref input must ALSO live at Script(um_script_hash) to be trusted.
 validator vault(
   lamp_policy_id : PolicyId,
   treasury_addr  : Address,
   um_nft_policy  : PolicyId,
+  um_script_hash : ByteArray,
   ms_per_epoch   : Int,
 ) {
   spend(
@@ -60,7 +65,8 @@ validator vault(
 
       VacuumFire { order_id } ->
         validate_vacuum_fire(input_datum, order_id, current_epoch, own_ref,
-                             lamp_policy_id, treasury_addr, um_nft_policy, tx)
+                             lamp_policy_id, treasury_addr, um_nft_policy,
+                             um_script_hash, tx)
 
       WithdrawLamp { amount } ->
         validate_withdraw_lamp(input_datum, amount, current_epoch, own_ref,
@@ -186,6 +192,7 @@ fn validate_vacuum_fire(
   lamp_policy_id : PolicyId,
   treasury_addr  : Address,
   um_nft_policy  : PolicyId,
+  um_script_hash : ByteArray,
   tx             : Transaction,
 ) -> Bool {
 
@@ -204,7 +211,7 @@ fn validate_vacuum_fire(
   expect current_epoch == order.fire_epoch
 
   // ── Get UM (C-UM-7: always smoothed, no stale check) ─────────
-  let um_datum = find_um_datum(tx.reference_inputs, um_nft_policy)
+  let um_datum = find_um_datum(tx.reference_inputs, um_nft_policy, um_script_hash)
   expect validate_um_range(um_datum)
   let um_q = get_um_for_vacuum(um_datum)   // C-UM-7
 
@@ -298,10 +305,27 @@ fn validate_vacuum_fire(
 // Helpers
 // ═══════════════════════════════════════════════════════════════
 
+// MAINNET-BLOCK fix (validity-range gaming): bind BOTH bounds, not lower only.
+// The ledger only enforces `lower_bound ≤ current_slot` — it does NOT forbid a tx
+// from spanning multiple epochs, nor does it guarantee the real block lands at
+// `lower_bound`. Reading lower-only lets an attacker set lower=start_of(E) with an
+// open/late upper, get included at a real epoch E+k, yet have the validator believe
+// current_epoch == E. For VacuumFire (C-VAC-6 EXACT) that means firing late; for
+// VacuumCommit/BurnBatch/SetDelegate it backdates fire_epoch / last_updated_epoch /
+// attribution stamps. Root-cause cure: require BOTH bounds Finite (fail-closed,
+// rejects ±Infinity) AND the whole tx to sit inside ONE epoch (e_lo == e_hi), so
+// `current_epoch` is unambiguous. Mirrors ProfileChange util.ak get_epoch.
 fn get_current_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
   expect Some(lower_ms) =
     tx.validity_range.lower_bound.bound_type |> get_finite_slot
-  lower_ms / ms_per_epoch
+  expect Some(upper_ms) =
+    tx.validity_range.upper_bound.bound_type |> get_finite_slot
+  let e_lo = lower_ms / ms_per_epoch
+  let e_hi = upper_ms / ms_per_epoch
+  // tx must fall entirely within a single epoch — blocks multi-epoch span and
+  // the ambiguity that lets an attacker game the effective epoch.
+  expect e_lo == e_hi
+  e_lo
 }
 
 fn get_finite_slot(bt: IntervalBoundType) -> Option<Int> {
@@ -565,9 +589,18 @@ fn validate_set_delegate(
   True
 }
 
-fn find_um_datum(ref_inputs: List<Input>, um_nft_policy: PolicyId) -> UMDatum {
+// MAINNET-BLOCK defense-in-depth (b): require the UM ref input to carry the
+// UM NFT AND sit at the canonical UM script address Script(um_script_hash).
+// The UM NFT is not a guaranteed global singleton, so the NFT alone is
+// forgeable; pinning the script address rejects forged UM UTxOs.
+fn find_um_datum(
+  ref_inputs     : List<Input>,
+  um_nft_policy  : PolicyId,
+  um_script_hash : ByteArray,
+) -> UMDatum {
   expect Some(i) = list.find(ref_inputs, fn(x) {
     assets.quantity_of(x.output.value, um_nft_policy, #"554d44") > 0
+      && x.output.address.payment_credential == Script(um_script_hash)
   })
   expect InlineDatum(d) = i.output.datum
   expect um: UMDatum = d
@@ -976,4 +1009,47 @@ test sd_tamper_batches() fail {
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tests — get_current_epoch (validity-range gaming MAINNET-BLOCK fix)
+// Preview ms_per_epoch = 86_400_000.
+// ═══════════════════════════════════════════════════════════════
+
+const t_mspe: Int = 86_400_000
+
+fn t_tx_vr(lo: Int, hi: Int) -> Transaction {
+  Transaction { ..placeholder, validity_range: between(lo, hi) }
+}
+
+// VR-POS-1: tx fully inside epoch 5 → current_epoch == 5.
+test vr_in_single_epoch() {
+  let tx = t_tx_vr(5 * t_mspe, 6 * t_mspe - 1)
+  get_current_epoch(tx, t_mspe) == 5
+}
+
+// VR-POS-2: tight bounds (lower == upper) inside epoch 7.
+test vr_tight_bounds() {
+  let slot = 7 * t_mspe + 123
+  let tx = t_tx_vr(slot, slot)
+  get_current_epoch(tx, t_mspe) == 7
+}
+
+// VR-NEG-1: span across epoch boundary (lower in 5, upper in 6) → reject.
+// This is the core gaming vector: attacker backdates lower to start_of(E)
+// while letting the tx be includable in a later epoch.
+test vr_span_two_epochs() fail {
+  let tx = t_tx_vr(5 * t_mspe, 6 * t_mspe + 100)
+  // Compare the result so the (crashing) call is forced — `let _e = ...` would
+  // be discarded lazily and the expected crash would never fire.
+  get_current_epoch(tx, t_mspe) == 5
+}
+
+// VR-NEG-2: unbounded upper (PositiveInfinity) → fail-closed.
+// `after(lo)` = [lo, +∞); without the upper-Finite guard the validator would
+// trust lower-only and fire/stamp at the wrong epoch.
+test vr_unbounded_upper() fail {
+  let tx = Transaction { ..placeholder, validity_range: after(5 * t_mspe) }
+  // Compare the result so the (crashing) call is forced.
+  get_current_epoch(tx, t_mspe) == 5
 }

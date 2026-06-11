@@ -1,4 +1,8 @@
-# ConsumeMAGIC — MATH v1 (feat/consume-magic-v1)
+# ConsumeMAGIC — MATH v2 (engagement-state, rewrite D1)
+
+> Model v2: MAGIC = số kế toán (vault datum), KHÔNG `tx.mint`. Tiêu MAGIC = `Σburns`
+> qua handler `BurnBatch` của vault; consume.ak ÉP `total_burned == total_required`
+> (`==`, KHÔNG `≥`). Phần PRICING (§2.1, 2.4, 2.5, §5) bất biến giữa 2 model.
 
 ## 1. Định nghĩa hình thức
 
@@ -11,8 +15,8 @@
 | `m_min`, `m_max` | Chặn clamp của `demand_mult`, Q-format | Q-format |
 | `load_raw(e)` | Tải thực `ops_served(e) / target_capacity`, Q-format | Q-format |
 | N | Cửa sổ FIR (mặc định 6, khớp `DEMAND_WINDOW` trong `pricing/src/price.ts`) | epoch |
-| `required(t, n)` | Tổng nanogic cần đốt cho `n` ops loại `t` | nanogic |
-| `magic_burned` | `−mint(MAGIC)` trong tx (qty dương) | nanogic |
+| `required(t, n)` | Tổng nanogic cần giảm (burns) cho `n` ops loại `t` | nanogic |
+| `total_burned` | `Σ burns` qua các vault_ref phân biệt (handler `BurnBatch` của vault giảm `current_amount`) — KHÔNG `tx.mint` | nanogic |
 
 Nguồn: `pricing/src/price.ts`, `onchain/lib/magiclamp/consume/pricing.ak`.
 
@@ -38,15 +42,20 @@ Nguồn: `pricing.ak:price_of`, `price.ts:pricePerOp`.
 required(t, n) = price(t) × n
 ```
 
-### 2.3 Aggregate required (toàn tx)
+### 2.3 Aggregate required + burned (toàn tx)
 
 ```
-total_required = Σ_{i ∈ vault_inputs} required(op_type_i, op_count_i)
+total_required = Σ_{i ∈ engage_inputs}        required(op_type_i, op_count_i)
+total_burned   = Σ_{v ∈ distinct vault_refs}  Σ burns(v)
 ```
 
-Bất biến C-CM-2: `magic_burned ≥ total_required`.
+Bất biến C-CM-2: `total_burned == total_required` (`==`, KHÔNG `≥`: over-burn =
+giảm MAGIC user vô cớ → CẤM). AGGREGATE qua MỌI Engage input + MỌI vault_ref PHÂN
+BIỆT (mỗi vault đếm burns 1 lần) → chống pay-once-consume-N (N engage chung 1 vault
+burn: `total_required = N× != total_burned = 1×` → REJECT).
 
-Nguồn: `consume.ak:sum_required_over_vault_inputs`.
+Nguồn: `consume.ak:sum_required_over_engage_inputs`,
+`consume.ak:distinct_vault_refs_over_engage_inputs`, `consume.ak:sum_burns_over_vault_refs`.
 
 ### 2.4 Demand multiplier — FIR (SMA-N + clamp)
 
@@ -74,19 +83,24 @@ m_min ≤ demand_mult ≤ m_max
 ∀ OpPrice p: p.base_price ≥ 0
 ```
 
-Lý do ép `base_price ≥ 0`: nếu `base_price < 0` thì `required < 0`, điều kiện `magic_burned ≥ required` thoả ngay cả khi `magic_burned = 0` → drain miễn phí. Đây là finding medium được vá tại `valid_param`.
+Lý do ép `base_price ≥ 0`: nếu `base_price < 0` thì `required < 0`. Với `==` thì
+`total_burned == required < 0` không thoả (burns ≥ 0), nhưng giá rác vẫn phá định giá
+→ reject sớm. (Ở model `≥` cũ, required âm còn cho drain miễn phí với burn=0.) Vá tại
+`valid_param`.
 
 Nguồn: `pricing.ak:valid_param`, `pricing.ak` test `valid_param_negative_base_price_fail`.
 
-### 2.6 Value preservation (không-MAGIC)
+### 2.6 Value preservation @engage (TUYỆT ĐỐI)
 
 ```
-Σ value(out@script) = Σ value(in@script) − MAGIC_burned_component
+Σ value(out@engage) == Σ value(in@engage)
 ```
 
-Chính xác hơn: diff = `Σ in − Σ out`; sau khi zero-hóa thành phần MAGIC: `diff_no_magic = 0` (qua `assets.is_zero`). ADA + LAMP + mọi token khác bảo toàn tuyệt đối.
+Engage UTxO chỉ giữ ADA + thread NFT (KHÔNG MAGIC/LAMP) → bảo toàn TUYỆT ĐỐI:
+`diff = Σin@engage − Σout@engage`; `assets.is_zero(diff)`. MAGIC giảm KHÔNG xảy ra ở
+Engage UTxO mà ở VAULT UTxO (handler BurnBatch, validator khác). Không `tx.mint`.
 
-Nguồn: `consume.ak:non_magic_value_preserved`.
+Nguồn: `consume.ak:engage_value_preserved`.
 
 ---
 
@@ -152,19 +166,21 @@ required(1, 5)  = 10_000_000 × 5 = 50_000_000
 
 Nguồn: `pricing.ak:required_multiplies_count`.
 
-### TV-CM-PRICE-05: Aggregate 2 vault input (double-satisfaction check)
+### TV-CM-PRICE-05: Aggregate 2 Engage input (`==`, over-burn CẤM)
 
 ```
-vault_input_0: op_type=1, op_count=1 → required_0 = 10_000_000
-vault_input_1: op_type=1, op_count=1 → required_1 = 10_000_000
+engage_input_0: op_type=1, op_count=1 → required_0 = 10_000_000
+engage_input_1: op_type=1, op_count=1 → required_1 = 10_000_000
 total_required = 20_000_000
 
-magic_burned = 10_000_000  → REJECT (< 20_000_000)
-magic_burned = 20_000_000  → ACCEPT
-magic_burned = 25_000_000  → ACCEPT (over-burn cho phép)
+total_burned = 10_000_000  → REJECT (< 20_000_000, under-charge)
+total_burned = 20_000_000  → ACCEPT (== total_required)
+total_burned = 25_000_000  → REJECT (over-burn — accounting cấm giảm MAGIC vô cớ)
 ```
 
-Nguồn: `consume.ak:consume_double_satisfaction_fail`, `consume.ak:consume_two_inputs_happy`.
+Nguồn: `consume.ak:consume_two_engage_share_vault_undercharge_fail` (10M REJECT),
+`consume.ak:consume_two_engage_full_burn_happy` (20M ACCEPT),
+`consume.ak:consume_overburn_fail` (25M-tương-tự REJECT qua `==`).
 
 ### TV-CM-STALE: Stale price
 

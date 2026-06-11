@@ -2,6 +2,9 @@
   "name": "@magiclamp/consumemagic-pricing",
   "version": "0.1.0",
   "type": "module",
+  "main": "src/price.ts",
+  "types": "src/price.ts",
+  "exports": { ".": "./src/price.ts" },
   "scripts": { "test": "vitest run" },
   "dependencies": {
     "@magiclamp/protocol-utils": "file:../../ProtocolUtils"

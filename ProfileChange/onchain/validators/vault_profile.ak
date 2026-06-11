@@ -20,7 +20,7 @@
 //   Xem báo cáo — KHÔNG tự quyết kiến trúc nếu trùng.
 
 use aiken/collection/list
-use aiken/interval.{after}
+use aiken/interval.{after, between}
 use cardano/assets
 use cardano/transaction.{InlineDatum, OutputReference, Transaction, placeholder}
 use magiclamp/protocol/types.{
@@ -54,7 +54,17 @@ validator vault_profile(ms_per_epoch: Int) {
     expect util.count_inputs_at_script(tx.inputs, own_hash) == 1
     expect util.count_outputs_at_script(tx.outputs, own_hash) == 1
 
-    let out_raw = util.output_at_script(tx.outputs, own_hash)
+    let own_input = util.input_at_script(tx.inputs, own_hash)
+    let out_raw   = util.output_at_script(tx.outputs, own_hash)
+
+    // ── MAINNET-BLOCK fix: VALUE-CONSERVATION ──────────────────────────────
+    // Trước đây chỉ validate DATUM (lamp_balance == datum.lamp_balance ở DATUM),
+    // KHÔNG kiểm `out_raw.value`. Owner (bắt buộc ký) gửi tx giữ nguyên datum
+    // nhưng rút tLAMP/ADA thật ra ví → kế toán nguyên vẹn, token thật biến mất.
+    // ProfileChange KHÔNG động value (không mint/burn/transfer LAMP) nên value
+    // ra phải == value vào TUYỆT ĐỐI (gồm tLAMP + min-ADA + mọi token khác).
+    expect out_raw.value == own_input.value
+
     expect InlineDatum(d) = out_raw.datum
     expect output: VaultDatum = d
 
@@ -186,6 +196,8 @@ fn vault(
   }
 }
 
+// Validity range nằm TRỌN trong epoch `epoch`: [E·mspe, (E+1)·mspe − 1].
+// (E+1)·mspe − 1 chia mspe = E → e_lo == e_hi. Mô phỏng off-chain đúng chuẩn.
 fn pc_tx(
   in_d  : VaultDatum,
   out_d : VaultDatum,
@@ -201,7 +213,7 @@ fn pc_tx(
     inputs: [v_in],
     outputs: [v_out],
     extra_signatories: sigs,
-    validity_range: after(epoch * t_mspe),
+    validity_range: between(epoch * t_mspe, (epoch + 1) * t_mspe - 1),
   }
 }
 
@@ -247,7 +259,7 @@ test update_double_satisfaction_stake_cred() fail {
     inputs: [in_a, in_b],
     outputs: [out_a, out_b],
     extra_signatories: [t_owner],
-    validity_range: after(5 * t_mspe),
+    validity_range: between(5 * t_mspe, 6 * t_mspe - 1),
   }
   vault_profile.spend(t_mspe, Some(in_d), UpdateProfile { new_profile: Ember }, util.mk_ref(0), tx)
 }
@@ -299,5 +311,63 @@ test update_no_owner_sig() fail {
   let in_d = vault(Flame, 0, None, 0, 7)
   let out_d = vault(Flame, 5, Some(PendingProfile { new_profile: Ember, effective_epoch: 6 }), 5, 7)
   let tx = pc_tx(in_d, out_d, [], 5)
+  vault_profile.spend(t_mspe, Some(in_d), UpdateProfile { new_profile: Ember }, util.mk_ref(0), tx)
+}
+
+// REJECT 7 — MAINNET-BLOCK value-conservation: datum nguyên vẹn nhưng output
+// value < input value (owner rút bớt lovelace/token thật). Phải fail.
+test update_value_drain() fail {
+  let in_d = vault(Flame, 0, None, 0, 7)
+  let out_d = vault(Flame, 5, Some(PendingProfile { new_profile: Ember, effective_epoch: 6 }), 5, 7)
+  let addr = util.script_address(t_sh)
+  let val_in  = assets.from_lovelace(2_000_000)
+  let val_out = assets.from_lovelace(1_000_000)   // owner rút 1 ADA ra ví mình
+  let v_in  = util.mk_input(util.mk_ref(0), util.mk_output(addr, val_in, in_d))
+  let v_out = util.mk_output(addr, val_out, out_d)
+  let tx = Transaction {
+    ..placeholder,
+    inputs: [v_in],
+    outputs: [v_out],
+    extra_signatories: [t_owner],
+    validity_range: between(5 * t_mspe, 6 * t_mspe - 1),
+  }
+  vault_profile.spend(t_mspe, Some(in_d), UpdateProfile { new_profile: Ember }, util.mk_ref(0), tx)
+}
+
+// REJECT 8 — MAINNET-BLOCK validity span: tx span 2 epoch (lower @5, upper @6)
+// → get_epoch fail (e_lo=5 ≠ e_hi=6). Chặn epoch nhập nhằng.
+test update_validity_span_multi_epoch() fail {
+  let in_d = vault(Flame, 0, None, 0, 7)
+  let out_d = vault(Flame, 5, Some(PendingProfile { new_profile: Ember, effective_epoch: 6 }), 5, 7)
+  let addr = util.script_address(t_sh)
+  let val = assets.from_lovelace(2_000_000)
+  let v_in  = util.mk_input(util.mk_ref(0), util.mk_output(addr, val, in_d))
+  let v_out = util.mk_output(addr, val, out_d)
+  let tx = Transaction {
+    ..placeholder,
+    inputs: [v_in],
+    outputs: [v_out],
+    extra_signatories: [t_owner],
+    validity_range: between(5 * t_mspe, 6 * t_mspe + 100),   // span sang epoch 6
+  }
+  vault_profile.spend(t_mspe, Some(in_d), UpdateProfile { new_profile: Ember }, util.mk_ref(0), tx)
+}
+
+// REJECT 9 — MAINNET-BLOCK validity: upper_bound = PositiveInfinity (after()).
+// get_epoch yêu cầu upper Finite → fail-closed.
+test update_validity_unbounded_upper() fail {
+  let in_d = vault(Flame, 0, None, 0, 7)
+  let out_d = vault(Flame, 5, Some(PendingProfile { new_profile: Ember, effective_epoch: 6 }), 5, 7)
+  let addr = util.script_address(t_sh)
+  let val = assets.from_lovelace(2_000_000)
+  let v_in  = util.mk_input(util.mk_ref(0), util.mk_output(addr, val, in_d))
+  let v_out = util.mk_output(addr, val, out_d)
+  let tx = Transaction {
+    ..placeholder,
+    inputs: [v_in],
+    outputs: [v_out],
+    extra_signatories: [t_owner],
+    validity_range: after(5 * t_mspe),   // upper = PositiveInfinity
+  }
   vault_profile.spend(t_mspe, Some(in_d), UpdateProfile { new_profile: Ember }, util.mk_ref(0), tx)
 }

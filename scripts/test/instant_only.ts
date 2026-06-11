@@ -20,7 +20,7 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
+  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
   lampToOil,
 } from "../config.js";
 import { buildInstantGenTx } from "../../InstantGen/offchain/src/instant.js";
@@ -66,6 +66,7 @@ async function main() {
       POLICY_IDS.lamp,
       treasuryAddrData,
       POLICY_IDS.um_nft,
+      SCRIPT_HASHES.um_datum,   // um_script_hash — pins UM ref input (layer b)
       PROTOCOL.MS_PER_EPOCH,
     ]),
   };

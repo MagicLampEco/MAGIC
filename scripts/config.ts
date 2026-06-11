@@ -41,8 +41,11 @@ export const POLICY_IDS = {
 };
 
 // ── Asset names (hex) ─────────────────────────────────────────
+// LAMP asset name is env-overridable: mainnet LAMP and testnet tLAMP carry
+// DIFFERENT asset names. It is applied as a validator parameter (vault takes
+// lamp_asset_name) so the on-chain value check reads the real LAMP asset.
 export const ASSET_NAMES = {
-  lamp:      "744c414d50", // "tLAMP"
+  lamp:      process.env.LAMP_ASSET_NAME ?? "744c414d50", // "tLAMP" (testnet default)
   um_nft:    "554d44",     // "UMD"
   shard_nft: "5348415244", // "SHARD"
 };

@@ -1,7 +1,7 @@
 // tests/vectors.ts — ConsumeMAGIC v2.2 Normative Test Vectors (Appendix B)
 // Implementation correct ⟺ passes ALL vectors
 
-import type { MagicBatch, AppAllocation, DelegationCertificate, ActivityState, AppRegistry } from "../offchain/src/math.js";
+import type { MagicBatch, AppAllocation, DelegationCertificate, ActivityState, AppRegistry } from "../offchain/src/_appeconomics_legacy.js";
 
 // ── Helpers ──────────────────────────────────────────────────
 const Q = 1_000_000_000n;

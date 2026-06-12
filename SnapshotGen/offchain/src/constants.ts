@@ -39,13 +39,14 @@ export const MAX_LOYALTY_HOLDINGS  = 64;
 // ── Testnet config (update after aiken build) ─────────────────
 // NOTE: lampAssetName here is the TESTNET default only. The on-chain value
 // check reads the LAMP asset name from the `lamp_asset_name` VALIDATOR PARAMETER
-// (applied at deploy per-network) — mainnet LAMP carries a different asset name.
-// Mainnet builders must override lampAssetName to the real LAMP asset name.
+// (set at deploy, not a hardcoded literal). Canonical asset name = tLAMP
+// 744c414d50 (khớp Genesis lazy-mint + Faucet). Override per deploy only if the
+// target network mints LAMP under a different asset name.
 export const TESTNET_CONFIG = {
   network:          "Preview" as const,
   blockfrostUrl:    "https://cardano-preview.blockfrost.io/api/v0",
   vaultScriptHash:  "REPLACE_WITH_VAULT_SCRIPT_HASH",
   lampPolicyId:     "REPLACE_WITH_LAMP_POLICY_ID",
-  lampAssetName:    "744c414d50",  // "tLAMP" — TESTNET default; override for mainnet
+  lampAssetName:    "744c414d50",  // "tLAMP" — canonical (Genesis/Faucet)
   treasuryAddress:  "REPLACE_WITH_TREASURY_ADDRESS",
 };

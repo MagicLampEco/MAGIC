@@ -137,7 +137,8 @@ async function main() {
   // SnapshotGen vault signature: lamp_policy_id + lamp_asset_name (cho value
   // check trong mọi handler) + ms_per_epoch. Order phải khớp Aiken
   // `validator vault(lamp_policy_id, lamp_asset_name, ms_per_epoch)`.
-  // lamp_asset_name env-overridable (mainnet LAMP ≠ testnet tLAMP — MAINNET-BLOCK fix).
+  // lamp_asset_name = validator param (không hardcode literal); canonical tLAMP
+  // 744c414d50 (Genesis/Faucet), env-overridable per deploy.
   const appliedCbor = applyParamsToScript(
     unapplied.compiledCode,
     [POLICY_IDS.lamp, ASSET_NAMES.lamp, PROTOCOL.MS_PER_EPOCH],

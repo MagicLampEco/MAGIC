@@ -15,6 +15,12 @@ pub fn own_address(own_ref: OutputReference, inputs: List<Input>) -> Address {
   i.output.address
 }
 
+/// Currently-being-spent input (dùng cho value-preservation: cần value của input).
+pub fn own_input(own_ref: OutputReference, inputs: List<Input>) -> Input {
+  expect Some(i) = list.find(inputs, fn(x) { x.output_reference == own_ref })
+  i
+}
+
 pub fn own_script_hash(own_addr: Address) -> ByteArray {
   expect Script(h) = own_addr.payment_credential
   h

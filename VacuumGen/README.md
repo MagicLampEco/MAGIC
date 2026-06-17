@@ -31,7 +31,7 @@ VacuumGen/
 │   │   ├── math.ak         # computeVacuumMagic, getSmQ, C-UM-7
 │   │   └── lock.ak         # youngest-first lock + remove_locked_amount
 │   └── validators/
-│       └── vault.ak        # VacuumCommit + VacuumFire redeemers
+│       └── vault.ak        # VacuumCommit + VacuumFire + WithdrawLamp + BurnBatch + SetDelegate
 ├── offchain/src/
 │   ├── math.ts             # BigInt engine
 │   ├── vacuum.ts           # buildVacuumCommitTx + buildVacuumFireTx

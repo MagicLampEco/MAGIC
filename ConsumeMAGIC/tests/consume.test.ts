@@ -9,7 +9,7 @@ import {
   computeBalance,
   type MagicBatch, type DelegationCertificate, type AppRegistry, type ActivityState,
   DELEGATION_FEE_BPS, MIN_SELF_CAPACITY_BPS, DRM_LOOKBACK, MIN_BURN_FOR_OAC_COUNT,
-} from "../offchain/src/math.js";
+} from "../offchain/src/_appeconomics_legacy.js";
 import {
   batch, cert, activeRegistry,
   TV_HALVE_001, TV_HALVE_002, TV_HALVE_003,

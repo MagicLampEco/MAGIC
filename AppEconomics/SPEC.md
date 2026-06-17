@@ -9,7 +9,7 @@
 
 ### Mục đích
 
-AppEconomics định nghĩa cách phân bổ phần thưởng MAGIC mỗi epoch cho các **App Operator** dựa trên năm yếu tố đo lường hiệu suất thực tế: khối lượng stake (V), mức độ sử dụng (Φ_util), lưu lượng người dùng (Φ_users), tỷ lệ tranh chấp (Φ_dispute), và tuổi của ứng dụng (Φ_age). Công thức W là hàm thưởng lõi; `distribute` áp dụng cap 30% và tái phân phối phần dư.
+AppEconomics định nghĩa cách phân bổ phần thưởng MAGIC mỗi epoch cho các **App Operator** dựa trên năm yếu tố đo lường hiệu suất thực tế: khối lượng stake (V), mức độ sử dụng (Φ_util), lưu lượng người dùng (Φ_users), tỷ lệ tranh chấp (Φ_dispute), và tuổi của ứng dụng (Φ_age). Công thức W là hàm thưởng lõi; `distribute` áp dụng **dust gate (sàn 0.5% pool, chặn đáy)** rồi cap 30% (chặn đỉnh) và tái phân phối phần dư.
 
 **Lý do offchain-only:** W chạy mỗi epoch trên toàn bộ tập apps — O(|A|) phép tính với các BigInt lớn và nhiều vòng lặp phân bổ. Chi phí ExUnit on-chain sẽ vượt Cardano block limit khi |A| > ~20. Kết quả W được commit on-chain qua governance Merkle root (§10.3), không cần validator tính lại.
 
@@ -46,7 +46,12 @@ AppEconomics định nghĩa cách phân bổ phần thưởng MAGIC mỗi epoch 
 | deltaQ ≥ Q² / DISPUTE_BETA_Q (= 200_000_000n, tức 20%) | Φ_dispute = 0n → W = 0n |
 | age < GRACE_PERIOD | Φ_age < Q, app nhận thưởng giảm dần |
 | emergencyPen > 0 và emergencyPen ≤ Q | κ giảm theo penalty, W giảm tỷ lệ |
-| emergencyPen > Q | **Không hợp lệ** — kap_eff < 0n → W < 0n, vi phạm W-3. Caller phải đảm bảo emergencyPen ∈ [0, Q] |
+| emergencyPen > Q | **Được guard** — clamp về Q (kap_eff = 0n → W = 0n). W không bao giờ âm (W-3) |
+| emergencyPen < 0 | **Được guard** — clamp về 0 (không phạt), W = W(emergencyPen=0) |
+| weights[a] < 0 trong `distribute` | **Được guard** — throw lỗi (W luôn ≥ 0 theo W-3; weight âm = input dị dạng) |
+| App có share tự nhiên < 0.5% pool (dust) | **Được gate (W-12)** — reward 0, loại khỏi mẫu số + tái phân phối; excess → BountyPool, không leak |
+| Tất cả app đều dưới sàn (A_eligible rỗng) | Tất cả rewards = 0n, không panic (Wtotal=0 sau gate) |
+| `minShareBps = 0n` | Tắt gate — giữ hành vi 3-tham-số cũ (dust leak quay lại, đã tài liệu hoá) |
 
 **Out-of-scope:**
 - On-chain validator tính W (xem lý do offchain-only ở trên).
@@ -158,10 +163,16 @@ Nguồn: `AppEconomics/offchain/src/math.ts:105–108`.
 
 ```
 κ = { Tier1: Q, Tier2: 1.2Q, Tier3: 1.5Q }
-κ_effective = κ × (Q − emergencyPen) / Q   nếu emergencyPen > 0
+ep_clamped  = clamp(emergencyPen, 0, Q)          — guard W-3 (xem dưới)
+κ_effective = κ × (Q − ep_clamped) / Q           nếu ep_clamped > 0
 ```
 
-Nguồn: `AppEconomics/offchain/src/math.ts:25`.
+**Guard W-3 (emergencyPen):** `computeW` clamp `emergencyPen` về `[0, Q]` trước khi
+tính `kap_eff`. `emergencyPen > Q` → clamp về Q → `kap_eff = 0` → W = 0 (không âm);
+`emergencyPen < 0` → clamp về 0 (không phạt). Không còn là "caller invariant" — code
+tự đảm bảo W ≥ 0 với mọi giá trị `emergencyPen`.
+
+Nguồn: `AppEconomics/offchain/src/math.ts:25`, guard tại `computeW`.
 
 ### §9.3 W — Hàm phần thưởng
 
@@ -178,22 +189,58 @@ W(a, e) = 0                              nếu V = 0
 
 Nguồn: `AppEconomics/offchain/src/math.ts:123–150`.
 
-### §10 Phân bổ reward có cap
+### §10 Phân bổ reward có sàn (dust gate) + cap
 
 ```
-cap = X × capBps / 10000
-r₀(a) = W(a) × X / W_total          — phân bổ tỷ lệ ban đầu
+W_total_all = Σ_{a ∈ A} W(a)                         — mẫu số trên TOÀN tập
+minShare    = X × minShareBps / 10000                — sàn tuyệt đối theo pool
+
+# §10.0 Dust gate (W-12) — lọc trước khi cap
+A_eligible = { a ∈ A : ⌊W(a) × X / W_total_all⌋ ≥ minShare }   nếu minShareBps > 0
+           = A                                                   nếu minShareBps = 0 (tắt gate)
+r(a) = 0  với mọi a ∉ A_eligible          — dust nhận 0, loại khỏi mẫu số + tái phân phối
+
+# §10.1 Cap redistribution — chỉ trên A_eligible
+W_total = Σ_{a ∈ A_eligible} W(a)         — re-normalise theo survivors
+cap     = X × capBps / 10000
+r₀(a)   = W(a) × X / W_total               — phân bổ tỷ lệ ban đầu (a ∈ A_eligible)
 
 Lặp cho đến khi excess = 0:
   excess = Σ max(0, r(a) − cap)
   r(a)   = cap  nếu r(a) > cap
-  Tái phân bổ excess theo tỷ lệ W cho các apps chưa hit cap
+  Tái phân bổ excess theo tỷ lệ W cho các apps trong A_eligible chưa hit cap
 ```
 
-**Theorem 10.1 Hội tụ:** Vòng lặp kết thúc sau ≤ |A| + 1 bước vì mỗi iteration, ít nhất một app hit cap và ra khỏi tập uncapped.  
-**MAX_SINGLE_APP_REWARD_BPS = 3000n** (30%) [Constitutional]  
+**§10.0 Dust gate — cơ chế chống dust-app (W-12).**
 
-Nguồn: `AppEconomics/offchain/src/math.ts:156–193`.
+*Vector tấn công:* 1 app thật bị cap tại 30% sẽ nhả 70% pool dạng excess. Không có sàn, excess được tái phân phối theo raw weight → 1 app rác `W=1` (không tiêu thụ MAGIC thật) hút trọn 70% chỉ nhờ "chưa hit cap". Cap chặn **đỉnh**; gate chặn **đáy**.
+
+*Cơ chế đã chọn — minimum-activity gate (sàn theo share tương đối pool):* App chỉ tham gia nếu **share tự nhiên (pre-cap)** `⌊W·X/W_total_all⌋ ≥ minShare`. Gate đánh trên share tự nhiên (KHÔNG phải reward sau tái phân phối) — đây là điểm mấu chốt: đảm bảo excess tái phân phối không bao giờ "hồi sinh" một dust app. App bị gate nhận reward 0 và bị loại khỏi mẫu số chia phần + khỏi vòng tái phân phối, dồn pool về các app có hoạt động thật.
+
+*Tại sao chọn gate thay vì sàn weight tuyệt đối / hybrid:*
+- **Sàn weight tuyệt đối (mỗi app được đảm bảo ≥ floor_bps):** SAI hướng — nó *bảo đảm* cho dust một phần pool, giải bài toán ngược (giúp app nhỏ trung thực), không chống dust. Bác bỏ.
+- **Minimum-activity gate (đã chọn):** đánh đúng gốc — dust `W=1` đơn giản không phải người tham gia. "Muốn chia pool phải làm việc thật."
+- **Hybrid = gate (đáy) + cap (đỉnh):** đây chính là thiết kế cuối. Gate và cap là đối ngẫu, cùng bound mỗi participant về `[0 nếu ngoài gate, cap nếu trong gate]`.
+
+*Tại sao sàn tương đối (% pool) thay vì ngưỡng nanogic tuyệt đối:* ngưỡng tuyệt đối lỗi thời khi pool tăng. Sàn theo share tự pool — "phải đại diện ≥ X% hoạt động thật" — tự co giãn, ổn định tham số.
+
+**Theorem 10.1 Hội tụ:** Vòng lặp cap kết thúc sau ≤ |A_eligible| + 1 bước vì mỗi iteration ≥ 1 app hit cap và ra khỏi tập uncapped. Gate chỉ co tập (monotone exclusion), không thêm vòng lặp.  
+**MAX_SINGLE_APP_REWARD_BPS = 3000n** (30%) [Constitutional]  
+**MIN_APP_SHARE_BPS = 50n** (0.5% pool) [Constitutional] — sàn dust gate; `minShareBps=0n` tắt gate (giữ tương thích caller 3-tham-số cũ).  
+
+**Guard W-10 (weight âm):** `distribute` throw lỗi nếu bất kỳ `weights[a] < 0`. W
+luôn ≥ 0 theo W-3, nên weight âm là input dị dạng. Nếu cho phép, một app weight-âm
+có thể bị tái phân phối thành reward dương qua vòng lặp cap (Wunc biến contributor âm
+thành kẻ chiếm cap), và Wtotal sẽ sai lệch mẫu số chia phần. Fail loud thay vì phân
+bổ sai âm thầm.
+
+**Guard W-12 (dust gate):** `distribute` loại mọi app có share tự nhiên
+`⌊W·X/W_total_all⌋ < minShare = X·minShareBps/10000` TRƯỚC vòng cap. App bị loại
+nhận reward 0, không tham gia mẫu số chia phần hay tái phân phối excess. Đây là phòng
+thủ chống dust-app value-leak (xem §10.0). `minShareBps=0n` tắt gate. Guard W-10 (weight
+âm) vẫn chạy trên TOÀN tập app trước gate, nên weight âm trên app sẽ-bị-gate vẫn throw.
+
+Nguồn: `AppEconomics/offchain/src/math.ts` — gate + cap trong `distribute`.
 
 ### Boundary conditions
 
@@ -317,13 +364,39 @@ Expected:
 
 Nguồn: `AppEconomics/tests/appeconomics.test.ts:205–231`.
 
+### TV-014: Dust gate (W-12 — minimum-activity floor)
+
+```
+Input:
+  X = 1_000_000 MAGIC
+  weights = { Real: 1_000_000 MAGIC, D0..D9: 1 nanogic mỗi app }
+  capBps = 3000 (30%), minShareBps = 50 (0.5%)
+
+Trước fix (gate tắt, minShareBps=0):
+  Real bị cap 30%; 70% excess tái phân phối cho 10 dust → dustTotal ≈ 69.99% (VALUE LEAK)
+
+Sau fix (gate = 50 bps):
+  share tự nhiên mỗi dust = ⌊1 × X / W_total_all⌋ = 0 ≪ minShare = 5_000 MAGIC → bị gate
+  Real = đúng 300_000 MAGIC (cap 30%); mỗi dust = 0; dustTotal = 0
+  Excess 70% → BountyPool (KHÔNG leak); Σ rewards ≤ X (W-5)
+
+Boundary:
+  weights = { Big: 9901, Edge: 50, Dust: 49 }  (Σ = 10000)
+  Edge share = 0.50% = minShare → survives;  Dust share = 0.49% < minShare → reward 0
+
+Regression: A70/B20/C10 (mỗi ≥ 10% ≫ 0.5%) phân bổ y nguyên — không app nào bị gate.
+Escape hatch: minShareBps=0n → khôi phục hành vi leak cũ (tài liệu hoá).
+```
+
+Nguồn: `AppEconomics/tests/appeconomics.test.ts` — describe "TV-014: dust-app gate".
+
 ### TV-007: Merkle claim (T11 Soundness)
 
 Cây Merkle blake2b256. Forging proof đòi second preimage — độ khó 2^256 classical.  
 Implementation tại `scripts/deploy/` (ngoài scope module này).  
 Nguồn: `AppEconomics/tests/appeconomics.test.ts:237–242`.
 
-> **Lưu ý thực thi:** Test TV-007 hiện là stub `expect(true).toBe(true)` — T11 Soundness **không được kiểm tra** trong bộ 33/33 tests. Merkle verification thực tế nằm trong `scripts/deploy/` và chưa được tích hợp vào test suite AppEconomics. Integrator không nên dựa vào TV-007 như bằng chứng kiểm thử T11.
+> **Lưu ý thực thi:** Test TV-007 hiện là stub `expect(true).toBe(true)` — T11 Soundness **không được kiểm tra** trong bộ 54/54 tests. Merkle verification thực tế nằm trong `scripts/deploy/` và chưa được tích hợp vào test suite AppEconomics. Integrator không nên dựa vào TV-007 như bằng chứng kiểm thử T11.
 
 ### TV-008: Sai số Q-format ≤ 7 nanogic
 
@@ -378,13 +451,16 @@ Không có Datum/Redeemer Aiken type vì module offchain-only.
 |---|---|---|
 | W-1 | V = 0 → W = 0 (guard) | `math.ts:133` |
 | W-2 | W ≤ W_exact (user-unfavorable, Lemma 3.2) | `math.ts:142–149` |
-| W-3 | W ≥ 0 (BigInt không âm với input hợp lệ) — **điều kiện cần:** emergencyPen ∈ [0, Q]; nếu emergencyPen > Q thì kap_eff < 0n và W < 0n (caller invariant, không được guard trong code) | cấu trúc BigInt + caller |
+| W-3 | W ≥ 0 với **mọi** giá trị emergencyPen — `computeW` clamp emergencyPen về [0, Q] (>Q→Q, <0→0), kap_eff ∈ [0, κ] ⇒ W không bao giờ âm | guard trong `computeW` |
 | W-4 | Wtotal = 0 → distribute trả về tất cả 0, không panic | `math.ts:163` |
 | W-5 | Σ rewards ≤ X (T3 Conservation) | `math.ts:165–191` |
 | W-6 | rewards[a] ≤ cap với mọi a (§10) | `math.ts:173–174` |
 | W-7 | Vòng lặp distribute kết thúc trong ≤ |A|+1 bước (T10.1) | `math.ts:177` |
 | W-8 | δ_q denominator ≥ DRATE_PRIOR = 10 > 0 (T20, không chia 0) | `math.ts:113` |
 | W-9 | BigInt everywhere — không dùng Number cho amounts (C-OVERFLOW) | toàn bộ math.ts |
+| W-10 | `distribute` throw nếu bất kỳ `weights[a] < 0` — weight âm là input dị dạng (W luôn ≥ 0 theo W-3); fail-loud thay vì mis-allocate qua vòng cap | guard trong `distribute` |
+| W-11 | `distribute` throw nếu pool `X < 0` — pool reward (nanogic) ≥ 0 theo cấu tạo; X âm sẽ lật dấu mọi reward, phòng thủ-theo-tầng | guard trong `distribute` |
+| W-12 | Dust gate — app có share tự nhiên `⌊W·X/W_total_all⌋ < X·minShareBps/10000` nhận reward 0 và bị loại khỏi phân bổ; gate đánh trên share PRE-cap nên excess không hồi sinh dust; `minShareBps=0n` tắt gate | gate trong `distribute` |
 
 ### eUTXO flow
 
@@ -445,19 +521,27 @@ npm install
 | T-5 | TV-002: utilHistory=[Q,Q,Q,0,0,0] | Φ_util_adj=Q/2 (burst penalty) |
 | T-6 | weights={} hoặc Wtotal=0 | Tất cả rewards=0, không panic |
 | T-7 | verifyVd(V, Vd+1) | false (over-claim bị bắt) |
+| T-8 | TV-011: emergencyPen=1.5Q (>Q) | W=0, KHÔNG âm (W-3 guard) |
+| T-9 | TV-011: emergencyPen<0 | W=W(emergencyPen=0) (clamp về 0) |
+| T-10 | TV-012: weights có app weight âm | throw `negative weight` (W-10 guard) |
+| T-11 | TV-013: pool X < 0 | throw `negative pool` (W-11 guard); X=0 → tất cả 0 |
+| T-12 | TV-014: 1 real (cap) + 10 dust(W=1) | dust = 0 (KHÔNG 70%), Real = 30%, Σ ≤ X (W-12 gate) |
+| T-13 | TV-014 boundary: share 0.50% vs 0.49% | 0.50% survives, 0.49% gated |
+| T-14 | TV-014 escape: minShareBps=0n | gate tắt, dust leak quay lại (regression doc) |
 
 **Chạy tests:**
 ```bash
 cd /Users/ductiger/Projects/MAGIC/AppEconomics/offchain
 npm test
-# Expected: 33/33 pass
+# Expected: 54/54 pass
 ```
 
 ### Known limits
 
 | Limit | Giá trị | Lý do |
 |---|---|---|
-| MAX_SINGLE_APP_REWARD_BPS | 3000 (30%) [Constitutional] | Ngăn monopoly phần thưởng |
+| MAX_SINGLE_APP_REWARD_BPS | 3000 (30%) [Constitutional] | Ngăn monopoly phần thưởng (chặn đỉnh) |
+| MIN_APP_SHARE_BPS | 50 (0.5% pool) [Constitutional] | Dust gate — chặn dust-app hút excess (chặn đáy, W-12) |
 | USERS_TARGET | 100 [Routine] | Ngưỡng Φ_users = Q |
 | GRACE_PERIOD | 6 epochs [Routine] | ~30 ngày Preview |
 | isqrt_10th max input | V ≤ S_LAMP_TOTAL = 36×10^15 → V^7 ≈ 10^110 | BigInt safe (đã test) |
@@ -489,6 +573,17 @@ Xem mục "Offchain-only" ở TECH.md. Ngắn gọn: ExUnit cost O(|A|) prohibit
 ### Tại sao Bayesian prior cho dispute rate?
 
 App mới hoàn toàn bị oan với 1 dispute đầu tiên nếu dùng raw rate (δ = 100%). Prior=10 = "tương đương 10 giao dịch sạch từ trước" — đủ buffer cho app mới, đủ nhạy cảm cho app lâu dài với nhiều disputes.
+
+### Tại sao dust gate (sàn) thay vì chỉ cap?
+
+Cap 30% chặn **đỉnh** (chống monopoly), nhưng để hở **đáy**: khi app thật bị cap, 70% pool nhả ra dạng excess và được tái phân phối theo raw weight — một app rác `W=1` (không tiêu thụ MAGIC thật) hút trọn 70% chỉ nhờ "chưa hit cap". Đây là value-leak nghiêm trọng (đã đo: dust 10 app `W=1` hút 69.99% pool trước fix).
+
+First-principles: gốc lỗi không phải cap mà là **quyền nhận** chưa từng bị gate theo đóng góp thật. Ba lựa chọn:
+- **Sàn weight tuyệt đối** (mỗi app đảm bảo ≥ floor): SAI hướng — *bảo đảm* cho dust một phần, giải bài toán ngược. Bác bỏ.
+- **Minimum-activity gate** (đã chọn): app phải có share tự nhiên ≥ 0.5% pool mới được chia. Dust `W=1` đơn giản không phải participant.
+- **Hybrid = gate + cap** (thiết kế cuối): gate và cap đối ngẫu — bound mỗi app về `[0 nếu ngoài gate, cap nếu trong]`.
+
+Sàn **tương đối theo % pool** (không phải ngưỡng nanogic tuyệt đối) để tự co giãn khi pool tăng. Gate đánh trên share **pre-cap** để excess tái phân phối không hồi sinh dust. 0.5% với cap 30% ⇒ tối đa ~3 app hit cap, phần còn lại trải trên các app mỗi app ≥ 0.5% — số participant bị bound, hết dust.
 
 ### Tại sao variance penalty?
 

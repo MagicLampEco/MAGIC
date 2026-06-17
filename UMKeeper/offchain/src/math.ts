@@ -17,10 +17,11 @@ export function clampUM(x: bigint): bigint {
   return x;
 }
 
-export function appendHistory(history: bigint[], newRaw: bigint): bigint[] {
-  // C-UM-2: keep last ≤ 6 raw values (NOT clamped — spec stores raw values)
-  // Clamping happens only at the smoothed output level (computeNewUM)
-  return [...history, newRaw].slice(-UM_WINDOW);
+export function appendHistory(history: bigint[], value: bigint): bigint[] {
+  // C-UM-2: pure sliding window — keep last ≤ 6 entries.
+  // P8: caller (computeNewUM) clamps BEFORE append để khớp Aiken
+  // `append_capped(history, clamped_raw, 6)` — history lưu giá trị đã clamp.
+  return [...history, value].slice(-UM_WINDOW);
 }
 
 export function computeSMA(history: bigint[]): bigint {
@@ -35,8 +36,12 @@ export interface UMDatum {
 }
 
 export function computeNewUM(datum: UMDatum, epochBurns: bigint, epochMints: bigint) {
-  const newRaw     = computeUMRaw(epochBurns, epochMints);
-  const newHistory = appendHistory(datum.history, newRaw);
+  // P8: clamp-before-append. Aiken `append_capped(history, clamped_raw, 6)`
+  // lưu giá trị ĐÃ CLAMP vào history → TS phải làm giống để `history` trong
+  // datum khớp bit-identical (double clamp: lần 1 ở đây, lần 2 ở SMA output).
+  const newRaw      = computeUMRaw(epochBurns, epochMints);   // raw cho redeemer new_raw
+  const clampedRaw  = clampUM(newRaw);
+  const newHistory  = appendHistory(datum.history, clampedRaw);
   const newSmoothed = clampUM(computeSMA(newHistory));
   return { newSmoothed, newHistory, newRaw };
 }

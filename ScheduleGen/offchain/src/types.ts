@@ -175,6 +175,12 @@ export const VaultRedeemerSchema = Data.Enum([
   Data.Object({ BurnBatch: Data.Object({                                     // constr 2
     burns: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
   })}),
+  Data.Object({ WithdrawLamp: Data.Object({                                  // constr 3
+    amount: Data.Integer(),
+  })}),
+  Data.Object({ SetDelegate: Data.Object({                                   // constr 4
+    new_delegate: Data.Nullable(Data.Bytes()),
+  })}),
 ]);
 export type VaultRedeemer = Data.Static<typeof VaultRedeemerSchema>;
 

@@ -22,6 +22,8 @@ VacuumGen là cơ chế tạo MAGIC theo mô hình **two-phase commit-then-fire*
 | **Anyone** | Bất kỳ ví nào đều có thể submit VacuumFire (C-VAC-FIRE-PERMISSION) |
 | **Treasury** | Địa chỉ script nhận LAMP tại fire (INV-43) |
 | **UMKeeper** | Cập nhật UMDatum mỗi epoch; VacuumFire đọc qua reference input |
+| **Consume-delegate** (`personal_delegate`) | Bên thứ ba (paymaster) được owner uỷ quyền kích hoạt BurnBatch — tiêu MAGIC thay owner. Owner đặt/xoá qua SetDelegate |
+| **ConsumeMAGIC validator** | Validator engagement co-spend cưỡng chế `Σ burns == required` theo PriceParam beacon (ngoài module này) |
 
 ---
 
@@ -56,6 +58,20 @@ VacuumGen là cơ chế tạo MAGIC theo mô hình **two-phase commit-then-fire*
 
 Owner rút LAMP chưa khóa bất kỳ lúc nào (W-1..W-7). `last_updated_epoch` không đổi để không reset cửa sổ Snapshot catch-up.
 
+### 3.4 BurnBatch — tiêu MAGIC (datum-consume)
+
+MAGIC là số kế toán trong `magic_batches`; tiêu MAGIC = hạ `current_amount`.
+
+1. Owner HOẶC `personal_delegate` ký (auth).
+2. Prune batch hết hạn trước (cliff), rồi áp từng `(batch_id, amount)`: trừ tại chỗ, prune batch về 0.
+3. `attribution.total_events += 1`, `last_event_epoch = current_epoch`.
+4. LAMP KHÔNG đổi (chỉ chạm magic_batches).
+5. Coupling giá (`Σ burns == required`) do validator ConsumeMAGIC co-spend cưỡng chế qua PriceParam beacon. Handler vault chỉ đảm bảo phép trừ đúng + bảo toàn value + auth.
+
+### 3.5 SetDelegate — đặt/xoá consume-delegate
+
+Owner (chỉ owner) ký, đặt `personal_delegate = new_delegate` (`None` = chỉ owner, `Some(d)` = owner hoặc d). Mọi field khác bất biến. Không cooldown.
+
 ---
 
 ## 4. Edge Cases (MECE)
@@ -73,9 +89,18 @@ Owner rút LAMP chưa khóa bất kỳ lúc nào (W-1..W-7). `last_updated_epoch
 | 2+ vault outputs | Reject C-VAULT-OUT-1 |
 | Thử huỷ order | Không có redeemer Cancel → validator `fail` catch-all |
 | Key mất sau commit | Fire vẫn thực hiện được — permissionless |
-| Datum mismatch (tamper) | Từng field được kiểm tra riêng trong A02 — bao gồm `activity_state` và `attribution` tại cả 3 redeemer (VacuumCommit, VacuumFire, WithdrawLamp) |
+| Datum mismatch (tamper) | Từng field được kiểm tra riêng trong A02 ở MỌI redeemer (VacuumCommit, VacuumFire, WithdrawLamp, BurnBatch, SetDelegate) — bao gồm `activity_state`, `attribution`, `personal_delegate` |
 | Withdrawal tăng last_updated_epoch | Reject W-5 |
 | Withdrawal của LAMP đang locked | Reject W-3: `amount > L_avail` |
+| BurnBatch không có owner/delegate ký | Reject (AUTH) |
+| BurnBatch over-burn (`amount > current_amount`) | Reject (`apply_burns`) |
+| BurnBatch batch_id không tồn tại / trùng | Reject (count khớp == 1) |
+| BurnBatch rỗng (`burns == []`) | Reject (no-op vô nghĩa) |
+| BurnBatch đụng LAMP / siphon LAMP | Reject (value-leak guard + `lamp_balance` bất biến) |
+| SetDelegate do delegate (không phải owner) ký | Reject (chỉ owner) |
+| SetDelegate output delegate ≠ redeemer | Reject (A02) |
+| Tx span nhiều epoch / upper-bound mở | Reject `get_current_epoch` (cả 2 biên Finite + `lo/ms == hi/ms`) — chống validity-range gaming |
+| UM ref input giả mạo (NFT đúng, sai script) | Reject `find_um_datum` (ghim `Script(um_script_hash)`) |
 
 ---
 
@@ -100,6 +125,12 @@ Owner rút LAMP chưa khóa bất kỳ lúc nào (W-1..W-7). `last_updated_epoch
 | C-VAULT-OUT-1 | Đúng 1 vault output / tx |
 | C-VAULT-9 | `lamp_locked == sum_locked(holdings)` — enforce tại VacuumCommit (dòng 137-139); không enforce tại VacuumFire (lamp_locked thay đổi đúng bởi các check tường minh trên từng field) |
 | C-VAULT-10 | `sum_holdings(holdings) == lamp_balance` |
+| C-VAC-BURN-1 | BurnBatch: auth = owner HOẶC `personal_delegate`; `burns` không rỗng; mỗi burn `0 < amount ≤ current_amount`, đúng 1 batch khớp `batch_id` |
+| C-VAC-BURN-2 | BurnBatch: chỉ `magic_batches` + `last_updated_epoch` + `attribution` đổi; LAMP bất biến; `attribution.total_events += 1` |
+| C-VAC-BURN-3 | Coupling giá (`Σ burns == required`) cưỡng chế bởi ConsumeMAGIC co-spend (PriceParam beacon) — cross-module |
+| C-VAC-DELEG-1 | SetDelegate: chỉ owner đổi `personal_delegate`; mọi field khác bất biến; không cooldown |
+| C-VAC-EPOCH-1 | `get_current_epoch`: cả 2 biên validity_range Finite VÀ `lo/ms == hi/ms` (tx trọn 1 epoch) — chống validity-range gaming, bảo vệ EXACT C-VAC-6 + stamp epoch |
+| C-UM-SCRIPT | `find_um_datum` ghim UM ref input về `Script(um_script_hash)` ngoài UM NFT — chống UM giả mạo |
 | T5 | Lock youngest-first tại commit → free = oldest → LF(free) tối đa |
 | P8 | Aiken ↔ TypeScript bit-identical cho cùng input |
 

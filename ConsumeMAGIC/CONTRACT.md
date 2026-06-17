@@ -1,13 +1,21 @@
-# ConsumeMAGIC — CONTRACT v1 "Đốt thật + định giá tiêu thụ" (orchestrator ghim 2026-06-07)
+# ConsumeMAGIC — CONTRACT v2 "Tiêu MAGIC dạng kế toán + định giá" (rewrite D1, 2026-06-10)
 
-**Trạng thái:** interface contract KHÓA, mọi spec/code bám file này. Lý do tồn tại: audit 2026-06-07
-phát hiện ConsumeMAGIC hiện **chỉ là math offchain** (31 test) — chưa validator onchain, chưa tx-builder,
-chưa interface định giá. App tiêu MAGIC chưa "đốt thật". File này ghim 2 mảnh còn trống:
-(A) **định giá tiêu thụ per nghiệp vụ**; (B) **đốt MAGIC thật on-chain an toàn**.
+**Trạng thái:** interface contract KHÓA, mọi spec/code bám file này. CONTRACT v1 (2026-06-07, PR #13)
+dùng mô hình **token-burn** (`tx.mint` âm MAGIC) — **ĐÃ THAY** ở v2. Lý do: ràng buộc vĩnh viễn xác
+định MAGIC = **số kế toán trong vault datum**, KHÔNG token, KHÔNG MintingPolicy, KHÔNG `tx.mint`. PR #13
+`consume.ak` đốt-token vi phạm ràng buộc này → viết lại thành engagement-state validator.
 
-> Nguyên tắc nền (CLAUDE.md): LAMP fixed-supply **KHÔNG BAO GIỜ burn**. MAGIC thì **đốt được** (MAGIC
-> sinh từ đốt LAMP qua generator — khác bản chất LAMP). ConsumeMAGIC chỉ chạm policy MAGIC, TUYỆT ĐỐI
-> không chạm LAMP/ADA value.
+> Nguyên tắc nền (CLAUDE.md): LAMP cố định 36 tỷ **KHÔNG BAO GIỜ burn**. MAGIC **KHÔNG là token** —
+> nó là `current_amount` của `MagicBatch` trong `VaultDatum.magic_batches`. **Tiêu MAGIC = GIẢM
+> `current_amount`** qua handler `BurnBatch` của VAULT validator (generator). ConsumeMAGIC TUYỆT ĐỐI
+> không `tx.mint`, không chạm MAGIC trực tiếp; nó là lớp **PRICING + ENGAGEMENT/ATTRIBUTION** per-app.
+
+> **THAY THẾ so với PR #13 (v1) — ghi rõ chỗ:** (1) bỏ tham số `magic_policy/magic_name`; (2) bỏ
+> `check_only_magic_burn` / `magic_burned` / `non_magic_value_preserved` (đặc thù mint); (3) `consume.ak`
+> không còn validator nào chạm `tx.mint`; (4) `consume` từ "đốt token" → "engagement-state validator"
+> ép cùng tx có 1 vault input spend bằng `BurnBatch` với `Σburns == required`; (5) `EngageDatum` thêm
+> `did_commit` (field cuối, append-only); (6) over-burn `≥` (v1, đốt token mất luôn) → `==` (v2,
+> accounting: over-burn = giảm MAGIC user vô cớ → CẤM).
 
 ## A. Định giá tiêu thụ (consume-side pricing) — interface `price_per_op`
 
@@ -33,7 +41,19 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
 - **Bất biến:** `price` đơn điệu không-giảm theo `load`; bị chặn `[base×m_min, base×m_max]`; pure BigInt,
   không float; hội tụ về `base×SMA` trong ≤ N epoch khi load ổn định.
 
-## B. Đốt MAGIC thật on-chain — validator + bất biến
+## B. Tiêu MAGIC dạng kế toán on-chain — validator + bất biến
+
+### B0. Mô hình 2-validator co-spend (rewrite D1)
+Tiêu MAGIC = **1 tx co-spend 2 validator**:
+- **Vault input** (generator vault validator, module khác) spend bằng `BurnBatch { burns }` →
+  GIẢM `current_amount` các `MagicBatch`. Vault là nơi DUY NHẤT giảm MAGIC.
+- **Engage UTxO** (ConsumeMAGIC `consume.ak`) spend bằng `Consume { op_type, op_count, price_ref,
+  vault_ref }` → ghi state per-app, ép `Σburns == required`.
+
+`consume.ak` đọc redeemer `BurnBatch` của `vault_ref` qua `tx.redeemers` (purpose Spend), giải mã
+`burns` bằng `builtin.un_constr_data` (param `burn_batch_constr` = constr index BurnBatch của vault đó:
+Instant=2, Snapshot=1, Vacuum=4, Schedule=2 — per-vault deploy). Hai validator đọc **CÙNG** PriceParam
+beacon + **CÙNG** `op_type/op_count` → giá không lệch. KHÔNG `tx.mint`.
 
 ### B1. Beacon `PriceParam` (reference input — CIP-31, KHÔNG tiêu)
 DAO/keeper post 1 UTxO mang `PriceParam` NFT one-shot (mẫu `beacon_nft.ak`). Datum:
@@ -47,47 +67,74 @@ PriceParam {
 ```
 Validator consume ĐỌC giá từ đây — **KHÔNG tin amount client mớm**. Giá có thẩm quyền = chống spam thật.
 
-### B2. Redeemer + bất biến validator `consume` (Aiken Plutus V3)
-Redeemer `Consume { op_type: Int, op_count: Int, price_ref: OutputReference }`. Validator ÉP:
+### B2. Redeemer + bất biến validator `consume` (engagement-state, Aiken Plutus V3)
+Redeemer `Consume { op_type: Int, op_count: Int, price_ref: OutputReference, vault_ref: OutputReference }`.
+`EngageDatum { owner, consumed_count, last_epoch, did_commit }`. Validator ÉP:
 
-- **C-CM-1 (policy đúng):** `tx.mint` chỉ chứa entry policy MAGIC, **giá trị ÂM** (đốt) đúng lượng.
-  ADA + LAMP + mọi asset khác trong value: **bảo toàn tuyệt đối** (chống drain — bài học M1 Treasury).
-- **C-CM-2 (đốt ≥ giá quote):** đọc `PriceParam` qua `price_ref` reference input (xác thực bằng NFT
-  policy), tính `required = Σ price(op_type)×op_count`, ép `magic_burned ≥ required`. Giá lấy từ beacon,
-  KHÔNG từ redeemer.
-- **C-CM-3 (double-satisfaction):** đếm theo **payment script hash**; nếu N input vault / N redeemer
-  trong 1 tx → GỘP tổng `magic_burned` so với tổng `required` (1 lần mint âm không "thỏa" cho nhiều
-  input). Bài học C1/C2 Distribution.
-- **C-CM-4 (replay / freshness):** state engagement (OAC window, attribution chain — đã có ở math.ts)
-  neo vào **continuing output** của vault UTxO duy nhất (thread/beacon token), không replay được.
-- **C-CM-5 (stale price):** ép `current_epoch − PriceParam.epoch ≤ MAX_PRICE_STALE` (param) — chống
-  dùng giá cũ khi demand đã tăng.
+- **C-CM-1 (value preservation @engage):** Engage UTxO chỉ giữ ADA + thread NFT (KHÔNG MAGIC/LAMP);
+  `Σ value(out@engage) == Σ value(in@engage)` TUYỆT ĐỐI → chống drain ADA/token (bài học M1 Treasury).
+  KHÔNG `tx.mint`.
+- **C-CM-2 (Σburns == Σrequired — AGGREGATE qua MỌI Engage input):** đọc `PriceParam` qua `price_ref`
+  reference input (xác thực NFT). Bất biến KHÔNG so sánh per-invocation mà AGGREGATE (mirroring C-CM-3):
+  `total_required = Σ trên MỌI Engage input [ price(op_type_i)×op_count_i ]` (mỗi input đọc redeemer
+  `Consume` riêng, CÙNG beacon `price_ref` — ép `pr_i == price_ref` để không trộn nhiều bảng giá);
+  `total_burned = Σ burns trên MỌI vault_ref PHÂN BIỆT` do các Engage input trỏ (mỗi vault đếm burns 1
+  lần dù N Engage chia chung). Ép `total_burned == total_required` (`==`, KHÔNG `≥`: over-burn = giảm
+  MAGIC vô cớ). Giá lấy từ beacon, KHÔNG từ redeemer amount. Mọi vault input phải ở `vault_script_hash`
+  + redeemer constr == `burn_batch_constr`.
+  **Lý do AGGREGATE (chống pay-once-consume-N):** nếu chỉ ép per-invocation `burns(vault_ref) == required`
+  của 1 Engage, thì N Engage input cùng `op_count=1` trỏ CHUNG 1 vault burn 10M sẽ mỗi cái pass độc lập
+  (10M==10M) trong khi state ghi `Σconsumed += N` — N nghiệp vụ attributed nhưng chỉ 1 đơn vị MAGIC giảm,
+  phá bất biến bảo toàn giá trị + bơm rẻ Governance C1 (MAGIC tiêu thụ). AGGREGATE: total_required=N×10M
+  != total_burned=10M → REJECT. Per-invocation == aggregate → idempotent qua mọi invocation.
+- **C-CM-3 (double-satisfaction @engage):** đếm theo **payment script hash**; bất biến AGGREGATE
+  idempotent qua mọi invocation: `#out@engage == #in@engage` (no collapse); `Σ engageNFT(out) ==
+  Σ engageNFT(in)` (không rút thread token); `Σ consumed_count(out) == Σ(in) + Σ op_count` (mọi consume
+  ghi state). Bài học C1/C2 Distribution.
+- **C-CM-4 (replay / state):** mỗi output@engage mang ĐÚNG 1 thread NFT one-shot, `owner` bảo toàn,
+  `last_epoch == current_epoch`, `did_commit` **immutable** (`out == in`). State neo vào UTxO Engage
+  RIÊNG (tách khỏi VaultDatum — quyết định D1: khác chủ thể, song song hoá, không tràn datum vault).
+- **C-CM-5 (stale price):** ép `0 ≤ current_epoch − PriceParam.epoch ≤ MAX_PRICE_STALE` (param) —
+  chống dùng giá cũ khi demand đã tăng.
 
-### B3. Tx-builder offchain + e2e Preview
-- `consumeBuilder(op_type, op_count)`: đọc PriceParam, dựng tx mint-âm MAGIC đúng `required`, neo state.
-- Script deploy + e2e Preview (mẫu Distribution 01–04): mint MAGIC test → consume thật → verify burned.
+`did_commit` (MVP = `#""` rỗng): tương lai = blake2b256 commitment liên kết engagement ↔ DID sinh trắc
+(PhoenixKey, Governance C1/C3 attribution). Đặt 1 lần lúc genesis, immutable sau đó. Validator KHÔNG
+ràng buộc nội dung ở MVP, chỉ ràng buộc bất biến.
+
+### B3. Tx-builder offchain + e2e Preview (chưa làm — xem GAPS)
+- `consumeBuilder(op_type, op_count)`: đọc PriceParam, dựng tx co-spend Engage UTxO (Consume) + vault
+  UTxO (BurnBatch Σburns==required), neo state. KHÔNG mint.
+- Script deploy + e2e Preview: tạo Engage UTxO + thread NFT → consume thật → verify `consumed_count`
+  tăng + `magic_batches` vault giảm.
 
 ## C. Mối nối với module khác (ranh giới)
 - **Pricing (A)** = thư viện tính giá, đặt `ConsumeMAGIC/pricing/` (offchain) + phơi `base_price` qua
   PriceParam beacon. Tái dùng `ProtocolUtils` (clamp, SMA, isqrt). KHÔNG đụng AppEconomics (reward-side)
   hay UMKeeper (mint-side) — chỉ MƯỢN cấu trúc FIR.
-- **ConsumeMAGIC (B)** đọc giá từ PriceParam, đốt MAGIC. KHÔNG định giá đối tượng (con bò vs gà) — đó
-  là việc **app component** (OriLife `animal_fee`), ngoài phạm vi. MAGIC chỉ định giá **nghiệp vụ hạ
-  tầng** (ảnh, CID) + đốt.
-- Generators sinh MAGIC; ConsumeMAGIC đốt MAGIC. Cùng policy MAGIC (đọc từ config protocol).
+- **ConsumeMAGIC (B)** đọc giá từ PriceParam, ghi engagement-state + ép Σburns. KHÔNG định giá đối tượng
+  (con bò vs gà) — đó là việc **app component** (OriLife `animal_fee`), ngoài phạm vi. MAGIC chỉ định giá
+  **nghiệp vụ hạ tầng** (ảnh, CID).
+- Generators sinh + giảm MAGIC (datum). ConsumeMAGIC định giá + ghi attribution; vault validator là nơi
+  DUY NHẤT giảm `magic_batches`. KHÔNG token, KHÔNG `tx.mint`.
+- **Paymaster (dài hạn):** app đặt `personal_delegate = Some(app_pkh)` qua `SetDelegate` ở vault → app
+  ký `BurnBatch` tiêu MAGIC HỘ user (trả phí tx) mà MAGIC vẫn nằm trong vault user. UX paymaster đạt
+  được KHÔNG vi phạm "MAGIC không transfer".
 
 ## D. Phải build (bám CONTRACT, có Agent audit phản biện mỗi vòng)
 - **SPEC**: FEAT (luồng consume: app gọi → đọc giá → đốt → verify; bảng op_type) + MATH (chứng minh
   price đơn điệu/bounded/hội tụ FIR; required = Σ; an toàn BigInt).
 - **PRICING (offchain)**: `pricing/price.ts` (`price_per_op`, `demand_mult` FIR) + vitest (đơn điệu,
   clamp biên, hội tụ, test vector ảnh 0.01 / CID 0.001).
-- **ONCHAIN**: `onchain/` Aiken — `types.ak` (PriceParam, OpPrice, Consume), validator `consume.ak`
-  (C-CM-1..5), `price_param.ak` beacon one-shot; aiken test (burn đúng policy, đốt≥quote, double-sat
-  reject, drain ADA/LAMP reject, stale price reject, replay reject).
-- **OFFCHAIN**: `consumeBuilder` + datum codec PriceParam + script deploy/e2e Preview.
+- **ONCHAIN**: `onchain/` Aiken — `types.ak` (PriceParam, OpPrice, Consume, EngageDatum+did_commit),
+  validator `consume.ak` (engagement-state, C-CM-1..5, KHÔNG mint), `price_param.ak` beacon one-shot,
+  `price_nft.ak` one-shot NFT; aiken test (Σburns==required, over/under-burn reject, double-sat reject,
+  drain ADA/token reject, stale price reject, did_commit immutable, wrong vault constr reject).
+- **OFFCHAIN**: `consumeBuilder` (co-spend Engage+vault) + datum codec EngageDatum/PriceParam + script
+  deploy/e2e Preview. (chưa làm — xem GAPS.)
 
 ## E. Bất biến tuyệt đối (mọi spec/code)
-- Chỉ chạm policy MAGIC; LAMP + ADA bảo toàn byte-perfect. LAMP KHÔNG burn.
+- MAGIC = số kế toán trong vault datum; KHÔNG token, KHÔNG `tx.mint`. LAMP + ADA bảo toàn byte-perfect.
+  LAMP cố định 36 tỷ KHÔNG burn.
 - Giá lấy từ PriceParam beacon (có thẩm quyền), KHÔNG từ client.
-- `magic_burned ≥ required`; value preservation `Σ out = Σ in − burned` riêng asset MAGIC.
+- `Σ burns == required` (`==`, over-burn cấm); value preservation Engage UTxO bảo toàn tuyệt đối.
 - Pure BigInt, không float. demand_mult FIR (không PI, không windup).

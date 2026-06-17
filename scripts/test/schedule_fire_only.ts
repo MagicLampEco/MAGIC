@@ -51,7 +51,12 @@ async function main() {
       POLICY_IDS.lamp, treasuryAddrData, POLICY_IDS.shard_nft, PROTOCOL.MS_PER_EPOCH,
     ]),
   };
-  const shardScript = { type: "PlutusV3" as const, script: shardUnapplied.compiledCode };
+  // Shard validator now takes 1 param: shard NFT policy id (same value the vault
+  // is parameterized with). Apply it before hashing — hash changed vs v1.0.
+  const shardScript = {
+    type: "PlutusV3" as const,
+    script: applyParamsToScript(shardUnapplied.compiledCode, [POLICY_IDS.shard_nft]),
+  };
   const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(shardScript)));
 
@@ -81,9 +86,11 @@ async function main() {
   console.log(`Start fire epoch:  ${sched.start_fire_epoch}`);
   console.log(`Fired count:       ${sched.fired_count} / ${sched.schedule_length}`);
 
-  const shardUnit = POLICY_IDS.shard_nft + ASSET_NAMES.shard_nft;
+  // One-shot policy issues 16 DISTINCT asset names (SHARD#0..15). Match any
+  // asset under the shard NFT policy id, not a single shared "SHARD" name.
   const allShards = await lucid.utxosAt(shardAddr);
-  const shardUtxos = allShards.filter(u => (u.assets[shardUnit] ?? 0n) > 0n);
+  const shardUtxos = allShards.filter(u =>
+    Object.keys(u.assets).some(unit => unit.startsWith(POLICY_IDS.shard_nft) && u.assets[unit] > 0n));
   console.log(`Shards (total/active): ${allShards.length}/${shardUtxos.length}\n`);
 
   const tip = await fetchTip();

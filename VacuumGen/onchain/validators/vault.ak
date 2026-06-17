@@ -8,7 +8,7 @@
 
 use aiken/collection/list
 use aiken/crypto
-use aiken/interval.{Finite, IntervalBoundType}
+use aiken/interval.{Finite, IntervalBoundType, after, between}
 use aiken/primitive/bytearray
 use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId}
@@ -17,9 +17,10 @@ use cardano/transaction.{
 }
 
 use magiclamp/protocol/types.{
-  ActivityState, DelegationCertificate, Flame, Instant, LoyaltyHolding,
-  MagicBatch, StreakState, UMDatum, Vacuum, VacuumCommit, VacuumFire,
-  VacuumOrder, VaultAttribution, VaultDatum, VaultRedeemer, WithdrawLamp,
+  ActivityState, BurnBatch, DelegationCertificate, Flame, Instant,
+  LoyaltyHolding, MagicBatch, SetDelegate, StreakState, UMDatum, Vacuum,
+  VacuumCommit, VacuumFire, VacuumOrder, VaultAttribution, VaultDatum,
+  VaultRedeemer, WithdrawLamp,
 }
 use magiclamp/protocol/constants.{
   max_batches_per_vault, max_loyalty_holdings, max_vacuum_orders,
@@ -37,10 +38,15 @@ use magiclamp/protocol/lock.{
 // `ms_per_epoch` is applied per-network (Plutus validity_range is POSIX ms):
 //   Mainnet:        432_000_000
 //   Preview/Preprod: 86_400_000
+// um_script_hash : ByteArray = applied UMKeeper validator hash. Pins the UM
+//   reference input to the canonical UM script address (MAINNET-BLOCK fix,
+//   defense-in-depth (b)). The UM NFT alone is not a global singleton, so the
+//   ref input must ALSO live at Script(um_script_hash) to be trusted.
 validator vault(
   lamp_policy_id : PolicyId,
   treasury_addr  : Address,
   um_nft_policy  : PolicyId,
+  um_script_hash : ByteArray,
   ms_per_epoch   : Int,
 ) {
   spend(
@@ -54,20 +60,37 @@ validator vault(
 
     when redeemer is {
       VacuumCommit { lambda } ->
-        validate_vacuum_commit(input_datum, lambda, current_epoch, own_ref, tx)
+        validate_vacuum_commit(input_datum, lambda, current_epoch, own_ref,
+                               lamp_policy_id, tx)
 
       VacuumFire { order_id } ->
         validate_vacuum_fire(input_datum, order_id, current_epoch, own_ref,
-                             lamp_policy_id, treasury_addr, um_nft_policy, tx)
+                             lamp_policy_id, treasury_addr, um_nft_policy,
+                             um_script_hash, tx)
 
       WithdrawLamp { amount } ->
         validate_withdraw_lamp(input_datum, amount, current_epoch, own_ref,
                                lamp_policy_id, tx)
 
-      // Other shared redeemers (InstantGen / ApplyHalving / BurnBatch /
-      // UpdateProfile) are intentionally rejected by VacuumGen — those flows
-      // live on their respective module's vault. Catch-all stays as a hard
-      // anti-tamper guard.
+      // ── BurnBatch — datum-consume (D1): subtract from magic_batches ──
+      // MAGIC is an accounting number in magic_batches; consuming = lowering
+      // current_amount (NO token, NO tx.mint). The price coupling
+      // (Σburns == required) is enforced by the co-spending ConsumeMAGIC
+      // engagement validator that reads the PriceParam beacon. This handler
+      // enforces the structural correctness of the subtraction + A02 + value
+      // preservation + owner-or-delegate auth.
+      BurnBatch { burns } ->
+        validate_burn_batch(input_datum, burns, current_epoch, own_ref,
+                            lamp_policy_id, tx)
+
+      // ── SetDelegate — owner sets/clears consume-delegate ──
+      SetDelegate { new_delegate } ->
+        validate_set_delegate(input_datum, new_delegate, current_epoch,
+                             own_ref, lamp_policy_id, tx)
+
+      // Other shared redeemers (InstantGen / ApplyHalving / UpdateProfile)
+      // are intentionally rejected by VacuumGen — those flows live on their
+      // respective module's vault. Catch-all stays as a hard anti-tamper guard.
       _ -> fail @"unimplemented redeemer for VacuumGen module"
     }
   }
@@ -78,11 +101,12 @@ validator vault(
 // Constraints: C-VAC-1..5, C-VAULT-DS-1
 // ═══════════════════════════════════════════════════════════════
 fn validate_vacuum_commit(
-  input_datum   : VaultDatum,
-  lambda        : Int,              // oil to lock (λ)
-  current_epoch : Int,
-  own_ref       : OutputReference,
-  tx            : Transaction,
+  input_datum    : VaultDatum,
+  lambda         : Int,              // oil to lock (λ)
+  current_epoch  : Int,
+  own_ref        : OutputReference,
+  lamp_policy_id : PolicyId,
+  tx             : Transaction,
 ) -> Bool {
 
   // ── C-VAULT-DS-1: one vault input ────────────────────────────
@@ -115,7 +139,8 @@ fn validate_vacuum_commit(
   let new_holdings = select_lamp_for_lock(input_datum.loyalty_holdings, lambda)
 
   // ── A02: Output datum validation ─────────────────────────────
-  let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
+  let output = find_vault_output(tx.outputs, vault_addr)
+  let output_datum = output_datum_of(output)
 
   expect output_datum.owner == input_datum.owner
   expect output_datum.lamp_balance == input_datum.lamp_balance  // no transfer yet
@@ -133,6 +158,7 @@ fn validate_vacuum_commit(
   expect output_datum.activity_state == input_datum.activity_state
   expect output_datum.streak_state == input_datum.streak_state
   expect output_datum.personal_delegate == input_datum.personal_delegate
+  expect output_datum.attribution == input_datum.attribution
 
   // C-VAULT-9: lamp_locked consistency
   let expected_locked = sum_locked(new_holdings)
@@ -140,6 +166,14 @@ fn validate_vacuum_commit(
 
   // C-VAULT-10: Σholdings = lamp_balance
   expect sum_holdings(output_datum.loyalty_holdings) == output_datum.lamp_balance
+
+  // ── CRIT value-leak guard (eUTXO): vault output LAMP value must match
+  // lamp_balance. Commit does NOT transfer LAMP, so the continuing vault
+  // output must still carry the full balance. Without this, an attacker
+  // could drain LAMP off the vault while leaving the datum balance intact.
+  let vault_lamp_qty =
+    assets.quantity_of(output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+  expect vault_lamp_qty == output_datum.lamp_balance
 
   // C-VAC-12: No cancel redeemer exists — enforced by absence of cancel handler
   True
@@ -158,6 +192,7 @@ fn validate_vacuum_fire(
   lamp_policy_id : PolicyId,
   treasury_addr  : Address,
   um_nft_policy  : PolicyId,
+  um_script_hash : ByteArray,
   tx             : Transaction,
 ) -> Bool {
 
@@ -176,7 +211,7 @@ fn validate_vacuum_fire(
   expect current_epoch == order.fire_epoch
 
   // ── Get UM (C-UM-7: always smoothed, no stale check) ─────────
-  let um_datum = find_um_datum(tx.reference_inputs, um_nft_policy)
+  let um_datum = find_um_datum(tx.reference_inputs, um_nft_policy, um_script_hash)
   expect validate_um_range(um_datum)
   let um_q = get_um_for_vacuum(um_datum)   // C-UM-7
 
@@ -223,7 +258,8 @@ fn validate_vacuum_fire(
   let new_holdings = remove_locked_amount(input_datum.loyalty_holdings, order.lamp_amount)
 
   // ── A02: Output datum validation ─────────────────────────────
-  let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
+  let output = find_vault_output(tx.outputs, vault_addr)
+  let output_datum = output_datum_of(output)
 
   expect output_datum.owner == input_datum.owner
   expect output_datum.lamp_balance == input_datum.lamp_balance - order.lamp_amount
@@ -252,6 +288,16 @@ fn validate_vacuum_fire(
   // C-VAULT-10
   expect sum_holdings(output_datum.loyalty_holdings) == output_datum.lamp_balance
 
+  // ── CRIT value-leak guard (eUTXO): vault output LAMP value must equal
+  // the post-fire lamp_balance. Fire transfers `order.lamp_amount` to
+  // Treasury; the vault keeps `lamp_balance - order.lamp_amount`. Without
+  // this check, the datum could record the decrement while LAMP is siphoned
+  // somewhere other than Treasury (value-leak), since treasury_receives_lamp
+  // only bounds the Treasury side, not the vault side.
+  let vault_lamp_qty =
+    assets.quantity_of(output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+  expect vault_lamp_qty == output_datum.lamp_balance
+
   True
 }
 
@@ -259,10 +305,27 @@ fn validate_vacuum_fire(
 // Helpers
 // ═══════════════════════════════════════════════════════════════
 
+// MAINNET-BLOCK fix (validity-range gaming): bind BOTH bounds, not lower only.
+// The ledger only enforces `lower_bound ≤ current_slot` — it does NOT forbid a tx
+// from spanning multiple epochs, nor does it guarantee the real block lands at
+// `lower_bound`. Reading lower-only lets an attacker set lower=start_of(E) with an
+// open/late upper, get included at a real epoch E+k, yet have the validator believe
+// current_epoch == E. For VacuumFire (C-VAC-6 EXACT) that means firing late; for
+// VacuumCommit/BurnBatch/SetDelegate it backdates fire_epoch / last_updated_epoch /
+// attribution stamps. Root-cause cure: require BOTH bounds Finite (fail-closed,
+// rejects ±Infinity) AND the whole tx to sit inside ONE epoch (e_lo == e_hi), so
+// `current_epoch` is unambiguous. Mirrors ProfileChange util.ak get_epoch.
 fn get_current_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
   expect Some(lower_ms) =
     tx.validity_range.lower_bound.bound_type |> get_finite_slot
-  lower_ms / ms_per_epoch
+  expect Some(upper_ms) =
+    tx.validity_range.upper_bound.bound_type |> get_finite_slot
+  let e_lo = lower_ms / ms_per_epoch
+  let e_hi = upper_ms / ms_per_epoch
+  // tx must fall entirely within a single epoch — blocks multi-epoch span and
+  // the ambiguity that lets an attacker game the effective epoch.
+  expect e_lo == e_hi
+  e_lo
 }
 
 fn get_finite_slot(bt: IntervalBoundType) -> Option<Int> {
@@ -282,14 +345,22 @@ fn find_vault_output(outputs: List<Output>, vault_addr: Address) -> Output {
   // to the input==1 check. Blocks a phantom 2nd vault output carrying a forged datum.
   expect list.count(outputs, fn(x) { x.address == vault_addr }) == 1
   expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
+  // C-VAULT-OUT-2 (LENS-SEC INFO): the continuing vault output must NOT carry a
+  // reference_script. Symmetric anti-tamper to input==1/output==1: forbids an
+  // attacker bloating the vault UTXO with a foreign reference_script (locked ADA).
+  expect o.reference_script == None
   o
+}
+
+fn output_datum_of(o: Output) -> VaultDatum {
+  expect InlineDatum(d) = o.datum
+  expect datum: VaultDatum = d
+  datum
 }
 
 fn find_vault_output_datum(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
   let o = find_vault_output(outputs, vault_addr)
-  expect InlineDatum(d) = o.datum
-  expect datum: VaultDatum = d
-  datum
+  output_datum_of(o)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -355,9 +426,181 @@ fn validate_withdraw_lamp(
   True
 }
 
-fn find_um_datum(ref_inputs: List<Input>, um_nft_policy: PolicyId) -> UMDatum {
+// ═══════════════════════════════════════════════════════════════
+// validate_burn_batch — datum-consume (D1)
+// MAGIC = accounting number in magic_batches[]. Consuming MAGIC = lowering
+// current_amount of the targeted batches. NO token, NO tx.mint.
+// Auth: owner OR personal_delegate (consume-delegate, paymaster model).
+// Price coupling (Σ burns == required) is enforced by the co-spending
+// ConsumeMAGIC engagement validator (reads PriceParam beacon); this handler
+// owns the subtraction correctness + A02 + value preservation.
+// ═══════════════════════════════════════════════════════════════
+fn validate_burn_batch(
+  input_datum    : VaultDatum,
+  burns          : List<(ByteArray, Int)>,
+  current_epoch  : Int,
+  own_ref        : OutputReference,
+  lamp_policy_id : PolicyId,
+  tx             : Transaction,
+) -> Bool {
+
+  // ── DS-1: exactly one vault input + one vault output ─────────
+  let vault_addr = find_own_address(own_ref, tx.inputs)
+  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+  let output = find_vault_output(tx.outputs, vault_addr)   // enforces count == 1
+  let output_datum = output_datum_of(output)
+
+  // ── AUTH: owner OR consume-delegate (personal_delegate) ──────
+  let authed =
+    list.has(tx.extra_signatories, input_datum.owner) || when input_datum.personal_delegate is {
+      Some(d) -> list.has(tx.extra_signatories, d)
+      None    -> False
+    }
+  expect authed
+
+  // ── burns must be non-empty (a no-op burn is meaningless) ────
+  expect list.length(burns) > 0
+
+  // ── Decay first (cliff prune, same model as fire), then burns ─
+  // VacuumGen batches are cliff (decay_window=1); a batch survives while
+  // current_epoch - created_epoch < decay_window. Prune expired BEFORE
+  // applying burns so a burn can only target a still-live batch.
+  let decayed = prune_expired(input_datum.magic_batches, current_epoch)
+
+  // ── Apply burns: subtract amount per batch_id, prune zeroed ──
+  let expected_batches = apply_burns(decayed, burns)
+
+  // ── A02: field-by-field (17 fields) ──────────────────────────
+  // Only magic_batches + last_updated_epoch + attribution change.
+  expect output_datum.owner == input_datum.owner
+  expect output_datum.lamp_balance == input_datum.lamp_balance        // BurnBatch never touches LAMP
+  expect output_datum.lamp_locked == input_datum.lamp_locked
+  expect output_datum.loyalty_holdings == input_datum.loyalty_holdings
+  expect output_datum.magic_batches == expected_batches               // ← the only MAGIC change
+  expect output_datum.next_batch_index == input_datum.next_batch_index
+  expect output_datum.vacuum_orders == input_datum.vacuum_orders
+  expect output_datum.gen_schedules == input_datum.gen_schedules
+  expect output_datum.profile == input_datum.profile
+  expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
+  expect output_datum.pending_profile == input_datum.pending_profile
+  expect output_datum.delegation_cert == input_datum.delegation_cert
+  expect output_datum.activity_state == input_datum.activity_state
+  expect output_datum.streak_state == input_datum.streak_state
+  expect output_datum.personal_delegate == input_datum.personal_delegate  // delegate unchanged here
+  expect output_datum.last_updated_epoch == current_epoch
+  expect output_datum.attribution.total_events == input_datum.attribution.total_events + 1
+  expect output_datum.attribution.last_event_epoch == current_epoch
+
+  // ── VALUE PRESERVATION (anti value-leak): LAMP must stay in vault ─
+  let vault_lamp_qty =
+    assets.quantity_of(output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+  expect vault_lamp_qty == output_datum.lamp_balance
+
+  expect list.length(output_datum.magic_batches) <= max_batches_per_vault
+  True
+}
+
+/// Prune batches whose decay window has elapsed (cliff model, mirrors fire).
+fn prune_expired(batches: List<MagicBatch>, current_epoch: Int) -> List<MagicBatch> {
+  list.filter(batches, fn(b) { current_epoch - b.created_epoch < b.decay_window })
+}
+
+/// Apply each (batch_id, amount) burn to the batch list:
+///   - exactly one batch must match batch_id (no duplicate, no missing);
+///   - 0 < amount ≤ current_amount;
+///   - current_amount' = current_amount - amount; all other fields immutable;
+///   - if current_amount' == 0 → batch removed; else replaced in place;
+///   - order of untouched batches preserved.
+fn apply_burns(batches: List<MagicBatch>, burns: List<(ByteArray, Int)>) -> List<MagicBatch> {
+  when burns is {
+    [] -> batches
+    [(batch_id, amount), ..rest] -> {
+      expect amount > 0
+      // exactly one batch with this id
+      expect list.count(batches, fn(b) { b.batch_id == batch_id }) == 1
+      let updated =
+        list.foldr(batches, [], fn(b, acc) {
+          if b.batch_id == batch_id {
+            expect amount <= b.current_amount
+            let new_amount = b.current_amount - amount
+            if new_amount == 0 {
+              acc                                     // prune zeroed batch
+            } else {
+              [MagicBatch { ..b, current_amount: new_amount }, ..acc]
+            }
+          } else {
+            [b, ..acc]
+          }
+        })
+      apply_burns(updated, rest)
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_set_delegate — owner sets/clears consume-delegate (D1)
+// personal_delegate (field 15) = consume-delegate: None → owner only;
+// Some(d) → owner OR d may trigger BurnBatch. Owner-only to change. No
+// cooldown (changing delegate is economically cheap and reversible).
+// ═══════════════════════════════════════════════════════════════
+fn validate_set_delegate(
+  input_datum    : VaultDatum,
+  new_delegate   : Option<ByteArray>,
+  current_epoch  : Int,
+  own_ref        : OutputReference,
+  lamp_policy_id : PolicyId,
+  tx             : Transaction,
+) -> Bool {
+
+  // ── DS-1: one vault input + one vault output ─────────────────
+  let vault_addr = find_own_address(own_ref, tx.inputs)
+  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+  let output = find_vault_output(tx.outputs, vault_addr)
+  let output_datum = output_datum_of(output)
+
+  // ── AUTH: ONLY owner may change the delegate ─────────────────
+  expect list.has(tx.extra_signatories, input_datum.owner)
+
+  // ── A02: everything immutable except personal_delegate +
+  //         last_updated_epoch ───────────────────────────────────
+  expect output_datum.owner == input_datum.owner
+  expect output_datum.lamp_balance == input_datum.lamp_balance
+  expect output_datum.lamp_locked == input_datum.lamp_locked
+  expect output_datum.loyalty_holdings == input_datum.loyalty_holdings
+  expect output_datum.magic_batches == input_datum.magic_batches
+  expect output_datum.next_batch_index == input_datum.next_batch_index
+  expect output_datum.vacuum_orders == input_datum.vacuum_orders
+  expect output_datum.gen_schedules == input_datum.gen_schedules
+  expect output_datum.profile == input_datum.profile
+  expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
+  expect output_datum.pending_profile == input_datum.pending_profile
+  expect output_datum.delegation_cert == input_datum.delegation_cert
+  expect output_datum.activity_state == input_datum.activity_state
+  expect output_datum.streak_state == input_datum.streak_state
+  expect output_datum.attribution == input_datum.attribution
+  expect output_datum.personal_delegate == new_delegate                  // ← the change
+  expect output_datum.last_updated_epoch == current_epoch
+
+  // ── VALUE PRESERVATION ───────────────────────────────────────
+  let vault_lamp_qty =
+    assets.quantity_of(output.value, lamp_policy_id, #"744c414d50")
+  expect vault_lamp_qty == output_datum.lamp_balance
+
+  True
+}
+
+// MAINNET-BLOCK defense-in-depth (b): require the UM ref input to carry the
+// UM NFT AND sit at the canonical UM script address Script(um_script_hash).
+// The UM NFT is not a guaranteed global singleton, so the NFT alone is
+// forgeable; pinning the script address rejects forged UM UTxOs.
+fn find_um_datum(
+  ref_inputs     : List<Input>,
+  um_nft_policy  : PolicyId,
+  um_script_hash : ByteArray,
+) -> UMDatum {
   expect Some(i) = list.find(ref_inputs, fn(x) {
     assets.quantity_of(x.output.value, um_nft_policy, #"554d44") > 0
+      && x.output.address.payment_credential == Script(um_script_hash)
   })
   expect InlineDatum(d) = i.output.datum
   expect um: UMDatum = d
@@ -517,4 +760,296 @@ test w_advance_last_updated_rejected() fail {
     }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
   validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tests — BurnBatch (datum-consume D1) + SetDelegate
+// ═══════════════════════════════════════════════════════════════
+
+const t_delegate: ByteArray =
+  #"44444444444444444444444444444444444444444444444444444444"
+const t_bid_a: ByteArray = #"aaaa"
+const t_bid_b: ByteArray = #"bbbb"
+
+// Vacuum batch: cliff (decay_window=1) — lives only at the epoch it was
+// created (current_epoch - created_epoch < 1 ⇒ created_epoch == current).
+fn t_batch(id: ByteArray, created: Int, amount: Int, window: Int) -> MagicBatch {
+  MagicBatch {
+    batch_id:            id,
+    source:              Vacuum,
+    created_epoch:       created,
+    initial_amount:      amount,
+    current_amount:      amount,
+    decay_window:        window,
+    profile_at_creation: None,
+    contract_id:         None,
+    halved:              False,
+  }
+}
+
+fn t_datum_b(batches: List<MagicBatch>, deleg: Option<ByteArray>) -> VaultDatum {
+  VaultDatum {
+    ..t_datum(100, 0, [t_holding(100, 5, False)]),
+    magic_batches: batches,
+    personal_delegate: deleg,
+  }
+}
+
+fn t_after_burn(
+  din: VaultDatum, batches: List<MagicBatch>, epoch: Int,
+) -> VaultDatum {
+  VaultDatum {
+    ..din,
+    magic_batches: batches,
+    last_updated_epoch: epoch,
+    attribution: VaultAttribution {
+      ..din.attribution,
+      total_events: din.attribution.total_events + 1,
+      last_event_epoch: epoch,
+    },
+  }
+}
+
+// BB-POS-1: partial burn — current_amount lowered, batch retained
+test bb_partial_owner() {
+  // window=10 so batch (created@5) is still live at epoch 10
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let bout = MagicBatch { ..bin, current_amount: 600 }
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [bout], 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(t_bid_a, 400)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-POS-2: full burn — batch pruned (current_amount → 0)
+test bb_full_prunes() {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [], 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(t_bid_a, 1000)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-POS-3: delegate (paymaster) may trigger when personal_delegate=Some
+test bb_delegate_authed() {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let bout = MagicBatch { ..bin, current_amount: 700 }
+  let din  = t_datum_b([bin], Some(t_delegate))
+  let dout = t_after_burn(din, [bout], 10)
+  // signed by delegate, NOT owner
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
+  validate_burn_batch(din, [(t_bid_a, 300)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-POS-4: multi-batch burn, one pruned one retained
+test bb_multi() {
+  let ba_in = t_batch(t_bid_a, 5, 1000, 10)
+  let bb_in = t_batch(t_bid_b, 5, 500, 10)
+  let bb_out = MagicBatch { ..bb_in, current_amount: 200 }
+  let din  = t_datum_b([ba_in, bb_in], None)
+  // a fully burned → pruned; b partial
+  let dout = t_after_burn(din, [bb_out], 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(t_bid_a, 1000), (t_bid_b, 300)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-1: no auth (neither owner nor delegate signs)
+test bb_no_auth() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let bout = MagicBatch { ..bin, current_amount: 600 }
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [bout], 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_burn_batch(din, [(t_bid_a, 400)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-2: delegate signs but personal_delegate=None → reject
+test bb_delegate_not_set() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let bout = MagicBatch { ..bin, current_amount: 600 }
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [bout], 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
+  validate_burn_batch(din, [(t_bid_a, 400)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-3: over-burn (amount > current_amount)
+test bb_over_burn() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [], 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(t_bid_a, 1001)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-4: burn references a non-existent batch_id
+test bb_unknown_batch() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [bin], 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(t_bid_b, 100)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-5: LAMP siphoned from vault output (value-leak) — datum unchanged but
+// vault output carries less LAMP than lamp_balance.
+test bb_value_leak() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let bout = MagicBatch { ..bin, current_amount: 600 }
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [bout], 10)
+  // output value only 90 LAMP, but datum says 100 → must reject
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 90)], [t_owner])
+  validate_burn_batch(din, [(t_bid_a, 400)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-6: tamper lamp_balance (BurnBatch must not change LAMP)
+test bb_lamp_mutated() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let bout = MagicBatch { ..bin, current_amount: 600 }
+  let din  = t_datum_b([bin], None)
+  let dout = VaultDatum { ..t_after_burn(din, [bout], 10), lamp_balance: 90 }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 90)], [t_owner])
+  validate_burn_batch(din, [(t_bid_a, 400)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-7: attribution not incremented
+test bb_attribution_not_advanced() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let bout = MagicBatch { ..bin, current_amount: 600 }
+  let din  = t_datum_b([bin], None)
+  let dout = VaultDatum {
+    ..din, magic_batches: [bout], last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(t_bid_a, 400)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-8: empty burns list (no-op) rejected
+test bb_empty_burns() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [bin], 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-9: phantom second vault output
+test bb_phantom_output() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let bout = MagicBatch { ..bin, current_amount: 600 }
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [bout], 10)
+  let tx = t_tx(
+    [t_vault_input(din, 100)],
+    [t_vault_output(dout, 100), t_vault_output(dout, 100)],
+    [t_owner],
+  )
+  validate_burn_batch(din, [(t_bid_a, 400)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// BB-NEG-10: continuing vault output carries a foreign reference_script — must
+// reject (C-VAULT-OUT-2 anti-tamper, symmetric to input==1/output==1).
+test bb_ref_script_rejected() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let bout = MagicBatch { ..bin, current_amount: 600 }
+  let din  = t_datum_b([bin], None)
+  let dout = t_after_burn(din, [bout], 10)
+  let tainted =
+    Output { ..t_vault_output(dout, 100), reference_script: Some(t_vault_hash) }
+  let tx = t_tx([t_vault_input(din, 100)], [tainted], [t_owner])
+  validate_burn_batch(din, [(t_bid_a, 400)], 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// ── SetDelegate ───────────────────────────────────────────────
+
+fn t_after_setdeleg(din: VaultDatum, d: Option<ByteArray>, epoch: Int) -> VaultDatum {
+  VaultDatum { ..din, personal_delegate: d, last_updated_epoch: epoch }
+}
+
+// SD-POS-1: owner sets delegate None → Some
+test sd_set_some() {
+  let din  = t_datum_b([], None)
+  let dout = t_after_setdeleg(din, Some(t_delegate), 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// SD-POS-2: owner clears delegate Some → None
+test sd_clear() {
+  let din  = t_datum_b([], Some(t_delegate))
+  let dout = t_after_setdeleg(din, None, 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// SD-NEG-1: non-owner (the delegate itself) cannot change delegate
+test sd_delegate_cannot_change() fail {
+  let din  = t_datum_b([], Some(t_delegate))
+  let dout = t_after_setdeleg(din, None, 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
+  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// SD-NEG-2: output delegate does not match redeemer new_delegate
+test sd_mismatch() fail {
+  let din  = t_datum_b([], None)
+  let dout = t_after_setdeleg(din, None, 10)   // output keeps None
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// SD-NEG-3: tamper another field (magic_batches) during SetDelegate
+test sd_tamper_batches() fail {
+  let bin  = t_batch(t_bid_a, 5, 1000, 10)
+  let din  = t_datum_b([bin], None)
+  let dout = VaultDatum {
+    ..t_after_setdeleg(din, Some(t_delegate), 10),
+    magic_batches: [],   // illegally dropped a batch
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_lamp_policy, tx)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tests — get_current_epoch (validity-range gaming MAINNET-BLOCK fix)
+// Preview ms_per_epoch = 86_400_000.
+// ═══════════════════════════════════════════════════════════════
+
+const t_mspe: Int = 86_400_000
+
+fn t_tx_vr(lo: Int, hi: Int) -> Transaction {
+  Transaction { ..placeholder, validity_range: between(lo, hi) }
+}
+
+// VR-POS-1: tx fully inside epoch 5 → current_epoch == 5.
+test vr_in_single_epoch() {
+  let tx = t_tx_vr(5 * t_mspe, 6 * t_mspe - 1)
+  get_current_epoch(tx, t_mspe) == 5
+}
+
+// VR-POS-2: tight bounds (lower == upper) inside epoch 7.
+test vr_tight_bounds() {
+  let slot = 7 * t_mspe + 123
+  let tx = t_tx_vr(slot, slot)
+  get_current_epoch(tx, t_mspe) == 7
+}
+
+// VR-NEG-1: span across epoch boundary (lower in 5, upper in 6) → reject.
+// This is the core gaming vector: attacker backdates lower to start_of(E)
+// while letting the tx be includable in a later epoch.
+test vr_span_two_epochs() fail {
+  let tx = t_tx_vr(5 * t_mspe, 6 * t_mspe + 100)
+  // Compare the result so the (crashing) call is forced — `let _e = ...` would
+  // be discarded lazily and the expected crash would never fire.
+  get_current_epoch(tx, t_mspe) == 5
+}
+
+// VR-NEG-2: unbounded upper (PositiveInfinity) → fail-closed.
+// `after(lo)` = [lo, +∞); without the upper-Finite guard the validator would
+// trust lower-only and fire/stamp at the wrong epoch.
+test vr_unbounded_upper() fail {
+  let tx = Transaction { ..placeholder, validity_range: after(5 * t_mspe) }
+  // Compare the result so the (crashing) call is forced.
+  get_current_epoch(tx, t_mspe) == 5
 }

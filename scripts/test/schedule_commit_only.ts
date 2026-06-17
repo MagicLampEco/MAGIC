@@ -62,7 +62,12 @@ async function main() {
       POLICY_IDS.lamp, treasuryAddrData, POLICY_IDS.shard_nft, PROTOCOL.MS_PER_EPOCH,
     ]),
   };
-  const shardScript = { type: "PlutusV3" as const, script: shardUnapplied.compiledCode };
+  // Shard validator now takes 1 param: shard NFT policy id (same value the vault
+  // is parameterized with). Apply it before hashing — hash changed vs v1.0.
+  const shardScript = {
+    type: "PlutusV3" as const,
+    script: applyParamsToScript(shardUnapplied.compiledCode, [POLICY_IDS.shard_nft]),
+  };
   const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(shardScript)));
 
@@ -84,12 +89,12 @@ async function main() {
   if (!vaultUtxo) { console.error("❌ Vault not found"); process.exit(1); }
   console.log(`Vault UTxO:     ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`);
 
-  // Only consider shards whose NFT asset name is exactly "SHARD" (5348415244)
-  // — matches validator's `quantity_of(..., "SHARD") > 0` lookup. Filters out
-  // older deploys that used suffixed asset names.
-  const shardUnit = POLICY_IDS.shard_nft + ASSET_NAMES.shard_nft;
+  // One-shot policy issues 16 DISTINCT asset names (SHARD#0..15, = "SHARD" ∥
+  // byte(id)) — the validator now identifies each shard by its distinct name.
+  // Match any asset under the shard NFT policy id.
   const allShards = await lucid.utxosAt(shardAddr);
-  const shardUtxos = allShards.filter(u => (u.assets[shardUnit] ?? 0n) > 0n);
+  const shardUtxos = allShards.filter(u =>
+    Object.keys(u.assets).some(unit => unit.startsWith(POLICY_IDS.shard_nft) && u.assets[unit] > 0n));
   console.log(`Shards (total/active): ${allShards.length}/${shardUtxos.length}\n`);
   if (shardUtxos.length < PROTOCOL.SHARD_COUNT) {
     console.error(`❌ Expected ${PROTOCOL.SHARD_COUNT} shards`); process.exit(1);

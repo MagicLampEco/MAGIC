@@ -64,6 +64,10 @@ export interface ProtocolParams {
   lampAssetName?: string;
   /** UM datum NFT policy ID. Required for Instant + Vacuum. */
   umNftPolicyId?: string;
+  /** UM script hash (= applied UMKeeper validator hash). Required for
+   *  Instant + Vacuum. Pins the UM reference input to the canonical UM
+   *  script address (MAINNET-BLOCK fix, defense-in-depth layer b). */
+  umScriptHash?: string;
   /** Shard NFT policy ID. Required for Schedule. */
   shardPolicyId?: string;
   /** Treasury address. Required for Instant + Vacuum + Schedule. */

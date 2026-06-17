@@ -6,10 +6,10 @@
 // Prints: UM_DATUM_HASH (applied), UM_NFT_POLICY_ID — copy both into .env.
 
 import {
-  Lucid, Blockfrost, Data,
+  Lucid, Blockfrost, Data, Constr,
   applyParamsToScript, validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
-  mintingPolicyToId, getAddressDetails, scriptFromNative,
+  mintingPolicyToId, getAddressDetails,
 } from "@lucid-evolution/lucid";
 import { readFile } from "node:fs/promises";
 import {
@@ -57,9 +57,35 @@ async function main() {
   const { paymentCredential } = getAddressDetails(address);
   if (!paymentCredential) throw new Error("Cannot get payment credential");
 
-  // Mint a unique UM NFT (singleton, native sig-locked).
-  const umNftPolicy = scriptFromNative({ type: "sig", keyHash: paymentCredential.hash });
-  const umNftPolicyId = mintingPolicyToId(umNftPolicy);
+  // ── Mint the UM authority NFT as a TRUE one-shot singleton ───────────────
+  // MAINNET-BLOCK fix, layer (a): the previous native `sig` policy could be
+  // re-minted arbitrarily by the key holder, so the UM NFT was not a global
+  // singleton and the UM reference input was forgeable. The one-shot Plutus
+  // policy is parameterized by a specific genesis OutputReference that the tx
+  // MUST consume → it can run at most once → supply fixed at 1, never re-mint.
+  const umNftPlutus = JSON.parse(
+    await readFile(new URL("../../UMKeeper/onchain/plutus.json", import.meta.url), "utf8"),
+  );
+  const unappliedNft = umNftPlutus.validators.find((v: any) =>
+    v.title === "um_nft.um_nft.mint" || v.title?.startsWith("um_nft."),
+  );
+  if (!unappliedNft) {
+    console.error("Available validators:", umNftPlutus.validators.map((v: any) => v.title));
+    throw new Error("um_nft.um_nft.mint not found in UMKeeper/onchain/plutus.json");
+  }
+
+  // Pick a genesis UTxO from the wallet to consume (must have lovelace).
+  const walletUtxos = await lucid.wallet().getUtxos();
+  const genesisUtxo = walletUtxos.find((u) => u.assets.lovelace >= 3_000_000n);
+  if (!genesisUtxo) throw new Error("No wallet UTxO with ≥3 ADA to seed the one-shot mint");
+
+  // OutputReference = Constr 0 [transaction_id (Bytes), output_index (Int)].
+  const genesisRefData = new Constr(0, [genesisUtxo.txHash, BigInt(genesisUtxo.outputIndex)]);
+  const umNftPolicyScript = {
+    type: "PlutusV3" as const,
+    script: applyParamsToScript(unappliedNft.compiledCode, [genesisRefData]),
+  };
+  const umNftPolicyId = mintingPolicyToId(umNftPolicyScript);
   const umNftUnit     = umNftPolicyId + ASSET_NAMES.um_nft;
 
   // Current epoch from tip POSIX ms (matches validator semantics).
@@ -87,8 +113,9 @@ async function main() {
 
   const tx = await lucid
     .newTx()
+    .collectFrom([genesisUtxo])      // consume the genesis UTxO → enforces one-shot
     .mintAssets({ [umNftUnit]: 1n }, Data.void())
-    .attach.MintingPolicy(umNftPolicy)
+    .attach.MintingPolicy(umNftPolicyScript)
     .pay.ToAddressWithData(
       umScriptAddress,
       { kind: "inline", value: umDatum },
@@ -106,8 +133,8 @@ async function main() {
   console.log(`   TX hash:   ${txHash}`);
   console.log(`   Explorer:  https://preview.cardanoscan.io/transaction/${txHash}`);
   console.log(`\n📋 Copy to .env:`);
-  console.log(`   UM_DATUM_HASH=${umScriptHash}      # applied for NETWORK=${NETWORK}`);
-  console.log(`   UM_NFT_POLICY_ID=${umNftPolicyId}`);
+  console.log(`   UM_DATUM_HASH=${umScriptHash}      # = um_script_hash param pinned by InstantGen/VacuumGen vaults`);
+  console.log(`   UM_NFT_POLICY_ID=${umNftPolicyId}  # one-shot singleton (genesis ${genesisUtxo.txHash}#${genesisUtxo.outputIndex})`);
 }
 
 main().catch(console.error);

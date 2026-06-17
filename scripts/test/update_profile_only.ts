@@ -20,7 +20,7 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ADDRESSES,
+  POLICY_IDS, ADDRESSES, SCRIPT_HASHES,
 } from "../config.js";
 
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
@@ -39,6 +39,7 @@ function buildProtocol(): ProtocolParams {
     network: NETWORK,
     lampPolicyId: POLICY_IDS.lamp,
     umNftPolicyId: POLICY_IDS.um_nft,
+    umScriptHash: SCRIPT_HASHES.um_datum,
     treasuryAddress: ADDRESSES.treasury,
     shardPolicyId: POLICY_IDS.shard_nft,
   };

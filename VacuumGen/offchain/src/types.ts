@@ -1,7 +1,11 @@
 // src/types.ts — TypeScript mirror of Aiken types + Lucid Evolution Data schemas
 // Constructor indices must match Aiken type ordering (Plutus Data encoding).
 
-import { Data } from "@lucid-evolution/lucid";
+// Import Data from the lean @lucid-evolution/plutus package (the canonical
+// source that @lucid-evolution/lucid re-exports). Pure schema definitions
+// must not drag in the wallet/crypto (libsodium) chain — keeps types.ts
+// loadable in test/codec contexts without a full Lucid runtime.
+import { Data } from "@lucid-evolution/plutus";
 
 // ── Primitive ────────────────────────────────────────────────
 export type Natural = bigint;
@@ -174,6 +178,10 @@ export const VaultRedeemerSchema = Data.Enum([
   })}),
   Data.Object({ UpdateProfile: Data.Object({                                 // constr 5
     new_profile: ActivityProfileSchema,
+  })}),
+  Data.Object({ WithdrawLamp: Data.Object({ amount: Data.Integer() }) }),     // constr 6
+  Data.Object({ SetDelegate: Data.Object({                                    // constr 7
+    new_delegate: Data.Nullable(Data.Bytes()),
   })}),
 ]);
 export type VaultRedeemer = Data.Static<typeof VaultRedeemerSchema>;

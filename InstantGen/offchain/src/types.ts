@@ -162,14 +162,23 @@ export const UMDatumSchema = Data.Object({
 export type UMDatum = Data.Static<typeof UMDatumSchema>;
 
 // ── VaultRedeemer ────────────────────────────────────────────
+// Constructor index = Aiken enum order (types.ak). MUST stay in lockstep:
+//   0 InstantGen, 1 ApplyHalving, 2 BurnBatch, 3 UpdateProfile,
+//   4 WithdrawLamp, 5 SetDelegate.
 export const VaultRedeemerSchema = Data.Enum([
-  Data.Object({ InstantGen:   Data.Object({ lamp_paid: Data.Integer() }) }),
-  Data.Literal("ApplyHalving"),
-  Data.Object({ BurnBatch: Data.Object({
+  Data.Object({ InstantGen:   Data.Object({ lamp_paid: Data.Integer() }) }),  // constr 0
+  Data.Literal("ApplyHalving"),                                               // constr 1
+  Data.Object({ BurnBatch: Data.Object({                                      // constr 2
     burns: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
   })}),
-  Data.Object({ UpdateProfile: Data.Object({
+  Data.Object({ UpdateProfile: Data.Object({                                  // constr 3
     new_profile: ActivityProfileSchema,
+  })}),
+  Data.Object({ WithdrawLamp: Data.Object({                                   // constr 4
+    amount: Data.Integer(),
+  })}),
+  Data.Object({ SetDelegate: Data.Object({                                    // constr 5
+    new_delegate: Data.Nullable(Data.Bytes()),
   })}),
 ]);
 export type VaultRedeemer = Data.Static<typeof VaultRedeemerSchema>;

@@ -2,10 +2,12 @@
   "name": "@magiclamp/consumemagic",
   "version": "2.2.0",
   "type": "module",
-  "scripts": { "test": "vitest run" },
+  "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit" },
   "dependencies": {
     "@noble/hashes": "^1.4.0",
-    "@magiclamp/protocol-utils": "file:../../ProtocolUtils"
+    "@magiclamp/protocol-utils": "file:../../ProtocolUtils",
+    "@magiclamp/consumemagic-pricing": "file:../pricing",
+    "@lucid-evolution/lucid": "^0.4.0"
   },
   "devDependencies": { "typescript": "^5.4.0", "vitest": "^1.6.0" }
 }

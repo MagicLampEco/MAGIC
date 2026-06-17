@@ -39,7 +39,7 @@ um_raw(B_e, M_e) = ⌊ B_e × Q / max(M_e, 1) ⌋
 clamped_raw = clamp(um_raw, UM_MIN_Q, UM_MAX_Q)
 ```
 
-Note: TypeScript `appendHistory()` lưu `new_raw` chưa clamp (spec stores raw), nhưng Aiken `append_capped()` nhận `clamped_raw`. Sự khác biệt này không ảnh hưởng đến `smoothed_q` vì SMA sau đó vẫn bị clamp. Tuy nhiên đây là điểm cần đồng bộ (xem TECH.md §4).
+P8 (đã đồng bộ): cả Aiken (`append_capped(history, clamped_raw, W)`) và TypeScript (`computeNewUM` clamp `newRaw` trước rồi `appendHistory(history, clampedRaw)`) đều lưu giá trị **đã clamp** vào history → `history` trong datum bit-identical giữa 2 bên. `appendHistory()` thuần là cửa sổ trượt; clamp xảy ra ở caller `computeNewUM` TRƯỚC append. Redeemer `new_raw` vẫn gửi giá trị raw (chưa clamp) — validator on-chain tự clamp lại để đảm bảo bounds dù caller gian.
 
 ### 2.2 History sliding window (§14.1, C-UM-2)
 
@@ -180,22 +180,25 @@ Expected: smoothed_q = 1_250_000_000 = 1.25×
 
 ---
 
-### TV-UM-04: Keeper chọn new_raw cực đại → SMA làm mịn chống manipulation
+### TV-UM-04: new_raw cực đại → SMA làm mịn chống manipulation (permissionless)
 
 ```
-Giả sử attacker kiểm soát 1 keeper (trong 2-of-3) cộng tác:
+Permissionless → bất kỳ ai cũng submit được new_raw. Phòng thủ = clamp + SMA:
   history hiện tại = [Q, Q, Q, Q, Q]   (5 điểm = 1.0×)
-  Attacker submit new_raw = UM_MAX_Q = 2_000_000_000
+  Người trigger submit new_raw = UM_MAX_Q = 2_000_000_000 (hoặc lớn hơn → clamp về 2Q)
 
+  clamped_raw = clamp(new_raw, 0.5Q, 2Q) = 2Q     (clamp-before-append)
   new_history = [Q, Q, Q, Q, Q, 2Q]
   SMA = ⌊ (5Q + 2Q) / 6 ⌋ = ⌊ 7_000_000_000 / 6 ⌋ = 1_166_666_666
   smoothed_q = 1_166_666_666   (chỉ tăng 16.7%, không đạt 2.0×)
 
-Kết luận: SMA chống single-epoch manipulation hiệu quả.
-  Để đẩy smoothed_q lên 2.0× cần 6 epoch liên tiếp raw = 2.0×.
+Kết luận: dù mở permissionless, người trigger KHÔNG đẩy được rate trong 1 epoch.
+  - clamp chặn new_raw ngoài [0.5×, 2.0×]
+  - SMA 6-epoch: cần 6 epoch LIÊN TIẾP raw = 2.0× mới đạt smoothed_q = 2.0×
+  Rủi ro còn lại: new_raw cấp off-chain không verify được tự thân (FEAT §3.3).
 ```
 
-**Nguồn code:** `um_datum.ak:106-113` (clamp + SMA verify)
+**Nguồn code:** `um_datum.ak` (clamp-before-append + SMA recompute + verify output datum)
 
 ---
 

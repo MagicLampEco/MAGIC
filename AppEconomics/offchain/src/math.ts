@@ -22,6 +22,7 @@ export const PENALTY_CAP_Q             = 500_000_000n;    // 50% max [Significan
 export const GRACE_PERIOD              = 6n;               // epochs [Routine]
 export const DRATE_PRIOR               = 10n;              // Bayesian prior [Routine]
 export const MAX_SINGLE_APP_REWARD_BPS = 3000n;           // 30% cap [Constitutional]
+export const MIN_APP_SHARE_BPS         = 50n;             // 0.5% dust gate [Constitutional]
 export const TIER_KAPPA = { Tier1: Q, Tier2: 1_200_000_000n, Tier3: 1_500_000_000n } as const;
 
 export type Tier = "Tier1" | "Tier2" | "Tier3";
@@ -136,7 +137,13 @@ export function computeW(
   const fn  = phiUsers(nBar);
   const fd  = phiDispute(deltaQ);
   let   kap = TIER_KAPPA[tier];
-  if (emergencyPen > 0n) kap = kap * (Q - emergencyPen) / Q;
+  // W-3 guard: emergencyPen ∈ [0, Q]. Clamp >Q to Q (kap_eff=0) so W can never
+  // go negative. Negative values clamp to 0 (no penalty). Without this guard a
+  // caller passing emergencyPen>Q would make (Q-emergencyPen)<0 → kap_eff<0 → W<0.
+  let ep = emergencyPen;
+  if (ep < 0n) ep = 0n;
+  if (ep > Q)  ep = Q;
+  if (ep > 0n) kap = kap * (Q - ep) / Q;
   const fa  = phiAge(age);
 
   // Sequential multiplications — error ≤ 7 nanogic (Lemma 3.2)
@@ -154,18 +161,62 @@ export function computeW(
 // Terminates in ≤ |𝒜| + 1 iterations (proved)
 // ══════════════════════════════════════════════════════════════
 export function distribute(
-  weights  : Record<string, bigint>,   // {app_id: W(a,e)}
-  X        : bigint,                   // total pool (nanogic)
-  capBps   : bigint = MAX_SINGLE_APP_REWARD_BPS,
+  weights    : Record<string, bigint>,   // {app_id: W(a,e)}
+  X          : bigint,                   // total pool (nanogic)
+  capBps     : bigint = MAX_SINGLE_APP_REWARD_BPS,
+  minShareBps: bigint = MIN_APP_SHARE_BPS,  // dust gate (W-12); 0n disables
 ): Record<string, bigint> {
-  const apps = Object.keys(weights);
+  const allApps = Object.keys(weights);
+  // W-11 guard: reject negative pool X. X (epoch reward pool, nanogic) is ≥ 0 by
+  // construction, but a negative X would flip the sign of every reward via the
+  // `weight*X/Wtotal` step (X<0 → reward<0) and corrupt the cap/conservation
+  // logic. Defense-in-depth: fail loud on malformed input rather than emit
+  // negative rewards.
+  if (X < 0n) {
+    throw new Error(`distribute: negative pool X (${X}); reward pool must be ≥ 0`);
+  }
+  // W-10 guard: reject negative weights. W is always ≥ 0 by W-3, so a negative
+  // weight is malformed input. Allowing it would let an app with a negative
+  // weight pull positive reward via the cap-redistribution loop (Wunc could turn
+  // a negative contributor into a cap grab), and could make Wtotal misrepresent
+  // the true share denominator. Fail loud rather than silently mis-allocate.
+  for (const a of allApps) {
+    if ((weights[a] ?? 0n) < 0n) {
+      throw new Error(`distribute: negative weight for app "${a}" (${weights[a]}); W must be ≥ 0 (W-3)`);
+    }
+  }
+
+  // W-12 dust gate (minimum-activity gate). Defense against the dust-app
+  // value-leak vector: a real app capped at capBps releases (1−capBps) of the
+  // pool as excess; without a floor that excess is redistributed by raw weight,
+  // so an app with W=1 (no real MAGIC consumed) drains up to (1−capBps) of X
+  // purely by being "uncapped". The cap bounds the TOP; this gate bounds the
+  // BOTTOM. An app participates only if its NATURAL (pre-cap) proportional
+  // share ⌊W·X/Wtotal⌋ ≥ minShare = ⌊X·minShareBps/10000⌋. Gating on the
+  // natural share — not the post-redistribution reward — is essential: it
+  // ensures redistributed excess can never resurrect a dust app. Gated apps
+  // get reward 0 and are removed from the active set (weight excluded from the
+  // share denominator and from redistribution), concentrating the pool among
+  // apps that represent genuine activity. minShareBps=0n disables the gate
+  // (preserves legacy 3-arg behaviour for callers that opt out).
+  const WtotalAll = allApps.reduce((s, a) => s + (weights[a] ?? 0n), 0n);
+  if (WtotalAll === 0n) return Object.fromEntries(allApps.map(a => [a, 0n]));
+
+  const minShare = X * minShareBps / 10000n;
+  const apps = minShareBps <= 0n
+    ? allApps
+    : allApps.filter(a => (weights[a] ?? 0n) * X / WtotalAll >= minShare);
+
+  // Every gated-out app gets exactly 0; seed the result map up front so the
+  // return shape always covers all input apps (W-4 / conservation contract).
+  const rewards: Record<string, bigint> = Object.fromEntries(allApps.map(a => [a, 0n]));
+
   const Wtotal = apps.reduce((s, a) => s + (weights[a] ?? 0n), 0n);
-  if (Wtotal === 0n) return Object.fromEntries(apps.map(a => [a, 0n]));
+  if (Wtotal === 0n) return rewards;
 
   const cap = X * capBps / 10000n;
 
-  // Initial uncapped rewards
-  const rewards: Record<string, bigint> = {};
+  // Initial uncapped rewards (survivors only; denominator re-normalised to Wtotal)
   for (const a of apps) rewards[a] = (weights[a] ?? 0n) * X / Wtotal;
 
   // Iterative cap redistribution — terminates in ≤ |apps|+1 iterations (T10.1)

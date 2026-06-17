@@ -67,7 +67,11 @@ export interface WithdrawLampResult {
   summary:         string;
 }
 
-const DEFAULT_LAMP_ASSET_NAME = "744c414d50";
+// LAMP + tLAMP coexist (PolicyId+AssetName = distinct tokens). Default by network:
+// tLAMP testnet / LAMP mainnet — caller may override via params.lampAssetName.
+function defaultLampAssetName(network: Network): string {
+  return network === "Mainnet" ? "4c414d50" : "744c414d50";
+}
 
 /**
  * Build an unsigned tx that withdraws `amountOil` LAMP from `vaultUtxo`
@@ -93,7 +97,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     lucid, vaultUtxo, amountOil, vaultScript, network,
     lampPolicyId, vaultPlutusJson,
   } = params;
-  const lampAssetName = params.lampAssetName ?? DEFAULT_LAMP_ASSET_NAME;
+  const lampAssetName = params.lampAssetName ?? defaultLampAssetName(network);
 
   if (amountOil <= 0n) {
     throw new Error(`WITHDRAW-001: amountOil must be > 0 (got ${amountOil})`);

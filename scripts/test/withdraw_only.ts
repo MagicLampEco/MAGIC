@@ -24,7 +24,7 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  PROTOCOL, POLICY_IDS, ADDRESSES,
+  PROTOCOL, POLICY_IDS, ASSET_NAMES, ADDRESSES,
 } from "../config.js";
 
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
@@ -44,6 +44,7 @@ function buildProtocol(): ProtocolParams {
   return {
     network: NETWORK,
     lampPolicyId: POLICY_IDS.lamp,
+    lampAssetName: ASSET_NAMES.lamp,
     umNftPolicyId: POLICY_IDS.um_nft,
     treasuryAddress: ADDRESSES.treasury,
     shardPolicyId: POLICY_IDS.shard_nft,
@@ -140,6 +141,7 @@ async function main() {
       vaultPlutusJson: plutusJson,
       network: NETWORK,
       lampPolicyId: POLICY_IDS.lamp,
+      lampAssetName: ASSET_NAMES.lamp,
       destinationAddress: process.env.DEST_ADDR ?? address,
       tipPosixMs: tip.posixMs,
     });
@@ -207,7 +209,7 @@ async function rebuildWithTamper(
   const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
   const { resolveConstrIndex } = await import("../../MagicSDK/src/redeemerIndex.js");
   const { Constr, toUnit } = await import("@lucid-evolution/lucid");
-  const lampUnit = toUnit(POLICY_IDS.lamp, "744c414d50");
+  const lampUnit = toUnit(POLICY_IDS.lamp, ASSET_NAMES.lamp);
 
   let mutatedDatum = { ...newVaultDatum };
   let outputLamp = vaultUtxo.assets[lampUnit] ?? 0n;

@@ -146,6 +146,7 @@ async function main() {
   // Apply parameters in order: lamp_policy_id, treasury_addr, um_nft_policy, ms_per_epoch.
   const appliedCbor = applyParamsToScript(unapplied.compiledCode, [
     POLICY_IDS.lamp,
+    ASSET_NAMES.lamp,
     treasuryAddrData,
     POLICY_IDS.um_nft,
     PROTOCOL.MS_PER_EPOCH,

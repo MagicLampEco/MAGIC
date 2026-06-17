@@ -57,7 +57,7 @@ async function main() {
   const vaultScript = {
     type: "PlutusV3" as const,
     script: applyParamsToScript(unapplied.compiledCode, [
-      POLICY_IDS.lamp, treasuryAddrData, POLICY_IDS.um_nft, PROTOCOL.MS_PER_EPOCH,
+      POLICY_IDS.lamp, ASSET_NAMES.lamp, treasuryAddrData, POLICY_IDS.um_nft, PROTOCOL.MS_PER_EPOCH,
     ]),
   };
   const vaultScriptHash    = validatorToScriptHash(vaultScript);

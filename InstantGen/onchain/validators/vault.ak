@@ -4,12 +4,14 @@
 //
 // Parameterized by:
 //   lamp_policy_id   : PolicyId of LAMP native asset
+//   lamp_asset_name  : ByteArray asset name of LAMP per network
+//                      (testnet tLAMP #"744c414d50" / mainnet LAMP #"4c414d50")
 //   treasury_addr    : Address of Treasury UTxO
 //   um_nft_policy    : PolicyId of UM datum NFT (identifies the UM UTxO)
 //
 // Build on testnet:
 //   aiken build
-//   # applies the 3 parameters, producing the script hash
+//   # applies the parameters, producing the script hash
 
 use aiken/collection/list
 use aiken/crypto
@@ -48,10 +50,11 @@ use magiclamp/protocol/profile.{apply_pending_profile}
 //   Mainnet:        432_000_000
 //   Preview/Preprod: 86_400_000
 validator vault(
-  lamp_policy_id : PolicyId,
-  treasury_addr  : Address,
-  um_nft_policy  : PolicyId,
-  ms_per_epoch   : Int,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  treasury_addr   : Address,
+  um_nft_policy   : PolicyId,
+  ms_per_epoch    : Int,
 ) {
   spend(
     datum_opt : Option<VaultDatum>,
@@ -71,7 +74,7 @@ validator vault(
       InstantGen { lamp_paid } ->
         validate_instant_gen(
           input_datum, lamp_paid, current_epoch,
-          own_ref, lamp_policy_id, treasury_addr, um_nft_policy, tx,
+          own_ref, lamp_policy_id, lamp_asset_name, treasury_addr, um_nft_policy, tx,
         )
 
       // ── ApplyHalving — permissionless pending-profile apply ─
@@ -97,7 +100,7 @@ validator vault(
       // ── WithdrawLamp (SPEC_V1 §1) ────────────────────────
       WithdrawLamp { amount } ->
         validate_withdraw_lamp(
-          input_datum, amount, current_epoch, own_ref, lamp_policy_id, tx,
+          input_datum, amount, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx,
         )
     }
   }
@@ -107,14 +110,15 @@ validator vault(
 // validate_instant_gen — all C-INST-* and related constraints
 // ═══════════════════════════════════════════════════════════════
 fn validate_instant_gen(
-  input_datum    : VaultDatum,
-  lamp_paid      : Int,
-  current_epoch  : Int,
-  own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  treasury_addr  : Address,
-  um_nft_policy  : PolicyId,
-  tx             : Transaction,
+  input_datum     : VaultDatum,
+  lamp_paid       : Int,
+  current_epoch   : Int,
+  own_ref         : OutputReference,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  treasury_addr   : Address,
+  um_nft_policy   : PolicyId,
+  tx              : Transaction,
 ) -> Bool {
 
   // ── C-VAULT-DS-1: exactly one vault input ────────────────
@@ -191,7 +195,7 @@ fn validate_instant_gen(
   // owner's own wallet, or co-locating another wallet output in the tx, makes
   // the `≥ lamp_paid` aggregate check vacuously satisfiable (Treasury/CONTRACT.md:66).
   expect Script(_) = treasury_addr.payment_credential
-  expect treasury_receives_lamp(tx.outputs, treasury_addr, lamp_policy_id, lamp_paid)
+  expect treasury_receives_lamp(tx.outputs, treasury_addr, lamp_policy_id, lamp_asset_name, lamp_paid)
 
   // ── A02: Field-by-field output datum validation ───────────
   let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
@@ -388,12 +392,13 @@ fn find_vault_output_datum(
 // validate_withdraw_lamp — W-1..W-7 (SPEC_V1 §1)
 // ═══════════════════════════════════════════════════════════════
 fn validate_withdraw_lamp(
-  input_datum    : VaultDatum,
-  amount         : Int,
-  _current_epoch : Int,
-  own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  tx             : Transaction,
+  input_datum     : VaultDatum,
+  amount          : Int,
+  _current_epoch  : Int,
+  own_ref         : OutputReference,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
 
   // W-1: amount > 0
@@ -439,7 +444,7 @@ fn validate_withdraw_lamp(
   // W-6: vault output value carries the new lamp_balance worth of LAMP
   let vault_output = find_vault_output(tx.outputs, vault_addr)
   let vault_lamp_qty =
-    assets.quantity_of(vault_output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+    assets.quantity_of(vault_output.value, lamp_policy_id, lamp_asset_name)
   expect vault_lamp_qty == new_lamp_balance
 
   // W-7: Σholdings == lamp_balance
@@ -508,15 +513,16 @@ fn validate_update_profile(
 /// Verify Treasury receives exactly lamp_paid of LAMP token (C-INST-4).
 /// Also verifies LAMP conservation (C-INST-10) at the output level.
 fn treasury_receives_lamp(
-  outputs        : List<Output>,
-  treasury_addr  : Address,
-  lamp_policy_id : PolicyId,
-  lamp_paid      : Int,
+  outputs         : List<Output>,
+  treasury_addr   : Address,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  lamp_paid       : Int,
 ) -> Bool {
   let lamp_at_treasury =
     list.foldl(outputs, 0, fn(o, acc) {
       if o.address == treasury_addr {
-        acc + assets.quantity_of(o.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+        acc + assets.quantity_of(o.value, lamp_policy_id, lamp_asset_name)
       } else {
         acc
       }
@@ -550,6 +556,8 @@ const t_vault_hash: ByteArray =
   #"11111111111111111111111111111111111111111111111111111111"
 const t_lamp_policy: ByteArray =
   #"22222222222222222222222222222222222222222222222222222222"
+const t_lamp_name: ByteArray =
+  #"744c414d50"
 const t_tx_id: ByteArray =
   #"3333333333333333333333333333333333333333333333333333333333333333"
 
@@ -593,7 +601,7 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
 fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
   Output {
     address: address.from_script(t_vault_hash),
-    value: assets.from_asset(t_lamp_policy, #"744c414d50", balance),
+    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance),
     datum: InlineDatum(datum),
     reference_script: None,
   }
@@ -613,27 +621,27 @@ test w_positive_partial() {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_amount_zero() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(din, 100)], [t_owner])
-  validate_withdraw_lamp(din, 0, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 0, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_over_avail() fail {
   let din = t_datum(100, 100, [t_holding(100, 5, True)])
   let dout = t_datum(95, 100, [t_holding(95, 5, True)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_no_owner_sig() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_phantom_second_output() fail {
@@ -645,7 +653,7 @@ test w_phantom_second_output() fail {
       [t_vault_output(dout, 95), t_vault_output(dout, 95)],
       [t_owner],
     )
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_advance_last_updated_rejected() fail {
@@ -656,7 +664,7 @@ test w_advance_last_updated_rejected() fail {
       last_updated_epoch: 5,
     }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // ── UpdateProfile ─────────────────────────────────────────────

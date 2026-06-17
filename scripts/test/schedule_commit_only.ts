@@ -59,7 +59,7 @@ async function main() {
   const vaultScript = {
     type: "PlutusV3" as const,
     script: applyParamsToScript(vaultUnapplied.compiledCode, [
-      POLICY_IDS.lamp, treasuryAddrData, POLICY_IDS.shard_nft, PROTOCOL.MS_PER_EPOCH,
+      POLICY_IDS.lamp, ASSET_NAMES.lamp, treasuryAddrData, POLICY_IDS.shard_nft, PROTOCOL.MS_PER_EPOCH,
     ]),
   };
   const shardScript = { type: "PlutusV3" as const, script: shardUnapplied.compiledCode };

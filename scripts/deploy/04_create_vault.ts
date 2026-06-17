@@ -136,7 +136,7 @@ async function main() {
 
   // v1.0: SnapshotGen vault signature thêm lamp_policy_id (cho W-6 value check
   // trong WithdrawLamp). Order phải khớp với Aiken `validator vault(lamp_policy_id, ms_per_epoch)`.
-  const appliedCbor = applyParamsToScript(unapplied.compiledCode, [POLICY_IDS.lamp, PROTOCOL.MS_PER_EPOCH]);
+  const appliedCbor = applyParamsToScript(unapplied.compiledCode, [POLICY_IDS.lamp, ASSET_NAMES.lamp, PROTOCOL.MS_PER_EPOCH]);
   const vaultScript = { type: "PlutusV3" as const, script: appliedCbor };
   const vaultScriptHash = validatorToScriptHash(vaultScript);
   console.log(`Network:           ${NETWORK}`);

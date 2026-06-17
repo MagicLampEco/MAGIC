@@ -40,10 +40,9 @@ import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 
 import type { CreateVaultParams, CreateVaultResult } from "./types.js";
 import { VaultDatumSchema } from "./schemas.js";
-import { applyVaultValidator } from "./validatorScripts.js";
+import { applyVaultValidator, resolveLampAssetName } from "./validatorScripts.js";
 import { buildInitialVaultDatum } from "./vaultDatum.js";
 
-const DEFAULT_LAMP_ASSET_NAME = "744c414d50"; // "tLAMP" in hex
 const DEFAULT_VAULT_LOVELACE  = 2_000_000n;
 const DEFAULT_PROFILE         = "Flame" as const;
 
@@ -51,7 +50,9 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   const { lucid, vaultType, protocol, validators, vault } = params;
 
   // ── Defaults ─────────────────────────────────────────────────
-  const lampAssetName = protocol.lampAssetName ?? DEFAULT_LAMP_ASSET_NAME;
+  // Single source of truth — must equal the asset-name baked into the vault
+  // validator param (resolveLampAssetName used there too): tLAMP testnet / LAMP mainnet.
+  const lampAssetName = resolveLampAssetName(protocol);
   const vaultLovelace = vault.vaultLovelace ?? DEFAULT_VAULT_LOVELACE;
   const profile       = vault.profile ?? DEFAULT_PROFILE;
 

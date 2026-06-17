@@ -64,6 +64,17 @@ export function applyShardValidator(
   return { shardScript, shardScriptHash, shardAddress };
 }
 
+/**
+ * Resolve the LAMP asset-name (hex) for a given network. LAMP and tLAMP coexist:
+ * tLAMP ("744c414d50") on testnet, LAMP ("4c414d50") on mainnet — two distinct
+ * tokens (PolicyId+AssetName) per Genesis CONTRACT.md (token_name is a param).
+ * The vault validator now bakes lamp_asset_name as a compile-time param, so this
+ * MUST match the asset-name used to build the vault's LAMP value.
+ */
+export function resolveLampAssetName(protocol: ProtocolParams): string {
+  return protocol.lampAssetName ?? (protocol.network === "Mainnet" ? "4c414d50" : "744c414d50");
+}
+
 // ── internals ────────────────────────────────────────────────
 
 function buildParamsList(
@@ -71,18 +82,23 @@ function buildParamsList(
   protocol : ProtocolParams,
   msPer    : bigint,
 ): Data[] {
+  // lamp_asset_name is param #2 on every vault (right after lamp_policy_id),
+  // mirroring the on-chain validator signature.
+  const lampAssetName = resolveLampAssetName(protocol);
+
   switch (vaultType) {
     case "Snapshot":
-      // vault(ms_per_epoch)
-      return [msPer];
+      // vault(lamp_policy_id, lamp_asset_name, ms_per_epoch)
+      return [protocol.lampPolicyId, lampAssetName, msPer];
 
     case "Instant":
     case "Vacuum": {
-      // vault(lamp_policy_id, treasury_addr, um_nft_policy, ms_per_epoch)
+      // vault(lamp_policy_id, lamp_asset_name, treasury_addr, um_nft_policy, ms_per_epoch)
       requireField(protocol.umNftPolicyId, "umNftPolicyId", vaultType);
       requireField(protocol.treasuryAddress, "treasuryAddress", vaultType);
       return [
         protocol.lampPolicyId,
+        lampAssetName,
         addressToPlutusData(protocol.treasuryAddress!),
         protocol.umNftPolicyId!,
         msPer,
@@ -90,11 +106,12 @@ function buildParamsList(
     }
 
     case "Schedule": {
-      // vault(lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch)
+      // vault(lamp_policy_id, lamp_asset_name, treasury_addr, shard_policy_id, ms_per_epoch)
       requireField(protocol.shardPolicyId, "shardPolicyId", "Schedule");
       requireField(protocol.treasuryAddress, "treasuryAddress", "Schedule");
       return [
         protocol.lampPolicyId,
+        lampAssetName,
         addressToPlutusData(protocol.treasuryAddress!),
         protocol.shardPolicyId!,
         msPer,

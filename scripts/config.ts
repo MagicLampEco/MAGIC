@@ -41,8 +41,13 @@ export const POLICY_IDS = {
 };
 
 // ── Asset names (hex) ─────────────────────────────────────────
+// LAMP asset-name là PARAM theo NETWORK (Genesis CONTRACT.md): tLAMP testnet,
+// LAMP mainnet — token = PolicyId+AssetName, hai mạng là hai token độc lập.
+// Validator vault nhận lamp_asset_name làm tham số → truyền giá trị này khi apply.
+export const TLAMP_NAME = "744c414d50"; // "tLAMP" — testnet
+export const LAMP_NAME  = "4c414d50";   // "LAMP"  — mainnet
 export const ASSET_NAMES = {
-  lamp:      "744c414d50", // "tLAMP"
+  lamp:      process.env.LAMP_ASSET_NAME ?? (NETWORK === "Mainnet" ? LAMP_NAME : TLAMP_NAME),
   um_nft:    "554d44",     // "UMD"
   shard_nft: "5348415244", // "SHARD"
 };

@@ -25,7 +25,7 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  PROTOCOL, POLICY_IDS, ADDRESSES,
+  PROTOCOL, POLICY_IDS, ASSET_NAMES, ADDRESSES,
 } from "../config.js";
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
@@ -69,6 +69,7 @@ function buildProtocol(): ProtocolParams {
   return {
     network: NETWORK,
     lampPolicyId: POLICY_IDS.lamp,
+    lampAssetName: ASSET_NAMES.lamp,
     umNftPolicyId: POLICY_IDS.um_nft,
     treasuryAddress: ADDRESSES.treasury,
     shardPolicyId: POLICY_IDS.shard_nft,
@@ -220,6 +221,7 @@ async function runMv3(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
     vaultPlutusJson: snapPlutus,
     network: NETWORK,
     lampPolicyId: POLICY_IDS.lamp,
+    lampAssetName: ASSET_NAMES.lamp,
     destinationAddress: address,
     tipPosixMs: tip.posixMs,
   });

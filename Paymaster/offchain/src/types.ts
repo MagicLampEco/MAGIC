@@ -8,7 +8,8 @@
 //   SponsorPolicy       { app_id, app_authority, max_per_did_per_epoch,
 //                         max_global_per_epoch, lamp_per_magic_q,
 //                         ada_per_magic_q, oracle_nft_policy, epoch }           constr 0
-//   SponsorMeter        { app_id, epoch, did_lamp_map, global_lamp_epoch }     constr 0
+//   SponsorMeter        { app_id, epoch, did_lamp_map, global_lamp_epoch,
+//                         global_magic_epoch }                                  constr 0
 //   ProtocolFeeParams   { min_lamp_per_magic_q, protocol_fee_active, epoch }   constr 0
 //   PaymasterRedeemer = Sponsor { vault_refs, policy_ref, protocol_ref,
 //                                 did_key, lamp_this, ada_this }                constr 0
@@ -45,6 +46,7 @@ export type SponsorPolicyT = Data.Static<typeof SponsorPolicySchema>;
 
 // ── SponsorMeter (thread UTxO datum) ──────────────────────────────────────────
 // types.ak:39-44. did_lamp_map = List<(ByteArray, Int)>.
+// global_magic_epoch = Σ magic_consumed per app per epoch (nanogic), append cuối.
 export const DidLampEntrySchema = Data.Tuple([Data.Bytes(), Data.Integer()]);
 export type DidLampEntryT = Data.Static<typeof DidLampEntrySchema>;
 
@@ -53,6 +55,7 @@ export const SponsorMeterSchema = Data.Object({
   epoch: Data.Integer(),
   did_lamp_map: Data.Array(DidLampEntrySchema),
   global_lamp_epoch: Data.Integer(),
+  global_magic_epoch: Data.Integer(), // Σ magic_consumed per app per epoch (nanogic)
 });
 export type SponsorMeterT = Data.Static<typeof SponsorMeterSchema>;
 

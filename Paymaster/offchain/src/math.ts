@@ -45,6 +45,20 @@ export function lookupDid(map: readonly DidLampEntry[], didKey: string): bigint 
   return e ? e[1] : 0n;
 }
 
+// ── global_magic_epoch helper (mirror paymaster.ak global_magic_epoch transition) ──
+
+/**
+ * Tích lũy global_magic_epoch: reset về 0 ở epoch mới, cộng dồn cùng epoch.
+ * base_magic = 0 khi epoch_rollover, ngược lại = meter_in.global_magic_epoch.
+ * Mirror Aiken: global_magic_epoch = base_magic + magic_consumed.
+ */
+export function updateGlobalMagic(
+  base_magic: bigint,
+  magic_consumed: bigint,
+): bigint {
+  return base_magic + magic_consumed;
+}
+
 /**
  * Cộng `add` vào entry did_key (tạo mới ở CUỐI nếu chưa có). Giữ thứ tự; tối đa 1
  * entry/key. Mirror util.ak:146-165 BYTE-PERFECT để meter_out_datum.did_lamp_map ==

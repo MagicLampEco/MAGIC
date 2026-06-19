@@ -28,7 +28,8 @@
 use aiken/builtin
 use aiken/collection/list
 use aiken/interval
-use cardano/assets.{PolicyId, Value}
+use cardano/address.{Address}
+use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, ScriptPurpose, Spend, Transaction,
   placeholder,
@@ -53,6 +54,8 @@ validator paymaster(
   max_policy_stale    : Int,
   max_did_entries     : Int,
   ms_per_epoch        : Int,
+  treasury_addr       : Address,    // SEC-01 fix: ép LAMP đến đúng Treasury
+  lamp_asset_name     : AssetName,  // SEC-01 fix: thay #"744c414d50" hardcode
 ) {
   spend(
     datum_opt : Option<SponsorMeter>,
@@ -116,6 +119,24 @@ validator paymaster(
     expect lamp_this >= 0
     expect lamp_this <= lamp_cap(magic_consumed, policy.lamp_per_magic_q)
 
+    // ── PM-TREASURY (SEC-01 fix): LAMP phải thực sự đến Treasury ─────────────
+    // Mirror pattern từ InstantGen vault.ak validate_gen (treasury_receives_lamp).
+    // Chống attacker chỉ claim LAMP đã trả nhưng thực tế gửi địa chỉ khác.
+    expect if lamp_this > 0 {
+      let lamp_to_treasury =
+        tx.outputs
+          |> list.filter(fn(o) { o.address == treasury_addr })
+          |> list.foldl(
+               0,
+               fn(o, acc) {
+                 acc + assets.quantity_of(o.value, lamp_policy_id, lamp_asset_name)
+               },
+             )
+      lamp_to_treasury >= lamp_this
+    } else {
+      True
+    }
+
     // ── PM-4: ada_this ≤ ⌊ magic_consumed × ada_per_magic_q / Q ⌋ (trần) ──────
     expect ada_this >= 0
     expect ada_this <= ada_cap(magic_consumed, policy.ada_per_magic_q)
@@ -123,12 +144,12 @@ validator paymaster(
     // ── PM-8: epoch lock + reset đúng. Base (pre-op) state lấy theo epoch. ─────
     expect meter_out_datum.epoch == current_epoch
     expect meter_in.epoch <= current_epoch
-    let (base_map, base_global) =
+    let (base_map, base_global, base_magic) =
       if meter_in.epoch < current_epoch {
         // epoch mới → reset budget cũ TRƯỚC khi cộng op này (chống replay budget)
-        ([], 0)
+        ([], 0, 0)
       } else {
-        (meter_in.did_lamp_map, meter_in.global_lamp_epoch)
+        (meter_in.did_lamp_map, meter_in.global_lamp_epoch, meter_in.global_magic_epoch)
       }
 
     // ── PM-5: per-DID/owner cap (trên base, fail-closed) ──────────────────────
@@ -142,6 +163,8 @@ validator paymaster(
     let expected_map = util.add_did(base_map, did_key, lamp_this)
     expect meter_out_datum.did_lamp_map == expected_map
     expect meter_out_datum.global_lamp_epoch == base_global + lamp_this
+    // P0-5: global_magic_epoch tích luỹ nanogic tiêu trong epoch (cho FlowRateKeeper)
+    expect meter_out_datum.global_magic_epoch == base_magic + magic_consumed
 
     // ── PM hard-cap: |did_lamp_map| ≤ max_did_entries (fail-closed, DoS §11) ───
     expect list.length(meter_out_datum.did_lamp_map) <= max_did_entries
@@ -309,6 +332,10 @@ const ct_max_stale: Int = 10
 const ct_max_did: Int = 64
 const ct_mspe: Int = 86_400_000               // Preview
 const ct_burn_constr: Int = 2                 // InstantGen BurnBatch
+const ct_lamp_asset_name: AssetName = #"744c414d50"  // SEC-01 fix: "tLAMP"
+fn ct_treasury_addr() -> Address {            // SEC-01 fix: mock treasury address
+  util.script_address(#"beef")
+}
 
 fn ct_policy_ref() -> OutputReference {
   util.mk_ref_id(#"bb", 9)
@@ -442,6 +469,7 @@ fn rd_data(r: PaymasterRedeemer) -> Data {
 }
 
 /// Run validator: cấu hình đầy đủ. validity-range cửa sổ hẹp quanh cur_epoch.
+/// lamp_to_tsy: oil LAMP gửi về treasury (SEC-01). Nếu > 0 thêm output @treasury_addr.
 fn run(
   policy        : SponsorPolicy,
   policy_nft_q  : Int,
@@ -458,9 +486,24 @@ fn run(
   rd            : PaymasterRedeemer,
   signers       : List<ByteArray>,
   extra_reds    : Pairs<ScriptPurpose, Data>,
+  lamp_to_tsy   : Int,
 ) -> Bool {
   let meter_i = ct_meter_input(meter_in, meter_nft_in, meter_in_lvl)
   let meter_o = ct_meter_output(meter_out, meter_nft_out, meter_out_lvl)
+  // SEC-01 fix: tạo treasury output nếu lamp_to_tsy > 0
+  let treasury_outs =
+    if lamp_to_tsy > 0 {
+      let tsy_val =
+        assets.add(
+          assets.from_lovelace(2_000_000),
+          ct_lamp_policy,
+          ct_lamp_asset_name,
+          lamp_to_tsy,
+        )
+      [util.mk_output(ct_treasury_addr(), tsy_val, builtin.constr_data(0, []))]
+    } else {
+      []
+    }
   let base_reds: Pairs<ScriptPurpose, Data> =
     [Pair(Spend(ct_meter_ref()), rd_data(rd))]
   let tx =
@@ -471,7 +514,7 @@ fn run(
         ct_policy_input(policy, policy_nft_q),
         ct_protocol_input(protocol, protocol_nft_q),
       ],
-      outputs: [meter_o],
+      outputs: list.concat([meter_o], treasury_outs),
       redeemers: list.concat(base_reds, extra_reds),
       extra_signatories: signers,
       validity_range: interval.between(cur_epoch * ct_mspe, cur_epoch * ct_mspe + 1),
@@ -479,12 +522,15 @@ fn run(
   paymaster.spend(
     ct_vault_sh, ct_burn_constr, ct_lamp_policy, ct_policy_nft, ct_meter_nft,
     ct_protocol_nft, ct_max_stale, ct_max_did, ct_mspe,
+    ct_treasury_addr(), ct_lamp_asset_name,
     Some(meter_in), rd, ct_meter_ref(), tx,
   )
 }
 
 fn empty_meter(epoch: Int) -> SponsorMeter {
-  SponsorMeter { app_id: ct_app_id, epoch, did_lamp_map: [], global_lamp_epoch: 0 }
+  SponsorMeter {
+    app_id: ct_app_id, epoch, did_lamp_map: [], global_lamp_epoch: 0, global_magic_epoch: 0,
+  }
 }
 
 // ── HAPPY: 1 vault burn 10M, rate 0.5×Q → lamp_cap 5M; lamp_this 5M; meter cập nhật.
@@ -499,12 +545,14 @@ test pm_happy() {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   run(
     pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000,
     [vault], 6, rd, [ct_app_auth],
     [Pair(Spend(vref), burn_rd)],
+    5_000_000,  // lamp_to_tsy = lamp_this (SEC-01)
   )
 }
 
@@ -521,12 +569,14 @@ test pm_happy_ada() {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 50_000_000)], global_lamp_epoch: 50_000_000,
+      global_magic_epoch: 50_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 50_000_000, 100_000_000)
   run(
     pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000,
     [vault], 6, rd, [ct_app_auth],
     [Pair(Spend(vref), burn_rd)],
+    50_000_000,  // lamp_to_tsy = lamp_this (SEC-01)
   )
 }
 
@@ -542,17 +592,20 @@ test pm_epoch_reset() {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 9_999_999_999)], global_lamp_epoch: 99_999_999_999,
+      global_magic_epoch: 999_999_999_999,  // giá trị cũ — bị reset
     }
   let m_out =
     SponsorMeter {
       app_id: ct_app_id, epoch: 10,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 10_000_000,       // reset: 0 + 10M burns = 10M
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   run(
     pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000,
     [vault], 10, rd, [ct_app_auth],
     [Pair(Spend(vref), burn_rd)],
+    5_000_000,  // lamp_to_tsy = lamp_this (SEC-01)
   )
 }
 
@@ -566,17 +619,19 @@ test pm_two_vault() {
   let v1 = ct_vault_input(1, Some(ct_app_auth))
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
-  // magic 20M, rate 0.5× → cap 10M; lamp_this 10M.
+  // magic 20M (2 vault × 10M), rate 0.5× → cap 10M; lamp_this 10M.
   let m_out =
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 10_000_000)], global_lamp_epoch: 10_000_000,
+      global_magic_epoch: 20_000_000,  // Σ burns = 2 × 10M
     }
   let rd = ct_sponsor_rd([vref0, vref1], ct_owner, 10_000_000, 0)
   run(
     pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000,
     [v0, v1], 6, rd, [ct_app_auth],
     [Pair(Spend(vref0), burn_rd), Pair(Spend(vref1), burn_rd)],
+    10_000_000,  // lamp_to_tsy = lamp_this (SEC-01)
   )
 }
 
@@ -589,9 +644,13 @@ test pm_neg_no_cosign() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-1.5: app KHÔNG phải delegate của vault → fail ──────────────────────
@@ -603,9 +662,13 @@ test pm_neg_not_delegate() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-1.5: vault delegate None → fail ───────────────────────────────────
@@ -617,9 +680,13 @@ test pm_neg_delegate_none() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-3: lamp_this vượt trần tỷ giá → fail ──────────────────────────────
@@ -631,9 +698,13 @@ test pm_neg_over_lamp_cap() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])  // cap 5M
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_001)], global_lamp_epoch: 5_000_001 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_001)], global_lamp_epoch: 5_000_001,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_001, 0)  // > cap 5M
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-3.5: lamp_per_magic_q < sàn → fail ────────────────────────────────
@@ -645,9 +716,13 @@ test pm_neg_below_floor() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 4_000_000)], global_lamp_epoch: 4_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 4_000_000)], global_lamp_epoch: 4_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 4_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-3.5: sponsor=0 khi protocol_fee_active → fail ─────────────────────
@@ -659,9 +734,13 @@ test pm_neg_sponsor_zero() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 0)], global_lamp_epoch: 0 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 0)], global_lamp_epoch: 0,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 0, 0)  // sponsor 0
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-5: per-DID cap vượt → fail ────────────────────────────────────────
@@ -673,11 +752,19 @@ test pm_neg_did_cap() fail {
   // burns lớn để cap đủ, did đã dùng 9.999 LAMP, op 5M → vượt 10 LAMP (oil).
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 1_000_000_000)])  // cap 500M
   let m_in =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 9_999_000_000)], global_lamp_epoch: 9_999_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 9_999_000_000)], global_lamp_epoch: 9_999_000_000,
+      global_magic_epoch: 0,
+    }
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 10_004_000_000)], global_lamp_epoch: 10_004_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 10_004_000_000)], global_lamp_epoch: 10_004_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)  // 9.999G + 5M = 10.004G > 10G
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-6: global cap vượt → fail ─────────────────────────────────────────
@@ -688,11 +775,19 @@ test pm_neg_global_cap() fail {
   let vault = ct_vault_input(0, Some(ct_app_auth))
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 1_000_000_000)])  // cap 500M
   let m_in =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 99_998_000_000)], global_lamp_epoch: 99_998_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 99_998_000_000)], global_lamp_epoch: 99_998_000_000,
+      global_magic_epoch: 0,
+    }
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 100_003_000_000)], global_lamp_epoch: 100_003_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 100_003_000_000)], global_lamp_epoch: 100_003_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)  // global 99.998G + 5M > 100G
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-10: policy stale (epoch quá cũ) → fail ────────────────────────────
@@ -704,10 +799,14 @@ test pm_neg_stale_policy() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(20)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 20, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 20,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   // current 20 − policy 1 = 19 > max_stale 10 → fail
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 20, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 20, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-10: fake policy beacon (NFT qty=0) → fail ─────────────────────────
@@ -719,9 +818,13 @@ test pm_neg_fake_policy_nft() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 0, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 0, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-2: khai magic_consumed giả — burn THẬT chỉ 10M nhưng app khai lamp_this
@@ -734,9 +837,13 @@ test pm_neg_fake_magic() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])  // THẬT 10M → cap 5M
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 10_000_000)], global_lamp_epoch: 10_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 10_000_000)], global_lamp_epoch: 10_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 10_000_000, 0)  // khai 10M > cap 5M
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-7: 2 meter input @script → double-meter → count fail ──────────────
@@ -748,7 +855,11 @@ test pm_neg_double_meter() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   // thêm 1 meter input thứ 2 @paymaster script
   let extra_meter =
@@ -772,7 +883,9 @@ test pm_neg_double_meter() fail {
     }
   paymaster.spend(
     ct_vault_sh, ct_burn_constr, ct_lamp_policy, ct_policy_nft, ct_meter_nft,
-    ct_protocol_nft, ct_max_stale, ct_max_did, ct_mspe, Some(m_in), rd, ct_meter_ref(), tx,
+    ct_protocol_nft, ct_max_stale, ct_max_did, ct_mspe,
+    ct_treasury_addr(), ct_lamp_asset_name,
+    Some(m_in), rd, ct_meter_ref(), tx,
   )
 }
 
@@ -785,10 +898,14 @@ test pm_neg_drain_ada() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   // meter_in 10 ADA, meter_out 2 ADA → drain 8 ADA
-  run(pol, 1, proto, 1, m_in, 1, 10_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 10_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG: meter NFT bị rút ở output (qty 0) → PM-7 fail ───────────────────────
@@ -800,9 +917,13 @@ test pm_neg_meter_nft_drain() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 0, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 0, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG PM-8: meter_in epoch FUTURE > current → meter_in.epoch <= current fail ─
@@ -814,9 +935,13 @@ test pm_neg_meter_future_epoch() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(9)  // future > current 6
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
 }
 
 // ── NEG: state transition sai (meter_out global không khớp base+lamp_this) → fail
@@ -827,11 +952,15 @@ test pm_neg_bad_state() fail {
   let vault = ct_vault_input(0, Some(ct_app_auth))
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
-  // out global = 0 (đáng lẽ 5M) → fail
+  // out global_lamp_epoch = 0 (đáng lẽ 5M) → fail tại PM-8 state transition check
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 0 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 0,
+      global_magic_epoch: 10_000_000,  // đúng để fail đúng chỗ global_lamp_epoch
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)])
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-16: validity-range unbounded upper → get_epoch fail ───────────────
@@ -843,7 +972,11 @@ test pm_neg_unbounded() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let m_in = empty_meter(6)
   let m_out =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 0,
+    }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   let meter_i = ct_meter_input(m_in, 1, 2_000_000)
   let meter_o = ct_meter_output(m_out, 1, 2_000_000)
@@ -859,7 +992,9 @@ test pm_neg_unbounded() fail {
     }
   paymaster.spend(
     ct_vault_sh, ct_burn_constr, ct_lamp_policy, ct_policy_nft, ct_meter_nft,
-    ct_protocol_nft, ct_max_stale, ct_max_did, ct_mspe, Some(m_in), rd, ct_meter_ref(), tx,
+    ct_protocol_nft, ct_max_stale, ct_max_did, ct_mspe,
+    ct_treasury_addr(), ct_lamp_asset_name,
+    Some(m_in), rd, ct_meter_ref(), tx,
   )
 }
 
@@ -873,11 +1008,16 @@ test pm_neg_did_cap_overflow() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   // meter_in đã có 1 entry (did khác); op tạo entry thứ 2 cho ct_owner.
   let m_in =
-    SponsorMeter { app_id: ct_app_id, epoch: 6, did_lamp_map: [(#"feed", 1_000_000)], global_lamp_epoch: 1_000_000 }
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(#"feed", 1_000_000)], global_lamp_epoch: 1_000_000,
+      global_magic_epoch: 0,
+    }
   let m_out =
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(#"feed", 1_000_000), (ct_owner, 5_000_000)], global_lamp_epoch: 6_000_000,
+      global_magic_epoch: 0,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   let meter_i = ct_meter_input(m_in, 1, 2_000_000)
@@ -895,6 +1035,8 @@ test pm_neg_did_cap_overflow() fail {
   // max_did_entries = 1 → output 2 entry vi phạm
   paymaster.spend(
     ct_vault_sh, ct_burn_constr, ct_lamp_policy, ct_policy_nft, ct_meter_nft,
-    ct_protocol_nft, ct_max_stale, 1, ct_mspe, Some(m_in), rd, ct_meter_ref(), tx,
+    ct_protocol_nft, ct_max_stale, 1, ct_mspe,
+    ct_treasury_addr(), ct_lamp_asset_name,
+    Some(m_in), rd, ct_meter_ref(), tx,
   )
 }

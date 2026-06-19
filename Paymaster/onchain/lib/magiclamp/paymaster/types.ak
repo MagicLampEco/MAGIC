@@ -33,14 +33,17 @@ pub type SponsorPolicy {
 
 /// SponsorMeter — thread UTxO (1 per app per epoch), mang SponsorMeter NFT.
 /// Datum ghi quota đã dùng. Thread NFT chống double-meter (1 UTxO duy nhất).
-///   did_lamp_map      : (did_key, lamp_sponsored_oil) per DID/owner-key. HARD-CAP
-///                       list.length ≤ max_did_entries (fail-closed, DoS guard).
-///   global_lamp_epoch : tổng oil đã sponsor trong epoch
+///   did_lamp_map       : (did_key, lamp_sponsored_oil) per DID/owner-key. HARD-CAP
+///                        list.length ≤ max_did_entries (fail-closed, DoS guard).
+///   global_lamp_epoch  : tổng oil đã sponsor trong epoch
+///   global_magic_epoch : Σ nanogic đã tiêu trong epoch — P0-5: dùng bởi FlowRateKeeper
+///                        (append-only field, không break datum cũ chưa có UTxO on-chain)
 pub type SponsorMeter {
-  app_id            : ByteArray,
-  epoch             : Int,
-  did_lamp_map      : List<(ByteArray, Int)>,
-  global_lamp_epoch : Int,
+  app_id             : ByteArray,
+  epoch              : Int,
+  did_lamp_map       : List<(ByteArray, Int)>,
+  global_lamp_epoch  : Int,
+  global_magic_epoch : Int,  // BỔ SUNG — Σ magic_consumed per app per epoch (nanogic)
 }
 
 /// ProtocolFeeParams — beacon DAO (reference input), mang Protocol NFT.

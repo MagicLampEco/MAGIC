@@ -26,7 +26,7 @@
 //      hạn bằng clamp + SMA, ghi chú rõ trong MATH.md §TV-UM-04 / TECH.md.
 
 use aiken/collection/list
-use aiken/interval.{Finite, IntervalBoundType, after}
+use aiken/interval.{Finite, IntervalBoundType, between}
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{PolicyId}
 use cardano/assets
@@ -167,12 +167,24 @@ fn clamp(x: Int, lo: Int, hi: Int) -> Int {
 }
 
 // ── eUTXO helpers ─────────────────────────────────────────────
+
+// SEC-03 fix: upper_bound constraint prevents front-run via epoch injection.
+// Đọc cả lower và upper bound; ép e_lo == e_hi để tx phải nằm trong một epoch
+// duy nhất. Nếu chỉ đọc lower_bound, attacker có thể set lower=start_of(E)
+// với upper=∞, tx được include ở epoch E+k, nhưng validator ghi
+// last_updated_epoch = E → sai epoch. Mirrors VacuumGen get_current_epoch.
 fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
-  expect Some(s) = tx.validity_range.lower_bound.bound_type |> get_finite
-  s / ms_per_epoch
+  expect Some(lower_ms) =
+    tx.validity_range.lower_bound.bound_type |> get_finite_slot
+  expect Some(upper_ms) =
+    tx.validity_range.upper_bound.bound_type |> get_finite_slot
+  let e_lo = lower_ms / ms_per_epoch
+  let e_hi = upper_ms / ms_per_epoch
+  expect e_lo == e_hi
+  e_lo
 }
 
-fn get_finite(bt: IntervalBoundType) -> Option<Int> {
+fn get_finite_slot(bt: IntervalBoundType) -> Option<Int> {
   when bt is {
     Finite(s) -> Some(s)
     _ -> None
@@ -277,7 +289,7 @@ fn um_tx(
     inputs: [um_in],
     outputs: [um_out],
     extra_signatories: sigs,
-    validity_range: after(epoch * t_mspe),
+    validity_range: between(epoch * t_mspe, (epoch + 1) * t_mspe - 1),
   }
 }
 
@@ -324,7 +336,7 @@ test um_double_satisfaction_stake_cred() fail {
     inputs: [in_a, in_b],
     outputs: [out_a, out_b],
     extra_signatories: [],
-    validity_range: after(5 * t_mspe),
+    validity_range: between(5 * t_mspe, 6 * t_mspe - 1),
   }
   um_datum_validator.spend(
     t_mspe, t_um_policy, t_um_name,
@@ -390,7 +402,7 @@ test um_output_stake_cred_hijack() fail {
     inputs: [um_in],
     outputs: [um_out],
     extra_signatories: [],
-    validity_range: after(5 * t_mspe),
+    validity_range: between(5 * t_mspe, 6 * t_mspe - 1),
   }
   um_datum_validator.spend(
     t_mspe, t_um_policy, t_um_name,

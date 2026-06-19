@@ -22,7 +22,7 @@ import {
   type PaymasterRedeemerT,
 } from "../offchain/src/types.js";
 import {
-  lampCap, adaCap, q, sumBurns, lookupDid, addDid,
+  lampCap, adaCap, q, sumBurns, lookupDid, addDid, updateGlobalMagic,
   type Burn, type DidLampEntry,
 } from "../offchain/src/math.js";
 
@@ -52,7 +52,7 @@ function mkPolicy(over: Partial<SponsorPolicyT> = {}): SponsorPolicyT {
 }
 
 function mkMeter(over: Partial<SponsorMeterT> = {}): SponsorMeterT {
-  return { app_id: APP_ID, epoch: 6n, did_lamp_map: [], global_lamp_epoch: 0n, ...over };
+  return { app_id: APP_ID, epoch: 6n, did_lamp_map: [], global_lamp_epoch: 0n, global_magic_epoch: 0n, ...over };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -104,9 +104,9 @@ describe("P8 codec — roundtrip", () => {
     expect(back).toEqual(r);
   });
 
-  it("SponsorMeter CBOR = Constr(0,[...]) đúng thứ tự field app_id,epoch,map,global", () => {
-    // Đối chiếu cấu trúc Plutus: field index 1 = epoch (Int), không phải map.
-    const m = mkMeter({ epoch: 42n, global_lamp_epoch: 7n });
+  it("SponsorMeter CBOR = Constr(0,[...]) đúng thứ tự field app_id,epoch,map,global_lamp,global_magic", () => {
+    // Đối chiếu cấu trúc Plutus: field index 1=epoch, 3=global_lamp_epoch, 4=global_magic_epoch.
+    const m = mkMeter({ epoch: 42n, global_lamp_epoch: 7n, global_magic_epoch: 99n });
     const cbor = encodeSponsorMeter(m);
     const raw = Data.from(cbor); // generic → Constr
     // @ts-expect-error truy cập runtime Constr
@@ -115,6 +115,8 @@ describe("P8 codec — roundtrip", () => {
     expect(raw.fields[1]).toBe(42n);
     // @ts-expect-error fields[3] = global_lamp_epoch
     expect(raw.fields[3]).toBe(7n);
+    // @ts-expect-error fields[4] = global_magic_epoch (append cuối)
+    expect(raw.fields[4]).toBe(99n);
   });
 
   it("OutputReference schema: transaction_id rồi output_index (thứ tự)", () => {
@@ -213,5 +215,40 @@ describe("meter state — magic_consumed + did_lamp_map", () => {
       total += 10_000_000n;
     }
     expect(total).toBe(20_000_000n); // 2 phân biệt × 10M
+  });
+
+  it("updateGlobalMagic: epoch mới → global_magic_epoch = magic_consumed", () => {
+    // baseMagic = 0 (epoch rollover), magic_consumed = 15M nanogic.
+    expect(updateGlobalMagic(0n, 15_000_000n)).toBe(15_000_000n);
+  });
+
+  it("updateGlobalMagic: cùng epoch → global_magic_epoch += magic_consumed", () => {
+    // baseMagic = 30M (đã tích lũy), magic_consumed = 10M → 40M tổng.
+    expect(updateGlobalMagic(30_000_000n, 10_000_000n)).toBe(40_000_000n);
+  });
+
+  it("SponsorMeter roundtrip giữ global_magic_epoch", () => {
+    const m = mkMeter({
+      did_lamp_map: [[OWNER, 5_000_000n]],
+      global_lamp_epoch: 5_000_000n,
+      global_magic_epoch: 10_000_000n,
+    });
+    const back = decodeSponsorMeter(encodeSponsorMeter(m));
+    expect(back.global_magic_epoch).toBe(10_000_000n);
+    expect(back).toEqual(m);
+  });
+
+  it("state transition: global_magic_epoch epoch mới = magic_consumed (reset + cộng)", () => {
+    // Epoch cũ: global_magic_epoch = 999n. Sang epoch mới: base = 0, result = magic_consumed.
+    const magic_consumed = 25_000_000n;
+    const base_magic = 0n; // epochRollover
+    expect(updateGlobalMagic(base_magic, magic_consumed)).toBe(25_000_000n);
+  });
+
+  it("state transition: global_magic_epoch cùng epoch = base + magic_consumed", () => {
+    // Cùng epoch: base = meter_in.global_magic_epoch, cộng dồn.
+    const base_magic = 50_000_000n;
+    const magic_consumed = 20_000_000n;
+    expect(updateGlobalMagic(base_magic, magic_consumed)).toBe(70_000_000n);
   });
 });

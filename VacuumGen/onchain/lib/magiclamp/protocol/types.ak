@@ -171,4 +171,11 @@ pub type VaultRedeemer {
   // constr 7  SetDelegate: set/clear consume-delegate (personal_delegate).
   // Owner-only, no cooldown. Append-only — new variant at END (P8).
   SetDelegate   { new_delegate: Option<ByteArray> }
+
+  // constr 8  VacuumExpire (SEC-05 fix): owner reclaims LAMP from an order
+  // that missed the 2-epoch grace window (current_epoch > fire_epoch + 2).
+  // Does NOT violate C-VAC-12: C-VAC-12 forbids cancel BEFORE fire_epoch;
+  // expire only becomes available AFTER fire_epoch + grace has passed.
+  // Owner-only — no keeper/delegate to prevent griefing.
+  VacuumExpire  { order_id: ByteArray }
 }

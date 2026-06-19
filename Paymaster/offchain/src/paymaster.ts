@@ -24,7 +24,7 @@ import {
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type OutRef,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
-import { lampCap, adaCap, sumBurns, lookupDid, addDid, type Burn } from "./math.js";
+import { lampCap, adaCap, sumBurns, lookupDid, addDid, updateGlobalMagic, type Burn } from "./math.js";
 import {
   PaymasterRedeemerSchema,
   encodeSponsorMeter, decodeSponsorMeter,
@@ -184,6 +184,7 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
   const epochRollover = meterIn.epoch < currentEpoch;
   const baseMap: DidLampEntryT[] = epochRollover ? [] : meterIn.did_lamp_map;
   const baseGlobal: bigint = epochRollover ? 0n : meterIn.global_lamp_epoch;
+  const baseMagic: bigint = epochRollover ? 0n : meterIn.global_magic_epoch;
 
   // ── PM-5/6: cap fail-closed (offchain mirror, fail sớm) ──────────────────────
   const didSpent = lookupDid(baseMap as ReadonlyArray<readonly [string, bigint]>, didKey);
@@ -209,6 +210,7 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
     epoch: currentEpoch,
     did_lamp_map: newMap as DidLampEntryT[],
     global_lamp_epoch: baseGlobal + lampThis,
+    global_magic_epoch: updateGlobalMagic(baseMagic, magicConsumed),
   };
 
   // ── Sponsor redeemer (Meter input) ──────────────────────────────────────────

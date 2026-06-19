@@ -582,9 +582,22 @@ fn create_batches_rec(
 
 // ── Helpers ───────────────────────────────────────────────────
 
+// SEC-02: upper_bound constraint prevents epoch gaming.
+// Reading lower_bound only lets an attacker set lower=start_of(E) with an
+// open/infinite upper, get included at a real epoch E+k, yet have the
+// validator believe current_epoch == E — enabling count_eligible_fires to
+// count up to k extra fires and claim k× MAGIC in a single tx.
+// Fix: require BOTH bounds Finite AND the tx to sit inside ONE epoch
+// (e_lo == e_hi), so `current_epoch` is unambiguous. Mirrors VacuumGen.
 fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
-  expect Some(s) = tx.validity_range.lower_bound.bound_type |> get_finite
-  s / ms_per_epoch
+  expect Some(lower_ms) =
+    tx.validity_range.lower_bound.bound_type |> get_finite
+  expect Some(upper_ms) =
+    tx.validity_range.upper_bound.bound_type |> get_finite
+  let e_lo = lower_ms / ms_per_epoch
+  let e_hi = upper_ms / ms_per_epoch
+  expect e_lo == e_hi
+  e_lo
 }
 
 fn get_finite(bt: IntervalBoundType) -> Option<Int> {

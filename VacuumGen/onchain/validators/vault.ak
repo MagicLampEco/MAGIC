@@ -19,8 +19,8 @@ use cardano/transaction.{
 use magiclamp/protocol/types.{
   ActivityState, BurnBatch, DelegationCertificate, Flame, Instant,
   LoyaltyHolding, MagicBatch, SetDelegate, StreakState, UMDatum, Vacuum,
-  VacuumCommit, VacuumFire, VacuumOrder, VaultAttribution, VaultDatum,
-  VaultRedeemer, WithdrawLamp,
+  VacuumCommit, VacuumExpire, VacuumFire, VacuumOrder, VaultAttribution,
+  VaultDatum, VaultRedeemer, WithdrawLamp,
 }
 use magiclamp/protocol/constants.{
   max_batches_per_vault, max_loyalty_holdings, max_vacuum_orders,
@@ -87,6 +87,14 @@ validator vault(
       SetDelegate { new_delegate } ->
         validate_set_delegate(input_datum, new_delegate, current_epoch,
                              own_ref, lamp_policy_id, tx)
+
+      // ── VacuumExpire (SEC-05 fix): owner reclaims LAMP after grace window ──
+      // Only reachable when current_epoch > fire_epoch + 2. The no-cancel rule
+      // (C-VAC-12) forbids cancelling BEFORE fire_epoch; this path is only open
+      // AFTER that window has definitively closed, so C-VAC-12 is not violated.
+      VacuumExpire { order_id } ->
+        validate_vacuum_expire(input_datum, order_id, current_epoch, own_ref,
+                               lamp_policy_id, tx)
 
       // Other shared redeemers (InstantGen / ApplyHalving / UpdateProfile)
       // are intentionally rejected by VacuumGen — those flows live on their
@@ -207,8 +215,14 @@ fn validate_vacuum_fire(
   // ── Find the specific order ───────────────────────────────────
   expect Some(order) = list.find(input_datum.vacuum_orders, fn(o) { o.order_id == order_id })
 
-  // ── C-VAC-6: current_epoch = fire_epoch (EXACT match, not ≥) ─
-  expect current_epoch == order.fire_epoch
+  // ── C-VAC-6 (SEC-05 fix): fire within grace window after fire_epoch ─
+  // Keeper có 2 epoch buffer; nếu miss 1 epoch vẫn có thể fire ở epoch+1/+2.
+  // Sau grace window, LAMP không bị khoá vĩnh viễn — owner dùng VacuumExpire.
+  // Không ảnh hưởng C-VAC-12: C-VAC-12 cấm cancel TRƯỚC fire_epoch, còn
+  // grace window chỉ mở rộng phía SAU fire_epoch.
+  let fire_grace_epochs = 2
+  expect current_epoch >= order.fire_epoch
+  expect current_epoch <= order.fire_epoch + fire_grace_epochs
 
   // ── Get UM (C-UM-7: always smoothed, no stale check) ─────────
   let um_datum = find_um_datum(tx.reference_inputs, um_nft_policy, um_script_hash)
@@ -585,6 +599,85 @@ fn validate_set_delegate(
   let vault_lamp_qty =
     assets.quantity_of(output.value, lamp_policy_id, #"744c414d50")
   expect vault_lamp_qty == output_datum.lamp_balance
+
+  True
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_vacuum_expire (SEC-05 fix) — §10 VacuumExpire
+// Owner thu hồi LAMP từ order đã quá grace window.
+// Điều kiện: current_epoch > fire_epoch + 2 (fire window đã đóng hoàn toàn).
+// LAMP trả về lamp_balance (KHÔNG vào Treasury — đây là lỗi keeper, không
+// phải completion bình thường; Treasury chỉ nhận khi VacuumFire thành công).
+// C-VAC-12 KHÔNG bị vi phạm: C-VAC-12 cấm cancel TRƯỚC fire_epoch; expire
+// chỉ mở sau khi fire window + grace đã qua.
+// ═══════════════════════════════════════════════════════════════
+fn validate_vacuum_expire(
+  input_datum    : VaultDatum,
+  order_id       : ByteArray,
+  current_epoch  : Int,
+  own_ref        : OutputReference,
+  lamp_policy_id : PolicyId,
+  tx             : Transaction,
+) -> Bool {
+
+  // ── DS-1: một vault input, một vault output ──────────────────
+  let vault_addr = find_own_address(own_ref, tx.inputs)
+  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+  let output = find_vault_output(tx.outputs, vault_addr)
+  let output_datum = output_datum_of(output)
+
+  // ── AUTH: chỉ owner mới được expire (KHÔNG delegate) ─────────
+  // Tránh griefing: delegate không được phép expire thay owner.
+  expect list.has(tx.extra_signatories, input_datum.owner)
+
+  // ── Tìm order trong vacuum_orders ────────────────────────────
+  expect Some(order) =
+    list.find(input_datum.vacuum_orders, fn(o) { o.order_id == order_id })
+
+  // ── Kiểm tra grace window đã qua ─────────────────────────────
+  // Fire window: [fire_epoch, fire_epoch + 2]. Expire chỉ hợp lệ khi
+  // current_epoch > fire_epoch + 2, tức fire_epoch + 3 trở lên.
+  let fire_grace_epochs = 2
+  expect current_epoch > order.fire_epoch + fire_grace_epochs
+
+  // ── Xoá order, trả LAMP về lamp_balance ──────────────────────
+  let new_orders =
+    list.filter(input_datum.vacuum_orders, fn(o) { o.order_id != order_id })
+  let new_lamp_balance = input_datum.lamp_balance  // balance KHÔNG đổi (LAMP vẫn ở vault)
+  let new_lamp_locked  = input_datum.lamp_locked - order.lamp_amount
+
+  // ── Unlock holdings tương ứng ────────────────────────────────
+  // Dùng cùng remove_locked_amount như VacuumFire (unlock LIFO).
+  let new_holdings = remove_locked_amount(input_datum.loyalty_holdings, order.lamp_amount)
+
+  // ── A02: field-by-field ───────────────────────────────────────
+  expect output_datum.owner == input_datum.owner
+  expect output_datum.lamp_balance == new_lamp_balance
+  expect output_datum.lamp_locked  == new_lamp_locked
+  expect output_datum.loyalty_holdings == new_holdings
+  expect output_datum.magic_batches == input_datum.magic_batches
+  expect output_datum.next_batch_index == input_datum.next_batch_index
+  expect output_datum.vacuum_orders == new_orders
+  expect output_datum.gen_schedules == input_datum.gen_schedules
+  expect output_datum.profile == input_datum.profile
+  expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
+  expect output_datum.pending_profile == input_datum.pending_profile
+  expect output_datum.last_updated_epoch == current_epoch
+  expect output_datum.delegation_cert == input_datum.delegation_cert
+  expect output_datum.activity_state == input_datum.activity_state
+  expect output_datum.streak_state == input_datum.streak_state
+  expect output_datum.personal_delegate == input_datum.personal_delegate
+  expect output_datum.attribution == input_datum.attribution
+
+  // ── C-VAULT-10: Σholdings == lamp_balance ────────────────────
+  expect sum_holdings(output_datum.loyalty_holdings) == output_datum.lamp_balance
+
+  // ── VALUE PRESERVATION: LAMP giữ nguyên trong vault ──────────
+  // Expire KHÔNG chuyển LAMP ra ngoài — LAMP vẫn trong vault, chỉ unlock.
+  let vault_lamp_qty =
+    assets.quantity_of(output.value, lamp_policy_id, #"744c414d50")  // "tLAMP"
+  expect vault_lamp_qty == new_lamp_balance
 
   True
 }

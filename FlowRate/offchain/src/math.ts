@@ -47,7 +47,22 @@ export function updateFlowRate(datum: FlowRateDatum, flow: EpochFlow): FlowRateD
   if (flow.epoch <= datum.last_epoch) return datum;
 
   // Raw rate this epoch (Q-format)
-  const raw_rate_q = flow.total_lamp_oil * Q / flow.total_magic_ng;
+  const unclamped_raw = flow.total_lamp_oil * Q / flow.total_magic_ng;
+
+  // Overflow guard: raw > HARD_CEIL indicates erroneous/manipulative data
+  // (paying 10,000+ LAMP/MAGIC is economically impossible at any realistic LAMP price).
+  // Preserve EMA state; only advance epoch and bound output by stored cap.
+  if (unclamped_raw > HARD_CEIL_Q) {
+    const prev = datum.lamp_per_magic_q;
+    const max_rate = prev * (Q + datum.cap_q) / Q;
+    return {
+      ...datum,
+      lamp_per_magic_q: clamp(prev, HARD_FLOOR_Q, max_rate),
+      last_epoch: flow.epoch,
+    };
+  }
+
+  const raw_rate_q = unclamped_raw;
 
   // Update fast EMA: ema_new = (α × raw + (1-α) × ema_old) / Q
   const new_fast = (ALPHA_FAST_Q * raw_rate_q + (Q - ALPHA_FAST_Q) * datum.ema_fast_q) / Q;

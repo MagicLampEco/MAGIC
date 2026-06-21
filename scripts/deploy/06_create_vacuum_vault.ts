@@ -167,6 +167,7 @@ async function main() {
 
   const appliedCbor = applyParamsToScript(unapplied.compiledCode, [
     POLICY_IDS.lamp,
+    ASSET_NAMES.lamp,
     treasuryAddrData,
     POLICY_IDS.um_nft,
     SCRIPT_HASHES.um_datum,   // um_script_hash — pins UM ref input (layer b)

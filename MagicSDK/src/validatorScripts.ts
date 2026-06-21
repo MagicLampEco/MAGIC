@@ -74,19 +74,25 @@ function buildParamsList(
   protocol : ProtocolParams,
   msPer    : bigint,
 ): Data[] {
+  // lamp_asset_name is param #2 on EVERY vault (right after lamp_policy_id),
+  // mirroring the on-chain validator signature. Canonical default = tLAMP
+  // ("744c414d50"); override via protocol.lampAssetName for other networks.
+  const lampAssetName = protocol.lampAssetName ?? "744c414d50";
+
   switch (vaultType) {
     case "Snapshot":
-      // vault(ms_per_epoch)
-      return [msPer];
+      // vault(lamp_policy_id, lamp_asset_name, ms_per_epoch)
+      return [protocol.lampPolicyId, lampAssetName, msPer];
 
     case "Instant":
     case "Vacuum": {
-      // vault(lamp_policy_id, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
+      // vault(lamp_policy_id, lamp_asset_name, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
       requireField(protocol.umNftPolicyId, "umNftPolicyId", vaultType);
       requireField(protocol.umScriptHash, "umScriptHash", vaultType);
       requireField(protocol.treasuryAddress, "treasuryAddress", vaultType);
       return [
         protocol.lampPolicyId,
+        lampAssetName,
         addressToPlutusData(protocol.treasuryAddress!),
         protocol.umNftPolicyId!,
         protocol.umScriptHash!,   // um_script_hash — pins UM ref input (layer b)
@@ -95,11 +101,12 @@ function buildParamsList(
     }
 
     case "Schedule": {
-      // vault(lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch)
+      // vault(lamp_policy_id, lamp_asset_name, treasury_addr, shard_policy_id, ms_per_epoch)
       requireField(protocol.shardPolicyId, "shardPolicyId", "Schedule");
       requireField(protocol.treasuryAddress, "treasuryAddress", "Schedule");
       return [
         protocol.lampPolicyId,
+        lampAssetName,
         addressToPlutusData(protocol.treasuryAddress!),
         protocol.shardPolicyId!,
         msPer,

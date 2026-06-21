@@ -43,6 +43,12 @@ export interface CreateOrderParams {
   fiatAmountVnd:   bigint;
   oracleVkey:      string;          // hex 32 bytes
   orderId:         string;          // hex-encoded 16-char ASCII order ID
+  /**
+   * Applied OTC order validator (PlutusV3 CBOR), parameterized with the deployed
+   * magic_allocation script hash (alloc_hash). Produced at deploy time by
+   * scripts/deploy/08_deploy_getmagic.ts. REQUIRED — see the Phase-1 guard below.
+   */
+  orderScript?:    { type: "PlutusV3"; script: string };
 }
 
 /**
@@ -51,6 +57,11 @@ export interface CreateOrderParams {
  *
  * The UTxO holds a minimal ADA lovelace deposit at the OTC Order script address.
  * The order expires after ORDER_EXPIRY_MS (4 hours).
+ *
+ * ⚠️ Phase-1 known-limit (KL-3, see GetMAGIC/TECH.md): the OTC order script is
+ * parameterized by the deployed alloc_hash and MUST be applied at deploy time.
+ * This builder therefore REQUIRES `params.orderScript`; without it the call
+ * throws rather than silently placing the order at the wrong address.
  */
 export async function buildCreateOrderTx(
   params: CreateOrderParams,
@@ -58,8 +69,25 @@ export async function buildCreateOrderTx(
   const {
     lucid, orgPkh, userPkh, userStakeKey,
     magicPerEpoch, totalEpochs, fiatAmountVnd,
-    oracleVkey, orderId,
+    oracleVkey, orderId, orderScript,
   } = params;
+
+  // ── Phase-1 isolation guard (PR #20 review item 2) ──────────────────────────
+  // The previous implementation derived the order address from MAGIC_ALLOCATION_HASH
+  // — that is the ALLOCATION script address, NOT the OTC order address. Placing an
+  // order deposit there would lock it at the wrong script (the allocation validator
+  // has no Expire/Cancel path for an OrderDatum). The correct order address comes
+  // from the order validator applied with the real alloc_hash at deploy time. Refuse
+  // to build until that applied script is supplied.
+  if (orderScript === undefined) {
+    throw new Error(
+      "GETMAGIC-ORDER-PHASE2: buildCreateOrderTx requires params.orderScript — the " +
+      "OTC order validator applied with the deployed alloc_hash (see " +
+      "scripts/deploy/08_deploy_getmagic.ts). It is NOT yet wired in Phase 1. The " +
+      "MAGIC_ALLOCATION_HASH placeholder is the allocation script, not the order " +
+      "script; building against it would lock the deposit at the wrong address.",
+    );
+  }
 
   const createdPosixMs = BigInt(Date.now());
   const expiryPosixMs  = createdPosixMs + BigInt(ORDER_EXPIRY_MS);
@@ -83,12 +111,9 @@ export async function buildCreateOrderTx(
 
   const datumCbor = Data.to<OrderDatum>(datum, OrderDatumSchema as unknown as OrderDatum);
 
-  // Derive OTC Order script address (parameterized with alloc_script_hash baked in).
-  const scriptAddress = validatorToAddress(requireNetwork(lucid), {
-    type:   "PlutusV3",
-    // TODO(Phase-2): dùng applied order script (parameterized alloc_hash), KHÔNG phải alloc address — xem scripts/deploy/08_deploy_getmagic.ts
-    script: MAGIC_ALLOCATION_HASH,
-  });
+  // Derive OTC Order script address from the applied order validator (parameterized
+  // with the deployed alloc_hash). Guarded above: orderScript is guaranteed defined.
+  const scriptAddress = validatorToAddress(requireNetwork(lucid), orderScript);
 
   const tx = await lucid
     .newTx()

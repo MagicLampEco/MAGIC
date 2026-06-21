@@ -7,6 +7,27 @@
 //   G-ALLOC-3: Only beneficiary can claim; only org can reclaim after expiry
 //   G-ALLOC-4: Total claimable = total_epochs - len(claimed_epochs)
 //   G-ALLOC-5: Voucher at index (epoch - start_epoch) authorises that specific epoch
+//
+// ⚠️ PHASE-1 KNOWN-LIMITS — MUST be closed before ClaimEpoch releases real MAGIC
+//    (this layer only TRACKS per-epoch claim rights; no asset/value moves yet — see
+//     GetMAGIC/TECH.md §KNOWN-LIMITS):
+//   KL-1 (ClaimEpoch continuing-output, CRITICAL@Phase-2): `continuing_output_ok`
+//        only matches a datum via `list.any`. It does NOT (a) check the output sits
+//        at THIS validator's own script address, (b) preserve the UTxO value, nor
+//        (c) enforce exactly ONE continuing output. Once value is locked, a claimer
+//        could move the allocation off-script / drain value / double-satisfy.
+//        Fix: derive own address from `self_ref`, require exactly 1 continuing
+//        output at it, and bind value conservation (see vault.ak value-lock pattern).
+//   KL-2 (oracle_vkey trust-root, CRITICAL@Phase-2): vouchers are verified against
+//        `datum.oracle_vkey`, a field of the SAME datum minted at Settle. otc_order
+//        does not constrain that datum (see otc_order.ak KL-2), so a settler can set
+//        their own vkey and self-sign all vouchers. Fix: make oracle_vkey a VALIDATOR
+//        PARAMETER (baked per-org at deploy), OR have the Settle oracle signature
+//        commit to the full AllocationDatum (oracle_vkey + magic_per_epoch +
+//        total_epochs + beneficiary + hash(vouchers)).
+//   KL-4 (epoch length, MAINNET): `expiry_posix_ms = expiry_epoch * 86_400_000` is
+//        hardcoded to the Preview 1-day epoch. Mainnet differs → param-ise
+//        ms_per_epoch (must match the oracle's voucher pre-sign formula).
 
 use aiken/collection/list
 use aiken/crypto

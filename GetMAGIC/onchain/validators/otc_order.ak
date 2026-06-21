@@ -11,6 +11,23 @@
 // Parameters:
 //   alloc_script_hash : ScriptHash of magic_allocation validator
 //                       (ensures AllocationDatum goes to the correct address)
+//
+// ⚠️ PHASE-1 KNOWN-LIMITS — MUST be closed before settlement produces a spendable
+//    MAGIC allocation (see GetMAGIC/TECH.md §KNOWN-LIMITS):
+//   KL-2 (Settle does not constrain the produced AllocationDatum, CRITICAL@Phase-2):
+//        G-OTC-4 only checks that SOME output exists at alloc_script_hash. It does
+//        NOT verify the AllocationDatum CONTENTS or value. The settler (anyone with
+//        a valid oracle settle-sig) can therefore mint an arbitrary AllocationDatum
+//        — own oracle_vkey (self-signing every voucher, see magic_allocation KL-2),
+//        inflated magic_per_epoch/total_epochs, attacker beneficiary. The Settle
+//        oracle signature covers only order_id+user_pkh+nonce+timestamp, NOT the
+//        allocation params. Fix: bake oracle_vkey as a magic_allocation validator
+//        param, AND/OR extend the settle message to commit to the full
+//        AllocationDatum, then verify the produced datum matches that commitment.
+//   KL-5 (Org registry off-chain): quota (magic_quota), collateral solvency, and
+//        nonce-replay (OrgDatum.released_nonces, G-OTC-3) are not enforced by any
+//        on-chain validator — an org could over-issue beyond collateral. Move to an
+//        Org-registry validator before mainnet.
 
 use aiken/collection/list
 use aiken/crypto

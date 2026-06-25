@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target":           "ES2022",
+    "module":           "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib":              ["ES2022", "DOM"],
+    "skipLibCheck":     true,
+    "strict":           true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess":   true,
+    "outDir":           "./dist",
+    "rootDir":          "..",
+    // Tests live in ../tests but deps are installed only in ./node_modules.
+    // Map bare specifiers so tsc resolves them from this package's node_modules.
+    "baseUrl":          ".",
+    "paths": {
+      "vitest":                  ["./node_modules/vitest"],
+      "@lucid-evolution/lucid":  ["./node_modules/@lucid-evolution/lucid"],
+      "@noble/curves/*":         ["./node_modules/@noble/curves/*"]
+    },
+    "declaration":      true,
+    "declarationMap":   true,
+    "sourceMap":        true
+  },
+  "include": ["src/**/*", "../tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

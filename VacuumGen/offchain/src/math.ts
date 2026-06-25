@@ -1,16 +1,16 @@
 // src/math.ts — VacuumGen BigInt Math Engine
-// ALL arithmetic uses BigInt. No Number for oil/nanogic/Q-format (C-OVERFLOW).
+// ALL arithmetic uses BigInt. No Number for oildrop/nanogic/Q-format (C-OVERFLOW).
 
 import {
   Q, VBR_Q, SM_Q, UM_MIN_Q, UM_MAX_Q, VACUUM_DECAY_WINDOW,
 } from "./constants.js";
 import {
-  slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr,
+  slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr,
   selectLampForLock, removeLockedAmount,
 } from "@magiclamp/protocol-utils";
 import type { LoyaltyHolding, UMDatum, StreakState } from "./types.js";
 
-export { slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr };
+export { slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr };
 export { selectLampForLock, removeLockedAmount };
 
 // ══════════════════════════════════════════════════════════════
@@ -65,11 +65,11 @@ export function validateUmRange(um: UMDatum): boolean {
 // §20.3: λ=10⁹, UM=1.0, streak=0 → 500_000_000 = 0.5 MAGIC ✓
 
 export function computeVacuumMagic(
-  lambdaOil : bigint,  // in oil
+  lambdaOildrop : bigint,  // in oildrop
   umQ       : bigint,  // C-UM-7: always smoothed
   smQ       : bigint,
 ): bigint {
-  const s1 = lambdaOil * VBR_Q / Q;   // × VBR (0.5)
+  const s1 = lambdaOildrop * VBR_Q / Q;   // × VBR (0.5)
   const s2 = s1 * umQ / Q;             // × UM_smoothed
   return s2 * smQ / Q;                 // × SM
 }
@@ -83,5 +83,5 @@ export function isVacuumExpired(createdEpoch: bigint, currentEpoch: bigint): boo
   return (currentEpoch - createdEpoch) >= VACUUM_DECAY_WINDOW;
 }
 
-// (slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr re-exported
+// (slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr re-exported
 // from @magiclamp/protocol-utils — see top of file)

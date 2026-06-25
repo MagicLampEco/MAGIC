@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeLfQ, computeOacQ, computeSnapshotMagic,
-  snapshotBatchBalance, isExpired, nanogicToMagicStr, lampToOil,
+  snapshotBatchBalance, isExpired, nanogicToMagicStr, lampToOildrop,
 } from "../offchain/src/math.js";
 import { PROFILE_PARAMS, MAX_BATCHES_PER_VAULT } from "../offchain/src/constants.js";
 import type { VaultDatum, MagicBatch } from "../offchain/src/types.js";
@@ -113,7 +113,7 @@ describe("SnapshotGen full flow", () => {
       // TV-SNAPGEN-01 exact conditions: 1000 LAMP, age=0 → LF=1.00, OAC=0.80 (no burns)
       const vault = makeVault({
         profile:          "Flame",
-        lamp_balance:     1_000_000_000n,   // 1000 LAMP in oil
+        lamp_balance:     1_000_000_000n,   // 1000 LAMP in oildrop
         loyalty_holdings: [{ amount: 1_000_000_000n, acquired_epoch: 100n, is_locked: false }], // age=0 → LF=1.0
       });
       const result = simulateSnapshot(vault, 100n);

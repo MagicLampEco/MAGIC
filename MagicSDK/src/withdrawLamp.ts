@@ -37,8 +37,8 @@ export interface WithdrawLampParams {
   lucid:           LucidEvolution;
   /** The vault UTxO to withdraw from. Use `listVaultsForOwner` to discover. */
   vaultUtxo:       UTxO;
-  /** Amount to withdraw, in oil (1 LAMP = 10^6 oil). MUST be ≤ L_avail. */
-  amountOil:       bigint;
+  /** Amount to withdraw, in oildrop (1 LAMP = 10^6 oildrop). MUST be ≤ L_avail. */
+  amountOildrop:       bigint;
   /** Applied vault validator (same one used at createVault). */
   vaultScript:     Validator;
   /** Vault type — for logging / error messages only. Constructor index for
@@ -70,41 +70,41 @@ export interface WithdrawLampResult {
 const DEFAULT_LAMP_ASSET_NAME = "744c414d50";
 
 /**
- * Build an unsigned tx that withdraws `amountOil` LAMP from `vaultUtxo`
+ * Build an unsigned tx that withdraws `amountOildrop` LAMP from `vaultUtxo`
  * back to `destinationAddress` (defaults to caller's wallet).
  *
  * Validation (mirrors what the validator must enforce):
  *   - Owner signs (`extra_signatories` contains `datum.owner`)
- *   - `amountOil > 0`
- *   - `amountOil ≤ L_avail = lamp_balance - lamp_locked`
+ *   - `amountOildrop > 0`
+ *   - `amountOildrop ≤ L_avail = lamp_balance - lamp_locked`
  *   - Output vault datum:
- *       - lamp_balance -= amountOil
+ *       - lamp_balance -= amountOildrop
  *       - loyalty_holdings: NEWEST-FIRST removal (LF-preserving)
  *       - lamp_locked, magic_batches, vacuum_orders, gen_schedules: UNCHANGED
  *       - profile, profile_changed_epoch, pending_profile: UNCHANGED
  *       - delegation_cert, activity_state, streak_state: UNCHANGED
  *       - personal_delegate, attribution: UNCHANGED
  *       - last_updated_epoch: advanced to current epoch
- *   - Output: `amountOil` LAMP sent to `destinationAddress`
+ *   - Output: `amountOildrop` LAMP sent to `destinationAddress`
  *   - Vault output preserved at vault address with same lovelace
  */
 export async function withdrawLamp(params: WithdrawLampParams): Promise<WithdrawLampResult> {
   const {
-    lucid, vaultUtxo, amountOil, vaultScript, network,
+    lucid, vaultUtxo, amountOildrop, vaultScript, network,
     lampPolicyId, vaultPlutusJson,
   } = params;
   const lampAssetName = params.lampAssetName ?? DEFAULT_LAMP_ASSET_NAME;
 
-  if (amountOil <= 0n) {
-    throw new Error(`WITHDRAW-001: amountOil must be > 0 (got ${amountOil})`);
+  if (amountOildrop <= 0n) {
+    throw new Error(`WITHDRAW-001: amountOildrop must be > 0 (got ${amountOildrop})`);
   }
 
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
 
   const lAvail = vaultDatum.lamp_balance - vaultDatum.lamp_locked;
-  if (amountOil > lAvail) {
+  if (amountOildrop > lAvail) {
     throw new Error(
-      `WITHDRAW-002: amount ${amountOil} > L_avail ${lAvail} ` +
+      `WITHDRAW-002: amount ${amountOildrop} > L_avail ${lAvail} ` +
       `(balance=${vaultDatum.lamp_balance}, locked=${vaultDatum.lamp_locked})`,
     );
   }
@@ -120,13 +120,13 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   // ── Newest-first holding removal (LF-preserving) ────────────────
   const newHoldings = removeNewestFirst(
     vaultDatum.loyalty_holdings as { amount: bigint; acquired_epoch: bigint; is_locked: boolean }[],
-    amountOil,
+    amountOildrop,
   );
 
   // ── Build updated VaultDatum (A02: field-by-field) ──────────────
   const newVaultDatum: VaultDatum = {
     ...vaultDatum,
-    lamp_balance:       vaultDatum.lamp_balance - amountOil,
+    lamp_balance:       vaultDatum.lamp_balance - amountOildrop,
     loyalty_holdings:   newHoldings,
     last_updated_epoch: currentEpoch,
     // Everything else unchanged per A02.
@@ -144,10 +144,10 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   // No hardcoded indices: SDK reads the Aiken enum from plutus.json, finds
   // the "WithdrawLamp" variant by title, uses its .index. If onchain enum
   // reorders, the new plutus.json reflects it; SDK auto-updates.
-  const redeemer = encodeWithdrawLampRedeemer(vaultPlutusJson, amountOil);
+  const redeemer = encodeWithdrawLampRedeemer(vaultPlutusJson, amountOildrop);
 
   // ── Vault output assets: same lovelace, reduced LAMP ────────────
-  const remainingLamp = vaultDatum.lamp_balance - amountOil;
+  const remainingLamp = vaultDatum.lamp_balance - amountOildrop;
   const vaultOutputAssets: Record<string, bigint> = { lovelace: vaultUtxo.assets.lovelace };
   if (remainingLamp > 0n) vaultOutputAssets[lampUnit] = remainingLamp;
   // If remainingLamp == 0, the vault still exists (with min-ADA) but holds 0 LAMP.
@@ -165,7 +165,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
       { kind: "inline", value: Data.to(newVaultDatum as never, VaultDatumSchema) },
       vaultOutputAssets,
     )
-    .pay.ToAddress(destination, { [lampUnit]: amountOil })
+    .pay.ToAddress(destination, { [lampUnit]: amountOildrop })
     .addSignerKey(vaultDatum.owner)
     .validFrom(lowerTime)
     .validTo(upperTime)
@@ -175,7 +175,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     `═══ WithdrawLamp ═══`,
     `Vault:           ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`,
     `Owner:           ${vaultDatum.owner}`,
-    `Amount:          ${amountOil / 1_000_000n} LAMP (${amountOil} oil)`,
+    `Amount:          ${amountOildrop / 1_000_000n} LAMP (${amountOildrop} oildrop)`,
     `LAMP before:     ${vaultDatum.lamp_balance / 1_000_000n}`,
     `LAMP after:      ${remainingLamp / 1_000_000n}`,
     `Locked unchanged: ${vaultDatum.lamp_locked / 1_000_000n}`,
@@ -186,7 +186,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
 
   return {
     tx,
-    amountWithdrawn: amountOil,
+    amountWithdrawn: amountOildrop,
     lampRemaining:   remainingLamp,
     newVaultDatum,
     summary,
@@ -196,7 +196,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
 // ── helpers ───────────────────────────────────────────────────────
 
 /**
- * Remove `amount` oil from holdings, picking NEWEST first (LF-preserving).
+ * Remove `amount` oildrop from holdings, picking NEWEST first (LF-preserving).
  * Locked holdings (is_locked=true) are NEVER touched — withdraw only from
  * unlocked balance.
  *
@@ -228,7 +228,7 @@ export function removeNewestFirst(
   }
 
   if (remaining > 0n) {
-    throw new Error(`WITHDRAW-003: insufficient unlocked LAMP (short ${remaining} oil)`);
+    throw new Error(`WITHDRAW-003: insufficient unlocked LAMP (short ${remaining} oildrop)`);
   }
   return result;
 }

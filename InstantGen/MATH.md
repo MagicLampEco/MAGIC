@@ -8,10 +8,10 @@
 | Ký hiệu | Giá trị / Đơn vị | Nguồn |
 |---|---|---|
 | Q | 10^9 | `constants.ak:6`, `constants.ts:5` |
-| oil | LAMP × 10^6 | `constants.ts:14` |
+| oildrop | LAMP × 10^6 | `constants.ts:14` |
 | nanogic | MAGIC × 10^9 | `constants.ts:15` |
-| L_paid | oil — lượng LAMP thanh toán | `vault.ak:71` redeemer field |
-| L_avail | oil = lamp_balance − lamp_locked | `lamp.ak:94` |
+| L_paid | oildrop — lượng LAMP thanh toán | `vault.ak:71` redeemer field |
+| L_avail | oildrop = lamp_balance − lamp_locked | `lamp.ak:94` |
 | R_inst | 3_000_000_000 (Q-format = 3.0×) | `constants.ak:18` |
 | UM_q | Q-format — sau stale check | `um.ak:22` |
 | PM_q | Q-format — theo profile | `constants.ak:47` |
@@ -132,7 +132,7 @@ Khi InstantGen deduct lamp_paid khỏi vault:
 ### TV-INST-GEN-01: 1000 LAMP, Flame, UM=1.0
 
 ```
-Input: L_paid = 1_000_000_000 oil (= 1000 × 10^6)
+Input: L_paid = 1_000_000_000 oildrop (= 1000 × 10^6)
        um_q   = 1_000_000_000  (UM = 1.0)
        pm_q   = 1_050_000_000  (Flame)
 
@@ -226,7 +226,7 @@ Nguồn: `vectors.ts:13` (TV-INST-01).
 ### TV-OVERFLOW-01: BigInt bắt buộc
 
 ```
-L = 36_000_000_000_000_000 oil (toàn bộ nguồn cung LAMP)
+L = 36_000_000_000_000_000 oildrop (toàn bộ nguồn cung LAMP)
 R_inst = 3_000_000_000
 
 Intermediate s1 = L × R_inst = 36×10^15 × 3×10^9 = 108×10^24

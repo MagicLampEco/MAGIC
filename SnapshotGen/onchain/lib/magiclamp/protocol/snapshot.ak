@@ -29,7 +29,7 @@ use magiclamp/protocol/decay.{snapshot_decay_window, is_snapshot_expired}
 // L4: ≤ 5 nanogic error; M_actual ≤ M_true
 //
 // TV-SNAPGEN-01: 1000 LAMP, Flame, LF=1.0, OAC=0.8, PM=1.05, B=1.1 → ≈4.62 MAGIC
-//   L = 10^9 oil
+//   L = 10^9 oildrop
 //   s1 = 10^9 × 5×10^9 / Q = 5×10^9
 //   s2 = 5×10^9 × 1×10^9 / Q = 5×10^9    (LF=1.0)
 //   s3 = 5×10^9 × 8×10^8 / Q = 4×10^9    (OAC=0.8)
@@ -53,7 +53,7 @@ pub fn get_b_q(profile: ActivityProfile) -> Int {
 }
 
 pub fn compute_snapshot_magic(
-  lamp_balance  : Int,    // C-SS-5: full balance (oil), locked included
+  lamp_balance  : Int,    // C-SS-5: full balance (oildrop), locked included
   lf_q          : Int,    // Q-format Loyalty Factor
   oac_q         : Int,    // Q-format OAC
   profile       : ActivityProfile,

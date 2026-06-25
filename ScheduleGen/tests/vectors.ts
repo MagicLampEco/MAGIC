@@ -25,7 +25,7 @@ export const TV_SCH_02 = {
   description: "L=100, λ=4000 LAMP → 45 MAGIC/fire; total 4500 MAGIC",
   L:            100n,
   lambda_lamp:  4_000n,
-  lambda_oil:   4_000_000_000n,         // 4000 × 10^6
+  lambda_oildrop:   4_000_000_000n,         // 4000 × 10^6
   r_snap_q:     5_000_000_000n,
   // S_Q(100) = 2_000_000_000 + 5_000_000×50 = 2_250_000_000
   S_Q:          2_250_000_000n,
@@ -34,7 +34,7 @@ export const TV_SCH_02 = {
   // M_i = ⌊4×10⁹ × 11_250_000_000 / Q⌋ = 45_000_000_000
   M_i:          45_000_000_000n,        // 45 MAGIC ✓
   total_magic:  4_500_000_000_000n,     // 100 × 45 = 4500 MAGIC ✓
-  total_lock:   400_000_000_000_000n,   // 100 × 4000 × 10^6 = 400,000 LAMP (oil)
+  total_lock:   400_000_000_000_000n,   // 100 × 4000 × 10^6 = 400,000 LAMP (oildrop)
   // C-SCH-RATE: 4×10⁹ × 11_250_000_000 = 4.5×10¹⁹ ≥ Q ✓
   sch_rate_check: 45_000_000_000_000_000_000n >= 1_000_000_000n,
 };
@@ -58,18 +58,18 @@ export const TV_SCH_03 = {
 // ══════════════════════════════════════════════════════════════
 export const TV_SCH_04 = {
   id: "TV-SCH-04", spec_ref: "App B §B.5, T13, C-SCH-CAP",
-  description: "Shard cap enforcement: 4.5×10¹⁴ oil per shard",
+  description: "Shard cap enforcement: 4.5×10¹⁴ oildrop per shard",
   shard_cap:    450_000_000_000_000n,     // 4.5×10¹⁴ = 450M LAMP
   shard_locked: 440_000_000_000_000n,     // 4.4×10¹⁴ already locked
   cases: [
     {
-      L: 100n, lambda_oil: 10_000_000_000n,   // λ=10,000 LAMP, total=10^12
+      L: 100n, lambda_oildrop: 10_000_000_000n,   // λ=10,000 LAMP, total=10^12
       total: 1_000_000_000_000n,
       new_locked: 441_000_000_000_000n,        // 4.4×10¹⁴ + 10¹² = 4.41×10¹⁴ ≤ 4.5×10¹⁴
       expected: "ACCEPT",
     },
     {
-      L: 200n, lambda_oil: 500_000_000_000n,  // λ=500,000 LAMP, total=10¹⁴
+      L: 200n, lambda_oildrop: 500_000_000_000n,  // λ=500,000 LAMP, total=10¹⁴
       total: 100_000_000_000_000n,
       new_locked: 541_000_000_000_000n,        // 4.41×10¹⁴ + 10¹⁴ > 4.5×10¹⁴
       expected: "REJECT",
@@ -84,7 +84,7 @@ export const TV_SCH_05 = {
   id: "TV-SCH-05", spec_ref: "App B §B.5, T19, C-SCH-RATE",
   description: "Low R_snap + small λ → M_i=0 → REJECT at commit",
   r_snap_q:         100n,                  // very low (not realistic but illustrative)
-  lambda_oil:        1_000_000n,           // 1 LAMP (minimum)
+  lambda_oildrop:        1_000_000n,           // 1 LAMP (minimum)
   L:                 10n,
   S_Q_at_10:         1_600_000_000n,
   rate_locked_q:     160n,                 // ⌊100 × 1.6B / Q⌋ = 160
@@ -107,7 +107,7 @@ export const TV_SCH_06 = {
   // Eligible: e_0=52≤55, e_1=53≤55, e_2=54≤55, e_3=55≤55 → 4 fires (< 8 limit)
   fires_in_tx:       4,
   total_magic_fired: 180_000_000_000n,  // 4 × 45 MAGIC = 180 MAGIC
-  lamp_transferred:  16_000_000_000n,   // 4 × 4000 LAMP oil
+  lamp_transferred:  16_000_000_000n,   // 4 × 4000 LAMP oildrop
   output_fired_count: 4n,               // C-FIRE-3 atomic ✓
   // Wallet: "4/100 orders. ALL expire end of epoch 55."
 };
@@ -153,7 +153,7 @@ export const TV_SCH_T_DET = {
   id: "TV-SCH-T-DET", spec_ref: "§11.4 T-DET",
   description: "Every fire in the same contract produces identical M_i",
   rate_locked_q: 11_250_000_000n,   // immutable
-  lambda_oil:    4_000_000_000n,
+  lambda_oildrop:    4_000_000_000n,
   // M_i at fire #1   = ⌊4B × 11.25B / Q⌋ = 45B
   // M_i at fire #100 = ⌊4B × 11.25B / Q⌋ = 45B  ← IDENTICAL
   M_i_all_fires: 45_000_000_000n,
@@ -166,7 +166,7 @@ export const TV_SCH_FIRE3 = {
   id: "TV-SCH-FIRE3", spec_ref: "§11.10 C-FIRE-3",
   description: "All fire accounting must be atomic (all-or-nothing)",
   fires_in_tx:  4,
-  lambda_oil:   4_000_000_000n,
+  lambda_oildrop:   4_000_000_000n,
   M_i:          45_000_000_000n,
   // Validator asserts ALL of these simultaneously:
   assertions: {

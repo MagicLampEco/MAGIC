@@ -21,8 +21,8 @@ export interface VaultRecord {
   datum:          VaultDatum;
   /** Network-derived vault address (same for all vaults of this type). */
   vaultAddress:   string;
-  /** LAMP balance in oil (lamp_balance from datum). */
-  lampBalanceOil: bigint;
+  /** LAMP balance in oildrop (lamp_balance from datum). */
+  lampBalanceOildrop: bigint;
   /** Oldest holding's acquired_epoch — lower bound on this vault's age. */
   oldestEpoch:    bigint;
   /** Profile of this vault. */
@@ -75,7 +75,7 @@ export async function listVaultsForOwner(params: ListVaultsParams): Promise<Vaul
       utxo:           u,
       datum,
       vaultAddress,
-      lampBalanceOil: datum.lamp_balance,
+      lampBalanceOildrop: datum.lamp_balance,
       oldestEpoch,
       profile:        datum.profile,
     });

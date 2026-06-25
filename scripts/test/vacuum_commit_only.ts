@@ -18,12 +18,12 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
-  lampToOil,
+  lampToOildrop,
 } from "../config.js";
 import { buildVacuumCommitTx } from "../../VacuumGen/offchain/src/vacuum.js";
 import { VaultDatumSchema } from "../../VacuumGen/offchain/src/types.js";
 
-const LAMBDA = lampToOil(BigInt(process.env.LAMBDA_LAMP ?? "50"));
+const LAMBDA = lampToOildrop(BigInt(process.env.LAMBDA_LAMP ?? "50"));
 
 async function fetchTip() {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -105,7 +105,7 @@ async function main() {
       console.log(`⚠  TEST MODE: ${tamper ?? "skipOwnerSig"} — expecting REJECT.\n`);
     }
     const result = await buildVacuumCommitTx({
-      lucid, vaultUtxo, lambdaOil: LAMBDA, userAddress: address,
+      lucid, vaultUtxo, lambdaOildrop: LAMBDA, userAddress: address,
       vaultScript, network: NETWORK, tipPosixMs: tip.posixMs,
       tamperOutputDatum, skipOwnerSig: process.env.SKIP_OWNER_SIG === "1",
     });

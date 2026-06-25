@@ -2,7 +2,7 @@
 // KHÔNG Number. P8 mirror BYTE-IDENTICAL onchain/lib/magiclamp/paymaster/math.ak
 // + util.ak (lookup_did, add_did, sum_burns, dedup). NORMATIVE: SPEC-Paymaster §4.3.
 //
-//   lamp_cap = ⌊ magic_consumed × lamp_per_magic_q / Q ⌋    (oil)
+//   lamp_cap = ⌊ magic_consumed × lamp_per_magic_q / Q ⌋    (oildrop)
 //   ada_cap  = ⌊ magic_consumed × ada_per_magic_q  / Q ⌋    (lovelace)
 //
 // magic_consumed = Σ BurnBatch.burns (nanogic). Single-step floor (1 nhân, 1 chia) —
@@ -14,7 +14,7 @@ import { Q } from "@magiclamp/protocol-utils";
 export const q: bigint = Q; // 1_000_000_000n
 
 /**
- * Trần LAMP (oil) app được sponsor cho magic_consumed (nanogic) tại tỷ giá Q-format.
+ * Trần LAMP (oildrop) app được sponsor cho magic_consumed (nanogic) tại tỷ giá Q-format.
  * Floor division BigInt. magic_consumed ≥ 0, rate ≥ 0 → kết quả ≥ 0. Mirror math.ak:16-18.
  */
 export function lampCap(magicConsumed: bigint, lampPerMagicQ: bigint): bigint {
@@ -37,9 +37,9 @@ export function sumBurns(burns: readonly Burn[]): bigint {
 
 // ── did_lamp_map helpers (mirror util.ak:138-165) ─────────────────────────────
 
-export type DidLampEntry = readonly [string, bigint]; // (did_key_hex, lamp_sponsored_oil)
+export type DidLampEntry = readonly [string, bigint]; // (did_key_hex, lamp_sponsored_oildrop)
 
-/** Lượng oil đã sponsor cho did_key trong map (0 nếu chưa có). Mirror util.ak:138-143. */
+/** Lượng oildrop đã sponsor cho did_key trong map (0 nếu chưa có). Mirror util.ak:138-143. */
 export function lookupDid(map: readonly DidLampEntry[], didKey: string): bigint {
   const e = map.find((x) => x[0] === didKey);
   return e ? e[1] : 0n;

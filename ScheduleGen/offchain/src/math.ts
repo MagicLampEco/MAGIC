@@ -1,5 +1,5 @@
 // src/math.ts — ScheduleGen BigInt Math Engine
-// ALL arithmetic uses BigInt. No Number for oil/nanogic/Q-format (C-OVERFLOW).
+// ALL arithmetic uses BigInt. No Number for oildrop/nanogic/Q-format (C-OVERFLOW).
 
 import {
   Q, SNAPSHOT_BASE_RATE_Q,
@@ -8,12 +8,12 @@ import {
   S_SEG3_KNEE, S_SEG3_INTERCEPT_Q, S_SEG3_SLOPE_Q,
 } from "./constants.js";
 import {
-  slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr,
+  slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr,
   selectLampForLock, removeLockedAmount,
 } from "@magiclamp/protocol-utils";
 import { blake2b } from "@noble/hashes/blake2b";
 
-export { slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr };
+export { slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr };
 export { selectLampForLock, removeLockedAmount };
 
 // ══════════════════════════════════════════════════════════════
@@ -67,16 +67,16 @@ export function computeRateLockedQ(
 // T-DET: rate_locked_q immutable + same λ → every fire gets identical M_i
 // T19:   C-SCH-RATE ensures M_i ≥ 1
 //
-// TV-SCH-02: λ=4000 LAMP=4×10⁹ oil, rate_locked_q=11_250_000_000
+// TV-SCH-02: λ=4000 LAMP=4×10⁹ oildrop, rate_locked_q=11_250_000_000
 //   M_i = ⌊4×10⁹ × 11_250_000_000 / Q⌋ = 45_000_000_000 = 45 MAGIC ✓
 
-export function computeMi(lambdaOil: bigint, rateLockedQ: bigint): bigint {
-  return lambdaOil * rateLockedQ / Q;
+export function computeMi(lambdaOildrop: bigint, rateLockedQ: bigint): bigint {
+  return lambdaOildrop * rateLockedQ / Q;
 }
 
 // ── C-SCH-RATE: M_i ≥ 1 guarantee (T19) ─────────────────────
-export function checkSchRate(lambdaOil: bigint, rateLockedQ: bigint): boolean {
-  return lambdaOil * rateLockedQ >= Q;
+export function checkSchRate(lambdaOildrop: bigint, rateLockedQ: bigint): boolean {
+  return lambdaOildrop * rateLockedQ >= Q;
 }
 
 // ══════════════════════════════════════════════════════════════

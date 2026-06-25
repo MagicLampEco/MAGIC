@@ -134,7 +134,7 @@ pub fn dedup_refs(refs: List<OutputReference>) -> List<OutputReference> {
 
 // ── did_lamp_map helpers ───────────────────────────────────────────────────────
 
-/// Lượng oil đã sponsor cho did_key trong map (0 nếu chưa có).
+/// Lượng oildrop đã sponsor cho did_key trong map (0 nếu chưa có).
 pub fn lookup_did(map: List<(ByteArray, Int)>, did_key: ByteArray) -> Int {
   when list.find(map, fn(e) { e.1st == did_key }) is {
     Some(e) -> e.2nd

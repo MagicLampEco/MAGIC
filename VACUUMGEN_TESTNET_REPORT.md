@@ -56,7 +56,7 @@ VacuumGen là module phức tạp nhất đã test với **two-phase protocol**:
 
 **Expected:**
 - Vault datum updated:
-  - `lamp_locked`: 0 → 50,000,000 oil
+  - `lamp_locked`: 0 → 50,000,000 oildrop
   - `vacuum_orders`: `[]` → `[{order_id, commit_epoch, fire_epoch, lamp_amount: 50,000,000}]`
   - `lamp_balance`: unchanged (no LAMP move yet)
   - `loyalty_holdings`: youngest entries marked `is_locked: true`

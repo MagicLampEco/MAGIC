@@ -10,7 +10,7 @@ import {
   applyHalving,
   isExpired,
   slotToEpoch,
-  lampToOil,
+  lampToOildrop,
   nanogicToMagicStr,
 } from "../offchain/src/math.js";
 import {
@@ -28,11 +28,11 @@ describe("computeInstantMagic — §9.1", () => {
 
   it("TV-INST-GEN-01: 1000 LAMP, Flame, UM=1.0 → 3.15 MAGIC (§20.3 calibration)", () => {
     const { input, expected_nanogic, steps } = TV_INST_GEN_01;
-    const result = computeInstantMagic(input.lamp_paid_oil, input.um_q, input.pm_q);
+    const result = computeInstantMagic(input.lamp_paid_oildrop, input.um_q, input.pm_q);
     expect(result).toBe(expected_nanogic);         // 3_150_000_000n ✓
 
     // Verify intermediate steps (L4 error analysis)
-    const s1 = input.lamp_paid_oil * 3_000_000_000n / 1_000_000_000n;
+    const s1 = input.lamp_paid_oildrop * 3_000_000_000n / 1_000_000_000n;
     const s2 = s1 * input.um_q / 1_000_000_000n;
     const s3 = s2 * input.pm_q / 1_000_000_000n;
     expect(s1).toBe(steps.s1);   // 3_000_000_000n
@@ -43,13 +43,13 @@ describe("computeInstantMagic — §9.1", () => {
 
   it("TV-INST-GEN-02: 1000 LAMP, Ember, UM=1.5 → 5.175 MAGIC", () => {
     const { input, expected_nanogic } = TV_INST_GEN_02;
-    const result = computeInstantMagic(input.lamp_paid_oil, input.um_q, input.pm_q);
+    const result = computeInstantMagic(input.lamp_paid_oildrop, input.um_q, input.pm_q);
     expect(result).toBe(expected_nanogic);  // 5_175_000_000n ✓
   });
 
   it("TV-INST-GEN-03: 500 LAMP, Lantern, UM=2.0 (max) → 3.0 MAGIC", () => {
     const { input, expected_nanogic } = TV_INST_GEN_03;
-    const result = computeInstantMagic(input.lamp_paid_oil, input.um_q, input.pm_q);
+    const result = computeInstantMagic(input.lamp_paid_oildrop, input.um_q, input.pm_q);
     expect(result).toBe(expected_nanogic);  // 3_000_000_000n ✓
   });
 
@@ -215,13 +215,13 @@ describe("isExpired — §4", () => {
 
 describe("InstantGen constraint mirrors — §9.3", () => {
 
-  it("TV-INST-MIN: 9_999_999 oil < 10_000_000 (min) → reject", () => {
+  it("TV-INST-MIN: 9_999_999 oildrop < 10_000_000 (min) → reject", () => {
     const MIN = 10_000_000n;
     expect(9_999_999n < MIN).toBe(true);    // would be rejected by C-INST-1
     expect(10_000_000n >= MIN).toBe(true);  // exactly MIN — accepted ✓
   });
 
-  it("TV-INST-MAX: 10^13 oil accepted; 10^13+1 rejected", () => {
+  it("TV-INST-MAX: 10^13 oildrop accepted; 10^13+1 rejected", () => {
     const MAX = 10_000_000_000_000n;
     expect(10_000_000_000_000n <= MAX).toBe(true);
     expect(10_000_000_000_001n <= MAX).toBe(false);
@@ -272,9 +272,9 @@ describe("Utility — formatting & conversion", () => {
     expect(slotToEpoch(864_000n, "Mainnet")).toBe(2n);
   });
 
-  it("lampToOil: 1 LAMP = 10^6 oil", () => {
-    expect(lampToOil(1n)).toBe(1_000_000n);
-    expect(lampToOil(1000n)).toBe(1_000_000_000n);
+  it("lampToOildrop: 1 LAMP = 10^6 oildrop", () => {
+    expect(lampToOildrop(1n)).toBe(1_000_000n);
+    expect(lampToOildrop(1000n)).toBe(1_000_000_000n);
   });
 
   it("nanogicToMagicStr: 3_150_000_000 → '3.1500'", () => {

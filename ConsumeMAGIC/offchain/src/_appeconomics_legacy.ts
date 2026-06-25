@@ -8,7 +8,7 @@
 //
 // (nguyên bản: "src/math.ts — ConsumeMAGIC v2.2 Pure Math Engine"; cô lập 2026-06-11
 //  để vá MAINNET-BLOCK "math.ts v1 lệch model engagement".)
-// ALL arithmetic BigInt. No Number for nanogic/oil (C8).
+// ALL arithmetic BigInt. No Number for nanogic/oildrop (C8).
 
 import { nanogicToMagicStr } from "@magiclamp/protocol-utils";
 export { nanogicToMagicStr };

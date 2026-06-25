@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeInstantMagic, getUmForInstant, shouldHalve, applyHalving,
-  isExpired, lampToOil, nanogicToMagicStr,
+  isExpired, lampToOildrop, nanogicToMagicStr,
 } from "../offchain/src/math.js";
 import {
   PM_Q, INSTANT_DECAY_WINDOW, MIN_INSTANT_PURCHASE, MAX_INSTANT_PURCHASE,
@@ -157,7 +157,7 @@ describe("InstantGen full flow simulation", () => {
     it("1000 LAMP, Flame, UM=1.0, fresh → 3.15 MAGIC batch", () => {
       const vault = makeVault({ profile: "Flame" });
       const um    = makeUM({ smoothed_q: 1_000_000_000n, last_updated_epoch: 99n });
-      const result = simulateInstantGen(vault, lampToOil(1000n), um, 100n);
+      const result = simulateInstantGen(vault, lampToOildrop(1000n), um, 100n);
 
       expect(result.expectedMagic).toBe(3_150_000_000n);                  // TV-INST-GEN-01 ✓
       expect(nanogicToMagicStr(result.expectedMagic)).toBe("3.1500");
@@ -165,20 +165,20 @@ describe("InstantGen full flow simulation", () => {
       expect(result.newBatch.halved).toBe(false);                          // C-INST-6 ✓
       expect(result.newBatch.profile_at_creation).toBeNull();              // C-DECAY-4 ✓
       expect(result.newBatch.decay_window).toBe(2n);                       // C-INST-DECAY ✓
-      expect(result.newLampBalance).toBe(100_000_000_000n - lampToOil(1000n));
+      expect(result.newLampBalance).toBe(100_000_000_000n - lampToOildrop(1000n));
     });
 
     it("500 LAMP, Lantern, UM=2.0 (max) → 3.0 MAGIC", () => {
       const vault = makeVault({ profile: "Lantern" });
       const um    = makeUM({ smoothed_q: 2_000_000_000n, last_updated_epoch: 100n });
-      const result = simulateInstantGen(vault, lampToOil(500n), um, 100n);
+      const result = simulateInstantGen(vault, lampToOildrop(500n), um, 100n);
       expect(result.expectedMagic).toBe(3_000_000_000n);  // TV-INST-GEN-03 ✓
     });
 
     it("C-INST-10: LAMP conservation — total unchanged", () => {
       const vault = makeVault();
       const um    = makeUM();
-      const lampPaid = lampToOil(1000n);
+      const lampPaid = lampToOildrop(1000n);
       const result = simulateInstantGen(vault, lampPaid, um, 100n);
 
       // vault lost lampPaid; treasury gains lampPaid; total unchanged
@@ -193,7 +193,7 @@ describe("InstantGen full flow simulation", () => {
     it("Stale UM (staleness=2) → UM_FALLBACK applied", () => {
       const vault = makeVault({ profile: "Flame" });
       const um    = makeUM({ smoothed_q: 2_000_000_000n, last_updated_epoch: 98n }); // stale
-      const result = simulateInstantGen(vault, lampToOil(1000n), um, 100n);
+      const result = simulateInstantGen(vault, lampToOildrop(1000n), um, 100n);
 
       // umUsed = UM_FALLBACK_Q = 500M (not 2B)
       expect(result.umUsed).toBe(UM_FALLBACK_Q);  // TV-UM-SPLIT ✓
@@ -206,7 +206,7 @@ describe("InstantGen full flow simulation", () => {
     it("Fresh UM (staleness=1) → smoothed UM used", () => {
       const vault = makeVault({ profile: "Flame" });
       const um    = makeUM({ smoothed_q: 1_500_000_000n, last_updated_epoch: 99n }); // fresh
-      const result = simulateInstantGen(vault, lampToOil(1000n), um, 100n);
+      const result = simulateInstantGen(vault, lampToOildrop(1000n), um, 100n);
 
       expect(result.umUsed).toBe(1_500_000_000n);  // TV-UM-FRESH ✓
       // M = 3B × 1.5 × 1.05 = 4.725B
@@ -220,7 +220,7 @@ describe("InstantGen full flow simulation", () => {
       const existingBatch = makeBatch({ created_epoch: 99n, current_amount: 800_000_000n, halved: false });
       const vault = makeVault({ magic_batches: [existingBatch] });
       const um    = makeUM();
-      const result = simulateInstantGen(vault, lampToOil(100n), um, 100n);
+      const result = simulateInstantGen(vault, lampToOildrop(100n), um, 100n);
 
       // existingBatch at k=1 (100-99=1), halved=False → should halve
       expect(result.halvingApplied).toBe(1);
@@ -238,7 +238,7 @@ describe("InstantGen full flow simulation", () => {
     it("TV-INST-03: Already-halved batch (halved=True at k=1) → NOT halved again (T18)", () => {
       const existingBatch = makeBatch({ created_epoch: 99n, current_amount: 500_000_000n, halved: true });
       const vault = makeVault({ magic_batches: [existingBatch] });
-      const result = simulateInstantGen(vault, lampToOil(100n), makeUM(), 100n);
+      const result = simulateInstantGen(vault, lampToOildrop(100n), makeUM(), 100n);
 
       expect(result.halvingApplied).toBe(0);  // T18: no double-halving ✓
       const existingInResult = result.updatedBatches.find(b => b.batch_id === "deadbeef");
@@ -249,7 +249,7 @@ describe("InstantGen full flow simulation", () => {
       // Batch at k=1 should be halved, then NOT yet pruned (decay_window=2, k=1 < 2)
       const batch = makeBatch({ created_epoch: 99n, halved: false });
       const vault = makeVault({ magic_batches: [batch] });
-      const result = simulateInstantGen(vault, lampToOil(100n), makeUM(), 100n);
+      const result = simulateInstantGen(vault, lampToOildrop(100n), makeUM(), 100n);
 
       // Halving applied (k=1, not expired)
       expect(result.halvingApplied).toBe(1);
@@ -263,7 +263,7 @@ describe("InstantGen full flow simulation", () => {
     it("Batch at k=2 (expired) → pruned", () => {
       const expiredBatch = makeBatch({ created_epoch: 98n }); // k=2 at epoch 100
       const vault = makeVault({ magic_batches: [expiredBatch] });
-      const result = simulateInstantGen(vault, lampToOil(100n), makeUM(), 100n);
+      const result = simulateInstantGen(vault, lampToOildrop(100n), makeUM(), 100n);
 
       expect(result.prunedCount).toBe(1);
       // Only the new batch remains
@@ -302,7 +302,7 @@ describe("InstantGen full flow simulation", () => {
         makeBatch({ batch_id: `batch_${i}`, created_epoch: 100n }),
       );
       const vault = makeVault({ magic_batches: batches });
-      expect(() => simulateInstantGen(vault, lampToOil(100n), makeUM(), 100n))
+      expect(() => simulateInstantGen(vault, lampToOildrop(100n), makeUM(), 100n))
         .toThrow("C-INST-7");
     });
   });
@@ -314,7 +314,7 @@ describe("InstantGen full flow simulation", () => {
       const um    = makeUM();
 
       // Epoch 100: create batch
-      const r0 = simulateInstantGen(vault, lampToOil(1000n), um, 100n);
+      const r0 = simulateInstantGen(vault, lampToOildrop(1000n), um, 100n);
       const batch0 = r0.newBatch;
       expect(batch0.current_amount).toBe(3_150_000_000n);  // TV-INST-GEN-01 ✓
       expect(batch0.halved).toBe(false);

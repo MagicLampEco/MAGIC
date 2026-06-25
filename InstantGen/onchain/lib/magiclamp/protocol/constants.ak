@@ -6,7 +6,7 @@
 pub const q : Int = 1_000_000_000
 
 // ── LAMP supply ──────────────────────────────────────────────
-// 36 × 10^15 oil [Constitutional — immutable forever §19.9]
+// 36 × 10^15 oildrop [Constitutional — immutable forever §19.9]
 pub const total_lamp_supply : Int = 36_000_000_000_000_000
 
 // ── Epoch length ─────────────────────────────────────────────
@@ -17,10 +17,10 @@ pub const slots_per_epoch : Int = 432_000
 // [Constitutional] Base rate
 pub const instant_base_rate_q : Int = 3_000_000_000
 
-// [Routine] Minimum purchase: 10 LAMP = 10^7 oil
+// [Routine] Minimum purchase: 10 LAMP = 10^7 oildrop
 pub const min_instant_purchase : Int = 10_000_000
 
-// [Routine] Maximum purchase per tx: 10^13 oil
+// [Routine] Maximum purchase per tx: 10^13 oildrop
 pub const max_instant_purchase : Int = 10_000_000_000_000
 
 // [Constitutional] Decay window: 2 epochs

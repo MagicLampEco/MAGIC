@@ -156,7 +156,7 @@ co-spend cưỡng chế — bất biến CROSS-MODULE, không nằm trong vault.
 |---|---|---|
 | N-VAC-01 | Fire sớm hơn 1 epoch (`current < fire_epoch`) | Reject C-VAC-6 |
 | N-VAC-02 | Fire muộn hơn 1 epoch (`current > fire_epoch`) | Reject C-VAC-6 |
-| N-VAC-03 | Commit lambda < 1 LAMP (999_999 oil) | Reject C-VAC-3 |
+| N-VAC-03 | Commit lambda < 1 LAMP (999_999 oildrop) | Reject C-VAC-3 |
 | N-VAC-04 | Commit lambda > L_avail | Reject C-VAC-2 |
 | N-VAC-05 | Commit khi đã có 10 orders | Reject C-VAC-5 |
 | N-VAC-06 | Commit không có chữ ký owner | Reject C-VAC-1 |
@@ -202,7 +202,7 @@ on-chain trực tiếp cho `VacuumCommit`/`VacuumFire` (đường happy-path đ�
 | Datum size tối đa | ~12KB | §5.1 (tx limit 16KB) |
 | Fire window | 1 epoch (EXACT) | C-VAC-6 — không có catch-up |
 | Batch lifetime | 1 epoch (cliff) | `vacuum_decay_window = 1` |
-| LAMP minimum | 1 LAMP (10⁶ oil) | C-VAC-3 |
+| LAMP minimum | 1 LAMP (10⁶ oildrop) | C-VAC-3 |
 
 **Lưu ý C-VAC-6**: VacuumGen KHÔNG có catch-up mechanism. Nếu keeper bỏ lỡ `fire_epoch`, order bị kẹt vĩnh viễn trong vault (LAMP bị khóa, không thể fire, không thể huỷ). Keeper phải đảm bảo monitor liên tục.
 
@@ -234,7 +234,7 @@ SDK phát ra các event string trong `summary` field của `CommitResult` và `F
 | `VacuumBurnBatch` | BurnBatch thành công — log `vaultRef`, `burns`, `totalBurned`, `actor` (owner/delegate) |
 | `VacuumSetDelegate` | SetDelegate thành công — log `vaultRef`, `oldDelegate`, `newDelegate` |
 
-Keeper nên log `orderId`, `fireEpoch`, `lambdaOil` sau mỗi commit để không bỏ lỡ fire window.
+Keeper nên log `orderId`, `fireEpoch`, `lambdaOildrop` sau mỗi commit để không bỏ lỡ fire window.
 
 **Giám sát UM keeper (phòng vệ kinh tế)**: VacuumFire đọc UM smoothed không stale
 check (C-UM-7). Nếu UM beacon bị giữ ở max (2.0×) do keeper thông đồng, mọi fire ăn

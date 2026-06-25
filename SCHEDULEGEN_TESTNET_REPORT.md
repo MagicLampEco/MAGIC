@@ -11,7 +11,7 @@
 
 ScheduleGen là module phức tạp nhất trong GenMAGIC v3.3 — kết hợp:
 - **Two-phase protocol** (Commit + Fire) như VacuumGen
-- **16-shard cap system** — mỗi user vault thuộc 1 shard (`shard_id = hash(owner) mod 16`); mỗi shard có cap LAMP locked (4.5×10^14 oil = 450M tLAMP)
+- **16-shard cap system** — mỗi user vault thuộc 1 shard (`shard_id = hash(owner) mod 16`); mỗi shard có cap LAMP locked (4.5×10^14 oildrop = 450M tLAMP)
 - **Multi-fire per tx** — 1 Fire tx có thể trigger nhiều orders (catch-up tới `MAX_FIRES_PER_TX_CATCHUP = 8`)
 - **Rate locked at commit (T8)** — `rate_locked_q` immutable per-schedule; DAO changes won't affect committed contracts
 - **Schedule length L ∈ [10, 200]** — quyết định nhân tử S_Q (sigmoid bonus) và tổng số fires
@@ -61,7 +61,7 @@ ScheduleGen là module phức tạp nhất trong GenMAGIC v3.3 — kết hợp:
 
 **Expected:**
 - Vault datum updated:
-  - `lamp_locked`: 0 → 10,000,000 oil (L × λ = 10 × 1 LAMP)
+  - `lamp_locked`: 0 → 10,000,000 oildrop (L × λ = 10 × 1 LAMP)
   - `gen_schedules`: `[]` → `[{schedule_id, commit_epoch=20589, start_fire_epoch=20591, end_fire_epoch=20600, schedule_length=10, lamp_per_epoch=10^6, rate_locked_q=8e9, ...}]`
   - `loyalty_holdings`: youngest entries marked `is_locked`
 - Shard 6 datum (computed shard_id for our owner):
@@ -304,7 +304,7 @@ Cardanoscan: `https://preview.cardanoscan.io/transaction/<hash>`
 | # | Case | Reason |
 |---|---|---|
 | SC-MAX-LENGTH (L=200) | Boundary test; SDK pattern same as MIN (verified by inspection) |
-| SC-SHARD-CAP | Need to fill shard to 4.5×10^14 oil cap. Requires very high LAMP balance |
+| SC-SHARD-CAP | Need to fill shard to 4.5×10^14 oildrop cap. Requires very high LAMP balance |
 | SC-MAX-SCHEDULES (20) | Need 20 schedules pre-seeded; arithmetic verified off-chain |
 | SF-MULTI-FIRE (catch-up 8) | Need vault with `start_fire_epoch + N` where N > 1 → multiple eligible fires in one tx. Pre-seed pattern can simulate but needs vault with multiple epochs gap |
 | SF-COMPLETE-SCHEDULE | Schedule's `fired_count == schedule_length` should remove schedule from vault AND decrement shard's `active_count`. Need multiple fires until completion |

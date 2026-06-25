@@ -1,5 +1,5 @@
 // src/math.ts — BigInt Math Engine (SnapshotGen)
-// ALL arithmetic uses BigInt. Never use Number for oil/nanogic/Q-format.
+// ALL arithmetic uses BigInt. Never use Number for oildrop/nanogic/Q-format.
 // TV-OVERFLOW-01/02: Number fails. BigInt required (C-OVERFLOW).
 
 import {
@@ -7,12 +7,12 @@ import {
   OAC_BASE_Q, OAC_INCREMENT_Q, OAC_CAP_APPS, DRM_LOOKBACK,
 } from "./constants.js";
 import {
-  slotToEpoch, lampToOil, nanogicToMagicStr, qToStr,
+  slotToEpoch, lampToOildrop, nanogicToMagicStr, qToStr,
   countActiveAppsInOacWindow,
 } from "@magiclamp/protocol-utils";
 import type { LoyaltyHolding, ActivityState } from "./types.js";
 
-export { slotToEpoch, lampToOil, nanogicToMagicStr, qToStr };
+export { slotToEpoch, lampToOildrop, nanogicToMagicStr, qToStr };
 
 // ══════════════════════════════════════════════════════════════
 // §6.3 Loyalty Factor (BigInt)
@@ -67,13 +67,13 @@ export function computeOacQ(activity: ActivityState, currentEpoch: bigint): bigi
 // TV-SNAPGEN-MATURE: 1000 LAMP, Ember, LF=1.5, OAC=1.0 → 11_212_500_000 ✓
 
 export function computeSnapshotMagic(
-  lampBalanceOil : bigint,         // C-SS-5: FULL balance incl. locked
+  lampBalanceOildrop : bigint,         // C-SS-5: FULL balance incl. locked
   lfQ            : bigint,
   oacQ           : bigint,
   profile        : string,
 ): bigint {
   const { B_Q, PM_Q } = PROFILE_PARAMS[profile]!;
-  const s1 = lampBalanceOil * SNAPSHOT_BASE_RATE_Q / Q;  // × R_snap
+  const s1 = lampBalanceOildrop * SNAPSHOT_BASE_RATE_Q / Q;  // × R_snap
   const s2 = s1 * lfQ  / Q;                              // × LF
   const s3 = s2 * oacQ / Q;                              // × OAC
   const s4 = s3 * PM_Q / Q;                              // × PM
@@ -85,13 +85,13 @@ export function computeSnapshotMagic(
 // ══════════════════════════════════════════════════════════════
 
 export function computeCatchupMagic(
-  lampBalanceOil : bigint,
+  lampBalanceOildrop : bigint,
   lfQ            : bigint,
   oacQ           : bigint,
   profile        : string,
   deltaEpochs    : bigint,
 ): bigint {
-  const mOne = computeSnapshotMagic(lampBalanceOil, lfQ, oacQ, profile);
+  const mOne = computeSnapshotMagic(lampBalanceOildrop, lfQ, oacQ, profile);
   return deltaEpochs * mOne;
 }
 
@@ -178,5 +178,5 @@ export function burnSnapshot(
   return { newInitialAmount: newInitial, newBalance, isb, diff };
 }
 
-// (slotToEpoch, lampToOil, nanogicToMagicStr, qToStr are re-exported from
+// (slotToEpoch, lampToOildrop, nanogicToMagicStr, qToStr are re-exported from
 // @magiclamp/protocol-utils — see top of file)

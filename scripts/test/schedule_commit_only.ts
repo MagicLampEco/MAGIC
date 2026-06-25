@@ -17,13 +17,13 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
-  lampToOil,
+  lampToOildrop,
 } from "../config.js";
 import { buildScheduleCommitTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
 
 const L = BigInt(process.env.SCHEDULE_LENGTH ?? "10");
-const LAMBDA = lampToOil(BigInt(process.env.LAMP_PER_EPOCH ?? "1"));
+const LAMBDA = lampToOildrop(BigInt(process.env.LAMP_PER_EPOCH ?? "1"));
 
 async function fetchTip() {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {

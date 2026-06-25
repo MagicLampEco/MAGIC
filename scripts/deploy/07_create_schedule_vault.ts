@@ -11,7 +11,7 @@
 //   PRESEED_SCHEDULE_L   — preseed a GenSchedule with this schedule_length (default 0 = none).
 //                          When > 0, pre-seeds a schedule with start_fire_epoch = currentEpoch (fire NOW).
 //                          Useful for testing Fire without waiting 2 epochs.
-//   PRESEED_SCHEDULE_LAM — lamp_per_epoch for the preseed schedule (default 1 tLAMP = 1_000_000 oil)
+//   PRESEED_SCHEDULE_LAM — lamp_per_epoch for the preseed schedule (default 1 tLAMP = 1_000_000 oildrop)
 
 import {
   Lucid, Blockfrost, Data, Constr, toUnit,
@@ -24,7 +24,7 @@ import { blake2b } from "@noble/hashes/blake2b";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
-  lampToOil,
+  lampToOildrop,
 } from "../config.js";
 
 // (Schema duplicated from 05/06 — same VaultDatum across all 4 vault modules.)
@@ -90,11 +90,11 @@ const VaultDatumSchema = Data.Object({
   }),
 });
 
-const INITIAL_LAMP_DEPOSIT  = lampToOil(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
+const INITIAL_LAMP_DEPOSIT  = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
 const INITIAL_PROFILE       = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
 const LAST_UPDATED_OFFSET   = BigInt(process.env.LAST_UPDATED_OFFSET ?? "1");
 const PRESEED_SCHEDULE_L    = BigInt(process.env.PRESEED_SCHEDULE_L   ?? "0");      // count of fires; 0 = no preseed
-const PRESEED_SCHEDULE_LAM  = lampToOil(BigInt(process.env.PRESEED_SCHEDULE_LAM ?? "1"));
+const PRESEED_SCHEDULE_LAM  = lampToOildrop(BigInt(process.env.PRESEED_SCHEDULE_LAM ?? "1"));
 
 // Constants matching Aiken (R_snap × Q = 2_000_000_000 for Flame baseline rate).
 const SNAPSHOT_BASE_RATE_Q = 2_000_000_000n;

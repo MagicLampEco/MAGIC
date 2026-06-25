@@ -74,17 +74,17 @@ pub fn compute_rate_locked_q(r_snap_q: Int, l: Int) -> Int {
 //   rate_locked_q is immutable → same λ → same M_i every fire.
 // T19: C-SCH-RATE: λ × rate_locked_q ≥ Q → M_i ≥ 1 every fire.
 //
-// TV-SCH-02: λ=4000 LAMP=4×10⁹ oil, rate_locked_q=11_250_000_000
+// TV-SCH-02: λ=4000 LAMP=4×10⁹ oildrop, rate_locked_q=11_250_000_000
 //   M_i = ⌊4×10⁹ × 11_250_000_000 / Q⌋ = 45_000_000_000 = 45 MAGIC ✓
 
-pub fn compute_m_i(lambda_oil: Int, rate_locked_q: Int) -> Int {
-  lambda_oil * rate_locked_q / q
+pub fn compute_m_i(lambda_oildrop: Int, rate_locked_q: Int) -> Int {
+  lambda_oildrop * rate_locked_q / q
 }
 
 // ── C-SCH-RATE check (T19) ───────────────────────────────────
 // Must hold at commit time. If false → REJECT commit.
-pub fn check_sch_rate(lambda_oil: Int, rate_locked_q: Int) -> Bool {
-  lambda_oil * rate_locked_q >= q
+pub fn check_sch_rate(lambda_oildrop: Int, rate_locked_q: Int) -> Bool {
+  lambda_oildrop * rate_locked_q >= q
 }
 
 // ══════════════════════════════════════════════════════════════

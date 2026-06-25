@@ -117,7 +117,7 @@ npm run test:e2e
 
 **P1: InstantGen cơ bản — 1000 LAMP, Flame, UM fresh**
 - Setup: vault với 10_000 LAMP, UM fresh (staleness = 0)
-- Input: lamp_paid = 1_000_000_000 oil (1000 LAMP), Flame profile
+- Input: lamp_paid = 1_000_000_000 oildrop (1000 LAMP), Flame profile
 - Expected: batch mới với 3_150_000_000 nanogic (TV-INST-GEN-01)
 - Verify: output datum.lamp_balance = old - 1B, treasury +1B
 
@@ -188,7 +188,7 @@ npm run test:e2e
 - Expected: REJECT (`vault.ak:218`)
 
 **N9: BigInt overflow check (C-OVERFLOW)**
-- Dùng JavaScript Number thay vì BigInt cho 36×10^15 oil
+- Dùng JavaScript Number thay vì BigInt cho 36×10^15 oildrop
 - Expected: test fail (incorrect result, không phải exception)
 - Vector: TV-OVERFLOW-01 (vectors.ts:161)
 
@@ -253,7 +253,7 @@ Worst case ~12KB (§5.1). Tx limit 16KB. Vault với 32 batches + 64 holdings + 
 | attribution_root hash chain | Verify `blake2b256(prev_root ∥ event_bytes)` on-chain | §7.2 C-ATT-1 |
 | activity_state A02 check | Thêm activity_state vào invariant list InstantGen | §5.5 |
 | Testnet deploy automation | Script tự động chạy toàn bộ 8 bước deploy | §E.3 |
-| ScheduleGen shard cap | SHARD_COUNT=16, SHARD_CAP=4.5×10^14 oil | §11 |
+| ScheduleGen shard cap | SHARD_COUNT=16, SHARD_CAP=4.5×10^14 oildrop | §11 |
 
 ---
 
@@ -277,7 +277,7 @@ Worst case ~12KB (§5.1). Tx limit 16KB. Vault với 32 batches + 64 holdings + 
 | Mã lỗi | Nguyên nhân | Xử lý |
 |---|---|---|
 | GEN-INST-001 | lamp_paid < 10 LAMP | Tăng amount ≥ 10_000_000 |
-| GEN-INST-002 | lamp_paid > 10^13 oil | Giảm amount |
+| GEN-INST-002 | lamp_paid > 10^13 oildrop | Giảm amount |
 | GEN-INST-003 | lamp_paid > L_avail | Kiểm tra lamp_locked; đợi VacuumGen/ScheduleGen hoàn thành |
 | GEN-VAULT-001 | Vault đầy 32 batches | Đợi v1.1 BurnBatch; hoặc đợi batches expire |
 | UM stale fallback | Keeper không chạy hoặc bị trễ | Khởi động UMKeeper; chấp nhận UM=0.5× hoặc đợi |

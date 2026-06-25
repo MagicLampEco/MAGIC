@@ -67,7 +67,7 @@ InstantGen validator được test end-to-end trên Preview testnet với 10 tr�
 
 ### Case I-1 — MIN purchase boundary
 
-**Spec:** C-INST-1 requires `lamp_paid >= 10 LAMP (10^7 oil)`.
+**Spec:** C-INST-1 requires `lamp_paid >= 10 LAMP (10^7 oildrop)`.
 
 **Setup:** `LAMP_PAID=10` (exactly MIN).
 
@@ -133,7 +133,7 @@ Tất cả negative tests dùng vault `2d032bfb...` (deployed với separate tre
 
 **Observed:**
 ```
-GEN-INST-003: lamp_paid 100000000 > L_avail 10000000 oil. lamp_locked=9990000000
+GEN-INST-003: lamp_paid 100000000 > L_avail 10000000 oildrop. lamp_locked=9990000000
 ```
 SDK rejects before submit. (Validator-level C-INST-3 redundant but exists at vault.ak.)
 
@@ -179,7 +179,7 @@ Trace expect output_datum.lamp_balance == input_datum.lamp_balance - lamp_paid
 
 **Observed:**
 ```
-GEN-INST-001: lamp_paid 5000000 < MIN 10000000 oil (10 LAMP)
+GEN-INST-001: lamp_paid 5000000 < MIN 10000000 oildrop (10 LAMP)
 ```
 
 **Verdict:** ✅ REJECT (SDK pre-check)
@@ -208,7 +208,7 @@ Validator reject vì only 50 LAMP at treasury_addr (no wallet change accumulates
 
 | # | Case | Lý do skip | Risk assessment |
 |---|---|---|---|
-| I-2 | MAX purchase (10^13 oil = 10M LAMP) | Vault chỉ có 10K LAMP trên testnet; mint thêm cần script changes | Low — same SDK pre-check pattern as MIN, công thức scaling linear |
+| I-2 | MAX purchase (10^13 oildrop = 10M LAMP) | Vault chỉ có 10K LAMP trên testnet; mint thêm cần script changes | Low — same SDK pre-check pattern as MIN, công thức scaling linear |
 | I-9 | Multi-tx same epoch (no rate limit) | Đã verify implicit (Ember + Flame + Lantern + IGP + I-1 + I-3a + I-3b + I-5 + tamper tests đều chạy trong cùng epoch 20589 cho mỗi vault) | None — no per-epoch check in InstantGen validator |
 | I-10 | C-DECAY-7 halving sau epoch | Preview epoch = 1 ngày; cần đợi qua epoch boundary. Setup `LAST_UPDATED_OFFSET=2` on vault có existing Instant batch sẽ trigger halving on next fire | Medium — math tested off-chain via vitest, validator code verified by inspection |
 

@@ -40,14 +40,14 @@ export function blendWeightFast(div_q: bigint): bigint {
 // Update flow rate state — called by FlowRateKeeper each epoch
 export function updateFlowRate(datum: FlowRateDatum, flow: EpochFlow): FlowRateDatum {
   // Guard: insufficient activity
-  if (flow.total_magic_ng < MIN_MAGIC_EPOCH || flow.total_lamp_oil === 0n) {
+  if (flow.total_magic_ng < MIN_MAGIC_EPOCH || flow.total_lamp_oildrop === 0n) {
     return { ...datum, last_epoch: flow.epoch };
   }
   // Guard: epoch must advance
   if (flow.epoch <= datum.last_epoch) return datum;
 
   // Raw rate this epoch (Q-format)
-  const unclamped_raw = flow.total_lamp_oil * Q / flow.total_magic_ng;
+  const unclamped_raw = flow.total_lamp_oildrop * Q / flow.total_magic_ng;
 
   // Overflow guard: raw > HARD_CEIL indicates erroneous/manipulative data
   // (paying 10,000+ LAMP/MAGIC is economically impossible at any realistic LAMP price).
@@ -90,7 +90,7 @@ export function updateFlowRate(datum: FlowRateDatum, flow: EpochFlow): FlowRateD
     ema_fast_q: clamp(new_fast, HARD_FLOOR_Q, HARD_CEIL_Q),
     ema_slow_q: clamp(new_slow, HARD_FLOOR_Q, HARD_CEIL_Q),
     lamp_per_magic_q: clamp(rate_capped, HARD_FLOOR_Q, HARD_CEIL_Q),
-    total_lamp_epoch: flow.total_lamp_oil,
+    total_lamp_epoch: flow.total_lamp_oildrop,
     total_magic_epoch: flow.total_magic_ng,
     last_epoch: flow.epoch,
     div_q,

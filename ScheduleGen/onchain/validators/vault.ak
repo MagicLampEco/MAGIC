@@ -170,7 +170,7 @@ validator shard(shard_policy_id_param: PolicyId) {
 fn validate_commit(
   datum           : VaultDatum,
   l               : Int,             // schedule_length
-  lambda          : Int,             // lamp_per_epoch (oil)
+  lambda          : Int,             // lamp_per_epoch (oildrop)
   current_epoch   : Int,
   own_ref         : OutputReference,
   vault_addr      : Address,

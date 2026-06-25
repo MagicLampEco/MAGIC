@@ -1,7 +1,7 @@
 // tests/utils.test.ts — protocol-utils canonical tests
 import { describe, it, expect } from "vitest";
 import {
-  slotToEpoch, lampToOil, nanogicToMagicStr,
+  slotToEpoch, lampToOildrop, nanogicToMagicStr,
   selectLampForLock, removeLockedAmount, sumHoldings, sumLocked,
   pruneActivityWindow, countActiveAppsInOacWindow, addBurnToActivity,
   isqrt, isqrt10th, verifyVd, vDampened, mulQ, clamp,
@@ -28,9 +28,9 @@ describe("Epoch utilities", () => {
   it("slotToEpoch Preprod: 86_400 slots = 1 epoch", () => {
     expect(slotToEpoch(86_400n, "Preprod")).toBe(1n);
   });
-  it("lampToOil: 1 LAMP = 10^6 oil", () => {
-    expect(lampToOil(1n)).toBe(1_000_000n);
-    expect(lampToOil(1000n)).toBe(1_000_000_000n);
+  it("lampToOildrop: 1 LAMP = 10^6 oildrop", () => {
+    expect(lampToOildrop(1n)).toBe(1_000_000n);
+    expect(lampToOildrop(1000n)).toBe(1_000_000_000n);
   });
 });
 

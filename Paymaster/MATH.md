@@ -12,12 +12,12 @@ Nguồn: `Paymaster/onchain/lib/magiclamp/paymaster/math.ak`; `LAMP/docs/SPEC-Pa
 | Ký hiệu | Đơn vị | Ý nghĩa |
 |---|---|---|
 | `Q` | — | `10^9` (scale Q-format). `math.ak:12`, `ProtocolUtils.Q`. |
-| `oil` | — | `LAMP × 10^6`. |
+| `oildrop` | — | `LAMP × 10^6`. |
 | `nanogic` | — | `MAGIC × 10^9`. |
 | `magic_consumed` | nanogic | `Σ BurnBatch.burns` trên vault PHÂN BIỆT. `util.ak:100-118`. |
 | `lamp_per_magic_q` | Q-format | `lamp_oil / nanogic`. `Q` = 1 LAMP/MAGIC. `types.ak:28`. |
 | `ada_per_magic_q` | Q-format | `lovelace / nanogic`. `types.ak:29`. |
-| `lamp_this` | oil | LAMP App sponsor op này. `types.ak:71`. |
+| `lamp_this` | oildrop | LAMP App sponsor op này. `types.ak:71`. |
 | `ada_this` | lovelace | ADA App sponsor op này. `types.ak:72`. |
 
 ---
@@ -27,7 +27,7 @@ Nguồn: `Paymaster/onchain/lib/magiclamp/paymaster/math.ak`; `LAMP/docs/SPEC-Pa
 ### 2.1 Trần sponsor (cap)
 
 ```
-lamp_cap = ⌊ magic_consumed × lamp_per_magic_q / Q ⌋     (oil)       math.ak:16-18
+lamp_cap = ⌊ magic_consumed × lamp_per_magic_q / Q ⌋     (oildrop)       math.ak:16-18
 ada_cap  = ⌊ magic_consumed × ada_per_magic_q  / Q ⌋     (lovelace)  math.ak:21-23
 ```
 
@@ -85,7 +85,7 @@ BYTE-PERFECT ở `math.ts addDid` (`offchain/src/math.ts:50-59`) để `meter_ou
 
 | ID | Input | Output | Vị trí test |
 |---|---|---|---|
-| TV-PM-PRICE-01 | `lamp_cap(10_000_000, 500_000_000)` | `5_000_000` oil | `math.ak:27-30`, `paymaster.test.ts` |
+| TV-PM-PRICE-01 | `lamp_cap(10_000_000, 500_000_000)` | `5_000_000` oildrop | `math.ak:27-30`, `paymaster.test.ts` |
 | TV-PM-PRICE-02 | `ada_cap(50_000_000, 2_000_000_000)` | `100_000_000` lovelace | `math.ak:32-35` |
 | TV-PM-UNIT | `lamp_cap(7_777_777, Q)` | `7_777_777` | `math.ak:37-40` |
 | TV-PM-ZERO | `lamp_cap(10_000_000, 0)` | `0` | `math.ak:42-44` |

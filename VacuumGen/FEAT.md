@@ -31,7 +31,7 @@ VacuumGen là cơ chế tạo MAGIC theo mô hình **two-phase commit-then-fire*
 
 ### 3.1 Phase 1 — VacuumCommit
 
-1. Owner chọn `lambda` (oil) sao cho `lambda >= 1 LAMP` (C-VAC-3) và `lambda <= L_avail` (C-VAC-2).
+1. Owner chọn `lambda` (oildrop) sao cho `lambda >= 1 LAMP` (C-VAC-3) và `lambda <= L_avail` (C-VAC-2).
 2. Kiểm tra `|vacuum_orders| < 10` (C-VAC-5).
 3. Tính `order_id = blake2b256(own_ref ∥ commit_epoch ∥ lambda)`.
 4. Tính `fire_epoch = commit_epoch + 2` (C-VAC-4, `vacuum_delay = 2`).
@@ -110,7 +110,7 @@ Owner (chỉ owner) ký, đặt `personal_delegate = new_delegate` (`None` = ch�
 |---|---|
 | C-VAC-1 | VacuumCommit phải có chữ ký owner |
 | C-VAC-2 | `lambda <= L_avail` tại commit |
-| C-VAC-3 | `lambda >= 1_000_000 oil` (1 LAMP) |
+| C-VAC-3 | `lambda >= 1_000_000 oildrop` (1 LAMP) |
 | C-VAC-4 | `fire_epoch = commit_epoch + 2` (cố định, không thay đổi) |
 | C-VAC-5 | `|vacuum_orders| < MAX_VACUUM_ORDERS (10)` trước khi thêm |
 | C-VAC-6 | VacuumFire phải submit đúng `fire_epoch` (EXACT, không ≥) |

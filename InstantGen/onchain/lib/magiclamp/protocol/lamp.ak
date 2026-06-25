@@ -21,7 +21,7 @@ use magiclamp/protocol/types.{LoyaltyHolding}
 
 pub fn remove_from_holdings(
   holdings   : List<LoyaltyHolding>,
-  amount_out : Int,  // oil to remove (= lamp_paid)
+  amount_out : Int,  // oildrop to remove (= lamp_paid)
 ) -> List<LoyaltyHolding> {
   // Sort: locked stay, unlocked sorted oldest-first for removal
   let unlocked = list.filter(holdings, fn(h) { !h.is_locked })
@@ -36,7 +36,7 @@ pub fn remove_from_holdings(
   list.concat(locked, remaining_unlocked)
 }
 
-/// Remove `amount` oil from a sorted (oldest-first) list of holdings.
+/// Remove `amount` oildrop from a sorted (oldest-first) list of holdings.
 /// Holdings are fully consumed before moving to the next one.
 fn remove_oldest_first(
   holdings : List<LoyaltyHolding>,

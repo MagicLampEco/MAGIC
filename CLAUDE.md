@@ -82,7 +82,7 @@ These are not stylistic preferences. They are protocol-level constraints with na
 
 **Bit-identical math between Aiken and TypeScript (P8).** `offchain/src/math.ts` and `onchain/lib/math.ak` (plus `decay.ak`, `lf_oac.ak`, etc.) implement the same formulas. They must produce identical outputs for identical inputs. The TypeScript suite enforces this against normative test vectors in `tests/vectors.ts` (App B of the spec). If you change one side, change the other.
 
-**BigInt everywhere for oil/nanogic/Q-format (C-OVERFLOW).** Never use `Number` for amounts. `Q = 10^9`, `oil = LAMP × 10^6`, `nanogic = MAGIC × 10^9`. Test vectors TV-OVERFLOW-01/02 specifically catch `Number` regressions.
+**BigInt everywhere for oildrop/nanogic/Q-format (C-OVERFLOW).** Never use `Number` for amounts. `Q = 10^9`, `oildrop = LAMP × 10^6`, `nanogic = MAGIC × 10^9`. Test vectors TV-OVERFLOW-01/02 specifically catch `Number` regressions.
 
 **Q-format arithmetic uses sequential floor multiplications.** Formulas like `M = L × R × UM × PM / Q³` are applied as three separate `⌊ × / Q ⌋` steps, not one big multiply-then-divide. This bounds rounding error per spec §6.1 / L4.
 
@@ -90,7 +90,7 @@ These are not stylistic preferences. They are protocol-level constraints with na
 
 **Cardano datum constructor indices must match Aiken type ordering.** TypeScript schemas in `types.ts` use `Data.Enum`/`Data.Object` whose order encodes Plutus Data constructor tags. Reorder a variant on one side, you break decoding on the other.
 
-**Hard limits enforced on-chain.** `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYALTY_HOLDINGS=64`, `MAX_VACUUM_ORDERS=10`, `MAX_GEN_SCHEDULES=20`, `MAX_FIRES_PER_TX_CATCHUP=8`, `SHARD_COUNT=16`, `SHARD_CAP=4.5×10^14 oil`. Defined in both `constants.ts` and `constants.ak` per module — keep them in sync.
+**Hard limits enforced on-chain.** `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYALTY_HOLDINGS=64`, `MAX_VACUUM_ORDERS=10`, `MAX_GEN_SCHEDULES=20`, `MAX_FIRES_PER_TX_CATCHUP=8`, `SHARD_COUNT=16`, `SHARD_CAP=4.5×10^14 oildrop`. Defined in both `constants.ts` and `constants.ak` per module — keep them in sync.
 
 ## Protocol rules that affect code changes
 

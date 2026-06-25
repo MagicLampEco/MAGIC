@@ -65,7 +65,7 @@ async function main() {
   if (!PLUTUS_PATH[moduleName]) throw new Error(`Unknown MODULE: ${moduleName}. Use Snapshot|Instant|Vacuum|Schedule.`);
 
   const amountLamp = BigInt(process.env.AMOUNT_LAMP ?? "5");
-  const amountOil = amountLamp * 1_000_000n;
+  const amountOildropdrop = amountLamp * 1_000_000n;
   const tamper = process.env.TAMPER ?? "";
 
   console.log("╔════════════════════════════════════════════╗");
@@ -89,7 +89,7 @@ async function main() {
   console.log(`Network:           ${NETWORK}`);
   console.log(`Vault hash:        ${vaultScriptHash}`);
   console.log(`Vault address:     ${vaultAddr}`);
-  console.log(`Amount:            ${amountLamp} LAMP (${amountOil} oil)`);
+  console.log(`Amount:            ${amountLamp} LAMP (${amountOildropdrop} oildrop)`);
   if (tamper) console.log(`TAMPER:            ${tamper}`);
   if (process.env.SKIP_OWNER_SIG === "1") console.log(`SKIP_OWNER_SIG:    1`);
   console.log();
@@ -135,7 +135,7 @@ async function main() {
     const result = await withdrawLamp({
       lucid,
       vaultUtxo,
-      amountOil: tamperedAmount(amountOil, tamper),
+      amountOildropdrop: tamperedAmount(amountOildropdrop, tamper),
       vaultScript,
       vaultType: moduleName as VaultType,
       vaultPlutusJson: plutusJson,
@@ -150,7 +150,7 @@ async function main() {
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
       finalTx = await rebuildWithTamper(
         lucid, vaultUtxo, result.newVaultDatum, vaultScript, vaultAddr,
-        amountOil, ownerPkh, tip.posixMs, plutusJson, tamper,
+        amountOildropdrop, ownerPkh, tip.posixMs, plutusJson, tamper,
         process.env.SKIP_OWNER_SIG === "1",
       );
       console.log(`⚠  TEST MODE: ${tamper || "skipOwnerSig"} — expecting validator REJECT.\n`);
@@ -193,16 +193,16 @@ async function main() {
 // W-NEG-1: amount = 0 → tamper at the SDK call level (or skip SDK and inject 0).
 // W-NEG-2: amount > L_avail handled by SDK pre-check; to trigger validator path,
 //          bypass the SDK check by setting an enormous amount but locked = 0.
-function tamperedAmount(amountOil: bigint, tamper: string): bigint {
+function tamperedAmount(amountOildropdrop: bigint, tamper: string): bigint {
   if (tamper === "amount_zero") return 0n;
-  return amountOil;
+  return amountOildropdrop;
 }
 
 // Tamper output datum / signer to exercise W-5..W-6.
 // Pattern: take the well-formed `newVaultDatum` from SDK, mutate, rebuild tx.
 async function rebuildWithTamper(
   lucid: any, vaultUtxo: UTxO, newVaultDatum: any, vaultScript: any, vaultAddr: string,
-  amountOil: bigint, ownerPkh: string, tipPosixMs: bigint, plutusJson: any,
+  amountOildropdrop: bigint, ownerPkh: string, tipPosixMs: bigint, plutusJson: any,
   tamper: string, skipOwnerSig: boolean,
 ): Promise<any> {
   const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
@@ -212,7 +212,7 @@ async function rebuildWithTamper(
 
   let mutatedDatum = { ...newVaultDatum };
   let outputLamp = vaultUtxo.assets[lampUnit] ?? 0n;
-  outputLamp = outputLamp - amountOil;
+  outputLamp = outputLamp - amountOildropdrop;
 
   if (tamper === "tamper_balance") {
     mutatedDatum = { ...mutatedDatum, lamp_balance: mutatedDatum.lamp_balance + 1n };  // W-5
@@ -225,7 +225,7 @@ async function rebuildWithTamper(
   }
 
   const idx = resolveConstrIndex(plutusJson, "vault.vault.spend", "WithdrawLamp");
-  const redeemer = Data.to(new Constr(idx, [amountOil]));
+  const redeemer = Data.to(new Constr(idx, [amountOildropdrop]));
 
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((BigInt(Math.floor(Date.now())) + 600_000n));
@@ -242,7 +242,7 @@ async function rebuildWithTamper(
       { kind: "inline", value: Data.to(mutatedDatum, VaultDatumSchema) },
       vaultOutputAssets,
     )
-    .pay.ToAddress(await lucid.wallet().address(), { [lampUnit]: amountOil })
+    .pay.ToAddress(await lucid.wallet().address(), { [lampUnit]: amountOildropdrop })
     .validFrom(lowerTime)
     .validTo(upperTime);
 

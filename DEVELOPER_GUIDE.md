@@ -20,12 +20,12 @@ Toàn bộ logic tính toán theo spec GenMAGIC v3.3 + ConsumeMAGIC v2.2 + AppEc
 Các primitives shared được gom vào `ProtocolUtils/` package:
 - Display: `nanogicToMagicStr`, `qToStr`
 - Epoch: `slotToEpoch`, `getCurrentEpoch(lucid, network)`, `getTipSlot(lucid, network)`
-- Conversions: `lampToOil`, `oilToLamp`, `lAvail`
+- Conversions: `lampToOildrop`, `oildropToLamp`, `lAvail`
 - Sort comparators: `cmpBigIntAsc`, `cmpBigIntDesc` (pure BigInt)
 - LAMP lock: `selectLampForLock`, `removeLockedAmount`, `sumHoldings`, `sumLocked` (canonical implementations)
 - OAC: `pruneActivityWindow`, `countActiveAppsInOacWindow`, `addBurnToActivity`
 - Math: `isqrt`, `isqrt10th`, `vDampened`, `verifyVd`, `mulQ`, `clamp`
-- Constants: `Q`, `SLOTS_PER_EPOCH`, `OIL_PER_LAMP`, `NANOGIC_PER_MAGIC`, `S_LAMP_TOTAL`, `DRM_LOOKBACK`, `GENESIS_UNIX`
+- Constants: `Q`, `SLOTS_PER_EPOCH`, `OILDROP_PER_LAMP`, `NANOGIC_PER_MAGIC`, `S_LAMP_TOTAL`, `DRM_LOOKBACK`, `GENESIS_UNIX`
 
 Mỗi module SDK dependent qua `"@magiclamp/protocol-utils": "file:../../ProtocolUtils"` và re-export từ local `math.ts`. **Không copy-paste primitives nữa** — sửa 1 chỗ, áp dụng toàn bộ.
 
@@ -213,7 +213,7 @@ Script này chạy theo thứ tự:
 
 ❌ Không commit `node_modules/` (đã có `.gitignore`)
 ❌ Không commit `.env` (chứa private key)
-❌ Không dùng `Number` cho BigInt (oil/nanogic) — luôn dùng `BigInt`
+❌ Không dùng `Number` cho BigInt (oildrop/nanogic) — luôn dùng `BigInt`
 ❌ Không cancel VacuumGen/ScheduleGen sau khi commit (C-VAC-12, T10)
 ❌ Không đổi profile 2 lần trong 2 epoch liên tiếp (cooldown §12)
 ❌ **Không copy-paste primitives đã có trong ProtocolUtils** (`nanogicToMagicStr`, `slotToEpoch`, `selectLampForLock`, `isqrt10th`, `cmpBigIntAsc/Desc`, ...). Sửa 1 chỗ trong ProtocolUtils, không sửa 9 nơi.

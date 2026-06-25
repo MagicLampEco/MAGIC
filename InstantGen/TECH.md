@@ -218,13 +218,13 @@ Các file chính:
 - `offchain/src/constants.ts` — constants (P8: phải match constants.ak)
 - `offchain/src/instant.ts` — transaction builder `buildInstantGenTx`
 
-**BigInt invariant (C-OVERFLOW):** Mọi amount (oil, nanogic, Q-format intermediate) phải dùng `bigint`. Không được dùng `number` cho arithmetic. TV-OVERFLOW-01/02 detect regression.
+**BigInt invariant (C-OVERFLOW):** Mọi amount (oildrop, nanogic, Q-format intermediate) phải dùng `bigint`. Không được dùng `number` cho arithmetic. TV-OVERFLOW-01/02 detect regression.
 
 ---
 
 ## 8. Protocol-utils dependency
 
 `math.ts` re-export từ `@magiclamp/protocol-utils`:
-- `slotToEpoch`, `nanogicToMagicStr`, `qToStr`, `lampToOil`, `oilToLamp`
+- `slotToEpoch`, `nanogicToMagicStr`, `qToStr`, `lampToOildrop`, `oildropToLamp`
 
 Các primitive này shared giữa modules — không duplicate trong InstantGen.

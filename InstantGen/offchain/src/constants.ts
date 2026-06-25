@@ -11,13 +11,13 @@ export const Q = 1_000_000_000n; // Q = 10^9 [Immutable]
 // ── LAMP / MAGIC units ───────────────────────────────────────
 export const LAMP_DECIMALS  = 6n;
 export const MAGIC_DECIMALS = 9n;
-export const OIL_PER_LAMP   = 1_000_000n;    // 10^6 oil per LAMP
+export const OILDROP_PER_LAMP   = 1_000_000n;    // 10^6 oildrop per LAMP
 export const NANOGIC_PER_MAGIC = 1_000_000_000n; // 10^9 nanogic per MAGIC
 
 // ── InstantGen (§19.4) ───────────────────────────────────────
 export const INSTANT_BASE_RATE_Q = 3_000_000_000n;   // [Constitutional]
-export const MIN_INSTANT_PURCHASE = 10_000_000n;      // 10 LAMP in oil [Routine]
-export const MAX_INSTANT_PURCHASE = 10_000_000_000_000n; // 10^13 oil [Routine]
+export const MIN_INSTANT_PURCHASE = 10_000_000n;      // 10 LAMP in oildrop [Routine]
+export const MAX_INSTANT_PURCHASE = 10_000_000_000_000n; // 10^13 oildrop [Routine]
 export const INSTANT_DECAY_WINDOW = 2n;                // [Constitutional]
 
 // ── UM (§19.7) ───────────────────────────────────────────────

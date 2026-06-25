@@ -1,14 +1,14 @@
 // @magiclamp/protocol-utils — Shared primitives (GenMAGIC v3.3)
 // Single source of truth for all modules.
-// ALL arithmetic BigInt. No Number for oil/nanogic/Q values.
+// ALL arithmetic BigInt. No Number for oildrop/nanogic/Q values.
 
 // ══════════════════════════════════════════════════════════════
 // §19 Protocol constants (Immutable unless noted)
 // ══════════════════════════════════════════════════════════════
 export const Q                   = 1_000_000_000n;   // [Immutable]
-export const OIL_PER_LAMP        = 1_000_000n;
+export const OILDROP_PER_LAMP        = 1_000_000n;
 export const NANOGIC_PER_MAGIC   = 1_000_000_000n;
-export const S_LAMP_TOTAL        = 36_000_000_000_000_000n;  // 36×10^15 oil
+export const S_LAMP_TOTAL        = 36_000_000_000_000_000n;  // 36×10^15 oildrop
 
 // `slots_per_epoch` is network-specific (used for slot-based epoch math and SDK display).
 export const SLOTS_PER_EPOCH_BY_NETWORK = {
@@ -96,8 +96,8 @@ export async function getCurrentEpoch(
 // ══════════════════════════════════════════════════════════════
 // Unit conversions
 // ══════════════════════════════════════════════════════════════
-export function lampToOil(lamp: bigint): bigint   { return lamp * OIL_PER_LAMP; }
-export function oilToLamp(oil: bigint):  bigint   { return oil  / OIL_PER_LAMP; }
+export function lampToOildrop(lamp: bigint): bigint   { return lamp * OILDROP_PER_LAMP; }
+export function oildropToLamp(oildrop: bigint):  bigint   { return oildrop  / OILDROP_PER_LAMP; }
 export function lAvail(balance: bigint, locked: bigint): bigint { return balance - locked; }
 
 // ══════════════════════════════════════════════════════════════
@@ -162,7 +162,7 @@ export function selectLampForLock(
       remaining = 0n;
     }
   }
-  if (remaining > 0n) throw new Error(`GEN-LOCK-001: insufficient holdings (${remaining} oil short)`);
+  if (remaining > 0n) throw new Error(`GEN-LOCK-001: insufficient holdings (${remaining} oildrop short)`);
   return result;
 }
 
@@ -185,7 +185,7 @@ export function removeLockedAmount(
     if (remaining >= h.amount) { remaining -= h.amount; }
     else { result.push({ ...h, amount: h.amount - remaining }); remaining = 0n; }
   }
-  if (remaining > 0n) throw new Error(`GEN-LOCK-002: insufficient locked holdings (${remaining} oil short)`);
+  if (remaining > 0n) throw new Error(`GEN-LOCK-002: insufficient locked holdings (${remaining} oildrop short)`);
   return [...unlocked, ...result];
 }
 

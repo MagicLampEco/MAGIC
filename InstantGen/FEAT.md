@@ -79,7 +79,7 @@ Chỉ 1 vault input được phép. Count theo address match. Nếu 2 vault UTxO
 | Mã | Nguồn code | Mô tả |
 |---|---|---|
 | C-INST-1 | `vault.ak:145` | `lamp_paid >= 10_000_000` (10 LAMP) |
-| C-INST-2 | `vault.ak:148` | `lamp_paid <= 10_000_000_000_000` (10^13 oil) |
+| C-INST-2 | `vault.ak:148` | `lamp_paid <= 10_000_000_000_000` (10^13 oildrop) |
 | C-INST-3 | `vault.ak:151` | `lamp_paid <= L_avail` |
 | C-INST-4 | `vault.ak:199` | Treasury nhận ≥ lamp_paid LAMP; Treasury phải là Script address |
 | C-INST-5 | `vault.ak:170` | `expected_m > 0` |

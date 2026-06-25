@@ -22,7 +22,7 @@ pub const schedule_min_length : Int = 10
 pub const schedule_max_length : Int = 200
 
 // ── λ minimum (§19.6) [Routine] ──────────────────────────────────────
-pub const min_lamp_per_fire : Int = 1_000_000   // 1 LAMP in oil
+pub const min_lamp_per_fire : Int = 1_000_000   // 1 LAMP in oildrop
 
 // ── Schedule delay (commit → first fire) [Constitutional] ─────────────
 pub const schedule_delay : Int = 2   // epochs
@@ -40,7 +40,7 @@ pub const max_loyalty_holdings  : Int = 64
 
 // ── Shard [Constitutional] ────────────────────────────────────────────
 pub const shard_count : Int = 16
-// shard_cap = 4.5 × 10^14 oil = 450,000,000 LAMP per shard
+// shard_cap = 4.5 × 10^14 oildrop = 450,000,000 LAMP per shard
 // = TOTAL_LAMP × SCHEDULE_PARTICIPATION_CAP_BPS / (10000 × shard_count)
 // = 36×10^15 × 2000 / 160000 = 4.5×10^14
 pub const shard_cap : Int = 450_000_000_000_000

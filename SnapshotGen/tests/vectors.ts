@@ -112,7 +112,7 @@ export const TV_LF_BOUNDARIES = [
 export const TV_SNAPGEN_01 = {
   id: "TV-SNAPGEN-01", spec_ref: "App B §B.7",
   description: "1000 LAMP, Flame, LF=1.0, OAC=0.8, PM=1.05, B=1.1 → ≈4.62 MAGIC",
-  lamp_oil: 1_000_000_000n,   // 1000 × 10^6 oil
+  lamp_oildrop: 1_000_000_000n,   // 1000 × 10^6 oildrop
   lf_q:     1_000_000_000n,   // 1.00
   oac_q:      800_000_000n,   // 0.80
   profile: "Flame",
@@ -135,7 +135,7 @@ export const TV_SNAPGEN_01 = {
 export const TV_SNAPGEN_MATURE = {
   id: "TV-SNAPGEN-MATURE", spec_ref: "§20.3",
   description: "1000 LAMP, Ember, LF=1.5, OAC=1.0 → ≈11.21 MAGIC",
-  lamp_oil: 1_000_000_000n,
+  lamp_oildrop: 1_000_000_000n,
   lf_q:     1_500_000_000n,   // 1.50
   oac_q:    1_000_000_000n,   // 1.00
   profile: "Ember",
@@ -153,7 +153,7 @@ export const TV_SNAPGEN_MATURE = {
 export const TV_CATCHUP_01 = {
   id: "TV-CATCHUP-01", spec_ref: "App B §B.10",
   description: "1000 LAMP, Flame, LF=1.1, OAC=0.9, Δe=5 → 28.586 MAGIC total",
-  lamp_oil:    1_000_000_000n,
+  lamp_oildrop:    1_000_000_000n,
   lf_q:        1_100_000_000n,
   oac_q:         900_000_000n,
   profile:     "Flame",

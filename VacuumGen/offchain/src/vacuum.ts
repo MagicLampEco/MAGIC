@@ -14,7 +14,7 @@ import {
 import {
   computeVacuumMagic, getUmForVacuum, computeSmQ,
   selectLampForLock, removeLockedAmount,
-  isVacuumExpired, lampToOil, lAvail,
+  isVacuumExpired, lampToOildrop, lAvail,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
@@ -30,7 +30,7 @@ import {
 export interface CommitParams {
   lucid        : LucidEvolution;
   vaultUtxo    : UTxO;
-  lambdaOil    : bigint;   // oil to lock (1 LAMP = 10^6 oil, min 10^6)
+  lambdaOildrop    : bigint;   // oildrop to lock (1 LAMP = 10^6 oildrop, min 10^6)
   userAddress  : string;
   /** Compiled vault validator with 4 params already applied per-network. Required. */
   vaultScript  : Validator;
@@ -49,7 +49,7 @@ export interface CommitResult {
   orderId      : string;
   fireEpoch    : bigint;
   commitEpoch  : bigint;
-  lambdaOil    : bigint;
+  lambdaOildrop    : bigint;
   summary      : string;
 }
 
@@ -91,7 +91,7 @@ export async function createLucid(blockfrostApiKey: string): Promise<LucidEvolut
 // Phase 1: buildVacuumCommitTx
 // ══════════════════════════════════════════════════════════════
 export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitResult> {
-  const { lucid, vaultUtxo, lambdaOil } = params;
+  const { lucid, vaultUtxo, lambdaOildrop } = params;
   const network    = params.network ?? TESTNET_CONFIG.network;
   const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
 
@@ -101,35 +101,35 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
   const fireEpoch   = commitEpoch + VACUUM_DELAY;  // C-VAC-4: = commit + 2
 
   // ── C-VAC-3: λ ≥ 1 LAMP ──────────────────────────────────
-  if (lambdaOil < MIN_VACUUM_AMOUNT)
-    throw new Error(`GEN-VAC-002: λ=${lambdaOil} < MIN=${MIN_VACUUM_AMOUNT} (1 LAMP)`);
+  if (lambdaOildrop < MIN_VACUUM_AMOUNT)
+    throw new Error(`GEN-VAC-002: λ=${lambdaOildrop} < MIN=${MIN_VACUUM_AMOUNT} (1 LAMP)`);
 
   // ── C-VAC-2: λ ≤ L_avail ─────────────────────────────────
   const avail = lAvail(vaultDatum.lamp_balance, vaultDatum.lamp_locked);
-  if (lambdaOil > avail)
-    throw new Error(`GEN-VAC-001: λ=${lambdaOil} > L_avail=${avail}`);
+  if (lambdaOildrop > avail)
+    throw new Error(`GEN-VAC-001: λ=${lambdaOildrop} > L_avail=${avail}`);
 
   // ── C-VAC-5: |orders| < 10 ───────────────────────────────
   if (vaultDatum.vacuum_orders.length >= MAX_VACUUM_ORDERS)
     throw new Error(`GEN-VAC-003: ${vaultDatum.vacuum_orders.length} orders ≥ MAX=${MAX_VACUUM_ORDERS}`);
 
   // Build order ID
-  const orderId = computeOrderId(vaultUtxo, commitEpoch, lambdaOil);
+  const orderId = computeOrderId(vaultUtxo, commitEpoch, lambdaOildrop);
 
   const newOrder: VacuumOrder = {
     order_id:     orderId,
     commit_epoch: commitEpoch,
     fire_epoch:   fireEpoch,
-    lamp_amount:  lambdaOil,
+    lamp_amount:  lambdaOildrop,
   };
 
   // Lock youngest holdings (T5, §6.8)
-  const newHoldings = selectLampForLock(vaultDatum.loyalty_holdings, lambdaOil);
+  const newHoldings = selectLampForLock(vaultDatum.loyalty_holdings, lambdaOildrop);
 
   // Build updated datum (A02)
   let newVaultDatum: VaultDatum = {
     ...vaultDatum,
-    lamp_locked:      vaultDatum.lamp_locked + lambdaOil,
+    lamp_locked:      vaultDatum.lamp_locked + lambdaOildrop,
     loyalty_holdings: newHoldings,
     vacuum_orders:    [...vaultDatum.vacuum_orders, newOrder],
     last_updated_epoch: commitEpoch,
@@ -138,7 +138,7 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
 
   const { vaultScript } = params;
   const vaultAddr = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
-  const redeemer  = Data.to({ VacuumCommit: { lambda: lambdaOil } }, VaultRedeemerSchema);
+  const redeemer  = Data.to({ VacuumCommit: { lambda: lambdaOildrop } }, VaultRedeemerSchema);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((commitEpoch + 1n) * msPerEpoch(network) - 1n);
@@ -161,14 +161,14 @@ export async function buildVacuumCommitTx(params: CommitParams): Promise<CommitR
     `═══ VacuumGen Commit ═══`,
     `Commit epoch:  ${commitEpoch}`,
     `Fire epoch:    ${fireEpoch} (~${Number(VACUUM_DELAY * 5n)} days from now)`,
-    `λ locked:      ${lambdaOil / 1_000_000n} tLAMP (${lambdaOil} oil)`,
+    `λ locked:      ${lambdaOildrop / 1_000_000n} tLAMP (${lambdaOildrop} oildrop)`,
     `Order ID:      ${orderId.slice(0, 16)}...`,
     ``,
     `✓  LAMP locked. Fire tx can be triggered by ANYONE at epoch ${fireEpoch}.`,
     `⚠  Cannot cancel (C-VAC-12). LAMP will transfer to Treasury at fire.`,
   ].join("\n");
 
-  return { tx, orderId, fireEpoch, commitEpoch, lambdaOil, summary };
+  return { tx, orderId, fireEpoch, commitEpoch, lambdaOildrop, summary };
 }
 
 // ══════════════════════════════════════════════════════════════

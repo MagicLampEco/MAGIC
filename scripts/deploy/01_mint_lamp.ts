@@ -11,7 +11,7 @@ import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet, ASSET_NAMES,
 } from "../config.js";
 
-const LAMP_TOTAL_SUPPLY = 36_000_000_000_000_000n; // 36 × 10^15 oil (§19.9)
+const LAMP_TOTAL_SUPPLY = 36_000_000_000_000_000n; // 36 × 10^15 oildrop (§19.9)
 const LAMP_ASSET_NAME   = ASSET_NAMES.lamp;         // "LAMP" hex
 
 async function main() {
@@ -41,7 +41,7 @@ async function main() {
 
   console.log(`\nPolicy ID: ${policyId}`);
   console.log(`LAMP unit: ${lampUnit}`);
-  console.log(`Minting:   ${LAMP_TOTAL_SUPPLY} oil = 36,000,000,000 LAMP\n`);
+  console.log(`Minting:   ${LAMP_TOTAL_SUPPLY} oildrop = 36,000,000,000 LAMP\n`);
 
   const utxos = await lucid.wallet().getUtxos();
   const balance = utxos.reduce((s, u) => s + (u.assets.lovelace ?? 0n), 0n);

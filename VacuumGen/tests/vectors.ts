@@ -3,13 +3,13 @@
 
 // ══════════════════════════════════════════════════════════════
 // §B.4 TV-VAC-01: VacuumGen formula
-// λ=10⁹ oil, UM=1.5, streak=8 → SM=1.10
+// λ=10⁹ oildrop, UM=1.5, streak=8 → SM=1.10
 // ══════════════════════════════════════════════════════════════
 export const TV_VAC_01 = {
   id: "TV-VAC-01", spec_ref: "App B §B.4",
   description: "commit=100, λ=10⁹, UM=1.5, streak=8 → SM=1.10 → 825M nanogic",
   input: {
-    lambda_oil : 1_000_000_000n,
+    lambda_oildropdrop : 1_000_000_000n,
     um_q       : 1_500_000_000n,   // 1.5
     streak     : 8n,
     sm_q       : 1_100_000_000n,   // streak 6-11 → 1.10
@@ -24,14 +24,14 @@ export const TV_VAC_01 = {
 // §20.3 calibration: λ=10⁹, UM=1.0, streak=0 → 0.5 MAGIC
 export const TV_VAC_CALIB = {
   id: "TV-VAC-CALIB", spec_ref: "§20.3",
-  input: { lambda_oil: 1_000_000_000n, um_q: 1_000_000_000n, streak: 0n, sm_q: 1_000_000_000n },
+  input: { lambda_oildropdrop: 1_000_000_000n, um_q: 1_000_000_000n, streak: 0n, sm_q: 1_000_000_000n },
   expected_nanogic: 500_000_000n,   // 0.5 MAGIC ✓
 };
 
 // UM=2.0 (max), streak≥12 (SM=1.20)
 export const TV_VAC_MAX = {
   id: "TV-VAC-MAX", spec_ref: "§10.1, §6.5",
-  input: { lambda_oil: 1_000_000_000n, um_q: 2_000_000_000n, streak: 12n, sm_q: 1_200_000_000n },
+  input: { lambda_oildropdrop: 1_000_000_000n, um_q: 2_000_000_000n, streak: 12n, sm_q: 1_200_000_000n },
   // s1=500M, s2=500M×2B/Q=1B, s3=1B×1.2B/Q=1_200_000_000
   expected_nanogic: 1_200_000_000n,
 };
@@ -101,7 +101,7 @@ export const TV_VAC_FULL = {
   id: "TV-VAC-FULL", spec_ref: "App B §B.16, INV-43, C-VAC-FIRE-FULL-VAULT",
   description: "32 active batches after prune → M=0; LAMP transfer still occurs",
   active_batch_count: 32,
-  lambda_oil:         1_000_000_000n,
+  lambda_oildropdrop:         1_000_000_000n,
   fire_epoch:         102n,
   prune_count:        0,
   expected_magic:     0n,              // M=0 (vault full)

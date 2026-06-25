@@ -85,7 +85,7 @@ export interface InitialVaultConfig {
    *  sign owner-required actions (TriggerSnapshot, InstantGen,
    *  VacuumCommit, ScheduleCommit, UpdateProfile, BurnBatch). */
   ownerPkh: string;
-  /** Initial LAMP locked into the vault, in oil (1 LAMP = 10^6 oil).
+  /** Initial LAMP locked into the vault, in oildrop (1 LAMP = 10^6 oildrop).
    *  Caller's wallet MUST hold ≥ this amount of LAMP. */
   lampDeposit: bigint;
   /** Profile at creation. Default "Flame". */

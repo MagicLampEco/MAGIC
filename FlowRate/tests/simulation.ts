@@ -2,18 +2,18 @@
  * FlowRate Preview Simulation — 2 price scenarios + MECE attack suite
  *
  * Đơn vị:
- *   oil      = LAMP × 10^6   (1 LAMP = 1_000_000 oil)
+ *   oildrop      = LAMP × 10^6   (1 LAMP = 1_000_000 oildrop)
  *   nanogic  = MAGIC × 10^9  (1 MAGIC = 1_000_000_000 nanogic)
  *
- * Q-format: lamp_per_magic_q = Q × oil / nanogic
- *   → Q = 10^9 → 1 oil/nanogic → 1 LAMP per 10^3 MAGIC → 0.001 LAMP/MAGIC? No:
- *   Đúng: rate = Q → lamp_cap(1 MAGIC) = Q oil = 1000 LAMP
+ * Q-format: lamp_per_magic_q = Q × oildrop / nanogic
+ *   → Q = 10^9 → 1 oildrop/nanogic → 1 LAMP per 10^3 MAGIC → 0.001 LAMP/MAGIC? No:
+ *   Đúng: rate = Q → lamp_cap(1 MAGIC) = Q oildrop = 1000 LAMP
  *         rate = Q/10 → lamp_cap(1 MAGIC) = 100 LAMP
  *         rate = Q/100 → lamp_cap(1 MAGIC) = 10 LAMP
  *         HARD_FLOOR = 10M → lamp_cap(1 MAGIC) = 10 LAMP (= 10 LAMP/MAGIC)
  *
  * Governance initial rate = Q/10 = 100_000_000 (= 100 LAMP/MAGIC)
- * LampNet 1MB permanent = 204,800 nanogic × 100M/Q = 20,480 oil = 0.02 LAMP
+ * LampNet 1MB permanent = 204,800 nanogic × 100M/Q = 20,480 oildrop = 0.02 LAMP
  * At LAMP = $5: $0.10/MB permanent = $100/GB — cao vì permanently on-chain
  *
  * Scenario A: LAMP = $5 (stable), Apps pay at governance rate Q/10
@@ -29,8 +29,8 @@ const absBig = (x: bigint) => (x < 0n ? -x : x);
 const clampN = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 
 const fmtLampPerMagic = (q: bigint): string => {
-  // rate_q / Q × 1000 = LAMP/MAGIC  (1 MAGIC = 10^9 ng, 1 LAMP = 10^6 oil)
-  // oil/ng × Q = rate_q → oil/ng = rate_q/Q → LAMP/MAGIC = rate_q/Q × 10^9/10^6 = rate_q × 1000 / Q
+  // rate_q / Q × 1000 = LAMP/MAGIC  (1 MAGIC = 10^9 ng, 1 LAMP = 10^6 oildrop)
+  // oildrop/ng × Q = rate_q → oildrop/ng = rate_q/Q → LAMP/MAGIC = rate_q/Q × 10^9/10^6 = rate_q × 1000 / Q
   const lpm = Number(q) * 1000 / Number(Q);
   return `${lpm.toFixed(2)} LAMP/MAGIC (q=${q})`;
 };
@@ -62,10 +62,10 @@ const TOTAL_MAGIC_NG = PER_CLUSTER_NG * CLUSTERS;  // nanogic/epoch
 const RATE_A = Q / 10n;         // 100 LAMP/MAGIC — Scenario A (LAMP ổn định)
 const RATE_B = Q / 5n;          // 200 LAMP/MAGIC — Scenario B (LAMP drops 50%)
 
-// oil/epoch = magic_ng × rate_q / Q
-const oilAtRate = (rate_q: bigint): bigint => TOTAL_MAGIC_NG * rate_q / Q;
+// oildrop/epoch = magic_ng × rate_q / Q
+const oildropAtRate = (rate_q: bigint): bigint => TOTAL_MAGIC_NG * rate_q / Q;
 const makeFlow  = (epoch: number, rate_q: bigint): EpochFlow => ({
-  total_lamp_oil: oilAtRate(rate_q),
+  total_lamp_oildrop: oildropAtRate(rate_q),
   total_magic_ng: TOTAL_MAGIC_NG,
   epoch,
 });
@@ -93,8 +93,8 @@ row('Vượt threshold?', TOTAL_MAGIC_NG >= MIN_MAGIC_EPOCH
   : `❌ ${(Number(TOTAL_MAGIC_NG)/1e9).toFixed(0)} < 1000`);
 console.log('\nEconomics check (tại LAMP = $5/LAMP):');
 row('  1MB permanent cost (nanogic)', `${(1024 * 200).toLocaleString()} = 0.0002048 MAGIC`);
-const cost_mb_oil = Number(1024n * PERM * RATE_A / Q);
-row('  1MB permanent cost (oil)', `${cost_mb_oil.toFixed(0)} oil = ${(cost_mb_oil/1e6).toFixed(6)} LAMP = $${(cost_mb_oil/1e6*5).toFixed(4)}`);
+const cost_mb_oildrop = Number(1024n * PERM * RATE_A / Q);
+row('  1MB permanent cost (oildrop)', `${cost_mb_oildrop.toFixed(0)} oildrop = ${(cost_mb_oildrop/1e6).toFixed(6)} LAMP = $${(cost_mb_oildrop/1e6*5).toFixed(4)}`);
 row('  HARD_FLOOR_Q', fmtLampPerMagic(HARD_FLOOR_Q));
 row('  Rate Scenario A (governance)', fmtLampPerMagic(RATE_A));
 row('  Rate Scenario B (post-drop)', fmtLampPerMagic(RATE_B));
@@ -109,12 +109,12 @@ function runScenario(label: string, init: FlowRateDatum, flows: EpochFlow[]): Fl
   let s = init;
   for (const f of flows) {
     const prev = s.lamp_per_magic_q;
-    const raw_q = f.total_lamp_oil * Q / f.total_magic_ng;
+    const raw_q = f.total_lamp_oildrop * Q / f.total_magic_ng;
     s = updateFlowRate(s, f);
     const pct = Number(s.lamp_per_magic_q - prev) * 100 / Number(prev);
     const dir = pct > 0.005 ? '▲' : pct < -0.005 ? '▼' : '─';
     console.log(`  Epoch ${String(f.epoch).padStart(2)} ${dir}`);
-    row('    LAMP paid', `${(Number(f.total_lamp_oil)/1e6).toFixed(0).padStart(8)} LAMP / epoch`);
+    row('    LAMP paid', `${(Number(f.total_lamp_oildrop)/1e6).toFixed(0).padStart(8)} LAMP / epoch`);
     row('    MAGIC consumed', `${(Number(f.total_magic_ng)/1e9).toFixed(2)} MAGIC / epoch`);
     row('    Raw rate',   fmtLampPerMagic(raw_q));
     row('    EMA fast',   fmtLampPerMagic(s.ema_fast_q));
@@ -202,7 +202,7 @@ attack(
 attack(
   'A-2: Flash dump 90% (1 epoch rate collapse)',
   'MAGIC tiêu thật nhưng LAMP trả gần 0. Kiểm tra floor và slow-EMA resistance.',
-  [{ total_lamp_oil: oilAtRate(RATE_A) / 10n, total_magic_ng: TOTAL_MAGIC_NG, epoch: 1 }],
+  [{ total_lamp_oildrop: oildropAtRate(RATE_A) / 10n, total_magic_ng: TOTAL_MAGIC_NG, epoch: 1 }],
   [2,3,4,5,6].map(e => makeFlow(e, RATE_A))
 );
 
@@ -219,7 +219,7 @@ attack(
   'A-4: Oscillation pump/dump (8 epochs alternating)',
   'Rate dao động ×5 / ÷5 mỗi epoch. Trung bình = baseline nhưng EMA bị nhiễu.',
   [1,2,3,4,5,6,7,8].map(e => ({
-    total_lamp_oil: e % 2 === 1 ? oilAtRate(RATE_A * 5n) : oilAtRate(RATE_A / 5n),
+    total_lamp_oildrop: e % 2 === 1 ? oildropAtRate(RATE_A * 5n) : oildropAtRate(RATE_A / 5n),
     total_magic_ng: TOTAL_MAGIC_NG,
     epoch: e,
   })),
@@ -231,7 +231,7 @@ attack(
   'A-5: Sybil 100 apps phối hợp 3× (3 epochs)',
   '100 app ảo nộp 3× LAMP/MAGIC. Volume MAGIC cũng ×100 (cần tiêu MAGIC thật).',
   [1,2,3].map(e => ({
-    total_lamp_oil: oilAtRate(RATE_A) * 300n,  // 100 apps × 3× rate
+    total_lamp_oildrop: oildropAtRate(RATE_A) * 300n,  // 100 apps × 3× rate
     total_magic_ng: TOTAL_MAGIC_NG * 100n,      // 100 apps × magic
     epoch: e,
   })),
@@ -250,15 +250,15 @@ attack(
 attack(
   'A-7: Dust MAGIC (below 1000 MAGIC threshold)',
   'total_magic < MIN_MAGIC_EPOCH → guard skip update, rate không đổi.',
-  [{ total_lamp_oil: 10_000_000_000n, total_magic_ng: MIN_MAGIC_EPOCH - 1n, epoch: 1 }],
+  [{ total_lamp_oildrop: 10_000_000_000n, total_magic_ng: MIN_MAGIC_EPOCH - 1n, epoch: 1 }],
   [2,3,4].map(e => makeFlow(e, RATE_A))
 );
 
 // A-8: Overflow — HARD_CEIL_Q clamp
 attack(
   'A-8: Overflow — HARD_CEIL_Q clamp',
-  'lamp_oil = 10^16 → raw rate_q = 10^13 >> HARD_CEIL (10^10) → clamp + rapid recovery.',
-  [{ total_lamp_oil: 10_000_000_000_000_000n, total_magic_ng: TOTAL_MAGIC_NG, epoch: 1 }],
+  'lamp_oildrop = 10^16 → raw rate_q = 10^13 >> HARD_CEIL (10^10) → clamp + rapid recovery.',
+  [{ total_lamp_oildrop: 10_000_000_000_000_000n, total_magic_ng: TOTAL_MAGIC_NG, epoch: 1 }],
   [2,3,4,5,6,7,8,9,10].map(e => makeFlow(e, RATE_A))
 );
 

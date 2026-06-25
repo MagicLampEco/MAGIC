@@ -271,7 +271,7 @@ Total spend across 4 modules:
 ### Nice-to-have
 - ScheduleGen multi-fire catch-up (8 fires in 1 tx) — math verified, on-chain pattern same as single-fire
 - SnapshotGen real catch-up across multiple epochs (currently tested with delta=5 pre-seed; would need 5-day natural wait for real catch-up)
-- Stress test with high LAMP balances near MAX_INSTANT_PURCHASE (10^13 oil)
+- Stress test with high LAMP balances near MAX_INSTANT_PURCHASE (10^13 oildrop)
 - ProfileChange + Consolidate end-to-end on testnet (lib-only modules; validator code exists but no plutus.json)
 
 ### Documentation

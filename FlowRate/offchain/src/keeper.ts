@@ -7,7 +7,7 @@ import { Q, FlowRateDatum, EpochFlow } from './types.js';
 export interface SponsorMeterSummary {
   app_id: string;
   epoch: number;
-  global_lamp_epoch: bigint;   // oil
+  global_lamp_epoch: bigint;   // oildrop
   global_magic_epoch: bigint;  // nanogic
 }
 
@@ -21,13 +21,13 @@ export function aggregateEpochFlow(meters: SponsorMeterSummary[], epoch: number)
       total_magic += m.global_magic_epoch;
     }
   }
-  return { total_lamp_oil: total_lamp, total_magic_ng: total_magic, epoch };
+  return { total_lamp_oildrop: total_lamp, total_magic_ng: total_magic, epoch };
 }
 
 // Compute implied rate from epoch flow (for logging/monitoring)
 export function impliedRate(flow: EpochFlow): bigint {
   if (flow.total_magic_ng === 0n) return 0n;
-  return flow.total_lamp_oil * Q / flow.total_magic_ng;
+  return flow.total_lamp_oildrop * Q / flow.total_magic_ng;
 }
 
 // Initial state for FlowRate beacon (bootstrap)

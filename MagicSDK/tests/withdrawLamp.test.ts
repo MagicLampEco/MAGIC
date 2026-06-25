@@ -15,7 +15,7 @@ describe("removeNewestFirst — LF-preserving selection", () => {
   it("removes from youngest holding first", () => {
     const before = [h(100n, 10n), h(200n, 20n), h(50n, 30n)];   // oldest=10, newest=30
     const after  = removeNewestFirst(before, 50n);
-    // Should consume the entire epoch-30 holding (50 oil)
+    // Should consume the entire epoch-30 holding (50 oildrop)
     expect(sumFree(after)).toBe(300n);
     expect(after.find(x => x.acquired_epoch === 30n)).toBeUndefined();
     expect(after.find(x => x.acquired_epoch === 20n)?.amount).toBe(200n);

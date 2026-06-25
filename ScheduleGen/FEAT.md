@@ -73,7 +73,7 @@ Hai đặc điểm phân biệt với ba cơ chế kia:
 | ID | Phát biểu | Nguồn |
 |---|---|---|
 | C-SCH-1 | `L ∈ [10, 200]` | `vault.ak:149` |
-| C-SCH-2 | `λ ≥ 1_000_000 oil (1 LAMP)` | `vault.ak:152` |
+| C-SCH-2 | `λ ≥ 1_000_000 oildrop (1 LAMP)` | `vault.ak:152` |
 | C-SCH-3 | `L × λ ≤ l_avail` | `vault.ak:155-157` |
 | C-SCH-RATE | `λ × rate_locked_q ≥ Q → M_i ≥ 1` | `vault.ak:168`, `math.ak:87-89` |
 | C-SCH-CAP | `shard_locked + L×λ ≤ shard_cap` | `vault.ak:173`, `shard validator:109` |

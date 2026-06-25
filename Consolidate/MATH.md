@@ -12,7 +12,7 @@ H = { (aᵢ, eᵢ, lᵢ) | i = 1..n }
 ```
 
 Trong đó:
-- `aᵢ ∈ ℕ` — số dư LAMP của holding i (đơn vị: oil = LAMP × 10⁶, kiểu BigInt)
+- `aᵢ ∈ ℕ` — số dư LAMP của holding i (đơn vị: oildrop = LAMP × 10⁶, kiểu BigInt)
 - `eᵢ ∈ ℕ` — epoch khi holding được tạo (`acquired_epoch`)
 - `lᵢ ∈ {True, False}` — cờ khoá (`is_locked`)
 

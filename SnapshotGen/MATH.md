@@ -8,7 +8,7 @@
 | Ký hiệu | Định nghĩa | Đơn vị |
 |---|---|---|
 | `Q` | Precision factor = 10⁹ | — |
-| `L` | `lamp_balance` (toàn bộ, kể cả locked) | oil = LAMP × 10⁶ |
+| `L` | `lamp_balance` (toàn bộ, kể cả locked) | oildrop = LAMP × 10⁶ |
 | `R_snap` | Base rate = 5 × 10⁹ / Q = 5.0 | Q-format |
 | `LF` | Loyalty Factor ∈ [1.00, 1.50] | Q-format |
 | `OAC` | On-chain Activity Coefficient ∈ [0.80, 1.00] | Q-format |
@@ -240,7 +240,7 @@ diff = 729M - 200M - 529M = 0 ✓ (T17)
 **Input:** 1000 LAMP Flame, LF=1.0, OAC=0.8
 
 ```
-L = 1_000_000_000 oil  (1000 × 10^6)
+L = 1_000_000_000 oildrop  (1000 × 10^6)
 R_snap_Q = 5_000_000_000
 LF_Q = 1_000_000_000
 OAC_Q = 800_000_000
@@ -259,7 +259,7 @@ M  = 4_200_000_000 × 1_100_000_000 / 10^9 = 4_620_000_000 nanogic ≈ 4.62 MAGI
 **Input:** 1000 LAMP Ember, LF=1.5, OAC=1.0
 
 ```
-L = 1_000_000_000 oil
+L = 1_000_000_000 oildrop
 PM_Q = 1_150_000_000  (Ember)
 B_Q  = 1_300_000_000  (Ember)
 
@@ -287,7 +287,7 @@ M_total = 5 × 5_717_250_000 = 28_586_250_000 nanogic ≈ 28.586 MAGIC ✓
 
 ### TV-LF-03 (vectors.ts:85-97)
 
-**Input:** 2 holdings: [{10⁹ oil, acq=50}, {10⁹ oil, acq=68}], current_epoch=74
+**Input:** 2 holdings: [{10⁹ oildrop, acq=50}, {10⁹ oildrop, acq=68}], current_epoch=74
 
 ```
 age1 = 74-50 = 24 → LF_pwl(24) = Q + Q/5 + 3Q/10 × 12/12 = Q + 200M + 300M = 1_500_000_000
@@ -301,7 +301,7 @@ weighted = (10^9 × 1_500_000_000 + 10^9 × 1_100_000_000) / (2 × 10^9)
 
 ## 10. Boundary conditions
 
-- **L = 0 oil:** M_snapshot = 0. Không tạo batch.
+- **L = 0 oildrop:** M_snapshot = 0. Không tạo batch.
 - **LF = Q (1.0):** Bước s2 là no-op (`s2 = s1`).
 - **OAC tối đa (4 apps):** OAC_Q = 1_000_000_000 → bước s3 là no-op.
 - **Δe = 1:** M_catchup = M_one (trường hợp thông thường, không catch-up thực sự).

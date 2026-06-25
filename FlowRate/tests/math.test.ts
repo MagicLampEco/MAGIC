@@ -76,7 +76,7 @@ describe('FlowRate — dual-EMA adaptive cap', () => {
 
   // ── TV-FR-07: Hard floor ──────────────────────────────────────────────────
   test('TV-FR-07: very low raw rate → clamp at HARD_FLOOR_Q', () => {
-    const result = runEpochs(INITIAL_STATE, { total_lamp_oil: 1n, total_magic_ng: 1_000_000_000_000n }, 50);
+    const result = runEpochs(INITIAL_STATE, { total_lamp_oildrop: 1n, total_magic_ng: 1_000_000_000_000n }, 50);
     expect(result.lamp_per_magic_q).toBeGreaterThanOrEqual(HARD_FLOOR_Q);
     expect(result.ema_fast_q).toBeGreaterThanOrEqual(HARD_FLOOR_Q);
     expect(result.ema_slow_q).toBeGreaterThanOrEqual(HARD_FLOOR_Q);
@@ -95,7 +95,7 @@ describe('FlowRate — dual-EMA adaptive cap', () => {
     const prev = TV_FR_CAP_ENFORCEMENT.prev_rate;
     const state = { ...INITIAL_STATE, lamp_per_magic_q: prev, ema_fast_q: prev, ema_slow_q: prev };
     const result = updateFlowRate(state, {
-      total_lamp_oil: TV_FR_CAP_ENFORCEMENT.high_raw_rate_lamp,
+      total_lamp_oildrop: TV_FR_CAP_ENFORCEMENT.high_raw_rate_lamp,
       total_magic_ng: TV_FR_CAP_ENFORCEMENT.high_raw_rate_magic,
       epoch: 1,
     });
@@ -108,9 +108,9 @@ describe('FlowRate — dual-EMA adaptive cap', () => {
     const { kb_per_mb, perm_nanogic_per_kb, magic_for_1mb_perm, lamp_cap_at_rate_01 } = TV_FR_LAMPNET;
     expect(magic_for_1mb_perm).toBe(kb_per_mb * perm_nanogic_per_kb);
     expect(lamp_cap_at_rate_01).toBe(magic_for_1mb_perm * 100_000_000n / Q);
-    // 1024 × 200 × 0.1 / Q = 204800 × 0.1 = 20480 oil
+    // 1024 × 200 × 0.1 / Q = 204800 × 0.1 = 20480 oildrop
     expect(lamp_cap_at_rate_01).toBe(20_480n);
-    console.log('1MB perm storage = ', magic_for_1mb_perm.toString(), 'nanogic → lamp_cap =', lamp_cap_at_rate_01.toString(), 'oil');
+    console.log('1MB perm storage = ', magic_for_1mb_perm.toString(), 'nanogic → lamp_cap =', lamp_cap_at_rate_01.toString(), 'oildrop');
   });
 
   // ── Component tests ───────────────────────────────────────────────────────

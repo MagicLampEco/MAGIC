@@ -18,8 +18,8 @@ Constructor index = THỨ TỰ KHAI BÁO field → Plutus Data. Mirror BYTE-PERF
 |---|---|---|---|
 | 0 | `app_id` | ByteArray | `Data.Bytes()` |
 | 1 | `app_authority` | ByteArray (vkh) | `Data.Bytes()` |
-| 2 | `max_per_did_per_epoch` | Int (oil) | `Data.Integer()` |
-| 3 | `max_global_per_epoch` | Int (oil) | `Data.Integer()` |
+| 2 | `max_per_did_per_epoch` | Int (oildrop) | `Data.Integer()` |
+| 3 | `max_global_per_epoch` | Int (oildrop) | `Data.Integer()` |
 | 4 | `lamp_per_magic_q` | Int (Q) | `Data.Integer()` |
 | 5 | `ada_per_magic_q` | Int (Q) | `Data.Integer()` |
 | 6 | `oracle_nft_policy` | Option\<ByteArray\> | `Data.Nullable(Data.Bytes())` |
@@ -34,7 +34,7 @@ Constructor index = THỨ TỰ KHAI BÁO field → Plutus Data. Mirror BYTE-PERF
 | 0 | `app_id` | ByteArray | `Data.Bytes()` |
 | 1 | `epoch` | Int | `Data.Integer()` |
 | 2 | `did_lamp_map` | List\<(ByteArray,Int)\> | `Data.Array(Data.Tuple([Bytes,Integer]))` |
-| 3 | `global_lamp_epoch` | Int (oil) | `Data.Integer()` |
+| 3 | `global_lamp_epoch` | Int (oildrop) | `Data.Integer()` |
 
 Tuple `(ByteArray,Int)` = `Constr(0,[Bytes,Int])` ↔ `Data.Tuple`.
 
@@ -56,7 +56,7 @@ Tuple `(ByteArray,Int)` = `Constr(0,[Bytes,Int])` ↔ `Data.Tuple`.
 | 1 | `policy_ref` | OutputReference | `OutputReferenceSchema` |
 | 2 | `protocol_ref` | OutputReference | `OutputReferenceSchema` |
 | 3 | `did_key` | ByteArray | `Data.Bytes()` |
-| 4 | `lamp_this` | Int (oil) | `Data.Integer()` |
+| 4 | `lamp_this` | Int (oildrop) | `Data.Integer()` |
 | 5 | `ada_this` | Int (lovelace) | `Data.Integer()` |
 
 Enum 1-constr → `Constr(0,[...6...])`. Offchain dùng `Data.Object` (KHÔNG `Data.Enum` 1-phần-tử —

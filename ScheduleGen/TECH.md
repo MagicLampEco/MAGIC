@@ -67,12 +67,12 @@ TypeScript mirror (`types.ts:70-83`): khớp field-for-field.
 // types.ak:66-74
 pub type ScheduleAggregateShardDatum {
   shard_id                   : Natural,    // 0..15
-  shard_locked_lamp          : Natural,    // oil
+  shard_locked_lamp          : Natural,    // oildrop
   shard_active_count         : Natural,
   shard_cumulative_committed : Natural,
   shard_cumulative_fired     : Natural,
   last_updated_epoch         : Natural,
-  shard_cap                  : Natural,    // 4.5×10^14 oil
+  shard_cap                  : Natural,    // 4.5×10^14 oildrop
 }
 ```
 
@@ -102,7 +102,7 @@ Nguồn: `vault.ak:134-207`.
 |---|---|---|
 | C-VAC-1 equiv | `vault.ak:146` | Owner phải ký tx (`extra_signatories` chứa `datum.owner`) |
 | C-SCH-1 | `vault.ak:149` | `L ∈ [10, 200]` |
-| C-SCH-2 | `vault.ak:152` | `λ ≥ 1_000_000 oil` |
+| C-SCH-2 | `vault.ak:152` | `λ ≥ 1_000_000 oildrop` |
 | C-SCH-3 | `vault.ak:155-157` | `L×λ ≤ l_avail(lamp_balance, lamp_locked)` |
 | C-SCH-10 | `vault.ak:160` | `|gen_schedules| < 20` |
 | C-SCH-RATE | `vault.ak:168` | `check_sch_rate(λ, rate_locked_q)` → `M_i ≥ 1` |

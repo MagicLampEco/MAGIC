@@ -34,7 +34,7 @@ const { tx, vaultAddress, vaultScript, summary } = await createVault({
   validators: { vaultUnappliedCbor },
   vault: {
     ownerPkh:    "5b889dfd...",      // 28-byte hex từ wallet PKH
-    lampDeposit: 1_000_000_000n,      // 1000 LAMP (in oil)
+    lampDeposit: 1_000_000_000n,      // 1000 LAMP (in oildrop)
     profile:     "Flame",             // Ember | Flame (default) | Lantern
   },
 });
@@ -82,7 +82,7 @@ Build unsigned tx tạo vault mới. Không sign, không submit — caller làm.
 | `validators.vaultUnappliedCbor` | `string` (CBOR hex) | ✅ | Từ `<Module>/onchain/plutus.json` |
 | `validators.shardUnappliedCbor` | `string` (CBOR hex) | Schedule | Từ ScheduleGen plutus.json |
 | `vault.ownerPkh` | `string` (28-byte hex) | ✅ | Owner key — duy nhất sign được owner-required actions |
-| `vault.lampDeposit` | `bigint` (oil) | ✅ | 1 LAMP = 10^6 oil; ví caller phải có ≥ số này |
+| `vault.lampDeposit` | `bigint` (oildrop) | ✅ | 1 LAMP = 10^6 oildrop; ví caller phải có ≥ số này |
 | `vault.profile` | `"Ember"` \| `"Flame"` \| `"Lantern"` | | Default `"Flame"` |
 | `vault.vaultLovelace` | `bigint` | | Default `2_000_000` (2 ADA min-UTxO) |
 | `vault.personalDelegate` | `string \| null` | | Reserved cho future session-key delegation |

@@ -61,7 +61,7 @@ export const ADDRESSES = {
 // Mainnet=432_000, Preview/Preprod=86_400 (1 day).
 export const PROTOCOL = {
   SHARD_COUNT:     16,
-  SHARD_CAP:       450_000_000_000_000n,  // 4.5×10^14 oil = 450M LAMP
+  SHARD_CAP:       450_000_000_000_000n,  // 4.5×10^14 oildrop = 450M LAMP
   SLOTS_PER_EPOCH: slotsPerEpoch(NETWORK),
   MS_PER_EPOCH:    msPerEpoch(NETWORK),    // = slots_per_epoch × 1000 (slot_length 1s)
   Q:               1_000_000_000n,
@@ -72,6 +72,6 @@ export function toUnit(policyId: string, assetName: string): string {
   return policyId + assetName;
 }
 
-export function lampToOil(lamp: bigint): bigint {
+export function lampToOildrop(lamp: bigint): bigint {
   return lamp * 1_000_000n;
 }

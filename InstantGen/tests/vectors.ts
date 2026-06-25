@@ -78,7 +78,7 @@ export const TV_INST_GEN_01 = {
   spec_ref:    "§9.1, §20.3",
   description: "InstantGen 1000 LAMP, Flame, UM=1.0 → 3.15 MAGIC",
   input: {
-    lamp_paid_oil: 1_000_000_000n,         // 1000 × 10^6 oil
+    lamp_paid_oildrop: 1_000_000_000n,         // 1000 × 10^6 oildrop
     um_q:          1_000_000_000n,         // UM = 1.0
     pm_q:          1_050_000_000n,         // Flame PM = 1.05
   },
@@ -100,7 +100,7 @@ export const TV_INST_GEN_02 = {
   spec_ref:    "§9.1",
   description: "InstantGen 1000 LAMP, Ember, UM=1.5",
   input: {
-    lamp_paid_oil: 1_000_000_000n,
+    lamp_paid_oildrop: 1_000_000_000n,
     um_q:          1_500_000_000n,         // UM = 1.5
     pm_q:          1_150_000_000n,         // Ember PM = 1.15
   },
@@ -116,7 +116,7 @@ export const TV_INST_GEN_03 = {
   spec_ref:    "§9.1, §14.1 UM_MAX",
   description: "InstantGen 500 LAMP, Lantern, UM=2.0 (max)",
   input: {
-    lamp_paid_oil: 500_000_000n,           // 500 LAMP
+    lamp_paid_oildrop: 500_000_000n,           // 500 LAMP
     um_q:          2_000_000_000n,         // UM_MAX
     pm_q:          1_000_000_000n,         // Lantern PM = 1.0
   },
@@ -164,8 +164,8 @@ export const TV_OVERFLOW_01 = {
   spec_ref:    "App B §B.14, §2.1",
   description: "JavaScript Number overflows on large L; BigInt required",
   // Number.MAX_SAFE_INTEGER = 2^53 - 1 ≈ 9 × 10^15
-  // L = 36 × 10^15 oil (entire LAMP supply)
-  L_oil:          36_000_000_000_000_000n,
+  // L = 36 × 10^15 oildrop (entire LAMP supply)
+  L_oildrop:          36_000_000_000_000_000n,
   instant_rate_q: 3_000_000_000n,
   // step1 = L × R_inst = 36×10^15 × 3×10^9 = 1.08×10^26
   // Number would: 1.08e26 — but JS Number loses precision here
@@ -226,11 +226,11 @@ export const TV_CONS_01 = {
   spec_ref:    "App B §B.11, §13.1 T14",
   description: "InstantGen: lamp_paid moves vault→Treasury; total unchanged",
   before: {
-    vault_lamp_balance : 100_000_000_000n,  // 10^11 oil (100,000 LAMP)
+    vault_lamp_balance : 100_000_000_000n,  // 10^11 oildrop (100,000 LAMP)
     treasury_lamp      : 0n,
     total              : 100_000_000_000n,
   },
-  lamp_paid: 1_000_000_000n,                // 10^9 oil (1,000 LAMP)
+  lamp_paid: 1_000_000_000n,                // 10^9 oildrop (1,000 LAMP)
   after: {
     vault_lamp_balance : 99_000_000_000n,   // 10^11 - 10^9
     treasury_lamp      : 1_000_000_000n,    // += lamp_paid
@@ -242,8 +242,8 @@ export const TV_CONS_01 = {
 export const TV_INST_MIN = {
   id:          "TV-INST-MIN",
   spec_ref:    "§9.3 C-INST-1",
-  description: "Minimum purchase boundary: 10 LAMP = 10^7 oil",
-  min_oil: 10_000_000n,
+  description: "Minimum purchase boundary: 10 LAMP = 10^7 oildrop",
+  min_oildrop: 10_000_000n,
   cases: [
     { lamp_paid: 9_999_999n,  expected: "REJECT" },  // < MIN
     { lamp_paid: 10_000_000n, expected: "ACCEPT" },  // = MIN ✓
@@ -255,8 +255,8 @@ export const TV_INST_MIN = {
 export const TV_INST_MAX = {
   id:          "TV-INST-MAX",
   spec_ref:    "§9.3 C-INST-2",
-  description: "Maximum purchase boundary: 10^13 oil",
-  max_oil: 10_000_000_000_000n,
+  description: "Maximum purchase boundary: 10^13 oildrop",
+  max_oildrop: 10_000_000_000_000n,
   cases: [
     { lamp_paid: 10_000_000_000_000n, expected: "ACCEPT" },   // = MAX ✓
     { lamp_paid: 10_000_000_000_001n, expected: "REJECT" },   // > MAX

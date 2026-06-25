@@ -21,7 +21,7 @@ use magiclamp/protocol/types.{LoyaltyHolding}
 // Output order: locked ++ remaining_unlocked
 pub fn remove_newest_first(
   holdings : List<LoyaltyHolding>,
-  amount   : Int,                   // oil to remove
+  amount   : Int,                   // oildrop to remove
 ) -> List<LoyaltyHolding> {
   let locked   = list.filter(holdings, fn(h) {  h.is_locked })
   let unlocked = list.filter(holdings, fn(h) { !h.is_locked })

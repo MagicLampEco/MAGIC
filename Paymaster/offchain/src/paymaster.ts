@@ -68,7 +68,7 @@ export interface SponsorParams {
   network: Network;
   /** Tip POSIX ms hiện tại (đầu vào tính epoch + validity-range). */
   tipPosixMs: bigint;
-  /** TUỲ CHỌN: LAMP app sponsor op này (oil). Mặc định = lamp_cap (sponsor tối đa).
+  /** TUỲ CHỌN: LAMP app sponsor op này (oildrop). Mặc định = lamp_cap (sponsor tối đa).
    *  Validator ép 0 ≤ lamp_this ≤ lamp_cap; nếu protocol_fee_active thì > 0. */
   lampThisOverride?: bigint;
   /** TUỲ CHỌN: ADA app sponsor op này (lovelace). Mặc định = ada_cap. 0 ≤ ada_this ≤ ada_cap. */
@@ -79,7 +79,7 @@ export interface SponsorResult {
   tx: TxSignBuilder;
   /** magic_consumed (nanogic) = Σ burns dedup. */
   magicConsumed: bigint;
-  /** lamp_this (oil) app sponsor op này — đã cap. */
+  /** lamp_this (oildrop) app sponsor op này — đã cap. */
   lampThis: bigint;
   /** ada_this (lovelace) app sponsor op này — đã cap. */
   adaThis: bigint;
@@ -267,7 +267,7 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
 
   const summary =
     `sponsor did=${didKey.slice(0, 8)} | magic=${magicConsumed} ng | ` +
-    `lamp_this=${lampThis} oil (cap ${lampCapVal}) | ada_this=${adaThis} lov (cap ${adaCapVal}) | ` +
+    `lamp_this=${lampThis} oildrop (cap ${lampCapVal}) | ada_this=${adaThis} lov (cap ${adaCapVal}) | ` +
     `epoch=${currentEpoch}${epochRollover ? " (reset)" : ""} | ` +
     `global ${baseGlobal}→${newMeter.global_lamp_epoch}`;
 

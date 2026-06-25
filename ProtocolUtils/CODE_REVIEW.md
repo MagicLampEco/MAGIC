@@ -79,9 +79,9 @@ và replace local impls bằng import + re-export (để giữ public API).
 
 | Module | Imports từ ProtocolUtils |
 |---|---|
-| InstantGen | slotToEpoch, nanogicToMagicStr, qToStr, lampToOil, oilToLamp, getTipSlot, cmpBigIntAsc |
-| SnapshotGen | slotToEpoch, lampToOil, nanogicToMagicStr, qToStr, countActiveAppsInOacWindow, getTipSlot |
-| VacuumGen | slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr, selectLampForLock, removeLockedAmount, getTipSlot |
+| InstantGen | slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp, getTipSlot, cmpBigIntAsc |
+| SnapshotGen | slotToEpoch, lampToOildrop, nanogicToMagicStr, qToStr, countActiveAppsInOacWindow, getTipSlot |
+| VacuumGen | slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr, selectLampForLock, removeLockedAmount, getTipSlot |
 | ScheduleGen | (same as VacuumGen) + getTipSlot |
 | UMKeeper | SLOTS_PER_EPOCH, slotToEpoch (cũng đã hợp nhất 2 bản UM math khác nhau trong keeper.ts vs math.ts) |
 | Consolidate | LoyaltyHolding, cmpBigIntAsc |

@@ -19,14 +19,17 @@ Thay **InstantGen + SnapshotGen cũ** (đã → `Legacy/stale-genmodel-2026-07/`
 ## 2. Đã build + test (bằng chứng)
 
 ```bash
-cd GenMAGIC/offchain && npm install && npm test     # → 32/32 pass
-cd GenMAGIC/onchain  && aiken check                 # → 14 checks, 0 errors, 0 warnings
+cd GenMAGIC/offchain && npm install && npm test     # → 32/32 pass (math)
+cd GenMAGIC/onchain  && aiken check                 # → 25 checks (14 math + 11 VALIDATOR), 0 errors
 cd GenMAGIC/onchain  && aiken build                 # → plutus.json, validator hash bee708e4…
 ```
 
 - `offchain/src/math.ts` + `onchain/lib/magiclamp/gen/math.ak` — **bit-identical (P8)**, cùng test vector.
-- Test **tái lập 5 đòn** hội đồng đánh sập v0.1 (vault giả 2 ADA `c=10¹²`, kíp nổ `vest_start_slot=10¹⁸`,
+- Test math **tái lập 5 đòn** hội đồng đánh sập v0.1 (vault giả 2 ADA `c=10¹²`, kíp nổ `vest_start_slot=10¹⁸`,
   lệch thừa số Q, floor nuốt G1, thấp-điểm không thang) → v0.2 chặn cả 5.
+- **11 test VALIDATOR** (mock Transaction) phủ mọi bất biến on-chain — mỗi phủ-định crash đúng guard của nó:
+  `gm_happy` (chấp nhận), I-ACT-7 (vault bị spend), B2 (nhịp vượt trần), B5 (2-output + value không bảo toàn),
+  S6, tuần-tự epoch, G9 (m_v sai), NFT không singleton, c=0, thiếu chữ ký engine.
 
 ## 3. Em ĐÃ vá (hội đồng tấn công 17/7)
 

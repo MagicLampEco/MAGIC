@@ -14,15 +14,16 @@
 ////    (I-ACT-10 KHÔNG tồn tại on-chain — hội đồng xác minh) · Merkle-anchor sổ.
 
 use aiken/collection/list
-use cardano/address.{Script}
-use cardano/assets.{AssetName, PolicyId}
+use cardano/address.{Address, Script}
+use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, Transaction,
+  InlineDatum, Input, Output, OutputReference, Transaction, placeholder,
 }
 use magiclamp/gen/math.{c_dung, magic_vault, slots_per_epoch, trong_so_vault,
   tu_cach}
 use magiclamp/gen/types.{
   ActivationVaultDatum, Drip, GenRedeemer, MagicAccountDatum, NhipBeacon,
+  SoLieuSo,
 }
 
 validator gen_magic(
@@ -151,3 +152,226 @@ fn policy_vault_nft(vault_out: Output, _owner_commit: ByteArray) -> Option<Polic
 }
 
 
+
+// ════════════════════════════════════════════════════════════════════════
+// TEST VALIDATOR — mock Transaction (mẫu Paymaster: ..placeholder)
+// Phủ: happy + I-ACT-7 + B2 + B5 + S6 + tuần-tự epoch + G9 + NFT + c=0 + mint.
+// ════════════════════════════════════════════════════════════════════════
+
+// ── hằng test ──
+const t_lamp_pol: PolicyId = #"1a"
+const t_lamp_nm: AssetName = #"744c414d50"
+const t_nhip_pol: PolicyId = #"cc"
+const t_nhip_nm: AssetName = #"4e4950"
+const t_engine: ByteArray = #"ee"
+const t_gen_sh: ByteArray = #"a0"
+const t_vault_sh: ByteArray = #"b0"
+const t_owner: ByteArray = #"0a0b"
+
+const t_own_ref_id: ByteArray = #"aa"
+const t_vault_ref_id: ByteArray = #"bb"
+const t_nhip_ref_id: ByteArray = #"cc"
+
+fn t_addr(h: ByteArray) -> Address {
+  Address { payment_credential: Script(h), stake_credential: None }
+}
+
+fn t_ref(id: ByteArray) -> OutputReference {
+  OutputReference { transaction_id: id, output_index: 0 }
+}
+
+fn t_out(addr: Address, val: Value, dat: Data) -> Output {
+  Output { address: addr, value: val, datum: InlineDatum(dat), reference_script: None }
+}
+
+fn t_in(ref: OutputReference, out: Output) -> Input {
+  Input { output_reference: ref, output: out }
+}
+
+fn d_acc(ep: Int, m: Int) -> Data {
+  let d: Data = MagicAccountDatum { did_commit: t_owner, epoch: ep, magic_nanogic: m }
+  d
+}
+
+fn d_vault(vss: Int, c: Int) -> Data {
+  let d: Data =
+    ActivationVaultDatum {
+      owner_commit: t_owner,
+      did_commit: t_owner,
+      vest_start_slot: vss,
+      conditional_lamp: c,
+      reclaimed_to_pot: 0,
+      last_tick_day: 0,
+      last_tick_epoch: 0,
+    }
+  d
+}
+
+fn d_beacon(ep: Int, nhip: Int, tran: Int) -> Data {
+  let d: Data = NhipBeacon { epoch: ep, nhip_gen: nhip, nhip_tran: tran }
+  d
+}
+
+fn acc_val() -> Value {
+  assets.from_lovelace(2_000_000)
+}
+
+fn vault_val(c_lamp_oildrop: Int, nft_qty: Int) -> Value {
+  assets.from_lovelace(2_000_000)
+    |> assets.add(t_vault_sh, t_owner, nft_qty)
+    |> assets.add(t_lamp_pol, t_lamp_nm, c_lamp_oildrop)
+}
+
+fn beacon_val() -> Value {
+  assets.from_lovelace(2_000_000) |> assets.add(t_nhip_pol, t_nhip_nm, 1)
+}
+
+/// Chạy validator. Trả về Bool (test happy → True; test fail → validator crash/False).
+fn run(
+  datum_ep: Int,
+  vault_in_inputs: Bool,
+  vault_nft_qty: Int,
+  c_lamp_oildrop: Int,
+  vss: Int,
+  beacon_ep: Int,
+  nhip: Int,
+  nhip_tran: Int,
+  so_lieu: SoLieuSo,
+  out_datum: Data,
+  extra_out: Bool,
+  out_val: Value,
+  signer: ByteArray,
+) -> Bool {
+  let own_ref = t_ref(t_own_ref_id)
+  let vault_ref = t_ref(t_vault_ref_id)
+  let nhip_ref = t_ref(t_nhip_ref_id)
+
+  let acc_in = t_in(own_ref, t_out(t_addr(t_gen_sh), acc_val(), d_acc(datum_ep, 0)))
+  let vault_input =
+    t_in(vault_ref, t_out(t_addr(t_vault_sh), vault_val(c_lamp_oildrop, vault_nft_qty), d_vault(vss, 20)))
+  let beacon_input =
+    t_in(nhip_ref, t_out(t_addr(#"dd"), beacon_val(), d_beacon(beacon_ep, nhip, nhip_tran)))
+
+  let inputs =
+    if vault_in_inputs {
+      [acc_in, vault_input]
+    } else {
+      [acc_in]
+    }
+  let acc_out = t_out(t_addr(t_gen_sh), out_val, out_datum)
+  let outputs =
+    if extra_out {
+      [acc_out, t_out(t_addr(t_gen_sh), acc_val(), out_datum)]
+    } else {
+      [acc_out]
+    }
+
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: inputs,
+      reference_inputs: [vault_input, beacon_input],
+      outputs: outputs,
+      extra_signatories: [signer],
+    }
+
+  let rd = Drip { vault_ref, nhip_ref, so_lieu }
+  gen_magic.spend(
+    t_lamp_pol, t_lamp_nm, t_nhip_pol, t_nhip_nm, t_engine,
+    Some(MagicAccountDatum { did_commit: t_owner, epoch: datum_ep, magic_nanogic: 0 }),
+    rd, own_ref, tx,
+  )
+}
+
+// c=20, r_tieu=Q, r khác=0 ⟹ tư_cách=1.9Q ⟹ w_v=38; nhip=Q ⟹ m_v=38.
+fn happy_so_lieu() -> SoLieuSo {
+  SoLieuSo { da_tieu: 1000, da_sinh: 1000, tieu_thap_diem: 0, magic_cam_ket: 0 }
+}
+
+test gm_happy() {
+  run(
+    0, False, 1, 20_000_000, 432_000, 1, 1_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(1, 38), False, acc_val(), t_engine,
+  )
+}
+
+// I-ACT-7: vault nằm trong inputs (bị spend) ⟹ reject.
+test gm_neg_vault_spent() fail {
+  run(
+    0, True, 1, 20_000_000, 432_000, 1, 1_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(1, 38), False, acc_val(), t_engine,
+  )
+}
+
+// B2: nhip_gen > nhip_tran ⟹ reject.
+test gm_neg_nhip_vuot_tran() fail {
+  run(
+    0, False, 1, 20_000_000, 432_000, 1, 3_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(1, 38), False, acc_val(), t_engine,
+  )
+}
+
+// B5: 2 output tại địa chỉ mình ⟹ reject (double-satisfaction).
+test gm_neg_double_output() fail {
+  run(
+    0, False, 1, 20_000_000, 432_000, 1, 1_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(1, 38), True, acc_val(), t_engine,
+  )
+}
+
+// B5: value không bảo toàn (rút bớt ADA) ⟹ reject.
+test gm_neg_value_khong_bao_toan() fail {
+  run(
+    0, False, 1, 20_000_000, 432_000, 1, 1_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(1, 38), False, assets.from_lovelace(1_000_000), t_engine,
+  )
+}
+
+// S6: tiêu_thấp_điểm > đã_tiêu ⟹ reject.
+test gm_neg_solieu_khong_nhat_quan() fail {
+  run(
+    0, False, 1, 20_000_000, 432_000, 1, 1_000_000_000, 2_000_000_000,
+    SoLieuSo { da_tieu: 1000, da_sinh: 1000, tieu_thap_diem: 5000, magic_cam_ket: 0 },
+    d_acc(1, 38), False, acc_val(), t_engine,
+  )
+}
+
+// tuần-tự epoch: beacon epoch != datum epoch + 1 ⟹ reject.
+test gm_neg_epoch_khong_tuan_tu() fail {
+  run(
+    0, False, 1, 20_000_000, 432_000, 5, 1_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(5, 38), False, acc_val(), t_engine,
+  )
+}
+
+// G9: m_v output SAI (bơm khống) ⟹ reject.
+test gm_neg_mv_sai() fail {
+  run(
+    0, False, 1, 20_000_000, 432_000, 1, 1_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(1, 999_999), False, acc_val(), t_engine,
+  )
+}
+
+// vault-NFT không phải singleton (qty=0) ⟹ reject.
+test gm_neg_nft_khong_singleton() fail {
+  run(
+    0, False, 0, 20_000_000, 432_000, 1, 1_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(1, 38), False, acc_val(), t_engine,
+  )
+}
+
+// c=0 (vault không có LAMP thật) ⟹ reject (c_dung=0).
+test gm_neg_khong_lamp() fail {
+  run(
+    0, False, 1, 0, 432_000, 1, 1_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(1, 38), False, acc_val(), t_engine,
+  )
+}
+
+// không có chữ ký engine ⟹ reject.
+test gm_neg_khong_engine_sign() fail {
+  run(
+    0, False, 1, 20_000_000, 432_000, 1, 1_000_000_000, 2_000_000_000,
+    happy_so_lieu(), d_acc(1, 38), False, acc_val(), #"ff",
+  )
+}

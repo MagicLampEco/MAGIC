@@ -1,0 +1,16 @@
+{
+  "name": "@magic-protocol/gen-magic",
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vitest": "^1.6.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

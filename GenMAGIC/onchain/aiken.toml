@@ -1,0 +1,15 @@
+name    = "magiclamp/genmagic"
+version = "0.2.0"
+plutus  = "v3"
+license = "Apache-2.0"
+description = "GenMAGIC — engine Gen đọc vault Wakeme qua reference_input, drip MAGIC. LAMP đứng yên (I-ACT-7)."
+
+[repository]
+user     = "MagicLampNetwork"
+project  = "MAGIC"
+platform = "github"
+
+[[dependencies]]
+name    = "aiken-lang/stdlib"
+version = "v3.1.0"
+source  = "github"

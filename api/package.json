@@ -1,0 +1,48 @@
+{
+  "name": "@magiclamp/otc-api",
+  "version": "1.0.0",
+  "description": "LAMP/MAGIC OTC Desk — Order Management API",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@blockfrost/blockfrost-js": "^5.5.0",
+    "@fastify/cors": "^9.0.1",
+    "@fastify/jwt": "^8.0.1",
+    "@fastify/rate-limit": "^9.1.0",
+    "@fastify/swagger": "^8.15.0",
+    "@fastify/swagger-ui": "^4.0.1",
+    "@fastify/websocket": "^10.0.1",
+    "@prisma/client": "^5.14.0",
+    "bcrypt": "^5.1.1",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.1",
+    "ioredis": "^5.4.1",
+    "nanoid": "^5.0.7",
+    "pino": "^9.2.0",
+    "pino-pretty": "^11.2.1",
+    "qrcode": "^1.5.4",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/node": "^20.14.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "prisma": "^5.14.0",
+    "tsx": "^4.15.7",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

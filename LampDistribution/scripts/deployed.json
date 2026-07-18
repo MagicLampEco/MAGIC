@@ -1,0 +1,66 @@
+{
+  "network": "Preview",
+  "msPerEpoch": "86400000",
+  "committee": {
+    "keyHashes": [
+      "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+    ],
+    "threshold": 1,
+    "source": "wallet-self"
+  },
+  "claimAccount": {
+    "hash": "e5ee48e0326fb1a9ae7e6c43925bd0ab6b48c0c793313ec4cd23ac1a",
+    "address": "addr_test1wrj7uj8qxfhmr2dw0eky8yjm6z4kkjxqc7fnz0kye536cxsmktx95"
+  },
+  "beacon": {
+    "hash": "09e26dfc0522825d2a16606d789c2c30137126f4bd3f7734df8a3530",
+    "address": "addr_test1wqy7ym0uq53gyhf2zesx67yu9scpxufx7j7n7ae5m79r2vqj6ul5g"
+  },
+  "treasury": {
+    "hash": "634535c844ef8b323a2b65ad5d7d14b6162d3f7b29d04ceff05a1f20",
+    "address": "addr_test1wp352dwggnhckv369dj66htazjmpvtfl0v5aqn807pdp7gq2u06sl"
+  },
+  "params": {
+    "msPerEpoch": "86400000",
+    "lampPolicy": "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4",
+    "lampName": "4c414d50",
+    "beaconNftPolicy": "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4",
+    "claimAccountHash": "e5ee48e0326fb1a9ae7e6c43925bd0ab6b48c0c793313ec4cd23ac1a"
+  },
+  "testLamp": {
+    "policyId": "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4",
+    "assetName": "4c414d50",
+    "minted": "1000000000000"
+  },
+  "beaconNftPolicy": "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4",
+  "wallets": {
+    "aPkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+    "bPkh": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+  },
+  "genesis": {
+    "pparamBeacon": {
+      "txHash": "b6b773425ec866e9d884921c87edc8d05f6315ab603bcd8cc47ca6eeb9b7571f",
+      "outputIndex": 0
+    },
+    "randomnessBeacon": {
+      "txHash": "b6b773425ec866e9d884921c87edc8d05f6315ab603bcd8cc47ca6eeb9b7571f",
+      "outputIndex": 1
+    },
+    "merkleBeacon": {
+      "txHash": "b6b773425ec866e9d884921c87edc8d05f6315ab603bcd8cc47ca6eeb9b7571f",
+      "outputIndex": 2
+    },
+    "treasuryUtxo": {
+      "txHash": "b6b773425ec866e9d884921c87edc8d05f6315ab603bcd8cc47ca6eeb9b7571f",
+      "outputIndex": 3
+    },
+    "claimAccountA": {
+      "txHash": "b6b773425ec866e9d884921c87edc8d05f6315ab603bcd8cc47ca6eeb9b7571f",
+      "outputIndex": 4
+    },
+    "claimAccountB": {
+      "txHash": "b6b773425ec866e9d884921c87edc8d05f6315ab603bcd8cc47ca6eeb9b7571f",
+      "outputIndex": 5
+    }
+  }
+}

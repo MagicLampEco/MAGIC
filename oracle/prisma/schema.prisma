@@ -1,0 +1,168 @@
+// VeData Oracle — Prisma schema
+// PostgreSQL 16
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum OrderStatus {
+  PENDING            // Awaiting payment
+  PAYMENT_MATCHED    // Payment received, entering signing
+  SIGNING            // Oracle is mid-signing (crash recovery marker)
+  SIGNED             // Signature generated, tx not yet submitted
+  SUBMITTED          // Tx submitted to Cardano mempool
+  CONFIRMED          // Tx on-chain, >= 1 block depth
+  FINALIZED          // Tx on-chain, >= 3 block depth
+  EXPIRED            // Order expired before payment
+  EXCEPTION          // Human review required
+}
+
+enum ExceptionType {
+  UNMATCHED_PAYMENT
+  EXPIRED_ORDER
+  DUPLICATE_PAYMENT
+  UNDERPAYMENT
+  OVERPAYMENT
+  WRONG_ACCOUNT
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model Order {
+  // Identity
+  id              String        @id @default(cuid())
+  offerId         String        // On-chain offer UTxO identifier (tx#idx)
+  referenceCode   String        @unique  // 16-char [A-Z0-9], embedded in VietQR
+
+  // Token details
+  tokenPolicy     String        // Hex 56-char policy ID
+  tokenName       String        // Hex asset name bytes
+  tokenAmount     BigInt        // Integer token units
+
+  // Payment
+  buyerWallet     String        // Bech32 Cardano address
+  buyerPkh        String        // Hex 56-char payment key hash (28 bytes)
+  expectedVND     BigInt        // Exact VND amount buyer must send
+  exchangeRate    Decimal       @db.Decimal(20, 6)  // VND per token unit at creation
+
+  // State machine
+  status          OrderStatus   @default(PENDING)
+
+  // Timestamps
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  expiresAt       DateTime      // Order-level expiry (30 minutes from creation)
+  completedAt     DateTime?     // Set when status = FINALIZED
+
+  // Relations
+  paymentEvents   PaymentEvent[]
+  releaseSignature ReleaseSignature?
+  exceptions      PaymentException[]
+
+  @@index([status])
+  @@index([referenceCode])
+  @@index([offerId])
+  @@index([expiresAt])
+  @@map("orders")
+}
+
+model PaymentEvent {
+  id            BigInt    @id @default(autoincrement())
+
+  // Source
+  source        String    // 'payos' | 'mbbank' | 'vcb' | 'acb' | 'reconciler'
+  bankTxRef     String    // Bank's own unique transaction identifier
+  amountVND     BigInt    // Post-fee VND amount received
+  rawDescription String   // Original description field from bank
+  rawPayload    Json      // Full webhook/poll body for audit
+
+  // Processing
+  detectedAt    DateTime  // When bank says transfer occurred
+  receivedAt    DateTime  @default(now())
+  processed     Boolean   @default(false)
+  processedAt   DateTime?
+
+  // Relation
+  orderId       String?
+  order         Order?    @relation(fields: [orderId], references: [id])
+
+  @@unique([source, bankTxRef])  // Deduplication across webhook + poll
+  @@index([orderId])
+  @@index([processed])
+  @@index([receivedAt])
+  @@map("payment_events")
+}
+
+model ReleaseSignature {
+  id              BigInt    @id @default(autoincrement())
+
+  // Content
+  orderId         String    @unique
+  order           Order     @relation(fields: [orderId], references: [id])
+
+  messageBytes    Bytes     // CBOR-serialized sign message
+  signatureHex    String    // 128-char hex (64 raw bytes)
+  oraclePubKeyHex String    // 64-char hex (32 raw bytes)
+  expiryPosix     BigInt    // Unix timestamp when sig expires
+  nonce           Bytes     // 16 random bytes
+
+  // Submission tracking
+  cardanoTxHash       String?   // 64-char hex, populated after submission
+  submissionAttempts  Int       @default(0)
+  signedAt            DateTime  @default(now())
+  submittedAt         DateTime?
+  confirmedAt         DateTime?
+  finalizedAt         DateTime?
+
+  used    Boolean   @default(false)
+  usedAt  DateTime?
+
+  @@index([cardanoTxHash])
+  @@index([used])
+  @@map("release_signatures")
+}
+
+model PaymentException {
+  id                BigInt        @id @default(autoincrement())
+  paymentEventId    BigInt
+  exceptionType     ExceptionType
+  amountReceived    BigInt
+  rawDescription    String?
+  refExtracted      String?       // Extracted reference candidate (may be invalid)
+
+  // Resolution
+  createdAt         DateTime      @default(now())
+  resolvedAt        DateTime?
+  resolvedBy        String?       // Operator username
+  resolutionNotes   String?
+
+  // Relations
+  orderId           String?
+  order             Order?        @relation(fields: [orderId], references: [id])
+
+  @@index([exceptionType])
+  @@index([resolvedAt])
+  @@map("payment_exceptions")
+}
+
+model OracleLog {
+  id          BigInt    @id @default(autoincrement())
+  level       String    // 'info' | 'warn' | 'error'
+  event       String    // Event type slug
+  orderId     String?
+  message     String
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([event])
+  @@index([orderId])
+  @@index([createdAt])
+  @@map("oracle_logs")
+}

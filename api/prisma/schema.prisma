@@ -1,0 +1,232 @@
+// LAMP/MAGIC OTC Desk — Prisma schema
+// Database: PostgreSQL 16
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// Enterprise (seller / API key holder)
+// ─────────────────────────────────────────────
+model Enterprise {
+  id            String   @id @default(cuid()) @map("enterprise_id")
+  displayName   String   @map("display_name") @db.VarChar(100)
+  legalName     String?  @map("legal_name")   @db.VarChar(200)
+  status        EnterpriseStatus @default(PENDING_KYB)
+  apiKeyHash    String   @unique @map("api_key_hash")   // bcrypt hash — raw key never stored
+  walletAddress String?  @map("wallet_address")         // Cardano address for refunds
+  bankCode      String   @map("bank_code")     @db.VarChar(10)
+  bankBin       String   @map("bank_bin")      @db.VarChar(6)
+  accountNumber String   @map("account_number") @db.VarChar(30)
+  accountName   String   @map("account_name")  @db.VarChar(100)
+  verifiedAt    DateTime? @map("verified_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt       @map("updated_at")
+
+  offers        Offer[]
+
+  @@map("enterprises")
+}
+
+enum EnterpriseStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_KYB
+}
+
+// ─────────────────────────────────────────────
+// Offer (token batch locked in on-chain escrow)
+// ─────────────────────────────────────────────
+model Offer {
+  id              String      @id @default(cuid()) @map("offer_id")
+  enterpriseId    String      @map("enterprise_id")
+  tokenSymbol     TokenSymbol @map("token_symbol")
+  policyId        String      @map("policy_id")   @db.VarChar(56)
+  assetName       String      @map("asset_name")  @db.VarChar(64)   // hex-encoded
+  totalAmount     BigInt      @map("total_amount")
+  availableAmount BigInt      @map("available_amount")
+  lockedAmount    BigInt      @default(0) @map("locked_amount")
+  priceVND        BigInt      @map("price_vnd")                      // per token
+  minOrderAmount  BigInt      @map("min_order_amount")
+  maxOrderAmount  BigInt      @map("max_order_amount")
+  escrowTxHash    String      @map("escrow_tx_hash")   @db.VarChar(64)
+  escrowTxIndex   Int         @map("escrow_tx_index")
+  escrowAddress   String?     @map("escrow_address")
+  status          OfferStatus @default(PENDING_VERIFICATION)
+  verificationJobId String?   @map("verification_job_id")
+  expiresAt       DateTime    @map("expires_at")
+  cancelledAt     DateTime?   @map("cancelled_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt        @map("updated_at")
+
+  enterprise      Enterprise  @relation(fields: [enterpriseId], references: [id])
+  orders          Order[]
+
+  @@index([status, expiresAt])
+  @@index([enterpriseId])
+  @@map("offers")
+}
+
+enum TokenSymbol {
+  LAMP
+  MAGIC
+}
+
+enum OfferStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  DEPLETED
+  EXPIRED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────────
+// Order (buyer purchase intent)
+// ─────────────────────────────────────────────
+model Order {
+  id                  String      @id @default(cuid()) @map("order_id")
+  offerId             String      @map("offer_id")
+  enterpriseId        String      @map("enterprise_id")
+  tokenSymbol         TokenSymbol @map("token_symbol")
+  tokenAmount         BigInt      @map("token_amount")
+  priceVNDSnapshot    BigInt      @map("price_vnd_snapshot")  // price locked at order time
+  totalVND            BigInt      @map("total_vnd")
+  buyerWalletAddress  String      @map("buyer_wallet_address")
+  referenceCode       String      @unique @map("reference_code") @db.VarChar(30)
+  status              OrderStatus @default(CREATED)
+  idempotencyKey      String?     @unique @map("idempotency_key") @db.VarChar(36)
+  txHash              String?     @map("tx_hash")      @db.VarChar(64)
+  blockHeight         Int?        @map("block_height")
+  blockTime           DateTime?   @map("block_time")
+  expiresAt           DateTime    @map("expires_at")
+  completedAt         DateTime?   @map("completed_at")
+  cancelledAt         DateTime?   @map("cancelled_at")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt           @map("updated_at")
+
+  offer               Offer       @relation(fields: [offerId], references: [id])
+  timeline            OrderTimeline[]
+  payment             Payment?
+  release             Release?
+
+  @@index([status, expiresAt])
+  @@index([offerId])
+  @@index([referenceCode])
+  @@index([buyerWalletAddress])
+  @@map("orders")
+}
+
+enum OrderStatus {
+  CREATED
+  AWAITING_PAYMENT
+  PAYMENT_DETECTED
+  RELEASE_PENDING
+  COMPLETED
+  EXPIRED
+  CANCELLED
+  DISPUTED
+  REFUNDED
+}
+
+// ─────────────────────────────────────────────
+// Order timeline log
+// ─────────────────────────────────────────────
+model OrderTimeline {
+  id      String      @id @default(cuid())
+  orderId String      @map("order_id")
+  status  OrderStatus
+  actor   TimelineActor
+  note    String?     @db.Text
+  at      DateTime    @default(now())
+
+  order   Order       @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@map("order_timeline")
+}
+
+enum TimelineActor {
+  BUYER
+  ENTERPRISE
+  ORACLE
+  BACKEND
+  ADMIN
+}
+
+// ─────────────────────────────────────────────
+// Payment (oracle attestation per order)
+// ─────────────────────────────────────────────
+model Payment {
+  id                  String        @id @default(cuid()) @map("payment_id")
+  orderId             String        @unique @map("order_id")
+  referenceCode       String        @map("reference_code")
+  bankCode            String        @map("bank_code")
+  accountNumber       String        @map("account_number")
+  expectedAmount      BigInt        @map("expected_amount")
+  detectedAmount      BigInt?       @map("detected_amount")
+  bankTransactionId   String?       @map("bank_transaction_id")
+  fromAccount         String?       @map("from_account")
+  napasRef            String?       @map("napas_ref")
+  oracleCbor          String?       @map("oracle_cbor")   @db.Text
+  oracleDatumHash     String?       @map("oracle_datum_hash")
+  oracleSignedAt      DateTime?     @map("oracle_signed_at")
+  status              PaymentStatus @default(PENDING)
+  confirmedAt         DateTime?     @map("confirmed_at")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt       @map("updated_at")
+
+  order               Order         @relation(fields: [orderId], references: [id])
+
+  @@index([referenceCode])
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  AMOUNT_MISMATCH
+  EXPIRED
+  REFUNDED
+}
+
+// ─────────────────────────────────────────────
+// Release (on-chain token transfer record)
+// ─────────────────────────────────────────────
+model Release {
+  id                  String        @id @default(cuid()) @map("release_id")
+  orderId             String        @unique @map("order_id")
+  tokenAmount         BigInt        @map("token_amount")
+  destinationAddress  String        @map("destination_address")
+  triggerMode         TriggerMode
+  submittedTxCbor     String?       @map("submitted_tx_cbor") @db.Text
+  txHash              String?       @map("tx_hash")     @db.VarChar(64)
+  blockHeight         Int?          @map("block_height")
+  blockTime           DateTime?     @map("block_time")
+  status              ReleaseStatus @default(BUILDING)
+  failureReason       String?       @map("failure_reason") @db.Text
+  createdAt           DateTime      @default(now()) @map("created_at")
+  confirmedAt         DateTime?     @map("confirmed_at")
+  updatedAt           DateTime      @updatedAt            @map("updated_at")
+
+  order               Order         @relation(fields: [orderId], references: [id])
+
+  @@map("releases")
+}
+
+enum TriggerMode {
+  AUTOMATIC
+  BUYER_SUBMITTED
+  ADMIN_MANUAL
+}
+
+enum ReleaseStatus {
+  BUILDING
+  SUBMITTED
+  CONFIRMED
+  FAILED
+}

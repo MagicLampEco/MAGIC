@@ -162,7 +162,7 @@ Ba cửa: **InstantGen · ScheduleGen · PrepaidGen**. Chia chung:
 Tư-cách là **một hệ số duy nhất** nhân vào tỷ lệ Gen, gộp 4 thành phần (đóng băng vào `profile_at_creation` lúc sinh batch — bất biến T4):
 
 1. **tuổi-LAMP** — xét trên **6 epoch**: cùng lượng LAMP, ở vault lâu hơn (trong cửa sổ 6 epoch) → sinh nhiều hơn. Xét từng epoch để user đo lường được.
-2. **MAGIC-đã-tiêu** — cùng LAMP + cùng tuổi: hồ sơ tiêu nhiều MAGIC hơn trong 6 epoch qua → sinh nhiều hơn.
+2. **MAGIC-đã-tiêu** — cùng LAMP + cùng tuổi: hồ sơ tiêu nhiều MAGIC hơn trong 6 epoch qua → sinh nhiều hơn. **`INV-CONSUMED-ATTRIB` (hội đồng 2026-07-31):** consumed đầu vào thành-phần này CHỈ đếm khi consumer-DID ⟂ provider/backer-DID (cross-DID, did_commit-gate) — chống **reflexive-gen-amplifier** (vòng LAMP→CARP→PrepaidGen→MAGIC→tự-tiêu tự nhân suất-sinh mỗi epoch, nguy hơn cả bơm-VP). MVP `did_commit=#""` → thành-phần này TẮT tới khi Long giao did_commit thật (lộ trình #1).
 3. **giờ-thấp-điểm** — cùng lượng tiêu: tỷ lệ tiêu lúc thấp-điểm cao hơn → sinh nhiều hơn (điều tiết cung-cầu).
 4. **cam-kết-lịch** — MAGIC cam kết trong hợp đồng ScheduleGen nhiều hơn → sinh nhiều hơn.
 
@@ -194,6 +194,7 @@ cap_surplus = 0                                   khi đỏ
 - *Ví dụ:* DID nắm 1000 LAMP (`L_avail`=1000). Schedule-commit khoá 600 → `L_avail`=400 → InstantGen còn tối đa ⌊400·ρ⌋=400 MAGIC/epoch. Mua & khoá thêm LAMP nâng trần ngay; LAMP đã khoá không dùng lại tới sang epoch.
 - `br = B/S`: `B` = backing thật (oracle LAMP CHỈ định-giá B — F6), `S` = cung MAGIC hiệu lực (đã Gen chưa tiêu chưa reset). `br_safe = 1.5`.
 - **Xanh** (`br > br_safe`): được Gen. **Đỏ** (`br ≤ br_safe`): `cap = 0` (khoá Gen). Sau Gen: `br' ≥ br_safe`.
+- **`INV-SURPLUS-RATION` — cap_surplus phải RATIONED toàn-mạng (hội đồng 3-ghế 2026-07-31, anh chốt 16-shard).** `cap_surplus` rút từ **pool backing CHUNG** → nếu mỗi DID đọc một `br`-beacon (reference-input, KHÔNG trừ-dần) rồi tự rút phần mình, **N chủ-thể (kể cả trung thực) mint/gen tập-thể VƯỢT backing → depeg** (đây là "lỗ Q2" — phía SINH/rút, KHÔNG phải phía mint-CDP: mint qua CDP `MCR≥2` là **accretive**, `Σcol≥2·Σdebt ⟹ br≥2` tự-động, không cần accumulator). Vá: tổng-surplus-khả-cấp mỗi epoch chia vào **16 shard** (tái dùng `SHARD_COUNT`/`SHARD_CAP` của ScheduleGen); keeper refresh đầu epoch; mỗi lần gen/rút-tồn **SPEND-và-DECREMENT** một shard → **trần toàn-cục CỨNG = Σ shard-cap**, atomic on-chain, "số chủ-thể" biến mất, contention chia 16. KHÔNG pro-rata theo beacon-read (stale = chính lỗ). Neo cuối fail-safe vẫn là `⌊L_avail×RATE/Q⌋` (LAMP-khoá vật lý, độc-lập-oracle).
 
 > **Vì sao bỏ hệ-số `0.5×` cũ:** bản trước chặn `InstantGen ≤ 0.5 × pp_schedule` để (a) giữ Instant < Schedule cho kênh tích-backing sống, (b) chặn cá voi hút cạn `cap_surplus`. Vai (a) nay do **LAMP-khoá** đảm nhiệm (Instant + Schedule cùng rút một pool `L_avail`; khoá của cửa này tự trừ khả-dụng của cửa kia, không double-dip 2×pp); vai (b) do chính `cap_surplus` giữ. Dùng **full `⌊L_avail×RATE/Q⌋`** làm trần thứ ba.
 

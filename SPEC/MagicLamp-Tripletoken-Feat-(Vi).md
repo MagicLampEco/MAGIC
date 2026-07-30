@@ -2,7 +2,7 @@
 
 > **Tài liệu:** `MagicLamp-Tripletoken-Feat-(Vi).md` — đặc tả kỹ thuật cho **chuyên gia và lập trình viên**.
 > **Đối tượng:** người triển khai on-chain/off-chain, kiểm toán, tích hợp. Phần diễn giải phổ thông (câu chuyện, pháp lý cho người dùng) nằm ở bản công bố `Launch/Whitepaper-MagicLamp-Tokenomic-(Vi).md` — tài liệu này **tham chiếu tới** bản đó, không lặp lại.
-> **Phạm vi:** hợp nhất đặc tả **GenMAGIC** (§6) và **ConsumeMAGIC** (§7) vào một nơi. Cơ chế ổn định CARP chi tiết ở `Carpet-CARP-DacTa-Vi.md` (tài liệu này chỉ nêu giao diện).
+> **Phạm vi:** hợp nhất đặc tả **GenMAGIC** (§6) và **ConsumeMAGIC** (§7) vào một nơi. Cơ chế ổn định CARP chi tiết ở `CarpetMint-Core-Spec-Vi.md` (tài liệu này chỉ nêu giao diện).
 > **Trạng thái:** canonical, chốt mô hình 2026-07-23. Khi mâu thuẫn với bản cũ (`MagicLamp-3Token-DacTa-Vi.md`, các file GenMAGIC/ConsumeMAGIC rời) → **theo file này**.
 
 ---
@@ -40,8 +40,8 @@ Quy luật: **LAMP sinh MAGIC; CARP chở giá trị tới nơi tiêu; MAGIC ti�
 
 ### §1.3 CARP — đồng-thanh-khoản ổn định (lớp lưu-hành)
 - Native token, **policy-id riêng**, chuyển nhượng trong hệ. Neo sức-mua-dịch-vụ nội sinh, **KHÔNG neo fiat**.
-- Giữ giá bằng **sàn-tiện-ích** (CARP luôn đổi được sang MAGIC để tiêu; PrepaidGen 1:1 + PSM-par nội bộ) + **3-back** (GreenBack/VacuumBack/RedBack) + Backstop. Chi tiết + tham số: `Carpet-CARP-DacTa-Vi.md §3–§4`.
-- Pháp lý: utility fiat-neutral (thoát EMT; khả năng bị phán ART còn — ESMA xét substance). Chi tiết: whitepaper §10, `Carpet-CARP-DacTa-Vi.md §8`.
+- Giữ giá bằng **sàn-tiện-ích** (CARP luôn đổi được sang MAGIC để tiêu; PrepaidGen 1:1 + PSM-par nội bộ) + **3-back** (GreenBack/VacuumBack/RedBack) + Backstop. Chi tiết + tham số: `CarpetMint-Core-Spec-Vi.md`.
+- Pháp lý: utility fiat-neutral (thoát EMT; khả năng bị phán ART còn — ESMA xét substance). Chi tiết: whitepaper §10, `CarpetMint-Core-Spec-Vi.md`.
 
 ---
 
@@ -133,9 +133,9 @@ MagicBatch {
 
 ---
 
-## §5. CARP — giao diện (chi tiết ở Carpet-CARP-DacTa-Vi.md)
+## §5. CARP — giao diện (chi tiết ở CarpetMint-Core-Spec-Vi.md)
 
-Tài liệu này chỉ nêu **điểm nối** CARP ↔ MAGIC. Đặc tả đầy đủ cơ chế ổn định (sàn-tiện-ích, 3-back, Backstop, CDP-phụ, tham số) ở `Carpet-CARP-DacTa-Vi.md`.
+Tài liệu này chỉ nêu **điểm nối** CARP ↔ MAGIC. Đặc tả đầy đủ cơ chế ổn định (sàn-tiện-ích, 3-back, Backstop, CDP-phụ, tham số) ở `CarpetMint-Core-Spec-Vi.md`.
 
 - **PrepaidGen (§6.4)** = cửa CARP → quyền-tiêu MAGIC, đồng thời là **sàn-tiện-ích của CARP**.
 - **PSM-par nội bộ** giữ peg CARP/MAGIC (`P_redeem ≡ 1`), KHÔNG DEX ngoài.
@@ -299,7 +299,7 @@ App đặt `personal_delegate = Some(app_pkh)` qua `SetDelegate` ở vault → a
 - Cơ chế: **commit-khoá LAMP/CARP kỳ-hạn**; kích hoạt khi `d ≥ d_vacuum = 6%` (peg lệch); vai PEG+SOLVENCY.
 - **INV-VACUUM-ISOLATION:** leak ≡ 0 — VacuumBack cách-ly cứng khỏi `backing_core` (chống Vacuum-cliff).
 - Thưởng người commit = **ưu-đãi-phí** = quyền-tiêu-MAGIC-thêm (non-transferable), KHÔNG phải yield tài sản.
-- Chi tiết: `Carpet-CARP-DacTa-Vi.md §4.2`.
+- Chi tiết: `CarpetMint-Core-Spec-Vi.md`.
 
 > **Lịch sử:** "VacuumGen" (cửa gen commit-then-fire 2 epoch) trong code cũ = **CHẾT**. Đừng nhầm với VacuumBack.
 
@@ -398,7 +398,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 > **Self-dealing / wash-consumption phụ thuộc `did_commit` (adversary 2026-07-30).** Vì MAGIC fungible + reward/C1 keyed theo consumed, một chủ thể vừa "user" vừa "merchant" có thể tự-trả-mình để bơm `consumed_count` giả (nâng reward InstantGen + C1). ConsumeMAGIC (`C-CM-1..5`) **không** kiểm "ai trả ai". Phanh đúng = `did_commit` (liên kết engagement ↔ DID sinh-trắc, §7.5) phát hiện pattern tự-giao — nhưng MVP `did_commit=#""` ⟹ **phanh TẮT tới khi Long giao `did_commit` thật** (lộ trình #1). Ghi nhận rủi ro: reward(consumed) và C1 dễ bị wash-trade tới khi did_commit bật; cân nhắc trần-suất consumed/epoch/DID như phanh tạm.
 
 **Còn chốt:**
-1. Cơ chế Mint CARP + utility-floor + sim phòng-thủ-giá (`Carpet-CARP-DacTa-Vi.md §3, §6`).
+1. Cơ chế Mint CARP + utility-floor + sim phòng-thủ-giá (`CarpetMint-Core-Spec-Vi.md`).
 2. Tham số hệ-số-năng-lực per-dịch-vụ (spec dịch-vụ riêng) — siết-thêm dưới trần on-chain (§6.4).
 3. `LENT_PP_CAP` (trần cứng LAMP-mượn, §6.1) — chọn giá trị hằng-hệ.
 
@@ -412,4 +412,4 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 
 ---
 
-> **Nhất quán tài liệu:** file này ĐÈ `MagicLamp-3Token-DacTa-Vi.md` và các file GenMAGIC/ConsumeMAGIC rời. Cơ chế ổn định CARP → `Carpet-CARP-DacTa-Vi.md`. Diễn giải phổ thông (câu chuyện, pháp lý người dùng, mô phỏng) → `Launch/Whitepaper-MagicLamp-Tokenomic-(Vi).md`.
+> **Nhất quán tài liệu:** file này ĐÈ `MagicLamp-3Token-DacTa-Vi.md` và các file GenMAGIC/ConsumeMAGIC rời. Cơ chế ổn định CARP → `CarpetMint-Core-Spec-Vi.md`. Diễn giải phổ thông (câu chuyện, pháp lý người dùng, mô phỏng) → `Launch/Whitepaper-MagicLamp-Tokenomic-(Vi).md`.

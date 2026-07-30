@@ -1,7 +1,7 @@
 // Paymaster math — Q-format tỷ giá. Pure BigInt, KHÔNG float. P8 mirror math.ts.
 // NORMATIVE: SPEC-Paymaster §4.3, §5.2-5.3.
 //
-//   lamp_cap = ⌊ magic_consumed × lamp_per_magic_q / Q ⌋    (oil)
+//   lamp_cap = ⌊ magic_consumed × lamp_per_magic_q / Q ⌋    (oildrop)
 //   ada_cap  = ⌊ magic_consumed × ada_per_magic_q  / Q ⌋    (lovelace)
 //
 // magic_consumed = Σ BurnBatch.burns (nanogic). Floor division single-step (1 lần
@@ -11,7 +11,7 @@
 /// Scale factor Q (1 MAGIC = 1e9 nanogic), khớp ProtocolUtils.Q + pricing.q.
 pub const q: Int = 1_000_000_000
 
-/// Trần LAMP (oil) app được sponsor cho magic_consumed (nanogic) tại tỷ giá Q-format.
+/// Trần LAMP (oildrop) app được sponsor cho magic_consumed (nanogic) tại tỷ giá Q-format.
 /// Floor division BigInt. magic_consumed ≥ 0, rate ≥ 0 → kết quả ≥ 0.
 pub fn lamp_cap(magic_consumed: Int, lamp_per_magic_q: Int) -> Int {
   magic_consumed * lamp_per_magic_q / q
@@ -25,7 +25,7 @@ pub fn ada_cap(magic_consumed: Int, ada_per_magic_q: Int) -> Int {
 // ── Tests thuần (TV-PM-PRICE-01/02, khớp SPEC §5.3) ──────────────────────────
 
 test tv_pm_price_01_lamp() {
-  // magic_consumed=10_000_000, rate=0.5×Q → lamp_sponsored = 5_000_000 oil.
+  // magic_consumed=10_000_000, rate=0.5×Q → lamp_sponsored = 5_000_000 oildrop.
   lamp_cap(10_000_000, 500_000_000) == 5_000_000
 }
 

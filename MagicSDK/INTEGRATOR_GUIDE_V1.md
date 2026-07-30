@@ -122,7 +122,7 @@ const { tx, vaultAddress, vaultScript, summary } = await createVault({
   },
   vault: {
     ownerPkh:    "5b889dfd8fabd0234233dbb2e26b9b8e96ceffe77b0c55aa2e8efc21",
-    lampDeposit: 1_000_000_000n,    // 1000 LAMP (1 LAMP = 10^6 oil)
+    lampDeposit: 1_000_000_000n,    // 1000 LAMP (1 LAMP = 10^6 oildrop)
     profile:     "Flame",            // Ember | Flame (default) | Lantern
   },
 });

@@ -13,7 +13,7 @@ import {
 } from "./constants.js";
 import {
   computeInstantMagic, getUmForInstant, shouldHalve, applyHalving,
-  isExpired, lampToOil, slotToEpoch, nanogicToMagicStr, qToStr,
+  isExpired, lampToOildrop, slotToEpoch, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network, cmpBigIntAsc } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
@@ -30,8 +30,8 @@ export interface InstantGenParams {
   lucid: LucidEvolution;
   /** The vault UTxO to spend */
   vaultUtxo: UTxO;
-  /** LAMP to pay in oil (1 LAMP = 10^6 oil). Min: 10^7, Max: 10^13 */
-  lampPaidOil: bigint;
+  /** LAMP to pay in oildrop (1 LAMP = 10^6 oildrop). Min: 10^7, Max: 10^13 */
+  lampPaidOildrop: bigint;
   /** UM datum UTxO (used as reference input) */
   umDatumUtxo: UTxO;
   /** User's wallet address (must match vault.owner) */
@@ -53,7 +53,7 @@ export interface InstantGenParams {
   tamperOutputDatum?: (d: any) => any;
   /** TEST ONLY: skip required-signer for owner-sig negative test. */
   skipOwnerSig?: boolean;
-  /** TEST ONLY: override treasury LAMP amount (default = lampPaidOil). */
+  /** TEST ONLY: override treasury LAMP amount (default = lampPaidOildrop). */
   treasuryAmountOverride?: bigint;
 }
 
@@ -103,7 +103,7 @@ export async function buildInstantGenTx(
   params: InstantGenParams,
 ): Promise<InstantGenResult> {
   const {
-    lucid, vaultUtxo, lampPaidOil, umDatumUtxo, userAddress,
+    lucid, vaultUtxo, lampPaidOildrop, umDatumUtxo, userAddress,
     vaultScript, lampPolicyId, treasuryAddress,
   } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
@@ -121,24 +121,24 @@ export async function buildInstantGenTx(
   const currentEpoch = posixMsToEpoch(tipPosixMs, network);
 
   // ── C-INST-1: MIN purchase ───────────────────────────────────
-  if (lampPaidOil < MIN_INSTANT_PURCHASE) {
+  if (lampPaidOildrop < MIN_INSTANT_PURCHASE) {
     throw new Error(
-      `GEN-INST-001: lamp_paid ${lampPaidOil} < MIN ${MIN_INSTANT_PURCHASE} oil (10 LAMP)`,
+      `GEN-INST-001: lamp_paid ${lampPaidOildrop} < MIN ${MIN_INSTANT_PURCHASE} oildrop (10 LAMP)`,
     );
   }
 
   // ── C-INST-2: MAX purchase ───────────────────────────────────
-  if (lampPaidOil > MAX_INSTANT_PURCHASE) {
+  if (lampPaidOildrop > MAX_INSTANT_PURCHASE) {
     throw new Error(
-      `GEN-INST-002: lamp_paid ${lampPaidOil} > MAX ${MAX_INSTANT_PURCHASE} oil`,
+      `GEN-INST-002: lamp_paid ${lampPaidOildrop} > MAX ${MAX_INSTANT_PURCHASE} oildrop`,
     );
   }
 
   // ── C-INST-3: lamp_paid ≤ L_avail ───────────────────────────
   const lAvail = vaultDatum.lamp_balance - vaultDatum.lamp_locked;
-  if (lampPaidOil > lAvail) {
+  if (lampPaidOildrop > lAvail) {
     throw new Error(
-      `GEN-INST-003: lamp_paid ${lampPaidOil} > L_avail ${lAvail} oil. ` +
+      `GEN-INST-003: lamp_paid ${lampPaidOildrop} > L_avail ${lAvail} oildrop. ` +
       `lamp_locked=${vaultDatum.lamp_locked}`,
     );
   }
@@ -160,7 +160,7 @@ export async function buildInstantGenTx(
   // ── C-INST-5: Compute expected M ─────────────────────────────
   const pmQ = PM_Q[vaultDatum.profile];
   if (!pmQ) throw new Error(`Unknown profile: ${vaultDatum.profile}`);
-  const expectedMagic = computeInstantMagic(lampPaidOil, umUsedQ, pmQ);
+  const expectedMagic = computeInstantMagic(lampPaidOildrop, umUsedQ, pmQ);
 
   // ── C-PRUNE-2: Halve BEFORE prune ────────────────────────────
   const halvingApplied: string[] = [];
@@ -194,8 +194,8 @@ export async function buildInstantGenTx(
   const updatedBatches = [...prunedBatches, newBatch];
 
   // ── Remove lamp_paid from loyalty holdings ───────────────────
-  const updatedHoldings = removeFromHoldings(vaultDatum.loyalty_holdings, lampPaidOil);
-  const newLampBalance = vaultDatum.lamp_balance - lampPaidOil;
+  const updatedHoldings = removeFromHoldings(vaultDatum.loyalty_holdings, lampPaidOildrop);
+  const newLampBalance = vaultDatum.lamp_balance - lampPaidOildrop;
 
   // ── Update attribution hash (C-ATT-1, C-ATT-2) ──────────────
   const newAttribution = updateAttribution(vaultDatum.attribution, {
@@ -229,7 +229,7 @@ export async function buildInstantGenTx(
   }
 
   const redeemer = Data.to(
-    { InstantGen: { lamp_paid: lampPaidOil } },
+    { InstantGen: { lamp_paid: lampPaidOildrop } },
     VaultRedeemerSchema,
   );
 
@@ -251,12 +251,12 @@ export async function buildInstantGenTx(
       { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
       {
         lovelace:  vaultUtxo.assets.lovelace,   // ADA stays on vault
-        [lampUnit]: vaultDatum.lamp_balance - lampPaidOil, // remaining LAMP on vault
+        [lampUnit]: vaultDatum.lamp_balance - lampPaidOildrop, // remaining LAMP on vault
       },
     )
     .pay.ToAddress(
       treasuryAddress,
-      { [lampUnit]: params.treasuryAmountOverride ?? lampPaidOil },  // C-INST-4
+      { [lampUnit]: params.treasuryAmountOverride ?? lampPaidOildrop },  // C-INST-4
     )
     .validFrom(lowerTime)
     .validTo(upperTime);
@@ -265,7 +265,7 @@ export async function buildInstantGenTx(
   const tx = await txBuilder.complete();
 
   const summary = buildSummary({
-    lampPaidOil,
+    lampPaidOildrop,
     expectedMagic,
     umUsedQ,
     umFallbackApplied,
@@ -382,7 +382,7 @@ function updateAttribution(
 // ── Human-readable summary ────────────────────────────────────
 
 function buildSummary(params: {
-  lampPaidOil      : bigint;
+  lampPaidOildrop      : bigint;
   expectedMagic    : bigint;
   umUsedQ          : bigint;
   umFallbackApplied: boolean;
@@ -395,7 +395,7 @@ function buildSummary(params: {
   const lines = [
     `═══ InstantGen Summary ═══`,
     `Epoch:         ${params.currentEpoch}`,
-    `LAMP paid:     ${params.lampPaidOil / 1_000_000n} tLAMP (${params.lampPaidOil} oil)`,
+    `LAMP paid:     ${params.lampPaidOildrop / 1_000_000n} tLAMP (${params.lampPaidOildrop} oildrop)`,
     `UM used:       ${qToStr(params.umUsedQ)}× ${params.umFallbackApplied ? "⚠ FALLBACK (stale UM — keeper not updated)" : "✓"}`,
     `MAGIC minted:  ${nanogicToMagicStr(params.expectedMagic)} MAGIC (${params.expectedMagic} nanogic)`,
     `Batch lifetime: 2 epochs (k=0: full, k=1: halved, k≥2: expired)`,

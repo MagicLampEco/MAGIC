@@ -7,7 +7,7 @@ pub const slots_per_epoch : Int = 432_000
 
 // ── VacuumGen (§19.5) ────────────────────────────────────────
 pub const vbr_q : Int = 500_000_000              // VBR = 0.5 [Significant]
-pub const min_vacuum_amount : Int = 1_000_000     // 1 LAMP in oil [Routine]
+pub const min_vacuum_amount : Int = 1_000_000     // 1 LAMP in oildrop [Routine]
 pub const max_vacuum_orders : Int = 10            // [Routine]
 pub const vacuum_delay : Int = 2                  // epochs [Constitutional]
 pub const vacuum_decay_window : Int = 1           // cliff (§2.3) [Constitutional]

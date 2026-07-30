@@ -151,7 +151,7 @@ pub type UMDatum {
 // ── Vault redeemer ───────────────────────────────────────────
 // NORMATIVE: append-only enum. New variants at END only.
 pub type VaultRedeemer {
-  // constr 0  InstantGen: user pays lamp_paid oil → receives MAGIC batch
+  // constr 0  InstantGen: user pays lamp_paid oildrop → receives MAGIC batch
   InstantGen    { lamp_paid: Natural }
 
   // constr 1  ApplyHalving: lazily apply halving to Instant batches at k=1

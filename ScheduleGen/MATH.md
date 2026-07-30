@@ -9,14 +9,14 @@
 |---|---|---|
 | `Q` | Hệ số Q-format = 10^9 | — |
 | `L` | Chiều dài schedule (số orders) ∈ [10, 200] | orders |
-| `λ` (lambda) | LAMP per fire | oil (LAMP × 10^6) |
+| `λ` (lambda) | LAMP per fire | oildrop (LAMP × 10^6) |
 | `R_snap` | Snapshot base rate tại thời điểm commit | Q-format |
 | `S(L)` | Schedule bonus multiplier, hàm của L | Q-format |
 | `rate_locked_q` | Tỷ lệ sinh khóa tại commit | Q-format |
 | `M_i` | MAGIC sinh ra mỗi fire order `i` | nanogic (MAGIC × 10^9) |
 | `e_i` | Epoch eligible của order `i` | epoch |
 | `shard_id` | ID của shard UTxO cần update | 0..15 |
-| `oil` | LAMP × 10^6 | oil |
+| `oildrop` | LAMP × 10^6 | oildrop |
 | `nanogic` | MAGIC × 10^9 | nanogic |
 
 ---
@@ -124,13 +124,13 @@ Deterministic từ PKH của owner. Computed on-chain (`math.ak:99-102`) và off
 
 ## 7. Shard cap enforcement (T13, C-SCH-CAP)
 
-Mỗi shard có `shard_cap = 4.5 × 10^14 oil = 450,000,000 LAMP`.
+Mỗi shard có `shard_cap = 4.5 × 10^14 oildrop = 450,000,000 LAMP`.
 
 Có thể suy ra từ:
 ```
 shard_cap = TOTAL_LAMP × SCHEDULE_PARTICIPATION_CAP_BPS / (10000 × SHARD_COUNT)
           = 36 × 10^15 × 2000 / (10000 × 16)
-          = 4.5 × 10^14 oil
+          = 4.5 × 10^14 oildrop
 ```
 
 Tức là mỗi shard có tối đa 450M LAMP bị khóa = tổng 20% LAMP cung ứng chia đều cho 16 shards.
@@ -161,7 +161,7 @@ Nguồn: `vectors.ts:7-18`.
 ### TV-SCH-02: L=100, λ=4000 LAMP → 45 MAGIC/fire
 
 Inputs:
-- `L = 100`, `λ = 4_000 LAMP = 4_000_000_000 oil`
+- `L = 100`, `λ = 4_000 LAMP = 4_000_000_000 oildrop`
 - `R_snap = 5_000_000_000`
 
 Tính:
@@ -170,7 +170,7 @@ S_Q(100)      = 2_000_000_000 + 5_000_000 × (100 - 50) = 2_250_000_000
 rate_locked_q = ⌊5_000_000_000 × 2_250_000_000 / 10^9⌋ = 11_250_000_000
 M_i           = ⌊4_000_000_000 × 11_250_000_000 / 10^9⌋ = 45_000_000_000  (= 45 MAGIC)
 total_MAGIC   = 100 × 45 = 4_500 MAGIC
-total_lock    = 100 × 4_000_000_000 = 400_000_000_000_000 oil (= 400,000 LAMP)
+total_lock    = 100 × 4_000_000_000 = 400_000_000_000_000 oildrop (= 400,000 LAMP)
 ```
 
 Kiểm tra C-SCH-RATE: `4_000_000_000 × 11_250_000_000 = 4.5×10^19 ≥ 10^9` ✓
@@ -211,7 +211,7 @@ Nguồn: `vectors.ts:118-129`.
 ### TV-SCH-05: C-SCH-RATE reject khi M_i = 0
 
 Inputs:
-- `R_snap = 100`, `λ = 1_000_000 oil (1 LAMP)`, `L = 10`
+- `R_snap = 100`, `λ = 1_000_000 oildrop (1 LAMP)`, `L = 10`
 
 Tính:
 ```
@@ -227,7 +227,7 @@ Nguồn: `vectors.ts:82-95`.
 
 ## 9. BigInt và overflow
 
-Tất cả giá trị oil, nanogic, Q-format dùng `BigInt` (TypeScript) / `Int` (Aiken). Không dùng `Number`.
+Tất cả giá trị oildrop, nanogic, Q-format dùng `BigInt` (TypeScript) / `Int` (Aiken). Không dùng `Number`.
 
 - `λ × rate_locked_q` có thể lên đến `~10^22` (TV-SCH-02: `4×10^9 × 11.25×10^9 = 4.5×10^19`).
 - `L × λ` trong TV-SCH-02: `100 × 4×10^9 = 4×10^11` (an toàn trong 64-bit integer).

@@ -1,7 +1,7 @@
 // src/types.ts — Paymaster codec (Lucid Evolution Data). Mirror BYTE-PERFECT
 // onchain/lib/magiclamp/paymaster/types.ak. Constructor index = THỨ TỰ KHAI BÁO
 // field trong Aiken type → Plutus Data encoding (CLAUDE.md P8). Đảo thứ tự 1 bên
-// = vỡ decode bên kia. BigInt mọi amount (oil/nanogic/lovelace/Q-format).
+// = vỡ decode bên kia. BigInt mọi amount (oildrop/nanogic/lovelace/Q-format).
 //
 // Bảng constr (khớp types.ak:23-79):
 //   OutputReference     { transaction_id, output_index }                       constr 0

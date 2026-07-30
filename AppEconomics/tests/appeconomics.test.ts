@@ -323,7 +323,7 @@ describe("TV-010: CoStakePool distribution — §7.2, Lemma 7.1", () => {
   });
 
   it("Slash 200K LAMP → proportional (Lemma 7.1: total ≤ slash_amount)", () => {
-    const total_slash = 200_000n * 1_000_000n;  // 200K LAMP in oil
+    const total_slash = 200_000n * 1_000_000n;  // 200K LAMP in oildrop
     const alice = total_slash * 6000n / 10000n;
     const bob   = total_slash * 3000n / 10000n;
     const carol = total_slash * 1000n / 10000n;

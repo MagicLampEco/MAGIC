@@ -188,7 +188,7 @@ const initialVault = {
 ## Bước 6: Chạy InstantGen
 
 ```typescript
-import { createLucid, buildInstantGenTx, signAndSubmit, lampToOil } from "@magiclamp/instantgen-sdk";
+import { createLucid, buildInstantGenTx, signAndSubmit, lampToOildrop } from "@magiclamp/instantgen-sdk";
 
 const lucid = await createLucid(process.env.BLOCKFROST_KEY!);
 lucid.selectWallet.fromPrivateKey(process.env.PRIVATE_KEY!);
@@ -201,7 +201,7 @@ const umDatumUtxo = await lucid.utxoByUnit(umNFT);
 const result = await buildInstantGenTx({
   lucid,
   vaultUtxo,
-  lampPaidOil: lampToOil(1000n),   // 1000 LAMP
+  lampPaidOildrop: lampToOildrop(1000n),   // 1000 LAMP
   umDatumUtxo,
   userAddress: await lucid.wallet().address(),
 });
@@ -210,7 +210,7 @@ console.log(result.summary);
 // Example output:
 // ═══ InstantGen Summary ═══
 // Epoch:         100
-// LAMP paid:     1000 tLAMP (1000000000 oil)
+// LAMP paid:     1000 tLAMP (1000000000 oildrop)
 // UM used:       1.00× ✓
 // MAGIC minted:  3.1500 MAGIC (3150000000 nanogic)
 // Batch lifetime: 2 epochs (k=0: full, k=1: halved, k≥2: expired)
@@ -242,7 +242,7 @@ console.log("Tx submitted:", txHash);
 | INSTANT_BASE_RATE_Q | 3_000_000_000 | §19.4 Constitutional |
 | UM_MIN_Q / UM_FALLBACK_Q | 500_000_000 | §19.7 Constitutional |
 | UM_MAX_STALENESS | 1 epoch | §19.7 Significant |
-| MIN_INSTANT_PURCHASE | 10 LAMP (10^7 oil) | §19.4 Routine |
+| MIN_INSTANT_PURCHASE | 10 LAMP (10^7 oildrop) | §19.4 Routine |
 | INSTANT_DECAY_WINDOW | 2 epochs | §19.4 Constitutional |
 
 ---

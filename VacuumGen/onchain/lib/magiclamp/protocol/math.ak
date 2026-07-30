@@ -63,7 +63,7 @@ pub fn validate_um_range(um: UMDatum) -> Bool {
 // §20.3 calibration: λ=10⁹, UM=1.0, streak=0 → 500M = 0.5 MAGIC ✓
 
 pub fn compute_vacuum_magic(
-  lambda : Int,   // in oil
+  lambda : Int,   // in oildrop
   um_q   : Int,   // Q-format UM_smoothed (C-UM-7)
   sm_q   : Int,   // Q-format Streak Multiplier
 ) -> Int {

@@ -20,7 +20,7 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
-  lampToOil,
+  lampToOildrop,
 } from "../config.js";
 
 // VaultDatum schema (same across all 4 modules — matches Aiken).
@@ -100,8 +100,8 @@ const VaultDatumSchema = Data.Object({
   }),
 });
 
-const INITIAL_LAMP_DEPOSIT = lampToOil(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
-const INITIAL_LAMP_LOCKED  = lampToOil(BigInt(process.env.LAMP_LOCKED ?? "0"));
+const INITIAL_LAMP_DEPOSIT = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
+const INITIAL_LAMP_LOCKED  = lampToOildrop(BigInt(process.env.LAMP_LOCKED ?? "0"));
 const INITIAL_PROFILE      = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
 const LAST_UPDATED_OFFSET  = BigInt(process.env.LAST_UPDATED_OFFSET ?? "1");
 

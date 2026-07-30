@@ -2,7 +2,7 @@
 export const Q                   = 1_000_000_000n;
 // SLOTS_PER_EPOCH removed — network-specific. Use slotsPerEpoch(network) / msPerEpoch(network)
 // from @magiclamp/protocol-utils.
-export const OIL_PER_LAMP        = 1_000_000n;
+export const OILDROP_PER_LAMP        = 1_000_000n;
 export const NANOGIC_PER_MAGIC   = 1_000_000_000n;
 export const SNAPSHOT_BASE_RATE_Q = 5_000_000_000n;   // R_snap [Constitutional]
 
@@ -29,7 +29,7 @@ export const MAX_LOYALTY_HOLDINGS    = 64;            // [Routine]
 
 // ── Shard [Constitutional] ────────────────────────────────────
 export const SHARD_COUNT = 16;
-export const SHARD_CAP   = 450_000_000_000_000n;      // 4.5×10^14 oil = 450M LAMP per shard
+export const SHARD_CAP   = 450_000_000_000_000n;      // 4.5×10^14 oildrop = 450M LAMP per shard
 export const PARTICIPATION_CAP_BPS = 2000;            // 20% [Routine]
 
 // ── Testnet config ────────────────────────────────────────────

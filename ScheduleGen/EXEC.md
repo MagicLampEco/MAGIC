@@ -144,7 +144,7 @@ Sau deploy:
 |---|---|---|
 | L_min | 10 orders | C-SCH-1 |
 | L_max | 200 orders (~1000 ngày) | C-SCH-1 |
-| λ_min | 1 LAMP (1_000_000 oil) | C-SCH-2 |
+| λ_min | 1 LAMP (1_000_000 oildrop) | C-SCH-2 |
 | MAX_GEN_SCHEDULES | 20 | Mỗi vault tối đa 20 schedules active |
 | MAX_BATCHES_PER_VAULT | 32 | Cap batch budget trong 1 fire tx |
 | MAX_FIRES_PER_TX | 8 | Catch-up cap — tránh tx quá nặng |

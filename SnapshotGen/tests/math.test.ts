@@ -238,15 +238,15 @@ describe("computeOacQ + countActiveApps — §6.4, TV-OAC-BOUNDARY", () => {
 describe("computeSnapshotMagic — §8.1, T16, C-SS-5", () => {
 
   it("TV-SNAPGEN-01: 1000 LAMP, Flame, LF=1.0, OAC=0.8 → 4.62 MAGIC", () => {
-    const { lamp_oil, lf_q, oac_q, profile, steps, expected_nanogic } = TV_SNAPGEN_01;
-    const result = computeSnapshotMagic(lamp_oil, lf_q, oac_q, profile);
+    const { lamp_oildrop, lf_q, oac_q, profile, steps, expected_nanogic } = TV_SNAPGEN_01;
+    const result = computeSnapshotMagic(lamp_oildrop, lf_q, oac_q, profile);
     expect(result).toBe(expected_nanogic);
     expect(nanogicToMagicStr(result)).toBe("4.6200");
 
     // Verify step-by-step (L4 audit) — use imported constants directly
     const Q = 1_000_000_000n, R = 5_000_000_000n;
     const { B_Q, PM_Q } = PROFILE_PARAMS[profile]!;
-    const s1 = lamp_oil * R / Q;
+    const s1 = lamp_oildrop * R / Q;
     const s2 = s1 * lf_q / Q;
     const s3 = s2 * oac_q / Q;
     const s4 = s3 * PM_Q / Q;
@@ -259,8 +259,8 @@ describe("computeSnapshotMagic — §8.1, T16, C-SS-5", () => {
   });
 
   it("TV-SNAPGEN-MATURE: Ember, LF=1.5, OAC=1.0 → 11.2125 MAGIC (§20.3)", () => {
-    const { lamp_oil, lf_q, oac_q, profile, expected_nanogic } = TV_SNAPGEN_MATURE;
-    expect(computeSnapshotMagic(lamp_oil, lf_q, oac_q, profile)).toBe(expected_nanogic);
+    const { lamp_oildrop, lf_q, oac_q, profile, expected_nanogic } = TV_SNAPGEN_MATURE;
+    expect(computeSnapshotMagic(lamp_oildrop, lf_q, oac_q, profile)).toBe(expected_nanogic);
     expect(nanogicToMagicStr(expected_nanogic)).toBe("11.2125");
   });
 
@@ -306,10 +306,10 @@ describe("computeSnapshotMagic — §8.1, T16, C-SS-5", () => {
 describe("computeCatchupMagic — §8.2, C-SS-6", () => {
 
   it("TV-CATCHUP-01: Δe=5, Flame, LF=1.1, OAC=0.9 → 28.586 MAGIC", () => {
-    const { lamp_oil, lf_q, oac_q, profile, delta_epochs, m_per_epoch, expected_total } = TV_CATCHUP_01;
-    const mOne = computeSnapshotMagic(lamp_oil, lf_q, oac_q, profile);
+    const { lamp_oildrop, lf_q, oac_q, profile, delta_epochs, m_per_epoch, expected_total } = TV_CATCHUP_01;
+    const mOne = computeSnapshotMagic(lamp_oildrop, lf_q, oac_q, profile);
     expect(mOne).toBe(m_per_epoch);  // ✓ per epoch value
-    const total = computeCatchupMagic(lamp_oil, lf_q, oac_q, profile, delta_epochs);
+    const total = computeCatchupMagic(lamp_oildrop, lf_q, oac_q, profile, delta_epochs);
     expect(total).toBe(expected_total);  // 28_586_250_000 ✓
   });
 

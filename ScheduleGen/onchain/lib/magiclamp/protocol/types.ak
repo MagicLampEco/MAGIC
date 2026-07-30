@@ -65,12 +65,12 @@ pub type GenSchedule {
 // ── §5.5 ScheduleAggregateShardDatum ─────────────────────────
 pub type ScheduleAggregateShardDatum {
   shard_id                   : Natural,   // 0..15
-  shard_locked_lamp          : Natural,   // current locked (oil)
+  shard_locked_lamp          : Natural,   // current locked (oildrop)
   shard_active_count         : Natural,   // active schedules
   shard_cumulative_committed : Natural,
   shard_cumulative_fired     : Natural,
   last_updated_epoch         : Natural,
-  shard_cap                  : Natural,   // 4.5×10^14 oil
+  shard_cap                  : Natural,   // 4.5×10^14 oildrop
 }
 
 pub type AppAllocation { app_id: ByteArray, weight_bps: Natural }
@@ -130,7 +130,7 @@ pub type VaultRedeemer {
   // constr 0  Phase 1: User commits — locks L×λ LAMP, creates GenSchedule
   ScheduleCommit {
     schedule_length  : Natural,   // L ∈ [10,200]
-    lamp_per_epoch   : Natural,   // λ (oil)
+    lamp_per_epoch   : Natural,   // λ (oildrop)
   }
 
   // constr 1  Phase 2: Fire — permissionless (C-SCH-FIRE-PERMISSION)

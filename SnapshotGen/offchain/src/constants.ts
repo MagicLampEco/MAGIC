@@ -3,7 +3,7 @@
 
 export const Q = 1_000_000_000n;
 // SLOTS_PER_EPOCH is network-specific — use slotsPerEpoch(network) from @magiclamp/protocol-utils
-export const OIL_PER_LAMP      = 1_000_000n;
+export const OILDROP_PER_LAMP      = 1_000_000n;
 export const NANOGIC_PER_MAGIC = 1_000_000_000n;
 
 // ── SnapshotGen (§19.1) ──────────────────────────────────────

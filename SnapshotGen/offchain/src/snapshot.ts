@@ -14,7 +14,7 @@ import {
 } from "./constants.js";
 import {
   computeLfQ, computeOacQ, computeSnapshotMagic, computeCatchupMagic,
-  isExpired, slotToEpoch, nanogicToMagicStr, qToStr, lampToOil,
+  isExpired, slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop,
 } from "./math.js";
 import { getTipSlot, slotsPerEpoch, msPerEpoch, posixMsToEpoch, type Network } from "@magiclamp/protocol-utils";
 import {

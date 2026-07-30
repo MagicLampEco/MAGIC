@@ -9,7 +9,7 @@ import type { Profile } from "./types.js";
 
 export interface InitialVaultDatumInputs {
   ownerPkh:           string;
-  lampBalanceOil:     bigint;
+  lampBalanceOildrop:     bigint;
   profile:            Profile;
   currentEpoch:       bigint;
   personalDelegate?:  string | null;
@@ -71,10 +71,10 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
     total_events:     bigint;
   };
 } {
-  const { ownerPkh, lampBalanceOil, profile, currentEpoch } = inputs;
+  const { ownerPkh, lampBalanceOildrop, profile, currentEpoch } = inputs;
 
-  if (lampBalanceOil <= 0n) {
-    throw new Error(`lampDeposit must be > 0 oil (got ${lampBalanceOil})`);
+  if (lampBalanceOildrop <= 0n) {
+    throw new Error(`lampDeposit must be > 0 oildrop (got ${lampBalanceOildrop})`);
   }
   if (!/^[0-9a-fA-F]{56}$/.test(ownerPkh)) {
     throw new Error(`ownerPkh must be 28-byte hex (got "${ownerPkh}")`);
@@ -85,10 +85,10 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
 
   return {
     owner:        ownerPkh,
-    lamp_balance: lampBalanceOil,
+    lamp_balance: lampBalanceOildrop,
     lamp_locked:  0n,
     loyalty_holdings: [{
-      amount:         lampBalanceOil,
+      amount:         lampBalanceOildrop,
       acquired_epoch: currentEpoch,
       is_locked:      false,
     }],

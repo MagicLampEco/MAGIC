@@ -91,7 +91,7 @@ for (let shardId = 0; shardId < 16; shardId++) {
 ## Bước 3: Run two-phase flow
 
 ```typescript
-import { createLucid, buildScheduleCommitTx, buildScheduleFireTx, signAndSubmit, lampToOil } from "@magiclamp/schedulegen-sdk";
+import { createLucid, buildScheduleCommitTx, buildScheduleFireTx, signAndSubmit, lampToOildrop } from "@magiclamp/schedulegen-sdk";
 
 const lucid  = await createLucid(process.env.BLOCKFROST_KEY!);
 const shardUtxos = await lucid.utxosAt(shardScriptAddress);  // all 16
@@ -100,7 +100,7 @@ const shardUtxos = await lucid.utxosAt(shardScriptAddress);  // all 16
 const commitResult = await buildScheduleCommitTx({
   lucid, vaultUtxo, shardUtxos,
   scheduleLength: 100n,         // L=100 orders (~500 days)
-  lampPerEpoch:   lampToOil(4000n),  // λ=4000 LAMP per fire
+  lampPerEpoch:   lampToOildrop(4000n),  // λ=4000 LAMP per fire
   userAddress:    await lucid.wallet().address(),
 });
 console.log(commitResult.summary);

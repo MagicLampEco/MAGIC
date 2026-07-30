@@ -1,17 +1,17 @@
 // src/math.ts — BigInt Math Engine (spec §6)
-// ALL arithmetic uses BigInt. NEVER use Number for oil/nanogic/Q-format (C-OVERFLOW).
+// ALL arithmetic uses BigInt. NEVER use Number for oildrop/nanogic/Q-format (C-OVERFLOW).
 // TV-OVERFLOW-01/02: Number fails for large values. BigInt required.
 
 import {
   Q, INSTANT_BASE_RATE_Q, PM_Q, UM_FALLBACK_Q, UM_MAX_STALENESS,
 } from "./constants.js";
 import {
-  slotToEpoch, nanogicToMagicStr, qToStr, lampToOil, oilToLamp,
+  slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp,
 } from "@magiclamp/protocol-utils";
 import type { UMDatum } from "./types.js";
 
 // Re-export shared primitives to preserve module's public API
-export { slotToEpoch, nanogicToMagicStr, qToStr, lampToOil, oilToLamp };
+export { slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp };
 
 // ── §6.1 Q-format operations ─────────────────────────────────
 
@@ -47,14 +47,14 @@ export function batchAge(createdEpoch: bigint, currentEpoch: bigint): bigint {
 //   Instant 1000 LAMP, Flame, UM=1.0 → ≈ 3.15 MAGIC (§20.3)
 //
 // Verify:
-//   L = 1000 × 10^6 = 10^9 oil
+//   L = 1000 × 10^6 = 10^9 oildrop
 //   step1 = 10^9 × 3_000_000_000 / Q = 3_000_000_000
 //   step2 = 3_000_000_000 × Q / Q    = 3_000_000_000  (UM=1.0)
 //   step3 = 3_000_000_000 × 1_050_000_000 / Q = 3_150_000_000  (PM_Flame)
 //   Result: 3_150_000_000 nanogic = 3.15 MAGIC ✓
 
 export function computeInstantMagic(
-  lampPaid : bigint,  // in oil
+  lampPaid : bigint,  // in oildrop
   umQ      : bigint,  // Q-format UM (after stale check)
   pmQ      : bigint,  // Q-format PM for the vault's profile
 ): bigint {

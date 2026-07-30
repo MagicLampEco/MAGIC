@@ -144,7 +144,7 @@ describe("math — Q-format fee caps", () => {
     expect(q).toBe(1_000_000_000n);
   });
 
-  it("TV-PM-PRICE-01: lampCap(10M, 0.5×Q) == 5M oil", () => {
+  it("TV-PM-PRICE-01: lampCap(10M, 0.5×Q) == 5M oildrop", () => {
     expect(lampCap(10_000_000n, 500_000_000n)).toBe(5_000_000n);
   });
 
@@ -179,7 +179,7 @@ describe("meter state — magic_consumed + did_lamp_map", () => {
     expect(sumBurns(burns)).toBe(15_000_000n);
   });
 
-  it("lookupDid: miss → 0, hit → đúng oil", () => {
+  it("lookupDid: miss → 0, hit → đúng oildrop", () => {
     const map: DidLampEntry[] = [["feed", 3n], [OWNER, 99n]];
     expect(lookupDid(map, "nope")).toBe(0n);
     expect(lookupDid(map, OWNER)).toBe(99n);

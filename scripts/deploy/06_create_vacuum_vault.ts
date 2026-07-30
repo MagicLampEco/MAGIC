@@ -27,7 +27,7 @@ import { blake2b } from "@noble/hashes/blake2b";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
-  lampToOil,
+  lampToOildrop,
 } from "../config.js";
 
 const VaultDatumSchema = Data.Object({
@@ -106,11 +106,11 @@ const VaultDatumSchema = Data.Object({
   }),
 });
 
-const INITIAL_LAMP_DEPOSIT = lampToOil(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
-const INITIAL_LAMP_LOCKED  = lampToOil(BigInt(process.env.LAMP_LOCKED ?? "0"));
+const INITIAL_LAMP_DEPOSIT = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
+const INITIAL_LAMP_LOCKED  = lampToOildrop(BigInt(process.env.LAMP_LOCKED ?? "0"));
 const INITIAL_PROFILE      = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
 const LAST_UPDATED_OFFSET  = BigInt(process.env.LAST_UPDATED_OFFSET ?? "1");
-const PRESEED_ORDER_LAMBDA = lampToOil(BigInt(process.env.PRESEED_ORDER_LAMBDA ?? "0"));
+const PRESEED_ORDER_LAMBDA = lampToOildrop(BigInt(process.env.PRESEED_ORDER_LAMBDA ?? "0"));
 const PRESEED_ORDER_FIRE_AGE = BigInt(process.env.PRESEED_ORDER_FIRE_AGE ?? "0");
 
 function bigIntToBytesBE(n: bigint, len: number): Buffer {

@@ -7,7 +7,7 @@
 
 | Ký hiệu | Đơn vị | Mô tả |
 |---|---|---|
-| `λ` | oil (= LAMP × 10⁶) | LAMP cam kết tại commit |
+| `λ` | oildrop (= LAMP × 10⁶) | LAMP cam kết tại commit |
 | `VBR` | — | Vacuum Base Rate = 0.5 |
 | `UM_smoothed` | Q-format | Network Demand Multiplier, luôn smoothed (C-UM-7) |
 | `SM` | Q-format | Streak Multiplier (§6.5) |
@@ -81,7 +81,7 @@ SM đọc từ `vault.streak_state.current_streak`. Không phụ thuộc vào pr
 VBR_Q = 500_000_000   // = 0.5×
 ```
 
-Nghĩa: 1 LAMP (10⁶ oil) với UM=1.0, SM=1.0 tạo 0.5 MAGIC.
+Nghĩa: 1 LAMP (10⁶ oildrop) với UM=1.0, SM=1.0 tạo 0.5 MAGIC.
 
 Nguồn: `constants.ak:vbr_q` (dòng 9), `constants.ts:VBR_Q` (dòng 9).
 
@@ -109,7 +109,7 @@ Sắp xếp holdings theo `acquired_epoch` giảm dần, khóa từ youngest:
 ```
 select_lamp_for_lock(holdings, lambda):
   sorted = sort_desc_by_epoch(holdings)
-  lock lambda oil from youngest, split holding nếu cần
+  lock lambda oildrop from youngest, split holding nếu cần
 ```
 
 Mục tiêu: free holdings = oldest → LF(free) tối đa (LF tăng theo tuổi).
@@ -118,7 +118,7 @@ Nguồn: `lock.ak:select_lamp_for_lock` (dòng 21-56), `math.ts:selectLampForLoc
 
 ### Unlock tại Fire (oldest-first)
 
-Xoá `lambda` oil từ locked holdings, ưu tiên oldest locked trước:
+Xoá `lambda` oildrop từ locked holdings, ưu tiên oldest locked trước:
 
 ```
 remove_locked_amount(holdings, lambda):
@@ -137,7 +137,7 @@ Nguồn: `lock.ak:remove_locked_amount` (dòng 65-75).
 ### TV-VAC-01 (App B §B.4)
 
 ```
-Input:  λ = 1_000_000_000 oil (1000 LAMP)
+Input:  λ = 1_000_000_000 oildrop (1000 LAMP)
         UM_smoothed_Q = 1_500_000_000 (1.5×)
         streak = 8  →  SM_Q = 1_100_000_000 (1.10×)
         VBR_Q = 500_000_000
@@ -152,7 +152,7 @@ Expected: 825_000_000 nanogic = 0.825 MAGIC
 ### TV-VAC-CALIB (§20.3 calibration)
 
 ```
-Input:  λ = 1_000_000_000 oil
+Input:  λ = 1_000_000_000 oildrop
         UM_smoothed_Q = 1_000_000_000 (1.0×)
         streak = 0  →  SM_Q = 1_000_000_000 (1.00×)
 
@@ -166,7 +166,7 @@ Expected: 500_000_000 nanogic = 0.5 MAGIC (baseline calibration)
 ### TV-VAC-MAX
 
 ```
-Input:  λ = 1_000_000_000 oil
+Input:  λ = 1_000_000_000 oildrop
         UM_smoothed_Q = 2_000_000_000 (2.0× — max)
         streak = 12  →  SM_Q = 1_200_000_000 (1.20×)
 
@@ -221,8 +221,8 @@ Expected VacuumGen: 2_000_000_000 (C-UM-7 — never fallback)
 
 | Điều kiện | Giá trị | Kết quả |
 |---|---|---|
-| `lambda < 1 LAMP` | `< 1_000_000 oil` | Reject C-VAC-3 |
-| `lambda == 1 LAMP` | `= 1_000_000 oil` | Accept |
+| `lambda < 1 LAMP` | `< 1_000_000 oildrop` | Reject C-VAC-3 |
+| `lambda == 1 LAMP` | `= 1_000_000 oildrop` | Accept |
 | `UM < UM_MIN` | `< 500_000_000` | Reject validate_um_range |
 | `UM == UM_MIN` | `= 500_000_000` | Accept |
 | `UM > UM_MAX` | `> 2_000_000_000` | Reject validate_um_range |
@@ -238,6 +238,6 @@ Expected VacuumGen: 2_000_000_000 (C-UM-7 — never fallback)
 ## 11. BigInt + Q-format Safety (C-OVERFLOW)
 
 - Tất cả tính toán dùng `Int` (Aiken) / `bigint` (TypeScript).
-- Không dùng `Number` cho `oil`, `nanogic`, `Q`.
+- Không dùng `Number` cho `oildrop`, `nanogic`, `Q`.
 - Sequential floor division: 3 bước `⌊×/Q⌋` riêng lẻ.
 - TV-OVERFLOW-01/02 trong test suite bắt regression nếu dùng `Number`.

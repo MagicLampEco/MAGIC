@@ -53,7 +53,7 @@ pub fn clamp(x: Int, lo: Int, hi: Int) -> Int {
 // Error: ≤ 3 nanogic total (L4)
 
 pub fn compute_instant_magic(
-  lamp_paid : Int,  // in oil
+  lamp_paid : Int,  // in oildrop
   um_q      : Int,  // Q-format UM (after stale check)
   pm_q      : Int,  // Q-format Profile Multiplier
 ) -> Int {

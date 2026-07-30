@@ -469,7 +469,7 @@ fn rd_data(r: PaymasterRedeemer) -> Data {
 }
 
 /// Run validator: cấu hình đầy đủ. validity-range cửa sổ hẹp quanh cur_epoch.
-/// lamp_to_tsy: oil LAMP gửi về treasury (SEC-01). Nếu > 0 thêm output @treasury_addr.
+/// lamp_to_tsy: oildrop LAMP gửi về treasury (SEC-01). Nếu > 0 thêm output @treasury_addr.
 fn run(
   policy        : SponsorPolicy,
   policy_nft_q  : Int,
@@ -749,7 +749,7 @@ test pm_neg_did_cap() fail {
   let proto = ct_protocol(500_000_000, True, 6)
   let vref = util.mk_ref_id(#"a1", 0)
   let vault = ct_vault_input(0, Some(ct_app_auth))
-  // burns lớn để cap đủ, did đã dùng 9.999 LAMP, op 5M → vượt 10 LAMP (oil).
+  // burns lớn để cap đủ, did đã dùng 9.999 LAMP, op 5M → vượt 10 LAMP (oildrop).
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 1_000_000_000)])  // cap 500M
   let m_in =
     SponsorMeter {

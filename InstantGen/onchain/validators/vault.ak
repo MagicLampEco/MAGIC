@@ -164,10 +164,10 @@ fn validate_instant_gen(
   // skip halving. Enforce epoch monotonicity against the vault's own clock.
   expect current_epoch >= input_datum.last_updated_epoch
 
-  // ── C-INST-1: lamp_paid ≥ 10 LAMP = 10^7 oil ────────────
+  // ── C-INST-1: lamp_paid ≥ 10 LAMP = 10^7 oildrop ────────────
   expect lamp_paid >= min_instant_purchase
 
-  // ── C-INST-2: lamp_paid ≤ 10^13 oil ─────────────────────
+  // ── C-INST-2: lamp_paid ≤ 10^13 oildrop ─────────────────────
   expect lamp_paid <= max_instant_purchase
 
   // ── C-INST-3: lamp_paid ≤ L_avail ───────────────────────

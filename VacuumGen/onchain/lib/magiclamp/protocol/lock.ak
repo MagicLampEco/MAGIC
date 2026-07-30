@@ -20,7 +20,7 @@ use magiclamp/protocol/types.{LoyaltyHolding}
 
 pub fn select_lamp_for_lock(
   holdings : List<LoyaltyHolding>,
-  amount   : Int,               // oil to lock
+  amount   : Int,               // oildrop to lock
 ) -> List<LoyaltyHolding> {
   // Sort youngest-first (desc acquired_epoch)
   let sorted = list.sort(holdings, fn(a, b) { int.compare(b.acquired_epoch, a.acquired_epoch) })
@@ -59,7 +59,7 @@ fn lock_from_youngest(
 // remove_locked_amount — oldest-locked-first (§A.9)
 // ══════════════════════════════════════════════════════════════
 //
-// Called at fire time: remove λ oil from locked holdings.
+// Called at fire time: remove λ oildrop from locked holdings.
 // Removes oldest locked holdings first (FIFO for locks).
 
 pub fn remove_locked_amount(

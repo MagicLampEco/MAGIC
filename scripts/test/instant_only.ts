@@ -21,12 +21,12 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
-  lampToOil,
+  lampToOildrop,
 } from "../config.js";
 import { buildInstantGenTx } from "../../InstantGen/offchain/src/instant.js";
 import { VaultDatumSchema, UMDatumSchema } from "../../InstantGen/offchain/src/types.js";
 
-const LAMP_PAID = lampToOil(BigInt(process.env.LAMP_PAID ?? "100"));
+const LAMP_PAID = lampToOildrop(BigInt(process.env.LAMP_PAID ?? "100"));
 
 async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -159,7 +159,7 @@ async function main() {
     const result = await buildInstantGenTx({
       lucid,
       vaultUtxo,
-      lampPaidOil:     LAMP_PAID,
+      lampPaidOildrop:     LAMP_PAID,
       umDatumUtxo,
       userAddress:     address,
       vaultScript,

@@ -14,9 +14,9 @@ use cardano/transaction.{OutputReference}
 /// SponsorPolicy — beacon (reference input), mang SponsorPolicy NFT one-shot.
 /// DAO approval đặt tham số. App tx-builder đọc qua reference input.
 ///   app_authority         : VerificationKeyHash bắt buộc cosign (= personal_delegate)
-///   max_per_did_per_epoch : oil — cap mỗi DID (MVP: owner-key) mỗi epoch
-///   max_global_per_epoch  : oil — cap toàn app mỗi epoch
-///   lamp_per_magic_q      : Q-format (lamp_oil / nanogic). 1.0 = Q = 1 LAMP/MAGIC
+///   max_per_did_per_epoch : oildrop — cap mỗi DID (MVP: owner-key) mỗi epoch
+///   max_global_per_epoch  : oildrop — cap toàn app mỗi epoch
+///   lamp_per_magic_q      : Q-format (lamp_oildrop / nanogic). 1.0 = Q = 1 LAMP/MAGIC
 ///   ada_per_magic_q       : Q-format (lovelace / nanogic)
 ///   oracle_nft_policy     : None = MVP tự định; Some = CIP-31 oracle (v1.x)
 ///   epoch                 : epoch cập nhật (đơn điệu tăng)
@@ -33,9 +33,9 @@ pub type SponsorPolicy {
 
 /// SponsorMeter — thread UTxO (1 per app per epoch), mang SponsorMeter NFT.
 /// Datum ghi quota đã dùng. Thread NFT chống double-meter (1 UTxO duy nhất).
-///   did_lamp_map       : (did_key, lamp_sponsored_oil) per DID/owner-key. HARD-CAP
+///   did_lamp_map       : (did_key, lamp_sponsored_oildrop) per DID/owner-key. HARD-CAP
 ///                        list.length ≤ max_did_entries (fail-closed, DoS guard).
-///   global_lamp_epoch  : tổng oil đã sponsor trong epoch
+///   global_lamp_epoch  : tổng oildrop đã sponsor trong epoch
 ///   global_magic_epoch : Σ nanogic đã tiêu trong epoch — P0-5: dùng bởi FlowRateKeeper
 ///                        (append-only field, không break datum cũ chưa có UTxO on-chain)
 pub type SponsorMeter {
@@ -63,7 +63,7 @@ pub type ProtocolFeeParams {
 ///   policy_ref  : reference input SponsorPolicy beacon
 ///   protocol_ref: reference input ProtocolFeeParams beacon (sàn)
 ///   did_key     : khoá per-user trong did_lamp_map (MVP = EngageDatum.owner)
-///   lamp_this   : oil app khai sponsor op này (validator ép ≤ trần + cập quota)
+///   lamp_this   : oildrop app khai sponsor op này (validator ép ≤ trần + cập quota)
 ///   ada_this    : lovelace app khai sponsor op này (validator ép ≤ trần)
 pub type PaymasterRedeemer {
   Sponsor {

@@ -12,7 +12,7 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, PROTOCOL,
-  lampToOil,
+  lampToOildrop,
 } from "../config.js";
 
 // VaultDatum schema (full — must match Aiken types exactly)
@@ -102,8 +102,8 @@ const VaultDatumSchema = Data.Object({
 //   PRESEED_BATCHES         — number of fresh Snapshot batches to pre-seed (default 0)
 //   PRESEED_EXPIRED         — number of expired Snapshot batches (default 0, created_epoch = current - 100)
 //   PRESEED_BURNS           — number of recent burn entries in activity_state (default 0)
-const INITIAL_LAMP_DEPOSIT = lampToOil(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
-const INITIAL_LAMP_LOCKED  = lampToOil(BigInt(process.env.LAMP_LOCKED ?? "0"));
+const INITIAL_LAMP_DEPOSIT = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
+const INITIAL_LAMP_LOCKED  = lampToOildrop(BigInt(process.env.LAMP_LOCKED ?? "0"));
 const INITIAL_PROFILE      = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
 const LAST_UPDATED_OFFSET  = BigInt(process.env.LAST_UPDATED_OFFSET ?? "1");
 const LOYALTY_AGE_EPOCHS   = BigInt(process.env.LOYALTY_AGE_EPOCHS ?? "0");

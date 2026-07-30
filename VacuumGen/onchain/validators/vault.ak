@@ -111,7 +111,7 @@ validator vault(
 // ═══════════════════════════════════════════════════════════════
 fn validate_vacuum_commit(
   input_datum    : VaultDatum,
-  lambda         : Int,              // oil to lock (λ)
+  lambda         : Int,              // oildrop to lock (λ)
   current_epoch  : Int,
   own_ref         : OutputReference,
   lamp_policy_id  : PolicyId,
@@ -126,7 +126,7 @@ fn validate_vacuum_commit(
   // ── C-VAC-1: User signs ──────────────────────────────────────
   expect list.has(tx.extra_signatories, input_datum.owner)
 
-  // ── C-VAC-3: λ ≥ 1 LAMP (10^6 oil) ─────────────────────────
+  // ── C-VAC-3: λ ≥ 1 LAMP (10^6 oildrop) ─────────────────────────
   expect lambda >= min_vacuum_amount
 
   // ── C-VAC-2: λ ≤ L_avail ────────────────────────────────────

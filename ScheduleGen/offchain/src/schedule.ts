@@ -17,7 +17,7 @@ import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, nextFireEpoch, countEligibleFires,
   selectLampForLock, removeLockedAmount, lAvail,
-  lampToOil, nanogicToMagicStr, qToStr,
+  lampToOildrop, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
@@ -46,7 +46,7 @@ export interface CommitParams {
   vaultUtxo       : UTxO;
   shardUtxos      : UTxO[];    // all 16 shard UTxOs (builder finds the right one)
   scheduleLength  : bigint;    // L ∈ [10,200]
-  lampPerEpoch    : bigint;    // λ in oil
+  lampPerEpoch    : bigint;    // λ in oildrop
   userAddress     : string;
   /** Compiled vault validator (4 params: lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch). */
   vaultScript     : Validator;
@@ -218,7 +218,7 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     `═══ ScheduleGen Commit ═══`,
     `Commit epoch:    ${commitEpoch}`,
     `Schedule length: ${L} orders (~${Number(L) * 5} days)`,
-    `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oil)`,
+    `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oildrop)`,
     `Total locked:    ${totalLock / 1_000_000n} tLAMP`,
     `rate_locked_q:   ${rateLockedQ} (immutable forever — T8)`,
     `M_i per fire:    ${nanogicToMagicStr(mPerFire)} MAGIC`,

@@ -151,7 +151,7 @@ pub type UMDatum {
 // ── Vault redeemer ───────────────────────────────────────────
 // NORMATIVE: append-only enum. New variants at END only.
 pub type VaultRedeemer {
-  // constr 0  VacuumCommit: lock λ oil for fire in 2 epochs (§10.1 Phase 1)
+  // constr 0  VacuumCommit: lock λ oildrop for fire in 2 epochs (§10.1 Phase 1)
   VacuumCommit { lambda: Natural }
   // constr 1  VacuumFire: permissionless fire by order_id (§10.1 Phase 2)
   VacuumFire   { order_id: ByteArray }

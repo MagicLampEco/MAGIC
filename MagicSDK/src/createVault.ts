@@ -25,7 +25,7 @@
 //     validators: { vaultUnappliedCbor },
 //     vault: {
 //       ownerPkh: "<28-byte hex>",
-//       lampDeposit: 1_000_000_000n,   // 1000 LAMP in oil
+//       lampDeposit: 1_000_000_000n,   // 1000 LAMP in oildrop
 //       profile: "Flame",
 //     },
 //   });
@@ -62,7 +62,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     throw new Error("protocol.lampPolicyId is required");
   }
   if (vault.lampDeposit <= 0n) {
-    throw new Error(`vault.lampDeposit must be > 0 oil (got ${vault.lampDeposit})`);
+    throw new Error(`vault.lampDeposit must be > 0 oildrop (got ${vault.lampDeposit})`);
   }
   // Per-vault-type sanity is enforced inside applyVaultValidator.
 
@@ -88,15 +88,15 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   );
   if (lampBalance < vault.lampDeposit) {
     throw new Error(
-      `Wallet has ${lampBalance} oil LAMP (= ${lampBalance / 1_000_000n} LAMP); ` +
-      `need ${vault.lampDeposit} oil (= ${vault.lampDeposit / 1_000_000n} LAMP).`,
+      `Wallet has ${lampBalance} oildrop LAMP (= ${lampBalance / 1_000_000n} LAMP); ` +
+      `need ${vault.lampDeposit} oildrop (= ${vault.lampDeposit / 1_000_000n} LAMP).`,
     );
   }
 
   // ── Build initial VaultDatum ─────────────────────────────────
   const initialVault = buildInitialVaultDatum({
     ownerPkh:         vault.ownerPkh,
-    lampBalanceOil:   vault.lampDeposit,
+    lampBalanceOildrop:   vault.lampDeposit,
     profile,
     currentEpoch,
     personalDelegate: vault.personalDelegate ?? null,
@@ -152,7 +152,7 @@ function formatSummary(o: {
     `Vault type:      ${o.vaultType}  (${o.network})`,
     `Owner pkh:       ${o.ownerPkh}`,
     `Profile:         ${o.profile}`,
-    `LAMP deposit:    ${o.lampDeposit / 1_000_000n} LAMP (${o.lampDeposit} oil)`,
+    `LAMP deposit:    ${o.lampDeposit / 1_000_000n} LAMP (${o.lampDeposit} oildrop)`,
     `Current epoch:   ${o.currentEpoch}  (POSIX-derived)`,
     `Vault address:   ${o.vaultAddress}`,
     `Vault hash:      ${o.vaultScriptHash}`,

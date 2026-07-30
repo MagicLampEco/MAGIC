@@ -211,7 +211,7 @@ currentEpoch (InstantGen tx) = 100
 staleness = 100 - 98 = 2 > UM_MAX_STALENESS (=1)
 → um_for_instant = UM_FALLBACK_Q = 500_000_000
 
-L_avail = 1_000_000_000_000  (1_000_000 LAMP in oil)
+L_avail = 1_000_000_000_000  (1_000_000 LAMP in oildrop)
 PM = 1_050_000_000  (Flame profile)
 
 MAGIC_output = ⌊ ⌊ ⌊ L × BASE / Q ⌋ × UM_FALLBACK / Q ⌋ × PM / Q ⌋

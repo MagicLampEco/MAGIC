@@ -31,7 +31,7 @@ describe("buildInitialVaultDatum", () => {
   it("produces clean genesis state for a fresh vault", () => {
     const d = buildInitialVaultDatum({
       ownerPkh:       PKH_28,
-      lampBalanceOil: 1_000_000_000n,
+      lampBalanceOildrop: 1_000_000_000n,
       profile:        "Flame",
       currentEpoch:   20589n,
     });
@@ -56,13 +56,13 @@ describe("buildInitialVaultDatum", () => {
 
   it("rejects ownerPkh not 28-byte hex", () => {
     expect(() => buildInitialVaultDatum({
-      ownerPkh: "short", lampBalanceOil: 1n, profile: "Flame", currentEpoch: 0n,
+      ownerPkh: "short", lampBalanceOildrop: 1n, profile: "Flame", currentEpoch: 0n,
     })).toThrow("28-byte hex");
   });
 
   it("rejects zero or negative lamp deposit", () => {
     expect(() => buildInitialVaultDatum({
-      ownerPkh: PKH_28, lampBalanceOil: 0n, profile: "Flame", currentEpoch: 0n,
+      ownerPkh: PKH_28, lampBalanceOildrop: 0n, profile: "Flame", currentEpoch: 0n,
     })).toThrow("> 0");
   });
 
@@ -70,7 +70,7 @@ describe("buildInitialVaultDatum", () => {
     const delegatePkh = "a".repeat(56);
     const d = buildInitialVaultDatum({
       ownerPkh:         PKH_28,
-      lampBalanceOil:   1n,
+      lampBalanceOildrop:   1n,
       profile:          "Lantern",
       currentEpoch:     0n,
       personalDelegate: delegatePkh,
@@ -80,7 +80,7 @@ describe("buildInitialVaultDatum", () => {
 
   it("rejects malformed personalDelegate", () => {
     expect(() => buildInitialVaultDatum({
-      ownerPkh: PKH_28, lampBalanceOil: 1n, profile: "Flame", currentEpoch: 0n,
+      ownerPkh: PKH_28, lampBalanceOildrop: 1n, profile: "Flame", currentEpoch: 0n,
       personalDelegate: "nothex",
     })).toThrow("personalDelegate");
   });
@@ -92,7 +92,7 @@ describe("VaultDatumSchema CBOR roundtrip", () => {
   it("Data.to → Data.from preserves all fields", () => {
     const original = buildInitialVaultDatum({
       ownerPkh:       PKH_28,
-      lampBalanceOil: 5_000_000n,
+      lampBalanceOildrop: 5_000_000n,
       profile:        "Ember",
       currentEpoch:   12345n,
     });

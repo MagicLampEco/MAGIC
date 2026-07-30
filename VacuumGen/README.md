@@ -73,7 +73,7 @@ cd onchain && aiken build
 ## Bước 3: Run two-phase flow
 
 ```typescript
-import { createLucid, buildVacuumCommitTx, buildVacuumFireTx, signAndSubmit, lampToOil } from "@magiclamp/vacuumgen-sdk";
+import { createLucid, buildVacuumCommitTx, buildVacuumFireTx, signAndSubmit, lampToOildrop } from "@magiclamp/vacuumgen-sdk";
 
 const lucid = await createLucid(process.env.BLOCKFROST_KEY!);
 lucid.selectWallet.fromPrivateKey(process.env.PRIVATE_KEY!);
@@ -82,7 +82,7 @@ lucid.selectWallet.fromPrivateKey(process.env.PRIVATE_KEY!);
 const commitResult = await buildVacuumCommitTx({
   lucid,
   vaultUtxo: await lucid.utxoByUnit(vaultNFT),
-  lambdaOil: lampToOil(1000n),   // 1000 LAMP
+  lambdaOildrop: lampToOildrop(1000n),   // 1000 LAMP
   userAddress: await lucid.wallet().address(),
 });
 console.log(commitResult.summary);

@@ -176,9 +176,9 @@ Tư-cách là **một hệ số duy nhất** nhân vào tỷ lệ Gen, gộp 4 t
 
 **Cổng thặng dư + trần cộng-dồn theo năng-lực-ScheduleGen (anh chốt 2026-07-30):**
 
-Trần InstantGen là phần **CÒN LẠI** của ngân-sách-gen-chung của DID trong epoch, sau khi trừ phần đã sinh:
+Trần InstantGen là ba phanh cùng chặn, phanh-thứ-ba **tự-siết qua LAMP-khoá** (không cần bộ đếm):
 ```
-cấp thực = min( reward(consumed), cap_surplus(br), pp_schedule − gen_this_epoch )
+cấp thực = min( reward(consumed), cap_surplus(br), ⌊ L_avail_hiện_tại × RATE_REF_Q / Q ⌋ )
 cap_surplus = f · S · (br − br_safe) / br_safe   khi xanh (f ≤ 0.10)
 cap_surplus = 0                                   khi đỏ
 ```
@@ -189,25 +189,26 @@ cap_surplus = 0                                   khi đỏ
   ```
   Thêm LAMP làm trần tăng **NGAY** trong epoch (đẩy nhu cầu nắm LAMP — mục tiêu kinh tế). Muốn gen nhiều hơn → phải MUA & NẮM thêm LAMP.
   - **`INV-INSTANT-LOCK` — khoá LAMP-nền intra-epoch, chống flash-rent (anh chốt 2026-07-30).** Khi InstantGen sinh dùng `L_used` LAMP-khả-dụng, **`L_used` bị KHOÁ tới hết epoch hiện tại** (`lamp_locked += L_used`), giải-phóng khi sang epoch mới — giống ScheduleGen nhưng áp trong CHÍNH epoch này. Hệ quả: (a) không thể **thuê LAMP 1 tx rồi trả ngay** để đội trần — muốn hưởng suất phải để LAMP nằm khoá trọn epoch; (b) `L_avail = lamp_balance − lamp_locked` **tự co lại** sau mỗi lần gen trong epoch → trần tự siết, LAMP-khoá vật lý trở thành thước đo ngân sách. LAMP-khoá cho InstantGen KHÔNG chuyển đi đâu (I-ACT-7 giữ nguyên: `lamp_balance` bất biến, chỉ `lamp_locked` đổi). MAGIC sinh ra là **use-or-lose trong epoch** (§4.2): tiêu ngay trong epoch, phần dư **huỷ hết** khi snapshot sang epoch.
-- **`gen_this_epoch` = ngân-sách-gen-chung ĐÃ DÙNG** — đếm **TỔNG** MAGIC DID sinh trong epoch hiện tại từ **CẢ InstantGen LẪN ScheduleGen-fire** (một ngân sách, hai cửa cùng rút). Đây là bộ đếm SINH **cộng-dồn on-chain** (trường datum), reset khi sang epoch mới. **KHÔNG suy từ số dư MAGIC** — nếu suy từ số dư thì đốt MAGIC sẽ "trả chỗ" → gen lại vô hạn (**`INV-GEN-BUDGET`**).
-- *Ví dụ (anh chốt):* hồ sơ cho phép ScheduleGen 1000 MAGIC/epoch; đã gen 800 (Instant + Schedule) → InstantGen còn tối đa 200. Nạp thêm LAMP nâng `pp_schedule` → trần nới ngay.
+- **KHÔNG có bộ đếm `gen_this_epoch` (hội đồng 3-ghế 2026-07-30 — anh chốt bỏ).** Vì gen KHOÁ LAMP (`INV-INSTANT-LOCK`), `L_avail_hiện_tại = lamp_balance − lamp_locked` **đã tự trừ** mọi phần đã sinh trong epoch (Schedule-commit + Instant-gen trước). Chứng minh: `Σ_vault gen ≤ Σ_vault lamp_balance = LAMP-DID-kiểm-soát` (bảo toàn LAMP: 1 token ở đúng 1 UTxO) → **số vault không xuất hiện trong bất đẳng thức**; chia N vault vô hại; "một ngân sách hai cửa" là hệ quả miễn phí của khoá. Bỏ hẳn trường datum đếm.
+  - **`INV-GEN-BUDGET` giữ KHÔNG cần đếm — hai điều kiện CỨNG:** (1) **khoá giải phóng CHỈ theo chuyển-epoch, CẤM giải theo burn** (đốt MAGIC không được "trả chỗ" LAMP-khoá) — cổng `current_epoch > lock_epoch` đặt ở **MỌI** đường thả `lamp_locked` (Withdraw/unlock/ProfileChange), sót một đường là thủng; (2) **làm tròn LÊN LAMP-khoá** cho mỗi `m` MAGIC (`⌈ m × Q / RATE_REF_Q ⌉`) — không bao giờ khoá thiếu tỷ lệ. Cần thêm đường thả **permissionless-sau-epoch** chống kẹt vốn nếu owner mất khoá.
+- *Ví dụ:* DID nắm 1000 LAMP (`L_avail`=1000). Schedule-commit khoá 600 → `L_avail`=400 → InstantGen còn tối đa ⌊400·ρ⌋=400 MAGIC/epoch. Mua & khoá thêm LAMP nâng trần ngay; LAMP đã khoá không dùng lại tới sang epoch.
 - `br = B/S`: `B` = backing thật (oracle LAMP CHỈ định-giá B — F6), `S` = cung MAGIC hiệu lực (đã Gen chưa tiêu chưa reset). `br_safe = 1.5`.
 - **Xanh** (`br > br_safe`): được Gen. **Đỏ** (`br ≤ br_safe`): `cap = 0` (khoá Gen). Sau Gen: `br' ≥ br_safe`.
 
-> **Vì sao bỏ hệ-số `0.5×` cũ:** bản trước chặn `InstantGen ≤ 0.5 × pp_schedule` để (a) giữ Instant < Schedule cho kênh tích-backing sống, (b) chặn cá voi hút cạn `cap_surplus`. Vai (a) nay do **ngân-sách-gen-chung** đảm nhiệm (Instant + Schedule cùng rút một `pp_schedule`, không double-dip 2×pp); vai (b) do chính `cap_surplus` giữ. Dùng **full `pp_schedule`** làm trần khớp đúng 3 ví dụ anh (1000/500/+200).
+> **Vì sao bỏ hệ-số `0.5×` cũ:** bản trước chặn `InstantGen ≤ 0.5 × pp_schedule` để (a) giữ Instant < Schedule cho kênh tích-backing sống, (b) chặn cá voi hút cạn `cap_surplus`. Vai (a) nay do **LAMP-khoá** đảm nhiệm (Instant + Schedule cùng rút một pool `L_avail`; khoá của cửa này tự trừ khả-dụng của cửa kia, không double-dip 2×pp); vai (b) do chính `cap_surplus` giữ. Dùng **full `⌊L_avail×RATE/Q⌋`** làm trần thứ ba.
 
 **Hai phanh bổ sung:**
 - `cap = 0` khi CARP/MAGIC đang rớt-dưới-mức-neo (depeg).
 - **`INV-CASHBACK-BOUND`**: hoàn-tiền/thưởng mỗi DID ≤ MAGIC thật đã tiêu thụ của DID đó.
 
-**Use-or-lose:** `reward` là **trần-suất mỗi epoch** — nạp vào batch epoch hiện tại, không cộng dồn (§4.2). Ngân-sách `gen_this_epoch` reset theo epoch: sang epoch mới, cả Instant lẫn Schedule-fire lại có đủ `pp_schedule`.
+**Use-or-lose:** `reward` là **trần-suất mỗi epoch** — nạp vào batch epoch hiện tại, không cộng dồn (§4.2). Sang epoch mới, `lamp_locked` giải phóng → `L_avail` phục hồi → cả Instant lẫn Schedule-fire lại có đủ trần.
 
 ### §6.4 ScheduleGen — dòng đều dài hạn, GreenBack đỡ
 **Mục đích:** cần **dòng MAGIC đều đặn nhiều epoch** (ví dụ trả công đội kỹ thuật vài tháng). Nắm/khoá LAMP, hệ bảo đảm `pp` MAGIC **mỗi epoch** trong `N` epoch. LAMP đứng yên, trả nguyên vẹn khi hết hợp đồng.
 
 **Bốn bước:** (1) Ký hợp đồng `pp` MAGIC/epoch × `N` epoch qua cổng-giới-hạn; (2) Tạo MAGIC vào GreenBack (chưa lưu thông); (3) GreenBack mua LAMP khi rẻ → góp backing + đỡ giá lúc sập (giữ đủ `buffer_ep = 2` epoch); (4) **Mỗi epoch sinh batch mới ≤ `pp`** (trần cứng per-epoch), tiêu trong epoch đó — vẫn use-or-lose, KHÔNG hoard.
 
-> **Schedule-fire rút từ NGÂN-SÁCH-GEN-CHUNG (anh chốt 2026-07-30).** Mỗi lần fire nạp MAGIC cũng **cộng vào `gen_this_epoch`** của DID (§6.3) — Instant và Schedule cùng rút một `pp_schedule`, không double-dip. Hệ quả: nếu DID đã dùng hết ngân sách qua InstantGen thì Schedule-fire epoch đó bằng 0 (và ngược lại). Reset theo epoch.
+> **Schedule-fire chung ngân sách qua LAMP-KHOÁ (anh chốt 2026-07-30, hội đồng 3-ghế).** Schedule-commit đã khoá LAMP hợp-đồng (`lamp_locked += Y`) → `L_avail` của Instant tự trừ đi Y. Không cần bộ đếm chung: `gen_schedule(Y) + gen_instant(≤ L_avail) ≤ lamp_balance` đúng ở MỌI epoch nhờ bảo toàn LAMP. Nếu DID đã khoá hết LAMP cho Schedule thì InstantGen epoch đó = 0 (và ngược lại). Sang epoch: khoá giải, cả hai phục hồi.
 
 **Cổng-giới-hạn (vì sao Schedule phải nhỏ):**
 ```

@@ -17,7 +17,7 @@ import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, nextFireEpoch, countEligibleFires,
   selectLampForLock, unlockLockedAmount, isExpired, lAvail,
-  lampToOil, nanogicToMagicStr, qToStr,
+  lampToOildrop, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";

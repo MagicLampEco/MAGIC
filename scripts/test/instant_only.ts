@@ -22,7 +22,7 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
-  lampToOil,
+  lampToOildrop,
 } from "../config.js";
 import { buildInstantGenTx } from "../../InstantGen/offchain/src/instant.js";
 import { VaultDatumSchema, UMDatumSchema } from "../../InstantGen/offchain/src/types.js";

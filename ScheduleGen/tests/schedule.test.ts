@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, countEligibleFires, nextFireEpoch,
-  nanogicToMagicStr, lampToOil, unlockLockedAmount, isExpired, isLive,
+  nanogicToMagicStr, lampToOildrop, unlockLockedAmount, isExpired, isLive,
 } from "../offchain/src/math.js";
 import {
   SCHEDULE_MIN_LENGTH, SCHEDULE_MAX_LENGTH,
@@ -144,10 +144,10 @@ describe("computeSQ — §11.3, T11, T12", () => {
 describe("computeRateLockedQ + computeMi — §11.2/11.4", () => {
 
   it("TV-SCH-02: L=100, λ=4000 LAMP → 45 MAGIC/fire", () => {
-    const { L, lambda_oil, rate_locked_q, M_i, total_magic, S_Q } = TV_SCH_02;
+    const { L, lambda_oildrop, rate_locked_q, M_i, total_magic, S_Q } = TV_SCH_02;
     const sQ   = computeSQ(L);
     const rate = computeRateLockedQ(SNAPSHOT_BASE_RATE_Q, L);
-    const mI   = computeMi(lambda_oil, rate);
+    const mI   = computeMi(lambda_oildrop, rate);
 
     expect(sQ).toBe(S_Q);
     expect(rate).toBe(rate_locked_q);
@@ -157,9 +157,9 @@ describe("computeRateLockedQ + computeMi — §11.2/11.4", () => {
   });
 
   it("TV-SCH-T-DET: same M_i every fire (T-DET)", () => {
-    const { rate_locked_q, lambda_oil, M_i_all_fires } = TV_SCH_T_DET;
+    const { rate_locked_q, lambda_oildrop, M_i_all_fires } = TV_SCH_T_DET;
     for (let fire = 0; fire < 100; fire++) {
-      expect(computeMi(lambda_oil, rate_locked_q)).toBe(M_i_all_fires);
+      expect(computeMi(lambda_oildrop, rate_locked_q)).toBe(M_i_all_fires);
     }
   });
 
@@ -169,22 +169,22 @@ describe("computeRateLockedQ + computeMi — §11.2/11.4", () => {
     // DAO raises R_snap to 10B at epoch 70 — fire at 80 should NOT use this
     const newRSnap = 10_000_000_000n;
     const wrongRate = computeRateLockedQ(newRSnap, 100n);
-    const mICorrect = computeMi(TV_SCH_02.lambda_oil, storedRate);   // stored ✓
-    const mIWrong   = computeMi(TV_SCH_02.lambda_oil, wrongRate);    // would be higher
+    const mICorrect = computeMi(TV_SCH_02.lambda_oildrop, storedRate);   // stored ✓
+    const mIWrong   = computeMi(TV_SCH_02.lambda_oildrop, wrongRate);    // would be higher
 
     expect(mICorrect).toBe(TV_SCH_02.M_i);   // 45B ✓ T8
     expect(mIWrong).toBeGreaterThan(mICorrect);   // higher but NOT what protocol uses
   });
 
   it("TV-SCH-05: C-SCH-RATE prevents M_i=0 at commit", () => {
-    const { lambda_oil, rate_locked_q } = TV_SCH_05;
-    const mI = computeMi(lambda_oil, rate_locked_q);
+    const { lambda_oildrop, rate_locked_q } = TV_SCH_05;
+    const mI = computeMi(lambda_oildrop, rate_locked_q);
     expect(mI).toBe(0n);                         // would be 0
-    expect(checkSchRate(lambda_oil, rate_locked_q)).toBe(false);  // REJECT ✓
+    expect(checkSchRate(lambda_oildrop, rate_locked_q)).toBe(false);  // REJECT ✓
   });
 
   it("T19: C-SCH-RATE soundness — λ×rate≥Q → M_i≥1", () => {
-    const lambda = TV_SCH_02.lambda_oil;
+    const lambda = TV_SCH_02.lambda_oildrop;
     const rate   = TV_SCH_02.rate_locked_q;
     expect(checkSchRate(lambda, rate)).toBe(true);
     expect(computeMi(lambda, rate)).toBeGreaterThanOrEqual(1n);
@@ -287,22 +287,22 @@ describe("Commit constraint boundaries", () => {
 
   it("C-SCH-1: L < 10 → reject", () => {
     const vault = makeVault();
-    expect(() => simulateCommit(vault, 9n, lampToOil(1000n), 50n)).toThrow("C-SCH-1");
+    expect(() => simulateCommit(vault, 9n, lampToOildrop(1000n), 50n)).toThrow("C-SCH-1");
   });
 
   it("C-SCH-1: L = 10 → accept", () => {
     const vault = makeVault();
-    expect(() => simulateCommit(vault, 10n, lampToOil(1000n), 50n)).not.toThrow();
+    expect(() => simulateCommit(vault, 10n, lampToOildrop(1000n), 50n)).not.toThrow();
   });
 
   it("C-SCH-1: L = 200 → accept", () => {
     const vault = makeVault();
-    expect(() => simulateCommit(vault, 200n, lampToOil(1000n), 50n)).not.toThrow();
+    expect(() => simulateCommit(vault, 200n, lampToOildrop(1000n), 50n)).not.toThrow();
   });
 
   it("C-SCH-1: L > 200 → reject", () => {
     const vault = makeVault();
-    expect(() => simulateCommit(vault, 201n, lampToOil(1000n), 50n)).toThrow("C-SCH-1");
+    expect(() => simulateCommit(vault, 201n, lampToOildrop(1000n), 50n)).toThrow("C-SCH-1");
   });
 
   it("C-SCH-3: L×λ > L_avail → reject", () => {
@@ -319,9 +319,9 @@ describe("Commit constraint boundaries", () => {
 describe("C-FIRE-3 atomic fire assertion", () => {
 
   it("TV-SCH-FIRE3: all accounting consistent", () => {
-    const { fires_in_tx, lambda_oil, M_i, assertions } = TV_SCH_FIRE3;
+    const { fires_in_tx, lambda_oildrop, M_i, assertions } = TV_SCH_FIRE3;
     const mTotal       = M_i * BigInt(fires_in_tx);
-    const lampReleased = lambda_oil * BigInt(fires_in_tx);
+    const lampReleased = lambda_oildrop * BigInt(fires_in_tx);
 
     expect(BigInt(fires_in_tx)).toBe(assertions.fired_count_delta);
     // I-ACT-7: the balance does not move; only the lock is released.
@@ -457,7 +457,7 @@ describe("I-ACT-7 — LAMP đứng yên across a fire", () => {
 
   it("TV-SCH-ACT7: balance invariant, lock reduced, Σholdings invariant", () => {
     const v = TV_SCH_ACT7;
-    const released = v.lambda_oil * BigInt(v.fires_in_tx);
+    const released = v.lambda_oildrop * BigInt(v.fires_in_tx);
 
     const after = unlockLockedAmount(v.before.loyalty_holdings, released);
     expect(after).toEqual(v.after.loyalty_holdings);

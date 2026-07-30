@@ -8,13 +8,13 @@ import {
   S_SEG3_KNEE, S_SEG3_INTERCEPT_Q, S_SEG3_SLOPE_Q,
 } from "./constants.js";
 import {
-  slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr,
+  slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr,
   selectLampForLock, removeLockedAmount, cmpBigIntAsc,
   type LoyaltyHolding,
 } from "@magiclamp/protocol-utils";
 import { blake2b } from "@noble/hashes/blake2b";
 
-export { slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr };
+export { slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr };
 export { selectLampForLock, removeLockedAmount };
 
 // ══════════════════════════════════════════════════════════════

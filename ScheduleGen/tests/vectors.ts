@@ -193,7 +193,7 @@ export const TV_SCH_ACT7 = {
     loyalty_holdings: [{ amount: 40_000_000_000n, acquired_epoch: 50n, is_locked: true }],
   },
   fires_in_tx: 1,
-  lambda_oil:  4_000_000_000n,
+  lambda_oildrop:  4_000_000_000n,
   after: {
     lamp_balance:     40_000_000_000n,   // UNCHANGED
     lamp_locked:      36_000_000_000n,   // −λ

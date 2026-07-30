@@ -14,7 +14,7 @@ import {
   isLive,
   batchBalance,
   slotToEpoch,
-  lampToOil,
+  lampToOildrop,
   nanogicToMagicStr,
 } from "../offchain/src/math.js";
 import {
@@ -337,9 +337,9 @@ describe("Utility — formatting & conversion", () => {
     expect(slotToEpoch(864_000n, "Mainnet")).toBe(2n);
   });
 
-  it("lampToOil: 1 LAMP = 10^6 oildrop", () => {
-    expect(lampToOil(1n)).toBe(1_000_000n);
-    expect(lampToOil(1000n)).toBe(1_000_000_000n);
+  it("lampToOildrop: 1 LAMP = 10^6 oildrop", () => {
+    expect(lampToOildrop(1n)).toBe(1_000_000n);
+    expect(lampToOildrop(1000n)).toBe(1_000_000_000n);
   });
 
   it("nanogicToMagicStr formats correctly", () => {

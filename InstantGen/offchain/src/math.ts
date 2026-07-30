@@ -11,12 +11,12 @@ import {
   UM_FALLBACK_Q, UM_MAX_STALENESS,
 } from "./constants.js";
 import {
-  slotToEpoch, nanogicToMagicStr, qToStr, lampToOil, oilToLamp,
+  slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp,
 } from "@magiclamp/protocol-utils";
 import type { UMDatum, GenSchedule } from "./types.js";
 
 // Re-export shared primitives to preserve module's public API
-export { slotToEpoch, nanogicToMagicStr, qToStr, lampToOil, oilToLamp };
+export { slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp };
 
 // ── §6.1 Q-format operations ─────────────────────────────────
 

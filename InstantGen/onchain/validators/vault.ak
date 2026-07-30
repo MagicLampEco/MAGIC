@@ -879,7 +879,10 @@ const t_vault_hash: ByteArray =
   #"11111111111111111111111111111111111111111111111111111111"
 const t_lamp_policy: ByteArray =
   #"22222222222222222222222222222222222222222222222222222222"
-const t_lamp_name: ByteArray = #"744c414d50"   // "tLAMP" (tests only)
+// Tests use the MAINNET name on purpose: if a #"744c414d50" literal is ever
+// reintroduced into validator logic, it no longer matches the param the tests
+// apply, and the suite fails instead of silently passing.
+const t_lamp_name: ByteArray = #"4c414d50"   // "LAMP"
 const t_tx_id: ByteArray =
   #"3333333333333333333333333333333333333333333333333333333333333333"
 
@@ -923,7 +926,7 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
 fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
   Output {
     address: address.from_script(t_vault_hash),
-    value: assets.from_asset(t_lamp_policy, #"744c414d50", balance),
+    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance),
     datum: InlineDatum(datum),
     reference_script: None,
   }
@@ -1429,7 +1432,7 @@ fn t_vault_output_ada(datum: VaultDatum, lovelace: Int, balance: Int) -> Output 
   Output {
     address: address.from_script(t_vault_hash),
     value: assets.from_lovelace(lovelace)
-      |> assets.add(t_lamp_policy, #"744c414d50", balance),
+      |> assets.add(t_lamp_policy, t_lamp_name, balance),
     datum: InlineDatum(datum),
     reference_script: None,
   }
@@ -1444,7 +1447,7 @@ fn t_vault_output_dust(datum: VaultDatum, lovelace: Int, balance: Int) -> Output
   Output {
     address: address.from_script(t_vault_hash),
     value: assets.from_lovelace(lovelace)
-      |> assets.add(t_lamp_policy, #"744c414d50", balance)
+      |> assets.add(t_lamp_policy, t_lamp_name, balance)
       |> assets.add(t_other_policy, #"6475737400", 1),  // "dust"
     datum: InlineDatum(datum),
     reference_script: None,

@@ -287,10 +287,13 @@ const t_sh: ByteArray = #"a1a1a1a1"
 
 const t_owner: ByteArray = #"0a0a"
 
-// LAMP policy + asset name (#"744c414d50" = "tLAMP") cho value-leak test.
+// LAMP policy + asset name (t_lamp_name) cho value-leak test.
 const t_lamp_policy: ByteArray = #"b2b2b2b2"
 
-const t_lamp_name: ByteArray = #"744c414d50"
+// Tests use the MAINNET name on purpose: if a #"744c414d50" literal is ever
+// reintroduced into validator logic, it no longer matches the param the tests
+// apply, and the suite fails instead of silently passing.
+const t_lamp_name: ByteArray = #"4c414d50"   // "LAMP"
 
 // Lovelace nền của vault UTxO (min-ADA). Output phải giữ ≥ input.
 const t_lovelace: Int = 2_000_000

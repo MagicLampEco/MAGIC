@@ -53,7 +53,10 @@ use magiclamp/protocol/lock.{
 // Test-only LAMP asset name. PRODUCTION lamp_asset_name is a VALIDATOR PARAM
 // (deploy applies tLAMP testnet #"744c414d50" / LAMP mainnet #"4c414d50") so the
 // vault does not lock when the network token name differs — see validator sig.
-const t_lamp_name: ByteArray = #"744c414d50"   // "tLAMP" (tests only)
+// Tests use the MAINNET name on purpose: if a #"744c414d50" literal is ever
+// reintroduced into validator logic, it no longer matches the param the tests
+// apply, and the suite fails instead of silently passing.
+const t_lamp_name: ByteArray = #"4c414d50"   // "LAMP"
 // Shard NFT asset name is now PER-SHARD: shard_asset_name(shard_id) from math.ak
 // ("SHARD" ∥ byte(id)). Each shard carries a distinct one-shot NFT, so identity
 // is bound by asset name, not by the self-declared `shard_id` datum field.

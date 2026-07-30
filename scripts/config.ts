@@ -3,7 +3,7 @@
 // KHÔNG commit file này nếu chứa private key thật
 
 import "dotenv/config";
-import { slotsPerEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { slotsPerEpoch, msPerEpoch, lampAssetName, type Network } from "@magiclamp/protocol-utils";
 import type { LucidEvolution } from "@lucid-evolution/lucid";
 
 // ── Network ───────────────────────────────────────────────────
@@ -43,10 +43,13 @@ export const POLICY_IDS = {
 // ── Asset names (hex) ─────────────────────────────────────────
 // LAMP asset name is applied as a validator parameter (vault takes
 // lamp_asset_name) — not a hardcoded literal — so the on-chain value check
-// reads whatever asset the network's LAMP is minted under. Canonical = tLAMP
-// 744c414d50 (Genesis/Faucet); env-overridable per deploy.
+// reads whatever asset the network's LAMP is minted under.
+// DERIVED FROM NETWORK (same rule as MS_PER_EPOCH below): Mainnet "LAMP",
+// testnets "tLAMP". A testnet default here would silently bake a tLAMP vault
+// on a mainnet deploy — the exact lock this param exists to prevent.
+// LAMP_ASSET_NAME env only overrides for a non-canonical mint.
 export const ASSET_NAMES = {
-  lamp:      process.env.LAMP_ASSET_NAME ?? "744c414d50", // "tLAMP" — canonical
+  lamp:      process.env.LAMP_ASSET_NAME ?? lampAssetName(NETWORK),
   um_nft:    "554d44",     // "UMD"
   shard_nft: "5348415244", // "SHARD"
 };

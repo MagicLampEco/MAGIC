@@ -754,7 +754,10 @@ const t_owner: ByteArray =
   #"00000000000000000000000000000000000000000000000000000000"
 const t_vault_hash: ByteArray =
   #"11111111111111111111111111111111111111111111111111111111"
-const t_lamp_name: ByteArray = #"744c414d50"   // "tLAMP" (tests only)
+// Tests use the MAINNET name on purpose: if a #"744c414d50" literal is ever
+// reintroduced into validator logic, it no longer matches the param the tests
+// apply, and the suite fails instead of silently passing.
+const t_lamp_name: ByteArray = #"4c414d50"   // "LAMP"
 const t_lamp_policy: ByteArray =
   #"22222222222222222222222222222222222222222222222222222222"
 const t_tx_id: ByteArray =

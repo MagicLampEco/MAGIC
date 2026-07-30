@@ -1,10 +1,13 @@
 // MagicSDK/src/validatorScripts.ts — apply ms_per_epoch + other params per vault type
 //
-// Each of the 4 vault validators takes a DIFFERENT set of compile-time parameters:
-//   Snapshot: vault(ms_per_epoch)
-//   Instant:  vault(lamp_policy_id, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
-//   Vacuum:   vault(lamp_policy_id, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
-//   Schedule: vault(lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch)
+// Each of the 4 vault validators takes a DIFFERENT set of compile-time parameters
+// (order below MUST match the Aiken `validator vault(...)` signature exactly —
+// tests/vaultParams.test.ts pins it, because a reorder yields a valid-looking
+// hash that is only wrong once it is on chain):
+//   Snapshot: vault(lamp_policy_id, lamp_asset_name, ms_per_epoch)
+//   Instant:  vault(lamp_policy_id, lamp_asset_name, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
+//   Vacuum:   vault(lamp_policy_id, lamp_asset_name, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
+//   Schedule: vault(lamp_policy_id, lamp_asset_name, treasury_addr, shard_policy_id, ms_per_epoch)
 //
 // `um_script_hash` pins the UM reference input to the canonical UM script
 // address (MAINNET-BLOCK fix, defense-in-depth layer b).
@@ -19,7 +22,7 @@ import {
   Constr, Data, getAddressDetails,
   type Validator,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch } from "@magiclamp/protocol-utils";
+import { msPerEpoch, lampAssetName } from "@magiclamp/protocol-utils";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
 /**
@@ -69,20 +72,20 @@ export function applyShardValidator(
 
 // ── internals ────────────────────────────────────────────────
 
-function buildParamsList(
+export function buildParamsList(
   vaultType: VaultType,
   protocol : ProtocolParams,
   msPer    : bigint,
 ): Data[] {
   // lamp_asset_name is param #2 on EVERY vault (right after lamp_policy_id),
-  // mirroring the on-chain validator signature. Canonical default = tLAMP
-  // ("744c414d50"); override via protocol.lampAssetName for other networks.
-  const lampAssetName = protocol.lampAssetName ?? "744c414d50";
+  // mirroring the on-chain validator signature. Derived from the network like
+  // msPer above — a tLAMP default would bake an unusable mainnet vault.
+  const assetName = protocol.lampAssetName ?? lampAssetName(protocol.network);
 
   switch (vaultType) {
     case "Snapshot":
       // vault(lamp_policy_id, lamp_asset_name, ms_per_epoch)
-      return [protocol.lampPolicyId, lampAssetName, msPer];
+      return [protocol.lampPolicyId, assetName, msPer];
 
     case "Instant":
     case "Vacuum": {
@@ -92,7 +95,7 @@ function buildParamsList(
       requireField(protocol.treasuryAddress, "treasuryAddress", vaultType);
       return [
         protocol.lampPolicyId,
-        lampAssetName,
+        assetName,
         addressToPlutusData(protocol.treasuryAddress!),
         protocol.umNftPolicyId!,
         protocol.umScriptHash!,   // um_script_hash — pins UM ref input (layer b)
@@ -106,7 +109,7 @@ function buildParamsList(
       requireField(protocol.treasuryAddress, "treasuryAddress", "Schedule");
       return [
         protocol.lampPolicyId,
-        lampAssetName,
+        assetName,
         addressToPlutusData(protocol.treasuryAddress!),
         protocol.shardPolicyId!,
         msPer,

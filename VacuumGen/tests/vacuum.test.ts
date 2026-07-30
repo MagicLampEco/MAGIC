@@ -113,25 +113,25 @@ describe("computeVacuumMagic — §10.1", () => {
 
   it("TV-VAC-01: λ=10⁹, UM=1.5, SM=1.10 → 825_000_000", () => {
     const { input, steps, expected_nanogic } = TV_VAC_01;
-    const result = computeVacuumMagic(input.lambda_oildropdrop, input.um_q, input.sm_q);
+    const result = computeVacuumMagic(input.lambda_oildrop, input.um_q, input.sm_q);
     expect(result).toBe(expected_nanogic);
 
     // Verify steps
     const Q = 1_000_000_000n, VBR = 500_000_000n;
-    expect(input.lambda_oildropdrop * VBR / Q).toBe(steps.s1);
+    expect(input.lambda_oildrop * VBR / Q).toBe(steps.s1);
     expect(steps.s1 * input.um_q / Q).toBe(steps.s2);
     expect(steps.s2 * input.sm_q / Q).toBe(steps.s3);
   });
 
   it("TV-VAC-CALIB: λ=10⁹, UM=1.0, SM=1.0 → 0.5 MAGIC (§20.3)", () => {
     const { input, expected_nanogic } = TV_VAC_CALIB;
-    expect(computeVacuumMagic(input.lambda_oildropdrop, input.um_q, input.sm_q)).toBe(expected_nanogic);
+    expect(computeVacuumMagic(input.lambda_oildrop, input.um_q, input.sm_q)).toBe(expected_nanogic);
     expect(nanogicToMagicStr(expected_nanogic)).toBe("0.5000");
   });
 
   it("TV-VAC-MAX: UM=2.0, SM=1.20 → 1.2 MAGIC", () => {
     const { input, expected_nanogic } = TV_VAC_MAX;
-    expect(computeVacuumMagic(input.lambda_oildropdrop, input.um_q, input.sm_q)).toBe(expected_nanogic);
+    expect(computeVacuumMagic(input.lambda_oildrop, input.um_q, input.sm_q)).toBe(expected_nanogic);
   });
 
   it("NO Profile Multiplier PM (§6.10 — M_vacuum chain)", () => {

@@ -154,6 +154,10 @@ Ba cửa: **InstantGen · ScheduleGen · PrepaidGen**. Chia chung:
 
 **Wakeme lent-LAMP KHÔNG phải cửa riêng.** Khoản ≤ 1001 LAMP hệ cho người mới mượn (đặt trong vault closed-loop, LAMP đứng yên, user không bao giờ sở hữu) là **nguồn-LAMP** để chạy InstantGen/ScheduleGen — cùng hai phương thức áp cho LAMP người dùng tự mua. Không có "cửa GenDrip" ngang hàng. Cơ chế tấm-pin (LAMP luân chuyển pot→vault→pot) thuộc `PhoenixKey-Wakeme-{Math,Tech}.md`.
 
+> **Faucet-guard cho LAMP-mượn (anh chốt 2026-07-30).** Vì `pp_schedule` tuyến-tính theo LAMP-khả-dụng (§6.3), 1001 LAMP-mượn miễn-phí-vốn sẽ cấp tới ~1001 MAGIC/epoch mỗi người — biến faucet thành máy in MAGIC. Hai chốt bắt buộc:
+> 1. **LAMP-mượn KHÔNG tính đủ suất `pp_schedule`** — chỉ cấp một **trần cứng nhỏ** `LENT_PP_CAP` (hằng-hệ, ≪ 1001·ρ) cho phần năng-lực đến từ LAMP-mượn; LAMP người dùng **tự mua & nắm** mới hưởng suất tuyến-tính đầy đủ. (`L_avail` chia hai phần: `L_owned` suất đầy đủ + `L_lent` trần `LENT_PP_CAP`.)
+> 2. **MAGIC sinh từ LAMP-mượn bị LOẠI khỏi `C1`** (consumed-count đầu vào VotingPower) — không cho đèn-mượn thổi quyền biểu-quyết. C1 chỉ đếm tiêu-thụ từ MAGIC do LAMP-sở-hữu / CARP sinh ra.
+
 ### §6.2 Tư-cách — nhân vào TỶ LỆ sinh (1 tham số, 4 thành phần)
 Tư-cách là **một hệ số duy nhất** nhân vào tỷ lệ Gen, gộp 4 thành phần (đóng băng vào `profile_at_creation` lúc sinh batch — bất biến T4):
 
@@ -170,26 +174,39 @@ Tư-cách là **một hệ số duy nhất** nhân vào tỷ lệ Gen, gộp 4 t
 - MAGIC tiêu từ **MỌI nguồn đều tính**, gồm cả từ PrepaidGen. MAGIC bị reset (chưa tiêu) **KHÔNG tính**.
 - *Ví dụ:* người có 1000 MAGIC đã tiêu 900 → InstantGen **nhiều hơn** người có 2000 MAGIC chỉ tiêu 500.
 
-**Cổng thặng dư + trần-kép:**
+**Cổng thặng dư + trần cộng-dồn theo năng-lực-ScheduleGen (anh chốt 2026-07-30):**
+
+Trần InstantGen là phần **CÒN LẠI** của ngân-sách-gen-chung của DID trong epoch, sau khi trừ phần đã sinh:
 ```
-cấp thực = min( reward(consumed), cap_surplus(br), 0.5 × pp_schedule )
+cấp thực = min( reward(consumed), cap_surplus(br), pp_schedule − gen_this_epoch )
 cap_surplus = f · S · (br − br_safe) / br_safe   khi xanh (f ≤ 0.10)
 cap_surplus = 0                                   khi đỏ
 ```
+- **`pp_schedule` = năng-lực-ScheduleGen-theo-hồ-sơ của DID** (notional — MAGIC/epoch mà hồ sơ DID *có thể* đặt ScheduleGen sinh), tính **TUYẾN TÍNH theo LAMP khả-dụng tức-thời**:
+  ```
+  pp_schedule[nanogic/ep] = ⌊ L_avail_oildrop × RATE_REF_Q / Q ⌋
+  RATE_REF_Q = 10¹²   Q = 10⁹   L_avail = lamp_balance − lamp_locked   (ρ = 1 MAGIC/LAMP/epoch)
+  ```
+  Thêm LAMP làm trần tăng **NGAY** trong epoch (đẩy nhu cầu nắm LAMP — mục tiêu kinh tế). Muốn gen nhiều hơn → phải MUA & NẮM thêm LAMP.
+- **`gen_this_epoch` = ngân-sách-gen-chung ĐÃ DÙNG** — đếm **TỔNG** MAGIC DID sinh trong epoch hiện tại từ **CẢ InstantGen LẪN ScheduleGen-fire** (một ngân sách, hai cửa cùng rút). Đây là bộ đếm SINH **cộng-dồn on-chain** (trường datum), reset khi sang epoch mới. **KHÔNG suy từ số dư MAGIC** — nếu suy từ số dư thì đốt MAGIC sẽ "trả chỗ" → gen lại vô hạn (**`INV-GEN-BUDGET`**).
+- *Ví dụ (anh chốt):* hồ sơ cho phép ScheduleGen 1000 MAGIC/epoch; đã gen 800 (Instant + Schedule) → InstantGen còn tối đa 200. Nạp thêm LAMP nâng `pp_schedule` → trần nới ngay.
 - `br = B/S`: `B` = backing thật (oracle LAMP CHỈ định-giá B — F6), `S` = cung MAGIC hiệu lực (đã Gen chưa tiêu chưa reset). `br_safe = 1.5`.
-- **Xanh** (`br > br_safe`): được Gen. **Đỏ** (`br ≤ br_safe`): `cap = 0` (khoá Gen).
-- Sau Gen: `br' ≥ br_safe`. Trần-kép giữ InstantGen ≤ 0.5×Schedule mọi trạng thái.
+- **Xanh** (`br > br_safe`): được Gen. **Đỏ** (`br ≤ br_safe`): `cap = 0` (khoá Gen). Sau Gen: `br' ≥ br_safe`.
+
+> **Vì sao bỏ hệ-số `0.5×` cũ:** bản trước chặn `InstantGen ≤ 0.5 × pp_schedule` để (a) giữ Instant < Schedule cho kênh tích-backing sống, (b) chặn cá voi hút cạn `cap_surplus`. Vai (a) nay do **ngân-sách-gen-chung** đảm nhiệm (Instant + Schedule cùng rút một `pp_schedule`, không double-dip 2×pp); vai (b) do chính `cap_surplus` giữ. Dùng **full `pp_schedule`** làm trần khớp đúng 3 ví dụ anh (1000/500/+200).
 
 **Hai phanh bổ sung:**
 - `cap = 0` khi CARP/MAGIC đang rớt-dưới-mức-neo (depeg).
 - **`INV-CASHBACK-BOUND`**: hoàn-tiền/thưởng mỗi DID ≤ MAGIC thật đã tiêu thụ của DID đó.
 
-**Use-or-lose:** `reward` là **trần-suất mỗi epoch** — nạp vào batch epoch hiện tại, không cộng dồn (§4.2).
+**Use-or-lose:** `reward` là **trần-suất mỗi epoch** — nạp vào batch epoch hiện tại, không cộng dồn (§4.2). Ngân-sách `gen_this_epoch` reset theo epoch: sang epoch mới, cả Instant lẫn Schedule-fire lại có đủ `pp_schedule`.
 
 ### §6.4 ScheduleGen — dòng đều dài hạn, GreenBack đỡ
 **Mục đích:** cần **dòng MAGIC đều đặn nhiều epoch** (ví dụ trả công đội kỹ thuật vài tháng). Nắm/khoá LAMP, hệ bảo đảm `pp` MAGIC **mỗi epoch** trong `N` epoch. LAMP đứng yên, trả nguyên vẹn khi hết hợp đồng.
 
 **Bốn bước:** (1) Ký hợp đồng `pp` MAGIC/epoch × `N` epoch qua cổng-giới-hạn; (2) Tạo MAGIC vào GreenBack (chưa lưu thông); (3) GreenBack mua LAMP khi rẻ → góp backing + đỡ giá lúc sập (giữ đủ `buffer_ep = 2` epoch); (4) **Mỗi epoch sinh batch mới ≤ `pp`** (trần cứng per-epoch), tiêu trong epoch đó — vẫn use-or-lose, KHÔNG hoard.
+
+> **Schedule-fire rút từ NGÂN-SÁCH-GEN-CHUNG (anh chốt 2026-07-30).** Mỗi lần fire nạp MAGIC cũng **cộng vào `gen_this_epoch`** của DID (§6.3) — Instant và Schedule cùng rút một `pp_schedule`, không double-dip. Hệ quả: nếu DID đã dùng hết ngân sách qua InstantGen thì Schedule-fire epoch đó bằng 0 (và ngược lại). Reset theo epoch.
 
 **Cổng-giới-hạn (vì sao Schedule phải nhỏ):**
 ```
@@ -201,6 +218,8 @@ Sức-tải = số dư quỹ cứu nội bộ (RedBack + kho dự phòng + Kho b
 - Cung-hữu-hạn-theo-vùng (ship trong huyện) → hệ số thường ~60%.
 - Cung-co-giãn-lớn (lưu-trữ LampNet, mở rộng chỉ là chỉnh tỷ-lệ-thưởng hút thiết bị người dùng) → gần như không giới hạn.
 - **Nguyên tắc:** không phát dòng MAGIC vượt năng-lực-tiêu-dịch-vụ-thực (nếu không MAGIC không có dịch vụ để tiêu → phá sàn-tiện-ích). Thuật toán cụ thể per-dịch-vụ nằm ở spec dịch-vụ riêng, ngoài phạm vi tài liệu này.
+
+> **Quan hệ với `pp_schedule` on-chain (§6.3).** Trần **on-chain** dùng `pp_schedule` notional TUYẾN TÍNH theo LAMP-khả-dụng (`⌊ L_avail × RATE_REF_Q / Q ⌋`) — đây là **trần trên** đủ tất-định để validator kiểm không cần oracle. Hệ-số-năng-lực per-dịch-vụ là lớp **SIẾT THÊM** (off-chain / spec dịch-vụ), chỉ **thu hẹp** dòng thực dưới trần on-chain, **không bao giờ nới rộng** vượt nó. Nhờ vậy khoảng-trống-spec "công thức năng-lực per-dịch-vụ" (từng chặn cài đặt) không còn chặn: on-chain đã có công thức tất-định; per-dịch-vụ tinh-chỉnh bên trên.
 
 **Bậc thang cứu (GreenBack thiếu) — 5 bậc:** (1) điều chỉnh tỷ giá hợp đồng; (2) bán LAMP thặng dư GreenBack; (3) RedBack; (4) kho dự phòng; (5) Kho bạc.
 
@@ -328,6 +347,10 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | `buffer_ep` | 2 |
 | `f` (cap_surplus) | ≤ 0.10 |
 | `m_min / m_max` | 0.5Q / 2.0Q |
+| `RATE_REF_Q` (pp_schedule) | 10¹² |
+| `ρ` (MAGIC/LAMP/epoch) | 1 |
+| `Q` | 10⁹ |
+| `LENT_PP_CAP` (trần LAMP-mượn, §6.1) | *chốt sau (hằng-hệ, ≪ 1001·ρ)* |
 
 **Constructor index BurnBatch per-vault** (TypeScript `Data.Enum`/`Data.Object` phải khớp thứ tự Aiken — đổi thứ tự một bên là hỏng decode bên kia):
 
@@ -365,10 +388,12 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 
 ## §13. Điểm mở + lộ trình
 
+**`engine_key` gen — mô hình chốt (anh chốt 2026-07-30):** engine uỷ-quyền qua **anchor Service-DID**. `engine_key` là chữ ký **ORACLE hệ thống** chứng thực sổ tiêu-thụ off-chain (validator không tự đo được), KHÔNG phải chữ ký user; gen tx không có chữ ký user (giữ UX drip tự-động). Thay `engine_key: ByteArray` 1-of-1 hardcode bằng `(engine_anchor_policy, engine_anchor_name)` trỏ Service-DID; validator `expect anchor_controller_ok(...)` đọc controller hiện tại từ TAAD anchor qua `reference_input` (mẫu PhoenixKey `I-SPEND-2OF2`). Nhờ đó: **xoay khoá / thu-hồi / kill-switch (`status=Revoked`) miễn phí, không redeploy**; guardian-recovery làm escape-hatch. `anchor_controller_ok` **vendor ~30 dòng** vào `lib/` (không kéo aiken-dep repo PhoenixKey). Cardano không verify sinh-trắc on-chain → "2 yếu tố" = 2 khoá Ed25519, sinh-trắc gate off-chain (enclave).
+
 **Còn chốt:**
 1. Cơ chế Mint CARP + utility-floor + sim phòng-thủ-giá (`Carpet-CARP-DacTa-Vi.md §3, §6`).
-2. `engine_key` gen: 1-of-1 hiện tại thiếu xoay-khoá/thu-hồi — cân nhắc M-of-N + escape-hatch redeemer (blocker đã ghi nhận, chờ anh chốt hướng).
-3. Tham số hệ-số-năng-lực per-dịch-vụ (spec dịch-vụ riêng).
+2. Tham số hệ-số-năng-lực per-dịch-vụ (spec dịch-vụ riêng) — siết-thêm dưới trần on-chain (§6.4).
+3. `LENT_PP_CAP` (trần cứng LAMP-mượn, §6.1) — chọn giá trị hằng-hệ.
 
 **Lộ trình:**
 1. `did_commit` thật (giao Long) → khoá attribution Governance C1.
@@ -376,6 +401,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 3. Test Preview 3 cửa gen → tx thật.
 4. Xây lõi CARP (MintingPolicy + ổn định).
 5. Paymaster runner + fee-abstraction.
+6. **Merkle-verify `so_lieu` (bỏ hẳn oracle `engine_key`)** — lộ trình sau-Preview; hiện dùng oracle anchor ở trên.
 
 ---
 

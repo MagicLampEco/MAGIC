@@ -36,14 +36,13 @@
 //   const txHash = await signed.submit();
 
 import { Data, toUnit } from "@lucid-evolution/lucid";
-import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { msPerEpoch, lampAssetName, type Network } from "@magiclamp/protocol-utils";
 
 import type { CreateVaultParams, CreateVaultResult } from "./types.js";
 import { VaultDatumSchema } from "./schemas.js";
 import { applyVaultValidator } from "./validatorScripts.js";
 import { buildInitialVaultDatum } from "./vaultDatum.js";
 
-const DEFAULT_LAMP_ASSET_NAME = "744c414d50"; // "tLAMP" in hex
 const DEFAULT_VAULT_LOVELACE  = 2_000_000n;
 const DEFAULT_PROFILE         = "Flame" as const;
 
@@ -51,7 +50,10 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   const { lucid, vaultType, protocol, validators, vault } = params;
 
   // ── Defaults ─────────────────────────────────────────────────
-  const lampAssetName = protocol.lampAssetName ?? DEFAULT_LAMP_ASSET_NAME;
+  // Network-derived, not a tLAMP literal — must match what buildParamsList
+  // bakes into the validator, or the vault UTxO carries an asset the script
+  // cannot see.
+  const assetName = protocol.lampAssetName ?? lampAssetName(protocol.network);
   const vaultLovelace = vault.vaultLovelace ?? DEFAULT_VAULT_LOVELACE;
   const profile       = vault.profile ?? DEFAULT_PROFILE;
 
@@ -78,7 +80,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   const currentEpoch = tipPosixMs / msPer;
 
   // ── Verify caller's wallet has enough LAMP ───────────────────
-  const lampUnit = toUnit(protocol.lampPolicyId, lampAssetName);
+  const lampUnit = toUnit(protocol.lampPolicyId, assetName);
   const walletAddress = await lucid.wallet().address();
   const walletUtxos   = await lucid.wallet().getUtxos();
   const lampBalance   = walletUtxos.reduce(

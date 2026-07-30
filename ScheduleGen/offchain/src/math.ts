@@ -1,5 +1,5 @@
 // src/math.ts — ScheduleGen BigInt Math Engine
-// ALL arithmetic uses BigInt. No Number for oildrop/nanogic/Q-format (C-OVERFLOW).
+// ALL arithmetic uses BigInt. No Number for oil/nanogic/Q-format (C-OVERFLOW).
 
 import {
   Q, SNAPSHOT_BASE_RATE_Q,
@@ -8,13 +8,81 @@ import {
   S_SEG3_KNEE, S_SEG3_INTERCEPT_Q, S_SEG3_SLOPE_Q,
 } from "./constants.js";
 import {
-  slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr,
-  selectLampForLock, removeLockedAmount,
+  slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr,
+  selectLampForLock, removeLockedAmount, cmpBigIntAsc,
+  type LoyaltyHolding,
 } from "@magiclamp/protocol-utils";
 import { blake2b } from "@noble/hashes/blake2b";
 
-export { slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr };
+export { slotToEpoch, lampToOil, lAvail, nanogicToMagicStr, qToStr };
 export { selectLampForLock, removeLockedAmount };
+
+// ══════════════════════════════════════════════════════════════
+// I-ACT-7 — unlockLockedAmount: RELEASE a lock without moving LAMP
+// ══════════════════════════════════════════════════════════════
+//
+// A ScheduleGen fire generates MAGIC but must NOT displace LAMP. It therefore
+// RELEASES `amount` oildrop from the locked pool instead of removing it: each
+// selected holding keeps its amount and acquired_epoch, only `is_locked` flips
+// to false. Σholdings — hence lamp_balance and the LAMP inside the UTxO — is
+// invariant.
+//
+// Selection is oldest-locked-first and the result order is
+//   [unlocked-before] ++ [newly freed] ++ [still locked]
+// which mirrors lock.ak: unlock_locked_amount byte-for-byte (P8).
+//
+// `removeLockedAmount` (which drops the LAMP) is kept exported for reference
+// but is no longer used by any builder.
+export function unlockLockedAmount(
+  holdings : LoyaltyHolding[],
+  amount   : bigint,
+): LoyaltyHolding[] {
+  const unlocked = holdings.filter(h => !h.is_locked);
+  const locked   = holdings.filter(h =>  h.is_locked)
+    .sort((a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));  // oldest first
+
+  let remaining = amount;
+  const freed       : LoyaltyHolding[] = [];
+  const stillLocked : LoyaltyHolding[] = [];
+
+  for (const h of locked) {
+    if (remaining <= 0n) { stillLocked.push(h); continue; }
+    if (remaining >= h.amount) {
+      freed.push({ ...h, is_locked: false });
+      remaining -= h.amount;
+    } else {
+      freed.push({ amount: remaining,            acquired_epoch: h.acquired_epoch, is_locked: false });
+      stillLocked.push({ amount: h.amount - remaining, acquired_epoch: h.acquired_epoch, is_locked: true });
+      remaining = 0n;
+    }
+  }
+  if (remaining > 0n)
+    throw new Error(`GEN-LOCK-002: insufficient locked holdings (${remaining} oildrop short)`);
+  return [...unlocked, ...freed, ...stillLocked];
+}
+
+// ══════════════════════════════════════════════════════════════
+// §4.2 — per-epoch use-or-lose CLIFF (decay_window = 1)
+// ══════════════════════════════════════════════════════════════
+//
+// k = current_epoch − created_epoch ; k ≥ decay_window ⟹ DEAD.
+// Mirrors vault.ak: is_expired / prune_expired.
+
+export function isExpired(
+  createdEpoch: bigint,
+  decayWindow : bigint,
+  currentEpoch: bigint,
+): boolean {
+  return (currentEpoch - createdEpoch) >= decayWindow;
+}
+
+export function isLive(
+  createdEpoch: bigint,
+  decayWindow : bigint,
+  currentEpoch: bigint,
+): boolean {
+  return !isExpired(createdEpoch, decayWindow, currentEpoch);
+}
 
 // ══════════════════════════════════════════════════════════════
 // §11.3 S(L) — Schedule bonus multiplier (piecewise, T11, T12)
@@ -67,16 +135,16 @@ export function computeRateLockedQ(
 // T-DET: rate_locked_q immutable + same λ → every fire gets identical M_i
 // T19:   C-SCH-RATE ensures M_i ≥ 1
 //
-// TV-SCH-02: λ=4000 LAMP=4×10⁹ oildrop, rate_locked_q=11_250_000_000
+// TV-SCH-02: λ=4000 LAMP=4×10⁹ oil, rate_locked_q=11_250_000_000
 //   M_i = ⌊4×10⁹ × 11_250_000_000 / Q⌋ = 45_000_000_000 = 45 MAGIC ✓
 
-export function computeMi(lambdaOildrop: bigint, rateLockedQ: bigint): bigint {
-  return lambdaOildrop * rateLockedQ / Q;
+export function computeMi(lambdaOil: bigint, rateLockedQ: bigint): bigint {
+  return lambdaOil * rateLockedQ / Q;
 }
 
 // ── C-SCH-RATE: M_i ≥ 1 guarantee (T19) ─────────────────────
-export function checkSchRate(lambdaOildrop: bigint, rateLockedQ: bigint): boolean {
-  return lambdaOildrop * rateLockedQ >= Q;
+export function checkSchRate(lambdaOil: bigint, rateLockedQ: bigint): boolean {
+  return lambdaOil * rateLockedQ >= Q;
 }
 
 // ══════════════════════════════════════════════════════════════

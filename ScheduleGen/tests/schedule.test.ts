@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, countEligibleFires, nextFireEpoch,
-  nanogicToMagicStr, lampToOildrop,
+  nanogicToMagicStr, lampToOil, unlockLockedAmount, isExpired, isLive,
 } from "../offchain/src/math.js";
 import {
   SCHEDULE_MIN_LENGTH, SCHEDULE_MAX_LENGTH,
@@ -15,6 +15,7 @@ import {
 import {
   TV_SCH_01, TV_SCH_02, TV_SCH_03, TV_SCH_04, TV_SCH_05,
   TV_SCH_06, TV_SCH_CATCHUP_LIMIT, TV_SCH_T_DET, TV_SCH_FIRE3,
+  TV_SCH_ACT7, TV_SCH_CLIFF,
 } from "./vectors.js";
 import type { VaultDatum, GenSchedule, MagicBatch } from "../offchain/src/types.js";
 
@@ -35,7 +36,7 @@ function makeVault(overrides: Partial<VaultDatum> = {}): VaultDatum {
     pending_profile: null,
     last_updated_epoch: 49n,
     delegation_cert: { current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n },
-    activity_state: { recent_burn_epochs: [], total_burns_count: 0n },
+    activity_state: { recent_burn_epochs: [], consumed_credit: 0n },
     streak_state:   { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate: null,
     attribution: { attribution_root: "00".repeat(32), last_event_epoch: 0n, total_events: 0n },
@@ -86,7 +87,7 @@ function simulateFire(
   sched        : GenSchedule,
   currentEpoch : bigint,
   batchCount   : number = 0,
-): { firesInTx: number; mTotal: bigint; lampTransfer: bigint; newFiredCount: bigint } {
+): { firesInTx: number; mTotal: bigint; lampReleased: bigint; newFiredCount: bigint } {
   const firesInTx = countEligibleFires(
     sched.start_fire_epoch, sched.fired_count,
     sched.schedule_length, currentEpoch, batchCount,
@@ -96,7 +97,8 @@ function simulateFire(
   return {
     firesInTx,
     mTotal:       mI * BigInt(firesInTx),
-    lampTransfer: sched.lamp_per_epoch * BigInt(firesInTx),
+    // PHA 2 / I-ACT-7: RELEASED from the locked pool, never transferred out.
+    lampReleased: sched.lamp_per_epoch * BigInt(firesInTx),
     newFiredCount: sched.fired_count + BigInt(firesInTx),
   };
 }
@@ -142,10 +144,10 @@ describe("computeSQ — §11.3, T11, T12", () => {
 describe("computeRateLockedQ + computeMi — §11.2/11.4", () => {
 
   it("TV-SCH-02: L=100, λ=4000 LAMP → 45 MAGIC/fire", () => {
-    const { L, lambda_oildrop, rate_locked_q, M_i, total_magic, S_Q } = TV_SCH_02;
+    const { L, lambda_oil, rate_locked_q, M_i, total_magic, S_Q } = TV_SCH_02;
     const sQ   = computeSQ(L);
     const rate = computeRateLockedQ(SNAPSHOT_BASE_RATE_Q, L);
-    const mI   = computeMi(lambda_oildrop, rate);
+    const mI   = computeMi(lambda_oil, rate);
 
     expect(sQ).toBe(S_Q);
     expect(rate).toBe(rate_locked_q);
@@ -155,9 +157,9 @@ describe("computeRateLockedQ + computeMi — §11.2/11.4", () => {
   });
 
   it("TV-SCH-T-DET: same M_i every fire (T-DET)", () => {
-    const { rate_locked_q, lambda_oildrop, M_i_all_fires } = TV_SCH_T_DET;
+    const { rate_locked_q, lambda_oil, M_i_all_fires } = TV_SCH_T_DET;
     for (let fire = 0; fire < 100; fire++) {
-      expect(computeMi(lambda_oildrop, rate_locked_q)).toBe(M_i_all_fires);
+      expect(computeMi(lambda_oil, rate_locked_q)).toBe(M_i_all_fires);
     }
   });
 
@@ -167,22 +169,22 @@ describe("computeRateLockedQ + computeMi — §11.2/11.4", () => {
     // DAO raises R_snap to 10B at epoch 70 — fire at 80 should NOT use this
     const newRSnap = 10_000_000_000n;
     const wrongRate = computeRateLockedQ(newRSnap, 100n);
-    const mICorrect = computeMi(TV_SCH_02.lambda_oildrop, storedRate);   // stored ✓
-    const mIWrong   = computeMi(TV_SCH_02.lambda_oildrop, wrongRate);    // would be higher
+    const mICorrect = computeMi(TV_SCH_02.lambda_oil, storedRate);   // stored ✓
+    const mIWrong   = computeMi(TV_SCH_02.lambda_oil, wrongRate);    // would be higher
 
     expect(mICorrect).toBe(TV_SCH_02.M_i);   // 45B ✓ T8
     expect(mIWrong).toBeGreaterThan(mICorrect);   // higher but NOT what protocol uses
   });
 
   it("TV-SCH-05: C-SCH-RATE prevents M_i=0 at commit", () => {
-    const { lambda_oildrop, rate_locked_q } = TV_SCH_05;
-    const mI = computeMi(lambda_oildrop, rate_locked_q);
+    const { lambda_oil, rate_locked_q } = TV_SCH_05;
+    const mI = computeMi(lambda_oil, rate_locked_q);
     expect(mI).toBe(0n);                         // would be 0
-    expect(checkSchRate(lambda_oildrop, rate_locked_q)).toBe(false);  // REJECT ✓
+    expect(checkSchRate(lambda_oil, rate_locked_q)).toBe(false);  // REJECT ✓
   });
 
   it("T19: C-SCH-RATE soundness — λ×rate≥Q → M_i≥1", () => {
-    const lambda = TV_SCH_02.lambda_oildrop;
+    const lambda = TV_SCH_02.lambda_oil;
     const rate   = TV_SCH_02.rate_locked_q;
     expect(checkSchRate(lambda, rate)).toBe(true);
     expect(computeMi(lambda, rate)).toBeGreaterThanOrEqual(1n);
@@ -272,7 +274,7 @@ describe("Shard participation cap — T13, C-SCH-CAP", () => {
     expect(shard_locked + reject.total).toBeGreaterThan(SHARD_CAP);
   });
 
-  it("SHARD_CAP = 4.5×10¹⁴ oildrop (450M LAMP per shard)", () => {
+  it("SHARD_CAP = 4.5×10¹⁴ oil (450M LAMP per shard)", () => {
     expect(SHARD_CAP).toBe(450_000_000_000_000n);
   });
 });
@@ -285,22 +287,22 @@ describe("Commit constraint boundaries", () => {
 
   it("C-SCH-1: L < 10 → reject", () => {
     const vault = makeVault();
-    expect(() => simulateCommit(vault, 9n, lampToOildrop(1000n), 50n)).toThrow("C-SCH-1");
+    expect(() => simulateCommit(vault, 9n, lampToOil(1000n), 50n)).toThrow("C-SCH-1");
   });
 
   it("C-SCH-1: L = 10 → accept", () => {
     const vault = makeVault();
-    expect(() => simulateCommit(vault, 10n, lampToOildrop(1000n), 50n)).not.toThrow();
+    expect(() => simulateCommit(vault, 10n, lampToOil(1000n), 50n)).not.toThrow();
   });
 
   it("C-SCH-1: L = 200 → accept", () => {
     const vault = makeVault();
-    expect(() => simulateCommit(vault, 200n, lampToOildrop(1000n), 50n)).not.toThrow();
+    expect(() => simulateCommit(vault, 200n, lampToOil(1000n), 50n)).not.toThrow();
   });
 
   it("C-SCH-1: L > 200 → reject", () => {
     const vault = makeVault();
-    expect(() => simulateCommit(vault, 201n, lampToOildrop(1000n), 50n)).toThrow("C-SCH-1");
+    expect(() => simulateCommit(vault, 201n, lampToOil(1000n), 50n)).toThrow("C-SCH-1");
   });
 
   it("C-SCH-3: L×λ > L_avail → reject", () => {
@@ -317,14 +319,17 @@ describe("Commit constraint boundaries", () => {
 describe("C-FIRE-3 atomic fire assertion", () => {
 
   it("TV-SCH-FIRE3: all accounting consistent", () => {
-    const { fires_in_tx, lambda_oildrop, M_i, assertions } = TV_SCH_FIRE3;
+    const { fires_in_tx, lambda_oil, M_i, assertions } = TV_SCH_FIRE3;
     const mTotal       = M_i * BigInt(fires_in_tx);
-    const lampTransfer = lambda_oildrop * BigInt(fires_in_tx);
+    const lampReleased = lambda_oil * BigInt(fires_in_tx);
 
     expect(BigInt(fires_in_tx)).toBe(assertions.fired_count_delta);
-    expect(-lampTransfer).toBe(assertions.lamp_balance_delta);
-    expect(lampTransfer).toBe(assertions.treasury_delta);
+    // I-ACT-7: the balance does not move; only the lock is released.
+    expect(0n).toBe(assertions.lamp_balance_delta);
+    expect(-lampReleased).toBe(assertions.lamp_locked_delta);
+    expect(0n).toBe(assertions.holdings_sum_delta);
     expect(fires_in_tx).toBe(assertions.new_batches_count);
+    expect(1n).toBe(assertions.each_batch_decay_window);
     // All batches get identical M_i (T-DET)
     for (let i = 0; i < fires_in_tx; i++) {
       expect(M_i).toBe(assertions.each_batch_initial);
@@ -342,7 +347,7 @@ describe("C-FIRE-3 atomic fire assertion", () => {
     const result = simulateFire(sched, 55n);
     expect(result.firesInTx).toBe(4);                        // §11.11 ✓
     expect(result.mTotal).toBe(180_000_000_000n);            // 4×45 MAGIC ✓
-    expect(result.lampTransfer).toBe(16_000_000_000n);       // 4×4000 LAMP oildrop ✓
+    expect(result.lampReleased).toBe(16_000_000_000n);       // 4×4000 LAMP oildrop released ✓
     expect(result.newFiredCount).toBe(4n);                   // output.fired_count ✓
     expect(nanogicToMagicStr(result.mTotal)).toBe("180.0000");
   });
@@ -441,5 +446,82 @@ describe("Schedule lifecycle: commit → multiple fires → complete", () => {
     // Fire remaining 7 normally
     const r2 = simulateFire({ ...sched, fired_count: 3n }, 59n);
     expect(r2.firesInTx).toBeLessThanOrEqual(7);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PHA 2 — I-ACT-7: a fire releases the lock, it never moves LAMP
+// ═══════════════════════════════════════════════════════════════
+
+describe("I-ACT-7 — LAMP đứng yên across a fire", () => {
+
+  it("TV-SCH-ACT7: balance invariant, lock reduced, Σholdings invariant", () => {
+    const v = TV_SCH_ACT7;
+    const released = v.lambda_oil * BigInt(v.fires_in_tx);
+
+    const after = unlockLockedAmount(v.before.loyalty_holdings, released);
+    expect(after).toEqual(v.after.loyalty_holdings);
+
+    const sumBefore = v.before.loyalty_holdings.reduce((s, h) => s + h.amount, 0n);
+    const sumAfter  = after.reduce((s, h) => s + h.amount, 0n);
+    expect(sumAfter).toBe(sumBefore);                       // Σholdings invariant
+    expect(sumAfter).toBe(v.after.lamp_balance);            // == lamp_balance (C-VAULT-10)
+    expect(v.before.lamp_locked - released).toBe(v.after.lamp_locked);
+  });
+
+  it("unlockLockedAmount: full release flips is_locked without changing amounts", () => {
+    const before = [{ amount: 100n, acquired_epoch: 5n, is_locked: true }];
+    const after  = unlockLockedAmount(before, 100n);
+    expect(after).toEqual([{ amount: 100n, acquired_epoch: 5n, is_locked: false }]);
+  });
+
+  it("unlockLockedAmount: oldest-locked-first, unlocked entries kept up front", () => {
+    const before = [
+      { amount: 10n, acquired_epoch: 9n, is_locked: false },
+      { amount: 30n, acquired_epoch: 5n, is_locked: true  },
+      { amount: 20n, acquired_epoch: 7n, is_locked: true  },
+    ];
+    const after = unlockLockedAmount(before, 30n);
+    expect(after).toEqual([
+      { amount: 10n, acquired_epoch: 9n, is_locked: false },
+      { amount: 30n, acquired_epoch: 5n, is_locked: false },
+      { amount: 20n, acquired_epoch: 7n, is_locked: true  },
+    ]);
+  });
+
+  it("unlockLockedAmount: releasing more than is locked throws", () => {
+    const before = [{ amount: 10n, acquired_epoch: 5n, is_locked: true }];
+    expect(() => unlockLockedAmount(before, 11n)).toThrow("GEN-LOCK-002");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PHA 2 — §4.2 per-epoch use-or-lose for Schedule batches
+// ═══════════════════════════════════════════════════════════════
+
+describe("§4.2 cliff — a fired batch lives exactly one epoch", () => {
+
+  it("TV-SCH-CLIFF: live at k=0, dead from k=1", () => {
+    for (const c of TV_SCH_CLIFF.cases) {
+      expect(isExpired(c.created_epoch, TV_SCH_CLIFF.decay_window, c.current_epoch))
+        .toBe(c.expired);
+      expect(isLive(c.created_epoch, TV_SCH_CLIFF.decay_window, c.current_epoch))
+        .toBe(!c.expired);
+    }
+  });
+
+  it("A catch-up cannot resurrect earlier epochs: all k batches are stamped NOW", () => {
+    const sched = makeSchedule({
+      start_fire_epoch: 52n, fired_count: 0n, schedule_length: 100n,
+    });
+    const currentEpoch = 55n;
+    const r = simulateFire(sched, currentEpoch);
+    expect(r.firesInTx).toBe(4);   // e_0..e_3 were missed
+
+    // Every one of the 4 batches carries created_epoch = 55 and dies at 56.
+    for (let i = 0; i < r.firesInTx; i++) {
+      expect(isLive(currentEpoch, 1n, currentEpoch)).toBe(true);
+      expect(isExpired(currentEpoch, 1n, currentEpoch + 1n)).toBe(true);
+    }
   });
 });

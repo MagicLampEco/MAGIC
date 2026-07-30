@@ -40,7 +40,71 @@ fn lock_youngest(
   }
 }
 
-// Oldest-locked-first removal (called per fire)
+// ══════════════════════════════════════════════════════════════
+// unlock_locked_amount — RELEASE a lock without moving any LAMP
+// ══════════════════════════════════════════════════════════════
+//
+// I-ACT-7: a ScheduleGen fire generates MAGIC but must NOT displace LAMP. The
+// fire therefore RELEASES `amount` oildrop from the locked pool instead of
+// removing it: the holdings keep their amount and acquired_epoch, only
+// `is_locked` flips to False. Σholdings — and hence lamp_balance and the real
+// LAMP in the UTxO — are unchanged.
+//
+// Selection is oldest-locked-first, mirroring `remove_locked_amount`, so the
+// off-chain builder can reproduce it byte-for-byte (P8).
+//
+// Result order: [unlocked-before] ++ [newly freed] ++ [still locked].
+pub fn unlock_locked_amount(
+  holdings : List<LoyaltyHolding>,
+  amount   : Int,
+) -> List<LoyaltyHolding> {
+  let locked   = list.filter(holdings, fn(h) {  h.is_locked })
+  let unlocked = list.filter(holdings, fn(h) { !h.is_locked })
+  let sorted   = list.sort(locked, fn(a, b) { int.compare(a.acquired_epoch, b.acquired_epoch) })
+  let (freed, still_locked) = unlock_oldest(sorted, amount, [])
+  list.concat(list.concat(unlocked, freed), still_locked)
+}
+
+fn unlock_oldest(
+  holdings  : List<LoyaltyHolding>,
+  remaining : Int,
+  freed     : List<LoyaltyHolding>,
+) -> (List<LoyaltyHolding>, List<LoyaltyHolding>) {
+  when holdings is {
+    [] -> {
+      expect remaining == 0
+      (freed, [])
+    }
+    [h, ..rest] ->
+      if remaining <= 0 {
+        (freed, [h, ..rest])
+      } else if remaining >= h.amount {
+        unlock_oldest(
+          rest,
+          remaining - h.amount,
+          list.concat(freed, [LoyaltyHolding { ..h, is_locked: False }]),
+        )
+      } else {
+        (
+          list.concat(freed, [
+            LoyaltyHolding {
+              amount: remaining, acquired_epoch: h.acquired_epoch, is_locked: False,
+            },
+          ]),
+          [
+            LoyaltyHolding {
+              amount: h.amount - remaining, acquired_epoch: h.acquired_epoch, is_locked: True,
+            },
+            ..rest
+          ],
+        )
+      }
+  }
+}
+
+// Oldest-locked-first removal — LEGACY. No handler calls this any more: under
+// I-ACT-7 a fire releases the lock (unlock_locked_amount) instead of removing
+// LAMP. Kept for reference/tests only.
 pub fn remove_locked_amount(
   holdings : List<LoyaltyHolding>,
   amount   : Int,

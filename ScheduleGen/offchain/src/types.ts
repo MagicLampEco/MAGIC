@@ -118,9 +118,13 @@ export const VaultAttributionSchema = Data.Object({
 export type VaultAttribution = Data.Static<typeof VaultAttributionSchema>;
 
 // ── ActivityState ────────────────────────────────────────────
+// `consumed_credit` occupies the slot previously named `total_burns_count`
+// (same position, same Integer type → Plutus Data shape unchanged).
+// SEMANTICS (§6.3): nanogic ALREADY CONSUMED via BurnBatch and not yet turned
+// into an InstantGen reward. BurnBatch adds Σburns here.
 export const ActivityStateSchema = Data.Object({
   recent_burn_epochs : Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
-  total_burns_count  : Data.Integer(),
+  consumed_credit    : Data.Integer(),
 });
 export type ActivityState = Data.Static<typeof ActivityStateSchema>;
 

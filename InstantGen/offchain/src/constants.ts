@@ -11,14 +11,30 @@ export const Q = 1_000_000_000n; // Q = 10^9 [Immutable]
 // ── LAMP / MAGIC units ───────────────────────────────────────
 export const LAMP_DECIMALS  = 6n;
 export const MAGIC_DECIMALS = 9n;
-export const OILDROP_PER_LAMP   = 1_000_000n;    // 10^6 oildrop per LAMP
+export const OIL_PER_LAMP   = 1_000_000n;    // 10^6 oil per LAMP
 export const NANOGIC_PER_MAGIC = 1_000_000_000n; // 10^9 nanogic per MAGIC
 
-// ── InstantGen (§19.4) ───────────────────────────────────────
-export const INSTANT_BASE_RATE_Q = 3_000_000_000n;   // [Constitutional]
-export const MIN_INSTANT_PURCHASE = 10_000_000n;      // 10 LAMP in oildrop [Routine]
-export const MAX_INSTANT_PURCHASE = 10_000_000_000_000n; // 10^13 oildrop [Routine]
-export const INSTANT_DECAY_WINDOW = 2n;                // [Constitutional]
+// ── MAGIC batch lifetime (§4.2 per-epoch use-or-lose) ────────
+// [Constitutional] decay_window = 1 ⟹ a batch is LIVE only inside its own
+// created_epoch; at created_epoch + 1 it is DEAD (cliff). No halving, no
+// carry-over. MUST equal `magic_decay_window` in constants.ak.
+export const MAGIC_DECAY_WINDOW   = 1n;
+export const INSTANT_DECAY_WINDOW = MAGIC_DECAY_WINDOW;   // alias
+
+// ── InstantGen — eligibility (§6.3) ──────────────────────────
+// [Routine] LAMP that must SIT in the vault to open the door. Never moves.
+export const MIN_INSTANT_HOLDING = 10_000_000n;      // 10 LAMP in oildrop
+
+// ── InstantGen — magnitude (§6.3 keyed-consumed) ─────────────
+// [Significant] rate applied to MAGIC ALREADY CONSUMED.
+// INV-CASHBACK-BOUND: rate × UM_MAX × PM_MAX = 0.20 × 2.00 × 1.15 = 0.46 < 1
+export const INSTANT_REWARD_RATE_Q = 200_000_000n;   // 0.20
+
+// ── Surplus gate (§6.3 cap_surplus) ──────────────────────────
+export const BR_SAFE_Q       = 1_500_000_000n;   // 1.5  [Constitutional]
+export const F_CAP_SURPLUS_Q =   100_000_000n;   // 0.10 [Constitutional]
+// [Significant] beyond this the backing beacon counts as ABSENT → cap = 0.
+export const MAX_BACKING_STALE = 1n;
 
 // ── UM (§19.7) ───────────────────────────────────────────────
 export const UM_MIN_Q            = 500_000_000n;   // 0.5 [Constitutional]
@@ -60,5 +76,11 @@ export const TESTNET_CONFIG = {
   lampAssetName:     "744c414d50", // "tLAMP" in hex
   umNftPolicyId:     "REPLACE_WITH_UM_NFT_POLICY_ID",
   umNftAssetName:    "554d44",   // "UMD" in hex
-  treasuryAddress:   "REPLACE_WITH_TREASURY_ADDRESS",
+
+  // BackingBeacon (§6.3)  [CẦN XÁC NHẬN — chờ CARP]
+  // All-zero policy/hash = "beacon not deployed": no reference input can match,
+  // so InstantGen is SHUT. Never substitute a fabricated `br`.
+  backingNftPolicyId: "00".repeat(28),
+  backingScriptHash:  "00".repeat(28),
+  backingNftAssetName: "425251",  // "BRQ" in hex
 };

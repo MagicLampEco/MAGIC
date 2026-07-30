@@ -1,17 +1,22 @@
-// tests/instant.test.ts — InstantGen integration tests (no network)
-// Simulates the full InstantGen flow off-chain.
-// Run: npx vitest run tests/instant.test.ts
+// tests/instant.test.ts — InstantGen flow simulation (no network)
+//
+// Mirrors validate_instant_gen in onchain/validators/vault.ak step for step, so
+// a divergence between the off-chain builder and the validator shows up here
+// (P8). Run: npx vitest run ../tests/instant.test.ts
 
 import { describe, it, expect } from "vitest";
 import {
-  computeInstantMagic, getUmForInstant, shouldHalve, applyHalving,
-  isExpired, lampToOildrop, nanogicToMagicStr,
+  computeInstantGrant, computeRewardFromConsumed, computeCapSurplus,
+  computeCapPp, getUmForInstant, isExpired, nanogicToMagicStr,
 } from "../offchain/src/math.js";
 import {
-  PM_Q, INSTANT_DECAY_WINDOW, MIN_INSTANT_PURCHASE, MAX_INSTANT_PURCHASE,
+  PM_Q, MAGIC_DECAY_WINDOW, MIN_INSTANT_HOLDING, MAX_BACKING_STALE,
   MAX_BATCHES_PER_VAULT, UM_FALLBACK_Q,
 } from "../offchain/src/constants.js";
-import type { VaultDatum, MagicBatch, UMDatum } from "../offchain/src/types.js";
+import type {
+  VaultDatum, MagicBatch, UMDatum, BackingBeaconDatum, GenSchedule,
+} from "../offchain/src/types.js";
+import { TV_ACT_7, TV_IG_ELIGIBILITY } from "./vectors.js";
 
 // ── Fixtures ─────────────────────────────────────────────────
 
@@ -22,7 +27,7 @@ function makeBatch(overrides: Partial<MagicBatch> = {}): MagicBatch {
     created_epoch:       100n,
     initial_amount:      1_000_000_000n,
     current_amount:      1_000_000_000n,
-    decay_window:        2n,
+    decay_window:        MAGIC_DECAY_WINDOW,
     profile_at_creation: null,
     contract_id:         null,
     halved:              false,
@@ -30,22 +35,39 @@ function makeBatch(overrides: Partial<MagicBatch> = {}): MagicBatch {
   };
 }
 
+function makeSchedule(overrides: Partial<GenSchedule> = {}): GenSchedule {
+  return {
+    schedule_id:            "5c4ed0",
+    commit_epoch:           90n,
+    start_fire_epoch:       92n,
+    end_fire_epoch:         190n,
+    schedule_length:        100n,
+    lamp_per_epoch:         4_000_000_000n,     // 4000 LAMP
+    rate_locked_q:          11_250_000_000n,    // pp = 45 MAGIC / epoch
+    baseline_at_commit_q:   5_000_000_000n,
+    multiplier_at_commit_q: 2_250_000_000n,
+    fired_count:            0n,
+    auto_burn_target:       null,
+    ...overrides,
+  };
+}
+
 function makeVault(overrides: Partial<VaultDatum> = {}): VaultDatum {
   return {
     owner:                 "aabbccdd",
-    lamp_balance:          100_000_000_000n,  // 100,000 LAMP
+    lamp_balance:          100_000_000_000n,  // 100,000 LAMP — eligibility only
     lamp_locked:           0n,
     loyalty_holdings:      [{ amount: 100_000_000_000n, acquired_epoch: 50n, is_locked: false }],
     magic_batches:         [],
     next_batch_index:      0n,
     vacuum_orders:         [],
-    gen_schedules:         [],
+    gen_schedules:         [makeSchedule()],
     profile:               "Flame",
     profile_changed_epoch: 0n,
     pending_profile:       null,
     last_updated_epoch:    99n,
     delegation_cert:       { current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n },
-    activity_state:        { recent_burn_epochs: [], total_burns_count: 0n },
+    activity_state:        { recent_burn_epochs: [], consumed_credit: 1_000_000_000n },
     streak_state:          { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate:     null,
     attribution:           { attribution_root: "00".repeat(32), last_event_epoch: 0n, total_events: 0n },
@@ -62,87 +84,105 @@ function makeUM(overrides: Partial<UMDatum> = {}): UMDatum {
   };
 }
 
-// ── Simulate InstantGen off-chain ─────────────────────────────
+function makeBeacon(overrides: Partial<BackingBeaconDatum> = {}): BackingBeaconDatum {
+  return {
+    br_q:               2_000_000_000n,       // br = 2.0 (xanh)
+    magic_supply:       1_000_000_000_000n,   // S = 1000 MAGIC
+    depeg:              false,
+    last_updated_epoch: 100n,
+    ...overrides,
+  };
+}
+
+// ── Simulate InstantGen off-chain (mirrors the validator) ─────
 
 interface SimResult {
-  newBatch         : MagicBatch;
-  updatedBatches   : MagicBatch[];
-  newLampBalance   : bigint;
-  expectedMagic    : bigint;
-  umUsed           : bigint;
-  halvingApplied   : number;
-  prunedCount      : number;
+  newBatch      : MagicBatch;
+  updatedBatches: MagicBatch[];
+  grant         : bigint;
+  ceilings      : { reward: bigint; capSurplus: bigint; capPp: bigint };
+  umUsed        : bigint;
+  prunedCount   : number;
+  lampBalanceAfter : bigint;
+  lampLockedAfter  : bigint;
+  holdingsAfter    : VaultDatum["loyalty_holdings"];
+  consumedCreditAfter: bigint;
 }
 
 function simulateInstantGen(
-  vault      : VaultDatum,
-  lampPaid   : bigint,
-  umDatum    : UMDatum,
+  vault       : VaultDatum,
+  umDatum     : UMDatum,
+  beacon      : BackingBeaconDatum | null,
   currentEpoch: bigint,
 ): SimResult {
-  // C-INST-1
-  if (lampPaid < MIN_INSTANT_PURCHASE)
-    throw new Error("C-INST-1: lamp_paid < MIN");
-  // C-INST-2
-  if (lampPaid > MAX_INSTANT_PURCHASE)
-    throw new Error("C-INST-2: lamp_paid > MAX");
-  // C-INST-3
-  const lAvail = vault.lamp_balance - vault.lamp_locked;
-  if (lampPaid > lAvail)
-    throw new Error("C-INST-3: lamp_paid > L_avail");
+  // C-INST-1: LAMP must SIT in the vault (eligibility, never spent)
+  if (vault.lamp_balance < MIN_INSTANT_HOLDING)
+    throw new Error("C-INST-1: lamp_balance < MIN_INSTANT_HOLDING");
+
+  // C-INST-3: the eligible LAMP must be unencumbered
+  if (vault.lamp_balance - vault.lamp_locked < MIN_INSTANT_HOLDING)
+    throw new Error("C-INST-3: L_avail < MIN_INSTANT_HOLDING");
+
+  // §4.2 cliff: only LIVE batches survive
+  const live = vault.magic_batches.filter(
+    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch),
+  );
+  const prunedCount = vault.magic_batches.length - live.length;
 
   // C-INST-7
-  const activeBefore = vault.magic_batches.filter(
-    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch)
-  );
-  if (activeBefore.length >= MAX_BATCHES_PER_VAULT)
+  if (live.length >= MAX_BATCHES_PER_VAULT)
     throw new Error("C-INST-7: vault full");
 
   // C-UM-6
   const umUsed = getUmForInstant(umDatum, currentEpoch);
 
+  // §6.3 backing gate — FAIL-CLOSED
+  if (beacon === null)
+    throw new Error("GEN-INST-BEACON: no BackingBeacon reference input → Gen shut");
+  if (beacon.depeg)
+    throw new Error("GEN-INST-006: depeg → cap_surplus = 0");
+  const age = currentEpoch - beacon.last_updated_epoch;
+  if (age < 0n || age > MAX_BACKING_STALE)
+    throw new Error("GEN-INST-007: BackingBeacon stale → treated as absent");
+
   // C-INST-5
   const pmQ = PM_Q[vault.profile]!;
-  const expectedMagic = computeInstantMagic(lampPaid, umUsed, pmQ);
-
-  // C-PRUNE-2: halve BEFORE prune
-  let halvingApplied = 0;
-  const halvedBatches = vault.magic_batches.map(b => {
-    if (shouldHalve(b.source, b.created_epoch, currentEpoch, b.halved)) {
-      halvingApplied++;
-      return { ...b, current_amount: applyHalving(b.current_amount), halved: true };
-    }
-    return b;
-  });
-
-  // C-PRUNE-1
-  const beforePrune = halvedBatches.length;
-  const pruned = halvedBatches.filter(
-    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch)
+  const consumed = vault.activity_state.consumed_credit;
+  const ceilings = {
+    reward:     computeRewardFromConsumed(consumed, umUsed, pmQ),
+    capSurplus: computeCapSurplus(beacon.br_q, beacon.magic_supply),
+    capPp:      computeCapPp(vault.gen_schedules),
+  };
+  const grant = computeInstantGrant(
+    consumed, umUsed, pmQ, beacon.br_q, beacon.magic_supply, vault.gen_schedules,
   );
-  const prunedCount = beforePrune - pruned.length;
+  if (grant <= 0n) throw new Error("GEN-INST-005: grant = 0 → nothing to mint");
 
-  // C-INST-6: create batch
   const newBatch: MagicBatch = {
     batch_id:            `batch_${vault.next_batch_index}`,
     source:              "Instant",
     created_epoch:       currentEpoch,
-    initial_amount:      expectedMagic,
-    current_amount:      expectedMagic,
-    decay_window:        INSTANT_DECAY_WINDOW,
-    profile_at_creation: null,    // C-DECAY-4
+    initial_amount:      grant,
+    current_amount:      grant,
+    decay_window:        MAGIC_DECAY_WINDOW,
+    profile_at_creation: null,
     contract_id:         null,
-    halved:              false,   // C-INST-6
+    halved:              false,
   };
 
   return {
     newBatch,
-    updatedBatches:  [...pruned, newBatch],
-    newLampBalance:  vault.lamp_balance - lampPaid,
-    expectedMagic,
+    updatedBatches: [...live, newBatch],
+    grant,
+    ceilings,
     umUsed,
-    halvingApplied,
     prunedCount,
+    // I-ACT-7 — copied verbatim, by construction
+    lampBalanceAfter: vault.lamp_balance,
+    lampLockedAfter:  vault.lamp_locked,
+    holdingsAfter:    vault.loyalty_holdings,
+    // INV-CASHBACK-BOUND — the credit is spent
+    consumedCreditAfter: 0n,
   };
 }
 
@@ -150,184 +190,222 @@ function simulateInstantGen(
 // Tests
 // ═══════════════════════════════════════════════════════════════
 
-describe("InstantGen full flow simulation", () => {
+describe("InstantGen full flow simulation (PHA 2)", () => {
 
-  describe("Happy path — basic purchase", () => {
+  describe("I-ACT-7 — LAMP đứng yên", () => {
 
-    it("1000 LAMP, Flame, UM=1.0, fresh → 3.15 MAGIC batch", () => {
-      const vault = makeVault({ profile: "Flame" });
-      const um    = makeUM({ smoothed_q: 1_000_000_000n, last_updated_epoch: 99n });
-      const result = simulateInstantGen(vault, lampToOildrop(1000n), um, 100n);
-
-      expect(result.expectedMagic).toBe(3_150_000_000n);                  // TV-INST-GEN-01 ✓
-      expect(nanogicToMagicStr(result.expectedMagic)).toBe("3.1500");
-      expect(result.newBatch.source).toBe("Instant");
-      expect(result.newBatch.halved).toBe(false);                          // C-INST-6 ✓
-      expect(result.newBatch.profile_at_creation).toBeNull();              // C-DECAY-4 ✓
-      expect(result.newBatch.decay_window).toBe(2n);                       // C-INST-DECAY ✓
-      expect(result.newLampBalance).toBe(100_000_000_000n - lampToOildrop(1000n));
-    });
-
-    it("500 LAMP, Lantern, UM=2.0 (max) → 3.0 MAGIC", () => {
-      const vault = makeVault({ profile: "Lantern" });
-      const um    = makeUM({ smoothed_q: 2_000_000_000n, last_updated_epoch: 100n });
-      const result = simulateInstantGen(vault, lampToOildrop(500n), um, 100n);
-      expect(result.expectedMagic).toBe(3_000_000_000n);  // TV-INST-GEN-03 ✓
-    });
-
-    it("C-INST-10: LAMP conservation — total unchanged", () => {
+    it("TV-ACT-7: every LAMP-bearing field is byte-identical after the grant", () => {
       const vault = makeVault();
-      const um    = makeUM();
-      const lampPaid = lampToOildrop(1000n);
-      const result = simulateInstantGen(vault, lampPaid, um, 100n);
+      const r = simulateInstantGen(vault, makeUM(), makeBeacon(), 100n);
 
-      // vault lost lampPaid; treasury gains lampPaid; total unchanged
-      const totalBefore = vault.lamp_balance;
-      const totalAfter  = result.newLampBalance + lampPaid; // + treasury
-      expect(totalAfter).toBe(totalBefore);  // T14, C-INST-10 ✓
+      expect(r.lampBalanceAfter).toBe(vault.lamp_balance);
+      expect(r.lampLockedAfter).toBe(vault.lamp_locked);
+      expect(r.holdingsAfter).toEqual(vault.loyalty_holdings);
+      expect(r.lampBalanceAfter).toBe(TV_ACT_7.after.vault_lamp_balance);
+    });
+
+    it("Generating MAGIC never reduces the vault's LAMP, whatever the grant is", () => {
+      for (const credit of [1_000_000_000n, 50_000_000_000n, 900_000_000_000n]) {
+        const vault = makeVault({
+          activity_state: { recent_burn_epochs: [], consumed_credit: credit },
+        });
+        const r = simulateInstantGen(vault, makeUM(), makeBeacon(), 100n);
+        expect(r.lampBalanceAfter).toBe(vault.lamp_balance);
+      }
     });
   });
 
-  describe("UM stale check — C-UM-6", () => {
+  describe("§6.3 — magnitude keyed to MAGIC consumed", () => {
 
-    it("Stale UM (staleness=2) → UM_FALLBACK applied", () => {
+    it("1 MAGIC consumed, Flame, UM=1.0 → 0.21 MAGIC granted", () => {
       const vault = makeVault({ profile: "Flame" });
-      const um    = makeUM({ smoothed_q: 2_000_000_000n, last_updated_epoch: 98n }); // stale
-      const result = simulateInstantGen(vault, lampToOildrop(1000n), um, 100n);
+      const r = simulateInstantGen(vault, makeUM(), makeBeacon(), 100n);
 
-      // umUsed = UM_FALLBACK_Q = 500M (not 2B)
-      expect(result.umUsed).toBe(UM_FALLBACK_Q);  // TV-UM-SPLIT ✓
-
-      // MAGIC is 50% less than if UM was fresh
-      // With UM=0.5: M = 3B × 0.5 × 1.05 = 1.575B
-      expect(result.expectedMagic).toBe(1_575_000_000n);
+      expect(r.grant).toBe(210_000_000n);
+      expect(nanogicToMagicStr(r.grant)).toBe("0.2100");
+      expect(r.newBatch.source).toBe("Instant");
+      expect(r.newBatch.decay_window).toBe(1n);            // §4.2 cliff
+      expect(r.newBatch.halved).toBe(false);               // dead field
+      expect(r.newBatch.profile_at_creation).toBeNull();   // C-DECAY-4
+      expect(r.consumedCreditAfter).toBe(0n);              // credit spent
     });
 
-    it("Fresh UM (staleness=1) → smoothed UM used", () => {
-      const vault = makeVault({ profile: "Flame" });
-      const um    = makeUM({ smoothed_q: 1_500_000_000n, last_updated_epoch: 99n }); // fresh
-      const result = simulateInstantGen(vault, lampToOildrop(1000n), um, 100n);
-
-      expect(result.umUsed).toBe(1_500_000_000n);  // TV-UM-FRESH ✓
-      // M = 3B × 1.5 × 1.05 = 4.725B
-      expect(result.expectedMagic).toBe(4_725_000_000n);
-    });
-  });
-
-  describe("Lazy halving — C-DECAY-7, C-PRUNE-2", () => {
-
-    it("TV-INST-01: Existing Instant batch at k=1 gets halved before new batch is added", () => {
-      const existingBatch = makeBatch({ created_epoch: 99n, current_amount: 800_000_000n, halved: false });
-      const vault = makeVault({ magic_batches: [existingBatch] });
-      const um    = makeUM();
-      const result = simulateInstantGen(vault, lampToOildrop(100n), um, 100n);
-
-      // existingBatch at k=1 (100-99=1), halved=False → should halve
-      expect(result.halvingApplied).toBe(1);
-
-      // Find the halved existing batch in updatedBatches
-      const halvedBatch = result.updatedBatches.find(b => b.batch_id === "deadbeef");
-      expect(halvedBatch).toBeDefined();
-      expect(halvedBatch!.current_amount).toBe(400_000_000n);  // ⌊800M/2⌋ ✓
-      expect(halvedBatch!.halved).toBe(true);                   // ✓
-
-      // New batch is also present
-      expect(result.updatedBatches.length).toBe(2);  // halved existing + new
-    });
-
-    it("TV-INST-03: Already-halved batch (halved=True at k=1) → NOT halved again (T18)", () => {
-      const existingBatch = makeBatch({ created_epoch: 99n, current_amount: 500_000_000n, halved: true });
-      const vault = makeVault({ magic_batches: [existingBatch] });
-      const result = simulateInstantGen(vault, lampToOildrop(100n), makeUM(), 100n);
-
-      expect(result.halvingApplied).toBe(0);  // T18: no double-halving ✓
-      const existingInResult = result.updatedBatches.find(b => b.batch_id === "deadbeef");
-      expect(existingInResult!.current_amount).toBe(500_000_000n);  // unchanged ✓
-    });
-
-    it("C-PRUNE-2: halving happens BEFORE pruning", () => {
-      // Batch at k=1 should be halved, then NOT yet pruned (decay_window=2, k=1 < 2)
-      const batch = makeBatch({ created_epoch: 99n, halved: false });
-      const vault = makeVault({ magic_batches: [batch] });
-      const result = simulateInstantGen(vault, lampToOildrop(100n), makeUM(), 100n);
-
-      // Halving applied (k=1, not expired)
-      expect(result.halvingApplied).toBe(1);
-      // NOT pruned (k=1 < decay_window=2)
-      expect(result.prunedCount).toBe(0);
-      // Halved batch still active
-      const halvedBatch = result.updatedBatches.find(b => b.batch_id === "deadbeef");
-      expect(halvedBatch).toBeDefined();
-    });
-
-    it("Batch at k=2 (expired) → pruned", () => {
-      const expiredBatch = makeBatch({ created_epoch: 98n }); // k=2 at epoch 100
-      const vault = makeVault({ magic_batches: [expiredBatch] });
-      const result = simulateInstantGen(vault, lampToOildrop(100n), makeUM(), 100n);
-
-      expect(result.prunedCount).toBe(1);
-      // Only the new batch remains
-      expect(result.updatedBatches.length).toBe(1);
-      expect(result.updatedBatches[0]!.source).toBe("Instant");
-    });
-  });
-
-  describe("Constraint violations", () => {
-
-    it("TV-INST-MIN: lamp_paid < 10 LAMP → GEN-INST-001", () => {
-      const vault = makeVault();
-      expect(() => simulateInstantGen(vault, 9_999_999n, makeUM(), 100n))
-        .toThrow("C-INST-1");
-    });
-
-    it("TV-INST-MAX: lamp_paid > 10^13 → GEN-INST-002", () => {
-      const vault = makeVault({ lamp_balance: 100_000_000_000_000n, lamp_locked: 0n,
-        loyalty_holdings: [{ amount: 100_000_000_000_000n, acquired_epoch: 0n, is_locked: false }] });
-      expect(() => simulateInstantGen(vault, 10_000_000_000_001n, makeUM(), 100n))
-        .toThrow("C-INST-2");
-    });
-
-    it("TV-INST-AVAIL: lamp_paid > L_avail → GEN-INST-003", () => {
-      const vault = makeVault({
-        lamp_balance: 100_000_000_000n,
-        lamp_locked:  60_000_000_000n,
+    it("More LAMP does NOT buy more MAGIC — only consumption does", () => {
+      const poorHolder = makeVault({
+        lamp_balance: 10_000_000n,
+        loyalty_holdings: [{ amount: 10_000_000n, acquired_epoch: 50n, is_locked: false }],
+        activity_state: { recent_burn_epochs: [], consumed_credit: 5_000_000_000n },
       });
-      const lAvail = 40_000_000_000n;
-      expect(() => simulateInstantGen(vault, lAvail + 1n, makeUM(), 100n))
-        .toThrow("C-INST-3");
+      const whaleHolder = makeVault({
+        lamp_balance: 10_000_000_000_000n,
+        loyalty_holdings: [{ amount: 10_000_000_000_000n, acquired_epoch: 50n, is_locked: false }],
+        activity_state: { recent_burn_epochs: [], consumed_credit: 1_000_000_000n },
+      });
+      const poor  = simulateInstantGen(poorHolder,  makeUM(), makeBeacon(), 100n);
+      const whale = simulateInstantGen(whaleHolder, makeUM(), makeBeacon(), 100n);
+
+      // The spec's own example: 1000 MAGIC holder who consumed 900 beats a
+      // 2000 MAGIC holder who consumed 500. Same shape here, LAMP-wise inverted.
+      expect(poor.grant).toBeGreaterThan(whale.grant);
     });
 
-    it("TV-INST-VAULT-FULL: 32 active batches → GEN-VAULT-001", () => {
+    it("Zero consumption → the tx cannot be built at all", () => {
+      const vault = makeVault({
+        activity_state: { recent_burn_epochs: [], consumed_credit: 0n },
+      });
+      expect(() => simulateInstantGen(vault, makeUM(), makeBeacon(), 100n))
+        .toThrow("GEN-INST-005");
+    });
+
+    it("Profile (tư-cách) scales the rate: Ember > Flame > Lantern", () => {
+      const grants = (["Ember", "Flame", "Lantern"] as const).map(p =>
+        simulateInstantGen(makeVault({ profile: p }), makeUM(), makeBeacon(), 100n).grant,
+      );
+      expect(grants[0]!).toBeGreaterThan(grants[1]!);
+      expect(grants[1]!).toBeGreaterThan(grants[2]!);
+    });
+  });
+
+  describe("§6.3 — the three ceilings", () => {
+
+    it("The whale's reward is clipped by 0.5 × pp_schedule", () => {
+      const vault = makeVault({
+        activity_state: { recent_burn_epochs: [], consumed_credit: 1_000_000_000_000n },
+      });
+      const r = simulateInstantGen(vault, makeUM(), makeBeacon(), 100n);
+      expect(r.ceilings.reward).toBe(210_000_000_000n);
+      expect(r.ceilings.capPp).toBe(22_500_000_000n);
+      expect(r.grant).toBe(22_500_000_000n);
+    });
+
+    it("A vault with no ScheduleGen contract cannot InstantGen at all", () => {
+      const vault = makeVault({ gen_schedules: [] });
+      expect(() => simulateInstantGen(vault, makeUM(), makeBeacon(), 100n))
+        .toThrow("GEN-INST-005");
+    });
+
+    it("Red backing (br ≤ br_safe) locks the door", () => {
+      const beacon = makeBeacon({ br_q: 1_400_000_000n });
+      expect(() => simulateInstantGen(makeVault(), makeUM(), beacon, 100n))
+        .toThrow("GEN-INST-005");
+    });
+  });
+
+  describe("Backing beacon — fail-closed (§6.3)", () => {
+
+    it("No beacon at all → REJECT, never a default br", () => {
+      expect(() => simulateInstantGen(makeVault(), makeUM(), null, 100n))
+        .toThrow("GEN-INST-BEACON");
+    });
+
+    it("Stale beacon is treated as ABSENT", () => {
+      const beacon = makeBeacon({ last_updated_epoch: 98n });   // age 2 > 1
+      expect(() => simulateInstantGen(makeVault(), makeUM(), beacon, 100n))
+        .toThrow("GEN-INST-007");
+    });
+
+    it("Depeg flag shuts the door regardless of br", () => {
+      const beacon = makeBeacon({ br_q: 9_000_000_000n, depeg: true });
+      expect(() => simulateInstantGen(makeVault(), makeUM(), beacon, 100n))
+        .toThrow("GEN-INST-006");
+    });
+
+    it("Beacon from the future (negative age) is rejected", () => {
+      const beacon = makeBeacon({ last_updated_epoch: 101n });
+      expect(() => simulateInstantGen(makeVault(), makeUM(), beacon, 100n))
+        .toThrow("GEN-INST-007");
+    });
+  });
+
+  describe("Eligibility — LAMP opens the door, nothing more", () => {
+
+    it("TV-IG-ELIGIBILITY: threshold, boundary and locked-LAMP cases", () => {
+      for (const c of TV_IG_ELIGIBILITY.cases) {
+        const vault = makeVault({
+          lamp_balance: c.lamp_balance,
+          lamp_locked:  c.lamp_locked,
+          loyalty_holdings: [
+            { amount: c.lamp_balance, acquired_epoch: 50n, is_locked: c.lamp_locked > 0n },
+          ],
+        });
+        if (c.expected === "ACCEPT") {
+          expect(() => simulateInstantGen(vault, makeUM(), makeBeacon(), 100n)).not.toThrow();
+        } else {
+          expect(() => simulateInstantGen(vault, makeUM(), makeBeacon(), 100n)).toThrow();
+        }
+      }
+    });
+  });
+
+  describe("C-UM-6 — UM stale check", () => {
+
+    it("Stale UM halves the grant (penalty, not rejection)", () => {
+      const vault = makeVault({ profile: "Flame" });
+      const um    = makeUM({ smoothed_q: 2_000_000_000n, last_updated_epoch: 98n });
+      const r = simulateInstantGen(vault, um, makeBeacon(), 100n);
+
+      expect(r.umUsed).toBe(UM_FALLBACK_Q);
+      expect(r.grant).toBe(105_000_000n);   // 0.20 × 0.5 × 1.05 × 1 MAGIC
+    });
+
+    it("Fresh UM uses the smoothed value", () => {
+      const vault = makeVault({ profile: "Flame" });
+      const um    = makeUM({ smoothed_q: 1_500_000_000n, last_updated_epoch: 99n });
+      const r = simulateInstantGen(vault, um, makeBeacon(), 100n);
+
+      expect(r.umUsed).toBe(1_500_000_000n);
+      expect(r.grant).toBe(315_000_000n);   // 0.20 × 1.5 × 1.05
+    });
+  });
+
+  describe("§4.2 — cliff behaviour inside the tx", () => {
+
+    it("A batch from the previous epoch is collected, not halved", () => {
+      const stale = makeBatch({ created_epoch: 99n, current_amount: 800_000_000n });
+      const vault = makeVault({ magic_batches: [stale] });
+      const r = simulateInstantGen(vault, makeUM(), makeBeacon(), 100n);
+
+      expect(r.prunedCount).toBe(1);
+      expect(r.updatedBatches.length).toBe(1);              // only the new one
+      expect(r.updatedBatches.find(b => b.batch_id === "deadbeef")).toBeUndefined();
+    });
+
+    it("A batch created this epoch survives alongside the new one", () => {
+      const fresh = makeBatch({ created_epoch: 100n });
+      const vault = makeVault({ magic_batches: [fresh] });
+      const r = simulateInstantGen(vault, makeUM(), makeBeacon(), 100n);
+
+      expect(r.prunedCount).toBe(0);
+      expect(r.updatedBatches.length).toBe(2);
+    });
+
+    it("Full lifecycle: granted at epoch 100, worth zero at epoch 101", () => {
+      const r = simulateInstantGen(makeVault(), makeUM(), makeBeacon(), 100n);
+      const b = r.newBatch;
+      expect(isExpired(b.created_epoch, b.decay_window, 100n)).toBe(false);
+      expect(isExpired(b.created_epoch, b.decay_window, 101n)).toBe(true);
+    });
+  });
+
+  describe("Vault limits", () => {
+
+    it("32 live batches → GEN-VAULT-001 (C-INST-7)", () => {
       const batches = Array.from({ length: 32 }, (_, i) =>
         makeBatch({ batch_id: `batch_${i}`, created_epoch: 100n }),
       );
       const vault = makeVault({ magic_batches: batches });
-      expect(() => simulateInstantGen(vault, lampToOildrop(100n), makeUM(), 100n))
+      expect(() => simulateInstantGen(vault, makeUM(), makeBeacon(), 100n))
         .toThrow("C-INST-7");
     });
-  });
 
-  describe("Multi-epoch lifecycle — TV-INST-01", () => {
-
-    it("Full 3-epoch lifecycle: mint → halve → expire", () => {
-      const vault = makeVault({ profile: "Flame" });
-      const um    = makeUM();
-
-      // Epoch 100: create batch
-      const r0 = simulateInstantGen(vault, lampToOildrop(1000n), um, 100n);
-      const batch0 = r0.newBatch;
-      expect(batch0.current_amount).toBe(3_150_000_000n);  // TV-INST-GEN-01 ✓
-      expect(batch0.halved).toBe(false);
-      expect(isExpired(batch0.created_epoch, batch0.decay_window, 100n)).toBe(false);
-
-      // Epoch 101: k=1, should halve
-      expect(shouldHalve("Instant", 100n, 101n, false)).toBe(true);
-      const halvingResult = applyHalving(batch0.current_amount);
-      expect(halvingResult).toBe(1_575_000_000n);  // ⌊3.15B/2⌋ ✓
-      expect(isExpired(100n, 2n, 101n)).toBe(false); // not yet expired ✓
-
-      // Epoch 102: k=2, expired
-      expect(isExpired(100n, 2n, 102n)).toBe(true);  // cliff ✓
+    it("32 DEAD batches do not block a new grant — they are collected", () => {
+      const batches = Array.from({ length: 32 }, (_, i) =>
+        makeBatch({ batch_id: `batch_${i}`, created_epoch: 99n }),
+      );
+      const vault = makeVault({ magic_batches: batches });
+      const r = simulateInstantGen(vault, makeUM(), makeBeacon(), 100n);
+      expect(r.prunedCount).toBe(32);
+      expect(r.updatedBatches.length).toBe(1);
     });
   });
 });

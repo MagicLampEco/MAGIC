@@ -2,7 +2,8 @@
 // Run: npx tsx deploy/07_create_schedule_vault.ts
 // Prereq: 01 LAMP, 02 UM, 03 Shards.
 //
-// ScheduleGen vault validator has 4 params: lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch.
+// ScheduleGen vault validator has 3 params: lamp_policy_id, shard_policy_id, ms_per_epoch.
+// (`treasury_addr` was removed in PHA 2 — no handler moves LAMP any more, I-ACT-7.)
 //
 // Env vars:
 //   PROFILE              — Ember/Flame/Lantern (default Flame)
@@ -11,7 +12,7 @@
 //   PRESEED_SCHEDULE_L   — preseed a GenSchedule with this schedule_length (default 0 = none).
 //                          When > 0, pre-seeds a schedule with start_fire_epoch = currentEpoch (fire NOW).
 //                          Useful for testing Fire without waiting 2 epochs.
-//   PRESEED_SCHEDULE_LAM — lamp_per_epoch for the preseed schedule (default 1 tLAMP = 1_000_000 oildrop)
+//   PRESEED_SCHEDULE_LAM — lamp_per_epoch for the preseed schedule (default 1 tLAMP = 1_000_000 oil)
 
 import {
   Lucid, Blockfrost, Data, Constr, toUnit,
@@ -24,7 +25,7 @@ import { blake2b } from "@noble/hashes/blake2b";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
-  lampToOildrop,
+  lampToOil,
 } from "../config.js";
 
 // (Schema duplicated from 05/06 — same VaultDatum across all 4 vault modules.)
@@ -81,7 +82,7 @@ const VaultDatumSchema = Data.Object({
   }),
   activity_state:        Data.Object({
     recent_burn_epochs: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
-    total_burns_count:  Data.Integer(),
+    consumed_credit:    Data.Integer(),   // was total_burns_count (same slot)
   }),
   streak_state:          Data.Object({ current_streak: Data.Integer(), last_active_epoch: Data.Integer() }),
   personal_delegate:     Data.Nullable(Data.Bytes()),
@@ -90,11 +91,11 @@ const VaultDatumSchema = Data.Object({
   }),
 });
 
-const INITIAL_LAMP_DEPOSIT  = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
+const INITIAL_LAMP_DEPOSIT  = lampToOil(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
 const INITIAL_PROFILE       = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
 const LAST_UPDATED_OFFSET   = BigInt(process.env.LAST_UPDATED_OFFSET ?? "1");
 const PRESEED_SCHEDULE_L    = BigInt(process.env.PRESEED_SCHEDULE_L   ?? "0");      // count of fires; 0 = no preseed
-const PRESEED_SCHEDULE_LAM  = lampToOildrop(BigInt(process.env.PRESEED_SCHEDULE_LAM ?? "1"));
+const PRESEED_SCHEDULE_LAM  = lampToOil(BigInt(process.env.PRESEED_SCHEDULE_LAM ?? "1"));
 
 // Constants matching Aiken (R_snap × Q = 2_000_000_000 for Flame baseline rate).
 const SNAPSHOT_BASE_RATE_Q = 2_000_000_000n;
@@ -104,7 +105,8 @@ async function main() {
 
   if (POLICY_IDS.lamp === "FILL_AFTER_MINT") throw new Error("Step 01 missing");
   if (POLICY_IDS.shard_nft === "FILL_AFTER_STEP_03") throw new Error("Step 03 missing");
-  if (ADDRESSES.treasury === "FILL_AFTER_DEPLOY") throw new Error("Treasury missing");
+  // NOTE: TREASURY_ADDRESS is NO LONGER a parameter of this validator.
+  // PHA 2 / I-ACT-7 — a fire RELEASES the lock; it moves no LAMP.
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
@@ -113,7 +115,8 @@ async function main() {
   if (!paymentCredential) throw new Error("Cannot get payment credential");
   const ownerPkh = paymentCredential.hash;
 
-  // Load ScheduleGen vault validator (4 params: lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch).
+  // Load ScheduleGen vault validator (PHA 2 — 3 params, treasury_addr REMOVED:
+  //   lamp_policy_id, shard_policy_id, ms_per_epoch).
   const plutusJson = JSON.parse(
     await readFile(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url), "utf8"),
   );
@@ -123,21 +126,8 @@ async function main() {
     throw new Error("vault.vault.spend not found");
   }
 
-  // Treasury Address Plutus encoding (Constr).
-  const td = getAddressDetails(ADDRESSES.treasury);
-  if (!td.paymentCredential) throw new Error("Invalid TREASURY_ADDRESS");
-  const tPaymentCred = td.paymentCredential.type === "Key"
-    ? new Constr(0, [td.paymentCredential.hash])
-    : new Constr(1, [td.paymentCredential.hash]);
-  const tStakeCred = td.stakeCredential
-    ? new Constr(0, [new Constr(0, [new Constr(0, [td.stakeCredential.hash])])])
-    : new Constr(1, []);
-  const treasuryAddrData = new Constr(0, [tPaymentCred, tStakeCred]);
-
   const appliedCbor = applyParamsToScript(unapplied.compiledCode, [
     POLICY_IDS.lamp,
-    ASSET_NAMES.lamp,
-    treasuryAddrData,
     POLICY_IDS.shard_nft,
     PROTOCOL.MS_PER_EPOCH,
   ]);
@@ -204,7 +194,7 @@ async function main() {
     pending_profile:       null,
     last_updated_epoch:    currentEpoch - LAST_UPDATED_OFFSET,
     delegation_cert:       { current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n },
-    activity_state:        { recent_burn_epochs: [], total_burns_count: 0n },
+    activity_state:        { recent_burn_epochs: [], consumed_credit: 0n },
     streak_state:          { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate:     null,
     attribution:           { attribution_root: "00".repeat(32), last_event_epoch: 0n, total_events: 0n },

@@ -1,6 +1,17 @@
-// tests/vectors.ts — InstantGen Test Vectors (NORMATIVE — App B §B.3, §B.9, §B.11, §B.13, §B.14, §B.17)
-// Implementation MUST produce bit-identical output for ALL vectors below.
-// deploy checklist §E.3: TV-INST-01..03, TV-UM-SPLIT, TV-OVERFLOW-01..02, TV-HALVED-INJECT
+// tests/vectors.ts — InstantGen NORMATIVE test vectors (PHA 2)
+//
+// Source of truth: SPEC/MagicLamp-Tripletoken-Feat-(Vi).md §4.2, §6.3, §11, §12.
+// P8: the Aiken and TypeScript implementations MUST produce bit-identical
+// output for every vector below. Every intermediate step is spelled out so a
+// reviewer can recompute the value by hand.
+//
+// Parameters used throughout (constants.ak ↔ constants.ts):
+//   Q                     = 1_000_000_000
+//   INSTANT_REWARD_RATE_Q =   200_000_000   (0.20)
+//   BR_SAFE_Q             = 1_500_000_000   (1.5)
+//   F_CAP_SURPLUS_Q       =   100_000_000   (0.10)
+//   PM: Ember 1.15 / Flame 1.05 / Lantern 1.00
+//   UM ∈ [0.5, 2.0], fallback 0.5
 
 export interface Vector {
   id         : string;
@@ -8,322 +19,403 @@ export interface Vector {
   description: string;
 }
 
-// ── TV-INST-01: Instant lifecycle, no burn ───────────────────
-// m₀ = 10^9 nanogic, decay_window = 2
-export const TV_INST_01 = {
-  id:          "TV-INST-01",
-  spec_ref:    "App B §B.3",
-  description: "Instant batch lifecycle, no burn (m₀=10⁹)",
+// ══════════════════════════════════════════════════════════════
+// §4.2 — per-epoch use-or-lose CLIFF (decay_window = 1)
+// ══════════════════════════════════════════════════════════════
+
+// ── TV-CLIFF-01: a batch lives exactly one epoch ─────────────
+export const TV_CLIFF_01 = {
+  id:          "TV-CLIFF-01",
+  spec_ref:    "§4.2",
+  description: "Batch is LIVE only in created_epoch; DEAD from created_epoch+1. No halving.",
   input: {
     initial_amount : 1_000_000_000n,
     current_amount : 1_000_000_000n,
-    decay_window   : 2n,
-    halved         : false,
+    decay_window   : 1n,
     created_epoch  : 100n,
   },
   cases: [
-    { current_epoch: 100n, k: 0n, expected_balance: 1_000_000_000n, halved: false },
-    { current_epoch: 101n, k: 1n, expected_balance: 500_000_000n,   halved: true  }, // halved
-    { current_epoch: 102n, k: 2n, expected_balance: 0n,             halved: true  }, // expired
+    { current_epoch: 100n, k: 0n, expired: false, balance: 1_000_000_000n },
+    { current_epoch: 101n, k: 1n, expired: true,  balance: 0n },   // cliff — NOT halved
+    { current_epoch: 102n, k: 2n, expired: true,  balance: 0n },
   ],
 };
 
-// ── TV-INST-02: Burn at k=0, then halving at k=1 ─────────────
-export const TV_INST_02 = {
-  id:          "TV-INST-02",
-  spec_ref:    "App B §B.3",
-  description: "Burn 300M at k=0, halving at k=1",
-  burn_at_k0: {
-    initial_amount_before_burn : 1_000_000_000n,
-    burn_amount                : 300_000_000n,
-    expected_current_after_burn: 700_000_000n,
-    halved_after_burn          : false,    // C-DECAY-8: burn does NOT change halved
-  },
-  halving_at_k1: {
-    current_before_halving : 700_000_000n,
-    expected_after_halving : 350_000_000n, // ⌊700M / 2⌋
-    expected_halved        : true,
-  },
-  expired_at_k2: 0n,
+// ── TV-CLIFF-02: no carry-over, no hoarding ──────────────────
+export const TV_CLIFF_02 = {
+  id:          "TV-CLIFF-02",
+  spec_ref:    "§4.2",
+  description: "Unconsumed MAGIC does NOT roll into the next epoch — it resets to 0.",
+  epoch_100_granted:   3_150_000_000n,
+  epoch_100_consumed:  1_000_000_000n,
+  // The remaining 2.15 MAGIC is NOT available at epoch 101:
+  epoch_101_balance:   0n,
+  // A burn aimed at that batch at epoch 101 must be REJECTED on-chain.
+  epoch_101_burn_expected: "REJECT",   // vault.ak test: bb_dead_batch_rejected
 };
 
-// ── TV-INST-03: Double-halving prevention (T18) ──────────────
-// eUTxO prevents intra-block; halved field prevents inter-block.
-export const TV_INST_03 = {
-  id:          "TV-INST-03",
-  spec_ref:    "App B §B.3, C.9",
-  description: "T18: halved=True prevents second halving in same epoch",
-  batch_before_block_B1: {
-    current_amount : 1_000_000_000n,
-    halved         : false,
-    created_epoch  : 100n,
-  },
-  // Block B₁: Tx₁ at epoch 101 → halve
-  tx1_result: {
-    current_amount : 500_000_000n,
-    halved         : true,
-  },
-  // Block B₂: Tx₂ at epoch 101 → should_halve = False (halved already True)
-  tx2_should_halve: false,
-  tx2_result: {
-    current_amount : 500_000_000n,  // UNCHANGED ✓ (not halved again)
-    halved         : true,
-  },
-};
+// ══════════════════════════════════════════════════════════════
+// §6.3 — reward(consumed): magnitude keyed to MAGIC CONSUMED
+// ══════════════════════════════════════════════════════════════
 
-// ── TV-INST-GEN-01: Compute M for 1000 LAMP, Flame, UM=1.0 ──
-// From §20.3 calibration: "Instant 1000 LAMP, Flame, UM=1.0 → ≈3.15 MAGIC"
-export const TV_INST_GEN_01 = {
-  id:          "TV-INST-GEN-01",
-  spec_ref:    "§9.1, §20.3",
-  description: "InstantGen 1000 LAMP, Flame, UM=1.0 → 3.15 MAGIC",
+// ── TV-IG-REWARD-01: 1 MAGIC consumed, Flame, UM = 1.0 ───────
+export const TV_IG_REWARD_01 = {
+  id:          "TV-IG-REWARD-01",
+  spec_ref:    "§6.3",
+  description: "reward(1 MAGIC consumed), Flame, UM=1.0 → 0.21 MAGIC",
   input: {
-    lamp_paid_oildrop: 1_000_000_000n,         // 1000 × 10^6 oildrop
-    um_q:          1_000_000_000n,         // UM = 1.0
-    pm_q:          1_050_000_000n,         // Flame PM = 1.05
+    consumed: 1_000_000_000n,   // 1 MAGIC in nanogic
+    um_q:     1_000_000_000n,   // 1.0
+    pm_q:     1_050_000_000n,   // Flame
   },
-  expected_nanogic: 3_150_000_000n,        // 3.15 MAGIC
-  // Step-by-step:
-  // s1 = 10^9 × 3_000_000_000 / Q = 3_000_000_000
-  // s2 = 3_000_000_000 × 10^9 / Q = 3_000_000_000  (UM=1.0)
-  // s3 = 3_000_000_000 × 1_050_000_000 / Q = 3_150_000_000
-  steps: {
-    s1: 3_000_000_000n,
-    s2: 3_000_000_000n,
-    s3: 3_150_000_000n,
-  },
+  // s1 = ⌊10^9 × 200_000_000 / Q⌋ =   200_000_000
+  // s2 = ⌊s1   × 10^9        / Q⌋ =   200_000_000
+  // s3 = ⌊s2   × 1_050_000_000/Q⌋ =   210_000_000
+  steps: { s1: 200_000_000n, s2: 200_000_000n, s3: 210_000_000n },
+  expected_nanogic: 210_000_000n,
 };
 
-// ── TV-INST-GEN-02: Ember profile ────────────────────────────
-export const TV_INST_GEN_02 = {
-  id:          "TV-INST-GEN-02",
-  spec_ref:    "§9.1",
-  description: "InstantGen 1000 LAMP, Ember, UM=1.5",
+// ── TV-IG-REWARD-02: 5 MAGIC consumed, Ember, UM = 1.5 ───────
+export const TV_IG_REWARD_02 = {
+  id:          "TV-IG-REWARD-02",
+  spec_ref:    "§6.3",
+  description: "reward(5 MAGIC consumed), Ember, UM=1.5 → 1.725 MAGIC",
   input: {
-    lamp_paid_oildrop: 1_000_000_000n,
-    um_q:          1_500_000_000n,         // UM = 1.5
-    pm_q:          1_150_000_000n,         // Ember PM = 1.15
+    consumed: 5_000_000_000n,
+    um_q:     1_500_000_000n,
+    pm_q:     1_150_000_000n,
   },
-  // s1 = 3_000_000_000
-  // s2 = 3_000_000_000 × 1_500_000_000 / Q = 4_500_000_000
-  // s3 = 4_500_000_000 × 1_150_000_000 / Q = 5_175_000_000
-  expected_nanogic: 5_175_000_000n,        // 5.175 MAGIC
+  // s1 = 1_000_000_000 ; s2 = 1_500_000_000 ; s3 = 1_725_000_000
+  steps: { s1: 1_000_000_000n, s2: 1_500_000_000n, s3: 1_725_000_000n },
+  expected_nanogic: 1_725_000_000n,
 };
 
-// ── TV-INST-GEN-03: UM=2.0 (maximum), Lantern ───────────────
-export const TV_INST_GEN_03 = {
-  id:          "TV-INST-GEN-03",
-  spec_ref:    "§9.1, §14.1 UM_MAX",
-  description: "InstantGen 500 LAMP, Lantern, UM=2.0 (max)",
+// ── TV-IG-REWARD-03: INV-CASHBACK-BOUND worst case ───────────
+// Highest possible multiplier chain: UM_MAX (2.0) × PM_MAX (Ember 1.15).
+export const TV_IG_REWARD_03 = {
+  id:          "TV-IG-REWARD-03",
+  spec_ref:    "§12 INV-CASHBACK-BOUND",
+  description: "Even at UM_MAX × PM_MAX the reward stays below the consumed amount",
   input: {
-    lamp_paid_oildrop: 500_000_000n,           // 500 LAMP
-    um_q:          2_000_000_000n,         // UM_MAX
-    pm_q:          1_000_000_000n,         // Lantern PM = 1.0
+    consumed: 1_000_000_000n,
+    um_q:     2_000_000_000n,   // UM_MAX
+    pm_q:     1_150_000_000n,   // PM_MAX
   },
-  // s1 = 500M × 3B / Q = 1_500_000_000
-  // s2 = 1.5B × 2B / Q = 3_000_000_000
-  // s3 = 3B × 1B / Q   = 3_000_000_000
-  expected_nanogic: 3_000_000_000n,        // 3.0 MAGIC
+  // s1 = 200_000_000 ; s2 = 400_000_000 ; s3 = 460_000_000
+  expected_nanogic: 460_000_000n,
+  // 0.46 × consumed < consumed ⟹ a self-burn loop is strictly net-negative.
+  effective_rate_q: 460_000_000n,
+  bound_holds: true,
 };
 
-// ── TV-UM-SPLIT: Instant vs Vacuum stale behavior ────────────
+// ── TV-IG-REWARD-ZERO: no consumption → no reward ────────────
+export const TV_IG_REWARD_ZERO = {
+  id:          "TV-IG-REWARD-ZERO",
+  spec_ref:    "§6.3 'nắm LAMP chỉ MỞ TƯ CÁCH'",
+  description: "Holding LAMP without consuming any MAGIC yields exactly 0",
+  input: { consumed: 0n, um_q: 2_000_000_000n, pm_q: 1_150_000_000n },
+  expected_nanogic: 0n,
+  // The validator rejects a zero grant outright (no-op tx).
+  expected_validation: "REJECT",
+};
+
+// ══════════════════════════════════════════════════════════════
+// §6.3 — cap_surplus(br): the backing gate
+// ══════════════════════════════════════════════════════════════
+
+// ── TV-IG-CAP-SURPLUS-01: xanh, br = 2.0 ─────────────────────
+export const TV_IG_CAP_SURPLUS_01 = {
+  id:          "TV-IG-CAP-SURPLUS-01",
+  spec_ref:    "§6.3",
+  description: "cap_surplus with br=2.0, S=1000 MAGIC → 33.333333333 MAGIC",
+  input: {
+    br_q:         2_000_000_000n,       // 2.0
+    magic_supply: 1_000_000_000_000n,   // 1000 MAGIC in nanogic
+  },
+  // s1 = ⌊10^12 × 100_000_000 / Q⌋   = 100_000_000_000     (f·S)
+  // excess = 2.0Q − 1.5Q             =     500_000_000
+  // s2 = ⌊s1 × excess / Q⌋           =  50_000_000_000
+  // s3 = ⌊s2 × Q / 1_500_000_000⌋    =  33_333_333_333
+  steps: { s1: 100_000_000_000n, excess_q: 500_000_000n, s2: 50_000_000_000n },
+  expected_nanogic: 33_333_333_333n,
+};
+
+// ── TV-IG-CAP-SURPLUS-02: boundary br == br_safe → ĐỎ ────────
+export const TV_IG_CAP_SURPLUS_02 = {
+  id:          "TV-IG-CAP-SURPLUS-02",
+  spec_ref:    "§6.3 'Đỏ (br ≤ br_safe): cap = 0'",
+  description: "br exactly at br_safe is RED (≤, not <) → cap = 0",
+  input: { br_q: 1_500_000_000n, magic_supply: 1_000_000_000_000n },
+  expected_nanogic: 0n,
+};
+
+// ── TV-IG-CAP-SURPLUS-03: đỏ, br < br_safe ───────────────────
+export const TV_IG_CAP_SURPLUS_03 = {
+  id:          "TV-IG-CAP-SURPLUS-03",
+  spec_ref:    "§6.3",
+  description: "br=1.4 below br_safe=1.5 → Gen locked (cap = 0)",
+  input: { br_q: 1_400_000_000n, magic_supply: 1_000_000_000_000n },
+  expected_nanogic: 0n,
+};
+
+// ── TV-IG-BEACON-ABSENT: fail-closed ─────────────────────────
+export const TV_IG_BEACON_ABSENT = {
+  id:          "TV-IG-BEACON-ABSENT",
+  spec_ref:    "§6.3 + §12 F6",
+  description:
+    "No beacon / wrong address / stale beacon / depeg ⟹ the tx does NOT validate. " +
+    "There is deliberately NO default br — the safe direction is a shut door.",
+  cases: [
+    { situation: "missing reference input", expected_validation: "REJECT" },
+    { situation: "beacon NFT at a non-canonical address", expected_validation: "REJECT" },
+    { situation: "beacon older than MAX_BACKING_STALE=1", expected_validation: "REJECT" },
+    { situation: "depeg = true", expected_validation: "REJECT" },
+  ],
+};
+
+// ══════════════════════════════════════════════════════════════
+// §6.3 — 0.5 × pp_schedule: the dual ceiling
+// ══════════════════════════════════════════════════════════════
+
+// ── TV-IG-CAP-PP-01 ──────────────────────────────────────────
+export const TV_IG_CAP_PP_01 = {
+  id:          "TV-IG-CAP-PP-01",
+  spec_ref:    "§6.3 'trần-kép' + §6.4",
+  description: "One schedule λ=4000 LAMP, rate_locked_q=11.25 → pp=45 MAGIC, cap=22.5 MAGIC",
+  schedules: [
+    { lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n },
+  ],
+  // pp = ⌊4×10^9 × 11_250_000_000 / Q⌋ = 45_000_000_000
+  expected_pp:  45_000_000_000n,
+  expected_cap: 22_500_000_000n,
+};
+
+// ── TV-IG-CAP-PP-02: two schedules add up ────────────────────
+export const TV_IG_CAP_PP_02 = {
+  id:          "TV-IG-CAP-PP-02",
+  spec_ref:    "§6.3",
+  description: "pp_schedule sums over every live contract in the vault",
+  schedules: [
+    { lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n },  // 45 MAGIC
+    { lamp_per_epoch: 1_000_000_000n, rate_locked_q:  8_000_000_000n },  //  8 MAGIC
+  ],
+  expected_pp:  53_000_000_000n,
+  expected_cap: 26_500_000_000n,
+};
+
+// ── TV-IG-CAP-PP-ZERO: no schedule → door shut ───────────────
+export const TV_IG_CAP_PP_ZERO = {
+  id:          "TV-IG-CAP-PP-ZERO",
+  spec_ref:    "§6.3 'InstantGen ≤ 0.5×Schedule mọi trạng thái'",
+  description: "A vault with no ScheduleGen contract has pp=0 ⟹ cap=0 ⟹ InstantGen SHUT",
+  schedules: [] as { lamp_per_epoch: bigint; rate_locked_q: bigint }[],
+  expected_pp:  0n,
+  expected_cap: 0n,
+  expected_validation: "REJECT",
+};
+
+// ══════════════════════════════════════════════════════════════
+// §6.3 — the whole gate: min of the three
+// ══════════════════════════════════════════════════════════════
+
+// ── TV-IG-GRANT-01: reward binds ─────────────────────────────
+export const TV_IG_GRANT_01 = {
+  id:          "TV-IG-GRANT-01",
+  spec_ref:    "§6.3",
+  description: "grant = min(reward, cap_surplus, 0.5×pp) — reward is the binding ceiling",
+  input: {
+    consumed:     1_000_000_000n,
+    um_q:         1_000_000_000n,
+    pm_q:         1_050_000_000n,
+    br_q:         2_000_000_000n,
+    magic_supply: 1_000_000_000_000n,
+    schedules: [{ lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n }],
+  },
+  ceilings: {
+    reward:      210_000_000n,
+    cap_surplus: 33_333_333_333n,
+    cap_pp:      22_500_000_000n,
+  },
+  expected_grant: 210_000_000n,
+  binding: "reward(consumed)",
+};
+
+// ── TV-IG-GRANT-02: cap_pp binds ─────────────────────────────
+export const TV_IG_GRANT_02 = {
+  id:          "TV-IG-GRANT-02",
+  spec_ref:    "§6.3 trần-kép",
+  description: "A whale that consumed a lot is still capped at 0.5 × pp_schedule",
+  input: {
+    consumed:     1_000_000_000_000n,   // 1000 MAGIC consumed
+    um_q:         1_000_000_000n,
+    pm_q:         1_050_000_000n,
+    br_q:         2_000_000_000n,
+    magic_supply: 1_000_000_000_000n,
+    schedules: [{ lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n }],
+  },
+  ceilings: {
+    reward:      210_000_000_000n,      // 210 MAGIC
+    cap_surplus: 33_333_333_333n,
+    cap_pp:      22_500_000_000n,       // ← smallest
+  },
+  expected_grant: 22_500_000_000n,
+  binding: "0.5 × pp_schedule",
+};
+
+// ── TV-IG-GRANT-03: red backing shuts everything ─────────────
+export const TV_IG_GRANT_03 = {
+  id:          "TV-IG-GRANT-03",
+  spec_ref:    "§6.3 'đỏ thì khoá Gen'",
+  description: "br ≤ br_safe ⟹ cap_surplus = 0 ⟹ grant = 0 regardless of consumption",
+  input: {
+    consumed:     1_000_000_000_000n,
+    um_q:         2_000_000_000n,
+    pm_q:         1_150_000_000n,
+    br_q:         1_400_000_000n,       // đỏ
+    magic_supply: 1_000_000_000_000n,
+    schedules: [{ lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n }],
+  },
+  expected_grant: 0n,
+  expected_validation: "REJECT",
+};
+
+// ══════════════════════════════════════════════════════════════
+// I-ACT-7 — LAMP does not move
+// ══════════════════════════════════════════════════════════════
+
+export const TV_ACT_7 = {
+  id:          "TV-ACT-7",
+  spec_ref:    "§6.1, §12 I-ACT-7",
+  description: "InstantGen leaves every LAMP-bearing field byte-identical",
+  before: {
+    vault_lamp_balance : 100_000_000_000n,
+    vault_lamp_locked  : 0n,
+    loyalty_holdings   : [{ amount: 100_000_000_000n, acquired_epoch: 50n, is_locked: false }],
+  },
+  after: {
+    vault_lamp_balance : 100_000_000_000n,   // UNCHANGED
+    vault_lamp_locked  : 0n,                 // UNCHANGED
+    loyalty_holdings   : [{ amount: 100_000_000_000n, acquired_epoch: 50n, is_locked: false }],
+  },
+  // Any tx that moves LAMP out of the vault must be rejected, even when the
+  // datum is internally consistent with the reduced value.
+  lamp_out_expected_validation: "REJECT",   // vault.ak test: ig_neg_lamp_moved
+};
+
+// ══════════════════════════════════════════════════════════════
+// Eligibility (§6.3 'nắm LAMP chỉ MỞ TƯ CÁCH')
+// ══════════════════════════════════════════════════════════════
+
+export const TV_IG_ELIGIBILITY = {
+  id:          "TV-IG-ELIGIBILITY",
+  spec_ref:    "§6.3",
+  description: "LAMP threshold is a DOOR, not a price: it gates access and is never spent",
+  min_holding_oildrop: 10_000_000n,   // 10 LAMP
+  cases: [
+    { lamp_balance:  9_999_999n, lamp_locked: 0n,          expected: "REJECT" },
+    { lamp_balance: 10_000_000n, lamp_locked: 0n,          expected: "ACCEPT" },
+    // Locked LAMP does not buy eligibility (L_avail < min).
+    { lamp_balance: 10_000_000n, lamp_locked: 10_000_000n, expected: "REJECT" },
+  ],
+};
+
+// ══════════════════════════════════════════════════════════════
+// C-UM-6 — UM staleness (Instant only)
+// ══════════════════════════════════════════════════════════════
+
+// ── TV-UM-SPLIT ──────────────────────────────────────────────
 export const TV_UM_SPLIT = {
   id:          "TV-UM-SPLIT",
-  spec_ref:    "App B §B.13, §14.4 C-UM-6/7",
-  description: "Instant gets fallback when stale; Vacuum always gets smoothed",
+  spec_ref:    "C-UM-6",
+  description: "Instant gets the fallback when UM is stale",
   um_datum: {
     smoothed_q:         2_000_000_000n,    // 2.0
     last_updated_epoch: 98n,
     history:            [],
   },
   current_epoch: 100n,
-  // staleness = 100 - 98 = 2 > UM_MAX_STALENESS=1
-  staleness: 2n,
-  instant_result: 500_000_000n,   // UM_FALLBACK_Q = UM_MIN_Q ✓
-  vacuum_result:  2_000_000_000n, // always smoothed (C-UM-7) ✓
+  staleness: 2n,                    // > UM_MAX_STALENESS = 1
+  instant_result: 500_000_000n,     // UM_FALLBACK_Q = UM_MIN_Q ✓
 };
 
-// ── TV-UM-FRESH: UM fresh (staleness = 0) ────────────────────
+// ── TV-UM-FRESH ──────────────────────────────────────────────
 export const TV_UM_FRESH = {
   id:          "TV-UM-FRESH",
-  spec_ref:    "§14.4 C-UM-6",
-  description: "UM fresh — use smoothed",
+  spec_ref:    "C-UM-6",
+  description: "UM fresh (staleness = 1, the boundary) — use smoothed",
   um_datum: {
     smoothed_q:         1_500_000_000n,    // 1.5
     last_updated_epoch: 99n,
     history:            [],
   },
   current_epoch: 100n,
-  staleness:     1n,               // ≤ UM_MAX_STALENESS=1 → use smoothed
-  instant_result: 1_500_000_000n,  // smoothed ✓
+  staleness:     1n,
+  instant_result: 1_500_000_000n,
 };
 
-// ── TV-OVERFLOW-01: BigInt mandatory ─────────────────────────
+// ══════════════════════════════════════════════════════════════
+// C-OVERFLOW — BigInt is mandatory
+// ══════════════════════════════════════════════════════════════
+
+// ── TV-OVERFLOW-01 ───────────────────────────────────────────
 export const TV_OVERFLOW_01 = {
   id:          "TV-OVERFLOW-01",
-  spec_ref:    "App B §B.14, §2.1",
-  description: "JavaScript Number overflows on large L; BigInt required",
-  // Number.MAX_SAFE_INTEGER = 2^53 - 1 ≈ 9 × 10^15
-  // L = 36 × 10^15 oildrop (entire LAMP supply)
-  L_oildrop:          36_000_000_000_000_000n,
-  instant_rate_q: 3_000_000_000n,
-  // step1 = L × R_inst = 36×10^15 × 3×10^9 = 1.08×10^26
-  // Number would: 1.08e26 — but JS Number loses precision here
-  // BigInt correctly: 108_000_000_000_000_000_000_000_000n
-  intermediate_step1_bigint: 108_000_000_000_000_000_000_000_000n,
-  // After /Q: 108_000_000_000_000_000n
-  step1_after_div: 108_000_000_000_000_000n,
-  use_bigint: true,  // MANDATORY (C-OVERFLOW)
+  spec_ref:    "§11 C-OVERFLOW",
+  description: "Intermediate products blow past Number.MAX_SAFE_INTEGER (≈9×10^15)",
+  // S = 36×10^15 nanogic of effective supply through cap_surplus:
+  //   s1 = ⌊S × f_q / Q⌋ needs S × 10^8 = 3.6×10^24 as an exact integer.
+  magic_supply:  36_000_000_000_000_000n,
+  f_cap_surplus: 100_000_000n,
+  intermediate:  3_600_000_000_000_000_000_000_000n,
+  step1_after_div: 3_600_000_000_000_000n,
+  use_bigint: true,   // MANDATORY
 };
 
-// ── TV-OVERFLOW-02: Schedule intermediate ────────────────────
+// ── TV-OVERFLOW-02 ───────────────────────────────────────────
 export const TV_OVERFLOW_02 = {
   id:          "TV-OVERFLOW-02",
-  spec_ref:    "App B §B.14",
-  description: "Schedule S_Q intermediate overflows Number",
-  // S_Q(200) = 2_625_000_000
-  // SNAPSHOT_BASE_RATE_Q = 5_000_000_000
-  // Intermediate: 5×10^9 × 2.625×10^9 = 1.3125×10^19 > Number.MAX_SAFE_INTEGER
+  spec_ref:    "§11 C-OVERFLOW",
+  description: "ScheduleGen S_Q intermediate overflows Number",
+  // S_Q(200) = 2_625_000_000 ; SNAPSHOT_BASE_RATE_Q = 5_000_000_000
   intermediate: 13_125_000_000_000_000_000n,
   use_bigint: true,
 };
 
-// ── TV-HALVED-INJECT: C-DECAY-8 attack prevention ────────────
-export const TV_HALVED_INJECT = {
-  id:          "TV-HALVED-INJECT",
-  spec_ref:    "App B §B.17, §4.6 C-DECAY-8, T22",
-  description: "Attacker sets halved=True at k=0 → REJECT",
-  input_batch: {
-    source:        "Instant",
-    created_epoch: 100n,
-    current_epoch: 100n,       // k=0
-    current_amount: 1_000_000_000n,
-    halved:        false,
-  },
-  attacker_output_batch: {
-    current_amount: 900_000_000n,   // burned 100M
-    halved:        true,            // ← INJECTED (k=0, not halving epoch)
-  },
-  // C-DECAY-8: k=0 ≠ 1, so this is NOT a halving operation.
-  // output.halved MUST equal input.halved = false.
-  // Validator MUST REJECT this output.
-  expected_validation: "REJECT",
-  // After legit burn at k=0:
-  legit_output_batch: {
-    current_amount: 900_000_000n,
-    halved:        false,           // ✓ unchanged
-  },
-  // Then at k=1 (epoch 101):
-  legit_halving_result: {
-    current_amount: 450_000_000n,  // ⌊900M / 2⌋
-    halved:        true,
-  },
-};
+// ══════════════════════════════════════════════════════════════
+// Vault limits
+// ══════════════════════════════════════════════════════════════
 
-// ── TV-CONS-01: LAMP conservation ────────────────────────────
-export const TV_CONS_01 = {
-  id:          "TV-CONS-01",
-  spec_ref:    "App B §B.11, §13.1 T14",
-  description: "InstantGen: lamp_paid moves vault→Treasury; total unchanged",
-  before: {
-    vault_lamp_balance : 100_000_000_000n,  // 10^11 oildrop (100,000 LAMP)
-    treasury_lamp      : 0n,
-    total              : 100_000_000_000n,
-  },
-  lamp_paid: 1_000_000_000n,                // 10^9 oildrop (1,000 LAMP)
-  after: {
-    vault_lamp_balance : 99_000_000_000n,   // 10^11 - 10^9
-    treasury_lamp      : 1_000_000_000n,    // += lamp_paid
-    total              : 100_000_000_000n,  // unchanged ✓ (T14, C-INST-10)
-  },
-};
-
-// ── TV-INST-MIN: Boundary — minimum purchase ─────────────────
-export const TV_INST_MIN = {
-  id:          "TV-INST-MIN",
-  spec_ref:    "§9.3 C-INST-1",
-  description: "Minimum purchase boundary: 10 LAMP = 10^7 oildrop",
-  min_oildrop: 10_000_000n,
-  cases: [
-    { lamp_paid: 9_999_999n,  expected: "REJECT" },  // < MIN
-    { lamp_paid: 10_000_000n, expected: "ACCEPT" },  // = MIN ✓
-    { lamp_paid: 10_000_001n, expected: "ACCEPT" },  // > MIN ✓
-  ],
-};
-
-// ── TV-INST-MAX: Boundary — maximum purchase ─────────────────
-export const TV_INST_MAX = {
-  id:          "TV-INST-MAX",
-  spec_ref:    "§9.3 C-INST-2",
-  description: "Maximum purchase boundary: 10^13 oildrop",
-  max_oildrop: 10_000_000_000_000n,
-  cases: [
-    { lamp_paid: 10_000_000_000_000n, expected: "ACCEPT" },   // = MAX ✓
-    { lamp_paid: 10_000_000_000_001n, expected: "REJECT" },   // > MAX
-  ],
-};
-
-// ── TV-INST-AVAIL: C-INST-3 L_avail check ────────────────────
-export const TV_INST_AVAIL = {
-  id:          "TV-INST-AVAIL",
-  spec_ref:    "§9.3 C-INST-3",
-  description: "lamp_paid ≤ L_avail; locked LAMP cannot be spent",
-  vault: {
-    lamp_balance: 100_000_000_000n,   // 100,000 LAMP
-    lamp_locked:  60_000_000_000n,    // 60,000 LAMP locked
-    l_avail:      40_000_000_000n,    // only 40,000 available
-  },
-  cases: [
-    { lamp_paid: 40_000_000_000n, expected: "ACCEPT" },  // = L_avail ✓
-    { lamp_paid: 40_000_000_001n, expected: "REJECT" },  // > L_avail (uses locked LAMP)
-  ],
-};
-
-// ── TV-INST-VAULT-FULL: C-INST-7 batch count ─────────────────
 export const TV_INST_VAULT_FULL = {
   id:          "TV-INST-VAULT-FULL",
-  spec_ref:    "§9.3 C-INST-7",
-  description: "Cannot add batch when |batches| = 32",
-  active_batch_count: 32,
-  expected: "REJECT",   // GEN-VAULT-001: burn batches first
-};
-
-// ── TV-MULTI-01 (Instant component) ──────────────────────────
-// From App B §B.9: epoch 103, Snapshot Lantern + Instant at k=1
-export const TV_MULTI_01_INSTANT_COMPONENT = {
-  id:          "TV-MULTI-01-INSTANT",
-  spec_ref:    "App B §B.9",
-  description: "Multi-source balance: Instant at k=1 (halved from 2B)",
-  instant_batch: {
-    initial_amount : 2_000_000_000n,
-    current_amount : 2_000_000_000n,
-    created_epoch  : 102n,
-    decay_window   : 2n,
-    halved         : false,
-  },
-  current_epoch: 103n,
-  // k=1, halved=False → apply halving: ⌊2B/2⌋ = 1B
-  expected_balance_after_halving: 1_000_000_000n,
-  // Total with Snapshot: 729M + 1B = 1_729_000_000 ✓
+  spec_ref:    "§11 MAX_BATCHES_PER_VAULT",
+  description: "Cannot add a batch when 32 LIVE batches are already present",
+  live_batch_count: 32,
+  expected: "REJECT",
 };
 
 // ── Export all vectors ────────────────────────────────────────
 export const ALL_VECTORS = [
-  TV_INST_01,
-  TV_INST_02,
-  TV_INST_03,
-  TV_INST_GEN_01,
-  TV_INST_GEN_02,
-  TV_INST_GEN_03,
+  TV_CLIFF_01,
+  TV_CLIFF_02,
+  TV_IG_REWARD_01,
+  TV_IG_REWARD_02,
+  TV_IG_REWARD_03,
+  TV_IG_REWARD_ZERO,
+  TV_IG_CAP_SURPLUS_01,
+  TV_IG_CAP_SURPLUS_02,
+  TV_IG_CAP_SURPLUS_03,
+  TV_IG_BEACON_ABSENT,
+  TV_IG_CAP_PP_01,
+  TV_IG_CAP_PP_02,
+  TV_IG_CAP_PP_ZERO,
+  TV_IG_GRANT_01,
+  TV_IG_GRANT_02,
+  TV_IG_GRANT_03,
+  TV_ACT_7,
+  TV_IG_ELIGIBILITY,
   TV_UM_SPLIT,
   TV_UM_FRESH,
   TV_OVERFLOW_01,
   TV_OVERFLOW_02,
-  TV_HALVED_INJECT,
-  TV_CONS_01,
-  TV_INST_MIN,
-  TV_INST_MAX,
-  TV_INST_AVAIL,
   TV_INST_VAULT_FULL,
-  TV_MULTI_01_INSTANT_COMPONENT,
 ] as const;

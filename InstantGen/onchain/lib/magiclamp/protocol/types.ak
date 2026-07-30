@@ -23,18 +23,22 @@ pub type ActivityProfile {
 }
 
 // ── §4.1 MagicBatch ─────────────────────────────────────────
-// decay_window: Ember=3, Flame=6, Lantern=9, Instant=2, Vacuum=1, Schedule=1
+// decay_window = 1 for EVERY source (§4.2 per-epoch use-or-lose cliff).
 // NORMATIVE: field order must not change (breaks on-chain encoding).
 pub type MagicBatch {
   batch_id            : ByteArray,                   // blake2b256(utxo_ref ∥ index)
   source              : BatchSource,
-  created_epoch       : Natural,
+  created_epoch       : Natural,                     // the ONLY epoch this batch is live
   initial_amount      : Natural,                     // immutable audit trail
-  current_amount      : Natural,                     // mutable
-  decay_window        : Natural,
+  current_amount      : Natural,                     // mutable (BurnBatch only)
+  decay_window        : Natural,                     // = 1 (§4.2)
   profile_at_creation : Option<ActivityProfile>,     // Some(P) Snapshot; None others (C-DECAY-4)
   contract_id         : Option<ByteArray>,           // Some for Schedule; None others
-  halved              : Bool,                        // Instant only; False→True one-way (T22)
+  halved              : Bool,                        // DEAD FIELD — always False under the
+                                                     // cliff model. Kept so the Plutus Data
+                                                     // shape (9 fields) stays byte-compatible
+                                                     // with the deployed datum + sibling
+                                                     // modules. Any True value is rejected.
 }
 
 // ── LoyaltyHolding ──────────────────────────────────────────
@@ -108,9 +112,16 @@ pub type VaultAttribution {
 }
 
 // ── ActivityState ───────────────────────────────────────────
+// `consumed_credit` occupies the slot previously named `total_burns_count`
+// (same position, same type Natural → Plutus Data shape unchanged).
+//
+// SEMANTICS (§6.3 keyed-consumed): running total of MAGIC (nanogic) the owner
+// has ACTUALLY CONSUMED via BurnBatch and has NOT yet converted into an
+// InstantGen reward. BurnBatch adds Σburns; InstantGen zeroes it when it pays
+// the reward out. This is the on-chain `consumed` base for `reward(consumed)`.
 pub type ActivityState {
   recent_burn_epochs : List<(ByteArray, Natural)>,   // (app_id, epoch)
-  total_burns_count  : Natural,
+  consumed_credit    : Natural,                      // nanogic consumed, not yet rewarded
 }
 
 // ── StreakState ──────────────────────────────────────────────
@@ -148,14 +159,45 @@ pub type UMDatum {
   history            : List<Natural>,
 }
 
+// ── BackingBeacon datum (§6.3 cổng thặng dư) ─────────────────
+//
+// [CẦN XÁC NHẬN — schema do MAGIC đề xuất, chờ CARP xác nhận]
+//
+// `cap_surplus(br)` needs `br = B/S`, which is CARP-side information the MAGIC
+// vault cannot derive from its own state. It is delivered by a beacon UTxO used
+// as a REFERENCE INPUT (CIP-31), pinned by a one-shot NFT + its script address
+// (same two-layer anti-forgery pattern as UMDatum).
+//
+// Fail-closed contract: if the beacon is missing, at the wrong address, without
+// its NFT, stale, or flagged depeg → the InstantGen tx does NOT validate, i.e.
+// cap = 0 and the Gen door is SHUT. There is no default `br`.
+//
+// NOTE the deployed CARP `GlobalState` (twap/spot/breaker/nsf/valid_until) is a
+// CDP-pricing datum and does NOT carry `br_q`; it cannot be used here as-is.
+pub type BackingBeaconDatum {
+  br_q              : Natural,   // ⌊B/S × Q⌋ — authoritative backing ratio
+  magic_supply      : Natural,   // S — effective MAGIC supply (nanogic)
+  depeg             : Bool,      // True = CARP/MAGIC below peg → cap = 0 (phanh)
+  last_updated_epoch: Natural,   // staleness guard (max_backing_stale)
+}
+
 // ── Vault redeemer ───────────────────────────────────────────
 // NORMATIVE: append-only enum. New variants at END only.
 pub type VaultRedeemer {
-  // constr 0  InstantGen: user pays lamp_paid oildrop → receives MAGIC batch
-  InstantGen    { lamp_paid: Natural }
+  // constr 0  InstantGen: convert accumulated `consumed_credit` into a MAGIC
+  //           batch for the CURRENT epoch. NO LAMP moves (I-ACT-7).
+  //           `claimed_amount` is the caller's assertion of the grant; the
+  //           validator recomputes it and requires exact equality, so the
+  //           granted amount is visible in the redeemer for auditing.
+  InstantGen    { claimed_amount: Natural }
 
-  // constr 1  ApplyHalving: lazily apply halving to Instant batches at k=1
-  ApplyHalving
+  // constr 1  PruneExpired (§7.4): permissionless garbage collection of DEAD
+  //           batches (created_epoch < current_epoch). Only removes bytes that
+  //           already carry zero live value; changes NO live amount.
+  //           (Occupies the slot of the retired `ApplyHalving` — halving no
+  //           longer exists under the §4.2 cliff. Nullary, so the Plutus Data
+  //           encoding of constr 1 is unchanged.)
+  PruneExpired
 
   // constr 2  BurnBatch: burn MAGIC from specified batches
   BurnBatch     { burns: List<(ByteArray, Natural)> }

@@ -9,9 +9,10 @@ export type Profile = "Ember" | "Flame" | "Lantern";
  * The 4 vault types correspond to 4 different on-chain validators.
  * Each user-mechanism pair lives in its own vault:
  *   - "Snapshot": per-epoch lazy generation (no LAMP cost; T16)
- *   - "Instant":  on-demand purchase (LAMP → Treasury)
- *   - "Vacuum":   2-phase lock-then-fire (LAMP → Treasury at fire)
- *   - "Schedule": forward contract with locked rate (LAMP → Treasury per fire)
+ *   - "Instant":  on-demand grant keyed to MAGIC consumed (LAMP stays put)
+ *   - "Vacuum":   2-phase lock-then-fire (legacy, LAMP → Treasury at fire)
+ *   - "Schedule": forward contract with locked rate (LAMP stays put; the fire
+ *                 only releases the lock — I-ACT-7)
  *
  * A user who wants all 4 mechanisms needs 4 separate vaults (4 UTxOs at 4
  * different addresses). The Vault*Datum shape is identical across all 4,
@@ -48,11 +49,9 @@ export interface ValidatorBundle {
  * Required network/protocol params that the validator will be applied with.
  * `ms_per_epoch` is auto-derived from `network` if omitted.
  *
- * `treasuryAddress` is the Cardano address that receives transferred LAMP
- * (used by Instant/Vacuum/Schedule). MUST be a separate address from the
- * user's wallet — otherwise the validator's `treasury_receives_lamp` check
- * is vacuously satisfied (wallet change aggregates). Snapshot doesn't need
- * one (T16: no LAMP movement).
+ * `treasuryAddress` is the Cardano address that receives transferred LAMP.
+ * After PHA 2 only the legacy Vacuum validator still takes it: Instant and
+ * Schedule keep LAMP inside the vault (I-ACT-7), and Snapshot never moved any.
  */
 export interface ProtocolParams {
   /** "Preview" | "Preprod" | "Mainnet". */
@@ -70,7 +69,16 @@ export interface ProtocolParams {
   umScriptHash?: string;
   /** Shard NFT policy ID. Required for Schedule. */
   shardPolicyId?: string;
-  /** Treasury address. Required for Instant + Vacuum + Schedule. */
+  /** BackingBeacon NFT policy ID. Required for Instant (§6.3).
+   *  [CẦN XÁC NHẬN — beacon schema pending CARP]
+   *  Pass the all-zero placeholder while the beacon is not deployed: no
+   *  reference input can then match and InstantGen stays SHUT (fail-closed). */
+  backingNftPolicyId?: string;
+  /** BackingBeacon script hash. Required for Instant (§6.3). */
+  backingScriptHash?: string;
+  /** Treasury address. Required for Vacuum ONLY (legacy module).
+   *  Instant and Schedule no longer take it — under I-ACT-7 no handler in
+   *  those validators moves LAMP, so there is no Treasury leg. */
   treasuryAddress?: string;
   /** Override ms_per_epoch (advanced). Derived from `network` otherwise. */
   msPerEpoch?: bigint;

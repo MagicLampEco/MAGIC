@@ -31,6 +31,9 @@ export const SCRIPT_HASHES = {
   vault_schedule:  process.env.VAULT_SCHEDULE_HASH  ?? "FILL_AFTER_AIKEN_BUILD",
   shard:           process.env.SHARD_HASH           ?? "FILL_AFTER_AIKEN_BUILD",
   um_datum:        process.env.UM_DATUM_HASH        ?? "FILL_AFTER_AIKEN_BUILD",
+  // BackingBeacon script hash (§6.3)  [CẦN XÁC NHẬN — chờ CARP]
+  // All-zero default = beacon not deployed ⟹ InstantGen SHUT (fail-closed).
+  backing_beacon:  process.env.BACKING_SCRIPT_HASH  ?? "00".repeat(28),
 };
 
 // ── Token policy IDs (điền sau khi mint) ─────────────────────
@@ -38,6 +41,11 @@ export const POLICY_IDS = {
   lamp:     process.env.LAMP_POLICY_ID     ?? "FILL_AFTER_MINT",
   um_nft:   process.env.UM_NFT_POLICY_ID   ?? "FILL_AFTER_DEPLOY_UM",
   shard_nft:process.env.SHARD_NFT_POLICY_ID ?? "FILL_AFTER_DEPLOY_SHARDS",
+  // BackingBeacon NFT (§6.3)  [CẦN XÁC NHẬN — chờ CARP]
+  // Default = all-zero: no UTxO can carry a token under a zero policy, so the
+  // InstantGen reference-input lookup fails and Gen stays SHUT (fail-closed).
+  // Never replace this with a fabricated value to "make it run".
+  backing:  process.env.BACKING_NFT_POLICY_ID ?? "00".repeat(28),
 };
 
 // ── Asset names (hex) ─────────────────────────────────────────
@@ -52,6 +60,7 @@ export const ASSET_NAMES = {
   lamp:      process.env.LAMP_ASSET_NAME ?? lampAssetName(NETWORK),
   um_nft:    "554d44",     // "UMD"
   shard_nft: "5348415244", // "SHARD"
+  backing:   "425251",     // "BRQ" — BackingBeacon
 };
 
 // ── Addresses (điền sau khi deploy) ──────────────────────────

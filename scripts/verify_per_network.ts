@@ -7,16 +7,12 @@
 // Run:
 //   npx tsx verify_per_network.ts
 //
-// Optional env (only needed for actual mainnet deploy verification — the
-// compile-time params each vault validator takes):
+// Optional env (only needed for actual mainnet deploy verification — runtime
+// params for Instant/Vacuum/Schedule validators that take 4 params):
 //   LAMP_POLICY_ID    LAMP minting policy (56-hex)
 //   TREASURY_ADDRESS  Treasury bech32 address (separate from wallet!)
 //   UM_NFT_POLICY_ID  UM NFT policy (56-hex)
-//   UM_DATUM_HASH     UM script hash — pins the UM ref input (Instant/Vacuum)
 //   SHARD_NFT_POLICY_ID Shard NFT policy (56-hex)
-//
-// lamp_asset_name is NOT an env var here — it is derived per network, so the
-// table shows the mainnet row built with "LAMP" and testnet rows with "tLAMP".
 //
 // If env vars missing, uses placeholder values — output hash is for SHAPE check
 // (does this build produce a deterministic per-network hash?), NOT for deploy.
@@ -27,27 +23,26 @@ import {
   type Validator,
 } from "@lucid-evolution/lucid";
 import { readFile } from "node:fs/promises";
-import { msPerEpoch, lampAssetName } from "@magiclamp/protocol-utils";
 
-// ── Network × per-network params ─────────────────────────────────
-// Both ms_per_epoch AND lamp_asset_name differ per network, so the whole
-// per-network tuple is derived from protocol-utils — this script is the tool
-// that catches a network/param mismatch, so it must not carry its own copies.
-const NETWORKS = (["Preview", "Preprod", "Mainnet"] as const).map((name) => ({
-  name,
-  msPerEpoch:    msPerEpoch(name),
-  lampAssetName: lampAssetName(name),
-}));
+// ── Network × ms_per_epoch ───────────────────────────────────────
+const NETWORKS = [
+  { name: "Preview", msPerEpoch: 86_400_000n },
+  { name: "Preprod", msPerEpoch: 86_400_000n },
+  { name: "Mainnet", msPerEpoch: 432_000_000n },
+] as const;
 
 // ── Placeholder values when env vars absent (shape check only) ──
 const PLACEHOLDER_POLICY  = "00".repeat(28);   // 28-byte zero policy id
 const PLACEHOLDER_ADDRESS = "addr_test1vp00000000000000000000000000000000000000000000000000000000000000000";
 
-const LAMP_POLICY    = process.env.LAMP_POLICY_ID      ?? PLACEHOLDER_POLICY;
-const UM_NFT_POLICY  = process.env.UM_NFT_POLICY_ID    ?? PLACEHOLDER_POLICY;
-const SHARD_POLICY   = process.env.SHARD_NFT_POLICY_ID ?? PLACEHOLDER_POLICY;
-const UM_SCRIPT_HASH = process.env.UM_DATUM_HASH       ?? PLACEHOLDER_POLICY;  // 28-byte script hash
-const TREASURY_ADDR  = process.env.TREASURY_ADDRESS    ?? PLACEHOLDER_ADDRESS;
+const LAMP_POLICY   = process.env.LAMP_POLICY_ID     ?? PLACEHOLDER_POLICY;
+const UM_NFT_POLICY = process.env.UM_NFT_POLICY_ID   ?? PLACEHOLDER_POLICY;
+const SHARD_POLICY  = process.env.SHARD_NFT_POLICY_ID ?? PLACEHOLDER_POLICY;
+const TREASURY_ADDR = process.env.TREASURY_ADDRESS   ?? PLACEHOLDER_ADDRESS;
+// PHA 2 — Instant needs the UM script hash + the §6.3 BackingBeacon pins.
+const UM_SCRIPT_HASH      = process.env.UM_DATUM_HASH       ?? PLACEHOLDER_POLICY;
+const BACKING_POLICY      = process.env.BACKING_NFT_POLICY_ID ?? "00".repeat(28);
+const BACKING_SCRIPT_HASH = process.env.BACKING_SCRIPT_HASH   ?? "00".repeat(28);
 
 /** Encode bech32 address as Plutus Constr (Address { paymentCredential, stakeCredential? }). */
 function addressToPlutusData(addressBech32: string): Data {
@@ -78,8 +73,8 @@ interface ModuleSpec {
   plutusPath: string;
   /** Validator title in plutus.json (Aiken: `validator vault { spend ... }` → "vault.vault.spend"). */
   title:     string;
-  /** Build the param list (in Aiken declaration order) for one network. */
-  buildParams: (msPer: bigint, lampName: string) => Data[];
+  /** Build the param list (in Aiken declaration order) given an ms_per_epoch. */
+  buildParams: (msPer: bigint) => Data[];
 }
 
 const MODULES: ModuleSpec[] = [
@@ -87,18 +82,19 @@ const MODULES: ModuleSpec[] = [
     name:      "SnapshotGen",
     plutusPath: "../SnapshotGen/onchain/plutus.json",
     title:     "vault.vault.spend",
-    buildParams: (msPer, lampName) => [LAMP_POLICY, lampName, msPer],
+    buildParams: (msPer) => [msPer],
   },
   {
     name:      "InstantGen",
     plutusPath: "../InstantGen/onchain/plutus.json",
     title:     "vault.vault.spend",
-    buildParams: (msPer, lampName) => [
+    // PHA 2 — 6 params, treasury_addr removed (I-ACT-7), beacon pins added (§6.3)
+    buildParams: (msPer) => [
       LAMP_POLICY,
-      lampName,
-      addressToPlutusData(TREASURY_ADDR),
       UM_NFT_POLICY,
       UM_SCRIPT_HASH,
+      BACKING_POLICY,
+      BACKING_SCRIPT_HASH,
       msPer,
     ],
   },
@@ -106,12 +102,10 @@ const MODULES: ModuleSpec[] = [
     name:      "VacuumGen",
     plutusPath: "../VacuumGen/onchain/plutus.json",
     title:     "vault.vault.spend",
-    buildParams: (msPer, lampName) => [
+    buildParams: (msPer) => [
       LAMP_POLICY,
-      lampName,
       addressToPlutusData(TREASURY_ADDR),
       UM_NFT_POLICY,
-      UM_SCRIPT_HASH,
       msPer,
     ],
   },
@@ -119,19 +113,12 @@ const MODULES: ModuleSpec[] = [
     name:      "ScheduleGen",
     plutusPath: "../ScheduleGen/onchain/plutus.json",
     title:     "vault.vault.spend",
-    buildParams: (msPer, lampName) => [
+    // PHA 2 — 3 params, treasury_addr removed (I-ACT-7)
+    buildParams: (msPer) => [
       LAMP_POLICY,
-      lampName,
-      addressToPlutusData(TREASURY_ADDR),
       SHARD_POLICY,
       msPer,
     ],
-  },
-  {
-    name:      "Consolidate",
-    plutusPath: "../Consolidate/onchain/plutus.json",
-    title:     "vault_consolidate.vault_consolidate.spend",
-    buildParams: (msPer, lampName) => [LAMP_POLICY, lampName, msPer],
   },
   {
     name:      "UMKeeper",
@@ -147,7 +134,7 @@ async function main() {
 
   if (LAMP_POLICY === PLACEHOLDER_POLICY) {
     console.log("⚠  Using PLACEHOLDER policy IDs / treasury — hashes here are for SHAPE check only.");
-    console.log("   For real deploy verification, set: LAMP_POLICY_ID UM_NFT_POLICY_ID UM_DATUM_HASH SHARD_NFT_POLICY_ID TREASURY_ADDRESS\n");
+    console.log("   For real deploy verification, set: LAMP_POLICY_ID UM_NFT_POLICY_ID SHARD_NFT_POLICY_ID TREASURY_ADDRESS\n");
   }
 
   for (const mod of MODULES) {
@@ -169,9 +156,9 @@ async function main() {
 
     console.log(`  unapplied hash:  ${unapplied.hash}`);
 
-    for (const { name, msPerEpoch, lampAssetName } of NETWORKS) {
+    for (const { name, msPerEpoch } of NETWORKS) {
       try {
-        const params  = mod.buildParams(msPerEpoch, lampAssetName);
+        const params  = mod.buildParams(msPerEpoch);
         const applied = applyParamsToScript(unapplied.compiledCode, params);
         const script: Validator = { type: "PlutusV3", script: applied };
         const hash    = validatorToScriptHash(script);

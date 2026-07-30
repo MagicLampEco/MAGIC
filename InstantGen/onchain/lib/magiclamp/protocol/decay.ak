@@ -1,56 +1,37 @@
-// lib/decay.ak — Batch decay, halving, and pruning
-// Normative: §4 (C-DECAY-*), §4.3 (Instant halving), C-PRUNE-1/2
+// lib/decay.ak — MAGIC batch lifetime (§4.2 per-epoch use-or-lose CLIFF)
+//
+// The multi-epoch decay / halving machinery is GONE. A batch has exactly one
+// live epoch — its own `created_epoch`:
+//
+//   k = current_epoch − created_epoch
+//   k = 0            → LIVE   (full current_amount, burnable)
+//   k ≥ decay_window → DEAD   (value 0, NOT burnable, garbage-collectable)
+//
+// with `decay_window = 1` for every source (constants.magic_decay_window).
+// The generic `k ≥ decay_window` form is kept so the helpers stay usable if a
+// future source ever gets a different window; today every batch is a 1-epoch
+// cliff, and there is no halving step at any k.
 
 use aiken/collection/list
-use magiclamp/protocol/types.{MagicBatch, BatchSource, Instant}
+use magiclamp/protocol/types.{MagicBatch}
 
-// ── §4.3 Instant batch: lazy halving ─────────────────────────
-//
-// C-DECAY-7: Instant ∧ k=1 ∧ halved=False → current=⌊current/2⌋; halved=True
-// C-DECAY-8: In any tx that is NOT a halving operation,
-//             output.batch.halved MUST equal input.batch.halved (T22)
+// ── Liveness ─────────────────────────────────────────────────
 
-/// Should this batch be halved in the current epoch?
-/// True only for Instant batches at age k=1 that have not yet been halved.
-pub fn should_halve(batch: MagicBatch, current_epoch: Int) -> Bool {
-  let k = current_epoch - batch.created_epoch
-  batch.source == Instant && k == 1 && !batch.halved
-}
-
-/// Apply halving to a batch (C-DECAY-7).
-/// MUST only be called when should_halve returns True.
-pub fn apply_halving(batch: MagicBatch) -> MagicBatch {
-  MagicBatch {
-    ..batch,
-    current_amount: batch.current_amount / 2,   // floor division ✓
-    halved: True,
-  }
-}
-
-/// Apply lazy halving across all batches in a vault (C-PRUNE-2 ordering: halve BEFORE prune).
-pub fn apply_halving_all(
-  batches       : List<MagicBatch>,
-  current_epoch : Int,
-) -> List<MagicBatch> {
-  list.map(batches, fn(b) {
-    if should_halve(b, current_epoch) { apply_halving(b) }
-    else { b }
-  })
-}
-
-// ── §4 Prune expired batches ─────────────────────────────────
-//
-// C-PRUNE-1: magic_batches output must NOT contain expired batches.
-// C-PRUNE-2: Halving BEFORE prune in the same tx (P12).
-// A batch is expired when k ≥ decay_window.
-
-/// Is this batch expired at current_epoch?
+/// Is this batch DEAD at current_epoch? (k ≥ decay_window)
+/// A dead batch contributes 0 and may not be burned.
 pub fn is_expired(batch: MagicBatch, current_epoch: Int) -> Bool {
   current_epoch - batch.created_epoch >= batch.decay_window
 }
 
-/// Remove all expired batches from the list.
-/// MUST be called AFTER apply_halving_all in the same tx (C-PRUNE-2).
+/// Is this batch LIVE at current_epoch? (exactly its own created_epoch)
+pub fn is_live(batch: MagicBatch, current_epoch: Int) -> Bool {
+  !is_expired(batch, current_epoch)
+}
+
+// ── Garbage collection (§7.4 PruneExpired) ───────────────────
+
+/// Drop every DEAD batch. Removes bytes only — a dead batch already counts as
+/// zero, so pruning never changes any live value.
 pub fn prune_expired(
   batches       : List<MagicBatch>,
   current_epoch : Int,
@@ -58,49 +39,35 @@ pub fn prune_expired(
   list.filter(batches, fn(b) { !is_expired(b, current_epoch) })
 }
 
-/// Combined: apply halving then prune. Use this in every tx that touches the vault.
-/// Returns the cleaned batch list.
-pub fn halve_then_prune(
-  batches       : List<MagicBatch>,
-  current_epoch : Int,
-) -> List<MagicBatch> {
-  batches
-    |> apply_halving_all(current_epoch)  // C-PRUNE-2: halving first
-    |> prune_expired(current_epoch)
+/// Number of DEAD batches in the list (used to reject a no-op prune).
+pub fn count_expired(batches: List<MagicBatch>, current_epoch: Int) -> Int {
+  list.count(batches, fn(b) { is_expired(b, current_epoch) })
 }
 
-// ── §4.3 balance of an Instant batch ─────────────────────────
-//
-// k=0 → current_amount (before any halving in current tx)
-// k=1 → current_amount (halved already applied lazily)
-// k≥2 → 0
+// ── Balance ──────────────────────────────────────────────────
 
-/// Compute the current balance of any batch at current_epoch.
-/// For non-Snapshot sources, balance = current_amount if not expired.
-/// For Snapshot, balance requires the initial_amount + formula (handled separately).
-pub fn instant_batch_balance(batch: MagicBatch, current_epoch: Int) -> Int {
+/// Live balance of a batch at current_epoch. 0 once the cliff has passed.
+pub fn batch_balance(batch: MagicBatch, current_epoch: Int) -> Int {
   let k = current_epoch - batch.created_epoch
-  if k < 0 { fail @"negative batch age (C-DECAY-2)" }
-  else if k >= batch.decay_window { 0 }
-  else { batch.current_amount }
-}
-
-// ── C-DECAY-6: halved=False at creation for non-Instant ─────
-pub fn validate_halved_at_creation(batch: MagicBatch) -> Bool {
-  when batch.source is {
-    Instant -> True               // halved=False checked in C-INST-6
-    _       -> !batch.halved      // C-DECAY-6: must be False
+  if k < 0 {
+    fail @"negative batch age (C-DECAY-2)"
+  } else if k >= batch.decay_window {
+    0
+  } else {
+    batch.current_amount
   }
 }
 
-// ── C-DECAY-8: halved immutable in non-halving txs ───────────
-//
-// For any pair (input_batch, output_batch) where the tx is NOT
-// a halving operation for that batch, halved must be unchanged.
-// This prevents the TV-HALVED-INJECT attack.
+/// Total live MAGIC across a batch list (S-side accounting, off-chain mirror).
+pub fn live_total(batches: List<MagicBatch>, current_epoch: Int) -> Int {
+  list.foldl(batches, 0, fn(b, acc) { acc + batch_balance(b, current_epoch) })
+}
 
-/// Verify halved field unchanged between input and output batch.
-/// Call this for every batch that is NOT being halved in this tx.
-pub fn halved_unchanged(input_batch: MagicBatch, output_batch: MagicBatch) -> Bool {
-  input_batch.halved == output_batch.halved
+// ── `halved` is a dead field under the cliff model ────────────
+//
+// `MagicBatch.halved` is kept only so the Plutus Data shape stays compatible.
+// No code path may ever set it: a batch is created with halved=False and never
+// mutated. Validators call this on every batch they emit.
+pub fn halved_must_be_false(batch: MagicBatch) -> Bool {
+  !batch.halved
 }

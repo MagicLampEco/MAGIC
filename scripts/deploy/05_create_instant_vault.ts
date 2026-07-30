@@ -1,10 +1,12 @@
 // scripts/deploy/05_create_instant_vault.ts — Create initial InstantGen vault UTxO.
 // Run: npx tsx deploy/05_create_instant_vault.ts
-// Prereq: 01 (LAMP), 02 (UM datum + UM NFT) done; .env has LAMP_POLICY_ID, UM_NFT_POLICY_ID, TREASURY_ADDRESS.
+// Prereq: 01 (LAMP), 02 (UM datum + UM NFT) done; .env has LAMP_POLICY_ID, UM_NFT_POLICY_ID.
+// Optional (§6.3): BACKING_NFT_POLICY_ID + BACKING_SCRIPT_HASH — omit them and the
+// vault deploys with an unsatisfiable beacon pin, i.e. InstantGen stays SHUT.
 //
 // InstantGen validator is parameterized with 5 args:
 //   lamp_policy_id: PolicyId  — required for asset checks
-//   treasury_addr:  Address   — where LAMP transfer goes
+//   (treasury_addr REMOVED in PHA 2 — InstantGen moves no LAMP, I-ACT-7)
 //   um_nft_policy:  PolicyId  — identifies the canonical UM UTxO via NFT
 //   um_script_hash: ByteArray — pins the UM ref input to the UM script address
 //                               (MAINNET-BLOCK fix, defense-in-depth layer b)
@@ -20,7 +22,7 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
-  lampToOildrop,
+  lampToOil,
 } from "../config.js";
 
 // VaultDatum schema (same across all 4 modules — matches Aiken).
@@ -86,7 +88,7 @@ const VaultDatumSchema = Data.Object({
   }),
   activity_state:        Data.Object({
     recent_burn_epochs: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
-    total_burns_count:  Data.Integer(),
+    consumed_credit:    Data.Integer(),   // was total_burns_count (same slot)
   }),
   streak_state:          Data.Object({
     current_streak:    Data.Integer(),
@@ -100,8 +102,8 @@ const VaultDatumSchema = Data.Object({
   }),
 });
 
-const INITIAL_LAMP_DEPOSIT = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
-const INITIAL_LAMP_LOCKED  = lampToOildrop(BigInt(process.env.LAMP_LOCKED ?? "0"));
+const INITIAL_LAMP_DEPOSIT = lampToOil(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
+const INITIAL_LAMP_LOCKED  = lampToOil(BigInt(process.env.LAMP_LOCKED ?? "0"));
 const INITIAL_PROFILE      = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
 const LAST_UPDATED_OFFSET  = BigInt(process.env.LAST_UPDATED_OFFSET ?? "1");
 
@@ -111,7 +113,16 @@ async function main() {
   if (POLICY_IDS.lamp === "FILL_AFTER_MINT") throw new Error("Run step 01 first; missing LAMP_POLICY_ID.");
   if (POLICY_IDS.um_nft === "FILL_AFTER_DEPLOY_UM") throw new Error("Run step 02 first; missing UM_NFT_POLICY_ID.");
   if (SCRIPT_HASHES.um_datum === "FILL_AFTER_AIKEN_BUILD") throw new Error("Run step 02 first; missing UM_DATUM_HASH (= um_script_hash).");
-  if (ADDRESSES.treasury === "FILL_AFTER_DEPLOY") throw new Error("Set TREASURY_ADDRESS in .env first.");
+  // NOTE: TREASURY_ADDRESS is NO LONGER a parameter of this validator.
+  // PHA 2 / I-ACT-7 — InstantGen never moves LAMP, so there is no Treasury leg.
+  if (POLICY_IDS.backing === "00".repeat(28) || SCRIPT_HASHES.backing_beacon === "00".repeat(28)) {
+    console.warn(
+      "⚠  BackingBeacon not configured (BACKING_NFT_POLICY_ID / BACKING_SCRIPT_HASH).\n" +
+      "   The vault will still deploy, but InstantGen is SHUT: no reference input can\n" +
+      "   satisfy the beacon lookup, so cap_surplus can never be evaluated.\n" +
+      "   This is the intended fail-closed state until CARP ships the beacon.",
+    );
+  }
 
   // Lucid + wallet
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
@@ -131,29 +142,15 @@ async function main() {
     throw new Error("vault.vault.spend not found in InstantGen/onchain/plutus.json");
   }
 
-  // Convert treasury bech32 → Plutus Data Address (Aiken Constr encoding).
-  //   Address       = Constr 0 [paymentCred, stakeCred]
-  //   VerificationKey = Constr 0 [hash];   Script = Constr 1 [hash]
-  //   None = Constr 1 [];                  Some = Constr 0 [v]
-  //   Inline v = Constr 0 [v]
-  const treasuryDetails = getAddressDetails(ADDRESSES.treasury);
-  if (!treasuryDetails.paymentCredential) throw new Error("Invalid TREASURY_ADDRESS");
-  const treasuryPaymentCred = treasuryDetails.paymentCredential.type === "Key"
-    ? new Constr(0, [treasuryDetails.paymentCredential.hash])
-    : new Constr(1, [treasuryDetails.paymentCredential.hash]);
-  const treasuryStakeCred = treasuryDetails.stakeCredential
-    ? new Constr(0, [new Constr(0, [new Constr(0, [treasuryDetails.stakeCredential.hash])])])
-    : new Constr(1, []);
-  const treasuryAddrData = new Constr(0, [treasuryPaymentCred, treasuryStakeCred]);
-
-  // Apply params in order: lamp_policy_id, treasury_addr, um_nft_policy,
-  //                         um_script_hash, ms_per_epoch.
+  // Apply params in order (PHA 2 — 6 params, treasury_addr REMOVED):
+  //   lamp_policy_id, um_nft_policy, um_script_hash,
+  //   backing_nft_policy, backing_script_hash, ms_per_epoch
   const appliedCbor = applyParamsToScript(unapplied.compiledCode, [
     POLICY_IDS.lamp,
-    ASSET_NAMES.lamp,
-    treasuryAddrData,
     POLICY_IDS.um_nft,
-    SCRIPT_HASHES.um_datum,   // um_script_hash — pins UM ref input (layer b)
+    SCRIPT_HASHES.um_datum,        // pins the UM ref input (layer b)
+    POLICY_IDS.backing,            // pins the BackingBeacon NFT (§6.3)
+    SCRIPT_HASHES.backing_beacon,  // pins the BackingBeacon address (§6.3)
     PROTOCOL.MS_PER_EPOCH,
   ]);
   const vaultScript     = { type: "PlutusV3" as const, script: appliedCbor };
@@ -165,7 +162,8 @@ async function main() {
   console.log(`LAMP policy:        ${POLICY_IDS.lamp}`);
   console.log(`UM NFT policy:      ${POLICY_IDS.um_nft}`);
   console.log(`UM script hash:     ${SCRIPT_HASHES.um_datum}`);
-  console.log(`Treasury address:   ${ADDRESSES.treasury}`);
+  console.log(`Backing NFT policy: ${POLICY_IDS.backing}`);
+  console.log(`Backing script:     ${SCRIPT_HASHES.backing_beacon}`);
   console.log(`Vault script hash:  ${vaultScriptHash}`);
   console.log(`Vault address:      ${vaultScriptAddress}`);
   console.log(`Profile:            ${INITIAL_PROFILE}`);
@@ -210,7 +208,7 @@ async function main() {
       current: [], pending: null,
       current_effective_epoch: 0n, last_changed_epoch: 0n,
     },
-    activity_state:        { recent_burn_epochs: [], total_burns_count: 0n },
+    activity_state:        { recent_burn_epochs: [], consumed_credit: 0n },
     streak_state:          { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate:     null,
     attribution:           {

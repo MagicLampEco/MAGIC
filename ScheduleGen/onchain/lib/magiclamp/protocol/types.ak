@@ -16,16 +16,19 @@ pub type ActivityProfile {
   Lantern  // constr 2
 }
 
+// §4.2 per-epoch use-or-lose: decay_window = 1 for EVERY source. A batch is
+// live only inside its own `created_epoch`; at created_epoch + 1 it is DEAD.
 pub type MagicBatch {
   batch_id            : ByteArray,
   source              : BatchSource,
-  created_epoch       : Natural,
+  created_epoch       : Natural,   // the ONLY epoch this batch is live
   initial_amount      : Natural,
   current_amount      : Natural,
-  decay_window        : Natural,
+  decay_window        : Natural,   // = 1 (§4.2)
   profile_at_creation : Option<ActivityProfile>,
   contract_id         : Option<ByteArray>,        // Some(schedule_id) for Schedule
-  halved              : Bool,
+  halved              : Bool,      // DEAD FIELD — always False under the cliff
+                                   // model; kept for Plutus Data compatibility
 }
 
 pub type LoyaltyHolding {
@@ -94,9 +97,15 @@ pub type VaultAttribution {
   total_events     : Natural,
 }
 
+// `consumed_credit` occupies the slot previously named `total_burns_count`
+// (same position, same type Natural → Plutus Data shape unchanged).
+// SEMANTICS (§6.3 keyed-consumed): running total of MAGIC (nanogic) the owner
+// has ACTUALLY CONSUMED via BurnBatch and not yet converted into an InstantGen
+// reward. BurnBatch adds Σburns here; only InstantGen (in the InstantGen vault)
+// spends it. Kept identical in both vault types so the datum stays portable.
 pub type ActivityState {
   recent_burn_epochs : List<(ByteArray, Natural)>,
-  total_burns_count  : Natural,
+  consumed_credit    : Natural,
 }
 
 pub type StreakState {

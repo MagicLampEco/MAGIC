@@ -1,16 +1,19 @@
 // MagicSDK/src/validatorScripts.ts — apply ms_per_epoch + other params per vault type
 //
-// Each of the 4 vault validators takes a DIFFERENT set of compile-time parameters
-// (order below MUST match the Aiken `validator vault(...)` signature exactly —
-// tests/vaultParams.test.ts pins it, because a reorder yields a valid-looking
-// hash that is only wrong once it is on chain):
-//   Snapshot: vault(lamp_policy_id, lamp_asset_name, ms_per_epoch)
-//   Instant:  vault(lamp_policy_id, lamp_asset_name, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
-//   Vacuum:   vault(lamp_policy_id, lamp_asset_name, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
-//   Schedule: vault(lamp_policy_id, lamp_asset_name, treasury_addr, shard_policy_id, ms_per_epoch)
+// Each of the 4 vault validators takes a DIFFERENT set of compile-time parameters:
+//   Snapshot: vault(ms_per_epoch)
+//   Instant:  vault(lamp_policy_id, um_nft_policy, um_script_hash,
+//                   backing_nft_policy, backing_script_hash, ms_per_epoch)
+//   Vacuum:   vault(lamp_policy_id, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
+//   Schedule: vault(lamp_policy_id, shard_policy_id, ms_per_epoch)
+//
+// PHA 2 removed `treasury_addr` from Instant and Schedule: under I-ACT-7 no
+// handler in those validators moves LAMP, so the parameter had no reader left.
+// Only the legacy Vacuum validator still carries it.
 //
 // `um_script_hash` pins the UM reference input to the canonical UM script
-// address (MAINNET-BLOCK fix, defense-in-depth layer b).
+// address (MAINNET-BLOCK fix, defense-in-depth layer b); `backing_script_hash`
+// does the same for the BackingBeacon (§6.3).
 //
 // `applyParamsToScript` bakes them into the CBOR → produces a network-specific
 // validator hash. The hash defines the on-chain address, so every consumer
@@ -22,7 +25,7 @@ import {
   Constr, Data, getAddressDetails,
   type Validator,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, lampAssetName } from "@magiclamp/protocol-utils";
+import { msPerEpoch } from "@magiclamp/protocol-utils";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
 /**
@@ -72,45 +75,53 @@ export function applyShardValidator(
 
 // ── internals ────────────────────────────────────────────────
 
-export function buildParamsList(
+function buildParamsList(
   vaultType: VaultType,
   protocol : ProtocolParams,
   msPer    : bigint,
 ): Data[] {
-  // lamp_asset_name is param #2 on EVERY vault (right after lamp_policy_id),
-  // mirroring the on-chain validator signature. Derived from the network like
-  // msPer above — a tLAMP default would bake an unusable mainnet vault.
-  const assetName = protocol.lampAssetName ?? lampAssetName(protocol.network);
-
   switch (vaultType) {
     case "Snapshot":
-      // vault(lamp_policy_id, lamp_asset_name, ms_per_epoch)
-      return [protocol.lampPolicyId, assetName, msPer];
+      // vault(ms_per_epoch)
+      return [msPer];
 
-    case "Instant":
+    case "Instant": {
+      // vault(lamp_policy_id, um_nft_policy, um_script_hash,
+      //       backing_nft_policy, backing_script_hash, ms_per_epoch)
+      requireField(protocol.umNftPolicyId, "umNftPolicyId", vaultType);
+      requireField(protocol.umScriptHash, "umScriptHash", vaultType);
+      requireField(protocol.backingNftPolicyId, "backingNftPolicyId", vaultType);
+      requireField(protocol.backingScriptHash, "backingScriptHash", vaultType);
+      return [
+        protocol.lampPolicyId,
+        protocol.umNftPolicyId!,
+        protocol.umScriptHash!,        // pins the UM ref input (layer b)
+        protocol.backingNftPolicyId!,  // pins the BackingBeacon ref input (§6.3)
+        protocol.backingScriptHash!,
+        msPer,
+      ];
+    }
+
     case "Vacuum": {
-      // vault(lamp_policy_id, lamp_asset_name, treasury_addr, um_nft_policy, um_script_hash, ms_per_epoch)
+      // LEGACY module — still vault(lamp_policy_id, treasury_addr,
+      //                            um_nft_policy, um_script_hash, ms_per_epoch)
       requireField(protocol.umNftPolicyId, "umNftPolicyId", vaultType);
       requireField(protocol.umScriptHash, "umScriptHash", vaultType);
       requireField(protocol.treasuryAddress, "treasuryAddress", vaultType);
       return [
         protocol.lampPolicyId,
-        assetName,
         addressToPlutusData(protocol.treasuryAddress!),
         protocol.umNftPolicyId!,
-        protocol.umScriptHash!,   // um_script_hash — pins UM ref input (layer b)
+        protocol.umScriptHash!,
         msPer,
       ];
     }
 
     case "Schedule": {
-      // vault(lamp_policy_id, lamp_asset_name, treasury_addr, shard_policy_id, ms_per_epoch)
+      // vault(lamp_policy_id, shard_policy_id, ms_per_epoch)
       requireField(protocol.shardPolicyId, "shardPolicyId", "Schedule");
-      requireField(protocol.treasuryAddress, "treasuryAddress", "Schedule");
       return [
         protocol.lampPolicyId,
-        assetName,
-        addressToPlutusData(protocol.treasuryAddress!),
         protocol.shardPolicyId!,
         msPer,
       ];

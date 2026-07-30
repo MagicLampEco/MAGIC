@@ -86,6 +86,12 @@ const DelegationCertificateSchema = Data.Object({
   last_changed_epoch:      Data.Integer(),
 });
 
+// NOTE (PHA 2): InstantGen and ScheduleGen renamed the second field to
+// `consumed_credit` — nanogic actually consumed via BurnBatch, the base for the
+// §6.3 InstantGen reward. Same POSITION and same Integer type, so the Plutus
+// Data encoding is identical and this schema stays wire-compatible. The name
+// here is kept as `total_burns_count` because SnapshotGen / VacuumGen /
+// Consolidate / ProfileChange still use that label on their side.
 const ActivityStateSchema = Data.Object({
   recent_burn_epochs: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
   total_burns_count:  Data.Integer(),

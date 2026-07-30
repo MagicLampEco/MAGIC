@@ -1,6 +1,13 @@
 # InstantGen — Testnet Implementation Guide
 ## GenMAGIC v3.3 · §9 InstantGen · Cardano Preview Testnet
 
+> ⚠ **ĐÃ LỖI THỜI ở phần cơ chế.** Từ PHA 2, InstantGen KHÔNG còn là "mua MAGIC
+> bằng LAMP": LAMP đứng yên trong vault (I-ACT-7), batch sống đúng 1 epoch
+> (§4.2, không có halving), và độ lớn tính theo MAGIC đã tiêu thụ thật (§6.3).
+> Mô tả cơ chế hiện hành ở **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn
+> chân lý là `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`. Phần cấu trúc thư mục và
+> lệnh chạy dưới đây vẫn đúng.
+
 ---
 
 ## Cấu trúc project
@@ -13,7 +20,7 @@ instantgen/
 │   │   ├── types.ak            # Data types (§4.1, §5)
 │   │   ├── constants.ak        # Protocol constants (§19)
 │   │   ├── math.ak             # Q-format arithmetic (§6.1)
-│   │   ├── decay.ak            # Decay + halving (§4, C-DECAY-*)
+│   │   ├── decay.ak            # Batch lifetime — cliff 1 epoch (§4.2)
 │   │   ├── um.ak               # UM handling (§14, C-UM-6)
 │   │   └── lamp.ak             # Loyalty holdings helpers
 │   └── validators/

@@ -16,8 +16,8 @@ import {
 import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, nextFireEpoch, countEligibleFires,
-  selectLampForLock, removeLockedAmount, lAvail,
-  lampToOildrop, nanogicToMagicStr, qToStr,
+  selectLampForLock, unlockLockedAmount, isExpired, lAvail,
+  lampToOil, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
@@ -46,15 +46,15 @@ export interface CommitParams {
   vaultUtxo       : UTxO;
   shardUtxos      : UTxO[];    // all 16 shard UTxOs (builder finds the right one)
   scheduleLength  : bigint;    // L ∈ [10,200]
-  lampPerEpoch    : bigint;    // λ in oildrop
+  lampPerEpoch    : bigint;    // λ in oil
   userAddress     : string;
-  /** Compiled vault validator (4 params: lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch). */
+  /** Compiled vault validator (3 params: lamp_policy_id, shard_policy_id, ms_per_epoch).
+   *  `treasury_addr` was REMOVED in PHA 2 — no handler moves LAMP any more (I-ACT-7). */
   vaultScript     : Validator;
   /** Compiled shard validator (0 params). */
   shardScript     : Validator;
   lampPolicyId    : string;
   lampAssetName?  : string;
-  treasuryAddress : string;
   network?        : Network;
   tipPosixMs?     : bigint;
   tamperOutputDatum?: (d: any) => any;
@@ -83,10 +83,11 @@ export interface FireParams {
   shardScript     : Validator;
   lampPolicyId    : string;
   lampAssetName?  : string;
-  treasuryAddress : string;
   network?        : Network;
   tipPosixMs?     : bigint;
   tamperOutputDatum?: (d: any) => any;
+  /** TEST ONLY: move LAMP out of the vault to prove I-ACT-7 rejects it. */
+  tamperLampOutOil?: bigint;
 }
 
 export interface FireResult {
@@ -94,7 +95,8 @@ export interface FireResult {
   firesInTx      : number;
   mPerFire       : bigint;
   totalMagicFired: bigint;
-  lampTransferred: bigint;
+  /** LAMP RELEASED from the locked pool — it stays in the vault (I-ACT-7). */
+  lampReleased   : bigint;
   scheduleComplete: boolean;
   summary        : string;
 }
@@ -218,7 +220,7 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     `═══ ScheduleGen Commit ═══`,
     `Commit epoch:    ${commitEpoch}`,
     `Schedule length: ${L} orders (~${Number(L) * 5} days)`,
-    `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oildrop)`,
+    `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oil)`,
     `Total locked:    ${totalLock / 1_000_000n} tLAMP`,
     `rate_locked_q:   ${rateLockedQ} (immutable forever — T8)`,
     `M_i per fire:    ${nanogicToMagicStr(mPerFire)} MAGIC`,
@@ -266,9 +268,12 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
 
   // M_i — reads STORED rate_locked_q (T8: immutable)
   const mI = computeMi(sched.lamp_per_epoch, sched.rate_locked_q);
-  const lampTransfer = sched.lamp_per_epoch * BigInt(firesInTx);
+  // PHA 2 / I-ACT-7: LAMP is RELEASED from the locked pool, not transferred.
+  const lampReleased = sched.lamp_per_epoch * BigInt(firesInTx);
 
-  // Create batches (one per fire)
+  // Create batches (one per fire). Every batch — including catch-up ones — is
+  // stamped with the CURRENT epoch and lives exactly this epoch (§4.2 cliff),
+  // so a catch-up can never resurrect MAGIC missed in earlier epochs.
   const newBatches: MagicBatch[] = Array.from({ length: firesInTx }, (_, i) => ({
     batch_id:            computeBatchId(vaultUtxo, vaultDatum.next_batch_index + BigInt(i)),
     source:              "Schedule" as const,
@@ -281,7 +286,11 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     halved:              false,
   }));
 
-  const updatedBatches = [...vaultDatum.magic_batches, ...newBatches];
+  // §4.2: collect DEAD batches on the way out.
+  const liveBatches = vaultDatum.magic_batches.filter(
+    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch),
+  );
+  const updatedBatches = [...liveBatches, ...newBatches];
   if (updatedBatches.length > MAX_BATCHES_PER_VAULT)
     throw new Error(`GEN-VAULT-001: would exceed 32 batches`);
 
@@ -294,10 +303,12 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
         s.schedule_id === scheduleId ? { ...s, fired_count: newFiredCount } : s
       );
 
-  // Remove locked LAMP (C-FIRE-6)
-  const newHoldings   = removeLockedAmount(vaultDatum.loyalty_holdings, lampTransfer);
-  const newLampBalance = vaultDatum.lamp_balance - lampTransfer;
-  const newLampLocked  = vaultDatum.lamp_locked  - lampTransfer;
+  // C-FIRE-6 (PHA 2): RELEASE the lock. Holdings keep their amount and epoch,
+  // only `is_locked` flips → Σholdings, lamp_balance and the LAMP inside the
+  // UTxO are all invariant (I-ACT-7).
+  const newHoldings    = unlockLockedAmount(vaultDatum.loyalty_holdings, lampReleased);
+  const newLampBalance = vaultDatum.lamp_balance;                    // UNCHANGED
+  const newLampLocked  = vaultDatum.lamp_locked - lampReleased;
 
   // Updated vault datum (A02)
   let newVaultDatum: VaultDatum = {
@@ -323,14 +334,14 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
 
   const newShardDatum: ShardDatum = {
     ...shardDatum,
-    shard_locked_lamp:      shardDatum.shard_locked_lamp - lampTransfer,
-    shard_cumulative_fired: shardDatum.shard_cumulative_fired + lampTransfer,
+    shard_locked_lamp:      shardDatum.shard_locked_lamp - lampReleased,
+    shard_cumulative_fired: shardDatum.shard_cumulative_fired + lampReleased,
     shard_active_count:     schedComplete ? shardDatum.shard_active_count - 1n : shardDatum.shard_active_count,
     last_updated_epoch:     currentEpoch,
   };
 
   // Build tx
-  const { vaultScript, shardScript, lampPolicyId, treasuryAddress } = params;
+  const { vaultScript, shardScript, lampPolicyId } = params;
   const lampAssetName = params.lampAssetName ?? TESTNET_CONFIG.lampAssetName;
   const vaultAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
@@ -346,10 +357,12 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     .collectFrom([shardUtxo], shardRed)
     .attach.SpendingValidator(vaultScript)
     .attach.SpendingValidator(shardScript)
+    // I-ACT-7: the vault output carries EXACTLY the LAMP it came in with.
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
-      { lovelace: vaultUtxo.assets.lovelace, [lampUnit]: newLampBalance })
+      { lovelace: vaultUtxo.assets.lovelace,
+        [lampUnit]: newLampBalance - (params.tamperLampOutOil ?? 0n) })
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
-    .pay.ToAddress(treasuryAddress, { [lampUnit]: lampTransfer })
+    // NO Treasury output — a fire moves no LAMP anywhere.
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless
     .validFrom(lowerTime)
     .validTo(upperTime)
@@ -361,7 +374,7 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     `Fires in tx:    ${firesInTx} (of ${Number(sched.schedule_length - sched.fired_count)} remaining)`,
     `M_i per fire:   ${nanogicToMagicStr(mI)} MAGIC (rate_locked at commit — T8)`,
     `Total MAGIC:    ${nanogicToMagicStr(mI * BigInt(firesInTx))} MAGIC`,
-    `LAMP transferred: ${lampTransfer / 1_000_000n} tLAMP → Treasury`,
+    `LAMP released:  ${lampReleased / 1_000_000n} tLAMP unlocked — stays in the vault (I-ACT-7)`,
     `Progress:       ${Number(newFiredCount)}/${Number(sched.schedule_length)} orders`,
     `Schedule:       ${schedComplete ? "✅ COMPLETE — removed" : `⏳ ${Number(sched.schedule_length - newFiredCount)} orders remaining`}`,
     `Shard:          ${shardId} (C-SCH-FIRE-SHARD ✓)`,
@@ -370,7 +383,7 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     `Note: This tx required NO owner signature (C-SCH-FIRE-PERMISSION).`,
   ].filter(Boolean).join("\n");
 
-  return { tx, firesInTx, mPerFire: mI, totalMagicFired: mI * BigInt(firesInTx), lampTransferred: lampTransfer, scheduleComplete: schedComplete, summary };
+  return { tx, firesInTx, mPerFire: mI, totalMagicFired: mI * BigInt(firesInTx), lampReleased, scheduleComplete: schedComplete, summary };
 }
 
 // ── Submit ────────────────────────────────────────────────────

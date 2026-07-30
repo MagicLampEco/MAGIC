@@ -1,6 +1,13 @@
 # ScheduleGen — Testnet Implementation Guide
 ## GenMAGIC v3.3 · §11 ScheduleGen · Cardano Preview Testnet
 
+> ⚠ **Đã đổi ở PHA 2 (xem `InstantGen/DESIGN-PHASE2.md` §2, §3, §5).**
+> `ScheduleFire` KHÔNG chuyển LAMP về Treasury nữa: nó chỉ **giải phóng khoá**
+> (I-ACT-7). `lamp_balance` bất biến; `lamp_locked` giảm `fires × λ`; holdings
+> chỉ lật `is_locked`. Batch sinh ra sống đúng 1 epoch (§4.2 use-or-lose) —
+> catch-up nhiều đơn vẫn đóng dấu epoch HIỆN TẠI, không hồi sinh MAGIC bỏ lỡ.
+> Validator `vault` còn **3** apply-param (`treasury_addr` đã xoá).
+
 ---
 
 ## ScheduleGen vs 3 cơ chế kia — tổng kết

@@ -36,19 +36,13 @@ async function main() {
     v.title === "vault.shard.spend" || v.title === "shard.shard.spend",
   );
 
-  const td = getAddressDetails(ADDRESSES.treasury);
-  const tPaymentCred = td.paymentCredential!.type === "Key"
-    ? new Constr(0, [td.paymentCredential!.hash])
-    : new Constr(1, [td.paymentCredential!.hash]);
-  const tStakeCred = td.stakeCredential
-    ? new Constr(0, [new Constr(0, [new Constr(0, [td.stakeCredential.hash])])])
-    : new Constr(1, []);
-  const treasuryAddrData = new Constr(0, [tPaymentCred, tStakeCred]);
+  // PHA 2: no treasury param — the ScheduleGen validator moves no LAMP (I-ACT-7).
 
   const vaultScript = {
     type: "PlutusV3" as const,
     script: applyParamsToScript(vaultUnapplied.compiledCode, [
-      POLICY_IDS.lamp, ASSET_NAMES.lamp, treasuryAddrData, POLICY_IDS.shard_nft, PROTOCOL.MS_PER_EPOCH,
+      // PHA 2 — 3 params (treasury_addr removed, I-ACT-7)
+      POLICY_IDS.lamp, POLICY_IDS.shard_nft, PROTOCOL.MS_PER_EPOCH,
     ]),
   };
   // Shard validator now takes 1 param: shard NFT policy id (same value the vault
@@ -109,7 +103,6 @@ async function main() {
       vaultScript, shardScript,
       lampPolicyId: POLICY_IDS.lamp,
       lampAssetName: ASSET_NAMES.lamp,
-      treasuryAddress: ADDRESSES.treasury,
       network: NETWORK, tipPosixMs: tip.posixMs,
       tamperOutputDatum,
     });

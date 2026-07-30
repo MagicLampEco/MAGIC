@@ -1,125 +1,249 @@
-// tests/math.test.ts — BigInt math engine unit tests
-// Run: npx vitest run tests/math.test.ts
+// tests/math.test.ts — BigInt math engine unit tests (PHA 2)
+// Run: npx vitest run ../tests/math.test.ts
 // ALL tests must pass before submitting any on-chain tx.
 
 import { describe, it, expect } from "vitest";
 import {
-  computeInstantMagic,
+  computeRewardFromConsumed,
+  computeCapSurplus,
+  computePpSchedule,
+  computeCapPp,
+  computeInstantGrant,
   getUmForInstant,
-  shouldHalve,
-  applyHalving,
   isExpired,
+  isLive,
+  batchBalance,
   slotToEpoch,
-  lampToOildrop,
+  lampToOil,
   nanogicToMagicStr,
 } from "../offchain/src/math.js";
 import {
-  TV_INST_GEN_01, TV_INST_GEN_02, TV_INST_GEN_03,
+  TV_CLIFF_01, TV_CLIFF_02,
+  TV_IG_REWARD_01, TV_IG_REWARD_02, TV_IG_REWARD_03, TV_IG_REWARD_ZERO,
+  TV_IG_CAP_SURPLUS_01, TV_IG_CAP_SURPLUS_02, TV_IG_CAP_SURPLUS_03,
+  TV_IG_CAP_PP_01, TV_IG_CAP_PP_02, TV_IG_CAP_PP_ZERO,
+  TV_IG_GRANT_01, TV_IG_GRANT_02, TV_IG_GRANT_03,
   TV_UM_SPLIT, TV_UM_FRESH,
-  TV_INST_01, TV_INST_02, TV_INST_03,
+  TV_OVERFLOW_01,
 } from "./vectors.js";
-import { UM_FALLBACK_Q } from "../offchain/src/constants.js";
+import {
+  UM_FALLBACK_Q, UM_MAX_Q, Q, INSTANT_REWARD_RATE_Q, PM_Q,
+  MAGIC_DECAY_WINDOW, F_CAP_SURPLUS_Q, BR_SAFE_Q,
+} from "../offchain/src/constants.js";
 
 // ═══════════════════════════════════════════════════════════════
-// §9.1 InstantGen generation formula
+// §6.3 reward(consumed) — magnitude keyed to MAGIC CONSUMED
 // ═══════════════════════════════════════════════════════════════
 
-describe("computeInstantMagic — §9.1", () => {
+describe("computeRewardFromConsumed — §6.3", () => {
 
-  it("TV-INST-GEN-01: 1000 LAMP, Flame, UM=1.0 → 3.15 MAGIC (§20.3 calibration)", () => {
-    const { input, expected_nanogic, steps } = TV_INST_GEN_01;
-    const result = computeInstantMagic(input.lamp_paid_oildrop, input.um_q, input.pm_q);
-    expect(result).toBe(expected_nanogic);         // 3_150_000_000n ✓
+  it("TV-IG-REWARD-01: 1 MAGIC consumed, Flame, UM=1.0 → 0.21 MAGIC", () => {
+    const { input, expected_nanogic, steps } = TV_IG_REWARD_01;
+    const result = computeRewardFromConsumed(input.consumed, input.um_q, input.pm_q);
+    expect(result).toBe(expected_nanogic);
 
-    // Verify intermediate steps (L4 error analysis)
-    const s1 = input.lamp_paid_oildrop * 3_000_000_000n / 1_000_000_000n;
-    const s2 = s1 * input.um_q / 1_000_000_000n;
-    const s3 = s2 * input.pm_q / 1_000_000_000n;
-    expect(s1).toBe(steps.s1);   // 3_000_000_000n
-    expect(s2).toBe(steps.s2);   // 3_000_000_000n
-    expect(s3).toBe(steps.s3);   // 3_150_000_000n
-    expect(nanogicToMagicStr(result)).toBe("3.1500");
+    // Verify the three sequential floor steps individually (L4 error analysis)
+    const s1 = input.consumed * INSTANT_REWARD_RATE_Q / Q;
+    const s2 = s1 * input.um_q / Q;
+    const s3 = s2 * input.pm_q / Q;
+    expect(s1).toBe(steps.s1);
+    expect(s2).toBe(steps.s2);
+    expect(s3).toBe(steps.s3);
+    expect(nanogicToMagicStr(result)).toBe("0.2100");
   });
 
-  it("TV-INST-GEN-02: 1000 LAMP, Ember, UM=1.5 → 5.175 MAGIC", () => {
-    const { input, expected_nanogic } = TV_INST_GEN_02;
-    const result = computeInstantMagic(input.lamp_paid_oildrop, input.um_q, input.pm_q);
-    expect(result).toBe(expected_nanogic);  // 5_175_000_000n ✓
+  it("TV-IG-REWARD-02: 5 MAGIC consumed, Ember, UM=1.5 → 1.725 MAGIC", () => {
+    const { input, expected_nanogic } = TV_IG_REWARD_02;
+    expect(computeRewardFromConsumed(input.consumed, input.um_q, input.pm_q))
+      .toBe(expected_nanogic);
   });
 
-  it("TV-INST-GEN-03: 500 LAMP, Lantern, UM=2.0 (max) → 3.0 MAGIC", () => {
-    const { input, expected_nanogic } = TV_INST_GEN_03;
-    const result = computeInstantMagic(input.lamp_paid_oildrop, input.um_q, input.pm_q);
-    expect(result).toBe(expected_nanogic);  // 3_000_000_000n ✓
+  it("TV-IG-REWARD-ZERO: holding LAMP without consuming yields exactly 0", () => {
+    const { input, expected_nanogic } = TV_IG_REWARD_ZERO;
+    expect(computeRewardFromConsumed(input.consumed, input.um_q, input.pm_q))
+      .toBe(expected_nanogic);
   });
 
-  it("L4: multiplication error ≤ 3 nanogic, M_actual ≤ M_true", () => {
-    // For any inputs, the 3-step floor multiplication introduces at most 3 nanogic error
-    const lamp = 1_000_000_000n;
-    const um   = 1_234_567_890n;  // arbitrary
-    const pm   = 1_050_000_000n;
-    const Q    = 1_000_000_000n;
-    const R    = 3_000_000_000n;
-
-    const m_actual = computeInstantMagic(lamp, um, pm);
-
-    // True value (exact rational, computed with higher precision)
-    // M_true = lamp × R × um × pm / Q³  (no floor)
-    // We use BigInt × 10^9 to simulate fractional part
-    const m_true_num = lamp * R * um * pm;
-    const m_true_den = Q * Q * Q;
-    const m_true_floor = m_true_num / m_true_den;
-
-    // M_actual ≤ M_true (user-unfavorable in M direction — protocol conservative)
-    expect(m_actual).toBeLessThanOrEqual(m_true_floor + 3n);
-    expect(m_actual).toBeLessThanOrEqual(m_true_floor);     // never exceeds true value
-    const error = m_true_floor - m_actual;
-    expect(error).toBeLessThanOrEqual(3n);  // L4: ≤ 3 nanogic
+  it("TV-IG-REWARD-03 / INV-CASHBACK-BOUND: reward ≤ consumed at UM_MAX × PM_MAX", () => {
+    const { input, expected_nanogic } = TV_IG_REWARD_03;
+    const result = computeRewardFromConsumed(input.consumed, input.um_q, input.pm_q);
+    expect(result).toBe(expected_nanogic);
+    expect(result).toBeLessThan(input.consumed);       // strict — self-burn is net-negative
+    // 0.20 × 2.00 × 1.15 = 0.46
+    expect(result * 1000n / input.consumed).toBe(460n);
   });
 
-  it("Uses BigInt — does not lose precision for large values", () => {
-    // TV-OVERFLOW-01: L = entire LAMP supply
-    const largeLamp = 36_000_000_000_000_000n;
-    const um        = 1_000_000_000n;
-    const pm        = 1_050_000_000n;
-    // Should not throw; result is a valid large bigint
-    const result = computeInstantMagic(largeLamp, um, pm);
-    expect(typeof result).toBe("bigint");
-    expect(result > 0n).toBe(true);
-    // Step1 intermediate: 36×10^15 × 3×10^9 = 1.08×10^26 (overflows Number)
-    const step1 = largeLamp * 3_000_000_000n;
-    expect(step1).toBe(108_000_000_000_000_000_000_000_000n);  // TV-OVERFLOW-01 ✓
+  it("INV-CASHBACK-BOUND holds for every profile at UM_MAX, over a wide range", () => {
+    for (const pmQ of Object.values(PM_Q)) {
+      for (const consumed of [
+        1n, 7n, 999n, 1_000_000_000n, 123_456_789_012n, 36_000_000_000_000_000n,
+      ]) {
+        const r = computeRewardFromConsumed(consumed, UM_MAX_Q, pmQ);
+        expect(r).toBeLessThanOrEqual(consumed);
+      }
+    }
+  });
+
+  it("L4: 3 sequential floors never exceed the exact value", () => {
+    const consumed = 123_456_789_012n;
+    const umQ = 1_234_567_890n;
+    const pmQ = 1_050_000_000n;
+    const actual = computeRewardFromConsumed(consumed, umQ, pmQ);
+    const exact  = consumed * INSTANT_REWARD_RATE_Q * umQ * pmQ / (Q * Q * Q);
+    expect(actual).toBeLessThanOrEqual(exact);
+    expect(exact - actual).toBeLessThanOrEqual(3n);   // ≤ 3 nanogic
+  });
+
+  it("Monotonic in consumed — more real consumption never pays less", () => {
+    let prev = -1n;
+    for (let c = 0n; c <= 20_000_000_000n; c += 1_000_000_000n) {
+      const r = computeRewardFromConsumed(c, 1_000_000_000n, PM_Q.Flame!);
+      expect(r).toBeGreaterThanOrEqual(prev);
+      prev = r;
+    }
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
-// §14.4 C-UM-6 UM staleness check
+// §6.3 cap_surplus(br) — the backing gate
 // ═══════════════════════════════════════════════════════════════
 
-describe("getUmForInstant — §14.4 C-UM-6", () => {
+describe("computeCapSurplus — §6.3", () => {
+
+  it("TV-IG-CAP-SURPLUS-01: br=2.0, S=1000 MAGIC → 33.333333333 MAGIC", () => {
+    const { input, expected_nanogic, steps } = TV_IG_CAP_SURPLUS_01;
+    expect(computeCapSurplus(input.br_q, input.magic_supply)).toBe(expected_nanogic);
+
+    // sequential floors, spelled out
+    const s1 = input.magic_supply * F_CAP_SURPLUS_Q / Q;
+    const excess = input.br_q - BR_SAFE_Q;
+    const s2 = s1 * excess / Q;
+    expect(s1).toBe(steps.s1);
+    expect(excess).toBe(steps.excess_q);
+    expect(s2).toBe(steps.s2);
+    expect(s2 * Q / BR_SAFE_Q).toBe(expected_nanogic);
+  });
+
+  it("TV-IG-CAP-SURPLUS-02: br exactly at br_safe is RED (≤, not <) → 0", () => {
+    const { input, expected_nanogic } = TV_IG_CAP_SURPLUS_02;
+    expect(computeCapSurplus(input.br_q, input.magic_supply)).toBe(expected_nanogic);
+  });
+
+  it("TV-IG-CAP-SURPLUS-03: br below br_safe → Gen locked", () => {
+    const { input, expected_nanogic } = TV_IG_CAP_SURPLUS_03;
+    expect(computeCapSurplus(input.br_q, input.magic_supply)).toBe(expected_nanogic);
+  });
+
+  it("br just above br_safe opens a tiny door, never a negative one", () => {
+    const cap = computeCapSurplus(BR_SAFE_Q + 1n, 1_000_000_000_000n);
+    expect(cap).toBeGreaterThanOrEqual(0n);
+    expect(cap).toBeLessThan(computeCapSurplus(2_000_000_000n, 1_000_000_000_000n));
+  });
+
+  it("Monotonic in br: healthier backing never allows less", () => {
+    let prev = -1n;
+    for (let br = BR_SAFE_Q; br <= 5_000_000_000n; br += 100_000_000n) {
+      const cap = computeCapSurplus(br, 1_000_000_000_000n);
+      expect(cap).toBeGreaterThanOrEqual(prev);
+      prev = cap;
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// §6.3 0.5 × pp_schedule — dual ceiling
+// ═══════════════════════════════════════════════════════════════
+
+describe("computePpSchedule / computeCapPp — §6.3 trần-kép", () => {
+
+  it("TV-IG-CAP-PP-01: one schedule → pp=45 MAGIC, cap=22.5 MAGIC", () => {
+    const v = TV_IG_CAP_PP_01;
+    expect(computePpSchedule(v.schedules)).toBe(v.expected_pp);
+    expect(computeCapPp(v.schedules)).toBe(v.expected_cap);
+  });
+
+  it("TV-IG-CAP-PP-02: pp sums over every live contract", () => {
+    const v = TV_IG_CAP_PP_02;
+    expect(computePpSchedule(v.schedules)).toBe(v.expected_pp);
+    expect(computeCapPp(v.schedules)).toBe(v.expected_cap);
+  });
+
+  it("TV-IG-CAP-PP-ZERO: no ScheduleGen contract ⟹ cap = 0 ⟹ InstantGen shut", () => {
+    const v = TV_IG_CAP_PP_ZERO;
+    expect(computePpSchedule(v.schedules)).toBe(v.expected_pp);
+    expect(computeCapPp(v.schedules)).toBe(v.expected_cap);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// §6.3 the whole gate
+// ═══════════════════════════════════════════════════════════════
+
+describe("computeInstantGrant — §6.3 min of three ceilings", () => {
+
+  it("TV-IG-GRANT-01: reward is the binding ceiling", () => {
+    const { input, ceilings, expected_grant } = TV_IG_GRANT_01;
+    expect(computeRewardFromConsumed(input.consumed, input.um_q, input.pm_q))
+      .toBe(ceilings.reward);
+    expect(computeCapSurplus(input.br_q, input.magic_supply)).toBe(ceilings.cap_surplus);
+    expect(computeCapPp(input.schedules)).toBe(ceilings.cap_pp);
+    expect(computeInstantGrant(
+      input.consumed, input.um_q, input.pm_q,
+      input.br_q, input.magic_supply, input.schedules,
+    )).toBe(expected_grant);
+  });
+
+  it("TV-IG-GRANT-02: a whale is still capped at 0.5 × pp_schedule", () => {
+    const { input, ceilings, expected_grant } = TV_IG_GRANT_02;
+    expect(computeRewardFromConsumed(input.consumed, input.um_q, input.pm_q))
+      .toBe(ceilings.reward);
+    expect(computeInstantGrant(
+      input.consumed, input.um_q, input.pm_q,
+      input.br_q, input.magic_supply, input.schedules,
+    )).toBe(expected_grant);
+    // The whale's own reward is an order of magnitude above what it receives.
+    expect(ceilings.reward).toBeGreaterThan(expected_grant);
+  });
+
+  it("TV-IG-GRANT-03: red backing shuts the door regardless of consumption", () => {
+    const { input, expected_grant } = TV_IG_GRANT_03;
+    expect(computeInstantGrant(
+      input.consumed, input.um_q, input.pm_q,
+      input.br_q, input.magic_supply, input.schedules,
+    )).toBe(expected_grant);
+  });
+
+  it("No schedule ⟹ grant 0 even with healthy backing and heavy consumption", () => {
+    expect(computeInstantGrant(
+      1_000_000_000_000n, 2_000_000_000n, PM_Q.Ember!,
+      3_000_000_000n, 1_000_000_000_000n, [],
+    )).toBe(0n);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// C-UM-6 UM staleness check
+// ═══════════════════════════════════════════════════════════════
+
+describe("getUmForInstant — C-UM-6", () => {
 
   it("TV-UM-SPLIT: stale UM (staleness=2) → UM_FALLBACK_Q (500M)", () => {
     const { um_datum, current_epoch, instant_result } = TV_UM_SPLIT;
     const result = getUmForInstant(um_datum, current_epoch);
-    expect(result).toBe(instant_result);          // 500_000_000n ✓
-    expect(result).toBe(UM_FALLBACK_Q);           // = UM_MIN_Q ✓
+    expect(result).toBe(instant_result);
+    expect(result).toBe(UM_FALLBACK_Q);
   });
 
   it("TV-UM-FRESH: fresh UM (staleness=1) → smoothed (1.5B)", () => {
     const { um_datum, current_epoch, instant_result } = TV_UM_FRESH;
     const result = getUmForInstant(um_datum, current_epoch);
-    expect(result).toBe(instant_result);          // 1_500_000_000n ✓
-    expect(result).toBe(um_datum.smoothed_q);     // = smoothed, not fallback ✓
+    expect(result).toBe(instant_result);
+    expect(result).toBe(um_datum.smoothed_q);
   });
 
   it("staleness=0 (same epoch as update) → smoothed", () => {
     const um = { smoothed_q: 1_800_000_000n, last_updated_epoch: 100n, history: [] };
     expect(getUmForInstant(um, 100n)).toBe(1_800_000_000n);
-  });
-
-  it("staleness=1 (boundary: exactly UM_MAX_STALENESS) → smoothed", () => {
-    const um = { smoothed_q: 1_800_000_000n, last_updated_epoch: 99n, history: [] };
-    expect(getUmForInstant(um, 100n)).toBe(1_800_000_000n);  // NOT fallback
   });
 
   it("staleness=2 (just over limit) → fallback", () => {
@@ -131,131 +255,72 @@ describe("getUmForInstant — §14.4 C-UM-6", () => {
     const um = { smoothed_q: 2_000_000_000n, last_updated_epoch: 0n, history: [] };
     expect(getUmForInstant(um, 100n)).toBe(UM_FALLBACK_Q);
   });
-});
 
-// ═══════════════════════════════════════════════════════════════
-// §4.3 Halving logic (T18, C-DECAY-7, C-DECAY-8)
-// ═══════════════════════════════════════════════════════════════
-
-describe("shouldHalve + applyHalving — §4.3", () => {
-
-  it("TV-INST-01: k=0 → should NOT halve", () => {
-    expect(shouldHalve("Instant", 100n, 100n, false)).toBe(false); // k=0
-  });
-
-  it("TV-INST-01: k=1, halved=False → SHOULD halve (C-DECAY-7)", () => {
-    expect(shouldHalve("Instant", 100n, 101n, false)).toBe(true);  // k=1 ✓
-  });
-
-  it("TV-INST-03: k=1, halved=True → should NOT halve again (T18)", () => {
-    expect(shouldHalve("Instant", 100n, 101n, true)).toBe(false);  // T18 ✓
-  });
-
-  it("k=2 (expired epoch) → should NOT halve", () => {
-    expect(shouldHalve("Instant", 100n, 102n, false)).toBe(false);
-  });
-
-  it("Non-Instant source → should NOT halve", () => {
-    expect(shouldHalve("Snapshot", 100n, 101n, false)).toBe(false);
-    expect(shouldHalve("Vacuum",   100n, 101n, false)).toBe(false);
-    expect(shouldHalve("Schedule", 100n, 101n, false)).toBe(false);
-  });
-
-  it("TV-INST-01: applyHalving(1_000_000_000) = 500_000_000 (floor)", () => {
-    expect(applyHalving(1_000_000_000n)).toBe(500_000_000n);       // ✓
-  });
-
-  it("TV-INST-02: applyHalving(700_000_000) = 350_000_000 (floor)", () => {
-    expect(applyHalving(700_000_000n)).toBe(350_000_000n);         // ✓
-  });
-
-  it("applyHalving: odd number floors down", () => {
-    expect(applyHalving(999_999_999n)).toBe(499_999_999n);         // ⌊999M/2⌋ ✓
-    expect(applyHalving(1n)).toBe(0n);                             // ⌊1/2⌋ = 0 ✓
-  });
-
-  it("TV-HALVED-INJECT: C-DECAY-8 — validator must reject halved change at k=0", () => {
-    // Off-chain simulation of the constraint:
-    // At k=0, source=Instant, halved=False:
-    // Any output with halved=True MUST be rejected.
-    const k = 100n - 100n;  // k=0
-    const isHalvingEpoch = shouldHalve("Instant", 100n, 100n, false);
-    expect(isHalvingEpoch).toBe(false);  // k=0 is NOT halving epoch
-    // Therefore: output.halved MUST equal input.halved = false
-    // (C-DECAY-8 enforcement — validator rejects if output.halved ≠ input.halved for non-halving txs)
+  it("A stale UM halves the grant instead of rejecting the tx", () => {
+    const fresh = computeRewardFromConsumed(1_000_000_000n, 1_000_000_000n, PM_Q.Flame!);
+    const stale = computeRewardFromConsumed(1_000_000_000n, UM_FALLBACK_Q, PM_Q.Flame!);
+    expect(fresh).toBe(210_000_000n);
+    expect(stale).toBe(105_000_000n);
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
-// §4 Prune / expiry
+// §4.2 CLIFF — one live epoch, nothing else
 // ═══════════════════════════════════════════════════════════════
 
-describe("isExpired — §4", () => {
+describe("§4.2 per-epoch use-or-lose cliff", () => {
 
-  it("Instant: k=0 → NOT expired", () => {
-    expect(isExpired(100n, 2n, 100n)).toBe(false);
+  it("decay_window is 1 for every source", () => {
+    expect(MAGIC_DECAY_WINDOW).toBe(1n);
   });
 
-  it("Instant: k=1 → NOT expired", () => {
-    expect(isExpired(100n, 2n, 101n)).toBe(false);
+  it("TV-CLIFF-01: live at k=0, dead from k=1 — no halving in between", () => {
+    const { input, cases } = TV_CLIFF_01;
+    for (const c of cases) {
+      expect(isExpired(input.created_epoch, input.decay_window, c.current_epoch))
+        .toBe(c.expired);
+      expect(isLive(input.created_epoch, input.decay_window, c.current_epoch))
+        .toBe(!c.expired);
+      expect(batchBalance(input.current_amount, input.decay_window,
+                          input.created_epoch, c.current_epoch))
+        .toBe(c.balance);
+    }
   });
 
-  it("Instant: k=2 → EXPIRED (cliff)", () => {
-    expect(isExpired(100n, 2n, 102n)).toBe(true);  // k=2 ≥ decay_window=2 ✓
+  it("TV-CLIFF-02: unconsumed MAGIC does NOT carry over", () => {
+    const v = TV_CLIFF_02;
+    const leftover = v.epoch_100_granted - v.epoch_100_consumed;
+    expect(leftover).toBeGreaterThan(0n);
+    // ...yet the balance at the next epoch is zero.
+    expect(batchBalance(leftover, 1n, 100n, 101n)).toBe(v.epoch_101_balance);
   });
 
-  it("Instant: k=3 → EXPIRED", () => {
-    expect(isExpired(100n, 2n, 103n)).toBe(true);
+  it("batchBalance throws on a negative age (C-DECAY-2)", () => {
+    expect(() => batchBalance(1_000n, 1n, 100n, 99n)).toThrow();
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
-// C-INST-1/2/3: constraints (off-chain validation mirrors)
+// C-OVERFLOW: BigInt is mandatory
 // ═══════════════════════════════════════════════════════════════
 
-describe("InstantGen constraint mirrors — §9.3", () => {
+describe("C-OVERFLOW — BigInt everywhere", () => {
 
-  it("TV-INST-MIN: 9_999_999 oildrop < 10_000_000 (min) → reject", () => {
-    const MIN = 10_000_000n;
-    expect(9_999_999n < MIN).toBe(true);    // would be rejected by C-INST-1
-    expect(10_000_000n >= MIN).toBe(true);  // exactly MIN — accepted ✓
+  it("TV-OVERFLOW-01: cap_surplus intermediate exceeds Number.MAX_SAFE_INTEGER", () => {
+    const v = TV_OVERFLOW_01;
+    const intermediate = v.magic_supply * v.f_cap_surplus;
+    expect(intermediate).toBe(v.intermediate);
+    expect(intermediate / Q).toBe(v.step1_after_div);
+    // The same magnitude via Number would be lossy:
+    expect(Number(intermediate)).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
   });
 
-  it("TV-INST-MAX: 10^13 oildrop accepted; 10^13+1 rejected", () => {
-    const MAX = 10_000_000_000_000n;
-    expect(10_000_000_000_000n <= MAX).toBe(true);
-    expect(10_000_000_000_001n <= MAX).toBe(false);
-  });
-
-  it("TV-INST-AVAIL: lamp_paid > L_avail → reject", () => {
-    const lamp_balance = 100_000_000_000n;
-    const lamp_locked  = 60_000_000_000n;
-    const l_avail      = lamp_balance - lamp_locked;  // 40B
-    expect(l_avail).toBe(40_000_000_000n);
-    expect(40_000_000_000n <= l_avail).toBe(true);    // accepted
-    expect(40_000_000_001n <= l_avail).toBe(false);   // rejected
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════
-// T14: LAMP conservation
-// ═══════════════════════════════════════════════════════════════
-
-describe("LAMP conservation — T14, C-INST-10", () => {
-
-  it("TV-CONS-01: vault+treasury total unchanged after InstantGen", () => {
-    const before_vault     = 100_000_000_000n;
-    const before_treasury  = 0n;
-    const lamp_paid        = 1_000_000_000n;
-
-    const after_vault     = before_vault - lamp_paid;
-    const after_treasury  = before_treasury + lamp_paid;
-    const total_before    = before_vault + before_treasury;
-    const total_after     = after_vault + after_treasury;
-
-    expect(total_after).toBe(total_before);        // T14 ✓
-    expect(after_vault).toBe(99_000_000_000n);     // ✓
-    expect(after_treasury).toBe(1_000_000_000n);   // ✓
+  it("Whole-supply inputs stay exact through the reward chain", () => {
+    const consumed = 36_000_000_000_000_000n;   // entire LAMP supply as nanogic
+    const r = computeRewardFromConsumed(consumed, UM_MAX_Q, PM_Q.Ember!);
+    expect(typeof r).toBe("bigint");
+    expect(r).toBe(16_560_000_000_000_000n);    // 0.46 × 36×10^15, exact
+    expect(r).toBeLessThan(consumed);           // INV-CASHBACK-BOUND still holds
   });
 });
 
@@ -272,15 +337,14 @@ describe("Utility — formatting & conversion", () => {
     expect(slotToEpoch(864_000n, "Mainnet")).toBe(2n);
   });
 
-  it("lampToOildrop: 1 LAMP = 10^6 oildrop", () => {
-    expect(lampToOildrop(1n)).toBe(1_000_000n);
-    expect(lampToOildrop(1000n)).toBe(1_000_000_000n);
+  it("lampToOil: 1 LAMP = 10^6 oildrop", () => {
+    expect(lampToOil(1n)).toBe(1_000_000n);
+    expect(lampToOil(1000n)).toBe(1_000_000_000n);
   });
 
-  it("nanogicToMagicStr: 3_150_000_000 → '3.1500'", () => {
-    expect(nanogicToMagicStr(3_150_000_000n)).toBe("3.1500");
+  it("nanogicToMagicStr formats correctly", () => {
+    expect(nanogicToMagicStr(210_000_000n)).toBe("0.2100");
     expect(nanogicToMagicStr(1_000_000_000n)).toBe("1.0000");
-    expect(nanogicToMagicStr(500_000_000n)).toBe("0.5000");
     expect(nanogicToMagicStr(0n)).toBe("0.0000");
   });
 });

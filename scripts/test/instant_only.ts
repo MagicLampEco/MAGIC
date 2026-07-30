@@ -1,13 +1,14 @@
 // scripts/test/instant_only.ts — InstantGen-only smoke test on Preview testnet.
 // Prereq:
 //   - 01_mint_lamp + 02_deploy_um + 05_create_instant_vault all run
-//   - .env: VAULT_INSTANT_HASH, UM_DATUM_HASH, UM_NFT_POLICY_ID, LAMP_POLICY_ID, TREASURY_ADDRESS
+//   - .env: VAULT_INSTANT_HASH, UM_DATUM_HASH, UM_NFT_POLICY_ID, LAMP_POLICY_ID,
+//           BACKING_NFT_POLICY_ID, BACKING_SCRIPT_HASH  (§6.3 — no beacon ⟹ Gen shut)
 //
 //   NETWORK=Preview npm run test:instant
 //
 // Env-var knobs:
 //   VAULT_TX_HASH=<hex>          — pick a specific vault UTxO (else first match by owner)
-//   LAMP_PAID=<int>              — LAMP amount in tLAMP units (default 100)
+//   (LAMP_PAID removed — PHA 2 pays no LAMP; the grant is keyed to consumed MAGIC)
 //   TAMPER=<mode>                — tamper mode for negative tests
 //   SKIP_OWNER_SIG=1             — negative test for owner sig
 
@@ -21,12 +22,12 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
-  lampToOildrop,
+  lampToOil,
 } from "../config.js";
 import { buildInstantGenTx } from "../../InstantGen/offchain/src/instant.js";
 import { VaultDatumSchema, UMDatumSchema } from "../../InstantGen/offchain/src/types.js";
 
-const LAMP_PAID = lampToOildrop(BigInt(process.env.LAMP_PAID ?? "100"));
+// PHA 2: nothing is paid. LAMP only sits in the vault to open eligibility.
 
 async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -42,32 +43,23 @@ async function main() {
   console.log("║  InstantGen smoke test — Preview testnet   ║");
   console.log("╚════════════════════════════════════════════╝\n");
 
-  // Load InstantGen validator (4 params).
+  // Load InstantGen validator (PHA 2 — 6 params, treasury_addr REMOVED).
   const plutusJson = JSON.parse(
     await readFile(new URL("../../InstantGen/onchain/plutus.json", import.meta.url), "utf8"),
   );
   const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
   if (!unapplied) throw new Error("vault.vault.spend not in InstantGen plutus.json");
 
-  // Treasury Address Plutus encoding (must match the encoding used at deploy time).
-  const treasuryDetails = getAddressDetails(ADDRESSES.treasury);
-  if (!treasuryDetails.paymentCredential) throw new Error("Invalid TREASURY_ADDRESS");
-  const treasuryPaymentCred = treasuryDetails.paymentCredential.type === "Key"
-    ? new Constr(0, [treasuryDetails.paymentCredential.hash])
-    : new Constr(1, [treasuryDetails.paymentCredential.hash]);
-  const treasuryStakeCred = treasuryDetails.stakeCredential
-    ? new Constr(0, [new Constr(0, [new Constr(0, [treasuryDetails.stakeCredential.hash])])])
-    : new Constr(1, []);
-  const treasuryAddrData = new Constr(0, [treasuryPaymentCred, treasuryStakeCred]);
-
+  // PHA 2 apply-params: lamp_policy_id, um_nft_policy, um_script_hash,
+  //                      backing_nft_policy, backing_script_hash, ms_per_epoch
   const vaultScript = {
     type: "PlutusV3" as const,
     script: applyParamsToScript(unapplied.compiledCode, [
       POLICY_IDS.lamp,
-      ASSET_NAMES.lamp,
-      treasuryAddrData,
       POLICY_IDS.um_nft,
-      SCRIPT_HASHES.um_datum,   // um_script_hash — pins UM ref input (layer b)
+      SCRIPT_HASHES.um_datum,        // pins UM ref input (layer b)
+      POLICY_IDS.backing,            // pins the BackingBeacon NFT (§6.3)
+      SCRIPT_HASHES.backing_beacon,  // pins the BackingBeacon address (§6.3)
       PROTOCOL.MS_PER_EPOCH,
     ]),
   };
@@ -138,18 +130,34 @@ async function main() {
   const tip = await fetchTip();
   console.log(`Tip POSIX ms:       ${tip.posixMs}`);
   console.log(`Current epoch:      ${tip.posixMs / PROTOCOL.MS_PER_EPOCH}`);
-  console.log(`LAMP to pay:        ${LAMP_PAID / 1_000_000n} tLAMP\n`);
+  // ── BackingBeacon reference input (§6.3) ────────────────────
+  // Fail-closed: without it InstantGen cannot be built at all.
+  const beaconScriptAddress = credentialToAddress(
+    NETWORK, scriptHashToCredential(SCRIPT_HASHES.backing_beacon),
+  );
+  const beaconUtxos = await lucid.utxosAt(beaconScriptAddress);
+  const backingBeaconUtxo = beaconUtxos.find(u =>
+    (u.assets[toUnit(POLICY_IDS.backing, ASSET_NAMES.backing)] ?? 0n) > 0n && u.datum,
+  );
+  if (!backingBeaconUtxo) {
+    console.error("\n❌ BackingBeacon UTxO not found at", beaconScriptAddress);
+    console.error("   InstantGen is SHUT until CARP ships the beacon (§6.3, fail-closed).");
+    console.error("   Set BACKING_NFT_POLICY_ID + BACKING_SCRIPT_HASH once it exists.");
+    process.exit(1);
+  }
+  console.log(`Backing beacon:     ${backingBeaconUtxo.txHash}#${backingBeaconUtxo.outputIndex}\n`);
 
   // Tamper helpers (negative tests).
   const tamper = process.env.TAMPER;
-  const tamperOutputDatum = tamper && tamper !== "half_treasury" ? ((d: any) => {
+  const tamperOutputDatum = tamper && tamper !== "lamp_out" ? ((d: any) => {
     if (tamper === "lamp_balance") return { ...d, lamp_balance: d.lamp_balance + 1n };
-    if (tamper === "no_lamp_transfer") return { ...d, lamp_balance: d.lamp_balance }; // skip the reduction
+    if (tamper === "keep_credit")
+      return { ...d, activity_state: { ...d.activity_state, consumed_credit: 1n } };
     if (tamper === "wrong_owner") return { ...d, owner: "ff".repeat(28) };
     throw new Error(`Unknown TAMPER: ${tamper}`);
   }) : undefined;
-  // TAMPER=half_treasury sends only half of LAMP_PAID to treasury (rest disappears via balancing).
-  const treasuryAmountOverride = tamper === "half_treasury" ? LAMP_PAID / 2n : undefined;
+  // TAMPER=lamp_out sends LAMP out of the vault — must be REJECTED (I-ACT-7).
+  const tamperLampOutOil = tamper === "lamp_out" ? 1_000_000n : undefined;
 
   try {
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
@@ -159,17 +167,16 @@ async function main() {
     const result = await buildInstantGenTx({
       lucid,
       vaultUtxo,
-      lampPaidOildrop:     LAMP_PAID,
       umDatumUtxo,
+      backingBeaconUtxo,
       userAddress:     address,
       vaultScript,
       lampPolicyId:    POLICY_IDS.lamp,
       lampAssetName:   ASSET_NAMES.lamp,
-      treasuryAddress: ADDRESSES.treasury,
       network:         NETWORK,
       tipPosixMs:      tip.posixMs,
       tamperOutputDatum,
-      treasuryAmountOverride,
+      tamperLampOutOil,
       skipOwnerSig:    process.env.SKIP_OWNER_SIG === "1",
     });
 

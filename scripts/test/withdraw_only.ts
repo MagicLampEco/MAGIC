@@ -47,8 +47,12 @@ function buildProtocol(): ProtocolParams {
     lampAssetName: ASSET_NAMES.lamp,
     umNftPolicyId: POLICY_IDS.um_nft,
     umScriptHash: SCRIPT_HASHES.um_datum,
+    // treasuryAddress is only read by the legacy Vacuum validator now (I-ACT-7).
     treasuryAddress: ADDRESSES.treasury,
     shardPolicyId: POLICY_IDS.shard_nft,
+    // §6.3 BackingBeacon pins (Instant). All-zero default ⟹ Gen shut.
+    backingNftPolicyId: POLICY_IDS.backing,
+    backingScriptHash: SCRIPT_HASHES.backing_beacon,
   };
 }
 

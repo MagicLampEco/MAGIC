@@ -118,9 +118,13 @@ export const VaultAttributionSchema = Data.Object({
 export type VaultAttribution = Data.Static<typeof VaultAttributionSchema>;
 
 // ── ActivityState ────────────────────────────────────────────
+// `consumed_credit` occupies the slot previously named `total_burns_count`
+// (same position, same Integer type → Plutus Data shape unchanged).
+// SEMANTICS (§6.3): nanogic ALREADY CONSUMED via BurnBatch and not yet turned
+// into an InstantGen reward. BurnBatch adds Σburns; InstantGen zeroes it.
 export const ActivityStateSchema = Data.Object({
   recent_burn_epochs : Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
-  total_burns_count  : Data.Integer(),
+  consumed_credit    : Data.Integer(),
 });
 export type ActivityState = Data.Static<typeof ActivityStateSchema>;
 
@@ -161,13 +165,34 @@ export const UMDatumSchema = Data.Object({
 });
 export type UMDatum = Data.Static<typeof UMDatumSchema>;
 
+// ── BackingBeaconDatum (§6.3)  [CẦN XÁC NHẬN — chờ CARP] ─────
+// Reference-input beacon carrying the backing ratio br = B/S. Field order must
+// match types.ak: BackingBeaconDatum exactly.
+//
+// The deployed CARP `GlobalState` (twap/spot/breaker/nsf/valid_until) is a
+// CDP-pricing datum and does NOT carry br_q — it cannot serve as this beacon.
+export const BackingBeaconDatumSchema = Data.Object({
+  br_q               : Data.Integer(),   // ⌊B/S × Q⌋
+  magic_supply       : Data.Integer(),   // S — effective MAGIC supply (nanogic)
+  depeg              : Data.Boolean(),   // true ⟹ cap = 0
+  last_updated_epoch : Data.Integer(),
+});
+export type BackingBeaconDatum = Data.Static<typeof BackingBeaconDatumSchema>;
+
 // ── VaultRedeemer ────────────────────────────────────────────
 // Constructor index = Aiken enum order (types.ak). MUST stay in lockstep:
-//   0 InstantGen, 1 ApplyHalving, 2 BurnBatch, 3 UpdateProfile,
+//   0 InstantGen, 1 PruneExpired, 2 BurnBatch, 3 UpdateProfile,
 //   4 WithdrawLamp, 5 SetDelegate.
+//
+// constr 2 = BurnBatch is the LOCKED cross-repo interface (ConsumeMAGIC
+// CONTRACT.md v2, spec §11 `burn_batch_constr` = 2). Do not move it.
+//
+// constr 1 was `ApplyHalving`; halving no longer exists under the §4.2 cliff,
+// so the (nullary, therefore encoding-identical) slot now carries the §7.4
+// permissionless dead-batch collector.
 export const VaultRedeemerSchema = Data.Enum([
-  Data.Object({ InstantGen:   Data.Object({ lamp_paid: Data.Integer() }) }),  // constr 0
-  Data.Literal("ApplyHalving"),                                               // constr 1
+  Data.Object({ InstantGen: Data.Object({ claimed_amount: Data.Integer() }) }), // constr 0
+  Data.Literal("PruneExpired"),                                                 // constr 1
   Data.Object({ BurnBatch: Data.Object({                                      // constr 2
     burns: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
   })}),

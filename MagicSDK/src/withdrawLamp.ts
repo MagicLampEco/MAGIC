@@ -19,7 +19,7 @@ import {
 } from "@lucid-evolution/lucid";
 import {
   getTipSlot, posixMsToEpoch, msPerEpoch,
-  cmpBigIntDesc,
+  cmpBigIntDesc, lampAssetName,
   type Network,
 } from "@magiclamp/protocol-utils";
 
@@ -52,7 +52,7 @@ export interface WithdrawLampParams {
   network:         Network;
   /** LAMP minting policy + asset name. */
   lampPolicyId:    string;
-  lampAssetName?:  string;        // default "744c414d50" = "tLAMP"
+  lampAssetName?:  string;        // default = lampAssetName(network)
   /** Where the withdrawn LAMP goes. Default = wallet's own address. */
   destinationAddress?: string;
   /** Override tip POSIX ms for deterministic testing. */
@@ -67,7 +67,6 @@ export interface WithdrawLampResult {
   summary:         string;
 }
 
-const DEFAULT_LAMP_ASSET_NAME = "744c414d50";
 
 /**
  * Build an unsigned tx that withdraws `amountOildrop` LAMP from `vaultUtxo`
@@ -93,7 +92,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     lucid, vaultUtxo, amountOildrop, vaultScript, network,
     lampPolicyId, vaultPlutusJson,
   } = params;
-  const lampAssetName = params.lampAssetName ?? DEFAULT_LAMP_ASSET_NAME;
+  const assetName = params.lampAssetName ?? lampAssetName(network);
 
   if (amountOildrop <= 0n) {
     throw new Error(`WITHDRAW-001: amountOildrop must be > 0 (got ${amountOildrop})`);
@@ -138,7 +137,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     scriptHashToCredential(validatorToScriptHash(vaultScript)),
   );
   const destination = params.destinationAddress ?? (await lucid.wallet().address());
-  const lampUnit = toUnit(lampPolicyId, lampAssetName);
+  const lampUnit = toUnit(lampPolicyId, assetName);
 
   // ── Build redeemer — resolve constr index from plutus.json at runtime ──
   // No hardcoded indices: SDK reads the Aiken enum from plutus.json, finds

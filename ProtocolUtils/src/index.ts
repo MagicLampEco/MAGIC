@@ -41,6 +41,21 @@ export function posixMsToEpoch(posixMs: bigint, network: Network): bigint {
   return posixMs / msPerEpoch(network);
 }
 
+// LAMP carries a DIFFERENT asset name per network — mainnet "LAMP", testnets
+// "tLAMP". Every vault validator takes it as compile-time param #2, so a wrong
+// value here bakes a vault that can never see its own LAMP (MAINNET-BLOCK).
+// Derived from network like ms_per_epoch — never defaulted to a testnet literal.
+export const LAMP_ASSET_NAME_BY_NETWORK = {
+  Preview:  "744c414d50",   // "tLAMP"
+  Preprod:  "744c414d50",   // "tLAMP"
+  Mainnet:  "4c414d50",     // "LAMP"
+} as const;
+
+/** LAMP asset name (hex) for a given Cardano network — validator param + unit building. */
+export function lampAssetName(network: Network): string {
+  return LAMP_ASSET_NAME_BY_NETWORK[network];
+}
+
 // OAC [GenMAGIC §6.4, Constitutional]
 export const DRM_LOOKBACK        = 12n;   // epochs
 export const MIN_BURN_FOR_OAC    = 1_000_000_000n;  // 1 MAGIC

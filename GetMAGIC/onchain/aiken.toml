@@ -1,0 +1,10 @@
+name    = "magiclamp/getmagic"
+version = "0.0.1"
+plutus  = "v3"
+license = "Apache-2.0"
+description = "GetMAGIC — fiat-to-magic-rights on-ramp"
+
+[[dependencies]]
+name    = "aiken-lang/stdlib"
+version = "v3.1.0"
+source  = "github"

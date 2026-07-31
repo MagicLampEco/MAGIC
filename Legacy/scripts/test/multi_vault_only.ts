@@ -25,7 +25,7 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  PROTOCOL, POLICY_IDS, ADDRESSES, SCRIPT_HASHES,
+  PROTOCOL, POLICY_IDS, ASSET_NAMES, ADDRESSES, SCRIPT_HASHES,
 } from "../../../scripts/config.js";
 import { withdrawLamp } from "../../../MagicSDK/src/withdrawLamp.js";
 import { updateProfile } from "../../../MagicSDK/src/updateProfile.js";
@@ -69,6 +69,7 @@ function buildProtocol(): ProtocolParams {
   return {
     network: NETWORK,
     lampPolicyId: POLICY_IDS.lamp,
+    lampAssetName: ASSET_NAMES.lamp,
     umNftPolicyId: POLICY_IDS.um_nft,
     umScriptHash: SCRIPT_HASHES.um_datum,
     treasuryAddress: ADDRESSES.treasury,
@@ -127,7 +128,7 @@ async function runMv1(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
   }
 
   for (const v of vaults) {
-    console.log(`  - ${v.vaultId.slice(0, 16)}...  balance=${v.lampBalanceOildropdrop / 1_000_000n} LAMP  profile=${v.profile}  oldest=ep${v.oldestEpoch}`);
+    console.log(`  - ${v.vaultId.slice(0, 16)}...  balance=${v.lampBalanceOildrop / 1_000_000n} LAMP  profile=${v.profile}  oldest=ep${v.oldestEpoch}`);
   }
 
   // Pick vault 1 (oldest = highest LF) and snapshot it. Skip if we can't import
@@ -179,7 +180,7 @@ async function runMv2(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
   console.log(`  by triggering snapshot on each vault then comparing batch.initial_amount.`);
 
   for (const v of vaults) {
-    console.log(`  - ${v.vaultId.slice(0, 16)}...  profile=${v.profile}  balance=${v.lampBalanceOildropdrop / 1_000_000n} LAMP`);
+    console.log(`  - ${v.vaultId.slice(0, 16)}...  profile=${v.profile}  balance=${v.lampBalanceOildrop / 1_000_000n} LAMP`);
   }
 }
 
@@ -204,23 +205,24 @@ async function runMv3(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
   const instVault = instVaults[0];
   const instLampBefore = instVault.datum.lamp_balance;
 
-  console.log(`Snap vault:    ${snapVault.vaultId.slice(0, 16)}... balance=${snapVault.lampBalanceOildropdrop / 1_000_000n} LAMP`);
+  console.log(`Snap vault:    ${snapVault.vaultId.slice(0, 16)}... balance=${snapVault.lampBalanceOildrop / 1_000_000n} LAMP`);
   console.log(`Instant vault: ${instVault.vaultId.slice(0, 16)}... balance=${instLampBefore / 1_000_000n} LAMP (must be unchanged)`);
   console.log();
 
   const amountLamp = BigInt(process.env.AMOUNT_LAMP ?? "5");
-  const amountOildropdrop = amountLamp * 1_000_000n;
+  const amountOildrop = amountLamp * 1_000_000n;
   const { vaultScript } = applyVaultValidator("Snapshot", snapBundle, protocol);
 
   const result = await withdrawLamp({
     lucid,
     vaultUtxo: snapVault.utxo,
-    amountOildropdrop,
+    amountOildrop,
     vaultScript,
     vaultType: "Snapshot",
     vaultPlutusJson: snapPlutus,
     network: NETWORK,
     lampPolicyId: POLICY_IDS.lamp,
+    lampAssetName: ASSET_NAMES.lamp,
     destinationAddress: address,
     tipPosixMs: tip.posixMs,
   });

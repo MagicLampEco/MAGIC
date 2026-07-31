@@ -43,7 +43,7 @@ async function main() {
   // v1.0: SnapshotGen vault signature thêm lamp_policy_id (cho WithdrawLamp W-6 check).
   const vaultScript = {
     type: "PlutusV3" as const,
-    script: applyParamsToScript(unapplied.compiledCode, [POLICY_IDS.lamp, PROTOCOL.MS_PER_EPOCH]),
+    script: applyParamsToScript(unapplied.compiledCode, [POLICY_IDS.lamp, ASSET_NAMES.lamp, PROTOCOL.MS_PER_EPOCH]),
   };
   const vaultScriptHash = validatorToScriptHash(vaultScript);
   const vaultAddr = credentialToAddress(

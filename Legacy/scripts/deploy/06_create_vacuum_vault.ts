@@ -28,7 +28,7 @@ import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
   lampToOildrop,
-} from "../config.js";
+} from "../../../scripts/config.js";
 
 const VaultDatumSchema = Data.Object({
   owner:                 Data.Bytes(),

@@ -13,7 +13,7 @@ import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, PROTOCOL,
   lampToOildrop,
-} from "../config.js";
+} from "../../../scripts/config.js";
 
 // VaultDatum schema (full — must match Aiken types exactly)
 const VaultDatumSchema = Data.Object({
@@ -129,7 +129,7 @@ async function main() {
 
   // Load unapplied vault validator and bake in network-specific slots_per_epoch
   const plutusJson = JSON.parse(
-    await readFile(new URL("../../SnapshotGen/onchain/plutus.json", import.meta.url), "utf8"),
+    await readFile(new URL("../../stale-genmodel-2026-07/SnapshotGen/onchain/plutus.json", import.meta.url), "utf8"),
   );
   const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
   if (!unapplied) throw new Error("vault.vault.spend not found in SnapshotGen/onchain/plutus.json");

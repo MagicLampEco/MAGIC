@@ -22,9 +22,9 @@ import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
   lampToOildrop,
-} from "../config.js";
-import { buildInstantGenTx } from "../../InstantGen/offchain/src/instant.js";
-import { VaultDatumSchema, UMDatumSchema } from "../../InstantGen/offchain/src/types.js";
+} from "../../../scripts/config.js";
+import { buildInstantGenTx } from "../../stale-genmodel-2026-07/InstantGen/offchain/src/instant.js";
+import { VaultDatumSchema, UMDatumSchema } from "../../stale-genmodel-2026-07/InstantGen/offchain/src/types.js";
 
 const LAMP_PAID = lampToOildrop(BigInt(process.env.LAMP_PAID ?? "100"));
 
@@ -44,7 +44,7 @@ async function main() {
 
   // Load InstantGen validator (4 params).
   const plutusJson = JSON.parse(
-    await readFile(new URL("../../InstantGen/onchain/plutus.json", import.meta.url), "utf8"),
+    await readFile(new URL("../../stale-genmodel-2026-07/InstantGen/onchain/plutus.json", import.meta.url), "utf8"),
   );
   const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
   if (!unapplied) throw new Error("vault.vault.spend not in InstantGen plutus.json");

@@ -26,13 +26,13 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   PROTOCOL, POLICY_IDS, ADDRESSES, SCRIPT_HASHES,
-} from "../config.js";
-import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
-import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
-import { listVaultsForOwner } from "../../MagicSDK/src/listVaults.js";
-import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
-import { VaultDatumSchema } from "../../MagicSDK/src/schemas.js";
-import type { Profile, ProtocolParams, ValidatorBundle, VaultType } from "../../MagicSDK/src/types.js";
+} from "../../../scripts/config.js";
+import { withdrawLamp } from "../../../MagicSDK/src/withdrawLamp.js";
+import { updateProfile } from "../../../MagicSDK/src/updateProfile.js";
+import { listVaultsForOwner } from "../../../MagicSDK/src/listVaults.js";
+import { applyVaultValidator } from "../../../MagicSDK/src/validatorScripts.js";
+import { VaultDatumSchema } from "../../../MagicSDK/src/schemas.js";
+import type { Profile, ProtocolParams, ValidatorBundle, VaultType } from "../../../MagicSDK/src/types.js";
 
 async function fetchTip(): Promise<{ posixMs: bigint }> {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -48,8 +48,8 @@ interface ModuleBundle {
 }
 
 const MODULES: ModuleBundle[] = [
-  { vaultType: "Snapshot", plutusJsonPath: "../../SnapshotGen/onchain/plutus.json" },
-  { vaultType: "Instant",  plutusJsonPath: "../../InstantGen/onchain/plutus.json" },
+  { vaultType: "Snapshot", plutusJsonPath: "../../stale-genmodel-2026-07/SnapshotGen/onchain/plutus.json" },
+  { vaultType: "Instant",  plutusJsonPath: "../../stale-genmodel-2026-07/InstantGen/onchain/plutus.json" },
 ];
 
 async function loadValidators(spec: ModuleBundle): Promise<{
@@ -138,7 +138,7 @@ async function runMv1(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
   const v2BalanceBefore = vaults[1].datum.lamp_balance;
 
   // Use the existing SnapshotGen offchain builder via dynamic import.
-  const { buildSnapshotGenTx } = await import("../../SnapshotGen/offchain/src/snapshot.js");
+  const { buildSnapshotGenTx } = await import("../../stale-genmodel-2026-07/SnapshotGen/offchain/src/snapshot.js");
   const { vaultScript } = applyVaultValidator("Snapshot", bundle, protocol);
 
   const result = await buildSnapshotGenTx({

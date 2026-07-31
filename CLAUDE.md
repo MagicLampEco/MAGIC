@@ -44,16 +44,16 @@ Tests are scoped per module — each `offchain/` is its own npm package. The `vi
 cd <Module>/offchain && npm install && npm test
 
 # Run a single test file (vitest)
-cd InstantGen/offchain && npx vitest run ../tests/math.test.ts
+cd ScheduleGen/offchain && npx vitest run ../tests/schedule.test.ts
 
-# Watch mode / typecheck (InstantGen has these — other modules expose only "test")
-cd InstantGen/offchain && npm run test:watch
-cd InstantGen/offchain && npm run typecheck
-
-# Run ALL module tests sequentially — expected: 190/190 pass
-for dir in InstantGen SnapshotGen VacuumGen ScheduleGen UMKeeper Consolidate ProfileChange; do
-  echo "=== $dir ===" && cd $dir/offchain && npm install --silent && npm test && cd ../..
+# Run ALL live module tests sequentially
+for dir in ScheduleGen MagicSDK ProtocolUtils GetMAGIC ConsumeMAGIC Paymaster FlowRate; do
+  echo "=== $dir ===" && cd $dir/offchain 2>/dev/null || cd $dir; npm install --silent && npm test; cd - >/dev/null
 done
+
+# Legacy modules (mô hình gen cũ) — chỉ chạy khi cần tái dựng kết quả cũ
+#   Legacy/VacuumGen  Legacy/UMKeeper  Legacy/ProfileChange  Legacy/AppEconomics
+#   Legacy/stale-genmodel-2026-07/{InstantGen,SnapshotGen,Consolidate}
 ```
 
 Aiken validators are not built into the repo — every module must be compiled before deploy:
@@ -74,7 +74,7 @@ npm run deploy:vault
 npm run test:e2e         # end-to-end flow across all 4 gen mechanisms
 ```
 
-The UMKeeper runs as a long-lived process in its own terminal (`UMKeeper/offchain` → `npx tsx src/keeper.ts`). Without it, InstantGen falls back to UM=0.5× after 1 epoch of staleness.
+The UMKeeper (legacy) runs as a long-lived process in its own terminal (`Legacy/UMKeeper/offchain` → `npx tsx src/keeper.ts`). Without it, InstantGen falls back to UM=0.5× after 1 epoch of staleness.
 
 ## Architecture invariants — read before changing math
 

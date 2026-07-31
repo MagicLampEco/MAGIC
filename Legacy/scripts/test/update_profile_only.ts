@@ -21,17 +21,17 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ADDRESSES, SCRIPT_HASHES,
-} from "../config.js";
+} from "../../../scripts/config.js";
 
-import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
-import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
-import type { Profile, VaultType, ProtocolParams } from "../../MagicSDK/src/types.js";
+import { updateProfile } from "../../../MagicSDK/src/updateProfile.js";
+import { applyVaultValidator } from "../../../MagicSDK/src/validatorScripts.js";
+import type { Profile, VaultType, ProtocolParams } from "../../../MagicSDK/src/types.js";
 
 type Module = "Snapshot" | "Instant";
 
 const PLUTUS_PATH: Record<Module, string> = {
-  Snapshot: "../../SnapshotGen/onchain/plutus.json",
-  Instant:  "../../InstantGen/onchain/plutus.json",
+  Snapshot: "../../stale-genmodel-2026-07/SnapshotGen/onchain/plutus.json",
+  Instant:  "../../stale-genmodel-2026-07/InstantGen/onchain/plutus.json",
 };
 
 function buildProtocol(): ProtocolParams {
@@ -103,7 +103,7 @@ async function main() {
     if (!u.datum) continue;
     if (wantedTx && u.txHash !== wantedTx) continue;
     try {
-      const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
+      const { VaultDatumSchema } = await import("../../../MagicSDK/src/schemas.js");
       const d = Data.from(u.datum, VaultDatumSchema);
       if (d.owner === ownerPkh) { vaultUtxo = u; break; }
     } catch { /* skip */ }
@@ -172,9 +172,9 @@ async function rebuildWithTamper(
   newProfile: Profile, ownerPkh: string, tipPosixMs: bigint, plutusJson: any,
   tamper: string, skipOwnerSig: boolean,
 ): Promise<any> {
-  const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
-  const { resolveConstrIndex } = await import("../../MagicSDK/src/redeemerIndex.js");
-  const { PROFILE_CONSTR_INDEX } = await import("../../MagicSDK/src/updateProfile.js");
+  const { VaultDatumSchema } = await import("../../../MagicSDK/src/schemas.js");
+  const { resolveConstrIndex } = await import("../../../MagicSDK/src/redeemerIndex.js");
+  const { PROFILE_CONSTR_INDEX } = await import("../../../MagicSDK/src/updateProfile.js");
   const { Constr } = await import("@lucid-evolution/lucid");
 
   let mutated = { ...newVaultDatum };

@@ -33,7 +33,7 @@ Tài liệu cho dev tích hợp MagicSDK vào app (PhoenixKey, ví Cardano khác
 | Lưu ở đâu | Trong ví Cardano hoặc khoá trong vault | Trong vault datum (không phải native token) |
 | Transfer giữa ví | ✅ Cardano transfer tx bình thường | ❌ MAGIC không transfer được — gắn với vault |
 
-User nạp LAMP vào vault → vault giữ LAMP làm "collateral" → vault sinh MAGIC theo công thức (LAMP × profile × loyalty × UM × …). MAGIC được "burn" (claim) bằng `BurnBatch` redeemer trên mỗi vault validator — đây là off-scope guide này; xem handler `BurnBatch { .. }` trong [`SnapshotGen/onchain/validators/vault.ak`](../SnapshotGen/onchain/validators/vault.ak) (hiện stub, sẽ implement đầy đủ ở bản sau v1.0).
+User nạp LAMP vào vault → vault giữ LAMP làm "collateral" → vault sinh MAGIC theo công thức (LAMP × profile × loyalty × UM × …). MAGIC được "burn" (claim) bằng `BurnBatch` redeemer trên mỗi vault validator — đây là off-scope guide này; xem handler `BurnBatch { .. }` trong [`Legacy/SnapshotGen/onchain/validators/vault.ak`](../Legacy/SnapshotGen/onchain/validators/vault.ak) (hiện stub, sẽ implement đầy đủ ở bản sau v1.0).
 
 ### Vault types
 
@@ -86,7 +86,7 @@ import { readFile } from "node:fs/promises";
 const lucid = await Lucid(new Blockfrost(URL, BLOCKFROST_KEY), "Preview");
 lucid.selectWallet.fromPrivateKey(PRIVATE_KEY);
 
-const plutus = JSON.parse(await readFile("SnapshotGen/onchain/plutus.json", "utf8"));
+const plutus = JSON.parse(await readFile("Legacy/SnapshotGen/onchain/plutus.json", "utf8"));
 ```
 
 ---
@@ -178,7 +178,7 @@ Sau khi tạo vault, để **thực sự sinh ra MAGIC**, gọi 1 trong 4 genera
 ### 6.1. Snapshot — passive accrual
 
 ```ts
-import { buildSnapshotGenTx } from "SnapshotGen/offchain/src/snapshot.js";
+import { buildSnapshotGenTx } from "Legacy/SnapshotGen/offchain/src/snapshot.js";
 
 const result = await buildSnapshotGenTx({
   lucid,
@@ -203,7 +203,7 @@ Trigger được 1 lần/epoch/vault. Bot/keeper hoặc app UI nhắc user trigg
 ### 6.2. Instant — purchase MAGIC ngay
 
 ```ts
-import { buildInstantGenTx } from "InstantGen/offchain/src/instant.js";
+import { buildInstantGenTx } from "Legacy/InstantGen/offchain/src/instant.js";
 
 const result = await buildInstantGenTx({
   lucid,
@@ -229,7 +229,7 @@ Batch lifetime = 2 epoch (cliff). Sinh ngay, decay nhanh.
 ### 6.3. Vacuum — 2-phase commit-then-fire
 
 ```ts
-import { buildVacuumCommitTx, buildVacuumFireTx } from "VacuumGen/offchain/src/vacuum.js";
+import { buildVacuumCommitTx, buildVacuumFireTx } from "Legacy/VacuumGen/offchain/src/vacuum.js";
 
 // Phase 1: commit (lock LAMP, fire epoch = current + delay)
 await buildVacuumCommitTx({

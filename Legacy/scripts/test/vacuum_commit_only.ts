@@ -19,7 +19,7 @@ import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
   lampToOildrop,
-} from "../config.js";
+} from "../../../scripts/config.js";
 import { buildVacuumCommitTx } from "../../VacuumGen/offchain/src/vacuum.js";
 import { VaultDatumSchema } from "../../VacuumGen/offchain/src/types.js";
 

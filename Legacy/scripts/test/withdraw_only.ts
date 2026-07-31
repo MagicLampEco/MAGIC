@@ -25,19 +25,19 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   PROTOCOL, POLICY_IDS, ADDRESSES, SCRIPT_HASHES,
-} from "../config.js";
+} from "../../../scripts/config.js";
 
-import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
-import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
-import type { VaultType, ProtocolParams } from "../../MagicSDK/src/types.js";
+import { withdrawLamp } from "../../../MagicSDK/src/withdrawLamp.js";
+import { applyVaultValidator } from "../../../MagicSDK/src/validatorScripts.js";
+import type { VaultType, ProtocolParams } from "../../../MagicSDK/src/types.js";
 
 type Module = "Snapshot" | "Instant" | "Vacuum" | "Schedule";
 
 const PLUTUS_PATH: Record<Module, string> = {
-  Snapshot: "../../SnapshotGen/onchain/plutus.json",
-  Instant:  "../../InstantGen/onchain/plutus.json",
+  Snapshot: "../../stale-genmodel-2026-07/SnapshotGen/onchain/plutus.json",
+  Instant:  "../../stale-genmodel-2026-07/InstantGen/onchain/plutus.json",
   Vacuum:   "../../VacuumGen/onchain/plutus.json",
-  Schedule: "../../ScheduleGen/onchain/plutus.json",
+  Schedule: "../../../ScheduleGen/onchain/plutus.json",
 };
 
 function buildProtocol(): ProtocolParams {
@@ -114,7 +114,7 @@ async function main() {
     // Match by owner — VaultDatumSchema lives per module; for simplicity use SDK schema
     // (identical across modules per types.ak shape).
     try {
-      const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
+      const { VaultDatumSchema } = await import("../../../MagicSDK/src/schemas.js");
       const d = Data.from(u.datum, VaultDatumSchema);
       if (d.owner === ownerPkh) {
         vaultUtxo = u;
@@ -205,8 +205,8 @@ async function rebuildWithTamper(
   amountOildropdrop: bigint, ownerPkh: string, tipPosixMs: bigint, plutusJson: any,
   tamper: string, skipOwnerSig: boolean,
 ): Promise<any> {
-  const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
-  const { resolveConstrIndex } = await import("../../MagicSDK/src/redeemerIndex.js");
+  const { VaultDatumSchema } = await import("../../../MagicSDK/src/schemas.js");
+  const { resolveConstrIndex } = await import("../../../MagicSDK/src/redeemerIndex.js");
   const { Constr, toUnit } = await import("@lucid-evolution/lucid");
   const lampUnit = toUnit(POLICY_IDS.lamp, "744c414d50");
 

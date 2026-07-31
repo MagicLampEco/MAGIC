@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   PROTOCOL, POLICY_IDS,
-} from "../config.js";
+} from "../../../scripts/config.js";
 
 /** Fetch tip slot + POSIX ms via Blockfrost REST (more reliable than Lucid provider). */
 async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
@@ -25,8 +25,8 @@ async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
   const tip = await res.json() as { slot: number; time: number };
   return { slot: BigInt(tip.slot), posixMs: BigInt(tip.time) * 1000n };
 }
-import { buildSnapshotGenTx } from "../../SnapshotGen/offchain/src/snapshot.js";
-import { VaultDatumSchema } from "../../SnapshotGen/offchain/src/types.js";
+import { buildSnapshotGenTx } from "../../stale-genmodel-2026-07/SnapshotGen/offchain/src/snapshot.js";
+import { VaultDatumSchema } from "../../stale-genmodel-2026-07/SnapshotGen/offchain/src/types.js";
 
 async function main() {
   console.log("╔════════════════════════════════════════════╗");
@@ -35,7 +35,7 @@ async function main() {
 
   // ── 1. Load + apply vault script ─────────────────────────────
   const plutusJson = JSON.parse(
-    await readFile(new URL("../../SnapshotGen/onchain/plutus.json", import.meta.url), "utf8"),
+    await readFile(new URL("../../stale-genmodel-2026-07/SnapshotGen/onchain/plutus.json", import.meta.url), "utf8"),
   );
   const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
   if (!unapplied) throw new Error("vault.vault.spend not found in SnapshotGen/onchain/plutus.json");

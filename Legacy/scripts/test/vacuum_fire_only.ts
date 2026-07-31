@@ -20,7 +20,7 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
-} from "../config.js";
+} from "../../../scripts/config.js";
 import { buildVacuumFireTx } from "../../VacuumGen/offchain/src/vacuum.js";
 import { VaultDatumSchema } from "../../VacuumGen/offchain/src/types.js";
 

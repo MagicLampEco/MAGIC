@@ -15,7 +15,7 @@ import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   ASSET_NAMES, PROTOCOL,
-} from "../config.js";
+} from "../../../scripts/config.js";
 
 const UMDatumSchema = Data.Object({
   smoothed_q:          Data.Integer(),

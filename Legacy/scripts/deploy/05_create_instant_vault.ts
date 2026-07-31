@@ -21,7 +21,7 @@ import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
   lampToOildrop,
-} from "../config.js";
+} from "../../../scripts/config.js";
 
 // VaultDatum schema (same across all 4 modules — matches Aiken).
 const VaultDatumSchema = Data.Object({
@@ -123,7 +123,7 @@ async function main() {
 
   // Load InstantGen validator with 4 params.
   const plutusJson = JSON.parse(
-    await readFile(new URL("../../InstantGen/onchain/plutus.json", import.meta.url), "utf8"),
+    await readFile(new URL("../../stale-genmodel-2026-07/InstantGen/onchain/plutus.json", import.meta.url), "utf8"),
   );
   const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
   if (!unapplied) {

@@ -8,17 +8,21 @@
 //     current_amount (nơi DUY NHẤT giảm MAGIC). consume.ak ép Σburns == required.
 //   - PriceParam beacon đọc dạng REFERENCE input (readFrom — KHÔNG tiêu).
 //
-// Builder KHÔNG tự dựng redeemer BurnBatch của vault (constr index khác nhau per
-// vault: Instant=2/Snapshot=1/Vacuum=4/Schedule=2) → caller truyền CBOR hex sẵn để
-// tránh coupling type cross-module. Builder chỉ chịu trách nhiệm phần Engage + ghép.
+// Builder KHÔNG tự dựng redeemer BurnBatch NI datum output của vault (constr index +
+// schema khác nhau per vault: Instant=2/Snapshot=1/Vacuum=4/Schedule=2) → caller truyền
+// CBOR hex sẵn (redeemer + datum output) để tránh coupling type cross-module. Builder
+// chịu trách nhiệm phần Engage + GHÉP cả hai continuing output (vault + engage).
 //
-// VALIDITY RANGE: dựng cửa sổ CHẶT ≤ 1 epoch (lower = đầu epoch, upper = +1ms) khớp
-// ràng buộc đã vá ở util.get_epoch (chống under-state epoch bằng validity-range).
-// epoch tham chiếu on-chain lấy từ UPPER bound.
+// VALIDITY RANGE: cửa sổ = TRỌN epoch hiện tại [epochStart, epochEnd-1] — PHẢI chứa
+// `now` (ledger từ chối nếu now > validTo) NHƯNG vẫn ≤ 1 epoch cho cả hai validator:
+//   vault.ak get_current_epoch: epoch = lower/mspe (đầu epoch → currentEpoch, ≤ now).
+//   consume.ak util.get_epoch:  epoch = upper/mspe floor (cuối epoch → currentEpoch, ≥ now).
+// (Bản cũ dùng [epochStart, epochStart+1ms] → validTo ở QUÁ KHỨ so với now giữa epoch →
+//  ledger reject OutsideValidityInterval. Đã vá.)
 
 import {
   Data, toUnit,
-  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
+  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type Assets,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 import { pricePerOp, type BasePriceTable } from "@magiclamp/consumemagic-pricing";
@@ -52,6 +56,18 @@ export interface ConsumeParams {
   /** Redeemer BurnBatch của vault, dạng CBOR hex (caller dựng theo type vault đó).
    *  consume.ak đọc redeemer này qua tx.redeemers; Σburns PHẢI == required. */
   vaultBurnRedeemerCbor: string;
+  /** Datum output tiếp-nối của vault, dạng CBOR hex (caller dựng theo schema vault đó).
+   *  validate_burn_batch (vault.ak) BẮT BUỘC 1 vault output mang datum này (InstantGen
+   *  A02: magic_batches sau burn+prune, consumed_credit += required, last_updated_epoch,
+   *  attribution +1) + value preserved. THIẾU field này ⟹ vault reject. */
+  vaultOutDatumCbor: string;
+  /** Value output của vault — mặc định copy y nguyên vaultUtxo.assets (LAMP+ADA preserved;
+   *  BurnBatch KHÔNG đụng LAMP, C-BURN-NO-LAMP). Chỉ override khi caller có lý do rõ. */
+  vaultOutAssets?: Assets;
+  /** Owner pkh (hex) — addSignerKey cho ràng buộc owner-sig của BurnBatch (vault.ak). */
+  ownerSignerKeyHash?: string;
+  /** Collateral UTxO thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token). */
+  collateralUtxo?: UTxO;
   /** Engage NFT unit (policyId+nameHex) — bảo toàn trên output Engage. */
   engageNftUnit: string;
   /** Network (chọn ms_per_epoch cho validity-range — PHẢI khớp validator param). */
@@ -95,7 +111,9 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   const {
     lucid, engageUtxo, vaultUtxo, priceBeaconUtxo,
     consumeScript, vaultScript, opType, opCount,
-    vaultBurnRedeemerCbor, engageNftUnit, network, tipPosixMs, basePriceTable,
+    vaultBurnRedeemerCbor, vaultOutDatumCbor, vaultOutAssets,
+    ownerSignerKeyHash, collateralUtxo,
+    engageNftUnit, network, tipPosixMs, basePriceTable,
   } = params;
 
   if (opCount < 1n) throw new Error("CONSUME-001: op_count phải ≥ 1");
@@ -117,8 +135,8 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   const mspe = msPerEpoch(network);
   const currentEpoch = tipPosixMs / mspe;
   // cửa sổ CHẶT: lower = đầu epoch hiện tại; upper = lower + 1ms (cùng epoch sau floor)
-  const lowerMs = currentEpoch * mspe;
-  const upperMs = lowerMs + 1n;
+  const lowerMs = currentEpoch * mspe;              // đầu epoch → floor = currentEpoch, ≤ now
+  const upperMs = (currentEpoch + 1n) * mspe - 1n;  // cuối epoch → floor = currentEpoch, ≥ now
 
   // ── stale guard offchain (mirror C-CM-5; fail sớm trước khi submit) ──────────
   if (currentEpoch < pp.epoch) {
@@ -156,7 +174,7 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
 
   const engageAddress = engageUtxo.address;
 
-  const txBuilder = lucid
+  let txBuilder = lucid
     .newTx()
     // Engage input (Consume) + vault input (BurnBatch CBOR caller cung cấp)
     .collectFrom([engageUtxo], consumeRedeemer)
@@ -171,10 +189,23 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
       { kind: "inline", value: encodeEngageDatum(newEngageDatum) },
       engageOutAssets,
     )
+    // Vault continuing output (datum A02 do caller dựng + value preserved) — BẮT BUỘC bởi
+    // validate_burn_batch (vault.ak); thiếu ⟹ vault reject. LAMP+ADA giữ nguyên.
+    .pay.ToAddressWithData(
+      vaultUtxo.address,
+      { kind: "inline", value: vaultOutDatumCbor },
+      vaultOutAssets ?? { ...vaultUtxo.assets },
+    )
     .validFrom(Number(lowerMs))
     .validTo(Number(upperMs));
 
-  const tx = await txBuilder.complete();
+  // BurnBatch đòi owner ký (vault.ak) — thêm signer key nếu caller cung cấp.
+  if (ownerSignerKeyHash) txBuilder = txBuilder.addSignerKey(ownerSignerKeyHash);
+
+  // Collateral thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token).
+  const tx = collateralUtxo
+    ? await txBuilder.complete({ presetWalletInputs: [collateralUtxo] })
+    : await txBuilder.complete();
 
   const summary =
     `consume op_type=${opType} ×${opCount} | required=${requiredNanogic} ng | ` +

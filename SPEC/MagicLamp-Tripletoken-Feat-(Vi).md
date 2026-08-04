@@ -3,7 +3,9 @@
 > **Tài liệu:** `MagicLamp-Tripletoken-Feat-(Vi).md` — đặc tả kỹ thuật cho **chuyên gia và lập trình viên**.
 > **Đối tượng:** người triển khai on-chain/off-chain, kiểm toán, tích hợp. Phần diễn giải phổ thông (câu chuyện, pháp lý cho người dùng) nằm ở bản công bố `Launch/Whitepaper-MagicLamp-Tokenomic-(Vi).md` — tài liệu này **tham chiếu tới** bản đó, không lặp lại.
 > **Phạm vi:** hợp nhất đặc tả **GenMAGIC** (§6) và **ConsumeMAGIC** (§7) vào một nơi. Cơ chế ổn định CARP chi tiết ở `CarpetMint-Core-Spec-Vi.md` (tài liệu này chỉ nêu giao diện).
-> **Trạng thái:** canonical, chốt mô hình 2026-07-23. Khi mâu thuẫn với bản cũ (`MagicLamp-3Token-DacTa-Vi.md`, các file GenMAGIC/ConsumeMAGIC rời) → **theo file này**.
+> **Trạng thái:** **canonical — nguồn chân lý tokenomics MAGIC, sống trong repo MAGIC** (anh Aladin chốt 2026-08-04: tài liệu chính chủ về MAGIC do MAGIC quyết định, nằm trong repo MAGIC; whitepaper /Launch + tài liệu LAMP chỉ **tham chiếu**, KHÔNG định-nghĩa-lại). Khi mâu thuẫn với bất kỳ bản nào khác (`MagicLamp-3Token-DacTa-Vi.md`, GenMAGIC/ConsumeMAGIC rời, whitepaper /Launch) → **theo file này**.
+>
+> **Changelog 2026-08-04 (hội đồng 4-ghế r_tuổi + adversary — anh chốt):** (1) §6.2 tư-cách đổi tên biến sang **tiếng Anh** (`eligibility/ageFactor/consumedFactor/offPeakFactor/commitFactor`) + công thức TỔNG-CÓ-TRỌNG-SỐ tường minh (Σw=1.5Q); (2) **`ageFactor` hiện thực bằng EMA số-dư-vault (α=1/6)** thay per-UTXO — GIỮ chính sách thâm-niên-LAMP 6-epoch, né O(n)/DoS/laundering; (3) §6.3 thêm `reward = g(consumed)×eligibility` + ràng buộc `g ≤ 0.4·consumed`; (4) §4.1 + §12 thêm **`INV-VAULT-IDENTITY`** (NFT one-shot, chặn lỗ vault-bịa-2-ADA đã VERIFIED PoC). Chuẩn-hoá 4 hàm rᵢ + slope g → Tuân dựng math+vector, anh chốt ở PR.
 
 ---
 
@@ -76,6 +78,7 @@ Quy luật: **LAMP sinh MAGIC; CARP chở giá trị tới nơi tiêu; MAGIC ti�
 | **F5-CARP-FIAT-NEUTRAL** | CARP neo-dịch-vụ không neo-fiat; 3-back đa-dạng-trung-lập, CẤM thuần-LAMP vào core. |
 | **F6-NO-EXTERNAL-INPUT** | Cổng/ngưỡng solvency chỉ căn số-dư-nội-bộ; oracle giá LAMP CHỈ định-giá `B`, KHÔNG điều khiển cổng. |
 | **INV-MAGIC-CITIZEN** | Mọi thưởng/ưu-đãi/quyền-lực keyed vào **MAGIC-đã-TIÊU-THỤ thật** (consumed, không gồm decayed). Công-dân-hạng-nhất = người tiêu thật. |
+| **INV-VAULT-IDENTITY** | Vault hợp-lệ PHẢI mang `vault_id_nft` one-shot; validator kiểm NFT tại MỌI điểm đọc `lamp_balance`/`magic_batches`, KHÔNG chỉ khớp địa-chỉ-script (chặn datum bịa 2-ADA — §4.1). |
 
 ---
 
@@ -110,6 +113,8 @@ MagicBatch {
   contract_id       : ByteArray,   // hợp đồng ScheduleGen (nếu có), else #""
 }
 ```
+
+**`VaultDatum` PHẢI gắn NFT định-danh one-shot (`vault_id_nft`) — bất biến `INV-VAULT-IDENTITY` (hội đồng adversary 2026-08-04, chặn mainnet-blocker đã VERIFIED PoC).** Mỗi vault hợp-lệ mang một **NFT mint one-shot** (policy neo `output_reference` genesis, gắn PersonDID chủ qua `I-PERSON-5`). Validator `consume` + mọi cửa gen PHẢI kiểm `vault_id_nft` có mặt & đúng policy tại **MỌI** điểm đọc `lamp_balance` / `magic_batches` — **KHÔNG được chỉ khớp địa-chỉ-script** (`is_at_script`). Lý do: nếu chỉ khớp địa-chỉ, kẻ tấn công trả **~2 ADA** tạo UTxO tại địa-chỉ vault với datum bịa `magic_batches:[{current_amount: 10¹⁸}]` → co-spend Engage + BurnBatch → **tiêu MAGIC chưa từng được sinh**, mua bất kỳ dịch-vụ định-giá-MAGIC (PoC `poc_fabricated_magic_burns_ok` PASS 2026-08-04). NFT one-shot ràng UTxO phải đi qua cửa tạo-vault hợp-lệ → đóng lỗ tận gốc cho MỌI cửa gen, độc lập với công thức tư-cách.
 
 ### §4.2 Per-epoch use-or-lose — bất biến trung tâm
 **`decay_window = 1` (cliff).** Một `MagicBatch` **chỉ LIVE trong đúng `created_epoch` của nó**. Sang `created_epoch + 1`, batch **chết** — `current_amount` được coi như 0, không tiêu được, không cộng dồn.
@@ -158,15 +163,38 @@ Ba cửa: **InstantGen · ScheduleGen · PrepaidGen**. Chia chung:
 >
 > **Faucet-guard cho LAMP-mượn — chặn TẠI NGUỒN (anh chốt 2026-07-30).** Vì `pp_schedule` tuyến-tính theo LAMP-khả-dụng (§6.3), 1001 LAMP-mượn miễn-phí-vốn nếu tính đủ suất sẽ cấp ~1001 MAGIC/epoch mỗi người — biến faucet thành máy in MAGIC. Chốt: **LAMP-mượn chỉ cấp trần cứng nhỏ `LENT_PP_CAP`** (hằng-hệ, ≪ 1001·ρ) cho phần năng-lực đến từ LAMP-mượn; LAMP người dùng **tự mua & nắm** mới hưởng suất tuyến-tính đầy đủ. (`L_avail` chia hai phần: `L_owned` suất đầy đủ + `L_lent` trần `LENT_PP_CAP`.) Vì chặn ngay ở SINH, lượng MAGIC từ LAMP-mượn đã nhỏ sẵn → không cần (và không được) lọc nó khỏi C1 ở tầng governance: nhất quán với fungibility. Rủi ro thổi C1 bằng đèn-mượn bị giới hạn bởi chính `LENT_PP_CAP`.
 
-### §6.2 Tư-cách — nhân vào TỶ LỆ sinh (1 tham số, 4 thành phần)
-Tư-cách là **một hệ số duy nhất** nhân vào tỷ lệ Gen, gộp 4 thành phần (đóng băng vào `profile_at_creation` lúc sinh batch — bất biến T4):
+### §6.2 Tư-cách (`eligibility`) — hệ-số-NHÂN vào TỶ LỆ sinh (1 tham số, 4 thành phần)
+Tư-cách là **một hệ số duy nhất `eligibility`** nhân vào cơ-sở-tính `g(consumed)` ở §6.3. Gộp 4 thành phần dưới dạng **TỔNG-CÓ-TRỌNG-SỐ** (KHÔNG phải tích — tích làm gãy bất biến chống-ôm-tối-ưu; anh chốt 2026-07-17, hội đồng 4-ghế xác nhận 2026-08-04):
 
-1. **tuổi-LAMP** — xét trên **6 epoch**: cùng lượng LAMP, ở vault lâu hơn (trong cửa sổ 6 epoch) → sinh nhiều hơn. Xét từng epoch để user đo lường được.
-2. **MAGIC-đã-tiêu** — cùng LAMP + cùng tuổi: hồ sơ tiêu nhiều MAGIC hơn trong 6 epoch qua → sinh nhiều hơn. **`INV-CONSUMED-ATTRIB` (hội đồng 2026-07-31):** consumed đầu vào thành-phần này CHỈ đếm khi consumer-DID ⟂ provider/backer-DID (cross-DID, did_commit-gate) — chống **reflexive-gen-amplifier** (vòng LAMP→CARP→PrepaidGen→MAGIC→tự-tiêu tự nhân suất-sinh mỗi epoch, nguy hơn cả bơm-VP). MVP `did_commit=#""` → thành-phần này TẮT tới khi Long giao did_commit thật (lộ trình #1).
-3. **giờ-thấp-điểm** — cùng lượng tiêu: tỷ lệ tiêu lúc thấp-điểm cao hơn → sinh nhiều hơn (điều tiết cung-cầu).
-4. **cam-kết-lịch** — MAGIC cam kết trong hợp đồng ScheduleGen nhiều hơn → sinh nhiều hơn.
+```
+eligibility_q = max( Q,  Q + ( W_AGE·ageFactor + W_CONSUMED·consumedFactor
+                              + W_OFFPEAK·offPeakFactor + W_COMMIT·commitFactor ) / Q )
 
-> Tư-cách **mở cổng và định tỷ-lệ**; **độ lớn** InstantGen còn nhân thêm biến MAGIC-đã-tiêu-thụ ở §6.3. Hai thứ ghép: tư-cách là hệ-số-nhân, consumed là cơ-sở-tính.
+mỗi rᵢ ∈ [0, Q]   (kẹp CẢ HAI đầu: rᵢ = max(0, min(Q, rᵢ_thô)) TRƯỚC khi nhân trọng số — chống input bẩn)
+Q = 10⁹ ·  Σ W = 1.5Q
+W_CONSUMED = 0.90Q  ·  W_OFFPEAK = 0.25Q  ·  W_COMMIT = 0.20Q  ·  W_AGE = 0.15Q
+```
+
+**Vì sao F8-sạch (hội đồng 4-ghế 2026-08-04 xác nhận — bác lo ngại lợi-tức-thụ-động):** `eligibility` là **hệ-số-NHÂN** lên `g(consumed)`, mà `g(0) = 0`. Người nắm LAMP / cam-kết-lịch nhưng **tiêu 0** → `eligibility` có thể > Q nhưng **cấp thực = g(0)·eligibility = 0**. Tư-cách chỉ **khuếch đại** người ĐÃ tiêu, KHÔNG BAO GIỜ tự-sinh reward → không phải lợi-tức-thụ-động (F3/INV-MAGIC-CITIZEN giữ nguyên). Trần lý-thuyết `eligibility = 2.5×` (mọi rᵢ=Q); thực-tế ~1.6× ở cân bằng.
+
+Bốn thành phần (đóng băng vào `profile_at_creation` lúc sinh batch — bất biến T4):
+
+1. **`ageFactor` — thâm-niên LAMP, cửa sổ 6 epoch (`W_AGE = 0.15Q`).** Đo bằng **EMA số-dư-LAMP của vault**, KHÔNG duyệt tuổi từng UTXO (anh chốt 2026-08-04, hội đồng optimizer — né O(n) ExUnit, DoS phân mảnh, xung đột Consolidate, age-laundering `vest_start_slot`):
+   ```
+   lamp_ema_q ← lamp_ema_q + (lamp_balance − lamp_ema_q)·α      (cập nhật mỗi lần spend vault, kẹp theo epoch)
+   α = 1/6    (cửa sổ 6 epoch; nâng 9/12 sau = đổi α → 1/9, 1/12, MỘT hằng số — không đổi cấu trúc)
+   ```
+   **Ngữ nghĩa:** thưởng LAMP **cam-kết-ở-lại-lâu** (EMA cao & ổn định), phạt mua-sát-snapshot (EMA < balance) và không thưởng đã-buông (balance tụt → phanh `L_avail` §6.3 tự siết). Dạng đề xuất: `ageFactor = ⌊ min(lamp_ema_q, lamp_balance·Q) / max(1, lamp_balance) ⌋`, kẹp `[0,Q]`. Tiền lệ dual-EMA: FlowRate (`5292578d`).
+   > *Ngưỡng đóng-góp:* đầu-cơ THUẦN đã bị `g(consumed)=0` (§6.3) chặn, KHÔNG do ageFactor. ageFactor chỉ tinh-chỉnh TỶ-LỆ (≤ +0.15×) cho người ĐÃ tiêu → thiên về **chính-sách điều-tiết-cung-cầu + khuyến-khích-nắm-LAMP** hơn là phòng-tuyến-đầu-cơ.
+   > **Chuẩn-hoá chính xác 4 hàm `rᵢ` → Tuân dựng math thuần + vector, anh chốt ở PR.** Hội đồng math gắn cờ hàm-chuẩn-hoá rᵢ là `[NEEDS-EVIDENCE]`. Tài liệu này chốt **CƠ CHẾ** (EMA α=1/6) + **trọng số**, KHÔNG chốt hằng-số-chuẩn-hoá.
+
+2. **`consumedFactor` — MAGIC-đã-tiêu, cửa sổ 6 epoch (`W_CONSUMED = 0.90Q`, chiếm ưu thế 60% dải).** Cùng LAMP + cùng thâm-niên: hồ sơ tiêu nhiều MAGIC hơn 6 epoch qua → sinh nhiều hơn. **`INV-CONSUMED-ATTRIB` (hội đồng 2026-07-31):** consumed đầu vào thành-phần này CHỈ đếm khi consumer-DID ⟂ provider/backer-DID (cross-DID, did_commit-gate) — chống **reflexive-gen-amplifier** (vòng LAMP→CARP→PrepaidGen→MAGIC→tự-tiêu tự nhân suất-sinh mỗi epoch). MVP `did_commit=#""` → thành-phần này TẮT tới khi Long giao did_commit thật (lộ trình #1).
+3. **`offPeakFactor` — giờ-thấp-điểm (`W_OFFPEAK = 0.25Q`).** Cùng lượng tiêu: tỷ lệ tiêu lúc thấp-điểm cao hơn → sinh nhiều hơn (điều tiết cung-cầu). Tín hiệu thấp-điểm lấy từ **giá-dịch-vụ công bố sẵn**, KHÔNG tự dựng EMA (anh chốt 17/7).
+4. **`commitFactor` — cam-kết-lịch ScheduleGen (`W_COMMIT = 0.20Q`).** MAGIC cam kết trong hợp đồng ScheduleGen nhiều hơn → sinh nhiều hơn.
+
+> **Tên biến chuẩn (code Aiken + TS, thay tên tiếng Việt cũ — anh chốt quốc-tế-hoá 2026-08-04):** `eligibility` (tư_cách) · `ageFactor` (r_tuổi/tuoi) · `consumedFactor` (r_tiêu) · `offPeakFactor` (r_thấp_điểm) · `commitFactor` (r_cam_kết) · trường datum mới `lamp_ema_q`.
+
+> Tư-cách **mở cổng và định tỷ-lệ**; **độ lớn** InstantGen = `⌊ g(consumed) × eligibility_q / Q ⌋` (§6.3). Ràng buộc SỐNG-CÒN của dải tư-cách: `g(consumed) ≤ 0.4·consumed` (hội đồng math 2026-08-04) — nếu không, cap-per-DID cắt phẳng cả dải về ~1.1× (§6.3).
 
 ### §6.3 InstantGen — nắm LAMP, tiêu ngay, độ lớn theo MAGIC-đã-tiêu-thụ
 **Bản chất:** thưởng-tham-gia điều-kiện-hoá-bởi-tiêu-MAGIC-thật, KHÔNG phải lợi-tức-thụ-động. Nắm LAMP chỉ **mở tư-cách**; **độ lớn ∝ MAGIC người đó ĐÃ TIÊU THỤ thật** (consumed, đo qua account có định danh).
@@ -182,6 +210,7 @@ cấp thực = min( reward(consumed), cap_surplus(br), ⌊ L_avail_hiện_tại 
 cap_surplus = f · S · (br − br_safe) / br_safe   khi xanh (f ≤ 0.10)
 cap_surplus = 0                                   khi đỏ
 ```
+- **`reward(consumed) = ⌊ g(consumed) × eligibility_q / Q ⌋`** — cơ-sở-tính `g(consumed)` (hàm LÕM) nhân hệ-số tư-cách (§6.2). Ràng buộc **`g(consumed) ≤ 0.4·consumed`** (hội đồng math 2026-08-04): với `eligibility` trần 2.5×, `g·2.5 ≤ consumed` ⟹ `INV-CASHBACK-BOUND` (Σreward ≤ Σconsumed) giữ tự-động, VÀ dải tư-cách [1×…2.5×] **hoạt-động thật** thay vì bị cap-per-DID cắt phẳng ~1.1×. Slope `g` cụ thể → Tuân math + vector, anh chốt.
 - **`pp_schedule` = năng-lực-ScheduleGen-theo-hồ-sơ của DID** (notional — MAGIC/epoch mà hồ sơ DID *có thể* đặt ScheduleGen sinh), tính **TUYẾN TÍNH theo LAMP khả-dụng tức-thời**:
   ```
   pp_schedule[nanogic/ep] = ⌊ L_avail_oildrop × RATE_REF_Q / Q ⌋
@@ -382,6 +411,9 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | **INV-CASHBACK-BOUND** | thưởng mỗi DID ≤ MAGIC thật đã tiêu |
 | **I-ACT-7** | LAMP đứng yên khi gen (chỉ đọc reference_input) |
 | **I-PERSON-5** | 1 PersonDID / 1 biometric_hash (chống Sybil-account) |
+| **INV-VAULT-IDENTITY** | vault mang `vault_id_nft` one-shot; kiểm NFT mọi điểm đọc balance/batches (chặn vault bịa 2-ADA) |
+| **INV-CONSUMED-ATTRIB** | consumed vào tư-cách chỉ đếm cross-DID (consumer ⟂ provider/backer) — chống reflexive-gen |
+| **INV-SURPLUS-RATION** | cap_surplus rationed 16-shard spend-decrement (trần toàn-cục cứng, chống N-DID vượt backing) |
 | **INV-VACUUM-ISOLATION** | VacuumBack leak ≡ 0 khỏi backing_core |
 | **P8** | bit-identical Aiken ↔ TS |
 | **C-OVERFLOW** | BigInt mọi amount |

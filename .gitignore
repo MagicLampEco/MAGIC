@@ -4,7 +4,15 @@ dist/
 *.env
 .DS_Store
 
+# Nhà riêng agent — không push lên org repo (chuẩn _rules/00-global.md)
+_Agents/
+.claude/worktrees/
+
 # Aiken build artifacts
 */onchain/build/
 */onchain/plutus.json
 MagicSDK/node_modules
+
+# nested (Legacy) build artifacts
+**/onchain/build/
+**/onchain/plutus.json

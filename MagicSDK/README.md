@@ -20,7 +20,7 @@ const lucid = await Lucid(new Blockfrost(URL, KEY), "Preview");
 lucid.selectWallet.fromPrivateKey(PRIVATE_KEY);
 
 // 2. Load unapplied vault validator CBOR (từ aiken build của MAGIC repo)
-const plutus = JSON.parse(await readFile("SnapshotGen/onchain/plutus.json", "utf8"));
+const plutus = JSON.parse(await readFile("Legacy/SnapshotGen/onchain/plutus.json", "utf8"));
 const vaultUnappliedCbor = plutus.validators.find(v => v.title === "vault.vault.spend").compiledCode;
 
 // 3. Build unsigned tx
@@ -116,9 +116,9 @@ CBOR schema cho VaultDatum. Dùng `Data.from(utxo.datum, VaultDatumSchema)` đ�
 
 Để **thực sự sinh MAGIC**, cần gọi các builder ở repo MAGIC (module tương ứng):
 
-- `SnapshotGen/offchain/src/snapshot.ts` → `buildSnapshotGenTx({...})` — trigger per epoch
-- `InstantGen/offchain/src/instant.ts` → `buildInstantGenTx({...})` — purchase MAGIC
-- `VacuumGen/offchain/src/vacuum.ts` → `buildVacuumCommitTx` / `buildVacuumFireTx`
+- `Legacy/SnapshotGen/offchain/src/snapshot.ts` → `buildSnapshotGenTx({...})` — trigger per epoch
+- `Legacy/InstantGen/offchain/src/instant.ts` → `buildInstantGenTx({...})` — purchase MAGIC
+- `Legacy/VacuumGen/offchain/src/vacuum.ts` → `buildVacuumCommitTx` / `buildVacuumFireTx`
 - `ScheduleGen/offchain/src/schedule.ts` → `buildScheduleCommitTx` / `buildScheduleFireTx`
 
 Mỗi builder cần `vaultScript` (lấy từ `createVault()` result hoặc `applyVaultValidator()`). Đây là same applied script — phải match đúng địa chỉ vault.

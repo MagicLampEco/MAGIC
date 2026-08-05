@@ -17,8 +17,15 @@ const VAULT_TITLE = "vault.vault.spend";
 
 // Resolve repo-root-relative paths to the built validator artifacts. This test
 // file lives at MagicSDK/tests/ → ../../ is the repo root.
+// SnapshotGen/InstantGen moved under Legacy/ — keep the mapping here so a module
+// relocation shows up as one edit, not a silent ENOENT in three tests.
+const MODULE_DIR: Record<string, string> = {
+  SnapshotGen: "Legacy/stale-genmodel-2026-07/SnapshotGen",
+  InstantGen:  "Legacy/stale-genmodel-2026-07/InstantGen",
+  ScheduleGen: "ScheduleGen",
+};
 const plutusPath = (module: string) =>
-  fileURLToPath(new URL(`../../${module}/onchain/plutus.json`, import.meta.url));
+  fileURLToPath(new URL(`../../${MODULE_DIR[module] ?? module}/onchain/plutus.json`, import.meta.url));
 
 describe("updateProfile — redeemer index resolution (real plutus.json)", () => {
   it("resolves UpdateProfile=2 on SnapshotGen", async () => {

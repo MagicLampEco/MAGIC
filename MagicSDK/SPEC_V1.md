@@ -143,7 +143,7 @@ SDK đối chiếu: `MagicSDK/src/withdrawLamp.ts:removeNewestFirst` — cùng t
 ### Trạng thái hiện tại — lỗi bảo mật
 
 ```aiken
-// SnapshotGen/onchain/validators/vault.ak (CURRENT — STUB)
+// Legacy/SnapshotGen/onchain/validators/vault.ak (CURRENT — STUB)
 UpdateProfile { .. } -> {
   expect list.has(tx.extra_signatories, input_datum.owner)
   True   // ← pass mọi datum tamper. CRITICAL BUG.
@@ -154,7 +154,7 @@ Stub hiện tại cho phép tx UpdateProfile thay đổi bất kỳ field nào t
 
 ### Spec đã có
 
-`ProfileChange/onchain/validators/vault_profile.ak` (partial) đã định nghĩa rules — copy logic vào SnapshotGen vault. §12 (C-PC-V1..V6, T4) có offchain reference tại `ProfileChange/offchain/src/profile.ts`.
+`Legacy/ProfileChange/onchain/validators/vault_profile.ak` (partial) đã định nghĩa rules — copy logic vào SnapshotGen vault. §12 (C-PC-V1..V6, T4) có offchain reference tại `Legacy/ProfileChange/offchain/src/profile.ts`.
 
 ### Validator rules
 
@@ -272,7 +272,7 @@ PM_Q dùng ở cả Snapshot + Instant. User có thể có vault Snap profile=Fl
 
 ### Trạng thái hiện tại — cùng lỗi như §2
 
-Enum `InstantGen/onchain/lib/magiclamp/protocol/types.ak` **đã có** `UpdateProfile { new_profile }` (constructor index 3). Handler trong `InstantGen/onchain/validators/vault.ak`:
+Enum `Legacy/InstantGen/onchain/lib/magiclamp/protocol/types.ak` **đã có** `UpdateProfile { new_profile }` (constructor index 3). Handler trong `Legacy/InstantGen/onchain/validators/vault.ak`:
 
 ```aiken
 UpdateProfile { .. } -> {

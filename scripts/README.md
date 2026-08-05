@@ -15,11 +15,13 @@ cp .env.example .env
 ## Thứ tự deploy bắt buộc
 
 ```
-01_mint_lamp.ts         → Mint LAMP token
-02_deploy_um.ts         → Deploy UM datum (cần trước InstantGen)
-03_deploy_shards.ts     → Deploy 16 shards (cần trước ScheduleGen)
-04_create_vault.ts      → Tạo vault đầu tiên
+01_mint_lamp.ts             → Mint LAMP token
+03_deploy_shards.ts         → Deploy 16 shards (cần trước ScheduleGen)
+07_create_schedule_vault.ts → Tạo ScheduleGen vault
 ```
+
+> `02_deploy_um.ts` và `04..06_create_*.ts` phục vụ 4 module mô hình cũ và đã
+> chuyển sang `Legacy/scripts/`. Đừng chạy chúng cho deploy mới.
 
 > ⚠️ Mỗi bước phải chờ ~20 giây để tx được confirm trước khi chạy bước tiếp.
 
@@ -31,13 +33,10 @@ cp .env.example .env
 npm run deploy:lamp
 # → Copy LAMP_POLICY_ID vào .env
 
-npm run deploy:um
-# → Copy UM_NFT_POLICY_ID vào .env
-
 npm run deploy:shards
 # → Copy SHARD_NFT_POLICY_ID vào .env
 
-npm run deploy:vault
+npm run deploy:schedule-vault
 # → Copy VAULT_OWNER_PKH vào .env
 ```
 
@@ -46,13 +45,8 @@ npm run deploy:vault
 ## Test sau khi deploy
 
 ```bash
-# Start UMKeeper (terminal riêng)
-cd ../UMKeeper/offchain
-BLOCKFROST_KEY=xxx PRIVATE_KEY=xxx npx tsx src/keeper.ts
-
-# Chạy e2e test
-cd ../scripts
-npm run test:e2e
+npm run test:schedule-commit
+npm run test:schedule-fire
 ```
 
 ---

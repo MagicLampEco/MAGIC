@@ -85,13 +85,13 @@ interface ModuleSpec {
 const MODULES: ModuleSpec[] = [
   {
     name:      "SnapshotGen",
-    plutusPath: "../SnapshotGen/onchain/plutus.json",
+    plutusPath: "../Legacy/stale-genmodel-2026-07/SnapshotGen/onchain/plutus.json",
     title:     "vault.vault.spend",
     buildParams: (msPer, lampName) => [LAMP_POLICY, lampName, msPer],
   },
   {
     name:      "InstantGen",
-    plutusPath: "../InstantGen/onchain/plutus.json",
+    plutusPath: "../Legacy/stale-genmodel-2026-07/InstantGen/onchain/plutus.json",
     title:     "vault.vault.spend",
     buildParams: (msPer, lampName) => [
       LAMP_POLICY,
@@ -104,7 +104,7 @@ const MODULES: ModuleSpec[] = [
   },
   {
     name:      "VacuumGen",
-    plutusPath: "../VacuumGen/onchain/plutus.json",
+    plutusPath: "../Legacy/VacuumGen/onchain/plutus.json",
     title:     "vault.vault.spend",
     buildParams: (msPer, lampName) => [
       LAMP_POLICY,
@@ -129,13 +129,13 @@ const MODULES: ModuleSpec[] = [
   },
   {
     name:      "Consolidate",
-    plutusPath: "../Consolidate/onchain/plutus.json",
+    plutusPath: "../Legacy/stale-genmodel-2026-07/Consolidate/onchain/plutus.json",
     title:     "vault_consolidate.vault_consolidate.spend",
     buildParams: (msPer, lampName) => [LAMP_POLICY, lampName, msPer],
   },
   {
     name:      "UMKeeper",
-    plutusPath: "../UMKeeper/onchain/plutus.json",
+    plutusPath: "../Legacy/UMKeeper/onchain/plutus.json",
     title:     "um_datum.um_datum_validator.spend",
     buildParams: (msPer) => [msPer],
   },

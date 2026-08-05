@@ -8,9 +8,9 @@
 //
 // When you change a validator signature, change this table in the same commit.
 // Source of truth:
-//   SnapshotGen/onchain/validators/vault.ak
-//   InstantGen/onchain/validators/vault.ak
-//   VacuumGen/onchain/validators/vault.ak
+//   Legacy/stale-genmodel-2026-07/SnapshotGen/onchain/validators/vault.ak
+//   Legacy/stale-genmodel-2026-07/InstantGen/onchain/validators/vault.ak
+//   Legacy/VacuumGen/onchain/validators/vault.ak
 //   ScheduleGen/onchain/validators/vault.ak
 
 import { describe, it, expect } from "vitest";

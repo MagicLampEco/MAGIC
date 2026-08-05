@@ -7,7 +7,7 @@
     "start": "node dist/src/run.js"
   },
   "dependencies": {
-    "@magiclamp/protocol-utils": "file:../../ProtocolUtils"
+    "@magiclamp/protocol-utils": "file:../../../ProtocolUtils"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

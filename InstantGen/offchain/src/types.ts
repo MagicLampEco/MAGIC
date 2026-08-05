@@ -207,3 +207,17 @@ export const VaultRedeemerSchema = Data.Enum([
   })}),
 ]);
 export type VaultRedeemer = Data.Static<typeof VaultRedeemerSchema>;
+
+// ── Codec companions ─────────────────────────────────────────
+// `Data.to`/`Data.from` infer their result from the SECOND argument, so that
+// argument must be a VALUE whose TypeScript type is the plain static shape —
+// not the schema object itself. Passing `XxxSchema` directly makes the call
+// return `TObject<…>` and every field access below it goes untyped.
+//
+// These aliases are the lucid-evolution idiom: same name as the type, so call
+// sites read `Data.from(utxo.datum!, VaultDatum)`. Runtime value is unchanged —
+// it is the very same schema object, only its static type is re-branded.
+export const VaultDatum          = VaultDatumSchema          as unknown as VaultDatum;
+export const UMDatum             = UMDatumSchema             as unknown as UMDatum;
+export const BackingBeaconDatum  = BackingBeaconDatumSchema  as unknown as BackingBeaconDatum;
+export const VaultRedeemer       = VaultRedeemerSchema       as unknown as VaultRedeemer;

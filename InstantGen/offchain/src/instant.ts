@@ -14,7 +14,7 @@
 import {
   Lucid, Blockfrost, Data, toUnit,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
-  type LucidEvolution, type UTxO, type Tx, type Validator,
+  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
 } from "@lucid-evolution/lucid";
 import {
   TESTNET_CONFIG, MAX_BATCHES_PER_VAULT, MAGIC_DECAY_WINDOW,
@@ -27,8 +27,8 @@ import {
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
-  VaultDatumSchema, UMDatumSchema, BackingBeaconDatumSchema, VaultRedeemerSchema,
-  type VaultDatum, type MagicBatch,
+  VaultDatum, UMDatum, BackingBeaconDatum, VaultRedeemer,
+  type MagicBatch,
 } from "./types.js";
 import { blake2b } from "@noble/hashes/blake2b";
 
@@ -72,7 +72,7 @@ export interface InstantGenParams {
 
 export interface InstantGenResult {
   /** The built but not yet signed/submitted transaction */
-  tx: Tx;
+  tx: TxSignBuilder;
   /** Granted MAGIC in nanogic (= redeemer `claimed_amount`) */
   grantNanogic: bigint;
   /** consumed_credit consumed by this tx (zeroed afterwards) */
@@ -124,14 +124,21 @@ export async function buildInstantGenTx(
   const network = params.network ?? TESTNET_CONFIG.network;
   const lampAssetName = params.lampAssetName ?? TESTNET_CONFIG.lampAssetName;
 
+  // A vault UTxO always carries ADA; assert it so the output cannot be built
+  // with an under-stated lovelace amount (Assets is an index signature).
+  const vaultLovelace = vaultUtxo.assets.lovelace;
+  if (vaultLovelace === undefined) {
+    throw new Error(`GEN-INST-000: vault UTxO carries no lovelace — refusing to build.`);
+  }
+
   // ── Decode datums ────────────────────────────────────────────
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
-  const umDatum    = Data.from(umDatumUtxo.datum!, UMDatumSchema);
-  const backing    = Data.from(backingBeaconUtxo.datum!, BackingBeaconDatumSchema);
+  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
+  const umDatum    = Data.from(umDatumUtxo.datum!, UMDatum);
+  const backing    = Data.from(backingBeaconUtxo.datum!, BackingBeaconDatum);
 
   // ── Get current epoch (POSIX-ms-based, matches Aiken validator) ──
   const tipPosixMs = params.tipPosixMs
-    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const currentEpoch = posixMsToEpoch(tipPosixMs, network);
 
   // ── C-INST-1: LAMP must SIT in the vault (eligibility only) ──
@@ -249,7 +256,7 @@ export async function buildInstantGenTx(
 
   const redeemer = Data.to(
     { InstantGen: { claimed_amount: grant } },
-    VaultRedeemerSchema,
+    VaultRedeemer,
   );
 
   const lampUnit = toUnit(lampPolicyId, lampAssetName);
@@ -268,9 +275,9 @@ export async function buildInstantGenTx(
     .readFrom([umDatumUtxo, backingBeaconUtxo])   // reference inputs (not spent)
     .pay.ToAddressWithData(
       vaultScriptAddress,
-      { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
+      { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) },
       {
-        lovelace:  vaultUtxo.assets.lovelace,   // ADA stays on vault
+        lovelace:  vaultLovelace,                // ADA stays on vault
         [lampUnit]: lampOut,                     // LAMP stays on vault (I-ACT-7)
       },
     )
@@ -310,7 +317,7 @@ export async function buildInstantGenTx(
 /** Sign (with user's wallet) and submit the tx. Returns tx hash. */
 export async function signAndSubmit(
   lucid : LucidEvolution,
-  tx    : Tx,
+  tx    : TxSignBuilder,
 ): Promise<string> {
   const signedTx = await tx.sign.withWallet().complete();
   return signedTx.submit();
@@ -319,7 +326,6 @@ export async function signAndSubmit(
 // ── Diagnostics: the three ceilings separately ───────────────
 
 import { computeRewardFromConsumed, computeCapSurplus, computeCapPp } from "./math.js";
-import type { BackingBeaconDatum } from "./types.js";
 
 export function diagnoseCeilings(
   vaultDatum: VaultDatum,

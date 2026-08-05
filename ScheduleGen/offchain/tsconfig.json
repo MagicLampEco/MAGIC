@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
     "lib":              ["ES2022"],
     "strict":           true,
+    "skipLibCheck":     true,
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess":   true,
     "outDir":           "./dist",
@@ -13,6 +14,6 @@
     "declarationMap":   true,
     "sourceMap":        true
   },
-  "include": ["src/**/*", "../tests/**/*"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

@@ -4,7 +4,7 @@
 import {
   Lucid, Blockfrost, Data, toUnit,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
-  type LucidEvolution, type UTxO, type Tx, type Validator,
+  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
 } from "@lucid-evolution/lucid";
 import { blake2b } from "@noble/hashes/blake2b";
 import {
@@ -22,8 +22,8 @@ import {
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
-  VaultDatumSchema, VaultRedeemerSchema, ShardRedeemerSchema,
-  type VaultDatum, type GenSchedule, type MagicBatch, type LoyaltyHolding,
+  VaultDatum, VaultRedeemer, ShardRedeemer,
+  type GenSchedule, type MagicBatch, type LoyaltyHolding,
 } from "./types.js";
 
 // ── Shard datum schema ────────────────────────────────────────
@@ -38,6 +38,8 @@ const ShardDatumSchema = D.Object({
   shard_cap:                    D.Integer(),
 });
 type ShardDatum = D.Static<typeof ShardDatumSchema>;
+// Codec companion — see types.ts for why the schema alone cannot be passed.
+const ShardDatum = ShardDatumSchema as unknown as ShardDatum;
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -62,7 +64,7 @@ export interface CommitParams {
 }
 
 export interface CommitResult {
-  tx              : Tx;
+  tx              : TxSignBuilder;
   scheduleId      : string;
   rateLockedQ     : bigint;
   mPerFire        : bigint;
@@ -91,7 +93,7 @@ export interface FireParams {
 }
 
 export interface FireResult {
-  tx             : Tx;
+  tx             : TxSignBuilder;
   firesInTx      : number;
   mPerFire       : bigint;
   totalMagicFired: bigint;
@@ -113,9 +115,9 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   const { lucid, vaultUtxo, shardUtxos, scheduleLength: L, lampPerEpoch: lambda } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
 
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
+  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
   const tipPosixMs = params.tipPosixMs
-    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const commitEpoch = posixMsToEpoch(tipPosixMs, network);
 
   // ── Validations ──────────────────────────────────────────
@@ -144,11 +146,11 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   // ── Shard check (C-SCH-CAP) ───────────────────────────────
   const shardId  = computeShardId(vaultDatum.owner);
   const shardUtxo = shardUtxos.find(u => {
-    const d = Data.from(u.datum!, ShardDatumSchema);
+    const d = Data.from(u.datum!, ShardDatum);
     return Number(d.shard_id) === shardId;
   });
   if (!shardUtxo) throw new Error(`Shard UTxO not found for shard_id=${shardId}`);
-  const shardDatum = Data.from(shardUtxo.datum!, ShardDatumSchema);
+  const shardDatum = Data.from(shardUtxo.datum!, ShardDatum);
 
   if (shardDatum.shard_locked_lamp + totalLock > SHARD_CAP)
     throw new Error(`GEN-SCH-006: Shard cap exceeded. shard_locked=${shardDatum.shard_locked_lamp}, adding=${totalLock}, cap=${SHARD_CAP}`);
@@ -198,8 +200,8 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   const { vaultScript, shardScript } = params;
   const vaultAddr = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
-  const redeemer  = Data.to({ ScheduleCommit: { schedule_length: L, lamp_per_epoch: lambda } }, VaultRedeemerSchema);
-  const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: totalLock, delta_committed: totalLock } }, ShardRedeemerSchema);
+  const redeemer  = Data.to({ ScheduleCommit: { schedule_length: L, lamp_per_epoch: lambda } }, VaultRedeemer);
+  const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: totalLock, delta_committed: totalLock } }, ShardRedeemer);
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((commitEpoch + 1n) * msPerEpoch(network) - 1n);
 
@@ -209,8 +211,8 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     .collectFrom([shardUtxo], shardRed)
     .attach.SpendingValidator(vaultScript)
     .attach.SpendingValidator(shardScript)
-    .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) }, vaultUtxo.assets)
-    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
+    .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) }, vaultUtxo.assets)
+    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatum) }, shardUtxo.assets)
     .validFrom(lowerTime)
     .validTo(upperTime);
   if (!params.skipOwnerSig) txBuilder = txBuilder.addSignerKey(vaultDatum.owner);
@@ -249,10 +251,18 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const { lucid, vaultUtxo, shardUtxos, scheduleId } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
 
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
+  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
   const tipPosixMs = params.tipPosixMs
-    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const currentEpoch = posixMsToEpoch(tipPosixMs, network);
+
+  // Assets is an index signature, so every lookup is `bigint | undefined`.
+  // A vault UTxO always carries ADA — assert it rather than defaulting to 0n,
+  // which would silently under-pay the vault output.
+  const vaultLovelaceFire = vaultUtxo.assets.lovelace;
+  if (vaultLovelaceFire === undefined) {
+    throw new Error(`GEN-SCH-000: vault UTxO carries no lovelace — refusing to build.`);
+  }
 
   const sched = vaultDatum.gen_schedules.find(s => s.schedule_id === scheduleId);
   if (!sched) throw new Error(`Schedule ${scheduleId} not found`);
@@ -326,11 +336,11 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   // C-SCH-FIRE-SHARD: find and update the correct shard (A19)
   const shardId = computeShardId(vaultDatum.owner);
   const shardUtxo = shardUtxos.find(u => {
-    const d = Data.from(u.datum!, ShardDatumSchema);
+    const d = Data.from(u.datum!, ShardDatum);
     return Number(d.shard_id) === shardId;
   });
   if (!shardUtxo) throw new Error(`GEN-SCH-008: Shard ${shardId} not found`);
-  const shardDatum = Data.from(shardUtxo.datum!, ShardDatumSchema);
+  const shardDatum = Data.from(shardUtxo.datum!, ShardDatum);
 
   const newShardDatum: ShardDatum = {
     ...shardDatum,
@@ -346,8 +356,8 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const vaultAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
   const lampUnit   = toUnit(lampPolicyId, lampAssetName);
-  const redeemer   = Data.to({ ScheduleFire: { schedule_id: scheduleId } }, VaultRedeemerSchema);
-  const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(firesInTx), lambda: sched.lamp_per_epoch } }, ShardRedeemerSchema);
+  const redeemer   = Data.to({ ScheduleFire: { schedule_id: scheduleId } }, VaultRedeemer);
+  const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(firesInTx), lambda: sched.lamp_per_epoch } }, ShardRedeemer);
   const lowerTime  = Number(tipPosixMs);
   const upperTime  = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
@@ -358,10 +368,10 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     .attach.SpendingValidator(vaultScript)
     .attach.SpendingValidator(shardScript)
     // I-ACT-7: the vault output carries EXACTLY the LAMP it came in with.
-    .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
-      { lovelace: vaultUtxo.assets.lovelace,
+    .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) },
+      { lovelace: vaultLovelaceFire,
         [lampUnit]: newLampBalance - (params.tamperLampOutOil ?? 0n) })
-    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
+    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatum) }, shardUtxo.assets)
     // NO Treasury output — a fire moves no LAMP anywhere.
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless
     .validFrom(lowerTime)
@@ -387,7 +397,7 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
 }
 
 // ── Submit ────────────────────────────────────────────────────
-export async function signAndSubmit(lucid: LucidEvolution, tx: Tx): Promise<string> {
+export async function signAndSubmit(lucid: LucidEvolution, tx: TxSignBuilder): Promise<string> {
   return (await tx.sign.withWallet().complete()).submit();
 }
 

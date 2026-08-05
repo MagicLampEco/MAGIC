@@ -38,6 +38,26 @@ export {
   type PlutusJson,
 } from "./redeemerIndex.js";
 
+// MAGIC generation — the only supported way for an app to trigger a gen tx.
+// See generate.ts for why VacuumGen/SnapshotGen are absent, and for the
+// fail-closed BackingBeacon precondition on InstantGen.
+export {
+  buildInstantGenTx,
+  diagnoseCeilings,
+  buildScheduleCommitTx,
+  buildScheduleFireTx,
+  NANOGIC_DECIMALS,
+  NANOGIC_PER_MAGIC,
+  OILDROP_DECIMALS,
+  OILDROP_PER_LAMP,
+  type InstantGenParams,
+  type InstantGenResult,
+  type CommitParams,
+  type CommitResult,
+  type FireParams,
+  type FireResult,
+} from "./generate.js";
+
 export type {
   Profile,
   VaultType,

@@ -1,6 +1,9 @@
 # MAGIC v1.0 — Integrator Guide
 
-Tài liệu cho dev tích hợp MagicSDK vào app (PhoenixKey, ví Cardano khác, app nội bộ MagicLamp Network). Sau khi đọc xong dev có thể: tạo vault → chọn/đổi profile → sinh MAGIC bằng 4 phương thức → rút LAMP về ví.
+Tài liệu cho dev tích hợp MagicSDK vào app (PhoenixKey, ví Cardano khác, app nội bộ MagicLamp Network). Sau khi đọc xong dev có thể: tạo vault → chọn/đổi profile → sinh MAGIC → rút LAMP về ví.
+
+> **Đổi lớn — `I-ACT-7`:** sinh MAGIC KHÔNG làm LAMP rời vault. Mô hình cũ
+> "trả LAMP sang Treasury để mua MAGIC" đã bị bỏ. Xem [mục 6](#6-sinh-magic).
 
 > **Tiền đề:** v1.0 onchain đã ship (Tuân đã merge `WithdrawLamp` + `UpdateProfile` full impl theo `SPEC_V1.md`). Trước v1.0, một số flow ở dưới sẽ bị validator reject — chi tiết ở từng phần.
 
@@ -13,7 +16,7 @@ Tài liệu cho dev tích hợp MagicSDK vào app (PhoenixKey, ví Cardano khác
 - [3. Tham số protocol](#3-tham-số-protocol)
 - [4. Tạo vault](#4-tạo-vault)
 - [5. Tìm vault của user](#5-tìm-vault-của-user)
-- [6. Sinh MAGIC — 4 phương thức](#6-sinh-magic--4-phương-thức)
+- [6. Sinh MAGIC](#6-sinh-magic)
 - [7. Đổi profile](#7-đổi-profile)
 - [8. Rút LAMP về ví](#8-rút-lamp-về-ví)
 - [9. Multi-vault patterns](#9-multi-vault-patterns)
@@ -29,22 +32,22 @@ Tài liệu cho dev tích hợp MagicSDK vào app (PhoenixKey, ví Cardano khác
 | | LAMP | MAGIC |
 |---|---|---|
 | Bản chất | Cardano native token | Số ghi trong `magic_batches[]` của vault datum |
-| Ai cấp phát | Mint qua `01_mint_lamp` (1 lần) | Sinh ra qua 1 trong 4 generator (vault redeemer) |
+| Ai cấp phát | Mint qua `01_mint_lamp` (1 lần) | Sinh ra qua một cửa gen (vault redeemer) |
 | Lưu ở đâu | Trong ví Cardano hoặc khoá trong vault | Trong vault datum (không phải native token) |
 | Transfer giữa ví | ✅ Cardano transfer tx bình thường | ❌ MAGIC không transfer được — gắn với vault |
 
-User nạp LAMP vào vault → vault giữ LAMP làm "collateral" → vault sinh MAGIC theo công thức (LAMP × profile × loyalty × UM × …). MAGIC được "burn" (claim) bằng `BurnBatch` redeemer trên mỗi vault validator — đây là off-scope guide này; xem handler `BurnBatch { .. }` trong [`SnapshotGen/onchain/validators/vault.ak`](../SnapshotGen/onchain/validators/vault.ak) (hiện stub, sẽ implement đầy đủ ở bản sau v1.0).
+User nạp LAMP vào vault → LAMP nằm đó **mở tư cách** sinh MAGIC (không bị tiêu, không đổi chủ — `I-ACT-7`) → vault sinh MAGIC theo công thức của từng cửa. MAGIC được "burn" (claim) bằng `BurnBatch` redeemer trên mỗi vault validator — đây là off-scope guide này; xem handler `BurnBatch { .. }` trong [`SnapshotGen/onchain/validators/vault.ak`](../SnapshotGen/onchain/validators/vault.ak) (hiện stub, sẽ implement đầy đủ ở bản sau v1.0).
 
 ### Vault types
 
 4 vault type, mỗi cái 1 validator riêng → 1 địa chỉ Cardano riêng:
 
-| Vault type | Khi nào dùng | LAMP cost | UM dependency | Lifetime batch |
+| Vault type | Khi nào dùng | LAMP có rời vault? | UM dependency | Lifetime batch |
 |---|---|---|---|---|
-| `Snapshot` | Passive, tự động mỗi epoch | **Free** — LAMP ở lại vault | Không | N(profile) epoch |
-| `Instant` | On-demand purchase | Transfer ngay → Treasury | Có (fallback 0.5× nếu stale) | 2 epoch |
-| `Vacuum` | 2-phase commit-then-fire | Transfer tại fire → Treasury | Có (always smoothed UM) | 1 epoch (cliff) |
-| `Schedule` | Forward contract rate-locked | Transfer per fire → Treasury | Không (locked rate) | 1 epoch (cliff) |
+| `Snapshot` | Passive, tự động mỗi epoch | Không | Không | N(profile) epoch |
+| `Instant` | Khoá theo lượng MAGIC đã tiêu | **Không** (`I-ACT-7`) | Có (fallback 0.5× nếu stale) | 1 epoch (cliff) |
+| `Vacuum` | 2-phase commit-then-fire | **Có → treasury** — trái `I-ACT-7`, legacy | Có (always smoothed UM) | 1 epoch (cliff) |
+| `Schedule` | Hợp đồng kỳ hạn, khoá suất | **Không** — fire chỉ mở khoá | Không (locked rate) | 1 epoch (cliff) |
 
 User có thể có N vault thuộc các type khác nhau, **cùng 1 owner PKH**, mỗi vault datum riêng.
 
@@ -74,7 +77,8 @@ Tiền đề ở repo MAGIC (1 lần, do team MAGIC làm):
 2. Deploy LAMP token → có `LAMP_POLICY_ID`
 3. Deploy UM datum → có `UM_NFT_POLICY_ID` (cần cho Instant/Vacuum)
 4. Deploy 16 shards → có `SHARD_POLICY_ID` (cần cho Schedule)
-5. Treasury address tách riêng khỏi mọi user wallet
+5. Treasury address — CHỈ còn cần cho module Vacuum (legacy). Các cửa sinh
+   đang mở không dùng tới nó nữa (`I-ACT-7`).
 
 App layer nhận các id này qua config (env var hoặc file JSON do team MAGIC publish).
 
@@ -145,7 +149,10 @@ Profile có thể đổi sau qua `updateProfile()` (xem §7), nhưng **existing 
 
 - Ví đã có `lampDeposit` LAMP (transferred từ deploy hoặc faucet)
 - Ví có ≥ `vaultLovelace` ADA (default 2 ADA min-UTxO) + network fee (~0.5 ADA)
-- Đối với `Instant` / `Vacuum` / `Schedule`: phải truyền thêm `treasuryAddress` + `umNftPolicyId` (hoặc `shardPolicyId` cho Schedule)
+- `Instant`: cần `umNftPolicyId`, `umScriptHash`, `backingNftPolicyId`, `backingScriptHash`.
+  KHÔNG cần `treasuryAddress` nữa (`I-ACT-7`).
+- `Schedule`: cần `shardPolicyId`. Cũng không cần `treasuryAddress`.
+- `Vacuum` (legacy): vẫn cần `treasuryAddress` + `umNftPolicyId`.
 
 ### Multi-vault — tạo nhiều vault cùng owner
 
@@ -171,120 +178,129 @@ App layer cache mapping `userId → [vaultUtxoRef, …]` để không phải sca
 
 ---
 
-## 6. Sinh MAGIC — 4 phương thức
+## 6. Sinh MAGIC
 
-Sau khi tạo vault, để **thực sự sinh ra MAGIC**, gọi 1 trong 4 generator builders. SDK chưa wrap mấy hàm này (chúng nằm trong repo MAGIC per-module), nhưng pattern giống nhau:
+> **Đọc mục này trước khi viết dòng nào.** Bản trước của tài liệu mô tả mô hình
+> "trả LAMP sang Treasury để mua MAGIC". Mô hình đó **đã bị bỏ**. Ai còn dựng theo
+> nó sẽ dựng ra một tx mà validator từ chối.
 
-### 6.1. Snapshot — passive accrual
+### Điều đổi: `I-ACT-7` — LAMP không rời vault
+
+Sinh MAGIC **không** làm LAMP đổi chủ. Không có chân Treasury, không có
+`lampPaid`, không có `treasuryAddress`. LAMP nằm trong vault chỉ để **mở tư cách**:
+giữ LAMP là điều kiện, không phải nhiên liệu.
+
+Hệ quả cho ứng dụng: sau một tx sinh MAGIC, `lamp_balance` **y nguyên**.
+Màn hình nào đang hứa với người dùng "trả X LAMP để lấy Y MAGIC" là hứa sai.
+
+### Đường gọi duy nhất
+
+`@magiclamp/sdk` là seam duy nhất. **Đừng import theo đường dẫn repo**
+(`InstantGen/offchain/src/instant.js` …) — đó không phải tên gói, ứng dụng
+không phân giải được.
 
 ```ts
-import { buildSnapshotGenTx } from "SnapshotGen/offchain/src/snapshot.js";
+import {
+  buildScheduleCommitTx, buildScheduleFireTx,
+  buildInstantGenTx, diagnoseCeilings,
+  NANOGIC_PER_MAGIC, OILDROP_PER_LAMP,
+} from "@magiclamp/sdk";
+```
 
-const result = await buildSnapshotGenTx({
+SDK dựng tx và trả về; **ký và submit là việc của ứng dụng** (ví/Enclave của
+người dùng). SDK không giữ khoá và không bao giờ đòi khoá.
+
+### 6.1. Schedule — hợp đồng kỳ hạn, khoá suất tại commit
+
+Đây là cửa sinh **dùng được hôm nay**: không cần BackingBeacon.
+
+```ts
+// Pha 1 — commit: khoá suất + khoá LAMP (LAMP vẫn nằm trong vault)
+const commit = await buildScheduleCommitTx({
   lucid,
-  vaultUtxo,                       // từ listVaultsForOwner
-  vaultScript,                     // từ createVault hoặc applyVaultValidator
+  vaultUtxo,                    // từ listVaultsForOwner
+  shardUtxos,                   // CẢ 16 shard UTxO — builder tự tìm đúng shard
+  scheduleLength: 12n,          // L ∈ [10, 200]
+  lampPerEpoch:   10_000_000n,  // λ, đơn vị oildrop (10 LAMP)
+  userAddress,
+  vaultScript, shardScript,
+  lampPolicyId,
   network: "Preview",
 });
-const signed = await result.tx.sign.withWallet().complete();
+const signed = await commit.tx.sign.withWallet().complete();
 await signed.submit();
+
+// Pha 2 — fire: mỗi epoch một nhát, KHÔNG cần chữ ký chủ vault
+const fire = await buildScheduleFireTx({
+  lucid, vaultUtxo, shardUtxos,
+  scheduleId: commit.scheduleId,
+  vaultScript, shardScript, lampPolicyId,
+  network: "Preview",
+});
 ```
 
-Free — `lamp_balance` không thay đổi. Validator compute:
+- `commit.rateLockedQ` cố định từ lúc commit (T8) — thay đổi tham số sau đó
+  không ảnh hưởng hợp đồng đã ký.
+- `fire.lampReleased` là LAMP **rời khỏi phần bị khoá nhưng vẫn ở trong vault**.
+  Không phải LAMP gửi đi đâu cả. Nhầm chỗ này là hiểu sai cả cơ chế.
+- Fire là **permissionless** (C-SCH-FIRE-PERMISSION): ứng dụng, keeper, hay bất
+  kỳ ai cũng chạy được. Bỏ lỡ vài epoch thì bắt kịp được, tối đa 8 nhát/tx.
+- **Không huỷ được giữa chừng** (C-VAC-12 / T10): đã commit thì fire hoặc hết hạn.
+  UI phải nói rõ điều này **trước** khi người dùng bấm, không phải sau.
 
-```
-M = base × LF × B_Q[profile] × LH(holdings) × decay(profile, age) × lamp_balance / q
-```
-
-→ Thêm 1 batch vào `magic_batches[]`. Batch decay theo `r(profile)` mỗi epoch, hết hạn sau `N(profile)` epoch.
-
-Trigger được 1 lần/epoch/vault. Bot/keeper hoặc app UI nhắc user trigger.
-
-### 6.2. Instant — purchase MAGIC ngay
+### 6.2. Instant — khoá theo lượng MAGIC ĐÃ TIÊU
 
 ```ts
-import { buildInstantGenTx } from "InstantGen/offchain/src/instant.js";
-
 const result = await buildInstantGenTx({
-  lucid,
-  vaultUtxo,
-  vaultScript,
-  umUtxo,                          // UM datum UTxO
-  treasuryAddress,
-  lampPaid: 100_000_000n,          // 100 LAMP — transfer ngay sang Treasury
+  lucid, vaultUtxo,
+  umDatumUtxo,          // reference input
+  backingBeaconUtxo,    // reference input — BẮT BUỘC, xem cảnh báo dưới
+  userAddress, vaultScript, lampPolicyId,
   network: "Preview",
 });
+// result.newLampBalance === vaultDatum.lamp_balance  — luôn đúng (I-ACT-7)
 ```
 
-LAMP chuyển sang Treasury **tại tx này**. Validator compute:
+Lượng cấp khoá theo `activity_state.consumed_credit` — tức **MAGIC đã tiêu**, không
+phải LAMP đã trả:
 
 ```
-M = lamp_paid × R_inst × UM_smoothed × PM_Q[profile] / q²
+grant = min( reward(consumed), cap_surplus(br), 0.5 × pp_schedule )
 ```
 
-Nếu UM stale (`current_epoch - um.last_updated > drm_lookback`) → fallback `UM = 0.5 × q` (C-UM-6).
+`consumed_credit` bị đưa về 0 trong chính tx này. `diagnoseCeilings()` trả về cả ba
+trần riêng lẻ — dùng nó để nói cho người dùng biết **trần nào** đang chặn họ, thay vì
+báo một lỗi trống.
 
-Batch lifetime = 2 epoch (cliff). Sinh ngay, decay nhanh.
+> ⚠ **Hôm nay cửa này ĐANG ĐÓNG, và đóng có chủ ý.** `backingBeaconUtxo` là bắt buộc;
+> chừng nào CARP chưa ship beacon thì không reference input nào thoả, `cap_surplus`
+> không tính được, và tx bị từ chối. Đây là fail-closed theo thiết kế — không có
+> `br` mặc định nào được bịa ra để đi tiếp. Ứng dụng **không nên** hiện nút Instant
+> cho tới khi beacon có thật.
 
-### 6.3. Vacuum — 2-phase commit-then-fire
+### 6.3. Snapshot / Vacuum — chưa mở qua SDK
 
-```ts
-import { buildVacuumCommitTx, buildVacuumFireTx } from "VacuumGen/offchain/src/vacuum.js";
+Cố ý không export:
 
-// Phase 1: commit (lock LAMP, fire epoch = current + delay)
-await buildVacuumCommitTx({
-  lucid, vaultUtxo, vaultScript,
-  lampAmount:   50_000_000n,
-  fireDelay:    1n,                  // fire ở epoch current + 1
-  network: "Preview",
-}).then(r => r.tx.sign.withWallet().complete()).then(s => s.submit());
+- **Vacuum** — validator của nó **vẫn chuyển LAMP ra khỏi vault sang treasury**.
+  Trái `I-ACT-7`. Module này ở trạng thái legacy cho tới khi được đưa về mô hình
+  PHA-2. Đừng dựng gì trên nó.
+- **Snapshot** — chưa hội tụ lên `VaultDatum` hợp nhất của PHA-2.
 
-// Phase 2: fire (chạy ở epoch >= commit.fire_epoch — permissionless)
-await buildVacuumFireTx({
-  lucid, vaultUtxo, vaultScript,
-  umUtxo, treasuryAddress,
-  orderIndex: 0,                    // index trong vacuum_orders[]
-  network: "Preview",
-}).then(r => r.tx.sign.withWallet().complete()).then(s => s.submit());
-```
+### Đơn vị — luôn thô, luôn BigInt
 
-Lock LAMP từ commit. Fire mới transfer Treasury + sinh MAGIC. Dùng UM smoothed (không có fallback — luôn chờ UM available).
+| Đại lượng | Đơn vị qua SDK | Quy đổi hiển thị |
+|---|---|---|
+| MAGIC | `nanogic` | `/ 10^9` (`NANOGIC_PER_MAGIC`) |
+| LAMP  | `oildrop` | `/ 10^6` (`OILDROP_PER_LAMP`) |
 
-### 6.4. Schedule — forward contract rate-locked
+Mọi con số qua biên SDK là **thô**, kiểu `bigint`. Không có "decimals" nào cần đoán.
+`magic_batches[].current_amount` trong datum vault cũng là nanogic — đó là **sổ kế
+toán trong vault**, không phải token trên UTxO, nên đừng đi tìm metadata decimals của
+một policy nào cả.
 
-```ts
-import { buildScheduleCommitTx, buildScheduleFireTx } from "ScheduleGen/offchain/src/schedule.js";
-
-// Phase 1: lock rate ở R_cur, schedule N fire
-await buildScheduleCommitTx({
-  lucid, vaultUtxo, vaultScript,
-  shardUtxo,
-  lampPerFire:  10_000_000n,
-  fireCount:    12,                 // 12 fire = 12 epoch tiếp theo
-  network: "Preview",
-});
-
-// Phase 2: fire mỗi epoch theo schedule
-await buildScheduleFireTx({
-  lucid, vaultUtxo, vaultScript,
-  treasuryAddress,
-  scheduleIndex: 0,
-  network: "Preview",
-});
-```
-
-Rate lock tại commit time → không phụ thuộc UM tại fire. Dùng cho user muốn "DCA-style" predictable MAGIC stream.
-
-### Khi nào dùng cơ chế nào
-
-| Mục tiêu user | Vault type khuyến nghị |
-|---|---|
-| "Tôi có LAMP, không muốn động vào, để sinh MAGIC dần" | Snapshot (free) |
-| "Tôi muốn MAGIC ngay bây giờ" | Instant |
-| "Tôi muốn batch order, fire 1 hôm khác" | Vacuum |
-| "Tôi muốn rate cố định lock cho 12 tháng" | Schedule |
-
-User mix-and-match: 1 vault Snapshot dài hạn + 1 vault Instant cho ad-hoc.
+**Không bao giờ dùng `Number`** cho các đại lượng này (`C-OVERFLOW`) — `2^53` nhỏ hơn
+số dư thật, và sai số hiện ra dưới dạng số tiền lệch chứ không phải lỗi ném ra.
 
 ---
 
@@ -509,23 +525,20 @@ Mỗi rule trong `SPEC_V1.md` ánh xạ 1-1 với 1 trace label trong validator.
 
 ### Q2: Sinh MAGIC bằng những phương thức nào?
 
-4 phương thức, all available trên v0 + v1.0:
+Bốn cơ chế được thiết kế; **hai** trong số đó mở qua SDK hôm nay.
 
-| Phương thức | Vault type | Cost LAMP | Use case |
+| Cơ chế | Qua `@magiclamp/sdk`? | LAMP có rời vault? | Trạng thái |
 |---|---|---|---|
-| **Snapshot** (passive accrual) | Snapshot vault | **Free** (LAMP ở lại vault) | Hold LAMP dài hạn, sinh MAGIC mỗi epoch |
-| **Instant** (on-demand purchase) | Instant vault | Transfer ngay → Treasury | Cần MAGIC ngay tức thì |
-| **Vacuum** (2-phase commit/fire) | Vacuum vault | Transfer tại fire → Treasury | Lock-in LAMP, fire epoch tiếp |
-| **Schedule** (forward contract) | Schedule vault | Transfer per fire → Treasury | Rate-locked DCA stream |
+| **Schedule** (hợp đồng kỳ hạn) | ✅ có | **Không** — fire chỉ mở khoá | Dùng được |
+| **Instant** (khoá theo lượng đã tiêu) | ✅ có | **Không** | Fail-closed: chờ BackingBeacon của CARP |
+| **Vacuum** (2 pha commit/fire) | ❌ không | **Có** — trái `I-ACT-7` | Legacy, đừng dựng lên nó |
+| **Snapshot** (tích luỹ thụ động) | ❌ không | Không | Chưa hội tụ lên `VaultDatum` PHA-2 |
 
-Tất cả 4 đều enabled trên Preview testnet v0. Tuân đã chạy 37 test case pass cho cả 4 module (xem [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md)).
+Không cơ chế nào còn "trả LAMP sang Treasury". Bảng cũ ghi `Transfer → Treasury` cho
+Instant/Vacuum/Schedule là mô tả mô hình **đã bỏ**.
 
-**Sau v1.0 thay đổi:**
-- 4 phương thức trên: không đổi
-- Thêm `WithdrawLamp` để rút LAMP back về ví (không phải sinh MAGIC mà là exit)
-- Thêm `UpdateProfile` full impl để đổi profile của vault (ảnh hưởng cách 4 phương thức tính M)
-
-→ **v0: 4 phương thức đã hoạt động trên Preview.** v1.0: 4 phương thức không đổi + 2 control ops bổ sung.
+`MASTER_TESTNET_REPORT.md` ghi kết quả Preview của mô hình **trước** PHA-2 — đọc nó
+như tư liệu lịch sử, không phải mô tả hành vi hiện tại.
 
 ### Q3: User có chuyển được LAMP đi ví khác chưa?
 
@@ -562,7 +575,9 @@ await lucid.newTx()
 | Capability | v0 (Preview hiện tại) | v1.0 (target) |
 |---|---|---|
 | Tạo vault chọn profile | ✅ | ✅ |
-| 4 phương thức sinh MAGIC | ✅ | ✅ |
+| Sinh MAGIC qua SDK — Schedule | ✅ | ✅ |
+| Sinh MAGIC qua SDK — Instant | ⚠ fail-closed, chờ BackingBeacon (CARP) | ✅ |
+| Sinh MAGIC — Vacuum / Snapshot | ❌ chưa mở qua SDK | — |
 | Đổi profile sau khi tạo (an toàn) | ❌ Stub | ✅ |
 | Rút LAMP về ví | ❌ Không tồn tại | ✅ |
 | Chuyển LAMP giữa các ví Cardano | ✅ (luôn) | ✅ |

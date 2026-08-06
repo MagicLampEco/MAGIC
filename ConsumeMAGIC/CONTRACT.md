@@ -81,7 +81,14 @@ Redeemer `Consume { op_type: Int, op_count: Int, price_ref: OutputReference, vau
   `total_burned = Σ burns trên MỌI vault_ref PHÂN BIỆT` do các Engage input trỏ (mỗi vault đếm burns 1
   lần dù N Engage chia chung). Ép `total_burned == total_required` (`==`, KHÔNG `≥`: over-burn = giảm
   MAGIC vô cớ). Giá lấy từ beacon, KHÔNG từ redeemer amount. Mọi vault input phải ở `vault_script_hash`
-  + redeemer constr == `burn_batch_constr`.
+  + redeemer constr == `burn_batch_constr` + **mang đúng 1 `vault_id_nft`** (xem C-CM-6).
+- **C-CM-6 (INV-VAULT-IDENTITY, siết 2026-08-06):** mỗi vault input phải mang **đúng 1** NFT one-shot
+  `(vault_nft_policy, vault_nft_name)` — hai apply-param mới của `consume.ak`. Chỉ khớp
+  `vault_script_hash` là KHÔNG đủ: địa chỉ script công khai nên ai cũng trả ~2 ADA tạo UTxO ở đó với
+  datum bịa `magic_batches:[{current_amount: 10^18}]` rồi co-spend Engage + BurnBatch để **tiêu MAGIC
+  chưa từng được sinh** (PoC `poc_fabricated_magic_burns_ok`). NFT do `vault_id_nft.ak` phát, neo
+  `OutputReference` genesis nên không mint lại được. Ép `== 1` chứ không `≥ 1` để chặn gom NFT nhiều
+  vault vào một UTxO. Kiểm cả policy lẫn name — chỉ kiểm name thì kẻ tấn công tự mint token trùng tên.
   **Lý do AGGREGATE (chống pay-once-consume-N):** nếu chỉ ép per-invocation `burns(vault_ref) == required`
   của 1 Engage, thì N Engage input cùng `op_count=1` trỏ CHUNG 1 vault burn 10M sẽ mỗi cái pass độc lập
   (10M==10M) trong khi state ghi `Σconsumed += N` — N nghiệp vụ attributed nhưng chỉ 1 đơn vị MAGIC giảm,
@@ -126,9 +133,10 @@ ràng buộc nội dung ở MVP, chỉ ràng buộc bất biến.
 - **PRICING (offchain)**: `pricing/price.ts` (`price_per_op`, `demand_mult` FIR) + vitest (đơn điệu,
   clamp biên, hội tụ, test vector ảnh 0.01 / CID 0.001).
 - **ONCHAIN**: `onchain/` Aiken — `types.ak` (PriceParam, OpPrice, Consume, EngageDatum+did_commit),
-  validator `consume.ak` (engagement-state, C-CM-1..5, KHÔNG mint), `price_param.ak` beacon one-shot,
-  `price_nft.ak` one-shot NFT; aiken test (Σburns==required, over/under-burn reject, double-sat reject,
-  drain ADA/token reject, stale price reject, did_commit immutable, wrong vault constr reject).
+  validator `consume.ak` (engagement-state, C-CM-1..6, KHÔNG mint), `price_param.ak` beacon one-shot,
+  `price_nft.ak` one-shot NFT, `vault_id_nft.ak` one-shot NFT định-danh vault (C-CM-6); aiken test
+  (Σburns==required, over/under-burn reject, double-sat reject, drain ADA/token reject, stale price
+  reject, did_commit immutable, wrong vault constr reject, vault không NFT / 2 NFT / sai policy reject).
 - **OFFCHAIN**: `consumeBuilder` (co-spend Engage+vault) + datum codec EngageDatum/PriceParam + script
   deploy/e2e Preview. (chưa làm — xem GAPS.)
 

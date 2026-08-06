@@ -45,6 +45,10 @@ validator consume(
   engage_nft_policy : PolicyId,
   engage_nft_name   : AssetName,
   vault_script_hash : ByteArray,
+  // INV-VAULT-IDENTITY (spec §4.1): NFT one-shot chứng minh UTxO này thật sự là
+  // vault, không phải UTxO ai đó tạo ở địa chỉ vault. Xem vault_id_nft.ak.
+  vault_nft_policy  : PolicyId,
+  vault_nft_name    : AssetName,
   burn_batch_constr : Int,
   max_price_stale   : Int,
   ms_per_epoch      : Int,
@@ -91,7 +95,10 @@ validator consume(
       sum_required_over_engage_inputs(tx, own_hash, pp, price_ref)
     let vault_refs = distinct_vault_refs_over_engage_inputs(tx, own_hash)
     let total_burned =
-      sum_burns_over_vault_refs(tx, vault_refs, vault_script_hash, burn_batch_constr)
+      sum_burns_over_vault_refs(
+        tx, vault_refs, vault_script_hash,
+        vault_nft_policy, vault_nft_name, burn_batch_constr,
+      )
     expect total_burned == total_required
 
     // ── ENGAGE state: aggregate invariants (double-satisfaction-safe) ───────────
@@ -227,6 +234,8 @@ fn sum_burns_over_vault_refs(
   tx                : Transaction,
   vault_refs        : List<OutputReference>,
   vault_script_hash : ByteArray,
+  vault_nft_policy  : PolicyId,
+  vault_nft_name    : AssetName,
   burn_batch_constr : Int,
 ) -> Int {
   list.foldl(
@@ -236,6 +245,14 @@ fn sum_burns_over_vault_refs(
       expect Some(vault_in) =
         list.find(tx.inputs, fn(i) { i.output_reference == vref })
       expect util.is_at_script(vault_in.output.address, vault_script_hash)
+
+      // INV-VAULT-IDENTITY — khớp địa chỉ là KHÔNG ĐỦ. Địa chỉ script công khai nên
+      // ai cũng tạo được UTxO ở đó với datum bịa `magic_batches` khổng lồ rồi
+      // co-spend BurnBatch để tiêu MAGIC chưa từng sinh (PoC
+      // `poc_fabricated_magic_burns_ok`). NFT one-shot thì không bịa được.
+      expect
+        assets.quantity_of(vault_in.output.value, vault_nft_policy, vault_nft_name) == 1
+
       let burns = read_vault_burns(tx, vref, burn_batch_constr)
       acc + sum_burns(burns)
     },
@@ -434,6 +451,8 @@ const ct_price_policy: PolicyId = #"9999"
 const ct_price_name: AssetName = #"5052494345"      // "PRICE"
 const ct_engage_policy: PolicyId = #"7777"
 const ct_engage_name: AssetName = #"454e47"          // "ENG"
+const ct_vault_nft_policy: PolicyId = #"8888"
+const ct_vault_nft_name: AssetName = #"564c54"       // "VLT"
 const ct_owner: ByteArray = #"0bada55e"
 const ct_did: ByteArray = #""                        // MVP did_commit rỗng
 const ct_max_stale: Int = 5
@@ -485,10 +504,21 @@ fn ct_cont_output_did(new_consumed: Int, new_epoch: Int, did: ByteArray) -> Outp
   util.mk_output(util.script_address(ct_eng_sh), v, d)
 }
 
-/// Vault input tại ct_vault_sh (output value/datum không cần khớp VaultDatum — chỉ cần
-/// địa chỉ ở vault_script_hash; redeemer BurnBatch là cái validator này đọc).
+/// Vault input tại ct_vault_sh, MANG vault-id NFT (INV-VAULT-IDENTITY). Datum không
+/// cần khớp VaultDatum — validator này chỉ đọc redeemer BurnBatch, không giải mã datum.
 fn ct_vault_input(ref_ix: Int) -> Input {
-  let v = assets.from_lovelace(2_000_000)
+  ct_vault_input_with_nft(ref_ix, 1)
+}
+
+/// Biến thể chỉnh được số NFT — dùng cho các test phủ định danh-tính vault.
+fn ct_vault_input_with_nft(ref_ix: Int, nft_qty: Int) -> Input {
+  let base = assets.from_lovelace(2_000_000)
+  let v =
+    if nft_qty == 0 {
+      base
+    } else {
+      assets.merge(base, assets.from_asset(ct_vault_nft_policy, ct_vault_nft_name, nft_qty))
+    }
   util.mk_input(util.mk_ref_id(#"a1", ref_ix), util.mk_output(util.script_address(ct_vault_sh), v, 0))
 }
 
@@ -538,7 +568,8 @@ fn run(
     }
   consume.spend(
     ct_price_policy, ct_price_name, ct_engage_policy, ct_engage_name,
-    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe,
+    ct_vault_sh, ct_vault_nft_policy, ct_vault_nft_name,
+    ct_burn_constr, ct_max_stale, ct_mspe,
     Some(in_datum), rd, own_ref, tx,
   )
 }
@@ -563,6 +594,63 @@ test consume_happy() {
 fn rd_as_data(rd: ConsumeRedeemer) -> Data {
   let d: Data = rd
   d
+}
+
+// ══════════════════════════════════════════════════════════════
+// INV-VAULT-IDENTITY (spec §4.1) — vault phải mang NFT one-shot
+//
+// Ba test dưới đây là bản tái hiện `poc_fabricated_magic_burns_ok`. Trước khi vá,
+// `poc_vault_no_nft_rejected` PASS theo nghĩa "tiêu được MAGIC chưa từng sinh" —
+// tx y hệt happy path, chỉ khác vault UTxO là hàng bịa 2 ADA không NFT. Sau khi vá
+// nó phải FAIL. Mọi tham số khác giữ nguyên happy path để cô lập đúng một biến.
+// ══════════════════════════════════════════════════════════════
+
+// POC: UTxO bịa ở địa chỉ vault, không NFT → phải reject.
+// Không có dòng này thì ~2 ADA mua được lượng MAGIC tuỳ ý.
+test poc_vault_no_nft_rejected() fail {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let fake_vault = ct_vault_input_with_nft(0, 0)   // hàng bịa: không NFT
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(pp, 1, 6, [eng], [fake_vault], [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum)
+}
+
+// Nhét 2 NFT vào một UTxO cũng không hợp lệ — `== 1`, không phải `≥ 1`. Chặn trường
+// hợp gom NFT của hai vault vào một UTxO rồi tiêu cho cả hai.
+test poc_vault_two_nft_rejected() fail {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input_with_nft(0, 2)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(pp, 1, 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum)
+}
+
+// NFT đúng số lượng nhưng SAI policy (kẻ tấn công tự mint token tên "VLT" dưới policy
+// của mình) → reject. Nếu chỉ kiểm asset name thì lỗ vẫn còn nguyên.
+test poc_vault_wrong_nft_policy_rejected() fail {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let v =
+    assets.merge(
+      assets.from_lovelace(2_000_000),
+      assets.from_asset(#"beef", ct_vault_nft_name, 1),   // policy giả
+    )
+  let fake_vault =
+    util.mk_input(util.mk_ref_id(#"a1", 0), util.mk_output(util.script_address(ct_vault_sh), v, 0))
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(pp, 1, 6, [eng], [fake_vault], [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum)
 }
 
 // ── NEGATIVE: Σburns < required (under-burn) → fail (== không ≥) ─────────────────
@@ -904,7 +992,8 @@ fn run_vr(
     }
   consume.spend(
     ct_price_policy, ct_price_name, ct_engage_policy, ct_engage_name,
-    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe,
+    ct_vault_sh, ct_vault_nft_policy, ct_vault_nft_name,
+    ct_burn_constr, ct_max_stale, ct_mspe,
     Some(in_datum), rd, own_ref, tx,
   )
 }

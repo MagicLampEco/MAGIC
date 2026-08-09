@@ -1,10 +1,10 @@
 // scripts/test/update_profile_only.ts — UpdateProfile smoke test on Preview testnet.
 // Maps V1_TESTNET_PLAN §4 case matrix (16 case: 2 vault × 8 case).
 //
-//   NETWORK=Preview MODULE=Snapshot NEW_PROFILE=Ember npm run test:update-profile
+//   NETWORK=Preview MODULE=Instant NEW_PROFILE=Ember npm run test:update-profile
 //
 // Env knobs:
-//   MODULE        Snapshot | Instant                              (default: Snapshot)
+//   MODULE        Instant                                          (default: Instant)
 //   NEW_PROFILE   Ember | Flame | Lantern                          (default: Ember)
 //   TAMPER        same_profile | bypass_lazy | wrong_effective |
 //                 effective_too_far | tamper_batches | tamper_balance
@@ -20,17 +20,18 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, ADDRESSES, SCRIPT_HASHES,
+  POLICY_IDS, ASSET_NAMES, SCRIPT_HASHES,
 } from "../config.js";
 
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
 import type { Profile, VaultType, ProtocolParams } from "../../MagicSDK/src/types.js";
 
-type Module = "Snapshot" | "Instant";
+// SnapshotGen đã dời sang Legacy/genmagic-v3.3 (mô hình GenMAGIC v3.3, đã bỏ) —
+// chỉ còn vault Instant có UpdateProfile trong mô hình hiện hành.
+type Module = "Instant";
 
 const PLUTUS_PATH: Record<Module, string> = {
-  Snapshot: "../../SnapshotGen/onchain/plutus.json",
   Instant:  "../../InstantGen/onchain/plutus.json",
 };
 
@@ -41,8 +42,8 @@ function buildProtocol(): ProtocolParams {
     lampAssetName: ASSET_NAMES.lamp,
     umNftPolicyId: POLICY_IDS.um_nft,
     umScriptHash: SCRIPT_HASHES.um_datum,
-    // treasuryAddress is only read by the legacy Vacuum validator now (I-ACT-7).
-    treasuryAddress: ADDRESSES.treasury,
+    // Không truyền treasuryAddress: dưới I-ACT-7 không handler nào của vault
+    // Instant/Schedule chuyển LAMP, nên không còn tham số Treasury.
     shardPolicyId: POLICY_IDS.shard_nft,
     // §6.3 BackingBeacon pins (Instant). All-zero default ⟹ Gen shut.
     backingNftPolicyId: POLICY_IDS.backing,
@@ -60,8 +61,8 @@ async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
 }
 
 async function main() {
-  const moduleName = (process.env.MODULE ?? "Snapshot") as Module;
-  if (!PLUTUS_PATH[moduleName]) throw new Error(`MODULE=${moduleName} not supported (only Snapshot|Instant).`);
+  const moduleName = (process.env.MODULE ?? "Instant") as Module;
+  if (!PLUTUS_PATH[moduleName]) throw new Error(`MODULE=${moduleName} not supported (only Instant).`);
 
   const newProfile = (process.env.NEW_PROFILE ?? "Ember") as Profile;
   const tamper = process.env.TAMPER ?? "";
@@ -70,8 +71,8 @@ async function main() {
   console.log(`║  UpdateProfile smoke — ${moduleName.padEnd(19)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
 
-  // Load + apply vault script via SDK helper (handles treasury bech32 → Plutus
-  // Constr conversion for Instant — raw bech32 breaks applyParamsToScript).
+  // Load + apply vault script via SDK helper (biết đúng danh sách tham số
+  // compile-time của từng loại vault).
   const plutusJson = JSON.parse(
     await readFile(new URL(PLUTUS_PATH[moduleName], import.meta.url), "utf8"),
   );
@@ -114,7 +115,7 @@ async function main() {
     } catch { /* skip */ }
   }
   if (!vaultUtxo) {
-    console.error("❌ Vault UTxO not found. Run deploy:vault first.");
+    console.error("❌ Vault UTxO not found. Run deploy:instant-vault first.");
     process.exit(1);
   }
   console.log(`Vault UTxO:        ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}\n`);

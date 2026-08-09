@@ -38,6 +38,9 @@ const VaultDatumSchema = Data.Object({
   })),
   magic_batches:         Data.Array(Data.Object({
     batch_id:            Data.Bytes(),
+    // BIA MỘ — "Snapshot"/"Vacuum" đã bỏ khỏi mô hình nhưng PHẢI giữ trong enum:
+    // đây là constructor index của Plutus Data trong các vault ĐÃ TẠO trên
+    // Preview. Bỏ variant là dịch chỉ số ⇒ vỡ decode toàn bộ.
     source:              Data.Enum([Data.Literal("Snapshot"), Data.Literal("Instant"), Data.Literal("Vacuum"), Data.Literal("Schedule")]),
     created_epoch:       Data.Integer(),
     initial_amount:      Data.Integer(),
@@ -48,6 +51,8 @@ const VaultDatumSchema = Data.Object({
     halved:              Data.Boolean(),
   })),
   next_batch_index:      Data.Integer(),
+  // BIA MỘ — VacuumGen đã bỏ, nhưng trường này giữ nguyên vị trí trong datum
+  // (arity + thứ tự field là một phần của Plutus Data đã ghi on-chain).
   vacuum_orders:         Data.Array(Data.Object({
     order_id: Data.Bytes(), commit_epoch: Data.Integer(),
     fire_epoch: Data.Integer(), lamp_amount: Data.Integer(),

@@ -1,6 +1,6 @@
-// scripts/verify_per_network.ts — Verify applied vault hash per network for all 5 modules.
+// scripts/verify_per_network.ts — Verify applied vault hash per network for all live modules.
 //
-// Run AFTER `aiken build` in each module (Snapshot/Instant/Vacuum/Schedule/UMKeeper).
+// Run AFTER `aiken build` in each module (Instant/Schedule/UMKeeper).
 // Outputs a table: for each module × network, prints the applied script hash so
 // you can cross-check before deploying.
 //
@@ -8,9 +8,8 @@
 //   npx tsx verify_per_network.ts
 //
 // Optional env (only needed for actual mainnet deploy verification — runtime
-// params for Instant/Vacuum/Schedule validators that take 4 params):
+// params for Instant/Schedule validators):
 //   LAMP_POLICY_ID    LAMP minting policy (56-hex)
-//   TREASURY_ADDRESS  Treasury bech32 address (separate from wallet!)
 //   UM_NFT_POLICY_ID  UM NFT policy (56-hex)
 //   SHARD_NFT_POLICY_ID Shard NFT policy (56-hex)
 //
@@ -19,7 +18,7 @@
 
 import {
   applyParamsToScript, validatorToScriptHash,
-  Constr, Data, getAddressDetails,
+  Data,
   type Validator,
 } from "@lucid-evolution/lucid";
 import { readFile } from "node:fs/promises";
@@ -33,38 +32,14 @@ const NETWORKS = [
 
 // ── Placeholder values when env vars absent (shape check only) ──
 const PLACEHOLDER_POLICY  = "00".repeat(28);   // 28-byte zero policy id
-const PLACEHOLDER_ADDRESS = "addr_test1vp00000000000000000000000000000000000000000000000000000000000000000";
 
 const LAMP_POLICY   = process.env.LAMP_POLICY_ID     ?? PLACEHOLDER_POLICY;
 const UM_NFT_POLICY = process.env.UM_NFT_POLICY_ID   ?? PLACEHOLDER_POLICY;
 const SHARD_POLICY  = process.env.SHARD_NFT_POLICY_ID ?? PLACEHOLDER_POLICY;
-const TREASURY_ADDR = process.env.TREASURY_ADDRESS   ?? PLACEHOLDER_ADDRESS;
 // PHA 2 — Instant needs the UM script hash + the §6.3 BackingBeacon pins.
 const UM_SCRIPT_HASH      = process.env.UM_DATUM_HASH       ?? PLACEHOLDER_POLICY;
 const BACKING_POLICY      = process.env.BACKING_NFT_POLICY_ID ?? "00".repeat(28);
 const BACKING_SCRIPT_HASH = process.env.BACKING_SCRIPT_HASH   ?? "00".repeat(28);
-
-/** Encode bech32 address as Plutus Constr (Address { paymentCredential, stakeCredential? }). */
-function addressToPlutusData(addressBech32: string): Data {
-  try {
-    const details = getAddressDetails(addressBech32);
-    const pc = details.paymentCredential;
-    if (!pc) throw new Error("no payment credential");
-    const sc = details.stakeCredential;
-    const paymentData = pc.type === "Key"
-      ? new Constr(0, [pc.hash])
-      : new Constr(1, [pc.hash]);
-    const stakeData = sc
-      ? new Constr(0, [new Constr(0, [
-          sc.type === "Key" ? new Constr(0, [sc.hash]) : new Constr(1, [sc.hash]),
-        ])])
-      : new Constr(1, []);
-    return new Constr(0, [paymentData, stakeData]);
-  } catch {
-    // Placeholder address may not parse — fall back to zero-bytes payment credential.
-    return new Constr(0, [new Constr(0, ["00".repeat(28)]), new Constr(1, [])]);
-  }
-}
 
 // ── Module table — must match `<Module>/onchain/plutus.json` + Aiken validator() signature ──
 interface ModuleSpec {
@@ -77,13 +52,9 @@ interface ModuleSpec {
   buildParams: (msPer: bigint) => Data[];
 }
 
+// SnapshotGen/VacuumGen đã dời sang Legacy/genmagic-v3.3 (mô hình GenMAGIC v3.3,
+// đã bỏ) — không verify hash cho hai module đó nữa.
 const MODULES: ModuleSpec[] = [
-  {
-    name:      "SnapshotGen",
-    plutusPath: "../SnapshotGen/onchain/plutus.json",
-    title:     "vault.vault.spend",
-    buildParams: (msPer) => [msPer],
-  },
   {
     name:      "InstantGen",
     plutusPath: "../InstantGen/onchain/plutus.json",
@@ -95,17 +66,6 @@ const MODULES: ModuleSpec[] = [
       UM_SCRIPT_HASH,
       BACKING_POLICY,
       BACKING_SCRIPT_HASH,
-      msPer,
-    ],
-  },
-  {
-    name:      "VacuumGen",
-    plutusPath: "../VacuumGen/onchain/plutus.json",
-    title:     "vault.vault.spend",
-    buildParams: (msPer) => [
-      LAMP_POLICY,
-      addressToPlutusData(TREASURY_ADDR),
-      UM_NFT_POLICY,
       msPer,
     ],
   },
@@ -133,8 +93,8 @@ async function main() {
   console.log("MagicLamp validator hash — per network × module verification\n");
 
   if (LAMP_POLICY === PLACEHOLDER_POLICY) {
-    console.log("⚠  Using PLACEHOLDER policy IDs / treasury — hashes here are for SHAPE check only.");
-    console.log("   For real deploy verification, set: LAMP_POLICY_ID UM_NFT_POLICY_ID SHARD_NFT_POLICY_ID TREASURY_ADDRESS\n");
+    console.log("⚠  Using PLACEHOLDER policy IDs — hashes here are for SHAPE check only.");
+    console.log("   For real deploy verification, set: LAMP_POLICY_ID UM_NFT_POLICY_ID SHARD_NFT_POLICY_ID\n");
   }
 
   for (const mod of MODULES) {

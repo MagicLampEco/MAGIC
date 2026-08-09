@@ -1,12 +1,12 @@
 // scripts/test/withdraw_only.ts — WithdrawLamp smoke test on Preview testnet
 // Standalone: runs exactly 1 WithdrawLamp tx; reports result clearly.
-// Maps V1_TESTNET_PLAN §3 case matrix (20 case total: 4 vault × 5 case core).
+// Maps V1_TESTNET_PLAN §3 case matrix (5 case core mỗi loại vault).
 //
-//   NETWORK=Preview MODULE=Snapshot npm run test:withdraw
-//   NETWORK=Preview MODULE=Snapshot TAMPER=amount_zero npm run test:withdraw
+//   NETWORK=Preview MODULE=Instant npm run test:withdraw
+//   NETWORK=Preview MODULE=Instant TAMPER=amount_zero npm run test:withdraw
 //
 // Env knobs:
-//   MODULE        Snapshot | Instant | Vacuum | Schedule          (default: Snapshot)
+//   MODULE        Instant | Schedule                              (default: Instant)
 //   AMOUNT_LAMP   amount to withdraw (in LAMP, integer)            (default: 5)
 //   TAMPER        amount_zero | over_avail | tamper_balance |
 //                 tamper_holdings | tamper_batches | tamper_value  (negative cases)
@@ -24,19 +24,19 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  PROTOCOL, POLICY_IDS, ASSET_NAMES, ADDRESSES, SCRIPT_HASHES,
+  PROTOCOL, POLICY_IDS, ASSET_NAMES, SCRIPT_HASHES,
 } from "../config.js";
 
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
 import type { VaultType, ProtocolParams } from "../../MagicSDK/src/types.js";
 
-type Module = "Snapshot" | "Instant" | "Vacuum" | "Schedule";
+// SnapshotGen/VacuumGen đã dời sang Legacy/genmagic-v3.3 (mô hình GenMAGIC v3.3,
+// đã bỏ) — chỉ còn hai loại vault sống.
+type Module = "Instant" | "Schedule";
 
 const PLUTUS_PATH: Record<Module, string> = {
-  Snapshot: "../../SnapshotGen/onchain/plutus.json",
   Instant:  "../../InstantGen/onchain/plutus.json",
-  Vacuum:   "../../VacuumGen/onchain/plutus.json",
   Schedule: "../../ScheduleGen/onchain/plutus.json",
 };
 
@@ -47,8 +47,8 @@ function buildProtocol(): ProtocolParams {
     lampAssetName: ASSET_NAMES.lamp,
     umNftPolicyId: POLICY_IDS.um_nft,
     umScriptHash: SCRIPT_HASHES.um_datum,
-    // treasuryAddress is only read by the legacy Vacuum validator now (I-ACT-7).
-    treasuryAddress: ADDRESSES.treasury,
+    // Không truyền treasuryAddress: dưới I-ACT-7 không handler nào của vault
+    // Instant/Schedule chuyển LAMP, nên không còn tham số Treasury.
     shardPolicyId: POLICY_IDS.shard_nft,
     // §6.3 BackingBeacon pins (Instant). All-zero default ⟹ Gen shut.
     backingNftPolicyId: POLICY_IDS.backing,
@@ -66,8 +66,8 @@ async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
 }
 
 async function main() {
-  const moduleName = (process.env.MODULE ?? "Snapshot") as Module;
-  if (!PLUTUS_PATH[moduleName]) throw new Error(`Unknown MODULE: ${moduleName}. Use Snapshot|Instant|Vacuum|Schedule.`);
+  const moduleName = (process.env.MODULE ?? "Instant") as Module;
+  if (!PLUTUS_PATH[moduleName]) throw new Error(`Unknown MODULE: ${moduleName}. Use Instant|Schedule.`);
 
   const amountLamp = BigInt(process.env.AMOUNT_LAMP ?? "5");
   const amountOildrop = amountLamp * 1_000_000n;
@@ -77,8 +77,8 @@ async function main() {
   console.log(`║  WithdrawLamp smoke — ${moduleName.padEnd(20)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
 
-  // ── 1. Load + apply vault script (uses SDK helper — handles treasury
-  //     bech32 → Plutus Constr conversion for Instant/Vacuum/Schedule)
+  // ── 1. Load + apply vault script (dùng helper SDK — biết đúng danh sách
+  //     tham số compile-time của từng loại vault)
   const plutusJson = JSON.parse(
     await readFile(new URL(PLUTUS_PATH[moduleName], import.meta.url), "utf8"),
   );
@@ -129,7 +129,7 @@ async function main() {
   }
 
   if (!vaultUtxo) {
-    console.error("❌ Vault UTxO not found for owner. Run deploy:vault first.");
+    console.error("❌ Vault UTxO not found for owner. Run deploy:instant-vault (hoặc deploy:schedule-vault) first.");
     process.exit(1);
   }
   console.log(`Vault UTxO:        ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}\n`);

@@ -24,10 +24,10 @@ export function selectWallet(lucid: LucidEvolution): void {
 
 // ── Script hashes (điền sau khi aiken build) ──────────────────
 // Lấy từ: cat [Module]/onchain/plutus.json | jq '.validators[0].hash'
+// SnapshotGen/VacuumGen đã dời sang Legacy/genmagic-v3.3 (mô hình GenMAGIC v3.3,
+// đã bỏ) — không còn hash nào cho hai module đó ở đây.
 export const SCRIPT_HASHES = {
   vault_instant:   process.env.VAULT_INSTANT_HASH   ?? "FILL_AFTER_AIKEN_BUILD",
-  vault_snapshot:  process.env.VAULT_SNAPSHOT_HASH  ?? "FILL_AFTER_AIKEN_BUILD",
-  vault_vacuum:    process.env.VAULT_VACUUM_HASH     ?? "FILL_AFTER_AIKEN_BUILD",
   vault_schedule:  process.env.VAULT_SCHEDULE_HASH  ?? "FILL_AFTER_AIKEN_BUILD",
   shard:           process.env.SHARD_HASH           ?? "FILL_AFTER_AIKEN_BUILD",
   um_datum:        process.env.UM_DATUM_HASH        ?? "FILL_AFTER_AIKEN_BUILD",

@@ -1,6 +1,16 @@
 # ProfileChange — MATH.md
 ## GenMAGIC v3.3 · §12 · Formal definitions + Test vectors
 
+> **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
+> [`DEVSTATUS.md`](../DEVSTATUS.md). Nguồn chân lý mô hình:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
+> số mục "§12" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
+> Validator ở đây là **script hash RIÊNG** (`vault_profile`), nên UTxO nằm ở địa chỉ vault
+> InstantGen **không bao giờ chạy** validator này. Vector trong tệp này chưa được đối chiếu
+> lại với mô hình ba token — dùng làm neo P8 cho module khác là neo vào thứ chưa chốt.
+> Mọi chỗ tệp này nhắc **SnapshotGen** là tàn dư: module đó đã chết
+> (`Legacy/genmagic-v3.3/`). Vault đang sống duy nhất dùng profile là **InstantGen**.
+
 ---
 
 ## 1. Formal Definitions

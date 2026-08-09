@@ -1,6 +1,16 @@
 # ProfileChange — FEAT.md
 ## GenMAGIC v3.3 · §12 · C-PC-V1..6 · T4
 
+> **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
+> [`DEVSTATUS.md`](../DEVSTATUS.md). Nguồn chân lý mô hình:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
+> số mục "§12" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
+> Validator ở đây là **script hash RIÊNG** (`vault_profile`), nên UTxO nằm ở địa chỉ vault
+> InstantGen **không bao giờ chạy** validator này — dựng luồng theo giả định "bốn module
+> chung một vault" là ra tx không ai spend được.
+> Mọi chỗ tệp này nhắc **SnapshotGen** là tàn dư: module đó đã chết
+> (`Legacy/genmagic-v3.3/`). Vault đang sống duy nhất dùng profile là **InstantGen**.
+
 ---
 
 ## 1. Mục đích

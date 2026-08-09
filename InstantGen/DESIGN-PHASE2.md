@@ -1,6 +1,8 @@
 # InstantGen — Thiết kế PHA 2
 
-**Trạng thái:** đã triển khai (`aiken check` 70/70, offchain 55/55).
+**Trạng thái:** đã triển khai. Số kiểm giữ ở một nơi duy nhất —
+[`DEVSTATUS.md`](../DEVSTATUS.md); muốn số tươi thì chạy `aiken check` trong `onchain/`
+và `npm test` trong `offchain/`.
 **Nguồn chân lý:** `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` §4.2, §6.1, §6.3, §11, §12.
 **Tài liệu này thay thế:** `HALVING-SPEC.md` (halving không còn tồn tại) và mọi mô tả
 "InstantGen = mua MAGIC bằng LAMP" trong `README.md` / `FEAT.md` / `MATH.md` / `TECH.md`.
@@ -34,8 +36,14 @@ expect output_datum.loyalty_holdings == applied_input.loyalty_holdings
 và ràng buộc datum vào **giá trị thật** trong UTxO đầu ra:
 
 ```
-expect quantity_of(vault_output.value, lamp_policy_id, "tLAMP") == output_datum.lamp_balance
+expect quantity_of(vault_output.value, lamp_policy_id, lamp_asset_name) == output_datum.lamp_balance
 ```
+
+`lamp_asset_name` là **tham số theo mạng** (apply-param #2), không phải chuỗi cố định:
+`tLAMP` trên testnet, `LAMP` trên mainnet. Bản cũ của khối trên viết thẳng `"tLAMP"` —
+sai theo `BOUNDARIES.md §2`. Bám bản cũ thì trên mainnet `quantity_of` trả 0, ép
+`lamp_balance = 0`, không vault nào đạt `min_instant_holding`, InstantGen chết vĩnh viễn
+trên mainnet. Chính `validators/vault.ak` đã ghi cảnh báo này ngay trên khối tham số.
 
 Không còn nhánh `treasury_receives_lamp`, không còn `treasury_addr` trong
 apply-param. Test chứng minh: `ig_neg_lamp_moved` (datum tự nhất quán nhưng
@@ -253,26 +261,60 @@ UTxO nào thoả được, cửa đóng sạch. Test:
 
 ## 5. Apply-param mới
 
-### InstantGen `vault` — 6 tham số (trước: 5)
+### Nguồn duy nhất: blueprint, không phải bảng chép tay
+
+Danh sách tham số thật đọc từ **`parameters[]` trong `<Module>/onchain/plutus.json`** —
+blueprint do `aiken build` sinh thẳng từ chữ ký `validator vault(...)`, nên nó không thể
+lệch với mã đã biên dịch. Cổng đối chiếu:
+
+```bash
+cd InstantGen/onchain && aiken build       # sinh plutus.json (artifact, đã gitignore)
+cd ../../scripts && npm run check:params   # đối chiếu TÊN + THỨ TỰ
+```
+
+`scripts/check_param_names.ts` đặt cạnh nhau `parameters[].title` của blueprint và danh
+sách mà `scripts/deployParams.ts` cấp cho từng validator, rồi khẳng định trùng cả tên lẫn
+thứ tự. Phải có cổng máy vì `applyParamsToScript` **không kiểm arity**: thiếu một tham số
+vẫn ra script hash 28 byte trông hợp lệ, vault vẫn nhận LAMP thật, và mọi tx spend về sau
+fail vĩnh viễn — LAMP kẹt, không đường nào gỡ. Không test nào đỏ, không lệnh biên dịch nào
+gãy.
+
+> **Bảng dưới chỉ là ảnh chụp cho người đọc — blueprint mới là trọng tài.** Lệch nhau thì
+> tin blueprint và chạy `npm run check:params`. Bản trước của chính bảng này ghi InstantGen
+> 6 tham số / ScheduleGen 3 tham số, bỏ sót `lamp_asset_name` ở cả hai — đúng kiểu sai mà
+> bảng chép tay sinh ra.
+
+### InstantGen `vault` — 7 tham số
 
 | # | Tên | Ghi chú |
 |---|---|---|
 | 1 | `lamp_policy_id` | không đổi |
-| 2 | `um_nft_policy` | không đổi |
-| 3 | `um_script_hash` | không đổi |
-| 4 | `backing_nft_policy` | **MỚI** — ghim NFT beacon (§6.3) |
-| 5 | `backing_script_hash` | **MỚI** — ghim địa chỉ beacon (§6.3) |
-| 6 | `ms_per_epoch` | không đổi |
+| 2 | `lamp_asset_name` | **PARAM theo mạng** — `tLAMP` testnet / `LAMP` mainnet. Hardcode = vault mainnet không nhìn thấy LAMP của chính nó (`BOUNDARIES.md §2`) |
+| 3 | `um_nft_policy` | không đổi |
+| 4 | `um_script_hash` | không đổi |
+| 5 | `backing_nft_policy` | ghim NFT beacon (§6.3) |
+| 6 | `backing_script_hash` | ghim địa chỉ beacon (§6.3) |
+| 7 | `ms_per_epoch` | không đổi |
 
-`treasury_addr` **đã xoá** — sau khi bỏ nhánh chuyển LAMP, đã rà toàn bộ 6
-handler (`InstantGen`, `PruneExpired`, `BurnBatch`, `UpdateProfile`,
-`WithdrawLamp`, `SetDelegate`) và không handler nào còn đọc tới nó.
+Đây là **một** danh sách dùng chung cho cả hai handler của script đa-mục-đích: nhánh
+`mint` (NFT danh tính vault) và nhánh `spend` phải nhận y hệt tham số, nếu không hai bên ra
+hai script hash khác nhau và NFT mint ra không thuộc vault nào.
 
-### ScheduleGen `vault` — 3 tham số (trước: 4)
+`treasury_addr` **không còn tồn tại** — sau khi bỏ nhánh chuyển LAMP (I-ACT-7), đã rà toàn
+bộ 6 handler (`InstantGen`, `PruneExpired`, `BurnBatch`, `UpdateProfile`, `WithdrawLamp`,
+`SetDelegate`) và không handler nào đọc tới nó.
 
-`lamp_policy_id`, `shard_policy_id`, `ms_per_epoch`. `treasury_addr` đã xoá;
-đã rà 5 handler (`ScheduleCommit`, `ScheduleFire`, `BurnBatch`, `WithdrawLamp`,
-`SetDelegate`), không handler nào còn đọc.
+### ScheduleGen `vault` — 4 tham số
+
+| # | Tên |
+|---|---|
+| 1 | `lamp_policy_id` |
+| 2 | `lamp_asset_name` (PARAM theo mạng — như trên) |
+| 3 | `shard_policy_id` |
+| 4 | `ms_per_epoch` |
+
+`treasury_addr` đã xoá; đã rà 5 handler (`ScheduleCommit`, `ScheduleFire`, `BurnBatch`,
+`WithdrawLamp`, `SetDelegate`), không handler nào còn đọc.
 
 `shard` validator: không đổi (`shard_policy_id_param`).
 
@@ -295,7 +337,7 @@ Biến môi trường mới: `BACKING_NFT_POLICY_ID`, `BACKING_SCRIPT_HASH` (m�
 | Hình dạng Plutus Data của `VaultDatum` | không đổi (17 trường; `ActivityState` vẫn 2 trường; `MagicBatch` vẫn 9 trường) |
 | `VaultRedeemer` số biến thể + chỉ số | không đổi (0..5); chỉ nhãn constr 1 đổi tên, vẫn nullary |
 
-`ConsumeMAGIC/offchain` 42/42 test vẫn xanh sau thay đổi.
+`ConsumeMAGIC/offchain` vẫn xanh sau thay đổi (số kiểm: [`DEVSTATUS.md`](../DEVSTATUS.md)).
 
 ---
 

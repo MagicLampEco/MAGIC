@@ -1,12 +1,21 @@
 # ConsolidateHoldings
 ## GenMAGIC v3.3 · §6.9 · C-CONSOLIDATE-1..6 · T23
 
+> **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
+> [`DEVSTATUS.md`](../DEVSTATUS.md). Nguồn chân lý mô hình:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
+> số mục "§6.9" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
+> Validator ở đây là **script hash RIÊNG** (`vault_consolidate`), nên UTxO nằm ở địa chỉ
+> vault InstantGen **không bao giờ chạy** validator này — đọc tài liệu này như mô tả một
+> vault dùng chung là dựng tx không ai spend được. Module có `onchain/aiken.toml` riêng và
+> build standalone bình thường.
+
 ---
 
 ## Khi nào cần?
 
 - `MAX_LOYALTY_HOLDINGS = 64` — nếu vault có nhiều holdings → ExUnit exhaustion (A5)
-- Mỗi lần nhận LAMP từ Treasury (reward) → thêm 1 holding mới (age=0)
+- Mỗi lần vault **nhận thêm LAMP** (người dùng nạp vào) → thêm 1 holding mới (age=0)
 - Sau nhiều giao dịch → holdings phân mảnh → cần merge
 
 **Wallet nên gợi ý consolidate khi `|holdings| ≥ 50`.**

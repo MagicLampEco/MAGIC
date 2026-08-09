@@ -5,8 +5,15 @@
 > bằng LAMP": LAMP đứng yên trong vault (I-ACT-7), batch sống đúng 1 epoch
 > (§4.2, không có halving), và độ lớn tính theo MAGIC đã tiêu thụ thật (§6.3).
 > Mô tả cơ chế hiện hành ở **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn
-> chân lý là `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`. Phần cấu trúc thư mục và
-> lệnh chạy dưới đây vẫn đúng.
+> chân lý là `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`.
+>
+> **Gãy gì nếu bám bản cũ:** ví dụ SDK dưới đây truyền `lampPaidOildrop` và bảng ký hiệu
+> ghi `INSTANT_DECAY_WINDOW = 2 epochs`. Cả hai đã bỏ — validator ép LAMP đứng yên và
+> batch chỉ sống một epoch, nên tx dựng theo mẫu cũ bị từ chối và MAGIC hết hạn sớm hơn
+> người dùng tưởng một epoch.
+>
+> Còn đúng: cấu trúc thư mục, lệnh `aiken build` / `aiken check` / `npm test`, và thứ tự
+> các bước deploy.
 
 ---
 
@@ -249,8 +256,8 @@ console.log("Tx submitted:", txHash);
 | INSTANT_BASE_RATE_Q | 3_000_000_000 | §19.4 Constitutional |
 | UM_MIN_Q / UM_FALLBACK_Q | 500_000_000 | §19.7 Constitutional |
 | UM_MAX_STALENESS | 1 epoch | §19.7 Significant |
-| MIN_INSTANT_PURCHASE | 10 LAMP (10^7 oildrop) | §19.4 Routine |
-| INSTANT_DECAY_WINDOW | 2 epochs | §19.4 Constitutional |
+| MIN_INSTANT_HOLDING | 10 LAMP (10^7 oildrop) — ngưỡng trên **số dư**, không phải khoản chi (tên cũ: MIN_INSTANT_PURCHASE) | §19.4 Routine |
+| MAGIC_DECAY_WINDOW | **1 epoch** cho mọi nguồn (cliff §4.2) — bảng cũ ghi 2 | §4.2 |
 
 ---
 
@@ -260,9 +267,12 @@ console.log("Tx submitted:", txHash);
 # Kiểm tra vault UTxO datum
 cardano-cli query utxo --address <vault_script_address> --testnet-magic 2 --out-file vault_utxo.json
 
-# Verify LAMP ở Treasury
-cardano-cli query utxo --address <treasury_address> --testnet-magic 2
+# Đối chiếu tên + thứ tự apply-param với blueprint (bắt buộc trước khi deploy)
+cd <gốc repo>/scripts && npm run check:params
 ```
+
+> Khối cũ ở đây là `# Verify LAMP ở Treasury` — bỏ. Không có Treasury để soi; LAMP nằm
+> nguyên trong vault (I-ACT-7).
 
 ---
 

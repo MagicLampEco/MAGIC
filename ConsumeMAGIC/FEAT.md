@@ -20,8 +20,24 @@ Nguồn: `ConsumeMAGIC/CONTRACT.md §B` (v2). Thay model token-burn v1 (PR #13).
 |---|---|
 | **Holder** | Sở hữu Engage UTxO (EngageDatum + thread NFT); gửi tx co-spend Engage + vault |
 | **Keeper (Committee)** | Post/cập nhật PriceParam beacon epoch-đơn-điệu; M-of-N multi-sig |
-| **App component** | Đọc `consumed_count` từ EngageDatum để xác nhận nghiệp vụ đã thanh toán |
+| **App component** | Xác nhận đã thanh toán bằng **delta `consumed_nanogic`** của EngageDatum (giá trị SAU tx trừ giá trị TRƯỚC tx). **KHÔNG đọc `consumed_count`** — xem cảnh báo §2.1 |
 | **Vault validator** | Module generator — `BurnBatch` GIẢM `current_amount`; nơi DUY NHẤT giảm MAGIC |
+
+### 2.1 ⚠ App cấp dịch vụ theo GIÁ TRỊ, không theo LƯỢT
+
+`consumed_count` chỉ đếm **số thao tác**, không mang giá trị. Ai trả một op rẻ
+(`op_type=2`, neo CID, 1e6 nanogic) cũng làm `consumed_count` tăng đúng +1 — rồi đòi app
+cấp một op đắt (`op_type=1`, xử lý ảnh, 1e7). Trả thiếu **10×**, mà mọi bất biến on-chain
+vẫn thoả: validator không biết app định phục vụ nghiệp vụ nào.
+
+App PHẢI đọc **delta `consumed_nanogic`** và chỉ cấp dịch vụ khi
+`delta ≥ giá niêm yết của nghiệp vụ đang phục vụ`. Validator ép
+`Σ consumed_nanogic(out) == Σ(in) + total_required` (TECH.md W-CM-12), nên delta chính là
+số nanogic đã thực trả trong tx đó. Cũng KHÔNG đọc giá trị TUYỆT ĐỐI của
+`consumed_nanogic` như "hạn mức còn lại" — nó là tổng tích luỹ đời thread.
+
+Nguồn: `CONTRACT.md §E`, `onchain/lib/magiclamp/consume/types.ak` (docstring
+`consumed_nanogic`), `EXEC.md §5`.
 
 ---
 
@@ -35,7 +51,7 @@ Holder                      Lucid tx-builder                Cardano ledger
   │── buildConsumeTx(op=1, n=1) ──►                               │
   │                               │── read PriceParam beacon (ref-input) ►
   │                               │◄── PriceParam (epoch, demand_mult) ──│
-  │                               │── required = price(1)×1  [offchain, từ beacon]
+  │                               │── required = ⌊base×demand_mult×n/Q⌋ [offchain, từ beacon]
   │                               │── build tx (KHÔNG mint):       │
   │                               │    spend Engage UTxO (Consume) │
   │                               │    spend vault UTxO  (BurnBatch Σburns==required)
@@ -48,8 +64,9 @@ Holder                      Lucid tx-builder                Cardano ledger
   │◄── confirmed ─────────────────│◄────────────────────────── tx │
 ```
 
-**Điều kiện kết thúc:** `consumed_count` tăng đúng `op_count`; `vault.magic_batches`
-giảm đúng `required`; value Engage UTxO bảo toàn tuyệt đối; KHÔNG mint.
+**Điều kiện kết thúc:** `consumed_nanogic` tăng đúng `required` (đây là thứ app đọc);
+`consumed_count` tăng đúng `op_count` (thống kê/attribution); `vault.magic_batches` giảm
+đúng `required`; value Engage UTxO bảo toàn tuyệt đối; KHÔNG mint.
 
 ### 3.2 Happy path — N Engage input (batch tx)
 

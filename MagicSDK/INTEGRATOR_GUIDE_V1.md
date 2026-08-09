@@ -58,7 +58,7 @@ Mỗi loại một validator riêng ⇒ một địa chỉ Cardano riêng:
 
 | `vaultType` | Khi nào dùng | LAMP có rời vault? | Phụ thuộc UM | Ghi chú |
 |---|---|---|---|---|
-| `Instant` | cấp theo lượng MAGIC **đã tiêu** (`consumed_credit`) | **Không** (`I-ACT-7`) | Có (fallback 0.5× khi UM cũ — C-UM-6) | đang fail-closed, chờ BackingBeacon của CARP |
+| `Instant` | cấp theo lượng MAGIC **đã tiêu** (`consumed_credit`) | **Không** (`I-ACT-7`) | Có (fallback 0.5× khi UM cũ — C-UM-6) | đang fail-closed vì **HAI** chốt: (a) chờ BackingBeacon của CARP, (b) trần theo lịch luôn = 0 — xem §6.2 |
 | `Schedule` | hợp đồng kỳ hạn, khoá suất lúc commit | **Không** — fire chỉ mở khoá | Không (suất đã khoá) | cửa dùng được hôm nay |
 
 `SnapshotGen` và `VacuumGen` đã dời sang `Legacy/genmagic-v3.3/` — validator của chúng không
@@ -370,11 +370,21 @@ Công thức cụ thể của từng trần: đọc `computeRewardFromConsumed`,
 bên trùng bit). `diagnoseCeilings()` trả về cả ba trần riêng lẻ — dùng nó để nói cho người
 dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trống.
 
-> ⚠ **Hôm nay cửa này ĐANG ĐÓNG, và đóng có chủ ý.** `backingBeaconUtxo` là bắt buộc; chừng
-> nào CARP chưa ship beacon thì không reference input nào thoả, `cap_surplus` không tính được,
-> và tx bị từ chối. Đây là fail-closed theo thiết kế — không có `br` mặc định nào được bịa ra
-> để đi tiếp. Ứng dụng **không nên** hiện nút Instant cho tới khi beacon có thật. Trạng thái
-> hiện hành: [`DEVSTATUS.md`](../DEVSTATUS.md), mục "Còn nợ".
+> ⚠ **Hôm nay cửa này ĐANG ĐÓNG, và có HAI chốt chặn ĐỘC LẬP.** Mở một cái không mở được cửa.
+>
+> 1. **`backingBeaconUtxo` chưa tồn tại** (trần thặng dư backing). Nó là bắt buộc; chừng nào
+>    CARP chưa ship beacon thì không reference input nào thoả, `cap_surplus` không tính được,
+>    tx bị từ chối. Không có `br` mặc định nào được bịa ra để đi tiếp.
+>    ([`DEVSTATUS.md`](../DEVSTATUS.md) "Còn nợ" #2)
+> 2. **Trần theo lịch đã cam kết luôn bằng 0.** `computeCapPp` /
+>    `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`, mà vault Instant luôn có
+>    `gen_schedules = []` ⇒ trần 0 ⇒ `min3(...) = 0` ⇒ `expect grant > 0` fail. Đây KHÔNG
+>    phải hệ quả của #1 — nó chặn độc lập, kể cả khi beacon đã có.
+>    ([`DEVSTATUS.md`](../DEVSTATUS.md) "Còn nợ" #6 và "Chờ chủ nhân chốt" D1: phải viết lại
+>    trần theo SPEC §6.3 **cùng lúc** với `INV-INSTANT-LOCK`, không thì mở đường flash-rent LAMP)
+>
+> **Ngày CARP giao beacon, InstantGen VẪN cấp 0 nanogic.** Đừng bật nút Instant chỉ vì #1 đã
+> xong — `diagnoseCeilings()` sẽ chỉ đúng trần nào đang chặn, dùng nó thay vì đoán.
 
 ### 6.3. Không có cửa nào khác qua SDK
 
@@ -480,12 +490,17 @@ await signed.submit();
 Khác với bản tài liệu cũ: `withdrawLamp` **có** `destinationAddress`, nên không cần hai tx để
 gửi sang ví khác. Bỏ trống thì LAMP về chính ví đang ký.
 
-> ⚠ **Chưa chạy được đầu-cuối trên chain — kiểm trên testnet trước khi hứa với người dùng.**
-> Builder off-chain hiện dựng output vault **không mang NFT danh tính** và đặt
-> `last_updated_epoch` bằng epoch hiện tại, trong khi `validate_withdraw_lamp` đòi NFT còn
-> nguyên (qua `validate_vault_value`) và đòi `last_updated_epoch` **giữ nguyên**. Hai điểm này
-> phải khớp thì tx mới qua. Xem [`SPEC_V1.md §1`](./SPEC_V1.md) để biết luật đang cưỡng chế là
-> gì, và [`DEVSTATUS.md`](../DEVSTATUS.md) để biết trạng thái mới nhất.
+> ⚠ **Builder đã khớp validator, nhưng CHƯA nghiệm thu trên chain.**
+> `withdrawLamp` giữ nguyên `last_updated_epoch` (không gán lại) và chép nguyên
+> `vaultUtxo.assets` sang output nên NFT danh tính còn — đúng hai thứ
+> `validate_withdraw_lamp` đòi (qua `validate_vault_value`). Việc còn nợ là chạy một tx
+> **thật** trên testnet trước khi mở nút "rút" cho người dùng.
+>
+> Bản tài liệu trước ghi builder đang lệch ở hai điểm này. Mô tả ấy đã hết đúng — **đừng sửa
+> code cho khớp nó**: gán `last_updated_epoch: currentEpoch` là reset cửa sổ bắt-kịp và làm
+> mất MAGIC đã tích; dựng lại value vault từ `{lovelace, lamp}` là bỏ rơi NFT danh tính ⇒ tx
+> bị từ chối. Luật đang cưỡng chế: [`SPEC_V1.md §1`](./SPEC_V1.md). Trạng thái:
+> [`DEVSTATUS.md`](../DEVSTATUS.md).
 
 ### Chọn holding: mới nhất trước
 
@@ -654,7 +669,7 @@ dùng cho mọi tính toán về sau. Bỏ trống thì mặc định `"Flame"`.
 | Cơ chế | Qua `@magiclamp/sdk`? | LAMP có rời vault? | Trạng thái |
 |---|---|---|---|
 | **Schedule** (hợp đồng kỳ hạn) | ✅ | **Không** — fire chỉ mở khoá | dùng được |
-| **Instant** (theo lượng đã tiêu) | ✅ | **Không** | fail-closed, chờ BackingBeacon của CARP |
+| **Instant** (theo lượng đã tiêu) | ✅ | **Không** | fail-closed vì **HAI** chốt độc lập: chờ BackingBeacon của CARP **và** trần theo lịch luôn = 0 (`gen_schedules = []`) — xem §6.2 |
 | **PrepaidGen** | ❌ | — | mã nguồn đã mất, chỉ còn bytecode |
 | **Snapshot / Vacuum** | ❌ | — | ở `Legacy/genmagic-v3.3/` |
 
@@ -679,9 +694,10 @@ await lucid.newTx()
 
 **LAMP trong vault:** redeemer `WithdrawLamp` **đã tồn tại trên cả hai validator còn sống**
 (hiện thực: `validate_withdraw_lamp`), và `withdrawLamp()` có `destinationAddress` nên gửi
-thẳng sang ví khác được trong một tx. Nhưng builder off-chain còn hai điểm chưa khớp validator
-— xem cảnh báo ở [§8](#8-rút-lamp-về-ví). Trước khi mở nút "rút" cho người dùng thật, chạy thử
-đầu-cuối trên testnet và đối chiếu [`DEVSTATUS.md`](../DEVSTATUS.md).
+thẳng sang ví khác được trong một tx. Builder off-chain **đã khớp** validator (giữ
+`last_updated_epoch`, giữ NFT danh tính) — cái còn thiếu là **nghiệm thu**: chưa có tx thật
+trên testnet. Xem [§8](#8-rút-lamp-về-ví). Trước khi mở nút "rút" cho người dùng thật, chạy
+thử đầu-cuối trên testnet và đối chiếu [`DEVSTATUS.md`](../DEVSTATUS.md).
 
 ---
 

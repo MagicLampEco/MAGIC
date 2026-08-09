@@ -138,14 +138,9 @@ async function main() {
     );
   }
 
-  // ⚠  ConsumeMAGIC/offchain/src/types.ts (encode/decodeEngageDatum) còn 4 trường,
-  //    thiếu `consumed_nanogic` (trường thứ 5 trong types.ak). Cho tới khi codec
-  //    offchain được cập nhật, leg spend dưới đây sẽ bị validator từ chối ở
-  //    `expect ed: EngageDatum`. Đây là drift của module khác, không sửa ở scripts/.
-  console.warn(
-    "⚠  EngageDatum codec offchain đang TRỄ (thiếu consumed_nanogic) — " +
-    "cập nhật ConsumeMAGIC/offchain/src/types.ts trước khi chạy leg consume thật.",
-  );
+  // Chỗ này từng cảnh báo "codec offchain còn 4 trường, thiếu `consumed_nanogic`".
+  // Đã hết hạn: `ConsumeMAGIC/offchain/src/types.ts` nay đủ 5 trường, khớp
+  // `types.ak`. Giữ cảnh báo lại sẽ đẩy người đọc đi "sửa" một codec đang đúng.
 
   const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
   if (vaultHash !== vaultInstantHash) {

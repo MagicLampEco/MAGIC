@@ -1,6 +1,12 @@
 # FEAT.md — ScheduleGen Feature Specification
 ## GenMAGIC v3.3 · §11 ScheduleGen · Cardano Preview Testnet
 
+> ⚠ **PHA 2 — I-ACT-7: LAMP ĐỨNG YÊN.** `ScheduleFire` chỉ **giải phóng khoá**:
+> `lamp_balance` và LAMP thật trong vault UTxO bất biến qua một fire; `lamp_locked` giảm
+> `fires × λ`, holding tương ứng lật `is_locked = False`. **Không có Treasury** trong luồng
+> này — apply-param `treasury_addr` đã xoá, không handler nào chuyển LAMP nữa. Off-chain
+> dựng thêm output Treasury theo bản cũ là tx bị từ chối. Xem [`README.md`](./README.md).
+
 ---
 
 ## 1. Mục đích
@@ -19,7 +25,6 @@ Hai đặc điểm phân biệt với ba cơ chế kia:
 |---|---|
 | **Owner (vault owner)** | Ký ScheduleCommit tx, chọn L và λ, nạp LAMP vào vault trước |
 | **Keeper / Bất kỳ ai** | Submit ScheduleFire tx — permissionless, không cần chữ ký owner |
-| **Treasury script** | Nhận LAMP từ mỗi fire; phải là Script credential (không phải wallet) |
 | **Shard UTxO** | 16 UTxO aggregate theo `shard_id = blake2b256(owner)[0] % 16`; giới hạn tham gia của từng shard |
 
 ---
@@ -45,10 +50,11 @@ Hai đặc điểm phân biệt với ba cơ chế kia:
 2. Keeper gọi `buildScheduleFireTx(scheduleId)`:
    - Đếm `fires_in_tx = min(eligible_by_time, 8, batch_budget, remaining)`.
    - Đọc `rate_locked_q` từ datum — KHÔNG recompute (T8).
-   - Tính `lamp_transfer = fires_in_tx × λ`.
+   - Tính `lamp_released = fires_in_tx × λ` — lượng LAMP **rời khỏi hồ khoá**, không rời vault.
    - Tạo `fires_in_tx` `MagicBatch` mới, mỗi batch `initial_amount = M_i`.
-   - Gửi `lamp_transfer` đến Treasury (script address).
-   - Cập nhật shard: `shard_locked -= lamp_transfer`, `shard_cumulative_fired += lamp_transfer`.
+   - Giải phóng khoá: `lamp_locked -= lamp_released`, holding tương ứng lật `is_locked = False`.
+     `lamp_balance` và LAMP thật trong output **giữ nguyên** (I-ACT-7). KHÔNG dựng output Treasury.
+   - Cập nhật shard: `shard_locked -= lamp_released`, `shard_cumulative_fired += lamp_released`.
    - Khi `fired_count == L`: xóa schedule khỏi danh sách (C-FIRE-5).
 3. Keeper submit — KHÔNG cần chữ ký owner (C-SCH-FIRE-PERMISSION).
 
@@ -63,7 +69,7 @@ Hai đặc điểm phân biệt với ba cơ chế kia:
 | Schedule hoàn thành (`fired_count == L`) | Xóa khỏi `gen_schedules` (C-FIRE-5); shard `active_count -= 1` |
 | Vault output = 2 | Validator fail (C-VAULT-OUT-1: đúng 1 output tại `vault_addr`) |
 | Double-spend vault | Validator fail (C-VAULT-DS-1: đúng 1 input tại `vault_addr`) |
-| Treasury là wallet, không phải script | Validator fail (PR #11: `expect Script(_) = treasury_addr.payment_credential`) |
+| Tx fire rút LAMP ra khỏi vault output | Validator fail — `lamp_balance` phải bất biến qua fire (I-ACT-7) |
 | BurnBatch redeemer | Fail cứng ("BurnBatch locked until v1.1") |
 
 ---
@@ -81,9 +87,9 @@ Hai đặc điểm phân biệt với ba cơ chế kia:
 | C-SCH-7 | `start_fire_epoch = commit_epoch + 2` | `vault.ak:181` |
 | T8 | `rate_locked_q` không thay đổi sau commit | `vault.ak:184`, `types.ak:58` |
 | C-FIRE-1 | `fires_in_tx > 0`, `e_i ≤ current_epoch` | `vault.ak:233,240` |
-| C-FIRE-3 | Toàn bộ accounting atomic | `vault.ak:276-286` |
+| C-FIRE-3 | Kế toán atomic; `lamp_balance` bất biến, `lamp_locked` giảm `fires × λ` | `validate_fire` |
 | C-FIRE-5 | Schedule bị xóa khi `fired_count == L` | `vault.ak:256-259` |
-| C-FIRE-6 | `loyalty_holdings` unlock sau mỗi fire | `vault.ak:268` |
+| C-FIRE-6 | `loyalty_holdings` chỉ lật `is_locked`, `amount` giữ nguyên | `validate_fire` |
 | C-SCH-FIRE-PERMISSION | Không yêu cầu chữ ký owner khi fire | `vault.ak:223-224` |
 | C-SCH-FIRE-SHARD | Đúng shard UTxO được spend theo `blake2b256(owner)[0] % 16` | `vault.ak:271-273` |
 | C-VAULT-DS-1 | Đúng 1 vault input | `vault.ak:62` |
@@ -95,7 +101,7 @@ Hai đặc điểm phân biệt với ba cơ chế kia:
 
 ## 5. Out-of-scope
 
-- **Cancel/refund:** Không tồn tại trong ScheduleGen (T10). LAMP bị lock đến hết hoặc bị chuyển dần vào Treasury.
+- **Cancel/refund:** Không tồn tại trong ScheduleGen (T10). LAMP bị khoá cho tới khi từng đơn fire giải phóng dần — nó **không rời vault** đi đâu cả (I-ACT-7). Chủ vault rút phần đã mở khoá bằng `WithdrawLamp`.
 - **UM (Network Demand Multiplier):** ScheduleGen không dùng UM. Rate được lock tại commit từ `R_snap × S(L)`. Chỉ InstantGen dùng UM với stale check.
 - **Token MAGIC:** MAGIC là số kế toán trong `magic_batches[]`. Không có MintPolicy. Không token-hóa.
 - **BurnBatch:** Locked until v1.1 (`vault.ak:76-81`).

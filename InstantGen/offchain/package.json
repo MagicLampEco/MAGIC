@@ -2,7 +2,7 @@
   "name": "@magiclamp/instantgen-sdk",
   "version": "0.1.0",
   "type": "module",
-  "description": "InstantGen off-chain SDK \u2014 GenMAGIC v3.3",
+  "description": "InstantGen off-chain SDK — hệ ba token MagicLamp",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"

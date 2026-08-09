@@ -2,10 +2,22 @@
 
 ## GenMAGIC v3.3 · Module Paymaster · v1.0 (MVP)
 
-Nguồn bám: `LAMP/docs/SPEC-Paymaster.md`; `Paymaster/onchain/validators/paymaster.ak`;
+> ⚠ **Con trỏ `LAMP/docs/SPEC-Paymaster.md` đã CHẾT.** Bản trước ghi tệp đó là "nguồn bám" —
+> nó không tồn tại (kiểm: `ls ../LAMP/docs/` báo không có thư mục). Đừng đi tìm, đừng dựng
+> lại từ trí nhớ. Spec canonical duy nhất:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+
+Nguồn bám (đọc thẳng ở đó, mã là trọng tài): `Paymaster/onchain/validators/paymaster.ak`;
 `Paymaster/onchain/lib/magiclamp/paymaster/{types,util,math}.ak`;
 `InstantGen/onchain/validators/vault.ak` (`validate_burn_batch`, `validate_set_delegate`);
-`CLAUDE.md` (ràng buộc vĩnh viễn).
+[`BOUNDARIES.md`](../BOUNDARIES.md) (ràng buộc vĩnh viễn — `CLAUDE.md` chỉ `@import` tệp đó).
+
+**Trạng thái triển khai:** `validator paymaster(...)` nhận **11** apply-param
+(`vault_script_hash, burn_batch_constr, lamp_policy_id, policy_nft_policy, meter_nft_policy,
+protocol_nft_policy, max_policy_stale, max_did_entries, ms_per_epoch, treasury_addr,
+lamp_asset_name`). Module **chưa có script deploy** trong `scripts/deploy/`. Trước khi ai đó
+viết script đầu tiên: `cd scripts && npm run check:params`. Chi tiết + lý do: [`TECH.md`](./TECH.md),
+[`EXEC.md §2`](./EXEC.md).
 
 ---
 

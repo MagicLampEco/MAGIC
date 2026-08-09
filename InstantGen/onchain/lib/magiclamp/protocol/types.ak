@@ -1,4 +1,5 @@
-// lib/types.ak — GenMAGIC v3.3 Data Structures
+// lib/types.ak — lược đồ Plutus Data. Chỉ số constructor + thứ tự trường là hợp
+// đồng nhị phân: đổi là vỡ decode mọi UTxO đã tạo.
 // Normative: §4.1 MagicBatch, §5 VaultDatum
 // All field names and ordering must match on-chain encoding exactly.
 

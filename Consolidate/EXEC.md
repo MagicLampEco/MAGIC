@@ -1,6 +1,16 @@
 # EXEC — ConsolidateHoldings (§6.9)
 GenMAGIC v3.3 · Deploy + Test Plan
 
+> **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
+> [`DEVSTATUS.md`](../DEVSTATUS.md). Nguồn chân lý mô hình:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
+> số mục "§6.9" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
+> Validator ở đây là **script hash RIÊNG** (`vault_consolidate`, có `onchain/aiken.toml`
+> riêng nên build standalone bình thường). Deploy nó **không** làm cho vault ở địa chỉ
+> InstantGen consolidate được: hai địa chỉ khác nhau, validator này không bao giờ chạy trên
+> UTxO của địa chỉ kia. Chốt hội tụ trước, deploy sau — deploy sớm là ra một địa chỉ thứ
+> hai không ai dùng.
+
 ---
 
 ## 1. Deploy steps (có thứ tự + env vars)

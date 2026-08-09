@@ -1,4 +1,4 @@
-// src/constants.ts — GenMAGIC v3.3 Protocol Constants (TypeScript)
+// src/constants.ts — hằng giao thức (TypeScript). Phải trùng BIT với constants.ak.
 // All values from §19. MUST match onchain/lib/constants.ak exactly (P8).
 
 // ── Precision ────────────────────────────────────────────────

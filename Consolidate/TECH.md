@@ -1,6 +1,15 @@
 # TECH — ConsolidateHoldings (§6.9)
 GenMAGIC v3.3 · Aiken PlutusV3 + TypeScript offchain
 
+> **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
+> [`DEVSTATUS.md`](../DEVSTATUS.md). Nguồn chân lý mô hình:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
+> số mục "§6.9" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
+> Validator ở đây là **script hash RIÊNG** (`vault_consolidate`, `onchain/aiken.toml`
+> riêng, build standalone bình thường), nên UTxO nằm ở địa chỉ vault InstantGen **không
+> bao giờ chạy** validator này — mọi mô tả eUTXO dưới đây chỉ đúng trong phạm vi địa chỉ
+> của chính `vault_consolidate`.
+
 ---
 
 ## 1. Aiken types và Plutus Data encoding

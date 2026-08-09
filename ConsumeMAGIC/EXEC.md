@@ -42,6 +42,7 @@ cd /Users/ductiger/Projects/MAGIC/scripts && npm install
 npx tsx deploy/05_create_instant_vault.ts
 
 # Bước 2: sinh MAGIC để có cái mà tiêu
+# ⛔ ĐANG KẸT — xem cảnh báo ngay dưới khối này. InstantGen chưa cấp được 1 nanogic.
 npx tsx test/instant_only.ts
 
 # Bước 3: deploy toàn bộ hạ tầng ConsumeMAGIC (1 tx, 5 việc)
@@ -54,8 +55,32 @@ npx tsx test/consume_only.ts
 # Expected: vault.magic_batches GIẢM đúng required, consumed_count tăng đúng op_count
 ```
 
+> ⛔ **Bước 2 hôm nay KHÔNG chạy được — chuỗi e2e đang đứt ở đây.**
+>
+> `test/instant_only.ts` sẽ fail ở `expect grant > 0`. Không phải lỗi của script: trần thứ
+> ba của InstantGen là `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`
+> (`InstantGen/onchain/lib/magiclamp/protocol/math.ak`), mà vault Instant luôn có
+> `gen_schedules = []` ⇒ trần **0** ⇒ `min3(...) = 0`. Đây là fail-closed có chủ ý, không
+> phải thứ đi vòng được bằng env hay tham số. Trạng thái:
+> [`DEVSTATUS.md`](../DEVSTATUS.md) — "Còn nợ" #6 và "Chờ chủ nhân chốt" D1.
+>
+> **Đường thay thế duy nhất để có MAGIC mà tiêu:** ScheduleGen — deploy vault Schedule
+> (`deploy/07_create_schedule_vault.ts`), rồi commit + fire
+> (`npm run test:schedule-commit` → `npm run test:schedule-fire`). Cửa Schedule đang dùng được.
+>
+> Nhưng **chưa cắm thẳng vào được**: `09_deploy_consume.ts` hôm nay ghim vault Instant —
+> nó ném lỗi nếu thiếu `VAULT_INSTANT_HASH`, và đặt cứng `BURN_BATCH_CONSTR = 2n`
+> (constr `BurnBatch` của `VaultRedeemer` InstantGen). Muốn consume từ vault Schedule thì
+> phải truyền `vaultScriptHash` = hash vault Schedule **và** constr `BurnBatch` của
+> `VaultRedeemer` ScheduleGen vào `consumeParams` — hai giá trị này vào apply-param, sai
+> một cái là ra **sai script hash**, tức sai địa chỉ Engage, và không có gì báo. Đối chiếu
+> bằng `cd scripts && npm run check:params` trước khi deploy.
+>
+> **Cái gì gãy nếu bám bản cũ:** người mới đọc sẽ ngồi debug credential / Blockfrost /
+> min-ADA cho một bước không bao giờ xanh, vì bản cũ liệt nó như bước thường.
+
 **Chạy cả 4 bước nối env tự động** — `scripts/run_consume_e2e.sh` làm đúng chuỗi trên và
-truyền env giữa các bước qua stdout:
+truyền env giữa các bước qua stdout (nên **cũng đứt ở bước 2** vì lý do trên):
 
 ```bash
 cd /Users/ductiger/Projects/MAGIC
@@ -199,7 +224,7 @@ npm run typecheck                 # tsc --noEmit: types.ts + engageId.ts + consu
 | Engage thread NFT | ✅ ĐÃ LÀM — nhưng KHÔNG phải validator riêng: handler `mint` nằm TRONG `onchain/validators/consume.ak` (policy = chính script hash, biết qua tự tham chiếu). Không còn tệp `engage_nft.ak` |
 | Offchain codec | ✅ ĐÃ LÀM (`offchain/src/types.ts`): EngageDatum **5 trường**/PriceParam/ConsumeRedeemer/**EngageMintRedeemer** khớp constr 0 + test round-trip P8. Tên thread NFT: `offchain/src/engageId.ts` |
 | Cổng bảng giá off-chain | ✅ ĐÃ LÀM (`pricing/src/price.ts:assertValidPriceParam` + `toCanonicalOpPrices`) — bản gương `valid_param`, chạy TRƯỚC khi post beacon, ném `PRICE-010..015` |
-| `09_deploy_consume.ts` khai `EngageDatumSchema` tại chỗ | ⏳ CÒN LẠI: khối tạm ở `scripts/deploy/09_deploy_consume.ts:59` nay đã thừa (offchain đã có 5 trường) — xoá và quay lại `import { encodeEngageDatum }`. `scripts/` ngoài phạm vi vòng này |
+| `09_deploy_consume.ts` khai `EngageDatumSchema` tại chỗ | ✅ ĐÃ LÀM — khối khai tạm đã xoá; `scripts/deploy/09_deploy_consume.ts` nay `import { encodePriceParam, EngageDatumSchema }` thẳng từ `ConsumeMAGIC/offchain/src/types.js`. Một datum một lược đồ; hai bản là thứ trôi khỏi nhau trong im lặng |
 | Keeper cập nhật demand_mult | Tương tự UMKeeper: đọc `ops_served_epoch`, tính FIR, post PriceParam mới (committee/keeper) — TRƯỚC mainnet |
 | E2E Preview script live | Tạo Engage genesis → consume thật → verify `consumed_nanogic` (+ `consumed_count`) và `magic_batches` vault giảm đúng on-chain (cần credential) |
 | committee → governance NFT động | Thay static list bằng multi-sig/NFT trước khi khoá mainnet |

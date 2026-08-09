@@ -2,7 +2,16 @@
 > PHA 2 bỏ hoàn toàn cơ chế halving: `decay_window = 1` (§4.2), batch sống đúng
 > một epoch rồi chết thẳng, không có bước giảm nửa nào. Slot redeemer constr 1
 > (trước là `ApplyHalving`) nay là `PruneExpired` — dọn rác batch chết,
-> permissionless, theo §7.4. Xem `DESIGN-PHASE2.md` §3.
+> permissionless, theo §7.4.
+>
+> **Vì sao slot constr 1 không được xoá, và biến thể thay thế bắt buộc nullary:** chỉ số
+> constructor Plutus Data là **hợp đồng nhị phân**, không phải nhãn cho người đọc. Xoá một
+> biến thể ở giữa sẽ đẩy `BurnBatch` từ constr 2 về constr 1 và phá interface liên repo
+> (`ConsumeMAGIC/CONTRACT.md` v2 khoá `BurnBatch` ở constr 2). Và vì `ApplyHalving` là
+> nullary, biến thể thay chỗ nó cũng phải nullary — `PruneExpired` thoả — để byte mã hoá
+> của constr 1 không đổi. Đổi arity ở đó là đổi cách giải mã: mọi UTxO đã tạo trên chain
+> không đọc được nữa. Lập luận đầy đủ ở `DESIGN-PHASE2.md` §3.
+>
 > Giữ file này chỉ để đọc hiểu code cũ.
 
 ---
@@ -10,7 +19,7 @@
 # ApplyHalving Spec — InstantGen vault
 
 **Version:** v1.1
-**Status:** Implemented + aiken check 20/20 PASS
+**Status:** ĐÃ CHẾT (lịch sử). Số kiểm của module: [`DEVSTATUS.md`](../DEVSTATUS.md)
 **Scope:** InstantGen module only. SnapshotGen/VacuumGen/ScheduleGen không có Instant batches và không có ApplyHalving redeemer.
 
 ---

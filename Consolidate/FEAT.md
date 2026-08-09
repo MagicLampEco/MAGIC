@@ -1,11 +1,20 @@
 # FEAT — ConsolidateHoldings (§6.9)
 GenMAGIC v3.3 · C-CONSOLIDATE-1..6 · T23
 
+> **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
+> [`DEVSTATUS.md`](../DEVSTATUS.md). Nguồn chân lý mô hình:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
+> số mục "§6.9" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
+> Validator ở đây là **script hash RIÊNG** (`vault_consolidate`), nên UTxO nằm ở địa chỉ
+> vault InstantGen **không bao giờ chạy** validator này — dựng luồng theo giả định "bốn
+> module chung một vault" là ra tx không ai spend được. Module có `onchain/aiken.toml`
+> riêng và build standalone bình thường.
+
 ---
 
 ## 1. Mục đích
 
-Vault giữ LAMP dưới dạng danh sách `loyalty_holdings` (mỗi entry là `{amount, acquired_epoch, is_locked}`). Mỗi lần nhận LAMP từ Treasury hoặc từ một nguồn reward → thêm 1 entry mới (`age=0`). Sau nhiều giao dịch, danh sách phân mảnh → tiêu tốn ExUnit khi xử lý onchain (A5). Giới hạn cứng `MAX_LOYALTY_HOLDINGS = 64` (`constants.ts:6`, `constants.ak`). Khi số entry tiến gần 64, vault có nguy cơ bị khoá (không thể thêm holding mới).
+Vault giữ LAMP dưới dạng danh sách `loyalty_holdings` (mỗi entry là `{amount, acquired_epoch, is_locked}`). Mỗi lần vault **nhận thêm LAMP** (người dùng nạp vào) → thêm 1 entry mới (`age=0`). Bản cũ ghi nguồn là "LAMP từ Treasury (reward)" — nguồn đó **không còn tồn tại**: LAMP đứng yên trong vault, không handler nào chuyển LAMP giữa vault và Treasury (I-ACT-7). Ai đọc theo bản cũ sẽ đi tìm một luồng reward không có ở đâu trong hệ. Sau nhiều giao dịch, danh sách phân mảnh → tiêu tốn ExUnit khi xử lý onchain (A5). Giới hạn cứng `MAX_LOYALTY_HOLDINGS = 64` (`constants.ts:6`, `constants.ak`). Khi số entry tiến gần 64, vault có nguy cơ bị khoá (không thể thêm holding mới).
 
 **ConsolidateHoldings** là cơ chế cho phép chủ vault gộp các entry gần nhau thành ít entry hơn, giảm chiều dài danh sách mà vẫn bảo toàn tổng số dư và cấu trúc khoá/mở khoá.
 

@@ -24,7 +24,7 @@ Nguồn: `pricing/src/price.ts`, `onchain/lib/magiclamp/consume/pricing.ak`.
 
 ## 2. Công thức chính
 
-### 2.1 Giá đơn vị
+### 2.1 Giá đơn vị — CHỈ để HIỂN THỊ
 
 ```
 price(t) = ⌊ base_price[t] × demand_mult / Q ⌋    (nanogic)
@@ -34,13 +34,33 @@ price(t) = ⌊ base_price[t] × demand_mult / Q ⌋    (nanogic)
 - `price` đơn điệu không-giảm theo `demand_mult` vì `base_price[t] ≥ 0` và floor không giảm khi nhân tử tăng.
 - Chặn: `⌊ base_price[t] × m_min / Q ⌋ ≤ price(t) ≤ ⌊ base_price[t] × m_max / Q ⌋`.
 
+⚠ `price(t)` **KHÔNG phải viên gạch dựng `required`**. Nó là giá niêm yết cho giao diện.
+Đừng nhân nó với `op_count` — xem §2.2.
+
 Nguồn: `pricing.ak:price_of`, `price.ts:pricePerOp`.
 
-### 2.2 Required (tổng cho 1 vault input)
+### 2.2 Required (một dòng op, cho 1 vault input) — FOLD-FLOOR MỘT LẦN
 
 ```
-required(t, n) = price(t) × n
+required(t, n) = ⌊ base_price[t] × demand_mult × n / Q ⌋    (nanogic)
 ```
+
+**Nhân hết TRƯỚC, chia `Q` MỘT lần ở cuối.** Đây là công thức có thẩm quyền.
+
+**KHÔNG viết `price(t) × n`** (floor per-op rồi nhân). Hai vế khác nhau khi
+`base_price × demand_mult` không chia hết `Q`: bản per-op vứt phần dư của TỪNG op rồi
+cộng dồn `n` lần ⇒ **thu THIẾU**. Bản đúng chỉ mất `< 1` nanogic cho cả dòng.
+
+Bất phương thức: `⌊b×d/Q⌋ × n ≤ ⌊b×d×n/Q⌋`, dấu bằng chỉ khi `Q | b×d`.
+Ví dụ `b×d = Q + Q/2`, `n = 2`: per-op cho `2Q`, fold-floor cho `3Q` — lệch `Q`.
+
+**Cái gì gãy nếu bám bản `price(t) × n`:** bất biến C-CM-2 là `total_burned == total_required`,
+**dấu bằng**. Bên off-chain tính theo per-op sẽ đặt `burns` nhỏ hơn cái validator đòi ⇒ **mọi tx
+consume bị từ chối**. Nếu chỗ tính sai nằm ở phía app (ước lượng số MAGIC cần), app cấp dịch vụ
+xong mới biết tx không lên được chain.
+
+Nguồn (đọc thẳng, đừng suy ra từ tên): `pricing.ak:required_for` — `base * demand_mult *
+op_count / q`; `pricing/src/price.ts:requiredForOp` (bản gương P8, trùng BIT).
 
 ### 2.3 Aggregate required + burned (toàn tx)
 

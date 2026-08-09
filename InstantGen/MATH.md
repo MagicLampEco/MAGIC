@@ -1,6 +1,22 @@
 # InstantGen — Math Specification
 ## GenMAGIC v3.3 · §9.1 · §6.1 · §4.3 · §14.4
 
+> ⚠ **ĐÃ LỖI THỜI ở phần công thức và phần suy giảm.** Tệp này còn tính độ lớn theo
+> `L_paid` (LAMP trả đi) và còn mô tả halving batch ở `k=1`. **Cả hai đã bị bỏ.** Đầu vào
+> nay là `consumed_credit` — MAGIC người dùng đã tiêu thụ thật — và batch sống đúng một
+> epoch (`decay_window = 1`, cliff), không có bước giảm nửa. Mô tả hiện hành ở
+> **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)** §3–§4; nguồn chân lý là
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+>
+> **Gãy gì nếu bám bản cũ:** phía off-chain tính `M` từ `L_paid` sẽ ra một con số khác
+> con số validator tự tính lại; validator đòi **đúng bằng** nên tx bị từ chối. Lịch
+> halving cũng vậy — chờ tới `k=1` để dùng MAGIC là chờ quá hạn, batch đã chết và bị dọn,
+> mất trắng.
+>
+> Còn dùng được nguyên: quy ước đơn vị (Q, oildrop, nanogic), **kỷ luật ba bước
+> `⌊ × / Q ⌋` tuần tự** (P8, §6.1/L4), bảng PM theo profile, `L_avail`, và mục 7 (LAMP
+> đứng yên) vốn đã cập nhật.
+
 ---
 
 ## 1. Định nghĩa ký hiệu
@@ -10,21 +26,28 @@
 | Q | 10^9 | `constants.ak:6`, `constants.ts:5` |
 | oildrop | LAMP × 10^6 | `constants.ts:14` |
 | nanogic | MAGIC × 10^9 | `constants.ts:15` |
-| L_paid | oildrop — lượng LAMP thanh toán | `vault.ak:71` redeemer field |
+| ~~L_paid~~ | **đã bỏ** — không còn khoản LAMP thanh toán (I-ACT-7). Đầu vào nay là `consumed_credit` (nanogic) | `types.ak` `VaultDatum.activity_state` |
 | L_avail | oildrop = lamp_balance − lamp_locked | `lamp.ak:94` |
 | R_inst | 3_000_000_000 (Q-format = 3.0×) | `constants.ak:18` |
 | UM_q | Q-format — sau stale check | `um.ak:22` |
 | PM_q | Q-format — theo profile | `constants.ak:47` |
 | UM_FALLBACK_Q | 500_000_000 (= 0.5×) | `constants.ak:39` |
 | UM_MAX_STALENESS | 1 epoch | `constants.ak:36` |
-| decay_window | 2 epoch (Instant) | `constants.ak:27` |
+| decay_window | **1 epoch** cho mọi nguồn (cliff §4.2) — bảng cũ ghi 2 | `constants.ak` `magic_decay_window` |
 
 ---
 
 ## 2. Công thức chính — InstantGen (§9.1)
 
+> **Công thức dưới đây theo mô hình cũ.** Bản đang chạy đọc ở
+> `onchain/lib/magiclamp/protocol/math.ak`, hàm `compute_instant_grant` /
+> `compute_reward_from_consumed`: đầu vào là `consumed` (MAGIC đã tiêu), không phải
+> `L_paid`, và kết quả còn bị chặn bởi `min( reward, cap_surplus(br), ½ × pp_schedule )`.
+> Cái giữ nguyên là **kỷ luật ba phép `⌊ × / Q ⌋` tuần tự** — không phải một phép chia
+> `Q³`. Song ánh TypeScript ở `offchain/src/math.ts`, trọng tài là `tests/vectors.ts`.
+
 ```
-M_instant = ⌊ L_paid × R_inst / Q ⌋ × UM_q / Q ⌋ × PM_q / Q ⌋
+M_instant = ⌊ L_paid × R_inst / Q ⌋ × UM_q / Q ⌋ × PM_q / Q ⌋     ← MÔ HÌNH CŨ
 ```
 
 Ba bước sequential floor (L4: tổng lỗi ≤ 3 nanogic):
@@ -88,7 +111,14 @@ Nguồn: `constants.ak:47`, `constants.ts:32`. Profile được resolve sau `app
 
 ---
 
-## 5. Instant batch halving — §4.3 (C-DECAY-7/8)
+## 5. Instant batch halving — §4.3 (C-DECAY-7/8) — MỤC ĐÃ CHẾT
+
+> Toàn bộ mục này không còn hiệu lực. `decay_window = 1`: `k=0` là sống, `k≥1` là chết
+> thẳng — không có nấc giảm nửa nào ở giữa. `decay.ak` đã gỡ `should_halve` /
+> `apply_halving` / `halve_then_prune`. Trường `MagicBatch.halved` giữ **đúng vị trí** để
+> hình dạng Plutus Data 9 trường không đổi, nhưng là trường chết: luôn `False`.
+> Bám bản cũ mà lập lịch tiêu MAGIC ở `k=1` là tiêu vào batch đã hết hạn — tx bị từ chối
+> và MAGIC mất trắng. Xem [`DESIGN-PHASE2.md`](DESIGN-PHASE2.md) §3.
 
 ```
 k = current_epoch − batch.created_epoch
@@ -245,6 +275,10 @@ Nguồn: `vectors.ts:161` (TV-OVERFLOW-01). C-OVERFLOW invariant.
 ---
 
 ## 9. Boundary conditions
+
+> Bốn dòng `lamp_paid` dưới đây theo mô hình cũ — không còn khoản chi để đặt biên. Biên
+> đang chạy là trên **số dư**: `lamp_balance ≥ min_instant_holding` và
+> `L_avail ≥ min_instant_holding`. Ba dòng cuối bảng vẫn đúng.
 
 | Điều kiện | Giá trị | Kết quả |
 |---|---|---|

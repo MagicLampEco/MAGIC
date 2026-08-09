@@ -96,11 +96,20 @@ Rút LAMP **không** được đẩy `last_updated_epoch` lên epoch hiện tạ
 bắt-kịp và làm mất phần MAGIC đã tích qua các epoch đã trôi. Rút LAMP là việc của riêng LAMP,
 trực giao với chuyện sinh MAGIC.
 
-Đây là chỗ hiện thực off-chain đang lệch: `withdrawLamp` trong `src/withdrawLamp.ts` đặt
-`last_updated_epoch: currentEpoch`, và output vault nó dựng **không mang NFT danh tính** —
-`validate_vault_value` sẽ từ chối. Hai điểm này phải sửa ở phía off-chain (luật on-chain là
-bên đúng), và phải kiểm bằng một tx thật trên testnet trước khi mở chức năng rút cho người
-dùng.
+**Off-chain ĐÃ khớp** (đối chiếu `src/withdrawLamp.ts`): builder dựng `newVaultDatum` bằng
+spread `...vaultDatum` và **không hề gán** `last_updated_epoch` — nên nó giữ nguyên giá trị
+input, đúng thứ validator ép `==`. Output vault dựng bằng `{ ...vaultUtxo.assets }`, tức
+**chép nguyên value đầu vào** rồi chỉ hạ LAMP, nên NFT danh tính (INV-VAULT-IDENTITY) còn
+nguyên và `validate_vault_value` qua.
+
+> ⚠ **Đừng "sửa code cho khớp mô tả cũ".** Bản trước của mục này ghi off-chain đang lệch ở
+> hai điểm đó. Mô tả ấy đã hết đúng. Ai đọc bản cũ rồi đi gán `last_updated_epoch:
+> currentEpoch` hoặc dựng lại value vault từ `{lovelace, lamp}` là **tái lập đúng hai lỗi vừa
+> vá**: cái thứ nhất reset cửa sổ bắt-kịp và làm mất MAGIC đã tích, cái thứ hai bỏ rơi NFT
+> danh tính ⇒ tx bị từ chối, mà không có gì bắt được lúc biên dịch.
+
+**Còn nợ thật ở đây:** chưa có tx thật trên testnet chứng minh đường rút chạy đầu-cuối. Khớp
+mã ≠ đã nghiệm thu. Kiểm bằng một tx thật trước khi mở nút "rút" cho người dùng.
 
 ### `remove_newest_first`
 
@@ -355,6 +364,7 @@ sang đây. Riêng phần dính trực tiếp tới hai handler trên:
 - Ma trận test [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md) **chưa hội tụ** về mô hình hai
   vault: nó còn liệt kê ca cho Snapshot/Vacuum và còn tham số `treasuryAddress`. Cần viết lại
   hoặc dời đi.
-- `withdrawLamp` off-chain lệch luật W-5 ở `last_updated_epoch` và thiếu NFT danh tính trong
-  output vault (xem [§1](#1-withdrawlamp-amount)). Chưa có tx thật trên testnet chứng minh
-  đường rút chạy đầu-cuối.
+- `withdrawLamp` off-chain **đã khớp** luật W-5 (`last_updated_epoch` giữ nguyên) và **đã giữ**
+  NFT danh tính trong output vault (chép nguyên `vaultUtxo.assets`) — xem
+  [§1](#1-withdrawlamp-amount). Phần còn nợ là **nghiệm thu**: chưa có tx thật trên testnet
+  chứng minh đường rút chạy đầu-cuối.

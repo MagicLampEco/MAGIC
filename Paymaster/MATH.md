@@ -2,8 +2,28 @@
 
 ## GenMAGIC v3.3 · Module Paymaster · v1.0
 
-NORMATIVE. P8: Aiken (`math.ak`) ↔ TypeScript (`offchain/src/math.ts`) bit-identical.
-Nguồn: `Paymaster/onchain/lib/magiclamp/paymaster/math.ak`; `LAMP/docs/SPEC-Paymaster.md §4-5`.
+> ⚠ **Tệp này KHÔNG normative.** Bản trước tự khai "NORMATIVE" và trỏ nguồn chân lý sang
+> `LAMP/docs/SPEC-Paymaster.md §4-5` — **tệp đó không tồn tại** (kiểm: `ls ../LAMP/docs/`
+> báo không có thư mục). Con trỏ cross-repo ấy đã chết; đừng đi tìm, đừng dựng lại từ trí nhớ.
+>
+> Spec canonical duy nhất:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> Trọng tài cho công thức là **mã**: `Paymaster/onchain/lib/magiclamp/paymaster/math.ak` và
+> bản gương `Paymaster/offchain/src/math.ts` (P8 buộc hai bên trùng BIT). Tệp này là bản mô
+> tả đi kèm — lệch thì mã đúng.
+>
+> **Cái gì gãy nếu bám bản cũ:** ai coi tệp này là nguồn chân lý sẽ sửa mã cho khớp mô tả,
+> mà mô tả lại neo vào một spec không ai đọc được để đối chiếu.
+
+P8: Aiken (`math.ak`) ↔ TypeScript (`offchain/src/math.ts`) bit-identical.
+
+**Trạng thái triển khai:** `validator paymaster(...)` nhận **11** apply-param
+(`vault_script_hash, burn_batch_constr, lamp_policy_id, policy_nft_policy, meter_nft_policy,
+protocol_nft_policy, max_policy_stale, max_did_entries, ms_per_epoch, treasury_addr,
+lamp_asset_name`) — `treasury_addr` + `lamp_asset_name` là hai bản vá SEC-01 mới nhất. Module
+**chưa có script deploy**. Cổng đối chiếu: `cd scripts && npm run check:params`. Đừng chép
+bảng tham số bằng tay: **blueprint (`onchain/plutus.json` sau `aiken build`) mới là trọng tài** —
+sai thứ tự hoặc thiếu một param là ra sai script hash mà không gì báo.
 
 ---
 

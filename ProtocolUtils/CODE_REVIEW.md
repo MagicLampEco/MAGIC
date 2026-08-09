@@ -3,9 +3,24 @@
 > **Đây là biên bản một đợt review ĐÃ XONG, không phải mô tả hệ hiện tại.** Nó ghi
 > "lúc ấy hỏng gì, vá ra sao" — giá trị nằm ở LÝ DO, không ở đường dẫn.
 >
-> - Đường dẫn `SnapshotGen/...` và `VacuumGen/...` trong tệp này **đã chết**: hai module
->   nằm ở `Legacy/genmagic-v3.3/`. Đừng lần theo, đừng khôi phục.
-> - Số test ở cuối tệp là ảnh chụp cũ. Số đang đúng: [`DEVSTATUS.md`](../DEVSTATUS.md).
+> **MỌI đường dẫn trong tệp này là ẢNH CHỤP tại thời điểm review — `ls` trước khi hành động.**
+> Không chỉ vài đường dẫn được nêu đích danh: cây thư mục đã đổi nhiều lần từ lúc biên bản này
+> đóng. Tệp không tồn tại thì việc gắn với nó cũng không tồn tại — đừng "tạo lại cho khớp".
+>
+> Đường dẫn đã kiểm và **đã chết** (tính tới lần soát gần nhất):
+>
+> | Đường dẫn tệp này nhắc | Thực tế |
+> |---|---|
+> | `SnapshotGen/...`, `VacuumGen/...` | hai module nằm ở `Legacy/genmagic-v3.3/`. Đừng lần theo, đừng khôi phục |
+> | `ConsumeMAGIC/offchain/src/math.ts` (§Critical 1) | **không tồn tại**. Toán giá của ConsumeMAGIC nay ở `ConsumeMAGIC/pricing/src/price.ts` + `onchain/lib/magiclamp/consume/pricing.ak` |
+> | `UMKeeper/onchain/onchain/` (§Action items + §Lưu ý) | **thư mục không tồn tại**. "Chọn bản canonical" là việc đã hết — không còn hai bản để chọn |
+> | `ScheduleGen/onchain/onchain/` (§Action items + §Lưu ý) | **thư mục không tồn tại**. Như trên |
+>
+> ⚠ Bốn dòng trên trông y hệt việc-phải-làm nếu đọc thân tệp: có checkbox `[ ]`, có mô tả kỹ.
+> Ai nhận chúng làm task sẽ đi tìm — hoặc tệ hơn, **dựng lại** — thứ đã được dọn xong.
+>
+> - **Mọi con số test trong tệp này** (kể cả ở §Trạng thái, không chỉ ở cuối) là ảnh chụp cũ.
+>   Số đang đúng: [`DEVSTATUS.md`](../DEVSTATUS.md).
 > - Mô hình đang đúng: [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 >
 > Không cập nhật tệp này theo code nữa. Review mới thì mở biên bản mới.
@@ -32,7 +47,7 @@
 
 ### 1. OAC window boundary inconsistency — FIXED
 
-**Vị trí:** [ConsumeMAGIC/offchain/src/math.ts:377](ConsumeMAGIC/offchain/src/math.ts), [SnapshotGen/offchain/src/math.ts:42](SnapshotGen/offchain/src/math.ts), [ProtocolUtils/src/index.ts:186](ProtocolUtils/src/index.ts)
+**Vị trí:** `ConsumeMAGIC/offchain/src/math.ts:377`, `SnapshotGen/offchain/src/math.ts:42`, [ProtocolUtils/src/index.ts:186](ProtocolUtils/src/index.ts)
 
 **Vấn đề:** Hai filter có ngữ nghĩa khác nhau bị nhầm lẫn:
 - Prune window (ConsumeMAGIC STEP 0e): `ep ≥ e − 12` — giữ entry cho epoch sau.

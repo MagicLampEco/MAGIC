@@ -1,6 +1,20 @@
 # InstantGen — Execution Guide
 ## GenMAGIC v3.3 · Deploy + Test Plan · v1.0
 
+> ⚠ **ĐÃ LỖI THỜI ở phần cơ chế và phần tham số.** Tệp này còn mô tả mô hình trước
+> PHA 2: "mua MAGIC bằng cách trả LAMP vào Treasury", redeemer mang `lamp_paid`,
+> apply-param có `treasury_addr`, và halving batch ở `k=1`. **Không cái nào còn tồn
+> tại.** Mô tả cơ chế hiện hành ở **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn
+> chân lý là [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+>
+> **Gãy gì nếu dựng theo tệp này:** apply một danh sách tham số có `treasury_addr`
+> sinh ra script hash KHÁC vault thật — `applyParamsToScript` không kiểm arity nên
+> không có lỗi nào nổ; vault nhận LAMP thật rồi không tx spend nào hợp lệ nữa, LAMP
+> kẹt vĩnh viễn. Bám `lamp_paid` thì tx bị từ chối ngay vì I-ACT-7 ép LAMP đứng yên.
+>
+> Còn dùng được: thứ tự các bước deploy, cách chạy `aiken build` / `aiken check`,
+> danh mục biến môi trường (trừ `TREASURY_ADDRESS`), và khung phân loại ca kiểm.
+
 ---
 
 ## 1. Deploy steps (thứ tự bắt buộc)
@@ -17,8 +31,10 @@ NETWORK=Preview
 LAMP_POLICY_ID=
 UM_NFT_POLICY_ID=
 VAULT_SCRIPT_HASH=
-TREASURY_ADDRESS=
 ```
+
+`TREASURY_ADDRESS` từng nằm ở đây — **bỏ**. Từ PHA 2 không handler nào chuyển LAMP
+(I-ACT-7) nên không có Treasury để trỏ tới. Biến còn thiếu, xem `scripts/config.ts`.
 
 ### Bước 1: Build Aiken validator
 
@@ -30,7 +46,23 @@ aiken blueprint address --testnet-magic 2
 # → copy validator hash vào VAULT_SCRIPT_HASH
 ```
 
-Validator cần 4 parameters: `lamp_policy_id`, `treasury_addr`, `um_nft_policy`, `ms_per_epoch`. Xem `aiken.toml` cho cách apply parameters.
+Danh sách apply-param **không chép ở đây**. Đọc `parameters[]` trong
+`InstantGen/onchain/plutus.json` do `aiken build` vừa sinh — đó là bản do chính chữ ký
+`validator vault(...)` đẻ ra, không thể lệch với mã đã biên dịch. Đối chiếu bằng cổng máy:
+
+```bash
+cd ../../scripts && npm run check:params
+```
+
+Cổng này so `parameters[].title` của blueprint với danh sách `scripts/deployParams.ts`
+cấp, khẳng định trùng cả tên lẫn thứ tự. Ảnh chụp hiện thời (blueprint mới là trọng tài):
+`lamp_policy_id`, `lamp_asset_name`, `um_nft_policy`, `um_script_hash`,
+`backing_nft_policy`, `backing_script_hash`, `ms_per_epoch`.
+
+Dòng cũ ở đây ghi "4 parameters: `lamp_policy_id`, `treasury_addr`, `um_nft_policy`,
+`ms_per_epoch`" — sai cả số lẫn tập, `treasury_addr` không còn tồn tại. Apply theo danh
+sách đó ra một script hash khác vault thật mà không lệnh nào báo lỗi; LAMP vào vault rồi
+không ai spend được nữa.
 
 **Verify build:**
 ```bash
@@ -72,7 +104,7 @@ export const TESTNET_CONFIG = {
   lampAssetName:   "744c414d50",    // "tLAMP"
   umNftPolicyId:   "<từ bước 3>",
   umNftAssetName:  "554d44",        // "UMD"
-  treasuryAddress: "<script addr>",
+  // treasuryAddress: ĐÃ BỎ — không còn chân Treasury (I-ACT-7).
 };
 ```
 
@@ -119,7 +151,9 @@ npm run test:e2e
 - Setup: vault với 10_000 LAMP, UM fresh (staleness = 0)
 - Input: lamp_paid = 1_000_000_000 oildrop (1000 LAMP), Flame profile
 - Expected: batch mới với 3_150_000_000 nanogic (TV-INST-GEN-01)
-- Verify: output datum.lamp_balance = old - 1B, treasury +1B
+- Verify (mô hình cũ, không còn đúng): `lamp_balance = old - 1B`, treasury +1B.
+  Từ PHA 2 phải ngược lại — `lamp_balance` **không đổi một byte** và không có output
+  Treasury nào. Kiểm theo bản cũ thì ca kiểm đúng bị đánh trượt.
 
 **P2: InstantGen boundary — MIN purchase (10 LAMP)**
 - Input: lamp_paid = 10_000_000 (= MIN)
@@ -175,9 +209,11 @@ npm run test:e2e
 - Expected: REJECT — A02 check `expected_batches` không match
 - Vector: TV-HALVED-INJECT (vectors.ts:191)
 
-**N6: Treasury không nhận LAMP (C-INST-4)**
-- Tx không có output đến treasury_addr, hoặc treasury_addr là wallet
-- Expected: REJECT (`vault.ak:199` — Script credential check, `vault.ak:200` — amount check)
+**N6: Treasury không nhận LAMP (C-INST-4) — CA KIỂM ĐÃ CHẾT**
+- Không còn chân Treasury nên không còn ràng buộc này. Ca kiểm thay thế theo I-ACT-7:
+  `ig_neg_lamp_moved` (LAMP rời vault → từ chối) và `ig_neg_value_drained` (datum khai
+  không đổi nhưng giá trị thật thiếu → từ chối). Xem
+  [`DESIGN-PHASE2.md`](DESIGN-PHASE2.md) §2.
 
 **N7: Không có owner signature (C-PC-V1)**
 - Tx thiếu `owner ∈ extra_signatories`
@@ -214,12 +250,12 @@ Test coverage bắt buộc (§E.3 deploy checklist):
 - TV-HALVED-INJECT ✓
 - TV-CONS-01 ✓
 
-Aiken tests (32 tests theo README.md):
+Aiken tests:
 ```bash
 cd InstantGen/onchain
 aiken check
-# 32 Aiken tests expected
 ```
+Số kiểm giữ ở một nơi duy nhất — [`DEVSTATUS.md`](../DEVSTATUS.md). Đừng chép số vào đây.
 
 ---
 
@@ -230,8 +266,12 @@ aiken check
 
 **Hậu quả:** Batches sẽ expire sau 2 epochs nếu không có BurnBatch. MAGIC sẽ mất sau k≥2.
 
-### 4.2 ApplyHalving stub
-Redeemer `ApplyHalving` chỉ check owner sign, không thực hiện halving thực sự. Halving vẫn xảy ra lazily trong `validate_instant_gen` qua `halve_then_prune`. Standalone `ApplyHalving` tx không có effect thực tế ngoài confirm owner.
+### 4.2 ApplyHalving stub — ĐÃ CHẾT
+`ApplyHalving` không còn tồn tại. PHA 2 bỏ hẳn halving (`decay_window = 1`, batch sống
+đúng một epoch rồi chết thẳng). Slot constr 1 nay là `PruneExpired` — dọn rác batch chết,
+permissionless (§7.4). Bám mục này mà dựng tx `ApplyHalving` thì tx bị từ chối: validator
+giải mã constr 1 ra `PruneExpired` và đòi ràng buộc khác hẳn. Xem
+[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md) §3.
 
 ### 4.3 attribution_root chưa implement đầy đủ
 `vault.ak:248` chỉ kiểm tra `total_events++` và `last_event_epoch`. Hash chain của `attribution_root` chưa được verify on-chain (TODO v1.1).
@@ -267,8 +307,11 @@ Worst case ~12KB (§5.1). Tx limit 16KB. Vault với 32 batches + 64 holdings + 
 | LAMP_POLICY_ID | PolicyId LAMP token | Sau deploy:lamp |
 | UM_NFT_POLICY_ID | PolicyId UM datum NFT | Sau deploy:um |
 | VAULT_SCRIPT_HASH | Hash của vault validator | Sau aiken build |
-| TREASURY_ADDRESS | Script address Treasury | Sau deploy:vault |
 | SHARD_NFT_POLICY_ID | PolicyId shard NFTs (ScheduleGen) | Sau deploy:shards |
+
+`TREASURY_ADDRESS` đã bỏ khỏi bảng này (I-ACT-7). Hai biến PHA 2 thêm vào —
+`BACKING_NFT_POLICY_ID`, `BACKING_SCRIPT_HASH` — mặc định 28 byte 0 nghĩa là beacon chưa
+có và cửa InstantGen đóng; chi tiết ở [`DESIGN-PHASE2.md`](DESIGN-PHASE2.md) §5.
 
 ---
 
@@ -282,4 +325,4 @@ Worst case ~12KB (§5.1). Tx limit 16KB. Vault với 32 batches + 64 holdings + 
 | GEN-VAULT-001 | Vault đầy 32 batches | Đợi v1.1 BurnBatch; hoặc đợi batches expire |
 | UM stale fallback | Keeper không chạy hoặc bị trễ | Khởi động UMKeeper; chấp nhận UM=0.5× hoặc đợi |
 | BurnBatch locked | v1.0 stub | Đợi v1.1 |
-| treasury Script check | treasury_addr là wallet address | Đảm bảo treasury_addr là Script credential |
+| ~~treasury Script check~~ | mục đã chết — không còn `treasury_addr` (I-ACT-7) | — |

@@ -1,8 +1,14 @@
 // ConsumeMAGIC pricing — giá CÓ THẨM QUYỀN tính từ PriceParam beacon.
 // NORMATIVE: CONTRACT.md §A + §E. Pure BigInt, KHÔNG float.
 //
-//   price(op_type) = base_price[op_type] × demand_mult / Q     (Q=1e9, scale)
-//   required       = price(op_type) × op_count
+//   required = ⌊ base_price[op_type] × demand_mult × op_count / Q ⌋   (Q=1e9, scale)
+//
+// GỘP-SÀN MỘT LẦN cho cả tổng. KHÔNG sàn từng lượt rồi nhân:
+//   price(op_type) = ⌊ base × demand_mult / Q ⌋  chỉ để HIỂN THỊ cho người dùng.
+//   `price(t) × n` vứt phần dư ở mỗi lượt ⇒ thu THIẾU ⇒ vì `Σburns == required` là
+//   DẤU BẰNG, tx bị từ chối. Xem docstring `required_for` phía dưới.
+// (Comment cũ ở đây ghi `required = price(op_type) × op_count` — sai, và nó nằm đúng
+//  chỗ người ta liếc trước khi đọc thân hàm.)
 //
 // demand_mult đã được keeper clamp về [m_min, m_max] offchain; validator KIỂM TRA
 // lại bất biến đó on-chain (defense-in-depth) trước khi dùng — không tin mù datum.

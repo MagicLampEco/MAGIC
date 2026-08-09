@@ -1,25 +1,49 @@
 # InstantGen — Technical Specification
 ## GenMAGIC v3.3 · Aiken PlutusV3 + TypeScript SDK
 
+> ⚠ **ĐÃ LỖI THỜI ở phần redeemer, phần tham số và phần luồng giá trị.** Tệp này còn ghi
+> `InstantGen { lamp_paid }`, `ApplyHalving` ở constr 1, apply-param có `treasury_addr`,
+> và một output Treasury trong sơ đồ tx. **Không cái nào còn tồn tại.** Mô tả hiện hành ở
+> **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn chân lý là
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+>
+> **Gãy gì nếu dựng theo tệp này:** lược đồ redeemer sai làm tx không giải mã được đúng
+> nhánh; danh sách apply-param sai sinh ra script hash khác vault thật mà không lệnh nào
+> báo lỗi — LAMP vào rồi kẹt vĩnh viễn. Danh sách tham số thật đọc ở `parameters[]` trong
+> `onchain/plutus.json`, đối chiếu bằng `cd scripts && npm run check:params`.
+>
+> Còn dùng được: nguyên tắc "thứ tự constructor = hợp đồng nhị phân", bố cục 17 trường
+> `VaultDatum`, và kỷ luật song ánh Aiken ↔ TypeScript (P8).
+
 ---
 
 ## 1. Aiken types và Plutus Data encoding
 
-### 1.1 VaultRedeemer (types.ak:153)
+### 1.1 VaultRedeemer
+
+Nguồn: `onchain/lib/magiclamp/protocol/types.ak`, kiểu `VaultRedeemer`.
 
 ```aiken
 pub type VaultRedeemer {
-  InstantGen    { lamp_paid: Natural }   // constr 0
-  ApplyHalving                           // constr 1
-  BurnBatch     { burns: List<...> }     // constr 2
-  UpdateProfile { new_profile: ... }     // constr 3
-  WithdrawLamp  { amount: Natural }      // constr 4
+  InstantGen    { claimed_amount: Natural }   // constr 0
+  PruneExpired                                // constr 1  (nullary)
+  BurnBatch     { burns: List<...> }          // constr 2
+  UpdateProfile { new_profile: ... }          // constr 3
+  WithdrawLamp  { amount: Natural }           // constr 4
+  SetDelegate   { new_delegate: Option<...> } // constr 5
 }
 ```
 
-Plutus Data encoding: `Constr 0 [I lamp_paid]`. TypeScript: `VaultRedeemerSchema` (`types.ts:165`).
+Constr 0 mang `claimed_amount` — khẳng định của người gọi về khoản được cấp; validator
+tính lại và đòi **đúng bằng**. Trường `lamp_paid` đã bỏ (I-ACT-7: không có khoản LAMP nào
+trả đi).
 
-**QUAN TRỌNG:** Thứ tự constructor = tag on-chain. Không được reorder.
+**QUAN TRỌNG — chỉ số constructor là hợp đồng nhị phân.** Thứ tự biến thể = tag on-chain.
+Không reorder, không xoá biến thể ở giữa. `ApplyHalving` ở constr 1 đã nghỉ, nhưng slot
+**không** được bỏ: xoá nó đẩy `BurnBatch` từ constr 2 về constr 1 và phá interface liên
+repo (`ConsumeMAGIC/CONTRACT.md` v2 khoá `BurnBatch` ở constr 2). Thay bằng
+`PruneExpired` — cũng **nullary**, nên mã hoá Plutus Data của constr 1 không đổi một byte.
+Chi tiết: [`DESIGN-PHASE2.md`](DESIGN-PHASE2.md) §3.
 
 ### 1.2 MagicBatch (types.ak:28)
 
@@ -88,13 +112,23 @@ PM_q: Ember=1.15×, Flame=1.05×, Lantern=1.00×. Nguồn: `constants.ak:47`.
 
 File: `validators/vault.ak`, function `validate_instant_gen` (line 115).
 
-Validator được parameterize bởi:
-- `lamp_policy_id`: PolicyId LAMP token
-- `treasury_addr`: Address Treasury (phải là Script credential, kiểm tra tại line 199)
-- `um_nft_policy`: PolicyId UM datum NFT
-- `ms_per_epoch`: POSIX ms / epoch (Mainnet=432_000_000; Preview=86_400_000)
+Danh sách apply-param **không chép ở đây** — chép tay là thứ đã sai. Đọc `parameters[]`
+trong `onchain/plutus.json` (do `aiken build` sinh từ chính chữ ký `validator vault(...)`),
+đối chiếu bằng `cd scripts && npm run check:params`. Ảnh chụp hiện thời, blueprint là
+trọng tài: `lamp_policy_id`, `lamp_asset_name` (PARAM theo mạng — `tLAMP` testnet /
+`LAMP` mainnet), `um_nft_policy`, `um_script_hash`, `backing_nft_policy`,
+`backing_script_hash`, `ms_per_epoch`.
+
+Bản cũ ở đây liệt 4 tham số và có `treasury_addr` — sai cả số lẫn tập. `applyParamsToScript`
+không kiểm arity: apply theo danh sách đó vẫn ra script hash 28 byte trông hợp lệ, vault
+vẫn nhận LAMP thật, rồi mọi tx spend fail vĩnh viễn.
 
 ### Danh sách invariants theo thứ tự thực thi
+
+> **Bảng dưới là ảnh chụp mô hình cũ.** Số dòng `vault.ak:NNN` đã trôi; các dòng
+> C-INST-1/2/3 tính trên `lamp_paid`, C-INST-4/4b nói về Treasury, C-PRUNE-2 nói về
+> halving — cả sáu đều không còn. Danh sách đang chạy đọc thẳng ở
+> `onchain/validators/vault.ak`.
 
 **W-n = WithdrawLamp; C-n = InstantGen; A02 = output datum check**
 
@@ -155,19 +189,27 @@ Từ `applied_input` (sau profile apply): `owner`, `lamp_locked`, `vacuum_orders
 ```
 [Vault UTxO] ──spend──> Validator
                          │
-[UM UTxO]    ──refIn──>  │ (read-only, không consume)
+[UM UTxO]      ──refIn──> │ (read-only, không consume)
+[Beacon UTxO]  ──refIn──> │ (br_q, §6.3 — thiếu là cửa đóng)
                          │
-                ┌────────┴────────┐
-                │                 │
-         [Vault UTxO']     [Treasury UTxO]
-         (datum updated)   (receives LAMP)
-         (LAMP: old - paid) (LAMP: +paid)
+                         ▼
+                  [Vault UTxO']
+                  (datum updated: batch mới, consumed_credit = 0)
+                  (LAMP: GIỮ NGUYÊN từng byte — I-ACT-7)
+                  (NFT danh tính vault phải còn nguyên)
 ```
+
+> Sơ đồ cũ có thêm một nhánh `[Treasury UTxO] (receives LAMP)` và ghi `LAMP: old - paid`.
+> Dựng tx theo hình đó là tx bị từ chối.
 
 **Điểm eUTxO quan trọng:**
 - UM datum là reference input — không bị consume. Nhiều InstantGen tx trong cùng block đều đọc được cùng UM UTxO.
 - Vault UTxO bị consume → chỉ 1 InstantGen/block/vault. Tự nhiên ngăn race condition.
-- LAMP conservation: `vault_output.lamp + treasury_output.lamp == vault_input.lamp` (không cần check tường minh — eUTxO ledger enforce).
+- LAMP: **không** dựa vào bảo toàn của ledger. Validator kiểm tường minh rằng
+  `quantity_of(vault_output.value, lamp_policy_id, lamp_asset_name) == output_datum.lamp_balance`
+  và ba trường LAMP giống hệt byte với input. Dòng cũ ở đây ghi
+  `vault_output.lamp + treasury_output.lamp == vault_input.lamp` "không cần kiểm tường
+  minh" — bám theo là mở đúng lỗ mà `ig_neg_value_drained` bắt.
 
 ---
 
@@ -189,16 +231,13 @@ P8: off-chain SDK phải dùng cùng encoding. Xem `instant.ts` phần `computeB
 
 ## 5. Deploy dependencies
 
-Validator `vault` cần 4 parameters được apply lúc compile/build:
+Danh sách tham số apply lúc build đọc ở `parameters[]` trong `onchain/plutus.json` —
+xem mục 2. Khối 4 dòng cũ ở đây (có `treasury_addr`) đã sai.
 
-```
-lamp_policy_id  : PolicyId   -- từ deploy LAMP token
-treasury_addr   : Address    -- Script address (phải verify là Script credential)
-um_nft_policy   : PolicyId   -- từ deploy UM NFT
-ms_per_epoch    : Int        -- 86_400_000 (Preview) hoặc 432_000_000 (Mainnet)
-```
-
-**Thứ tự apply parameters phải match `aiken.toml`.**
+**Thứ tự apply phải khớp blueprint, không khớp `aiken.toml`.** Cổng máy:
+`cd scripts && npm run check:params` — so tên + thứ tự giữa `parameters[].title` và
+`scripts/deployParams.ts`. Nhánh `mint` và nhánh `spend` của cùng script đa-mục-đích phải
+nhận **y hệt** danh sách, nếu không NFT danh tính mint ra không thuộc vault nào.
 
 UM datum UTxO phải tồn tại trước khi bất kỳ InstantGen nào có thể chạy (validator `find_um_datum` fail nếu không có reference input với NFT đúng).
 
@@ -206,8 +245,10 @@ UM datum UTxO phải tồn tại trước khi bất kỳ InstantGen nào có th�
 
 ## 6. Các stub / locked handlers
 
-### ApplyHalving (vault.ak:78)
-Hiện chỉ check `owner ∈ extra_signatories`. TODO v1.1: gọi `apply_pending_profile` và tính halving đúng + A02 check.
+### ApplyHalving — ĐÃ CHẾT
+Không còn handler này. Slot constr 1 nay là `PruneExpired`: dọn rác batch chết,
+permissionless (§7.4), có `reject-noop` chống spam và cấm chạm `consumed_credit`.
+Xem [`DESIGN-PHASE2.md`](DESIGN-PHASE2.md) §3.
 
 ### BurnBatch (vault.ak:89)
 **Hard-locked** với `fail @"BurnBatch locked until v1.1"`. Không thể claim MAGIC đến khi ConsumeMAGIC được implement đầy đủ. Lý do: stub cũ `expect owner_sign; True` không có output constraint → LAMP drain vector.

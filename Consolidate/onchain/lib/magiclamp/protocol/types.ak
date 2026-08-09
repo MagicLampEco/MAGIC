@@ -1,7 +1,8 @@
-// lib/magiclamp/protocol/types.ak — GenMAGIC v3.3 Data Types (shared)
+// lib/magiclamp/protocol/types.ak — lược đồ Plutus Data dùng chung.
 //
 // ── AUDIT FIX (Bug 1) ─────────────────────────────────────────────────────
-// VaultDatum ở đây là bản ĐẦY ĐỦ (mirror SnapshotGen/onchain/.../types.ak),
+// VaultDatum ở đây là bản ĐẦY ĐỦ (mirror InstantGen/onchain/.../types.ak —
+// bản SnapshotGen từng là mốc nay đã ở Legacy/, đừng đi tìm),
 // KHÔNG cắt ngắn. Validator vault_consolidate phải decode đúng MỌI field theo
 // đúng thứ tự constructor, nếu không CBOR decode sẽ FAIL (vault kẹt) hoặc ví
 // chủ có thể reset streak/profile/xoá batches (DRAIN). Đây là xương sống

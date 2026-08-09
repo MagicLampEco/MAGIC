@@ -1,6 +1,11 @@
 # EXEC.md — ScheduleGen Execution Guide
 ## GenMAGIC v3.3 · §11 ScheduleGen · Cardano Preview Testnet
 
+> ⚠ **PHA 2 — I-ACT-7: LAMP ĐỨNG YÊN.** `ScheduleFire` chỉ giải phóng khoá; `lamp_balance`
+> bất biến, không có output Treasury, `TREASURY_ADDRESS` là biến môi trường chết.
+> Validator `vault` nhận **4** apply-param: `lamp_policy_id`, `lamp_asset_name`,
+> `shard_policy_id`, `ms_per_epoch`. Xem [`README.md`](./README.md).
+
 ---
 
 ## 1. Deploy Steps (ordered)
@@ -30,9 +35,25 @@ LAMP_POLICY_ID=<từ deploy LAMP>
 VAULT_SCRIPT_HASH=<từ plutus.json — vault validator>
 SHARD_SCRIPT_HASH=<từ plutus.json — shard validator>
 SHARD_NFT_POLICY_ID=<one-shot minting policy cho 16 SHARD NFTs>
-TREASURY_ADDRESS=<script address — PHẢI là Script credential>
+LAMP_ASSET_NAME=tLAMP    # THEO MẠNG: tLAMP testnet / LAMP mainnet
 MS_PER_EPOCH=86400000
 ```
+
+Validator `vault` nhận **4** apply-param, đúng thứ tự: `lamp_policy_id`,
+`lamp_asset_name`, `shard_policy_id`, `ms_per_epoch`. `treasury_addr` **không còn** —
+một fire không chuyển LAMP đi đâu (I-ACT-7), nên `TREASURY_ADDRESS` là biến môi trường
+chết, đừng khai lại.
+
+> Danh sách trên chỉ là ảnh chụp cho người đọc. **Nguồn thật** là mảng `parameters[]`
+> trong `onchain/plutus.json` do `aiken build` sinh. Trước khi apply, chạy cổng đối chiếu
+> tên + thứ tự:
+> ```bash
+> cd /Users/ductiger/Projects/MAGIC/scripts && npm run check:params
+> ```
+> Vì sao bắt buộc: `applyParamsToScript` không kiểm arity. Bản tài liệu cũ ghi 4 tham số
+> với `TREASURY_ADDR` ở vị trí #2 — đếm đúng, nội dung sai, nên mọi kiểm "arity khớp" đều
+> xanh trong khi script hash là của một vault khác. Hậu quả: vault mainnet không nhìn thấy
+> LAMP của chính nó, LAMP thật kẹt vĩnh viễn.
 
 ### Bước 3: Deploy 16 Shard UTxOs
 
@@ -115,7 +136,7 @@ npx tsx test/schedulegen_e2e.ts
 | M_i = 0 (R_snap quá thấp) | ScheduleCommit | REJECT | C-SCH-RATE |
 | Fire trước `start_fire_epoch` | ScheduleFire | REJECT | C-FIRE-1 |
 | Fire với `fires_in_tx = 0` | ScheduleFire | REJECT | `vault.ak:240` |
-| Treasury là wallet address | ScheduleFire | REJECT | PR #11 pt3 |
+| Tx fire rút LAMP ra khỏi vault output | ScheduleFire | REJECT | I-ACT-7 (`lamp_balance` bất biến) |
 | Vault output datum sai field | ScheduleCommit/Fire | REJECT | A02 |
 | 2 vault outputs | ScheduleCommit/Fire | REJECT | C-VAULT-OUT-1 |
 | Không có chữ ký owner khi Commit | ScheduleCommit | REJECT | C-VAC-1 equiv |
@@ -160,7 +181,6 @@ Sau deploy:
 | Hạng mục | Lý do | Ưu tiên |
 |---|---|---|
 | **BurnBatch / ConsumeMAGIC (v1.1)** | Hiện locked, cần full A02 + apply_pending_profile | Cao |
-| **TypeScript `WithdrawLamp` redeemer** | `types.ts:VaultRedeemerSchema` thiếu constr 3 | Trung bình |
 | **Auto-burn integration** | `auto_burn_target` field trong datum chưa được xử lý | Thấp |
 | **Shard cap governance** | Hiện hardcoded; cần DAO-updatable trong v2 | Thấp |
 | **Multi-schedule fire** | Hiện 1 tx fire 1 schedule; có thể batch nhiều schedules cùng lúc | Thấp |

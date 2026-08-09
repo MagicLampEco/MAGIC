@@ -1,5 +1,5 @@
 {
-  "name": "@magic-protocol/flow-rate",
+  "name": "@magiclamp/flowrate",
   "version": "1.0.0",
   "type": "module",
   "scripts": {

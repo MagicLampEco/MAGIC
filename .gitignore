@@ -4,6 +4,16 @@ dist/
 *.env
 .DS_Store
 
+# Nhà riêng agent + worktree tạm — KHÔNG đẩy lên org repo
+_Agents/
+.claude/
+
+# Khoá / bí mật — chặn sẵn, không bao giờ commit
+*.key
+*.pem
+*.pat
+*.mnemonic
+
 # Aiken build artifacts
 */onchain/build/
 */onchain/plutus.json

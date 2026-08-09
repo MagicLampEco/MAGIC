@@ -91,6 +91,19 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
   Bài học đắt nhất của repo này là một danh sách apply-param lệch với chữ ký validator:
   không test nào đỏ, không compile nào gãy, và sai chỉ lộ ra dưới dạng một vault trên
   mainnet có LAMP thật mà không ai spend được.
+- **Tệp lỗi thời thì XOÁ. `Legacy/` đã bãi bỏ** (chủ nhân chốt 2026-08-09, nguồn
+  `_rules/agent-hygiene.md §4`). `Legacy/` đang có thì **để yên** — xoá dần khi đụng tới, mỗi
+  lần một mục. Đừng dọn ngược cả loạt, và đừng dồn thêm gì vào đó. Ba điều kiện khi xoá,
+  thiếu một là chưa xong:
+  1. 🔴 Chỉ xoá thẳng thứ **đã commit** — git nhớ hộ nên hoàn tác được. Tệp chưa track thì xoá
+     là mất vĩnh viễn: commit trước, hoặc hỏi.
+  2. Xoá phải **kèm vá tham chiếu, chứng minh bằng lệnh** — dán output `grep` cho thấy 0 tham
+     chiếu treo, cộng một lệnh build/typecheck xanh. Nhãn "đã dọn" không kèm output thô là
+     **chưa dọn**.
+  3. **Rà lại mã đã viết DỰA TRÊN tệp vừa xoá.** Xem bài học ở cuối mục này.
+- **Trước khi xoá, tra `DEVSTATUS.md` mục `## Không được xoá`.** Định danh đã lên chain (chỉ
+  số constructor, tên asset, thứ tự trường datum, thứ tự apply-param) **không bao giờ** là tệp
+  lỗi thời — bỏ đi là vỡ decode mọi UTxO đã tạo.
 - **Không đọc `Legacy/`** trừ khi được yêu cầu rõ. Nó là kho lịch sử, không phải nguồn.
 - **Một sự thật một nơi giữ.** Cần số test thì trỏ `DEVSTATUS.md` hoặc chạy lệnh, đừng chép.
 - **Commit đặt tên tác giả thật**, không đặt tên công cụ.

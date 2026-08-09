@@ -49,7 +49,8 @@ trôi khỏi nguồn trong im lặng. Đã xảy ra thật một lần (AladinWo
 
 ## 2026-08-09 — Neo danh tính vault từ lúc sinh (INV-VAULT-IDENTITY)
 
-**Đổi gì.** Bốn validator vault gộp thêm handler `mint` vào chính `validator vault(...)`,
+**Đổi gì.** Hai validator vault SỐNG (`InstantGen`, `ScheduleGen`) gộp thêm handler `mint`
+vào chính `validator vault(...)`,
 sinh một NFT one-shot lúc tạo vault (`asset_name = blake2b_256(cbor.serialise(seed))`,
 policy = chính script hash); mọi nhánh `spend` đòi NFT còn nguyên, đúng tên. Genesis phải
 sạch: mọi trường trạng thái tích luỹ rỗng/0, `lamp_balance` bằng đúng LAMP thật trong
@@ -59,9 +60,16 @@ output, `owner` nằm trong signatories. `lamp_asset_name` thành apply-param #2
 ai cũng đặt được một UTxO ở địa chỉ script với datum bịa (`current_amount = 10^18`) rồi rút
 MAGIC/LAMP thật. Lỗ này chặn mainnet, đã dựng được PoC.
 
-**Gãy gì.** Chữ ký apply-param của cả bốn vault đổi ⇒ **script hash đổi ⇒ địa chỉ đổi**.
+**Gãy gì.** Chữ ký apply-param của cả hai vault đổi ⇒ **script hash đổi ⇒ địa chỉ đổi**.
 Mọi vault tạo bằng bản cũ nằm ở địa chỉ khác. Off-chain **bắt buộc** phải mint NFT khi tạo
 vault — không mint thì vault không spend được, LAMP kẹt vĩnh viễn.
+
+**Chưa phủ.** `Consolidate/onchain/validators/vault_consolidate.ak` và
+`ProfileChange/onchain/validators/vault_profile.ak` **không** có handler `mint` và **không**
+kiểm NFT danh tính ở đâu cả (đếm được 0 tham chiếu). Hai module đó đang mồ côi và mang script
+hash riêng nên chưa có tài sản nào đi qua chúng — nhưng ngày nào hội tụ (D4) thì phải nối
+INV-VAULT-IDENTITY trước, không thì mở lại đúng lỗ 2-ADA-datum-bịa mà bất biến này sinh ra để
+bịt. Bản ghi cũ ở đây viết "bốn vault", làm người rà tưởng đã phủ hết.
 
 **KHÔNG ghim `profile`** trong genesis dù nó nằm trong datum: đó là lựa chọn chiến lược
 của người dùng, không phải trạng thái tích luỹ; ghim vào sẽ chặn hết luồng chuẩn.
@@ -70,7 +78,9 @@ của người dùng, không phải trạng thái tích luỹ; ghim vào sẽ ch
 
 **Đổi gì.** `required_for` (Aiken) và `requiredForOp` (TS) gộp-sàn-**một lần** cho cả tổng
 thay vì sàn từng lượt rồi nhân. `valid_param` bắt buộc `m_min`/`m_max` đúng dải đã ghim và
-`base_price == 0 || base_price × m_min ≥ Q`. `buildConsumeTx` đọc `base_price` từ beacon,
+`base_price × m_min ≥ Q` — **không có nhánh thoát cho `base_price == 0`**; dòng giá 0 bị từ
+chối thẳng. (Bản ghi đầu ở đây viết `base_price == 0 || …`, sai: ai post beacon theo đó sẽ bị
+từ chối không hiểu vì sao, còn ai "sửa mã cho khớp" thì mở lại lỗ giá-về-0.) `buildConsumeTx` đọc `base_price` từ beacon,
 hết dùng hằng MVP trên đường tiền. Sổ `op_type` trong `CONTRACT.md` thành bảng 1..6.
 
 **Vì sao.** Hai lỗi do bên tiêu thụ báo lên và dựng lại được: sàn áp trước khi nhân số lượt

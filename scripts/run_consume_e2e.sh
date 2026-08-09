@@ -6,14 +6,22 @@
 #   bash run_consume_e2e.sh            # Preview (mặc định)
 #   bash run_consume_e2e.sh Preprod    # Preprod
 #
-# Tự dò biến seed ví deploy trong $AGENT_SECRETS rồi export WALLET_SEED — chỉ DÙNG
-# value, KHÔNG in ra. Prereq LAMP/UM/backing nạp tự động qua dotenv từ scripts/.env.
+# Secret (Blockfrost + seed) chỉ DÙNG value từ $AGENT_SECRETS, KHÔNG in ra.
 #
-# 4 bước, nối env qua stdout của bước trước:
-#   [1] 05 deploy vault InstantGen converge → VAULT_INSTANT_HASH
-#   [2] test:instant gen MAGIC   ⚠ CHECKPOINT: vault SHUT (BackingBeacon all-zero) sẽ dừng ở đây
-#   [3] 09 deploy consume infra (price/engage NFT + beacon + Engage) → export block
-#   [4] consume_only tiêu MAGIC thật (co-spend Engage + vault BurnBatch)
+# PREREQ tự bootstrap theo NETWORK (vá lỗi "Run step 01 first; missing LAMP_POLICY_ID"):
+#   - Prereq (LAMP policy, UM policy+hash) là ONE-SHOT / mạng. Lưu vào deployed.$NET.env
+#     (đã .gitignore qua *.env). Lần chạy sau tự đọc lại, KHÔNG mint trùng.
+#   - Muốn tái dùng bản deploy sẵn: export LAMP_POLICY_ID / UM_NFT_POLICY_ID / UM_DATUM_HASH
+#     trước khi chạy, HOẶC điền vào deployed.$NET.env. Có giá trị → bỏ qua bootstrap.
+#   - Giá trị export/đọc-file LUÔN thắng dotenv scripts/.env → không lẫn policy giữa 2 mạng.
+#
+# Các bước:
+#   [0a] 01 mint LAMP           → LAMP_POLICY_ID           (bootstrap nếu thiếu)
+#   [0b] 02 deploy UM           → UM_NFT_POLICY_ID + UM_DATUM_HASH  (bootstrap nếu thiếu)
+#   [1]  05 deploy vault InstantGen converge → VAULT_INSTANT_HASH
+#   [2]  test:instant gen MAGIC ⚠ CHECKPOINT: vault SHUT (BackingBeacon all-zero) sẽ dừng ở đây
+#   [3]  09 deploy consume infra (price/engage NFT + beacon + Engage) → export block
+#   [4]  consume_only tiêu MAGIC thật (co-spend Engage + vault BurnBatch)
 set -euo pipefail
 
 NET="${1:-Preview}"
@@ -25,6 +33,15 @@ esac
 : "${AGENT_SECRETS:?✗ AGENT_SECRETS chưa set}"
 cd "$(dirname "$0")"
 
+STATE_FILE="deployed.$NET.env"
+persist() { printf '%s=%s\n' "$1" "$2" >> "$STATE_FILE"; }
+
+# Đọc lại prereq đã deploy cho ĐÚNG mạng này (nếu có) — export để thắng dotenv.
+if [ -f "$STATE_FILE" ]; then
+  echo "▶ Đọc prereq đã lưu: $STATE_FILE"
+  set -a; . "./$STATE_FILE"; set +a
+fi
+
 echo "▶ Dò biến seed ví deploy…"
 SEED_VAR="$(npx tsx detect_deploy_wallet.ts)"
 echo "  → biến seed: $SEED_VAR"
@@ -35,6 +52,33 @@ export WALLET_SEED="$(grep "^${SEED_VAR}=" "$AGENT_SECRETS" | cut -d= -f2-)"
 [ -n "${BLOCKFROST_KEY:-}" ] || { echo "✗ không lấy được $BF_VAR"; exit 1; }
 [ -n "${WALLET_SEED:-}" ]    || { echo "✗ không lấy được seed $SEED_VAR"; exit 1; }
 echo "  → NETWORK=$NET, Blockfrost + seed đã nạp (không in)."
+
+# ── [0a] Prereq: LAMP policy ────────────────────────────────────────────────
+if [ -z "${LAMP_POLICY_ID:-}" ]; then
+  echo; echo "▶ [0a] Chưa có LAMP_POLICY_ID cho $NET → mint LAMP (01)…"
+  OUT01="$(npx tsx deploy/01_mint_lamp.ts | tee /dev/tty)"
+  export LAMP_POLICY_ID="$(printf '%s\n' "$OUT01" | grep -oE 'LAMP_POLICY_ID=[0-9a-f]+' | head -1 | cut -d= -f2- || true)"
+  [ -n "${LAMP_POLICY_ID:-}" ] || { echo "✗ 01 không in LAMP_POLICY_ID (01 lỗi?)"; exit 1; }
+  persist LAMP_POLICY_ID "$LAMP_POLICY_ID"
+  echo "  → LAMP_POLICY_ID=$LAMP_POLICY_ID (đã lưu $STATE_FILE)"
+else
+  echo; echo "▶ [0a] Dùng lại LAMP_POLICY_ID=$LAMP_POLICY_ID"
+fi
+
+# ── [0b] Prereq: UM policy + script hash ────────────────────────────────────
+if [ -z "${UM_NFT_POLICY_ID:-}" ] || [ -z "${UM_DATUM_HASH:-}" ]; then
+  echo; echo "▶ [0b] Chưa đủ UM (policy/hash) cho $NET → deploy UM (02)…"
+  OUT02="$(npx tsx deploy/02_deploy_um.ts | tee /dev/tty)"
+  export UM_DATUM_HASH="$(printf '%s\n' "$OUT02" | grep -oE 'UM_DATUM_HASH=[0-9a-f]+' | head -1 | cut -d= -f2- || true)"
+  export UM_NFT_POLICY_ID="$(printf '%s\n' "$OUT02" | grep -oE 'UM_NFT_POLICY_ID=[0-9a-f]+' | head -1 | cut -d= -f2- || true)"
+  { [ -n "${UM_DATUM_HASH:-}" ] && [ -n "${UM_NFT_POLICY_ID:-}" ]; } \
+    || { echo "✗ 02 không in UM_DATUM_HASH/UM_NFT_POLICY_ID (02 lỗi?)"; exit 1; }
+  persist UM_DATUM_HASH "$UM_DATUM_HASH"
+  persist UM_NFT_POLICY_ID "$UM_NFT_POLICY_ID"
+  echo "  → UM_NFT_POLICY_ID=$UM_NFT_POLICY_ID · UM_DATUM_HASH=$UM_DATUM_HASH (đã lưu $STATE_FILE)"
+else
+  echo; echo "▶ [0b] Dùng lại UM_NFT_POLICY_ID=$UM_NFT_POLICY_ID"
+fi
 
 echo; echo "▶ [1/4] Deploy vault InstantGen (converge)…"
 OUT05="$(npx tsx deploy/05_create_instant_vault.ts | tee /dev/tty)"

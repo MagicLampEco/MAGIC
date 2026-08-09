@@ -1,11 +1,23 @@
 {
   "name": "@magiclamp/consumemagic-pricing",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "main": "src/price.ts",
-  "types": "src/price.ts",
-  "exports": { ".": "./src/price.ts" },
-  "scripts": { "test": "vitest run" },
+  "main": "./dist/cjs/price.js",
+  "module": "./dist/esm/price.js",
+  "types": "./dist/esm/price.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/price.d.ts",
+      "import": "./dist/esm/price.js",
+      "require": "./dist/cjs/price.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('dist/cjs/package.json', JSON.stringify({type:'commonjs'}))\"",
+    "prepare": "npm run build",
+    "test": "vitest run"
+  },
   "dependencies": {
     "@magiclamp/protocol-utils": "file:../../ProtocolUtils"
   },

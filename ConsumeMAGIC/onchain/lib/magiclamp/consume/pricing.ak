@@ -22,7 +22,34 @@ pub const m_min_q: Int = 500_000_000
 
 pub const m_max_q: Int = 2_000_000_000
 
+/// Trần số dòng trong bảng giá `op_prices`.
+///
+/// VÌ SAO CẦN CAP: `valid_param` chạy MỘT LẦN / Engage input (mỗi invocation của
+/// consume.spend). Không cap ⇒ committee (hoặc kẻ chiếm committee) post bảng vài
+/// nghìn dòng ⇒ MỌI tx consume vượt ex-unit ⇒ DoS toàn cơ chế, không hạ được vì
+/// beacon chỉ sửa được bởi chính committee.
+///
+/// VÌ SAO 16 — chọn theo SỐ ĐO `aiken check`, không theo cảm giác. Chi phí
+/// `valid_param` trên bảng ĐẦY (gồm cả dựng list trong test):
+///     n= 8 → 339 K mem /  111 M cpu
+///     n=12 → 601 K mem /  199 M cpu
+///     n=16 → 940 K mem /  314 M cpu
+///     n=24 → 1.84 M mem /  625 M cpu
+///     n=32 → 3.05 M mem / 1.04 B cpu
+///   Trần tx Cardano: 14 M mem / 10 B cpu. Ràng buộc BINDING là MEM, không phải CPU.
+///   Ở n=16, một tx gộp 3 Engage input trả ~2.8 M mem (20% ngân sách) riêng cho việc
+///   kiểm bảng giá — còn chỗ cho phần còn lại của validator (tx 2-engage hiện đo
+///   2.00 M mem tổng). Ở n=32, chỉ riêng 2 invocation đã ngốn ~6.1 M (44%) ⇒ LOẠI.
+///   MVP dùng 2 loại nghiệp vụ ⇒ 16 vẫn dư 8× cho mở rộng.
+///
+/// Cap này nằm DƯỚI trần ledger thật (16 dòng ≈ 256 byte datum, xa trần datum-size)
+/// ⇒ nó thực sự ràng buộc, không phải cap trang trí đặt TRÊN trần thật.
+pub const max_op_prices: Int = 16
+
 /// Tìm base_price cho op_type trong bảng giá. None nếu op_type không tồn tại.
+/// AN TOÀN nhờ `valid_param` đã ép op_type PHÂN BIỆT đôi một — nếu không, `list.find`
+/// lấy dòng ĐẦU trong khi bản off-chain viết bằng map (last-wins) lấy dòng CUỐI ⇒ hai
+/// phía lệch giá im lặng.
 pub fn lookup_base(op_prices: List<OpPrice>, op_type: Int) -> Option<Int> {
   when list.find(op_prices, fn(p) { p.op_type == op_type }) is {
     Some(p) -> Some(p.base_price)
@@ -30,18 +57,36 @@ pub fn lookup_base(op_prices: List<OpPrice>, op_type: Int) -> Option<Int> {
   }
 }
 
+/// op_type phân biệt đôi một (O(n²) — an toàn vì `op_prices` đã bị cap `max_op_prices`).
+pub fn distinct_op_types(op_prices: List<OpPrice>) -> Bool {
+  when op_prices is {
+    [] -> True
+    [x, ..rest] ->
+      !list.any(rest, fn(p) { p.op_type == x.op_type }) && distinct_op_types(rest)
+  }
+}
+
 /// Bất biến datum PriceParam (C-CM-2 defense-in-depth, CONTRACT §E "mọi giá trị ≥ 0"):
 ///   BAND TUYỆT ĐỐI: m_min == m_min_q ∧ m_max == m_max_q (pin, chống band-escape #1b);
 ///   0 ≤ m_min ≤ m_max ; m_min ≤ demand_mult ≤ m_max ; epoch ≥ 0 ; MỌI base_price ≥ 0;
-///   GATE-giá-tối-thiểu: MỌI op có base_price == 0 HOẶC base_price × m_min ≥ q.
+///   BẢNG GIÁ: len(op_prices) ≤ max_op_prices ∧ op_type PHÂN BIỆT đôi một;
+///   GATE-giá-tối-thiểu: MỌI op có base_price × m_min ≥ q.
 /// Lý do các tầng:
 ///   - Pin m_min/m_max: PostPrice cẩu thả đặt m_max khổng lồ ⇒ price = base×demand/q nổ
 ///     ~1e6× (verified). Check tương-đối (m_min≤demand≤m_max) KHÔNG chặn được vì demand
 ///     cũng theo m_max. Phải neo về HẰNG compile-time.
 ///   - GATE base×m_min ≥ q: bảo đảm giá 1 đơn-vị ở demand THẤP NHẤT ≥ 1 nanogic
 ///     (⌊base×m_min/q⌋ ≥ 1) ⇒ đóng collapse-to-0 (#1b): base quá nhỏ ⇒ giá làm tròn về 0
-///     ⇒ drain miễn phí. base_price == 0 là dòng "miễn phí có chủ đích" (được phép).
+///     ⇒ drain miễn phí.
+///     [VÁ 2026-08-09] BỎ ngoại lệ `base_price == 0`. Nó là NHÁNH CHẾT: consume ép
+///     `required > 0` nên dòng giá 0 luôn bị từ chối ở tầng trên; giữ lại chỉ tạo ảo
+///     giác "có dòng miễn phí" và mở một lối rẽ số-học không ai đi. Mọi dòng đều phải
+///     qua GATE ⇒ nhất quán với `required > 0`, ít nhánh hơn, dễ soi hơn.
 ///   - base_price ≥ 0: giá âm → required âm → burn=0 thoả "≥ required" (drain miễn phí).
+///     (Sau khi bỏ ngoại lệ base==0, điều kiện này bị GATE bao hàm — giữ làm belt.)
+///   - [VÁ 2026-08-09] cap độ dài + op_type phân biệt: xem `max_op_prices` /
+///     `distinct_op_types`. Trùng op_type ⇒ on-chain `list.find` lấy dòng ĐẦU, off-chain
+///     viết bằng map lấy dòng CUỐI ⇒ hai phía lệch giá (10×) mà KHÔNG bên nào báo lỗi.
 /// Nếu sai → datum beacon không hợp lệ → consume phải fail (không dùng giá rác).
 pub fn valid_param(pp: PriceParam) -> Bool {
   and {
@@ -54,13 +99,16 @@ pub fn valid_param(pp: PriceParam) -> Bool {
     pp.demand_mult >= pp.m_min,
     pp.demand_mult <= pp.m_max,
     pp.epoch >= 0,
-    // per-op: base ≥ 0 VÀ (base == 0 HOẶC giá ≥ 1 nanogic ở demand thấp nhất) → #1b
+    // BẢNG GIÁ: có trần (ex-unit bị chặn) + khoá tra cứu KHÔNG nhập nhằng
+    list.length(pp.op_prices) <= max_op_prices,
+    distinct_op_types(pp.op_prices),
+    // per-op: base ≥ 0 VÀ giá ≥ 1 nanogic ở demand thấp nhất (#1b, không ngoại lệ)
     list.all(
       pp.op_prices,
       fn(op) {
         and {
           op.base_price >= 0,
-          op.base_price == 0 || op.base_price * pp.m_min >= q,
+          op.base_price * pp.m_min >= q,
         }
       },
     ),
@@ -225,6 +273,74 @@ test valid_param_rejects_negative_epoch() {
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: -1,
+    }
+  !valid_param(bad)
+}
+
+// ── VÁ 2026-08-09 #7: bảng giá phải có TRẦN + op_type PHÂN BIỆT ────────────────
+
+test valid_param_rejects_duplicate_op_type() {
+  // [{1,10M},{1,99M}] TRƯỚC vá đi qua valid_param: on-chain lookup_base lấy dòng ĐẦU
+  // (10M), off-chain viết bằng map/fromEntries lấy dòng CUỐI (99M) ⇒ lệch ~10×, khớp
+  // được chỉ là TÌNH CỜ do cả hai cùng dùng `.find`. Sau vá: reject tận gốc.
+  let bad =
+    PriceParam {
+      op_prices: [
+        OpPrice { op_type: 1, base_price: 10_000_000 },
+        OpPrice { op_type: 1, base_price: 99_000_000 },
+      ],
+      demand_mult: q,
+      m_min: 500_000_000,
+      m_max: 2_000_000_000,
+      epoch: 100,
+    }
+  !valid_param(bad)
+}
+
+/// Bảng giá n dòng, op_type = 1..n phân biệt, base hợp GATE.
+fn mk_ops(n: Int) -> List<OpPrice> {
+  if n <= 0 {
+    []
+  } else {
+    list.push(mk_ops(n - 1), OpPrice { op_type: n, base_price: 10_000_000 })
+  }
+}
+
+fn pp_with_ops(ops: List<OpPrice>) -> PriceParam {
+  PriceParam {
+    op_prices: ops,
+    demand_mult: q,
+    m_min: 500_000_000,
+    m_max: 2_000_000_000,
+    epoch: 100,
+  }
+}
+
+test valid_param_accepts_max_op_prices() {
+  // Biên: đúng max_op_prices dòng → còn hợp lệ.
+  valid_param(pp_with_ops(mk_ops(max_op_prices)))
+}
+
+test valid_param_rejects_too_many_op_prices() {
+  // max_op_prices + 1 → reject (chặn bảng giá phình → DoS ex-unit mọi tx consume).
+  !valid_param(pp_with_ops(mk_ops(max_op_prices + 1)))
+}
+
+// ── VÁ 2026-08-09 #8: base_price == 0 là NHÁNH CHẾT → cấm hẳn ──────────────────
+
+test valid_param_rejects_zero_base_price() {
+  // Trước vá: valid_param CHO PHÉP (ngoại lệ "dòng miễn phí"), nhưng consume.ak ép
+  // `required > 0` nên op này KHÔNG BAO GIỜ dùng được → nhánh chết, gây hiểu nhầm.
+  let bad =
+    PriceParam {
+      op_prices: [
+        OpPrice { op_type: 1, base_price: 10_000_000 },
+        OpPrice { op_type: 2, base_price: 0 },
+      ],
+      demand_mult: q,
+      m_min: 500_000_000,
+      m_max: 2_000_000_000,
+      epoch: 100,
     }
   !valid_param(bad)
 }

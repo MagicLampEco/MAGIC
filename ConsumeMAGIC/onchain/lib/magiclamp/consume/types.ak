@@ -43,11 +43,22 @@ pub type PriceParam {
 ///   sinh trắc (PhoenixKey, Governance C1/C3). Đặt 1 lần lúc genesis, IMMUTABLE sau đó
 ///   (validator ép output.did_commit == input.did_commit). Validator KHÔNG ràng buộc
 ///   NỘI DUNG ở MVP (rỗng-được), chỉ ràng buộc bất biến.
+///
+/// `consumed_nanogic` (field 4, THÊM Ở CUỐI để KHÔNG dịch chỉ số field cũ):
+///   Tổng GIÁ TRỊ đã tiêu (nanogic) tích luỹ trên thread này.
+///   LÝ DO tồn tại: `consumed_count` chỉ đếm LƯỢT, KHÔNG phân biệt op rẻ / op đắt.
+///   Chỉ có count thì kẻ gọi trả tiền op_type=2 (CID, 1e6) rồi để app đọc "+1 lượt"
+///   mà cấp dịch vụ op_type=1 (ảnh, 1e7) → trả thiếu 10×. Validator ép bất biến
+///   THỨ HAI (song song với count):
+///       Σ consumed_nanogic(out@engage) == Σ consumed_nanogic(in@engage) + total_required
+///   ⇒ giá trị THẬT đã trả nằm on-chain. App PHẢI cấp dịch vụ theo delta của trường
+///   này, KHÔNG theo `consumed_count` (count giữ lại chỉ để thống kê/attribution).
 pub type EngageDatum {
-  owner          : ByteArray,
-  consumed_count : Int,
-  last_epoch     : Int,
-  did_commit     : ByteArray,
+  owner            : ByteArray,
+  consumed_count   : Int,
+  last_epoch       : Int,
+  did_commit       : ByteArray,
+  consumed_nanogic : Int,
 }
 
 /// Redeemer validator consume (engagement spend — CONTRACT.md §B2).

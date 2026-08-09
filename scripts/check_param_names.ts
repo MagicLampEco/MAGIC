@@ -17,7 +17,8 @@ import {
 } from "./applyParams.js";
 import {
   instantVaultParams, scheduleVaultParams, umDatumParams, shardSpendParams,
-  oneShotGenesisParams, priceParamParams, consumeParams,
+  oneShotGenesisParams, priceParamParams, consumeParams, paymasterParams,
+  addressData,
 } from "./deployParams.js";
 
 // Giá trị giữ chỗ — chỉ TÊN và THỨ TỰ mới được kiểm ở đây.
@@ -119,6 +120,22 @@ const CASES: Case[] = [
       priceNftPolicy: P28, priceNftName: "5052494345",
       vaultScriptHash: P28, burnBatchConstr: 2n,
       maxPriceStale: 1n, msPerEpoch: MS, priceParamScriptHash: P28,
+    }),
+  },
+  {
+    // Paymaster CHƯA có deploy script — case này có mặt TRƯỚC cái nó gác.
+    // Lý do: module này từng nằm ngoài mọi cổng, và `paymaster.ts` mô tả
+    // "đã apply 9 param" trong khi validator nhận 11. Hai cái thiếu là hai bản
+    // vá SEC-01 (`treasury_addr`, `lamp_asset_name`) — đúng thứ mà truyền sót
+    // sẽ dựng ra một Paymaster gửi LAMP đi đâu cũng được.
+    module: "Paymaster", title: "paymaster.paymaster.spend",
+    usedBy: "(chưa có deploy script — cổng dựng trước)",
+    params: paymasterParams({
+      vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
+      policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
+      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
+      treasuryAddr: addressData({ hash: P28, isScript: true }),
+      lampAssetName: "744c414d50",
     }),
   },
 ];

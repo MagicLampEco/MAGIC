@@ -20,6 +20,30 @@ export function outputReferenceData(txHash: string, outputIndex: number | bigint
   return new Constr(0, [txHash, BigInt(outputIndex)]);
 }
 
+/**
+ * `cardano/address.Address` = Constr 0 [payment_credential, stake_credential].
+ *   payment_credential : VerificationKey → Constr 0 [hash] · Script → Constr 1 [hash]
+ *   stake_credential   : None → Constr 1 [] · Some(Inline(cred)) → Constr 0 [Constr 0 [cred]]
+ *
+ * CẨN THẬN — đây là đẳng thức CẤU TRÚC, không phải so chuỗi bech32.
+ * `Paymaster/onchain/validators/paymaster.ak:128` lọc output bằng
+ * `o.address == treasury_addr`. Một ví Treasury có stake part mà bake vào tham số
+ * bằng bản KHÔNG stake sẽ không bao giờ khớp: không output nào lọt qua bộ lọc,
+ * LAMP không tới được Treasury, và mọi giao dịch Paymaster bị từ chối. Hai địa
+ * chỉ "nhìn giống nhau" trong ví vẫn là hai giá trị Plutus Data khác nhau.
+ */
+export function addressData(
+  payment: { hash: string; isScript: boolean },
+  stake?:  { hash: string; isScript: boolean },
+): Data {
+  const cred = (c: { hash: string; isScript: boolean }) =>
+    new Constr(c.isScript ? 1 : 0, [c.hash]);
+  return new Constr(0, [
+    cred(payment),
+    stake ? new Constr(0, [new Constr(0, [cred(stake)])]) : new Constr(1, []),
+  ]);
+}
+
 // ── InstantGen — vault.vault.{mint,spend} (7 tham số) ────────────
 // Neo: InstantGen/onchain/validators/vault.ak — `validator vault(...)`.
 export interface InstantVaultParamInputs {
@@ -138,5 +162,47 @@ export function consumeParams(i: ConsumeParamInputs): ParamMap {
     max_price_stale:         i.maxPriceStale,
     ms_per_epoch:            i.msPerEpoch,
     price_param_script_hash: i.priceParamScriptHash,
+  };
+}
+
+// ── Paymaster — paymaster.paymaster.{spend,else} (11 tham số) ────
+// Neo: Paymaster/onchain/validators/paymaster.ak — `validator paymaster(...)`.
+//
+// Paymaster CHƯA có script deploy. Khai ở đây trước vì đúng module này từng nằm
+// NGOÀI mọi cổng đồng bộ: `paymaster.ts` mô tả "đã apply 9 param" trong khi
+// validator nhận 11, và hai cái thiếu đúng là hai bản vá SEC-01 mới nhất
+// (`treasury_addr` ép LAMP về đúng Treasury, `lamp_asset_name` thay hardcode
+// #"744c414d50"). Người viết deploy script đầu tiên mà tin comment đó sẽ dựng
+// một Paymaster mainnet vừa gửi LAMP đi đâu cũng được, vừa không nhìn thấy LAMP.
+//
+// Khai TRƯỚC deploy script là cố ý: cổng phải có mặt trước cái nó gác.
+export interface PaymasterParamInputs {
+  vaultScriptHash:   string;
+  burnBatchConstr:   bigint;
+  lampPolicyId:      string;
+  policyNftPolicy:   string;
+  meterNftPolicy:    string;
+  protocolNftPolicy: string;
+  maxPolicyStale:    bigint;
+  maxDidEntries:     bigint;
+  msPerEpoch:        bigint;
+  /** Dựng bằng `addressData()` — đẳng thức CẤU TRÚC, đọc chú thích ở đó. */
+  treasuryAddr:      Data;
+  lampAssetName:     string;  // PARAM theo mạng (tLAMP testnet / LAMP mainnet)
+}
+
+export function paymasterParams(i: PaymasterParamInputs): ParamMap {
+  return {
+    vault_script_hash:   i.vaultScriptHash,
+    burn_batch_constr:   i.burnBatchConstr,
+    lamp_policy_id:      i.lampPolicyId,
+    policy_nft_policy:   i.policyNftPolicy,
+    meter_nft_policy:    i.meterNftPolicy,
+    protocol_nft_policy: i.protocolNftPolicy,
+    max_policy_stale:    i.maxPolicyStale,
+    max_did_entries:     i.maxDidEntries,
+    ms_per_epoch:        i.msPerEpoch,
+    treasury_addr:       i.treasuryAddr,
+    lamp_asset_name:     i.lampAssetName,
   };
 }

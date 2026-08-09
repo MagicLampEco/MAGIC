@@ -47,9 +47,9 @@ pub const m_max_q: Int = 2_000_000_000
 pub const max_op_prices: Int = 16
 
 /// Tìm base_price cho op_type trong bảng giá. None nếu op_type không tồn tại.
-/// AN TOÀN nhờ `valid_param` đã ép op_type PHÂN BIỆT đôi một — nếu không, `list.find`
-/// lấy dòng ĐẦU trong khi bản off-chain viết bằng map (last-wins) lấy dòng CUỐI ⇒ hai
-/// phía lệch giá im lặng.
+/// AN TOÀN nhờ `valid_param` đã ép bảng giá TĂNG NGẶT theo op_type — nếu không,
+/// `list.find` lấy dòng ĐẦU trong khi bản off-chain viết bằng map (last-wins) lấy
+/// dòng CUỐI ⇒ hai phía lệch giá im lặng.
 pub fn lookup_base(op_prices: List<OpPrice>, op_type: Int) -> Option<Int> {
   when list.find(op_prices, fn(p) { p.op_type == op_type }) is {
     Some(p) -> Some(p.base_price)
@@ -57,19 +57,33 @@ pub fn lookup_base(op_prices: List<OpPrice>, op_type: Int) -> Option<Int> {
   }
 }
 
-/// op_type phân biệt đôi một (O(n²) — an toàn vì `op_prices` đã bị cap `max_op_prices`).
-pub fn distinct_op_types(op_prices: List<OpPrice>) -> Bool {
+/// [VÁ 2026-08-09 #C] Bảng giá phải TĂNG NGẶT theo `op_type`.
+///
+/// Thay cho `distinct_op_types` (phân biệt đôi một, O(n²)). Hai cái lợi, không mất gì:
+///   1) O(n) thay O(n²) — `valid_param` chạy MỘT LẦN / Engage input nên đây là chi phí
+///      nhân theo số input.
+///   2) DẠNG CHUẨN TẮC: một tập op_type chỉ có ĐÚNG MỘT cách viết hợp lệ ⇒ off-chain
+///      KHÔNG sinh nổi bảng nhập nhằng (thứ tự khác nhau = bảng khác nhau), và tăng
+///      ngặt đã BAO HÀM "không trùng" (a < b ⇒ a ≠ b).
+/// Đổi lại: off-chain BẮT BUỘC sắp xếp bảng giá theo op_type tăng dần trước khi post.
+pub fn sorted_strict_op_types(op_prices: List<OpPrice>) -> Bool {
   when op_prices is {
     [] -> True
-    [x, ..rest] ->
-      !list.any(rest, fn(p) { p.op_type == x.op_type }) && distinct_op_types(rest)
+    [x, ..rest] -> increasing_after(x.op_type, rest)
+  }
+}
+
+fn increasing_after(prev: Int, rest: List<OpPrice>) -> Bool {
+  when rest is {
+    [] -> True
+    [x, ..tail] -> x.op_type > prev && increasing_after(x.op_type, tail)
   }
 }
 
 /// Bất biến datum PriceParam (C-CM-2 defense-in-depth, CONTRACT §E "mọi giá trị ≥ 0"):
 ///   BAND TUYỆT ĐỐI: m_min == m_min_q ∧ m_max == m_max_q (pin, chống band-escape #1b);
 ///   0 ≤ m_min ≤ m_max ; m_min ≤ demand_mult ≤ m_max ; epoch ≥ 0 ; MỌI base_price ≥ 0;
-///   BẢNG GIÁ: len(op_prices) ≤ max_op_prices ∧ op_type PHÂN BIỆT đôi một;
+///   BẢNG GIÁ: len(op_prices) ≤ max_op_prices ∧ op_type TĂNG NGẶT (dạng chuẩn tắc);
 ///   GATE-giá-tối-thiểu: MỌI op có base_price × m_min ≥ q.
 /// Lý do các tầng:
 ///   - Pin m_min/m_max: PostPrice cẩu thả đặt m_max khổng lồ ⇒ price = base×demand/q nổ
@@ -84,9 +98,10 @@ pub fn distinct_op_types(op_prices: List<OpPrice>) -> Bool {
 ///     qua GATE ⇒ nhất quán với `required > 0`, ít nhánh hơn, dễ soi hơn.
 ///   - base_price ≥ 0: giá âm → required âm → burn=0 thoả "≥ required" (drain miễn phí).
 ///     (Sau khi bỏ ngoại lệ base==0, điều kiện này bị GATE bao hàm — giữ làm belt.)
-///   - [VÁ 2026-08-09] cap độ dài + op_type phân biệt: xem `max_op_prices` /
-///     `distinct_op_types`. Trùng op_type ⇒ on-chain `list.find` lấy dòng ĐẦU, off-chain
-///     viết bằng map lấy dòng CUỐI ⇒ hai phía lệch giá (10×) mà KHÔNG bên nào báo lỗi.
+///   - [VÁ 2026-08-09] cap độ dài + op_type TĂNG NGẶT: xem `max_op_prices` /
+///     `sorted_strict_op_types`. Trùng op_type ⇒ on-chain `list.find` lấy dòng ĐẦU,
+///     off-chain viết bằng map lấy dòng CUỐI ⇒ hai phía lệch giá (10×) mà KHÔNG bên nào
+///     báo lỗi. Tăng ngặt bao hàm "không trùng" và loại luôn bảng cùng-tập-khác-thứ-tự.
 /// Nếu sai → datum beacon không hợp lệ → consume phải fail (không dùng giá rác).
 pub fn valid_param(pp: PriceParam) -> Bool {
   and {
@@ -101,7 +116,7 @@ pub fn valid_param(pp: PriceParam) -> Bool {
     pp.epoch >= 0,
     // BẢNG GIÁ: có trần (ex-unit bị chặn) + khoá tra cứu KHÔNG nhập nhằng
     list.length(pp.op_prices) <= max_op_prices,
-    distinct_op_types(pp.op_prices),
+    sorted_strict_op_types(pp.op_prices),
     // per-op: base ≥ 0 VÀ giá ≥ 1 nanogic ở demand thấp nhất (#1b, không ngoại lệ)
     list.all(
       pp.op_prices,
@@ -297,12 +312,14 @@ test valid_param_rejects_duplicate_op_type() {
   !valid_param(bad)
 }
 
-/// Bảng giá n dòng, op_type = 1..n phân biệt, base hợp GATE.
+/// Bảng giá n dòng, op_type = 1..n TĂNG NGẶT (dạng chuẩn tắc), base hợp GATE.
+/// (Bản cũ dùng `list.push` nên sinh ra bảng GIẢM dần — hợp lệ với luật "phân biệt
+/// đôi một" nhưng vi phạm luật "tăng ngặt" mới. Phải nối vào ĐUÔI.)
 fn mk_ops(n: Int) -> List<OpPrice> {
   if n <= 0 {
     []
   } else {
-    list.push(mk_ops(n - 1), OpPrice { op_type: n, base_price: 10_000_000 })
+    list.concat(mk_ops(n - 1), [OpPrice { op_type: n, base_price: 10_000_000 }])
   }
 }
 
@@ -360,4 +377,53 @@ test valid_param_negative_base_price_fail() {
       epoch: 100,
     }
   !valid_param(bad)
+}
+
+// ── VÁ 2026-08-09 #C: bảng giá phải TĂNG NGẶT theo op_type (dạng chuẩn tắc) ────
+
+test valid_param_rejects_unsorted_op_types() {
+  // Cùng TẬP op_type {1,2} nhưng viết ngược thứ tự. Trước vá: hợp lệ (phân biệt đôi
+  // một là đủ) ⇒ off-chain sinh được HAI bảng khác nhau cho cùng một biểu giá, và
+  // `list.find` on-chain phụ thuộc thứ tự. Sau vá: chỉ MỘT cách viết hợp lệ → reject.
+  let bad =
+    PriceParam {
+      op_prices: [
+        OpPrice { op_type: 2, base_price: 1_000_000 },
+        OpPrice { op_type: 1, base_price: 10_000_000 },
+      ],
+      demand_mult: q,
+      m_min: 500_000_000,
+      m_max: 2_000_000_000,
+      epoch: 100,
+    }
+  !valid_param(bad)
+}
+
+test valid_param_accepts_sorted_op_types() {
+  // Đối chứng: đúng tập đó, sắp xếp tăng dần → hợp lệ.
+  valid_param(pp_mvp(q))
+}
+
+test valid_param_rejects_equal_neighbour_op_types() {
+  // Trùng op_type ở hai dòng LIỀN KỀ: tăng NGẶT (>) đã bao (không cần luật riêng).
+  let bad =
+    PriceParam {
+      op_prices: [
+        OpPrice { op_type: 1, base_price: 10_000_000 },
+        OpPrice { op_type: 1, base_price: 99_000_000 },
+        OpPrice { op_type: 2, base_price: 1_000_000 },
+      ],
+      demand_mult: q,
+      m_min: 500_000_000,
+      m_max: 2_000_000_000,
+      epoch: 100,
+    }
+  !valid_param(bad)
+}
+
+test sorted_strict_op_types_edge_cases() {
+  // Bảng rỗng và bảng 1 dòng: hợp lệ theo định nghĩa (không có cặp nào để so).
+  sorted_strict_op_types([]) && sorted_strict_op_types(
+    [OpPrice { op_type: 7, base_price: 10_000_000 }],
+  )
 }

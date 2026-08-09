@@ -69,6 +69,19 @@ validator price_param(
     expect beacon_out.address == beacon_in.address
     expect assets.lovelace_of(beacon_out.value) >= assets.lovelace_of(beacon_in.value)
 
+    // ── VÁ #B 2026-08-09: PIN TOÀN BỘ PHẦN NON-ADA CỦA VALUE ──────────────────
+    //   Trước vá chỉ ghim ADA ≥ và NFT == 1 — hai mệnh đề đó KHÔNG nói gì về phần
+    //   value còn lại: committee (hoặc kẻ chiếm được ngưỡng) vừa nhét được token rác
+    //   vào beacon (UTxO phình dần → mỗi lần post phải mang theo, min-UTxO tăng, tới
+    //   lúc nào đó tốn thêm ex-unit/kích thước vô ích) vừa RÚT được token lạ ai đó
+    //   lỡ gửi tới. Ghim CHÍNH XÁC: phần non-ADA của output PHẢI y hệt input.
+    //   VẪN GIỮ đường top-up ADA (ràng buộc ADA là `>=`, không phải `==`) để còn nạp
+    //   thêm cho min-UTxO khi protocol param đổi.
+    expect
+      assets.without_lovelace(beacon_out.value) == assets.without_lovelace(
+        beacon_in.value,
+      )
+
     // epoch đơn điệu TĂNG (chống rollback về giá thấp khi demand đã lên).
     expect out_datum.epoch > datum.epoch
 
@@ -290,4 +303,63 @@ test price_param_lovelace_topup_happy() {
       util.script_address(pp_sh), 2_000_000, 5_000_000,
     )
   pp_spend(pp_committee, pp_threshold, tx)
+}
+
+// ── VÁ #B 2026-08-09: ghim TOÀN BỘ value beacon (phần non-ADA) ─────────────────
+
+/// tx post giá với token LẠ tuỳ biến ở input / output (ngoài NFT authenticity).
+fn pp_tx_tok(tok_in: Int, tok_out: Int, lovelace_out: Int) -> Transaction {
+  let addr = util.script_address(pp_sh)
+  let base_in = assets.add(assets.from_lovelace(2_000_000), pp_nft_policy, pp_nft_name, 1)
+  let base_out = assets.add(assets.from_lovelace(lovelace_out), pp_nft_policy, pp_nft_name, 1)
+  let v_in =
+    if tok_in > 0 {
+      assets.add(base_in, #"0a0a", #"544f4b", tok_in)
+    } else {
+      base_in
+    }
+  let v_out =
+    if tok_out > 0 {
+      assets.add(base_out, #"0a0a", #"544f4b", tok_out)
+    } else {
+      base_out
+    }
+  let b_in = util.mk_input(util.mk_ref(0), util.mk_output(addr, v_in, mk_pp(5, 1_000_000_000)))
+  let b_out = util.mk_output(addr, v_out, mk_pp(6, 1_500_000_000))
+  Transaction {
+    ..placeholder,
+    inputs: [b_in],
+    outputs: [b_out],
+    extra_signatories: [#"c1", #"c2"],
+    mint: assets.zero,
+    validity_range: interval.between(6 * pp_mspe, 6 * pp_mspe + 1),
+  }
+}
+
+test price_param_foreign_token_injected_fail() fail {
+  // Nhét token lạ VÀO beacon: UTxO phình, mỗi lần post phải cõng theo, min-UTxO tăng.
+  // Trước vá: pass (chỉ kiểm ADA ≥ và NFT == 1). Sau vá: REJECT.
+  pp_spend(pp_committee, pp_threshold, pp_tx_tok(0, 7, 2_000_000))
+}
+
+test price_param_token_withdrawn_fail() fail {
+  // RÚT token lạ (ai đó lỡ gửi tới beacon) ra khỏi UTxO. Sau vá: REJECT.
+  pp_spend(pp_committee, pp_threshold, pp_tx_tok(7, 0, 2_000_000))
+}
+
+test price_param_token_quantity_changed_fail() fail {
+  // Giữ token nhưng đổi SỐ LƯỢNG (7 → 3): rút một phần cũng bị chặn.
+  pp_spend(pp_committee, pp_threshold, pp_tx_tok(7, 3, 2_000_000))
+}
+
+test price_param_token_kept_happy() {
+  // ĐỐI CHỨNG (chống vá quá tay): token lạ ĐÃ nằm sẵn trong beacon, giữ nguyên y hệt
+  // ⇒ vẫn post giá được. Ràng buộc là "bằng", không phải "cấm có token".
+  pp_spend(pp_committee, pp_threshold, pp_tx_tok(7, 7, 2_000_000))
+}
+
+test price_param_ada_topup_with_token_happy() {
+  // Đường TOP-UP ADA còn nguyên: nạp thêm ADA (2 → 9 tADA) trong khi phần non-ADA
+  // giữ y hệt → PASS. Đây là lý do ràng buộc ADA để `>=` chứ không gộp vào phép `==`.
+  pp_spend(pp_committee, pp_threshold, pp_tx_tok(7, 7, 9_000_000))
 }

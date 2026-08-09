@@ -38,6 +38,10 @@ pub type PriceParam {
 /// VaultDatum — quyết định D1: khác chủ thể, song song hoá, không tràn datum vault).
 /// Thread token (NFT one-shot) gắn UTxO này → không UTxO giả nào thay thế được.
 ///
+/// `last_epoch` (field 2): epoch của lần consume GẦN NHẤT. Là STATE TÍCH LUỸ, không
+///   phải lựa chọn của người dùng ⇒ genesis PHẢI == 0 (thread chưa consume lần nào).
+///   Validator spend ép `output.last_epoch == current_epoch`.
+///
 /// `did_commit` (field 3, APPEND-ONLY — giữ tương thích decode genesis cũ):
 ///   MVP = #"" (rỗng). Tương lai = blake2b256 commitment liên kết engagement ↔ DID
 ///   sinh trắc (PhoenixKey, Governance C1/C3). Đặt 1 lần lúc genesis, IMMUTABLE sau đó
@@ -80,6 +84,22 @@ pub type ConsumeRedeemer {
 /// Redeemer cho beacon PriceParam (committee/keeper post giá mới).
 pub type PriceParamRedeemer {
   PostPrice
+}
+
+/// Redeemer handler `mint` của chính validator `consume` (MULTI-PURPOSE).
+///
+/// VÌ SAO nằm TRONG consume chứ không phải một validator riêng: mint-policy phải ép
+/// Engage UTxO genesis nằm ĐÚNG địa chỉ script consume với datum SẠCH. Muốn thế,
+/// policy phải biết `consume_script_hash`, mà `consume_script_hash` lại phụ thuộc
+/// policy nếu policy là param ⇒ fixed-point blake2b, KHÔNG deploy được. Gộp `mint`
+/// vào chính `consume` ⇒ `policy_id (mint) == script_hash == payment_credential của
+/// địa chỉ spend` — biết qua TỰ THAM CHIẾU, không param, không vòng.
+///
+///   seed : OutputReference bị TIÊU trong chính tx mint (one-shot). Tên NFT =
+///          blake2b_256(cbor.serialise(seed)) ⇒ mỗi thread một tên duy nhất,
+///          permissionless, N thread cùng policy mà không đụng nhau.
+pub type EngageMintRedeemer {
+  MintEngage { seed: OutputReference }
 }
 
 /// Redeemer minting policy thread/price NFT one-shot.

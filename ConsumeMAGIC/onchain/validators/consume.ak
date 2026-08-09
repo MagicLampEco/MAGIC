@@ -12,9 +12,18 @@
 //   - ÉP cùng tx có 1 vault input (vault_ref) spend bằng BurnBatch với
 //     Σburns == required → liên kết 2 validator, không lệch giá, không over/under-burn.
 //
+// ── THREAD TOKEN = MULTI-PURPOSE (vá 2026-08-09, PHƯƠNG ÁN A) ─────────────────
+// `engage_nft_policy` / `engage_nft_name` KHÔNG còn là apply-param. Policy của thread
+// token CHÍNH LÀ script hash của validator này (handler `mint` ở dưới), biết qua TỰ
+// THAM CHIẾU: `policy_id` mà ledger truyền vào `mint` == script hash == payment
+// credential của địa chỉ spend. Nhờ vậy mint-gate ép được Engage UTxO genesis nằm
+// ĐÚNG địa chỉ script này với datum SẠCH, mà KHÔNG phải bake hash lẫn nhau (bake 2
+// chiều = fixed-point blake2b = KHÔNG deploy được).
+// Tên NFT = blake2b_256(cbor.serialise(seed)) ⇒ N thread / 1 policy, mỗi thread một
+// tên duy nhất (one-shot theo seed), permissionless.
+//
 // Parameterized by:
 //   price_nft_policy / price_nft_name   : authenticity NFT của PriceParam beacon
-//   engage_nft_policy / engage_nft_name : thread token neo state engagement
 //   vault_script_hash                   : payment script hash của generator vault
 //   burn_batch_constr                   : constr index của BurnBatch trong
 //                                         VaultRedeemer của vault đó. Giá trị theo
@@ -38,35 +47,51 @@
 // Σ consumed_nanogic(out) == Σ(in) + total_required.
 //
 // DOUBLE-SATISFACTION XUYÊN-INSTANCE (vá 2026-08-09): các bất biến AGGREGATE gộp theo
-// `own_hash`, mà `own_hash` KHÁC NHAU giữa các app (apply-param engage_nft_policy/name)
-// trong khi `vault_script_hash` là CHUNG ⇒ 2 instance cùng "thấy" 1 vault burn và cùng
+// `own_hash`, mà `own_hash` KHÁC NHAU giữa các deploy (khác beacon giá /
+// burn_batch_constr / max_price_stale — mỗi loại vault một instance)
+// trong khi `vault_script_hash` có thể TRÙNG ⇒ 2 instance cùng "thấy" 1 vault burn và cùng
 // PASS. Đóng bằng `util.script_inputs_confined_to`: mọi input do script khoá phải ở
 // own_hash hoặc vault_script_hash ⇒ 1 tx phục vụ ĐÚNG 1 instance consume.
 
 use aiken/builtin
+use aiken/cbor
+use aiken/collection/dict
 use aiken/collection/list
+use aiken/crypto
 use aiken/interval
-use cardano/address.{Address}
+use cardano/address.{Address, Script}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, ScriptPurpose, Spend, Transaction,
   placeholder,
 }
 use magiclamp/consume/pricing
-use magiclamp/consume/types.{Consume, ConsumeRedeemer, EngageDatum, OpPrice, PriceParam}
+use magiclamp/consume/types.{
+  Consume, ConsumeRedeemer, EngageDatum, EngageMintRedeemer, MintEngage, OpPrice,
+  PriceParam,
+}
 use magiclamp/consume/util
 
 validator consume(
   price_nft_policy  : PolicyId,
   price_nft_name    : AssetName,
-  engage_nft_policy : PolicyId,
-  engage_nft_name   : AssetName,
   vault_script_hash : ByteArray,
   burn_batch_constr : Int,
   max_price_stale   : Int,
   ms_per_epoch      : Int,
   price_param_script_hash : ByteArray,
 ) {
+  /// Handler MINT — policy của thread token Engage (policy_id == script hash này).
+  /// Đây là KHOẢNH KHẮC DUY NHẤT ép được "thread này khởi đầu SẠCH": Cardano KHÔNG
+  /// chạy validator lúc TẠO UTxO, nên nếu policy không ràng địa chỉ + datum ở đây
+  /// thì kẻ mint đặt Engage UTxO genesis với `consumed_nanogic` bịa (vd 1e18) và
+  /// `owner` tuỳ ý — bất biến delta ở spend (Σng(out) == Σng(in) + total_required)
+  /// chỉ khoá PHẦN TĂNG, KHÔNG khoá GỐC.
+  mint(redeemer: EngageMintRedeemer, policy_id: PolicyId, tx: Transaction) {
+    let MintEngage { seed } = redeemer
+    validate_mint_engage_id(seed, policy_id, tx)
+  }
+
   spend(
     datum_opt : Option<EngageDatum>,
     redeemer  : ConsumeRedeemer,
@@ -85,11 +110,31 @@ validator consume(
     // ── VÁ #1 (NGHIÊM TRỌNG) — DOUBLE-SATISFACTION XUYÊN-INSTANCE ──────────────
     //    Đặt SỚM (fail-fast, trước mọi tính toán giá): mọi input do SCRIPT khoá phải
     //    là own_hash hoặc vault_script_hash. Nếu không, hai instance consume ở HAI
-    //    script hash khác nhau (khác engage_nft_policy/name) cùng ăn MỘT vault burn:
+    //    script hash khác nhau (sau PHƯƠNG ÁN A: khác nhau ở beacon giá /
+    //    burn_batch_constr / max_price_stale — mỗi loại vault một deploy) cùng ăn
+    //    MỘT vault burn:
     //    mỗi instance chỉ cộng total_required trên input tại CHÍNH own_hash của nó
     //    ⇒ cả hai đều thấy "10M == 10M" và PASS, vault chỉ giảm 10M cho 2 nghiệp vụ.
     //    Input ví thường (VerificationKey) KHÔNG bị ràng (người dùng vẫn trả phí/ADA).
     expect util.script_inputs_confined_to(tx.inputs, own_hash, vault_script_hash)
+
+    // ── CỔNG ĐỊNH DANH (đặt SỚM, fail-fast) ────────────────────────────────────
+    //    MỌI input tại địa chỉ engage PHẢI mang ĐÚNG 1 thread NFT dưới policy
+    //    own_hash. Fail-closed: UTxO "engage giả" (ai cũng gửi được tới địa chỉ
+    //    script, không validator nào chạy lúc tạo) có dict token RỖNG ⇒ pattern
+    //    `[Pair(_, _)]` không khớp ⇒ chết ngay tại đây, KHÔNG kịp bơm datum bịa vào
+    //    các tổng kế toán (consumed_count / consumed_nanogic).
+    expect
+      list.all(
+        tx.inputs,
+        fn(i) {
+          if util.is_at_script(i.output.address, own_hash) {
+            single_thread_nft(i.output.value, own_hash)
+          } else {
+            True
+          }
+        },
+      )
 
     let current_epoch = util.get_epoch(tx, ms_per_epoch)
 
@@ -131,12 +176,10 @@ validator consume(
     let n_out = util.count_outputs_at_script(tx.outputs, own_hash)
     expect n_in == n_out
 
-    // (2) Σ engage NFT bảo toàn (không rút thread token).
-    let nft_in =
-      sum_engage_nft_inputs(tx.inputs, own_hash, engage_nft_policy, engage_nft_name)
-    let nft_out =
-      sum_engage_nft_outputs(tx.outputs, own_hash, engage_nft_policy, engage_nft_name)
-    expect nft_in == nft_out
+    // (2) Thread token bảo toàn: cổng định danh phía INPUT (đã chạy ở trên) + mỗi
+    //     output@engage mang ĐÚNG 1 NFT dưới own_hash (trong enforce_engagement) +
+    //     value bảo toàn TUYỆT ĐỐI (3) ⇒ tập tên NFT vào == ra, không rút, không gộp
+    //     2 thread vào 1 UTxO (dict size ≠ 1 là fail). Mạnh hơn phép so TỔNG cũ.
 
     // (3) VALUE PRESERVATION @engage: mọi asset bảo toàn tuyệt đối giữa input@engage
     //     và output@engage (engage UTxO chỉ giữ ADA + thread NFT, KHÔNG MAGIC/LAMP).
@@ -149,13 +192,92 @@ validator consume(
     //     (VÁ #2 — ghi GIÁ TRỊ đã trả, không chỉ số LƯỢT).
     enforce_engagement(
       tx, own_hash, in_datum.owner, in_datum.did_commit, current_epoch,
-      engage_nft_policy, engage_nft_name, total_required,
+      total_required,
     )
   }
 
   else(_) {
     fail
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_mint_engage_id — genesis-clean thread NFT (PHƯƠNG ÁN A)
+//
+// Cùng KHUÔN với `validate_mint_vault_id` của 4 vault gen (commit 17f051d8):
+// one-shot theo seed → asset_name = blake2b_256(cbor.serialise(seed)) → ĐÚNG 1
+// output tại chính địa chỉ script này mang NFT → datum genesis SẠCH → owner ký.
+// ═══════════════════════════════════════════════════════════════
+fn validate_mint_engage_id(
+  seed      : OutputReference,
+  policy_id : PolicyId,
+  tx        : Transaction,
+) -> Bool {
+  // ── ONE-SHOT: đúng UTxO seed phải bị TIÊU trong tx này ────────────────────
+  //    1 UTxO tiêu được tối đa 1 lần ⇒ (policy, name) này đúc được tối đa 1 lần
+  //    ⇒ thread NFT là singleton VĨNH VIỄN. Permissionless: ví nào cũng có seed.
+  expect list.any(tx.inputs, fn(i) { i.output_reference == seed })
+
+  // ── ĐÚNG 1 asset dưới policy này, qty +1, tên = H(seed) ───────────────────
+  let own_tokens = assets.tokens(tx.mint, policy_id)
+  expect dict.size(own_tokens) == 1
+  let nft_name = crypto.blake2b_256(cbor.serialise(seed))
+  expect assets.quantity_of(tx.mint, policy_id, nft_name) == 1
+
+  // ── ĐÚNG 1 output tại ĐỊA CHỈ SCRIPT NÀY mang NFT ─────────────────────────
+  //    policy_id == script hash của chính validator này ⇒ `Script(policy_id)` là
+  //    địa chỉ spend. Neo NFT vào đó NGAY LÚC ĐÚC là thứ đóng lỗ "mint sạch →
+  //    dời nhà bẩn": nếu chỉ kiểm mint mà không kiểm địa chỉ, kẻ tấn công đúc NFT
+  //    về ví rồi trong CÙNG tx (hoặc tx sau) gửi NFT + datum bịa tới địa chỉ
+  //    engage — không validator nào chạy lúc tạo UTxO nên không ai chặn.
+  let carriers =
+    list.filter(
+      tx.outputs,
+      fn(o) {
+        o.address.payment_credential == Script(policy_id) && assets.quantity_of(
+          o.value,
+          policy_id,
+          nft_name,
+        ) == 1
+      },
+    )
+  expect [engage_out] = carriers
+
+  // ── Datum genesis phải INLINE + decode được EngageDatum ───────────────────
+  expect InlineDatum(datum_data) = engage_out.datum
+  expect ed: EngageDatum = datum_data
+
+  // ── GENESIS SẠCH — ràng TỪNG field STATE TÍCH LUỸ ─────────────────────────
+  // owner: pkh mà người đúc THẬT SỰ kiểm soát (có trong signatories) ⇒ không đúc
+  // thread "nhân danh" ví nạn nhân để bơm attribution rác cho họ.
+  expect list.has(tx.extra_signatories, ed.owner)
+  // Hai trục kế toán PHẢI bắt đầu từ 0. `consumed_nanogic` là trục bị khai thác:
+  // bất biến spend chỉ khoá DELTA nên gốc bịa 1e18 sẽ sống mãi trong state và mọi
+  // app đọc "đã tiêu 1e18 nanogic" sẽ cấp dịch vụ miễn phí.
+  expect ed.consumed_count == 0
+  expect ed.consumed_nanogic == 0
+  // last_epoch = state tích luỹ ("epoch consume gần nhất") ⇒ thread mới == 0.
+  expect ed.last_epoch == 0
+  // did_commit CỐ Ý KHÔNG pin nội dung: types.ak định nghĩa nó là commitment do
+  // người tạo đặt MỘT LẦN lúc genesis rồi IMMUTABLE (MVP = #""), tức LỰA CHỌN của
+  // người dùng chứ không phải state tích luỹ. Pin cứng về #"" sẽ khoá chết đường
+  // liên kết DID sinh trắc sau này mà KHÔNG thêm chút an toàn nào (nó không gate
+  // bất kỳ đường tiền nào; tính bất biến đã do spend ép).
+
+  // ── Không nhét rác vào output genesis: nhiều nhất {ADA, thread NFT} ───────
+  //    Engage UTxO bảo toàn value TUYỆT ĐỐI ở mọi spend ⇒ token lạ đúc kèm ở đây
+  //    sẽ KẸT vĩnh viễn trong thread. Chặn ngay tại nguồn.
+  expect list.length(assets.policies(engage_out.value)) <= 2
+
+  True
+}
+
+/// ĐÚNG 1 thread NFT (policy == own_hash) với qty == 1 trên UTxO.
+/// Fail-closed CÓ CHỦ Ý: value không có token nào của policy ⇒ `dict.to_pairs` trả
+/// list rỗng ⇒ `expect [Pair(..)]` nổ ⇒ UTxO "engage giả" không tham gia được.
+fn single_thread_nft(value: Value, own_hash: ByteArray) -> Bool {
+  expect [Pair(_name, qty)] = assets.tokens(value, own_hash) |> dict.to_pairs
+  qty == 1
 }
 
 // ── PriceParam beacon tại price_ref (reference input), mang NFT one-shot. ───────
@@ -280,46 +402,6 @@ fn sum_burns_over_vault_refs(
       expect util.is_at_script(vault_in.output.address, vault_script_hash)
       let burns = read_vault_burns(tx, vref, burn_batch_constr)
       acc + sum_burns(burns)
-    },
-  )
-}
-
-/// Σ quantity engage NFT trên các INPUT tại engage script.
-fn sum_engage_nft_inputs(
-  inputs            : List<Input>,
-  own_hash          : ByteArray,
-  engage_nft_policy : PolicyId,
-  engage_nft_name   : AssetName,
-) -> Int {
-  list.foldl(
-    inputs,
-    0,
-    fn(inp, acc) {
-      if util.is_at_script(inp.output.address, own_hash) {
-        acc + assets.quantity_of(inp.output.value, engage_nft_policy, engage_nft_name)
-      } else {
-        acc
-      }
-    },
-  )
-}
-
-/// Σ quantity engage NFT trên các OUTPUT tại engage script.
-fn sum_engage_nft_outputs(
-  outputs           : List<Output>,
-  own_hash          : ByteArray,
-  engage_nft_policy : PolicyId,
-  engage_nft_name   : AssetName,
-) -> Int {
-  list.foldl(
-    outputs,
-    0,
-    fn(o, acc) {
-      if util.is_at_script(o.address, own_hash) {
-        acc + assets.quantity_of(o.value, engage_nft_policy, engage_nft_name)
-      } else {
-        acc
-      }
     },
   )
 }
@@ -474,8 +556,6 @@ fn enforce_engagement(
   owner             : ByteArray,
   did_commit        : ByteArray,
   current_epoch     : Int,
-  engage_nft_policy : PolicyId,
-  engage_nft_name   : AssetName,
   total_required    : Int,
 ) -> Bool {
   expect
@@ -489,7 +569,8 @@ fn enforce_engagement(
             od.owner == owner,
             od.last_epoch == current_epoch,
             od.did_commit == did_commit,
-            assets.quantity_of(o.value, engage_nft_policy, engage_nft_name) == 1,
+            // ĐÚNG 1 thread NFT dưới own_hash (không rút, không gộp 2 thread).
+            single_thread_nft(o.value, own_hash),
           }
         } else {
           True
@@ -523,8 +604,11 @@ const ct_vault_sh: ByteArray = #"dddd"
 const ct_price_param_sh: ByteArray = #"feed"
 const ct_price_policy: PolicyId = #"9999"
 const ct_price_name: AssetName = #"5052494345"      // "PRICE"
-const ct_engage_policy: PolicyId = #"7777"
-const ct_engage_name: AssetName = #"454e47"          // "ENG"
+/// Tên thread NFT trong fixture. THẬT ra tên = blake2b_256(cbor.serialise(seed)) do
+/// mint-gate ép; spend KHÔNG tính lại tên (nó chỉ đòi "đúng 1 token dưới own_hash"),
+/// nên fixture dùng tên đục tuỳ ý là hợp lệ. POLICY thì KHÔNG tuỳ ý: sau PHƯƠNG ÁN A
+/// nó PHẢI == script hash của địa chỉ engage (tự tham chiếu).
+const ct_thread_name: AssetName = #"454e47"          // "ENG"
 const ct_owner: ByteArray = #"0bada55e"
 const ct_did: ByteArray = #""                        // MVP did_commit rỗng
 const ct_max_stale: Int = 5
@@ -570,7 +654,8 @@ fn ct_engage_input(ref_ix: Int, consumed: Int) -> Input {
 
 /// Engage input tại script hash TUỲ Ý (test instance thứ hai).
 fn ct_engage_input_at(sh: ByteArray, ref_ix: Int, consumed: Int) -> Input {
-  let v = assets.add(assets.from_lovelace(2_000_000), ct_engage_policy, ct_engage_name, 1)
+  // Thread NFT policy == script hash của chính địa chỉ đó (tự tham chiếu).
+  let v = assets.add(assets.from_lovelace(2_000_000), sh, ct_thread_name, 1)
   let d = ct_datum(consumed, 0, 0, ct_did)
   util.mk_input(util.mk_ref_id(#"e1", ref_ix), util.mk_output(util.script_address(sh), v, d))
 }
@@ -598,14 +683,14 @@ fn ct_cont_output_ng(new_consumed: Int, new_epoch: Int, nft_qty: Int, nanogic: I
 fn ct_cont_output_at(
   sh: ByteArray, new_consumed: Int, new_epoch: Int, nft_qty: Int, nanogic: Int,
 ) -> Output {
-  let v = assets.add(assets.from_lovelace(2_000_000), ct_engage_policy, ct_engage_name, nft_qty)
+  let v = assets.add(assets.from_lovelace(2_000_000), sh, ct_thread_name, nft_qty)
   let d = ct_datum(new_consumed, new_epoch, nanogic, ct_did)
   util.mk_output(util.script_address(sh), v, d)
 }
 
 /// Continuing engage output với did_commit tuỳ biến (test immutable).
 fn ct_cont_output_did(new_consumed: Int, new_epoch: Int, did: ByteArray) -> Output {
-  let v = assets.add(assets.from_lovelace(2_000_000), ct_engage_policy, ct_engage_name, 1)
+  let v = assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, ct_thread_name, 1)
   let d = ct_datum(new_consumed, new_epoch, ct_img_price, did)
   util.mk_output(util.script_address(ct_eng_sh), v, d)
 }
@@ -680,7 +765,7 @@ fn run_beacon(
       ),
     }
   consume.spend(
-    ct_price_policy, ct_price_name, ct_engage_policy, ct_engage_name,
+    ct_price_policy, ct_price_name,
     ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe, ct_price_param_sh,
     Some(in_datum), rd, own_ref, tx,
   )
@@ -981,14 +1066,14 @@ test consume_state_undercount_fail() fail {
 
 // ── HAPPY value preserved: engage UTxO giữ 100 ADA + 5 TOK → output GIỮ NGUYÊN ──
 fn ct_engage_input_v(ref_ix: Int, consumed: Int, lovelace: Int, other_qty: Int) -> Input {
-  let v0 = assets.add(assets.from_lovelace(lovelace), ct_engage_policy, ct_engage_name, 1)
+  let v0 = assets.add(assets.from_lovelace(lovelace), ct_eng_sh, ct_thread_name, 1)
   let v = assets.add(v0, #"0a0a", #"544f4b", other_qty)
   let d = ct_datum(consumed, 0, 0, ct_did)
   util.mk_input(util.mk_ref_id(#"e1", ref_ix), util.mk_output(util.script_address(ct_eng_sh), v, d))
 }
 
 fn ct_cont_output_v(new_consumed: Int, new_epoch: Int, lovelace: Int, other_qty: Int) -> Output {
-  let v0 = assets.add(assets.from_lovelace(lovelace), ct_engage_policy, ct_engage_name, 1)
+  let v0 = assets.add(assets.from_lovelace(lovelace), ct_eng_sh, ct_thread_name, 1)
   let v = assets.add(v0, #"0a0a", #"544f4b", other_qty)
   let d = ct_datum(new_consumed, new_epoch, ct_img_price, ct_did)
   util.mk_output(util.script_address(ct_eng_sh), v, d)
@@ -1059,7 +1144,7 @@ fn run_vr(
       validity_range: vr,
     }
   consume.spend(
-    ct_price_policy, ct_price_name, ct_engage_policy, ct_engage_name,
+    ct_price_policy, ct_price_name,
     ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe, ct_price_param_sh,
     Some(in_datum), rd, own_ref, tx,
   )
@@ -1265,4 +1350,343 @@ test consume_wallet_input_allowed_happy() {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
   run(pp, 1, 6, [eng], [vault, wallet], [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum)
+}
+
+// ══════════════════════════════════════════════════════════════
+// VÁ 2026-08-09 #A — MINT GATE genesis-clean (PHƯƠNG ÁN A)
+//   Trước vá: `engage_nft.mint` (policy RIÊNG) chỉ kiểm one-shot + đúng 1 token.
+//   Kẻ mint đặt Engage UTxO genesis với consumed_nanogic bịa (1e18) và owner tuỳ ý,
+//   ở địa chỉ nào cũng được. Bất biến delta của spend chỉ khoá PHẦN TĂNG.
+//   Sau vá: mint gộp vào chính `consume` ⇒ ép ĐỊA CHỈ (Script(policy_id)) + DATUM SẠCH.
+// ══════════════════════════════════════════════════════════════
+
+fn ct_seed() -> OutputReference {
+  util.mk_ref_id(#"5eed", 3)
+}
+
+/// Tên NFT hợp lệ DUY NHẤT cho seed này (mint-gate tự tính lại).
+fn ct_seed_name() -> AssetName {
+  crypto.blake2b_256(cbor.serialise(ct_seed()))
+}
+
+fn ct_seed_input() -> Input {
+  util.mk_input(
+    ct_seed(),
+    util.mk_output_no_datum(util.vk_address(#"a0"), assets.from_lovelace(5_000_000)),
+  )
+}
+
+/// Output genesis: địa chỉ tuỳ biến, value = ADA + 1 thread NFT (+ token lạ nếu có).
+fn ct_gen_out(addr: Address, name: AssetName, d: EngageDatum, extra_tok: Int) -> Output {
+  let v0 = assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, name, 1)
+  let v =
+    if extra_tok > 0 {
+      assets.add(v0, #"0a0a", #"544f4b", extra_tok)
+    } else {
+      v0
+    }
+  util.mk_output(addr, v, d)
+}
+
+/// Chạy handler mint với policy_id == ct_eng_sh (tự tham chiếu: policy == script hash).
+fn run_mint(
+  inputs  : List<Input>,
+  mint_v  : Value,
+  outputs : List<Output>,
+  sigs    : List<ByteArray>,
+) -> Bool {
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: inputs,
+      mint: mint_v,
+      outputs: outputs,
+      extra_signatories: sigs,
+    }
+  consume.mint(
+    ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
+    ct_mspe, ct_price_param_sh, MintEngage { seed: ct_seed() }, ct_eng_sh, tx,
+  )
+}
+
+/// Datum genesis SẠCH.
+fn ct_clean_genesis() -> EngageDatum {
+  ct_datum(0, 0, 0, ct_did)
+}
+
+// ── HAPPY: seed bị tiêu, tên = H(seed), output tại địa chỉ script này, datum sạch ──
+test engage_mint_clean_happy() {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_clean_genesis(), 0)],
+    [ct_owner],
+  )
+}
+
+// ── LỖ CHÍNH: datum genesis BỊA consumed_nanogic = 1e18 → REJECT ─────────────────
+//    Đây là đòn mà bất biến delta KHÔNG chặn được: gốc bịa sống mãi trong state,
+//    app đọc "đã tiêu 1e18 nanogic" và cấp dịch vụ miễn phí.
+test engage_mint_fabricated_nanogic_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [
+      ct_gen_out(
+        util.script_address(ct_eng_sh), ct_seed_name(),
+        ct_datum(0, 0, 1_000_000_000_000_000_000, ct_did), 0,
+      ),
+    ],
+    [ct_owner],
+  )
+}
+
+// ── Bịa consumed_count (trục attribution/Governance C1) → REJECT ─────────────────
+test engage_mint_fabricated_count_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_datum(7, 0, 0, ct_did), 0)],
+    [ct_owner],
+  )
+}
+
+// ── Bịa last_epoch (giả vờ thread vừa hoạt động) → REJECT ───────────────────────
+test engage_mint_fabricated_last_epoch_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_datum(0, 6, 0, ct_did), 0)],
+    [ct_owner],
+  )
+}
+
+// ── ĐỊA CHỈ: đúc NFT về VÍ THƯỜNG (rồi dời nhà kèm datum bẩn) → REJECT ──────────
+test engage_mint_output_at_wallet_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [ct_gen_out(util.vk_address(#"a11ce5"), ct_seed_name(), ct_clean_genesis(), 0)],
+    [ct_owner],
+  )
+}
+
+// ── ĐỊA CHỈ: đúc về SCRIPT KHÁC (kể cả instance consume khác) → REJECT ──────────
+test engage_mint_output_at_other_script_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [ct_gen_out(util.script_address(ct_eng_sh_b), ct_seed_name(), ct_clean_genesis(), 0)],
+    [ct_owner],
+  )
+}
+
+// ── ONE-SHOT: seed KHÔNG bị tiêu → REJECT (chống đúc lại thread thứ hai) ────────
+test engage_mint_seed_not_spent_fail() fail {
+  let other =
+    util.mk_input(
+      util.mk_ref_id(#"ff", 0),
+      util.mk_output_no_datum(util.vk_address(#"a0"), assets.from_lovelace(5_000_000)),
+    )
+  run_mint(
+    [other],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_clean_genesis(), 0)],
+    [ct_owner],
+  )
+}
+
+// ── owner trong datum KHÔNG ký → REJECT (không đúc "nhân danh" ví nạn nhân) ─────
+test engage_mint_owner_not_signer_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_clean_genesis(), 0)],
+    [#"beefbeef"],
+  )
+}
+
+// ── TÊN: không phải blake2b_256(cbor(seed)) → REJECT (một seed một tên) ─────────
+test engage_mint_wrong_name_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_thread_name, 1),
+    [ct_gen_out(util.script_address(ct_eng_sh), ct_thread_name, ct_clean_genesis(), 0)],
+    [ct_owner],
+  )
+}
+
+// ── Đúc 2 tên trong 1 tx (nhân bản thread) → dict.size != 1 → REJECT ────────────
+test engage_mint_two_names_fail() fail {
+  let v =
+    assets.add(assets.from_asset(ct_eng_sh, ct_seed_name(), 1), ct_eng_sh, ct_thread_name, 1)
+  run_mint(
+    [ct_seed_input()],
+    v,
+    [ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_clean_genesis(), 0)],
+    [ct_owner],
+  )
+}
+
+// ── Nhét token lạ vào UTxO genesis → policies > 2 → REJECT ──────────────────────
+//    Engage UTxO bảo toàn value tuyệt đối ⇒ token nhét vào đây KẸT vĩnh viễn.
+test engage_mint_extra_token_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_clean_genesis(), 5)],
+    [ct_owner],
+  )
+}
+
+// ── ĐỐI CHỨNG (chống vá quá tay): did_commit KHÁC RỖNG vẫn PASS ─────────────────
+//    types.ak định nghĩa did_commit là commitment do người tạo đặt một lần lúc
+//    genesis (MVP rỗng, tương lai = blake2b256 liên kết DID). Đó là LỰA CHỌN, không
+//    phải state tích luỹ ⇒ pin cứng về #"" sẽ khoá chết đường DID mà không thêm an
+//    toàn nào. Test này khoá quyết định đó lại để lần sau không ai "siết nhầm".
+test engage_mint_did_commit_free_happy() {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [
+      ct_gen_out(
+        util.script_address(ct_eng_sh), ct_seed_name(),
+        ct_datum(0, 0, 0, #"d1d1d1d1"), 0,
+      ),
+    ],
+    [ct_owner],
+  )
+}
+
+// ── SPEND: UTxO "engage giả" (đậu ở địa chỉ script, KHÔNG mang thread NFT) ──────
+//    Ai cũng gửi được UTxO tới địa chỉ script (không validator nào chạy lúc TẠO).
+//    Nếu nó tham gia được vào tổng kế toán thì datum bịa của nó lọt vào Σ. Cổng
+//    định danh phía input chặn ngay: dict token dưới own_hash RỖNG → fail-closed.
+test consume_fake_engage_input_no_nft_fail() fail {
+  let pp = ct_pp(6)
+  let real = ct_engage_input(0, 10)
+  let fake =
+    util.mk_input(
+      util.mk_ref_id(#"e1", 1),
+      util.mk_output(
+        util.script_address(ct_eng_sh),
+        assets.from_lovelace(2_000_000),
+        ct_datum(0, 0, 1_000_000_000_000_000_000, ct_did),
+      ),
+    )
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 20_000_000)])
+  let reds =
+    [Pair(Spend(er0), rd_as_data(rd)), Pair(Spend(er1), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(
+    pp, 1, 6, [real, fake], [vault],
+    [ct_cont_output(11, 6, 1), ct_cont_output(11, 6, 1)], reds, rd, er0, ct_in_datum,
+  )
+}
+
+// ══════════════════════════════════════════════════════════════
+// ĐO EX-UNIT KỊCH BẢN XẤU NHẤT trên đường `consume` THẬT
+//   bảng giá ĐẦY (max_op_prices = 16 dòng) × 2 Engage input × 1 vault.
+//   Số đo dán trong báo cáo; đây là mốc hồi quy để lần sau đổi cấu trúc dữ liệu
+//   còn có cái mà so. Trần tx Cardano: 14 M mem / 10 G cpu.
+// ══════════════════════════════════════════════════════════════
+
+/// Bảng giá n dòng, op_type TĂNG NGẶT 1..n (dạng chuẩn tắc bắt buộc sau VÁ #C).
+fn ct_ops(n: Int) -> List<OpPrice> {
+  if n <= 0 {
+    []
+  } else {
+    list.concat(ct_ops(n - 1), [OpPrice { op_type: n, base_price: 10_000_000 }])
+  }
+}
+
+fn ct_pp_full(epoch: Int) -> PriceParam {
+  PriceParam {
+    op_prices: ct_ops(pricing.max_op_prices),
+    demand_mult: 1_000_000_000,
+    m_min: 500_000_000,
+    m_max: 2_000_000_000,
+    epoch: epoch,
+  }
+}
+
+test consume_worst_case_full_table_two_engage_happy() {
+  // op_type = 16 (dòng CUỐI bảng → lookup_base duyệt hết list, xấu nhất).
+  let pp = ct_pp_full(6)
+  let e0 = ct_engage_input(0, 10)
+  let e1 = ct_engage_input(1, 10)
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(pricing.max_op_prices, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 20_000_000)])
+  let reds =
+    [Pair(Spend(er0), rd_as_data(rd)), Pair(Spend(er1), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(pp, 1, 6, [e0, e1], [vault], [ct_cont_output(11, 6, 1), ct_cont_output(11, 6, 1)], reds, rd, er0, ct_in_datum)
+}
+
+
+
+// ── SPEND: GỘP hai thread vào MỘT UTxO → "đúng 1 NFT / UTxO" chặn ──────────────
+//    Thực tế mỗi thread một tên riêng (H(seed)). Kẻ gọi gộp cả hai NFT vào 1 output
+//    và để output còn lại rỗng NFT: Σ value VẪN bảo toàn, #out == #in VẪN đúng, Σ
+//    count / Σ nanogic VẪN khớp — mọi bất biến TỔNG đều thoả. Chỉ ràng buộc theo
+//    TỪNG UTxO mới chặn được việc hợp nhất (sau đó một thread "chết" mà tài sản
+//    định danh của nó đã dồn sang cái khác).
+fn ct_engage_input_named(ref_ix: Int, consumed: Int, name: AssetName) -> Input {
+  let v = assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, name, 1)
+  let d = ct_datum(consumed, 0, 0, ct_did)
+  util.mk_input(
+    util.mk_ref_id(#"e1", ref_ix),
+    util.mk_output(util.script_address(ct_eng_sh), v, d),
+  )
+}
+
+test consume_thread_merge_into_one_utxo_fail() fail {
+  let pp = ct_pp(6)
+  let e0 = ct_engage_input_named(0, 10, #"41")   // thread A
+  let e1 = ct_engage_input_named(1, 10, #"42")   // thread B
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 20_000_000)])
+  let reds =
+    [Pair(Spend(er0), rd_as_data(rd)), Pair(Spend(er1), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  // out1 giữ CẢ A lẫn B; out2 không NFT. Σ value in == Σ value out.
+  let merged =
+    util.mk_output(
+      util.script_address(ct_eng_sh),
+      assets.add(
+        assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, #"41", 1),
+        ct_eng_sh, #"42", 1,
+      ),
+      ct_datum(11, 6, ct_img_price, ct_did),
+    )
+  let empty =
+    util.mk_output(
+      util.script_address(ct_eng_sh),
+      assets.from_lovelace(2_000_000),
+      ct_datum(11, 6, ct_img_price, ct_did),
+    )
+  run(pp, 1, 6, [e0, e1], [vault], [merged, empty], reds, rd, er0, ct_in_datum)
+}
+
+// ── ĐỐT thread NFT là BẤT KHẢ: mint-gate đòi qty == +1 nên mọi lượng âm bị chặn ──
+//    Hệ quả (ghi rõ, không giấu): Engage thread KHÔNG có đường đóng ⇒ min-ADA của nó
+//    khoá vĩnh viễn. Đây là đánh đổi CÓ CHỦ Ý, giống các vault gen: NFT định danh còn
+//    sống thì state không bị "đóng rồi mở lại" với datum khác.
+test engage_mint_burn_attempt_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), -1),
+    [ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_clean_genesis(), 0)],
+    [ct_owner],
+  )
 }

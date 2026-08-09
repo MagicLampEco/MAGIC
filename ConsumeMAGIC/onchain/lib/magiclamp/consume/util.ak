@@ -93,8 +93,9 @@ pub fn output_at_script(outputs: List<Output>, script_hash: ByteArray) -> Output
 /// MỌI input do SCRIPT khoá trong tx phải nằm ở `hash_a` hoặc `hash_b`; input ví
 /// thường (VerificationKey) KHÔNG bị ràng.
 ///
-/// Vì sao cần: `consume` được apply-param theo engage_nft_policy/name ⇒ MỖI app là
-/// MỘT script hash khác nhau, nhưng tất cả cùng ăn CHUNG một `vault_script_hash`.
+/// Vì sao cần: `consume` được apply-param (beacon giá / burn_batch_constr /
+/// max_price_stale) ⇒ MỖI deploy là MỘT script hash khác nhau, mà nhiều deploy có thể
+/// cùng ăn CHUNG một `vault_script_hash`.
 /// Bất biến gộp C-CM-2 (`total_required` cộng theo `own_hash`) chỉ nhìn thấy input ở
 /// CHÍNH hash của invocation đó ⇒ tx chứa engage_A(H_A) + engage_B(H_B) + 1 vault
 /// burn 10M làm CẢ HAI instance tự thấy "10M == 10M" và cùng PASS, trong khi vault

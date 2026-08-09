@@ -5,11 +5,12 @@
 //      for InstantGen (UpdateProfile=3), and absence on ScheduleGen (no
 //      UpdateProfile variant → fail loud).
 //   2. ActivityProfile inner-constructor mapping (Ember/Flame/Lantern).
-//   3. UPDATE-001 guard — Vacuum/Schedule vaults reject before any network call.
+//   3. UPDATE-001 guard — Schedule vaults reject before any network call.
 //
-// SnapshotGen từng có ca riêng ở đây (UpdateProfile=2). Module đó đã dời sang
-// Legacy/genmagic-v3.3 nên không còn plutus.json để đọc — bỏ ca đó, không thay
-// bằng fixture chép tay (fixture chép tay chính là thứ trôi khỏi validator thật).
+// SnapshotGen và VacuumGen từng có ca riêng ở đây. Hai module đó đã dời sang
+// Legacy/genmagic-v3.3: không còn plutus.json để đọc, và `VaultType` không còn
+// nhận chúng — bỏ các ca đó, không thay bằng fixture chép tay (fixture chép tay
+// chính là thứ trôi khỏi validator thật).
 
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
@@ -44,12 +45,6 @@ describe("updateProfile — ActivityProfile constructor mapping", () => {
 });
 
 describe("updateProfile — vault-type guard (UPDATE-001)", () => {
-  it("rejects Vacuum vaults before any network call", async () => {
-    await expect(
-      updateProfile({ vaultType: "Vacuum", newProfile: "Ember" } as never),
-    ).rejects.toThrow(/UPDATE-001/);
-  });
-
   it("rejects Schedule vaults before any network call", async () => {
     await expect(
       updateProfile({ vaultType: "Schedule", newProfile: "Ember" } as never),

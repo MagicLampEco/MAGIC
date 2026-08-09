@@ -2,7 +2,7 @@
 //
 // LF-PRESERVING SELECTION: rút từ holding MỚI NHẤT (newest first).
 // Lý do: LF (Loyalty Factor §6.3) là weighted-average tuổi holding × amount;
-// giữ holding CŨ → LF cao → MAGIC sinh ra (Snapshot) nhiều. Rút newest-first
+// giữ holding CŨ → LF cao → MAGIC sinh ra nhiều. Rút newest-first
 // = sacrifice 0 tuổi loyalty (vs rút oldest-first sẽ phá max LF user đã tích).
 // Đây là pattern ngược của Instant subtractFromHoldings (oldest-first) — vì
 // withdraw là discretionary, user nên được optimize cho retention.
@@ -111,7 +111,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   // ── Current PROTOCOL epoch (POSIX-derived, matches validator) ────
   // Cast lucid → any: getTipSlot accepts `{provider: unknown}`; LucidEvolution
   // has `provider` at runtime but its type def doesn't expose it. Same cast
-  // used across all MAGIC SDK builders (snapshot.ts, instant.ts, ...).
+  // used across all MAGIC SDK builders (instant.ts, schedule.ts).
   const tipPosixMs = params.tipPosixMs
     ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const currentEpoch = posixMsToEpoch(tipPosixMs, network);

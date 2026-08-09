@@ -40,6 +40,8 @@ describe("buildInitialVaultDatum", () => {
     expect(d.lamp_locked).toBe(0n);
     expect(d.profile).toBe("Flame");
     expect(d.magic_batches).toEqual([]);
+    // `vacuum_orders` vẫn là TRƯỜNG của VaultDatum trên chain (arity Plutus
+    // Data) dù VacuumGen đã sang Legacy — xem bia mộ trong src/schemas.ts.
     expect(d.vacuum_orders).toEqual([]);
     expect(d.gen_schedules).toEqual([]);
     expect(d.next_batch_index).toBe(0n);
@@ -143,28 +145,14 @@ describe("VaultDatumSchema CBOR roundtrip", () => {
 // ── applyVaultValidator: per-vault-type param requirements ─────
 
 describe("applyVaultValidator: requires correct params per vault type", () => {
-  const types: VaultType[] = ["Instant", "Vacuum", "Schedule"];
+  // `baseProtocol` chỉ có network + lampPolicyId. Cả hai loại vault còn sống
+  // đều đòi thêm: Instant cần um*/backing*, Schedule cần shardPolicyId.
+  const types: VaultType[] = ["Instant", "Schedule"];
 
   for (const t of types) {
-    it(`${t}: throws when treasuryAddress missing`, () => {
-      expect(() => applyVaultValidator(t, validators, baseProtocol)).toThrow();
+    it(`${t}: throws when a required protocol field is missing`, () => {
+      expect(() => applyVaultValidator(t, validators, baseProtocol))
+        .toThrow(/required for vaultType/);
     });
   }
-
-  it("Snapshot: works with minimal params (no treasury/UM)", () => {
-    // Note: the CBOR here is a stub — applyParamsToScript may still error if
-    // it expects 1 typed param. We accept either success OR a clear param-related
-    // error (not a missing-field error).
-    try {
-      const { vaultScript, vaultAddress } = applyVaultValidator(
-        "Snapshot", validators, baseProtocol,
-      );
-      expect(vaultScript.type).toBe("PlutusV3");
-      expect(vaultAddress.startsWith("addr_test1")).toBe(true);
-    } catch (e: any) {
-      // If the stub CBOR is incompatible, the error should NOT be about missing
-      // protocol fields (those are vault-type specific and only apply to Inst/Vac/Sch).
-      expect(String(e.message)).not.toMatch(/required for vaultType/);
-    }
-  });
 });

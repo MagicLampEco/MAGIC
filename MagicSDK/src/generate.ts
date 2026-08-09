@@ -11,10 +11,10 @@
 //
 // WHAT IS DELIBERATELY NOT HERE
 // -----------------------------
-// * VacuumGen — its validator still moves LAMP out of the vault to a treasury
-//   address. That contradicts I-ACT-7 (LAMP never changes hands when MAGIC is
-//   generated). It stays unexported until it is brought onto the PHA-2 model.
-// * SnapshotGen — not yet converged onto the PHA-2 unified vault datum.
+// * VacuumGen và SnapshotGen — cả hai đã dời sang `Legacy/genmagic-v3.3/`.
+//   Vacuum vi phạm I-ACT-7 (validator của nó chuyển LAMP ra treasury); Snapshot
+//   chưa bao giờ hội tụ về vault datum PHA-2. Không còn validator trong cây làm
+//   việc, nên `VaultType` cũng đã thu về "Instant" | "Schedule" (types.ts).
 //
 // Named re-exports only (no `export *`): the module packages each ship their own
 // `createLucid`, `Q`, `TESTNET_CONFIG`, … and a wildcard would collide.

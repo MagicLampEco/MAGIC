@@ -6,19 +6,23 @@ import type { PlutusJson } from "./redeemerIndex.js";
 export type Profile = "Ember" | "Flame" | "Lantern";
 
 /**
- * The 4 vault types correspond to 4 different on-chain validators.
- * Each user-mechanism pair lives in its own vault:
- *   - "Snapshot": per-epoch lazy generation (no LAMP cost; T16)
+ * The 2 LIVE vault types correspond to 2 on-chain validators:
  *   - "Instant":  on-demand grant keyed to MAGIC consumed (LAMP stays put)
- *   - "Vacuum":   2-phase lock-then-fire (legacy, LAMP → Treasury at fire)
  *   - "Schedule": forward contract with locked rate (LAMP stays put; the fire
  *                 only releases the lock — I-ACT-7)
  *
- * A user who wants all 4 mechanisms needs 4 separate vaults (4 UTxOs at 4
- * different addresses). The Vault*Datum shape is identical across all 4,
- * but the validator code (and hence the address) differs.
+ * SnapshotGen và VacuumGen ĐÃ dời sang `Legacy/genmagic-v3.3/`: validator của
+ * chúng không còn trong cây làm việc, nên không có gì để `applyParamsToScript`.
+ * Chào bán hai loại đó ở đây là nhánh chết — người tích hợp đi vào chỗ không có
+ * validator. Chúng KHÔNG được thêm lại nếu không kèm validator sống.
+ * (Lưu ý: enum `BatchSource` trong schemas.ts vẫn giữ nguyên `Snapshot`/`Vacuum`
+ * — đó là Plutus Data đã lên chain, xem bia mộ trong tệp đó.)
+ *
+ * A user who wants both mechanisms needs 2 separate vaults (2 UTxOs at 2
+ * different addresses). The VaultDatum shape is identical across both, but the
+ * validator code (and hence the address) differs.
  */
-export type VaultType = "Snapshot" | "Instant" | "Vacuum" | "Schedule";
+export type VaultType = "Instant" | "Schedule";
 
 /**
  * Unapplied (raw aiken-built) validator script CBOR strings.
@@ -49,22 +53,22 @@ export interface ValidatorBundle {
  * Required network/protocol params that the validator will be applied with.
  * `ms_per_epoch` is auto-derived from `network` if omitted.
  *
- * `treasuryAddress` is the Cardano address that receives transferred LAMP.
- * After PHA 2 only the legacy Vacuum validator still takes it: Instant and
- * Schedule keep LAMP inside the vault (I-ACT-7), and Snapshot never moved any.
+ * KHÔNG còn `treasuryAddress`. Dưới I-ACT-7 không handler nào của hai validator
+ * còn sống chuyển LAMP ra khỏi vault, nên tham số đó không còn ai đọc. Validator
+ * duy nhất từng nhận nó (Vacuum) đã ở `Legacy/genmagic-v3.3/`.
  */
 export interface ProtocolParams {
   /** "Preview" | "Preprod" | "Mainnet". */
   network: Network;
-  /** LAMP minting-policy ID. Required for Instant/Vacuum/Schedule;
-   *  required for Snapshot for the vault's LAMP UTxO asset unit. */
+  /** LAMP minting-policy ID. Required for both Instant and Schedule — it pins
+   *  the vault's LAMP UTxO asset unit. */
   lampPolicyId: string;
   /** LAMP asset name as hex (default "744c414d50" = "tLAMP"). */
   lampAssetName?: string;
-  /** UM datum NFT policy ID. Required for Instant + Vacuum. */
+  /** UM datum NFT policy ID. Required for Instant. */
   umNftPolicyId?: string;
   /** UM script hash (= applied UMKeeper validator hash). Required for
-   *  Instant + Vacuum. Pins the UM reference input to the canonical UM
+   *  Instant. Pins the UM reference input to the canonical UM
    *  script address (MAINNET-BLOCK fix, defense-in-depth layer b). */
   umScriptHash?: string;
   /** Shard NFT policy ID. Required for Schedule. */
@@ -76,10 +80,6 @@ export interface ProtocolParams {
   backingNftPolicyId?: string;
   /** BackingBeacon script hash. Required for Instant (§6.3). */
   backingScriptHash?: string;
-  /** Treasury address. Required for Vacuum ONLY (legacy module).
-   *  Instant and Schedule no longer take it — under I-ACT-7 no handler in
-   *  those validators moves LAMP, so there is no Treasury leg. */
-  treasuryAddress?: string;
   /** Override ms_per_epoch (advanced). Derived from `network` otherwise. */
   msPerEpoch?: bigint;
 }
@@ -90,8 +90,8 @@ export interface ProtocolParams {
  */
 export interface InitialVaultConfig {
   /** Owner payment key hash (28-byte hex). The only key authorized to
-   *  sign owner-required actions (TriggerSnapshot, InstantGen,
-   *  VacuumCommit, ScheduleCommit, UpdateProfile, BurnBatch). */
+   *  sign owner-required actions (InstantGen, ScheduleCommit, UpdateProfile,
+   *  BurnBatch, WithdrawLamp). ScheduleFire is permissionless. */
   ownerPkh: string;
   /** Initial LAMP locked into the vault, in oildrop (1 LAMP = 10^6 oildrop).
    *  Caller's wallet MUST hold ≥ this amount of LAMP. */

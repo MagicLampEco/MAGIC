@@ -22,7 +22,7 @@ export interface InitialVaultDatumInputs {
  *   - `loyalty_holdings` starts with a single unlocked holding of size
  *     `lamp_balance` acquired at the current epoch. As LF age (§6.3)
  *     measures from `acquired_epoch`, this gives the user a clean
- *     LF=1.0 baseline. SnapshotGen will mutate this list naturally.
+ *     LF=1.0 baseline. Deposits/withdrawals mutate this list naturally.
  *
  *   - `last_updated_epoch = 0` — KHÔNG phải epoch hiện tại. `validate_mint_vault_id`
  *     (validators/vault.ak) ép `vd.last_updated_epoch == 0` tại lúc mint NFT
@@ -38,8 +38,8 @@ export interface InitialVaultDatumInputs {
  *   - `personal_delegate = None` bắt buộc tại lúc sinh. Muốn đặt uỷ quyền cá
  *     nhân thì dùng redeemer `SetDelegate` SAU khi vault đã tồn tại.
  *
- *   - `lamp_locked = 0` always at creation. Locks only happen via Vacuum
- *     Commit or Schedule Commit.
+ *   - `lamp_locked = 0` always at creation. Locks only happen via Schedule
+ *     Commit (ScheduleFire chỉ mở khoá, LAMP vẫn ở trong vault — I-ACT-7).
  *
  * MỌI hằng số trong hàm này là một điều kiện on-chain, không phải sở thích:
  * đối chiếu trực tiếp với `validate_mint_vault_id` trước khi sửa bất kỳ dòng nào.

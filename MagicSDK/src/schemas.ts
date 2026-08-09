@@ -5,9 +5,19 @@
 // `pub type VaultDatum { ... }` definition in
 // `<Module>/onchain/lib/magiclamp/protocol/types.ak`.
 //
-// All 4 vault types (Snapshot/Instant/Vacuum/Schedule) use the SAME VaultDatum
-// shape — the only thing that differs is the validator code (and hence the
-// vault address per-network).
+// Mọi loại vault dùng CHUNG một VaultDatum — chỉ code validator (và do đó địa
+// chỉ vault theo network) là khác.
+//
+// ══ BIA MỘ — ĐỪNG XOÁ `Snapshot` / `Vacuum` Ở TỆP NÀY ══════════════════════
+// `VaultType` (types.ts) đã thu về "Instant" | "Schedule" vì SnapshotGen và
+// VacuumGen dời sang `Legacy/genmagic-v3.3/`. Tệp NÀY thì KHÔNG được thu theo:
+//   - `BatchSource` (variant Snapshot=0, Instant=1, Vacuum=2, Schedule=3), và
+//   - trường `vacuum_orders` trong `VaultDatum`
+// là CHỈ SỐ CONSTRUCTOR / ARITY của Plutus Data ĐÃ LÊN CHAIN. Bỏ một variant
+// làm dịch chỉ số của các variant sau nó; bỏ một trường làm lệch arity — cả hai
+// đều vỡ decode MỌI vault đã tạo, và LAMP trong đó thành không tiêu được.
+// Muốn bỏ thật thì phải migrate on-chain, không phải sửa tệp này.
+// ═══════════════════════════════════════════════════════════════════════════
 
 import { Data } from "@lucid-evolution/lucid";
 
@@ -90,8 +100,9 @@ const DelegationCertificateSchema = Data.Object({
 // `consumed_credit` — nanogic actually consumed via BurnBatch, the base for the
 // §6.3 InstantGen reward. Same POSITION and same Integer type, so the Plutus
 // Data encoding is identical and this schema stays wire-compatible. The name
-// here is kept as `total_burns_count` because SnapshotGen / VacuumGen /
-// Consolidate / ProfileChange still use that label on their side.
+// here is kept as `total_burns_count` because Consolidate / ProfileChange still
+// use that label on their side (SnapshotGen / VacuumGen dùng nhãn đó trước khi
+// sang Legacy — đổi tên ở đây chỉ tổ làm lệch nhãn giữa các module còn sống).
 const ActivityStateSchema = Data.Object({
   recent_burn_epochs: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
   total_burns_count:  Data.Integer(),
@@ -109,7 +120,7 @@ const VaultAttributionSchema = Data.Object({
 });
 
 /** Full VaultDatum schema — used to serialize the initial datum at vault creation
- *  and to decode existing vault UTxOs in downstream builders (Snapshot/Instant/...). */
+ *  and to decode existing vault UTxOs in downstream builders (Instant/Schedule). */
 export const VaultDatumSchema = Data.Object({
   owner:                 Data.Bytes(),
   lamp_balance:          Data.Integer(),

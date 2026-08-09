@@ -2,8 +2,9 @@
 //
 // Cardano native: nhiều UTxO có thể nằm cùng 1 script address. Vault validator
 // (`expect list.count(inputs at vault_addr) == 1`) chỉ chặn double-spend trong
-// 1 tx — KHÔNG giới hạn "1 vault per owner". User có thể có N vault SnapshotGen,
-// mỗi vault với 1 khoản LAMP khác nhau (ngắn / trung / dài hạn). Mỗi vault có
+// 1 tx — KHÔNG giới hạn "1 vault per owner". User có thể có N vault cùng loại
+// (Instant hoặc Schedule), mỗi vault 1 khoản LAMP khác nhau (ngắn / trung /
+// dài hạn). Mỗi vault có
 // tuổi loyalty độc lập → tiêu LAMP của vault ngắn hạn KHÔNG ảnh hưởng tới LF
 // của vault dài hạn. Đây là feature có sẵn — không cần thay đổi onchain.
 
@@ -40,8 +41,8 @@ export interface ListVaultsParams {
 
 /**
  * Query all vaults at the per-network vault address whose `datum.owner` matches
- * `ownerPkh`. Returns one entry per UTxO — a user can have multiple SnapshotGen
- * vaults (different time horizons / profiles), each independent.
+ * `ownerPkh`. Returns one entry per UTxO — a user can have multiple vaults of
+ * the same type (different time horizons / profiles), each independent.
  *
  * UX hint: sort by `oldestEpoch` ascending = oldest vault first = highest LF.
  * Caller can label them off-chain ("long-term" / "mid-term" / "short-term")

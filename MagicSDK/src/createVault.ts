@@ -9,18 +9,20 @@
 //   import { readFile } from "node:fs/promises";
 //
 //   // 1. Load the unapplied vault validator CBOR (from MAGIC repo build output).
-//   const snapshotPlutus = JSON.parse(await readFile("path/to/SnapshotGen/onchain/plutus.json", "utf8"));
-//   const vaultUnappliedCbor = snapshotPlutus.validators.find(
+//   //    Hai loại vault còn sống: ScheduleGen và InstantGen.
+//   const schedulePlutus = JSON.parse(await readFile("path/to/ScheduleGen/onchain/plutus.json", "utf8"));
+//   const vaultUnappliedCbor = schedulePlutus.validators.find(
 //     v => v.title === "vault.vault.spend"
 //   ).compiledCode;
 //
 //   // 2. Build the unsigned tx.
 //   const { tx, vaultAddress, summary } = await createVault({
 //     lucid,                  // Lucid Evolution with wallet selected
-//     vaultType: "Snapshot",
+//     vaultType: "Schedule",
 //     protocol: {
 //       network: "Preview",
 //       lampPolicyId: "...",
+//       shardPolicyId: "...",   // Schedule-only; Instant cần um*/backing* thay vào
 //     },
 //     validators: { vaultUnappliedCbor },
 //     vault: {
@@ -74,7 +76,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
 
   // ── Current PROTOCOL epoch ────────────────────────────────────
   // Validator computes epoch = posix_ms / ms_per_epoch. Initial datum's
-  // `last_updated_epoch` should match the current epoch so that snapshot
+  // `last_updated_epoch` should match the current epoch so that generation
   // can fire from the NEXT epoch boundary.
   const tipPosixMs   = params.tipPosixMs ?? BigInt(Date.now());
   const msPer        = protocol.msPerEpoch ?? msPerEpoch(protocol.network);
@@ -138,7 +140,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   // plain-bigint shape from buildInitialVaultDatum() is structurally
   // compatible at runtime but the inferred TS type doesn't match the
   // schema's TUnsafe<...> wrappers. Cast — same workaround used by
-  // every other vault SDK in this repo (snapshot.ts, instant.ts, ...).
+  // every other vault SDK in this repo (instant.ts, schedule.ts).
   const vaultDatumCbor = Data.to(initialVault as never, VaultDatumSchema);
 
   // ── Build tx ─────────────────────────────────────────────────

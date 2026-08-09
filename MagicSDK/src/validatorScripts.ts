@@ -1,14 +1,16 @@
 // MagicSDK/src/validatorScripts.ts — apply ms_per_epoch + other params per vault type
 //
-// Each of the 4 vault validators takes a DIFFERENT set of compile-time parameters.
-// SOURCE OF TRUTH = the `validator vault(...)` header in each module; this table
-// must be read off those files, never from memory:
-//   Snapshot: vault(lamp_policy_id, lamp_asset_name, ms_per_epoch)
+// Each of the 2 live vault validators takes a DIFFERENT set of compile-time
+// parameters. SOURCE OF TRUTH = the `validator vault(...)` header in each module;
+// this table must be read off those files, never from memory:
 //   Instant:  vault(lamp_policy_id, lamp_asset_name, um_nft_policy, um_script_hash,
 //                   backing_nft_policy, backing_script_hash, ms_per_epoch)
-//   Vacuum:   vault(lamp_policy_id, lamp_asset_name, treasury_addr,
-//                   um_nft_policy, um_script_hash, ms_per_epoch)
+//              ← InstantGen/onchain/validators/vault.ak
 //   Schedule: vault(lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch)
+//              ← ScheduleGen/onchain/validators/vault.ak
+//
+// Snapshot và Vacuum không có mặt ở đây vì validator của chúng đã dời sang
+// `Legacy/genmagic-v3.3/`. Đừng thêm case cho chúng nếu không kèm validator sống.
 //
 // `lamp_asset_name` is param #2 on EVERY vault (INV-VAULT-IDENTITY commit): the
 // validator compares the vault's LAMP holding by (policy, asset_name), and the
@@ -17,7 +19,8 @@
 //
 // PHA 2 removed `treasury_addr` from Instant and Schedule: under I-ACT-7 no
 // handler in those validators moves LAMP, so the parameter had no reader left.
-// Only the legacy Vacuum validator still carries it.
+// The only validator that ever took it (Vacuum) is now legacy — hence no
+// `treasuryAddress` on ProtocolParams and no address→PlutusData encoder here.
 //
 // `um_script_hash` pins the UM reference input to the canonical UM script
 // address (MAINNET-BLOCK fix, defense-in-depth layer b); `backing_script_hash`
@@ -25,12 +28,13 @@
 //
 // `applyParamsToScript` bakes them into the CBOR → produces a network-specific
 // validator hash. The hash defines the on-chain address, so every consumer
-// (vault creation, snapshot, instant, etc.) MUST use the same applied script.
+// (vault creation, instant gen, schedule commit/fire) MUST use the same applied
+// script.
 
 import {
   applyParamsToScript, validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
-  Constr, Data, getAddressDetails,
+  Data,
   type Validator,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch, lampAssetName } from "@magiclamp/protocol-utils";
@@ -93,10 +97,6 @@ export function buildParamsList(
   const assetName = protocol.lampAssetName ?? lampAssetName(protocol.network);
 
   switch (vaultType) {
-    case "Snapshot":
-      // vault(lamp_policy_id, lamp_asset_name, ms_per_epoch)
-      return [protocol.lampPolicyId, assetName, msPer];
-
     case "Instant": {
       // vault(lamp_policy_id, lamp_asset_name, um_nft_policy, um_script_hash,
       //       backing_nft_policy, backing_script_hash, ms_per_epoch)
@@ -111,22 +111,6 @@ export function buildParamsList(
         protocol.umScriptHash!,        // pins the UM ref input (layer b)
         protocol.backingNftPolicyId!,  // pins the BackingBeacon ref input (§6.3)
         protocol.backingScriptHash!,
-        msPer,
-      ];
-    }
-
-    case "Vacuum": {
-      // LEGACY module — vault(lamp_policy_id, lamp_asset_name, treasury_addr,
-      //                       um_nft_policy, um_script_hash, ms_per_epoch)
-      requireField(protocol.umNftPolicyId, "umNftPolicyId", vaultType);
-      requireField(protocol.umScriptHash, "umScriptHash", vaultType);
-      requireField(protocol.treasuryAddress, "treasuryAddress", vaultType);
-      return [
-        protocol.lampPolicyId,
-        assetName,
-        addressToPlutusData(protocol.treasuryAddress!),
-        protocol.umNftPolicyId!,
-        protocol.umScriptHash!,
         msPer,
       ];
     }
@@ -146,36 +130,4 @@ export function buildParamsList(
 
 function requireField(v: unknown, name: string, vaultType: string): void {
   if (!v) throw new Error(`${name} required for vaultType="${vaultType}"`);
-}
-
-/**
- * Encode a bech32 Cardano address as Plutus Address Constr.
- * Aiken `Address` = Constr 0 { payment_credential, stake_credential? } where
- *   payment_credential = Constr 0 (key_hash) | Constr 1 (script_hash)
- *   stake_credential   = None | Some(Constr 0 (Constr 0 / 1 (hash)))
- *
- * For treasury addresses (typically `addr_test1v...` = key-only or simple),
- * we extract the payment credential and serialize with no stake credential.
- */
-function addressToPlutusData(addressBech32: string): Data {
-  const details = getAddressDetails(addressBech32);
-  const pc = details.paymentCredential;
-  if (!pc) throw new Error(`addressToPlutusData: no payment credential in ${addressBech32}`);
-  const sc = details.stakeCredential;
-
-  // Payment credential: Constr 0 (Key) or Constr 1 (Script)
-  const paymentData = pc.type === "Key"
-    ? new Constr(0, [pc.hash])
-    : new Constr(1, [pc.hash]);
-
-  // Stake credential: None (Constr 1) or Some(Constr 0 (Inline (Constr 0 (Constr 0/1 hash))))
-  // Most validator params accept the simplified shape; if Aiken uses
-  // Address { payment_credential, stake_credential }, omit stake by passing None.
-  const stakeData = sc
-    ? new Constr(0, [new Constr(0, [
-        sc.type === "Key" ? new Constr(0, [sc.hash]) : new Constr(1, [sc.hash]),
-      ])])
-    : new Constr(1, []);
-
-  return new Constr(0, [paymentData, stakeData]);
 }

@@ -49,8 +49,9 @@ export {
 } from "./redeemerIndex.js";
 
 // MAGIC generation — the only supported way for an app to trigger a gen tx.
-// See generate.ts for why VacuumGen/SnapshotGen are absent, and for the
-// fail-closed BackingBeacon precondition on InstantGen.
+// Chỉ có InstantGen + ScheduleGen: VacuumGen/SnapshotGen đã ở
+// `Legacy/genmagic-v3.3/` (xem generate.ts). Cũng xem generate.ts cho điều kiện
+// fail-closed của BackingBeacon trên InstantGen.
 export {
   buildInstantGenTx,
   diagnoseCeilings,

@@ -4,7 +4,8 @@
 // `createVault()`. End-to-end flow:
 //
 //   1. PhoenixKey resolves the user's DID → Cardano payment key hash (PKH).
-//   2. PhoenixKey caller chooses which vault type to create (or all 4).
+//   2. PhoenixKey caller chooses which vault type to create ("Instant" hoặc
+//      "Schedule" — hai loại còn validator sống).
 //   3. SDK builds unsigned tx → PhoenixKey wallet abstraction signs → submit.
 //
 // This file is illustrative — adapt to your wallet abstraction (CIP-30,
@@ -15,7 +16,6 @@
 //   cd MagicSDK
 //   NETWORK=Preview BLOCKFROST_KEY=preview... PRIVATE_KEY=ed25519_sk... \
 //     LAMP_POLICY_ID=... UM_NFT_POLICY_ID=... SHARD_NFT_POLICY_ID=... \
-//     TREASURY_ADDRESS=addr_test1... \
 //     npx tsx examples/phoenixkey_integration.ts
 
 import { readFile } from "node:fs/promises";
@@ -35,9 +35,7 @@ function resolveUserFromDID(did: string): { ownerPkh: string; preferredProfile: 
 // ── 2. Load unapplied validator CBOR from MAGIC repo build output. ──────────
 async function loadVaultCbor(vaultType: VaultType): Promise<{ vault: string; shard?: string }> {
   const moduleName = ({
-    Snapshot: "SnapshotGen",
     Instant:  "InstantGen",
-    Vacuum:   "VacuumGen",
     Schedule: "ScheduleGen",
   } as const)[vaultType];
 
@@ -54,15 +52,14 @@ async function loadVaultCbor(vaultType: VaultType): Promise<{ vault: string; sha
   return { vault: vault.compiledCode, shard: shard?.compiledCode };
 }
 
-// ── 3. Main: create one Snapshot vault for the user. ────────────────────────
+// ── 3. Main: create one vault for the user. ─────────────────────────────────
 async function main() {
   const NETWORK         = (process.env.NETWORK ?? "Preview") as "Preview" | "Preprod" | "Mainnet";
   const BLOCKFROST_URL  = `https://cardano-${NETWORK.toLowerCase()}.blockfrost.io/api/v0`;
   const BLOCKFROST_KEY  = required("BLOCKFROST_KEY");
   const PRIVATE_KEY     = required("PRIVATE_KEY");
   const LAMP_POLICY_ID  = required("LAMP_POLICY_ID");
-  const TREASURY_ADDR   = process.env.TREASURY_ADDRESS;     // optional for Snapshot
-  const UM_NFT_POLICY   = process.env.UM_NFT_POLICY_ID;     // required for Instant/Vacuum
+  const UM_NFT_POLICY   = process.env.UM_NFT_POLICY_ID;     // required for Instant
   const SHARD_NFT_POLICY= process.env.SHARD_NFT_POLICY_ID;  // required for Schedule
 
   // Lucid setup — PhoenixKey would use CIP-30 / WebAuthn instead.
@@ -76,9 +73,9 @@ async function main() {
   console.log(`Wallet:  ${walletAddr}`);
   console.log(`Owner pkh: ${ownerPkh}\n`);
 
-  // Pick vault type. PhoenixKey UI would let user choose; default Snapshot
-  // (no LAMP cost, just locks LAMP into vault for generation).
-  const vaultType: VaultType = (process.env.VAULT_TYPE as VaultType) ?? "Snapshot";
+  // Pick vault type. PhoenixKey UI would let user choose; default Schedule
+  // (hợp đồng kỳ hạn, khoá LAMP trong vault — I-ACT-7, LAMP không đổi chủ).
+  const vaultType: VaultType = (process.env.VAULT_TYPE as VaultType) ?? "Schedule";
 
   const { vault: vaultCbor, shard: shardCbor } = await loadVaultCbor(vaultType);
 
@@ -88,7 +85,6 @@ async function main() {
     protocol: {
       network:         NETWORK,
       lampPolicyId:    LAMP_POLICY_ID,
-      treasuryAddress: TREASURY_ADDR,
       umNftPolicyId:   UM_NFT_POLICY,
       shardPolicyId:   SHARD_NFT_POLICY,
     },

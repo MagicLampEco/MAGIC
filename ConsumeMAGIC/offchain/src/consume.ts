@@ -25,7 +25,7 @@ import {
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type Assets,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
-import { pricePerOp, type BasePriceTable } from "@magiclamp/consumemagic-pricing";
+import { Q } from "@magiclamp/consumemagic-pricing";
 import {
   ConsumeRedeemerSchema,
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
@@ -74,8 +74,6 @@ export interface ConsumeParams {
   network: Network;
   /** Tip POSIX ms hiện tại (đầu vào để tính epoch + validity-range). */
   tipPosixMs: bigint;
-  /** TEST: override base-price table khi tính required (mặc định MVP). */
-  basePriceTable?: BasePriceTable;
 }
 
 export interface ConsumeResult {
@@ -95,14 +93,45 @@ function utxoToRef(u: UTxO): OutputReferenceT {
   return { transaction_id: u.txHash, output_index: BigInt(u.outputIndex) };
 }
 
+// ── required (giá CÓ THẨM QUYỀN, đọc TỪ beacon datum) ─────────────────────────
+
+/**
+ * required = ⌊ base_price × demand_mult × op_count / Q ⌋  (nanogic).
+ *
+ * FIX #3 (P8 fold-floor) + FIX #4 (price authority):
+ *  - base_price đọc TỪ pp.op_prices (beacon datum) THEO op_type — KHÔNG hardcode bảng
+ *    MVP. PostPrice đổi base_price ⇒ off-chain tự theo, không lệch on-chain.
+ *  - FOLD-FLOOR-ONCE: base×demand×count rồi ÷Q một lần — KHỚP byte-perfect
+ *    onchain pricing.required_for. Floor-before-multiply = under-charge ⇒ tx reject.
+ *  - op_type vắng trong beacon ⇒ THROW (không im lặng fallback trên đường tiền).
+ *
+ * @throws CONSUME-007 nếu op_type không có trong pp.op_prices.
+ */
+export function requiredFromBeacon(
+  pp: PriceParamT,
+  opType: number,
+  opCount: bigint,
+): bigint {
+  const row = pp.op_prices.find((p) => Number(p.op_type) === opType);
+  if (row === undefined) {
+    throw new Error(
+      `CONSUME-007: op_type ${opType} không có trong beacon PriceParam.op_prices ` +
+        `(giá có thẩm quyền phải đến từ beacon, không fallback MVP trên đường tiền)`,
+    );
+  }
+  const count = opCount > 0n ? opCount : 0n;
+  return (row.base_price * pp.demand_mult * count) / Q;
+}
+
 // ── Builder ───────────────────────────────────────────────────────────────────
 
 /**
  * Dựng tx tiêu MAGIC. KHÔNG mint. Caller sign + submit (signAndSubmit).
  *
  * Bất biến builder bám validator (consume.ak):
- *  - required = pricePerOp(op_type, demand_mult) × op_count  (đọc TỪ beacon, không
- *    tin client) — caller phải đảm bảo vaultBurnRedeemerCbor có Σburns == required.
+ *  - required = ⌊base_price×demand_mult×op_count/Q⌋ (fold-floor-once, base_price ĐỌC
+ *    TỪ beacon datum theo op_type — P8 khớp on-chain) — caller phải đảm bảo
+ *    vaultBurnRedeemerCbor có Σburns == required.
  *  - Engage output: value bảo toàn TUYỆT ĐỐI (copy y nguyên engageUtxo.assets),
  *    consumed_count += op_count, last_epoch = currentEpoch, did_commit immutable.
  *  - validity-range cửa sổ ≤ 1 epoch; epoch ref = upper bound.
@@ -113,7 +142,7 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     consumeScript, vaultScript, opType, opCount,
     vaultBurnRedeemerCbor, vaultOutDatumCbor, vaultOutAssets,
     ownerSignerKeyHash, collateralUtxo,
-    engageNftUnit, network, tipPosixMs, basePriceTable,
+    engageNftUnit, network, tipPosixMs,
   } = params;
 
   if (opCount < 1n) throw new Error("CONSUME-001: op_count phải ≥ 1");
@@ -124,11 +153,10 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   }
   const pp: PriceParamT = decodePriceParam(priceBeaconUtxo.datum);
 
-  // ── required (giá có thẩm quyền từ beacon) ──────────────────────────────────
-  const unit = pricePerOp(opType, pp.demand_mult, basePriceTable);
-  const requiredNanogic = unit * opCount;
+  // ── required (giá có thẩm quyền từ beacon, fold-floor-once — P8) ─────────────
+  const requiredNanogic = requiredFromBeacon(pp, opType, opCount);
   if (requiredNanogic <= 0n) {
-    throw new Error(`CONSUME-003: required=${requiredNanogic} (op_type ngoài bảng hoặc giá 0)`);
+    throw new Error(`CONSUME-003: required=${requiredNanogic} (op_count<1 hoặc base_price 0)`);
   }
 
   // ── epoch tham chiếu = từ UPPER bound (khớp util.get_epoch vá) ───────────────

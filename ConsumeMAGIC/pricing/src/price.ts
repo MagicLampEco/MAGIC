@@ -133,8 +133,34 @@ export function pricePerOp(
 }
 
 /**
- * required = Σ price(op_type) × op_count   (nanogic) — total burn quote for a tx.
- * Mirrors the on-chain C-CM-2 accumulation. Pure BigInt.
+ * required for ONE op line = ⌊ base_price × demand_mult × op_count / Q ⌋ (nanogic).
+ *
+ * FOLD-FLOOR-ONCE — P8 parity với onchain pricing.required_for:
+ *   base × demand × count, RỒI chia Q một lần (KHÔNG floor per-op rồi nhân count).
+ * Floor-before-multiply (bản cũ) mất phần dư mỗi op × count ⇒ thu THIẾU (under-charge)
+ * ⇒ Σburns off-chain < required on-chain ⇒ MỌI consume tx bị validator từ chối.
+ *
+ * @throws if op_type is absent from the table (unknown op = no authoritative price).
+ */
+export function requiredForOp(
+  opType: number,
+  opCount: bigint,
+  demandMultQ: bigint,
+  basePriceTable: BasePriceTable = MVP_BASE_PRICE,
+): bigint {
+  const base = basePriceTable[opType];
+  if (base === undefined) {
+    throw new Error(`PRICE-001: unknown op_type ${opType} (not in base-price table)`);
+  }
+  const count = opCount > 0n ? opCount : 0n;
+  return (base * demandMultQ * count) / Q;
+}
+
+/**
+ * required = Σ ⌊ base(op)×demand×count / Q ⌋   (nanogic) — total burn quote for a tx.
+ * Mirrors the on-chain C-CM-2 accumulation (fold-floor-once PER op line, then Σ).
+ * On-chain sum_required_over_engage_inputs folds each Engage input's required_for
+ * (một lần / input) rồi cộng ⇒ off-chain fold per item rồi cộng = KHỚP. Pure BigInt.
  */
 export function requiredBurn(
   items: ReadonlyArray<{ opType: number; opCount: bigint }>,
@@ -143,8 +169,7 @@ export function requiredBurn(
 ): bigint {
   let total = 0n;
   for (const { opType, opCount } of items) {
-    const count = opCount > 0n ? opCount : 0n;
-    total += pricePerOp(opType, demandMultQ, basePriceTable) * count;
+    total += requiredForOp(opType, opCount, demandMultQ, basePriceTable);
   }
   return total;
 }

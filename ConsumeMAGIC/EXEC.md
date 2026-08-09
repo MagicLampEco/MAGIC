@@ -6,68 +6,63 @@
 
 ## 1. Deploy steps (thứ tự bắt buộc)
 
-Mỗi bước viết output vào `scripts/.env`. Bước sau phụ thuộc env var của bước trước.
 `consume.ak` parameterized bởi 8 field — `vault_script_hash` + `burn_batch_constr`
 khác nhau per-vault (Instant=2/Snapshot=1/Vacuum=4/Schedule=2) → **1 deploy
 ConsumeMAGIC / 1 loại vault**.
 
-```bash
-cd /Users/ductiger/Projects/MAGIC/scripts && npm install
+Toàn bộ hạ tầng ConsumeMAGIC deploy trong **một script, một tx** (`09_deploy_consume.ts:52`):
+mint price NFT + post PriceParam beacon + mint engage NFT + tạo Engage UTxO + apply-param
+consume validator. Hai genesis UTxO riêng (`g1`, `g2`) cho hai one-shot policy phân biệt.
 
+```bash
 # Bước 0: build Aiken validators
 cd /Users/ductiger/Projects/MAGIC/ConsumeMAGIC/onchain
 aiken build   # → onchain/plutus.json (4 validator: consume, price_nft, price_param, engage_nft)
 
-# Bước 1: deploy price_nft (one-shot minting policy — beacon authenticity NFT)
-# Đọc PRICE genesis_ref từ ví (UTXO chưa spend), set trong deploy script
-npm run deploy:consume:price-nft
-# → ghi PRICE_NFT_POLICY_ID vào scripts/.env
+# Bước 1: deploy vault InstantGen (prereq — cho VAULT_INSTANT_HASH)
+cd /Users/ductiger/Projects/MAGIC/scripts && npm install
+npx tsx deploy/05_create_instant_vault.ts
 
-# Bước 2: deploy engage_nft (one-shot minting policy — thread NFT neo EngageDatum)
-# Đọc ENGAGE genesis_ref RIÊNG (khác PRICE genesis_ref → policy id phân biệt)
-npm run deploy:consume:engage-nft
-# → ghi ENGAGE_NFT_POLICY_ID vào scripts/.env (name = 454e47 "ENG")
+# Bước 2: sinh MAGIC để có cái mà tiêu
+npx tsx test/instant_only.ts
 
-# Bước 3: deploy price_param (beacon spend validator) + post beacon genesis
-npm run deploy:consume:price-param
-# → ghi PRICE_PARAM_SCRIPT_HASH vào scripts/.env
-# → mint 1 price NFT, post PriceParam beacon epoch=<epoch hiện tại>, demand_mult=1_000_000_000
+# Bước 3: deploy toàn bộ hạ tầng ConsumeMAGIC (1 tx, 5 việc)
+npx tsx deploy/09_deploy_consume.ts
+# → in ra block export: PRICE_NFT_POLICY_ID, ENGAGE_NFT_POLICY_ID,
+#   PRICE_PARAM_SCRIPT_HASH, CONSUME_SCRIPT_HASH
 
-# Bước 4: deploy consume validator (apply 8 param)
-#   price_nft_policy/name, engage_nft_policy/name, vault_script_hash,
-#   burn_batch_constr, max_price_stale, ms_per_epoch
-npm run deploy:consume:vault
-# → ghi CONSUME_SCRIPT_HASH vào scripts/.env
-
-# Bước 5: tạo Engage UTxO genesis (mint engage NFT + EngageDatum{consumed_count:0,
-#         last_epoch:0, did_commit đặt 1 lần (MVP rỗng), owner})
-npm run deploy:consume:engage-init
-
-# Bước 6: e2e consume (co-spend Engage + vault BurnBatch)
-npm run test:consume:e2e
+# Bước 4: tiêu MAGIC thật (co-spend Engage + vault BurnBatch)
+npx tsx test/consume_only.ts
 # Expected: vault.magic_batches GIẢM đúng required, consumed_count tăng đúng op_count
 ```
 
-**Env vars cần trước bước 1:**
+**Chạy cả 4 bước nối env tự động** — `scripts/run_consume_e2e.sh` làm đúng chuỗi trên và
+truyền env giữa các bước qua stdout:
+
+```bash
+cd /Users/ductiger/Projects/MAGIC
+AGENT_SECRETS=<đường dẫn .env của hệ agent> bash scripts/run_consume_e2e.sh Preview   # hoặc Preprod
+```
+
+**Secret** (`BLOCKFROST_KEY`, seed ví deploy) đọc từ `$AGENT_SECRETS`, KHÔNG đặt trong
+`scripts/.env` — `detect_deploy_wallet.ts` tự dò tên biến seed và chỉ dùng giá trị, không in ra.
+
+**Knob (env, có default — xem `09_deploy_consume.ts:16-20`):**
 
 ```
-BLOCKFROST_KEY=<preview key>
-PRIVATE_KEY=<hex>
-NETWORK=Preview
-# Vault liên kết (generator vault — module khác). PHẢI khớp param consume validator:
-VAULT_SCRIPT_HASH=<payment script hash của generator vault>
-BURN_BATCH_CONSTR=2          # Instant=2, Snapshot=1, Vacuum=4, Schedule=2
-ENGAGE_NFT_NAME=454e47       # "ENG"
-PRICE_NFT_NAME=5052494345    # "PRICE"
-MAX_PRICE_STALE=1            # epoch. Mainnet ≤ 1-2 (1 epoch = 5 ngày — xem §4)
-MS_PER_EPOCH=86400000        # Preview = 1 ngày. MAINNET = 432000000 (5 ngày)
-COMMITTEE_PKH_1=<hex>
-COMMITTEE_PKH_2=<hex>
-COMMITTEE_THRESHOLD=2
+NETWORK=Preview              # Preview | Preprod
+VAULT_INSTANT_HASH=<hash>    # BẮT BUỘC — sinh ra ở bước 1
+MAX_PRICE_STALE=1            # epoch giá được phép cũ. Baked vào consume hash
+PRICE_COMMITTEE=<pkh,pkh>    # default = ví deploy
+PRICE_THRESHOLD=1            # M-of-N committee
+PRICE_DEMAND_MULT=1000000000 # Q-format, default 1.0×
 ```
+
+Hằng số baked trong script, không phải env: `PRICE_NFT_NAME=5052494345` ("PRICE"),
+`ENGAGE_NFT_NAME=454e47` ("ENG"), `BURN_BATCH_CONSTR=2` (InstantGen).
 
 > **KHÔNG còn** `MAGIC_POLICY_ID` / `MAGIC_ASSET_NAME` (v1 mint — model v2 không mint
-> MAGIC). `ENGAGE_NFT_POLICY_ID` / `PRICE_NFT_POLICY_ID` sinh ra ở bước 1-2 (one-shot).
+> MAGIC). `ENGAGE_NFT_POLICY_ID` / `PRICE_NFT_POLICY_ID` sinh ra ở bước 3 (one-shot).
 
 ---
 

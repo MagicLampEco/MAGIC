@@ -28,9 +28,19 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
 
 - **`base_price[op_type]`**: bảng giá danh nghĩa per loại nghiệp vụ, **governance param** (DAO chỉnh).
   Ví dụ MVP: `xử lý 1 ảnh = 0.01 MAGIC`, `neo 1 CID = 0.001 MAGIC`. Đơn vị nanogic (1 MAGIC = 1e9).
-- **op_type chuẩn (CHỐT, khớp offchain `OP_IMAGE`/`OP_CID` trong `pricing/src/price.ts`):**
-  `1 = ảnh` (0.01 MAGIC = 10_000_000 nanogic), `2 = CID` (0.001 MAGIC = 1_000_000 nanogic).
+- **Sổ op_type chuẩn (CHỐT — MAGIC là registrar duy nhất; base_price là governance param, DAO chốt):**
+  | op_type | tên | base_price MVP (nanogic) | cấp cho | ghi chú |
+  |---|---|---|---|---|
+  | 1 | `ảnh` | 10_000_000 (0.01 MAGIC) | (gốc) | khớp `OP_IMAGE` `pricing/src/price.ts` |
+  | 2 | `CID` (neo bằng chứng) | 1_000_000 (0.001 MAGIC) | (gốc) | khớp `OP_CID`; mọi bên neo bằng chứng DÙNG LẠI mã này, KHÔNG xin mã mới |
+  | 3 | `recognition_storage_mb` | DAO chốt (tạm 1e9/MB) | OriLife/Registry | tính theo MB |
+  | 4 | `recognition_compute_mb` | DAO chốt (tạm 1e9/MB) | OriLife/Registry | tính theo MB |
+  | 5 | `job_post` | DAO chốt (tạm 2_000_000) | AladinWork | đăng+phát tán 1 tin việc |
+  | 6 | `contract_settle` | DAO chốt (tạm 5_000_000) | AladinWork | tất toán 1 hợp đồng |
   Mọi fixture/beacon/redeemer onchain PHẢI dùng đúng key này; không được lệch sang `0/1`.
+  **Ràng buộc khi mở op_type** (đề nghị AladinWork, MAGIC tán thành): nếu `base_price > 0` thì
+  `base_price × m_min ≥ Q` — chặn giá-về-0 (#1b) ngay tại governance. Cưỡng chế on-chain: xem hạng-mục
+  siết `price_param.ak` (GATED, đụng validator, chờ chủ nhân gật).
 - **`demand_mult(t)`**: hệ số co giãn cung-cầu, **TÁI DÙNG cấu trúc UMKeeper** (lọc FIR: SMA-N của
   `load_raw` rồi `clamp[m_min, m_max]`), **KHÔNG dùng PI**. Lý do (4 trục):
   (1) tối ưu eUTXO — FIR không cần biến trạng thái tích phân trên datum, ít byte;

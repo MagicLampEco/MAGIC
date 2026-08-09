@@ -14,6 +14,7 @@ import {
   demandMult,
   pricePerOp,
   requiredBurn,
+  requiredForOp,
 } from "../src/price.js";
 
 // helper: build a window full of the same constant raw load
@@ -270,6 +271,29 @@ describe("requiredBurn — Σ price × count (mirrors on-chain C-CM-2)", () => {
   it("negative/zero counts contribute nothing", () => {
     expect(requiredBurn([{ opType: OP_IMAGE, opCount: -4n }], Q)).toBe(0n);
     expect(requiredBurn([{ opType: OP_IMAGE, opCount: 0n }], Q)).toBe(0n);
+  });
+});
+
+describe("FOLD-FLOOR-ONCE — P8 parity anchor (must match onchain pricing.required_for)", () => {
+  // NORMATIVE parity vector — GIÁ TRỊ NÀY == test Aiken required_fold_floor_no_undercharge.
+  // base=1e6, demand=1_333_333_333, count=1000.
+  const base = 1_000_000n;
+  const demand = 1_333_333_333n;
+  const count = 1000n;
+  const foldOnce = 1_333_333_333n; //  ⌊base×demand×count/Q⌋   — CORRECT (fold-once)
+  const oldFloorFirst = 1_333_333_000n; // ⌊base×demand/Q⌋×count — under-charge (333 ng)
+
+  const table = { [OP_IMAGE]: base } as const;
+
+  it("requiredForOp folds base×demand×count then ÷Q once (no under-charge)", () => {
+    expect(requiredForOp(OP_IMAGE, count, demand, table)).toBe(foldOnce);
+    // demonstrate the old floor-before-multiply WOULD have under-charged
+    expect((base * demand) / Q * count).toBe(oldFloorFirst);
+    expect(foldOnce - oldFloorFirst).toBe(333n);
+  });
+
+  it("requiredBurn matches the on-chain fold value on the parity vector", () => {
+    expect(requiredBurn([{ opType: OP_IMAGE, opCount: count }], demand, table)).toBe(foldOnce);
   });
 });
 

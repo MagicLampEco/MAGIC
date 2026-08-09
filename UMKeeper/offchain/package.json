@@ -2,14 +2,20 @@
   "name": "@magiclamp/umkeeper",
   "version": "0.1.0",
   "type": "module",
+  "main": "src/keeper.ts",
+  "exports": {
+    ".": "./src/keeper.ts"
+  },
   "scripts": {
     "test": "vitest run",
-    "start": "node dist/src/run.js"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@lucid-evolution/lucid": "0.4.30",
     "@magiclamp/protocol-utils": "file:../../ProtocolUtils"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
   }

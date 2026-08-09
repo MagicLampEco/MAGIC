@@ -65,15 +65,27 @@ export async function getEpochStats(
 // Transaction builder
 // ══════════════════════════════════════════════════════════════
 
+// Lược đồ Plutus Data. Thứ tự trường LÀ hợp đồng nhị phân — đổi chỗ là vỡ decode
+// mọi UM UTxO đã tạo. Neo: UMKeeper/onchain/validators/um_datum.ak.
+//
+// Cặp `type X = Data.Static<...>` + `const X = schema as unknown as X` là khuôn bắt
+// buộc của lucid-evolution: `Data.to`/`Data.from` nhận KIỂU TĨNH ở tham số thứ hai,
+// không nhận chính đối tượng lược đồ. Thiếu cặp này thì tệp không biên dịch được —
+// và trước đây không ai biết, vì gói này chưa từng có `tsconfig.json` để chạy
+// `tsc --noEmit`, còn vitest thì chỉ chạm `math.ts`.
 const UMDatumSchema = Data.Object({
   smoothed_q:          Data.Integer(),
   last_updated_epoch:  Data.Integer(),
   history:             Data.Array(Data.Integer()),
 });
+type UMDatumPlutus = Data.Static<typeof UMDatumSchema>;
+const UMDatumPlutus = UMDatumSchema as unknown as UMDatumPlutus;
 
 const UMRedeemerSchema = Data.Enum([
   Data.Object({ UMUpdate: Data.Object({ new_raw: Data.Integer() }) }),
 ]);
+type UMRedeemerPlutus = Data.Static<typeof UMRedeemerSchema>;
+const UMRedeemerPlutus = UMRedeemerSchema as unknown as UMRedeemerPlutus;
 
 export async function buildUMUpdateTx(
   lucid          : LucidEvolution,
@@ -83,7 +95,7 @@ export async function buildUMUpdateTx(
   network        : Network = "Preview",
   tipPosixMs?    : bigint,
 ): Promise<UMUpdateResult> {
-  const datum    = Data.from(umUtxo.datum!, UMDatumSchema);
+  const datum    = Data.from(umUtxo.datum!, UMDatumPlutus);
   const currentEpoch = epochStats.epoch;
 
   // C-UM-4: Must be a new epoch
@@ -107,7 +119,7 @@ export async function buildUMUpdateTx(
     network,
     scriptHashToCredential(validatorToScriptHash(umScript)),
   );
-  const redeemer = Data.to({ UMUpdate: { new_raw: newRaw } }, UMRedeemerSchema);
+  const redeemer = Data.to({ UMUpdate: { new_raw: newRaw } }, UMRedeemerPlutus);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const tipMs    = tipPosixMs ?? BigInt(Date.now());
   const lowerTime = Number(tipMs);
@@ -119,7 +131,7 @@ export async function buildUMUpdateTx(
     .attach.SpendingValidator(umScript)
     .pay.ToAddressWithData(
       umAddr,
-      { kind: "inline", value: Data.to(newDatum, UMDatumSchema) },
+      { kind: "inline", value: Data.to(newDatum, UMDatumPlutus) },
       umUtxo.assets,
     )
     // Permissionless — no .addSignerKey()
@@ -177,8 +189,8 @@ export function startUMKeeper(config: KeeperConfig): () => void {
       const umUtxo = await lucid.utxoByUnit(umUtxoUnit);
       if (!umUtxo.datum) return;
 
-      const datum       = Data.from(umUtxo.datum, UMDatumSchema);
-      const tip         = await (lucid.provider as any).getBlock("latest");
+      const datum       = Data.from(umUtxo.datum, UMDatumPlutus);
+      const tip         = await (lucid.config().provider as any).getBlock("latest");
       const network     = config.network ?? "Preview";
       const tipPosixMs  = BigInt(slotToUnixTime(network, tip.slot ?? 0));
       const currentEpoch = posixMsToEpoch(tipPosixMs, network);

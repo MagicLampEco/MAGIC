@@ -12,7 +12,7 @@
 | `UM_MAX_Q` | const | `2_000_000_000` = 2.0 × Q (giới hạn Constitutional tối đa) |
 | `W` | const | `6` — kích thước cửa sổ SMA (UM_WINDOW) |
 | `e` | biến | epoch hiện tại (số nguyên, tính từ genesis Cardano) |
-| `B_e` | biến | tổng nanogic burned trong epoch `e` (SnapshotGen accumulation) |
+| `B_e` | biến | tổng nanogic burned trong epoch `e` (gộp từ các vault đang sống — nguồn cũ ghi "SnapshotGen accumulation", module đó đã ở `Legacy/`) |
 | `M_e` | biến | tổng nanogic minted trong epoch `e` |
 | `history` | `List<Int>` | danh sách ≤ W raw UM values gần nhất (được bảo toàn trong datum) |
 | `smoothed_q` | `Int` | giá trị UM đã làm mịn, trong Q-format, thuộc `[UM_MIN_Q, UM_MAX_Q]` |
@@ -210,6 +210,12 @@ currentEpoch (InstantGen tx) = 100
 
 staleness = 100 - 98 = 2 > UM_MAX_STALENESS (=1)
 → um_for_instant = UM_FALLBACK_Q = 500_000_000
+
+> ⚠ Phần số dưới đây minh hoạ DUY NHẤT cơ chế stale → fallback. Hình dạng công thức
+> (`L × BASE`) thuộc mô hình cũ: sau PHA-2, InstantGen tính thưởng từ `consumed`, không
+> từ số dư LAMP (`compute_reward_from_consumed` trong
+> `InstantGen/onchain/lib/magiclamp/protocol/math.ak`). Cần con số thật thì chạy hàm đó,
+> đừng lấy ví dụ này làm chuẩn.
 
 L_avail = 1_000_000_000_000  (1_000_000 LAMP in oildrop)
 PM = 1_050_000_000  (Flame profile)

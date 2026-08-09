@@ -50,7 +50,11 @@ export interface CommitParams {
   scheduleLength  : bigint;    // L ∈ [10,200]
   lampPerEpoch    : bigint;    // λ in oil
   userAddress     : string;
-  /** Compiled vault validator (3 params: lamp_policy_id, shard_policy_id, ms_per_epoch).
+  /** Compiled vault validator — 4 apply-params, THEO THỨ TỰ:
+   *    1. lamp_policy_id
+   *    2. lamp_asset_name   ← per-network (tLAMP testnet / LAMP mainnet), KHÔNG hardcode
+   *    3. shard_policy_id
+   *    4. ms_per_epoch
    *  `treasury_addr` was REMOVED in PHA 2 — no handler moves LAMP any more (I-ACT-7). */
   vaultScript     : Validator;
   /** Compiled shard validator (0 params). */

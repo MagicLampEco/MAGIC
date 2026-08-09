@@ -1,11 +1,22 @@
-# ConsumeMAGIC — TECH v1 (feat/consume-magic-v1)
+# ConsumeMAGIC — TECH (mô hình v2: engagement-state)
+
+> **MAGIC KHÔNG phải token.** `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` §4.1: MAGIC không
+> có policy-id, không đúc, không có `tx.mint`. "Tiêu MAGIC" = handler `BurnBatch` của
+> **vault generator** hạ `current_amount` trong `VaultDatum.magic_batches`; `consume.ak`
+> chỉ là lớp ĐỊNH GIÁ + ENGAGEMENT, ép hai validator khớp nhau trong cùng một tx.
+>
+> **Kế toán là DẤU BẰNG.** §7.4 C-CM-2: `total_burned == total_required`. Over-burn bị
+> CẤM y như under-burn. Bản v1 từng ghi `≥` — sai, đừng chép lại.
+>
+> Tệp này KHÔNG giữ số test và KHÔNG chép công thức — số ở [`DEVSTATUS.md`](../DEVSTATUS.md),
+> công thức đọc thẳng ở tên hàm được trỏ. Neo `file:line` cố tình bị bỏ: chúng chết theo
+> commit đầu tiên chạm vào tệp.
 
 ## 1. Aiken types + Plutus Data encoding
 
 ### 1.1 OpPrice
 
 ```aiken
-// onchain/lib/magiclamp/consume/types.ak:5
 pub type OpPrice {
   op_type    : Int,
   base_price : Int,
@@ -17,7 +28,6 @@ Plutus Data: `Constr 0 [I op_type, I base_price]` (1 constructor duy nhất, ind
 ### 1.2 PriceParam
 
 ```aiken
-// types.ak:14
 pub type PriceParam {
   op_prices   : List<OpPrice>,
   demand_mult : Int,
@@ -32,42 +42,58 @@ Plutus Data: `Constr 0 [List<OpPrice>, I demand_mult, I m_min, I m_max, I epoch]
 ### 1.3 EngageDatum
 
 ```aiken
-// types.ak:27
 pub type EngageDatum {
-  owner          : ByteArray,
-  consumed_count : Int,
-  last_epoch     : Int,
+  owner            : ByteArray,
+  consumed_count   : Int,
+  last_epoch       : Int,
+  did_commit       : ByteArray,
+  consumed_nanogic : Int,
 }
 ```
 
-Plutus Data: `Constr 0 [B owner, I consumed_count, I last_epoch]`.
+Plutus Data: `Constr 0 [B owner, I consumed_count, I last_epoch, B did_commit, I consumed_nanogic]`.
+
+`did_commit` và `consumed_nanogic` được THÊM Ở CUỐI, cố ý, để không dịch chỉ số ba
+field cũ. `consumed_nanogic` là trục kế toán THẬT (giá trị đã trả); `consumed_count`
+chỉ đếm LƯỢT — xem docstring trong `types.ak` để biết vì sao count một mình là lỗ.
 
 ### 1.4 ConsumeRedeemer
 
 ```aiken
-// types.ak:37
 pub type ConsumeRedeemer {
-  Consume { op_type: Int, op_count: Int, price_ref: OutputReference }
+  Consume {
+    op_type   : Int,
+    op_count  : Int,
+    price_ref : OutputReference,
+    vault_ref : OutputReference,
+  }
 }
 ```
 
-Plutus Data: `Constr 0 [I op_type, I op_count, Constr 0 [B txId, I outputIndex]]`.
+Plutus Data: `Constr 0 [I op_type, I op_count, Constr 0 [B txId, I ix], Constr 0 [B txId, I ix]]`.
 
 Lưu ý: `OutputReference` = `Constr 0 [B transaction_id, I output_index]` (Plutus V3 stdlib).
 
 ### 1.5 PriceParamRedeemer
 
 ```aiken
-// types.ak:43
 pub type PriceParamRedeemer { PostPrice }
 ```
 
 Plutus Data: `Constr 0 []`.
 
-### 1.6 NftRedeemer
+### 1.6 EngageMintRedeemer
 
 ```aiken
-// types.ak:47
+pub type EngageMintRedeemer { MintEngage { seed: OutputReference } }
+```
+
+Plutus Data: `Constr 0 [Constr 0 [B txId, I ix]]`. Redeemer của handler `mint` trong
+CHÍNH `consume.ak` (không phải validator riêng — xem docstring `types.ak`).
+
+### 1.7 NftRedeemer
+
+```aiken
 pub type NftRedeemer { MintGenesis }
 ```
 
@@ -83,42 +109,54 @@ Plutus Data: `Constr 0 []`.
 
 File: `onchain/validators/consume.ak`
 
-Parameterized:
+Parameterized (7 field — đọc `validator consume(...)` để lấy thứ tự chuẩn):
 ```
-magic_policy, magic_name        : policy MAGIC
-price_nft_policy, price_nft_name: authenticity NFT của beacon PriceParam
-engage_nft_policy, engage_nft_name: thread token neo EngageDatum
-max_price_stale                 : số epoch tối đa giá được dùng
-ms_per_epoch                    : POSIX ms / epoch (Preview = 86_400_000)
+price_nft_policy, price_nft_name : authenticity NFT của beacon PriceParam
+vault_script_hash                : payment script hash của vault generator
+burn_batch_constr                : constr index của BurnBatch trong VaultRedeemer
+                                   của vault đó (Instant=2, Schedule=2)
+max_price_stale                  : số epoch tối đa giá được dùng
+ms_per_epoch                     : POSIX ms / epoch (Preview = 86_400_000)
+price_param_script_hash          : địa chỉ bắt buộc của beacon PriceParam
 ```
+
+> KHÔNG có `magic_policy` / `magic_name` — không có token MAGIC để trỏ tới.
+> `engage_nft_policy` / `engage_nft_name` cũng KHÔNG còn là apply-param: policy của
+> thread token CHÍNH LÀ script hash của validator này (handler `mint`), biết qua tự
+> tham chiếu — tránh bake hash hai chiều (fixed-point blake2b = không deploy được).
 
 #### Redeemer `Consume`
 
 **Invariant list:**
 
-| ID | Bất biến | Cách ép | Vị trí code |
-|---|---|---|---|
-| W-CM-1 | `op_count >= 1` | `expect op_count >= 1` | `consume.ak:38` |
-| W-CM-2 | PriceParam beacon mang đúng 1 NFT `(price_nft_policy, price_nft_name)` | `read_price_param`: `expect qty == 1` | `consume.ak:read_price_param` |
-| W-CM-3 | `pricing.valid_param(pp)` — clamp invariant + base_price ≥ 0 | `expect pricing.valid_param(pp)` | `consume.ak:44` |
-| W-CM-4 | `0 ≤ cur_epoch − pp.epoch ≤ max_price_stale` | hai `expect` liên tiếp | `consume.ak:47–48` |
-| W-CM-5 | `tx.mint` chứa đúng 1 entry, policy MAGIC, qty âm | `check_only_magic_burn`: `expect [(p,n,q)] = flatten(mint)` | `consume.ak:check_only_magic_burn` |
-| W-CM-6 | `magic_burned > 0` | `expect magic_burned > 0` | `consume.ak:53` |
-| W-CM-7 | `magic_burned >= total_required` (aggregate qua vault inputs) | `expect magic_burned >= total_required` | `consume.ak:59` |
-| W-CM-8 | `#out@script == #in@script` | `expect n_in == n_out` | `consume.ak:65` |
-| W-CM-9 | `Σ engage NFT(out@script) == Σ engage NFT(in@script)` | `expect nft_in == nft_out` | `consume.ak:70` |
-| W-CM-10 | Non-MAGIC value bảo toàn tuyệt đối giữa input@script và output@script | `expect non_magic_value_preserved(...)` | `consume.ak:82` |
-| W-CM-11 | Mỗi out@script: đúng 1 engage NFT, `owner` bảo toàn, `last_epoch = current_epoch` | `list.all(tx.outputs, ...)` trong `enforce_engagement` | `consume.ak:enforce_engagement` |
-| W-CM-12 | `Σ consumed_count(out) == Σ consumed_count(in) + Σ op_count` | `consumed_out == consumed_in + total_op` | `consume.ak:enforce_engagement` |
+| ID | Bất biến | Hàm ép (đọc thẳng ở đó, đừng chép công thức về đây) |
+|---|---|---|
+| W-CM-1 | `op_count >= 1` | thân `spend` |
+| W-CM-2 | Mọi input do SCRIPT khoá chỉ ở `own_hash` hoặc `vault_script_hash` — chặn double-satisfaction XUYÊN-INSTANCE | `util.script_inputs_confined_to` |
+| W-CM-3 | Mọi input@engage mang ĐÚNG 1 thread NFT dưới `own_hash` (cổng định danh, fail-closed với UTxO giả) | `single_thread_nft` trong `list.all` đầu `spend` |
+| W-CM-4 | Beacon PriceParam nằm đúng `price_param_script_hash` và mang đúng 1 NFT `(price_nft_policy, price_nft_name)` | `read_price_param` |
+| W-CM-5 | `pricing.valid_param(pp)` — clamp invariant + `base_price ≥ 0` | `pricing.valid_param` |
+| W-CM-6 | `0 ≤ current_epoch − pp.epoch ≤ max_price_stale` | hai `expect` sau `util.get_epoch` |
+| W-CM-7 | **`total_burned == total_required`** (DẤU BẰNG — over-burn và under-burn đều bị từ chối). `total_required` gộp qua MỌI Engage input; `total_burned` gộp qua các `vault_ref` PHÂN BIỆT | `sum_required_over_engage_inputs` · `distinct_vault_refs_over_engage_inputs` · `sum_burns_over_vault_refs` |
+| W-CM-8 | `#out@engage == #in@engage` | `util.count_inputs_at_script` / `util.count_outputs_at_script` |
+| W-CM-9 | Value bảo toàn TUYỆT ĐỐI giữa input@engage và output@engage (engage UTxO chỉ giữ ADA + thread NFT) | `engage_value_preserved` |
+| W-CM-10 | Mỗi out@engage: đúng 1 thread NFT, `owner` bảo toàn, `did_commit` bất biến, `last_epoch = current_epoch` | `enforce_engagement` |
+| W-CM-11 | `Σ consumed_count(out) == Σ(in) + Σ op_count` — mọi LƯỢT được ghi | `enforce_engagement` |
+| W-CM-12 | `Σ consumed_nanogic(out) == Σ(in) + total_required` — mọi GIÁ TRỊ được ghi | `enforce_engagement` |
+| W-CM-13 | Thread genesis SẠCH: one-shot theo seed, `asset_name = blake2b_256(cbor.serialise(seed))`, NFT neo đúng địa chỉ script, `consumed_count = consumed_nanogic = last_epoch = 0`, `owner` có trong `extra_signatories` | `validate_mint_engage_id` (handler `mint`) |
 
-**else(_):** `fail` — chặn mọi purpose ngoài `spend` (withdraw, mint, cert,...).
+**else(_):** `fail` — chặn mọi purpose ngoài `spend` và `mint`.
 
 #### Hàm nội bộ quan trọng
 
-- `check_only_magic_burn`: ép `flatten(tx.mint)` có đúng 1 tuple → policy và name khớp → qty âm → trả `-qty`. Bất kỳ entry khác (LAMP, ADA, asset lạ) → fail (`consume.ak:fn check_only_magic_burn`).
-- `sum_required_over_vault_inputs`: fold qua `tx.inputs`, với mỗi input tại `own_hash` đọc redeemer `Consume` qua `find_spend_redeemer` → gọi `pricing.required_for` → cộng dồn. Tham chiếu `consume.ak:sum_required_over_vault_inputs`.
-- `non_magic_value_preserved`: tính diff = `Σin − Σout`; zero-hóa thành phần MAGIC (`assets.add(diff, magic_policy, magic_name, -magic_diff)`); kiểm `assets.is_zero`. Nguồn: `consume.ak:non_magic_value_preserved`.
-- `enforce_engagement`: (a) `list.all` trên `tx.outputs`: mỗi output@script phải có đúng 1 engage NFT, `owner == in_datum.owner`, `last_epoch == current_epoch`. (b) `Σ consumed_out == Σ consumed_in + Σ op_count`. Nguồn: `consume.ak:enforce_engagement`.
+Tên hàm là neo duy nhất; thân hàm là lời giải thích. Đừng chép logic về đây.
+
+- `util.script_inputs_confined_to` — mọi input do script khoá phải ở `own_hash` hoặc `vault_script_hash`. Đặt SỚM, fail-fast. Bịt lỗ hai instance consume khác `own_hash` cùng ăn một vault burn.
+- `sum_required_over_engage_inputs` — fold qua `tx.inputs`, mỗi input tại `own_hash` đọc redeemer `Consume` → `pricing.required_for` → cộng dồn. Ép mọi Engage input dùng CÙNG `price_ref`.
+- `distinct_vault_refs_over_engage_inputs` + `sum_burns_over_vault_refs` — gom các `vault_ref` phân biệt rồi cộng burn đọc từ redeemer `BurnBatch` của vault.
+- `engage_value_preserved` — value input@engage == value output@engage, TUYỆT ĐỐI (không trừ hạng nào; engage UTxO không giữ MAGIC/LAMP).
+- `enforce_engagement` — per-output: đúng 1 thread NFT, `owner` giữ, `did_commit` giữ, `last_epoch = current_epoch`; aggregate: cả `consumed_count` lẫn `consumed_nanogic`.
+- `validate_mint_engage_id` — cổng genesis của thread token (xem W-CM-13).
 
 ### 2.2 price_param (spend)
 
@@ -163,59 +201,58 @@ File: `onchain/lib/magiclamp/consume/pricing.ak`
 ## 3. eUTXO flow
 
 ```
-Tx ConsumeMAGIC:
+Tx ConsumeMAGIC (CO-SPEND — hai validator trong một tx, KHÔNG có mint):
   inputs:
-    vault_UTxO_0   (script: consume, datum: EngageDatum, value: ADA + engage_NFT + ?)
-    [vault_UTxO_1] ...
+    engage_UTxO_0  (script: consume, datum: EngageDatum, value: ADA + thread_NFT)
+    [engage_UTxO_1] ...
+    vault_UTxO     (script: vault generator, datum: VaultDatum)
+                   -- nơi DUY NHẤT MAGIC giảm: handler BurnBatch hạ current_amount
   reference_inputs:
     price_beacon   (script: price_param, datum: PriceParam, value: ADA + price_NFT)
                    -- CIP-31: tiêu THAM CHIẾU, không spend
   outputs:
-    vault_UTxO_0'  (script: consume, datum: EngageDatum', value: ADA + engage_NFT)
-    [vault_UTxO_1'] ...
+    engage_UTxO_0' (script: consume, datum: EngageDatum', value BẢO TOÀN TUYỆT ĐỐI)
+    [engage_UTxO_1'] ...
+    vault_UTxO'    (magic_batches đã trừ Σburns)
   mint:
-    (magic_policy, magic_name, −magic_burned)   -- ÂM = đốt MAGIC
+    (KHÔNG CÓ — MAGIC không phải token. tx.mint chỉ khác rỗng ở tx genesis
+     đúc thread NFT, và khi đó handler `mint` của chính consume.ak chạy.)
   redeemers:
-    Spend(vault_UTxO_0): Consume { op_type, op_count, price_ref }
-    [Spend(vault_UTxO_1): Consume { ... }]
+    Spend(engage_UTxO_0): Consume { op_type, op_count, price_ref, vault_ref }
+    [Spend(engage_UTxO_1): Consume { ... }]
+    Spend(vault_UTxO)   : BurnBatch { ... }   -- constr = burn_batch_constr
 ```
 
 **Lưu ý eUTXO quan trọng:**
-- Mỗi vault UTxO chỉ được spend 1 lần/tx (ledger rule). Không thể dùng 1 input thỏa 2 redeemer.
+- Mỗi UTxO chỉ được spend 1 lần/tx (ledger rule). Không thể dùng 1 input thỏa 2 redeemer.
 - `price_beacon` là reference input — không bị tiêu. Giá giữ nguyên trong suốt tx.
-- Double-satisfaction guard (`W-CM-8`, `W-CM-9`, `W-CM-12`) là aggregate — idempotent qua mọi invocation của validator trên cùng tx. Validator chạy N lần (N vault input) nhưng kiểm tra cùng bộ conditions → kết quả như nhau mỗi lần → an toàn.
+- Double-satisfaction guard (`W-CM-7`..`W-CM-12`) là aggregate — idempotent qua mọi invocation trên cùng tx: validator chạy N lần (N Engage input) nhưng kiểm cùng bộ điều kiện.
+- Double-satisfaction XUYÊN-INSTANCE (hai `own_hash` khác nhau, cùng một `vault_script_hash`) KHÔNG đóng được bằng aggregate — nó đóng bằng `W-CM-2`.
 
 ---
 
 ## 4. Deploy dependencies
 
 ```
-Step 1: deploy magic_policy (từ generator đã deploy — đọc từ scripts/.env MAGIC_POLICY_ID)
+Step 1: deploy vault generator (InstantGen/ScheduleGen) → VAULT_SCRIPT_HASH
+        KHÔNG có bước "deploy magic_policy" — MAGIC không phải token.
 Step 2: deploy price_nft.ak (parameterized bởi genesis_ref)
         → PRICE_NFT_POLICY_ID
-        → mint 1 NFT vào ví committee
 Step 3: deploy price_param.ak (parameterized bởi committee[], threshold, price_nft_policy, price_nft_name)
         → PRICE_PARAM_SCRIPT_HASH
 Step 4: post PriceParam beacon UTxO tại PRICE_PARAM_SCRIPT_HASH
         (tx: mint price_NFT, create datum PriceParam epoch=0, demand_mult=Q)
-Step 5: deploy consume.ak (parameterized bởi 6 policy/name + max_price_stale + ms_per_epoch)
-        → CONSUME_SCRIPT_HASH
-Step 6: tạo vault UTxO tại CONSUME_SCRIPT_HASH
-        (EngageDatum{ owner=pkh, consumed_count=0, last_epoch=0 }, engage_NFT)
+Step 5: deploy consume.ak (7 param — xem §2.1) → CONSUME_SCRIPT_HASH
+Step 6: đúc thread NFT + tạo Engage UTxO genesis tại CONSUME_SCRIPT_HASH
+        (handler `mint` của chính consume.ak ép datum genesis sạch — W-CM-13)
 ```
 
-Env vars cần có trong `scripts/.env`:
-```
-MAGIC_POLICY_ID
-PRICE_NFT_POLICY_ID
-PRICE_NFT_NAME=5052494345
-PRICE_PARAM_SCRIPT_HASH
-ENGAGE_NFT_POLICY_ID
-ENGAGE_NFT_NAME=454e47
-CONSUME_SCRIPT_HASH
-MAX_PRICE_STALE=5
-MS_PER_EPOCH=86400000
-```
+Bước 2–6 chạy trong MỘT script, MỘT tx — xem [`EXEC.md`](EXEC.md) §1.
+
+Danh sách env (tên biến + default) là của script deploy, KHÔNG chép về đây — xem
+[`EXEC.md`](EXEC.md) §1 "Knob". Không còn `MAGIC_POLICY_ID` / `MAGIC_ASSET_NAME`
+(v1 mint), không còn `ENGAGE_NFT_POLICY_ID` là input (policy = script hash, sinh ra
+lúc apply-param).
 
 ---
 
@@ -227,31 +264,40 @@ File: `pricing/src/price.ts`
 - `appendLoadHistory(history, newRaw, window)`: giữ tối đa `window` mẫu gần nhất (FIR window).
 - `smaLoad(history)`: SMA Q-format, rỗng → `M_NEUTRAL_Q`.
 - `demandMult(history, mMinQ, mMaxQ)`: `clamp(smaLoad(history), mMinQ, mMaxQ)`.
-- `pricePerOp(opType, demandMultQ, basePriceTable)`: floor BigInt, throw nếu `opType` không có trong bảng.
-- `requiredBurn(items, demandMultQ)`: Σ `pricePerOp × opCount`.
+- `pricePerOp(opType, demandMultQ, basePriceTable)`: giá 1 op để HIỂN THỊ, floor BigInt, throw nếu `opType` không có trong bảng.
+- `requiredForOp(opType, opCount, demandMultQ)`: số phải trả cho MỘT dòng op.
+- `requiredBurn(items, demandMultQ)`: Σ `requiredForOp` trên các dòng.
 
-Tất cả thao số BigInt. Không Number cho nanogic/Q values.
+> **Đừng chép công thức `requiredBurn` bằng tay.** Bản cũ viết `Σ pricePerOp × opCount`
+> — floor TRƯỚC rồi nhân — mất phần dư mỗi op × count ⇒ thu THIẾU ⇒ `Σburns < required`
+> on-chain ⇒ MỌI consume tx bị từ chối. Bản đúng là fold-floor-MỘT-LẦN, khớp bit với
+> `pricing.required_for` (P8). Cần công thức thì đọc docstring của `requiredForOp` trong
+> `pricing/src/price.ts`, đừng suy ra từ tên.
+
+Tất cả tham số BigInt. Không `Number` cho nanogic/Q values.
 
 ---
 
 ## 6. Aiken test coverage (consume.ak)
 
-| Test | Loại | Invariant |
-|---|---|---|
-| `consume_happy` | Happy | C-CM-1..5 đều thoả |
-| `consume_overburn_ok` | Happy | over-burn cho phép |
-| `consume_two_inputs_happy` | Happy | N=2 input đúng |
-| `consume_value_preserved_happy` | Happy | ADA + token khác bảo toàn |
-| `consume_underburn_fail` | Negative | C-CM-2 |
-| `consume_extra_mint_entry_fail` | Negative | C-CM-1 (entry rác trong mint) |
-| `consume_no_thread_token_fail` | Negative | C-CM-4 (NFT qty=0 ở output) |
-| `consume_double_satisfaction_fail` | Negative | C-CM-3 (burn chỉ đủ 1 trong 2) |
-| `consume_output_collapse_burn_enough_fail` | Negative | C-CM-3 (#out=1 < #in=2) |
-| `consume_thread_token_drain_fail` | Negative | C-CM-3 (Σnft_out < Σnft_in) |
-| `consume_state_undercount_fail` | Negative | C-CM-4 (Σconsumed không tăng đủ) |
-| `consume_stale_price_fail` | Negative | C-CM-5 |
-| `consume_price_from_redeemer_fail` | Negative | C-CM-2 (op_type=42 không có trong bảng) |
-| `consume_fake_beacon_no_nft_fail` | Negative | C-CM-2 (beacon NFT qty=0) |
-| `consume_drain_ada_fail` | Negative | C-CM-1 (drain ADA) |
-| `consume_drain_other_token_fail` | Negative | C-CM-1 (drain token khác) |
-| `consume_negative_base_price_fail` | Negative | C-CM-2 (base_price âm → valid_param fail) |
+Danh sách tên test KHÔNG chép về đây — bản chép tay từng sống lâu hơn code (nó còn ghi
+`consume_overburn_ok — over-burn cho phép`, trong khi test thật tên `consume_overburn_fail`,
+vì C-CM-2 là dấu BẰNG). Lấy danh sách thật:
+
+```bash
+grep -n '^test ' ConsumeMAGIC/onchain/validators/consume.ak
+```
+
+Các nhóm đang có, để biết chỗ nào còn hở khi thêm bất biến mới:
+
+| Nhóm | Cái được canh |
+|---|---|
+| happy | 1 engage, nhiều burn, 2 engage / 1 vault, 2 engage / 2 vault, value bảo toàn, input ví thường, bảng giá đầy đủ (worst-case ExUnit) |
+| kế toán | under-burn, over-burn, multi-engage share vault under-charge, `consumed_nanogic` khai thừa / khai thiếu |
+| định danh | thiếu thread NFT, engage input giả không NFT, thread token drain, output collapse, `did_commit` bị đổi |
+| giá | stale, op_type không có trong bảng, beacon không NFT, `base_price` âm, beacon đặt ở ví / ở script khác |
+| liên kết vault | sai `burn_batch_constr`, vault không ở `vault_script_hash`, double-satisfaction xuyên-instance |
+| validity range | upper vô hạn, cửa sổ rộng quá 1 epoch, cửa sổ chặt hợp lệ |
+| genesis thread (`mint`) | datum bịa (nanogic / count / last_epoch), output sai địa chỉ, seed không tiêu, owner không ký, sai tên, hai tên, token lạ kèm |
+
+Số test hiện tại: [`DEVSTATUS.md`](../DEVSTATUS.md).

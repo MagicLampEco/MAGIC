@@ -2,7 +2,11 @@
 // Normative §19.6. Tiers marked per spec.
 
 pub const q : Int = 1_000_000_000   // [Immutable]
-pub const slots_per_epoch : Int = 432_000
+
+// KHÔNG có hằng độ dài epoch ở đây, CỐ Ý — nó là THAM SỐ THEO MẠNG (Preview 86_400
+// slot, Mainnet/Preprod 432_000). Validator nhận `ms_per_epoch` qua apply-param;
+// offchain tra `SLOTS_PER_EPOCH_BY_NETWORK` trong `ProtocolUtils/src/index.ts`.
+// (`slots_per_epoch = 432_000` đã xoá 2026-08-09: 0 call site, sai với Preview.)
 
 // ── SnapshotGen base rate (used to compute rate_locked_q at commit) ──
 pub const snapshot_base_rate_q : Int = 5_000_000_000  // [Constitutional]

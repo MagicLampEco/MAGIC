@@ -1,7 +1,17 @@
-# AppEconomics v2.1 — Normative Specification
+# AppEconomics v2.1 — Đặc tả module (KHÔNG normative)
 
-> GenMAGIC v3.3 §7–§10 + §19  
-> Trạng thái: **NORMATIVE** — mọi thay đổi code phải cập nhật tài liệu này đồng thời.
+> ⚠ **Tệp này KHÔNG phải nguồn chân lý.** Nguồn duy nhất:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> Ràng buộc chung: [`BOUNDARIES.md`](../BOUNDARIES.md).
+>
+> **Trạng thái module: MỒ CÔI** — xem [`DEVSTATUS.md`](../DEVSTATUS.md). Chưa quyết hội tụ
+> vào mô hình ba-token hay dời `Legacy/`. Cho tới khi có quyết định, nội dung dưới đây
+> mô tả mô hình GenMAGIC v3.3 (§7–§10 + §19) và **có thể mâu thuẫn với spec canonical**.
+> Mâu thuẫn thì spec canonical thắng.
+>
+> Bản trước tự khai `Trạng thái: NORMATIVE`. Sai — một module chưa hội tụ không thể tự
+> phong nguồn chân lý. Dòng đó đã gỡ. Nội dung kỹ thuật **cố ý giữ nguyên**: viết lại
+> cần quyết định về PM/tư-cách trước, sửa sớm là sửa mù.
 
 ---
 

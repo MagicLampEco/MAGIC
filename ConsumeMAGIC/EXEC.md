@@ -100,11 +100,9 @@ Hằng số baked trong script, không phải env: `PRICE_NFT_NAME=5052494345` (
 | N15 | Validity-range gaming — upper vô hạn | `interval.after` (upper = +∞) | get_epoch (vá BLOCK) | tx rejected |
 | N16 | Validity-range gaming — under-state epoch | cửa sổ rộng > 1 epoch (lower quá khứ) | get_epoch (vá BLOCK) | tx rejected |
 
-Aiken tests (module): `consume.ak` 24 (N1–N16 + happy + validity-range),
-`pricing.ak` 9 (số học giá), `price_param.ak` 4, `price_nft.ak` 3,
-`engage_nft.ak` 4 (one-shot) = 44 test module. Tổng `aiken check`: 88 pass, 0 fail,
-0 warning (gồm stdlib test). Offchain: 42 vitest pass (31 AppEconomics legacy + 11
-codec P8). Pricing: 44 vitest pass.
+Số test (aiken / offchain / pricing) KHÔNG ghi ở đây — nó hết hạn ngay commit sau và
+bản chép tay ở tệp này từng lệch thật. Nguồn duy nhất: [`DEVSTATUS.md`](../DEVSTATUS.md),
+hoặc chạy thẳng lệnh ở §3.
 
 ---
 
@@ -121,7 +119,7 @@ npm install && npm test
 
 # TypeScript offchain (codec round-trip + builder typecheck)
 cd /Users/ductiger/Projects/MAGIC/ConsumeMAGIC/offchain
-npm install && npm test           # 42 pass (31 legacy AppEconomics + 11 codec P8)
+npm install && npm test           # số ca: xem DEVSTATUS.md
 npm run typecheck                 # tsc --noEmit: types.ts + consume.ts + index.ts
 ```
 
@@ -145,10 +143,24 @@ npm run typecheck                 # tsc --noEmit: types.ts + consume.ts + index.
 | Hạng mục | Trạng thái / Mô tả |
 |---|---|
 | `buildConsumeTx` TypeScript | ✅ ĐÃ LÀM (`offchain/src/consume.ts`): đọc PriceParam ref-input, tính `required`, co-spend Engage+vault, validity-range chặt ≤1 epoch, KHÔNG mint |
-| Engage NFT minting policy | ✅ ĐÃ LÀM (`onchain/validators/engage_nft.ak`): one-shot parameterized bởi genesis ref riêng |
+| Engage thread NFT | ✅ ĐÃ LÀM — nhưng KHÔNG phải validator riêng: handler `mint` nằm TRONG `onchain/validators/consume.ak` (policy = chính script hash, biết qua tự tham chiếu). Không còn tệp `engage_nft.ak` |
 | Offchain codec | ✅ ĐÃ LÀM (`offchain/src/types.ts`): EngageDatum/PriceParam/ConsumeRedeemer khớp constr 0 + test round-trip P8 |
 | Keeper cập nhật demand_mult | Tương tự UMKeeper: đọc `ops_served_epoch`, tính FIR, post PriceParam mới (committee/keeper) — TRƯỚC mainnet |
-| E2E Preview script live | Tạo Engage genesis → consume thật → verify `consumed_count` + `magic_batches` vault giảm on-chain (cần credential) |
+| E2E Preview script live | Tạo Engage genesis → consume thật → verify `consumed_nanogic` (+ `consumed_count`) và `magic_batches` vault giảm đúng on-chain (cần credential) |
 | committee → governance NFT động | Thay static list bằng multi-sig/NFT trước khi khoá mainnet |
 | `did_commit` ↔ DID PhoenixKey | blake2b256 commitment bind engagement ↔ DID sinh trắc (Governance C1/C3) |
-| Tích hợp OriLife app | App component đọc `consumed_count` từ EngageDatum để xác nhận thanh toán |
+| Tích hợp OriLife app | App đọc **delta `consumed_nanogic`** của EngageDatum (giá trị datum SAU tx trừ giá trị TRƯỚC tx) để xác nhận thanh toán — xem cảnh báo ngay dưới bảng |
+
+### ⚠ Xác nhận thanh toán: đọc GÌ của EngageDatum
+
+**KHÔNG đọc `consumed_count`.** Nó đếm **LƯỢT**, không mang giá trị. Ai trả tiền một op
+rẻ (`op_type=2`, CID, 1e6 nanogic) cũng làm `consumed_count` tăng đúng +1 — rồi đòi app
+cấp một op đắt (`op_type=1`, ảnh, 1e7). Trả thiếu 10×, mà mọi bất biến on-chain vẫn thoả.
+
+**KHÔNG đọc giá trị TUYỆT ĐỐI** của `consumed_nanogic` như "hạn mức còn lại". Nó là tổng
+tích luỹ đời thread, chỉ có ý nghĩa khi so hai mốc.
+
+**ĐỌC delta `consumed_nanogic`**: lấy `EngageDatum` ở UTxO **trước** tx và ở UTxO **sau**
+tx của cùng thread; `delta = sau − trước`. Cấp dịch vụ khi `delta ≥ giá niêm yết của
+nghiệp vụ đang phục vụ`. Validator đã ép `Σ consumed_nanogic(out) == Σ(in) + total_required`
+(TECH.md W-CM-12), nên delta chính là số nanogic đã thực trả trong tx đó.

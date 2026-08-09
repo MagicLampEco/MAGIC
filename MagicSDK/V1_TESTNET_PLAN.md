@@ -1,4 +1,12 @@
-# MAGIC v1.0 — Testnet Plan
+# MAGIC v1.0 — Testnet Plan  ⚠ QUÁ HẠN, CHỜ QUYẾT ĐỊNH
+
+> **Ma trận này dựng cho 4 vault module. Hai trong bốn đã chết.** `SnapshotGen` và
+> `VacuumGen` nằm ở `Legacy/genmagic-v3.3/` — mọi ca `Snapshot*` / `Vacuum*` bên dưới,
+> và `treasuryAddress` (LAMP đứng yên từ PHA-2, I-ACT-7), không chạy được. Xem
+> [`DEVSTATUS.md`](../DEVSTATUS.md).
+>
+> Chưa xoá, chưa viết lại: cần chủ nhân chốt "viết lại theo 2 vault" hay "dời `Legacy/`".
+> Đừng dùng tệp này làm căn cứ nghiệm thu cho tới khi có quyết định.
 
 Plan test em chạy sau khi implement xong `WithdrawLamp` + `UpdateProfile` full theo [`SPEC_V1.md`](./SPEC_V1.md). Cùng pattern với 37 case v0 mà em đã làm (xem [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md)).
 

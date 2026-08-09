@@ -116,14 +116,19 @@ L_avail = lamp_balance − lamp_locked
 
 ---
 
-## 7. Loyalty holdings removal — oldest-first
+## 7. Loyalty holdings — InstantGen KHÔNG chạm
 
-Khi InstantGen deduct lamp_paid khỏi vault:
-- Tách unlocked holdings, sort theo `acquired_epoch` tăng dần (oldest first).
-- Tiêu thụ từ holding cũ nhất trước. Holding mới hơn (LF cao hơn) được bảo toàn.
-- Locked holdings không bị chạm.
+**I-ACT-7 (PHA-2): LAMP đứng yên.** InstantGen không trừ `lamp_paid`, không sắp xếp
+lại `loyalty_holdings`. Validator ép ba trường LAMP byte-identical giữa input và output.
 
-**Implementation:** `lamp.ak:22` (`remove_from_holdings`).
+Đường DUY NHẤT holdings thay đổi là `WithdrawLamp` — chính chủ rút về ví mình, chọn
+**newest-first** để giữ tuổi loyalty của holding cũ.
+
+**Implementation:** `remove_newest_first` trong `onchain/lib/magiclamp/protocol/lamp.ak`,
+song ánh với `removeNewestFirst` trong `MagicSDK/src/withdrawLamp.ts` (P8).
+
+> Mục này trước đây mô tả thuật toán oldest-first `remove_from_holdings`. Hàm đó đã xoá
+> (2026-08-09, 0 call site) vì nó hiện thực hoá hành vi mà I-ACT-7 cấm.
 
 ---
 

@@ -7,14 +7,16 @@
 //
 // Cooldown: 2 epoch giữa các lần đổi (C-PC-V2). Tránh user flip-flop.
 //
-// ⚠ ONCHAIN STATUS:
-//   - InstantGen vault: `UpdateProfile` enum variant đã có; handler trong
-//     validator là STUB (chỉ check owner sign, không enforce cooldown /
-//     lazy apply / datum integrity). Cần Tuân implement full per SPEC_V1.md §2/§3.
+// ONCHAIN STATUS:
+//   - InstantGen vault: `UpdateProfile` ĐÃ HIỆN THỰC ĐẦY ĐỦ (`validate_update_profile`
+//     trong `InstantGen/onchain/validators/vault.ak`) — ép cooldown, ép lazy apply
+//     (không cho set thẳng `profile`), chặn đổi sang chính profile đang dùng, và
+//     kiểm toàn vẹn datum. Có test: `up_positive`, `up_cooldown_not_met`,
+//     `up_bypass_lazy`, `up_same_profile`.
 //   - ScheduleGen: không support UpdateProfile (validator không dùng profile
-//     cho compute).
+//     cho compute) — đúng thiết kế, không phải thiếu sót.
 //
-// SDK code complete + match spec §12 — đợi validator full impl.
+// (Bình luận cũ ghi handler là STUB "chờ Tuân implement" — đã quá hạn.)
 
 import {
   Constr, Data,

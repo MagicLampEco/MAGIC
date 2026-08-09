@@ -1,5 +1,14 @@
-# Code Review — MagicLamp MAGIC Protocol
-## GenMAGIC v3.3 + ConsumeMAGIC v2.2 + AppEconomics v2.1
+# Code Review — MagicLamp MAGIC Protocol (BẢN GHI LỊCH SỬ, ĐÃ ĐÓNG)
+
+> **Đây là biên bản một đợt review ĐÃ XONG, không phải mô tả hệ hiện tại.** Nó ghi
+> "lúc ấy hỏng gì, vá ra sao" — giá trị nằm ở LÝ DO, không ở đường dẫn.
+>
+> - Đường dẫn `SnapshotGen/...` và `VacuumGen/...` trong tệp này **đã chết**: hai module
+>   nằm ở `Legacy/genmagic-v3.3/`. Đừng lần theo, đừng khôi phục.
+> - Số test ở cuối tệp là ảnh chụp cũ. Số đang đúng: [`DEVSTATUS.md`](../DEVSTATUS.md).
+> - Mô hình đang đúng: [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+>
+> Không cập nhật tệp này theo code nữa. Review mới thì mở biên bản mới.
 
 ---
 
@@ -171,22 +180,11 @@ sai. Đã fix: keeper.ts import từ math.ts (single source).
 
 ## Test status
 
-```
-ProtocolUtils:   24/24 pass
-InstantGen:      45/45 pass
-SnapshotGen:     46/46 pass
-VacuumGen:       30/30 pass
-ScheduleGen:     29/29 pass
-UMKeeper:        20/20 pass
-Consolidate:     12/12 pass
-ProfileChange:    8/8  pass
-ConsumeMAGIC:    31/31 pass
-AppEconomics:    33/33 pass
-─────────────────────────
-TOTAL:          278/278 pass
-```
+Bảng số của đợt review này đã gỡ: nó liệt kê cả `SnapshotGen` / `VacuumGen` (nay ở
+`Legacy/`) và mọi con số đều hết hạn. Số đang đúng, kèm lệnh kiểm:
+[`DEVSTATUS.md`](../DEVSTATUS.md).
 
-Regression tests thêm mới:
+Regression tests đợt đó thêm mới:
 - `AppEconomics`: isqrt10th với V=S_LAMP_TOTAL (V^7 ≈ 10^110) không throw.
 - `ConsumeMAGIC`: TV-ACT-003b — burn tại `ep == e` không count cho OAC epoch e.
 

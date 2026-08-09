@@ -1,71 +1,16 @@
 // lib/lamp.ak — LAMP loyalty holdings management
-// Spec: §6.8 select_lamp_for_lock, §A.9 remove_locked_amount
-// For InstantGen: LAMP is transferred out (not locked), so we remove
-// from unlocked holdings oldest-first.
+//
+// ── PHA-2: LAMP ĐỨNG YÊN (I-ACT-7) ───────────────────────────
+// KHÔNG handler nào của vault chuyển LAMP ra ngoài để đổi lấy MAGIC. Đường
+// DUY NHẤT LAMP rời vault là `WithdrawLamp` — chính chủ rút về ví mình.
+// Vì thế module này chỉ còn một thuật toán chọn holding: `remove_newest_first`
+// (đường withdraw). Hàm `remove_from_holdings` (oldest-first, "InstantGen
+// chuyển lamp_paid sang Treasury") ĐÃ XOÁ 2026-08-09: 0 call site trong toàn
+// repo, và docstring của nó dạy đúng cái hành vi mà I-ACT-7 cấm.
 
 use aiken/collection/list
 use aiken/primitive/int
 use magiclamp/protocol/types.{LoyaltyHolding}
-
-// ── Remove LAMP from holdings (InstantGen path) ──────────────
-//
-// InstantGen transfers lamp_paid from vault to Treasury.
-// Unlike lock operations (youngest-first), this removes from
-// UNLOCKED holdings.
-//
-// The exact removal algorithm must produce the same result as
-// the off-chain SDK (P8: determinism).
-//
-// Algorithm: Remove oldest unlocked holdings first until lamp_paid satisfied.
-// This preserves newer (higher LF) holdings → user-favorable.
-
-pub fn remove_from_holdings(
-  holdings   : List<LoyaltyHolding>,
-  amount_out : Int,  // oildrop to remove (= lamp_paid)
-) -> List<LoyaltyHolding> {
-  // Sort: locked stay, unlocked sorted oldest-first for removal
-  let unlocked = list.filter(holdings, fn(h) { !h.is_locked })
-  let locked   = list.filter(holdings, fn(h) { h.is_locked })
-
-  let sorted_unlocked = list.sort(
-    unlocked,
-    fn(a, b) { int.compare(a.acquired_epoch, b.acquired_epoch) },
-  )
-
-  let remaining_unlocked = remove_oldest_first(sorted_unlocked, amount_out)
-  list.concat(locked, remaining_unlocked)
-}
-
-/// Remove `amount` oildrop from a sorted (oldest-first) list of holdings.
-/// Holdings are fully consumed before moving to the next one.
-fn remove_oldest_first(
-  holdings : List<LoyaltyHolding>,
-  amount   : Int,
-) -> List<LoyaltyHolding> {
-  when holdings is {
-    [] -> {
-      // All holdings consumed; amount should be 0 (C-INST-3 ensures lamp_paid ≤ L_avail)
-      expect amount == 0
-      []
-    }
-    [h, ..rest] -> {
-      if amount <= 0 {
-        holdings   // done — return remaining unchanged
-      } else if amount >= h.amount {
-        // Fully consume this holding
-        remove_oldest_first(rest, amount - h.amount)
-      } else {
-        // Partially consume this holding
-        let partial = LoyaltyHolding {
-          amount:         h.amount - amount,
-          acquired_epoch: h.acquired_epoch,
-          is_locked:      False,
-        }
-        [partial, ..rest]
-      }
-    }
-  }
-}
 
 // ── Sum of unlocked holdings ─────────────────────────────────
 pub fn sum_unlocked(holdings: List<LoyaltyHolding>) -> Int {
@@ -103,11 +48,8 @@ pub fn l_avail(lamp_balance: Int, lamp_locked: Int) -> Int {
 // loyalty of older holdings (LF-favorable for future generations).
 // Locked holdings are never touched.
 //
-// Algorithm mirrors MagicSDK/src/withdrawLamp.ts:206 byte-for-byte
-// (P8 invariant — Aiken and TS must produce identical output).
-//
-// Distinct from `remove_from_holdings` above (which is OLDEST-first
-// for InstantGen path).
+// Algorithm mirrors `removeNewestFirst` trong MagicSDK/src/withdrawLamp.ts
+// byte-for-byte (P8 invariant — Aiken and TS must produce identical output).
 pub fn remove_newest_first(
   holdings : List<LoyaltyHolding>,
   amount   : Int,

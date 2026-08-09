@@ -11,7 +11,8 @@
 ActivityProfile ∈ { Ember, Flame, Lantern }
 ```
 
-Mỗi profile xác định 2 tham số sinh MAGIC dùng bởi SnapshotGen/InstantGen:
+Mỗi profile xác định 2 tham số sinh MAGIC dùng bởi InstantGen (bản cũ ghi thêm
+SnapshotGen — module đó đã ở `Legacy/genmagic-v3.3/`):
 
 | Profile | N (decay window, epoch) | d (decay rate/epoch) | ELV (effective lifetime value) |
 |---|---|---|---|
@@ -62,7 +63,7 @@ PROFILE_COOLDOWN = 2  // [Significant]
 
 Nguồn: `vault_profile.ak:32`, `math.ts:5`.
 
-**Ý nghĩa kinh tế:** Ngăn user liên tục flip profile để "chọn profile tốt nhất" ngay trước mỗi Snapshot. Với Snapshot mỗi epoch, cooldown = 2 có nghĩa là tối thiểu 1 epoch phải "chịu" profile đã chọn trước khi đổi tiếp.
+**Ý nghĩa kinh tế:** Ngăn user liên tục flip profile để "chọn profile tốt nhất" ngay trước mỗi lần sinh MAGIC. Cooldown = 2 nghĩa là tối thiểu 1 epoch phải "chịu" profile đã chọn trước khi đổi tiếp. (Lập luận gốc viết theo nhịp Snapshot mỗi epoch — cơ chế đó đã chết; với InstantGen nhịp do user chọn, nên cooldown càng là ràng buộc duy nhất.)
 
 ### 2.1 Số epoch phải chờ
 

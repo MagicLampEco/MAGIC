@@ -1,5 +1,12 @@
 # ProfileChange — EXEC.md
-## GenMAGIC v3.3 · §12 · Deploy steps, Test plan, Known limits
+## Deploy steps, Test plan, Known limits
+
+> **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
+> [`DEVSTATUS.md`](../DEVSTATUS.md). Nguồn chân lý mô hình:
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
+> số mục "§12" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
+> Mọi chỗ tệp này nhắc **SnapshotGen** là tàn dư: module đó đã chết
+> (`Legacy/genmagic-v3.3/`). Vault đang sống duy nhất dùng profile là **InstantGen**.
 
 ---
 
@@ -49,7 +56,11 @@ const VAULT_PROFILE_HASH = validatorToScriptHash(validator);
 
 ### Step 3 — Deploy vault UTxO
 
-Vault UTxO được tạo bởi deploy script tổng (`scripts/deploy/04_deploy_vault.ts`). ProfileChange dùng chung vault UTxO với SnapshotGen/InstantGen.
+Vault UTxO được tạo bởi script deploy vault đang sống — `scripts/deploy/05_create_instant_vault.ts`.
+ProfileChange dùng chung vault UTxO với InstantGen.
+
+> Bản cũ trỏ `scripts/deploy/04_deploy_vault.ts` và "dùng chung với SnapshotGen": cả hai
+> đã chết, script nằm ở `Legacy/genmagic-v3.3/scripts/`.
 
 Env vars cần thiết (`scripts/.env`):
 ```
@@ -119,7 +130,7 @@ Xem chi tiết test trong `vault_profile.ak:209-303`.
 
 ### 2.5 Integration test (TypeScript + on-chain mock)
 
-Khi SnapshotGen được gọi sau UpdateProfile:
+Khi InstantGen được gọi sau UpdateProfile:
 1. `applyPendingProfile` trả về profile mới.
 2. Batch mới dùng profile mới cho N, decay.
 3. Batch cũ trong `magic_batches` giữ nguyên `profile_at_creation` (T4).
@@ -138,7 +149,7 @@ Khi SnapshotGen được gọi sau UpdateProfile:
 1. Vault được touch bởi bất kỳ tx nào gọi `applyPendingProfile` off-chain.
 2. User gửi tx `ApplyPending` standalone.
 
-Trong thời gian chờ: `vault.profile` vẫn là profile cũ — ảnh hưởng đến tính toán SnapshotGen/InstantGen nếu chúng không gọi `applyPendingProfile` trước.
+Trong thời gian chờ: `vault.profile` vẫn là profile cũ — ảnh hưởng đến tính toán InstantGen nếu nó không gọi `applyPendingProfile` trước.
 
 ### 3.3 profile_changed_epoch không cập nhật khi ApplyPending
 

@@ -11,8 +11,12 @@ pub const q : Int = 1_000_000_000
 pub const total_lamp_supply : Int = 36_000_000_000_000_000
 
 // ── Epoch length ─────────────────────────────────────────────
-// 432,000 slots per epoch on Cardano (mainnet + preview testnet)
-pub const slots_per_epoch : Int = 432_000
+// KHÔNG có hằng số epoch ở đây, CỐ Ý. Độ dài epoch là THAM SỐ THEO MẠNG, không
+// phải hằng của giao thức: Preview = 86_400 slot, Mainnet/Preprod = 432_000.
+// Validator nhận `ms_per_epoch` qua apply-param; offchain tra
+// `SLOTS_PER_EPOCH_BY_NETWORK` trong `ProtocolUtils/src/index.ts`.
+// (Hằng `slots_per_epoch = 432_000` với bình luận "mainnet + preview testnet" đã
+//  xoá 2026-08-09: sai với Preview, 0 call site, và là mìn ngủ cho người đọc sau.)
 
 // ── MAGIC batch lifetime (§4.2 per-epoch use-or-lose) ────────
 // [Constitutional] decay_window = 1 ⟹ a batch is LIVE only inside its own

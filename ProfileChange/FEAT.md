@@ -70,10 +70,11 @@ Khi effective_epoch (E+1) ≤ current_epoch (E+1):
 
 ### 3.4 Lazy apply trong các module khác
 
-`applyPendingProfile` (math.ts:13) được gọi bởi:
-- SnapshotGen tx builder: trước khi tính toán batch mới
-- InstantGen tx builder: trước khi dùng `profile` cho LF/OAC
+`applyPendingProfile` (`offchain/src/math.ts`) được gọi bởi:
+- InstantGen tx builder: trước khi dùng `profile`
 - ApplyHalving tx builder: trước khi áp halving
+
+(Bản cũ liệt kê thêm SnapshotGen tx builder — module đó ở `Legacy/genmagic-v3.3/`.)
 
 Trong mọi trường hợp: `magic_batches` đã có KHÔNG bị ảnh hưởng (T4).
 
@@ -103,5 +104,5 @@ Trong mọi trường hợp: `magic_batches` đã có KHÔNG bị ảnh hưởng
 - ProfileChange KHÔNG tác động đến `magic_batches` hay `gen_schedules` (bất biến tuyệt đối).
 - ProfileChange KHÔNG mint/burn token.
 - ProfileChange KHÔNG xử lý `delegation_cert` hay `streak_state`.
-- Việc tính MAGIC dựa trên profile mới (ELV, N, decay) thuộc về SnapshotGen/InstantGen/VacuumGen — không phải module này.
-- Lazy apply trong SnapshotGen/InstantGen/ApplyHalving là trách nhiệm của module đó; ProfileChange validator chỉ cung cấp redeemer `ApplyPending` cho trường hợp standalone.
+- Việc tính MAGIC dựa trên profile mới (ELV, N, decay) thuộc về InstantGen — không phải module này. (Bản cũ ghi thêm SnapshotGen/VacuumGen: cả hai ở `Legacy/genmagic-v3.3/`.)
+- Lazy apply trong InstantGen/ApplyHalving là trách nhiệm của module đó; ProfileChange validator chỉ cung cấp redeemer `ApplyPending` cho trường hợp standalone.

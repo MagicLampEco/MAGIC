@@ -74,7 +74,7 @@ Data.to({ UpdateProfile: { new_profile: newProfile } })  // profile.ts:77
 | 15 | personal_delegate | Option<ByteArray> |
 | 16 | attribution | VaultAttribution |
 
-**Audit note:** VaultDatum đầy đủ 17 fields. Phiên bản cũ cắt ngắn datum → decode FAIL hoặc cho phép ví chủ reset field ẩn (drain). Fix (Bug 1): types.ak dùng bản đầy đủ mirror SnapshotGen/onchain/.../types.ak.
+**Audit note:** VaultDatum đầy đủ 17 fields. Phiên bản cũ cắt ngắn datum → decode FAIL hoặc cho phép ví chủ reset field ẩn (drain). Fix (Bug 1): `types.ak` dùng bản đầy đủ. Bản đối chiếu SỐNG là `InstantGen/onchain/lib/magiclamp/protocol/types.ak` — đã kiểm 2026-08-09: 17 field, đúng thứ tự, khớp tuyệt đối. (Bản cũ trỏ `SnapshotGen/onchain/.../types.ak`, nay ở `Legacy/genmagic-v3.3/`.)
 
 ---
 
@@ -195,7 +195,8 @@ Validator tham số: `ms_per_epoch: Int` — phải apply khi hash.
 ### 4.2 Apply tham số (Preview)
 
 ```typescript
-// deploy script (scripts/deploy/04_deploy_vault.ts)
+// deploy script (scripts/deploy/05_create_instant_vault.ts — bản cũ trỏ
+// 04_deploy_vault.ts, script đó nay ở Legacy/genmagic-v3.3/scripts/)
 const validator = applyParamsToScript(
   plutusJson.validators.find(v => v.title === "vault_profile.spend"),
   [Data.Integer(86_400_000n)],  // ms_per_epoch Preview

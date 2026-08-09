@@ -103,7 +103,8 @@ UMKeeper deploy PHẢI sau:
 
 UMKeeper deploy PHẢI trước:
   - InstantGen deploy  (InstantGen cần UM_NFT_UNIT để query UM datum)
-  - VacuumGen deploy   (VacuumGen cần UM nếu dùng rate lock)
+                       — đây là hộ tiêu thụ UM DUY NHẤT đang sống.
+                       (VacuumGen từng đứng ở đây; module đó nay ở Legacy/genmagic-v3.3/)
 ```
 
 ---

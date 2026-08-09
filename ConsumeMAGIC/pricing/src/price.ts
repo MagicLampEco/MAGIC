@@ -111,8 +111,15 @@ export function demandMult(
  * price_per_op = base_price[op_type] × demand_mult / Q   (nanogic).
  *
  * Floor division on the Q de-scale: price never exceeds the exact real value,
- * so the burn quote is never rounded UP against the user (CONTRACT §E:
- * magic_burned ≥ required — we keep `required` honest).
+ * so the quote is never rounded UP against the user.
+ *
+ * Chỉ dùng để HIỂN THỊ giá 1 op. KHÔNG dùng làm nền tính tổng phải trả — nhân
+ * `pricePerOp × opCount` là floor-trước-nhân-sau, thu THIẾU. Tổng phải trả đi qua
+ * `requiredForOp` / `requiredBurn` (fold-floor-một-lần, P8 với `pricing.required_for`).
+ *
+ * Bất biến kế toán on-chain là DẤU BẰNG: `total_burned == total_required`
+ * (SPEC §7.4 C-CM-2). Over-burn bị từ chối y như under-burn — bản cũ của bình luận
+ * này ghi `magic_burned ≥ required`, thuộc mô hình token-mint đã chết.
  *
  * @param opType         op_type key into the base-price table.
  * @param demandMultQ    demand multiplier in Q-format (output of demandMult).

@@ -4,12 +4,13 @@
 // Lý do: LF (Loyalty Factor §6.3) là weighted-average tuổi holding × amount;
 // giữ holding CŨ → LF cao → MAGIC sinh ra nhiều. Rút newest-first
 // = sacrifice 0 tuổi loyalty (vs rút oldest-first sẽ phá max LF user đã tích).
-// Đây là pattern ngược của Instant subtractFromHoldings (oldest-first) — vì
-// withdraw là discretionary, user nên được optimize cho retention.
+// Sau PHA-2 (I-ACT-7 — LAMP đứng yên), đây là đường DUY NHẤT LAMP rời vault:
+// chính chủ rút về ví mình. Không handler nào chuyển LAMP đi nơi khác.
 //
-// ⚠ ONCHAIN STATUS: validator chưa support redeemer này (Tuân v1.0 work).
-// SDK code complete + tx builder pattern set — chỉ chờ validator merge.
-// Submit tx này TRƯỚC khi onchain v1.0 deploy sẽ bị validator reject.
+// ONCHAIN STATUS: ĐÃ HIỆN THỰC ĐẦY ĐỦ ở cả hai vault đang sống —
+// `InstantGen/onchain/validators/vault.ak` và `ScheduleGen/.../vault.ak`
+// (handler `WithdrawLamp`). Aiken ép P8 song ánh với `removeNewestFirst` dưới đây.
+// (Bình luận cũ ghi "validator chưa support / chờ Tuân v1.0" — đã quá hạn.)
 
 import {
   Constr, Data, toUnit,

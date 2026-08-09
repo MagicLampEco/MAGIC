@@ -1,5 +1,10 @@
 # UMKeeper — Feature Specification
-## GenMAGIC v3.3 · §14 Network Demand Multiplier
+## Hệ số cầu mạng UM
+
+> Nguồn chân lý: [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> Các số mục "§8/§9/§10/§14" trong tệp này là di sản đánh số GenMAGIC v3.3 — giữ lại để
+> tra cứu lịch sử, KHÔNG phải mục lục của spec canonical. Trạng thái module:
+> [`DEVSTATUS.md`](../DEVSTATUS.md).
 
 ---
 
@@ -8,9 +13,17 @@
 UMKeeper duy trì giá trị **UM (Network Demand Multiplier)** — tham số Constitutional phản ánh tỷ lệ cung/cầu MAGIC toàn mạng. UM được lưu trong một UTxO riêng biệt (UM datum UTxO), cập nhật mỗi epoch theo cơ chế **permissionless** (khớp pattern VacuumFire/ScheduleFire): bất kỳ ai cũng có thể trigger update, validator tính lại SMA + double-clamp nên người trigger không hưởng lợi.
 
 **Vai trò của UM trong hệ sinh thái:**
-- InstantGen (§9) nhân UM vào công thức tính MAGIC output: `M = L × BASE × UM × PM / Q³`
+- **InstantGen** nhân UM vào phần thưởng MAGIC. Công thức đọc ở hàm
+  `compute_reward_from_consumed` (`InstantGen/onchain/lib/magiclamp/protocol/math.ak`) —
+  ba phép `⌊ × / Q ⌋` TUẦN TỰ, KHÔNG phải một phép chia `Q³`. Đầu vào là `consumed`
+  (LAMP đã tiêu), **không phải** số dư LAMP: sau PHA-2 LAMP đứng yên (I-ACT-7), không
+  handler nào chuyển LAMP. Bản cũ của dòng này ghi `M = L × BASE × UM × PM / Q³` — sai
+  cả đầu vào lẫn thứ tự làm tròn; đừng chép lại.
 - Nếu UM stale > 1 epoch → InstantGen fallback về `UM_FALLBACK_Q = 0.5×` (C-UM-6) — tức là user nhận rate tệ nhất. Keeper có incentive tự nhiên để update đúng giờ.
-- SnapshotGen (§8) và VacuumGen (§10) KHÔNG dùng UM (T16 — đây là sự khác biệt có chủ ý).
+- **ScheduleGen** khoá rate lúc commit nên không đọc UM ở lúc fire. UM chỉ có MỘT hộ tiêu
+  thụ đang sống: InstantGen.
+- SnapshotGen / VacuumGen từng được ghi ở đây là "cố ý không dùng UM (T16)". Hai module đó
+  ĐÃ CHẾT — nằm ở `Legacy/genmagic-v3.3/`. Đừng suy ra ràng buộc thiết kế nào từ chúng.
 
 **Giá trị UM dao động từ 0.5× đến 2.0×** (Constitutional limits, không thể vượt on-chain). Giá trị trung lập là 1.0× (burns = mints).
 

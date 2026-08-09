@@ -3,15 +3,15 @@
 
 import {
   Lucid, Blockfrost, Data, Constr,
-  applyParamsToScript, validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
 } from "../config.js";
+import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
 
@@ -28,31 +28,26 @@ async function main() {
   console.log("║  ScheduleFire smoke test — Preview         ║");
   console.log("╚════════════════════════════════════════════╝\n");
 
-  const plutusJson = JSON.parse(
-    await readFile(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url), "utf8"),
-  );
-  const vaultUnapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
-  const shardUnapplied = plutusJson.validators.find((v: any) =>
-    v.title === "vault.shard.spend" || v.title === "shard.shard.spend",
-  );
+  // Apply-param THEO TÊN — dùng chung bản đồ giá trị với deploy/07.
+  const blueprint      = await loadBlueprint("ScheduleGen");
+  const vaultUnapplied = findValidator(blueprint, "vault.vault.spend");
+  const shardUnapplied = findValidator(blueprint, "vault.shard.spend");
 
-  // PHA 2: no treasury param — the ScheduleGen validator moves no LAMP (I-ACT-7).
-
-  const vaultScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(vaultUnapplied.compiledCode, [
-      // PHA 2 — 3 params (treasury_addr removed, I-ACT-7)
-      POLICY_IDS.lamp, POLICY_IDS.shard_nft, PROTOCOL.MS_PER_EPOCH,
-    ]),
-  };
-  // Shard validator now takes 1 param: shard NFT policy id (same value the vault
-  // is parameterized with). Apply it before hashing — hash changed vs v1.0.
-  const shardScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(shardUnapplied.compiledCode, [POLICY_IDS.shard_nft]),
-  };
-  const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(vaultScript)));
-  const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(shardScript)));
+  const { script: vaultScript, hash: vaultHash } = appliedScript(
+    vaultUnapplied,
+    scheduleVaultParams({
+      lampPolicyId:  POLICY_IDS.lamp,
+      lampAssetName: ASSET_NAMES.lamp,
+      shardPolicyId: POLICY_IDS.shard_nft,
+      msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    }),
+  );
+  const { script: shardScript, hash: shardHash } = appliedScript(
+    shardUnapplied,
+    shardSpendParams({ shardPolicyId: POLICY_IDS.shard_nft }),
+  );
+  const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
+  const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(shardHash));
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);

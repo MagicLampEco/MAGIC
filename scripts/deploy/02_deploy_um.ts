@@ -1,21 +1,26 @@
 // scripts/deploy/02_deploy_um.ts — Deploy parameterized UM datum UTxO
 // Run: npx tsx deploy/02_deploy_um.ts
-// Prereq: 01_mint_lamp.ts done; UMKeeper/onchain/plutus.json built with ms_per_epoch param.
+// Prereq: 01_mint_lamp.ts done; `aiken build` đã chạy ở UMKeeper/onchain.
+//
+// um_datum_validator nhận 3 tham số (ms_per_epoch, um_policy, um_name) — tên +
+// thứ tự đọc thẳng từ blueprint qua scripts/applyParams.ts, không khai tay.
 //
 // Output: UM datum UTxO at applied UMKeeper validator address, with 1 UM NFT.
 // Prints: UM_DATUM_HASH (applied), UM_NFT_POLICY_ID — copy both into .env.
 
 import {
-  Lucid, Blockfrost, Data, Constr,
-  applyParamsToScript, validatorToScriptHash,
+  Lucid, Blockfrost, Data,
   credentialToAddress, scriptHashToCredential,
   mintingPolicyToId, getAddressDetails,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   ASSET_NAMES, PROTOCOL,
 } from "../config.js";
+import {
+  loadBlueprint, findValidator, appliedScript, appliedValidator,
+} from "../applyParams.js";
+import { umDatumParams, oneShotGenesisParams } from "../deployParams.js";
 
 const UMDatumSchema = Data.Object({
   smoothed_q:          Data.Integer(),
@@ -26,29 +31,11 @@ const UMDatumSchema = Data.Object({
 async function main() {
   console.log("=== Step 2: Deploy UM Datum UTxO (parameterized) ===\n");
 
-  // Load and apply UMKeeper validator (1 param: ms_per_epoch)
-  const plutusJson = JSON.parse(
-    await readFile(new URL("../../UMKeeper/onchain/plutus.json", import.meta.url), "utf8"),
-  );
-  const unapplied = plutusJson.validators.find((v: any) =>
-    v.title === "um_datum.um_datum_validator.spend"
-    || v.title === "um_datum_validator.um_datum_validator.spend"
-    || v.title?.endsWith(".spend"),
-  );
-  if (!unapplied) {
-    console.error("Available validators:", plutusJson.validators.map((v: any) => v.title));
-    throw new Error("UMKeeper validator not found in UMKeeper/onchain/plutus.json");
-  }
-
-  const appliedCbor    = applyParamsToScript(unapplied.compiledCode, [PROTOCOL.MS_PER_EPOCH]);
-  const umScript       = { type: "PlutusV3" as const, script: appliedCbor };
-  const umScriptHash   = validatorToScriptHash(umScript);
-  const umScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(umScriptHash));
-
-  console.log(`Network:             ${NETWORK}`);
-  console.log(`ms_per_epoch:        ${PROTOCOL.MS_PER_EPOCH}`);
-  console.log(`UM script hash:      ${umScriptHash}`);
-  console.log(`UM script address:   ${umScriptAddress}`);
+  // Blueprint UMKeeper — tên + thứ tự tham số đọc từ đây, KHÔNG khai tay.
+  // Chưa `aiken build` thì loadBlueprint báo lỗi rõ ràng, không đoán.
+  const blueprint    = await loadBlueprint("UMKeeper");
+  const unapplied    = findValidator(blueprint, "um_datum.um_datum_validator.spend");
+  const unappliedNft = findValidator(blueprint, "um_nft.um_nft.mint");
 
   // Lucid + wallet
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
@@ -63,30 +50,38 @@ async function main() {
   // singleton and the UM reference input was forgeable. The one-shot Plutus
   // policy is parameterized by a specific genesis OutputReference that the tx
   // MUST consume → it can run at most once → supply fixed at 1, never re-mint.
-  const umNftPlutus = JSON.parse(
-    await readFile(new URL("../../UMKeeper/onchain/plutus.json", import.meta.url), "utf8"),
-  );
-  const unappliedNft = umNftPlutus.validators.find((v: any) =>
-    v.title === "um_nft.um_nft.mint" || v.title?.startsWith("um_nft."),
-  );
-  if (!unappliedNft) {
-    console.error("Available validators:", umNftPlutus.validators.map((v: any) => v.title));
-    throw new Error("um_nft.um_nft.mint not found in UMKeeper/onchain/plutus.json");
-  }
-
-  // Pick a genesis UTxO from the wallet to consume (must have lovelace).
+  //
+  // THỨ TỰ BẮT BUỘC: um_datum_validator nhận `um_policy` làm tham số, mà policy
+  // đó lại sinh từ genesis UTxO ⇒ phải chốt genesis + policy TRƯỚC, rồi mới
+  // apply được validator UM. Đảo ngược thứ tự này chính là cách bản cũ đánh rơi
+  // hai tham số (um_policy, um_name).
   const walletUtxos = await lucid.wallet().getUtxos();
   const genesisUtxo = walletUtxos.find((u) => u.assets.lovelace >= 3_000_000n);
   if (!genesisUtxo) throw new Error("No wallet UTxO with ≥3 ADA to seed the one-shot mint");
 
-  // OutputReference = Constr 0 [transaction_id (Bytes), output_index (Int)].
-  const genesisRefData = new Constr(0, [genesisUtxo.txHash, BigInt(genesisUtxo.outputIndex)]);
-  const umNftPolicyScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(unappliedNft.compiledCode, [genesisRefData]),
-  };
+  const umNftPolicyScript = appliedValidator(
+    unappliedNft,
+    oneShotGenesisParams({ txHash: genesisUtxo.txHash, outputIndex: genesisUtxo.outputIndex }),
+  );
   const umNftPolicyId = mintingPolicyToId(umNftPolicyScript);
   const umNftUnit     = umNftPolicyId + ASSET_NAMES.um_nft;
+
+  // ── UM datum validator: ms_per_epoch + um_policy + um_name ───────────────
+  const { hash: umScriptHash } = appliedScript(
+    unapplied,
+    umDatumParams({
+      msPerEpoch: PROTOCOL.MS_PER_EPOCH,
+      umPolicy:   umNftPolicyId,
+      umName:     ASSET_NAMES.um_nft,
+    }),
+  );
+  const umScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(umScriptHash));
+
+  console.log(`Network:             ${NETWORK}`);
+  console.log(`ms_per_epoch:        ${PROTOCOL.MS_PER_EPOCH}`);
+  console.log(`UM NFT name (hex):   ${ASSET_NAMES.um_nft}`);
+  console.log(`UM script hash:      ${umScriptHash}`);
+  console.log(`UM script address:   ${umScriptAddress}`);
 
   // Current epoch from tip POSIX ms (matches validator semantics).
   const tipRes = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {

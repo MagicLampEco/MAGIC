@@ -9,6 +9,8 @@
     "deploy:um":     "npx tsx deploy/02_deploy_um.ts",
     "deploy:shards": "npx tsx deploy/03_deploy_shards.ts",
     "verify:hashes": "npx tsx verify_per_network.ts",
+    "check:params":  "npx tsx check_param_names.ts",
+    "deploy:consume": "npx tsx deploy/09_deploy_consume.ts",
     "test:instant":          "npx tsx test/instant_only.ts",
     "deploy:instant-vault":  "npx tsx deploy/05_create_instant_vault.ts",
     "deploy:schedule-vault": "npx tsx deploy/07_create_schedule_vault.ts",
@@ -20,6 +22,7 @@
   },
   "dependencies": {
     "@lucid-evolution/lucid": "^0.4.0",
+    "@noble/hashes": "^1.4.0",
     "@magiclamp/protocol-utils": "file:../ProtocolUtils",
     "dotenv": "^16.4.0"
   },

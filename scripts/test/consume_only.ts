@@ -29,16 +29,16 @@
 
 import {
   Lucid, Blockfrost, Data,
-  applyParamsToScript, validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
   type UTxO,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, PROTOCOL, SCRIPT_HASHES,
 } from "../config.js";
+import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { consumeParams, instantVaultParams } from "../deployParams.js";
 import {
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
   ConsumeRedeemerSchema,
@@ -47,7 +47,6 @@ import {
 import { VaultDatumSchema, VaultRedeemerSchema } from "../../InstantGen/offchain/src/types.js";
 
 const PRICE_NFT_NAME  = "5052494345";
-const ENGAGE_NFT_NAME = "454e47";
 const BURN_BATCH_CONSTR = 2n;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -85,47 +84,69 @@ async function main() {
   if (opCount < 1n) throw new Error("op_count phải ≥ 1");
 
   const priceNftPolicy  = req("PRICE_NFT_POLICY");
-  const engageNftPolicy = req("ENGAGE_NFT_POLICY");
-  const engageNftUnit   = engageNftPolicy + ENGAGE_NFT_NAME;
   const maxPriceStale   = BigInt(process.env.MAX_PRICE_STALE ?? "1");
   const vaultInstantHash = req("VAULT_INSTANT_HASH");
 
-  // ── Reconstruct consume validator (8 param — phải khớp 09) ───────────────────
-  const consumePlutus = JSON.parse(
-    await readFile(new URL("../../ConsumeMAGIC/onchain/plutus.json", import.meta.url), "utf8"),
+  // ── Dựng lại consume validator — apply-param THEO TÊN, dùng chung bản đồ với 09 ──
+  const priceParamHash = req("PRICE_PARAM_HASH");
+  const consumeBlueprint = await loadBlueprint("ConsumeMAGIC");
+  const consumeV = findValidator(consumeBlueprint, "consume.consume.spend");
+  const { script: consumeScript, hash: consumeHash } = appliedScript(
+    consumeV,
+    consumeParams({
+      priceNftPolicy,
+      priceNftName:         PRICE_NFT_NAME,
+      vaultScriptHash:      vaultInstantHash,
+      burnBatchConstr:      BURN_BATCH_CONSTR,
+      maxPriceStale,
+      msPerEpoch:           PROTOCOL.MS_PER_EPOCH,
+      priceParamScriptHash: priceParamHash,
+    }),
   );
-  const consumeV = consumePlutus.validators.find((v: any) => v.title === "consume.consume.spend");
-  if (!consumeV) throw new Error("consume.consume.spend not found");
-  const consumeScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(consumeV.compiledCode, [
-      priceNftPolicy, PRICE_NFT_NAME,
-      engageNftPolicy, ENGAGE_NFT_NAME,
-      vaultInstantHash, BURN_BATCH_CONSTR, maxPriceStale, PROTOCOL.MS_PER_EPOCH,
-    ]),
-  };
-  const consumeHash = validatorToScriptHash(consumeScript);
+  // Thread token Engage do CHÍNH consume đúc ⇒ policy id == consume script hash.
+  // Tên asset = blake2b_256(cbor(seed)) nên KHÔNG suy ra được từ hash: lấy nguyên
+  // ENGAGE_NFT_UNIT do deploy/09 in ra.
+  const engageNftUnit   = req("ENGAGE_NFT_UNIT");
+  const engageNftPolicy = engageNftUnit.slice(0, 56);
+
   if (process.env.CONSUME_SCRIPT_HASH && process.env.CONSUME_SCRIPT_HASH !== consumeHash) {
     throw new Error(
       `Consume hash reconstruct (${consumeHash}) ≠ CONSUME_SCRIPT_HASH env ` +
-      `(${process.env.CONSUME_SCRIPT_HASH}). Kiểm tra PRICE/ENGAGE policy + MAX_PRICE_STALE.`,
+      `(${process.env.CONSUME_SCRIPT_HASH}). Kiểm tra PRICE/ENGAGE policy + PRICE_PARAM_HASH + MAX_PRICE_STALE.`,
     );
   }
 
-  // ── Reconstruct InstantGen vault (6 param — như instant_only) ────────────────
-  const vaultPlutus = JSON.parse(
-    await readFile(new URL("../../InstantGen/onchain/plutus.json", import.meta.url), "utf8"),
+  // ── Dựng lại InstantGen vault — cùng bản đồ tham số với deploy/05 ───────────
+  const vaultBlueprint = await loadBlueprint("InstantGen");
+  const vaultV = findValidator(vaultBlueprint, "vault.vault.spend");
+  const { script: vaultScript, hash: vaultHash } = appliedScript(
+    vaultV,
+    instantVaultParams({
+      lampPolicyId:      POLICY_IDS.lamp,
+      lampAssetName:     ASSET_NAMES.lamp,
+      umNftPolicy:       POLICY_IDS.um_nft,
+      umScriptHash:      SCRIPT_HASHES.um_datum,
+      backingNftPolicy:  POLICY_IDS.backing,
+      backingScriptHash: SCRIPT_HASHES.backing_beacon,
+      msPerEpoch:        PROTOCOL.MS_PER_EPOCH,
+    }),
   );
-  const vaultV = vaultPlutus.validators.find((v: any) => v.title === "vault.vault.spend");
-  if (!vaultV) throw new Error("vault.vault.spend not found");
-  const vaultScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(vaultV.compiledCode, [
-      POLICY_IDS.lamp, POLICY_IDS.um_nft, SCRIPT_HASHES.um_datum,
-      POLICY_IDS.backing, SCRIPT_HASHES.backing_beacon, PROTOCOL.MS_PER_EPOCH,
-    ]),
-  };
-  const vaultHash = validatorToScriptHash(vaultScript);
+  if (engageNftPolicy !== consumeHash) {
+    throw new Error(
+      `ENGAGE_NFT_UNIT policy (${engageNftPolicy}) ≠ consume hash (${consumeHash}). ` +
+      `Thread token Engage do chính consume đúc — hai giá trị này PHẢI trùng.`,
+    );
+  }
+
+  // ⚠  ConsumeMAGIC/offchain/src/types.ts (encode/decodeEngageDatum) còn 4 trường,
+  //    thiếu `consumed_nanogic` (trường thứ 5 trong types.ak). Cho tới khi codec
+  //    offchain được cập nhật, leg spend dưới đây sẽ bị validator từ chối ở
+  //    `expect ed: EngageDatum`. Đây là drift của module khác, không sửa ở scripts/.
+  console.warn(
+    "⚠  EngageDatum codec offchain đang TRỄ (thiếu consumed_nanogic) — " +
+    "cập nhật ConsumeMAGIC/offchain/src/types.ts trước khi chạy leg consume thật.",
+  );
+
   const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
   if (vaultHash !== vaultInstantHash) {
     console.warn(`⚠  vault reconstruct hash ${vaultHash} ≠ VAULT_INSTANT_HASH ${vaultInstantHash} — kiểm tra param.`);

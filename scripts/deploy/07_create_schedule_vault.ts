@@ -2,31 +2,30 @@
 // Run: npx tsx deploy/07_create_schedule_vault.ts
 // Prereq: 01 LAMP, 02 UM, 03 Shards.
 //
-// ScheduleGen vault validator has 3 params: lamp_policy_id, shard_policy_id, ms_per_epoch.
-// (`treasury_addr` was removed in PHA 2 — no handler moves LAMP any more, I-ACT-7.)
+// Tham số apply-param KHÔNG còn khai tay ở đây: tên + thứ tự đọc thẳng từ
+// ScheduleGen/onchain/plutus.json qua scripts/applyParams.ts.
+//
+// Tx này MINT luôn NFT danh-tính vault (INV-VAULT-IDENTITY) — validator đòi NFT
+// ở MỌI đường spend, thiếu nó là vault không ai spend được.
 //
 // Env vars:
 //   PROFILE              — Ember/Flame/Lantern (default Flame)
 //   LAMP_DEPOSIT         — initial LAMP (default 10_000)
-//   LAST_UPDATED_OFFSET  — offset from currentEpoch (default 1)
-//   PRESEED_SCHEDULE_L   — preseed a GenSchedule with this schedule_length (default 0 = none).
-//                          When > 0, pre-seeds a schedule with start_fire_epoch = currentEpoch (fire NOW).
-//                          Useful for testing Fire without waiting 2 epochs.
-//   PRESEED_SCHEDULE_LAM — lamp_per_epoch for the preseed schedule (default 1 tLAMP = 1_000_000 oil)
+//   (LAST_UPDATED_OFFSET / PRESEED_SCHEDULE_* đã BỎ — xem LEGACY_ENV bên dưới)
 
 import {
-  Lucid, Blockfrost, Data, Constr, toUnit,
-  applyParamsToScript, validatorToScriptHash,
+  Lucid, Blockfrost, Data, toUnit,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
-import { blake2b } from "@noble/hashes/blake2b";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
+  POLICY_IDS, ASSET_NAMES, PROTOCOL,
   lampToOildrop,
 } from "../config.js";
+import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { scheduleVaultParams } from "../deployParams.js";
+import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 
 // (Schema duplicated from 05/06 — same VaultDatum across all 4 vault modules.)
 const VaultDatumSchema = Data.Object({
@@ -98,12 +97,16 @@ const VaultDatumSchema = Data.Object({
 
 const INITIAL_LAMP_DEPOSIT  = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
 const INITIAL_PROFILE       = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
-const LAST_UPDATED_OFFSET   = BigInt(process.env.LAST_UPDATED_OFFSET ?? "1");
-const PRESEED_SCHEDULE_L    = BigInt(process.env.PRESEED_SCHEDULE_L   ?? "0");      // count of fires; 0 = no preseed
-const PRESEED_SCHEDULE_LAM  = lampToOildrop(BigInt(process.env.PRESEED_SCHEDULE_LAM ?? "1"));
 
-// Constants matching Aiken (R_snap × Q = 2_000_000_000 for Flame baseline rate).
-const SNAPSHOT_BASE_RATE_Q = 2_000_000_000n;
+// `validate_mint_vault_id` (ScheduleGen/onchain/validators/vault.ak:878-914) ép
+// datum khởi sinh SẠCH: lamp_locked == 0, gen_schedules == [],
+// last_updated_epoch == 0, attribution_root == #"". Preseed một GenSchedule
+// (và cái khoá LAMP kèm theo) nay là ĐIỀU KHÔNG THỂ tại lúc tạo vault: NFT danh
+// tính không mint được ⇒ vault không spend được. Muốn thử Fire thì Commit thật
+// qua ScheduleGen rồi chờ, không nhét trước vào genesis.
+const LEGACY_ENV = [
+  "LAST_UPDATED_OFFSET", "PRESEED_SCHEDULE_L", "PRESEED_SCHEDULE_LAM",
+] as const;
 
 async function main() {
   console.log("=== Step 7: Create ScheduleGen Vault UTxO ===\n");
@@ -112,6 +115,15 @@ async function main() {
   if (POLICY_IDS.shard_nft === "FILL_AFTER_STEP_03") throw new Error("Step 03 missing");
   // NOTE: TREASURY_ADDRESS is NO LONGER a parameter of this validator.
   // PHA 2 / I-ACT-7 — a fire RELEASES the lock; it moves no LAMP.
+  for (const k of LEGACY_ENV) {
+    if (process.env[k] !== undefined) {
+      throw new Error(
+        `${k} không còn dùng được. validate_mint_vault_id ép datum khởi sinh sạch ` +
+        `(lamp_locked == 0, gen_schedules == [], last_updated_epoch == 0), nên không ` +
+        `preseed được lịch vào genesis. Bỏ biến này khỏi môi trường.`,
+      );
+    }
+  }
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
@@ -120,32 +132,29 @@ async function main() {
   if (!paymentCredential) throw new Error("Cannot get payment credential");
   const ownerPkh = paymentCredential.hash;
 
-  // Load ScheduleGen vault validator (PHA 2 — 3 params, treasury_addr REMOVED:
-  //   lamp_policy_id, shard_policy_id, ms_per_epoch).
-  const plutusJson = JSON.parse(
-    await readFile(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url), "utf8"),
+  // Apply params THEO TÊN — thứ tự do blueprint quyết định, không do file này.
+  const blueprint = await loadBlueprint("ScheduleGen");
+  const unapplied = findValidator(blueprint, "vault.vault.spend");
+  const { script: vaultScript, hash: vaultScriptHash } = appliedScript(
+    unapplied,
+    scheduleVaultParams({
+      lampPolicyId:  POLICY_IDS.lamp,
+      lampAssetName: ASSET_NAMES.lamp,   // PARAM theo mạng, không hardcode
+      shardPolicyId: POLICY_IDS.shard_nft,
+      msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    }),
   );
-  const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
-  if (!unapplied) {
-    console.error("Validators:", plutusJson.validators.map((v: any) => v.title));
-    throw new Error("vault.vault.spend not found");
-  }
-
-  const appliedCbor = applyParamsToScript(unapplied.compiledCode, [
-    POLICY_IDS.lamp,
-    POLICY_IDS.shard_nft,
-    PROTOCOL.MS_PER_EPOCH,
-  ]);
-  const vaultScript = { type: "PlutusV3" as const, script: appliedCbor };
-  const vaultScriptHash = validatorToScriptHash(vaultScript);
   const vaultScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(vaultScriptHash));
 
   console.log(`Network:            ${NETWORK}`);
+  console.log(`LAMP policy:        ${POLICY_IDS.lamp}`);
+  console.log(`LAMP asset name:    ${ASSET_NAMES.lamp}`);
+  console.log(`Shard NFT policy:   ${POLICY_IDS.shard_nft}`);
+  console.log(`ms_per_epoch:       ${PROTOCOL.MS_PER_EPOCH}`);
   console.log(`Vault script hash:  ${vaultScriptHash}`);
   console.log(`Vault address:      ${vaultScriptAddress}`);
   console.log(`Profile:            ${INITIAL_PROFILE}`);
   console.log(`LAMP deposit:       ${INITIAL_LAMP_DEPOSIT / 1_000_000n} tLAMP`);
-  console.log(`Preseed schedule:   L=${PRESEED_SCHEDULE_L}, λ=${PRESEED_SCHEDULE_LAM / 1_000_000n} tLAMP`);
 
   const tipRes = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
     headers: { project_id: BLOCKFROST_KEY },
@@ -159,61 +168,57 @@ async function main() {
   const lampBal  = utxos.reduce((s, u) => s + (u.assets[lampUnit] ?? 0n), 0n);
   if (lampBal < INITIAL_LAMP_DEPOSIT) throw new Error(`Need ${INITIAL_LAMP_DEPOSIT / 1_000_000n} LAMP`);
 
-  // Pre-seed schedule with start_fire_epoch = currentEpoch so Fire fires NOW.
-  // Schedule_id is opaque to validator (only verified at Commit time, looked up by ID at Fire).
-  function placeholderHash(suffix: string, n: number): string {
-    return (suffix + n.toString(16).padStart(2, "0")).padEnd(64, "f");
-  }
-  const gen_schedules = PRESEED_SCHEDULE_L > 0n ? [{
-    schedule_id:              placeholderHash("aa", 1),
-    commit_epoch:             currentEpoch - 2n,                   // commit + delay = current
-    start_fire_epoch:         currentEpoch,
-    end_fire_epoch:           currentEpoch + PRESEED_SCHEDULE_L - 1n,
-    schedule_length:          PRESEED_SCHEDULE_L,
-    lamp_per_epoch:           PRESEED_SCHEDULE_LAM,
-    rate_locked_q:            SNAPSHOT_BASE_RATE_Q,                 // 2.0× (frozen at commit)
-    baseline_at_commit_q:     SNAPSHOT_BASE_RATE_Q,
-    multiplier_at_commit_q:   1_000_000_000n,                       // 1.0×
-    fired_count:              0n,
-    auto_burn_target:         null,
-  }] : [];
+  // ── Danh tính vault (INV-VAULT-IDENTITY) ───────────────────────────────────
+  const seedUtxo    = pickSeedUtxo(utxos);
+  const vaultIdName = vaultIdAssetName({
+    txHash: seedUtxo.txHash, outputIndex: seedUtxo.outputIndex,
+  });
+  const vaultIdUnit  = toUnit(vaultScriptHash, vaultIdName);
+  const mintRedeemer = mintVaultIdRedeemer({
+    txHash: seedUtxo.txHash, outputIndex: seedUtxo.outputIndex,
+  });
+  console.log(`Seed UTxO:          ${seedUtxo.txHash}#${seedUtxo.outputIndex}`);
+  console.log(`Vault-ID NFT:       ${vaultScriptHash}.${vaultIdName}`);
 
-  const totalLocked = gen_schedules.reduce(
-    (s, g) => s + g.schedule_length * g.lamp_per_epoch, 0n,
-  );
-
+  // MỌI hằng số dưới đây là điều kiện on-chain của `validate_mint_vault_id`
+  // (ScheduleGen/onchain/validators/vault.ak:878-914), không phải sở thích.
   const initialVault = {
     owner:                 ownerPkh,
     lamp_balance:          INITIAL_LAMP_DEPOSIT,
-    lamp_locked:           totalLocked,
+    lamp_locked:           0n,               // PIN: `expect vd.lamp_locked == 0`
     loyalty_holdings:      [{
       amount: INITIAL_LAMP_DEPOSIT, acquired_epoch: currentEpoch,
-      is_locked: totalLocked > 0n,
+      is_locked: false,                      // PIN: list.all(..., !h.is_locked)
     }],
     magic_batches:         [],
     next_batch_index:      0n,
     vacuum_orders:         [],
-    gen_schedules,
+    gen_schedules:         [],               // PIN: `expect vd.gen_schedules == []`
     profile:               INITIAL_PROFILE,
     profile_changed_epoch: 0n,
     pending_profile:       null,
-    last_updated_epoch:    currentEpoch - LAST_UPDATED_OFFSET,
+    last_updated_epoch:    0n,               // PIN: `expect vd.last_updated_epoch == 0`
     delegation_cert:       { current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n },
     activity_state:        { recent_burn_epochs: [], consumed_credit: 0n },
     streak_state:          { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate:     null,
-    attribution:           { attribution_root: "00".repeat(32), last_event_epoch: 0n, total_events: 0n },
+    // PIN: `attribution_root: #""` — chuỗi byte RỖNG, KHÔNG phải 32 byte 0.
+    attribution:           { attribution_root: "", last_event_epoch: 0n, total_events: 0n },
   };
 
   const vaultDatum = Data.to(initialVault, VaultDatumSchema);
 
   const tx = await lucid
     .newTx()
-    .pay.ToAddressWithData(
+    .collectFrom([seedUtxo])                          // (1) one-shot seed
+    .mintAssets({ [vaultIdUnit]: 1n }, mintRedeemer)  // (2) đúng 1 NFT
+    .attach.MintingPolicy(vaultScript)
+    .pay.ToAddressWithData(                           // (3) NFT ở output vault
       vaultScriptAddress,
       { kind: "inline", value: vaultDatum },
-      { lovelace: 2_000_000n, [lampUnit]: INITIAL_LAMP_DEPOSIT },
+      { lovelace: 2_000_000n, [lampUnit]: INITIAL_LAMP_DEPOSIT, [vaultIdUnit]: 1n },
     )
+    .addSignerKey(ownerPkh)                           // (4) owner ký
     .complete();
 
   const signed = await tx.sign.withWallet().complete();
@@ -222,12 +227,9 @@ async function main() {
   console.log(`\n✅ ScheduleGen vault created!`);
   console.log(`   TX hash:   ${txHash}`);
   console.log(`   Explorer:  https://preview.cardanoscan.io/transaction/${txHash}`);
-  if (gen_schedules.length > 0) {
-    console.log(`   Preseed schedule_id: ${gen_schedules[0].schedule_id}`);
-    console.log(`   start_fire_epoch:    ${gen_schedules[0].start_fire_epoch} (current=${currentEpoch})`);
-  }
   console.log(`\n📋 Copy to .env:`);
   console.log(`   VAULT_SCHEDULE_HASH=${vaultScriptHash}    # applied for NETWORK=${NETWORK}`);
+  console.log(`   VAULT_SCHEDULE_ID_UNIT=${vaultIdUnit}     # NFT danh-tính vault (policy = vault hash)`);
 }
 
 main().catch(console.error);

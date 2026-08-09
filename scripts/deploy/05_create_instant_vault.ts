@@ -4,26 +4,29 @@
 // Optional (§6.3): BACKING_NFT_POLICY_ID + BACKING_SCRIPT_HASH — omit them and the
 // vault deploys with an unsatisfiable beacon pin, i.e. InstantGen stays SHUT.
 //
-// InstantGen validator is parameterized with 5 args:
-//   lamp_policy_id: PolicyId  — required for asset checks
-//   (treasury_addr REMOVED in PHA 2 — InstantGen moves no LAMP, I-ACT-7)
-//   um_nft_policy:  PolicyId  — identifies the canonical UM UTxO via NFT
-//   um_script_hash: ByteArray — pins the UM ref input to the UM script address
-//                               (MAINNET-BLOCK fix, defense-in-depth layer b)
-//   ms_per_epoch:   Int       — POSIX-ms epoch math (network-specific)
+// Tham số apply-param KHÔNG còn khai tay ở đây: danh sách tên + thứ tự đọc
+// thẳng từ InstantGen/onchain/plutus.json qua scripts/applyParams.ts, giá trị
+// lấy từ scripts/deployParams.ts. Đổi chữ ký `validator vault(...)` ⇒ script
+// này gãy ồn ào, không còn sinh hash sai im lặng.
+//
+// Tx này MINT luôn NFT danh-tính vault (INV-VAULT-IDENTITY): validator đòi NFT
+// ở MỌI đường spend (`validate_vault_value` → `single_nft_name`), nên một vault
+// tạo ra mà không có NFT là vault KHÔNG AI SPEND ĐƯỢC. Không validator nào chạy
+// lúc TẠO UTxO, nên thiếu mint thì tx vẫn vào chuỗi và log vẫn in "đã tạo".
 
 import {
-  Lucid, Blockfrost, Data, Constr, toUnit,
-  applyParamsToScript, validatorToScriptHash,
+  Lucid, Blockfrost, Data, toUnit,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
+  POLICY_IDS, ASSET_NAMES, PROTOCOL, SCRIPT_HASHES,
   lampToOildrop,
 } from "../config.js";
+import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { instantVaultParams } from "../deployParams.js";
+import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 
 // VaultDatum schema (same across all 4 modules — matches Aiken).
 const VaultDatumSchema = Data.Object({
@@ -108,9 +111,11 @@ const VaultDatumSchema = Data.Object({
 });
 
 const INITIAL_LAMP_DEPOSIT = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
-const INITIAL_LAMP_LOCKED  = lampToOildrop(BigInt(process.env.LAMP_LOCKED ?? "0"));
 const INITIAL_PROFILE      = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
-const LAST_UPDATED_OFFSET  = BigInt(process.env.LAST_UPDATED_OFFSET ?? "1");
+// LAMP_LOCKED / LAST_UPDATED_OFFSET đã BỎ: `validate_mint_vault_id` ép datum
+// khởi sinh SẠCH — `lamp_locked == 0` và `last_updated_epoch == 0`. Ai còn đặt
+// env cũ sẽ bị chặn ngay dưới đây thay vì tạo ra một vault không spend được.
+const LEGACY_ENV = ["LAMP_LOCKED", "LAST_UPDATED_OFFSET"] as const;
 
 async function main() {
   console.log("=== Step 5: Create InstantGen Vault UTxO ===\n");
@@ -118,6 +123,14 @@ async function main() {
   if (POLICY_IDS.lamp === "FILL_AFTER_MINT") throw new Error("Run step 01 first; missing LAMP_POLICY_ID.");
   if (POLICY_IDS.um_nft === "FILL_AFTER_DEPLOY_UM") throw new Error("Run step 02 first; missing UM_NFT_POLICY_ID.");
   if (SCRIPT_HASHES.um_datum === "FILL_AFTER_AIKEN_BUILD") throw new Error("Run step 02 first; missing UM_DATUM_HASH (= um_script_hash).");
+  for (const k of LEGACY_ENV) {
+    if (process.env[k] !== undefined) {
+      throw new Error(
+        `${k} không còn dùng được. validate_mint_vault_id ép datum khởi sinh sạch ` +
+        `(lamp_locked == 0, last_updated_epoch == 0). Bỏ biến này khỏi môi trường.`,
+      );
+    }
+  }
   // NOTE: TREASURY_ADDRESS is NO LONGER a parameter of this validator.
   // PHA 2 / I-ACT-7 — InstantGen never moves LAMP, so there is no Treasury leg.
   if (POLICY_IDS.backing === "00".repeat(28) || SCRIPT_HASHES.backing_beacon === "00".repeat(28)) {
@@ -137,34 +150,27 @@ async function main() {
   if (!paymentCredential) throw new Error("Cannot get payment credential");
   const ownerPkh = paymentCredential.hash;
 
-  // Load InstantGen validator with 4 params.
-  const plutusJson = JSON.parse(
-    await readFile(new URL("../../InstantGen/onchain/plutus.json", import.meta.url), "utf8"),
+  // Apply params THEO TÊN — thứ tự do blueprint quyết định, không do file này.
+  const blueprint = await loadBlueprint("InstantGen");
+  const unapplied = findValidator(blueprint, "vault.vault.spend");
+  const { script: vaultScript, hash: vaultScriptHash } = appliedScript(
+    unapplied,
+    instantVaultParams({
+      lampPolicyId:      POLICY_IDS.lamp,
+      lampAssetName:     ASSET_NAMES.lamp,        // PARAM theo mạng, không hardcode
+      umNftPolicy:       POLICY_IDS.um_nft,
+      umScriptHash:      SCRIPT_HASHES.um_datum,      // pins the UM ref input (layer b)
+      backingNftPolicy:  POLICY_IDS.backing,          // pins the BackingBeacon NFT (§6.3)
+      backingScriptHash: SCRIPT_HASHES.backing_beacon, // pins the BackingBeacon address (§6.3)
+      msPerEpoch:        PROTOCOL.MS_PER_EPOCH,
+    }),
   );
-  const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
-  if (!unapplied) {
-    console.error("Available validators:", plutusJson.validators.map((v: any) => v.title));
-    throw new Error("vault.vault.spend not found in InstantGen/onchain/plutus.json");
-  }
-
-  // Apply params in order (PHA 2 — 6 params, treasury_addr REMOVED):
-  //   lamp_policy_id, um_nft_policy, um_script_hash,
-  //   backing_nft_policy, backing_script_hash, ms_per_epoch
-  const appliedCbor = applyParamsToScript(unapplied.compiledCode, [
-    POLICY_IDS.lamp,
-    POLICY_IDS.um_nft,
-    SCRIPT_HASHES.um_datum,        // pins the UM ref input (layer b)
-    POLICY_IDS.backing,            // pins the BackingBeacon NFT (§6.3)
-    SCRIPT_HASHES.backing_beacon,  // pins the BackingBeacon address (§6.3)
-    PROTOCOL.MS_PER_EPOCH,
-  ]);
-  const vaultScript     = { type: "PlutusV3" as const, script: appliedCbor };
-  const vaultScriptHash = validatorToScriptHash(vaultScript);
   const vaultScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(vaultScriptHash));
 
   console.log(`Network:            ${NETWORK}`);
   console.log(`ms_per_epoch:       ${PROTOCOL.MS_PER_EPOCH}`);
   console.log(`LAMP policy:        ${POLICY_IDS.lamp}`);
+  console.log(`LAMP asset name:    ${ASSET_NAMES.lamp}`);
   console.log(`UM NFT policy:      ${POLICY_IDS.um_nft}`);
   console.log(`UM script hash:     ${SCRIPT_HASHES.um_datum}`);
   console.log(`Backing NFT policy: ${POLICY_IDS.backing}`);
@@ -189,17 +195,32 @@ async function main() {
   console.log(`Wallet LAMP:        ${lampBal / 1_000_000n} LAMP`);
   if (lampBal < INITIAL_LAMP_DEPOSIT) throw new Error(`Need ${INITIAL_LAMP_DEPOSIT / 1_000_000n} LAMP`);
 
-  console.log(`LAMP locked:        ${INITIAL_LAMP_LOCKED / 1_000_000n} LAMP`);
+  // ── Danh tính vault (INV-VAULT-IDENTITY) ───────────────────────────────────
+  // seed phải là input THẬT của chính tx này (`expect list.any(tx.inputs, ...)`
+  // trong validate_mint_vault_id) ⇒ ép vào bằng .collectFrom, không để coin
+  // selection quyết định. policy id = chính vault script hash đã apply params.
+  const seedUtxo    = pickSeedUtxo(utxos);
+  const vaultIdName = vaultIdAssetName({
+    txHash: seedUtxo.txHash, outputIndex: seedUtxo.outputIndex,
+  });
+  const vaultIdUnit = toUnit(vaultScriptHash, vaultIdName);
+  const mintRedeemer = mintVaultIdRedeemer({
+    txHash: seedUtxo.txHash, outputIndex: seedUtxo.outputIndex,
+  });
+  console.log(`Seed UTxO:          ${seedUtxo.txHash}#${seedUtxo.outputIndex}`);
+  console.log(`Vault-ID NFT:       ${vaultScriptHash}.${vaultIdName}`);
 
   // Initial vault datum — schema VaultDatum dùng chung cho mọi loại vault.
+  // MỌI hằng số dưới đây là một điều kiện on-chain của `validate_mint_vault_id`
+  // (InstantGen/onchain/validators/vault.ak), không phải sở thích.
   const initialVault = {
     owner:                 ownerPkh,
     lamp_balance:          INITIAL_LAMP_DEPOSIT,
-    lamp_locked:           INITIAL_LAMP_LOCKED,
+    lamp_locked:           0n,                 // PIN: `expect vd.lamp_locked == 0`
     loyalty_holdings:      [{
       amount:         INITIAL_LAMP_DEPOSIT,
       acquired_epoch: currentEpoch,
-      is_locked:      INITIAL_LAMP_LOCKED > 0n,
+      is_locked:      false,                   // PIN: list.all(..., !h.is_locked)
     }],
     magic_batches:         [],
     next_batch_index:      0n,
@@ -208,7 +229,7 @@ async function main() {
     profile:               INITIAL_PROFILE,
     profile_changed_epoch: 0n,
     pending_profile:       null,
-    last_updated_epoch:    currentEpoch - LAST_UPDATED_OFFSET,
+    last_updated_epoch:    0n,                 // PIN: `expect vd.last_updated_epoch == 0`
     delegation_cert:       {
       current: [], pending: null,
       current_effective_epoch: 0n, last_changed_epoch: 0n,
@@ -217,7 +238,8 @@ async function main() {
     streak_state:          { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate:     null,
     attribution:           {
-      attribution_root: "00".repeat(32),
+      // PIN: `attribution_root: #""` — chuỗi byte RỖNG, KHÔNG phải 32 byte 0.
+      attribution_root: "",
       last_event_epoch: 0n,
       total_events:     0n,
     },
@@ -225,16 +247,24 @@ async function main() {
 
   const vaultDatum = Data.to(initialVault, VaultDatumSchema);
 
+  // 4 mảnh BẮT BUỘC khớp nhau (validate_mint_vault_id):
+  //   (1) seed UTxO trong inputs           (2) mint đúng 1 NFT policy = vault hash
+  //   (3) NFT nằm ở output tại vault addr  (4) owner ký
   const tx = await lucid
     .newTx()
-    .pay.ToAddressWithData(
+    .collectFrom([seedUtxo])                            // (1)
+    .mintAssets({ [vaultIdUnit]: 1n }, mintRedeemer)    // (2)
+    .attach.MintingPolicy(vaultScript)
+    .pay.ToAddressWithData(                             // (3)
       vaultScriptAddress,
       { kind: "inline", value: vaultDatum },
       {
-        lovelace:  2_000_000n,
-        [lampUnit]: INITIAL_LAMP_DEPOSIT,
+        lovelace:      2_000_000n,
+        [lampUnit]:    INITIAL_LAMP_DEPOSIT,
+        [vaultIdUnit]: 1n,
       },
     )
+    .addSignerKey(ownerPkh)                             // (4)
     .complete();
 
   const signed = await tx.sign.withWallet().complete();
@@ -245,6 +275,7 @@ async function main() {
   console.log(`   Explorer:  https://preview.cardanoscan.io/transaction/${txHash}`);
   console.log(`\n📋 Copy to .env:`);
   console.log(`   VAULT_INSTANT_HASH=${vaultScriptHash}   # applied for NETWORK=${NETWORK}`);
+  console.log(`   VAULT_INSTANT_ID_UNIT=${vaultIdUnit}    # NFT danh-tính vault (policy = vault hash)`);
 }
 
 main().catch(console.error);

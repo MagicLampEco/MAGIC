@@ -16,13 +16,15 @@
 
 import {
   Lucid, Blockfrost, Data,
-  applyParamsToScript, validatorToScriptHash, credentialToAddress,
-  scriptHashToCredential, mintingPolicyToId,
+  credentialToAddress, scriptHashToCredential, mintingPolicyToId,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet, PROTOCOL,
 } from "../config.js";
+import {
+  loadBlueprint, findValidator, appliedScript, appliedValidator,
+} from "../applyParams.js";
+import { oneShotGenesisParams, shardSpendParams } from "../deployParams.js";
 
 const ShardDatumSchema = Data.Object({
   shard_id:                    Data.Integer(),
@@ -34,13 +36,6 @@ const ShardDatumSchema = Data.Object({
   shard_cap:                    Data.Integer(),
 });
 
-// OutputReference param schema for the one-shot policy (constr 0 with
-// {transaction_id: bytes, output_index: int}).
-const OutRefSchema = Data.Object({
-  transaction_id: Data.Bytes(),
-  output_index:   Data.Integer(),
-});
-
 // shard_asset_name(id) = "SHARD" (5348415244) ∥ single byte 0x00..0x0f.
 function shardAssetName(shardId: number): string {
   return "5348415244" + shardId.toString(16).padStart(2, "0");
@@ -49,23 +44,10 @@ function shardAssetName(shardId: number): string {
 async function main() {
   console.log("=== Step 3: Deploy 16 Shard UTxOs (one-shot NFT policy) ===\n");
 
-  // Load ScheduleGen plutus.json: shard NFT minting policy + shard spend validator.
-  const plutusJson = JSON.parse(
-    await readFile(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url), "utf8"),
-  );
-  const shardNftUnapplied = plutusJson.validators.find((v: any) =>
-    v.title === "shard_nft.shard_nft.mint",
-  );
-  if (!shardNftUnapplied) {
-    console.error("Validators:", plutusJson.validators.map((v: any) => v.title));
-    throw new Error("shard_nft.shard_nft.mint not found in ScheduleGen plutus.json");
-  }
-  const shardSpendUnapplied = plutusJson.validators.find((v: any) =>
-    v.title === "vault.shard.spend",
-  );
-  if (!shardSpendUnapplied) {
-    throw new Error("vault.shard.spend not found in ScheduleGen plutus.json");
-  }
+  // Load ScheduleGen blueprint: shard NFT minting policy + shard spend validator.
+  const blueprint         = await loadBlueprint("ScheduleGen");
+  const shardNftUnapplied = findValidator(blueprint, "shard_nft.shard_nft.mint");
+  const shardSpendUnapplied = findValidator(blueprint, "vault.shard.spend");
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
@@ -74,25 +56,24 @@ async function main() {
   // ── Pick a genesis UTxO to consume (one-shot seed) ──────────────────────
   const utxos = await lucid.wallet().getUtxos();
   if (utxos.length === 0) throw new Error("Wallet has no UTxOs to seed the one-shot policy");
-  const genesis = utxos[0];
-  const genesisRef = {
-    transaction_id: genesis.txHash,
-    output_index:   BigInt(genesis.outputIndex),
-  };
+  const genesis = utxos[0]!;
 
   // Apply genesis ref to the minting policy → fixed policy id.
-  const shardNftCbor = applyParamsToScript(shardNftUnapplied.compiledCode, [
-    Data.to(genesisRef, OutRefSchema),
-  ]);
-  const shardNftPolicy = { type: "PlutusV3" as const, script: shardNftCbor };
+  // LƯU Ý: tham số phải là Plutus Data DẠNG CẤU TRÚC (Constr 0 [bytes, int]).
+  // Bản cũ truyền `Data.to(genesisRef, OutRefSchema)` — tức một CHUỖI HEX CBOR —
+  // nên tham số vào script là một ByteArray, không phải OutputReference: mint
+  // luôn fail ở `i.output_reference == genesis_ref`.
+  const shardNftPolicy = appliedValidator(
+    shardNftUnapplied,
+    oneShotGenesisParams({ txHash: genesis.txHash, outputIndex: genesis.outputIndex }),
+  );
   const shardNftPolicyId = mintingPolicyToId(shardNftPolicy);
 
   // Apply policy id to the shard spend validator BEFORE hashing.
-  const shardSpendCbor = applyParamsToScript(shardSpendUnapplied.compiledCode, [
-    shardNftPolicyId,
-  ]);
-  const shardScript = { type: "PlutusV3" as const, script: shardSpendCbor };
-  const shardScriptHash = validatorToScriptHash(shardScript);
+  const { script: shardScript, hash: shardScriptHash } = appliedScript(
+    shardSpendUnapplied,
+    shardSpendParams({ shardPolicyId: shardNftPolicyId }),
+  );
   const shardScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(shardScriptHash));
 
   console.log(`Network:              ${NETWORK}`);

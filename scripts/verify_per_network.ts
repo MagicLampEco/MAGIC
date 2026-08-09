@@ -1,90 +1,89 @@
-// scripts/verify_per_network.ts — Verify applied vault hash per network for all live modules.
+// scripts/verify_per_network.ts — Verify applied validator hash per network.
 //
-// Run AFTER `aiken build` in each module (Instant/Schedule/UMKeeper).
-// Outputs a table: for each module × network, prints the applied script hash so
-// you can cross-check before deploying.
+// Run AFTER `aiken build` in each module (InstantGen/ScheduleGen/UMKeeper).
 //
 // Run:
 //   npx tsx verify_per_network.ts
 //
-// Optional env (only needed for actual mainnet deploy verification — runtime
-// params for Instant/Schedule validators):
-//   LAMP_POLICY_ID    LAMP minting policy (56-hex)
-//   UM_NFT_POLICY_ID  UM NFT policy (56-hex)
-//   SHARD_NFT_POLICY_ID Shard NFT policy (56-hex)
+// ⚠  BÀI HỌC ĐÃ TRẢ GIÁ: bản trước của file này TỰ KHAI danh sách tham số
+// (Instant 6, Schedule 3, UMKeeper 1) — y hệt cái sai của các script deploy.
+// Deploy sai + verify sai giống nhau ⇒ đối chiếu thấy "khớp" ⇒ cổng kiểm biến
+// thành cổng XÁC NHẬN LỖI. Nay cả hai phía dùng CHUNG scripts/deployParams.ts,
+// và tên + thứ tự tham số đọc thẳng từ `plutus.json` qua scripts/applyParams.ts.
 //
-// If env vars missing, uses placeholder values — output hash is for SHAPE check
-// (does this build produce a deterministic per-network hash?), NOT for deploy.
+// Optional env (chỉ cần khi verify một deploy THẬT — nếu thiếu thì dùng giá trị
+// giữ chỗ và hash chỉ có ý nghĩa kiểm HÌNH DẠNG):
+//   LAMP_POLICY_ID  UM_NFT_POLICY_ID  SHARD_NFT_POLICY_ID
+//   UM_DATUM_HASH   BACKING_NFT_POLICY_ID   BACKING_SCRIPT_HASH
 
+import { validatorToScriptHash } from "@lucid-evolution/lucid";
+import { lampAssetName, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 import {
-  applyParamsToScript, validatorToScriptHash,
-  Data,
-  type Validator,
-} from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
+  loadBlueprint, findValidator, paramTitles, appliedValidator,
+  type ParamMap,
+} from "./applyParams.js";
+import {
+  instantVaultParams, scheduleVaultParams, umDatumParams,
+} from "./deployParams.js";
 
-// ── Network × ms_per_epoch ───────────────────────────────────────
-const NETWORKS = [
-  { name: "Preview", msPerEpoch: 86_400_000n },
-  { name: "Preprod", msPerEpoch: 86_400_000n },
-  { name: "Mainnet", msPerEpoch: 432_000_000n },
-] as const;
+// ── Mạng cần đối chiếu ───────────────────────────────────────────
+const NETWORKS: Network[] = ["Preview", "Preprod", "Mainnet"];
 
-// ── Placeholder values when env vars absent (shape check only) ──
-const PLACEHOLDER_POLICY  = "00".repeat(28);   // 28-byte zero policy id
+// ── Giá trị giữ chỗ khi thiếu env (chỉ kiểm hình dạng) ───────────
+const PLACEHOLDER_POLICY = "00".repeat(28);
 
-const LAMP_POLICY   = process.env.LAMP_POLICY_ID     ?? PLACEHOLDER_POLICY;
-const UM_NFT_POLICY = process.env.UM_NFT_POLICY_ID   ?? PLACEHOLDER_POLICY;
+const LAMP_POLICY   = process.env.LAMP_POLICY_ID      ?? PLACEHOLDER_POLICY;
+const UM_NFT_POLICY = process.env.UM_NFT_POLICY_ID    ?? PLACEHOLDER_POLICY;
 const SHARD_POLICY  = process.env.SHARD_NFT_POLICY_ID ?? PLACEHOLDER_POLICY;
-// PHA 2 — Instant needs the UM script hash + the §6.3 BackingBeacon pins.
-const UM_SCRIPT_HASH      = process.env.UM_DATUM_HASH       ?? PLACEHOLDER_POLICY;
-const BACKING_POLICY      = process.env.BACKING_NFT_POLICY_ID ?? "00".repeat(28);
-const BACKING_SCRIPT_HASH = process.env.BACKING_SCRIPT_HASH   ?? "00".repeat(28);
+const UM_SCRIPT_HASH      = process.env.UM_DATUM_HASH          ?? PLACEHOLDER_POLICY;
+const BACKING_POLICY      = process.env.BACKING_NFT_POLICY_ID  ?? PLACEHOLDER_POLICY;
+const BACKING_SCRIPT_HASH = process.env.BACKING_SCRIPT_HASH    ?? PLACEHOLDER_POLICY;
+// um_name / shard asset names là hằng giao thức, không phải env.
+const UM_NFT_NAME = "554d44"; // "UMD" — khớp ASSET_NAMES.um_nft trong config.ts
 
-// ── Module table — must match `<Module>/onchain/plutus.json` + Aiken validator() signature ──
+// ── Bảng module ──────────────────────────────────────────────────
+// SnapshotGen/VacuumGen đã dời sang Legacy/genmagic-v3.3 — không verify nữa.
 interface ModuleSpec {
-  name:      string;
-  /** Path to plutus.json (relative to this script). */
-  plutusPath: string;
-  /** Validator title in plutus.json (Aiken: `validator vault { spend ... }` → "vault.vault.spend"). */
-  title:     string;
-  /** Build the param list (in Aiken declaration order) given an ms_per_epoch. */
-  buildParams: (msPer: bigint) => Data[];
+  /** Tên thư mục module ở gốc repo. */
+  module: string;
+  /** Title đầy đủ của validator trong plutus.json. */
+  title: string;
+  /** Bản đồ tên → giá trị, dùng CHUNG với script deploy. */
+  build: (network: Network) => ParamMap;
 }
 
-// SnapshotGen/VacuumGen đã dời sang Legacy/genmagic-v3.3 (mô hình GenMAGIC v3.3,
-// đã bỏ) — không verify hash cho hai module đó nữa.
 const MODULES: ModuleSpec[] = [
   {
-    name:      "InstantGen",
-    plutusPath: "../InstantGen/onchain/plutus.json",
-    title:     "vault.vault.spend",
-    // PHA 2 — 6 params, treasury_addr removed (I-ACT-7), beacon pins added (§6.3)
-    buildParams: (msPer) => [
-      LAMP_POLICY,
-      UM_NFT_POLICY,
-      UM_SCRIPT_HASH,
-      BACKING_POLICY,
-      BACKING_SCRIPT_HASH,
-      msPer,
-    ],
+    module: "InstantGen",
+    title:  "vault.vault.spend",
+    build:  (net) => instantVaultParams({
+      lampPolicyId:      LAMP_POLICY,
+      lampAssetName:     lampAssetName(net),
+      umNftPolicy:       UM_NFT_POLICY,
+      umScriptHash:      UM_SCRIPT_HASH,
+      backingNftPolicy:  BACKING_POLICY,
+      backingScriptHash: BACKING_SCRIPT_HASH,
+      msPerEpoch:        msPerEpoch(net),
+    }),
   },
   {
-    name:      "ScheduleGen",
-    plutusPath: "../ScheduleGen/onchain/plutus.json",
-    title:     "vault.vault.spend",
-    // PHA 2 — 3 params, treasury_addr removed (I-ACT-7)
-    buildParams: (msPer) => [
-      LAMP_POLICY,
-      SHARD_POLICY,
-      msPer,
-    ],
+    module: "ScheduleGen",
+    title:  "vault.vault.spend",
+    build:  (net) => scheduleVaultParams({
+      lampPolicyId:  LAMP_POLICY,
+      lampAssetName: lampAssetName(net),
+      shardPolicyId: SHARD_POLICY,
+      msPerEpoch:    msPerEpoch(net),
+    }),
   },
   {
-    name:      "UMKeeper",
-    plutusPath: "../UMKeeper/onchain/plutus.json",
-    title:     "um_datum.um_datum_validator.spend",
-    buildParams: (msPer) => [msPer],
+    module: "UMKeeper",
+    title:  "um_datum.um_datum_validator.spend",
+    build:  (net) => umDatumParams({
+      msPerEpoch: msPerEpoch(net),
+      umPolicy:   UM_NFT_POLICY,
+      umName:     UM_NFT_NAME,
+    }),
   },
 ];
 
@@ -93,44 +92,71 @@ async function main() {
   console.log("MagicLamp validator hash — per network × module verification\n");
 
   if (LAMP_POLICY === PLACEHOLDER_POLICY) {
-    console.log("⚠  Using PLACEHOLDER policy IDs — hashes here are for SHAPE check only.");
-    console.log("   For real deploy verification, set: LAMP_POLICY_ID UM_NFT_POLICY_ID SHARD_NFT_POLICY_ID\n");
+    console.log("⚠  Đang dùng policy id GIỮ CHỖ — hash dưới đây chỉ để kiểm HÌNH DẠNG.");
+    console.log("   Verify deploy thật thì đặt: LAMP_POLICY_ID UM_NFT_POLICY_ID SHARD_NFT_POLICY_ID\n");
   }
 
+  let failures = 0;
+
   for (const mod of MODULES) {
-    console.log(`── ${mod.name} (${mod.plutusPath}) ─────────────────────────`);
+    console.log(`── ${mod.module} / ${mod.title} ─────────────────────────`);
 
-    let plutus: any;
+    let unapplied;
     try {
-      plutus = JSON.parse(await readFile(new URL(mod.plutusPath, import.meta.url), "utf8"));
-    } catch (e: any) {
-      console.log(`  ❌ Cannot load plutus.json — run \`aiken build\` in ${mod.name}/onchain first.\n`);
-      continue;
-    }
-
-    const unapplied = plutus.validators.find((v: any) => v.title === mod.title);
-    if (!unapplied) {
-      console.log(`  ❌ validator "${mod.title}" not found in ${mod.plutusPath}\n`);
+      const bp = await loadBlueprint(mod.module);
+      unapplied = findValidator(bp, mod.title);
+    } catch (e: unknown) {
+      console.log(`  ❌ ${(e as Error).message}\n`);
+      failures++;
       continue;
     }
 
     console.log(`  unapplied hash:  ${unapplied.hash}`);
 
-    for (const { name, msPerEpoch } of NETWORKS) {
+    // Đối chiếu TÊN + THỨ TỰ trước khi nói tới hash.
+    const expected = paramTitles(unapplied);
+    const given    = Object.keys(mod.build("Preview"));
+    console.log(`  blueprint params (${expected.length}): ${expected.join(", ")}`);
+    console.log(`  script provides  (${given.length}): ${given.join(", ")}`);
+    if (expected.join(" ") !== given.join(" ")) {
+      console.log(`  ❌ LỆCH tên/thứ tự tham số — xem chi tiết ở lỗi apply bên dưới.`);
+      failures++;
+    } else {
+      console.log(`  ✓ tên + thứ tự khớp blueprint`);
+    }
+
+    const hashes = new Map<string, string>();
+    for (const net of NETWORKS) {
       try {
-        const params  = mod.buildParams(msPerEpoch);
-        const applied = applyParamsToScript(unapplied.compiledCode, params);
-        const script: Validator = { type: "PlutusV3", script: applied };
-        const hash    = validatorToScriptHash(script);
-        console.log(`  ${name.padEnd(8)} → ${hash}`);
-      } catch (e: any) {
-        console.log(`  ${name.padEnd(8)} → ❌ apply failed: ${e.message}`);
+        const hash = validatorToScriptHash(appliedValidator(unapplied, mod.build(net)));
+        hashes.set(net, hash);
+        console.log(`  ${net.padEnd(8)} → ${hash}`);
+      } catch (e: unknown) {
+        console.log(`  ${net.padEnd(8)} → ❌ apply failed:\n${(e as Error).message}`);
+        failures++;
       }
+    }
+
+    // Preview và Preprod DÙNG CHUNG mọi tham số theo mạng (cùng ms_per_epoch
+    // 86_400_000, cùng asset name "tLAMP") ⇒ hash trùng nhau là ĐÚNG, không
+    // phải dấu hiệu rơi tham số. Discriminator thật là testnet ↔ Mainnet.
+    const preview = hashes.get("Preview");
+    const mainnet = hashes.get("Mainnet");
+    if (preview && mainnet && preview === mainnet) {
+      console.log(
+        `  ❌ Preview == Mainnet — tham số theo mạng KHÔNG vào được script ` +
+        `(ms_per_epoch và/hoặc lamp_asset_name bị rơi).`,
+      );
+      failures++;
     }
     console.log();
   }
 
-  console.log("✓ Done. Cross-check hashes against deployed validator addresses before submitting tx.");
+  if (failures > 0) {
+    console.log(`❌ ${failures} vấn đề. KHÔNG deploy cho tới khi sạch.`);
+    process.exit(1);
+  }
+  console.log("✓ Done. Đối chiếu hash với địa chỉ validator đã deploy trước khi gửi tx.");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

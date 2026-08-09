@@ -14,16 +14,16 @@
 
 import {
   Lucid, Blockfrost, Data, Constr, toUnit,
-  applyParamsToScript, validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL, SCRIPT_HASHES,
   lampToOildrop,
 } from "../config.js";
+import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { instantVaultParams, umDatumParams } from "../deployParams.js";
 import { buildInstantGenTx } from "../../InstantGen/offchain/src/instant.js";
 import { VaultDatumSchema, UMDatumSchema } from "../../InstantGen/offchain/src/types.js";
 
@@ -43,44 +43,39 @@ async function main() {
   console.log("║  InstantGen smoke test — Preview testnet   ║");
   console.log("╚════════════════════════════════════════════╝\n");
 
-  // Load InstantGen validator (PHA 2 — 6 params, treasury_addr REMOVED).
-  const plutusJson = JSON.parse(
-    await readFile(new URL("../../InstantGen/onchain/plutus.json", import.meta.url), "utf8"),
+  // Apply-param THEO TÊN (scripts/applyParams.ts) — tên + thứ tự đọc từ
+  // blueprint, dùng chung bản đồ giá trị với deploy/05 nên hash không thể lệch.
+  const blueprint = await loadBlueprint("InstantGen");
+  const unapplied = findValidator(blueprint, "vault.vault.spend");
+  const { script: vaultScript, hash: vaultScriptHash } = appliedScript(
+    unapplied,
+    instantVaultParams({
+      lampPolicyId:      POLICY_IDS.lamp,
+      lampAssetName:     ASSET_NAMES.lamp,
+      umNftPolicy:       POLICY_IDS.um_nft,
+      umScriptHash:      SCRIPT_HASHES.um_datum,        // pins UM ref input (layer b)
+      backingNftPolicy:  POLICY_IDS.backing,            // pins the BackingBeacon NFT (§6.3)
+      backingScriptHash: SCRIPT_HASHES.backing_beacon,  // pins the BackingBeacon address (§6.3)
+      msPerEpoch:        PROTOCOL.MS_PER_EPOCH,
+    }),
   );
-  const unapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
-  if (!unapplied) throw new Error("vault.vault.spend not in InstantGen plutus.json");
-
-  // PHA 2 apply-params: lamp_policy_id, um_nft_policy, um_script_hash,
-  //                      backing_nft_policy, backing_script_hash, ms_per_epoch
-  const vaultScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(unapplied.compiledCode, [
-      POLICY_IDS.lamp,
-      POLICY_IDS.um_nft,
-      SCRIPT_HASHES.um_datum,        // pins UM ref input (layer b)
-      POLICY_IDS.backing,            // pins the BackingBeacon NFT (§6.3)
-      SCRIPT_HASHES.backing_beacon,  // pins the BackingBeacon address (§6.3)
-      PROTOCOL.MS_PER_EPOCH,
-    ]),
-  };
-  const vaultScriptHash    = validatorToScriptHash(vaultScript);
   const vaultScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(vaultScriptHash));
 
   console.log(`Network:            ${NETWORK}`);
   console.log(`Vault script hash:  ${vaultScriptHash}`);
   console.log(`Vault address:      ${vaultScriptAddress}`);
 
-  // Load UMKeeper validator to derive UM address.
-  const umPlutus = JSON.parse(
-    await readFile(new URL("../../UMKeeper/onchain/plutus.json", import.meta.url), "utf8"),
+  // UM address — um_datum_validator nhận 3 tham số (ms_per_epoch, um_policy, um_name).
+  const umBlueprint = await loadBlueprint("UMKeeper");
+  const umUnapplied = findValidator(umBlueprint, "um_datum.um_datum_validator.spend");
+  const { hash: umScriptHash } = appliedScript(
+    umUnapplied,
+    umDatumParams({
+      msPerEpoch: PROTOCOL.MS_PER_EPOCH,
+      umPolicy:   POLICY_IDS.um_nft,
+      umName:     ASSET_NAMES.um_nft,
+    }),
   );
-  const umUnapplied = umPlutus.validators.find((v: any) => v.title?.endsWith(".spend"));
-  if (!umUnapplied) throw new Error("UMKeeper validator not found");
-  const umScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(umUnapplied.compiledCode, [PROTOCOL.MS_PER_EPOCH]),
-  };
-  const umScriptHash    = validatorToScriptHash(umScript);
   const umScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(umScriptHash));
   console.log(`UM address:         ${umScriptAddress}\n`);
 

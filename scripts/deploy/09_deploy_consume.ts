@@ -4,10 +4,12 @@
 // Tạo hạ tầng để tiêu MAGIC theo mô hình ENGAGEMENT (KHÔNG mint MAGIC):
 //   1. price_nft  one-shot  → mint 1 "PRICE" NFT (xác thực beacon).
 //   2. PriceParam beacon    → UTxO tại price_param address, inline PriceParam datum.
-//   3. engage_nft one-shot  → mint 1 "ENG" NFT (thread token cho Engage state).
-//   4. Engage UTxO          → UTxO tại consume address, inline EngageDatum (state per-app).
-//   5. consume validator     → apply-param 8 tham số → in ra hash + address.
-// Tất cả trong 1 tx (consume 2 genesis UTxO g1,g2 → 2 one-shot policy phân biệt).
+//   3. consume validator    → apply-param theo blueprint → hash + address.
+//   4. Engage thread token  → MINT bằng CHÍNH handler `mint` của consume
+//                             (policy id == consume script hash), tên asset
+//                             = blake2b_256(cbor(seed)) — không còn engage_nft.ak.
+//   5. Engage UTxO          → UTxO tại consume address, inline EngageDatum SẠCH.
+// Tất cả trong 1 tx (tiêu 2 UTxO seed: g1 cho price_nft, g2 cho thread Engage).
 //
 // PREREQ (đã deploy trước, nạp qua env — xem config.ts):
 //   VAULT_INSTANT_HASH   — hash vault InstantGen (deploy 05). BẮT BUỘC.
@@ -19,29 +21,51 @@
 //   PRICE_THRESHOLD   — M-of-N committee threshold (default 1).
 //   PRICE_DEMAND_MULT — demand_mult Q-format của beacon (default Q = 1_000_000_000 = 1.0×).
 //
-// ⚠  THAM SỐ consume validator ĐỌC TỪ consume.ak (8 param, KHÁC bản mô tả cũ 6 param):
-//     price_nft_policy, price_nft_name, engage_nft_policy, engage_nft_name,
-//     vault_script_hash, burn_batch_constr(=2 InstantGen), max_price_stale, ms_per_epoch.
+// ⚠  DANH SÁCH THAM SỐ KHÔNG khai tay ở file này nữa — đọc thẳng
+//     `parameters[].title` từ ConsumeMAGIC/onchain/plutus.json qua
+//     scripts/applyParams.ts. Chuỗi bake TUYẾN TÍNH, đổi thứ tự là sai hash:
+//        price_nft (genesis_ref)
+//          → price_param (committee, threshold, price_nft_policy, price_nft_name, ms_per_epoch)
+//            → consume (…, price_param_script_hash)
 
 import {
-  Lucid, Blockfrost, Data, Constr,
-  applyParamsToScript, validatorToScriptHash,
+  Lucid, Blockfrost, Data,
   credentialToAddress, scriptHashToCredential,
   mintingPolicyToId, getAddressDetails,
   type UTxO,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet, PROTOCOL,
 } from "../config.js";
 import {
-  encodePriceParam, encodeEngageDatum,
-  type PriceParamT, type EngageDatumT,
+  loadBlueprint, findValidator, appliedScript, appliedValidator,
+} from "../applyParams.js";
+import {
+  oneShotGenesisParams, priceParamParams, consumeParams,
+} from "../deployParams.js";
+import {
+  encodePriceParam, type PriceParamT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
+import { vaultIdAssetName, mintVaultIdRedeemer } from "../vaultId.js";
+
+// ── EngageDatum khai TẠI CHỖ (5 trường) ──────────────────────────────────────
+// ConsumeMAGIC/offchain/src/types.ts còn 4 trường (thiếu `consumed_nanogic`) —
+// tức codec offchain đang TRỄ so với
+// ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak (`pub type EngageDatum`,
+// consumed_nanogic là trường THỨ 5, thêm ở cuối). Dùng encodeEngageDatum cũ sẽ
+// sinh Constr 0 thiếu một field ⇒ `expect ed: EngageDatum` fail ⇒ mint thread
+// hỏng. Khai ở đây theo ĐÚNG thứ tự khai báo trong types.ak.
+// KHI offchain được cập nhật, xoá khối này và quay lại import encodeEngageDatum.
+const EngageDatumSchema = Data.Object({
+  owner:            Data.Bytes(),
+  consumed_count:   Data.Integer(),
+  last_epoch:       Data.Integer(),
+  did_commit:       Data.Bytes(),
+  consumed_nanogic: Data.Integer(),
+});
 
 // Asset name const đọc từ validator (.ak `pub const ...`).
 const PRICE_NFT_NAME  = "5052494345"; // "PRICE" — price_nft.ak
-const ENGAGE_NFT_NAME = "454e47";     // "ENG"   — engage_nft.ak
 const BURN_BATCH_CONSTR = 2n;         // InstantGen VaultRedeemer: BurnBatch = constr 2
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -61,21 +85,10 @@ async function main() {
   const demandMultQ = BigInt(process.env.PRICE_DEMAND_MULT ?? PROTOCOL.Q.toString());
 
   // Load ConsumeMAGIC validators.
-  const plutus = JSON.parse(
-    await readFile(new URL("../../ConsumeMAGIC/onchain/plutus.json", import.meta.url), "utf8"),
-  );
-  const findV = (title: string) => {
-    const v = plutus.validators.find((x: any) => x.title === title);
-    if (!v) {
-      console.error("Available:", plutus.validators.map((x: any) => x.title));
-      throw new Error(`validator ${title} not found in ConsumeMAGIC/onchain/plutus.json`);
-    }
-    return v;
-  };
-  const priceNftV  = findV("price_nft.price_nft.mint");
-  const engageNftV = findV("engage_nft.engage_nft.mint");
-  const priceParamV = findV("price_param.price_param.spend");
-  const consumeV   = findV("consume.consume.spend");
+  const blueprint   = await loadBlueprint("ConsumeMAGIC");
+  const priceNftV   = findValidator(blueprint, "price_nft.price_nft.mint");
+  const priceParamV = findValidator(blueprint, "price_param.price_param.spend");
+  const consumeV    = findValidator(blueprint, "consume.consume.spend");
 
   // Lucid + wallet
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
@@ -102,50 +115,56 @@ async function main() {
       `Tách bớt UTxO trước khi chạy.`,
     );
   }
-  const g1 = adaSeeds[0]; // genesis price_nft
-  const g2 = adaSeeds[1]; // genesis engage_nft
+  const g1 = adaSeeds[0]!; // seed one-shot price_nft
+  const g2 = adaSeeds[1]!; // seed thread token Engage (đặt TÊN asset, không đặt policy)
 
   // ── price_nft one-shot: apply genesis_ref = Constr(0,[txHash, idx]) ───────────
-  const priceNftScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(priceNftV.compiledCode, [
-      new Constr(0, [g1.txHash, BigInt(g1.outputIndex)]),
-    ]),
-  };
+  const priceNftScript = appliedValidator(
+    priceNftV,
+    oneShotGenesisParams({ txHash: g1.txHash, outputIndex: g1.outputIndex }),
+  );
   const priceNftPolicy = mintingPolicyToId(priceNftScript);
   const priceNftUnit   = priceNftPolicy + PRICE_NFT_NAME;
 
-  // ── engage_nft one-shot: genesis RIÊNG (g2) → policy id phân biệt ─────────────
-  const engageNftScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(engageNftV.compiledCode, [
-      new Constr(0, [g2.txHash, BigInt(g2.outputIndex)]),
-    ]),
-  };
-  const engageNftPolicy = mintingPolicyToId(engageNftScript);
-  const engageNftUnit   = engageNftPolicy + ENGAGE_NFT_NAME;
-
-  // ── price_param address (4 param: committee, threshold, price_nft_policy, name) ─
-  const priceParamScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(priceParamV.compiledCode, [
-      committee, priceThreshold, priceNftPolicy, PRICE_NFT_NAME,
-    ]),
-  };
-  const priceParamHash = validatorToScriptHash(priceParamScript);
+  // ── price_param (mắt xích 2 của chuỗi bake) ──────────────────────────────────
+  const { hash: priceParamHash } = appliedScript(
+    priceParamV,
+    priceParamParams({
+      committee,
+      threshold:      priceThreshold,
+      priceNftPolicy,
+      priceNftName:   PRICE_NFT_NAME,
+      msPerEpoch:     PROTOCOL.MS_PER_EPOCH,
+    }),
+  );
   const priceParamAddr = credentialToAddress(NETWORK, scriptHashToCredential(priceParamHash));
 
-  // ── consume validator (8 param) → hash + address ─────────────────────────────
-  const consumeScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(consumeV.compiledCode, [
-      priceNftPolicy, PRICE_NFT_NAME,
-      engageNftPolicy, ENGAGE_NFT_NAME,
-      vaultInstantHash, BURN_BATCH_CONSTR, maxPriceStale, PROTOCOL.MS_PER_EPOCH,
-    ]),
-  };
-  const consumeHash = validatorToScriptHash(consumeScript);
+  // ── consume (mắt xích 3) → hash + address ────────────────────────────────────
+  const { script: consumeScript, hash: consumeHash } = appliedScript(
+    consumeV,
+    consumeParams({
+      priceNftPolicy,
+      priceNftName:         PRICE_NFT_NAME,
+      vaultScriptHash:      vaultInstantHash,
+      burnBatchConstr:      BURN_BATCH_CONSTR,
+      maxPriceStale,
+      msPerEpoch:           PROTOCOL.MS_PER_EPOCH,
+      priceParamScriptHash: priceParamHash,   // neo beacon giá vào đúng script
+    }),
+  );
   const consumeAddr = credentialToAddress(NETWORK, scriptHashToCredential(consumeHash));
+
+  // ── Thread token Engage: policy = CHÍNH consume script hash ──────────────────
+  // `validate_mint_engage_id` đòi: seed nằm trong inputs, đúng 1 asset dưới policy
+  // này với tên = blake2b_256(cbor.serialise(seed)), NFT nằm ở output tại địa chỉ
+  // consume, datum genesis SẠCH, owner ký. Phép băm dùng chung với NFT danh-tính
+  // vault (scripts/vaultId.ts) vì công thức on-chain y hệt.
+  const engageNftPolicy = consumeHash;
+  const engageNftName   = vaultIdAssetName({ txHash: g2.txHash, outputIndex: g2.outputIndex });
+  const engageNftUnit   = engageNftPolicy + engageNftName;
+  const engageMintRedeemer = mintVaultIdRedeemer({
+    txHash: g2.txHash, outputIndex: g2.outputIndex,
+  });
 
   // ── PriceParam beacon datum (MVP base-price, khớp pricing.ak / price.ts) ──────
   const priceParam: PriceParamT = {
@@ -160,23 +179,25 @@ async function main() {
   };
   const priceDatumCbor = encodePriceParam(priceParam);
 
-  // ── Engage genesis datum (state per-app, consumed_count=0, did_commit="") ─────
-  const engageDatum: EngageDatumT = {
-    owner: ownerPkh,
-    consumed_count: 0n,
-    last_epoch: currentEpoch,
-    did_commit: "", // MVP rỗng — immutable về sau
-  };
-  const engageDatumCbor = encodeEngageDatum(engageDatum);
+  // ── Engage genesis datum — MỌI trục kế toán = 0 (validate_mint_engage_id) ────
+  //   expect ed.consumed_count == 0 / ed.consumed_nanogic == 0 / ed.last_epoch == 0
+  const engageDatumCbor = Data.to({
+    owner:            ownerPkh,
+    consumed_count:   0n,
+    last_epoch:       0n,   // PIN: state tích luỹ, genesis PHẢI 0 (không phải epoch hiện tại)
+    did_commit:       "",   // MVP rỗng — immutable về sau
+    consumed_nanogic: 0n,
+  } as never, EngageDatumSchema);
 
   console.log(`Network:              ${NETWORK}`);
   console.log(`Current epoch:        ${currentEpoch}`);
   console.log(`ms_per_epoch:         ${PROTOCOL.MS_PER_EPOCH}`);
   console.log(`Vault InstantGen:     ${vaultInstantHash}`);
   console.log(`Genesis price (g1):   ${g1.txHash}#${g1.outputIndex}`);
-  console.log(`Genesis engage (g2):  ${g2.txHash}#${g2.outputIndex}`);
+  console.log(`Seed engage  (g2):    ${g2.txHash}#${g2.outputIndex}`);
   console.log(`Price NFT policy:     ${priceNftPolicy}`);
-  console.log(`Engage NFT policy:    ${engageNftPolicy}`);
+  console.log(`Engage thread policy: ${engageNftPolicy}  (== consume hash)`);
+  console.log(`Engage thread name:   ${engageNftName}`);
   console.log(`PriceParam address:   ${priceParamAddr}`);
   console.log(`Consume hash:         ${consumeHash}`);
   console.log(`Consume address:      ${consumeAddr}`);
@@ -188,9 +209,9 @@ async function main() {
     .newTx()
     .collectFrom([g1, g2])
     .mintAssets({ [priceNftUnit]: 1n }, Data.void())
-    .mintAssets({ [engageNftUnit]: 1n }, Data.void())
+    .mintAssets({ [engageNftUnit]: 1n }, engageMintRedeemer)
     .attach.MintingPolicy(priceNftScript)
-    .attach.MintingPolicy(engageNftScript)
+    .attach.MintingPolicy(consumeScript)
     .pay.ToAddressWithData(
       priceParamAddr,
       { kind: "inline", value: priceDatumCbor },
@@ -201,6 +222,7 @@ async function main() {
       { kind: "inline", value: engageDatumCbor },
       { lovelace: 2_000_000n, [engageNftUnit]: 1n },
     )
+    .addSignerKey(ownerPkh)      // validate_mint_engage_id: owner phải ký
     .complete();
 
   const signed = await tx.sign.withWallet().complete();

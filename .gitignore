@@ -18,3 +18,6 @@ _Agents/
 */onchain/build/
 */onchain/plutus.json
 MagicSDK/node_modules
+
+# Tệp nội bộ từng máy — ranh giới chia sẻ nằm ở BOUNDARIES.md (được track)
+CLAUDE.md

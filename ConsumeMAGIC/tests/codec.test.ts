@@ -5,12 +5,13 @@
 // KHÔNG cần network: thuần Data.to/Data.from (Lucid Evolution Plutus Data codec).
 
 import { describe, it, expect } from "vitest";
-import { Data } from "@lucid-evolution/lucid";
+import { Data, Constr } from "@lucid-evolution/lucid";
 import {
   EngageDatumSchema, PriceParamSchema, ConsumeRedeemerSchema, OutputReferenceSchema,
+  EngageMintRedeemerSchema,
   encodeEngageDatum, decodeEngageDatum, encodePriceParam, decodePriceParam,
-  encodeConsumeRedeemer,
-  type EngageDatumT, type PriceParamT,
+  encodeConsumeRedeemer, encodeEngageMintRedeemer, decodeEngageMintRedeemer,
+  type EngageDatumT, type PriceParamT, type EngageMintRedeemerT,
 } from "../offchain/src/types.js";
 
 const engage: EngageDatumT = {
@@ -18,6 +19,7 @@ const engage: EngageDatumT = {
   consumed_count: 10n,
   last_epoch: 0n,
   did_commit: "", // MVP rỗng
+  consumed_nanogic: 0n,
 };
 
 const pp: PriceParamT = {
@@ -31,26 +33,86 @@ const pp: PriceParamT = {
   epoch: 6n,
 };
 
-describe("EngageDatum codec (constr 0: owner, consumed_count, last_epoch, did_commit)", () => {
+describe("EngageDatum codec — 5 trường (constr 0: owner, consumed_count, last_epoch, did_commit, consumed_nanogic)", () => {
   it("round-trips byte-perfect", () => {
     const cbor = encodeEngageDatum(engage);
     expect(decodeEngageDatum(cbor)).toEqual(engage);
   });
 
-  it("is a Constr index 0 with 4 fields", () => {
-    // CBOR Plutus Constr 0 (single-field tuple) bắt đầu 0xd8 0x79 (tag 121) hoặc
-    // dạng định nghĩa: kiểm field order qua decode lại + so sánh field-by-field.
+  it("is a Constr index 0 with 5 fields — ĐÚNG THỨ TỰ khai báo trong types.ak", () => {
+    // Thiếu `consumed_nanogic` ⇒ Constr 0 chỉ 4 field ⇒ on-chain `expect ed: EngageDatum`
+    // nổ ⇒ mint thread hỏng và mọi consume tx bị từ chối. Kiểm THẲNG số field trong
+    // CBOR, không chỉ round-trip (round-trip khớp với chính mình dù thiếu field).
+    const raw = Data.from(encodeEngageDatum(engage)) as { fields: unknown[]; index: number };
+    expect(raw.index).toBe(0);
+    expect(raw.fields).toHaveLength(5);
+    expect(raw.fields).toEqual(["0bada55e", 10n, 0n, "", 0n]);
+
     const d = decodeEngageDatum(encodeEngageDatum(engage));
-    // field 1 = owner (bytes), field 2 = consumed_count (int)...
     expect(d.owner).toBe("0bada55e");
     expect(d.consumed_count).toBe(10n);
     expect(d.last_epoch).toBe(0n);
     expect(d.did_commit).toBe("");
+    expect(d.consumed_nanogic).toBe(0n);
+  });
+
+  it("consumed_nanogic mang giá trị lớn (tích luỹ đời thread) round-trip", () => {
+    const busy: EngageDatumT = {
+      ...engage,
+      consumed_count: 1_234n,
+      consumed_nanogic: 12_345_678_901_234n,
+    };
+    expect(decodeEngageDatum(encodeEngageDatum(busy))).toEqual(busy);
   });
 
   it("did_commit non-empty round-trips (future DID commitment)", () => {
     const withDid: EngageDatumT = { ...engage, did_commit: "deadbeef" };
     expect(decodeEngageDatum(encodeEngageDatum(withDid))).toEqual(withDid);
+  });
+
+  it("datum genesis SẠCH: ba trục kế toán đều 0 (validate_mint_engage_id)", () => {
+    const genesis: EngageDatumT = {
+      owner: "0bada55e",
+      consumed_count: 0n,
+      last_epoch: 0n,
+      did_commit: "",
+      consumed_nanogic: 0n,
+    };
+    const raw = Data.from(encodeEngageDatum(genesis)) as { fields: unknown[] };
+    expect(raw.fields[1]).toBe(0n); // consumed_count
+    expect(raw.fields[2]).toBe(0n); // last_epoch — state tích luỹ, KHÔNG phải epoch hiện tại
+    expect(raw.fields[4]).toBe(0n); // consumed_nanogic
+  });
+});
+
+describe("EngageMintRedeemer codec (MintEngage { seed } — Constr 0 [ Constr 0 [bytes, int] ])", () => {
+  const seedTx = "0000000000000000000000000000000000000000000000000000000000000001";
+  const rd: EngageMintRedeemerT = {
+    seed: { transaction_id: seedTx, output_index: 0n },
+  };
+
+  it("round-trips byte-perfect", () => {
+    expect(decodeEngageMintRedeemer(encodeEngageMintRedeemer(rd))).toEqual(rd);
+  });
+
+  it("bytes == Constr 0 [ Constr 0 [txHash, index] ] dựng tay", () => {
+    // Cùng dạng với MintVaultId của 4 vault gen (khuôn one-shot dùng chung).
+    const manual = Data.to(new Constr(0, [new Constr(0, [seedTx, 0n])]));
+    expect(encodeEngageMintRedeemer(rd)).toBe(manual);
+  });
+
+  it("output_index thực sự đi vào bytes (không bị bỏ qua)", () => {
+    const other: EngageMintRedeemerT = {
+      seed: { transaction_id: seedTx, output_index: 7n },
+    };
+    expect(encodeEngageMintRedeemer(other)).not.toBe(encodeEngageMintRedeemer(rd));
+  });
+
+  it("schema decode được bytes dựng tay", () => {
+    const manual = Data.to(new Constr(0, [new Constr(0, [seedTx, 7n])]));
+    expect(Data.from(manual, EngageMintRedeemerSchema)).toEqual({
+      seed: { transaction_id: seedTx, output_index: 7n },
+    });
   });
 });
 

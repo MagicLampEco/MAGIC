@@ -5,4 +5,5 @@
 // cho test suite tests/consume.test.ts).
 
 export * from "./types.js";
+export * from "./engageId.js";
 export * from "./consume.js";

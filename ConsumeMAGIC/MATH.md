@@ -78,17 +78,39 @@ Nguồn: `price.ts:demandMult`, `price.ts:smaLoad`, `price.ts:computeLoadRaw`.
 ### 2.5 Bất biến datum PriceParam
 
 ```
+m_min == 500_000_000  ∧  m_max == 2_000_000_000        (PIN về hằng compile-time)
 0 ≤ m_min ≤ m_max
 m_min ≤ demand_mult ≤ m_max
-∀ OpPrice p: p.base_price ≥ 0
+epoch ≥ 0
+len(op_prices) ≤ 16                                     (max_op_prices)
+op_type TĂNG NGẶT theo chỉ số dòng                      (dạng chuẩn tắc)
+∀ OpPrice p: p.base_price × m_min ≥ Q                   (GATE giá-tối-thiểu)
 ```
 
-Lý do ép `base_price ≥ 0`: nếu `base_price < 0` thì `required < 0`. Với `==` thì
-`total_burned == required < 0` không thoả (burns ≥ 0), nhưng giá rác vẫn phá định giá
-→ reject sớm. (Ở model `≥` cũ, required âm còn cho drain miễn phí với burn=0.) Vá tại
-`valid_param`.
+- **PIN `m_min`/`m_max`**: check tương-đối `m_min ≤ demand ≤ m_max` KHÔNG chặn được
+  band-escape, vì `demand` bám theo `m_max`: đặt `m_max` khổng lồ thì giá nổ ~1e6× mà
+  vẫn "trong band". Phải neo về hằng compile-time.
+- **Trần 16 dòng**: `valid_param` chạy MỘT LẦN / Engage input ⇒ bảng vài nghìn dòng làm
+  MỌI tx consume vượt ex-unit = DoS toàn cơ chế, không hạ được vì beacon chỉ committee
+  sửa. Số 16 chọn theo số đo `aiken check` (ràng buộc BINDING là MEM: n=16 → 940 K mem
+  / invocation; n=32 → 3,05 M ⇒ loại).
+- **TĂNG NGẶT theo `op_type`**: trùng `op_type` thì on-chain `list.find` lấy dòng ĐẦU
+  còn off-chain viết bằng map lấy dòng CUỐI ⇒ hai phía lệch giá (10×) mà KHÔNG bên nào
+  báo lỗi. Tăng ngặt bao hàm "không trùng" VÀ loại luôn bảng cùng-tập-khác-thứ-tự
+  (một biểu giá chỉ có ĐÚNG MỘT cách viết hợp lệ). Hệ quả bắt buộc cho off-chain: **sắp
+  xếp bảng trước khi post** (`toCanonicalOpPrices`).
+- **GATE `base_price × m_min ≥ Q`**: bảo đảm giá 1 đơn vị ở demand THẤP NHẤT vẫn ≥ 1
+  nanogic ⇒ đóng collapse-to-0 (`base` quá nhỏ ⇒ giá làm tròn về 0 ⇒ drain miễn phí).
+  GATE này **bao hàm** `base_price ≥ 0` và cấm luôn `base_price == 0` (nhánh chết:
+  `consume` ép `required > 0` nên dòng giá 0 không bao giờ dùng được). Nó cũng là chỗ
+  chặn sớm toán hạng âm — điều kiện tiên quyết của P8, xem §5.1.
 
-Nguồn: `pricing.ak:valid_param`, `pricing.ak` test `valid_param_negative_base_price_fail`.
+**Bản gương off-chain: `price.ts:assertValidPriceParam`** — chạy TRƯỚC khi post beacon,
+ném `PRICE-010..015`. Không có nó, bên tiêu thụ không có cách nào tự biết bảng của mình
+hợp lệ; sai chỉ lộ ra khi mọi tx consume đã chết hàng loạt.
+
+Nguồn: `pricing.ak:valid_param`, `pricing.ak:sorted_strict_op_types`,
+`pricing.ak:max_op_prices`, `price.ts:assertValidPriceParam`.
 
 ### 2.6 Value preservation @engage (TUYỆT ĐỐI)
 
@@ -111,7 +133,7 @@ Nguồn: `consume.ak:engage_value_preserved`.
 | `target_capacity = 0` | `computeLoadRaw` dùng `den = 1` (defensive, `price.ts:29`) |
 | Lịch sử load rỗng | `smaLoad` trả `M_NEUTRAL_Q = Q` (neutral 1.0×) |
 | `op_type` không có trong bảng | `lookup_base` trả `None` → `required_for` trả `None` → validator fail |
-| `op_count = 0` | Validator ép `op_count >= 1` trước khi tính required |
+| `op_count ≤ 0` | On-chain: `expect op_count >= 1`. Off-chain: **ném** `PRICE-002` / `CONSUME-008` (trước 2026-08-09 trả `0` im lặng = fail-open: app hiện "0 MAGIC", cấp dịch vụ, rồi tx mới bị từ chối) |
 | `demand_mult = m_min` (load thấp) | `price(t) = ⌊ base_price[t] × m_min / Q ⌋` (sàn giá) |
 | `demand_mult = m_max` (load cao) | `price(t) = ⌊ base_price[t] × m_max / Q ⌋` (trần giá) |
 | Floor division làm tròn xuống | `required` có thể thấp hơn giá thực chính xác ≤ 1 nanogic; user-favorable |
@@ -217,3 +239,47 @@ Cùng input `(base_price, demand_mult, Q, op_count)`:
 Hai biểu thức giống nhau → P8 thoả. Không có float, không có bước trung gian khác nhau.
 
 Nguồn: `pricing.ak:price_of`, `price.ts:pricePerOp`.
+
+### 5.1 ⚠ ĐIỀU KIỆN của P8: MỌI toán hạng phải `≥ 0`
+
+**P8 KHÔNG phải một đẳng thức vô điều kiện.** Phép chia nguyên của hai ngôn ngữ khác
+nhau trên số âm:
+
+| | Aiken `/` | JavaScript BigInt `/` |
+|---|---|---|
+| Ngữ nghĩa | **floor** (làm tròn xuống, về `−∞`) | **trunc** (cắt về `0`) |
+| `−7 / 2` | `−4` | `−3n` |
+
+Phản ví dụ cụ thể trên chính công thức `required`:
+
+```
+base_price = −3 , demand_mult = 1_500_000_000 , op_count = 1 , Q = 1e9
+
+tích     = −3 × 1_500_000_000 × 1 = −4_500_000_000
+Aiken    ⌊ −4_500_000_000 / 1e9 ⌋ = −5      (floor)
+TypeScript  −4_500_000_000n / Q   = −4n     (trunc-về-0)
+                                    ↑ LỆCH 1 nanogic
+```
+
+**Vì sao đường tiền KHÔNG chạm nó:** on-chain `pricing.valid_param` từ chối
+`base_price` không thoả GATE `base_price × m_min ≥ Q`, mà mọi `base_price ≤ 0` đều rớt
+GATE ⇒ beacon hợp lệ không bao giờ chứa toán hạng âm. `demand_mult` bị chặn trong
+`[m_min, m_max]` (cả hai dương), `op_count ≥ 1` (validator ép, off-chain nay cũng ném
+`PRICE-002` / `CONSUME-008` thay vì trả 0 im lặng).
+
+**Vì sao vẫn phải ghi ra đây:** gói `@magiclamp/consumemagic-pricing` được **xuất bản
+cho bên ngoài dùng**. Người gọi có thể đưa vào một bảng giá chưa qua beacon (mô phỏng,
+tính thử, dựng datum sắp post). Với họ, P8 chỉ là lời hứa có điều kiện:
+
+> **Hợp đồng P8:** `pricePerOp` / `requiredForOp` / `requiredBurn` khớp bit-identical
+> với `pricing.ak` **khi và chỉ khi** `base_price ≥ 0`, `demand_mult ≥ 0`, `op_count ≥ 1`.
+> Ngoài miền đó, hai bên có thể lệch 1 đơn vị và **không bên nào sai** — chúng chỉ định
+> nghĩa phép chia khác nhau.
+
+**Chặn sớm:** gọi `assertValidPriceParam(pp)` (`pricing/src/price.ts`) **trước khi post
+beacon**. Nó là bản gương off-chain của `pricing.ak:valid_param` và ném `PRICE-015` cho
+mọi `base_price` rớt GATE — bao gồm toàn bộ miền âm. Không có phương án "trả giá trị
+mặc định": bảng giá không hợp lệ thì không có giá đúng nào để trả.
+
+Nguồn: `pricing.ak:valid_param`, `price.ts:assertValidPriceParam`,
+test `PRICE-015: base_price ÂM → ném` (`pricing/tests/price.test.ts`).

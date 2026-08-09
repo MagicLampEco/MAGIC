@@ -6,18 +6,36 @@
 
 ## 1. Deploy steps (thứ tự bắt buộc)
 
-`consume.ak` parameterized bởi 8 field — `vault_script_hash` + `burn_batch_constr`
-khác nhau per-vault (Instant=2/Snapshot=1/Vacuum=4/Schedule=2) → **1 deploy
-ConsumeMAGIC / 1 loại vault**.
+`consume.ak` parameterized bởi **7 field, ĐÚNG THỨ TỰ** (đổi thứ tự = sai hash):
 
-Toàn bộ hạ tầng ConsumeMAGIC deploy trong **một script, một tx** (`09_deploy_consume.ts:52`):
-mint price NFT + post PriceParam beacon + mint engage NFT + tạo Engage UTxO + apply-param
-consume validator. Hai genesis UTxO riêng (`g1`, `g2`) cho hai one-shot policy phân biệt.
+```
+price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
+max_price_stale, ms_per_epoch, price_param_script_hash
+```
+
+`vault_script_hash` + `burn_batch_constr` khác nhau per-vault (Instant=2/Schedule=2;
+Legacy: Snapshot=1/Vacuum=4) → **1 deploy ConsumeMAGIC / 1 loại vault**.
+
+> **KHÔNG còn `engage_nft_policy` / `engage_nft_name`.** Validator `engage_nft.ak` đã bị
+> XOÁ; handler `mint` nằm TRONG chính `consume` (multi-purpose). Policy của thread NFT
+> **chính là script hash của `consume` sau khi apply 7 param** — biết qua tự tham chiếu,
+> không bake hash lẫn nhau (bake 2 chiều = fixed-point blake2b = không deploy được).
+> Tên NFT = `blake2b_256(cbor.serialise(seed))` với `seed : OutputReference` bị tiêu trong
+> chính tx mint — **KHÔNG phải hằng `454e47`**. Off-chain: `offchain/src/engageId.ts`.
+
+Chuỗi bake TUYẾN TÍNH (không vòng): `price_nft (genesis_ref)` → `price_param (committee,
+threshold, price_nft_policy, price_nft_name, ms_per_epoch)` → `consume (…,
+price_param_script_hash)`.
+
+Toàn bộ hạ tầng ConsumeMAGIC deploy trong **một script, một tx** (`09_deploy_consume.ts`):
+mint price NFT + post PriceParam beacon + mint thread Engage + tạo Engage UTxO + apply-param
+consume validator. Hai genesis UTxO riêng (`g1` cho price_nft one-shot, `g2` làm seed đặt
+TÊN thread Engage).
 
 ```bash
 # Bước 0: build Aiken validators
 cd /Users/ductiger/Projects/MAGIC/ConsumeMAGIC/onchain
-aiken build   # → onchain/plutus.json (4 validator: consume, price_nft, price_param, engage_nft)
+aiken build   # → onchain/plutus.json (3 validator: consume, price_nft, price_param)
 
 # Bước 1: deploy vault InstantGen (prereq — cho VAULT_INSTANT_HASH)
 cd /Users/ductiger/Projects/MAGIC/scripts && npm install
@@ -28,8 +46,8 @@ npx tsx test/instant_only.ts
 
 # Bước 3: deploy toàn bộ hạ tầng ConsumeMAGIC (1 tx, 5 việc)
 npx tsx deploy/09_deploy_consume.ts
-# → in ra block export: PRICE_NFT_POLICY_ID, ENGAGE_NFT_POLICY_ID,
-#   PRICE_PARAM_SCRIPT_HASH, CONSUME_SCRIPT_HASH
+# → in ra block export: PRICE_NFT_POLICY, PRICE_PARAM_SCRIPT_HASH, CONSUME_SCRIPT_HASH,
+#   ENGAGE_NFT_POLICY (== CONSUME_SCRIPT_HASH), ENGAGE_NFT_UNIT, ENGAGE_UTXO
 
 # Bước 4: tiêu MAGIC thật (co-spend Engage + vault BurnBatch)
 npx tsx test/consume_only.ts
@@ -59,10 +77,34 @@ PRICE_DEMAND_MULT=1000000000 # Q-format, default 1.0×
 ```
 
 Hằng số baked trong script, không phải env: `PRICE_NFT_NAME=5052494345` ("PRICE"),
-`ENGAGE_NFT_NAME=454e47` ("ENG"), `BURN_BATCH_CONSTR=2` (InstantGen).
+`BURN_BATCH_CONSTR=2` (InstantGen).
 
 > **KHÔNG còn** `MAGIC_POLICY_ID` / `MAGIC_ASSET_NAME` (v1 mint — model v2 không mint
-> MAGIC). `ENGAGE_NFT_POLICY_ID` / `PRICE_NFT_POLICY_ID` sinh ra ở bước 3 (one-shot).
+> MAGIC). **KHÔNG còn** `ENGAGE_NFT_NAME=454e47`: tên thread NFT là
+> `blake2b_256(cbor(seed))`, sinh ra tại thời điểm mint theo UTxO seed, không đặt tay
+> được. `PRICE_NFT_POLICY` sinh ở bước 3 (one-shot); `ENGAGE_NFT_POLICY` **không phải
+> một policy riêng** — nó BẰNG `CONSUME_SCRIPT_HASH`.
+
+### 1.1 Mint thread Engage cho app khác (sau khi hạ tầng đã deploy)
+
+Thread NFT là **permissionless, N thread / 1 policy** — mỗi app/ví tự đúc thread riêng
+bằng seed UTxO của mình, không cần committee. Off-chain: `buildMintEngageTx`
+(`offchain/src/consume.ts`), tx **RIÊNG**, KHÔNG gộp với tx consume (C-CM-8).
+
+```ts
+import { buildMintEngageTx } from "@magiclamp/consumemagic";
+
+const { tx, engageNftUnit, engageAddress, genesisDatum } = await buildMintEngageTx({
+  lucid, consumeScript,          // ĐÃ apply 7 param
+  seedUtxo,                      // UTxO của ví, bị TIÊU trong chính tx này (one-shot)
+  ownerPkh,                      // phải ký tx — validate_mint_engage_id ép
+  didCommit: "",                 // MVP rỗng; đặt 1 LẦN ở đây, IMMUTABLE sau đó
+  network,
+});
+```
+
+Genesis SẠCH: `consumed_count = 0`, `consumed_nanogic = 0`, `last_epoch = 0`
+(`last_epoch` là "epoch consume gần nhất", **không** phải epoch hiện tại).
 
 ---
 
@@ -99,6 +141,12 @@ Hằng số baked trong script, không phải env: `PRICE_NFT_NAME=5052494345` (
 | N14 | Drain token khác khỏi Engage | output@engage TOK = 2 thay vì 5 | C-CM-1 | tx rejected |
 | N15 | Validity-range gaming — upper vô hạn | `interval.after` (upper = +∞) | get_epoch (vá BLOCK) | tx rejected |
 | N16 | Validity-range gaming — under-state epoch | cửa sổ rộng > 1 epoch (lower quá khứ) | get_epoch (vá BLOCK) | tx rejected |
+| N17 | Cửa sổ cưỡi ranh giới epoch | `lo` cuối epoch e, `hi` đầu epoch e+1 | get_epoch (`⌊lo/mspe⌋ == ⌊hi/mspe⌋`) | tx rejected |
+| N18 | Genesis bẩn — `consumed_nanogic` bịa | mint thread với `consumed_nanogic = 1e18` | C-CM-7 | tx rejected |
+| N19 | Genesis không neo địa chỉ | NFT đúc về ví thay vì địa chỉ script consume | C-CM-7 | tx rejected |
+| N20 | Under-count GIÁ TRỊ | 2 output@engage, Σ`consumed_nanogic` thiếu | C-CM-6 | tx rejected |
+| N21 | Bảng giá không sắp xếp / trùng `op_type` | `op_prices` = `[{2,…},{1,…}]` | `valid_param` (tăng ngặt) | tx rejected |
+| N22 | Bảng giá > 16 dòng | 17 dòng `op_prices` | `valid_param` (`max_op_prices`) | tx rejected |
 
 Số test (aiken / offchain / pricing) KHÔNG ghi ở đây — nó hết hạn ngay commit sau và
 bản chép tay ở tệp này từng lệch thật. Nguồn duy nhất: [`DEVSTATUS.md`](../DEVSTATUS.md),
@@ -120,8 +168,13 @@ npm install && npm test
 # TypeScript offchain (codec round-trip + builder typecheck)
 cd /Users/ductiger/Projects/MAGIC/ConsumeMAGIC/offchain
 npm install && npm test           # số ca: xem DEVSTATUS.md
-npm run typecheck                 # tsc --noEmit: types.ts + consume.ts + index.ts
+npm run typecheck                 # tsc --noEmit: types.ts + engageId.ts + consume.ts + index.ts
 ```
+
+> ⚠ `offchain` typecheck đọc **types của `pricing` từ `pricing/dist/`** (`package.json`
+> field `types`), mà `dist/` bị gitignore. Thêm/đổi export trong `pricing/src/price.ts`
+> mà chưa `cd ../pricing && npm run build` ⇒ `tsc` báo `TS2305: has no exported member`
+> dù mã nguồn đúng. `npm install` trong `pricing` cũng chạy `prepare` → build.
 
 ---
 
@@ -144,7 +197,9 @@ npm run typecheck                 # tsc --noEmit: types.ts + consume.ts + index.
 |---|---|
 | `buildConsumeTx` TypeScript | ✅ ĐÃ LÀM (`offchain/src/consume.ts`): đọc PriceParam ref-input, tính `required`, co-spend Engage+vault, validity-range chặt ≤1 epoch, KHÔNG mint |
 | Engage thread NFT | ✅ ĐÃ LÀM — nhưng KHÔNG phải validator riêng: handler `mint` nằm TRONG `onchain/validators/consume.ak` (policy = chính script hash, biết qua tự tham chiếu). Không còn tệp `engage_nft.ak` |
-| Offchain codec | ✅ ĐÃ LÀM (`offchain/src/types.ts`): EngageDatum/PriceParam/ConsumeRedeemer khớp constr 0 + test round-trip P8 |
+| Offchain codec | ✅ ĐÃ LÀM (`offchain/src/types.ts`): EngageDatum **5 trường**/PriceParam/ConsumeRedeemer/**EngageMintRedeemer** khớp constr 0 + test round-trip P8. Tên thread NFT: `offchain/src/engageId.ts` |
+| Cổng bảng giá off-chain | ✅ ĐÃ LÀM (`pricing/src/price.ts:assertValidPriceParam` + `toCanonicalOpPrices`) — bản gương `valid_param`, chạy TRƯỚC khi post beacon, ném `PRICE-010..015` |
+| `09_deploy_consume.ts` khai `EngageDatumSchema` tại chỗ | ⏳ CÒN LẠI: khối tạm ở `scripts/deploy/09_deploy_consume.ts:59` nay đã thừa (offchain đã có 5 trường) — xoá và quay lại `import { encodeEngageDatum }`. `scripts/` ngoài phạm vi vòng này |
 | Keeper cập nhật demand_mult | Tương tự UMKeeper: đọc `ops_served_epoch`, tính FIR, post PriceParam mới (committee/keeper) — TRƯỚC mainnet |
 | E2E Preview script live | Tạo Engage genesis → consume thật → verify `consumed_nanogic` (+ `consumed_count`) và `magic_batches` vault giảm đúng on-chain (cần credential) |
 | committee → governance NFT động | Thay static list bằng multi-sig/NFT trước khi khoá mainnet |

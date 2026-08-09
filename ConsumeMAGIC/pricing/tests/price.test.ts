@@ -15,6 +15,11 @@ import {
   pricePerOp,
   requiredBurn,
   requiredForOp,
+  assertValidPriceParam,
+  toCanonicalOpPrices,
+  MAX_OP_PRICES,
+  type PriceParamLike,
+  type OpPriceRow,
 } from "../src/price.js";
 
 // helper: build a window full of the same constant raw load
@@ -268,9 +273,19 @@ describe("requiredBurn — Σ price × count (mirrors on-chain C-CM-2)", () => {
     const ceil = 5n * ((10_000_000n * M_MAX_Q) / Q);
     expect(total).toBeLessThanOrEqual(ceil);
   });
-  it("negative/zero counts contribute nothing", () => {
-    expect(requiredBurn([{ opType: OP_IMAGE, opCount: -4n }], Q)).toBe(0n);
-    expect(requiredBurn([{ opType: OP_IMAGE, opCount: 0n }], Q)).toBe(0n);
+  // ĐỔI HÀNH VI (2026-08-09): ca cũ tên "negative/zero counts contribute nothing" KHOÁ
+  // một fail-open. `requiredForOp` trả 0 im lặng cho opCount ≤ 0, trong khi on-chain
+  // `expect op_count >= 1` TỪ CHỐI ⇒ app hiện "0 MAGIC", cấp dịch vụ, rồi tx mới chết.
+  // Hành vi đúng: ném PRICE-002.
+  it("opCount ≤ 0 → ném PRICE-002 (KHÔNG trả 0 im lặng)", () => {
+    expect(() => requiredBurn([{ opType: OP_IMAGE, opCount: -4n }], Q)).toThrow(/PRICE-002/);
+    expect(() => requiredBurn([{ opType: OP_IMAGE, opCount: 0n }], Q)).toThrow(/PRICE-002/);
+    expect(() => requiredForOp(OP_IMAGE, 0n, Q)).toThrow(/PRICE-002/);
+    expect(() => requiredForOp(OP_IMAGE, -1n, Q)).toThrow(/PRICE-002/);
+  });
+
+  it("opCount = 1 (biên dưới hợp lệ) vẫn tính bình thường", () => {
+    expect(requiredForOp(OP_IMAGE, 1n, Q)).toBe(10_000_000n);
   });
 });
 
@@ -300,6 +315,163 @@ describe("FOLD-FLOOR-ONCE — P8 parity anchor (must match onchain pricing.requi
 describe("unknown op_type rejected (no authoritative price)", () => {
   it("throws PRICE-001 for op_type not in table", () => {
     expect(() => pricePerOp(99, Q)).toThrow(/PRICE-001/);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// assertValidPriceParam — bản gương off-chain của pricing.ak:valid_param
+//
+// ĐỐI CHIẾU 1-1 với test Aiken (ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak):
+//   valid_param_ok                         → "bảng MVP hợp lệ"
+//   valid_param_out_of_clamp               → PRICE-011
+//   valid_param_rejects_unpinned_m_max     → PRICE-010
+//   valid_param_rejects_negative_epoch     → PRICE-012
+//   valid_param_accepts_max_op_prices      → biên 16 dòng
+//   valid_param_rejects_too_many_op_prices → PRICE-013
+//   valid_param_rejects_unsorted_op_types  → PRICE-014
+//   valid_param_rejects_duplicate_op_type  → PRICE-014
+//   valid_param_gate_rejects_tiny_base     → PRICE-015
+//   valid_param_gate_accepts_min_base      → biên GATE base=2
+//   valid_param_rejects_zero_base_price    → PRICE-015
+//   valid_param_negative_base_price_fail   → PRICE-015
+// ══════════════════════════════════════════════════════════════
+
+function ppOf(rows: OpPriceRow[], over: Partial<PriceParamLike> = {}): PriceParamLike {
+  return {
+    op_prices: rows,
+    demand_mult: Q,
+    m_min: M_MIN_Q,
+    m_max: M_MAX_Q,
+    epoch: 100n,
+    ...over,
+  };
+}
+
+const MVP_ROWS: OpPriceRow[] = [
+  { op_type: 1n, base_price: 10_000_000n },
+  { op_type: 2n, base_price: 1_000_000n },
+];
+
+describe("assertValidPriceParam — cổng TRƯỚC khi post beacon", () => {
+  it("bảng MVP hợp lệ → không ném", () => {
+    expect(() => assertValidPriceParam(ppOf(MVP_ROWS))).not.toThrow();
+  });
+
+  it("PRICE-010: m_max lệch hằng dù chỉ +1 → ném (band-escape)", () => {
+    expect(() => assertValidPriceParam(ppOf(MVP_ROWS, { m_max: M_MAX_Q + 1n })))
+      .toThrow(/PRICE-010/);
+    expect(() => assertValidPriceParam(ppOf(MVP_ROWS, { m_min: 0n })))
+      .toThrow(/PRICE-010/);
+    // m_max khổng lồ + demand bám theo: giá nổ ~1e6× — pin chặn tận gốc.
+    expect(() =>
+      assertValidPriceParam(
+        ppOf(MVP_ROWS, { m_max: 2_000_000_000_000_000n, demand_mult: 2_000_000_000_000_000n }),
+      ),
+    ).toThrow(/PRICE-010/);
+  });
+
+  it("PRICE-011: demand_mult ngoài band → ném", () => {
+    expect(() => assertValidPriceParam(ppOf(MVP_ROWS, { demand_mult: 3n * Q })))
+      .toThrow(/PRICE-011/);
+    expect(() => assertValidPriceParam(ppOf(MVP_ROWS, { demand_mult: 1n })))
+      .toThrow(/PRICE-011/);
+  });
+
+  it("PRICE-012: epoch âm → ném", () => {
+    expect(() => assertValidPriceParam(ppOf(MVP_ROWS, { epoch: -1n }))).toThrow(/PRICE-012/);
+  });
+
+  it("PRICE-013: bảng > 16 dòng → ném (DoS ex-unit)", () => {
+    const mk = (n: number): OpPriceRow[] =>
+      Array.from({ length: n }, (_, i) => ({
+        op_type: BigInt(i + 1),
+        base_price: 10_000_000n,
+      }));
+    // biên: đúng MAX_OP_PRICES dòng còn hợp lệ
+    expect(() => assertValidPriceParam(ppOf(mk(MAX_OP_PRICES)))).not.toThrow();
+    expect(() => assertValidPriceParam(ppOf(mk(MAX_OP_PRICES + 1)))).toThrow(/PRICE-013/);
+  });
+
+  it("PRICE-014: bảng KHÔNG sắp xếp tăng ngặt → ném", () => {
+    const unsorted: OpPriceRow[] = [
+      { op_type: 2n, base_price: 1_000_000n },
+      { op_type: 1n, base_price: 10_000_000n },
+    ];
+    expect(() => assertValidPriceParam(ppOf(unsorted))).toThrow(/PRICE-014/);
+  });
+
+  it("PRICE-014: op_type trùng (kề nhau) → ném — chỗ sinh lệch giá 10×", () => {
+    // on-chain `list.find` lấy dòng ĐẦU (10M), map off-chain lấy dòng CUỐI (99M).
+    const dup: OpPriceRow[] = [
+      { op_type: 1n, base_price: 10_000_000n },
+      { op_type: 1n, base_price: 99_000_000n },
+      { op_type: 2n, base_price: 1_000_000n },
+    ];
+    expect(() => assertValidPriceParam(ppOf(dup))).toThrow(/PRICE-014/);
+  });
+
+  it("PRICE-015: base_price quá nhỏ → ném (collapse-to-0)", () => {
+    // base=1 ở demand=m_min(0.5×) → ⌊1×5e8/1e9⌋ = 0 ⇒ drain miễn phí.
+    expect(() => assertValidPriceParam(ppOf([{ op_type: 1n, base_price: 1n }])))
+      .toThrow(/PRICE-015/);
+  });
+
+  it("PRICE-015: biên GATE base_price=2 → hợp lệ (2×5e8 == Q)", () => {
+    expect(() => assertValidPriceParam(ppOf([{ op_type: 1n, base_price: 2n }]))).not.toThrow();
+  });
+
+  it("PRICE-015: base_price = 0 → ném (nhánh chết — consume ép required > 0)", () => {
+    expect(() =>
+      assertValidPriceParam(
+        ppOf([{ op_type: 1n, base_price: 10_000_000n }, { op_type: 2n, base_price: 0n }]),
+      ),
+    ).toThrow(/PRICE-015/);
+  });
+
+  it("PRICE-015: base_price ÂM → ném (P8 chỉ đúng khi mọi toán hạng ≥ 0)", () => {
+    // Aiken `/` là floor, JS BigInt `/` là trunc-về-0 ⇒ hai phía LỆCH trên số âm.
+    // GATE này là chỗ chặn sớm — xem MATH.md §5.1.
+    expect(() =>
+      assertValidPriceParam(
+        ppOf([{ op_type: 1n, base_price: 10_000_000n }, { op_type: 2n, base_price: -1n }]),
+      ),
+    ).toThrow(/PRICE-015/);
+  });
+
+  it("bảng rỗng và bảng 1 dòng: hợp lệ theo định nghĩa (không có cặp nào để so)", () => {
+    expect(() => assertValidPriceParam(ppOf([]))).not.toThrow();
+    expect(() => assertValidPriceParam(ppOf([{ op_type: 7n, base_price: 10_000_000n }])))
+      .not.toThrow();
+  });
+});
+
+describe("toCanonicalOpPrices — dạng chuẩn tắc trước khi post", () => {
+  it("sắp xếp tăng dần theo op_type", () => {
+    const out = toCanonicalOpPrices([
+      { op_type: 5n, base_price: 2_000_000n },
+      { op_type: 1n, base_price: 10_000_000n },
+      { op_type: 2n, base_price: 1_000_000n },
+    ]);
+    expect(out.map((r) => r.op_type)).toEqual([1n, 2n, 5n]);
+    expect(() => assertValidPriceParam(ppOf(out))).not.toThrow();
+  });
+
+  it("thuần — không đổi mảng gốc", () => {
+    const orig: OpPriceRow[] = [
+      { op_type: 2n, base_price: 1_000_000n },
+      { op_type: 1n, base_price: 10_000_000n },
+    ];
+    toCanonicalOpPrices(orig);
+    expect(orig[0]!.op_type).toBe(2n);
+  });
+
+  it("op_type trùng → ném PRICE-014 (không tự chọn dòng thắng)", () => {
+    expect(() =>
+      toCanonicalOpPrices([
+        { op_type: 1n, base_price: 10_000_000n },
+        { op_type: 1n, base_price: 99_000_000n },
+      ]),
+    ).toThrow(/PRICE-014/);
   });
 });
 

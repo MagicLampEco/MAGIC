@@ -59,8 +59,19 @@ describe("FIX #3 — P8: requiredFromBeacon == on-chain fold-floor value", () =>
     expect(viaBeacon).toBe(viaPricing);
   });
 
-  it("op_count < 1 clamps to 0 (matches count>0 guard)", () => {
-    expect(requiredFromBeacon(beacon, 1, 0n)).toBe(0n);
-    expect(requiredFromBeacon(beacon, 1, -3n)).toBe(0n);
+  // ĐỔI HÀNH VI (2026-08-09): ca cũ "op_count < 1 clamps to 0" KHOÁ một fail-open.
+  // On-chain consume.ak ép `expect op_count >= 1` ⇒ trả 0 im lặng nghĩa là app hiện
+  // "0 MAGIC", cấp dịch vụ, RỒI tx mới bị validator từ chối — dịch vụ đã cấp mất trắng.
+  it("op_count ≤ 0 → ném CONSUME-008 (KHÔNG trả 0 im lặng)", () => {
+    expect(() => requiredFromBeacon(beacon, 1, 0n)).toThrow(/CONSUME-008/);
+    expect(() => requiredFromBeacon(beacon, 1, -3n)).toThrow(/CONSUME-008/);
+  });
+
+  it("op_count ≤ 0 được kiểm TRƯỚC op_type — lỗi dấu không bị che bởi CONSUME-007", () => {
+    expect(() => requiredFromBeacon(beacon, 99, -1n)).toThrow(/CONSUME-008/);
+  });
+
+  it("op_count = 1 (biên dưới hợp lệ) vẫn tính bình thường", () => {
+    expect(requiredFromBeacon(beacon, 1, 1n)).toBe(3_000_000n);
   });
 });

@@ -19,19 +19,27 @@
 //   consume.ak util.get_epoch:  epoch = upper/mspe floor (cuối epoch → currentEpoch, ≥ now).
 // (Bản cũ dùng [epochStart, epochStart+1ms] → validTo ở QUÁ KHỨ so với now giữa epoch →
 //  ledger reject OutsideValidityInterval. Đã vá.)
+// `util.get_epoch` ép THÊM: hai biên đều Finite VÀ ⌊lo/mspe⌋ == ⌊hi/mspe⌋ (trọn MỘT
+// epoch) — cửa sổ dưới đây thoả theo dựng, không được nới ra ngoài biên epoch.
+//
+// THREAD NFT: policy == script hash của `consume` sau apply 7 param (tự tham chiếu),
+// tên == blake2b_256(cbor(seed)) — xem `engageId.ts`. KHÔNG còn `engage_nft.ak`,
+// KHÔNG còn hằng tên `454e47`.
 
 import {
-  Data, toUnit,
+  Data, toUnit, validatorToScriptHash, validatorToAddress,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type Assets,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
-import { Q } from "@magiclamp/consumemagic-pricing";
+import { Q, assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
 import {
   ConsumeRedeemerSchema,
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
+  encodeEngageMintRedeemer,
   type EngageDatumT, type PriceParamT, type ConsumeRedeemerT,
   type OutputReferenceT,
 } from "./types.js";
+import { engageAssetName, type EngageIdSeed } from "./engageId.js";
 
 // ── Params ────────────────────────────────────────────────────────────────────
 
@@ -44,8 +52,11 @@ export interface ConsumeParams {
   vaultUtxo: UTxO;
   /** PriceParam beacon UTxO — đọc REFERENCE (không tiêu). Phải mang price NFT. */
   priceBeaconUtxo: UTxO;
-  /** Compiled consume validator (đã apply 8 param: price_nft_*, engage_nft_*,
-   *  vault_script_hash, burn_batch_constr, max_price_stale, ms_per_epoch). */
+  /** Compiled consume validator — ĐÃ apply ĐÚNG 7 param, theo THỨ TỰ:
+   *  price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
+   *  max_price_stale, ms_per_epoch, price_param_script_hash.
+   *  (`engage_nft_policy` / `engage_nft_name` KHÔNG còn là param — thread NFT dùng
+   *   chính script hash này làm policy, biết qua tự tham chiếu.) */
   consumeScript: Validator;
   /** Compiled vault validator (module khác) — cần để spend vault input. */
   vaultScript: Validator;
@@ -68,8 +79,12 @@ export interface ConsumeParams {
   ownerSignerKeyHash?: string;
   /** Collateral UTxO thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token). */
   collateralUtxo?: UTxO;
-  /** Engage NFT unit (policyId+nameHex) — bảo toàn trên output Engage. */
-  engageNftUnit: string;
+  /** Thread NFT unit (policyId+nameHex) — TUỲ CHỌN.
+   *  Bỏ trống ⇒ builder TỰ tìm: policy = hash(consumeScript), phải có ĐÚNG 1 asset
+   *  dưới policy đó với qty 1 (mirror `single_thread_nft` on-chain). Truyền vào ⇒
+   *  builder vẫn kiểm prefix policy == hash(consumeScript) rồi mới dùng. Tên NFT là
+   *  blake2b_256(cbor(seed)) — KHÔNG phải hằng `454e47`, đừng tự bịa. */
+  engageNftUnit?: string;
   /** Network (chọn ms_per_epoch cho validity-range — PHẢI khớp validator param). */
   network: Network;
   /** Tip POSIX ms hiện tại (đầu vào để tính epoch + validity-range). */
@@ -105,13 +120,26 @@ function utxoToRef(u: UTxO): OutputReferenceT {
  *    onchain pricing.required_for. Floor-before-multiply = under-charge ⇒ tx reject.
  *  - op_type vắng trong beacon ⇒ THROW (không im lặng fallback trên đường tiền).
  *
+ * VÁ FAIL-OPEN (2026-08-09): bản cũ làm `count = opCount > 0n ? opCount : 0n` ⇒
+ * `opCount` âm/0 trả về **0** trong IM LẶNG, trong khi on-chain `expect op_count >= 1`
+ * TỪ CHỐI. Hệ quả thực: app có lỗi dấu hiển thị "0 MAGIC", cấp dịch vụ, RỒI tx mới bị
+ * validator từ chối — dịch vụ đã cấp không lấy lại được. Nay ném lỗi có mã.
+ *
  * @throws CONSUME-007 nếu op_type không có trong pp.op_prices.
+ * @throws CONSUME-008 nếu opCount < 1 (mirror on-chain `expect op_count >= 1`).
  */
 export function requiredFromBeacon(
   pp: PriceParamT,
   opType: number,
   opCount: bigint,
 ): bigint {
+  if (opCount < 1n) {
+    throw new Error(
+      `CONSUME-008: op_count phải ≥ 1 (nhận ${opCount}). On-chain consume.ak ép ` +
+        `\`expect op_count >= 1\` — trả 0 im lặng là fail-open: app hiện "0 MAGIC", ` +
+        `cấp dịch vụ, rồi tx mới bị từ chối.`,
+    );
+  }
   const row = pp.op_prices.find((p) => Number(p.op_type) === opType);
   if (row === undefined) {
     throw new Error(
@@ -119,8 +147,7 @@ export function requiredFromBeacon(
         `(giá có thẩm quyền phải đến từ beacon, không fallback MVP trên đường tiền)`,
     );
   }
-  const count = opCount > 0n ? opCount : 0n;
-  return (row.base_price * pp.demand_mult * count) / Q;
+  return (row.base_price * pp.demand_mult * opCount) / Q;
 }
 
 // ── Builder ───────────────────────────────────────────────────────────────────
@@ -133,8 +160,11 @@ export function requiredFromBeacon(
  *    TỪ beacon datum theo op_type — P8 khớp on-chain) — caller phải đảm bảo
  *    vaultBurnRedeemerCbor có Σburns == required.
  *  - Engage output: value bảo toàn TUYỆT ĐỐI (copy y nguyên engageUtxo.assets),
- *    consumed_count += op_count, last_epoch = currentEpoch, did_commit immutable.
- *  - validity-range cửa sổ ≤ 1 epoch; epoch ref = upper bound.
+ *    consumed_count += op_count, consumed_nanogic += required, last_epoch = currentEpoch,
+ *    did_commit immutable.
+ *  - validity-range nằm TRỌN trong một epoch, hai biên Finite.
+ *
+ * KHÔNG mint ở đây: mint thread Engage là tx RIÊNG (`buildMintEngageTx`).
  */
 export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResult> {
   const {
@@ -152,6 +182,13 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     throw new Error("CONSUME-002: beacon UTxO thiếu inline datum PriceParam");
   }
   const pp: PriceParamT = decodePriceParam(priceBeaconUtxo.datum);
+
+  // ── beacon phải hợp lệ: mirror `expect pricing.valid_param(pp)` on-chain ─────
+  //    Chạy TRƯỚC khi dựng tx: beacon rác (bảng không sắp xếp, > 16 dòng, rớt GATE
+  //    giá-tối-thiểu, band lệch hằng) làm validator từ chối ở phase-2 — lúc đó
+  //    collateral đã mất. Ném PRICE-010..015 với lý do cụ thể thay vì một
+  //    "script evaluation failed" không đọc được.
+  assertValidPriceParam(pp);
 
   // ── required (giá có thẩm quyền từ beacon, fold-floor-once — P8) ─────────────
   const requiredNanogic = requiredFromBeacon(pp, opType, opCount);
@@ -172,13 +209,20 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   }
 
   // ── EngageDatum cũ → mới ────────────────────────────────────────────────────
+  // HAI trục kế toán song song (consume.ak `enforce_engagement`):
+  //   (a) Σ consumed_count(out)   == Σ(in) + Σ op_count      — số LƯỢT
+  //   (b) Σ consumed_nanogic(out) == Σ(in) + total_required  — GIÁ TRỊ đã trả
+  // Builder này dựng tx MỘT Engage input ⇒ total_required == requiredNanogic của
+  // chính nó. Nếu về sau gộp N Engage input trong 1 tx thì (b) là bất biến TỔNG:
+  // phải cộng requiredNanogic của MỌI input rồi phân bổ, không cộng riêng lẻ mù.
   if (!engageUtxo.datum) throw new Error("CONSUME-005: engage UTxO thiếu inline datum");
   const oldDatum: EngageDatumT = decodeEngageDatum(engageUtxo.datum);
   const newEngageDatum: EngageDatumT = {
     owner: oldDatum.owner,
     consumed_count: oldDatum.consumed_count + opCount,
     last_epoch: currentEpoch,
-    did_commit: oldDatum.did_commit, // IMMUTABLE
+    did_commit: oldDatum.did_commit,                            // IMMUTABLE
+    consumed_nanogic: oldDatum.consumed_nanogic + requiredNanogic, // bất biến (b)
   };
 
   // ── Consume redeemer (Engage input) ─────────────────────────────────────────
@@ -194,10 +238,12 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   );
 
   // ── Engage output: VALUE BẢO TOÀN tuyệt đối (copy y nguyên assets input) ─────
-  // (ép có engage NFT — defensive; engageUtxo.assets đã chứa nó nếu hợp lệ.)
-  if ((engageUtxo.assets[engageNftUnit] ?? 0n) !== 1n) {
-    throw new Error("CONSUME-006: engage UTxO không mang đúng 1 thread NFT");
-  }
+  // Cổng định danh mirror `single_thread_nft`: policy của thread NFT PHẢI == script
+  // hash của chính `consume` (tự tham chiếu, BẤT BIẾN #1) và UTxO phải mang ĐÚNG MỘT
+  // asset dưới policy đó với qty 1. UTxO "engage giả" (ai cũng gửi tới địa chỉ script
+  // được) có 0 asset ⇒ chết ở đây thay vì chết trong phase-2 sau khi đã tốn collateral.
+  const consumePolicyId = validatorToScriptHash(consumeScript);
+  const resolvedNftUnit = resolveThreadNft(engageUtxo, consumePolicyId, engageNftUnit);
   const engageOutAssets = { ...engageUtxo.assets };
 
   const engageAddress = engageUtxo.address;
@@ -237,9 +283,154 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
 
   const summary =
     `consume op_type=${opType} ×${opCount} | required=${requiredNanogic} ng | ` +
-    `epoch=${currentEpoch} | consumed ${oldDatum.consumed_count}→${newEngageDatum.consumed_count}`;
+    `epoch=${currentEpoch} | thread=${resolvedNftUnit} | ` +
+    `count ${oldDatum.consumed_count}→${newEngageDatum.consumed_count} | ` +
+    `nanogic ${oldDatum.consumed_nanogic}→${newEngageDatum.consumed_nanogic}`;
 
   return { tx, requiredNanogic, currentEpoch, newEngageDatum, summary };
+}
+
+/**
+ * Thread NFT của Engage UTxO — mirror `single_thread_nft` (consume.ak).
+ *
+ * Policy BẮT BUỘC == script hash của `consume` đã apply param (tự tham chiếu). Tên
+ * tuỳ seed nên builder KHÔNG đoán được; nó tìm asset duy nhất dưới policy đó.
+ *
+ * @throws CONSUME-006 nếu không có đúng 1 asset dưới policy, hoặc qty ≠ 1.
+ * @throws CONSUME-009 nếu caller truyền `engageNftUnit` sai policy.
+ */
+function resolveThreadNft(
+  engageUtxo: UTxO,
+  consumePolicyId: string,
+  declaredUnit?: string,
+): string {
+  const underPolicy = Object.keys(engageUtxo.assets).filter((u) =>
+    u.startsWith(consumePolicyId),
+  );
+  if (underPolicy.length !== 1) {
+    throw new Error(
+      `CONSUME-006: Engage UTxO phải mang ĐÚNG 1 thread NFT dưới policy ` +
+        `${consumePolicyId} (== hash consume), thấy ${underPolicy.length}`,
+    );
+  }
+  const unit = underPolicy[0]!;
+  if ((engageUtxo.assets[unit] ?? 0n) !== 1n) {
+    throw new Error(
+      `CONSUME-006: thread NFT ${unit} có qty ${engageUtxo.assets[unit]} ≠ 1`,
+    );
+  }
+  if (declaredUnit !== undefined && declaredUnit.toLowerCase() !== unit.toLowerCase()) {
+    throw new Error(
+      `CONSUME-009: engageNftUnit caller truyền (${declaredUnit}) khác thread NFT ` +
+        `thật trên UTxO (${unit}). Tên NFT = blake2b_256(cbor(seed)), KHÔNG phải hằng.`,
+    );
+  }
+  return unit;
+}
+
+// ── Mint thread Engage (genesis) ──────────────────────────────────────────────
+
+export interface MintEngageParams {
+  lucid: LucidEvolution;
+  /** Compiled consume validator (ĐÃ apply 7 param) — vừa là policy, vừa là địa chỉ. */
+  consumeScript: Validator;
+  /** UTxO seed one-shot: PHẢI bị TIÊU trong chính tx này (`list.any(tx.inputs, ...)`). */
+  seedUtxo: UTxO;
+  /** Owner pkh (hex) — `validate_mint_engage_id` ép `list.has(tx.extra_signatories, owner)`. */
+  ownerPkh: string;
+  /** did_commit đặt MỘT LẦN lúc genesis, IMMUTABLE sau đó. MVP = "" (rỗng). */
+  didCommit?: string;
+  /** Lovelace gắn kèm thread UTxO (min-ADA). Default 2 ADA. */
+  lovelace?: bigint;
+  network: Network;
+}
+
+export interface MintEngageResult {
+  tx: TxSignBuilder;
+  /** policyId + nameHex của thread NFT vừa đúc. */
+  engageNftUnit: string;
+  /** Địa chỉ script consume — nơi Engage UTxO genesis phải nằm. */
+  engageAddress: string;
+  /** Datum genesis (mọi trục kế toán = 0). */
+  genesisDatum: EngageDatumT;
+  summary: string;
+}
+
+/**
+ * Dựng tx MINT thread Engage (genesis). Đây là "nhà" của MintEngage vì handler `mint`
+ * nằm TRONG chính validator `consume` (multi-purpose) — cùng script, cùng module.
+ *
+ * ⚠ MINT VÀ SPEND KHÔNG ĐI CHUNG MỘT TX. `consume.spend` ép
+ * `script_inputs_confined_to(inputs, own_hash, vault_script_hash)` và cổng định danh
+ * "mọi input tại địa chỉ engage mang đúng 1 thread NFT"; còn tx mint tiêu UTxO seed
+ * của VÍ. Gộp hai việc chỉ làm rối ràng buộc mà không tiết kiệm được gì — tách hẳn.
+ *
+ * Ràng buộc `validate_mint_engage_id` mà builder này bám (đọc thẳng consume.ak):
+ *   - seed UTxO bị tiêu trong tx (one-shot ⇒ thread NFT singleton vĩnh viễn);
+ *   - đúng 1 asset dưới policy, qty +1, tên = blake2b_256(cbor.serialise(seed));
+ *   - đúng 1 output tại ĐỊA CHỈ SCRIPT này mang NFT đó (chống "mint sạch → dời nhà bẩn");
+ *   - datum inline, decode được EngageDatum 5 trường;
+ *   - owner nằm trong `extra_signatories`;
+ *   - consumed_count == 0 ∧ consumed_nanogic == 0 ∧ last_epoch == 0;
+ *   - output genesis có nhiều nhất 2 policy ({ADA, thread NFT}) — không nhét token lạ.
+ */
+export async function buildMintEngageTx(
+  params: MintEngageParams,
+): Promise<MintEngageResult> {
+  const {
+    lucid, consumeScript, seedUtxo, ownerPkh,
+    didCommit = "", lovelace = 2_000_000n, network,
+  } = params;
+
+  if (!/^[0-9a-fA-F]{56}$/.test(ownerPkh)) {
+    throw new Error(`MINT-ENGAGE-001: ownerPkh phải là hex 28 byte, nhận "${ownerPkh}"`);
+  }
+  if (didCommit !== "" && !/^([0-9a-fA-F]{2})+$/.test(didCommit)) {
+    throw new Error(`MINT-ENGAGE-002: did_commit phải là hex (hoặc rỗng), nhận "${didCommit}"`);
+  }
+
+  const policyId = validatorToScriptHash(consumeScript);
+  const engageAddress = validatorToAddress(network, consumeScript);
+
+  const seed: EngageIdSeed = {
+    txHash: seedUtxo.txHash,
+    outputIndex: seedUtxo.outputIndex,
+  };
+  const unit = policyId + engageAssetName(seed);
+
+  // GENESIS SẠCH: cả ba trục state tích luỹ = 0. `last_epoch` KHÔNG phải epoch hiện
+  // tại — nó là "epoch consume gần nhất", thread chưa consume lần nào ⇒ 0 (validator
+  // ép `expect ed.last_epoch == 0`).
+  const genesisDatum: EngageDatumT = {
+    owner: ownerPkh.toLowerCase(),
+    consumed_count: 0n,
+    last_epoch: 0n,
+    did_commit: didCommit.toLowerCase(),
+    consumed_nanogic: 0n,
+  };
+
+  const mintRedeemer = encodeEngageMintRedeemer({
+    seed: { transaction_id: seed.txHash, output_index: BigInt(seedUtxo.outputIndex) },
+  });
+
+  const tx = await lucid
+    .newTx()
+    .collectFrom([seedUtxo]) // one-shot: seed PHẢI nằm trong inputs
+    .mintAssets({ [unit]: 1n }, mintRedeemer)
+    .attach.MintingPolicy(consumeScript)
+    .pay.ToAddressWithData(
+      engageAddress,
+      { kind: "inline", value: encodeEngageDatum(genesisDatum) },
+      { lovelace, [unit]: 1n }, // ≤ 2 policy: ADA + thread NFT
+    )
+    .addSignerKey(ownerPkh.toLowerCase())
+    .complete();
+
+  const summary =
+    `mint engage thread ${unit} | seed=${seed.txHash}#${seedUtxo.outputIndex} | ` +
+    `addr=${engageAddress} | genesis count=0 nanogic=0 last_epoch=0`;
+
+  return { tx, engageNftUnit: unit, engageAddress, genesisDatum, summary };
 }
 
 // ── Submit helper ─────────────────────────────────────────────────────────────

@@ -2,10 +2,14 @@
 //
 // Covers the pure / early-exit surface (no lucid network mocking):
 //   1. Redeemer constructor-index resolution against the REAL built plutus.json
-//      for SnapshotGen (UpdateProfile=2) + InstantGen (=3), and absence on
-//      ScheduleGen (no UpdateProfile variant → fail loud).
+//      for InstantGen (UpdateProfile=3), and absence on ScheduleGen (no
+//      UpdateProfile variant → fail loud).
 //   2. ActivityProfile inner-constructor mapping (Ember/Flame/Lantern).
 //   3. UPDATE-001 guard — Vacuum/Schedule vaults reject before any network call.
+//
+// SnapshotGen từng có ca riêng ở đây (UpdateProfile=2). Module đó đã dời sang
+// Legacy/genmagic-v3.3 nên không còn plutus.json để đọc — bỏ ca đó, không thay
+// bằng fixture chép tay (fixture chép tay chính là thứ trôi khỏi validator thật).
 
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
@@ -21,11 +25,6 @@ const plutusPath = (module: string) =>
   fileURLToPath(new URL(`../../${module}/onchain/plutus.json`, import.meta.url));
 
 describe("updateProfile — redeemer index resolution (real plutus.json)", () => {
-  it("resolves UpdateProfile=2 on SnapshotGen", async () => {
-    const pj = await loadPlutusJson(plutusPath("SnapshotGen"));
-    expect(resolveConstrIndex(pj, VAULT_TITLE, UPDATE_PROFILE_TAG)).toBe(2);
-  });
-
   it("resolves UpdateProfile=3 on InstantGen", async () => {
     const pj = await loadPlutusJson(plutusPath("InstantGen"));
     expect(resolveConstrIndex(pj, VAULT_TITLE, UPDATE_PROFILE_TAG)).toBe(3);

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.30",
+    "@noble/hashes": "^1.4.0",
     "@magiclamp/protocol-utils": "file:../ProtocolUtils",
     "@magiclamp/instantgen-sdk": "file:../InstantGen/offchain",
     "@magiclamp/schedulegen-sdk": "file:../ScheduleGen/offchain"

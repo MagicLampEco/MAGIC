@@ -6,11 +6,21 @@
 
 export {
   createVault,
+  pickSeedUtxo,
   applyVaultValidator,
   applyShardValidator,
   buildInitialVaultDatum,
   VaultDatumSchema,
 } from "./createVault.js";
+
+// NFT danh-tính vault (INV-VAULT-IDENTITY) — mọi integrator tự dựng tx tạo vault
+// đều cần đúng hai thứ này, nếu không vault sinh ra sẽ KHÔNG tiêu được.
+export {
+  vaultIdAssetName,
+  vaultIdSeedCbor,
+  type VaultIdSeed,
+} from "./vaultId.js";
+export { VaultIdRedeemerSchema } from "./schemas.js";
 
 export {
   listVaultsForOwner,

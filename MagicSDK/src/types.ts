@@ -1,5 +1,5 @@
 // MagicSDK/src/types.ts — public types for createVault and friends
-import type { LucidEvolution, TxSignBuilder, Validator } from "@lucid-evolution/lucid";
+import type { LucidEvolution, TxSignBuilder, UTxO, Validator } from "@lucid-evolution/lucid";
 import type { Network } from "@magiclamp/protocol-utils";
 import type { PlutusJson } from "./redeemerIndex.js";
 
@@ -100,9 +100,10 @@ export interface InitialVaultConfig {
   profile?: Profile;
   /** Min-ADA lovelace to attach to vault UTxO (default 2_000_000). */
   vaultLovelace?: bigint;
-  /** Optional personal delegate PKH (28-byte hex) — reserved for
-   *  future session-key / delegated-signing semantics. Stored in
-   *  `personal_delegate` datum field. Default null. */
+  /** @deprecated KHÔNG dùng được lúc tạo vault.
+   *  `validate_mint_vault_id` ép `personal_delegate == None` ở datum khởi sinh
+   *  (genesis phải sạch). Truyền giá trị khác null ⇒ createVault ném lỗi.
+   *  Đặt uỷ quyền cá nhân bằng redeemer `SetDelegate` sau khi vault đã tồn tại. */
   personalDelegate?: string | null;
 }
 
@@ -120,6 +121,10 @@ export interface CreateVaultParams {
   vault: InitialVaultConfig;
   /** Override current epoch derivation (for deterministic tests). */
   tipPosixMs?: bigint;
+  /** Seed UTxO cho NFT danh-tính vault (INV-VAULT-IDENTITY). Bỏ trống thì SDK
+   *  tự chọn tất định từ UTxO của ví. UTxO này BẮT BUỘC là input của tx tạo
+   *  vault; tên NFT = blake2b_256(cbor.serialise(OutputReference của nó)). */
+  seedUtxo?: UTxO;
 }
 
 /** Result of `createVault()` — ready for caller to sign + submit. */
@@ -133,6 +138,15 @@ export interface CreateVaultResult {
   /** Applied vault script (for downstream tx builders that need
    *  `.attach.SpendingValidator(vaultScript)`). */
   vaultScript: Validator;
+  /** Policy ID của NFT danh-tính vault. BẰNG ĐÚNG `vaultScriptHash`: vault là
+   *  validator đa-mục-đích, handler `mint` chạy dưới chính script hash đó. */
+  vaultIdPolicyId: string;
+  /** Tên asset (hex) của NFT danh-tính = blake2b_256(cbor.serialise(seed)). */
+  vaultIdAssetName: string;
+  /** `policyId + assetName` — unit dùng trực tiếp với Lucid. */
+  vaultIdUnit: string;
+  /** UTxO đã dùng làm seed one-shot (đã được ép vào inputs của tx). */
+  seedUtxo: UTxO;
   /** Human-readable summary for logs / UI. */
   summary: string;
 }

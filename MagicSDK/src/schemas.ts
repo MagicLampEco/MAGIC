@@ -131,3 +131,23 @@ export const VaultDatumSchema = Data.Object({
 });
 
 export type VaultDatum = ReturnType<typeof Data.from<typeof VaultDatumSchema>>;
+
+// ── VaultIdRedeemer — redeemer của handler `mint` trên chính validator vault ──
+//
+// Nguồn (ĐỌC, đừng nhớ): `pub type VaultIdRedeemer` trong
+//   InstantGen/onchain/validators/vault.ak  (và bản song sinh ở ScheduleGen)
+//     MintVaultId { seed: OutputReference }   → constructor 0
+//     BurnVaultId                             → constructor 1
+// Thứ tự khai báo = chỉ số constructor. Đảo một biến thể bên Aiken mà không đảo
+// ở đây ⇒ tx mint bị validator đọc thành BurnVaultId và fail.
+const OutputReferenceSchema = Data.Object({
+  transaction_id: Data.Bytes(),   // 32 byte
+  output_index:   Data.Integer(),
+});
+
+export const VaultIdRedeemerSchema = Data.Enum([
+  Data.Object({ MintVaultId: Data.Object({ seed: OutputReferenceSchema }) }),
+  Data.Literal("BurnVaultId"),
+]);
+
+export type VaultIdRedeemer = ReturnType<typeof Data.from<typeof VaultIdRedeemerSchema>>;

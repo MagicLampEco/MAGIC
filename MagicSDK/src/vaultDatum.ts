@@ -24,18 +24,25 @@ export interface InitialVaultDatumInputs {
  *     measures from `acquired_epoch`, this gives the user a clean
  *     LF=1.0 baseline. SnapshotGen will mutate this list naturally.
  *
- *   - `last_updated_epoch = current` means the user can immediately call
- *     `TriggerSnapshot` only at the NEXT epoch boundary (C-SS-1 requires
- *     `current_epoch > last_updated_epoch`). If the caller wants to make
- *     the vault fire-immediately for tests, post-process this value or
- *     wait one epoch.
+ *   - `last_updated_epoch = 0` — KHÔNG phải epoch hiện tại. `validate_mint_vault_id`
+ *     (validators/vault.ak) ép `vd.last_updated_epoch == 0` tại lúc mint NFT
+ *     danh-tính. Đặt epoch thật vào đây làm tx tạo vault fail. Trường này là
+ *     TRẠNG THÁI TÍCH LUỸ ("lần cuối vault đổi trạng thái"), giá trị sạch của
+ *     nó là 0; mọi handler đều chỉ so `current_epoch > last_updated_epoch` nên
+ *     0 là an toàn (vault dùng được ngay từ epoch kế tiếp).
  *
- *   - `attribution_root = 32 zero bytes` is the genesis state for the
- *     attribution Merkle chain (§A11). Validator hashes events into this
- *     incrementally on TriggerSnapshot.
+ *   - `attribution_root = #""` (RỖNG, 0 byte) — không phải 32 byte 0.
+ *     `validate_mint_vault_id` ép `attribution == VaultAttribution {
+ *     attribution_root: #"", last_event_epoch: 0, total_events: 0 }`.
+ *
+ *   - `personal_delegate = None` bắt buộc tại lúc sinh. Muốn đặt uỷ quyền cá
+ *     nhân thì dùng redeemer `SetDelegate` SAU khi vault đã tồn tại.
  *
  *   - `lamp_locked = 0` always at creation. Locks only happen via Vacuum
  *     Commit or Schedule Commit.
+ *
+ * MỌI hằng số trong hàm này là một điều kiện on-chain, không phải sở thích:
+ * đối chiếu trực tiếp với `validate_mint_vault_id` trước khi sửa bất kỳ dòng nào.
  */
 export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
   owner:                 string;
@@ -79,8 +86,16 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
   if (!/^[0-9a-fA-F]{56}$/.test(ownerPkh)) {
     throw new Error(`ownerPkh must be 28-byte hex (got "${ownerPkh}")`);
   }
-  if (inputs.personalDelegate && !/^[0-9a-fA-F]{56}$/.test(inputs.personalDelegate)) {
-    throw new Error(`personalDelegate must be 28-byte hex if set`);
+  if (inputs.personalDelegate != null) {
+    if (!/^[0-9a-fA-F]{56}$/.test(inputs.personalDelegate)) {
+      throw new Error(`personalDelegate must be 28-byte hex if set`);
+    }
+    // Genesis phải SẠCH: validate_mint_vault_id ép `personal_delegate == None`.
+    throw new Error(
+      `personalDelegate không đặt được lúc tạo vault: validate_mint_vault_id ` +
+      `ép personal_delegate == None ở datum khởi sinh. Tạo vault trước, rồi ` +
+      `dùng redeemer SetDelegate.`,
+    );
   }
 
   return {
@@ -99,7 +114,8 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
     profile,
     profile_changed_epoch: 0n,
     pending_profile:    null,
-    last_updated_epoch: currentEpoch,
+    // PIN on-chain: `expect vd.last_updated_epoch == 0`
+    last_updated_epoch: 0n,
     delegation_cert: {
       current: [],
       pending: null,
@@ -114,9 +130,10 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
       current_streak:    0n,
       last_active_epoch: 0n,
     },
-    personal_delegate: inputs.personalDelegate ?? null,
+    personal_delegate: null,   // PIN on-chain: `expect vd.personal_delegate == None`
     attribution: {
-      attribution_root: "00".repeat(32),   // 32 zero bytes hex
+      // PIN on-chain: `attribution_root: #""` — chuỗi byte RỖNG, không phải 32 byte 0.
+      attribution_root: "",
       last_event_epoch: 0n,
       total_events:     0n,
     },

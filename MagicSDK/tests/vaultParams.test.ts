@@ -23,6 +23,8 @@ const LAMP_POLICY = "4942de4a226f43c524c1273d752712366511d5fd7ae28bc1a1576077";
 const UM_POLICY   = "11111111111111111111111111111111111111111111111111111111";
 const UM_SCRIPT   = "22222222222222222222222222222222222222222222222222222222";
 const SHARD_POLC  = "33333333333333333333333333333333333333333333333333333333";
+const BACK_POLICY = "44444444444444444444444444444444444444444444444444444444";
+const BACK_SCRIPT = "55555555555555555555555555555555555555555555555555555555";
 const TREASURY_PKH = "5b889dfd8fabd0234233dbb2e26b9b8e96ceffe77b0c55aa2e8efc21";
 
 const TLAMP = "744c414d50";  // "tLAMP" — testnets
@@ -35,6 +37,8 @@ function protocolFor(network: ProtocolParams["network"]): ProtocolParams {
     umNftPolicyId:   UM_POLICY,
     umScriptHash:    UM_SCRIPT,
     shardPolicyId:   SHARD_POLC,
+    backingNftPolicyId: BACK_POLICY,
+    backingScriptHash:  BACK_SCRIPT,
     treasuryAddress: credentialToAddress(network, { type: "Key", hash: TREASURY_PKH }),
   };
 }
@@ -56,19 +60,23 @@ describe("buildParamsList: param order matches the Aiken validator signature", (
     expect(params("Snapshot", "Preview")).toEqual([LAMP_POLICY, TLAMP, MS_PREVIEW]);
   });
 
-  it("Instant: (lamp_policy_id, lamp_asset_name, treasury, um_nft, um_script_hash, ms_per_epoch)", () => {
+  it("Instant: (lamp_policy_id, lamp_asset_name, um_nft, um_script_hash, backing_nft, backing_script_hash, ms_per_epoch)", () => {
     expect(params("Instant", "Preview")).toEqual([
+      LAMP_POLICY, TLAMP, UM_POLICY, UM_SCRIPT, BACK_POLICY, BACK_SCRIPT, MS_PREVIEW,
+    ]);
+  });
+
+  // Vacuum is the only vault that still carries treasury_addr (I-ACT-7 removed
+  // it everywhere else), so its signature is NOT the same as Instant's.
+  it("Vacuum: (lamp_policy_id, lamp_asset_name, treasury, um_nft, um_script_hash, ms_per_epoch)", () => {
+    expect(params("Vacuum", "Preview")).toEqual([
       LAMP_POLICY, TLAMP, TREASURY_DATA, UM_POLICY, UM_SCRIPT, MS_PREVIEW,
     ]);
   });
 
-  it("Vacuum: same signature as Instant", () => {
-    expect(params("Vacuum", "Preview")).toEqual(params("Instant", "Preview"));
-  });
-
-  it("Schedule: (lamp_policy_id, lamp_asset_name, treasury, shard_policy_id, ms_per_epoch)", () => {
+  it("Schedule: (lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch)", () => {
     expect(params("Schedule", "Preview")).toEqual([
-      LAMP_POLICY, TLAMP, TREASURY_DATA, SHARD_POLC, MS_PREVIEW,
+      LAMP_POLICY, TLAMP, SHARD_POLC, MS_PREVIEW,
     ]);
   });
 });

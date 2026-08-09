@@ -39,19 +39,51 @@ describe("buildInitialVaultDatum", () => {
     expect(d.lamp_balance).toBe(1_000_000_000n);
     expect(d.lamp_locked).toBe(0n);
     expect(d.profile).toBe("Flame");
-    expect(d.last_updated_epoch).toBe(20589n);
     expect(d.magic_batches).toEqual([]);
     expect(d.vacuum_orders).toEqual([]);
     expect(d.gen_schedules).toEqual([]);
     expect(d.next_batch_index).toBe(0n);
-    expect(d.attribution.attribution_root).toBe("00".repeat(32));
     expect(d.attribution.total_events).toBe(0n);
     expect(d.personal_delegate).toBeNull();
+    // `acquired_epoch` KHÔNG bị validator ghim (LF đo tuổi từ đây) → giữ epoch thật.
     expect(d.loyalty_holdings).toEqual([{
       amount:         1_000_000_000n,
       acquired_epoch: 20589n,
       is_locked:      false,
     }]);
+  });
+
+  // ── Các trường bị `validate_mint_vault_id` GHIM CỨNG ────────────
+  // Nguồn: InstantGen/onchain/validators/vault.ak → fn validate_mint_vault_id.
+  // Sai một trường ⇒ tx tạo vault fail ⇒ không có vault nào ra đời.
+  it("khớp datum khởi sinh mà validate_mint_vault_id đòi hỏi", () => {
+    const d = buildInitialVaultDatum({
+      ownerPkh:       PKH_28,
+      lampBalanceOildrop: 1_000_000_000n,
+      profile:        "Flame",
+      currentEpoch:   20589n,
+    });
+    // `expect vd.last_updated_epoch == 0` — KHÔNG phải epoch hiện tại.
+    expect(d.last_updated_epoch).toBe(0n);
+    // `attribution_root: #""` — chuỗi byte RỖNG, không phải 32 byte 0.
+    expect(d.attribution.attribution_root).toBe("");
+    expect(d.attribution.last_event_epoch).toBe(0n);
+    // `expect vd.personal_delegate == None`
+    expect(d.personal_delegate).toBeNull();
+    expect(d.profile_changed_epoch).toBe(0n);
+    expect(d.pending_profile).toBeNull();
+    expect(d.streak_state).toEqual({ current_streak: 0n, last_active_epoch: 0n });
+    expect(d.delegation_cert).toEqual({
+      current: [], pending: null,
+      current_effective_epoch: 0n, last_changed_epoch: 0n,
+    });
+    // ActivityState { recent_burn_epochs: [], consumed_credit: 0 }
+    // (nhãn off-chain vẫn là total_burns_count — cùng vị trí, cùng kiểu.)
+    expect(d.activity_state).toEqual({ recent_burn_epochs: [], total_burns_count: 0n });
+    // sum_holdings(loyalty_holdings) == lamp_balance
+    const sum = d.loyalty_holdings.reduce((s, h) => s + h.amount, 0n);
+    expect(sum).toBe(d.lamp_balance);
+    expect(d.loyalty_holdings.every(h => !h.is_locked)).toBe(true);
   });
 
   it("rejects ownerPkh not 28-byte hex", () => {
@@ -66,16 +98,17 @@ describe("buildInitialVaultDatum", () => {
     })).toThrow("> 0");
   });
 
-  it("accepts personalDelegate when provided", () => {
-    const delegatePkh = "a".repeat(56);
-    const d = buildInitialVaultDatum({
+  // Đảo ngược kỳ vọng cũ: genesis BẮT BUỘC personal_delegate == None
+  // (`expect vd.personal_delegate == None` trong validate_mint_vault_id).
+  // Trước đây SDK nhận personalDelegate lúc tạo → tx sẽ fail on-chain.
+  it("từ chối personalDelegate lúc tạo vault (genesis phải sạch)", () => {
+    expect(() => buildInitialVaultDatum({
       ownerPkh:         PKH_28,
       lampBalanceOildrop:   1n,
       profile:          "Lantern",
       currentEpoch:     0n,
-      personalDelegate: delegatePkh,
-    });
-    expect(d.personal_delegate).toBe(delegatePkh);
+      personalDelegate: "a".repeat(56),
+    })).toThrow(/SetDelegate/);
   });
 
   it("rejects malformed personalDelegate", () => {
@@ -102,6 +135,8 @@ describe("VaultDatumSchema CBOR roundtrip", () => {
     expect(decoded.lamp_balance).toBe(original.lamp_balance);
     expect(decoded.profile).toBe(original.profile);
     expect(decoded.last_updated_epoch).toBe(original.last_updated_epoch);
+    // attribution_root rỗng phải sống sót vòng CBOR (bytes rỗng ≠ null).
+    expect(decoded.attribution.attribution_root).toBe("");
   });
 });
 

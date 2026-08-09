@@ -44,25 +44,14 @@ import {
   oneShotGenesisParams, priceParamParams, consumeParams,
 } from "../deployParams.js";
 import {
-  encodePriceParam, type PriceParamT,
+  encodePriceParam, EngageDatumSchema, type PriceParamT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
 import { vaultIdAssetName, mintVaultIdRedeemer } from "../vaultId.js";
 
-// ── EngageDatum khai TẠI CHỖ (5 trường) ──────────────────────────────────────
-// ConsumeMAGIC/offchain/src/types.ts còn 4 trường (thiếu `consumed_nanogic`) —
-// tức codec offchain đang TRỄ so với
-// ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak (`pub type EngageDatum`,
-// consumed_nanogic là trường THỨ 5, thêm ở cuối). Dùng encodeEngageDatum cũ sẽ
-// sinh Constr 0 thiếu một field ⇒ `expect ed: EngageDatum` fail ⇒ mint thread
-// hỏng. Khai ở đây theo ĐÚNG thứ tự khai báo trong types.ak.
-// KHI offchain được cập nhật, xoá khối này và quay lại import encodeEngageDatum.
-const EngageDatumSchema = Data.Object({
-  owner:            Data.Bytes(),
-  consumed_count:   Data.Integer(),
-  last_epoch:       Data.Integer(),
-  did_commit:       Data.Bytes(),
-  consumed_nanogic: Data.Integer(),
-});
+// EngageDatum lấy thẳng từ codec của module (5 trường, khớp `pub type EngageDatum`
+// trong ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak). Từng có một bản khai
+// TẠI CHỖ ở đây khi codec offchain còn trễ một trường — đã xoá: hai bản schema cho
+// cùng một datum là đúng thứ sẽ trôi khỏi nhau trong im lặng.
 
 // Asset name const đọc từ validator (.ak `pub const ...`).
 const PRICE_NFT_NAME  = "5052494345"; // "PRICE" — price_nft.ak

@@ -29,13 +29,16 @@
 // shard NFT policy id).
 
 use aiken/builtin
+use aiken/cbor
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/crypto
 use aiken/interval.{Finite, IntervalBoundType}
-use cardano/address.{Address}
-use cardano/assets.{PolicyId}
+use cardano/address.{Address, Script}
+use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, Spend, Transaction, placeholder,
+  InlineDatum, Input, NoDatum, Output, OutputReference, Spend, Transaction,
+  placeholder,
 }
 
 use magiclamp/protocol/types.{
@@ -61,10 +64,56 @@ use magiclamp/protocol/lock.{
   sum_holdings, l_avail,
 }
 
-const lamp_asset_name: ByteArray = #"744c414d50"   // "tLAMP"
-// Shard NFT asset name is now PER-SHARD: shard_asset_name(shard_id) from math.ak
+// LAMP native-asset name is now a VALIDATOR PARAMETER (`lamp_asset_name`), NOT a
+// hardcoded literal — the asset name is a per-network PARAM (tLAMP testnet / LAMP
+// mainnet), so it must never be baked as a constant.
+//
+// Shard NFT asset name is PER-SHARD: shard_asset_name(shard_id) from math.ak
 // ("SHARD" ∥ byte(id)). Each shard carries a distinct one-shot NFT, so identity
 // is bound by asset name, not by the self-declared `shard_id` datum field.
+
+// ══════════════════════════════════════════════════════════════
+// VAULT-IDENTITY STATE-THREAD NFT — genesis-clean anchor (MAINNET-BLOCK)
+//
+// THE HOLE: Cardano runs a validator only when a UTxO is SPENT, never when it is
+// CREATED. The vault script address is public (= hash of this validator + params).
+// An attacker parks a UTxO at the vault address with a FABRICATED inline datum
+// (`gen_schedules` full of fake locks, `magic_batches` full of fake amounts,
+// `consumed_credit = 10^18`, `owner = attacker`) and spends it via
+// ScheduleCommit/ScheduleFire/BurnBatch to mint MAGIC (or pay a ConsumeMAGIC
+// co-spend) from 100%-fabricated state. Nothing validated the datum at creation.
+//
+// THE FIX: a state-thread NFT whose ONLY way into existence runs the `mint`
+// handler below — which PROVES the vault started clean — and whose presence is
+// REQUIRED on every spend (`validate_vault_value`). A fabricated vault (no NFT)
+// cannot be spent by ANY handler.
+//
+// WHY MULTI-PURPOSE (spend + mint in ONE validator): the mint policy must bind
+// the genesis NFT to THIS vault's script address (else an attacker mints a clean
+// NFT to a wallet, then in a plain tx re-homes it to the vault address with a
+// DIRTY datum — no script runs on that creation, reopening the hole). Binding
+// needs the vault hash inside the mint policy while the spend side needs the mint
+// policy id — a MUTUAL apply-param fixed point (`vault_hash = H(…,policy)`,
+// `policy = H(…,vault_hash)`) that is undeployable. Folding the mint handler INTO
+// the vault validator breaks the cycle: `policy_id (mint) == script_hash == the
+// Script credential of the spend address`, all known via self-reference, no param,
+// no cycle. The single script hash IS the vault_id policy id.
+//
+// NOTE — this is a DISTINCT anchor from the 16-shard NFT system: the shard NFT
+// (shard_nft.ak) protects the shard aggregate UTxOs, NOT the vault. `vault_id_nft`
+// protects the vault UTxO itself. The vault output carries {ADA, LAMP, vault_id
+// NFT} — NEVER a shard NFT — so its policy-set is bounded at 3.
+//
+// The asset name is `blake2b_256(cbor.serialise(seed))` so each vault is a
+// distinct N-instance one-shot (permissionless, unique per spent seed UTxO).
+pub type VaultIdRedeemer {
+  // Mint a fresh vault-identity NFT + park a genesis-clean vault UTxO.
+  MintVaultId { seed: OutputReference }
+  // Burn the NFT (qty < 0 only). A spend that also burns the NFT still fails
+  // `validate_vault_value` (NFT must survive on the continuing output), so under
+  // the current handler set the NFT is permanent. Kept for forward-compat.
+  BurnVaultId
+}
 
 // ══════════════════════════════════════════════════════════════
 // Vault validator
@@ -74,9 +123,20 @@ const lamp_asset_name: ByteArray = #"744c414d50"   // "tLAMP"
 //   Preview/Preprod: 86_400_000
 validator vault(
   lamp_policy_id    : PolicyId,
-  shard_policy_id   : PolicyId,  // identifies shard UTxOs by NFT
+  lamp_asset_name   : ByteArray,  // per-network PARAM (tLAMP testnet / LAMP mainnet)
+  shard_policy_id   : PolicyId,   // identifies shard UTxOs by NFT
   ms_per_epoch      : Int,
 ) {
+  // ── mint: vault-identity NFT policy (policy_id == this script hash) ──────
+  mint(redeemer: VaultIdRedeemer, policy_id: PolicyId, tx: Transaction) {
+    when redeemer is {
+      MintVaultId { seed } ->
+        validate_mint_vault_id(seed, policy_id, lamp_policy_id, lamp_asset_name, tx)
+      BurnVaultId ->
+        validate_burn_vault_id(policy_id, tx)
+    }
+  }
+
   spend(
     datum_opt : Option<VaultDatum>,
     redeemer  : VaultRedeemer,
@@ -94,27 +154,32 @@ validator vault(
       ScheduleCommit { schedule_length, lamp_per_epoch } ->
         validate_commit(datum, schedule_length, lamp_per_epoch,
                         current_epoch, own_ref, vault_addr,
-                        lamp_policy_id, shard_policy_id, tx)
+                        lamp_policy_id, lamp_asset_name, shard_policy_id, tx)
 
       ScheduleFire { schedule_id } ->
         validate_fire(datum, schedule_id, current_epoch, own_ref, vault_addr,
-                      lamp_policy_id, shard_policy_id, tx)
+                      lamp_policy_id, lamp_asset_name, shard_policy_id, tx)
 
       // ── BurnBatch (D1 datum-consume) ─────────────────────────
       BurnBatch { burns } ->
         validate_burn_batch(datum, burns, current_epoch, vault_addr,
-                            lamp_policy_id, tx)
+                            lamp_policy_id, lamp_asset_name, tx)
 
       // ── WithdrawLamp (SPEC_V1 §1) ────────────────────────────
       WithdrawLamp { amount } ->
         validate_withdraw_lamp(datum, amount, current_epoch, vault_addr,
-                               lamp_policy_id, tx)
+                               lamp_policy_id, lamp_asset_name, tx)
 
       // ── SetDelegate: owner sets/changes consume-delegate ─────
       SetDelegate { new_delegate } ->
         validate_set_delegate(datum, new_delegate, current_epoch, vault_addr,
-                              lamp_policy_id, tx)
+                              lamp_policy_id, lamp_asset_name, tx)
     }
+  }
+
+  // Any other script purpose fails closed.
+  else(_) {
+    fail
   }
 }
 
@@ -185,9 +250,18 @@ fn validate_commit(
   own_ref         : OutputReference,
   vault_addr      : Address,
   lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
   shard_policy_id : PolicyId,
   tx              : Transaction,
 ) -> Bool {
+
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  // A UTxO parked at the vault address with a forged datum but NO vault_id NFT
+  // dies here before any schedule/shard logic runs.
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
 
   // C-VAC-1 equivalent: user signs
   expect list.has(tx.extra_signatories, datum.owner)
@@ -281,7 +355,7 @@ fn validate_commit(
   expect sum_holdings(output.loyalty_holdings) == output.lamp_balance  // C-VAULT-10
 
   // VALUE PRESERVATION: vault LAMP value == lamp_balance (commit moves no LAMP).
-  expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id) == output.lamp_balance
+  expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id, lamp_asset_name) == output.lamp_balance
 
   True
 }
@@ -296,9 +370,18 @@ fn validate_fire(
   own_ref         : OutputReference,
   vault_addr      : Address,
   lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
   shard_policy_id : PolicyId,
   tx              : Transaction,
 ) -> Bool {
+
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  // ScheduleFire is PERMISSIONLESS, so this is the sole gate stopping a forged
+  // vault (no NFT) from being fired into fabricated MAGIC batches.
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
 
   // C-SCH-FIRE-PERMISSION: NO owner signature required
   // (any keeper, user, or third party may trigger fire)
@@ -391,7 +474,7 @@ fn validate_fire(
   expect sum_holdings(output.loyalty_holdings) == output.lamp_balance
 
   // VALUE PRESERVATION: vault LAMP value == new lamp_balance.
-  expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id) == output.lamp_balance
+  expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id, lamp_asset_name) == output.lamp_balance
 
   True
 }
@@ -405,13 +488,22 @@ fn validate_fire(
 // value preservation. total_burned is the sum of the burns; over-burn is
 // FORBIDDEN in the accounting model (would destroy user MAGIC for free).
 fn validate_burn_batch(
-  input_datum    : VaultDatum,
-  burns          : List<(ByteArray, Int)>,
-  current_epoch  : Int,
-  vault_addr     : Address,
-  lamp_policy_id : PolicyId,
-  tx             : Transaction,
+  input_datum     : VaultDatum,
+  burns           : List<(ByteArray, Int)>,
+  current_epoch   : Int,
+  vault_addr      : Address,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
+
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  // The delegate path lets a non-owner call this; a forged vault (no NFT) full
+  // of fabricated batches dies here before any consume accounting runs.
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
 
   // ── AUTH: owner OR consume-delegate (personal_delegate) signs ──
   let authed =
@@ -464,7 +556,7 @@ fn validate_burn_batch(
   expect output_datum.attribution.last_event_epoch == current_epoch
 
   // ── VALUE PRESERVATION (anti value-leak) ─────────────────────
-  expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id) == output_datum.lamp_balance
+  expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id, lamp_asset_name) == output_datum.lamp_balance
 
   expect list.length(output_datum.magic_batches) <= max_batches_per_vault
   True
@@ -527,13 +619,20 @@ fn prune_expired(batches: List<MagicBatch>, current_epoch: Int) -> List<MagicBat
 // validate_set_delegate — owner sets/changes consume-delegate
 // ══════════════════════════════════════════════════════════════
 fn validate_set_delegate(
-  input_datum    : VaultDatum,
-  new_delegate   : Option<ByteArray>,
-  current_epoch  : Int,
-  vault_addr     : Address,
-  lamp_policy_id : PolicyId,
-  tx             : Transaction,
+  input_datum     : VaultDatum,
+  new_delegate    : Option<ByteArray>,
+  current_epoch   : Int,
+  vault_addr      : Address,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
+
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
 
   // ONLY owner may change the delegate (a delegate cannot re-delegate).
   expect list.has(tx.extra_signatories, input_datum.owner)
@@ -560,7 +659,7 @@ fn validate_set_delegate(
   expect output_datum.last_updated_epoch    == current_epoch
 
   // VALUE PRESERVATION: LAMP untouched.
-  expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id) == input_datum.lamp_balance
+  expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id, lamp_asset_name) == input_datum.lamp_balance
 
   True
 }
@@ -682,26 +781,178 @@ fn find_vault_output_raw(outputs: List<Output>, vault_addr: Address) -> Output {
   o
 }
 
+/// The single vault INPUT at `vault_addr` (used for the vault-identity value
+/// check). The spend-level C-VAULT-DS-1 guarantees exactly one such input.
+fn find_vault_input_raw(inputs: List<Input>, vault_addr: Address) -> Input {
+  expect Some(i) = list.find(inputs, fn(x) { x.output.address == vault_addr })
+  i
+}
+
 fn vault_output_lamp_with(
-  outputs        : List<Output>,
-  vault_addr     : Address,
-  lamp_policy_id : PolicyId,
+  outputs         : List<Output>,
+  vault_addr      : Address,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
 ) -> Int {
   let o = find_vault_output_raw(outputs, vault_addr)
   assets.quantity_of(o.value, lamp_policy_id, lamp_asset_name)
 }
 
 // ═══════════════════════════════════════════════════════════════
+// VAULT-IDENTITY value check + genesis mint policy (MAINNET-BLOCK)
+// ═══════════════════════════════════════════════════════════════
+
+/// VALUE-PRESERVATION guard shared by EVERY spend handler.
+///   - VAULT-IDENTITY NFT: the spent input must carry EXACTLY one asset under the
+///     vault_id policy (== this validator's own script hash, read from the input's
+///     Script payment credential), and the continuing output must carry the SAME
+///     (policy, name). A FABRICATED vault (no NFT — no policy ran to vet its datum)
+///     fails at `single_nft_name`, so it cannot be spent by ANY handler.
+///   - lovelace(out) >= lovelace(in)  → no surplus ADA siphoned (top-up allowed).
+///   - |policies(out)| <= 3           → at most {ADA, LAMP, vault_id NFT}; the
+///     vault NEVER carries a shard NFT, so any extra policy = dust-stuffing bloat,
+///     rejected.
+fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
+  expect Script(vault_id_policy) = vault_input.output.address.payment_credential
+  let nft_name = single_nft_name(vault_input.output.value, vault_id_policy)
+  expect assets.quantity_of(vault_output.value, vault_id_policy, nft_name) == 1
+  expect assets.lovelace_of(vault_output.value) >= assets.lovelace_of(vault_input.output.value)
+  expect list.length(assets.policies(vault_output.value)) <= 3
+  True
+}
+
+/// The single asset name held under `policy` in `value` (qty must be 1).
+/// `expect`-fails if there is not EXACTLY one such token — a fabricated vault
+/// carrying zero vault_id tokens is rejected right here.
+fn single_nft_name(value: Value, policy: PolicyId) -> ByteArray {
+  expect [Pair(name, qty)] = assets.tokens(value, policy) |> dict.to_pairs
+  expect qty == 1
+  name
+}
+
+/// validate_mint_vault_id — genesis-clean state-thread NFT mint.
+/// Runs at MINT (the one moment a policy can enforce "this vault started clean").
+/// Constrains EVERY VaultDatum field to its clean initial value and binds the
+/// declared LAMP balance to the ACTUAL LAMP sitting in the parked output.
+fn validate_mint_vault_id(
+  seed            : OutputReference,
+  policy_id       : PolicyId,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
+) -> Bool {
+
+  // ── ONE-SHOT uniqueness: the exact seed UTxO must be spent here ──────────
+  expect list.any(tx.inputs, fn(i) { i.output_reference == seed })
+
+  // ── EXACTLY one asset under this policy, qty +1, name = H(seed) ──────────
+  let own_tokens = assets.tokens(tx.mint, policy_id)
+  expect dict.size(own_tokens) == 1
+  let nft_name = crypto.blake2b_256(cbor.serialise(seed))
+  expect assets.quantity_of(tx.mint, policy_id, nft_name) == 1
+
+  // ── EXACTLY one output at THIS vault script address carrying the NFT ─────
+  // policy_id == this validator's own script hash ⟹ Script(policy_id) is the
+  // vault spend address. Binding the NFT here stops "mint clean → re-home dirty".
+  let carriers =
+    list.filter(tx.outputs, fn(o) {
+      o.address.payment_credential == Script(policy_id) && assets.quantity_of(
+        o.value,
+        policy_id,
+        nft_name,
+      ) == 1
+    })
+  expect [vault_out] = carriers
+
+  // ── Genesis datum must be inline + decode as a VaultDatum ────────────────
+  expect InlineDatum(datum_data) = vault_out.datum
+  expect vd: VaultDatum = datum_data
+
+  // ── CLEAN genesis — constrain ALL 17 fields ─────────────────────────────
+  // owner: a pkh the creator controls (present in signatories).
+  expect list.has(tx.extra_signatories, vd.owner)
+
+  // LAMP accounting bound to the REAL deposited LAMP (no over-claim).
+  let lamp_qty = assets.quantity_of(vault_out.value, lamp_policy_id, lamp_asset_name)
+  expect vd.lamp_balance == lamp_qty
+  expect vd.lamp_locked == 0
+  expect sum_holdings(vd.loyalty_holdings) == vd.lamp_balance
+  expect list.all(vd.loyalty_holdings, fn(h) { !h.is_locked })
+  expect list.length(vd.loyalty_holdings) <= max_loyalty_holdings
+
+  // MAGIC / schedule / consumed state MUST be empty — the exact levers a forged
+  // datum would fabricate (critic I2: consumed_credit is accumulated by BurnBatch
+  // though unread today; pin it to 0 at genesis regardless).
+  expect vd.magic_batches == []
+  expect vd.next_batch_index == 0
+  expect vd.vacuum_orders == []
+  expect vd.gen_schedules == []
+  expect vd.activity_state == ActivityState {
+    recent_burn_epochs: [],
+    consumed_credit: 0,
+  }
+
+  // Every other ledger empty/zeroed. profile NOT pinned: it is a user-chosen
+  // STRATEGY (Ember/Flame/Lantern), not accumulated state — any of the 3 valid
+  // enum values is a valid genesis strategy, so pinning gives no security benefit
+  // and would reject vaults the standard off-chain flow creates (default Flame).
+  expect vd.profile_changed_epoch == 0
+  expect vd.pending_profile == None
+  expect vd.last_updated_epoch == 0
+  expect vd.delegation_cert == DelegationCertificate {
+    current: [],
+    pending: None,
+    current_effective_epoch: 0,
+    last_changed_epoch: 0,
+  }
+  expect vd.streak_state == StreakState {
+    current_streak: 0,
+    last_active_epoch: 0,
+  }
+  expect vd.personal_delegate == None
+  expect vd.attribution == VaultAttribution {
+    attribution_root: #"",
+    last_event_epoch: 0,
+    total_events: 0,
+  }
+
+  // ── No dust / shard NFT bundled into genesis: at most {ADA, LAMP, vault_id} ─
+  expect list.length(assets.policies(vault_out.value)) <= 3
+
+  True
+}
+
+/// Burn path: allowed only for NEGATIVE quantities under this policy. A spend
+/// that also burns the NFT is still rejected by `validate_vault_value` (the NFT
+/// must survive on the continuing output).
+fn validate_burn_vault_id(policy_id: PolicyId, tx: Transaction) -> Bool {
+  let own_tokens = assets.tokens(tx.mint, policy_id)
+  expect
+    list.all(dict.to_pairs(own_tokens), fn(p) {
+      let Pair(_name, qty) = p
+      qty < 0
+    })
+  True
+}
+
+// ═══════════════════════════════════════════════════════════════
 // validate_withdraw_lamp — W-1..W-7 (SPEC_V1 §1)
 // ═══════════════════════════════════════════════════════════════
 fn validate_withdraw_lamp(
-  input_datum    : VaultDatum,
-  amount         : Int,
-  _current_epoch : Int,
-  vault_addr     : Address,
-  lamp_policy_id : PolicyId,
-  tx             : Transaction,
+  input_datum     : VaultDatum,
+  amount          : Int,
+  _current_epoch  : Int,
+  vault_addr      : Address,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
+
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
 
   // W-1
   expect amount > 0
@@ -880,6 +1131,14 @@ const t_lamp_policy: ByteArray =
   #"22222222222222222222222222222222222222222222222222222222"
 const t_tx_id: ByteArray =
   #"3333333333333333333333333333333333333333333333333333333333333333"
+// LAMP asset name is now a validator PARAM; tests supply it explicitly.
+const t_lamp_name: ByteArray = #"744c414d50"   // "tLAMP"
+const t_shard_policy: ByteArray =
+  #"55555555555555555555555555555555555555555555555555555555"
+// vault_id NFT lives under the vault's OWN script hash (policy_id == script hash
+// for this multi-purpose validator). Stand-in for blake2b_256(cbor.serialise(seed)).
+const t_vault_id_name: ByteArray =
+  #"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
 fn t_vault_addr() -> Address {
   address.from_script(t_vault_hash)
@@ -949,7 +1208,8 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
 fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
   Output {
     address: t_vault_addr(),
-    value: assets.from_asset(t_lamp_policy, lamp_asset_name, balance),
+    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance)
+      |> assets.add(t_vault_hash, t_vault_id_name, 1),
     datum: InlineDatum(datum),
     reference_script: None,
   }
@@ -957,6 +1217,20 @@ fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
 
 fn t_vault_input(datum: VaultDatum, balance: Int) -> Input {
   Input { output_reference: t_own_ref(), output: t_vault_output(datum, balance) }
+}
+
+// Fabricated (NO-NFT) vault fixtures — the attacker's parked UTxO.
+fn t_vault_output_nonft(datum: VaultDatum, balance: Int) -> Output {
+  Output {
+    address: t_vault_addr(),
+    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance),  // NO vault_id NFT
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+}
+
+fn t_vault_input_nonft(datum: VaultDatum, balance: Int) -> Input {
+  Input { output_reference: t_own_ref(), output: t_vault_output_nonft(datum, balance) }
 }
 
 fn t_tx(ins: List<Input>, outs: List<Output>, signers: List<ByteArray>) -> Transaction {
@@ -969,27 +1243,27 @@ test w_positive_partial() {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
-  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_amount_zero() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(din, 100)], [t_owner])
-  validate_withdraw_lamp(din, 0, 0, t_vault_addr(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 0, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_over_avail() fail {
   let din = t_datum(100, 100, [t_holding(100, 5, True)])
   let dout = t_datum(95, 100, [t_holding(95, 5, True)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
-  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_no_owner_sig() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [])
-  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_phantom_second_output() fail {
@@ -1001,7 +1275,7 @@ test w_phantom_second_output() fail {
       [t_vault_output(dout, 95), t_vault_output(dout, 95)],
       [t_owner],
     )
-  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_advance_last_updated_rejected() fail {
@@ -1012,7 +1286,7 @@ test w_advance_last_updated_rejected() fail {
       last_updated_epoch: 5,
     }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
-  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, tx)
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // ── BurnBatch (D1) tests ──────────────────────────────────────
@@ -1043,21 +1317,21 @@ test bb_partial_reduce() {
   let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60), t_batch(#"bb", 50)], 1, 40, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_full_prune() {
   let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
   let dout = t_out_b([t_batch(#"bb", 50)], 1, 100, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 100)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 100)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_multi_burn() {
   let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 90), t_batch_reduced(#"bb", 50, 30)], 1, 30, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 10), (#"bb", 20)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 10), (#"bb", 20)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_delegate_can_burn() {
@@ -1066,7 +1340,7 @@ test bb_delegate_can_burn() {
   let doutb = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
   let dout  = VaultDatum { ..doutb, personal_delegate: Some(t_delegate) }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
-  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // §4.2 CLIFF: a batch created at epoch 7 is DEAD at epoch 8 — burning it must
@@ -1075,7 +1349,7 @@ test bb_dead_batch_rejected() fail {
   let din  = t_datum_b([t_batch(#"aa", 100)])            // created_epoch = 7
   let dout = t_out_b([], 1, 40, 8)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 40)], 8, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 40)], 8, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // §4.2 GC: burning a live batch in the same tx also collects the dead ones.
@@ -1084,7 +1358,7 @@ test bb_dead_batch_collected() {
   let din  = t_datum_b([dead, t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // consumed_credit must advance by exactly Σburns (§6.3 accounting hook).
@@ -1092,21 +1366,21 @@ test bb_consumed_credit_not_advanced() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 0, 7)   // credit stayed 0
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_consumed_credit_inflated() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40_000, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_no_auth() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_over_burn() fail {
@@ -1114,21 +1388,21 @@ test bb_over_burn() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([], 1, 150, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 150)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 150)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_zero_amount() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch(#"aa", 100)], 1, 0, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 0)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 0)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_empty_burns() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch(#"aa", 100)], 1, 0, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_lamp_leak_rejected() fail {
@@ -1136,14 +1410,14 @@ test bb_lamp_leak_rejected() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 80)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_attribution_not_incremented() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 0, 40, 7)   // total_events stayed 0
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, tx)
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // ── unlock_locked_amount (I-ACT-7 fire release) ───────────────
@@ -1178,7 +1452,7 @@ test sd_set() {
   let dout =
     VaultDatum { ..din, personal_delegate: Some(t_delegate), last_updated_epoch: 9 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_set_delegate(din, Some(t_delegate), 9, t_vault_addr(), t_lamp_policy, tx)
+  validate_set_delegate(din, Some(t_delegate), 9, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test sd_clear() {
@@ -1190,7 +1464,7 @@ test sd_clear() {
   let dout =
     VaultDatum { ..din, personal_delegate: None, last_updated_epoch: 9 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_set_delegate(din, None, 9, t_vault_addr(), t_lamp_policy, tx)
+  validate_set_delegate(din, None, 9, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test sd_only_owner() fail {
@@ -1199,7 +1473,7 @@ test sd_only_owner() fail {
     VaultDatum { ..din, personal_delegate: Some(t_delegate), last_updated_epoch: 9 }
   // signed by the prospective delegate, NOT the owner → reject
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
-  validate_set_delegate(din, Some(t_delegate), 9, t_vault_addr(), t_lamp_policy, tx)
+  validate_set_delegate(din, Some(t_delegate), 9, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test sd_no_other_field_change() fail {
@@ -1213,7 +1487,7 @@ test sd_no_other_field_change() fail {
       lamp_balance: 200,
     }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 200)], [t_owner])
-  validate_set_delegate(din, Some(t_delegate), 9, t_vault_addr(), t_lamp_policy, tx)
+  validate_set_delegate(din, Some(t_delegate), 9, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 // ── Shard co-spend redeemer-gate tests (HIGH authority-bypass fix) ─────
@@ -1288,4 +1562,189 @@ test shard_cospend_no_redeemer_rejected() {
   let sid = compute_shard_id(vd.owner)
   let tx = t_tx([t_vault_input(vd, 100)], [], [])
   !vault_cospend_matches(tx, t_shard_addr(), sid)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tests — VAULT-IDENTITY STATE-THREAD NFT (MAINNET-BLOCK)
+//
+// Closes the fabricated-datum hole: a UTxO parked at the vault script address
+// with an attacker-authored inline datum but NO vault_id NFT can no longer be
+// spent by any handler, and the mint policy forces a genesis-clean datum bound
+// to the real deposited LAMP.
+// ═══════════════════════════════════════════════════════════════
+
+fn t_mint_seed() -> OutputReference {
+  OutputReference { transaction_id: t_tx_id, output_index: 7 }
+}
+
+fn t_mint_name(seed: OutputReference) -> ByteArray {
+  crypto.blake2b_256(cbor.serialise(seed))
+}
+
+fn t_seed_input(seed: OutputReference) -> Input {
+  Input {
+    output_reference: seed,
+    output: Output {
+      address: address.from_script(t_owner),
+      value: assets.from_lovelace(2_000_000),
+      datum: NoDatum,
+      reference_script: None,
+    },
+  }
+}
+
+/// Genesis output at Script(policy) carrying `balance` LAMP + the vault_id NFT.
+fn t_genesis_output(vd: VaultDatum, balance: Int, policy: PolicyId, name: ByteArray) -> Output {
+  Output {
+    address: address.from_script(policy),
+    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance)
+      |> assets.add(policy, name, 1),
+    datum: InlineDatum(vd),
+    reference_script: None,
+  }
+}
+
+fn t_mint_tx(seed: OutputReference, out: Output, mint_v: Value, signers: List<ByteArray>) -> Transaction {
+  Transaction {
+    ..placeholder,
+    inputs: [t_seed_input(seed)],
+    outputs: [out],
+    mint: mint_v,
+    extra_signatories: signers,
+  }
+}
+
+fn t_mint_call(seed: OutputReference, policy_id: PolicyId, tx: Transaction) -> Bool {
+  vault.mint(
+    t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
+    MintVaultId { seed }, policy_id, tx,
+  )
+}
+
+/// Clean genesis datum (all fields at initial value); owner = t_owner, profile Flame.
+fn t_clean_genesis(balance: Int) -> VaultDatum {
+  t_datum(balance, 0, [t_holding(balance, 5, False)])
+}
+
+// ── mint_clean_genesis_ok: a correct clean mint passes ────────────────────
+test mint_clean_genesis_ok() {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let vd   = t_clean_genesis(bal)
+  let out  = t_genesis_output(vd, bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx   = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── poc_dirty_mint_rejected: dirty datum at mint → rejected ────────────────
+// Non-empty magic_batches AND nonzero consumed_credit — the exact fabrication.
+test poc_dirty_mint_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let dirty =
+    VaultDatum {
+      ..t_clean_genesis(bal),
+      magic_batches: [t_batch(#"aa", 1_000_000_000_000_000_000)],
+      activity_state: ActivityState {
+        recent_burn_epochs: [],
+        consumed_credit: 1_000_000_000_000_000_000,
+      },
+    }
+  let out = t_genesis_output(dirty, bal, t_vault_hash, name)
+  let m   = assets.from_asset(t_vault_hash, name, 1)
+  let tx  = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: lamp_balance overclaimed vs actual LAMP in output → rejected ─────
+test poc_dirty_mint_lamp_overclaim_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  // datum claims 1000 LAMP but only 100 LAMP sits in the output.
+  let vd  = t_clean_genesis(1000)
+  let out = t_genesis_output(vd, 100, t_vault_hash, name)
+  let m   = assets.from_asset(t_vault_hash, name, 1)
+  let tx  = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: genesis seed not spent → one-shot broken → rejected ──────────────
+test mint_no_genesis_seed_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out  = t_genesis_output(t_clean_genesis(bal), bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: [t_seed_input(OutputReference { transaction_id: t_tx_id, output_index: 99 })],
+      outputs: [out],
+      mint: m,
+      extra_signatories: [t_owner],
+    }
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: qty != 1 (2 minted) → not a singleton → rejected ─────────────────
+test mint_wrong_qty_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out  = t_genesis_output(t_clean_genesis(bal), bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 2)
+  let tx   = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: owner not among signatories → rejected ───────────────────────────
+test mint_owner_not_signed_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out  = t_genesis_output(t_clean_genesis(bal), bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx   = t_mint_tx(seed, out, m, [])     // nobody signs for the owner
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── POC: fabricated vault fired via ScheduleFire now FAILS ─────────────────
+// Pre-fix, a UTxO parked at the vault address with fabricated magic_batches (or
+// gen_schedules) could be fired/consumed into REAL MAGIC. Now the no-NFT input
+// dies at validate_vault_value → single_nft_name before any schedule logic runs.
+test poc_fabricated_magic_schedule_fails() fail {
+  let fake = t_batch(#"aa", 1_000_000_000_000_000_000)   // fabricated 10^18
+  let din  = t_datum_b([fake])
+  let tx   =
+    t_tx([t_vault_input_nonft(din, 100)], [t_vault_output_nonft(din, 100)], [t_owner])
+  validate_fire(din, #"aa", 7, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+// ── POC: fabricated MAGIC batch burned via BurnBatch now FAILS ─────────────
+test poc_fabricated_magic_burn_batch_fails() fail {
+  let fake = t_batch(#"aa", 1_000_000_000_000_000_000)
+  let din  = t_datum_b([fake])
+  let tx   =
+    t_tx([t_vault_input_nonft(din, 100)], [t_vault_output_nonft(din, 100)], [t_owner])
+  validate_burn_batch(din, [(#"aa", 500)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// ── spend_preserves_nft_ok: continuing output keeps the NFT → passes ───────
+test spend_preserves_nft_ok() {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// ── spend_drops_nft_fail: input has NFT, output drops it → rejected ────────
+test spend_drops_nft_fail() fail {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output_nonft(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }

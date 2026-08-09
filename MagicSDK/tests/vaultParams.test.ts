@@ -13,6 +13,8 @@
 //   ScheduleGen/onchain/validators/vault.ak
 
 import { describe, it, expect } from "vitest";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { msPerEpoch } from "@magiclamp/protocol-utils";
 import { buildParamsList } from "../src/validatorScripts.js";
 import type { ProtocolParams } from "../src/types.js";
@@ -80,5 +82,58 @@ describe("buildParamsList: lamp_asset_name is network-derived, never a testnet d
     const custom = "6d794c414d50";  // "myLAMP" — non-canonical mint
     const p = { ...protocolFor("Mainnet"), lampAssetName: custom };
     expect(buildParamsList("Instant", p, msPerEpoch("Mainnet"))[1]).toBe(custom);
+  });
+});
+
+// ── Cổng ARITY — đối chiếu thẳng với blueprint đã build ─────────────────────
+//
+// Bảng kỳ vọng ở trên vẫn là bảng CHÉP TAY: nó bắt được lệch THỨ TỰ nhưng vẫn
+// trôi cùng nhau nếu người sửa cập nhật cả code lẫn bảng theo một hiểu sai.
+// Khối này đọc `parameters[]` từ chính `plutus.json` do `aiken build` sinh ra —
+// nguồn duy nhất không thể chép sai.
+//
+// Đây là lỗi đã xảy ra thật, ba lần trong repo này: `applyParamsToScript` KHÔNG
+// kiểm arity, nên truyền thiếu vẫn ra hash 28 byte trông hợp lệ, và sai chỉ lộ ra
+// khi có LAMP thật nằm ở một địa chỉ không ai spend được.
+type Blueprint = {
+  validators: { title: string; parameters?: { title: string }[] }[];
+};
+
+const loadBlueprint = async (module: string): Promise<Blueprint> =>
+  JSON.parse(await readFile(
+    fileURLToPath(new URL(`../../${module}/onchain/plutus.json`, import.meta.url)),
+    "utf8",
+  ));
+
+const paramTitles = (bp: Blueprint, title: string): string[] => {
+  const v = bp.validators.find((x) => x.title === title);
+  if (!v) throw new Error(`validator "${title}" not in blueprint`);
+  return (v.parameters ?? []).map((p) => p.title);
+};
+
+describe("arity gate: SDK param list matches the built blueprint", () => {
+  it("Instant: buildParamsList length == vault.vault.spend parameter count", async () => {
+    const titles = paramTitles(await loadBlueprint("InstantGen"), "vault.vault.spend");
+    expect(titles).toEqual([
+      "lamp_policy_id", "lamp_asset_name", "um_nft_policy", "um_script_hash",
+      "backing_nft_policy", "backing_script_hash", "ms_per_epoch",
+    ]);
+    expect(params("Instant", "Preview")).toHaveLength(titles.length);
+  });
+
+  it("Schedule: buildParamsList length == vault.vault.spend parameter count", async () => {
+    const titles = paramTitles(await loadBlueprint("ScheduleGen"), "vault.vault.spend");
+    expect(titles).toEqual([
+      "lamp_policy_id", "lamp_asset_name", "shard_policy_id", "ms_per_epoch",
+    ]);
+    expect(params("Schedule", "Preview")).toHaveLength(titles.length);
+  });
+
+  it("shard validator takes exactly 1 param — applyShardValidator must not apply []", async () => {
+    // applyShardValidator từng apply `[]` cho validator nhận 1 tham số ⇒ hash và
+    // địa chỉ shard do SDK dẫn xuất KHÁC hash mà deploy/03 đã dùng để đặt 16 shard
+    // UTxO ⇒ mọi ScheduleFire qua SDK không tìm thấy shard input.
+    const titles = paramTitles(await loadBlueprint("ScheduleGen"), "vault.shard.spend");
+    expect(titles).toEqual(["shard_policy_id_param"]);
   });
 });

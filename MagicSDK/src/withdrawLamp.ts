@@ -83,9 +83,10 @@ export interface WithdrawLampResult {
  *       - profile, profile_changed_epoch, pending_profile: UNCHANGED
  *       - delegation_cert, activity_state, streak_state: UNCHANGED
  *       - personal_delegate, attribution: UNCHANGED
- *       - last_updated_epoch: advanced to current epoch
+ *       - last_updated_epoch: UNCHANGED (validator ép giữ nguyên)
  *   - Output: `amountOildrop` LAMP sent to `destinationAddress`
- *   - Vault output preserved at vault address with same lovelace
+ *   - Vault output preserved at vault address with same lovelace AND the
+ *     vault-identity NFT (INV-VAULT-IDENTITY) — value chép nguyên từ input
  */
 export async function withdrawLamp(params: WithdrawLampParams): Promise<WithdrawLampResult> {
   const {
@@ -127,7 +128,11 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     ...vaultDatum,
     lamp_balance:       vaultDatum.lamp_balance - amountOildrop,
     loyalty_holdings:   newHoldings,
-    last_updated_epoch: currentEpoch,
+    // last_updated_epoch GIỮ NGUYÊN — validator ép
+    //   output_datum.last_updated_epoch == input_datum.last_updated_epoch
+    // (InstantGen/onchain/validators/vault.ak, validate_withdraw_lamp). Đẩy nó
+    // lên current epoch sẽ reset cửa sổ bắt-kịp và làm mất MAGIC đã tích. Rút
+    // LAMP là việc trực giao với sinh MAGIC.
     // Everything else unchanged per A02.
   };
 
@@ -145,11 +150,16 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   // reorders, the new plutus.json reflects it; SDK auto-updates.
   const redeemer = encodeWithdrawLampRedeemer(vaultPlutusJson, amountOildrop);
 
-  // ── Vault output assets: same lovelace, reduced LAMP ────────────
+  // ── Vault output assets: chép NGUYÊN value đầu vào, chỉ hạ LAMP ──
+  // Phải chép nguyên chứ không dựng lại từ {lovelace, lamp}: vault còn mang NFT
+  // danh tính (INV-VAULT-IDENTITY), và validate_vault_value đòi đúng 1 NFT của
+  // policy vault còn nguyên trên output ở MỌI đường spend. Dựng lại tay là bỏ
+  // rơi nó ⇒ tx bị từ chối, và không có gì bắt được lúc biên dịch.
   const remainingLamp = vaultDatum.lamp_balance - amountOildrop;
-  const vaultOutputAssets: Record<string, bigint> = { lovelace: vaultUtxo.assets.lovelace };
+  const vaultOutputAssets: Record<string, bigint> = { ...vaultUtxo.assets };
   if (remainingLamp > 0n) vaultOutputAssets[lampUnit] = remainingLamp;
-  // If remainingLamp == 0, the vault still exists (with min-ADA) but holds 0 LAMP.
+  else delete vaultOutputAssets[lampUnit];
+  // remainingLamp == 0 thì vault vẫn tồn tại (min-ADA + NFT danh tính), giữ 0 LAMP.
 
   // ── Validity range (POSIX ms, matches validator's epoch math) ────
   const lowerTime = Number(tipPosixMs);

@@ -65,7 +65,13 @@ export function applyVaultValidator(
 
 /**
  * Build the applied shard Validator (only meaningful for ScheduleGen).
- * Shard validator currently takes 0 params, so applied == unapplied.
+ *
+ * `validator shard(shard_policy_id_param: PolicyId)` — MỘT tham số, không phải
+ * không. Xem `ScheduleGen/onchain/validators/vault.ak`, khai báo `validator shard`.
+ * Trước đây hàm này apply `[]`: `applyParamsToScript` không kiểm arity nên vẫn ra
+ * một hash trông hợp lệ, chỉ khác hash thật mà `scripts/deploy/03_deploy_shards.ts`
+ * đã dùng để đặt 16 shard UTxO ⇒ mọi ScheduleFire dựng qua SDK đính sai địa chỉ
+ * shard và không tìm thấy shard input.
  */
 export function applyShardValidator(
   validators: ValidatorBundle,
@@ -74,8 +80,10 @@ export function applyShardValidator(
   if (!validators.shardUnappliedCbor) {
     throw new Error("shardUnappliedCbor required when vaultType=Schedule");
   }
-  // Shard validator has no compile-time params; apply with [] for symmetry.
-  const appliedCbor = applyParamsToScript(validators.shardUnappliedCbor, []);
+  requireField(protocol.shardPolicyId, "shardPolicyId", "Schedule (shard validator)");
+  const appliedCbor = applyParamsToScript(validators.shardUnappliedCbor, [
+    protocol.shardPolicyId!,
+  ]);
   const shardScript: Validator = { type: "PlutusV3", script: appliedCbor };
   const shardScriptHash = validatorToScriptHash(shardScript);
   const shardAddress = credentialToAddress(

@@ -89,6 +89,11 @@ Redeemer `Consume { op_type: Int, op_count: Int, price_ref: OutputReference, vau
   chưa từng được sinh** (PoC `poc_fabricated_magic_burns_ok`). NFT do `vault_id_nft.ak` phát, neo
   `OutputReference` genesis nên không mint lại được. Ép `== 1` chứ không `≥ 1` để chặn gom NFT nhiều
   vault vào một UTxO. Kiểm cả policy lẫn name — chỉ kiểm name thì kẻ tấn công tự mint token trùng tên.
+  **Phía vault (bắt buộc, cùng bản vá):** `ScheduleGen/onchain/validators/vault.ak` giữ NFT Ở LẠI vault —
+  `vault_nft_preserved` ép output vault mang đúng 1 NFT, gọi trong `spend` TRƯỚC khi dispatch redeemer
+  nên phủ cả 5 handler. Thiếu nó thì owner *hoặc `personal_delegate`* rút được NFT ra trong một tx
+  BurnBatch hợp lệ; NFT one-shot không mint lại được ⟹ vault brick vĩnh viễn (griefing bên thứ ba, không
+  chỉ tự bắn chân). Hai apply-param `vault_nft_policy`/`vault_nft_name` phải giống hệt của `consume.ak`.
   **Lý do AGGREGATE (chống pay-once-consume-N):** nếu chỉ ép per-invocation `burns(vault_ref) == required`
   của 1 Engage, thì N Engage input cùng `op_count=1` trỏ CHUNG 1 vault burn 10M sẽ mỗi cái pass độc lập
   (10M==10M) trong khi state ghi `Σconsumed += N` — N nghiệp vụ attributed nhưng chỉ 1 đơn vị MAGIC giảm,

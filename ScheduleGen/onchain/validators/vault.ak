@@ -72,6 +72,12 @@ validator vault(
   lamp_asset_name   : ByteArray,  // LAMP asset name per network (deploy-applied)
   treasury_addr     : Address,
   shard_policy_id   : PolicyId,  // identifies shard UTxOs by NFT
+  // INV-VAULT-IDENTITY (ConsumeMAGIC C-CM-6): the one-shot NFT minted by
+  // ConsumeMAGIC/onchain/validators/vault_id_nft.ak. Deploy MUST apply the SAME
+  // (policy, name) pair here and to consume.ak — consume.ak proves a vault input
+  // is genuine by this NFT, and this validator keeps the NFT inside the vault.
+  vault_nft_policy  : PolicyId,
+  vault_nft_name    : ByteArray,
   ms_per_epoch      : Int,
 ) {
   spend(
@@ -86,6 +92,17 @@ validator vault(
 
     // C-VAULT-DS-1
     expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+
+    // INV-VAULT-IDENTITY — the vault NFT must STAY in the vault. Placed here, not
+    // per-handler: all five branches route through find_vault_output_raw (exactly
+    // one continuing output at vault_addr), so one check covers them all.
+    //   Without it, BurnBatch/WithdrawLamp/SetDelegate can drop the NFT out of the
+    //   continuing output. The NFT is one-shot ⟹ never re-mintable ⟹ the vault is
+    //   permanently unusable for ConsumeMAGIC. `personal_delegate` can spend under
+    //   BurnBatch, so that is a third-party griefing vector, not just self-harm.
+    //   It also fails a fabricated UTxO parked at vault_addr: the attacker cannot
+    //   produce an output carrying the NFT.
+    expect vault_nft_preserved(tx.outputs, vault_addr, vault_nft_policy, vault_nft_name)
 
     when redeemer is {
       ScheduleCommit { schedule_length, lamp_per_epoch } ->
@@ -653,6 +670,20 @@ fn vault_output_lamp_with(
   assets.quantity_of(o.value, lamp_policy_id, lamp_asset_name)
 }
 
+/// INV-VAULT-IDENTITY: the continuing vault output carries EXACTLY one vault-id
+/// NFT. `== 1` not `>= 1` — the same reason consume.ak uses `== 1`: two vaults'
+/// NFTs must never end up in one UTxO. Policy AND name are both checked; name
+/// alone would let an attacker mint a same-named token under their own policy.
+fn vault_nft_preserved(
+  outputs          : List<Output>,
+  vault_addr       : Address,
+  vault_nft_policy : PolicyId,
+  vault_nft_name   : ByteArray,
+) -> Bool {
+  let o = find_vault_output_raw(outputs, vault_addr)
+  assets.quantity_of(o.value, vault_nft_policy, vault_nft_name) == 1
+}
+
 // ═══════════════════════════════════════════════════════════════
 // validate_withdraw_lamp — W-1..W-7 (SPEC_V1 §1)
 // ═══════════════════════════════════════════════════════════════
@@ -1122,6 +1153,91 @@ test sd_no_other_field_change() fail {
 }
 
 // ── Shard co-spend redeemer-gate tests (HIGH authority-bypass fix) ─────
+// ── INV-VAULT-IDENTITY: vault-id NFT preservation ─────────────
+// The NFT is one-shot (ConsumeMAGIC/onchain/validators/vault_id_nft.ak) so it can
+// never be re-minted: letting it leave the vault bricks the vault for ConsumeMAGIC
+// permanently. Checked once in vault.spend, ahead of the redeemer dispatch, so
+// every handler (Commit/Fire/BurnBatch/WithdrawLamp/SetDelegate) is covered.
+
+const t_vault_nft_policy: PolicyId =
+  #"55555555555555555555555555555555555555555555555555555555"
+const t_vault_nft_name: ByteArray = #"564c54"   // "VLT" — matches vault_id_nft.ak
+
+// Vault output with a tunable vault-NFT quantity under a tunable policy.
+fn t_vault_output_nft(datum: VaultDatum, balance: Int, policy: PolicyId, qty: Int) -> Output {
+  let base = assets.from_asset(t_lamp_policy, t_lamp_name, balance)
+  let v =
+    if qty == 0 {
+      base
+    } else {
+      assets.merge(base, assets.from_asset(policy, t_vault_nft_name, qty))
+    }
+  Output { ..t_vault_output(datum, balance), value: v }
+}
+
+test vault_nft_preserved_ok() {
+  let d = t_datum(100, 0, [t_holding(100, 5, False)])
+  let outs = [t_vault_output_nft(d, 100, t_vault_nft_policy, 1)]
+  vault_nft_preserved(outs, t_vault_addr(), t_vault_nft_policy, t_vault_nft_name)
+}
+
+// THE BUG this check exists for: owner (or personal_delegate) spends under
+// BurnBatch and simply omits the NFT from the continuing output. One-shot ⟹ the
+// vault can never be made spendable-by-ConsumeMAGIC again.
+test vault_nft_dropped_rejected() {
+  let d = t_datum(100, 0, [t_holding(100, 5, False)])
+  let outs = [t_vault_output_nft(d, 100, t_vault_nft_policy, 0)]
+  !vault_nft_preserved(outs, t_vault_addr(), t_vault_nft_policy, t_vault_nft_name)
+}
+
+// `== 1`, not `>= 1`: two vaults' NFTs merged into one UTxO is not a valid vault.
+test vault_nft_two_rejected() {
+  let d = t_datum(100, 0, [t_holding(100, 5, False)])
+  let outs = [t_vault_output_nft(d, 100, t_vault_nft_policy, 2)]
+  !vault_nft_preserved(outs, t_vault_addr(), t_vault_nft_policy, t_vault_nft_name)
+}
+
+// Right name, attacker-controlled policy → reject. Name-only would be forgeable.
+test vault_nft_wrong_policy_rejected() {
+  let d = t_datum(100, 0, [t_holding(100, 5, False)])
+  let outs = [t_vault_output_nft(d, 100, #"beef", 1)]
+  !vault_nft_preserved(outs, t_vault_addr(), t_vault_nft_policy, t_vault_nft_name)
+}
+
+// WIRING: the four tests above prove the helper's logic; these two prove
+// vault.spend actually calls it. SetDelegate is the cheapest handler to drive
+// end-to-end, and the check sits ahead of the redeemer dispatch so covering one
+// branch covers all five.
+fn t_spend_setdelegate(nft_qty: Int) -> Bool {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout =
+    VaultDatum { ..din, personal_delegate: Some(t_delegate), last_updated_epoch: 3 }
+  let tx =
+    Transaction {
+      ..t_tx(
+        [t_vault_input(din, 100)],
+        [t_vault_output_nft(dout, 100, t_vault_nft_policy, nft_qty)],
+        [t_owner],
+      ),
+      validity_range: interval.between(3 * 86_400_000, 3 * 86_400_000),
+    }
+  vault.spend(
+    t_lamp_policy, t_lamp_name, t_shard_addr(), #"",
+    t_vault_nft_policy, t_vault_nft_name, 86_400_000,
+    Some(din), SetDelegate { new_delegate: Some(t_delegate) }, t_own_ref(), tx,
+  )
+}
+
+test spend_setdelegate_with_nft_ok() {
+  t_spend_setdelegate(1)
+}
+
+// Drop the NFT from the continuing output → vault.spend must reject, whatever the
+// handler would otherwise have allowed.
+test spend_setdelegate_nft_dropped_rejected() fail {
+  t_spend_setdelegate(0)
+}
+
 // vault_cospend_matches must accept a co-spending vault ONLY when that vault is
 // spent under ScheduleCommit (constr 0) or ScheduleFire (constr 1). A vault
 // co-spent under SetDelegate/WithdrawLamp/BurnBatch must NOT authorize a shard

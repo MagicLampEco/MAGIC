@@ -38,6 +38,10 @@ export const POLICY_IDS = {
   lamp:     process.env.LAMP_POLICY_ID     ?? "FILL_AFTER_MINT",
   um_nft:   process.env.UM_NFT_POLICY_ID   ?? "FILL_AFTER_DEPLOY_UM",
   shard_nft:process.env.SHARD_NFT_POLICY_ID ?? "FILL_AFTER_DEPLOY_SHARDS",
+  // INV-VAULT-IDENTITY (C-CM-6): one-shot NFT from ConsumeMAGIC vault_id_nft.ak.
+  // Applied to BOTH vault.ak and consume.ak — they must see the same pair or the
+  // vault every consume tx needs is unreachable.
+  vault_id_nft: process.env.VAULT_ID_NFT_POLICY_ID ?? "FILL_AFTER_DEPLOY_VAULT_NFT",
 };
 
 // ── Asset names (hex) ─────────────────────────────────────────
@@ -52,6 +56,7 @@ export const ASSET_NAMES = {
   lamp:      process.env.LAMP_ASSET_NAME ?? lampAssetName(NETWORK),
   um_nft:    "554d44",     // "UMD"
   shard_nft: "5348415244", // "SHARD"
+  vault_id_nft: "564c54",  // "VLT" — vault_id_nft.ak vault_id_nft_name
 };
 
 // ── Addresses (điền sau khi deploy) ──────────────────────────

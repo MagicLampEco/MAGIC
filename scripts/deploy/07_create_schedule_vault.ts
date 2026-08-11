@@ -2,7 +2,14 @@
 // Run: npx tsx deploy/07_create_schedule_vault.ts
 // Prereq: 01 LAMP, 02 UM, 03 Shards.
 //
-// ScheduleGen vault validator has 4 params: lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch.
+// ScheduleGen vault validator has 7 params: lamp_policy_id, lamp_asset_name,
+// treasury_addr, shard_policy_id, vault_nft_policy, vault_nft_name, ms_per_epoch.
+//
+// This script ALSO mints the vault's one-shot identity NFT (INV-VAULT-IDENTITY /
+// C-CM-6) into the vault output. It must happen in this tx: vault.spend rejects a
+// continuing output without the NFT, and the policy is one-shot so it cannot be
+// minted later. Copy the printed policy id into .env as VAULT_ID_NFT_POLICY_ID —
+// consume.ak must be applied with the SAME pair.
 //
 // Env vars:
 //   PROFILE              — Ember/Flame/Lantern (default Flame)
@@ -15,7 +22,7 @@
 
 import {
   Lucid, Blockfrost, Data, Constr, toUnit,
-  applyParamsToScript, validatorToScriptHash,
+  applyParamsToScript, validatorToScriptHash, mintingPolicyToId,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
 } from "@lucid-evolution/lucid";
@@ -28,6 +35,12 @@ import {
 } from "../config.js";
 
 // (Schema duplicated from 05/06 — same VaultDatum across all 4 vault modules.)
+// OutputReference param for the one-shot policy (same shape as 03_deploy_shards).
+const OutRefSchema = Data.Object({
+  transaction_id: Data.Bytes(),
+  output_index:   Data.Integer(),
+});
+
 const VaultDatumSchema = Data.Object({
   owner:                 Data.Bytes(),
   lamp_balance:          Data.Integer(),
@@ -113,7 +126,7 @@ async function main() {
   if (!paymentCredential) throw new Error("Cannot get payment credential");
   const ownerPkh = paymentCredential.hash;
 
-  // Load ScheduleGen vault validator (4 params: lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch).
+  // Load ScheduleGen vault validator (7 params — see applyParamsToScript below).
   const plutusJson = JSON.parse(
     await readFile(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url), "utf8"),
   );
@@ -122,6 +135,34 @@ async function main() {
     console.error("Validators:", plutusJson.validators.map((v: any) => v.title));
     throw new Error("vault.vault.spend not found");
   }
+
+  // ── INV-VAULT-IDENTITY (C-CM-6): mint the vault's one-shot identity NFT in the
+  // SAME tx that creates the vault. It must be minted here, not in a separate
+  // step: vault.spend rejects any continuing output without it, so a vault born
+  // without the NFT can never be spent. One-shot ⟹ it also can never be re-minted.
+  const consumeJson = JSON.parse(
+    await readFile(new URL("../../ConsumeMAGIC/onchain/plutus.json", import.meta.url), "utf8"),
+  );
+  const vaultNftUnapplied = consumeJson.validators.find(
+    (v: any) => v.title === "vault_id_nft.vault_id_nft.mint",
+  );
+  if (!vaultNftUnapplied) {
+    throw new Error("vault_id_nft.vault_id_nft.mint not found — run `aiken build` in ConsumeMAGIC/onchain");
+  }
+  const genesisUtxos = await lucid.wallet().getUtxos();
+  if (genesisUtxos.length === 0) throw new Error("Wallet has no UTxO to seed the one-shot policy");
+  const genesis = genesisUtxos[0];
+  const vaultNftPolicy = {
+    type: "PlutusV3" as const,
+    script: applyParamsToScript(vaultNftUnapplied.compiledCode, [
+      Data.to({ transaction_id: genesis.txHash, output_index: BigInt(genesis.outputIndex) }, OutRefSchema),
+    ]),
+  };
+  const vaultNftPolicyId = mintingPolicyToId(vaultNftPolicy);
+  const vaultNftUnit = toUnit(vaultNftPolicyId, ASSET_NAMES.vault_id_nft);
+  // The vault validator is parameterized by the policy id we just derived, so it
+  // is NOT read from config here — config's VAULT_ID_NFT_POLICY_ID is the value
+  // this script PRINTS for you to write back into .env (consume.ak needs the same).
 
   // Treasury Address Plutus encoding (Constr).
   const td = getAddressDetails(ADDRESSES.treasury);
@@ -139,6 +180,8 @@ async function main() {
     ASSET_NAMES.lamp,
     treasuryAddrData,
     POLICY_IDS.shard_nft,
+    vaultNftPolicyId,
+    ASSET_NAMES.vault_id_nft,
     PROTOCOL.MS_PER_EPOCH,
   ]);
   const vaultScript = { type: "PlutusV3" as const, script: appliedCbor };
@@ -148,6 +191,8 @@ async function main() {
   console.log(`Network:            ${NETWORK}`);
   console.log(`Vault script hash:  ${vaultScriptHash}`);
   console.log(`Vault address:      ${vaultScriptAddress}`);
+  console.log(`Genesis seed UTxO:  ${genesis.txHash}#${genesis.outputIndex}`);
+  console.log(`Vault-id NFT policy:${vaultNftPolicyId}  (one-shot → .env VAULT_ID_NFT_POLICY_ID)`);
   console.log(`Profile:            ${INITIAL_PROFILE}`);
   console.log(`LAMP deposit:       ${INITIAL_LAMP_DEPOSIT / 1_000_000n} tLAMP`);
   console.log(`Preseed schedule:   L=${PRESEED_SCHEDULE_L}, λ=${PRESEED_SCHEDULE_LAM / 1_000_000n} tLAMP`);
@@ -160,8 +205,7 @@ async function main() {
   const currentEpoch = tipPosixMs / PROTOCOL.MS_PER_EPOCH;
 
   const lampUnit = toUnit(POLICY_IDS.lamp, ASSET_NAMES.lamp);
-  const utxos    = await lucid.wallet().getUtxos();
-  const lampBal  = utxos.reduce((s, u) => s + (u.assets[lampUnit] ?? 0n), 0n);
+  const lampBal  = genesisUtxos.reduce((s, u) => s + (u.assets[lampUnit] ?? 0n), 0n);
   if (lampBal < INITIAL_LAMP_DEPOSIT) throw new Error(`Need ${INITIAL_LAMP_DEPOSIT / 1_000_000n} LAMP`);
 
   // Pre-seed schedule with start_fire_epoch = currentEpoch so Fire fires NOW.
@@ -214,10 +258,15 @@ async function main() {
 
   const tx = await lucid
     .newTx()
+    // MUST consume the genesis UTxO so the one-shot policy runs (and can never
+    // run again).
+    .collectFrom([genesis])
+    .mintAssets({ [vaultNftUnit]: 1n }, Data.to(new Constr(0, [])))   // MintGenesis
+    .attach.MintingPolicy(vaultNftPolicy)
     .pay.ToAddressWithData(
       vaultScriptAddress,
       { kind: "inline", value: vaultDatum },
-      { lovelace: 2_000_000n, [lampUnit]: INITIAL_LAMP_DEPOSIT },
+      { lovelace: 2_000_000n, [lampUnit]: INITIAL_LAMP_DEPOSIT, [vaultNftUnit]: 1n },
     )
     .complete();
 

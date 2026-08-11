@@ -14,6 +14,8 @@
 //   UM_NFT_POLICY_ID  UM NFT policy (56-hex)
 //   UM_DATUM_HASH     UM script hash — pins the UM ref input (Instant/Vacuum)
 //   SHARD_NFT_POLICY_ID Shard NFT policy (56-hex)
+//   VAULT_ID_NFT_POLICY_ID Vault identity NFT policy (56-hex) — same value applied
+//                     to consume.ak; ScheduleGen vault takes it too (C-CM-6)
 //
 // lamp_asset_name is NOT an env var here — it is derived per network, so the
 // table shows the mainnet row built with "LAMP" and testnet rows with "tLAMP".
@@ -47,6 +49,9 @@ const LAMP_POLICY    = process.env.LAMP_POLICY_ID      ?? PLACEHOLDER_POLICY;
 const UM_NFT_POLICY  = process.env.UM_NFT_POLICY_ID    ?? PLACEHOLDER_POLICY;
 const SHARD_POLICY   = process.env.SHARD_NFT_POLICY_ID ?? PLACEHOLDER_POLICY;
 const UM_SCRIPT_HASH = process.env.UM_DATUM_HASH       ?? PLACEHOLDER_POLICY;  // 28-byte script hash
+// INV-VAULT-IDENTITY (C-CM-6): must be the SAME pair applied to consume.ak.
+const VAULT_ID_NFT_POLICY = process.env.VAULT_ID_NFT_POLICY_ID ?? PLACEHOLDER_POLICY;
+const VAULT_ID_NFT_NAME   = "564c54";   // "VLT" — vault_id_nft.ak vault_id_nft_name
 const TREASURY_ADDR  = process.env.TREASURY_ADDRESS    ?? PLACEHOLDER_ADDRESS;
 
 /** Encode bech32 address as Plutus Constr (Address { paymentCredential, stakeCredential? }). */
@@ -124,6 +129,8 @@ const MODULES: ModuleSpec[] = [
       lampName,
       addressToPlutusData(TREASURY_ADDR),
       SHARD_POLICY,
+      VAULT_ID_NFT_POLICY,
+      VAULT_ID_NFT_NAME,
       msPer,
     ],
   },

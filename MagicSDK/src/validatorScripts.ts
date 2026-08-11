@@ -25,6 +25,10 @@ import {
 import { msPerEpoch, lampAssetName } from "@magiclamp/protocol-utils";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
+/** Asset name of the vault identity NFT — must equal `vault_id_nft_name` in
+ *  ConsumeMAGIC/onchain/validators/vault_id_nft.ak ("VLT"). */
+export const VAULT_ID_NFT_ASSET_NAME = "564c54";
+
 /**
  * Build the applied vault Validator for a given vault type + protocol params.
  * Returns the Validator (CBOR + type tag) and its derived address+hash.
@@ -104,14 +108,20 @@ export function buildParamsList(
     }
 
     case "Schedule": {
-      // vault(lamp_policy_id, lamp_asset_name, treasury_addr, shard_policy_id, ms_per_epoch)
+      // vault(lamp_policy_id, lamp_asset_name, treasury_addr, shard_policy_id,
+      //       vault_nft_policy, vault_nft_name, ms_per_epoch)
       requireField(protocol.shardPolicyId, "shardPolicyId", "Schedule");
       requireField(protocol.treasuryAddress, "treasuryAddress", "Schedule");
+      // INV-VAULT-IDENTITY: no default — a wrong policy here bakes a vault whose
+      // NFT check can never pass, i.e. a vault that cannot be spent at all.
+      requireField(protocol.vaultIdNftPolicyId, "vaultIdNftPolicyId", "Schedule");
       return [
         protocol.lampPolicyId,
         assetName,
         addressToPlutusData(protocol.treasuryAddress!),
         protocol.shardPolicyId!,
+        protocol.vaultIdNftPolicyId!,
+        protocol.vaultIdNftAssetName ?? VAULT_ID_NFT_ASSET_NAME,
         msPer,
       ];
     }

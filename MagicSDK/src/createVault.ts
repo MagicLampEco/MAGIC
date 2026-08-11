@@ -40,7 +40,7 @@ import { msPerEpoch, lampAssetName, type Network } from "@magiclamp/protocol-uti
 
 import type { CreateVaultParams, CreateVaultResult } from "./types.js";
 import { VaultDatumSchema } from "./schemas.js";
-import { applyVaultValidator } from "./validatorScripts.js";
+import { applyVaultValidator, VAULT_ID_NFT_ASSET_NAME } from "./validatorScripts.js";
 import { buildInitialVaultDatum } from "./vaultDatum.js";
 
 const DEFAULT_VAULT_LOVELACE  = 2_000_000n;
@@ -93,6 +93,26 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     );
   }
 
+  // ── INV-VAULT-IDENTITY: the vault must be BORN with its identity NFT ──
+  // The Schedule validator rejects any continuing output without it, so a vault
+  // created without the NFT can never be spent — and the policy is one-shot, so
+  // it can never be added later. Mint it first (deploy/07_create_schedule_vault
+  // does mint+create in one tx; here the NFT is expected to be in the wallet
+  // already) and this pays it straight into the vault.
+  const vaultNftUnit = vaultType === "Schedule"
+    ? toUnit(protocol.vaultIdNftPolicyId!, protocol.vaultIdNftAssetName ?? VAULT_ID_NFT_ASSET_NAME)
+    : null;
+  if (vaultNftUnit) {
+    const held = walletUtxos.reduce((s, u) => s + (u.assets[vaultNftUnit] ?? 0n), 0n);
+    if (held !== 1n) {
+      throw new Error(
+        `Wallet must hold exactly 1 vault identity NFT (${vaultNftUnit}) to create a ` +
+        `Schedule vault; found ${held}. Mint it with the one-shot vault_id_nft policy ` +
+        `whose id you passed as protocol.vaultIdNftPolicyId.`,
+      );
+    }
+  }
+
   // ── Build initial VaultDatum ─────────────────────────────────
   const initialVault = buildInitialVaultDatum({
     ownerPkh:         vault.ownerPkh,
@@ -115,7 +135,11 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     .pay.ToAddressWithData(
       vaultAddress,
       { kind: "inline", value: vaultDatumCbor },
-      { lovelace: vaultLovelace, [lampUnit]: vault.lampDeposit },
+      {
+        lovelace: vaultLovelace,
+        [lampUnit]: vault.lampDeposit,
+        ...(vaultNftUnit ? { [vaultNftUnit]: 1n } : {}),
+      },
     )
     .complete();
 

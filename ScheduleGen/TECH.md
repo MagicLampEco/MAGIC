@@ -88,10 +88,18 @@ Tham số validator (applied khi deploy):
 - `lamp_policy_id: PolicyId` — policy ID của LAMP token
 - `treasury_addr: Address` — địa chỉ Treasury script
 - `shard_policy_id: PolicyId` — policy ID của SHARD NFT
+- `vault_nft_policy: PolicyId` / `vault_nft_name: ByteArray` — vault-id NFT one-shot
+  (`ConsumeMAGIC/onchain/validators/vault_id_nft.ak`). Deploy PHẢI apply **cùng cặp**
+  này cho cả `vault.ak` và `consume.ak`
 - `ms_per_epoch: Int` — 86_400_000 (Preview/Preprod), 432_000_000 (Mainnet)
 
 Invariant chung (áp dụng mọi redeemer):
 - **C-VAULT-DS-1:** `count(inputs, addr==vault_addr) == 1` (`vault.ak:62`)
+- **INV-VAULT-IDENTITY:** output vault duy nhất mang **đúng 1** vault-id NFT
+  (`vault_nft_preserved`, gọi trước khi dispatch redeemer nên phủ cả 5 handler).
+  NFT là one-shot, không mint lại được — để nó rời vault là brick vault vĩnh viễn
+  đối với ConsumeMAGIC, và `personal_delegate` spend được BurnBatch nên đây là
+  griefing vector của bên thứ ba. Xem ConsumeMAGIC `C-CM-6`.
 - `current_epoch = tx.validity_range.lower_bound / ms_per_epoch`
 
 ### 2.2 validate_commit — C-SCH-1..12, C-SCH-CAP

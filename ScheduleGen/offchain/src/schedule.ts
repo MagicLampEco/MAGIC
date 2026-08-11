@@ -346,8 +346,11 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     .collectFrom([shardUtxo], shardRed)
     .attach.SpendingValidator(vaultScript)
     .attach.SpendingValidator(shardScript)
+    // Spread the input value, override only LAMP. Rebuilding it from scratch
+    // drops the vault identity NFT (INV-VAULT-IDENTITY) — one-shot, so the vault
+    // would be bricked by its own first Fire.
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
-      { lovelace: vaultUtxo.assets.lovelace, [lampUnit]: newLampBalance })
+      { ...vaultUtxo.assets, [lampUnit]: newLampBalance })
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
     .pay.ToAddress(treasuryAddress, { [lampUnit]: lampTransfer })
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless

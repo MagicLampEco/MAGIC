@@ -23,6 +23,8 @@ const LAMP_POLICY = "4942de4a226f43c524c1273d752712366511d5fd7ae28bc1a1576077";
 const UM_POLICY   = "11111111111111111111111111111111111111111111111111111111";
 const UM_SCRIPT   = "22222222222222222222222222222222222222222222222222222222";
 const SHARD_POLC  = "33333333333333333333333333333333333333333333333333333333";
+const VAULT_NFT_POLC = "44444444444444444444444444444444444444444444444444444444";
+const VLT         = "564c54";   // vault_id_nft asset name "VLT"
 const TREASURY_PKH = "5b889dfd8fabd0234233dbb2e26b9b8e96ceffe77b0c55aa2e8efc21";
 
 const TLAMP = "744c414d50";  // "tLAMP" — testnets
@@ -35,6 +37,7 @@ function protocolFor(network: ProtocolParams["network"]): ProtocolParams {
     umNftPolicyId:   UM_POLICY,
     umScriptHash:    UM_SCRIPT,
     shardPolicyId:   SHARD_POLC,
+    vaultIdNftPolicyId: VAULT_NFT_POLC,
     treasuryAddress: credentialToAddress(network, { type: "Key", hash: TREASURY_PKH }),
   };
 }
@@ -66,10 +69,23 @@ describe("buildParamsList: param order matches the Aiken validator signature", (
     expect(params("Vacuum", "Preview")).toEqual(params("Instant", "Preview"));
   });
 
-  it("Schedule: (lamp_policy_id, lamp_asset_name, treasury, shard_policy_id, ms_per_epoch)", () => {
+  it("Schedule: (lamp_policy_id, lamp_asset_name, treasury, shard_policy_id, vault_nft_policy, vault_nft_name, ms_per_epoch)", () => {
     expect(params("Schedule", "Preview")).toEqual([
-      LAMP_POLICY, TLAMP, TREASURY_DATA, SHARD_POLC, MS_PREVIEW,
+      LAMP_POLICY, TLAMP, TREASURY_DATA, SHARD_POLC, VAULT_NFT_POLC, VLT, MS_PREVIEW,
     ]);
+  });
+
+  // INV-VAULT-IDENTITY: no silent default. A wrong/absent vault NFT policy bakes
+  // a vault whose NFT check can never pass — i.e. an unspendable vault holding
+  // real LAMP. Fail at build time, not on-chain.
+  it("Schedule: missing vaultIdNftPolicyId throws instead of defaulting", () => {
+    const p = { ...protocolFor("Preview"), vaultIdNftPolicyId: undefined };
+    expect(() => buildParamsList("Schedule", p, MS_PREVIEW)).toThrow(/vaultIdNftPolicyId/);
+  });
+
+  it("Schedule: vaultIdNftAssetName overrides the VLT default", () => {
+    const p = { ...protocolFor("Preview"), vaultIdNftAssetName: "6162" };
+    expect(buildParamsList("Schedule", p, MS_PREVIEW)[5]).toBe("6162");
   });
 });
 

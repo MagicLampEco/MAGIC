@@ -145,10 +145,15 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   // reorders, the new plutus.json reflects it; SDK auto-updates.
   const redeemer = encodeWithdrawLampRedeemer(vaultPlutusJson, amountOildrop);
 
-  // ── Vault output assets: same lovelace, reduced LAMP ────────────
+  // ── Vault output assets: carry EVERYTHING forward, change only LAMP ──
+  // Spread the input value rather than rebuilding it from scratch: the vault
+  // also holds its identity NFT (INV-VAULT-IDENTITY), and the validator rejects
+  // any continuing output missing it. The NFT is one-shot, so listing assets
+  // explicitly here would silently brick the vault on the first withdrawal.
   const remainingLamp = vaultDatum.lamp_balance - amountOildrop;
-  const vaultOutputAssets: Record<string, bigint> = { lovelace: vaultUtxo.assets.lovelace };
+  const vaultOutputAssets: Record<string, bigint> = { ...vaultUtxo.assets };
   if (remainingLamp > 0n) vaultOutputAssets[lampUnit] = remainingLamp;
+  else delete vaultOutputAssets[lampUnit];
   // If remainingLamp == 0, the vault still exists (with min-ADA) but holds 0 LAMP.
 
   // ── Validity range (POSIX ms, matches validator's epoch math) ────

@@ -70,6 +70,12 @@ export interface ProtocolParams {
   umScriptHash?: string;
   /** Shard NFT policy ID. Required for Schedule. */
   shardPolicyId?: string;
+  /** Vault identity NFT policy ID (INV-VAULT-IDENTITY / C-CM-6). Required for
+   *  Schedule. One-shot policy from ConsumeMAGIC's vault_id_nft.ak; consume.ak
+   *  must be applied with the SAME policy, or the vault it needs is unreachable. */
+  vaultIdNftPolicyId?: string;
+  /** Vault identity NFT asset name as hex. Defaults to "564c54" ("VLT"). */
+  vaultIdNftAssetName?: string;
   /** Treasury address. Required for Instant + Vacuum + Schedule. */
   treasuryAddress?: string;
   /** Override ms_per_epoch (advanced). Derived from `network` otherwise. */

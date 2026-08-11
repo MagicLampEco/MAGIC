@@ -178,7 +178,6 @@ async function main() {
   const appliedCbor = applyParamsToScript(unapplied.compiledCode, [
     POLICY_IDS.lamp,
     ASSET_NAMES.lamp,
-    treasuryAddrData,
     POLICY_IDS.shard_nft,
     vaultNftPolicyId,
     ASSET_NAMES.vault_id_nft,

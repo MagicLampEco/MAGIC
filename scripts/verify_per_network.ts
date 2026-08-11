@@ -127,7 +127,7 @@ const MODULES: ModuleSpec[] = [
     buildParams: (msPer, lampName) => [
       LAMP_POLICY,
       lampName,
-      addressToPlutusData(TREASURY_ADDR),
+      // No treasury_addr: I-ACT-7 removed the fire's treasury leg.
       SHARD_POLICY,
       VAULT_ID_NFT_POLICY,
       VAULT_ID_NFT_NAME,

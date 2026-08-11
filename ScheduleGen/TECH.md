@@ -86,7 +86,6 @@ Entrypoint: `validators/vault.ak:44-89`.
 
 Tham số validator (applied khi deploy):
 - `lamp_policy_id: PolicyId` — policy ID của LAMP token
-- `treasury_addr: Address` — địa chỉ Treasury script
 - `shard_policy_id: PolicyId` — policy ID của SHARD NFT
 - `vault_nft_policy: PolicyId` / `vault_nft_name: ByteArray` — vault-id NFT one-shot
   (`ConsumeMAGIC/onchain/validators/vault_id_nft.ak`). Deploy PHẢI apply **cùng cặp**
@@ -122,7 +121,15 @@ Nguồn: `vault.ak:134-207`.
 | C-VAULT-10 | `vault.ak:204` | `sum_holdings == lamp_balance` |
 | C-VAULT-OUT-1 | `vault.ak:388-389` | Đúng 1 output tại vault_addr |
 
-### 2.3 validate_fire — C-FIRE-1..8, C-SCH-FIRE-PERMISSION
+### 2.3 validate_fire — C-FIRE-1..8, C-SCH-FIRE-PERMISSION, I-ACT-7
+
+> **I-ACT-7 (LAMP đứng yên).** Một lần fire sinh MAGIC nhưng **không dịch chuyển LAMP**.
+> Trước đây fire chuyển `fires×λ` LAMP thật sang treasury và giảm `lamp_balance` — bào mòn
+> vốn gốc của người dùng. Kênh NEWUSER cấp `DID × 1001 LAMP`, mà suất sinh tỉ lệ với số dư,
+> nên nhóm người dùng mới có suất sinh tụt dần về 0. Nay fire chỉ **mở khoá**:
+> `lamp_balance` giống hệt từng byte, `lamp_locked` giảm, holding lật `is_locked → False`.
+> Test chặn regression: `f_fire_old_behaviour_rejected` trong `vault.ak`.
+
 
 Nguồn: `vault.ak:212-289`.
 
@@ -131,13 +138,13 @@ Nguồn: `vault.ak:212-289`.
 | C-SCH-FIRE-PERMISSION | `vault.ak:223-224` | Không yêu cầu chữ ký owner (comment, không check) |
 | C-FIRE-1 ≥ | `vault.ak:232-240` | `count_eligible_fires > 0` |
 | T8 | `vault.ak:236` | `compute_m_i(sched.lamp_per_epoch, sched.rate_locked_q)` |
-| C-FIRE-3 | `vault.ak:244-245` | Treasury phải là script credential |
-| C-FIRE-3 | `vault.ak:245` | `treasury_lamp_received ≥ lamp_transfer` |
+| ~~C-FIRE-3~~ | — | **GỠ (I-ACT-7):** không còn chân treasury. `treasury_addr` và `treasury_lamp_received` đã xoá khỏi validator |
 | MAX_BATCHES | `vault.ak:251` | `|updated_batches| ≤ 32` |
 | C-FIRE-5 | `vault.ak:256-259` | Remove schedule khi `fired_count == L` |
-| C-FIRE-6 | `vault.ak:268` | `remove_locked_amount` unlock LAMP |
+| C-FIRE-6 | `vault.ak:268` | `unlock_locked_amount` — lật `is_locked`, GIỮ nguyên amount |
 | C-SCH-FIRE-SHARD | `vault.ak:271-273` | `shard_datum.shard_id == shard_id_val` |
-| A02 (output) | `vault.ak:276-286` | `lamp_balance -= lamp_transfer`, `lamp_locked -= lamp_transfer`, etc. |
+| **I-ACT-7** | `vault.ak:388` | `lamp_balance == datum.lamp_balance` — số dư **KHÔNG ĐỔI** |
+| A02 (output) | `vault.ak:389` | `lamp_locked -= lamp_released` — chỉ khoá được mở |
 | C-VAULT-10 | `vault.ak:286` | `sum_holdings == lamp_balance` |
 
 ### 2.4 Shard validator

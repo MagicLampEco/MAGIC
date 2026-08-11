@@ -171,8 +171,13 @@ export const TV_SCH_FIRE3 = {
   // Validator asserts ALL of these simultaneously:
   assertions: {
     fired_count_delta:    4n,            // output.fired_count = input + 4
-    lamp_balance_delta: -16_000_000_000n, // -4 × λ
-    treasury_delta:      16_000_000_000n, // +4 × λ
+    // I-ACT-7 (changed): a fire RELEASES the lock, it does not move LAMP.
+    // Previously lamp_balance_delta = -4×λ with the same amount paid to a
+    // treasury — that eroded the user's principal, so generation decayed to
+    // zero for the NEWUSER cohort. There is no treasury leg any more.
+    lamp_balance_delta:   0n,            // balance is byte-identical
+    lamp_locked_delta:  -16_000_000_000n, // -4 × λ — only the lock lifts
+    lamp_released:       16_000_000_000n, // +4 × λ unlocked, stays in the vault
     new_batches_count:   4,              // exactly 4 new batches
     each_batch_initial:  45_000_000_000n, // all equal M_i (T-DET)
   },

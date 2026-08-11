@@ -69,10 +69,15 @@ describe("buildParamsList: param order matches the Aiken validator signature", (
     expect(params("Vacuum", "Preview")).toEqual(params("Instant", "Preview"));
   });
 
-  it("Schedule: (lamp_policy_id, lamp_asset_name, treasury, shard_policy_id, vault_nft_policy, vault_nft_name, ms_per_epoch)", () => {
+  // I-ACT-7: no treasury_addr — a ScheduleGen fire has no treasury leg.
+  it("Schedule: (lamp_policy_id, lamp_asset_name, shard_policy_id, vault_nft_policy, vault_nft_name, ms_per_epoch)", () => {
     expect(params("Schedule", "Preview")).toEqual([
-      LAMP_POLICY, TLAMP, TREASURY_DATA, SHARD_POLC, VAULT_NFT_POLC, VLT, MS_PREVIEW,
+      LAMP_POLICY, TLAMP, SHARD_POLC, VAULT_NFT_POLC, VLT, MS_PREVIEW,
     ]);
+  });
+
+  it("Schedule: treasury address is NOT baked in", () => {
+    expect(params("Schedule", "Preview")).not.toContainEqual(TREASURY_DATA);
   });
 
   // INV-VAULT-IDENTITY: no silent default. A wrong/absent vault NFT policy bakes
@@ -85,7 +90,7 @@ describe("buildParamsList: param order matches the Aiken validator signature", (
 
   it("Schedule: vaultIdNftAssetName overrides the VLT default", () => {
     const p = { ...protocolFor("Preview"), vaultIdNftAssetName: "6162" };
-    expect(buildParamsList("Schedule", p, MS_PREVIEW)[5]).toBe("6162");
+    expect(buildParamsList("Schedule", p, MS_PREVIEW)[4]).toBe("6162");
   });
 });
 

@@ -86,7 +86,7 @@ function simulateFire(
   sched        : GenSchedule,
   currentEpoch : bigint,
   batchCount   : number = 0,
-): { firesInTx: number; mTotal: bigint; lampTransfer: bigint; newFiredCount: bigint } {
+): { firesInTx: number; mTotal: bigint; lampReleased: bigint; newFiredCount: bigint } {
   const firesInTx = countEligibleFires(
     sched.start_fire_epoch, sched.fired_count,
     sched.schedule_length, currentEpoch, batchCount,
@@ -96,7 +96,7 @@ function simulateFire(
   return {
     firesInTx,
     mTotal:       mI * BigInt(firesInTx),
-    lampTransfer: sched.lamp_per_epoch * BigInt(firesInTx),
+    lampReleased: sched.lamp_per_epoch * BigInt(firesInTx),
     newFiredCount: sched.fired_count + BigInt(firesInTx),
   };
 }
@@ -319,11 +319,13 @@ describe("C-FIRE-3 atomic fire assertion", () => {
   it("TV-SCH-FIRE3: all accounting consistent", () => {
     const { fires_in_tx, lambda_oildrop, M_i, assertions } = TV_SCH_FIRE3;
     const mTotal       = M_i * BigInt(fires_in_tx);
-    const lampTransfer = lambda_oildrop * BigInt(fires_in_tx);
+    const lampReleased = lambda_oildrop * BigInt(fires_in_tx);
 
     expect(BigInt(fires_in_tx)).toBe(assertions.fired_count_delta);
-    expect(-lampTransfer).toBe(assertions.lamp_balance_delta);
-    expect(lampTransfer).toBe(assertions.treasury_delta);
+    // I-ACT-7: the balance does NOT move; only the lock lifts by the same amount.
+    expect(0n).toBe(assertions.lamp_balance_delta);
+    expect(-lampReleased).toBe(assertions.lamp_locked_delta);
+    expect(lampReleased).toBe(assertions.lamp_released);
     expect(fires_in_tx).toBe(assertions.new_batches_count);
     // All batches get identical M_i (T-DET)
     for (let i = 0; i < fires_in_tx; i++) {
@@ -342,7 +344,7 @@ describe("C-FIRE-3 atomic fire assertion", () => {
     const result = simulateFire(sched, 55n);
     expect(result.firesInTx).toBe(4);                        // §11.11 ✓
     expect(result.mTotal).toBe(180_000_000_000n);            // 4×45 MAGIC ✓
-    expect(result.lampTransfer).toBe(16_000_000_000n);       // 4×4000 LAMP oildrop ✓
+    expect(result.lampReleased).toBe(16_000_000_000n);       // 4×4000 LAMP oildrop UNLOCKED, not moved ✓
     expect(result.newFiredCount).toBe(4n);                   // output.fired_count ✓
     expect(nanogicToMagicStr(result.mTotal)).toBe("180.0000");
   });

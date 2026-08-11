@@ -9,12 +9,12 @@ import {
 } from "./constants.js";
 import {
   slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr,
-  selectLampForLock, removeLockedAmount,
+  selectLampForLock, unlockLockedAmount,
 } from "@magiclamp/protocol-utils";
 import { blake2b } from "@noble/hashes/blake2b";
 
 export { slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr };
-export { selectLampForLock, removeLockedAmount };
+export { selectLampForLock, unlockLockedAmount };
 
 // ══════════════════════════════════════════════════════════════
 // §11.3 S(L) — Schedule bonus multiplier (piecewise, T11, T12)

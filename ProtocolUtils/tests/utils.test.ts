@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   slotToEpoch, lampToOildrop, nanogicToMagicStr,
-  selectLampForLock, removeLockedAmount, sumHoldings, sumLocked,
+  selectLampForLock, removeLockedAmount, unlockLockedAmount, sumHoldings, sumLocked,
   pruneActivityWindow, countActiveAppsInOacWindow, addBurnToActivity,
   isqrt, isqrt10th, verifyVd, vDampened, mulQ, clamp,
   cmpBigIntAsc, cmpBigIntDesc, Q,
@@ -101,6 +101,42 @@ describe("removeLockedAmount — §A.9", () => {
     expect(result.filter(x => x.is_locked)).toHaveLength(0);
     expect(result.find(x => !x.is_locked)?.amount).toBe(1000n);
     expect(sumHoldings(result)).toBe(1000n);  // 500+500 removed
+  });
+});
+
+// I-ACT-7: the difference that matters is Σholdings. `remove` shrinks it (and
+// with it the vault's lamp_balance); `unlock` leaves it alone.
+describe("unlockLockedAmount — I-ACT-7 (LAMP stays put)", () => {
+  const h = () => [
+    { amount: 500n,  acquired_epoch: 50n, is_locked: true  },  // oldest locked
+    { amount: 500n,  acquired_epoch: 60n, is_locked: true  },
+    { amount: 1000n, acquired_epoch: 70n, is_locked: false },
+  ];
+
+  it("Σholdings is invariant — unlike removeLockedAmount", () => {
+    expect(sumHoldings(unlockLockedAmount(h(), 1000n))).toBe(2000n);
+    expect(sumHoldings(removeLockedAmount(h(), 1000n))).toBe(1000n);
+  });
+
+  it("Frees oldest-locked-first, order = [unlocked, freed, still locked]", () => {
+    expect(unlockLockedAmount(h(), 500n)).toEqual([
+      { amount: 1000n, acquired_epoch: 70n, is_locked: false },  // already unlocked
+      { amount: 500n,  acquired_epoch: 50n, is_locked: false },  // epoch 50 freed
+      { amount: 500n,  acquired_epoch: 60n, is_locked: true  },  // still locked
+    ]);
+  });
+
+  it("Partial release splits one holding, parts sum to the original", () => {
+    const out = unlockLockedAmount([{ amount: 500n, acquired_epoch: 50n, is_locked: true }], 200n);
+    expect(out).toEqual([
+      { amount: 200n, acquired_epoch: 50n, is_locked: false },
+      { amount: 300n, acquired_epoch: 50n, is_locked: true  },
+    ]);
+    expect(sumHoldings(out)).toBe(500n);
+  });
+
+  it("Releasing more than is locked throws, not silently clamps", () => {
+    expect(() => unlockLockedAmount(h(), 1500n)).toThrow("GEN-LOCK-002");
   });
 });
 

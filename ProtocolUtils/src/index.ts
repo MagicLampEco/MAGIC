@@ -181,7 +181,52 @@ export function selectLampForLock(
   return result;
 }
 
-/** §A.9 Oldest-locked-first removal — called at fire/burn time.
+/** I-ACT-7 — Oldest-locked-first RELEASE. Called at ScheduleGen fire time.
+ *
+ *  Unlike `removeLockedAmount`, the LAMP stays: holdings keep their amount and
+ *  acquired_epoch, only `is_locked` flips. Σholdings is therefore invariant, so
+ *  the vault's `lamp_balance` (and the real LAMP in the UTxO) does not move —
+ *  a fire mints MAGIC without eroding the user's principal.
+ *
+ *  Mirrors `unlock_locked_amount` in ScheduleGen/onchain/lib/.../lock.ak
+ *  byte-for-byte, including the result order (P8):
+ *    [already unlocked] ++ [newly freed] ++ [still locked]
+ *
+ *  Pure function: returns new array, does not mutate input.
+ */
+export function unlockLockedAmount(
+  holdings : LoyaltyHolding[],
+  amount   : bigint,
+): LoyaltyHolding[] {
+  const unlocked = holdings.filter(h => !h.is_locked);
+  const locked   = holdings.filter(h =>  h.is_locked)
+    .sort((a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));  // oldest first
+
+  let remaining = amount;
+  const freed:       LoyaltyHolding[] = [];
+  const stillLocked: LoyaltyHolding[] = [];
+
+  for (const h of locked) {
+    if (remaining <= 0n) { stillLocked.push(h); continue; }
+    if (remaining >= h.amount) {
+      freed.push({ ...h, is_locked: false });
+      remaining -= h.amount;
+    } else {
+      // Partial release splits one holding; the parts sum to the original.
+      freed.push({ amount: remaining, acquired_epoch: h.acquired_epoch, is_locked: false });
+      stillLocked.push({ amount: h.amount - remaining, acquired_epoch: h.acquired_epoch, is_locked: true });
+      remaining = 0n;
+    }
+  }
+  if (remaining > 0n) throw new Error(`GEN-LOCK-002: insufficient locked holdings (${remaining} oildrop short)`);
+  return [...unlocked, ...freed, ...stillLocked];
+}
+
+/** §A.9 Oldest-locked-first REMOVAL — deletes the LAMP.
+ *
+ *  Legacy/VacuumGen only. ScheduleGen moved to `unlockLockedAmount` under
+ *  I-ACT-7: removing LAMP at fire time eroded the user's principal.
+ *
  *  Pure function: returns new array, does not mutate input.
  */
 export function removeLockedAmount(

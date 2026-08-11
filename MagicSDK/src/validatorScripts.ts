@@ -108,17 +108,16 @@ export function buildParamsList(
     }
 
     case "Schedule": {
-      // vault(lamp_policy_id, lamp_asset_name, treasury_addr, shard_policy_id,
+      // vault(lamp_policy_id, lamp_asset_name, shard_policy_id,
       //       vault_nft_policy, vault_nft_name, ms_per_epoch)
+      // NO treasury_addr: under I-ACT-7 a ScheduleGen fire has no treasury leg.
       requireField(protocol.shardPolicyId, "shardPolicyId", "Schedule");
-      requireField(protocol.treasuryAddress, "treasuryAddress", "Schedule");
       // INV-VAULT-IDENTITY: no default — a wrong policy here bakes a vault whose
       // NFT check can never pass, i.e. a vault that cannot be spent at all.
       requireField(protocol.vaultIdNftPolicyId, "vaultIdNftPolicyId", "Schedule");
       return [
         protocol.lampPolicyId,
         assetName,
-        addressToPlutusData(protocol.treasuryAddress!),
         protocol.shardPolicyId!,
         protocol.vaultIdNftPolicyId!,
         protocol.vaultIdNftAssetName ?? VAULT_ID_NFT_ASSET_NAME,

@@ -33,6 +33,12 @@ cd <Module>/onchain && aiken build
 > sai tên, hay thiếu một param là ra **sai script hash** ⇒ sai địa chỉ, và **không test
 > nào đỏ**. `applyParamsToScript` không kiểm arity: thiếu param vẫn trả về một script
 > đã-apply-một-phần với hash 28 byte trông hợp lệ.
+>
+> Phạm vi cổng, nói rõ để không ai đọc "0 lệch" thành "đã phủ hết": nó gác **13
+> validator nhận tham số** trong `*/onchain/validators/*.ak`, qua 16 case (một số
+> validator đa-mục-đích được gác cả `spend` lẫn `mint`). Nó **không** gác
+> `MagicSDK/src/validatorScripts.ts` — đó là đường apply thứ hai, tự gác bằng
+> `MagicSDK/tests/vaultParams.test.ts`.
 
 ---
 

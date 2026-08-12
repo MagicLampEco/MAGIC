@@ -16,7 +16,8 @@ import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { msPerEpoch } from "@magiclamp/protocol-utils";
-import { buildParamsList } from "../src/validatorScripts.js";
+import { applyParamsToScript, validatorToScriptHash } from "@lucid-evolution/lucid";
+import { buildParamsList, applyShardValidator } from "../src/validatorScripts.js";
 import type { ProtocolParams } from "../src/types.js";
 
 const LAMP_POLICY = "4942de4a226f43c524c1273d752712366511d5fd7ae28bc1a1576077";
@@ -96,7 +97,7 @@ describe("buildParamsList: lamp_asset_name is network-derived, never a testnet d
 // kiểm arity, nên truyền thiếu vẫn ra hash 28 byte trông hợp lệ, và sai chỉ lộ ra
 // khi có LAMP thật nằm ở một địa chỉ không ai spend được.
 type Blueprint = {
-  validators: { title: string; parameters?: { title: string }[] }[];
+  validators: { title: string; compiledCode: string; parameters?: { title: string }[] }[];
 };
 
 const loadBlueprint = async (module: string): Promise<Blueprint> =>
@@ -112,28 +113,61 @@ const paramTitles = (bp: Blueprint, title: string): string[] => {
 };
 
 describe("arity gate: SDK param list matches the built blueprint", () => {
-  it("Instant: buildParamsList length == vault.vault.spend parameter count", async () => {
-    const titles = paramTitles(await loadBlueprint("InstantGen"), "vault.vault.spend");
-    expect(titles).toEqual([
-      "lamp_policy_id", "lamp_asset_name", "um_nft_policy", "um_script_hash",
-      "backing_nft_policy", "backing_script_hash", "ms_per_epoch",
-    ]);
-    expect(params("Instant", "Preview")).toHaveLength(titles.length);
-  });
+  // Bảng tên → giá trị. Đối chiếu THEO TÊN với blueprint, không chỉ theo số lượng:
+  // `toHaveLength` cho qua mọi hoán vị, mà hoán vị chính là ca đắt nhất (hash sai,
+  // không gì đỏ). Sai một tên ở đây là test đỏ ngay, chứ không phải mainnet đỏ.
+  const BY_NAME: Record<string, unknown> = {
+    lamp_policy_id:       LAMP_POLICY,
+    lamp_asset_name:      TLAMP,
+    um_nft_policy:        UM_POLICY,
+    um_script_hash:       UM_SCRIPT,
+    backing_nft_policy:   BACK_POLICY,
+    backing_script_hash:  BACK_SCRIPT,
+    shard_policy_id:      SHARD_POLC,
+    ms_per_epoch:         86_400_000n,
+  };
 
-  it("Schedule: buildParamsList length == vault.vault.spend parameter count", async () => {
-    const titles = paramTitles(await loadBlueprint("ScheduleGen"), "vault.vault.spend");
-    expect(titles).toEqual([
-      "lamp_policy_id", "lamp_asset_name", "shard_policy_id", "ms_per_epoch",
-    ]);
-    expect(params("Schedule", "Preview")).toHaveLength(titles.length);
-  });
+  for (const [vaultType, module] of [
+    ["Instant", "InstantGen"], ["Schedule", "ScheduleGen"],
+  ] as const) {
+    it(`${vaultType}: buildParamsList khớp blueprint theo TÊN và THỨ TỰ`, async () => {
+      const titles = paramTitles(await loadBlueprint(module), "vault.vault.spend");
+      const unknown = titles.filter((t) => !(t in BY_NAME));
+      expect(unknown, `tham số blueprint chưa có trong BY_NAME: ${unknown.join(", ")}`)
+        .toEqual([]);
+      expect(params(vaultType, "Preview")).toEqual(titles.map((t) => BY_NAME[t]));
+    });
+  }
 
-  it("shard validator takes exactly 1 param — applyShardValidator must not apply []", async () => {
-    // applyShardValidator từng apply `[]` cho validator nhận 1 tham số ⇒ hash và
-    // địa chỉ shard do SDK dẫn xuất KHÁC hash mà deploy/03 đã dùng để đặt 16 shard
-    // UTxO ⇒ mọi ScheduleFire qua SDK không tìm thấy shard input.
-    const titles = paramTitles(await loadBlueprint("ScheduleGen"), "vault.shard.spend");
+  it("applyShardValidator apply ĐÚNG 1 tham số — không phải []", async () => {
+    // Bản cũ của test này chỉ đọc blueprint rồi assert tên tham số; nó KHÔNG hề gọi
+    // applyShardValidator, nên revert hàm đó về `[]` vẫn xanh. Nay gọi thật và so
+    // hash với bản apply `[]`: hai hash phải KHÁC nhau.
+    const bp = await loadBlueprint("ScheduleGen");
+    const titles = paramTitles(bp, "vault.shard.spend");
     expect(titles).toEqual(["shard_policy_id_param"]);
+
+    const shardRaw = bp.validators.find((v) => v.title === "vault.shard.spend")!;
+    const { shardScriptHash } = applyShardValidator(
+      { vaultUnappliedCbor: shardRaw.compiledCode, shardUnappliedCbor: shardRaw.compiledCode },
+      protocolFor("Preview"),
+    );
+    const emptyHash = validatorToScriptHash({
+      type: "PlutusV3",
+      script: applyParamsToScript(shardRaw.compiledCode, []),
+    });
+    expect(shardScriptHash).not.toBe(emptyHash);
+    expect(shardScriptHash).toHaveLength(56);
+  });
+
+  it("applyShardValidator ném lỗi khi thiếu shardPolicyId — không lặng lẽ apply rỗng", async () => {
+    const bp = await loadBlueprint("ScheduleGen");
+    const shardRaw = bp.validators.find((v) => v.title === "vault.shard.spend")!;
+    const p = { ...protocolFor("Preview") };
+    delete (p as { shardPolicyId?: string }).shardPolicyId;
+    expect(() => applyShardValidator(
+      { vaultUnappliedCbor: shardRaw.compiledCode, shardUnappliedCbor: shardRaw.compiledCode },
+      p,
+    )).toThrow();
   });
 });

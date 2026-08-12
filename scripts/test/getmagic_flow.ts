@@ -16,7 +16,7 @@
 
 import {
   Lucid, Blockfrost, Data,
-  applyParamsToScript, validatorToScriptHash,
+  validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails, type UTxO,
 } from "@lucid-evolution/lucid";
@@ -35,6 +35,8 @@ import {
   buildOracleSettleMsg, hexToBytes, bytesToHex,
 } from "../../GetMAGIC/offchain/src/oracle.js";
 import { ed25519 } from "@noble/curves/ed25519";
+import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { otcOrderParams } from "../deployParams.js";
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -129,10 +131,12 @@ async function main() {
   const allocHash   = validatorToScriptHash(allocScript);
   const allocAddr   = credentialToAddress(NETWORK, scriptHashToCredential(allocHash));
 
-  const orderRaw    = findV("otc_order.otc_order.spend");
-  const appliedCode = applyParamsToScript(orderRaw.compiledCode, [allocHash]);
-  const orderScript = { type: "PlutusV3" as const, script: appliedCode };
-  const orderHash   = validatorToScriptHash(orderScript);
+  // Apply THEO TÊN — cùng đường với deploy/08, nếu không hai bên sinh hash khác nhau.
+  const bpGetMagic  = await loadBlueprint("GetMAGIC");
+  const orderRaw    = findValidator(bpGetMagic, "otc_order.otc_order.spend");
+  const { script: orderScript, hash: orderHash } = appliedScript(
+    orderRaw, otcOrderParams({ allocScriptHash: allocHash }),
+  );
   const orderAddr   = credentialToAddress(NETWORK, scriptHashToCredential(orderHash));
 
   console.log(`AllocationDatum address: ${allocAddr}`);

@@ -18,7 +18,7 @@ import {
 import {
   instantVaultParams, scheduleVaultParams, umDatumParams, shardSpendParams,
   oneShotGenesisParams, priceParamParams, consumeParams, paymasterParams,
-  addressData,
+  addressData, otcOrderParams, consolidateParams, profileChangeParams,
 } from "./deployParams.js";
 
 // Giá trị giữ chỗ — chỉ TÊN và THỨ TỰ mới được kiểm ở đây.
@@ -138,6 +138,29 @@ const CASES: Case[] = [
       lampAssetName: "744c414d50",
     }),
   },
+  {
+    // Đây là chỗ SÓT thật, không phải cổng dựng trước: `deploy/08` CÓ chạy, và nó
+    // là script deploy DUY NHẤT còn apply-param theo VỊ TRÍ. Thêm một tham số vào
+    // otc_order.ak là deploy/08 lặng lẽ sinh hash sai — không ai đỏ.
+    module: "GetMAGIC", title: "otc_order.otc_order.spend",
+    usedBy: "deploy/08_deploy_getmagic.ts + test/getmagic_flow.ts",
+    params: otcOrderParams({ allocScriptHash: P28 }),
+  },
+  {
+    // Chưa có deploy script. Vào cổng vì tài liệu của chính module này từng khai
+    // 2 tham số trong khi validator nhận 3 — ai làm theo tài liệu sẽ bake
+    // ms_per_epoch vào đúng chỗ của lamp_asset_name.
+    module: "Consolidate", title: "vault_consolidate.vault_consolidate.spend",
+    usedBy: "(chưa có deploy script — cổng dựng trước)",
+    params: consolidateParams({
+      lampPolicyId: P28, lampAssetName: "744c414d50", msPerEpoch: MS,
+    }),
+  },
+  {
+    module: "ProfileChange", title: "vault_profile.vault_profile.spend",
+    usedBy: "(chưa có deploy script — cổng dựng trước)",
+    params: profileChangeParams({ msPerEpoch: MS }),
+  },
 ];
 
 async function main() {
@@ -189,9 +212,14 @@ async function main() {
 
   console.log(`── Tổng kết: ${ok} khớp, ${mismatch} lệch, ${unbuilt} chưa build`);
   if (unbuilt > 0) {
-    console.log(`   (module chưa build không kết luận được — chạy \`aiken build\` rồi chạy lại)`);
+    console.log(
+      `   ❌ ${unbuilt} module CHƯA BUILD — cổng không kết luận được về chúng.\n` +
+      `   Chạy \`aiken build\` ở <Module>/onchain rồi chạy lại. Trên bản clone sạch thì\n` +
+      `   mọi plutus.json đều thiếu (artifact đã gitignore) — bản cũ của cổng này thoát 0\n` +
+      `   trong đúng ca đó, tức nó im lặng đúng lúc cần nói nhất.`,
+    );
   }
-  if (mismatch > 0) process.exit(1);
+  if (mismatch > 0 || unbuilt > 0) process.exit(1);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

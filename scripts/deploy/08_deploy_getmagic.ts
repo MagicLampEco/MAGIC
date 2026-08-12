@@ -4,11 +4,13 @@
 
 import {
   Lucid, Blockfrost, Data,
-  applyParamsToScript, validatorToScriptHash,
+  validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
 } from "@lucid-evolution/lucid";
 import { readFile } from "node:fs/promises";
 import { NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet } from "../config.js";
+import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { otcOrderParams } from "../deployParams.js";
 
 async function main() {
   console.log("=== GetMAGIC Deploy — Step 8 ===\n");
@@ -40,11 +42,14 @@ async function main() {
   console.log(`  Address: ${allocAddr}\n`);
 
   // ── 3. OTCOrder (parameterized by alloc_script_hash) ─────────
-  const orderRaw     = find("otc_order.otc_order.spend");
-  const appliedOrder = applyParamsToScript(orderRaw.compiledCode, [allocHash]);
-  const orderScript  = { type: "PlutusV3" as const, script: appliedOrder };
-  const orderHash    = validatorToScriptHash(orderScript);
-  const orderAddr    = credentialToAddress(NETWORK, scriptHashToCredential(orderHash));
+  // Apply THEO TÊN, đọc thứ tự từ blueprint — không truyền theo vị trí. Đây từng
+  // là script deploy duy nhất còn apply theo vị trí, tức nằm ngoài `check:params`.
+  const bpGetMagic = await loadBlueprint("GetMAGIC");
+  const orderRaw   = findValidator(bpGetMagic, "otc_order.otc_order.spend");
+  const { script: orderScript, hash: orderHash } = appliedScript(
+    orderRaw, otcOrderParams({ allocScriptHash: allocHash }),
+  );
+  const orderAddr  = credentialToAddress(NETWORK, scriptHashToCredential(orderHash));
 
   console.log("OTCOrder validator (parameterized with allocHash):");
   console.log(`  Hash:    ${orderHash}`);

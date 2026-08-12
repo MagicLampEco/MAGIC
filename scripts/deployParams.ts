@@ -91,6 +91,33 @@ export function shardSpendParams(i: { shardPolicyId: string }): ParamMap {
   return { shard_policy_id_param: i.shardPolicyId };
 }
 
+// ── GetMAGIC — otc_order.otc_order.spend (1 tham số) ─────────────
+// Neo: GetMAGIC/onchain/validators/otc_order.ak:43.
+export function otcOrderParams(i: { allocScriptHash: string }): ParamMap {
+  return { alloc_script_hash: i.allocScriptHash };
+}
+
+// ── Consolidate — vault_consolidate.vault_consolidate.spend (3) ──
+// Neo: Consolidate/onchain/validators/vault_consolidate.ak:106.
+// `lamp_asset_name` là tham số THEO MẠNG (tLAMP testnet / LAMP mainnet) — nó nằm
+// GIỮA hai tham số kia, nên bỏ nó đi không phải là "thiếu param cuối" mà là ĐẨY
+// ms_per_epoch vào đúng chỗ của asset name. Hash sai, im lặng.
+export function consolidateParams(i: {
+  lampPolicyId: string; lampAssetName: string; msPerEpoch: bigint;
+}): ParamMap {
+  return {
+    lamp_policy_id:  i.lampPolicyId,
+    lamp_asset_name: i.lampAssetName,
+    ms_per_epoch:    i.msPerEpoch,
+  };
+}
+
+// ── ProfileChange — vault_profile.vault_profile.spend (1 tham số) ─
+// Neo: ProfileChange/onchain/validators/vault_profile.ak.
+export function profileChangeParams(i: { msPerEpoch: bigint }): ParamMap {
+  return { ms_per_epoch: i.msPerEpoch };
+}
+
 // ── UMKeeper — um_datum.um_datum_validator.spend (3 tham số) ─────
 // Neo: UMKeeper/onchain/validators/um_datum.ak.
 export interface UmDatumParamInputs {

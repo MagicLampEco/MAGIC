@@ -251,6 +251,10 @@ async function main() {
     consumed_count: oldEngage.consumed_count + opCount,
     last_epoch: currentEpoch,
     did_commit: oldEngage.did_commit, // immutable
+    // W-CM-12: validator ép Σ consumed_nanogic(out) == Σ(in) + total_required.
+    // Thiếu trường này thì tx dựng ra bị validator từ chối — trước đây không lộ vì
+    // gói `scripts/` chưa có `tsconfig.json` để `tsc` bắt.
+    consumed_nanogic: oldEngage.consumed_nanogic + required,
   };
 
   // ── Redeemers ────────────────────────────────────────────────────────────────

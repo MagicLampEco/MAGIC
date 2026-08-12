@@ -1293,6 +1293,27 @@ test f_unlock_partial_preserves_sum() {
   ]
 }
 
+// THE BOUND. Each partial release splits a holding, and nothing is ever dropped,
+// so without coalescing the list grew +1 per fire — 21 entries after 20 fires,
+// ~201 after an L=200 schedule, against max_loyalty_holdings=64 enforced by
+// validate_withdraw_lamp. That would freeze the user's LAMP outright. Every
+// split inherits the original acquired_epoch, so the count must stay flat.
+test f_unlock_repeated_does_not_grow() {
+  let h1 = unlock_locked_amount([t_holding(1000, 5, True)], 100)
+  let h2 = unlock_locked_amount(h1, 100)
+  let h3 = unlock_locked_amount(h2, 100)
+  list.length(h3) == 2 && sum_holdings(h3) == 1000 && h3 == [
+    t_holding(300, 5, False),
+    t_holding(700, 5, True),
+  ]
+}
+
+// Distinct epochs must NOT be merged — acquired_epoch is the loyalty age.
+test f_unlock_keeps_distinct_epochs_apart() {
+  let out = unlock_locked_amount([t_holding(50, 2, True), t_holding(50, 7, True)], 100)
+  out == [t_holding(50, 2, False), t_holding(50, 7, False)]
+}
+
 // Oldest-locked-first, and already-unlocked holdings are left alone in front.
 test f_unlock_oldest_first() {
   let h = [t_holding(30, 9, False), t_holding(50, 2, True), t_holding(70, 6, True)]

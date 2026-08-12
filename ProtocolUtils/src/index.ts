@@ -219,7 +219,30 @@ export function unlockLockedAmount(
     }
   }
   if (remaining > 0n) throw new Error(`GEN-LOCK-002: insufficient locked holdings (${remaining} oildrop short)`);
-  return [...unlocked, ...freed, ...stillLocked];
+  return coalesceHoldings([...unlocked, ...freed, ...stillLocked]);
+}
+
+/** Merge holdings sharing (acquired_epoch, is_locked). Lossless: that pair is the
+ *  only thing distinguishing two holdings, and `amount` is additive.
+ *
+ *  NOT optional. `unlockLockedAmount` splits a holding on every partial release
+ *  and never drops one, so without this the list grows +1 per fire — 21 entries
+ *  after 20 fires vs 2 under the old `removeLockedAmount`. MAX_LOYALTY_HOLDINGS
+ *  is 64 and the vault validator enforces it on withdrawal, so an L=200 schedule
+ *  would leave the user unable to withdraw at all.
+ *
+ *  Mirrors `coalesce_holdings` in ScheduleGen/onchain/lib/.../lock.ak, including
+ *  order: the first occurrence of a bucket keeps its position (P8).
+ */
+export function coalesceHoldings(holdings: LoyaltyHolding[]): LoyaltyHolding[] {
+  const out: LoyaltyHolding[] = [];
+  for (const h of holdings) {
+    const i = out.findIndex(x =>
+      x.acquired_epoch === h.acquired_epoch && x.is_locked === h.is_locked);
+    if (i >= 0) out[i] = { ...out[i]!, amount: out[i]!.amount + h.amount };
+    else out.push({ ...h });
+  }
+  return out;
 }
 
 /** §A.9 Oldest-locked-first REMOVAL — deletes the LAMP.

@@ -138,6 +138,42 @@ describe("unlockLockedAmount — I-ACT-7 (LAMP stays put)", () => {
   it("Releasing more than is locked throws, not silently clamps", () => {
     expect(() => unlockLockedAmount(h(), 1500n)).toThrow("GEN-LOCK-002");
   });
+
+  // THE BOUND. Each partial release splits a holding and nothing is dropped, so
+  // without coalescing the list grew +1 per fire — past MAX_LOYALTY_HOLDINGS=64,
+  // which the vault enforces on withdrawal. That freezes the user's LAMP.
+  // P8: same input as `f_unlock_repeated_does_not_grow` in lock.ak — the two
+  // implementations must agree element-for-element, not just on the count.
+  it("Repeated releases match the Aiken vector exactly", () => {
+    let h = [{ amount: 1000n, acquired_epoch: 5n, is_locked: true }];
+    for (let i = 0; i < 3; i++) h = unlockLockedAmount(h, 100n);
+    expect(h).toEqual([
+      { amount: 300n, acquired_epoch: 5n, is_locked: false },
+      { amount: 700n, acquired_epoch: 5n, is_locked: true  },
+    ]);
+  });
+
+  it("Repeated releases do not grow the list", () => {
+    let h = [{ amount: 1000n, acquired_epoch: 5n, is_locked: true }];
+    for (let i = 0; i < 20; i++) h = unlockLockedAmount(h, 10n);
+    expect(h).toHaveLength(2);
+    expect(sumHoldings(h)).toBe(1000n);
+    expect(h).toEqual([
+      { amount: 200n, acquired_epoch: 5n, is_locked: false },
+      { amount: 800n, acquired_epoch: 5n, is_locked: true  },
+    ]);
+  });
+
+  // acquired_epoch is the loyalty age — distinct epochs must never merge.
+  it("Distinct epochs stay separate", () => {
+    expect(unlockLockedAmount(
+      [{ amount: 50n, acquired_epoch: 2n, is_locked: true },
+       { amount: 50n, acquired_epoch: 7n, is_locked: true }], 100n,
+    )).toEqual([
+      { amount: 50n, acquired_epoch: 2n, is_locked: false },
+      { amount: 50n, acquired_epoch: 7n, is_locked: false },
+    ]);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════

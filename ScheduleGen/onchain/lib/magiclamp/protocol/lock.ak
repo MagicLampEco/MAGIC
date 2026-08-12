@@ -64,7 +64,43 @@ pub fn unlock_locked_amount(
   let locked   = list.filter(holdings, fn(h) {  h.is_locked })
   let unlocked = list.filter(holdings, fn(h) { !h.is_locked })
   let sorted   = list.sort(locked, fn(a, b) { int.compare(a.acquired_epoch, b.acquired_epoch) })
-  list.concat(unlocked, unlock_oldest(sorted, amount, []))
+  coalesce_holdings(list.concat(unlocked, unlock_oldest(sorted, amount, [])))
+}
+
+/// Merge holdings sharing (acquired_epoch, is_locked). Lossless: that pair is the
+/// only thing that distinguishes two holdings, and `amount` is additive.
+///
+/// WHY THIS IS NOT OPTIONAL. `unlock_oldest` splits one holding on every partial
+/// release, and unlike the old `remove_locked_amount` it never drops an entry —
+/// so the list grew by +1 PER FIRE (measured: 21 holdings after 20 fires, vs 2).
+/// `max_loyalty_holdings` is 64 and `validate_withdraw_lamp` enforces it, so an
+/// L=200 schedule would leave the vault unable to withdraw at all: LAMP frozen,
+/// which is worse than the erosion I-ACT-7 set out to fix. Every split carries
+/// the ORIGINAL acquired_epoch, so coalescing collapses them back exactly.
+///
+/// ponytail: O(n²) merge over a list capped at 64. sort-then-scan would be
+/// O(n log n) but needs a total order over the pair; revisit only if fire
+/// ExUnits actually bite.
+pub fn coalesce_holdings(holdings: List<LoyaltyHolding>) -> List<LoyaltyHolding> {
+  list.foldl(holdings, [], fn(h, acc) { merge_into(acc, h) })
+}
+
+fn same_bucket(a: LoyaltyHolding, b: LoyaltyHolding) -> Bool {
+  a.acquired_epoch == b.acquired_epoch && a.is_locked == b.is_locked
+}
+
+fn merge_into(
+  acc : List<LoyaltyHolding>,
+  h   : LoyaltyHolding,
+) -> List<LoyaltyHolding> {
+  if list.any(acc, fn(x) { same_bucket(x, h) }) {
+    // First occurrence keeps its position — order stays deterministic (P8).
+    list.map(acc, fn(x) {
+      if same_bucket(x, h) { LoyaltyHolding { ..x, amount: x.amount + h.amount } } else { x }
+    })
+  } else {
+    list.concat(acc, [h])
+  }
 }
 
 fn unlock_oldest(

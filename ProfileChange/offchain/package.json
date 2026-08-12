@@ -2,9 +2,16 @@
   "name": "@magiclamp/profilechange",
   "version": "0.1.0",
   "type": "module",
-  "scripts": { "test": "vitest run" },
-  "dependencies": {
-    "@magiclamp/protocol-utils": "file:../../ProtocolUtils"
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
-  "devDependencies": { "typescript": "^5.4.0", "vitest": "^1.6.0" }
+  "dependencies": {
+    "@magiclamp/protocol-utils": "file:../../ProtocolUtils",
+    "@lucid-evolution/lucid": "0.4.30"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
 }

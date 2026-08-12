@@ -2,10 +2,16 @@
   "name": "@magiclamp/paymaster",
   "version": "1.0.0",
   "type": "module",
-  "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@magiclamp/protocol-utils": "file:../../ProtocolUtils",
-    "@lucid-evolution/lucid": "^0.4.0"
+    "@lucid-evolution/lucid": "0.4.30"
   },
-  "devDependencies": { "typescript": "^5.4.0", "vitest": "^1.6.0" }
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
 }

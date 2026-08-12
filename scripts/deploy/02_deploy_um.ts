@@ -129,7 +129,7 @@ async function main() {
 
   console.log(`\n✅ UM Datum deployed!`);
   console.log(`   TX hash:   ${txHash}`);
-  console.log(`   Explorer:  https://preview.cardanoscan.io/transaction/${txHash}`);
+  console.log(`   Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
   console.log(`\n📋 Copy to .env:`);
   console.log(`   UM_DATUM_HASH=${umScriptHash}      # = um_script_hash param pinned by InstantGen vaults`);
   console.log(`   UM_NFT_POLICY_ID=${umNftPolicyId}  # one-shot singleton (genesis ${genesisUtxo.txHash}#${genesisUtxo.outputIndex})`);

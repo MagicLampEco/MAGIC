@@ -275,7 +275,7 @@ async function main() {
 
   console.log(`\n✅ InstantGen vault created!`);
   console.log(`   TX hash:   ${txHash}`);
-  console.log(`   Explorer:  https://preview.cardanoscan.io/transaction/${txHash}`);
+  console.log(`   Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
   console.log(`\n📋 Copy to .env:`);
   console.log(`   VAULT_INSTANT_HASH=${vaultScriptHash}   # applied for NETWORK=${NETWORK}`);
   console.log(`   VAULT_INSTANT_ID_UNIT=${vaultIdUnit}    # NFT danh-tính vault (policy = vault hash)`);

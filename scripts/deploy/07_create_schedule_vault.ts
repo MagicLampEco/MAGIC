@@ -229,7 +229,7 @@ async function main() {
 
   console.log(`\n✅ ScheduleGen vault created!`);
   console.log(`   TX hash:   ${txHash}`);
-  console.log(`   Explorer:  https://preview.cardanoscan.io/transaction/${txHash}`);
+  console.log(`   Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
   console.log(`\n📋 Copy to .env:`);
   console.log(`   VAULT_SCHEDULE_HASH=${vaultScriptHash}    # applied for NETWORK=${NETWORK}`);
   console.log(`   VAULT_SCHEDULE_ID_UNIT=${vaultIdUnit}     # NFT danh-tính vault (policy = vault hash)`);

@@ -141,7 +141,7 @@ async function main() {
 
   console.log(`\n✅ 16 Shards deployed (one-shot — policy can never re-mint)!`);
   console.log(`   TX hash:   ${txHash}`);
-  console.log(`   Explorer:  https://preview.cardanoscan.io/transaction/${txHash}`);
+  console.log(`   Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
   console.log(`\n📋 Copy to .env:`);
   console.log(`   SHARD_HASH=${shardScriptHash}              # applied for NETWORK=${NETWORK}`);
   console.log(`   SHARD_NFT_POLICY_ID=${shardNftPolicyId}`);

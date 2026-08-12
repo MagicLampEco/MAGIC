@@ -4,7 +4,7 @@
 use aiken/crypto
 use aiken/primitive/bytearray
 use magiclamp/protocol/constants.{
-  q,
+  q, shard_count,
   s_seg1_intercept_q, s_seg1_slope_q,
   s_seg2_knee, s_seg2_intercept_q, s_seg2_slope_q,
   s_seg3_knee, s_seg3_intercept_q, s_seg3_slope_q,
@@ -97,8 +97,9 @@ pub fn check_sch_rate(lambda_oildrop: Int, rate_locked_q: Int) -> Bool {
 
 pub fn compute_shard_id(owner_pkh: ByteArray) -> Int {
   let hash = crypto.blake2b_256(owner_pkh)
-  // first byte mod 16
-  bytearray.at(hash, 0) % 16
+  // byte đầu mod shard_count. Dùng hằng, không ghi thẳng 16: `shard_nft.ak` đã dùng
+  // `shard_count`, nên một chỗ ghi số sẽ tách khỏi chỗ kia trong im lặng khi đổi.
+  bytearray.at(hash, 0) % shard_count
 }
 
 // ══════════════════════════════════════════════════════════════

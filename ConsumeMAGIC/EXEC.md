@@ -62,7 +62,7 @@ npx tsx test/consume_only.ts
 > (`InstantGen/onchain/lib/magiclamp/protocol/math.ak`), mà vault Instant luôn có
 > `gen_schedules = []` ⇒ trần **0** ⇒ `min3(...) = 0`. Đây là fail-closed có chủ ý, không
 > phải thứ đi vòng được bằng env hay tham số. Trạng thái:
-> [`DEVSTATUS.md`](../DEVSTATUS.md) — "Còn nợ" #6 và "Chờ chủ nhân chốt" D1.
+> [`DevStatus.md`](../DevStatus.md) — "Còn nợ" #6 và "Chờ chủ nhân chốt" D1.
 >
 > **Đường thay thế duy nhất để có MAGIC mà tiêu:** ScheduleGen — deploy vault Schedule
 > (`deploy/07_create_schedule_vault.ts`), rồi commit + fire
@@ -174,7 +174,7 @@ Genesis SẠCH: `consumed_count = 0`, `consumed_nanogic = 0`, `last_epoch = 0`
 | N22 | Bảng giá > 16 dòng | 17 dòng `op_prices` | `valid_param` (`max_op_prices`) | tx rejected |
 
 Số test (aiken / offchain / pricing) KHÔNG ghi ở đây — nó hết hạn ngay commit sau và
-bản chép tay ở tệp này từng lệch thật. Nguồn duy nhất: [`DEVSTATUS.md`](../DEVSTATUS.md),
+bản chép tay ở tệp này từng lệch thật. Nguồn duy nhất: [`DevStatus.md`](../DevStatus.md),
 hoặc chạy thẳng lệnh ở §3.
 
 ---
@@ -192,7 +192,7 @@ npm install && npm test
 
 # TypeScript offchain (codec round-trip + builder typecheck)
 cd /Users/ductiger/Projects/MAGIC/ConsumeMAGIC/offchain
-npm install && npm test           # số ca: xem DEVSTATUS.md
+npm install && npm test           # số ca: xem DevStatus.md
 npm run typecheck                 # tsc --noEmit: types.ts + engageId.ts + consume.ts + index.ts
 ```
 

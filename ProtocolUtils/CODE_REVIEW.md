@@ -20,7 +20,7 @@
 > Ai nhận chúng làm task sẽ đi tìm — hoặc tệ hơn, **dựng lại** — thứ đã được dọn xong.
 >
 > - **Mọi con số test trong tệp này** (kể cả ở §Trạng thái, không chỉ ở cuối) là ảnh chụp cũ.
->   Số đang đúng: [`DEVSTATUS.md`](../DEVSTATUS.md).
+>   Số đang đúng: [`DevStatus.md`](../DevStatus.md).
 > - Mô hình đang đúng: [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 >
 > Không cập nhật tệp này theo code nữa. Review mới thì mở biên bản mới.
@@ -197,7 +197,7 @@ sai. Đã fix: keeper.ts import từ math.ts (single source).
 
 Bảng số của đợt review này đã gỡ: nó liệt kê cả `SnapshotGen` / `VacuumGen` (nay ở
 `Legacy/`) và mọi con số đều hết hạn. Số đang đúng, kèm lệnh kiểm:
-[`DEVSTATUS.md`](../DEVSTATUS.md).
+[`DevStatus.md`](../DevStatus.md).
 
 Regression tests đợt đó thêm mới:
 - `AppEconomics`: isqrt10th với V=S_LAMP_TOTAL (V^7 ≈ 10^110) không throw.

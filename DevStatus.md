@@ -1,7 +1,7 @@
-# DEVSTATUS — module nào đang sống, đang chết, đang mồ côi
+# DevStatus — module nào đang sống, đang chết, đang mồ côi
 
 > **Vai của tệp này:** trả lời "**cái gì đang đúng LÚC NÀY**". Chuyện *đã xảy ra* nằm ở
-> [`CHANGELOG.md`](CHANGELOG.md); mô hình *phải thế nào* nằm ở
+> [`ChangeLog.md`](ChangeLog.md); mô hình *phải thế nào* nằm ở
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 >
 > **Đây là nơi DUY NHẤT ghi trạng thái + số kiểm.** Đừng chép số test sang README, sang

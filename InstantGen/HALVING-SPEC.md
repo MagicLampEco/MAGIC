@@ -19,7 +19,7 @@
 # ApplyHalving Spec — InstantGen vault
 
 **Version:** v1.1
-**Status:** ĐÃ CHẾT (lịch sử). Số kiểm của module: [`DEVSTATUS.md`](../DEVSTATUS.md)
+**Status:** ĐÃ CHẾT (lịch sử). Số kiểm của module: [`DevStatus.md`](../DevStatus.md)
 **Scope:** InstantGen module only. SnapshotGen/VacuumGen/ScheduleGen không có Instant batches và không có ApplyHalving redeemer.
 
 ---

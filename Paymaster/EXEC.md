@@ -24,7 +24,7 @@ cd Paymaster/offchain && npm install && npm test
 cd Paymaster/offchain && npx tsc --noEmit   # exit 0
 ```
 
-Số ca test KHÔNG chép về đây — nguồn duy nhất: [`DEVSTATUS.md`](../DEVSTATUS.md), hoặc chạy
+Số ca test KHÔNG chép về đây — nguồn duy nhất: [`DevStatus.md`](../DevStatus.md), hoặc chạy
 lệnh trên. Bản trước chép cứng con số vào tệp này và nó là thứ trôi khỏi mã trong im lặng.
 
 Kiểm thêm (chạy được ngay, không cần credential):
@@ -104,7 +104,7 @@ cd Paymaster/onchain && aiken build   # → plutus.json (đọc hash)
 
 ### 3.1 Đã có
 
-Số ca: [`DEVSTATUS.md`](../DEVSTATUS.md) hoặc chạy `aiken check` / `npm test` (§1).
+Số ca: [`DevStatus.md`](../DevStatus.md) hoặc chạy `aiken check` / `npm test` (§1).
 
 - **Onchain** (`paymaster.ak`): happy path + negative phủ PM-1..PM-17 + math vectors.
 - **Offchain** (`tests/paymaster.test.ts`):

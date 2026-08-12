@@ -8,7 +8,7 @@
 > **Kế toán là DẤU BẰNG.** §7.4 C-CM-2: `total_burned == total_required`. Over-burn bị
 > CẤM y như under-burn. Bản v1 từng ghi `≥` — sai, đừng chép lại.
 >
-> Tệp này KHÔNG giữ số test và KHÔNG chép công thức — số ở [`DEVSTATUS.md`](../DEVSTATUS.md),
+> Tệp này KHÔNG giữ số test và KHÔNG chép công thức — số ở [`DevStatus.md`](../DevStatus.md),
 > công thức đọc thẳng ở tên hàm được trỏ. Neo `file:line` cố tình bị bỏ: chúng chết theo
 > commit đầu tiên chạm vào tệp.
 
@@ -326,4 +326,4 @@ Các nhóm đang có, để biết chỗ nào còn hở khi thêm bất biến m
 | validity range | upper vô hạn, cửa sổ rộng quá 1 epoch, cửa sổ chặt hợp lệ |
 | genesis thread (`mint`) | datum bịa (nanogic / count / last_epoch), output sai địa chỉ, seed không tiêu, owner không ký, sai tên, hai tên, token lạ kèm |
 
-Số test hiện tại: [`DEVSTATUS.md`](../DEVSTATUS.md).
+Số test hiện tại: [`DevStatus.md`](../DevStatus.md).

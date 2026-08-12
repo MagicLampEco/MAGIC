@@ -2,7 +2,7 @@
 ## GenMAGIC v3.3 · §6.9 · C-CONSOLIDATE-1..6 · T23
 
 > **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
-> [`DEVSTATUS.md`](../DEVSTATUS.md). Nguồn chân lý mô hình:
+> [`DevStatus.md`](../DevStatus.md). Nguồn chân lý mô hình:
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
 > số mục "§6.9" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
 > Validator ở đây là **script hash RIÊNG** (`vault_consolidate`), nên UTxO nằm ở địa chỉ

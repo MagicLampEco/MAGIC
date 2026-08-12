@@ -147,7 +147,7 @@ Chỉ 1 vault input được phép. Count theo address match. Nếu 2 vault UTxO
 ## 6. Out-of-scope (v1.0)
 
 - **BurnBatch** — mục này đã cũ: `BurnBatch` nay sống, ở constr 2, và còn cộng `Σburns`
-  vào `consumed_credit`. Trạng thái module: [`DEVSTATUS.md`](../DEVSTATUS.md).
+  vào `consumed_credit`. Trạng thái module: [`DevStatus.md`](../DevStatus.md).
 - **ApplyHalving standalone** — **đã chết**. Slot constr 1 nay là `PruneExpired` (§7.4).
 - **UM smoothing logic** — thuộc UMKeeper (§14), không phải InstantGen.
 - **VacuumGen / ScheduleGen UM path** — C-UM-7 (không stale check), separate module.

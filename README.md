@@ -6,10 +6,10 @@ Hợp đồng thông minh Cardano L1 (PlutusV3) cho hệ **ba token** LAMP · MA
 > Mâu thuẫn giữa README này (hoặc bất kỳ tài liệu nào khác) với spec đó → **theo spec**.
 > README chỉ dẫn đường, không định nghĩa lại mô hình.
 >
-> **Trạng thái từng module:** [`DEVSTATUS.md`](DEVSTATUS.md) — một nơi duy nhất, kèm lệnh
+> **Trạng thái từng module:** [`DevStatus.md`](DevStatus.md) — một nơi duy nhất, kèm lệnh
 > kiểm chứng. Đừng chép số test ra chỗ khác.
 >
-> **Lịch sử thay đổi:** [`CHANGELOG.md`](CHANGELOG.md).
+> **Lịch sử thay đổi:** [`ChangeLog.md`](ChangeLog.md).
 
 ---
 

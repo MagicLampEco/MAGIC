@@ -76,7 +76,7 @@ npm run typecheck
 cd ../onchain && aiken check                          # validators
 ```
 
-Số kiểm giữ ở một nơi duy nhất: [`DEVSTATUS.md`](../DEVSTATUS.md). Muốn số tươi thì chạy
+Số kiểm giữ ở một nơi duy nhất: [`DevStatus.md`](../DevStatus.md). Muốn số tươi thì chạy
 đúng ba lệnh trên, đừng chép con số vào tài liệu.
 
 ---

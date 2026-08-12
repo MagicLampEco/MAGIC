@@ -9,7 +9,7 @@ nhánh trong `InstantGen/onchain/validators/vault.ak` và
 **Đối tượng:** dev on-chain (Aiken). Dev off-chain xem
 [`INTEGRATOR_GUIDE_V1.md`](./INTEGRATOR_GUIDE_V1.md). Mô hình chuẩn của cả hệ:
 [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
-Module nào đang sống: [`DEVSTATUS.md`](../DEVSTATUS.md).
+Module nào đang sống: [`DevStatus.md`](../DevStatus.md).
 
 **Phạm vi:** hai vault còn sống. `SnapshotGen` và `VacuumGen` đã dời sang
 `Legacy/genmagic-v3.3/`; mọi câu trong tài liệu này chỉ nói về hai module dưới đây.
@@ -351,14 +351,14 @@ Preview và không bao giờ lên mainnet: bản lên mainnet phải là bản �
 `UpdateProfile`, đã kiểm toán. Sau khi lên mainnet, mỗi lần đổi validator là một đợt chuyển
 đổi có kế hoạch riêng — không có đường tắt.
 
-Cần biết cái gì đã deploy ở đâu tại thời điểm này thì xem [`DEVSTATUS.md`](../DEVSTATUS.md),
+Cần biết cái gì đã deploy ở đâu tại thời điểm này thì xem [`DevStatus.md`](../DevStatus.md),
 không xem tài liệu này.
 
 ---
 
 ## §8. Còn nợ
 
-Danh sách việc chưa làm sống ở [`DEVSTATUS.md`](../DEVSTATUS.md) — một nơi giữ, không chép
+Danh sách việc chưa làm sống ở [`DevStatus.md`](../DevStatus.md) — một nơi giữ, không chép
 sang đây. Riêng phần dính trực tiếp tới hai handler trên:
 
 - Ma trận test [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md) **chưa hội tụ** về mô hình hai

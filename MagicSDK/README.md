@@ -6,8 +6,8 @@ Cardano nào giữ LAMP đều dùng được.
 > Mô hình chuẩn của cả hệ (ba token LAMP · MAGIC · CARP):
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 > Ràng buộc khi sửa mã: [`BOUNDARIES.md`](../BOUNDARIES.md).
-> Module nào đang sống + số kiểm: [`DEVSTATUS.md`](../DEVSTATUS.md).
-> Chuyện đã xảy ra: [`CHANGELOG.md`](../CHANGELOG.md).
+> Module nào đang sống + số kiểm: [`DevStatus.md`](../DevStatus.md).
+> Chuyện đã xảy ra: [`ChangeLog.md`](../ChangeLog.md).
 
 ## Cài đặt
 
@@ -195,10 +195,10 @@ import theo đường dẫn repo (`InstantGen/offchain/src/instant.js`…) — �
 >
 > 1. **`backingBeaconUtxo` chưa tồn tại.** Nó là bắt buộc; chừng nào CARP chưa ship
 >    BackingBeacon thì không reference input nào thoả, `cap_surplus` không tính được, tx bị
->    từ chối. ([`DEVSTATUS.md`](../DEVSTATUS.md) "Còn nợ" #2)
+>    từ chối. ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #2)
 > 2. **Trần thứ ba luôn bằng 0.** `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`, mà
 >    vault Instant luôn có `gen_schedules = []` ⇒ trần 0 ⇒ `min3(...) = 0` ⇒
->    `expect grant > 0` fail. ([`DEVSTATUS.md`](../DEVSTATUS.md) "Còn nợ" #6, "Chờ chủ nhân
+>    `expect grant > 0` fail. ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #6, "Chờ chủ nhân
 >    chốt" D1 — phải vá cùng lúc với `INV-INSTANT-LOCK`)
 >
 > Cả hai đều fail-closed theo thiết kế, không phải lỗi để đi vòng. **Ngày CARP giao beacon,
@@ -280,5 +280,5 @@ npm test          # vitest
 npm run typecheck # tsc --noEmit
 ```
 
-Số ca test hiện hành nằm ở [`DEVSTATUS.md`](../DEVSTATUS.md) — chỗ duy nhất giữ số. Đừng chép
+Số ca test hiện hành nằm ở [`DevStatus.md`](../DevStatus.md) — chỗ duy nhất giữ số. Đừng chép
 con số đó sang đây; nó hết hạn ngay khi có commit mới.

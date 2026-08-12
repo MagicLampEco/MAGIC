@@ -7,7 +7,7 @@ rút LAMP.
 > **Mô hình chuẩn của cả hệ:**
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 > **Luật validator** mà mã dưới đây phải khớp: [`SPEC_V1.md`](./SPEC_V1.md).
-> **Module nào đang sống + số kiểm:** [`DEVSTATUS.md`](../DEVSTATUS.md).
+> **Module nào đang sống + số kiểm:** [`DevStatus.md`](../DevStatus.md).
 
 > **Hai điều dễ sai nhất, nói trước:**
 > 1. **Tạo vault BẮT BUỘC mint NFT danh tính.** Quên là LAMP kẹt vĩnh viễn — xem [§4](#4-tạo-vault).
@@ -63,7 +63,7 @@ Mỗi loại một validator riêng ⇒ một địa chỉ Cardano riêng:
 
 `SnapshotGen` và `VacuumGen` đã dời sang `Legacy/genmagic-v3.3/` — validator của chúng không
 còn trong cây làm việc, `VaultType` chỉ còn hai giá trị trên. Lý do từng module:
-[`Legacy/README.md`](../Legacy/README.md); mốc thời gian: [`CHANGELOG.md`](../CHANGELOG.md).
+[`Legacy/README.md`](../Legacy/README.md); mốc thời gian: [`ChangeLog.md`](../ChangeLog.md).
 
 Một người có thể có N vault thuộc cả hai loại, **cùng một owner PKH**, mỗi vault một datum
 riêng.
@@ -375,12 +375,12 @@ dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trốn
 > 1. **`backingBeaconUtxo` chưa tồn tại** (trần thặng dư backing). Nó là bắt buộc; chừng nào
 >    CARP chưa ship beacon thì không reference input nào thoả, `cap_surplus` không tính được,
 >    tx bị từ chối. Không có `br` mặc định nào được bịa ra để đi tiếp.
->    ([`DEVSTATUS.md`](../DEVSTATUS.md) "Còn nợ" #2)
+>    ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #2)
 > 2. **Trần theo lịch đã cam kết luôn bằng 0.** `computeCapPp` /
 >    `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`, mà vault Instant luôn có
 >    `gen_schedules = []` ⇒ trần 0 ⇒ `min3(...) = 0` ⇒ `expect grant > 0` fail. Đây KHÔNG
 >    phải hệ quả của #1 — nó chặn độc lập, kể cả khi beacon đã có.
->    ([`DEVSTATUS.md`](../DEVSTATUS.md) "Còn nợ" #6 và "Chờ chủ nhân chốt" D1: phải viết lại
+>    ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #6 và "Chờ chủ nhân chốt" D1: phải viết lại
 >    trần theo SPEC §6.3 **cùng lúc** với `INV-INSTANT-LOCK`, không thì mở đường flash-rent LAMP)
 >
 > **Ngày CARP giao beacon, InstantGen VẪN cấp 0 nanogic.** Đừng bật nút Instant chỉ vì #1 đã
@@ -394,7 +394,7 @@ trong cây làm việc, nên cũng không có gì để export. Đừng dựng g
 
 `PrepaidGen` được `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` nhắc tới như cửa thứ ba, nhưng mã
 nguồn của nó **đã mất** (chỉ còn bytecode) — xem mục "Còn nợ" của
-[`DEVSTATUS.md`](../DEVSTATUS.md). Không có đường gọi qua SDK.
+[`DevStatus.md`](../DevStatus.md). Không có đường gọi qua SDK.
 
 ### Đơn vị — luôn thô, luôn BigInt
 
@@ -500,7 +500,7 @@ gửi sang ví khác. Bỏ trống thì LAMP về chính ví đang ký.
 > code cho khớp nó**: gán `last_updated_epoch: currentEpoch` là reset cửa sổ bắt-kịp và làm
 > mất MAGIC đã tích; dựng lại value vault từ `{lovelace, lamp}` là bỏ rơi NFT danh tính ⇒ tx
 > bị từ chối. Luật đang cưỡng chế: [`SPEC_V1.md §1`](./SPEC_V1.md). Trạng thái:
-> [`DEVSTATUS.md`](../DEVSTATUS.md).
+> [`DevStatus.md`](../DevStatus.md).
 
 ### Chọn holding: mới nhất trước
 
@@ -697,7 +697,7 @@ await lucid.newTx()
 thẳng sang ví khác được trong một tx. Builder off-chain **đã khớp** validator (giữ
 `last_updated_epoch`, giữ NFT danh tính) — cái còn thiếu là **nghiệm thu**: chưa có tx thật
 trên testnet. Xem [§8](#8-rút-lamp-về-ví). Trước khi mở nút "rút" cho người dùng thật, chạy
-thử đầu-cuối trên testnet và đối chiếu [`DEVSTATUS.md`](../DEVSTATUS.md).
+thử đầu-cuối trên testnet và đối chiếu [`DevStatus.md`](../DevStatus.md).
 
 ---
 
@@ -710,4 +710,4 @@ thử đầu-cuối trên testnet và đối chiếu [`DEVSTATUS.md`](../DEVSTAT
   vault, còn nói về Snapshot/Vacuum
 - [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md) — mô
   hình ba token của cả hệ
-- [`DEVSTATUS.md`](../DEVSTATUS.md) — module nào đang sống, còn nợ gì, số kiểm hiện hành
+- [`DevStatus.md`](../DevStatus.md) — module nào đang sống, còn nợ gì, số kiểm hiện hành

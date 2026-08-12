@@ -255,7 +255,7 @@ Aiken tests:
 cd InstantGen/onchain
 aiken check
 ```
-Số kiểm giữ ở một nơi duy nhất — [`DEVSTATUS.md`](../DEVSTATUS.md). Đừng chép số vào đây.
+Số kiểm giữ ở một nơi duy nhất — [`DevStatus.md`](../DevStatus.md). Đừng chép số vào đây.
 
 ---
 

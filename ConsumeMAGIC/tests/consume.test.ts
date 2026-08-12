@@ -6,7 +6,7 @@
 // Chúng KHÔNG phủ mô hình v2 engagement-state. Phủ v2 nằm ở `codec.test.ts` và
 // `consume_required.test.ts`.
 //
-// ⇒ Con số "ConsumeMAGIC offchain N pass" ở DEVSTATUS.md phần lớn là số của tệp này,
+// ⇒ Con số "ConsumeMAGIC offchain N pass" ở DevStatus.md phần lớn là số của tệp này,
 //   ĐỪNG đọc nó như bằng chứng v2 đã được phủ.
 //
 // Số phận tệp này (giữ / dời `Legacy/`) đang CHỜ QUYẾT ĐỊNH của chủ nhân.

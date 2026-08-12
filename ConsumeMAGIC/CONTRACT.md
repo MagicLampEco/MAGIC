@@ -226,7 +226,7 @@ tích luỹ; pin cứng về `#""` sẽ khoá chết đường liên kết DID s
 - **OFFCHAIN**: `buildMintEngageTx` + `buildConsumeTx` + codec EngageDatum(5)/PriceParam/
   ConsumeRedeemer/EngageMintRedeemer + `engageId.ts` (tên thread NFT) + script deploy/e2e Preview.
 
-Số ca test (aiken / offchain / pricing) KHÔNG ghi ở đây — nguồn duy nhất: [`DEVSTATUS.md`](../DEVSTATUS.md).
+Số ca test (aiken / offchain / pricing) KHÔNG ghi ở đây — nguồn duy nhất: [`DevStatus.md`](../DevStatus.md).
 
 ## E. Bất biến tuyệt đối (mọi spec/code)
 - MAGIC = số kế toán trong vault datum; KHÔNG token, KHÔNG `tx.mint`. LAMP + ADA bảo toàn byte-perfect.

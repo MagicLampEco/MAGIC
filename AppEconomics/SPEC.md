@@ -4,7 +4,7 @@
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 > Ràng buộc chung: [`BOUNDARIES.md`](../BOUNDARIES.md).
 >
-> **Trạng thái module: MỒ CÔI** — xem [`DEVSTATUS.md`](../DEVSTATUS.md). Chưa quyết hội tụ
+> **Trạng thái module: MỒ CÔI** — xem [`DevStatus.md`](../DevStatus.md). Chưa quyết hội tụ
 > vào mô hình ba-token hay dời `Legacy/`. Cho tới khi có quyết định, nội dung dưới đây
 > mô tả mô hình GenMAGIC v3.3 (§7–§10 + §19) và **có thể mâu thuẫn với spec canonical**.
 > Mâu thuẫn thì spec canonical thắng.

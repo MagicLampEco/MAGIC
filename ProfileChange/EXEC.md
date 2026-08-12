@@ -2,7 +2,7 @@
 ## Deploy steps, Test plan, Known limits
 
 > **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
-> [`DEVSTATUS.md`](../DEVSTATUS.md). Nguồn chân lý mô hình:
+> [`DevStatus.md`](../DevStatus.md). Nguồn chân lý mô hình:
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
 > số mục "§12" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
 > Mọi chỗ tệp này nhắc **SnapshotGen** là tàn dư: module đó đã chết

@@ -1,7 +1,7 @@
 # InstantGen — Thiết kế PHA 2
 
 **Trạng thái:** đã triển khai. Số kiểm giữ ở một nơi duy nhất —
-[`DEVSTATUS.md`](../DEVSTATUS.md); muốn số tươi thì chạy `aiken check` trong `onchain/`
+[`DevStatus.md`](../DevStatus.md); muốn số tươi thì chạy `aiken check` trong `onchain/`
 và `npm test` trong `offchain/`.
 **Nguồn chân lý:** `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` §4.2, §6.1, §6.3, §11, §12.
 **Tài liệu này thay thế:** `HALVING-SPEC.md` (halving không còn tồn tại) và mọi mô tả
@@ -337,7 +337,7 @@ Biến môi trường mới: `BACKING_NFT_POLICY_ID`, `BACKING_SCRIPT_HASH` (m�
 | Hình dạng Plutus Data của `VaultDatum` | không đổi (17 trường; `ActivityState` vẫn 2 trường; `MagicBatch` vẫn 9 trường) |
 | `VaultRedeemer` số biến thể + chỉ số | không đổi (0..5); chỉ nhãn constr 1 đổi tên, vẫn nullary |
 
-`ConsumeMAGIC/offchain` vẫn xanh sau thay đổi (số kiểm: [`DEVSTATUS.md`](../DEVSTATUS.md)).
+`ConsumeMAGIC/offchain` vẫn xanh sau thay đổi (số kiểm: [`DevStatus.md`](../DevStatus.md)).
 
 ---
 

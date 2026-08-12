@@ -4,7 +4,7 @@ Tệp này được track, dùng chung cho cả người và agent. `CLAUDE.md` 
 máy và chỉ `@import` tệp này — đừng chép nội dung sang đó.
 
 > Mô hình chuẩn: [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
-> Trạng thái module: [`DEVSTATUS.md`](DEVSTATUS.md). Lịch sử: [`CHANGELOG.md`](CHANGELOG.md).
+> Trạng thái module: [`DevStatus.md`](DevStatus.md). Lịch sử: [`ChangeLog.md`](ChangeLog.md).
 
 ---
 
@@ -101,9 +101,9 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
      chiếu treo, cộng một lệnh build/typecheck xanh. Nhãn "đã dọn" không kèm output thô là
      **chưa dọn**.
   3. **Rà lại mã đã viết DỰA TRÊN tệp vừa xoá.** Xem bài học ở cuối mục này.
-- **Trước khi xoá, tra `DEVSTATUS.md` mục `## Không được xoá`.** Định danh đã lên chain (chỉ
+- **Trước khi xoá, tra `DevStatus.md` mục `## Không được xoá`.** Định danh đã lên chain (chỉ
   số constructor, tên asset, thứ tự trường datum, thứ tự apply-param) **không bao giờ** là tệp
   lỗi thời — bỏ đi là vỡ decode mọi UTxO đã tạo.
 - **Không đọc `Legacy/`** trừ khi được yêu cầu rõ. Nó là kho lịch sử, không phải nguồn.
-- **Một sự thật một nơi giữ.** Cần số test thì trỏ `DEVSTATUS.md` hoặc chạy lệnh, đừng chép.
+- **Một sự thật một nơi giữ.** Cần số test thì trỏ `DevStatus.md` hoặc chạy lệnh, đừng chép.
 - **Commit đặt tên tác giả thật**, không đặt tên công cụ.

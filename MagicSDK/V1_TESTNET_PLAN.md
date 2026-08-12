@@ -17,10 +17,10 @@
 > khi đi tìm bất cứ đường dẫn nào bên dưới.
 >
 > **Mọi con số** trong tệp (37 ca v0, 32+ ca mới, 28/28 SDK unit test) là ảnh chụp cũ. Số
-> đang đúng: [`DEVSTATUS.md`](../DEVSTATUS.md).
+> đang đúng: [`DevStatus.md`](../DevStatus.md).
 >
 > Chưa xoá, chưa viết lại: cần chủ nhân chốt "viết lại theo 2 vault" hay "dời `Legacy/`"
-> ([`DEVSTATUS.md`](../DEVSTATUS.md) — "Chờ chủ nhân chốt" D6).
+> ([`DevStatus.md`](../DevStatus.md) — "Chờ chủ nhân chốt" D6).
 > **Đừng dùng tệp này làm căn cứ nghiệm thu**, và đừng nhận các mục §1 làm tiêu chí pass:
 > tiêu chí #1/#2/#5 neo vào những con số không kiểm lại được, #3/#4 neo vào "4 module" mà
 > nay chỉ còn 2.

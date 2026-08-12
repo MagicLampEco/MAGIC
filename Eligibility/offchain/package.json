@@ -1,0 +1,15 @@
+{
+  "name": "@magiclamp/eligibility",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "GenMAGIC eligibility — pure math + normative vectors (spec §6.2)",
+  "scripts": {
+    "test":       "vitest run",
+    "test:watch": "vitest",
+    "typecheck":  "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest":     "^1.6.0"
+  }
+}

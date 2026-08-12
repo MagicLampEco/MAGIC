@@ -7,7 +7,7 @@ use aiken/builtin
 use aiken/collection/list
 use aiken/interval.{Finite, IntervalBoundType}
 use cardano/address.{Address, Inline, Script, VerificationKey}
-use cardano/assets.{PolicyId, Value}
+use cardano/assets.{Value}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Spend, Transaction,
 }

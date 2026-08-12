@@ -19,7 +19,10 @@ import {
   selectLampForLock, unlockLockedAmount, isExpired, lAvail,
   lampToOildrop, nanogicToMagicStr, qToStr,
 } from "./math.js";
-import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import {
+  getTipSlot, posixMsToEpoch, msPerEpoch, lampAssetName as lampAssetNameFor,
+  type Network,
+} from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatum, VaultRedeemer, ShardRedeemer,
@@ -356,7 +359,11 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
 
   // Build tx
   const { vaultScript, shardScript, lampPolicyId } = params;
-  const lampAssetName = params.lampAssetName ?? TESTNET_CONFIG.lampAssetName;
+  // Suy theo MẠNG, không lấy mặc định testnet. Bản cũ rơi về `TESTNET_CONFIG`
+  // ("tLAMP") kể cả khi network là Mainnet — đúng thứ BOUNDARIES.md §2 gọi là dựng
+  // ra một vault mainnet không bao giờ nhìn thấy LAMP của chính nó. Override tường
+  // minh vẫn được tôn trọng, cho ca mint không chuẩn.
+  const lampAssetName = params.lampAssetName ?? lampAssetNameFor(network);
   const vaultAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
   const lampUnit   = toUnit(lampPolicyId, lampAssetName);

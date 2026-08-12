@@ -156,7 +156,7 @@ export function checkSchRate(lambdaOil: bigint, rateLockedQ: bigint): boolean {
 
 export function computeShardId(ownerPkh: string): number {
   const hash = blake2b(Buffer.from(ownerPkh, "hex"), { dkLen: 32 });
-  return hash[0]! % 16;
+  return hash[0]! % SHARD_COUNT;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -178,7 +178,7 @@ export function countEligibleFires(
   const batchBudget  = MAX_BATCHES_PER_VAULT - currentBatches;
   let fires = 0;
   while (
-    fires < 8 &&                                              // MAX_FIRES_PER_TX_CATCHUP
+    fires < MAX_FIRES_PER_TX_CATCHUP &&
     fires < remaining &&
     fires < batchBudget &&
     startFireEpoch + firedCount + BigInt(fires) <= currentEpoch
@@ -188,7 +188,9 @@ export function countEligibleFires(
   return fires;
 }
 
-import { MAX_BATCHES_PER_VAULT } from "./constants.js";
+import {
+  MAX_BATCHES_PER_VAULT, MAX_FIRES_PER_TX_CATCHUP, SHARD_COUNT,
+} from "./constants.js";
 
 // Utility + lock helpers are re-exported from @magiclamp/protocol-utils
 // (single source of truth, P8). See imports/re-exports at top of file.

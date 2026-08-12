@@ -525,3 +525,32 @@ describe("§4.2 cliff — a fired batch lives exactly one epoch", () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+// TV-OVERFLOW-02 — BigInt bắt buộc ở phía ScheduleGen
+//
+// Vector này khai ở `InstantGen/tests/vectors.ts` (TV_OVERFLOW_02) nhưng ở đó nó
+// KHÔNG có một assertion nào, và `ALL_VECTORS` không tệp nào import — nghĩa là chốt
+// mà BOUNDARIES.md §2 viện dẫn cho phía ScheduleGen từng chỉ là đồ trang trí.
+// Bài kiểm thật sống ở đây, cạnh `computeSQ` mà nó gác.
+// ═══════════════════════════════════════════════════════════════
+describe("C-OVERFLOW — TV-OVERFLOW-02: trung gian S_Q × R_snap vượt Number", () => {
+  it("S_Q(200) × SNAPSHOT_BASE_RATE_Q khớp vector và vượt MAX_SAFE_INTEGER", () => {
+    const sQ = computeSQ(200n);
+    expect(sQ).toBe(2_625_000_000n);
+
+    const intermediate = sQ * SNAPSHOT_BASE_RATE_Q;
+    expect(intermediate).toBe(13_125_000_000_000_000_000n);
+    expect(intermediate > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true);
+  });
+
+  it("ở độ lớn đó Number KHÔNG phân biệt được hai giá trị kề nhau", () => {
+    // Chính con số này thì double biểu diễn đúng (nó ít bit nghĩa). Cái hỏng không
+    // phải giá trị mẫu, mà là ĐỘ PHÂN GIẢI: quanh 1.3e19 khoảng cách giữa hai double
+    // kề nhau đã là hàng nghìn, nên một nanogic lệch biến mất không dấu vết. Đó là
+    // lý do mọi số tiền phải là BigInt, không phải vì mẫu này tràn.
+    const exact = computeSQ(200n) * SNAPSHOT_BASE_RATE_Q;
+    expect(Number(exact + 1n)).toBe(Number(exact));
+    expect(Number(exact + 1000n)).toBe(Number(exact));
+  });
+});

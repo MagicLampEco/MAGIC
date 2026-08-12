@@ -30,6 +30,20 @@ Chạy lại: `bash scripts/run_wakeme_e2e.sh Preview` · `bash scripts/run_wake
 — L=10, λ=1 tLAMP, khoá 10 tLAMP, `rate_locked_q = 8_000_000_000`, shard 6/16,
 schedule `0e8bde1cf2dc5997…`, fire đầu tiên epoch 20679.
 
+**Chạy lại trọn chuỗi 2026-08-13** (00 → 0a…0e → 07 → commit → fire → 05 → instant),
+vault mới, cùng kết quả:
+
+| Bước | TX |
+|---|---|
+| vault ScheduleGen (07) | `eb32aa5801fff0e689b560ea662a7ec5168eddd0c43853cc5849f4800d106d4f` |
+| ScheduleCommit | `80632ebfd5e65f6a1694c4c76f233ee77d82bab3a2d76620fab9ccf5ec814608` |
+| BackingBeacon làm mới (04) | `9a60b79a0d5d2f445d4d9f57296d569bc06c4daa87ddaa8be398ed701beb6c61` |
+| vault InstantGen (05) | `1fade5a23f18a992fd7e17c797b2e118f3b50648b154dcb2652c6ae6d7c92d51` |
+
+Script tham chiếu CIP-33 dùng lại, không dựng mới:
+`REF_VAULT_SCHEDULE_UTXO=d16d9a2384e91a4a6abd955b6a05e3cc11993c98a24be32990d5bd55f028a085#0` ·
+`REF_SHARD_UTXO=5458caa235ac2326b1dbe13f0d445d2d6c16b96ba5277377818bb971b1606648#0`
+
 ## Preprod — 2026-08-12
 
 | Thứ | Giá trị |
@@ -41,6 +55,20 @@ schedule `0e8bde1cf2dc5997…`, fire đầu tiên epoch 20679.
 **ScheduleCommit chạy được, tx thật:**
 `8ffe6dc7288ac6b33e0599d093c1f8d71dc22e39fe2d7e28fff32d99abaa29dc`
 — schedule `3649a67d9d6dd808…`, cùng tham số, cùng shard 6/16.
+
+**Chạy lại trọn chuỗi 2026-08-13**, vault mới, cùng kết quả:
+
+| Bước | TX |
+|---|---|
+| ScheduleCommit | `cc632831f56c584135f49aabc496b62867d657e14bbad4a87d37470b2142990c` |
+| BackingBeacon làm mới (04) | `1903cef71d803d14db64f254bcb5768195f711fd7efb7b9db4761681ed320acd` |
+| vault InstantGen (05) | `27530d3e884c10dc8711ac399be7c498641e4a450809f80e55b70fff70c4fba6` |
+
+| Thứ | Giá trị |
+|---|---|
+| UM NFT policy | `8bd51c8ed0ae559acf13e7d12801e2635fe4ae30b8fe62a416cb6a25` |
+| UM script hash | `c81d0a41ccb2487cb764923f01e04a8419d13d0485a16ac05495c935` |
+| Shard NFT policy | `b6ea66ab9fe55747930294be0a74bc4eba1136c72e90c0585ee2bf7b` |
 
 ---
 
@@ -56,6 +84,18 @@ tổng hợp cập nhật, rate khoá vĩnh viễn theo T8.
 nghiệm thu ScheduleGen trọn vòng trong một buổi.**
 
 **3. InstantGen ❌ không mở được, và không phải vì cấu hình.** Đo giống hệt nhau trên cả
-hai mạng: `reward=0 cap_surplus=33333333333 cap_pp=0`. Beacon dựng-tạm ĐÃ mở cổng thặng dư
-(cap_surplus > 0), nên cái chặn là `cap_pp = 0`. Xem `DevStatus.md` Nợ #19 — vòng khép kín
-trong mã, vá thuộc D1.
+hai mạng, hai ngày, bốn vault khác nhau: `reward=0 cap_surplus=33333333333 cap_pp=0`.
+Beacon dựng-tạm ĐÃ mở cổng thặng dư (cap_surplus > 0), nên cái chặn nằm ở hai vế kia.
+**HAI khoá độc lập, không phải một** (soát lại 2026-08-13):
+
+- `cap_pp = 0` — `gen_schedules` bị genesis ép rỗng và không nhánh nào của validator
+  InstantGen ghi vào được.
+- `reward = 0` — `consumed_credit` chỉ tăng ở `BurnBatch`, mà `BurnBatch` cần
+  `magic_batches` khác rỗng, mà `magic_batches` chỉ được ghi ở chính nhánh `InstantGen`.
+  Vòng tự-tham-chiếu.
+
+Vá `cap_pp` một mình KHÔNG mở được cửa. Xem `DevStatus.md` Nợ #19 + D1.
+
+**Hệ quả cho thứ tự thao tác của người dùng:** InstantGen là **khoản ứng trước** trên dòng
+ScheduleGen đã cam kết, không phải cửa độc lập. Kể cả sau khi vá, thứ tự tối thiểu vẫn là
+`Wakeme → ScheduleCommit → chờ 2 epoch → ScheduleFire → BurnBatch → InstantGen`.

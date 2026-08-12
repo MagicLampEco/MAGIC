@@ -21,3 +21,6 @@ MagicSDK/node_modules
 
 # Tệp nội bộ từng máy — ranh giới chia sẻ nằm ở BOUNDARIES.md (được track)
 CLAUDE.md
+
+# Trang thai deploy cuc bo theo mang (gia tri cong khai, ban ghi chuan la scripts/DEPLOYED.md)
+scripts/state.*.sh

@@ -68,6 +68,11 @@ export interface CommitParams {
   tipPosixMs?     : bigint;
   tamperOutputDatum?: (d: any) => any;
   skipOwnerSig?   : boolean;
+  /** UTxO mang scriptRef của vault + shard (CIP-33). Có thì tx ĐỌC script từ
+   *  chain thay vì đính kèm. ĐÍNH KÈM CẢ HAI VALIDATOR VƯỢT TRẦN 16 KB
+   *  (đo thật trên Preview: 17303 > 16384), nên đây không phải tối ưu — không
+   *  có nó thì ScheduleCommit không dựng nổi tx nào. */
+  refScriptUtxos? : UTxO[];
 }
 
 export interface CommitResult {
@@ -97,6 +102,8 @@ export interface FireParams {
   tamperOutputDatum?: (d: any) => any;
   /** TEST ONLY: move LAMP out of the vault to prove I-ACT-7 rejects it. */
   tamperLampOutOil?: bigint;
+  /** Xem `CommitParams.refScriptUtxos` — ScheduleFire cũng tiêu hai script. */
+  refScriptUtxos? : UTxO[];
 }
 
 export interface FireResult {
@@ -215,9 +222,11 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   let txBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
-    .collectFrom([shardUtxo], shardRed)
-    .attach.SpendingValidator(vaultScript)
-    .attach.SpendingValidator(shardScript)
+    .collectFrom([shardUtxo], shardRed);
+  txBuilder = params.refScriptUtxos?.length
+    ? txBuilder.readFrom(params.refScriptUtxos)
+    : txBuilder.attach.SpendingValidator(vaultScript).attach.SpendingValidator(shardScript);
+  txBuilder = txBuilder
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) }, vaultUtxo.assets)
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatum) }, shardUtxo.assets)
     .validFrom(lowerTime)
@@ -372,12 +381,14 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const lowerTime  = Number(tipPosixMs);
   const upperTime  = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
-  const tx = await lucid
+  let fireBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
-    .collectFrom([shardUtxo], shardRed)
-    .attach.SpendingValidator(vaultScript)
-    .attach.SpendingValidator(shardScript)
+    .collectFrom([shardUtxo], shardRed);
+  fireBuilder = params.refScriptUtxos?.length
+    ? fireBuilder.readFrom(params.refScriptUtxos)
+    : fireBuilder.attach.SpendingValidator(vaultScript).attach.SpendingValidator(shardScript);
+  const tx = await fireBuilder
     // I-ACT-7: the vault output carries EXACTLY the LAMP it came in with.
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) },
       { lovelace: vaultLovelaceFire,

@@ -5,7 +5,10 @@
 //
 // TWO-PHASE:
 //   ScheduleCommit: user signs, locks L×λ, creates GenSchedule, updates shard
-//   ScheduleFire:   permissionless, fires ≤8 orders, updates vault+shard+treasury
+//   ScheduleFire:   permissionless, fires ≤8 orders, updates vault+shard.
+//                   I-ACT-7: LAMP STAYS PUT — a fire lifts the lock, it does
+//                   not move LAMP out. lamp_balance is byte-identical across a
+//                   fire; only lamp_locked drops.
 //
 // SHARD BIND (HIGH fix, option (c)): the VAULT is the SINGLE authority on the
 // shard datum transition. validate_commit / validate_fire assert the full shard
@@ -21,8 +24,8 @@ use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/interval.{Finite, IntervalBoundType}
-use cardano/address.{Address, Script}
-use cardano/assets.{PolicyId}
+use cardano/address.{Address}
+use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Spend, Transaction, placeholder,
 }
@@ -46,7 +49,7 @@ use magiclamp/protocol/math.{
   compute_schedule_id, compute_batch_id, shard_asset_name,
 }
 use magiclamp/protocol/lock.{
-  select_lamp_for_lock, remove_locked_amount, remove_newest_first,
+  select_lamp_for_lock, unlock_locked_amount, remove_newest_first,
   sum_holdings, l_avail,
 }
 
@@ -70,7 +73,6 @@ const t_lamp_name: ByteArray = #"4c414d50"   // "LAMP"
 validator vault(
   lamp_policy_id    : PolicyId,
   lamp_asset_name   : ByteArray,  // LAMP asset name per network (deploy-applied)
-  treasury_addr     : Address,
   shard_policy_id   : PolicyId,  // identifies shard UTxOs by NFT
   // INV-VAULT-IDENTITY (ConsumeMAGIC C-CM-6): the one-shot NFT minted by
   // ConsumeMAGIC/onchain/validators/vault_id_nft.ak. Deploy MUST apply the SAME
@@ -112,7 +114,7 @@ validator vault(
 
       ScheduleFire { schedule_id } ->
         validate_fire(datum, schedule_id, current_epoch, own_ref, vault_addr,
-                      lamp_policy_id, lamp_asset_name, treasury_addr,
+                      lamp_policy_id, lamp_asset_name,
                       shard_policy_id, tx)
 
       // ── BurnBatch (D1 datum-consume) ─────────────────────────
@@ -313,7 +315,6 @@ fn validate_fire(
   vault_addr      : Address,
   lamp_policy_id  : PolicyId,
   lamp_asset_name : ByteArray,
-  treasury_addr   : Address,
   shard_policy_id : PolicyId,
   tx              : Transaction,
 ) -> Bool {
@@ -331,12 +332,9 @@ fn validate_fire(
   // M_i for each fire (T-DET: all identical)
   let m_i = compute_m_i(sched.lamp_per_epoch, sched.rate_locked_q)
 
-  // Total LAMP to transfer: fires_in_tx × λ
-  let lamp_transfer = fires_in_tx * sched.lamp_per_epoch
-
-  // C-FIRE-3: LAMP transfer atomic; treasury must be SCRIPT custody (PR #11 pt3)
-  expect Script(_) = treasury_addr.payment_credential
-  expect treasury_lamp_received(tx.outputs, treasury_addr, lamp_policy_id, lamp_asset_name, lamp_transfer)
+  // I-ACT-7: a fire RELEASES the lock, it does not move LAMP. fires_in_tx × λ is
+  // the amount unlocked — no treasury leg, no change to lamp_balance.
+  let lamp_released = fires_in_tx * sched.lamp_per_epoch
 
   // Create new batches (one per fire)
   let new_batches = create_fire_batches(own_ref, datum.next_batch_index,
@@ -357,8 +355,9 @@ fn validate_fire(
       })
     }
 
-  // Remove locked amount (C-FIRE-6)
-  let new_holdings = remove_locked_amount(datum.loyalty_holdings, lamp_transfer)
+  // C-FIRE-6 / I-ACT-7: release the lock, keep the LAMP. is_locked flips on the
+  // oldest locked holdings; Σholdings is invariant so lamp_balance stays put.
+  let new_holdings = unlock_locked_amount(datum.loyalty_holdings, lamp_released)
 
   // ── SHARD BIND (option c): vault is the authority on the delta ──
   let shard_id_val = compute_shard_id(datum.owner)
@@ -372,9 +371,9 @@ fn validate_fire(
   expect shard_in.shard_cap == shard_cap
 
   expect shard_out.shard_id == shard_id_val                          // correct shard ✓
-  expect shard_out.shard_locked_lamp == shard_in.shard_locked_lamp - lamp_transfer
+  expect shard_out.shard_locked_lamp == shard_in.shard_locked_lamp - lamp_released
   expect shard_out.shard_cumulative_fired
-       == shard_in.shard_cumulative_fired + lamp_transfer
+       == shard_in.shard_cumulative_fired + lamp_released
   // active_count decrements iff schedule just completed, else unchanged
   expect shard_out.shard_active_count
        == if schedule_completes { shard_in.shard_active_count - 1 }
@@ -386,8 +385,9 @@ fn validate_fire(
   // A02: output datum
   let output = get_vault_output(tx.outputs, vault_addr)
   expect output.owner              == datum.owner
-  expect output.lamp_balance       == datum.lamp_balance - lamp_transfer
-  expect output.lamp_locked        == datum.lamp_locked  - lamp_transfer
+  // I-ACT-7 (the whole point): the balance does NOT move. Only the lock lifts.
+  expect output.lamp_balance       == datum.lamp_balance
+  expect output.lamp_locked        == datum.lamp_locked - lamp_released
   expect output.loyalty_holdings   == new_holdings
   expect output.magic_batches      == updated_batches
   expect output.next_batch_index   == datum.next_batch_index + fires_in_tx
@@ -850,20 +850,9 @@ fn decode_vault(d: Data) -> Option<VaultDatum> {
   if d is vd: VaultDatum { Some(vd) } else { None }
 }
 
-fn treasury_lamp_received(
-  outputs         : List<Output>,
-  treasury_addr   : Address,
-  lamp_policy     : PolicyId,
-  lamp_asset_name : ByteArray,
-  amount          : Int,
-) -> Bool {
-  let received = list.foldl(outputs, 0, fn(o, acc) {
-    if o.address == treasury_addr {
-      acc + assets.quantity_of(o.value, lamp_policy, lamp_asset_name)
-    } else { acc }
-  })
-  received >= amount
-}
+// NOTE: `treasury_lamp_received` is GONE, along with the `treasury_addr`
+// apply-parameter. Under I-ACT-7 a fire has no treasury leg at all. If a
+// treasury transfer ever comes back it belongs to a different redeemer.
 
 fn compute_schedule_id_from_ref(own_ref: OutputReference, index: Int) -> ByteArray {
   let tx_hash = own_ref.transaction_id
@@ -1153,6 +1142,189 @@ test sd_no_other_field_change() fail {
 }
 
 // ── Shard co-spend redeemer-gate tests (HIGH authority-bypass fix) ─────
+// ── ScheduleFire — I-ACT-7: LAMP STAYS PUT ────────────────────
+// Before this, a fire moved fires×λ of real LAMP to the treasury and shrank
+// lamp_balance. That eroded the user's principal: the NEWUSER channel grants
+// DID × 1001 LAMP, and since generation scales with the balance, a new user's
+// rate decayed toward zero as their schedule fired. A fire must only LIFT THE
+// LOCK — MAGIC is created, LAMP does not move.
+//
+// The whole treasury leg was deleted, so nothing but these tests distinguishes
+// the two behaviours: without `f_fire_lamp_drops_rejected` the regression is
+// invisible to the suite.
+
+const t_shard_policy: PolicyId =
+  #"66666666666666666666666666666666666666666666666666666666"
+const t_sched_id: ByteArray = #"aa01"
+const t_lambda: Int = 100          // λ per fire (oildrop)
+const t_rate_q: Int = snapshot_base_rate_q
+
+// One schedule, length 3, first fire due at epoch 5, none fired yet.
+fn t_sched() -> GenSchedule {
+  GenSchedule {
+    schedule_id:            t_sched_id,
+    commit_epoch:           3,
+    start_fire_epoch:       5,
+    end_fire_epoch:         7,
+    schedule_length:        3,
+    lamp_per_epoch:         t_lambda,
+    rate_locked_q:          t_rate_q,
+    baseline_at_commit_q:   t_rate_q,
+    multiplier_at_commit_q: 1_000_000_000,
+    fired_count:            0,
+    auto_burn_target:       None,
+  }
+}
+
+/// Vault datum holding exactly λ, all of it locked by the schedule.
+fn t_fire_datum() -> VaultDatum {
+  VaultDatum {
+    ..t_datum(t_lambda, t_lambda, [t_holding(t_lambda, 5, True)]),
+    gen_schedules: [t_sched()],
+  }
+}
+
+fn t_shard_datum(locked: Int, fired: Int) -> ScheduleAggregateShardDatum {
+  ScheduleAggregateShardDatum {
+    shard_id:                   compute_shard_id(t_owner),
+    shard_locked_lamp:          locked,
+    shard_active_count:         1,
+    shard_cumulative_committed: t_lambda * 3,
+    shard_cumulative_fired:     fired,
+    last_updated_epoch:         5,
+    shard_cap:                  shard_cap,
+  }
+}
+
+fn t_shard_value() -> Value {
+  assets.from_asset(t_shard_policy, shard_asset_name(compute_shard_id(t_owner)), 1)
+}
+
+fn t_shard_in() -> Input {
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+    output: Output {
+      address: t_shard_addr(), value: t_shard_value(),
+      datum: InlineDatum(t_shard_datum(t_lambda * 3, 0)), reference_script: None,
+    },
+  }
+}
+
+fn t_shard_out() -> Output {
+  Output {
+    address: t_shard_addr(), value: t_shard_value(),
+    // one fire → locked drops by λ, cumulative_fired rises by λ
+    datum: InlineDatum(t_shard_datum(t_lambda * 3 - t_lambda, t_lambda)),
+    reference_script: None,
+  }
+}
+
+/// Expected vault output after ONE fire at epoch 5.
+/// `lamp_balance` is deliberately a parameter: the negative test passes the
+/// pre-I-ACT-7 value (balance − λ) and must be rejected.
+fn t_fire_out_datum(lamp_balance: Int) -> VaultDatum {
+  let din = t_fire_datum()
+  let m_i = compute_m_i(t_lambda, t_rate_q)
+  VaultDatum {
+    ..din,
+    lamp_balance:       lamp_balance,
+    lamp_locked:        0,
+    loyalty_holdings:   [t_holding(t_lambda, 5, False)],   // unlocked, NOT removed
+    magic_batches:      create_fire_batches(t_own_ref(), 0, 1, m_i, t_sched_id, 5),
+    next_batch_index:   1,
+    gen_schedules:      [GenSchedule { ..t_sched(), fired_count: 1 }],
+    last_updated_epoch: 5,
+  }
+}
+
+fn t_run_fire(out_datum: VaultDatum, vault_out_lamp: Int) -> Bool {
+  let din = t_fire_datum()
+  let tx =
+    t_tx(
+      [t_vault_input(din, t_lambda), t_shard_in()],
+      [t_vault_output(out_datum, vault_out_lamp), t_shard_out()],
+      [],                                   // permissionless: no signer
+    )
+  validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+// PASS: lamp_balance and the real LAMP in the UTxO are byte-identical across a
+// fire; only lamp_locked drops and the holding flips to unlocked.
+test f_fire_lamp_stays_put() {
+  t_run_fire(t_fire_out_datum(t_lambda), t_lambda)
+}
+
+// THE REGRESSION TEST — the exact output pre-I-ACT-7 `main` accepted: balance
+// down by fires×λ (paid to treasury), and the holdings DELETED by
+// `remove_locked_amount` rather than unlocked. Both moves together, because
+// `Σholdings == lamp_balance` couples them: changing only one is rejected by
+// that older check instead of by the I-ACT-7 rule, which would prove nothing.
+// Under I-ACT-7 this whole shape must be REJECTED.
+test f_fire_old_behaviour_rejected() fail {
+  let d =
+    VaultDatum { ..t_fire_out_datum(0), loyalty_holdings: [] }
+  t_run_fire(d, 0)
+}
+
+// Lock must actually lift: keeping lamp_locked at λ is not a valid fire.
+test f_fire_lock_not_released_rejected() fail {
+  let d = VaultDatum { ..t_fire_out_datum(t_lambda), lamp_locked: t_lambda }
+  t_run_fire(d, t_lambda)
+}
+
+// Holdings must be UNLOCKED, not deleted. Dropping the holding keeps the old
+// `remove_locked_amount` behaviour alive and breaks Σholdings == lamp_balance.
+test f_fire_holdings_removed_rejected() fail {
+  let d = VaultDatum { ..t_fire_out_datum(t_lambda), loyalty_holdings: [] }
+  t_run_fire(d, t_lambda)
+}
+
+// ── unlock_locked_amount — Σ invariant ────────────────────────
+
+// Partial release splits one holding; the two parts sum to the original, so
+// lamp_balance never has to move.
+test f_unlock_partial_preserves_sum() {
+  let h = [t_holding(100, 5, True)]
+  let out = unlock_locked_amount(h, 40)
+  sum_holdings(out) == 100 && out == [
+    t_holding(40, 5, False),
+    t_holding(60, 5, True),
+  ]
+}
+
+// THE BOUND. Each partial release splits a holding, and nothing is ever dropped,
+// so without coalescing the list grew +1 per fire — 21 entries after 20 fires,
+// ~201 after an L=200 schedule, against max_loyalty_holdings=64 enforced by
+// validate_withdraw_lamp. That would freeze the user's LAMP outright. Every
+// split inherits the original acquired_epoch, so the count must stay flat.
+test f_unlock_repeated_does_not_grow() {
+  let h1 = unlock_locked_amount([t_holding(1000, 5, True)], 100)
+  let h2 = unlock_locked_amount(h1, 100)
+  let h3 = unlock_locked_amount(h2, 100)
+  list.length(h3) == 2 && sum_holdings(h3) == 1000 && h3 == [
+    t_holding(300, 5, False),
+    t_holding(700, 5, True),
+  ]
+}
+
+// Distinct epochs must NOT be merged — acquired_epoch is the loyalty age.
+test f_unlock_keeps_distinct_epochs_apart() {
+  let out = unlock_locked_amount([t_holding(50, 2, True), t_holding(50, 7, True)], 100)
+  out == [t_holding(50, 2, False), t_holding(50, 7, False)]
+}
+
+// Oldest-locked-first, and already-unlocked holdings are left alone in front.
+test f_unlock_oldest_first() {
+  let h = [t_holding(30, 9, False), t_holding(50, 2, True), t_holding(70, 6, True)]
+  let out = unlock_locked_amount(h, 50)
+  sum_holdings(out) == 150 && out == [
+    t_holding(30, 9, False),
+    t_holding(50, 2, False),   // epoch 2 is oldest → freed first
+    t_holding(70, 6, True),
+  ]
+}
+
 // ── INV-VAULT-IDENTITY: vault-id NFT preservation ─────────────
 // The NFT is one-shot (ConsumeMAGIC/onchain/validators/vault_id_nft.ak) so it can
 // never be re-minted: letting it leave the vault bricks the vault for ConsumeMAGIC
@@ -1222,7 +1394,7 @@ fn t_spend_setdelegate(nft_qty: Int) -> Bool {
       validity_range: interval.between(3 * 86_400_000, 3 * 86_400_000),
     }
   vault.spend(
-    t_lamp_policy, t_lamp_name, t_shard_addr(), #"",
+    t_lamp_policy, t_lamp_name, #"",
     t_vault_nft_policy, t_vault_nft_name, 86_400_000,
     Some(din), SetDelegate { new_delegate: Some(t_delegate) }, t_own_ref(), tx,
   )

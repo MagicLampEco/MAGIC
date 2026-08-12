@@ -16,7 +16,7 @@ import {
 import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, nextFireEpoch, countEligibleFires,
-  selectLampForLock, removeLockedAmount, lAvail,
+  selectLampForLock, unlockLockedAmount, lAvail,
   lampToOildrop, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
@@ -48,13 +48,13 @@ export interface CommitParams {
   scheduleLength  : bigint;    // L ∈ [10,200]
   lampPerEpoch    : bigint;    // λ in oildrop
   userAddress     : string;
-  /** Compiled vault validator (4 params: lamp_policy_id, treasury_addr, shard_policy_id, ms_per_epoch). */
+  /** Compiled vault validator (6 params: lamp_policy_id, lamp_asset_name,
+   *  shard_policy_id, vault_nft_policy, vault_nft_name, ms_per_epoch). */
   vaultScript     : Validator;
   /** Compiled shard validator (0 params). */
   shardScript     : Validator;
   lampPolicyId    : string;
   lampAssetName?  : string;
-  treasuryAddress : string;
   network?        : Network;
   tipPosixMs?     : bigint;
   tamperOutputDatum?: (d: any) => any;
@@ -83,7 +83,6 @@ export interface FireParams {
   shardScript     : Validator;
   lampPolicyId    : string;
   lampAssetName?  : string;
-  treasuryAddress : string;
   network?        : Network;
   tipPosixMs?     : bigint;
   tamperOutputDatum?: (d: any) => any;
@@ -94,7 +93,8 @@ export interface FireResult {
   firesInTx      : number;
   mPerFire       : bigint;
   totalMagicFired: bigint;
-  lampTransferred: bigint;
+  /** I-ACT-7: amount UNLOCKED by this fire. No LAMP leaves the vault. */
+  lampReleased   : bigint;
   scheduleComplete: boolean;
   summary        : string;
 }
@@ -266,7 +266,8 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
 
   // M_i — reads STORED rate_locked_q (T8: immutable)
   const mI = computeMi(sched.lamp_per_epoch, sched.rate_locked_q);
-  const lampTransfer = sched.lamp_per_epoch * BigInt(firesInTx);
+  // I-ACT-7: this is RELEASED from the lock, not transferred anywhere.
+  const lampReleased = sched.lamp_per_epoch * BigInt(firesInTx);
 
   // Create batches (one per fire)
   const newBatches: MagicBatch[] = Array.from({ length: firesInTx }, (_, i) => ({
@@ -294,10 +295,11 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
         s.schedule_id === scheduleId ? { ...s, fired_count: newFiredCount } : s
       );
 
-  // Remove locked LAMP (C-FIRE-6)
-  const newHoldings   = removeLockedAmount(vaultDatum.loyalty_holdings, lampTransfer);
-  const newLampBalance = vaultDatum.lamp_balance - lampTransfer;
-  const newLampLocked  = vaultDatum.lamp_locked  - lampTransfer;
+  // C-FIRE-6 / I-ACT-7: RELEASE the lock, keep the LAMP. Σholdings is invariant,
+  // so lamp_balance does not move — a fire mints MAGIC without eroding principal.
+  const newHoldings    = unlockLockedAmount(vaultDatum.loyalty_holdings, lampReleased);
+  const newLampBalance = vaultDatum.lamp_balance;
+  const newLampLocked  = vaultDatum.lamp_locked - lampReleased;
 
   // Updated vault datum (A02)
   let newVaultDatum: VaultDatum = {
@@ -323,14 +325,14 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
 
   const newShardDatum: ShardDatum = {
     ...shardDatum,
-    shard_locked_lamp:      shardDatum.shard_locked_lamp - lampTransfer,
-    shard_cumulative_fired: shardDatum.shard_cumulative_fired + lampTransfer,
+    shard_locked_lamp:      shardDatum.shard_locked_lamp - lampReleased,
+    shard_cumulative_fired: shardDatum.shard_cumulative_fired + lampReleased,
     shard_active_count:     schedComplete ? shardDatum.shard_active_count - 1n : shardDatum.shard_active_count,
     last_updated_epoch:     currentEpoch,
   };
 
   // Build tx
-  const { vaultScript, shardScript, lampPolicyId, treasuryAddress } = params;
+  const { vaultScript, shardScript, lampPolicyId } = params;
   const lampAssetName = params.lampAssetName ?? TESTNET_CONFIG.lampAssetName;
   const vaultAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
@@ -352,7 +354,6 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
       { ...vaultUtxo.assets, [lampUnit]: newLampBalance })
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
-    .pay.ToAddress(treasuryAddress, { [lampUnit]: lampTransfer })
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless
     .validFrom(lowerTime)
     .validTo(upperTime)
@@ -364,7 +365,7 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     `Fires in tx:    ${firesInTx} (of ${Number(sched.schedule_length - sched.fired_count)} remaining)`,
     `M_i per fire:   ${nanogicToMagicStr(mI)} MAGIC (rate_locked at commit — T8)`,
     `Total MAGIC:    ${nanogicToMagicStr(mI * BigInt(firesInTx))} MAGIC`,
-    `LAMP transferred: ${lampTransfer / 1_000_000n} tLAMP → Treasury`,
+    `LAMP released:  ${lampReleased / 1_000_000n} tLAMP unlocked (balance unchanged — I-ACT-7)`,
     `Progress:       ${Number(newFiredCount)}/${Number(sched.schedule_length)} orders`,
     `Schedule:       ${schedComplete ? "✅ COMPLETE — removed" : `⏳ ${Number(sched.schedule_length - newFiredCount)} orders remaining`}`,
     `Shard:          ${shardId} (C-SCH-FIRE-SHARD ✓)`,
@@ -373,7 +374,7 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     `Note: This tx required NO owner signature (C-SCH-FIRE-PERMISSION).`,
   ].filter(Boolean).join("\n");
 
-  return { tx, firesInTx, mPerFire: mI, totalMagicFired: mI * BigInt(firesInTx), lampTransferred: lampTransfer, scheduleComplete: schedComplete, summary };
+  return { tx, firesInTx, mPerFire: mI, totalMagicFired: mI * BigInt(firesInTx), lampReleased: lampReleased, scheduleComplete: schedComplete, summary };
 }
 
 // ── Submit ────────────────────────────────────────────────────

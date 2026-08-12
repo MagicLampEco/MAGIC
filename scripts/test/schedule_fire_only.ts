@@ -10,7 +10,7 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
+  POLICY_IDS, ASSET_NAMES, PROTOCOL,
 } from "../config.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
@@ -36,19 +36,10 @@ async function main() {
     v.title === "vault.shard.spend" || v.title === "shard.shard.spend",
   );
 
-  const td = getAddressDetails(ADDRESSES.treasury);
-  const tPaymentCred = td.paymentCredential!.type === "Key"
-    ? new Constr(0, [td.paymentCredential!.hash])
-    : new Constr(1, [td.paymentCredential!.hash]);
-  const tStakeCred = td.stakeCredential
-    ? new Constr(0, [new Constr(0, [new Constr(0, [td.stakeCredential.hash])])])
-    : new Constr(1, []);
-  const treasuryAddrData = new Constr(0, [tPaymentCred, tStakeCred]);
-
   const vaultScript = {
     type: "PlutusV3" as const,
     script: applyParamsToScript(vaultUnapplied.compiledCode, [
-      POLICY_IDS.lamp, ASSET_NAMES.lamp, treasuryAddrData, POLICY_IDS.shard_nft,
+      POLICY_IDS.lamp, ASSET_NAMES.lamp, POLICY_IDS.shard_nft,
       POLICY_IDS.vault_id_nft, ASSET_NAMES.vault_id_nft, PROTOCOL.MS_PER_EPOCH,
     ]),
   };
@@ -110,7 +101,6 @@ async function main() {
       vaultScript, shardScript,
       lampPolicyId: POLICY_IDS.lamp,
       lampAssetName: ASSET_NAMES.lamp,
-      treasuryAddress: ADDRESSES.treasury,
       network: NETWORK, tipPosixMs: tip.posixMs,
       tamperOutputDatum,
     });

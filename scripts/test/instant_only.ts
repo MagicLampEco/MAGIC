@@ -40,7 +40,7 @@ async function fetchTip(): Promise<{ slot: bigint; posixMs: bigint }> {
 
 async function main() {
   console.log("╔════════════════════════════════════════════╗");
-  console.log("║  InstantGen smoke test — Preview testnet   ║");
+  console.log(`║  InstantGen smoke test — ${NETWORK.padEnd(18)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
 
   // Apply-param THEO TÊN (scripts/applyParams.ts) — tên + thứ tự đọc từ

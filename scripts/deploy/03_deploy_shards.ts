@@ -135,6 +135,9 @@ async function main() {
 
   const signed = await tx.sign.withWallet().complete();
   const txHash = await signed.submit();
+  // Chờ xác nhận: bước sau tiêu chính UTxO thối của tx này. Không chờ thì node
+  // vẫn thấy UTxO cũ ⟹ BadInputsUTxO. Chuỗi deploy trước đây không bước nào chờ.
+  await lucid.awaitTx(txHash);
 
   console.log(`\n✅ 16 Shards deployed (one-shot — policy can never re-mint)!`);
   console.log(`   TX hash:   ${txHash}`);

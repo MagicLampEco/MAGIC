@@ -23,9 +23,21 @@ async function fetchTip() {
   return { posixMs: BigInt(tip.time) * 1000n };
 }
 
+// ── Script tham chiếu (CIP-33) ──────────────────────────────────────────────
+// Đính kèm CẢ HAI validator (vault + shard) làm tx vượt trần 16384 byte — đo
+// thật trên Preview: 17303. Nên hai bước ScheduleGen BẮT BUỘC đọc script từ
+// chain. Chạy `npx tsx deploy/06_publish_ref_scripts.ts` rồi nạp hai biến.
+async function refScriptUtxos(lucid: any) {
+  const refs = [process.env.REF_VAULT_SCHEDULE_UTXO, process.env.REF_SHARD_UTXO]
+    .filter((s): s is string => !!s)
+    .map((s) => { const [h, i] = s.split("#"); return { txHash: h!, outputIndex: Number(i) }; });
+  if (refs.length === 0) return undefined;
+  return await lucid.utxosByOutRef(refs);
+}
+
 async function main() {
   console.log("╔════════════════════════════════════════════╗");
-  console.log("║  ScheduleFire smoke test — Preview         ║");
+  console.log(`║  ScheduleFire smoke test — ${NETWORK.padEnd(15)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
 
   // Apply-param THEO TÊN — dùng chung bản đồ giá trị với deploy/07.
@@ -93,7 +105,9 @@ async function main() {
 
   try {
     if (tamper) console.log(`⚠  TEST MODE: ${tamper} — expecting REJECT.\n`);
+    const refUtxos = await refScriptUtxos(lucid);
     const result = await buildScheduleFireTx({
+      refScriptUtxos: refUtxos,
       lucid, vaultUtxo, shardUtxos, scheduleId,
       vaultScript, shardScript,
       lampPolicyId: POLICY_IDS.lamp,

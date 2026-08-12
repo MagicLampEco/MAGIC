@@ -33,9 +33,21 @@ async function fetchTip() {
   return { slot: BigInt(tip.slot), posixMs: BigInt(tip.time) * 1000n };
 }
 
+// ── Script tham chiếu (CIP-33) ──────────────────────────────────────────────
+// Đính kèm CẢ HAI validator (vault + shard) làm tx vượt trần 16384 byte — đo
+// thật trên Preview: 17303. Nên hai bước ScheduleGen BẮT BUỘC đọc script từ
+// chain. Chạy `npx tsx deploy/06_publish_ref_scripts.ts` rồi nạp hai biến.
+async function refScriptUtxos(lucid: any) {
+  const refs = [process.env.REF_VAULT_SCHEDULE_UTXO, process.env.REF_SHARD_UTXO]
+    .filter((s): s is string => !!s)
+    .map((s) => { const [h, i] = s.split("#"); return { txHash: h!, outputIndex: Number(i) }; });
+  if (refs.length === 0) return undefined;
+  return await lucid.utxosByOutRef(refs);
+}
+
 async function main() {
   console.log("╔════════════════════════════════════════════╗");
-  console.log("║  ScheduleCommit smoke test — Preview       ║");
+  console.log(`║  ScheduleCommit smoke test — ${NETWORK.padEnd(13)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
 
   // Apply-param THEO TÊN — dùng chung bản đồ giá trị với deploy/07 nên địa chỉ
@@ -109,7 +121,9 @@ async function main() {
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
       console.log(`⚠  TEST MODE: ${tamper ?? "skipOwnerSig"} — expecting REJECT.\n`);
     }
+    const refUtxos = await refScriptUtxos(lucid);
     const result = await buildScheduleCommitTx({
+      refScriptUtxos: refUtxos,
       lucid, vaultUtxo, shardUtxos,
       scheduleLength: L, lampPerEpoch: LAMBDA,
       userAddress: address,

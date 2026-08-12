@@ -3,8 +3,8 @@
 // Result: LAMP_POLICY_ID printed → copy vào .env
 
 import {
-  Lucid, Blockfrost, Data,
-  getAddressDetails, mintingPolicyToId,
+  Lucid, Blockfrost,
+  getAddressDetails, mintingPolicyToId, scriptFromNative,
   type MintingPolicy,
 } from "@lucid-evolution/lucid";
 import {
@@ -28,13 +28,14 @@ async function main() {
   const { paymentCredential } = getAddressDetails(address);
   if (!paymentCredential) throw new Error("Cannot get payment credential from wallet");
 
-  const mintingPolicy: MintingPolicy = {
-    type: "Native",
-    script: Data.to({
-      type: "sig",
-      keyHash: paymentCredential.hash,
-    }),
-  };
+  // `Data.to({type:"sig",…})` là mã hoá Plutus Data của một object JS — KHÔNG phải
+  // native script. Nó ném "Unsupported type" ngay lúc dựng, nên bước 01 chưa từng
+  // chạy được với lucid-evolution 0.4.x. `scriptFromNative` mới là hàm dựng đúng
+  // (trả về chính {type:"Native", script:<cbor hex>}).
+  const mintingPolicy: MintingPolicy = scriptFromNative({
+    type: "sig",
+    keyHash: paymentCredential.hash,
+  });
 
   const policyId = mintingPolicyToId(mintingPolicy);
   const lampUnit = policyId + LAMP_ASSET_NAME;
@@ -52,13 +53,18 @@ async function main() {
 
   const tx = await lucid
     .newTx()
-    .mintAssets({ [lampUnit]: LAMP_TOTAL_SUPPLY }, Data.void())
+    // Native script không nhận redeemer — truyền `Data.void()` ở đây làm lucid
+    // xếp mint này vào nhánh Plutus và tx dựng ra sai.
+    .mintAssets({ [lampUnit]: LAMP_TOTAL_SUPPLY })
     .attach.MintingPolicy(mintingPolicy)
     .pay.ToAddress(address, { [lampUnit]: LAMP_TOTAL_SUPPLY })
     .complete();
 
   const signed = await tx.sign.withWallet().complete();
   const txHash = await signed.submit();
+  // Chờ xác nhận: bước sau tiêu chính UTxO thối của tx này. Không chờ thì node
+  // vẫn thấy UTxO cũ ⟹ BadInputsUTxO. Chuỗi deploy trước đây không bước nào chờ.
+  await lucid.awaitTx(txHash);
 
   console.log(`✅ LAMP minted!`);
   console.log(`   TX hash:   ${txHash}`);

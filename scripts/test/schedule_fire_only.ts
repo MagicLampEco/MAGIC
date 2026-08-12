@@ -66,13 +66,29 @@ async function main() {
   const address = await lucid.wallet().address();
   const ownerPkh = getAddressDetails(address).paymentCredential!.hash;
 
+  // Blockfrost đánh chỉ mục UTxO trễ vài giây sau tx trước (ScheduleCommit vừa
+  // xác nhận). Không chờ thì bước này báo "Vault not found" và che mất lý do
+  // THẬT — đo được trên Preview 2026-08-13: commit PASS ngay trước đó.
   const wantedTx = process.env.VAULT_TX_HASH;
-  const vaultUtxos = await lucid.utxosAt(vaultAddr);
-  const vaultUtxo = vaultUtxos.find((u) => {
+  const mine = (u: { datum?: string | null }) => {
     if (!u.datum) return false;
-    if (wantedTx && u.txHash !== wantedTx) return false;
     try { return Data.from(u.datum, VaultDatumSchema).owner === ownerPkh; } catch { return false; }
-  });
+  };
+  let vaultUtxo;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const vaultUtxos = await lucid.utxosAt(vaultAddr);
+    vaultUtxo = vaultUtxos.find((u) => mine(u) && (!wantedTx || u.txHash === wantedTx));
+    if (vaultUtxo) break;
+    // Hết lượt mà vẫn không thấy đúng tx: lấy vault CÓ lịch mới nhất, còn hơn
+    // dừng ở một thông báo không nói được gì.
+    if (attempt === 5) {
+      vaultUtxo = vaultUtxos.find((u) => mine(u) && Data.from(u.datum!, VaultDatumSchema).gen_schedules.length > 0);
+      if (vaultUtxo) console.log(`⚠ không thấy VAULT_TX_HASH=${wantedTx}; dùng vault có lịch: ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`);
+      break;
+    }
+    console.log(`  … chưa thấy vault ở chỉ mục Blockfrost (lần ${attempt}), chờ 15s`);
+    await new Promise((r) => setTimeout(r, 15_000));
+  }
   if (!vaultUtxo) { console.error("❌ Vault not found"); process.exit(1); }
 
   const vd = Data.from(vaultUtxo.datum!, VaultDatumSchema);

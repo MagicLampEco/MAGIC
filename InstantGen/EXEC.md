@@ -111,8 +111,8 @@ export const TESTNET_CONFIG = {
 ### Bước 5: Deploy vault UTxO
 
 ```bash
-npm run deploy:vault
-# Tạo vault UTxO với VaultDatum initial state + LAMP token
+npm run deploy:instant-vault
+# Tạo vault UTxO với VaultDatum initial state + LAMP token + NFT danh tính
 # Xem README.md §5 cho datum structure
 ```
 
@@ -131,15 +131,19 @@ npx tsx src/keeper.ts
 cd InstantGen/offchain
 npm install
 npm test
-# Expected: 314 tests pass (theo README.md)
+# Số ca: xem DevStatus.md. (Bản cũ ghi "314 theo README.md" — README không có số đó;
+# 314 là tổng cũ của cả 9 module ở mô hình đã bỏ, không phải của riêng InstantGen.)
 ```
 
 ### Bước 8: End-to-end test
 
 ```bash
 cd scripts
-npm run test:e2e
+npm run test:instant        # ⛔ chưa xanh được — trần thứ ba bằng 0, xem DevStatus.md nợ #6 / D1
 ```
+
+> `npm run test:e2e` không tồn tại trong `scripts/package.json` và chưa bao giờ tồn tại.
+> Chuỗi e2e đầy đủ: `bash scripts/run_consume_e2e.sh Preview` (xem `scripts/README.md`).
 
 ---
 
@@ -240,7 +244,7 @@ npm run test:e2e
 cd InstantGen/offchain
 npm install
 npm test
-# 314 tests expected (theo README.md, deploy checklist §E.3)
+# Số ca: xem DevStatus.md — nơi duy nhất ghi số kiểm.
 ```
 
 Test coverage bắt buộc (§E.3 deploy checklist):

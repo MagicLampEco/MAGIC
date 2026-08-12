@@ -312,7 +312,8 @@ Offchain: `math.ts:89-92` (`blake2b(Buffer.from(pkh,"hex"),{dkLen:32})[0] % 16`)
 
 ## 6. Aiken Tests (on-chain)
 
-Có 6 test trong `vault.ak:575-623`:
+Có 6 test trong `vault.ak` (khối `w_positive_partial` … `w_advance_last_updated_rejected`,
+nay ở `vault.ak:1242-1289` — số dòng trôi theo mỗi lần sửa, tìm bằng tên test):
 
 | Test | Loại | Mô tả |
 |---|---|---|

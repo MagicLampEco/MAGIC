@@ -26,31 +26,38 @@ cat scripts/.env | grep -E "BLOCKFROST_KEY|PRIVATE_KEY|NETWORK|LAMP_POLICY_ID"
 
 ### Bước 1 — Build + apply params Aiken validator
 
-`vault_consolidate` nhận 2 param THEO THỨ TỰ: `(lamp_policy_id: PolicyId, ms_per_epoch: Int)`.
+`vault_consolidate` nhận **3** param THEO THỨ TỰ:
+`(lamp_policy_id: PolicyId, lamp_asset_name: ByteArray, ms_per_epoch: Int)`.
+Neo: `onchain/validators/vault_consolidate.ak:106`. Đối chiếu máy: `cd scripts && npm run check:params`.
 
 - `lamp_policy_id` — PolicyId của LAMP native asset (= `LAMP_POLICY_ID` trong `.env`).
   BẮT BUỘC apply ĐÚNG giá trị mạng: value-leak guard bind LAMP token thật trong
   vault output theo policy này. Sai policy → hash sai → guard vô hiệu.
+- `lamp_asset_name` — tên asset LAMP dạng hex, **theo mạng**: `tLAMP` trên testnet,
+  `LAMP` trên mainnet. Nó nằm **GIỮA** hai tham số kia, nên bỏ nó đi không phải là
+  "thiếu tham số cuối" mà là đẩy `ms_per_epoch` vào đúng chỗ của asset name — ra hash
+  khác, im lặng, và vault sinh ra không ai spend được.
 - `ms_per_epoch` — POSIX-ms/epoch: Preview/Preprod `86_400_000`, Mainnet `432_000_000`.
 
 ```bash
 cd /Users/ductiger/Projects/MAGIC/Consolidate/onchain
 aiken build
-# Tạo: plutus.json (validator CHƯA apply param — còn 2 tham số tự do)
+# Tạo: plutus.json (validator CHƯA apply param — còn 3 tham số tự do)
 ```
 
 Apply param khi build tx (Lucid `applyParamsToScript`) hoặc dùng `aiken blueprint apply`:
 ```bash
-# Apply lamp_policy_id rồi ms_per_epoch (đúng thứ tự khai báo validator)
-aiken blueprint apply -v vault_consolidate.spend <LAMP_POLICY_ID_cbor>   > /tmp/c1.json
-aiken blueprint apply -m /tmp/c1.json <MS_PER_EPOCH_cbor>                > /tmp/c2.json
-# Đọc hash đã apply → điền CONSOLIDATE_SCRIPT_HASH vào scripts/.env
-cat /tmp/c2.json | jq -r '.validators[] | select(.title == "vault_consolidate.spend") | .hash'
+# Apply lamp_policy_id → lamp_asset_name → ms_per_epoch (đúng thứ tự khai báo validator)
+aiken blueprint apply -v vault_consolidate.vault_consolidate.spend <LAMP_POLICY_ID_cbor> > /tmp/c1.json
+aiken blueprint apply -m /tmp/c1.json <LAMP_ASSET_NAME_cbor>                             > /tmp/c2.json
+aiken blueprint apply -m /tmp/c2.json <MS_PER_EPOCH_cbor>                                > /tmp/c3.json
+# Đọc hash đã apply → điền CONSOLIDATE_SCRIPT_HASH vào biến môi trường
+cat /tmp/c3.json | jq -r '.validators[] | select(.title == "vault_consolidate.vault_consolidate.spend") | .hash'
 ```
 
 Hoặc lấy hash chưa-apply (nếu offchain tự apply param qua Lucid):
 ```bash
-cat plutus.json | jq -r '.validators[] | select(.title == "vault_consolidate.spend") | .hash'
+cat plutus.json | jq -r '.validators[] | select(.title == "vault_consolidate.vault_consolidate.spend") | .hash'
 ```
 
 Điền vào `scripts/.env`:
@@ -80,9 +87,14 @@ ConsolidateHoldings là redeemer của vault script chính. Không cần deploy 
 
 ```bash
 cd /Users/ductiger/Projects/MAGIC/scripts
-npm run deploy:vault
-# → Ghi VAULT_SCRIPT_HASH vào .env
+npm run deploy:instant-vault    # hoặc: npm run deploy:schedule-vault
+# → Ghi VAULT_INSTANT_HASH (hoặc VAULT_SCHEDULE_HASH) vào biến môi trường
 ```
+
+> ⚠️ Hai lệnh trên deploy vault **InstantGen / ScheduleGen**, KHÔNG deploy
+> `vault_consolidate`. Chúng ở ba địa chỉ khác nhau — xem cảnh báo đầu tệp. Hiện
+> **chưa có** script deploy cho `vault_consolidate`; `npm run deploy:vault` mà bản cũ
+> chỉ tới thì chưa bao giờ tồn tại trong `scripts/package.json`.
 
 ### Bước 5 — Verify trên Preview
 

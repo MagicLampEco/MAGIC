@@ -57,7 +57,10 @@ pub type MagicBatch {
   decay_window        : Natural,
   profile_at_creation : Option<ActivityProfile>, // None cho Instant (C-DECAY-4)
   contract_id         : Option<ByteArray>,       // None cho Instant
-  halved              : Bool,                    // False tại creation, True after k=1 halving
+  halved              : Bool,                    // TRƯỜNG CHẾT — mô hình cliff không có
+                                                 // nấc giảm nửa. Luôn False tại creation.
+                                                 // KHÔNG có expect nào từ chối True; nó chỉ
+                                                 // không bao giờ được SINH ra (types.ak).
 }
 ```
 

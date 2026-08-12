@@ -227,5 +227,5 @@ cd Consolidate/onchain && aiken build
 Test offchain:
 ```bash
 cd Consolidate/offchain && npm install && npm test
-# TV-CONSOLIDATE-01/02/03 + 6 test bổ sung = 9 test tổng
+# Phủ TV-CONSOLIDATE-01/02/03 + các ca bổ sung. Số ca: xem DevStatus.md, đừng chép về đây.
 ```

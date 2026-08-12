@@ -197,17 +197,17 @@ Lưu ý: KHÔNG còn test auth (um_unauthorized/um_stranger_signer) vì permissi
 ### 3.3 Chạy toàn bộ tests
 
 ```bash
-# Aiken (on-chain — 5 tests: 1 happy + 4 reject; KHÔNG còn test auth)
+# Aiken (on-chain). Số checks: xem DevStatus.md. KHÔNG còn test auth.
 cd /Users/ductiger/Projects/MAGIC/UMKeeper/onchain
 aiken check
 
-# TypeScript (off-chain — 20 test cases)
+# TypeScript (off-chain). Số ca: xem DevStatus.md.
 cd /Users/ductiger/Projects/MAGIC/UMKeeper/offchain
 npm install && npm test
 
-# Expected output:
-#   Aiken: 5/5 PASS
-#   TS:    20/20 PASS
+# Kỳ vọng cứng: cả hai 0 lỗi. Số ca cụ thể chỉ ghi ở DevStatus.md.
+# Lưu ý: `npm test` chỉ chạm math.ts. Muốn biết keeper.ts có biên dịch được không
+# thì chạy `npm run typecheck` — cổng này mới thêm, trước đó gói không có tsconfig.
 ```
 
 ---

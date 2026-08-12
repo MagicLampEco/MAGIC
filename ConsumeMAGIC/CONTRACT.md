@@ -44,7 +44,29 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   | 4 | `recognition_compute_mb` | DAO chốt (tạm 1e9/MB) | OriLife/Registry | tính theo MB |
   | 5 | `job_post` | DAO chốt (tạm 2_000_000) | AladinWork | đăng+phát tán 1 tin việc |
   | 6 | `contract_settle` | DAO chốt (tạm 5_000_000) | AladinWork | tất toán 1 hợp đồng |
-  Mọi fixture/beacon/redeemer onchain PHẢI dùng đúng key này; không được lệch sang `0/1`.
+  | 7 | `did.rotate` | DAO chốt (tạm 2_000_000_000) | PhoenixKey | xoay khoá DID. **Thao tác an ninh** — xem cảnh báo dưới bảng |
+  | 8 | `did.transfer` | DAO chốt (tạm 10_000_000_000) | PhoenixKey | chuyển DID; thương mại, chịu nhân theo cầu là đúng |
+  Còn **8/16 dòng**. Mọi fixture/beacon/redeemer onchain PHẢI dùng đúng key này; không được
+  lệch sang `0/1`.
+
+  > 🔴 **`op_type=7` đang bị định giá SAI về nguyên tắc, và MAGIC ghi nhận điều đó.**
+  > `price_of`/`required_for` (`onchain/lib/magiclamp/consume/pricing.ak`) nhân
+  > `pp.demand_mult` vào `base_price` của **mọi** `op_type`, mà `demand_mult` tính từ
+  > `ops_served_epoch` — bộ đếm **gộp toàn hệ**, không tách theo `op_type`. Hệ quả:
+  > (a) ai bơm `op_type` rẻ khối lượng lớn cũng đẩy giá xoay khoá DID lên tới trần `2.0×`
+  > cho tất cả mọi người, không cần biết PhoenixKey tồn tại; (b) một đợt lộ khoá hàng
+  > loạt khiến nhiều người cùng Rotate ⇒ `ops_served_epoch` tăng ⇒ Rotate đắt lên —
+  > **việc cần gấp nhất thành đắt nhất đúng lúc cần rẻ nhất**, và tự khuếch đại. Trần
+  > `2.0×` chặn được độ lớn, không chặn được chiều. Phát hiện: Phoenix, thư 2026-08-10.
+  >
+  > Đường vá **chưa làm** — nó đụng validator nên GATED, chờ chủ nhân gật. Hai hình dạng:
+  > thêm cờ `fixed: Bool` vào `OpPrice` (đổi lược đồ datum của beacon đang sống, phải
+  > post lại mọi beacon), hoặc quy ước một **dải `op_type` là giá cố định** (đổi hàm giá,
+  > KHÔNG đổi lược đồ datum, không phải migrate beacon). MAGIC nghiêng về dải quy ước.
+  >
+  > **Đính chính một suy luận:** cờ/dải giá cố định **không** làm tx thôi phải đọc beacon
+  > — `base_price` vẫn nằm trong datum beacon. Muốn tx độc lập beacon thì phải bake
+  > `base_price` thành apply-param, và như vậy là mất luôn quyền DAO chỉnh giá đó.
   **Ràng buộc khi mở op_type** (đề nghị AladinWork, MAGIC tán thành): nếu `base_price > 0` thì
   `base_price × m_min ≥ Q` — chặn giá-về-0 (#1b) ngay tại governance. Cưỡng chế on-chain: xem hạng-mục
   siết `price_param.ak` (GATED, đụng validator, chờ chủ nhân gật).

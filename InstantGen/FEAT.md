@@ -71,7 +71,7 @@ danh sách)**:**
 4. Đọc UM datum qua reference input (NFT marker `um_nft_policy`, asset name `"UMD"=0x554d44`). Áp dụng C-UM-6 stale check → `um_q`.
 5. Tính `expected_m = compute_instant_magic(lamp_paid, um_q, pm_q)` (`math.ak:55`).
 6. `halve_then_prune(magic_batches, current_epoch)` — halve trước, prune sau (C-PRUNE-2).
-7. Tạo `MagicBatch` mới: `source=Instant`, `created_epoch`, `initial_amount=current_amount=expected_m`, `decay_window=2`, `profile_at_creation=None` (C-DECAY-4), `halved=False`.
+7. Tạo `MagicBatch` mới: `source=Instant`, `created_epoch`, `initial_amount=current_amount=expected_m`, `decay_window=1` (cliff — xem chú thích cùng tệp; bản cũ ghi 2, sai so `constants.ak:25`), `profile_at_creation=None` (C-DECAY-4), `halved=False`.
 8. Kiểm tra output datum field-by-field (A02).
 9. Kiểm tra Treasury nhận ≥ lamp_paid LAMP (`vault.ak:454`).
 

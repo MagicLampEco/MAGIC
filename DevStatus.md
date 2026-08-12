@@ -81,7 +81,14 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 | 8 | `buildConsumeTx` mới dựng 1 Engage input | on-chain là bất biến AGGREGATE qua N input — tập con hợp lệ, nhưng chưa gộp được nhiều thread |
 | 9 | Không có đường đóng thread Engage / vault | mint ép `qty == 1` nên burn bất khả ⇒ min-ADA khoá vĩnh viễn mỗi thread. Cố ý, nhưng là quyết định cần biết |
 | 10 | `UMKeeper/offchain/src/keeper.ts` **chưa từng chạy với node thật** | Tệp này trước đây **không biên dịch được** (4 lỗi kiểu) và không ai biết: gói không có `tsconfig.json` nên `tsc --noEmit` chưa từng chạy, còn vitest chỉ chạm `math.ts`. Nó cũng import `@lucid-evolution/lucid` mà `package.json` không khai. Đã vá cả ba (thêm `tsconfig.json`, khai dep, dựng cặp `Data.Static` mà lucid-evolution bắt buộc) ⇒ nay `npm run typecheck` xanh, `npm test` 20/20. Nhưng **xanh kiểu ≠ chạy đúng**: `getEpochStats` vẫn là bản giả trả số cố định, và chưa có lần chạy nào với Blockfrost. Liên quan D7 |
-| 11 | 4 gói + `scripts/` chưa có `tsconfig.json` | `AppEconomics/offchain`, `Consolidate/offchain`, `ProfileChange/offchain`, `scripts/` — chạy qua `tsx`/`vitest` nên lỗi kiểu lọt qua nếu test không phủ đúng nhánh. Đúng cách UMKeeper giấu được 4 lỗi (Nợ #10). `UMKeeper/offchain` đã có |
+| 11 | ~~4 gói + `scripts/` chưa có `tsconfig.json`~~ **ĐÃ VÁ 2026-08-12, trừ `scripts/`** | Bản ghi cũ ở đây **sai hai chiều**: nó bỏ sót `FlowRate/offchain` và `ProtocolUtils` (gói P8 chuẩn, 25 tệp import). Nay cả sáu đều có `tsconfig.json` + script `typecheck`. Năm gói xanh 0 lỗi. Còn hai chỗ đỏ, ghi riêng ở #12 và #13 |
+| 12 | `scripts/` typecheck **19 lỗi** | Gói duy nhất chạm ví thật. Nay đã có `tsconfig.json` + `npm run typecheck`, và cổng bắt được ngay một lỗi THẬT: `test/consume_only.ts` dựng `EngageDatum` thiếu `consumed_nanogic` ⇒ tx dựng ra bị validator từ chối (W-CM-12) — đã vá. 19 lỗi còn lại thuộc hai lớp: (a) `Data.to(x, Schema)` truyền lược đồ thay vì kiểu tĩnh — cùng lớp đã vá ở UMKeeper; (b) hai bản `@lucid-evolution/lucid` (`scripts/node_modules` vs `InstantGen/offchain/node_modules`) cho hai định danh kiểu khác nhau. Con số này chỉ được phép GIẢM |
+| 13 | `ProfileChange/offchain` typecheck **3 lỗi** | `src/profile.ts` import `Tx` — lucid-evolution 0.4.30 không export tên đó; và một `Data.to` truyền lược đồ. Trước 2026-08-12 gói không có `tsconfig.json` nên chưa ai thấy. Buộc chung số phận D4 |
+| 14 | 🔴 `validate_burn_batch` **không đòi ConsumeMAGIC co-spend** — liên kết giá MỘT CHIỀU | `InstantGen/onchain/validators/vault.ak:851-936`: auth = chủ HOẶC `personal_delegate`, và không ràng buộc input nào ở địa chỉ `consume`, không đọc PriceParam beacon. `consume.ak:95` ép chặt chiều consume→vault; chiều ngược lại bỏ ngỏ. Hệ quả: một delegate ký được tx BurnBatch trần trụi, không giao dịch vụ gì, đốt sạch MAGIC của chủ vault (LAMP và ADA vẫn an toàn — hai chốt dưới chặn đúng). `personal_delegate` hiện là `Option<ByteArray>` trần: không hạn mức, không phạm vi op, không hạn dùng. Vá đụng validator ⇒ xem D8 |
+| 15 | Không ai kiểm chữ ký chủ trên nhánh **spend** của Engage | `ConsumeMAGIC/onchain/validators/consume.ak` dùng `extra_signatories` đúng MỘT lần, ở nhánh **mint** (`:253`). Nhánh spend chỉ ép `owner` được bảo toàn. Hôm nay đây là TÍNH NĂNG (nó cho phép Feecover ứng trước cho ví 0 MAGIC — đã trả lời PhoenixKey 2026-08-12), nhưng nó cũng nghĩa là ai cũng bơm được `consumed_count`/`consumed_nanogic` của người khác. Sẽ thành lỗ ngay khi attribution/ISPO đọc hai trục đó |
+| 16 | `GetMAGIC/onchain` biên dịch sạch nhưng **0 test Aiken** | `aiken check` → `0 checks, 0 errors`. Không có `test` nào định nghĩa trong validator. Biên dịch được không có nghĩa có bài kiểm — cùng họ với Nợ #10 |
+| 17 | `Paymaster`: `ada_per_magic_q` không có chặn âm | `paymaster.ak:111` chặn `lamp_per_magic_q` bằng sàn giao thức, `ada_per_magic_q` thì không. Với giá âm, Aiken `/` (làm tròn xuống) cho `-1` còn TS BigInt `/` (cắt về 0) cho `0` ⇒ off-chain dựng tx mà on-chain từ chối. Fail-closed, không mất tiền, nhưng là chỗ P8 lệch theo dấu |
+| 18 | `scripts/config.ts:75-76` khai lại `SHARD_COUNT`/`SHARD_CAP` độc lập | Giá trị hiện đang bằng ScheduleGen. Hai nguồn cho một sự thật — đổi một bên là lệch im lặng |
 
 ## Chờ chủ nhân chốt
 
@@ -94,6 +101,9 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 | D5 | `_appeconomics_legacy.ts` + 31 ca test bám vào nó | buộc chung số phận với `AppEconomics` (D4) — nó là bản sao math của module đó |
 | D6 | `MagicSDK/V1_TESTNET_PLAN.md` — viết lại theo 2 vault hay xoá? | chưa deploy mạng nào; viết ma trận nghiệm thu bây giờ là viết mù lần hai |
 | D7 | `MAX_PRICE_STALE = 1` có đúng ý định? | mainnet 1 epoch = 5 ngày ⇒ `stale=1` là chấp nhận giá trễ 5 ngày. Và **chưa có keeper** post lại giá ⇒ hệ tự khoá sau 1 epoch |
+| D8 | Siết `personal_delegate` + bắt buộc co-spend ở `BurnBatch`? (Nợ #14) | Đụng validator đang sống VÀ đụng lược đồ datum. Hai việc, hai mức: (a) đòi ≥1 input ở `engage_script_hash` khi người ký là delegate — chỉ đổi logic, không đổi datum; (b) đổi `personal_delegate` từ `Option<ByteArray>` sang bản có `max_nanogic_per_epoch`/`expires_epoch`/`allowed_op_types` — đổi datum, trường mới phải THÊM Ở CUỐI để không lệch chỉ số constructor. Không tự quyết vì (b) là thay đổi mô hình uỷ nhiệm, không phải sửa lỗi |
+| D9 | `PRICE_THRESHOLD` mặc định 1 — giữ hay bắt buộc M-of-N trước mainnet? | Beacon `PriceParam` là **reference input** của mọi tx Consume. Một khoá committee chèn `PostPrice` hợp lệ ngay trước là beacon bị chi, tx nạn nhân invalid từ gốc, lặp không giới hạn ⇒ **chặn dịch vụ nhắm đúng một người**. PhoenixKey đặt thành điều kiện W2 cho `op_type=7 did.rotate` (xoay khoá sau khi nghi lộ) — ở đó nó là chặn quyền tự vệ. Ghi chi tiết ở `ConsumeMAGIC/EXEC.md §4` |
+| D10 | `op_type` nào được **giá cố định** (không nhân `demand_mult`)? | `demand_mult` tính từ `ops_served_epoch` gộp toàn hệ nên tải của module không liên quan định giá thao tác an ninh của DID, và một đợt lộ khoá hàng loạt làm Rotate đắt lên đúng lúc cần rẻ. Hai hình dạng: cờ `fixed` trong `OpPrice` (đổi lược đồ datum beacon đang sống, phải post lại mọi beacon) hoặc **dải `op_type` quy ước** (chỉ đổi hàm giá, không migrate). MAGIC nghiêng về dải quy ước. Chi tiết + đính chính "giá cố định thì khỏi đọc beacon" (SAI): `ConsumeMAGIC/CONTRACT.md §A` |
 
 ---
 
@@ -105,6 +115,12 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
   script với datum bịa". *Hai validator mồ côi chưa được nối — xem mục Mồ côi.*
 - **P8** — toán Aiken và TypeScript trùng bit, vector chuẩn trong `tests/` là trọng tài.
 - **Σburns == required** (ConsumeMAGIC) — dấu bằng, lệch một nanogic là tx bị từ chối.
+  ⚠️ **MỘT CHIỀU.** Bất biến này sống trong `consume.ak`, nên nó chỉ tồn tại ở tx CÓ
+  ConsumeMAGIC co-spend. `validate_burn_batch` của vault không đòi ConsumeMAGIC có mặt —
+  xem Nợ #14. Đừng đọc dòng này thành "MAGIC chỉ giảm khi có dịch vụ".
+- **`halved` KHÔNG phải bất biến.** Không có `expect` nào từ chối `halved == True`;
+  validator chỉ không bao giờ SINH ra True. Chú thích cũ trong `types.ak` ghi "Any True
+  value is rejected" — đã đính chính 2026-08-12.
 - **Chỉ số constructor Plutus Data là hợp đồng nhị phân** — variant đã bỏ khỏi mô hình
   (`BatchSource::Snapshot`, `::Vacuum`) và trường `vacuum_orders` vẫn phải nằm nguyên chỗ cũ.
 - **`lamp_asset_name` là apply-param #2 của mọi vault**, suy ra từ mạng, không hardcode.

@@ -843,10 +843,25 @@ fn validate_withdraw_lamp(
 //
 // Consuming MAGIC = subtracting `amount` (nanogic) from the matching batch's
 // current_amount. No tx.mint, no token. The vault is the ONLY place MAGIC is
-// reduced. Auth = owner OR consume-delegate (personal_delegate). The price
-// match (Σburns == required) is enforced by the co-spending ConsumeMAGIC
-// validator that reads the PriceParam beacon + this BurnBatch redeemer; the
-// vault enforces the safe per-batch mutation, A02, and LAMP value lock.
+// reduced. Auth = owner OR consume-delegate (personal_delegate). The vault
+// enforces the safe per-batch mutation, A02, and LAMP value lock.
+//
+// 🔴 ĐÍNH CHÍNH (2026-08-12) — bản cũ ghi rằng `Σburns == required` "is enforced
+// by the co-spending ConsumeMAGIC validator". Câu đó chỉ đúng KHI ConsumeMAGIC có
+// mặt trong tx, và KHÔNG có gì trong hàm này bắt nó có mặt: không ràng buộc input
+// nào ở địa chỉ `consume`, không đọc PriceParam beacon. Liên kết giá là MỘT CHIỀU
+// — consume.ak ép về phía vault, vault không ép ngược lại.
+//
+// Hệ quả đang sống: một `personal_delegate` ký được một tx BurnBatch trần trụi,
+// không kèm Engage input, không giao dịch vụ gì, và đốt sạch MAGIC của chủ vault.
+// Chủ không mất LAMP và không mất ADA (hai chốt dưới chặn đúng), nhưng mất toàn bộ
+// quyền-tiêu-dịch-vụ đã trả tiền để có. `personal_delegate` hiện là
+// `Option<ByteArray>` trần: không hạn mức, không phạm vi op, không hạn dùng.
+//
+// Vá đề xuất (ĐỤNG VALIDATOR — chờ chủ nhân gật, xem DevStatus.md): khi người ký
+// là delegate chứ không phải chủ, đòi ≥1 input ở `engage_script_hash` với redeemer
+// `Consume`. Đường chủ-tự-ký có thể miễn. Phát hiện: hội đồng rà trước push
+// 2026-08-12, trục cơ chế.
 // ═══════════════════════════════════════════════════════════════
 fn validate_burn_batch(
   input_datum    : VaultDatum,

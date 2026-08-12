@@ -34,9 +34,22 @@ Sửa một bên thì sửa bên kia **trong cùng commit**.
 `nanothread = CARP × 10⁹`. Dùng `Number` cho các đại lượng này là lỗi tràn số đang chờ xảy
 ra — có vector `TV-OVERFLOW-01/02` bắt đúng ca đó.
 
-**Số học Q-format nhân-chia tuần tự.** `M = L × R × UM × PM / Q³` áp thành **ba** bước
+**Số học Q-format nhân-chia tuần tự.** Chuỗi thưởng ba hệ số áp thành **ba** bước
 `⌊ × / Q ⌋` riêng, không phải một lần nhân hết rồi chia. Đây là thứ chặn sai số làm tròn
-theo spec §6.1 / L4.
+theo spec §6.1 / L4. Neo: `InstantGen/onchain/lib/magiclamp/protocol/math.ak:81-83` ↔
+`InstantGen/offchain/src/math.ts:73-76`.
+
+> Bản cũ của dòng này viết công thức là `M = L × R × UM × PM / Q³`. **Tên biến đó đã cũ**
+> — từ PHA-2, thưởng khoá theo `consumed` chứ không theo `L` (INV-MAGIC-CITIZEN: thưởng
+> gắn MAGIC ĐÃ TIÊU, không gắn MAGIC nắm giữ). Hình dạng ba-bước-sàn thì không đổi, và
+> đó mới là phần bất biến.
+
+**Ngược lại, `required` của ConsumeMAGIC gộp rồi sàn MỘT lần.** `required =
+⌊base_price × demand_mult × op_count / Q⌋` — KHÔNG sàn từng op rồi nhân. Hai quy tắc
+làm tròn khác nhau nằm cạnh nhau trong cùng repo; chép nhầm quy tắc này sang chỗ kia là
+thu thiếu tới `op_count` nanogic mỗi dòng. Neo:
+`ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak:157` ↔
+`ConsumeMAGIC/pricing/src/price.ts:174`.
 
 **Chỉ số constructor Plutus Data là hợp đồng nhị phân.** Lược đồ TypeScript trong
 `types.ts` dùng `Data.Enum`/`Data.Object` mà **thứ tự mã hoá tag constructor**. Đổi thứ tự

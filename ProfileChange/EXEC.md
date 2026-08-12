@@ -35,7 +35,7 @@ Kiểm tra validator xuất hiện trong `plutus.json`:
 
 ```bash
 jq '.validators[] | .title' ProfileChange/onchain/plutus.json
-# → "vault_profile.spend"
+# → "vault_profile.vault_profile.spend"
 ```
 
 ### Step 2 — Apply tham số + lấy hash
@@ -45,7 +45,7 @@ jq '.validators[] | .title' ProfileChange/onchain/plutus.json
 import { applyParamsToScript, validatorToScriptHash, Data } from "@lucid-evolution/lucid";
 import rawPlutus from "../../ProfileChange/onchain/plutus.json" assert { type: "json" };
 
-const raw = rawPlutus.validators.find(v => v.title === "vault_profile.spend");
+const raw = rawPlutus.validators.find(v => v.title === "vault_profile.vault_profile.spend");
 const validator = {
   type: "PlutusV3",
   script: applyParamsToScript(raw.compiledCode, [Data.Integer(86_400_000n)]),
@@ -91,16 +91,15 @@ npm install
 npm test
 ```
 
-File test: `ProfileChange/tests/profile.test.ts` (7 test cases).
-
-Kết quả mong đợi: 7/7 pass.
+File test: `ProfileChange/tests/profile.test.ts`. Số ca + kết quả: xem `DevStatus.md`
+— nơi duy nhất ghi số kiểm. Con số chép tay ở đây hết hạn ngay commit sau.
 
 ### 2.2 Aiken on-chain tests
 
 ```bash
 cd /Users/ductiger/Projects/MAGIC/ProfileChange/onchain
 aiken check
-# Expected: 8 tests pass (2 happy + 6 reject)
+# Số checks: xem DevStatus.md. Kỳ vọng cứng duy nhất: 0 errors.
 ```
 
 Xem chi tiết test trong `vault_profile.ak:209-303`.

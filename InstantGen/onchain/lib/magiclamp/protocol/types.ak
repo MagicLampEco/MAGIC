@@ -35,11 +35,20 @@ pub type MagicBatch {
   decay_window        : Natural,                     // = 1 (§4.2)
   profile_at_creation : Option<ActivityProfile>,     // Some(P) Snapshot; None others (C-DECAY-4)
   contract_id         : Option<ByteArray>,           // Some for Schedule; None others
-  halved              : Bool,                        // DEAD FIELD — always False under the
-                                                     // cliff model. Kept so the Plutus Data
-                                                     // shape (9 fields) stays byte-compatible
-                                                     // with the deployed datum + sibling
-                                                     // modules. Any True value is rejected.
+  halved              : Bool,                        // DEAD FIELD dưới mô hình cliff. Giữ để
+                                                     // hình dạng Plutus Data (9 trường) còn
+                                                     // byte-compatible với datum đã deploy và
+                                                     // các module anh em.
+                                                     // ĐÍNH CHÍNH (2026-08-12): bản cũ ghi
+                                                     // "Any True value is rejected" — SAI.
+                                                     // Không có `expect` nào từ chối
+                                                     // `halved == True` trong vault.ak; nó chỉ
+                                                     // được ĐẶT False lúc tạo batch
+                                                     // (vault.ak:436) và so sánh cấu trúc ở
+                                                     // các nhánh spend. Nghĩa là: validator
+                                                     // này không bao giờ SINH ra True, nhưng
+                                                     // cũng không CHẶN True do bên khác ghi.
+                                                     // Đừng dựa vào nó như một bất biến.
 }
 
 // ── LoyaltyHolding ──────────────────────────────────────────

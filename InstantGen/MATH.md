@@ -134,6 +134,12 @@ Quy tắc:
 
 C-DECAY-8: nếu tx không phải halving epoch (k≠1), `output.halved MUST == input.halved`. Tấn công TV-HALVED-INJECT: set halved=True ở k=0 → validator reject qua A02 batch comparison.
 
+> ⚠️ **Đính chính 2026-08-12.** Câu trên mô tả mô hình đã chết, và phần "validator reject"
+> cũng không đúng cho mã hôm nay: `InstantGen/onchain/validators/vault.ak` **không có
+> `expect` nào từ chối `halved == True`**. A02 so sánh cấu trúc nên nó ép output BẰNG
+> input — tức nó bảo toàn `halved`, chứ không chặn `halved` bằng True. Batch chỉ được
+> tạo với `False` (`vault.ak:436`). Đừng viện dẫn dòng này như một chốt an ninh.
+
 ---
 
 ## 6. L_avail (§6.8)

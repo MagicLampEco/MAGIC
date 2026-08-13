@@ -8,7 +8,7 @@
 > spec, sang PR body. Bài học đo được: một con số test từng sống ở 28 vị trí với 12 giá
 > trị khác nhau, và bản sai lọt ra trang công khai. Cần số thì trỏ về đây, hoặc chạy lệnh.
 
-**Đo lúc:** 2026-08-09 · **trên nhánh** `feat/converge-tripletoken-code`.
+**Đo lúc:** 2026-08-13 · **trên nhánh** `feat/converge-tripletoken-code`.
 Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. Lệnh kiểm chứng nằm ngay cạnh.
 
 ---
@@ -19,11 +19,11 @@ Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. L
 |---|---|---|---|
 | `ProtocolUtils` | thư viện dùng chung (hằng, Q-format, BigInt) | 26 | — |
 | `InstantGen` | sinh MAGIC theo yêu cầu, vault hợp nhất PHA-2 | 55 | 83 |
-| `ScheduleGen` | hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard | 39 | 51 |
+| `ScheduleGen` | hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard | 41 | 51 |
 | `UMKeeper` | cập nhật hệ số cầu mạng UM mỗi epoch | 20 | 10 |
 | `ConsumeMAGIC` | tiêu thụ MAGIC (đốt theo giá nghiệp vụ) | 67 | 98 |
 | `ConsumeMAGIC/pricing` | `@magiclamp/consumemagic-pricing` — bộ định giá | 62 | (dùng chung) |
-| `MagicSDK` | mặt tiền cho bên tích hợp | 51 | — |
+| `MagicSDK` | mặt tiền cho bên tích hợp | 52 | — |
 | `GetMAGIC` | cổng vào, Phase 1 (chưa nối vault) | 41 | 0 lỗi |
 | `Paymaster` | trả phí hộ (SponsorMeter) | 26 | 28 |
 | `FlowRate` | điều tiết nhịp | 19 | (không có `aiken.toml`) |
@@ -35,6 +35,53 @@ cd <Module>/offchain && npm test          # ConsumeMAGIC/pricing và MagicSDK: n
 # aiken — 1.1.21 không in gì khi bị pipe
 cd <Module>/onchain && script -q /tmp/out.txt aiken check && cat /tmp/out.txt
 ```
+
+> Hai số vừa đổi so với bản 2026-08-09: `ScheduleGen` 39 → **41** vitest, `MagicSDK` 51 → **52**.
+> `GetMAGIC` vẫn `0 checks, 0 errors` — biên dịch sạch, **không có bài kiểm nào** (Nợ #16).
+
+## Đo trên testnet — chuỗi deploy chạy thật, không phải test đơn vị
+
+> Bảng trên là test **đơn vị**: mã tự chấm mã. Bảng dưới là tx **thật** trên chuỗi thật, nơi
+> validator chạy dưới ledger chứ không dưới mock. Hai thứ nói hai điều khác nhau, và bài học
+> đắt nhất của repo này nằm đúng ở khe giữa hai bảng: `ig_pos_*` xanh 55/55 trong khi
+> InstantGen chưa từng cấp nổi 1 nanogic trên chuỗi (Nợ #19).
+
+**Đo lúc:** 2026-08-13, chạy trọn `bash scripts/run_wakeme_e2e.sh <Preview|Preprod>`
+(00 → 0a…0e → 07 → ScheduleCommit → ScheduleFire → 05 → InstantGen). Tx hash + địa chỉ:
+[`scripts/DEPLOYED.md`](scripts/DEPLOYED.md).
+
+| Bước | Preview | Preprod | Ý nghĩa |
+|---|---|---|---|
+| Dựng LAMP + UM + Shard + beacon | ✅ | ✅ | chuỗi phụ thuộc đi hết, không kẹt bước nào |
+| Công bố script tham chiếu CIP-33 | ✅ | ✅ | bắt buộc, không phải tuỳ chọn — Nợ #20 |
+| Tạo vault ScheduleGen | ✅ | ✅ | NFT one-shot mint cùng tx (INV-VAULT-IDENTITY) |
+| **ScheduleCommit** | ✅ | ✅ | `gen_schedules` ghi được, shard giảm, rate khoá theo T8 |
+| **ScheduleFire** | ⏳ | ⏳ | `No eligible fires: next fire at epoch 20679, current=20677` — **chưa tới hạn, đúng thiết kế**, không phải lỗi |
+| Tạo vault InstantGen | ✅ | ✅ | |
+| **InstantGen** | ❌ | ❌ | `reward=0 cap_surplus=33333333333 cap_pp=0 (consumed_credit=0)` — Nợ #19 |
+
+Ba điều bảng này nói mà bảng test đơn vị không nói được:
+
+1. **ScheduleGen là cửa sinh MAGIC DUY NHẤT đã chứng minh được trên chuỗi.** Hai mạng, hai
+   ngày, tx thật.
+2. **Không nghiệm thu được ScheduleGen trọn vòng trong một buổi.** `SCHEDULE_DELAY = 2` epoch,
+   `ms_per_epoch` testnet = 86 400 000 (1 ngày) ⇒ chờ ~2 ngày sau commit mới fire được.
+3. **InstantGen hỏng giống hệt nhau trên 4 vault khác nhau, 2 mạng, 2 ngày.** `cap_surplus > 0`
+   chứng minh beacon dựng-tạm ĐÃ mở cổng §6.3 — nên đây không phải thiếu cấu hình.
+
+**Kích thước script, đo lại bằng apply-param thật 2026-08-13** (thay con số 16643 cũ):
+
+| Script ScheduleGen | chưa apply | đã apply |
+|---|---|---|
+| `vault.vault.spend` | 11 210 B | 11 302 B |
+| `vault.shard.spend` | 5 131 B | 5 169 B |
+| **tổng** | 16 341 B | **16 471 B** |
+
+Trần tx Cardano là **16 384 B**. Chưa apply thì hai script **vừa lọt** (dư 43 B); apply-param
+đẩy lên **vượt 87 B**. Nên chính bước apply-param là thứ đá ScheduleGen qua trần — không phải
+kích thước mã. Tx thật đính kèm cả hai đo được 17 303 B (16 471 script + ~832 B phần tx).
+Kiểm lại: `applyParamsToScript` trên `ScheduleGen/onchain/plutus.json`, tham số hình dạng thật
+(policy 28 B · `744c414d50` · policy 28 B · `86400000`).
 
 ## Mồ côi — còn dùng được nhưng chưa có nhà rõ ràng
 
@@ -89,8 +136,8 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 | 16 | `GetMAGIC/onchain` biên dịch sạch nhưng **0 test Aiken** | `aiken check` → `0 checks, 0 errors`. Không có `test` nào định nghĩa trong validator. Biên dịch được không có nghĩa có bài kiểm — cùng họ với Nợ #10 |
 | 17 | `Paymaster`: `ada_per_magic_q` không có chặn âm | `paymaster.ak:111` chặn `lamp_per_magic_q` bằng sàn giao thức, `ada_per_magic_q` thì không. Với giá âm, Aiken `/` (làm tròn xuống) cho `-1` còn TS BigInt `/` (cắt về 0) cho `0` ⇒ off-chain dựng tx mà on-chain từ chối. Fail-closed, không mất tiền, nhưng là chỗ P8 lệch theo dấu |
 | 18 | `scripts/config.ts:75-76` khai lại `SHARD_COUNT`/`SHARD_CAP` độc lập | Giá trị hiện đang bằng ScheduleGen. Hai nguồn cho một sự thật — đổi một bên là lệch im lặng |
-| 19 | 🔴 **InstantGen không mở được cho BẤT KỲ vault nào** — vòng khép kín trong chính mã | Đo thật trên Preview **và** Preprod 2026-08-12: `reward=0 cap_surplus=33333333333 cap_pp=0`. Chuỗi đóng: genesis ép `gen_schedules == []` (`vault.ak:281`), sáu nhánh spend đều ép `output.gen_schedules == input.gen_schedules` (`:455,559,808,921,1033,1093`), và `VaultRedeemer` của InstantGen **không có nhánh nào GHI** `gen_schedules` (chỉ có `ScheduleCommit` — mà nhánh đó nằm ở validator ScheduleGen, script hash KHÁC, địa chỉ KHÁC). ⟹ `compute_cap_pp([]) = 0` vĩnh viễn ⟹ `expect grant > 0` (`vault.ak:426`) luôn hỏng. Test đơn vị `ig_pos_*` xanh vì chúng tự dựng datum có `gen_schedules` — trạng thái mà đường mint cấm. Đây KHÔNG phải lỗi cấu hình: beacon dựng-tạm đã mở cổng thặng dư (cap_surplus > 0) mà vẫn hỏng. Vá thuộc D1. **2026-08-13, soát lại từ nguyên lý gốc: KHÔNG phải một khoá, mà HAI khoá độc lập.** Genesis ép cả ba trường cùng lúc (`vault.ak:272` `magic_batches == []`, `:276` `consumed_credit == 0`, `:281` `gen_schedules == []`). Khoá thứ hai: `consumed_credit` chỉ tăng ở nhánh `BurnBatch` (`:929`), mà `BurnBatch` cần `magic_batches` khác rỗng, mà `magic_batches` chỉ được ghi ở chính nhánh `InstantGen` (`:439`) — vòng tự-tham-chiếu ⟹ `reward = 0` vĩnh viễn, độc lập với `cap_pp`. Số đo in ra đúng cả hai: `reward=0 … cap_pp=0 (consumed_credit=0)`. Nghĩa là kể cả vá `cap_pp` thì InstantGen VẪN đóng — vault InstantGen không có nguồn MAGIC nào để tiêu trước. Nguồn MAGIC duy nhất còn sống là `BatchSource::Schedule` (`ScheduleFire`), nằm ở validator kia |
-| 20 | ScheduleGen **bắt buộc** script tham chiếu CIP-33, không phải tuỳ chọn | Đính kèm cả `vault` lẫn `shard` vào một tx cho **17303 byte > 16384** (đo thật, Preview). Bản thân hai script cộng lại đã 16643 byte nên cả bước công bố cũng phải tách hai tx. `scripts/deploy/06_publish_ref_scripts.ts` + `refScriptUtxos` trong `ScheduleGen/offchain/src/schedule.ts`. Bên tích hợp nào định gộp tx với vault MAGIC phải tính phần ngân sách byte này |
+| 19 | 🔴 **InstantGen không mở được cho BẤT KỲ vault nào** — vòng khép kín trong chính mã | Đo thật trên Preview **và** Preprod 2026-08-12: `reward=0 cap_surplus=33333333333 cap_pp=0`. Chuỗi đóng: genesis ép `gen_schedules == []` (`vault.ak:281`), sáu nhánh spend đều ép `output.gen_schedules == input.gen_schedules` (`:455,559,808,921,1033,1093`), và `VaultRedeemer` của InstantGen **không có nhánh nào GHI** `gen_schedules` (chỉ có `ScheduleCommit` — mà nhánh đó nằm ở validator ScheduleGen, script hash KHÁC, địa chỉ KHÁC). ⟹ `compute_cap_pp([]) = 0` vĩnh viễn ⟹ `expect grant > 0` (`vault.ak:421`) luôn hỏng. Test đơn vị `ig_pos_*` xanh vì chúng tự dựng datum có `gen_schedules` — trạng thái mà đường mint cấm. Đây KHÔNG phải lỗi cấu hình: beacon dựng-tạm đã mở cổng thặng dư (cap_surplus > 0) mà vẫn hỏng. Vá thuộc D1. **2026-08-13, soát lại từ nguyên lý gốc: KHÔNG phải một khoá, mà HAI khoá độc lập.** Genesis ép cả ba trường cùng lúc (`vault.ak:272` `magic_batches == []`, `:276` `consumed_credit == 0`, `:281` `gen_schedules == []`). Khoá thứ hai: `consumed_credit` chỉ tăng ở nhánh `BurnBatch` (`:929`), mà `BurnBatch` chết ngay ở `expect total_burned > 0` (`:909`) khi `magic_batches` rỗng, mà `magic_batches` chỉ được ghi ở chính nhánh `InstantGen` (`:469`) — vòng tự-tham-chiếu ⟹ `reward = 0` vĩnh viễn, độc lập với `cap_pp`. Số đo in ra đúng cả hai: `reward=0 … cap_pp=0 (consumed_credit=0)`. Nghĩa là kể cả vá `cap_pp` thì InstantGen VẪN đóng — vault InstantGen không có nguồn MAGIC nào để tiêu trước. Nguồn MAGIC duy nhất còn sống là `BatchSource::Schedule` (`ScheduleFire`), nằm ở validator kia |
+| 20 | ScheduleGen **bắt buộc** script tham chiếu CIP-33, không phải tuỳ chọn | Đính kèm cả `vault` lẫn `shard` vào một tx cho **17303 byte > 16384** (đo thật, Preview). Đo lại 2026-08-13 bằng apply-param thật (bản ghi cũ ở đây ghi 16643 — **sai**): hai script chưa apply cộng lại 16 341 B (dư 43 B dưới trần), **đã apply 16 471 B — vượt 87 B**. Tức chính bước apply-param đá nó qua trần, không phải kích thước mã. Nên cả bước công bố cũng phải tách hai tx. `scripts/deploy/06_publish_ref_scripts.ts` + `refScriptUtxos` trong `ScheduleGen/offchain/src/schedule.ts`. Bên tích hợp nào định gộp tx với vault MAGIC phải tính phần ngân sách byte này |
 | 21 | Vault InstantGen và vault ScheduleGen là **hai địa chỉ**, một người dùng cần hai vault | Cùng `VaultDatum` 17 trường, nhưng redeemer rời nhau và chỉ số lệch: `WithdrawLamp` = 4 ở Instant, 3 ở Schedule; `SetDelegate` = 5 và 4. Một UTxO nằm ở một địa chỉ nên không vault nào chạy được cả hai cửa. "Hợp nhất Instant+Schedule" (PHA-2) mới hợp nhất DATUM, chưa hợp nhất SCRIPT. Cùng họ với vướng mắc của `Consolidate`/`ProfileChange` ở mục Mồ côi |
 | 22 | Chuỗi deploy **không bước nào chờ xác nhận** trước 2026-08-12 | Năm script `deploy/*.ts` submit rồi trả ngay, nên bước sau tiêu phải UTxO cũ ⇒ `BadInputsUTxO`. Đã thêm `awaitTx` cả năm. Còn một lớp nữa chưa vá tận gốc: Blockfrost trả danh sách UTxO trễ vài giây **sau khi** `awaitTx` xong, nên 04/06 phải có vòng thử lại. Bước nào chưa có vòng đó vẫn hỏng ngẫu nhiên |
 | 23 | Ví deploy hết UTxO thuần ADA là **mọi tx script** bị từ chối | `CollateralContainsNonADA`: collateral không được mang native token, mà ví dùng lâu sẽ gom hết ADA vào UTxO có token. Đã thêm `scripts/prepare_wallet.ts` và gọi trước mỗi cụm bước. Đây là lỗi hình dạng ví, không phải lỗi validator — nhưng nó trông y hệt |

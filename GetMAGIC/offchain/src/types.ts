@@ -63,7 +63,7 @@ export type OrderRedeemer = Data.Static<typeof OrderRedeemerSchema>;
 // ── AllocationDatum ──────────────────────────────────────────
 // Mirrors Aiken: getmagic/types.ak :: AllocationDatum
 export const AllocationDatumSchema = Data.Object({
-  alloc_id:             Data.Bytes(),           // blake2b_256(order_id ++ user_pkh)
+  alloc_id:             Data.Bytes(),           // deriveAllocId() — 32 bytes, framed (nợ #26)
   order_id:             Data.Bytes(),
   org_pkh:              Data.Bytes(),
   org_vault_nft_policy: Data.Bytes(),

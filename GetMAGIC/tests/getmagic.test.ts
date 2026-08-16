@@ -37,6 +37,8 @@ import {
 import {
   TV_ORACLE_01_CLEAN,
   TV_ORACLE_02,
+  TV_ALLOCID_01,
+  TV_FRAMING_01,
   TV_VOUCHER_01,
   TV_NONCE_01,
   TV_ALLOC_01,
@@ -86,40 +88,46 @@ function makeAllocationDatum(overrides: Partial<AllocationDatum> = {}): Allocati
 
 // ── TV-ORACLE-01: buildOracleSettleMsg ────────────────────────
 describe("TV-ORACLE-01: buildOracleSettleMsg", () => {
-  it("produces bytes of correct length", () => {
-    const msg = buildOracleSettleMsg(
-      TV_ORACLE_01_CLEAN.orderId,    // 8 bytes
+  const build = () =>
+    buildOracleSettleMsg(
+      TV_ORACLE_01_CLEAN.orderId,   // 8 bytes
       TV_ORACLE_01_CLEAN.userPkh,   // 28 bytes
       TV_ORACLE_01_CLEAN.nonce,     // 32 bytes
       TV_ORACLE_01_CLEAN.timestampMs,
     );
-    // 8 + 28 + 32 + 8 = 76 bytes
-    expect(msg.length).toBe(TV_ORACLE_01_CLEAN.expectedLength);
+
+  it("produces bytes of correct length", () => {
+    // 22 tag + 1 sep + (4+8) + (4+28) + (4+32) + 8 = 111 bytes
+    expect(build().length).toBe(TV_ORACLE_01_CLEAN.expectedLength);
+  });
+
+  it("matches the pinned vector byte-for-byte (P8 vs utils_test.ak c3)", () => {
+    expect(bytesToHex(build())).toBe(TV_ORACLE_01_CLEAN.expectedMsgHex);
+  });
+
+  it("starts with the domain tag and separator", () => {
+    const prefix = bytesToHex(build().slice(0, 23));
+    expect(prefix).toBe("4d414749435f4f5241434c455f534554544c453a763100");
+  });
+
+  it("length-prefixes each variable field", () => {
+    const msg = build();
+    expect(bytesToHex(msg.slice(23, 27))).toBe("00000008"); // len(order_id)
+    expect(bytesToHex(msg.slice(35, 39))).toBe("0000001c"); // len(user_pkh) = 28
+    expect(bytesToHex(msg.slice(67, 71))).toBe("00000020"); // len(nonce) = 32
+  });
+
+  it("places orderId at its framed offset", () => {
+    const msg = build();
+    const o   = TV_ORACLE_01_CLEAN.orderIdOffset;
+    expect(bytesToHex(msg.slice(o, o + 8))).toBe(TV_ORACLE_01_CLEAN.orderId);
   });
 
   it("encodes timestamp as big-endian 8 bytes", () => {
-    const msg = buildOracleSettleMsg(
-      TV_ORACLE_01_CLEAN.orderId,
-      TV_ORACLE_01_CLEAN.userPkh,
-      TV_ORACLE_01_CLEAN.nonce,
-      TV_ORACLE_01_CLEAN.timestampMs,
-    );
-    // Last 8 bytes = timestamp in BE
+    const msg     = build();
     const tsBytes = msg.slice(msg.length - 8);
-    const tsHex   = bytesToHex(tsBytes);
     // 1_700_000_000_000n = 0x0000_018B_CFE5_6800
-    expect(tsHex).toBe("0000018bcfe56800");
-  });
-
-  it("starts with orderId bytes", () => {
-    const msg = buildOracleSettleMsg(
-      TV_ORACLE_01_CLEAN.orderId,
-      TV_ORACLE_01_CLEAN.userPkh,
-      TV_ORACLE_01_CLEAN.nonce,
-      TV_ORACLE_01_CLEAN.timestampMs,
-    );
-    const orderIdPart = bytesToHex(msg.slice(0, 8));
-    expect(orderIdPart).toBe(TV_ORACLE_01_CLEAN.orderId);
+    expect(bytesToHex(tsBytes)).toBe(TV_ORACLE_01_CLEAN.timestampHex);
   });
 
   it("is deterministic — same inputs same output", () => {
@@ -129,45 +137,99 @@ describe("TV-ORACLE-01: buildOracleSettleMsg", () => {
   });
 });
 
+// ── TV-FRAMING-01: injectivity (nợ #26) ───────────────────────
+// Mirrors onchain/lib/getmagic/utils_test.ak group A.
+describe("TV-FRAMING-01: message framing is injective", () => {
+  const F = TV_FRAMING_01;
+
+  it("premise — the OLD raw concat collides for two different field-sets", () => {
+    expect(F.orderA + F.pkhA).toBe(F.orderB + F.pkhB);
+    expect(F.pkhA).not.toBe(F.pkhB);
+  });
+
+  it("alloc_id: the framed derivation separates that same pair", () => {
+    expect(deriveAllocId(F.orderA, F.pkhA)).not.toBe(deriveAllocId(F.orderB, F.pkhB));
+  });
+
+  it("premise — the OLD settle payload collides with a VALID 28-byte pkh swap", () => {
+    expect(F.orderSettleA + F.pkhSettleA + F.nonceSettleA).toBe(
+      F.orderSettleB + F.pkhSettleB + F.nonceSettleB,
+    );
+    expect(F.pkhSettleB.length / 2).toBe(28);
+    expect(F.pkhSettleA).not.toBe(F.pkhSettleB);
+  });
+
+  it("settle: the framed message separates that same pair", () => {
+    const a = buildOracleSettleMsg(F.orderSettleA, F.pkhSettleA, F.nonceSettleA, F.timestampMs);
+    const b = buildOracleSettleMsg(F.orderSettleB, F.pkhSettleB, F.nonceSettleB, F.timestampMs);
+    expect(bytesToHex(a)).not.toBe(bytesToHex(b));
+  });
+
+  it("empty-field shift is separated too", () => {
+    expect(deriveAllocId("", "abcd")).not.toBe(deriveAllocId("abcd", ""));
+  });
+});
+
+// ── TV-ALLOCID-01: deriveAllocId pinned vector ────────────────
+describe("TV-ALLOCID-01: deriveAllocId pinned vector", () => {
+  it("matches the Aiken build_alloc_id output (P8 vs utils_test.ak c5)", () => {
+    expect(deriveAllocId(TV_ALLOCID_01.orderId, TV_ALLOCID_01.userPkh)).toBe(
+      TV_ALLOCID_01.expected,
+    );
+  });
+});
+
 // ── TV-ORACLE-02: buildVoucherMsg ─────────────────────────────
 describe("TV-ORACLE-02: buildVoucherMsg", () => {
+  const V = TV_ORACLE_02;
+  const build = (nanogic: bigint = V.nanogic) =>
+    buildVoucherMsg(V.allocId, V.epoch, nanogic, V.expiryPosixMs);
+
   it("produces bytes of correct length", () => {
-    const msg = buildVoucherMsg(
-      TV_ORACLE_02.allocId,
-      TV_ORACLE_02.epoch,
-      TV_ORACLE_02.nanogic,
-      TV_ORACLE_02.expiryPosixMs,
-    );
-    // 32 + 8 + 8 + 8 = 56 bytes
-    expect(msg.length).toBe(TV_ORACLE_02.expectedLength);
+    // 16 tag + 1 sep + (4+32) + 8 + 8 + 8 = 77 bytes
+    expect(build().length).toBe(V.expectedLength);
   });
 
-  it("encodes epoch correctly in bytes 32–39", () => {
-    const msg    = buildVoucherMsg(TV_ORACLE_02.allocId, TV_ORACLE_02.epoch, TV_ORACLE_02.nanogic, TV_ORACLE_02.expiryPosixMs);
-    const epHex  = bytesToHex(msg.slice(32, 40));
-    expect(epHex).toBe(TV_ORACLE_02.epochHex);
+  it("matches the pinned vector byte-for-byte (P8 vs utils_test.ak c4)", () => {
+    expect(bytesToHex(build())).toBe(V.expectedMsgHex);
   });
 
-  it("encodes nanogic correctly in bytes 40–47", () => {
-    const msg   = buildVoucherMsg(TV_ORACLE_02.allocId, TV_ORACLE_02.epoch, TV_ORACLE_02.nanogic, TV_ORACLE_02.expiryPosixMs);
-    const ngHex = bytesToHex(msg.slice(40, 48));
-    expect(ngHex).toBe(TV_ORACLE_02.nanogicHex);
+  it("starts with the domain tag, separator and LP(alloc_id)", () => {
+    const msg = build();
+    expect(bytesToHex(msg.slice(0, 17))).toBe("4d414749435f564f55434845523a763100");
+    expect(bytesToHex(msg.slice(17, 21))).toBe("00000020"); // len(alloc_id) = 32
   });
 
-  it("encodes expiryPosixMs correctly in bytes 48–55", () => {
-    const msg    = buildVoucherMsg(TV_ORACLE_02.allocId, TV_ORACLE_02.epoch, TV_ORACLE_02.nanogic, TV_ORACLE_02.expiryPosixMs);
-    const exHex  = bytesToHex(msg.slice(48, 56));
-    expect(exHex).toBe(TV_ORACLE_02.expiryHex);
+  it("encodes epoch at its framed offset", () => {
+    const o = V.epochOffset;
+    expect(bytesToHex(build().slice(o, o + 8))).toBe(V.epochHex);
+  });
+
+  it("encodes nanogic at its framed offset", () => {
+    const o = V.nanogicOffset;
+    expect(bytesToHex(build().slice(o, o + 8))).toBe(V.nanogicHex);
+  });
+
+  it("encodes expiryPosixMs at its framed offset", () => {
+    const o = V.expiryOffset;
+    expect(bytesToHex(build().slice(o, o + 8))).toBe(V.expiryHex);
   });
 
   it("uses BigInt — nanogic value does not lose precision", () => {
     // 10_000_000_000n fits in Number, but 1_000_000_000_000_000_000n does not
     const bigNanogic = 1_000_000_000_000_000_000n;
-    const msg = buildVoucherMsg(TV_ORACLE_02.allocId, TV_ORACLE_02.epoch, bigNanogic, TV_ORACLE_02.expiryPosixMs);
-    const ngBytes = msg.slice(40, 48);
+    const msg     = build(bigNanogic);
+    const ngBytes = msg.slice(V.nanogicOffset, V.nanogicOffset + 8);
     const dv      = new DataView(ngBytes.buffer, ngBytes.byteOffset, 8);
-    const decoded = dv.getBigUint64(0, false);
-    expect(decoded).toBe(bigNanogic);
+    expect(dv.getBigUint64(0, false)).toBe(bigNanogic);
+  });
+
+  // Mirrors the on-chain `expect bytearray.length(alloc_id) == 32`
+  // (utils_test.ak b2/b3/b4).
+  it("rejects an alloc_id that is not 32 bytes", () => {
+    expect(() => buildVoucherMsg("aabbccdd", 100n, 1n, 1n)).toThrow();
+    expect(() => buildVoucherMsg("", 100n, 1n, 1n)).toThrow();
+    expect(() => buildVoucherMsg("aa".repeat(33), 100n, 1n, 1n)).toThrow();
   });
 });
 
@@ -450,9 +512,9 @@ describe("BigInt overflow checks", () => {
   it("encodeInt8Bytes preserves large nanogic value precisely", () => {
     const bigNanogic = TV_OVERFLOW_01.largeMagicNanogic;
     const msg = buildVoucherMsg("00".repeat(32), 1n, bigNanogic, 1n);
-    // Extract nanogic bytes (positions 40–47)
+    // Extract nanogic bytes at the framed offset [61,69)
     const dv      = new DataView(msg.buffer, msg.byteOffset);
-    const decoded = dv.getBigUint64(40, false);
+    const decoded = dv.getBigUint64(TV_ORACLE_02.nanogicOffset, false);
     expect(decoded).toBe(bigNanogic);
   });
 

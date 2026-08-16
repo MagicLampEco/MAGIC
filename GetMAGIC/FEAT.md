@@ -41,8 +41,8 @@ bằng LAMP on-chain. Mô hình:
 3. `expiry_posix_ms = created + 4h` (ORDER_EXPIRY_MS).
 
 ### 3.2 Settle (oracle xác nhận thanh toán)
-1. Oracle ký `settle_msg = order_id ++ user_pkh ++ nonce ++ timestamp` (Ed25519).
-2. Oracle pre-sign `total_epochs` vouchers: `voucher_msg = alloc_id ++ epoch ++ nanogic ++ expiry_posix`.
+1. Oracle ký `settle_msg` (Ed25519) — khuôn đóng-khung-độ-dài, xem `TECH.md §2.3`.
+2. Oracle pre-sign `total_epochs` vouchers theo `voucher_msg` — cùng nguồn khuôn.
 3. Redeemer `Settle { nonce, timestamp, signature, epoch_vouchers }` tiêu OrderDatum,
    tạo `AllocationDatum` tại `magic_allocation` script.
 4. Validator kiểm: sig hợp lệ (G-OTC-1), timestamp tươi ±1h (G-OTC-2), chưa hết hạn (G-OTC-5),
@@ -81,7 +81,7 @@ bằng LAMP on-chain. Mô hình:
 
 | ID | Phát biểu |
 |---|---|
-| G-OTC-1 | Oracle sig phủ `order_id ++ user_pkh ++ nonce ++ timestamp` |
+| G-OTC-1 | Oracle sig phủ `settle_msg` đơn ánh (tag miền + `LP` mỗi trường, `TECH.md §2.3`) |
 | G-OTC-2 | Oracle timestamp tươi ±1h so với tx lower bound |
 | G-OTC-3 | Nonce uniqueness — **off-chain** (xem KL-5) |
 | G-OTC-4 | Settle tạo output tại `alloc_script_hash` (xem KL-2 cho giới hạn) |

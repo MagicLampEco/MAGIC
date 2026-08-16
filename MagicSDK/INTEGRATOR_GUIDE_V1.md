@@ -392,9 +392,16 @@ dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trốn
 trái `I-ACT-7`; Snapshot chưa bao giờ hội tụ về `VaultDatum` hợp nhất. Không còn validator
 trong cây làm việc, nên cũng không có gì để export. Đừng dựng gì trên hai cái tên đó.
 
-`PrepaidGen` được `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` nhắc tới như cửa thứ ba, nhưng mã
-nguồn của nó **đã mất** (chỉ còn bytecode) — xem mục "Còn nợ" của
-[`DevStatus.md`](../DevStatus.md). Không có đường gọi qua SDK.
+`PrepaidGen` là cửa sinh thứ ba trong `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` §6.5 (nguồn
+CARP: app/user khoá CARP, không phải sinh từ số dư LAMP như hai cửa kia). **Chưa có đường gọi
+qua SDK** vì mã chưa vào cây làm việc — nhưng mã **còn nguyên**, 24 tệp neo bằng tag
+`preserve/prepaidgen-stash-2026-07-30`. Bản trước của đoạn này viết *"mã nguồn đã mất (chỉ còn
+bytecode)"*: **sai**, đã đính chính ở [`DevStatus.md`](../DevStatus.md) Nợ #5. Kiểm lại được
+bằng một lệnh:
+
+```
+git ls-tree -r --name-only "preserve/prepaidgen-stash-2026-07-30^{commit}^3" | grep '^PrepaidGen/'
+```
 
 ### Đơn vị — luôn thô, luôn BigInt
 
@@ -666,11 +673,15 @@ dùng cho mọi tính toán về sau. Bỏ trống thì mặc định `"Flame"`.
 
 ### Q2: Sinh MAGIC bằng những cửa nào?
 
+Mô hình có **đúng ba** cửa sinh, không hơn: **Schedule** và **Instant** sinh từ số dư LAMP
+trong vault của người dùng; **Prepaid** thì người dùng trả CARP. `Snapshot`/`Vacuum` không
+phải cửa thứ tư — chúng là mô hình cũ đã bỏ, chỉ còn bia mộ chỉ-số-constructor.
+
 | Cơ chế | Qua `@magiclamp/sdk`? | LAMP có rời vault? | Trạng thái |
 |---|---|---|---|
 | **Schedule** (hợp đồng kỳ hạn) | ✅ | **Không** — fire chỉ mở khoá | dùng được |
 | **Instant** (theo lượng đã tiêu) | ✅ | **Không** | fail-closed vì **HAI** chốt độc lập: chờ BackingBeacon của CARP **và** trần theo lịch luôn = 0 (`gen_schedules = []`) — xem §6.2 |
-| **PrepaidGen** | ❌ | — | mã nguồn đã mất, chỉ còn bytecode |
+| **Prepaid** (trả bằng CARP) | ❌ | — | mã CÒN (24 tệp, tag `preserve/prepaidgen-stash-2026-07-30`) nhưng chưa vào cây làm việc ⇒ chưa có đường gọi SDK |
 | **Snapshot / Vacuum** | ❌ | — | ở `Legacy/genmagic-v3.3/` |
 
 Không cơ chế nào còn "trả LAMP sang Treasury". Bảng cũ ghi `Transfer → Treasury` cho

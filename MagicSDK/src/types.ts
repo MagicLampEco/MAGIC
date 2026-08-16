@@ -63,7 +63,12 @@ export interface ProtocolParams {
   /** LAMP minting-policy ID. Required for both Instant and Schedule — it pins
    *  the vault's LAMP UTxO asset unit. */
   lampPolicyId: string;
-  /** LAMP asset name as hex (default "744c414d50" = "tLAMP"). */
+  /** LAMP asset name as hex. Bỏ trống thì DẪN THEO MẠNG qua
+   *  `lampAssetName(network)`: Mainnet "4c414d50" = "LAMP", Preview/Preprod
+   *  "744c414d50" = "tLAMP" (`ProtocolUtils/src/index.ts:48-52`). KHÔNG có mặc
+   *  định cứng — mặc định testnet ở đây là đường bake một vault tLAMP vào lần
+   *  deploy mainnet, đúng thứ tham số này sinh ra để chặn. Chỉ đặt tay khi LAMP
+   *  được mint dưới một tên phi chuẩn. */
   lampAssetName?: string;
   /** UM datum NFT policy ID. Required for Instant. */
   umNftPolicyId?: string;

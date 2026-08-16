@@ -2,7 +2,7 @@
 // Normative: C-PC-V1..6, T4, §3.5
 
 import {
-  Data, type LucidEvolution, type UTxO, type Tx,
+  Data, type LucidEvolution, type UTxO, type TxSignBuilder,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
   slotToUnixTime,
   type Validator,
@@ -13,6 +13,28 @@ const PROFILE_COOLDOWN  = 2n;   // epochs [Significant]
 
 export type ActivityProfile = "Ember" | "Flame" | "Lantern";
 
+// ── ProfileRedeemer codec ─────────────────────────────────────
+// `Data.to(x)` KHÔNG có lược đồ thì ném "Could not serialize the data:
+// Unsupported type" — một object JS thường không phải Plutus Data. Lời gọi
+// dựng redeemer bên dưới vì thế hỏng ở thời-chạy, không chỉ hỏng kiểu.
+//
+// Chỉ số constructor lấy từ blueprint đã biên dịch
+// (ProfileChange/onchain/plutus.json :: vault_profile/ProfileRedeemer):
+//   0 UpdateProfile { new_profile } · 1 ApplyPending
+// ActivityProfile: 0 Ember · 1 Flame · 2 Lantern.
+// Thứ tự này là HỢP ĐỒNG NHỊ PHÂN — đổi là vỡ decode mọi UTxO đã tạo.
+const ActivityProfileSchema = Data.Enum([
+  Data.Literal("Ember"),
+  Data.Literal("Flame"),
+  Data.Literal("Lantern"),
+]);
+const ProfileRedeemerSchema = Data.Enum([
+  Data.Object({ UpdateProfile: Data.Object({ new_profile: ActivityProfileSchema }) }),
+  Data.Literal("ApplyPending"),
+]);
+type ProfileRedeemer = Data.Static<typeof ProfileRedeemerSchema>;
+const ProfileRedeemer = ProfileRedeemerSchema as unknown as ProfileRedeemer;
+
 // Profile parameters (§3.1) — for display
 export const PROFILE_INFO: Record<ActivityProfile, { N: number; decay: string; ELV: string }> = {
   Ember:   { N: 3, decay: "×0.70/ep", ELV: "2.19" },
@@ -20,8 +42,9 @@ export const PROFILE_INFO: Record<ActivityProfile, { N: number; decay: string; E
   Lantern: { N: 9, decay: "×0.90/ep", ELV: "6.12" },
 };
 
+// `.complete()` trả về TxSignBuilder — `Tx` không phải tên lucid 0.4.30 xuất ra.
 export interface ProfileChangeResult {
-  tx              : Tx;
+  tx              : TxSignBuilder;
   oldProfile      : ActivityProfile;
   newProfile      : ActivityProfile;
   effectiveEpoch  : bigint;
@@ -43,7 +66,10 @@ export async function buildProfileChangeTx(
 ): Promise<ProfileChangeResult> {
   const datum = Data.from(vaultUtxo.datum!, vaultSchema);
   const tipMs = tipPosixMs
-    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+    // `as never` theo đúng lệ đã dùng ở InstantGen/ScheduleGen/MagicSDK:
+    // getTipSlot nhận `{provider: unknown}` mà LucidEvolution để provider trong
+    // `config()`, không phải ở gốc. Xem ghi chú ở MagicSDK/src/withdrawLamp.ts.
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const currentEpoch = posixMsToEpoch(tipMs, network);
 
   // C-PC-V2: cooldown ≥ 2 epochs
@@ -74,7 +100,7 @@ export async function buildProfileChangeTx(
   };
 
   const vaultAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
-  const redeemer   = Data.to({ UpdateProfile: { new_profile: newProfile } });
+  const redeemer   = Data.to({ UpdateProfile: { new_profile: newProfile } }, ProfileRedeemer);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const lowerTime = Number(tipMs);
   const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);

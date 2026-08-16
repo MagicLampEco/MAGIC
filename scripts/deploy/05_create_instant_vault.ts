@@ -109,6 +109,10 @@ const VaultDatumSchema = Data.Object({
     total_events:      Data.Integer(),
   }),
 });
+type VaultDatum = Data.Static<typeof VaultDatumSchema>;
+// Codec companion — xem chú thích ở InstantGen/offchain/src/types.ts.
+// Giá trị thời-chạy y nguyên, chỉ gắn lại nhãn kiểu tĩnh.
+const VaultDatum = VaultDatumSchema as unknown as VaultDatum;
 
 const INITIAL_LAMP_DEPOSIT = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
 const INITIAL_PROFILE      = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
@@ -245,7 +249,7 @@ async function main() {
     },
   };
 
-  const vaultDatum = Data.to(initialVault, VaultDatumSchema);
+  const vaultDatum = Data.to(initialVault, VaultDatum);
 
   // 4 mảnh BẮT BUỘC khớp nhau (validate_mint_vault_id):
   //   (1) seed UTxO trong inputs           (2) mint đúng 1 NFT policy = vault hash

@@ -5,6 +5,9 @@
 import "dotenv/config";
 import { slotsPerEpoch, msPerEpoch, lampAssetName, type Network } from "@magiclamp/protocol-utils";
 import type { LucidEvolution } from "@lucid-evolution/lucid";
+// Giới hạn shard là ràng buộc cưỡng chế on-chain — giữ MỘT nguồn duy nhất.
+// Khai lại ở đây từng làm hai nơi có thể trôi khỏi nhau mà không test nào đỏ.
+import { SHARD_COUNT, SHARD_CAP } from "../ScheduleGen/offchain/src/constants.js";
 
 // ── Network ───────────────────────────────────────────────────
 export const NETWORK: Network = (process.env.NETWORK ?? "Preview") as Network;
@@ -72,8 +75,8 @@ export const ADDRESSES = {
 // SLOTS_PER_EPOCH is network-specific — derived from NETWORK env at runtime.
 // Mainnet=432_000, Preview/Preprod=86_400 (1 day).
 export const PROTOCOL = {
-  SHARD_COUNT:     16,
-  SHARD_CAP:       450_000_000_000_000n,  // 4.5×10^14 oildrop = 450M LAMP
+  SHARD_COUNT,                            // ← ScheduleGen/offchain/src/constants.ts
+  SHARD_CAP,                              // ← nt. (4.5×10^14 oildrop = 450M LAMP)
   SLOTS_PER_EPOCH: slotsPerEpoch(NETWORK),
   MS_PER_EPOCH:    msPerEpoch(NETWORK),    // = slots_per_epoch × 1000 (slot_length 1s)
   Q:               1_000_000_000n,

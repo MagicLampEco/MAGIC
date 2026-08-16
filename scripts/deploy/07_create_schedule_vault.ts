@@ -94,6 +94,10 @@ const VaultDatumSchema = Data.Object({
     attribution_root: Data.Bytes(), last_event_epoch: Data.Integer(), total_events: Data.Integer(),
   }),
 });
+type VaultDatum = Data.Static<typeof VaultDatumSchema>;
+// Codec companion — xem chú thích ở ScheduleGen/offchain/src/types.ts.
+// Giá trị thời-chạy y nguyên, chỉ gắn lại nhãn kiểu tĩnh.
+const VaultDatum = VaultDatumSchema as unknown as VaultDatum;
 
 const INITIAL_LAMP_DEPOSIT  = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
 const INITIAL_PROFILE       = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
@@ -206,7 +210,7 @@ async function main() {
     attribution:           { attribution_root: "", last_event_epoch: 0n, total_events: 0n },
   };
 
-  const vaultDatum = Data.to(initialVault, VaultDatumSchema);
+  const vaultDatum = Data.to(initialVault, VaultDatum);
 
   const tx = await lucid
     .newTx()

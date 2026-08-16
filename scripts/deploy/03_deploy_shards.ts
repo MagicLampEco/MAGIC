@@ -35,6 +35,10 @@ const ShardDatumSchema = Data.Object({
   last_updated_epoch:           Data.Integer(),
   shard_cap:                    Data.Integer(),
 });
+type ShardDatum = Data.Static<typeof ShardDatumSchema>;
+// Codec companion — xem chú thích ở ScheduleGen/offchain/src/types.ts.
+// Giá trị thời-chạy y nguyên, chỉ gắn lại nhãn kiểu tĩnh.
+const ShardDatum = ShardDatumSchema as unknown as ShardDatum;
 
 // shard_asset_name(id) = "SHARD" (5348415244) ∥ single byte 0x00..0x0f.
 function shardAssetName(shardId: number): string {
@@ -114,7 +118,7 @@ async function main() {
       shard_cumulative_fired:       0n,
       last_updated_epoch:           currentEpoch,
       shard_cap:                    shardCap,
-    }, ShardDatumSchema);
+    }, ShardDatum);
 
     if (shardCap !== PROTOCOL.SHARD_CAP) throw new Error("cap-pin assertion failed");
 

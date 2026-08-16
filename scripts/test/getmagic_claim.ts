@@ -26,9 +26,24 @@ import {
 } from "../config.js";
 import {
   AllocationDatumSchema, AllocationRedeemerSchema,
-  type AllocationDatum,
+  type AllocationDatum, type AllocationRedeemer,
 } from "../../GetMAGIC/offchain/src/types.js";
 import { generateEpochVouchers } from "../../GetMAGIC/offchain/src/oracle.js";
+
+// ── Codec companions ─────────────────────────────────────────────
+// `Data.to`/`Data.from` suy kiểu kết quả từ THAM SỐ THỨ HAI, nên tham số đó
+// phải là một GIÁ TRỊ mang kiểu tĩnh phẳng — không phải chính đối tượng lược
+// đồ. Truyền thẳng `XxxSchema` làm lời gọi trả về `TObject<…>` và mọi truy cập
+// trường bên dưới mất kiểu.
+//
+// GetMAGIC/offchain/src/types.ts hiện chỉ xuất lược đồ, chưa có hằng
+// bạn-đồng-hành, nên khai tại chỗ. Hậu tố `Codec` vì tên trần đã bị kiểu nhập
+// từ GetMAGIC chiếm. KHÔNG suy lại bằng `Data.Static<typeof XxxSchema>`: lược
+// đồ nhập từ GetMAGIC mang nhãn của bản lucid cài trong GetMAGIC/offchain, nên
+// không thoả ràng buộc `TSchema` của bản lucid trong scripts/.
+// Giá trị thời-chạy y nguyên, chỉ gắn lại nhãn.
+const AllocationDatumCodec    = AllocationDatumSchema    as unknown as AllocationDatum;
+const AllocationRedeemerCodec = AllocationRedeemerSchema as unknown as AllocationRedeemer;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -75,7 +90,7 @@ async function ensureCollateralUtxo(
 function tryDecodeDatum(u: UTxO): AllocationDatum | null {
   if (!u.datum) return null;
   try {
-    return Data.from(u.datum, AllocationDatumSchema) as AllocationDatum;
+    return Data.from(u.datum, AllocationDatumCodec);
   } catch {
     return null;
   }
@@ -202,7 +217,7 @@ async function main() {
   // ── Build claim tx ────────────────────────────────────────────
   const newClaimed = [...claimed_epochs, epochToClaim].sort((a, b) => (a < b ? -1 : 1));
   const updatedDatum: AllocationDatum = { ...allocDatum, claimed_epochs: newClaimed };
-  const updatedDatumCbor = Data.to(updatedDatum, AllocationDatumSchema);
+  const updatedDatumCbor = Data.to(updatedDatum, AllocationDatumCodec);
 
   const claimRedeemer = Data.to(
     {
@@ -211,7 +226,7 @@ async function main() {
         um_ref: 0n,
       },
     },
-    AllocationRedeemerSchema,
+    AllocationRedeemerCodec,
   );
 
   const claimTx = await lucid

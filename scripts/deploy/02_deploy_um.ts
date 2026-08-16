@@ -27,6 +27,11 @@ const UMDatumSchema = Data.Object({
   last_updated_epoch:  Data.Integer(),
   history:             Data.Array(Data.Integer()),
 });
+type UMDatum = Data.Static<typeof UMDatumSchema>;
+// Codec companion — `Data.to`/`Data.from` suy kiểu từ THAM SỐ THỨ HAI, nên tham
+// số đó phải là một GIÁ TRỊ mang kiểu tĩnh phẳng, không phải chính đối tượng
+// lược đồ. Cùng tên với kiểu; giá trị thời-chạy y nguyên, chỉ gắn lại nhãn.
+const UMDatum = UMDatumSchema as unknown as UMDatum;
 
 async function main() {
   console.log("=== Step 2: Deploy UM Datum UTxO (parameterized) ===\n");
@@ -100,7 +105,7 @@ async function main() {
     last_updated_epoch: currentEpoch - umAge,
     history:            [] as bigint[],
   };
-  const umDatum = Data.to(initialUM, UMDatumSchema);
+  const umDatum = Data.to(initialUM, UMDatum);
 
   console.log(`Current epoch:       ${currentEpoch}`);
   console.log(`Initial smoothed_q:  ${initialUM.smoothed_q} (1.000×)`);

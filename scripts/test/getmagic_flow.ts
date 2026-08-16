@@ -28,7 +28,8 @@ import {
   OrderDatumSchema, AllocationDatumSchema,
   OrderRedeemerSchema, AllocationRedeemerSchema,
   MAGIC_PER_EPOCH, DEFAULT_TOTAL_EPOCHS, ORDER_EXPIRY_MS,
-  type OrderDatum, type AllocationDatum,
+  type OrderDatum, type OrderRedeemer,
+  type AllocationDatum, type AllocationRedeemer,
 } from "../../GetMAGIC/offchain/src/types.js";
 import {
   signMsg, verifyMsg, generateNonce, generateEpochVouchers, deriveAllocId,
@@ -37,6 +38,23 @@ import {
 import { ed25519 } from "@noble/curves/ed25519";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { otcOrderParams } from "../deployParams.js";
+
+// ── Codec companions ─────────────────────────────────────────────
+// `Data.to`/`Data.from` suy kiểu kết quả từ THAM SỐ THỨ HAI, nên tham số đó
+// phải là một GIÁ TRỊ mang kiểu tĩnh phẳng — không phải chính đối tượng lược
+// đồ. Truyền thẳng `XxxSchema` làm lời gọi trả về `TObject<…>` / `TUnion<…>`
+// và mọi truy cập trường bên dưới mất kiểu.
+//
+// GetMAGIC/offchain/src/types.ts hiện chỉ xuất lược đồ, chưa có hằng
+// bạn-đồng-hành, nên khai tại chỗ. Hậu tố `Codec` vì tên trần đã bị kiểu nhập
+// từ GetMAGIC chiếm. KHÔNG suy lại bằng `Data.Static<typeof XxxSchema>`: lược
+// đồ nhập từ GetMAGIC mang nhãn của bản lucid cài trong GetMAGIC/offchain, nên
+// không thoả ràng buộc `TSchema` của bản lucid trong scripts/.
+// Giá trị thời-chạy y nguyên, chỉ gắn lại nhãn.
+const OrderDatumCodec         = OrderDatumSchema         as unknown as OrderDatum;
+const AllocationDatumCodec    = AllocationDatumSchema    as unknown as AllocationDatum;
+const OrderRedeemerCodec      = OrderRedeemerSchema      as unknown as OrderRedeemer;
+const AllocationRedeemerCodec = AllocationRedeemerSchema as unknown as AllocationRedeemer;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -204,7 +222,7 @@ async function main() {
   console.log(`Magic/epoch: ${MAGIC_PER_EPOCH} nanogic (10 MAGIC)`);
   console.log(`Total epochs: ${DEFAULT_TOTAL_EPOCHS}\n`);
 
-  const orderDatumCbor = Data.to(orderDatum, OrderDatumSchema);
+  const orderDatumCbor = Data.to(orderDatum, OrderDatumCodec);
 
   const createOrderTx = await lucid
     .newTx()
@@ -297,7 +315,7 @@ async function main() {
     oracle_vkey:          oracleVkey,
   };
 
-  const allocDatumCbor  = Data.to(allocDatum, AllocationDatumSchema);
+  const allocDatumCbor  = Data.to(allocDatum, AllocationDatumCodec);
   const settleRedeemer  = Data.to(
     {
       Settle: {
@@ -307,7 +325,7 @@ async function main() {
         epoch_vouchers:   vouchers,
       },
     },
-    OrderRedeemerSchema,
+    OrderRedeemerCodec,
   );
 
   const settleTx = await lucid
@@ -360,7 +378,7 @@ async function main() {
     ...allocDatum,
     claimed_epochs: newClaimed,
   };
-  const updatedAllocCbor = Data.to(updatedAllocDatum, AllocationDatumSchema);
+  const updatedAllocCbor = Data.to(updatedAllocDatum, AllocationDatumCodec);
 
   const claimRedeemer = Data.to(
     {
@@ -369,7 +387,7 @@ async function main() {
         um_ref: 0n,   // Phase 1: integer 0 placeholder (um_ref = Data, ignored on-chain)
       },
     },
-    AllocationRedeemerSchema,
+    AllocationRedeemerCodec,
   );
 
   const claimTx = await lucid

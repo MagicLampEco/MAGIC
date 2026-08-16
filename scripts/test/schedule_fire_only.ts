@@ -13,7 +13,7 @@ import {
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
-import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
+import { VaultDatum } from "../../ScheduleGen/offchain/src/types.js";
 
 async function fetchTip() {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -72,7 +72,7 @@ async function main() {
   const wantedTx = process.env.VAULT_TX_HASH;
   const mine = (u: { datum?: string | null }) => {
     if (!u.datum) return false;
-    try { return Data.from(u.datum, VaultDatumSchema).owner === ownerPkh; } catch { return false; }
+    try { return Data.from(u.datum, VaultDatum).owner === ownerPkh; } catch { return false; }
   };
   let vaultUtxo;
   for (let attempt = 1; attempt <= 5; attempt++) {
@@ -82,7 +82,7 @@ async function main() {
     // Hết lượt mà vẫn không thấy đúng tx: lấy vault CÓ lịch mới nhất, còn hơn
     // dừng ở một thông báo không nói được gì.
     if (attempt === 5) {
-      vaultUtxo = vaultUtxos.find((u) => mine(u) && Data.from(u.datum!, VaultDatumSchema).gen_schedules.length > 0);
+      vaultUtxo = vaultUtxos.find((u) => mine(u) && Data.from(u.datum!, VaultDatum).gen_schedules.length > 0);
       if (vaultUtxo) console.log(`⚠ không thấy VAULT_TX_HASH=${wantedTx}; dùng vault có lịch: ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`);
       break;
     }
@@ -91,7 +91,7 @@ async function main() {
   }
   if (!vaultUtxo) { console.error("❌ Vault not found"); process.exit(1); }
 
-  const vd = Data.from(vaultUtxo.datum!, VaultDatumSchema);
+  const vd = Data.from(vaultUtxo.datum!, VaultDatum);
   if (vd.gen_schedules.length === 0) {
     console.error("❌ No schedules. Run Commit first or deploy with PRESEED_SCHEDULE_L>0.");
     process.exit(1);

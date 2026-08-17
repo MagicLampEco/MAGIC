@@ -282,20 +282,27 @@ Nguồn: `vectors.ts:161` (TV-OVERFLOW-01). C-OVERFLOW invariant.
 
 ## 9. Boundary conditions
 
-> Bốn dòng `lamp_paid` dưới đây theo mô hình cũ — không còn khoản chi để đặt biên. Biên
-> đang chạy là trên **số dư**: `lamp_balance ≥ min_instant_holding` và
-> `L_avail ≥ min_instant_holding`. Ba dòng cuối bảng vẫn đúng.
+> Bảng dưới đo lại từ mã 2026-08-17. Bản trước đặt biên trên `lamp_paid` — **không còn
+> khoản chi nào để đặt biên**, InstantGen không lấy LAMP đi đâu cả (I-ACT-7). Biên đang
+> chạy đặt trên **số dư**, và **không có biên trên**: `C-INST-2` ("trần mua
+> `lamp_paid ≤ 10¹³`") **đã bỏ khỏi mã**, dòng cũ ghi nó là dòng làm người đọc tin có
+> một trần đang được cưỡng chế. Nợ #25.
 
-| Điều kiện | Giá trị | Kết quả |
-|---|---|---|
-| lamp_paid = MIN - 1 | 9_999_999 | REJECT C-INST-1 |
-| lamp_paid = MIN | 10_000_000 | ACCEPT |
-| lamp_paid = MAX | 10_000_000_000_000 | ACCEPT |
-| lamp_paid = MAX + 1 | 10_000_000_000_001 | REJECT C-INST-2 |
-| lamp_paid > L_avail | bất kỳ | REJECT C-INST-3 |
-| active_batches = 32 | — | REJECT C-INST-7 |
-| UM stale > 1 epoch | — | ACCEPT với um_q = 0.5× fallback |
-| M_instant = 0 | edge case nhỏ | REJECT (expect > 0, `vault.ak:171`) |
+`min_instant_holding = 10_000_000` oildrop (10 LAMP), `constants.ak:33`.
+
+| Điều kiện | Giá trị | Kết quả | Neo |
+|---|---|---|---|
+| `lamp_balance` = MIN − 1 | 9_999_999 | REJECT C-INST-1 | `vault.ak:379` |
+| `lamp_balance` = MIN | 10_000_000 | qua C-INST-1 | `vault.ak:379` |
+| `L_avail` < MIN (LAMP khoá hết vào Schedule) | bất kỳ | REJECT C-INST-3 | `vault.ak:385` |
+| **không có biên trên** | — | — | `C-INST-2` đã bỏ khỏi mã |
+| `live_batches` = 32 | — | REJECT C-INST-7 | `vault.ak:389` |
+| epoch lùi (`current < last_updated`) | — | REJECT | `vault.ak:375` |
+| beacon depeg | — | REJECT | `vault.ak:406` |
+| beacon ôi > `max_backing_stale` (=1) | — | REJECT | `vault.ak:410` |
+| UM stale > 1 epoch | — | ACCEPT với `um_q` fallback | `um.ak:22` |
+| `grant` = 0 | edge case | REJECT | `vault.ak:421` |
+| `claimed_amount ≠ grant` | bất kỳ | REJECT | `vault.ak:422` |
 
 ---
 

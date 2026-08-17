@@ -128,40 +128,50 @@ vẫn nhận LAMP thật, rồi mọi tx spend fail vĩnh viễn.
 
 ### Danh sách invariants theo thứ tự thực thi
 
-> **Bảng dưới là ảnh chụp mô hình cũ.** Số dòng `vault.ak:NNN` đã trôi; các dòng
-> C-INST-1/2/3 tính trên `lamp_paid`, C-INST-4/4b nói về Treasury, C-PRUNE-2 nói về
-> halving — cả sáu đều không còn. Danh sách đang chạy đọc thẳng ở
-> `onchain/validators/vault.ak`.
+> **Bảng này đo lại từ mã ngày 2026-08-17** (`onchain/validators/vault.ak`, đường
+> `InstantGen`), thay cho bản cũ vốn là ảnh chụp mô hình "trả LAMP sang Treasury" với
+> mọi số dòng đã trôi. Bản cũ để lại ba thứ sai, không phải một: (a) `C-INST-1/2/3`
+> tính trên `lamp_paid` — biến đó **đã xoá** (`grep lamp_paid --include='*.ak'` trong
+> `InstantGen/` chỉ còn đúng một dòng chú thích, `lib/magiclamp/protocol/lamp.ak:8`);
+> (b) `C-INST-4/4b` (Treasury) và `C-PRUNE-2` (halving) mô tả các chốt **không tồn
+> tại**; (c) bảng **thiếu bốn chốt đang chạy thật** — epoch đơn điệu, depeg, beacon ôi,
+> và `claimed_amount == grant`. Nợ #25 ban đầu chỉ ghi một dòng phải xoá; đo ra thì cả
+> bảng lệch. Sửa mã ở đường này thì sửa bảng **trong cùng commit**.
 
-**W-n = WithdrawLamp; C-n = InstantGen; A02 = output datum check**
+**C-n = InstantGen; A02 = output datum check.** Thứ tự dưới đây là thứ tự thực thi thật
+trong `validate_instant_gen`.
 
-| # | Invariant | Code location | Mô tả |
+| # | Invariant | Neo | Mô tả |
 |---|---|---|---|
-| I-1 | Datum present | `vault.ak:63` | `datum_opt = Some(_)` bắt buộc |
-| I-2 | current_epoch | `vault.ak:67` | Từ POSIX ms lower bound chia ms_per_epoch |
-| C-DS-1 | 1 vault input | `vault.ak:130` | Count inputs cùng vault address = 1 |
-| C-PC-V1 | Owner sign | `vault.ak:135` | `owner ∈ tx.extra_signatories` |
-| C-PP | Pending profile | `vault.ak:142` | `apply_pending_profile` trước tính M |
-| C-INST-1 | Min purchase | `vault.ak:145` | `lamp_paid ≥ 10_000_000` |
-| C-INST-2 | Max purchase | `vault.ak:148` | `lamp_paid ≤ 10_000_000_000_000` |
-| C-INST-3 | L_avail | `vault.ak:151` | `lamp_paid ≤ lamp_balance - lamp_locked` |
-| C-INST-7 | Batch count | `vault.ak:155` | active (non-expired) batches < 32 |
-| C-UM-3 | UM range | `vault.ak:164` | `smoothed_q ∈ [500M, 2B]` |
-| C-UM-2 | UM history | `vault.ak:165` | `|history| ≤ 6` |
-| C-UM-6 | UM stale | `vault.ak:166` | staleness > 1 → fallback 0.5× |
-| C-INST-5 | M > 0 | `vault.ak:171` | sanity check sau compute |
-| C-PRUNE-2 | Halve first | `vault.ak:175` | `halve_then_prune` (halving trước prune) |
-| C-INST-6 | New batch | `vault.ak:178` | `halved=False`, `source=Instant`, `profile_at_creation=None` |
-| C-INST-4 | Treasury Script | `vault.ak:199` | treasury_addr phải là Script credential |
-| C-INST-4b | Treasury LAMP | `vault.ak:200` | treasury nhận ≥ lamp_paid |
-| A02-1..n | Output datum | `vault.ak:203` | 17 fields field-by-field |
-| C-VAULT-10 | Holdings sum | `vault.ak:225` | Σholdings = lamp_balance |
-| C-VAULT-8 | lamp_locked | `vault.ak:228` | lamp_locked ≤ lamp_balance |
-| C-VAULT-13 | Holdings count | `vault.ak:231` | |holdings| ≤ 64 |
-| C-VAULT-1 | Batch count | `vault.ak:237` | |magic_batches| ≤ 32 |
-| C-VAULT-3 | Index++ | `vault.ak:241` | next_batch_index = old + 1 |
-| C-VAULT-TS | Epoch update | `vault.ak:244` | last_updated_epoch = current_epoch |
-| C-ATT-1/2 | Attribution | `vault.ak:248` | total_events++, last_event_epoch |
+| I-1 | Datum present | `vault.ak:152` | `expect Some(input_datum) = datum_opt` |
+| I-2 | current_epoch | `vault.ak:156` | `get_current_epoch(tx, ms_per_epoch)` từ POSIX ms |
+| C-VAULT-DS-1 | 1 vault input | `vault.ak:361` | đếm input cùng địa chỉ vault = 1 (chặn double-satisfaction, T20) |
+| C-PC-V1 | Owner sign | `vault.ak:364` | `owner ∈ tx.extra_signatories` |
+| C-PP | Pending profile | `vault.ak:369` | `apply_pending_profile` chạy TRƯỚC, kết quả lái cả grant lẫn A02 |
+| — | **Epoch đơn điệu** | `vault.ak:375` | `current_epoch ≥ last_updated_epoch` — chặn lùi giờ để hồi sinh batch chết / phát lại beacon ôi |
+| C-INST-1 | Tư cách: số dư | `vault.ak:379` | `lamp_balance ≥ min_instant_holding` — ngưỡng trên **SỐ DƯ**, không phải trên tiền trả (§6.3 "nắm LAMP chỉ MỞ TƯ CÁCH") |
+| C-INST-3 | Tư cách: khả dụng | `vault.ak:385` | `l_avail(balance, locked) ≥ min_instant_holding` — LAMP đã khoá vào ScheduleGen không mua thêm tư cách |
+| C-INST-7 | Batch count | `vault.ak:389` | `|live_batches| < 32` sau `prune_expired` |
+| C-UM-3 | UM range | `um.ak:34` | `validate_um_range` — `smoothed_q ∈ [500M, 2B]` |
+| C-UM-2 | UM history | `um.ak:61` | `validate_um_history_length` — `|history| ≤ 6` |
+| C-UM-6 | UM stale | `um.ak:22` | `get_um_for_instant` — staleness > 1 ⟹ fallback |
+| — | **Depeg** | `vault.ak:406` | `expect !backing.depeg` — từ chối thẳng, không tính grant = 0, để lý do hỏng không mơ hồ |
+| — | **Beacon ôi** | `vault.ak:410` | `0 ≤ backing_age ≤ max_backing_stale`; không tìm thấy beacon ⟹ tra hỏng ⟹ tx vô hiệu (fail-closed, **không** có `br` mặc định) |
+| C-INST-5 | grant > 0 | `vault.ak:421` | từ chối tx không-làm-gì |
+| — | **claimed == grant** | `vault.ak:422` | redeemer phải khai đúng con số validator tự tính |
+| C-INST-6 | New batch | `vault.ak:426-437` | `source = Instant`, `profile_at_creation = None` (C-DECAY-4), `halved = False` (trường chết), `decay_window = 1` |
+| A02 | Output datum | `vault.ak:441-486` | so từng trường với `applied_input` |
+| I-ACT-7 | **LAMP đứng yên** | `vault.ak:449-451` | `lamp_balance`, `lamp_locked`, `loyalty_holdings` byte-identical với input |
+| C-VAULT-10 | Holdings sum | `vault.ak:464` | `Σholdings == lamp_balance` |
+| C-VAULT-8 | lamp_locked | `vault.ak:465` | `lamp_locked ≤ lamp_balance` |
+| C-VAULT-13 | Holdings count | `vault.ak:466` | `|holdings| ≤ 64` |
+| C-VAULT-1 | Batch count | `vault.ak:470` | `|magic_batches| ≤ 32` |
+| C-VAULT-3 | Index++ | `vault.ak:473` | `next_batch_index = old + 1` |
+| C-VAULT-TS | Epoch update | `vault.ak:476` | `last_updated_epoch = current_epoch` |
+| INV-CASHBACK-BOUND | Credit tiêu một lần | `vault.ak:481-482` | `consumed_credit` về **0** ở output — cùng một lượt tiêu không đòi thưởng hai lần |
+| C-ATT-1/2 | Attribution | `vault.ak:485-486` | `total_events + 1`, `last_event_epoch = current_epoch` |
+| — | **Ràng datum vào giá trị thật** | `vault.ak:495` | LAMP thật trong output vault `== output_datum.lamp_balance` — datum không được nói dối trong khi LAMP bị rút |
+| — | **Giữ ADA / tập token** | `vault.ak:498` | `validate_vault_value(input, output)` |
 
 ### A02 fields bất biến (không đổi trong InstantGen)
 
@@ -175,15 +185,21 @@ Từ `applied_input` (sau profile apply): `owner`, `lamp_locked`, `vacuum_orders
 > `lamp_balance - lamp_paid` và `remove_from_holdings(...)` — mô hình "trả LAMP sang
 > Treasury" đã bị bỏ, hàm `remove_from_holdings` đã xoá khỏi `lamp.ak`.
 
-| Field | Giá trị output |
-|---|---|
-| magic_batches | `halve_then_prune(...) ++ [new_batch]` |
-| next_batch_index | `applied_input.next_batch_index + 1` |
-| last_updated_epoch | `current_epoch` |
-| attribution.total_events | `+ 1` |
-| attribution.last_event_epoch | `current_epoch` |
+| Field | Giá trị output | Neo |
+|---|---|---|
+| magic_batches | `prune_expired(...) ++ [new_batch]` | `vault.ak:389,439,469` |
+| next_batch_index | `applied_input.next_batch_index + 1` | `vault.ak:473` |
+| last_updated_epoch | `current_epoch` | `vault.ak:476` |
+| activity_state.consumed_credit | **`0`** | `vault.ak:481-482` |
+| attribution.total_events | `+ 1` | `vault.ak:485` |
+| attribution.last_event_epoch | `current_epoch` | `vault.ak:486` |
 
-**Lưu ý activity_state:** Không được liệt kê trong A02 check của `validate_instant_gen`. Đây là điểm để theo dõi cho v1.1.
+> 🔴 **Hai câu ở bản trước của mục này đã sai và đã sửa.** (1) Hàm gom batch là
+> `prune_expired`, **không** phải `halve_then_prune` — halving đã bỏ khỏi mô hình.
+> (2) Bản trước ghi *"`activity_state` không được liệt kê trong A02 check… điểm theo dõi
+> cho v1.1"*: **sai**, `vault.ak:481-482` có kiểm, và nó ép `consumed_credit` về 0. Câu
+> cũ làm người đọc tin có một lỗ đang mở đúng ở chỗ chống-đòi-thưởng-hai-lần — cùng lớp
+> lỗi với chú thích tự nhận có chốt an ninh trong khi không có, chỉ ngược dấu.
 
 ---
 

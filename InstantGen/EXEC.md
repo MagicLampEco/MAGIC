@@ -185,20 +185,24 @@ npm run test:instant        # ⛔ chưa xanh được — trần thứ ba bằng
 
 ### 2.2 Negative cases (≥ 5)
 
-**N1: lamp_paid < MIN (C-INST-1)**
-- Input: lamp_paid = 9_999_999
-- Expected: REJECT (`vault.ak:145`)
+> 🔴 Ba ca N1-N3 dưới đây viết theo mô hình cũ, đã sửa lại theo mã đo 2026-08-17 (Nợ #25).
+> InstantGen **không lấy LAMP đi đâu** (I-ACT-7, `vault.ak:449-451`) nên không có `lamp_paid`
+> để đặt biên; biên đặt trên **số dư**. Và `C-INST-2` (trần trên) **đã bỏ khỏi mã** — ca N2 cũ
+> kiểm một ràng buộc không tồn tại, viết test theo nó là test xanh giả.
+
+**N1: `lamp_balance` < MIN (C-INST-1)**
+- Input: `lamp_balance` = 9_999_999 (MIN = `min_instant_holding` = 10_000_000, `constants.ak:33`)
+- Expected: REJECT (`vault.ak:379`)
 - Vector: TV-INST-MIN
 
-**N2: lamp_paid > MAX (C-INST-2)**
-- Input: lamp_paid = 10_000_000_000_001
-- Expected: REJECT (`vault.ak:148`)
-- Vector: TV-INST-MAX
+**N2: ~~lamp_paid > MAX (C-INST-2)~~ — BỎ, không có trần trên trong mã**
+- Thay bằng: **beacon ôi quá `max_backing_stale`** (= 1, `constants.ak:49`)
+- Expected: REJECT (`vault.ak:410`); ca kề: depeg → REJECT (`vault.ak:406`)
+- Vector: TV-INST-STALE (chưa có, cần viết)
 
-**N3: lamp_paid > L_avail — LAMP đang lock (C-INST-3)**
-- Setup: lamp_balance = 100_000_000_000, lamp_locked = 60_000_000_000, L_avail = 40_000_000_000
-- Input: lamp_paid = 40_000_000_001
-- Expected: REJECT (`vault.ak:151`)
+**N3: `L_avail` < MIN — LAMP đang khoá vào Schedule (C-INST-3)**
+- Setup: `lamp_balance` = 100_000_000_000, `lamp_locked` = 91_000_000_000 ⟹ `L_avail` = 9_000_000_000 < MIN
+- Expected: REJECT (`vault.ak:385`)
 - Vector: TV-INST-AVAIL
 
 **N4: Vault đầy 32 batches (C-INST-7)**

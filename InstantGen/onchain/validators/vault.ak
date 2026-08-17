@@ -353,11 +353,14 @@ fn validate_instant_gen(
 ) -> Bool {
 
   // ── C-VAULT-DS-1: exactly one vault input ────────────────
-  // Prevents Double Satisfaction attack (T20, A1). Address match alone is
-  // sufficient — each vault UTxO has a unique own_ref enforced by Cardano.
+  // Prevents Double Satisfaction attack (T20, A1). Counted by PAYMENT
+  // CREDENTIAL — see `same_script`. (The old comment here claimed "address match
+  // alone is sufficient because each UTxO has a unique own_ref". That confuses
+  // two things: own_ref is unique, but the ADDRESS is not — the stake half is
+  // unconstrained, so one script hash presents as N addresses.)
   let vault_addr = find_own_address(own_ref, tx.inputs)
   let vault_input_count =
-    list.count(tx.inputs, fn(i) { i.output.address == vault_addr })
+    list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) })
   expect vault_input_count == 1
 
   // ── User must sign (C-PC-V1) ─────────────────────────────
@@ -523,7 +526,7 @@ fn validate_prune_expired(
 
   // ── P-1: exactly one vault input (C-VAULT-DS-1) ─────────────
   let vault_addr = find_own_address(own_ref, tx.inputs)
-  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+  expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
 
   // ── P-2: lazy profile apply (SPEC_V1 §2) ─────────────────────
   let applied_input = apply_pending_profile(input_datum, current_epoch)
@@ -746,12 +749,27 @@ fn find_backing_datum(
   beacon
 }
 
+/// Two addresses belong to the same SCRIPT iff their payment credentials match.
+/// The stake credential is deliberately ignored — nothing constrains it, so one
+/// script hash presents as arbitrarily many distinct `Address` values and every
+/// "exactly one at MY address" guard counts each of them separately. Same rule,
+/// same reason, as `ScheduleGen/onchain/validators/vault.ak` (Nợ #31),
+/// `Consolidate/onchain/validators/vault_consolidate.ak:19-20` and
+/// `ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak:67-72`.
+fn same_script(a: Address, b: Address) -> Bool {
+  a.payment_credential == b.payment_credential
+}
+
 /// Find the vault's output (used for value check in WithdrawLamp W-6).
 fn find_vault_output(outputs: List<Output>, vault_addr: Address) -> Output {
   // C-VAULT-OUT-1 (PR #11 review): exactly one continuing vault output, symmetric
   // to the input==1 check. Blocks a phantom 2nd vault output carrying a forged datum.
-  expect list.count(outputs, fn(o) { o.address == vault_addr }) == 1
-  expect Some(vault_output) = list.find(outputs, fn(o) { o.address == vault_addr })
+  // COUNTED by payment credential so a staked twin cannot hide from the count.
+  expect list.count(outputs, fn(o) { same_script(o.address, vault_addr) }) == 1
+  expect Some(vault_output) = list.find(outputs, fn(o) { same_script(o.address, vault_addr) })
+  // IDENTITY stays pinned to the input's FULL address — counting loosened, the
+  // continuing output did not.
+  expect vault_output.address == vault_addr
   vault_output
 }
 
@@ -791,7 +809,7 @@ fn validate_withdraw_lamp(
 
   // W-4: exactly 1 vault input
   let vault_addr = find_own_address(own_ref, tx.inputs)
-  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+  expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
 
   // W-5: A02 field-by-field output datum check
   let output_datum     = find_vault_output_datum(tx.outputs, vault_addr)
@@ -875,7 +893,7 @@ fn validate_burn_batch(
 
   // ── DS-1: exactly one vault input (no double-satisfaction) ──
   let vault_addr = find_own_address(own_ref, tx.inputs)
-  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+  expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
 
   // ── AUTH: owner OR consume-delegate signs ─────────────────
   let authed =
@@ -1015,7 +1033,7 @@ fn validate_set_delegate(
 ) -> Bool {
 
   let vault_addr = find_own_address(own_ref, tx.inputs)
-  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+  expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
 
   // ONLY owner may change the delegate (a delegate cannot re-delegate itself)
   expect list.has(tx.extra_signatories, input_datum.owner)
@@ -1069,7 +1087,7 @@ fn validate_update_profile(
 ) -> Bool {
 
   let vault_addr = find_own_address(own_ref, tx.inputs)
-  expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+  expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
 
   // C-PC-V1: owner signs
   expect list.has(tx.extra_signatories, input_datum.owner)
@@ -1258,6 +1276,39 @@ test w_phantom_second_output() fail {
       [t_vault_output(dout, 95), t_vault_output(dout, 95)],
       [t_owner],
     )
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// ── Nợ #31: double-satisfaction qua stake credential ──────────
+// Same script hash + a stake credential = a different `Address`. Counting by
+// full address let the twin read as somebody else's UTxO.
+
+fn t_vault_output_staked(datum: VaultDatum, balance: Int) -> Output {
+  Output {
+    ..t_vault_output(datum, balance),
+    address: address.from_script(t_vault_hash)
+      |> address.with_delegation_key(t_owner),
+  }
+}
+
+// Pre-fix this PASSED: `o.address == vault_addr` counted 1, not 2.
+test ds_phantom_output_under_stake_cred_rejected() fail {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx =
+    t_tx(
+      [t_vault_input(din, 100)],
+      [t_vault_output(dout, 95), t_vault_output_staked(dout, 95)],
+      [t_owner],
+    )
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// Counting loosened to payment credential; IDENTITY did not.
+test ds_continuing_output_must_keep_stake_cred() fail {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output_staked(dout, 95)], [t_owner])
   validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 

@@ -147,8 +147,9 @@ validator vault(
     let current_epoch = get_epoch(tx, ms_per_epoch)
     let vault_addr    = own_addr(own_ref, tx.inputs)
 
-    // C-VAULT-DS-1
-    expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+    // C-VAULT-DS-1 — counted by PAYMENT CREDENTIAL, not by full address.
+    // See `same_script` for why comparing the full address is a hole.
+    expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
 
     when redeemer is {
       ScheduleCommit { schedule_length, lamp_per_epoch } ->
@@ -204,8 +205,10 @@ validator shard(shard_policy_id_param: PolicyId) {
     let shard_addr = own_addr(own_ref, tx.inputs)
     let name = shard_asset_name(shard_datum.shard_id)
 
-    // SHARD-DS-1: exactly one shard input at this address.
-    expect list.count(tx.inputs,  fn(i) { i.output.address == shard_addr }) == 1
+    // SHARD-DS-1: exactly one shard input under this SCRIPT (payment
+    // credential — a second UTxO at the same script but another stake
+    // credential must not read as "not mine"). See `same_script`.
+    expect list.count(tx.inputs,  fn(i) { same_script(i.output.address, shard_addr) }) == 1
 
     // SHARD-OUT-1: exactly ONE output carries THIS shard's distinct NFT, so the
     // aggregate state cannot be split/duplicated across outputs.
@@ -440,6 +443,11 @@ fn validate_fire(
 
   expect shard_out.shard_id == shard_id_val                          // correct shard ✓
   expect shard_out.shard_locked_lamp == shard_in.shard_locked_lamp - lamp_released
+  // Second net under the shard ledger: the commit branch has an upper bound
+  // (`<= shard_cap`, :311) but nothing had a lower one. A negative counter would
+  // widen the shard's headroom PERMANENTLY for everyone hashing into it, so make
+  // the bad tx fail instead of letting it write the number (Nợ #31 / A5 U5).
+  expect shard_out.shard_locked_lamp >= 0
   expect shard_out.shard_cumulative_fired
        == shard_in.shard_cumulative_fired + lamp_released
   // active_count decrements iff schedule just completed, else unchanged
@@ -774,17 +782,46 @@ fn get_vault_output(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
   datum
 }
 
+/// Two addresses belong to the same SCRIPT iff their payment credentials match.
+/// The stake credential is deliberately ignored.
+///
+/// WHY. `Address` = payment credential + stake credential, and nothing in
+/// `validate_mint_vault_id` (`:859`, permissionless) constrains the stake half.
+/// So one script hash presents as arbitrarily many distinct addresses, and every
+/// "exactly one input/output at MY address" guard then counts each of them
+/// separately — two vaults of the same owner co-spend in one tx, each counting
+/// itself as the only one, and both write the same delta onto ONE shard. The
+/// shard ledger undercounts by a factor of K (Nợ #31): `SHARD_CAP` is bypassed,
+/// and `shard_locked_lamp` goes negative once they fire in separate txs.
+///
+/// This repo already knew the rule and applied it in two other modules — this
+/// was the one live vault it was forgotten in:
+///   · `Consolidate/onchain/validators/vault_consolidate.ak:19-20`
+///   · `ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak:67-72` (`is_at_script`)
+///
+/// Counting is by payment credential; IDENTITY of the continuing output is a
+/// separate, stricter check (`find_vault_output_raw` pins the full address).
+fn same_script(a: Address, b: Address) -> Bool {
+  a.payment_credential == b.payment_credential
+}
+
 fn find_vault_output_raw(outputs: List<Output>, vault_addr: Address) -> Output {
-  // C-VAULT-OUT-1: exactly one continuing vault output.
-  expect list.count(outputs, fn(x) { x.address == vault_addr }) == 1
-  expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
+  // C-VAULT-OUT-1: exactly one continuing vault output — COUNTED by payment
+  // credential, so a second output under this script with another stake
+  // credential cannot hide from the count.
+  expect list.count(outputs, fn(x) { same_script(x.address, vault_addr) }) == 1
+  expect Some(o) = list.find(outputs, fn(x) { same_script(x.address, vault_addr) })
+  // …and that one output must carry the input's FULL address, stake credential
+  // included. ScheduleFire is permissionless, so without this a stranger could
+  // re-point the vault's staking rewards on the way through.
+  expect o.address == vault_addr
   o
 }
 
-/// The single vault INPUT at `vault_addr` (used for the vault-identity value
+/// The single vault INPUT under this script (used for the vault-identity value
 /// check). The spend-level C-VAULT-DS-1 guarantees exactly one such input.
 fn find_vault_input_raw(inputs: List<Input>, vault_addr: Address) -> Input {
-  expect Some(i) = list.find(inputs, fn(x) { x.output.address == vault_addr })
+  expect Some(i) = list.find(inputs, fn(x) { same_script(x.output.address, vault_addr) })
   i
 }
 
@@ -1064,7 +1101,7 @@ fn vault_cospend_matches(
   shard_id   : Int,
 ) -> Bool {
   list.any(tx.inputs, fn(i) {
-    if i.output.address == shard_addr { False }
+    if same_script(i.output.address, shard_addr) { False }
     else {
       when i.output.datum is {
         InlineDatum(d) ->
@@ -1275,6 +1312,41 @@ test w_phantom_second_output() fail {
       [t_vault_output(dout, 95), t_vault_output(dout, 95)],
       [t_owner],
     )
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// ── Nợ #31: double-satisfaction qua stake credential ──────────
+// Same script hash, different stake credential = a different `Address`. Counting
+// "at MY address" by full address let the twin read as somebody else's UTxO.
+
+fn t_vault_addr_staked() -> Address {
+  address.from_script(t_vault_hash) |> address.with_delegation_key(t_owner)
+}
+
+fn t_vault_output_staked(datum: VaultDatum, balance: Int) -> Output {
+  Output { ..t_vault_output(datum, balance), address: t_vault_addr_staked() }
+}
+
+// Pre-fix this PASSED: `x.address == vault_addr` counted 1, not 2.
+test ds_phantom_output_under_stake_cred_rejected() fail {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx =
+    t_tx(
+      [t_vault_input(din, 100)],
+      [t_vault_output(dout, 95), t_vault_output_staked(dout, 95)],
+      [t_owner],
+    )
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// Counting by payment credential must NOT loosen IDENTITY: the one continuing
+// output still has to carry the input's full address. ScheduleFire is
+// permissionless, so otherwise a stranger re-points the vault's staking rewards.
+test ds_continuing_output_must_keep_stake_cred() fail {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output_staked(dout, 95)], [t_owner])
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 

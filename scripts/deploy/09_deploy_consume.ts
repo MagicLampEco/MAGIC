@@ -10,6 +10,12 @@
 //                             = blake2b_256(cbor(seed)) — không còn engage_nft.ak.
 //   5. Engage UTxO          → UTxO tại consume address, inline EngageDatum SẠCH.
 // Tất cả trong 1 tx (tiêu 2 UTxO seed: g1 cho price_nft, g2 cho thread Engage).
+//   6. ref-script `consume` → tx RIÊNG sau đó, đỗ ở bãi chung (scripts/refScripts.ts).
+//
+// Vì sao bước 6 nằm ở đây chứ không ở bước 06: hash của `consume` chỉ tính được
+// SAU khi biết price_nft_policy và price_param_script_hash — hai thứ do chính bước
+// này đúc ra. Bước 06 lo chân vault, bước này lo chân consume; tx consume cần CẢ
+// HAI đã đỗ vì đính kèm cả hai validator cho 17.310 byte, vượt trần 16.384.
 //
 // PREREQ (đã deploy trước, nạp qua env — xem config.ts):
 //   VAULT_INSTANT_HASH   — hash vault InstantGen (deploy 05). BẮT BUỘC.
@@ -47,6 +53,7 @@ import {
   encodePriceParam, EngageDatumSchema, type PriceParamT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
 import { vaultIdAssetName, mintVaultIdRedeemer } from "../vaultId.js";
+import { parkAddressFor, publishRefScript } from "../refScripts.js";
 
 // EngageDatum lấy thẳng từ codec của module (5 trường, khớp `pub type EngageDatum`
 // trong ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak). Từng có một bản khai
@@ -244,6 +251,16 @@ async function main() {
     throw new Error("Beacon/Engage UTxO chưa thấy sau ~5 phút — kiểm tra tx trên explorer rồi query lại.");
   }
 
+  // ── Công bố ref-script `consume` (tx riêng) ──────────────────────────────────
+  //   Không gộp vào tx trên: tx đó đã bê CBOR của consume vào làm minting policy,
+  //   thêm một bản nữa dưới dạng ref-script là trả tiền hai lần cho cùng một script.
+  const parkAddr = parkAddressFor(NETWORK, address);
+  console.log(`\n⏳ Công bố ref-script consume tại bãi đỗ ${parkAddr} …`);
+  const consumeRef = await publishRefScript({
+    lucid, parkAddr, label: "consume ref",
+    script: consumeScript, hash: consumeHash, lovelace: 35_000_000n,
+  });
+
   console.log(`\n✅ Confirmed.`);
   console.log(`\n📋 Copy vào env (cho scripts/test/consume_only.ts):`);
   console.log(`export CONSUME_SCRIPT_HASH=${consumeHash}`);
@@ -256,6 +273,8 @@ async function main() {
   console.log(`export ENGAGE_NFT_UNIT=${engageNftUnit}`);
   console.log(`export ENGAGE_UTXO=${engageUtxo.txHash}#${engageUtxo.outputIndex}`);
   console.log(`export MAX_PRICE_STALE=${maxPriceStale}   # PHẢI khớp lúc reconstruct consume hash`);
+  console.log(`export REF_CONSUME_UTXO=${consumeRef}      # chân consume của tx consume`);
+  console.log(`#  chân còn lại: REF_VAULT_INSTANT_UTXO — lấy từ bước 06`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

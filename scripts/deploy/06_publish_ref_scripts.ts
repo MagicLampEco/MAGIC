@@ -6,10 +6,9 @@
 // vượt trần giao thức 16384 — đo thật trên Preview, tx không dựng nổi. Đưa script
 // lên chain một lần rồi `readFrom` là đường duy nhất chạy được.
 //
-// 🔴 KHÔNG đỗ script ở địa chỉ ví. Bản đầu làm vậy và mất script ngay trong cùng
-// đợt chạy: bộ chọn UTxO của ví coi đó là tiền lẻ và tiêu mất, nên bước sau báo
-// MISSING_SCRIPT dù explorer vẫn thấy output. Đỗ ở một địa chỉ script riêng thì
-// ví không bao giờ đụng tới, mà chủ khoá vẫn thu hồi được khi cần.
+// Bãi đỗ và phép công bố nằm ở `scripts/refScripts.ts` — dùng chung với bước 09,
+// vì hai bên PHẢI dẫn xuất cùng một địa chỉ bãi đỗ. Ở đó có luôn lý do 🔴 không
+// đỗ script ở địa chỉ ví.
 //
 // Chạy được nhiều lần: chỉ công bố cái nào chưa có mặt ở địa chỉ đỗ.
 //
@@ -21,12 +20,8 @@
 // ra. Nên 09 tự công bố ref-script của nó; bước này chỉ lo những script mà tham số đã
 // biết từ `config.ts`.
 
-import {
-  Lucid, Blockfrost,
-  credentialToAddress, scriptHashToCredential, validatorToScriptHash,
-  scriptFromNative, getAddressDetails,
-  type Script,
-} from "@lucid-evolution/lucid";
+import { Lucid, Blockfrost } from "@lucid-evolution/lucid";
+import { parkAddressFor, publishRefScript } from "../refScripts.js";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, SCRIPT_HASHES, PROTOCOL,
@@ -72,13 +67,7 @@ async function main() {
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
-  const address = await lucid.wallet().address();
-  const { paymentCredential } = getAddressDetails(address);
-  if (!paymentCredential) throw new Error("Không lấy được payment credential của ví");
-
-  // Bãi đỗ: script native chỉ chủ khoá mở được. Ví KHÔNG tự chọn UTxO ở đây.
-  const parkScript = scriptFromNative({ type: "sig", keyHash: paymentCredential.hash });
-  const parkAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(parkScript)));
+  const parkAddr = parkAddressFor(NETWORK, await lucid.wallet().address());
 
   console.log(`Network:            ${NETWORK}`);
   console.log(`Vault Schedule hash:${vaultHash}`);
@@ -86,40 +75,11 @@ async function main() {
   console.log(`Vault Instant hash: ${igVaultHash}`);
   console.log(`Bãi đỗ:             ${parkAddr}\n`);
 
+  // Lấy MỘT lần rồi truyền vào từng lượt: mỗi lượt tự truy vấn lại thì tốn ba
+  // vòng gọi Blockfrost mà kết quả không mới hơn — script vừa đỗ chưa kịp index.
   const parked = await lucid.utxosAt(parkAddr);
-  const findParked = (hash: string) =>
-    parked.find((u) => u.scriptRef && validatorToScriptHash(u.scriptRef) === hash);
-
-  // HAI tx riêng: hai script cộng lại là 16643 byte, chính chúng đã vượt trần
-  // 16384 nếu công bố chung một tx.
-  const publish = async (label: string, script: Script, hash: string, lovelace: bigint) => {
-    const already = findParked(hash);
-    if (already) {
-      console.log(`✓ ${label} đã có sẵn: ${already.txHash}#${already.outputIndex}`);
-      return `${already.txHash}#${already.outputIndex}`;
-    }
-    // Blockfrost trả danh sách UTxO trễ vài giây sau khi tx trước xác nhận, nên
-    // lần dựng đầu hay chọn phải input vừa bị tiêu ("All inputs are spent").
-    // Dựng lại là hết — không phải lỗi logic, nên thử lại thay vì bỏ cuộc.
-    let lastErr: unknown;
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      try {
-        const tx = await lucid.newTx()
-          .pay.ToAddressWithData(parkAddr, undefined, { lovelace }, script)
-          .complete();
-        const signed = await tx.sign.withWallet().complete();
-        const txHash = await signed.submit();
-        await lucid.awaitTx(txHash);
-        console.log(`✔ ${label}: ${txHash}#0`);
-        return `${txHash}#0`;
-      } catch (e) {
-        lastErr = e;
-        console.log(`  … lần ${attempt} chưa được, dựng lại sau 15s`);
-        await new Promise((r) => setTimeout(r, 15_000));
-      }
-    }
-    throw lastErr;
-  };
+  const publish = (label: string, script: typeof vaultScript, hash: string, lovelace: bigint) =>
+    publishRefScript({ lucid, parkAddr, label, script, hash, lovelace, parked });
 
   const vaultRef = await publish("vault schedule ref", vaultScript, vaultHash, 35_000_000n);
   const shardRef = await publish("shard ref", shardScript, shardHash, 20_000_000n);

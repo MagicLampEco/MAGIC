@@ -95,7 +95,7 @@ export interface ConsumeParams {
   consumeRefUtxo?: UTxO;
   /** UTxO mang script tham chiếu CIP-33 của vault. Cùng lý do `consumeRefUtxo`.
    *  Hai script này là hai UTxO RIÊNG — cộng lại chúng đã vượt trần nếu công bố chung
-   *  một tx (`scripts/deploy/06_publish_ref_scripts.ts:93`). */
+   *  một tx (`scripts/refScripts.ts` — `publishRefScript`, mỗi script một tx). */
   vaultRefUtxo?: UTxO;
   /** Network (chọn ms_per_epoch cho validity-range — PHẢI khớp validator param). */
   network: Network;

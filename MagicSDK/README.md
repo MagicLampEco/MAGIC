@@ -73,13 +73,20 @@ const signed = await tx.sign.withWallet().complete();
 const txHash = await signed.submit();
 ```
 
-## Khái niệm: vault và hai cửa sinh MAGIC
+## Khái niệm: vault và các cửa sinh MAGIC
 
 MAGIC **không phải native token** — là số kế toán trong `magic_batches[]` của **vault** (một
 UTxO ở địa chỉ script vault). Có LAMP trong ví ≠ có MAGIC. Muốn sinh MAGIC: tạo vault → gọi
 một cửa sinh.
 
-**Hai loại vault còn sống, mỗi loại một validator riêng ⇒ một địa chỉ riêng:**
+🔴 **Mô hình có ĐÚNG BA cửa sinh, không phải hai** (`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`
+§6): **ScheduleGen · InstantGen · PrepaidGen**. Hai cửa đầu sinh từ **số dư LAMP trong vault
+của người dùng**; cửa thứ ba, PrepaidGen, người dùng **trả CARP** (§6.5). SDK này hiện gọi
+được **hai** cửa — không phải vì mô hình chỉ có hai, mà vì mã PrepaidGen chưa vào cây làm
+việc (còn nguyên, neo bằng tag `preserve/prepaidgen-stash-2026-07-30`). Chi tiết:
+[`INTEGRATOR_GUIDE_V1.md`](INTEGRATOR_GUIDE_V1.md) §6.3.
+
+**Hai loại vault SDK gọi được hôm nay, mỗi loại một validator riêng ⇒ một địa chỉ riêng:**
 
 | `vaultType` | Khi nào dùng | LAMP có rời vault? | UM | Cần thêm gì trong `protocol` |
 |---|---|---|---|---|
@@ -88,7 +95,9 @@ một cửa sinh.
 
 `SnapshotGen` và `VacuumGen` **đã dời sang `Legacy/genmagic-v3.3/`**: validator của chúng
 không còn trong cây làm việc, nên `VaultType` chỉ còn hai giá trị trên. Truyền
-`vaultType: "Snapshot"` hay `"Vacuum"` là lỗi kiểu — không có gì để apply param.
+`vaultType: "Snapshot"` hay `"Vacuum"` là lỗi kiểu — không có gì để apply param. **Đừng đọc
+`VaultType` chỉ-có-hai-giá-trị thành "mô hình bỏ PrepaidGen"** — hai chuyện khác nhau:
+Snapshot/Vacuum **đã chết**, PrepaidGen **chưa vào cây**.
 
 Muốn dùng cả hai cơ chế thì cần **hai vault riêng** (hai UTxO ở hai địa chỉ). Hình dạng
 `VaultDatum` giống hệt nhau; chỉ mã validator (và do đó địa chỉ) khác.

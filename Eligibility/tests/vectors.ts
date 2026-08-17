@@ -32,7 +32,7 @@ export const TV_ELIG_WEIGHTS = {
   ceiling_q: 2_500_000_000n, // all factors Q
 };
 
-/** MVP ceiling: did_commit = #"" ⟹ consumedFactor is OFF ⟹ 0.90Q unreachable. */
+/** did_commit = #"" ⟹ consumedFactor is OFF ⟹ 0.90Q unreachable. */
 export const TV_ELIG_MVP_CEILING = {
   id: "TV-ELIG-MVP-CEILING",
   spec_ref: "§6.2 + §6.3 INV-CONSUMED-ATTRIB",
@@ -42,6 +42,64 @@ export const TV_ELIG_MVP_CEILING = {
   off_peak_r: Q,
   commit_r: Q,
   eligibility_q: 1_600_000_000n,
+};
+
+/**
+ * What actually ships. offPeakFactor is off too — the shipped function measured
+ * network headroom rather than the user's own off-peak share, so it added a flat
+ * +0.125Q to everybody and discriminated between nobody. Off until việc 3 gives it
+ * the per-user shape, which leaves age + commit: 1.00× + 0.15Q + 0.20Q = 1.35×.
+ */
+export const TV_ELIG_MVP_CEILING_TODAY = {
+  id: "TV-ELIG-MVP-CEILING-TODAY",
+  spec_ref: "§6.2",
+  description: "consumed AND off-peak both off ⟹ ceiling 1.35×",
+  age_r: Q,
+  consumed_r: 0n,
+  off_peak_r: 0n,
+  commit_r: Q,
+  eligibility_q: 1_350_000_000n,
+};
+
+/**
+ * TV-ELIG-EMA-FALLING — the vector that pins the CHOICE of EMA form.
+ *
+ * Every convergence case above starts at ema = 0 with a flat or rising balance,
+ * and on that path the shipped `(αB + (Q−α)e)/Q` and the `e + (x−e)·α` form the
+ * issue proposed are bit-identical. The argument for picking one was therefore
+ * untested: a regression to the rejected form passed the entire suite. They
+ * separate only when the balance FALLS, and the rejected form drifts UP — free
+ * age for anyone who oscillates a balance.
+ */
+export const TV_ELIG_EMA_FALLING = {
+  id: "TV-ELIG-EMA-FALLING",
+  spec_ref: "§6.2 ageFactor",
+  description: "EMA converged at 1000 LAMP, balance drops to 1 oildrop, 5 steps",
+  ema_start_q: LAMP(1000n) * Q,
+  balance_after: 1n,
+  steps: 5n,
+  ema_q: 401_877_574_222_093_621n,
+  rejected_form_would_give: 401_877_574_222_093_625n,
+};
+
+/**
+ * TV-ELIG-AGE-LAUNDER — why emaCatchUp takes balance_before AND balance_after.
+ *
+ * An empty vault sleeps 24 epochs, then deposits 10010 LAMP and calls once. The
+ * gap is aged at the balance it really held (zero), so the deposit buys exactly
+ * one step. Running the whole catch-up at the post-deposit balance instead — the
+ * old single-balance signature — pays 66.5% for having held nothing.
+ */
+export const TV_ELIG_AGE_LAUNDER = {
+  id: "TV-ELIG-AGE-LAUNDER",
+  spec_ref: "§6.2 ageFactor",
+  description: "Deposit after 24 idle epochs earns one step, not a full catch-up",
+  balance_before: 0n,
+  balance_after: LAMP(10_010n),
+  epochs_elapsed: 24n,
+  catch_up_cap: 6n,
+  age_factor_q: 166_666_666n,
+  single_balance_signature_would_give: 665_102_021n,
 };
 
 /**
@@ -56,6 +114,14 @@ export const TV_ELIG_MVP_CEILING = {
  * Aiken and a TS side that both floor identically are worth more than either one
  * matching a real-number ideal. Recompute from the code if α ever changes; do
  * not "correct" these toward the analytic values.
+ *
+ * `age_factor_q` is the vault that UPDATES EVERY EPOCH: n separate single steps.
+ * `one_shot_cap6_q` is the same tenure collected in ONE call at the end, where
+ * catch_up_cap = 6 binds and the curve stops at the 6-step value.
+ *
+ * Both columns are here because the payoff table used to show only the first,
+ * while printing `cap=` in its header — which made cap = 6 indistinguishable from
+ * cap = 10000 in the very evidence used to propose it.
  */
 export const TV_ELIG_EMA_CONVERGENCE = {
   id: "TV-ELIG-EMA-CONVERGENCE",
@@ -63,11 +129,12 @@ export const TV_ELIG_EMA_CONVERGENCE = {
   description: "ageFactor after n single-epoch steps of a flat balance, from ema = 0",
   alpha_q: 166_666_666n,
   lamp_balance: LAMP(1000n),
+  catch_up_cap: 6n,
   cases: [
-    { epochs: 1n, age_factor_q: 166_666_666n },
-    { epochs: 6n, age_factor_q: 665_102_021n },
-    { epochs: 12n, age_factor_q: 887_843_344n },
-    { epochs: 24n, age_factor_q: 987_420_884n },
+    { epochs: 1n, age_factor_q: 166_666_666n, one_shot_cap6_q: 166_666_666n },
+    { epochs: 6n, age_factor_q: 665_102_021n, one_shot_cap6_q: 665_102_021n },
+    { epochs: 12n, age_factor_q: 887_843_344n, one_shot_cap6_q: 665_102_021n },
+    { epochs: 24n, age_factor_q: 987_420_884n, one_shot_cap6_q: 665_102_021n },
   ],
 };
 
@@ -80,12 +147,15 @@ export const TV_ELIG_EMA_CONVERGENCE = {
 // the ceiling, the factor stops discriminating), C almost never saturates (the
 // factor is effectively dead weight for ordinary users). B is the middle.
 
+// There is no `load_ref`: offPeakFactor is off (see eligibility.ts), so there is
+// no reference to choose for it. It comes back with the factor in việc 3, and its
+// shape will be per-user, not a network load bar.
+
 export interface CandidateSet {
   name: string;
   rationale: string;
   consumed_ref: bigint; // nanogic of MAGIC consumed that counts as "fully consuming"
   commit_ref: bigint; // oildrop locked that counts as "fully committed"
-  load_ref: bigint; // network load that counts as "fully at peak"
   catch_up_cap: bigint; // max EMA steps applied in one update
   /**
    * How commit_ref is read. This is a genuine design fork, not a tuning knob:
@@ -105,7 +175,6 @@ export const CANDIDATE_SETS: CandidateSet[] = [
     rationale: "Low bars. Most active users saturate, so the factors stop separating anyone.",
     consumed_ref: MAGIC(10n),
     commit_ref: LAMP(100n),
-    load_ref: 1000n,
     catch_up_cap: 6n,
     commit_ref_mode: "absolute",
   },
@@ -114,7 +183,6 @@ export const CANDIDATE_SETS: CandidateSet[] = [
     rationale: "Bars near the NEWUSER grant (1001 LAMP). Ordinary users land mid-range.",
     consumed_ref: MAGIC(100n),
     commit_ref: LAMP(1000n),
-    load_ref: 1000n,
     catch_up_cap: 6n,
     commit_ref_mode: "absolute",
   },
@@ -123,7 +191,6 @@ export const CANDIDATE_SETS: CandidateSet[] = [
     rationale: "High bars. Only whales move the needle; small vaults see ~1.0× regardless.",
     consumed_ref: MAGIC(1000n),
     commit_ref: LAMP(10_000n),
-    load_ref: 1000n,
     catch_up_cap: 6n,
     commit_ref_mode: "absolute",
   },
@@ -132,7 +199,6 @@ export const CANDIDATE_SETS: CandidateSet[] = [
     rationale: "Same as B, but commitFactor measures the FRACTION of the balance locked. Tests whether an absolute commit bar is just a whale subsidy.",
     consumed_ref: MAGIC(100n),
     commit_ref: 0n, // unused in relative mode
-    load_ref: 1000n,
     catch_up_cap: 6n,
     commit_ref_mode: "relative_to_balance",
   },
@@ -146,10 +212,14 @@ export const CANDIDATE_SETS: CandidateSet[] = [
 // LAMP is the reference "ordinary user" size; the speculator is deliberately 10×
 // that to test whether raw size can outrun tenure.
 //
-// network_load is held equal across profiles on purpose: off-peak is a choice of
-// WHEN to generate, not a property of who you are. Holding it constant keeps the
-// table about identity, and makes offPeakFactor a visible common offset rather
-// than noise.
+// There is no off-peak input: the factor is off (eligibility.ts) so every profile
+// scores 0 on it. The earlier table carried a `network_load` column that was
+// identical for all five rows — a constant offset dressed up as a measurement,
+// which is precisely why the factor is off rather than approximated.
+//
+// `epochs_held` is read TWICE per row: once as a vault that updates every epoch,
+// once as a vault that sleeps and does one catch-up at the end. Only the second
+// reading is sensitive to catch_up_cap.
 
 export interface Profile {
   name: string;
@@ -158,7 +228,6 @@ export interface Profile {
   epochs_held: bigint; // consecutive epochs the balance has been flat
   consumed_nanogic: bigint;
   lamp_locked: bigint;
-  network_load: bigint;
 }
 
 export const PROFILES: Profile[] = [
@@ -169,7 +238,6 @@ export const PROFILES: Profile[] = [
     epochs_held: 24n,
     consumed_nanogic: MAGIC(50n),
     lamp_locked: LAMP(300n),
-    network_load: 500n,
   },
   {
     name: "2 · đầu cơ",
@@ -178,7 +246,6 @@ export const PROFILES: Profile[] = [
     epochs_held: 1n,
     consumed_nanogic: 0n,
     lamp_locked: 0n,
-    network_load: 500n,
   },
   {
     name: "3 · tiêu mới",
@@ -187,7 +254,6 @@ export const PROFILES: Profile[] = [
     epochs_held: 1n,
     consumed_nanogic: MAGIC(200n),
     lamp_locked: 0n,
-    network_load: 500n,
   },
   {
     name: "4 · giữ lâu, không tiêu",
@@ -196,7 +262,6 @@ export const PROFILES: Profile[] = [
     epochs_held: 24n,
     consumed_nanogic: 0n,
     lamp_locked: 0n,
-    network_load: 500n,
   },
   // Not one of the four #26 names — added because B and B-rel are
   // indistinguishable on profiles 1-4 (commit_ref happens to sit near the
@@ -211,6 +276,5 @@ export const PROFILES: Profile[] = [
     epochs_held: 24n,
     consumed_nanogic: 0n,
     lamp_locked: LAMP(1000n),
-    network_load: 500n,
   },
 ];

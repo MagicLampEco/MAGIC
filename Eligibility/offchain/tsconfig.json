@@ -1,0 +1,23 @@
+{
+  // Type-check only — this package is pure math plus vectors, vitest runs it and
+  // nothing here is ever emitted. No outDir/rootDir/declaration: ../tests lives
+  // outside the package root, and a rootDir would reject it. Bundler resolution
+  // is what vitest actually does, so tsc and the test run agree.
+  "compilerOptions": {
+    "target":           "ES2022",
+    "module":           "ESNext",
+    "moduleResolution": "Bundler",
+    // DOM only for `console` in the payoff table. ../tests sits outside this
+    // package, so `vitest` has to be pointed at the node_modules that holds it.
+    "lib":              ["ES2022", "DOM"],
+    "baseUrl":          ".",
+    "paths":            { "vitest": ["./node_modules/vitest"] },
+    "strict":           true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess":   true,
+    "noEmit":           true,
+    "skipLibCheck":     true
+  },
+  "include": ["src/**/*", "../tests/**/*"],
+  "exclude": ["node_modules"]
+}

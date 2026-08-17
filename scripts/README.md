@@ -141,6 +141,15 @@ npx tsx test/consume_only.ts
 # `consumed_nanogic` đúng số đã trả.
 ```
 
+Cần sẵn trong env **hai** ref-script CIP-33, nếu không tx không dựng nổi (attach cả
+hai validator = 17.310 byte, vượt trần 16.384):
+
+- `REF_VAULT_INSTANT_UTXO` — bước `05_create_instant_vault.ts` in ra.
+- `REF_CONSUME_UTXO` — bước `09_deploy_consume.ts` in ra.
+
+Bước nào tính ra hash thì bước đó công bố ref-script; `06_publish_ref_scripts.ts` chỉ
+lo hai script ScheduleGen. Bãi đỗ dùng chung ở [`refScripts.ts`](refScripts.ts).
+
 > App xác nhận thanh toán phải đọc **delta `consumed_nanogic`**, KHÔNG đọc
 > `consumed_count` (nó đếm LƯỢT, không mang giá trị — trả 1 op rẻ cũng +1). Lý do đầy đủ:
 > `ConsumeMAGIC/EXEC.md §5`.

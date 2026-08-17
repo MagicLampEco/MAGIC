@@ -40,6 +40,7 @@ aiken build   # → onchain/plutus.json (3 validator: consume, price_nft, price_
 # Bước 1: deploy vault InstantGen (prereq — cho VAULT_INSTANT_HASH)
 cd /Users/ductiger/Projects/MAGIC/scripts && npm install
 npx tsx deploy/05_create_instant_vault.ts
+# → cũng in REF_VAULT_INSTANT_UTXO (ref-script CIP-33 của chính vault này)
 
 # Bước 2: sinh MAGIC để có cái mà tiêu
 # ⛔ ĐANG KẸT — xem cảnh báo ngay dưới khối này. InstantGen chưa cấp được 1 nanogic.
@@ -48,12 +49,21 @@ npx tsx test/instant_only.ts
 # Bước 3: deploy toàn bộ hạ tầng ConsumeMAGIC (1 tx, 5 việc)
 npx tsx deploy/09_deploy_consume.ts
 # → in ra block export: PRICE_NFT_POLICY, PRICE_PARAM_SCRIPT_HASH, CONSUME_SCRIPT_HASH,
-#   ENGAGE_NFT_POLICY (== CONSUME_SCRIPT_HASH), ENGAGE_NFT_UNIT, ENGAGE_UTXO
+#   ENGAGE_NFT_POLICY (== CONSUME_SCRIPT_HASH), ENGAGE_NFT_UNIT, ENGAGE_UTXO,
+#   REF_CONSUME_UTXO (ref-script CIP-33 của `consume`, 09 tự công bố bằng tx riêng)
 
 # Bước 4: tiêu MAGIC thật (co-spend Engage + vault BurnBatch)
+#   BẮT BUỘC có REF_CONSUME_UTXO (bước 3) + REF_VAULT_INSTANT_UTXO (bước 1) trong env.
 npx tsx test/consume_only.ts
 # Expected: vault.magic_batches GIẢM đúng required, consumed_count tăng đúng op_count
 ```
+
+> **Vì sao hai ref-script là bắt buộc, không phải tối ưu.** Tx consume tiêu HAI UTxO
+> script (Engage + vault). Đính kèm cả hai validator vào tx cho **17.310 byte ngay ở
+> vault RỖNG**, vượt trần giao thức **16.384** ⟹ đường `attach` không dựng nổi một tx
+> consume nào, ở bất kỳ cỡ datum nào. Phải `readFrom` hai UTxO ref-script đã đỗ.
+> `script_inputs_confined_to` chỉ duyệt `tx.inputs`, không chạm `reference_inputs`
+> (`onchain/lib/magiclamp/consume/util.ak:104-118`) nên chốt đó không cản readFrom.
 
 > ⛔ **Bước 2 hôm nay KHÔNG chạy được — chuỗi e2e đang đứt ở đây.**
 >

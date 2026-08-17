@@ -27,6 +27,7 @@ import {
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { instantVaultParams } from "../deployParams.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
+import { parkAddressFor, publishRefScript } from "../refScripts.js";
 
 // VaultDatum schema (same across all 4 modules — matches Aiken).
 const VaultDatumSchema = Data.Object({
@@ -280,9 +281,24 @@ async function main() {
   console.log(`\n✅ InstantGen vault created!`);
   console.log(`   TX hash:   ${txHash}`);
   console.log(`   Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
+
+  // ── Ref-script CIP-33 của chính vault này (tx riêng, idempotent) ─────────────
+  //   Bước nào tính ra hash thì bước đó công bố ref-script — cùng lối với bước 09
+  //   (ref-script `consume`) và bước 06 (vault+shard ScheduleGen). Đặt ở đây, chuỗi
+  //   e2e consume KHÔNG phải chạm gì tới ScheduleGen mới có đủ ref.
+  //   Vì sao cần: tx consume tiêu HAI UTxO script (Engage + vault). Đính kèm cả hai
+  //   validator cho 17.310 byte, vượt trần 16.384 ⟹ phải readFrom, không attach.
+  const parkAddr = parkAddressFor(NETWORK, address);
+  console.log(`\n⏳ Công bố ref-script vault tại bãi đỗ ${parkAddr} …`);
+  const vaultRef = await publishRefScript({
+    lucid, parkAddr, label: "vault instant ref",
+    script: vaultScript, hash: vaultScriptHash, lovelace: 35_000_000n,
+  });
+
   console.log(`\n📋 Copy to .env:`);
   console.log(`   VAULT_INSTANT_HASH=${vaultScriptHash}   # applied for NETWORK=${NETWORK}`);
   console.log(`   VAULT_INSTANT_ID_UNIT=${vaultIdUnit}    # NFT danh-tính vault (policy = vault hash)`);
+  console.log(`   REF_VAULT_INSTANT_UTXO=${vaultRef}      # chân vault của tx consume`);
 }
 
 main().catch(console.error);

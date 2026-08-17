@@ -13,19 +13,29 @@
 //   BACKING_SCRIPT_HASH, VAULT_INSTANT_HASH   — để reconstruct vault InstantGen (như instant_only).
 //   PRICE_NFT_POLICY, ENGAGE_NFT_POLICY, MAX_PRICE_STALE — để reconstruct consume hash.
 //   PRICE_BEACON_UTXO, ENGAGE_UTXO           — "txHash#idx" (in ra bởi 09).
+//   REF_CONSUME_UTXO       — ref-script `consume` (09 in ra).      BẮT BUỘC.
+//   REF_VAULT_INSTANT_UTXO — ref-script vault InstantGen (06 in ra). BẮT BUỘC.
 //   INSTANT_VAULT_UTXO                        — "txHash#idx" của vault đã gen (tuỳ chọn;
 //                                               nếu thiếu → tự tìm ở vault addr theo owner).
 //   op_type (default 1), op_count (default 1).
+//
+// ── VÌ SAO HAI REF-SCRIPT LÀ BẮT BUỘC, không phải tuỳ chọn ─────────────────────
+//   Đính kèm cả hai validator vào tx cho 17.310 byte ngay ở vault RỖNG, vượt trần
+//   giao thức 16.384 ⟹ đường `attach` KHÔNG dựng nổi tx consume nào, ở bất kỳ cỡ
+//   datum nào (đo của agent A3, 2026-08-17). Bản trước của tệp này attach cả hai,
+//   nên nó chưa từng qua nổi phase-2 trên chuỗi. Nay readFrom cả hai.
+//   `script_inputs_confined_to` chỉ duyệt `tx.inputs`, không chạm `reference_inputs`
+//   (ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak:104-118) nên readFrom không
+//   bị chốt đó chặn.
 //
 // ── VÌ SAO KHÔNG gọi buildConsumeTx (ConsumeMAGIC/offchain/src/consume.ts) ──────
 //   buildConsumeTx() collect vault input bằng BurnBatch NHƯNG KHÔNG tạo output tiếp
 //   nối cho vault (chỉ tạo Engage output) rồi tự .complete() — không thể chèn thêm
 //   output sau đó. Trong khi validate_burn_batch của InstantGen (vault.ak dòng
 //   684-722) BẮT BUỘC 1 vault output với datum A02 đúng + value preserved → tx từ
-//   buildConsumeTx sẽ BỊ vault validator từ chối. Do KHÔNG được sửa consume.ts, ở đây
-//   ta dựng tx THỦ CÔNG, phản chiếu đúng bất biến của consume.ak (engage side) +
-//   validate_burn_batch (vault output). Đã báo cáo lỗ hổng này cho người gọi.
-//   (Encoders/redeemer schema vẫn tái dùng từ ConsumeMAGIC + InstantGen offchain.)
+//   buildConsumeTx sẽ BỊ vault validator từ chối. Nên ở đây dựng tx THỦ CÔNG, phản
+//   chiếu đúng bất biến của consume.ak (engage side) + validate_burn_batch (vault
+//   output). (Encoders/redeemer schema vẫn tái dùng từ ConsumeMAGIC + InstantGen.)
 
 import {
   Lucid, Blockfrost, Data,
@@ -45,6 +55,7 @@ import {
   type ConsumeRedeemerT, type PriceParamT, type EngageDatumT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
 import { VaultDatumSchema, VaultRedeemerSchema } from "../../InstantGen/offchain/src/types.js";
+import { fetchRefScriptUtxo } from "../refScripts.js";
 
 const PRICE_NFT_NAME  = "5052494345";
 const BURN_BATCH_CONSTR = 2n;
@@ -56,9 +67,9 @@ function parseOutRef(s: string): { txHash: string; outputIndex: number } {
   if (!h || i === undefined) throw new Error(`OutRef sai định dạng (cần txHash#idx): ${s}`);
   return { txHash: h, outputIndex: Number(i) };
 }
-function req(name: string): string {
+function req(name: string, hint = "chạy 09_deploy_consume trước"): string {
   const v = process.env[name];
-  if (!v) throw new Error(`Env ${name} bắt buộc — chạy 09_deploy_consume trước.`);
+  if (!v) throw new Error(`Env ${name} bắt buộc — ${hint}.`);
   return v;
 }
 
@@ -91,7 +102,8 @@ async function main() {
   const priceParamHash = req("PRICE_PARAM_HASH");
   const consumeBlueprint = await loadBlueprint("ConsumeMAGIC");
   const consumeV = findValidator(consumeBlueprint, "consume.consume.spend");
-  const { script: consumeScript, hash: consumeHash } = appliedScript(
+  // Chỉ cần HASH: hai validator vào tx bằng ref-script, không đính kèm CBOR.
+  const { hash: consumeHash } = appliedScript(
     consumeV,
     consumeParams({
       priceNftPolicy,
@@ -119,7 +131,7 @@ async function main() {
   // ── Dựng lại InstantGen vault — cùng bản đồ tham số với deploy/05 ───────────
   const vaultBlueprint = await loadBlueprint("InstantGen");
   const vaultV = findValidator(vaultBlueprint, "vault.vault.spend");
-  const { script: vaultScript, hash: vaultHash } = appliedScript(
+  const { hash: vaultHash } = appliedScript(
     vaultV,
     instantVaultParams({
       lampPolicyId:      POLICY_IDS.lamp,
@@ -163,6 +175,21 @@ async function main() {
   if (!priceBeaconUtxo?.datum) throw new Error("Beacon UTxO thiếu hoặc không có inline datum.");
   if (!engageUtxo?.datum)      throw new Error("Engage UTxO thiếu hoặc không có inline datum.");
   if ((engageUtxo.assets[engageNftUnit] ?? 0n) !== 1n) throw new Error("Engage UTxO không mang đúng 1 thread NFT.");
+
+  // ── Hai ref-script (bắt buộc — xem đầu tệp) ──────────────────────────────────
+  //   Kiểm hash NGAY: đưa nhầm thì tx chết ở phase-1 với "MissingScriptWitness",
+  //   thông điệp không nói nhầm cái nào. Hai UTxO này đỗ cạnh nhau ở cùng một bãi
+  //   nên đảo hai biến env cho nhau là chuyện rất dễ xảy ra.
+  const consumeRefUtxo = await fetchRefScriptUtxo({
+    lucid, outRef: req("REF_CONSUME_UTXO"), wantHash: consumeHash,
+    label: "REF_CONSUME_UTXO",
+  });
+  const vaultRefUtxo = await fetchRefScriptUtxo({
+    lucid,
+    outRef: req("REF_VAULT_INSTANT_UTXO", "chạy 06_publish_ref_scripts trước"),
+    wantHash: vaultHash,
+    label: "REF_VAULT_INSTANT_UTXO",
+  });
 
   let vaultUtxo: UTxO | undefined;
   if (process.env.INSTANT_VAULT_UTXO) {
@@ -278,6 +305,8 @@ async function main() {
   console.log(`Vault UTxO:         ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`);
   console.log(`Engage UTxO:        ${engageUtxo.txHash}#${engageUtxo.outputIndex}`);
   console.log(`Beacon (ref):       ${priceBeaconUtxo.txHash}#${priceBeaconUtxo.outputIndex}`);
+  console.log(`Ref consume:        ${consumeRefUtxo.txHash}#${consumeRefUtxo.outputIndex}`);
+  console.log(`Ref vault instant:  ${vaultRefUtxo.txHash}#${vaultRefUtxo.outputIndex}`);
   console.log(`op_type=${opType} × op_count=${opCount} → required=${required} nanogic`);
   console.log(`Batch: ${live.batch_id.slice(0, 12)}… ${live.current_amount} → ${live.current_amount - required}`);
   console.log(`consumed_count: ${oldEngage.consumed_count} → ${newEngage.consumed_count}\n`);
@@ -287,9 +316,8 @@ async function main() {
     .newTx()
     .collectFrom([engageUtxo], consumeRedeemer)
     .collectFrom([vaultUtxo], vaultBurnRedeemer)
-    .attach.SpendingValidator(consumeScript)
-    .attach.SpendingValidator(vaultScript)
-    .readFrom([priceBeaconUtxo])
+    // Beacon giá + HAI ref-script, tất cả là reference input (KHÔNG tiêu).
+    .readFrom([priceBeaconUtxo, consumeRefUtxo, vaultRefUtxo])
     .pay.ToAddressWithData(
       engageUtxo.address,
       { kind: "inline", value: encodeEngageDatum(newEngage) },

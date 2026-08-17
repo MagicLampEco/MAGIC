@@ -18,10 +18,14 @@
 # Các bước:
 #   [0a] 01 mint LAMP           → LAMP_POLICY_ID           (bootstrap nếu thiếu)
 #   [0b] 02 deploy UM           → UM_NFT_POLICY_ID + UM_DATUM_HASH  (bootstrap nếu thiếu)
-#   [1]  05 deploy vault InstantGen converge → VAULT_INSTANT_HASH
+#   [1]  05 deploy vault InstantGen converge → VAULT_INSTANT_HASH + REF_VAULT_INSTANT_UTXO
 #   [2]  test:instant gen MAGIC ⚠ CHECKPOINT: vault SHUT (BackingBeacon all-zero) sẽ dừng ở đây
 #   [3]  09 deploy consume infra (price/engage NFT + beacon + Engage) → export block
+#        (kèm REF_CONSUME_UTXO — ref-script consume, 09 tự công bố)
 #   [4]  consume_only tiêu MAGIC thật (co-spend Engage + vault BurnBatch)
+#
+# HAI ref-script ở [1] và [3] là ĐIỀU KIỆN SỐNG của [4], không phải tối ưu: đính kèm
+# cả hai validator vào tx consume cho 17.310 byte, vượt trần giao thức 16.384.
 set -euo pipefail
 
 NET="${1:-Preview}"
@@ -84,7 +88,10 @@ echo; echo "▶ [1/4] Deploy vault InstantGen (converge)…"
 OUT05="$(npx tsx deploy/05_create_instant_vault.ts | tee /dev/tty)"
 export VAULT_INSTANT_HASH="$(printf '%s\n' "$OUT05" | grep -oE 'VAULT_INSTANT_HASH=[0-9a-f]+' | head -1 | cut -d= -f2- || true)"
 [ -n "${VAULT_INSTANT_HASH:-}" ] || { echo "✗ không đọc được VAULT_INSTANT_HASH từ 05 (05 lỗi?)"; exit 1; }
+export REF_VAULT_INSTANT_UTXO="$(printf '%s\n' "$OUT05" | grep -oE 'REF_VAULT_INSTANT_UTXO=[0-9a-f]+#[0-9]+' | head -1 | cut -d= -f2- || true)"
+[ -n "${REF_VAULT_INSTANT_UTXO:-}" ] || { echo "✗ 05 không in REF_VAULT_INSTANT_UTXO — bước [4] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
 echo "  → VAULT_INSTANT_HASH=$VAULT_INSTANT_HASH"
+echo "  → REF_VAULT_INSTANT_UTXO=$REF_VAULT_INSTANT_UTXO"
 
 echo; echo "▶ [2/4] Gen MAGIC (InstantGen)…"
 echo "  ⚠ CHECKPOINT: nếu vault SHUT vì BackingBeacon all-zero (CARP chưa ship), bước này DỪNG."
@@ -95,6 +102,7 @@ echo; echo "▶ [3/4] Deploy consume infra (price/engage NFT + beacon + Engage)�
 OUT09="$(npx tsx deploy/09_deploy_consume.ts | tee /dev/tty)"
 eval "$(printf '%s\n' "$OUT09" | grep '^export ' || true)"
 [ -n "${PRICE_BEACON_UTXO:-}" ] || { echo "✗ 09 không in export block (09 lỗi?)"; exit 1; }
+[ -n "${REF_CONSUME_UTXO:-}" ] || { echo "✗ 09 không in REF_CONSUME_UTXO — bước [4] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
 
 echo; echo "▶ [4/4] Tiêu MAGIC thật (co-spend Engage + vault BurnBatch)…"
 npx tsx test/consume_only.ts

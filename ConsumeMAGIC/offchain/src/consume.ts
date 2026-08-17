@@ -85,6 +85,18 @@ export interface ConsumeParams {
    *  builder vẫn kiểm prefix policy == hash(consumeScript) rồi mới dùng. Tên NFT là
    *  blake2b_256(cbor(seed)) — KHÔNG phải hằng `454e47`, đừng tự bịa. */
   engageNftUnit?: string;
+  /** UTxO mang script tham chiếu CIP-33 của `consume` — TUỲ CHỌN nhưng gần như BẮT BUỘC
+   *  trên chuỗi thật. Có ⟹ builder `readFrom` thay vì `attach`.
+   *  Vì sao: đính kèm cả hai validator vào tx cho **17.310 byte ngay ở vault RỖNG**, vượt
+   *  trần giao thức 16.384 ⟹ **không tx consume nào dựng nổi ở bất kỳ cỡ datum nào** (đo
+   *  của agent A3 2026-08-17, đối chiếu số 17.303 B mà `06_publish_ref_scripts.ts:5-7` đã
+   *  đo thật trên Preview cho cặp vault+shard ScheduleGen). Bỏ trống ⟹ giữ đường `attach`
+   *  cũ, dùng được cho test đơn vị và emulator, KHÔNG dùng được trên chuỗi. */
+  consumeRefUtxo?: UTxO;
+  /** UTxO mang script tham chiếu CIP-33 của vault. Cùng lý do `consumeRefUtxo`.
+   *  Hai script này là hai UTxO RIÊNG — cộng lại chúng đã vượt trần nếu công bố chung
+   *  một tx (`scripts/deploy/06_publish_ref_scripts.ts:93`). */
+  vaultRefUtxo?: UTxO;
   /** Network (chọn ms_per_epoch cho validity-range — PHẢI khớp validator param). */
   network: Network;
   /** Tip POSIX ms hiện tại (đầu vào để tính epoch + validity-range). */
@@ -172,10 +184,29 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     consumeScript, vaultScript, opType, opCount,
     vaultBurnRedeemerCbor, vaultOutDatumCbor, vaultOutAssets,
     ownerSignerKeyHash, collateralUtxo,
-    engageNftUnit, network, tipPosixMs,
+    engageNftUnit, consumeRefUtxo, vaultRefUtxo, network, tipPosixMs,
   } = params;
 
   if (opCount < 1n) throw new Error("CONSUME-001: op_count phải ≥ 1");
+
+  // ── ref-script phải ĐÚNG script, không chỉ "một UTxO có scriptRef" ───────────
+  //    Đưa nhầm UTxO ref-script làm tx chết ở phase-1 với "MissingScriptWitness" —
+  //    thông điệp không chỉ ra nhầm cái nào. Kiểm hash tại đây, nêu đích danh.
+  const assertRefIs = (u: UTxO | undefined, want: Validator, label: string) => {
+    if (!u) return;
+    const wantHash = validatorToScriptHash(want);
+    if (!u.scriptRef) {
+      throw new Error(`CONSUME-004: ${label} không mang scriptRef (${u.txHash}#${u.outputIndex})`);
+    }
+    const gotHash = validatorToScriptHash(u.scriptRef);
+    if (gotHash !== wantHash) {
+      throw new Error(
+        `CONSUME-005: ${label} mang script hash ${gotHash}, cần ${wantHash}`,
+      );
+    }
+  };
+  assertRefIs(consumeRefUtxo, consumeScript, "consumeRefUtxo");
+  assertRefIs(vaultRefUtxo,   vaultScript,   "vaultRefUtxo");
 
   // ── đọc PriceParam beacon (datum CBOR → struct) ─────────────────────────────
   if (!priceBeaconUtxo.datum) {
@@ -248,15 +279,29 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
 
   const engageAddress = engageUtxo.address;
 
+  // ── Nguồn WITNESS của hai validator: readFrom (CIP-33) hay attach ────────────
+  //    readFrom đưa script vào tx bằng một CON TRỎ tới UTxO đã đỗ trên chain, thay
+  //    vì bê nguyên CBOR vào tx. Với HEAD đây KHÔNG phải tối ưu hoá mà là điều kiện
+  //    sống: attach cả hai = 17.310 B > trần 16.384 (A3, 2026-08-17).
+  //    `script_inputs_confined_to` chỉ duyệt `tx.inputs`, KHÔNG chạm
+  //    `reference_inputs` (`ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak:104-118`)
+  //    ⟹ readFrom không bị chốt đó chặn. (A4 xác nhận 2026-08-17.)
+  const refInputs: UTxO[] = [priceBeaconUtxo];
+  if (consumeRefUtxo) refInputs.push(consumeRefUtxo);
+  if (vaultRefUtxo)   refInputs.push(vaultRefUtxo);
+
   let txBuilder = lucid
     .newTx()
     // Engage input (Consume) + vault input (BurnBatch CBOR caller cung cấp)
     .collectFrom([engageUtxo], consumeRedeemer)
     .collectFrom([vaultUtxo], vaultBurnRedeemerCbor)
-    .attach.SpendingValidator(consumeScript)
-    .attach.SpendingValidator(vaultScript)
-    // PriceParam beacon = reference input (KHÔNG tiêu)
-    .readFrom([priceBeaconUtxo])
+    // PriceParam beacon = reference input (KHÔNG tiêu); kèm ref-script nếu có
+    .readFrom(refInputs);
+
+  if (!consumeRefUtxo) txBuilder = txBuilder.attach.SpendingValidator(consumeScript);
+  if (!vaultRefUtxo)   txBuilder = txBuilder.attach.SpendingValidator(vaultScript);
+
+  txBuilder = txBuilder
     // Engage continuing output (value preserved, state +op_count)
     .pay.ToAddressWithData(
       engageAddress,

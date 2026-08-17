@@ -14,7 +14,7 @@
 //   PRICE_NFT_POLICY, ENGAGE_NFT_POLICY, MAX_PRICE_STALE — để reconstruct consume hash.
 //   PRICE_BEACON_UTXO, ENGAGE_UTXO           — "txHash#idx" (in ra bởi 09).
 //   REF_CONSUME_UTXO       — ref-script `consume` (09 in ra).      BẮT BUỘC.
-//   REF_VAULT_INSTANT_UTXO — ref-script vault InstantGen (06 in ra). BẮT BUỘC.
+//   REF_VAULT_INSTANT_UTXO — ref-script vault InstantGen (05 in ra). BẮT BUỘC.
 //   INSTANT_VAULT_UTXO                        — "txHash#idx" của vault đã gen (tuỳ chọn;
 //                                               nếu thiếu → tự tìm ở vault addr theo owner).
 //   op_type (default 1), op_count (default 1).
@@ -186,7 +186,7 @@ async function main() {
   });
   const vaultRefUtxo = await fetchRefScriptUtxo({
     lucid,
-    outRef: req("REF_VAULT_INSTANT_UTXO", "chạy 06_publish_ref_scripts trước"),
+    outRef: req("REF_VAULT_INSTANT_UTXO", "bước 05_create_instant_vault in ra"),
     wantHash: vaultHash,
     label: "REF_VAULT_INSTANT_UTXO",
   });

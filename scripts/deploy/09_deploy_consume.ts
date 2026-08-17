@@ -274,7 +274,7 @@ async function main() {
   console.log(`export ENGAGE_UTXO=${engageUtxo.txHash}#${engageUtxo.outputIndex}`);
   console.log(`export MAX_PRICE_STALE=${maxPriceStale}   # PHẢI khớp lúc reconstruct consume hash`);
   console.log(`export REF_CONSUME_UTXO=${consumeRef}      # chân consume của tx consume`);
-  console.log(`#  chân còn lại: REF_VAULT_INSTANT_UTXO — lấy từ bước 06`);
+  console.log(`#  chân còn lại: REF_VAULT_INSTANT_UTXO — lấy từ bước 05`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -58,7 +58,29 @@ export function unlockLockedAmount(
   }
   if (remaining > 0n)
     throw new Error(`GEN-LOCK-002: insufficient locked holdings (${remaining} oildrop short)`);
-  return [...unlocked, ...freed, ...stillLocked];
+  return coalesceHoldings([...unlocked, ...freed, ...stillLocked]);
+}
+
+// Merge holdings sharing (acquired_epoch, is_locked). Lossless: that pair is the
+// only thing that distinguishes two holdings, and `amount` is additive.
+//
+// NOT OPTIONAL. Without it the list grew +1 per fire — a partial release always
+// splits one holding and nothing is ever dropped — and `max_loyalty_holdings`
+// is 64, enforced on-chain by validate_fire. A long schedule would leave the
+// vault unable to fire OR withdraw: LAMP frozen outright.
+//
+// Mirrors `coalesce_holdings` in lock.ak byte-for-byte, INCLUDING the rule that
+// the first occurrence keeps its position, so the order stays deterministic (P8).
+export function coalesceHoldings(holdings: LoyaltyHolding[]): LoyaltyHolding[] {
+  const out: LoyaltyHolding[] = [];
+  for (const h of holdings) {
+    const hit = out.find(
+      x => x.acquired_epoch === h.acquired_epoch && x.is_locked === h.is_locked,
+    );
+    if (hit) hit.amount += h.amount;   // first occurrence keeps its position
+    else out.push({ ...h });
+  }
+  return out;
 }
 
 // ══════════════════════════════════════════════════════════════

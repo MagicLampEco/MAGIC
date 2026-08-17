@@ -493,6 +493,35 @@ describe("I-ACT-7 — LAMP đứng yên across a fire", () => {
     const before = [{ amount: 10n, acquired_epoch: 5n, is_locked: true }];
     expect(() => unlockLockedAmount(before, 11n)).toThrow("GEN-LOCK-002");
   });
+
+  // Nợ #30 — THE BOUND. Every partial release splits a holding and nothing is
+  // ever dropped, so without coalescing the list grew +1 per fire against
+  // max_loyalty_holdings=64, freezing the vault's LAMP. Mirrors Aiken
+  // ul_repeated_does_not_grow (vault.ak) byte-for-byte (P8).
+  it("unlockLockedAmount: repeated partial releases do not grow the list", () => {
+    const h1 = unlockLockedAmount([{ amount: 1000n, acquired_epoch: 5n, is_locked: true }], 100n);
+    const h2 = unlockLockedAmount(h1, 100n);
+    const h3 = unlockLockedAmount(h2, 100n);
+    expect(h3).toHaveLength(2);
+    expect(h3.reduce((a, h) => a + h.amount, 0n)).toBe(1000n);
+    expect(h3).toEqual([
+      { amount: 300n, acquired_epoch: 5n, is_locked: false },
+      { amount: 700n, acquired_epoch: 5n, is_locked: true  },
+    ]);
+  });
+
+  // The opposite trap: acquired_epoch IS the loyalty age, so distinct epochs
+  // must never be merged. Mirrors ul_keeps_distinct_epochs_apart.
+  it("unlockLockedAmount: distinct acquired_epoch are kept apart", () => {
+    const after = unlockLockedAmount([
+      { amount: 50n, acquired_epoch: 2n, is_locked: true },
+      { amount: 50n, acquired_epoch: 7n, is_locked: true },
+    ], 100n);
+    expect(after).toEqual([
+      { amount: 50n, acquired_epoch: 2n, is_locked: false },
+      { amount: 50n, acquired_epoch: 7n, is_locked: false },
+    ]);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════

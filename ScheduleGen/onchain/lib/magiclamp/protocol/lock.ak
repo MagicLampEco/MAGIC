@@ -53,7 +53,8 @@ fn lock_youngest(
 // Selection is oldest-locked-first, mirroring `remove_locked_amount`, so the
 // off-chain builder can reproduce it byte-for-byte (P8).
 //
-// Result order: [unlocked-before] ++ [newly freed] ++ [still locked].
+// Result order: [unlocked-before] ++ [newly freed] ++ [still locked], then
+// coalesced (see `coalesce_holdings` — the count MUST NOT grow per fire).
 pub fn unlock_locked_amount(
   holdings : List<LoyaltyHolding>,
   amount   : Int,
@@ -62,7 +63,46 @@ pub fn unlock_locked_amount(
   let unlocked = list.filter(holdings, fn(h) { !h.is_locked })
   let sorted   = list.sort(locked, fn(a, b) { int.compare(a.acquired_epoch, b.acquired_epoch) })
   let (freed, still_locked) = unlock_oldest(sorted, amount, [])
-  list.concat(list.concat(unlocked, freed), still_locked)
+  coalesce_holdings(list.concat(list.concat(unlocked, freed), still_locked))
+}
+
+/// Merge holdings sharing (acquired_epoch, is_locked). Lossless: that pair is the
+/// only thing that distinguishes two holdings, and `amount` is additive.
+///
+/// WHY THIS IS NOT OPTIONAL. `unlock_oldest` splits one holding on every partial
+/// release, and unlike the old `remove_locked_amount` it never drops an entry —
+/// so the list grew by +1 PER FIRE. `max_loyalty_holdings` is 64 and
+/// `validate_fire` enforces it, so a long schedule would leave the vault unable
+/// to fire OR withdraw at all: LAMP frozen, which is worse than the erosion
+/// I-ACT-7 set out to fix. Every split carries the ORIGINAL acquired_epoch, so
+/// coalescing collapses them back exactly.
+///
+/// Ported verbatim from `origin/main:ScheduleGen/.../lock.ak:84-102`, where this
+/// bug was found and fixed first (see the comment at `main:vault.ak:1296-1299`).
+/// Kept byte-identical on purpose — do not "improve" one side alone (P8).
+///
+/// O(n²) merge over a list capped at 64. sort-then-scan would be O(n log n) but
+/// needs a total order over the pair; revisit only if fire ExUnits actually bite.
+pub fn coalesce_holdings(holdings: List<LoyaltyHolding>) -> List<LoyaltyHolding> {
+  list.foldl(holdings, [], fn(h, acc) { merge_into(acc, h) })
+}
+
+fn same_bucket(a: LoyaltyHolding, b: LoyaltyHolding) -> Bool {
+  a.acquired_epoch == b.acquired_epoch && a.is_locked == b.is_locked
+}
+
+fn merge_into(
+  acc : List<LoyaltyHolding>,
+  h   : LoyaltyHolding,
+) -> List<LoyaltyHolding> {
+  if list.any(acc, fn(x) { same_bucket(x, h) }) {
+    // First occurrence keeps its position — order stays deterministic (P8).
+    list.map(acc, fn(x) {
+      if same_bucket(x, h) { LoyaltyHolding { ..x, amount: x.amount + h.amount } } else { x }
+    })
+  } else {
+    list.concat(acc, [h])
+  }
 }
 
 fn unlock_oldest(

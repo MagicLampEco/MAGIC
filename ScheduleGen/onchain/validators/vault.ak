@@ -1445,6 +1445,29 @@ test ul_oldest_locked_first() {
     && sum_holdings(after) == 60
 }
 
+// UL-4 — THE BOUND (Nợ #30). Each partial release splits a holding and nothing
+// is ever dropped, so without coalescing the list grew +1 per fire: 21 entries
+// after 20 fires, ~201 after an L=200 schedule, against max_loyalty_holdings=64
+// enforced by validate_fire. That freezes the user's LAMP outright — no fire, no
+// withdraw. Every split inherits the original acquired_epoch, so the count must
+// stay flat. Ported with coalesce_holdings from origin/main.
+test ul_repeated_does_not_grow() {
+  let h1 = unlock_locked_amount([t_holding(1000, 5, True)], 100)
+  let h2 = unlock_locked_amount(h1, 100)
+  let h3 = unlock_locked_amount(h2, 100)
+  list.length(h3) == 2 && sum_holdings(h3) == 1000 && h3 == [
+    t_holding(300, 5, False),
+    t_holding(700, 5, True),
+  ]
+}
+
+// UL-5: the opposite trap — distinct epochs must NOT be merged. acquired_epoch
+// IS the loyalty age; collapsing two epochs into one would erase it.
+test ul_keeps_distinct_epochs_apart() {
+  let out = unlock_locked_amount([t_holding(50, 2, True), t_holding(50, 7, True)], 100)
+  out == [t_holding(50, 2, False), t_holding(50, 7, False)]
+}
+
 // ── SetDelegate tests ─────────────────────────────────────────
 
 test sd_set() {

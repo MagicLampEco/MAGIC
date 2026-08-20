@@ -43,6 +43,28 @@ pub const domain_voucher: ByteArray = #"4d414749435f564f55434845523a7631"
 /// Length of an alloc_id — blake2b_256 output. Enforced, not assumed.
 pub const alloc_id_length: Int = 32
 
+// ── Số trường của từng khuôn ─────────────────────────────────
+// Đưa số trường vào chính tiền ảnh: thêm một trường ⇒ hằng đổi ⇒ tiền ảnh đổi ⇒
+// hash đổi, KỂ CẢ khi người sửa quên tăng `:v1`. Va chạm liên-phiên-bản thành
+// bất khả theo cấu tạo, không còn phải phòng bằng trí nhớ người sửa.
+//
+// Khai ở ĐÂY, cạnh khuôn — không viết tay ở từng hàm. Viết tay thì nó lại là
+// một thứ nữa phải nhớ đồng bộ, đúng cái đang tránh.
+//
+// Giới hạn, nói rõ để không ai nhận một nửa: hằng này KHÔNG bắt được ca ĐỔI CHỖ
+// hai trường cùng độ dài (số trường không đổi). Ca đó do vector vàng ở
+// `tests/vectors.ts` bắt — vector đã ghim thì chỉ được THÊM, không được SỬA.
+// Và `:v1` vẫn giữ trong tiền tố: hai thứ bù nhau chứ không thay nhau.
+
+/// alloc_id: order_id, user_pkh
+pub const fields_alloc_id: Int = 2
+
+/// oracle settle: order_id, user_pkh, nonce, timestamp_ms
+pub const fields_oracle_settle: Int = 4
+
+/// voucher: alloc_id, epoch, nanogic, expiry_posix
+pub const fields_voucher: Int = 4
+
 // ── Encoding ─────────────────────────────────────────────────
 
 /// Encode Int to big-endian 8-byte ByteArray for oracle message building.
@@ -58,9 +80,10 @@ pub fn length_prefixed(s: ByteArray) -> ByteArray {
   bytearray.concat(bytearray.from_int_big_endian(bytearray.length(s), 4), s)
 }
 
-/// `tag ++ 0x00` — domain separator prefix.
-fn domain_prefix(tag: ByteArray) -> ByteArray {
+/// `tag ++ 0x00 ++ u8(field_count)` — tiền tố phân miền.
+fn domain_prefix(tag: ByteArray, field_count: Int) -> ByteArray {
   bytearray.concat(tag, #"00")
+    |> bytearray.concat(bytearray.from_int_big_endian(field_count, 1))
 }
 
 // ── Identifier derivation ─────────────────────────────────────
@@ -68,7 +91,7 @@ fn domain_prefix(tag: ByteArray) -> ByteArray {
 /// Derive the canonical allocation identifier.
 ///
 ///   alloc_id = blake2b_256(
-///     "MAGIC_ALLOC_ID:v1" ++ 0x00 ++ LP(order_id) ++ LP(user_pkh)
+///     "MAGIC_ALLOC_ID:v1" ++ 0x00 ++ u8(2) ++ LP(order_id) ++ LP(user_pkh)
 ///   )
 ///
 /// P8: mirrored bit-for-bit by `deriveAllocId` in offchain/src/oracle.ts.
@@ -78,7 +101,7 @@ fn domain_prefix(tag: ByteArray) -> ByteArray {
 /// it fails SILENTLY — no signature check trips. Hence the framing.
 pub fn build_alloc_id(order_id: ByteArray, user_pkh: ByteArray) -> ByteArray {
   crypto.blake2b_256(
-    domain_prefix(domain_alloc_id)
+    domain_prefix(domain_alloc_id, fields_alloc_id)
       |> bytearray.concat(length_prefixed(order_id))
       |> bytearray.concat(length_prefixed(user_pkh)),
   )
@@ -88,7 +111,7 @@ pub fn build_alloc_id(order_id: ByteArray, user_pkh: ByteArray) -> ByteArray {
 
 /// Build oracle settlement message:
 ///
-///   msg = "MAGIC_ORACLE_SETTLE:v1" ++ 0x00
+///   msg = "MAGIC_ORACLE_SETTLE:v1" ++ 0x00 ++ u8(4)
 ///      ++ LP(order_id) ++ LP(user_pkh) ++ LP(nonce)
 ///      ++ u64be(timestamp_ms)
 ///
@@ -100,7 +123,7 @@ pub fn build_oracle_settle_msg(
   nonce: ByteArray,
   timestamp_ms: Int,
 ) -> ByteArray {
-  domain_prefix(domain_oracle_settle)
+  domain_prefix(domain_oracle_settle, fields_oracle_settle)
     |> bytearray.concat(length_prefixed(order_id))
     |> bytearray.concat(length_prefixed(user_pkh))
     |> bytearray.concat(length_prefixed(nonce))
@@ -109,7 +132,7 @@ pub fn build_oracle_settle_msg(
 
 /// Build epoch voucher message:
 ///
-///   msg = "MAGIC_VOUCHER:v1" ++ 0x00
+///   msg = "MAGIC_VOUCHER:v1" ++ 0x00 ++ u8(4)
 ///      ++ LP(alloc_id)
 ///      ++ u64be(epoch) ++ u64be(nanogic) ++ u64be(expiry_posix)
 ///
@@ -126,7 +149,7 @@ pub fn build_voucher_msg(
   expiry_posix: Int,
 ) -> ByteArray {
   expect bytearray.length(alloc_id) == alloc_id_length
-  domain_prefix(domain_voucher)
+  domain_prefix(domain_voucher, fields_voucher)
     |> bytearray.concat(length_prefixed(alloc_id))
     |> bytearray.concat(encode_int_8bytes(epoch))
     |> bytearray.concat(encode_int_8bytes(nanogic))

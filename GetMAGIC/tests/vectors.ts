@@ -5,10 +5,10 @@
 // ── FRAMING (nợ #26) ──────────────────────────────────────────
 // Every hashed/signed payload is domain-tagged and length-prefixed:
 //   LP(s)    = u32be(len(s)) ++ s
-//   alloc_id = blake2b_256("MAGIC_ALLOC_ID:v1" ++ 00 ++ LP(order_id) ++ LP(user_pkh))
-//   settle   = "MAGIC_ORACLE_SETTLE:v1" ++ 00 ++ LP(order_id) ++ LP(user_pkh)
+//   alloc_id = blake2b_256("MAGIC_ALLOC_ID:v1" ++ 00 ++ u8(2) ++ LP(order_id) ++ LP(user_pkh))
+//   settle   = "MAGIC_ORACLE_SETTLE:v1" ++ 00 ++ u8(4) ++ LP(order_id) ++ LP(user_pkh)
 //                ++ LP(nonce) ++ u64be(timestamp)
-//   voucher  = "MAGIC_VOUCHER:v1" ++ 00 ++ LP(alloc_id)
+//   voucher  = "MAGIC_VOUCHER:v1" ++ 00 ++ u8(4) ++ LP(alloc_id)
 //                ++ u64be(epoch) ++ u64be(nanogic) ++ u64be(expiry_posix)
 // The same vectors are pinned on the Aiken side in
 // onchain/lib/getmagic/utils_test.ak (group C) — change one, change both.
@@ -24,26 +24,27 @@
 //   userPkh      = 28 zero bytes
 //   nonce        = 32 zero bytes
 //   timestampMs  = 1_700_000_000_000n (Unix ms)
-// Layout: 22 tag + 1 sep + (4+8) + (4+28) + (4+32) + 8 = 111 bytes
-// Field offsets: orderId [27,35) · userPkh [39,67) · nonce [71,103) · ts [103,111)
+// Layout: 22 tag + 1 sep + 1 u8(fields) + (4+8) + (4+28) + (4+32) + 8 = 112 bytes
+// Field offsets: orderId [28,36) · userPkh [40,68) · nonce [72,104) · ts [104,112)
 
 export const TV_ORACLE_01_CLEAN = {
   orderId:        "4142434431323334",  // 8 bytes = "ABCD1234"
   userPkh:        "00".repeat(28),
   nonce:          "00".repeat(32),
   timestampMs:    1_700_000_000_000n,
-  expectedLength: 111,
+  expectedLength: 112,
   // Field offsets under the framed layout
-  orderIdOffset:  27,
-  userPkhOffset:  39,
-  nonceOffset:    71,
-  tsOffset:       103,
+  orderIdOffset:  28,
+  userPkhOffset:  40,
+  nonceOffset:    72,
+  tsOffset:       104,
   // Timestamp 1_700_000_000_000n = 0x0000_018B_CFE5_6800
   timestampHex:   "0000018bcfe56800",
   // Whole message, pinned
   expectedMsgHex:
     "4d414749435f4f5241434c455f534554544c453a7631" + // tag
     "00" +                                            // separator
+    "04" +                                            // u8(field_count)
     "00000008" + "4142434431323334" +                 // LP(order_id)
     "0000001c" + "00".repeat(28) +                    // LP(user_pkh)
     "00000020" + "00".repeat(32) +                    // LP(nonce)
@@ -56,19 +57,19 @@ export const TV_ORACLE_01_CLEAN = {
 //   epoch        = 100n
 //   nanogic      = 10_000_000_000n (10 MAGIC)
 //   expiryPosix  = 600n * 86_400_000n = 51_840_000_000n
-// Layout: 16 tag + 1 sep + (4+32) + 8 + 8 + 8 = 77 bytes
-// Field offsets: allocId [21,53) · epoch [53,61) · nanogic [61,69) · expiry [69,77)
+// Layout: 16 tag + 1 sep + 1 u8(fields) + (4+32) + 8 + 8 + 8 = 78 bytes
+// Field offsets: allocId [22,54) · epoch [54,62) · nanogic [62,70) · expiry [70,78)
 
 export const TV_ORACLE_02 = {
   allocId:       "00".repeat(32),
   epoch:         100n,
   nanogic:       10_000_000_000n,  // NEVER Number — C-OVERFLOW check
   expiryPosixMs: 51_840_000_000n,  // epoch 600 * 86_400_000
-  expectedLength: 77,
-  allocIdOffset:  21,
-  epochOffset:    53,
-  nanogicOffset:  61,
-  expiryOffset:   69,
+  expectedLength: 78,
+  allocIdOffset:  22,
+  epochOffset:    54,
+  nanogicOffset:  62,
+  expiryOffset:   70,
   // epoch(100n) in 8 BE: 0000000000000064
   epochHex:      "0000000000000064",
   // nanogic(10_000_000_000n) = 0x0000_0002_540B_E400 in 8 BE
@@ -79,6 +80,7 @@ export const TV_ORACLE_02 = {
   expectedMsgHex:
     "4d414749435f564f55434845523a7631" +  // tag
     "00" +                                 // separator
+    "04" +                                 // u8(field_count)
     "00000020" + "00".repeat(32) +         // LP(alloc_id)
     "0000000000000064" +                   // u64be(epoch)
     "00000002540be400" +                   // u64be(nanogic)
@@ -91,7 +93,7 @@ export const TV_ORACLE_02 = {
 export const TV_ALLOCID_01 = {
   orderId:  "4142434431323334",
   userPkh:  "00".repeat(28),
-  expected: "26292bf4a409d4869e8be2e189f1897b1dd053cc07e801e152f0fee826b39289",
+  expected: "65ba533961f913bccaabda9474bd7eba947602564f5a883faf3a296bf41db2cd",
 } as const;
 
 // ── TV-FRAMING-01: injectivity — the collision the framing closes ──

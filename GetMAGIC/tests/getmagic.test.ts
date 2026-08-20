@@ -105,16 +105,16 @@ describe("TV-ORACLE-01: buildOracleSettleMsg", () => {
     expect(bytesToHex(build())).toBe(TV_ORACLE_01_CLEAN.expectedMsgHex);
   });
 
-  it("starts with the domain tag and separator", () => {
-    const prefix = bytesToHex(build().slice(0, 23));
-    expect(prefix).toBe("4d414749435f4f5241434c455f534554544c453a763100");
+  it("starts with the domain tag, separator and u8(field_count)", () => {
+    const prefix = bytesToHex(build().slice(0, 24));
+    expect(prefix).toBe("4d414749435f4f5241434c455f534554544c453a76310004");
   });
 
   it("length-prefixes each variable field", () => {
     const msg = build();
-    expect(bytesToHex(msg.slice(23, 27))).toBe("00000008"); // len(order_id)
-    expect(bytesToHex(msg.slice(35, 39))).toBe("0000001c"); // len(user_pkh) = 28
-    expect(bytesToHex(msg.slice(67, 71))).toBe("00000020"); // len(nonce) = 32
+    expect(bytesToHex(msg.slice(24, 28))).toBe("00000008"); // len(order_id)
+    expect(bytesToHex(msg.slice(36, 40))).toBe("0000001c"); // len(user_pkh) = 28
+    expect(bytesToHex(msg.slice(68, 72))).toBe("00000020"); // len(nonce) = 32
   });
 
   it("places orderId at its framed offset", () => {
@@ -194,10 +194,10 @@ describe("TV-ORACLE-02: buildVoucherMsg", () => {
     expect(bytesToHex(build())).toBe(V.expectedMsgHex);
   });
 
-  it("starts with the domain tag, separator and LP(alloc_id)", () => {
+  it("starts with the domain tag, separator, u8(field_count) and LP(alloc_id)", () => {
     const msg = build();
-    expect(bytesToHex(msg.slice(0, 17))).toBe("4d414749435f564f55434845523a763100");
-    expect(bytesToHex(msg.slice(17, 21))).toBe("00000020"); // len(alloc_id) = 32
+    expect(bytesToHex(msg.slice(0, 18))).toBe("4d414749435f564f55434845523a76310004");
+    expect(bytesToHex(msg.slice(18, 22))).toBe("00000020"); // len(alloc_id) = 32
   });
 
   it("encodes epoch at its framed offset", () => {

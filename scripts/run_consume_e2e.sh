@@ -51,8 +51,12 @@ SEED_VAR="$(npx tsx detect_deploy_wallet.ts)"
 echo "  → biến seed: $SEED_VAR"
 
 export NETWORK="$NET"
-export BLOCKFROST_KEY="$(grep "^${BF_VAR}=" "$AGENT_SECRETS" | cut -d= -f2-)"
-export WALLET_SEED="$(grep "^${SEED_VAR}=" "$AGENT_SECRETS" | cut -d= -f2-)"
+# Value trong $AGENT_SECRETS có thể được bọc nháy. Không bóc thì dấu nháy đi thẳng
+# vào bip39 và chết ở "Invalid mnemonic" — thông báo không hề nhắc tới dấu nháy.
+# Hai runner kia (run_schedule_fire, run_wakeme_e2e) đã bóc từ đầu; chỗ này sót.
+unquote() { sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"; }
+export BLOCKFROST_KEY="$(grep "^${BF_VAR}=" "$AGENT_SECRETS" | cut -d= -f2- | unquote)"
+export WALLET_SEED="$(grep "^${SEED_VAR}=" "$AGENT_SECRETS" | cut -d= -f2- | unquote)"
 [ -n "${BLOCKFROST_KEY:-}" ] || { echo "✗ không lấy được $BF_VAR"; exit 1; }
 [ -n "${WALLET_SEED:-}" ]    || { echo "✗ không lấy được seed $SEED_VAR"; exit 1; }
 echo "  → NETWORK=$NET, Blockfrost + seed đã nạp (không in)."

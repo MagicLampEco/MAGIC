@@ -89,7 +89,22 @@ async function main() {
     console.log(`  … chưa thấy vault ở chỉ mục Blockfrost (lần ${attempt}), chờ 15s`);
     await new Promise((r) => setTimeout(r, 15_000));
   }
-  if (!vaultUtxo) { console.error("❌ Vault not found"); process.exit(1); }
+  if (!vaultUtxo) {
+    // "Vault not found" trần trụi che mất nguyên nhân thật. Hai nguyên nhân, và
+    // cả hai đều KHÔNG phải "Blockfrost chậm" (đã chờ 4×15s ở trên):
+    //   1. apply-param lệch ⇒ suy ra hash khác ⇒ soi nhầm địa chỉ;
+    //   2. validator ĐÃ ĐỔI sau lần deploy ⇒ hash mới, vault cũ nằm ở địa chỉ cũ
+    //      và không bao giờ xuất hiện ở đây nữa — phải deploy lại chân ScheduleGen
+    //      trên bản build hiện tại, không có đường vá bằng env.
+    console.error("❌ Không thấy vault nào của ví này ở địa chỉ vault ScheduleGen.");
+    console.error(`   vault hash suy ra : ${vaultHash}`);
+    console.error(`   địa chỉ soi       : ${vaultAddr}`);
+    console.error(`   VAULT_TX_HASH ghim: ${wantedTx ?? "(không ghim)"}`);
+    console.error(`   owner pkh         : ${ownerPkh}`);
+    console.error("   → Đối chiếu hash trên với scripts/DEPLOYED.md. Lệch nghĩa là");
+    console.error("     apply-param khác lúc deploy, HOẶC validator đã đổi từ đó.");
+    process.exit(1);
+  }
 
   const vd = Data.from(vaultUtxo.datum!, VaultDatum);
   if (vd.gen_schedules.length === 0) {

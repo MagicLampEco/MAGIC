@@ -1,5 +1,6 @@
 name    = "magiclamp/paymaster"
 version = "0.0.1"
+compiler = "v1.1.21"
 plutus  = "v3"
 license = "Apache-2.0"
 

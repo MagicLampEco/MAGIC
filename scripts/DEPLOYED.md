@@ -11,6 +11,35 @@ Chạy lại: `bash scripts/run_wakeme_e2e.sh Preview` · `bash scripts/run_wake
 
 ---
 
+## Bản dựng — ba thứ phải đủ mới tái lập được một địa chỉ
+
+Byte của validator do **mã nguồn × trình biên dịch × bộ tham số apply-param** quyết định.
+Thiếu một trong ba thì "dựng lại script cũ từ git" là một cuộc dò tìm, và trên Cardano dò
+sai nghĩa là ra một **địa chỉ khác** — tiền ở địa chỉ cũ không ai mở được nữa.
+
+| Thứ | Ghim ở đâu | Cổng kiểm |
+|---|---|---|
+| trình biên dịch | `compiler = "v1.1.21"` trong 8 `aiken.toml` của project | `npm run verify:toolchain` (trong `scripts/`) |
+| bộ tham số | `scripts/deployParams.ts` — dùng CHUNG cho deploy và verify | `npm run check:params` · `npm run verify:hashes` |
+| commit của bản đã deploy | **chưa ghim** — xem cảnh báo dưới | — |
+
+> ⚠ `compiler =` trong `aiken.toml` **không phải cổng**. Đo trên aiken v1.1.21: ghim sai bản
+> chỉ in `⚠ aiken.toml demands compiler version v1.0.0, but you are using v1.1.21.` rồi
+> `aiken check` vẫn **`exit 0`**. Vì vậy có `scripts/verify_toolchain.sh` — nó `exit 1`.
+> Cổng đã nối vào `npm run deploy:all` nên chạy trước mọi bước deploy.
+
+**Các mục Preview/Preprod bên trên deploy TRƯỚC khi có ghim này** ⇒ bản trình biên dịch
+dựng ra chúng không được ghi lại, và commit dựng cũng không. Chúng là bản ghi *đã xảy ra*,
+không phải bản ghi *tái lập được*. Mọi mục deploy từ đây về sau phải kèm cả ba dòng:
+
+```
+commit    <sha ngắn>
+compiler  v1.1.21
+tham số   <tên + giá trị từng apply-param, theo thứ tự plutus.json>
+```
+
+---
+
 ## Preview — 2026-08-12
 
 | Thứ | Giá trị |

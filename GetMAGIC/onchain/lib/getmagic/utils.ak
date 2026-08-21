@@ -65,34 +65,62 @@ pub const fields_oracle_settle: Int = 4
 /// voucher: alloc_id, epoch, nanogic, expiry_posix
 pub const fields_voucher: Int = 4
 
-// ── Mốc đóng băng của khuôn — điều kiện KIỂM ĐƯỢC, không phải phán đoán ──
-// Sửa được một khuôn `:vN` khi VÀ CHỈ KHI cả hai vế cùng đúng:
+// ── Mốc đóng băng của khuôn — PHÉP PHÂN LOẠI, không phải cổng cho phép ──
+// Hai mệnh đề dưới đây KHÔNG dùng để xin phép đổi khuôn. Dùng để phân loại xem
+// đổi khuôn ở đây phải đi đường nào. Vế nào sai thì chính vế đó chỉ ra đường
+// chuyển bắt buộc:
+//
 //   (1) KHÔNG script hash nào nướng khuôn này đã deploy lên BẤT KỲ mạng nào.
-//       Testnet nằm TRONG điều kiện, không nằm ngoài.
+//       Testnet nằm TRONG, không nằm ngoài.
 //   (2) KHÔNG chữ ký nào ký dưới khuôn này tồn tại ngoài kho mã.
-// Sai một vế ⟹ `:vN` ĐÓNG BĂNG, thay đổi đi bằng `:vN+1`.
+//
+//   cả hai ĐÚNG        ⟹ đổi thẳng `:vN` tại chỗ, không cần đường chuyển.
+//   (1) sai            ⟹ khuôn đóng băng, thay đổi đi bằng `:vN+1`.
+//   (2) sai            ⟹ phải đi BA NHỊP: bên kiểm nhận CẢ HAI khuôn trước, rồi
+//                        bên ký chuyển sang khuôn mới, rồi mới tắt khuôn cũ.
 //
 // Mốc đóng băng là LẦN DEPLOY ĐẦU TIÊN lên bất kỳ mạng nào — KHÔNG phải mainnet.
 // Đặt mốc ở mainnet là đặt sai chỗ, và nhà này đã trả giá cho đúng chuyện đó ở
-// ScheduleGen: hai commit sửa validator sau lần deploy 2026-08-13 làm script hash
-// đổi, vault testnet đang giữ tLAMP nằm ở địa chỉ mà bản build hiện tại không suy
-// ra được, và lỗi hiện ra chỉ dưới dạng "Vault not found".
+// ScheduleGen: hai commit vá lỗi validator sau lần deploy 2026-08-13 làm script
+// hash đổi, vault testnet đang giữ tLAMP nằm ở địa chỉ mà bản build hiện tại
+// không suy ra được, và lỗi hiện ra chỉ dưới dạng "Vault not found". Cả hai
+// commit đó là vá ĐÚNG VÀ CẦN — mốc đóng băng không tha cho thay đổi có lý do
+// chính đáng, và đó mới là chỗ nó dạy được.
 //
-// PHÉP KIỂM ĐÃ CHẠY — lệnh + ngày + kết quả. Đây KHÔNG phải kết luận đóng đinh:
-// nó là một khẳng định về thế giới và nó CŨ ĐI. Chạy lại trước khi dựa vào.
+// 🔴 HAI VẾ KHÔNG NGANG HÀNG. Đọc chúng như hai lớp bảo vệ chồng nhau là đọc sai
+// theo hướng nguy hiểm:
+//
+//   Vế (1) là một PHÉP KIỂM — chạy được bằng một lệnh, chạy lại trước mỗi lần
+//   dựa vào nó.
+//
+//   Vế (2) là một GIẢ ĐỊNH, không phải phép kiểm. Theo đúng định nghĩa nó nói về
+//   thứ nằm NGOÀI kho, nên không kiểm được từ trong kho. Nó chỉ trở thành phép
+//   kiểm khi có một SỔ ĐĂNG KÝ KHOÁ KÝ tách rời để đối chiếu. Kho này KHÔNG có
+//   sổ đó. Chừng nào chưa có, vế (2) là HỆ QUẢ của vế (1) — khoá oracle chưa
+//   từng có bản chạy thật để mà ký cho ai — và nó mất hiệu lực CÙNG LÚC với vế
+//   (1), không đỡ được cho vế (1).
+//
+//   Nhà Phoenix đã đo đúng vế này ở `PHOENIXKEY_RP_AUTH` và kết quả nặng hơn:
+//   ở đó vế (2) không phải "tựa vào vế (1)" mà SAI HẲN — chữ ký dưới khuôn cũ
+//   đang được app bên tích hợp sinh ra mỗi lượt đăng nhập. Đó là vì sao nhà đó
+//   phải đi ba nhịp còn nhà này đổi thẳng được. Cùng một khuôn phân loại, hai
+//   kết quả khác nhau, hai đường làm khác nhau.
+//
+// PHÉP KIỂM ĐÃ CHẠY — lệnh + ngày + kết quả. Đây là khẳng định về thế giới và nó
+// CŨ ĐI. Chạy lại trước khi dựa vào.
 //
 //   2026-08-21  grep -niE "getmagic|otc|alloc|voucher|settle" scripts/DEPLOYED.md
 //               → EXIT=1, không một dòng. Bản ghi triển khai chỉ có: LAMP policy,
 //                 UM, shard, backing beacon, vault ScheduleGen, vault InstantGen.
-//               ⟹ vế (1) đúng. `scripts/deploy/08_deploy_getmagic.ts` có tồn tại
-//                 nhưng chưa chạy lần nào — không hash nào của nó vào DEPLOYED.md.
+//               ⟹ vế (1) ĐÚNG. Kèm một chi tiết đừng bỏ:
+//                 `scripts/deploy/08_deploy_getmagic.ts` ĐÃ CÓ SẴN, chỉ là chưa
+//                 chạy lần nào. Khoảng cách tới lần deploy đầu là MỘT lệnh, không
+//                 phải "còn xa".
 //
-//   Vế (2) chỉ kiểm được BÊN TRONG kho: mọi chỗ ký ed25519 đều nằm trong
-//   `GetMAGIC/` + `scripts/test/` + `MagicSDK/examples/`, toàn bộ là vector thử.
-//   Ngoài kho thì không kiểm trực tiếp được — chỗ neo duy nhất là vế (1): khoá
-//   oracle chưa từng có bản chạy thật để mà ký cho ai. Nghĩa là vế (2) hiện ĐANG
-//   TỰA vào vế (1), không độc lập với nó. Ngày nào có một bản deploy, cả hai vế
-//   mất hiệu lực CÙNG LÚC — đừng đọc chúng như hai lớp bảo vệ chồng lên nhau.
+//   2026-08-21  Vế (2): mọi chỗ ký ed25519 đều nằm trong `GetMAGIC/`,
+//               `scripts/test/`, `MagicSDK/examples/` — toàn bộ là vector thử.
+//               Nhưng đây là đo BÊN TRONG kho, nên nó không kết luận được vế (2);
+//               nó chỉ nói vế (2) chưa bị bác từ bên trong.
 
 // ── Encoding ─────────────────────────────────────────────────
 

@@ -65,6 +65,35 @@ pub const fields_oracle_settle: Int = 4
 /// voucher: alloc_id, epoch, nanogic, expiry_posix
 pub const fields_voucher: Int = 4
 
+// ── Mốc đóng băng của khuôn — điều kiện KIỂM ĐƯỢC, không phải phán đoán ──
+// Sửa được một khuôn `:vN` khi VÀ CHỈ KHI cả hai vế cùng đúng:
+//   (1) KHÔNG script hash nào nướng khuôn này đã deploy lên BẤT KỲ mạng nào.
+//       Testnet nằm TRONG điều kiện, không nằm ngoài.
+//   (2) KHÔNG chữ ký nào ký dưới khuôn này tồn tại ngoài kho mã.
+// Sai một vế ⟹ `:vN` ĐÓNG BĂNG, thay đổi đi bằng `:vN+1`.
+//
+// Mốc đóng băng là LẦN DEPLOY ĐẦU TIÊN lên bất kỳ mạng nào — KHÔNG phải mainnet.
+// Đặt mốc ở mainnet là đặt sai chỗ, và nhà này đã trả giá cho đúng chuyện đó ở
+// ScheduleGen: hai commit sửa validator sau lần deploy 2026-08-13 làm script hash
+// đổi, vault testnet đang giữ tLAMP nằm ở địa chỉ mà bản build hiện tại không suy
+// ra được, và lỗi hiện ra chỉ dưới dạng "Vault not found".
+//
+// PHÉP KIỂM ĐÃ CHẠY — lệnh + ngày + kết quả. Đây KHÔNG phải kết luận đóng đinh:
+// nó là một khẳng định về thế giới và nó CŨ ĐI. Chạy lại trước khi dựa vào.
+//
+//   2026-08-21  grep -niE "getmagic|otc|alloc|voucher|settle" scripts/DEPLOYED.md
+//               → EXIT=1, không một dòng. Bản ghi triển khai chỉ có: LAMP policy,
+//                 UM, shard, backing beacon, vault ScheduleGen, vault InstantGen.
+//               ⟹ vế (1) đúng. `scripts/deploy/08_deploy_getmagic.ts` có tồn tại
+//                 nhưng chưa chạy lần nào — không hash nào của nó vào DEPLOYED.md.
+//
+//   Vế (2) chỉ kiểm được BÊN TRONG kho: mọi chỗ ký ed25519 đều nằm trong
+//   `GetMAGIC/` + `scripts/test/` + `MagicSDK/examples/`, toàn bộ là vector thử.
+//   Ngoài kho thì không kiểm trực tiếp được — chỗ neo duy nhất là vế (1): khoá
+//   oracle chưa từng có bản chạy thật để mà ký cho ai. Nghĩa là vế (2) hiện ĐANG
+//   TỰA vào vế (1), không độc lập với nó. Ngày nào có một bản deploy, cả hai vế
+//   mất hiệu lực CÙNG LÚC — đừng đọc chúng như hai lớp bảo vệ chồng lên nhau.
+
 // ── Encoding ─────────────────────────────────────────────────
 
 /// Encode Int to big-endian 8-byte ByteArray for oracle message building.

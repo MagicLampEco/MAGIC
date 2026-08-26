@@ -230,3 +230,112 @@ pub fn get_voucher_for_epoch(
   let idx = epoch - start_epoch
   list.at(vouchers, idx)
 }
+
+// ══════════════════════════════════════════════════════════════
+// TEST — P8 (Aiken ↔ TypeScript trùng BIT)
+//
+// Trọng tài là `GetMAGIC/tests/vectors.ts`. Các test dưới ghim ĐÚNG chuỗi byte mà
+// `GetMAGIC/offchain/src/oracle.ts` sinh ra cho cùng đầu vào (chạy lại bằng Node
+// `crypto` thuần để lấy hex). Lệch một byte ở đây = mọi chữ ký oracle do off-chain
+// sinh sẽ bị on-chain từ chối, và ngược lại.
+// ══════════════════════════════════════════════════════════════
+
+// TV_ORACLE_01_CLEAN.timestampHex — 1_700_000_000_000 → 8 byte big-endian.
+test p8_encode_int_8bytes_matches_ts() {
+  encode_int_8bytes(1_700_000_000_000) == #"0000018bcfe56800"
+}
+
+// encode_int_8bytes phải là big-endian ĐỘ DÀI CỐ ĐỊNH 8, kể cả số nhỏ.
+test p8_encode_int_8bytes_pads_to_8() {
+  encode_int_8bytes(100) == #"0000000000000064" && bytearray.length(
+    encode_int_8bytes(0),
+  ) == 8
+}
+
+// TV_ORACLE_02: nanogic 10_000_000_000 và expiry 51_840_000_000.
+test p8_encode_int_8bytes_nanogic_and_expiry() {
+  encode_int_8bytes(10_000_000_000) == #"00000002540be400" && encode_int_8bytes(
+    51_840_000_000,
+  ) == #"0000000c11e7a000"
+}
+
+// TV_ORACLE_01_CLEAN — settle msg = order_id(8) ++ user_pkh(28) ++ nonce(32) ++ ts(8)
+// = 76 byte. Hex dưới đây khớp buildOracleSettleMsg của offchain/src/oracle.ts.
+test p8_settle_msg_matches_tv_oracle_01_clean() {
+  let msg =
+    build_oracle_settle_msg(
+      #"4142434431323334",
+      #"00000000000000000000000000000000000000000000000000000000",
+      #"0000000000000000000000000000000000000000000000000000000000000000",
+      1_700_000_000_000,
+    )
+  bytearray.length(msg) == 76 && msg == #"41424344313233340000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000018bcfe56800"
+}
+
+// TV_ORACLE_02 — voucher msg = alloc_id(32) ++ epoch(8) ++ nanogic(8) ++ expiry(8)
+// = 56 byte.
+test p8_voucher_msg_matches_tv_oracle_02() {
+  let msg =
+    build_voucher_msg(
+      #"0000000000000000000000000000000000000000000000000000000000000000",
+      100,
+      10_000_000_000,
+      51_840_000_000,
+    )
+  bytearray.length(msg) == 56 && msg == #"0000000000000000000000000000000000000000000000000000000000000000000000000000006400000002540be4000000000c11e7a000"
+}
+
+// ── Ca GIÁ TRỊ: số âm và tràn 64-bit ─────────────────────────
+//
+// Off-chain `encodeInt8Bytes` NÉM lỗi khi n < 0 (oracle.ts:15). On-chain builtin
+// `integer_to_bytearray` cũng lỗi. Hai test dưới chốt rằng hành vi hai bên khớp:
+// không bên nào âm thầm bọc vòng (wrap) thành số dương khổng lồ.
+
+test p8_encode_int_8bytes_negative_fails() fail {
+  encode_int_8bytes(-1) == #""
+}
+
+// 2^64 không lọt 8 byte → builtin lỗi, KHÔNG cắt bớt bit cao.
+test p8_encode_int_8bytes_overflow_fails() fail {
+  encode_int_8bytes(18_446_744_073_709_551_616) == #""
+}
+
+// 2^64 - 1 là giá trị lớn nhất còn lọt.
+test p8_encode_int_8bytes_max_u64_ok() {
+  encode_int_8bytes(18_446_744_073_709_551_615) == #"ffffffffffffffff"
+}
+
+// ══════════════════════════════════════════════════════════════
+// TEST — chỉ mục voucher (G-ALLOC-5) và sổ epoch đã claim (G-ALLOC-2)
+// ══════════════════════════════════════════════════════════════
+
+test voucher_index_is_epoch_minus_start() {
+  let vs = [#"aa", #"bb", #"cc"]
+  get_voucher_for_epoch(vs, 100, 100) == Some(#"aa") && get_voucher_for_epoch(
+    vs,
+    102,
+    100,
+  ) == Some(#"cc")
+}
+
+// epoch < start_epoch → index âm. `list.at` phải trả None, KHÔNG được đếm ngược
+// từ cuối danh sách (kiểu Python) — nếu đếm ngược, epoch 99 sẽ mượn được voucher
+// của epoch 102.
+test voucher_index_negative_is_none() {
+  get_voucher_for_epoch([#"aa", #"bb", #"cc"], 99, 100) == None
+}
+
+test voucher_index_past_end_is_none() {
+  get_voucher_for_epoch([#"aa", #"bb", #"cc"], 103, 100) == None
+}
+
+test voucher_index_empty_list_is_none() {
+  get_voucher_for_epoch([], 100, 100) == None
+}
+
+test epoch_already_claimed_true_and_false() {
+  epoch_already_claimed([100, 102], 102) && !epoch_already_claimed(
+    [100, 102],
+    101,
+  ) && !epoch_already_claimed([], 100)
+}

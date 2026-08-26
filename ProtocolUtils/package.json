@@ -14,11 +14,12 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "prepare.mjs"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('dist/cjs/package.json', JSON.stringify({type:'commonjs'}))\"",
-    "prepare": "npm run build",
+    "prepare": "node prepare.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

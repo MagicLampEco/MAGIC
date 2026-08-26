@@ -56,6 +56,29 @@ cd <Module>/onchain && script -q /tmp/out.txt aiken check && cat /tmp/out.txt
 > có từ trước khi vá Nợ #35/#36/#41/#42 và trước khi PrepaidGen vào git.
 > Cảnh báo `self_ref` không dùng ở `GetMAGIC` cũng hết — chính chỗ đó là Nợ #41.
 
+> **Ghim phụ thuộc 2026-08-26 — stdlib ghim theo COMMIT SHA, không theo tag.** Cả 10
+> `aiken.toml` + 10 `aiken.lock` (8 module sống + 2 trong `Legacy/genmagic-v3.3/`) đổi
+> `aiken-lang/stdlib` từ `v3.1.0` sang `7d5cee54b2bb4eea211ae3bd806c7c39e5fd899d`. Lý do:
+> tag git **di chuyển được** ⇒ dựng lại cùng một commit ở hai thời điểm có thể ra hai
+> `plutus.json` khác nhau ⇒ đổi script hash ⇒ **đổi địa chỉ**, tiền ở địa chỉ cũ không ai
+> mở được. Tra SHA bằng
+> `git ls-remote --tags https://github.com/aiken-lang/stdlib.git 'v3.1.0*'` → hai dòng:
+> `933c85e1…` (tag object) và `7d5cee54…` (`v3.1.0^{}` = commit). **Phải lấy dòng `^{}`** —
+> tag này là annotated + GPG-signed (KtorZ, 2026-04-24), ghim nhầm sha của tag object là
+> ghim vào một đối tượng không phải commit.
+>
+> Chứng minh bản vá không đổi gì: `aiken build` 10 module trước/sau, đọc hash bằng
+> `jq -r '.validators[]|"\(.title) \(.hash)"'`, `diff` **rỗng** trên 37 mục validator
+> (`sha256` hai bảng bằng nhau: `51ed1e80…`). Thêm một chứng cứ độc lập: giải nén hai
+> zipball trong cache aiken (`…-v3.1.0.zip` tải 2026-05-17 và
+> `…-7d5cee54….zip` tải 2026-08-26) rồi `diff -r` → **không khác byte nào**, tức tag chưa
+> trôi tính tới hôm nay. `aiken check` 10 module: 399 checks, 0 error.
+>
+> Còn hở, nằm ngoài tầm với: `aiken.lock` của **chính stdlib** ghim
+> `aiken-lang/fuzz = "v2.2.0"` — cũng là tag. Build của repo này không kéo `fuzz` (log
+> `Fetched 1 package`) nên không ảnh hưởng script hash; nhưng module nào khai `fuzz` làm
+> phụ thuộc thì lỗ hổng tag mở lại.
+
 ## Đo trên testnet — chuỗi deploy chạy thật, không phải test đơn vị
 
 > Bảng trên là test **đơn vị**: mã tự chấm mã. Bảng dưới là tx **thật** trên chuỗi thật, nơi

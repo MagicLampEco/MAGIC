@@ -5,5 +5,11 @@ license = "Apache-2.0"
 
 [[dependencies]]
 name    = "aiken-lang/stdlib"
-version = "v3.1.0"
+# Ghim COMMIT SHA, KHÔNG ghim tag. Tag git di chuyển được: stdlib đổi => script hash
+# đổi => ĐỊA CHỈ đổi => tiền ở địa chỉ cũ không ai mở được, mà hệ này không có đường
+# xoá đi làm lại. 7d5cee54… là commit mà tag v3.1.0 trỏ tới (tag object 933c85e1…,
+# annotated + GPG-signed KtorZ 2026-04-24). Tra lại:
+#   git ls-remote --tags https://github.com/aiken-lang/stdlib.git 'v3.1.0*'
+# và lấy DÒNG CÓ ^{} — dòng kia là sha của tag object, không phải commit.
+version = "7d5cee54b2bb4eea211ae3bd806c7c39e5fd899d"
 source  = "github"

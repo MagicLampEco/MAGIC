@@ -93,6 +93,13 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
   gì khi bị đưa qua pipe** — muốn giữ output thì `script -q /tmp/out.txt aiken check`.
 - **Node.js** ≥ 20, ES modules. Off-chain dùng `@lucid-evolution/lucid` + `vitest`. Script
   deploy chạy thẳng bằng `tsx`.
+- **`npm install` phải chạy được từ checkout sạch, không có bước dựng tay đi trước.** Vì
+  không có workspace ở gốc, gói nào xuất bản `dist/` (`ProtocolUtils`,
+  `ConsumeMAGIC/pricing`) đều được nạp qua `file:` — mà npm chạy `prepare` của một
+  dependency `file:` ngay trong thư mục gói đó **và không cài `devDependencies` ở đó**.
+  Nên `prepare` không được gọi thẳng `tsc`: nó gọi `prepare.mjs`, kịch bản tự cài bộ công
+  cụ rồi dựng các `file:` dep có `prepare` riêng trước khi build. Thêm gói có `dist/` mới
+  thì chép `prepare.mjs` sang, đừng viết `"prepare": "npm run build"`.
 - Validator **không** được build sẵn trong repo: `aiken build` sinh `onchain/plutus.json`
   (artifact, đã gitignore) trước khi deploy.
 

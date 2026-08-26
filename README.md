@@ -59,11 +59,31 @@ Mỗi module cùng một khuôn: `onchain/` (Aiken) · `offchain/` (TypeScript +
 
 ## Chạy kiểm
 
+Từ một checkout sạch, `npm install` trong bất kỳ gói `offchain/` nào là đủ — không có
+bước dựng tay nào đi trước:
+
+```bash
+cd InstantGen/offchain && npm install && npm test
+```
+
+Hai gói `ProtocolUtils` và `ConsumeMAGIC/pricing` xuất bản `dist/` (ESM + CJS) và được
+các gói khác nạp qua `file:`. Chúng tự dựng lấy trong `prepare` — kịch bản
+`prepare.mjs` tự cài bộ công cụ của chính nó rồi mới gọi `tsc`, nên lần cài đầu tiên
+chậm hơn vài chục giây, chỉ vậy. **Không cần** `cd ProtocolUtils && npm run build`
+trước. Nếu gặp `tsc: command not found` khi `npm install` thì đó là bản cũ hơn
+commit "npm install từ checkout sạch" — cập nhật nhánh, đừng dựng tay.
+
+Chạy cả loạt:
+
 ```bash
 for m in InstantGen ScheduleGen UMKeeper Consolidate ProfileChange ConsumeMAGIC AppEconomics; do
   echo "=== $m ===" && (cd $m/offchain && npm install --silent && npm test)
 done
 ```
+
+> `MagicSDK` là ngoại lệ: `npm install` xanh, nhưng `tests/vaultParams.test.ts` đọc
+> `InstantGen/onchain/plutus.json` và `ScheduleGen/onchain/plutus.json` — artifact đã
+> gitignore. Phải `aiken build` hai module đó trước, nếu không 6 test ngã ENOENT.
 
 ```bash
 for m in InstantGen ScheduleGen UMKeeper; do

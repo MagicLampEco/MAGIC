@@ -224,7 +224,9 @@ Validator ÉP:
   vault cho phép BurnBatch theo `owner HOẶC personal_delegate`
   (`InstantGen/onchain/validators/vault.ak:900`). Vế thứ hai nhận đúng đường đó mà không mở lại lỗ:
   MAGIC bị đốt là của chính chủ thread ⇒ không hồ sơ ai khác bị ghi vào. Ai được tiêu vault đó là
-  việc của vault gác, không phải của lớp này.
+  việc của vault gác, không phải của lớp này — và vault gác bằng `owner HOẶC personal_delegate`,
+  trong đó `personal_delegate` chỉ **đặt được bằng chữ ký owner** (`validate_set_delegate`). Nên
+  vế 2 là **uỷ quyền tường minh** của chính chủ thread, không phải một lỗ bỏ ngỏ.
 
   *Vì sao ràng trên MỌI vault_ref, không phải "có một cái khớp":* tx trộn một vault của chủ thread
   với một vault của người lạ, không chữ ký, thì phần đốt ở vault người lạ vẫn chảy vào `consumed_*`

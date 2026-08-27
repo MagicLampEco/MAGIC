@@ -51,6 +51,14 @@ thu thiếu tới `op_count` nanogic mỗi dòng. Neo:
 `ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak:157` ↔
 `ConsumeMAGIC/pricing/src/price.ts:174`.
 
+**"Thêm trường ở cuối" KHÔNG giữ được UTxO đã tạo.** Giải mã Plutus Data của Aiken
+NGHIÊM NGẶT VỀ SỐ TRƯỜNG, **cả hai chiều** — đo trên v1.1.21: datum 2 trường đọc bằng
+type 3 trường FAIL; datum 3 trường đọc bằng type 2 trường **cũng** FAIL; cả hai chết
+đúng dòng `expect n: NewD = d`. Nên câu "THÊM Ở CUỐI để KHÔNG dịch chỉ số field cũ"
+(`ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak:51`) đúng **đúng phạm vi của nó**:
+nó giữ *chỉ số* các trường cũ, nó KHÔNG giữ *khả năng đọc* các UTxO đã tạo bằng type cũ.
+Thêm một trường là buộc di trú mọi UTxO đang sống, không phải nâng cấp tương thích ngược.
+
 **Chỉ số constructor Plutus Data là hợp đồng nhị phân.** Lược đồ TypeScript trong
 `types.ts` dùng `Data.Enum`/`Data.Object` mà **thứ tự mã hoá tag constructor**. Đổi thứ tự
 một variant, hoặc bỏ một field, là đổi cách decode — mọi UTxO đã tạo trên chain sẽ không

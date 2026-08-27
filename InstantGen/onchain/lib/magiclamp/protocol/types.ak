@@ -129,6 +129,13 @@ pub type VaultAttribution {
 // has ACTUALLY CONSUMED via BurnBatch and has NOT yet converted into an
 // InstantGen reward. BurnBatch adds Σburns; InstantGen zeroes it when it pays
 // the reward out. This is the on-chain `consumed` base for `reward(consumed)`.
+// 🔴 VA CHẠM HAI NHÁNH — Nợ #39. Trường THỨ HAI mang HAI NGHĨA khác nhau trên cùng
+// một ô byte: `origin/main` là `total_burns_count` (ĐẾM lượt), nhánh này là
+// `consumed_credit` (nanogic đã tiêu, chưa quy thưởng). Cùng vị trí, cùng kiểu, CÙNG
+// HÌNH DẠNG Plutus Data ⇒ decode KHÔNG BAO GIỜ báo lỗi. Off-chain viết theo main ghi số
+// ĐẾM vào ô mà `reward(consumed)` ở đây đọc là NGÂN SÁCH THƯỞNG. Spec im lặng về
+// ActivityState ở cả hai bản. Hoà nhánh theo tên trường sẽ im lặng đổi nghĩa dữ liệu đã
+// nằm trên chuỗi — quyết định của chủ nhân, không sửa được bằng đổi tên.
 pub type ActivityState {
   recent_burn_epochs : List<(ByteArray, Natural)>,   // (app_id, epoch)
   consumed_credit    : Natural,                      // nanogic consumed, not yet rewarded

@@ -103,6 +103,15 @@ pub type VaultAttribution {
 // has ACTUALLY CONSUMED via BurnBatch and not yet converted into an InstantGen
 // reward. BurnBatch adds Σburns here; only InstantGen (in the InstantGen vault)
 // spends it. Kept identical in both vault types so the datum stays portable.
+// 🔴 VA CHẠM HAI NHÁNH — Nợ #39. Trường THỨ HAI của kiểu này mang HAI NGHĨA
+// KHÁC NHAU trên cùng một ô byte:
+//     origin/main : total_burns_count : Natural   — ĐẾM số lượt burn
+//     nhánh này   : consumed_credit   : Natural   — nanogic đã tiêu, chưa quy thưởng
+// Cùng vị trí, cùng kiểu, CÙNG HÌNH DẠNG Plutus Data ⇒ decode KHÔNG BAO GIỜ báo lỗi.
+// Off-chain viết theo main ghi số ĐẾM vào ô mà InstantGen nhánh này đọc là NGÂN SÁCH
+// THƯỞNG. Spec im lặng hoàn toàn về ActivityState ở CẢ HAI bản, nên không có trọng tài.
+// Hoà hai nhánh theo tên trường sẽ im lặng đổi nghĩa dữ liệu đã nằm trên chuỗi.
+// Đây là quyết định của chủ nhân, không phải việc sửa được bằng đổi tên.
 pub type ActivityState {
   recent_burn_epochs : List<(ByteArray, Natural)>,
   consumed_credit    : Natural,

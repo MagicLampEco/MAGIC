@@ -186,6 +186,13 @@ Validator ÉP:
   chống dùng giá cũ khi demand đã tăng. `current_epoch` lấy từ **upper bound** của `validity_range`;
   `util.get_epoch` đòi **cả hai biên Finite** và `⌊lo/mspe⌋ == ⌊hi/mspe⌋` (cửa sổ nằm **TRỌN trong
   MỘT epoch**). Off-chain dựng sai cửa sổ ⇒ tx chết ở đây.
+> 🔴 **MÃ `C-CM-6` BỊ DÙNG CHO HAI RÀNG BUỘC KHÁC NHAU — Nợ #38.** Trên `origin/main`,
+> `C-CM-6` là `INV-VAULT-IDENTITY` (mỗi vault input mang đúng 1 NFT one-shot). Trên nhánh
+> này nó là bất biến kế toán `consumed_nanogic` ngay dưới. Bảng §7.4 của spec **cả hai bản**
+> chỉ liệt tới `C-CM-5` nên không phân giải được. Hoà hai nhánh **theo tên mã** sẽ im lặng
+> đánh rơi một trong hai ràng buộc — cả hai đều còn cần. Ai hoà nhánh phải cấp mã MỚI cho
+> một trong hai và sửa mọi nơi trích, không được để trùng.
+
 - **C-CM-6 (GIÁ TRỊ đã trả — `consumed_nanogic`):** bất biến kế toán **THỨ HAI**, song song với
   C-CM-3: `Σ consumed_nanogic(out@engage) == Σ(in@engage) + total_required`.
   **Chỉ đếm LƯỢT là KHÔNG ĐỦ:** `consumed_count` không phân biệt op rẻ / op đắt — kẻ gọi trả giá

@@ -22,7 +22,11 @@ while IFS= read -r f; do
     echo "LỆCH BẢN    $f ghim $want · máy đang chạy v$have"; rc=1; continue
   fi
   echo "khớp        $f  $want"
-done < <(find . -name aiken.toml -not -path '*/build/*' -not -path '*/Legacy/*' | sort)
+done < <(find . -name aiken.toml \
+           -not -path '*/build/*' \
+           -not -path '*/Legacy/*' \
+           -not -path './.claude/*' \
+           -not -path '*/node_modules/*' | sort)
 
 [ $rc -eq 0 ] && echo "→ toàn bộ project khớp aiken v$have" || echo "→ KHÔNG dựng lại được byte đã deploy bằng bản aiken này."
 exit $rc

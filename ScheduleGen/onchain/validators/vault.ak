@@ -216,7 +216,11 @@ validator shard(shard_policy_id_param: PolicyId) {
       list.count(tx.outputs, fn(o) {
         assets.quantity_of(o.value, shard_policy_id_param, name) == 1
       }) == 1
-    let output_shard = find_shard_output_by_policy(tx.outputs, shard_policy_id_param, shard_datum.shard_id)
+    // SHARD-RETURN (Nợ #35): quay về ĐÚNG địa chỉ đang tiêu, không chỉ "có NFT".
+    let output_shard =
+      find_shard_output_by_policy(
+        tx.outputs, shard_policy_id_param, shard_datum.shard_id, shard_addr,
+      )
 
     // SHARD-NFT: this UTxO must actually carry THIS shard's NFT (anti-forgery,
     // bound by the distinct one-shot asset name).
@@ -294,8 +298,13 @@ fn validate_commit(
   // Find shard INPUT and OUTPUT (both carry the NFT, matched by shard_id), then
   // assert the FULL delta against the real lock amount. C-SCH-CAP enforced here.
   let shard_id_val = compute_shard_id(datum.owner)
-  let shard_in  = find_shard_input(tx.inputs, shard_policy_id, shard_id_val)
-  let shard_out = find_shard_output_by_policy(tx.outputs, shard_policy_id, shard_id_val)
+  let shard_input = find_shard_input_raw(tx.inputs, shard_policy_id, shard_id_val)
+  let shard_in    = shard_datum_of(shard_input.output, shard_id_val)
+  // SHARD-RETURN (Nợ #35): shard phải trở về CHÍNH địa chỉ nó đi ra.
+  let shard_out =
+    find_shard_output_by_policy(
+      tx.outputs, shard_policy_id, shard_id_val, shard_input.output.address,
+    )
 
   // No shard NFT may be minted/burned in a commit tx (defence in depth: the
   // one-shot policy already prevents re-mint, but the validator does not assume
@@ -432,8 +441,13 @@ fn validate_fire(
 
   // ── SHARD BIND (option c): vault is the authority on the delta ──
   let shard_id_val = compute_shard_id(datum.owner)
-  let shard_in  = find_shard_input(tx.inputs, shard_policy_id, shard_id_val)
-  let shard_out = find_shard_output_by_policy(tx.outputs, shard_policy_id, shard_id_val)
+  let shard_input = find_shard_input_raw(tx.inputs, shard_policy_id, shard_id_val)
+  let shard_in    = shard_datum_of(shard_input.output, shard_id_val)
+  // SHARD-RETURN (Nợ #35): shard phải trở về CHÍNH địa chỉ nó đi ra.
+  let shard_out =
+    find_shard_output_by_policy(
+      tx.outputs, shard_policy_id, shard_id_val, shard_input.output.address,
+    )
   let schedule_completes = new_fired == sched.schedule_length
 
   // No shard NFT minted/burned during a fire tx (defence in depth).
@@ -1040,21 +1054,36 @@ fn validate_withdraw_lamp(
 
 // ── Shard helpers ─────────────────────────────────────────────
 
-fn find_shard_input(
+fn find_shard_input_raw(
   inputs          : List<Input>,
   shard_policy_id : PolicyId,
   shard_id        : Int,
-) -> ScheduleAggregateShardDatum {
+) -> Input {
   // Identify the shard by its DISTINCT one-shot NFT asset name (anti-forgery),
   // not by a self-declared datum field.
   let name = shard_asset_name(shard_id)
   expect Some(i) = list.find(inputs, fn(x) {
     assets.quantity_of(x.output.value, shard_policy_id, name) == 1
   })
-  expect InlineDatum(d) = i.output.datum
+  i
+}
+
+fn shard_datum_of(o: Output, shard_id: Int) -> ScheduleAggregateShardDatum {
+  expect InlineDatum(d) = o.datum
   expect sd: ScheduleAggregateShardDatum = d
   expect sd.shard_id == shard_id
   sd
+}
+
+fn find_shard_input(
+  inputs          : List<Input>,
+  shard_policy_id : PolicyId,
+  shard_id        : Int,
+) -> ScheduleAggregateShardDatum {
+  shard_datum_of(
+    find_shard_input_raw(inputs, shard_policy_id, shard_id).output,
+    shard_id,
+  )
 }
 
 // No token of the shard NFT policy is minted or burned in this tx. With the
@@ -1068,10 +1097,23 @@ fn no_shard_mint(tx: Transaction, shard_policy_id: PolicyId) -> Bool {
 // Find the continuing shard output by NFT policy + per-shard asset name
 // (vault-side check). Also asserts EXACTLY ONE output carries this shard's NFT,
 // so the aggregate state cannot be split across two outputs.
+//
+// SHARD-RETURN (Nợ #35): the output must sit at `expect_addr` — the FULL address
+// the shard input came from, payment AND stake credential. Without this the
+// checks below vet the shard DATUM while saying nothing about WHERE that datum
+// lands: a valid ScheduleCommit could carry all 16 shard NFTs out to a private
+// wallet in the same tx, and from then on the aggregate ledger is authored by
+// whoever holds them — C-SCH-CAP stops binding anyone. Content was checked,
+// address was not; that is the whole bug, and it is the same shape as Nợ #41 in
+// GetMAGIC. The stake half is included on purpose (same reasoning as Nợ #31):
+// one script hash presents as N addresses, so pinning only the payment
+// credential still lets the UTxO be moved to an address the script no longer
+// recognises as the same shard.
 fn find_shard_output_by_policy(
   outputs         : List<Output>,
   shard_policy_id : PolicyId,
   shard_id        : Int,
+  expect_addr     : Address,
 ) -> ScheduleAggregateShardDatum {
   let name = shard_asset_name(shard_id)
   expect
@@ -1081,10 +1123,8 @@ fn find_shard_output_by_policy(
   expect Some(o) = list.find(outputs, fn(x) {
     assets.quantity_of(x.value, shard_policy_id, name) == 1
   })
-  expect InlineDatum(d) = o.datum
-  expect sd: ScheduleAggregateShardDatum = d
-  expect sd.shard_id == shard_id
-  sd
+  expect o.address == expect_addr
+  shard_datum_of(o, shard_id)
 }
 
 // Shard-side co-spend proof: there exists a vault input whose owner hashes to
@@ -1657,6 +1697,54 @@ test shard_cospend_no_redeemer_rejected() {
   let sid = compute_shard_id(vd.owner)
   let tx = t_tx([t_vault_input(vd, 100)], [], [])
   !vault_cospend_matches(tx, t_shard_addr(), sid)
+}
+
+// ── SHARD-RETURN: shard phải quay về ĐÚNG địa chỉ (Nợ #35) ────────────
+// Trước khi vá, `find_shard_output_by_policy` chỉ hỏi "output nào mang NFT của
+// shard này" rồi giải mã datum — không một dòng nào hỏi output đó nằm ở ĐÂU.
+// Nên một `ScheduleCommit` hợp lệ vẫn bê được NFT shard ra ví riêng trong cùng
+// tx; từ đó `shard_locked_lamp` do kẻ giữ NFT tự ghi, và `C-SCH-CAP` — trần
+// tham gia của TẤT CẢ người hash vào shard đó — hết ràng buộc ai.
+//
+// Ba ca dưới đây chạy thẳng vào hàm đó. Bỏ dòng `expect o.address == expect_addr`
+// là ca 2 và ca 3 chuyển sang PASS ngay.
+
+fn t_shard_datum(shard_id: Int, locked: Int) -> ScheduleAggregateShardDatum {
+  ScheduleAggregateShardDatum {
+    shard_id, shard_locked_lamp: locked,
+    shard_active_count: 1, shard_cumulative_committed: locked,
+    shard_cumulative_fired: 0, last_updated_epoch: 5, shard_cap,
+  }
+}
+
+fn t_shard_out_at(addr: Address, shard_id: Int, locked: Int) -> Output {
+  Output {
+    address: addr,
+    value: assets.from_asset(t_shard_policy, shard_asset_name(shard_id), 1),
+    datum: InlineDatum(t_shard_datum(shard_id, locked)),
+    reference_script: None,
+  }
+}
+
+/// PASS — output nằm đúng địa chỉ shard đi ra.
+test shard_out_same_address_ok() {
+  let out = t_shard_out_at(t_shard_addr(), 6, 1000)
+  find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
+}
+
+/// FAIL — NFT shard + datum bay sang ví trần. Đây là chính ca Nợ #35.
+test shard_out_moved_to_wallet_rejected() fail {
+  let wallet = address.from_verification_key(t_owner)
+  let out = t_shard_out_at(wallet, 6, 1000)
+  find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
+}
+
+/// FAIL — cùng script hash, khác stake credential. Ghim nửa payment là chưa đủ:
+/// một script hash hiện ra thành N địa chỉ (cùng lý do Nợ #31).
+test shard_out_restaked_rejected() fail {
+  let restaked = t_shard_addr() |> address.with_delegation_key(t_owner)
+  let out = t_shard_out_at(restaked, 6, 1000)
+  find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
 }
 
 // ═══════════════════════════════════════════════════════════════

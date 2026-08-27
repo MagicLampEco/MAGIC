@@ -1065,6 +1065,14 @@ fn find_shard_input_raw(
   expect Some(i) = list.find(inputs, fn(x) {
     assets.quantity_of(x.output.value, shard_policy_id, name) == 1
   })
+  // NFT chứng minh ĐÂY LÀ shard nào, KHÔNG chứng minh AI được sửa datum của nó.
+  // Một NFT shard nằm ở địa chỉ khoá-bằng-khoá thì tiêu được bằng chữ ký mà KHÔNG
+  // validator nào chạy ⇒ `shard_locked_lamp` thành trường tự khai ⇒ trần C-SCH-CAP
+  // hết hiệu lực. Nửa ghim địa chỉ output (`find_shard_output_by_policy`) giữ shard
+  // ở lại đúng chỗ nó đang đứng; dòng này lo nửa còn lại — shard ĐÃ ở ví (rút thoát
+  // từ trước bản vá, hoặc deploy đặt sai chỗ) thì từ chối, không im lặng dùng một
+  // UTxO không ai canh.
+  expect Script(_) = i.output.address.payment_credential
   i
 }
 
@@ -1745,6 +1753,29 @@ test shard_out_restaked_rejected() fail {
   let restaked = t_shard_addr() |> address.with_delegation_key(t_owner)
   let out = t_shard_out_at(restaked, 6, 1000)
   find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
+}
+
+/// PASS — shard input khoá bằng SCRIPT.
+test shard_in_at_script_ok() {
+  let inp =
+    Input {
+      output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+      output: t_shard_out_at(t_shard_addr(), 6, 1000),
+    }
+  find_shard_input_raw([inp], t_shard_policy, 6).output.address == t_shard_addr()
+}
+
+/// FAIL — shard input đã nằm ở ví trần. Ghim địa chỉ output không cứu được ca này:
+/// input ở ví thì output "cùng địa chỉ" cũng ở ví, và cả hai vế đều thoả. Phải
+/// từ chối ngay ở đầu vào — fail-closed.
+test shard_in_from_wallet_rejected() fail {
+  let wallet = address.from_verification_key(t_owner)
+  let inp =
+    Input {
+      output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+      output: t_shard_out_at(wallet, 6, 1000),
+    }
+  find_shard_input_raw([inp], t_shard_policy, 6).output.address == wallet
 }
 
 // ═══════════════════════════════════════════════════════════════

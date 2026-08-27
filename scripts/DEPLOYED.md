@@ -38,7 +38,17 @@ compiler  v1.1.21+42babe5      ← ĐỦ HẬU TỐ, chép từ preamble.compile
 tham số   <tên + giá trị từng apply-param, theo thứ tự plutus.json>
 ```
 
-**Vì sao phải chép tay chuỗi đó vào đây.** `plutus.json` **không** được version-control
+> **Hai dòng đầu nay do MÁY sinh, đừng chép tay.** `npm run record:build` (trong `scripts/`)
+> đọc `plutus.json` của cả 9 module rồi ghi chuỗi trình biên dịch đủ hậu tố + hash từng
+> validator vào [`scripts/BUILD-RECORD.md`](BUILD-RECORD.md) — tệp CÓ version-control.
+> `npm run verify:build-record` so lại và **exit 1** khi khối đó cũ hơn hiện vật; bước sinh
+> đã nối vào `npm run deploy:all`.
+> Còn lại phải chép tay: **bộ tham số apply-param** và **tx hash**, vì hai thứ đó chỉ có
+> nghĩa gắn với một lần deploy cụ thể.
+> Hash trong bản ghi là hash **CHƯA apply-param** — nó ghim *mã nguồn × trình biên dịch ×
+> thư viện*, KHÔNG phải địa chỉ. Địa chỉ vẫn do `npm run verify:hashes` đối chiếu.
+
+**Vì sao phải chép tay chuỗi đó vào đây** (lý do gốc, nay chỉ còn áp cho phần tham số + tx hash)**.** `plutus.json` **không** được version-control
 (`.gitignore:19`) — nên nó là hiện vật duy nhất mang bằng chứng phiên bản, mà lại nằm ngoài
 lịch sử. Một lượt `aiken build` bất kỳ ghi đè nó và `git status` vẫn **sạch trơn**, không báo
 gì. Hệ quả: cổng chỉ chứng minh được *"lần dựng này khớp lần dựng ngay trước"*, KHÔNG chứng

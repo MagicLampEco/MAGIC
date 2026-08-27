@@ -80,7 +80,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `shard_nft.shard_nft` | `b81a8f09b234ad5de6be20cec7955fc710f211af08cb2136ca6d11d2` |
+| `shard_nft.shard_nft` | `b2211b6008397f1b5996f834e0d060bfff48a16a3dd971207c333e71` |
 | `vault.shard` | `52128031da1835058e16a19bb63f517f1ca027456a2b193e3e398831` |
 | `vault.vault` | `2de65bad93d570262116b4941c08da6031ba469123b4ce5768a5f7ef` |
 

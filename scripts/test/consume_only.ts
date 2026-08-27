@@ -312,7 +312,7 @@ async function main() {
   console.log(`consumed_count: ${oldEngage.consumed_count} → ${newEngage.consumed_count}\n`);
 
   // ── CO-SPEND tx: Engage(Consume) + Vault(BurnBatch) + beacon ref ──────────────
-  const tx = await lucid
+  let txBuild = lucid
     .newTx()
     .collectFrom([engageUtxo], consumeRedeemer)
     .collectFrom([vaultUtxo], vaultBurnRedeemer)
@@ -330,8 +330,15 @@ async function main() {
     )
     .addSignerKey(ownerPkh)                      // vault BurnBatch: owner phải ký
     .validFrom(Number(lowerMs))
-    .validTo(Number(upperMs))
-    .complete({ presetWalletInputs: [collateral] });
+    .validTo(Number(upperMs));
+
+  // Chủ THREAD Engage cũng phải ký (Nợ #36 — `consume.ak` nhánh spend). Thường
+  // trùng `ownerPkh`, nên chỉ thêm khi khác — thêm trùng một pkh là dựng tx sai
+  // hình dạng. Lấy từ datum đang tiêu, không giả định hai bên là một người.
+  const engageOwner = oldEngage.owner.toLowerCase();
+  if (engageOwner !== ownerPkh.toLowerCase()) txBuild = txBuild.addSignerKey(engageOwner);
+
+  const tx = await txBuild.complete({ presetWalletInputs: [collateral] });
 
   const signed = await tx.sign.withWallet().complete();
   const txHash = await signed.submit();

@@ -318,8 +318,17 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     .validFrom(Number(lowerMs))
     .validTo(Number(upperMs));
 
-  // BurnBatch đòi owner ký (vault.ak) — thêm signer key nếu caller cung cấp.
-  if (ownerSignerKeyHash) txBuilder = txBuilder.addSignerKey(ownerSignerKeyHash);
+  // CHỦ THREAD phải ký (Nợ #36 — `consume.ak` nhánh spend). Đây KHÔNG phải tuỳ chọn:
+  // thiếu chữ ký này tx vẫn dựng được và vẫn nộp được, rồi chết ở phase-2 với một
+  // thông báo không nhắc gì tới chữ ký. Lấy thẳng từ datum đang tiêu nên không có
+  // đường truyền nhầm khoá của người khác.
+  txBuilder = txBuilder.addSignerKey(oldDatum.owner.toLowerCase());
+
+  // BurnBatch đòi owner của VAULT ký (vault.ak) — có thể là khoá khác chủ thread.
+  // Trùng khoá thì bỏ qua, thêm hai lần một pkh là dựng ra tx sai hình dạng.
+  if (ownerSignerKeyHash && ownerSignerKeyHash.toLowerCase() !== oldDatum.owner.toLowerCase()) {
+    txBuilder = txBuilder.addSignerKey(ownerSignerKeyHash);
+  }
 
   // Collateral thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token).
   const tx = collateralUtxo

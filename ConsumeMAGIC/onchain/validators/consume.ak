@@ -107,6 +107,22 @@ validator consume(
     let own_addr = util.own_address(own_ref, tx.inputs)
     let own_hash = util.own_script_hash(own_addr)
 
+    // ── CỔNG QUYỀN GHI (Nợ #36) — chủ thread PHẢI ký ───────────────────────────
+    //    Thiếu dòng này, nhánh spend không hỏi ai đang tiêu: `enforce_engagement`
+    //    chỉ ép `owner` BẢO TOÀN qua tx, không ép `owner` KÝ. Nên bất kỳ ai có
+    //    MAGIC trong vault của CHÍNH MÌNH đều co-spend được thread Engage của
+    //    người khác và cộng `consumed_count` / `consumed_nanogic` vào hồ sơ đó.
+    //
+    //    Đó không phải phiền toái: `consumed_*` là đầu vào C1 của quyền biểu quyết,
+    //    mà hệ này cấm biểu quyết theo tiền. Cho phép ghi hộ tức là mở đúng đường
+    //    mua phiếu bằng tiền mà thiết kế loại trừ — chỉ vòng qua một bước.
+    //
+    //    Mỗi input@engage chạy validator một lượt với `in_datum` của chính nó, nên
+    //    tx gộp nhiều thread đòi ĐỦ chữ ký của từng chủ. `EngageDatum` không có
+    //    trường uỷ quyền (5 trường, `types.ak:60-66`) ⇒ không có đường uỷ nhiệm
+    //    nào bị dòng này chặn nhầm.
+    expect list.has(tx.extra_signatories, in_datum.owner)
+
     // ── VÁ #1 (NGHIÊM TRỌNG) — DOUBLE-SATISFACTION XUYÊN-INSTANCE ──────────────
     //    Đặt SỚM (fail-fast, trước mọi tính toán giá): mọi input do SCRIPT khoá phải
     //    là own_hash hoặc vault_script_hash. Nếu không, hai instance consume ở HAI
@@ -738,6 +754,7 @@ fn run(
 }
 
 /// Như `run` nhưng nhận thẳng beacon Input (test pin địa chỉ beacon).
+/// Chữ ký mặc định = chủ thread (Nợ #36). Ca cần thiếu chữ ký dùng `run_sigs`.
 fn run_beacon(
   beacon        : Input,
   cur_epoch     : Int,
@@ -749,6 +766,25 @@ fn run_beacon(
   own_ref       : OutputReference,
   in_datum      : EngageDatum,
 ) -> Bool {
+  run_sigs(
+    beacon, cur_epoch, engage_inputs, vault_inputs, outputs, redeemers, rd,
+    own_ref, in_datum, [in_datum.owner],
+  )
+}
+
+/// Bản đầy đủ: người gọi tự khai danh sách chữ ký.
+fn run_sigs(
+  beacon        : Input,
+  cur_epoch     : Int,
+  engage_inputs : List<Input>,
+  vault_inputs  : List<Input>,
+  outputs       : List<Output>,
+  redeemers     : Pairs<ScriptPurpose, Data>,
+  rd            : ConsumeRedeemer,
+  own_ref       : OutputReference,
+  in_datum      : EngageDatum,
+  sigs          : List<ByteArray>,
+) -> Bool {
   let tx =
     Transaction {
       ..placeholder,
@@ -756,6 +792,7 @@ fn run_beacon(
       reference_inputs: [beacon],
       outputs: outputs,
       redeemers: redeemers,
+      extra_signatories: sigs,
       // Cửa sổ HẸP nằm TRỌN trong cur_epoch: lower tại đầu epoch, upper +1ms
       // (vẫn cùng epoch sau floor) → epoch tham chiếu (từ upper) == cur_epoch.
       // Chứng minh validator ăn cửa sổ chặt hợp lệ sau khi vá validity-range.
@@ -791,6 +828,45 @@ test consume_happy() {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
   run(pp, 1, 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum)
+}
+
+// ── Nợ #36: chủ thread KHÔNG ký → REJECT ────────────────────────────────────
+// Trước khi vá, ca này PASS. Nghĩa là: kẻ tấn công tiêu MAGIC từ vault của CHÍNH
+// MÌNH (nên `Σburns == required` vẫn khớp) mà ghi `consumed_count` /
+// `consumed_nanogic` vào thread Engage của người khác. `consumed_*` là đầu vào C1
+// của quyền biểu quyết, nên đó là đường mua phiếu bằng tiền — thứ hệ này cấm.
+//
+// Ví lạ có ký, chỉ CHỦ THREAD là không: chứng minh cổng đòi đúng chữ ký của chủ,
+// không phải "có ai đó ký".
+test consume_owner_not_signer_fail() fail {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run_sigs(
+    ct_beacon_ref(pp, 1), 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds,
+    rd, eng_ref, ct_in_datum, [#"deadbeef"],
+  )
+}
+
+// Không chữ ký nào — fail-closed, không phải "danh sách rỗng thì bỏ qua".
+test consume_no_signer_fail() fail {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run_sigs(
+    ct_beacon_ref(pp, 1), 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds,
+    rd, eng_ref, ct_in_datum, [],
+  )
 }
 
 /// ConsumeRedeemer → Data (cho redeemers list).
@@ -1142,6 +1218,8 @@ fn run_vr(
       outputs: outputs,
       redeemers: redeemers,
       validity_range: vr,
+      // Chủ thread ký — cổng Nợ #36. Ca thiếu chữ ký nằm ở test riêng.
+      extra_signatories: [in_datum.owner],
     }
   consume.spend(
     ct_price_policy, ct_price_name,

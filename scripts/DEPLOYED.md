@@ -19,7 +19,7 @@ sai nghĩa là ra một **địa chỉ khác** — tiền ở địa chỉ cũ k
 
 | Thứ | Ghim ở đâu | Cổng kiểm |
 |---|---|---|
-| trình biên dịch | `compiler = "v1.1.21"` trong 8 `aiken.toml` của project | `npm run verify:toolchain` (trong `scripts/`) |
+| trình biên dịch | `compiler = "v1.1.21"` trong 9 `aiken.toml` của project **và** `preamble.compiler.version` của blueprint | `npm run verify:toolchain` (trong `scripts/`) — hai vế |
 | bộ tham số | `scripts/deployParams.ts` — dùng CHUNG cho deploy và verify | `npm run check:params` · `npm run verify:hashes` |
 | commit của bản đã deploy | **chưa ghim** — xem cảnh báo dưới | — |
 
@@ -34,8 +34,25 @@ không phải bản ghi *tái lập được*. Mọi mục deploy từ đây v�
 
 ```
 commit    <sha ngắn>
-compiler  v1.1.21
+compiler  v1.1.21+42babe5      ← ĐỦ HẬU TỐ, chép từ preamble.compiler.version
 tham số   <tên + giá trị từng apply-param, theo thứ tự plutus.json>
+```
+
+**Vì sao phải chép tay chuỗi đó vào đây.** `plutus.json` **không** được version-control
+(`.gitignore:19`) — nên nó là hiện vật duy nhất mang bằng chứng phiên bản, mà lại nằm ngoài
+lịch sử. Một lượt `aiken build` bất kỳ ghi đè nó và `git status` vẫn **sạch trơn**, không báo
+gì. Hệ quả: cổng chỉ chứng minh được *"lần dựng này khớp lần dựng ngay trước"*, KHÔNG chứng
+minh được *"script đang chạy trên chuỗi dựng bằng bản nào"*. Chuỗi bảo đảm đứt đúng ở giữa và
+không ai thấy chỗ đứt. Chép chuỗi vào sổ này — thứ CÓ version-control — là mắt nối lại.
+
+**Hai vế của cổng khác nhau chỗ nào.** `aiken.toml` chỉ giữ được **semver**, vì phép kiểm
+phiên bản của aiken là semver và `+42babe5` không phải semver. Nên vế `aiken.toml` chặn ca
+"thiếu ghim" và "lệch bản phát hành"; nó **không** phân biệt được hai bản aiken cùng nhãn
+`v1.1.21` dựng từ hai commit khác nhau. Vế blueprint chặn đúng ca đó. Kiểm thật:
+
+```
+D. UMKeeper/onchain/plutus.json khai v1.1.21+deadbee, máy chạy v1.1.21+42babe5
+   → "LỆCH BẢN DỰNG … dựng bằng v1.1.21+deadbee · máy đang chạy v1.1.21+42babe5"   exit=1
 ```
 
 ---

@@ -207,6 +207,33 @@ Validator ÉP:
   xuyên-instance) + cổng "mọi input tại địa chỉ engage mang đúng 1 thread NFT"; tx `MintEngage` thì
   tiêu UTxO seed của VÍ. Hai việc tách hẳn — off-chain dựng hai tx riêng.
 
+- **C-CM-9 (quyền ghi vào thread — Nợ #36):** nhánh `spend` ép
+  `owner ∈ tx.extra_signatories` **HOẶC** `VaultDatum.owner == EngageDatum.owner` trên **MỌI**
+  `vault_ref` phân biệt (đọc trường 0 của datum vault bằng `un_constr_data`, KHÔNG import
+  `VaultDatum` — cùng khuôn `read_vault_burns`). Neo:
+  `onchain/validators/consume.ak` (sau `expect total_burned == total_required`).
+
+  *Vì sao cần:* C-CM-4 chỉ ép `owner` **bảo toàn** qua tx, không ép `owner` cho phép. Thiếu cổng
+  này, bất kỳ ai có MAGIC trong vault của **chính mình** đều co-spend được thread Engage của người
+  khác và cộng `consumed_count` / `consumed_nanogic` vào hồ sơ đó. `consumed_*` là đầu vào **C1**
+  của quyền biểu quyết, mà hệ này cấm biểu quyết theo tiền — nên đó là đường mua phiếu bằng tiền,
+  chỉ vòng qua một bước.
+
+  *Vì sao KHÔNG chỉ đòi chữ ký:* đường sponsor Paymaster/Feecover cố ý để người dùng **không ký**
+  (`Paymaster/FEAT.md:44`) — app chỉ là `personal_delegate` của vault **của chính người dùng**, và
+  vault cho phép BurnBatch theo `owner HOẶC personal_delegate`
+  (`InstantGen/onchain/validators/vault.ak:900`). Vế thứ hai nhận đúng đường đó mà không mở lại lỗ:
+  MAGIC bị đốt là của chính chủ thread ⇒ không hồ sơ ai khác bị ghi vào. Ai được tiêu vault đó là
+  việc của vault gác, không phải của lớp này.
+
+  *Vì sao ràng trên MỌI vault_ref, không phải "có một cái khớp":* tx trộn một vault của chủ thread
+  với một vault của người lạ, không chữ ký, thì phần đốt ở vault người lạ vẫn chảy vào `consumed_*`
+  của chủ thread. Test `consume_mixed_vault_owners_no_sig_fail` giữ đúng vế này — đổi `list.all`
+  thành `list.any` là test đó đỏ ngay.
+
+  *Off-chain:* `buildConsumeTx` mặc định thêm chữ ký chủ thread (vế 1). Đường sponsor đặt
+  `sponsoredNoThreadSignature: true` và tự chịu trách nhiệm về điều kiện vế 2.
+
 `did_commit` (MVP = `#""` rỗng): tương lai = blake2b256 commitment liên kết engagement ↔ DID sinh trắc
 (PhoenixKey, Governance C1/C3 attribution). Đặt 1 lần lúc genesis, immutable sau đó. Validator KHÔNG
 ràng buộc nội dung — kể cả ở handler `mint` (cố ý: nó là LỰA CHỌN của người dùng, không phải state
@@ -243,7 +270,7 @@ tích luỹ; pin cứng về `#""` sẽ khoá chết đường liên kết DID s
   vector ảnh 0.01 / CID 0.001, bảng giá không sắp xếp / > 16 dòng / rớt GATE → ném).
 - **ONCHAIN**: `onchain/` Aiken — `types.ak` (PriceParam, OpPrice, Consume, `EngageMintRedeemer`,
   EngageDatum 5 trường), validator `consume.ak` (multi-purpose: `mint` genesis + `spend`
-  engagement-state, C-CM-1..8, KHÔNG mint MAGIC), `price_param.ak` beacon one-shot, `price_nft.ak`
+  engagement-state, C-CM-1..9, KHÔNG mint MAGIC), `price_param.ak` beacon one-shot, `price_nft.ak`
   one-shot NFT. **Không còn `engage_nft.ak`.**
 - **OFFCHAIN**: `buildMintEngageTx` + `buildConsumeTx` + codec EngageDatum(5)/PriceParam/
   ConsumeRedeemer/EngageMintRedeemer + `engageId.ts` (tên thread NFT) + script deploy/e2e Preview.

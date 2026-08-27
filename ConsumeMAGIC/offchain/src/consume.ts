@@ -77,6 +77,14 @@ export interface ConsumeParams {
   vaultOutAssets?: Assets;
   /** Owner pkh (hex) — addSignerKey cho ràng buộc owner-sig của BurnBatch (vault.ak). */
   ownerSignerKeyHash?: string;
+  /** Đường SPONSOR (Paymaster/Feecover): chủ thread KHÔNG ký tx
+   *  (`Paymaster/FEAT.md:44`). Cổng #36 của `consume.ak` có HAI vế — vế 2 nhận khi
+   *  MỌI vault trong tx thuộc chính chủ thread, vì khi đó MAGIC bị đốt là của chủ
+   *  thread và không hồ sơ ai khác bị ghi vào.
+   *  Chỉ đặt `true` khi điều kiện đó ĐÚNG. Đặt sai thì tx vẫn dựng được, vẫn nộp
+   *  được, rồi chết ở phase-2 với thông báo không nhắc gì tới chữ ký. Mặc định
+   *  `false` — thêm chữ ký chủ thread, luôn thoả vế 1. */
+  sponsoredNoThreadSignature?: boolean;
   /** Collateral UTxO thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token). */
   collateralUtxo?: UTxO;
   /** Thread NFT unit (policyId+nameHex) — TUỲ CHỌN.
@@ -183,7 +191,7 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     lucid, engageUtxo, vaultUtxo, priceBeaconUtxo,
     consumeScript, vaultScript, opType, opCount,
     vaultBurnRedeemerCbor, vaultOutDatumCbor, vaultOutAssets,
-    ownerSignerKeyHash, collateralUtxo,
+    ownerSignerKeyHash, sponsoredNoThreadSignature = false, collateralUtxo,
     engageNftUnit, consumeRefUtxo, vaultRefUtxo, network, tipPosixMs,
   } = params;
 
@@ -318,11 +326,14 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     .validFrom(Number(lowerMs))
     .validTo(Number(upperMs));
 
-  // CHỦ THREAD phải ký (Nợ #36 — `consume.ak` nhánh spend). Đây KHÔNG phải tuỳ chọn:
-  // thiếu chữ ký này tx vẫn dựng được và vẫn nộp được, rồi chết ở phase-2 với một
-  // thông báo không nhắc gì tới chữ ký. Lấy thẳng từ datum đang tiêu nên không có
-  // đường truyền nhầm khoá của người khác.
-  txBuilder = txBuilder.addSignerKey(oldDatum.owner.toLowerCase());
+  // Cổng #36 (`consume.ak` nhánh spend) có HAI vế: chủ thread ký, HOẶC mọi vault
+  // trong tx thuộc chính chủ thread. Mặc định đi vế 1 — thêm chữ ký chủ thread, lấy
+  // thẳng từ datum đang tiêu nên không có đường truyền nhầm khoá của người khác.
+  // Đường sponsor cố ý bỏ chữ ký này và dựa vào vế 2; xem
+  // `sponsoredNoThreadSignature`.
+  if (!sponsoredNoThreadSignature) {
+    txBuilder = txBuilder.addSignerKey(oldDatum.owner.toLowerCase());
+  }
 
   // BurnBatch đòi owner của VAULT ký (vault.ak) — có thể là khoá khác chủ thread.
   // Trùng khoá thì bỏ qua, thêm hai lần một pkh là dựng ra tx sai hình dạng.

@@ -107,22 +107,6 @@ validator consume(
     let own_addr = util.own_address(own_ref, tx.inputs)
     let own_hash = util.own_script_hash(own_addr)
 
-    // ── CỔNG QUYỀN GHI (Nợ #36) — chủ thread PHẢI ký ───────────────────────────
-    //    Thiếu dòng này, nhánh spend không hỏi ai đang tiêu: `enforce_engagement`
-    //    chỉ ép `owner` BẢO TOÀN qua tx, không ép `owner` KÝ. Nên bất kỳ ai có
-    //    MAGIC trong vault của CHÍNH MÌNH đều co-spend được thread Engage của
-    //    người khác và cộng `consumed_count` / `consumed_nanogic` vào hồ sơ đó.
-    //
-    //    Đó không phải phiền toái: `consumed_*` là đầu vào C1 của quyền biểu quyết,
-    //    mà hệ này cấm biểu quyết theo tiền. Cho phép ghi hộ tức là mở đúng đường
-    //    mua phiếu bằng tiền mà thiết kế loại trừ — chỉ vòng qua một bước.
-    //
-    //    Mỗi input@engage chạy validator một lượt với `in_datum` của chính nó, nên
-    //    tx gộp nhiều thread đòi ĐỦ chữ ký của từng chủ. `EngageDatum` không có
-    //    trường uỷ quyền (5 trường, `types.ak:60-66`) ⇒ không có đường uỷ nhiệm
-    //    nào bị dòng này chặn nhầm.
-    expect list.has(tx.extra_signatories, in_datum.owner)
-
     // ── VÁ #1 (NGHIÊM TRỌNG) — DOUBLE-SATISFACTION XUYÊN-INSTANCE ──────────────
     //    Đặt SỚM (fail-fast, trước mọi tính toán giá): mọi input do SCRIPT khoá phải
     //    là own_hash hoặc vault_script_hash. Nếu không, hai instance consume ở HAI
@@ -185,6 +169,37 @@ validator consume(
     let total_burned =
       sum_burns_over_vault_refs(tx, vault_refs, vault_script_hash, burn_batch_constr)
     expect total_burned == total_required
+
+    // ── CỔNG QUYỀN GHI (Nợ #36) — ai được ghi vào thread này ───────────────────
+    //    Trước vá, nhánh spend không hỏi ai đang tiêu: `enforce_engagement` chỉ ép
+    //    `owner` BẢO TOÀN qua tx, không ép `owner` cho phép. Nên bất kỳ ai có MAGIC
+    //    trong vault của CHÍNH MÌNH đều co-spend được thread Engage của người khác
+    //    rồi cộng `consumed_count` / `consumed_nanogic` vào hồ sơ đó.
+    //
+    //    Đó không phải phiền toái: `consumed_*` là đầu vào C1 của quyền biểu quyết,
+    //    mà hệ này cấm biểu quyết theo tiền. Cho phép ghi hộ tức là mở đúng đường
+    //    mua phiếu bằng tiền mà thiết kế loại trừ — chỉ vòng qua một bước.
+    //
+    //    HAI vế, không phải một. Vế chữ ký MỘT MÌNH đóng luôn một đường đã thiết
+    //    kế: ở Paymaster/Feecover người dùng CỐ Ý không ký (`Paymaster/FEAT.md:44`)
+    //    — app chỉ là `personal_delegate` của vault CỦA CHÍNH người dùng, và vault
+    //    cho phép BurnBatch theo `owner HOẶC personal_delegate`
+    //    (`InstantGen/onchain/validators/vault.ak:900`).
+    //
+    //    Vế thứ hai nhận đúng đường đó mà không mở lại lỗ: MAGIC bị đốt là MAGIC
+    //    của chính chủ thread, nên không có phiếu nào bị mua — người trả phí không
+    //    ghi được vào hồ sơ ai khác ngoài người sở hữu số MAGIC vừa tiêu. Ai được
+    //    tiêu vault đó thì do chính vault gác, không phải việc của lớp này.
+    //
+    //    Ràng trên MỌI vault_ref phân biệt, không phải "có một cái khớp": tx trộn
+    //    một vault của chủ thread với một vault của người lạ mà thiếu chữ ký thì
+    //    phần đốt ở vault người lạ vẫn chảy vào hồ sơ chủ thread.
+    expect
+      list.has(tx.extra_signatories, in_datum.owner) || all_vault_owners_are(
+        tx.inputs,
+        vault_refs,
+        in_datum.owner,
+      )
 
     // ── ENGAGE state: aggregate invariants (double-satisfaction-safe) ───────────
     // (1) #out@engage == #in@engage (no collapse).
@@ -418,6 +433,34 @@ fn sum_burns_over_vault_refs(
       expect util.is_at_script(vault_in.output.address, vault_script_hash)
       let burns = read_vault_burns(tx, vref, burn_batch_constr)
       acc + sum_burns(burns)
+    },
+  )
+}
+
+/// Nợ #36 — MỌI vault_ref phân biệt có cùng thuộc `owner` không?
+///
+/// Đọc trường 0 (`owner`) của datum vault bằng `un_constr_data`, KHÔNG import
+/// `VaultDatum`: consume cố ý không phụ thuộc kiểu của vault (mỗi loại vault một
+/// deploy — xem `burn_batch_constr`), nên chỉ đọc đúng vị trí đã cam kết ở hợp đồng
+/// nhị phân. Cùng khuôn với `read_vault_burns`.
+///
+/// Gọi SAU `sum_burns_over_vault_refs`: chỗ đó đã chứng minh mỗi `vref` là input
+/// THẬT nằm tại `vault_script_hash`, nên ở đây không phải phòng ca datum bịa.
+fn all_vault_owners_are(
+  inputs     : List<Input>,
+  vault_refs : List<OutputReference>,
+  owner      : ByteArray,
+) -> Bool {
+  list.all(
+    vault_refs,
+    fn(vref) {
+      expect Some(vault_in) =
+        list.find(inputs, fn(i) { i.output_reference == vref })
+      expect InlineDatum(vd) = vault_in.output.datum
+      let Pair(_, fields) = builtin.un_constr_data(vd)
+      expect [owner_data, ..] = fields
+      expect vault_owner: ByteArray = owner_data
+      vault_owner == owner
     },
   )
 }
@@ -718,6 +761,19 @@ fn ct_vault_input(ref_ix: Int) -> Input {
   util.mk_input(util.mk_ref_id(#"a1", ref_ix), util.mk_output(util.script_address(ct_vault_sh), v, 0))
 }
 
+/// Vault input mang datum ĐÚNG hình dạng: Constr(_, [owner, ..]). `ct_vault_input`
+/// nhét datum Integer nên chỉ dùng được cho ca CÓ chữ ký (vế 1 ngắn mạch, vế 2 không
+/// chạy). Ca sponsor/không-chữ-ký phải dùng hàm này.
+fn ct_vault_input_owned(ref_ix: Int, owner: ByteArray) -> Input {
+  let v = assets.from_lovelace(2_000_000)
+  let owner_data: Data = owner
+  let d: Data = builtin.constr_data(0, [owner_data])
+  util.mk_input(
+    util.mk_ref_id(#"a1", ref_ix),
+    util.mk_output(util.script_address(ct_vault_sh), v, d),
+  )
+}
+
 fn ct_consume_redeemer(op_type: Int, op_count: Int, vault_ref: OutputReference) -> ConsumeRedeemer {
   Consume { op_type, op_count, price_ref: ct_price_ref(), vault_ref }
 }
@@ -841,7 +897,7 @@ test consume_happy() {
 test consume_owner_not_signer_fail() fail {
   let pp = ct_pp(6)
   let eng = ct_engage_input(0, 10)
-  let vault = ct_vault_input(0)
+  let vault = ct_vault_input_owned(0, #"deadbeef")
   let eng_ref = util.mk_ref_id(#"e1", 0)
   let vault_ref = util.mk_ref_id(#"a1", 0)
   let rd = ct_consume_redeemer(1, 1, vault_ref)
@@ -857,7 +913,7 @@ test consume_owner_not_signer_fail() fail {
 test consume_no_signer_fail() fail {
   let pp = ct_pp(6)
   let eng = ct_engage_input(0, 10)
-  let vault = ct_vault_input(0)
+  let vault = ct_vault_input_owned(0, #"deadbeef")
   let eng_ref = util.mk_ref_id(#"e1", 0)
   let vault_ref = util.mk_ref_id(#"a1", 0)
   let rd = ct_consume_redeemer(1, 1, vault_ref)
@@ -866,6 +922,56 @@ test consume_no_signer_fail() fail {
   run_sigs(
     ct_beacon_ref(pp, 1), 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds,
     rd, eng_ref, ct_in_datum, [],
+  )
+}
+
+// ── Đường SPONSOR (Paymaster/Feecover): chủ thread KHÔNG ký ──────────────────
+// `Paymaster/FEAT.md:44` — người dùng cố ý không ký tx sponsor; app là
+// `personal_delegate` của vault CỦA CHÍNH người dùng
+// (`InstantGen/onchain/validators/vault.ak:900`: BurnBatch = owner HOẶC delegate).
+// MAGIC bị đốt là của chủ thread ⇒ vế 2 của cổng #36 nhận, không cần chữ ký.
+// Đây là test chặn chính bản vá #36 quá chặt mà chính người viết đã commit trước đó.
+test consume_sponsor_no_signature_ok() {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input_owned(0, ct_owner)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run_sigs(
+    ct_beacon_ref(pp, 1), 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds,
+    rd, eng_ref, ct_in_datum, [],
+  )
+}
+
+// 🔴 Ca TRỘN — lý do vế 2 phải ràng trên MỌI vault_ref, không phải "có một cái khớp".
+// Hai Engage input của cùng chủ thread, hai vault: một của chủ, một của người lạ.
+// Không chữ ký. Nếu vế 2 chỉ cần một vault khớp thì phần đốt ở vault người lạ vẫn
+// chảy vào `consumed_*` của chủ thread — đúng đường mua phiếu mà cổng này chặn.
+test consume_mixed_vault_owners_no_sig_fail() fail {
+  let pp = ct_pp(6)
+  let e0 = ct_engage_input(0, 10)
+  let e1 = ct_engage_input(1, 10)
+  let v0 = ct_vault_input_owned(0, ct_owner)
+  let v1 = ct_vault_input_owned(1, #"deadbeef")
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vref0 = util.mk_ref_id(#"a1", 0)
+  let vref1 = util.mk_ref_id(#"a1", 1)
+  let rd0 = ct_consume_redeemer(1, 1, vref0)
+  let rd1 = ct_consume_redeemer(1, 1, vref1)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds =
+    [
+      Pair(Spend(er0), rd_as_data(rd0)), Pair(Spend(er1), rd_as_data(rd1)),
+      Pair(Spend(vref0), burn_rd), Pair(Spend(vref1), burn_rd),
+    ]
+  run_sigs(
+    ct_beacon_ref(pp, 1), 6, [e0, e1],
+    [v0, v1], [ct_cont_output(11, 6, 1), ct_cont_output(11, 6, 1)], reds, rd0,
+    er0, ct_in_datum, [],
   )
 }
 

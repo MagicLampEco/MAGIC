@@ -19,7 +19,7 @@ Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. L
 |---|---|---|---|
 | `ProtocolUtils` | thư viện dùng chung (hằng, Q-format, BigInt) | 26 | — |
 | `InstantGen` | sinh MAGIC theo yêu cầu, vault hợp nhất PHA-2 | 55 | 85 |
-| `ScheduleGen` | hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard | 43 | 60 |
+| `ScheduleGen` | hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard | 43 | 64 |
 | `UMKeeper` | cập nhật hệ số cầu mạng UM mỗi epoch | 20 | 10 |
 | `ConsumeMAGIC` | tiêu thụ MAGIC (đốt theo giá nghiệp vụ) | 71 | 102 |
 | `ConsumeMAGIC/pricing` | `@magiclamp/consumemagic-pricing` — bộ định giá | 62 | (dùng chung) |
@@ -54,9 +54,9 @@ print(len(t),'test ·',len([x for x in t if x['status']!='pass']),'đỏ')"
 >
 > **Đo lại 2026-08-27, quét TOÀN BỘ** — vòng lặp qua mọi `aiken.toml` và mọi
 > `package.json` có script `test`, không liệt kê tay:
-> `aiken check` **414** / 0 lỗi / 0 cảnh báo — Consolidate 21 · ConsumeMAGIC 102 ·
+> `aiken check` **418** / 0 lỗi / 0 cảnh báo — Consolidate 21 · ConsumeMAGIC 102 ·
 > GetMAGIC 23 · InstantGen 85 · Paymaster 28 · PrepaidGen 72 · ProfileChange 13 ·
-> ScheduleGen 60 · UMKeeper 10.
+> ScheduleGen 64 · UMKeeper 10.
 > `vitest` **522** — Consolidate 12 · ConsumeMAGIC/offchain 71 · ConsumeMAGIC/pricing 62 ·
 > FlowRate 19 · GetMAGIC 53 · InstantGen 55 · MagicSDK 52 · Paymaster 26 · PrepaidGen 75 ·
 > ProfileChange 8 · ProtocolUtils 26 · ScheduleGen 43 · UMKeeper 20.
@@ -64,8 +64,8 @@ print(len(t),'test ·',len([x for x in t if x['status']!='pass']),'đỏ')"
 > ⚠ Số **368 / 510** ghi trước đó trong chính mục này là **thiếu**, không phải sai lệch do
 > thay đổi mã: nó liệt kê tay và bỏ sót Consolidate 21 + ProfileChange 13 + UMKeeper 10
 > (aiken) và Consolidate 12 (vitest). Đó đúng là lớp lỗi mà một danh sách chép tay sinh ra —
-> nên bản này đo bằng vòng lặp. Phần chênh còn lại (+2 aiken) là hai test mới của
-> `shard_in_*` (`d1c7cb9f`).
+> nên bản này đo bằng vòng lặp. Phần chênh còn lại (+6 aiken) là hai test
+> `shard_in_*` (`d1c7cb9f`) và bốn test genesis-datum của `shard_nft` (`c84e2ff5`).
 >
 > `AppEconomics/offchain` **không có script `test`** — gói duy nhất trong kho không có test
 > nào chạy được. Ghi ra đây vì một gói không test không hiện lên ở bất kỳ tổng nào.

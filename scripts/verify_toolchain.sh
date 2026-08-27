@@ -24,6 +24,43 @@ while IFS= read -r f; do
   fi
   echo "khớp        $f  $want"
 
+  # ── Vế 3: THƯ VIỆN. Trình biên dịch đúng bản mà stdlib trôi thì hash vẫn đổi.
+  #    Tag git KHÔNG phải định danh bất biến — `v3.1.0` trỏ lại được sang commit
+  #    khác, và khi đó dựng lại cùng một commit của repo này ra `plutus.json` khác
+  #    ⇒ script hash khác ⇒ ĐỊA CHỈ khác. Nên mọi PHỤ THUỘC phải ghim SHA 40 hex.
+  #    Đây là vế một module MỚI rất dễ bỏ sót, và không gì báo.
+  #    Chỉ soi khối phụ thuộc — `version` của chính gói (`[package]`) là số phiên
+  #    bản của repo này, không phải thứ quyết định byte.
+  dep_out="$(python3 - "$f" "$(dirname "$f")/aiken.lock" <<'PYEOF'
+import re, sys, os
+def deps(path, header):
+    if not os.path.exists(path): return []
+    out, cur, inblk = [], {}, False
+    for line in open(path):
+        t = line.strip()
+        if t.startswith("[["):
+            if inblk and cur.get("version"): out.append((cur.get("name","?"), cur["version"]))
+            inblk = (t == header); cur = {}
+            continue
+        if t.startswith("[") : 
+            if inblk and cur.get("version"): out.append((cur.get("name","?"), cur["version"]))
+            inblk = False; cur = {}
+            continue
+        if inblk:
+            m = re.match(r'(name|version)\s*=\s*"([^"]*)"', t)
+            if m: cur[m.group(1)] = m.group(2)
+    if inblk and cur.get("version"): out.append((cur.get("name","?"), cur["version"]))
+    return out
+bad = []
+for path, header in ((sys.argv[1], "[[dependencies]]"), (sys.argv[2], "[[packages]]")):
+    for name, ver in deps(path, header):
+        if not re.fullmatch(r"[0-9a-f]{40}", ver):
+            bad.append(f"  GHIM BẰNG TAG  {path}: {name} = \"{ver}\" — phải là SHA commit 40 hex")
+print("\n".join(bad))
+PYEOF
+)"
+  if [ -n "$dep_out" ]; then echo "$dep_out"; rc=1; fi
+
   # ── Vế 2: blueprint. `aiken.toml` chỉ giữ được semver (phép kiểm của aiken là
   #    semver, "+42babe5" không phải semver) nên vế 1 KHÔNG phân biệt được hai bản
   #    aiken cùng nhãn v1.1.21 dựng từ hai commit khác nhau. `plutus.json` thì ghi

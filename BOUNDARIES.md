@@ -89,8 +89,13 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 
 ## 4. Công cụ
 
-- **Aiken** ≥ 1.1.0, `plutus = "v3"` trong mỗi `onchain/aiken.toml`. Bản 1.1.21 **không in
-  gì khi bị đưa qua pipe** — muốn giữ output thì `script -q /tmp/out.txt aiken check`.
+- **Aiken** ≥ 1.1.0, `plutus = "v3"` trong mỗi `onchain/aiken.toml`. Bản 1.1.21 qua pipe
+  **đổi định dạng chứ không im lặng**: bảng cho người đọc chỉ ra khi stdout là terminal,
+  còn khi bị chuyển hướng thì stdout là **JSON đầy đủ** (đo 2026-08-27: 4.254 byte qua
+  pipe / 4.255 byte ghi thẳng tệp — chênh đúng một ký tự xuống dòng). Nên
+  `aiken check > /tmp/out.json 2>&1` rồi `json.load` sau khi bỏ mấy dòng tiến-độ trước
+  dấu `{` đầu tiên. Bản cũ của dòng này viết "không in gì khi bị đưa qua pipe" và bảo
+  dùng `script -q` — **sai**, và cái sai đó tốn nhiều lượt chạy lại.
 - **Node.js** ≥ 20, ES modules. Off-chain dùng `@lucid-evolution/lucid` + `vitest`. Script
   deploy chạy thẳng bằng `tsx`.
 - **`npm install` phải chạy được từ checkout sạch, không có bước dựng tay đi trước.** Vì

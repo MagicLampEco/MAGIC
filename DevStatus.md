@@ -19,7 +19,7 @@ Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. L
 |---|---|---|---|
 | `ProtocolUtils` | thư viện dùng chung (hằng, Q-format, BigInt) | 26 | — |
 | `InstantGen` | sinh MAGIC theo yêu cầu, vault hợp nhất PHA-2 | 55 | 85 |
-| `ScheduleGen` | hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard | 43 | 58 |
+| `ScheduleGen` | hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard | 43 | 60 |
 | `UMKeeper` | cập nhật hệ số cầu mạng UM mỗi epoch | 20 | 10 |
 | `ConsumeMAGIC` | tiêu thụ MAGIC (đốt theo giá nghiệp vụ) | 71 | 102 |
 | `ConsumeMAGIC/pricing` | `@magiclamp/consumemagic-pricing` — bộ định giá | 62 | (dùng chung) |
@@ -33,8 +33,13 @@ Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. L
 # vitest một module
 cd <Module>/offchain && npm test          # ConsumeMAGIC/pricing và MagicSDK: npm test tại chính thư mục đó
 
-# aiken — 1.1.21 không in gì khi bị pipe
-cd <Module>/onchain && script -q /tmp/out.txt aiken check && cat /tmp/out.txt
+# aiken — qua pipe nó đổi ĐỊNH DẠNG (JSON ra stdout), KHÔNG phải im lặng
+cd <Module>/onchain && aiken check > /tmp/out.json 2>&1
+
+# đếm bằng máy, không đếm bằng mắt (bỏ mấy dòng tiến-độ trước dấu `{` đầu tiên)
+python3 -c "import json,sys;r=open('/tmp/out.json').read();d=json.loads(r[r.index('{'):]);\
+t=[x for m in d['modules'] for x in m['tests']];\
+print(len(t),'test ·',len([x for x in t if x['status']!='pass']),'đỏ')"
 ```
 
 > Hai số vừa đổi so với bản 2026-08-09: `ScheduleGen` 39 → **41** vitest, `MagicSDK` 51 → **52**.
@@ -47,13 +52,24 @@ cd <Module>/onchain && script -q /tmp/out.txt aiken check && cat /tmp/out.txt
 > `ConsumeMAGIC` 67 là số **sau** khi vá Nợ #27 — trước đó vitest chỉ nạp được 31 mà không
 > ai thấy là mất 36.
 >
-> **Đo lại 2026-08-27** — chạy đủ từng gói, lấy dòng tổng thô:
-> `aiken check` **368** (InstantGen 85 · ScheduleGen 58 · ConsumeMAGIC 102 · GetMAGIC 23 ·
-> Paymaster 28 · PrepaidGen 72), 0 lỗi 0 cảnh báo. `vitest` **510** (InstantGen 55 ·
-> ScheduleGen 43 · ConsumeMAGIC/offchain 71 · ConsumeMAGIC/pricing 62 · GetMAGIC 53 ·
-> MagicSDK 52 · Paymaster 26 · ProtocolUtils 26 · FlowRate 19 · UMKeeper 20 ·
-> ProfileChange 8 · PrepaidGen 75). Bảng trên đã sửa theo số này; các số cũ trong bảng
-> có từ trước khi vá Nợ #35/#36/#41/#42 và trước khi PrepaidGen vào git.
+> **Đo lại 2026-08-27, quét TOÀN BỘ** — vòng lặp qua mọi `aiken.toml` và mọi
+> `package.json` có script `test`, không liệt kê tay:
+> `aiken check` **414** / 0 lỗi / 0 cảnh báo — Consolidate 21 · ConsumeMAGIC 102 ·
+> GetMAGIC 23 · InstantGen 85 · Paymaster 28 · PrepaidGen 72 · ProfileChange 13 ·
+> ScheduleGen 60 · UMKeeper 10.
+> `vitest` **522** — Consolidate 12 · ConsumeMAGIC/offchain 71 · ConsumeMAGIC/pricing 62 ·
+> FlowRate 19 · GetMAGIC 53 · InstantGen 55 · MagicSDK 52 · Paymaster 26 · PrepaidGen 75 ·
+> ProfileChange 8 · ProtocolUtils 26 · ScheduleGen 43 · UMKeeper 20.
+>
+> ⚠ Số **368 / 510** ghi trước đó trong chính mục này là **thiếu**, không phải sai lệch do
+> thay đổi mã: nó liệt kê tay và bỏ sót Consolidate 21 + ProfileChange 13 + UMKeeper 10
+> (aiken) và Consolidate 12 (vitest). Đó đúng là lớp lỗi mà một danh sách chép tay sinh ra —
+> nên bản này đo bằng vòng lặp. Phần chênh còn lại (+2 aiken) là hai test mới của
+> `shard_in_*` (`d1c7cb9f`).
+>
+> `AppEconomics/offchain` **không có script `test`** — gói duy nhất trong kho không có test
+> nào chạy được. Ghi ra đây vì một gói không test không hiện lên ở bất kỳ tổng nào.
+> Các số cũ trong bảng có từ trước khi vá Nợ #35/#36/#41/#42 và trước khi PrepaidGen vào git.
 > Cảnh báo `self_ref` không dùng ở `GetMAGIC` cũng hết — chính chỗ đó là Nợ #41.
 
 > **Ghim phụ thuộc 2026-08-26 — stdlib ghim theo COMMIT SHA, không theo tag.** Cả 10

@@ -82,3 +82,53 @@ export type {
 // Re-export Network for convenience so callers don't need a separate import
 // from @magiclamp/protocol-utils for the most common type.
 export type { Network } from "@magiclamp/protocol-utils";
+
+// ── ConsumeMAGIC — TIÊU MAGIC ────────────────────────────────────────────────
+// Trước 2026-08-29 kho có đủ lớp ConsumeMAGIC nhưng SDK không xuất một tên nào
+// của nó: một app tích hợp sinh được MAGIC mà không có API nào để tiêu. Đó là
+// chốt chặn thật giữa "E2E chạy được một lần" và "OriLife/AladinWork gọi được".
+//
+// Xuất TƯỜNG MINH, không `export *`: `consume.ts` re-export `toUnit` của lucid và
+// `types.ts` mang nhiều schema nội bộ — gom hết vào mặt tiền công khai là dựng ra
+// những cái tên mà đổi đi là breaking change, dù không ai định hứa.
+export {
+  buildConsumeTx,
+  buildMintEngageTx,
+  buildPostPriceTx,
+  postPriceRedeemerCbor,
+  requiredFromBeacon,
+  signAndSubmit as submitConsumeTx,
+  engageAssetName,
+  engageNftUnit,
+  engageSeedCbor,
+  encodeEngageDatum,
+  decodeEngageDatum,
+  encodePriceParam,
+  decodePriceParam,
+  type ConsumeParams,
+  type ConsumeResult,
+  type MintEngageParams,
+  type MintEngageResult,
+  type PostPriceParams,
+  type PostPriceResult,
+  type EngageIdSeed,
+  type EngageDatumT,
+  type PriceParamT,
+  type OpPriceT,
+} from "@magiclamp/consumemagic";
+
+// Bảng giá + số học định giá: app cần chúng để BÁO GIÁ TRƯỚC cho người dùng, chứ
+// không phải để tính tiền — `required` có thẩm quyền luôn đọc từ beacon
+// (`requiredFromBeacon`). Hai đường phải cho cùng số; lệch là tx bị từ chối.
+export {
+  requiredForOp,
+  pricePerOp,
+  demandMult,
+  assertValidPriceParam,
+  MVP_BASE_PRICE,
+  OP_IMAGE,
+  OP_CID,
+  M_MIN_Q,
+  M_MAX_Q,
+  Q as PRICING_Q,
+} from "@magiclamp/consumemagic-pricing";

@@ -7,3 +7,7 @@
 export * from "./types.js";
 export * from "./engageId.js";
 export * from "./consume.js";
+
+// Nợ #7 — đường post bảng giá mới KHÔNG phải redeploy. Thiếu nó thì beacon hết hạn
+// là hạ tầng phải dựng lại từ đầu và mọi thread Engage thành mồ côi. Xem postPrice.ts.
+export * from "./postPrice.js";

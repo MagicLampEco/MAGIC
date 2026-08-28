@@ -89,6 +89,13 @@ export const EngageMintRedeemerSchema = Data.Object({
 export type EngageMintRedeemerT = Data.Static<typeof EngageMintRedeemerSchema>;
 
 // ── PriceParamRedeemer = PostPrice (constr 0) ─────────────────────────────────
+// 🔴 KHAI BÁO CHO NGƯỜI ĐỌC, KHÔNG PHẢI BỘ MÃ HOÁ DÙNG ĐƯỢC. Đo trên
+//    @lucid-evolution/lucid 0.4.30: `Data.to("PostPrice", PriceParamRedeemerSchema)`
+//    NÉM "Could not type cast to void" — Data.Enum một variant KHÔNG field bị lucid
+//    quy về dạng void và đường cast vỡ. Đường dựng redeemer thật là `Data.void()`
+//    (= Constr(0,[]) = `d87980`), xem `postPrice.ts:postPriceRedeemerCbor`. Hai vế
+//    được ghim trong `tests/post_price.test.ts`.
+//    Cùng cảnh báo áp cho `NftRedeemerSchema` ngay dưới — hình dạng y hệt.
 export const PriceParamRedeemerSchema = Data.Enum([Data.Literal("PostPrice")]);
 
 // ── NftRedeemer = MintGenesis (constr 0) — CHỈ còn price_nft ──────────────────

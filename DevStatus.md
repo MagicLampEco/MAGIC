@@ -21,7 +21,7 @@ Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. L
 | `InstantGen` | sinh MAGIC theo yêu cầu, vault hợp nhất PHA-2 | 55 | 85 |
 | `ScheduleGen` | hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard | 43 | 64 |
 | `UMKeeper` | cập nhật hệ số cầu mạng UM mỗi epoch | 20 | 10 |
-| `ConsumeMAGIC` | tiêu thụ MAGIC (đốt theo giá nghiệp vụ) | 71 | 102 |
+| `ConsumeMAGIC` | tiêu thụ MAGIC (đốt theo giá nghiệp vụ) | 83 | 107 |
 | `ConsumeMAGIC/pricing` | `@magiclamp/consumemagic-pricing` — bộ định giá | 62 | (dùng chung) |
 | `MagicSDK` | mặt tiền cho bên tích hợp | 52 | — |
 | `GetMAGIC` | cổng vào, Phase 1 (chưa nối vault) | 53 | 23 |
@@ -60,6 +60,11 @@ print(len(t),'test ·',len([x for x in t if x['status']!='pass']),'đỏ')"
 > ConsumeMAGIC/pricing 67 · Eligibility 29 · FlowRate 19 · GetMAGIC 53 · InstantGen 55 ·
 > MagicSDK 52 · Paymaster 26 · PrepaidGen 75 · ProfileChange 8 · ProtocolUtils 33 ·
 > ScheduleGen 43 · UMKeeper 20.
+> **Đo lại 2026-08-29** — sau khi mở Nợ #7 (`buildPostPriceTx`) và nối ConsumeMAGIC
+> vào `MagicSDK`: `vitest` **629** (`ConsumeMAGIC/offchain` 71 → **83**, mười hai test
+> mới ở `tests/post_price.test.ts`). `aiken check` **453**, không đổi — Nợ #7 là việc
+> off-chain thuần, không đụng một dòng Aiken nào.
+>
 > Chênh so với bản 2026-08-27 (418/522): `Eligibility` (30 aiken + 29 vitest) và
 > `AppEconomics` (54 vitest) vào kho theo lượt hoà nhánh; `ProtocolUtils` 26 → 33 và
 > `ConsumeMAGIC/pricing` 62 → 67 là test mới; `ConsumeMAGIC` aiken 102 → 107 là năm test
@@ -196,7 +201,7 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 | 4 | `AppEconomics` chưa hội tụ | xem mục mồ côi |
 | 5 | Nguồn `PrepaidGen` **chưa mất** — đang treo trong `refs/stash@{0}` | 24 tệp nguồn (`prepaid.ak`, `fund_nft.ak`, trọn `offchain/src`, `tests/`, `DESIGN.md`). Bản ghi cũ ở đây kết luận "đã mất" vì `git log --all --diff-filter=A` trả rỗng — nhưng `--all` **không quét `refs/stash`**, nên rỗng ở đó không có nghĩa là mất. Nguyên nhân gốc: code viết trên `feat/genmagic-v0.2-handoff`, **chưa từng commit**, bị `git stash` tự hứng lúc chuyển nhánh 2026-07-30 và không ai `pop` lại. Đã neo bằng tag `preserve/prepaidgen-stash-2026-07-30` để `git stash clear/drop` không xoá được. Kiểm: `git ls-tree -r --name-only preserve/prepaidgen-stash-2026-07-30^{commit}^3 \| grep -c '^PrepaidGen/'` → 24 |
 | 6 | **InstantGen chưa bao giờ cấp được 1 nanogic** | trần thứ ba còn là `0.5 × Σ(gen_schedules)` kiểu cũ; vault thường có `gen_schedules = []` ⇒ trần 0 ⇒ `expect grant > 0` fail. SPEC §6.3 đòi `⌊L_avail × RATE_REF_Q / Q⌋`. **Chờ chủ nhân chốt** — phải vá CÙNG LÚC với `INV-INSTANT-LOCK`, không thì mở đường flash-rent LAMP |
-| 7 | `ConsumeMAGIC` chưa có `buildPostPriceTx` | bất biến "giữ nguyên phần non-ADA của beacon" chưa có bên off-chain nào thực thi |
+| ~~7~~ | ~~`ConsumeMAGIC` chưa có `buildPostPriceTx`~~ | ✅ **ĐÓNG 2026-08-29.** `ConsumeMAGIC/offchain/src/postPrice.ts` + 12 test (`tests/post_price.test.ts`). Chín cổng fail-closed `POSTPRICE-001..010` bám từng `expect` của `price_param.ak`; phần non-ADA của value được bảo toàn bằng cách copy y nguyên `assets` của input nên builder KHÔNG có đường thêm/bớt token, kể cả vô ý. Đo phụ, đáng ghi: `Data.to("PostPrice", PriceParamRedeemerSchema)` **NÉM** `Could not type cast to void` trên lucid-evolution 0.4.30 — schema literal-enum một variant không field không dùng để mã hoá được; đường thật là `Data.void()` (`d87980`), đã ghim hai vế trong test |
 | 8 | `buildConsumeTx` mới dựng 1 Engage input | on-chain là bất biến AGGREGATE qua N input — tập con hợp lệ, nhưng chưa gộp được nhiều thread |
 | 9 | Không có đường đóng thread Engage / vault | mint ép `qty == 1` nên burn bất khả ⇒ min-ADA khoá vĩnh viễn mỗi thread. Cố ý, nhưng là quyết định cần biết |
 | 10 | `UMKeeper/offchain/src/keeper.ts` **chưa từng chạy với node thật** | Tệp này trước đây **không biên dịch được** (4 lỗi kiểu) và không ai biết: gói không có `tsconfig.json` nên `tsc --noEmit` chưa từng chạy, còn vitest chỉ chạm `math.ts`. Nó cũng import `@lucid-evolution/lucid` mà `package.json` không khai. Đã vá cả ba (thêm `tsconfig.json`, khai dep, dựng cặp `Data.Static` mà lucid-evolution bắt buộc) ⇒ nay `npm run typecheck` xanh, `npm test` 20/20. Nhưng **xanh kiểu ≠ chạy đúng**: `getEpochStats` vẫn là bản giả trả số cố định, và chưa có lần chạy nào với Blockfrost. Liên quan D7 |

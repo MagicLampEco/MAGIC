@@ -79,11 +79,17 @@ async function main() {
     const vaultUtxos = await lucid.utxosAt(vaultAddr);
     vaultUtxo = vaultUtxos.find((u) => mine(u) && (!wantedTx || u.txHash === wantedTx));
     if (vaultUtxo) break;
-    // Hết lượt mà vẫn không thấy đúng tx: lấy vault CÓ lịch mới nhất, còn hơn
-    // dừng ở một thông báo không nói được gì.
+    // Hết lượt: CHỈ được tự chọn khi người gọi KHÔNG ghim gì.
+    //
+    // 🔴 Bản trước thay thế cả khi `wantedTx` ĐANG được ghim — tức người gọi chỉ đúng
+    //    một vault, hệ thống không tìm thấy, và nó bắn vào một vault KHÁC rồi báo bằng
+    //    một dòng cảnh báo trong log. Đó là fail-open trên đường tiền: MAGIC sinh ra ở
+    //    vault không ai đợi, còn vault được ghim thì hết một lượt fire của epoch này.
+    //    Ghim mà không thấy là LỖI, không phải chỗ để đoán hộ.
     if (attempt === 5) {
+      if (wantedTx) break;
       vaultUtxo = vaultUtxos.find((u) => mine(u) && Data.from(u.datum!, VaultDatum).gen_schedules.length > 0);
-      if (vaultUtxo) console.log(`⚠ không thấy VAULT_TX_HASH=${wantedTx}; dùng vault có lịch: ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`);
+      if (vaultUtxo) console.log(`⚠ không ghim VAULT_TX_HASH; dùng vault có lịch: ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`);
       break;
     }
     console.log(`  … chưa thấy vault ở chỉ mục Blockfrost (lần ${attempt}), chờ 15s`);

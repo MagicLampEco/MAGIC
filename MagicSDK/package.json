@@ -1,6 +1,6 @@
 {
   "name": "@magiclamp/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "MagicLamp MAGIC protocol SDK \u2014 createVault + downstream ops for any Cardano integrator (DID-agnostic).",
   "main": "src/index.ts",

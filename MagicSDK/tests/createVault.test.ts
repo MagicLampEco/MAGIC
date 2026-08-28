@@ -80,8 +80,7 @@ describe("buildInitialVaultDatum", () => {
       current_effective_epoch: 0n, last_changed_epoch: 0n,
     });
     // ActivityState { recent_burn_epochs: [], consumed_credit: 0 }
-    // (nhãn off-chain vẫn là total_burns_count — cùng vị trí, cùng kiểu.)
-    expect(d.activity_state).toEqual({ recent_burn_epochs: [], total_burns_count: 0n });
+    expect(d.activity_state).toEqual({ recent_burn_epochs: [], consumed_credit: 0n });
     // sum_holdings(loyalty_holdings) == lamp_balance
     const sum = d.loyalty_holdings.reduce((s, h) => s + h.amount, 0n);
     expect(sum).toBe(d.lamp_balance);

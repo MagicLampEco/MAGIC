@@ -9,6 +9,13 @@ rút LAMP.
 > **Luật validator** mà mã dưới đây phải khớp: [`SPEC_V1.md`](./SPEC_V1.md).
 > **Module nào đang sống + số kiểm:** [`DevStatus.md`](../DevStatus.md).
 
+> **0.2.0 — MỘT THAY ĐỔI GÃY, đọc trước khi nâng:** trường thứ hai của
+> `VaultDatum.activity_state` đổi tên `total_burns_count` → **`consumed_credit`**. Mã đang đọc
+> `.total_burns_count` sẽ nhận `undefined` — **im lặng**, không lỗi biên dịch nếu bạn viết bằng
+> JS. Chuỗi thì KHÔNG đổi: Plutus Data mã hoá vị trí chứ không mã hoá tên, nên mọi UTxO đã tạo
+> vẫn đọc được bình thường. Lý do đổi: nhãn cũ nói SAI đơn vị — ô đó là **tổng lượng nanogic đã
+> tiêu**, không phải số lượt burn, và nó chính là ngân sách mà InstantGen dùng để tính thưởng.
+
 > **Hai điều dễ sai nhất, nói trước:**
 > 1. **Tạo vault BẮT BUỘC mint NFT danh tính.** Quên là LAMP kẹt vĩnh viễn — xem [§4](#4-tạo-vault).
 > 2. **Sinh MAGIC KHÔNG làm LAMP rời vault** (`I-ACT-7`). Mô hình cũ "trả LAMP sang Treasury

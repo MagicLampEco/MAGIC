@@ -96,16 +96,20 @@ const DelegationCertificateSchema = Data.Object({
   last_changed_epoch:      Data.Integer(),
 });
 
-// NOTE (PHA 2): InstantGen and ScheduleGen renamed the second field to
-// `consumed_credit` — nanogic actually consumed via BurnBatch, the base for the
-// §6.3 InstantGen reward. Same POSITION and same Integer type, so the Plutus
-// Data encoding is identical and this schema stays wire-compatible. The name
-// here is kept as `total_burns_count` because Consolidate / ProfileChange still
-// use that label on their side (SnapshotGen / VacuumGen dùng nhãn đó trước khi
-// sang Legacy — đổi tên ở đây chỉ tổ làm lệch nhãn giữa các module còn sống).
+// Trường thứ hai là TỔNG LƯỢNG nanogic đã tiêu qua BurnBatch và chưa quy thành thưởng
+// InstantGen (§6.3) — KHÔNG phải số lượt. Nhãn cũ `total_burns_count` nói sai đơn vị và
+// đã bỏ khỏi mọi module còn sống (Nợ #39, chốt 2026-08-28).
+//
+// Đổi tên KHÔNG đụng hợp đồng nhị phân: `Data.Object` mã hoã theo THỨ TỰ KHAI, tên khoá
+// JS chỉ là hình dạng đối tượng. Cùng vị trí, cùng `Data.Integer()` ⇒ cùng byte trên
+// chuỗi, mọi UTxO đã tạo vẫn đọc được.
+//
+// 🔴 CÁI VỠ LÀ API CỦA SDK, KHÔNG PHẢI CHUỖI. Mã ngoài đọc `.total_burns_count` nay nhận
+// `undefined` — im lặng, không lỗi biên dịch nếu bên đó viết bằng JS. Đây là thay đổi
+// BREAKING của SDK; xem `MagicSDK/INTEGRATOR_GUIDE_V1.md`.
 const ActivityStateSchema = Data.Object({
   recent_burn_epochs: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
-  total_burns_count:  Data.Integer(),
+  consumed_credit:    Data.Integer(),
 });
 
 const StreakStateSchema = Data.Object({

@@ -90,9 +90,14 @@ pub type VaultAttribution {
   total_events      : Natural,
 }
 
+// Trường thứ hai là TỔNG LƯỢNG nanogic đã tiêu, KHÔNG phải số lượt burn. Nhãn cũ
+// `total_burns_count` nói sai đơn vị và đã bỏ (Nợ #39, chốt 2026-08-28). Đổi tên KHÔNG
+// đụng hợp đồng nhị phân: Plutus Data mã hoá VỊ TRÍ, không mã hoá tên — cùng vị trí,
+// cùng kiểu `Natural`, cùng hình dạng. Module này không bao giờ đọc NGHĨA của trường,
+// nó chỉ bảo toàn nguyên `activity_state`.
 pub type ActivityState {
   recent_burn_epochs : List<(ByteArray, Natural)>,
-  total_burns_count  : Natural,
+  consumed_credit    : Natural,
 }
 
 pub type StreakState {

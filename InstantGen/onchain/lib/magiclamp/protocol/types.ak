@@ -122,20 +122,33 @@ pub type VaultAttribution {
 }
 
 // ── ActivityState ───────────────────────────────────────────
-// `consumed_credit` occupies the slot previously named `total_burns_count`
-// (same position, same type Natural → Plutus Data shape unchanged).
+// `consumed_credit` — TỔNG LƯỢNG nanogic đã tiêu, KHÔNG phải số lượt.
 //
 // SEMANTICS (§6.3 keyed-consumed): running total of MAGIC (nanogic) the owner
 // has ACTUALLY CONSUMED via BurnBatch and has NOT yet converted into an
 // InstantGen reward. BurnBatch adds Σburns; InstantGen zeroes it when it pays
 // the reward out. This is the on-chain `consumed` base for `reward(consumed)`.
-// 🔴 VA CHẠM HAI NHÁNH — Nợ #39. Trường THỨ HAI mang HAI NGHĨA khác nhau trên cùng
-// một ô byte: `origin/main` là `total_burns_count` (ĐẾM lượt), nhánh này là
-// `consumed_credit` (nanogic đã tiêu, chưa quy thưởng). Cùng vị trí, cùng kiểu, CÙNG
-// HÌNH DẠNG Plutus Data ⇒ decode KHÔNG BAO GIỜ báo lỗi. Off-chain viết theo main ghi số
-// ĐẾM vào ô mà `reward(consumed)` ở đây đọc là NGÂN SÁCH THƯỞNG. Spec im lặng về
-// ActivityState ở cả hai bản. Hoà nhánh theo tên trường sẽ im lặng đổi nghĩa dữ liệu đã
-// nằm trên chuỗi — quyết định của chủ nhân, không sửa được bằng đổi tên.
+//
+// ── Nợ #39 ĐÃ ĐÓNG 2026-08-28 ────────────────────────────────────────────────
+// Trường này từng mang hai nhãn trong cùng một kho: `total_burns_count` (nghe như ĐẾM)
+// và `consumed_credit` (LƯỢNG). Cùng ô byte, cùng kiểu ⇒ decode không bao giờ báo lỗi,
+// nên va chạm nhãn chỉ lộ ra bằng số tiền sai — và ở ĐÚNG ô này thì "số tiền sai" là
+// NGÂN SÁCH THƯỞNG: `reward(consumed)` ngay dưới đây đọc nó.
+//
+// Nghĩa KHÔNG mơ hồ. Ba trọng tài, bản ghi cũ viết "spec im lặng nên không có trọng
+// tài" là suy diễn SAI từ tiền đề đúng:
+//   1) validator: nhánh BurnBatch cộng `sum_burns(burns)` = Σ LƯỢNG, không phải
+//      `list.length(burns)`;
+//   2) INV-CASHBACK-BOUND ở `math.ak:73-75` — `reward ≤ consumed` chỉ có nghĩa khi hai
+//      vế cùng thứ nguyên nanogic;
+//   3) SPEC §7.3 đã xử đúng câu hỏi này cho trường anh em phía engage.
+// Cộng INV-MAGIC-CITIZEN (`BOUNDARIES.md §2`): thưởng gắn MAGIC ĐÃ TIÊU — một LƯỢNG.
+//
+// Nhãn cũ là nhãn của một trường CHẾT thời tiền-PHA-2 (`DESIGN-PHASE2.md §4.1`: chưa
+// handler nào từng ghi vào nó). Đổi tên KHÔNG đụng chuỗi, nhưng ĐÃ vỡ API MagicSDK —
+// breaking, cố ý.
+// 🔴 KHÔNG "thêm một trường cho nghĩa kia" — thêm trường là hỏng decode mọi UTxO đang
+// sống (Nợ #37).
 pub type ActivityState {
   recent_burn_epochs : List<(ByteArray, Natural)>,   // (app_id, epoch)
   consumed_credit    : Natural,                      // nanogic consumed, not yet rewarded

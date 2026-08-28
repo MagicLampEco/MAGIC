@@ -97,21 +97,35 @@ pub type VaultAttribution {
   total_events     : Natural,
 }
 
-// `consumed_credit` occupies the slot previously named `total_burns_count`
-// (same position, same type Natural → Plutus Data shape unchanged).
+// `consumed_credit` — TỔNG LƯỢNG nanogic đã tiêu, KHÔNG phải số lượt.
 // SEMANTICS (§6.3 keyed-consumed): running total of MAGIC (nanogic) the owner
 // has ACTUALLY CONSUMED via BurnBatch and not yet converted into an InstantGen
 // reward. BurnBatch adds Σburns here; only InstantGen (in the InstantGen vault)
 // spends it. Kept identical in both vault types so the datum stays portable.
-// 🔴 VA CHẠM HAI NHÁNH — Nợ #39. Trường THỨ HAI của kiểu này mang HAI NGHĨA
-// KHÁC NHAU trên cùng một ô byte:
-//     origin/main : total_burns_count : Natural   — ĐẾM số lượt burn
-//     nhánh này   : consumed_credit   : Natural   — nanogic đã tiêu, chưa quy thưởng
-// Cùng vị trí, cùng kiểu, CÙNG HÌNH DẠNG Plutus Data ⇒ decode KHÔNG BAO GIỜ báo lỗi.
-// Off-chain viết theo main ghi số ĐẾM vào ô mà InstantGen nhánh này đọc là NGÂN SÁCH
-// THƯỞNG. Spec im lặng hoàn toàn về ActivityState ở CẢ HAI bản, nên không có trọng tài.
-// Hoà hai nhánh theo tên trường sẽ im lặng đổi nghĩa dữ liệu đã nằm trên chuỗi.
-// Đây là quyết định của chủ nhân, không phải việc sửa được bằng đổi tên.
+//
+// ── Nợ #39 ĐÃ ĐÓNG 2026-08-28 ────────────────────────────────────────────────
+// Trường này từng mang hai nhãn trong cùng một kho: `total_burns_count` (nghe như
+// ĐẾM) ở Consolidate/ProfileChange/MagicSDK, `consumed_credit` (LƯỢNG) ở đây. Cùng
+// vị trí, cùng kiểu, CÙNG hình dạng Plutus Data ⇒ decode không bao giờ báo lỗi, nên
+// va chạm nhãn là thứ chỉ lộ ra bằng số tiền sai.
+//
+// Nghĩa KHÔNG hề mơ hồ, và đây là ba trọng tài — bản ghi cũ viết "spec im lặng nên
+// không có trọng tài" là suy diễn SAI từ một tiền đề đúng:
+//   1) Chính validator này: `vault.ak` nhánh BurnBatch cộng `sum_burns(burns)`, tức Σ
+//      LƯỢNG. Nếu là đếm thì dòng đó đã là `list.length(burns)`.
+//   2) INV-CASHBACK-BOUND (`InstantGen/onchain/lib/magiclamp/protocol/math.ak:73-75`):
+//      `reward ≤ consumed` chỉ có nghĩa khi hai vế cùng thứ nguyên nanogic.
+//   3) SPEC §7.3 đã xử đúng câu hỏi này cho trường anh em phía engage: cấp dịch vụ
+//      theo delta `consumed_nanogic`, KHÔNG theo `consumed_count`.
+// Cộng thêm INV-MAGIC-CITIZEN (`BOUNDARIES.md §2`): thưởng gắn MAGIC ĐÃ TIÊU — tiêu
+// là một LƯỢNG.
+//
+// Nhãn `total_burns_count` là nhãn của một trường CHẾT thời tiền-PHA-2 (không handler
+// nào từng ghi vào nó — `InstantGen/DESIGN-PHASE2.md §4.1`). Nay mọi module còn sống
+// dùng `consumed_credit`. Đổi tên KHÔNG đụng chuỗi (Plutus Data mã hoá vị trí), nhưng
+// ĐÃ vỡ API của MagicSDK — đó là thay đổi breaking, cố ý.
+// 🔴 TUYỆT ĐỐI KHÔNG "thêm một trường cho nghĩa kia": thêm trường là hỏng decode mọi
+// UTxO đang sống (Nợ #37).
 pub type ActivityState {
   recent_burn_epochs : List<(ByteArray, Natural)>,
   consumed_credit    : Natural,

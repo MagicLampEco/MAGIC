@@ -337,7 +337,7 @@ fn vault(
     },
     activity_state: ActivityState {
       recent_burn_epochs: [],
-      total_burns_count: 0,
+      consumed_credit: 0,
     },
     streak_state: StreakState { current_streak: streak, last_active_epoch: 0 },
     personal_delegate: None,

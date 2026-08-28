@@ -65,7 +65,7 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
   };
   activity_state: {
     recent_burn_epochs: never[];
-    total_burns_count:  bigint;
+    consumed_credit:    bigint;
   };
   streak_state: {
     current_streak:    bigint;
@@ -124,7 +124,7 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
     },
     activity_state: {
       recent_burn_epochs: [],
-      total_burns_count:  0n,
+      consumed_credit:    0n,
     },
     streak_state: {
       current_streak:    0n,

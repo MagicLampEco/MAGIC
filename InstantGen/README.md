@@ -184,7 +184,7 @@ const initialVault = {
   pending_profile:       null,
   last_updated_epoch:    BigInt(currentEpoch),
   delegation_cert:       { current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n },
-  activity_state:        { recent_burn_epochs: [], total_burns_count: 0n },
+  activity_state:        { recent_burn_epochs: [], consumed_credit: 0n },
   streak_state:          { current_streak: 0n, last_active_epoch: 0n },
   personal_delegate:     null,
   attribution:           {

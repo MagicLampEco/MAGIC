@@ -188,6 +188,23 @@ def compute_scope(changed_files, pkgs, aiken_projects):
 
 def get_changed_files():
     """Trả (ok, files, reason). ok=False => phải chạy tất, không phải danh sách rỗng."""
+    # ── Chế độ CỤC BỘ ─────────────────────────────────────────────────────────
+    # Cổng CI của kho này đang bị chặn vì thanh toán tài khoản, không phải vì mã
+    # (job đầu tiên trả về 0 bước, annotation nguyên văn: "The job was not started
+    # because recent account payments have failed..."). Nên phải có đường chạy ĐÚNG
+    # cổng đó ở máy, trước khi đẩy. Dùng CHUNG bộ dò này thay vì chép luật sang một
+    # kịch bản thứ hai — hai bộ dò là hai cổng khác nhau đội lốt một.
+    base = os.environ.get("LOCAL_BASE", "")
+    if base:
+        rc, _, err = sh("git", "rev-parse", "--verify", base)
+        if rc != 0:
+            return False, [], f"LOCAL_BASE={base!r} không phải ref hợp lệ: {err.strip()} — chạy tất."
+        rc, out, err = sh("git", "diff", "--name-only", f"{base}...HEAD")
+        if rc != 0:
+            return False, [], f"git diff {base}...HEAD thất bại (mã {rc}): {err.strip()} — chạy tất."
+        files = [line.strip() for line in out.splitlines() if line.strip()]
+        return True, files, "ok (chế độ cục bộ)"
+
     event = os.environ.get("GITHUB_EVENT_NAME", "")
     if event != "pull_request":
         return False, [], (
@@ -249,6 +266,13 @@ def main():
 
     gh_out = os.environ.get("GITHUB_OUTPUT")
     if not gh_out:
+        # Chạy ở máy: in ra stdout theo đúng cùng ba khoá để `verify.sh` đọc. KHÔNG
+        # thoát lỗi — thoát lỗi ở đây là biến chế độ cục bộ thành thứ không dùng được.
+        if os.environ.get("LOCAL_BASE"):
+            print(f"SCOPE_NPM={json.dumps(npm_out)}")
+            print(f"SCOPE_AIKEN={json.dumps(aiken_out)}")
+            print(f"SCOPE_RUN_ALL={'true' if run_all else 'false'}")
+            return
         print("::error::Không thấy biến môi trường GITHUB_OUTPUT — không chạy trong GitHub Actions?")
         sys.exit(1)
     with open(gh_out, "a", encoding="utf-8") as fh:

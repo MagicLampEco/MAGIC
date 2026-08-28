@@ -10,9 +10,10 @@
 // Chuỗi E2E trước đây kết luận theo biến môi trường, và ngày 2026-08-28 nó đúc lần
 // thứ hai lên đúng tài sản cũ trên Preprod. Đo được ngay sau đó:
 //     asset 28e916b0…744c414d50 · quantity = 72000000000000000 · mint_or_burn_count = 2
-// tức 72 tỷ tLAMP, GẤP ĐÔI mức hiến định 36 tỷ (BOUNDARIES.md §1: "cố định 36 tỷ,
-// không mint thêm, không burn"). Không validator nào gãy vì chuyện đó — và đó mới là
-// phần đáng ngại: bất biến nổi bật nhất của hệ vỡ trên testnet mà không gì đỏ.
+// tức 72 tỷ tLAMP, VƯỢT TRẦN 36 tỷ. Chú ý cách nói: 36 tỷ là TRẦN, không phải số đã
+// đúc — LAMP lazy-mint, tổng lịch sử luôn ≤ trần (`LAMP/Papers/Whitepaper.md:48`), nên
+// mainnet lúc đó mới ở mức vài triệu. Không validator nào gãy vì chuyện đó — và đó mới
+// là phần đáng ngại: bất biến nổi bật nhất của hệ vỡ trên testnet mà không gì đỏ.
 //
 // Chạy: NETWORK=Preprod BLOCKFROST_KEY=… WALLET_SEED=… npx tsx resolve_lamp_policy.ts
 // stdout (để wrapper `eval`/đọc):  LAMP_POLICY_ID=…  và  LAMP_ONCHAIN_SUPPLY=…

@@ -12,7 +12,16 @@ máy và chỉ `@import` tệp này — đừng chép nội dung sang đó.
 
 Hợp đồng Cardano L1 (PlutusV3, Aiken) cho hệ ba token:
 
-- **LAMP** — tài sản nền, native token, cố định 36 tỷ, không mint thêm, không burn.
+- **LAMP** — tài sản nền, native token. **36 tỷ là TRẦN, không phải số đã đúc.** LAMP
+  dùng lazy-mint: token chỉ sinh khi cần, tổng lịch sử luôn ≤ trần, và bộ đếm
+  `SupplyState` đơn điệu tăng (không rollback). Nguồn: `LAMP/Papers/Whitepaper.md:25,48`.
+  Không burn.
+
+  > Bản cũ của dòng này viết "cố định 36 tỷ, không mint thêm" và câu đó **đọc thành
+  > "36 tỷ đang nằm sẵn trên chuỗi"**. Nó tốn thật: 2026-08-28 chuỗi kiểm thử đúc chồng
+  > lên tLAMP Preprod, và bên này báo là "gấp đôi cung", trong khi hỏng thật là **vượt
+  > trần**. Mainnet lúc đó mới đúc vài triệu LAMP, đúng mô hình lazy-mint. Bất biến phải
+  > kiểm là `tổng ≤ 36 tỷ`, không phải `tổng == 36 tỷ`.
 - **MAGIC** — quyền-tiêu-dịch-vụ. **Không phải token**: là số kế toán trong datum vault,
   gắn PersonDID, **không chuyển nhượng**, dùng-hết-hoặc-mất theo epoch.
 - **CARP** — đồng-thanh-khoản, native token riêng, chuyển nhượng được.

@@ -71,7 +71,8 @@ async function main() {
   // nói gì về chuỗi. Chuỗi E2E từng kết luận theo biến môi trường và ngày
   // 2026-08-28 nó đúc lần thứ hai lên đúng tài sản cũ trên Preprod:
   //     quantity 72000000000000000 · mint_or_burn_count 2
-  // = 72 tỷ tLAMP, gấp đôi mức hiến định 36 tỷ (BOUNDARIES.md §1). Không validator
+  // = 72 tỷ tLAMP, VƯỢT TRẦN 36 tỷ (BOUNDARIES.md §1 — 36 tỷ là trần, không phải số
+  // đã đúc: LAMP lazy-mint, mainnet lúc đó mới vài triệu). Không validator
   // nào đỏ vì chuyện đó, nên nó lọt.
   const existing = await onchainSupply(lampUnit);
   if (existing > 0n) {

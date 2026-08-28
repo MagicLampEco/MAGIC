@@ -1,8 +1,28 @@
-// scripts/test/consume_only.ts — Tiêu MAGIC THẬT (co-spend Engage + InstantGen vault) trên Preview.
-// Run: npx tsx test/consume_only.ts   (hoặc thêm "test:consume" vào package.json)
+// scripts/test/consume_only.ts — Tiêu MAGIC THẬT (co-spend Engage + vault sinh MAGIC).
+// Run: VAULT_KIND=schedule npx tsx test/consume_only.ts
+//
+// ── HAI ĐƯỜNG, MỘT TỆP ────────────────────────────────────────────────────────
+//   `VAULT_KIND=schedule` (mặc định)  — vault ScheduleGen. ĐƯỜNG DUY NHẤT CHẠY ĐƯỢC.
+//   `VAULT_KIND=instant`              — vault InstantGen. Đang kẹt, xem dưới.
+//
+//   Vì sao một tệp phục vụ được cả hai: `consume` KHÔNG giải mã `VaultDatum`. Nó chỉ
+//   đọc trường 0 (`owner`) qua `un_constr_data`
+//   (ConsumeMAGIC/onchain/validators/consume.ak:443-461). Và hai `VaultDatum` trùng
+//   khít — 17 trường, cùng tên, cùng thứ tự — còn `BurnBatch` là constr 2 ở cả hai
+//   (InstantGen/offchain/src/types.ts:184 · ScheduleGen/offchain/src/types.ts:179).
+//   Nên phần dựng tx giống hệt nhau; chỉ khác bộ apply-param dựng lại hash vault.
+//   Chép tệp này thành hai bản là tạo ra hai thứ sẽ trôi khỏi nhau trong im lặng.
+//
+//   ĐƯỜNG instant ĐANG KẸT (Nợ #19): `consumed_credit` chỉ tăng ở `BurnBatch`, mà
+//   `BurnBatch` đòi `magic_batches` khác rỗng, mà nhánh `InstantGen` là nơi DUY NHẤT
+//   ghi `magic_batches` — vòng tự tham chiếu. ScheduleGen không có vòng đó:
+//   `ScheduleFire` ghi thẳng `magic_batches` (ScheduleGen/onchain/validators/vault.ak:483)
+//   và `BurnBatch` nằm ngay trong cùng validator (vault.ak:512).
 //
 // PREREQ (theo thứ tự):
-//   1. 01/02/05 + test:instant → có InstantGen vault UTxO mang ≥1 MagicBatch CÒN SỐNG.
+//   1a. VAULT_KIND=schedule: 01/03/06/07 → commit → chờ 2 epoch → fire
+//       ⟹ vault ScheduleGen UTxO mang ≥1 MagicBatch CÒN SỐNG.
+//   1b. VAULT_KIND=instant : 01/02/05 + test:instant (hiện chưa qua được, xem Nợ #19).
 //   2. 09_deploy_consume         → có PriceParam beacon + Engage UTxO.
 //   ⚠  §4.2 use-or-lose (decay_window=1): batch chỉ tiêu được trong ĐÚNG epoch nó
 //      được sinh. Trên Preview 1 epoch = 1 ngày → gen (test:instant) + consume PHẢI
@@ -10,12 +30,14 @@
 //
 // ENV (từ deploy trước):
 //   LAMP_POLICY_ID, UM_NFT_POLICY_ID, UM_DATUM_HASH, BACKING_NFT_POLICY_ID,
-//   BACKING_SCRIPT_HASH, VAULT_INSTANT_HASH   — để reconstruct vault InstantGen (như instant_only).
+//   VAULT_KIND=schedule: LAMP_POLICY_ID, SHARD_NFT_POLICY_ID, VAULT_SCHEDULE_HASH
+//   VAULT_KIND=instant : LAMP_POLICY_ID, UM_NFT_POLICY_ID, UM_DATUM_HASH,
+//                        BACKING_NFT_POLICY_ID, BACKING_SCRIPT_HASH, VAULT_INSTANT_HASH
 //   PRICE_NFT_POLICY, ENGAGE_NFT_POLICY, MAX_PRICE_STALE — để reconstruct consume hash.
 //   PRICE_BEACON_UTXO, ENGAGE_UTXO           — "txHash#idx" (in ra bởi 09).
 //   REF_CONSUME_UTXO       — ref-script `consume` (09 in ra).      BẮT BUỘC.
-//   REF_VAULT_INSTANT_UTXO — ref-script vault InstantGen (05 in ra). BẮT BUỘC.
-//   INSTANT_VAULT_UTXO                        — "txHash#idx" của vault đã gen (tuỳ chọn;
+//   REF_VAULT_SCHEDULE_UTXO / REF_VAULT_INSTANT_UTXO — ref-script vault. BẮT BUỘC.
+//   SCHEDULE_VAULT_UTXO / INSTANT_VAULT_UTXO  — "txHash#idx" của vault đã gen (tuỳ chọn;
 //                                               nếu thiếu → tự tìm ở vault addr theo owner).
 //   op_type (default 1), op_count (default 1).
 //
@@ -48,12 +70,15 @@ import {
   POLICY_IDS, ASSET_NAMES, PROTOCOL, SCRIPT_HASHES,
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
-import { consumeParams, instantVaultParams } from "../deployParams.js";
+import { consumeParams, instantVaultParams, scheduleVaultParams } from "../deployParams.js";
 import {
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
   ConsumeRedeemerSchema,
   type ConsumeRedeemerT, type PriceParamT, type EngageDatumT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
+// Lược đồ dùng chung cho CẢ HAI loại vault: đo được là trùng khít — 17 trường, cùng
+// tên, cùng thứ tự, `BurnBatch` constr 2 ở cả hai. Nhập từ một nơi để nếu hai bên có
+// ngày trôi khỏi nhau thì `tsc` gãy ngay, thay vì tx im lặng sai.
 import { VaultDatumSchema, VaultRedeemerSchema } from "../../InstantGen/offchain/src/types.js";
 import { fetchRefScriptUtxo } from "../refScripts.js";
 
@@ -96,7 +121,18 @@ async function main() {
 
   const priceNftPolicy  = req("PRICE_NFT_POLICY");
   const maxPriceStale   = BigInt(process.env.MAX_PRICE_STALE ?? "1");
-  const vaultInstantHash = req("VAULT_INSTANT_HASH");
+
+  const vaultKind = (process.env.VAULT_KIND ?? "schedule").toLowerCase();
+  if (vaultKind !== "schedule" && vaultKind !== "instant") {
+    throw new Error(`VAULT_KIND phải là "schedule" hoặc "instant" — nhận "${vaultKind}".`);
+  }
+  const isSchedule = vaultKind === "schedule";
+  const vaultHashEnv    = isSchedule ? "VAULT_SCHEDULE_HASH"     : "VAULT_INSTANT_HASH";
+  const vaultRefEnv     = isSchedule ? "REF_VAULT_SCHEDULE_UTXO" : "REF_VAULT_INSTANT_UTXO";
+  const vaultUtxoEnv    = isSchedule ? "SCHEDULE_VAULT_UTXO"     : "INSTANT_VAULT_UTXO";
+  const vaultDeployStep = isSchedule ? "bước 07_create_schedule_vault" : "bước 05_create_instant_vault";
+  const expectedVaultHash = req(vaultHashEnv, `${vaultDeployStep} in ra`);
+  console.log(`Loại vault:           ${vaultKind}`);
 
   // ── Dựng lại consume validator — apply-param THEO TÊN, dùng chung bản đồ với 09 ──
   const priceParamHash = req("PRICE_PARAM_HASH");
@@ -108,7 +144,7 @@ async function main() {
     consumeParams({
       priceNftPolicy,
       priceNftName:         PRICE_NFT_NAME,
-      vaultScriptHash:      vaultInstantHash,
+      vaultScriptHash:      expectedVaultHash,
       burnBatchConstr:      BURN_BATCH_CONSTR,
       maxPriceStale,
       msPerEpoch:           PROTOCOL.MS_PER_EPOCH,
@@ -128,20 +164,30 @@ async function main() {
     );
   }
 
-  // ── Dựng lại InstantGen vault — cùng bản đồ tham số với deploy/05 ───────────
-  const vaultBlueprint = await loadBlueprint("InstantGen");
+  // ── Dựng lại vault — CÙNG bản đồ tham số với bước deploy tương ứng ──────────
+  //   ScheduleGen: 4 tham số (deploy/07) · InstantGen: 7 tham số (deploy/05).
+  //   Thiếu hay lệch thứ tự MỘT tham số là ra hash khác, địa chỉ khác, và không
+  //   lệnh nào báo lỗi — chỉ có tx chết ở phase-1. Nên đối chiếu hash ngay dưới.
+  const vaultBlueprint = await loadBlueprint(isSchedule ? "ScheduleGen" : "InstantGen");
   const vaultV = findValidator(vaultBlueprint, "vault.vault.spend");
   const { hash: vaultHash } = appliedScript(
     vaultV,
-    instantVaultParams({
-      lampPolicyId:      POLICY_IDS.lamp,
-      lampAssetName:     ASSET_NAMES.lamp,
-      umNftPolicy:       POLICY_IDS.um_nft,
-      umScriptHash:      SCRIPT_HASHES.um_datum,
-      backingNftPolicy:  POLICY_IDS.backing,
-      backingScriptHash: SCRIPT_HASHES.backing_beacon,
-      msPerEpoch:        PROTOCOL.MS_PER_EPOCH,
-    }),
+    isSchedule
+      ? scheduleVaultParams({
+          lampPolicyId:  POLICY_IDS.lamp,
+          lampAssetName: ASSET_NAMES.lamp,
+          shardPolicyId: POLICY_IDS.shard_nft,
+          msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+        })
+      : instantVaultParams({
+          lampPolicyId:      POLICY_IDS.lamp,
+          lampAssetName:     ASSET_NAMES.lamp,
+          umNftPolicy:       POLICY_IDS.um_nft,
+          umScriptHash:      SCRIPT_HASHES.um_datum,
+          backingNftPolicy:  POLICY_IDS.backing,
+          backingScriptHash: SCRIPT_HASHES.backing_beacon,
+          msPerEpoch:        PROTOCOL.MS_PER_EPOCH,
+        }),
   );
   if (engageNftPolicy !== consumeHash) {
     throw new Error(
@@ -155,8 +201,18 @@ async function main() {
   // `types.ak`. Giữ cảnh báo lại sẽ đẩy người đọc đi "sửa" một codec đang đúng.
 
   const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
-  if (vaultHash !== vaultInstantHash) {
-    console.warn(`⚠  vault reconstruct hash ${vaultHash} ≠ VAULT_INSTANT_HASH ${vaultInstantHash} — kiểm tra param.`);
+  if (vaultHash !== expectedVaultHash) {
+    // CỐ Ý ném lỗi chứ không cảnh báo. Hash lệch nghĩa là địa chỉ vault lệch: tx sẽ
+    // dựng xong, gửi đi, rồi chết ở phase-1 với thông điệp không nói vì sao. Mà mỗi
+    // lần thử lại tốn một cửa sổ epoch (§4.2 use-or-lose), nên hỏng ở đây rẻ hơn
+    // hỏng ở đó rất nhiều.
+    throw new Error(
+      `Hash vault dựng lại (${vaultHash}) ≠ ${vaultHashEnv} (${expectedVaultHash}).\n` +
+      `  Loại vault đang chọn: ${vaultKind}. Kiểm bộ apply-param của ${vaultDeployStep}:\n` +
+      (isSchedule
+        ? "  LAMP_POLICY_ID · ASSET_NAMES.lamp (tLAMP/LAMP theo mạng) · SHARD_NFT_POLICY_ID · MS_PER_EPOCH"
+        : "  LAMP_POLICY_ID · ASSET_NAMES.lamp · UM_NFT_POLICY_ID · UM_DATUM_HASH · BACKING_NFT_POLICY_ID · BACKING_SCRIPT_HASH · MS_PER_EPOCH"),
+    );
   }
 
   // Lucid + wallet
@@ -186,14 +242,14 @@ async function main() {
   });
   const vaultRefUtxo = await fetchRefScriptUtxo({
     lucid,
-    outRef: req("REF_VAULT_INSTANT_UTXO", "bước 05_create_instant_vault in ra"),
+    outRef: req(vaultRefEnv, `${vaultDeployStep} in ra`),
     wantHash: vaultHash,
-    label: "REF_VAULT_INSTANT_UTXO",
+    label: vaultRefEnv,
   });
 
   let vaultUtxo: UTxO | undefined;
-  if (process.env.INSTANT_VAULT_UTXO) {
-    const vref = parseOutRef(process.env.INSTANT_VAULT_UTXO);
+  if (process.env[vaultUtxoEnv]) {
+    const vref = parseOutRef(process.env[vaultUtxoEnv]!);
     [vaultUtxo] = await lucid.utxosByOutRef([vref]);
   } else {
     const vs = await lucid.utxosAt(vaultAddr);

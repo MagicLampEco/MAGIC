@@ -62,7 +62,12 @@ import { parkAddressFor, publishRefScript } from "../refScripts.js";
 
 // Asset name const đọc từ validator (.ak `pub const ...`).
 const PRICE_NFT_NAME  = "5052494345"; // "PRICE" — price_nft.ak
-const BURN_BATCH_CONSTR = 2n;         // InstantGen VaultRedeemer: BurnBatch = constr 2
+// BurnBatch = constr 2 trong VaultRedeemer của CẢ HAI vault sinh MAGIC:
+//   InstantGen  — InstantGen/onchain/lib/magiclamp/protocol/types.ak:219-220
+//   ScheduleGen — ScheduleGen/onchain/lib/magiclamp/protocol/types.ak:160-163
+// Nên một giá trị dùng chung được. (Bản cũ của `scripts/README.md` nói hai module
+// khác constr — SAI, và cái sai đó làm việc dễ trông như việc khó.)
+const BURN_BATCH_CONSTR = 2n;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function isPureAda(u: UTxO): boolean {
@@ -72,9 +77,28 @@ function isPureAda(u: UTxO): boolean {
 async function main() {
   console.log("=== Step 9: Deploy ConsumeMAGIC infra (price NFT + beacon + engage NFT + Engage) ===\n");
 
-  const vaultInstantHash = process.env.VAULT_INSTANT_HASH;
-  if (!vaultInstantHash || vaultInstantHash === "FILL_AFTER_AIKEN_BUILD") {
-    throw new Error("VAULT_INSTANT_HASH missing — deploy InstantGen vault (05) first.");
+  // `consume` được apply-param bởi hash của MỘT loại vault sinh MAGIC. Nó KHÔNG giải
+  // mã `VaultDatum` — chỉ đọc trường 0 (`owner`) qua `un_constr_data`
+  // (ConsumeMAGIC/onchain/validators/consume.ak:443-461) — nên cùng mã nguồn phục vụ
+  // được cả vault InstantGen lẫn vault ScheduleGen, mỗi loại một instance, hash riêng.
+  //
+  // VÌ SAO CẦN ĐƯỜNG ScheduleGen: InstantGen hiện chưa cấp nổi 1 nanogic (Nợ #19 —
+  // `consumed_credit` chỉ tăng ở BurnBatch, mà BurnBatch cần `magic_batches` khác rỗng,
+  // mà nhánh InstantGen là nơi duy nhất ghi nó). ScheduleGen KHÔNG có vòng đó:
+  // `ScheduleFire` ghi thẳng `magic_batches` (ScheduleGen/onchain/validators/vault.ak:483)
+  // và `BurnBatch` nằm ngay trong cùng validator (vault.ak:512). Nên cửa sinh–tiêu
+  // MAGIC đóng kín trong ScheduleGen, và đó là đường DUY NHẤT đã chạy thật trên chuỗi.
+  const vaultScriptHash =
+    process.env.VAULT_HASH ??
+    process.env.VAULT_SCHEDULE_HASH ??
+    process.env.VAULT_INSTANT_HASH;
+  if (!vaultScriptHash || vaultScriptHash === "FILL_AFTER_AIKEN_BUILD") {
+    throw new Error(
+      "Thiếu hash vault. Đặt MỘT trong ba, theo loại vault mà instance consume này phục vụ:\n" +
+      "  VAULT_SCHEDULE_HASH — đường ScheduleGen (chạy được hôm nay); deploy bằng bước 07\n" +
+      "  VAULT_INSTANT_HASH  — đường InstantGen  (đang kẹt Nợ #19);   deploy bằng bước 05\n" +
+      "  VAULT_HASH          — ghi đè tường minh, thắng cả hai biến trên",
+    );
   }
   const maxPriceStale = BigInt(process.env.MAX_PRICE_STALE ?? "1");
   const priceThreshold = BigInt(process.env.PRICE_THRESHOLD ?? "1");
@@ -141,7 +165,7 @@ async function main() {
     consumeParams({
       priceNftPolicy,
       priceNftName:         PRICE_NFT_NAME,
-      vaultScriptHash:      vaultInstantHash,
+      vaultScriptHash,
       burnBatchConstr:      BURN_BATCH_CONSTR,
       maxPriceStale,
       msPerEpoch:           PROTOCOL.MS_PER_EPOCH,
@@ -165,8 +189,14 @@ async function main() {
   // ── PriceParam beacon datum (MVP base-price, khớp pricing.ak / price.ts) ──────
   const priceParam: PriceParamT = {
     op_prices: [
-      { op_type: 1n, base_price: 10_000_000n }, // ảnh 0.01 MAGIC
-      { op_type: 2n, base_price: 1_000_000n },  // CID  0.001 MAGIC
+      // Bảng phải TĂNG NGẶT theo op_type (pricing.ak: sorted_strict_op_types) và
+      // mỗi dòng phải thoả base_price × m_min ≥ Q (pricing.ak:127-135) ⟹ base_price ≥ 2.
+      // Trần 16 dòng (pricing.ak:53) — đang dùng 4.
+      // Giá lấy từ sổ op_type chuẩn ở ConsumeMAGIC/CONTRACT.md §A.
+      { op_type: 1n, base_price:    10_000_000n }, // ảnh          0.01 MAGIC
+      { op_type: 2n, base_price:     1_000_000n }, // neo CID      0.001 MAGIC
+      { op_type: 3n, base_price: 1_000_000_000n }, // lưu trữ /MB  1 MAGIC
+      { op_type: 4n, base_price: 1_000_000_000n }, // tính toán/MB 1 MAGIC
     ],
     demand_mult: demandMultQ, // 1.0× → price = base
     m_min: 500_000_000n,      // 0.5×
@@ -188,7 +218,7 @@ async function main() {
   console.log(`Network:              ${NETWORK}`);
   console.log(`Current epoch:        ${currentEpoch}`);
   console.log(`ms_per_epoch:         ${PROTOCOL.MS_PER_EPOCH}`);
-  console.log(`Vault InstantGen:     ${vaultInstantHash}`);
+  console.log(`Vault phục vụ:        ${vaultScriptHash}`);
   console.log(`Genesis price (g1):   ${g1.txHash}#${g1.outputIndex}`);
   console.log(`Seed engage  (g2):    ${g2.txHash}#${g2.outputIndex}`);
   console.log(`Price NFT policy:     ${priceNftPolicy}`);

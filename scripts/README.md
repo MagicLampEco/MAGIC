@@ -87,12 +87,31 @@ npm run test:schedule-commit
 npm run test:schedule-fire
 ```
 
-Nhưng **chưa cắm thẳng vào ConsumeMAGIC được**: `09_deploy_consume.ts` hôm nay ghim vault
-Instant — ném lỗi nếu thiếu `VAULT_INSTANT_HASH`, và đặt cứng `BURN_BATCH_CONSTR = 2n`
-(constr `BurnBatch` của `VaultRedeemer` InstantGen). Muốn consume từ vault Schedule thì
-phải truyền `vaultScriptHash` = hash vault Schedule **và** constr `BurnBatch` của
-`VaultRedeemer` ScheduleGen vào `consumeParams`. Hai giá trị đó vào apply-param — sai một
-cái là sai script hash, tức sai địa chỉ Engage, và không có gì báo.
+Và **đã cắm được vào ConsumeMAGIC** (2026-08-28):
+
+```
+bash run_consume_schedule_e2e.sh Preprod 1                    # dựng + cam kết lịch
+#  … chờ 2 epoch …
+bash run_consume_schedule_e2e.sh Preprod 2 <VAULT_TX_HASH>    # 09 → fire → tiêu MAGIC
+```
+
+🔴 **ĐÍNH CHÍNH — bản trước của đoạn này SAI, và cái sai đó làm việc dễ trông như việc khó.**
+Nó viết rằng phải truyền *"constr `BurnBatch` của `VaultRedeemer` ScheduleGen"* như thể nó
+khác InstantGen. Không khác: `BurnBatch` là **constr 2 ở cả hai** —
+`InstantGen/onchain/lib/magiclamp/protocol/types.ak:219-220` và
+`ScheduleGen/onchain/lib/magiclamp/protocol/types.ak:160-163`. Nên `BURN_BATCH_CONSTR = 2n`
+dùng nguyên được, và việc phải làm chỉ là truyền `vaultScriptHash` khác.
+
+Không sửa một dòng Aiken nào, vì `consume` **không giải mã `VaultDatum`** — nó đọc đúng
+trường 0 (`owner`) qua `un_constr_data` (`ConsumeMAGIC/onchain/validators/consume.ak:443-461`),
+cố ý, để một mã nguồn phục vụ được nhiều loại vault, mỗi loại một instance đã apply-param.
+`09_deploy_consume.ts` nay nhận `VAULT_HASH` / `VAULT_SCHEDULE_HASH` / `VAULT_INSTANT_HASH`,
+và `test/consume_only.ts` nhận `VAULT_KIND=schedule|instant`.
+
+Vẫn đúng một điều trong đoạn cũ, và nó là điều quan trọng nhất: các giá trị đó đi vào
+**apply-param** — sai một cái là sai script hash, tức sai địa chỉ Engage, và không có gì
+báo. Vì thế `consume_only.ts` nay **ném lỗi** khi hash dựng lại lệch env, chứ không còn
+chỉ cảnh báo: hỏng ở đó rẻ hơn hỏng trên chuỗi, nơi mỗi lần thử lại tốn một cửa sổ epoch.
 
 ---
 

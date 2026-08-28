@@ -46,6 +46,15 @@ const ShardDatum = ShardDatumSchema as unknown as ShardDatum;
 
 // ── Types ─────────────────────────────────────────────────────
 
+// Số ngày mỗi epoch KHÁC NHAU theo mạng: mainnet 5 ngày, Preview/Preprod 1 ngày
+// (ProtocolUtils: MS_PER_EPOCH_BY_NETWORK). Bản trước hardcode `× 5` nên trên testnet
+// nó in "~10 days" cho một khoảng chờ thật là 2 ngày — người vận hành đọc số đó sẽ
+// tưởng hỏng rồi bỏ đi. Suy từ tham số mạng, đừng nhớ mòn.
+function fmtDays(epochs: bigint, network: Network): string {
+  const days = Number(epochs) * Number(msPerEpoch(network)) / 86_400_000;
+  return days === 1 ? "1 day" : `${days} days`;
+}
+
 export interface CommitParams {
   lucid           : LucidEvolution;
   vaultUtxo       : UTxO;
@@ -237,13 +246,13 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   const summary = [
     `═══ ScheduleGen Commit ═══`,
     `Commit epoch:    ${commitEpoch}`,
-    `Schedule length: ${L} orders (~${Number(L) * 5} days)`,
+    `Schedule length: ${L} orders (~${fmtDays(L, network)})`,
     `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oil)`,
     `Total locked:    ${totalLock / 1_000_000n} tLAMP`,
     `rate_locked_q:   ${rateLockedQ} (immutable forever — T8)`,
     `M_i per fire:    ${nanogicToMagicStr(mPerFire)} MAGIC`,
     `Total MAGIC:     ${nanogicToMagicStr(mPerFire * L)} MAGIC (guaranteed)`,
-    `First fire:      epoch ${startFireEpoch} (~${Number(SCHEDULE_DELAY * 5n)} days)`,
+    `First fire:      epoch ${startFireEpoch} (~${fmtDays(SCHEDULE_DELAY, network)})`,
     `Last fire:       epoch ${endFireEpoch}`,
     `S_Q(${L}):       ${qToStr(sQ)}×`,
     `Schedule ID:     ${scheduleId.slice(0, 16)}...`,

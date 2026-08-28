@@ -138,6 +138,20 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
   `aiken check > /tmp/out.json 2>&1` rồi `json.load` sau khi bỏ mấy dòng tiến-độ trước
   dấu `{` đầu tiên. Bản cũ của dòng này viết "không in gì khi bị đưa qua pipe" và bảo
   dùng `script -q` — **sai**, và cái sai đó tốn nhiều lượt chạy lại.
+
+  🔴 **Nhưng có một ca `aiken check` thoát 1 mà KHÔNG in một dòng chẩn nào**: hằng hex
+  **lẻ ký tự** (`#"a11ce"`). Tự đo trên v1.1.21, cùng cây nguồn, chỉ đổi độ dài hằng:
+
+  ```
+  #"a11ce"   (5)  → exit=1, TOÀN BỘ stdout+stderr = 42 byte: "Compiling magiclamp/… (.)"
+  #"a11ce0"  (6)  → exit=0, JSON đầy đủ
+  ```
+
+  Nghĩa là công thức `json.load` ở trên sẽ ném `ValueError` trên chuỗi 42 byte đó, và lỗi
+  bạn đọc được là lỗi của **trình phân tích JSON**, không phải lỗi biên dịch thật — nó trỏ
+  đi chỗ khác. Nên khi `aiken check` thoát khác 0 mà output không có dấu `{`, hãy in
+  nguyên output thô ra rồi đi soi hằng hex, đừng đi soi pipe. Nguồn phát hiện: nhà LAMP
+  (`magic-etags-r`, 2026-08-28); kho này tự dựng lại phép đo để xác minh.
 - **Node.js** ≥ 20, ES modules. Off-chain dùng `@lucid-evolution/lucid` + `vitest`. Script
   deploy chạy thẳng bằng `tsx`.
 - **`npm install` phải chạy được từ checkout sạch, không có bước dựng tay đi trước.** Vì

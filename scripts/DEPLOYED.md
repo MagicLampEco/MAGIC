@@ -5,6 +5,17 @@ secret nào ở đây; secret chỉ nằm ở `$AGENT_SECRETS`.
 
 Chạy lại: `bash scripts/run_wakeme_e2e.sh Preview` · `bash scripts/run_wakeme_e2e.sh Preprod`.
 
+> 🔴 **TỆP NÀY LÀ ẢNH CHỤP, KHÔNG PHẢI BẢNG TRA.** Mọi hash và UTxO dưới đây đúng tại thời
+> điểm ghi cạnh nó, và **hết hạn mà không có gì báo**. Script hash đổi mỗi lần sửa
+> validator hoặc đổi apply-param; NFT one-shot đổi mỗi lần deploy lại; UTxO đổi ngay khi
+> có người tiêu. Đã xảy ra thật ngay trong tệp này: cụm shard Preview có **hai đời**, và
+> đời thứ hai cũng đã cũ kể từ `c84e2ff5` — xem mục "Shard trên Preview đã sang ĐỜI THỨ
+> HAI" bên dưới.
+>
+> Nên: **đừng chép giá trị từ đây vào một lần chạy mới.** Lấy từ `scripts/state.<Mạng>.sh`
+> do chính lượt chạy sinh ra, hoặc dựng lại rồi đọc `plutus.json`. Tệp này để trả lời câu
+> *"lần đó ra cái gì"*, không trả lời câu *"bây giờ là cái gì"*.
+
 > **Beacon `backing` là DỰNG-TẠM.** Nó không phản ánh dự trữ nào. `br_q = 2.0` là con số
 > bịa để mở cổng fail-closed §6.3 trên testnet, và `deploy/04_deploy_backing_fixture.ts`
 > từ chối chạy khi `NETWORK=Mainnet`. Beacon thật do phía CARP/CarpetMint phát.

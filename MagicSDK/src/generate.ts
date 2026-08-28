@@ -11,7 +11,7 @@
 //
 // WHAT IS DELIBERATELY NOT HERE
 // -----------------------------
-// * VacuumGen và SnapshotGen — cả hai đã dời sang `Legacy/genmagic-v3.3/`.
+// * VacuumGen và SnapshotGen — cả hai đã dời sang `Legacy/`.
 //   Vacuum vi phạm I-ACT-7 (validator của nó chuyển LAMP ra treasury); Snapshot
 //   chưa bao giờ hội tụ về vault datum PHA-2. Không còn validator trong cây làm
 //   việc, nên `VaultType` cũng đã thu về "Instant" | "Schedule" (types.ts).

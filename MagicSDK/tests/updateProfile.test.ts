@@ -8,7 +8,7 @@
 //   3. UPDATE-001 guard — Schedule vaults reject before any network call.
 //
 // SnapshotGen và VacuumGen từng có ca riêng ở đây. Hai module đó đã dời sang
-// Legacy/genmagic-v3.3: không còn plutus.json để đọc, và `VaultType` không còn
+// Legacy/: không còn plutus.json để đọc, và `VaultType` không còn
 // nhận chúng — bỏ các ca đó, không thay bằng fixture chép tay (fixture chép tay
 // chính là thứ trôi khỏi validator thật).
 
@@ -22,8 +22,15 @@ const VAULT_TITLE = "vault.vault.spend";
 
 // Resolve repo-root-relative paths to the built validator artifacts. This test
 // file lives at MagicSDK/tests/ → ../../ is the repo root.
+// SnapshotGen/InstantGen moved under Legacy/ — keep the mapping here so a module
+// relocation shows up as one edit, not a silent ENOENT in three tests.
+const MODULE_DIR: Record<string, string> = {
+  SnapshotGen: "Legacy/stale-genmodel-2026-07/SnapshotGen",
+  InstantGen:  "InstantGen",
+  ScheduleGen: "ScheduleGen",
+};
 const plutusPath = (module: string) =>
-  fileURLToPath(new URL(`../../${module}/onchain/plutus.json`, import.meta.url));
+  fileURLToPath(new URL(`../../${MODULE_DIR[module] ?? module}/onchain/plutus.json`, import.meta.url));
 
 describe("updateProfile — redeemer index resolution (real plutus.json)", () => {
   it("resolves UpdateProfile=3 on InstantGen", async () => {

@@ -28,7 +28,7 @@
 //   burn_batch_constr                   : constr index của BurnBatch trong
 //                                         VaultRedeemer của vault đó. Giá trị theo
 //                                         module: Instant=2, Schedule=2; và trong
-//                                         Legacy/genmagic-v3.3/ : Snapshot=1, Vacuum=4
+//                                         Legacy/ : Snapshot=1, Vacuum=4
 //                                         (SnapshotGen/VacuumGen ĐÃ dời sang Legacy —
 //                                         các constr trên vẫn ĐÚNG, ghi ở đây để tra
 //                                         cứu khi deploy lại vault legacy). Per-vault

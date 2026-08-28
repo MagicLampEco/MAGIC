@@ -8,7 +8,7 @@
 //
 // When you change a validator signature, change this table in the same commit.
 // Source of truth (chỉ còn 2 validator sống — SnapshotGen/VacuumGen đã sang
-// Legacy/genmagic-v3.3 nên không còn chữ ký nào để ghim):
+// Legacy/ nên không còn chữ ký nào để ghim):
 //   InstantGen/onchain/validators/vault.ak
 //   ScheduleGen/onchain/validators/vault.ak
 

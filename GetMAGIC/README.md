@@ -31,7 +31,7 @@ oracle cấp trước dưới dạng **voucher Ed25519 ký sẵn** tại thời 
 
 > Bản cũ của bảng này có thêm cột **SnapshotGen** đặt ngang hàng module sống, và mô tả
 > InstantGen theo mô hình trước PHA 2 ("User mua", "UM + PM", "Ngay"). SnapshotGen **đã
-> chết** — nằm ở `Legacy/genmagic-v3.3/`, không phải nguồn để so chiếu. InstantGen thì
+> chết** — nằm ở `Legacy/`, không phải nguồn để so chiếu. InstantGen thì
 > không còn là mua-MAGIC-bằng-LAMP: LAMP không rời vault, và độ lớn cấp phát bám vào MAGIC
 > đã tiêu thụ chứ không bám khoản chi. Ai thiết kế GetMAGIC Phase 2 theo bảng cũ sẽ dựng
 > luồng "trả tiền → chuyển LAMP → phát MAGIC" không tồn tại ở đâu trong hệ. Mô tả hiện

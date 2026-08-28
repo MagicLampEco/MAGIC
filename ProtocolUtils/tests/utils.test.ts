@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   slotToEpoch, lampToOildrop, nanogicToMagicStr,
-  selectLampForLock, removeLockedAmount, sumHoldings, sumLocked,
+  selectLampForLock, removeLockedAmount, unlockLockedAmount, sumHoldings, sumLocked,
   pruneActivityWindow, countActiveAppsInOacWindow, addBurnToActivity,
   isqrt, isqrt10th, verifyVd, vDampened, mulQ, clamp,
   cmpBigIntAsc, cmpBigIntDesc, Q,
@@ -101,6 +101,78 @@ describe("removeLockedAmount — §A.9", () => {
     expect(result.filter(x => x.is_locked)).toHaveLength(0);
     expect(result.find(x => !x.is_locked)?.amount).toBe(1000n);
     expect(sumHoldings(result)).toBe(1000n);  // 500+500 removed
+  });
+});
+
+// I-ACT-7: the difference that matters is Σholdings. `remove` shrinks it (and
+// with it the vault's lamp_balance); `unlock` leaves it alone.
+describe("unlockLockedAmount — I-ACT-7 (LAMP stays put)", () => {
+  const h = () => [
+    { amount: 500n,  acquired_epoch: 50n, is_locked: true  },  // oldest locked
+    { amount: 500n,  acquired_epoch: 60n, is_locked: true  },
+    { amount: 1000n, acquired_epoch: 70n, is_locked: false },
+  ];
+
+  it("Σholdings is invariant — unlike removeLockedAmount", () => {
+    expect(sumHoldings(unlockLockedAmount(h(), 1000n))).toBe(2000n);
+    expect(sumHoldings(removeLockedAmount(h(), 1000n))).toBe(1000n);
+  });
+
+  it("Frees oldest-locked-first, order = [unlocked, freed, still locked]", () => {
+    expect(unlockLockedAmount(h(), 500n)).toEqual([
+      { amount: 1000n, acquired_epoch: 70n, is_locked: false },  // already unlocked
+      { amount: 500n,  acquired_epoch: 50n, is_locked: false },  // epoch 50 freed
+      { amount: 500n,  acquired_epoch: 60n, is_locked: true  },  // still locked
+    ]);
+  });
+
+  it("Partial release splits one holding, parts sum to the original", () => {
+    const out = unlockLockedAmount([{ amount: 500n, acquired_epoch: 50n, is_locked: true }], 200n);
+    expect(out).toEqual([
+      { amount: 200n, acquired_epoch: 50n, is_locked: false },
+      { amount: 300n, acquired_epoch: 50n, is_locked: true  },
+    ]);
+    expect(sumHoldings(out)).toBe(500n);
+  });
+
+  it("Releasing more than is locked throws, not silently clamps", () => {
+    expect(() => unlockLockedAmount(h(), 1500n)).toThrow("GEN-LOCK-002");
+  });
+
+  // THE BOUND. Each partial release splits a holding and nothing is dropped, so
+  // without coalescing the list grew +1 per fire — past MAX_LOYALTY_HOLDINGS=64,
+  // which the vault enforces on withdrawal. That freezes the user's LAMP.
+  // P8: same input as `f_unlock_repeated_does_not_grow` in lock.ak — the two
+  // implementations must agree element-for-element, not just on the count.
+  it("Repeated releases match the Aiken vector exactly", () => {
+    let h = [{ amount: 1000n, acquired_epoch: 5n, is_locked: true }];
+    for (let i = 0; i < 3; i++) h = unlockLockedAmount(h, 100n);
+    expect(h).toEqual([
+      { amount: 300n, acquired_epoch: 5n, is_locked: false },
+      { amount: 700n, acquired_epoch: 5n, is_locked: true  },
+    ]);
+  });
+
+  it("Repeated releases do not grow the list", () => {
+    let h = [{ amount: 1000n, acquired_epoch: 5n, is_locked: true }];
+    for (let i = 0; i < 20; i++) h = unlockLockedAmount(h, 10n);
+    expect(h).toHaveLength(2);
+    expect(sumHoldings(h)).toBe(1000n);
+    expect(h).toEqual([
+      { amount: 200n, acquired_epoch: 5n, is_locked: false },
+      { amount: 800n, acquired_epoch: 5n, is_locked: true  },
+    ]);
+  });
+
+  // acquired_epoch is the loyalty age — distinct epochs must never merge.
+  it("Distinct epochs stay separate", () => {
+    expect(unlockLockedAmount(
+      [{ amount: 50n, acquired_epoch: 2n, is_locked: true },
+       { amount: 50n, acquired_epoch: 7n, is_locked: true }], 100n,
+    )).toEqual([
+      { amount: 50n, acquired_epoch: 2n, is_locked: false },
+      { amount: 50n, acquired_epoch: 7n, is_locked: false },
+    ]);
   });
 });
 

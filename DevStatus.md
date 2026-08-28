@@ -73,7 +73,7 @@ print(len(t),'test ·',len([x for x in t if x['status']!='pass']),'đỏ')"
 > Cảnh báo `self_ref` không dùng ở `GetMAGIC` cũng hết — chính chỗ đó là Nợ #41.
 
 > **Ghim phụ thuộc 2026-08-26 — stdlib ghim theo COMMIT SHA, không theo tag.** Cả 10
-> `aiken.toml` + 10 `aiken.lock` (8 module sống + 2 trong `Legacy/genmagic-v3.3/`) đổi
+> `aiken.toml` + 10 `aiken.lock` (8 module sống + 2 trong `Legacy/`) đổi
 > `aiken-lang/stdlib` từ `v3.1.0` sang `7d5cee54b2bb4eea211ae3bd806c7c39e5fd899d`. Lý do:
 > tag git **di chuyển được** ⇒ dựng lại cùng một commit ở hai thời điểm có thể ra hai
 > `plutus.json` khác nhau ⇒ đổi script hash ⇒ **đổi địa chỉ**, tiền ở địa chỉ cũ không ai
@@ -162,7 +162,7 @@ Ba module này **chưa được quyết**: hội tụ vào mô hình ba-token, h
 chọn "dời `Legacy/`" — chủ nhân đã bãi bỏ `Legacy/` ngày 2026-08-09; xem `## Không được xoá`.)
 Chờ chốt PM/tư-cách trong spec canonical rồi mới xử — dọn sớm là dọn mù.
 
-## Đã chết — ở `Legacy/genmagic-v3.3/`, không đọc
+## Đã chết — ở `Legacy/`, không đọc
 
 `SnapshotGen` · `VacuumGen` · 10 báo cáo testnet · `SnapshotGen-Simulator.HTML` ·
 `DEVELOPER_GUIDE.md` · 5 tệp script phục vụ riêng hai module trên.

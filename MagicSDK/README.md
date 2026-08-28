@@ -93,7 +93,7 @@ việc (còn nguyên, neo bằng tag `preserve/prepaidgen-stash-2026-07-30`). Ch
 | `Instant` | Cấp theo lượng MAGIC **đã tiêu** (`consumed_credit`) | **Không** (I-ACT-7) | Có, kèm kiểm tra cũ (C-UM-6) | `umNftPolicyId`, `umScriptHash`, `backingNftPolicyId`, `backingScriptHash` |
 | `Schedule` | Hợp đồng kỳ hạn, khoá suất lúc commit | **Không** — fire chỉ mở khoá | Không (suất đã khoá) | `shardPolicyId` |
 
-`SnapshotGen` và `VacuumGen` **đã dời sang `Legacy/genmagic-v3.3/`**: validator của chúng
+`SnapshotGen` và `VacuumGen` **đã dời sang `Legacy/`**: validator của chúng
 không còn trong cây làm việc, nên `VaultType` chỉ còn hai giá trị trên. Truyền
 `vaultType: "Snapshot"` hay `"Vacuum"` là lỗi kiểu — không có gì để apply param. **Đừng đọc
 `VaultType` chỉ-có-hai-giá-trị thành "mô hình bỏ PrepaidGen"** — hai chuyện khác nhau:

@@ -12,7 +12,7 @@ nhánh trong `InstantGen/onchain/validators/vault.ak` và
 Module nào đang sống: [`DevStatus.md`](../DevStatus.md).
 
 **Phạm vi:** hai vault còn sống. `SnapshotGen` và `VacuumGen` đã dời sang
-`Legacy/genmagic-v3.3/`; mọi câu trong tài liệu này chỉ nói về hai module dưới đây.
+`Legacy/`; mọi câu trong tài liệu này chỉ nói về hai module dưới đây.
 
 | Handler | InstantGen | ScheduleGen | Hiện thực |
 |---|---|---|---|

@@ -42,7 +42,7 @@ const BACKING_SCRIPT_HASH = process.env.BACKING_SCRIPT_HASH    ?? PLACEHOLDER_PO
 const UM_NFT_NAME = "554d44"; // "UMD" — khớp ASSET_NAMES.um_nft trong config.ts
 
 // ── Bảng module ──────────────────────────────────────────────────
-// SnapshotGen/VacuumGen đã dời sang Legacy/genmagic-v3.3 — không verify nữa.
+// SnapshotGen/VacuumGen đã dời sang Legacy/ — không verify nữa.
 interface ModuleSpec {
   /** Tên thư mục module ở gốc repo. */
   module: string;

@@ -14,7 +14,7 @@ _Agents/
 *.pat
 *.mnemonic
 
-# Aiken build artifacts
+# Aiken build artifacts (kể cả module lồng trong Legacy/)
 **/onchain/build/
 **/onchain/plutus.json
 MagicSDK/node_modules
@@ -22,5 +22,7 @@ MagicSDK/node_modules
 # Tệp nội bộ từng máy — ranh giới chia sẻ nằm ở BOUNDARIES.md (được track)
 CLAUDE.md
 
-# Trang thai deploy cuc bo theo mang (gia tri cong khai, ban ghi chuan la scripts/DEPLOYED.md)
+# Trạng thái deploy cục bộ theo mạng (giá trị công khai, bản ghi chuẩn là scripts/DEPLOYED.md).
+# Cả bản sao lưu: hash cũ trong tệp .bak là mồi cho việc deploy nhầm vào địa chỉ đã chết.
 scripts/state.*.sh
+scripts/state.*.sh.bak-*

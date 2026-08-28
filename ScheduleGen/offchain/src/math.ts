@@ -10,6 +10,7 @@ import {
 import {
   slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr,
   selectLampForLock, removeLockedAmount, cmpBigIntAsc,
+  unlockLockedAmount, coalesceHoldings,
   type LoyaltyHolding,
 } from "@magiclamp/protocol-utils";
 import { blake2b } from "@noble/hashes/blake2b";
@@ -18,70 +19,26 @@ export { slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr };
 export { selectLampForLock, removeLockedAmount };
 
 // ══════════════════════════════════════════════════════════════
-// I-ACT-7 — unlockLockedAmount: RELEASE a lock without moving LAMP
+// I-ACT-7 — unlockLockedAmount / coalesceHoldings: MỘT nguồn, ở ProtocolUtils
 // ══════════════════════════════════════════════════════════════
 //
-// A ScheduleGen fire generates MAGIC but must NOT displace LAMP. It therefore
-// RELEASES `amount` oildrop from the locked pool instead of removing it: each
-// selected holding keeps its amount and acquired_epoch, only `is_locked` flips
-// to false. Σholdings — hence lamp_balance and the LAMP inside the UTxO — is
-// invariant.
+// Hai hàm này TỪNG có hai bản: một trong ProtocolUtils (dùng chung), một viết
+// riêng ngay tại đây. Hai bản cho cùng kết quả, nhưng hai bản thì trôi được —
+// và P8 đòi phía TypeScript trùng BIT với `lock.ak: unlock_locked_amount` +
+// `coalesce_holdings`. Hoà nhánh 2026-08-28 gộp về bản dùng chung.
 //
-// Selection is oldest-locked-first and the result order is
-//   [unlocked-before] ++ [newly freed] ++ [still locked]
-// which mirrors lock.ak: unlock_locked_amount byte-for-byte (P8).
+// Nghĩa: fire GIẢI KHOÁ chứ không chuyển LAMP đi — mỗi holding được chọn giữ
+// nguyên amount và acquired_epoch, chỉ `is_locked` lật sang false. Σholdings,
+// và do đó lamp_balance cùng số LAMP thật trong UTxO, bất biến. Chọn theo
+// oldest-locked-first; thứ tự kết quả [đã-mở] ++ [vừa-mở] ++ [còn-khoá].
 //
-// `removeLockedAmount` (which drops the LAMP) is kept exported for reference
-// but is no longer used by any builder.
-export function unlockLockedAmount(
-  holdings : LoyaltyHolding[],
-  amount   : bigint,
-): LoyaltyHolding[] {
-  const unlocked = holdings.filter(h => !h.is_locked);
-  const locked   = holdings.filter(h =>  h.is_locked)
-    .sort((a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));  // oldest first
-
-  let remaining = amount;
-  const freed       : LoyaltyHolding[] = [];
-  const stillLocked : LoyaltyHolding[] = [];
-
-  for (const h of locked) {
-    if (remaining <= 0n) { stillLocked.push(h); continue; }
-    if (remaining >= h.amount) {
-      freed.push({ ...h, is_locked: false });
-      remaining -= h.amount;
-    } else {
-      freed.push({ amount: remaining,            acquired_epoch: h.acquired_epoch, is_locked: false });
-      stillLocked.push({ amount: h.amount - remaining, acquired_epoch: h.acquired_epoch, is_locked: true });
-      remaining = 0n;
-    }
-  }
-  if (remaining > 0n)
-    throw new Error(`GEN-LOCK-002: insufficient locked holdings (${remaining} oildrop short)`);
-  return coalesceHoldings([...unlocked, ...freed, ...stillLocked]);
-}
-
-// Merge holdings sharing (acquired_epoch, is_locked). Lossless: that pair is the
-// only thing that distinguishes two holdings, and `amount` is additive.
+// `coalesceHoldings` KHÔNG phải tuỳ chọn: mỗi lần giải khoá một phần là tách
+// một holding và không bao giờ bỏ đi cái nào, nên danh sách phình +1 mỗi lần
+// fire. `max_loyalty_holdings` = 64 và validate_fire cưỡng chế nó ⟹ một lịch
+// dài sẽ làm vault không fire nổi mà cũng không rút nổi: LAMP đóng băng.
 //
-// NOT OPTIONAL. Without it the list grew +1 per fire — a partial release always
-// splits one holding and nothing is ever dropped — and `max_loyalty_holdings`
-// is 64, enforced on-chain by validate_fire. A long schedule would leave the
-// vault unable to fire OR withdraw: LAMP frozen outright.
-//
-// Mirrors `coalesce_holdings` in lock.ak byte-for-byte, INCLUDING the rule that
-// the first occurrence keeps its position, so the order stays deterministic (P8).
-export function coalesceHoldings(holdings: LoyaltyHolding[]): LoyaltyHolding[] {
-  const out: LoyaltyHolding[] = [];
-  for (const h of holdings) {
-    const hit = out.find(
-      x => x.acquired_epoch === h.acquired_epoch && x.is_locked === h.is_locked,
-    );
-    if (hit) hit.amount += h.amount;   // first occurrence keeps its position
-    else out.push({ ...h });
-  }
-  return out;
-}
+// `removeLockedAmount` (xoá hẳn LAMP) vẫn xuất để tra cứu, không builder nào gọi.
+export { unlockLockedAmount, coalesceHoldings };
 
 // ══════════════════════════════════════════════════════════════
 // §4.2 — per-epoch use-or-lose CLIFF (decay_window = 1)

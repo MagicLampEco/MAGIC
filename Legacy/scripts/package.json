@@ -1,0 +1,29 @@
+{
+  "name": "@magiclamp/legacy-scripts",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "ARCHIVE — deploy/test scripts cho 4 module mo hinh cu. Khong dung cho deploy moi.",
+  "scripts": {
+    "deploy:um": "npx tsx deploy/02_deploy_um.ts",
+    "deploy:vault": "npx tsx deploy/04_create_vault.ts",
+    "test:snapshot": "npx tsx test/snapshot_only.ts",
+    "test:instant": "npx tsx test/instant_only.ts",
+    "deploy:instant-vault": "npx tsx deploy/05_create_instant_vault.ts",
+    "deploy:vacuum-vault": "npx tsx deploy/06_create_vacuum_vault.ts",
+    "test:vacuum-commit": "npx tsx test/vacuum_commit_only.ts",
+    "test:vacuum-fire": "npx tsx test/vacuum_fire_only.ts",
+    "test:withdraw": "npx tsx test/withdraw_only.ts",
+    "test:update-profile": "npx tsx test/update_profile_only.ts",
+    "test:multi-vault": "npx tsx test/multi_vault_only.ts"
+  },
+  "dependencies": {
+    "@lucid-evolution/lucid": "^0.4.0",
+    "@magiclamp/protocol-utils": "file:../../ProtocolUtils",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

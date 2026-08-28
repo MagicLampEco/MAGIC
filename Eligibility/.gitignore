@@ -1,0 +1,3 @@
+node_modules/
+onchain/build/
+onchain/plutus.json

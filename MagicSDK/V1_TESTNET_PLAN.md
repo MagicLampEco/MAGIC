@@ -1,7 +1,7 @@
 # MAGIC v1.0 — Testnet Plan  ⚠ QUÁ HẠN, CHỜ QUYẾT ĐỊNH
 
 > **Ma trận này dựng cho 4 vault module. Hai trong bốn đã chết.** `SnapshotGen` và
-> `VacuumGen` nằm ở `Legacy/genmagic-v3.3/` — mọi ca `Snapshot*` / `Vacuum*` bên dưới,
+> `VacuumGen` nằm ở `Legacy/` — mọi ca `Snapshot*` / `Vacuum*` bên dưới,
 > và `treasuryAddress` (LAMP đứng yên từ PHA-2, I-ACT-7), không chạy được. Chỉ còn
 > `Instant` + `Schedule`, và `Instant` đang fail-closed vì hai chốt độc lập
 > (xem [`INTEGRATOR_GUIDE_V1.md §6.2`](./INTEGRATOR_GUIDE_V1.md)) ⇒ **phần chạy được của

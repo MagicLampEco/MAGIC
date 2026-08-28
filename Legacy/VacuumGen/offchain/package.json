@@ -1,0 +1,23 @@
+{
+  "name": "@magiclamp/vacuumgen-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "VacuumGen off-chain SDK — GenMAGIC v3.3",
+  "scripts": {
+    "build":       "tsc",
+    "test":        "vitest run",
+    "test:watch":  "vitest",
+    "test:math":   "vitest run tests/math.test.ts",
+    "test:instant":"vitest run tests/instant.test.ts",
+    "typecheck":   "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lucid-evolution/lucid": "^0.4.0",
+    "@noble/hashes": "^1.4.0",
+    "@magiclamp/protocol-utils": "file:../../../ProtocolUtils"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest":     "^1.6.0"
+  }
+}

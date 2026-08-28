@@ -11,7 +11,7 @@ export type Profile = "Ember" | "Flame" | "Lantern";
  *   - "Schedule": forward contract with locked rate (LAMP stays put; the fire
  *                 only releases the lock — I-ACT-7)
  *
- * SnapshotGen và VacuumGen ĐÃ dời sang `Legacy/genmagic-v3.3/`: validator của
+ * SnapshotGen và VacuumGen ĐÃ dời sang `Legacy/`: validator của
  * chúng không còn trong cây làm việc, nên không có gì để `applyParamsToScript`.
  * Chào bán hai loại đó ở đây là nhánh chết — người tích hợp đi vào chỗ không có
  * validator. Chúng KHÔNG được thêm lại nếu không kèm validator sống.
@@ -55,7 +55,7 @@ export interface ValidatorBundle {
  *
  * KHÔNG còn `treasuryAddress`. Dưới I-ACT-7 không handler nào của hai validator
  * còn sống chuyển LAMP ra khỏi vault, nên tham số đó không còn ai đọc. Validator
- * duy nhất từng nhận nó (Vacuum) đã ở `Legacy/genmagic-v3.3/`.
+ * duy nhất từng nhận nó (Vacuum) đã ở `Legacy/`.
  */
 export interface ProtocolParams {
   /** "Preview" | "Preprod" | "Mainnet". */

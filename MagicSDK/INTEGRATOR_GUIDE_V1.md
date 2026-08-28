@@ -61,7 +61,7 @@ Mỗi loại một validator riêng ⇒ một địa chỉ Cardano riêng:
 | `Instant` | cấp theo lượng MAGIC **đã tiêu** (`consumed_credit`) | **Không** (`I-ACT-7`) | Có (fallback 0.5× khi UM cũ — C-UM-6) | đang fail-closed vì **HAI** chốt: (a) chờ BackingBeacon của CARP, (b) trần theo lịch luôn = 0 — xem §6.2 |
 | `Schedule` | hợp đồng kỳ hạn, khoá suất lúc commit | **Không** — fire chỉ mở khoá | Không (suất đã khoá) | cửa dùng được hôm nay |
 
-`SnapshotGen` và `VacuumGen` đã dời sang `Legacy/genmagic-v3.3/` — validator của chúng không
+`SnapshotGen` và `VacuumGen` đã dời sang `Legacy/` — validator của chúng không
 còn trong cây làm việc, `VaultType` chỉ còn hai giá trị trên. Lý do từng module:
 [`Legacy/README.md`](../Legacy/README.md); mốc thời gian: [`ChangeLog.md`](../ChangeLog.md).
 
@@ -388,7 +388,7 @@ dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trốn
 
 ### 6.3. Không có cửa nào khác qua SDK
 
-`SnapshotGen` và `VacuumGen` đã ở `Legacy/genmagic-v3.3/`: Vacuum chuyển LAMP ra treasury nên
+`SnapshotGen` và `VacuumGen` đã ở `Legacy/`: Vacuum chuyển LAMP ra treasury nên
 trái `I-ACT-7`; Snapshot chưa bao giờ hội tụ về `VaultDatum` hợp nhất. Không còn validator
 trong cây làm việc, nên cũng không có gì để export. Đừng dựng gì trên hai cái tên đó.
 
@@ -682,12 +682,12 @@ phải cửa thứ tư — chúng là mô hình cũ đã bỏ, chỉ còn bia m�
 | **Schedule** (hợp đồng kỳ hạn) | ✅ | **Không** — fire chỉ mở khoá | dùng được |
 | **Instant** (theo lượng đã tiêu) | ✅ | **Không** | fail-closed vì **HAI** chốt độc lập: chờ BackingBeacon của CARP **và** trần theo lịch luôn = 0 (`gen_schedules = []`) — xem §6.2 |
 | **Prepaid** (trả bằng CARP) | ❌ | — | mã CÒN (24 tệp, tag `preserve/prepaidgen-stash-2026-07-30`) nhưng chưa vào cây làm việc ⇒ chưa có đường gọi SDK |
-| **Snapshot / Vacuum** | ❌ | — | ở `Legacy/genmagic-v3.3/` |
+| **Snapshot / Vacuum** | ❌ | — | ở `Legacy/` |
 
 Không cơ chế nào còn "trả LAMP sang Treasury". Bảng cũ ghi `Transfer → Treasury` cho
 Instant/Vacuum/Schedule là mô tả mô hình **đã bỏ**.
 
-Các báo cáo testnet trong `Legacy/genmagic-v3.3/` ghi kết quả Preview của mô hình **trước**
+Các báo cáo testnet trong `Legacy/` ghi kết quả Preview của mô hình **trước**
 PHA-2 — đọc như tư liệu lịch sử, không phải mô tả hành vi hiện tại.
 
 ### Q3: Chuyển LAMP đi ví khác được chưa?

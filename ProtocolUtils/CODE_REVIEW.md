@@ -11,7 +11,7 @@
 >
 > | Đường dẫn tệp này nhắc | Thực tế |
 > |---|---|
-> | `SnapshotGen/...`, `VacuumGen/...` | hai module nằm ở `Legacy/genmagic-v3.3/`. Đừng lần theo, đừng khôi phục |
+> | `SnapshotGen/...`, `VacuumGen/...` | hai module nằm ở `Legacy/`. Đừng lần theo, đừng khôi phục |
 > | `ConsumeMAGIC/offchain/src/math.ts` (§Critical 1) | **không tồn tại**. Toán giá của ConsumeMAGIC nay ở `ConsumeMAGIC/pricing/src/price.ts` + `onchain/lib/magiclamp/consume/pricing.ak` |
 > | `UMKeeper/onchain/onchain/` (§Action items + §Lưu ý) | **thư mục không tồn tại**. "Chọn bản canonical" là việc đã hết — không còn hai bản để chọn |
 > | `ScheduleGen/onchain/onchain/` (§Action items + §Lưu ý) | **thư mục không tồn tại**. Như trên |

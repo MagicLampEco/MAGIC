@@ -181,7 +181,75 @@ export function selectLampForLock(
   return result;
 }
 
-/** §A.9 Oldest-locked-first removal — called at fire/burn time.
+/** I-ACT-7 — Oldest-locked-first RELEASE. Called at ScheduleGen fire time.
+ *
+ *  Unlike `removeLockedAmount`, the LAMP stays: holdings keep their amount and
+ *  acquired_epoch, only `is_locked` flips. Σholdings is therefore invariant, so
+ *  the vault's `lamp_balance` (and the real LAMP in the UTxO) does not move —
+ *  a fire mints MAGIC without eroding the user's principal.
+ *
+ *  Mirrors `unlock_locked_amount` in ScheduleGen/onchain/lib/.../lock.ak
+ *  byte-for-byte, including the result order (P8):
+ *    [already unlocked] ++ [newly freed] ++ [still locked]
+ *
+ *  Pure function: returns new array, does not mutate input.
+ */
+export function unlockLockedAmount(
+  holdings : LoyaltyHolding[],
+  amount   : bigint,
+): LoyaltyHolding[] {
+  const unlocked = holdings.filter(h => !h.is_locked);
+  const locked   = holdings.filter(h =>  h.is_locked)
+    .sort((a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));  // oldest first
+
+  let remaining = amount;
+  const freed:       LoyaltyHolding[] = [];
+  const stillLocked: LoyaltyHolding[] = [];
+
+  for (const h of locked) {
+    if (remaining <= 0n) { stillLocked.push(h); continue; }
+    if (remaining >= h.amount) {
+      freed.push({ ...h, is_locked: false });
+      remaining -= h.amount;
+    } else {
+      // Partial release splits one holding; the parts sum to the original.
+      freed.push({ amount: remaining, acquired_epoch: h.acquired_epoch, is_locked: false });
+      stillLocked.push({ amount: h.amount - remaining, acquired_epoch: h.acquired_epoch, is_locked: true });
+      remaining = 0n;
+    }
+  }
+  if (remaining > 0n) throw new Error(`GEN-LOCK-002: insufficient locked holdings (${remaining} oildrop short)`);
+  return coalesceHoldings([...unlocked, ...freed, ...stillLocked]);
+}
+
+/** Merge holdings sharing (acquired_epoch, is_locked). Lossless: that pair is the
+ *  only thing distinguishing two holdings, and `amount` is additive.
+ *
+ *  NOT optional. `unlockLockedAmount` splits a holding on every partial release
+ *  and never drops one, so without this the list grows +1 per fire — 21 entries
+ *  after 20 fires vs 2 under the old `removeLockedAmount`. MAX_LOYALTY_HOLDINGS
+ *  is 64 and the vault validator enforces it on withdrawal, so an L=200 schedule
+ *  would leave the user unable to withdraw at all.
+ *
+ *  Mirrors `coalesce_holdings` in ScheduleGen/onchain/lib/.../lock.ak, including
+ *  order: the first occurrence of a bucket keeps its position (P8).
+ */
+export function coalesceHoldings(holdings: LoyaltyHolding[]): LoyaltyHolding[] {
+  const out: LoyaltyHolding[] = [];
+  for (const h of holdings) {
+    const i = out.findIndex(x =>
+      x.acquired_epoch === h.acquired_epoch && x.is_locked === h.is_locked);
+    if (i >= 0) out[i] = { ...out[i]!, amount: out[i]!.amount + h.amount };
+    else out.push({ ...h });
+  }
+  return out;
+}
+
+/** §A.9 Oldest-locked-first REMOVAL — deletes the LAMP.
+ *
+ *  Legacy/VacuumGen only. ScheduleGen moved to `unlockLockedAmount` under
+ *  I-ACT-7: removing LAMP at fire time eroded the user's principal.
+ *
  *  Pure function: returns new array, does not mutate input.
  */
 export function removeLockedAmount(

@@ -10,7 +10,7 @@
 //
 // ══ BIA MỘ — ĐỪNG XOÁ `Snapshot` / `Vacuum` Ở TỆP NÀY ══════════════════════
 // `VaultType` (types.ts) đã thu về "Instant" | "Schedule" vì SnapshotGen và
-// VacuumGen dời sang `Legacy/genmagic-v3.3/`. Tệp NÀY thì KHÔNG được thu theo:
+// VacuumGen dời sang `Legacy/`. Tệp NÀY thì KHÔNG được thu theo:
 //   - `BatchSource` (variant Snapshot=0, Instant=1, Vacuum=2, Schedule=3), và
 //   - trường `vacuum_orders` trong `VaultDatum`
 // là CHỈ SỐ CONSTRUCTOR / ARITY của Plutus Data ĐÃ LÊN CHAIN. Bỏ một variant

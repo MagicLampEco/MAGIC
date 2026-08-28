@@ -22,7 +22,7 @@
 
 Chỉ còn **hai** cửa sinh sống: `ScheduleGen` và `InstantGen`. Bảng trước ở đây còn hai cột
 `VacuumGen` và `SnapshotGen` trình bày ngang hàng như đang chạy — cả hai đã chết, nằm ở
-`Legacy/genmagic-v3.3/`. Ai đọc bảng cũ sẽ đi thiết kế cho một cơ chế không tồn tại, hoặc
+`Legacy/`. Ai đọc bảng cũ sẽ đi thiết kế cho một cơ chế không tồn tại, hoặc
 tưởng mình phải chọn giữa bốn đường.
 
 | | ScheduleGen | InstantGen |

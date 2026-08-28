@@ -10,7 +10,7 @@
 //              ← ScheduleGen/onchain/validators/vault.ak
 //
 // Snapshot và Vacuum không có mặt ở đây vì validator của chúng đã dời sang
-// `Legacy/genmagic-v3.3/`. Đừng thêm case cho chúng nếu không kèm validator sống.
+// `Legacy/`. Đừng thêm case cho chúng nếu không kèm validator sống.
 //
 // `lamp_asset_name` is param #2 on EVERY vault (INV-VAULT-IDENTITY commit): the
 // validator compares the vault's LAMP holding by (policy, asset_name), and the

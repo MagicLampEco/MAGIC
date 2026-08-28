@@ -59,7 +59,7 @@ UMKeeper — lệnh đó chưa bao giờ chạy được gì, `keeper.ts` là th
 
 ## 2026-08-09 — Dọn mô hình bốn-cơ-chế vào `Legacy/`, dựng lại tài liệu-vào-đầu
 
-**Đổi gì.** `SnapshotGen/` và `VacuumGen/` rời sang `Legacy/genmagic-v3.3/`, cùng 10 báo
+**Đổi gì.** `SnapshotGen/` sang `Legacy/stale-genmodel-2026-07/`, `VacuumGen/` sang `Legacy/`, cùng 10 báo
 cáo testnet, `SnapshotGen-Simulator.HTML`, `DEVELOPER_GUIDE.md` và 5 tệp script chỉ phục
 vụ hai module đó. Đặc tả canonical `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` được mang về
 nhánh làm việc. `README.md` viết lại theo mô hình ba-token. Dựng `ChangeLog.md`,
@@ -74,7 +74,7 @@ bỏ, và mọi con trỏ "nguồn chân lý" trong mã đều treo vì `SPEC/` 
 vẫn còn thời sự.
 
 **Gãy gì nếu đang bám bản cũ.** Mọi đường dẫn `SnapshotGen/…` và `VacuumGen/…` đổi tiền
-tố thành `Legacy/genmagic-v3.3/…`. Bốn npm script biến mất khỏi `scripts/package.json`
+tố thành đường dẫn dưới `Legacy/…`. Bốn npm script biến mất khỏi `scripts/package.json`
 (`test:snapshot`, `deploy:vacuum-vault`, `test:vacuum-commit`, `test:vacuum-fire`); hai
 biến môi trường `VAULT_SNAPSHOT_HASH`, `VAULT_VACUUM_HASH` không còn ai đọc. Mã trong
 `Legacy/` **không cài được** — `file:../../ProtocolUtils` sau khi dời giải ra một đường

@@ -31,6 +31,13 @@ trình biên dịch `v1.1.21+42babe5`
 | `price_nft.price_nft` | `82080eb9cb27d9eb7e603b7e3ecc460db12103b1829203b55d549d64` |
 | `price_param.price_param` | `bc289f71cbfbbbb8e485c7699a9a3aef88ab92086bdb73f181a99906` |
 
+### `Eligibility/onchain`
+
+trình biên dịch `v1.1.21+42babe5`
+
+| validator | hash (CHƯA apply-param) |
+|---|---|
+
 ### `GetMAGIC/onchain`
 
 trình biên dịch `v1.1.21+42babe5`

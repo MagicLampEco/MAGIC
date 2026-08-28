@@ -10,6 +10,7 @@ import {
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet, ASSET_NAMES,
 } from "../config.js";
+import { onchainSupply } from "../resolve_lamp_policy.js";
 
 const LAMP_TOTAL_SUPPLY = 36_000_000_000_000_000n; // 36 × 10^15 oildrop (§19.9)
 const LAMP_ASSET_NAME   = ASSET_NAMES.lamp;         // "LAMP" hex
@@ -17,13 +18,33 @@ const LAMP_ASSET_NAME   = ASSET_NAMES.lamp;         // "LAMP" hex
 async function main() {
   console.log("=== Step 1: Mint testnet LAMP ===\n");
 
+  // ── Cổng 0: KHÔNG BAO GIỜ chạm Mainnet ──────────────────────────────────
+  // `04_deploy_backing_fixture.ts:52` đã có đúng chốt này; tệp NÀY thì chưa, và nó
+  // là tệp nguy hiểm nhất trong chín script deploy. Vì `config.ts:63` suy tên asset
+  // theo mạng, đặt NETWORK=Mainnet là đúc 36×10^15 đơn vị mang tên **LAMP** thật,
+  // dưới một policy id KHÔNG phải policy hiến định. Đốt token thì được; xoá
+  // `mint_or_burn_count` khỏi lịch sử chuỗi thì không, và explorer/ví/DEX sẽ hiện
+  // hai tài sản cùng tên LAMP mãi mãi.
+  // LAMP mainnet không do script này sinh ra — nó là việc của kho LAMP.
+  if (NETWORK === "Mainnet") {
+    throw new Error(
+      "Từ chối: 01_mint_lamp.ts là script TESTNET. Policy của nó là native `sig` " +
+      "đúc lại được vô hạn lần — không phải mô hình của LAMP mainnet. Đúc LAMP " +
+      "mainnet là việc của kho LAMP, không phải của chuỗi kiểm thử này.",
+    );
+  }
+
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
 
   const address = await lucid.wallet().address();
   console.log(`Wallet address: ${address}`);
 
-  // Simple time-locked minting policy (testnet only)
+  // Native script `sig` — MỘT chữ ký, KHÔNG có time-lock.
+  // 🔴 Dòng cũ ở đây viết "Simple time-locked minting policy". SAI: `{type:"sig"}`
+  //    không mang `before`/`after` nào, nên policy này đúc lại được VÔ HẠN LẦN chừng
+  //    nào khoá ví còn sống. Chính chỗ đọc-nhầm đó làm người ta yên tâm rằng chạy
+  //    lại là vô hại. Nó không vô hại — xem cổng ngay dưới.
   // Production: use multi-sig or native script with proper governance
   const { paymentCredential } = getAddressDetails(address);
   if (!paymentCredential) throw new Error("Cannot get payment credential from wallet");
@@ -43,6 +64,35 @@ async function main() {
   console.log(`\nPolicy ID: ${policyId}`);
   console.log(`LAMP unit: ${lampUnit}`);
   console.log(`Minting:   ${LAMP_TOTAL_SUPPLY} oildrop = 36,000,000,000 LAMP\n`);
+
+  // ── Cổng 1: HỎI CHUỖI, đừng hỏi biến môi trường ─────────────────────────
+  // Policy id trên suy TẤT ĐỊNH từ khoá ví ⟹ cùng ví thì lần chạy nào cũng ra cùng
+  // policy. Nên "LAMP_POLICY_ID đang rỗng" chỉ nói MÁY NÀY chưa ghi lại; nó không
+  // nói gì về chuỗi. Chuỗi E2E từng kết luận theo biến môi trường và ngày
+  // 2026-08-28 nó đúc lần thứ hai lên đúng tài sản cũ trên Preprod:
+  //     quantity 72000000000000000 · mint_or_burn_count 2
+  // = 72 tỷ tLAMP, gấp đôi mức hiến định 36 tỷ (BOUNDARIES.md §1). Không validator
+  // nào đỏ vì chuyện đó, nên nó lọt.
+  const existing = await onchainSupply(lampUnit);
+  if (existing > 0n) {
+    console.error(
+      `\n✗ DỪNG — trên ${NETWORK} đã có ${existing.toLocaleString("en-US")} oildrop ` +
+      `(= ${(existing / 1_000_000n).toLocaleString("en-US")} LAMP) dưới đúng policy này.`,
+    );
+    console.error(`  Đúc tiếp là CỘNG DỒN lên cung cũ, không phải tạo tài sản mới.`);
+    console.error(`  Dùng lại giá trị sẵn có:\n     LAMP_POLICY_ID=${policyId}`);
+    process.exit(1);
+  }
+
+  // ── Cổng 2: đúc lần đầu vẫn là ghi lên chuỗi, phải nói ra ────────────────
+  // Cổng 1 đã chặn ca hỏng thật. Cổng này chỉ để bước ghi-chuỗi không bao giờ là
+  // hệ quả PHỤ của một lệnh mà người chạy tưởng chỉ đi kiểm thử.
+  if (process.env.LAMP_MINT_CONFIRM !== NETWORK) {
+    console.error(`\n✗ DỪNG — bước này ĐÚC ${LAMP_TOTAL_SUPPLY} oildrop lên ${NETWORK}. Ghi lên chuỗi là không hoàn tác được.`);
+    console.error(`  Trên ${NETWORK} chưa có tài sản này, nên đúc lần đầu là hợp lệ. Nếu đúng ý:`);
+    console.error(`     LAMP_MINT_CONFIRM=${NETWORK} npx tsx deploy/01_mint_lamp.ts`);
+    process.exit(1);
+  }
 
   const utxos = await lucid.wallet().getUtxos();
   const balance = utxos.reduce((s, u) => s + (u.assets.lovelace ?? 0n), 0n);

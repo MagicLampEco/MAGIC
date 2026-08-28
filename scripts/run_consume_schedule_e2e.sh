@@ -50,6 +50,17 @@ STATE_FILE="deployed.$NET.env"
 persist() { printf '%s=%s\n' "$1" "$2" >> "$STATE_FILE"; }
 grab()    { printf '%s\n' "$2" | grep -oE "$1=[0-9a-f]+(#[0-9]+)?" | head -1 | cut -d= -f2- || true; }
 
+# 🔴 HAI KHÔNG GIAN TÊN, một mạng. `run_wakeme_e2e.sh` và `run_schedule_fire.sh`
+#   ghi trạng thái vào `state.$NET.sh`; hai runner consume thì đọc `deployed.$NET.env`.
+#   Nên chuỗi này từng kết luận "chưa có LAMP" TRONG KHI `state.Preprod.sh` đang giữ
+#   sẵn đúng `LAMP_POLICY_ID=28e916b0…` — câu trả lời nằm trên đĩa, ở sổ bên kia.
+#   Đó mới là nguyên nhân gốc của lần đúc chồng 2026-08-28, không phải "quên hỏi chuỗi".
+#   Đọc sổ CŨ trước, sổ MỚI sau ⟹ giá trị của `deployed.$NET.env` thắng khi cả hai có.
+LEGACY_STATE="state.$NET.sh"
+if [ -f "$LEGACY_STATE" ]; then
+  echo "▶ Đọc prereq của runner khác: $LEGACY_STATE"
+  set -a; . "./$LEGACY_STATE"; set +a
+fi
 if [ -f "$STATE_FILE" ]; then
   echo "▶ Đọc prereq đã lưu: $STATE_FILE"
   set -a; . "./$STATE_FILE"; set +a
@@ -72,10 +83,27 @@ echo "  → NETWORK=$NET, Blockfrost + seed đã nạp (không in)."
 if [ "$PHASE" = "1" ]; then
   # ── [1/5] LAMP policy ────────────────────────────────────────────────────
   if [ -z "${LAMP_POLICY_ID:-}" ]; then
-    echo; echo "▶ [1/5] Chưa có LAMP_POLICY_ID cho $NET → mint LAMP (01)…"
-    OUT="$(npx tsx deploy/01_mint_lamp.ts | tee /dev/tty)"
-    export LAMP_POLICY_ID="$(grab LAMP_POLICY_ID "$OUT")"
-    [ -n "${LAMP_POLICY_ID:-}" ] || { echo "✗ 01 không in LAMP_POLICY_ID"; exit 1; }
+    # 🔴 Bước này KHÔNG đúc nữa. Bản cũ gọi thẳng `deploy/01_mint_lamp.ts` khi biến
+    #   này rỗng — mà policy đúc là native `sig` suy TẤT ĐỊNH từ khoá ví, nên
+    #   "biến rỗng" chỉ nói MÁY NÀY chưa ghi lại, không nói gì về chuỗi. Ngày
+    #   2026-08-28 nó đúc lần thứ hai lên đúng tài sản cũ trên Preprod:
+    #   quantity 72000000000000000, mint_or_burn_count 2 — 72 tỷ tLAMP, gấp đôi
+    #   mức hiến định 36 tỷ (BOUNDARIES.md §1). Không test nào đỏ, không validator
+    #   nào gãy; bất biến nổi nhất của hệ vỡ trên testnet trong im lặng.
+    echo; echo "▶ [1/5] Chưa có LAMP_POLICY_ID cục bộ → HỎI CHUỖI (chỉ đọc, không đúc)…"
+    OUT="$(npx tsx resolve_lamp_policy.ts)"
+    LAMP_POLICY_ID="$(printf '%s\n' "$OUT" | grep '^LAMP_POLICY_ID=' | cut -d= -f2-)"
+    SUPPLY="$(printf '%s\n' "$OUT" | grep '^LAMP_ONCHAIN_SUPPLY=' | cut -d= -f2-)"
+    [ -n "${LAMP_POLICY_ID:-}" ] || { echo "✗ không dò được LAMP_POLICY_ID"; exit 1; }
+    if [ "${SUPPLY:-0}" = "0" ]; then
+      echo "✗ DỪNG — trên $NET chưa có tLAMP dưới policy $LAMP_POLICY_ID."
+      echo "  Đúc là ghi lên chuỗi, không hoàn tác được, nên chuỗi kiểm thử không tự làm."
+      echo "  Đúc một lần, có chủ đích:"
+      echo "     LAMP_MINT_CONFIRM=$NET npx tsx deploy/01_mint_lamp.ts"
+      echo "  rồi chạy lại lệnh này."
+      exit 1
+    fi
+    export LAMP_POLICY_ID
     persist LAMP_POLICY_ID "$LAMP_POLICY_ID"
   else
     echo; echo "▶ [1/5] Dùng lại LAMP_POLICY_ID=$LAMP_POLICY_ID"

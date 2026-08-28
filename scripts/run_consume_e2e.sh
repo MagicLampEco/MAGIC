@@ -41,6 +41,17 @@ STATE_FILE="deployed.$NET.env"
 persist() { printf '%s=%s\n' "$1" "$2" >> "$STATE_FILE"; }
 
 # Đọc lại prereq đã deploy cho ĐÚNG mạng này (nếu có) — export để thắng dotenv.
+# 🔴 HAI KHÔNG GIAN TÊN, một mạng. `run_wakeme_e2e.sh` và `run_schedule_fire.sh`
+#   ghi trạng thái vào `state.$NET.sh`; hai runner consume thì đọc `deployed.$NET.env`.
+#   Nên chuỗi này từng kết luận "chưa có LAMP" TRONG KHI `state.Preprod.sh` đang giữ
+#   sẵn đúng `LAMP_POLICY_ID=28e916b0…` — câu trả lời nằm trên đĩa, ở sổ bên kia.
+#   Đó mới là nguyên nhân gốc của lần đúc chồng 2026-08-28, không phải "quên hỏi chuỗi".
+#   Đọc sổ CŨ trước, sổ MỚI sau ⟹ giá trị của `deployed.$NET.env` thắng khi cả hai có.
+LEGACY_STATE="state.$NET.sh"
+if [ -f "$LEGACY_STATE" ]; then
+  echo "▶ Đọc prereq của runner khác: $LEGACY_STATE"
+  set -a; . "./$LEGACY_STATE"; set +a
+fi
 if [ -f "$STATE_FILE" ]; then
   echo "▶ Đọc prereq đã lưu: $STATE_FILE"
   set -a; . "./$STATE_FILE"; set +a

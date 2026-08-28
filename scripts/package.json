@@ -27,9 +27,10 @@
   },
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.30",
+    "@magiclamp/consumemagic-pricing": "file:../ConsumeMAGIC/pricing",
+    "@magiclamp/protocol-utils": "file:../ProtocolUtils",
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
-    "@magiclamp/protocol-utils": "file:../ProtocolUtils",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {

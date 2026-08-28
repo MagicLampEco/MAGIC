@@ -70,6 +70,7 @@ import {
   POLICY_IDS, ASSET_NAMES, PROTOCOL, SCRIPT_HASHES,
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { requiredForOp } from "@magiclamp/consumemagic-pricing";
 import { consumeParams, instantVaultParams, scheduleVaultParams } from "../deployParams.js";
 import {
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
@@ -98,12 +99,24 @@ function req(name: string, hint = "chạy 09_deploy_consume trước"): string {
   return v;
 }
 
-// Số học giá KHỚP on-chain pricing.ak: price = base × demand_mult / Q (floor); required = price × count.
+// 🔴 P8 — dùng CHUNG hàm với gói định giá, không tự chép công thức.
+//   Bản cũ ở đây tự tính SÀN-TRƯỚC-NHÂN-SAU:
+//        const unit = (base × demand_mult) / Q ;  return unit × op_count
+//   và chú thích của nó viết "required = price × count". Cả hai đều SAI so với
+//   trọng tài: `required = ⌊ base × demand_mult × op_count / Q ⌋`, GỘP rồi SÀN
+//   MỘT lần (ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak:53-57, và
+//   chính chú thích ở :49-51 cấm đúng cách làm cũ: phần dư mỗi op bị mất, cộng
+//   dồn theo op_count ⟹ THU THIẾU tới op_count nanogic mỗi dòng).
+//   Vì sao nó nằm im lâu: với `demand_mult = Q` hai công thức cho cùng kết quả,
+//   mà mọi lần chạy tới nay đều để demand_mult = Q. Nó chỉ lộ khi ai đó đặt hệ số
+//   cầu khác 1,0× — lúc đó `Σburns ≠ required` và tx bị từ chối ở consume.ak:171,
+//   còn người chạy thì đi soi hạ tầng chứ không soi số học.
+//   Phép đo: base=1e6, demand=1_333_333_333, count=5 → đúng 6_666_666, cũ 6_666_665.
 function computeRequired(pp: PriceParamT, opType: bigint, opCount: bigint): bigint {
   const row = pp.op_prices.find((p) => p.op_type === opType);
   if (!row) throw new Error(`op_type ${opType} không có trong beacon op_prices`);
-  const unit = (row.base_price * pp.demand_mult) / PROTOCOL.Q;
-  return unit * opCount;
+  // Bảng giá là của BEACON đang sống trên chuỗi, không phải bảng MVP mặc định.
+  return requiredForOp(Number(opType), opCount, pp.demand_mult, { [Number(opType)]: row.base_price });
 }
 
 // Mirror InstantGen decay.ak: is_expired = current - created >= decay_window.

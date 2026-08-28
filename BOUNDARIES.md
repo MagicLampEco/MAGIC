@@ -74,6 +74,40 @@ mainnet không bao giờ nhìn thấy LAMP của chính nó.
 Mọi nhánh spend đòi NFT còn nguyên. Off-chain tạo vault **bắt buộc** mint NFT — quên là
 LAMP kẹt vĩnh viễn. Lý do: Cardano chỉ chạy validator lúc tiêu, không bao giờ lúc tạo.
 
+**Apply-param được phép thay đổi theo LOẠI script, KHÔNG theo từng thực thể.** Đây là
+kết luận của D12, chốt 2026-08-28 sau khi hai kiến trúc `INV-VAULT-IDENTITY` không tương
+thích nhị phân cùng tồn tại trong kho. Bản được giữ là bản đang mô tả ngay bên trên: mint
+gộp vào chính script vault, `asset_name` suy từ `seed`, một policy phát N vault-NFT.
+
+Nghĩa đen, cho người sắp sửa mã: **apply-param là tham số lúc BIÊN DỊCH.** Đổi giá trị của
+nó là đổi bytes ⟹ đổi script hash ⟹ đổi địa chỉ ⟹ phải công bố một script tham chiếu
+CIP-33 mới. Cho nên số bản đã biên dịch phải nuôi bằng đúng số **giá trị khác nhau** mà
+apply-param nhận. Từ đó ra một phép thử một dòng, dùng được ở mọi module:
+
+> Trước khi thêm một apply-param, hỏi: **giá trị này đổi theo cái gì?** Đổi theo *loại*
+> script (mỗi cửa gen một bản: Schedule, Instant, Prepaid) thì được — N nhỏ, hữu hạn, và
+> mỗi bản là một thứ khác nhau thật. Đổi theo *từng người dùng / từng UTxO / từng lần tạo*
+> thì KHÔNG — định danh thực thể phải nằm ở **datum** hoặc ở **tên tài sản**, không nằm ở
+> apply-param.
+
+Bản bị loại chết đúng phép thử đó, và chính nó tự khai ra: `origin/main:ConsumeMAGIC/onchain/validators/vault_id_nft.ak:14-16`
+viết *"MVP là MỘT policy / MỘT vault — mỗi vault deploy một `genesis_ref` riêng nên policy
+id khác nhau, và `consume.ak` được apply-param bởi đúng cặp policy/name của vault nó phục
+vụ"*. Ghép hai vế lại: `genesis_ref` đổi theo từng lần tạo vault ⟹ policy id đổi theo từng
+vault ⟹ `consume` đổi hash theo từng vault. Mỗi người dùng mở vault là kho phải biên dịch,
+deploy và công bố ref-script một bản `consume` RIÊNG. Cộng với Nợ #20 (`consume` đã phải
+tách giao dịch vì vượt trần 16.384 byte) thì chi phí mở một vault tăng tuyến tính theo số
+người dùng — trong khi mô hình là **mỗi PersonDID một vault**.
+
+Bản được giữ vẫn có `vault_script_hash` làm apply-param (`ConsumeMAGIC/onchain/validators/consume.ak:75-83`,
+7 tham số) và điều đó ĐÚNG phép thử: nó đổi theo *loại* vault, không theo từng vault. Ba
+cửa gen ⟹ ba bản `consume`, hết. Cùng lý do đó, `consume` cố ý không giải mã `VaultDatum`
+mà chỉ đọc trường 0 qua `un_constr_data` (`consume.ak:442-461`) — để một mã nguồn phục vụ
+được nhiều loại vault.
+
+Hệ quả phải làm ngay khi mở một loại vault mới: deploy thêm MỘT bản `consume` apply-param
+bằng hash của nó. Không phải sửa Aiken. Xem `scripts/run_consume_schedule_e2e.sh`.
+
 **`Σburns == required`** (ConsumeMAGIC) — dấu bằng. Lệch một nanogic là giao dịch bị từ
 chối. Nên mọi thay đổi trong bộ định giá phải giữ hai phía khớp tuyệt đối.
 

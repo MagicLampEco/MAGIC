@@ -100,6 +100,36 @@ Script tham chiếu CIP-33 dùng lại, không dựng mới:
 `REF_VAULT_SCHEDULE_UTXO=d16d9a2384e91a4a6abd955b6a05e3cc11993c98a24be32990d5bd55f028a085#0` ·
 `REF_SHARD_UTXO=5458caa235ac2326b1dbe13f0d445d2d6c16b96ba5277377818bb971b1606648#0`
 
+### Shard trên Preview đã sang ĐỜI THỨ HAI — và đời thứ hai cũng đã cũ
+
+Bảng trên là **đời 1**. Trạng thái cục bộ `scripts/state.Preview.sh` (ghi 2026-08-26, tệp
+này bị gitignore nên không ai ngoài máy đó thấy) mang một bộ khác:
+
+| Thứ | Đời 1 — 2026-08-12 | Đời 2 — 2026-08-26 |
+|---|---|---|
+| Shard NFT policy | `67368ae03ab71778b28a87eb2c51b0942ddd1319e43967c6ebffcf8a` | `98eb1bcb8e3f6970640ef2d28d50f38f84d1a9dc393139d03438609d` |
+| Shard script hash | `165b30aaac98dd7bff1e95e9312e4619da3e0adc55255e33ec6057e0` | `f5769884276a51dd92258a87aa66fbf403087221de300a936785298f` |
+
+`LAMP_POLICY_ID`, `UM_DATUM_HASH`, `UM_NFT_POLICY_ID` thì **không đổi** giữa hai đời — nên
+thứ trôi là riêng cụm shard.
+
+Ba điều đọc thẳng từ đó:
+
+1. **Shard là one-shot, không mint lại được.** `shard_nft` nhận `genesis_ref` làm apply-param,
+   nên mỗi lần dựng lại là một policy id mới và 16 NFT mới. 16 NFT của đời 1 vẫn nằm trên
+   Preview, ở địa chỉ `165b30aa…`, và không validator nào đang chạy còn trỏ tới chúng. Chúng
+   không mất — chúng mồ côi. Muốn dùng lại phải deploy lại đúng bản dựng đời 1, mà điều đó
+   đòi ghim đủ ba thứ ở mục "Bản dựng" đầu tệp này.
+2. **Đời 2 cũng đã cũ tính tới 2026-08-27.** `c84e2ff5` sửa `shard_nft.ak` (ràng datum khởi
+   tạo, Nợ #33) ⟹ bytes biên dịch đổi ⟹ policy id đổi ⟹ `shard` (nhận `shard_policy_id` làm
+   apply-param) đổi hash theo. Lần dựng tiếp theo trên Preview sẽ ra **đời 3**. Đừng dùng
+   `f5769884…` làm mốc để nối tiếp việc.
+3. **Vì sao ghi vào đây chứ không để trong tệp trạng thái.** `scripts/state.*.sh` là trạng
+   thái cục bộ của MỘT máy, bị gitignore. Bản sao lưu `state.Preview.sh.bak-2026-08-20` từng
+   là nơi duy nhất còn giữ cụm đời 1 ngoài tệp này — đã đối chiếu từng dòng, nó không mang
+   dữ kiện nào mà bảng đời 1 ở trên chưa có, nên đã xoá để hai bản khác nhau thôi nằm cạnh
+   nhau gây đọc nhầm.
+
 ## Preprod — 2026-08-12
 
 | Thứ | Giá trị |

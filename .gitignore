@@ -26,3 +26,4 @@ CLAUDE.md
 # Cả bản sao lưu: hash cũ trong tệp .bak là mồi cho việc deploy nhầm vào địa chỉ đã chết.
 scripts/state.*.sh
 scripts/state.*.sh.bak-*
+__pycache__/

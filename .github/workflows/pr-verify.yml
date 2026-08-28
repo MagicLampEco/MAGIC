@@ -100,6 +100,66 @@ jobs:
             npm install --no-audit --no-fund
           fi
 
+      # ── Vì sao bước này tồn tại ───────────────────────────────────────────
+      # `MagicSDK/tests/vaultParams.test.ts` là CỔNG ARITY: nó đọc `parameters[]`
+      # thẳng từ `plutus.json` do `aiken build` sinh, rồi đối chiếu THEO TÊN với
+      # danh sách apply-param của SDK. Đó đúng lớp lỗi mà BOUNDARIES.md §5 gọi là
+      # bài học đắt nhất của kho — danh sách apply-param lệch chữ ký validator thì
+      # không test nào đỏ, không compile nào gãy, và sai chỉ lộ ra dưới dạng một
+      # vault mainnet có LAMP thật mà không ai spend được.
+      #
+      # Mà `plutus.json` là ARTIFACT, đã gitignore (BOUNDARIES.md §4). Trên máy
+      # người ta nó có sẵn từ lần build trước, nên cổng này XANH ở local và ĐỎ ở
+      # CI với `ENOENT` — tức cổng đắt nhất của kho là cổng chưa từng chạy trên CI.
+      # Bỏ qua test khi thiếu tệp thì còn tệ hơn: cổng biến mất trong im lặng,
+      # đúng thứ đầu file này cảnh báo.
+      #
+      # Dựng TẤT CẢ project Aiken chứ không đoán gói này đọc blueprint nào: đường
+      # dẫn được ghép động (`../../${module}/onchain/plutus.json`) nên không grep
+      # tĩnh ra được, và nguyên tắc của file này là thà chạy thừa còn hơn bỏ sót.
+      - name: Gói này có đọc plutus.json không?
+        id: needs_blueprint
+        working-directory: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          if grep -rqs --include='*.ts' --include='*.mjs' --include='*.js' \
+               'onchain/plutus[.]json' . --exclude-dir=node_modules --exclude-dir=dist; then
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+            echo "Gói này đọc plutus.json — sẽ dựng blueprint trước khi chạy test."
+          else
+            echo "yes=false" >> "$GITHUB_OUTPUT"
+            echo "Gói này không đọc plutus.json — bỏ qua bước dựng blueprint."
+          fi
+
+      - name: Cài Aiken + dựng blueprint mọi project
+        if: steps.needs_blueprint.outputs.yes == 'true'
+        env:
+          AIKEN_VERSION: "1.1.21"
+          AIKEN_ASSET: "aiken-x86_64-unknown-linux-musl.tar.gz"
+          AIKEN_SHA256: "9fe0bb94efbb79f4d351664def3da0d58c7e30716fcb65590ff9b6c6b0ffb715"
+        run: |
+          set -euo pipefail
+          url="https://github.com/aiken-lang/aiken/releases/download/v${AIKEN_VERSION}/${AIKEN_ASSET}"
+          curl -sSL --fail -o aiken.tar.gz "$url"
+          echo "${AIKEN_SHA256}  aiken.tar.gz" | sha256sum -c -
+          tar -xzf aiken.tar.gz
+          mkdir -p "$HOME/.local/bin"
+          mv "aiken-x86_64-unknown-linux-musl/aiken" "$HOME/.local/bin/aiken"
+          chmod +x "$HOME/.local/bin/aiken"
+          export PATH="$HOME/.local/bin:$PATH"
+          aiken --version
+          rm -rf aiken.tar.gz aiken-x86_64-unknown-linux-musl
+          # `aiken build` KHÔNG chạy test ⇒ bước này không nhân đôi job
+          # `aiken check` bên dưới; nó chỉ sinh artifact.
+          while IFS= read -r toml; do
+            d="$(dirname "$toml")"
+            echo "::group::aiken build $d"
+            ( cd "$d" && aiken build )
+            echo "::endgroup::"
+          done < <(find . -name aiken.toml -not -path '*/node_modules/*' -not -path './Legacy/*' | sort)
+          echo "Blueprint đã dựng:"
+          find . -name plutus.json -not -path '*/node_modules/*' -not -path './Legacy/*' | sort
+
       - name: npm test (chỉ khi package.json thật sự có script "test")
         working-directory: ${{ matrix.package }}
         run: |
@@ -109,6 +169,22 @@ jobs:
           else
             echo "Gói ${{ matrix.package }} không có script \"test\" trong package.json — bỏ qua bước này."
           fi
+
+      # ── Vì sao bước này tồn tại ───────────────────────────────────────────
+      # `scripts/` typecheck bằng `tsc --noEmit`, mà mã trong đó import thẳng
+      # `../MagicSDK/src/...` và `../ScheduleGen/offchain/src/...`. tsc đi theo
+      # những import đó và biên dịch cả nguồn của gói anh em — nhưng gói anh em
+      # KHÔNG phải `file:` dependency, nên bước cài tôpô ở trên không chạm tới
+      # chúng và `node_modules` của chúng rỗng. Kết quả: hàng chục lỗi
+      # `Cannot find module '@lucid-evolution/lucid'` cùng một chuỗi `implicit
+      # any` ĂN THEO — lỗi thật bị chôn giữa đám lỗi giả, và không ai đọc nữa.
+      #
+      # Bước này quét import tương đối THOÁT KHỎI gói, tìm gói npm gần nhất chứa
+      # đích, rồi cài phụ thuộc ở đó. Không đoán, không khoá cứng tên gói nào.
+      - name: Cài phụ thuộc của gói anh em mà mã gói này import qua đường dẫn tương đối
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/install_sibling_deps.py "${{ matrix.package }}"
 
       - name: npm run typecheck (chỉ khi package.json thật sự có script "typecheck")
         working-directory: ${{ matrix.package }}
@@ -158,11 +234,13 @@ jobs:
         working-directory: ${{ matrix.project }}
         run: |
           set -euo pipefail
-          # BOUNDARIES.md: Aiken 1.1.21 KHÔNG in gì khi output bị đưa qua pipe
-          # (kể cả log của GitHub Actions, vốn không phải TTY thật). Giả lập
-          # PTY bằng lệnh `script` (util-linux, có sẵn trên ubuntu-latest) để
-          # giữ output — nếu không log CI sẽ RỖNG dù lệnh đỏ, không ai đọc
-          # được vì sao. `--return` trả về đúng mã thoát của lệnh được bọc.
+          # Aiken 1.1.21 qua pipe ĐỔI ĐỊNH DẠNG chứ không im lặng: stdout là
+          # JSON đầy đủ thay vì bảng cho người đọc (BOUNDARIES.md §4 — bản cũ
+          # của chú thích này viết "KHÔNG in gì khi bị đưa qua pipe", SAI, và
+          # cái sai đó tốn nhiều lượt chạy lại). Vẫn giữ `script`: nó giả lập
+          # PTY nên log CI ra đúng cái bảng người đọc quen nhìn thay vì một
+          # khối JSON. `--return` trả về đúng mã thoát của lệnh được bọc — đó
+          # mới là phần load-bearing của dòng này.
           log="$RUNNER_TEMP/aiken-check-$(echo '${{ matrix.project }}' | tr '/' '_').log"
           # `status=$?` sau một lệnh đỏ là dòng KHÔNG BAO GIỜ chạy khi có
           # `set -e` — shell thoát ngay tại lệnh đỏ, nên `cat "$log"` bên dưới

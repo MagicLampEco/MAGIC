@@ -18,6 +18,7 @@ import {
   assertValidPriceParam,
   toCanonicalOpPrices,
   MAX_OP_PRICES,
+  MAX_BASE_PRICE,
   type PriceParamLike,
   type OpPriceRow,
 } from "../src/price.js";
@@ -334,6 +335,11 @@ describe("unknown op_type rejected (no authoritative price)", () => {
 //   valid_param_gate_accepts_min_base      → biên GATE base=2
 //   valid_param_rejects_zero_base_price    → PRICE-015
 //   valid_param_negative_base_price_fail   → PRICE-015
+//   valid_param_cap_accepts_at_ceiling     → biên TRẦN base == MAX_BASE_PRICE
+//   valid_param_cap_rejects_one_above_ceiling      → PRICE-016
+//   valid_param_cap_rejects_lock_the_service_price → PRICE-016
+//   valid_param_cap_rejects_one_bad_row_among_good → PRICE-016
+//   valid_param_cap_leaves_headroom_for_dearest_standard_row → biên kinh tế
 // ══════════════════════════════════════════════════════════════
 
 function ppOf(rows: OpPriceRow[], over: Partial<PriceParamLike> = {}): PriceParamLike {
@@ -426,6 +432,54 @@ describe("assertValidPriceParam — cổng TRƯỚC khi post beacon", () => {
         ppOf([{ op_type: 1n, base_price: 10_000_000n }, { op_type: 2n, base_price: 0n }]),
       ),
     ).toThrow(/PRICE-015/);
+  });
+
+  it("PRICE-016: biên TRẦN base == MAX_BASE_PRICE → hợp lệ", () => {
+    // `<=` và `<` chỉ khác nhau tại đúng điểm này, nên cặp test biên ghim đúng dấu.
+    expect(() =>
+      assertValidPriceParam(ppOf([{ op_type: 1n, base_price: MAX_BASE_PRICE }])),
+    ).not.toThrow();
+  });
+
+  it("PRICE-016: TRẦN + 1 nanogic → ném", () => {
+    expect(() =>
+      assertValidPriceParam(ppOf([{ op_type: 1n, base_price: MAX_BASE_PRICE + 1n }])),
+    ).toThrow(/PRICE-016/);
+  });
+
+  it("PRICE-016: giá khoá-dịch-vụ cho op_type=7 (did.rotate) → ném", () => {
+    // Ca thật mà trần sinh ra để chặn. 2⁶³−1 vẫn là số hợp lệ với BigInt và với Aiken
+    // Int (số nguyên lớn tuỳ ý) — không có gì tự chặn nó ngoài trần này.
+    expect(() =>
+      assertValidPriceParam(
+        ppOf([
+          { op_type: 1n, base_price: 10_000_000n },
+          { op_type: 7n, base_price: 9_223_372_036_854_775_807n },
+        ]),
+      ),
+    ).toThrow(/PRICE-016/);
+  });
+
+  it("PRICE-016: trần áp cho MỌI dòng, không riêng dòng đầu", () => {
+    expect(() =>
+      assertValidPriceParam(
+        ppOf([
+          { op_type: 1n, base_price: 10_000_000n },
+          { op_type: 2n, base_price: 1_000_000n },
+          { op_type: 8n, base_price: MAX_BASE_PRICE + 1n },
+        ]),
+      ),
+    ).toThrow(/PRICE-016/);
+  });
+
+  it("PRICE-016: dòng đắt nhất trong sổ chuẩn còn rất xa trần", () => {
+    // `did.transfer` = 1e10 nanogic (ConsumeMAGIC/CONTRACT.md). Test này đỏ nghĩa là
+    // trần đặt quá thấp và sổ giá sắp không dùng được — không phải test sai.
+    const dearestStandard = 10_000_000_000n;
+    expect(MAX_BASE_PRICE).toBeGreaterThanOrEqual(dearestStandard * 10_000n);
+    expect(() =>
+      assertValidPriceParam(ppOf([{ op_type: 8n, base_price: dearestStandard }])),
+    ).not.toThrow();
   });
 
   it("PRICE-015: base_price ÂM → ném (P8 chỉ đúng khi mọi toán hạng ≥ 0)", () => {

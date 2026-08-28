@@ -207,6 +207,19 @@ export function requiredBurn(
 /** Trần số dòng `op_prices` — khớp `pricing.ak:max_op_prices`. */
 export const MAX_OP_PRICES = 16;
 
+/**
+ * Trần TRÊN của `base_price` — khớp `pricing.ak:max_base_price` (P8, cùng commit).
+ * 10¹⁴ nanogic = 100.000 MAGIC cho MỘT đơn vị nghiệp vụ.
+ *
+ * Lý do đầy đủ + các con số đã cân nhắc rồi loại nằm ở docstring bên Aiken; đừng chép
+ * xuống đây, một sự thật một nơi giữ. Hai điều phải nhớ khi đọc mã này:
+ *  - Đây là BACKSTOP chống thảm hoạ, không phải khoảng giá gợi ý. Bảng đang deploy
+ *    dùng 10⁹.
+ *  - Trần này KHÔNG cứu được thao tác an ninh (`did.rotate`) khỏi đòn khoá-bằng-giá.
+ *    Việc đó cần một dải op_type riêng — Nợ #43, còn mở.
+ */
+export const MAX_BASE_PRICE = 100_000_000_000_000n;
+
 /** Một dòng bảng giá, đúng hình dạng `OpPrice` on-chain (BigInt cả hai trường). */
 export interface OpPriceRow {
   op_type: bigint;
@@ -239,6 +252,10 @@ export interface PriceParamLike {
  *    `list.find` lấy dòng ĐẦU, off-chain viết bằng map lấy dòng CUỐI ⇒ hai phía lệch
  *    giá (10×) mà KHÔNG bên nào báo lỗi. Tăng ngặt bao hàm "không trùng" và loại luôn
  *    bảng cùng-tập-khác-thứ-tự.
+ *  - PRICE-016 TRẦN `base_price ≤ MAX_BASE_PRICE`. PRICE-015 và `base_price ≥ 0` đều là
+ *    ràng buộc DƯỚI — không cái nào chặn giá vọt lên. Không có PRICE-016 thì một bảng giá
+ *    hợp lệ đặt `base_price = 2⁶³` cho `op_type = 7` (`did.rotate`) khoá quyền xoay khoá
+ *    của mọi người, đúng lúc người ta cần tự vệ vì nghi lộ khoá.
  *  - PRICE-015 GATE `base_price × m_min ≥ Q` cho MỌI dòng: bảo đảm giá 1 đơn vị ở
  *    demand THẤP NHẤT vẫn ≥ 1 nanogic ⇒ đóng collapse-to-0 (base quá nhỏ ⇒ giá làm
  *    tròn về 0 ⇒ drain miễn phí). GATE này BAO HÀM `base_price ≥ 0` và cấm luôn
@@ -248,7 +265,7 @@ export interface PriceParamLike {
  * Aiken và JS chỉ đúng khi MỌI toán hạng ≥ 0 (Aiken `/` là floor, JS BigInt `/` là
  * trunc-về-0; chúng lệch nhau trên số âm).
  *
- * @throws PRICE-010..PRICE-015 (mã kèm chỉ số dòng khi lỗi thuộc về một dòng cụ thể).
+ * @throws PRICE-010..PRICE-016 (mã kèm chỉ số dòng khi lỗi thuộc về một dòng cụ thể).
  */
 export function assertValidPriceParam(pp: PriceParamLike): void {
   if (pp.m_min !== M_MIN_Q || pp.m_max !== M_MAX_Q) {
@@ -291,6 +308,13 @@ export function assertValidPriceParam(pp: PriceParamLike): void {
           `GATE đòi base_price × m_min ≥ Q (${row.base_price} × ${pp.m_min} < ${Q}). ` +
           `Dưới GATE thì giá làm tròn về 0 ở demand thấp nhất ⇒ drain miễn phí. ` +
           `base_price ≤ 0 luôn rớt GATE này.`,
+      );
+    }
+    if (row.base_price > MAX_BASE_PRICE) {
+      throw new Error(
+        `PRICE-016: dòng ${i} (op_type=${row.op_type}) có base_price=${row.base_price}, ` +
+          `vượt trần ${MAX_BASE_PRICE} nanogic (= 100.000 MAGIC / một đơn vị nghiệp vụ). ` +
+          `Trần là backstop chống khoá-dịch-vụ-bằng-giá; xem \`pricing.ak:max_base_price\`.`,
       );
     }
   }

@@ -52,6 +52,47 @@ pub const m_max_q: Int = 2_000_000_000
 /// ⇒ nó thực sự ràng buộc, không phải cap trang trí đặt TRÊN trần thật.
 pub const max_op_prices: Int = 16
 
+/// TRẦN TRÊN của `base_price` — 10¹⁴ nanogic = 100.000 MAGIC cho MỘT đơn vị nghiệp vụ.
+///
+/// VÌ SAO CẦN: trước bản vá này `valid_param` chỉ có ràng buộc DƯỚI (`base_price >= 0`
+/// và GATE `base_price * m_min >= q`). Cả hai chặn giá tụt về 0 (drain miễn phí); KHÔNG
+/// cái nào chặn giá vọt lên. Một `PostPrice` hợp lệ đặt `base_price = 2⁶³` cho `op_type=7`
+/// (`did.rotate`) là KHOÁ quyền xoay khoá của mọi người — đúng thao tác tự vệ khi nghi lộ
+/// khoá. Và không ai lệch ra được: beacon chỉ committee sửa, `consume` bắt buộc đọc beacon
+/// còn hạn, không có đường vòng.
+///
+/// CON SỐ, và vì sao là 10¹⁴ chứ không phải số khác:
+///   · Dòng ĐẮT NHẤT trong sổ op_type chuẩn là `did.transfer` = 10¹⁰ nanogic
+///     (`ConsumeMAGIC/CONTRACT.md`, bảng op_type). Trần này = 10.000× dòng đó.
+///   · `base_price` là giá MỘT ĐƠN VỊ; khối lượng đi qua `op_count`. Lưu 1 TB không cần
+///     base_price to — nó là `op_count = 1.048.576` ở base 10⁹. Nên trần chỉ phải phủ
+///     "đơn vị đắt nhất", KHÔNG phải "giao dịch đắt nhất".
+///   · Phép thử "đắt hay KHOÁ" là một TỶ LỆ, không phải một lượng: giá-một-đơn-vị ở
+///     `m_max` chia cho sản lượng MAGIC toàn mạng mỗi epoch. Trần LAMP khoá được là 20%
+///     cung (`PARTICIPATION_CAP_BPS = 2000`) = 7,2×10⁹ LAMP. Ở 10¹⁴, một đơn vị tại
+///     demand 2,0× tốn 2×10¹⁴ nanogic — dưới 10⁻² của sản lượng ở MỌI chế độ rate đang
+///     bàn, tức còn hàng trăm lượt/epoch toàn mạng. Chưa phải khoá.
+///   · Đã loại 10¹¹ và 10¹²: chúng sống được hôm nay nhưng chết nếu D2 ngả về ρ = 1
+///     MAGIC/LAMP/epoch (SPEC §"RATE_REF_Q") thay vì rate đang cài — giá danh nghĩa phải
+///     tăng ~76× thì dư địa chỉ còn 1,3–13×. Trần dưới 100× dư địa là một cuộc di trú đã
+///     hẹn giờ. Đã loại 10¹⁵: một đơn vị ở m_max ăn ~2% sản lượng MAGIC/epoch của cả
+///     mạng — đó là khoá mặc áo giá.
+///   · Bất đối xứng chi phí quyết định chỗ làm tròn lên: thêm 10× dư địa tốn ĐÚNG 0 (cùng
+///     một phép so sánh Int trong vòng `list.all` sẵn có), còn đặt hụt tốn một cuộc di trú
+///     UTxO có tiền thật — hằng này là hằng BIÊN DỊCH, đổi nó là đổi script hash.
+///
+/// ĐÂY LÀ BACKSTOP CHỐNG THẢM HOẠ, KHÔNG PHẢI KHOẢNG GIÁ GỢI Ý. Đừng đọc "1e13 vẫn dưới
+/// trần mà" thành lý do đặt giá cao. Bảng mẫu đang deploy dùng 10⁹.
+///
+/// 🔴 TRẦN NÀY KHÔNG CỨU ĐƯỢC `did.rotate`. Ở 10¹⁴, xoay khoá tốn 200.000 MAGIC, mà người
+/// nắm mức tối thiểu sinh ra vài phần trăm MAGIC mỗi epoch ⇒ vẫn khoá tuyệt đối. Phòng
+/// tuyến đúng cho thao tác an ninh là một DẢI op_type dành riêng với trần thứ hai chặt hơn,
+/// cũng ở lúc biên dịch. Đó là việc khác, còn mở — xem `DevStatus.md` Nợ #43.
+///
+/// BẤT BIẾN PHẢI KIỂM LẠI nếu DAO đổi rate sinh MAGIC:
+///   `max_base_price × m_max_q / q  ≤  10⁻²  ×  (LAMP khoá tối đa × rate mỗi epoch)`
+pub const max_base_price: Int = 100_000_000_000_000
+
 /// Tìm base_price cho op_type trong bảng giá. None nếu op_type không tồn tại.
 /// AN TOÀN nhờ `valid_param` đã ép bảng giá TĂNG NGẶT theo op_type — nếu không,
 /// `list.find` lấy dòng ĐẦU trong khi bản off-chain viết bằng map (last-wins) lấy
@@ -104,6 +145,10 @@ fn increasing_after(prev: Int, rest: List<OpPrice>) -> Bool {
 ///     qua GATE ⇒ nhất quán với `required > 0`, ít nhánh hơn, dễ soi hơn.
 ///   - base_price ≥ 0: giá âm → required âm → burn=0 thoả "≥ required" (drain miễn phí).
 ///     (Sau khi bỏ ngoại lệ base==0, điều kiện này bị GATE bao hàm — giữ làm belt.)
+///   - [VÁ 2026-08-28, Nợ #32] base_price ≤ `max_base_price`: hai điều kiện trên đều là
+///     ràng buộc DƯỚI. Không có cận trên thì committee đặt giá tuỳ ý và người dùng không
+///     cản được — khoá dịch vụ bằng giá. Xem `max_base_price` để biết con số và giới hạn
+///     của nó.
 ///   - [VÁ 2026-08-09] cap độ dài + op_type TĂNG NGẶT: xem `max_op_prices` /
 ///     `sorted_strict_op_types`. Trùng op_type ⇒ on-chain `list.find` lấy dòng ĐẦU,
 ///     off-chain viết bằng map lấy dòng CUỐI ⇒ hai phía lệch giá (10×) mà KHÔNG bên nào
@@ -124,12 +169,14 @@ pub fn valid_param(pp: PriceParam) -> Bool {
     list.length(pp.op_prices) <= max_op_prices,
     sorted_strict_op_types(pp.op_prices),
     // per-op: base ≥ 0 VÀ giá ≥ 1 nanogic ở demand thấp nhất (#1b, không ngoại lệ)
+    // VÀ base ≤ trần (Nợ #32 — chặn khoá-dịch-vụ-bằng-giá; xem `max_base_price`)
     list.all(
       pp.op_prices,
       fn(op) {
         and {
           op.base_price >= 0,
           op.base_price * pp.m_min >= q,
+          op.base_price <= max_base_price,
         }
       },
     ),
@@ -258,6 +305,77 @@ test valid_param_gate_accepts_min_base() {
       epoch: 100,
     }
   valid_param(ok)
+}
+
+test valid_param_cap_accepts_at_ceiling() {
+  // Biên TRẦN (Nợ #32): base_price ĐÚNG BẰNG max_base_price → còn hợp lệ.
+  // Kiểm ở đúng biên vì `<=` và `<` chỉ khác nhau tại đúng điểm này.
+  let ok =
+    PriceParam {
+      op_prices: [OpPrice { op_type: 1, base_price: max_base_price }],
+      demand_mult: q,
+      m_min: 500_000_000,
+      m_max: 2_000_000_000,
+      epoch: 100,
+    }
+  valid_param(ok)
+}
+
+test valid_param_cap_rejects_one_above_ceiling() {
+  // Biên TRẦN + 1 nanogic → từ chối. Một nanogic là khoảng cách nhỏ nhất tồn tại,
+  // nên cặp test này ghim `<=` chứ không phải `<`, và ngược lại.
+  let bad =
+    PriceParam {
+      op_prices: [OpPrice { op_type: 1, base_price: max_base_price + 1 }],
+      demand_mult: q,
+      m_min: 500_000_000,
+      m_max: 2_000_000_000,
+      epoch: 100,
+    }
+  !valid_param(bad)
+}
+
+test valid_param_cap_rejects_lock_the_service_price() {
+  // Ca thật mà trần này sinh ra để chặn: committee đặt giá khổng lồ cho op_type=7
+  // (`did.rotate`) ⇒ khoá quyền xoay khoá của mọi người. 2⁶³ vẫn là số hợp lệ với
+  // Aiken (Int là số nguyên lớn tuỳ ý) — không có gì tự chặn nó ngoài trần này.
+  let bad =
+    PriceParam {
+      op_prices: [
+        OpPrice { op_type: 1, base_price: 10_000_000 },
+        OpPrice { op_type: 7, base_price: 9_223_372_036_854_775_807 },
+      ],
+      demand_mult: q,
+      m_min: 500_000_000,
+      m_max: 2_000_000_000,
+      epoch: 100,
+    }
+  !valid_param(bad)
+}
+
+test valid_param_cap_rejects_one_bad_row_among_good() {
+  // Trần áp cho MỌI dòng, không phải dòng đầu. Dòng cuối vượt trần ⇒ cả bảng hỏng.
+  let bad =
+    PriceParam {
+      op_prices: [
+        OpPrice { op_type: 1, base_price: 10_000_000 },
+        OpPrice { op_type: 2, base_price: 1_000_000 },
+        OpPrice { op_type: 8, base_price: max_base_price + 1 },
+      ],
+      demand_mult: q,
+      m_min: 500_000_000,
+      m_max: 2_000_000_000,
+      epoch: 100,
+    }
+  !valid_param(bad)
+}
+
+test valid_param_cap_leaves_headroom_for_dearest_standard_row() {
+  // Dòng đắt nhất trong sổ op_type chuẩn (`did.transfer` = 1e10 nanogic) phải còn
+  // rất xa trần — nếu test này đỏ thì trần đã đặt quá thấp và sổ giá sắp không dùng
+  // được, chứ không phải test sai.
+  let dearest_standard = 10_000_000_000
+  max_base_price >= dearest_standard * 10_000
 }
 
 test valid_param_rejects_unpinned_m_max() {

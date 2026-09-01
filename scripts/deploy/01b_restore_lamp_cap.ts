@@ -1,6 +1,11 @@
-// scripts/deploy/01b_burn_lamp_excess.ts — đốt phần tLAMP đúc VƯỢT TRẦN trên testnet.
+// scripts/deploy/01b_restore_lamp_cap.ts — đưa tLAMP testnet VỀ ĐÚNG TRẦN sau một lần đúc thừa.
 //
-// Chạy: LAMP_BURN_CONFIRM=Preprod npx tsx deploy/01b_burn_lamp_excess.ts
+// 🔴 ĐÂY LÀ SỬA SAI VẬN HÀNH TRÊN TESTNET, KHÔNG PHẢI CƠ CHẾ GIẢM CUNG.
+//    LAMP KHÔNG BURN. Giảm lưu hành trên mainnet = CHUYỂN VÀO TREASURY, một bút toán
+//    kế toán, không phải một lần đốt (`LAMP/Treasury/CONTRACT.md §5`). Thao tác ở đây
+//    không giảm cung — nó HUỶ MỘT LẦN ĐÚC THỪA để tổng lịch sử trở lại ≤ trần.
+//
+// Chạy: LAMP_BURN_CONFIRM=Preprod npx tsx deploy/01b_restore_lamp_cap.ts
 //
 // ── CHUYỆN GÌ ĐÃ XẢY RA ─────────────────────────────────────────────────────
 // 2026-08-28, chuỗi E2E chạy `01_mint_lamp.ts` lần thứ hai trên Preprod. Policy
@@ -98,7 +103,7 @@ async function main() {
   if (process.env.LAMP_BURN_CONFIRM !== NETWORK) {
     console.error(`\n✗ DỪNG — bước này ĐỐT ${excess.toLocaleString("en-US")} oildrop trên ${NETWORK}. Ghi lên chuỗi là không hoàn tác được.`);
     console.error(`  Sau khi đốt, mint_or_burn_count sẽ TĂNG (không giảm) — dấu vết ở lại vĩnh viễn.`);
-    console.error(`  Nếu đúng ý:\n     LAMP_BURN_CONFIRM=${NETWORK} npx tsx deploy/01b_burn_lamp_excess.ts`);
+    console.error(`  Nếu đúng ý:\n     LAMP_BURN_CONFIRM=${NETWORK} npx tsx deploy/01b_restore_lamp_cap.ts`);
     process.exit(1);
   }
 

@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# scripts/run_burn_lamp_excess.sh — đốt phần tLAMP đúc VƯỢT TRẦN trên testnet.
+# scripts/run_restore_lamp_cap.sh — đưa tLAMP testnet VỀ ĐÚNG TRẦN sau một lần đúc thừa.
 #
-#   bash run_burn_lamp_excess.sh Preprod          # xem số, KHÔNG đốt
-#   bash run_burn_lamp_excess.sh Preprod --dot    # đốt thật
+# 🔴 SỬA SAI VẬN HÀNH TESTNET, KHÔNG PHẢI CƠ CHẾ GIẢM CUNG. LAMP KHÔNG BURN — giảm lưu
+#    hành trên mainnet là CHUYỂN VÀO TREASURY (LAMP/Treasury/CONTRACT.md §5).
+#
+#   bash run_restore_lamp_cap.sh Preprod          # xem số, KHÔNG đốt
+#   bash run_restore_lamp_cap.sh Preprod --dot    # đốt thật
 #
 # Chạy tại Terminal của anh (cổng máy chặn agent đọc seed).
 # Không có `--dot` thì kịch bản dừng ở cổng xác nhận và chỉ IN ra con số đo từ chuỗi —
@@ -37,4 +40,4 @@ else
   echo "▶ Chế độ XEM SỐ (không đốt). Thêm --dot để đốt thật."
 fi
 
-npx tsx deploy/01b_burn_lamp_excess.ts
+npx tsx deploy/01b_restore_lamp_cap.ts

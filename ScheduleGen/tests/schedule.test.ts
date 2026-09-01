@@ -274,7 +274,7 @@ describe("Shard participation cap — T13, C-SCH-CAP", () => {
     expect(shard_locked + reject.total).toBeGreaterThan(SHARD_CAP);
   });
 
-  it("SHARD_CAP = 4.5×10¹⁴ oil (450M LAMP per shard)", () => {
+  it("SHARD_CAP = 4.5×10¹⁴ oildrop (450M LAMP per shard)", () => {
     expect(SHARD_CAP).toBe(450_000_000_000_000n);
   });
 });

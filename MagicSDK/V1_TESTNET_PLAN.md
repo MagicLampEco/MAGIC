@@ -1,6 +1,31 @@
-# MAGIC v1.0 — Testnet Plan
+# MAGIC v1.0 — Testnet Plan  ⚠ QUÁ HẠN, CHỜ QUYẾT ĐỊNH
 
-Plan test em chạy sau khi implement xong `WithdrawLamp` + `UpdateProfile` full theo [`SPEC_V1.md`](./SPEC_V1.md). Cùng pattern với 37 case v0 mà em đã làm (xem [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md)).
+> **Ma trận này dựng cho 4 vault module. Hai trong bốn đã chết.** `SnapshotGen` và
+> `VacuumGen` nằm ở `Legacy/` — mọi ca `Snapshot*` / `Vacuum*` bên dưới,
+> và `treasuryAddress` (LAMP đứng yên từ PHA-2, I-ACT-7), không chạy được. Chỉ còn
+> `Instant` + `Schedule`, và `Instant` đang fail-closed vì hai chốt độc lập
+> (xem [`INTEGRATOR_GUIDE_V1.md §6.2`](./INTEGRATOR_GUIDE_V1.md)) ⇒ **phần chạy được của
+> ma trận này nhỏ hơn nhiều so với vẻ ngoài của nó.**
+>
+> **Ba lệnh tệp này bảo chạy KHÔNG còn tồn tại** — `scripts/package.json` không có
+> `test:snapshot`, `test:vacuum-commit`, `test:vacuum-fire` (§4). Gõ vào là `npm` báo
+> missing script, không phải test đỏ.
+>
+> **Mọi liên kết báo cáo trong tệp này đã chết** — `MASTER_TESTNET_REPORT.md`,
+> `SNAPSHOTGEN_/INSTANTGEN_/VACUUMGEN_/SCHEDULEGEN_TESTNET_REPORT.md`, và
+> `scripts/test/snapshot_only.ts` (mẫu ở §2) đều **không có trong cây làm việc**. `ls` trước
+> khi đi tìm bất cứ đường dẫn nào bên dưới.
+>
+> **Mọi con số** trong tệp (37 ca v0, 32+ ca mới, 28/28 SDK unit test) là ảnh chụp cũ. Số
+> đang đúng: [`DevStatus.md`](../DevStatus.md).
+>
+> Chưa xoá, chưa viết lại: cần chủ nhân chốt "viết lại theo 2 vault" hay "dời `Legacy/`"
+> ([`DevStatus.md`](../DevStatus.md) — "Chờ chủ nhân chốt" D6).
+> **Đừng dùng tệp này làm căn cứ nghiệm thu**, và đừng nhận các mục §1 làm tiêu chí pass:
+> tiêu chí #1/#2/#5 neo vào những con số không kiểm lại được, #3/#4 neo vào "4 module" mà
+> nay chỉ còn 2.
+
+Plan test em chạy sau khi implement xong `WithdrawLamp` + `UpdateProfile` full theo [`SPEC_V1.md`](./SPEC_V1.md). Cùng pattern với 37 case v0 mà em đã làm (xem ``MASTER_TESTNET_REPORT.md``).
 
 **Phạm vi:** 4 vault module × 2 redeemer mới + multi-vault scenarios + lazy apply scenarios + regression cho 37 case cũ.
 
@@ -23,7 +48,7 @@ v1.0 testnet pass khi:
 
 ## §2. Smoke test script template
 
-Theo pattern [`scripts/test/snapshot_only.ts`](../scripts/test/snapshot_only.ts) hiện tại — mỗi case là 1 file riêng để dễ tách isolated rerun.
+Theo pattern ``scripts/test/snapshot_only.ts`` hiện tại — mỗi case là 1 file riêng để dễ tách isolated rerun.
 
 ```ts
 // scripts/test/withdraw_only.ts (NEW)
@@ -150,7 +175,7 @@ npm run test:schedule-commit # ScheduleGen commit
 npm run test:schedule-fire   # ScheduleGen fire
 ```
 
-Cộng các script anh em đã thêm khi test 37 case (xem [`SNAPSHOTGEN_TESTNET_REPORT.md`](../SNAPSHOTGEN_TESTNET_REPORT.md), [`INSTANTGEN_TESTNET_REPORT.md`](../INSTANTGEN_TESTNET_REPORT.md), [`VACUUMGEN_TESTNET_REPORT.md`](../VACUUMGEN_TESTNET_REPORT.md), [`SCHEDULEGEN_TESTNET_REPORT.md`](../SCHEDULEGEN_TESTNET_REPORT.md) để biết list đầy đủ).
+Cộng các script anh em đã thêm khi test 37 case (xem ``SNAPSHOTGEN_TESTNET_REPORT.md``, ``INSTANTGEN_TESTNET_REPORT.md``, ``VACUUMGEN_TESTNET_REPORT.md``, ``SCHEDULEGEN_TESTNET_REPORT.md`` để biết list đầy đủ).
 
 **Đặc biệt cần re-verify sau khi thêm `apply_pending_profile` vào mọi handler:**
 - TriggerSnapshot M compute không đổi khi `pending_profile = None` (mặc định)
@@ -206,11 +231,11 @@ Sau khi test xong, em update:
 
 | File (path so với repo root) | Nội dung |
 |---|---|
-| [`MASTER_TESTNET_REPORT.md`](../MASTER_TESTNET_REPORT.md) | Thêm section "v1.0 changes — 36+ new cases" với link tới các report sau |
+| ``MASTER_TESTNET_REPORT.md`` | Thêm section "v1.0 changes — 36+ new cases" với link tới các report sau |
 | `WITHDRAW_TESTNET_REPORT.md` (NEW — repo root) | 20 case withdraw đầy đủ, tx hash, datum snapshots |
 | `UPDATE_PROFILE_TESTNET_REPORT.md` (NEW — repo root) | 16 case UpdateProfile + lazy apply scenarios |
 | `MULTI_VAULT_TESTNET_REPORT.md` (NEW — repo root) | 4 case multi-vault |
-| Per-module — [`SNAPSHOTGEN`](../SNAPSHOTGEN_TESTNET_REPORT.md) · [`INSTANTGEN`](../INSTANTGEN_TESTNET_REPORT.md) · [`VACUUMGEN`](../VACUUMGEN_TESTNET_REPORT.md) · [`SCHEDULEGEN`](../SCHEDULEGEN_TESTNET_REPORT.md) `_TESTNET_REPORT.md` | Append v1.0 specific case của module đó |
+| Per-module — ``SNAPSHOTGEN`` · ``INSTANTGEN`` · ``VACUUMGEN`` · ``SCHEDULEGEN`` `_TESTNET_REPORT.md` | Append v1.0 specific case của module đó |
 
 Format report cùng như 4 report v0 cũ — anh đã quen pattern: header (TX hash, datum before/after, value diff) + body (rule trace + expected).
 

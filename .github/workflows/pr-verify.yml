@@ -1,0 +1,284 @@
+name: Verify PR
+
+# Cổng CI đầu tiên của kho này. BÁM DIFF THẬT của PR — không tự chọn tập
+# kiểm cố định. Xem .github/scripts/detect_scope.py để biết vì sao và bài
+# học nguồn (thư agent nhà SuperApp, 2026-08-14): một cổng tên "Verify PR"
+# chạy tsc+jest xanh suốt trong khi phần Rust nó đổi chưa từng qua compiler
+# vì cổng tự chọn tập kiểm thay vì bám diff. Sai chỉ được phép MỘT CHIỀU:
+# thà chạy thừa, tuyệt đối không bỏ sót.
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: Dò phạm vi PR
+    runs-on: ubuntu-latest
+    outputs:
+      npm_packages: ${{ steps.detect.outputs.npm_packages }}
+      aiken_projects: ${{ steps.detect.outputs.aiken_projects }}
+      run_all: ${{ steps.detect.outputs.run_all }}
+    steps:
+      - name: Checkout (fetch-depth 2 — cần cả hai cha của commit gộp thử)
+        uses: actions/checkout@v4
+        with:
+          # Sự kiện pull_request checkout ra commit GỘP THỬ. fetch-depth 1
+          # (mặc định) chỉ có commit đó, KHÔNG có HEAD^1 (gốc)/HEAD^2 (ngọn)
+          # — bước dò phạm vi bên dưới sẽ hỏng câm nếu thiếu depth 2. Đây là
+          # chi tiết được thư SuperApp nêu rõ, không phải suy đoán.
+          fetch-depth: 2
+
+      - name: Dò gói npm + project Aiken bị chạm bởi diff
+        id: detect
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: python3 .github/scripts/detect_scope.py
+
+  npm-verify:
+    name: "npm · ${{ matrix.package }}"
+    needs: scope
+    if: needs.scope.outputs.npm_packages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # một gói đỏ không được che các gói khác
+      matrix:
+        package: ${{ fromJson(needs.scope.outputs.npm_packages) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Đo thật 2026-08-16 trên checkout sạch: `npm ci` ở một gói phụ thuộc
+      # `file:../../ProtocolUtils` HỎNG với `sh: tsc: command not found` —
+      # npm chạy `prepare`/`build` của gói file: NGAY TRONG thư mục gói đó, mà
+      # thư mục đó chưa có `node_modules/.bin/tsc`. Không tài liệu nào ghi
+      # (đúng phát hiện (iii) ở bình luận PR #30). Nên phải cài phụ thuộc nội
+      # bộ TRƯỚC, theo thứ tự tôpô đơn giản: mọi `file:` bắc cầu.
+      - name: Cài trước các phụ thuộc nội bộ (file:) theo thứ tự tôpô
+        run: |
+          set -euo pipefail
+          python3 - "${{ matrix.package }}" <<'PY'
+          import json, os, subprocess, sys
+          root, pkg = os.getcwd(), sys.argv[1]
+          order, seen = [], set()
+          def walk(d):
+              d = os.path.normpath(d)
+              if d in seen: return
+              seen.add(d)
+              man = os.path.join(root, d, "package.json")
+              if not os.path.isfile(man): return
+              m = json.load(open(man))
+              for spec in {**m.get("dependencies", {}), **m.get("devDependencies", {})}.values():
+                  if isinstance(spec, str) and spec.startswith("file:"):
+                      walk(os.path.join(d, spec[5:]))
+              if d != os.path.normpath(pkg): order.append(d)
+          walk(pkg)
+          for d in order:
+              print(f"::group::npm install {d}")
+              subprocess.run(["npm", "install", "--no-audit", "--no-fund"], cwd=os.path.join(root, d), check=True)
+              print("::endgroup::")
+          if not order:
+              print(f"{pkg}: không có phụ thuộc file: nội bộ.")
+          PY
+
+      - name: Cài phụ thuộc (npm ci; npm install nếu thiếu lockfile)
+        working-directory: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            echo "::warning::${{ matrix.package }} không có package-lock.json — dùng npm install thay vì npm ci"
+            npm install --no-audit --no-fund
+          fi
+
+      # ── Vì sao bước này tồn tại ───────────────────────────────────────────
+      # `MagicSDK/tests/vaultParams.test.ts` là CỔNG ARITY: nó đọc `parameters[]`
+      # thẳng từ `plutus.json` do `aiken build` sinh, rồi đối chiếu THEO TÊN với
+      # danh sách apply-param của SDK. Đó đúng lớp lỗi mà BOUNDARIES.md §5 gọi là
+      # bài học đắt nhất của kho — danh sách apply-param lệch chữ ký validator thì
+      # không test nào đỏ, không compile nào gãy, và sai chỉ lộ ra dưới dạng một
+      # vault mainnet có LAMP thật mà không ai spend được.
+      #
+      # Mà `plutus.json` là ARTIFACT, đã gitignore (BOUNDARIES.md §4). Trên máy
+      # người ta nó có sẵn từ lần build trước, nên cổng này XANH ở local và ĐỎ ở
+      # CI với `ENOENT` — tức cổng đắt nhất của kho là cổng chưa từng chạy trên CI.
+      # Bỏ qua test khi thiếu tệp thì còn tệ hơn: cổng biến mất trong im lặng,
+      # đúng thứ đầu file này cảnh báo.
+      #
+      # Dựng TẤT CẢ project Aiken chứ không đoán gói này đọc blueprint nào: đường
+      # dẫn được ghép động (`../../${module}/onchain/plutus.json`) nên không grep
+      # tĩnh ra được, và nguyên tắc của file này là thà chạy thừa còn hơn bỏ sót.
+      - name: Gói này có đọc plutus.json không?
+        id: needs_blueprint
+        working-directory: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          if grep -rqs --include='*.ts' --include='*.mjs' --include='*.js' \
+               'onchain/plutus[.]json' . --exclude-dir=node_modules --exclude-dir=dist; then
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+            echo "Gói này đọc plutus.json — sẽ dựng blueprint trước khi chạy test."
+          else
+            echo "yes=false" >> "$GITHUB_OUTPUT"
+            echo "Gói này không đọc plutus.json — bỏ qua bước dựng blueprint."
+          fi
+
+      - name: Cài Aiken + dựng blueprint mọi project
+        if: steps.needs_blueprint.outputs.yes == 'true'
+        env:
+          AIKEN_VERSION: "1.1.21"
+          AIKEN_ASSET: "aiken-x86_64-unknown-linux-musl.tar.gz"
+          AIKEN_SHA256: "9fe0bb94efbb79f4d351664def3da0d58c7e30716fcb65590ff9b6c6b0ffb715"
+        run: |
+          set -euo pipefail
+          url="https://github.com/aiken-lang/aiken/releases/download/v${AIKEN_VERSION}/${AIKEN_ASSET}"
+          curl -sSL --fail -o aiken.tar.gz "$url"
+          echo "${AIKEN_SHA256}  aiken.tar.gz" | sha256sum -c -
+          tar -xzf aiken.tar.gz
+          mkdir -p "$HOME/.local/bin"
+          mv "aiken-x86_64-unknown-linux-musl/aiken" "$HOME/.local/bin/aiken"
+          chmod +x "$HOME/.local/bin/aiken"
+          export PATH="$HOME/.local/bin:$PATH"
+          aiken --version
+          rm -rf aiken.tar.gz aiken-x86_64-unknown-linux-musl
+          # `aiken build` KHÔNG chạy test ⇒ bước này không nhân đôi job
+          # `aiken check` bên dưới; nó chỉ sinh artifact.
+          while IFS= read -r toml; do
+            d="$(dirname "$toml")"
+            echo "::group::aiken build $d"
+            ( cd "$d" && aiken build )
+            echo "::endgroup::"
+          done < <(find . -name aiken.toml -not -path '*/node_modules/*' -not -path './Legacy/*' | sort)
+          echo "Blueprint đã dựng:"
+          find . -name plutus.json -not -path '*/node_modules/*' -not -path './Legacy/*' | sort
+
+      - name: npm test (chỉ khi package.json thật sự có script "test")
+        working-directory: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          if node -e "process.exit((require('./package.json').scripts||{}).test ? 0 : 1)"; then
+            npm test
+          else
+            echo "Gói ${{ matrix.package }} không có script \"test\" trong package.json — bỏ qua bước này."
+          fi
+
+      # ── Vì sao bước này tồn tại ───────────────────────────────────────────
+      # `scripts/` typecheck bằng `tsc --noEmit`, mà mã trong đó import thẳng
+      # `../MagicSDK/src/...` và `../ScheduleGen/offchain/src/...`. tsc đi theo
+      # những import đó và biên dịch cả nguồn của gói anh em — nhưng gói anh em
+      # KHÔNG phải `file:` dependency, nên bước cài tôpô ở trên không chạm tới
+      # chúng và `node_modules` của chúng rỗng. Kết quả: hàng chục lỗi
+      # `Cannot find module '@lucid-evolution/lucid'` cùng một chuỗi `implicit
+      # any` ĂN THEO — lỗi thật bị chôn giữa đám lỗi giả, và không ai đọc nữa.
+      #
+      # Bước này quét import tương đối THOÁT KHỎI gói, tìm gói npm gần nhất chứa
+      # đích, rồi cài phụ thuộc ở đó. Không đoán, không khoá cứng tên gói nào.
+      - name: Cài phụ thuộc của gói anh em mà mã gói này import qua đường dẫn tương đối
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/install_sibling_deps.py "${{ matrix.package }}"
+
+      - name: npm run typecheck (chỉ khi package.json thật sự có script "typecheck")
+        working-directory: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          if node -e "process.exit((require('./package.json').scripts||{}).typecheck ? 0 : 1)"; then
+            npm run typecheck
+          else
+            echo "Gói ${{ matrix.package }} không có script \"typecheck\" trong package.json — bỏ qua bước này."
+          fi
+
+  aiken-check:
+    name: "aiken check · ${{ matrix.project }}"
+    needs: scope
+    if: needs.scope.outputs.aiken_projects != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # một project đỏ không được che các project khác
+      matrix:
+        project: ${{ fromJson(needs.scope.outputs.aiken_projects) }}
+    env:
+      # Ghim phiên bản tường minh (BOUNDARIES.md: Aiken >= 1.1.0). KHÔNG dùng
+      # action bên thứ ba — tải thẳng từ GitHub Releases + xác minh sha256.
+      AIKEN_VERSION: "1.1.21"
+      AIKEN_ASSET: "aiken-x86_64-unknown-linux-musl.tar.gz"
+      AIKEN_SHA256: "9fe0bb94efbb79f4d351664def3da0d58c7e30716fcb65590ff9b6c6b0ffb715"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cài Aiken ${{ env.AIKEN_VERSION }} (tải trực tiếp + xác minh sha256)
+        run: |
+          set -euo pipefail
+          url="https://github.com/aiken-lang/aiken/releases/download/v${AIKEN_VERSION}/${AIKEN_ASSET}"
+          curl -sSL --fail -o aiken.tar.gz "$url"
+          echo "${AIKEN_SHA256}  aiken.tar.gz" | sha256sum -c -
+          tar -xzf aiken.tar.gz
+          mkdir -p "$HOME/.local/bin"
+          mv "aiken-x86_64-unknown-linux-musl/aiken" "$HOME/.local/bin/aiken"
+          chmod +x "$HOME/.local/bin/aiken"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Xác minh phiên bản Aiken đã cài
+        run: aiken --version
+
+      - name: aiken check
+        working-directory: ${{ matrix.project }}
+        run: |
+          set -euo pipefail
+          # Aiken 1.1.21 qua pipe ĐỔI ĐỊNH DẠNG chứ không im lặng: stdout là
+          # JSON đầy đủ thay vì bảng cho người đọc (BOUNDARIES.md §4 — bản cũ
+          # của chú thích này viết "KHÔNG in gì khi bị đưa qua pipe", SAI, và
+          # cái sai đó tốn nhiều lượt chạy lại). Vẫn giữ `script`: nó giả lập
+          # PTY nên log CI ra đúng cái bảng người đọc quen nhìn thay vì một
+          # khối JSON. `--return` trả về đúng mã thoát của lệnh được bọc — đó
+          # mới là phần load-bearing của dòng này.
+          log="$RUNNER_TEMP/aiken-check-$(echo '${{ matrix.project }}' | tr '/' '_').log"
+          # `status=$?` sau một lệnh đỏ là dòng KHÔNG BAO GIỜ chạy khi có
+          # `set -e` — shell thoát ngay tại lệnh đỏ, nên `cat "$log"` bên dưới
+          # bị bỏ qua và log CI RỖNG đúng lúc cần đọc nhất. Đo:
+          #   bash -c 'set -e; false; status=$?; echo den-day'  ⟹ không in gì.
+          # `|| status=$?` giữ nguyên mã thoát mà không kích hoạt errexit.
+          status=0
+          script --quiet --return --command "aiken check" "$log" || status=$?
+          echo "----- output aiken check (${{ matrix.project }}) -----"
+          cat "$log"
+          echo "-----------------------------------------------------"
+          exit $status
+
+  result:
+    name: Kết quả Verify PR
+    needs: [scope, npm-verify, aiken-check]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tổng hợp
+        run: |
+          echo "run_all (dò phạm vi rơi về chạy tất): ${{ needs.scope.outputs.run_all }}"
+          echo "npm_packages: ${{ needs.scope.outputs.npm_packages }}"
+          echo "aiken_projects: ${{ needs.scope.outputs.aiken_projects }}"
+          echo "job scope: ${{ needs.scope.result }}"
+          echo "job npm-verify: ${{ needs.npm-verify.result }}"
+          echo "job aiken-check: ${{ needs.aiken-check.result }}"
+
+          if [ "${{ needs.scope.result }}" != "success" ]; then
+            echo "::error::Bước dò phạm vi (job scope) thất bại — cổng không biết phải kiểm gì, coi là ĐỎ."
+            exit 1
+          fi
+          if [ "${{ needs.npm-verify.result }}" = "failure" ]; then
+            echo "::error::Có ít nhất một gói npm trong phạm vi bị đỏ."
+            exit 1
+          fi
+          if [ "${{ needs.aiken-check.result }}" = "failure" ]; then
+            echo "::error::Có ít nhất một project Aiken trong phạm vi bị đỏ."
+            exit 1
+          fi
+          echo "Mọi gói/project trong phạm vi PR đã qua kiểm."

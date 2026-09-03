@@ -20,8 +20,24 @@ Nguồn: `ConsumeMAGIC/CONTRACT.md §B` (v2). Thay model token-burn v1 (PR #13).
 |---|---|
 | **Holder** | Sở hữu Engage UTxO (EngageDatum + thread NFT); gửi tx co-spend Engage + vault |
 | **Keeper (Committee)** | Post/cập nhật PriceParam beacon epoch-đơn-điệu; M-of-N multi-sig |
-| **App component** | Đọc `consumed_count` từ EngageDatum để xác nhận nghiệp vụ đã thanh toán |
+| **App component** | Xác nhận đã thanh toán bằng **delta `consumed_nanogic`** của EngageDatum (giá trị SAU tx trừ giá trị TRƯỚC tx). **KHÔNG đọc `consumed_count`** — xem cảnh báo §2.1 |
 | **Vault validator** | Module generator — `BurnBatch` GIẢM `current_amount`; nơi DUY NHẤT giảm MAGIC |
+
+### 2.1 ⚠ App cấp dịch vụ theo GIÁ TRỊ, không theo LƯỢT
+
+`consumed_count` chỉ đếm **số thao tác**, không mang giá trị. Ai trả một op rẻ
+(`op_type=2`, neo CID, 1e6 nanogic) cũng làm `consumed_count` tăng đúng +1 — rồi đòi app
+cấp một op đắt (`op_type=1`, xử lý ảnh, 1e7). Trả thiếu **10×**, mà mọi bất biến on-chain
+vẫn thoả: validator không biết app định phục vụ nghiệp vụ nào.
+
+App PHẢI đọc **delta `consumed_nanogic`** và chỉ cấp dịch vụ khi
+`delta ≥ giá niêm yết của nghiệp vụ đang phục vụ`. Validator ép
+`Σ consumed_nanogic(out) == Σ(in) + total_required` (TECH.md W-CM-12), nên delta chính là
+số nanogic đã thực trả trong tx đó. Cũng KHÔNG đọc giá trị TUYỆT ĐỐI của
+`consumed_nanogic` như "hạn mức còn lại" — nó là tổng tích luỹ đời thread.
+
+Nguồn: `CONTRACT.md §E`, `onchain/lib/magiclamp/consume/types.ak` (docstring
+`consumed_nanogic`), `EXEC.md §5`.
 
 ---
 
@@ -35,7 +51,7 @@ Holder                      Lucid tx-builder                Cardano ledger
   │── buildConsumeTx(op=1, n=1) ──►                               │
   │                               │── read PriceParam beacon (ref-input) ►
   │                               │◄── PriceParam (epoch, demand_mult) ──│
-  │                               │── required = price(1)×1  [offchain, từ beacon]
+  │                               │── required = ⌊base×demand_mult×n/Q⌋ [offchain, từ beacon]
   │                               │── build tx (KHÔNG mint):       │
   │                               │    spend Engage UTxO (Consume) │
   │                               │    spend vault UTxO  (BurnBatch Σburns==required)
@@ -48,8 +64,9 @@ Holder                      Lucid tx-builder                Cardano ledger
   │◄── confirmed ─────────────────│◄────────────────────────── tx │
 ```
 
-**Điều kiện kết thúc:** `consumed_count` tăng đúng `op_count`; `vault.magic_batches`
-giảm đúng `required`; value Engage UTxO bảo toàn tuyệt đối; KHÔNG mint.
+**Điều kiện kết thúc:** `consumed_nanogic` tăng đúng `required` (đây là thứ app đọc);
+`consumed_count` tăng đúng `op_count` (thống kê/attribution); `vault.magic_batches` giảm
+đúng `required`; value Engage UTxO bảo toàn tuyệt đối; KHÔNG mint.
 
 ### 3.2 Happy path — N Engage input (batch tx)
 
@@ -82,9 +99,14 @@ Tham chiếu: `price_param.ak`.
 
 - Mint NFT one-shot beacon (`price_nft.ak`, parameterized bởi `genesis_ref`). Post UTxO
   tại địa chỉ `price_param` validator mang NFT + PriceParam datum.
-- Mint NFT one-shot thread (`engage_nft.ak`, parameterized bởi `genesis_ref` RIÊNG).
+- Mint thread NFT bằng **handler `mint` của chính `consume`** (redeemer `MintEngage { seed }`)
+  — KHÔNG còn `engage_nft.ak`. Policy = script hash `consume` (tự tham chiếu); tên NFT =
+  `blake2b_256(cbor.serialise(seed))` với `seed` là UTxO bị tiêu trong chính tx đó
+  (one-shot, permissionless, N thread / 1 policy).
   Tạo Engage UTxO tại địa chỉ `consume` validator mang NFT + EngageDatum
-  `{owner, consumed_count:0, last_epoch:0, did_commit}` (did_commit đặt 1 lần, MVP rỗng).
+  `{owner, consumed_count:0, last_epoch:0, did_commit, consumed_nanogic:0}` — ba trục kế
+  toán đều 0, `did_commit` đặt 1 lần (MVP rỗng), immutable sau đó.
+  Off-chain: `offchain/src/consume.ts:buildMintEngageTx` — tx RIÊNG, không gộp với consume.
 
 ---
 
@@ -96,7 +118,11 @@ Tham chiếu: `price_param.ak`.
 | C-CM-2 | `total_burned == total_required` (AGGREGATE qua mọi Engage input/vault_ref phân biệt; `==`, KHÔNG `≥`); giá đọc từ PriceParam beacon (xác thực NFT), không tin amount client; vault input phải ở `vault_script_hash` + redeemer constr == `burn_batch_constr` | `consume.ak:sum_required_over_engage_inputs`, `sum_burns_over_vault_refs` |
 | C-CM-3 | Double-satisfaction guard (đếm theo payment script hash): `#out@engage == #in@engage`; `Σ engageNFT(out) == Σ engageNFT(in)`; `Σ consumed_count(out) == Σ(in) + Σ op_count` | `consume.ak:n_in==n_out`, `nft_in==nft_out`, `enforce_engagement` |
 | C-CM-4 | Mỗi output@engage mang đúng 1 thread NFT; `owner` bảo toàn; `last_epoch = current_epoch`; `did_commit` IMMUTABLE (`out == in`) | `consume.ak:enforce_engagement` |
-| C-CM-5 | Stale price: `0 ≤ current_epoch − PriceParam.epoch ≤ max_price_stale`; `current_epoch` tính từ UPPER bound + cửa sổ validity ≤ 1 epoch (chống under-state validity-range) | `consume.ak` dòng stale + `util.get_epoch` |
+| C-CM-5 | Stale price: `0 ≤ current_epoch − PriceParam.epoch ≤ max_price_stale`; `current_epoch` tính từ UPPER bound, hai biên Finite, cửa sổ nằm TRỌN trong MỘT epoch (`⌊lo/mspe⌋ == ⌊hi/mspe⌋`) | `consume.ak` dòng stale + `util.get_epoch` |
+| C-CM-6 | GIÁ TRỊ đã trả: `Σ consumed_nanogic(out@engage) == Σ(in@engage) + total_required`. Song song C-CM-3 (LƯỢT) — count không phân biệt op rẻ/đắt nên chỉ đếm lượt là trả thiếu 10× vẫn hợp lệ. App cấp dịch vụ theo **delta** trường này | `consume.ak:enforce_engagement` (`sum_nanogic_inputs/outputs`) |
+| C-CM-7 | Genesis SẠCH: thread NFT chỉ ra đời qua `MintEngage { seed }` của chính `consume`; seed bị tiêu (one-shot); tên = `blake2b_256(cbor(seed))`; đúng 1 output tại địa chỉ script này mang NFT; `owner ∈ extra_signatories`; `consumed_count == consumed_nanogic == last_epoch == 0`; ≤ 2 policy trên output | `consume.ak:validate_mint_engage_id` |
+| C-CM-8 | Mint và spend KHÔNG đi chung 1 tx: `script_inputs_confined_to(inputs, own_hash, vault_script_hash)` + cổng "mọi input @engage mang đúng 1 thread NFT" | `consume.ak` + `util.script_inputs_confined_to` |
+| C-CM-9 | Bảng giá `op_prices`: `op_type` TĂNG NGẶT (dạng chuẩn tắc), ≤ 16 dòng, mọi dòng `base_price × m_min ≥ Q`, `m_min`/`m_max` PIN về hằng | `pricing.ak:valid_param`, `sorted_strict_op_types`; gương off-chain `price.ts:assertValidPriceParam` |
 
 ---
 
@@ -119,6 +145,10 @@ Tham chiếu: `price_param.ak`.
 | Vault input redeemer constr ≠ burn_batch_constr | `expect idx == burn_batch_constr` fail |
 | Epoch rollback (price_param cập nhật epoch ≤ cũ) | `out_datum.epoch > datum.epoch` trong `price_param.ak` fail |
 | `demand_mult > m_max` trong beacon | `valid_param` fail → consume fail |
+| Bảng giá không sắp xếp / trùng `op_type` | `sorted_strict_op_types` fail. Off-chain chặn sớm: `assertValidPriceParam` ném `PRICE-014` |
+| Bảng giá > 16 dòng | `list.length ≤ max_op_prices` fail (chống DoS ex-unit). Off-chain: `PRICE-013` |
+| Genesis bẩn (`consumed_nanogic` bịa lúc mint) | `validate_mint_engage_id` ép `== 0` — bất biến delta ở spend chỉ khoá phần TĂNG, không khoá GỐC |
+| `op_count ≤ 0` từ app | On-chain `expect op_count >= 1`. Off-chain **ném** `PRICE-002`/`CONSUME-008` (trả 0 im lặng = fail-open: app cấp dịch vụ rồi tx mới chết) |
 
 ---
 

@@ -17,7 +17,8 @@
 - Redeemers: `OrderRedeemer = Settle | Expire | Cancel`;
   `AllocationRedeemer = ClaimEpoch | ReclaimExpired | Surrender`.
 
-`alloc_id = blake2b_256(order_id ++ user_pkh)`.
+`alloc_id = blake2b_256("MAGIC_ALLOC_ID:v1" ++ 0x00 ++ u8(2) ++ LP(order_id) ++ LP(user_pkh))`
+(xem §2.3 — nối thô hai trường độ-dài-thay-đổi không đơn ánh, nợ #26).
 
 ---
 
@@ -37,11 +38,48 @@
 - **Surrender**: beneficiary ký; tiêu UTxO, không cần continuing output.
 
 ### 2.3 Message formats (P8 — `utils.ak` ↔ `oracle.ts`)
+
+Mọi trường độ-dài-thay-đổi được **đóng khung độ dài**, mọi thông điệp có **tiền tố miền**:
 ```
-settle_msg  = order_id ++ user_pkh(28) ++ nonce(32) ++ timestamp(8 BE)
-voucher_msg = alloc_id(32) ++ epoch(8 BE) ++ nanogic(8 BE) ++ expiry_posix(8 BE)
+LP(s)       = u32be(len(s)) ++ s
+
+alloc_id    = blake2b_256( "MAGIC_ALLOC_ID:v1" ++ 0x00 ++ u8(2)
+                           ++ LP(order_id) ++ LP(user_pkh) )
+
+settle_msg  = "MAGIC_ORACLE_SETTLE:v1" ++ 0x00 ++ u8(4)
+              ++ LP(order_id) ++ LP(user_pkh) ++ LP(nonce)
+              ++ u64be(timestamp)
+
+voucher_msg = "MAGIC_VOUCHER:v1" ++ 0x00 ++ u8(4)
+              ++ LP(alloc_id)
+              ++ u64be(epoch) ++ u64be(nanogic) ++ u64be(expiry_posix)
 ```
-Encoding Int = big-endian 8-byte (`bytearray.from_int_big_endian` ↔ `DataView.setBigUint64`).
+Tiền tố miền là ASCII (không chứa byte `0x00`) nên `tag ++ 0x00` tách được không nhập nhằng,
+và ảnh của ba khuôn rời nhau từng đôi.
+
+`u8(n)` là **số trường** của chính khuôn đó, khai bằng hằng cạnh khuôn
+(`fields_*` trong `utils.ak` ↔ `FIELDS_*` trong `oracle.ts`). Nó vá chỗ khuôn cũ còn hở:
+đóng khung độ dài làm thông điệp đơn ánh **với cách tách**, nhưng không đơn ánh **với ngữ
+nghĩa** — thêm một trường mà giữ nguyên `:v1` thì hai thông điệp khác nghĩa vẫn trùng byte
+được qua các phiên bản, và thứ duy nhất chặn là người sửa nhớ tăng `:v1`. Đưa số trường vào
+chính tiền ảnh thì thêm trường ⇒ hash đổi, kể cả khi quên tăng phiên bản.
+
+Hai giới hạn, nói rõ để không ai nhận một nửa: (a) nó **không** bắt ca **đổi chỗ** hai trường
+cùng độ dài — ca đó do vector vàng ở `tests/vectors.ts` bắt, và vector đã ghim thì **chỉ được
+THÊM, không được SỬA**; (b) `:v1` vẫn giữ trong tiền tố — hai thứ bù nhau chứ không thay nhau.
+
+**Vì sao (nợ #26):** nối thô các trường độ-dài-thay-đổi **không đơn ánh** — dời byte qua ranh
+giới trường cho ra cùng một dãy byte, nên một chữ ký / một mã băm phủ nhiều bộ trường khác
+nhau. Với `LP`, giải mã là hàm toàn phần (đọc 4 byte → đọc bấy nhiêu byte → lặp) ⟹ mã hoá đơn
+ánh. Số nguyên cố định 8 byte tự phân định nên đứng CUỐI, không bọc.
+
+Thêm trường độ-dài-thay-đổi mới thì **bắt buộc** bọc `LP`; thêm khuôn mới thì cấp tag mới.
+
+`alloc_id` bị ép đúng 32 byte tại `build_voucher_msg`
+(`expect bytearray.length(alloc_id) == 32`) — kiểu khai trong `types.ak` là `ByteArray` tự do.
+
+Encoding Int = big-endian 8-byte (`bytearray.from_int_big_endian` ↔ `DataView.setBigUint64`);
+tiền tố độ dài = big-endian 4-byte (`from_int_big_endian(_, 4)` ↔ `DataView.setUint32`).
 
 ---
 

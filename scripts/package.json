@@ -4,21 +4,42 @@
   "type": "module",
   "description": "Deploy + test scripts for MagicLamp Preview testnet",
   "scripts": {
-    "deploy:all": "npm run deploy:lamp && npm run deploy:shards && npm run deploy:schedule-vault",
+    "deploy:all": "npm run verify:toolchain && npm run check:params && npm run record:build && npm run deploy:lamp && npm run deploy:um && npm run deploy:shards && npm run deploy:instant-vault",
     "deploy:lamp": "npx tsx deploy/01_mint_lamp.ts",
+    "deploy:um": "npx tsx deploy/02_deploy_um.ts",
     "deploy:shards": "npx tsx deploy/03_deploy_shards.ts",
     "verify:hashes": "npx tsx verify_per_network.ts",
+    "check:params": "npx tsx check_param_names.ts",
+    "deploy:consume": "npx tsx deploy/09_deploy_consume.ts",
+    "test:instant": "npx tsx test/instant_only.ts",
+    "deploy:instant-vault": "npx tsx deploy/05_create_instant_vault.ts",
     "deploy:schedule-vault": "npx tsx deploy/07_create_schedule_vault.ts",
     "test:schedule-commit": "npx tsx test/schedule_commit_only.ts",
-    "test:schedule-fire": "npx tsx test/schedule_fire_only.ts"
+    "test:schedule-fire": "npx tsx test/schedule_fire_only.ts",
+    "test:withdraw": "npx tsx test/withdraw_only.ts",
+    "test:update-profile": "npx tsx test/update_profile_only.ts",
+    "test:multi-vault": "npx tsx test/multi_vault_only.ts",
+    "typecheck": "tsc --noEmit",
+    "verify:toolchain": "bash verify_toolchain.sh",
+    "record:build": "npx tsx emit_build_record.ts",
+    "verify:build-record": "npx tsx emit_build_record.ts --check",
+    "e2e:consume-schedule": "bash run_consume_schedule_e2e.sh",
+    "restore:lamp-cap": "bash run_restore_lamp_cap.sh"
   },
   "dependencies": {
-    "@lucid-evolution/lucid": "^0.4.0",
+    "@lucid-evolution/lucid": "0.4.30",
+    "@magiclamp/consumemagic-pricing": "file:../ConsumeMAGIC/pricing",
     "@magiclamp/protocol-utils": "file:../ProtocolUtils",
+    "@noble/curves": "^1.4.0",
+    "@noble/hashes": "^1.4.0",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0"
+  },
+  "overrides": {
+    "libsodium-wrappers-sumo": "0.7.10"
   }
 }

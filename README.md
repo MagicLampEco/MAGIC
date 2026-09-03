@@ -1,133 +1,122 @@
 # MagicLamp Network — MAGIC Protocol
-## GenMAGIC v3.3 · Cardano L1 (PlutusV3) · Preview Testnet
+
+Hợp đồng thông minh Cardano L1 (PlutusV3) cho hệ **ba token** LAMP · MAGIC · CARP.
+
+> **Nguồn chân lý:** [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> Mâu thuẫn giữa README này (hoặc bất kỳ tài liệu nào khác) với spec đó → **theo spec**.
+> README chỉ dẫn đường, không định nghĩa lại mô hình.
+>
+> **Trạng thái từng module:** [`DevStatus.md`](DevStatus.md) — một nơi duy nhất, kèm lệnh
+> kiểm chứng. Đừng chép số test ra chỗ khác.
+>
+> **Lịch sử thay đổi:** [`ChangeLog.md`](ChangeLog.md).
 
 ---
 
-## Tổng quan kiến trúc
+## Ba token, ba vai không gộp được
 
-```
-┌─────────────────────────────────────────────┐
-│           App tích hợp (TonFarm, ...)       │
-└─────────────────┬───────────────────────────┘
-                  │ PhoenixKey SDK
-┌─────────────────▼───────────────────────────┐
-│         PhoenixKey (phoenixkey.me)           │
-│         Quản lý danh tính & khoá onchain     │
-└─────────────────┬───────────────────────────┘
-                  │ MAGIC Protocol
-┌─────────────────▼───────────────────────────┐
-│         MagicLamp / MAGIC (repo này)         │
-│   Smart contracts + Protocol math engine     │
-└─────────────────┬───────────────────────────┘
-                  │ Cardano L1
-┌─────────────────▼───────────────────────────┐
-│              LampNet                         │
-│         Decentralized storage                │
-└─────────────────────────────────────────────┘
-```
+| Token | Vai | Bản chất |
+|---|---|---|
+| **LAMP** | tài sản nền / thế chấp | native token, cố định 36 tỷ, không mint thêm, không burn |
+| **MAGIC** | quyền-tiêu-dịch-vụ (tín dụng) | **không phải token** — số kế toán trong datum vault, gắn PersonDID, không chuyển nhượng |
+| **CARP** | đồng-thanh-khoản | native token có policy riêng, chuyển nhượng được, giữ giá bằng sàn-tiện-ích |
 
-**MagicLamp/MAGIC** = Protocol layer (smart contracts + math)
-**PhoenixKey SDK** = Interface layer (apps tích hợp qua đây)
-**Apps** = Không biết gì về MAGIC — chỉ gọi PhoenixKey SDK
+Quy luật: **LAMP sinh MAGIC · CARP chở giá trị tới nơi tiêu · MAGIC tiêu xong hoặc tan biến.**
+Chi tiết: spec §0–§4.
+
+Đơn vị nhỏ nhất — mỗi token một tên riêng, cố ý không trùng nhau:
+`nanogic` (MAGIC) · `nanothread` (CARP) · `oildrop` (LAMP). Tên `nanothread` do repo
+CarpetMint sở hữu (`CarpetMint-Core-Spec-Vi.md §T1`); MAGIC chỉ tham chiếu.
 
 ---
 
-## Trạng thái hiện tại
-
-| Module | Spec | TypeScript Tests | Aiken `check` | Testnet |
-|---|---|---|---|---|
-| InstantGen | §9 | ✅ 45/45 | ✅ 0 errors | ⬜ |
-| SnapshotGen | §8 | ✅ 46/46 | ✅ 0 errors | ⬜ |
-| VacuumGen | §10 | ✅ 30/30 | ✅ 0 errors | ⬜ |
-| ScheduleGen | §11 | ✅ 29/29 | ✅ 0 errors | ⬜ |
-| UMKeeper | §14 | ✅ 20/20 | ✅ 0 errors | ⬜ |
-| Consolidate | §6.9 | ✅ 12/12 | partial validator | ⬜ |
-| ProfileChange | §12 | ✅ 8/8 | partial validator | ⬜ |
-| ConsumeMAGIC | v2.2 | ✅ 31/31 | offchain only | ⬜ |
-| AppEconomics | v2.1 | ✅ 42/42 | offchain only | ⬜ |
-| ProtocolUtils | shared | ✅ 24/24 | offchain library | — |
-| **TỔNG** | | **✅ 287/287** | **5/5 modules clean** | |
-
-> Aiken `aiken check` đã pass 0 errors trên 5 module có `aiken.toml`. Còn warnings về unused imports — không block deploy nhưng dev có thể cleanup. Bước tiếp theo là `aiken build` để sinh `plutus.json` rồi deploy lên Preview testnet (xem DEVELOPER_GUIDE.md).
-
----
-
-## Cấu trúc repo
+## Repo có gì
 
 ```
 MAGIC/
-├── ProtocolUtils/        # Shared single source of truth (P8)
-│   ├── src/              # nanogicToMagicStr, slotToEpoch, isqrt10th,
-│   ├── tests/            # selectLampForLock, cmpBigIntAsc, getTipSlot,
-│   └── package.json      # countActiveAppsInOacWindow, ...
-├── InstantGen/           # §9  — On-demand MAGIC purchase
-│   ├── onchain/          # Aiken validator (PlutusV3, stdlib v2)
-│   ├── offchain/         # TypeScript SDK (depends on @magiclamp/protocol-utils)
-│   └── tests/            # Test vectors (normative App B)
-├── SnapshotGen/          # §8  — Automatic epoch generation
-├── VacuumGen/            # §10 — Two-phase lock-then-fire
-├── ScheduleGen/          # §11 — Forward contract, rate locked
-├── UMKeeper/             # §14 — Network Demand Multiplier updater
-├── Consolidate/          # §6.9 — Holdings consolidation utility
-├── ProfileChange/        # §12 — Activity profile switching
-├── ConsumeMAGIC/         # v2.2 — Burn flow + delegation (offchain only)
-├── AppEconomics/         # v2.1 — W function + reward distribution (offchain only)
-├── scripts/              # Deploy + test scripts cho testnet
-│   ├── deploy/           # 4 bước deploy theo thứ tự
-│   └── test/             # End-to-end flow test
-├── DEVELOPER_GUIDE.md    # Hướng dẫn chi tiết cho dev
-├── ProtocolUtils/CODE_REVIEW.md  # Audit log + design notes
-└── SnapshotGen-Simulator.HTML    # UI demo cho PM/user
+├── SPEC/                 # ĐẶC TẢ CANONICAL — đọc trước khi sửa bất cứ công thức nào
+├── ProtocolUtils/        # Thư viện dùng chung (hằng số, Q-format, BigInt) — P8
+├── InstantGen/           # Sinh MAGIC theo yêu cầu, vault hợp nhất PHA-2
+├── ScheduleGen/          # Hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard
+├── UMKeeper/             # Cập nhật hệ số cầu mạng UM mỗi epoch (permissionless)
+├── ConsumeMAGIC/         # Tiêu thụ MAGIC (đốt theo giá nghiệp vụ) + bộ định giá
+│   └── pricing/          # @magiclamp/consumemagic-pricing — gói gọi được (ESM + CJS)
+├── GetMAGIC/             # Cổng vào (Phase 1, độc lập, chưa nối vault)
+├── MagicSDK/             # Mặt tiền cho bên tích hợp
+├── Paymaster/            # Trả phí hộ (SponsorMeter)
+├── FlowRate/             # Điều tiết nhịp
+├── Consolidate/          # Gộp holding phân mảnh   (validator một phần)
+├── ProfileChange/        # Đổi profile 2 bước      (validator một phần)
+├── AppEconomics/         # Lớp thưởng app          (chưa hội tụ ba-token)
+├── scripts/              # Deploy + kiểm thử testnet
+└── Legacy/               # KHO LƯU TRỮ — không đọc, không build, không deploy
 ```
+
+Mỗi module cùng một khuôn: `onchain/` (Aiken) · `offchain/` (TypeScript + vitest) ·
+`tests/` (vector chuẩn). Không có workspace ở gốc — mỗi `offchain/` là một gói npm độc lập.
 
 ---
 
-## Chạy tests nhanh
+## Chạy kiểm
+
+Từ một checkout sạch, `npm install` trong bất kỳ gói `offchain/` nào là đủ — không có
+bước dựng tay nào đi trước:
 
 ```bash
-# Chạy tất cả — phải ra 278/278
-for dir in InstantGen SnapshotGen VacuumGen ScheduleGen UMKeeper Consolidate ProfileChange ConsumeMAGIC AppEconomics; do
-  echo "=== $dir ===" && cd $dir/offchain && npm install --silent && npm test && cd ../..
-done
-cd ProtocolUtils && npm install --silent && npm test && cd ..
+cd InstantGen/offchain && npm install && npm test
 ```
 
+Hai gói `ProtocolUtils` và `ConsumeMAGIC/pricing` xuất bản `dist/` (ESM + CJS) và được
+các gói khác nạp qua `file:`. Chúng tự dựng lấy trong `prepare` — kịch bản
+`prepare.mjs` tự cài bộ công cụ của chính nó rồi mới gọi `tsc`, nên lần cài đầu tiên
+chậm hơn vài chục giây, chỉ vậy. **Không cần** `cd ProtocolUtils && npm run build`
+trước. Nếu gặp `tsc: command not found` khi `npm install` thì đó là bản cũ hơn
+commit "npm install từ checkout sạch" — cập nhật nhánh, đừng dựng tay.
+
+Chạy cả loạt:
+
 ```bash
-# Chạy aiken check cho 5 onchain modules (cần aiken >= 1.1.0)
-for m in InstantGen SnapshotGen VacuumGen ScheduleGen UMKeeper; do
+for m in InstantGen ScheduleGen UMKeeper Consolidate ProfileChange ConsumeMAGIC AppEconomics; do
+  echo "=== $m ===" && (cd $m/offchain && npm install --silent && npm test)
+done
+```
+
+> `MagicSDK` là ngoại lệ: `npm install` xanh, nhưng `tests/vaultParams.test.ts` đọc
+> `InstantGen/onchain/plutus.json` và `ScheduleGen/onchain/plutus.json` — artifact đã
+> gitignore. Phải `aiken build` hai module đó trước, nếu không 6 test ngã ENOENT.
+
+```bash
+for m in InstantGen ScheduleGen UMKeeper; do
   echo "=== $m ===" && (cd $m/onchain && aiken check)
 done
 ```
 
----
+> Aiken 1.1.21 không in gì khi bị đưa qua pipe. Muốn giữ output thì
+> `script -q /tmp/out.txt aiken check` rồi đọc `/tmp/out.txt`.
 
-## Bốn cơ chế sinh MAGIC
-
-| Cơ chế | Trigger | LAMP cost | UM | Lifetime |
-|---|---|---|---|---|
-| **SnapshotGen** | Tự động mỗi epoch | Không | Không | N(profile) epoch |
-| **InstantGen** | User on-demand | Transfer ngay | Có (stale check) | 2 epoch |
-| **VacuumGen** | Commit → fire sau 2 epoch | Transfer tại fire | Có (no stale) | 1 epoch |
-| **ScheduleGen** | Forward contract | Lock tại commit | Không (locked rate) | 1 epoch |
+Validator không được build sẵn trong repo — phải `aiken build` từng module trước khi
+deploy (`onchain/plutus.json` là artifact, đã gitignore).
 
 ---
 
-## Quick reference — Profile
+## Ràng buộc phải biết trước khi sửa code
 
-| Profile | MAGIC/epoch (1000 LAMP) | Lifetime batch | Decay |
-|---|---|---|---|
-| Ember | ~5.98 MAGIC | 3 epoch | ×0.70/ep |
-| Flame | ~4.62 MAGIC | 6 epoch | ×0.80/ep |
-| Lantern | ~3.15 MAGIC | 9 epoch | ×0.90/ep |
+Đầy đủ ở [`BOUNDARIES.md`](BOUNDARIES.md). Bốn cái hay bị vi phạm nhất:
 
-*(LF=1.0, OAC=0.80, không có apps hoạt động)*
+1. **Toán Aiken ↔ TypeScript phải trùng bit (P8).** Sửa một bên thì sửa bên kia, và
+   vector chuẩn trong `tests/` là trọng tài.
+2. **BigInt cho mọi số tiền.** `Number` cho oildrop/nanogic là lỗi tràn số đang chờ xảy ra.
+3. **Chỉ số constructor Plutus Data là hợp đồng nhị phân.** Đổi thứ tự một variant
+   (`BatchSource`, redeemer) hay bỏ một field (`vacuum_orders`) = vỡ decode mọi UTxO đã tạo.
+   Thứ đã bỏ khỏi mô hình vẫn phải giữ làm bia mộ.
+4. **`lamp_asset_name` là tham số theo mạng** (`tLAMP` testnet / `LAMP` mainnet), không
+   bao giờ hardcode — nó là apply-param #2 của mọi vault.
 
 ---
 
-## Links
+## Liên kết
 
-- Spec: GenMAGIC v3.3 (internal)
 - PhoenixKey SDK: https://github.com/PhoenixKeyDID/PhoenixKey-SDK
-- Cardano Preview Testnet Faucet: https://docs.cardano.org/cardano-testnet/tools/faucet
+- Cardano Preview faucet: https://docs.cardano.org/cardano-testnet/tools/faucet
 - Blockfrost: https://blockfrost.io
 - Aiken: https://aiken-lang.org

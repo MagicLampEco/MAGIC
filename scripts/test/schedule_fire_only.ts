@@ -3,17 +3,17 @@
 
 import {
   Lucid, Blockfrost, Data, Constr,
-  applyParamsToScript, validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, PROTOCOL,
+  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
 } from "../config.js";
+import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
-import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
+import { VaultDatum } from "../../ScheduleGen/offchain/src/types.js";
 
 async function fetchTip() {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -23,50 +23,96 @@ async function fetchTip() {
   return { posixMs: BigInt(tip.time) * 1000n };
 }
 
+// ── Script tham chiếu (CIP-33) ──────────────────────────────────────────────
+// Đính kèm CẢ HAI validator (vault + shard) làm tx vượt trần 16384 byte — đo
+// thật trên Preview: 17303. Nên hai bước ScheduleGen BẮT BUỘC đọc script từ
+// chain. Chạy `npx tsx deploy/06_publish_ref_scripts.ts` rồi nạp hai biến.
+async function refScriptUtxos(lucid: any) {
+  const refs = [process.env.REF_VAULT_SCHEDULE_UTXO, process.env.REF_SHARD_UTXO]
+    .filter((s): s is string => !!s)
+    .map((s) => { const [h, i] = s.split("#"); return { txHash: h!, outputIndex: Number(i) }; });
+  if (refs.length === 0) return undefined;
+  return await lucid.utxosByOutRef(refs);
+}
+
 async function main() {
   console.log("╔════════════════════════════════════════════╗");
-  console.log("║  ScheduleFire smoke test — Preview         ║");
+  console.log(`║  ScheduleFire smoke test — ${NETWORK.padEnd(15)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
 
-  const plutusJson = JSON.parse(
-    await readFile(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url), "utf8"),
-  );
-  const vaultUnapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
-  const shardUnapplied = plutusJson.validators.find((v: any) =>
-    v.title === "vault.shard.spend" || v.title === "shard.shard.spend",
-  );
+  // Apply-param THEO TÊN — dùng chung bản đồ giá trị với deploy/07.
+  const blueprint      = await loadBlueprint("ScheduleGen");
+  const vaultUnapplied = findValidator(blueprint, "vault.vault.spend");
+  const shardUnapplied = findValidator(blueprint, "vault.shard.spend");
 
-  const vaultScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(vaultUnapplied.compiledCode, [
-      POLICY_IDS.lamp, ASSET_NAMES.lamp, POLICY_IDS.shard_nft,
-      POLICY_IDS.vault_id_nft, ASSET_NAMES.vault_id_nft, PROTOCOL.MS_PER_EPOCH,
-    ]),
-  };
-  // Shard validator now takes 1 param: shard NFT policy id (same value the vault
-  // is parameterized with). Apply it before hashing — hash changed vs v1.0.
-  const shardScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(shardUnapplied.compiledCode, [POLICY_IDS.shard_nft]),
-  };
-  const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(vaultScript)));
-  const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(shardScript)));
+  const { script: vaultScript, hash: vaultHash } = appliedScript(
+    vaultUnapplied,
+    scheduleVaultParams({
+      lampPolicyId:  POLICY_IDS.lamp,
+      lampAssetName: ASSET_NAMES.lamp,
+      shardPolicyId: POLICY_IDS.shard_nft,
+      msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    }),
+  );
+  const { script: shardScript, hash: shardHash } = appliedScript(
+    shardUnapplied,
+    shardSpendParams({ shardPolicyId: POLICY_IDS.shard_nft }),
+  );
+  const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
+  const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(shardHash));
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
   const address = await lucid.wallet().address();
   const ownerPkh = getAddressDetails(address).paymentCredential!.hash;
 
+  // Blockfrost đánh chỉ mục UTxO trễ vài giây sau tx trước (ScheduleCommit vừa
+  // xác nhận). Không chờ thì bước này báo "Vault not found" và che mất lý do
+  // THẬT — đo được trên Preview 2026-08-13: commit PASS ngay trước đó.
   const wantedTx = process.env.VAULT_TX_HASH;
-  const vaultUtxos = await lucid.utxosAt(vaultAddr);
-  const vaultUtxo = vaultUtxos.find((u) => {
+  const mine = (u: { datum?: string | null }) => {
     if (!u.datum) return false;
-    if (wantedTx && u.txHash !== wantedTx) return false;
-    try { return Data.from(u.datum, VaultDatumSchema).owner === ownerPkh; } catch { return false; }
-  });
-  if (!vaultUtxo) { console.error("❌ Vault not found"); process.exit(1); }
+    try { return Data.from(u.datum, VaultDatum).owner === ownerPkh; } catch { return false; }
+  };
+  let vaultUtxo;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const vaultUtxos = await lucid.utxosAt(vaultAddr);
+    vaultUtxo = vaultUtxos.find((u) => mine(u) && (!wantedTx || u.txHash === wantedTx));
+    if (vaultUtxo) break;
+    // Hết lượt: CHỈ được tự chọn khi người gọi KHÔNG ghim gì.
+    //
+    // 🔴 Bản trước thay thế cả khi `wantedTx` ĐANG được ghim — tức người gọi chỉ đúng
+    //    một vault, hệ thống không tìm thấy, và nó bắn vào một vault KHÁC rồi báo bằng
+    //    một dòng cảnh báo trong log. Đó là fail-open trên đường tiền: MAGIC sinh ra ở
+    //    vault không ai đợi, còn vault được ghim thì hết một lượt fire của epoch này.
+    //    Ghim mà không thấy là LỖI, không phải chỗ để đoán hộ.
+    if (attempt === 5) {
+      if (wantedTx) break;
+      vaultUtxo = vaultUtxos.find((u) => mine(u) && Data.from(u.datum!, VaultDatum).gen_schedules.length > 0);
+      if (vaultUtxo) console.log(`⚠ không ghim VAULT_TX_HASH; dùng vault có lịch: ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`);
+      break;
+    }
+    console.log(`  … chưa thấy vault ở chỉ mục Blockfrost (lần ${attempt}), chờ 15s`);
+    await new Promise((r) => setTimeout(r, 15_000));
+  }
+  if (!vaultUtxo) {
+    // "Vault not found" trần trụi che mất nguyên nhân thật. Hai nguyên nhân, và
+    // cả hai đều KHÔNG phải "Blockfrost chậm" (đã chờ 4×15s ở trên):
+    //   1. apply-param lệch ⇒ suy ra hash khác ⇒ soi nhầm địa chỉ;
+    //   2. validator ĐÃ ĐỔI sau lần deploy ⇒ hash mới, vault cũ nằm ở địa chỉ cũ
+    //      và không bao giờ xuất hiện ở đây nữa — phải deploy lại chân ScheduleGen
+    //      trên bản build hiện tại, không có đường vá bằng env.
+    console.error("❌ Không thấy vault nào của ví này ở địa chỉ vault ScheduleGen.");
+    console.error(`   vault hash suy ra : ${vaultHash}`);
+    console.error(`   địa chỉ soi       : ${vaultAddr}`);
+    console.error(`   VAULT_TX_HASH ghim: ${wantedTx ?? "(không ghim)"}`);
+    console.error(`   owner pkh         : ${ownerPkh}`);
+    console.error("   → Đối chiếu hash trên với scripts/DEPLOYED.md. Lệch nghĩa là");
+    console.error("     apply-param khác lúc deploy, HOẶC validator đã đổi từ đó.");
+    process.exit(1);
+  }
 
-  const vd = Data.from(vaultUtxo.datum!, VaultDatumSchema);
+  const vd = Data.from(vaultUtxo.datum!, VaultDatum);
   if (vd.gen_schedules.length === 0) {
     console.error("❌ No schedules. Run Commit first or deploy with PRESEED_SCHEDULE_L>0.");
     process.exit(1);
@@ -96,7 +142,9 @@ async function main() {
 
   try {
     if (tamper) console.log(`⚠  TEST MODE: ${tamper} — expecting REJECT.\n`);
+    const refUtxos = await refScriptUtxos(lucid);
     const result = await buildScheduleFireTx({
+      refScriptUtxos: refUtxos,
       lucid, vaultUtxo, shardUtxos, scheduleId,
       vaultScript, shardScript,
       lampPolicyId: POLICY_IDS.lamp,

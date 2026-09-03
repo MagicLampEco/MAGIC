@@ -33,9 +33,12 @@ use aiken/collection/list
 use aiken/crypto
 use aiken/interval.{Finite}
 use cardano/address.{Script}
-use cardano/transaction.{OutputReference, Transaction}
+use cardano/assets
+use cardano/transaction.{InlineDatum, Output, OutputReference, Transaction}
 
-use getmagic/types.{Cancel, Expire, OrderDatum, OrderRedeemer, Settle}
+use getmagic/types.{
+  AllocationDatum, Cancel, Expire, OrderDatum, OrderRedeemer, Settle,
+}
 use getmagic/utils.{build_oracle_settle_msg}
 
 /// Parameterized by the allocation validator script hash.
@@ -86,13 +89,26 @@ validator otc_order(alloc_script_hash: ByteArray) {
         // Voucher count must match total_epochs (pre-issued by oracle at settlement time).
         let vouchers_ok = list.length(epoch_vouchers) == datum.total_epochs
 
-        // G-OTC-4: Exactly one output at the allocation script address must exist.
-        // Off-chain is responsible for embedding the correct AllocationDatum inline.
+        // G-OTC-4 (Nợ #42): ĐÚNG MỘT output tại địa chỉ allocation mang
+        // AllocationDatum có `order_id` TRÙNG đơn này.
+        //
+        // Bản trước viết `list.any` với điều kiện duy nhất là "địa chỉ đúng" —
+        // trong khi chú thích ngay trên nó hứa "exactly one". Hai đơn Settle của
+        // hai khách trong cùng một tx, kèm đúng MỘT output allocation, thì cả hai
+        // lượt chạy validator đều thấy điều kiện thoả: một khách nhận phân bổ,
+        // khách còn lại trả tiền và không nhận gì. Đếm không ràng buộc theo đơn
+        // thì gộp lô là đường làm mất tiền khách, không phải tối ưu phí.
+        //
+        // Ràng theo `order_id` chứ không chỉ đếm tổng: gộp lô N đơn vẫn hợp lệ,
+        // miễn mỗi đơn có output riêng của nó. Đếm tổng sẽ chặn nhầm lô hợp lệ mà
+        // vẫn không nói được output nào thuộc đơn nào.
+        //
+        // Vẫn nằm trong KL-2: dòng này ràng output THUỘC ĐÚNG ĐƠN, chưa ràng NỘI
+        // DUNG các trường còn lại của AllocationDatum.
         let alloc_output_exists =
-          list.any(
-            tx.outputs,
-            fn(o) { o.address.payment_credential == Script(alloc_script_hash) },
-          )
+          count_alloc_outputs_for_order(
+            tx.outputs, alloc_script_hash, datum.order_id,
+          ) == 1
 
         sig_valid && timestamp_fresh && not_expired && vouchers_ok && alloc_output_exists
       }
@@ -117,4 +133,101 @@ validator otc_order(alloc_script_hash: ByteArray) {
   }
 
   else(_) { fail }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Đếm output allocation THUỘC ĐÚNG một đơn (Nợ #42)
+// ═══════════════════════════════════════════════════════════════
+
+/// Số output nằm tại địa chỉ allocation VÀ mang AllocationDatum có `order_id`
+/// trùng đơn đang xét. Tách rời để kiểm được bằng test, không phải suy từ mã.
+pub fn count_alloc_outputs_for_order(
+  outputs           : List<Output>,
+  alloc_script_hash : ByteArray,
+  order_id          : ByteArray,
+) -> Int {
+  list.count(
+    outputs,
+    fn(o) {
+      if o.address.payment_credential == Script(alloc_script_hash) {
+        when o.datum is {
+          InlineDatum(d) ->
+            if d is AllocationDatum {
+              let ad: AllocationDatum = d
+              ad.order_id == order_id
+            } else {
+              False
+            }
+          _ -> False
+        }
+      } else {
+        False
+      }
+    },
+  )
+}
+
+// ── Tests ─────────────────────────────────────────────────────
+
+const t_alloc_sh: ByteArray =
+  #"11111111111111111111111111111111111111111111111111111111"
+
+fn t_alloc_datum(order_id: ByteArray) -> AllocationDatum {
+  AllocationDatum {
+    alloc_id: #"00", order_id, org_pkh: #"aa",
+    org_vault_nft_policy: #"bb", beneficiary_pkh: #"cc",
+    beneficiary_stake: None, magic_per_epoch: 10_000_000_000,
+    total_epochs: 6, claimed_epochs: [], start_epoch: 1,
+    expiry_epoch: 7, vouchers: [], oracle_vkey: #"dd",
+  }
+}
+
+fn t_alloc_out(order_id: ByteArray) -> Output {
+  Output {
+    address: address.from_script(t_alloc_sh),
+    value: assets.from_lovelace(2_000_000),
+    datum: InlineDatum(t_alloc_datum(order_id)),
+    reference_script: None,
+  }
+}
+
+/// Một đơn, một output của chính nó.
+test alloc_out_one_per_order() {
+  count_alloc_outputs_for_order([t_alloc_out(#"4f31")], t_alloc_sh, #"4f31") == 1
+}
+
+/// 🔴 Ca Nợ #42: hai đơn Settle trong CÙNG tx, chỉ MỘT output allocation.
+/// Bản cũ dùng `list.any` nên cả hai lượt chạy validator đều thấy thoả — khách
+/// thứ hai trả tiền và không nhận gì. Nay đơn #"4f32" đếm ra 0 ⟹ tx bị từ chối.
+test alloc_out_two_orders_share_one_output() {
+  let outs = [t_alloc_out(#"4f31")]
+  and {
+    count_alloc_outputs_for_order(outs, t_alloc_sh, #"4f31") == 1,
+    count_alloc_outputs_for_order(outs, t_alloc_sh, #"4f32") == 0,
+  }
+}
+
+/// Gộp lô vẫn hợp lệ khi mỗi đơn có output riêng — ràng theo `order_id` chứ
+/// không đếm tổng, nên không chặn nhầm lô đúng.
+test alloc_out_batch_each_order_has_its_own() {
+  let outs = [t_alloc_out(#"4f31"), t_alloc_out(#"4f32")]
+  and {
+    count_alloc_outputs_for_order(outs, t_alloc_sh, #"4f31") == 1,
+    count_alloc_outputs_for_order(outs, t_alloc_sh, #"4f32") == 1,
+  }
+}
+
+/// Output đúng địa chỉ nhưng datum của đơn KHÁC không được tính.
+test alloc_out_wrong_order_not_counted() {
+  count_alloc_outputs_for_order([t_alloc_out(#"4f99")], t_alloc_sh, #"4f31") == 0
+}
+
+/// Datum đúng nhưng nằm ở địa chỉ khác (ví trần) không được tính.
+test alloc_out_wrong_address_not_counted() {
+  let o =
+    Output {
+      ..t_alloc_out(#"4f31"),
+      address: address.from_verification_key(#"cc"),
+    }
+  count_alloc_outputs_for_order([o], t_alloc_sh, #"4f31") == 0
 }

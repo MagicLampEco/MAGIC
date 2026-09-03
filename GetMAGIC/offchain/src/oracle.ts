@@ -1,9 +1,19 @@
 // src/oracle.ts — Ed25519 oracle signing and message construction for GetMAGIC
 // ALL amounts are BigInt. NEVER use Number for nanogic or epoch amounts.
 //
-// Message formats (must match getmagic/utils.ak exactly — P8):
-//   settle_msg  = order_id(var) ++ user_pkh(28) ++ nonce(32) ++ timestamp(8 BE)
-//   voucher_msg = alloc_id(32)  ++ epoch(8 BE)  ++ nanogic(8 BE) ++ expiry_posix(8 BE)
+// ── FRAMING RULE (must match getmagic/utils.ak byte-for-byte — P8) ─────────
+//   LP(s)    = u32be(len(s)) ++ s
+//   alloc_id = blake2b_256("MAGIC_ALLOC_ID:v1" ++ 0x00 ++ u8(2) ++ LP(order_id) ++ LP(user_pkh))
+//   settle   = "MAGIC_ORACLE_SETTLE:v1" ++ 0x00 ++ u8(4)
+//                ++ LP(order_id) ++ LP(user_pkh) ++ LP(nonce) ++ u64be(timestamp)
+//   voucher  = "MAGIC_VOUCHER:v1" ++ 0x00 ++ u8(4) ++ LP(alloc_id)
+//                ++ u64be(epoch) ++ u64be(nanogic) ++ u64be(expiry_posix)
+//
+// Plain concatenation of variable-length fields is NOT injective: moving bytes
+// across a field boundary yields the same byte string, so one hash / one oracle
+// signature covers several different field-sets (nợ #26). Any NEW variable-
+// length field MUST be wrapped in `lengthPrefixed`, and the Aiken side in
+// onchain/lib/getmagic/utils.ak must change in the SAME commit.
 
 import { blake2b } from "@noble/hashes/blake2b";
 import { ed25519 } from "@noble/curves/ed25519";
@@ -49,24 +59,66 @@ function concatBytes(...arrays: Uint8Array[]): Uint8Array {
   return out;
 }
 
+/** Encode bigint to 4-byte big-endian (length prefix). */
+function encodeInt4Bytes(n: number): Uint8Array {
+  if (n < 0 || n > 0xffff_ffff) throw new Error("encodeInt4Bytes: out of u32 range");
+  const buf = new Uint8Array(4);
+  new DataView(buf.buffer).setUint32(0, n, false); // false = big-endian
+  return buf;
+}
+
+/**
+ * LP(s) = u32be(len(s)) ++ s — makes a variable-length field self-delimiting.
+ * Matches Aiken: `length_prefixed` in getmagic/utils.ak
+ */
+export function lengthPrefixed(bytes: Uint8Array): Uint8Array {
+  return concatBytes(encodeInt4Bytes(bytes.length), bytes);
+}
+
+// ── Domain tags (ASCII, no 0x00 inside) ───────────────────────
+// Must equal domain_alloc_id / domain_oracle_settle / domain_voucher in utils.ak.
+
+const DOMAIN_ALLOC_ID      = new TextEncoder().encode("MAGIC_ALLOC_ID:v1");
+const DOMAIN_ORACLE_SETTLE = new TextEncoder().encode("MAGIC_ORACLE_SETTLE:v1");
+const DOMAIN_VOUCHER       = new TextEncoder().encode("MAGIC_VOUCHER:v1");
+
+// ── Số trường của từng khuôn ─────────────────────────────────
+// P8 — gương của `fields_*` trong getmagic/utils.ak. Đưa số trường vào chính
+// tiền ảnh: thêm một trường ⇒ hằng đổi ⇒ hash đổi, KỂ CẢ khi quên tăng `:v1`.
+// Không bắt được ca đổi chỗ hai trường cùng độ dài — ca đó do vector vàng ở
+// tests/vectors.ts bắt.
+const FIELDS_ALLOC_ID      = 2;  // order_id, user_pkh
+const FIELDS_ORACLE_SETTLE = 4;  // order_id, user_pkh, nonce, timestamp_ms
+const FIELDS_VOUCHER       = 4;  // alloc_id, epoch, nanogic, expiry_posix
+
+/** `tag ++ 0x00 ++ u8(fieldCount)` — tiền tố phân miền. */
+function domainPrefix(tag: Uint8Array, fieldCount: number): Uint8Array {
+  return concatBytes(tag, new Uint8Array([0x00, fieldCount]));
+}
+
+/** alloc_id is a blake2b_256 digest — always 32 bytes. Enforced, not assumed. */
+export const ALLOC_ID_LENGTH = 32;
+
 // ── Oracle settle message ─────────────────────────────────────
 
 /**
  * Build oracle settlement message (G-OTC-1).
- *   msg = order_id ++ user_pkh ++ nonce ++ timestamp_ms(8 BE)
+ *   msg = "MAGIC_ORACLE_SETTLE:v1" ++ 0x00 ++ u8(4)
+ *      ++ LP(order_id) ++ LP(user_pkh) ++ LP(nonce) ++ u64be(timestamp_ms)
  *
  * Matches Aiken: build_oracle_settle_msg in getmagic/utils.ak
  */
 export function buildOracleSettleMsg(
-  orderId:     string,  // hex — ASCII bytes of 16-char order ID
+  orderId:     string,  // hex — ASCII bytes of the order ID
   userPkh:     string,  // hex — 28-byte payment key hash
   nonce:       string,  // hex — 32-byte blake2b_256 nonce
   timestampMs: bigint,  // Unix ms
 ): Uint8Array {
   return concatBytes(
-    hexToBytes(orderId),
-    hexToBytes(userPkh),
-    hexToBytes(nonce),
+    domainPrefix(DOMAIN_ORACLE_SETTLE, FIELDS_ORACLE_SETTLE),
+    lengthPrefixed(hexToBytes(orderId)),
+    lengthPrefixed(hexToBytes(userPkh)),
+    lengthPrefixed(hexToBytes(nonce)),
     encodeInt8Bytes(timestampMs),
   );
 }
@@ -75,18 +127,28 @@ export function buildOracleSettleMsg(
 
 /**
  * Build epoch voucher message (G-ALLOC-1).
- *   msg = alloc_id(32) ++ epoch(8 BE) ++ nanogic(8 BE) ++ expiry_posix(8 BE)
+ *   msg = "MAGIC_VOUCHER:v1" ++ 0x00 ++ u8(4) ++ LP(alloc_id)
+ *      ++ u64be(epoch) ++ u64be(nanogic) ++ u64be(expiry_posix)
  *
  * Matches Aiken: build_voucher_msg in getmagic/utils.ak
+ * Throws on a non-32-byte allocId — mirrors the on-chain
+ * `expect bytearray.length(alloc_id) == 32`.
  */
 export function buildVoucherMsg(
-  allocId:      string,  // hex — 32-byte blake2b_256 of (order_id ++ user_pkh)
+  allocId:      string,  // hex — 32-byte alloc ID (see deriveAllocId)
   epoch:        bigint,
   nanogic:      bigint,  // NEVER use Number here (C-OVERFLOW)
   expiryPosixMs: bigint,
 ): Uint8Array {
+  const allocBytes = hexToBytes(allocId);
+  if (allocBytes.length !== ALLOC_ID_LENGTH) {
+    throw new Error(
+      `buildVoucherMsg: allocId must be ${ALLOC_ID_LENGTH} bytes, got ${allocBytes.length}`,
+    );
+  }
   return concatBytes(
-    hexToBytes(allocId),
+    domainPrefix(DOMAIN_VOUCHER, FIELDS_VOUCHER),
+    lengthPrefixed(allocBytes),
     encodeInt8Bytes(epoch),
     encodeInt8Bytes(nanogic),
     encodeInt8Bytes(expiryPosixMs),
@@ -146,12 +208,24 @@ export function generateNonce(orderId: string, bankTxRef: string): string {
 // ── Alloc ID derivation ───────────────────────────────────────
 
 /**
- * Derive alloc_id: blake2b_256(order_id_bytes ++ user_pkh_bytes).
+ * Derive alloc_id:
+ *   blake2b_256("MAGIC_ALLOC_ID:v1" ++ 0x00 ++ u8(2) ++ LP(order_id) ++ LP(user_pkh))
+ *
+ * Matches Aiken: build_alloc_id in getmagic/utils.ak
+ *
+ * alloc_id is a LOOKUP KEY (accounting, double-claim tracking, vouchers). The
+ * old raw-concat form let two different (order_id, user_pkh) pairs map to one
+ * key, and it failed silently — no signature check would trip.
+ *
  * @returns 32-byte alloc ID in hex
  */
 export function deriveAllocId(orderId: string, userPkh: string): string {
-  const combined = concatBytes(hexToBytes(orderId), hexToBytes(userPkh));
-  const hash     = blake2b(combined, { dkLen: 32 });
+  const preimage = concatBytes(
+    domainPrefix(DOMAIN_ALLOC_ID, FIELDS_ALLOC_ID),
+    lengthPrefixed(hexToBytes(orderId)),
+    lengthPrefixed(hexToBytes(userPkh)),
+  );
+  const hash = blake2b(preimage, { dkLen: 32 });
   return bytesToHex(hash);
 }
 

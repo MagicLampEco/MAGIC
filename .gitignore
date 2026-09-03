@@ -4,15 +4,26 @@ dist/
 *.env
 .DS_Store
 
-# Nhà riêng agent — không push lên org repo (chuẩn _rules/00-global.md)
+# Nhà riêng agent + worktree tạm — KHÔNG đẩy lên org repo
 _Agents/
-.claude/worktrees/
+.claude/
 
-# Aiken build artifacts
-*/onchain/build/
-*/onchain/plutus.json
-MagicSDK/node_modules
+# Khoá / bí mật — chặn sẵn, không bao giờ commit
+*.key
+*.pem
+*.pat
+*.mnemonic
 
-# nested (Legacy) build artifacts
+# Aiken build artifacts (kể cả module lồng trong Legacy/)
 **/onchain/build/
 **/onchain/plutus.json
+MagicSDK/node_modules
+
+# Tệp nội bộ từng máy — ranh giới chia sẻ nằm ở BOUNDARIES.md (được track)
+CLAUDE.md
+
+# Trạng thái deploy cục bộ theo mạng (giá trị công khai, bản ghi chuẩn là scripts/DEPLOYED.md).
+# Cả bản sao lưu: hash cũ trong tệp .bak là mồi cho việc deploy nhầm vào địa chỉ đã chết.
+scripts/state.*.sh
+scripts/state.*.sh.bak-*
+__pycache__/

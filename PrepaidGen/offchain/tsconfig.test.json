@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module":           "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit":           true,
+    "skipLibCheck":     true,
+    "rootDir":          "..",
+    "baseUrl":          ".",
+    "paths":            { "*": ["./node_modules/*"] },
+    "types":            ["node"]
+  },
+  "include": ["src/**/*", "../tests/**/*"]
+}

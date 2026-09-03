@@ -1,5 +1,5 @@
 // src/math.ts — ScheduleGen BigInt Math Engine
-// ALL arithmetic uses BigInt. No Number for oildrop/nanogic/Q-format (C-OVERFLOW).
+// ALL arithmetic uses BigInt. No Number for oil/nanogic/Q-format (C-OVERFLOW).
 
 import {
   Q, SNAPSHOT_BASE_RATE_Q,
@@ -9,12 +9,59 @@ import {
 } from "./constants.js";
 import {
   slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr,
-  selectLampForLock, unlockLockedAmount,
+  selectLampForLock, removeLockedAmount, cmpBigIntAsc,
+  unlockLockedAmount, coalesceHoldings,
+  type LoyaltyHolding,
 } from "@magiclamp/protocol-utils";
 import { blake2b } from "@noble/hashes/blake2b";
 
 export { slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr };
-export { selectLampForLock, unlockLockedAmount };
+export { selectLampForLock, removeLockedAmount };
+
+// ══════════════════════════════════════════════════════════════
+// I-ACT-7 — unlockLockedAmount / coalesceHoldings: MỘT nguồn, ở ProtocolUtils
+// ══════════════════════════════════════════════════════════════
+//
+// Hai hàm này TỪNG có hai bản: một trong ProtocolUtils (dùng chung), một viết
+// riêng ngay tại đây. Hai bản cho cùng kết quả, nhưng hai bản thì trôi được —
+// và P8 đòi phía TypeScript trùng BIT với `lock.ak: unlock_locked_amount` +
+// `coalesce_holdings`. Hoà nhánh 2026-08-28 gộp về bản dùng chung.
+//
+// Nghĩa: fire GIẢI KHOÁ chứ không chuyển LAMP đi — mỗi holding được chọn giữ
+// nguyên amount và acquired_epoch, chỉ `is_locked` lật sang false. Σholdings,
+// và do đó lamp_balance cùng số LAMP thật trong UTxO, bất biến. Chọn theo
+// oldest-locked-first; thứ tự kết quả [đã-mở] ++ [vừa-mở] ++ [còn-khoá].
+//
+// `coalesceHoldings` KHÔNG phải tuỳ chọn: mỗi lần giải khoá một phần là tách
+// một holding và không bao giờ bỏ đi cái nào, nên danh sách phình +1 mỗi lần
+// fire. `max_loyalty_holdings` = 64 và validate_fire cưỡng chế nó ⟹ một lịch
+// dài sẽ làm vault không fire nổi mà cũng không rút nổi: LAMP đóng băng.
+//
+// `removeLockedAmount` (xoá hẳn LAMP) vẫn xuất để tra cứu, không builder nào gọi.
+export { unlockLockedAmount, coalesceHoldings };
+
+// ══════════════════════════════════════════════════════════════
+// §4.2 — per-epoch use-or-lose CLIFF (decay_window = 1)
+// ══════════════════════════════════════════════════════════════
+//
+// k = current_epoch − created_epoch ; k ≥ decay_window ⟹ DEAD.
+// Mirrors vault.ak: is_expired / prune_expired.
+
+export function isExpired(
+  createdEpoch: bigint,
+  decayWindow : bigint,
+  currentEpoch: bigint,
+): boolean {
+  return (currentEpoch - createdEpoch) >= decayWindow;
+}
+
+export function isLive(
+  createdEpoch: bigint,
+  decayWindow : bigint,
+  currentEpoch: bigint,
+): boolean {
+  return !isExpired(createdEpoch, decayWindow, currentEpoch);
+}
 
 // ══════════════════════════════════════════════════════════════
 // §11.3 S(L) — Schedule bonus multiplier (piecewise, T11, T12)
@@ -67,16 +114,16 @@ export function computeRateLockedQ(
 // T-DET: rate_locked_q immutable + same λ → every fire gets identical M_i
 // T19:   C-SCH-RATE ensures M_i ≥ 1
 //
-// TV-SCH-02: λ=4000 LAMP=4×10⁹ oildrop, rate_locked_q=11_250_000_000
+// TV-SCH-02: λ=4000 LAMP=4×10⁹ oil, rate_locked_q=11_250_000_000
 //   M_i = ⌊4×10⁹ × 11_250_000_000 / Q⌋ = 45_000_000_000 = 45 MAGIC ✓
 
-export function computeMi(lambdaOildrop: bigint, rateLockedQ: bigint): bigint {
-  return lambdaOildrop * rateLockedQ / Q;
+export function computeMi(lambdaOil: bigint, rateLockedQ: bigint): bigint {
+  return lambdaOil * rateLockedQ / Q;
 }
 
 // ── C-SCH-RATE: M_i ≥ 1 guarantee (T19) ─────────────────────
-export function checkSchRate(lambdaOildrop: bigint, rateLockedQ: bigint): boolean {
-  return lambdaOildrop * rateLockedQ >= Q;
+export function checkSchRate(lambdaOil: bigint, rateLockedQ: bigint): boolean {
+  return lambdaOil * rateLockedQ >= Q;
 }
 
 // ══════════════════════════════════════════════════════════════

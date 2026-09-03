@@ -5,10 +5,18 @@
 //
 // TWO-PHASE:
 //   ScheduleCommit: user signs, locks L×λ, creates GenSchedule, updates shard
-//   ScheduleFire:   permissionless, fires ≤8 orders, updates vault+shard.
-//                   I-ACT-7: LAMP STAYS PUT — a fire lifts the lock, it does
-//                   not move LAMP out. lamp_balance is byte-identical across a
-//                   fire; only lamp_locked drops.
+//   ScheduleFire:   permissionless, fires ≤8 orders, updates vault + shard
+//
+// PHA 2 — I-ACT-7 (LAMP ĐỨNG YÊN):
+//   A fire no longer transfers LAMP to a Treasury. It only RELEASES the lock:
+//   `lamp_balance` and the real LAMP inside the vault UTxO are byte-identical
+//   across a fire; `lamp_locked` drops by fires×λ and the matching holdings
+//   flip `is_locked` to False. The `treasury_addr` apply-parameter is gone —
+//   no handler in this validator moves LAMP any more.
+//
+// PHA 2 — §4.2 per-epoch use-or-lose:
+//   Every batch is a 1-epoch cliff. `apply_burns` refuses to burn a batch
+//   outside its `created_epoch`, and dead batches are collected on the way out.
 //
 // SHARD BIND (HIGH fix, option (c)): the VAULT is the SINGLE authority on the
 // shard datum transition. validate_commit / validate_fire assert the full shard
@@ -21,13 +29,16 @@
 // shard NFT policy id).
 
 use aiken/builtin
+use aiken/cbor
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/crypto
 use aiken/interval.{Finite, IntervalBoundType}
-use cardano/address.{Address}
+use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, Spend, Transaction, placeholder,
+  InlineDatum, Input, NoDatum, Output, OutputReference, Spend, Transaction,
+  placeholder,
 }
 
 use magiclamp/protocol/types.{
@@ -53,16 +64,56 @@ use magiclamp/protocol/lock.{
   sum_holdings, l_avail,
 }
 
-// Test-only LAMP asset name. PRODUCTION lamp_asset_name is a VALIDATOR PARAM
-// (deploy applies tLAMP testnet #"744c414d50" / LAMP mainnet #"4c414d50") so the
-// vault does not lock when the network token name differs — see validator sig.
-// Tests use the MAINNET name on purpose: if a #"744c414d50" literal is ever
-// reintroduced into validator logic, it no longer matches the param the tests
-// apply, and the suite fails instead of silently passing.
-const t_lamp_name: ByteArray = #"4c414d50"   // "LAMP"
-// Shard NFT asset name is now PER-SHARD: shard_asset_name(shard_id) from math.ak
+// LAMP native-asset name is now a VALIDATOR PARAMETER (`lamp_asset_name`), NOT a
+// hardcoded literal — the asset name is a per-network PARAM (tLAMP testnet / LAMP
+// mainnet), so it must never be baked as a constant.
+//
+// Shard NFT asset name is PER-SHARD: shard_asset_name(shard_id) from math.ak
 // ("SHARD" ∥ byte(id)). Each shard carries a distinct one-shot NFT, so identity
 // is bound by asset name, not by the self-declared `shard_id` datum field.
+
+// ══════════════════════════════════════════════════════════════
+// VAULT-IDENTITY STATE-THREAD NFT — genesis-clean anchor (MAINNET-BLOCK)
+//
+// THE HOLE: Cardano runs a validator only when a UTxO is SPENT, never when it is
+// CREATED. The vault script address is public (= hash of this validator + params).
+// An attacker parks a UTxO at the vault address with a FABRICATED inline datum
+// (`gen_schedules` full of fake locks, `magic_batches` full of fake amounts,
+// `consumed_credit = 10^18`, `owner = attacker`) and spends it via
+// ScheduleCommit/ScheduleFire/BurnBatch to mint MAGIC (or pay a ConsumeMAGIC
+// co-spend) from 100%-fabricated state. Nothing validated the datum at creation.
+//
+// THE FIX: a state-thread NFT whose ONLY way into existence runs the `mint`
+// handler below — which PROVES the vault started clean — and whose presence is
+// REQUIRED on every spend (`validate_vault_value`). A fabricated vault (no NFT)
+// cannot be spent by ANY handler.
+//
+// WHY MULTI-PURPOSE (spend + mint in ONE validator): the mint policy must bind
+// the genesis NFT to THIS vault's script address (else an attacker mints a clean
+// NFT to a wallet, then in a plain tx re-homes it to the vault address with a
+// DIRTY datum — no script runs on that creation, reopening the hole). Binding
+// needs the vault hash inside the mint policy while the spend side needs the mint
+// policy id — a MUTUAL apply-param fixed point (`vault_hash = H(…,policy)`,
+// `policy = H(…,vault_hash)`) that is undeployable. Folding the mint handler INTO
+// the vault validator breaks the cycle: `policy_id (mint) == script_hash == the
+// Script credential of the spend address`, all known via self-reference, no param,
+// no cycle. The single script hash IS the vault_id policy id.
+//
+// NOTE — this is a DISTINCT anchor from the 16-shard NFT system: the shard NFT
+// (shard_nft.ak) protects the shard aggregate UTxOs, NOT the vault. `vault_id_nft`
+// protects the vault UTxO itself. The vault output carries {ADA, LAMP, vault_id
+// NFT} — NEVER a shard NFT — so its policy-set is bounded at 3.
+//
+// The asset name is `blake2b_256(cbor.serialise(seed))` so each vault is a
+// distinct N-instance one-shot (permissionless, unique per spent seed UTxO).
+pub type VaultIdRedeemer {
+  // Mint a fresh vault-identity NFT + park a genesis-clean vault UTxO.
+  MintVaultId { seed: OutputReference }
+  // Burn the NFT (qty < 0 only). A spend that also burns the NFT still fails
+  // `validate_vault_value` (NFT must survive on the continuing output), so under
+  // the current handler set the NFT is permanent. Kept for forward-compat.
+  BurnVaultId
+}
 
 // ══════════════════════════════════════════════════════════════
 // Vault validator
@@ -72,16 +123,20 @@ const t_lamp_name: ByteArray = #"4c414d50"   // "LAMP"
 //   Preview/Preprod: 86_400_000
 validator vault(
   lamp_policy_id    : PolicyId,
-  lamp_asset_name   : ByteArray,  // LAMP asset name per network (deploy-applied)
-  shard_policy_id   : PolicyId,  // identifies shard UTxOs by NFT
-  // INV-VAULT-IDENTITY (ConsumeMAGIC C-CM-6): the one-shot NFT minted by
-  // ConsumeMAGIC/onchain/validators/vault_id_nft.ak. Deploy MUST apply the SAME
-  // (policy, name) pair here and to consume.ak — consume.ak proves a vault input
-  // is genuine by this NFT, and this validator keeps the NFT inside the vault.
-  vault_nft_policy  : PolicyId,
-  vault_nft_name    : ByteArray,
+  lamp_asset_name   : ByteArray,  // per-network PARAM (tLAMP testnet / LAMP mainnet)
+  shard_policy_id   : PolicyId,   // identifies shard UTxOs by NFT
   ms_per_epoch      : Int,
 ) {
+  // ── mint: vault-identity NFT policy (policy_id == this script hash) ──────
+  mint(redeemer: VaultIdRedeemer, policy_id: PolicyId, tx: Transaction) {
+    when redeemer is {
+      MintVaultId { seed } ->
+        validate_mint_vault_id(seed, policy_id, lamp_policy_id, lamp_asset_name, tx)
+      BurnVaultId ->
+        validate_burn_vault_id(policy_id, tx)
+    }
+  }
+
   spend(
     datum_opt : Option<VaultDatum>,
     redeemer  : VaultRedeemer,
@@ -92,19 +147,9 @@ validator vault(
     let current_epoch = get_epoch(tx, ms_per_epoch)
     let vault_addr    = own_addr(own_ref, tx.inputs)
 
-    // C-VAULT-DS-1
-    expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
-
-    // INV-VAULT-IDENTITY — the vault NFT must STAY in the vault. Placed here, not
-    // per-handler: all five branches route through find_vault_output_raw (exactly
-    // one continuing output at vault_addr), so one check covers them all.
-    //   Without it, BurnBatch/WithdrawLamp/SetDelegate can drop the NFT out of the
-    //   continuing output. The NFT is one-shot ⟹ never re-mintable ⟹ the vault is
-    //   permanently unusable for ConsumeMAGIC. `personal_delegate` can spend under
-    //   BurnBatch, so that is a third-party griefing vector, not just self-harm.
-    //   It also fails a fabricated UTxO parked at vault_addr: the attacker cannot
-    //   produce an output carrying the NFT.
-    expect vault_nft_preserved(tx.outputs, vault_addr, vault_nft_policy, vault_nft_name)
+    // C-VAULT-DS-1 — counted by PAYMENT CREDENTIAL, not by full address.
+    // See `same_script` for why comparing the full address is a hole.
+    expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
 
     when redeemer is {
       ScheduleCommit { schedule_length, lamp_per_epoch } ->
@@ -114,8 +159,7 @@ validator vault(
 
       ScheduleFire { schedule_id } ->
         validate_fire(datum, schedule_id, current_epoch, own_ref, vault_addr,
-                      lamp_policy_id, lamp_asset_name,
-                      shard_policy_id, tx)
+                      lamp_policy_id, lamp_asset_name, shard_policy_id, tx)
 
       // ── BurnBatch (D1 datum-consume) ─────────────────────────
       BurnBatch { burns } ->
@@ -132,6 +176,11 @@ validator vault(
         validate_set_delegate(datum, new_delegate, current_epoch, vault_addr,
                               lamp_policy_id, lamp_asset_name, tx)
     }
+  }
+
+  // Any other script purpose fails closed.
+  else(_) {
+    fail
   }
 }
 
@@ -156,8 +205,10 @@ validator shard(shard_policy_id_param: PolicyId) {
     let shard_addr = own_addr(own_ref, tx.inputs)
     let name = shard_asset_name(shard_datum.shard_id)
 
-    // SHARD-DS-1: exactly one shard input at this address.
-    expect list.count(tx.inputs,  fn(i) { i.output.address == shard_addr }) == 1
+    // SHARD-DS-1: exactly one shard input under this SCRIPT (payment
+    // credential — a second UTxO at the same script but another stake
+    // credential must not read as "not mine"). See `same_script`.
+    expect list.count(tx.inputs,  fn(i) { same_script(i.output.address, shard_addr) }) == 1
 
     // SHARD-OUT-1: exactly ONE output carries THIS shard's distinct NFT, so the
     // aggregate state cannot be split/duplicated across outputs.
@@ -165,7 +216,11 @@ validator shard(shard_policy_id_param: PolicyId) {
       list.count(tx.outputs, fn(o) {
         assets.quantity_of(o.value, shard_policy_id_param, name) == 1
       }) == 1
-    let output_shard = find_shard_output_by_policy(tx.outputs, shard_policy_id_param, shard_datum.shard_id)
+    // SHARD-RETURN (Nợ #35): quay về ĐÚNG địa chỉ đang tiêu, không chỉ "có NFT".
+    let output_shard =
+      find_shard_output_by_policy(
+        tx.outputs, shard_policy_id_param, shard_datum.shard_id, shard_addr,
+      )
 
     // SHARD-NFT: this UTxO must actually carry THIS shard's NFT (anti-forgery,
     // bound by the distinct one-shot asset name).
@@ -197,7 +252,7 @@ validator shard(shard_policy_id_param: PolicyId) {
 fn validate_commit(
   datum           : VaultDatum,
   l               : Int,             // schedule_length
-  lambda          : Int,             // lamp_per_epoch (oildrop)
+  lambda          : Int,             // lamp_per_epoch (oil)
   current_epoch   : Int,
   own_ref         : OutputReference,
   vault_addr      : Address,
@@ -206,6 +261,14 @@ fn validate_commit(
   shard_policy_id : PolicyId,
   tx              : Transaction,
 ) -> Bool {
+
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  // A UTxO parked at the vault address with a forged datum but NO vault_id NFT
+  // dies here before any schedule/shard logic runs.
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
 
   // C-VAC-1 equivalent: user signs
   expect list.has(tx.extra_signatories, datum.owner)
@@ -235,8 +298,13 @@ fn validate_commit(
   // Find shard INPUT and OUTPUT (both carry the NFT, matched by shard_id), then
   // assert the FULL delta against the real lock amount. C-SCH-CAP enforced here.
   let shard_id_val = compute_shard_id(datum.owner)
-  let shard_in  = find_shard_input(tx.inputs, shard_policy_id, shard_id_val)
-  let shard_out = find_shard_output_by_policy(tx.outputs, shard_policy_id, shard_id_val)
+  let shard_input = find_shard_input_raw(tx.inputs, shard_policy_id, shard_id_val)
+  let shard_in    = shard_datum_of(shard_input.output, shard_id_val)
+  // SHARD-RETURN (Nợ #35): shard phải trở về CHÍNH địa chỉ nó đi ra.
+  let shard_out =
+    find_shard_output_by_policy(
+      tx.outputs, shard_policy_id, shard_id_val, shard_input.output.address,
+    )
 
   // No shard NFT may be minted/burned in a commit tx (defence in depth: the
   // one-shot policy already prevents re-mint, but the validator does not assume
@@ -319,6 +387,14 @@ fn validate_fire(
   tx              : Transaction,
 ) -> Bool {
 
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  // ScheduleFire is PERMISSIONLESS, so this is the sole gate stopping a forged
+  // vault (no NFT) from being fired into fabricated MAGIC batches.
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
+
   // C-SCH-FIRE-PERMISSION: NO owner signature required
   // (any keeper, user, or third party may trigger fire)
 
@@ -332,14 +408,18 @@ fn validate_fire(
   // M_i for each fire (T-DET: all identical)
   let m_i = compute_m_i(sched.lamp_per_epoch, sched.rate_locked_q)
 
-  // I-ACT-7: a fire RELEASES the lock, it does not move LAMP. fires_in_tx × λ is
-  // the amount unlocked — no treasury leg, no change to lamp_balance.
+  // C-FIRE-3 (PHA 2): LAMP to RELEASE — fires_in_tx × λ leaves the locked pool
+  // but stays in the vault. NOTHING is transferred anywhere (I-ACT-7).
   let lamp_released = fires_in_tx * sched.lamp_per_epoch
 
-  // Create new batches (one per fire)
+  // Create new batches (one per fire), then collect the dead ones (§4.2).
+  // A catch-up fire of k orders stamps ALL k batches with the CURRENT epoch, so
+  // they live for exactly this epoch — the catch-up cannot resurrect MAGIC the
+  // owner failed to consume in earlier epochs.
   let new_batches = create_fire_batches(own_ref, datum.next_batch_index,
                                          fires_in_tx, m_i, schedule_id, current_epoch)
-  let updated_batches = list.concat(datum.magic_batches, new_batches)
+  let updated_batches =
+    list.concat(prune_expired(datum.magic_batches, current_epoch), new_batches)
   expect list.length(updated_batches) <= max_batches_per_vault
 
   // Update or remove schedule
@@ -355,14 +435,19 @@ fn validate_fire(
       })
     }
 
-  // C-FIRE-6 / I-ACT-7: release the lock, keep the LAMP. is_locked flips on the
-  // oldest locked holdings; Σholdings is invariant so lamp_balance stays put.
+  // C-FIRE-6 (PHA 2): RELEASE the lock — holdings keep their amount, only
+  // is_locked flips. Σholdings is invariant, so lamp_balance stays untouched.
   let new_holdings = unlock_locked_amount(datum.loyalty_holdings, lamp_released)
 
   // ── SHARD BIND (option c): vault is the authority on the delta ──
   let shard_id_val = compute_shard_id(datum.owner)
-  let shard_in  = find_shard_input(tx.inputs, shard_policy_id, shard_id_val)
-  let shard_out = find_shard_output_by_policy(tx.outputs, shard_policy_id, shard_id_val)
+  let shard_input = find_shard_input_raw(tx.inputs, shard_policy_id, shard_id_val)
+  let shard_in    = shard_datum_of(shard_input.output, shard_id_val)
+  // SHARD-RETURN (Nợ #35): shard phải trở về CHÍNH địa chỉ nó đi ra.
+  let shard_out =
+    find_shard_output_by_policy(
+      tx.outputs, shard_policy_id, shard_id_val, shard_input.output.address,
+    )
   let schedule_completes = new_fired == sched.schedule_length
 
   // No shard NFT minted/burned during a fire tx (defence in depth).
@@ -372,6 +457,11 @@ fn validate_fire(
 
   expect shard_out.shard_id == shard_id_val                          // correct shard ✓
   expect shard_out.shard_locked_lamp == shard_in.shard_locked_lamp - lamp_released
+  // Second net under the shard ledger: the commit branch has an upper bound
+  // (`<= shard_cap`, :311) but nothing had a lower one. A negative counter would
+  // widen the shard's headroom PERMANENTLY for everyone hashing into it, so make
+  // the bad tx fail instead of letting it write the number (Nợ #31 / A5 U5).
+  expect shard_out.shard_locked_lamp >= 0
   expect shard_out.shard_cumulative_fired
        == shard_in.shard_cumulative_fired + lamp_released
   // active_count decrements iff schedule just completed, else unchanged
@@ -385,10 +475,11 @@ fn validate_fire(
   // A02: output datum
   let output = get_vault_output(tx.outputs, vault_addr)
   expect output.owner              == datum.owner
-  // I-ACT-7 (the whole point): the balance does NOT move. Only the lock lifts.
+  // I-ACT-7: the balance does NOT move — only the lock is released.
   expect output.lamp_balance       == datum.lamp_balance
   expect output.lamp_locked        == datum.lamp_locked - lamp_released
   expect output.loyalty_holdings   == new_holdings
+  expect list.length(output.loyalty_holdings) <= max_loyalty_holdings
   expect output.magic_batches      == updated_batches
   expect output.next_batch_index   == datum.next_batch_index + fires_in_tx
   expect output.vacuum_orders      == datum.vacuum_orders
@@ -419,14 +510,22 @@ fn validate_fire(
 // value preservation. total_burned is the sum of the burns; over-burn is
 // FORBIDDEN in the accounting model (would destroy user MAGIC for free).
 fn validate_burn_batch(
-  input_datum    : VaultDatum,
-  burns          : List<(ByteArray, Int)>,
-  current_epoch  : Int,
+  input_datum     : VaultDatum,
+  burns           : List<(ByteArray, Int)>,
+  current_epoch   : Int,
   vault_addr      : Address,
   lamp_policy_id  : PolicyId,
   lamp_asset_name : ByteArray,
   tx              : Transaction,
 ) -> Bool {
+
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  // The delegate path lets a non-owner call this; a forged vault (no NFT) full
+  // of fabricated batches dies here before any consume accounting runs.
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
 
   // ── AUTH: owner OR consume-delegate (personal_delegate) signs ──
   let authed =
@@ -439,8 +538,18 @@ fn validate_burn_batch(
   // ── burns must be non-empty and each amount > 0 ──────────────
   expect list.length(burns) > 0
 
-  // ── Apply burns to batches: reduce current_amount, prune zero ──
-  let expected_batches = apply_burns(input_datum.magic_batches, burns)
+  // ── Apply burns to LIVE batches, then collect the dead ────────
+  // §4.2 use-or-lose: apply_burns rejects any burn aimed at a batch outside its
+  // created_epoch; surviving dead batches are pruned so the output carries no
+  // zero-value bytes.
+  let burned = apply_burns(input_datum.magic_batches, burns, current_epoch)
+  let expected_batches = prune_expired(burned, current_epoch)
+
+  // ── §6.3 consumed accounting ──────────────────────────────────
+  // Credit every consumed nanogic; InstantGen converts this into the reward
+  // (INV-MAGIC-CITIZEN: reward keyed to MAGIC CONSUMED, never to MAGIC held).
+  let total_burned = sum_burns(burns)
+  expect total_burned > 0
 
   // ── A02: field-by-field output datum (17 fields) ─────────────
   let output_datum = get_vault_output(tx.outputs, vault_addr)
@@ -456,7 +565,11 @@ fn validate_burn_batch(
   expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
   expect output_datum.pending_profile       == input_datum.pending_profile
   expect output_datum.delegation_cert       == input_datum.delegation_cert
-  expect output_datum.activity_state        == input_datum.activity_state
+  expect output_datum.activity_state ==
+    ActivityState {
+      ..input_datum.activity_state,
+      consumed_credit: input_datum.activity_state.consumed_credit + total_burned,
+    }
   expect output_datum.streak_state          == input_datum.streak_state
   expect output_datum.personal_delegate     == input_datum.personal_delegate
   expect output_datum.last_updated_epoch    == current_epoch
@@ -471,12 +584,15 @@ fn validate_burn_batch(
   True
 }
 
-// apply_burns: for each (batch_id, amt): find exactly one matching batch,
-// amt ∈ (0, current_amount]; set current_amount -= amt; prune at zero; all
-// other fields immutable; order preserved for untouched batches.
+// apply_burns: for each (batch_id, amt): find exactly one matching batch, which
+// must still be LIVE at current_epoch (§4.2 cliff — a batch outside its
+// created_epoch is worth zero and may not be consumed); amt ∈ (0,
+// current_amount]; set current_amount -= amt; prune at zero; all other fields
+// immutable; order preserved for untouched batches.
 fn apply_burns(
-  batches : List<MagicBatch>,
-  burns   : List<(ByteArray, Int)>,
+  batches       : List<MagicBatch>,
+  burns         : List<(ByteArray, Int)>,
+  current_epoch : Int,
 ) -> List<MagicBatch> {
   when burns is {
     [] -> batches
@@ -487,6 +603,7 @@ fn apply_burns(
       let reduced =
         list.filter_map(batches, fn(b) {
           if b.batch_id == bid {
+            expect !is_expired(b, current_epoch)   // §4.2 dead batch → reject
             expect amt <= b.current_amount
             let na = b.current_amount - amt
             if na == 0 { None }
@@ -495,23 +612,49 @@ fn apply_burns(
             Some(b)
           }
         })
-      apply_burns(reduced, rest)
+      apply_burns(reduced, rest, current_epoch)
     }
   }
+}
+
+/// Σ of the burn amounts in a BurnBatch redeemer (nanogic actually consumed).
+fn sum_burns(burns: List<(ByteArray, Int)>) -> Int {
+  list.foldl(burns, 0, fn(b, acc) { let (_bid, amt) = b
+    acc + amt })
+}
+
+// ── §4.2 batch liveness (cliff) ───────────────────────────────
+//
+// k = current_epoch − created_epoch ; k ≥ decay_window (= 1) ⟹ DEAD.
+
+fn is_expired(batch: MagicBatch, current_epoch: Int) -> Bool {
+  current_epoch - batch.created_epoch >= batch.decay_window
+}
+
+/// Drop every DEAD batch. Removes bytes only — a dead batch already counts as
+/// zero, so pruning never changes any live value.
+fn prune_expired(batches: List<MagicBatch>, current_epoch: Int) -> List<MagicBatch> {
+  list.filter(batches, fn(b) { !is_expired(b, current_epoch) })
 }
 
 // ══════════════════════════════════════════════════════════════
 // validate_set_delegate — owner sets/changes consume-delegate
 // ══════════════════════════════════════════════════════════════
 fn validate_set_delegate(
-  input_datum    : VaultDatum,
-  new_delegate   : Option<ByteArray>,
-  current_epoch  : Int,
+  input_datum     : VaultDatum,
+  new_delegate    : Option<ByteArray>,
+  current_epoch   : Int,
   vault_addr      : Address,
   lamp_policy_id  : PolicyId,
   lamp_asset_name : ByteArray,
   tx              : Transaction,
 ) -> Bool {
+
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
 
   // ONLY owner may change the delegate (a delegate cannot re-delegate).
   expect list.has(tx.extra_signatories, input_datum.owner)
@@ -653,11 +796,47 @@ fn get_vault_output(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
   datum
 }
 
+/// Two addresses belong to the same SCRIPT iff their payment credentials match.
+/// The stake credential is deliberately ignored.
+///
+/// WHY. `Address` = payment credential + stake credential, and nothing in
+/// `validate_mint_vault_id` (`:859`, permissionless) constrains the stake half.
+/// So one script hash presents as arbitrarily many distinct addresses, and every
+/// "exactly one input/output at MY address" guard then counts each of them
+/// separately — two vaults of the same owner co-spend in one tx, each counting
+/// itself as the only one, and both write the same delta onto ONE shard. The
+/// shard ledger undercounts by a factor of K (Nợ #31): `SHARD_CAP` is bypassed,
+/// and `shard_locked_lamp` goes negative once they fire in separate txs.
+///
+/// This repo already knew the rule and applied it in two other modules — this
+/// was the one live vault it was forgotten in:
+///   · `Consolidate/onchain/validators/vault_consolidate.ak:19-20`
+///   · `ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak:67-72` (`is_at_script`)
+///
+/// Counting is by payment credential; IDENTITY of the continuing output is a
+/// separate, stricter check (`find_vault_output_raw` pins the full address).
+fn same_script(a: Address, b: Address) -> Bool {
+  a.payment_credential == b.payment_credential
+}
+
 fn find_vault_output_raw(outputs: List<Output>, vault_addr: Address) -> Output {
-  // C-VAULT-OUT-1: exactly one continuing vault output.
-  expect list.count(outputs, fn(x) { x.address == vault_addr }) == 1
-  expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
+  // C-VAULT-OUT-1: exactly one continuing vault output — COUNTED by payment
+  // credential, so a second output under this script with another stake
+  // credential cannot hide from the count.
+  expect list.count(outputs, fn(x) { same_script(x.address, vault_addr) }) == 1
+  expect Some(o) = list.find(outputs, fn(x) { same_script(x.address, vault_addr) })
+  // …and that one output must carry the input's FULL address, stake credential
+  // included. ScheduleFire is permissionless, so without this a stranger could
+  // re-point the vault's staking rewards on the way through.
+  expect o.address == vault_addr
   o
+}
+
+/// The single vault INPUT under this script (used for the vault-identity value
+/// check). The spend-level C-VAULT-DS-1 guarantees exactly one such input.
+fn find_vault_input_raw(inputs: List<Input>, vault_addr: Address) -> Input {
+  expect Some(i) = list.find(inputs, fn(x) { same_script(x.output.address, vault_addr) })
+  i
 }
 
 fn vault_output_lamp_with(
@@ -670,32 +849,161 @@ fn vault_output_lamp_with(
   assets.quantity_of(o.value, lamp_policy_id, lamp_asset_name)
 }
 
-/// INV-VAULT-IDENTITY: the continuing vault output carries EXACTLY one vault-id
-/// NFT. `== 1` not `>= 1` — the same reason consume.ak uses `== 1`: two vaults'
-/// NFTs must never end up in one UTxO. Policy AND name are both checked; name
-/// alone would let an attacker mint a same-named token under their own policy.
-fn vault_nft_preserved(
-  outputs          : List<Output>,
-  vault_addr       : Address,
-  vault_nft_policy : PolicyId,
-  vault_nft_name   : ByteArray,
+// ═══════════════════════════════════════════════════════════════
+// VAULT-IDENTITY value check + genesis mint policy (MAINNET-BLOCK)
+// ═══════════════════════════════════════════════════════════════
+
+/// VALUE-PRESERVATION guard shared by EVERY spend handler.
+///   - VAULT-IDENTITY NFT: the spent input must carry EXACTLY one asset under the
+///     vault_id policy (== this validator's own script hash, read from the input's
+///     Script payment credential), and the continuing output must carry the SAME
+///     (policy, name). A FABRICATED vault (no NFT — no policy ran to vet its datum)
+///     fails at `single_nft_name`, so it cannot be spent by ANY handler.
+///   - lovelace(out) >= lovelace(in)  → no surplus ADA siphoned (top-up allowed).
+///   - |policies(out)| <= 3           → at most {ADA, LAMP, vault_id NFT}; the
+///     vault NEVER carries a shard NFT, so any extra policy = dust-stuffing bloat,
+///     rejected.
+fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
+  expect Script(vault_id_policy) = vault_input.output.address.payment_credential
+  let nft_name = single_nft_name(vault_input.output.value, vault_id_policy)
+  expect assets.quantity_of(vault_output.value, vault_id_policy, nft_name) == 1
+  expect assets.lovelace_of(vault_output.value) >= assets.lovelace_of(vault_input.output.value)
+  expect list.length(assets.policies(vault_output.value)) <= 3
+  True
+}
+
+/// The single asset name held under `policy` in `value` (qty must be 1).
+/// `expect`-fails if there is not EXACTLY one such token — a fabricated vault
+/// carrying zero vault_id tokens is rejected right here.
+fn single_nft_name(value: Value, policy: PolicyId) -> ByteArray {
+  expect [Pair(name, qty)] = assets.tokens(value, policy) |> dict.to_pairs
+  expect qty == 1
+  name
+}
+
+/// validate_mint_vault_id — genesis-clean state-thread NFT mint.
+/// Runs at MINT (the one moment a policy can enforce "this vault started clean").
+/// Constrains EVERY VaultDatum field to its clean initial value and binds the
+/// declared LAMP balance to the ACTUAL LAMP sitting in the parked output.
+fn validate_mint_vault_id(
+  seed            : OutputReference,
+  policy_id       : PolicyId,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
-  let o = find_vault_output_raw(outputs, vault_addr)
-  assets.quantity_of(o.value, vault_nft_policy, vault_nft_name) == 1
+
+  // ── ONE-SHOT uniqueness: the exact seed UTxO must be spent here ──────────
+  expect list.any(tx.inputs, fn(i) { i.output_reference == seed })
+
+  // ── EXACTLY one asset under this policy, qty +1, name = H(seed) ──────────
+  let own_tokens = assets.tokens(tx.mint, policy_id)
+  expect dict.size(own_tokens) == 1
+  let nft_name = crypto.blake2b_256(cbor.serialise(seed))
+  expect assets.quantity_of(tx.mint, policy_id, nft_name) == 1
+
+  // ── EXACTLY one output at THIS vault script address carrying the NFT ─────
+  // policy_id == this validator's own script hash ⟹ Script(policy_id) is the
+  // vault spend address. Binding the NFT here stops "mint clean → re-home dirty".
+  let carriers =
+    list.filter(tx.outputs, fn(o) {
+      o.address.payment_credential == Script(policy_id) && assets.quantity_of(
+        o.value,
+        policy_id,
+        nft_name,
+      ) == 1
+    })
+  expect [vault_out] = carriers
+
+  // ── Genesis datum must be inline + decode as a VaultDatum ────────────────
+  expect InlineDatum(datum_data) = vault_out.datum
+  expect vd: VaultDatum = datum_data
+
+  // ── CLEAN genesis — constrain ALL 17 fields ─────────────────────────────
+  // owner: a pkh the creator controls (present in signatories).
+  expect list.has(tx.extra_signatories, vd.owner)
+
+  // LAMP accounting bound to the REAL deposited LAMP (no over-claim).
+  let lamp_qty = assets.quantity_of(vault_out.value, lamp_policy_id, lamp_asset_name)
+  expect vd.lamp_balance == lamp_qty
+  expect vd.lamp_locked == 0
+  expect sum_holdings(vd.loyalty_holdings) == vd.lamp_balance
+  expect list.all(vd.loyalty_holdings, fn(h) { !h.is_locked })
+  expect list.length(vd.loyalty_holdings) <= max_loyalty_holdings
+
+  // MAGIC / schedule / consumed state MUST be empty — the exact levers a forged
+  // datum would fabricate (critic I2: consumed_credit is accumulated by BurnBatch
+  // though unread today; pin it to 0 at genesis regardless).
+  expect vd.magic_batches == []
+  expect vd.next_batch_index == 0
+  expect vd.vacuum_orders == []
+  expect vd.gen_schedules == []
+  expect vd.activity_state == ActivityState {
+    recent_burn_epochs: [],
+    consumed_credit: 0,
+  }
+
+  // Every other ledger empty/zeroed. profile NOT pinned: it is a user-chosen
+  // STRATEGY (Ember/Flame/Lantern), not accumulated state — any of the 3 valid
+  // enum values is a valid genesis strategy, so pinning gives no security benefit
+  // and would reject vaults the standard off-chain flow creates (default Flame).
+  expect vd.profile_changed_epoch == 0
+  expect vd.pending_profile == None
+  expect vd.last_updated_epoch == 0
+  expect vd.delegation_cert == DelegationCertificate {
+    current: [],
+    pending: None,
+    current_effective_epoch: 0,
+    last_changed_epoch: 0,
+  }
+  expect vd.streak_state == StreakState {
+    current_streak: 0,
+    last_active_epoch: 0,
+  }
+  expect vd.personal_delegate == None
+  expect vd.attribution == VaultAttribution {
+    attribution_root: #"",
+    last_event_epoch: 0,
+    total_events: 0,
+  }
+
+  // ── No dust / shard NFT bundled into genesis: at most {ADA, LAMP, vault_id} ─
+  expect list.length(assets.policies(vault_out.value)) <= 3
+
+  True
+}
+
+/// Burn path: allowed only for NEGATIVE quantities under this policy. A spend
+/// that also burns the NFT is still rejected by `validate_vault_value` (the NFT
+/// must survive on the continuing output).
+fn validate_burn_vault_id(policy_id: PolicyId, tx: Transaction) -> Bool {
+  let own_tokens = assets.tokens(tx.mint, policy_id)
+  expect
+    list.all(dict.to_pairs(own_tokens), fn(p) {
+      let Pair(_name, qty) = p
+      qty < 0
+    })
+  True
 }
 
 // ═══════════════════════════════════════════════════════════════
 // validate_withdraw_lamp — W-1..W-7 (SPEC_V1 §1)
 // ═══════════════════════════════════════════════════════════════
 fn validate_withdraw_lamp(
-  input_datum    : VaultDatum,
-  amount         : Int,
-  _current_epoch : Int,
+  input_datum     : VaultDatum,
+  amount          : Int,
+  _current_epoch  : Int,
   vault_addr      : Address,
   lamp_policy_id  : PolicyId,
   lamp_asset_name : ByteArray,
   tx              : Transaction,
 ) -> Bool {
+
+  // ── VAULT-IDENTITY NFT (MAINNET-BLOCK) — fail-fast on a fabricated vault ──
+  expect validate_vault_value(
+    find_vault_input_raw(tx.inputs, vault_addr),
+    find_vault_output_raw(tx.outputs, vault_addr),
+  )
 
   // W-1
   expect amount > 0
@@ -746,21 +1054,44 @@ fn validate_withdraw_lamp(
 
 // ── Shard helpers ─────────────────────────────────────────────
 
-fn find_shard_input(
+fn find_shard_input_raw(
   inputs          : List<Input>,
   shard_policy_id : PolicyId,
   shard_id        : Int,
-) -> ScheduleAggregateShardDatum {
+) -> Input {
   // Identify the shard by its DISTINCT one-shot NFT asset name (anti-forgery),
   // not by a self-declared datum field.
   let name = shard_asset_name(shard_id)
   expect Some(i) = list.find(inputs, fn(x) {
     assets.quantity_of(x.output.value, shard_policy_id, name) == 1
   })
-  expect InlineDatum(d) = i.output.datum
+  // NFT chứng minh ĐÂY LÀ shard nào, KHÔNG chứng minh AI được sửa datum của nó.
+  // Một NFT shard nằm ở địa chỉ khoá-bằng-khoá thì tiêu được bằng chữ ký mà KHÔNG
+  // validator nào chạy ⇒ `shard_locked_lamp` thành trường tự khai ⇒ trần C-SCH-CAP
+  // hết hiệu lực. Nửa ghim địa chỉ output (`find_shard_output_by_policy`) giữ shard
+  // ở lại đúng chỗ nó đang đứng; dòng này lo nửa còn lại — shard ĐÃ ở ví (rút thoát
+  // từ trước bản vá, hoặc deploy đặt sai chỗ) thì từ chối, không im lặng dùng một
+  // UTxO không ai canh.
+  expect Script(_) = i.output.address.payment_credential
+  i
+}
+
+fn shard_datum_of(o: Output, shard_id: Int) -> ScheduleAggregateShardDatum {
+  expect InlineDatum(d) = o.datum
   expect sd: ScheduleAggregateShardDatum = d
   expect sd.shard_id == shard_id
   sd
+}
+
+fn find_shard_input(
+  inputs          : List<Input>,
+  shard_policy_id : PolicyId,
+  shard_id        : Int,
+) -> ScheduleAggregateShardDatum {
+  shard_datum_of(
+    find_shard_input_raw(inputs, shard_policy_id, shard_id).output,
+    shard_id,
+  )
 }
 
 // No token of the shard NFT policy is minted or burned in this tx. With the
@@ -774,10 +1105,23 @@ fn no_shard_mint(tx: Transaction, shard_policy_id: PolicyId) -> Bool {
 // Find the continuing shard output by NFT policy + per-shard asset name
 // (vault-side check). Also asserts EXACTLY ONE output carries this shard's NFT,
 // so the aggregate state cannot be split across two outputs.
+//
+// SHARD-RETURN (Nợ #35): the output must sit at `expect_addr` — the FULL address
+// the shard input came from, payment AND stake credential. Without this the
+// checks below vet the shard DATUM while saying nothing about WHERE that datum
+// lands: a valid ScheduleCommit could carry all 16 shard NFTs out to a private
+// wallet in the same tx, and from then on the aggregate ledger is authored by
+// whoever holds them — C-SCH-CAP stops binding anyone. Content was checked,
+// address was not; that is the whole bug, and it is the same shape as Nợ #41 in
+// GetMAGIC. The stake half is included on purpose (same reasoning as Nợ #31):
+// one script hash presents as N addresses, so pinning only the payment
+// credential still lets the UTxO be moved to an address the script no longer
+// recognises as the same shard.
 fn find_shard_output_by_policy(
   outputs         : List<Output>,
   shard_policy_id : PolicyId,
   shard_id        : Int,
+  expect_addr     : Address,
 ) -> ScheduleAggregateShardDatum {
   let name = shard_asset_name(shard_id)
   expect
@@ -787,10 +1131,8 @@ fn find_shard_output_by_policy(
   expect Some(o) = list.find(outputs, fn(x) {
     assets.quantity_of(x.value, shard_policy_id, name) == 1
   })
-  expect InlineDatum(d) = o.datum
-  expect sd: ScheduleAggregateShardDatum = d
-  expect sd.shard_id == shard_id
-  sd
+  expect o.address == expect_addr
+  shard_datum_of(o, shard_id)
 }
 
 // Shard-side co-spend proof: there exists a vault input whose owner hashes to
@@ -807,7 +1149,7 @@ fn vault_cospend_matches(
   shard_id   : Int,
 ) -> Bool {
   list.any(tx.inputs, fn(i) {
-    if i.output.address == shard_addr { False }
+    if same_script(i.output.address, shard_addr) { False }
     else {
       when i.output.datum is {
         InlineDatum(d) ->
@@ -850,9 +1192,9 @@ fn decode_vault(d: Data) -> Option<VaultDatum> {
   if d is vd: VaultDatum { Some(vd) } else { None }
 }
 
-// NOTE: `treasury_lamp_received` is GONE, along with the `treasury_addr`
-// apply-parameter. Under I-ACT-7 a fire has no treasury leg at all. If a
-// treasury transfer ever comes back it belongs to a different redeemer.
+// NOTE: the former `treasury_lamp_received` helper is GONE. Under I-ACT-7 a
+// fire releases the lock instead of transferring LAMP, so there is no Treasury
+// leg and no `treasury_addr` apply-parameter left in this validator.
 
 fn compute_schedule_id_from_ref(own_ref: OutputReference, index: Int) -> ByteArray {
   let tx_hash = own_ref.transaction_id
@@ -874,6 +1216,14 @@ const t_lamp_policy: ByteArray =
   #"22222222222222222222222222222222222222222222222222222222"
 const t_tx_id: ByteArray =
   #"3333333333333333333333333333333333333333333333333333333333333333"
+// LAMP asset name is now a validator PARAM; tests supply it explicitly.
+const t_lamp_name: ByteArray = #"744c414d50"   // "tLAMP"
+const t_shard_policy: ByteArray =
+  #"55555555555555555555555555555555555555555555555555555555"
+// vault_id NFT lives under the vault's OWN script hash (policy_id == script hash
+// for this multi-purpose validator). Stand-in for blake2b_256(cbor.serialise(seed)).
+const t_vault_id_name: ByteArray =
+  #"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
 fn t_vault_addr() -> Address {
   address.from_script(t_vault_hash)
@@ -887,14 +1237,18 @@ fn t_holding(amount: Int, epoch: Int, locked: Bool) -> LoyaltyHolding {
   LoyaltyHolding { amount, acquired_epoch: epoch, is_locked: locked }
 }
 
+// Batches in the BurnBatch tests are created at epoch 7 — the same epoch the
+// tests burn in — because §4.2 makes a batch live ONLY in its created_epoch.
+const t_burn_epoch: Int = 7
+
 fn t_batch(id: ByteArray, amt: Int) -> MagicBatch {
   MagicBatch {
     batch_id:            id,
     source:              Schedule,
-    created_epoch:       0,
+    created_epoch:       t_burn_epoch,
     initial_amount:      amt,
     current_amount:      amt,
-    decay_window:        1,
+    decay_window:        schedule_decay_window,   // 1 (cliff)
     profile_at_creation: None,
     contract_id:         None,
     halved:              False,
@@ -926,7 +1280,7 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
       current_effective_epoch: 0, last_changed_epoch: 0,
     },
     activity_state: ActivityState {
-      recent_burn_epochs: [], total_burns_count: 0,
+      recent_burn_epochs: [], consumed_credit: 0,
     },
     streak_state: StreakState { current_streak: 0, last_active_epoch: 0 },
     personal_delegate: None,
@@ -939,7 +1293,8 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
 fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
   Output {
     address: t_vault_addr(),
-    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance),
+    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance)
+      |> assets.add(t_vault_hash, t_vault_id_name, 1),
     datum: InlineDatum(datum),
     reference_script: None,
   }
@@ -947,6 +1302,20 @@ fn t_vault_output(datum: VaultDatum, balance: Int) -> Output {
 
 fn t_vault_input(datum: VaultDatum, balance: Int) -> Input {
   Input { output_reference: t_own_ref(), output: t_vault_output(datum, balance) }
+}
+
+// Fabricated (NO-NFT) vault fixtures — the attacker's parked UTxO.
+fn t_vault_output_nonft(datum: VaultDatum, balance: Int) -> Output {
+  Output {
+    address: t_vault_addr(),
+    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance),  // NO vault_id NFT
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+}
+
+fn t_vault_input_nonft(datum: VaultDatum, balance: Int) -> Input {
+  Input { output_reference: t_own_ref(), output: t_vault_output_nonft(datum, balance) }
 }
 
 fn t_tx(ins: List<Input>, outs: List<Output>, signers: List<ByteArray>) -> Transaction {
@@ -994,6 +1363,41 @@ test w_phantom_second_output() fail {
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
+// ── Nợ #31: double-satisfaction qua stake credential ──────────
+// Same script hash, different stake credential = a different `Address`. Counting
+// "at MY address" by full address let the twin read as somebody else's UTxO.
+
+fn t_vault_addr_staked() -> Address {
+  address.from_script(t_vault_hash) |> address.with_delegation_key(t_owner)
+}
+
+fn t_vault_output_staked(datum: VaultDatum, balance: Int) -> Output {
+  Output { ..t_vault_output(datum, balance), address: t_vault_addr_staked() }
+}
+
+// Pre-fix this PASSED: `x.address == vault_addr` counted 1, not 2.
+test ds_phantom_output_under_stake_cred_rejected() fail {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx =
+    t_tx(
+      [t_vault_input(din, 100)],
+      [t_vault_output(dout, 95), t_vault_output_staked(dout, 95)],
+      [t_owner],
+    )
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// Counting by payment credential must NOT loosen IDENTITY: the one continuing
+// output still has to carry the input's full address. ScheduleFire is
+// permissionless, so otherwise a stranger re-points the vault's staking rewards.
+test ds_continuing_output_must_keep_stake_cred() fail {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output_staked(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
 test w_advance_last_updated_rejected() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout =
@@ -1011,11 +1415,18 @@ fn t_datum_b(batches: List<MagicBatch>) -> VaultDatum {
   VaultDatum { ..t_datum(100, 0, [t_holding(100, 5, False)]), magic_batches: batches }
 }
 
-fn t_out_b(batches: List<MagicBatch>, total_events: Int, epoch: Int) -> VaultDatum {
+/// Expected output datum after a burn of `burned` nanogic at `epoch`.
+fn t_out_b(
+  batches: List<MagicBatch>, total_events: Int, burned: Int, epoch: Int,
+) -> VaultDatum {
   let base = t_datum_b(batches)
   VaultDatum {
     ..base,
     last_updated_epoch: epoch,
+    activity_state: ActivityState {
+      ..base.activity_state,
+      consumed_credit: base.activity_state.consumed_credit + burned,
+    },
     attribution: VaultAttribution {
       attribution_root: #"", last_event_epoch: epoch, total_events,
     },
@@ -1024,21 +1435,21 @@ fn t_out_b(batches: List<MagicBatch>, total_events: Int, epoch: Int) -> VaultDat
 
 test bb_partial_reduce() {
   let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
-  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60), t_batch(#"bb", 50)], 1, 7)
+  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60), t_batch(#"bb", 50)], 1, 40, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_full_prune() {
   let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
-  let dout = t_out_b([t_batch(#"bb", 50)], 1, 7)
+  let dout = t_out_b([t_batch(#"bb", 50)], 1, 100, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(#"aa", 100)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_multi_burn() {
   let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
-  let dout = t_out_b([t_batch_reduced(#"aa", 100, 90), t_batch_reduced(#"bb", 50, 30)], 1, 7)
+  let dout = t_out_b([t_batch_reduced(#"aa", 100, 90), t_batch_reduced(#"bb", 50, 30)], 1, 30, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(#"aa", 10), (#"bb", 20)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
@@ -1046,15 +1457,48 @@ test bb_multi_burn() {
 test bb_delegate_can_burn() {
   let base = t_datum_b([t_batch(#"aa", 100)])
   let din  = VaultDatum { ..base, personal_delegate: Some(t_delegate) }
-  let doutb = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 7)
+  let doutb = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
   let dout  = VaultDatum { ..doutb, personal_delegate: Some(t_delegate) }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
+// §4.2 CLIFF: a batch created at epoch 7 is DEAD at epoch 8 — burning it must
+// be rejected, even though the datum still carries a non-zero current_amount.
+test bb_dead_batch_rejected() fail {
+  let din  = t_datum_b([t_batch(#"aa", 100)])            // created_epoch = 7
+  let dout = t_out_b([], 1, 40, 8)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(#"aa", 40)], 8, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// §4.2 GC: burning a live batch in the same tx also collects the dead ones.
+test bb_dead_batch_collected() {
+  let dead = MagicBatch { ..t_batch(#"cc", 999), created_epoch: 6 }
+  let din  = t_datum_b([dead, t_batch(#"aa", 100)])
+  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// consumed_credit must advance by exactly Σburns (§6.3 accounting hook).
+test bb_consumed_credit_not_advanced() fail {
+  let din = t_datum_b([t_batch(#"aa", 100)])
+  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 0, 7)   // credit stayed 0
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+test bb_consumed_credit_inflated() fail {
+  let din = t_datum_b([t_batch(#"aa", 100)])
+  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40_000, 7)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
 test bb_no_auth() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
-  let dout = t_out_b([t_batch(#"aa", 60)], 1, 7)
+  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
@@ -1062,21 +1506,21 @@ test bb_no_auth() fail {
 test bb_over_burn() fail {
   // amount > current_amount → reject (cannot burn more than batch holds)
   let din = t_datum_b([t_batch(#"aa", 100)])
-  let dout = t_out_b([], 1, 7)
+  let dout = t_out_b([], 1, 150, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(#"aa", 150)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_zero_amount() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
-  let dout = t_out_b([t_batch(#"aa", 100)], 1, 7)
+  let dout = t_out_b([t_batch(#"aa", 100)], 1, 0, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(#"aa", 0)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_empty_burns() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
-  let dout = t_out_b([t_batch(#"aa", 100)], 1, 7)
+  let dout = t_out_b([t_batch(#"aa", 100)], 1, 0, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
@@ -1084,16 +1528,64 @@ test bb_empty_burns() fail {
 test bb_lamp_leak_rejected() fail {
   // output datum claims lamp_balance 100 but only 80 LAMP in the output value
   let din = t_datum_b([t_batch(#"aa", 100)])
-  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 7)
+  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 80)], [t_owner])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_attribution_not_incremented() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
-  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 0, 7)   // total_events stayed 0
+  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 0, 40, 7)   // total_events stayed 0
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// ── unlock_locked_amount (I-ACT-7 fire release) ───────────────
+
+// UL-1: a full release flips is_locked without changing any amount.
+test ul_full_release_preserves_total() {
+  let before = [t_holding(100, 5, True)]
+  let after  = unlock_locked_amount(before, 100)
+  after == [t_holding(100, 5, False)] && sum_holdings(after) == 100
+}
+
+// UL-2: a partial release splits the holding; Σamount is invariant.
+test ul_partial_release_splits() {
+  let before = [t_holding(100, 5, True)]
+  let after  = unlock_locked_amount(before, 40)
+  after == [t_holding(40, 5, False), t_holding(60, 5, True)]
+    && sum_holdings(after) == 100
+}
+
+// UL-3: oldest-locked-first, already-unlocked holdings kept up front.
+test ul_oldest_locked_first() {
+  let before = [t_holding(10, 9, False), t_holding(30, 5, True), t_holding(20, 7, True)]
+  let after  = unlock_locked_amount(before, 30)
+  after == [t_holding(10, 9, False), t_holding(30, 5, False), t_holding(20, 7, True)]
+    && sum_holdings(after) == 60
+}
+
+// UL-4 — THE BOUND (Nợ #30). Each partial release splits a holding and nothing
+// is ever dropped, so without coalescing the list grew +1 per fire: 21 entries
+// after 20 fires, ~201 after an L=200 schedule, against max_loyalty_holdings=64
+// enforced by validate_fire. That freezes the user's LAMP outright — no fire, no
+// withdraw. Every split inherits the original acquired_epoch, so the count must
+// stay flat. Ported with coalesce_holdings from origin/main.
+test ul_repeated_does_not_grow() {
+  let h1 = unlock_locked_amount([t_holding(1000, 5, True)], 100)
+  let h2 = unlock_locked_amount(h1, 100)
+  let h3 = unlock_locked_amount(h2, 100)
+  list.length(h3) == 2 && sum_holdings(h3) == 1000 && h3 == [
+    t_holding(300, 5, False),
+    t_holding(700, 5, True),
+  ]
+}
+
+// UL-5: the opposite trap — distinct epochs must NOT be merged. acquired_epoch
+// IS the loyalty age; collapsing two epochs into one would erase it.
+test ul_keeps_distinct_epochs_apart() {
+  let out = unlock_locked_amount([t_holding(50, 2, True), t_holding(50, 7, True)], 100)
+  out == [t_holding(50, 2, False), t_holding(50, 7, False)]
 }
 
 // ── SetDelegate tests ─────────────────────────────────────────
@@ -1142,274 +1634,6 @@ test sd_no_other_field_change() fail {
 }
 
 // ── Shard co-spend redeemer-gate tests (HIGH authority-bypass fix) ─────
-// ── ScheduleFire — I-ACT-7: LAMP STAYS PUT ────────────────────
-// Before this, a fire moved fires×λ of real LAMP to the treasury and shrank
-// lamp_balance. That eroded the user's principal: the NEWUSER channel grants
-// DID × 1001 LAMP, and since generation scales with the balance, a new user's
-// rate decayed toward zero as their schedule fired. A fire must only LIFT THE
-// LOCK — MAGIC is created, LAMP does not move.
-//
-// The whole treasury leg was deleted, so nothing but these tests distinguishes
-// the two behaviours: without `f_fire_lamp_drops_rejected` the regression is
-// invisible to the suite.
-
-const t_shard_policy: PolicyId =
-  #"66666666666666666666666666666666666666666666666666666666"
-const t_sched_id: ByteArray = #"aa01"
-const t_lambda: Int = 100          // λ per fire (oildrop)
-const t_rate_q: Int = snapshot_base_rate_q
-
-// One schedule, length 3, first fire due at epoch 5, none fired yet.
-fn t_sched() -> GenSchedule {
-  GenSchedule {
-    schedule_id:            t_sched_id,
-    commit_epoch:           3,
-    start_fire_epoch:       5,
-    end_fire_epoch:         7,
-    schedule_length:        3,
-    lamp_per_epoch:         t_lambda,
-    rate_locked_q:          t_rate_q,
-    baseline_at_commit_q:   t_rate_q,
-    multiplier_at_commit_q: 1_000_000_000,
-    fired_count:            0,
-    auto_burn_target:       None,
-  }
-}
-
-/// Vault datum holding exactly λ, all of it locked by the schedule.
-fn t_fire_datum() -> VaultDatum {
-  VaultDatum {
-    ..t_datum(t_lambda, t_lambda, [t_holding(t_lambda, 5, True)]),
-    gen_schedules: [t_sched()],
-  }
-}
-
-fn t_shard_datum(locked: Int, fired: Int) -> ScheduleAggregateShardDatum {
-  ScheduleAggregateShardDatum {
-    shard_id:                   compute_shard_id(t_owner),
-    shard_locked_lamp:          locked,
-    shard_active_count:         1,
-    shard_cumulative_committed: t_lambda * 3,
-    shard_cumulative_fired:     fired,
-    last_updated_epoch:         5,
-    shard_cap:                  shard_cap,
-  }
-}
-
-fn t_shard_value() -> Value {
-  assets.from_asset(t_shard_policy, shard_asset_name(compute_shard_id(t_owner)), 1)
-}
-
-fn t_shard_in() -> Input {
-  Input {
-    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
-    output: Output {
-      address: t_shard_addr(), value: t_shard_value(),
-      datum: InlineDatum(t_shard_datum(t_lambda * 3, 0)), reference_script: None,
-    },
-  }
-}
-
-fn t_shard_out() -> Output {
-  Output {
-    address: t_shard_addr(), value: t_shard_value(),
-    // one fire → locked drops by λ, cumulative_fired rises by λ
-    datum: InlineDatum(t_shard_datum(t_lambda * 3 - t_lambda, t_lambda)),
-    reference_script: None,
-  }
-}
-
-/// Expected vault output after ONE fire at epoch 5.
-/// `lamp_balance` is deliberately a parameter: the negative test passes the
-/// pre-I-ACT-7 value (balance − λ) and must be rejected.
-fn t_fire_out_datum(lamp_balance: Int) -> VaultDatum {
-  let din = t_fire_datum()
-  let m_i = compute_m_i(t_lambda, t_rate_q)
-  VaultDatum {
-    ..din,
-    lamp_balance:       lamp_balance,
-    lamp_locked:        0,
-    loyalty_holdings:   [t_holding(t_lambda, 5, False)],   // unlocked, NOT removed
-    magic_batches:      create_fire_batches(t_own_ref(), 0, 1, m_i, t_sched_id, 5),
-    next_batch_index:   1,
-    gen_schedules:      [GenSchedule { ..t_sched(), fired_count: 1 }],
-    last_updated_epoch: 5,
-  }
-}
-
-fn t_run_fire(out_datum: VaultDatum, vault_out_lamp: Int) -> Bool {
-  let din = t_fire_datum()
-  let tx =
-    t_tx(
-      [t_vault_input(din, t_lambda), t_shard_in()],
-      [t_vault_output(out_datum, vault_out_lamp), t_shard_out()],
-      [],                                   // permissionless: no signer
-    )
-  validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
-                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
-}
-
-// PASS: lamp_balance and the real LAMP in the UTxO are byte-identical across a
-// fire; only lamp_locked drops and the holding flips to unlocked.
-test f_fire_lamp_stays_put() {
-  t_run_fire(t_fire_out_datum(t_lambda), t_lambda)
-}
-
-// THE REGRESSION TEST — the exact output pre-I-ACT-7 `main` accepted: balance
-// down by fires×λ (paid to treasury), and the holdings DELETED by
-// `remove_locked_amount` rather than unlocked. Both moves together, because
-// `Σholdings == lamp_balance` couples them: changing only one is rejected by
-// that older check instead of by the I-ACT-7 rule, which would prove nothing.
-// Under I-ACT-7 this whole shape must be REJECTED.
-test f_fire_old_behaviour_rejected() fail {
-  let d =
-    VaultDatum { ..t_fire_out_datum(0), loyalty_holdings: [] }
-  t_run_fire(d, 0)
-}
-
-// Lock must actually lift: keeping lamp_locked at λ is not a valid fire.
-test f_fire_lock_not_released_rejected() fail {
-  let d = VaultDatum { ..t_fire_out_datum(t_lambda), lamp_locked: t_lambda }
-  t_run_fire(d, t_lambda)
-}
-
-// Holdings must be UNLOCKED, not deleted. Dropping the holding keeps the old
-// `remove_locked_amount` behaviour alive and breaks Σholdings == lamp_balance.
-test f_fire_holdings_removed_rejected() fail {
-  let d = VaultDatum { ..t_fire_out_datum(t_lambda), loyalty_holdings: [] }
-  t_run_fire(d, t_lambda)
-}
-
-// ── unlock_locked_amount — Σ invariant ────────────────────────
-
-// Partial release splits one holding; the two parts sum to the original, so
-// lamp_balance never has to move.
-test f_unlock_partial_preserves_sum() {
-  let h = [t_holding(100, 5, True)]
-  let out = unlock_locked_amount(h, 40)
-  sum_holdings(out) == 100 && out == [
-    t_holding(40, 5, False),
-    t_holding(60, 5, True),
-  ]
-}
-
-// THE BOUND. Each partial release splits a holding, and nothing is ever dropped,
-// so without coalescing the list grew +1 per fire — 21 entries after 20 fires,
-// ~201 after an L=200 schedule, against max_loyalty_holdings=64 enforced by
-// validate_withdraw_lamp. That would freeze the user's LAMP outright. Every
-// split inherits the original acquired_epoch, so the count must stay flat.
-test f_unlock_repeated_does_not_grow() {
-  let h1 = unlock_locked_amount([t_holding(1000, 5, True)], 100)
-  let h2 = unlock_locked_amount(h1, 100)
-  let h3 = unlock_locked_amount(h2, 100)
-  list.length(h3) == 2 && sum_holdings(h3) == 1000 && h3 == [
-    t_holding(300, 5, False),
-    t_holding(700, 5, True),
-  ]
-}
-
-// Distinct epochs must NOT be merged — acquired_epoch is the loyalty age.
-test f_unlock_keeps_distinct_epochs_apart() {
-  let out = unlock_locked_amount([t_holding(50, 2, True), t_holding(50, 7, True)], 100)
-  out == [t_holding(50, 2, False), t_holding(50, 7, False)]
-}
-
-// Oldest-locked-first, and already-unlocked holdings are left alone in front.
-test f_unlock_oldest_first() {
-  let h = [t_holding(30, 9, False), t_holding(50, 2, True), t_holding(70, 6, True)]
-  let out = unlock_locked_amount(h, 50)
-  sum_holdings(out) == 150 && out == [
-    t_holding(30, 9, False),
-    t_holding(50, 2, False),   // epoch 2 is oldest → freed first
-    t_holding(70, 6, True),
-  ]
-}
-
-// ── INV-VAULT-IDENTITY: vault-id NFT preservation ─────────────
-// The NFT is one-shot (ConsumeMAGIC/onchain/validators/vault_id_nft.ak) so it can
-// never be re-minted: letting it leave the vault bricks the vault for ConsumeMAGIC
-// permanently. Checked once in vault.spend, ahead of the redeemer dispatch, so
-// every handler (Commit/Fire/BurnBatch/WithdrawLamp/SetDelegate) is covered.
-
-const t_vault_nft_policy: PolicyId =
-  #"55555555555555555555555555555555555555555555555555555555"
-const t_vault_nft_name: ByteArray = #"564c54"   // "VLT" — matches vault_id_nft.ak
-
-// Vault output with a tunable vault-NFT quantity under a tunable policy.
-fn t_vault_output_nft(datum: VaultDatum, balance: Int, policy: PolicyId, qty: Int) -> Output {
-  let base = assets.from_asset(t_lamp_policy, t_lamp_name, balance)
-  let v =
-    if qty == 0 {
-      base
-    } else {
-      assets.merge(base, assets.from_asset(policy, t_vault_nft_name, qty))
-    }
-  Output { ..t_vault_output(datum, balance), value: v }
-}
-
-test vault_nft_preserved_ok() {
-  let d = t_datum(100, 0, [t_holding(100, 5, False)])
-  let outs = [t_vault_output_nft(d, 100, t_vault_nft_policy, 1)]
-  vault_nft_preserved(outs, t_vault_addr(), t_vault_nft_policy, t_vault_nft_name)
-}
-
-// THE BUG this check exists for: owner (or personal_delegate) spends under
-// BurnBatch and simply omits the NFT from the continuing output. One-shot ⟹ the
-// vault can never be made spendable-by-ConsumeMAGIC again.
-test vault_nft_dropped_rejected() {
-  let d = t_datum(100, 0, [t_holding(100, 5, False)])
-  let outs = [t_vault_output_nft(d, 100, t_vault_nft_policy, 0)]
-  !vault_nft_preserved(outs, t_vault_addr(), t_vault_nft_policy, t_vault_nft_name)
-}
-
-// `== 1`, not `>= 1`: two vaults' NFTs merged into one UTxO is not a valid vault.
-test vault_nft_two_rejected() {
-  let d = t_datum(100, 0, [t_holding(100, 5, False)])
-  let outs = [t_vault_output_nft(d, 100, t_vault_nft_policy, 2)]
-  !vault_nft_preserved(outs, t_vault_addr(), t_vault_nft_policy, t_vault_nft_name)
-}
-
-// Right name, attacker-controlled policy → reject. Name-only would be forgeable.
-test vault_nft_wrong_policy_rejected() {
-  let d = t_datum(100, 0, [t_holding(100, 5, False)])
-  let outs = [t_vault_output_nft(d, 100, #"beef", 1)]
-  !vault_nft_preserved(outs, t_vault_addr(), t_vault_nft_policy, t_vault_nft_name)
-}
-
-// WIRING: the four tests above prove the helper's logic; these two prove
-// vault.spend actually calls it. SetDelegate is the cheapest handler to drive
-// end-to-end, and the check sits ahead of the redeemer dispatch so covering one
-// branch covers all five.
-fn t_spend_setdelegate(nft_qty: Int) -> Bool {
-  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
-  let dout =
-    VaultDatum { ..din, personal_delegate: Some(t_delegate), last_updated_epoch: 3 }
-  let tx =
-    Transaction {
-      ..t_tx(
-        [t_vault_input(din, 100)],
-        [t_vault_output_nft(dout, 100, t_vault_nft_policy, nft_qty)],
-        [t_owner],
-      ),
-      validity_range: interval.between(3 * 86_400_000, 3 * 86_400_000),
-    }
-  vault.spend(
-    t_lamp_policy, t_lamp_name, #"",
-    t_vault_nft_policy, t_vault_nft_name, 86_400_000,
-    Some(din), SetDelegate { new_delegate: Some(t_delegate) }, t_own_ref(), tx,
-  )
-}
-
-test spend_setdelegate_with_nft_ok() {
-  t_spend_setdelegate(1)
-}
-
-// Drop the NFT from the continuing output → vault.spend must reject, whatever the
-// handler would otherwise have allowed.
-test spend_setdelegate_nft_dropped_rejected() fail {
-  t_spend_setdelegate(0)
-}
-
 // vault_cospend_matches must accept a co-spending vault ONLY when that vault is
 // spent under ScheduleCommit (constr 0) or ScheduleFire (constr 1). A vault
 // co-spent under SetDelegate/WithdrawLamp/BurnBatch must NOT authorize a shard
@@ -1481,4 +1705,260 @@ test shard_cospend_no_redeemer_rejected() {
   let sid = compute_shard_id(vd.owner)
   let tx = t_tx([t_vault_input(vd, 100)], [], [])
   !vault_cospend_matches(tx, t_shard_addr(), sid)
+}
+
+// ── SHARD-RETURN: shard phải quay về ĐÚNG địa chỉ (Nợ #35) ────────────
+// Trước khi vá, `find_shard_output_by_policy` chỉ hỏi "output nào mang NFT của
+// shard này" rồi giải mã datum — không một dòng nào hỏi output đó nằm ở ĐÂU.
+// Nên một `ScheduleCommit` hợp lệ vẫn bê được NFT shard ra ví riêng trong cùng
+// tx; từ đó `shard_locked_lamp` do kẻ giữ NFT tự ghi, và `C-SCH-CAP` — trần
+// tham gia của TẤT CẢ người hash vào shard đó — hết ràng buộc ai.
+//
+// Ba ca dưới đây chạy thẳng vào hàm đó. Bỏ dòng `expect o.address == expect_addr`
+// là ca 2 và ca 3 chuyển sang PASS ngay.
+
+fn t_shard_datum(shard_id: Int, locked: Int) -> ScheduleAggregateShardDatum {
+  ScheduleAggregateShardDatum {
+    shard_id, shard_locked_lamp: locked,
+    shard_active_count: 1, shard_cumulative_committed: locked,
+    shard_cumulative_fired: 0, last_updated_epoch: 5, shard_cap,
+  }
+}
+
+fn t_shard_out_at(addr: Address, shard_id: Int, locked: Int) -> Output {
+  Output {
+    address: addr,
+    value: assets.from_asset(t_shard_policy, shard_asset_name(shard_id), 1),
+    datum: InlineDatum(t_shard_datum(shard_id, locked)),
+    reference_script: None,
+  }
+}
+
+/// PASS — output nằm đúng địa chỉ shard đi ra.
+test shard_out_same_address_ok() {
+  let out = t_shard_out_at(t_shard_addr(), 6, 1000)
+  find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
+}
+
+/// FAIL — NFT shard + datum bay sang ví trần. Đây là chính ca Nợ #35.
+test shard_out_moved_to_wallet_rejected() fail {
+  let wallet = address.from_verification_key(t_owner)
+  let out = t_shard_out_at(wallet, 6, 1000)
+  find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
+}
+
+/// FAIL — cùng script hash, khác stake credential. Ghim nửa payment là chưa đủ:
+/// một script hash hiện ra thành N địa chỉ (cùng lý do Nợ #31).
+test shard_out_restaked_rejected() fail {
+  let restaked = t_shard_addr() |> address.with_delegation_key(t_owner)
+  let out = t_shard_out_at(restaked, 6, 1000)
+  find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
+}
+
+/// PASS — shard input khoá bằng SCRIPT.
+test shard_in_at_script_ok() {
+  let inp =
+    Input {
+      output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+      output: t_shard_out_at(t_shard_addr(), 6, 1000),
+    }
+  find_shard_input_raw([inp], t_shard_policy, 6).output.address == t_shard_addr()
+}
+
+/// FAIL — shard input đã nằm ở ví trần. Ghim địa chỉ output không cứu được ca này:
+/// input ở ví thì output "cùng địa chỉ" cũng ở ví, và cả hai vế đều thoả. Phải
+/// từ chối ngay ở đầu vào — fail-closed.
+test shard_in_from_wallet_rejected() fail {
+  let wallet = address.from_verification_key(t_owner)
+  let inp =
+    Input {
+      output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+      output: t_shard_out_at(wallet, 6, 1000),
+    }
+  find_shard_input_raw([inp], t_shard_policy, 6).output.address == wallet
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Tests — VAULT-IDENTITY STATE-THREAD NFT (MAINNET-BLOCK)
+//
+// Closes the fabricated-datum hole: a UTxO parked at the vault script address
+// with an attacker-authored inline datum but NO vault_id NFT can no longer be
+// spent by any handler, and the mint policy forces a genesis-clean datum bound
+// to the real deposited LAMP.
+// ═══════════════════════════════════════════════════════════════
+
+fn t_mint_seed() -> OutputReference {
+  OutputReference { transaction_id: t_tx_id, output_index: 7 }
+}
+
+fn t_mint_name(seed: OutputReference) -> ByteArray {
+  crypto.blake2b_256(cbor.serialise(seed))
+}
+
+fn t_seed_input(seed: OutputReference) -> Input {
+  Input {
+    output_reference: seed,
+    output: Output {
+      address: address.from_script(t_owner),
+      value: assets.from_lovelace(2_000_000),
+      datum: NoDatum,
+      reference_script: None,
+    },
+  }
+}
+
+/// Genesis output at Script(policy) carrying `balance` LAMP + the vault_id NFT.
+fn t_genesis_output(vd: VaultDatum, balance: Int, policy: PolicyId, name: ByteArray) -> Output {
+  Output {
+    address: address.from_script(policy),
+    value: assets.from_asset(t_lamp_policy, t_lamp_name, balance)
+      |> assets.add(policy, name, 1),
+    datum: InlineDatum(vd),
+    reference_script: None,
+  }
+}
+
+fn t_mint_tx(seed: OutputReference, out: Output, mint_v: Value, signers: List<ByteArray>) -> Transaction {
+  Transaction {
+    ..placeholder,
+    inputs: [t_seed_input(seed)],
+    outputs: [out],
+    mint: mint_v,
+    extra_signatories: signers,
+  }
+}
+
+fn t_mint_call(seed: OutputReference, policy_id: PolicyId, tx: Transaction) -> Bool {
+  vault.mint(
+    t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
+    MintVaultId { seed }, policy_id, tx,
+  )
+}
+
+/// Clean genesis datum (all fields at initial value); owner = t_owner, profile Flame.
+fn t_clean_genesis(balance: Int) -> VaultDatum {
+  t_datum(balance, 0, [t_holding(balance, 5, False)])
+}
+
+// ── mint_clean_genesis_ok: a correct clean mint passes ────────────────────
+test mint_clean_genesis_ok() {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let vd   = t_clean_genesis(bal)
+  let out  = t_genesis_output(vd, bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx   = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── poc_dirty_mint_rejected: dirty datum at mint → rejected ────────────────
+// Non-empty magic_batches AND nonzero consumed_credit — the exact fabrication.
+test poc_dirty_mint_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let dirty =
+    VaultDatum {
+      ..t_clean_genesis(bal),
+      magic_batches: [t_batch(#"aa", 1_000_000_000_000_000_000)],
+      activity_state: ActivityState {
+        recent_burn_epochs: [],
+        consumed_credit: 1_000_000_000_000_000_000,
+      },
+    }
+  let out = t_genesis_output(dirty, bal, t_vault_hash, name)
+  let m   = assets.from_asset(t_vault_hash, name, 1)
+  let tx  = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: lamp_balance overclaimed vs actual LAMP in output → rejected ─────
+test poc_dirty_mint_lamp_overclaim_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  // datum claims 1000 LAMP but only 100 LAMP sits in the output.
+  let vd  = t_clean_genesis(1000)
+  let out = t_genesis_output(vd, 100, t_vault_hash, name)
+  let m   = assets.from_asset(t_vault_hash, name, 1)
+  let tx  = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: genesis seed not spent → one-shot broken → rejected ──────────────
+test mint_no_genesis_seed_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out  = t_genesis_output(t_clean_genesis(bal), bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: [t_seed_input(OutputReference { transaction_id: t_tx_id, output_index: 99 })],
+      outputs: [out],
+      mint: m,
+      extra_signatories: [t_owner],
+    }
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: qty != 1 (2 minted) → not a singleton → rejected ─────────────────
+test mint_wrong_qty_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out  = t_genesis_output(t_clean_genesis(bal), bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 2)
+  let tx   = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: owner not among signatories → rejected ───────────────────────────
+test mint_owner_not_signed_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out  = t_genesis_output(t_clean_genesis(bal), bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx   = t_mint_tx(seed, out, m, [])     // nobody signs for the owner
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── POC: fabricated vault fired via ScheduleFire now FAILS ─────────────────
+// Pre-fix, a UTxO parked at the vault address with fabricated magic_batches (or
+// gen_schedules) could be fired/consumed into REAL MAGIC. Now the no-NFT input
+// dies at validate_vault_value → single_nft_name before any schedule logic runs.
+test poc_fabricated_magic_schedule_fails() fail {
+  let fake = t_batch(#"aa", 1_000_000_000_000_000_000)   // fabricated 10^18
+  let din  = t_datum_b([fake])
+  let tx   =
+    t_tx([t_vault_input_nonft(din, 100)], [t_vault_output_nonft(din, 100)], [t_owner])
+  validate_fire(din, #"aa", 7, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+// ── POC: fabricated MAGIC batch burned via BurnBatch now FAILS ─────────────
+test poc_fabricated_magic_burn_batch_fails() fail {
+  let fake = t_batch(#"aa", 1_000_000_000_000_000_000)
+  let din  = t_datum_b([fake])
+  let tx   =
+    t_tx([t_vault_input_nonft(din, 100)], [t_vault_output_nonft(din, 100)], [t_owner])
+  validate_burn_batch(din, [(#"aa", 500)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// ── spend_preserves_nft_ok: continuing output keeps the NFT → passes ───────
+test spend_preserves_nft_ok() {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// ── spend_drops_nft_fail: input has NFT, output drops it → rejected ────────
+test spend_drops_nft_fail() fail {
+  let din  = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output_nonft(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }

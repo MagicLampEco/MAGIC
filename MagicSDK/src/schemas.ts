@@ -5,9 +5,19 @@
 // `pub type VaultDatum { ... }` definition in
 // `<Module>/onchain/lib/magiclamp/protocol/types.ak`.
 //
-// All 4 vault types (Snapshot/Instant/Vacuum/Schedule) use the SAME VaultDatum
-// shape — the only thing that differs is the validator code (and hence the
-// vault address per-network).
+// Mọi loại vault dùng CHUNG một VaultDatum — chỉ code validator (và do đó địa
+// chỉ vault theo network) là khác.
+//
+// ══ BIA MỘ — ĐỪNG XOÁ `Snapshot` / `Vacuum` Ở TỆP NÀY ══════════════════════
+// `VaultType` (types.ts) đã thu về "Instant" | "Schedule" vì SnapshotGen và
+// VacuumGen dời sang `Legacy/`. Tệp NÀY thì KHÔNG được thu theo:
+//   - `BatchSource` (variant Snapshot=0, Instant=1, Vacuum=2, Schedule=3), và
+//   - trường `vacuum_orders` trong `VaultDatum`
+// là CHỈ SỐ CONSTRUCTOR / ARITY của Plutus Data ĐÃ LÊN CHAIN. Bỏ một variant
+// làm dịch chỉ số của các variant sau nó; bỏ một trường làm lệch arity — cả hai
+// đều vỡ decode MỌI vault đã tạo, và LAMP trong đó thành không tiêu được.
+// Muốn bỏ thật thì phải migrate on-chain, không phải sửa tệp này.
+// ═══════════════════════════════════════════════════════════════════════════
 
 import { Data } from "@lucid-evolution/lucid";
 
@@ -86,9 +96,20 @@ const DelegationCertificateSchema = Data.Object({
   last_changed_epoch:      Data.Integer(),
 });
 
+// Trường thứ hai là TỔNG LƯỢNG nanogic đã tiêu qua BurnBatch và chưa quy thành thưởng
+// InstantGen (§6.3) — KHÔNG phải số lượt. Nhãn cũ `total_burns_count` nói sai đơn vị và
+// đã bỏ khỏi mọi module còn sống (Nợ #39, chốt 2026-08-28).
+//
+// Đổi tên KHÔNG đụng hợp đồng nhị phân: `Data.Object` mã hoã theo THỨ TỰ KHAI, tên khoá
+// JS chỉ là hình dạng đối tượng. Cùng vị trí, cùng `Data.Integer()` ⇒ cùng byte trên
+// chuỗi, mọi UTxO đã tạo vẫn đọc được.
+//
+// 🔴 CÁI VỠ LÀ API CỦA SDK, KHÔNG PHẢI CHUỖI. Mã ngoài đọc `.total_burns_count` nay nhận
+// `undefined` — im lặng, không lỗi biên dịch nếu bên đó viết bằng JS. Đây là thay đổi
+// BREAKING của SDK; xem `MagicSDK/INTEGRATOR_GUIDE_V1.md`.
 const ActivityStateSchema = Data.Object({
   recent_burn_epochs: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
-  total_burns_count:  Data.Integer(),
+  consumed_credit:    Data.Integer(),
 });
 
 const StreakStateSchema = Data.Object({
@@ -103,7 +124,7 @@ const VaultAttributionSchema = Data.Object({
 });
 
 /** Full VaultDatum schema — used to serialize the initial datum at vault creation
- *  and to decode existing vault UTxOs in downstream builders (Snapshot/Instant/...). */
+ *  and to decode existing vault UTxOs in downstream builders (Instant/Schedule). */
 export const VaultDatumSchema = Data.Object({
   owner:                 Data.Bytes(),
   lamp_balance:          Data.Integer(),
@@ -125,3 +146,23 @@ export const VaultDatumSchema = Data.Object({
 });
 
 export type VaultDatum = ReturnType<typeof Data.from<typeof VaultDatumSchema>>;
+
+// ── VaultIdRedeemer — redeemer của handler `mint` trên chính validator vault ──
+//
+// Nguồn (ĐỌC, đừng nhớ): `pub type VaultIdRedeemer` trong
+//   InstantGen/onchain/validators/vault.ak  (và bản song sinh ở ScheduleGen)
+//     MintVaultId { seed: OutputReference }   → constructor 0
+//     BurnVaultId                             → constructor 1
+// Thứ tự khai báo = chỉ số constructor. Đảo một biến thể bên Aiken mà không đảo
+// ở đây ⇒ tx mint bị validator đọc thành BurnVaultId và fail.
+const OutputReferenceSchema = Data.Object({
+  transaction_id: Data.Bytes(),   // 32 byte
+  output_index:   Data.Integer(),
+});
+
+export const VaultIdRedeemerSchema = Data.Enum([
+  Data.Object({ MintVaultId: Data.Object({ seed: OutputReferenceSchema }) }),
+  Data.Literal("BurnVaultId"),
+]);
+
+export type VaultIdRedeemer = ReturnType<typeof Data.from<typeof VaultIdRedeemerSchema>>;

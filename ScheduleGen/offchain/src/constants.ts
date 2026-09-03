@@ -42,5 +42,4 @@ export const TESTNET_CONFIG = {
   lampAssetName:    "744c414d50",   // "tLAMP"
   shardNftPolicyId: "REPLACE_WITH_SHARD_NFT_POLICY_ID",
   shardNftAssetName:"5348415244",  // "SHARD"
-  treasuryAddress:  "REPLACE_WITH_TREASURY_ADDRESS",
 };

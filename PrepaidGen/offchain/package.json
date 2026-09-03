@@ -1,0 +1,21 @@
+{
+  "name": "@magiclamp/prepaidgen-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "PrepaidGen off-chain SDK — MagicLamp bộ-ba-token §6.5",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@lucid-evolution/lucid": "^0.4.0",
+    "@noble/hashes": "^1.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0",
+    "@types/node": "^20.12.0"
+  }
+}

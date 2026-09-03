@@ -107,10 +107,32 @@ validator magic_allocation {
             },
           )
 
+        // ── ĐỊA CHỈ + GIÁ TRỊ (Nợ #41) ────────────────────────────────────
+        // Bản trước chỉ duyệt `tx.outputs` so NỘI DUNG datum, không một lần hỏi
+        // output đó nằm ở ĐÂU. Nên một ClaimEpoch hợp lệ vẫn đưa được bản ghi
+        // phân bổ — kèm toàn bộ giá trị UTxO — ra ví trần: datum khớp từng
+        // trường, validator qua, và allocation rời khỏi tầm kiểm soát của script
+        // vĩnh viễn. Kiểm nội dung, quên địa chỉ; cùng lớp lỗi với Nợ #35 ở
+        // ScheduleGen, nên đây là lỗi trong CÁCH VIẾT validator, không phải lỗi lẻ.
+        //
+        // Ghim đủ ba vế: đúng địa chỉ (cả stake credential — một script hash hiện
+        // ra thành N địa chỉ), ĐÚNG MỘT output như thế (không tách đôi bản ghi),
+        // và giá trị bảo toàn (không rút ADA ra trong lúc datum vẫn khớp).
+        expect Some(self_input) =
+          list.find(tx.inputs, fn(i) { i.output_reference == self_ref })
+        let self_addr = self_input.output.address
+        let self_value = self_input.output.value
+
+        expect
+          list.count(tx.outputs, fn(o) { o.address == self_addr }) == 1
+
         let continuing_output_ok =
           list.any(
             tx.outputs,
             fn(o) {
+              if o.address != self_addr || o.value != self_value {
+                False
+              } else {
               when o.datum is {
                 InlineDatum(d) -> {
                   // Decode only if possible; mismatched datums are skipped.
@@ -123,6 +145,7 @@ validator magic_allocation {
                   }
                 }
                 _ -> False
+              }
               }
             },
           )

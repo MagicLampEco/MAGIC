@@ -118,9 +118,13 @@ export const VaultAttributionSchema = Data.Object({
 export type VaultAttribution = Data.Static<typeof VaultAttributionSchema>;
 
 // ── ActivityState ────────────────────────────────────────────
+// `consumed_credit` occupies the slot previously named `total_burns_count`
+// (same position, same Integer type → Plutus Data shape unchanged).
+// SEMANTICS (§6.3): nanogic ALREADY CONSUMED via BurnBatch and not yet turned
+// into an InstantGen reward. BurnBatch adds Σburns here.
 export const ActivityStateSchema = Data.Object({
   recent_burn_epochs : Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
-  total_burns_count  : Data.Integer(),
+  consumed_credit    : Data.Integer(),
 });
 export type ActivityState = Data.Static<typeof ActivityStateSchema>;
 
@@ -196,3 +200,16 @@ export const ShardRedeemerSchema = Data.Enum([
   })}),
 ]);
 export type ShardRedeemer = Data.Static<typeof ShardRedeemerSchema>;
+
+// ── Codec companions ─────────────────────────────────────────
+// `Data.to`/`Data.from` infer their result from the SECOND argument, so that
+// argument must be a VALUE whose TypeScript type is the plain static shape —
+// not the schema object itself. Passing `XxxSchema` directly makes the call
+// return `TObject<…>` and every field access below it goes untyped.
+//
+// Same name as the type, so call sites read `Data.from(utxo.datum!, VaultDatum)`.
+// Runtime value is unchanged — the very same schema object, re-branded.
+export const VaultDatum    = VaultDatumSchema    as unknown as VaultDatum;
+export const UMDatum       = UMDatumSchema       as unknown as UMDatum;
+export const VaultRedeemer = VaultRedeemerSchema as unknown as VaultRedeemer;
+export const ShardRedeemer = ShardRedeemerSchema as unknown as ShardRedeemer;

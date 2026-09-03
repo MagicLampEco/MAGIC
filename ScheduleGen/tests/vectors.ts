@@ -140,7 +140,8 @@ export const TV_SCH_FIRE_PERM = {
   bob_sig_in_tx:     false,   // Bob not required either — truly permissionless
   expected:          "ACCEPT",
   magic_to_alice:    true,    // MAGIC → Alice's vault ✓
-  lamp_to_treasury:  true,    // LAMP → Treasury ✓
+  lamp_stays_in_vault: true,  // PHA 2 / I-ACT-7: LAMP does NOT move — the fire
+                              // only RELEASES the lock. No Treasury leg exists.
   shard_correct:     true,    // C-SCH-FIRE-SHARD: shard = first_byte(blake2b256(alice_pkh)) % 16 ✓
   // Rationale A18: Alice may lose key after commit → schedule stuck forever
   // Fire is fulfilling a pre-committed LAMP obligation, not a discretionary action
@@ -168,19 +169,60 @@ export const TV_SCH_FIRE3 = {
   fires_in_tx:  4,
   lambda_oildrop:   4_000_000_000n,
   M_i:          45_000_000_000n,
-  // Validator asserts ALL of these simultaneously:
+  // Validator asserts ALL of these simultaneously (PHA 2 / I-ACT-7):
   assertions: {
-    fired_count_delta:    4n,            // output.fired_count = input + 4
-    // I-ACT-7 (changed): a fire RELEASES the lock, it does not move LAMP.
-    // Previously lamp_balance_delta = -4×λ with the same amount paid to a
-    // treasury — that eroded the user's principal, so generation decayed to
-    // zero for the NEWUSER cohort. There is no treasury leg any more.
-    lamp_balance_delta:   0n,            // balance is byte-identical
-    lamp_locked_delta:  -16_000_000_000n, // -4 × λ — only the lock lifts
-    lamp_released:       16_000_000_000n, // +4 × λ unlocked, stays in the vault
-    new_batches_count:   4,              // exactly 4 new batches
+    fired_count_delta:    4n,             // output.fired_count = input + 4
+    lamp_balance_delta:   0n,             // LAMP DOES NOT MOVE
+    lamp_locked_delta:  -16_000_000_000n, // -4 × λ released from the locked pool
+    holdings_sum_delta:   0n,             // Σholdings invariant (only is_locked flips)
+    new_batches_count:    4,              // exactly 4 new batches
     each_batch_initial:  45_000_000_000n, // all equal M_i (T-DET)
+    each_batch_decay_window: 1n,          // §4.2 cliff — live this epoch only
   },
+};
+
+// ══════════════════════════════════════════════════════════════
+// TV-SCH-ACT7: LAMP đứng yên across a fire (I-ACT-7)
+// ══════════════════════════════════════════════════════════════
+export const TV_SCH_ACT7 = {
+  id: "TV-SCH-ACT7", spec_ref: "§6.1, §6.4, §12 I-ACT-7",
+  description: "A fire releases the lock; it never transfers LAMP anywhere",
+  before: {
+    lamp_balance:     40_000_000_000n,
+    lamp_locked:      40_000_000_000n,
+    loyalty_holdings: [{ amount: 40_000_000_000n, acquired_epoch: 50n, is_locked: true }],
+  },
+  fires_in_tx: 1,
+  lambda_oildrop:  4_000_000_000n,
+  after: {
+    lamp_balance:     40_000_000_000n,   // UNCHANGED
+    lamp_locked:      36_000_000_000n,   // −λ
+    loyalty_holdings: [
+      { amount:  4_000_000_000n, acquired_epoch: 50n, is_locked: false },  // freed
+      { amount: 36_000_000_000n, acquired_epoch: 50n, is_locked: true  },  // still locked
+    ],
+  },
+  // A tx that sends LAMP out of the vault must be REJECTED.
+  lamp_out_expected_validation: "REJECT",
+};
+
+// ══════════════════════════════════════════════════════════════
+// TV-SCH-CLIFF: §4.2 per-epoch use-or-lose for Schedule batches
+// ══════════════════════════════════════════════════════════════
+export const TV_SCH_CLIFF = {
+  id: "TV-SCH-CLIFF", spec_ref: "§4.2, §6.4",
+  description:
+    "A fired batch is live ONLY in the epoch it was fired. A catch-up of k " +
+    "orders stamps all k batches with the CURRENT epoch, so it cannot " +
+    "resurrect MAGIC missed in earlier epochs.",
+  decay_window: 1n,
+  cases: [
+    { created_epoch: 60n, current_epoch: 60n, expired: false },
+    { created_epoch: 60n, current_epoch: 61n, expired: true  },
+    { created_epoch: 60n, current_epoch: 62n, expired: true  },
+  ],
+  // Burning a dead batch must be rejected on-chain.
+  burn_dead_expected_validation: "REJECT",   // vault.ak test: bb_dead_batch_rejected
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -202,4 +244,5 @@ export const ALL_SCHEDULE_VECTORS = [
   TV_SCH_01, TV_SCH_02, TV_SCH_03, TV_SCH_04, TV_SCH_05,
   TV_SCH_06, TV_SCH_CATCHUP_LIMIT, TV_SCH_FIRE_PERM,
   TV_SCH_T_DET, TV_SCH_FIRE3, TV_SCH_BOUNDS,
+  TV_SCH_ACT7, TV_SCH_CLIFF,
 ] as const;

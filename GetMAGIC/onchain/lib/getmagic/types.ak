@@ -46,7 +46,9 @@ pub type OrderRedeemer {
 ///   G-ALLOC-4: total claimable = total_epochs - len(claimed_epochs)
 ///   G-ALLOC-5: voucher at index (epoch - start_epoch) authorises that epoch
 pub type AllocationDatum {
-  alloc_id:             ByteArray,    // blake2b_256(order_id ++ user_pkh)
+  // ALWAYS 32 bytes — see utils.build_alloc_id. The type is a free ByteArray;
+  // the 32-byte width is enforced in utils.build_voucher_msg, not by this type.
+  alloc_id:             ByteArray,    // utils.build_alloc_id(order_id, user_pkh)
   order_id:             ByteArray,
   org_pkh:              ByteArray,
   org_vault_nft_policy: ByteArray,   // PolicyId of Org's vault NFT

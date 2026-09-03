@@ -2,10 +2,15 @@
 //
 // Covers the pure / early-exit surface (no lucid network mocking):
 //   1. Redeemer constructor-index resolution against the REAL built plutus.json
-//      for SnapshotGen (UpdateProfile=2) + InstantGen (=3), and absence on
-//      ScheduleGen (no UpdateProfile variant → fail loud).
+//      for InstantGen (UpdateProfile=3), and absence on ScheduleGen (no
+//      UpdateProfile variant → fail loud).
 //   2. ActivityProfile inner-constructor mapping (Ember/Flame/Lantern).
-//   3. UPDATE-001 guard — Vacuum/Schedule vaults reject before any network call.
+//   3. UPDATE-001 guard — Schedule vaults reject before any network call.
+//
+// SnapshotGen và VacuumGen từng có ca riêng ở đây. Hai module đó đã dời sang
+// Legacy/: không còn plutus.json để đọc, và `VaultType` không còn
+// nhận chúng — bỏ các ca đó, không thay bằng fixture chép tay (fixture chép tay
+// chính là thứ trôi khỏi validator thật).
 
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
@@ -21,18 +26,13 @@ const VAULT_TITLE = "vault.vault.spend";
 // relocation shows up as one edit, not a silent ENOENT in three tests.
 const MODULE_DIR: Record<string, string> = {
   SnapshotGen: "Legacy/stale-genmodel-2026-07/SnapshotGen",
-  InstantGen:  "Legacy/stale-genmodel-2026-07/InstantGen",
+  InstantGen:  "InstantGen",
   ScheduleGen: "ScheduleGen",
 };
 const plutusPath = (module: string) =>
   fileURLToPath(new URL(`../../${MODULE_DIR[module] ?? module}/onchain/plutus.json`, import.meta.url));
 
 describe("updateProfile — redeemer index resolution (real plutus.json)", () => {
-  it("resolves UpdateProfile=2 on SnapshotGen", async () => {
-    const pj = await loadPlutusJson(plutusPath("SnapshotGen"));
-    expect(resolveConstrIndex(pj, VAULT_TITLE, UPDATE_PROFILE_TAG)).toBe(2);
-  });
-
   it("resolves UpdateProfile=3 on InstantGen", async () => {
     const pj = await loadPlutusJson(plutusPath("InstantGen"));
     expect(resolveConstrIndex(pj, VAULT_TITLE, UPDATE_PROFILE_TAG)).toBe(3);
@@ -52,12 +52,6 @@ describe("updateProfile — ActivityProfile constructor mapping", () => {
 });
 
 describe("updateProfile — vault-type guard (UPDATE-001)", () => {
-  it("rejects Vacuum vaults before any network call", async () => {
-    await expect(
-      updateProfile({ vaultType: "Vacuum", newProfile: "Ember" } as never),
-    ).rejects.toThrow(/UPDATE-001/);
-  });
-
   it("rejects Schedule vaults before any network call", async () => {
     await expect(
       updateProfile({ vaultType: "Schedule", newProfile: "Ember" } as never),

@@ -1,5 +1,29 @@
-# Code Review — MagicLamp MAGIC Protocol
-## GenMAGIC v3.3 + ConsumeMAGIC v2.2 + AppEconomics v2.1
+# Code Review — MagicLamp MAGIC Protocol (BẢN GHI LỊCH SỬ, ĐÃ ĐÓNG)
+
+> **Đây là biên bản một đợt review ĐÃ XONG, không phải mô tả hệ hiện tại.** Nó ghi
+> "lúc ấy hỏng gì, vá ra sao" — giá trị nằm ở LÝ DO, không ở đường dẫn.
+>
+> **MỌI đường dẫn trong tệp này là ẢNH CHỤP tại thời điểm review — `ls` trước khi hành động.**
+> Không chỉ vài đường dẫn được nêu đích danh: cây thư mục đã đổi nhiều lần từ lúc biên bản này
+> đóng. Tệp không tồn tại thì việc gắn với nó cũng không tồn tại — đừng "tạo lại cho khớp".
+>
+> Đường dẫn đã kiểm và **đã chết** (tính tới lần soát gần nhất):
+>
+> | Đường dẫn tệp này nhắc | Thực tế |
+> |---|---|
+> | `SnapshotGen/...`, `VacuumGen/...` | hai module nằm ở `Legacy/`. Đừng lần theo, đừng khôi phục |
+> | `ConsumeMAGIC/offchain/src/math.ts` (§Critical 1) | **không tồn tại**. Toán giá của ConsumeMAGIC nay ở `ConsumeMAGIC/pricing/src/price.ts` + `onchain/lib/magiclamp/consume/pricing.ak` |
+> | `UMKeeper/onchain/onchain/` (§Action items + §Lưu ý) | **thư mục không tồn tại**. "Chọn bản canonical" là việc đã hết — không còn hai bản để chọn |
+> | `ScheduleGen/onchain/onchain/` (§Action items + §Lưu ý) | **thư mục không tồn tại**. Như trên |
+>
+> ⚠ Bốn dòng trên trông y hệt việc-phải-làm nếu đọc thân tệp: có checkbox `[ ]`, có mô tả kỹ.
+> Ai nhận chúng làm task sẽ đi tìm — hoặc tệ hơn, **dựng lại** — thứ đã được dọn xong.
+>
+> - **Mọi con số test trong tệp này** (kể cả ở §Trạng thái, không chỉ ở cuối) là ảnh chụp cũ.
+>   Số đang đúng: [`DevStatus.md`](../DevStatus.md).
+> - Mô hình đang đúng: [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+>
+> Không cập nhật tệp này theo code nữa. Review mới thì mở biên bản mới.
 
 ---
 
@@ -23,7 +47,7 @@
 
 ### 1. OAC window boundary inconsistency — FIXED
 
-**Vị trí:** [ConsumeMAGIC/offchain/src/math.ts:377](ConsumeMAGIC/offchain/src/math.ts), [SnapshotGen/offchain/src/math.ts:42](SnapshotGen/offchain/src/math.ts), [ProtocolUtils/src/index.ts:186](ProtocolUtils/src/index.ts)
+**Vị trí:** `ConsumeMAGIC/offchain/src/math.ts:377`, `SnapshotGen/offchain/src/math.ts:42`, [ProtocolUtils/src/index.ts:186](ProtocolUtils/src/index.ts)
 
 **Vấn đề:** Hai filter có ngữ nghĩa khác nhau bị nhầm lẫn:
 - Prune window (ConsumeMAGIC STEP 0e): `ep ≥ e − 12` — giữ entry cho epoch sau.
@@ -171,22 +195,11 @@ sai. Đã fix: keeper.ts import từ math.ts (single source).
 
 ## Test status
 
-```
-ProtocolUtils:   24/24 pass
-InstantGen:      45/45 pass
-SnapshotGen:     46/46 pass
-VacuumGen:       30/30 pass
-ScheduleGen:     29/29 pass
-UMKeeper:        20/20 pass
-Consolidate:     12/12 pass
-ProfileChange:    8/8  pass
-ConsumeMAGIC:    31/31 pass
-AppEconomics:    33/33 pass
-─────────────────────────
-TOTAL:          278/278 pass
-```
+Bảng số của đợt review này đã gỡ: nó liệt kê cả `SnapshotGen` / `VacuumGen` (nay ở
+`Legacy/`) và mọi con số đều hết hạn. Số đang đúng, kèm lệnh kiểm:
+[`DevStatus.md`](../DevStatus.md).
 
-Regression tests thêm mới:
+Regression tests đợt đó thêm mới:
 - `AppEconomics`: isqrt10th với V=S_LAMP_TOTAL (V^7 ≈ 10^110) không throw.
 - `ConsumeMAGIC`: TV-ACT-003b — burn tại `ep == e` không count cho OAC epoch e.
 

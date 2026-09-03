@@ -9,16 +9,16 @@
 
 import {
   Lucid, Blockfrost, Data, Constr,
-  applyParamsToScript, validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
 } from "@lucid-evolution/lucid";
-import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, PROTOCOL,
+  POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
   lampToOildrop,
 } from "../config.js";
+import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { buildScheduleCommitTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
 
@@ -33,35 +33,44 @@ async function fetchTip() {
   return { slot: BigInt(tip.slot), posixMs: BigInt(tip.time) * 1000n };
 }
 
+// ── Script tham chiếu (CIP-33) ──────────────────────────────────────────────
+// Đính kèm CẢ HAI validator (vault + shard) làm tx vượt trần 16384 byte — đo
+// thật trên Preview: 17303. Nên hai bước ScheduleGen BẮT BUỘC đọc script từ
+// chain. Chạy `npx tsx deploy/06_publish_ref_scripts.ts` rồi nạp hai biến.
+async function refScriptUtxos(lucid: any) {
+  const refs = [process.env.REF_VAULT_SCHEDULE_UTXO, process.env.REF_SHARD_UTXO]
+    .filter((s): s is string => !!s)
+    .map((s) => { const [h, i] = s.split("#"); return { txHash: h!, outputIndex: Number(i) }; });
+  if (refs.length === 0) return undefined;
+  return await lucid.utxosByOutRef(refs);
+}
+
 async function main() {
   console.log("╔════════════════════════════════════════════╗");
-  console.log("║  ScheduleCommit smoke test — Preview       ║");
+  console.log(`║  ScheduleCommit smoke test — ${NETWORK.padEnd(13)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
 
-  // Vault validator
-  const plutusJson = JSON.parse(
-    await readFile(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url), "utf8"),
-  );
-  const vaultUnapplied = plutusJson.validators.find((v: any) => v.title === "vault.vault.spend");
-  const shardUnapplied = plutusJson.validators.find((v: any) =>
-    v.title === "vault.shard.spend" || v.title === "shard.shard.spend",
-  );
+  // Apply-param THEO TÊN — dùng chung bản đồ giá trị với deploy/07 nên địa chỉ
+  // dựng lại ở đây không thể lệch với vault đã deploy.
+  const blueprint      = await loadBlueprint("ScheduleGen");
+  const vaultUnapplied = findValidator(blueprint, "vault.vault.spend");
+  const shardUnapplied = findValidator(blueprint, "vault.shard.spend");
 
-  const vaultScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(vaultUnapplied.compiledCode, [
-      POLICY_IDS.lamp, ASSET_NAMES.lamp, POLICY_IDS.shard_nft,
-      POLICY_IDS.vault_id_nft, ASSET_NAMES.vault_id_nft, PROTOCOL.MS_PER_EPOCH,
-    ]),
-  };
-  // Shard validator now takes 1 param: shard NFT policy id (same value the vault
-  // is parameterized with). Apply it before hashing — hash changed vs v1.0.
-  const shardScript = {
-    type: "PlutusV3" as const,
-    script: applyParamsToScript(shardUnapplied.compiledCode, [POLICY_IDS.shard_nft]),
-  };
-  const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(vaultScript)));
-  const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(validatorToScriptHash(shardScript)));
+  const { script: vaultScript, hash: vaultHash } = appliedScript(
+    vaultUnapplied,
+    scheduleVaultParams({
+      lampPolicyId:  POLICY_IDS.lamp,
+      lampAssetName: ASSET_NAMES.lamp,
+      shardPolicyId: POLICY_IDS.shard_nft,
+      msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    }),
+  );
+  const { script: shardScript, hash: shardHash } = appliedScript(
+    shardUnapplied,
+    shardSpendParams({ shardPolicyId: POLICY_IDS.shard_nft }),
+  );
+  const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
+  const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(shardHash));
 
   console.log(`Vault address:  ${vaultAddr}`);
   console.log(`Shard address:  ${shardAddr}\n`);
@@ -112,7 +121,9 @@ async function main() {
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
       console.log(`⚠  TEST MODE: ${tamper ?? "skipOwnerSig"} — expecting REJECT.\n`);
     }
+    const refUtxos = await refScriptUtxos(lucid);
     const result = await buildScheduleCommitTx({
+      refScriptUtxos: refUtxos,
       lucid, vaultUtxo, shardUtxos,
       scheduleLength: L, lampPerEpoch: LAMBDA,
       userAddress: address,

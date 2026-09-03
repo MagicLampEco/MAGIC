@@ -7,14 +7,16 @@
 //
 // Cooldown: 2 epoch giữa các lần đổi (C-PC-V2). Tránh user flip-flop.
 //
-// ⚠ ONCHAIN STATUS:
-//   - SnapshotGen + InstantGen vault: `UpdateProfile` enum variant đã có; handler
-//     trong validator là STUB (chỉ check owner sign, không enforce cooldown /
-//     lazy apply / datum integrity). Cần Tuân implement full per SPEC_V1.md §2/§3.
-//   - VacuumGen + ScheduleGen: không support UpdateProfile (validator không dùng
-//     profile cho compute).
+// ONCHAIN STATUS:
+//   - InstantGen vault: `UpdateProfile` ĐÃ HIỆN THỰC ĐẦY ĐỦ (`validate_update_profile`
+//     trong `InstantGen/onchain/validators/vault.ak`) — ép cooldown, ép lazy apply
+//     (không cho set thẳng `profile`), chặn đổi sang chính profile đang dùng, và
+//     kiểm toàn vẹn datum. Có test: `up_positive`, `up_cooldown_not_met`,
+//     `up_bypass_lazy`, `up_same_profile`.
+//   - ScheduleGen: không support UpdateProfile (validator không dùng profile
+//     cho compute) — đúng thiết kế, không phải thiếu sót.
 //
-// SDK code complete + match spec §12 — đợi validator full impl.
+// (Bình luận cũ ghi handler là STUB "chờ Tuân implement" — đã quá hạn.)
 
 import {
   Constr, Data,
@@ -40,8 +42,8 @@ export interface UpdateProfileParams {
   vaultUtxo:    UTxO;
   newProfile:   Profile;
   vaultScript:  Validator;
-  /** Vault type — for error/logging only; only "Snapshot" and "Instant" support
-   *  UpdateProfile (Vacuum/Schedule don't use profile in M computation). */
+  /** Vault type — for error/logging only; only "Instant" supports UpdateProfile
+   *  ("Schedule" doesn't use profile in M computation). */
   vaultType:    VaultType;
   /** Full plutus.json of the vault module — SDK resolves UpdateProfile
    *  constructor index at runtime (no hardcoded table). */
@@ -77,9 +79,9 @@ export interface UpdateProfileResult {
 export async function updateProfile(params: UpdateProfileParams): Promise<UpdateProfileResult> {
   const { lucid, vaultUtxo, newProfile, vaultScript, vaultType, network, vaultPlutusJson } = params;
 
-  if (vaultType === "Vacuum" || vaultType === "Schedule") {
+  if (vaultType === "Schedule") {
     throw new Error(
-      `UPDATE-001: vaultType="${vaultType}" doesn't use profile (PM_Q only applies to Snapshot + Instant). ` +
+      `UPDATE-001: vaultType="${vaultType}" doesn't use profile (PM_Q only applies to Instant). ` +
       `No UpdateProfile redeemer on this vault.`,
     );
   }
@@ -171,7 +173,7 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
  * Encode the `UpdateProfile { new_profile }` redeemer.
  *
  * Constructor index resolved at runtime from `plutusJson` (no hardcoded table).
- * Throws if `UpdateProfile` variant missing (e.g. used on Vacuum/Schedule vault
+ * Throws if `UpdateProfile` variant missing (e.g. used on a Schedule vault
  * where the enum doesn't include it).
  *
  * ActivityProfile inner constructor: Ember=0, Flame=1, Lantern=2 (Aiken order

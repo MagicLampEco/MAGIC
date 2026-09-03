@@ -1,23 +1,28 @@
 // MagicSDK/src/types.ts — public types for createVault and friends
-import type { LucidEvolution, TxSignBuilder, Validator } from "@lucid-evolution/lucid";
+import type { LucidEvolution, TxSignBuilder, UTxO, Validator } from "@lucid-evolution/lucid";
 import type { Network } from "@magiclamp/protocol-utils";
 import type { PlutusJson } from "./redeemerIndex.js";
 
 export type Profile = "Ember" | "Flame" | "Lantern";
 
 /**
- * The 4 vault types correspond to 4 different on-chain validators.
- * Each user-mechanism pair lives in its own vault:
- *   - "Snapshot": per-epoch lazy generation (no LAMP cost; T16)
- *   - "Instant":  on-demand purchase (LAMP → Treasury)
- *   - "Vacuum":   2-phase lock-then-fire (LAMP → Treasury at fire)
- *   - "Schedule": forward contract with locked rate (LAMP → Treasury per fire)
+ * The 2 LIVE vault types correspond to 2 on-chain validators:
+ *   - "Instant":  on-demand grant keyed to MAGIC consumed (LAMP stays put)
+ *   - "Schedule": forward contract with locked rate (LAMP stays put; the fire
+ *                 only releases the lock — I-ACT-7)
  *
- * A user who wants all 4 mechanisms needs 4 separate vaults (4 UTxOs at 4
- * different addresses). The Vault*Datum shape is identical across all 4,
- * but the validator code (and hence the address) differs.
+ * SnapshotGen và VacuumGen ĐÃ dời sang `Legacy/`: validator của
+ * chúng không còn trong cây làm việc, nên không có gì để `applyParamsToScript`.
+ * Chào bán hai loại đó ở đây là nhánh chết — người tích hợp đi vào chỗ không có
+ * validator. Chúng KHÔNG được thêm lại nếu không kèm validator sống.
+ * (Lưu ý: enum `BatchSource` trong schemas.ts vẫn giữ nguyên `Snapshot`/`Vacuum`
+ * — đó là Plutus Data đã lên chain, xem bia mộ trong tệp đó.)
+ *
+ * A user who wants both mechanisms needs 2 separate vaults (2 UTxOs at 2
+ * different addresses). The VaultDatum shape is identical across both, but the
+ * validator code (and hence the address) differs.
  */
-export type VaultType = "Snapshot" | "Instant" | "Vacuum" | "Schedule";
+export type VaultType = "Instant" | "Schedule";
 
 /**
  * Unapplied (raw aiken-built) validator script CBOR strings.
@@ -48,36 +53,38 @@ export interface ValidatorBundle {
  * Required network/protocol params that the validator will be applied with.
  * `ms_per_epoch` is auto-derived from `network` if omitted.
  *
- * `treasuryAddress` is the Cardano address that receives transferred LAMP
- * (used by Instant/Vacuum/Schedule). MUST be a separate address from the
- * user's wallet — otherwise the validator's `treasury_receives_lamp` check
- * is vacuously satisfied (wallet change aggregates). Snapshot doesn't need
- * one (T16: no LAMP movement).
+ * KHÔNG còn `treasuryAddress`. Dưới I-ACT-7 không handler nào của hai validator
+ * còn sống chuyển LAMP ra khỏi vault, nên tham số đó không còn ai đọc. Validator
+ * duy nhất từng nhận nó (Vacuum) đã ở `Legacy/`.
  */
 export interface ProtocolParams {
   /** "Preview" | "Preprod" | "Mainnet". */
   network: Network;
-  /** LAMP minting-policy ID. Required for Instant/Vacuum/Schedule;
-   *  required for Snapshot for the vault's LAMP UTxO asset unit. */
+  /** LAMP minting-policy ID. Required for both Instant and Schedule — it pins
+   *  the vault's LAMP UTxO asset unit. */
   lampPolicyId: string;
-  /** LAMP asset name as hex (default "744c414d50" = "tLAMP"). */
+  /** LAMP asset name as hex. Bỏ trống thì DẪN THEO MẠNG qua
+   *  `lampAssetName(network)`: Mainnet "4c414d50" = "LAMP", Preview/Preprod
+   *  "744c414d50" = "tLAMP" (`ProtocolUtils/src/index.ts:48-52`). KHÔNG có mặc
+   *  định cứng — mặc định testnet ở đây là đường bake một vault tLAMP vào lần
+   *  deploy mainnet, đúng thứ tham số này sinh ra để chặn. Chỉ đặt tay khi LAMP
+   *  được mint dưới một tên phi chuẩn. */
   lampAssetName?: string;
-  /** UM datum NFT policy ID. Required for Instant + Vacuum. */
+  /** UM datum NFT policy ID. Required for Instant. */
   umNftPolicyId?: string;
   /** UM script hash (= applied UMKeeper validator hash). Required for
-   *  Instant + Vacuum. Pins the UM reference input to the canonical UM
+   *  Instant. Pins the UM reference input to the canonical UM
    *  script address (MAINNET-BLOCK fix, defense-in-depth layer b). */
   umScriptHash?: string;
   /** Shard NFT policy ID. Required for Schedule. */
   shardPolicyId?: string;
-  /** Vault identity NFT policy ID (INV-VAULT-IDENTITY / C-CM-6). Required for
-   *  Schedule. One-shot policy from ConsumeMAGIC's vault_id_nft.ak; consume.ak
-   *  must be applied with the SAME policy, or the vault it needs is unreachable. */
-  vaultIdNftPolicyId?: string;
-  /** Vault identity NFT asset name as hex. Defaults to "564c54" ("VLT"). */
-  vaultIdNftAssetName?: string;
-  /** Treasury address. Required for Instant + Vacuum + Schedule. */
-  treasuryAddress?: string;
+  /** BackingBeacon NFT policy ID. Required for Instant (§6.3).
+   *  [CẦN XÁC NHẬN — beacon schema pending CARP]
+   *  Pass the all-zero placeholder while the beacon is not deployed: no
+   *  reference input can then match and InstantGen stays SHUT (fail-closed). */
+  backingNftPolicyId?: string;
+  /** BackingBeacon script hash. Required for Instant (§6.3). */
+  backingScriptHash?: string;
   /** Override ms_per_epoch (advanced). Derived from `network` otherwise. */
   msPerEpoch?: bigint;
 }
@@ -88,8 +95,8 @@ export interface ProtocolParams {
  */
 export interface InitialVaultConfig {
   /** Owner payment key hash (28-byte hex). The only key authorized to
-   *  sign owner-required actions (TriggerSnapshot, InstantGen,
-   *  VacuumCommit, ScheduleCommit, UpdateProfile, BurnBatch). */
+   *  sign owner-required actions (InstantGen, ScheduleCommit, UpdateProfile,
+   *  BurnBatch, WithdrawLamp). ScheduleFire is permissionless. */
   ownerPkh: string;
   /** Initial LAMP locked into the vault, in oildrop (1 LAMP = 10^6 oildrop).
    *  Caller's wallet MUST hold ≥ this amount of LAMP. */
@@ -98,9 +105,10 @@ export interface InitialVaultConfig {
   profile?: Profile;
   /** Min-ADA lovelace to attach to vault UTxO (default 2_000_000). */
   vaultLovelace?: bigint;
-  /** Optional personal delegate PKH (28-byte hex) — reserved for
-   *  future session-key / delegated-signing semantics. Stored in
-   *  `personal_delegate` datum field. Default null. */
+  /** @deprecated KHÔNG dùng được lúc tạo vault.
+   *  `validate_mint_vault_id` ép `personal_delegate == None` ở datum khởi sinh
+   *  (genesis phải sạch). Truyền giá trị khác null ⇒ createVault ném lỗi.
+   *  Đặt uỷ quyền cá nhân bằng redeemer `SetDelegate` sau khi vault đã tồn tại. */
   personalDelegate?: string | null;
 }
 
@@ -118,6 +126,10 @@ export interface CreateVaultParams {
   vault: InitialVaultConfig;
   /** Override current epoch derivation (for deterministic tests). */
   tipPosixMs?: bigint;
+  /** Seed UTxO cho NFT danh-tính vault (INV-VAULT-IDENTITY). Bỏ trống thì SDK
+   *  tự chọn tất định từ UTxO của ví. UTxO này BẮT BUỘC là input của tx tạo
+   *  vault; tên NFT = blake2b_256(cbor.serialise(OutputReference của nó)). */
+  seedUtxo?: UTxO;
 }
 
 /** Result of `createVault()` — ready for caller to sign + submit. */
@@ -131,6 +143,15 @@ export interface CreateVaultResult {
   /** Applied vault script (for downstream tx builders that need
    *  `.attach.SpendingValidator(vaultScript)`). */
   vaultScript: Validator;
+  /** Policy ID của NFT danh-tính vault. BẰNG ĐÚNG `vaultScriptHash`: vault là
+   *  validator đa-mục-đích, handler `mint` chạy dưới chính script hash đó. */
+  vaultIdPolicyId: string;
+  /** Tên asset (hex) của NFT danh-tính = blake2b_256(cbor.serialise(seed)). */
+  vaultIdAssetName: string;
+  /** `policyId + assetName` — unit dùng trực tiếp với Lucid. */
+  vaultIdUnit: string;
+  /** UTxO đã dùng làm seed one-shot (đã được ép vào inputs của tx). */
+  seedUtxo: UTxO;
   /** Human-readable summary for logs / UI. */
   summary: string;
 }

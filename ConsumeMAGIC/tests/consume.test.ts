@@ -1,4 +1,15 @@
-// tests/consume.test.ts — ConsumeMAGIC v2.2 (all TV-* from Appendix B)
+// tests/consume.test.ts — LỚP V1 AppEconomics (reward/halving/delegation/attribution).
+//
+// ⚠ ĐỌC TRƯỚC KHI TRÍCH SỐ TEST: mọi ca trong tệp này bám vào
+// `offchain/src/_appeconomics_legacy.ts` — lớp V1 mà `ConsumeMAGIC/CONTRACT.md` đã khai
+// tử (`computeFee(serviceAmount do client tự đưa)` = lỗ cần đóng, không chống spam).
+// Chúng KHÔNG phủ mô hình v2 engagement-state. Phủ v2 nằm ở `codec.test.ts` và
+// `consume_required.test.ts`.
+//
+// ⇒ Con số "ConsumeMAGIC offchain N pass" ở DevStatus.md phần lớn là số của tệp này,
+//   ĐỪNG đọc nó như bằng chứng v2 đã được phủ.
+//
+// Số phận tệp này (giữ / dời `Legacy/`) đang CHỜ QUYẾT ĐỊNH của chủ nhân.
 import { describe, it, expect } from "vitest";
 import {
   applyLazyHalving, getLiveBatches, effectiveBalance,

@@ -56,7 +56,15 @@ export interface SponsorParams {
   policyBeaconUtxo: UTxO;
   /** ProtocolFeeParams beacon UTxO — đọc REFERENCE (sàn DAO). Mang protocol NFT. */
   protocolBeaconUtxo: UTxO;
-  /** Compiled paymaster validator (đã apply 9 param). */
+  /**
+   * Compiled paymaster validator — đã apply **11** tham số.
+   *
+   * Dựng qua `scripts/deployParams.ts::paymasterParams()`, KHÔNG tự khai danh
+   * sách tay: `applyParamsToScript` không kiểm arity, nên truyền sót vẫn ra một
+   * script hash 28 byte trông hợp lệ. Comment ở đây từng ghi "9 param" — thiếu
+   * đúng `treasury_addr` và `lamp_asset_name`, tức hai bản vá SEC-01. Cổng đối
+   * chiếu: `cd scripts && npm run check:params`.
+   */
   paymasterScript: Validator;
   /** Compiled vault validator (module khác) — cần để spend vault input(s). */
   vaultScript: Validator;

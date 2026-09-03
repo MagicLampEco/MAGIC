@@ -4,7 +4,7 @@
 import {
   Lucid, Blockfrost, Data, toUnit,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
-  type LucidEvolution, type UTxO, type Tx, type Validator,
+  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
 } from "@lucid-evolution/lucid";
 import { blake2b } from "@noble/hashes/blake2b";
 import {
@@ -16,7 +16,7 @@ import {
 import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, nextFireEpoch, countEligibleFires,
-  selectLampForLock, unlockLockedAmount, lAvail,
+  selectLampForLock, unlockLockedAmount, isExpired, lAvail,
   lampToOildrop, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import {
@@ -25,8 +25,8 @@ import {
 } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
-  VaultDatumSchema, VaultRedeemerSchema, ShardRedeemerSchema,
-  type VaultDatum, type GenSchedule, type MagicBatch, type LoyaltyHolding,
+  VaultDatum, VaultRedeemer, ShardRedeemer,
+  type GenSchedule, type MagicBatch, type LoyaltyHolding,
 } from "./types.js";
 
 // ── Shard datum schema ────────────────────────────────────────
@@ -41,18 +41,33 @@ const ShardDatumSchema = D.Object({
   shard_cap:                    D.Integer(),
 });
 type ShardDatum = D.Static<typeof ShardDatumSchema>;
+// Codec companion — see types.ts for why the schema alone cannot be passed.
+const ShardDatum = ShardDatumSchema as unknown as ShardDatum;
 
 // ── Types ─────────────────────────────────────────────────────
+
+// Số ngày mỗi epoch KHÁC NHAU theo mạng: mainnet 5 ngày, Preview/Preprod 1 ngày
+// (ProtocolUtils: MS_PER_EPOCH_BY_NETWORK). Bản trước hardcode `× 5` nên trên testnet
+// nó in "~10 days" cho một khoảng chờ thật là 2 ngày — người vận hành đọc số đó sẽ
+// tưởng hỏng rồi bỏ đi. Suy từ tham số mạng, đừng nhớ mòn.
+function fmtDays(epochs: bigint, network: Network): string {
+  const days = Number(epochs) * Number(msPerEpoch(network)) / 86_400_000;
+  return days === 1 ? "1 day" : `${days} days`;
+}
 
 export interface CommitParams {
   lucid           : LucidEvolution;
   vaultUtxo       : UTxO;
   shardUtxos      : UTxO[];    // all 16 shard UTxOs (builder finds the right one)
   scheduleLength  : bigint;    // L ∈ [10,200]
-  lampPerEpoch    : bigint;    // λ in oildrop
+  lampPerEpoch    : bigint;    // λ in oil
   userAddress     : string;
-  /** Compiled vault validator (6 params: lamp_policy_id, lamp_asset_name,
-   *  shard_policy_id, vault_nft_policy, vault_nft_name, ms_per_epoch). */
+  /** Compiled vault validator — 4 apply-params, THEO THỨ TỰ:
+   *    1. lamp_policy_id
+   *    2. lamp_asset_name   ← per-network (tLAMP testnet / LAMP mainnet), KHÔNG hardcode
+   *    3. shard_policy_id
+   *    4. ms_per_epoch
+   *  `treasury_addr` was REMOVED in PHA 2 — no handler moves LAMP any more (I-ACT-7). */
   vaultScript     : Validator;
   /** Compiled shard validator (0 params). */
   shardScript     : Validator;
@@ -62,10 +77,15 @@ export interface CommitParams {
   tipPosixMs?     : bigint;
   tamperOutputDatum?: (d: any) => any;
   skipOwnerSig?   : boolean;
+  /** UTxO mang scriptRef của vault + shard (CIP-33). Có thì tx ĐỌC script từ
+   *  chain thay vì đính kèm. ĐÍNH KÈM CẢ HAI VALIDATOR VƯỢT TRẦN 16 KB
+   *  (đo thật trên Preview: 17303 > 16384), nên đây không phải tối ưu — không
+   *  có nó thì ScheduleCommit không dựng nổi tx nào. */
+  refScriptUtxos? : UTxO[];
 }
 
 export interface CommitResult {
-  tx              : Tx;
+  tx              : TxSignBuilder;
   scheduleId      : string;
   rateLockedQ     : bigint;
   mPerFire        : bigint;
@@ -89,14 +109,18 @@ export interface FireParams {
   network?        : Network;
   tipPosixMs?     : bigint;
   tamperOutputDatum?: (d: any) => any;
+  /** TEST ONLY: move LAMP out of the vault to prove I-ACT-7 rejects it. */
+  tamperLampOutOil?: bigint;
+  /** Xem `CommitParams.refScriptUtxos` — ScheduleFire cũng tiêu hai script. */
+  refScriptUtxos? : UTxO[];
 }
 
 export interface FireResult {
-  tx             : Tx;
+  tx             : TxSignBuilder;
   firesInTx      : number;
   mPerFire       : bigint;
   totalMagicFired: bigint;
-  /** I-ACT-7: amount UNLOCKED by this fire. No LAMP leaves the vault. */
+  /** LAMP RELEASED from the locked pool — it stays in the vault (I-ACT-7). */
   lampReleased   : bigint;
   scheduleComplete: boolean;
   summary        : string;
@@ -114,9 +138,9 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   const { lucid, vaultUtxo, shardUtxos, scheduleLength: L, lampPerEpoch: lambda } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
 
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
+  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
   const tipPosixMs = params.tipPosixMs
-    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const commitEpoch = posixMsToEpoch(tipPosixMs, network);
 
   // ── Validations ──────────────────────────────────────────
@@ -145,11 +169,11 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   // ── Shard check (C-SCH-CAP) ───────────────────────────────
   const shardId  = computeShardId(vaultDatum.owner);
   const shardUtxo = shardUtxos.find(u => {
-    const d = Data.from(u.datum!, ShardDatumSchema);
+    const d = Data.from(u.datum!, ShardDatum);
     return Number(d.shard_id) === shardId;
   });
   if (!shardUtxo) throw new Error(`Shard UTxO not found for shard_id=${shardId}`);
-  const shardDatum = Data.from(shardUtxo.datum!, ShardDatumSchema);
+  const shardDatum = Data.from(shardUtxo.datum!, ShardDatum);
 
   if (shardDatum.shard_locked_lamp + totalLock > SHARD_CAP)
     throw new Error(`GEN-SCH-006: Shard cap exceeded. shard_locked=${shardDatum.shard_locked_lamp}, adding=${totalLock}, cap=${SHARD_CAP}`);
@@ -199,19 +223,21 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   const { vaultScript, shardScript } = params;
   const vaultAddr = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
-  const redeemer  = Data.to({ ScheduleCommit: { schedule_length: L, lamp_per_epoch: lambda } }, VaultRedeemerSchema);
-  const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: totalLock, delta_committed: totalLock } }, ShardRedeemerSchema);
+  const redeemer  = Data.to({ ScheduleCommit: { schedule_length: L, lamp_per_epoch: lambda } }, VaultRedeemer);
+  const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: totalLock, delta_committed: totalLock } }, ShardRedeemer);
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((commitEpoch + 1n) * msPerEpoch(network) - 1n);
 
   let txBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
-    .collectFrom([shardUtxo], shardRed)
-    .attach.SpendingValidator(vaultScript)
-    .attach.SpendingValidator(shardScript)
-    .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) }, vaultUtxo.assets)
-    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
+    .collectFrom([shardUtxo], shardRed);
+  txBuilder = params.refScriptUtxos?.length
+    ? txBuilder.readFrom(params.refScriptUtxos)
+    : txBuilder.attach.SpendingValidator(vaultScript).attach.SpendingValidator(shardScript);
+  txBuilder = txBuilder
+    .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) }, vaultUtxo.assets)
+    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatum) }, shardUtxo.assets)
     .validFrom(lowerTime)
     .validTo(upperTime);
   if (!params.skipOwnerSig) txBuilder = txBuilder.addSignerKey(vaultDatum.owner);
@@ -220,13 +246,13 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   const summary = [
     `═══ ScheduleGen Commit ═══`,
     `Commit epoch:    ${commitEpoch}`,
-    `Schedule length: ${L} orders (~${Number(L) * 5} days)`,
-    `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oildrop)`,
+    `Schedule length: ${L} orders (~${fmtDays(L, network)})`,
+    `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oil)`,
     `Total locked:    ${totalLock / 1_000_000n} tLAMP`,
     `rate_locked_q:   ${rateLockedQ} (immutable forever — T8)`,
     `M_i per fire:    ${nanogicToMagicStr(mPerFire)} MAGIC`,
     `Total MAGIC:     ${nanogicToMagicStr(mPerFire * L)} MAGIC (guaranteed)`,
-    `First fire:      epoch ${startFireEpoch} (~${Number(SCHEDULE_DELAY * 5n)} days)`,
+    `First fire:      epoch ${startFireEpoch} (~${fmtDays(SCHEDULE_DELAY, network)})`,
     `Last fire:       epoch ${endFireEpoch}`,
     `S_Q(${L}):       ${qToStr(sQ)}×`,
     `Schedule ID:     ${scheduleId.slice(0, 16)}...`,
@@ -250,10 +276,18 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const { lucid, vaultUtxo, shardUtxos, scheduleId } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
 
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
+  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
   const tipPosixMs = params.tipPosixMs
-    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid, network)));
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const currentEpoch = posixMsToEpoch(tipPosixMs, network);
+
+  // Assets is an index signature, so every lookup is `bigint | undefined`.
+  // A vault UTxO always carries ADA — assert it rather than defaulting to 0n,
+  // which would silently under-pay the vault output.
+  const vaultLovelaceFire = vaultUtxo.assets.lovelace;
+  if (vaultLovelaceFire === undefined) {
+    throw new Error(`GEN-SCH-000: vault UTxO carries no lovelace — refusing to build.`);
+  }
 
   const sched = vaultDatum.gen_schedules.find(s => s.schedule_id === scheduleId);
   if (!sched) throw new Error(`Schedule ${scheduleId} not found`);
@@ -269,10 +303,12 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
 
   // M_i — reads STORED rate_locked_q (T8: immutable)
   const mI = computeMi(sched.lamp_per_epoch, sched.rate_locked_q);
-  // I-ACT-7: this is RELEASED from the lock, not transferred anywhere.
+  // PHA 2 / I-ACT-7: LAMP is RELEASED from the locked pool, not transferred.
   const lampReleased = sched.lamp_per_epoch * BigInt(firesInTx);
 
-  // Create batches (one per fire)
+  // Create batches (one per fire). Every batch — including catch-up ones — is
+  // stamped with the CURRENT epoch and lives exactly this epoch (§4.2 cliff),
+  // so a catch-up can never resurrect MAGIC missed in earlier epochs.
   const newBatches: MagicBatch[] = Array.from({ length: firesInTx }, (_, i) => ({
     batch_id:            computeBatchId(vaultUtxo, vaultDatum.next_batch_index + BigInt(i)),
     source:              "Schedule" as const,
@@ -285,7 +321,11 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     halved:              false,
   }));
 
-  const updatedBatches = [...vaultDatum.magic_batches, ...newBatches];
+  // §4.2: collect DEAD batches on the way out.
+  const liveBatches = vaultDatum.magic_batches.filter(
+    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch),
+  );
+  const updatedBatches = [...liveBatches, ...newBatches];
   if (updatedBatches.length > MAX_BATCHES_PER_VAULT)
     throw new Error(`GEN-VAULT-001: would exceed 32 batches`);
 
@@ -298,10 +338,11 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
         s.schedule_id === scheduleId ? { ...s, fired_count: newFiredCount } : s
       );
 
-  // C-FIRE-6 / I-ACT-7: RELEASE the lock, keep the LAMP. Σholdings is invariant,
-  // so lamp_balance does not move — a fire mints MAGIC without eroding principal.
+  // C-FIRE-6 (PHA 2): RELEASE the lock. Holdings keep their amount and epoch,
+  // only `is_locked` flips → Σholdings, lamp_balance and the LAMP inside the
+  // UTxO are all invariant (I-ACT-7).
   const newHoldings    = unlockLockedAmount(vaultDatum.loyalty_holdings, lampReleased);
-  const newLampBalance = vaultDatum.lamp_balance;
+  const newLampBalance = vaultDatum.lamp_balance;                    // UNCHANGED
   const newLampLocked  = vaultDatum.lamp_locked - lampReleased;
 
   // Updated vault datum (A02)
@@ -320,11 +361,11 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   // C-SCH-FIRE-SHARD: find and update the correct shard (A19)
   const shardId = computeShardId(vaultDatum.owner);
   const shardUtxo = shardUtxos.find(u => {
-    const d = Data.from(u.datum!, ShardDatumSchema);
+    const d = Data.from(u.datum!, ShardDatum);
     return Number(d.shard_id) === shardId;
   });
   if (!shardUtxo) throw new Error(`GEN-SCH-008: Shard ${shardId} not found`);
-  const shardDatum = Data.from(shardUtxo.datum!, ShardDatumSchema);
+  const shardDatum = Data.from(shardUtxo.datum!, ShardDatum);
 
   const newShardDatum: ShardDatum = {
     ...shardDatum,
@@ -344,23 +385,25 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const vaultAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
   const lampUnit   = toUnit(lampPolicyId, lampAssetName);
-  const redeemer   = Data.to({ ScheduleFire: { schedule_id: scheduleId } }, VaultRedeemerSchema);
-  const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(firesInTx), lambda: sched.lamp_per_epoch } }, ShardRedeemerSchema);
+  const redeemer   = Data.to({ ScheduleFire: { schedule_id: scheduleId } }, VaultRedeemer);
+  const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(firesInTx), lambda: sched.lamp_per_epoch } }, ShardRedeemer);
   const lowerTime  = Number(tipPosixMs);
   const upperTime  = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
-  const tx = await lucid
+  let fireBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
-    .collectFrom([shardUtxo], shardRed)
-    .attach.SpendingValidator(vaultScript)
-    .attach.SpendingValidator(shardScript)
-    // Spread the input value, override only LAMP. Rebuilding it from scratch
-    // drops the vault identity NFT (INV-VAULT-IDENTITY) — one-shot, so the vault
-    // would be bricked by its own first Fire.
-    .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatumSchema) },
-      { ...vaultUtxo.assets, [lampUnit]: newLampBalance })
-    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatumSchema) }, shardUtxo.assets)
+    .collectFrom([shardUtxo], shardRed);
+  fireBuilder = params.refScriptUtxos?.length
+    ? fireBuilder.readFrom(params.refScriptUtxos)
+    : fireBuilder.attach.SpendingValidator(vaultScript).attach.SpendingValidator(shardScript);
+  const tx = await fireBuilder
+    // I-ACT-7: the vault output carries EXACTLY the LAMP it came in with.
+    .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) },
+      { lovelace: vaultLovelaceFire,
+        [lampUnit]: newLampBalance - (params.tamperLampOutOil ?? 0n) })
+    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatum) }, shardUtxo.assets)
+    // NO Treasury output — a fire moves no LAMP anywhere.
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless
     .validFrom(lowerTime)
     .validTo(upperTime)
@@ -372,7 +415,7 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     `Fires in tx:    ${firesInTx} (of ${Number(sched.schedule_length - sched.fired_count)} remaining)`,
     `M_i per fire:   ${nanogicToMagicStr(mI)} MAGIC (rate_locked at commit — T8)`,
     `Total MAGIC:    ${nanogicToMagicStr(mI * BigInt(firesInTx))} MAGIC`,
-    `LAMP released:  ${lampReleased / 1_000_000n} tLAMP unlocked (balance unchanged — I-ACT-7)`,
+    `LAMP released:  ${lampReleased / 1_000_000n} tLAMP unlocked — stays in the vault (I-ACT-7)`,
     `Progress:       ${Number(newFiredCount)}/${Number(sched.schedule_length)} orders`,
     `Schedule:       ${schedComplete ? "✅ COMPLETE — removed" : `⏳ ${Number(sched.schedule_length - newFiredCount)} orders remaining`}`,
     `Shard:          ${shardId} (C-SCH-FIRE-SHARD ✓)`,
@@ -381,11 +424,11 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     `Note: This tx required NO owner signature (C-SCH-FIRE-PERMISSION).`,
   ].filter(Boolean).join("\n");
 
-  return { tx, firesInTx, mPerFire: mI, totalMagicFired: mI * BigInt(firesInTx), lampReleased: lampReleased, scheduleComplete: schedComplete, summary };
+  return { tx, firesInTx, mPerFire: mI, totalMagicFired: mI * BigInt(firesInTx), lampReleased, scheduleComplete: schedComplete, summary };
 }
 
 // ── Submit ────────────────────────────────────────────────────
-export async function signAndSubmit(lucid: LucidEvolution, tx: Tx): Promise<string> {
+export async function signAndSubmit(lucid: LucidEvolution, tx: TxSignBuilder): Promise<string> {
   return (await tx.sign.withWallet().complete()).submit();
 }
 

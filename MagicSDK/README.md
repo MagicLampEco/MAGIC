@@ -1,12 +1,38 @@
 # @magiclamp/sdk
 
-MAGIC protocol SDK cho Cardano integrators. **DID-agnostic** — bất kỳ wallet Cardano nào có LAMP đều dùng được.
+Mặt tiền TypeScript của giao thức MAGIC trên Cardano. **Không phụ thuộc DID** — bất kỳ ví
+Cardano nào giữ LAMP đều dùng được.
+
+> Mô hình chuẩn của cả hệ (ba token LAMP · MAGIC · CARP):
+> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> Ràng buộc khi sửa mã: [`BOUNDARIES.md`](../BOUNDARIES.md).
+> Module nào đang sống + số kiểm: [`DevStatus.md`](../DevStatus.md).
+> Chuyện đã xảy ra: [`ChangeLog.md`](../ChangeLog.md).
 
 ## Cài đặt
 
 ```bash
 npm install @magiclamp/sdk @lucid-evolution/lucid
 ```
+
+## Đọc trước khi viết dòng nào: tạo vault BẮT BUỘC mint NFT danh tính
+
+Cardano chỉ chạy validator lúc UTxO **bị tiêu**, không bao giờ lúc UTxO **được tạo**. Địa
+chỉ script vault là công khai, nên ai cũng đặt được một UTxO datum bịa vào đó. Bịt lỗ đó là
+bất biến **INV-VAULT-IDENTITY**: mỗi vault mang một NFT one-shot chỉ ra đời được qua handler
+`mint` của chính validator vault, và **mọi** nhánh `spend` đòi NFT đó còn nguyên trên output
+nối tiếp.
+
+Hệ quả cho người tích hợp:
+
+- `createVault()` dựng sẵn cả 4 mảnh (seed UTxO trong inputs · mint đúng 1 NFT · NFT nằm
+  trong output vault · chữ ký chủ). Dùng nó thì không phải lo.
+- Ai **tự dựng tx tạo vault** mà quên mint NFT sẽ tạo ra một UTxO trông như vault, nhận LAMP
+  thật, và **không nhánh spend nào đi qua được** — LAMP kẹt vĩnh viễn, không có đường sửa.
+  Tên asset lấy bằng `vaultIdAssetName(seed)`; redeemer mint theo `VaultIdRedeemerSchema`.
+- Datum khởi sinh phải **sạch**: `last_updated_epoch = 0`, `attribution_root` RỖNG (0 byte,
+  không phải 32 byte 0), `personal_delegate = None`. Handler mint ép từng trường một. Muốn
+  đặt uỷ quyền cá nhân thì tạo vault trước, rồi dùng redeemer `SetDelegate`.
 
 ## Quick start
 
@@ -15,173 +41,253 @@ import { createVault } from "@magiclamp/sdk";
 import { Lucid, Blockfrost } from "@lucid-evolution/lucid";
 import { readFile } from "node:fs/promises";
 
-// 1. Lucid với wallet đã selected
+// 1. Lucid với ví đã chọn
 const lucid = await Lucid(new Blockfrost(URL, KEY), "Preview");
 lucid.selectWallet.fromPrivateKey(PRIVATE_KEY);
 
-// 2. Load unapplied vault validator CBOR (từ aiken build của MAGIC repo)
-const plutus = JSON.parse(await readFile("Legacy/SnapshotGen/onchain/plutus.json", "utf8"));
+// 2. Nạp CBOR validator chưa apply param (từ `aiken build` của repo MAGIC)
+const plutus = JSON.parse(await readFile("ScheduleGen/onchain/plutus.json", "utf8"));
 const vaultUnappliedCbor = plutus.validators.find(v => v.title === "vault.vault.spend").compiledCode;
 
-// 3. Build unsigned tx
-const { tx, vaultAddress, vaultScript, summary } = await createVault({
+// 3. Dựng tx chưa ký
+const { tx, vaultAddress, vaultScript, vaultIdUnit, seedUtxo, summary } = await createVault({
   lucid,
-  vaultType: "Snapshot",
+  vaultType: "Schedule",
   protocol: {
-    network:      "Preview",
-    lampPolicyId: LAMP_POLICY_ID,
+    network:       "Preview",
+    lampPolicyId:  LAMP_POLICY_ID,
+    shardPolicyId: SHARD_NFT_POLICY_ID,   // Schedule cần cái này
   },
   validators: { vaultUnappliedCbor },
   vault: {
-    ownerPkh:    "5b889dfd...",      // 28-byte hex từ wallet PKH
-    lampDeposit: 1_000_000_000n,      // 1000 LAMP (in oildrop)
-    profile:     "Flame",             // Ember | Flame (default) | Lantern
+    ownerPkh:    "5b889dfd…",      // 28 byte hex, PKH của ví chủ
+    lampDeposit: 1_000_000_000n,   // 1000 LAMP (1 LAMP = 10^6 oildrop)
+    profile:     "Flame",          // Ember | Flame (mặc định) | Lantern
   },
 });
 
-console.log(summary);
+console.log(summary);   // in cả seed UTxO và tên NFT danh tính
 
-// 4. Sign + submit
+// 4. Ký + gửi. Khoá CHỦ phải ký — tx có addSignerKey(ownerPkh).
 const signed = await tx.sign.withWallet().complete();
 const txHash = await signed.submit();
 ```
 
-## Concept: vault và 4 cơ chế sinh MAGIC
+## Khái niệm: vault và các cửa sinh MAGIC
 
-MAGIC không phải native token — là số ghi trong `magic_batches[]` của **vault** (1 UTxO ở vault script address). User có tLAMP trong ví ≠ có MAGIC. Để sinh MAGIC: tạo vault → trigger 1 generator.
+MAGIC **không phải native token** — là số kế toán trong `magic_batches[]` của **vault** (một
+UTxO ở địa chỉ script vault). Có LAMP trong ví ≠ có MAGIC. Muốn sinh MAGIC: tạo vault → gọi
+một cửa sinh.
 
-**4 vault types — mỗi cái 1 validator riêng, 1 địa chỉ riêng:**
+🔴 **Mô hình có ĐÚNG BA cửa sinh, không phải hai** (`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`
+§6): **ScheduleGen · InstantGen · PrepaidGen**. Hai cửa đầu sinh từ **số dư LAMP trong vault
+của người dùng**; cửa thứ ba, PrepaidGen, người dùng **trả CARP** (§6.5). SDK này hiện gọi
+được **hai** cửa — không phải vì mô hình chỉ có hai, mà vì mã PrepaidGen chưa vào cây làm
+việc (còn nguyên, neo bằng tag `preserve/prepaidgen-stash-2026-07-30`). Chi tiết:
+[`INTEGRATOR_GUIDE_V1.md`](INTEGRATOR_GUIDE_V1.md) §6.3.
 
-| Vault type | Khi nào dùng | LAMP cost | UM | Lifetime batch |
+**Hai loại vault SDK gọi được hôm nay, mỗi loại một validator riêng ⇒ một địa chỉ riêng:**
+
+| `vaultType` | Khi nào dùng | LAMP có rời vault? | UM | Cần thêm gì trong `protocol` |
 |---|---|---|---|---|
-| `Snapshot` | Tự động mỗi epoch | **Free** (T16) | Không | N(profile) epochs |
-| `Instant` | On-demand purchase | Transfer ngay → Treasury | Có (C-UM-6 stale fallback 0.5×) | 2 epochs |
-| `Vacuum` | Lock-then-fire 2-phase | Transfer tại fire → Treasury | Có (C-UM-7 always smoothed) | 1 epoch (cliff) |
-| `Schedule` | Forward contract rate-locked | Transfer per fire → Treasury | Không (locked rate) | 1 epoch (cliff) |
+| `Instant` | Cấp theo lượng MAGIC **đã tiêu** (`consumed_credit`) | **Không** (I-ACT-7) | Có, kèm kiểm tra cũ (C-UM-6) | `umNftPolicyId`, `umScriptHash`, `backingNftPolicyId`, `backingScriptHash` |
+| `Schedule` | Hợp đồng kỳ hạn, khoá suất lúc commit | **Không** — fire chỉ mở khoá | Không (suất đã khoá) | `shardPolicyId` |
 
-User muốn dùng nhiều cơ chế → cần nhiều vault (mỗi cái deposit LAMP riêng).
+`SnapshotGen` và `VacuumGen` **đã dời sang `Legacy/`**: validator của chúng
+không còn trong cây làm việc, nên `VaultType` chỉ còn hai giá trị trên. Truyền
+`vaultType: "Snapshot"` hay `"Vacuum"` là lỗi kiểu — không có gì để apply param. **Đừng đọc
+`VaultType` chỉ-có-hai-giá-trị thành "mô hình bỏ PrepaidGen"** — hai chuyện khác nhau:
+Snapshot/Vacuum **đã chết**, PrepaidGen **chưa vào cây**.
+
+Muốn dùng cả hai cơ chế thì cần **hai vault riêng** (hai UTxO ở hai địa chỉ). Hình dạng
+`VaultDatum` giống hệt nhau; chỉ mã validator (và do đó địa chỉ) khác.
+
+### LAMP không rời vault (I-ACT-7)
+
+Sinh MAGIC **không** làm LAMP đổi chủ. Không có chân Treasury, không có `lampPaid`. LAMP nằm
+trong vault để **mở tư cách**, không phải nhiên liệu bị đốt. Vì vậy `ProtocolParams` **không
+còn trường `treasuryAddress`** — validator duy nhất từng đọc nó (Vacuum) đã ở `Legacy/`. Màn
+hình nào còn hứa "trả X LAMP lấy Y MAGIC" là hứa sai.
 
 ## API
 
+Toàn bộ tên public nằm ở `src/index.ts`. Thứ không xuất qua đó là chi tiết hiện thực.
+
 ### `createVault(params): Promise<CreateVaultResult>`
 
-Build unsigned tx tạo vault mới. Không sign, không submit — caller làm.
+Dựng tx **chưa ký** tạo vault mới (kèm mint NFT danh tính). Không ký, không gửi — việc đó của
+người gọi.
 
 **`params: CreateVaultParams`**
 
-| Field | Type | Required | Note |
+| Trường | Kiểu | Bắt buộc | Ghi chú |
 |---|---|---|---|
-| `lucid` | `LucidEvolution` | ✅ | Wallet đã selected; sẽ là người fund LAMP |
-| `vaultType` | `"Snapshot"` \| `"Instant"` \| `"Vacuum"` \| `"Schedule"` | ✅ | |
-| `protocol.network` | `"Preview"` \| `"Preprod"` \| `"Mainnet"` | ✅ | Quyết định `ms_per_epoch` |
-| `protocol.lampPolicyId` | `string` (56-hex) | ✅ | LAMP minting policy |
-| `protocol.lampAssetName` | `string` (hex) | | Default `"744c414d50"` = `"tLAMP"` |
-| `protocol.treasuryAddress` | `string` (bech32) | Instant/Vacuum/Schedule | Phải là địa chỉ TÁCH RIÊNG khỏi ví user |
-| `protocol.umNftPolicyId` | `string` (56-hex) | Instant/Vacuum | UM datum NFT |
-| `protocol.shardPolicyId` | `string` (56-hex) | Schedule | Shard NFT |
-| `validators.vaultUnappliedCbor` | `string` (CBOR hex) | ✅ | Từ `<Module>/onchain/plutus.json` |
-| `validators.shardUnappliedCbor` | `string` (CBOR hex) | Schedule | Từ ScheduleGen plutus.json |
-| `vault.ownerPkh` | `string` (28-byte hex) | ✅ | Owner key — duy nhất sign được owner-required actions |
-| `vault.lampDeposit` | `bigint` (oildrop) | ✅ | 1 LAMP = 10^6 oildrop; ví caller phải có ≥ số này |
-| `vault.profile` | `"Ember"` \| `"Flame"` \| `"Lantern"` | | Default `"Flame"` |
-| `vault.vaultLovelace` | `bigint` | | Default `2_000_000` (2 ADA min-UTxO) |
-| `vault.personalDelegate` | `string \| null` | | Reserved cho future session-key delegation |
-| `tipPosixMs` | `bigint` | | Override để test deterministic |
+| `lucid` | `LucidEvolution` | ✅ | Ví đã chọn; chính ví này nạp LAMP và trả phí |
+| `vaultType` | `"Instant"` \| `"Schedule"` | ✅ | |
+| `protocol` | `ProtocolParams` | ✅ | xem bảng dưới |
+| `validators.vaultUnappliedCbor` | `string` (CBOR hex) | ✅ | từ `<Module>/onchain/plutus.json`, `title === "vault.vault.spend"` |
+| `validators.shardUnappliedCbor` | `string` (CBOR hex) | Schedule | từ plutus.json của ScheduleGen |
+| `validators.vaultPlutusJson` | `PlutusJson` | | cần cho hành động DÙNG redeemer (`withdrawLamp`, `updateProfile`), không cần cho `createVault` |
+| `vault.ownerPkh` | `string` (28 byte hex) | ✅ | khoá chủ — người duy nhất ký được hành động đòi chủ |
+| `vault.lampDeposit` | `bigint` (oildrop) | ✅ | ví người gọi phải có ≥ số này |
+| `vault.profile` | `"Ember"` \| `"Flame"` \| `"Lantern"` | | mặc định `"Flame"` |
+| `vault.vaultLovelace` | `bigint` | | mặc định `2_000_000` |
+| `vault.personalDelegate` | `string \| null` | | **không dùng được lúc tạo** — truyền khác `null` là ném lỗi; dùng redeemer `SetDelegate` sau |
+| `seedUtxo` | `UTxO` | | seed one-shot cho NFT danh tính; bỏ trống thì SDK tự chọn tất định qua `pickSeedUtxo` |
+| `tipPosixMs` | `bigint` | | ép epoch hiện tại, dùng cho test tất định |
 
-**Returns `CreateVaultResult`:**
+**`protocol: ProtocolParams`**
+
+| Trường | Kiểu | Bắt buộc | Ghi chú |
+|---|---|---|---|
+| `network` | `"Preview"` \| `"Preprod"` \| `"Mainnet"` | ✅ | quyết định `ms_per_epoch` **và** `lamp_asset_name` |
+| `lampPolicyId` | `string` (56 hex) | ✅ | policy mint LAMP |
+| `lampAssetName` | `string` (hex) | | suy từ `network` nếu bỏ trống (`tLAMP` testnet / `LAMP` mainnet) — **đừng hardcode** |
+| `umNftPolicyId` | `string` (56 hex) | Instant | NFT mang datum UM |
+| `umScriptHash` | `string` (hex) | Instant | ghim reference input UM về đúng địa chỉ script UM |
+| `backingNftPolicyId` | `string` (56 hex) | Instant | BackingBeacon (§6.3) — xem cảnh báo fail-closed dưới |
+| `backingScriptHash` | `string` (hex) | Instant | ghim reference input beacon |
+| `shardPolicyId` | `string` (56 hex) | Schedule | NFT shard |
+| `msPerEpoch` | `bigint` | | ép giá trị (nâng cao); mặc định suy từ `network` |
+
+Thiếu trường bắt buộc theo loại vault ⇒ ném ngay lúc apply param, thông điệp dạng
+``<tên trường> required for vaultType="<loại>"`` — chưa gọi mạng, chưa dựng tx.
+
+**Trả về `CreateVaultResult`:**
 
 ```ts
 {
-  tx:               TxSignBuilder;  // .sign.withWallet().complete().submit()
-  vaultAddress:     string;          // địa chỉ vault sau khi apply params
-  vaultScriptHash:  string;          // hash, khác nhau giữa các network
-  vaultScript:      Validator;       // applied script (pass vào builder Snapshot/Instant/... downstream)
-  summary:          string;          // human-readable log
+  tx:               TxSignBuilder;  // .sign.withWallet().complete() rồi .submit()
+  vaultAddress:     string;   // địa chỉ vault sau khi apply param
+  vaultScriptHash:  string;   // hash — khác nhau giữa các mạng
+  vaultScript:      Validator; // script đã apply, truyền tiếp cho builder gen
+  vaultIdPolicyId:  string;   // BẰNG ĐÚNG vaultScriptHash (validator đa mục đích)
+  vaultIdAssetName: string;   // blake2b_256(cbor.serialise(seed))
+  vaultIdUnit:      string;   // policyId + assetName, dùng thẳng với Lucid
+  seedUtxo:         UTxO;     // UTxO đã bị ép vào inputs làm seed one-shot
+  summary:          string;   // bản tóm tắt cho log / UI
 }
 ```
 
 ### `applyVaultValidator(vaultType, validators, protocol)`
 
-Tính địa chỉ + applied script không cần submit tx. Dùng để **check vault address tồn tại** trước khi tạo mới.
+Tính địa chỉ + script đã apply mà không cần dựng tx. Dùng để kiểm tra vault đã tồn tại chưa
+trước khi tạo mới. Bảng chữ ký apply-param sống ở `buildParamsList` (cùng tệp) — đọc header
+của hàm đó để biết validator từng loại nhận đúng những tham số nào, thứ tự nào.
 
-### `buildInitialVaultDatum(inputs)`
+### `applyShardValidator(validators, protocol)`
 
-Build initial VaultDatum object (chưa serialize). Dùng để inspect / debug / test.
+Script shard đã apply (chỉ có nghĩa với ScheduleGen).
 
-### `VaultDatumSchema`
+### `listVaultsForOwner(params): Promise<VaultRecord[]>`
 
-CBOR schema cho VaultDatum. Dùng `Data.from(utxo.datum, VaultDatumSchema)` để decode vault hiện có.
+Quét địa chỉ vault theo `vaultType` + `protocol` + `validators`, lọc theo `ownerPkh`, trả về
+một bản ghi cho mỗi UTxO. Một người **được phép có nhiều vault cùng loại** — validator chỉ
+chặn "hai vault input trong một tx", không chặn "nhiều vault một chủ".
 
-## Sau khi vault tạo xong
+### `withdrawLamp(params)` · `updateProfile(params)`
 
-Để **thực sự sinh MAGIC**, cần gọi các builder ở repo MAGIC (module tương ứng):
+Rút LAMP chưa khoá về ví, và đặt lịch đổi profile. Hai hàm này cần `vaultPlutusJson` để tự
+tra chỉ số constructor của redeemer lúc chạy (`resolveConstrIndex`) — SDK không giữ bảng chỉ
+số viết tay, nên enum Aiken đổi thứ tự thì chỉ cần `aiken build` lại.
 
-- `Legacy/SnapshotGen/offchain/src/snapshot.ts` → `buildSnapshotGenTx({...})` — trigger per epoch
-- `Legacy/InstantGen/offchain/src/instant.ts` → `buildInstantGenTx({...})` — purchase MAGIC
-- `Legacy/VacuumGen/offchain/src/vacuum.ts` → `buildVacuumCommitTx` / `buildVacuumFireTx`
-- `ScheduleGen/offchain/src/schedule.ts` → `buildScheduleCommitTx` / `buildScheduleFireTx`
+`updateProfile` chỉ áp cho vault `Instant`: ScheduleGen không có variant `UpdateProfile` trong
+`VaultRedeemer`, gọi với `vaultType: "Schedule"` sẽ ném `UPDATE-001` trước mọi lệnh gọi mạng.
 
-Mỗi builder cần `vaultScript` (lấy từ `createVault()` result hoặc `applyVaultValidator()`). Đây là same applied script — phải match đúng địa chỉ vault.
+### `buildInstantGenTx` · `diagnoseCeilings` · `buildScheduleCommitTx` · `buildScheduleFireTx`
 
-## Pre-requisites trên repo MAGIC
+Đường gọi **duy nhất** để sinh MAGIC. `@magiclamp/sdk` xuất lại các builder theo TÊN; đừng
+import theo đường dẫn repo (`InstantGen/offchain/src/instant.js`…) — đó không phải tên gói,
+ứng dụng không phân giải được.
 
-Trước khi gọi SDK, MAGIC repo phải đã:
+> ⚠ **InstantGen hôm nay ĐANG ĐÓNG, và có HAI chốt chặn ĐỘC LẬP — không phải một.**
+>
+> 1. **`backingBeaconUtxo` chưa tồn tại.** Nó là bắt buộc; chừng nào CARP chưa ship
+>    BackingBeacon thì không reference input nào thoả, `cap_surplus` không tính được, tx bị
+>    từ chối. ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #2)
+> 2. **Trần thứ ba luôn bằng 0.** `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`, mà
+>    vault Instant luôn có `gen_schedules = []` ⇒ trần 0 ⇒ `min3(...) = 0` ⇒
+>    `expect grant > 0` fail. ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #6, "Chờ chủ nhân
+>    chốt" D1 — phải vá cùng lúc với `INV-INSTANT-LOCK`)
+>
+> Cả hai đều fail-closed theo thiết kế, không phải lỗi để đi vòng. **Ngày CARP giao beacon,
+> InstantGen VẪN cấp 0 nanogic** cho tới khi #2 được chốt và vá. Đừng hiện nút Instant dựa
+> trên mỗi tin "beacon đã có". Dùng `diagnoseCeilings()` để biết trần nào đang chặn.
 
-1. `aiken build` cho 5 module (Snapshot/Instant/Vacuum/Schedule/UMKeeper) → sinh `plutus.json`
-2. Mint LAMP token (`scripts/deploy/01_mint_lamp.ts`) → có `LAMP_POLICY_ID`
-3. Deploy UM datum (`02_deploy_um.ts`) → có `UM_NFT_POLICY_ID` (cần cho Instant/Vacuum)
-4. Deploy 16 shards (`03_deploy_shards.ts`) → có `SHARD_POLICY_ID` (cần cho Schedule)
-5. Có treasury address tách riêng (KHÔNG dùng wallet address)
+### `buildInitialVaultDatum(inputs)` · `VaultDatumSchema` · `VaultIdRedeemerSchema`
 
-## Network parameterization
+Dựng object `VaultDatum` khởi sinh (chưa mã hoá) để soi/kiểm thử; và hai lược đồ để
+`Data.from` / `Data.to`. Mọi hằng trong `buildInitialVaultDatum` là một điều kiện on-chain của
+`validate_mint_vault_id`, không phải sở thích — đối chiếu hàm đó trước khi đổi.
 
-Mỗi network có `ms_per_epoch` khác nhau (PlutusV3 validity_range = POSIX ms):
+### `vaultIdAssetName(seed)` · `vaultIdSeedCbor(seed)`
 
-| Network | ms_per_epoch | Epoch length |
+Tên asset của NFT danh tính, và bước CBOR trung gian. Ai tự dựng tx tạo vault thì đây là hai
+hàm không được đoán: dạng CBOR của `OutputReference` ở PlutusV3 **không** bọc `transaction_id`
+trong một `Constr` như V1/V2; bọc thừa một lớp là hash khác là mint hỏng.
+
+### Đơn vị — luôn thô, luôn `BigInt`
+
+| Đại lượng | Đơn vị qua SDK | Hằng quy đổi |
 |---|---|---|
-| Mainnet | 432,000,000 | 5 days |
-| Preview / Preprod | 86,400,000 | 1 day |
+| MAGIC | `nanogic` | `NANOGIC_PER_MAGIC` (`10^9`) |
+| LAMP | `oildrop` | `OILDROP_PER_LAMP` (`10^6`) |
 
-Vault validator được apply với `ms_per_epoch` tương ứng → hash khác per-network → địa chỉ vault khác. **Vault tạo trên Preview KHÔNG tương thích với Mainnet.**
+**Không bao giờ dùng `Number`** cho các đại lượng này (C-OVERFLOW): `2^53` nhỏ hơn số dư
+thật, và sai lộ ra dưới dạng số tiền lệch chứ không phải lỗi ném ra.
 
-## Tài liệu v1.0
+## Tiền đề trên repo MAGIC
 
-| File | Audience | Nội dung |
+Trước khi gọi SDK, repo MAGIC phải đã:
+
+1. `aiken build` cho các module đang dùng (`InstantGen`, `ScheduleGen`, `UMKeeper`) → sinh
+   `onchain/plutus.json` (artifact, đã gitignore).
+2. Mint LAMP → có `LAMP_POLICY_ID`.
+3. Deploy datum UM → có `UM_NFT_POLICY_ID` + hash script UM (cần cho Instant).
+4. Deploy 16 shard → có `SHARD_NFT_POLICY_ID` (cần cho Schedule).
+
+Không còn bước "chuẩn bị địa chỉ treasury": dưới I-ACT-7 không handler nào của hai validator
+còn sống chuyển LAMP ra khỏi vault.
+
+## Tham số theo mạng
+
+Mỗi mạng có `ms_per_epoch` riêng (validity_range của PlutusV3 là POSIX ms) **và** tên asset
+LAMP riêng:
+
+| Mạng | `ms_per_epoch` | Độ dài epoch | `lamp_asset_name` |
+|---|---|---|---|
+| Mainnet | 432.000.000 | 5 ngày | `LAMP` |
+| Preview / Preprod | 86.400.000 | 1 ngày | `tLAMP` |
+
+Cả hai đều là apply-param, nên hash validator khác theo mạng ⇒ **địa chỉ vault khác theo
+mạng**. Vault tạo trên Preview không dùng được trên Mainnet. Hardcode tên asset testnet vào
+mã là dựng ra một vault mainnet không bao giờ nhìn thấy LAMP của chính nó.
+
+## Tài liệu liên quan
+
+| Tệp | Cho ai | Nội dung |
 |---|---|---|
-| [`SPEC_V1.md`](./SPEC_V1.md) | Onchain dev (Aiken) | Validator rules + helper + A02 datum check + lazy apply pattern |
-| [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md) | Onchain dev | Test matrix (32+ case mới) sau khi implement |
-| [`INTEGRATOR_GUIDE_V1.md`](./INTEGRATOR_GUIDE_V1.md) | Offchain dev (app/PhoenixKey) | Full lifecycle: create → profile → 4 cách sinh MAGIC → withdraw. Code samples + error reference + FAQ |
-| `README.md` (file này) | Quick start | API reference SDK |
+| [`INTEGRATOR_GUIDE_V1.md`](./INTEGRATOR_GUIDE_V1.md) | dev off-chain (app / ví) | Trọn vòng đời: tạo vault → đổi profile → sinh MAGIC → rút LAMP, kèm mã mẫu + bảng lỗi |
+| [`SPEC_V1.md`](./SPEC_V1.md) | dev on-chain (Aiken) | Luật của `WithdrawLamp` + `UpdateProfile` mà validator đang cưỡng chế; các nhánh trong `vault.ak` trỏ thẳng về §1/§2/§3 của tệp này |
+| [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md) | dev on-chain | Ma trận test — **chưa hội tụ về mô hình hai vault**, còn nói về Snapshot/Vacuum |
+| `README.md` (tệp này) | mọi người | Bắt đầu nhanh + tham chiếu API |
 
-**Onchain status:** v1.0 đã ship trên branch `feat/v1.0-onchain` (WithdrawLamp + UpdateProfile full impl, 4 module). Đang chờ testnet exec + audit trước mainnet launch.
+Ngoài phạm vi MAGIC (thuộc PhoenixKey hoặc lớp ứng dụng): ánh xạ tên người dùng → PKH; khoá
+phiên cho đăng nhập web; xoay khoá chủ. Validator chỉ thấy một tx được ký bởi PKH chủ, không
+phân biệt cơ chế ký phía sau.
 
-### SDK functions
+## Hợp đồng ổn định
 
-| Function | v0 (legacy) | v1.0 (current branch) |
-|---|---|---|
-| `createVault()` | ✅ | ✅ |
-| `listVaultsForOwner()` | ✅ (multi-vault native) | ✅ |
-| `updateProfile()` | ⚠ Stub validator chỉ check sign — không enforce | ✅ Full per spec §12 — cooldown + lazy apply enforced onchain |
-| `withdrawLamp()` | ❌ Validator reject (no redeemer) | ✅ Full per spec §1 — W-1..W-7 enforced onchain |
+`@magiclamp/sdk` đang ở `0.x` — **API có thể gãy giữa các bản minor**. Ai chạy thật nên ghim
+`0.1.x` cho tới khi có `1.0.0`.
 
-### Nằm ngoài scope MAGIC (PhoenixKey hoặc app layer)
-
-- **Username → PKH mapping** — PhoenixKey DID resolver
-- **Session key cho web login** — PhoenixKey wallet abstraction (CIP-30 hoặc custodial). MAGIC validator chỉ thấy tx signed by owner PKH, không phân biệt cơ chế signing
-- **Key rotation (đổi master key)** — chưa có spec; sau v1.0 nếu cần
-
-## Stability contract
-
-`@magiclamp/sdk` v0.x — pre-1.0, **API có thể break giữa minor versions**. Production users nên ghim cụ thể `0.1.x` cho đến khi 1.0.0.
-
-Mọi exported name trong `src/index.ts` là public API. Mọi thứ khác (validatorScripts.ts, vaultDatum.ts internals) là implementation detail.
-
-## Test
+## Kiểm thử
 
 ```bash
-cd MagicSDK
-npm install
-npm test        # 10/10 unit tests
+cd MagicSDK && npm install
+npm test          # vitest
+npm run typecheck # tsc --noEmit
 ```
 
-End-to-end testnet test do team MAGIC làm (per-module smoke scripts trong `scripts/test/`).
+Số ca test hiện hành nằm ở [`DevStatus.md`](../DevStatus.md) — chỗ duy nhất giữ số. Đừng chép
+con số đó sang đây; nó hết hạn ngay khi có commit mới.

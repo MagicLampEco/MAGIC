@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/types.ts", "src/consume.ts", "src/index.ts"]
+  "include": ["src/types.ts", "src/engageId.ts", "src/consume.ts", "src/index.ts"]
 }

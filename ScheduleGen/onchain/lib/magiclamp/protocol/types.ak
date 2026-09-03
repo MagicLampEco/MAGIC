@@ -16,16 +16,19 @@ pub type ActivityProfile {
   Lantern  // constr 2
 }
 
+// §4.2 per-epoch use-or-lose: decay_window = 1 for EVERY source. A batch is
+// live only inside its own `created_epoch`; at created_epoch + 1 it is DEAD.
 pub type MagicBatch {
   batch_id            : ByteArray,
   source              : BatchSource,
-  created_epoch       : Natural,
+  created_epoch       : Natural,   // the ONLY epoch this batch is live
   initial_amount      : Natural,
   current_amount      : Natural,
-  decay_window        : Natural,
+  decay_window        : Natural,   // = 1 (§4.2)
   profile_at_creation : Option<ActivityProfile>,
   contract_id         : Option<ByteArray>,        // Some(schedule_id) for Schedule
-  halved              : Bool,
+  halved              : Bool,      // DEAD FIELD — always False under the cliff
+                                   // model; kept for Plutus Data compatibility
 }
 
 pub type LoyaltyHolding {
@@ -94,9 +97,38 @@ pub type VaultAttribution {
   total_events     : Natural,
 }
 
+// `consumed_credit` — TỔNG LƯỢNG nanogic đã tiêu, KHÔNG phải số lượt.
+// SEMANTICS (§6.3 keyed-consumed): running total of MAGIC (nanogic) the owner
+// has ACTUALLY CONSUMED via BurnBatch and not yet converted into an InstantGen
+// reward. BurnBatch adds Σburns here; only InstantGen (in the InstantGen vault)
+// spends it. Kept identical in both vault types so the datum stays portable.
+//
+// ── Nợ #39 ĐÃ ĐÓNG 2026-08-28 ────────────────────────────────────────────────
+// Trường này từng mang hai nhãn trong cùng một kho: `total_burns_count` (nghe như
+// ĐẾM) ở Consolidate/ProfileChange/MagicSDK, `consumed_credit` (LƯỢNG) ở đây. Cùng
+// vị trí, cùng kiểu, CÙNG hình dạng Plutus Data ⇒ decode không bao giờ báo lỗi, nên
+// va chạm nhãn là thứ chỉ lộ ra bằng số tiền sai.
+//
+// Nghĩa KHÔNG hề mơ hồ, và đây là ba trọng tài — bản ghi cũ viết "spec im lặng nên
+// không có trọng tài" là suy diễn SAI từ một tiền đề đúng:
+//   1) Chính validator này: `vault.ak` nhánh BurnBatch cộng `sum_burns(burns)`, tức Σ
+//      LƯỢNG. Nếu là đếm thì dòng đó đã là `list.length(burns)`.
+//   2) INV-CASHBACK-BOUND (`InstantGen/onchain/lib/magiclamp/protocol/math.ak:73-75`):
+//      `reward ≤ consumed` chỉ có nghĩa khi hai vế cùng thứ nguyên nanogic.
+//   3) SPEC §7.3 đã xử đúng câu hỏi này cho trường anh em phía engage: cấp dịch vụ
+//      theo delta `consumed_nanogic`, KHÔNG theo `consumed_count`.
+// Cộng thêm INV-MAGIC-CITIZEN (`BOUNDARIES.md §2`): thưởng gắn MAGIC ĐÃ TIÊU — tiêu
+// là một LƯỢNG.
+//
+// Nhãn `total_burns_count` là nhãn của một trường CHẾT thời tiền-PHA-2 (không handler
+// nào từng ghi vào nó — `InstantGen/DESIGN-PHASE2.md §4.1`). Nay mọi module còn sống
+// dùng `consumed_credit`. Đổi tên KHÔNG đụng chuỗi (Plutus Data mã hoá vị trí), nhưng
+// ĐÃ vỡ API của MagicSDK — đó là thay đổi breaking, cố ý.
+// 🔴 TUYỆT ĐỐI KHÔNG "thêm một trường cho nghĩa kia": thêm trường là hỏng decode mọi
+// UTxO đang sống (Nợ #37).
 pub type ActivityState {
   recent_burn_epochs : List<(ByteArray, Natural)>,
-  total_burns_count  : Natural,
+  consumed_credit    : Natural,
 }
 
 pub type StreakState {

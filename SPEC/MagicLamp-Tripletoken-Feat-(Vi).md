@@ -102,17 +102,32 @@ Quy luật: **LAMP sinh MAGIC; CARP chở giá trị tới nơi tiêu; MAGIC ti�
 ### §4.1 Mô hình lưu trữ
 MAGIC là **số kế toán trong `VaultDatum.magic_batches`** — danh sách `MagicBatch`, mỗi phần tử gắn một `created_epoch` và một `current_amount` (nanogic). MAGIC **không có policy-id, không mint token** (Gen ≠ Mint).
 
+**Hình dạng nhị phân là hợp đồng, và nguồn của nó là mã, không phải khối dưới đây.**
+Đọc `InstantGen/onchain/lib/magiclamp/protocol/types.ak` — `pub type MagicBatch`. Khối dưới
+đây là ảnh chụp cho người đọc; lệch một trường hay một thứ tự là đổi cách decode, và mọi UTxO
+đã tạo trên chain sẽ không đọc được nữa.
+
 ```
-MagicBatch {
-  batch_id          : ByteArray,   // định danh batch (chống trùng)
-  source            : Int,         // 1=Instant 2=Schedule 3=Prepaid (cửa sinh)
-  created_epoch     : Int,         // epoch sinh — quyết định sống/chết
-  current_amount    : Int,         // nanogic còn lại (chỉ BurnBatch giảm)
-  decay_window      : Int,         // = 1 (cliff, per-epoch) — xem §4.2
-  profile_at_creation : Int,       // tham số tư-cách đóng băng lúc sinh (bất biến T4)
-  contract_id       : ByteArray,   // hợp đồng ScheduleGen (nếu có), else #""
+MagicBatch {                                      // 9 TRƯỜNG — đếm lại trước khi encode
+  batch_id            : ByteArray,   // định danh batch (chống trùng)
+  source              : BatchSource, // ENUM, không phải Int — xem bảng bia mộ dưới
+  created_epoch       : Natural,     // epoch sinh — quyết định sống/chết
+  initial_amount      : Natural,     // bất biến, để soát sổ (KHÔNG bỏ)
+  current_amount      : Natural,     // nanogic còn lại (chỉ BurnBatch giảm)
+  decay_window        : Natural,     // = 1 (cliff, per-epoch) — xem §4.2
+  profile_at_creation : Option<ActivityProfile>,  // Some(P) khi Snapshot; None các cửa khác
+  contract_id         : Option<ByteArray>,        // Some với Schedule; None các cửa khác
+  halved              : Bool,        // TRƯỜNG CHẾT dưới mô hình cliff. Giữ để hình dạng
+                                     // 9 trường còn tương thích byte với datum đã deploy.
+                                     // KHÔNG có ràng buộc nào từ chối `halved == True`:
+                                     // validator chỉ ĐẶT nó False lúc tạo batch. Đừng dựa
+                                     // vào nó như một bất biến.
 }
 ```
+
+`source: BatchSource` là enum, chỉ số constructor đã lên chain: `Snapshot=0, Instant=1,
+Vacuum=2, Schedule=3`. `Snapshot` và `Vacuum` là **bia mộ** — hai cửa sinh đó đã bỏ khỏi mô
+hình, nhưng variant phải nằm nguyên chỗ cũ. Đánh lại số cho gọn là vỡ decode mọi UTxO đã tạo.
 
 **`VaultDatum` PHẢI gắn NFT định-danh one-shot (`vault_id_nft`) — bất biến `INV-VAULT-IDENTITY` (rà soát đối kháng 2026-08-04, chặn lỗ mức-chặn-mainnet đã dựng PoC).** Mỗi vault hợp-lệ mang một **NFT mint one-shot** (policy neo `output_reference` genesis, gắn PersonDID chủ qua `I-PERSON-5`). Validator `consume` + mọi cửa gen PHẢI kiểm `vault_id_nft` có mặt & đúng policy tại **MỌI** điểm đọc `lamp_balance` / `magic_batches` — **KHÔNG được chỉ khớp địa-chỉ-script** (`is_at_script`). Lý do: nếu chỉ khớp địa-chỉ, kẻ tấn công trả **~2 ADA** tạo UTxO tại địa-chỉ vault với datum bịa `magic_batches:[{current_amount: 10¹⁸}]` → co-spend Engage + BurnBatch → **tiêu MAGIC chưa từng được sinh**, mua bất kỳ dịch-vụ định-giá-MAGIC (PoC `poc_fabricated_magic_burns_ok` PASS 2026-08-04). NFT one-shot ràng UTxO phải đi qua cửa tạo-vault hợp-lệ → đóng lỗ tận gốc cho MỌI cửa gen, độc lập với công thức tư-cách.
 
@@ -295,11 +310,33 @@ Tiêu MAGIC = **1 tx spend 2 validator**:
 
 `consume.ak` đọc redeemer `BurnBatch` của `vault_ref` qua `tx.redeemers`, giải mã `burns` bằng `un_constr_data` với `burn_batch_constr` = constr index BurnBatch của vault đó (**per-vault deploy** — bảng §11). Hai validator đọc **CÙNG** `PriceParam` beacon + **CÙNG** `op_type/op_count` → giá không lệch. KHÔNG `tx.mint`.
 
+**Nguồn hình dạng: `ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak`.** Khối dưới là ảnh chụp.
+
 ```
-EngageDatum { owner, consumed_count, last_epoch, did_commit }
+EngageDatum {                        // 5 TRƯỜNG
+  owner            : ByteArray,
+  consumed_count   : Int,            // ĐẾM số thao tác — KHÔNG phải bằng chứng thanh toán
+  last_epoch       : Int,
+  did_commit       : ByteArray,
+  consumed_nanogic : Int,            // giá trị đã tiêu; đây mới là thứ app phải đọc
+}
 ```
 
-### §7.4 Bất biến validator `consume` (C-CM-1..5)
+🔴 **App cấp dịch vụ theo delta `consumed_nanogic`, KHÔNG theo `consumed_count`.**
+`count` chỉ đếm số thao tác, không mang giá trị. Trả một thao tác rẻ (`op_type` giá 10⁶) rồi
+đòi dịch vụ đắt (`op_type` giá 10⁷) làm `count` tăng đúng 1 trong cả hai trường hợp — mọi bất
+biến on-chain vẫn thoả, mà bên bán thiếu 10×. `consumed_nanogic` được thêm chính vì lỗ này.
+
+### §7.4 Bất biến validator `consume` (C-CM-1..9)
+
+> Bảng dưới liệt C-CM-1..5. Validator hiện ép thêm **C-CM-6/7/8/9**; nguồn đầy đủ và đang đúng
+> là [`ConsumeMAGIC/CONTRACT.md`](../ConsumeMAGIC/CONTRACT.md) §B. Đừng gỡ một ràng buộc chỉ
+> vì nó không có trong bảng này — phòng thủ mồ côi là cách các cổng bị dọn nhầm.
+>
+> Một chỗ trong bảng đã hết hạn: C-CM-1 ghi "KHÔNG `tx.mint`". Nay `validator consume` là
+> validator **đa mục đích** — handler `mint` của chính nó đúc thread token Engage để neo
+> genesis của thread, nên `policy_id == script_hash` qua tự tham chiếu. `engage_nft.ak` đã bị
+> xoá và `engage_nft_policy`/`engage_nft_name` không còn là apply-param.
 
 | Mã | Ràng buộc |
 |---|---|

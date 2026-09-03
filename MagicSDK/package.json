@@ -1,6 +1,6 @@
 {
   "name": "@magiclamp/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "MagicLamp MAGIC protocol SDK — createVault + downstream ops for any Cardano integrator (DID-agnostic).",
   "main": "src/index.ts",
@@ -8,18 +8,26 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build":     "tsc",
-    "test":      "vitest run",
-    "test:watch":"vitest",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@lucid-evolution/lucid":   "^0.4.0",
-    "@magiclamp/protocol-utils": "file:../ProtocolUtils"
+    "@lucid-evolution/lucid": "0.4.30",
+    "@noble/hashes": "^1.4.0",
+    "@magiclamp/protocol-utils": "file:../ProtocolUtils",
+    "@magiclamp/consumemagic": "file:../ConsumeMAGIC/offchain",
+    "@magiclamp/consumemagic-pricing": "file:../ConsumeMAGIC/pricing",
+    "@magiclamp/instantgen-sdk": "file:../InstantGen/offchain",
+    "@magiclamp/schedulegen-sdk": "file:../ScheduleGen/offchain"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "typescript":  "^5.4.0",
-    "vitest":      "^1.6.0"
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "overrides": {
+    "libsodium-wrappers-sumo": "0.7.10"
   }
 }

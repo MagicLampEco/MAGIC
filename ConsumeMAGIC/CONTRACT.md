@@ -35,7 +35,14 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
 
 - **`base_price[op_type]`**: bảng giá danh nghĩa per loại nghiệp vụ, **governance param** (DAO chỉnh).
   Ví dụ MVP: `xử lý 1 ảnh = 0.01 MAGIC`, `neo 1 CID = 0.001 MAGIC`. Đơn vị nanogic (1 MAGIC = 1e9).
-- **Sổ op_type chuẩn (CHỐT — MAGIC là registrar duy nhất; base_price là governance param, DAO chốt):**
+- **Sổ op_type — `Registry` giữ sổ toàn hệ (chủ nhân chốt 2026-09-02); bảng dưới là các mã
+  MAGIC đang dùng, `base_price` là governance param do DAO chốt.**
+
+  Trước đây dòng này ghi *"MAGIC là registrar duy nhất"*. Hết đúng từ 2026-09-02: cấp mã mới
+  thì xin ở `Registry`, kèm đơn vị vật lý, ai đo được (phải là bên thứ ba, không phải lời khai
+  bên bán), và neo `file:line` tới chỗ mã thật đang đếm đại lượng đó. Mã 1–8 dưới đây **giữ
+  nguyên nghĩa** — `Registry` đã dời sáu định nghĩa trùng số của mình xuống 13–18, vì luật gỡ
+  trùng là *số đã nối vào mã chạy thì giữ, định nghĩa chưa nối vào đâu thì nhường*.
   | op_type | tên | base_price MVP (nanogic) | cấp cho | ghi chú |
   |---|---|---|---|---|
   | 1 | `ảnh` | 10_000_000 (0.01 MAGIC) | (gốc) | khớp `OP_IMAGE` `pricing/src/price.ts` |
@@ -46,8 +53,17 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   | 6 | `contract_settle` | DAO chốt (tạm 5_000_000) | AladinWork | tất toán 1 hợp đồng |
   | 7 | `did.rotate` | DAO chốt (tạm 2_000_000_000) | PhoenixKey | xoay khoá DID. **Thao tác an ninh** — xem cảnh báo dưới bảng |
   | 8 | `did.transfer` | DAO chốt (tạm 10_000_000_000) | PhoenixKey | chuyển DID; thương mại, chịu nhân theo cầu là đúng |
-  Còn **8/16 dòng**. Mọi fixture/beacon/redeemer onchain PHẢI dùng đúng key này; không được
-  lệch sang `0/1`.
+  Mọi fixture/beacon/redeemer onchain PHẢI dùng đúng key này; không được lệch sang `0/1`.
+
+  > ⚠️ **Đừng đọc `max_op_prices = 16` thành "sổ chỉ còn 8 ô".** Bản cũ của dòng này viết
+  > *"Còn 8/16 dòng"* và câu đó sai theo chiều nguy hiểm nhất với một quyển sổ: nó dẫn tới
+  > tiết kiệm số, rồi tái dùng số. Con số 16 ở
+  > [`pricing.ak:53`](onchain/lib/magiclamp/consume/pricing.ak:53) là trần **kích thước datum
+  > của MỘT bảng giá** — chú thích ngay trên nó ghi *"16 dòng ≈ 256 byte datum"*. Nó chặn số
+  > **dòng một platform khai được**, không chặn **giá trị** của `op_type`: `op_type` là `Int`
+  > thường và hàm tra là `list.find` tuyến tính
+  > ([`pricing.ak:100-101`](onchain/lib/magiclamp/consume/pricing.ak:100)), không có chặn trên.
+  > Sổ toàn hệ dài bao nhiêu cũng được.
 
   > 🔴 **`op_type=7` đang bị định giá SAI về nguyên tắc, và MAGIC ghi nhận điều đó.**
   > `price_of`/`required_for` (`onchain/lib/magiclamp/consume/pricing.ak`) nhân

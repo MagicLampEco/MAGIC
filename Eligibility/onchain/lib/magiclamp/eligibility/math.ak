@@ -244,13 +244,25 @@ pub fn commit_factor(lamp_locked: Int, commit_ref: Int) -> Int {
 // braces — do NOT read it as support for negative factors; clamp_q rejects them
 // first.
 //
-// AND IF YOU DO ADD A SIGNED FACTOR: the max() alone is not enough. `weighted /
-// q` below is the second place in this file where a negative numerator would
-// meet Aiken's floor division and TypeScript's truncation and get two different
-// answers (weighted = −1 ⟹ Aiken −1, TS 0). Nothing is clamped after that
-// division, so the divergence would reach the caller. Whoever relaxes clamp_q
-// owes this line a `quotient`-vs-`/` decision and a negative vector, exactly as
-// ema_step already has.
+// AND IF YOU DO ADD A SIGNED FACTOR: `weighted / q` below is the second place in
+// this file where a negative numerator would meet Aiken's floor division and
+// TypeScript's truncation and get two different answers (weighted = −1 ⟹ Aiken −1,
+// TS 0).
+//
+// 🔴 CÂU TIẾP THEO TỪNG SAI, và nó sai theo chiều đẩy người vá đi canh nhầm chỗ. Bản cũ
+// viết "Nothing is clamped after that division, so the divergence would reach the
+// caller." KHÔNG ĐÚNG: `imax(q, q + weighted / q)` ngay dưới nuốt trọn. Với weighted âm
+// bất kỳ, hai bên cho `q + (−a)` và `q + (−b)` với a,b ≥ 0, cả hai ≤ q ⟹ `imax` kéo cả
+// hai về đúng `q`. Chênh lệch sàn-vs-cắt KHÔNG tới được người gọi qua đường này.
+//
+// Điều đúng, và nó là điều đáng nói: `imax(q, ·)` hôm nay là mã KHÔNG BAO GIỜ ràng buộc
+// (mọi số hạng là `w × clamp_q(·) ≥ 0` ⟹ `weighted ≥ 0`), nên không vector nào giết được
+// nó — xem `elig_all_negative_inputs_floor_at_q`. Nó chỉ bắt đầu làm việc ĐÚNG VÀO LÚC
+// ai đó nới `clamp_q`, và lúc đó nó làm đúng việc này: chặn chênh lệch sàn-vs-cắt.
+//
+// Nên người nới `clamp_q` nợ hai thứ, không phải một: (a) một quyết định `quotient`-vs-`/`
+// cho `weighted / q`, và (b) viết lại chú thích ở `elig_all_negative_inputs_floor_at_q` —
+// từ lúc đó `imax` kiểm được, và phải được kiểm.
 //
 // Q-format: ONE floor division, applied to the weighted sum. Each wᵢ·rᵢ is an
 // exact product (both ≤ Q ⟹ ≤ 10^18), so there is no per-term rounding to
@@ -294,15 +306,78 @@ test elig_negative_factor_cannot_subtract() {
   eligibility_q(-10 * q, q, 0, 0) == q + w_consumed
 }
 
-// Each weight is individually reachable — catches a wire-up swap between two
-// factors, which a symmetric all-max test cannot see.
+// 🔴 Test dưới đây TỪNG là bản tự tham chiếu, và nó KHÔNG bắt được thứ chú thích của
+// chính nó hứa. Bản cũ so `eligibility_q(q,0,0,0) == q + w_age` — tức so kết quả với
+// CHÍNH hằng cần ghim, nên hoán vị hai trọng số làm hai vế đổi cùng nhau và test vẫn
+// xanh. Đo được, cùng cây nguồn, chỉ hoán vị `w_age` ↔ `w_commit` (tổng giữ 1.5Q):
+//
+//     aiken check → exit 0, 30 pass / 0 fail
+//     AIKEN (đã hoán vị) : age_only = 1_200_000_000  commit_only = 1_150_000_000
+//     TS   (nguyên bản)  : age_only = 1_150_000_000  commit_only = 1_200_000_000
+//
+// Hai hiện thực, cùng đầu vào, khác kết quả, hai bộ kiểm đều xanh. Đó là định nghĩa P8
+// vỡ. Phía TS ghim literal cho TỪNG trọng số (`eligibility.ts:17-20`), phía Aiken thì
+// không — nên bên nào lệch cũng chỉ có bên TS phát hiện, và chỉ khi ai đó đọc.
+//
+// Nay ghim bằng literal. Một literal không tự đổi theo hằng nó canh.
+test elig_weights_pinned_by_literal() {
+  w_consumed == 900_000_000 && w_offpeak == 250_000_000 && w_commit == 200_000_000 && w_age == 150_000_000
+}
+
+// Σ = 1.5Q là thứ cho khoảng [Q, 2.5Q] ở spec §6.2. Ghim riêng: literal từng trọng số
+// giữ được giá trị, tổng giữ được TÍNH CHẤT — hỏng một trong hai là hỏng khác nhau.
+test elig_weights_sum_to_1_5q() {
+  w_consumed + w_offpeak + w_commit + w_age == 3 * q / 2
+}
+
+// Mỗi trọng số vẫn phải đi tới được đúng ô của nó — literal ở trên ghim GIÁ TRỊ, test
+// này ghim ĐẤU DÂY. Vế phải là literal, không phải tên hằng.
 test elig_weights_are_individually_addressable() {
-  eligibility_q(q, 0, 0, 0) == q + w_age && eligibility_q(0, q, 0, 0) == q + w_consumed && eligibility_q(
+  eligibility_q(q, 0, 0, 0) == 1_150_000_000 && eligibility_q(0, q, 0, 0) == 1_900_000_000 && eligibility_q(
     0,
     0,
     q,
     0,
-  ) == q + w_offpeak && eligibility_q(0, 0, 0, q) == q + w_commit
+  ) == 1_250_000_000 && eligibility_q(0, 0, 0, q) == 1_200_000_000
+}
+
+// ── Bốn cái KẸP, mỗi cái một vector âm ────────────────────────────────────────
+// Gỡ bất kỳ cái nào trong bốn cái kẹp dưới đây thì bộ kiểm cũ VẪN xanh 30/30 — đo được.
+// Chúng là thứ nuốt chênh lệch giữa Aiken chia-sàn và BigInt cắt-về-0, nên không canh
+// chúng là để P8 phụ thuộc vào việc không ai đưa số âm vào.
+test elig_clamp_age_factor_negative_ema() {
+  age_factor(-5, 3) == 0
+}
+
+// `imin(ema, balance*q)` là thứ DUY NHẤT chặn "kho rỗng đòi thâm niên": vault đã rút
+// sạch mà EMA còn cao thì không được khai 50% tuổi. Ca `age_factor(0,0)` ở test cũ
+// vacuous đúng chỗ cần canh — ema cũng bằng 0.
+test elig_clamp_age_factor_empty_balance() {
+  age_factor(500_000_000, 0) == 0
+}
+
+// Vector phải là (âm, âm), KHÔNG phải (dương, âm). Với `ratio_q(1, -3)` thì bỏ hẳn cổng
+// `reference <= 0` vẫn cho 0, vì `clamp_q` phía sau nuốt số âm — nên vector đó xanh ở cả
+// hai hiện thực và không chứng minh gì. Đo được: đổi cổng thành `== 0` → đỏ=0.
+// Với (âm, âm) thì thương DƯƠNG (`-3×q / -3 = q`) và `clamp_q` không nuốt được:
+// có cổng → 0, bỏ cổng → q. Đó mới là ca tách được hai hiện thực.
+test elig_clamp_ratio_negative_reference() {
+  ratio_q(-3, -3) == 0 && ratio_q(1, -3) == 0
+}
+
+// ⚠ `imax(q, ·)` ở cuối `eligibility_q` là KHÔNG THỂ KIỂM bằng vector, và nói rõ ở đây
+// thay vì viết một test trông như đang canh nó. Lý do: mỗi số hạng là
+// `w_i × clamp_q(x_i)` với `clamp_q(v) = imax(0, imin(q, v))` (`math.ak:68-70`) ⟹ mọi số
+// hạng ≥ 0 ⟹ `weighted ≥ 0` ⟹ `q + weighted/q ≥ q` ⟹ `imax` KHÔNG BAO GIỜ ràng buộc.
+// Đo: bỏ hẳn `imax` → đỏ=0, và đó là kết quả ĐÚNG, không phải lỗ hổng kiểm thử.
+//
+// Nên nó là đai an toàn cho một tương lai bỏ `clamp_q` bên trong, không phải một chốt
+// đang cưỡng chế điều gì. Ai bỏ `clamp_q` khỏi bất kỳ số hạng nào PHẢI viết lại chú
+// thích này — lúc đó `imax` mới bắt đầu ràng buộc và mới kiểm được.
+//
+// Test dưới chỉ ghim GIÁ TRỊ ở ca toàn-âm; nó không ghim `imax`.
+test elig_all_negative_inputs_floor_at_q() {
+  eligibility_q(-1, -1, -1, -1) == q
 }
 
 // consumedFactor is OFF while did_commit is empty, so 0.90Q of the 1.50Q range is
@@ -463,9 +538,25 @@ test age_factor_empty_vault_is_zero() {
   age_factor(0, 0) == 0
 }
 
-// TV-ELIG-EMA-CONVERGENCE — the P8 teeth. These exact integers also appear in
-// Eligibility/tests/vectors.ts; if the two sides ever round differently, one of
-// them fails here rather than silently disagreeing on-chain.
+// TV-ELIG-EMA-CONVERGENCE — cùng bộ số nguyên với `Eligibility/tests/vectors.ts`.
+//
+// 🔴 CÂU CŨ Ở ĐÂY HỨA MỘT CƠ CHẾ KHÔNG TỒN TẠI. Nó viết: "if the two sides ever round
+// differently, one of them fails here rather than silently disagreeing on-chain." Không có
+// gì làm điều đó. Aiken KHÔNG đọc `vectors.ts` — `grep vectors.ts` trong cây `*.ak` chỉ ra
+// chú thích, không ra một lời gọi nào; và CI chạy hai job rời nhau, không job nào đối
+// chiếu hai bộ số. Hai bộ kỳ vọng được GÕ TAY HAI LẦN. Hôm nay chúng khớp vì người gõ
+// đúng, không vì cơ chế nào.
+//
+// Đo được, cùng cây nguồn, chỉ hoán vị `w_age` ↔ `w_commit` phía Aiken (tổng giữ 1.5Q):
+// `aiken check` 30/30 xanh, `vitest` xanh, mà `eligibility_q(q,0,0,0)` cho
+// 1_200_000_000 phía Aiken và 1_150_000_000 phía TS. Hai hiện thực khác kết quả, không
+// bộ kiểm nào đỏ.
+//
+// Nay từng trọng số được ghim bằng LITERAL hai phía (`elig_weights_pinned_by_literal` ↔
+// `eligibility.ts:17-20`), nên ca đó bị bắt — kiểm đột biến: đỏ 2.
+// NHƯNG đó là ghim theo GIÁ TRỊ, vẫn do người gõ hai lần. Cơ chế cưỡng chế thật (một job
+// CI đối chiếu literal hai phía, hoặc sinh vector từ một nguồn chung) thì kho CHƯA CÓ.
+// Đừng đọc khối này thành "P8 đã được cưỡng chế".
 //
 // They are NOT 1 − (5/6)^n: α is ⌊Q/6⌋, a hair under 1/6, and every step floors,
 // so the shortfall compounds. The implementation is normative — recompute if α

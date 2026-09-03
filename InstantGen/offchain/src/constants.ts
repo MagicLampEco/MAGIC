@@ -11,7 +11,7 @@ export const Q = 1_000_000_000n; // Q = 10^9 [Immutable]
 // ── LAMP / MAGIC units ───────────────────────────────────────
 export const LAMP_DECIMALS  = 6n;
 export const MAGIC_DECIMALS = 9n;
-export const OIL_PER_LAMP   = 1_000_000n;    // 10^6 oil per LAMP
+export const OILDROP_PER_LAMP  = 1_000_000n;    // 10^6 oildrop per LAMP
 export const NANOGIC_PER_MAGIC = 1_000_000_000n; // 10^9 nanogic per MAGIC
 
 // ── MAGIC batch lifetime (§4.2 per-epoch use-or-lose) ────────

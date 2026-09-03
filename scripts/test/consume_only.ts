@@ -50,14 +50,24 @@
 //   (ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak:104-118) nên readFrom không
 //   bị chốt đó chặn.
 //
-// ── VÌ SAO KHÔNG gọi buildConsumeTx (ConsumeMAGIC/offchain/src/consume.ts) ──────
-//   buildConsumeTx() collect vault input bằng BurnBatch NHƯNG KHÔNG tạo output tiếp
-//   nối cho vault (chỉ tạo Engage output) rồi tự .complete() — không thể chèn thêm
-//   output sau đó. Trong khi validate_burn_batch của InstantGen (vault.ak dòng
-//   684-722) BẮT BUỘC 1 vault output với datum A02 đúng + value preserved → tx từ
-//   buildConsumeTx sẽ BỊ vault validator từ chối. Nên ở đây dựng tx THỦ CÔNG, phản
-//   chiếu đúng bất biến của consume.ak (engage side) + validate_burn_batch (vault
-//   output). (Encoders/redeemer schema vẫn tái dùng từ ConsumeMAGIC + InstantGen.)
+// ── VÌ SAO tệp này dựng tx THỦ CÔNG ────────────────────────────────────────────
+//   Lý do lịch sử, KHÔNG còn đúng: bản trước của khối này viết "buildConsumeTx KHÔNG
+//   tạo output tiếp nối cho vault nên tx sẽ bị vault từ chối". Câu đó SAI TỪ CHÍNH
+//   COMMIT SINH RA NÓ — `82a22699` vừa thêm `vaultOutDatumCbor` + vault continuing
+//   output vào `ConsumeMAGIC/offchain/src/consume.ts:317-324`, vừa để lại câu trên.
+//   Nên hơn một tháng qua, tệp này dạy mọi người tích hợp đi tự dựng tx bằng tay.
+//
+//   Đường ĐÚNG cho app, kể từ 2026-09-03:
+//       const vaultSide = buildVaultBurnBatch({ vaultUtxo, required, currentEpoch,
+//                                               vaultPlutusJson });
+//       await buildConsumeTx({ ..., vaultBurnRedeemerCbor: vaultSide.vaultBurnRedeemerCbor,
+//                                   vaultOutDatumCbor:     vaultSide.vaultOutDatumCbor });
+//   (`MagicSDK/src/burnBatch.ts` — gương đúng `validate_burn_batch`, chọn ĐA batch và
+//   ưu tiên batch sắp chết; tệp này chỉ chọn được MỘT batch, xem dòng ~309.)
+//
+//   Tệp này GIỮ đường thủ công có chủ ý: nó là bản đối chứng độc lập với SDK. Nếu
+//   `burnBatch.ts` lệch khỏi Aiken thì hai đường cho hai CBOR khác nhau và chỗ lệch lộ
+//   ra ở đây. Đừng viết lại nó thành lời gọi SDK — làm thế là mất chính phép đối chứng.
 
 import {
   Lucid, Blockfrost, Data,

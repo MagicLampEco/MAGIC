@@ -120,8 +120,18 @@ validator paymaster(
     expect lamp_this <= lamp_cap(magic_consumed, policy.lamp_per_magic_q)
 
     // ── PM-TREASURY (SEC-01 fix): LAMP phải thực sự đến Treasury ─────────────
-    // Mirror pattern từ InstantGen vault.ak validate_gen (treasury_receives_lamp).
     // Chống attacker chỉ claim LAMP đã trả nhưng thực tế gửi địa chỉ khác.
+    //
+    // 🔴 ĐÂY NAY LÀ CHÂN THU LAMP DUY NHẤT CỦA TREASURY trong kho này, không phải một
+    // bản sao của chỗ khác. Chú thích cũ viết "Mirror pattern từ InstantGen vault.ak
+    // validate_gen (treasury_receives_lamp)" — hàm đó KHÔNG CÒN TỒN TẠI, chính
+    // `InstantGen/onchain/validators/vault.ak:1144` khai nó đã bị gỡ. Sau I-ACT-7 không
+    // generator nào trả LAMP về Treasury nữa (`grep -rln treasury --include=*.ak` ngoài
+    // `Legacy/` chỉ còn tệp này và một dòng bia mộ ở InstantGen).
+    //
+    // Nghĩa là chân thu dời từ hành vi SINH sang hành vi BẢO TRỢ: Treasury không thu khi
+    // ai đó sinh MAGIC, mà thu khi một app trả phí hộ người dùng. Ai sửa khối này đang
+    // sửa đường thu duy nhất — không có chỗ thứ hai đỡ.
     expect if lamp_this > 0 {
       let lamp_to_treasury =
         tx.outputs

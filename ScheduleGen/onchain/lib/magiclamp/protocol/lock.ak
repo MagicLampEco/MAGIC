@@ -77,9 +77,12 @@ pub fn unlock_locked_amount(
 /// I-ACT-7 set out to fix. Every split carries the ORIGINAL acquired_epoch, so
 /// coalescing collapses them back exactly.
 ///
-/// Ported verbatim from `origin/main:ScheduleGen/.../lock.ak:84-102`, where this
-/// bug was found and fixed first (see the comment at `main:vault.ak:1296-1299`).
-/// Kept byte-identical on purpose — do not "improve" one side alone (P8).
+/// Ai tìm ra trước: `bf9b1725` (tuanzoro2k, 2026-08-12) — sớm hơn `5e2fd76b`
+/// (DucTiger, 2026-08-17) năm ngày. Quét mọi ref bằng `git log --all -S'coalesce_holdings'`
+/// cho đúng hai commit đó, theo thứ tự đó.
+///   (Bản trước của ba dòng này ghi "ported from origin/main, where this bug was found
+///    and fixed first" — sai thứ tự, và nó nằm trong mã nguồn nên người sau đọc sẽ tin.)
+/// Hai bản giữ byte-identical có chủ ý — đừng "cải tiến" một bên (P8).
 ///
 /// O(n²) merge over a list capped at 64. sort-then-scan would be O(n log n) but
 /// needs a total order over the pair; revisit only if fire ExUnits actually bite.

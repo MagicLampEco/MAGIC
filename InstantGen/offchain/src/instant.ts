@@ -24,7 +24,7 @@ import {
   computeInstantGrant, getUmForInstant, isExpired,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
-import { getTipSlot, posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { getTipSlot, posixMsToEpoch, msPerEpoch, vaultOutValue, type Network } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatum, UMDatum, BackingBeaconDatum, VaultRedeemer,
@@ -276,10 +276,15 @@ export async function buildInstantGenTx(
     .pay.ToAddressWithData(
       vaultScriptAddress,
       { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) },
-      {
+      // 🔴 `vaultOutValue` bê nguyên value đầu vào rồi mới đè. Dựng lại object từ đầu
+      // là làm rơi vault-id NFT (INV-VAULT-IDENTITY), và mọi nhánh spend đòi NFT còn
+      // nguyên ở output — NFT one-shot nên rơi là vault chết vĩnh viễn, không phải một
+      // tx hỏng. Bản vá gốc `ca5870df` (tuanzoro2k, 11/8) bị lần trộn hội tụ đánh rơi;
+      // chốt nay nằm ở `ProtocolUtils` kèm test (`droppedUnits`).
+      vaultOutValue(vaultUtxo.assets, {
         lovelace:  vaultLovelace,                // ADA stays on vault
         [lampUnit]: lampOut,                     // LAMP stays on vault (I-ACT-7)
-      },
+      }),
     )
     .validFrom(lowerTime)
     .validTo(upperTime);

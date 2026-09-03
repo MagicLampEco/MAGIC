@@ -396,3 +396,60 @@ export function mulQ(a: bigint, b: bigint): bigint { return a * b / Q; }
 export function clamp(x: bigint, lo: bigint, hi: bigint): bigint {
   return x < lo ? lo : x > hi ? hi : x;
 }
+
+// ── INV-VAULT-IDENTITY: dựng value output của vault ──────────────────────────────
+//
+// Mọi nhánh spend của mọi vault đòi vault-id NFT còn nguyên ở output
+// (`validate_vault_value`, ví dụ `ScheduleGen/onchain/validators/vault.ak:866-872`).
+// NFT là one-shot, sinh cùng lúc với vault, không đúc lại được.
+//
+// 🔴 LỖI ĐÃ XẢY RA THẬT, HAI LẦN, VÀ IM LẶNG CẢ HAI LẦN. Cách viết
+//
+//     { lovelace: L, [lampUnit]: X }        // ✗ dựng lại từ đầu
+//
+// bỏ mất mọi tài sản khác đang nằm trên vault — trong đó có NFT danh tính. Không lỗi
+// biên dịch, không test đỏ; chuỗi từ chối tx và thông điệp không nói NFT. `ca5870df`
+// (tuanzoro2k, 11/8) vá đúng chỗ này, lần trộn hội tụ đánh rơi bản vá, và đường
+// ScheduleFire nằm gãy từ đó tới 3/9 — đúng khoảng thời gian mà `DEPLOYED.md` ghi là
+// "fire chưa bao giờ thành công trên chuỗi".
+//
+// Dùng hàm này thay vì viết object bằng tay. Nó ở ProtocolUtils vì cả bốn module vault
+// cần cùng một bất biến, và một bất biến thì giữ ở một chỗ.
+
+/** Tập tài sản tối thiểu mà lucid nhận cho một output. */
+export type AssetsLike = Record<string, bigint>;
+
+/**
+ * Value cho output tiếp-nối của vault: bê NGUYÊN value đầu vào, chỉ đè các đơn vị được
+ * nêu. Tài sản không nêu — vault-id NFT trước hết — đi qua nguyên vẹn.
+ *
+ * @param inputAssets value của UTxO vault đang tiêu (`vaultUtxo.assets`).
+ * @param overrides   các đơn vị cần đặt lại, ví dụ `{ lovelace, [lampUnit]: newBalance }`.
+ *                    Đặt một đơn vị về `0n` là XOÁ nó khỏi output (lucid không nhận
+ *                    số lượng 0) — dùng khi thật sự muốn tài sản đó rời vault.
+ */
+export function vaultOutValue(
+  inputAssets: AssetsLike,
+  overrides:   AssetsLike,
+): AssetsLike {
+  const out: AssetsLike = { ...inputAssets, ...overrides };
+  for (const [unit, qty] of Object.entries(out)) {
+    if (qty === 0n) delete out[unit];
+  }
+  return out;
+}
+
+/**
+ * Đếm số tài sản KHÔNG phải lovelace bị đánh rơi giữa value vào và value ra. Dùng cho
+ * test và cho chốt lúc chạy: > 0 nghĩa là có thứ gì đó rời vault, và nếu đó là NFT danh
+ * tính thì mọi nhánh spend về sau đều bị từ chối.
+ */
+export function droppedUnits(
+  inputAssets: AssetsLike,
+  outputAssets: AssetsLike,
+): string[] {
+  return Object.keys(inputAssets)
+    .filter(u => u !== "lovelace")
+    .filter(u => (inputAssets[u] ?? 0n) > 0n)
+    .filter(u => (outputAssets[u] ?? 0n) === 0n);
+}

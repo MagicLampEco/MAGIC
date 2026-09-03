@@ -7,6 +7,7 @@ import {
   isqrt, isqrt10th, verifyVd, vDampened, mulQ, clamp,
   cmpBigIntAsc, cmpBigIntDesc, Q,
   DRM_LOOKBACK,
+  vaultOutValue, droppedUnits,
 } from "../src/index.js";
 
 const MAGIC = Q;
@@ -279,5 +280,44 @@ describe("isqrt10th + verifyVd — §9.1 (pure BigInt, no float)", () => {
     expect(() => vDampened(V)).not.toThrow();
     const Vd = vDampened(V);
     expect(verifyVd(V, Vd)).toBe(true);
+  });
+});
+
+// ── INV-VAULT-IDENTITY ───────────────────────────────────────────────────────────
+// Chốt cho lỗi đã xảy ra hai lần và im lặng cả hai lần: dựng lại value output của vault
+// từ đầu làm rơi vault-id NFT ⟹ mọi nhánh spend bị từ chối. Xem chú thích ở
+// `ProtocolUtils/src/index.ts` mục cùng tên.
+describe("vaultOutValue — INV-VAULT-IDENTITY", () => {
+  const NFT  = "beef".repeat(14) + "0011";   // policy+name, giá trị không quan trọng
+  const LAMP = "cafe".repeat(14) + "744c414d50";
+  const vaultIn = { lovelace: 5_000_000n, [LAMP]: 1_000_000n, [NFT]: 1n };
+
+  it("bê NFT danh tính sang output khi chỉ đổi LAMP", () => {
+    const out = vaultOutValue(vaultIn, { [LAMP]: 400_000n });
+    expect(out[NFT]).toBe(1n);
+    expect(out[LAMP]).toBe(400_000n);
+    expect(out.lovelace).toBe(5_000_000n);
+  });
+
+  it("bê NFT sang output khi đổi CẢ lovelace lẫn LAMP", () => {
+    const out = vaultOutValue(vaultIn, { lovelace: 6_000_000n, [LAMP]: 0n + 900_000n });
+    expect(out[NFT]).toBe(1n);
+    expect(droppedUnits(vaultIn, out)).toEqual([]);
+  });
+
+  it("droppedUnits BẮT được đúng cách viết đã gây hồi quy", () => {
+    const saiCach = { lovelace: 5_000_000n, [LAMP]: 400_000n };   // dựng lại từ đầu
+    expect(droppedUnits(vaultIn, saiCach)).toEqual([NFT]);
+  });
+
+  it("droppedUnits im lặng khi không rơi gì", () => {
+    expect(droppedUnits(vaultIn, vaultOutValue(vaultIn, { [LAMP]: 1n }))).toEqual([]);
+  });
+
+  it("đặt một đơn vị về 0n là cố ý cho nó rời vault, không phải rơi", () => {
+    const out = vaultOutValue(vaultIn, { [LAMP]: 0n });
+    expect(LAMP in out).toBe(false);
+    expect(out[NFT]).toBe(1n);                        // NFT vẫn ở lại
+    expect(droppedUnits(vaultIn, out)).toEqual([LAMP]); // và báo đúng thứ đã rời
   });
 });

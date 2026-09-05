@@ -39,8 +39,8 @@ describe("Epoch utilities", () => {
   // Chốt này tồn tại vì lần hỏng trước không có gì bắt được: bảng ms bị suy ra từ
   // bảng slot bằng một câu bình luận, nên một trong hai phải sai mà test vẫn xanh
   // (test dùng chính hằng sai đó làm chuẩn).
-  it("Preprod: nhịp giao thức KHÁC nhịp mạng — nén 5×, cố ý", () => {
-    expect(msPerEpoch("Preprod")).toBe(86_400_000n);          // 1 ngày, đồng hồ nén
+  it("Preprod: nhịp giao thức KHÁC nhịp mạng — nén 5×, chưa có quyết định ghi lại", () => {
+    expect(msPerEpoch("Preprod")).toBe(86_400_000n);          // 1 ngày — nén 5× so với mạng
     expect(slotsPerEpoch("Preprod")).toBe(432_000n);          // 5 ngày, mạng thật
     expect(slotsPerEpoch("Preprod") * 1_000n).not.toBe(msPerEpoch("Preprod"));
   });

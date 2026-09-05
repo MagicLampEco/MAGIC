@@ -43,13 +43,26 @@ export function slotsPerEpoch(network: Network): bigint {
 //     độ dài một epoch giao thức, và đổi apply-param ⟹ đổi script hash ⟹ giết mọi
 //     thứ đã deploy.
 //
-//     Preprod cố ý giữ 1 ngày = ĐỒNG HỒ NÉN cho kiểm thử (nén 5× so với mainnet), để
-//     chạy hết một vòng decay / hết hạn / cửa sổ fire trong một ngày thay vì năm ngày.
-//     Đây là lựa chọn, không phải số sai — và nó phải mang nhãn, đúng như
-//     PhoenixKey-Validator ghi `ms_per_epoch` nén của họ.
+//     Preprod ở đây là 1 ngày, tức KHÁC nhịp mạng thật (5 ngày). Hệ quả thực tế là một
+//     đồng hồ nén 5×: một vòng decay / hết hạn / cửa sổ fire chạy hết trong một ngày.
+//
+//     ⚠ NHƯNG ĐỪNG GỌI ĐÓ LÀ THIẾT KẾ CHỪNG NÀO CHƯA CÓ AI GHI LẠI. Đã tìm trong
+//     `SPEC/`, `BOUNDARIES.md`, `DevStatus.md`, `ChangeLog.md` và `git log -S`: không
+//     có một quyết định nào chọn con số này. Bằng chứng hiện có nghiêng về phía TAI NẠN
+//     — commit `640690bf` sinh CẢ HAI bảng trong cùng một hunk, bảng ms suy ra từ bảng
+//     slots đang sai, và commit message không nhắc gì tới nén.
+//
+//     Giữ nguyên số thì có lý do vững, và lý do đó KHÔNG phải "vì cố ý": nó là
+//     apply-param của các script đang sống trên Preprod (`scripts/DEPLOYED.md` §Preprod),
+//     nên đổi là đổi script hash là giết chúng. Đó là lý do HOÃN SỬA, không phải bằng
+//     chứng CHỦ ĐÍCH — hai thứ khác nhau, và trộn chúng lại là biến một tai nạn thành
+//     "nguồn" cho người sau viện dẫn.
+//
+//     Việc còn nợ: một mục trong `DevStatus.md` chốt xem giữ nén 5× là chính sách hay
+//     là nợ phải trả trước mainnet. Trước khi có mục đó, đọc bảng này như "chưa quyết".
 export const MS_PER_EPOCH_BY_NETWORK = {
   Preview:   86_400_000n,   // 1 ngày — trùng nhịp mạng Preview
-  Preprod:   86_400_000n,   // 1 ngày — ĐỒNG HỒ NÉN 5×, mạng thật là 5 ngày
+  Preprod:   86_400_000n,   // 1 ngày — KHÁC nhịp mạng (5 ngày); chưa có quyết định nào ghi lại
   Mainnet:  432_000_000n,   // 5 ngày — trùng nhịp mainnet
 } as const;
 
@@ -103,7 +116,9 @@ export type Network = "Preview" | "Preprod" | "Mainnet";
  *  ⚠ KHÔNG dùng hàm này để lấy epoch của GIAO THỨC — đó là `posixMsToEpoch`.
  *  Hai hàm trả hai số khác hẳn nhau (đồng hồ giao thức không trừ genesis), và trộn
  *  chúng vào cùng một datum là dựng một giao dịch validator không bao giờ nhận.
- *  Hiện KHÔNG mã sống nào gọi hàm này — chỉ tái xuất qua `math.ts` các module.
+ *  Chỗ gọi: `getCurrentEpoch` ngay dưới, và tái xuất qua `math.ts` của các module.
+ *  (Bản trước của dòng này viết "KHÔNG mã sống nào gọi hàm này" — sai, và cái sai đó
+ *   dán cảnh báo lên đúng hàm không ai gọi trong khi để `getCurrentEpoch` trần.)
  */
 export function slotToEpoch(slot: bigint, network: Network): bigint {
   return slot / slotsPerEpoch(network);
@@ -127,7 +142,20 @@ export async function getTipSlot(
   }
 }
 
-/** Get current epoch from a Lucid-compatible provider. */
+/** Epoch CARDANO hiện tại, đọc từ provider.
+ *
+ *  ⚠ ĐÂY KHÔNG PHẢI epoch của GIAO THỨC. Tên hàm nghe như thứ bạn cần, nhưng nó trả số
+ *  epoch của CHUỖI (có trừ genesis), còn mọi trường datum trong kho này — `acquired_epoch`,
+ *  `last_updated_epoch`, `created_epoch`, `commit_epoch` — mang epoch GIAO THỨC
+ *  (`posix_ms / ms_per_epoch`, KHÔNG trừ genesis). Hai số cách nhau rất xa: cùng một lúc
+ *  trên Preprod, hàm này trả ~311 còn epoch giao thức là ~20 700.
+ *
+ *  Nhét số của hàm này vào datum ⟹ validator từ chối, và triệu chứng là một tx fail
+ *  không kèm lời giải thích nào. Muốn epoch giao thức thì dùng `posixMsToEpoch(tipMs, network)`.
+ *
+ *  Dùng hàm này khi và chỉ khi bạn thật sự cần đối chiếu với epoch mà explorer/Blockfrost
+ *  hiển thị.
+ */
 export async function getCurrentEpoch(
   lucid   : { provider: unknown },
   network : Network = "Preview",

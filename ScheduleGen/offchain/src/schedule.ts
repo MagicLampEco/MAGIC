@@ -23,6 +23,7 @@ import {
   getTipSlot, posixMsToEpoch, msPerEpoch, lampAssetName as lampAssetNameFor,
   type Network,
   vaultOutValue,
+  assertVaultIdentityKept,
 } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
@@ -391,6 +392,14 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const lowerTime  = Number(tipPosixMs);
   const upperTime  = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
+  // Value ra của vault, tách thành CÂU LỆNH RIÊNG để chốt bên dưới không biến mất cùng
+  // lần viết lại biểu thức value — đó chính là lần viết lại nó sinh ra để bắt.
+  const vaultOutAssets = vaultOutValue(vaultUtxo.assets, {
+    lovelace: vaultLovelaceFire,
+    [lampUnit]: newLampBalance - (params.tamperLampOutOil ?? 0n),
+  });
+  assertVaultIdentityKept(vaultUtxo.assets, vaultOutAssets);
+
   let fireBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
@@ -410,10 +419,7 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     // Bản vá gốc: `ca5870df` (tuanzoro2k, 11/8) — nó bị lần trộn hội tụ đánh rơi và
     // đường Fire nằm gãy tới 3/9. Đừng viết lại thành object dựng mới.
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) },
-      vaultOutValue(vaultUtxo.assets, {
-        lovelace: vaultLovelaceFire,
-        [lampUnit]: newLampBalance - (params.tamperLampOutOil ?? 0n),
-      }))
+      vaultOutAssets)
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatum) }, shardUtxo.assets)
     // NO Treasury output — a fire moves no LAMP anywhere.
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless

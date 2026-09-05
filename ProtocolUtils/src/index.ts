@@ -453,3 +453,31 @@ export function droppedUnits(
     .filter(u => (inputAssets[u] ?? 0n) > 0n)
     .filter(u => (outputAssets[u] ?? 0n) === 0n);
 }
+
+/**
+ * Chốt lúc chạy: value sắp trả về vault KHÔNG được đánh rơi tài sản nào của value vào.
+ *
+ * ⚠ Đọc kỹ trước khi ai đó gỡ nó vì "thừa": nó ĐÚNG LÀ thừa chừng nào chỗ gọi còn dùng
+ * `vaultOutValue` — hàm đó bê nguyên value vào nên không thể đánh rơi gì. Nó tồn tại cho
+ * đúng một tình huống, và tình huống đó đã xảy ra HAI LẦN: có người thay biểu thức value
+ * bằng một object dựng mới (`{ lovelace, [lampUnit] }`). Lúc đó `vaultOutValue` biến mất
+ * khỏi dòng đó, còn dòng này ở lại — và nó đổi lỗi từ "chuỗi từ chối tx với thông điệp
+ * không nhắc NFT" thành "builder ném lỗi gọi đúng tên thứ bị rơi".
+ *
+ * Đặt nó thành CÂU LỆNH RIÊNG, đừng gộp vào biểu thức truyền cho `.pay` — gộp lại là nó
+ * biến mất cùng lần viết lại mà nó sinh ra để bắt.
+ */
+export function assertVaultIdentityKept(
+  inputAssets: AssetsLike,
+  outputAssets: AssetsLike,
+): void {
+  const dropped = droppedUnits(inputAssets, outputAssets);
+  if (dropped.length > 0) {
+    throw new Error(
+      `INV-VAULT-IDENTITY: value ra của vault đánh rơi ${dropped.length} tài sản ` +
+      `(${dropped.join(", ")}). Vault-id NFT là one-shot, không đúc lại được, và mọi ` +
+      `nhánh spend đòi nó còn nguyên ở output — rơi là vault chết vĩnh viễn. ` +
+      `Dựng value ra bằng vaultOutValue(vaultUtxo.assets, {...}), đừng viết object mới.`,
+    );
+  }
+}

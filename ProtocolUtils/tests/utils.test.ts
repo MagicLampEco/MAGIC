@@ -7,7 +7,7 @@ import {
   isqrt, isqrt10th, verifyVd, vDampened, mulQ, clamp,
   cmpBigIntAsc, cmpBigIntDesc, Q,
   DRM_LOOKBACK,
-  vaultOutValue, droppedUnits,
+  vaultOutValue, droppedUnits, assertVaultIdentityKept,
 } from "../src/index.js";
 
 const MAGIC = Q;
@@ -319,5 +319,24 @@ describe("vaultOutValue — INV-VAULT-IDENTITY", () => {
     expect(LAMP in out).toBe(false);
     expect(out[NFT]).toBe(1n);                        // NFT vẫn ở lại
     expect(droppedUnits(vaultIn, out)).toEqual([LAMP]); // và báo đúng thứ đã rời
+  });
+
+  // Chốt lúc chạy. Nó im chừng nào builder còn dùng `vaultOutValue`; nó chỉ lên tiếng
+  // đúng lúc có người thay biểu thức value bằng object dựng mới — lần viết lại đã xảy
+  // ra hai lần trong kho này.
+  it("assertVaultIdentityKept im khi value ra dựng đúng cách", () => {
+    expect(() =>
+      assertVaultIdentityKept(vaultIn, vaultOutValue(vaultIn, { [LAMP]: 400_000n })),
+    ).not.toThrow();
+  });
+
+  it("assertVaultIdentityKept NÉM khi value ra dựng lại từ đầu", () => {
+    const saiCach = { lovelace: 5_000_000n, [LAMP]: 400_000n };
+    expect(() => assertVaultIdentityKept(vaultIn, saiCach)).toThrow(/INV-VAULT-IDENTITY/);
+  });
+
+  it("thông điệp lỗi gọi ĐÚNG TÊN đơn vị bị rơi, không nói chung chung", () => {
+    const saiCach = { lovelace: 5_000_000n, [LAMP]: 400_000n };
+    expect(() => assertVaultIdentityKept(vaultIn, saiCach)).toThrow(NFT);
   });
 });

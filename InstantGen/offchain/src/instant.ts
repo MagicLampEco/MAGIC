@@ -24,7 +24,7 @@ import {
   computeInstantGrant, getUmForInstant, isExpired,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
-import { getTipSlot, posixMsToEpoch, msPerEpoch, vaultOutValue, type Network } from "@magiclamp/protocol-utils";
+import { getTipSlot, posixMsToEpoch, msPerEpoch, vaultOutValue, assertVaultIdentityKept, type Network } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatum, UMDatum, BackingBeaconDatum, VaultRedeemer,
@@ -268,6 +268,14 @@ export async function buildInstantGenTx(
   // I-ACT-7: the vault output carries EXACTLY the LAMP it came in with.
   const lampOut = vaultDatum.lamp_balance - (params.tamperLampOutOil ?? 0n);
 
+  // Value ra của vault, tách thành CÂU LỆNH RIÊNG để chốt không biến mất cùng lần viết
+  // lại biểu thức value — đó chính là lần viết lại nó sinh ra để bắt.
+  const vaultOutAssets = vaultOutValue(vaultUtxo.assets, {
+    lovelace:  vaultLovelace,                // ADA stays on vault
+    [lampUnit]: lampOut,                     // LAMP stays on vault (I-ACT-7)
+  });
+  assertVaultIdentityKept(vaultUtxo.assets, vaultOutAssets);
+
   let txBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
@@ -279,12 +287,9 @@ export async function buildInstantGenTx(
       // 🔴 `vaultOutValue` bê nguyên value đầu vào rồi mới đè. Dựng lại object từ đầu
       // là làm rơi vault-id NFT (INV-VAULT-IDENTITY), và mọi nhánh spend đòi NFT còn
       // nguyên ở output — NFT one-shot nên rơi là vault chết vĩnh viễn, không phải một
-      // tx hỏng. Bản vá gốc `ca5870df` (tuanzoro2k, 11/8) bị lần trộn hội tụ đánh rơi;
-      // chốt nay nằm ở `ProtocolUtils` kèm test (`droppedUnits`).
-      vaultOutValue(vaultUtxo.assets, {
-        lovelace:  vaultLovelace,                // ADA stays on vault
-        [lampUnit]: lampOut,                     // LAMP stays on vault (I-ACT-7)
-      }),
+      // tx hỏng. Bản vá gốc `ca5870df` (tuanzoro2k, 11/8) bị lần trộn hội tụ đánh rơi.
+      // Chốt lúc chạy ở ngay trên (`assertVaultIdentityKept`).
+      vaultOutAssets,
     )
     .validFrom(lowerTime)
     .validTo(upperTime);

@@ -132,3 +132,23 @@ export {
   M_MAX_Q,
   Q as PRICING_Q,
 } from "@magiclamp/consumemagic-pricing";
+
+// ── Bên VAULT của một lần tiêu MAGIC ─────────────────────────────────────────
+// `buildConsumeTx` lo bên Engage + định giá, nhưng hai tham số thuộc về vault thì nó
+// đòi caller tự dựng: `vaultBurnRedeemerCbor` và `vaultOutDatumCbor`. Trước khi có
+// `burnBatch.ts`, chỗ duy nhất trong kho biết dựng chúng là một kịch bản test — nên
+// mọi app tích hợp phải tự đọc `VaultDatum` 17 trường và tự làm kế toán A02, mà sai
+// một trường là vault từ chối tx không nói trường nào. Đó là mảnh chặn thật giữa
+// "SDK xuất đủ tên ConsumeMAGIC" và "OriLife/AladinWork gọi được".
+export {
+  buildVaultBurnBatch,
+  planBurnBatch,
+  isBatchExpired,
+  applyPendingProfile,
+  type VaultModule,
+  type BuildVaultBurnBatchParams,
+  type BuildVaultBurnBatchResult,
+  type BurnBatchPlan,
+  type BurnEntry,
+  type MagicBatchLike,
+} from "./burnBatch.js";

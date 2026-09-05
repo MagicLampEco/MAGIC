@@ -10,33 +10,70 @@ export const OILDROP_PER_LAMP        = 1_000_000n;
 export const NANOGIC_PER_MAGIC   = 1_000_000_000n;
 export const S_LAMP_TOTAL        = 36_000_000_000_000_000n;  // 36×10^15 oildrop
 
-// `slots_per_epoch` is network-specific (used for slot-based epoch math and SDK display).
+// ── HAI ĐỒNG HỒ, ĐỘC LẬP NHAU — đừng suy bảng này ra bảng kia ─────────────────
+//
+// Bản trước gộp chúng làm một ("ms_per_epoch = slots_per_epoch × 1000") và câu đó
+// SAI cho Preprod: mạng Preprod thật chạy 432_000 slot/epoch (5 ngày), trong khi
+// bảng ms cố ý để 1 ngày. Gộp lại thì một trong hai bảng phải sai, và bảng sai đó
+// đội lốt số thật — không cổng nào bắt được, vì test đơn vị dùng chính hằng đó làm
+// chuẩn nên xanh cả trước lẫn sau. Nguồn phát hiện: nhà Phoenix, đo Blockfrost
+// `/epochs/latest` 2026-09-04 (Preprod epoch 311 dài 432 000 s).
+//
+// Từ nay hai bảng khai HAI thứ khác nhau và không được suy ra nhau:
+
+// (1) SỰ THẬT VỀ MẠNG. Tham số thật của Cardano, dùng khi phải diễn giải slot thật
+//     của chuỗi. KHÔNG bao giờ đi vào apply-param của validator nào.
 export const SLOTS_PER_EPOCH_BY_NETWORK = {
-  Preview:  86_400n,
-  Preprod:  86_400n,
-  Mainnet:  432_000n,
+  Preview:   86_400n,   // 1 ngày — đo được trên chuỗi
+  Preprod:  432_000n,   // 5 ngày — đo được trên chuỗi (VÁ 2026-09-05, trước ghi 86_400)
+  Mainnet:  432_000n,   // 5 ngày
 } as const;
 
-/** Slots-per-epoch for a given Cardano network. */
+/** Slots-per-epoch THẬT của mạng Cardano (không phải nhịp epoch của giao thức). */
 export function slotsPerEpoch(network: Network): bigint {
   return SLOTS_PER_EPOCH_BY_NETWORK[network];
 }
 
-// `ms_per_epoch` is what the Aiken validator's epoch-from-validity-range math uses,
-// because PlutusV3 validity_range carries POSIX milliseconds (not slots).
-// All current Cardano networks use slot_length = 1000 ms, so ms_per_epoch = slots_per_epoch × 1000.
+// (2) NHỊP ĐỒNG HỒ CỦA GIAO THỨC — apply-param #4 của mọi vault validator.
+//     Validator tính `epoch = posix_ms / ms_per_epoch` từ validity_range (PlutusV3
+//     mang POSIX ms, không mang slot). Phép chia đó KHÔNG trừ genesis, nên số epoch
+//     của giao thức chưa bao giờ là số epoch của Cardano và không thể trở thành nó:
+//     hôm nay Preprod chạy epoch Cardano 311 còn epoch giao thức ≈ 20 700. Cho nên
+//     chỉnh nhịp này cho khớp Preprod cũng KHÔNG làm hai số gặp nhau — nó chỉ đổi
+//     độ dài một epoch giao thức, và đổi apply-param ⟹ đổi script hash ⟹ giết mọi
+//     thứ đã deploy.
+//
+//     Preprod ở đây là 1 ngày, tức KHÁC nhịp mạng thật (5 ngày). Hệ quả thực tế là một
+//     đồng hồ nén 5×: một vòng decay / hết hạn / cửa sổ fire chạy hết trong một ngày.
+//
+//     ⚠ NHƯNG ĐỪNG GỌI ĐÓ LÀ THIẾT KẾ CHỪNG NÀO CHƯA CÓ AI GHI LẠI. Đã tìm trong
+//     `SPEC/`, `BOUNDARIES.md`, `DevStatus.md`, `ChangeLog.md` và `git log -S`: không
+//     có một quyết định nào chọn con số này. Bằng chứng hiện có nghiêng về phía TAI NẠN
+//     — commit `640690bf` sinh CẢ HAI bảng trong cùng một hunk, bảng ms suy ra từ bảng
+//     slots đang sai, và commit message không nhắc gì tới nén.
+//
+//     Giữ nguyên số thì có lý do vững, và lý do đó KHÔNG phải "vì cố ý": nó là
+//     apply-param của các script đang sống trên Preprod (`scripts/DEPLOYED.md` §Preprod),
+//     nên đổi là đổi script hash là giết chúng. Đó là lý do HOÃN SỬA, không phải bằng
+//     chứng CHỦ ĐÍCH — hai thứ khác nhau, và trộn chúng lại là biến một tai nạn thành
+//     "nguồn" cho người sau viện dẫn.
+//
+//     Việc còn nợ: một mục trong `DevStatus.md` chốt xem giữ nén 5× là chính sách hay
+//     là nợ phải trả trước mainnet. Trước khi có mục đó, đọc bảng này như "chưa quyết".
 export const MS_PER_EPOCH_BY_NETWORK = {
-  Preview:  86_400_000n,
-  Preprod:  86_400_000n,
-  Mainnet:  432_000_000n,
+  Preview:   86_400_000n,   // 1 ngày — trùng nhịp mạng Preview
+  Preprod:   86_400_000n,   // 1 ngày — KHÁC nhịp mạng (5 ngày); chưa có quyết định nào ghi lại
+  Mainnet:  432_000_000n,   // 5 ngày — trùng nhịp mainnet
 } as const;
 
-/** Milliseconds-per-epoch for a given Cardano network (used by validator + SDK). */
+/** Nhịp epoch của GIAO THỨC (ms). Đây là apply-param, đổi là đổi script hash. */
 export function msPerEpoch(network: Network): bigint {
   return MS_PER_EPOCH_BY_NETWORK[network];
 }
 
-/** POSIX ms → POSIX-derived epoch number (matches Aiken validator's get_current_epoch). */
+/** POSIX ms → epoch GIAO THỨC (khớp `get_current_epoch` của validator).
+ *  KHÔNG trừ genesis ⇒ giá trị trả về KHÔNG phải epoch Cardano, đừng đem so với
+ *  số epoch của Blockfrost hay của explorer. */
 export function posixMsToEpoch(posixMs: bigint, network: Network): bigint {
   return posixMs / msPerEpoch(network);
 }
@@ -74,9 +111,14 @@ export const GENESIS_UNIX: Record<"Preview" | "Preprod" | "Mainnet", number> = {
 
 export type Network = "Preview" | "Preprod" | "Mainnet";
 
-/** slot → epoch (integer division). Must pass the network because slots/epoch differs:
- *    Mainnet:        432_000
- *    Preview/Preprod: 86_400
+/** slot → epoch CARDANO (chia nguyên theo `SLOTS_PER_EPOCH_BY_NETWORK`).
+ *
+ *  ⚠ KHÔNG dùng hàm này để lấy epoch của GIAO THỨC — đó là `posixMsToEpoch`.
+ *  Hai hàm trả hai số khác hẳn nhau (đồng hồ giao thức không trừ genesis), và trộn
+ *  chúng vào cùng một datum là dựng một giao dịch validator không bao giờ nhận.
+ *  Chỗ gọi: `getCurrentEpoch` ngay dưới, và tái xuất qua `math.ts` của các module.
+ *  (Bản trước của dòng này viết "KHÔNG mã sống nào gọi hàm này" — sai, và cái sai đó
+ *   dán cảnh báo lên đúng hàm không ai gọi trong khi để `getCurrentEpoch` trần.)
  */
 export function slotToEpoch(slot: bigint, network: Network): bigint {
   return slot / slotsPerEpoch(network);
@@ -100,7 +142,20 @@ export async function getTipSlot(
   }
 }
 
-/** Get current epoch from a Lucid-compatible provider. */
+/** Epoch CARDANO hiện tại, đọc từ provider.
+ *
+ *  ⚠ ĐÂY KHÔNG PHẢI epoch của GIAO THỨC. Tên hàm nghe như thứ bạn cần, nhưng nó trả số
+ *  epoch của CHUỖI (có trừ genesis), còn mọi trường datum trong kho này — `acquired_epoch`,
+ *  `last_updated_epoch`, `created_epoch`, `commit_epoch` — mang epoch GIAO THỨC
+ *  (`posix_ms / ms_per_epoch`, KHÔNG trừ genesis). Hai số cách nhau rất xa: cùng một lúc
+ *  trên Preprod, hàm này trả ~311 còn epoch giao thức là ~20 700.
+ *
+ *  Nhét số của hàm này vào datum ⟹ validator từ chối, và triệu chứng là một tx fail
+ *  không kèm lời giải thích nào. Muốn epoch giao thức thì dùng `posixMsToEpoch(tipMs, network)`.
+ *
+ *  Dùng hàm này khi và chỉ khi bạn thật sự cần đối chiếu với epoch mà explorer/Blockfrost
+ *  hiển thị.
+ */
 export async function getCurrentEpoch(
   lucid   : { provider: unknown },
   network : Network = "Preview",

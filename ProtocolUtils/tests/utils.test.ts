@@ -7,6 +7,7 @@ import {
   isqrt, isqrt10th, verifyVd, vDampened, mulQ, clamp,
   cmpBigIntAsc, cmpBigIntDesc, Q,
   DRM_LOOKBACK,
+  msPerEpoch, slotsPerEpoch, posixMsToEpoch,
   vaultOutValue, droppedUnits, assertVaultIdentityKept, sortAiken,
 } from "../src/index.js";
 
@@ -26,8 +27,33 @@ describe("Epoch utilities", () => {
     expect(slotToEpoch(172_799n, "Preview")).toBe(1n);
     expect(slotToEpoch(172_800n, "Preview")).toBe(2n);
   });
-  it("slotToEpoch Preprod: 86_400 slots = 1 epoch", () => {
-    expect(slotToEpoch(86_400n, "Preprod")).toBe(1n);
+  it("slotToEpoch Preprod: 432_000 slots = 1 epoch (mạng thật 5 ngày)", () => {
+    // VÁ 2026-09-05: bản trước ghim 86_400 và đó là số SAI về mạng — Preprod chạy
+    // 5 ngày/epoch, đo Blockfrost `/epochs/latest` (epoch 311 dài 432 000 s).
+    expect(slotToEpoch(432_000n, "Preprod")).toBe(1n);
+    expect(slotToEpoch(863_999n, "Preprod")).toBe(1n);
+    expect(slotToEpoch(864_000n, "Preprod")).toBe(2n);
+  });
+
+  // ── Hai đồng hồ phải ở lại HAI đồng hồ ────────────────────────────────────
+  // Chốt này tồn tại vì lần hỏng trước không có gì bắt được: bảng ms bị suy ra từ
+  // bảng slot bằng một câu bình luận, nên một trong hai phải sai mà test vẫn xanh
+  // (test dùng chính hằng sai đó làm chuẩn).
+  it("Preprod: nhịp giao thức KHÁC nhịp mạng — nén 5×, chưa có quyết định ghi lại", () => {
+    expect(msPerEpoch("Preprod")).toBe(86_400_000n);          // 1 ngày — nén 5× so với mạng
+    expect(slotsPerEpoch("Preprod")).toBe(432_000n);          // 5 ngày, mạng thật
+    expect(slotsPerEpoch("Preprod") * 1_000n).not.toBe(msPerEpoch("Preprod"));
+  });
+  it("Preview/Mainnet: hai nhịp trùng nhau — nên chốt trên phải chỉ đúng Preprod", () => {
+    for (const n of ["Preview", "Mainnet"] as const) {
+      expect(slotsPerEpoch(n) * 1_000n).toBe(msPerEpoch(n));
+    }
+  });
+  it("epoch giao thức KHÔNG phải epoch Cardano (không trừ genesis)", () => {
+    // 2026-09-04, Preprod: epoch Cardano = 311; epoch giao thức cùng lúc ≈ 20 700.
+    const tipMs = 1_788_393_600_000n;                          // start epoch 311
+    expect(posixMsToEpoch(tipMs, "Preprod")).toBe(20_699n);
+    expect(posixMsToEpoch(tipMs, "Preprod")).not.toBe(311n);
   });
   it("lampToOildrop: 1 LAMP = 10^6 oildrop", () => {
     expect(lampToOildrop(1n)).toBe(1_000_000n);

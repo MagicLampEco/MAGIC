@@ -72,13 +72,27 @@ export const ADDRESSES = {
 };
 
 // ── Protocol constants ───────────────────────────────────────
-// SLOTS_PER_EPOCH is network-specific — derived from NETWORK env at runtime.
-// Mainnet=432_000, Preview/Preprod=86_400 (1 day).
+//
+// 🔴 HAI ĐỒNG HỒ, KHÔNG SUY RA NHAU. Đừng "sửa" cái này cho khớp cái kia.
+//
+//   SLOTS_PER_EPOCH — nhịp THẬT của chuỗi Cardano (Preview 86_400 / Preprod 432_000 /
+//                     Mainnet 432_000). Chỉ dùng khi phải diễn giải slot thật.
+//                     KHÔNG đi vào apply-param của validator nào.
+//   MS_PER_EPOCH    — nhịp của GIAO THỨC, và là apply-param #4 của mọi vault validator
+//                     (xem `deployParams.ts`). Preprod cố tình KHÁC nhịp mạng.
+//
+// Công thức `ms_per_epoch = slots_per_epoch × 1000` từng đứng ở đúng dòng này và nó
+// SAI: nó đúng cho Preview và Mainnet, sai cho Preprod. Ai áp lại công thức đó rồi
+// chỉnh `MS_PER_EPOCH_BY_NETWORK` cho "khớp" sẽ đổi apply-param ⟹ đổi script hash ⟹
+// đổi địa chỉ vault ⟹ mọi thứ đang sống trên Preprod (`scripts/DEPLOYED.md` §Preprod:
+// vault `94c0c8b2…`, UM `c81d0a41…`) thành mồ côi, không ai spend được nữa.
+// Nguồn duy nhất của hai bảng: `ProtocolUtils/src/index.ts` — đọc ghi chú ở đó trước
+// khi đụng bất cứ con số nào.
 export const PROTOCOL = {
   SHARD_COUNT,                            // ← ScheduleGen/offchain/src/constants.ts
   SHARD_CAP,                              // ← nt. (4.5×10^14 oildrop = 450M LAMP)
-  SLOTS_PER_EPOCH: slotsPerEpoch(NETWORK),
-  MS_PER_EPOCH:    msPerEpoch(NETWORK),    // = slots_per_epoch × 1000 (slot_length 1s)
+  SLOTS_PER_EPOCH: slotsPerEpoch(NETWORK), // nhịp chuỗi — hiện KHÔNG call site nào
+  MS_PER_EPOCH:    msPerEpoch(NETWORK),    // nhịp giao thức — apply-param, 26 call site
   Q:               1_000_000_000n,
 };
 

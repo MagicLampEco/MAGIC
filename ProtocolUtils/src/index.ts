@@ -180,6 +180,63 @@ export interface LoyaltyHolding {
   is_locked      : boolean;
 }
 
+
+// ══════════════════════════════════════════════════════════════
+// sortAiken — P8: `list.sort` của Aiken KHÔNG ổn định
+// ══════════════════════════════════════════════════════════════
+//
+// 🔴 Đây là chỗ P8 vỡ mà không phép kiểm nào bắt được, và nó vỡ ở đúng trạng thái mà
+// giao thức TỰ SINH RA.
+//
+// `Array.prototype.sort` của JS ổn định từ ES2019: hai phần tử so ra `0` giữ nguyên thứ
+// tự. `list.sort` của stdlib Aiken thì ĐẢO chúng. Nguồn — `aiken-lang-stdlib`
+// (`lib/aiken/collection/list.ak`, bản ghim ở mọi `aiken.toml` của kho này):
+//
+//     sort([x, ..xs], cmp)   = insert(sort(xs, cmp), x, cmp)
+//     insert([x, ..xs], e)   = if cmp(e, x) == Less { [e, ..self] }
+//                              else { [x, ..insert(xs, e)] }
+//
+// Nó sắp phần ĐUÔI trước rồi chèn phần ĐẦU vào; `Equal` rơi vào nhánh `else` nên phần
+// tử đứng trước bị đẩy ra sau. Với hai phần tử hoà, kết quả là danh sách ĐẢO.
+//
+// Đo thật (2026-09-05, `aiken check` trên bản sao ScheduleGen, đầu vào
+// `[(100, ep10, F), (50, ep10, F)]`):
+//
+//     remove_newest_first(…, 30)   Aiken [(20,F),(100,F)]     TS cũ [(70,F),(50,F)]
+//     select_lamp_for_lock(…, 20)  Aiken [(20,T),(30,F),(100,F)]  TS cũ [(20,T),(80,F),(50,F)]
+//
+// Validator so danh sách BẰNG NHAU TUYỆT ĐỐI (`ScheduleGen/onchain/validators/vault.ak:353`,
+// `InstantGen/onchain/validators/vault.ak:822`), nên mỗi lệch là một tx bị chuỗi từ chối.
+//
+// Vì sao nó không phải ca hiếm: comparator chỉ khoá theo `acquired_epoch`, và
+// `select_lamp_for_lock` khi khoá MỘT PHẦN sẽ tách một holding thành HAI holding cùng
+// `acquired_epoch` (`lock.ak:34-38`). Nghĩa là lần khoá đầu tiên tự tạo ra thế hoà, và
+// mọi thao tác sau đó trên vault đó đi vào đúng ca lệch.
+//
+// Sửa ở phía TS chứ không phía Aiken là CÓ CHỦ ĐÍCH: đổi `lock.ak` là đổi bytes ⟹ đổi
+// script hash ⟹ đổi địa chỉ vault ⟹ mọi vault đang sống mồ côi. On-chain là trọng tài,
+// nên bản mô phỏng phải chạy theo nó.
+//
+// Đây là bản soi gương ĐÚNG THUẬT TOÁN, không phải một mẹo "đảo phần tử hoà". Viết theo
+// thuật toán thì nó còn đúng ở những ca mà một phép đảo hậu-kỳ sai — ví dụ ba phần tử
+// hoà trở lên, hoặc các cụm hoà xen kẽ cụm không hoà.
+
+function insertAiken<T>(self: readonly T[], e: T, cmp: (a: T, b: T) => number): T[] {
+  if (self.length === 0) return [e];
+  const [x, ...xs] = self;
+  return cmp(e, x) < 0 ? [e, ...self] : [x, ...insertAiken(xs, e, cmp)];
+}
+
+/**
+ * `list.sort` của Aiken, mô phỏng đúng thuật toán. Dùng THAY CHO `Array.sort` ở mọi chỗ
+ * kết quả phải trùng bit với một hàm Aiken (P8). Không đột biến mảng vào.
+ */
+export function sortAiken<T>(xs: readonly T[], cmp: (a: T, b: T) => number): T[] {
+  if (xs.length === 0) return [];
+  const [head, ...tail] = xs;
+  return insertAiken(sortAiken(tail, cmp), head, cmp);
+}
+
 /** §6.8 Youngest-first lock (T5) — maximises LF of free holdings.
  *  Lock youngest holdings first → free = oldest → LF(free) highest.
  *  Pure function: returns new array, does not mutate input.
@@ -188,8 +245,9 @@ export function selectLampForLock(
   holdings : LoyaltyHolding[],
   amount   : bigint,
 ): LoyaltyHolding[] {
-  // Sort youngest-first (desc acquired_epoch) — BigInt-safe comparator
-  const sorted = [...holdings].sort((a, b) => cmpBigIntDesc(a.acquired_epoch, b.acquired_epoch));
+  // Sort youngest-first (desc acquired_epoch). `sortAiken`, KHÔNG `Array.sort` —
+  // xem chú thích ở `sortAiken`: hai holding cùng `acquired_epoch` ra thứ tự khác nhau.
+  const sorted = sortAiken(holdings, (a, b) => cmpBigIntDesc(a.acquired_epoch, b.acquired_epoch));
   let remaining = amount;
   const result: LoyaltyHolding[] = [];
 
@@ -226,8 +284,8 @@ export function unlockLockedAmount(
   amount   : bigint,
 ): LoyaltyHolding[] {
   const unlocked = holdings.filter(h => !h.is_locked);
-  const locked   = holdings.filter(h =>  h.is_locked)
-    .sort((a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));  // oldest first
+  const locked   = sortAiken(holdings.filter(h => h.is_locked),        // oldest first
+    (a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));       // P8: xem sortAiken
 
   let remaining = amount;
   const freed:       LoyaltyHolding[] = [];
@@ -284,8 +342,8 @@ export function removeLockedAmount(
   amount   : bigint,
 ): LoyaltyHolding[] {
   const unlocked = holdings.filter(h => !h.is_locked);
-  const locked   = holdings.filter(h =>  h.is_locked)
-    .sort((a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));  // oldest first
+  const locked   = sortAiken(holdings.filter(h => h.is_locked),        // oldest first
+    (a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch));       // P8: xem sortAiken
 
   let remaining = amount;
   const result: LoyaltyHolding[] = [];
@@ -422,4 +480,89 @@ export function vDampened(V: bigint): bigint {
 export function mulQ(a: bigint, b: bigint): bigint { return a * b / Q; }
 export function clamp(x: bigint, lo: bigint, hi: bigint): bigint {
   return x < lo ? lo : x > hi ? hi : x;
+}
+
+// ── INV-VAULT-IDENTITY: dựng value output của vault ──────────────────────────────
+//
+// Mọi nhánh spend của mọi vault đòi vault-id NFT còn nguyên ở output
+// (`validate_vault_value`, ví dụ `ScheduleGen/onchain/validators/vault.ak:866-872`).
+// NFT là one-shot, sinh cùng lúc với vault, không đúc lại được.
+//
+// 🔴 LỖI ĐÃ XẢY RA THẬT, HAI LẦN, VÀ IM LẶNG CẢ HAI LẦN. Cách viết
+//
+//     { lovelace: L, [lampUnit]: X }        // ✗ dựng lại từ đầu
+//
+// bỏ mất mọi tài sản khác đang nằm trên vault — trong đó có NFT danh tính. Không lỗi
+// biên dịch, không test đỏ; chuỗi từ chối tx và thông điệp không nói NFT. `ca5870df`
+// (tuanzoro2k, 11/8) vá đúng chỗ này, lần trộn hội tụ đánh rơi bản vá, và đường
+// ScheduleFire nằm gãy từ đó tới 3/9 — đúng khoảng thời gian mà `DEPLOYED.md` ghi là
+// "fire chưa bao giờ thành công trên chuỗi".
+//
+// Dùng hàm này thay vì viết object bằng tay. Nó ở ProtocolUtils vì cả bốn module vault
+// cần cùng một bất biến, và một bất biến thì giữ ở một chỗ.
+
+/** Tập tài sản tối thiểu mà lucid nhận cho một output. */
+export type AssetsLike = Record<string, bigint>;
+
+/**
+ * Value cho output tiếp-nối của vault: bê NGUYÊN value đầu vào, chỉ đè các đơn vị được
+ * nêu. Tài sản không nêu — vault-id NFT trước hết — đi qua nguyên vẹn.
+ *
+ * @param inputAssets value của UTxO vault đang tiêu (`vaultUtxo.assets`).
+ * @param overrides   các đơn vị cần đặt lại, ví dụ `{ lovelace, [lampUnit]: newBalance }`.
+ *                    Đặt một đơn vị về `0n` là XOÁ nó khỏi output (lucid không nhận
+ *                    số lượng 0) — dùng khi thật sự muốn tài sản đó rời vault.
+ */
+export function vaultOutValue(
+  inputAssets: AssetsLike,
+  overrides:   AssetsLike,
+): AssetsLike {
+  const out: AssetsLike = { ...inputAssets, ...overrides };
+  for (const [unit, qty] of Object.entries(out)) {
+    if (qty === 0n) delete out[unit];
+  }
+  return out;
+}
+
+/**
+ * Đếm số tài sản KHÔNG phải lovelace bị đánh rơi giữa value vào và value ra. Dùng cho
+ * test và cho chốt lúc chạy: > 0 nghĩa là có thứ gì đó rời vault, và nếu đó là NFT danh
+ * tính thì mọi nhánh spend về sau đều bị từ chối.
+ */
+export function droppedUnits(
+  inputAssets: AssetsLike,
+  outputAssets: AssetsLike,
+): string[] {
+  return Object.keys(inputAssets)
+    .filter(u => u !== "lovelace")
+    .filter(u => (inputAssets[u] ?? 0n) > 0n)
+    .filter(u => (outputAssets[u] ?? 0n) === 0n);
+}
+
+/**
+ * Chốt lúc chạy: value sắp trả về vault KHÔNG được đánh rơi tài sản nào của value vào.
+ *
+ * ⚠ Đọc kỹ trước khi ai đó gỡ nó vì "thừa": nó ĐÚNG LÀ thừa chừng nào chỗ gọi còn dùng
+ * `vaultOutValue` — hàm đó bê nguyên value vào nên không thể đánh rơi gì. Nó tồn tại cho
+ * đúng một tình huống, và tình huống đó đã xảy ra HAI LẦN: có người thay biểu thức value
+ * bằng một object dựng mới (`{ lovelace, [lampUnit] }`). Lúc đó `vaultOutValue` biến mất
+ * khỏi dòng đó, còn dòng này ở lại — và nó đổi lỗi từ "chuỗi từ chối tx với thông điệp
+ * không nhắc NFT" thành "builder ném lỗi gọi đúng tên thứ bị rơi".
+ *
+ * Đặt nó thành CÂU LỆNH RIÊNG, đừng gộp vào biểu thức truyền cho `.pay` — gộp lại là nó
+ * biến mất cùng lần viết lại mà nó sinh ra để bắt.
+ */
+export function assertVaultIdentityKept(
+  inputAssets: AssetsLike,
+  outputAssets: AssetsLike,
+): void {
+  const dropped = droppedUnits(inputAssets, outputAssets);
+  if (dropped.length > 0) {
+    throw new Error(
+      `INV-VAULT-IDENTITY: value ra của vault đánh rơi ${dropped.length} tài sản ` +
+      `(${dropped.join(", ")}). Vault-id NFT là one-shot, không đúc lại được, và mọi ` +
+      `nhánh spend đòi nó còn nguyên ở output — rơi là vault chết vĩnh viễn. ` +
+      `Dựng value ra bằng vaultOutValue(vaultUtxo.assets, {...}), đừng viết object mới.`,
+    );
+  }
 }

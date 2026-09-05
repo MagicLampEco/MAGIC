@@ -13,6 +13,7 @@ import {
   MIN_DRAW_CARPDROP,
   MIN_LOCK_CARPDROP,
   NANOGIC_PER_MAGIC,
+  CARPDROP_PER_CARP,
   PAR_SCALE,
   PREPAID_DECAY_WINDOW,
 } from "../offchain/src/constants.js";
@@ -136,7 +137,10 @@ describe("par 1:1 (C-PP-1)", () => {
   );
 
   it("PAR_SCALE dẫn xuất từ hai thang decimals, không phải số ma thuật", () => {
-    expect(NANOGIC_PER_MAGIC / 1_000_000n).toBe(PAR_SCALE);
+    // Ghim theo HẰNG, không theo literal: bản trước viết `/ 1_000_000n` nên khi
+    // CARP đổi sang 9 chữ số thì chốt này vẫn xanh trong lúc nó đã sai.
+    expect(NANOGIC_PER_MAGIC / CARPDROP_PER_CARP).toBe(PAR_SCALE);
+    expect(PAR_SCALE).toBe(1n);   // CARP và MAGIC cùng 9 chữ số ⇒ par đồng nhất
   });
 
   it("chiều CARP→MAGIC không mất số dư với mọi giá trị thử", () => {
@@ -145,9 +149,15 @@ describe("par 1:1 (C-PP-1)", () => {
     }
   });
 
-  it("chiều MAGIC→CARP làm tròn XUỐNG (lệch về phía an toàn cho quỹ)", () => {
-    expect(parCarpFromMagic(999n)).toBe(0n);
-    expect(parCarpFromMagic(1_999n)).toBe(1n);
+  it("chiều MAGIC→CARP KHÔNG còn cắt phần dư — par_scale = 1", () => {
+    // Bản trước ghim `999n → 0n` và `1_999n → 1n`: đó là hành vi của par_scale
+    // = 1_000. Với CARP 9 chữ số thì hai thang bằng nhau, phép chia sàn không
+    // cắt gì, nên lập luận "sàn lệch về phía an toàn cho quỹ" hết chỗ dựa —
+    // quỹ khớp đúng bằng số. Ghim đúng hành vi hiện tại, không giữ một chốt
+    // mô tả cơ chế đã biến mất.
+    expect(parCarpFromMagic(999n)).toBe(999n);
+    expect(parCarpFromMagic(1_999n)).toBe(1_999n);
+    expect(parCarpFromMagic(parMagicFromCarp(7n))).toBe(7n);
   });
 
   it("từ chối số âm thay vì để BigInt cắt-về-0 lệch với ⌊⌋ của Aiken", () => {
@@ -166,11 +176,14 @@ describe("C-OVERFLOW — BigInt tuyệt đối", () => {
     // Thang nanogic vượt khỏi vùng số nguyên an toàn của double.
     expect(Number.isSafeInteger(Number(TV_PP_OVERFLOW.nanogic))).toBe(false);
 
-    // Ví dụ cụ thể mất số lẻ: 4_500_000_000_000_001 carpdrop.
-    const lossy = 4_500_000_000_000_001n;
-    expect(parMagicFromCarp(lossy)).toBe(4_500_000_000_000_001_000n);
+    // par_scale = 1 nên phép quy đổi là ĐỒNG NHẤT — không còn phép nhân thang
+    // nào để làm mất số lẻ. Cái vẫn mất được là bước đi VÒNG qua `Number`, và
+    // đó đúng là thứ vector này canh: giá trị dưới đây không biểu diễn được
+    // chính xác bằng double, nên chuyển sang Number rồi quay lại là đã sai.
+    const lossy = 36_000_000_000_000_000_001n;
+    expect(parMagicFromCarp(lossy)).toBe(lossy);
     const viaNumber = BigInt(Number(lossy) * Number(PAR_SCALE));
-    expect(viaNumber).not.toBe(4_500_000_000_000_001_000n);
+    expect(viaNumber).not.toBe(lossy);
   });
 });
 
@@ -193,7 +206,7 @@ describe("sàn đệm buffer-Paid (C-PP-6 / F2)", () => {
   });
 
   it("trần F2 thô: claim ≤ ⌊magic_settled / par_scale⌋ − đã rút", () => {
-    expect(claimCeiling(6_000_000_000n, 1_000_000n)).toBe(5_000_000n);
+    expect(claimCeiling(6_000_000_000n, 1_000_000_000n)).toBe(5_000_000_000n);
   });
 });
 
@@ -248,7 +261,7 @@ describe("TV-PP-EXPIRE — hết hạn trả lại hạn-mức, không trả l�
   it("phần MAGIC không tiêu hết chuyển ngược thành hạn-mức ở epoch sau", () => {
     const v0: PrepaidVaultDatum = {
       ...vault(),
-      prepaid_credits: creditsAfterLock([], FUND_ID, 1_000_000_000n, EPOCH),
+      prepaid_credits: creditsAfterLock([], FUND_ID, 1_000_000_000_000n, EPOCH), // 1000 CARP
     };
     const v1 = drawMagic(v0, FUND_ID, TV_PP_EXPIRE.draw_carpdrop, EPOCH, OWN_REF);
     const bid = v1.magic_batches[0]!.batch_id;
@@ -365,22 +378,22 @@ describe("TẤN CÔNG — tiêu batch của epoch đã chết (C-PP-5)", () => {
 
 describe("TẤN CÔNG — rút CARP ra khỏi quỹ (C-PP-3, C-PP-6)", () => {
   it("rút quá phần MAGIC đã tiêu thật → từ chối (F2)", () => {
-    const f = fund(1_000_000n, 1_000_000n, 500_000_000n, 0n, 0n);
-    expect(() => fundAfterClaim(f, 600_000n, EPOCH)).toThrow(/C-PP-6/);
+    const f = fund(1_000_000_000n, 1_000_000_000n, 500_000_000n, 0n, 0n);
+    expect(() => fundAfterClaim(f, 600_000_000n, EPOCH)).toThrow(/C-PP-6/);
   });
 
   it("rút thêm 1 đơn vị quá sàn đệm → từ chối", () => {
-    const f = fund(1_000_000n, 1_000_000n, 500_000_000n);
-    expect(maxClaimable(f)).toBe(425_000n);
-    expect(fundAfterClaim(f, 425_000n, EPOCH).carp_locked).toBe(575_000n);
-    expect(() => fundAfterClaim(f, 425_001n, EPOCH)).toThrow(/C-PP-6/);
+    const f = fund(1_000_000_000n, 1_000_000_000n, 500_000_000n);
+    expect(maxClaimable(f)).toBe(425_000_000n);
+    expect(fundAfterClaim(f, 425_000_000n, EPOCH).carp_locked).toBe(575_000_000n);
+    expect(() => fundAfterClaim(f, 425_000_001n, EPOCH)).toThrow(/C-PP-6/);
   });
 
   it("quỹ tiêu hết thì rút được toàn bộ, và sổ vẫn cân", () => {
-    const f = fund(1_000_000n, 1_000_000n, 1_000_000_000n);
-    const after = fundAfterClaim(f, 1_000_000n, EPOCH);
+    const f = fund(1_000_000_000n, 1_000_000_000n, 1_000_000_000n);
+    const after = fundAfterClaim(f, 1_000_000_000n, EPOCH);
     expect(after.carp_locked).toBe(0n);
-    expect(after.provider_claimed).toBe(1_000_000n);
+    expect(after.provider_claimed).toBe(1_000_000_000n);
     assertFundInvariant(after);
   });
 
@@ -440,7 +453,7 @@ describe("TẤN CÔNG — dọn rác sai (PrunePrepaid)", () => {
     );
     const after = pruneExpired(v, EPOCH);
     expect(after.magic_batches.map((b) => b.batch_id)).toEqual(["b2"]);
-    expect(after.prepaid_credits[0]!.remaining).toBe(1_000_000n);
+    expect(after.prepaid_credits[0]!.remaining).toBe(1_000_000_000n);
   });
 });
 

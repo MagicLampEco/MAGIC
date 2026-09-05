@@ -980,7 +980,7 @@ fn t_tx_rd(
 // PrepaidLock
 // ══════════════════════════════════════════════════════════════
 
-const lock_amt: Int = 1_000_000   // 1 CARP
+const lock_amt: Int = 1_000_000_000   // 1 CARP (9 chu so)
 
 fn lock_tx(
   vin_d    : PrepaidVaultDatum,
@@ -1218,7 +1218,7 @@ test pp_lock_did_forged() fail {
 // PrepaidDraw
 // ══════════════════════════════════════════════════════════════
 
-const draw_amt: Int = 1_000_000              // 1 CARP
+const draw_amt: Int = 1_000_000_000          // 1 CARP (9 chu so)
 const draw_nanogic: Int = 1_000_000_000      // = 1 MAGIC (par chính xác)
 
 fn drawn_batch(index: Int) -> MagicBatch {
@@ -1242,14 +1242,14 @@ fn run_draw(datum: PrepaidVaultDatum, amount: Int, tx: Transaction) -> Bool {
 
 // happy: rút 1 CARP hạn-mức → đúng 1 MAGIC, batch của epoch hiện tại.
 test pp_draw_ok() {
-  let din = t_vd([t_credit(t_fund_id, 5_000_000)], [])
+  let din = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
   let dout =
     PrepaidVaultDatum {
       ..din,
       prepaid_credits: [
         PrepaidCredit {
           fund_id: t_fund_id,
-          remaining: 4_000_000,
+          remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
         },
@@ -1263,7 +1263,7 @@ test pp_draw_ok() {
 
 // happy: delegate (Paymaster §7.6) rút hộ.
 test pp_draw_by_delegate_ok() {
-  let base = t_vd([t_credit(t_fund_id, 5_000_000)], [])
+  let base = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
   let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
   let dout =
     PrepaidVaultDatum {
@@ -1271,7 +1271,7 @@ test pp_draw_by_delegate_ok() {
       prepaid_credits: [
         PrepaidCredit {
           fund_id: t_fund_id,
-          remaining: 4_000_000,
+          remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
         },
@@ -1285,7 +1285,7 @@ test pp_draw_by_delegate_ok() {
 
 // TẤN CÔNG cốt lõi: sinh MAGIC mà KHÔNG có hạn-mức nào của quỹ đó.
 test pp_draw_without_credit() fail {
-  let din = t_vd([t_credit(t_other_fund, 5_000_000)], [])
+  let din = t_vd([t_credit(t_other_fund, 5_000_000_000)], [])
   let dout =
     PrepaidVaultDatum {
       ..din,
@@ -1298,7 +1298,7 @@ test pp_draw_without_credit() fail {
 
 // TẤN CÔNG: rút quá hạn-mức.
 test pp_draw_over_credit() fail {
-  let din = t_vd([t_credit(t_fund_id, 500_000)], [])
+  let din = t_vd([t_credit(t_fund_id, 500_000_000)], [])
   let dout =
     PrepaidVaultDatum {
       ..din,
@@ -1319,7 +1319,7 @@ test pp_draw_over_credit() fail {
 
 // TẤN CÔNG: rút đúng hạn-mức nhưng ghi MAGIC nhiều hơn par (bơm tỷ giá).
 test pp_draw_inflated_magic() fail {
-  let din = t_vd([t_credit(t_fund_id, 5_000_000)], [])
+  let din = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
   let inflated =
     MagicBatch { ..drawn_batch(0), current_amount: draw_nanogic * 10 }
   let dout =
@@ -1328,7 +1328,7 @@ test pp_draw_inflated_magic() fail {
       prepaid_credits: [
         PrepaidCredit {
           fund_id: t_fund_id,
-          remaining: 4_000_000,
+          remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
         },
@@ -1342,7 +1342,7 @@ test pp_draw_inflated_magic() fail {
 
 // TẤN CÔNG: gắn batch vào epoch tương lai để né cliff.
 test pp_draw_future_epoch() fail {
-  let din = t_vd([t_credit(t_fund_id, 5_000_000)], [])
+  let din = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
   let future = MagicBatch { ..drawn_batch(0), created_epoch: t_epoch + 5 }
   let dout =
     PrepaidVaultDatum {
@@ -1350,7 +1350,7 @@ test pp_draw_future_epoch() fail {
       prepaid_credits: [
         PrepaidCredit {
           fund_id: t_fund_id,
-          remaining: 4_000_000,
+          remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
         },
@@ -1364,7 +1364,7 @@ test pp_draw_future_epoch() fail {
 
 // TẤN CÔNG: đặt decay_window > 1 để MAGIC sống qua epoch.
 test pp_draw_decay_window_forged() fail {
-  let din = t_vd([t_credit(t_fund_id, 5_000_000)], [])
+  let din = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
   let forged = MagicBatch { ..drawn_batch(0), decay_window: 12 }
   let dout =
     PrepaidVaultDatum {
@@ -1372,7 +1372,7 @@ test pp_draw_decay_window_forged() fail {
       prepaid_credits: [
         PrepaidCredit {
           fund_id: t_fund_id,
-          remaining: 4_000_000,
+          remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
         },
@@ -1386,14 +1386,14 @@ test pp_draw_decay_window_forged() fail {
 
 // TẤN CÔNG: người lạ rút hạn-mức của người khác.
 test pp_draw_no_auth() fail {
-  let din = t_vd([t_credit(t_fund_id, 5_000_000)], [])
+  let din = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
   let dout =
     PrepaidVaultDatum {
       ..din,
       prepaid_credits: [
         PrepaidCredit {
           fund_id: t_fund_id,
-          remaining: 4_000_000,
+          remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
         },
@@ -1407,7 +1407,7 @@ test pp_draw_no_auth() fail {
 
 // TẤN CÔNG: rút dưới sàn (spam batch rác).
 test pp_draw_below_min() fail {
-  let din = t_vd([t_credit(t_fund_id, 5_000_000)], [])
+  let din = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
   let tiny = MagicBatch { ..drawn_batch(0), current_amount: 999_000 }
   let dout =
     PrepaidVaultDatum {
@@ -1429,14 +1429,14 @@ test pp_draw_below_min() fail {
 
 // TẤN CÔNG: gửi CARP vào chính vault (giá trị không được kế toán).
 test pp_draw_vault_holds_carp() fail {
-  let din = t_vd([t_credit(t_fund_id, 5_000_000)], [])
+  let din = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
   let dout =
     PrepaidVaultDatum {
       ..din,
       prepaid_credits: [
         PrepaidCredit {
           fund_id: t_fund_id,
-          remaining: 4_000_000,
+          remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
         },
@@ -1608,7 +1608,7 @@ test pp_prune_ok() {
   let dout =
     PrepaidVaultDatum {
       ..din,
-      prepaid_credits: [t_credit(t_fund_id, 1_000_000)],
+      prepaid_credits: [t_credit(t_fund_id, 1_000_000_000)],
       magic_batches: [t_batch(#"b2", 500_000_000, t_epoch, t_fund_id)],
       last_updated_epoch: t_epoch,
     }
@@ -1929,123 +1929,123 @@ fn claim_tx(
 
 // happy: quỹ đã tiêu hết → provider rút toàn bộ (outstanding = 0 ⇒ đệm = 0).
 test pp_fund_claim_full_ok() {
-  let fin = t_fd(1_000_000, 1_000_000, 1_000_000_000, 0, 1_500)
-  let fout = t_fd(0, 1_000_000, 1_000_000_000, 1_000_000, 1_500)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 1_500)
+  let fout = t_fd(0, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_500)
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 0, [t_platform]),
-    FundClaim { amount_carpdrop: 1_000_000 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 0, [t_platform]),
+    FundClaim { amount_carpdrop: 1_000_000_000 },
   )
 }
 
-// happy: mới tiêu một nửa → rút tối đa 425_000 (giữ đệm 15% trên 500_000).
+// happy: mới tiêu một nửa → rút tối đa 425_000_000 (giữ đệm 15% trên 500_000_000).
 test pp_fund_claim_partial_ok() {
-  let fin = t_fd(1_000_000, 1_000_000, 500_000_000, 0, 1_500)
-  let fout = t_fd(575_000, 1_000_000, 500_000_000, 425_000, 1_500)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 500_000_000, 0, 1_500)
+  let fout = t_fd(575_000_000, 1_000_000_000, 500_000_000, 425_000_000, 1_500)
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 575_000, [t_platform]),
-    FundClaim { amount_carpdrop: 425_000 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 575_000_000, [t_platform]),
+    FundClaim { amount_carpdrop: 425_000_000 },
   )
 }
 
 // TẤN CÔNG: rút thêm 1 đơn vị nữa → phá sàn đệm buffer-Paid.
 test pp_fund_claim_breaks_buffer() fail {
-  let fin = t_fd(1_000_000, 1_000_000, 500_000_000, 0, 1_500)
-  let fout = t_fd(574_999, 1_000_000, 500_000_000, 425_001, 1_500)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 500_000_000, 0, 1_500)
+  let fout = t_fd(574_999_999, 1_000_000_000, 500_000_000, 425_000_001, 1_500)
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 574_999, [t_platform]),
-    FundClaim { amount_carpdrop: 425_001 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 574_999_999, [t_platform]),
+    FundClaim { amount_carpdrop: 425_000_001 },
   )
 }
 
 // TẤN CÔNG: rút quá phần MAGIC đã tiêu thật (F2), đệm để 0 để cô lập luật này.
 test pp_fund_claim_over_settled() fail {
-  let fin = t_fd(1_000_000, 1_000_000, 500_000_000, 0, 0)
-  let fout = t_fd(400_000, 1_000_000, 500_000_000, 600_000, 0)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 500_000_000, 0, 0)
+  let fout = t_fd(400_000_000, 1_000_000_000, 500_000_000, 600_000_000, 0)
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 400_000, [t_platform]),
-    FundClaim { amount_carpdrop: 600_000 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 400_000_000, [t_platform]),
+    FundClaim { amount_carpdrop: 600_000_000 },
   )
 }
 
 // TẤN CÔNG: kẻ lạ rút quỹ (khoá platform không có).
 test pp_fund_claim_no_platform_sig() fail {
-  let fin = t_fd(1_000_000, 1_000_000, 1_000_000_000, 0, 1_500)
-  let fout = t_fd(0, 1_000_000, 1_000_000_000, 1_000_000, 1_500)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 1_500)
+  let fout = t_fd(0, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_500)
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 0, [t_stranger]),
-    FundClaim { amount_carpdrop: 1_000_000 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 0, [t_stranger]),
+    FundClaim { amount_carpdrop: 1_000_000_000 },
   )
 }
 
 // TẤN CÔNG: rút CARP mà không ghi provider_claimed (phá C-PP-3).
 test pp_fund_claim_unrecorded() fail {
-  let fin = t_fd(1_000_000, 1_000_000, 1_000_000_000, 0, 1_500)
-  let fout = t_fd(0, 1_000_000, 1_000_000_000, 0, 1_500)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 1_500)
+  let fout = t_fd(0, 1_000_000_000, 1_000_000_000, 0, 1_500)
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 0, [t_platform]),
-    FundClaim { amount_carpdrop: 1_000_000 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 0, [t_platform]),
+    FundClaim { amount_carpdrop: 1_000_000_000 },
   )
 }
 
 // TẤN CÔNG: hạ buffer_bps để mở đường rút (tham số bất biến).
 test pp_fund_buffer_lowered() fail {
-  let fin = t_fd(1_000_000, 1_000_000, 500_000_000, 0, 1_500)
-  let fout = t_fd(500_000, 1_000_000, 500_000_000, 500_000, 0)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 500_000_000, 0, 1_500)
+  let fout = t_fd(500_000_000, 1_000_000_000, 500_000_000, 500_000_000, 0)
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 500_000, [t_platform]),
-    FundClaim { amount_carpdrop: 500_000 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 500_000_000, [t_platform]),
+    FundClaim { amount_carpdrop: 500_000_000 },
   )
 }
 
 // TẤN CÔNG: đổi platform (chiếm quyền đòi của quỹ).
 test pp_fund_platform_changed() fail {
-  let fin = t_fd(1_000_000, 1_000_000, 1_000_000_000, 0, 1_500)
-  let base = t_fd(0, 1_000_000, 1_000_000_000, 1_000_000, 1_500)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 1_500)
+  let base = t_fd(0, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_500)
   let fout = PaidFundDatum { ..base, platform: t_stranger }
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 0, [t_platform]),
-    FundClaim { amount_carpdrop: 1_000_000 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 0, [t_platform]),
+    FundClaim { amount_carpdrop: 1_000_000_000 },
   )
 }
 
 // TẤN CÔNG: đổi vault_hash để sau này quyết toán bằng vault giả.
 test pp_fund_vault_hash_changed() fail {
-  let fin = t_fd(1_000_000, 1_000_000, 1_000_000_000, 0, 1_500)
-  let base = t_fd(0, 1_000_000, 1_000_000_000, 1_000_000, 1_500)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 1_500)
+  let base = t_fd(0, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_500)
   let fout = PaidFundDatum { ..base, vault_hash: t_evil_hash }
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 0, [t_platform]),
-    FundClaim { amount_carpdrop: 1_000_000 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 0, [t_platform]),
+    FundClaim { amount_carpdrop: 1_000_000_000 },
   )
 }
 
 // TẤN CÔNG: mang NFT quỹ (và trạng thái quỹ) ra khỏi địa chỉ quỹ.
 test pp_fund_nft_escapes() fail {
-  let fin = t_fd(1_000_000, 1_000_000, 1_000_000_000, 0, 1_500)
-  let fout = t_fd(0, 1_000_000, 1_000_000_000, 1_000_000, 1_500)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 1_500)
+  let fout = t_fd(0, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_500)
   let evil = address.from_script(t_evil_hash)
   let tx =
-    t_tx([t_fund_in(fin, 1_000_000)], [t_fund_out_at(fout, 0, evil)], [t_platform])
-  run_fund(fin, 1_000_000, tx, FundClaim { amount_carpdrop: 1_000_000 })
+    t_tx([t_fund_in(fin, 1_000_000_000)], [t_fund_out_at(fout, 0, evil)], [t_platform])
+  run_fund(fin, 1_000_000_000, tx, FundClaim { amount_carpdrop: 1_000_000_000 })
 }
 
 // TẤN CÔNG: datum quỹ khai một đằng, CARP trong UTxO một nẻo.
 test pp_fund_value_mismatch() fail {
-  let fin = t_fd(1_000_000, 1_000_000, 1_000_000_000, 0, 1_500)
-  let fout = t_fd(0, 1_000_000, 1_000_000_000, 1_000_000, 1_500)
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 1_500)
+  let fout = t_fd(0, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_500)
   run_fund(
-    fin, 1_000_000,
-    claim_tx(fin, 1_000_000, fout, 900_000, [t_platform]),
-    FundClaim { amount_carpdrop: 1_000_000 },
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 900_000_000, [t_platform]),
+    FundClaim { amount_carpdrop: 1_000_000_000 },
   )
 }
 

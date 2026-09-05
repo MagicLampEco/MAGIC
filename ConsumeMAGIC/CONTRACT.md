@@ -43,6 +43,15 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   bên bán), và neo `file:line` tới chỗ mã thật đang đếm đại lượng đó. Mã 1–8 dưới đây **giữ
   nguyên nghĩa** — `Registry` đã dời sáu định nghĩa trùng số của mình xuống 13–18, vì luật gỡ
   trùng là *số đã nối vào mã chạy thì giữ, định nghĩa chưa nối vào đâu thì nhường*.
+
+  > ⚠️ **Hai lỗ trong chính đoạn trên, ghi ra để đừng ai tưởng đã xong.**
+  > (1) `Registry` chưa có địa chỉ ở đâu trong kho này — không repo, không URL, không quy
+  > trình. Đoạn này bắt người xin mã kèm neo `file:line`, mà bản thân nó không neo được
+  > `Registry`. (2) Sáu định nghĩa 13–18 **không được chép lại ở đây**, nên bảng này không
+  > tra ngược được: đọc xong vẫn không biết 13–18 là gì. Đến khi (1) có địa chỉ hoặc (2)
+  > được chép vào, coi hai câu trên là **ghi nhận một quyết định**, không phải một sổ dùng
+  > được. Cưỡng chế duy nhất về `op_type` trong mã vẫn chỉ là `sorted_strict_op_types`
+  > (không trùng TRONG MỘT bảng) — không có gì on-chain hay off-chain biết ai được cấp số nào.
   | op_type | tên | base_price MVP (nanogic) | cấp cho | ghi chú |
   |---|---|---|---|---|
   | 1 | `ảnh` | 10_000_000 (0.01 MAGIC) | (gốc) | khớp `OP_IMAGE` `pricing/src/price.ts` |
@@ -83,15 +92,30 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   > `pricing.ak`. Ràng buộc TẠM: giá hai mã đang bằng nhau, nên chọn nhầm mã **không** làm
   > lệch hoá đơn — nó chỉ làm lệch phân bổ thưởng ở bên tiêu thụ.
 
-  > ⚠️ **Đừng đọc `max_op_prices = 16` thành "sổ chỉ còn 8 ô".** Bản cũ của dòng này viết
-  > *"Còn 8/16 dòng"* và câu đó sai theo chiều nguy hiểm nhất với một quyển sổ: nó dẫn tới
-  > tiết kiệm số, rồi tái dùng số. Con số 16 ở
-  > [`pricing.ak:53`](onchain/lib/magiclamp/consume/pricing.ak:53) là trần **kích thước datum
-  > của MỘT bảng giá** — chú thích ngay trên nó ghi *"16 dòng ≈ 256 byte datum"*. Nó chặn số
-  > **dòng một platform khai được**, không chặn **giá trị** của `op_type`: `op_type` là `Int`
-  > thường và hàm tra là `list.find` tuyến tính
-  > ([`pricing.ak:100-101`](onchain/lib/magiclamp/consume/pricing.ak:100)), không có chặn trên.
-  > Sổ toàn hệ dài bao nhiêu cũng được.
+  > ⚠️ **`max_op_prices = 16` chặn SỐ DÒNG ĐỊNH GIÁ ĐỒNG THỜI, không chặn giá trị `op_type`.**
+  > Hai vế, đừng gộp:
+  >
+  > - **Cấp SỐ thì không có trần.** `op_type` là `Int` thường, tra bằng `list.find` tuyến tính
+  >   ([`pricing.ak#L100-L101`](onchain/lib/magiclamp/consume/pricing.ak#L100-L101)). Sổ
+  >   `op_type` toàn hệ dài bao nhiêu cũng được, và **không cần tiết kiệm số** — bản cũ của
+  >   dòng này viết *"Còn 8/16 dòng"* theo cách khiến người đọc dè sẻn rồi tái dùng số, đó
+  >   mới là cái sai cần gỡ.
+  > - **Định giá ĐỒNG THỜI thì có trần, và nó là 16.**
+  >   [`pricing.ak#L53`](onchain/lib/magiclamp/consume/pricing.ak#L53) — cưỡng chế ở
+  >   [`pricing.ak#L169`](onchain/lib/magiclamp/consume/pricing.ak#L169) và off-chain
+  >   PRICE-013. **Ràng buộc là EX-UNIT (MEM), không phải kích thước datum**: docstring
+  >   ngay trên hằng đo `n=16 → 940 K mem`, `n=32 → 3.05 M mem ⇒ LOẠI`, và nói thẳng
+  >   *"Ràng buộc BINDING là MEM, không phải CPU"*. Câu *"16 dòng ≈ 256 byte datum"* trong
+  >   cùng docstring kết thúc bằng *"**xa trần datum-size**"* — tức nó nói datum-size KHÔNG
+  >   phải ràng buộc, chứ không định nghĩa con số.
+  >
+  > Và 16 dòng đó là **ngân sách DÙNG CHUNG toàn hệ, không phải hạn mức mỗi platform**:
+  > beacon `PriceParam` là một UTxO singleton — [`consume.ak#L165`](onchain/validators/consume.ak#L165)
+  > ép mọi Engage input trong một tx phải cùng `price_ref`, và bảng genesis
+  > [`09_deploy_consume.ts`](../scripts/deploy/09_deploy_consume.ts) đặt chung mã của MAGIC
+  > lẫn OriLife. Nên khi đếm chỗ trống thì đếm cho cả hệ: sau khi sổ dưới lấy 13–18, tổng mã
+  > đã cấp là 14 ⇒ **còn 2 dòng** cho bảng dùng chung. Hết chỗ thì phải nâng `max_op_prices`
+  > (đo lại ex-unit) hoặc tách beacon, không phải im lặng chen thêm dòng.
 
   > 🔴 **`op_type=7` đang bị định giá SAI về nguyên tắc, và MAGIC ghi nhận điều đó.**
   > `price_of`/`required_for` (`onchain/lib/magiclamp/consume/pricing.ak`) nhân

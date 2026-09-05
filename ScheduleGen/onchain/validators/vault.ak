@@ -1588,6 +1588,240 @@ test ul_keeps_distinct_epochs_apart() {
   out == [t_holding(50, 2, False), t_holding(50, 7, False)]
 }
 
+// ── ScheduleFire — I-ACT-7: LAMP STAYS PUT ────────────────────
+// Before this, a fire moved fires×λ of real LAMP to the treasury and shrank
+// lamp_balance. That eroded the user's principal: the NEWUSER channel grants
+// DID × 1001 LAMP, and since generation scales with the balance, a new user's
+// rate decayed toward zero as their schedule fired. A fire must only LIFT THE
+// LOCK — MAGIC is created, LAMP does not move.
+//
+// WHY THESE TESTS WENT MISSING — measured, not assumed. `35e59dac`
+// (2026-08-11) added them. The converge branch had implemented the same
+// I-ACT-7 behaviour independently at `3f88b605` (2026-07-30) and its copy of
+// this file never carried the negative tests; merge `2ced26fe` took that copy
+// whole — `git rev-parse` gives blob `1e942c23` on BOTH sides, so there was no
+// hand merge, no conflict, no decision. Nobody judged the tests wrong: the
+// behaviour survived (`:479`), only the proof that it is enforced did not.
+// For whoever repeats this search: `git log -S'<name>' --all -- <file>` returns
+// ONLY the adding commit. It skips merge commits by default, so it reports
+// "nothing deleted this" for something a merge deleted. Use
+// `--diff-merges=first-parent`, then compare blob hashes across the merge.
+//
+// WHAT THEY ACTUALLY PIN — measured by mutation (one `expect` replaced with
+// `expect True` at a time, then `aiken check`):
+//   `:480` lamp_locked      → only `f_fire_lock_not_released_rejected` red
+//   `:481` loyalty_holdings → only `f_fire_holding_stays_locked_rejected` red
+//   `:499` vault LAMP value → only `f_fire_lamp_value_leaves_vault_rejected` red
+//   `:479` lamp_balance     → NOTHING red, and no vector can make it red:
+//          `:481` fixes the holdings exactly and `:496` fixes
+//          `Σholdings == lamp_balance`, so lamp_balance is already determined.
+//          `:479` is defence in depth against a malformed INPUT datum, not a
+//          live gate. Kept, but it is not test-covered and cannot be.
+// Three of the six pin one line each; one is the positive case; the other two
+// (`f_fire_old_behaviour_rejected`, `f_fire_holdings_removed_rejected`) are
+// caught by a neighbouring check before reaching the line they describe. They
+// are kept because they pin the SHAPE of the pre-I-ACT-7 output, which no
+// single-line mutation can measure — but do not read them as three more pins.
+//
+// The `ul_*` tests above pin `unlock_locked_amount` in isolation; these pin the
+// WHOLE fire transaction — vault datum + vault VALUE + shard delta together.
+// That is the level at which "LAMP does not move" is a statement about the
+// chain rather than about one helper.
+
+const t_sched_id: ByteArray = #"aa01"
+const t_lambda: Int = 100          // λ per fire (oildrop)
+const t_rate_q: Int = snapshot_base_rate_q
+
+// One schedule, length 3, first fire due at epoch 5, none fired yet.
+fn t_sched() -> GenSchedule {
+  GenSchedule {
+    schedule_id:            t_sched_id,
+    commit_epoch:           3,
+    start_fire_epoch:       5,
+    end_fire_epoch:         7,
+    schedule_length:        3,
+    lamp_per_epoch:         t_lambda,
+    rate_locked_q:          t_rate_q,
+    baseline_at_commit_q:   t_rate_q,
+    multiplier_at_commit_q: 1_000_000_000,
+    fired_count:            0,
+    auto_burn_target:       None,
+  }
+}
+
+/// Vault datum holding exactly λ, all of it locked by the schedule.
+fn t_fire_datum() -> VaultDatum {
+  VaultDatum {
+    ..t_datum(t_lambda, t_lambda, [t_holding(t_lambda, 5, True)]),
+    gen_schedules: [t_sched()],
+  }
+}
+
+// The shard fixture for a fire needs BOTH counters free (locked goes down,
+// cumulative_fired goes up) while `shard_cumulative_committed` stays pinned at
+// the committed L×λ. `t_shard_datum` (Nợ #35 block, :1720) ties committed to
+// locked and hardcodes fired=0, so it cannot express the post-fire state — hence
+// a separate builder rather than a reshaped shared one.
+fn t_fire_shard_datum(locked: Int, fired: Int) -> ScheduleAggregateShardDatum {
+  ScheduleAggregateShardDatum {
+    shard_id:                   compute_shard_id(t_owner),
+    shard_locked_lamp:          locked,
+    shard_active_count:         1,
+    shard_cumulative_committed: t_lambda * 3,
+    shard_cumulative_fired:     fired,
+    last_updated_epoch:         5,
+    shard_cap:                  shard_cap,
+  }
+}
+
+fn t_fire_shard_value() -> Value {
+  assets.from_asset(t_shard_policy, shard_asset_name(compute_shard_id(t_owner)), 1)
+}
+
+// Shard input sits at a SCRIPT address (Nợ #35: find_shard_input_raw rejects a
+// shard already parked at a bare wallet), and the output must come back to that
+// exact same address.
+fn t_fire_shard_in() -> Input {
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+    output: Output {
+      address: t_shard_addr(), value: t_fire_shard_value(),
+      datum: InlineDatum(t_fire_shard_datum(t_lambda * 3, 0)), reference_script: None,
+    },
+  }
+}
+
+fn t_fire_shard_out() -> Output {
+  Output {
+    address: t_shard_addr(), value: t_fire_shard_value(),
+    // one fire → locked drops by λ, cumulative_fired rises by λ
+    datum: InlineDatum(t_fire_shard_datum(t_lambda * 3 - t_lambda, t_lambda)),
+    reference_script: None,
+  }
+}
+
+/// Expected vault output after ONE fire at epoch 5.
+/// `lamp_balance` is deliberately a parameter: the negative test passes the
+/// pre-I-ACT-7 value (balance − λ) and must be rejected.
+fn t_fire_out_datum(lamp_balance: Int) -> VaultDatum {
+  let din = t_fire_datum()
+  let m_i = compute_m_i(t_lambda, t_rate_q)
+  VaultDatum {
+    ..din,
+    lamp_balance:       lamp_balance,
+    lamp_locked:        0,
+    loyalty_holdings:   [t_holding(t_lambda, 5, False)],   // unlocked, NOT removed
+    magic_batches:      create_fire_batches(t_own_ref(), 0, 1, m_i, t_sched_id, 5),
+    next_batch_index:   1,
+    gen_schedules:      [GenSchedule { ..t_sched(), fired_count: 1 }],
+    last_updated_epoch: 5,
+  }
+}
+
+/// The vault input/output carry the vault-identity NFT (`t_vault_input` /
+/// `t_vault_output`, :1293/:1303). ScheduleFire opens with
+/// `validate_vault_value` (:393), so a NO-NFT fixture would make every test
+/// below red for the wrong reason — the fabricated-vault gate, not I-ACT-7.
+fn t_run_fire(out_datum: VaultDatum, vault_out_lamp: Int) -> Bool {
+  let din = t_fire_datum()
+  let tx =
+    t_tx(
+      [t_vault_input(din, t_lambda), t_fire_shard_in()],
+      [t_vault_output(out_datum, vault_out_lamp), t_fire_shard_out()],
+      [],                                   // permissionless: no signer
+    )
+  validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+// PASS: lamp_balance and the real LAMP in the UTxO are byte-identical across a
+// fire; only lamp_locked drops and the holding flips to unlocked.
+test f_fire_lamp_stays_put() {
+  t_run_fire(t_fire_out_datum(t_lambda), t_lambda)
+}
+
+// THE REGRESSION TEST — the exact output pre-I-ACT-7 `main` accepted: balance
+// down by fires×λ (paid to treasury), and the holdings DELETED by
+// `remove_locked_amount` rather than unlocked. Both moves together, because
+// `Σholdings == lamp_balance` couples them: changing only one is rejected by
+// that older check instead of by the I-ACT-7 rule, which would prove nothing.
+// Under I-ACT-7 this whole shape must be REJECTED.
+test f_fire_old_behaviour_rejected() fail {
+  let d =
+    VaultDatum { ..t_fire_out_datum(0), loyalty_holdings: [] }
+  t_run_fire(d, 0)
+}
+
+// Lock must actually lift: keeping lamp_locked at λ is not a valid fire.
+test f_fire_lock_not_released_rejected() fail {
+  let d = VaultDatum { ..t_fire_out_datum(t_lambda), lamp_locked: t_lambda }
+  t_run_fire(d, t_lambda)
+}
+
+// Holdings must be UNLOCKED, not deleted. Dropping the holding keeps the old
+// `remove_locked_amount` behaviour alive and breaks Σholdings == lamp_balance.
+test f_fire_holdings_removed_rejected() fail {
+  let d = VaultDatum { ..t_fire_out_datum(t_lambda), loyalty_holdings: [] }
+  t_run_fire(d, t_lambda)
+}
+
+// FIFTH test, NOT part of the four restored from dcc61749 — added because a
+// mutation measurement showed the restored four leave the load-bearing half of
+// I-ACT-7 unpinned. Replacing `:499`
+//   expect vault_output_lamp_with(...) == output.lamp_balance
+// with `expect True` keeps ALL 68 other tests green: the datum may swear the
+// LAMP never moved while the UTxO ships it out in the same tx. "LAMP stays put"
+// is a claim about the VALUE, not only about the bookkeeping field, so it needs
+// a test that separates the two — here the datum is byte-perfect and only the
+// real LAMP is missing.
+//
+// (The sibling line `:479` output.lamp_balance == datum.lamp_balance CANNOT be
+// isolated the same way, and that is a proof rather than a gap: `:481` pins
+// loyalty_holdings to new_holdings, whose Σ is λ, and the Σholdings ==
+// lamp_balance check then forces lamp_balance back to λ. It is redundant
+// defence-in-depth, so no test can turn red on its removal alone.)
+test f_fire_lamp_value_leaves_vault_rejected() fail {
+  t_run_fire(t_fire_out_datum(t_lambda), 0)
+}
+
+// SIXTH test, also an addition — same measurement, other half of I-ACT-7.
+// Replacing `:481` (loyalty_holdings == new_holdings) with `expect True` left
+// every other test green, `f_fire_holdings_removed_rejected` included: deleting
+// the holdings breaks Σholdings == lamp_balance, so that test is caught by the
+// Σ check and never has to reach `:481`. The half it therefore never tests is
+// the one I-ACT-7 is actually named after — "the holding FLIPS to unlocked".
+// Here Σ is untouched (the same λ, the same epoch, still one entry) and only
+// `is_locked` is wrong, so nothing but `:481` can reject it. Without this,
+// `lamp_locked` could drop to 0 while the holding stays locked forever: the lock
+// released on the books, never released on the holding.
+test f_fire_holding_stays_locked_rejected() fail {
+  let d =
+    VaultDatum {
+      ..t_fire_out_datum(t_lambda),
+      loyalty_holdings: [t_holding(t_lambda, 5, True)],
+    }
+  t_run_fire(d, t_lambda)
+}
+
+// SEVENTH — the gate this branch is named after, on the branch that needs it
+// most. Every test above uses NFT-carrying fixtures (see `t_run_fire`), so
+// deleting `:393` (`validate_vault_value`) from the fire path leaves all six
+// green. ScheduleFire is the PERMISSIONLESS branch: no signature stands
+// between an attacker and it, so a fabricated UTxO parked at the vault address
+// is reachable here and nowhere else in this file. This is the only test that
+// turns red if that call goes away.
+test f_fire_fabricated_vault_rejected() fail {
+  let din = t_fire_datum()
+  let tx =
+    t_tx(
+      [t_vault_input_nonft(din, t_lambda), t_fire_shard_in()],
+      [t_vault_output_nonft(t_fire_out_datum(t_lambda), t_lambda), t_fire_shard_out()],
+      [],
+    )
+  validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
 // ── SetDelegate tests ─────────────────────────────────────────
 
 test sd_set() {

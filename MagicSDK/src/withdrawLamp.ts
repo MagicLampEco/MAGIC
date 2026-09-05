@@ -20,7 +20,7 @@ import {
 } from "@lucid-evolution/lucid";
 import {
   getTipSlot, posixMsToEpoch, msPerEpoch,
-  cmpBigIntDesc, lampAssetName,
+  cmpBigIntDesc, sortAiken, lampAssetName,
   type Network,
 } from "@magiclamp/protocol-utils";
 
@@ -219,8 +219,11 @@ export function removeNewestFirst(
 ): { amount: bigint; acquired_epoch: bigint; is_locked: boolean }[] {
   // Split locked (keep as-is) vs unlocked (eligible for withdrawal)
   const locked   = holdings.filter(h =>  h.is_locked);
-  const unlocked = holdings.filter(h => !h.is_locked)
-    .sort((a, b) => cmpBigIntDesc(a.acquired_epoch, b.acquired_epoch)); // newest first
+  // newest first — `sortAiken`, KHÔNG `Array.sort`: `list.sort` của Aiken đảo phần tử
+  // hoà, và hai holding cùng `acquired_epoch` là trạng thái giao thức tự sinh ra khi
+  // khoá một phần. Xem chú thích ở `sortAiken` (`@magiclamp/protocol-utils`).
+  const unlocked = sortAiken(holdings.filter(h => !h.is_locked),
+    (a, b) => cmpBigIntDesc(a.acquired_epoch, b.acquired_epoch));
 
   let remaining = amount;
   const result = [...locked];

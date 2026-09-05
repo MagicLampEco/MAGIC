@@ -77,9 +77,12 @@ pub fn unlock_locked_amount(
 /// I-ACT-7 set out to fix. Every split carries the ORIGINAL acquired_epoch, so
 /// coalescing collapses them back exactly.
 ///
-/// Ported verbatim from `origin/main:ScheduleGen/.../lock.ak:84-102`, where this
-/// bug was found and fixed first (see the comment at `main:vault.ak:1296-1299`).
-/// Kept byte-identical on purpose — do not "improve" one side alone (P8).
+/// Ai tìm ra trước: `bf9b1725` (tuanzoro2k, 2026-08-12) — sớm hơn `5e2fd76b`
+/// (DucTiger, 2026-08-17) năm ngày. Quét mọi ref bằng `git log --all -S'coalesce_holdings'`
+/// cho đúng hai commit đó, theo thứ tự đó.
+///   (Bản trước của ba dòng này ghi "ported from origin/main, where this bug was found
+///    and fixed first" — sai thứ tự, và nó nằm trong mã nguồn nên người sau đọc sẽ tin.)
+/// Hai bản giữ byte-identical có chủ ý — đừng "cải tiến" một bên (P8).
 ///
 /// O(n²) merge over a list capped at 64. sort-then-scan would be O(n log n) but
 /// needs a total order over the pair; revisit only if fire ExUnits actually bite.
@@ -217,4 +220,53 @@ fn consume_newest(
         [LoyaltyHolding { ..h, amount: h.amount - remaining }, ..rest]
       }
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// P8 — vector cho ca HOÀ (`acquired_epoch` trùng nhau)
+// ══════════════════════════════════════════════════════════════
+//
+// `list.sort` của stdlib Aiken ĐẢO phần tử hoà; `Array.prototype.sort` của JS thì GIỮ
+// nguyên thứ tự (ổn định từ ES2019). Trước ngày 2026-09-05 không vector nào trong kho có
+// hai holding cùng `acquired_epoch`, nên hai bản hiện thực lệch nhau ở đúng ca đó mà mọi
+// bộ test hai phía đều xanh — và validator so danh sách BẰNG NHAU TUYỆT ĐỐI
+// (`validators/vault.ak:353`), nên mỗi lệch là một tx bị chuỗi từ chối.
+//
+// Ca hoà không hiếm: `select_lamp_for_lock` khi khoá MỘT PHẦN tách một holding thành HAI
+// holding cùng `acquired_epoch` (:34-38). Lần khoá đầu tự tạo ra thế hoà.
+//
+// Bốn test dưới đây là bản gốc; `ProtocolUtils/tests/utils.test.ts` mục "sortAiken — P8,
+// phần tử hoà" ghim CÙNG những giá trị này ở phía TypeScript. Đổi một bên mà không đổi
+// bên kia thì một trong hai bộ đỏ — đó là điều trước đây không xảy ra.
+
+fn p8_tie_two() -> List<LoyaltyHolding> {
+  [ LoyaltyHolding { amount: 100, acquired_epoch: 10, is_locked: False },
+    LoyaltyHolding { amount:  50, acquired_epoch: 10, is_locked: False } ]
+}
+
+test p8_tie_sort_reverses_equal_elements() {
+  let s = list.sort(p8_tie_two(), fn(a, b) { int.compare(b.acquired_epoch, a.acquired_epoch) })
+  when s is {
+    [h, ..] -> h.amount == 50      // ĐẢO. JS ổn định sẽ cho 100 ở đây.
+    [] -> False
+  }
+}
+
+test p8_tie_select_lamp_for_lock() {
+  select_lamp_for_lock(p8_tie_two(), 20) == [
+    LoyaltyHolding { amount:  20, acquired_epoch: 10, is_locked: True  },
+    LoyaltyHolding { amount:  30, acquired_epoch: 10, is_locked: False },
+    LoyaltyHolding { amount: 100, acquired_epoch: 10, is_locked: False } ]
+}
+
+test p8_tie_remove_newest_first() {
+  remove_newest_first(p8_tie_two(), 30) == [
+    LoyaltyHolding { amount:  20, acquired_epoch: 10, is_locked: False },
+    LoyaltyHolding { amount: 100, acquired_epoch: 10, is_locked: False } ]
+}
+
+test p8_tie_conserves_total() {
+  sum_holdings(select_lamp_for_lock(p8_tie_two(), 20)) == 150 && sum_holdings(
+    remove_newest_first(p8_tie_two(), 30),
+  ) == 120
 }

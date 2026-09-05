@@ -47,8 +47,13 @@ export const CARP_POLICY_ID = {
   Preprod: "47144f2e675f5fd2b909fc295ba2a975291c4cbb576a15e7298cdb0b",
 } as const;
 
+// Nhịp epoch của GIAO THỨC — phải trùng `MS_PER_EPOCH_BY_NETWORK` ở
+// `ProtocolUtils/src/index.ts` (đó là nguồn; bảng này là bản chép có nhãn vì
+// PrepaidGen chưa nạp ProtocolUtils). Preprod cố ý nén 5×: mạng thật 5 ngày,
+// giao thức chạy 1 ngày để một vòng hết hạn gói trọn trong một ngày kiểm thử.
+// Đổi số ở đây là đổi apply-param ⟹ đổi script hash. Chép ngày 2026-09-05.
 export const MS_PER_EPOCH = {
-  Mainnet: 432_000_000n,
-  Preview: 86_400_000n,
-  Preprod: 86_400_000n,
+  Mainnet: 432_000_000n,   // 5 ngày — trùng nhịp mainnet
+  Preview: 86_400_000n,    // 1 ngày — trùng nhịp mạng Preview
+  Preprod: 86_400_000n,    // 1 ngày — ĐỒNG HỒ NÉN 5×, mạng thật là 5 ngày
 } as const;

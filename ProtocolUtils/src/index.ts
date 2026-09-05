@@ -10,33 +10,57 @@ export const OILDROP_PER_LAMP        = 1_000_000n;
 export const NANOGIC_PER_MAGIC   = 1_000_000_000n;
 export const S_LAMP_TOTAL        = 36_000_000_000_000_000n;  // 36×10^15 oildrop
 
-// `slots_per_epoch` is network-specific (used for slot-based epoch math and SDK display).
+// ── HAI ĐỒNG HỒ, ĐỘC LẬP NHAU — đừng suy bảng này ra bảng kia ─────────────────
+//
+// Bản trước gộp chúng làm một ("ms_per_epoch = slots_per_epoch × 1000") và câu đó
+// SAI cho Preprod: mạng Preprod thật chạy 432_000 slot/epoch (5 ngày), trong khi
+// bảng ms cố ý để 1 ngày. Gộp lại thì một trong hai bảng phải sai, và bảng sai đó
+// đội lốt số thật — không cổng nào bắt được, vì test đơn vị dùng chính hằng đó làm
+// chuẩn nên xanh cả trước lẫn sau. Nguồn phát hiện: nhà Phoenix, đo Blockfrost
+// `/epochs/latest` 2026-09-04 (Preprod epoch 311 dài 432 000 s).
+//
+// Từ nay hai bảng khai HAI thứ khác nhau và không được suy ra nhau:
+
+// (1) SỰ THẬT VỀ MẠNG. Tham số thật của Cardano, dùng khi phải diễn giải slot thật
+//     của chuỗi. KHÔNG bao giờ đi vào apply-param của validator nào.
 export const SLOTS_PER_EPOCH_BY_NETWORK = {
-  Preview:  86_400n,
-  Preprod:  86_400n,
-  Mainnet:  432_000n,
+  Preview:   86_400n,   // 1 ngày — đo được trên chuỗi
+  Preprod:  432_000n,   // 5 ngày — đo được trên chuỗi (VÁ 2026-09-05, trước ghi 86_400)
+  Mainnet:  432_000n,   // 5 ngày
 } as const;
 
-/** Slots-per-epoch for a given Cardano network. */
+/** Slots-per-epoch THẬT của mạng Cardano (không phải nhịp epoch của giao thức). */
 export function slotsPerEpoch(network: Network): bigint {
   return SLOTS_PER_EPOCH_BY_NETWORK[network];
 }
 
-// `ms_per_epoch` is what the Aiken validator's epoch-from-validity-range math uses,
-// because PlutusV3 validity_range carries POSIX milliseconds (not slots).
-// All current Cardano networks use slot_length = 1000 ms, so ms_per_epoch = slots_per_epoch × 1000.
+// (2) NHỊP ĐỒNG HỒ CỦA GIAO THỨC — apply-param #4 của mọi vault validator.
+//     Validator tính `epoch = posix_ms / ms_per_epoch` từ validity_range (PlutusV3
+//     mang POSIX ms, không mang slot). Phép chia đó KHÔNG trừ genesis, nên số epoch
+//     của giao thức chưa bao giờ là số epoch của Cardano và không thể trở thành nó:
+//     hôm nay Preprod chạy epoch Cardano 311 còn epoch giao thức ≈ 20 700. Cho nên
+//     chỉnh nhịp này cho khớp Preprod cũng KHÔNG làm hai số gặp nhau — nó chỉ đổi
+//     độ dài một epoch giao thức, và đổi apply-param ⟹ đổi script hash ⟹ giết mọi
+//     thứ đã deploy.
+//
+//     Preprod cố ý giữ 1 ngày = ĐỒNG HỒ NÉN cho kiểm thử (nén 5× so với mainnet), để
+//     chạy hết một vòng decay / hết hạn / cửa sổ fire trong một ngày thay vì năm ngày.
+//     Đây là lựa chọn, không phải số sai — và nó phải mang nhãn, đúng như
+//     PhoenixKey-Validator ghi `ms_per_epoch` nén của họ.
 export const MS_PER_EPOCH_BY_NETWORK = {
-  Preview:  86_400_000n,
-  Preprod:  86_400_000n,
-  Mainnet:  432_000_000n,
+  Preview:   86_400_000n,   // 1 ngày — trùng nhịp mạng Preview
+  Preprod:   86_400_000n,   // 1 ngày — ĐỒNG HỒ NÉN 5×, mạng thật là 5 ngày
+  Mainnet:  432_000_000n,   // 5 ngày — trùng nhịp mainnet
 } as const;
 
-/** Milliseconds-per-epoch for a given Cardano network (used by validator + SDK). */
+/** Nhịp epoch của GIAO THỨC (ms). Đây là apply-param, đổi là đổi script hash. */
 export function msPerEpoch(network: Network): bigint {
   return MS_PER_EPOCH_BY_NETWORK[network];
 }
 
-/** POSIX ms → POSIX-derived epoch number (matches Aiken validator's get_current_epoch). */
+/** POSIX ms → epoch GIAO THỨC (khớp `get_current_epoch` của validator).
+ *  KHÔNG trừ genesis ⇒ giá trị trả về KHÔNG phải epoch Cardano, đừng đem so với
+ *  số epoch của Blockfrost hay của explorer. */
 export function posixMsToEpoch(posixMs: bigint, network: Network): bigint {
   return posixMs / msPerEpoch(network);
 }
@@ -74,9 +98,12 @@ export const GENESIS_UNIX: Record<"Preview" | "Preprod" | "Mainnet", number> = {
 
 export type Network = "Preview" | "Preprod" | "Mainnet";
 
-/** slot → epoch (integer division). Must pass the network because slots/epoch differs:
- *    Mainnet:        432_000
- *    Preview/Preprod: 86_400
+/** slot → epoch CARDANO (chia nguyên theo `SLOTS_PER_EPOCH_BY_NETWORK`).
+ *
+ *  ⚠ KHÔNG dùng hàm này để lấy epoch của GIAO THỨC — đó là `posixMsToEpoch`.
+ *  Hai hàm trả hai số khác hẳn nhau (đồng hồ giao thức không trừ genesis), và trộn
+ *  chúng vào cùng một datum là dựng một giao dịch validator không bao giờ nhận.
+ *  Hiện KHÔNG mã sống nào gọi hàm này — chỉ tái xuất qua `math.ts` các module.
  */
 export function slotToEpoch(slot: bigint, network: Network): bigint {
   return slot / slotsPerEpoch(network);

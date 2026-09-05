@@ -47,13 +47,41 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   |---|---|---|---|---|
   | 1 | `ảnh` | 10_000_000 (0.01 MAGIC) | (gốc) | khớp `OP_IMAGE` `pricing/src/price.ts` |
   | 2 | `CID` (neo bằng chứng) | 1_000_000 (0.001 MAGIC) | (gốc) | khớp `OP_CID`; mọi bên neo bằng chứng DÙNG LẠI mã này, KHÔNG xin mã mới |
-  | 3 | `recognition_storage_mb` | DAO chốt (tạm 1e9/MB) | OriLife/Registry | tính theo MB |
-  | 4 | `recognition_compute_mb` | DAO chốt (tạm 1e9/MB) | OriLife/Registry | tính theo MB |
+  | 3 | `recognition_storage_event` | DAO chốt (tạm 1e9/lần) | OriLife/Registry | **một lần lưu**, không phải MB — xem cảnh báo dưới bảng |
+  | 4 | `recognition_compute_event` | DAO chốt (tạm 1e9/lần) | OriLife/Registry | **một lần tính**, không phải MB — xem cảnh báo dưới bảng |
   | 5 | `job_post` | DAO chốt (tạm 2_000_000) | AladinWork | đăng+phát tán 1 tin việc |
   | 6 | `contract_settle` | DAO chốt (tạm 5_000_000) | AladinWork | tất toán 1 hợp đồng |
   | 7 | `did.rotate` | DAO chốt (tạm 2_000_000_000) | PhoenixKey | xoay khoá DID. **Thao tác an ninh** — xem cảnh báo dưới bảng |
   | 8 | `did.transfer` | DAO chốt (tạm 10_000_000_000) | PhoenixKey | chuyển DID; thương mại, chịu nhân theo cầu là đúng |
   Mọi fixture/beacon/redeemer onchain PHẢI dùng đúng key này; không được lệch sang `0/1`.
+
+  > 🔴 **Mã 3 và 4 từng khai đơn vị là MB. Sai — mã không đếm MB ở bất kỳ nghĩa nào.**
+  > `required_for` nhân `op_count` (`onchain/lib/magiclamp/consume/pricing.ak:204`), và
+  > `op_count` là **số lần**, đã bị một bài test ghim lại:
+  > `pricing.ak:249-251 required_for(pp, 1, 5) == Some(50_000_000)` — `op_type 1` là ảnh,
+  > `op_count = 5` là **năm tấm ảnh**. Phép đo phủ định trên toàn kho, bỏ `node_modules/`
+  > và `build/`: `grep -rn "storage_mb\|storageMb\|sizeMb\|megabyte" --include="*.ts"
+  > --include="*.ak"` → **0 dòng**. Chuỗi `_mb` chỉ từng sống trong tên mã và trong bảng này.
+  >
+  > Hỏng ra sao nếu để nguyên: hai bên tích hợp đọc **cùng một dòng** rồi truyền hai thứ khác
+  > nhau vào **cùng một tham số** — bên A truyền `op_count = 40` cho một tệp 40 MB, bên B
+  > truyền `op_count = 1` cho một lần lưu. Cả hai đều đọc đúng tài liệu, hoá đơn chênh **40
+  > lần**, và không cổng nào kêu vì `op_count` là `Int` và cả hai giá trị đều hợp lệ.
+  >
+  > Đã đổi tên thành `_event` và sửa cột đơn vị. Đổi tên còn miễn phí vì chưa tx nào submit:
+  > `grep -rn "recognition_storage\|recognition_compute" --include="*.ts" --include="*.ak"`
+  > → **0 dòng mã**. Sau lần submit đầu thì không còn miễn phí.
+  >
+  > **Cần đại lượng dung lượng thật (MB, GiB·giờ) thì đó là MÃ MỚI**, xin ở `Registry`, kèm
+  > đơn vị vật lý và bên thứ ba đo được — không phải quy ước lại `op_count` cho một mã sẵn có.
+  > Đã loại phương án "giữ tên `_mb`, quy ước `op_count` = số MB": nó làm `op_count` mang hai
+  > nghĩa tuỳ `op_type`, và không cổng nào kiểm được điều đó.
+  >
+  > ⚠️ **Mã 3 và 4 hôm nay không phân biệt được với nhau bên trong `ConsumeMAGIC/`** — cùng
+  > đơn vị, cùng giá tạm, cùng nhân `op_count`. Lý do tách hai mã nằm ở bên tiêu thụ (phân bổ
+  > `LAMPNET_REWARD` cho node cấp lưu trữ so với node cấp tính toán), không nằm trong
+  > `pricing.ak`. Ràng buộc TẠM: giá hai mã đang bằng nhau, nên chọn nhầm mã **không** làm
+  > lệch hoá đơn — nó chỉ làm lệch phân bổ thưởng ở bên tiêu thụ.
 
   > ⚠️ **Đừng đọc `max_op_prices = 16` thành "sổ chỉ còn 8 ô".** Bản cũ của dòng này viết
   > *"Còn 8/16 dòng"* và câu đó sai theo chiều nguy hiểm nhất với một quyển sổ: nó dẫn tới

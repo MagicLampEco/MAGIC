@@ -16,9 +16,9 @@ export const TV_PP_01 = {
   spec_ref: "§6.5, Carpet-CARP-DacTa-Vi.md §3.1",
   description: "1 CARP khoá → đúng 1 MAGIC; giá 1 op CID = 0.001 MAGIC",
   cases: [
-    { carp: "1", carpdrop: 1_000_000n, nanogic: 1_000_000_000n, magic: "1" },
-    { carp: "0.001", carpdrop: 1_000n, nanogic: 1_000_000n, magic: "0.001" },
-    { carp: "1000", carpdrop: 1_000_000_000n, nanogic: 1_000_000_000_000n, magic: "1000" },
+    { carp: "1", carpdrop: 1_000_000_000n, nanogic: 1_000_000_000n, magic: "1" },
+    { carp: "0.001", carpdrop: 1_000_000n, nanogic: 1_000_000n, magic: "0.001" },
+    { carp: "1000", carpdrop: 1_000_000_000_000n, nanogic: 1_000_000_000_000n, magic: "1000" },
   ],
 } as const;
 
@@ -31,21 +31,21 @@ export const TV_PP_02 = {
   description:
     "Platform mở quỹ → khoá 1000 CARP cho user → user rút 10 CARP thành 10 MAGIC ở epoch 100 → tiêu 6 MAGIC → quyết toán",
   buffer_bps: 1_500n,
-  lock_carpdrop: 1_000_000_000n, // 1000 CARP
+  lock_carpdrop: 1_000_000_000_000n, // 1000 CARP (9 chữ số)
   fund_after_lock: {
-    carp_locked: 1_000_000_000n,
-    credit_issued: 1_000_000_000n,
+    carp_locked: 1_000_000_000_000n,
+    credit_issued: 1_000_000_000_000n,
     magic_settled: 0n,
     provider_claimed: 0n,
   },
   epoch: 100n,
-  draw_carpdrop: 10_000_000n, // 10 CARP
-  drawn_nanogic: 10_000_000_000n, // 10 MAGIC (par chính xác)
+  draw_carpdrop: 10_000_000_000n, // 10 CARP
+  drawn_nanogic: 10_000_000_000n, // 10 MAGIC (par chính xác, par_scale = 1)
   // 600 op "ảnh" × 0.01 MAGIC (§7.2 op_type 1)
   burn_nanogic: 6_000_000_000n,
   batch_left_nanogic: 4_000_000_000n,
   settle_delta_nanogic: 6_000_000_000n,
-  settled_par_carpdrop: 6_000_000n,
+  settled_par_carpdrop: 6_000_000_000n,
   // Quỹ mới tiêu 0.6% → đệm buffer-Paid chặn hết, provider chưa rút được gì.
   max_claimable_after: 0n,
 } as const;
@@ -65,28 +65,28 @@ export const TV_PP_BUFFER = {
   cases: [
     {
       settled_par: 130_434_782n,
-      magic_settled: 130_434_782_000n,
+      magic_settled: 130_434_782n,
       buffer_floor: 1_000_000_000n,
       max_claimable: 0n,
       note: "dưới ngưỡng 1 đơn vị → chưa rút được gì",
     },
     {
       settled_par: 130_434_783n,
-      magic_settled: 130_434_783_000n,
+      magic_settled: 130_434_783n,
       buffer_floor: 999_999_999n,
       max_claimable: 1n,
       note: "đúng ngưỡng → rút được 1 carpdrop đầu tiên",
     },
     {
       settled_par: 500_000_000n,
-      magic_settled: 500_000_000_000n,
+      magic_settled: 500_000_000n,
       buffer_floor: 575_000_000n,
       max_claimable: 425_000_000n,
       note: "tiêu nửa quỹ → rút được 425M, giữ đệm 15% trên 500M chưa giao",
     },
     {
       settled_par: 1_000_000_000n,
-      magic_settled: 1_000_000_000_000n,
+      magic_settled: 1_000_000_000n,
       buffer_floor: 0n,
       max_claimable: 1_000_000_000n,
       note: "tiêu hết → outstanding = 0 ⇒ đệm = 0 ⇒ rút toàn bộ",
@@ -102,10 +102,10 @@ export const TV_PP_EXPIRE = {
   spec_ref: "§4.2 + DESIGN.md §1.3",
   description:
     "Rút 10 CARP ở epoch 100, chỉ tiêu 6 MAGIC; sang epoch 101 phần còn lại chết và hạn-mức được trả lại 4 CARP",
-  draw_carpdrop: 10_000_000n,
+  draw_carpdrop: 10_000_000_000n,
   burned_nanogic: 6_000_000_000n,
   expired_nanogic: 4_000_000_000n,
-  credit_restored_carpdrop: 4_000_000n, // = ⌊4×10⁹ / 1000⌋
+  credit_restored_carpdrop: 4_000_000_000n, // = ⌊4×10⁹ / 1⌋ (par_scale = 1)
   carp_left_fund: "không đổi — không đồng CARP nào rời quỹ (F2)",
   settled_unchanged: true, // hết hạn KHÔNG tính là tiêu (INV-MAGIC-CITIZEN)
 } as const;
@@ -118,7 +118,7 @@ export const TV_PP_OVERFLOW = {
   spec_ref: "§11 C-OVERFLOW",
   description: "Toàn bộ cung LAMP quy sang thang par vượt xa 2^53",
   carpdrop: 36_000_000_000_000_000n,
-  nanogic: 36_000_000_000_000_000_000n,
+  nanogic: 36_000_000_000_000_000n, // par_scale = 1 ⇒ bằng nhau
   exceeds_safe_integer: true,
 } as const;
 

@@ -36,13 +36,20 @@ hạn-mức, không phải MAGIC**.
 `Carpet-CARP-DacTa-Vi.md §3.1`: "1 CARP khoá → luôn ra 1 MAGIC". Đổi ở tầng đơn vị cơ sở:
 
 ```
-par_scale = nanogic_per_magic / carpdrop_per_carp = 10^9 / 10^6 = 1000
+par_scale = nanogic_per_magic / carpdrop_per_carp = 10^9 / 10^9 = 1
 nanogic = carpdrop × par_scale          (phép nhân — chính xác tuyệt đối, không mất số dư)
 carpdrop = ⌊ nanogic / par_scale ⌋      (chiều ngược, chỉ dùng cho trần đòi của provider)
 ```
 
-Không có phí par, không có hệ số Q. `[CẦN XÁC NHẬN]` decimals của CARP = 6 (chưa có tài liệu CARP
-xác nhận; suy từ tLAMP decimals 6). Nếu khác, chỉ đổi hằng `par_scale`.
+Không có phí par, không có hệ số Q. **CARP dùng 9 chữ số thập phân, BẰNG MAGIC** — chốt 2026-09-05,
+khớp `nanothread = CARP × 10⁹` ở `BOUNDARIES.md`. Bản trước suy 6 từ tLAMP và gắn nhãn
+`[CẦN XÁC NHẬN]`; nhãn đó nay đã được trả lời.
+
+Hai thang bằng nhau ⟹ `par_scale = 1`, tức quy đổi là **phép đồng nhất**. Hệ quả đổi NGỮ NGHĨA chứ
+không chỉ đổi số: chiều MAGIC→CARP trước đây SÀN và cố ý lệch về phía an toàn cho quỹ; nay nó chính
+xác tuyệt đối, không còn phần dư nào để mất. Mọi lập luận dựa trên "sàn bù cho quỹ" không còn chỗ
+dựa — quỹ đúng bằng số. Ngày nào một trong hai token đổi decimals thì `par_scale` khác 1 trở lại và
+cái sàn kia sống lại.
 
 ### 1.3 Hết hạn thì trả lại HẠN-MỨC, không trả lại CARP
 
@@ -58,8 +65,9 @@ par_scale⌋` vào `PrepaidCredit.remaining` của đúng quỹ đó.
 chiếu `Forall §Cơ chế phạt`: phần chưa giao dịch vụ là **quyền chưa hình thành**, không được tịch
 thu bằng một lỗi canh giờ.
 
-Sai số: `⌊/par_scale⌋` làm mất tối đa 999 nanogic (< 10⁻⁶ MAGIC) mỗi lần dọn — lệch về phía **an
-toàn** (hạn-mức trả lại ít hơn, quỹ không bao giờ thiếu backing).
+Sai số: với `par_scale = 1` phép `⌊/par_scale⌋` **không mất gì** — hạn-mức trả lại đúng bằng MAGIC
+đã chết. Trước 2026-09-05 nó mất tối đa 999 nanogic mỗi lần dọn và lệch về phía an toàn cho quỹ;
+lớp đệm đó nay không còn, nên đừng viện nó làm lý do khi tính backing.
 
 ### 1.4 Không đụng backing chung
 
@@ -257,7 +265,7 @@ PaidFundRedeemer                             constr
 | **C-PP-9** phân quyền | Lock: `platform` HOẶC `owner` ký · Draw: `owner` HOẶC `personal_delegate` ký · BurnBatch: `owner` HOẶC `personal_delegate` · Prune: **không cần chữ ký** · SetDelegate: **chỉ** `owner` · FundClaim: `platform` | vault + quỹ |
 | **C-PP-10** chống thoả-mãn-kép | đúng 1 vault input tại địa chỉ vault; đúng 1 output vault; đúng 1 input và đúng 1 output mang NFT quỹ; không đúc/đốt token của `fund_nft_policy` trong mọi giao dịch vận hành | vault + quỹ |
 | **C-PP-11** epoch không nhập nhằng | cả hai biên `validity_range` là `Finite` và cùng rơi vào một epoch (`e_lo == e_hi`) | `get_epoch` (SEC-02, giống ScheduleGen) |
-| **C-PP-12** trần cứng | `MAX_BATCHES_PER_VAULT = 32`, `MAX_PREPAID_CREDITS = 20`, `MIN_LOCK_CARPDROP = 10⁶` (1 CARP), `MIN_DRAW_CARPDROP = 10³` | vault |
+| **C-PP-12** trần cứng | `MAX_BATCHES_PER_VAULT = 32`, `MAX_PREPAID_CREDITS = 20`, `MIN_LOCK_CARPDROP = 10⁹` (1 CARP), `MIN_DRAW_CARPDROP = 10⁶` | vault |
 | **C-PP-13** không đúc token | MAGIC không phải token; không nhánh nào của module này gọi `tx.mint` cho CARP; token quỹ chỉ đúc đúng một lần ở `fund_nft` | vault + quỹ |
 | **C-PP-14** không chạm backing chung | validator PrepaidGen không có tham số LAMP, không đọc `br`/GreenBack/oracle | cấu trúc — kiểm bằng đọc chữ ký tham số |
 | **C-PP-15** genesis quỹ sạch | NFT quỹ chỉ đúc được khi output mang nó có `PaidFundDatum` với `credit_issued = magic_settled = provider_claimed = carp_locked = 0`, `fund_id == asset name`, `buffer_bps ≥ 1500` | `fund_nft` |
@@ -390,7 +398,7 @@ bên là đỏ ngay.
 
 | # | Điểm | Đang chọn gì | Ảnh hưởng nếu chốt khác |
 |---|---|---|---|
-| 1 | decimals của CARP | 6 ⇒ `par_scale = 1000` | đổi 1 hằng số ở `constants.ak` + `constants.ts` |
+| 1 | ~~decimals của CARP~~ **ĐÃ CHỐT 2026-09-05: 9 ⇒ `par_scale = 1`** | — | — |
 | 2 | asset name CARP trên mainnet | tham số validator, testnet `43415250` | không sửa code (đã là tham số) |
 | 3 | `burn_batch_constr` của PrepaidGen | 2 (đồng nhất Instant/Schedule) | đổi thứ tự nhánh redeemer + bảng §11 |
 | 4 | quỹ Paid là cấu trúc CARP-side đã có hay MAGIC tự định nghĩa | MAGIC tự định nghĩa `PaidFundDatum` | có thể phải ghép vào schema CARP |

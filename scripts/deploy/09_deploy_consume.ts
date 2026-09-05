@@ -195,8 +195,11 @@ async function main() {
       // Giá lấy từ sổ op_type chuẩn ở ConsumeMAGIC/CONTRACT.md §A.
       { op_type: 1n, base_price:    10_000_000n }, // ảnh          0.01 MAGIC
       { op_type: 2n, base_price:     1_000_000n }, // neo CID      0.001 MAGIC
-      { op_type: 3n, base_price: 1_000_000_000n }, // lưu trữ /MB  1 MAGIC
-      { op_type: 4n, base_price: 1_000_000_000n }, // tính toán/MB 1 MAGIC
+      // ĐƠN VỊ LÀ LẦN, KHÔNG PHẢI MB. `required_for` nhân `op_count` như bội số thuần
+      // (pricing.ak:204) — không có chỗ nào quy đổi byte. Chú thích "/MB" cũ ở đây
+      // mô tả một đơn vị mà mã chưa bao giờ tính. Xem CONTRACT.md §A sổ op_type.
+      { op_type: 3n, base_price: 1_000_000_000n }, // lưu trữ  /lần  1 MAGIC
+      { op_type: 4n, base_price: 1_000_000_000n }, // tính toán/lần  1 MAGIC
     ],
     demand_mult: demandMultQ, // 1.0× → price = base
     m_min: 500_000_000n,      // 0.5×

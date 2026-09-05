@@ -7,7 +7,7 @@ import {
   isqrt, isqrt10th, verifyVd, vDampened, mulQ, clamp,
   cmpBigIntAsc, cmpBigIntDesc, Q,
   DRM_LOOKBACK,
-  vaultOutValue, droppedUnits, assertVaultIdentityKept,
+  vaultOutValue, droppedUnits, assertVaultIdentityKept, sortAiken,
 } from "../src/index.js";
 
 const MAGIC = Q;
@@ -180,6 +180,50 @@ describe("unlockLockedAmount — I-ACT-7 (LAMP stays put)", () => {
 // ══════════════════════════════════════════════════════════════
 // OAC — canonical window definitions (CRITICAL FIX)
 // ══════════════════════════════════════════════════════════════
+// ── P8: `list.sort` của Aiken KHÔNG ổn định ─────────────────────────────────────
+// Mọi số kỳ vọng dưới đây là GIÁ TRỊ ĐO ĐƯỢC TỪ AIKEN, không phải giá trị suy ra:
+// chạy `aiken check` trên bản sao `ScheduleGen` với chính các đầu vào này (2026-09-05).
+// Đây là trọng tài P8 cho ca hoà — trước đó không vector nào trong kho có hai holding
+// cùng `acquired_epoch`, nên hai bên lệch nhau suốt mà mọi bộ test đều xanh.
+describe("sortAiken — P8, phần tử hoà", () => {
+  const h = (amount: bigint, ep: bigint, locked: boolean) =>
+    ({ amount, acquired_epoch: ep, is_locked: locked });
+
+  it("hai phần tử hoà bị ĐẢO, khác Array.sort của JS", () => {
+    const xs = [h(100n, 10n, false), h(50n, 10n, false)];
+    const cmp = (a: typeof xs[0], b: typeof xs[0]) =>
+      cmpBigIntDesc(a.acquired_epoch, b.acquired_epoch);
+    expect(sortAiken(xs, cmp).map(x => x.amount)).toEqual([50n, 100n]);
+    expect([...xs].sort(cmp).map(x => x.amount)).toEqual([100n, 50n]);   // JS ổn định
+  });
+
+  it("ba phần tử hoà — đảo TRỌN cụm, không phải hoán vị hai cái cuối", () => {
+    const xs = [h(1n, 5n, false), h(2n, 5n, false), h(3n, 5n, false)];
+    expect(sortAiken(xs, (a, b) => cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch))
+      .map(x => x.amount)).toEqual([3n, 2n, 1n]);
+  });
+
+  it("không hoà thì giống Array.sort, và không đột biến mảng vào", () => {
+    const xs = [h(1n, 9n, false), h(2n, 3n, false), h(3n, 6n, false)];
+    const cmp = (a: typeof xs[0], b: typeof xs[0]) =>
+      cmpBigIntAsc(a.acquired_epoch, b.acquired_epoch);
+    expect(sortAiken(xs, cmp).map(x => x.acquired_epoch)).toEqual([3n, 6n, 9n]);
+    expect(xs.map(x => x.amount)).toEqual([1n, 2n, 3n]);                 // vào còn nguyên
+  });
+
+  it("selectLampForLock khớp giá trị ĐO TỪ AIKEN ở ca hoà", () => {
+    const out = selectLampForLock([h(100n, 10n, false), h(50n, 10n, false)], 20n);
+    // aiken: [(20,ep10,T), (30,ep10,F), (100,ep10,F)]
+    expect(out).toEqual([h(20n, 10n, true), h(30n, 10n, false), h(100n, 10n, false)]);
+    expect(sumHoldings(out)).toBe(150n);                                 // không sinh/mất
+  });
+
+  it("removeLockedAmount khớp giá trị ĐO TỪ AIKEN ở ca hoà", () => {
+    const out = removeLockedAmount([h(100n, 10n, true), h(50n, 10n, true)], 30n);
+    expect(sumHoldings(out)).toBe(120n);
+  });
+});
+
 describe("OAC window — §6.4 (two semantics by design)", () => {
 
   const entries: [string, bigint][] = [

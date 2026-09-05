@@ -221,3 +221,52 @@ fn consume_newest(
       }
   }
 }
+
+// ══════════════════════════════════════════════════════════════
+// P8 — vector cho ca HOÀ (`acquired_epoch` trùng nhau)
+// ══════════════════════════════════════════════════════════════
+//
+// `list.sort` của stdlib Aiken ĐẢO phần tử hoà; `Array.prototype.sort` của JS thì GIỮ
+// nguyên thứ tự (ổn định từ ES2019). Trước ngày 2026-09-05 không vector nào trong kho có
+// hai holding cùng `acquired_epoch`, nên hai bản hiện thực lệch nhau ở đúng ca đó mà mọi
+// bộ test hai phía đều xanh — và validator so danh sách BẰNG NHAU TUYỆT ĐỐI
+// (`validators/vault.ak:353`), nên mỗi lệch là một tx bị chuỗi từ chối.
+//
+// Ca hoà không hiếm: `select_lamp_for_lock` khi khoá MỘT PHẦN tách một holding thành HAI
+// holding cùng `acquired_epoch` (:34-38). Lần khoá đầu tự tạo ra thế hoà.
+//
+// Bốn test dưới đây là bản gốc; `ProtocolUtils/tests/utils.test.ts` mục "sortAiken — P8,
+// phần tử hoà" ghim CÙNG những giá trị này ở phía TypeScript. Đổi một bên mà không đổi
+// bên kia thì một trong hai bộ đỏ — đó là điều trước đây không xảy ra.
+
+fn p8_tie_two() -> List<LoyaltyHolding> {
+  [ LoyaltyHolding { amount: 100, acquired_epoch: 10, is_locked: False },
+    LoyaltyHolding { amount:  50, acquired_epoch: 10, is_locked: False } ]
+}
+
+test p8_tie_sort_reverses_equal_elements() {
+  let s = list.sort(p8_tie_two(), fn(a, b) { int.compare(b.acquired_epoch, a.acquired_epoch) })
+  when s is {
+    [h, ..] -> h.amount == 50      // ĐẢO. JS ổn định sẽ cho 100 ở đây.
+    [] -> False
+  }
+}
+
+test p8_tie_select_lamp_for_lock() {
+  select_lamp_for_lock(p8_tie_two(), 20) == [
+    LoyaltyHolding { amount:  20, acquired_epoch: 10, is_locked: True  },
+    LoyaltyHolding { amount:  30, acquired_epoch: 10, is_locked: False },
+    LoyaltyHolding { amount: 100, acquired_epoch: 10, is_locked: False } ]
+}
+
+test p8_tie_remove_newest_first() {
+  remove_newest_first(p8_tie_two(), 30) == [
+    LoyaltyHolding { amount:  20, acquired_epoch: 10, is_locked: False },
+    LoyaltyHolding { amount: 100, acquired_epoch: 10, is_locked: False } ]
+}
+
+test p8_tie_conserves_total() {
+  sum_holdings(select_lamp_for_lock(p8_tie_two(), 20)) == 150 && sum_holdings(
+    remove_newest_first(p8_tie_two(), 30),
+  ) == 120
+}

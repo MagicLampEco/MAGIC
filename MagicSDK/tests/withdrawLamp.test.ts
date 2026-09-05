@@ -88,3 +88,25 @@ describe("removeNewestFirst — LF-preserving selection", () => {
     expect(after.filter(x => x.is_locked)).toHaveLength(1);
   });
 });
+
+// ── P8: ca HOÀ (`acquired_epoch` trùng) ──────────────────────────────────────────
+// Giá trị kỳ vọng dưới đây ĐO TỪ AIKEN (`aiken check` trên bản sao ScheduleGen với chính
+// đầu vào này, 2026-09-05), không phải suy ra. `list.sort` của Aiken đảo phần tử hoà;
+// `Array.sort` của JS giữ nguyên. Bản gốc phía Aiken:
+// `ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak` ▸ `p8_tie_remove_newest_first`.
+//
+// Ca này không hiếm: khoá MỘT PHẦN tách một holding thành hai holding cùng
+// `acquired_epoch`, nên lần khoá đầu tiên tự tạo ra thế hoà.
+describe("removeNewestFirst — P8, hai holding cùng acquired_epoch", () => {
+  it("khớp giá trị đo từ Aiken", () => {
+    const before = [h(100n, 10n), h(50n, 10n)];
+    expect(removeNewestFirst(before, 30n)).toEqual([
+      { amount:  20n, acquired_epoch: 10n, is_locked: false },
+      { amount: 100n, acquired_epoch: 10n, is_locked: false },
+    ]);
+  });
+
+  it("không sinh cũng không mất oildrop", () => {
+    expect(sumAll(removeNewestFirst([h(100n, 10n), h(50n, 10n)], 30n))).toBe(120n);
+  });
+});

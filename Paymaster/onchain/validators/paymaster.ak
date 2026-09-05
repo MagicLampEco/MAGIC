@@ -120,8 +120,25 @@ validator paymaster(
     expect lamp_this <= lamp_cap(magic_consumed, policy.lamp_per_magic_q)
 
     // ── PM-TREASURY (SEC-01 fix): LAMP phải thực sự đến Treasury ─────────────
-    // Mirror pattern từ InstantGen vault.ak validate_gen (treasury_receives_lamp).
     // Chống attacker chỉ claim LAMP đã trả nhưng thực tế gửi địa chỉ khác.
+    //
+    // 🔴 ĐÂY NAY LÀ CHÂN THU LAMP DUY NHẤT CỦA TREASURY trong kho này, không phải một
+    // bản sao của chỗ khác. Chú thích cũ viết "Mirror pattern từ InstantGen vault.ak
+    // validate_gen (treasury_receives_lamp)" — hàm đó KHÔNG CÒN TỒN TẠI, chính
+    // `InstantGen/onchain/validators/vault.ak:1144` khai nó đã bị gỡ. Sau I-ACT-7 không
+    // generator nào trả LAMP về Treasury nữa. Đo thật 2026-09-05 —
+    // `grep -rlni treasury --include='*.ak'` ngoài `Legacy/` cho 5 tệp, và 4 trong số đó
+    // chỉ còn là bia mộ, không phải chân thu:
+    //   · InstantGen/onchain/validators/vault.ak:1144-1146   "helper GONE, no treasury_addr"
+    //   · InstantGen/onchain/lib/magiclamp/protocol/lamp.ak:8 "ĐÃ XOÁ 2026-08-09, 0 call site"
+    //   · ScheduleGen/onchain/validators/vault.ak:14,1195,1197 "apply-parameter is gone"
+    //   · ConsumeMAGIC/onchain/validators/consume.ak          (tham chiếu bài học audit)
+    // Còn lại đúng tệp này. (Lệnh phải quote `'*.ak'` — không quote thì zsh tự nở glob
+    // và trả `no matches found` trước khi grep chạy.)
+    //
+    // Nghĩa là chân thu dời từ hành vi SINH sang hành vi BẢO TRỢ: Treasury không thu khi
+    // ai đó sinh MAGIC, mà thu khi một app trả phí hộ người dùng. Ai sửa khối này đang
+    // sửa đường thu duy nhất — không có chỗ thứ hai đỡ.
     expect if lamp_this > 0 {
       let lamp_to_treasury =
         tx.outputs

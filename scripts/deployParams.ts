@@ -26,7 +26,7 @@ export function outputReferenceData(txHash: string, outputIndex: number | bigint
  *   stake_credential   : None → Constr 1 [] · Some(Inline(cred)) → Constr 0 [Constr 0 [cred]]
  *
  * CẨN THẬN — đây là đẳng thức CẤU TRÚC, không phải so chuỗi bech32.
- * `Paymaster/onchain/validators/paymaster.ak:128` lọc output bằng
+ * `Paymaster/onchain/validators/paymaster.ak:145` lọc output bằng
  * `o.address == treasury_addr`. Một ví Treasury có stake part mà bake vào tham số
  * bằng bản KHÔNG stake sẽ không bao giờ khớp: không output nào lọt qua bộ lọc,
  * LAMP không tới được Treasury, và mọi giao dịch Paymaster bị từ chối. Hai địa

@@ -136,6 +136,10 @@ const CASES: Case[] = [
       maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
       treasuryAddr: addressData({ hash: P28, isScript: true }),
       lampAssetName: "744c414d50",
+      // Cổng này đo TÊN tham số, không dựng script thật — nên nó đi qua chốt
+      // stake của `assertTreasuryStakeDecided`. Đừng chép cờ này sang deploy
+      // script: ở đó nó có nghĩa "đã chốt kho không uỷ quyền stake".
+      treasuryEnterpriseIsDecided: true,
     }),
   },
   {
@@ -210,7 +214,26 @@ async function main() {
     }
   }
 
+  // ── Chốt stake Treasury phải CẮN, không chỉ tồn tại ────────────────────────
+  // Một cổng fail-closed mà không ai đo thì nó chỉ là một câu chú thích. Ca này
+  // dựng đúng địa chỉ enterprise mà `_reserve_layer2.ts` sinh ra và đòi nó ném.
+  let guardOk = true;
+  try {
+    paymasterParams({
+      vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
+      policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
+      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
+      treasuryAddr: addressData({ hash: P28, isScript: true }),   // stake part None
+      lampAssetName: "744c414d50",
+      // cố ý KHÔNG đặt treasuryEnterpriseIsDecided
+    });
+    guardOk = false;
+    console.log("   ❌ chốt stake Treasury KHÔNG cắn: enterprise address đi lọt\n");
+  } catch { /* đúng như mong đợi */ }
+  if (guardOk) console.log("── Chốt stake Treasury: cắn đúng ca enterprise address ✓\n");
+
   console.log(`── Tổng kết: ${ok} khớp, ${mismatch} lệch, ${unbuilt} chưa build`);
+  if (!guardOk) process.exit(1);
   if (unbuilt > 0) {
     console.log(
       `   ❌ ${unbuilt} module CHƯA BUILD — cổng không kết luận được về chúng.\n` +

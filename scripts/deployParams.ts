@@ -216,9 +216,46 @@ export interface PaymasterParamInputs {
   /** Dựng bằng `addressData()` — đẳng thức CẤU TRÚC, đọc chú thích ở đó. */
   treasuryAddr:      Data;
   lampAssetName:     string;  // PARAM theo mạng (tLAMP testnet / LAMP mainnet)
+  /** Xác nhận Treasury CỐ Ý không uỷ quyền stake. Xem `assertTreasuryStakeDecided`. */
+  treasuryEnterpriseIsDecided?: boolean;
+}
+
+/** Chốt fail-closed: `treasury_addr` mang stake part `None` là một QUYẾT ĐỊNH chưa ai ra.
+ *
+ *  Địa chỉ kho hôm nay dựng ra là **enterprise address** — stake part `None`
+ *  (`LAMP/Genesis/scripts/_reserve_layer2.ts:156-158` trả `Constr(1,[])` cho vế stake).
+ *  Bake nó vào apply-param không phải một bước xếp lịch, nó là câu trả lời cho câu hỏi
+ *  "kho có bao giờ uỷ quyền stake không", và câu trả lời đó là **không, trừ khi chịu một
+ *  lần deploy lại**: ngày kho uỷ quyền stake thì địa chỉ đổi ⟹ `treasury_addr` đổi ⟹ bytes
+ *  đổi ⟹ hash đổi ⟹ phải công bố ref-script CIP-33 mới.
+ *
+ *  Đây đúng loại quyết định bị chốt bởi THỨ TỰ THAO TÁC chứ không bởi ai đó quyết — kiểu
+ *  chốt không để lại dấu vết nào để lần sau đọc ra. Nên cổng này dừng đỏ thay vì để nó
+ *  trôi qua, và nó **tự hết tác dụng** ngay khi một địa chỉ có stake part được truyền vào.
+ *  Chốt là "kho không uỷ quyền stake" thì truyền `treasuryEnterpriseIsDecided: true` và ghi
+ *  lý do vào spec, để lần sau không ai đọc enterprise address thành một chỗ chưa làm xong.
+ */
+export function assertTreasuryStakeDecided(
+  treasuryAddr: Data,
+  decided?: boolean,
+): void {
+  if (decided) return;
+  // Address = Constr 0 [payment_credential, stake_credential]; stake None = Constr 1 [].
+  const addr = treasuryAddr as { index?: number; fields?: unknown[] };
+  const stake = addr?.fields?.[1] as { index?: number } | undefined;
+  if (stake?.index === 1) {
+    throw new Error(
+      "treasury_addr đang mang stake part `None` (enterprise address), và đó là một QUYẾT " +
+      "ĐỊNH chưa được ghi ở đâu: bake nó vào apply-param nghĩa là kho KHÔNG uỷ quyền stake, " +
+      "trừ khi sau này chịu đổi script hash và công bố lại ref-script CIP-33. " +
+      "Truyền địa chỉ có stake part, hoặc — nếu đã chốt kho không uỷ quyền stake — đặt " +
+      "`treasuryEnterpriseIsDecided: true` và ghi lý do vào spec.",
+    );
+  }
 }
 
 export function paymasterParams(i: PaymasterParamInputs): ParamMap {
+  assertTreasuryStakeDecided(i.treasuryAddr, i.treasuryEnterpriseIsDecided);
   return {
     vault_script_hash:   i.vaultScriptHash,
     burn_batch_constr:   i.burnBatchConstr,

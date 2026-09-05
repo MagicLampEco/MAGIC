@@ -144,6 +144,8 @@ export {
   buildVaultBurnBatch,
   planBurnBatch,
   isBatchExpired,
+  applyPendingProfile,
+  type VaultModule,
   type BuildVaultBurnBatchParams,
   type BuildVaultBurnBatchResult,
   type BurnBatchPlan,

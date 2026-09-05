@@ -14,9 +14,20 @@
 //
 // ── P8: đây là GƯƠNG của Aiken, không phải một cách tính độc lập ──────────────────
 // `planBurnBatch` phản chiếu ĐÚNG `validate_burn_batch` + `apply_burns` + `prune_expired`
-// ở `ScheduleGen/onchain/validators/vault.ak:512-638` (InstantGen giống từng dòng ở
-// `InstantGen/onchain/validators/vault.ak`). Sửa một bên PHẢI sửa bên kia trong CÙNG
-// commit. Neo cụ thể ghi ở từng khối bên dưới.
+// ở `ScheduleGen/onchain/validators/vault.ak:512-638`. Sửa một bên PHẢI sửa bên kia
+// trong CÙNG commit. Neo cụ thể ghi ở từng khối bên dưới.
+//
+// ⚠ HAI MODULE KHÔNG GIỐNG NHAU — phải khai `vaultModule`.
+// Bản trước của khối này viết "InstantGen giống từng dòng" và câu đó SAI ở đúng một
+// chỗ, nhưng chỗ đó đủ để chuỗi từ chối tx: InstantGen chạy `apply_pending_profile`
+// trước khi kiểm A02 (`InstantGen/onchain/validators/vault.ak:913`, kiểm so với
+// `applied` ở `:940-942`), ScheduleGen thì KHÔNG (`ScheduleGen/.../vault.ak:564-566`
+// chép y nguyên `input_datum`, và cả tệp không có hàm đó).
+// Hệ quả nếu dựng theo bản ScheduleGen cho vault Instant: vault đã gọi `updateProfile`
+// và tới epoch `effective_epoch` mà chưa tx nào flush ⟹ on-chain thấy
+// `applied.profile = new`, `applied.pending_profile = None`, còn datum ta xuất mang
+// profile CŨ ⟹ `expect output_datum.profile == applied.profile` vỡ ⟹ tx bị từ chối,
+// đúng loại lỗi "không nói trường nào" mà tệp này sinh ra để gỡ.
 
 import { Constr, Data, type UTxO } from "@lucid-evolution/lucid";
 
@@ -57,6 +68,27 @@ export interface BurnBatchPlan {
   expiredDropped: MagicBatchLike[];
 }
 
+/** Module vault đang tiêu. Không có mặc định: mặc định nào cũng tái tạo bug cho module
+ *  kia, và triệu chứng là tx bị từ chối không kèm tên trường. */
+export type VaultModule = "InstantGen" | "ScheduleGen";
+
+/**
+ * Gương của `apply_pending_profile`
+ * (`InstantGen/onchain/lib/magiclamp/protocol/profile.ak:19-35`).
+ *
+ * CHỈ InstantGen chạy hàm này. Áp nhầm cho ScheduleGen cũng sai y như bỏ sót nó ở
+ * InstantGen — ScheduleGen kiểm A02 so với `input_datum` thô, nên một datum đã áp
+ * pending sẽ vỡ `expect output_datum.pending_profile == input_datum.pending_profile`.
+ */
+export function applyPendingProfile<T extends VaultDatum>(datum: T, currentEpoch: bigint): T {
+  const pending = (datum as unknown as {
+    pending_profile: { new_profile: unknown; effective_epoch: bigint } | null;
+  }).pending_profile;
+  if (pending === null || pending === undefined) return datum;
+  if (currentEpoch < pending.effective_epoch) return datum;
+  return { ...datum, profile: pending.new_profile, pending_profile: null } as T;
+}
+
 /**
  * §4.2 vách đứng: batch chết khi `current_epoch − created_epoch >= decay_window`.
  * Gương của `is_expired`, `ScheduleGen/onchain/validators/vault.ak:630-632`.
@@ -84,17 +116,27 @@ export function isBatchExpired(b: MagicBatchLike, currentEpoch: bigint): boolean
  * @param datum        VaultDatum đã giải mã từ UTxO vault.
  * @param required     Σ nanogic phải đốt. `consume.ak` đòi `Σburns == required` — DẤU BẰNG.
  * @param currentEpoch Epoch của tx (phải trùng epoch mà validity range phủ).
+ * @param vaultModule  Module của vault. BẮT BUỘC — hai module kiểm A02 khác nhau ở
+ *                     `pending_profile`; xem khối ⚠ đầu tệp.
  */
 export function planBurnBatch(
   datum:        VaultDatum,
   required:     bigint,
   currentEpoch: bigint,
+  vaultModule:  VaultModule,
 ): BurnBatchPlan {
   if (required <= 0n) {
     throw new Error(`[burnBatch] required=${required} — phải > 0 (vault.ak:552 expect total_burned > 0).`);
   }
 
-  const batches = datum.magic_batches as unknown as MagicBatchLike[];
+  // InstantGen lazy-apply profile TRƯỚC khi kiểm A02; ScheduleGen thì không. Mọi trường
+  // dưới đây phải lấy từ `applied`, không phải `datum` thô — nếu không, vault Instant có
+  // `pending_profile` tới hạn sẽ bị từ chối ở `:940-942`.
+  const applied = vaultModule === "InstantGen"
+    ? applyPendingProfile(datum, currentEpoch)
+    : datum;
+
+  const batches = applied.magic_batches as unknown as MagicBatchLike[];
 
   // `apply_burns` đòi `list.count(batches, b.batch_id == bid) == 1` (vault.ak:602). Hai
   // batch trùng id là vault KHÔNG BAO GIỜ đốt được nữa — kể cả burn nhắm vào batch khác
@@ -167,20 +209,20 @@ export function planBurnBatch(
   }
 
   // ── A02: 17 trường, chỉ 5 chỗ được đổi ──────────────────────────────────────────
-  // vault.ak:556-578 kiểm TỪNG trường. Mọi trường không nêu ở đây phải đi qua nguyên
-  // vẹn — kể cả `pending_profile`: `BurnBatch` KHÔNG lazy-apply profile (`:566` chép y
-  // nguyên), nên vault có `pending_profile` khác null vẫn tiêu được bình thường.
+  // vault.ak:556-578 kiểm TỪNG trường. Mọi trường không nêu ở đây đi qua nguyên vẹn TỪ
+  // `applied` — với ScheduleGen `applied === datum`; với InstantGen `applied` đã nuốt
+  // `pending_profile` tới hạn, đúng như `:913` làm trước khi kiểm `:940-942`.
   const newDatum = {
-    ...datum,
+    ...applied,
     magic_batches:  expectedBatches,
     activity_state: {
-      ...datum.activity_state,
-      consumed_credit: datum.activity_state.consumed_credit + required,   // :571
+      ...applied.activity_state,
+      consumed_credit: applied.activity_state.consumed_credit + required, // :571
     },
     last_updated_epoch: currentEpoch,                                     // :575
     attribution: {
-      ...datum.attribution,
-      total_events:     datum.attribution.total_events + 1n,              // :577 — +1 mỗi TX,
+      ...applied.attribution,
+      total_events:     applied.attribution.total_events + 1n,            // :577 — +1 mỗi TX,
       last_event_epoch: currentEpoch,                                     //       không theo op_count
     },
   } as unknown as VaultDatum;
@@ -196,6 +238,9 @@ export interface BuildVaultBurnBatchParams {
   /** Epoch của tx. Phải trùng epoch mà validity range của tx phủ, nếu không
    *  `current_epoch` on-chain khác con số này và mọi kiểm epoch lệch theo. */
   currentEpoch:    bigint;
+  /** Module của vault đang tiêu. BẮT BUỘC — InstantGen lazy-apply `pending_profile`
+   *  trước khi kiểm A02, ScheduleGen thì không; xem khối ⚠ đầu tệp. */
+  vaultModule:     VaultModule;
   /** plutus.json của module vault — chỉ số constructor `BurnBatch` suy lúc chạy, nên SDK
    *  không lệch được với thứ tự enum on-chain. */
   vaultPlutusJson: PlutusJson;
@@ -248,7 +293,7 @@ export function buildVaultBurnBatch(
     );
   }
 
-  const plan = planBurnBatch(datum, p.required, p.currentEpoch);
+  const plan = planBurnBatch(datum, p.required, p.currentEpoch, p.vaultModule);
 
   const burnIx = resolveConstrIndex(p.vaultPlutusJson, VAULT_VALIDATOR_TITLE, BURN_BATCH_TAG);
 

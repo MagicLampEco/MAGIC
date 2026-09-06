@@ -72,10 +72,13 @@ pub const max_op_prices: Int = 16
 ///     cung (`PARTICIPATION_CAP_BPS = 2000`) = 7,2×10⁹ LAMP. Ở 10¹⁴, một đơn vị tại
 ///     demand 2,0× tốn 2×10¹⁴ nanogic — dưới 10⁻² của sản lượng ở MỌI chế độ rate đang
 ///     bàn, tức còn hàng trăm lượt/epoch toàn mạng. Chưa phải khoá.
-///   · Đã loại 10¹¹ và 10¹²: chúng sống được hôm nay nhưng chết nếu D2 ngả về ρ = 1
-///     MAGIC/LAMP/epoch (SPEC §"RATE_REF_Q") thay vì rate đang cài — giá danh nghĩa phải
-///     tăng ~76× thì dư địa chỉ còn 1,3–13×. Trần dưới 100× dư địa là một cuộc di trú đã
-///     hẹn giờ. Đã loại 10¹⁵: một đơn vị ở m_max ăn ~2% sản lượng MAGIC/epoch của cả
+///   · Đã loại 10¹¹ và 10¹²: chúng sống được hôm nay nhưng chết nếu suất sinh ngả về
+///     ρ = 1 MAGIC/LAMP/epoch (SPEC §"RATE_REF_Q") thay vì rate đang cài — giá danh nghĩa
+///     phải tăng 76,19×–125× (dải theo `S(L)`; ~76× là ca `L=200`) thì dư địa chỉ còn
+///     1,3–13×. Trần dưới 100× dư địa là một cuộc di trú đã hẹn giờ.
+///     [D2 ĐÃ CHỐT 2026-09-05 — `DevStatus.md` ▸ D2: chuẩn hoá bằng cách kéo InstantGen
+///     XUỐNG suất ScheduleGen, KHÔNG nâng lên ρ=1. Điều kiện trên vì thế KHÔNG kích hoạt;
+///     giữ đoạn này làm hồ sơ vì sao 10¹¹/10¹² bị loại, không phải làm cảnh báo đang chờ.] Đã loại 10¹⁵: một đơn vị ở m_max ăn ~2% sản lượng MAGIC/epoch của cả
 ///     mạng — đó là khoá mặc áo giá.
 ///   · Bất đối xứng chi phí quyết định chỗ làm tròn lên: thêm 10× dư địa tốn ĐÚNG 0 (cùng
 ///     một phép so sánh Int trong vòng `list.all` sẵn có), còn đặt hụt tốn một cuộc di trú

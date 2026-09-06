@@ -222,8 +222,14 @@ export interface PaymasterParamInputs {
 
 /** Chốt fail-closed: `treasury_addr` mang stake part `None` là một QUYẾT ĐỊNH chưa ai ra.
  *
- *  Địa chỉ kho hôm nay dựng ra là **enterprise address** — stake part `None`
- *  (`LAMP/Genesis/scripts/_reserve_layer2.ts:156-158` trả `Constr(1,[])` cho vế stake).
+ *  Địa chỉ kho hôm nay dựng ra là **enterprise address** — stake part `None`. Bằng chứng:
+ *  `LAMP/Genesis/scripts/canonical_compute.ts:34`
+ *  (`credentialToAddress(NETWORK, scriptHashToCredential(h))` — không truyền stake ⟹
+ *  enterprise). Mock on-chain cũng vậy: `Paymaster/onchain/validators/paymaster.ak`
+ *  ▸ `ct_treasury_addr` → `util.script_address` với `stake_credential: None`.
+ *  ⚠ Neo `canonical_compute.ts` nằm ở REPO KHÁC (`aladin/LAMP`) nên CI của kho này không
+ *  kiểm được — nó sẽ mục lặng lẽ. Bản trước dẫn `_reserve_layer2.ts:156-158`, tệp đó
+ *  KHÔNG tồn tại ở đâu trong cả hai repo (đã `find` cả hai).
  *  Bake nó vào apply-param không phải một bước xếp lịch, nó là câu trả lời cho câu hỏi
  *  "kho có bao giờ uỷ quyền stake không", và câu trả lời đó là **không, trừ khi chịu một
  *  lần deploy lại**: ngày kho uỷ quyền stake thì địa chỉ đổi ⟹ `treasury_addr` đổi ⟹ bytes

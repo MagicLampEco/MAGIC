@@ -216,52 +216,62 @@ export interface PaymasterParamInputs {
   /** Dựng bằng `addressData()` — đẳng thức CẤU TRÚC, đọc chú thích ở đó. */
   treasuryAddr:      Data;
   lampAssetName:     string;  // PARAM theo mạng (tLAMP testnet / LAMP mainnet)
-  /** Xác nhận Treasury CỐ Ý không uỷ quyền stake. Xem `assertTreasuryStakeDecided`. */
-  treasuryEnterpriseIsDecided?: boolean;
 }
 
-/** Chốt fail-closed: `treasury_addr` mang stake part `None` là một QUYẾT ĐỊNH chưa ai ra.
+/** Chốt fail-closed: `treasury_addr` PHẢI mang stake part. Enterprise address bị từ chối.
  *
- *  Địa chỉ kho hôm nay dựng ra là **enterprise address** — stake part `None`. Bằng chứng:
- *  `LAMP/Genesis/scripts/canonical_compute.ts:34`
- *  (`credentialToAddress(NETWORK, scriptHashToCredential(h))` — không truyền stake ⟹
- *  enterprise). Mock on-chain cũng vậy: `Paymaster/onchain/validators/paymaster.ak`
- *  ▸ `ct_treasury_addr` → `util.script_address` với `stake_credential: None`.
- *  ⚠ Neo `canonical_compute.ts` nằm ở REPO KHÁC (`aladin/LAMP`) nên CI của kho này không
- *  kiểm được — nó sẽ mục lặng lẽ. Bản trước dẫn `_reserve_layer2.ts:156-158`, tệp đó
- *  KHÔNG tồn tại ở đâu trong cả hai repo (đã `find` cả hai).
- *  Bake nó vào apply-param không phải một bước xếp lịch, nó là câu trả lời cho câu hỏi
- *  "kho có bao giờ uỷ quyền stake không", và câu trả lời đó là **không, trừ khi chịu một
- *  lần deploy lại**: ngày kho uỷ quyền stake thì địa chỉ đổi ⟹ `treasury_addr` đổi ⟹ bytes
- *  đổi ⟹ hash đổi ⟹ phải công bố ref-script CIP-33 mới.
+ *  **Chốt 2026-09-06: kho Treasury CÓ uỷ quyền stake.** ADA nằm trong kho là ADA nhàn
+ *  rỗi, và trên Cardano thì uỷ quyền stake không khoá vốn cũng không chuyển quyền chi —
+ *  không uỷ quyền là bỏ không một dòng thu mà không đổi lại được gì. Nên câu hỏi cũ
+ *  ("kho có bao giờ uỷ quyền stake không") đã có câu trả lời, và cổng này nay gác một
+ *  quyết định ĐÃ RA thay vì gác một chỗ trống.
  *
- *  Đây đúng loại quyết định bị chốt bởi THỨ TỰ THAO TÁC chứ không bởi ai đó quyết — kiểu
- *  chốt không để lại dấu vết nào để lần sau đọc ra. Nên cổng này dừng đỏ thay vì để nó
- *  trôi qua, và nó **tự hết tác dụng** ngay khi một địa chỉ có stake part được truyền vào.
- *  Chốt là "kho không uỷ quyền stake" thì truyền `treasuryEnterpriseIsDecided: true` và ghi
- *  lý do vào spec, để lần sau không ai đọc enterprise address thành một chỗ chưa làm xong.
+ *  Vì sao vẫn phải là CỔNG chứ không phải một dòng ghi chú: `treasury_addr` là
+ *  apply-param, tức tham số lúc **biên dịch**. Bake bản enterprise là chốt "không bao
+ *  giờ uỷ quyền" bằng **thứ tự thao tác** — gỡ ra sau này phải đổi script hash, công bố
+ *  lại ref-script CIP-33, di trú mọi UTxO đang sống. Cái giá đó trả một lần lúc deploy
+ *  thì bằng không; trả sau thì bằng một đợt di trú.
+ *
+ *  **KHÔNG có cửa bỏ qua.** Bản trước nhận một cờ `treasuryEnterpriseIsDecided` cho ca
+ *  "đã chốt kho không uỷ quyền stake". Ca đó nay không tồn tại, và một cờ bỏ-qua còn nằm
+ *  lại là đường để lần sau đi vòng qua chính chốt này — đúng lớp lỗi mà bản soát #39 vừa
+ *  chỉ ra ở một chỗ khác của cùng tệp.
+ *
+ *  Địa chỉ kho mà mã phát sinh hôm nay VẪN là enterprise — stake part `None`. Hai chỗ,
+ *  đo 2026-09-06:
+ *    · `LAMP/Genesis/scripts/_reserve_layer2.ts:156-158` ▸ `scriptAddressData` trả thẳng
+ *      `Constr(0, [Constr(1, [hash]), Constr(1, [])])` — vế thứ hai là `None` nguyên văn.
+ *    · `LAMP/Genesis/scripts/canonical_compute.ts:34` ▸ `credentialToAddress(NETWORK,
+ *      scriptHashToCredential(h))` — không truyền stake ⟹ enterprise.
+ *  Mock on-chain cũng vậy: `Paymaster/onchain/validators/paymaster.ak` ▸
+ *  `ct_treasury_addr` → `util.script_address` với `stake_credential: None`.
+ *
+ *  ⚠ Cả hai neo nằm ở REPO KHÁC (`MagicLampEco/LAMP`) nên CI của kho này không kiểm được
+ *  — chúng sẽ mục lặng lẽ. Và kiểu mục đó đã xảy ra một lần theo chiều ngược: một vòng
+ *  soát báo `_reserve_layer2.ts` "không tồn tại", vì phép tìm chỉ quét kho này. Neo
+ *  liên-kho phải nói rõ kho nào, nếu không thì một lần `grep` sai vùng đủ để xoá một
+ *  bằng chứng có thật.
+ *
+ *  Nghĩa là cổng này sẽ ĐỎ cho tới khi đường sinh địa chỉ bên đó mang stake credential
+ *  vào. Đỏ ở đó là đúng: nó chặn đúng một lần bake không lùi được.
  */
-export function assertTreasuryStakeDecided(
-  treasuryAddr: Data,
-  decided?: boolean,
-): void {
-  if (decided) return;
+export function assertTreasuryStakeDecided(treasuryAddr: Data): void {
   // Address = Constr 0 [payment_credential, stake_credential]; stake None = Constr 1 [].
   const addr = treasuryAddr as { index?: number; fields?: unknown[] };
   const stake = addr?.fields?.[1] as { index?: number } | undefined;
   if (stake?.index === 1) {
     throw new Error(
-      "treasury_addr đang mang stake part `None` (enterprise address), và đó là một QUYẾT " +
-      "ĐỊNH chưa được ghi ở đâu: bake nó vào apply-param nghĩa là kho KHÔNG uỷ quyền stake, " +
-      "trừ khi sau này chịu đổi script hash và công bố lại ref-script CIP-33. " +
-      "Truyền địa chỉ có stake part, hoặc — nếu đã chốt kho không uỷ quyền stake — đặt " +
-      "`treasuryEnterpriseIsDecided: true` và ghi lý do vào spec.",
+      "treasury_addr đang mang stake part `None` (enterprise address). Chốt 2026-09-06: " +
+      "kho Treasury CÓ uỷ quyền stake, nên địa chỉ bake vào apply-param phải mang stake " +
+      "credential. Bake bản enterprise là khoá cứng 'không bao giờ uỷ quyền' vào script " +
+      "hash — gỡ ra sau này phải đổi hash, công bố lại ref-script CIP-33 và di trú mọi " +
+      "UTxO đang sống. Dựng địa chỉ bằng `addressData(payment, stake)` với vế stake thật.",
     );
   }
 }
 
 export function paymasterParams(i: PaymasterParamInputs): ParamMap {
-  assertTreasuryStakeDecided(i.treasuryAddr, i.treasuryEnterpriseIsDecided);
+  assertTreasuryStakeDecided(i.treasuryAddr);
   return {
     vault_script_hash:   i.vaultScriptHash,
     burn_batch_constr:   i.burnBatchConstr,

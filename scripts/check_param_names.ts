@@ -134,12 +134,14 @@ const CASES: Case[] = [
       vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
       policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
       maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
-      treasuryAddr: addressData({ hash: P28, isScript: true }),
+      // Địa chỉ giữ chỗ phải mang stake part: chốt 2026-09-06 là kho Treasury CÓ
+      // uỷ quyền stake, và `assertTreasuryStakeDecided` nay từ chối enterprise
+      // address không có cửa bỏ qua. Ca enterprise được đo riêng ở cuối tệp.
+      treasuryAddr: addressData(
+        { hash: P28, isScript: true },
+        { hash: P28, isScript: false },
+      ),
       lampAssetName: "744c414d50",
-      // Cổng này đo TÊN tham số, không dựng script thật — nên nó đi qua chốt
-      // stake của `assertTreasuryStakeDecided`. Đừng chép cờ này sang deploy
-      // script: ở đó nó có nghĩa "đã chốt kho không uỷ quyền stake".
-      treasuryEnterpriseIsDecided: true,
     }),
   },
   {
@@ -225,7 +227,7 @@ async function main() {
       maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
       treasuryAddr: addressData({ hash: P28, isScript: true }),   // stake part None
       lampAssetName: "744c414d50",
-      // cố ý KHÔNG đặt treasuryEnterpriseIsDecided
+      // Không còn cờ nào để đặt — cổng phải ném ở đây, không có đường vòng.
     });
     guardOk = false;
     console.log("   ❌ chốt stake Treasury KHÔNG cắn: enterprise address đi lọt\n");
@@ -242,7 +244,7 @@ async function main() {
       maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
       treasuryAddr: addressData({ hash: P28, isScript: true }, { hash: P28, isScript: false }),
       lampAssetName: "744c414d50",
-      // KHÔNG đặt treasuryEnterpriseIsDecided — địa chỉ có stake thì không cần cờ.
+      // Địa chỉ có stake part — đây là hình dạng duy nhất cổng chấp nhận.
     });
   } catch (e) {
     guardOk = false;

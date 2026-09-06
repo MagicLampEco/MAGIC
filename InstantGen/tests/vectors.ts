@@ -180,38 +180,51 @@ export const TV_IG_BEACON_ABSENT = {
 // ── TV-IG-CAP-PP-01 ──────────────────────────────────────────
 export const TV_IG_CAP_PP_01 = {
   id:          "TV-IG-CAP-PP-01",
-  spec_ref:    "§6.3 'trần-kép' + §6.4",
-  description: "One schedule λ=4000 LAMP, rate_locked_q=11.25 → pp=45 MAGIC, cap=22.5 MAGIC",
-  schedules: [
-    { lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n },
-  ],
-  // pp = ⌊4×10^9 × 11_250_000_000 / Q⌋ = 45_000_000_000
-  expected_pp:  45_000_000_000n,
-  expected_cap: 22_500_000_000n,
+  spec_ref:    "§6.3 phanh thứ ba (D2)",
+  description: "L_avail = 4000 LAMP → ⌊4×10⁹ × 8×10⁹ / Q⌋ / 2 = 16 MAGIC/epoch",
+  l_avail_oildrop: 4_000_000_000n,
+  expected_per_epoch: 32_000_000_000n,   // trước khi chia đôi
+  expected_cap:       16_000_000_000n,
 };
 
-// ── TV-IG-CAP-PP-02: two schedules add up ────────────────────
+// ── TV-IG-CAP-PP-02: tuyến tính theo L_avail ─────────────────
 export const TV_IG_CAP_PP_02 = {
   id:          "TV-IG-CAP-PP-02",
-  spec_ref:    "§6.3",
-  description: "pp_schedule sums over every live contract in the vault",
-  schedules: [
-    { lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n },  // 45 MAGIC
-    { lamp_per_epoch: 1_000_000_000n, rate_locked_q:  8_000_000_000n },  //  8 MAGIC
-  ],
-  expected_pp:  53_000_000_000n,
-  expected_cap: 26_500_000_000n,
+  spec_ref:    "§6.3 phanh thứ ba (D2)",
+  description: "Trần tỉ lệ thuận L_avail: 1000 LAMP cho đúng 1/4 của 4000 LAMP",
+  l_avail_oildrop: 1_000_000_000n,
+  expected_per_epoch: 8_000_000_000n,
+  expected_cap:       4_000_000_000n,
 };
 
-// ── TV-IG-CAP-PP-ZERO: no schedule → door shut ───────────────
+// ── TV-IG-CAP-PP-ZERO: không còn LAMP tự do → không cấp ──────
 export const TV_IG_CAP_PP_ZERO = {
   id:          "TV-IG-CAP-PP-ZERO",
-  spec_ref:    "§6.3 'InstantGen ≤ 0.5×Schedule mọi trạng thái'",
-  description: "A vault with no ScheduleGen contract has pp=0 ⟹ cap=0 ⟹ InstantGen SHUT",
-  schedules: [] as { lamp_per_epoch: bigint; rate_locked_q: bigint }[],
-  expected_pp:  0n,
-  expected_cap: 0n,
+  spec_ref:    "§6.3 phanh thứ ba (D2)",
+  description: "L_avail = 0 (LAMP khoá hết) ⟹ cap = 0 ⟹ InstantGen đóng",
+  l_avail_oildrop: 0n,
+  expected_per_epoch: 0n,
+  expected_cap:       0n,
   expected_validation: "REJECT",
+  // ⚠ Vector này TỪNG mang tên "no ScheduleGen contract ⟹ shut" và pin một
+  // bất biến nay KHÔNG còn: trần thứ ba không đọc `gen_schedules` nữa. Cùng
+  // một mã định danh, khác hẳn mệnh đề — đừng trích nó như bằng chứng cho
+  // trần-kép cũ.
+};
+
+// ── TV-IG-CAP-PP-DOOR: khoảng cách với suất spec, viết thành số ──
+export const TV_IG_CAP_PP_DOOR = {
+  id:          "TV-IG-CAP-PP-DOOR",
+  spec_ref:    "SPEC §6.3 `RATE_REF_Q = 10¹²` đối chiếu D2",
+  description:
+    "Một LAMP: spec ghi 10⁹ nanogic/epoch (ρ=1), trần này cho 4×10⁶ — cách nhau 250 lần. " +
+    "Cửa chênh lệch đó chỉ tồn tại khi InstantGen chạy được, nên nó đã nằm sẵn trong " +
+    "bản vá của bất kỳ ai gỡ Nợ #19 mà không đọc chỗ này.",
+  l_avail_oildrop:    1_000_000n,        // 1 LAMP
+  spec_rate_ref_q:    1_000_000_000_000n,
+  spec_would_pay:     1_000_000_000n,    // ⌊10⁶ × 10¹² / Q⌋
+  expected_cap:       4_000_000n,
+  ratio:              250n,
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -222,19 +235,19 @@ export const TV_IG_CAP_PP_ZERO = {
 export const TV_IG_GRANT_01 = {
   id:          "TV-IG-GRANT-01",
   spec_ref:    "§6.3",
-  description: "grant = min(reward, cap_surplus, 0.5×pp) — reward is the binding ceiling",
+  description: "grant = min(reward, cap_surplus, cap_pp(L_avail)) — reward binds",
   input: {
     consumed:     1_000_000_000n,
     um_q:         1_000_000_000n,
     pm_q:         1_050_000_000n,
     br_q:         2_000_000_000n,
     magic_supply: 1_000_000_000_000n,
-    schedules: [{ lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n }],
+    l_avail_oildrop: 4_000_000_000n,   // 4000 LAMP tự do trong vault
   },
   ceilings: {
     reward:      210_000_000n,
     cap_surplus: 33_333_333_333n,
-    cap_pp:      22_500_000_000n,
+    cap_pp:      16_000_000_000n,
   },
   expected_grant: 210_000_000n,
   binding: "reward(consumed)",
@@ -244,22 +257,22 @@ export const TV_IG_GRANT_01 = {
 export const TV_IG_GRANT_02 = {
   id:          "TV-IG-GRANT-02",
   spec_ref:    "§6.3 trần-kép",
-  description: "A whale that consumed a lot is still capped at 0.5 × pp_schedule",
+  description: "A whale that consumed a lot is still capped by the LAMP it holds free",
   input: {
     consumed:     1_000_000_000_000n,   // 1000 MAGIC consumed
     um_q:         1_000_000_000n,
     pm_q:         1_050_000_000n,
     br_q:         2_000_000_000n,
     magic_supply: 1_000_000_000_000n,
-    schedules: [{ lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n }],
+    l_avail_oildrop: 4_000_000_000n,   // 4000 LAMP tự do trong vault
   },
   ceilings: {
     reward:      210_000_000_000n,      // 210 MAGIC
     cap_surplus: 33_333_333_333n,
-    cap_pp:      22_500_000_000n,       // ← smallest
+    cap_pp:      16_000_000_000n,       // ← smallest
   },
-  expected_grant: 22_500_000_000n,
-  binding: "0.5 × pp_schedule",
+  expected_grant: 16_000_000_000n,
+  binding: "cap_pp(L_avail)",
 };
 
 // ── TV-IG-GRANT-03: red backing shuts everything ─────────────
@@ -273,7 +286,7 @@ export const TV_IG_GRANT_03 = {
     pm_q:         1_150_000_000n,
     br_q:         1_400_000_000n,       // đỏ
     magic_supply: 1_000_000_000_000n,
-    schedules: [{ lamp_per_epoch: 4_000_000_000n, rate_locked_q: 11_250_000_000n }],
+    l_avail_oildrop: 4_000_000_000n,   // 4000 LAMP tự do trong vault
   },
   expected_grant: 0n,
   expected_validation: "REJECT",
@@ -408,6 +421,7 @@ export const ALL_VECTORS = [
   TV_IG_CAP_PP_01,
   TV_IG_CAP_PP_02,
   TV_IG_CAP_PP_ZERO,
+  TV_IG_CAP_PP_DOOR,
   TV_IG_GRANT_01,
   TV_IG_GRANT_02,
   TV_IG_GRANT_03,

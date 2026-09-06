@@ -151,10 +151,11 @@ function simulateInstantGen(
   const ceilings = {
     reward:     computeRewardFromConsumed(consumed, umUsed, pmQ),
     capSurplus: computeCapSurplus(beacon.br_q, beacon.magic_supply),
-    capPp:      computeCapPp(vault.gen_schedules),
+    capPp:      computeCapPp(vault.lamp_balance - vault.lamp_locked),
   };
   const grant = computeInstantGrant(
-    consumed, umUsed, pmQ, beacon.br_q, beacon.magic_supply, vault.gen_schedules,
+    consumed, umUsed, pmQ, beacon.br_q, beacon.magic_supply,
+    vault.lamp_balance - vault.lamp_locked,
   );
   if (grant <= 0n) throw new Error("GEN-INST-005: grant = 0 → nothing to mint");
 
@@ -230,19 +231,30 @@ describe("InstantGen full flow simulation (PHA 2)", () => {
       expect(r.consumedCreditAfter).toBe(0n);              // credit spent
     });
 
-    it("More LAMP does NOT buy more MAGIC — only consumption does", () => {
+    it("LAMP nâng TRẦN, không nâng phần thưởng — tiêu nhiều vẫn thắng nắm nhiều", () => {
+      // ⚠ Ca này đã ĐỔI MỆNH ĐỀ theo D2. Bản cũ khẳng định "thêm LAMP không
+      // mua thêm MAGIC" — đúng với trần cũ (đọc gen_schedules), nhưng SPEC
+      // §6.3 nói ngược lại ở đúng chỗ này: "Thêm LAMP làm trần tăng NGAY trong
+      // epoch… Muốn gen nhiều hơn → phải MUA & NẮM thêm LAMP." Nay trần thứ ba
+      // đọc L_avail nên vế đó thành thật. Cái KHÔNG đổi, và là cái phải canh:
+      // LAMP chỉ nới trần, `reward(consumed)` mới quyết định con số.
       const poorHolder = makeVault({
-        lamp_balance: 10_000_000n,
-        loyalty_holdings: [{ amount: 10_000_000n, acquired_epoch: 50n, is_locked: false }],
+        lamp_balance: 10_000_000_000n,   // 10.000 LAMP — trần rộng rãi
+        loyalty_holdings: [{ amount: 10_000_000_000n, acquired_epoch: 50n, is_locked: false }],
         activity_state: { recent_burn_epochs: [], consumed_credit: 5_000_000_000n },
       });
       const whaleHolder = makeVault({
-        lamp_balance: 10_000_000_000_000n,
+        lamp_balance: 10_000_000_000_000n,   // gấp 1000 lần LAMP
         loyalty_holdings: [{ amount: 10_000_000_000_000n, acquired_epoch: 50n, is_locked: false }],
         activity_state: { recent_burn_epochs: [], consumed_credit: 1_000_000_000n },
       });
       const poor  = simulateInstantGen(poorHolder,  makeUM(), makeBeacon(), 100n);
       const whale = simulateInstantGen(whaleHolder, makeUM(), makeBeacon(), 100n);
+
+      // Cả hai đều bị `reward` chặn, không phải bị trần LAMP chặn — đó là điều
+      // kiện để phép so dưới đây nói về TIÊU chứ không nói về NẮM.
+      expect(poor.grant).toBe(poor.ceilings.reward);
+      expect(whale.grant).toBe(whale.ceilings.reward);
 
       // The spec's own example: 1000 MAGIC holder who consumed 900 beats a
       // 2000 MAGIC holder who consumed 500. Same shape here, LAMP-wise inverted.
@@ -268,20 +280,30 @@ describe("InstantGen full flow simulation (PHA 2)", () => {
 
   describe("§6.3 — the three ceilings", () => {
 
-    it("The whale's reward is clipped by 0.5 × pp_schedule", () => {
+    it("Phần thưởng của cá voi bị cắt bởi trần LAMP tự do", () => {
       const vault = makeVault({
+        lamp_balance: 100_000_000_000n,   // 100.000 LAMP
+        loyalty_holdings: [{ amount: 100_000_000_000n, acquired_epoch: 50n, is_locked: false }],
         activity_state: { recent_burn_epochs: [], consumed_credit: 1_000_000_000_000n },
       });
       const r = simulateInstantGen(vault, makeUM(), makeBeacon(), 100n);
       expect(r.ceilings.reward).toBe(210_000_000_000n);
-      expect(r.ceilings.capPp).toBe(22_500_000_000n);
-      expect(r.grant).toBe(22_500_000_000n);
+      // 10¹¹ oildrop × 4 = 4×10¹¹ nanogic, nhưng cap_surplus nhỏ hơn nên nó mới
+      // là phanh cắn. Điều được ghim ở đây: phần thưởng KHÔNG được cấp trọn.
+      expect(r.grant).toBeLessThan(r.ceilings.reward);
+      expect(r.grant).toBe(
+        r.ceilings.capPp < r.ceilings.capSurplus ? r.ceilings.capPp : r.ceilings.capSurplus,
+      );
     });
 
-    it("A vault with no ScheduleGen contract cannot InstantGen at all", () => {
+    it("Không có hợp đồng ScheduleGen nào mà vẫn gen được — Nợ #19 đã gỡ", () => {
+      // ⚠ ĐẢO CHIỀU so với bản cũ, và đó là toàn bộ nội dung của D2. Trần cũ
+      // đọc `gen_schedules`, nên một vault không có hợp đồng nào đọc ra 0 và
+      // InstantGen đóng trên MỌI mạng. Ghi trong sổ là hành vi fail-closed;
+      // thực chất là một công tắc tắt không ai định bật lại.
       const vault = makeVault({ gen_schedules: [] });
-      expect(() => simulateInstantGen(vault, makeUM(), makeBeacon(), 100n))
-        .toThrow("GEN-INST-005");
+      const r = simulateInstantGen(vault, makeUM(), makeBeacon(), 100n);
+      expect(r.grant).toBeGreaterThan(0n);
     });
 
     it("Red backing (br ≤ br_safe) locks the door", () => {

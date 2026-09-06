@@ -6,8 +6,9 @@ import { describe, it, expect } from "vitest";
 import {
   computeRewardFromConsumed,
   computeCapSurplus,
-  computePpSchedule,
   computeCapPp,
+  computeSq,
+  instantRateQDerived,
   computeInstantGrant,
   getUmForInstant,
   isExpired,
@@ -21,7 +22,7 @@ import {
   TV_CLIFF_01, TV_CLIFF_02,
   TV_IG_REWARD_01, TV_IG_REWARD_02, TV_IG_REWARD_03, TV_IG_REWARD_ZERO,
   TV_IG_CAP_SURPLUS_01, TV_IG_CAP_SURPLUS_02, TV_IG_CAP_SURPLUS_03,
-  TV_IG_CAP_PP_01, TV_IG_CAP_PP_02, TV_IG_CAP_PP_ZERO,
+  TV_IG_CAP_PP_01, TV_IG_CAP_PP_02, TV_IG_CAP_PP_ZERO, TV_IG_CAP_PP_DOOR,
   TV_IG_GRANT_01, TV_IG_GRANT_02, TV_IG_GRANT_03,
   TV_UM_SPLIT, TV_UM_FRESH,
   TV_OVERFLOW_01,
@@ -154,24 +155,50 @@ describe("computeCapSurplus — §6.3", () => {
 // §6.3 0.5 × pp_schedule — dual ceiling
 // ═══════════════════════════════════════════════════════════════
 
-describe("computePpSchedule / computeCapPp — §6.3 trần-kép", () => {
+describe("computeCapPp — §6.3 phanh thứ ba theo L_avail (D2)", () => {
 
-  it("TV-IG-CAP-PP-01: one schedule → pp=45 MAGIC, cap=22.5 MAGIC", () => {
+  it("TV-IG-CAP-PP-01: L_avail = 4000 LAMP → 16 MAGIC/epoch", () => {
     const v = TV_IG_CAP_PP_01;
-    expect(computePpSchedule(v.schedules)).toBe(v.expected_pp);
-    expect(computeCapPp(v.schedules)).toBe(v.expected_cap);
+    expect(computeCapPp(v.l_avail_oildrop)).toBe(v.expected_cap);
   });
 
-  it("TV-IG-CAP-PP-02: pp sums over every live contract", () => {
+  it("TV-IG-CAP-PP-02: trần tuyến tính theo L_avail", () => {
     const v = TV_IG_CAP_PP_02;
-    expect(computePpSchedule(v.schedules)).toBe(v.expected_pp);
-    expect(computeCapPp(v.schedules)).toBe(v.expected_cap);
+    expect(computeCapPp(v.l_avail_oildrop)).toBe(v.expected_cap);
+    // 1/4 số LAMP cho đúng 1/4 trần — không có bậc thang nào ở giữa.
+    expect(TV_IG_CAP_PP_01.expected_cap).toBe(v.expected_cap * 4n);
   });
 
-  it("TV-IG-CAP-PP-ZERO: no ScheduleGen contract ⟹ cap = 0 ⟹ InstantGen shut", () => {
+  it("TV-IG-CAP-PP-ZERO: L_avail = 0 ⟹ cap = 0", () => {
     const v = TV_IG_CAP_PP_ZERO;
-    expect(computePpSchedule(v.schedules)).toBe(v.expected_pp);
-    expect(computeCapPp(v.schedules)).toBe(v.expected_cap);
+    expect(computeCapPp(v.l_avail_oildrop)).toBe(v.expected_cap);
+  });
+
+  it("TV-IG-CAP-PP-DOOR: cách suất RATE_REF_Q của spec đúng 250 lần", () => {
+    const v = TV_IG_CAP_PP_DOOR;
+    const specWouldPay = v.l_avail_oildrop * v.spec_rate_ref_q / Q;
+    expect(specWouldPay).toBe(v.spec_would_pay);
+    expect(computeCapPp(v.l_avail_oildrop)).toBe(v.expected_cap);
+    expect(specWouldPay).toBe(v.expected_cap * v.ratio);
+  });
+
+  it("INSTANT_RATE_Q suy lại được từ hằng S_Q — không phải một số gõ tay", () => {
+    expect(instantRateQDerived()).toBe(8_000_000_000n);
+    // Và hằng đó phải là thứ `computeCapPp` thật sự dùng: 1 LAMP → 4×10⁶.
+    expect(computeCapPp(1_000_000n) * 2n * Q / 1_000_000n).toBe(instantRateQDerived());
+  });
+
+  it("S_Q khớp bảng ScheduleGen tự khai, và đơn điệu tăng", () => {
+    expect(computeSq(10n)).toBe(1_600_000_000n);
+    expect(computeSq(50n)).toBe(2_000_000_000n);
+    expect(computeSq(100n)).toBe(2_250_000_000n);
+    expect(computeSq(150n)).toBe(2_500_000_000n);
+    expect(computeSq(200n)).toBe(2_625_000_000n);
+    // Đơn điệu là toàn bộ lý lẽ cho việc ghim InstantGen ở độ dài nhỏ nhất:
+    // chỉ khi đó S_Q(schedule_min_length) mới là SÀN của dải ScheduleGen.
+    for (const [a, b] of [[10n, 11n], [49n, 50n], [50n, 51n], [149n, 150n], [150n, 151n], [199n, 200n]]) {
+      expect(computeSq(a!) <= computeSq(b!)).toBe(true);
+    }
   });
 });
 
@@ -186,10 +213,10 @@ describe("computeInstantGrant — §6.3 min of three ceilings", () => {
     expect(computeRewardFromConsumed(input.consumed, input.um_q, input.pm_q))
       .toBe(ceilings.reward);
     expect(computeCapSurplus(input.br_q, input.magic_supply)).toBe(ceilings.cap_surplus);
-    expect(computeCapPp(input.schedules)).toBe(ceilings.cap_pp);
+    expect(computeCapPp(input.l_avail_oildrop)).toBe(ceilings.cap_pp);
     expect(computeInstantGrant(
       input.consumed, input.um_q, input.pm_q,
-      input.br_q, input.magic_supply, input.schedules,
+      input.br_q, input.magic_supply, input.l_avail_oildrop,
     )).toBe(expected_grant);
   });
 
@@ -199,7 +226,7 @@ describe("computeInstantGrant — §6.3 min of three ceilings", () => {
       .toBe(ceilings.reward);
     expect(computeInstantGrant(
       input.consumed, input.um_q, input.pm_q,
-      input.br_q, input.magic_supply, input.schedules,
+      input.br_q, input.magic_supply, input.l_avail_oildrop,
     )).toBe(expected_grant);
     // The whale's own reward is an order of magnitude above what it receives.
     expect(ceilings.reward).toBeGreaterThan(expected_grant);
@@ -209,15 +236,28 @@ describe("computeInstantGrant — §6.3 min of three ceilings", () => {
     const { input, expected_grant } = TV_IG_GRANT_03;
     expect(computeInstantGrant(
       input.consumed, input.um_q, input.pm_q,
-      input.br_q, input.magic_supply, input.schedules,
+      input.br_q, input.magic_supply, input.l_avail_oildrop,
     )).toBe(expected_grant);
   });
 
-  it("No schedule ⟹ grant 0 even with healthy backing and heavy consumption", () => {
+  // Ca này TỪNG khẳng định "không có ScheduleGen ⟹ cấp 0". Mệnh đề đó đã bị
+  // bỏ cùng với trần-kép cũ (D2). Cái còn đúng, và là cái đáng canh, là: hết
+  // LAMP tự do thì không cấp — dù tiêu nhiều và backing khoẻ đến đâu.
+  it("L_avail = 0 ⟹ cấp 0 dù backing khoẻ và đã tiêu rất nhiều", () => {
     expect(computeInstantGrant(
       1_000_000_000_000n, 2_000_000_000n, PM_Q.Ember!,
-      3_000_000_000n, 1_000_000_000_000n, [],
+      3_000_000_000n, 1_000_000_000_000n, 0n,
     )).toBe(0n);
+  });
+
+  // Chiều ngược lại — bản vá phải mở được cửa, không chỉ đóng bớt. Không có
+  // ca này thì một `return 0n` cũng qua được toàn bộ nhóm test trên.
+  it("Không có ScheduleGen nào mà vẫn cấp được — đúng chỗ Nợ #19 khoá", () => {
+    const grant = computeInstantGrant(
+      1_000_000_000_000n, 2_000_000_000n, PM_Q.Ember!,
+      3_000_000_000n, 1_000_000_000_000n, 10_000_000n,   // 10 LAMP, không schedule
+    );
+    expect(grant).toBe(40_000_000n);
   });
 });
 

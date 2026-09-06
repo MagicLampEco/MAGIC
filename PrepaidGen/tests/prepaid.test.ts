@@ -143,6 +143,16 @@ describe("par 1:1 (C-PP-1)", () => {
     expect(PAR_SCALE).toBe(1n);   // CARP và MAGIC cùng 9 chữ số ⇒ par đồng nhất
   });
 
+  // Cùng lớp lỗi với ca trên, ở hai hằng KHÁC. Đo thật: hạ CẢ HAI sàn về thang 10⁶ cũ
+  // (`MIN_LOCK_CARPDROP = 1_000_000`) ở cả `.ak` lẫn `.ts` thì aiken 72/72 và vitest
+  // 75/75 vẫn XANH — cổng P8 chỉ chốt `ak == ts`, không buộc chúng theo
+  // `carpdrop_per_carp`. Nghĩa là một lần lùi về đúng lỗi Nợ #29 (sàn khoá thành
+  // 0,001 CARP thay vì 1 CARP) đi qua im lặng. Ghim theo HẰNG để cửa đó đóng.
+  it("hai sàn dẫn xuất từ CARPDROP_PER_CARP, không phải literal", () => {
+    expect(MIN_LOCK_CARPDROP).toBe(CARPDROP_PER_CARP);               // 1 CARP
+    expect(MIN_DRAW_CARPDROP).toBe(CARPDROP_PER_CARP / 1_000n);      // 0,001 CARP
+  });
+
   it("chiều CARP→MAGIC không mất số dư với mọi giá trị thử", () => {
     for (const c of [0n, 1n, 7n, 999n, 1_000n, 123_456_789n, 10n ** 18n]) {
       expect(parCarpFromMagic(parMagicFromCarp(c))).toBe(c);

@@ -26,7 +26,11 @@ export function parMagicFromCarp(carpdrop: bigint): bigint {
 /**
  * carpdrop = ⌊ nanogic / PAR_SCALE ⌋.
  * Chỉ dùng cho TRẦN ĐÒI của provider (C-PP-6) và cho phần trả lại hạn-mức khi
- * dọn batch chết. Sàn ⌊⌋ lệch về phía an toàn (ra ÍT CARP hơn).
+ * dọn batch chết.
+ *
+ * VỚI `PAR_SCALE = 1` phép sàn này KHÔNG còn cắt gì — lập luận "lệch về phía an
+ * toàn, ra ÍT CARP hơn" ở bản trước đã chết cùng lúc hai thang bằng nhau. Giữ hàm
+ * vì ngày nào một token đổi decimals thì `PAR_SCALE ≠ 1` và cái sàn sống lại.
  *
  * BigInt `/` cắt về 0; với toán hạng không âm điều đó trùng với ⌊⌋ của Aiken,
  * nên chặn số âm ngay tại cửa thay vì để hai bên lệch ngầm.

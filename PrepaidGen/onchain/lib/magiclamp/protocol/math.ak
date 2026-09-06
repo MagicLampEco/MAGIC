@@ -12,7 +12,7 @@ use magiclamp/protocol/constants.{bps_denom, par_scale}
 //
 // nanogic = carpdrop × par_scale        (NHÂN → chính xác tuyệt đối)
 //
-// 1 CARP = 10^6 carpdrop → 10^9 nanogic = 1 MAGIC ✓ (Carpet-CARP §3.1)
+// 1 CARP = 10^9 carpdrop → 10^9 nanogic = 1 MAGIC ✓ (CARP 9 chữ số, chốt 2026-09-05)
 // Không có phí par, không có hệ số Q, không có làm tròn ở chiều này (C-PP-1).
 pub fn par_magic_from_carp(carpdrop: Int) -> Int {
   carpdrop * par_scale
@@ -20,8 +20,15 @@ pub fn par_magic_from_carp(carpdrop: Int) -> Int {
 
 // carpdrop = ⌊ nanogic / par_scale ⌋
 //
-// CHỈ dùng để tính TRẦN ĐÒI của provider (C-PP-6). Sàn ⌊⌋ lệch về phía an toàn:
-// quy đổi ra ÍT CARP hơn → provider không bao giờ đòi quá phần đã giao.
+// CHỈ dùng để tính TRẦN ĐÒI của provider (C-PP-6) và phần trả lại hạn-mức khi dọn
+// batch chết.
+//
+// VỚI `par_scale = 1` PHÉP SÀN NÀY KHÔNG CÒN CẮT GÌ. Bản trước ghi "sàn ⌊⌋ lệch về
+// phía an toàn: ra ÍT CARP hơn → provider không bao giờ đòi quá phần đã giao" — lập
+// luận đó chết cùng lúc hai thang bằng nhau. An toàn nay đến từ chỗ khác: Σ hạn-mức
+// còn lại = `credit_issued − Σ burned` = `outstanding`, đúng bằng nhau ở cả hai thang,
+// nên quỹ khớp chính xác chứ không còn giữ dư bụi. Ngày nào một trong hai token đổi
+// decimals thì `par_scale ≠ 1` và cái sàn này sống lại — giữ nguyên hàm, đừng rút gọn.
 pub fn par_carp_from_magic(nanogic: Int) -> Int {
   nanogic / par_scale
 }

@@ -4,15 +4,23 @@
 
 export const Q = 1_000_000_000n;
 
-export const CARPDROP_PER_CARP = 1_000_000n; // CARP decimals = 6  [CẦN XÁC NHẬN]
+// CARP dùng 9 chữ số thập phân, BẰNG MAGIC — chủ nhân chốt 2026-09-05, khớp
+// `nanothread = CARP × 10⁹` ở `BOUNDARIES.md`. Bản trước ghi 10⁶ kèm nhãn
+// [CẦN XÁC NHẬN] và nhãn đó nay đã được trả lời.
+export const CARPDROP_PER_CARP = 1_000_000_000n; // CARP decimals = 9
 export const NANOGIC_PER_MAGIC = 1_000_000_000n; // MAGIC decimals = 9 (§11)
 
 /**
  * par_scale = NANOGIC_PER_MAGIC / CARPDROP_PER_CARP.
- * 1 CARP khoá → đúng 1 MAGIC. Vì là phép NHÂN nên chiều CARP→MAGIC không mất
- * số dư (C-PP-1).  [Constitutional]
+ * 1 CARP khoá → đúng 1 MAGIC (C-PP-1).
+ *
+ * Hai thang bằng nhau ⟹ PAR_SCALE = 1, tức quy đổi là PHÉP ĐỒNG NHẤT. Hệ quả
+ * đổi NGỮ NGHĨA chứ không chỉ đổi số: chiều MAGIC→CARP (`parCarpFromMagic`)
+ * trước đây SÀN và cố ý lệch về phía an toàn cho quỹ; nay nó chính xác tuyệt
+ * đối, không còn phần dư nào để mất. Ngày nào một trong hai token đổi decimals
+ * thì hằng này đổi theo, và cái sàn kia sống lại.  [Constitutional]
  */
-export const PAR_SCALE = 1_000n;
+export const PAR_SCALE = 1n;
 
 // ── Hình dạng batch (§4.1, §4.2) ─────────────────────────────
 export const BATCH_SOURCE_PREPAID = 3n; // §4.1: 1=Instant 2=Schedule 3=Prepaid
@@ -20,8 +28,8 @@ export const PREPAID_DECAY_WINDOW = 1n; // cliff  [Constitutional]
 export const PREPAID_PROFILE = 0n; // PrepaidGen không dùng tư-cách
 
 // ── Sàn số lượng ──────────────────────────────────────────────
-export const MIN_LOCK_CARPDROP = 1_000_000n; // 1 CARP
-export const MIN_DRAW_CARPDROP = 1_000n; // 0.001 CARP = giá 1 op CID (§7.2)
+export const MIN_LOCK_CARPDROP = 1_000_000_000n; // 1 CARP
+export const MIN_DRAW_CARPDROP = 1_000_000n; // 0.001 CARP = giá 1 op CID (§7.2)
 
 // ── Trần hệ thống (§11) ───────────────────────────────────────
 export const MAX_BATCHES_PER_VAULT = 32;
@@ -47,8 +55,13 @@ export const CARP_POLICY_ID = {
   Preprod: "47144f2e675f5fd2b909fc295ba2a975291c4cbb576a15e7298cdb0b",
 } as const;
 
+// Nhịp epoch của GIAO THỨC — phải trùng `MS_PER_EPOCH_BY_NETWORK` ở
+// `ProtocolUtils/src/index.ts` (đó là nguồn; bảng này là bản chép có nhãn vì
+// PrepaidGen chưa nạp ProtocolUtils). Preprod nén 5× so với mạng thật (5 ngày),
+// giao thức chạy 1 ngày để một vòng hết hạn gói trọn trong một ngày kiểm thử.
+// Đổi số ở đây là đổi apply-param ⟹ đổi script hash. Chép ngày 2026-09-05.
 export const MS_PER_EPOCH = {
-  Mainnet: 432_000_000n,
-  Preview: 86_400_000n,
-  Preprod: 86_400_000n,
+  Mainnet: 432_000_000n,   // 5 ngày — trùng nhịp mainnet
+  Preview: 86_400_000n,    // 1 ngày — trùng nhịp mạng Preview
+  Preprod: 86_400_000n,    // 1 ngày — ĐỒNG HỒ NÉN 5×, mạng thật là 5 ngày
 } as const;

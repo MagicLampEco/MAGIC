@@ -134,7 +134,13 @@ const CASES: Case[] = [
       vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
       policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
       maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
-      treasuryAddr: addressData({ hash: P28, isScript: true }),
+      // Địa chỉ giữ chỗ phải mang stake part: chốt 2026-09-06 là kho Treasury CÓ
+      // uỷ quyền stake, và `assertTreasuryStakeDecided` nay từ chối enterprise
+      // address không có cửa bỏ qua. Ca enterprise được đo riêng ở cuối tệp.
+      treasuryAddr: addressData(
+        { hash: P28, isScript: true },
+        { hash: P28, isScript: false },
+      ),
       lampAssetName: "744c414d50",
     }),
   },
@@ -210,7 +216,78 @@ async function main() {
     }
   }
 
+  // ── Chốt stake Treasury phải CẮN, không chỉ tồn tại ────────────────────────
+  // Một cổng fail-closed mà không ai đo thì nó chỉ là một câu chú thích. Ca này
+  // dựng đúng địa chỉ enterprise mà `_reserve_layer2.ts` sinh ra và đòi nó ném.
+  let guardOk = true;
+  try {
+    paymasterParams({
+      vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
+      policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
+      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
+      treasuryAddr: addressData({ hash: P28, isScript: true }),   // stake part None
+      lampAssetName: "744c414d50",
+      // Không còn cờ nào để đặt — cổng phải ném ở đây, không có đường vòng.
+    });
+    guardOk = false;
+    console.log("   ❌ chốt stake Treasury KHÔNG cắn: enterprise address đi lọt\n");
+  } catch { /* đúng như mong đợi */ }
+
+  // ── CA DƯƠNG: cổng phải cho địa chỉ CÓ stake đi qua ────────────────────────────
+  // Thiếu vế này thì một cổng ném MỌI LÚC (`if (true) throw`) vẫn xanh — đo thật, đột
+  // biến đó sống sót khi chỉ có ca âm. Một cổng chặn cả địa chỉ đúng thì vô dụng y như
+  // cổng không chặn gì, chỉ khác là nó hỏng ồn ào hơn.
+  try {
+    paymasterParams({
+      vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
+      policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
+      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
+      treasuryAddr: addressData({ hash: P28, isScript: true }, { hash: P28, isScript: false }),
+      lampAssetName: "744c414d50",
+      // Địa chỉ có stake part — đây là hình dạng duy nhất cổng chấp nhận.
+    });
+  } catch (e) {
+    guardOk = false;
+    console.log(`   ❌ chốt stake Treasury ném NHẦM ca hợp lệ (địa chỉ CÓ stake): ${e}\n`);
+  }
+
+  // ── GHIM BYTE của addressData: nhánh Some(Inline(...)) không có caller sản xuất ──
+  // nào, nên lồng sai ở đó im lặng tuyệt đối — mà nó chính là đoạn quyết định
+  // `o.address == treasury_addr` on-chain có khớp hay không. Hình dạng chuẩn theo
+  // `aiken-lang-stdlib` ▸ `cardano/address.ak`:
+  //   Address       = Constr 0 [payment_credential, stake_credential]
+  //   VerificationKey = Constr 0 [hash] · Script = Constr 1 [hash]
+  //   stake None    = Constr 1 []
+  //   stake Some(Inline(c)) = Constr 0 [Constr 0 [c]]
+  const shape = (d: unknown): string => {
+    const n = d as { index?: number; fields?: unknown[] };
+    if (n && typeof n.index === "number") {
+      return `C${n.index}[${(n.fields ?? []).map(shape).join(",")}]`;
+    }
+    return typeof d === "string" ? "h" : String(d);
+  };
+  const wantNone   = "C0[C1[h],C1[]]";
+  const wantInline = "C0[C1[h],C0[C0[C0[h]]]]";
+  const gotNone    = shape(addressData({ hash: P28, isScript: true }));
+  const gotInline  = shape(addressData({ hash: P28, isScript: true }, { hash: P28, isScript: false }));
+  if (gotNone !== wantNone || gotInline !== wantInline) {
+    guardOk = false;
+    console.log(
+      `   ❌ addressData dựng SAI hình dạng Plutus Data:\n` +
+      `      stake None   mong ${wantNone}  nhận ${gotNone}\n` +
+      `      stake Inline mong ${wantInline}  nhận ${gotInline}\n` +
+      `      Lồng sai ở đây = validator không bao giờ khớp output nào.\n`,
+    );
+  }
+
+  // Pointer address (`Some(Pointer{slot,tx,cert})` → Constr 0 [Constr 1 [...]]) KHÔNG
+  // dựng được bằng addressData và cũng không bị cổng chặn. Chấp nhận: Conway cấm
+  // pointer address ở output. Ghi ra đây để lần sau không ai tưởng đã phủ 4/4 ca.
+
+  if (guardOk) console.log("── Chốt stake Treasury: cắn ca enterprise, cho qua ca có stake, hình dạng byte đúng ✓\n");
+
   console.log(`── Tổng kết: ${ok} khớp, ${mismatch} lệch, ${unbuilt} chưa build`);
+  if (!guardOk) process.exit(1);
   if (unbuilt > 0) {
     console.log(
       `   ❌ ${unbuilt} module CHƯA BUILD — cổng không kết luận được về chúng.\n` +

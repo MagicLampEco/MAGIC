@@ -11,20 +11,33 @@ use aiken/collection/list
 use magiclamp/protocol/math.{buffer_floor, par_carp_from_magic, par_magic_from_carp}
 
 // ── V1: par_magic_from_carp(carpdrop) -> nanogic ──────────────
-// Giá trị cuối vượt xa 2^53 → bắt hồi quy dùng Number bên TypeScript (C-OVERFLOW).
+//
+// ⚠ TỪ 2026-09-05, `par_scale = 1` (CARP và MAGIC cùng 9 chữ số) ⟹ bảng này là
+// PHÉP ĐỒNG NHẤT: cột ra bằng cột vào. Nói thẳng để không ai đọc nó thành một
+// chốt mạnh hơn thực tế — nó KHÔNG còn chứng minh phép nhân thang nào cả.
+// Cái nó CÒN chứng minh, và đó là lý do giữ: hai giá trị cuối không biểu diễn
+// được chính xác bằng `Number` (đều > 2^53, giá trị cuối lệch đúng 1 đơn vị so
+// với một mốc tròn), nên một lần hồi quy sang `Number` bên TypeScript vẫn làm
+// bảng này đỏ (C-OVERFLOW). Ngày CARP hoặc MAGIC đổi decimals thì `par_scale`
+// khác 1 trở lại và bảng lấy lại đầy đủ sức nặng — nhớ cập nhật CẢ HAI cột.
 pub const v1_par_in: List<Int> =
   [
     0, 1, 1_000, 1_000_000, 123_456_789, 4_500_000_000_000_000,
-    36_000_000_000_000_000,
+    36_000_000_000_000_000, 36_000_000_000_000_000_001,
   ]
 
 pub const v1_par_out: List<Int> =
   [
-    0, 1_000, 1_000_000, 1_000_000_000, 123_456_789_000,
-    4_500_000_000_000_000_000, 36_000_000_000_000_000_000,
+    0, 1, 1_000, 1_000_000, 123_456_789, 4_500_000_000_000_000,
+    36_000_000_000_000_000, 36_000_000_000_000_000_001,
   ]
 
 // ── V2: par_carp_from_magic(nanogic) -> carpdrop (floor) ──────
+//
+// ⚠ Cùng lý do trên: với `par_scale = 1` phép chia sàn KHÔNG cắt gì, nên bảng
+// này cũng là đồng nhất và KHÔNG còn chứng minh hành vi làm-tròn-xuống. Trước
+// 2026-09-05 nó bắt được ca `999 → 0` (dư bị bỏ, lệch về phía an toàn cho quỹ);
+// hành vi đó nay không tồn tại vì không còn phần dư nào.
 pub const v2_inv_in: List<Int> =
   [
     0, 999, 1_000, 1_999, 1_000_000_000, 123_456_789_123,
@@ -32,7 +45,10 @@ pub const v2_inv_in: List<Int> =
   ]
 
 pub const v2_inv_out: List<Int> =
-  [0, 0, 1, 1, 1_000_000, 123_456_789, 36_000_000_000_000_000]
+  [
+    0, 999, 1_000, 1_999, 1_000_000_000, 123_456_789_123,
+    36_000_000_000_000_000_000,
+  ]
 
 // ── V3: buffer_floor(outstanding, buffer_bps) ─────────────────
 pub const v3_buf_outstanding: List<Int> =

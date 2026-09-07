@@ -415,11 +415,14 @@ fn validate_instant_gen(
   // ── §6.3 grant = min(reward, cap_surplus, 0.5 × pp) ──────
   let pm_q = get_pm_q(applied_input.profile)
   let consumed = applied_input.activity_state.consumed_credit
+  // `avail` is the same L_avail computed for C-INST-3 above — the third brake
+  // is now keyed to the LAMP this vault actually holds free, not to its
+  // ScheduleGen contracts. See math.ak `compute_cap_pp` for why that changed.
   let grant =
     compute_instant_grant(
       consumed, um_q, pm_q,
       backing.br_q, backing.magic_supply,
-      applied_input.gen_schedules,
+      avail,
     )
   expect grant > 0                       // no-op tx rejected
   expect claimed_amount == grant         // redeemer must state the exact grant
@@ -2030,10 +2033,20 @@ test ig_neg_forged_beacon_address() fail {
   t_ig_call(din, ig_grant, 10, tx)
 }
 
-// IG-NEG-NO-SCHEDULE: no ScheduleGen contract ⟹ pp = 0 ⟹ 0.5×pp = 0 ⟹ closed.
-// Documents the dual-ceiling behaviour: InstantGen can never run ahead of the
-// committed Schedule flow.
-test ig_neg_no_schedule_cap_zero() fail {
+// IG-POS-NO-SCHEDULE: a vault with NO ScheduleGen contract can still gen.
+//
+// This test used to assert the opposite, and the flip is the whole point of
+// D2. The old third brake was `0.5 × Σ gen_schedules`, so an empty list read
+// as cap = 0 and InstantGen was shut on every network — filed as Nợ #19. It
+// was written up as fail-closed behaviour, but a brake that reads 0 in the
+// ordinary case is not a brake, it is an off switch.
+//
+// ⚠ WHAT THIS TEST NO LONGER PROVES: it no longer pins any relationship
+// between InstantGen and the vault's committed Schedule flow, because there
+// is no longer one. The ceiling that replaced it is keyed to L_avail and is
+// pinned by `ig_cap_pp_*` in math.ak instead. Do not read a green here as
+// evidence that the dual ceiling still holds — it does not exist.
+test ig_pos_no_schedule_still_gens() {
   let base = t_ig_din(ig_credit)
   let din  = VaultDatum { ..base, gen_schedules: [] }
   let dout = t_ig_dout(din, ig_grant, 10)

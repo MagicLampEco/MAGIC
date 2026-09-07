@@ -89,6 +89,61 @@ pub const max_fires_per_tx_catchup: Int = 8
 // [Constitutional]
 pub const snapshot_base_rate_q : Int = 5_000_000_000
 
+// ── Shape factor S_Q — MIRRORED from ScheduleGen ─────────────
+// [Constitutional] Byte-identical to
+// `ScheduleGen/onchain/lib/magiclamp/protocol/constants.ak:15-22`. Copied, not
+// imported: each `onchain/` is a separate Aiken project, so there is no shared
+// module to point at. `instant_rate_q_derived` (math.ak) recomputes the derived
+// rate from these, and a test pins it against the literal below — that test is
+// what stops the two copies drifting apart in silence.
+//
+// S_Q is a function of a schedule's LENGTH IN EPOCHS, not of any LAMP amount.
+// Reading it as a size factor is the mistake to avoid: `compute_s_q` is called
+// with `schedule_length` at `ScheduleGen/onchain/validators/vault.ak:291`.
+pub const s_seg1_intercept_q : Int = 1_500_000_000   // 1.5
+pub const s_seg1_slope_q     : Int = 10_000_000      // 0.010 per L
+pub const s_seg2_knee        : Int = 50              // L=50 boundary
+pub const s_seg2_intercept_q : Int = 2_000_000_000   // 2.0
+pub const s_seg2_slope_q     : Int = 5_000_000       // 0.005 per (L-50)
+pub const s_seg3_knee        : Int = 150             // L=150 boundary
+pub const s_seg3_intercept_q : Int = 2_500_000_000   // 2.5
+pub const s_seg3_slope_q     : Int = 2_500_000       // 0.0025 per (L-150)
+
+/// Shortest commitment ScheduleGen will accept, in epochs.
+/// Mirror of `ScheduleGen/onchain/lib/magiclamp/protocol/constants.ak:25`.
+pub const schedule_min_length : Int = 10
+
+// ── instant_rate_q — the rate InstantGen is allowed to pay ───
+// [Constitutional]
+//
+//   instant_rate_q = ⌊ snapshot_base_rate_q × S_Q(schedule_min_length) / Q ⌋
+//                  = ⌊ 5_000_000_000 × 1_600_000_000 / 10⁹ ⌋
+//                  = 8_000_000_000
+//
+// WHY THIS NUMBER AND NOT ANOTHER. The third brake used to be
+// `0.5 × Σ over gen_schedules`, and SPEC §6.3 replaced that with
+// `⌊L_avail × RATE_REF_Q / Q⌋` at `RATE_REF_Q = 10¹²` (ρ = 1 MAGIC/LAMP/epoch).
+// Neither is usable as written:
+//   · the old form is 0 whenever the vault has no schedule, which is why
+//     InstantGen cannot issue at all today;
+//   · ρ = 1 pays 10⁹ nanogic per LAMP per epoch, while a real ScheduleGen
+//     commitment pays `rate_locked_q / Q` per oildrop — 8×10⁹/10⁹ = 8 nanogic
+//     per oildrop at the shortest schedule, i.e. 8×10⁶ nanogic per LAMP. That
+//     is a 125× gap between two doors onto the same LAMP — 250× once the `/2`
+//     in `compute_cap_pp` is applied, which is the figure the test pins. Two
+//     numbers, two quantities: 125× compares the RATES, 250× compares what a
+//     vault actually receives. The gap opens the moment someone fixes
+//     InstantGen without reading this.
+//
+// So the rate is pinned to what ScheduleGen actually pays, at its LEAST
+// generous setting. The argument is a monotonicity one, not a taste one:
+// `compute_s_q` is increasing in schedule length, so `S_Q(schedule_min_length)`
+// is the smallest rate ScheduleGen ever grants. An InstantGen lock lasts one
+// epoch — shorter than any schedule — so it may not be paid more than the
+// shortest schedule. Every other choice would have to argue for a number;
+// this one is the floor of an existing range.
+pub const instant_rate_q : Int = 8_000_000_000
+
 // ── Profile change cooldown (§12, C-PC-V2) ──────────────────
 // [Routine] Minimum epochs between UpdateProfile calls
 pub const profile_change_cooldown : Int = 2

@@ -9,6 +9,9 @@
 import {
   Q, INSTANT_REWARD_RATE_Q, BR_SAFE_Q, F_CAP_SURPLUS_Q,
   UM_FALLBACK_Q, UM_MAX_STALENESS,
+  INSTANT_RATE_Q, SNAPSHOT_BASE_RATE_Q, SCHEDULE_MIN_LENGTH,
+  S_SEG1_INTERCEPT_Q, S_SEG1_SLOPE_Q, S_SEG2_KNEE, S_SEG2_INTERCEPT_Q,
+  S_SEG2_SLOPE_Q, S_SEG3_KNEE, S_SEG3_INTERCEPT_Q, S_SEG3_SLOPE_Q,
 } from "./constants.js";
 import {
   slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp,
@@ -100,39 +103,56 @@ export function computeCapSurplus(brQ: bigint, magicSupply: bigint): bigint {
 }
 
 /**
- * pp_schedule = Σ ⌊ λ_i × rate_locked_q_i / Q ⌋ over the vault's live
- * ScheduleGen contracts — the per-epoch MAGIC guaranteed by §6.4.
+ * ScheduleGen's S_Q, mirrored so `instantRateQDerived` can recompute the rate
+ * constant instead of trusting a literal. `l` is a schedule LENGTH IN EPOCHS,
+ * not a LAMP amount — `compute_s_q` is called with `schedule_length` at
+ * `ScheduleGen/onchain/validators/vault.ak:291`.
  *
- * Mirrors math.ak: compute_pp_schedule.
+ * Mirrors math.ak: compute_s_q.
  */
-export function computePpSchedule(
-  schedules: ReadonlyArray<Pick<GenSchedule, "lamp_per_epoch" | "rate_locked_q">>,
-): bigint {
-  let acc = 0n;
-  for (const s of schedules) acc += s.lamp_per_epoch * s.rate_locked_q / Q;
-  return acc;
+export function computeSq(l: bigint): bigint {
+  if (l <= S_SEG2_KNEE) return S_SEG1_INTERCEPT_Q + S_SEG1_SLOPE_Q * l;
+  if (l <= S_SEG3_KNEE) return S_SEG2_INTERCEPT_Q + S_SEG2_SLOPE_Q * (l - S_SEG2_KNEE);
+  return S_SEG3_INTERCEPT_Q + S_SEG3_SLOPE_Q * (l - S_SEG3_KNEE);
 }
 
-/** 0.5 × pp_schedule (floor). Empty schedules ⟹ 0 ⟹ InstantGen SHUT. */
-export function computeCapPp(
-  schedules: ReadonlyArray<Pick<GenSchedule, "lamp_per_epoch" | "rate_locked_q">>,
-): bigint {
-  return computePpSchedule(schedules) / 2n;
+/** Mirrors math.ak: instant_rate_q_derived. A test pins it against the literal. */
+export function instantRateQDerived(): bigint {
+  return SNAPSHOT_BASE_RATE_Q * computeSq(SCHEDULE_MIN_LENGTH) / Q;
+}
+
+/**
+ * Third brake: cap_pp = ⌊ ⌊ L_avail × INSTANT_RATE_Q / Q ⌋ / 2 ⌋.
+ *
+ * `lAvailOildrop = lamp_balance − lamp_locked`, result in nanogic.
+ *
+ * Replaces the old `0.5 × Σ gen_schedules` (D2). That form read 0 for a vault
+ * with no schedule, which is why InstantGen could not issue at all (Nợ #19);
+ * and SPEC §6.3's stated replacement, `RATE_REF_Q = 10¹²`, pays 250× what this
+ * ceiling allows for the same LAMP. Rate rationale in
+ * `onchain/lib/magiclamp/protocol/constants.ak` ▸ `instant_rate_q`.
+ *
+ * Mirrors math.ak: compute_cap_pp. Two sequential floors, not one fused
+ * division — §6.1.
+ */
+export function computeCapPp(lAvailOildrop: bigint): bigint {
+  const perEpoch = lAvailOildrop * INSTANT_RATE_Q / Q;
+  return perEpoch / 2n;
 }
 
 /** The whole §6.3 gate. Mirrors math.ak: compute_instant_grant. */
 export function computeInstantGrant(
-  consumed    : bigint,
-  umQ         : bigint,
-  pmQ         : bigint,
-  brQ         : bigint,
-  magicSupply : bigint,
-  schedules   : ReadonlyArray<Pick<GenSchedule, "lamp_per_epoch" | "rate_locked_q">>,
+  consumed      : bigint,
+  umQ           : bigint,
+  pmQ           : bigint,
+  brQ           : bigint,
+  magicSupply   : bigint,
+  lAvailOildrop : bigint,
 ): bigint {
   return min3(
     computeRewardFromConsumed(consumed, umQ, pmQ),
     computeCapSurplus(brQ, magicSupply),
-    computeCapPp(schedules),
+    computeCapPp(lAvailOildrop),
   );
 }
 

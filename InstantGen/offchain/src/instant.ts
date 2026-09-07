@@ -194,8 +194,11 @@ export async function buildInstantGenTx(
   if (!pmQ) throw new Error(`Unknown profile: ${vaultDatum.profile}`);
 
   const consumed = vaultDatum.activity_state.consumed_credit;
+  // `lAvail` đã tính ở cổng C-INST-3 phía trên — dùng lại, đừng khai lần hai:
+  // hai `const` cùng tên trong một scope là lỗi biên dịch TS2451, và vitest KHÔNG
+  // bắt được vì esbuild strip type mà không kiểm kiểu.
   const grant = computeInstantGrant(
-    consumed, umUsedQ, pmQ, backing.br_q, backing.magic_supply, vaultDatum.gen_schedules,
+    consumed, umUsedQ, pmQ, backing.br_q, backing.magic_supply, lAvail,
   );
   const ceilings = diagnoseCeilings(vaultDatum, consumed, umUsedQ, pmQ, backing);
 
@@ -203,8 +206,9 @@ export async function buildInstantGenTx(
     throw new Error(
       `GEN-INST-005: grant = 0 → nothing to mint. ` +
       `reward=${ceilings.reward} cap_surplus=${ceilings.capSurplus} cap_pp=${ceilings.capPp} ` +
-      `(consumed_credit=${consumed}). InstantGen only pays out against MAGIC actually consumed, ` +
-      `and never above 0.5 × the committed ScheduleGen flow.`,
+      `(consumed_credit=${consumed}, L_avail=${lAvail} oildrop). InstantGen only pays out ` +
+      `against MAGIC actually consumed, and never above half the per-epoch rate that the ` +
+      `same LAMP would earn on the shortest ScheduleGen commitment.`,
     );
   }
 
@@ -347,7 +351,7 @@ export function diagnoseCeilings(
   return {
     reward:     computeRewardFromConsumed(consumed, umQ, pmQ),
     capSurplus: computeCapSurplus(backing.br_q, backing.magic_supply),
-    capPp:      computeCapPp(vaultDatum.gen_schedules),
+    capPp:      computeCapPp(vaultDatum.lamp_balance - vaultDatum.lamp_locked),
   };
 }
 

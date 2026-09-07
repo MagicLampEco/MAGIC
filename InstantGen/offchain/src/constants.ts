@@ -30,6 +30,44 @@ export const MIN_INSTANT_HOLDING = 10_000_000n;      // 10 LAMP in oildrop
 // INV-CASHBACK-BOUND: rate × UM_MAX × PM_MAX = 0.20 × 2.00 × 1.15 = 0.46 < 1
 export const INSTANT_REWARD_RATE_Q = 200_000_000n;   // 0.20
 
+// ── Shape factor S_Q — MIRRORED from ScheduleGen ─────────────
+// [Constitutional] Byte-identical to
+// `ScheduleGen/onchain/lib/magiclamp/protocol/constants.ak:15-22` and to
+// `InstantGen/onchain/lib/magiclamp/protocol/constants.ak`. Copied because each
+// `onchain/` is its own Aiken project and each `offchain/` its own npm package
+// — there is no shared module to point at. `instantRateQDerived()` recomputes
+// INSTANT_RATE_Q from these, and a test pins that against the literal; that
+// test is the only thing stopping the copies drifting apart in silence.
+//
+// S_Q is a function of a schedule's LENGTH IN EPOCHS, not of a LAMP amount.
+export const S_SEG1_INTERCEPT_Q = 1_500_000_000n;  // 1.5
+export const S_SEG1_SLOPE_Q     =    10_000_000n;  // 0.010 per L
+export const S_SEG2_KNEE        =            50n;  // L=50 boundary
+export const S_SEG2_INTERCEPT_Q = 2_000_000_000n;  // 2.0
+export const S_SEG2_SLOPE_Q     =     5_000_000n;  // 0.005 per (L-50)
+export const S_SEG3_KNEE        =           150n;  // L=150 boundary
+export const S_SEG3_INTERCEPT_Q = 2_500_000_000n;  // 2.5
+export const S_SEG3_SLOPE_Q     =     2_500_000n;  // 0.0025 per (L-150)
+
+/** Shortest commitment ScheduleGen accepts, in epochs. */
+export const SCHEDULE_MIN_LENGTH = 10n;
+
+/** [Constitutional] ScheduleGen rate baseline. */
+export const SNAPSHOT_BASE_RATE_Q = 5_000_000_000n;
+
+// ── INSTANT_RATE_Q — the rate InstantGen is allowed to pay ────
+// [Constitutional]
+//
+//   INSTANT_RATE_Q = ⌊ SNAPSHOT_BASE_RATE_Q × S_Q(SCHEDULE_MIN_LENGTH) / Q ⌋
+//                  = ⌊ 5_000_000_000 × 1_600_000_000 / 10⁹ ⌋ = 8_000_000_000
+//
+// Pinned to the LEAST generous rate ScheduleGen grants. The argument is
+// monotonicity, not taste: S_Q increases with schedule length, so
+// S_Q(SCHEDULE_MIN_LENGTH) is the floor of ScheduleGen's range, and an
+// InstantGen lock (one epoch) is shorter than any schedule (ten or more), so it
+// may not be paid more. Full rationale in the Aiken twin of this constant.
+export const INSTANT_RATE_Q = 8_000_000_000n;
+
 // ── Surplus gate (§6.3 cap_surplus) ──────────────────────────
 export const BR_SAFE_Q       = 1_500_000_000n;   // 1.5  [Constitutional]
 export const F_CAP_SURPLUS_Q =   100_000_000n;   // 0.10 [Constitutional]

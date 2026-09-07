@@ -11,8 +11,12 @@ import {
   EngageMintRedeemerSchema,
   encodeEngageDatum, decodeEngageDatum, encodePriceParam, decodePriceParam,
   encodeConsumeRedeemer, encodeEngageMintRedeemer, decodeEngageMintRedeemer,
+  encodeBindDidRedeemer, CONSUME_REDEEMER_CONSTR, BIND_DID_REDEEMER_CONSTR,
   type EngageDatumT, type PriceParamT, type EngageMintRedeemerT,
 } from "../offchain/src/types.js";
+
+/** did_commit đúng khuôn 32 byte (64 ký tự hex) — gương của `ct_did32` trong consume.ak. */
+const DID_32 = "d1".repeat(32);
 
 const engage: EngageDatumT = {
   owner: "0bada55e",
@@ -65,8 +69,11 @@ describe("EngageDatum codec — 5 trường (constr 0: owner, consumed_count, la
     expect(decodeEngageDatum(encodeEngageDatum(busy))).toEqual(busy);
   });
 
-  it("did_commit non-empty round-trips (future DID commitment)", () => {
-    const withDid: EngageDatumT = { ...engage, did_commit: "deadbeef" };
+  it("did_commit non-empty round-trips (DID commitment 32 byte)", () => {
+    // 32 byte — khuôn DUY NHẤT mà on-chain `did_len_ok` nhận ngoài rỗng. Codec tự nó
+    // không ép độ dài (nó chỉ mã hoá bytes); ràng buộc nằm ở validator. Dùng đúng
+    // khuôn ở đây để test không dạy người đọc một hình dạng mà chuỗi sẽ từ chối.
+    const withDid: EngageDatumT = { ...engage, did_commit: DID_32 };
     expect(decodeEngageDatum(encodeEngageDatum(withDid))).toEqual(withDid);
   });
 
@@ -151,6 +158,49 @@ describe("ConsumeRedeemer codec (Constr 0: op_type, op_count, price_ref, vault_r
     const ref = { transaction_id: "bb", output_index: 9n };
     const cbor = Data.to(ref, OutputReferenceSchema);
     expect(Data.from(cbor, OutputReferenceSchema)).toEqual(ref);
+  });
+});
+
+describe("ConsumeRedeemer enum — chỉ số constructor là HỢP ĐỒNG NHỊ PHÂN", () => {
+  // Gương của `redeemer_constr_index_pinned` (consume.ak). Đảo thứ tự hai variant
+  // hoặc chèn variant mới vào GIỮA là đổi cách decode ⇒ mọi tx dựng theo chỉ số cũ
+  // vỡ, và không compile nào gãy để báo.
+  it("Consume ở constr 0, ĐÚNG 4 field", () => {
+    const cbor = encodeConsumeRedeemer({
+      op_type: 1n,
+      op_count: 3n,
+      price_ref: { transaction_id: "bb", output_index: 9n },
+      vault_ref: { transaction_id: "a1", output_index: 0n },
+    });
+    const raw = Data.from(cbor) as { index: number; fields: unknown[] };
+    expect(raw.index).toBe(CONSUME_REDEEMER_CONSTR);
+    expect(raw.index).toBe(0);
+    expect(raw.fields).toHaveLength(4);
+  });
+
+  it("BindDID ở constr 1, KHÔNG field", () => {
+    const raw = Data.from(encodeBindDidRedeemer()) as { index: number; fields: unknown[] };
+    expect(raw.index).toBe(BIND_DID_REDEEMER_CONSTR);
+    expect(raw.index).toBe(1);
+    expect(raw.fields).toHaveLength(0);
+  });
+
+  it("BindDID bytes == Constr(1, []) dựng tay == d87a80", () => {
+    // Constr 1 → CBOR tag 122 = 0xd87a; danh sách rỗng = 0x80.
+    expect(encodeBindDidRedeemer()).toBe(Data.to(new Constr(1, [])));
+    expect(encodeBindDidRedeemer()).toBe("d87a80");
+  });
+
+  it("hai variant KHÔNG trùng bytes (variant mới không đè lên variant cũ)", () => {
+    const consumeCbor = encodeConsumeRedeemer({
+      op_type: 1n,
+      op_count: 1n,
+      price_ref: { transaction_id: "bb", output_index: 0n },
+      vault_ref: { transaction_id: "a1", output_index: 0n },
+    });
+    expect(encodeBindDidRedeemer()).not.toBe(consumeCbor);
+    expect(consumeCbor.startsWith("d879")).toBe(true); // Constr 0
+    expect(encodeBindDidRedeemer().startsWith("d87a")).toBe(true); // Constr 1
   });
 });
 

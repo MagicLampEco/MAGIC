@@ -43,10 +43,24 @@ pub type PriceParam {
 ///   Validator spend ép `output.last_epoch == current_epoch`.
 ///
 /// `did_commit` (field 3, APPEND-ONLY — giữ tương thích decode genesis cũ):
-///   MVP = #"" (rỗng). Tương lai = blake2b256 commitment liên kết engagement ↔ DID
-///   sinh trắc (PhoenixKey, Governance C1/C3). Đặt 1 lần lúc genesis, IMMUTABLE sau đó
-///   (validator ép output.did_commit == input.did_commit). Validator KHÔNG ràng buộc
-///   NỘI DUNG ở MVP (rỗng-được), chỉ ràng buộc bất biến.
+///   #"" (rỗng) = CHƯA gắn DID. Khác rỗng = blake2b256 commitment liên kết
+///   engagement ↔ DID sinh trắc (PhoenixKey, Governance C1/C3).
+///
+///   ĐỘ DÀI bị ghim on-chain ở MỌI chỗ GHI (mint genesis + redeemer BindDID):
+///   `length == 0` HOẶC `length == 32`. Không ghim thì một did_commit dài tuỳ ý đi
+///   được vào datum — vừa phình UTxO vừa buộc mọi bên đọc tự đoán khuôn.
+///
+///   ĐƯỜNG ĐI MỘT CHIỀU, ĐÚNG MỘT LẦN:
+///     rỗng ──BindDID──▶ 32 byte ──▶ (đóng băng vĩnh viễn)
+///   - nhánh `Consume` ép `output.did_commit == input.did_commit` (bất biến tuyệt đối);
+///   - nhánh `BindDID` là đường DUY NHẤT ghi được, và chỉ khi giá trị hiện tại RỖNG.
+///   Không có đường đi ngược (32 byte → rỗng) và không có đường đổi giá trị này sang
+///   giá trị khác.
+///
+///   VÌ SAO cần BindDID: thread mở trong giai đoạn này có did_commit rỗng (lớp gắn DID
+///   chưa bật). Nếu did_commit bất biến TUYỆT ĐỐI qua mọi giao dịch thì khi hệ bật
+///   `consumedFactor` (hệ số tư-cách đọc MAGIC đã tiêu, gắn theo PersonDID), mọi thread
+///   mở hôm nay bị khoá vĩnh viễn ngoài cơ chế đó — không đường nào điền vào sau.
 ///
 /// `consumed_nanogic` (field 4, THÊM Ở CUỐI để KHÔNG dịch chỉ số field cũ):
 ///   Tổng GIÁ TRỊ đã tiêu (nanogic) tích luỹ trên thread này.
@@ -66,12 +80,32 @@ pub type EngageDatum {
 }
 
 /// Redeemer validator consume (engagement spend — CONTRACT.md §B2).
+///
+/// 🔴 CHỈ SỐ CONSTRUCTOR LÀ HỢP ĐỒNG NHỊ PHÂN. Variant MỚI chỉ được THÊM Ở CUỐI;
+///    đảo thứ tự / chèn giữa là đổi cách decode ⇒ mọi tx đã dựng sẵn và mọi bên
+///    off-chain đang mã hoá theo chỉ số cũ đều vỡ. Chỉ số hiện hành:
+///      Consume  → constr 0
+///      BindDID  → constr 1
+///    Ghim bằng test `redeemer_constr_index_pinned` (consume.ak) ↔
+///    `tests/codec.test.ts` phía off-chain.
+///
+/// `Consume` — tiêu MAGIC, ghi engagement:
 ///   op_type   : loại nghiệp vụ (khớp 1 OpPrice trong PriceParam.op_prices)
 ///   op_count  : số lượng nghiệp vụ trong consume này (≥ 1)
 ///   price_ref : OutputReference của beacon PriceParam (reference input)
 ///   vault_ref : OutputReference của vault input co-spend bằng BurnBatch trong CÙNG
 ///               tx; validator đọc redeemer BurnBatch của input này để khớp
 ///               Σburns == required (liên kết 2 validator, không lệch giá).
+///
+/// `BindDID` — gắn PersonDID vào thread, KHÔNG field.
+///   Đường DUY NHẤT ghi `did_commit` sau genesis, đi MỘT CHIỀU và ĐÚNG MỘT LẦN:
+///   chỉ hợp lệ khi `did_commit` hiện tại RỖNG, và giá trị mới phải khác rỗng + đúng
+///   32 byte. Không tiêu MAGIC, không đọc giá, không đụng vault. Mọi trường kế toán
+///   (`owner`, `consumed_count`, `last_epoch`, `consumed_nanogic`) và value bảo toàn
+///   TUYỆT ĐỐI — giao dịch này chỉ điền một trường.
+///   Không field: continuing output là DUY NHẤT (ép `#in@engage == #out@engage == 1`)
+///   nên giá trị mới đọc thẳng từ datum của output đó, không cần khai lại trong
+///   redeemer (khai hai nơi là mở ra một chỗ để hai nơi lệch nhau).
 pub type ConsumeRedeemer {
   Consume {
     op_type   : Int,
@@ -79,6 +113,7 @@ pub type ConsumeRedeemer {
     price_ref : OutputReference,
     vault_ref : OutputReference,
   }
+  BindDID
 }
 
 /// Redeemer cho beacon PriceParam (committee/keeper post giá mới).

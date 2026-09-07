@@ -214,7 +214,9 @@ async function main() {
     owner:            ownerPkh,
     consumed_count:   0n,
     last_epoch:       0n,   // PIN: state tích luỹ, genesis PHẢI 0 (không phải epoch hiện tại)
-    did_commit:       "",   // MVP rỗng — immutable về sau
+    did_commit:       "",   // rỗng lúc tạo; điền MỘT LẦN sau bằng redeemer BindDID
+                            // (constr 1). Bất biến trên nhánh Consume, KHÔNG bất biến
+                            // tuyệt đối — câu "immutable về sau" ở đây từng đúng và nay sai.
     consumed_nanogic: 0n,
   } as never, EngageDatumSchema);
 

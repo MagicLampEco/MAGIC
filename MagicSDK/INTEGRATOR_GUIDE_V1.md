@@ -31,11 +31,12 @@ rút LAMP.
 - [4. Tạo vault](#4-tạo-vault)
 - [5. Tìm vault của người dùng](#5-tìm-vault-của-người-dùng)
 - [6. Sinh MAGIC](#6-sinh-magic)
-- [7. Đổi profile](#7-đổi-profile)
-- [8. Rút LAMP về ví](#8-rút-lamp-về-ví)
-- [9. Nhiều vault một chủ](#9-nhiều-vault-một-chủ)
-- [10. Bảng lỗi](#10-bảng-lỗi)
-- [11. Ba câu hỏi hay gặp](#11-ba-câu-hỏi-hay-gặp)
+- [7. Tiêu MAGIC](#7-tiêu-magic)
+- [8. Đổi profile](#8-đổi-profile)
+- [9. Rút LAMP về ví](#9-rút-lamp-về-ví)
+- [10. Nhiều vault một chủ](#10-nhiều-vault-một-chủ)
+- [11. Bảng lỗi](#11-bảng-lỗi)
+- [12. Ba câu hỏi hay gặp](#12-ba-câu-hỏi-hay-gặp)
 
 ---
 
@@ -244,7 +245,7 @@ Chi tiết từng trường: `buildInitialVaultDatum` trong `src/vaultDatum.ts` 
 ### Chọn profile lúc tạo
 
 `vault.profile` là profile **đầu tiên** của vault; bỏ trống thì SDK mặc định `"Flame"`. Đổi
-sau được qua `updateProfile()` ([§7](#7-đổi-profile)) — nhưng batch đã sinh giữ nguyên
+sau được qua `updateProfile()` ([§8](#8-đổi-profile)) — nhưng batch đã sinh giữ nguyên
 `profile_at_creation`, chỉ batch mới dùng profile mới.
 
 ### Trước khi bấm tạo, kiểm
@@ -377,7 +378,11 @@ Công thức cụ thể của từng trần: đọc `computeRewardFromConsumed`,
 bên trùng bit). `diagnoseCeilings()` trả về cả ba trần riêng lẻ — dùng nó để nói cho người
 dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trống.
 
-> ⚠ **Hôm nay cửa này ĐANG ĐÓNG, và có HAI chốt chặn ĐỘC LẬP.** Mở một cái không mở được cửa.
+> ⚠ **Hôm nay cửa này ĐANG ĐÓNG, và có BA chốt chặn ĐỘC LẬP.** Mở một cái không mở được cửa.
+>
+> **Đọc chốt #3 trước.** Nó là chốt cấu trúc, và nó nói rằng InstantGen **không phải cửa vào**:
+> nó là cửa THỨ HAI, chỉ mở cho người đã có MAGIC qua cửa thứ nhất. Cửa vào là **ScheduleGen**
+> (§6, phần ScheduleGen) — đó là đường app nên tích hợp.
 >
 > 1. **`backingBeaconUtxo` chưa tồn tại** (trần thặng dư backing). Nó là bắt buộc; chừng nào
 >    CARP chưa ship beacon thì không reference input nào thoả, `cap_surplus` không tính được,
@@ -390,8 +395,21 @@ dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trốn
 >    ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #6 và "Chờ chủ nhân chốt" D1: phải viết lại
 >    trần theo SPEC §6.3 **cùng lúc** với `INV-INSTANT-LOCK`, không thì mở đường flash-rent LAMP)
 >
-> **Ngày CARP giao beacon, InstantGen VẪN cấp 0 nanogic.** Đừng bật nút Instant chỉ vì #1 đã
-> xong — `diagnoseCeilings()` sẽ chỉ đúng trần nào đang chặn, dùng nó thay vì đoán.
+> 3. 🔴 **`consumed_credit` bằng 0 vì CẤU TRÚC, không vì cấu hình.** Thưởng InstantGen khoá
+>    theo MAGIC **đã tiêu** (`INV-MAGIC-CITIZEN`), tức `activity_state.consumed_credit`. Trong
+>    module InstantGen, `consumed_credit` chỉ tăng ở một chỗ — nhánh `BurnBatch`
+>    (`InstantGen/onchain/validators/vault.ak:947`) — mà nhánh đó chỉ đốt được `magic_batches`,
+>    và nơi DUY NHẤT tạo `magic_batches` trong module này là chính nhánh `InstantGen`
+>    (`vault.ak:429-442`). Genesis ghim cả hai về 0 (`vault.ak:274-277`), và module **không có
+>    handler nạp MAGIC từ ngoài** — `VaultRedeemer` đúng 6 biến thể. Vòng kín.
+>
+> **Ngày CARP giao beacon, InstantGen VẪN cấp 0 nanogic. Vá trần ở #2 xong thì VẪN 0.** Chốt #3
+> không mở được bằng một bản vá công thức; nó chờ quyết định kiến trúc D1 (InstantGen ở lại làm
+> script riêng, hay hợp nhất vào vault ScheduleGen để `ScheduleFire` nuôi `consumed_credit`).
+> Xem [`DevStatus.md`](../DevStatus.md) "Chờ chủ nhân chốt" D1.
+>
+> Đừng bật nút Instant chỉ vì #1 đã xong — `diagnoseCeilings()` chỉ đúng trần nào đang chặn,
+> dùng nó thay vì đoán.
 
 ### 6.3. Không có cửa nào khác qua SDK
 
@@ -425,7 +443,149 @@ thật, và sai lộ ra dưới dạng số tiền lệch chứ không phải l�
 
 ---
 
-## 7. Đổi profile
+## 7. Tiêu MAGIC
+
+Sinh MAGIC xong là để **tiêu**. Mục này là đường đi trọn vẹn của một lần tiêu, cho app như
+OriLife (neo CID, xử ảnh) hay AladinWork (đăng việc, tất toán hợp đồng).
+
+### 7.1 Một lần tiêu cần ba UTxO, không phải một
+
+| UTxO | Vai | Dựng bằng | Ai giữ |
+|---|---|---|---|
+| **vault** | nơi MAGIC nằm (số kế toán trong datum) | `createVault` | người dùng |
+| **Engage thread** | sổ đếm của app cho người dùng đó | `buildMintEngageTx` | app |
+| **PriceParam beacon** | bảng giá đang có thẩm quyền | `buildPostPriceTx` | app / uỷ ban giá |
+
+Beacon là **reference input** — nó không bị tiêu, nhiều người đọc chung một bảng. Vault và
+Engage thì bị tiêu và tạo lại trong cùng một tx.
+
+### 7.2 Giá lấy từ beacon, KHÔNG tự tính
+
+```ts
+import { requiredFromBeacon } from "@magiclamp/sdk";
+
+const required = await requiredFromBeacon({
+  lucid, priceBeaconUtxo, opType: 3, opCount: 12n,
+});   // → bigint, đơn vị nanogic
+```
+
+`requiredForOp` cũng có trong SDK, nhưng nó để **báo giá trước** cho người dùng thấy, không
+phải để tính tiền. Con số có thẩm quyền luôn là con số đọc từ beacon đang sống. Hai đường phải
+cho cùng kết quả; lệch một nanogic là tx bị từ chối, vì `consume.ak` đòi `Σburns == required`
+đúng dấu bằng.
+
+> **Quy tắc làm tròn ở đây KHÁC chỗ khác trong kho.**
+> `required = ⌊base_price × demand_mult × op_count / Q⌋` — gộp rồi sàn **một** lần.
+> Không phải sàn từng op rồi nhân. Chép nhầm quy tắc là thu thiếu tới `op_count` nanogic mỗi
+> dòng, và nó chỉ lộ ra khi `demand_mult ≠ Q`.
+
+### 7.3 Bên vault: `buildVaultBurnBatch`
+
+`buildConsumeTx` lo bên Engage và bên định giá, nhưng hai tham số thuộc về vault thì nó không
+tự dựng được — vault là module khác và schema datum của nó nằm ngoài tầm ConsumeMAGIC. Dùng:
+
+```ts
+import { buildVaultBurnBatch, buildConsumeTx } from "@magiclamp/sdk";
+
+const vaultSide = buildVaultBurnBatch({
+  vaultUtxo, required, currentEpoch, vaultPlutusJson,
+});
+
+if (vaultSide.expiredDropped.length) {
+  // MAGIC trong các batch này đã MẤT TRẮNG — báo người dùng, đừng nuốt im lặng.
+  console.warn(`${vaultSide.expiredDropped.length} batch đã hết hạn ở epoch ${currentEpoch}`);
+}
+
+const { tx } = await buildConsumeTx({
+  lucid, vaultUtxo, engageUtxo, priceBeaconUtxo,
+  consumeScript, vaultScript, opType: 3, opCount: 12n,
+  vaultBurnRedeemerCbor: vaultSide.vaultBurnRedeemerCbor,
+  vaultOutDatumCbor:     vaultSide.vaultOutDatumCbor,
+  ownerSignerKeyHash:    ownerPkh,
+});
+```
+
+Hàm chọn batch theo hai luật, và cả hai đều có lý do:
+
+- **Đa batch.** `burns` on-chain là một danh sách, nên ba batch 0,5 MAGIC gánh chung được một
+  lần tiêu 1,0 MAGIC. Đừng tự viết vòng chọn "một batch phải đủ" — nó từ chối người dùng đang
+  thừa MAGIC.
+- **Batch sắp chết trước.** MAGIC dùng-hết-hoặc-mất theo epoch; batch sắp hết hạn thì hoặc tiêu
+  bây giờ hoặc mất trắng. Đốt batch tươi trước là tự vứt phần sắp mất.
+
+Cần dựng tx bằng tay (paymaster, gộp nhiều thao tác) thì dùng `planBurnBatch` — cùng logic,
+hàm thuần, trả `{ burns, newDatum, expiredDropped }` chứ không mã hoá CBOR.
+
+### 7.4 Xác nhận app đã thu tiền: đọc **delta `consumed_nanogic`**
+
+Sau khi tx lên chuỗi, app đọc `EngageDatum` mới và so với bản cũ:
+
+```ts
+const before = decodeEngageDatum(engageUtxo.datum);
+const after  = decodeEngageDatum(newEngageUtxo.datum);
+const paid   = after.consumed_nanogic - before.consumed_nanogic;   // nanogic thật đã tiêu
+```
+
+> 🔴 **Đọc delta `consumed_nanogic`, KHÔNG đọc `consumed_count`.** `consumed_count` đếm số
+> **lượt**, không đếm **lượng** — hai lượt 1 op và một lượt 2 op cho cùng số lượt nhưng khác
+> số tiền. Cấp dịch vụ theo số lượt là cấp miễn phí cho ai gộp op.
+>
+> Cùng lý do đó, `attribution.total_events` trên vault tăng **+1 mỗi giao dịch**, không theo
+> `op_count`. Đừng dùng nó làm số lượng.
+
+### 7.5 §4.2 dùng-hết-hoặc-mất — điều app phải nói với người dùng
+
+`decay_window = 1` nghĩa là một batch chỉ tiêu được trong **đúng epoch nó được sinh**. Trên
+testnet 1 epoch = 1 ngày; sinh hôm nay, tiêu ngày mai là mất trắng. MAGIC **không cộng dồn**.
+
+Hệ quả cho giao diện: đừng hiện "số dư MAGIC" như một số dư ngân hàng. Hiện **số tiêu được
+trong epoch này** và **thời điểm nó hết hạn**. `expiredDropped` cho biết lần này đã mất bao
+nhiêu — dùng nó, đừng để người dùng tự phát hiện.
+
+### 7.6 `op_type`: cái nào có giá thật
+
+`op_type` là số nguyên trỏ vào một dòng của bảng giá beacon. Bảng của một beacon giữ tối đa 16
+dòng — đó là trần **kích thước datum của một bảng**, không phải trần số mã tồn tại trên đời;
+sổ mã do Registry giữ.
+
+| mã | nghĩa | có giá trong beacon mẫu |
+|---|---|---|
+| 1 | xử một ảnh | có |
+| 2 | neo một CID | có |
+| 3 | lưu trữ (MB) | có |
+| 4 | tính toán (MB) | có |
+| 5 | `job_post` | **chưa** — chờ chốt `base_price` |
+| 6 | `contract_settle` | **chưa** — chờ chốt `base_price` |
+
+Thêm dòng vào bảng **không** cần deploy lại gì: `op_prices` nằm trong **datum** của beacon, post
+lại bằng `buildPostPriceTx` là xong.
+
+> `op_type` đã lưu hành trên chuỗi thì **không bao giờ đổi nghĩa được** — mọi UTxO mang số đó
+> sẽ đổi nghĩa cùng lúc, và không hoàn tác được. Cần một đại lượng mới thì xin mã mới, đừng
+> diễn giải lại mã cũ.
+
+### 7.7 Bảng giá ai post, và cái phải siết trước mainnet
+
+`PriceParam` được canh bởi một uỷ ban `k`-trong-`n`: `price_param.ak` đòi danh sách người ký
+phân biệt, ngưỡng `threshold > 0` và `threshold ≤ |committee|`. Trên testnet mặc định là
+**1-trong-1** (ví deploy), nên app tự post được, không chờ ai.
+
+Ngưỡng 1 là chấp nhận được cho testnet và **không** chấp nhận được cho mainnet: một khoá đổi
+được giá của mọi người dùng. Trước khi lên mainnet phải nâng ngưỡng và tách khoá.
+
+### 7.8 Bảng lỗi hay gặp ở đường tiêu
+
+| Triệu chứng | Nguyên nhân thật | Xử |
+|---|---|---|
+| `MAGIC còn sống … < required` | batch đã qua epoch, mất trắng | sinh lại trong epoch hiện tại |
+| `op_type … không có trong beacon` | mã chưa có dòng giá | post lại bảng có dòng đó |
+| chuỗi từ chối, không nói trường nào | datum output lệch một trường, hoặc vault-id NFT rơi | dùng `buildVaultBurnBatch`; đừng tự dựng datum A02 |
+| beacon quá cũ | `max_price_stale` — beacon phải post lại mỗi epoch | dựng keeper, hoặc post trước mỗi đợt |
+| `HAI batch cùng batch_id` | dữ liệu vault hỏng | không phải lỗi tham số — báo lại, vault đó không đốt được nữa |
+
+---
+
+## 8. Đổi profile
 
 **Chỉ vault `Instant` hỗ trợ.** `VaultRedeemer` của ScheduleGen không có variant
 `UpdateProfile` (ScheduleGen khoá suất lúc commit, không đọc profile khi tính). Gọi với
@@ -482,7 +642,7 @@ lần một nên không lách được. Người dùng đổi ý sớm là trư�
 
 ---
 
-## 8. Rút LAMP về ví
+## 9. Rút LAMP về ví
 
 ```ts
 const result = await withdrawLamp({
@@ -551,7 +711,7 @@ thì validator từ chối ở luật W-3.
 
 ---
 
-## 9. Nhiều vault một chủ
+## 10. Nhiều vault một chủ
 
 Validator chỉ chặn "hai vault input trong cùng một tx" (C-VAULT-DS-1), **không** chặn "nhiều
 vault một chủ". Cardano hỗ trợ sẵn: N UTxO ở cùng địa chỉ script, mỗi UTxO một datum.
@@ -619,7 +779,7 @@ Rút LAMP khỏi vault ngắn hạn không đụng tới tuổi tích luỹ củ
 
 ---
 
-## 10. Bảng lỗi
+## 11. Bảng lỗi
 
 ### Lỗi từ SDK (ném TRƯỚC khi dựng tx)
 
@@ -661,12 +821,12 @@ chối, đối chiếu vết lỗi với bảng này:
 | W-5 | output datum lệch bất kỳ trường nào | lỗi builder — kể cả `last_updated_epoch`, luật đòi **giữ nguyên** |
 | W-6 | LAMP trong output vault ≠ `lamp_balance` mới | lỗi builder |
 | W-7 | Σholding ≠ `lamp_balance` | lỗi `removeNewestFirst` |
-| C-PC-V1..V6 | luật đổi profile | xem [§7](#7-đổi-profile) |
+| C-PC-V1..V6 | luật đổi profile | xem [§8](#8-đổi-profile) |
 | — | output vault thiếu NFT danh tính, hoặc ADA giảm | `validate_vault_value` — mọi nhánh spend đều đòi |
 
 ---
 
-## 11. Ba câu hỏi hay gặp
+## 12. Ba câu hỏi hay gặp
 
 ### Q1: Người dùng chọn được profile chưa?
 
@@ -714,7 +874,7 @@ await lucid.newTx()
 (hiện thực: `validate_withdraw_lamp`), và `withdrawLamp()` có `destinationAddress` nên gửi
 thẳng sang ví khác được trong một tx. Builder off-chain **đã khớp** validator (giữ
 `last_updated_epoch`, giữ NFT danh tính) — cái còn thiếu là **nghiệm thu**: chưa có tx thật
-trên testnet. Xem [§8](#8-rút-lamp-về-ví). Trước khi mở nút "rút" cho người dùng thật, chạy
+trên testnet. Xem [§9](#9-rút-lamp-về-ví). Trước khi mở nút "rút" cho người dùng thật, chạy
 thử đầu-cuối trên testnet và đối chiếu [`DevStatus.md`](../DevStatus.md).
 
 ---

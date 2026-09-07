@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit":       true,
+    "skipLibCheck": true,
+    "rootDir":      ".",
+    "types":        ["node"]
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "//exclude": "PHẢI ghi đè: tsconfig.json gốc liệt `tests` trong exclude, và `extends` kế thừa exclude — không ghi đè thì `include` ở trên vô hiệu và tsc lặng lẽ kiểm 0 tệp test.",
+  "exclude": ["node_modules", "dist", "examples"]
+}

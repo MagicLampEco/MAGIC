@@ -11,8 +11,10 @@
 // single shared "SHARD" name) is removed entirely.
 //
 // The SAME one-shot policy id is applied to the vault in
-// 07_create_schedule_vault.ts (vault takes shard_policy_id) — no param
-// hash-cycle (the shard validator does NOT take the vault hash).
+// 07_create_schedule_vault.ts (vault takes shard_policy_id). Từ 2026-09-07 shard
+// nhận NGƯỢC lại `vault_script_hash` — vẫn KHÔNG có vòng, vì chuỗi đi một chiều:
+//   shard_nft(genesis_ref) → shard_policy_id → vault(…) → vault_script_hash → shard(…)
+// Câu cũ ở đây ("the shard validator does NOT take the vault hash") nay SAI.
 
 import {
   Lucid, Blockfrost, Data,
@@ -20,11 +22,14 @@ import {
 } from "@lucid-evolution/lucid";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet, PROTOCOL,
+  POLICY_IDS, ASSET_NAMES,
 } from "../config.js";
 import {
   loadBlueprint, findValidator, appliedScript, appliedValidator,
 } from "../applyParams.js";
-import { oneShotGenesisParams, shardSpendParams } from "../deployParams.js";
+import {
+  oneShotGenesisParams, shardSpendParams, scheduleVaultParams,
+} from "../deployParams.js";
 
 const ShardDatumSchema = Data.Object({
   shard_id:                    Data.Integer(),
@@ -73,10 +78,30 @@ async function main() {
   );
   const shardNftPolicyId = mintingPolicyToId(shardNftPolicy);
 
-  // Apply policy id to the shard spend validator BEFORE hashing.
+  // ── THỨ TỰ APPLY: vault TRƯỚC shard, và đây là thứ tự BẮT BUỘC ────────────
+  //
+  // Từ 2026-09-07 `shard` nhận `vault_script_hash` làm tham số #2, nên phải có
+  // hash vault trước khi apply shard. Chuỗi một chiều, không khép vòng:
+  //   shard_nft(genesis_ref) → shard_policy_id → vault(…) → vault_script_hash → shard(…)
+  // Vault KHÔNG nhận hash của shard. Ai đảo lại sẽ cần hash vault trước khi có nó,
+  // và lối thoát duy nhất lúc đó là dựng một giá trị giữ chỗ — `applyParamsToScript`
+  // không kiểm arity lẫn nội dung, nên nó vẫn trả về một hash trông hợp lệ.
+  //
+  // `shard_policy_id` của vault phải là policy VỪA sinh ở trên, KHÔNG phải
+  // `POLICY_IDS.shard_nft` trong cấu hình — cái đó là của lần deploy trước.
+  const { hash: vaultScriptHash } = appliedScript(
+    findValidator(blueprint, "vault.vault.spend"),
+    scheduleVaultParams({
+      lampPolicyId:  POLICY_IDS.lamp,
+      lampAssetName: ASSET_NAMES.lamp,
+      shardPolicyId: shardNftPolicyId,
+      msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    }),
+  );
+
   const { script: shardScript, hash: shardScriptHash } = appliedScript(
     shardSpendUnapplied,
-    shardSpendParams({ shardPolicyId: shardNftPolicyId }),
+    shardSpendParams({ shardPolicyId: shardNftPolicyId, vaultScriptHash }),
   );
   const shardScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(shardScriptHash));
 

@@ -86,9 +86,25 @@ export function scheduleVaultParams(i: ScheduleVaultParamInputs): ParamMap {
   };
 }
 
-// ── ScheduleGen — vault.shard.spend (1 tham số) ──────────────────
-export function shardSpendParams(i: { shardPolicyId: string }): ParamMap {
-  return { shard_policy_id_param: i.shardPolicyId };
+// ── ScheduleGen — vault.shard.spend (2 tham số) ──────────────────
+//
+// `vault_script_hash` là tham số #2 từ 2026-09-07. `shard` không tự phán xét delta
+// sổ cái shard — nó chỉ chứng minh trong cùng giao dịch có một vault THẬT đang bị
+// tiêu. Trước đó "thật" được định nghĩa bằng hình dạng datum, thứ người gửi tự đặt,
+// nên nó không định nghĩa gì; tham số này là vế ghim địa chỉ.
+//
+// THỨ TỰ APPLY MỘT CHIỀU, không có vòng:
+//   shard_nft(genesis_ref) → shard_policy_id → vault(…) → vault_script_hash → shard(…)
+// Vault KHÔNG nhận hash của shard, nên chuỗi không khép. Ai đảo thứ tự này sẽ cần
+// hash vault trước khi có nó và phải dựng ra một giá trị giữ chỗ — đó là đường đi
+// tới một hash trông hợp lệ mà sai.
+export function shardSpendParams(
+  i: { shardPolicyId: string; vaultScriptHash: string },
+): ParamMap {
+  return {
+    shard_policy_id_param: i.shardPolicyId,
+    vault_script_hash:     i.vaultScriptHash,
+  };
 }
 
 // ── GetMAGIC — otc_order.otc_order.spend (1 tham số) ─────────────

@@ -73,7 +73,7 @@ const CASES: Case[] = [
   {
     module: "ScheduleGen", title: "vault.shard.spend",
     usedBy: "ScheduleGen shard UTxO",
-    params: shardSpendParams({ shardPolicyId: P28 }),
+    params: shardSpendParams({ shardPolicyId: P28, vaultScriptHash: P28 }),
   },
   {
     module: "ScheduleGen", title: "shard_nft.shard_nft.mint",

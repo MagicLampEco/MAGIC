@@ -44,7 +44,7 @@ async function main() {
   );
   const { script: shardScript, hash: shardHash } = appliedScript(
     findValidator(blueprint, "vault.shard.spend"),
-    shardSpendParams({ shardPolicyId: POLICY_IDS.shard_nft }),
+    shardSpendParams({ shardPolicyId: POLICY_IDS.shard_nft, vaultScriptHash: vaultHash }),
   );
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);

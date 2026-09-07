@@ -27,9 +27,9 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `consume.consume` | `b180e7293db5dc35c4885dd3232543c5325153ca01d7b8b8abbd9d33` |
+| `consume.consume` | `5470f785b8f32eb0571e2095bd1c4849e637746afb2cee6124cbc8ae` |
 | `price_nft.price_nft` | `82080eb9cb27d9eb7e603b7e3ecc460db12103b1829203b55d549d64` |
-| `price_param.price_param` | `bc289f71cbfbbbb8e485c7699a9a3aef88ab92086bdb73f181a99906` |
+| `price_param.price_param` | `84711860285aa599b8bafe8a437a90d3903c966395787b3bae9f88ad` |
 
 ### `Eligibility/onchain`
 
@@ -70,8 +70,8 @@ trình biên dịch `v1.1.21+42babe5`
 | validator | hash (CHƯA apply-param) |
 |---|---|
 | `fund_nft.fund_nft` | `2a3195949a6417d8a08c082148d7f04f6fb0e2898fc9b7bb3aa2a7e1` |
-| `prepaid.paid_fund` | `5f113b42535b0e0ecbe51c98a7327f82903260a2c978bd28f3e3119b` |
-| `prepaid.prepaid_vault` | `bf1f2d97c1903e7229e1058e08d18aa65ba92529b0699b73d7ea5e4f` |
+| `prepaid.paid_fund` | `fa4a1df824e7b1a37216b903c4e8701a5bf203c88cae59ba87e55def` |
+| `prepaid.prepaid_vault` | `5e566d91a5a5f34f5b2621177f42933ae4f1cfc6c615aaf0648f1b63` |
 
 ### `ProfileChange/onchain`
 

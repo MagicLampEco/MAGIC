@@ -21,10 +21,11 @@ Lý do thiết kế, bất biến `C-PP-1..15`, bảng quyền, và danh sách `
   vault người dùng — không hết hạn. Chỉ khi `PrepaidDraw` nó mới thành `MagicBatch`, và
   batch đó sống **đúng một epoch** (`decay_window = 1`, §4.2). Gộp hai bước làm một là làm
   người trả trước mất tiền sau một epoch.
-- **Par 1:1 là phép nhân, không phải Q-format.** `nanogic = carpdrop × 1000`. Không phí,
-  không làm tròn ở chiều CARP→MAGIC.
+- **Par 1:1 là phép nhân, không phải Q-format.** `nanogic = carpdrop × PAR_SCALE`, và
+  `PAR_SCALE = 1` vì CARP và MAGIC cùng 9 chữ số thập phân (chốt 2026-09-05). Tức quy đổi
+  là PHÉP ĐỒNG NHẤT — không phí, không làm tròn, ở cả hai chiều.
 - **MAGIC hết hạn trả lại HẠN-MỨC, không trả lại CARP.** `PrunePrepaid` cộng
-  `⌊current_amount / 1000⌋` về dòng hạn-mức tương ứng. Không đồng CARP nào rời quỹ (F2).
+  `⌊current_amount / PAR_SCALE⌋` về dòng hạn-mức tương ứng. Không đồng CARP nào rời quỹ (F2).
 - **Chỉ MAGIC tiêu THẬT mới vào `magic_settled`.** Quyết toán bỏ qua mọi batch đã chết —
   đây là `INV-MAGIC-CITIZEN`, và là thứ quyết định provider được đòi bao nhiêu.
 - **`BurnBatch` phải ở constructor index 2.** ConsumeMAGIC ghim `burn_batch_constr = 2` cho

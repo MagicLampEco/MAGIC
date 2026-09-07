@@ -194,7 +194,9 @@ export async function buildInstantGenTx(
   if (!pmQ) throw new Error(`Unknown profile: ${vaultDatum.profile}`);
 
   const consumed = vaultDatum.activity_state.consumed_credit;
-  const lAvail = vaultDatum.lamp_balance - vaultDatum.lamp_locked;
+  // `lAvail` đã tính ở cổng C-INST-3 phía trên — dùng lại, đừng khai lần hai:
+  // hai `const` cùng tên trong một scope là lỗi biên dịch TS2451, và vitest KHÔNG
+  // bắt được vì esbuild strip type mà không kiểm kiểu.
   const grant = computeInstantGrant(
     consumed, umUsedQ, pmQ, backing.br_q, backing.magic_supply, lAvail,
   );

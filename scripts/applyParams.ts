@@ -151,8 +151,36 @@ export function orderedParams(v: BlueprintValidator, byName: ParamMap): Data[] {
         `apply-param không nhận undefined/null. Nạp đủ env trước khi deploy.`,
       );
     }
+    assertNotBech32(v.title, n, value);
     return value;
   });
+}
+
+/** Chặn một chuỗi bech32 (hoặc placeholder) bị bake thẳng vào chỗ đợi Plutus Data.
+ *
+ *  VÌ SAO Ở ĐÂY. `orderedParams` là chốt DUY NHẤT mà mọi apply-param bắt buộc đi qua —
+ *  các hàm `*Params()` ở `deployParams.ts` chỉ là bộ định dạng, và `appliedScript(v, {...})`
+ *  dựng ParamMap bằng tay đi vòng qua chúng được. Đặt cổng ở hàm định dạng thì cổng có
+ *  đường vòng; đặt ở đây thì không.
+ *
+ *  Đây là lớp lỗi mà chính header của `deployParams.ts` cảnh báo: địa chỉ so bằng đẳng
+ *  thức CẤU TRÚC, không phải chuỗi bech32. `config.ts` giữ `ADDRESSES.treasury` dạng
+ *  chuỗi và `.env.example` để `TREASURY_ADDRESS=FILL_AFTER_DEPLOY`, nên hai giá trị này
+ *  ở ngay tầm tay người viết deploy script đầu tiên. Bake chuỗi vào thì
+ *  `applyParamsToScript` vẫn ra một hash "trông hợp lệ", và validator sẽ không bao giờ
+ *  khớp output nào — hỏng lúc chạy thật, không lúc deploy.
+ */
+function assertNotBech32(title: string, param: string, value: unknown): void {
+  if (typeof value !== "string") return;
+  const looksBech32 = /^(addr|addr_test|stake|stake_test)1[0-9a-z]{20,}$/.test(value);
+  const looksPlaceholder = /^(FILL_|REPLACE_)/.test(value);
+  if (!looksBech32 && !looksPlaceholder) return;
+  throw new Error(
+    `Tham số "${param}" của validator "${title}" nhận chuỗi ${looksBech32 ? "bech32" : "placeholder"} ` +
+    `"${value.slice(0, 24)}…". Apply-param cần Plutus Data có cấu trúc, không phải chuỗi: ` +
+    `địa chỉ on-chain so bằng đẳng thức CẤU TRÚC (xem đầu tệp deployParams.ts). ` +
+    `Dùng addressData({ hash, isScript }, stake?) để dựng, đừng truyền bech32 thẳng.`,
+  );
 }
 
 function formatMismatch(

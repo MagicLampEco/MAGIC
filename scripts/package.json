@@ -24,7 +24,8 @@
     "record:build": "npx tsx emit_build_record.ts",
     "verify:build-record": "npx tsx emit_build_record.ts --check",
     "e2e:consume-schedule": "bash run_consume_schedule_e2e.sh",
-    "restore:lamp-cap": "bash run_restore_lamp_cap.sh"
+    "restore:lamp-cap": "bash run_restore_lamp_cap.sh",
+    "test": "npx tsx check_param_names.ts"
   },
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.30",

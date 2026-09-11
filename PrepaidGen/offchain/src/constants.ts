@@ -44,16 +44,88 @@ export const MIN_BUFFER_BPS = 1_500n; // buffer-Paid ≥ 15%  [Constitutional]
 // nhất với InstantGen/ScheduleGen.  [CẦN XÁC NHẬN — §11 chưa có dòng PrepaidGen]
 export const BURN_BATCH_CONSTR = 2;
 
-// ── Cấu hình mạng ─────────────────────────────────────────────
-// tCARP đã đúc thật trên cả hai testnet (CARP/_Agents/topics/
-// carpetmint-offchain-testnet.md). Asset name + policy là THAM SỐ validator,
-// không hardcode vào logic.
-export const CARP_ASSET_NAME = "43415250"; // "CARP"
+// ── Cấu hình mạng: CARP ───────────────────────────────────────
+// CHỦ QUYỀN CỦA NHÀ CarpetMint. Kho này KHÔNG được tự đặt, tự suy, tự điền.
+//
+// Trạng thái đo ngày 2026-09-11 (số do nhà CarpetMint phát, thư trả lời cùng
+// ngày):
+//   Preprod — CÓ CARP, policy + asset name bên dưới.
+//   Preview — KHÔNG CÓ CARP. Instance duy nhất sống ở Preview là LACE, khác
+//             vai (BASE) và khác token. Điền policy LACE vào đây là dựng một
+//             quỹ Paid không bao giờ nhìn thấy đồng CARP nào.
+//   Mainnet — CHƯA DEPLOY.
+// Đo lại bằng: hỏi nhà CarpetMint (họ giữ nguồn), rồi đối chiếu on-chain
+//   `curl "$BLOCKFROST_URL/assets/<policy><asset_name>"` trên đúng mạng đó.
+//
+// Bản trước của khối này viết "tCARP đã đúc thật trên cả hai testnet" và điền
+// ba giá trị KHÔNG khớp nguồn nào: hai policy lạ, cộng asset name `43415250`
+// = hex ASCII của chuỗi "CARP". `carp_asset_name` KHÔNG phải ticker mã hoá —
+// nó là một băm 28 byte. Nhầm đó qua được mọi phép kiểm cũ vì phép kiểm cũ
+// ghim đúng con số sai.
 
-export const CARP_POLICY_ID = {
-  Preview: "074cf29c52db3700910d249e0da5b761b7588f8d5bcea595a335bcf7",
-  Preprod: "47144f2e675f5fd2b909fc295ba2a975291c4cbb576a15e7298cdb0b",
-} as const;
+/** Ba mạng PrepaidGen biết tới. Trùng khoá với `MS_PER_EPOCH` bên dưới. */
+export type CarpNetwork = "Mainnet" | "Preview" | "Preprod";
+
+/**
+ * `null` = CHƯA CÓ CARP trên mạng đó. Không có giá trị nào thay thế được, và
+ * chuỗi rỗng KHÔNG phải giá trị thay thế — xem `carpAssetClass()`.
+ */
+export const CARP_POLICY_ID: Record<CarpNetwork, string | null> = {
+  Mainnet: null, // chưa deploy (2026-09-11)
+  Preview: null, // KHÔNG CÓ CARP trên Preview (2026-09-11)
+  Preprod: "4967df00c7e038fc7ce2abdc1e6d4c946342ffa905e059ab861dffc2",
+};
+
+/** Băm 28 byte do nhà CarpetMint phát. KHÔNG phải hex của "CARP"/"tCARP". */
+export const CARP_ASSET_NAME: Record<CarpNetwork, string | null> = {
+  Mainnet: null,
+  Preview: null,
+  Preprod: "30cb6a6b6a1c9746bf9eb081d914d96ede4c4c13e661404678a933a6",
+};
+
+/** 28 byte = 56 ký tự hex — độ dài của cả policy id lẫn asset name CARP. */
+const HEX28 = /^[0-9a-f]{56}$/;
+
+/**
+ * Cửa DUY NHẤT để lấy cặp (policy, asset name) của CARP. FAIL-CLOSED: mạng
+ * chưa có CARP thì NÉM, không trả chuỗi rỗng, không trả giá trị mặc định.
+ *
+ * Vì sao là hàm chứ không phải hằng: một `?? ""` ở nơi gọi biến "chưa có CARP"
+ * thành "có CARP tên rỗng", và `assets.quantity_of(value, "", "")` trên chuỗi
+ * trả về 0 một cách im lặng — đúng hình dạng cái vỏ im lặng. Ném ở đây làm
+ * đường Preview DỪNG với một câu người đọc hành động được.
+ */
+export function carpAssetClass(
+  network: CarpNetwork,
+): { policyId: string; assetName: string } {
+  const policyId = CARP_POLICY_ID[network];
+  const assetName = CARP_ASSET_NAME[network];
+  if (policyId === null || assetName === null) {
+    throw new Error(
+      `PrepaidGen: mạng ${network} CHƯA CÓ CARP (đo 2026-09-11, nguồn: nhà ` +
+        `CarpetMint). PrepaidGen khoá CARP thật nên không có đường chạy nào ` +
+        `trên mạng này — nghiệm thu PrepaidGen phải chạy trên Preprod. ` +
+        `TUYỆT ĐỐI không điền policy của LACE (instance khác, vai BASE) vào ` +
+        `chỗ của CARP để "cho nó chạy".`,
+    );
+  }
+  if (!HEX28.test(policyId)) {
+    throw new Error(
+      `PrepaidGen: carp_policy_id của ${network} phải là 56 ký tự hex ` +
+        `thường (28 byte), đang là ${policyId.length} ký tự: "${policyId}".`,
+    );
+  }
+  if (!HEX28.test(assetName)) {
+    throw new Error(
+      `PrepaidGen: carp_asset_name của ${network} phải là 56 ký tự hex ` +
+        `thường (28 byte, một BĂM do nhà CarpetMint phát), đang là ` +
+        `${assetName.length} ký tự: "${assetName}". Nếu giá trị này là hex ` +
+        `của chuỗi "CARP"/"tCARP" thì nó là ticker mã hoá, không phải asset ` +
+        `name — đó đúng là lỗi đã vá ngày 2026-09-11.`,
+    );
+  }
+  return { policyId, assetName };
+}
 
 // Nhịp epoch của GIAO THỨC — phải trùng `MS_PER_EPOCH_BY_NETWORK` ở
 // `ProtocolUtils/src/index.ts` (đó là nguồn; bảng này là bản chép có nhãn vì

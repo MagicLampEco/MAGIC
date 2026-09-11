@@ -356,7 +356,8 @@ async function main() {
     owner: oldEngage.owner,
     consumed_count: oldEngage.consumed_count + opCount,
     last_epoch: currentEpoch,
-    did_commit: oldEngage.did_commit, // immutable
+    did_commit: oldEngage.did_commit, // bất biến TRÊN NHÁNH NÀY (Consume). Đổi được
+                                      // đúng một lần qua redeemer BindDID, và chỉ từ rỗng.
     // W-CM-12: validator ép Σ consumed_nanogic(out) == Σ(in) + total_required.
     // Thiếu trường này thì tx dựng ra bị validator từ chối — trước đây không lộ vì
     // gói `scripts/` chưa có `tsconfig.json` để `tsc` bắt.

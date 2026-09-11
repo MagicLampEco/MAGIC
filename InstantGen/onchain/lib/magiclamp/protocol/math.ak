@@ -6,10 +6,10 @@
 // P8: offchain/src/math.ts mirrors every function here bit-for-bit.
 
 use magiclamp/protocol/constants.{
-  br_safe_q, f_cap_surplus_q, instant_rate_q, instant_reward_rate_q, q,
-  s_seg1_intercept_q, s_seg1_slope_q, s_seg2_intercept_q, s_seg2_knee,
-  s_seg2_slope_q, s_seg3_intercept_q, s_seg3_knee, s_seg3_slope_q,
-  schedule_min_length, snapshot_base_rate_q,
+  br_safe_q, f_cap_surplus_q, instant_rate_q, instant_reward_rate_q,
+  pm_q_ember, q, s_seg1_intercept_q, s_seg1_slope_q, s_seg2_intercept_q,
+  s_seg2_knee, s_seg2_slope_q, s_seg3_intercept_q, s_seg3_knee,
+  s_seg3_slope_q, schedule_min_length, snapshot_base_rate_q, um_max_q,
 }
 
 // ── §6.1 Core Q operations ───────────────────────────────────
@@ -76,10 +76,23 @@ pub fn min3(a: Int, b: Int, c: Int) -> Int {
 // INV-CASHBACK-BOUND (reward ≤ consumed) holds by parameter construction:
 //   R_reward × UM_MAX × PM_MAX = 0.20 × 2.00 × 1.15 = 0.46 < 1
 // and each floor step only ever lowers the result.
+//
+// 🔴 `PM_MAX = 1.15` là trần của HỆ SỐ HỒ SƠ HOẠT ĐỘNG (`ActivityProfile`), một
+// enum BA mức đóng: `pm_q_ember 1.15` · `pm_q_flame 1.05` · `pm_q_lantern 1.00`
+// (`constants.ak:69-71`, ánh xạ ở `vault.ak` ▸ `get_pm_q`). Nó KHÔNG phải hệ số
+// tư-cách §6.2 — thứ đó là `eligibility_q ∈ [1.00×, 2.50×]` (`Eligibility/…/math.ak`
+// ▸ `eligibility_q`) và nó KHÔNG được nối vào đây.
+//
+// Vì sao phải viết ra: nối tư-cách vào chỗ này thì bất biến trên thành
+// `0.20 × 2.00 × 2.50 = 1.00`, tức HOÀ VỐN — cấp lại đúng bằng số đã tiêu, và
+// vòng tiêu-rồi-được-hoàn thôi hội tụ. Hai hệ số cùng mang chữ "multiplier", cùng
+// định dạng Q, cùng nhân vào một biểu thức; không dấu hiệu nào trong kiểu phân biệt
+// được chúng, và không bài kiểm nào đỏ nếu ai đó hoán chỗ. Chú thích cũ ở dòng
+// `pm_q` gọi thẳng nó là "tư-cách, §6.2" — đúng cái nhầm mà bất biến này không chịu nổi.
 pub fn compute_reward_from_consumed(
   consumed : Int, // nanogic already burned and not yet rewarded
   um_q     : Int, // Q-format UM (after the C-UM-6 stale check)
-  pm_q     : Int, // Q-format profile multiplier (tư-cách, §6.2)
+  pm_q     : Int, // hệ số hồ sơ hoạt động, enum ba mức ≤ 1.15 — KHÔNG phải tư-cách §6.2
 ) -> Int {
   let s1 = consumed * instant_reward_rate_q / q // step 1
   let s2 = s1 * um_q / q // step 2
@@ -280,4 +293,34 @@ test ig_grant_binds_on_cap_pp() {
       1_000_000,               // L_avail = 1 LAMP
     )
   grant == 4_000_000
+}
+
+// ── INV-CASHBACK-BOUND: bài kiểm CẮN được, không phải chú thích ──────────────
+//
+// Bất biến `R_reward × UM_MAX × PM_MAX < 1` cho tới nay chỉ sống trong một dòng
+// chú thích. Ba hằng đứng ở ba tệp/chỗ khác nhau, nên nâng một cái không làm gì
+// đỏ. Ba bài dưới đây bắt đúng ba đường phá nó.
+
+// Ở TRẦN của cả hai hệ số, hoàn lại phải NGẶT nhỏ hơn số đã tiêu.
+test ig_cashback_strictly_below_consumed_at_both_ceilings() {
+  let consumed = 1_000_000_000_000
+  let reward =
+    compute_reward_from_consumed(consumed, um_max_q, pm_q_ember)
+  reward < consumed && reward == 460_000_000_000
+}
+
+// Ghim đúng ba hằng dựng nên biên 0,46. Nâng bất kỳ cái nào là bài này đỏ ngay
+// tại chỗ, thay vì hỏng lặng ở một phép nhân cách đó ba tệp.
+test ig_cashback_bound_factors_are_pinned() {
+  instant_reward_rate_q == 200_000_000 && um_max_q == 2_000_000_000 && pm_q_ember == 1_150_000_000
+}
+
+// Đường phá thật: nối hệ số TƯ-CÁCH (trần 2,50×) vào chỗ `pm_q`. Kết quả là hoàn
+// lại ĐÚNG BẰNG số đã tiêu — hoà vốn, vòng tiêu-rồi-được-hoàn thôi hội tụ. Bài này
+// khẳng định con số đó để người đọc thấy biên mỏng đến đâu, và để ai định nới
+// `pm_q` phải đi qua đây.
+test ig_eligibility_ceiling_would_break_the_bound() {
+  let consumed = 1_000_000_000_000
+  let eligibility_ceiling_q = 2_500_000_000
+  compute_reward_from_consumed(consumed, um_max_q, eligibility_ceiling_q) == consumed
 }

@@ -388,7 +388,17 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 
 **Voting Power KHÔNG token-weighted** (cử tri = cá nhân qua PhoenixKey DID sinh trắc). VP = tích-nhân ≥4 tham số; **C1 = MAGIC tiêu thụ**.
 
-- **Nguồn C1 = `consumed_count` engage-side** (`EngageDatum.consumed_count`, §7.3), cửa-sổ ~18 epoch, đọc **cross-DID** — KHÔNG đọc tổng-sự-kiện-vault (số này self-burn bơm được).
+- **Nguồn C1 = `consumed_nanogic` engage-side** (`EngageDatum.consumed_nanogic`, §7.3), cửa-sổ ~18 epoch, đọc **cross-DID** — KHÔNG đọc tổng-sự-kiện-vault (số này self-burn bơm được).
+
+  > Dòng này trước viết `consumed_count`, và đó là lỗi chọi thẳng với §7.3 ngay trên. Sửa
+  > 2026-09-11 theo bốn nguồn cùng chiều: §7.3 của chính tệp này (*"`count` chỉ đếm số thao
+  > tác, không mang giá trị"*) · `LAMP/Governance/VotingPower/CONTRACT.md` — mục định nghĩa
+  > C1 nói *"tiền × thời gian"* và **không nhắc `consumed_count`** ở đâu · chú thích trên
+  > `EngageDatum` trong `ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak` (*"App PHẢI
+  > cấp dịch vụ theo delta của trường này, KHÔNG theo `consumed_count`"*) · và mô hình VP
+  > đã chốt. Đáng nói nhất: bản cũ **tự bác chính lý do nó đưa** — nó chống việc bơm số,
+  > mà `count` dễ bơm hơn `nanogic`, vì trả `op_type` rẻ nhất rồi lặp thì `count` tăng đều
+  > còn giá trị thì không. Đây là sửa một dòng mô tả sai mô hình, **không** phải đổi mô hình.
 - Điều này đóng phụ-thuộc-mở **D9** trong `LAMP/Governance/VotingPower/CONTRACT.md` (chống-mượn-C1: MAGIC xác nhận = consumed thật, không phải MAGIC-cầm).
 - Nguồn chân lý công thức VP: `LAMP/Governance/VotingPower/CONTRACT.md`.
 
@@ -464,7 +474,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 
 > **`INV-ORACLE-INDEP` — hai oracle phải ĐỘC LẬP (rà soát đối kháng 2026-07-30).** `engine_key`-oracle (chứng thực sổ tiêu-thụ off-chain) và **backing-price-oracle** (định giá `B` cho `br` — F6) **PHẢI là hai thực thể / hai bộ khoá tách biệt**. Nếu chung một bên vận hành, kẻ chiếm 1 khoá vô hiệu **đồng thời** hai phanh reward(consumed) và cap_surplus(br). Phanh **duy nhất độc-lập-oracle** là `pp_schedule` (suy TUYẾN TÍNH từ LAMP THẬT trên chuỗi — §6.3) cùng `INV-INSTANT-LOCK` (LAMP khoá vật lý): dù oracle nói dối, không gen vượt được LAMP-khoá-thật. ⟹ giữ `pp_schedule` là trần cứng on-chain là điều kiện sống-còn cho fail-safe. Kill-switch `status=Revoked` phải tách quyền: bên giữ engine_key KHÔNG đồng thời giữ quyền chặn revoke.
 
-> **Self-dealing / wash-consumption phụ thuộc `did_commit` (rà soát đối kháng 2026-07-30).** Vì MAGIC fungible + reward/C1 keyed theo consumed, một chủ thể vừa "user" vừa "merchant" có thể tự-trả-mình để bơm `consumed_count` giả (nâng reward InstantGen + C1). ConsumeMAGIC (`C-CM-1..5`) **không** kiểm "ai trả ai". Phanh đúng = `did_commit` (liên kết engagement ↔ DID sinh-trắc, §7.5) phát hiện pattern tự-giao — nhưng MVP `did_commit=#""` ⟹ **phanh TẮT tới khi Long giao `did_commit` thật** (lộ trình #1). Ghi nhận rủi ro: reward(consumed) và C1 dễ bị wash-trade tới khi did_commit bật; cân nhắc trần-suất consumed/epoch/DID như phanh tạm.
+> **Self-dealing / wash-consumption phụ thuộc `did_commit` (rà soát đối kháng 2026-07-30).** Vì MAGIC fungible + reward/C1 keyed theo consumed, một chủ thể vừa "user" vừa "merchant" có thể tự-trả-mình để bơm `consumed_nanogic` giả (nâng reward InstantGen + C1). ConsumeMAGIC (`C-CM-1..5`) **không** kiểm "ai trả ai". Phanh đúng = `did_commit` (liên kết engagement ↔ DID sinh-trắc, §7.5) phát hiện pattern tự-giao — nhưng MVP `did_commit=#""` ⟹ **phanh TẮT tới khi `did_commit` thật được giao** (lộ trình #1). Đo lại 2026-09-11: trường `did_commit` **đã có** trong `EngageDatum`, và nhánh spend ép nó **bất biến** ⟹ mọi thread đang sống mang `#""` không có đường điền vào. Đường ghi một chiều (redeemer `BindDID`) đã dựng nhưng **chưa lên nhánh chính** — nên phanh vẫn TẮT, và lý do nay là "chờ đường ghi", không còn là "chờ thêm trường". Ghi nhận rủi ro: reward(consumed) và C1 dễ bị wash-trade tới khi did_commit bật; cân nhắc trần-suất consumed/epoch/DID như phanh tạm.
 
 **Còn chốt:**
 1. Cơ chế Mint CARP + utility-floor + sim phòng-thủ-giá (`CarpetMint-Core-Spec-Vi.md`).

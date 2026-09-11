@@ -158,7 +158,10 @@ không cho dạng hàm cụ thể, đây là tham số MAGIC đề xuất]**.
 
 - `UM` = hệ số cầu mạng, giữ nguyên kiểm tra cũ `C-UM-6` (stale > 1 epoch →
   fallback 0.5×). Đây là phần "điều tiết cung-cầu".
-- `PM` = tư-cách (§6.2), Ember 1.15 / Flame 1.05 / Lantern 1.00.
+- `PM` = **hệ số hồ sơ hoạt động** (`ActivityProfile`), Ember 1.15 / Flame 1.05 /
+  Lantern 1.00 — một enum ba mức đóng. **KHÔNG phải hệ số tư-cách §6.2**
+  (`eligibility_q ∈ [1.00×, 2.50×]`), và tư-cách KHÔNG được nối vào chỗ này: nối vào
+  thì bất biến ngay dưới đây thành `0,20 × 2,00 × 2,50 = 1,00` — hoà vốn.
 
 `INV-CASHBACK-BOUND` đúng **theo cấu tạo tham số**, không cần kiểm tra runtime:
 

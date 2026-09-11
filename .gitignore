@@ -27,3 +27,7 @@ CLAUDE.md
 scripts/state.*.sh
 scripts/state.*.sh.bak-*
 __pycache__/
+
+# Cache của vitest/vite (sinh khi chạy bộ kiểm) — artifact, không commit
+.vite/
+**/.vite/

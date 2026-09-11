@@ -56,7 +56,7 @@ async function main() {
   );
   const { script: shardScript, hash: shardHash } = appliedScript(
     shardUnapplied,
-    shardSpendParams({ shardPolicyId: POLICY_IDS.shard_nft }),
+    shardSpendParams({ shardPolicyId: POLICY_IDS.shard_nft, vaultScriptHash: vaultHash }),
   );
   const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
   const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(shardHash));

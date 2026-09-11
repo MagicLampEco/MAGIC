@@ -23,10 +23,33 @@
 // output delta (locked/active/cumulative + cap + immutable fields) against the
 // real vault delta. The `shard` validator no longer re-derives the delta from a
 // redeemer it cannot trust; it only proves a matching vault co-spends in the
-// same tx (a VaultDatum input whose compute_shard_id(owner) == shard_id). This
-// removes the value-leak where shard state could desync from vault state, and
-// avoids a param hash-cycle (shard takes NO vault hash; vault takes only the
-// shard NFT policy id).
+// same tx. This removes the value-leak where shard state could desync from
+// vault state.
+//
+// COSPEND-IDENTITY (bản vá 2026-09-07) — "vault đối tác" phải là vault THẬT.
+//   Bản trước nhận diện vault đối tác bằng HÌNH DẠNG DATUM: giải mã ra
+//   `VaultDatum`, kiểm `compute_shard_id(owner) == shard_id`, kiểm redeemer là
+//   constr 0/1. Không vế nào đòi input đó nằm ở địa chỉ vault, cũng không đòi
+//   NFT danh tính ⟹ kẻ tấn công dựng một UTxO min-ADA ở script always-true của
+//   CHÍNH HẮN, đặt inline datum hình dạng `VaultDatum` với `owner` hash vào đúng
+//   shard mục tiêu, tiêu nó với redeemer constr 0. Bốn vế thoả, validator vault
+//   THẬT không hề chạy, và nhánh `shard` chỉ ghim `shard_id` + `shard_cap` trên
+//   output ⟹ bốn bộ đếm sổ cái shard bị ghi tuỳ ý (đặt 0 ⟹ `SHARD_CAP` thôi
+//   ràng buộc ai; đẩy kịch trần ⟹ DoS 1/16 người dùng với giá một phí giao dịch).
+//
+//   Nguyên tắc (BOUNDARIES §2 INV-VAULT-IDENTITY): bất biến danh tính KHÔNG tự
+//   lan sang bên ĐỌC. Chỗ nào không buộc validator vault CHẠY thì phải tự kiểm
+//   NFT VÀ địa chỉ ngay tại chỗ đọc. `vault_cospend_matches` nay ép cả hai.
+//
+//   KHÔNG có vòng apply-param: vault nhận *policy id của shard NFT*
+//   (= hash `shard_nft.ak`, param `genesis_ref` — không nhận hash nào), shard
+//   nhận *script hash của vault*. Thứ tự biên dịch một chiều:
+//       shard_nft(genesis_ref) → shard_policy_id
+//         → vault(lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch)
+//           → vault_script_hash
+//             → shard(shard_policy_id, vault_script_hash)
+//   Và D12: `vault_script_hash` đổi theo LOẠI vault (ba cửa gen ⟹ ba bản), không
+//   theo từng người dùng / từng UTxO / từng lần tạo.
 
 use aiken/builtin
 use aiken/cbor
@@ -189,12 +212,17 @@ validator vault(
 // ══════════════════════════════════════════════════════════════
 // The shard datum TRANSITION is enforced authoritatively by the vault
 // (validate_commit / validate_fire). The shard validator only guarantees that
-// it cannot be spent UNLESS a matching vault co-spends in the same tx — i.e. an
-// input carrying a VaultDatum whose compute_shard_id(owner) == this shard_id.
+// it cannot be spent UNLESS a matching REAL vault co-spends in the same tx —
+// an input sitting at `Script(vault_script_hash)`, carrying the vault-identity
+// NFT, whose datum's owner hashes to this shard_id, spent under Commit/Fire.
 // Without this, a shard could be spent standalone (no vault) and its aggregate
 // state corrupted. The redeemer carries the intended delta purely as an audit
 // hint; correctness is bound by the vault, not by trusting this redeemer.
-validator shard(shard_policy_id_param: PolicyId) {
+//
+// `vault_script_hash` (apply-param #2) là hash của validator `vault` ở CHÍNH tệp
+// này sau khi đã apply 4 tham số của nó. Xem khối COSPEND-IDENTITY ở đầu tệp:
+// thứ tự biên dịch một chiều, không vòng.
+validator shard(shard_policy_id_param: PolicyId, vault_script_hash: ByteArray) {
   spend(
     datum_opt : Option<ScheduleAggregateShardDatum>,
     _redeemer : ShardRedeemer,
@@ -230,14 +258,18 @@ validator shard(shard_policy_id_param: PolicyId) {
     // SHARD-NOMINT: no shard-policy token minted/burned (defence in depth).
     expect no_shard_mint(tx, shard_policy_id_param)
 
-    // SHARD-COSPEND: a matching vault must co-spend in this tx UNDER
-    // ScheduleCommit (constr 0) or ScheduleFire (constr 1). Find a vault input
-    // whose datum's owner hashes to this shard_id AND whose Spend redeemer is
-    // Commit/Fire. The vault validator (validate_commit / validate_fire) does
-    // the authoritative delta check. Without the redeemer gate, a vault spent
-    // under BurnBatch/WithdrawLamp/SetDelegate (which read NO shard) would
-    // satisfy the co-spend and let the shard datum be rewritten arbitrarily.
-    expect vault_cospend_matches(tx, shard_addr, shard_datum.shard_id)
+    // SHARD-COSPEND: a matching REAL vault must co-spend in this tx UNDER
+    // ScheduleCommit (constr 0) or ScheduleFire (constr 1). Four vế, thiếu một
+    // là hở: (1) input ở `Script(vault_script_hash)`; (2) input mang NFT danh
+    // tính vault; (3) datum giải mã ra VaultDatum với owner hash vào shard này;
+    // (4) Spend redeemer của nó là Commit/Fire. Hai vế đầu là bản vá
+    // COSPEND-IDENTITY — không có chúng thì một UTxO giả ở script bất kỳ của kẻ
+    // tấn công đủ để mở khoá shard mà validator vault không hề chạy. Vế thứ tư
+    // chặn vault spent under BurnBatch/WithdrawLamp/SetDelegate (đọc NO shard).
+    expect
+      vault_cospend_matches(
+        tx, shard_addr, shard_datum.shard_id, vault_script_hash,
+      )
 
     // shard_id and shard_cap are immutable (defense-in-depth; vault also checks).
     expect output_shard.shard_id  == shard_datum.shard_id
@@ -1135,22 +1167,43 @@ fn find_shard_output_by_policy(
   shard_datum_of(o, shard_id)
 }
 
-// Shard-side co-spend proof: there exists a vault input whose owner hashes to
-// this shard_id AND that vault is spent under ScheduleCommit (constr 0) or
-// ScheduleFire (constr 1). Only those two redeemers run the authoritative
-// shard-delta check in the vault validator; BurnBatch/WithdrawLamp/SetDelegate
-// touch no shard state, so co-spending the shard under one of them would let
-// the shard datum be rewritten freely (HIGH authority-bypass). We decode the
-// vault's Spend redeemer constructor index via builtin (no VaultRedeemer
-// coupling needed — same approach as ConsumeMAGIC.read_vault_burns).
+// Shard-side co-spend proof: there exists a REAL vault input — at the vault
+// script address, carrying the vault-identity NFT — whose owner hashes to this
+// shard_id AND that is spent under ScheduleCommit (constr 0) or ScheduleFire
+// (constr 1). Only those two redeemers run the authoritative shard-delta check
+// in the vault validator; BurnBatch/WithdrawLamp/SetDelegate touch no shard
+// state, so co-spending the shard under one of them would let the shard datum
+// be rewritten freely (HIGH authority-bypass). We decode the vault's Spend
+// redeemer constructor index via builtin (no VaultRedeemer coupling needed —
+// same approach as ConsumeMAGIC.read_vault_burns).
+//
+// COSPEND-ADDR + COSPEND-NFT (bản vá 2026-09-07) — hai vế đầu, xem khối
+// COSPEND-IDENTITY ở đầu tệp. Hình dạng datum là thứ NGƯỜI GỬI đặt, nên nó
+// KHÔNG chứng minh gì; chỉ một trong hai điều chứng minh được: hoặc input đang
+// bị tiêu tại `Script(vault_hash)` (ledger ép validator vault chạy), hoặc chỗ
+// đọc tự kiểm NFT + địa chỉ. Ở đây làm CẢ HAI vế của vế thứ hai — địa chỉ một
+// mình không đủ (một UTxO ai cũng park được ở địa chỉ vault công khai, không
+// validator nào chạy lúc TẠO), NFT một mình cũng không đủ (một NFT hợp lệ ra
+// khỏi vault thì đi kèm được bất kỳ datum nào ở bất kỳ đâu).
 fn vault_cospend_matches(
-  tx         : Transaction,
-  shard_addr : Address,
-  shard_id   : Int,
+  tx                : Transaction,
+  shard_addr        : Address,
+  shard_id          : Int,
+  vault_script_hash : ByteArray,
 ) -> Bool {
   list.any(tx.inputs, fn(i) {
-    if same_script(i.output.address, shard_addr) { False }
-    else {
+    if same_script(i.output.address, shard_addr) {
+      False
+    } else if i.output.address.payment_credential != Script(vault_script_hash) {
+      // COSPEND-ADDR: chỉ input NẰM Ở địa chỉ vault mới tính. Ở đó ledger bắt
+      // buộc chạy validator vault trong cùng giao dịch này.
+      False
+    } else if !has_vault_id_nft(i.output.value, vault_script_hash) {
+      // COSPEND-NFT: và nó phải mang NFT danh tính vault (policy == chính
+      // script hash vault, một token duy nhất, qty 1). Đây là thứ chặn UTxO
+      // giả park sẵn ở địa chỉ vault — Cardano không chạy validator lúc TẠO.
+      False
+    } else {
       when i.output.datum is {
         InlineDatum(d) ->
           when decode_vault(d) is {
@@ -1165,6 +1218,16 @@ fn vault_cospend_matches(
       }
     }
   })
+}
+
+/// Đúng MỘT tên tài sản dưới `policy`, số lượng 1 — phiên bản TRẢ VỀ Bool của
+/// `single_nft_name`. Chỗ này nằm trong vị từ của `list.any` nên không được
+/// dùng `expect` (một input lạ sẽ làm sập cả giao dịch thay vì bị bỏ qua).
+fn has_vault_id_nft(value: Value, policy: PolicyId) -> Bool {
+  when assets.tokens(value, policy) |> dict.to_pairs is {
+    [Pair(_name, qty)] -> qty == 1
+    _ -> False
+  }
 }
 
 // True iff the Spend redeemer for `vault_ref` is ScheduleCommit (constr 0) or
@@ -1883,7 +1946,12 @@ fn t_shard_addr() -> Address {
 // A tx carrying one vault input (at t_own_ref) plus a single Spend redeemer for
 // that vault with the given VaultRedeemer (coerced to the Data-typed Redeemer).
 fn t_tx_redeemer(vault_datum: VaultDatum, rd: VaultRedeemer) -> Transaction {
-  let vin = t_vault_input(vault_datum, 100)
+  t_tx_redeemer_in(t_vault_input(vault_datum, 100), rd)
+}
+
+/// Bản tổng quát: input do ca kiểm tự dựng (địa chỉ / value tuỳ ý), redeemer
+/// vẫn gắn vào `t_own_ref()`. Dùng cho các ca COSPEND-ADDR / COSPEND-NFT.
+fn t_tx_redeemer_in(vin: Input, rd: VaultRedeemer) -> Transaction {
   let rd_data: Data = rd
   Transaction {
     ..placeholder,
@@ -1897,7 +1965,7 @@ test shard_cospend_commit_ok() {
   let vd = t_datum(100, 0, [t_holding(100, 5, False)])
   let sid = compute_shard_id(vd.owner)
   let tx = t_tx_redeemer(vd, ScheduleCommit { schedule_length: 10, lamp_per_epoch: 1 })
-  vault_cospend_matches(tx, t_shard_addr(), sid)
+  vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
 }
 
 // PASS: vault co-spends under ScheduleFire (constr 1).
@@ -1905,7 +1973,7 @@ test shard_cospend_fire_ok() {
   let vd = t_datum(100, 0, [t_holding(100, 5, False)])
   let sid = compute_shard_id(vd.owner)
   let tx = t_tx_redeemer(vd, ScheduleFire { schedule_id: #"aa" })
-  vault_cospend_matches(tx, t_shard_addr(), sid)
+  vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
 }
 
 // FAIL: vault co-spends under SetDelegate (constr 4) — the exact authority
@@ -1914,7 +1982,7 @@ test shard_cospend_setdelegate_rejected() {
   let vd = t_datum(100, 0, [t_holding(100, 5, False)])
   let sid = compute_shard_id(vd.owner)
   let tx = t_tx_redeemer(vd, SetDelegate { new_delegate: Some(t_delegate) })
-  !vault_cospend_matches(tx, t_shard_addr(), sid)
+  !vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
 }
 
 // FAIL: vault co-spends under WithdrawLamp (constr 3).
@@ -1922,7 +1990,7 @@ test shard_cospend_withdraw_rejected() {
   let vd = t_datum(100, 0, [t_holding(100, 5, False)])
   let sid = compute_shard_id(vd.owner)
   let tx = t_tx_redeemer(vd, WithdrawLamp { amount: 5 })
-  !vault_cospend_matches(tx, t_shard_addr(), sid)
+  !vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
 }
 
 // FAIL: vault co-spends under BurnBatch (constr 2).
@@ -1930,7 +1998,7 @@ test shard_cospend_burnbatch_rejected() {
   let vd = t_datum(100, 0, [t_holding(100, 5, False)])
   let sid = compute_shard_id(vd.owner)
   let tx = t_tx_redeemer(vd, BurnBatch { burns: [(#"aa", 1)] })
-  !vault_cospend_matches(tx, t_shard_addr(), sid)
+  !vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
 }
 
 // FAIL: matching vault input present but NO redeemer entry for it → fail-closed.
@@ -1938,7 +2006,98 @@ test shard_cospend_no_redeemer_rejected() {
   let vd = t_datum(100, 0, [t_holding(100, 5, False)])
   let sid = compute_shard_id(vd.owner)
   let tx = t_tx([t_vault_input(vd, 100)], [], [])
-  !vault_cospend_matches(tx, t_shard_addr(), sid)
+  !vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
+}
+
+// ── COSPEND-IDENTITY: vault đối tác phải là vault THẬT ────────────────
+// Sáu ca trên chỉ đo VẾ REDEEMER. Cả sáu dùng `t_vault_input`, tức là đã ở đúng
+// địa chỉ vault VÀ đã mang NFT — nên không ca nào trong số đó đỏ khi hai vế mới
+// bị gỡ. Bốn ca dưới đây mới là bài canh của bản vá; mỗi ca cô lập ĐÚNG một vế.
+
+/// Script always-true của kẻ tấn công — bất kỳ hash nào khác vault/shard.
+const t_attacker_hash: ByteArray =
+  #"77777777777777777777777777777777777777777777777777777777"
+
+/// PoC nguyên bản: UTxO min-ADA ở script CỦA KẺ TẤN CÔNG, không NFT, inline
+/// datum đúng hình dạng `VaultDatum` với owner hash vào shard mục tiêu. Trước
+/// bản vá bốn vế đều thoả và validator vault THẬT không hề chạy ⟹ bốn bộ đếm
+/// sổ cái shard bị ghi tuỳ ý. Bị COSPEND-ADDR chặn.
+test shard_cospend_fake_utxo_at_attacker_script_rejected() {
+  let vd = t_datum(100, 0, [t_holding(100, 5, False)])
+  let sid = compute_shard_id(vd.owner)
+  let fake =
+    Input {
+      output_reference: t_own_ref(),
+      output: Output {
+        address: address.from_script(t_attacker_hash),
+        value: assets.from_lovelace(2_000_000),
+        datum: InlineDatum(vd),
+        reference_script: None,
+      },
+    }
+  let tx =
+    t_tx_redeemer_in(fake, ScheduleCommit { schedule_length: 10, lamp_per_epoch: 1 })
+  !vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
+}
+
+/// COSPEND-ADDR đo RIÊNG: y hệt vault thật — MANG ĐỦ NFT danh tính, đúng datum,
+/// đúng redeemer — chỉ khác mỗi ĐỊA CHỈ. Gỡ vế địa chỉ là ca này chuyển sang
+/// chấp nhận. (Vế NFT không cứu được ở đây vì NFT có mặt.)
+test shard_cospend_nft_carried_to_other_script_rejected() {
+  let vd = t_datum(100, 0, [t_holding(100, 5, False)])
+  let sid = compute_shard_id(vd.owner)
+  let moved =
+    Input {
+      output_reference: t_own_ref(),
+      output: Output {
+        address: address.from_script(t_attacker_hash),
+        value: assets.from_asset(t_lamp_policy, t_lamp_name, 100)
+          |> assets.add(t_vault_hash, t_vault_id_name, 1),
+        datum: InlineDatum(vd),
+        reference_script: None,
+      },
+    }
+  let tx =
+    t_tx_redeemer_in(moved, ScheduleCommit { schedule_length: 10, lamp_per_epoch: 1 })
+  !vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
+}
+
+/// COSPEND-NFT đo RIÊNG: UTxO park sẵn ở ĐÚNG địa chỉ vault (địa chỉ đó công
+/// khai, ai cũng gửi vào được) nhưng KHÔNG có NFT danh tính — Cardano không
+/// chạy validator lúc TẠO, nên không gì vét datum này. Gỡ vế NFT là ca này
+/// chuyển sang chấp nhận. (Vế địa chỉ không cứu được ở đây vì địa chỉ đúng.)
+test shard_cospend_parked_utxo_no_nft_rejected() {
+  let vd = t_datum(100, 0, [t_holding(100, 5, False)])
+  let sid = compute_shard_id(vd.owner)
+  let tx =
+    t_tx_redeemer_in(
+      t_vault_input_nonft(vd, 100),
+      ScheduleCommit { schedule_length: 10, lamp_per_epoch: 1 },
+    )
+  !vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
+}
+
+/// COSPEND-NFT, biên số lượng: đúng địa chỉ, đúng policy, nhưng HAI token dưới
+/// policy vault (một tên lạ ghép thêm). `has_vault_id_nft` đòi dict đúng một
+/// cặp — không được nới thành "có ít nhất một".
+test shard_cospend_two_tokens_under_vault_policy_rejected() {
+  let vd = t_datum(100, 0, [t_holding(100, 5, False)])
+  let sid = compute_shard_id(vd.owner)
+  let doubled =
+    Input {
+      output_reference: t_own_ref(),
+      output: Output {
+        address: t_vault_addr(),
+        value: assets.from_asset(t_lamp_policy, t_lamp_name, 100)
+          |> assets.add(t_vault_hash, t_vault_id_name, 1)
+          |> assets.add(t_vault_hash, #"beef", 1),
+        datum: InlineDatum(vd),
+        reference_script: None,
+      },
+    }
+  let tx =
+    t_tx_redeemer_in(doubled, ScheduleCommit { schedule_length: 10, lamp_per_epoch: 1 })
+  !vault_cospend_matches(tx, t_shard_addr(), sid, t_vault_hash)
 }
 
 // ── SHARD-RETURN: shard phải quay về ĐÚNG địa chỉ (Nợ #35) ────────────

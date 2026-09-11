@@ -220,7 +220,8 @@ EngageDatum {
   owner            : ByteArray,   // pkh chủ thread, bảo toàn qua mọi spend
   consumed_count   : Int,         // số LƯỢT tích luỹ  (thống kê/attribution)
   last_epoch       : Int,         // epoch consume GẦN NHẤT; genesis PHẢI == 0
-  did_commit       : ByteArray,   // append-only, MVP = #""; đặt 1 lần lúc genesis, immutable
+  did_commit       : ByteArray,   // rỗng hoặc ĐÚNG 32 byte; bất biến dưới `Consume`,
+                                  //   ghi được MỘT LẦN qua redeemer `BindDID`
   consumed_nanogic : Int,         // GIÁ TRỊ (nanogic) tích luỹ đã tiêu  ← THÊM Ở CUỐI
 }
 ```

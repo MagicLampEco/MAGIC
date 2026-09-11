@@ -64,7 +64,9 @@ pub const um_fallback_q : Int = 500_000_000
 // [Significant] Smoothing window: 6 epochs
 pub const um_smoothing_window : Int = 6
 
-// ── Profile multipliers PM_Q (§6.2 tư-cách) ─────────────────
+// ── Profile multipliers PM_Q — HỆ SỐ HỒ SƠ HOẠT ĐỘNG (ActivityProfile) ──
+// KHÔNG phải hệ số tư-cách §6.2 (`eligibility_q ∈ [1.00×, 2.50×]`). Ba mức dưới đây
+// đều ≤ 1.15, và trần 1.15 đó chính là thứ giữ INV-CASHBACK-BOUND < 1.───────────────
 // [Routine] — can be changed by DAO Routine vote
 pub const pm_q_ember   : Int = 1_150_000_000   // 1.15
 pub const pm_q_flame   : Int = 1_050_000_000   // 1.05

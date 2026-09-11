@@ -71,7 +71,13 @@ export function batchAge(createdEpoch: bigint, currentEpoch: bigint): bigint {
 export function computeRewardFromConsumed(
   consumed: bigint,  // nanogic already burned and not yet rewarded
   umQ     : bigint,  // Q-format UM (after the C-UM-6 stale check)
-  pmQ     : bigint,  // Q-format profile multiplier (tư-cách, §6.2)
+  // 🔴 pmQ = hệ số HỒ SƠ HOẠT ĐỘNG (`ActivityProfile`), enum ba mức đóng ≤ 1.15.
+  //    KHÔNG phải hệ số tư-cách §6.2 (`eligibility_q ∈ [1.00×, 2.50×]`) — nối nhầm thứ
+  //    đó vào đây làm INV-CASHBACK-BOUND thành 0.20 × 2.00 × 2.50 = 1.00, tức HOÀ VỐN:
+  //    cấp lại đúng bằng số đã tiêu, vòng tiêu-rồi-được-hoàn thôi hội tụ.
+  //    Chú thích cũ ở đúng dòng này ghi "(tư-cách, §6.2)" — chính cái nhầm mà bên Aiken
+  //    đã viết hẳn một khối để cảnh báo (math.ak ▸ compute_reward_from_consumed).
+  pmQ     : bigint,
 ): bigint {
   const s1 = consumed * INSTANT_REWARD_RATE_Q / Q;  // step 1
   const s2 = s1 * umQ / Q;                           // step 2

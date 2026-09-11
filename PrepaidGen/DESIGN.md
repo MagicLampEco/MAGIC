@@ -399,7 +399,7 @@ bên là đỏ ngay.
 | # | Điểm | Đang chọn gì | Ảnh hưởng nếu chốt khác |
 |---|---|---|---|
 | 1 | ~~decimals của CARP~~ **ĐÃ CHỐT 2026-09-05: 9 ⇒ `par_scale = 1`** | — | — |
-| 2 | asset name CARP trên mainnet | tham số validator, testnet `43415250` | không sửa code (đã là tham số) |
+| 2 | ~~asset name CARP~~ **ĐÃ ĐO 2026-09-11** — xem bảng ngay dưới | — | — |
 | 3 | `burn_batch_constr` của PrepaidGen | 2 (đồng nhất Instant/Schedule) | đổi thứ tự nhánh redeemer + bảng §11 |
 | 4 | quỹ Paid là cấu trúc CARP-side đã có hay MAGIC tự định nghĩa | MAGIC tự định nghĩa `PaidFundDatum` | có thể phải ghép vào schema CARP |
 | 5 | ranh giới một quỹ | mỗi (platform × dịch vụ) một quỹ | chỉ là quy ước vận hành |
@@ -410,3 +410,30 @@ bên là đỏ ngay.
 | 10 | `platform` 1-of-1 | pkh đơn | đổi sang script M-of-N |
 | 11 | quỹ có phải báo cáo `GlobalState` CarpetMint không | không | thêm reference input + kiểm tra |
 | 12 | đốt NFT quỹ để đóng quỹ | chưa cho (`else(_) { fail }`) | mở nhánh burn có điều kiện `outstanding == 0` |
+
+### 9.1 CARP theo mạng — đo 2026-09-11
+
+Nguồn: nhà **CarpetMint**, giữ chủ quyền CARP. Kho này KHÔNG tự đặt, tự suy, tự điền.
+Giá trị sống ở `offchain/src/constants.ts` (`CARP_POLICY_ID`, `CARP_ASSET_NAME`,
+`carpAssetClass`); bảng dưới là bản chép có nhãn, **không** phải nguồn.
+
+| mạng | có CARP? | ghi chú |
+|---|---|---|
+| Preprod | **có** | `policy_id` + `asset_name`, cả hai 28 byte — xem `constants.ts` |
+| Preview | **KHÔNG** | instance duy nhất sống ở Preview là **LACE**, vai BASE, token khác. Điền policy LACE vào chỗ CARP là dựng một quỹ Paid không bao giờ thấy đồng CARP nào |
+| Mainnet | chưa deploy | — |
+
+Hai điểm dễ sai, đã tốn một lần:
+
+1. `carp_asset_name` **không phải** hex của ticker. Nó là một **băm 28 byte**. Bản trước
+   của kho ghi `43415250` (hex ASCII "CARP", 4 byte) và một bài kiểm ghim đúng con số sai
+   đó, nên bộ kiểm xanh trong lúc cấu hình sai.
+2. Preview **fail-closed**: `carpAssetClass("Preview")` **ném**, không trả chuỗi rỗng.
+   `assets.quantity_of(value, "", "")` trả 0 một cách im lặng — đó là cái vỏ im lặng, không
+   phải một cấu hình.
+
+**Hệ quả lịch trình:** PrepaidGen khoá CARP thật, nên **không có đường chạy thử nào trên
+Preview**. Mọi bước nghiệm thu PrepaidGen phải chạy trên **Preprod**.
+
+Đo lại: hỏi nhà CarpetMint, rồi đối chiếu on-chain
+`curl "$BLOCKFROST_URL/assets/<policy><asset_name>"` trên đúng mạng đó.

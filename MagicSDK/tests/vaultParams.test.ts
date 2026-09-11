@@ -17,7 +17,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { msPerEpoch } from "@magiclamp/protocol-utils";
 import { applyParamsToScript, validatorToScriptHash } from "@lucid-evolution/lucid";
-import { buildParamsList, applyShardValidator } from "../src/validatorScripts.js";
+import {
+  buildParamsList, applyShardValidator, applyVaultValidator,
+} from "../src/validatorScripts.js";
 import type { ProtocolParams } from "../src/types.js";
 
 const LAMP_POLICY = "4942de4a226f43c524c1273d752712366511d5fd7ae28bc1a1576077";
@@ -139,34 +141,72 @@ describe("arity gate: SDK param list matches the built blueprint", () => {
     });
   }
 
-  it("applyShardValidator apply ĐÚNG 1 tham số — không phải []", async () => {
+  it("applyShardValidator apply ĐÚNG 2 tham số — không phải [] và không phải 1", async () => {
     // Bản cũ của test này chỉ đọc blueprint rồi assert tên tham số; nó KHÔNG hề gọi
     // applyShardValidator, nên revert hàm đó về `[]` vẫn xanh. Nay gọi thật và so
-    // hash với bản apply `[]`: hai hash phải KHÁC nhau.
+    // hash với các bản apply thiếu tham số: mọi hash phải KHÁC nhau.
+    //
+    // Bundle phải mang vault THẬT, không phải chính bytes của shard: từ 2026-09-07
+    // `applyShardValidator` suy `vault_script_hash` bằng `applyVaultValidator`, nên
+    // truyền nhầm bytes vào đó vẫn ra một hash — `applyParamsToScript` không kiểm
+    // arity — chỉ là hash của một thứ không tồn tại trên chuỗi.
     const bp = await loadBlueprint("ScheduleGen");
-    const titles = paramTitles(bp, "vault.shard.spend");
-    expect(titles).toEqual(["shard_policy_id_param"]);
+    expect(paramTitles(bp, "vault.shard.spend")).toEqual([
+      "shard_policy_id_param", "vault_script_hash",
+    ]);
 
     const shardRaw = bp.validators.find((v) => v.title === "vault.shard.spend")!;
-    const { shardScriptHash } = applyShardValidator(
-      { vaultUnappliedCbor: shardRaw.compiledCode, shardUnappliedCbor: shardRaw.compiledCode },
-      protocolFor("Preview"),
-    );
+    const vaultRaw = bp.validators.find((v) => v.title === "vault.vault.spend")!;
+    const bundle = {
+      vaultUnappliedCbor: vaultRaw.compiledCode,
+      shardUnappliedCbor: shardRaw.compiledCode,
+    };
+    const proto = protocolFor("Preview");
+
+    const { shardScriptHash } = applyShardValidator(bundle, proto);
     const emptyHash = validatorToScriptHash({
       type: "PlutusV3",
       script: applyParamsToScript(shardRaw.compiledCode, []),
     });
+    const oneParamHash = validatorToScriptHash({
+      type: "PlutusV3",
+      script: applyParamsToScript(shardRaw.compiledCode, [proto.shardPolicyId!]),
+    });
     expect(shardScriptHash).not.toBe(emptyHash);
+    expect(shardScriptHash).not.toBe(oneParamHash);
     expect(shardScriptHash).toHaveLength(56);
+  });
+
+  it("vault_script_hash mà shard nhận ĐÚNG BẰNG hash của vault Schedule", async () => {
+    // Ghim chính phép suy ra. Không có bài này thì `applyShardValidator` truyền một
+    // hash bất kỳ vào tham số #2 vẫn xanh — bài trên chỉ đòi "khác bản 1 tham số".
+    const bp = await loadBlueprint("ScheduleGen");
+    const shardRaw = bp.validators.find((v) => v.title === "vault.shard.spend")!;
+    const vaultRaw = bp.validators.find((v) => v.title === "vault.vault.spend")!;
+    const bundle = {
+      vaultUnappliedCbor: vaultRaw.compiledCode,
+      shardUnappliedCbor: shardRaw.compiledCode,
+    };
+    const proto = protocolFor("Preview");
+
+    const { vaultScriptHash } = applyVaultValidator("Schedule", bundle, proto);
+    const expected = validatorToScriptHash({
+      type: "PlutusV3",
+      script: applyParamsToScript(shardRaw.compiledCode, [
+        proto.shardPolicyId!, vaultScriptHash,
+      ]),
+    });
+    expect(applyShardValidator(bundle, proto).shardScriptHash).toBe(expected);
   });
 
   it("applyShardValidator ném lỗi khi thiếu shardPolicyId — không lặng lẽ apply rỗng", async () => {
     const bp = await loadBlueprint("ScheduleGen");
     const shardRaw = bp.validators.find((v) => v.title === "vault.shard.spend")!;
+    const vaultRaw = bp.validators.find((v) => v.title === "vault.vault.spend")!;
     const p = { ...protocolFor("Preview") };
     delete (p as { shardPolicyId?: string }).shardPolicyId;
     expect(() => applyShardValidator(
-      { vaultUnappliedCbor: shardRaw.compiledCode, shardUnappliedCbor: shardRaw.compiledCode },
+      { vaultUnappliedCbor: vaultRaw.compiledCode, shardUnappliedCbor: shardRaw.compiledCode },
       p,
     )).toThrow();
   });

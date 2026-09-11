@@ -8,7 +8,10 @@
 // ENGAGEMENT/ATTRIBUTION per-app:
 //   - đọc PriceParam beacon → tính required (giá có thẩm quyền).
 //   - spend Engage UTxO (state per-app): tăng consumed_count, refresh last_epoch,
-//     did_commit immutable, thread NFT bảo toàn, owner bảo toàn, value bảo toàn.
+//     did_commit bất biến (ép out == in — NHÁNH NÀY, không phải toàn validator),
+//     thread NFT bảo toàn, owner bảo toàn, value bảo toàn.
+//   - spend Engage UTxO bằng redeemer `BindDID`: ĐƯỜNG GHI DUY NHẤT còn lại cho
+//     `did_commit`. Một chiều, đúng một lần — rỗng → 32 byte, rồi khoá vĩnh viễn.
 //   - ÉP cùng tx có 1 vault input (vault_ref) spend bằng BurnBatch với
 //     Σburns == required → liên kết 2 validator, không lệch giá, không over/under-burn.
 //
@@ -67,8 +70,8 @@ use cardano/transaction.{
 }
 use magiclamp/consume/pricing
 use magiclamp/consume/types.{
-  Consume, ConsumeRedeemer, EngageDatum, EngageMintRedeemer, MintEngage, OpPrice,
-  PriceParam,
+  BindDID, Consume, ConsumeRedeemer, EngageDatum, EngageMintRedeemer, MintEngage,
+  OpPrice, PriceParam,
 }
 use magiclamp/consume/util
 
@@ -99,13 +102,50 @@ validator consume(
     tx        : Transaction,
   ) {
     expect Some(in_datum) = datum_opt
-    // vault_ref của invocation này được dùng qua distinct_vault_refs (aggregate);
-    // không cần tham chiếu trực tiếp ở đây.
-    let Consume { op_type, op_count, price_ref, vault_ref: _ } = redeemer
-    expect op_count >= 1
-
     let own_addr = util.own_address(own_ref, tx.inputs)
     let own_hash = util.own_script_hash(own_addr)
+    when redeemer is {
+      // vault_ref của invocation này được dùng qua distinct_vault_refs (aggregate);
+      // không cần tham chiếu trực tiếp ở đây.
+      Consume { op_type, op_count, price_ref, vault_ref: _ } ->
+        validate_consume(
+          tx, own_hash, in_datum, op_type, op_count, price_ref,
+          price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
+          max_price_stale, ms_per_epoch, price_param_script_hash,
+        )
+      // Gắn PersonDID vào thread. Đường RIÊNG, không đụng giá / vault / epoch.
+      BindDID -> validate_bind_did(tx, own_hash, in_datum)
+    }
+  }
+
+  else(_) {
+    fail
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_consume — nhánh TIÊU MAGIC (redeemer constr 0)
+//
+// Nguyên văn thân `spend` cũ. Tách thành hàm (nhận lại 7 apply-param) thay vì lồng
+// vào một nhánh `when` để bộ ràng buộc đã có không bị đẩy thêm một tầng thụt lề —
+// mỗi lần re-indent trọn khối là một lần diff phủ kín thứ không đổi và giấu thứ đổi.
+// ═══════════════════════════════════════════════════════════════
+fn validate_consume(
+  tx        : Transaction,
+  own_hash  : ByteArray,
+  in_datum  : EngageDatum,
+  op_type   : Int,
+  op_count  : Int,
+  price_ref : OutputReference,
+  price_nft_policy  : PolicyId,
+  price_nft_name    : AssetName,
+  vault_script_hash : ByteArray,
+  burn_batch_constr : Int,
+  max_price_stale   : Int,
+  ms_per_epoch      : Int,
+  price_param_script_hash : ByteArray,
+) -> Bool {
+    expect op_count >= 1
 
     // ── VÁ #1 (NGHIÊM TRỌNG) — DOUBLE-SATISFACTION XUYÊN-INSTANCE ──────────────
     //    Đặt SỚM (fail-fast, trước mọi tính toán giá): mọi input do SCRIPT khoá phải
@@ -225,10 +265,94 @@ validator consume(
       tx, own_hash, in_datum.owner, in_datum.did_commit, current_epoch,
       total_required,
     )
-  }
+}
 
-  else(_) {
-    fail
+/// Độ dài hợp lệ của `did_commit`: RỖNG (chưa gắn) hoặc ĐÚNG 32 byte (blake2b-256).
+///
+/// Ghim ở MỌI chỗ GHI trường này (mint genesis + BindDID). Không ghim thì một
+/// `did_commit` dài tuỳ ý đi được vào datum: nó vừa phình UTxO (min-ADA theo kích
+/// thước) vừa buộc mọi bên đọc tự đoán khuôn — và "tự đoán khuôn" ở lớp định danh là
+/// chỗ hai bên đọc ra hai người khác nhau từ cùng một chuỗi byte.
+///
+/// CỐ Ý KHÔNG ép ở nhánh `Consume`: nhánh đó không GHI, nó ép
+/// `output.did_commit == input.did_commit`. Thêm kiểm độ dài vào đó là biến mọi thread
+/// đã tồn tại với did sai khuôn thành BẤT KHẢ TIÊU (min-ADA khoá vĩnh viễn) — ràng
+/// buộc phải đặt ở cổng VÀO, không đặt ở cổng RA của state đã nằm trên chuỗi.
+fn did_len_ok(did: ByteArray) -> Bool {
+  let n = builtin.length_of_bytearray(did)
+  n == 0 || n == 32
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_bind_did — GẮN PersonDID vào thread (redeemer constr 1)
+//
+// VÌ SAO TỒN TẠI: thread mở trong giai đoạn này có `did_commit` rỗng (lớp gắn DID
+// chưa bật). `Consume` ép did_commit BẤT BIẾN, nên khi hệ bật `consumedFactor` (hệ số
+// tư-cách đọc MAGIC đã tiêu, gắn theo PersonDID) thì mọi thread mở hôm nay nằm ngoài
+// cơ chế đó VĨNH VIỄN — không đường nào điền vào sau.
+//
+// ĐI MỘT CHIỀU, ĐÚNG MỘT LẦN: rỗng → 32 byte → đóng băng. Không đường về, không đổi
+// từ giá trị này sang giá trị khác (vì cổng đòi giá trị hiện tại phải RỖNG).
+//
+// KHÔNG uỷ quyền: đây là thao tác gắn DANH TÍNH, đòi chữ ký của CHÍNH `owner`. Vế
+// `|| personal_delegate` dùng ở nhánh consume (đường Paymaster/Feecover) KHÔNG áp ở
+// đây — ở đó cái được uỷ quyền là TRẢ TIỀN hộ, còn ở đây là KHAI mình là ai.
+//
+// DOUBLE-SATISFACTION: mọi bất biến dưới đây cục bộ theo `own_hash` và bị kẹp bởi
+// `#in == #out == 1`, nên một tx phục vụ đúng MỘT thread. Trộn một input BindDID với
+// một input Consume cùng script cũng chết: nhánh BindDID thấy `n_in == 2`, còn nhánh
+// Consume thấy redeemer không phải `Consume` ở `expect Consume {..}`.
+// ═══════════════════════════════════════════════════════════════
+fn validate_bind_did(
+  tx       : Transaction,
+  own_hash : ByteArray,
+  in_datum : EngageDatum,
+) -> Bool {
+  // ── (1) MỘT LẦN: chỉ hợp lệ khi chưa gắn. Đã có giá trị ⇒ TỪ CHỐI ─────────────
+  //    Đây là vế khoá cả hai hướng sai: đổi did này sang did khác, và ghi đè did của
+  //    một thread đã có danh tính.
+  expect in_datum.did_commit == #""
+
+  // ── (2) CHỮ KÝ CỦA CHÍNH CHỦ THREAD ──────────────────────────────────────────
+  //    Thiếu vế này thì bất kỳ ai cũng gắn được một DID do MÌNH chọn vào thread của
+  //    người khác, và vì cổng (1) chỉ cho ghi MỘT LẦN nên nạn nhân mất luôn đường
+  //    gắn DID thật của họ — hỏng không hoàn tác được.
+  expect list.has(tx.extra_signatories, in_datum.owner)
+
+  // ── (3) ĐÚNG 1 vào, ĐÚNG 1 ra tại địa chỉ engage ─────────────────────────────
+  //    Không gộp hai thread, không tách một thread. Đồng thời làm continuing output
+  //    là DUY NHẤT ⇒ đọc nó không cần khớp theo tên NFT.
+  expect util.count_inputs_at_script(tx.inputs, own_hash) == 1
+  expect util.count_outputs_at_script(tx.outputs, own_hash) == 1
+
+  // ── (4) VALUE BẢO TOÀN TUYỆT ĐỐI ─────────────────────────────────────────────
+  //    Cộng với (5) `single_thread_nft` phía output, nó cũng chứng minh input mang
+  //    đúng 1 thread NFT (value vào == value ra) — nên không cần cổng định danh riêng
+  //    phía input như nhánh Consume.
+  expect engage_value_preserved(tx, own_hash)
+
+  expect Some(out) =
+    list.find(tx.outputs, fn(o) { util.is_at_script(o.address, own_hash) })
+  expect InlineDatum(d) = out.datum
+  expect od: EngageDatum = d
+  // ── (5) đúng 1 thread NFT trên output ────────────────────────────────────────
+  expect single_thread_nft(out.value, own_hash)
+
+  and {
+    // ── (6) MỌI trường còn lại bảo toàn TUYỆT ĐỐI ─────────────────────────────
+    //    Giao dịch này chỉ điền MỘT trường. `consumed_count` / `consumed_nanogic` là
+    //    đầu vào tư-cách biểu quyết (C1) và `owner` là quyền tiêu — nhân tiện sửa một
+    //    trong số đó là biến một thao tác khai danh tính thành một đường bơm hồ sơ.
+    od.owner == in_datum.owner,
+    od.consumed_count == in_datum.consumed_count,
+    od.last_epoch == in_datum.last_epoch,
+    od.consumed_nanogic == in_datum.consumed_nanogic,
+    // ── (7) giá trị mới phải KHÁC RỖNG ────────────────────────────────────────
+    //    Không có vế này thì "gắn DID" bằng chuỗi rỗng là một no-op hợp lệ; vô hại
+    //    một mình, nhưng nó làm cổng (1) không còn nghĩa "một lần".
+    od.did_commit != #"",
+    // ── (8) và ĐÚNG KHUÔN 32 byte ─────────────────────────────────────────────
+    did_len_ok(od.did_commit),
   }
 }
 
@@ -289,11 +413,13 @@ fn validate_mint_engage_id(
   expect ed.consumed_nanogic == 0
   // last_epoch = state tích luỹ ("epoch consume gần nhất") ⇒ thread mới == 0.
   expect ed.last_epoch == 0
-  // did_commit CỐ Ý KHÔNG pin nội dung: types.ak định nghĩa nó là commitment do
-  // người tạo đặt MỘT LẦN lúc genesis rồi IMMUTABLE (MVP = #""), tức LỰA CHỌN của
-  // người dùng chứ không phải state tích luỹ. Pin cứng về #"" sẽ khoá chết đường
-  // liên kết DID sinh trắc sau này mà KHÔNG thêm chút an toàn nào (nó không gate
-  // bất kỳ đường tiền nào; tính bất biến đã do spend ép).
+  // did_commit CỐ Ý KHÔNG pin NỘI DUNG: types.ak định nghĩa nó là commitment do
+  // người tạo đặt lúc genesis, tức LỰA CHỌN của người dùng chứ không phải state tích
+  // luỹ. Pin cứng về #"" sẽ khoá chết đường liên kết DID sinh trắc mà KHÔNG thêm chút
+  // an toàn nào (nó không gate bất kỳ đường tiền nào).
+  // NHƯNG ĐỘ DÀI thì pin: rỗng, hoặc đúng 32 byte. Đây là chỗ GHI, nên là chỗ đúng để
+  // ép khuôn — mọi bên đọc sau đó khỏi phải tự đoán.
+  expect did_len_ok(ed.did_commit)
 
   // ── Không nhét rác vào output genesis: nhiều nhất {ADA, thread NFT} ───────
   //    Engage UTxO bảo toàn value TUYỆT ĐỐI ở mọi spend ⇒ token lạ đúc kèm ở đây
@@ -378,7 +504,10 @@ fn sum_required_over_engage_inputs(
     0,
     fn(inp, acc) {
       if util.is_at_script(inp.output.address, own_hash) {
-        let Consume { op_type, op_count, price_ref: pr_i, .. } =
+        // `expect`, không `let`: redeemer của một Engage input khác có thể là
+        // `BindDID`. Trộn BindDID vào một tx Consume ⇒ CHẾT ở đây (fail-closed) —
+        // BindDID không mang op_type/op_count nên không có gì để cộng vào tổng giá.
+        expect Consume { op_type, op_count, price_ref: pr_i, .. } =
           find_consume_redeemer(tx, inp.output_reference)
         expect op_count >= 1
         expect pr_i == price_ref
@@ -402,7 +531,7 @@ fn distinct_vault_refs_over_engage_inputs(
     [],
     fn(inp, acc) {
       if util.is_at_script(inp.output.address, own_hash) {
-        let Consume { vault_ref, .. } =
+        expect Consume { vault_ref, .. } =
           find_consume_redeemer(tx, inp.output_reference)
         if list.has(acc, vault_ref) {
           acc
@@ -513,7 +642,7 @@ fn sum_op_count_over_engage_inputs(tx: Transaction, own_hash: ByteArray) -> Int 
     fn(inp, acc) {
       if util.is_at_script(inp.output.address, own_hash) {
         let rd = find_consume_redeemer(tx, inp.output_reference)
-        let Consume { op_count, .. } = rd
+        expect Consume { op_count, .. } = rd
         expect op_count >= 1
         acc + op_count
       } else {
@@ -669,7 +798,25 @@ const ct_price_name: AssetName = #"5052494345"      // "PRICE"
 /// nó PHẢI == script hash của địa chỉ engage (tự tham chiếu).
 const ct_thread_name: AssetName = #"454e47"          // "ENG"
 const ct_owner: ByteArray = #"0bada55e"
-const ct_did: ByteArray = #""                        // MVP did_commit rỗng
+const ct_did: ByteArray = #""                        // did_commit rỗng = chưa gắn DID
+/// did_commit ĐÚNG KHUÔN (32 byte). Viết thẳng ra hex vì `const` Aiken không gọi hàm.
+/// 64 ký tự hex = 32 byte — đếm lại khi sửa: hằng hex LẺ ký tự làm `aiken check`
+/// thoát 1 mà KHÔNG in dòng chẩn nào (BOUNDARIES.md §4).
+const ct_did32: ByteArray =
+  #"d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
+/// did_commit ĐÚNG KHUÔN, giá trị KHÁC `ct_did32` (test "đã có did thì từ chối").
+const ct_did32_b: ByteArray =
+  #"c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2"
+
+/// ByteArray đúng `n` byte (mọi byte 0xd1). Dùng cho ca BIÊN độ dài (31/33) — ở đó
+/// điều đang đo là ĐỘ DÀI, không phải nội dung.
+fn ct_bytes(n: Int) -> ByteArray {
+  if n <= 0 {
+    #""
+  } else {
+    builtin.cons_bytearray(0xd1, ct_bytes(n - 1))
+  }
+}
 const ct_max_stale: Int = 5
 const ct_mspe: Int = 86_400_000                      // Preview
 const ct_burn_constr: Int = 2                        // InstantGen BurnBatch constr
@@ -1724,10 +1871,14 @@ test engage_mint_extra_token_fail() fail {
 }
 
 // ── ĐỐI CHỨNG (chống vá quá tay): did_commit KHÁC RỖNG vẫn PASS ─────────────────
-//    types.ak định nghĩa did_commit là commitment do người tạo đặt một lần lúc
-//    genesis (MVP rỗng, tương lai = blake2b256 liên kết DID). Đó là LỰA CHỌN, không
-//    phải state tích luỹ ⇒ pin cứng về #"" sẽ khoá chết đường DID mà không thêm an
-//    toàn nào. Test này khoá quyết định đó lại để lần sau không ai "siết nhầm".
+//    types.ak định nghĩa did_commit là commitment do người tạo đặt lúc genesis (rỗng
+//    = chưa gắn, khác rỗng = blake2b256 liên kết DID). Đó là LỰA CHỌN, không phải
+//    state tích luỹ ⇒ pin cứng về #"" sẽ khoá chết đường DID mà không thêm an toàn
+//    nào. Test này khoá quyết định đó lại để lần sau không ai "siết nhầm".
+//
+//    ĐÃ ĐỔI GIÁ TRỊ (vá độ dài did_commit): bản cũ dùng `#"d1d1d1d1"` (4 byte) và
+//    bản đó nay bị TỪ CHỐI — xem `engage_mint_did_len_4_fail`. Đây là ca "lật chính
+//    sách thì đảo dấu kỳ vọng của phép kiểm cũ", không phải nới test cho xanh.
 test engage_mint_did_commit_free_happy() {
   run_mint(
     [ct_seed_input()],
@@ -1735,11 +1886,57 @@ test engage_mint_did_commit_free_happy() {
     [
       ct_gen_out(
         util.script_address(ct_eng_sh), ct_seed_name(),
-        ct_datum(0, 0, 0, #"d1d1d1d1"), 0,
+        ct_datum(0, 0, 0, ct_did32), 0,
       ),
     ],
     [ct_owner],
   )
+}
+
+// ══════════════════════════════════════════════════════════════
+// VÁ 2026-09-07 — ĐỘ DÀI `did_commit` ở MỌI CHỖ GHI (mint genesis)
+//   Trước vá: không ràng buộc nào. Một did_commit dài tuỳ ý vào được datum — phình
+//   UTxO (min-ADA theo kích thước) và buộc mọi bên đọc tự đoán khuôn.
+//   Sau vá: `length == 0 || length == 32`.
+// ══════════════════════════════════════════════════════════════
+
+/// Genesis mang did_commit độ dài tuỳ ý (dựng bằng `bytearray` để đúng số byte).
+fn run_mint_did(did: ByteArray) -> Bool {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [
+      ct_gen_out(
+        util.script_address(ct_eng_sh), ct_seed_name(), ct_datum(0, 0, 0, did), 0,
+      ),
+    ],
+    [ct_owner],
+  )
+}
+
+// 31 byte — SÁT DƯỚI khuôn. Ca biên: sai một byte vẫn phải chết.
+test engage_mint_did_len_31_fail() fail {
+  run_mint_did(ct_bytes(31))
+}
+
+// 33 byte — SÁT TRÊN khuôn.
+test engage_mint_did_len_33_fail() fail {
+  run_mint_did(ct_bytes(33))
+}
+
+// 4 byte — đúng giá trị mà bản cũ của `engage_mint_did_commit_free_happy` dùng.
+test engage_mint_did_len_4_fail() fail {
+  run_mint_did(#"d1d1d1d1")
+}
+
+// ĐỐI CHỨNG: rỗng (chưa gắn DID) vẫn là đường mở — đây là ca mặc định hôm nay.
+test engage_mint_did_len_0_happy() {
+  run_mint_did(#"")
+}
+
+// ĐỐI CHỨNG: đúng 32 byte đi qua.
+test engage_mint_did_len_32_happy() {
+  run_mint_did(ct_bytes(32))
 }
 
 // ── SPEND: UTxO "engage giả" (đậu ở địa chỉ script, KHÔNG mang thread NFT) ──────
@@ -1873,4 +2070,408 @@ test engage_mint_burn_attempt_fail() fail {
     [ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_clean_genesis(), 0)],
     [ct_owner],
   )
+}
+
+// ══════════════════════════════════════════════════════════════
+// VÁ 2026-09-07 — redeemer `BindDID` (constr 1)
+//
+// Thread mở hôm nay có `did_commit` rỗng; nhánh `Consume` ép trường đó BẤT BIẾN.
+// Không có đường ghi nào khác thì khi hệ bật `consumedFactor` (hệ số tư-cách đọc
+// MAGIC đã tiêu, gắn theo PersonDID), mọi thread mở hôm nay nằm ngoài cơ chế đó
+// VĨNH VIỄN. `BindDID` mở đúng một cửa: rỗng → 32 byte, một lần, có chữ ký chủ.
+// ══════════════════════════════════════════════════════════════
+
+/// Engage input với did_commit tuỳ biến (mặc định `ct_engage_input` dùng #"").
+fn ct_engage_input_did(ref_ix: Int, consumed: Int, nanogic: Int, did: ByteArray) -> Input {
+  let v = assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, ct_thread_name, 1)
+  let d = ct_datum(consumed, 3, nanogic, did)
+  util.mk_input(
+    util.mk_ref_id(#"e1", ref_ix),
+    util.mk_output(util.script_address(ct_eng_sh), v, d),
+  )
+}
+
+/// Engage output đầy đủ tuỳ biến (mọi trường + value) — để bẻ TỪNG ràng buộc.
+fn ct_bind_output(
+  owner: ByteArray, consumed: Int, epoch: Int, did: ByteArray, nanogic: Int,
+  lovelace: Int, nft_qty: Int,
+) -> Output {
+  let v = assets.add(assets.from_lovelace(lovelace), ct_eng_sh, ct_thread_name, nft_qty)
+  let d = EngageDatum {
+    owner: owner,
+    consumed_count: consumed,
+    last_epoch: epoch,
+    did_commit: did,
+    consumed_nanogic: nanogic,
+  }
+  util.mk_output(util.script_address(ct_eng_sh), v, d)
+}
+
+/// Chạy nhánh spend với redeemer BindDID. KHÔNG beacon, KHÔNG vault, KHÔNG
+/// validity_range — nhánh này không đọc giá và không refresh `last_epoch`, nên
+/// `placeholder` (khoảng thời gian vô hạn) là đầu vào ĐÚNG, không phải chỗ đi tắt.
+fn run_bind(
+  inputs   : List<Input>,
+  outputs  : List<Output>,
+  sigs     : List<ByteArray>,
+  own_ref  : OutputReference,
+  in_datum : EngageDatum,
+) -> Bool {
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: inputs,
+      outputs: outputs,
+      extra_signatories: sigs,
+      redeemers: [Pair(Spend(own_ref), rd_as_data(BindDID))],
+    }
+  consume.spend(
+    ct_price_policy, ct_price_name,
+    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe, ct_price_param_sh,
+    Some(in_datum), BindDID, own_ref, tx,
+  )
+}
+
+/// Datum thread CHƯA gắn DID, đã tiêu 7 lượt / 70M nanogic ở epoch 3 — số khác 0 ở
+/// mọi trục để ca "nhân tiện sửa trường khác" phân biệt được hai cực.
+const ct_bind_in: EngageDatum =
+  EngageDatum {
+    owner: ct_owner,
+    consumed_count: 7,
+    last_epoch: 3,
+    did_commit: #"",
+    consumed_nanogic: 70_000_000,
+  }
+
+// ── HAPPY: rỗng → 32 byte, chủ ký, mọi trường khác giữ nguyên ────────────────────
+test bind_did_happy() {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 2_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── ĐÃ CÓ did → TỪ CHỐI (không đổi giá trị này sang giá trị khác) ────────────────
+test bind_did_already_bound_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, ct_did32)
+  let er = util.mk_ref_id(#"e1", 0)
+  let in_d =
+    EngageDatum { ..ct_bind_in, did_commit: ct_did32 }
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32_b, 70_000_000, 2_000_000, 1)],
+    [ct_owner], er, in_d,
+  )
+}
+
+// ── ĐÃ CÓ did, ghi lại CHÍNH giá trị đó → vẫn TỪ CHỐI ────────────────────────────
+//    Không phải "vô hại nên cho qua": cổng (1) là thứ duy nhất giữ nghĩa MỘT LẦN,
+//    nới nó ra cho ca no-op là mở lại đường ghi cho thread đã có danh tính.
+test bind_did_rebind_same_value_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, ct_did32)
+  let er = util.mk_ref_id(#"e1", 0)
+  let in_d =
+    EngageDatum { ..ct_bind_in, did_commit: ct_did32 }
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 2_000_000, 1)],
+    [ct_owner], er, in_d,
+  )
+}
+
+// ── did RỖNG ở output (no-op "gắn") → TỪ CHỐI ────────────────────────────────────
+test bind_did_output_empty_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, #"", 70_000_000, 2_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── THIẾU chữ ký owner (ví lạ ký) → TỪ CHỐI ──────────────────────────────────────
+//    Ví khác CÓ ký, chỉ chủ thread là không ⇒ chứng minh cổng đòi ĐÚNG chữ ký của
+//    chủ, không phải "có ai đó ký".
+test bind_did_owner_not_signer_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 2_000_000, 1)],
+    [#"deadbeef"], er, ct_bind_in,
+  )
+}
+
+// ── KHÔNG chữ ký nào → TỪ CHỐI (danh sách rỗng không phải "bỏ qua") ─────────────
+test bind_did_no_signer_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 2_000_000, 1)],
+    [], er, ct_bind_in,
+  )
+}
+
+// ── Vế `|| personal_delegate` KHÔNG áp ở đây: vault của chính chủ không thay được
+//    chữ ký. Ca này dựng đúng hình dạng đường SPONSOR của nhánh Consume (vault input
+//    thuộc chủ thread, chủ thread không ký) — nhánh BindDID vẫn phải TỪ CHỐI.
+test bind_did_sponsor_path_rejected_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let vault = ct_vault_input_owned(0, ct_owner)
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng, vault],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 2_000_000, 1)],
+    [], er, ct_bind_in,
+  )
+}
+
+// ── NHÂN TIỆN sửa `consumed_nanogic` → TỪ CHỐI ──────────────────────────────────
+test bind_did_mutates_nanogic_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32, 999_000_000, 2_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── NHÂN TIỆN sửa `consumed_count` → TỪ CHỐI ────────────────────────────────────
+test bind_did_mutates_count_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 99, 3, ct_did32, 70_000_000, 2_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── NHÂN TIỆN sửa `owner` (chiếm thread) → TỪ CHỐI ──────────────────────────────
+test bind_did_mutates_owner_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(#"deadbeef", 7, 3, ct_did32, 70_000_000, 2_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── NHÂN TIỆN sửa `last_epoch` → TỪ CHỐI (BindDID không phải một lượt consume) ──
+test bind_did_mutates_last_epoch_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 9, ct_did32, 70_000_000, 2_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── ĐỘ DÀI 31 byte → TỪ CHỐI (biên dưới) ────────────────────────────────────────
+test bind_did_len_31_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_bytes(31), 70_000_000, 2_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── ĐỘ DÀI 33 byte → TỪ CHỐI (biên trên) ────────────────────────────────────────
+test bind_did_len_33_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_bytes(33), 70_000_000, 2_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── RÚT ADA khỏi thread → TỪ CHỐI (value bảo toàn tuyệt đối) ───────────────────
+test bind_did_drain_ada_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 1_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── RÚT thread NFT → TỪ CHỐI ────────────────────────────────────────────────────
+test bind_did_drop_nft_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 2_000_000, 0)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── KHÔNG output nào tại địa chỉ engage (đốt thread) → TỪ CHỐI ─────────────────
+test bind_did_no_engage_output_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  let elsewhere =
+    util.mk_output(
+      util.vk_address(#"beef"),
+      assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, ct_thread_name, 1),
+      ct_datum(7, 3, 70_000_000, ct_did32),
+    )
+  run_bind([eng], [elsewhere], [ct_owner], er, ct_bind_in)
+}
+
+// ── TÁCH: 1 vào, 2 ra tại engage → TỪ CHỐI (#out != 1) ─────────────────────────
+test bind_did_two_outputs_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind(
+    [eng],
+    [
+      ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 1_000_000, 1),
+      ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 1_000_000, 0),
+    ],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── GỘP: 2 vào, 1 ra tại engage → TỪ CHỐI (#in != 1) ───────────────────────────
+//    Không có ràng buộc này thì hai thread gộp làm một: một thread "chết" mà tài sản
+//    định danh của nó đã dồn sang cái kia.
+test bind_did_two_inputs_fail() fail {
+  let e0 = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let e1 = ct_engage_input_did(1, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  let merged =
+    util.mk_output(
+      util.script_address(ct_eng_sh),
+      assets.add(assets.from_lovelace(4_000_000), ct_eng_sh, ct_thread_name, 2),
+      ct_datum(7, 3, 70_000_000, ct_did32),
+    )
+  run_bind([e0, e1], [merged], [ct_owner], er, ct_bind_in)
+}
+
+// ── output datum KHÔNG decode được EngageDatum → TỪ CHỐI ───────────────────────
+test bind_did_output_bad_datum_fail() fail {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  let bad =
+    util.mk_output(
+      util.script_address(ct_eng_sh),
+      assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, ct_thread_name, 1),
+      0,
+    )
+  run_bind([eng], [bad], [ct_owner], er, ct_bind_in)
+}
+
+// ══════════════════════════════════════════════════════════════
+// CHỈ SỐ CONSTRUCTOR = HỢP ĐỒNG NHỊ PHÂN
+//   `Consume` phải ở constr 0 (đã lên chuỗi), `BindDID` ở constr 1 (thêm ở CUỐI).
+//   Đảo thứ tự / chèn giữa là đổi cách decode ⇒ mọi tx dựng theo chỉ số cũ vỡ.
+//   Gương off-chain: `tests/codec.test.ts` ghim đúng hai số này.
+// ══════════════════════════════════════════════════════════════
+test redeemer_constr_index_pinned() {
+  let consume_d: Data = rd_as_data(ct_consume_redeemer(1, 1, util.mk_ref(0)))
+  let Pair(ix_consume, fields_consume) = builtin.un_constr_data(consume_d)
+  let bind_d: Data = rd_as_data(BindDID)
+  let Pair(ix_bind, fields_bind) = builtin.un_constr_data(bind_d)
+  and {
+    ix_consume == 0,
+    list.length(fields_consume) == 4,
+    ix_bind == 1,
+    list.length(fields_bind) == 0,
+  }
+}
+
+// ── TRỘN BindDID vào một tx Consume → TỪ CHỐI ở CẢ HAI nhánh ───────────────────
+//    Nhánh Consume (ca này): `expect Consume {..}` trong các hàm gộp gặp redeemer
+//    BindDID của input kia và chết. Nếu ở đó còn là `let` thì mã không biên dịch,
+//    nên ca này canh cả việc không ai đổi ngược lại thành một pattern-match câm.
+test consume_mixed_with_bind_did_input_fail() fail {
+  let pp = ct_pp(6)
+  let e0 = ct_engage_input(0, 10)
+  let e1 = ct_engage_input(1, 10)
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd0 = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds =
+    [
+      Pair(Spend(er0), rd_as_data(rd0)),
+      Pair(Spend(er1), rd_as_data(BindDID)),
+      Pair(Spend(vault_ref), burn_rd),
+    ]
+  run(
+    pp, 1, 6, [e0, e1], [vault],
+    [ct_cont_output(11, 6, 1), ct_cont_output(11, 6, 1)], reds, rd0, er0,
+    ct_in_datum,
+  )
+}
+
+// ── HAI CA DƯỚI ĐÂY SINH RA TỪ KIỂM ĐỘT BIẾN ───────────────────────────────────
+//    Gỡ `#in@engage == 1` hoặc `single_thread_nft(out)` mà bộ kiểm VẪN XANH ⇒ hai
+//    chốt đó chưa được ghim: các ca trước chết ở chốt HÀNG XÓM, đúng màu và đúng tên
+//    nhưng không chứng minh gì cho chốt mang tên nó. Hai ca dưới đây phân biệt được
+//    hai cực của đúng hai chốt ấy.
+
+// ── #in@engage == 1: một thread THẬT + một UTxO GIẢ (không NFT) gộp làm một ────
+//    Ai cũng gửi UTxO tới địa chỉ script được. UTxO giả không mang NFT, nên value
+//    tổng vẫn bảo toàn khi gộp ADA của nó vào thread thật, output vẫn đúng 1 NFT,
+//    #out vẫn == 1 — MỌI chốt khác đều thoả. Chỉ `#in == 1` chặn việc thread hút
+//    ADA của một UTxO nằm cùng địa chỉ.
+test bind_did_absorbs_fake_input_fail() fail {
+  let real = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let fake =
+    util.mk_input(
+      util.mk_ref_id(#"e1", 1),
+      util.mk_output(
+        util.script_address(ct_eng_sh),
+        assets.from_lovelace(2_000_000),      // KHÔNG thread NFT
+        ct_datum(0, 0, 0, #""),
+      ),
+    )
+  let er = util.mk_ref_id(#"e1", 0)
+  // 4 ADA + 1 NFT = đúng tổng value vào; đúng 1 output; đúng 1 NFT trên nó.
+  run_bind(
+    [real, fake],
+    [ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 4_000_000, 1)],
+    [ct_owner], er, ct_bind_in,
+  )
+}
+
+// ── single_thread_nft(out): thread mang HAI NFT cùng policy đi qua BindDID ─────
+//    Value bảo toàn (vào 2 NFT, ra 2 NFT), #in == #out == 1, mọi trường datum giữ
+//    nguyên. Chỉ ràng buộc "ĐÚNG 1 NFT trên output" chặn. Hình dạng input này
+//    không dựng được qua mint-gate hôm nay (nó ép 1 NFT / genesis), nên chốt này là
+//    PHÒNG THỦ CHIỀU SÂU — và đúng vì thế nó cần một ca riêng, chứ ca "rút NFT"
+//    chết ở value-preserved chứ không chết ở đây.
+test bind_did_two_nfts_on_thread_fail() fail {
+  let v =
+    assets.add(
+      assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, #"41", 1),
+      ct_eng_sh, #"42", 1,
+    )
+  let inp =
+    util.mk_input(
+      util.mk_ref_id(#"e1", 0),
+      util.mk_output(util.script_address(ct_eng_sh), v, ct_datum(7, 3, 70_000_000, #"")),
+    )
+  let out =
+    util.mk_output(
+      util.script_address(ct_eng_sh), v, ct_datum(7, 3, 70_000_000, ct_did32),
+    )
+  run_bind([inp], [out], [ct_owner], util.mk_ref_id(#"e1", 0), ct_bind_in)
 }

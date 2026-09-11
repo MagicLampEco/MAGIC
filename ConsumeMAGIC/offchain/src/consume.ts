@@ -35,7 +35,7 @@ import { Q, assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
 import {
   ConsumeRedeemerSchema,
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
-  encodeEngageMintRedeemer,
+  encodeEngageMintRedeemer, encodeBindDidRedeemer,
   type EngageDatumT, type PriceParamT, type ConsumeRedeemerT,
   type OutputReferenceT,
 } from "./types.js";
@@ -403,7 +403,13 @@ export interface MintEngageParams {
   seedUtxo: UTxO;
   /** Owner pkh (hex) — `validate_mint_engage_id` ép `list.has(tx.extra_signatories, owner)`. */
   ownerPkh: string;
-  /** did_commit đặt MỘT LẦN lúc genesis, IMMUTABLE sau đó. MVP = "" (rỗng). */
+  /**
+   * `did_commit` — đặt lúc genesis, và **bất biến DƯỚI nhánh `Consume`** (nhánh đó ép
+   * `out == in`). KHÔNG phải bất biến tuyệt đối: redeemer `BindDID` là đường ghi thứ hai,
+   * dùng để gắn PersonDID sau khi thread đã mở. Ghi qua `BindDID` thì **một chiều, đúng
+   * một lần** — đặt rồi là khoá vĩnh viễn.
+   * Khuôn bắt buộc ở mọi chỗ GHI: rỗng, hoặc đúng 32 byte (blake2b-256).
+   */
   didCommit?: string;
   /** Lovelace gắn kèm thread UTxO (min-ADA). Default 2 ADA. */
   lovelace?: bigint;
@@ -496,6 +502,134 @@ export async function buildMintEngageTx(
     `addr=${engageAddress} | genesis count=0 nanogic=0 last_epoch=0`;
 
   return { tx, engageNftUnit: unit, engageAddress, genesisDatum, summary };
+}
+
+// ── BindDID: gắn PersonDID vào thread (redeemer constr 1) ─────────────────────
+
+/** Độ dài hợp lệ của `did_commit` tính theo BYTE — gương của `did_len_ok` on-chain. */
+export const DID_COMMIT_BYTES = 32;
+
+export interface BindDidParams {
+  lucid: LucidEvolution;
+  /** Engage UTxO cần gắn DID — `did_commit` của nó PHẢI đang rỗng. */
+  engageUtxo: UTxO;
+  /** Compiled consume validator (ĐÃ apply 7 param) — vừa là policy, vừa là địa chỉ. */
+  consumeScript: Validator;
+  /** did_commit mới: hex 32 byte (64 ký tự), KHÁC rỗng. */
+  didCommit: string;
+  /** UTxO mang script tham chiếu CIP-33 của `consume`. Bỏ trống ⟹ `attach`.
+   *  Ở đây `attach` DÙNG ĐƯỢC trên chuỗi thật: tx này chỉ có MỘT validator (5.528 B
+   *  cho bản chưa apply-param, đo `plutus.json` 2026-09-07), không như đường consume
+   *  phải gánh cả vault. Vẫn nên dùng ref-script khi đã công bố. */
+  consumeRefUtxo?: UTxO;
+  /** Collateral UTxO thuần ADA. */
+  collateralUtxo?: UTxO;
+}
+
+export interface BindDidResult {
+  tx: TxSignBuilder;
+  /** EngageDatum mới — chỉ `did_commit` đổi. */
+  newEngageDatum: EngageDatumT;
+  summary: string;
+}
+
+/**
+ * Dựng tx gắn PersonDID vào một Engage thread.
+ *
+ * Ràng buộc `validate_bind_did` (consume.ak) mà builder này bám — kiểm TRƯỚC khi
+ * dựng để lỗi hiện ở đây kèm lý do, thay vì chết phase-2 sau khi đã mất collateral:
+ *   - `in_datum.did_commit == ""` (một chiều, một lần — đã gắn thì không đổi được);
+ *   - `out_datum.did_commit != ""` và dài đúng 32 byte;
+ *   - chữ ký của CHÍNH `owner` (KHÔNG có vế `personal_delegate` như nhánh consume —
+ *     đường sponsor của Paymaster/Feecover KHÔNG dùng được ở đây);
+ *   - mọi trường còn lại + value bảo toàn TUYỆT ĐỐI;
+ *   - đúng 1 engage input và đúng 1 engage output.
+ *
+ * KHÔNG kèm vault, KHÔNG đọc beacon giá, KHÔNG cần validity-range: nhánh này không
+ * tính giá và không refresh `last_epoch`.
+ */
+export async function buildBindDidTx(params: BindDidParams): Promise<BindDidResult> {
+  const {
+    lucid, engageUtxo, consumeScript, didCommit, consumeRefUtxo, collateralUtxo,
+  } = params;
+
+  const did = didCommit.toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(did)) {
+    throw new Error(
+      `BIND-DID-001: did_commit phải là hex ĐÚNG ${DID_COMMIT_BYTES} byte ` +
+        `(${DID_COMMIT_BYTES * 2} ký tự), nhận "${didCommit}" (${didCommit.length} ký tự). ` +
+        `On-chain \`did_len_ok\` ép \`length == 0 || length == 32\`, và BindDID còn ` +
+        `đòi khác rỗng ⇒ chỉ 32 byte đi qua.`,
+    );
+  }
+
+  if (!engageUtxo.datum) {
+    throw new Error("BIND-DID-002: engage UTxO thiếu inline datum");
+  }
+  const oldDatum: EngageDatumT = decodeEngageDatum(engageUtxo.datum);
+  if (oldDatum.did_commit !== "") {
+    throw new Error(
+      `BIND-DID-003: thread này ĐÃ gắn DID (did_commit=${oldDatum.did_commit}). ` +
+        `BindDID đi MỘT CHIỀU và ĐÚNG MỘT LẦN — không có đường đổi sang giá trị khác, ` +
+        `kể cả ghi lại chính giá trị cũ.`,
+    );
+  }
+
+  const consumePolicyId = validatorToScriptHash(consumeScript);
+  const resolvedNftUnit = resolveThreadNft(engageUtxo, consumePolicyId, undefined);
+
+  if (consumeRefUtxo) {
+    if (!consumeRefUtxo.scriptRef) {
+      throw new Error(
+        `BIND-DID-004: consumeRefUtxo không mang scriptRef ` +
+          `(${consumeRefUtxo.txHash}#${consumeRefUtxo.outputIndex})`,
+      );
+    }
+    const gotHash = validatorToScriptHash(consumeRefUtxo.scriptRef);
+    if (gotHash !== consumePolicyId) {
+      throw new Error(
+        `BIND-DID-005: consumeRefUtxo mang script hash ${gotHash}, cần ${consumePolicyId}`,
+      );
+    }
+  }
+
+  // Chỉ `did_commit` đổi. Mọi trường khác chép nguyên — on-chain ép bằng tuyệt đối.
+  const newEngageDatum: EngageDatumT = {
+    owner: oldDatum.owner,
+    consumed_count: oldDatum.consumed_count,
+    last_epoch: oldDatum.last_epoch,
+    did_commit: did,
+    consumed_nanogic: oldDatum.consumed_nanogic,
+  };
+
+  let txBuilder = lucid
+    .newTx()
+    .collectFrom([engageUtxo], encodeBindDidRedeemer());
+
+  if (consumeRefUtxo) txBuilder = txBuilder.readFrom([consumeRefUtxo]);
+  else txBuilder = txBuilder.attach.SpendingValidator(consumeScript);
+
+  txBuilder = txBuilder
+    // Value bảo toàn TUYỆT ĐỐI: copy y nguyên assets của input.
+    .pay.ToAddressWithData(
+      engageUtxo.address,
+      { kind: "inline", value: encodeEngageDatum(newEngageDatum) },
+      { ...engageUtxo.assets },
+    )
+    // Chữ ký của CHÍNH chủ thread — lấy từ datum đang tiêu, không nhận từ caller
+    // (nhận từ caller là mở một chỗ để truyền nhầm khoá người khác).
+    .addSignerKey(oldDatum.owner.toLowerCase());
+
+  const tx = collateralUtxo
+    ? await txBuilder.complete({ presetWalletInputs: [collateralUtxo] })
+    : await txBuilder.complete();
+
+  const summary =
+    `bind did thread=${resolvedNftUnit} | owner=${oldDatum.owner} | ` +
+    `did_commit "" → ${did} | count=${oldDatum.consumed_count} ` +
+    `nanogic=${oldDatum.consumed_nanogic} last_epoch=${oldDatum.last_epoch} (giữ nguyên)`;
+
+  return { tx, newEngageDatum, summary };
 }
 
 // ── Submit helper ─────────────────────────────────────────────────────────────

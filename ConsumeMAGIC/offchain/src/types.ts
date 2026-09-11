@@ -11,9 +11,10 @@
 //   EngageDatum     { owner, consumed_count, last_epoch, did_commit,
 //                     consumed_nanogic }                               constr 0
 //   ConsumeRedeemer     = Consume     { op_type, op_count, price_ref, vault_ref } constr 0
+//                       | BindDID                                                 constr 1
 //   EngageMintRedeemer  = MintEngage  { seed: OutputReference }                   constr 0
 
-import { Data } from "@lucid-evolution/lucid";
+import { Constr, Data } from "@lucid-evolution/lucid";
 
 // ── OutputReference (cardano/transaction.OutputReference) ─────────────────────
 // Aiken: OutputReference { transaction_id: ByteArray, output_index: Int }.
@@ -43,7 +44,8 @@ export type PriceParamT = Data.Static<typeof PriceParamSchema>;
 // ── EngageDatum (state per-app) — 5 TRƯỜNG ────────────────────────────────────
 // Thứ tự = thứ tự khai báo trong types.ak. Hai trường được THÊM Ở CUỐI theo
 // nguyên tắc APPEND-ONLY (không dịch chỉ số field cũ):
-//   did_commit       — MVP = "" (rỗng). Immutable on-chain sau genesis.
+//   did_commit       — rỗng, hoặc đúng 32 byte. Bất biến DƯỚI nhánh `Consume`; đường ghi
+//                      thứ hai là redeemer `BindDID` (một chiều, đúng một lần).
 //   consumed_nanogic — tổng GIÁ TRỊ (nanogic) đã tiêu tích luỹ trên thread.
 //
 // ⚠ consumed_nanogic KHÔNG phải trường trang trí: validator ép bất biến THỨ HAI
@@ -62,11 +64,20 @@ export const EngageDatumSchema = Data.Object({
 });
 export type EngageDatumT = Data.Static<typeof EngageDatumSchema>;
 
-// ── ConsumeRedeemer = Consume { op_type, op_count, price_ref, vault_ref } ──────
-// Aiken: enum 1 constr → Plutus Constr(0, [op_type, op_count, price_ref, vault_ref]).
-// Lucid: 1-variant enum encode = Data.Object (Constr 0, field theo thứ tự khai báo).
-// KHÔNG dùng Data.Enum 1-phần-tử (Lucid 0.4.x cast lỗi "Could not type cast to
-// constructor" khi variant >1 field). Data.Object cho RA ĐÚNG bytes Constr 0.
+// ── ConsumeRedeemer — enum 2 variant ──────────────────────────────────────────
+//   Consume { op_type, op_count, price_ref, vault_ref }  → Constr 0
+//   BindDID                                              → Constr 1
+//
+// 🔴 CHỈ SỐ CONSTRUCTOR LÀ HỢP ĐỒNG NHỊ PHÂN với on-chain (types.ak). Variant mới
+//    chỉ được THÊM Ở CUỐI. Hai hằng dưới đây tồn tại để chỗ nào cần con số thì ĐỌC
+//    chúng, không gõ lại — và `tests/codec.test.ts` ghim cả hai.
+export const CONSUME_REDEEMER_CONSTR = 0;
+export const BIND_DID_REDEEMER_CONSTR = 1;
+
+// Variant `Consume` giữ nguyên lược đồ cũ: Data.Object cho RA ĐÚNG bytes Constr 0.
+// KHÔNG chuyển sang Data.Enum để "cho giống enum Aiken" — Lucid 0.4.x cast lỗi
+// "Could not type cast to constructor" với variant nhiều field, và đổi lược đồ ở đây
+// là đổi bytes của một redeemer ĐÃ LÊN CHUỖI.
 export const ConsumeRedeemerSchema = Data.Object({
   op_type: Data.Integer(),
   op_count: Data.Integer(),
@@ -74,6 +85,17 @@ export const ConsumeRedeemerSchema = Data.Object({
   vault_ref: OutputReferenceSchema,
 });
 export type ConsumeRedeemerT = Data.Static<typeof ConsumeRedeemerSchema>;
+
+/**
+ * Redeemer `BindDID` — Constr(1, []), KHÔNG field.
+ *
+ * Dựng bằng `new Constr(...)` chứ KHÔNG gõ hằng CBOR `"d87a80"`: chỉ số constructor
+ * là thứ phải khớp on-chain, còn chuỗi bytes là HỆ QUẢ của nó. Gõ bytes tay là chép
+ * một sự thật ra chỗ thứ hai, và chỗ thứ hai đó không có đường báo khi chỉ số đổi.
+ * (Cùng lý do `postPrice.ts` dùng `Data.void()` thay vì gõ `"d87980"`.)
+ */
+export const encodeBindDidRedeemer = (): string =>
+  Data.to(new Constr(BIND_DID_REDEEMER_CONSTR, []));
 
 // ── EngageMintRedeemer = MintEngage { seed } (constr 0) ───────────────────────
 // Handler `mint` nằm TRONG chính validator `consume` (multi-purpose): policy id

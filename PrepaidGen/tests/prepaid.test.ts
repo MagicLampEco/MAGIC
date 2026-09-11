@@ -7,6 +7,7 @@ import {
   BURN_BATCH_CONSTR,
   CARP_ASSET_NAME,
   CARP_POLICY_ID,
+  carpAssetClass,
   MAX_BATCHES_PER_VAULT,
   MAX_PREPAID_CREDITS,
   MIN_BUFFER_BPS,
@@ -493,15 +494,37 @@ describe("định danh dẫn xuất", () => {
 });
 
 describe("cấu hình mạng đã verify", () => {
-  it("giữ đúng policy tCARP đã đúc thật trên hai testnet", () => {
-    expect(CARP_POLICY_ID.Preview).toBe(
-      "074cf29c52db3700910d249e0da5b761b7588f8d5bcea595a335bcf7",
+  // Ba bài dưới thay bài cũ "giữ đúng policy tCARP đã đúc thật trên hai
+  // testnet" — bài đó ghim ba con số KHÔNG khớp nguồn nào (xem khối chú thích
+  // ở `constants.ts`), nên nó xanh trong lúc nó sai.
+  it("Preprod mang đúng số của nhà CarpetMint (đo 2026-09-11)", () => {
+    const { policyId, assetName } = carpAssetClass("Preprod");
+    expect(policyId).toBe(
+      "4967df00c7e038fc7ce2abdc1e6d4c946342ffa905e059ab861dffc2",
     );
-    expect(CARP_POLICY_ID.Preprod).toBe(
-      "47144f2e675f5fd2b909fc295ba2a975291c4cbb576a15e7298cdb0b",
+    expect(assetName).toBe(
+      "30cb6a6b6a1c9746bf9eb081d914d96ede4c4c13e661404678a933a6",
     );
-    expect(CARP_ASSET_NAME).toBe("43415250");
-    expect(Buffer.from(CARP_ASSET_NAME, "hex").toString()).toBe("CARP");
+  });
+
+  it("asset name là BĂM 28 byte, KHÔNG phải hex của ticker", () => {
+    const { policyId, assetName } = carpAssetClass("Preprod");
+    expect(assetName).toHaveLength(56); // 28 byte
+    expect(policyId).toHaveLength(56);
+    // Chốt chống tái phát: giá trị cũ `43415250` là hex ASCII của "CARP".
+    expect(assetName).not.toBe(Buffer.from("CARP").toString("hex"));
+    expect(assetName).not.toBe(Buffer.from("tCARP").toString("hex"));
+  });
+
+  it("Preview và Mainnet FAIL-CLOSED: không có CARP thì NÉM, không im lặng", () => {
+    expect(CARP_POLICY_ID.Preview).toBeNull();
+    expect(CARP_ASSET_NAME.Preview).toBeNull();
+    expect(CARP_POLICY_ID.Mainnet).toBeNull();
+    expect(CARP_ASSET_NAME.Mainnet).toBeNull();
+    expect(() => carpAssetClass("Preview")).toThrow(/CHƯA CÓ CARP/);
+    expect(() => carpAssetClass("Mainnet")).toThrow(/CHƯA CÓ CARP/);
+    // Câu báo phải đọc được và phải nói đúng cái bẫy: đừng điền LACE.
+    expect(() => carpAssetClass("Preview")).toThrow(/LACE/);
   });
 
   it("burn_batch_constr = 2, đồng nhất với InstantGen/ScheduleGen (§11)", () => {

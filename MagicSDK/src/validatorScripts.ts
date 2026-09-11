@@ -66,12 +66,24 @@ export function applyVaultValidator(
 /**
  * Build the applied shard Validator (only meaningful for ScheduleGen).
  *
- * `validator shard(shard_policy_id_param: PolicyId)` — MỘT tham số, không phải
- * không. Xem `ScheduleGen/onchain/validators/vault.ak`, khai báo `validator shard`.
- * Trước đây hàm này apply `[]`: `applyParamsToScript` không kiểm arity nên vẫn ra
- * một hash trông hợp lệ, chỉ khác hash thật mà `scripts/deploy/03_deploy_shards.ts`
- * đã dùng để đặt 16 shard UTxO ⇒ mọi ScheduleFire dựng qua SDK đính sai địa chỉ
- * shard và không tìm thấy shard input.
+ * `validator shard(shard_policy_id_param: PolicyId, vault_script_hash: ByteArray)`
+ * — HAI tham số từ 2026-09-07. Xem `ScheduleGen/onchain/validators/vault.ak`, khai
+ * báo `validator shard`. Trước đây hàm này apply `[]`: `applyParamsToScript` không
+ * kiểm arity nên vẫn ra một hash trông hợp lệ, chỉ khác hash thật mà
+ * `scripts/deploy/03_deploy_shards.ts` đã dùng để đặt 16 shard UTxO ⇒ mọi
+ * ScheduleFire dựng qua SDK đính sai địa chỉ shard và không tìm thấy shard input.
+ *
+ * `vault_script_hash` được SUY RA tại đây, không nhận qua `ProtocolParams`. Đây là
+ * lựa chọn có chủ ý: nó là hash của validator vault Schedule, mà SDK đã có đủ
+ * blueprint và tham số để tự tính. Thêm một trường cấu hình cho nó là dựng nguồn
+ * thứ hai cho một giá trị suy ra được — và nguồn thứ hai đó lệch được với vault
+ * thật mà không gì kêu lên, đúng lớp hỏng im lặng mà chính hàm này từng dính.
+ * Khác với `umScriptHash`/`backingScriptHash`: những cái đó là hash của validator
+ * thuộc MODULE KHÁC, SDK không tính được nên buộc phải nhận qua cấu hình.
+ *
+ * Hệ quả: `validators.vaultUnappliedCbor` phải là vault **Schedule**, và `protocol`
+ * phải đủ tham số vault. Truyền vault Instant vào đây sẽ ra một `vault_script_hash`
+ * sai và shard không bao giờ khớp — không có cách nào phát hiện điều đó ở đây.
  */
 export function applyShardValidator(
   validators: ValidatorBundle,
@@ -81,8 +93,10 @@ export function applyShardValidator(
     throw new Error("shardUnappliedCbor required when vaultType=Schedule");
   }
   requireField(protocol.shardPolicyId, "shardPolicyId", "Schedule (shard validator)");
+  const { vaultScriptHash } = applyVaultValidator("Schedule", validators, protocol);
   const appliedCbor = applyParamsToScript(validators.shardUnappliedCbor, [
     protocol.shardPolicyId!,
+    vaultScriptHash,
   ]);
   const shardScript: Validator = { type: "PlutusV3", script: appliedCbor };
   const shardScriptHash = validatorToScriptHash(shardScript);

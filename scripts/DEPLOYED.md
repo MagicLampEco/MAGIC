@@ -175,10 +175,34 @@ Ba điều đọc thẳng từ đó:
 vào vault ScheduleGen rồi cam kết lịch — tx đi qua thật, `gen_schedules` được ghi, shard
 tổng hợp cập nhật, rate khoá vĩnh viễn theo T8.
 
-**2. ScheduleFire ⏳ chưa tới hạn, đúng thiết kế.** `No eligible fires: next fire at epoch
-20679, current=20677`. `SCHEDULE_DELAY = 2` epoch, mà `ms_per_epoch` testnet = 86 400 000
-(1 ngày) ⇒ phải chờ ~2 ngày sau commit. Đây không phải lỗi; nhưng nghĩa là **không thể
-nghiệm thu ScheduleGen trọn vòng trong một buổi.**
+**2. ScheduleFire ✅ Preview — đã bắn 8 lượt, sinh 64.000.000 nanogic.**
+
+> Dòng cũ ở đây ghi *"⏳ chưa tới hạn"* kèm `No eligible fires: next fire at epoch 20679,
+> current=20677`. Câu đó **đúng lúc chạy và sai từ lâu**: lịch đã tới hạn rồi bắn. Sổ này
+> không được cập nhật sau lượt bắn, nên nó ghi một trạng thái CHỜ cho một việc ĐÃ XONG —
+> và không có gì kêu lên. Đây đúng lớp "trạng thái chép lại thì già đi, phép đo thì không".
+
+Đo lại trực tiếp trên chuỗi 2026-09-11 (`VaultReadAPI` ▸ `npm run probe`, Preview):
+
+```
+schedule_id            88ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3e
+commit_epoch           20691      start_fire_epoch  20693     end_fire_epoch  20702
+schedule_length        10         fired_count       8
+lamp_per_epoch_oildrop 1000000    rate_locked_q     8000000000
+accrued_nanogic        64000000   available_nanogic 0         expired_nanogic 64000000
+```
+
+**Cách kiểm lại** (phép đo, không phải trạng thái chép — nên nó không già đi):
+`npm run probe -- <owner_pkh>` trong `VaultReadAPI/`, đọc trường `fired_count`.
+
+🔴 **Nhưng cả 64 triệu nanogic đó đã hết hạn, và đó là phát hiện đáng nói hơn lượt bắn.**
+`decay_window = 1` (`ScheduleGen/…/constants.ak`) ⟹ mỗi batch sống đúng **một** epoch
+(`expires_at_epoch: 20701`, `live: false`). Người dùng sinh được MAGIC rồi mở ứng dụng muộn
+một epoch là số đó bằng 0 — không phải lỗi đọc, mà là hệ quả của hằng số. Xem Nợ #46.
+
+Hệ quả cho nghiệm thu: **không thể nghiệm thu ScheduleGen trọn vòng trong một buổi** —
+`SCHEDULE_DELAY = 2` epoch với `ms_per_epoch` testnet = 86 400 000 (1 ngày) ⇒ chờ ~2 ngày
+sau commit mới bắn được, rồi chỉ còn ~1 epoch để tiêu trước khi hết hạn.
 
 **3. InstantGen ❌ không mở được, và không phải vì cấu hình.** Đo giống hệt nhau trên cả
 hai mạng, hai ngày, bốn vault khác nhau: `reward=0 cap_surplus=33333333333 cap_pp=0`.

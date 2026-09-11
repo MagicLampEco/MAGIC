@@ -105,7 +105,8 @@ Tham chiếu: `price_param.ak`.
   (one-shot, permissionless, N thread / 1 policy).
   Tạo Engage UTxO tại địa chỉ `consume` validator mang NFT + EngageDatum
   `{owner, consumed_count:0, last_epoch:0, did_commit, consumed_nanogic:0}` — ba trục kế
-  toán đều 0, `did_commit` đặt 1 lần (MVP rỗng), immutable sau đó.
+  toán đều 0. `did_commit` **rỗng hoặc đúng 32 byte**; bất biến dưới nhánh `Consume`, còn
+  đường ghi thứ hai là redeemer `BindDID` — một chiều, đúng một lần, đặt rồi khoá vĩnh viễn.
   Off-chain: `offchain/src/consume.ts:buildMintEngageTx` — tx RIÊNG, không gộp với consume.
 
 ---

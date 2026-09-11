@@ -22,6 +22,13 @@ export {
 } from "./vaultId.js";
 export { VaultIdRedeemerSchema } from "./schemas.js";
 
+// KIỂU của thứ `Data.from(…, VaultDatumSchema)` trả về. Lược đồ đã xuất từ trước, kiểu
+// thì chưa — nên mã ngoài đọc được datum nhưng không khai nổi biến giữ nó, và phải tự
+// viết lại `ReturnType<typeof Data.from<typeof VaultDatumSchema>>`. Một biểu thức chép
+// tay như thế là bản sao sẽ chết im lặng lúc lược đồ đổi hình. Xuất thêm là cộng, không
+// phá: không cái tên nào đổi nghĩa.
+export type { VaultDatum } from "./schemas.js";
+
 export {
   listVaultsForOwner,
   type VaultRecord,

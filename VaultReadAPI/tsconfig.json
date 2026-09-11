@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "types": ["node"]
+  },
+  "//exclude": "KHÔNG liệt `tests` vào exclude. MagicSDK phải dựng tsconfig.test.json riêng vì tsconfig gốc của nó exclude `tests` và `extends` kế thừa exclude — thiếu bản ghi đè thì tsc lặng lẽ kiểm 0 tệp test. Gói này không emit nên gộp được một tệp, và gộp chính là cách không tái tạo cái bẫy đó.",
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules"]
+}

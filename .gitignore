@@ -26,6 +26,11 @@ CLAUDE.md
 # Cả bản sao lưu: hash cũ trong tệp .bak là mồi cho việc deploy nhầm vào địa chỉ đã chết.
 scripts/state.*.sh
 scripts/state.*.sh.bak-*
+# Bản sao lưu của sổ trạng thái kia cũng vậy. `*.env` ở trên đã chặn chính tệp đó, nhưng
+# một hậu tố `.bak-…` làm nó THÔI khớp `*.env` — và lúc dời sổ sang đời mới thì đúng là
+# người ta tạo ra những tệp có hậu tố ấy. Đo thật: `deployed.Preprod.env.bak-doi-cu` hiện
+# lên untracked ngay lần dời đầu tiên.
+scripts/*.bak-*
 __pycache__/
 
 # Cache của vitest/vite (sinh khi chạy bộ kiểm) — artifact, không commit

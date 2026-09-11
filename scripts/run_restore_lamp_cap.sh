@@ -19,7 +19,20 @@ case "$NET" in
   Preprod) BF_VAR="Blockfrost_Aladin_Preprod" ;;
   *) echo "✗ Tham số 1 phải là Preview hoặc Preprod (nhận: $NET)"; exit 2 ;;
 esac
-: "${AGENT_SECRETS:?✗ AGENT_SECRETS chưa set}"
+# Cổng này DỪNG kịch bản trước khi nó chạm vào bất cứ thứ gì. Thông điệp phải nói được
+# người đọc PHẢI LÀM GÌ — bản cũ chỉ nói "chưa set", và một lượt chạy chết ở đây không để
+# lại dấu vết nào trên chuỗi, nên nó đọc y hệt một lượt chạy đã xong.
+: "${AGENT_SECRETS:?
+  ✗ AGENT_SECRETS chưa set. Kịch bản DỪNG — KHÔNG có gì được thực hiện, KHÔNG giao dịch nào
+    được gửi. Đừng đọc lần chạy này thành 'đã chạy rồi'.
+
+    Biến này phải trỏ tới tệp kho khoá của CHÍNH MÁY BẠN. Kho mã này cố ý KHÔNG ghi đường
+    dẫn đó ở bất cứ đâu, nên nó không thể tự điền hộ.
+
+    Đặt một lần cho mọi phiên terminal:
+        echo \'export AGENT_SECRETS=\"đường/dẫn/kho/khoá/của/bạn\"\' >> ~/.zshenv
+        source ~/.zshenv
+}"
 cd "$(dirname "$0")"
 
 echo "▶ Dò biến seed ví deploy…"

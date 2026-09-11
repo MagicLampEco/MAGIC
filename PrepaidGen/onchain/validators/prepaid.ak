@@ -821,7 +821,13 @@ const t_vault_hash: ByteArray = #"1111111111111111111111111111111111111111111111
 const t_fund_hash: ByteArray = #"44444444444444444444444444444444444444444444444444444444"
 const t_evil_hash: ByteArray = #"66666666666666666666666666666666666666666666666666666666"
 const t_carp_policy: ByteArray = #"22222222222222222222222222222222222222222222222222222222"
-const t_carp_name: ByteArray = #"43415250"
+// `carp_asset_name` thật là một BĂM 28 byte do nhà CarpetMint phát (xem
+// `offchain/src/constants.ts` §"Cấu hình mạng: CARP", đo 2026-09-11) — KHÔNG
+// phải hex của ticker "CARP". Fixture giữ đúng HÌNH DẠNG đó mà không chép giá
+// trị thật vào đây: một bản chép trong tệp kiểm sẽ chết im lặng khi nhà
+// CarpetMint đổi số. Bản trước ghi #"43415250" (4 byte, hex ASCII "CARP") nên
+// mọi bài kiểm chạy trên một hình dạng không tồn tại trên chuỗi.
+const t_carp_name: ByteArray = #"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
 const t_fund_policy: ByteArray = #"33333333333333333333333333333333333333333333333333333333"
 const t_fund_id: ByteArray =
   #"aaaa000000000000000000000000000000000000000000000000000000000000"

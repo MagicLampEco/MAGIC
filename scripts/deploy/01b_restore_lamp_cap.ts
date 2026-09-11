@@ -124,16 +124,47 @@ async function main() {
   const txHash = await signed.submit();
   await lucid.awaitTx(txHash);
 
-  const after = await onchainSupply(lampUnit);
-  console.log(`\n✅ Đã đốt.`);
+  console.log(`\n✅ Đã gửi và tx đã vào khối.`);
   console.log(`   TX hash:   ${txHash}`);
   console.log(`   Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
-  console.log(`   Cung sau:  ${after.toLocaleString("en-US")} oildrop = ${(after / 1_000_000n).toLocaleString("en-US")} LAMP`);
-  if (after !== LAMP_CAP) {
-    console.error(`   ⚠ Cung sau KHÁC trần ${LAMP_CAP} — đối chiếu lại trước khi coi là xong.`);
-    process.exit(1);
+
+  // 🔴 `awaitTx` trả về khi tx VÀO KHỐI. Nó KHÔNG nói bảng tổng hợp tài sản của indexer
+  //    đã cập nhật — bảng đó nhất-quán-dần, và đo được là trễ hơn vài phút. Bản cũ đọc
+  //    `onchainSupply` đúng một lần ngay sau `awaitTx`, thấy còn số cũ, rồi in
+  //    "⚠ Cung sau KHÁC trần" + exit 1. Một lần đốt ĐÃ THÀNH CÔNG đọc y hệt một lần hỏng.
+  //
+  //    Forall §Cổng gác: phép đo phải phân biệt BA trạng thái — khớp · lệch · KHÔNG ĐO
+  //    ĐƯỢC — và trạng thái thứ ba không được đội lốt trạng thái thứ hai. Ở đây "indexer
+  //    chưa kịp" là trạng thái thứ ba. Nên: thử lại có chờ, và nếu hết lượt vẫn chưa đổi
+  //    thì nói đúng rằng CHƯA ĐO ĐƯỢC, kèm phép đo độc lập không đi qua bảng tổng hợp.
+  const TRIES = 6, GAP_MS = 20_000;
+  let after = 0n, khop = false;
+  for (let i = 1; i <= TRIES; i++) {
+    after = await onchainSupply(lampUnit);
+    if (after === LAMP_CAP) { khop = true; break; }
+    if (i < TRIES) {
+      console.log(`   … bảng tổng hợp còn đọc ${after.toLocaleString("en-US")} — chờ ${GAP_MS / 1000}s rồi hỏi lại (${i}/${TRIES - 1})`);
+      await new Promise((r) => setTimeout(r, GAP_MS));
+    }
   }
-  console.log(`   → Đúng trần 36 tỷ. Chú ý: mint_or_burn_count nay là 3, không về 1.`);
+
+  if (khop) {
+    console.log(`   Cung sau:  ${after.toLocaleString("en-US")} oildrop = 36,000,000,000 LAMP`);
+    console.log(`   → Đúng trần 36 tỷ. Chú ý: mint_or_burn_count nay là 3, không về 1.`);
+    return;
+  }
+
+  // KHÔNG kết luận "đốt hỏng" — tx đã vào khối, chỉ là phép đo này chưa thấy.
+  console.log(`\n⏳ CHƯA ĐO ĐƯỢC — không phải "đốt hỏng".`);
+  console.log(`   Tx ở trên ĐÃ vào khối. Bảng tổng hợp tài sản của indexer còn đọc`);
+  console.log(`   ${after.toLocaleString("en-US")} oildrop sau ${(TRIES - 1) * GAP_MS / 1000}s; bảng đó nhất-quán-dần.`);
+  console.log(`\n   Hai phép đo KHÔNG đi qua bảng tổng hợp, dùng cái nào cũng được:`);
+  console.log(`   1) tx này đã đốt bao nhiêu — đọc trường \`assets_minted\` (số ÂM là đốt):`);
+  console.log(`      curl -s -X POST https://${NETWORK.toLowerCase()}.koios.rest/api/v1/tx_info \\`);
+  console.log(`        -H 'Content-Type: application/json' -d '{"_tx_hashes":["${txHash}"],"_assets":true}'`);
+  console.log(`   2) tổng đang thực giữ — cộng mọi địa chỉ, đây mới là sổ cái:`);
+  console.log(`      curl -s 'https://${NETWORK.toLowerCase()}.koios.rest/api/v1/asset_addresses?_asset_policy=${policyId}&_asset_name=${lampUnit.slice(56)}'`);
+  console.log(`\n   Tổng ở phép (2) bằng ${LAMP_CAP.toLocaleString("en-US")} ⟹ đã đúng trần, xong việc.`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

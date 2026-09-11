@@ -21,7 +21,7 @@ khác. Cụ thể, nó dùng lại — không chép — ba thứ:
 | dùng lại | ở đâu | vì sao không chép |
 |---|---|---|
 | `VaultDatumSchema` | `MagicSDK/src/schemas.ts` | thứ tự trường = hợp đồng nhị phân |
-| `isBatchExpired` | `MagicSDK/src/burnBatch.ts` | gương của `is_expired`, `ScheduleGen/onchain/validators/vault.ak:630-632` |
+| `isBatchExpired` | `MagicSDK/src/burnBatch.ts` | gương của `ScheduleGen/onchain/validators/vault.ak` ▸ `is_expired` |
 | `posixMsToEpoch` | `ProtocolUtils/src/index.ts` | epoch giao thức ≠ epoch Cardano |
 
 ## 2. Vì sao chọn HTTP sidecar
@@ -147,9 +147,14 @@ có `policy_id == script hash của vault`, số lượng 1.
 
 Lọc theo `datum.owner` **không đủ**. Địa chỉ script là công cộng: ai cũng đặt được một
 UTxO ở đó với datum tự soạn, khai `owner` là PKH của người khác và khai bao nhiêu MAGIC
-tuỳ thích. Validator từ chối đúng những UTxO ấy
-(`ScheduleGen/onchain/validators/vault.ak:266` và `:867-869`), nên mặt tiền đọc phải từ
-chối y hệt — nếu không nó báo một số dư mà **không giao dịch nào chi ra được**.
+tuỳ thích. Validator từ chối đúng những UTxO ấy —
+`ScheduleGen/onchain/validators/vault.ak` ▸ `validate_vault_value` và ▸ `has_vault_id_nft`
+— nên mặt tiền đọc phải từ chối y hệt; nếu không nó báo một số dư mà **không giao dịch nào
+chi ra được**.
+
+> Neo ở đây cố ý là **tên hàm**, không phải số dòng: bản đầu của tệp này neo `:266` và
+> `:867-869`, và hai neo đó chết ngay trong lần hoà kế tiếp — chúng vẫn trỏ vào dòng CÓ
+> THẬT, chỉ là dòng khác. Đó là kiểu hỏng không kêu.
 
 UTxO bị bỏ qua được **đếm và khai** ở `ignored[]` kèm lý do (`NO_VAULT_ID_NFT`,
 `NO_INLINE_DATUM`, `OWNER_MISMATCH`). Rỗng là bình thường; khác rỗng là thứ người vận

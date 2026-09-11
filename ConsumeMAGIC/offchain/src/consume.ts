@@ -403,7 +403,13 @@ export interface MintEngageParams {
   seedUtxo: UTxO;
   /** Owner pkh (hex) — `validate_mint_engage_id` ép `list.has(tx.extra_signatories, owner)`. */
   ownerPkh: string;
-  /** did_commit đặt MỘT LẦN lúc genesis, IMMUTABLE sau đó. MVP = "" (rỗng). */
+  /**
+   * `did_commit` — đặt lúc genesis, và **bất biến DƯỚI nhánh `Consume`** (nhánh đó ép
+   * `out == in`). KHÔNG phải bất biến tuyệt đối: redeemer `BindDID` là đường ghi thứ hai,
+   * dùng để gắn PersonDID sau khi thread đã mở. Ghi qua `BindDID` thì **một chiều, đúng
+   * một lần** — đặt rồi là khoá vĩnh viễn.
+   * Khuôn bắt buộc ở mọi chỗ GHI: rỗng, hoặc đúng 32 byte (blake2b-256).
+   */
   didCommit?: string;
   /** Lovelace gắn kèm thread UTxO (min-ADA). Default 2 ADA. */
   lovelace?: bigint;

@@ -45,9 +45,29 @@ hai bên đọc ra hai người khác nhau từ cùng một chuỗi byte. Còn h
 phân biệt được chúng, và không bài kiểm nào đỏ nếu ai đó hoán chỗ**. Hoán nhầm thì
 `0,20 × 2,00 × 2,50 = 1,00` — hoà vốn, vòng tiêu-rồi-được-hoàn thôi hội tụ.
 
-**Gãy gì.** Cả ba đều **siết thêm**, không nới: giao dịch hợp lệ theo bản cũ vẫn hợp lệ, trừ
-đúng những ca mà bản cũ lẽ ra phải từ chối. `did_commit` là **bất biến sau khi đặt** ⟹ mọi
-thread mở từ nay mang khuôn 32 byte vĩnh viễn; đặt sai là khoá chết ngoài lớp tư-cách.
+**Gãy gì.** Về LOGIC thì cả ba đều **siết thêm**, không nới: giao dịch hợp lệ theo bản cũ vẫn
+hợp lệ, trừ đúng những ca mà bản cũ lẽ ra phải từ chối.
+
+🔴 **Nhưng về BYTES thì hai script đổi hash, và đó mới là thứ gãy:**
+
+| script | đổi gì | hệ quả |
+|---|---|---|
+| `ScheduleGen` ▸ `validator shard` | apply-param **1 → 2** (`shard_policy_id_param` + `vault_script_hash` mới) | bytes đổi ⟹ **script hash đổi ⟹ ĐỊA CHỈ đổi** |
+| `ConsumeMAGIC` ▸ `validator consume` | thêm variant `BindDID` vào `ConsumeRedeemer` | bytes đổi ⟹ **script hash đổi** |
+
+Hệ quả phải làm, không phải tuỳ chọn:
+
+- **Mọi script tham chiếu CIP-33 đã công bố cho hai script này là của bản CŨ.** `REF_SHARD_UTXO`
+  ghi trong `scripts/DEPLOYED.md` trỏ một ref-script không còn khớp hash nào đang dùng. Phải
+  công bố ref-script mới rồi mới chạy được lượt triển khai kế tiếp.
+- **Mọi UTxO shard đang sống nằm ở địa chỉ CŨ** và chỉ tiêu được bằng bản cũ. Không có đường
+  "nâng cấp tại chỗ" — apply-param là tham số lúc **biên dịch**, nên đây là một cụm shard đời
+  mới, không phải một bản vá cho cụm đang chạy.
+- `ConsumeRedeemer` nay có **hai** variant. `BindDID` ĐẶT Ở CUỐI để `Consume` giữ nguyên
+  `Constr 0` — mã đang mã hoá `Consume` không phải sửa. Nhưng lần thêm variant sau **không
+  được** chiếm `Constr 1`, chỗ đó đã có chủ.
+- `did_commit` là **bất biến sau khi đặt** ⟹ mọi thread mở từ nay mang khuôn 32 byte vĩnh
+  viễn; đặt sai là khoá chết ngoài lớp tư-cách.
 
 ## 2026-09-11 — `VaultReadAPI`: mặt tiền ĐỌC-THÔI để backend không-TypeScript đọc được số MAGIC thật
 
@@ -75,11 +95,12 @@ Ba quyết định đáng nêu, vì cả ba đều là chỗ một mặt tiền 
    vault vừa "đã sinh 64 000 000 nanogic" vừa "tiêu được 0 hôm nay", và cả hai đều đúng.
 3. **Đòi NFT danh-tính vault, không chỉ `datum.owner`.** Địa chỉ script là công cộng: lọc
    theo `owner` thôi thì ai cũng đặt được một UTxO datum tự soạn ở đó và mặt tiền sẽ báo
-   một số dư không giao dịch nào chi ra được. On-chain từ chối đúng ca đó
-   (`ScheduleGen/onchain/validators/vault.ak:266`, `:867-869`).
+   một số dư không giao dịch nào chi ra được. On-chain từ chối đúng ca đó —
+   `ScheduleGen/onchain/validators/vault.ak` ▸ `validate_vault_value`, ▸ `has_vault_id_nft`.
 
-**Gãy gì nếu đang bám bản cũ.** Không gãy gì. Gói mới, không đụng `onchain/` nên không
-script hash nào đổi; thay đổi duy nhất ngoài gói là **thêm** một `export type` ở MagicSDK
+**Gãy gì nếu đang bám bản cũ.** Riêng mục này không gãy gì: gói mới, không đụng `onchain/`
+nên **mục này** không đổi script hash nào; thay đổi duy nhất ngoài gói là **thêm** một
+`export type` ở MagicSDK
 — cộng, không phá. `MagicSDK/src/listVaults.ts` giữ nguyên hành vi (xem mục "còn nợ" ở
 `VaultReadAPI/README.md §7` và ghi chú về `catch { continue }` ở `listVaults.ts:64`).
 

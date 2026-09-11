@@ -20,7 +20,7 @@ MAGIC (CREDIT, số kế toán, KHÔNG token/mint/burn, **fungible — cấm nh�
 1. MAGIC = số kế toán, **KHÔNG tx.mint**. CARP-mint là native asset TÁCH khỏi lớp MAGIC.
 2. Vault = nơi DUY NHẤT giảm MAGIC (qua `BurnBatch`). Consume chỉ ép `Σburns == required`.
 3. **C-CM-1 value-preservation @engage TUYỆT ĐỐI**: Engage UTxO chỉ ADA + thread NFT. **CARP/ADA-transfer KHÔNG đi qua Engage UTxO** — đi UTxO/validator khác.
-4. `Σburns == required` (`==`, AGGREGATE chống pay-once-consume-N). did_commit immutable, stale-price gate.
+4. `Σburns == required` (`==`, AGGREGATE chống pay-once-consume-N). `did_commit` bất biến **dưới nhánh `Consume`** — đường ghi thứ hai là redeemer `BindDID`, một chiều, đúng một lần. Stale-price gate.
 5. **KHÔNG refund/un-burn** — consume tại RELEASED.
 6. **consume KHÔNG gác phía mint** (PoC verify: mint 10¹² CARP vẫn pass). Mỗi leg TỰ gác; an-toàn-CARP nằm ở CarpetMint, KHÔNG ở consume.
 

@@ -67,12 +67,28 @@ pub type ConsumeRedeemer {
     price_ref : OutputReference,
     vault_ref : OutputReference,
   }
+  BindDID
 }
 ```
 
-Plutus Data: `Constr 0 [I op_type, I op_count, Constr 0 [B txId, I ix], Constr 0 [B txId, I ix]]`.
+Plutus Data:
+
+| variant | mã hoá |
+|---|---|
+| `Consume` | `Constr 0 [I op_type, I op_count, Constr 0 [B txId, I ix], Constr 0 [B txId, I ix]]` |
+| `BindDID` | `Constr 1 []` |
 
 Lưu ý: `OutputReference` = `Constr 0 [B transaction_id, I output_index]` (Plutus V3 stdlib).
+
+🔴 **`BindDID` ĐẶT Ở CUỐI là một ràng buộc, không phải một lựa chọn trình bày.** Chỉ số
+constructor là hợp đồng nhị phân: đặt nó ở đầu sẽ đẩy `Consume` sang `Constr 1` và mọi
+giao dịch đã mã hoá theo bản cũ decode hỏng. Hệ quả cho lần thêm variant TIẾP THEO:
+`Constr 1` **đã có chủ** — variant mới phải nhận `Constr 2`, kể cả khi `BindDID` sau này
+bị bỏ khỏi mô hình (lúc đó nó nằm lại làm **bia mộ**, không được xoá khỏi chỗ cũ).
+
+> Bản trước của mục này khai enum **một** variant trong khi mã đã có hai. Bên tích hợp
+> dựng codec theo nó sẽ không decode nổi tx `BindDID`, và tệ hơn: lần mở rộng sau sẽ đặt
+> variant mới vào `Constr 1` — chỗ đã bị chiếm — vì tài liệu không nói ra.
 
 ### 1.5 PriceParamRedeemer
 

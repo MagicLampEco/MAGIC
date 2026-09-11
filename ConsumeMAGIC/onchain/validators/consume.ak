@@ -8,7 +8,10 @@
 // ENGAGEMENT/ATTRIBUTION per-app:
 //   - đọc PriceParam beacon → tính required (giá có thẩm quyền).
 //   - spend Engage UTxO (state per-app): tăng consumed_count, refresh last_epoch,
-//     did_commit immutable, thread NFT bảo toàn, owner bảo toàn, value bảo toàn.
+//     did_commit bất biến (ép out == in — NHÁNH NÀY, không phải toàn validator),
+//     thread NFT bảo toàn, owner bảo toàn, value bảo toàn.
+//   - spend Engage UTxO bằng redeemer `BindDID`: ĐƯỜNG GHI DUY NHẤT còn lại cho
+//     `did_commit`. Một chiều, đúng một lần — rỗng → 32 byte, rồi khoá vĩnh viễn.
 //   - ÉP cùng tx có 1 vault input (vault_ref) spend bằng BurnBatch với
 //     Σburns == required → liên kết 2 validator, không lệch giá, không over/under-burn.
 //

@@ -44,7 +44,8 @@ export type PriceParamT = Data.Static<typeof PriceParamSchema>;
 // ── EngageDatum (state per-app) — 5 TRƯỜNG ────────────────────────────────────
 // Thứ tự = thứ tự khai báo trong types.ak. Hai trường được THÊM Ở CUỐI theo
 // nguyên tắc APPEND-ONLY (không dịch chỉ số field cũ):
-//   did_commit       — MVP = "" (rỗng). Immutable on-chain sau genesis.
+//   did_commit       — rỗng, hoặc đúng 32 byte. Bất biến DƯỚI nhánh `Consume`; đường ghi
+//                      thứ hai là redeemer `BindDID` (một chiều, đúng một lần).
 //   consumed_nanogic — tổng GIÁ TRỊ (nanogic) đã tiêu tích luỹ trên thread.
 //
 // ⚠ consumed_nanogic KHÔNG phải trường trang trí: validator ép bất biến THỨ HAI

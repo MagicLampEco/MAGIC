@@ -45,8 +45,13 @@ ra — có vector `TV-OVERFLOW-01/02` bắt đúng ca đó.
 
 **Số học Q-format nhân-chia tuần tự.** Chuỗi thưởng ba hệ số áp thành **ba** bước
 `⌊ × / Q ⌋` riêng, không phải một lần nhân hết rồi chia. Đây là thứ chặn sai số làm tròn
-theo spec §6.1 / L4. Neo: `InstantGen/onchain/lib/magiclamp/protocol/math.ak:81-83` ↔
-`InstantGen/offchain/src/math.ts:73-76`.
+theo spec §6.1 / L4. Neo — **theo TÊN HÀM, không theo số dòng**:
+`InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_reward_from_consumed` ↔
+`InstantGen/offchain/src/math.ts` ▸ `computeRewardFromConsumed`.
+
+> Neo cũ ở đây là số dòng, và nó **đã trôi mà vẫn trỏ vào một dòng có thật** — chèn thêm
+> khối chú thích phía trên đẩy công thức xuống, nên `math.ak:81-83` nay là văn xuôi chứ
+> không phải mã. Đó là kiểu hỏng im lặng: người tra thấy một dòng hợp lệ và tưởng đã kiểm.
 
 > Bản cũ của dòng này viết công thức là `M = L × R × UM × PM / Q³`. **Tên biến đó đã cũ**
 > — từ PHA-2, thưởng khoá theo `consumed` chứ không theo `L` (INV-MAGIC-CITIZEN: thưởng
@@ -56,9 +61,9 @@ theo spec §6.1 / L4. Neo: `InstantGen/onchain/lib/magiclamp/protocol/math.ak:81
 **Ngược lại, `required` của ConsumeMAGIC gộp rồi sàn MỘT lần.** `required =
 ⌊base_price × demand_mult × op_count / Q⌋` — KHÔNG sàn từng op rồi nhân. Hai quy tắc
 làm tròn khác nhau nằm cạnh nhau trong cùng repo; chép nhầm quy tắc này sang chỗ kia là
-thu thiếu tới `op_count` nanogic mỗi dòng. Neo:
-`ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak:157` ↔
-`ConsumeMAGIC/pricing/src/price.ts:174`.
+thu thiếu tới `op_count` nanogic mỗi dòng. Neo — **theo TÊN HÀM**:
+`ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak` ▸ `required_for` ↔
+`ConsumeMAGIC/pricing/src/price.ts` ▸ `requiredForOp` (bản Σ-nhiều-op là `requiredBurn`).
 
 **"Thêm trường ở cuối" KHÔNG giữ được UTxO đã tạo.** Giải mã Plutus Data của Aiken
 NGHIÊM NGẶT VỀ SỐ TRƯỜNG, **cả hai chiều** — đo trên v1.1.21: datum 2 trường đọc bằng

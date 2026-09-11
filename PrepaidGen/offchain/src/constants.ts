@@ -127,6 +127,43 @@ export function carpAssetClass(
   return { policyId, assetName };
 }
 
+/**
+ * Các đời bytes CARP ĐÃ ĐƯỢC THAY — danh sách đối chiếu, không phải cấu hình.
+ *
+ * Đây là phả hệ của một tài sản còn đang sống, không phải sổ tử. Mỗi dòng là
+ * một đời từng phục vụ thật và đã bàn giao cho đời sau; giữ lại để đời hiện
+ * hành tự nhận ra mình khi có ai cầm nhầm bản cũ.
+ *
+ * Vì sao cần: đếm được bốn đời từng lưu hành, và **không đời nào tự khai được
+ * mình là đời thứ mấy**. Một policy id đã được thay vẫn là 56 ký tự hex hợp lệ,
+ * và `quantity_of` trên nó vẫn trả `0` một cách bình thản — đúng hình dạng cái
+ * vỏ im lặng. Danh sách này biến "gặp một bản cũ" từ chuyện phải tình cờ đối
+ * chiếu thành một phép kiểm đỏ.
+ *
+ * Nguồn: nhà Phoenix, 2026-09-12. Nhà đó giữ ba đời ở dạng đầy đủ và hai đời
+ * chỉ còn 4 byte đầu — nên mỗi dòng mang `isFullLength` để nói rõ so được tới
+ * đâu. Chép một giá trị cụt vào đây mà không gắn nhãn thì chính nó thành một
+ * bản sao lỗi thời kiểu mới.
+ *
+ * CỐ Ý KHÔNG đọc ở tầng chạy: ở đó mỗi đời mới phải nuôi thêm một dòng vĩnh
+ * viễn. Chỗ đọc là bộ kiểm, nơi danh sách được dọn cùng lúc với lần soát nó.
+ */
+export const CARP_SUPERSEDED_GENERATIONS: ReadonlyArray<{
+  value: string;
+  kind: "policy" | "asset_name";
+  network: "Mainnet" | "Preview" | "Preprod" | "both";
+  /** Ngày biết là đã được thay bằng đời mới, dạng ISO `YYYY-MM-DD`. */
+  supersededOn: string;
+  /** `false` = chỉ có tiền tố; so bằng `startsWith`, KHÔNG so toàn chuỗi. */
+  isFullLength: boolean;
+}> = [
+  { value: "527ae83ffb0c3512b672a2b9f291b631edf41f20146494e5268ab61a", kind: "policy",     network: "Preprod", supersededOn: "2026-09-11", isFullLength: true  },
+  { value: "2a40c5f3af044bdc3a41acaa864e9089123156c06cea5c7cab631e4f", kind: "policy",     network: "Preview", supersededOn: "2026-09-11", isFullLength: true  },
+  { value: "aa93b3b44d6079f4fbf4c73d23fe382cb80f05d421b749d966aa8fcc", kind: "asset_name", network: "both",    supersededOn: "2026-09-11", isFullLength: true  },
+  { value: "154a5fd3",                                                 kind: "policy",     network: "Preprod", supersededOn: "2026-08-02", isFullLength: false },
+  { value: "3921aebe",                                                 kind: "policy",     network: "Preprod", supersededOn: "2026-08-02", isFullLength: false },
+];
+
 // Nhịp epoch của GIAO THỨC — phải trùng `MS_PER_EPOCH_BY_NETWORK` ở
 // `ProtocolUtils/src/index.ts` (đó là nguồn; bảng này là bản chép có nhãn vì
 // PrepaidGen chưa nạp ProtocolUtils). Preprod nén 5× so với mạng thật (5 ngày),

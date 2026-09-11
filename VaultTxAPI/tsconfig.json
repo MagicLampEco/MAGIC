@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "types": ["node"],
+    "preserveSymlinks": true
+  },
+  "//preserveSymlinks": "BẮT BUỘC. `@magiclamp/sdk` là dependency `file:` nên npm dựng một liên kết mềm trỏ ra ngoài gốc gói. Mặc định tsc đi theo đường THẬT rồi tra `node_modules` từ đó — mà `MagicSDK/node_modules` không tồn tại trong một checkout sạch, nên MỌI import của MagicSDK gãy và kiểu `VaultDatum` tụt về `any`. Tụt kiểu ở đó không đỏ tại chỗ nó xảy ra; nó đỏ ở chỗ khác, dưới dạng 'number không gán được cho bigint'. Giữ liên kết mềm thì tra từ `VaultTxAPI/node_modules`, nơi npm đã cài đủ.",
+  "//exclude": "KHÔNG liệt `tests` vào exclude — cùng lý do đã ghi ở VaultReadAPI/tsconfig.json: `extends` kế thừa exclude và tsc sẽ lặng lẽ kiểm 0 tệp test. Gói này không emit nên một tệp là đủ.",
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules"]
+}

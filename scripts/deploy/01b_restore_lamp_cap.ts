@@ -5,7 +5,9 @@
 //    kế toán, không phải một lần đốt (`LAMP/Treasury/CONTRACT.md §5`). Thao tác ở đây
 //    không giảm cung — nó HUỶ MỘT LẦN ĐÚC THỪA để tổng lịch sử trở lại ≤ trần.
 //
-// Chạy: LAMP_BURN_CONFIRM=Preprod npx tsx deploy/01b_restore_lamp_cap.ts
+// Chạy (từ `scripts/`): bash run_restore_lamp_cap.sh Preprod --dot
+//   Không gọi thẳng `npx tsx` tệp này — nó cần `BLOCKFROST_KEY` + `WALLET_SEED` do
+//   wrapper nạp từ kho khoá, và `--dot` là thứ đặt `LAMP_BURN_CONFIRM`.
 //
 // ── CHUYỆN GÌ ĐÃ XẢY RA ─────────────────────────────────────────────────────
 // 2026-08-28, chuỗi E2E chạy `01_mint_lamp.ts` lần thứ hai trên Preprod. Policy
@@ -103,7 +105,11 @@ async function main() {
   if (process.env.LAMP_BURN_CONFIRM !== NETWORK) {
     console.error(`\n✗ DỪNG — bước này ĐỐT ${excess.toLocaleString("en-US")} oildrop trên ${NETWORK}. Ghi lên chuỗi là không hoàn tác được.`);
     console.error(`  Sau khi đốt, mint_or_burn_count sẽ TĂNG (không giảm) — dấu vết ở lại vĩnh viễn.`);
-    console.error(`  Nếu đúng ý:\n     LAMP_BURN_CONFIRM=${NETWORK} npx tsx deploy/01b_restore_lamp_cap.ts`);
+    // Gợi ý PHẢI là lệnh chạy được từ một shell sạch. Chạy thẳng `npx tsx` ở đây thì
+    // thiếu `BLOCKFROST_KEY` + `WALLET_SEED` — hai biến đó do wrapper nạp từ kho khoá
+    // (`run_restore_lamp_cap.sh:44-45`), nên câu gợi ý cũ dẫn người vận hành sang một
+    // lỗi KHÁC ở chỗ khác. Trỏ wrapper: `--dot` chính là thứ đặt biến xác nhận này.
+    console.error(`  Nếu đúng ý, chạy từ thư mục \`scripts/\`:\n     bash run_restore_lamp_cap.sh ${NETWORK} --dot`);
     process.exit(1);
   }
 

@@ -116,8 +116,15 @@ if [ "$PHASE" = "1" ]; then
       echo "✗ DỪNG — trên $NET chưa có tLAMP dưới policy $LAMP_POLICY_ID."
       echo "  Đúc là ghi lên chuỗi, không hoàn tác được, nên chuỗi kiểm thử không tự làm."
       echo "  Đúc một lần, có chủ đích:"
-      echo "     LAMP_MINT_CONFIRM=$NET npx tsx deploy/01_mint_lamp.ts"
-      echo "  rồi chạy lại lệnh này."
+      # Không in lệnh `npx tsx` chạy thẳng: bước đúc cần Blockfrost key + seed ví, hai thứ
+      # chỉ do wrapper nạp. Chỉ sang một lệnh hỏng ở shell sạch thì không dừng được ai — nó
+      # đẩy người vận hành đi tự ghép lệnh quanh cổng đúc, đúng đường đã dẫn tới 72 tỷ.
+      echo "  🔴 Chuỗi này KHÔNG đúc, và hiện KHÔNG có wrapper nào dành riêng cho việc đúc."
+      echo "     \`deploy/01_mint_lamp.ts\` cần Blockfrost key + seed ví lấy từ môi trường, nên"
+      echo "     gọi thẳng \`npx tsx\` từ shell sạch sẽ hỏng ở chỗ khác. Đường duy nhất đang"
+      echo "     chạy được: \`export LAMP_MINT_CONFIRM=$NET\` rồi chạy \`run_consume_e2e.sh $NET\`"
+      echo "     với state file chưa có LAMP_POLICY_ID — bước [0a] của nó sẽ đúc."
+      echo "     (Đó là đường vòng, không phải thiết kế. Nợ đã ghi ở DevStatus.)"
       exit 1
     fi
     export LAMP_POLICY_ID
@@ -180,7 +187,17 @@ if [ "$PHASE" = "1" ]; then
   # GHIM vault: `schedule_commit_only` fail-closed theo VAULT_TX_HASH (test/
   # schedule_commit_only.ts:83-90). Không ghim thì nó lấy vault ĐẦU TIÊN của chủ ví
   # — nhiều vault cùng chủ là cam kết lịch vào cái không phải cái vừa tạo.
-  echo; echo "▶ [5/5] Cam kết lịch (schedule_commit_only) — ghim vault $VAULT_TX_HASH_SCHEDULE…"
+  # 🔴 NGOẶC NHỌN BẮT BUỘC ở đây. Dấu `…` là MỘT ký tự Unicode 3 byte, và trong locale
+  #    UTF-8 bash gộp byte đầu của nó vào TÊN BIẾN — dạng KHÔNG ngoặc (đô-la dán thẳng tên
+  #    rồi tới dấu ba chấm) thành một biến KHÁC, tên mang byte thừa, chưa bao giờ được đặt.
+  #    (Cố ý không trích dạng hỏng nguyên văn ở đây: phép quét dưới sẽ kêu ở chính chú thích
+  #     này, và một cảnh báo luôn có lời giải thích vô hại dạy người đọc bỏ qua nó.)
+  #    `set -u` giết kịch bản ngay sau khi bước [4/5]
+  #    đã tạo vault THẬT trên chuỗi và đã ghi sổ. Đo 2026-09-11 trên Preprod: vault
+  #    2cb416e0… tạo xong, rồi chết ở đúng dòng này với tên biến hiện ra kèm byte hỏng.
+  #    Mọi `$BIEN` đứng liền trước chữ tiếng Việt hay dấu `…`/`—` đều dính; quét bằng
+  #    mẫu `\$[A-Za-z_][A-Za-z0-9_]*[\x80-\xff]` (grep -P của macOS KHÔNG bắt được).
+  echo; echo "▶ [5/5] Cam kết lịch (schedule_commit_only) — ghim vault ${VAULT_TX_HASH_SCHEDULE}…"
   VAULT_TX_HASH="$VAULT_TX_HASH_SCHEDULE" npx tsx test/schedule_commit_only.ts | tee /dev/tty
 
   echo

@@ -187,7 +187,17 @@ if [ "$PHASE" = "1" ]; then
   # GHIM vault: `schedule_commit_only` fail-closed theo VAULT_TX_HASH (test/
   # schedule_commit_only.ts:83-90). Không ghim thì nó lấy vault ĐẦU TIÊN của chủ ví
   # — nhiều vault cùng chủ là cam kết lịch vào cái không phải cái vừa tạo.
-  echo; echo "▶ [5/5] Cam kết lịch (schedule_commit_only) — ghim vault $VAULT_TX_HASH_SCHEDULE…"
+  # 🔴 NGOẶC NHỌN BẮT BUỘC ở đây. Dấu `…` là MỘT ký tự Unicode 3 byte, và trong locale
+  #    UTF-8 bash gộp byte đầu của nó vào TÊN BIẾN — dạng KHÔNG ngoặc (đô-la dán thẳng tên
+  #    rồi tới dấu ba chấm) thành một biến KHÁC, tên mang byte thừa, chưa bao giờ được đặt.
+  #    (Cố ý không trích dạng hỏng nguyên văn ở đây: phép quét dưới sẽ kêu ở chính chú thích
+  #     này, và một cảnh báo luôn có lời giải thích vô hại dạy người đọc bỏ qua nó.)
+  #    `set -u` giết kịch bản ngay sau khi bước [4/5]
+  #    đã tạo vault THẬT trên chuỗi và đã ghi sổ. Đo 2026-09-11 trên Preprod: vault
+  #    2cb416e0… tạo xong, rồi chết ở đúng dòng này với tên biến hiện ra kèm byte hỏng.
+  #    Mọi `$BIEN` đứng liền trước chữ tiếng Việt hay dấu `…`/`—` đều dính; quét bằng
+  #    mẫu `\$[A-Za-z_][A-Za-z0-9_]*[\x80-\xff]` (grep -P của macOS KHÔNG bắt được).
+  echo; echo "▶ [5/5] Cam kết lịch (schedule_commit_only) — ghim vault ${VAULT_TX_HASH_SCHEDULE}…"
   VAULT_TX_HASH="$VAULT_TX_HASH_SCHEDULE" npx tsx test/schedule_commit_only.ts | tee /dev/tty
 
   echo

@@ -66,8 +66,36 @@ async function main() {
   const consumeAddr = credentialToAddress(NETWORK, scriptHashToCredential(consumeHash));
   const priceAddr = credentialToAddress(NETWORK, scriptHashToCredential(priceParamHash));
 
-  const beacon = findByNft(await lucid.utxosAt(priceAddr), priceNftUnit);
-  const engage = findByNft(await lucid.utxosAt(consumeAddr), engageNftUnit);
+  // 🔴 THỬ LẠI TRƯỚC KHI KẾT LUẬN "CHẾT". Ba trạng thái, không phải hai.
+  //
+  //  Thông điệp phía dưới nói "hạ tầng này CHẾT, không hồi được" — một kết luận VĨNH
+  //  VIỄN, và nó dẫn thẳng tới một hành động phá: người chạy đúc lại hạ tầng thứ hai
+  //  trong khi bộ cũ còn sống. Nhưng đầu vào của kết luận đó là MỘT lần hỏi chỉ mục,
+  //  không thử lại. Chỉ mục Blockfrost nhất-quán-dần — chính kho này đã ghi nhận hiện
+  //  tượng ấy ở `test/schedule_fire_only.ts` (vòng 5 lượt) và ở
+  //  `deploy/01b_restore_lamp_cap.ts` (vòng 6 lượt, kèm nhãn "CHƯA ĐO ĐƯỢC").
+  //  ⟹ một lần trả rỗng thoáng qua đọc y hệt một hạ tầng đã chết.
+  //
+  //  Forall §Cổng gác: khớp · lệch · KHÔNG ĐO ĐƯỢC là BA trạng thái, và trạng thái thứ
+  //  ba không được đội lốt trạng thái thứ hai. Ở đây trạng thái thứ ba còn nguy hơn
+  //  thường lệ, vì hành động nó xui ra là bất khả hồi: price NFT one-shot, đúc lại là
+  //  đổi hash consume ⟹ mọi Engage UTxO đang sống thành mồ côi.
+  const TRIES = 4, GAP_MS = 15_000;
+  let beacon: UTxO | null = null;
+  let engage: UTxO | null = null;
+  for (let i = 1; i <= TRIES; i++) {
+    beacon = findByNft(await lucid.utxosAt(priceAddr), priceNftUnit);
+    engage = findByNft(await lucid.utxosAt(consumeAddr), engageNftUnit);
+    if (beacon && engage) break;
+    if (i < TRIES) {
+      console.error(
+        `  … lượt ${i}/${TRIES}: ${beacon ? "" : "chưa thấy beacon"}` +
+        `${!beacon && !engage ? " + " : ""}${engage ? "" : "chưa thấy engage"}` +
+        ` — chờ ${GAP_MS / 1000}s (chỉ mục nhất-quán-dần)`,
+      );
+      await new Promise((r) => setTimeout(r, GAP_MS));
+    }
+  }
 
   console.error(`  mạng             ${NETWORK}`);
   console.error(`  consume address  ${consumeAddr}`);
@@ -75,9 +103,18 @@ async function main() {
 
   if (!beacon) {
     console.error(
-      `✗ không còn UTxO nào mang price NFT ${priceNftUnit} tại ${priceAddr}.\n` +
-        `  Beacon đã bị tiêu mà không tạo lại ⟹ hạ tầng này CHẾT, không hồi được: ` +
-        `price NFT là one-shot, đúc lại là đổi luôn hash consume.`,
+      `✗ sau ${TRIES} lượt (${(TRIES * GAP_MS) / 1000}s) vẫn không thấy UTxO nào mang ` +
+        `price NFT ${priceNftUnit} tại ${priceAddr}.\n` +
+        `  HAI KHẢ NĂNG, và chúng đòi hai hành động NGƯỢC NHAU — đừng đoán:\n` +
+        `   (a) beacon đã bị tiêu mà không tạo lại ⟹ hạ tầng này chết thật. Price NFT là\n` +
+        `       one-shot, đúc lại là đổi luôn hash consume ⟹ mọi Engage UTxO đang sống\n` +
+        `       thành mồ côi, kèm toàn bộ kế toán tiêu dùng trong đó.\n` +
+        `   (b) chỉ mục còn trễ. Hiếm sau ${(TRIES * GAP_MS) / 1000}s, nhưng KHÔNG loại trừ được\n` +
+        `       từ phía kịch bản này.\n` +
+        `  PHÂN BIỆT bằng đường KHÔNG qua chỉ mục: mở Explorer soi địa chỉ trên, xem NFT\n` +
+        `  còn nằm ở đó không. Thấy còn ⟹ (b), chờ rồi chạy lại. Thấy mất ⟹ (a).\n` +
+        `  ⛔ ĐỪNG chạy lại 09_deploy_consume.ts trước khi phân biệt xong — ở ca (b) nó\n` +
+        `     dựng một hạ tầng thứ hai và giết hạ tầng đang sống.`,
     );
     process.exit(1);
   }

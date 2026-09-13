@@ -134,7 +134,7 @@ export async function createLucid(apiKey: string): Promise<LucidEvolution> {
 }
 
 // ══════════════════════════════════════════════════════════════
-// Phase 1: buildScheduleCommitTx
+// Bước 1: buildScheduleCommitTx
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleCommitTx(params: CommitParams): Promise<CommitResult> {
   const { lucid, vaultUtxo, shardUtxos, scheduleLength: L, lampPerEpoch: lambda } = params;
@@ -245,13 +245,27 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   if (!params.skipOwnerSig) txBuilder = txBuilder.addSignerKey(vaultDatum.owner);
   const tx = await txBuilder.complete();
 
+  // MAGIC mỗi LAMP = rate_locked_q × 10⁻¹² × 10⁶ / 10⁶ … viết thẳng cho khỏi suy:
+  //   M_i[nanogic] = λ[oildrop] · r / Q  ⟹  M[MAGIC]/L[LAMP] = r · 10⁶ / (Q · 10⁹) = r/10¹²
+  // Tính bằng BigInt tới 6 chữ số thập phân rồi mới dựng chuỗi — không đi qua Number.
+  const magicPerLampMicro = (rateLockedQ * 1_000_000n) / 1_000_000_000_000n;
+  const magicPerLampStr =
+    `${magicPerLampMicro / 1_000_000n}.` +
+    `${(magicPerLampMicro % 1_000_000n).toString().padStart(6, "0")}`;
+
   const summary = [
     `═══ ScheduleGen Commit ═══`,
     `Commit epoch:    ${commitEpoch}`,
     `Schedule length: ${L} orders (~${fmtDays(L, network)})`,
     `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oil)`,
     `Total locked:    ${totalLock / 1_000_000n} tLAMP`,
-    `rate_locked_q:   ${rateLockedQ} (immutable forever — T8)`,
+    // ĐƠN VỊ PHẢI IN RA, đừng để người đọc tự suy. `rate_locked_q / Q` là
+    // **nanogic trên mỗi oildrop**, KHÔNG phải MAGIC trên mỗi LAMP — hai thang
+    // lệch nhau đúng 10³ (λ ở thang 10⁶, M_i ở thang 10⁹, mã chỉ chia Q một lần).
+    // Bản trước in trần con số `8000000000` và nó đọc thành "8 MAGIC mỗi LAMP",
+    // sai 1000 lần. Nên in luôn cả suất đã quy về đơn vị người dùng.
+    `rate_locked_q:   ${rateLockedQ} = ${qToStr(rateLockedQ)} nanogic/oildrop`,
+    `  ⟹ suất thật:   ${magicPerLampStr} MAGIC mỗi LAMP (immutable forever — T8)`,
     `M_i per fire:    ${nanogicToMagicStr(mPerFire)} MAGIC`,
     `Total MAGIC:     ${nanogicToMagicStr(mPerFire * L)} MAGIC (guaranteed)`,
     `First fire:      epoch ${startFireEpoch} (~${fmtDays(SCHEDULE_DELAY, network)})`,
@@ -272,7 +286,7 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
 }
 
 // ══════════════════════════════════════════════════════════════
-// Phase 2: buildScheduleFireTx — PERMISSIONLESS (C-SCH-FIRE-PERMISSION)
+// Bước 2: buildScheduleFireTx — PERMISSIONLESS (C-SCH-FIRE-PERMISSION)
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleFireTx(params: FireParams): Promise<FireResult> {
   const { lucid, vaultUtxo, shardUtxos, scheduleId } = params;

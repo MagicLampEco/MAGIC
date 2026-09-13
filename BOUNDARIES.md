@@ -54,9 +54,33 @@ theo spec §6.1 / L4. Neo — **theo TÊN HÀM, không theo số dòng**:
 > không phải mã. Đó là kiểu hỏng im lặng: người tra thấy một dòng hợp lệ và tưởng đã kiểm.
 
 > Bản cũ của dòng này viết công thức là `M = L × R × UM × PM / Q³`. **Tên biến đó đã cũ**
-> — từ PHA-2, thưởng khoá theo `consumed` chứ không theo `L` (INV-MAGIC-CITIZEN: thưởng
+> — từ DESIGN-2, thưởng khoá theo `consumed` chứ không theo `L` (INV-MAGIC-CITIZEN: thưởng
 > gắn MAGIC ĐÃ TIÊU, không gắn MAGIC nắm giữ). Hình dạng ba-bước-sàn thì không đổi, và
 > đó mới là phần bất biến.
+
+**`DESIGN-2` là gì, và vì sao nó không còn tên `PHA-2`** (đổi 2026-09-12). `DESIGN-2` là
+**đời thiết kế thứ hai của kho này** — mốc mà `I-ACT-7` bắt LAMP ĐỨNG YÊN và thưởng khoá
+theo `consumed` thay vì theo `L`. Nó là một MỐC THIẾT KẾ, không phải một pha vòng đời của
+thứ gì.
+
+Chuỗi `PHA-2` bị bỏ vì tới lúc đó **ba khái niệm khác nhau cùng đội lốt "phase 2"**, và
+không bản nào tự khai:
+
+| chuỗi | nghĩa | chủ |
+|---|---|---|
+| `PHA-2` (cũ, kho này) | đời thiết kế thứ hai → nay là **`DESIGN-2`** | kho MAGIC |
+| `PHA-2` (Wakeme) | pha vòng đời vault, `n > 1001` → nay là **`Epochy`** (pha đầu là `Daily`) | PhoenixKey |
+| `phase-2` / `PHASE2` | **kiểm tra pha 2 của sổ cái Cardano** (script chạy rồi từ chối), đối lại pha 1 | thuật ngữ Cardano |
+
+Mục thứ ba là thuật ngữ chuẩn của nền tảng — **không đổi, không đụng**. Nó xuất hiện hợp lệ
+trong mã bắt lỗi, ví dụ `CarpetMint/offchain/src/16_deadman_gates.ts` ▸ hằng `PHASE2` phân
+biệt "bị từ chối lúc chạy script" với "bị từ chối ở tầng sổ cái". Chính vì nó là claim mạnh
+nhất trên cái tên đó mà hai mục kia phải nhường.
+
+Giá đã trả trước khi đổi: một vòng hỏi-đáp của chủ dự án để tìm ra `PHA-2` của kho này
+KHÔNG phải `PHA-2` của Wakeme. Cùng hình dạng với bẫy `28e916b0…` — cùng tên hiển thị,
+khác đời, không bản nào tự khai. Ai gặp `PHA-1`/`PHA-2` trong kho này thì đó là tài liệu
+chưa được quét: kho đã về **0** ngoài `Legacy/` (`Legacy/` để yên theo §5).
 
 **Ngược lại, `required` của ConsumeMAGIC gộp rồi sàn MỘT lần.** `required =
 ⌊base_price × demand_mult × op_count / Q⌋` — KHÔNG sàn từng op rồi nhân. Hai quy tắc

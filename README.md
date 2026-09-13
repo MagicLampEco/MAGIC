@@ -36,7 +36,7 @@ CarpetMint sở hữu (`CarpetMint-Core-Spec-Vi.md §T1`); MAGIC chỉ tham chi�
 MAGIC/
 ├── SPEC/                 # ĐẶC TẢ CANONICAL — đọc trước khi sửa bất cứ công thức nào
 ├── ProtocolUtils/        # Thư viện dùng chung (hằng số, Q-format, BigInt) — P8
-├── InstantGen/           # Sinh MAGIC theo yêu cầu, vault hợp nhất PHA-2
+├── InstantGen/           # Sinh MAGIC theo yêu cầu, vault hợp nhất DESIGN-2
 ├── ScheduleGen/          # Hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard
 ├── UMKeeper/             # Cập nhật hệ số cầu mạng UM mỗi epoch (permissionless)
 ├── ConsumeMAGIC/         # Tiêu thụ MAGIC (đốt theo giá nghiệp vụ) + bộ định giá

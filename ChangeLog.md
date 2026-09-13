@@ -183,7 +183,7 @@ không tồn tại; đó là dự tính.
 `vacuum_orders` trong `VaultDatum` giữ nguyên vị trí — chúng là chỉ số constructor / arity
 của Plutus Data đã lên chain, bỏ đi là vỡ decode mọi vault đã tạo. Hằng
 `snapshot_base_rate_q` giữ nguyên vì ScheduleGen dùng thật. `UMKeeper/` **không** bị dọn:
-UM vẫn nằm trong công thức thưởng của InstantGen PHA-2.
+UM vẫn nằm trong công thức thưởng của InstantGen DESIGN-2.
 
 ## 2026-08-09 — `@magiclamp/consumemagic-pricing` thành gói gọi được (ESM + CJS)
 

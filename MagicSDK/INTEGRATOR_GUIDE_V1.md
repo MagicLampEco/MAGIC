@@ -855,7 +855,7 @@ Không cơ chế nào còn "trả LAMP sang Treasury". Bảng cũ ghi `Transfer 
 Instant/Vacuum/Schedule là mô tả mô hình **đã bỏ**.
 
 Các báo cáo testnet trong `Legacy/` ghi kết quả Preview của mô hình **trước**
-PHA-2 — đọc như tư liệu lịch sử, không phải mô tả hành vi hiện tại.
+DESIGN-2 — đọc như tư liệu lịch sử, không phải mô tả hành vi hiện tại.
 
 ### Q3: Chuyển LAMP đi ví khác được chưa?
 

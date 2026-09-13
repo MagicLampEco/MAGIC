@@ -179,7 +179,7 @@ Từ `applied_input` (sau profile apply): `owner`, `lamp_locked`, `vacuum_orders
 
 ### A02 fields thay đổi
 
-> **I-ACT-7 — LAMP ĐỨNG YÊN (PHA-2).** `lamp_balance`, `lamp_locked`,
+> **I-ACT-7 — LAMP ĐỨNG YÊN (DESIGN-2).** `lamp_balance`, `lamp_locked`,
 > `loyalty_holdings` là BẤT BIẾN qua InstantGen: validator ép chúng byte-identical với
 > `applied_input` (xem khối `A02` trong `validators/vault.ak`). Bản cũ của bảng này ghi
 > `lamp_balance - lamp_paid` và `remove_from_holdings(...)` — mô hình "trả LAMP sang

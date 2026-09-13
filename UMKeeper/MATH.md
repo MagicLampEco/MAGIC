@@ -212,7 +212,7 @@ staleness = 100 - 98 = 2 > UM_MAX_STALENESS (=1)
 → um_for_instant = UM_FALLBACK_Q = 500_000_000
 
 > ⚠ Phần số dưới đây minh hoạ DUY NHẤT cơ chế stale → fallback. Hình dạng công thức
-> (`L × BASE`) thuộc mô hình cũ: sau PHA-2, InstantGen tính thưởng từ `consumed`, không
+> (`L × BASE`) thuộc mô hình cũ: sau DESIGN-2, InstantGen tính thưởng từ `consumed`, không
 > từ số dư LAMP (`compute_reward_from_consumed` trong
 > `InstantGen/onchain/lib/magiclamp/protocol/math.ak`). Cần con số thật thì chạy hàm đó,
 > đừng lấy ví dụ này làm chuẩn.

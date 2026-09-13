@@ -16,7 +16,7 @@ UMKeeper duy trì giá trị **UM (Network Demand Multiplier)** — tham số Co
 - **InstantGen** nhân UM vào phần thưởng MAGIC. Công thức đọc ở hàm
   `compute_reward_from_consumed` (`InstantGen/onchain/lib/magiclamp/protocol/math.ak`) —
   ba phép `⌊ × / Q ⌋` TUẦN TỰ, KHÔNG phải một phép chia `Q³`. Đầu vào là `consumed`
-  (LAMP đã tiêu), **không phải** số dư LAMP: sau PHA-2 LAMP đứng yên (I-ACT-7), không
+  (LAMP đã tiêu), **không phải** số dư LAMP: sau DESIGN-2 LAMP đứng yên (I-ACT-7), không
   handler nào chuyển LAMP. Bản cũ của dòng này ghi `M = L × BASE × UM × PM / Q³` — sai
   cả đầu vào lẫn thứ tự làm tròn; đừng chép lại.
 - Nếu UM stale > 1 epoch → InstantGen fallback về `UM_FALLBACK_Q = 0.5×` (C-UM-6) — tức là user nhận rate tệ nhất. Keeper có incentive tự nhiên để update đúng giờ.

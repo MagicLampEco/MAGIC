@@ -14,14 +14,14 @@
 # `test/schedule_fire_only.ts` dò theo owner-pkh, mà 5 vault cùng owner ⟹ nó
 # bắn nhầm cái không có lịch, hoặc rơi vào nhánh đoán ở lần thử thứ 5.
 #
-# Secret chỉ lấy value từ $AGENT_SECRETS, không in ra.
+# Bí mật đi vào bằng GIÁ TRỊ qua môi trường, không in ra:
+#   BLOCKFROST_KEY=… WALLET_SEED='…' bash run_schedule_fire.sh Preprod <VAULT_TX_HASH>
 set -uo pipefail
 
 NET="${1:-Preview}"
 VAULT_TX="${2:-${VAULT_TX_HASH:-}}"
 case "$NET" in
-  Preview) BF_VAR="Blockfrost_GreenSun_Preview" ;;
-  Preprod) BF_VAR="Blockfrost_Aladin_Preprod" ;;
+  Preview|Preprod) ;;
   *) echo "✗ Tham số 1 phải là Preview hoặc Preprod (nhận: $NET)"; exit 2 ;;
 esac
 [ -n "$VAULT_TX" ] || {
@@ -32,16 +32,23 @@ esac
 # Cổng này DỪNG kịch bản trước khi nó chạm vào bất cứ thứ gì. Thông điệp phải nói được
 # người đọc PHẢI LÀM GÌ — bản cũ chỉ nói "chưa set", và một lượt chạy chết ở đây không để
 # lại dấu vết nào trên chuỗi, nên nó đọc y hệt một lượt chạy đã xong.
-: "${AGENT_SECRETS:?
-  ✗ AGENT_SECRETS chưa set. Kịch bản DỪNG — KHÔNG có gì được thực hiện, KHÔNG giao dịch nào
-    được gửi. Đừng đọc lần chạy này thành 'đã chạy rồi'.
+#
+# Kịch bản nhận GIÁ TRỊ qua môi trường và KHÔNG biết chúng được cất ở đâu. Đó là ràng buộc
+# cố ý, không phải chỗ còn thiếu. Một tệp mã biết đường tới kho khoá là một tệp CHỈ ĐƯỜNG,
+# và nó chỉ đường cho cả người không nên biết — kể cả khi nó không in ra giá trị nào.
+: "${BLOCKFROST_KEY:?
+  ✗ BLOCKFROST_KEY chưa có trong môi trường. Kịch bản DỪNG — KHÔNG có gì được thực hiện,
+    KHÔNG giao dịch nào được gửi. Đừng đọc lần chạy này thành \'đã chạy rồi\'.
 
-    Biến này phải trỏ tới tệp kho khoá của CHÍNH MÁY BẠN. Kho mã này cố ý KHÔNG ghi đường
-    dẫn đó ở bất cứ đâu, nên nó không thể tự điền hộ.
+    Đặt giá trị ngay trước lệnh, để bí mật sống trong đúng một tiến trình và không đi qua
+    tệp nào:
+        BLOCKFROST_KEY=… WALLET_SEED=\'…\' bash run_schedule_fire.sh Preprod <tx-hash>
 
-    Đặt một lần cho mọi phiên terminal:
-        echo \'export AGENT_SECRETS=\"đường/dẫn/kho/khoá/của/bạn\"\' >> ~/.zshenv
-        source ~/.zshenv
+    Khoá phải đúng mạng đang chạy. Khoá của mạng khác vẫn là chuỗi hợp lệ và vẫn gọi được
+    — nó chỉ trả về dữ liệu của mạng kia, và không có gì kêu lên.
+}"
+: "${WALLET_SEED:?
+  ✗ WALLET_SEED chưa có trong môi trường. Kịch bản DỪNG — KHÔNG giao dịch nào được gửi.
 }"
 cd "$(dirname "$0")"
 
@@ -55,14 +62,8 @@ set -a; . "./$STATE_FILE"; set +a
 : "${REF_SHARD_UTXO:?✗ thiếu REF_SHARD_UTXO (xem scripts/DEPLOYED.md)}"
 export REF_VAULT_SCHEDULE_UTXO REF_SHARD_UTXO
 
-SEED_VAR="$(npx tsx detect_deploy_wallet.ts)"
-export NETWORK="$NET" VAULT_TX_HASH="$VAULT_TX"
-unquote() { sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"; }
-export BLOCKFROST_KEY="$(grep "^${BF_VAR}=" "$AGENT_SECRETS" | cut -d= -f2- | unquote)"
-export WALLET_SEED="$(grep "^${SEED_VAR}=" "$AGENT_SECRETS" | cut -d= -f2- | unquote)"
-[ -n "${BLOCKFROST_KEY:-}" ] || { echo "✗ không lấy được $BF_VAR"; exit 1; }
-[ -n "${WALLET_SEED:-}" ]    || { echo "✗ không lấy được seed $SEED_VAR"; exit 1; }
-echo "▶ NETWORK=$NET · ví=$SEED_VAR · vault ghim=${VAULT_TX:0:16}… · secret đã nạp (không in)."
+export NETWORK="$NET" VAULT_TX_HASH="$VAULT_TX" BLOCKFROST_KEY WALLET_SEED
+echo "▶ NETWORK=$NET · vault ghim=${VAULT_TX:0:16}… · secret đã nhận từ môi trường (không in)."
 
 npx tsx test/schedule_fire_only.ts
 RC=$?

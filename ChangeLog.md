@@ -145,9 +145,9 @@ ConsumeMAGIC, README chỉ mô tả phần scripts. `scripts/.env.example` bỏ 
 a Changelog / SemVer) và là thứ `release-please`/`semantic-release` đi tìm — hai tệp này
 không phải loại đó, chúng ghi quyết định spec (`_rules/agent-hygiene.md §3.1`, chủ nhân
 chốt 2026-08-09). Còn `.env.example`: nó dạy đúng cái repo cấm — chép khoá Blockfrost và
-private key xuống đĩa, trong khi nguồn duy nhất là `$AGENT_SECRETS` và
-`run_consume_e2e.sh` đã đọc từ đó sẵn. Một mẫu bảo "điền khoá vào đây" là một bản sao thứ
-hai của thứ chỉ nên có một bản.
+private key xuống đĩa, trong khi bí mật chỉ nên đi vào bằng **giá trị** qua môi trường và
+`run_consume_e2e.sh` đã nhận theo đường đó sẵn. Một mẫu bảo "điền khoá vào đây" là một bản
+sao thứ hai của thứ chỉ nên có một bản.
 
 **Gãy gì nếu đang bám bản cũ.** Mọi liên kết `DEVSTATUS.md`/`CHANGELOG.md` từ repo khác
 trỏ sang MAGIC sẽ chết — trên máy phân biệt hoa-thường (Linux, CI) là 404 thật, trên macOS

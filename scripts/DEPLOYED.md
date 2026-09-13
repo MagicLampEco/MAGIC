@@ -1,7 +1,7 @@
 # Bản ghi triển khai testnet — MagicLamp
 
 Toàn bộ giá trị dưới đây là **công khai** (policy id, script hash, tx hash). Không có
-secret nào ở đây; secret chỉ nằm ở `$AGENT_SECRETS`.
+secret nào ở đây, và kho này cố ý không ghi ở đâu có.
 
 Chạy lại: `bash scripts/run_wakeme_e2e.sh Preview` · `bash scripts/run_wakeme_e2e.sh Preprod`.
 

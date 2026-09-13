@@ -13,9 +13,18 @@ cd scripts
 npm install
 ```
 
-**Secret không nằm ở đây.** `BLOCKFROST_KEY` và seed ví deploy đọc từ `$AGENT_SECRETS` —
-xem `.env.example` để biết cách export. `scripts/.env` chỉ giữ giá trị **không bí mật**
-(hash, policy id, địa chỉ) sinh ra sau mỗi bước deploy.
+**Secret không nằm ở đây, và kho này cố ý KHÔNG biết chúng nằm ở đâu.** `BLOCKFROST_KEY` và
+`WALLET_SEED` đi vào bằng **giá trị** qua môi trường, đặt ngay trước lệnh để bí mật sống
+trong đúng một tiến trình và không đi qua tệp nào:
+
+```bash
+BLOCKFROST_KEY=… WALLET_SEED='…' bash scripts/run_wakeme_e2e.sh Preprod
+```
+
+Lấy giá trị ở đâu là việc của người vận hành. Một tệp mã biết đường tới kho khoá là một tệp
+**chỉ đường** — và nó chỉ đường cho cả người không nên biết, kể cả khi nó không in ra giá trị
+nào. `scripts/.env` chỉ giữ giá trị **không bí mật** (hash, policy id, địa chỉ) sinh ra sau
+mỗi bước deploy.
 
 ```bash
 cp .env.example .env      # rồi điền dần hash/policy id sau từng bước
@@ -134,8 +143,7 @@ Chép giá trị in ra vào `.env` sau mỗi bước.
 **Hoặc chạy cả chuỗi, tự nối env giữa các bước** (cũng đứt ở bước sinh MAGIC, vì lý do trên):
 
 ```bash
-cd /Users/ductiger/Projects/MAGIC
-AGENT_SECRETS=<đường dẫn secret của hệ agent> bash scripts/run_consume_e2e.sh Preview
+BLOCKFROST_KEY=… WALLET_SEED='…' bash scripts/run_consume_e2e.sh Preview
 ```
 
 ---
@@ -208,8 +216,8 @@ https://preview.cardanoscan.io/address/{SCRIPT_ADDRESS}
 
 | Lỗi | Xử lý |
 |---|---|
-| `BLOCKFROST_KEY missing in .env` | Export từ `$AGENT_SECRETS` — xem `.env.example`. ĐỪNG ghi khoá vào `.env` |
-| `Either PRIVATE_KEY or WALLET_SEED required` | Export `WALLET_SEED` từ `$AGENT_SECRETS`; biến seed dò bằng `npx tsx detect_deploy_wallet.ts` |
+| `BLOCKFROST_KEY missing in .env` | Đặt `BLOCKFROST_KEY=…` ngay trước lệnh. ĐỪNG ghi khoá vào `.env` |
+| `Either PRIVATE_KEY or WALLET_SEED required` | Đặt `WALLET_SEED='…'` ngay trước lệnh. ĐỪNG ghi seed xuống tệp |
 | `Need at least 5 tADA` | Lấy tADA từ faucet |
 | `FILL_AFTER_AIKEN_BUILD` | Chạy `aiken build` ở `<Module>/onchain` rồi điền hash |
 | `Vault UTxO not found` | Chạy `npm run deploy:instant-vault` trước |

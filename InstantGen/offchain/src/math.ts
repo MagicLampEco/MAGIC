@@ -62,7 +62,14 @@ export function batchAge(createdEpoch: bigint, currentEpoch: bigint): bigint {
 /**
  * reward(consumed) = ⌊ ⌊ ⌊ consumed × R_reward / Q ⌋ × UM / Q ⌋ × PM / Q ⌋
  *
- * 3 sequential floor steps (≤ 3 nanogic total error, result ≤ true value).
+ * 3 sequential floor steps. `result ≤ true value` — đúng, mọi hạng tử sai số ≥ 0.
+ *
+ * 🔴 CẬN SAI SỐ: `< 3,94` nanogic, KHÔNG phải `≤ 3`. Bản trước viết "≤ 3" ở cả hai
+ * phía P8 — sửa 2026-09-12. Lý do đầy đủ + khai triển `Δ` ở `math.ak` ▸
+ * `compute_reward_from_consumed`; tóm tắt: bước 2 nhân `um_q/Q ≤ 2,0` nên nó GIÃN
+ * sai số bước 1, và quy tắc "3 bước sàn ⟹ ≤ 3 ulp" chỉ đúng khi mọi hệ số sau mỗi
+ * bước sàn đều ≤ 1.
+ *
  * INV-CASHBACK-BOUND holds by parameter construction:
  *   R_reward × UM_MAX × PM_MAX = 0.20 × 2.00 × 1.15 = 0.46 < 1
  *

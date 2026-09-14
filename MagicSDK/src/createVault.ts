@@ -43,6 +43,7 @@ import { msPerEpoch, lampAssetName, type Network } from "@magiclamp/protocol-uti
 import type { CreateVaultParams, CreateVaultResult } from "./types.js";
 import { VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
 import { applyVaultValidator } from "./validatorScripts.js";
+import { assertLampPolicyId } from "./lampPolicy.js";
 import { buildInitialVaultDatum } from "./vaultDatum.js";
 import { vaultIdAssetName } from "./vaultId.js";
 
@@ -61,9 +62,11 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   const profile       = vault.profile ?? DEFAULT_PROFILE;
 
   // ── Sanity checks ────────────────────────────────────────────
-  if (!protocol.lampPolicyId) {
-    throw new Error("protocol.lampPolicyId is required");
-  }
+  // Cổng THẬT ở `buildParamsList` (policy id nướng vào script hash ở đó). Gọi lại ở
+  // đây để câu lỗi mang tên đường người ngoài thật sự đi, và để chỗ này không còn là
+  // một phép kiểm-rỗng trông như đã kiểm: bản trước chỉ hỏi chuỗi có rỗng không, nên
+  // một policy nhái 56-hex đi qua không tiếng động.
+  assertLampPolicyId(protocol.lampPolicyId, "createVault");
   if (vault.lampDeposit <= 0n) {
     throw new Error(`vault.lampDeposit must be > 0 oildrop (got ${vault.lampDeposit})`);
   }

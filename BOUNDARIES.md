@@ -24,7 +24,23 @@ Hợp đồng Cardano L1 (PlutusV3, Aiken) cho hệ ba token:
   > kiểm là `tổng ≤ 36 tỷ`, không phải `tổng == 36 tỷ`.
 - **MAGIC** — quyền-tiêu-dịch-vụ. **Không phải token**: là số kế toán trong datum vault,
   gắn PersonDID, **không chuyển nhượng**, dùng-hết-hoặc-mất theo epoch.
+
+  > Trên Preview **có** một native token hiện ra chữ `MAGIC`, và nó KHÔNG làm sai câu trên.
+  > Bất biến này là phát biểu về **hành vi của validator**, không phải về trạng thái mạng
+  > Cardano — cùng dạng với việc đúc một token tên `BITCOIN` trên Cardano không phá bất biến
+  > 21 triệu của Bitcoin. Mức đúng là **va chạm không gian tên, không chạm giao thức**; rủi
+  > ro thật nằm ngoài giao thức (ví và explorer hiện chữ đó), và vá bằng thao tác on-chain
+  > cộng một trang công bố, **không vá bằng validator**. Kiểm kê trọn, lịch sử đúc và phép đo
+  > chứng minh mã không bao giờ tra tài sản theo tên: `scripts/DEPLOYED.md` ▸ *"Tên hiện ra
+  > trong ví KHÔNG phải định danh"*.
 - **CARP** — đồng-thanh-khoản, native token riêng, chuyển nhượng được.
+
+**Định danh tài sản = cặp `(policy id, asset name)`. Policy id là điều kiện ĐỦ; asset name
+KHÔNG BAO GIỜ là điều kiện đủ.** Ở dòng `4c414d50`, vế asset name đúng với cả hàng thật lẫn
+hàng nhái, nên nó không mang thông tin — một cổng hiện thực câu này thành phép so HOẶC vẫn
+qua được mọi lần thử. Testnet của kho có **27 dòng tài sản** mang tên của hệ này dưới một
+policy chữ-ký-đơn không phải của LAMP; danh sách và hệ quả ở `scripts/DEPLOYED.md`, cổng
+chặn tái phát ở `MagicSDK/src/lampPolicy.ts` ▸ `assertLampPolicyId`.
 
 Mỗi module cùng khuôn: `onchain/` (Aiken) · `offchain/` (TypeScript + vitest) · `tests/`
 (vector chuẩn). **Không có workspace ở gốc** — mỗi `offchain/` là gói npm độc lập, cài và
@@ -80,7 +96,18 @@ nhất trên cái tên đó mà hai mục kia phải nhường.
 Giá đã trả trước khi đổi: một vòng hỏi-đáp của chủ dự án để tìm ra `PHA-2` của kho này
 KHÔNG phải `PHA-2` của Wakeme. Cùng hình dạng với bẫy `28e916b0…` — cùng tên hiển thị,
 khác đời, không bản nào tự khai. Ai gặp `PHA-1`/`PHA-2` trong kho này thì đó là tài liệu
-chưa được quét: kho đã về **0** ngoài `Legacy/` (`Legacy/` để yên theo §5).
+chưa được quét: dạng **có gạch nối** đã về **0** ngoài `Legacy/` (`Legacy/` để yên theo §5).
+
+> **Dạng có KHOẢNG TRẮNG thì chưa** — `PHA 1` / `PHA 2` còn **45 dòng / 22 tệp** (đo
+> 2026-09-14, ngoài `Legacy/` và ngoài `.claude/`), gồm cả `ScheduleGen/onchain/validators/vault.ak`,
+> `InstantGen/tests/vectors.ts` và một tệp mang tên `InstantGen/DESIGN-PHASE2.md`.
+>
+> Bản trước của dòng này viết "kho đã về **0**" mà không kèm chữ "có gạch nối". Đợt dọn
+> đo bằng `grep "PHA-[12]"`, thấy 0, rồi phát biểu như thể **khái niệm** đã biến mất —
+> `grep` đo VĂN BẢN, không đo KHÁI NIỆM. Câu sai đó nằm trong chính tệp mà mọi agent
+> `@import` mỗi phiên, nên nó không chỉ sai, nó còn được đọc mỗi ngày: người gặp `PHA 2`
+> trong `vault.ak` rồi tra ở đây sẽ kết luận mình đang nhìn tài liệu của kho khác — đúng
+> vòng hỏi-đáp mà việc đổi tên này sinh ra để tránh.
 
 **Ngược lại, `required` của ConsumeMAGIC gộp rồi sàn MỘT lần.** `required =
 ⌊base_price × demand_mult × op_count / Q⌋` — KHÔNG sàn từng op rồi nhân. Hai quy tắc
@@ -155,24 +182,44 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 `SHARD_CAP=4.5×10¹⁴ oildrop`.
 
 > `MAX_LOYALTY_HOLDINGS` hạ **64 → 40** ngày 2026-09-14. Bản cũ đặt trần TRÊN trần vật
-> lý: đo `aiken check` trên giao dịch trọn vẹn (đã trừ chi phí dựng fixture) cho
-> ScheduleGen **commit 128,6 %** và **fire 138,9 %** `maxTxExMem` ở 63/64 holding — nghĩa
-> là một vault chạm trần cũ thì KHÔNG TIÊU ĐƯỢC, và `validate_fire` là nhánh duy nhất hạ
-> được `lamp_locked`. Ở 40: commit 58,4 %, fire 62,2 %. Điểm chết khớp bậc hai: fire
-> n ≈ 53, commit n ≈ 55.
+> lý: một vault chạm trần cũ thì **KHÔNG TIÊU ĐƯỢC**, và `validate_fire` là nhánh duy
+> nhất hạ được `lamp_locked`.
 >
-> Hai điều đi kèm, cả hai đều phản trực giác nên viết ra: **(a) fire chết TRƯỚC commit**
-> — cửa RA hẹp hơn cửa VÀO, nên `validate_commit` phải có cổng đếm holding chứ không chỉ
-> `validate_fire`; bản cũ thiếu đúng cổng đó. **Và cổng ở nhánh commit mang dấu NGHIÊM
-> (`<`), không phải `<=`** — đường RA tự nó dài thêm ĐÚNG một phần tử (`unlock_oldest`
-> cắt holding ở biên lượt nhả, hai mảnh khác `is_locked` nên `coalesce_holdings` không
-> gộp), nên chạm đúng trần ở bước commit là dựng một vault khoá LAMP vĩnh viễn: vào
-> được, không ra được, và không có cửa phụ. Một suất là đủ và là tối thiểu — chứng minh
-> chặn trên nằm cạnh chính cổng đó trong `validators/vault.ak`. **(b) Thủ phạm bậc hai KHÔNG phải
-> `list.sort`** mà là mẫu `foldl` + `merge_into(acc, h)` trong `coalesce_holdings` và
-> `list.concat(acc, […])` trong `lock_youngest` (`ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak`).
-> Chú thích của chính `coalesce_holdings` đã tự khai *"O(n²)… revisit only if fire
-> ExUnits actually bite"* — chúng cắn rồi. Ai đi tối ưu thì nhắm vào hai chỗ đó.
+> Ba điều phản trực giác, viết ra vì chúng là **kết luận**, không phải số đo — nên chúng
+> không già đi theo mỗi lần đo lại.
+>
+> **(a)** `validate_commit` phải có cổng đếm holding chứ không chỉ `validate_fire`; bản
+> cũ thiếu đúng cổng đó.
+>
+> **(b) Và cổng ở nhánh commit mang dấu NGHIÊM (`<`), không phải `<=`** như ba cổng kia.
+> Đường RA tự nó dài thêm ĐÚNG một phần tử: `unlock_oldest` cắt holding ở biên lượt nhả
+> thành `(epoch, đã mở)` + `(epoch, còn khoá)`, mà `same_bucket` đòi trùng cả `is_locked`
+> nên `coalesce_holdings` không gộp hai mảnh đó. Chạm đúng trần ở bước commit vì thế là
+> dựng một vault khoá LAMP vĩnh viễn — vào được, không ra được, và không có cửa phụ vì
+> `lamp_locked` chỉ giảm ở nhánh fire. Một suất là **đủ** và là **tối thiểu**; chứng minh
+> chặn trên nằm cạnh chính cổng đó trong `validators/vault.ak`, cùng hai bài canh
+> (`c_commit_full_lock_at_cap_rejected`, `cf_commit_at_cap_then_fire_ok`).
+>
+> **(c) Hai nhánh có hai thủ phạm KHÁC NHAU** — câu "thủ phạm không phải `list.sort`"
+> đúng cho FIRE và **sai cho COMMIT**. Nhánh nào đang hẹp nhất thì **đã đảo một lần** sau
+> bản vá #48, và có thể đảo nữa; đừng nhớ thứ tự, hãy tra.
+>
+> **Số đo KHÔNG nằm ở đây, và cũng không nằm ở `constants.ak`** — chỉ ở MỘT chỗ:
+> `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Trần ExUnit của hai nhánh mang LAMP"*,
+> ngay trên `t_fire_datum_n`, cùng với cách đo, thang đo (`probe_commit_fixture_cap` /
+> `probe_fire_fixture_cap`), mốc kích hoạt phần còn nợ, và lý do KHÔNG nâng trần theo
+> phần biên vừa mua được. Đo lại là một lệnh `aiken check`.
+>
+> Bản trước của khối này vẫn chép số xuống dù chính nó dặn đừng chép — và phần chép lại
+> là phần sai, đúng lần thứ hai. Chú thích ở `constants.ak` cũng chép, cũng sai, và nằm
+> đúng chỗ người ta tra để chọn trần. Hai bản sao đó nay đã gỡ.
+>
+> 🔴 **Và bản hoà này đã bỏ một câu của nhánh kia: "fire chết TRƯỚC commit".** Câu đó
+> đúng lúc viết và **đã bị chính phép đo lật** sau bản vá #48 — nay commit là nhánh hẹp
+> nhất. Nó bị bỏ chứ không được giữ kèm đính chính, vì trí nhớ thì nạp cùng lúc: giữ cả
+> hai bản là giữ một mâu thuẫn, và không bản nào tự khai là đã bị bác. Vế còn sống của
+> câu đó — *cửa RA hẹp hơn cửa VÀO nên commit phải có cổng* — nằm nguyên ở mục (a) và (b)
+> bên trên, và mục (b) không phụ thuộc nhánh nào đang hẹp hơn.
 
 ---
 

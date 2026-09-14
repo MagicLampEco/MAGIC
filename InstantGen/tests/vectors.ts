@@ -9,7 +9,7 @@
 //   Q                     = 1_000_000_000
 //   INSTANT_REWARD_RATE_Q =   200_000_000   (0.20)
 //   BR_SAFE_Q             = 1_500_000_000   (1.5)
-//   F_CAP_SURPLUS_Q       =   100_000_000   (0.10)
+//   F_CAP_SURPLUS_Q       =     1_000_000   (0.001)
 //   PM: Ember 1.15 / Flame 1.05 / Lantern 1.00
 //   UM ∈ [0.5, 2.0], fallback 0.5
 

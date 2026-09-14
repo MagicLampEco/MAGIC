@@ -62,13 +62,17 @@ pub const max_fires_per_tx_catchup : Int = 8
 // ── System limits [Routine] ──────────────────────────────────────────
 pub const max_gen_schedules     : Int = 20
 pub const max_batches_per_vault : Int = 32
-// Hạ 64 → 40 ngày 2026-09-14. 64 nằm TRÊN trần vật lý: đo `aiken check` trên
-// giao dịch trọn vẹn (trừ chi phí fixture) cho commit 128,6 % và fire 138,9 %
-// `maxTxExMem` ở 63/64 holding — tức một vault chạm trần cũ thì KHÔNG tiêu được,
-// và fire là nhánh duy nhất hạ được `lamp_locked`. Ở 40 thì commit 58,4 %, fire
-// 62,2 %. Điểm chết khớp bậc hai: fire n ≈ 53, commit n ≈ 55 — 40 để lại ~38 %
-// biên cho chênh lệch giữa bản đo và mạng thật. Số + cách dựng lại thang đo ghi
-// ở `validators/vault.ak`, khối "Trần ExUnit của hai nhánh mang LAMP".
+// Hạ 64 → 40 ngày 2026-09-14. 64 nằm TRÊN trần vật lý: một vault chạm trần cũ
+// thì KHÔNG tiêu được, và fire là nhánh duy nhất hạ được `lamp_locked`.
+//
+// KHÔNG chép số đo xuống đây. Bản trước của khối này chép, rồi bản vá #48 đo lại
+// và ĐẢO hai kết luận — chỗ chép thì không ai báo cho, nên nó nằm đây nói ngược
+// với chính tệp nó trỏ tới, suốt từ lúc vá. Đó là bản sao chết im lặng, đúng lớp
+// mà `BOUNDARIES.md` cảnh báo, và lần này nó chết ở nơi người ta tra để chọn trần.
+//
+// Một nguồn duy nhất cho số đo, cách đo, thang đo, và mốc kích hoạt phần còn nợ:
+// `validators/vault.ak` ▸ khối "Trần ExUnit của hai nhánh mang LAMP", ngay trên
+// `t_fire_datum_n`. Đo lại là một lệnh `aiken check`.
 pub const max_loyalty_holdings  : Int = 40
 
 // ── Shard [Constitutional] ────────────────────────────────────────────

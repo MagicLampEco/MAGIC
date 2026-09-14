@@ -13,6 +13,15 @@ export {
   VaultDatumSchema,
 } from "./createVault.js";
 
+// Cổng `lampPolicyId`. Xuất ra vì lớp ứng dụng thường nhận policy id từ cấu hình của
+// CHÍNH NÓ (biến môi trường, tệp JSON) rồi mới gọi SDK — kiểm được ở đó thì lỗi lộ ra
+// lúc nạp cấu hình, không phải lúc dựng giao dịch. Xem đầu `lampPolicy.ts` về thứ
+// danh sách từ chối chống được và thứ nó KHÔNG chống được.
+export {
+  assertLampPolicyId,
+  NON_LAMP_LOOKALIKE_POLICIES,
+} from "./lampPolicy.js";
+
 // NFT danh-tính vault (INV-VAULT-IDENTITY) — mọi integrator tự dựng tx tạo vault
 // đều cần đúng hai thứ này, nếu không vault sinh ra sẽ KHÔNG tiêu được.
 export {

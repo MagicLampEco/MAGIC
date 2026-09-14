@@ -144,7 +144,7 @@ echo "https://preview.cardanoscan.io/transaction/<TX_HASH>"
 
 | Giới hạn | Giá trị | Nguồn |
 |---|---|---|
-| `MAX_LOYALTY_HOLDINGS` | 64 | `README.md:8`; CLAUDE.md hard limits |
+| `MAX_LOYALTY_HOLDINGS` | 40 | `ScheduleGen/onchain/lib/magiclamp/protocol/constants.ak` ▸ `max_loyalty_holdings` |
 | Ngưỡng gợi ý consolidate | ≥ 50 holdings | `README.md:12` |
 | Số pass tối đa `mergeGroup` | ≤ ⌊n/2⌋ | T23 convergence; `consolidate.ts:7` |
 | ExUnit exhaustion risk | Khi holdings tiến gần 64 | A5; `README.md:8-9` |

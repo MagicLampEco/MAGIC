@@ -32,12 +32,24 @@ const NETWORKS: Network[] = ["Preview", "Preprod", "Mainnet"];
 // ── Giá trị giữ chỗ khi thiếu env (chỉ kiểm hình dạng) ───────────
 const PLACEHOLDER_POLICY = "00".repeat(28);
 
-const LAMP_POLICY   = process.env.LAMP_POLICY_ID      ?? PLACEHOLDER_POLICY;
-const UM_NFT_POLICY = process.env.UM_NFT_POLICY_ID    ?? PLACEHOLDER_POLICY;
-const SHARD_POLICY  = process.env.SHARD_NFT_POLICY_ID ?? PLACEHOLDER_POLICY;
-const UM_SCRIPT_HASH      = process.env.UM_DATUM_HASH          ?? PLACEHOLDER_POLICY;
-const BACKING_POLICY      = process.env.BACKING_NFT_POLICY_ID  ?? PLACEHOLDER_POLICY;
-const BACKING_SCRIPT_HASH = process.env.BACKING_SCRIPT_HASH    ?? PLACEHOLDER_POLICY;
+/** Tham số đang là giữ-chỗ, gom lại để báo ĐỦ chứ không báo mỗi cái đầu tiên. */
+const usingPlaceholder: string[] = [];
+
+function fromEnv(name: string): string {
+  const v = process.env[name];
+  if (v === undefined || v === "") {
+    usingPlaceholder.push(name);
+    return PLACEHOLDER_POLICY;
+  }
+  return v;
+}
+
+const LAMP_POLICY   = fromEnv("LAMP_POLICY_ID");
+const UM_NFT_POLICY = fromEnv("UM_NFT_POLICY_ID");
+const SHARD_POLICY  = fromEnv("SHARD_NFT_POLICY_ID");
+const UM_SCRIPT_HASH      = fromEnv("UM_DATUM_HASH");
+const BACKING_POLICY      = fromEnv("BACKING_NFT_POLICY_ID");
+const BACKING_SCRIPT_HASH = fromEnv("BACKING_SCRIPT_HASH");
 // um_name / shard asset names là hằng giao thức, không phải env.
 const UM_NFT_NAME = "554d44"; // "UMD" — khớp ASSET_NAMES.um_nft trong config.ts
 
@@ -91,9 +103,28 @@ const MODULES: ModuleSpec[] = [
 async function main() {
   console.log("MagicLamp validator hash — per network × module verification\n");
 
-  if (LAMP_POLICY === PLACEHOLDER_POLICY) {
-    console.log("⚠  Đang dùng policy id GIỮ CHỖ — hash dưới đây chỉ để kiểm HÌNH DẠNG.");
-    console.log("   Verify deploy thật thì đặt: LAMP_POLICY_ID UM_NFT_POLICY_ID SHARD_NFT_POLICY_ID\n");
+  // Cùng cổng với đường DEPLOY. Bản trước đọc thẳng `process.env` nên một policy
+  // nằm trong danh sách từ chối của `config.ts` vẫn được công cụ này in ra hash kèm
+  // "✓ Done" và thoát 0 — tức cổng KIỂM gật đầu với đúng giá trị mà cổng DEPLOY ném.
+  // Đó là ca "deploy sai + verify sai giống nhau" mà đầu tệp này đã tự cảnh báo; chú
+  // thích không phải cổng, nên nay gọi cổng thật.
+  //
+  // Chỉ kiểm khi có giá trị thật: giữ-chỗ toàn-số-0 cố ý không đúng hình dạng một
+  // policy đã triển khai, và nó đã được báo riêng ở khối dưới.
+  if (!usingPlaceholder.includes("LAMP_POLICY_ID")) {
+    const { POLICY_IDS } = await import("./config.js");
+    void POLICY_IDS.lamp;   // ném nếu policy nằm trong danh sách từ chối hoặc sai hình dạng
+  }
+
+  if (usingPlaceholder.length > 0) {
+    // Đây là trạng thái KHÔNG ĐO ĐƯỢC, không phải trạng thái "khớp" — nên nó phải kêu
+    // to hơn một dòng lệch. Bản trước chỉ cảnh báo cho LAMP; năm tham số còn lại rơi
+    // về toàn-số-0 trong im lặng, và câu kết vẫn mời đi đối chiếu với địa chỉ đã
+    // deploy. Hash của tham số bịa mà được đối chiếu là cách hỏng tệ nhất ở đây.
+    console.log("⚠  KHÔNG ĐO ĐƯỢC — các tham số sau đang là GIỮ CHỖ (toàn số 0):");
+    for (const n of usingPlaceholder) console.log(`     · ${n}`);
+    console.log("   Hash dưới đây chỉ kiểm HÌNH DẠNG. ĐỪNG đối chiếu chúng với địa chỉ");
+    console.log("   đã deploy — chúng là hash của tham số không có thật.\n");
   }
 
   let failures = 0;

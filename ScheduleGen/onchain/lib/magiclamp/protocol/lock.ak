@@ -15,6 +15,17 @@ pub fn select_lamp_for_lock(
   lock_youngest(sorted, amount, [])
 }
 
+/// `acc` giữ NGƯỢC thứ tự kết quả, và được lật lại đúng MỘT lần ở nhánh dừng.
+///
+/// Bản trước cộng dồn bằng `list.concat(acc, […])` ở mỗi bước đệ quy. `list.concat`
+/// phải đi hết vế TRÁI để dựng lại nó, nên cộng dồn n lần là O(n²) — và nó là O(n²)
+/// ngay cả khi danh sách vào đã sắp sẵn, tức không mẹo nào ở chỗ gọi gỡ được.
+/// Nối đầu (`[x, ..acc]`) là O(1); một lần `list.reverse` cuối là O(n). Tổng: O(n).
+///
+/// KẾT QUẢ TRÙNG TỪNG BIT với bản cũ — `list.reverse` của dãy nối-đầu đúng bằng dãy
+/// nối-đuôi. Đây là điều kiện bắt buộc, không phải điều mong muốn: `validators/vault.ak`
+/// so danh sách BẰNG NHAU TUYỆT ĐỐI, và phía TypeScript phải dựng lại được y hệt (P8).
+/// Vì kết quả không đổi, phía TypeScript KHÔNG cần sửa theo.
 fn lock_youngest(
   holdings  : List<LoyaltyHolding>,
   remaining : Int,
@@ -23,15 +34,15 @@ fn lock_youngest(
   when holdings is {
     [] -> {
       expect remaining == 0
-      acc
+      list.reverse(acc)
     }
     [h, ..rest] ->
-      if remaining <= 0 { list.concat(acc, [h, ..rest]) }
+      if remaining <= 0 { list.concat(list.reverse(acc), [h, ..rest]) }
       else if remaining >= h.amount {
         lock_youngest(rest, remaining - h.amount,
-          list.concat(acc, [LoyaltyHolding { ..h, is_locked: True }]))
+          [LoyaltyHolding { ..h, is_locked: True }, ..acc])
       } else {
-        list.concat(acc, [
+        list.concat(list.reverse(acc), [
           LoyaltyHolding { amount: remaining, acquired_epoch: h.acquired_epoch, is_locked: True },
           LoyaltyHolding { amount: h.amount - remaining, acquired_epoch: h.acquired_epoch, is_locked: False },
           ..rest
@@ -63,7 +74,15 @@ pub fn unlock_locked_amount(
   let unlocked = list.filter(holdings, fn(h) { !h.is_locked })
   let sorted   = list.sort(locked, fn(a, b) { int.compare(a.acquired_epoch, b.acquired_epoch) })
   let (freed, still_locked) = unlock_oldest(sorted, amount, [])
-  coalesce_holdings(list.concat(list.concat(unlocked, freed), still_locked))
+  // Gộp theo HAI ĐOẠN, không gộp cả dãy. `unlocked` và `freed` mang is_locked=False,
+  // `still_locked` mang is_locked=True; `same_bucket` đòi trùng CẢ `is_locked`, nên
+  // không phần tử nào của đoạn sau gộp được với đoạn trước. Phép gộp là foldl giữ
+  // thứ tự lần-xuất-hiện-đầu, nên tách ra cho ĐÚNG kết quả cũ từng bit, mà đổi
+  // n² thành n₁² + n₂².
+  list.concat(
+    coalesce_holdings(list.concat(unlocked, freed)),
+    coalesce_holdings(still_locked),
+  )
 }
 
 /// Merge holdings sharing (acquired_epoch, is_locked). Lossless: that pair is the
@@ -84,27 +103,43 @@ pub fn unlock_locked_amount(
 ///    and fixed first" — sai thứ tự, và nó nằm trong mã nguồn nên người sau đọc sẽ tin.)
 /// Hai bản giữ byte-identical có chủ ý — đừng "cải tiến" một bên (P8).
 ///
-/// O(n²) merge over a list capped at 64. sort-then-scan would be O(n log n) but
-/// needs a total order over the pair; revisit only if fire ExUnits actually bite.
+/// ExUnits ĐÃ cắn — số đo ở `validators/vault.ak` mục "Trần ExUnit". Bản dưới đây giữ
+/// nguyên O(n²) trên GIẤY nhưng hạ hằng số xuống nhiều lần, bằng cách để bộ tích luỹ
+/// nằm NGƯỢC suốt vòng lặp và chỉ lật một lần ở cuối:
+///
+///   - nhánh KHÔNG gộp được (nhánh thường gặp, chính nó làm danh sách dài ra) từ
+///     `list.concat(acc, [h])` — O(|acc|), dựng lại cả danh sách — thành `[h, ..acc]`,
+///     O(1).
+///   - nhánh gộp được vẫn quét `acc` để tìm rồi quét để cộng, nhưng không còn phải
+///     dựng lại danh sách ở bước nối.
+///
+/// `list.map` giữ nguyên vị trí, nên lật-rồi-map và map-rồi-lật cho cùng một dãy:
+/// kết quả TRÙNG TỪNG BIT với bản cũ. Không đụng gì phía TypeScript (P8).
+///
+/// Cách sắp xếp-rồi-quét O(n log n) vẫn để ngỏ, nhưng nó đòi một thứ tự toàn phần trên
+/// cặp `(acquired_epoch, is_locked)` và `list.sort` của Aiken ĐẢO phần tử hoà trong khi
+/// JS thì không — tức nó là một thay đổi CÓ THỂ đổi kết quả, phải qua bài kiểm ca hoà
+/// trước. Hai bản vá ở đây thì không.
 pub fn coalesce_holdings(holdings: List<LoyaltyHolding>) -> List<LoyaltyHolding> {
-  list.foldl(holdings, [], fn(h, acc) { merge_into(acc, h) })
+  list.reverse(list.foldl(holdings, [], fn(h, acc_rev) { merge_into_rev(acc_rev, h) }))
 }
 
 fn same_bucket(a: LoyaltyHolding, b: LoyaltyHolding) -> Bool {
   a.acquired_epoch == b.acquired_epoch && a.is_locked == b.is_locked
 }
 
-fn merge_into(
-  acc : List<LoyaltyHolding>,
-  h   : LoyaltyHolding,
+/// `acc_rev` NGƯỢC thứ tự kết quả — nên "nối vào đuôi" ở đây là nối vào ĐẦU.
+fn merge_into_rev(
+  acc_rev : List<LoyaltyHolding>,
+  h       : LoyaltyHolding,
 ) -> List<LoyaltyHolding> {
-  if list.any(acc, fn(x) { same_bucket(x, h) }) {
+  if list.any(acc_rev, fn(x) { same_bucket(x, h) }) {
     // First occurrence keeps its position — order stays deterministic (P8).
-    list.map(acc, fn(x) {
+    list.map(acc_rev, fn(x) {
       if same_bucket(x, h) { LoyaltyHolding { ..x, amount: x.amount + h.amount } } else { x }
     })
   } else {
-    list.concat(acc, [h])
+    [h, ..acc_rev]
   }
 }
 
@@ -113,26 +148,29 @@ fn unlock_oldest(
   remaining : Int,
   freed     : List<LoyaltyHolding>,
 ) -> (List<LoyaltyHolding>, List<LoyaltyHolding>) {
+  // `freed` giữ NGƯỢC thứ tự, lật một lần ở mỗi nhánh dừng — cùng lý do và cùng
+  // bảo đảm trùng-bit như `lock_youngest`.
   when holdings is {
     [] -> {
       expect remaining == 0
-      (freed, [])
+      (list.reverse(freed), [])
     }
     [h, ..rest] ->
       if remaining <= 0 {
-        (freed, [h, ..rest])
+        (list.reverse(freed), [h, ..rest])
       } else if remaining >= h.amount {
         unlock_oldest(
           rest,
           remaining - h.amount,
-          list.concat(freed, [LoyaltyHolding { ..h, is_locked: False }]),
+          [LoyaltyHolding { ..h, is_locked: False }, ..freed],
         )
       } else {
         (
-          list.concat(freed, [
+          list.reverse([
             LoyaltyHolding {
               amount: remaining, acquired_epoch: h.acquired_epoch, is_locked: False,
             },
+            ..freed
           ]),
           [
             LoyaltyHolding {

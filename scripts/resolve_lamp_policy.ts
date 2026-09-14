@@ -1,5 +1,6 @@
-// scripts/resolve_lamp_policy.ts — CHỈ ĐỌC. Suy policy id của tLAMP/LAMP từ ví deploy
-// rồi HỎI CHUỖI xem tài sản đó đã tồn tại chưa. Không dựng tx, không ghi gì lên chuỗi.
+// scripts/resolve_lamp_policy.ts — CHỈ ĐỌC, và là công cụ CHẨN ĐOÁN, không phải nguồn
+// cấu hình. Suy policy chữ-ký-đơn từ khoá ví deploy rồi hỏi chuỗi xem token diễn tập
+// dưới policy đó còn bao nhiêu. Không dựng tx, không ghi gì lên chuỗi.
 //
 // ── VÌ SAO TỆP NÀY TỒN TẠI ──────────────────────────────────────────────────
 // `deploy/01_mint_lamp.ts` đúc bằng native script `{type:"sig", keyHash:<pkh ví>}`.
@@ -15,10 +16,23 @@
 // mainnet lúc đó mới ở mức vài triệu. Không validator nào gãy vì chuyện đó — và đó mới
 // là phần đáng ngại: bất biến nổi bật nhất của hệ vỡ trên testnet mà không gì đỏ.
 //
+// ── 🔴 TỆP NÀY KHÔNG PHẢI NGUỒN CỦA `LAMP_POLICY_ID` ────────────────────────
+// Nó suy policy TỪ KHOÁ VÍ, nên thứ nó tìm thấy là token do chính ví này tự đúc:
+// chính sách chữ-ký-đơn, KHÔNG trần, KHÔNG `SupplyState` — không phải LAMP. Kho
+// LAMP xếp bản Preprod của nó vào nhóm "trông giống LAMP nhưng KHÔNG phải LAMP".
+//
+// Bản trước, một runner đã dùng tệp này thay cho lệnh đúc và tự mô tả là "hỏi
+// chuỗi, chỉ đọc, không đúc". Vế đó đúng. Nhưng nó chặn hành vi ĐÚC mà để nguyên
+// hành vi DÙNG NHẦM, và cái sau đi qua êm hơn hẳn vì nó không ghi gì lên chuỗi.
+//
+// Nên stdout của tệp này CỐ Ý không còn in khoá `LAMP_POLICY_ID=`: không ai ống
+// được nó vào biến đó nữa. Vai còn lại của nó là CHẨN ĐOÁN — "ví này có token nhái
+// nào không, bao nhiêu" — và đó là vai có ích thật, vì số token nhái đang nằm trên
+// Preprod là một dữ kiện cần biết.
+//
 // Chạy: NETWORK=Preprod BLOCKFROST_KEY=… WALLET_SEED=… npx tsx resolve_lamp_policy.ts
-// stdout (để wrapper `eval`/đọc):  LAMP_POLICY_ID=…  và  LAMP_ONCHAIN_SUPPLY=…
-// stderr: chẩn đoán cho người đọc. Mã thoát 0 dù tài sản đã có hay chưa — người gọi
-// tự quyết theo LAMP_ONCHAIN_SUPPLY. Thoát khác 0 chỉ khi KHÔNG dò được.
+// stdout:  WALLET_DERIVED_LOOKALIKE_POLICY_ID=…  và  LOOKALIKE_ONCHAIN_SUPPLY=…
+// stderr: chẩn đoán cho người đọc. Mã thoát 0 dù tài sản đã có hay chưa.
 
 import {
   Lucid, Blockfrost, getAddressDetails, mintingPolicyToId, scriptFromNative,
@@ -65,8 +79,9 @@ async function main() {
         `${(supply / 1_000_000n).toLocaleString("en-US")} LAMP — ĐÃ CÓ, đừng đúc nữa.`,
   );
 
-  console.log(`LAMP_POLICY_ID=${policyId}`);
-  console.log(`LAMP_ONCHAIN_SUPPLY=${supply}`);
+  // Tên khoá CỐ Ý không phải `LAMP_POLICY_ID` — xem khối đầu tệp.
+  console.log(`WALLET_DERIVED_LOOKALIKE_POLICY_ID=${policyId}`);
+  console.log(`LOOKALIKE_ONCHAIN_SUPPLY=${supply}`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

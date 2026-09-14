@@ -1,6 +1,18 @@
-// scripts/deploy/01_mint_lamp.ts — Mint testnet LAMP token
-// Run: npx tsx deploy/01_mint_lamp.ts
-// Result: LAMP_POLICY_ID printed → copy vào .env
+// scripts/deploy/01_mint_lamp.ts — đúc token diễn tập trên testnet.
+//
+// 🔴 KHÔNG CÒN NẰM TRONG BẤT KỲ ĐƯỜNG CHẠY NÀO, và đó là chủ ý. Ba runner E2E từng
+//    gọi tệp này khi `LAMP_POLICY_ID` rỗng; nay cả ba DỪNG thay vì đúc.
+//
+//    Thứ tệp này tạo ra KHÔNG PHẢI LAMP. Policy là native `{type:"sig", keyHash:<pkh
+//    ví>}`: không trần phát hành, không `SupplyState`, không cổng WHO, và đúc lần hai
+//    thì cộng dồn lên tài sản cũ. Nó hiển thị ra đúng chữ `tLAMP`, nên không phân biệt
+//    được bằng tên. Kho LAMP đã xếp bản Preprod của nó vào nhóm "trông giống LAMP
+//    nhưng KHÔNG phải LAMP".
+//
+//    Giữ tệp lại vì việc dựng một token giả lập trên testnet vẫn có lúc cần, và vì nó
+//    đã mang hai cổng thật (từ chối Mainnet · đòi `LAMP_MINT_CONFIRM` khớp mạng). Nhưng
+//    đừng dùng đầu ra của nó làm `LAMP_POLICY_ID` cho một lượt chạy được coi là bằng
+//    chứng: một lượt xanh với token nhái trông y hệt một lượt xanh với token thật.
 
 import {
   Lucid, Blockfrost,

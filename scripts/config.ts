@@ -40,8 +40,74 @@ export const SCRIPT_HASHES = {
 };
 
 // ── Token policy IDs (điền sau khi mint) ─────────────────────
+/** Policy id LAMP đã KIỂM. Ném khi thiếu hoặc sai hình dạng.
+ *
+ * VÌ SAO LÀ CỔNG CHỨ KHÔNG PHẢI GIÁ TRỊ MẶC ĐỊNH. Bản cũ trả chuỗi
+ * `"FILL_AFTER_MINT"`. Vài nơi gọi có kiểm chuỗi đó, nhưng
+ * `deploy/03_deploy_shards.ts` và `deploy/06_publish_ref_scripts.ts` đưa thẳng nó
+ * vào **apply-param** mà không kiểm gì. Apply-param là tham số lúc BIÊN DỊCH: một
+ * giá trị rác ở đó vẫn cho ra bytes, vẫn cho ra script hash, vẫn deploy êm — và
+ * địa chỉ thu được sai vĩnh viễn, không lệnh nào đỏ. Đó đúng là hình dạng
+ * "rót đúng địa chỉ nhưng không vào sổ".
+ *
+ * Đặt ở `POLICY_IDS.lamp` dưới dạng getter để MỌI nơi gọi được che cùng lúc,
+ * thay vì rải cổng ở từng tệp rồi sót đúng hai tệp nguy hiểm nhất.
+ */
+/** Policy ĐÃ BIẾT là không phải LAMP. Danh sách TỪ CHỐI, không phải danh sách cho phép.
+ *
+ * Hai loại giá trị này bất đối xứng, và chỗ đó quyết định cái nào được gõ cứng:
+ * gõ cứng một giá trị CHO PHÉP là dựng một bản sao sẽ chết im lặng khi nguồn đổi —
+ * và nguồn thật sắp đổi, kho LAMP đang đổi tên bốn nhãn NFT mà nhãn là apply-param
+ * nằm TRONG policy id. Gõ cứng một giá trị TỪ CHỐI thì hỏng về phía an toàn: sai
+ * lắm là chặn nhầm một thứ hợp lệ, và người bị chặn BIẾT mình bị chặn.
+ *
+ * Vì sao cần đến nó dù đã có cổng hình dạng ở dưới: `28e916b0…` là 56 ký tự hex
+ * hợp lệ. Cổng hình dạng KHÔNG phân biệt được nó với policy thật. Và sổ trạng thái
+ * `scripts/state.*.sh` bị `.gitignore` chặn, nên bản vá trong kho không với tới được
+ * sổ cũ đang nằm trên đĩa của từng máy — máy nào còn sổ cũ thì vẫn nạp đúng giá trị
+ * đó vào môi trường, và cổng hình dạng sẽ để nó đi qua.
+ *
+ * Nguồn phân loại: kho LAMP ▸ Genesis ▸ `lampPolicies` ▸ `NON_LAMP_LOOKALIKE_POLICIES`.
+ * Chép có nhãn vì không có đường nhập khẩu: kho này chưa phụ thuộc gói đó.
+ * Chép ngày 2026-09-14.
+ */
+const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
+  "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4":
+    "chính sách chữ-ký-đơn suy từ khoá ví deploy của kho này — không trần phát hành, " +
+    "không SupplyState, không cổng WHO; đã có lúc cung lên 72 tỷ, gấp đôi trần 36 tỷ. " +
+    "Nó đúc được cả REG và SUPPLY nên bắt chước trọn hình dạng của lamp_mint thật.",
+  "7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9":
+    "bản diễn tập đời trước, đã bị thay (SUPERSEDED).",
+};
+
+function requireLampPolicyId(): string {
+  const v = process.env.LAMP_POLICY_ID ?? "";
+  const why = NON_LAMP_LOOKALIKE_POLICIES[v];
+  if (why) {
+    throw new Error(
+      `LAMP_POLICY_ID đang trỏ vào một token KHÔNG PHẢI LAMP: ${v}\n` +
+      `  ${why}\n` +
+      `  · Giá trị này thường tới từ một sổ trạng thái cũ (\`scripts/state.<mạng>.sh\`) —` +
+      ` tệp đó nằm ngoài git nên bản vá trong kho không dọn hộ được. Dọn tay.\n` +
+      `  · Nó hiển thị ra đúng chữ "tLAMP" và đúng 56 ký tự hex, nên không cổng hình dạng` +
+      ` nào phân biệt được. Phải so CẢ policy id lẫn asset name hex với sổ canonical.`,
+    );
+  }
+  if (!/^[0-9a-f]{56}$/.test(v)) {
+    throw new Error(
+      `LAMP_POLICY_ID thiếu hoặc sai hình dạng (nhận ${JSON.stringify(v)}). ` +
+      `Phải là 56 ký tự hex thường.\n` +
+      `  · ĐỪNG tự đúc LAMP để lấp chỗ này. Policy đúc bằng native "sig" suy tất định ` +
+      `từ khoá ví, KHÔNG có trần phát hành, và đúc lần hai thì cộng dồn lên tài sản cũ.\n` +
+      `  · Lấy giá trị canonical THEO MẠNG từ kho LAMP (Genesis ▸ lampPolicies). Token ` +
+      `hiển thị ra chữ "tLAMP" chưa chắc là LAMP — phải so CẢ policy id lẫn asset name hex.`,
+    );
+  }
+  return v;
+}
+
 export const POLICY_IDS = {
-  lamp:     process.env.LAMP_POLICY_ID     ?? "FILL_AFTER_MINT",
+  get lamp(): string { return requireLampPolicyId(); },
   um_nft:   process.env.UM_NFT_POLICY_ID   ?? "FILL_AFTER_DEPLOY_UM",
   shard_nft:process.env.SHARD_NFT_POLICY_ID ?? "FILL_AFTER_DEPLOY_SHARDS",
   // BackingBeacon NFT (§6.3)  [CẦN XÁC NHẬN — chờ CARP]

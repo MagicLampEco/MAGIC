@@ -38,6 +38,7 @@ import {
   type Validator,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch, lampAssetName } from "@magiclamp/protocol-utils";
+import { assertLampPolicyId } from "./lampPolicy.js";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
 /**
@@ -114,6 +115,13 @@ export function buildParamsList(
   protocol : ProtocolParams,
   msPer    : bigint,
 ): Data[] {
+  // Param #1 on every vault, và là tham số ĐẮT NHẤT khi sai: nó nướng vào bytes
+  // lúc biên dịch ⟹ sai policy là sai script hash, sai địa chỉ vault, và không
+  // sửa được bằng cách đổi cấu hình sau. Nên cổng đứng ở ĐÂY chứ không ở chỗ gọi:
+  // `applyVaultValidator` · `createVault` · `listVaults` đều đi qua hàm này, còn
+  // một cổng đặt ở từng chỗ gọi thì chỗ gọi thứ tư sẽ không có.
+  const lampPolicyId = assertLampPolicyId(protocol.lampPolicyId, "buildParamsList");
+
   // Param #2 on every vault. Network-derived; an explicit override is honoured
   // so a caller on a custom network can pass its own asset name.
   const assetName = protocol.lampAssetName ?? lampAssetName(protocol.network);
@@ -127,7 +135,7 @@ export function buildParamsList(
       requireField(protocol.backingNftPolicyId, "backingNftPolicyId", vaultType);
       requireField(protocol.backingScriptHash, "backingScriptHash", vaultType);
       return [
-        protocol.lampPolicyId,
+        lampPolicyId,
         assetName,
         protocol.umNftPolicyId!,
         protocol.umScriptHash!,        // pins the UM ref input (layer b)
@@ -141,7 +149,7 @@ export function buildParamsList(
       // vault(lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch)
       requireField(protocol.shardPolicyId, "shardPolicyId", "Schedule");
       return [
-        protocol.lampPolicyId,
+        lampPolicyId,
         assetName,
         protocol.shardPolicyId!,
         msPer,

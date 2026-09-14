@@ -22,6 +22,129 @@ Chạy lại: `bash scripts/run_wakeme_e2e.sh Preview` · `bash scripts/run_wake
 
 ---
 
+## Tên hiện ra trong ví KHÔNG phải định danh — 27 dòng tài sản mang tên của hệ này
+
+Định danh một tài sản trên Cardano là **cặp `(policy id, asset name)`**. Tên hiển thị là một
+nửa của cặp đó, và là nửa **không mang thông tin**: ở dòng `4c414d50`, vế asset name đúng
+với cả hàng thật lẫn hàng nhái. Cách phát biểu chặt — nhận từ nhà LAMP, thư `lamp0914mg-d`,
+và đã chép vào `MagicSDK/src/lampPolicy.ts`:
+
+> **policy id là điều kiện ĐỦ, và asset name KHÔNG BAO GIỜ là điều kiện đủ.**
+
+### Kiểm kê dưới policy `28e916b0…`
+
+`28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4` là **chính sách chữ-ký-đơn suy từ
+khoá của một ví triển khai trong kho này**: không trần phát hành, không `SupplyState`, ai giữ
+khoá thì đúc thêm tuỳ ý. Nó không phải policy của LAMP, và không bao giờ là. Mọi số đo trong
+sổ này đo trên token đó.
+
+Đo 2026-09-14 bằng Blockfrost `/assets/policy/{policy}` — **trọn danh sách, không cắt**:
+
+| Preview — 19 dòng | | | Preprod — 8 dòng | | |
+|---|---|---|---|---|---|
+| `4c414d50` | LAMP | 3 000 000 000 000 | `70726f644c414d50` | prodLAMP | 1 000 000 000 000 |
+| `744c414d50` | tLAMP | 36 000 000 000 000 000 | `744c414d50` | tLAMP | 36 000 000 000 000 000 |
+| `546573744c414d50` | TestLAMP | 1 000 000 000 000 | `4532454e4f544c414d50` | E2ENOTLAMP | 36 000 000 000 000 000 |
+| `4d41474943` | MAGIC | 1 970 000 000 | `4b484f` | KHO | 1 |
+| `43415250` | CARP | 10 000 000 000 | `524547` | REG | 1 |
+| `4e49474854` | NIGHT | 10 000 000 000 | `535550504c59` | SUPPLY | 1 |
+| `4b484f` · `524547` · `535550504c59` | KHO · REG · SUPPLY | 5 mỗi dòng | `44524f50` | DROP | 1 |
+| `44524f50` | DROP | 2 | `425251` | BRQ | 1 |
+| `4c4d504d` · `4c4d5050` · `4c4d5052` | LMPM · LMPP · LMPR | 1 mỗi dòng | | | |
+| `4d524f4f54` · `4e4f4e4345` · `505041524d` | MROOT · NONCE · PPARM | 1 mỗi dòng | | | |
+| `444944616c696365` | DIDalice | 1 | | | |
+| `454e47414745` · `425251` | ENGAGE · BRQ | 1 mỗi dòng | | | |
+
+Hai dòng đáng đọc kỹ, vì chúng là hai kiểu hiểu sai khác nhau:
+
+- **`tLAMP` mang TRỌN 36 tỷ trên cả hai mạng** (3,6 × 10¹⁶ oildrop ÷ 10⁶ = 36 × 10⁹ LAMP).
+  Ai đọc chuỗi mà không đọc spec sẽ kết luận **ngược hẳn** mô hình phát hành: LAMP dùng
+  lazy-mint, 36 tỷ là **trần**, và bộ đếm `SupplyState` mới là thứ cưỡng chế nó
+  (`BOUNDARIES.md §1`). Dòng này không có `SupplyState` nào đứng sau.
+- **`E2ENOTLAMP` trên Preprod** mang đúng con số ấy: nó là một mẫu thử của chính kho này,
+  cố ý đặt tên để không ai nhầm — và nó nằm cạnh `tLAMP` dưới **cùng một policy**, tức chính
+  sách đó không phân biệt được "hàng thử" với "hàng thật" bằng bất cứ thứ gì ngoài tên.
+
+Một policy nữa đã chết nhưng còn trong danh sách từ chối của SDK:
+`7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` — bản diễn tập đời trước, đã bị
+thay.
+
+### Dòng `LAMP` trên Preview — ba lượt đúc, trải 26 ngày
+
+`/assets/{unit}/history`, mốc thời gian từ `/txs/{hash}` ▸ `block_time`:
+
+| TX | Lượng | Thời điểm |
+|---|---|---|
+| `320fb82ba8a07ecb3a5abd298a431c65f523545fbb47dc410ba3fe81a11f1923` | +1 000 000 000 000 | 2026-06-01 02:18 UTC · block 4336523 |
+| `b3b931be027a5ebb057e23c46eb18322da411311a3daa76d07234cf0a0011bed` | +1 000 000 000 000 | 2026-06-18 19:34 UTC · block 4395416 |
+| `a39e81a3281c7be68e9f0dff24947eafeb8d227a90d02051d6d96c54f69bd798` | +1 000 000 000 000 | 2026-06-27 16:12 UTC · block 4421172 |
+
+`mint_or_burn_count = 3`, không lượt đốt nào. Ba lượt riêng biệt cách nhau nhiều tuần với
+cùng khối lượng chẵn **không phải một lần gõ nhầm tên**: đó là một bước lặp lại trong một
+kịch bản chạy nhiều đợt. Policy suy từ khoá ví triển khai của kho này, nên đây là việc của
+phía MAGIC, không phải của người lạ.
+
+### Dòng `MAGIC` trên Preview — hoá thạch của một đời thiết kế đã chết
+
+| TX | Lượng | Thời điểm |
+|---|---|---|
+| `17e62102c0749371d1284cee3f5fb4d0d8d36952893c259c766dbdbc88ec9dd0` | +1 000 000 000 | 2026-06-14 15:15 UTC |
+| `76759176a18c9b5655b0cc2cca2fcdc23438dc8b97b3e1c04d39414dd1fb52ed` | +1 000 000 000 | 2026-06-14 15:16 UTC |
+| `d599e05f72d490b2078ece5327f976dd19d91680deb60530bb1d543c24521f73` | **−30 000 000** | 2026-06-14 15:17 UTC |
+
+Ba giao dịch trong **hai phút**, kết thúc bằng một lượt **đốt**. Lượt đốt nói rõ nó diễn tập
+cái gì: **tiêu MAGIC bằng cách đốt native token** — mô hình đã bị bỏ, trước khi chốt
+`Gen ≠ Mint`. Nó không phải ai đó dựng để giả mạo; nó là hiện vật của chính kho này, nằm lại
+trên chuỗi.
+
+### Mức đúng của việc này: va chạm không gian tên, KHÔNG chạm giao thức
+
+Sự tồn tại của một native token tên `MAGIC` **không** làm sai bất biến *"MAGIC không phải
+token"*. Bất biến đó là phát biểu về **hành vi của validator**, không phải phát biểu về trạng
+thái của mạng Cardano — cùng dạng với việc đúc một token tên `BITCOIN` trên Cardano không
+phá bất biến 21 triệu của Bitcoin. Một bản ghi trước của việc này đặt nó ở mức *"đụng thẳng
+một bất biến"*; **mức đó sai và đã rút**, vì nó là lỗi phạm trù.
+
+Phép so sánh trên chỉ đứng được khi hệ **không bao giờ tra tài sản theo tên hiển thị**, và
+điều kiện ấy kiểm được. Đo trên mã nguồn ngoài `Legacy/`:
+
+```
+$ grep -rn "4d41474943" --include='*.ak' --include='*.ts' . | grep -v /Legacy/ | wc -l
+0                          # hex của chữ "MAGIC" không xuất hiện ở đâu trong mã
+
+$ grep -rn "assets\.quantity_of(" --include='*.ak' . | grep -v /Legacy/ | wc -l
+63
+$ grep -rn "assets\.quantity_of([^,]*,[^,)]*)" --include='*.ak' . | grep -v /Legacy/
+                           # rỗng — không lời gọi nào thiếu vế asset_name
+
+$ grep -rnE "asset_name ==|[^_.]name ==" --include='*.ak' . | grep -v /Legacy/ | wc -l
+0                          # không chỗ nào so tên tài sản một mình
+```
+
+Đo lại 2026-09-14. Ba lệnh này là **phép đo**, không phải trạng thái chép lại — chạy lại được
+nên nó không già đi. Con số 63 gồm cả lời gọi trong khối `test` của chính tệp validator; điều
+đang khẳng định không phải con số đó mà là **lệnh thứ hai trả về rỗng**.
+
+Rủi ro **thật** thì vẫn còn, và nó nằm **ngoài** giao thức: ví và explorer hiện chữ `MAGIC`
+cho một tài sản chuyển nhượng được, nên luận cứ đối ngoại *"MAGIC không chuyển nhượng, chỉ
+tiêu-dịch-vụ"* khó trình bày hơn. Đó là việc vá bằng thao tác on-chain và bằng một trang công
+bố lớp tài sản chuẩn, **không vá bằng validator** — thêm một phép kiểm tên vào validator là
+đem cái nửa không mang thông tin vào chỗ quyết định.
+
+### Hệ quả còn đang sống trong sổ này
+
+Vault ScheduleGen Preview `7c42ace98d077292bf89dd17437e12f0e4ecc6231c9c515701a49865` nhận
+policy nhái làm **apply-param**. Apply-param là tham số lúc biên dịch: nó nướng vào bytes ⟹
+vào script hash ⟹ vào địa chỉ. Nên vault đó **không** đổi sang policy LAMP thật được bằng
+cách sửa cấu hình — phải biên dịch lại và công bố script tham chiếu CIP-33 mới.
+
+Cổng chặn tái phát: `MagicSDK/src/lampPolicy.ts` ▸ `assertLampPolicyId`, gọi ở
+`MagicSDK/src/validatorScripts.ts` ▸ `buildParamsList` — chốt duy nhất mà mọi apply-param của
+SDK đi qua. Đó là cổng chống **tái phát một sai lầm đã biết**, danh sách ĐÓNG; nó không phải
+cổng xác thực, và một policy chữ-ký-đơn mới từ ví khác vẫn đi qua được.
+
+---
+
 ## Bản dựng — ba thứ phải đủ mới tái lập được một địa chỉ
 
 Byte của validator do **mã nguồn × trình biên dịch × bộ tham số apply-param** quyết định.

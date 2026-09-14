@@ -24,7 +24,23 @@ Hợp đồng Cardano L1 (PlutusV3, Aiken) cho hệ ba token:
   > kiểm là `tổng ≤ 36 tỷ`, không phải `tổng == 36 tỷ`.
 - **MAGIC** — quyền-tiêu-dịch-vụ. **Không phải token**: là số kế toán trong datum vault,
   gắn PersonDID, **không chuyển nhượng**, dùng-hết-hoặc-mất theo epoch.
+
+  > Trên Preview **có** một native token hiện ra chữ `MAGIC`, và nó KHÔNG làm sai câu trên.
+  > Bất biến này là phát biểu về **hành vi của validator**, không phải về trạng thái mạng
+  > Cardano — cùng dạng với việc đúc một token tên `BITCOIN` trên Cardano không phá bất biến
+  > 21 triệu của Bitcoin. Mức đúng là **va chạm không gian tên, không chạm giao thức**; rủi
+  > ro thật nằm ngoài giao thức (ví và explorer hiện chữ đó), và vá bằng thao tác on-chain
+  > cộng một trang công bố, **không vá bằng validator**. Kiểm kê trọn, lịch sử đúc và phép đo
+  > chứng minh mã không bao giờ tra tài sản theo tên: `scripts/DEPLOYED.md` ▸ *"Tên hiện ra
+  > trong ví KHÔNG phải định danh"*.
 - **CARP** — đồng-thanh-khoản, native token riêng, chuyển nhượng được.
+
+**Định danh tài sản = cặp `(policy id, asset name)`. Policy id là điều kiện ĐỦ; asset name
+KHÔNG BAO GIỜ là điều kiện đủ.** Ở dòng `4c414d50`, vế asset name đúng với cả hàng thật lẫn
+hàng nhái, nên nó không mang thông tin — một cổng hiện thực câu này thành phép so HOẶC vẫn
+qua được mọi lần thử. Testnet của kho có **27 dòng tài sản** mang tên của hệ này dưới một
+policy chữ-ký-đơn không phải của LAMP; danh sách và hệ quả ở `scripts/DEPLOYED.md`, cổng
+chặn tái phát ở `MagicSDK/src/lampPolicy.ts` ▸ `assertLampPolicyId`.
 
 Mỗi module cùng khuôn: `onchain/` (Aiken) · `offchain/` (TypeScript + vitest) · `tests/`
 (vector chuẩn). **Không có workspace ở gốc** — mỗi `offchain/` là gói npm độc lập, cài và

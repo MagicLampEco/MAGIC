@@ -81,16 +81,19 @@ export NETWORK="$NET" BLOCKFROST_KEY WALLET_SEED
 echo "  → NETWORK=$NET, Blockfrost + seed đã nhận từ môi trường (không in)."
 
 # ── [0a] Prereq: LAMP policy ────────────────────────────────────────────────
+# 🔴 Bước này TỪNG gọi `deploy/01_mint_lamp.ts` khi biến rỗng. Đã bỏ. Policy của
+#   bước đó là native `{type:"sig"}` suy tất định từ khoá ví: không trần phát hành,
+#   không `SupplyState`, chạy lần hai thì cộng dồn lên tài sản cũ — ngày 2026-08-28
+#   nó đẩy cung tLAMP Preprod lên 72 tỷ, gấp đôi trần 36 tỷ, không gì đỏ. Token nó
+#   đúc hiển thị đúng chữ `tLAMP` nên lọc theo tên hiển thị không phân biệt được.
 if [ -z "${LAMP_POLICY_ID:-}" ]; then
-  echo; echo "▶ [0a] Chưa có LAMP_POLICY_ID cho $NET → mint LAMP (01)…"
-  OUT01="$(npx tsx deploy/01_mint_lamp.ts | tee /dev/tty)"
-  export LAMP_POLICY_ID="$(printf '%s\n' "$OUT01" | grep -oE 'LAMP_POLICY_ID=[0-9a-f]+' | head -1 | cut -d= -f2- || true)"
-  [ -n "${LAMP_POLICY_ID:-}" ] || { echo "✗ 01 không in LAMP_POLICY_ID (01 lỗi?)"; exit 1; }
-  persist LAMP_POLICY_ID "$LAMP_POLICY_ID"
-  echo "  → LAMP_POLICY_ID=$LAMP_POLICY_ID (đã lưu $STATE_FILE)"
-else
-  echo; echo "▶ [0a] Dùng lại LAMP_POLICY_ID=$LAMP_POLICY_ID"
+  echo "✗ [0a] LAMP_POLICY_ID chưa có."
+  echo "     Chuỗi này KHÔNG tự đúc LAMP nữa. Đặt LAMP_POLICY_ID bằng policy canonical"
+  echo "     của $NET (kho LAMP ▸ Genesis ▸ lampPolicies) rồi chạy lại."
+  echo "     So CẢ policy id lẫn asset name hex — chữ \"tLAMP\" hiện ra không đủ để kết luận."
+  exit 1
 fi
+echo; echo "▶ [0a] LAMP_POLICY_ID nhận từ môi trường: $LAMP_POLICY_ID"
 
 # ── [0b] Prereq: UM policy + script hash ────────────────────────────────────
 if [ -z "${UM_NFT_POLICY_ID:-}" ] || [ -z "${UM_DATUM_HASH:-}" ]; then

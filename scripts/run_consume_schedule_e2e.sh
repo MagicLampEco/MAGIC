@@ -95,35 +95,28 @@ echo "  → NETWORK=$NET, Blockfrost + seed đã nhận từ môi trường (kh�
 if [ "$PHASE" = "1" ]; then
   # ── [1/5] LAMP policy ────────────────────────────────────────────────────
   if [ -z "${LAMP_POLICY_ID:-}" ]; then
-    # 🔴 Bước này KHÔNG đúc nữa. Bản cũ gọi thẳng `deploy/01_mint_lamp.ts` khi biến
-    #   này rỗng — mà policy đúc là native `sig` suy TẤT ĐỊNH từ khoá ví, nên
-    #   "biến rỗng" chỉ nói MÁY NÀY chưa ghi lại, không nói gì về chuỗi. Ngày
-    #   2026-08-28 nó đúc lần thứ hai lên đúng tài sản cũ trên Preprod:
-    #   quantity 72000000000000000, mint_or_burn_count 2 — 72 tỷ tLAMP, gấp đôi
-    #   mức hiến định 36 tỷ (BOUNDARIES.md §1). Không test nào đỏ, không validator
-    #   nào gãy; bất biến nổi nhất của hệ vỡ trên testnet trong im lặng.
-    echo; echo "▶ [1/5] Chưa có LAMP_POLICY_ID cục bộ → HỎI CHUỖI (chỉ đọc, không đúc)…"
-    OUT="$(npx tsx resolve_lamp_policy.ts)"
-    LAMP_POLICY_ID="$(printf '%s\n' "$OUT" | grep '^LAMP_POLICY_ID=' | cut -d= -f2-)"
-    SUPPLY="$(printf '%s\n' "$OUT" | grep '^LAMP_ONCHAIN_SUPPLY=' | cut -d= -f2-)"
-    [ -n "${LAMP_POLICY_ID:-}" ] || { echo "✗ không dò được LAMP_POLICY_ID"; exit 1; }
-    if [ "${SUPPLY:-0}" = "0" ]; then
-      echo "✗ DỪNG — trên $NET chưa có tLAMP dưới policy $LAMP_POLICY_ID."
-      echo "  Đúc là ghi lên chuỗi, không hoàn tác được, nên chuỗi kiểm thử không tự làm."
-      echo "  Đúc một lần, có chủ đích:"
-      # Không in lệnh `npx tsx` chạy thẳng: bước đúc cần Blockfrost key + seed ví, hai thứ
-      # chỉ do wrapper nạp. Chỉ sang một lệnh hỏng ở shell sạch thì không dừng được ai — nó
-      # đẩy người vận hành đi tự ghép lệnh quanh cổng đúc, đúng đường đã dẫn tới 72 tỷ.
-      echo "  🔴 Chuỗi này KHÔNG đúc, và hiện KHÔNG có wrapper nào dành riêng cho việc đúc."
-      echo "     \`deploy/01_mint_lamp.ts\` cần Blockfrost key + seed ví lấy từ môi trường, nên"
-      echo "     gọi thẳng \`npx tsx\` từ shell sạch sẽ hỏng ở chỗ khác. Đường duy nhất đang"
-      echo "     chạy được: \`export LAMP_MINT_CONFIRM=$NET\` rồi chạy \`run_consume_e2e.sh $NET\`"
-      echo "     với state file chưa có LAMP_POLICY_ID — bước [0a] của nó sẽ đúc."
-      echo "     (Đó là đường vòng, không phải thiết kế. Nợ đã ghi ở DevStatus.)"
-      exit 1
-    fi
-    export LAMP_POLICY_ID
-    persist LAMP_POLICY_ID "$LAMP_POLICY_ID"
+    # 🔴 BƯỚC NÀY TỪNG CẨN THẬN ĐÚNG MỘT NỬA, và nửa còn lại mới là chỗ hỏng.
+    #
+    # Bản trước đã bỏ lệnh đúc và thay bằng `resolve_lamp_policy.ts` — "hỏi chuỗi,
+    # chỉ đọc, không đúc". Đọc thì đúng là chỉ đọc. Nhưng hàm đó suy policy id TỪ
+    # KHOÁ VÍ, nên thứ nó tìm thấy trên chuỗi chính là token do ví này tự đúc:
+    # chính sách chữ-ký-đơn, KHÔNG trần, KHÔNG `SupplyState`, đã có lúc lên 72 tỷ —
+    # gấp đôi mức hiến định 36 tỷ. Kho LAMP xếp nó vào nhóm "trông giống LAMP nhưng
+    # KHÔNG phải LAMP".
+    #
+    # Nghĩa là cổng cũ chặn được hành vi ĐÚC mà vẫn để nguyên hành vi DÙNG NHẦM, và
+    # cái sau đi qua êm hơn vì nó không ghi gì lên chuỗi cả. Một lượt chạy xanh với
+    # token nhái không khác gì một lượt chạy xanh với token thật, cho tới lúc có
+    # người mang kết quả đó đi kết luận rằng đường LAMP đã thông.
+    #
+    # Nay: `LAMP_POLICY_ID` phải do NGƯỜI CHẠY đưa vào, lấy từ sổ canonical theo
+    # mạng của kho LAMP. Không suy từ ví, không dò trên chuỗi.
+    echo "✗ [1/5] LAMP_POLICY_ID chưa có."
+    echo "     Chuỗi này KHÔNG tự đúc và cũng KHÔNG tự suy policy từ khoá ví nữa —"
+    echo "     policy suy từ ví là token diễn tập không có trần, không phải LAMP."
+    echo "     Đặt LAMP_POLICY_ID bằng policy canonical của $NET (kho LAMP ▸ Genesis ▸"
+    echo "     lampPolicies) rồi chạy lại. So CẢ policy id lẫn asset name hex."
+    exit 1
   else
     echo; echo "▶ [1/5] Dùng lại LAMP_POLICY_ID=$LAMP_POLICY_ID"
   fi

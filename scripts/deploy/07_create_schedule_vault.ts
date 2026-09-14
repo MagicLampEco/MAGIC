@@ -115,7 +115,8 @@ const LEGACY_ENV = [
 async function main() {
   console.log("=== Step 7: Create ScheduleGen Vault UTxO ===\n");
 
-  if (POLICY_IDS.lamp === "FILL_AFTER_MINT") throw new Error("Step 01 missing");
+  // `POLICY_IDS.lamp` nay là cổng ở `config.ts` ▸ `requireLampPolicyId` — nó tự ném
+  // khi thiếu, nên ở đây không còn chuỗi giữ chỗ nào để so.
   // 🔴 Dòng cũ so với "FILL_AFTER_STEP_03", mà mặc định thật ở config.ts:46 là
   //   "FILL_AFTER_DEPLOY_SHARDS" — hai chuỗi không bằng nhau nên chốt NÀY CHƯA
   //   TỪNG NỔ. Hậu quả nếu lọt: `shard_policy_id` mang nguyên chuỗi chữ đi vào
@@ -127,9 +128,6 @@ async function main() {
     throw new Error(
       `Step 03 chưa chạy: SHARD_NFT_POLICY_ID phải là 56 ký tự hex, nhận "${POLICY_IDS.shard_nft}".`,
     );
-  }
-  if (!/^[0-9a-f]{56}$/.test(POLICY_IDS.lamp)) {
-    throw new Error(`Step 01 chưa chạy: LAMP_POLICY_ID phải là 56 ký tự hex, nhận "${POLICY_IDS.lamp}".`);
   }
   // NOTE: TREASURY_ADDRESS is NO LONGER a parameter of this validator.
   // PHA 2 / I-ACT-7 — a fire RELEASES the lock; it moves no LAMP.

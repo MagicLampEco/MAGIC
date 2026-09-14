@@ -125,7 +125,7 @@ const LEGACY_ENV = ["LAMP_LOCKED", "LAST_UPDATED_OFFSET"] as const;
 async function main() {
   console.log("=== Step 5: Create InstantGen Vault UTxO ===\n");
 
-  if (POLICY_IDS.lamp === "FILL_AFTER_MINT") throw new Error("Run step 01 first; missing LAMP_POLICY_ID.");
+  // LAMP: cổng nằm ở `config.ts` ▸ `requireLampPolicyId`, tự ném khi thiếu.
   if (POLICY_IDS.um_nft === "FILL_AFTER_DEPLOY_UM") throw new Error("Run step 02 first; missing UM_NFT_POLICY_ID.");
   if (SCRIPT_HASHES.um_datum === "FILL_AFTER_AIKEN_BUILD") throw new Error("Run step 02 first; missing UM_DATUM_HASH (= um_script_hash).");
   for (const k of LEGACY_ENV) {

@@ -5,6 +5,62 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-09-14 — Kho thôi tự đúc "LAMP": ba runner dừng thay vì đúc, và cổng dời về một chỗ
+
+**Đổi gì.**
+
+1. **Ba runner E2E không còn gọi `deploy/01_mint_lamp.ts`.** `run_wakeme_e2e.sh`,
+   `run_consume_e2e.sh` và `run_consume_schedule_e2e.sh` nay **DỪNG** khi thiếu
+   `LAMP_POLICY_ID`, kèm câu chỉ đúng chỗ lấy giá trị canonical theo mạng.
+2. **`POLICY_IDS.lamp` thành cổng** (`scripts/config.ts` ▸ `requireLampPolicyId`): kiểm
+   56 ký tự hex, ném khi thiếu, **cộng một danh sách TỪ CHỐI** các policy đã biết là
+   không phải LAMP. Bỏ chuỗi giữ chỗ `"FILL_AFTER_MINT"`.
+
+   Cổng hình dạng một mình KHÔNG đủ: `28e916b0…` đúng 56 ký tự hex và hiện ra đúng chữ
+   `tLAMP`. Mà `scripts/state.*.sh` bị `.gitignore` chặn (`.gitignore:27`), nên bản vá
+   trong kho **không với tới** sổ cũ đang nằm trên đĩa từng máy — máy nào còn sổ cũ thì
+   vẫn nạp đúng giá trị đó vào môi trường. Danh sách từ chối là thứ duy nhất chặn được
+   đường đó từ trong kho.
+
+   Là danh sách TỪ CHỐI chứ không phải CHO PHỘP, và chỗ đó có lý do: gõ cứng một giá trị
+   cho phép là dựng một bản sao sẽ chết im lặng khi nguồn đổi — nguồn thật sắp đổi, vì
+   kho LAMP đang đổi tên bốn nhãn NFT mà nhãn là apply-param nằm TRONG policy id. Gõ cứng
+   một giá trị từ chối thì hỏng về phía an toàn: sai lắm là chặn nhầm, và người bị chặn
+   biết mình bị chặn.
+3. **Hai sổ trạng thái thôi mang `28e916b0…`** (`scripts/state.Preprod.sh`,
+   `state.Preview.sh`).
+4. **`resolve_lamp_policy.ts` thôi in khoá `LAMP_POLICY_ID=`** — nay in
+   `WALLET_DERIVED_LOOKALIKE_POLICY_ID=`, và tự khai là công cụ chẩn đoán.
+5. Dán nhãn ở `scripts/DEPLOYED.md` và `VaultReadAPI/tests/fixtures/preview-e5fd34b1.ts`.
+
+**Vì sao.** `28e916b0…` **không phải LAMP**. Nó là chính sách chữ-ký-đơn suy tất định từ
+khoá ví deploy: không trần phát hành, không `SupplyState`, không cổng WHO — và đúc lần hai
+thì cộng dồn lên tài sản cũ, nên ngày 2026-08-28 cung tLAMP Preprod lên 72 tỷ, gấp đôi trần
+36 tỷ, không gì đỏ. Đo trên ví deploy hôm nay: policy đó đang giữ cả `tLAMP`, `prodLAMP`,
+`REG`, `SUPPLY` và một dòng đã bị đổi tên thành `E2ENOTLAMP` — tức nó bắt chước TRỌN hình
+dạng của `lamp_mint` thật, không chỉ một dòng token.
+
+**Ba chỗ đáng ghi lại vì cùng một mẫu "cẩn thận đúng một nửa".**
+
+- **Cổng chặn ĐÚC không chặn DÙNG NHẦM.** `run_consume_schedule_e2e.sh` đã bỏ lệnh đúc và
+  thay bằng `resolve_lamp_policy.ts`, tự mô tả là "hỏi chuỗi, chỉ đọc, không đúc". Vế đó
+  đúng. Nhưng hàm ấy suy policy TỪ KHOÁ VÍ, nên thứ nó tìm thấy chính là token nhái — và
+  đường này đi qua êm hơn hẳn vì nó không ghi gì lên chuỗi. Một lượt chạy xanh với token
+  nhái trông y hệt một lượt xanh với token thật.
+- **Sổ thắng mã.** Mã chỉ đọc biến môi trường (`config.ts`), còn giá trị thật đi vào lượt
+  chạy nằm ở `state.$NET.sh`. Sửa hết mã mà bỏ sổ thì lượt sau vẫn dùng token cũ.
+- **Cổng rải khắp nơi thì sót đúng chỗ nguy hiểm nhất.** Vài nơi gọi có kiểm chuỗi
+  `"FILL_AFTER_MINT"`, nhưng `deploy/03_deploy_shards.ts` và `deploy/06_publish_ref_scripts.ts`
+  đưa thẳng nó vào **apply-param** không kiểm gì. Apply-param là tham số lúc biên dịch: giá
+  trị rác vẫn ra bytes, vẫn ra script hash, vẫn deploy êm — địa chỉ sai vĩnh viễn. Nên cổng
+  dời về **một** chỗ ở `config.ts`, che mọi nơi gọi cùng lúc.
+
+**Gãy gì.** Mọi lượt chạy E2E nay **bắt buộc** có `LAMP_POLICY_ID` đặt sẵn ở môi trường;
+không còn đường nào tự sinh ra nó. Đây là fail-closed cố ý. Script nào `grep` khoá
+`LAMP_POLICY_ID=` từ đầu ra của `resolve_lamp_policy.ts` sẽ không khớp nữa — cũng cố ý.
+`deploy/01_mint_lamp.ts` **giữ lại** nhưng đứng ngoài mọi đường chạy, và vẫn cần
+`LAMP_MINT_CONFIRM` khớp mạng cùng lệnh từ chối Mainnet.
+
 ## 2026-09-14 — Nợ #48: hạ bậc hai ở nhánh fire, và một phép đo lật ngược hai kết luận của chính hôm qua
 
 **Đổi gì.** Ba thay đổi trong `ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak`, tất cả

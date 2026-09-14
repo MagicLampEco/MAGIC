@@ -32,6 +32,14 @@ export const PREVIEW_VAULT_ID_UNIT =
   "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf" +
   "f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6";
 
+/** ⚠ Đây KHÔNG phải LAMP, dù asset name hex `744c414d50` hiện ra chữ `tLAMP`.
+ *
+ * Policy `28e916b0…` là chính sách chữ-ký-đơn suy từ khoá ví deploy — không trần
+ * phát hành, không `SupplyState`, đã có lúc cung lên gấp đôi mức hiến định 36 tỷ.
+ * Giữ nguyên ở đây vì đây là ẢNH CHỤP một UTxO CÓ THẬT trên Preview: đổi giá trị
+ * này là làm fixture không còn khớp thứ nó chụp. Nhưng đừng chép nó sang chỗ khác,
+ * và đừng đọc một bài kiểm xanh ở đây thành "đường LAMP đã thông".
+ */
 export const PREVIEW_LAMP_UNIT =
   "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4744c414d50";
 

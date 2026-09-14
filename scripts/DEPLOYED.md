@@ -83,7 +83,7 @@ D. UMKeeper/onchain/plutus.json khai v1.1.21+deadbee, máy chạy v1.1.21+42babe
 | Thứ | Giá trị |
 |---|---|
 | Ví deploy | `addr_test1qqh9u9qc4l2q9eyzx2c58pmpqn9vvxy2gjux0lah2wp33axx7cqq55f75fypagzqnelz3uzwxf764qzjx8kvaaw3q3yq8fyl7p` |
-| LAMP policy | `28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4` · asset `744c414d50` (tLAMP) |
+| ⚠ Token nhái đã dùng (KHÔNG phải LAMP) | `28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4` · asset `744c414d50` (hiện ra chữ `tLAMP`) — chính sách chữ-ký-đơn suy từ khoá ví deploy: không trần, không `SupplyState`, đã có lúc lên 72 tỷ. Mọi số đo ở bảng này được đo TRÊN token đó. |
 | UM NFT policy | `85a89ded99d41e916dfbe872ae06d0dca6748338caeff10c405e2007` |
 | UM script hash | `eb8b66b61636dde5ac73d2ca5c9c17f181205731d35483b4bfac716d` |
 | Shard NFT policy | `67368ae03ab71778b28a87eb2c51b0942ddd1319e43967c6ebffcf8a` |

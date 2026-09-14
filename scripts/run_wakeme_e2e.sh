@@ -70,14 +70,31 @@ step() { echo; echo "══════ $* ══════"; }
 step "[00] chuẩn bị ví (UTxO thuần ADA cho collateral + genesis one-shot)"
 npx tsx prepare_wallet.ts 2>&1 || { echo "✗ prepare_wallet lỗi"; exit 1; }
 
-# ── [0a] LAMP ───────────────────────────────────────────────────────────────
+# ── [0a] LAMP — NHẬN từ ngoài, KHÔNG tự đúc ─────────────────────────────────
+#
+# Bước này TỪNG chạy `deploy/01_mint_lamp.ts`. Nó đã bị bỏ, và lý do không phải
+# gọn gàng:
+#
+#   · Policy của bước đó là native `{type:"sig", keyHash:<pkh ví>}` — suy tất định
+#     từ khoá ví, KHÔNG có trần phát hành, KHÔNG có `SupplyState`, KHÔNG có cổng
+#     WHO. Nó bắt chước được cả nhãn `REG` và `SUPPLY` của `lamp_mint` thật.
+#   · Chạy lần hai thì CỘNG DỒN lên tài sản cũ. Ngày 2026-08-28 nó đẩy cung tLAMP
+#     Preprod lên 72 tỷ, gấp đôi trần 36 tỷ, và không validator nào đỏ.
+#   · Token nó đúc hiển thị đúng chữ `tLAMP`, nên lọc theo tên hiển thị không phân
+#     biệt được. Kho LAMP đã xếp policy đó vào danh sách "trông giống LAMP nhưng
+#     KHÔNG phải LAMP".
+#
+# Nên chuỗi này không còn tự tạo LAMP nữa. `LAMP_POLICY_ID` phải do người chạy đưa
+# vào, lấy giá trị canonical THEO MẠNG từ kho LAMP. Thiếu thì DỪNG — và dừng ở đây
+# rẻ hơn nhiều so với dừng sau khi vault đã ăn tiền gửi.
 if [ -z "${LAMP_POLICY_ID:-}" ]; then
-  step "[0a] mint LAMP (01)"
-  OUT="$(npx tsx deploy/01_mint_lamp.ts 2>&1)"; printf "%s\n" "$OUT"
-  export LAMP_POLICY_ID="$(printf '%s\n' "$OUT" | grep -oE 'LAMP_POLICY_ID=[0-9a-f]+' | head -1 | cut -d= -f2-)"
-  [ -n "${LAMP_POLICY_ID:-}" ] || { echo "✗ 01 lỗi"; exit 1; }
-  persist LAMP_POLICY_ID "$LAMP_POLICY_ID"
-else echo "  ✓ [0a] dùng lại LAMP_POLICY_ID=$LAMP_POLICY_ID"; fi
+  echo "✗ [0a] LAMP_POLICY_ID chưa có."
+  echo "     Chuỗi này KHÔNG tự đúc LAMP nữa. Đặt LAMP_POLICY_ID bằng policy canonical"
+  echo "     của $NET (lấy từ kho LAMP ▸ Genesis ▸ lampPolicies) rồi chạy lại."
+  echo "     So CẢ policy id lẫn asset name hex — chữ \"tLAMP\" hiện ra không đủ để kết luận."
+  exit 1
+fi
+echo "  ✓ [0a] LAMP_POLICY_ID nhận từ môi trường: $LAMP_POLICY_ID"
 
 # ── [0b] UM ─────────────────────────────────────────────────────────────────
 if [ -z "${UM_NFT_POLICY_ID:-}" ] || [ -z "${UM_DATUM_HASH:-}" ]; then

@@ -161,13 +161,18 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 > được `lamp_locked`. Ở 40: commit 58,4 %, fire 62,2 %. Điểm chết khớp bậc hai: fire
 > n ≈ 53, commit n ≈ 55.
 >
-> Hai điều đi kèm, cả hai đều phản trực giác nên viết ra: **(a) fire chết TRƯỚC commit**
-> — cửa RA hẹp hơn cửa VÀO, nên `validate_commit` phải có cổng đếm holding chứ không chỉ
-> `validate_fire`; bản cũ thiếu đúng cổng đó. **(b) Thủ phạm bậc hai KHÔNG phải
-> `list.sort`** mà là mẫu `foldl` + `merge_into(acc, h)` trong `coalesce_holdings` và
-> `list.concat(acc, […])` trong `lock_youngest` (`ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak`).
-> Chú thích của chính `coalesce_holdings` đã tự khai *"O(n²)… revisit only if fire
-> ExUnits actually bite"* — chúng cắn rồi. Ai đi tối ưu thì nhắm vào hai chỗ đó.
+> Hai điều đi kèm, cả hai đều phản trực giác nên viết ra. **(a)** Ở bản đo ĐẦU TIÊN,
+> fire chết trước commit — cửa RA hẹp hơn cửa VÀO — nên `validate_commit` phải có cổng
+> đếm holding chứ không chỉ `validate_fire`; bản cũ thiếu đúng cổng đó. **(b) Hai nhánh
+> có hai thủ phạm KHÁC NHAU**, và bản trước của dòng này gộp chúng làm một: nó viết
+> "thủ phạm KHÔNG phải `list.sort`", câu đó đúng cho FIRE và **sai cho COMMIT**.
+>
+> Thứ tự chết cũng đã đảo sau bản vá. Số đo, cách đo, mốc kích hoạt phần còn nợ, và lý do
+> KHÔNG nâng trần theo phần biên vừa mua được — tất cả nằm ở MỘT chỗ:
+> `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Trần ExUnit của hai nhánh mang LAMP"*,
+> ngay trên `t_fire_datum_n`. Thang đo (`probe_commit_fixture_cap` /
+> `probe_fire_fixture_cap`) nằm cùng chỗ, nên đo lại là một lệnh `aiken check`.
+> Đừng chép số xuống đây: bản trước đã chép, và phần chép lại là phần sai.
 
 ---
 

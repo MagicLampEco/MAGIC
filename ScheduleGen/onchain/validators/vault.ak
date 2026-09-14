@@ -2195,7 +2195,11 @@ fn t_commit_shard_out(total_lock: Int) -> Output {
 /// Dựng TRỌN một giao dịch commit hợp lệ với `n` holding, mỗi holding 1 LAMP.
 /// Mọi vế khác của `validate_commit` đều thoả, nên bài nào đỏ là đỏ VÌ cổng đếm
 /// holding chứ không vì một hàng xóm nào bắt trước.
-fn t_run_commit(n: Int) -> Bool {
+///
+/// Tách khỏi `t_run_commit` để đo được chi phí của RIÊNG validator: fixture này
+/// tự gọi `select_lamp_for_lock`, tức đúng hàm mà validator gọi lại bên trong.
+/// Không trừ nó ra thì mọi con số đọc được đều cộng thêm một lần chạy thừa.
+fn t_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
   let holdings   = t_holdings_rec(n, [])
   let balance    = n * t_commit_unit
   let din        = t_datum(balance, 0, holdings)
@@ -2228,6 +2232,11 @@ fn t_run_commit(n: Int) -> Bool {
       [t_vault_output(dout, balance), t_commit_shard_out(total_lock)],
       [t_owner],
     )
+  (din, tx)
+}
+
+fn t_run_commit(n: Int) -> Bool {
+  let (din, tx) = t_commit_fixture(n)
   validate_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref(),
                   t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, tx)
 }
@@ -2248,28 +2257,56 @@ test c_commit_over_holding_cap_rejected() fail {
 // ── Trần ExUnit của hai nhánh mang LAMP — số ĐO, không ngoại suy ─────────────
 //
 // Cách đo: chạy trọn giao dịch qua `t_run_commit` / `t_run_fire_n`, rồi TRỪ chi
-// phí dựng fixture (đo riêng bằng `probe_*fix*`), vì fixture tự gọi lại chính
-// hàm O(n²) mà validator gọi. Số dưới đây là phần của VALIDATOR, `aiken check`
-// 2026-09-14, đối chiếu `maxTxExMem = 16 500 000`:
+// phí dựng fixture (`probe_commit_fixture_cap` / `probe_fire_fixture_cap`), vì
+// fixture tự gọi lại chính hàm O(n²) mà validator gọi. Thang đo nằm NGAY DƯỚI
+// trong tệp này — đừng gỡ nó ra nữa.
 //
-//   holding |  commit  |  fire
-//      40   |  58,4 %  |  62,2 %     ← trần đang đặt, còn ~38 % biên
-//      63   | 128,6 %  |    —
-//      64   |    —     | 138,9 %
-//   điểm chết (khớp bậc hai, R² > 0,99): commit n ≈ 55, fire n ≈ 53
+// Số của VALIDATOR, `aiken check` 2026-09-14, `maxTxExMem = 16 500 000`:
 //
-// FIRE CHẾT TRƯỚC COMMIT (53 < 55) — cửa RA hẹp hơn cửa VÀO. Đó là lý do
-// `validate_commit` phải có cổng đếm holding chứ không chỉ `validate_fire`.
+//   nhánh (n)      | trước vá #48 |  sau vá #48  | đổi
+//   commit (39)    |    55,1 %    |    54,6 %    |  −1,1 %
+//   fire   (40)    |    61,3 %    |    51,1 %    | −16,6 %
 //
-// THỦ PHẠM KHÔNG PHẢI `list.sort`. Nhánh fire không sort danh sách đầy đủ mà vẫn
-// bậc hai: `coalesce_holdings` (`lock.ak` ▸ chính hàm đó) là `foldl` gọi
-// `merge_into(acc, h)`, và chú thích của nó đã tự khai *"O(n²)… revisit only if
-// fire ExUnits actually bite"*. Chúng cắn rồi. Cùng hình dạng ở `lock_youngest`:
-// `list.concat(acc, […])` trong đệ quy. Ai đi tối ưu sau này nhắm vào hai chỗ
-// ĐÓ, đừng nhắm vào `list.sort` — bỏ sort một mình không mua lại được biên nào.
+// Giao dịch thật chạy THÊM validator `shard` trong cùng ngân sách 16,5 M — đo
+// được ~272 689 (1,7 %) và KHÔNG duyệt holding, nên coi là hằng số. Ngân sách
+// còn cho `vault` là ~98,3 %.
 //
-// Thang đo đã gỡ khỏi tệp sau khi đọc số; dựng lại bằng `t_run_commit(n)` /
-// `t_run_fire_n(n)` cộng một bài chỉ chạy fixture, rồi lấy hiệu.
+// Điểm chết ước theo bậc hai: commit n ≈ 52, fire n ≈ 55.
+//
+// 🔴 HAI ĐIỀU ĐẢO SO VỚI BẢN GHI TRƯỚC — cả hai do đo lại, không do suy luận:
+//
+// (1) **COMMIT giờ chết TRƯỚC FIRE** (52 < 55). Bản trước ghi ngược (fire 53 <
+//     commit 55) và kết luận "cửa RA hẹp hơn cửa VÀO". Kết luận ấy đúng với số
+//     lúc đó; bản vá #48 hạ fire 16,6 % mà gần như không chạm commit, nên thứ tự
+//     đảo. Cổng đếm holding ở `validate_commit` vẫn cần — chỉ là lý do đã đổi:
+//     nay nó canh chính nhánh hẹp nhất, không còn canh hộ nhánh kia.
+//
+// (2) **THỦ PHẠM CỦA HAI NHÁNH KHÁC NHAU, và bản trước gộp làm một.** Bản trước
+//     viết "thủ phạm KHÔNG phải `list.sort`… đừng nhắm vào `list.sort`". Câu đó
+//     đúng cho nhánh FIRE và SAI cho nhánh COMMIT:
+//
+//       · fire  → `coalesce_holdings` + `lock.ak` ▸ `unlock_oldest`. Đã vá, và
+//         phép đo xác nhận: −16,6 %.
+//       · commit → `list.sort` (`lock.ak:14`). Bản vá #48 chạm mọi thứ TRỪ
+//         `list.sort`, và commit đứng yên (−1,1 %). Đó là phép đo kiểu gỡ-chốt:
+//         thay phần còn lại mà số không đổi ⟹ phần còn lại không phải thủ phạm.
+//         `list.sort` của Aiken là sắp-xếp-chèn, O(n²) ở ca xấu nhất;
+//         `lock_youngest` trong fixture này chỉ chạm ~11 phần tử
+//         (`t_commit_l = 10`), nên nó không thể tạo ra mức đó.
+//
+// CÒN NỢ — P4, thay `list.sort` bằng sắp-xếp-trộn đảo-phần-tử-hoà: CHƯA làm, và
+// cố ý chưa. Nó là thứ DUY NHẤT hạ được nhánh commit, nhưng ở trần 40 hiện tại
+// commit mới dùng 54,6 % nên nó không mua được gì. Mốc kích hoạt: khi nào có
+// người cần nâng trần quá ~48. Điều kiện đi kèm (chủ dự án đã chốt): phải có bài
+// kiểm tính chất `msort == list.sort` trên đầu vào dày phần tử hoà xanh TRƯỚC,
+// vì `list.sort` ĐẢO phần tử hoà còn sắp-xếp-trộn thường thì không — đổi chỗ đó
+// là đổi KẾT QUẢ, không phải đổi tốc độ.
+//
+// TRẦN GIỮ NGUYÊN 40, không nâng theo phần biên vừa mua được. Ba lý do: phần
+// biên rơi vào nhánh fire, mà nhánh hẹp nhất bây giờ là commit — không nhúc
+// nhích; số trên là của validator trong bài kiểm, chưa mang kích thước giao
+// dịch, datum, hay lượt đổi tham số giao thức; và chính khoảng biên là thứ
+// ngăn lặp lại ca "vault chạm trần thì không tiêu được".
 
 fn t_fire_datum_n(n: Int) -> VaultDatum {
   let hs = list.push(t_holdings_rec(n - 1, []), t_holding(t_lambda, 99, True))
@@ -2279,7 +2316,9 @@ fn t_fire_datum_n(n: Int) -> VaultDatum {
   }
 }
 
-fn t_run_fire_n(n: Int) -> Bool {
+/// Cùng lý do tách như `t_commit_fixture`: fixture gọi `unlock_locked_amount`,
+/// đúng hàm validator gọi lại.
+fn t_fire_fixture(n: Int) -> (VaultDatum, Transaction) {
   let din = t_fire_datum_n(n)
   let m_i = compute_m_i(t_lambda, t_rate_q)
   let dout =
@@ -2298,8 +2337,39 @@ fn t_run_fire_n(n: Int) -> Bool {
       [t_vault_output(dout, din.lamp_balance), t_fire_shard_out()],
       [],
     )
+  (din, tx)
+}
+
+fn t_run_fire_n(n: Int) -> Bool {
+  let (din, tx) = t_fire_fixture(n)
   validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
                 t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+// ── THANG ĐO — giữ trong tệp, đừng gỡ lần nữa ───────────────────────────────
+//
+// Bốn bài dưới đây KHÔNG khẳng định điều gì về hiệu năng — Aiken không cho đặt
+// ngưỡng ExUnit trong `test`. Việc của chúng là làm phép trừ chạy được bằng MỘT
+// lệnh: `aiken check` in mem/cpu cho từng bài, và
+//
+//     validator = t_run_*(n)  −  probe_*_fixture_n
+//
+// Bản trước đã gỡ thang đo ra sau khi đọc số, và cái giá là lần đo lại phải dựng
+// lại từ đầu — đủ đắt để không ai đo lại, nên một tối ưu hoá không có cách nào
+// chứng minh mình đã mua được biên nào.
+
+test probe_commit_fixture_cap() {
+  let (din, tx) = t_commit_fixture(max_loyalty_holdings - 1)
+  list.length(din.loyalty_holdings) == max_loyalty_holdings - 1 && list.length(
+    tx.inputs,
+  ) == 2
+}
+
+test probe_fire_fixture_cap() {
+  let (din, tx) = t_fire_fixture(max_loyalty_holdings)
+  list.length(din.loyalty_holdings) == max_loyalty_holdings && list.length(
+    tx.inputs,
+  ) == 2
 }
 
 // Bài canh trần: fire ở ĐÚNG trần holding phải còn chạy được. Nó không đo

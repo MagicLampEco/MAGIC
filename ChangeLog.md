@@ -5,6 +5,54 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-09-14 — Nợ #48: hạ bậc hai ở nhánh fire, và một phép đo lật ngược hai kết luận của chính hôm qua
+
+**Đổi gì.** Ba thay đổi trong `ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak`, tất cả
+**giữ nguyên kết quả từng bit** nên phía TypeScript không đổi dòng nào (P8):
+
+1. `lock_youngest` và `unlock_oldest` cộng dồn bằng nối-ĐẦU rồi `list.reverse` một lần ở
+   nhánh dừng, thay cho `list.concat(acc, […])` mỗi bước đệ quy. O(n²) → O(n).
+2. `coalesce_holdings` giữ bộ tích luỹ NGƯỢC suốt vòng lặp và lật một lần ở cuối. Nhánh
+   không-gộp-được — nhánh thường gặp — từ O(|acc|) xuống O(1).
+3. `unlock_locked_amount` gộp theo HAI ĐOẠN thay vì gộp cả dãy: `unlocked ++ freed` mang
+   `is_locked=False`, `still_locked` mang `True`, mà `same_bucket` đòi trùng cả `is_locked`
+   — nên không phần tử nào của đoạn sau gộp được với đoạn trước. n² → n₁² + n₂².
+
+Cộng một **thang đo giữ lại trong tệp** (`probe_commit_fixture_cap`,
+`probe_fire_fixture_cap` ở `validators/vault.ak`). Bản trước gỡ thang đo ra sau khi đọc số,
+và cái giá là lần đo lại phải dựng từ đầu — đủ đắt để không ai đo lại.
+
+**Vì sao.** `coalesce_holdings` tự khai *"revisit only if fire ExUnits actually bite"*.
+Chúng đã cắn: mục bên dưới ghi fire 138,9 % `maxTxExMem` ở 64 holding.
+
+**Số đo** (`aiken check`, validator đã trừ chi phí fixture, 96/96 bài xanh):
+fire **61,3 % → 51,1 %** (−16,6 %); commit **55,1 % → 54,6 %** (−1,1 %).
+
+**Hai kết luận của mục bên dưới bị lật, cả hai do đo lại chứ không do suy luận.**
+
+- **Hai nhánh có hai thủ phạm KHÁC NHAU.** Mục dưới viết "thủ phạm không phải `list.sort`
+  … đừng nhắm vào `list.sort`". Đúng cho **fire**, sai cho **commit**. Bản vá này chạm mọi
+  thứ TRỪ `list.sort`, và commit đứng yên (−1,1 %) — tức phần đã chạm không phải thủ phạm
+  của nó. `list.sort` của Aiken là sắp-xếp-chèn; `lock_youngest` trong fixture đó chỉ chạm
+  ~11 phần tử nên không thể tạo ra mức đã đo.
+- **Thứ tự chết đảo: commit n ≈ 52 giờ đứng trước fire n ≈ 55.** Cổng đếm holding ở
+  `validate_commit` vẫn cần, nhưng lý do đã đổi — nay nó canh chính nhánh hẹp nhất.
+
+**Trần giữ nguyên 40, KHÔNG nâng.** Phần biên vừa mua được rơi vào nhánh fire, trong khi
+nhánh hẹp nhất bây giờ là commit và nó không nhúc nhích. Số đo cũng là của validator trong
+bài kiểm, chưa mang kích thước giao dịch thật.
+
+**Còn nợ.** P4 — thay `list.sort` bằng sắp-xếp-trộn đảo-phần-tử-hoà — **chưa làm, cố ý**.
+Ở trần 40, commit mới dùng 54,6 % nên nó không mua được gì. Mốc kích hoạt và điều kiện
+(bài kiểm tính chất trên đầu vào dày phần tử hoà phải xanh TRƯỚC, vì `list.sort` ĐẢO phần
+tử hoà còn sắp-xếp-trộn thường thì không) ghi tại `validators/vault.ak` ▸ khối *"Trần
+ExUnit của hai nhánh mang LAMP"*.
+
+**Gãy gì.** `lock.ak` đổi bytes ⟹ **đổi script hash `vault.vault` và `vault.shard` của
+ScheduleGen ⟹ đổi địa chỉ**, cùng đợt với các thay đổi ở mục dưới. Hành vi không đổi: mọi
+danh sách vào/ra giống hệt bản cũ, nên bên dựng tx không phải sửa gì ngoài việc trỏ sang
+địa chỉ và ref-script mới.
+
 ## 2026-09-14 — Đóng một ngõ cụt khoá LAMP vĩnh viễn ở ScheduleGen, và hạ hai tham số về dưới trần vật lý
 
 **Đổi gì.** Bốn thay đổi, ba trong số đó đổi bytes validator ⟹ đổi script hash ⟹ **đổi địa chỉ**.
@@ -43,6 +91,12 @@ holding phải có mặt ở nhánh commit chứ không chỉ ở nhánh fire.
 `merge_into(acc, h)` trong `coalesce_holdings` và `list.concat(acc, […])` trong
 `lock_youngest` (`ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak`) — chú thích của chính
 `coalesce_holdings` đã tự khai *"O(n²)… revisit only if fire ExUnits actually bite"*.
+
+> 🔴 **Đoạn đính chính ngay trên ĐÃ BỊ THAY** bởi mục ngày 2026-09-14 ở đầu tệp. Nó đúng cho
+> nhánh **fire** và sai cho nhánh **commit** — hai nhánh có hai thủ phạm khác nhau, và câu
+> "đừng nhắm vào `list.sort`" đọc như một lời khuyên cho cả hai. Cả hai vế "fire chết trước
+> commit" và "thủ phạm không phải `list.sort`" đều không còn đúng sau khi đo lại. Giữ đoạn
+> này ở nguyên chỗ vì nó là chuyện đã xảy ra; đừng dùng nó làm căn cứ.
 
 **Gãy gì.** **Địa chỉ ScheduleGen và InstantGen đổi.** Vault đang sống trên Preview/Preprod
 nằm ở địa chỉ cũ và vẫn tiêu được bằng script cũ (ref-script CIP-33 cũ còn trên chuỗi), nhưng

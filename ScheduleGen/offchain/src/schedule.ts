@@ -17,6 +17,7 @@ import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, nextFireEpoch, countEligibleFires,
   selectLampForLock, unlockLockedAmount, isExpired, lAvail,
+  assertHoldingCapAfterCommit,
   lampToOildrop, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import {
@@ -201,6 +202,9 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
 
   // Lock youngest holdings (C-SCH-8, T5)
   const newHoldings = selectLampForLock(vaultDatum.loyalty_holdings, totalLock);
+
+  // C-SCH-HOLD — gương của `validate_commit`; lý lẽ ở `math.ts` cạnh hàm này.
+  assertHoldingCapAfterCommit(newHoldings.length, "buildScheduleCommit");
 
   // Updated vault datum (A02: field-by-field)
   let newVaultDatum: VaultDatum = {

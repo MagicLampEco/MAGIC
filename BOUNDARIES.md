@@ -185,12 +185,24 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 > lý: một vault chạm trần cũ thì **KHÔNG TIÊU ĐƯỢC**, và `validate_fire` là nhánh duy
 > nhất hạ được `lamp_locked`.
 >
-> Hai điều phản trực giác, viết ra vì chúng là **kết luận**, không phải số đo — nên chúng
-> không già đi theo mỗi lần đo lại. **(a)** `validate_commit` phải có cổng đếm holding
-> chứ không chỉ `validate_fire`; bản cũ thiếu đúng cổng đó. **(b) Hai nhánh có hai thủ
-> phạm KHÁC NHAU** — câu "thủ phạm không phải `list.sort`" đúng cho FIRE và **sai cho
-> COMMIT**. Nhánh nào đang hẹp nhất thì **đã đảo một lần** sau bản vá #48, và có thể đảo
-> nữa; đừng nhớ thứ tự, hãy tra.
+> Ba điều phản trực giác, viết ra vì chúng là **kết luận**, không phải số đo — nên chúng
+> không già đi theo mỗi lần đo lại.
+>
+> **(a)** `validate_commit` phải có cổng đếm holding chứ không chỉ `validate_fire`; bản
+> cũ thiếu đúng cổng đó.
+>
+> **(b) Và cổng ở nhánh commit mang dấu NGHIÊM (`<`), không phải `<=`** như ba cổng kia.
+> Đường RA tự nó dài thêm ĐÚNG một phần tử: `unlock_oldest` cắt holding ở biên lượt nhả
+> thành `(epoch, đã mở)` + `(epoch, còn khoá)`, mà `same_bucket` đòi trùng cả `is_locked`
+> nên `coalesce_holdings` không gộp hai mảnh đó. Chạm đúng trần ở bước commit vì thế là
+> dựng một vault khoá LAMP vĩnh viễn — vào được, không ra được, và không có cửa phụ vì
+> `lamp_locked` chỉ giảm ở nhánh fire. Một suất là **đủ** và là **tối thiểu**; chứng minh
+> chặn trên nằm cạnh chính cổng đó trong `validators/vault.ak`, cùng hai bài canh
+> (`c_commit_full_lock_at_cap_rejected`, `cf_commit_at_cap_then_fire_ok`).
+>
+> **(c) Hai nhánh có hai thủ phạm KHÁC NHAU** — câu "thủ phạm không phải `list.sort`"
+> đúng cho FIRE và **sai cho COMMIT**. Nhánh nào đang hẹp nhất thì **đã đảo một lần** sau
+> bản vá #48, và có thể đảo nữa; đừng nhớ thứ tự, hãy tra.
 >
 > **Số đo KHÔNG nằm ở đây, và cũng không nằm ở `constants.ak`** — chỉ ở MỘT chỗ:
 > `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Trần ExUnit của hai nhánh mang LAMP"*,
@@ -201,6 +213,13 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 > Bản trước của khối này vẫn chép số xuống dù chính nó dặn đừng chép — và phần chép lại
 > là phần sai, đúng lần thứ hai. Chú thích ở `constants.ak` cũng chép, cũng sai, và nằm
 > đúng chỗ người ta tra để chọn trần. Hai bản sao đó nay đã gỡ.
+>
+> 🔴 **Và bản hoà này đã bỏ một câu của nhánh kia: "fire chết TRƯỚC commit".** Câu đó
+> đúng lúc viết và **đã bị chính phép đo lật** sau bản vá #48 — nay commit là nhánh hẹp
+> nhất. Nó bị bỏ chứ không được giữ kèm đính chính, vì trí nhớ thì nạp cùng lúc: giữ cả
+> hai bản là giữ một mâu thuẫn, và không bản nào tự khai là đã bị bác. Vế còn sống của
+> câu đó — *cửa RA hẹp hơn cửa VÀO nên commit phải có cổng* — nằm nguyên ở mục (a) và (b)
+> bên trên, và mục (b) không phụ thuộc nhánh nào đang hẹp hơn.
 
 ---
 

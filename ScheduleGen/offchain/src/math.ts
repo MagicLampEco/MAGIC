@@ -172,8 +172,31 @@ export function countEligibleFires(
   return fires;
 }
 
+/// C-SCH-HOLD — dấu NGHIÊM, gương của `onchain/validators/vault.ak` ▸
+/// `validate_commit`. Danh sách SAU commit phải còn trống ĐÚNG một suất, vì
+/// đường RA tự nó dài thêm 1: `unlockLockedAmount` cắt holding ở biên lượt nhả
+/// thành (epoch, đã mở) + (epoch, còn khoá), và `coalesceHoldings` không gộp
+/// hai mảnh đó (chúng khác `is_locked`). Chạm đúng trần ở bước commit là dựng
+/// một vault KHÔNG BAO GIỜ tiêu được: `lamp_locked` chỉ giảm ở nhánh fire, còn
+/// rút thì chết ở `avail = balance − locked`.
+///
+/// Một suất là ĐỦ, không cộng dồn theo số lượt bắn: nhả đi từ epoch già nhất
+/// theo thứ tự nên tại mỗi thời điểm chỉ MỘT epoch mang hai mảnh; lượt sau cắt
+/// tiếp cùng epoch đó thì mảnh mở mới gộp vào mảnh mở cũ.
+export function assertHoldingCapAfterCommit(
+  holdingsAfterCommit : number,
+  where               : string,
+): void {
+  if (holdingsAfterCommit >= MAX_LOYALTY_HOLDINGS)
+    throw new Error(
+      `GEN-SCH-007 (${where}): commit would leave ${holdingsAfterCommit} loyalty ` +
+      `holdings, but the vault must stay below ${MAX_LOYALTY_HOLDINGS} so one slot ` +
+      `is left for the split that every fire performs. Consolidate holdings first.`);
+}
+
 import {
   MAX_BATCHES_PER_VAULT, MAX_FIRES_PER_TX_CATCHUP, SHARD_COUNT,
+  MAX_LOYALTY_HOLDINGS,
 } from "./constants.js";
 
 // Utility + lock helpers are re-exported from @magiclamp/protocol-utils

@@ -123,7 +123,11 @@ danh sách vào/ra giống hệt bản cũ, nên bên dựng tx không phải s�
    Permissionless, không đụng LAMP, từ chối lượt rỗng, giữ nguyên `last_updated_epoch`.
 3. **`max_loyalty_holdings` 64 → 40** ở cả ScheduleGen lẫn InstantGen, hai bên P8, cộng
    **một cổng đếm holding mới trong `validate_commit`** — nhánh này trước đây không có,
-   dù `validate_fire`, genesis và `validate_withdraw_lamp` đều có.
+   dù `validate_fire`, genesis và `validate_withdraw_lamp` đều có. Cổng ấy mang **dấu
+   NGHIÊM `<`**, không phải `<=` như ba cổng kia, và chênh lệch một ký tự đó là toàn bộ
+   nội dung của nó — xem đoạn riêng bên dưới. Gương off-chain:
+   `ScheduleGen/offchain/src/math.ts` ▸ `assertHoldingCapAfterCommit`, gọi ở
+   `schedule.ts` ▸ `buildScheduleCommit` (mã lỗi `GEN-SCH-007`).
 4. **`f_cap_surplus_q` 0,10 → 0,001** (InstantGen) và **`um_max_step_q = 0,10`** (UMKeeper,
    chốt mới) — hai hàng rào TẠM, xem `DevStatus.md` Nợ #49 và #50.
 
@@ -141,6 +145,28 @@ dựng fixture, đối chiếu `maxTxExMem = 16 500 000`: commit **128,6 %** ở
 **138,9 %** ở 64; ở 40 thì 58,4 % / 62,2 %. Điểm chết khớp bậc hai: fire n ≈ 53, commit
 n ≈ 55 — **fire chết TRƯỚC commit**, tức cửa RA hẹp hơn cửa VÀO, và đó là lý do cổng đếm
 holding phải có mặt ở nhánh commit chứ không chỉ ở nhánh fire.
+
+**Và cổng ấy phải mang dấu NGHIÊM — bản đầu của chính đợt vá này viết `<=`, và như thế
+là thay một ngõ cụt bằng một ngõ cụt khác.** Đường RA tự nó làm danh sách dài thêm ĐÚNG
+một phần tử: `unlock_oldest` cắt holding ở biên lượt nhả thành `(epoch, đã mở)` +
+`(epoch, còn khoá)`, mà `same_bucket` đòi trùng **cả** `is_locked` nên `coalesce_holdings`
+không gộp hai mảnh đó lại. Với `<=`, tồn tại một trạng thái vào được mà không ra được:
+commit khoá **trọn** số dư giữ nguyên độ dài danh sách (mọi holding khoá nguyên cái, không
+cắt cái nào), chạm đúng trần, được nhận; rồi **mọi** lượt fire đều cho trần + 1 và bị
+`validate_fire` từ chối — với mọi `k ∈ [1, max_fires_per_tx_catchup]`, nên không có lựa
+chọn epoch nào cứu được. Cửa phụ cũng không có: `lamp_locked` chỉ giảm ở nhánh fire, và
+`validate_withdraw_lamp` chết ở `amount <= avail` với `avail = balance − locked = 0`.
+Kết cục là LAMP khoá vĩnh viễn **cộng** một suất `shard_active_count` không bao giờ trả
+lại, tức mất vĩnh viễn một phần `SHARD_CAP` của 1/16 số người dùng.
+
+Một suất là **đủ** và là **tối thiểu**: nhả đi từ epoch già nhất theo thứ tự, nên tại mỗi
+thời điểm chỉ một epoch mang đồng thời hai mảnh; lượt sau cắt tiếp cùng epoch đó thì mảnh
+mở mới gộp vào mảnh mở cũ (+0), và biên chỉ dời sang epoch kế khi epoch cũ đã cạn. Vậy
+đỉnh danh sách trong suốt vòng đời = (độ dài sau commit) + 1. Ba bài canh, cả ba đỏ khi
+đảo dấu về `<=` (đã đo bằng cách đảo thật rồi chạy lại): `c_commit_full_lock_at_cap_rejected`
+chặn lối vào, `cf_commit_at_cap_then_fire_ok` chạy một lượt fire **thật** trên datum do
+commit sinh ra để chứng minh cửa ra còn mở, `hc_full_lock_keeps_length_then_fire_adds_one`
+giữ phần số học để hai bài kia không thành số ma thuật.
 
 **Đính chính một kết luận cũ của chính đợt đo này.** Thủ phạm bậc hai **không phải
 `list.sort`**: nhánh fire không sort danh sách đầy đủ mà vẫn bậc hai. Nguồn là mẫu `foldl` +

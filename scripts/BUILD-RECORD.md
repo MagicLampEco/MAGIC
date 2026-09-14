@@ -27,9 +27,9 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `consume.consume` | `5470f785b8f32eb0571e2095bd1c4849e637746afb2cee6124cbc8ae` |
+| `consume.consume` | `5e218121ec47798adc034beeacc5f922108cc7055edcd6e7c806e614` |
 | `price_nft.price_nft` | `82080eb9cb27d9eb7e603b7e3ecc460db12103b1829203b55d549d64` |
-| `price_param.price_param` | `84711860285aa599b8bafe8a437a90d3903c966395787b3bae9f88ad` |
+| `price_param.price_param` | `3ea8f97b561d71688e6c4b6aacf02e6879ad6cdc9d134d53ad07da28` |
 
 ### `Eligibility/onchain`
 
@@ -44,7 +44,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `vault.vault` | `1b2d0de4512f8b3289f99cb7b59ae6c99518b94a5bed0f15c3aad5bb` |
+| `vault.vault` | `d11bc4d1df5fd14bc8359e3b5787fdbbb59c7fdc2ecbbb73e1e9f0f8` |
 
 ### `Paymaster/onchain`
 
@@ -79,8 +79,8 @@ trình biên dịch `v1.1.21+42babe5`
 | validator | hash (CHƯA apply-param) |
 |---|---|
 | `shard_nft.shard_nft` | `b2211b6008397f1b5996f834e0d060bfff48a16a3dd971207c333e71` |
-| `vault.shard` | `52128031da1835058e16a19bb63f517f1ca027456a2b193e3e398831` |
-| `vault.vault` | `2de65bad93d570262116b4941c08da6031ba469123b4ce5768a5f7ef` |
+| `vault.shard` | `b1836db9658800284b43631ac1b44a8fb80c1d4f0fc0b6b9725fe63f` |
+| `vault.vault` | `b7d68fc94597679334c92e6c5f71fbbe34348e2d01850ee8dc0c703c` |
 
 ### `UMKeeper/onchain`
 
@@ -88,7 +88,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `um_datum.um_datum_validator` | `38d6e740f5c2a75335eb36736e8d458e04b949ef5be7513f0be7c374` |
+| `um_datum.um_datum_validator` | `c4ff76ae5cb027ebdeda78b281364a86c2347d7c63a97fd664f181a0` |
 | `um_nft.um_nft` | `f38ed1b66fadd5f1da408519bf9a8966a409ae24e31e1cec7dbe09d3` |
 
 <!-- MÁY SINH — HẾT -->

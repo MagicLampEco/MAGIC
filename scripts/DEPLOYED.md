@@ -112,18 +112,34 @@ Phép so sánh trên chỉ đứng được khi hệ **không bao giờ tra tài
 $ grep -rn "4d41474943" --include='*.ak' --include='*.ts' . | grep -v /Legacy/ | wc -l
 0                          # hex của chữ "MAGIC" không xuất hiện ở đâu trong mã
 
-$ grep -rn "assets\.quantity_of(" --include='*.ak' . | grep -v /Legacy/ | wc -l
-63
-$ grep -rn "assets\.quantity_of([^,]*,[^,)]*)" --include='*.ak' . | grep -v /Legacy/
-                           # rỗng — không lời gọi nào thiếu vế asset_name
-
 $ grep -rnE "asset_name ==|[^_.]name ==" --include='*.ak' . | grep -v /Legacy/ | wc -l
 0                          # không chỗ nào so tên tài sản một mình
+
+$ python3 scripts/measure_asset_pair_arity.py
+lời gọi assets.quantity_of : 51
+  trong đó trải nhiều dòng : 4   (grep một dòng không đọc được)
+  truyền đủ (value, policy_id, asset_name) : 51
+  ✓ không lời gọi nào tra tài sản bằng policy id một mình
+exit=0
 ```
 
-Đo lại 2026-09-14. Ba lệnh này là **phép đo**, không phải trạng thái chép lại — chạy lại được
-nên nó không già đi. Con số 63 gồm cả lời gọi trong khối `test` của chính tệp validator; điều
-đang khẳng định không phải con số đó mà là **lệnh thứ hai trả về rỗng**.
+Đo 2026-09-14. Đây là **phép đo**, không phải trạng thái chép lại — chạy lại được nên nó
+không già đi.
+
+> 🔴 **Vế thứ ba KHÔNG đo được bằng grep, và bản đầu của khối này đã đo bằng grep.**
+> `assets.quantity_of(value, policy_id, asset_name)` nhận ba tham số; một phép grep một dòng
+> không đọc được lời gọi trải nhiều dòng, nên nó trả về "sạch" cho một tập nó **chưa hề nhìn
+> thấy**. Ở kho này có **4 trên 51** lời gọi như thế. Nhà LAMP nêu đúng chỗ hở này (thư
+> `lamp0914mg-e`) khi tự đo kho của họ; câu đó áp cho cả hai nhà. Nay đo bằng phép cân ngoặc
+> (`scripts/measure_asset_pair_arity.py`), đếm dấu phẩy ở mức ngoài cùng và bỏ dấu phẩy đuôi.
+>
+> Bản grep còn đếm đôi: `.claude/worktrees/` là **bản sao của chính kho này**, nên mọi con số
+> quét toàn kho phải loại nó ra — không loại thì `51` thành `114`.
+>
+> Rút thành câu dùng được, đứng cạnh câu về policy id — cũng nhận từ nhà LAMP:
+> **kiểm ĐỊNH DẠNG không bao giờ thay được ĐỐI CHỨNG.** Một giá trị chép nhầm luôn đúng định
+> dạng, vì nó từng là một giá trị thật. Đó đúng là giới hạn của `assertLampPolicyId`: nó là
+> danh sách từ chối cộng phép kiểm hình dạng, **không** phải phép đối chứng.
 
 Rủi ro **thật** thì vẫn còn, và nó nằm **ngoài** giao thức: ví và explorer hiện chữ `MAGIC`
 cho một tài sản chuyển nhượng được, nên luận cứ đối ngoại *"MAGIC không chuyển nhượng, chỉ

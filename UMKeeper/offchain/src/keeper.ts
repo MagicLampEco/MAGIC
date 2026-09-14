@@ -10,12 +10,13 @@ import {
 } from "@lucid-evolution/lucid";
 import { posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 import {
-  computeUMRaw, clampUM, appendHistory, computeSMA, computeNewUM,
+  computeUMRaw, clampUM, clampStep, appendHistory, computeSMA, computeNewUM,
   type UMDatum,
 } from "./math.js";
 
 export {
-  computeUMRaw, clampUM, appendHistory, computeSMA, computeNewUM, type UMDatum,
+  computeUMRaw, clampUM, clampStep, appendHistory, computeSMA, computeNewUM,
+  type UMDatum,
 };
 
 // ── Local constants used for tx serialization only ────────────
@@ -31,7 +32,8 @@ export interface UMUpdateResult {
   tx           : TxSignBuilder;
   oldSmoothed  : bigint;
   newSmoothed  : bigint;
-  newRaw       : bigint;
+  newRaw       : bigint;   // tỉ lệ ĐO ĐƯỢC của epoch (chưa kẹp bước)
+  submittedRaw : bigint;   // con số THẬT đi vào redeemer, sau khi kẹp bước
   epoch        : bigint;
   summary      : string;
 }
@@ -104,7 +106,7 @@ export async function buildUMUpdateTx(
   }
 
   // Compute new UM
-  const { newSmoothed, newHistory, newRaw } = computeNewUM(
+  const { newSmoothed, newHistory, newRaw, submittedRaw } = computeNewUM(
     datum, epochStats.totalBurns, epochStats.totalMints,
   );
 
@@ -119,7 +121,9 @@ export async function buildUMUpdateTx(
     network,
     scriptHashToCredential(validatorToScriptHash(umScript)),
   );
-  const redeemer = Data.to({ UMUpdate: { new_raw: newRaw } }, UMRedeemerPlutus);
+  // `new_raw` gửi lên là con số ĐÃ KẸP BƯỚC, không phải tỉ lệ đo được: validator
+  // từ chối (không kẹp hộ) mọi bước vượt `um_max_step_q`.
+  const redeemer = Data.to({ UMUpdate: { new_raw: submittedRaw } }, UMRedeemerPlutus);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const tipMs    = tipPosixMs ?? BigInt(Date.now());
   const lowerTime = Number(tipMs);
@@ -140,11 +144,17 @@ export async function buildUMUpdateTx(
     .complete();
 
   const arrow = newSmoothed > datum.smoothed_q ? "▲" : newSmoothed < datum.smoothed_q ? "▼" : "─";
+  // Hàng rào có cắt bớt bước không — phải HIỆN RA, không nuốt im. Keeper đọc
+  // dòng này là biết UM đang đi sau thị trường bao nhiêu và vì lý do gì.
+  const stepNote = submittedRaw === clampUM(newRaw)
+    ? `(trong trần bước 0,10)`
+    : `(ĐÃ KẸP về trần bước 0,10 — thị trường đòi ${(Number(clampUM(newRaw)) / 1e9).toFixed(4)}×)`;
   const summary = [
     `═══ UM Update ═══`,
     `Epoch:         ${currentEpoch}`,
     `Burns / Mints: ${epochStats.totalBurns} / ${epochStats.totalMints} nanogic`,
-    `New raw UM:    ${newRaw} (${(Number(newRaw) / 1e9).toFixed(4)}×)`,
+    `Raw đo được:   ${newRaw} (${(Number(newRaw) / 1e9).toFixed(4)}×)`,
+    `Raw đã gửi:    ${submittedRaw} (${(Number(submittedRaw) / 1e9).toFixed(4)}×) ${stepNote}`,
     `Old smoothed:  ${datum.smoothed_q} (${(Number(datum.smoothed_q) / 1e9).toFixed(4)}×)`,
     `New smoothed:  ${newSmoothed} (${(Number(newSmoothed) / 1e9).toFixed(4)}×) ${arrow}`,
     `History:       [${newHistory.map(x => (Number(x)/1e9).toFixed(2)).join(", ")}]`,
@@ -155,7 +165,10 @@ export async function buildUMUpdateTx(
     `Note: Permissionless tx — no owner signature required (§14.3).`,
   ].join("\n");
 
-  return { tx, oldSmoothed: datum.smoothed_q, newSmoothed, newRaw, epoch: currentEpoch, summary };
+  return {
+    tx, oldSmoothed: datum.smoothed_q, newSmoothed, newRaw, submittedRaw,
+    epoch: currentEpoch, summary,
+  };
 }
 
 // ══════════════════════════════════════════════════════════════

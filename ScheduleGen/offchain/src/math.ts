@@ -34,7 +34,7 @@ export { selectLampForLock, removeLockedAmount };
 //
 // `coalesceHoldings` KHÔNG phải tuỳ chọn: mỗi lần giải khoá một phần là tách
 // một holding và không bao giờ bỏ đi cái nào, nên danh sách phình +1 mỗi lần
-// fire. `max_loyalty_holdings` = 64 và validate_fire cưỡng chế nó ⟹ một lịch
+// fire. `max_loyalty_holdings` (40 kể từ 2026-09-14) và validate_fire cưỡng chế nó ⟹ một lịch
 // dài sẽ làm vault không fire nổi mà cũng không rút nổi: LAMP đóng băng.
 //
 // `removeLockedAmount` (xoá hẳn LAMP) vẫn xuất để tra cứu, không builder nào gọi.
@@ -146,15 +146,20 @@ export function nextFireEpoch(startFireEpoch: bigint, firedCount: bigint): bigin
   return startFireEpoch + firedCount;   // e_i = start + fired_count (before this fire)
 }
 
+/// `liveBatches` PHẢI là số batch CÒN SỐNG (đã lọc bỏ batch hết hạn), không phải
+/// `magic_batches.length` thô. Đây là chỗ bản cũ hỏng: validator dựng danh sách
+/// mới trên bản ĐÃ prune, nên đếm trên bản CHƯA prune làm 32 batch đã chết cũng
+/// khoá `batchBudget` về 0 — một ngõ cụt khoá LAMP, không phải một sai số nhỏ.
+/// Cùng bản vá với `ScheduleGen/onchain/validators/vault.ak` ▸ `validate_fire` (P8).
 export function countEligibleFires(
   startFireEpoch : bigint,
   firedCount     : bigint,
   scheduleLength : bigint,
   currentEpoch   : bigint,
-  currentBatches : number,
+  liveBatches    : number,
 ): number {
   const remaining    = Number(scheduleLength - firedCount);
-  const batchBudget  = MAX_BATCHES_PER_VAULT - currentBatches;
+  const batchBudget  = MAX_BATCHES_PER_VAULT - liveBatches;
   let fires = 0;
   while (
     fires < MAX_FIRES_PER_TX_CATCHUP &&
@@ -167,8 +172,31 @@ export function countEligibleFires(
   return fires;
 }
 
+/// C-SCH-HOLD — dấu NGHIÊM, gương của `onchain/validators/vault.ak` ▸
+/// `validate_commit`. Danh sách SAU commit phải còn trống ĐÚNG một suất, vì
+/// đường RA tự nó dài thêm 1: `unlockLockedAmount` cắt holding ở biên lượt nhả
+/// thành (epoch, đã mở) + (epoch, còn khoá), và `coalesceHoldings` không gộp
+/// hai mảnh đó (chúng khác `is_locked`). Chạm đúng trần ở bước commit là dựng
+/// một vault KHÔNG BAO GIỜ tiêu được: `lamp_locked` chỉ giảm ở nhánh fire, còn
+/// rút thì chết ở `avail = balance − locked`.
+///
+/// Một suất là ĐỦ, không cộng dồn theo số lượt bắn: nhả đi từ epoch già nhất
+/// theo thứ tự nên tại mỗi thời điểm chỉ MỘT epoch mang hai mảnh; lượt sau cắt
+/// tiếp cùng epoch đó thì mảnh mở mới gộp vào mảnh mở cũ.
+export function assertHoldingCapAfterCommit(
+  holdingsAfterCommit : number,
+  where               : string,
+): void {
+  if (holdingsAfterCommit >= MAX_LOYALTY_HOLDINGS)
+    throw new Error(
+      `GEN-SCH-007 (${where}): commit would leave ${holdingsAfterCommit} loyalty ` +
+      `holdings, but the vault must stay below ${MAX_LOYALTY_HOLDINGS} so one slot ` +
+      `is left for the split that every fire performs. Consolidate holdings first.`);
+}
+
 import {
   MAX_BATCHES_PER_VAULT, MAX_FIRES_PER_TX_CATCHUP, SHARD_COUNT,
+  MAX_LOYALTY_HOLDINGS,
 } from "./constants.js";
 
 // Utility + lock helpers are re-exported from @magiclamp/protocol-utils

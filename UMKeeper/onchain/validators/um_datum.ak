@@ -38,6 +38,26 @@ const um_min_q : Int = 500_000_000    // [Constitutional]
 const um_max_q : Int = 2_000_000_000  // [Constitutional]
 const um_window : Int = 6             // [Significant]
 
+// ── HÀNG RÀO TẠM, KHÔNG PHẢI BẢN VÁ THẬT ─────────────────────────────────────
+// Trần tương đối cho MỖI lượt cập nhật: |clamped_raw − datum.smoothed_q| ≤ trần.
+//
+// Lỗ thật: `new_raw` do người gửi TỰ KHAI và validator không có cách nào đo lại
+// (không oracle, không chữ ký). Vì nhánh UMUpdate là permissionless, một mình kẻ
+// tấn công ghim được smoothed_q lên um_max_q — đã đo bằng PoC chạy thật: 6 giao
+// dịch liên tiếp, 0 chữ ký, smoothed_q chạm 2_000_000_000, tức nhân đôi hệ số
+// thưởng của mọi vault trong giao thức. Bộ kiểm nền 10/10 xanh trên bản sạch ⟹
+// đường tấn công đó nằm BÊN TRONG hành vi đang được chấp nhận.
+//
+// Rào này chỉ làm kẻ tấn công TỐN NHIỀU EPOCH HƠN — nó KHÔNG chặn được:
+// vẫn một mình, vẫn 0 chữ ký, chỉ là mỗi epoch nhích tối đa 0,10 thay vì nhảy
+// thẳng. Từ smoothed_q = 1.0 lên trần vẫn tới đích, chỉ chậm hơn.
+//
+// Bản vá thật là CỔNG M-of-N ngang với `price_param`, khuôn có sẵn ở
+// `ConsumeMAGIC/onchain/validators/price_param.ak:54-57` (threshold > 0 ·
+// threshold ≤ len(committee) · all_distinct(committee) · đếm chữ ký ≥ threshold).
+// Chừng nào chưa có cổng đó, đừng đọc rào này thành "UM đã được bảo vệ".
+const um_max_step_q : Int = 100_000_000  // 0.10 — [Significant]
+
 // ── Types ─────────────────────────────────────────────────────
 pub type UMDatum {
   smoothed_q         : Int,
@@ -114,6 +134,16 @@ validator um_datum_validator(
         // ── Clamp raw value ──────────────────────────────────
         let clamped_raw = clamp(new_raw, um_min_q, um_max_q)
 
+        // ── TRẦN TƯƠNG ĐỐI MỖI LƯỢT (hàng rào tạm — xem um_max_step_q) ──
+        // So với `datum.smoothed_q` của INPUT, KHÔNG so với phần tử cuối của
+        // history: history ghi các giá trị RAW đã khai, còn thứ cả giao thức
+        // đọc là smoothed_q. Neo vào raw cũ thì kẻ tấn công tự chọn mốc.
+        //
+        // Dùng `expect` (TỪ CHỐI giao dịch), KHÔNG kẹp âm thầm: `history` phải
+        // ghi đúng con số người gửi đã khai. Kẹp âm thầm là ghi vào sổ một con
+        // số không ai khai, và mọi phân tích sau đó đọc nó như một lời khai thật.
+        expect step_within(clamped_raw, datum.smoothed_q, um_max_step_q)
+
         // ── C-UM-2: history cap ≤ 6 ─────────────────────────
         let old_history = datum.history
         let new_history = append_capped(old_history, clamped_raw, um_window)
@@ -164,6 +194,16 @@ fn append_capped(history: List<Int>, new_val: Int, cap: Int) -> List<Int> {
 
 fn clamp(x: Int, lo: Int, hi: Int) -> Int {
   if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+// |new_value − old_value| ≤ max_step, viết không dùng abs để khỏi thêm import.
+fn step_within(new_value: Int, old_value: Int, max_step: Int) -> Bool {
+  let delta = new_value - old_value
+  if delta < 0 {
+    -delta <= max_step
+  } else {
+    delta <= max_step
+  }
 }
 
 // ── eUTXO helpers ─────────────────────────────────────────────
@@ -294,13 +334,16 @@ fn um_tx(
 }
 
 // happy: permissionless (không cần chữ ký), value preserved, SMA đúng.
+// raw đi lên 0,05 — NẰM TRONG trần um_max_step_q (0,10). Bản trước dùng 1,2e9
+// (bước 0,2) và nay bị chính trần đó từ chối; đổi xuống để bài này vẫn kiểm
+// đúng thứ nó mang tên (đường đi được), không phải kiểm trần.
 test um_happy_path() {
   let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
-  let raw = 1_200_000_000
-  // history [q, raw] → SMA = (1e9 + 1.2e9)/2 = 1.1e9, clamp giữ nguyên
+  let raw = 1_050_000_000
+  // history [q, raw] → SMA = (1e9 + 1.05e9)/2 = 1.025e9, clamp giữ nguyên
   let new_hist = [q, raw]
   let out_d = UMDatum {
-    smoothed_q: 1_100_000_000,
+    smoothed_q: 1_025_000_000,
     last_updated_epoch: 5,
     history: new_hist,
   }
@@ -411,14 +454,107 @@ test um_output_stake_cred_hijack() fail {
 }
 
 // REJECT 4 — output smoothed_q sai (người trigger khai gian SMA).
+// raw giữ trong trần (bước 0,10) để bài này chết ĐÚNG ở chốt smoothed_q chứ
+// không trôi lên chốt trần mới — nếu trôi thì nó vẫn đỏ, vẫn đúng tên, và vẫn
+// không ghim gì cả.
 test um_forged_smoothed() fail {
   let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
-  let raw = 1_200_000_000
-  // SMA đúng = 1.1e9, attacker khai 2e9 → reject
+  let raw = 1_100_000_000
+  // SMA đúng = 1.05e9, attacker khai 2e9 → reject
   let out_d = UMDatum {
     smoothed_q: 2_000_000_000,
     last_updated_epoch: 5,
     history: [q, raw],
+  }
+  let v = um_value()
+  let tx = um_tx(in_d, out_d, [], 5, v, v)
+  um_datum_validator.spend(
+    t_mspe, t_um_policy, t_um_name,
+    Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
+  )
+}
+
+// ══════════════════════════════════════════════════════════════
+// Trần tương đối mỗi lượt (um_max_step_q) — bốn bài kẹp HAI CỰC
+// ══════════════════════════════════════════════════════════════
+// Hai bài ACCEPT đứng đúng TRÊN biên (bước == trần), hai bài REJECT đứng ngay
+// SAU biên (+1) và ở đúng bước của PoC. Đầu vào của bốn bài chỉ khác nhau ở
+// `new_raw`; mọi ràng buộc khác (value, địa chỉ, epoch, SMA) đều được dựng
+// ĐÚNG, nên gỡ chốt ra là hai bài REJECT lật màu — không bài nào chết vì lý do
+// khác.
+
+// ACCEPT — bước đi LÊN đúng bằng trần: 1.0 → 1.1 (Δ = +0,10 == um_max_step_q).
+test um_step_up_exactly_at_cap() {
+  let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
+  let raw = 1_100_000_000             // q + um_max_step_q
+  // history [1e9, 1.1e9] → SMA = 2.1e9 / 2 = 1.05e9
+  let out_d = UMDatum {
+    smoothed_q: 1_050_000_000,
+    last_updated_epoch: 5,
+    history: [q, raw],
+  }
+  let v = um_value()
+  let tx = um_tx(in_d, out_d, [], 5, v, v)
+  um_datum_validator.spend(
+    t_mspe, t_um_policy, t_um_name,
+    Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
+  )
+}
+
+// ACCEPT — bước đi XUỐNG đúng bằng trần: 1.0 → 0.9 (Δ = −0,10).
+// Phải có cả chiều xuống: một trần chỉ kiểm một dấu là trần nửa vời, và kẻ
+// tấn công dìm UM xuống um_min_q cũng đổi được kinh tế của giao thức.
+test um_step_down_exactly_at_cap() {
+  let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
+  let raw = 900_000_000               // q − um_max_step_q
+  // history [1e9, 0.9e9] → SMA = 1.9e9 / 2 = 0.95e9
+  let out_d = UMDatum {
+    smoothed_q: 950_000_000,
+    last_updated_epoch: 5,
+    history: [q, raw],
+  }
+  let v = um_value()
+  let tx = um_tx(in_d, out_d, [], 5, v, v)
+  um_datum_validator.spend(
+    t_mspe, t_um_policy, t_um_name,
+    Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
+  )
+}
+
+// REJECT — bước vượt trần đúng MỘT đơn vị: Δ = um_max_step_q + 1.
+// SMA khai ở output là SMA ĐÚNG của history đó ((1e9 + 1_100_000_001)/2 =
+// 1_050_000_000 sau khi sàn), nên bài này chỉ có MỘT lý do để đỏ: chốt trần.
+test um_step_one_over_cap_rejected() fail {
+  let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
+  let raw = 1_100_000_001             // q + um_max_step_q + 1
+  let out_d = UMDatum {
+    smoothed_q: 1_050_000_000,
+    last_updated_epoch: 5,
+    history: [q, raw],
+  }
+  let v = um_value()
+  let tx = um_tx(in_d, out_d, [], 5, v, v)
+  um_datum_validator.spend(
+    t_mspe, t_um_policy, t_um_name,
+    Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
+  )
+}
+
+// REJECT — tái hiện ĐÚNG một bước của PoC đã chạy thật: smoothed_q = 1,5 và
+// người gửi khai thẳng new_raw = 2,0 (bước 0,50). Trước khi có trần, bước này
+// được chấp nhận và sáu lượt như thế ghim smoothed_q lên um_max_q với 0 chữ ký.
+test um_poc_jump_to_max_rejected() fail {
+  let in_d = UMDatum {
+    smoothed_q: 1_500_000_000,
+    last_updated_epoch: 0,
+    history: [1_500_000_000],
+  }
+  let raw = 2_000_000_000             // = um_max_q, bước 0,50
+  // history [1.5e9, 2e9] → SMA = 3.5e9 / 2 = 1.75e9 (nằm trong [min, max])
+  let out_d = UMDatum {
+    smoothed_q: 1_750_000_000,
+    last_updated_epoch: 5,
+    history: [1_500_000_000, raw],
   }
   let v = um_value()
   let tx = um_tx(in_d, out_d, [], 5, v, v)

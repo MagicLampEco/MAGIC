@@ -185,6 +185,10 @@ export const VaultRedeemerSchema = Data.Enum([
   Data.Object({ SetDelegate: Data.Object({                                   // constr 4
     new_delegate: Data.Nullable(Data.Bytes()),
   })}),
+  // constr 5 — PruneExpired: dọn rác batch chết, permissionless, không đụng LAMP.
+  // ĐẶT CUỐI: chỉ số constructor là hợp đồng nhị phân, chèn vào giữa là vỡ decode
+  // mọi UTxO đã tạo. Một variant không trường mã hoá bằng danh sách RỖNG.
+  Data.Object({ PruneExpired: Data.Tuple([]) }),
 ]);
 export type VaultRedeemer = Data.Static<typeof VaultRedeemerSchema>;
 

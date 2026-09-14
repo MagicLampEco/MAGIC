@@ -303,6 +303,36 @@ fn did_len_ok(did: ByteArray) -> Bool {
 // một input Consume cùng script cũng chết: nhánh BindDID thấy `n_in == 2`, còn nhánh
 // Consume thấy redeemer không phải `Consume` ở `expect Consume {..}`.
 // ═══════════════════════════════════════════════════════════════
+/// 🔴 GIỚI HẠN PHẢI ĐỌC TRƯỚC KHI DÙNG `did_commit` LÀM ĐẦU VÀO CHO BẤT CỨ THỨ GÌ
+///
+/// Nhánh này KHÔNG xác thực rằng DID được gắn **thuộc về** người ký. Nó kiểm đúng năm
+/// thứ: một-lần · chữ ký **CHỦ THREAD** · 1-vào-1-ra · value bảo toàn · độ dài 32 byte.
+/// Không vế nào chứng minh mối liên hệ giữa `in_datum.owner` và `did_commit`.
+///
+/// **Hệ quả cụ thể, không phải lý thuyết:** `did_commit` là một hash 32 byte nằm CÔNG
+/// KHAI trên chuỗi trong mọi thread đã gắn. Nên bất kỳ ai cũng CHÉP được `did_commit`
+/// của người khác vào thread của mình — không cần biết tiền ảnh, chỉ cần đọc chuỗi —
+/// rồi toàn bộ MAGIC mình tiêu sẽ quy về DID của người đó. Cả hai chiều đều mở: bán
+/// mức-tiêu của mình cho người khác, và thổi mức-tiêu cho một người không hề yêu cầu.
+///
+/// Điều đó **ĐÚNG THEO THIẾT KẾ** ở tầng này — `types.ak` định nghĩa `did_commit` là
+/// một cam kết do người tạo đặt, và `engage_mint_did_commit_free_happy` (cuối tệp này)
+/// khoá chủ ý đó lại để không ai "siết nhầm". Chứng minh quyền sở hữu DID được giả định
+/// nằm ở tầng khác.
+///
+/// **VÌ THẾ:** `did_commit` dùng được cho **QUY KẾT** (ai tự nhận việc tiêu này), KHÔNG
+/// dùng được cho bất cứ thứ gì mà nói dối có lợi — quyền biểu quyết, phân bổ phần
+/// thưởng, hạn mức theo người, chống-Sybil. Một hệ đọc `did_commit` làm đầu vào cho
+/// những thứ đó đang đọc một lời tự khai không ai kiểm.
+///
+/// Nếu có ngày cần vế mạnh, hình dạng rẻ nhất là đọc anchor Service-DID của PhoenixKey
+/// qua `reference_input` rồi đòi chữ ký của controller hiện tại — cùng khuôn mà
+/// `SPEC` §13 đã mô tả cho `engine_key`. Nó đổi script hash ⟹ deploy lại ⟹ công bố
+/// ref-script CIP-33 mới, nên phải đi cùng một lượt với việc khác đổi hash.
+///
+/// Viết ra đây, không viết ở tài liệu, vì đây là chỗ người sắp dựa vào `did_commit` sẽ
+/// mở ra đọc. Một kho khác đã mở sẵn một mục treo chờ đúng câu trả lời này, và câu trả
+/// lời là KHÔNG.
 fn validate_bind_did(
   tx       : Transaction,
   own_hash : ByteArray,

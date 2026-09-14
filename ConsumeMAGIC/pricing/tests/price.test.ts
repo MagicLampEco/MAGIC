@@ -472,11 +472,16 @@ describe("assertValidPriceParam — cổng TRƯỚC khi post beacon", () => {
     ).toThrow(/PRICE-016/);
   });
 
-  it("PRICE-016: dòng đắt nhất trong sổ chuẩn còn rất xa trần", () => {
+  it("PRICE-016: dòng đắt nhất trong sổ chuẩn còn xa trần (kẹp hai đầu)", () => {
     // `did.transfer` = 1e10 nanogic (ConsumeMAGIC/CONTRACT.md). Test này đỏ nghĩa là
     // trần đặt quá thấp và sổ giá sắp không dùng được — không phải test sai.
+    //
+    // Hệ số 100× (hạ từ 10.000× ngày 2026-09-12 cùng lúc trần xuống 10¹²). Cận TRÊN
+    // của trần là bất biến chống-khoá-toàn-mạng, ghim bên Aiken ở
+    // `pricing.ak` ▸ `max_base_price_below_network_lock_threshold`; TypeScript không
+    // dựng lại được vế đó vì nó cần hằng của kho ScheduleGen. Bài này giữ cận DƯỚI.
     const dearestStandard = 10_000_000_000n;
-    expect(MAX_BASE_PRICE).toBeGreaterThanOrEqual(dearestStandard * 10_000n);
+    expect(MAX_BASE_PRICE).toBeGreaterThanOrEqual(dearestStandard * 100n);
     expect(() =>
       assertValidPriceParam(ppOf([{ op_type: 8n, base_price: dearestStandard }])),
     ).not.toThrow();

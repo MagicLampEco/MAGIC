@@ -1,10 +1,11 @@
 // lib/math.ak — ScheduleGen core math (§11.2–§11.4)
 // Normative: T8 (rate immutable), T11 (S continuous), T12 (S diminishing), T-DET, T19
 
+use aiken/collection/list
 use aiken/crypto
 use aiken/primitive/bytearray
 use magiclamp/protocol/constants.{
-  q, shard_count,
+  q, shard_count, snapshot_base_rate_q,
   s_seg1_intercept_q, s_seg1_slope_q,
   s_seg2_knee, s_seg2_intercept_q, s_seg2_slope_q,
   s_seg3_knee, s_seg3_intercept_q, s_seg3_slope_q,
@@ -79,6 +80,84 @@ pub fn compute_rate_locked_q(r_snap_q: Int, l: Int) -> Int {
 
 pub fn compute_m_i(lambda_oildrop: Int, rate_locked_q: Int) -> Int {
   lambda_oildrop * rate_locked_q / q
+}
+
+// ── MỐC ĐƠN VỊ — ba bài dưới đây ghim thứ không hằng số nào tự khai ──────
+//
+// `rate_locked_q / q` đọc ra "8,0" ở L=10. Con số đó là **nanogic trên mỗi
+// oildrop**, KHÔNG phải MAGIC trên mỗi LAMP. Hai thang lệch nhau đúng 10³, vì
+// λ ở thang 10⁶ còn M_i ở thang 10⁹ mà mã chỉ chia `q` MỘT lần — `r` âm thầm
+// gánh luôn cầu-nối-đơn-vị 10³ chồng lên thang Q của nó. Ai đọc "8,0" thành
+// "8 MAGIC mỗi LAMP" sai 1000 lần, và toàn bộ phần kinh tế dựng trên số đó.
+// Không dòng mã nào nói ra hệ số 10³ này; ba bài dưới đây nói.
+
+/// 1 LAMP khoá, bắn một lần ở L=10, cho ĐÚNG 0,008 MAGIC — không phải 8.
+/// ĐỌC HẰNG SỐNG, không gõ cứng: bài này phải đỏ ngay khi ai đổi
+/// `snapshot_base_rate_q`, để mốc kinh tế được sửa CÓ Ý THỨC chứ không trôi theo.
+test unit_anchor_one_lamp_at_min_length() {
+  let lambda_one_lamp = 1_000_000            // 1 LAMP, tính bằng oildrop
+  let r = compute_rate_locked_q(snapshot_base_rate_q, 10)
+  and {
+    r == 8_000_000_000,                      // = 8,0 nanogic/oildrop
+    compute_m_i(lambda_one_lamp, r) == 8_000_000,   // = 0,008 MAGIC
+  }
+}
+
+/// Vector chuẩn TV-SCH-02, neo ở chú thích §11.4 ngay trên. Giữ hai đầu mút
+/// cùng một bài để bất cứ ai đổi `snapshot_base_rate_q` phải đi qua cả hai.
+test unit_anchor_tv_sch_02() {
+  let r = compute_rate_locked_q(5_000_000_000, 100)
+  and {
+    r == 11_250_000_000,
+    compute_m_i(4_000_000_000, r) == 45_000_000_000,   // 4000 LAMP → 45 MAGIC
+  }
+}
+
+/// Tầng sàn thứ nhất trong `compute_rate_locked_q` VÔ HIỆU — nhưng chỉ vì giá
+/// trị hằng hiện hành thoả một điều kiện KHÔNG dòng nào ép.
+///
+/// Điều kiện đúng là **`400 | snapshot_base_rate_q`**, không phải `5×10⁹ | R`.
+/// `S_Q(L)` luôn là bội của 2,5×10⁶ trên cả ba đoạn (1,5e9 · 1e7 · 2e9 · 5e6 ·
+/// 2,5e9 · 2,5e6 đều chia hết cho 2,5e6), nên `R·S_Q ≡ 0 mod 10⁹` ⟺ `R` chia
+/// hết cho `10⁹ / 2,5×10⁶ = 400`.
+///
+/// Con số 400 này là KẾT QUẢ ĐO, không phải suy luận: bản đầu của chú thích
+/// viết `5×10⁹ | R`, rồi phép đột biến `R := 8,5×10⁹` (chia hết 400, không chia
+/// hết 5×10⁹) để bài này XANH — chứng tỏ `5×10⁹` là điều kiện đủ mà thừa xa.
+/// Đột biến `R := 5.000.000.100` (chia hết 4, không chia hết 400) mới làm nó
+/// ĐỎ. Ghi cận đúng ở đây vì cận thừa sẽ bị ai đó đọc thành "phải giữ bội 5 tỷ"
+/// và loại oan những giá trị hoàn toàn hợp lệ.
+///
+/// Vì sao cần canh: đổi hằng sang một số bất kỳ vẫn biên dịch xanh và âm thầm
+/// bật lại một tầng cắt cụt mà không tài liệu nào nói tới.
+test rate_floor_is_exact_across_full_l_range() {
+  let l_probes = [10, 35, 50, 51, 100, 149, 150, 151, 200]
+  list.all(
+    l_probes,
+    fn(l) { snapshot_base_rate_q * compute_s_q(l) % q == 0 },
+  )
+}
+
+/// GHIM CHO BẢN CHÉP Ở KHO KHÁC — đừng xoá vì tưởng nó trùng bài trên.
+///
+/// `ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak` ▸
+/// `max_base_price_below_network_lock_threshold` chép ba hằng của tệp này để dựng lại
+/// suất ở độ dài lịch tối đa. Hai kho là hai gói Aiken rời (`magiclamp/protocol` và
+/// `magiclamp/consume`, hai `aiken.toml` không phụ thuộc nhau) nên bản chép KHÔNG
+/// import được — mức 3 "chép có nhãn" là mức cao nhất còn khả thi.
+///
+/// Bài này là nửa còn lại của cái nhãn đó: nó làm bản chép **chết ỒN ÀO**. Đổi
+/// `snapshot_base_rate_q` hay hệ số đoạn 3 của `S_Q` ⟹ bài này đỏ ngay tại kho nguồn,
+/// kèm câu chỉ thẳng sang tệp phải sửa theo. Không có bài này thì bản chép bên kia vẫn
+/// xanh với một con số đã chết — đúng kiểu hỏng mà người đọc TIN.
+///
+/// `L = 200` là trần độ dài lịch, và là ca chặt nhất của bất biến chống-khoá bên đó
+/// (`ρ/L` giảm theo `L` vì `S_Q` tăng dưới-tuyến-tính).
+test rate_at_max_length_mirrored_in_consumemagic() {
+  and {
+    compute_s_q(200) == 2_625_000_000,
+    compute_rate_locked_q(snapshot_base_rate_q, 200) == 13_125_000_000,
+  }
 }
 
 // ── C-SCH-RATE check (T19) ───────────────────────────────────

@@ -1,13 +1,14 @@
 // tests/um.test.ts — UM Keeper unit tests
 import { describe, it, expect } from "vitest";
 import {
-  computeUMRaw, clampUM, appendHistory,
+  computeUMRaw, clampUM, clampStep, appendHistory,
   computeSMA, computeNewUM,
 } from "../offchain/src/math.js";
 
-const Q        = 1_000_000_000n;
-const UM_MIN_Q = 500_000_000n;
-const UM_MAX_Q = 2_000_000_000n;
+const Q            = 1_000_000_000n;
+const UM_MIN_Q     = 500_000_000n;
+const UM_MAX_Q     = 2_000_000_000n;
+const UM_MAX_STEP_Q = 100_000_000n;   // P8: khớp um_max_step_q trong um_datum.ak
 
 // ── TV-UM-SPLIT (reused from InstantGen) ─────────────────────
 describe("computeUMRaw — §14.1 C-UM-1", () => {
@@ -37,6 +38,28 @@ describe("clampUM — §14.1 C-UM-3", () => {
   });
   it("Above MAX → clamped to MAX", () => {
     expect(clampUM(5_000_000_000n)).toBe(UM_MAX_Q);
+  });
+});
+
+// ── Trần tương đối mỗi lượt — P8 với `step_within` trong um_datum.ak ────────
+describe("clampStep — trần bước 0,10 mỗi lượt cập nhật", () => {
+  it("Bước nhỏ hơn trần → giữ nguyên", () => {
+    expect(clampStep(1_050_000_000n, Q)).toBe(1_050_000_000n);
+    expect(clampStep(950_000_000n, Q)).toBe(950_000_000n);
+  });
+  it("Bước đúng bằng trần (hai chiều) → giữ nguyên", () => {
+    expect(clampStep(Q + UM_MAX_STEP_Q, Q)).toBe(Q + UM_MAX_STEP_Q);
+    expect(clampStep(Q - UM_MAX_STEP_Q, Q)).toBe(Q - UM_MAX_STEP_Q);
+  });
+  it("Vượt trần đi lên → kẹp về smoothed + trần", () => {
+    expect(clampStep(UM_MAX_Q, Q)).toBe(Q + UM_MAX_STEP_Q);
+  });
+  it("Vượt trần đi xuống → kẹp về smoothed − trần", () => {
+    expect(clampStep(UM_MIN_Q, Q)).toBe(Q - UM_MAX_STEP_Q);
+  });
+  it("Đúng bước của PoC (1,5 → 2,0) → kẹp về 1,6", () => {
+    // On-chain bước này bị TỪ CHỐI; off-chain kẹp trước để tx còn gửi được.
+    expect(clampStep(2_000_000_000n, 1_500_000_000n)).toBe(1_600_000_000n);
   });
 });
 
@@ -97,10 +120,51 @@ describe("computeNewUM — full update", () => {
     expect(newSmoothed).toBeLessThanOrEqual(UM_MAX_Q);
   });
 
-  it("High demand (burns >> mints) → smoothed approaches UM_MAX", () => {
+  it("High demand (burns >> mints) → MỘT lượt chỉ nhích tối đa 0,10, KHÔNG còn nhảy thẳng lên UM_MAX", () => {
+    // Bản trước bài này đòi `newSmoothed === UM_MAX_Q` sau ĐÚNG MỘT lượt — và
+    // đó chính là đường tấn công PoC đã đi (6 lượt, 0 chữ ký, ghim UM lên trần).
+    // Trần bước làm kỳ vọng cũ SAI theo thiết kế; sửa kỳ vọng, không nới trần.
     const datum = { smoothed_q: Q, last_updated_epoch: 99n, history: [] };
-    const { newSmoothed } = computeNewUM(datum, 10_000_000_000_000n, 1_000_000_000n);
-    expect(newSmoothed).toBe(UM_MAX_Q);  // clamped at 2.0 ✓
+    const { newSmoothed, submittedRaw, newRaw } = computeNewUM(datum, 10_000_000_000_000n, 1_000_000_000n);
+    expect(newRaw).toBeGreaterThan(UM_MAX_Q);          // thị trường đòi rất cao
+    expect(submittedRaw).toBe(Q + UM_MAX_STEP_Q);      // gửi đi chỉ là 1,10
+    expect(newSmoothed).toBe(Q + UM_MAX_STEP_Q);       // history rỗng → SMA = 1,10
+    expect(newSmoothed).toBeLessThan(UM_MAX_Q);
+  });
+
+  it("Từ 1,0 lên UM_MAX cần NHIỀU epoch — đây là CÁI GIÁ của hàng rào, không phải chỗ ẩn đi", () => {
+    // Đo thẳng: nhu cầu cực đại liên tục thì mất bao nhiêu lượt mới chạm trần.
+    let datum = { smoothed_q: Q, last_updated_epoch: 0n, history: [] as bigint[] };
+    let epochs = 0;
+    while (datum.smoothed_q < UM_MAX_Q && epochs < 200) {
+      const { newSmoothed, newHistory } = computeNewUM(datum, 10_000_000_000_000n, 1n);
+      datum = { smoothed_q: newSmoothed, last_updated_epoch: BigInt(epochs), history: newHistory };
+      epochs++;
+    }
+    // Hàng rào chỉ LÀM CHẬM, KHÔNG CHẶN: vẫn tới trần, chỉ tốn nhiều epoch hơn.
+    // Bản vá thật là cổng M-of-N (khuôn ở ConsumeMAGIC/…/price_param.ak).
+    expect(datum.smoothed_q).toBe(UM_MAX_Q);
+    expect(epochs).toBeGreaterThan(6);   // PoC cũ chỉ cần 6 lượt
+  });
+
+  it("P8 — submittedRaw LUÔN qua được `step_within` của validator", () => {
+    // Nếu bài này đỏ thì bên dựng tx đang sinh ra giao dịch bị on-chain từ chối.
+    const smootheds = [UM_MIN_Q, Q, 1_500_000_000n, UM_MAX_Q];
+    const cases = [
+      { burns: 0n,               mints: 1_000_000_000n },
+      { burns: 10_000_000_000n,  mints: 1n },
+      { burns: 1_000_000_000n,   mints: 1_000_000_000n },
+      { burns: 1n,               mints: 10_000_000_000n },
+    ];
+    for (const smoothed_q of smootheds) {
+      for (const { burns, mints } of cases) {
+        const datum = { smoothed_q, last_updated_epoch: 0n, history: [] as bigint[] };
+        const { submittedRaw } = computeNewUM(datum, burns, mints);
+        const clamped = clampUM(submittedRaw);          // on-chain clamp dải trước
+        const delta = clamped > smoothed_q ? clamped - smoothed_q : smoothed_q - clamped;
+        expect(delta).toBeLessThanOrEqual(UM_MAX_STEP_Q);
+      }
+    }
   });
 
   it("No burns → raw clamped to UM_MIN, smoothed falls", () => {

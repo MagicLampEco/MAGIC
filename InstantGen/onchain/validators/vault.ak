@@ -2054,6 +2054,75 @@ test ig_pos_no_schedule_still_gens() {
   t_ig_call(din, ig_grant, 10, tx)
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// NỢ #19 — HAI BÀI GHIM CHÍNH CÁI KHOÁ, không ghim một trường
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Mọi bài `ig_*` phía trên xuất phát từ `t_ig_din(credit)`, tức **tự cấp cho
+// mình `consumed_credit` khác 0**. Đó là một trạng thái chỉ tới được qua chính
+// vòng đang bị khoá, nên `ig_positive_grant` xanh trên một đầu vào **không tồn
+// tại được trên chuỗi**. Nó không sai — nó chỉ không nói gì về việc cửa có mở
+// được không.
+//
+// Vòng khoá, đo 2026-09-12 trên cây này:
+//   genesis ép `consumed_credit == 0` (`:276`) và `magic_batches == []` (`:272`)
+//   → `InstantGen` lấy `consumed` từ `consumed_credit` (`:417`) rồi ép
+//     `grant > 0` (`:427`)      ⟹ cần `consumed_credit > 0`
+//   → `consumed_credit` chỉ TĂNG ở đúng một chỗ, trong `BurnBatch` (`:950`)
+//   → `BurnBatch` ép `total_burned > 0` (`:930`) ⟹ cần `magic_batches` khác rỗng
+//   → `magic_batches` chỉ được THÊM ở chính nhánh `InstantGen` (`:474-475`;
+//     `:552` và `:939` chỉ bớt đi)
+//   ⟹ vault InstantGen mở từ genesis KHÔNG có đường nào đi hết một vòng.
+//
+// Hai bài dưới là bài ĐỐI NGẪU: ca "InstantGen sinh được MAGIC từ vault sạch"
+// không dựng được vì nó **không có đầu vào**, không phải vì chưa ai đo. Thứ đo
+// được là chiều ngược lại — cả hai cửa đều đóng — và đó là thứ ghim ở đây.
+//
+// 🔴 KHI AI ĐÓ MỞ VÒNG NÀY, HAI BÀI NÀY SẼ ĐỎ. Đỏ ở đây nghĩa là *"khoá đã mở"*,
+// không phải *"vừa làm hỏng cái gì"*. Lúc đó xoá chúng, và thay bằng bài dương
+// đi từ đúng trạng thái genesis — đừng sửa chúng cho xanh lại.
+//
+// Đo đột biến 2026-09-12, nói đúng mức từng bài đóng góp gì:
+//   · gỡ `expect grant > 0` (`:427`)        → 2 đỏ: `ig_neg_no_consumed_credit`
+//     và `ig_neg_genesis_state_cannot_gen`. Chốt này ĐÃ có bài canh từ trước;
+//     bài mới KHÔNG thêm độ phủ chốt — nó thêm một nhân chứng rằng đầu vào bị
+//     từ chối là một trạng thái **tới được trên chuỗi**, trong khi bài cũ dựng
+//     `gen_schedules` mà đường mint cấm.
+//   · gỡ `expect total_burned > 0` (`:930`) → 1 đỏ: `bb_neg_empty_batches_cannot_burn`.
+//     Trước bài này chốt đó **không bài nào canh** — gỡ ra thì cả 100 bài vẫn xanh.
+
+// IG-NEG-GENESIS-CLOSED: cửa 1 — vault đúng trạng thái genesis không gen được.
+test ig_neg_genesis_state_cannot_gen() fail {
+  let base = t_ig_din(0)
+  let din =
+    VaultDatum { ..base, gen_schedules: [], magic_batches: [] }
+  let dout = t_ig_dout(din, 0, 10)
+  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, 0, 10, tx)
+}
+
+// BB-NEG-EMPTY: cửa 2 — không có batch nào thì không đốt được, nên
+// `consumed_credit` không có đường nào rời khỏi 0.
+test bb_neg_empty_batches_cannot_burn() fail {
+  let din = t_burn_din([], None)
+  let dout = t_burn_dout(din, [], 0, 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  //    Danh sách đốt RỖNG, không phải một id không tồn tại: bản đầu của bài này
+  //    dùng `[(bid_a, 0)]` và nó xanh — nhưng đo đột biến cho thấy nó chết ở chốt
+  //    "id lạ", KHÔNG ở chốt `total_burned > 0`. Gỡ `total_burned > 0` ra thì cả
+  //    100 bài vẫn xanh. Đó là ca Forall §Kỷ luật phát ngôn mục 6 tả: đỏ đúng tên,
+  //    sai chốt.
+  validate_burn_batch(
+    din,
+    [],
+    10,
+    t_own_ref(),
+    t_lamp_policy,
+    t_lamp_asset_name,
+    tx,
+  )
+}
+
 // IG-NEG-NOT-ELIGIBLE: LAMP below min_instant_holding → door closed.
 test ig_neg_below_min_holding() fail {
   let base = t_ig_din(ig_credit)

@@ -9,7 +9,29 @@ pub const q : Int = 1_000_000_000   // [Immutable]
 // (`slots_per_epoch = 432_000` đã xoá 2026-08-09: 0 call site, sai với Preview.)
 
 // ── SnapshotGen base rate (used to compute rate_locked_q at commit) ──
-pub const snapshot_base_rate_q : Int = 5_000_000_000  // [Constitutional]
+//
+// 🔴 NHÃN `[Constitutional]` NAY LÀ NHÃN CỦA MỘT GIAI ĐOẠN, KHÔNG PHẢI CỦA HẰNG NÀY.
+// Chủ dự án chốt 2026-09-12: suất sinh `ρ` **không được là hằng biên dịch**
+// (`SPEC` ▸ `INV-RATE-GOVERNED`). Giá trị dưới đây là bản đang chạy của
+// **giai đoạn 1 — tình thế, để chạy được chuỗi nghiệm thu**, không phải đích.
+//
+// Vì sao một hằng biên dịch là SAI LOẠI HỘP ở đây, chứ không phải sai con số:
+// giá trị đúng của `ρ` phụ thuộc **mức LAMP tham gia** và **cầu dịch vụ thực** —
+// hai đại lượng không ai biết lúc deploy. Số đo: ở trần tham gia 20% cung
+// (7,2×10⁹ LAMP), suất này phát ~4,2×10⁹ MAGIC mỗi năm; dưới neo của chủ dự án
+// (1 MAGIC ≈ giá mint một cây) đó là một lượng dịch vụ thực không nền kinh tế nào
+// trong tầm nhìn hấp thụ nổi. Ở mức tham gia nhỏ thì cùng con số này lại quá ít.
+// Không tồn tại một hằng nào đúng cho cả hai đầu.
+//
+// Đích (giai đoạn 2, mở khi `did_commit` sống — `SPEC` §13): nội sinh, zero oracle
+//   ρ_{e+1} = clamp( ρ_e · D_e / G_e , ρ_e/2 , ρ_e·2 )
+// với `D` = MAGIC đã tiêu cross-DID, `G` = MAGIC đã phát. Nó tự đúng dấu với giá
+// LAMP mà KHÔNG đọc giá: giá lên ⟹ nhiều người khoá LAMP ⟹ `G` tăng ⟹ `ρ` giảm.
+//
+// ĐỪNG đọc `[Constitutional]` thành "đã chốt, đừng đụng". Đọc nó thành: đổi giá trị
+// này hôm nay vẫn là đổi script hash, nên nó phải đổi CÙNG lúc chuyển sang tham số
+// quản trị, không đổi lẻ.
+pub const snapshot_base_rate_q : Int = 5_000_000_000  // [Giai-đoạn-1, sẽ thành tham số quản trị]
 
 // ── S(L) piecewise segments (§11.3, §19.6) [Constitutional] ──────────
 pub const s_seg1_intercept_q : Int = 1_500_000_000   // 1.5
@@ -40,7 +62,14 @@ pub const max_fires_per_tx_catchup : Int = 8
 // ── System limits [Routine] ──────────────────────────────────────────
 pub const max_gen_schedules     : Int = 20
 pub const max_batches_per_vault : Int = 32
-pub const max_loyalty_holdings  : Int = 64
+// Hạ 64 → 40 ngày 2026-09-14. 64 nằm TRÊN trần vật lý: đo `aiken check` trên
+// giao dịch trọn vẹn (trừ chi phí fixture) cho commit 128,6 % và fire 138,9 %
+// `maxTxExMem` ở 63/64 holding — tức một vault chạm trần cũ thì KHÔNG tiêu được,
+// và fire là nhánh duy nhất hạ được `lamp_locked`. Ở 40 thì commit 58,4 %, fire
+// 62,2 %. Điểm chết khớp bậc hai: fire n ≈ 53, commit n ≈ 55 — 40 để lại ~38 %
+// biên cho chênh lệch giữa bản đo và mạng thật. Số + cách dựng lại thang đo ghi
+// ở `validators/vault.ak`, khối "Trần ExUnit của hai nhánh mang LAMP".
+pub const max_loyalty_holdings  : Int = 40
 
 // ── Shard [Constitutional] ────────────────────────────────────────────
 pub const shard_count : Int = 16

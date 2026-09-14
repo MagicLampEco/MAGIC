@@ -5,6 +5,108 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-09-14 — Đóng một ngõ cụt khoá LAMP vĩnh viễn ở ScheduleGen, và hạ hai tham số về dưới trần vật lý
+
+**Đổi gì.** Bốn thay đổi, ba trong số đó đổi bytes validator ⟹ đổi script hash ⟹ **đổi địa chỉ**.
+
+1. **`validate_fire` prune TRƯỚC khi đếm** (`ScheduleGen/onchain/validators/vault.ak`). Bản
+   cũ tính `batch_budget` trên `datum.magic_batches` chưa lọc, rồi vài dòng sau mới dựng
+   `updated_batches` trên danh sách ĐÃ lọc. Bản vá lọc **một lần** và dùng cho cả hai chỗ.
+   Bản sao y hệt ở off-chain (`ScheduleGen/offchain/src/schedule.ts` truyền
+   `magic_batches.length` thô) vá cùng commit theo P8.
+2. **Thêm redeemer `PruneExpired`** cho ScheduleGen, **constr 5, đặt CUỐI danh sách** —
+   khuôn lấy từ `InstantGen/onchain/validators/vault.ak` ▸ `validate_prune_expired`.
+   Permissionless, không đụng LAMP, từ chối lượt rỗng, giữ nguyên `last_updated_epoch`.
+3. **`max_loyalty_holdings` 64 → 40** ở cả ScheduleGen lẫn InstantGen, hai bên P8, cộng
+   **một cổng đếm holding mới trong `validate_commit`** — nhánh này trước đây không có,
+   dù `validate_fire`, genesis và `validate_withdraw_lamp` đều có. Cổng ấy mang **dấu
+   NGHIÊM `<`**, không phải `<=` như ba cổng kia, và chênh lệch một ký tự đó là toàn bộ
+   nội dung của nó — xem đoạn riêng bên dưới. Gương off-chain:
+   `ScheduleGen/offchain/src/math.ts` ▸ `assertHoldingCapAfterCommit`, gọi ở
+   `schedule.ts` ▸ `buildScheduleCommit` (mã lỗi `GEN-SCH-007`).
+4. **`f_cap_surplus_q` 0,10 → 0,001** (InstantGen) và **`um_max_step_q = 0,10`** (UMKeeper,
+   chốt mới) — hai hàng rào TẠM, xem `DevStatus.md` Nợ #49 và #50.
+
+**Vì sao.** Ngõ cụt ở (1) là đường **khoá LAMP vĩnh viễn**, cùng lớp với bài học đắt nhất
+của kho ghi ở `BOUNDARIES.md §5`. Ba vế khoá lẫn nhau: `ScheduleFire` là nhánh DUY NHẤT hạ
+được `lamp_locked`; nó tự chặn mình khi danh sách batch đầy, kể cả khi cả 32 batch đã chết;
+`BurnBatch` không cứu được vì nó đòi batch CÒN SỐNG, mà `schedule_decay_window = 1` giết cả
+32 ở epoch kế. Trước bản vá, `prune_expired` chỉ được gọi ở hai chỗ và **không chỗ nào là
+một cửa độc lập** — nên (2) không phải tiện tay dọn dẹp mà là van an toàn cho cả họ ngõ cụt
+cùng dạng. Cửa sổ thoát rộng đúng một epoch: bắn tới đúng 32 batch trong epoch E mà không
+tiêu hết ngay trong E thì E+1 là khoá vĩnh viễn.
+
+(3) vì 64 nằm **trên** trần vật lý. Đo `aiken check` trên giao dịch trọn vẹn, đã trừ chi phí
+dựng fixture, đối chiếu `maxTxExMem = 16 500 000`: commit **128,6 %** ở 63 holding, fire
+**138,9 %** ở 64; ở 40 thì 58,4 % / 62,2 %. Điểm chết khớp bậc hai: fire n ≈ 53, commit
+n ≈ 55 — **fire chết TRƯỚC commit**, tức cửa RA hẹp hơn cửa VÀO, và đó là lý do cổng đếm
+holding phải có mặt ở nhánh commit chứ không chỉ ở nhánh fire.
+
+**Và cổng ấy phải mang dấu NGHIÊM — bản đầu của chính đợt vá này viết `<=`, và như thế
+là thay một ngõ cụt bằng một ngõ cụt khác.** Đường RA tự nó làm danh sách dài thêm ĐÚNG
+một phần tử: `unlock_oldest` cắt holding ở biên lượt nhả thành `(epoch, đã mở)` +
+`(epoch, còn khoá)`, mà `same_bucket` đòi trùng **cả** `is_locked` nên `coalesce_holdings`
+không gộp hai mảnh đó lại. Với `<=`, tồn tại một trạng thái vào được mà không ra được:
+commit khoá **trọn** số dư giữ nguyên độ dài danh sách (mọi holding khoá nguyên cái, không
+cắt cái nào), chạm đúng trần, được nhận; rồi **mọi** lượt fire đều cho trần + 1 và bị
+`validate_fire` từ chối — với mọi `k ∈ [1, max_fires_per_tx_catchup]`, nên không có lựa
+chọn epoch nào cứu được. Cửa phụ cũng không có: `lamp_locked` chỉ giảm ở nhánh fire, và
+`validate_withdraw_lamp` chết ở `amount <= avail` với `avail = balance − locked = 0`.
+Kết cục là LAMP khoá vĩnh viễn **cộng** một suất `shard_active_count` không bao giờ trả
+lại, tức mất vĩnh viễn một phần `SHARD_CAP` của 1/16 số người dùng.
+
+Một suất là **đủ** và là **tối thiểu**: nhả đi từ epoch già nhất theo thứ tự, nên tại mỗi
+thời điểm chỉ một epoch mang đồng thời hai mảnh; lượt sau cắt tiếp cùng epoch đó thì mảnh
+mở mới gộp vào mảnh mở cũ (+0), và biên chỉ dời sang epoch kế khi epoch cũ đã cạn. Vậy
+đỉnh danh sách trong suốt vòng đời = (độ dài sau commit) + 1. Ba bài canh, cả ba đỏ khi
+đảo dấu về `<=` (đã đo bằng cách đảo thật rồi chạy lại): `c_commit_full_lock_at_cap_rejected`
+chặn lối vào, `cf_commit_at_cap_then_fire_ok` chạy một lượt fire **thật** trên datum do
+commit sinh ra để chứng minh cửa ra còn mở, `hc_full_lock_keeps_length_then_fire_adds_one`
+giữ phần số học để hai bài kia không thành số ma thuật.
+
+**Đính chính một kết luận cũ của chính đợt đo này.** Thủ phạm bậc hai **không phải
+`list.sort`**: nhánh fire không sort danh sách đầy đủ mà vẫn bậc hai. Nguồn là mẫu `foldl` +
+`merge_into(acc, h)` trong `coalesce_holdings` và `list.concat(acc, […])` trong
+`lock_youngest` (`ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak`) — chú thích của chính
+`coalesce_holdings` đã tự khai *"O(n²)… revisit only if fire ExUnits actually bite"*.
+
+**Gãy gì.** **Địa chỉ ScheduleGen và InstantGen đổi.** Vault đang sống trên Preview/Preprod
+nằm ở địa chỉ cũ và vẫn tiêu được bằng script cũ (ref-script CIP-33 cũ còn trên chuỗi), nhưng
+**không** đọc được bằng bản mới — phải deploy lại và di trú. Không có gì trên mainnet. Thêm
+`PruneExpired` là thêm constr **ở cuối**, nên mọi UTxO đã tạo vẫn giải mã được; bên dựng tx
+nào tự gõ chỉ số constructor thay vì dùng `VaultRedeemerSchema` thì phải soát lại. Hai vector
+chuẩn của InstantGen (`TV-IG-GRANT-02`, và ca `LAMP nâng TRẦN…` trong `instant.test.ts`) đổi
+`magic_supply` đầu vào — bắt buộc, vì `cap_surplus` co 100 lần sẽ thành cái chặn thay cho
+`cap_pp` và hai ca đó sẽ xanh vì lý do khác với tên chúng mang.
+
+## 2026-09-14 — `GetMAGIC/` ra khỏi kho: cửa sinh MAGIC thứ tư trong một mô hình chỉ có ba cửa
+
+**Đổi gì.** Xoá `GetMAGIC/` (22 tệp) cùng `scripts/deploy/08_deploy_getmagic.ts`,
+`scripts/test/getmagic_claim.ts`, `scripts/test/getmagic_flow.ts`. Vá tham chiếu ở `README.md`,
+`scripts/README.md`, `scripts/BUILD-RECORD.md`, `scripts/deployParams.ts` (bỏ `otcOrderParams`),
+`scripts/check_param_names.ts` (bỏ import + ca kiểm), `DevStatus.md`, và một chú thích trong
+`ScheduleGen/onchain/validators/vault.ak` từng trỏ sang nợ của module này.
+
+**Vì sao.** `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md:174` (§6.1) chốt đúng ba cửa sinh —
+*"Ba cửa: InstantGen · ScheduleGen · PrepaidGen"* — và chuỗi `GetMAGIC` không xuất hiện một lần
+nào trong đặc tả. Một cửa fiat→MAGIC sinh quyền-tiêu mà không có LAMP hay CARP đứng sau, nên nó
+không phải tính năng còn dở mà là tính năng **mâu thuẫn với bất biến**: MAGIC là quyền-tiêu suy
+ra từ tài sản đã khoá, không phải hàng bán. Ba lỗ ở tầng validator đi kèm — khoá công xác minh
+là trường của **chính datum nó xác minh**; nhánh `Settle` ràng output theo `order_id` nhưng
+không theo nội dung; mốc hết hạn tính bằng `expiry_epoch × 86_400_000` nên với `expiry_epoch = 7`
+ngưỡng rơi vào 1970-01-08 và luôn đúng — là hệ quả của việc module đứng ngoài mô hình, không phải
+nguyên nhân độc lập.
+
+**Gãy gì.** Không có gì trên chuỗi: `scripts/DEPLOYED.md` nhắc module này 0 lần, nên không định
+danh on-chain nào mất đường giải mã. `npm run deploy:all` không đi qua bước 08. Ai đang gọi
+`otcOrderParams` từ `scripts/deployParams.ts` sẽ gãy lúc biên dịch — đó là ý định. Bản mã cuối
+cùng của module ở `8cfd5295`.
+
+Ba lớp lỗi thì **vẫn còn hiệu lực** cho mọi module khác, đã ghi lại trong các dòng nợ đóng ở
+`DevStatus.md`: nối `ByteArray` độ-dài-tự-do rồi ký là không đơn ánh · khoá công xác minh không
+được là trường của datum được xác minh · ghim `payment_credential` mà bỏ `stake_credential` là
+chưa ghim địa chỉ.
+
 ## 2026-09-11 — Ba con số CARP đều sai · SPEC §10 trích sai chính tệp nó viện dẫn · sổ ghi "chờ" cho việc đã xong
 
 **Đổi gì.**
@@ -145,9 +247,9 @@ ConsumeMAGIC, README chỉ mô tả phần scripts. `scripts/.env.example` bỏ 
 a Changelog / SemVer) và là thứ `release-please`/`semantic-release` đi tìm — hai tệp này
 không phải loại đó, chúng ghi quyết định spec (`_rules/agent-hygiene.md §3.1`, chủ nhân
 chốt 2026-08-09). Còn `.env.example`: nó dạy đúng cái repo cấm — chép khoá Blockfrost và
-private key xuống đĩa, trong khi nguồn duy nhất là `$AGENT_SECRETS` và
-`run_consume_e2e.sh` đã đọc từ đó sẵn. Một mẫu bảo "điền khoá vào đây" là một bản sao thứ
-hai của thứ chỉ nên có một bản.
+private key xuống đĩa, trong khi bí mật chỉ nên đi vào bằng **giá trị** qua môi trường và
+`run_consume_e2e.sh` đã nhận theo đường đó sẵn. Một mẫu bảo "điền khoá vào đây" là một bản
+sao thứ hai của thứ chỉ nên có một bản.
 
 **Gãy gì nếu đang bám bản cũ.** Mọi liên kết `DEVSTATUS.md`/`CHANGELOG.md` từ repo khác
 trỏ sang MAGIC sẽ chết — trên máy phân biệt hoa-thường (Linux, CI) là 404 thật, trên macOS
@@ -183,7 +285,7 @@ không tồn tại; đó là dự tính.
 `vacuum_orders` trong `VaultDatum` giữ nguyên vị trí — chúng là chỉ số constructor / arity
 của Plutus Data đã lên chain, bỏ đi là vỡ decode mọi vault đã tạo. Hằng
 `snapshot_base_rate_q` giữ nguyên vì ScheduleGen dùng thật. `UMKeeper/` **không** bị dọn:
-UM vẫn nằm trong công thức thưởng của InstantGen PHA-2.
+UM vẫn nằm trong công thức thưởng của InstantGen DESIGN-2.
 
 ## 2026-08-09 — `@magiclamp/consumemagic-pricing` thành gói gọi được (ESM + CJS)
 

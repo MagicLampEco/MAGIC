@@ -181,10 +181,30 @@ export function nanogicToMagicStr(ng: bigint, dec = 4): string {
   return `${whole}.${frac}`;
 }
 
+/**
+ * Hiển thị một giá trị Q-format. Làm tròn nửa-lên, tính TRỌN bằng BigInt.
+ *
+ * Bản trước dùng `Number(abs) / 1e9` rồi `toFixed`. Nó đúng với mọi giá trị đang
+ * chạy hôm nay (S_Q, UM, rate_locked_q đều ≤ ~10¹⁰), và chính chỗ đó là vấn đề:
+ * `Number` mất chữ số **im lặng** từ 2⁵³ ≈ 9,007×10¹⁵ trở lên, không ném, không
+ * cảnh báo. Nâng suất sinh lên ~25× là đủ đẩy `M_i` qua mốc đó — và khi ấy hàm
+ * này vẫn trả về một chuỗi trông hoàn toàn bình thường. Đúng hình dạng cái vỏ
+ * im lặng, trên đường tiền.
+ *
+ * Cách vá rẻ hơn một cổng chặn: bỏ hẳn `Number` thì không còn trần nào để canh.
+ * Kết quả trùng `toFixed` ở mọi giá trị `Number` còn biểu diễn đúng, nên đây
+ * không phải đổi hành vi — chỉ là gỡ một cái trần.
+ */
 export function qToStr(qv: bigint, dec = 3): string {
   const sign = qv < 0n ? "-" : "";
   const abs  = qv < 0n ? -qv : qv;
-  return sign + (Number(abs) / 1e9).toFixed(dec);
+  const scale = 10n ** BigInt(dec);
+  // ⌊(abs·scale·2 + Q) / (2Q)⌋ — làm tròn nửa-lên trên số nguyên, không mất bit.
+  const scaled = (abs * scale * 2n + Q) / (2n * Q);
+  const whole = scaled / scale;
+  if (dec === 0) return `${sign}${whole}`;
+  const frac = (scaled % scale).toString().padStart(dec, "0");
+  return `${sign}${whole}.${frac}`;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -341,6 +361,7 @@ export function unlockLockedAmount(
  *  NOT optional. `unlockLockedAmount` splits a holding on every partial release
  *  and never drops one, so without this the list grows +1 per fire — 21 entries
  *  after 20 fires vs 2 under the old `removeLockedAmount`. MAX_LOYALTY_HOLDINGS
+ *  (40 kể từ 2026-09-14, trước đó 64)
  *  is 64 and the vault validator enforces it on withdrawal, so an L=200 schedule
  *  would leave the user unable to withdraw at all.
  *

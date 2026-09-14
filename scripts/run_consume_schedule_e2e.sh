@@ -5,8 +5,8 @@
 #   ... chờ 2 epoch (Preprod: 2 ngày UTC) ...
 #   bash run_consume_schedule_e2e.sh Preprod 2 <VAULT_TX_HASH>   # chặng 2: fire + tiêu
 #
-# Chạy tại Terminal của anh (KHÔNG qua Claude — cổng máy chặn đọc seed).
-# Secret chỉ lấy value từ $AGENT_SECRETS, không in ra.
+# Bí mật đi vào bằng GIÁ TRỊ qua môi trường, không in ra:
+#   BLOCKFROST_KEY=… WALLET_SEED='…' bash run_consume_schedule_e2e.sh Preprod 1
 #
 # ── VÌ SAO ĐƯỜNG NÀY, KHÔNG PHẢI run_consume_e2e.sh ──────────────────────────
 #   `run_consume_e2e.sh` đi qua InstantGen, và đường đó ĐANG KẸT (Nợ #19):
@@ -38,24 +38,30 @@ NET="${1:-Preprod}"
 PHASE="${2:-1}"
 VAULT_TX="${3:-}"
 case "$NET" in
-  Preview) BF_VAR="Blockfrost_GreenSun_Preview" ;;
-  Preprod) BF_VAR="Blockfrost_Aladin_Preprod" ;;
+  Preview|Preprod) ;;
   *) echo "✗ Tham số 1 phải là Preview hoặc Preprod (nhận: $NET)"; exit 2 ;;
 esac
 case "$PHASE" in 1|2) ;; *) echo "✗ Tham số 2 phải là 1 hoặc 2 (nhận: $PHASE)"; exit 2 ;; esac
 # Cổng này DỪNG kịch bản trước khi nó chạm vào bất cứ thứ gì. Thông điệp phải nói được
 # người đọc PHẢI LÀM GÌ — bản cũ chỉ nói "chưa set", và một lượt chạy chết ở đây không để
 # lại dấu vết nào trên chuỗi, nên nó đọc y hệt một lượt chạy đã xong.
-: "${AGENT_SECRETS:?
-  ✗ AGENT_SECRETS chưa set. Kịch bản DỪNG — KHÔNG có gì được thực hiện, KHÔNG giao dịch nào
-    được gửi. Đừng đọc lần chạy này thành 'đã chạy rồi'.
+#
+# Kịch bản nhận GIÁ TRỊ qua môi trường và KHÔNG biết chúng được cất ở đâu. Đó là ràng buộc
+# cố ý, không phải chỗ còn thiếu. Một tệp mã biết đường tới kho khoá là một tệp CHỈ ĐƯỜNG,
+# và nó chỉ đường cho cả người không nên biết — kể cả khi nó không in ra giá trị nào.
+: "${BLOCKFROST_KEY:?
+  ✗ BLOCKFROST_KEY chưa có trong môi trường. Kịch bản DỪNG — KHÔNG có gì được thực hiện,
+    KHÔNG giao dịch nào được gửi. Đừng đọc lần chạy này thành \'đã chạy rồi\'.
 
-    Biến này phải trỏ tới tệp kho khoá của CHÍNH MÁY BẠN. Kho mã này cố ý KHÔNG ghi đường
-    dẫn đó ở bất cứ đâu, nên nó không thể tự điền hộ.
+    Đặt giá trị ngay trước lệnh, để bí mật sống trong đúng một tiến trình và không đi qua
+    tệp nào:
+        BLOCKFROST_KEY=… WALLET_SEED=\'…\' bash run_consume_schedule_e2e.sh Preprod 1
 
-    Đặt một lần cho mọi phiên terminal:
-        echo \'export AGENT_SECRETS=\"đường/dẫn/kho/khoá/của/bạn\"\' >> ~/.zshenv
-        source ~/.zshenv
+    Khoá phải đúng mạng đang chạy. Khoá của mạng khác vẫn là chuỗi hợp lệ và vẫn gọi được
+    — nó chỉ trả về dữ liệu của mạng kia, và không có gì kêu lên.
+}"
+: "${WALLET_SEED:?
+  ✗ WALLET_SEED chưa có trong môi trường. Kịch bản DỪNG — KHÔNG giao dịch nào được gửi.
 }"
 cd "$(dirname "$0")"
 
@@ -83,19 +89,8 @@ if [ -f "$STATE_FILE" ]; then
   set -a; . "./$STATE_FILE"; set +a
 fi
 
-echo "▶ Dò biến seed ví deploy…"
-SEED_VAR="$(npx tsx detect_deploy_wallet.ts)"
-echo "  → biến seed: $SEED_VAR"
-
-export NETWORK="$NET"
-# Value trong $AGENT_SECRETS có thể bọc nháy. Không bóc thì dấu nháy đi thẳng vào
-# bip39 và chết ở "Invalid mnemonic" — thông báo không hề nhắc tới dấu nháy.
-unquote() { sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"; }
-export BLOCKFROST_KEY="$(grep "^${BF_VAR}=" "$AGENT_SECRETS" | cut -d= -f2- | unquote)"
-export WALLET_SEED="$(grep "^${SEED_VAR}=" "$AGENT_SECRETS" | cut -d= -f2- | unquote)"
-[ -n "${BLOCKFROST_KEY:-}" ] || { echo "✗ không lấy được $BF_VAR"; exit 1; }
-[ -n "${WALLET_SEED:-}" ]    || { echo "✗ không lấy được seed $SEED_VAR"; exit 1; }
-echo "  → NETWORK=$NET, Blockfrost + seed đã nạp (không in)."
+export NETWORK="$NET" BLOCKFROST_KEY WALLET_SEED
+echo "  → NETWORK=$NET, Blockfrost + seed đã nhận từ môi trường (không in)."
 
 if [ "$PHASE" = "1" ]; then
   # ── [1/5] LAMP policy ────────────────────────────────────────────────────
@@ -198,21 +193,96 @@ if [ "$PHASE" = "1" ]; then
   #    Mọi `$BIEN` đứng liền trước chữ tiếng Việt hay dấu `…`/`—` đều dính; quét bằng
   #    mẫu `\$[A-Za-z_][A-Za-z0-9_]*[\x80-\xff]` (grep -P của macOS KHÔNG bắt được).
   echo; echo "▶ [5/5] Cam kết lịch (schedule_commit_only) — ghim vault ${VAULT_TX_HASH_SCHEDULE}…"
-  VAULT_TX_HASH="$VAULT_TX_HASH_SCHEDULE" npx tsx test/schedule_commit_only.ts | tee /dev/tty
+  OUT5="$(VAULT_TX_HASH="$VAULT_TX_HASH_SCHEDULE" npx tsx test/schedule_commit_only.ts | tee /dev/tty)"
+
+  # 🔴 BẮT LẠI TX HASH CỦA CHÍNH BƯỚC CAM KẾT — ĐỪNG BỎ.
+  #
+  #  Cam kết là một lệnh SPEND: `buildScheduleCommitTx` gọi
+  #  `.collectFrom([vaultUtxo], redeemer)` (ScheduleGen/offchain/src/schedule.ts:235),
+  #  nên UTxO vault mà bước [4/5] vừa tạo bị TIÊU ngay tại đây, và vault sống tiếp ở
+  #  một output MỚI mang hash của tx cam kết.
+  #
+  #  Bản trước KHÔNG bắt hash này (chạy lệnh trần, không bọc `$(...)`) rồi in ra lệnh
+  #  chặng 2 kèm hash của bước [4/5]. Lệnh đó **chắc chắn hỏng**, và hỏng theo cách đắt
+  #  nhất có thể:
+  #    · `schedule_fire_only.ts:79` đòi `u.txHash === wantedTx`, và khi đã ghim thì
+  #      hết lượt là DỪNG, cố ý không đoán hộ (`if (wantedTx) break;`).
+  #    · kể cả nếu UTxO cũ còn sống thì nó cũng `gen_schedules == []`, và fire chết ở
+  #      `schedule_fire_only.ts:115` với "No schedules. Run Commit first".
+  #    · thông điệp lỗi lúc đó dẫn người chạy đi soi apply-param và validator hash —
+  #      SAI HƯỚNG, đúng vào lúc đắt nhất.
+  #  Giá: trọn 2 epoch (~2 ngày UTC) đã chờ, và người chạy phải tự bới hash đúng trong
+  #  log — đúng thứ mà dòng cuối chặng 1 vừa bảo họ không cần giữ.
+  #
+  #  Người chạy không làm sai gì cả: họ dán đúng lệnh mà chính kịch bản này in ra.
+  COMMIT_TX_HASH="$(grab_txhash "$OUT5")"
+  [ -n "$COMMIT_TX_HASH" ] || {
+    echo "✗ Không bắt được TX hash của bước cam kết."
+    echo "  Chặng 2 PHẢI ghim hash của tx CAM KẾT, không phải hash tạo vault ở [4/5]."
+    echo "  Tìm dòng 'TX hash:' trong output ngay trên rồi chạy chặng 2 bằng hash đó."
+    exit 1
+  }
+  # Từ đây trở đi, vault sống ở output của tx cam kết.
+  export VAULT_TX_HASH_SCHEDULE="$COMMIT_TX_HASH"
+  persist VAULT_TX_HASH_SCHEDULE "$COMMIT_TX_HASH"
 
   echo
   echo "✅ CHẶNG 1 XONG trên $NET. Trạng thái đã lưu: $STATE_FILE"
   echo
   echo "   CHỜ 2 EPOCH (Preprod ≈ 2 ngày UTC), rồi chạy đúng lệnh này:"
   echo
-  echo "     bash run_consume_schedule_e2e.sh $NET 2 $VAULT_TX_HASH_SCHEDULE"
+  echo "     bash run_consume_schedule_e2e.sh $NET 2 $COMMIT_TX_HASH"
   echo
+  echo "   (Hash trên là của tx CAM KẾT — vault đã dời sang đó. Hash tạo vault ở [4/5]"
+  echo "    đã bị chính bước cam kết tiêu, dùng nó là chặng 2 không tìm thấy vault.)"
   echo "   Tx hash đã được lưu vào $STATE_FILE nên không phải bới lại trong log."
   exit 0
 fi
 
 # ══════════════ CHẶNG 2 ══════════════
 [ -n "$VAULT_TX" ] || { echo "✗ Chặng 2 cần VAULT_TX_HASH: bash $0 $NET 2 <VAULT_TX_HASH>"; exit 2; }
+
+# 🔴 CỔNG NỬA ĐÊM UTC — ĐO LÚC CHẠY, không phải một lời dặn trong chú thích.
+#
+#  Cả chặng 2 phải nằm TRỌN trong một epoch: fire sinh batch mang `created_epoch = E`,
+#  `schedule_decay_window = 1` ⟹ `is_expired` đúng ngay khi sang E+1. Nếu bước tiêu rơi
+#  sang epoch sau thì batch vừa sinh đã chết, và `consume_only.ts` báo "MAGIC còn sống
+#  KHÔNG ĐỦ" — thông điệp đúng, nhưng thiệt hại đã xảy ra: mất một ô `fired_count` của
+#  lịch và mất một ngày.
+#
+#  Thời gian thật của chặng 2 (đo theo chính các vòng chờ trong mã):
+#    · [1/3] nếu phải deploy hạ tầng consume: 09 polling 30×10s + 1 tx ref-script ≈ 5-6'
+#    · [2/3] fire + xác nhận: tối đa 6×20s = 2'
+#    · [3/3] tiêu: 1 tx
+#  ⟹ lấy 12 phút làm ngưỡng an toàn khi đã có cache, 20 phút khi chưa.
+#
+#  Cảnh báo tĩnh ở đầu tệp KHÔNG thay được cổng này: người chạy sau hai ngày chờ sẽ gõ
+#  lệnh ngay khi rảnh, không phải ngay khi an toàn.
+# `10#` phải đứng trước GIÁ TRỊ, không trước hằng 60: `date` in ra hai chữ số có số 0
+# dẫn đầu, và bash đọc `08`/`09` là bát phân KHÔNG HỢP LỆ ⟹ với `set -e` cả kịch bản
+# chết bằng `value too great for base` ở đúng phút 08/09 — hỏng ồn nhưng thông điệp
+# không nhắc gì tới giờ giấc. Đã dựng lại lỗi này rồi mới sửa.
+CON_LAI_GIAY=$(( 86400 - ( 10#$(date -u +%H) * 3600 + 10#$(date -u +%M) * 60 + 10#$(date -u +%S) ) ))
+if [ -n "${CONSUME_SCRIPT_HASH:-}" ] && [ -n "${REF_CONSUME_UTXO:-}" ]; then
+  NGUONG=720          # 12 phút — hạ tầng consume đã có, bỏ qua được bước 09
+else
+  NGUONG=1200         # 20 phút — còn phải deploy hạ tầng consume
+fi
+printf '⏱  Còn %d phút %02d giây tới nửa đêm UTC (ngưỡng cần: %d phút).\n' \
+  $(( CON_LAI_GIAY / 60 )) $(( CON_LAI_GIAY % 60 )) $(( NGUONG / 60 ))
+if [ "$CON_LAI_GIAY" -lt "$NGUONG" ]; then
+  echo
+  echo "⛔ KHÔNG ĐỦ THỜI GIAN — dừng TRƯỚC khi chạm vào bất cứ thứ gì."
+  echo "   Chạy tiếp bây giờ thì fire sinh batch ở epoch này, bước tiêu rơi sang epoch"
+  echo "   sau, và batch đó đã chết (schedule_decay_window = 1). Mất một ô fire + một ngày."
+  echo
+  echo "   Chờ qua nửa đêm UTC rồi chạy lại đúng lệnh này — lịch còn nhiều ô fire, không"
+  echo "   phải chờ lại 2 epoch."
+  echo
+  echo "   Biết mình đang làm gì và vẫn muốn chạy: BO_QUA_CONG_NUA_DEM=1 bash $0 $NET 2 $VAULT_TX"
+  [ "${BO_QUA_CONG_NUA_DEM:-}" = "1" ] || exit 3
+  echo "   ⚠ BO_QUA_CONG_NUA_DEM=1 — chạy tiếp theo yêu cầu."
+fi
 for v in LAMP_POLICY_ID SHARD_NFT_POLICY_ID VAULT_SCHEDULE_HASH REF_VAULT_SCHEDULE_UTXO; do
   eval "val=\${$v:-}"
   [ -n "$val" ] || { echo "✗ thiếu $v — chạy chặng 1 trước, hoặc điền vào $STATE_FILE"; exit 1; }
@@ -246,7 +316,7 @@ fi
 
 echo; echo "▶ [2/3] Bắn lịch (schedule_fire_only) — sinh magic_batches…"
 export VAULT_TX_HASH="$VAULT_TX"
-npx tsx test/schedule_fire_only.ts | tee /dev/tty
+npx tsx test/schedule_fire_only.ts
 
 echo; echo "▶ [3/3] Tiêu MAGIC thật (co-spend Engage + vault ScheduleGen BurnBatch)…"
 export VAULT_KIND=schedule

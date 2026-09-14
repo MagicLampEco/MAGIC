@@ -120,7 +120,7 @@ pub type VaultAttribution {
 // Cộng thêm INV-MAGIC-CITIZEN (`BOUNDARIES.md §2`): thưởng gắn MAGIC ĐÃ TIÊU — tiêu
 // là một LƯỢNG.
 //
-// Nhãn `total_burns_count` là nhãn của một trường CHẾT thời tiền-PHA-2 (không handler
+// Nhãn `total_burns_count` là nhãn của một trường CHẾT thời trước DESIGN-2 (không handler
 // nào từng ghi vào nó — `InstantGen/DESIGN-PHASE2.md §4.1`). Nay mọi module còn sống
 // dùng `consumed_credit`. Đổi tên KHÔNG đụng chuỗi (Plutus Data mã hoá vị trí), nhưng
 // ĐÃ vỡ API của MagicSDK — đó là thay đổi breaking, cố ý.
@@ -159,13 +159,13 @@ pub type VaultDatum {
 // ── Vault Redeemer (ScheduleGen operations) ───────────────────
 // NORMATIVE: append-only enum. New variants at END only.
 pub type VaultRedeemer {
-  // constr 0  Phase 1: User commits — locks L×λ LAMP, creates GenSchedule
+  // constr 0  Bước 1: User commits — locks L×λ LAMP, creates GenSchedule
   ScheduleCommit {
     schedule_length  : Natural,   // L ∈ [10,200]
     lamp_per_epoch   : Natural,   // λ (oildrop)
   }
 
-  // constr 1  Phase 2: Fire — permissionless (C-SCH-FIRE-PERMISSION)
+  // constr 1  Bước 2: Fire — permissionless (C-SCH-FIRE-PERMISSION)
   // Fires up to 8 pending orders for a specific schedule.
   ScheduleFire {
     schedule_id  : ByteArray,
@@ -182,6 +182,20 @@ pub type VaultRedeemer {
   // constr 4  SetDelegate: owner đặt/đổi consume-delegate (personal_delegate).
   //           Tách concern khỏi commit/withdraw; KHÔNG cooldown (đổi rẻ).
   SetDelegate { new_delegate: Option<ByteArray> }
+
+  // constr 5  PruneExpired: dọn rác batch ĐÃ CHẾT, permissionless, không đụng
+  //           LAMP. Đây là CỬA THOÁT ĐỘC LẬP, và nó tồn tại vì một lý do cụ thể:
+  //           trước khi có nó, `ScheduleFire` là nhánh DUY NHẤT biết gọi
+  //           `prune_expired`, nên một vault đủ `max_batches_per_vault` batch —
+  //           kể cả khi cả 32 đã chết — không còn cách nào rút danh sách xuống:
+  //           fire bị chính đống rác đó chặn, `BurnBatch` thì đòi batch CÒN SỐNG.
+  //           Hai cửa khoá lẫn nhau, và `lamp_locked` chỉ giảm được trong
+  //           `validate_fire` ⟹ LAMP đã cam kết cho lịch mất đường ra.
+  //           ĐẶT CUỐI DANH SÁCH LÀ BẮT BUỘC: chỉ số constructor là hợp đồng nhị
+  //           phân, chèn vào giữa sẽ làm mọi UTxO đã tạo không giải mã được.
+  //           Khuôn lấy từ InstantGen — `InstantGen/onchain/validators/vault.ak`
+  //           ▸ `validate_prune_expired` (§7.4), đã chạy sẵn ở module đó.
+  PruneExpired
 }
 
 // ── Shard Redeemer ────────────────────────────────────────────

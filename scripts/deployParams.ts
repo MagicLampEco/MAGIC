@@ -107,12 +107,6 @@ export function shardSpendParams(
   };
 }
 
-// ── GetMAGIC — otc_order.otc_order.spend (1 tham số) ─────────────
-// Neo: GetMAGIC/onchain/validators/otc_order.ak:43.
-export function otcOrderParams(i: { allocScriptHash: string }): ParamMap {
-  return { alloc_script_hash: i.allocScriptHash };
-}
-
 // ── Consolidate — vault_consolidate.vault_consolidate.spend (3) ──
 // Neo: Consolidate/onchain/validators/vault_consolidate.ak:106.
 // `lamp_asset_name` là tham số THEO MẠNG (tLAMP testnet / LAMP mainnet) — nó nằm
@@ -253,23 +247,33 @@ export interface PaymasterParamInputs {
  *  lại là đường để lần sau đi vòng qua chính chốt này — đúng lớp lỗi mà bản soát #39 vừa
  *  chỉ ra ở một chỗ khác của cùng tệp.
  *
- *  Địa chỉ kho mà mã phát sinh hôm nay VẪN là enterprise — stake part `None`. Hai chỗ,
- *  đo 2026-09-06:
- *    · `LAMP/Genesis/scripts/_reserve_layer2.ts:156-158` ▸ `scriptAddressData` trả thẳng
- *      `Constr(0, [Constr(1, [hash]), Constr(1, [])])` — vế thứ hai là `None` nguyên văn.
- *    · `LAMP/Genesis/scripts/canonical_compute.ts:34` ▸ `credentialToAddress(NETWORK,
- *      scriptHashToCredential(h))` — không truyền stake ⟹ enterprise.
- *  Mock on-chain cũng vậy: `Paymaster/onchain/validators/paymaster.ak` ▸
- *  `ct_treasury_addr` → `util.script_address` với `stake_credential: None`.
+ *  🟢 **2026-09-13: đường sinh địa chỉ bên LAMP đã mang stake credential vào** (nhà LAMP
+ *  báo; gộp vào nhánh chính của kho đó). `Genesis/scripts/_reserve_layer2.ts` ▸
+ *  `deriveCustody` nay dựng địa chỉ kho dạng **BASE**: payment = hash `custody`, stake =
+ *  hash `treasury_stake` áp `(instance_id, reward_cred, delegation_admin)`, với
+ *  `reward_cred` trỏ về chính credential thanh toán của kho. `ReserveWiring` xuất thêm
+ *  `treasuryStakeHash` nên phần stake đọc được thẳng, không phải suy từ địa chỉ.
  *
- *  ⚠ Cả hai neo nằm ở REPO KHÁC (`MagicLampEco/LAMP`) nên CI của kho này không kiểm được
- *  — chúng sẽ mục lặng lẽ. Và kiểu mục đó đã xảy ra một lần theo chiều ngược: một vòng
- *  soát báo `_reserve_layer2.ts` "không tồn tại", vì phép tìm chỉ quét kho này. Neo
- *  liên-kho phải nói rõ kho nào, nếu không thì một lần `grep` sai vùng đủ để xoá một
- *  bằng chứng có thật.
+ *  ⚠ **Mọi giá trị `treasuryAddr` giữ từ trước 2026-09-13 đều đã CHẾT.** Địa chỉ kho đổi
+ *  so với mọi bản đã gieo. Dựng bằng `addressData(payment, stake)` với CẢ HAI vế, lấy từ
+ *  artifact deploy của LAMP theo mạng — **soft-pin, không bake, không chép sang tệp thứ
+ *  hai**. Mock on-chain `Paymaster/onchain/validators/paymaster.ak` ▸ `ct_treasury_addr`
+ *  vẫn dựng `stake_credential: None` — đó là mock, sửa khi nối giá trị thật.
  *
- *  Nghĩa là cổng này sẽ ĐỎ cho tới khi đường sinh địa chỉ bên đó mang stake credential
- *  vào. Đỏ ở đó là đúng: nó chặn đúng một lần bake không lùi được.
+ *  ⚠ Neo liên-kho mục lặng lẽ, và lượt này có bằng chứng cho cả hai chiều mục:
+ *    · Một vòng soát từng báo `_reserve_layer2.ts` "không tồn tại", vì phép tìm chỉ quét
+ *      kho này. Neo liên-kho phải nói rõ KHO NÀO.
+ *    · Neo `_reserve_layer2.ts:156-158` ▸ `scriptAddressData` (bản cũ của khối này trích
+ *      nguyên văn `Constr(0, [Constr(1, [hash]), Constr(1, [])])`) đã mục trong **7
+ *      ngày**, theo kiểu khó thấy nhất: **hàm vẫn tồn tại, vẫn trả đúng hình dạng bị tố,
+ *      chỉ là không còn chỗ gọi** — sót lại từ thời `reserve_draw` nhận apply-param
+ *      `reserve_dest`. Một lần `grep` vẫn ra kết quả, và kết quả ấy vẫn sai. Địa chỉ
+ *      enterprise thật sự đến từ `custodyAddr: addrOf(custodyHash, network)` trong
+ *      `deriveCustody`. ⟹ Neo liên-kho phải trích theo **đường GỌI**, không theo chỗ định
+ *      nghĩa: một định nghĩa không ai gọi vẫn khớp `grep` y như lúc nó còn sống.
+ *
+ *  Cổng này **GIỮ NGUYÊN, không nới, không thêm cờ bỏ qua** — nó vừa chặn đúng một lần
+ *  bake không lùi được, và đó là lý do nó tồn tại.
  */
 export function assertTreasuryStakeDecided(treasuryAddr: Data): void {
   // Address = Constr 0 [payment_credential, stake_credential]; stake None = Constr 1 [].

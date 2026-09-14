@@ -248,8 +248,16 @@ describe("InstantGen full flow simulation (PHA 2)", () => {
         loyalty_holdings: [{ amount: 10_000_000_000_000n, acquired_epoch: 50n, is_locked: false }],
         activity_state: { recent_burn_epochs: [], consumed_credit: 1_000_000_000n },
       });
-      const poor  = simulateInstantGen(poorHolder,  makeUM(), makeBeacon(), 100n);
-      const whale = simulateInstantGen(whaleHolder, makeUM(), makeBeacon(), 100n);
+      // Beacon cung CAO cho riêng ca này. Bắt buộc, và lý do phải viết ra vì nó
+      // là điều kiện tiền đề chứ không phải tham số trang trí: `f` hạ 0,10 →
+      // 0,001 (2026-09-14) làm `cap_surplus` co 100 lần, nên ở cung mặc định
+      // 1000 MAGIC thì CHÍNH `cap_surplus` thành cái chặn (0,333 MAGIC) và phép
+      // so bên dưới sẽ so hai lần chạm cùng một cái trần — tức không còn nói gì
+      // về TIÊU. Cung 100.000 MAGIC đưa `cap_surplus` lên 33,3 MAGIC, trên cả
+      // hai `reward`, nên tiền đề ghi ở dòng dưới lại đúng.
+      const richBeacon = makeBeacon({ magic_supply: 100_000_000_000_000n });
+      const poor  = simulateInstantGen(poorHolder,  makeUM(), richBeacon, 100n);
+      const whale = simulateInstantGen(whaleHolder, makeUM(), richBeacon, 100n);
 
       // Cả hai đều bị `reward` chặn, không phải bị trần LAMP chặn — đó là điều
       // kiện để phép so dưới đây nói về TIÊU chứ không nói về NẮM.

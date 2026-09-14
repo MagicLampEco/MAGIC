@@ -1,6 +1,6 @@
 // lib/lamp.ak — LAMP loyalty holdings management
 //
-// ── PHA-2: LAMP ĐỨNG YÊN (I-ACT-7) ───────────────────────────
+// ── DESIGN-2: LAMP ĐỨNG YÊN (I-ACT-7) ───────────────────────────
 // KHÔNG handler nào của vault chuyển LAMP ra ngoài để đổi lấy MAGIC. Đường
 // DUY NHẤT LAMP rời vault là `WithdrawLamp` — chính chủ rút về ví mình.
 // Vì thế module này chỉ còn một thuật toán chọn holding: `remove_newest_first`

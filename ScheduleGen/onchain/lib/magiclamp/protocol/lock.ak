@@ -71,7 +71,7 @@ pub fn unlock_locked_amount(
 ///
 /// WHY THIS IS NOT OPTIONAL. `unlock_oldest` splits one holding on every partial
 /// release, and unlike the old `remove_locked_amount` it never drops an entry —
-/// so the list grew by +1 PER FIRE. `max_loyalty_holdings` is 64 and
+/// so the list grew by +1 PER FIRE. `max_loyalty_holdings` (40 kể từ 2026-09-14) and
 /// `validate_fire` enforces it, so a long schedule would leave the vault unable
 /// to fire OR withdraw at all: LAMP frozen, which is worse than the erosion
 /// I-ACT-7 set out to fix. Every split carries the ORIGINAL acquired_epoch, so

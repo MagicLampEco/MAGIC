@@ -283,6 +283,35 @@ async function main() {
   }
   if (!vaultUtxo?.datum) throw new Error("InstantGen vault UTxO không tìm thấy (chạy test:instant trước, cùng epoch).");
 
+  // 🔴 KIỂM CHỦ VAULT Ở CẢ HAI NHÁNH, không chỉ nhánh tự tìm.
+  //  Nhánh tự tìm (else ở trên) lọc theo `decodeVaultOwner(...) === ownerPkh`, nên nó
+  //  không bao giờ trả về vault của người khác. Nhánh GHIM qua env thì trước đây nhận
+  //  bất cứ out-ref nào người chạy đưa vào — dán nhầm hash của một lượt chạy trước với
+  //  ví khác là tx dựng xong xuôi rồi mới chết ở `expect authed` trong
+  //  `validate_burn_batch` (ScheduleGen/onchain/validators/vault.ak) lúc ledger chạy.
+  //  Hỏng ồn, tài sản an toàn — nhưng tốn nguyên một cửa sổ epoch để biết một điều
+  //  off-chain trả lời được ngay, và cửa sổ đó chỉ dài ĐÚNG một epoch.
+  {
+    let chuVault: string;
+    try {
+      chuVault = decodeVaultOwner(vaultUtxo.datum);
+    } catch (e: any) {
+      throw new Error(
+        `Không giải mã nổi owner từ datum của vault ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}: ${e?.message ?? e}. ` +
+        `UTxO này có phải vault không, hay đang trỏ nhầm sang một script khác?`,
+      );
+    }
+    if (chuVault.toLowerCase() !== ownerPkh.toLowerCase()) {
+      throw new Error(
+        `Vault ${vaultUtxo.txHash}#${vaultUtxo.outputIndex} KHÔNG thuộc ví đang dùng.\n` +
+        `  owner trong datum : ${chuVault}\n` +
+        `  ví đang chạy      : ${ownerPkh}\n` +
+        `BurnBatch đòi chữ ký của owner, nên tx này chắc chắn bị từ chối. ` +
+        `Kiểm lại ${vaultUtxoEnv} (hoặc bỏ nó đi để kịch bản tự tìm vault của ví này).`,
+      );
+    }
+  }
+
   // ── Tip → epoch + cửa sổ CHẶT ≤ 1 epoch (khớp consume.ak upper + vault lower) ─
   const tipRes = await fetch(`${BLOCKFROST_URL}/blocks/latest`, { headers: { project_id: BLOCKFROST_KEY } });
   const tip = await tipRes.json() as { time: number };
@@ -316,22 +345,62 @@ async function main() {
     throw new Error(`last_updated_epoch ${vaultDatum.last_updated_epoch} > current ${currentEpoch} (vault từ tương lai?).`);
   }
   const batches: MagicBatchT[] = vaultDatum.magic_batches;
-  const live = batches.find((b) => !isExpired(b, currentEpoch) && b.current_amount >= required);
-  if (!live) {
+
+  // 🔴 GOM NHIỀU BATCH, không chọn MỘT. Bản cũ dùng
+  //      batches.find(b => !isExpired(b) && b.current_amount >= required)
+  //    tức đòi MỘT batch tự nó đủ `required`. Vault hoàn toàn có thể có đủ MAGIC mà
+  //    không batch nào đủ một mình — `ScheduleFire` bắn tối đa
+  //    `max_fires_per_tx_catchup = 8` lệnh trong một lượt, và `schedule_decay_window = 1`
+  //    nên cả 8 batch cùng sống trong ĐÚNG epoch đó. Lúc ấy bản cũ ném
+  //    "Không có MagicBatch còn sống" trong khi vault đang giữ thừa MAGIC — một lần
+  //    ĐỦ TIỀN đọc y hệt một lần THIẾU TIỀN, và người chạy mất trọn epoch vì tưởng
+  //    fire hỏng.
+  //    Validator vốn đã cho phép: `apply_burns` (ScheduleGen/onchain/validators/vault.ak:624)
+  //    đệ quy theo danh sách `burns`, không đòi thứ tự, chỉ đòi mỗi `bid` khớp ĐÚNG
+  //    một batch, `amt > 0`, `amt <= current_amount`, batch chưa hết hạn. Ràng buộc
+  //    tổng nằm ở consume.ak: `Σburns == required` (dấu BẰNG).
+  const liveBatches = batches.filter((b) => !isExpired(b, currentEpoch) && b.current_amount > 0n);
+  const totalLive = liveBatches.reduce((s, b) => s + b.current_amount, 0n);
+  if (totalLive < required) {
     throw new Error(
-      `Không có MagicBatch còn sống với current_amount ≥ required(${required}) tại epoch ${currentEpoch}. ` +
-      `Batches: ${JSON.stringify(batches.map((b) => ({ id: b.batch_id.slice(0, 8), amt: b.current_amount.toString(), created: b.created_epoch.toString() })))}. ` +
-      `Chạy test:instant lại trong CÙNG epoch để có batch tươi.`,
+      `MAGIC còn sống KHÔNG ĐỦ tại epoch ${currentEpoch}: tổng ${totalLive} < required ${required}. ` +
+      `(Đây là thiếu THẬT — đã cộng qua mọi batch còn sống, không phải giới hạn của kịch bản.) ` +
+      `Batches: ${JSON.stringify(batches.map((b) => ({ id: b.batch_id.slice(0, 8), amt: b.current_amount.toString(), created: b.created_epoch.toString(), song: !isExpired(b, currentEpoch) })))}. ` +
+      `Chạy fire lại trong CÙNG epoch để có batch tươi.`,
     );
   }
 
-  // ── burns = [(batch_id, required)]; Σburns == required (mô hình ==) ───────────
-  const burns: [string, bigint][] = [[live.batch_id, required]];
+  // ── burns = gom tham lam theo THỨ TỰ BATCH TRONG DATUM; Σburns == required ─────
+  //    Giữ nguyên thứ tự của `magic_batches` chứ không sắp lại: `apply_burns` không
+  //    đòi thứ tự, nhưng `expectedBatches` phải khớp TUYỆT ĐỐI với thứ tự validator
+  //    sinh ra, và validator dựng nó bằng `list.filter_map` trên danh sách gốc.
+  const burns: [string, bigint][] = [];
+  {
+    let remaining = required;
+    for (const b of liveBatches) {
+      if (remaining === 0n) break;
+      const take = b.current_amount < remaining ? b.current_amount : remaining;
+      burns.push([b.batch_id, take]);
+      remaining -= take;
+    }
+    // Bất biến cục bộ: `totalLive >= required` đã kiểm ở trên ⟹ remaining phải về 0.
+    // Kiểm lại chứ không tin — sai ở đây là Σburns != required và tx bị từ chối với
+    // một thông điệp không nhắc gì tới chỗ hỏng thật.
+    if (remaining !== 0n) {
+      throw new Error(`LỖI NỘI BỘ: gom burns còn dư ${remaining} nanogic dù totalLive=${totalLive} ≥ required=${required}.`);
+    }
+  }
+  const burnByBatch = new Map<string, bigint>(burns);
+  console.log(`Gom ${burns.length} batch cho required=${required}: ` +
+    burns.map(([id, amt]) => `${id.slice(0, 8)}→${amt}`).join(" + "));
 
   // ── Vault output datum (A02 — vault.ak 684-708): magic_batches sau burn+prune,
   //    consumed_credit += required, last_updated_epoch=current, attribution +1 ────
   const burned = batches
-    .map((b) => (b.batch_id === live.batch_id ? { ...b, current_amount: b.current_amount - required } : b))
+    .map((b) => {
+      const take = burnByBatch.get(b.batch_id);
+      return take === undefined ? b : { ...b, current_amount: b.current_amount - take };
+    })
     .filter((b) => b.current_amount > 0n);             // apply_burns: prune batch về 0
   const expectedBatches = burned.filter((b) => !isExpired(b, currentEpoch)); // prune_expired
   const newVaultDatum = {
@@ -388,7 +457,11 @@ async function main() {
   console.log(`Ref consume:        ${consumeRefUtxo.txHash}#${consumeRefUtxo.outputIndex}`);
   console.log(`Ref vault instant:  ${vaultRefUtxo.txHash}#${vaultRefUtxo.outputIndex}`);
   console.log(`op_type=${opType} × op_count=${opCount} → required=${required} nanogic`);
-  console.log(`Batch: ${live.batch_id.slice(0, 12)}… ${live.current_amount} → ${live.current_amount - required}`);
+  console.log(`Batch còn sống: ${liveBatches.length} (tổng ${totalLive} nanogic) → đốt ${burns.length} batch, còn lại ${totalLive - required}`);
+  for (const [id, amt] of burns) {
+    const b = liveBatches.find((x) => x.batch_id === id)!;
+    console.log(`  ${id.slice(0, 12)}… ${b.current_amount} − ${amt} = ${b.current_amount - amt}`);
+  }
   console.log(`consumed_count: ${oldEngage.consumed_count} → ${newEngage.consumed_count}\n`);
 
   // ── CO-SPEND tx: Engage(Consume) + Vault(BurnBatch) + beacon ref ──────────────

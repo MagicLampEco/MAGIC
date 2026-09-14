@@ -69,7 +69,7 @@ validator um_datum_validator(
 )
 ```
 
-KHÔNG còn `keepers`/`threshold` — update là permissionless (khớp VacuumFire/ScheduleFire). An toàn nhờ validator recompute SMA + double-clamp.
+KHÔNG còn `keepers`/`threshold` — update là permissionless (khớp VacuumFire/ScheduleFire). SMA + double-clamp KHÔNG đủ để an toàn một mình — xem hằng `um_max_step_q` + bước `W-STEP` ở bảng §3 (HÀNG RÀO TẠM). Đích cuối là cổng M-trên-N (khuôn `price_param.ak`, `ConsumeMAGIC/onchain/validators`), CHƯA làm.
 
 Tất cả params được bake vào script hash qua `applyParamsToScript` trong Lucid. Đây là `PlutusScript` applied — phải lưu lại applied script bytes để sử dụng lại khi build tx.
 
@@ -83,17 +83,18 @@ Thứ tự kiểm tra trong validator (`um_datum.ak:79-126`):
 
 | Bước | Invariant | Code | Lý do |
 |---|---|---|---|
-| 1 | **W-PERM** | _(không kiểm tra chữ ký)_ | Permissionless — ai cũng trigger được; an toàn nhờ recompute SMA + double-clamp |
+| 1 | **W-PERM** | _(không kiểm tra chữ ký)_ | Permissionless — ai cũng trigger được; MỘT MÌNH KHÔNG an toàn, xem bước 8 (`W-STEP`) |
 | 2 | **W-SINGLE-IN** | `count_inputs_at_script(tx.inputs, own_hash) == 1` | Chống double-satisfaction — đếm theo payment credential, không full Address |
 | 3 | **W-SINGLE-OUT** | `count_outputs_at_script(tx.outputs, own_hash) == 1` | Đúng 1 output UM (không fork datum) |
 | 4 | **C-UM-5a** | `assets.quantity_of(um_out.value, um_policy, um_name) == 1` | UM NFT authority phải còn trong output |
 | 5 | **C-UM-5b** | `um_out.value == um_in.value` | Value preservation toàn bộ (không rút min-ADA, không chèn token lạ) |
 | 6 | **C-UM-4** | `current_epoch > datum.last_updated_epoch` | Mỗi epoch chỉ update 1 lần |
 | 7 | **C-UM-1a** | `clamped_raw = clamp(new_raw, UM_MIN_Q, UM_MAX_Q)` | Raw vào history phải trong bounds |
-| 8 | **C-UM-2** | `new_history = append_capped(history, clamped_raw, 6)` | Sliding window ≤ 6 |
-| 9 | **C-UM-1b** | `new_smoothed = compute_sma(new_history)` | SMA từ history mới |
-| 10 | **C-UM-3** | `new_smoothed_clamped = clamp(new_smoothed, UM_MIN_Q, UM_MAX_Q)` | Smoothed trong Constitutional bounds |
-| 11 | **A02** | Verify output datum fields khớp với giá trị tính được | Chống khai gian datum |
+| 8 | **W-STEP** | `step_within(clamped_raw, datum.smoothed_q, um_max_step_q)` — hằng `um_max_step_q` = 0.10 | HÀNG RÀO TẠM: mỗi lượt chỉ được lệch tối đa 0.10 so với `smoothed_q` hiện tại — vượt là TỪ CHỐI cả giao dịch (fail-closed). KHÔNG chặn kẻ tấn công một mình, chỉ tốn nhiều epoch hơn. Bản vá thật là cổng M-trên-N (`price_param.ak`), CHƯA làm |
+| 9 | **C-UM-2** | `new_history = append_capped(history, clamped_raw, 6)` | Sliding window ≤ 6 |
+| 10 | **C-UM-1b** | `new_smoothed = compute_sma(new_history)` | SMA từ history mới |
+| 11 | **C-UM-3** | `new_smoothed_clamped = clamp(new_smoothed, UM_MIN_Q, UM_MAX_Q)` | Smoothed trong Constitutional bounds |
+| 12 | **A02** | Verify output datum fields khớp với giá trị tính được | Chống khai gian datum |
 
 ### `else(_) { fail }`
 
@@ -197,8 +198,11 @@ Bước 5: Start keeper bot (tiện ích — không đặc quyền)
 | clamp-before-append | `append_capped(history, clamped_raw, W)` | `computeNewUM`: `clampedRaw = clampUM(newRaw)` → `appendHistory(history, clampedRaw)` |
 | `compute_sma` | `compute_sma` | `computeSMA` |
 | `clamp` | `clamp` | `clampUM` |
+| trần bước (`W-STEP`, HÀNG RÀO TẠM) | hằng `um_max_step_q` (= 0.10) + hàm `step_within` — validator TỪ CHỐI vượt trần | hằng `UM_MAX_STEP_Q` + hàm `clampStep` (`math.ts`) |
 
 **P8 ĐÃ ĐỒNG BỘ (clamp-before-append):** cả hai bên lưu giá trị **đã clamp** vào `history`. Trước đây TS `appendHistory` nhận raw chưa clamp (lệch HIGH với Aiken khi `new_raw` ngoài `[UM_MIN_Q, UM_MAX_Q]`); nay `computeNewUM` clamp `newRaw` TRƯỚC khi gọi `appendHistory` → `history` trong datum bit-identical. Redeemer `new_raw` vẫn là giá trị raw; validator on-chain clamp lại để bảo đảm bounds dù caller gian.
+
+**P8 áp cả cho trần bước.** `um_max_step_q` (Aiken) và `UM_MAX_STEP_Q` (TypeScript) phải cùng giá trị. Khác nhau ở CÁCH xử lý: on-chain TỪ CHỐI cả giao dịch nếu vượt trần (`expect`, không kẹp); off-chain PHẢI tự kẹp TRƯỚC khi gửi (`clampStep`) — quên kẹp là keeper tự dựng ra giao dịch mà validator chắc chắn từ chối, mất phí, UM không được làm tươi. Đây vẫn là hàng rào TẠM (xem §2, §3 `W-STEP`), không phải bản vá gốc.
 
 ---
 

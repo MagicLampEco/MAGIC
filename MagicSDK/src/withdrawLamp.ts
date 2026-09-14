@@ -4,7 +4,7 @@
 // Lý do: LF (Loyalty Factor §6.3) là weighted-average tuổi holding × amount;
 // giữ holding CŨ → LF cao → MAGIC sinh ra nhiều. Rút newest-first
 // = sacrifice 0 tuổi loyalty (vs rút oldest-first sẽ phá max LF user đã tích).
-// Sau PHA-2 (I-ACT-7 — LAMP đứng yên), đây là đường DUY NHẤT LAMP rời vault:
+// Sau DESIGN-2 (I-ACT-7 — LAMP đứng yên), đây là đường DUY NHẤT LAMP rời vault:
 // chính chủ rút về ví mình. Không handler nào chuyển LAMP đi nơi khác.
 //
 // ONCHAIN STATUS: ĐÃ HIỆN THỰC ĐẦY ĐỦ ở cả hai vault đang sống —

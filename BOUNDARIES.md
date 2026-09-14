@@ -54,9 +54,33 @@ theo spec §6.1 / L4. Neo — **theo TÊN HÀM, không theo số dòng**:
 > không phải mã. Đó là kiểu hỏng im lặng: người tra thấy một dòng hợp lệ và tưởng đã kiểm.
 
 > Bản cũ của dòng này viết công thức là `M = L × R × UM × PM / Q³`. **Tên biến đó đã cũ**
-> — từ PHA-2, thưởng khoá theo `consumed` chứ không theo `L` (INV-MAGIC-CITIZEN: thưởng
+> — từ DESIGN-2, thưởng khoá theo `consumed` chứ không theo `L` (INV-MAGIC-CITIZEN: thưởng
 > gắn MAGIC ĐÃ TIÊU, không gắn MAGIC nắm giữ). Hình dạng ba-bước-sàn thì không đổi, và
 > đó mới là phần bất biến.
+
+**`DESIGN-2` là gì, và vì sao nó không còn tên `PHA-2`** (đổi 2026-09-12). `DESIGN-2` là
+**đời thiết kế thứ hai của kho này** — mốc mà `I-ACT-7` bắt LAMP ĐỨNG YÊN và thưởng khoá
+theo `consumed` thay vì theo `L`. Nó là một MỐC THIẾT KẾ, không phải một pha vòng đời của
+thứ gì.
+
+Chuỗi `PHA-2` bị bỏ vì tới lúc đó **ba khái niệm khác nhau cùng đội lốt "phase 2"**, và
+không bản nào tự khai:
+
+| chuỗi | nghĩa | chủ |
+|---|---|---|
+| `PHA-2` (cũ, kho này) | đời thiết kế thứ hai → nay là **`DESIGN-2`** | kho MAGIC |
+| `PHA-2` (Wakeme) | pha vòng đời vault, `n > 1001` → nay là **`Epochy`** (pha đầu là `Daily`) | PhoenixKey |
+| `phase-2` / `PHASE2` | **kiểm tra pha 2 của sổ cái Cardano** (script chạy rồi từ chối), đối lại pha 1 | thuật ngữ Cardano |
+
+Mục thứ ba là thuật ngữ chuẩn của nền tảng — **không đổi, không đụng**. Nó xuất hiện hợp lệ
+trong mã bắt lỗi, ví dụ `CarpetMint/offchain/src/16_deadman_gates.ts` ▸ hằng `PHASE2` phân
+biệt "bị từ chối lúc chạy script" với "bị từ chối ở tầng sổ cái". Chính vì nó là claim mạnh
+nhất trên cái tên đó mà hai mục kia phải nhường.
+
+Giá đã trả trước khi đổi: một vòng hỏi-đáp của chủ dự án để tìm ra `PHA-2` của kho này
+KHÔNG phải `PHA-2` của Wakeme. Cùng hình dạng với bẫy `28e916b0…` — cùng tên hiển thị,
+khác đời, không bản nào tự khai. Ai gặp `PHA-1`/`PHA-2` trong kho này thì đó là tài liệu
+chưa được quét: kho đã về **0** ngoài `Legacy/` (`Legacy/` để yên theo §5).
 
 **Ngược lại, `required` của ConsumeMAGIC gộp rồi sàn MỘT lần.** `required =
 ⌊base_price × demand_mult × op_count / Q⌋` — KHÔNG sàn từng op rồi nhân. Hai quy tắc
@@ -126,9 +150,29 @@ bằng hash của nó. Không phải sửa Aiken. Xem `scripts/run_consume_sched
 chối. Nên mọi thay đổi trong bộ định giá phải giữ hai phía khớp tuyệt đối.
 
 **Giới hạn cứng cưỡng chế on-chain** — khai ở cả `constants.ts` lẫn `constants.ak` của
-từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYALTY_HOLDINGS=64`,
+từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYALTY_HOLDINGS=40`,
 `MAX_GEN_SCHEDULES=20`, `MAX_FIRES_PER_TX_CATCHUP=8`, `SHARD_COUNT=16`,
 `SHARD_CAP=4.5×10¹⁴ oildrop`.
+
+> `MAX_LOYALTY_HOLDINGS` hạ **64 → 40** ngày 2026-09-14. Bản cũ đặt trần TRÊN trần vật
+> lý: đo `aiken check` trên giao dịch trọn vẹn (đã trừ chi phí dựng fixture) cho
+> ScheduleGen **commit 128,6 %** và **fire 138,9 %** `maxTxExMem` ở 63/64 holding — nghĩa
+> là một vault chạm trần cũ thì KHÔNG TIÊU ĐƯỢC, và `validate_fire` là nhánh duy nhất hạ
+> được `lamp_locked`. Ở 40: commit 58,4 %, fire 62,2 %. Điểm chết khớp bậc hai: fire
+> n ≈ 53, commit n ≈ 55.
+>
+> Hai điều đi kèm, cả hai đều phản trực giác nên viết ra: **(a) fire chết TRƯỚC commit**
+> — cửa RA hẹp hơn cửa VÀO, nên `validate_commit` phải có cổng đếm holding chứ không chỉ
+> `validate_fire`; bản cũ thiếu đúng cổng đó. **Và cổng ở nhánh commit mang dấu NGHIÊM
+> (`<`), không phải `<=`** — đường RA tự nó dài thêm ĐÚNG một phần tử (`unlock_oldest`
+> cắt holding ở biên lượt nhả, hai mảnh khác `is_locked` nên `coalesce_holdings` không
+> gộp), nên chạm đúng trần ở bước commit là dựng một vault khoá LAMP vĩnh viễn: vào
+> được, không ra được, và không có cửa phụ. Một suất là đủ và là tối thiểu — chứng minh
+> chặn trên nằm cạnh chính cổng đó trong `validators/vault.ak`. **(b) Thủ phạm bậc hai KHÔNG phải
+> `list.sort`** mà là mẫu `foldl` + `merge_into(acc, h)` trong `coalesce_holdings` và
+> `list.concat(acc, […])` trong `lock_youngest` (`ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak`).
+> Chú thích của chính `coalesce_holdings` đã tự khai *"O(n²)… revisit only if fire
+> ExUnits actually bite"* — chúng cắn rồi. Ai đi tối ưu thì nhắm vào hai chỗ đó.
 
 ---
 
@@ -153,8 +197,22 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
   dấu `{` đầu tiên. Bản cũ của dòng này viết "không in gì khi bị đưa qua pipe" và bảo
   dùng `script -q` — **sai**, và cái sai đó tốn nhiều lượt chạy lại.
 
-  🔴 **Nhưng có một ca `aiken check` thoát 1 mà KHÔNG in một dòng chẩn nào**: hằng hex
-  **lẻ ký tự** (`#"a11ce"`). Tự đo trên v1.1.21, cùng cây nguồn, chỉ đổi độ dài hằng:
+  🔴 **Và ca im lặng RỘNG HƠN một hằng hex lẻ — đo lại 2026-09-14.** Trên v1.1.21, khi
+  stdout KHÔNG phải terminal, `aiken check` in **rỗng cho MỌI lỗi biên dịch**, không chỉ
+  ca hằng hex. Đo bằng một lỗi kiểu cố ý (`let x: Int = #"aa"`): chuyển hướng ⟹ stdout
+  RỖNG, stderr chỉ hai dòng `Compiling`; **cùng lệnh đó** chạy dưới `script -q /dev/null`
+  ⟹ in đủ khối `× I struggled to unify…`. Nên câu "qua pipe đổi định dạng chứ không im
+  lặng" ở ngay trên đúng cho ca **THÀNH CÔNG** và sai cho ca **LỖI** — và đó là chiều
+  hỏng tệ hơn, vì nó im đúng lúc có thứ cần đọc.
+
+  **Quy trình đúng, hai bước, đừng bỏ bước hai:**
+  `aiken check 2>/dev/null > out.json` → mã thoát 0 thì `json.load(out.json)`; mã thoát
+  KHÁC 0 thì **chạy lại dưới `script -q /dev/null aiken check`** rồi đọc output đó. Đi
+  thẳng vào `json.load` ở nhánh lỗi sẽ ném `ValueError` trên một tệp rỗng, và lỗi bạn
+  đọc được là lỗi của trình phân tích JSON — nó trỏ đi chỗ khác.
+
+  Ca hằng hex **lẻ ký tự** (`#"a11ce"`) vẫn ghi lại ở đây vì nó là ca đầu tiên tìm ra và
+  vì nó cho một số đo gọn:
 
   ```
   #"a11ce"   (5)  → exit=1, TOÀN BỘ stdout+stderr = 42 byte: "Compiling magiclamp/… (.)"

@@ -42,7 +42,27 @@ pub const instant_reward_rate_q : Int = 200_000_000   // 0.20
 // ── Surplus gate (§6.3 cap_surplus) ──────────────────────────
 // [Constitutional] br_safe = 1.5 ; f ≤ 0.10
 pub const br_safe_q       : Int = 1_500_000_000   // 1.5
-pub const f_cap_surplus_q : Int =   100_000_000   // 0.10
+//
+// Hạ 0,10 → 0,001 ngày 2026-09-14. ĐÂY LÀ HÀNG RÀO TẠM, KHÔNG PHẢI BẢN VÁ.
+//
+// Lỗ: beacon là reference input ⟹ đọc mà KHÔNG trừ dần, nên `N` lượt gen trong
+// cùng một epoch đều lấy `f · H₀` trên cùng một `H₀`. Thủng sàn khi `N > 1/f`.
+// Ở 0,10 thì `N = 10` — mười một vault THẬT gọi trong cùng epoch là đủ, không
+// cần chiếm oracle nào. Hạ xuống 0,001 dời điểm thủng lên `N = 1000`.
+//
+// Nó KHÔNG đóng lỗ, chỉ dời. Bản vá thật là `INV-SURPLUS-RATION` (`SPEC` §6.3,
+// 16 shard trừ dần theo lượt tiêu) và nó phải đi cùng đợt vá Nợ #19, vì dựng
+// shard cho InstantGen còn phải giải bài toán script đã sát trần kích thước.
+//
+// VÌ SAO DỪNG Ở 0,001 CHỨ KHÔNG THẤP HƠN — đây là một đánh đổi, không phải một
+// con số tối ưu. `cap_surplus` tỉ lệ THUẬN với `f`, nên hạ `f` vừa dời điểm
+// thủng vừa siết trần cấp của người dùng thật. Ở cung 1000 MAGIC, br = 2,0:
+// f = 0,10 → 33,3 MAGIC/lượt · f = 0,001 → 0,333 MAGIC/lượt · f = 1e-5 → 0,0033.
+// Trần `cap_pp` đo được trên chuỗi thật là 4,004 MAGIC, nên ở cung thấp lúc mới
+// mở, f = 1e-5 sẽ biến `cap_surplus` thành cái chặn người dùng bình thường —
+// tức đổi một hàng rào an toàn thành một ràng buộc kinh tế mà không ai chọn.
+// 0,001 là mức hạ sâu nhất còn giữ được giai đoạn khởi động chạy.
+pub const f_cap_surplus_q : Int =     1_000_000   // 0.001
 
 // [Significant] Backing beacon staleness window (epochs). Beyond it the
 // beacon is treated as ABSENT → cap_surplus = 0 → Gen closed (fail-closed).
@@ -81,7 +101,12 @@ pub const b_q_lantern : Int = 1_000_000_000   // 1.00
 // ── System limits (§11) ──────────────────────────────────────
 // [Routine]
 pub const max_batches_per_vault   : Int = 32
-pub const max_loyalty_holdings    : Int = 64
+// Hạ 64 → 40 ngày 2026-09-14 để giữ MỘT giá trị chung toàn giao thức
+// (`BOUNDARIES.md §2`). Số đo đứng sau nằm ở ScheduleGen — nơi trần này thật sự
+// cắn: commit 128,6 % và fire 138,9 % `maxTxExMem` ở 63/64 holding. InstantGen
+// CHƯA được đo riêng; hạ trần ở đây là chiều fail-closed (chỉ siết, không nới)
+// và module đang bị Nợ #19 khoá nên không vault nào chạm tới.
+pub const max_loyalty_holdings    : Int = 40
 pub const max_vacuum_orders       : Int = 10
 pub const max_gen_schedules       : Int = 20
 pub const max_delegation_apps     : Int = 5

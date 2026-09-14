@@ -6,6 +6,7 @@ import {
   BATCH_SOURCE_PREPAID,
   BURN_BATCH_CONSTR,
   CARP_ASSET_NAME,
+  CARP_SUPERSEDED_GENERATIONS,
   CARP_POLICY_ID,
   carpAssetClass,
   MAX_BATCHES_PER_VAULT,
@@ -525,6 +526,38 @@ describe("cấu hình mạng đã verify", () => {
     expect(() => carpAssetClass("Mainnet")).toThrow(/CHƯA CÓ CARP/);
     // Câu báo phải đọc được và phải nói đúng cái bẫy: đừng điền LACE.
     expect(() => carpAssetClass("Preview")).toThrow(/LACE/);
+  });
+
+  it("giá trị CARP đang dùng KHÔNG trùng đời nào đã được thay", () => {
+    const inUse = [
+      ...Object.values(CARP_POLICY_ID),
+      ...Object.values(CARP_ASSET_NAME),
+    ].filter((v): v is string => v !== null);
+
+    // Danh sách phải KHÁC RỖNG. Một mảng rỗng làm mọi vòng lặp dưới xanh mà
+    // không so gì — trạng thái "không đo được" đội lốt trạng thái "khớp".
+    expect(CARP_SUPERSEDED_GENERATIONS.length).toBeGreaterThan(0);
+
+    for (const prior of CARP_SUPERSEDED_GENERATIONS) {
+      for (const v of inUse) {
+        if (prior.isFullLength) {
+          expect(v).not.toBe(prior.value);
+        } else {
+          // Dòng cụt: so TIỀN TỐ. Coi một tiền tố như giá trị đầy đủ thì phép
+          // so không bao giờ khớp, và bài kiểm xanh mà chưa kiểm gì.
+          expect(v.startsWith(prior.value)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("mỗi đời đã được thay tự khai được độ dài của chính nó", () => {
+    for (const prior of CARP_SUPERSEDED_GENERATIONS) {
+      if (prior.isFullLength) expect(prior.value).toHaveLength(56);
+      else expect(prior.value.length).toBeLessThan(56);
+      expect(prior.value).toMatch(/^[0-9a-f]+$/);
+      expect(prior.supersededOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
   });
 
   it("burn_batch_constr = 2, đồng nhất với InstantGen/ScheduleGen (§11)", () => {

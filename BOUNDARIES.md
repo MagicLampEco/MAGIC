@@ -202,7 +202,12 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 >
 > **(c) Hai nhánh có hai thủ phạm KHÁC NHAU** — câu "thủ phạm không phải `list.sort`"
 > đúng cho FIRE và **sai cho COMMIT**. Nhánh nào đang hẹp nhất thì **đã đảo một lần** sau
-> bản vá #48, và có thể đảo nữa; đừng nhớ thứ tự, hãy tra.
+> bản vá cho **Nợ #48** (`DevStatus.md`), và có thể đảo nữa; đừng nhớ thứ tự, hãy tra.
+>
+> `#48` một mình là chuỗi MƠ HỒ trong kho này và đừng viết nó trơ: nó vừa là **Nợ #48** ở
+> `DevStatus.md` vừa là một **PR #48** trên GitHub nói về chuyện khác hẳn. Cùng hình dạng
+> với bẫy `PHA-2` và bẫy `28e916b0…` — cùng ký hiệu, khác đời, không bản nào tự khai. Viết
+> `Nợ #48` hoặc `PR #48`, đủ chữ để người tra không phải đoán.
 >
 > **Số đo KHÔNG nằm ở đây, và cũng không nằm ở `constants.ak`** — chỉ ở MỘT chỗ:
 > `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Trần ExUnit của hai nhánh mang LAMP"*,
@@ -215,7 +220,7 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 > đúng chỗ người ta tra để chọn trần. Hai bản sao đó nay đã gỡ.
 >
 > 🔴 **Và bản hoà này đã bỏ một câu của nhánh kia: "fire chết TRƯỚC commit".** Câu đó
-> đúng lúc viết và **đã bị chính phép đo lật** sau bản vá #48 — nay commit là nhánh hẹp
+> đúng lúc viết và **đã bị chính phép đo lật** sau bản vá cho Nợ #48 — nay commit là nhánh hẹp
 > nhất. Nó bị bỏ chứ không được giữ kèm đính chính, vì trí nhớ thì nạp cùng lúc: giữ cả
 > hai bản là giữ một mâu thuẫn, và không bản nào tự khai là đã bị bác. Vế còn sống của
 > câu đó — *cửa RA hẹp hơn cửa VÀO nên commit phải có cổng* — nằm nguyên ở mục (a) và (b)

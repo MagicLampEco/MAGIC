@@ -10,7 +10,7 @@
 
 ## 1. Mục đích
 
-UMKeeper duy trì giá trị **UM (Network Demand Multiplier)** — tham số Constitutional phản ánh tỷ lệ cung/cầu MAGIC toàn mạng. UM được lưu trong một UTxO riêng biệt (UM datum UTxO), cập nhật mỗi epoch theo cơ chế **permissionless** (khớp pattern VacuumFire/ScheduleFire): bất kỳ ai cũng có thể trigger update, validator tính lại SMA + double-clamp nên người trigger không hưởng lợi.
+UMKeeper duy trì giá trị **UM (Network Demand Multiplier)** — tham số Constitutional phản ánh tỷ lệ cung/cầu MAGIC toàn mạng. UM được lưu trong một UTxO riêng biệt (UM datum UTxO), cập nhật mỗi epoch theo cơ chế **permissionless** (khớp pattern VacuumFire/ScheduleFire): bất kỳ ai cũng có thể trigger update. Permissionless MỘT MÌNH KHÔNG an toàn — recompute SMA + double-clamp không đủ để chặn kẻ tấn công một mình (chi tiết + PoC ở §3.3). Thứ đang giữ an toàn LÚC NÀY là hàng rào bước `um_max_step_q` (HÀNG RÀO TẠM — xem §3.3, §4 mục `W-STEP`), không phải double-clamp.
 
 **Vai trò của UM trong hệ sinh thái:**
 - **InstantGen** nhân UM vào phần thưởng MAGIC. Công thức đọc ở hàm
@@ -76,8 +76,10 @@ Keeper bot (mỗi intervalMs = 60s):
 
 - Validator KHÔNG kiểm tra chữ ký — bất kỳ ai cũng submit được UMUpdate.
 - Người trigger cấp `new_raw` (tính off-chain từ epoch stats) → validator KHÔNG verify được con số này tự thân (không có on-chain accumulator burns/mints trong v1).
-- **Phòng thủ:** (1) `new_raw` bị clamp về `[UM_MIN_Q, UM_MAX_Q] = [0.5×, 2.0×]` → tác động bị chặn trần/sàn; (2) SMA 6-epoch làm mịn → cần 6 epoch liên tiếp chọn raw cực trị mới đẩy `smoothed_q` chạm biên (xem MATH.md §TV-UM-04). Trade-off chấp nhận để đổi lấy liveness tối đa (không phụ thuộc 1 keeper).
-- v-next: thêm on-chain epoch accumulator (MagicSupplyShard) để validator verify `new_raw` trực tiếp → bỏ được rủi ro này.
+- **Clamp + SMA MỘT MÌNH KHÔNG đủ.** PoC chạy thật, tái hiện bằng test `um_poc_jump_to_max_rejected` (`UMKeeper/onchain/validators/um_datum.ak`): trước khi có trần bước, 6 giao dịch liên tiếp — 0 chữ ký — ghim `smoothed_q` lên `um_max_q`, tức nhân đôi hệ số thưởng của mọi vault đang dùng InstantGen.
+- **Hàng rào TẠM đang giữ an toàn:** hằng `um_max_step_q` (= 0.10) + hàm `step_within` (cả hai ở `um_datum.ak`) ép mỗi lượt cập nhật lệch tối đa 0.10 so với `smoothed_q` hiện tại; vượt trần thì validator TỪ CHỐI cả giao dịch (fail-closed). Rào này KHÔNG chặn được kẻ tấn công một mình — chỉ buộc họ tốn nhiều epoch hơn để tới cùng đích.
+- **Đích chưa làm:** cổng M-trên-N (nhiều bên ký), khuôn có sẵn ở `price_param.ak` (`ConsumeMAGIC/onchain/validators`). Chừng nào chưa có cổng đó, đừng đọc hàng rào bước như đã giải xong bài toán permissionless.
+- v-next: thêm on-chain epoch accumulator (MagicSupplyShard) để validator verify `new_raw` trực tiếp, VÀ cổng M-trên-N — hai việc độc lập, không thay thế nhau.
 
 ### 3.4 Edge — Attacker cố đè `smoothed_q` thủ công
 
@@ -120,8 +122,9 @@ Keeper bot (mỗi intervalMs = 60s):
 | **C-UM-4** | `current_epoch > last_updated_epoch` tại mỗi update | `um_datum.ak` |
 | **C-UM-5** | UM NFT luôn còn trong output, value không đổi (`um_out.value == um_in.value`) | `um_datum.ak` |
 | **C-UM-6** | Staleness = `currentEpoch - last_updated_epoch`; nếu > 1 → fallback 0.5× (chỉ InstantGen) | `math.ts (InstantGen)`, `constants.ts` |
-| **W-PERM** | Permissionless — KHÔNG kiểm tra chữ ký (an toàn nhờ SMA recompute + double-clamp) | `um_datum.ak` |
+| **W-PERM** | Permissionless — KHÔNG kiểm tra chữ ký. MỘT MÌNH KHÔNG an toàn; an toàn hiện tại tới từ `W-STEP` dưới đây, không phải từ SMA recompute + double-clamp | `um_datum.ak` |
 | **W-SINGLE** | Đúng 1 input và 1 output tại script hash (đếm theo payment credential) | `um_datum.ak` |
+| **W-STEP** | `\|clamped_raw − datum.smoothed_q\| ≤ um_max_step_q` (= 0.10) mỗi lượt. HÀNG RÀO TẠM, không phải bản vá gốc — đích là cổng M-trên-N (khuôn `ConsumeMAGIC/onchain/validators/price_param.ak:54-57`), CHƯA làm | `um_datum.ak` (hằng `um_max_step_q`, hàm `step_within`) |
 
 ---
 
@@ -129,6 +132,6 @@ Keeper bot (mỗi intervalMs = 60s):
 
 - UMKeeper KHÔNG tính MAGIC, KHÔNG tương tác vault, KHÔNG đụng LAMP token.
 - UM datum KHÔNG phải vault — không có `magic_batches`, không có loyalty holdings.
-- Keeper được permissionless theo thiết kế (khớp VacuumFire/ScheduleFire). An toàn vì validator recompute SMA + double-clamp; rủi ro còn lại là `new_raw` cấp off-chain (xem §3.3).
+- Keeper được permissionless theo thiết kế (khớp VacuumFire/ScheduleFire). SMA + double-clamp KHÔNG đủ để an toàn một mình — an toàn hiện tại dựa vào hàng rào TẠM `um_max_step_q` (xem §3.3, §4 `W-STEP`); đích cuối (cổng M-trên-N) CHƯA làm.
 - `getEpochStats()` là stub trong testnet v1 — production cần indexer thực.
 - Không có whitelist keeper → không cần quản lý thêm/xoá keeper on-chain.

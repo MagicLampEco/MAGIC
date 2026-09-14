@@ -9,7 +9,7 @@
 - Keeper update UM mỗi epoch → users nhận rate đúng thực tế (0.5× – 2.0×)
 - Không có keeper → mọi InstantGen luôn nhận rate tệ nhất (0.5×)
 
-**Cập nhật PERMISSIONLESS** (khớp pattern VacuumFire/ScheduleFire): bất kỳ ai cũng có thể trigger UMUpdate — không cần whitelist, không cần chữ ký keeper. An toàn vì validator tính lại `smoothed_q` từ `history` rồi double-clamp `[UM_MIN_Q, UM_MAX_Q]` → người trigger KHÔNG hưởng lợi, chỉ làm tươi rate theo công thức. Biến số duy nhất họ cấp là `new_raw` (tính off-chain), đã bị clamp + SMA 6-epoch làm mịn. `keeper.ts` chỉ là bot tiện ích chạy đều đặn, không phải tác nhân đặc quyền.
+**Cập nhật PERMISSIONLESS** (khớp pattern VacuumFire/ScheduleFire): bất kỳ ai cũng có thể trigger UMUpdate — không cần whitelist, không cần chữ ký keeper. **Permissionless MỘT MÌNH KHÔNG an toàn**: `new_raw` do người gửi tự khai, validator không có oracle để đối chiếu — kẻ tấn công gọi lặp (0 chữ ký) từng ghim `smoothed_q` lên trần `um_max_q` chỉ sau 6 giao dịch liên tiếp (xem test `um_poc_jump_to_max_rejected` trong `UMKeeper/onchain/validators/um_datum.ak`). Thứ đang giữ an toàn LÚC NÀY là hằng `um_max_step_q` (= 0.10) và hàm `step_within`, cùng ở `um_datum.ak`: mỗi lượt cập nhật chỉ được lệch tối đa 0.10 so với `smoothed_q` hiện tại, vượt là validator TỪ CHỐI cả giao dịch (fail-closed). Đây là **HÀNG RÀO TẠM, không phải bản vá gốc** — nó không chặn được kẻ tấn công một mình, chỉ buộc tốn nhiều epoch hơn để tới cùng đích. Bản vá thật là cổng M-trên-N (nhiều bên ký), khuôn có sẵn ở `price_param.ak` (`ConsumeMAGIC/onchain/validators`) — CHƯA làm. `keeper.ts` chỉ là bot tiện ích chạy đều đặn, không phải tác nhân đặc quyền.
 
 ---
 

@@ -6,11 +6,12 @@ import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, countEligibleFires, nextFireEpoch,
   nanogicToMagicStr, lampToOildrop, unlockLockedAmount, isExpired, isLive,
+  selectLampForLock, assertHoldingCapAfterCommit,
 } from "../offchain/src/math.js";
 import {
   SCHEDULE_MIN_LENGTH, SCHEDULE_MAX_LENGTH,
   MIN_LAMP_PER_FIRE, SHARD_CAP, SNAPSHOT_BASE_RATE_Q, Q,
-  MAX_FIRES_PER_TX_CATCHUP, MAX_BATCHES_PER_VAULT,
+  MAX_FIRES_PER_TX_CATCHUP, MAX_BATCHES_PER_VAULT, MAX_LOYALTY_HOLDINGS,
 } from "../offchain/src/constants.js";
 import {
   TV_SCH_01, TV_SCH_02, TV_SCH_03, TV_SCH_04, TV_SCH_05,
@@ -620,4 +621,48 @@ describe("C-OVERFLOW — TV-OVERFLOW-02: trung gian S_Q × R_snap vượt Number
     expect(Number(exact + 1n)).toBe(Number(exact));
     expect(Number(exact + 1000n)).toBe(Number(exact));
   });
+});
+
+describe("C-SCH-HOLD — cửa VÀO phải hẹp hơn cửa RA đúng một suất", () => {
+  // Số học đứng sau dấu `<`. Hai bài dưới neo theo HẰNG, không theo số 40.
+  function fullyUnlocked(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      amount: 1_000_000n, acquired_epoch: BigInt(i + 1), is_locked: false,
+    }));
+  }
+
+  it("khoá TRỌN không cắt holding nào — độ dài giữ nguyên", () => {
+    const before = fullyUnlocked(MAX_LOYALTY_HOLDINGS);
+    const after  = selectLampForLock(before, BigInt(MAX_LOYALTY_HOLDINGS) * 1_000_000n);
+    expect(after).toHaveLength(MAX_LOYALTY_HOLDINGS);
+    expect(after.every(h => h.is_locked)).toBe(true);
+  });
+
+  it("nhưng lượt fire đầu tiên cắt một cái — danh sách dài thêm ĐÚNG 1", () => {
+    const locked = selectLampForLock(
+      fullyUnlocked(MAX_LOYALTY_HOLDINGS),
+      BigInt(MAX_LOYALTY_HOLDINGS) * 1_000_000n);
+    // Nhả 4,3 LAMP: ăn trọn 4 holding rồi CẮT cái thứ 5 ⟹ +1 phần tử.
+    expect(unlockLockedAmount(locked, 4_300_000n))
+      .toHaveLength(MAX_LOYALTY_HOLDINGS + 1);
+  });
+
+  it("chạm đúng trần sau commit bị chặn — đó là lối vào của bẫy khoá vĩnh viễn", () => {
+    expect(() => assertHoldingCapAfterCommit(MAX_LOYALTY_HOLDINGS, "t"))
+      .toThrow("GEN-SCH-007");
+  });
+
+  it("trần − 1 đi qua — và một suất đó vừa đủ cho lượt fire cắt thêm", () => {
+    expect(() => assertHoldingCapAfterCommit(MAX_LOYALTY_HOLDINGS - 1, "t")).not.toThrow();
+    const locked = selectLampForLock(
+      fullyUnlocked(MAX_LOYALTY_HOLDINGS - 1),
+      BigInt(MAX_LOYALTY_HOLDINGS - 1) * 1_000_000n);
+    expect(unlockLockedAmount(locked, 4_300_000n))
+      .toHaveLength(MAX_LOYALTY_HOLDINGS);   // chạm trần, KHÔNG vượt
+  });
+
+  // CHƯA GHIM: bốn bài trên ghim HÀM `assertHoldingCapAfterCommit` và số học
+  // của nó, KHÔNG ghim lời gọi bên trong `buildScheduleCommit` — gỡ dòng gọi ở
+  // `schedule.ts` thì bộ kiểm này vẫn xanh. Ghim được lời gọi cần một khung
+  // dựng giao dịch Lucid mà kho chưa có; cổng thật cho ca đó là validator.
 });

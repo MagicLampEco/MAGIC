@@ -398,7 +398,31 @@ fn validate_commit(
   // Hệ quả nếu thiếu: tồn tại một dải mà cửa VÀO còn mở trong khi cửa RA đã đóng
   // — người dùng khoá thêm được LAMP vào một vault mà `validate_fire` không còn
   // lọt trần ExUnit để gỡ khoá. Cổng này đóng đúng dải đó.
-  expect list.length(output.loyalty_holdings) <= max_loyalty_holdings
+  //
+  // DẤU NGHIÊM (`<`) CHỨ KHÔNG PHẢI `<=`, và một suất là ĐỦ — chứng minh:
+  // fire cũng làm danh sách dài ra. `unlock_oldest` cắt holding ở biên lượt nhả
+  // thành (epoch, đã mở) + (epoch, còn khoá); `same_bucket` đòi trùng CẢ
+  // `is_locked` nên hai mảnh đó không gộp lại được ⟹ +1. Chặn trên của phần
+  // dôi ra là ĐÚNG 1 cho cả vòng đời, không cộng dồn theo số lượt bắn: nhả đi
+  // từ epoch già nhất theo thứ tự, nên tại mỗi thời điểm chỉ MỘT epoch mang
+  // đồng thời hai mảnh; lượt sau cắt tiếp cùng epoch đó thì `coalesce_holdings`
+  // nhập mảnh mở mới vào mảnh mở cũ (+0), và chỉ khi epoch đó cạn thì biên mới
+  // dời sang epoch kế — lúc ấy epoch cũ đã về một mảnh.
+  // ⟹ đỉnh danh sách trong suốt lịch = (độ dài sau commit) + 1.
+  // Cửa RA ép `<= max_loyalty_holdings`, nên cửa VÀO phải ép `<`. Để `<=` là
+  // dựng đúng một trạng thái vào được mà không ra được: commit khoá TRỌN số dư
+  // giữ nguyên độ dài (mọi holding khoá nguyên cái, không cắt), chạm đúng trần,
+  // rồi mọi lượt fire đều cho trần+1 — và không có cửa phụ, vì `lamp_locked`
+  // chỉ giảm ở `validate_fire` còn `validate_withdraw_lamp` chết ở
+  // `amount <= avail` với `avail = balance − locked = 0`. LAMP khoá vĩnh viễn.
+  // Bài canh: `c_commit_full_lock_at_cap_rejected` (chặn lối vào) và
+  // `cf_commit_at_cap_then_fire_ok` (chứng minh một suất là ĐỦ).
+  //
+  // InstantGen giữ `<=` ở cả ba cổng của nó và ĐÓ LÀ ĐÚNG — đừng "sửa cho đối
+  // xứng". Dấu nghiêm ở đây trả giá cho một đường tách mà module kia không có:
+  // `grep -rn "unlock_locked_amount\|select_lamp_for_lock\|coalesce_holdings"
+  // InstantGen/onchain --include='*.ak'` → 0 dòng.
+  expect list.length(output.loyalty_holdings) < max_loyalty_holdings
   expect output.magic_batches         == datum.magic_batches
   expect output.next_batch_index      == datum.next_batch_index
   expect output.vacuum_orders         == datum.vacuum_orders
@@ -2232,17 +2256,167 @@ fn t_run_commit(n: Int) -> Bool {
                   t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, tx)
 }
 
-// PASS — (trần − 1) holding vào, tách một cái ⟹ chạm đúng trần.
+// PASS — (trần − 2) holding vào, tách một cái ⟹ trần − 1, còn đúng một suất
+// cho lượt fire đầu tiên tách tiếp. Đó là trạng thái LỚN NHẤT còn ra được.
 test c_commit_at_holding_cap_ok() {
+  t_run_commit(max_loyalty_holdings - 2)
+}
+
+// REJECT — (trần − 1) vào, tách một cái ⟹ chạm đúng trần, và lúc đó lượt fire
+// đầu tiên sẽ cho trần + 1. Đây là dải mà TRƯỚC bản vá người dùng vẫn khoá thêm
+// LAMP vào được, trong khi `validate_fire` — nhánh DUY NHẤT hạ được
+// `lamp_locked` — đã ép đúng trần này từ đầu. Cửa vào rộng hơn cửa ra là định
+// nghĩa của một cái bẫy.
+test c_commit_over_holding_cap_rejected() fail {
   t_run_commit(max_loyalty_holdings - 1)
 }
 
-// REJECT — đúng trần holding vào, tách một cái ⟹ vượt trần đúng 1.
-// Đây là dải mà TRƯỚC bản vá người dùng vẫn khoá thêm LAMP vào được, trong khi
-// `validate_fire` — nhánh DUY NHẤT hạ được `lamp_locked` — đã ép đúng trần này
-// từ đầu. Cửa vào rộng hơn cửa ra là định nghĩa của một cái bẫy.
-test c_commit_over_holding_cap_rejected() fail {
-  t_run_commit(max_loyalty_holdings)
+// ── C-SCH-HOLD, nửa còn lại: commit khoá TRỌN số dư ──────────────────────────
+//
+// `t_run_commit` khoá MỘT PHẦN số dư nên `select_lamp_for_lock` luôn cắt một
+// holding (+1). Khoá TRỌN thì không cắt cái nào (+0) — và chính ca không-cắt ấy
+// là ca đi lọt khi cổng còn là `<=`: vào đúng trần, rồi lượt fire đầu tiên cắt
+// ⟹ trần + 1 ⟹ không bao giờ ra.
+//
+// Số cố định để `pc_l × hc_lambda` bằng ĐÚNG số dư (điều kiện của "khoá trọn"):
+// 43 LAMP = 10 lượt × 4,3 LAMP. Đuôi co lại theo n để tổng không đổi.
+const hc_unit    : Int = 1_000_000        // 1 LAMP
+const hc_balance : Int = 43_000_000       // 43 LAMP
+const hc_l       : Int = 10
+const hc_lambda  : Int = 4_300_000        // 10 × 4,3 = 43 ⟹ khoá TRỌN
+const hc_epoch   : Int = 5
+
+fn hc_holdings(n: Int) -> List<LoyaltyHolding> {
+  list.concat(
+    t_holdings_rec(n - 1, []),
+    [t_holding(hc_balance - ( n - 1 ) * hc_unit, n, False)],
+  )
+}
+
+fn hc_sched() -> GenSchedule {
+  GenSchedule {
+    schedule_id:            compute_schedule_id_from_ref(t_own_ref(), 0),
+    commit_epoch:           hc_epoch,
+    start_fire_epoch:       hc_epoch + schedule_delay,
+    end_fire_epoch:         hc_epoch + hc_l + 1,
+    schedule_length:        hc_l,
+    lamp_per_epoch:         hc_lambda,
+    rate_locked_q:          compute_rate_locked_q(snapshot_base_rate_q, hc_l),
+    baseline_at_commit_q:   snapshot_base_rate_q,
+    multiplier_at_commit_q: compute_s_q(hc_l),
+    fired_count:            0,
+    auto_burn_target:       None,
+  }
+}
+
+fn hc_shard(locked: Int, committed: Int, fired: Int, active: Int, ep: Int)
+  -> ScheduleAggregateShardDatum {
+  ScheduleAggregateShardDatum {
+    shard_id:                   compute_shard_id(t_owner),
+    shard_locked_lamp:          locked,
+    shard_active_count:         active,
+    shard_cumulative_committed: committed,
+    shard_cumulative_fired:     fired,
+    last_updated_epoch:         ep,
+    shard_cap:                  shard_cap,
+  }
+}
+
+fn hc_shard_in(d: ScheduleAggregateShardDatum) -> Input {
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+    output: Output { address: t_shard_addr(), value: t_fire_shard_value(),
+                     datum: InlineDatum(d), reference_script: None },
+  }
+}
+
+fn hc_shard_out(d: ScheduleAggregateShardDatum) -> Output {
+  Output { address: t_shard_addr(), value: t_fire_shard_value(),
+           datum: InlineDatum(d), reference_script: None }
+}
+
+/// Datum sau một lượt commit khoá TRỌN với `n` holding vào.
+fn hc_datum_after_commit(n: Int) -> VaultDatum {
+  VaultDatum {
+    ..t_datum(hc_balance, hc_balance,
+              select_lamp_for_lock(hc_holdings(n), hc_l * hc_lambda)),
+    gen_schedules:      [hc_sched()],
+    last_updated_epoch: hc_epoch,
+  }
+}
+
+/// Trọn một giao dịch commit khoá-trọn hợp lệ với `n` holding vào.
+fn hc_run_commit(n: Int) -> Bool {
+  let din  = t_datum(hc_balance, 0, hc_holdings(n))
+  let dout = hc_datum_after_commit(n)
+  let tx =
+    t_tx(
+      [t_vault_input(din, hc_balance), hc_shard_in(hc_shard(0, 0, 0, 0, hc_epoch))],
+      [t_vault_output(dout, hc_balance),
+       hc_shard_out(hc_shard(hc_balance, hc_balance, 0, 1, hc_epoch))],
+      [t_owner])
+  validate_commit(din, hc_l, hc_lambda, hc_epoch, t_own_ref(), t_vault_addr(),
+                  t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+/// Một lượt fire thật trên datum do `hc_run_commit(n)` sinh ra.
+fn hc_run_fire(n: Int) -> Bool {
+  let din      = hc_datum_after_commit(n)
+  let fire_ep  = hc_epoch + schedule_delay
+  let m_i      = compute_m_i(hc_lambda, compute_rate_locked_q(snapshot_base_rate_q, hc_l))
+  let dout =
+    VaultDatum {
+      ..din,
+      lamp_locked:        hc_balance - hc_lambda,
+      loyalty_holdings:   unlock_locked_amount(din.loyalty_holdings, hc_lambda),
+      magic_batches:      create_fire_batches(t_own_ref(), 0, 1, m_i,
+                                              hc_sched().schedule_id, fire_ep),
+      next_batch_index:   1,
+      gen_schedules:      [GenSchedule { ..hc_sched(), fired_count: 1 }],
+      last_updated_epoch: fire_ep,
+    }
+  let tx =
+    t_tx(
+      [t_vault_input(din, hc_balance),
+       hc_shard_in(hc_shard(hc_balance, hc_balance, 0, 1, hc_epoch))],
+      [t_vault_output(dout, hc_balance),
+       hc_shard_out(hc_shard(hc_balance - hc_lambda, hc_balance, hc_lambda, 1, fire_ep))],
+      [])
+  validate_fire(din, hc_sched().schedule_id, fire_ep, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+// SỐ HỌC — vì sao một suất là cần. Khoá trọn KHÔNG cắt holding nào (độ dài giữ
+// nguyên), rồi lượt nhả đầu tiên cắt đúng một cái (+1). Bài này là cái "VÌ SAO"
+// của hai bài dưới; hỏng nó thì hai bài kia thành số ma thuật.
+test hc_full_lock_keeps_length_then_fire_adds_one() {
+  let hin  = hc_holdings(max_loyalty_holdings - 1)
+  let hcom = select_lamp_for_lock(hin, hc_l * hc_lambda)
+  and {
+    sum_holdings(hin) == hc_balance,
+    list.length(hin) == max_loyalty_holdings - 1,
+    list.length(hcom) == max_loyalty_holdings - 1,   // khoá trọn ⟹ KHÔNG cắt
+    list.all(hcom, fn(h) { h.is_locked }),
+    list.length(unlock_locked_amount(hcom, hc_lambda)) == max_loyalty_holdings,
+  }
+}
+
+// REJECT — đây là lối vào của cái bẫy. Với cổng `<=` bài này ĐI LỌT: commit
+// khoá trọn ở đúng trần được chấp nhận, và từ đó không lượt fire nào ra được
+// (mọi k ∈ [1, max_fires_per_tx_catchup] đều cho trần + 1), còn
+// `validate_withdraw_lamp` thì chết ở `avail = balance − locked = 0`.
+test c_commit_full_lock_at_cap_rejected() fail {
+  hc_run_commit(max_loyalty_holdings)
+}
+
+// PASS — và một suất là ĐỦ: commit khoá trọn ở (trần − 1) vào được, rồi một
+// lượt fire THẬT chạy trót lọt với danh sách chạm đúng trần. Không có bài này
+// thì bản vá chỉ chứng minh đã đóng cửa vào, chưa chứng minh cửa ra còn mở.
+test cf_commit_at_cap_then_fire_ok() {
+  and {
+    hc_run_commit(max_loyalty_holdings - 1),
+    hc_run_fire(max_loyalty_holdings - 1),
+  }
 }
 
 // ── Trần ExUnit của hai nhánh mang LAMP — số ĐO, không ngoại suy ─────────────

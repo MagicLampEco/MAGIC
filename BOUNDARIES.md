@@ -163,7 +163,12 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 >
 > Hai điều đi kèm, cả hai đều phản trực giác nên viết ra: **(a) fire chết TRƯỚC commit**
 > — cửa RA hẹp hơn cửa VÀO, nên `validate_commit` phải có cổng đếm holding chứ không chỉ
-> `validate_fire`; bản cũ thiếu đúng cổng đó. **(b) Thủ phạm bậc hai KHÔNG phải
+> `validate_fire`; bản cũ thiếu đúng cổng đó. **Và cổng ở nhánh commit mang dấu NGHIÊM
+> (`<`), không phải `<=`** — đường RA tự nó dài thêm ĐÚNG một phần tử (`unlock_oldest`
+> cắt holding ở biên lượt nhả, hai mảnh khác `is_locked` nên `coalesce_holdings` không
+> gộp), nên chạm đúng trần ở bước commit là dựng một vault khoá LAMP vĩnh viễn: vào
+> được, không ra được, và không có cửa phụ. Một suất là đủ và là tối thiểu — chứng minh
+> chặn trên nằm cạnh chính cổng đó trong `validators/vault.ak`. **(b) Thủ phạm bậc hai KHÔNG phải
 > `list.sort`** mà là mẫu `foldl` + `merge_into(acc, h)` trong `coalesce_holdings` và
 > `list.concat(acc, […])` trong `lock_youngest` (`ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak`).
 > Chú thích của chính `coalesce_holdings` đã tự khai *"O(n²)… revisit only if fire

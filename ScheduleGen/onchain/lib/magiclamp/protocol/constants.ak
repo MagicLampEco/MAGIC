@@ -62,7 +62,14 @@ pub const max_fires_per_tx_catchup : Int = 8
 // ── System limits [Routine] ──────────────────────────────────────────
 pub const max_gen_schedules     : Int = 20
 pub const max_batches_per_vault : Int = 32
-pub const max_loyalty_holdings  : Int = 64
+// Hạ 64 → 40 ngày 2026-09-14. 64 nằm TRÊN trần vật lý: đo `aiken check` trên
+// giao dịch trọn vẹn (trừ chi phí fixture) cho commit 128,6 % và fire 138,9 %
+// `maxTxExMem` ở 63/64 holding — tức một vault chạm trần cũ thì KHÔNG tiêu được,
+// và fire là nhánh duy nhất hạ được `lamp_locked`. Ở 40 thì commit 58,4 %, fire
+// 62,2 %. Điểm chết khớp bậc hai: fire n ≈ 53, commit n ≈ 55 — 40 để lại ~38 %
+// biên cho chênh lệch giữa bản đo và mạng thật. Số + cách dựng lại thang đo ghi
+// ở `validators/vault.ak`, khối "Trần ExUnit của hai nhánh mang LAMP".
+pub const max_loyalty_holdings  : Int = 40
 
 // ── Shard [Constitutional] ────────────────────────────────────────────
 pub const shard_count : Int = 16

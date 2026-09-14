@@ -70,7 +70,11 @@ export const INSTANT_RATE_Q = 8_000_000_000n;
 
 // ── Surplus gate (§6.3 cap_surplus) ──────────────────────────
 export const BR_SAFE_Q       = 1_500_000_000n;   // 1.5  [Constitutional]
-export const F_CAP_SURPLUS_Q =   100_000_000n;   // 0.10 [Constitutional]
+// Hạ 0,10 → 0,001 ngày 2026-09-14 — hàng rào TẠM cho lỗ "beacon không trừ dần",
+// dời điểm thủng sàn từ N = 10 lên N = 1000 lượt gen mỗi epoch. Lý do đầy đủ +
+// đánh đổi ở `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸
+// `f_cap_surplus_q`. P8: hai bên đổi trong CÙNG commit.
+export const F_CAP_SURPLUS_Q =     1_000_000n;   // 0.001 [Constitutional, f ≤ 0.10]
 // [Significant] beyond this the backing beacon counts as ABSENT → cap = 0.
 export const MAX_BACKING_STALE = 1n;
 
@@ -97,7 +101,9 @@ export const PROFILE_PARAMS: Record<string, { B_Q: bigint; r: number; N: number 
 
 // ── System limits (§19.8) ────────────────────────────────────
 export const MAX_BATCHES_PER_VAULT    = 32;
-export const MAX_LOYALTY_HOLDINGS     = 64;
+// Hạ 64 → 40 ngày 2026-09-14. Lý do + số đo:
+// `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸ `max_loyalty_holdings`.
+export const MAX_LOYALTY_HOLDINGS     = 40;
 export const MAX_VACUUM_ORDERS        = 10;
 export const MAX_GEN_SCHEDULES        = 20;
 export const MAX_DELEGATION_APPS      = 5;

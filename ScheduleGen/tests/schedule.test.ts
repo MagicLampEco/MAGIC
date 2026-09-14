@@ -225,6 +225,44 @@ describe("countEligibleFires — C-FIRE-1 ≥, catch-up", () => {
     const fires = countEligibleFires(52n, 0n, 100n, 59n, 30);  // 30 existing batches, budget=2
     expect(fires).toBeLessThanOrEqual(2);  // only 2 slots remain
   });
+
+  // ── Ngõ cụt 32 batch — bài canh phía off-chain (P8 với Aiken
+  // `f_fire_full_of_dead_batches_now_fires` / `..._live_batches_still_rejected`).
+  //
+  // Cái phải canh KHÔNG nằm trong `countEligibleFires` mà nằm ở BÊN GỌI:
+  // `buildScheduleFireTx` từng truyền `magic_batches.length` thô. Hai bài dưới
+  // ghim đúng hợp đồng của tham số đó — "số batch CÒN SỐNG" — bằng cùng phép lọc
+  // `isExpired` mà bên dựng tx dùng.
+  const mkBatches = (n: number, createdEpoch: bigint): MagicBatch[] =>
+    Array.from({ length: n }, (_, i) => ({
+      batch_id:            i.toString(16).padStart(2, "0"),
+      source:              "Schedule" as const,
+      created_epoch:       createdEpoch,
+      initial_amount:      1n,
+      current_amount:      1n,
+      decay_window:        1n,
+      profile_at_creation: null,
+      contract_id:         null,
+      halved:              false,
+    }));
+
+  const liveCount = (bs: MagicBatch[], epoch: bigint) =>
+    bs.filter(b => !isExpired(b.created_epoch, b.decay_window, epoch)).length;
+
+  it("32 batch ĐÃ CHẾT không được khoá fire — đếm trên danh sách còn sống", () => {
+    const batches = mkBatches(MAX_BATCHES_PER_VAULT, 50n);   // chết ở epoch 59
+    expect(liveCount(batches, 59n)).toBe(0);
+    // Hành vi CŨ (đếm thô) cho 0 ⟹ ngõ cụt. Hành vi ĐÚNG cho > 0.
+    expect(countEligibleFires(52n, 0n, 100n, 59n, batches.length)).toBe(0);
+    expect(countEligibleFires(52n, 0n, 100n, 59n, liveCount(batches, 59n)))
+      .toBeGreaterThan(0);
+  });
+
+  it("32 batch CÒN SỐNG vẫn phải khoá fire — trần không bị nới", () => {
+    const batches = mkBatches(MAX_BATCHES_PER_VAULT, 59n);   // sống ở epoch 59
+    expect(liveCount(batches, 59n)).toBe(MAX_BATCHES_PER_VAULT);
+    expect(countEligibleFires(52n, 0n, 100n, 59n, liveCount(batches, 59n))).toBe(0);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -496,7 +534,7 @@ describe("I-ACT-7 — LAMP đứng yên across a fire", () => {
 
   // Nợ #30 — THE BOUND. Every partial release splits a holding and nothing is
   // ever dropped, so without coalescing the list grew +1 per fire against
-  // max_loyalty_holdings=64, freezing the vault's LAMP. Mirrors Aiken
+  // max_loyalty_holdings (40 kể từ 2026-09-14), freezing the vault's LAMP. Mirrors Aiken
   // ul_repeated_does_not_grow (vault.ak) byte-for-byte (P8).
   it("unlockLockedAmount: repeated partial releases do not grow the list", () => {
     const h1 = unlockLockedAmount([{ amount: 1000n, acquired_epoch: 5n, is_locked: true }], 100n);

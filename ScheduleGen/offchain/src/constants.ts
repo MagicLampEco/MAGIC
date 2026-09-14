@@ -25,7 +25,10 @@ export const SCHEDULE_DECAY_WINDOW   = 1n;             // cliff [Constitutional]
 export const MAX_FIRES_PER_TX_CATCHUP = 8;            // [Routine]
 export const MAX_GEN_SCHEDULES       = 20;            // [Routine]
 export const MAX_BATCHES_PER_VAULT   = 32;            // [Routine]
-export const MAX_LOYALTY_HOLDINGS    = 64;            // [Routine]
+// Hạ 64 → 40 ngày 2026-09-14 — 64 nằm TRÊN trần ExUnit thật. Lý do + số đo ở
+// `ScheduleGen/onchain/lib/magiclamp/protocol/constants.ak` ▸ `max_loyalty_holdings`.
+// P8: hai bên phải đổi trong CÙNG commit.
+export const MAX_LOYALTY_HOLDINGS    = 40;            // [Routine]
 
 // ── Shard [Constitutional] ────────────────────────────────────
 export const SHARD_COUNT = 16;

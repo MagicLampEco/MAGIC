@@ -127,17 +127,19 @@ export const TV_IG_REWARD_ZERO = {
 export const TV_IG_CAP_SURPLUS_01 = {
   id:          "TV-IG-CAP-SURPLUS-01",
   spec_ref:    "§6.3",
-  description: "cap_surplus with br=2.0, S=1000 MAGIC → 33.333333333 MAGIC",
+  description: "cap_surplus with br=2.0, S=1000 MAGIC → 0.333333333 MAGIC",
   input: {
     br_q:         2_000_000_000n,       // 2.0
     magic_supply: 1_000_000_000_000n,   // 1000 MAGIC in nanogic
   },
-  // s1 = ⌊10^12 × 100_000_000 / Q⌋   = 100_000_000_000     (f·S)
+  // f hạ 0,10 → 0,001 ngày 2026-09-14 (hàng rào tạm cho lỗ beacon-không-trừ-dần);
+  // vector này đi theo vì nó ghim CÔNG THỨC, không ghim một con số lịch sử.
+  // s1 = ⌊10^12 × 1_000_000 / Q⌋     =   1_000_000_000     (f·S)
   // excess = 2.0Q − 1.5Q             =     500_000_000
-  // s2 = ⌊s1 × excess / Q⌋           =  50_000_000_000
-  // s3 = ⌊s2 × Q / 1_500_000_000⌋    =  33_333_333_333
-  steps: { s1: 100_000_000_000n, excess_q: 500_000_000n, s2: 50_000_000_000n },
-  expected_nanogic: 33_333_333_333n,
+  // s2 = ⌊s1 × excess / Q⌋           =     500_000_000
+  // s3 = ⌊s2 × Q / 1_500_000_000⌋    =     333_333_333
+  steps: { s1: 1_000_000_000n, excess_q: 500_000_000n, s2: 500_000_000n },
+  expected_nanogic: 333_333_333n,
 };
 
 // ── TV-IG-CAP-SURPLUS-02: boundary br == br_safe → ĐỎ ────────
@@ -246,7 +248,7 @@ export const TV_IG_GRANT_01 = {
   },
   ceilings: {
     reward:      210_000_000n,
-    cap_surplus: 33_333_333_333n,
+    cap_surplus: 333_333_333n,        // f = 0,001 (hạ 2026-09-14)
     cap_pp:      16_000_000_000n,
   },
   expected_grant: 210_000_000n,
@@ -263,7 +265,13 @@ export const TV_IG_GRANT_02 = {
     um_q:         1_000_000_000n,
     pm_q:         1_050_000_000n,
     br_q:         2_000_000_000n,
-    magic_supply: 1_000_000_000_000n,
+    // Cung nâng 10^12 → 10^14 ngày 2026-09-14. LÝ DO, vì đây là đổi ĐẦU VÀO của
+    // một vector chuẩn chứ không chỉ đổi kết quả: `f` hạ 0,10 → 0,001 làm
+    // `cap_surplus` co đúng 100 lần, nên ở cung 1000 MAGIC thì CHÍNH NÓ thành
+    // cái chặn — và vector này tồn tại để chứng minh `cap_pp` chặn. Giữ nguyên
+    // đầu vào thì vector vẫn xanh nhưng xanh vì lý do khác với tên nó mang.
+    // 10^14 × 0,001 = 10^12 × 0,10 ⟹ `cap_surplus` giữ nguyên 33_333_333_333.
+    magic_supply: 100_000_000_000_000n,
     l_avail_oildrop: 4_000_000_000n,   // 4000 LAMP tự do trong vault
   },
   ceilings: {
@@ -376,11 +384,13 @@ export const TV_OVERFLOW_01 = {
   spec_ref:    "§11 C-OVERFLOW",
   description: "Intermediate products blow past Number.MAX_SAFE_INTEGER (≈9×10^15)",
   // S = 36×10^15 nanogic of effective supply through cap_surplus:
-  //   s1 = ⌊S × f_q / Q⌋ needs S × 10^8 = 3.6×10^24 as an exact integer.
+  //   s1 = ⌊S × f_q / Q⌋ needs S × 10^6 = 3.6×10^22 as an exact integer.
+  // f hạ 10^8 → 10^6 ngày 2026-09-14; tích trung gian vẫn vượt xa 9×10^15, nên
+  // mệnh đề vector này ghim (phải dùng BigInt) không đổi — chỉ số hạng đổi.
   magic_supply:  36_000_000_000_000_000n,
-  f_cap_surplus: 100_000_000n,
-  intermediate:  3_600_000_000_000_000_000_000_000n,
-  step1_after_div: 3_600_000_000_000_000n,
+  f_cap_surplus: 1_000_000n,
+  intermediate:  36_000_000_000_000_000_000_000n,
+  step1_after_div: 36_000_000_000_000n,
   use_bigint: true,   // MANDATORY
 };
 

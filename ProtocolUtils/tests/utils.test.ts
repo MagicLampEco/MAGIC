@@ -167,7 +167,7 @@ describe("unlockLockedAmount — I-ACT-7 (LAMP stays put)", () => {
   });
 
   // THE BOUND. Each partial release splits a holding and nothing is dropped, so
-  // without coalescing the list grew +1 per fire — past MAX_LOYALTY_HOLDINGS=64,
+  // without coalescing the list grew +1 per fire — past MAX_LOYALTY_HOLDINGS (40 kể từ 2026-09-14, trước đó 64),
   // which the vault enforces on withdrawal. That freezes the user's LAMP.
   // P8: same input as `f_unlock_repeated_does_not_grow` in lock.ak — the two
   // implementations must agree element-for-element, not just on the count.

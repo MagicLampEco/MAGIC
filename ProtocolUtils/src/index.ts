@@ -361,6 +361,7 @@ export function unlockLockedAmount(
  *  NOT optional. `unlockLockedAmount` splits a holding on every partial release
  *  and never drops one, so without this the list grows +1 per fire — 21 entries
  *  after 20 fires vs 2 under the old `removeLockedAmount`. MAX_LOYALTY_HOLDINGS
+ *  (40 kể từ 2026-09-14, trước đó 64)
  *  is 64 and the vault validator enforces it on withdrawal, so an L=200 schedule
  *  would leave the user unable to withdraw at all.
  *

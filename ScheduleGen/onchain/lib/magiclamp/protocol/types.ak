@@ -182,6 +182,20 @@ pub type VaultRedeemer {
   // constr 4  SetDelegate: owner đặt/đổi consume-delegate (personal_delegate).
   //           Tách concern khỏi commit/withdraw; KHÔNG cooldown (đổi rẻ).
   SetDelegate { new_delegate: Option<ByteArray> }
+
+  // constr 5  PruneExpired: dọn rác batch ĐÃ CHẾT, permissionless, không đụng
+  //           LAMP. Đây là CỬA THOÁT ĐỘC LẬP, và nó tồn tại vì một lý do cụ thể:
+  //           trước khi có nó, `ScheduleFire` là nhánh DUY NHẤT biết gọi
+  //           `prune_expired`, nên một vault đủ `max_batches_per_vault` batch —
+  //           kể cả khi cả 32 đã chết — không còn cách nào rút danh sách xuống:
+  //           fire bị chính đống rác đó chặn, `BurnBatch` thì đòi batch CÒN SỐNG.
+  //           Hai cửa khoá lẫn nhau, và `lamp_locked` chỉ giảm được trong
+  //           `validate_fire` ⟹ LAMP đã cam kết cho lịch mất đường ra.
+  //           ĐẶT CUỐI DANH SÁCH LÀ BẮT BUỘC: chỉ số constructor là hợp đồng nhị
+  //           phân, chèn vào giữa sẽ làm mọi UTxO đã tạo không giải mã được.
+  //           Khuôn lấy từ InstantGen — `InstantGen/onchain/validators/vault.ak`
+  //           ▸ `validate_prune_expired` (§7.4), đã chạy sẵn ở module đó.
+  PruneExpired
 }
 
 // ── Shard Redeemer ────────────────────────────────────────────

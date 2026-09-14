@@ -66,7 +66,8 @@ use cardano/transaction.{
 
 use magiclamp/protocol/types.{
   ActivityState, BurnBatch, DelegationCertificate, Flame, GenSchedule,
-  LoyaltyHolding, MagicBatch, Schedule, ScheduleAggregateShardDatum,
+  LoyaltyHolding, MagicBatch, PruneExpired, Schedule,
+  ScheduleAggregateShardDatum,
   ScheduleCommit, ScheduleFire, SetDelegate, ShardRedeemer,
   StreakState, VaultAttribution, VaultDatum, VaultRedeemer,
   WithdrawLamp,
@@ -198,6 +199,13 @@ validator vault(
       SetDelegate { new_delegate } ->
         validate_set_delegate(datum, new_delegate, current_epoch, vault_addr,
                               lamp_policy_id, lamp_asset_name, tx)
+
+      // ── PruneExpired — dọn rác batch chết, permissionless ────
+      // Cửa thoát độc lập khỏi fire/burn. Xem khối lý do ở `VaultRedeemer`
+      // (`types.ak`) và ở `validate_prune_expired` bên dưới.
+      PruneExpired ->
+        validate_prune_expired(datum, current_epoch, vault_addr,
+                               lamp_policy_id, lamp_asset_name, tx)
     }
   }
 
@@ -383,6 +391,14 @@ fn validate_commit(
   expect output.lamp_balance          == datum.lamp_balance         // no transfer yet
   expect output.lamp_locked           == datum.lamp_locked + total_lock  // C-SCH-9
   expect output.loyalty_holdings      == new_holdings
+  // C-SCH-HOLD (2026-09-14): cổng đếm holding, TRƯỚC ĐÂY THIẾU Ở ĐÚNG NHÁNH NÀY.
+  // `validate_fire` ép nó, genesis ép nó, `validate_withdraw_lamp` ép nó — chỉ
+  // commit thì không. Mà commit là nhánh LÀM DANH SÁCH DÀI RA: `select_lamp_for_lock`
+  // tách một holding thành hai khi khoá một phần, nên mỗi lần cam kết lẻ là +1.
+  // Hệ quả nếu thiếu: tồn tại một dải mà cửa VÀO còn mở trong khi cửa RA đã đóng
+  // — người dùng khoá thêm được LAMP vào một vault mà `validate_fire` không còn
+  // lọt trần ExUnit để gỡ khoá. Cổng này đóng đúng dải đó.
+  expect list.length(output.loyalty_holdings) <= max_loyalty_holdings
   expect output.magic_batches         == datum.magic_batches
   expect output.next_batch_index      == datum.next_batch_index
   expect output.vacuum_orders         == datum.vacuum_orders
@@ -433,8 +449,22 @@ fn validate_fire(
   // Find the schedule
   expect Some(sched) = list.find(datum.gen_schedules, fn(s) { s.schedule_id == schedule_id })
 
+  // §4.2: thu rác TRƯỚC khi đếm, và chỉ prune MỘT lần cho cả nhánh.
+  //
+  // Bản cũ đếm `batch_budget` trên danh sách CHƯA prune ở đây, rồi mới prune ở
+  // chỗ dựng `updated_batches` bên dưới. Hai chỗ đọc hai danh sách khác nhau, và
+  // cái cổng lại chặt hơn chính bất biến nó bảo vệ — đó là một ngõ cụt khoá tiền:
+  // đủ `max_batches_per_vault` batch (KỂ CẢ khi cả 32 đã chết) ⟹ `batch_budget = 0`
+  // ⟹ `fires_in_tx = 0` ⟹ `expect fires_in_tx > 0` sập. Nhánh duy nhất biết dọn
+  // rác chính là nhánh vừa bị đống rác đó chặn.
+  // `validate_burn_batch` không cứu được: nó đòi batch CÒN SỐNG, mà
+  // `schedule_decay_window = 1` giết cả 32 ở epoch kế. Và `lamp_locked` chỉ giảm
+  // được ở đúng một chỗ trong cả tệp — trong chính `validate_fire` này — nên LAMP
+  // đã cam kết cho lịch sẽ không còn đường ra. Cửa thứ ba nay là `PruneExpired`.
+  let live_batches = prune_expired(datum.magic_batches, current_epoch)
+
   // Compute fires_in_tx (C-FIRE-1 ≥ catch-up logic)
-  let fires_in_tx = count_eligible_fires(sched, current_epoch, datum.magic_batches)
+  let fires_in_tx = count_eligible_fires(sched, current_epoch, live_batches)
   expect fires_in_tx > 0   // at least one fire must occur
 
   // M_i for each fire (T-DET: all identical)
@@ -450,8 +480,7 @@ fn validate_fire(
   // owner failed to consume in earlier epochs.
   let new_batches = create_fire_batches(own_ref, datum.next_batch_index,
                                          fires_in_tx, m_i, schedule_id, current_epoch)
-  let updated_batches =
-    list.concat(prune_expired(datum.magic_batches, current_epoch), new_batches)
+  let updated_batches = list.concat(live_batches, new_batches)
   expect list.length(updated_batches) <= max_batches_per_vault
 
   // Update or remove schedule
@@ -667,6 +696,81 @@ fn is_expired(batch: MagicBatch, current_epoch: Int) -> Bool {
 /// zero, so pruning never changes any live value.
 fn prune_expired(batches: List<MagicBatch>, current_epoch: Int) -> List<MagicBatch> {
   list.filter(batches, fn(b) { !is_expired(b, current_epoch) })
+}
+
+// ══════════════════════════════════════════════════════════════
+// validate_prune_expired — dọn rác batch chết, permissionless
+// ══════════════════════════════════════════════════════════════
+//
+// Bỏ mọi batch ĐÃ CHẾT theo vách §4.2. Một batch chết đã đáng giá 0, nên nhánh
+// này KHÔNG đổi một giá trị sống nào — nó chỉ đòi lại byte trong datum.
+//
+// VÌ SAO NHÁNH NÀY TỒN TẠI (chứ không phải vì gọn gàng): nó là cửa thoát ĐỘC LẬP
+// khỏi cặp fire/burn. Không có nó, `validate_fire` là nơi DUY NHẤT gọi
+// `prune_expired` trên đường đi tới, nên một vault đầy `max_batches_per_vault`
+// batch chết tự khoá mình: fire bị chính đống rác chặn, burn đòi batch còn sống.
+// Khuôn lấy từ `InstantGen/onchain/validators/vault.ak` ▸ `validate_prune_expired`.
+//
+// Vì permissionless (không chữ ký) nên phải chống quấy rối, và đây là bốn vế đó:
+//   - từ chối lượt rỗng (không có gì chết) ⟹ không spam được;
+//   - GIỮ NGUYÊN `last_updated_epoch` ⟹ người lạ không đẩy được đồng hồ của chủ
+//     vault đi tới (mọi phép tính sống-chết đọc `created_epoch` của từng batch,
+//     không đọc trường này, nên giữ nguyên là an toàn);
+//   - `activity_state` bất động ⟹ không có đòn bẩy thưởng/trộm miễn phí;
+//   - LAMP / ADA / tập token khoá cứng qua `validate_vault_value`.
+//
+// KHÔNG đụng shard: nhánh này không đổi `lamp_locked`, nên không có delta nào để
+// shard ghi. Và `shard` validator chỉ cho đồng-tiêu dưới Commit/Fire, nên không ai
+// kéo được một shard vào giao dịch prune.
+fn validate_prune_expired(
+  input_datum     : VaultDatum,
+  current_epoch   : Int,
+  vault_addr      : Address,
+  lamp_policy_id  : PolicyId,
+  lamp_asset_name : ByteArray,
+  tx              : Transaction,
+) -> Bool {
+
+  // ── VAULT-IDENTITY NFT — chết sớm với vault bịa ─────────────
+  let vault_input  = find_vault_input_raw(tx.inputs, vault_addr)
+  let vault_output = find_vault_output_raw(tx.outputs, vault_addr)
+  expect validate_vault_value(vault_input, vault_output)
+
+  // ── Đầu ra = đầu vào trừ đi các batch đã chết ───────────────
+  let expected_batches = prune_expired(input_datum.magic_batches, current_epoch)
+
+  // ── Từ chối lượt RỖNG: phải thật sự có thứ để dọn ──────────
+  expect list.length(expected_batches) < list.length(input_datum.magic_batches)
+
+  let output_datum = get_vault_output(tx.outputs, vault_addr)
+
+  // Thay đổi DUY NHẤT được phép là danh sách batch.
+  expect output_datum.magic_batches         == expected_batches
+  expect list.length(output_datum.magic_batches) <= max_batches_per_vault
+
+  // Mọi trường còn lại BẤT ĐỘNG — kể cả `last_updated_epoch` (xem khối trên).
+  expect output_datum.owner                 == input_datum.owner
+  expect output_datum.lamp_balance          == input_datum.lamp_balance
+  expect output_datum.lamp_locked           == input_datum.lamp_locked
+  expect output_datum.loyalty_holdings      == input_datum.loyalty_holdings
+  expect output_datum.next_batch_index      == input_datum.next_batch_index
+  expect output_datum.vacuum_orders         == input_datum.vacuum_orders
+  expect output_datum.gen_schedules         == input_datum.gen_schedules
+  expect output_datum.profile               == input_datum.profile
+  expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
+  expect output_datum.pending_profile       == input_datum.pending_profile
+  expect output_datum.delegation_cert       == input_datum.delegation_cert
+  expect output_datum.activity_state        == input_datum.activity_state
+  expect output_datum.streak_state          == input_datum.streak_state
+  expect output_datum.personal_delegate     == input_datum.personal_delegate
+  expect output_datum.attribution           == input_datum.attribution
+  expect output_datum.last_updated_epoch    == input_datum.last_updated_epoch
+
+  // VALUE PRESERVATION: LAMP trong value khớp `lamp_balance` (không đụng gì).
+  expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id, lamp_asset_name)
+       == output_datum.lamp_balance
+
+  True
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1630,7 +1734,7 @@ test ul_oldest_locked_first() {
 
 // UL-4 — THE BOUND (Nợ #30). Each partial release splits a holding and nothing
 // is ever dropped, so without coalescing the list grew +1 per fire: 21 entries
-// after 20 fires, ~201 after an L=200 schedule, against max_loyalty_holdings=64
+// after 20 fires, ~201 after an L=200 schedule, against max_loyalty_holdings
 // enforced by validate_fire. That freezes the user's LAMP outright — no fire, no
 // withdraw. Every split inherits the original acquired_epoch, so the count must
 // stay flat. Ported with coalesce_holdings from origin/main.
@@ -1884,6 +1988,324 @@ test f_fire_fabricated_vault_rejected() fail {
   validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
                 t_lamp_policy, t_lamp_name, t_shard_policy, tx)
 }
+
+// ── NGÕ CỤT 32 BATCH — bài canh gốc, và bài canh chiều ngược ──
+//
+// Trước bản vá, `count_eligible_fires` đọc danh sách CHƯA prune, nên 32 batch
+// ĐÃ CHẾT cũng làm `batch_budget = 0` ⟹ `fires_in_tx = 0` ⟹ fire sập. Mà fire là
+// nhánh duy nhất hạ được `lamp_locked` ⟹ LAMP cam kết cho lịch mất đường ra.
+//
+// HAI bài dưới đây phải đi CÙNG NHAU, và đây là lý do: bài đầu một mình KHÔNG
+// phân biệt được bản vá đúng với bản vá ẩu "bỏ hẳn `batch_budget`". Bài thứ hai
+// là cực đối xứng — 32 batch CÒN SỐNG thì vẫn phải bị từ chối. Chỉ khi cả hai
+// cùng đúng thì mới kết luận được cổng còn nguyên và chỉ đọc đúng danh sách.
+fn t_batch_at(i: Int, epoch: Int) -> MagicBatch {
+  MagicBatch {
+    ..t_batch(crypto.blake2b_256(cbor.serialise(i)), 1),
+    created_epoch: epoch,
+  }
+}
+
+fn t_batches_rec(n: Int, epoch: Int, acc: List<MagicBatch>) -> List<MagicBatch> {
+  if n <= 0 { acc }
+  else { t_batches_rec(n - 1, epoch, list.push(acc, t_batch_at(n, epoch))) }
+}
+
+/// `t_run_fire` với một datum đầu vào tuỳ ý (bản gốc ghim cứng `t_fire_datum()`).
+fn t_run_fire_with(din: VaultDatum, out_datum: VaultDatum, vault_out_lamp: Int) -> Bool {
+  let tx =
+    t_tx(
+      [t_vault_input(din, t_lambda), t_fire_shard_in()],
+      [t_vault_output(out_datum, vault_out_lamp), t_fire_shard_out()],
+      [],
+    )
+  validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+// Epoch hiện tại của mọi bài fire là 5. `schedule_decay_window = 1` ⟹ batch tạo
+// ở epoch 3 đã CHẾT (5−3 = 2 ≥ 1), batch tạo ở epoch 5 còn SỐNG (5−5 = 0 < 1).
+const t_epoch_dead: Int = 3
+const t_epoch_live: Int = 5
+
+// PASS — vault đầy đúng `max_batches_per_vault` batch CHẾT vẫn bắn được, và cả
+// 32 xác đi ra khỏi datum trong cùng giao dịch đó.
+test f_fire_full_of_dead_batches_now_fires() {
+  let dead = t_batches_rec(max_batches_per_vault, t_epoch_dead, [])
+  let din =
+    VaultDatum {
+      ..t_fire_datum(),
+      magic_batches:    dead,
+      next_batch_index: max_batches_per_vault,
+    }
+  let m_i = compute_m_i(t_lambda, t_rate_q)
+  let dout =
+    VaultDatum {
+      ..t_fire_out_datum(t_lambda),
+      magic_batches:
+        create_fire_batches(t_own_ref(), max_batches_per_vault, 1, m_i, t_sched_id, 5),
+      next_batch_index: max_batches_per_vault + 1,
+    }
+  t_run_fire_with(din, dout, t_lambda)
+}
+
+// REJECT — cực đối xứng: 32 batch CÒN SỐNG thì trần vẫn phải giữ. Bản vá chỉ
+// được đổi DANH SÁCH được đếm, không được nới cái trần.
+test f_fire_full_of_live_batches_still_rejected() fail {
+  let live = t_batches_rec(max_batches_per_vault, t_epoch_live, [])
+  let din =
+    VaultDatum {
+      ..t_fire_datum(),
+      magic_batches:    live,
+      next_batch_index: max_batches_per_vault,
+    }
+  let m_i = compute_m_i(t_lambda, t_rate_q)
+  let dout =
+    VaultDatum {
+      ..t_fire_out_datum(t_lambda),
+      magic_batches:
+        list.concat(
+          live,
+          create_fire_batches(t_own_ref(), max_batches_per_vault, 1, m_i, t_sched_id, 5),
+        ),
+      next_batch_index: max_batches_per_vault + 1,
+    }
+  t_run_fire_with(din, dout, t_lambda)
+}
+
+// ── PruneExpired — cửa thoát độc lập ─────────────────────────
+fn t_prune_datum(batches: List<MagicBatch>) -> VaultDatum {
+  VaultDatum {
+    ..t_datum(t_lambda, 0, [t_holding(t_lambda, 5, False)]),
+    magic_batches: batches,
+  }
+}
+
+fn t_run_prune(din: VaultDatum, dout: VaultDatum, out_lamp: Int) -> Bool {
+  let tx = t_tx([t_vault_input(din, t_lambda)], [t_vault_output(dout, out_lamp)], [])
+  validate_prune_expired(din, 5, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// PASS — hai xác đi ra, batch còn sống ở lại nguyên chỗ.
+test pe_drops_dead_keeps_live() {
+  let dead_a = t_batch_at(1, t_epoch_dead)
+  let dead_b = t_batch_at(2, t_epoch_dead)
+  let live   = t_batch_at(3, t_epoch_live)
+  let din  = t_prune_datum([dead_a, dead_b, live])
+  let dout = t_prune_datum([live])
+  t_run_prune(din, dout, t_lambda)
+}
+
+// REJECT — lượt RỖNG (không có gì chết) ⟹ không spam được vault người khác.
+test pe_noop_rejected() fail {
+  let live = t_batch_at(3, t_epoch_live)
+  let din  = t_prune_datum([live])
+  t_run_prune(din, din, t_lambda)
+}
+
+// REJECT — nhánh permissionless KHÔNG được dùng làm đường rút LAMP.
+test pe_lamp_drained_rejected() fail {
+  let dead = t_batch_at(1, t_epoch_dead)
+  let din  = t_prune_datum([dead])
+  let dout =
+    VaultDatum {
+      ..t_datum(t_lambda - 10, 0, [t_holding(t_lambda - 10, 5, False)]),
+      magic_batches: [],
+    }
+  t_run_prune(din, dout, t_lambda - 10)
+}
+
+// REJECT — chống quấy rối: người lạ không đẩy được đồng hồ của chủ vault đi tới.
+test pe_clock_advanced_rejected() fail {
+  let dead = t_batch_at(1, t_epoch_dead)
+  let din  = t_prune_datum([dead])
+  let dout = VaultDatum { ..t_prune_datum([]), last_updated_epoch: 5 }
+  t_run_prune(din, dout, t_lambda)
+}
+
+// REJECT — không được nhân tiện xoá cả batch còn sống của chủ vault.
+test pe_kills_live_batch_rejected() fail {
+  let dead = t_batch_at(1, t_epoch_dead)
+  let live = t_batch_at(3, t_epoch_live)
+  let din  = t_prune_datum([dead, live])
+  let dout = t_prune_datum([])
+  t_run_prune(din, dout, t_lambda)
+}
+
+// REJECT — `consumed_credit` bất động: prune không phải đòn bẩy thưởng miễn phí.
+test pe_consumed_credit_inflated_rejected() fail {
+  let dead = t_batch_at(1, t_epoch_dead)
+  let din  = t_prune_datum([dead])
+  let dout =
+    VaultDatum {
+      ..t_prune_datum([]),
+      activity_state: ActivityState { recent_burn_epochs: [], consumed_credit: 1_000 },
+    }
+  t_run_prune(din, dout, t_lambda)
+}
+
+// ── C-SCH-HOLD: cổng đếm holding ở validate_commit ───────────
+//
+// Hai bài dưới neo theo HẰNG `max_loyalty_holdings`, không neo theo số 64 hay 40.
+// Cố ý: hằng đó là tham số kinh tế còn đổi, còn mệnh đề cần ghim thì không —
+// "cửa VÀO không được mở rộng hơn cửa RA". Viết số vào đây là dựng một bản sao
+// sẽ chết im lặng đúng ngày hằng đổi.
+const t_commit_epoch: Int = 5
+const t_commit_l: Int = 10
+// λ cố ý KHÔNG chia chẵn một holding: 10 × 1_050_000 = 10_500_000 ⟹ `lock_youngest`
+// phải TÁCH một holding làm đôi ⟹ danh sách dài thêm đúng 1. Đây chính là cơ chế
+// làm `loyalty_holdings` phình ở nhánh commit.
+const t_commit_lambda: Int = 1_050_000
+const t_commit_unit: Int = 1_000_000
+
+fn t_holdings_rec(n: Int, acc: List<LoyaltyHolding>) -> List<LoyaltyHolding> {
+  if n <= 0 { acc }
+  else { t_holdings_rec(n - 1, list.push(acc, t_holding(t_commit_unit, n, False))) }
+}
+
+fn t_commit_shard(locked: Int, committed: Int, active: Int) -> ScheduleAggregateShardDatum {
+  ScheduleAggregateShardDatum {
+    shard_id:                   compute_shard_id(t_owner),
+    shard_locked_lamp:          locked,
+    shard_active_count:         active,
+    shard_cumulative_committed: committed,
+    shard_cumulative_fired:     0,
+    last_updated_epoch:         t_commit_epoch,
+    shard_cap:                  shard_cap,
+  }
+}
+
+fn t_commit_shard_in() -> Input {
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+    output: Output {
+      address: t_shard_addr(), value: t_fire_shard_value(),
+      datum: InlineDatum(t_commit_shard(0, 0, 0)), reference_script: None,
+    },
+  }
+}
+
+fn t_commit_shard_out(total_lock: Int) -> Output {
+  Output {
+    address: t_shard_addr(), value: t_fire_shard_value(),
+    datum: InlineDatum(t_commit_shard(total_lock, total_lock, 1)), reference_script: None,
+  }
+}
+
+/// Dựng TRỌN một giao dịch commit hợp lệ với `n` holding, mỗi holding 1 LAMP.
+/// Mọi vế khác của `validate_commit` đều thoả, nên bài nào đỏ là đỏ VÌ cổng đếm
+/// holding chứ không vì một hàng xóm nào bắt trước.
+fn t_run_commit(n: Int) -> Bool {
+  let holdings   = t_holdings_rec(n, [])
+  let balance    = n * t_commit_unit
+  let din        = t_datum(balance, 0, holdings)
+  let total_lock = t_commit_l * t_commit_lambda
+  let new_sched =
+    GenSchedule {
+      schedule_id:            compute_schedule_id_from_ref(t_own_ref(), 0),
+      commit_epoch:           t_commit_epoch,
+      start_fire_epoch:       t_commit_epoch + schedule_delay,
+      end_fire_epoch:         t_commit_epoch + t_commit_l + 1,
+      schedule_length:        t_commit_l,
+      lamp_per_epoch:         t_commit_lambda,
+      rate_locked_q:          compute_rate_locked_q(snapshot_base_rate_q, t_commit_l),
+      baseline_at_commit_q:   snapshot_base_rate_q,
+      multiplier_at_commit_q: compute_s_q(t_commit_l),
+      fired_count:            0,
+      auto_burn_target:       None,
+    }
+  let dout =
+    VaultDatum {
+      ..din,
+      lamp_locked:        total_lock,
+      loyalty_holdings:   select_lamp_for_lock(holdings, total_lock),
+      gen_schedules:      [new_sched],
+      last_updated_epoch: t_commit_epoch,
+    }
+  let tx =
+    t_tx(
+      [t_vault_input(din, balance), t_commit_shard_in()],
+      [t_vault_output(dout, balance), t_commit_shard_out(total_lock)],
+      [t_owner],
+    )
+  validate_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref(),
+                  t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+// PASS — (trần − 1) holding vào, tách một cái ⟹ chạm đúng trần.
+test c_commit_at_holding_cap_ok() {
+  t_run_commit(max_loyalty_holdings - 1)
+}
+
+// REJECT — đúng trần holding vào, tách một cái ⟹ vượt trần đúng 1.
+// Đây là dải mà TRƯỚC bản vá người dùng vẫn khoá thêm LAMP vào được, trong khi
+// `validate_fire` — nhánh DUY NHẤT hạ được `lamp_locked` — đã ép đúng trần này
+// từ đầu. Cửa vào rộng hơn cửa ra là định nghĩa của một cái bẫy.
+test c_commit_over_holding_cap_rejected() fail {
+  t_run_commit(max_loyalty_holdings)
+}
+
+// ── Trần ExUnit của hai nhánh mang LAMP — số ĐO, không ngoại suy ─────────────
+//
+// Cách đo: chạy trọn giao dịch qua `t_run_commit` / `t_run_fire_n`, rồi TRỪ chi
+// phí dựng fixture (đo riêng bằng `probe_*fix*`), vì fixture tự gọi lại chính
+// hàm O(n²) mà validator gọi. Số dưới đây là phần của VALIDATOR, `aiken check`
+// 2026-09-14, đối chiếu `maxTxExMem = 16 500 000`:
+//
+//   holding |  commit  |  fire
+//      40   |  58,4 %  |  62,2 %     ← trần đang đặt, còn ~38 % biên
+//      63   | 128,6 %  |    —
+//      64   |    —     | 138,9 %
+//   điểm chết (khớp bậc hai, R² > 0,99): commit n ≈ 55, fire n ≈ 53
+//
+// FIRE CHẾT TRƯỚC COMMIT (53 < 55) — cửa RA hẹp hơn cửa VÀO. Đó là lý do
+// `validate_commit` phải có cổng đếm holding chứ không chỉ `validate_fire`.
+//
+// THỦ PHẠM KHÔNG PHẢI `list.sort`. Nhánh fire không sort danh sách đầy đủ mà vẫn
+// bậc hai: `coalesce_holdings` (`lock.ak` ▸ chính hàm đó) là `foldl` gọi
+// `merge_into(acc, h)`, và chú thích của nó đã tự khai *"O(n²)… revisit only if
+// fire ExUnits actually bite"*. Chúng cắn rồi. Cùng hình dạng ở `lock_youngest`:
+// `list.concat(acc, […])` trong đệ quy. Ai đi tối ưu sau này nhắm vào hai chỗ
+// ĐÓ, đừng nhắm vào `list.sort` — bỏ sort một mình không mua lại được biên nào.
+//
+// Thang đo đã gỡ khỏi tệp sau khi đọc số; dựng lại bằng `t_run_commit(n)` /
+// `t_run_fire_n(n)` cộng một bài chỉ chạy fixture, rồi lấy hiệu.
+
+fn t_fire_datum_n(n: Int) -> VaultDatum {
+  let hs = list.push(t_holdings_rec(n - 1, []), t_holding(t_lambda, 99, True))
+  VaultDatum {
+    ..t_datum(t_lambda + ( n - 1 ) * t_commit_unit, t_lambda, hs),
+    gen_schedules: [t_sched()],
+  }
+}
+
+fn t_run_fire_n(n: Int) -> Bool {
+  let din = t_fire_datum_n(n)
+  let m_i = compute_m_i(t_lambda, t_rate_q)
+  let dout =
+    VaultDatum {
+      ..din,
+      lamp_locked:        0,
+      loyalty_holdings:   unlock_locked_amount(din.loyalty_holdings, t_lambda),
+      magic_batches:      create_fire_batches(t_own_ref(), 0, 1, m_i, t_sched_id, 5),
+      next_batch_index:   1,
+      gen_schedules:      [GenSchedule { ..t_sched(), fired_count: 1 }],
+      last_updated_epoch: 5,
+    }
+  let tx =
+    t_tx(
+      [t_vault_input(din, din.lamp_balance), t_fire_shard_in()],
+      [t_vault_output(dout, din.lamp_balance), t_fire_shard_out()],
+      [],
+    )
+  validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+// Bài canh trần: fire ở ĐÚNG trần holding phải còn chạy được. Nó không đo
+// ExUnit (Aiken không cho khẳng định ngưỡng trong `test`), nó giữ cho fixture
+// `t_run_fire_n` sống để lần sau còn dựng lại thang đo bằng một dòng.
+test f_fire_at_holding_cap_ok() { t_run_fire_n(max_loyalty_holdings) }
 
 // ── SetDelegate tests ─────────────────────────────────────────
 

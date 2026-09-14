@@ -34,7 +34,7 @@ export { selectLampForLock, removeLockedAmount };
 //
 // `coalesceHoldings` KHÔNG phải tuỳ chọn: mỗi lần giải khoá một phần là tách
 // một holding và không bao giờ bỏ đi cái nào, nên danh sách phình +1 mỗi lần
-// fire. `max_loyalty_holdings` = 64 và validate_fire cưỡng chế nó ⟹ một lịch
+// fire. `max_loyalty_holdings` (40 kể từ 2026-09-14) và validate_fire cưỡng chế nó ⟹ một lịch
 // dài sẽ làm vault không fire nổi mà cũng không rút nổi: LAMP đóng băng.
 //
 // `removeLockedAmount` (xoá hẳn LAMP) vẫn xuất để tra cứu, không builder nào gọi.
@@ -146,15 +146,20 @@ export function nextFireEpoch(startFireEpoch: bigint, firedCount: bigint): bigin
   return startFireEpoch + firedCount;   // e_i = start + fired_count (before this fire)
 }
 
+/// `liveBatches` PHẢI là số batch CÒN SỐNG (đã lọc bỏ batch hết hạn), không phải
+/// `magic_batches.length` thô. Đây là chỗ bản cũ hỏng: validator dựng danh sách
+/// mới trên bản ĐÃ prune, nên đếm trên bản CHƯA prune làm 32 batch đã chết cũng
+/// khoá `batchBudget` về 0 — một ngõ cụt khoá LAMP, không phải một sai số nhỏ.
+/// Cùng bản vá với `ScheduleGen/onchain/validators/vault.ak` ▸ `validate_fire` (P8).
 export function countEligibleFires(
   startFireEpoch : bigint,
   firedCount     : bigint,
   scheduleLength : bigint,
   currentEpoch   : bigint,
-  currentBatches : number,
+  liveBatches    : number,
 ): number {
   const remaining    = Number(scheduleLength - firedCount);
-  const batchBudget  = MAX_BATCHES_PER_VAULT - currentBatches;
+  const batchBudget  = MAX_BATCHES_PER_VAULT - liveBatches;
   let fires = 0;
   while (
     fires < MAX_FIRES_PER_TX_CATCHUP &&

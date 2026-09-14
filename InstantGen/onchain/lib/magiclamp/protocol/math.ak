@@ -285,14 +285,18 @@ test ig_instant_rate_q_matches_derivation() {
 ///   1. `cap` khớp vector chuẩn `TV-IG-CAP-SURPLUS-01`;
 ///   2. `cap × 10` LẤP ĐÚNG khoảng trống tới sàn — đây là mệnh đề "cap_surplus =
 ///      f × khoảng-trống", viết thành thứ máy kiểm được thay vì thành văn xuôi;
-///   3. `cap × 11` VƯỢT khoảng trống — tức `N > 1/f = 10` lượt gen trong cùng một
-///      epoch là thủng sàn. Vế này là SỐ ĐO của một lỗ đang mở
+///   3. `cap × 1001` VƯỢT khoảng trống — tức `N > 1/f = 1000` lượt gen trong cùng
+///      một epoch là thủng sàn. Vế này là SỐ ĐO của một lỗ đang mở
 ///      (`INV-SURPLUS-RATION` chưa có mã), không phải một lời cảnh báo.
+///
+/// Bài này neo theo `f_cap_surplus_q` chứ không theo số 10 hay 1000: khi `f` hạ
+/// 0,10 → 0,001 (2026-09-14) thì hệ số ở vế 2/3 đi theo, và ĐÓ LÀ ĐIỂM — mệnh đề
+/// được ghim là "cap = f × khoảng-trống", không phải "cap = một phần mười".
 ///
 /// Vế 3 sẽ vẫn XANH sau khi 16-shard được hiện thực — nó nói về `compute_cap_surplus`
 /// đứng một mình, và hàm này đúng là không giữ được sàn một mình. Đừng đọc nó xanh
 /// thành "lỗ đã vá".
-test cap_surplus_is_one_tenth_of_headroom_to_floor() {
+test cap_surplus_is_f_times_headroom_to_floor() {
   let supply = 1_000_000_000_000
   // 1000 MAGIC
   let br = 2_000_000_000
@@ -300,12 +304,15 @@ test cap_surplus_is_one_tenth_of_headroom_to_floor() {
   let cap = compute_cap_surplus(br, supply)
   // Khoảng trống tới sàn: S·(br − br_safe)/br_safe = 1000 × 0,5/1,5 MAGIC
   let headroom = supply * ( br - br_safe_q ) / br_safe_q
+  // n = 1/f, suy THẲNG từ hằng — không gõ tay, để bài tự đi theo khi `f` đổi.
+  let n = q / f_cap_surplus_q
   and {
-    cap == 33_333_333_333,
+    cap == 333_333_333,
     headroom == 333_333_333_333,
-    headroom - cap * 10 >= 0,
-    headroom - cap * 10 < 10,
-    cap * 11 > headroom,
+    n == 1000,
+    headroom - cap * n >= 0,
+    headroom - cap * n < n,
+    cap * ( n + 1 ) > headroom,
   }
 }
 

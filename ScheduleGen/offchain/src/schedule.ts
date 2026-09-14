@@ -308,11 +308,21 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const sched = vaultDatum.gen_schedules.find(s => s.schedule_id === scheduleId);
   if (!sched) throw new Error(`Schedule ${scheduleId} not found`);
 
+  // §4.2: thu rác TRƯỚC khi đếm — cùng một bản vá với `validate_fire` bên Aiken,
+  // và bản cũ ở đây hỏng y hệt: nó đếm `magic_batches.length` CHƯA prune trong khi
+  // `updatedBatches` bên dưới lại dựng trên danh sách ĐÃ prune. Hai chỗ đọc hai
+  // danh sách khác nhau ⟹ đủ 32 batch đã chết là `batchBudget = 0` ⟹ `firesInTx = 0`
+  // ⟹ ném GEN-SCH-... trong khi giao dịch đó hoàn toàn hợp lệ. P8: đổi cùng commit
+  // với `ScheduleGen/onchain/validators/vault.ak` ▸ `validate_fire`.
+  const liveBatches = vaultDatum.magic_batches.filter(
+    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch),
+  );
+
   // C-FIRE-1 ≥: count eligible fires (catch-up)
   const firesInTx = countEligibleFires(
     sched.start_fire_epoch, sched.fired_count,
     sched.schedule_length, currentEpoch,
-    vaultDatum.magic_batches.length,
+    liveBatches.length,
   );
   if (firesInTx === 0)
     throw new Error(`No eligible fires: next fire at epoch ${nextFireEpoch(sched.start_fire_epoch, sched.fired_count)}, current=${currentEpoch}`);
@@ -337,10 +347,8 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     halved:              false,
   }));
 
-  // §4.2: collect DEAD batches on the way out.
-  const liveBatches = vaultDatum.magic_batches.filter(
-    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch),
-  );
+  // §4.2: xác đi ra cùng giao dịch này. `liveBatches` đã tính ở TRÊN, trước khi
+  // đếm fire — cố ý một lần, vì hai lần lọc là hai cơ hội lệch nhau.
   const updatedBatches = [...liveBatches, ...newBatches];
   if (updatedBatches.length > MAX_BATCHES_PER_VAULT)
     throw new Error(`GEN-VAULT-001: would exceed 32 batches`);

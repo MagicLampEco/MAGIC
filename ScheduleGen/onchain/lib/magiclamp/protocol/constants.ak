@@ -55,6 +55,29 @@ pub const schedule_delay : Int = 2   // epochs
 
 // ── Schedule batch cliff [Constitutional] ────────────────────────────
 pub const schedule_decay_window : Int = 1   // cliff at k=1
+// GIỮ NGUYÊN 1 — chủ dự án chốt 2026-09-15, và chốt bằng lý do SẢN PHẨM, không phải
+// lý do kỹ thuật: *"MAGIC không dùng sẽ mất đi giống như ánh nắng không dùng sẽ mất
+// đi, chứ không thể mang sang ngày hôm sau tiêu được."*
+//
+// Đây là hằng số mà người dùng cuối phải hiểu được, nên nó bị khoá bởi thứ đắt hơn
+// một lần biên dịch: một lời hứa đã phát ra. Ai định nâng nó lên vì lý do kỹ thuật
+// (cho người dùng đỡ lỡ nhịp, cho bài nghiệm thu dễ chạy) thì đang đổi một câu
+// giải thích được lấy một câu phải giải thích — hỏi chủ dự án trước.
+//
+// Hai hệ quả phải cầm theo khi đọc con số này, cả hai đều phản trực giác:
+//
+// (1) MỘT epoch là một khoảng THỜI GIAN KHÁC NHAU theo mạng. `ms_per_epoch` của
+//     testnet là 86_400_000 (1 ngày), của mainnet là 432_000_000 (5 ngày). Cùng
+//     hằng số này cho ra cửa tiêu ~1 ngày khi nghiệm thu và ~5 ngày khi chạy thật.
+//     Nên một bài nghiệm thu chật vật trên testnet KHÔNG có nghĩa người dùng
+//     mainnet cũng chật vật, và ngược lại — đừng suy một bên ra bên kia.
+//
+// (2) Cộng với `schedule_delay = 2` ở ngay trên, một vòng đời trọn vẹn của lịch
+//     trải qua ít nhất ba epoch: commit, chờ, rồi fire-và-tiêu-trong-cùng-epoch.
+//     Vế cuối là vế hẹp: batch sinh ra ở `validate_fire` và chết ở cuối epoch đó
+//     (`validators/vault.ak` ▸ `validate_fire`, chỗ đặt `expires_at_epoch`), còn
+//     nhánh đốt nằm ở `validators/vault.ak` ▸ `validate_burn_batch`. Fire hôm nay
+//     mà tiêu hôm sau là mất trắng — không có nhánh nào cứu, và đó là chủ ý.
 
 // ── Catch-up limit [Routine] ─────────────────────────────────────────
 pub const max_fires_per_tx_catchup : Int = 8

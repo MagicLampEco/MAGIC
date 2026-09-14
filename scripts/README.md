@@ -60,7 +60,6 @@ cd <Module>/onchain && aiken build
 03_deploy_shards.ts         → 16 shard (cần trước ScheduleGen)
 05_create_instant_vault.ts  → vault Instant đầu tiên
 07_create_schedule_vault.ts → vault Schedule
-08_deploy_getmagic.ts       → validator GetMAGIC (MagicAllocation…)
 09_deploy_consume.ts        → hạ tầng ConsumeMAGIC trong 1 tx: mint price NFT +
                               post PriceParam beacon + mint thread Engage +
                               tạo Engage UTxO + apply-param consume validator
@@ -132,7 +131,6 @@ npm run deploy:um               # → UM_NFT_POLICY_ID, UM_DATUM_HASH
 npm run deploy:shards           # → SHARD_NFT_POLICY_ID
 npm run deploy:instant-vault    # → VAULT_OWNER_PKH, VAULT_INSTANT_HASH
 npm run deploy:schedule-vault   # → VAULT_SCHEDULE_HASH
-npx tsx deploy/08_deploy_getmagic.ts
 npm run deploy:consume          # → PRICE_NFT_POLICY, PRICE_PARAM_SCRIPT_HASH,
                                 #   CONSUME_SCRIPT_HASH, ENGAGE_NFT_POLICY
                                 #   (== CONSUME_SCRIPT_HASH), ENGAGE_NFT_UNIT, ENGAGE_UTXO
@@ -198,7 +196,6 @@ Và `getEpochStats` hiện là **bản giả** trả số trung tính — chưa 
 | 03_deploy_shards | 16 UTxO tại `shard_script_address`, `shard_id` 0-15 |
 | 05_create_instant_vault | UTxO tại `vault_script_address` có `VaultDatum` đúng owner **và mang đúng 1 NFT danh tính** (INV-VAULT-IDENTITY — thiếu là LAMP kẹt vĩnh viễn) |
 | 07_create_schedule_vault | UTxO có `VaultDatum` đúng owner + NFT danh tính |
-| 08_deploy_getmagic | In hash + address validator GetMAGIC, khớp `plutus.json` sau `aiken build` |
 | 09_deploy_consume | 1 tx làm 5 việc: UTxO beacon `PriceParam` mang đúng 1 price NFT ở `PRICE_PARAM_SCRIPT_HASH`; UTxO Engage mang đúng 1 thread NFT ở `CONSUME_SCRIPT_HASH`; `ENGAGE_NFT_POLICY == CONSUME_SCRIPT_HASH` (policy = chính script hash, tự tham chiếu) |
 
 ---

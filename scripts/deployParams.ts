@@ -107,12 +107,6 @@ export function shardSpendParams(
   };
 }
 
-// ── GetMAGIC — otc_order.otc_order.spend (1 tham số) ─────────────
-// Neo: GetMAGIC/onchain/validators/otc_order.ak:43.
-export function otcOrderParams(i: { allocScriptHash: string }): ParamMap {
-  return { alloc_script_hash: i.allocScriptHash };
-}
-
 // ── Consolidate — vault_consolidate.vault_consolidate.spend (3) ──
 // Neo: Consolidate/onchain/validators/vault_consolidate.ak:106.
 // `lamp_asset_name` là tham số THEO MẠNG (tLAMP testnet / LAMP mainnet) — nó nằm

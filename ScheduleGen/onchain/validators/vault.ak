@@ -1144,8 +1144,8 @@ fn no_shard_mint(tx: Transaction, shard_policy_id: PolicyId) -> Bool {
 // lands: a valid ScheduleCommit could carry all 16 shard NFTs out to a private
 // wallet in the same tx, and from then on the aggregate ledger is authored by
 // whoever holds them — C-SCH-CAP stops binding anyone. Content was checked,
-// address was not; that is the whole bug, and it is the same shape as Nợ #41 in
-// GetMAGIC. The stake half is included on purpose (same reasoning as Nợ #31):
+// address was not; that is the whole bug. The stake half is included on purpose
+// (same reasoning as Nợ #31):
 // one script hash presents as N addresses, so pinning only the payment
 // credential still lets the UTxO be moved to an address the script no longer
 // recognises as the same shard.

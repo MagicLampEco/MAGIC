@@ -38,15 +38,6 @@ trình biên dịch `v1.1.21+42babe5`
 | validator | hash (CHƯA apply-param) |
 |---|---|
 
-### `GetMAGIC/onchain`
-
-trình biên dịch `v1.1.21+42babe5`
-
-| validator | hash (CHƯA apply-param) |
-|---|---|
-| `magic_allocation.magic_allocation` | `59619dcf238a7874e973a0a4f0106c2a9cf0ef5e8889c32c5fbbf59c` |
-| `otc_order.otc_order` | `a703c82ee50491e83b8bb430e1162311f74908d675f16b5d57073b5a` |
-
 ### `InstantGen/onchain`
 
 trình biên dịch `v1.1.21+42babe5`

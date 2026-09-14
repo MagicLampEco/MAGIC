@@ -41,7 +41,6 @@ MAGIC/
 ├── UMKeeper/             # Cập nhật hệ số cầu mạng UM mỗi epoch (permissionless)
 ├── ConsumeMAGIC/         # Tiêu thụ MAGIC (đốt theo giá nghiệp vụ) + bộ định giá
 │   └── pricing/          # @magiclamp/consumemagic-pricing — gói gọi được (ESM + CJS)
-├── GetMAGIC/             # Cổng vào (Phase 1, độc lập, chưa nối vault)
 ├── MagicSDK/             # Mặt tiền cho bên tích hợp
 ├── Paymaster/            # Trả phí hộ (SponsorMeter)
 ├── FlowRate/             # Điều tiết nhịp

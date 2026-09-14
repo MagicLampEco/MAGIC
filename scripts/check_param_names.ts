@@ -18,7 +18,7 @@ import {
 import {
   instantVaultParams, scheduleVaultParams, umDatumParams, shardSpendParams,
   oneShotGenesisParams, priceParamParams, consumeParams, paymasterParams,
-  addressData, otcOrderParams, consolidateParams, profileChangeParams,
+  addressData, consolidateParams, profileChangeParams,
 } from "./deployParams.js";
 
 // Giá trị giữ chỗ — chỉ TÊN và THỨ TỰ mới được kiểm ở đây.
@@ -143,14 +143,6 @@ const CASES: Case[] = [
       ),
       lampAssetName: "744c414d50",
     }),
-  },
-  {
-    // Đây là chỗ SÓT thật, không phải cổng dựng trước: `deploy/08` CÓ chạy, và nó
-    // là script deploy DUY NHẤT còn apply-param theo VỊ TRÍ. Thêm một tham số vào
-    // otc_order.ak là deploy/08 lặng lẽ sinh hash sai — không ai đỏ.
-    module: "GetMAGIC", title: "otc_order.otc_order.spend",
-    usedBy: "deploy/08_deploy_getmagic.ts + test/getmagic_flow.ts",
-    params: otcOrderParams({ allocScriptHash: P28 }),
   },
   {
     // Chưa có deploy script. Vào cổng vì tài liệu của chính module này từng khai

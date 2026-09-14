@@ -180,7 +180,15 @@ Ba cửa: **InstantGen · ScheduleGen · PrepaidGen**. Chia chung:
 - **MAGIC sinh ra là per-epoch** (§4.2) — mọi cửa đều nạp vào batch của epoch hiện tại.
 - **Thưởng keyed-consumed** (INV-MAGIC-CITIZEN): độ lớn thưởng tính theo MAGIC **đã tiêu thụ thật**, không theo LAMP-giữ hay MAGIC-đang-cầm.
 
-**Wakeme lent-LAMP KHÔNG phải cửa riêng.** Khoản ≤ 1001 LAMP hệ cho người mới mượn (đặt trong vault closed-loop, LAMP đứng yên, user không bao giờ sở hữu) là **nguồn-LAMP** để chạy InstantGen/ScheduleGen — cùng hai phương thức áp cho LAMP người dùng tự mua. Không có "cửa GenDrip" ngang hàng. Cơ chế tấm-pin (LAMP luân chuyển pot→vault→pot) thuộc `PhoenixKey-Wakeme-{Math,Tech}.md`.
+**Wakeme lent-LAMP KHÔNG phải cửa riêng.** Khoản ≤ 1001 LAMP hệ cho người mới mượn là **nguồn-LAMP** để chạy InstantGen/ScheduleGen — cùng hai phương thức áp cho LAMP người dùng tự mua. Không có "cửa GenDrip" ngang hàng.
+
+**Khoản mượn đó KHÔNG BAO GIỜ RỜI két Wakeme.** Nó không sang két của MAGIC, không sang ví người dùng, không đi đâu cả: giá trị LAMP trong két Wakeme là **bất biến qua mọi lượt Gen**. Engine gen **chỉ ĐỌC** số dư ấy qua `reference_input` (CIP-31) — nhất quán với I-ACT-7 ở §6.1 — và két Wakeme **không có redeemer nào cho Gen**. Việc "cho mượn" là một bút toán trong datum của chính két đó (`conditional_lamp` → `owned_lamp`), không phải một lần chuyển tài sản.
+
+> Viết dài đến thế vì bản trước của đoạn này nói *"đặt trong vault closed-loop"* và *"cơ chế tấm-pin (LAMP luân chuyển pot→vault→pot)"*, và hai cụm ấy đọc thành **LAMP vẫn đi, chỉ đi vòng**. Cách đọc sai lại là cách đọc tự nhiên hơn với người đang dựng một cái két — nó suýt dẫn tới một bản ScheduleGen đòi LAMP mượn phải nằm trong két của MAGIC.
+>
+> Cái hỏng nếu làm theo cách đọc sai: hai đường thu hồi của Wakeme (`Reclaim` khi người dùng ngồi im qua ngày, `ReclaimEpoch` khi ngồi im ≥ 1001 kỳ) chi **từ chính két đó**. LAMP rời két là hai đường ấy chi vào một két rỗng — hệ cho mượn ≤ 1001 LAMP mỗi người và **không còn đường lấy lại**. Không lỗi nào hiện ra; pot chỉ cạn dần theo số người đăng ký. Bất biến bị phá là `L(két) == conditional_lamp + owned_lamp`.
+
+Cơ chế đầy đủ của két Wakeme thuộc `PhoenixKey-Wakeme-{Math,Tech}.md`. Ở kho này chỉ cần đúng một điều: `L_lent` trong §6.3 **đọc từ datum két Wakeme**, không đọc từ `lamp_balance` của két MAGIC.
 
 > **MAGIC là FUNGIBLE — nguyên tắc gốc (chốt 2026-07-30).** Một khi MAGIC đã sinh, hệ **KHÔNG BAO GIỜ phân biệt nó theo nguồn** (Instant/Schedule/Prepaid/LAMP-mượn hay LAMP-sở-hữu). MAGIC hành xử như đơn-vị fungible: mọi MAGIC-đã-tiêu đếm như nhau vào §6.2-thành-phần-2, §6.3 reward(consumed), §10 C1. Hệ quả thiết kế: **mọi rào chống-lạm-dụng phải đặt Ở TẦNG SINH (generation), không gắn nhãn MAGIC hay lọc theo nguồn ở tầng tiêu/kế-toán.** (Trường `source` trên batch — nếu có — chỉ dùng cho decay-param lúc tạo, KHÔNG được ảnh hưởng giá-trị-tiêu hay C1.)
 >

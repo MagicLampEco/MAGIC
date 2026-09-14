@@ -136,6 +136,14 @@ không già đi.
 > Bản grep còn đếm đôi: `.claude/worktrees/` là **bản sao của chính kho này**, nên mọi con số
 > quét toàn kho phải loại nó ra — không loại thì `51` thành `114`.
 >
+> **Và chỗ mù KHÔNG nằm ở phép ĐẾM — nó nằm ở phép SOI VẾ** (nhà LAMP sắc hoá, thư
+> `lamp0914mg-f`, sau khi họ tự đo lại kho của họ: 98 lời gọi, 7 trải nhiều dòng, 0 thiếu vế).
+> Grep đếm đúng số lời gọi, vì mỗi lời gọi bắt đầu ở một dòng nào đó; cái nó không làm được là
+> **đọc đủ ba tham số** của những lời gọi trải nhiều dòng. Phân biệt này đổi cách đọc kết quả:
+> một phép đếm bằng grep ra **đúng số** vẫn là một phép đo mù về điều đang hỏi, và nó mù một
+> cách đặc biệt thuyết phục — con số khớp với bản cân ngoặc, nên **không có gì lệch để mà thấy**.
+> Ai đối chiếu hai phép đo bằng cách so con số tổng sẽ kết luận cả hai đều đúng.
+>
 > Rút thành câu dùng được, đứng cạnh câu về policy id — cũng nhận từ nhà LAMP:
 > **kiểm ĐỊNH DẠNG không bao giờ thay được ĐỐI CHỨNG.** Một giá trị chép nhầm luôn đúng định
 > dạng, vì nó từng là một giá trị thật. Đó đúng là giới hạn của `assertLampPolicyId`: nó là

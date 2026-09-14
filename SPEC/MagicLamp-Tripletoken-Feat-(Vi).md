@@ -479,7 +479,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | Hằng | Giá trị |
 |---|---|
 | `MAX_BATCHES_PER_VAULT` | 32 |
-| `MAX_LOYALTY_HOLDINGS` | 64 |
+| `MAX_LOYALTY_HOLDINGS` | 40 |
 | `MAX_GEN_SCHEDULES` | 20 |
 | `SHARD_COUNT` | 16 |
 | `SHARD_CAP` | 4.5×10¹⁴ oildrop |

@@ -96,7 +96,18 @@ nhất trên cái tên đó mà hai mục kia phải nhường.
 Giá đã trả trước khi đổi: một vòng hỏi-đáp của chủ dự án để tìm ra `PHA-2` của kho này
 KHÔNG phải `PHA-2` của Wakeme. Cùng hình dạng với bẫy `28e916b0…` — cùng tên hiển thị,
 khác đời, không bản nào tự khai. Ai gặp `PHA-1`/`PHA-2` trong kho này thì đó là tài liệu
-chưa được quét: kho đã về **0** ngoài `Legacy/` (`Legacy/` để yên theo §5).
+chưa được quét: dạng **có gạch nối** đã về **0** ngoài `Legacy/` (`Legacy/` để yên theo §5).
+
+> **Dạng có KHOẢNG TRẮNG thì chưa** — `PHA 1` / `PHA 2` còn **45 dòng / 22 tệp** (đo
+> 2026-09-14, ngoài `Legacy/` và ngoài `.claude/`), gồm cả `ScheduleGen/onchain/validators/vault.ak`,
+> `InstantGen/tests/vectors.ts` và một tệp mang tên `InstantGen/DESIGN-PHASE2.md`.
+>
+> Bản trước của dòng này viết "kho đã về **0**" mà không kèm chữ "có gạch nối". Đợt dọn
+> đo bằng `grep "PHA-[12]"`, thấy 0, rồi phát biểu như thể **khái niệm** đã biến mất —
+> `grep` đo VĂN BẢN, không đo KHÁI NIỆM. Câu sai đó nằm trong chính tệp mà mọi agent
+> `@import` mỗi phiên, nên nó không chỉ sai, nó còn được đọc mỗi ngày: người gặp `PHA 2`
+> trong `vault.ak` rồi tra ở đây sẽ kết luận mình đang nhìn tài liệu của kho khác — đúng
+> vòng hỏi-đáp mà việc đổi tên này sinh ra để tránh.
 
 **Ngược lại, `required` của ConsumeMAGIC gộp rồi sàn MỘT lần.** `required =
 ⌊base_price × demand_mult × op_count / Q⌋` — KHÔNG sàn từng op rồi nhân. Hai quy tắc
@@ -171,24 +182,25 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 `SHARD_CAP=4.5×10¹⁴ oildrop`.
 
 > `MAX_LOYALTY_HOLDINGS` hạ **64 → 40** ngày 2026-09-14. Bản cũ đặt trần TRÊN trần vật
-> lý: đo `aiken check` trên giao dịch trọn vẹn (đã trừ chi phí dựng fixture) cho
-> ScheduleGen **commit 128,6 %** và **fire 138,9 %** `maxTxExMem` ở 63/64 holding — nghĩa
-> là một vault chạm trần cũ thì KHÔNG TIÊU ĐƯỢC, và `validate_fire` là nhánh duy nhất hạ
-> được `lamp_locked`. Ở 40: commit 58,4 %, fire 62,2 %. Điểm chết khớp bậc hai: fire
-> n ≈ 53, commit n ≈ 55.
+> lý: một vault chạm trần cũ thì **KHÔNG TIÊU ĐƯỢC**, và `validate_fire` là nhánh duy
+> nhất hạ được `lamp_locked`.
 >
-> Hai điều đi kèm, cả hai đều phản trực giác nên viết ra. **(a)** Ở bản đo ĐẦU TIÊN,
-> fire chết trước commit — cửa RA hẹp hơn cửa VÀO — nên `validate_commit` phải có cổng
-> đếm holding chứ không chỉ `validate_fire`; bản cũ thiếu đúng cổng đó. **(b) Hai nhánh
-> có hai thủ phạm KHÁC NHAU**, và bản trước của dòng này gộp chúng làm một: nó viết
-> "thủ phạm KHÔNG phải `list.sort`", câu đó đúng cho FIRE và **sai cho COMMIT**.
+> Hai điều phản trực giác, viết ra vì chúng là **kết luận**, không phải số đo — nên chúng
+> không già đi theo mỗi lần đo lại. **(a)** `validate_commit` phải có cổng đếm holding
+> chứ không chỉ `validate_fire`; bản cũ thiếu đúng cổng đó. **(b) Hai nhánh có hai thủ
+> phạm KHÁC NHAU** — câu "thủ phạm không phải `list.sort`" đúng cho FIRE và **sai cho
+> COMMIT**. Nhánh nào đang hẹp nhất thì **đã đảo một lần** sau bản vá #48, và có thể đảo
+> nữa; đừng nhớ thứ tự, hãy tra.
 >
-> Thứ tự chết cũng đã đảo sau bản vá. Số đo, cách đo, mốc kích hoạt phần còn nợ, và lý do
-> KHÔNG nâng trần theo phần biên vừa mua được — tất cả nằm ở MỘT chỗ:
+> **Số đo KHÔNG nằm ở đây, và cũng không nằm ở `constants.ak`** — chỉ ở MỘT chỗ:
 > `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Trần ExUnit của hai nhánh mang LAMP"*,
-> ngay trên `t_fire_datum_n`. Thang đo (`probe_commit_fixture_cap` /
-> `probe_fire_fixture_cap`) nằm cùng chỗ, nên đo lại là một lệnh `aiken check`.
-> Đừng chép số xuống đây: bản trước đã chép, và phần chép lại là phần sai.
+> ngay trên `t_fire_datum_n`, cùng với cách đo, thang đo (`probe_commit_fixture_cap` /
+> `probe_fire_fixture_cap`), mốc kích hoạt phần còn nợ, và lý do KHÔNG nâng trần theo
+> phần biên vừa mua được. Đo lại là một lệnh `aiken check`.
+>
+> Bản trước của khối này vẫn chép số xuống dù chính nó dặn đừng chép — và phần chép lại
+> là phần sai, đúng lần thứ hai. Chú thích ở `constants.ak` cũng chép, cũng sai, và nằm
+> đúng chỗ người ta tra để chọn trần. Hai bản sao đó nay đã gỡ.
 
 ---
 

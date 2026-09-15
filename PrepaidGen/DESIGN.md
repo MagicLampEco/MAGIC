@@ -167,17 +167,19 @@ redeemer `BurnBatch` qua `un_constr_data` với `burn_batch_constr` per-vault. V
 > một UTxO — để người tạo tự đặt datum đầu tiên. Dựng được một vault khai `prepaid_credits`
 > tuỳ ý mà không khoá một đồng CARP nào, rồi `PrepaidDraw` đọc đúng cái datum đó và cấp MAGIC
 > từ hư không. Cổng genesis nay ghim `prepaid_credits == []` ∧ `magic_batches == []` ∧
-> `next_batch_index == 0` ∧ `personal_delegate == None` ∧ `attribution` rỗng ∧ chủ phải ký, và
+> `next_batch_index == 0` ∧ `personal_delegate == None` ∧ `attribution` rỗng ∧
+> `did_commit == #""` ∧ chủ phải ký, và
 > mọi nhánh spend đòi NFT còn nguyên qua MỘT điểm nghẽn trong thân `spend` (cố ý không chép
 > cổng vào 5 hàm `validate_*`: chép 5 bản là 5 chỗ sót được, mà sót thì không gì đỏ).
 >
 > Đo chứ không khai — **đây là nguồn DUY NHẤT của các con số này trong kho; chú thích trong mã
 > cố ý không chép chúng xuống.** Phép đo: thay đúng một chốt bằng `expect True`, chạy trọn bộ
-> (122 bài), đếm bài lật. Đo lại 2026-09-15 trên `aiken v1.1.21+42babe5`:
+> (**134** bài), đếm bài lật từ pass sang không-pass. Đo lại 2026-09-15 trên `aiken v1.1.21+42babe5`,
+> sau khi thêm nhánh `SetDidCommit`:
 >
 > | chốt gỡ ra (neo theo tên hàm) | bài lật |
 > |---|---|
-> | `vault_identity_preserved` — cả lời gọi trong thân `spend` | **13** |
+> | `vault_identity_preserved` — cả lời gọi trong thân `spend` | **15** |
 > | `vault_identity_preserved` ▸ `single_nft_name(vault_output…) == nft_name` | 11 |
 > | `single_nft_name` ▸ `expect qty == 1` | 1 (`pp_spend_nft_qty_two`) |
 > | `validate_mint_vault_id` ▸ `quantity_of(tx.mint, …) == 1` (cổng chặn ĐỐT) | 1 (`pp_mint_burn_rejected`) |
@@ -188,6 +190,21 @@ redeemer `BurnBatch` qua `un_constr_data` với `burn_batch_constr` per-vault. V
 > | `validate_mint_fund_nft` ▸ `expect qty == 1` (cổng chặn ĐỐT) | 1 |
 > | `validate_mint_fund_nft` ▸ `single_nft_name` · `stake_credential` · `reference_script` · `last_updated_epoch == 0` | 1 mỗi chốt |
 > | `validate_fund_settle` ▸ `par_carp_from_magic(magic_settled) <= credit_issued` | 1 (`pp_fund_settle_over_issued`) |
+> | `validate_mint_vault_id` ▸ `vd.did_commit == #""` | 1 (`pp_mint_did_preset`) |
+> | `validate_set_did_commit` ▸ (1) `datum.did_commit == #""` | 1 (`pp_setdid_already_set`) |
+> | `validate_set_did_commit` ▸ (2) `list.has(extra_signatories, datum.owner)` | 2 (`pp_setdid_no_owner_sig`, `pp_setdid_by_delegate`) |
+> | `validate_set_did_commit` ▸ (3) `new_did != #""` | 1 (`pp_setdid_to_empty`) |
+> | `validate_set_did_commit` ▸ (4) `did_len_ok(new_did)` | 1 (`pp_setdid_wrong_length`) |
+> | `validate_set_did_commit` ▸ `out.prepaid_credits == datum.prepaid_credits` | 1 (`pp_setdid_mutates_other_field`) |
+>
+> Con số **15** ở hàng đầu là 13 của bản trước cộng đúng hai bài của nhánh thứ sáu
+> (`pp_spend_setdidcommit_forged_vault`, `pp_spend_setdidcommit_nft_escapes`) — tức nhánh mới
+> được cổng ở thân `spend` phủ mà không phải tự nhớ gọi lại nó. Đó là phép ĐO câu "cổng nằm ở
+> cấu trúc chứ không ở kỷ luật", không phải một lời khai về nó.
+>
+> Sáu hàng cuối không hàng nào phồng theo cụm: mỗi chốt gỡ ra làm lật đúng những bài mang tên nó.
+> Hàng (2) ra **2** vì có hai hình dạng tấn công khác nhau cùng chết ở một dòng — người lạ ký, và
+> `personal_delegate` ký — chứ không phải vì một cụm mã bị loại.
 >
 > Một chi tiết phản trực giác đáng ghi: gỡ `single_nft_name(vault_output…)` làm **11** bài lật chứ
 > không phải 1, vì `nft_name` khi đó không còn ai dùng ⟹ lời gọi `single_nft_name` phía **input**
@@ -269,7 +286,8 @@ sau đó không còn chỗ để trả lại. Trần `MAX_PREPAID_CREDITS = 20` 
 ```
 PrepaidVaultDatum {
   owner              : ByteArray,          // payment pkh
-  did_commit         : ByteArray,          // §7.5 — đặt 1 lần lúc tạo vault, BẤT BIẾN
+  did_commit         : ByteArray,          // §7.5 — RỖNG lúc đúc; đặt 1 lần qua
+                                           // SetDidCommit (32 byte); rồi BẤT BIẾN
   prepaid_credits    : List<PrepaidCredit>,
   magic_batches      : List<MagicBatch>,
   next_batch_index   : Int,
@@ -307,6 +325,7 @@ PrepaidVaultRedeemer                         constr
   BurnBatch   { burns }                         2   ← KHOÁ, khớp §7.3 / §11
   PrunePrepaid                                  3
   SetDelegate { new_delegate }                  4
+  SetDidCommit { did_commit }                   5   ← thêm 2026-09-15, Ở CUỐI
 
 PaidFundRedeemer                             constr
   FundLock                                      0
@@ -316,6 +335,16 @@ PaidFundRedeemer                             constr
 
 `PrepaidVaultRedeemer` là enum **chỉ thêm ở cuối** (append-only) — thêm nhánh giữa chừng làm lệch
 `burn_batch_constr = 2` mà ConsumeMAGIC đã ghim.
+
+> `SetDidCommit` đặt ở **5**, không đặt cạnh `SetDelegate`, dù hai nhánh nghe giống nhau (đều là
+> "owner đổi một trường cấu hình"). Thứ tự khai báo **≠** thứ tự vòng đời: chèn vào 5 thì
+> `SetDelegate` dịch sang 6, và mọi redeemer đã mã hoá ngoài chuỗi cho một nhánh ≥ 3 trỏ sang
+> nhánh khác — không lỗi cú pháp, không phép kiểm kiểu nào đỏ, chỉ sai lúc chạy. Chốt này được ép
+> bằng ba phép trong `tests/codec.test.ts`, và chỉ phép thứ ba đo được thứ thật sự lên chuỗi:
+> (a) chỉ số trong `types.ak`; (b) chỉ số trong bảng `VAULT_REDEEMER_ORDER`; (c) **byte thật** —
+> `Data.to(…, PrepaidVaultRedeemerSchema)` phải bắt đầu bằng thẻ CBOR `d87e` (= 121+5), kèm một
+> vế đối chứng rằng `SetDelegate` vẫn ra `d87d`. Thiếu vế đối chứng thì bài (c) vẫn xanh khi CẢ
+> HAI nhánh cùng dịch một bậc.
 
 ---
 
@@ -330,8 +359,8 @@ PaidFundRedeemer                             constr
 | **C-PP-5** cliff per-epoch | mọi batch sinh ra có `created_epoch == epoch hiện tại`, `decay_window == 1`; `BurnBatch` **từ chối** batch có `created_epoch ≠ epoch hiện tại`; batch chết chỉ có thể bị dọn | vault `validate_draw`, `validate_burn_batch`, `validate_prune` |
 | **C-PP-6** trần đòi của provider (F2) | `provider_claimed' ≤ ⌊magic_settled / par_scale⌋` **và** `carp_locked' ≥ outstanding' + ⌊outstanding' × buffer_bps / 10000⌋`, với `outstanding' = credit_issued − ⌊magic_settled/par_scale⌋` | quỹ `validate_claim` |
 | **C-PP-7** chỉ quyết toán MAGIC TIÊU THẬT | `FundSettle` chỉ cộng phần `current_amount` giảm trên batch có `contract_id == fund_id`, `source == 3`, **và** `created_epoch == epoch hiện tại`; và bắt buộc vault được tiêu bằng redeemer constr 2 (`BurnBatch`). MAGIC hết hạn hoặc bị dọn **không bao giờ** thành `magic_settled` | quỹ `validate_settle` (INV-MAGIC-CITIZEN) |
-| **C-PP-8** DID bất biến | `did_commit` giống hệt input↔output ở **mọi** redeemer của vault | vault, mọi nhánh |
-| **C-PP-9** phân quyền | Lock: `platform` HOẶC `owner` ký · Draw: `owner` HOẶC `personal_delegate` ký · BurnBatch: `owner` HOẶC `personal_delegate` · Prune: **không cần chữ ký** · SetDelegate: **chỉ** `owner` · FundClaim: `platform` | vault + quỹ |
+| **C-PP-8** DID ghi MỘT LẦN rồi bất biến | genesis ép `did_commit == #""`; `SetDidCommit` là nhánh **GHI duy nhất** và chỉ chạy được khi giá trị hiện tại còn rỗng, giá trị mới khác rỗng và dài đúng 32 byte; năm redeemer còn lại ép `did_commit` giống hệt input↔output. Ràng buộc độ dài đặt ở **chỗ GHI**, cố ý KHÔNG đặt ở nhánh bảo toàn — đặt ở đó là biến mọi vault đã nằm trên chuỗi với did sai khuôn thành bất khả tiêu | vault: `validate_mint_vault_id` + `validate_set_did_commit` + năm nhánh còn lại |
+| **C-PP-9** phân quyền | Lock: `platform` HOẶC `owner` ký · Draw: `owner` HOẶC `personal_delegate` ký · BurnBatch: `owner` HOẶC `personal_delegate` · Prune: **không cần chữ ký** · SetDelegate: **chỉ** `owner` · SetDidCommit: **chỉ** `owner` (uỷ quyền TRẢ PHÍ không phải uỷ quyền KHAI DANH TÍNH, và vì cổng chỉ cho ghi một lần nên một delegate ghi trước là nạn nhân mất luôn đường gắn DID thật) · FundClaim: `platform` | vault + quỹ |
 | **C-PP-10** chống thoả-mãn-kép | đúng 1 vault input tại địa chỉ vault; đúng 1 output vault; đúng 1 input và đúng 1 output mang NFT quỹ; không đúc/đốt token của policy NFT quỹ (= script hash `paid_fund`) trong mọi giao dịch vận hành | vault + quỹ |
 | **C-PP-11** epoch không nhập nhằng | cả hai biên `validity_range` là `Finite` và cùng rơi vào một epoch (`e_lo == e_hi`) | `get_epoch` (SEC-02, giống ScheduleGen) |
 | **C-PP-12** trần cứng | `MAX_BATCHES_PER_VAULT = 32`, `MAX_PREPAID_CREDITS = 20`, `MIN_LOCK_CARPDROP = 10⁹` (1 CARP), `MIN_DRAW_CARPDROP = 10⁶` | vault |

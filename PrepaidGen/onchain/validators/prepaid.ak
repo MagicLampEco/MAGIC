@@ -56,7 +56,7 @@ use magiclamp/protocol/types.{
   BurnBatch, FundClaim, FundLock, FundSettle, MagicBatch, MintVaultId,
   PaidFundDatum, PaidFundRedeemer, PrepaidCredit, PrepaidDraw, PrepaidLock,
   PrepaidVaultDatum, PrepaidVaultIdRedeemer, PrepaidVaultRedeemer, PrunePrepaid,
-  SetDelegate, VaultAttribution,
+  SetDelegate, SetDidCommit, VaultAttribution,
 }
 use magiclamp/protocol/constants.{
   batch_source_prepaid, max_batches_per_vault, max_prepaid_credits,
@@ -124,11 +124,13 @@ validator prepaid_vault(
     // C-PP-10: đúng một vault input tại địa chỉ này
     expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
 
-    // INV-VAULT-IDENTITY — ĐIỂM NGHẼN DUY NHẤT, ép cho CẢ NĂM nhánh redeemer.
-    // Cố ý đặt ở thân handler chứ không chép vào từng `validate_*`: chép năm bản
-    // là năm chỗ có thể sót một, mà sót thì không gì đỏ. Một bản ở đây thì gỡ nó
-    // ra là cả năm bài `pp_*_nft_stripped` cùng chuyển sang xanh — phép đột biến
-    // đó ghim được toàn bộ năm nhánh chỉ bằng một lần chạy.
+    // INV-VAULT-IDENTITY — ĐIỂM NGHẼN DUY NHẤT, ép cho CẢ SÁU nhánh redeemer.
+    // Cố ý đặt ở thân handler chứ không chép vào từng `validate_*`: chép sáu bản
+    // là sáu chỗ có thể sót một, mà sót thì không gì đỏ. Một bản ở đây thì gỡ nó
+    // ra là cả nhóm bài `pp_spend_*_forged_vault`/`_nft_escapes` cùng chuyển sang
+    // xanh — phép đột biến đó ghim được toàn bộ các nhánh chỉ bằng một lần chạy.
+    // Và nó là lý do nhánh `SetDidCommit` thêm sau này KHÔNG phải tự nhớ gọi lại:
+    // cổng nằm ở cấu trúc, không nằm ở kỷ luật của người thêm nhánh.
     expect
       vault_identity_preserved(
         own_input(own_ref, tx.inputs),
@@ -162,6 +164,12 @@ validator prepaid_vault(
       SetDelegate { new_delegate } ->
         validate_set_delegate(
           datum, new_delegate, current_epoch, vault_addr, carp_policy_id,
+          carp_asset_name, tx,
+        )
+
+      SetDidCommit { did_commit } ->
+        validate_set_did_commit(
+          datum, did_commit, current_epoch, vault_addr, carp_policy_id,
           carp_asset_name, tx,
         )
     }
@@ -616,6 +624,100 @@ fn validate_set_delegate(
 }
 
 // ══════════════════════════════════════════════════════════════
+// VAULT — SetDidCommit (§7.5) — GẮN PersonDID, MỘT LẦN
+// ══════════════════════════════════════════════════════════════
+//
+// VÌ SAO NHÁNH NÀY TỒN TẠI. `validate_mint_vault_id` ghim `did_commit == #""` ở
+// cổng đúc, còn C-PP-8 ép `out.did_commit == datum.did_commit` ở mọi nhánh khác.
+// Hai vế đó cộng lại mà KHÔNG có nhánh này thì trường `did_commit` là hằng số
+// rỗng trọn đời mọi vault — tức cả cơ chế tư-cách đọc theo PersonDID nằm ngoài
+// tầm PrepaidGen VĨNH VIỄN, không đường điền vào sau. Đây là nhánh GHI duy nhất.
+//
+// Bản trước bản này đi đường ngược lại: cổng đúc KHÔNG ghim `did_commit`, người
+// tạo vault tự đặt giá trị. Đường đó hỏng ở chỗ nó gộp hai thẩm quyền vào một
+// chữ ký — `owner` được ký để chứng minh mình điều khiển pkh đó, và nó bị dùng
+// luôn làm chứng cho một cam kết DID mà không vế nào buộc phải cùng người. Mà
+// C-PP-8 bất biến trọn đời nên một cam kết bịa KHÔNG sửa được: vault đó chỉ có
+// thể bị bỏ đi. Tách thành hai khoảnh khắc không làm cho lời khai trở nên thật
+// hơn (xem GIỚI HẠN dưới đây) nhưng nó trả lại đúng một thứ: người đặt cam kết
+// phải là người đang ĐIỀU KHIỂN vault tại thời điểm đặt, không phải bất kỳ ai
+// dựng hộ một vault mang tên người khác.
+//
+// 🔴 GIỚI HẠN — ĐỌC TRƯỚC KHI DÙNG `did_commit` LÀM ĐẦU VÀO CHO BẤT CỨ THỨ GÌ.
+// Nhánh này KHÔNG chứng minh DID được gắn THUỘC VỀ người ký. `did_commit` là một
+// hash 32 byte nằm công khai trên chuỗi, nên ai cũng CHÉP được cam kết của người
+// khác vào vault của mình — không cần biết tiền ảnh. ⟹ `did_commit` dùng được
+// cho QUY KẾT (ai tự nhận việc tiêu này), KHÔNG dùng được cho thứ mà nói dối có
+// lợi: quyền biểu quyết, phân bổ thưởng, hạn mức theo người, chống-Sybil. Cùng
+// một giới hạn, cùng một câu chữ với `validate_bind_did` của ConsumeMAGIC — hai
+// module phải nói cùng một điều, nếu không bên đọc sẽ tin bên lỏng hơn.
+//
+// Vế mạnh (nếu có ngày cần): đọc anchor Service-DID của PhoenixKey qua
+// `reference_input` rồi đòi chữ ký của controller hiện tại. Nó đổi script hash ⟹
+// deploy lại ⟹ công bố ref-script CIP-33 mới, nên phải đi cùng lượt với một
+// thay đổi khác cũng đổi hash.
+fn validate_set_did_commit(
+  datum           : PrepaidVaultDatum,
+  new_did         : ByteArray,
+  current_epoch   : Int,
+  vault_addr      : Address,
+  carp_policy_id  : PolicyId,
+  carp_asset_name : ByteArray,
+  tx              : Transaction,
+) -> Bool {
+  // ── (1) MỘT LẦN: chỉ hợp lệ khi chưa gắn ────────────────────────────────
+  // Khoá cả hai hướng sai cùng lúc: đổi cam kết này sang cam kết khác, và ghi
+  // đè cam kết của một vault đã có danh tính. Vế này cộng với C-PP-8 ở năm
+  // nhánh kia là thứ làm nhánh này TỰ KHOÁ sau lần chạy đầu tiên.
+  expect datum.did_commit == #""
+
+  // ── (2) CHỮ KÝ CỦA CHÍNH `owner` ────────────────────────────────────────
+  // KHÔNG nhận `personal_delegate`: thứ được uỷ quyền ở đường Paymaster là TRẢ
+  // TIỀN hộ, còn ở đây là KHAI MÌNH LÀ AI. Và vì (1) chỉ cho ghi một lần, một
+  // delegate ghi trước là nạn nhân mất luôn đường gắn DID thật — hỏng không
+  // hoàn tác được, đúng lớp hại mà `authed_owner_or_delegate` không được đụng.
+  expect list.has(tx.extra_signatories, datum.owner)
+
+  // ── (3) GIÁ TRỊ MỚI KHÁC RỖNG ───────────────────────────────────────────
+  // Không có vế này thì "gắn DID" bằng chuỗi rỗng là một no-op hợp lệ: vô hại
+  // một mình, nhưng nó làm cổng (1) hết nghĩa "một lần" — đặt rỗng rồi đặt lại.
+  expect new_did != #""
+
+  // ── (4) ĐÚNG KHUÔN 32 byte ──────────────────────────────────────────────
+  expect did_len_ok(new_did)
+
+  let out = get_vault_output(tx.outputs, vault_addr)
+  expect out.owner == datum.owner
+  expect out.did_commit == new_did                   // ← thay đổi duy nhất
+  expect out.prepaid_credits == datum.prepaid_credits
+  expect out.magic_batches == datum.magic_batches
+  expect out.next_batch_index == datum.next_batch_index
+  expect out.personal_delegate == datum.personal_delegate
+  expect out.attribution == datum.attribution
+  expect out.last_updated_epoch == current_epoch
+  expect vault_output_carp(tx.outputs, vault_addr, carp_policy_id, carp_asset_name) == 0
+  True
+}
+
+/// Độ dài hợp lệ của `did_commit`: RỖNG (chưa gắn) hoặc ĐÚNG 32 byte
+/// (blake2b-256). Cùng ràng buộc, cùng lý lẽ với
+/// `ConsumeMAGIC/onchain/validators/consume.ak` ▸ `did_len_ok` — hai module đọc
+/// cùng một trường của cùng một người, nên hai khuôn khác nhau là hai bên đọc ra
+/// hai người khác nhau từ cùng một chuỗi byte.
+///
+/// Ghim ở MỌI chỗ GHI trường này, và CHỈ ở đó: cổng đúc (ghim về rỗng) và
+/// `validate_set_did_commit`. CỐ Ý KHÔNG ép ở năm nhánh còn lại — chúng không
+/// GHI, chúng ép `out.did_commit == datum.did_commit`. Thêm kiểm độ dài vào một
+/// nhánh bảo toàn là biến mọi vault đã nằm trên chuỗi với did sai khuôn thành
+/// BẤT KHẢ TIÊU (min-ADA khoá vĩnh viễn), mà chính nhánh tiêu là thứ vừa bị
+/// khoá nên không có đường di trú. Ràng buộc đặt ở cổng VÀO, không đặt ở cổng RA
+/// của state đã nằm trên chuỗi.
+fn did_len_ok(did: ByteArray) -> Bool {
+  let n = builtin.length_of_bytearray(did)
+  n == 0 || n == 32
+}
+
+// ══════════════════════════════════════════════════════════════
 // FUND — FundLock
 // ══════════════════════════════════════════════════════════════
 // Vault đã kiểm toàn bộ delta; quỹ chỉ chứng minh có VAULT THẬT (đúng
@@ -885,13 +987,23 @@ fn validate_mint_vault_id(
     total_events: 0,
   }
 
-  // `did_commit` KHÔNG bị ghim về rỗng — §7.5 nói nó được ĐẶT MỘT LẦN LÚC TẠO
-  // VAULT rồi bất biến, mà "lúc tạo vault" chính là giao dịch này. Ghim về rỗng ở
-  // đây là đóng vĩnh viễn đường đặt nó, vì không nhánh spend nào đổi được. Nó cũng
-  // không phải cần gạt giá trị: không nhánh nào đọc `did_commit` để cấp quyền hay
-  // tính tiền. Khoảng hở còn lại là hở TÍNH XÁC THỰC (ai cũng khai được cam kết DID
-  // của người khác) — đóng nó cần một sổ DID đọc qua reference input, nằm ngoài
-  // phạm vi module này. Xem mục "chỗ còn mơ hồ" trong báo cáo.
+  // ── `did_commit` phải RỖNG lúc đúc ──────────────────────────────────────
+  // Bản trước để trường này TỰ DO ở đây, với lý lẽ "§7.5 nói đặt một lần lúc tạo
+  // vault, mà lúc tạo vault chính là giao dịch này". Lý lẽ đó đúng về thời điểm
+  // và sai về THẨM QUYỀN. Chỗ duy nhất kiểm danh tính trong giao dịch đúc là
+  // `list.has(tx.extra_signatories, vd.owner)` ngay trên, và không vế nào buộc
+  // `owner` có liên hệ gì với `did_commit` — nên cùng một chữ ký vừa chứng minh
+  // "tôi điều khiển pkh này" vừa được tính là chứng cho một cam kết DID bất kỳ.
+  //
+  // Và nó BẤT BIẾN TRỌN ĐỜI: năm nhánh spend còn lại đều ép `out.did_commit ==
+  // datum.did_commit` (C-PP-8), nên một vault sinh ra với cam kết bịa thì không
+  // nhánh nào sửa được — chỉ có thể bỏ vault đi. Một trường ghi-một-lần-không-
+  // sửa-được mà cổng ghi lại không kiểm gì là lớp hại không hoàn tác.
+  //
+  // Đường đặt KHÔNG bị đóng: nó chuyển sang nhánh `SetDidCommit` (constr 5), nơi
+  // có đủ ba vế mà chỗ này không có — chưa-gắn, chữ ký CHÍNH `owner` tại thời
+  // điểm gắn, và khuôn 32 byte. Xem `validate_set_did_commit`.
+  expect vd.did_commit == #""
 
   // ── Không bụi token, không CARP trong vault genesis: nhiều nhất {ADA, NFT} ─
   expect list.length(assets.policies(vault_out.value)) <= 2
@@ -1169,7 +1281,17 @@ const t_fund_id: ByteArray =
   #"aaaa000000000000000000000000000000000000000000000000000000000000"
 const t_other_fund: ByteArray =
   #"bbbb000000000000000000000000000000000000000000000000000000000000"
-const t_did: ByteArray = #"deadbeef"
+// `did_commit` của một vault ĐÃ GẮN: đúng 32 byte, khuôn duy nhất mà
+// `did_len_ok` cho qua. Bản trước là #"deadbeef" (4 byte) — từ khi cổng đúc ghim
+// rỗng và `SetDidCommit` ghim 32 byte thì độ dài đó KHÔNG tới được trên chuỗi, và
+// một fixture tả trạng thái bất khả đạt là fixture kiểm một thế giới không có.
+const t_did: ByteArray =
+  #"d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
+// Giá trị 32 byte THỨ HAI — dùng cho bài "vault đã có DID thì từ chối đặt lại".
+const t_did_other: ByteArray =
+  #"d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+// SAI KHUÔN (4 byte) — chỉ để chứng minh cổng độ dài ở nhánh ghi có người canh.
+const t_did_short: ByteArray = #"deadbeef"
 const t_tx_id: ByteArray =
   #"3333333333333333333333333333333333333333333333333333333333333333"
 const t_fund_tx: ByteArray =
@@ -2081,6 +2203,113 @@ test pp_setdelegate_mints_credit() fail {
 }
 
 // ══════════════════════════════════════════════════════════════
+// SetDidCommit — nhánh GHI duy nhất của `did_commit`
+// ══════════════════════════════════════════════════════════════
+//
+// Mỗi bài âm tính dưới đây dựng phần CÒN LẠI của giao dịch HỢP LỆ và chỉ sai
+// đúng MỘT thứ. Đó không phải nghi thức: một bài âm dựng ẩu thì gỡ chốt ra nó
+// vẫn đỏ ở chốt kế tiếp, số bài lật ra 0, và phép đột biến không chứng minh gì.
+
+fn sd_din() -> PrepaidVaultDatum {
+  PrepaidVaultDatum { ..t_vd([t_credit(t_fund_id, 10)], []), did_commit: #"" }
+}
+
+fn sd_dout(did: ByteArray) -> PrepaidVaultDatum {
+  PrepaidVaultDatum { ..sd_din(), did_commit: did, last_updated_epoch: t_epoch }
+}
+
+fn run_setdid(
+  datum   : PrepaidVaultDatum,
+  new_did : ByteArray,
+  tx      : Transaction,
+) -> Bool {
+  validate_set_did_commit(
+    datum, new_did, t_epoch, t_vault_addr(), t_carp_policy, t_carp_name, tx,
+  )
+}
+
+fn sd_tx(din: PrepaidVaultDatum, dout: PrepaidVaultDatum, signers: List<ByteArray>) -> Transaction {
+  t_tx([t_vault_in(din)], [t_vault_out(dout)], signers)
+}
+
+// DƯƠNG TÍNH: vault chưa gắn, chính owner ký, giá trị đúng khuôn 32 byte.
+test pp_setdid_ok() {
+  run_setdid(sd_din(), t_did, sd_tx(sd_din(), sd_dout(t_did), [t_owner]))
+}
+
+// TẤN CÔNG: vault đã có danh tính, ghi đè sang một cam kết khác.
+// Đây là vế "một lần, không đảo ngược" — thiếu nó thì `did_commit` thành một
+// trường đổi được tuỳ ý, và mọi bên đã quy kết theo giá trị cũ bị bỏ lại.
+test pp_setdid_already_set() fail {
+  let din = PrepaidVaultDatum { ..sd_din(), did_commit: t_did_other }
+  let dout = PrepaidVaultDatum { ..din, did_commit: t_did, last_updated_epoch: t_epoch }
+  run_setdid(din, t_did, sd_tx(din, dout, [t_owner]))
+}
+
+// TẤN CÔNG: người lạ gắn DID của mình vào vault người khác. Vì cổng "một lần"
+// chỉ cho ghi MỘT lần, nạn nhân mất luôn đường gắn DID thật — hỏng không hoàn tác.
+test pp_setdid_no_owner_sig() fail {
+  run_setdid(sd_din(), t_did, sd_tx(sd_din(), sd_dout(t_did), [t_stranger]))
+}
+
+// TẤN CÔNG: `personal_delegate` khai danh tính hộ. Uỷ quyền TRẢ PHÍ không phải
+// uỷ quyền KHAI MÌNH LÀ AI — bài này là thứ chặn ai đó "tiện tay" đổi vế (2)
+// thành `authed_owner_or_delegate` cho đồng bộ với Draw/BurnBatch.
+test pp_setdid_by_delegate() fail {
+  let din = PrepaidVaultDatum { ..sd_din(), personal_delegate: Some(t_delegate) }
+  let dout = PrepaidVaultDatum { ..din, did_commit: t_did, last_updated_epoch: t_epoch }
+  run_setdid(din, t_did, sd_tx(din, dout, [t_delegate]))
+}
+
+// TẤN CÔNG: cam kết sai khuôn (4 byte). Không chặn thì mỗi bên đọc tự đoán khuôn,
+// và ở lớp định danh "tự đoán khuôn" là hai bên đọc ra hai người khác nhau.
+test pp_setdid_wrong_length() fail {
+  run_setdid(sd_din(), t_did_short, sd_tx(sd_din(), sd_dout(t_did_short), [t_owner]))
+}
+
+// TẤN CÔNG: "gắn" bằng chuỗi rỗng. Vô hại một mình, nhưng nó làm cổng một-lần
+// hết nghĩa: đặt rỗng rồi đặt lại, bao nhiêu lần cũng được.
+test pp_setdid_to_empty() fail {
+  run_setdid(sd_din(), #"", sd_tx(sd_din(), sd_dout(#""), [t_owner]))
+}
+
+// TẤN CÔNG: nhân tiện khai danh tính thì bơm luôn hạn-mức. Giao dịch này chỉ
+// được điền MỘT trường.
+test pp_setdid_mutates_other_field() fail {
+  let dout =
+    PrepaidVaultDatum { ..sd_dout(t_did), prepaid_credits: [t_credit(t_fund_id, 10_000_000)] }
+  run_setdid(sd_din(), t_did, sd_tx(sd_din(), dout, [t_owner]))
+}
+
+// DƯƠNG TÍNH ĐẦU–CUỐI, chạy qua ĐÚNG các handler thật, ba bước liền mạch:
+//   (1) đúc vault — cổng mint ép `did_commit == #""`;
+//   (2) `SetDidCommit` đặt giá trị 32 byte;
+//   (3) một nhánh spend KHÁC (`SetDelegate`) chạy tiếp và giá trị còn nguyên.
+// Bước (3) chứng minh đường đi tồn tại, KHÔNG chứng minh C-PP-8 có người canh —
+// việc đó thuộc `pp_lock_did_forged` / `pp_burn_did_forged`, hai bài âm tính đo
+// đúng chốt bảo toàn.
+test pp_setdid_end_to_end() {
+  let g = t_genesis_vd()
+  expect run_mint(t_seed_ref(), mint_tx_with(g))
+
+  let after = PrepaidVaultDatum { ..g, did_commit: t_did, last_updated_epoch: t_epoch }
+  expect
+    run_spend(
+      g,
+      SetDidCommit { did_commit: t_did },
+      branch_tx(t_vault_in(g), t_vault_out(after), [], [], [t_owner]),
+    )
+
+  let after2 = PrepaidVaultDatum { ..after, personal_delegate: Some(t_delegate) }
+  expect after2.did_commit == t_did
+  run_spend(
+    after,
+    SetDelegate { new_delegate: Some(t_delegate) },
+    branch_tx(t_vault_in(after), t_vault_out(after2), [], [], [t_owner]),
+  )
+}
+
+// ══════════════════════════════════════════════════════════════
 // Quỹ Paid — FundLock / FundSettle / FundClaim
 // ══════════════════════════════════════════════════════════════
 
@@ -2488,8 +2717,9 @@ test pp_epoch_open_upper() fail {
 // Gỡ lời gọi `vault_identity_preserved` ở thân `spend` ⟹ toàn bộ nhóm bài âm
 // tính này chuyển sang xanh cùng lúc. SỐ ĐO nằm ở MỘT nơi — `DESIGN.md §2.1` —
 // và cố ý không chép xuống đây: một con số chép ở hai chỗ thì chỗ chép chết im
-// lặng ngay lần thêm bài kế tiếp (bản trước của dòng này ghi "MƯỜI", `DESIGN.md`
-// ghi "12", đo thật ra 12; nay là 13).
+// lặng ngay lần thêm bài kế tiếp. Chính khối này đã dính đúng thế một lần (ghi
+// "MƯỜI" khi `DESIGN.md` ghi 12), và lần thêm nhánh `SetDidCommit` vừa rồi lại
+// làm con số đổi — đó là lý do nó không được nằm ở đây.
 
 // ── Fixtures genesis ──────────────────────────────────────────
 
@@ -2505,11 +2735,11 @@ fn t_seed_input(ref: OutputReference) -> Input {
   }
 }
 
-// Datum genesis SẠCH: mọi cần gạt ở trạng thái khởi tạo.
+// Datum genesis SẠCH: mọi cần gạt ở trạng thái khởi tạo, kể cả `did_commit`.
 fn t_genesis_vd() -> PrepaidVaultDatum {
   PrepaidVaultDatum {
     owner: t_owner,
-    did_commit: t_did,
+    did_commit: #"",
     prepaid_credits: [],
     magic_batches: [],
     next_batch_index: 0,
@@ -2636,6 +2866,19 @@ test pp_mint_attribution_forged() fail {
 test pp_mint_delegate_preset() fail {
   let vd =
     PrepaidVaultDatum { ..t_genesis_vd(), personal_delegate: Some(t_delegate) }
+  run_mint(t_seed_ref(), mint_tx_with(vd))
+}
+
+// TẤN CÔNG: khai sẵn cam kết DID lúc tạo vault.
+//
+// Đây là ca ĐẮT NHẤT trong nhóm mint, vì nó không hoàn tác được: C-PP-8 ép
+// `out.did_commit == datum.did_commit` ở cả năm nhánh spend còn lại, nên một cam
+// kết bịa lọt qua cổng đúc là bịa VĨNH VIỄN — vault đó chỉ có thể bị bỏ đi. Giá
+// trị dùng ở đây ĐÚNG KHUÔN 32 byte có chủ ý: nếu nó sai khuôn thì bài không
+// phân biệt được "cổng chặn vì khác rỗng" với "cổng chặn vì sai độ dài", mà cổng
+// độ dài thì không tồn tại ở nhánh mint.
+test pp_mint_did_preset() fail {
+  let vd = PrepaidVaultDatum { ..t_genesis_vd(), did_commit: t_did }
   run_mint(t_seed_ref(), mint_tx_with(vd))
 }
 
@@ -2992,6 +3235,41 @@ test pp_spend_setdelegate_forged_vault() fail {
 
 test pp_spend_setdelegate_nft_escapes() fail {
   sp_setdel_run(t_vault_in(sp_setdel_din()), t_vault_out_no_nft(sp_setdel_dout()))
+}
+
+// ── Nhánh 6/6 — SetDidCommit ──────────────────────────────────
+// Nhánh mới KHÔNG phải tự nhớ gọi `vault_identity_preserved`: cổng nằm ở thân
+// handler `spend`, trước `when redeemer is`. Ba bài dưới đây là phép ĐO câu đó,
+// không phải một lời khai về nó.
+
+fn sp_setdid_din() -> PrepaidVaultDatum {
+  sd_din()
+}
+
+fn sp_setdid_dout() -> PrepaidVaultDatum {
+  sd_dout(t_did)
+}
+
+fn sp_setdid_run(vin: Input, vout: Output) -> Bool {
+  run_spend(
+    sp_setdid_din(),
+    SetDidCommit { did_commit: t_did },
+    branch_tx(vin, vout, [], [], [t_owner]),
+  )
+}
+
+test pp_spend_setdidcommit_ok() {
+  sp_setdid_run(t_vault_in(sp_setdid_din()), t_vault_out(sp_setdid_dout()))
+}
+
+test pp_spend_setdidcommit_forged_vault() fail {
+  sp_setdid_run(
+    t_vault_in_no_nft(sp_setdid_din()), t_vault_out_no_nft(sp_setdid_dout()),
+  )
+}
+
+test pp_spend_setdidcommit_nft_escapes() fail {
+  sp_setdid_run(t_vault_in(sp_setdid_din()), t_vault_out_no_nft(sp_setdid_dout()))
 }
 
 // ── Hai cổng còn lại của `vault_identity_preserved` ────────────

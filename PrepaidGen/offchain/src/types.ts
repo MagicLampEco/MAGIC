@@ -63,8 +63,14 @@ export const PaidFundDatumSchema = Data.Object({
 export type PaidFundDatum = Data.Static<typeof PaidFundDatumSchema>;
 
 // ── PrepaidVaultRedeemer ─────────────────────────────────────
-// Constr 0 Lock · 1 Draw · 2 BurnBatch · 3 PrunePrepaid · 4 SetDelegate.
+// Constr 0 Lock · 1 Draw · 2 BurnBatch · 3 PrunePrepaid · 4 SetDelegate ·
+// 5 SetDidCommit.
 // BurnBatch PHẢI ở 2 — ConsumeMAGIC ghim burn_batch_constr = 2 (§7.3).
+//
+// `SetDidCommit` nằm CUỐI, không nằm cạnh `SetDelegate` dù hai nhánh nghe giống
+// nhau: `Data.Enum` mã hoá tag constructor theo THỨ TỰ PHẦN TỬ trong mảng này,
+// nên chèn vào giữa là mọi redeemer đã mã hoá cho một nhánh ≥ 3 trỏ sang nhánh
+// khác — không lỗi cú pháp, không test kiểu nào đỏ, chỉ sai lúc chạy trên chuỗi.
 export const PrepaidVaultRedeemerSchema = Data.Enum([
   Data.Object({
     PrepaidLock: Data.Object({
@@ -87,6 +93,13 @@ export const PrepaidVaultRedeemerSchema = Data.Enum([
   Data.Object({
     SetDelegate: Data.Object({
       new_delegate: Data.Nullable(Data.Bytes()),
+    }),
+  }),
+  Data.Object({
+    // constr 5 — gắn PersonDID MỘT LẦN. On-chain đòi `datum.did_commit == #""`,
+    // chữ ký của CHÍNH `owner`, và giá trị mới dài ĐÚNG 32 byte (64 ký tự hex).
+    SetDidCommit: Data.Object({
+      did_commit: Data.Bytes(),
     }),
   }),
 ]);
@@ -146,7 +159,18 @@ export const VAULT_REDEEMER_ORDER = [
   "BurnBatch", // constr 2 — ConsumeMAGIC ghim (§7.3)
   "PrunePrepaid",
   "SetDelegate",
+  "SetDidCommit", // constr 5 — thêm 2026-09-15, CHỈ THÊM Ở CUỐI
 ] as const;
+
+/// Chỉ số constructor của `SetDidCommit`. Viết ra thành hằng để bài kiểm codec ép
+/// được một con số cụ thể: một nhánh chèn nhầm vị trí không làm hỏng biên dịch,
+/// không làm hỏng suy luận kiểu, và chỉ lộ ra khi giao dịch chạy nhầm nhánh trên
+/// chuỗi — đúng lớp hỏng im lặng mà bảng thứ tự này sinh ra để chặn.
+export const SET_DID_COMMIT_CONSTR = 5;
+
+/// Độ dài hợp lệ của `did_commit` khi GHI (blake2b-256). Gương của
+/// `did_len_ok` bên Aiken: rỗng là "chưa gắn", còn nhánh ghi đòi đúng 32 byte.
+export const DID_COMMIT_BYTES = 32;
 
 export const FUND_REDEEMER_ORDER = ["FundLock", "FundSettle", "FundClaim"] as const;
 

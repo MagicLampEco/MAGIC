@@ -40,7 +40,8 @@ pub type VaultAttribution {
 // KHÔNG có trường LAMP nào — C-PP-14 (PrepaidGen không chạm backing chung).
 pub type PrepaidVaultDatum {
   owner              : ByteArray,
-  did_commit         : ByteArray,            // §7.5 — bất biến sau genesis
+  did_commit         : ByteArray,            // §7.5 — RỖNG lúc genesis, đặt MỘT LẦN
+                                             // qua `SetDidCommit`, rồi bất biến
   prepaid_credits    : List<PrepaidCredit>,
   magic_batches      : List<MagicBatch>,
   next_batch_index   : Natural,
@@ -82,6 +83,16 @@ pub type PrepaidVaultRedeemer {
 
   // constr 4 — owner đặt/đổi consume-delegate (§7.6)
   SetDelegate { new_delegate: Option<ByteArray> }
+
+  // constr 5 — owner gắn PersonDID MỘT LẦN, không đảo ngược (§7.5).
+  //
+  // ĐẶT Ở CUỐI, KHÔNG PHẢI CẠNH `SetDelegate` vì hai nhánh nghe giống nhau: chỉ
+  // số constructor đi theo THỨ TỰ KHAI BÁO, nên chèn vào giữa là đẩy
+  // `SetDelegate` sang 5 và — nặng hơn — đẩy mọi nhánh sau `BurnBatch` đi một
+  // bậc. `burn_batch_constr = 2` mà ConsumeMAGIC ghim thì đứng yên ở đây, nhưng
+  // mọi redeemer đã mã hoá ngoài chuỗi cho một nhánh ≥ 3 sẽ chạy NHẦM NHÁNH mà
+  // không lỗi cú pháp nào. Thứ tự khai báo ≠ thứ tự vòng đời.
+  SetDidCommit { did_commit: ByteArray }
 }
 
 // ── Paid fund redeemer ────────────────────────────────────────

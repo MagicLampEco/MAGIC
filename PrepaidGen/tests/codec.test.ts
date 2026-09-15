@@ -17,6 +17,7 @@ import {
   PAID_FUND_DATUM_FIELDS,
   PREPAID_CREDIT_FIELDS,
   PREPAID_VAULT_DATUM_FIELDS,
+  type PrepaidVaultRedeemer,
   PrepaidVaultRedeemerSchema,
   SET_DID_COMMIT_CONSTR,
   VAULT_ATTRIBUTION_FIELDS,
@@ -160,18 +161,24 @@ describe("constructor index redeemer khớp Aiken", () => {
   // thẻ CBOR 121+i, nên constr 5 ⟹ 126 ⟹ tiền tố `d87e`. Nếu ai chèn nhánh mới
   // vào giữa mảng `Data.Enum`, chuỗi này đổi và bài đỏ ngay — trong khi mọi phép
   // kiểm kiểu của TypeScript vẫn xanh.
+  //
+  // Chữ `as unknown as PrepaidVaultRedeemer` là idiom BẮT BUỘC của Lucid 0.4.x,
+  // đã ghi ở `ConsumeMAGIC/offchain/src/types.ts` cạnh `encodeEngageDatum`:
+  // `Data.to(value, Schema)` suy kiểu tham số thứ hai từ tham số thứ nhất, nên
+  // truyền lược đồ vào thẳng thì `tsc` đòi tham số MỘT phải là lược đồ.
+  //
+  // Và phép ép có cái giá của nó, nói thẳng ra vì nó không tự khai: sau khi ép,
+  // `tsc` KHÔNG còn đối chiếu tham số thứ nhất với lược đồ nữa — một tên nhánh
+  // gõ sai ở đây sẽ biên dịch trót lọt. Cái bù lại là phép so thẻ CBOR ngay dưới:
+  // nhánh sai thì thẻ sai, và bài này đỏ. Đó đúng là lý do bài này đo BYTE chứ
+  // không đo bảng chữ — nên chỗ mất là chỗ vốn đã không được tin.
   it("Data.to(SetDidCommit) mã hoá ra thẻ constr 5 (`d87e`)", () => {
-    const hex = Data.to(
-      { SetDidCommit: { did_commit: "ab".repeat(DID_COMMIT_BYTES) } },
-      PrepaidVaultRedeemerSchema,
-    );
+    const schema = PrepaidVaultRedeemerSchema as unknown as PrepaidVaultRedeemer;
+    const hex = Data.to({ SetDidCommit: { did_commit: "ab".repeat(DID_COMMIT_BYTES) } }, schema);
     expect(hex.startsWith("d87e")).toBe(true);
     // Đối chứng ở hàng xóm: SetDelegate vẫn là constr 4 ⟹ thẻ 125 ⟹ `d87d`.
     // Không có vế này thì bài trên xanh cả khi CẢ HAI nhánh cùng dịch một bậc.
-    const del = Data.to(
-      { SetDelegate: { new_delegate: null } },
-      PrepaidVaultRedeemerSchema,
-    );
+    const del = Data.to({ SetDelegate: { new_delegate: null } }, schema);
     expect(del.startsWith("d87d")).toBe(true);
   });
 

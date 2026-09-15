@@ -2012,8 +2012,27 @@ test engage_mint_extra_token_fail() fail {
 // ── ĐỐI CHỨNG (chống vá quá tay): did_commit KHÁC RỖNG vẫn PASS ─────────────────
 //    types.ak định nghĩa did_commit là commitment do người tạo đặt lúc genesis (rỗng
 //    = chưa gắn, khác rỗng = blake2b256 liên kết DID). Đó là LỰA CHỌN, không phải
-//    state tích luỹ ⇒ pin cứng về #"" sẽ khoá chết đường DID mà không thêm an toàn
-//    nào. Test này khoá quyết định đó lại để lần sau không ai "siết nhầm".
+//    state tích luỹ. Test này khoá quyết định đó lại để lần sau không ai "siết nhầm".
+//
+//    🔴 ĐÍNH CHÍNH lý do, 2026-09-15 — kết luận GIỮ NGUYÊN, lập luận thì không.
+//    Bản trước viết "pin cứng về #"" sẽ khoá chết đường DID mà không thêm an toàn
+//    nào". Cả hai vế đều sai, và tệp này tự bác chúng:
+//      · KHÔNG khoá chết — `validate_bind_did` đã là đúng cổng ghi-một-lần đó
+//        (một lần · chữ ký chủ · khác rỗng · đúng 32 byte). Pin ở cổng đúc chỉ
+//        buộc mọi người đi qua nó, tức thêm MỘT giao dịch mỗi người, không mất đường.
+//      · CÓ thêm an toàn, chỉ là rất ít — đường đúc dựng lại đúng cái hại mà cổng
+//        (2) của `validate_bind_did` sinh ra để chặn: người lạ mở thread mang
+//        `owner` của nạn nhân với một DID do mình chọn, và vì ghi-một-lần nên nạn
+//        nhân mất luôn đường gắn DID thật vào CHÍNH thread đó.
+//    Vì sao vẫn giữ: thread engage KHÔNG có ràng buộc duy-nhất-theo-owner (đo bằng
+//    `grep` trên tệp này: không mệnh đề nào ép một owner một thread), nên thread bị
+//    chiếm chỗ là thread CHẾT — nạn nhân mở thread sạch của mình và dùng. Cái giá
+//    của việc pin là một giao dịch bắt buộc cho mọi người dùng, vĩnh viễn.
+//    Và đây là chỗ ConsumeMAGIC cố ý KHÁC PrepaidGen, không phải chỗ bị bỏ sót:
+//    `prepaid_vault` pin `did_commit == #""` ở cổng đúc (2026-09-15) vì nó giữ CARP
+//    khoá và tín dụng tích luỹ — người sở hữu buộc phải dùng ĐÚNG vault đó, nên một
+//    giá trị sai ở genesis là hỏng không hoàn tác. Thread engage thì thay được.
+//    Ai đọc hai module rồi thấy chúng lệch: lệch có chủ ý, lý do nằm ở đây.
 //
 //    ĐÃ ĐỔI GIÁ TRỊ (vá độ dài did_commit): bản cũ dùng `#"d1d1d1d1"` (4 byte) và
 //    bản đó nay bị TỪ CHỐI — xem `engage_mint_did_len_4_fail`. Đây là ca "lật chính

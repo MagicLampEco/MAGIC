@@ -27,7 +27,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `consume.consume` | `5e218121ec47798adc034beeacc5f922108cc7055edcd6e7c806e614` |
+| `consume.consume` | `6e174468ce71a1adf29a4fce883a0e3d436452b6b1e5dddfe90e63e8` |
 | `price_nft.price_nft` | `82080eb9cb27d9eb7e603b7e3ecc460db12103b1829203b55d549d64` |
 | `price_param.price_param` | `3ea8f97b561d71688e6c4b6aacf02e6879ad6cdc9d134d53ad07da28` |
 
@@ -62,7 +62,7 @@ trình biên dịch `v1.1.21+42babe5`
 |---|---|
 | `fund_nft.fund_nft` | `2a3195949a6417d8a08c082148d7f04f6fb0e2898fc9b7bb3aa2a7e1` |
 | `prepaid.paid_fund` | `fa4a1df824e7b1a37216b903c4e8701a5bf203c88cae59ba87e55def` |
-| `prepaid.prepaid_vault` | `5e566d91a5a5f34f5b2621177f42933ae4f1cfc6c615aaf0648f1b63` |
+| `prepaid.prepaid_vault` (nay có CẢ handler `mint`) | `27fa3de66a26a461933517dfbbd8a4dc53c289a1af1e50618c3b9995` |
 
 ### `ProfileChange/onchain`
 

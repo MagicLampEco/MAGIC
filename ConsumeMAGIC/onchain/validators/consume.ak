@@ -271,9 +271,29 @@ fn validate_consume(
     //    người dùng (app chỉ là `personal_delegate`), nên `all_vault_owners_are` thoả
     //    mà không cần chữ ký nào. Bài canh: `consume_sponsor_no_signature_ok`.
     //
-    //    Ràng trên MỌI vault_ref phân biệt, không phải "có một cái khớp": tx trộn
-    //    một vault của chủ thread với một vault của người lạ thì phần đốt ở vault
-    //    người lạ vẫn chảy vào hồ sơ chủ thread.
+    //    CÁI CỔNG NÀY THẬT SỰ CHẶN GÌ (viết lại 2026-09-15 — bản cũ tả sai hình dạng).
+    //    Bản cũ biện minh bằng "tx trộn một vault của chủ thread với một vault của
+    //    người lạ". Hình dạng đó KHÔNG DỰNG ĐƯỢC trong hợp thành hiện tại: cả hai loại
+    //    vault đang phục vụ đều ép ĐÚNG MỘT input tại địa chỉ vault trong một tx —
+    //    `InstantGen/onchain/validators/vault.ak` ▸ `validate_burn_batch` (`DS-1`), và
+    //    `ScheduleGen/onchain/validators/vault.ak` ▸ chốt `C-VAULT-DS-1` đặt ngay đầu
+    //    nhánh `spend` nên áp cho MỌI redeemer, BurnBatch trong đó. Hai vault trong một
+    //    tx là hai input tại cùng payment credential ⇒ vault tự chết trước khi lớp này
+    //    kịp nói gì.
+    //
+    //    Thứ cổng này chặn, và nó là thứ THẬT: MỘT vault duy nhất KHÔNG thuộc chủ
+    //    thread. Kẻ tấn công xin `personal_delegate` trên vault của V (V ký
+    //    `SetDelegate`, đúng thiết kế), rồi ghép vault đó với thread của chính mình.
+    //    Vault cho qua vì có delegate; không có cổng này thì `consumed_nanogic` của kẻ
+    //    tấn công tăng đúng bằng số MAGIC của V. Bài canh:
+    //    `consume_foreign_vault_with_owner_signature_rejected`.
+    //
+    //    BỀ RỘNG MULTI-VAULT LÀ BỀ RỘNG CHƯA TỚI ĐƯỢC. `distinct_vault_refs_over_engage_inputs`
+    //    / `sum_burns_over_vault_refs` / `all_vault_owners_are` đều duyệt một DANH SÁCH
+    //    vault_ref, và danh sách đó có nhiều hơn một phần tử chỉ khi một loại vault mới
+    //    (chưa tồn tại) bỏ chốt một-input. Giữ `list.all` thay vì "có một cái khớp" là
+    //    giữ đúng chiều fail-closed cho ngày đó; đừng đọc nó thành bằng chứng rằng hôm
+    //    nay dựng được tx nhiều vault.
     all_vault_owners_are(tx.inputs, vault_refs, in_datum.owner)
 }
 
@@ -432,11 +452,30 @@ fn validate_mint_engage_id(
   //    dời nhà bẩn": nếu chỉ kiểm mint mà không kiểm địa chỉ, kẻ tấn công đúc NFT
   //    về ví rồi trong CÙNG tx (hoặc tx sau) gửi NFT + datum bịa tới địa chỉ
   //    engage — không validator nào chạy lúc tạo UTxO nên không ai chặn.
+  //
+  //    ── VÁ 2026-09-15 — ĐỊA CHỈ ĐẦY ĐỦ, KHÔNG CHỈ PAYMENT CREDENTIAL ──────────
+  //    Bản cũ so `o.address.payment_credential == Script(policy_id)`, nên stake
+  //    credential của output genesis do NGƯỜI DỰNG TX chọn tự do. Một sponsor dựng tx
+  //    `MintEngage` hộ người dùng đặt được thread ở `Script(consume) + stake(sponsor)`:
+  //    người dùng vẫn ký (cổng dưới chỉ đòi `ed.owner` ký) mà không soi địa chỉ, và
+  //    thread sinh ra ở một địa chỉ bech32 KHÁC địa chỉ enterprise. Hai hậu quả:
+  //    `lucid.utxosAt(consumeAddr)` không bao giờ thấy nó, và phần thưởng stake của
+  //    min-ADA chảy về sponsor suốt đời thread.
+  //
+  //    Trước bản vá nhánh spend 2026-09-15 còn dời về được. Nay `out.address ==
+  //    in.address` là bất biến ở CẢ HAI nhánh spend (`Consume` và `BindDID`) ⇒ địa chỉ
+  //    lúc sinh là địa chỉ VĨNH VIỄN, và không có redeemer nào dời được.
+  //
+  //    VÁ Ở ĐÂY, KHÔNG Ở CỔNG SPEND. Spend là cổng RA của state đã nằm trên chuỗi;
+  //    siết ở đó là khoá chết mọi thread đã sinh ra ngoài địa chỉ enterprise. Cùng lý
+  //    lẽ với `did_len_ok` (xem docstring của nó): ràng buộc khuôn đặt ở chỗ GHI.
+  let engage_addr =
+    Address { payment_credential: Script(policy_id), stake_credential: None }
   let carriers =
     list.filter(
       tx.outputs,
       fn(o) {
-        o.address.payment_credential == Script(policy_id) && assets.quantity_of(
+        o.address == engage_addr && assets.quantity_of(
           o.value,
           policy_id,
           nft_name,
@@ -993,7 +1032,9 @@ fn run(
 }
 
 /// Như `run` nhưng nhận thẳng beacon Input (test pin địa chỉ beacon).
-/// Chữ ký mặc định = chủ thread (Nợ #36). Ca cần thiếu chữ ký dùng `run_sigs`.
+/// Chữ ký mặc định = chủ thread, chỉ để fixture giống tx thật. Nhánh `Consume` KHÔNG
+/// đọc `extra_signatories` nữa; `run_sigs` tồn tại để ca sponsor dựng được danh sách
+/// RỖNG và chứng minh đúng điều đó.
 fn run_beacon(
   beacon        : Input,
   cur_epoch     : Int,
@@ -1069,15 +1110,18 @@ test consume_happy() {
   run(pp, 1, 6, [eng], [vault], [ct_cont_output(11, 6, 1)], reds, rd, eng_ref, ct_in_datum)
 }
 
-// ── Nợ #36: chủ thread KHÔNG ký → REJECT ────────────────────────────────────
-// Trước khi vá, ca này PASS. Nghĩa là: kẻ tấn công tiêu MAGIC từ vault của CHÍNH
+// ── Nợ #36: vault của NGƯỜI LẠ, chính người lạ đó ký → REJECT ────────────────
+// Trước cổng #36, ca này PASS. Nghĩa là: kẻ tấn công tiêu MAGIC từ vault của CHÍNH
 // MÌNH (nên `Σburns == required` vẫn khớp) mà ghi `consumed_count` /
 // `consumed_nanogic` vào thread Engage của người khác. `consumed_*` là đầu vào C1
 // của quyền biểu quyết, nên đó là đường mua phiếu bằng tiền — thứ hệ này cấm.
 //
-// Ví lạ có ký, chỉ CHỦ THREAD là không: chứng minh cổng đòi đúng chữ ký của chủ,
-// không phải "có ai đó ký".
-test consume_owner_not_signer_fail() fail {
+// 🔴 TÊN CŨ LÀ `consume_owner_not_signer_fail`, và nó HỨA SAI (đổi tên 2026-09-15).
+// Sau khi cổng quyền ghi hạ xuống MỘT vế (`all_vault_owners_are` vô điều kiện), không
+// còn phép so chữ ký nào trong nhánh `Consume`. Ca này đỏ vì `vault.owner == #"deadbeef"`
+// KHÁC chủ thread — danh sách chữ ký của nó không đổi được kết quả. Tên cũ làm người đọc
+// tin rằng chốt chữ ký đang được canh, trong khi chốt đó không tồn tại nữa.
+test consume_foreign_vault_signed_by_vault_owner_fail() fail {
   let pp = ct_pp(6)
   let eng = ct_engage_input(0, 10)
   let vault = ct_vault_input_owned(0, #"deadbeef")
@@ -1092,8 +1136,11 @@ test consume_owner_not_signer_fail() fail {
   )
 }
 
-// Không chữ ký nào — fail-closed, không phải "danh sách rỗng thì bỏ qua".
-test consume_no_signer_fail() fail {
+// Cùng hình dạng, danh sách chữ ký RỖNG — fail-closed, không phải "rỗng thì bỏ qua".
+// Cặp với ca ngay trên: hai danh sách chữ ký khác nhau, CÙNG kết quả đỏ. Chính cặp đó
+// là bằng chứng chốt đang đo CHỦ VAULT chứ không đo chữ ký.
+// (Tên cũ `consume_no_signer_fail` — đổi 2026-09-15, cùng lý do ca trên.)
+test consume_foreign_vault_no_signer_fail() fail {
   let pp = ct_pp(6)
   let eng = ct_engage_input(0, 10)
   let vault = ct_vault_input_owned(0, #"deadbeef")
@@ -1112,7 +1159,8 @@ test consume_no_signer_fail() fail {
 // `Paymaster/FEAT.md:44` — người dùng cố ý không ký tx sponsor; app là
 // `personal_delegate` của vault CỦA CHÍNH người dùng
 // (`InstantGen/onchain/validators/vault.ak:900`: BurnBatch = owner HOẶC delegate).
-// MAGIC bị đốt là của chủ thread ⇒ vế 2 của cổng #36 nhận, không cần chữ ký.
+// MAGIC bị đốt là của chủ thread ⇒ cổng #36 nhận, không cần chữ ký nào ở lớp này.
+// (Bản cũ của dòng này viết "vế 2 của cổng #36" — cổng nay chỉ còn MỘT vế, không đánh số.)
 // Đây là test chặn chính bản vá #36 quá chặt mà chính người viết đã commit trước đó.
 test consume_sponsor_no_signature_ok() {
   let pp = ct_pp(6)
@@ -1355,6 +1403,16 @@ test consume_two_engage_full_burn_happy() {
 
 // ── HAPPY 2-input, 2 vault PHÂN BIỆT (mỗi engage 1 vault riêng, mỗi vault burn 10M).
 //    total_required=20M, total_burned = 10M+10M (2 vault_ref distinct) = 20M → pass.
+//
+// 🔴 NHÃN (2026-09-15) — HÌNH DẠNG CHƯA TỚI ĐƯỢC, ĐỪNG ĐỌC THÀNH "HỢP LỆ".
+//    Hai vault input trong một tx là hai input tại CÙNG payment credential, mà cả hai
+//    loại vault đang phục vụ đều ép đúng MỘT input tại địa chỉ vault:
+//    `InstantGen/onchain/validators/vault.ak` ▸ `validate_burn_batch` (`DS-1`) và
+//    `ScheduleGen/onchain/validators/vault.ak` ▸ `C-VAULT-DS-1` (đặt ở đầu nhánh
+//    `spend`, áp cho mọi redeemer). Ở đây vault chỉ là mock nên chốt đó không chạy.
+//    Ca này giữ lại để bề rộng multi-vault của `distinct_vault_refs_over_engage_inputs`
+//    / `sum_burns_over_vault_refs` / `all_vault_owners_are` không bị lượt dọn mã sau cắt
+//    mất — nó canh MÃ, không chứng minh một tx như thế dựng được hôm nay.
 test consume_two_engage_two_vault_happy() {
   let pp = ct_pp(6)
   let e0 = ct_engage_input(0, 10)
@@ -1507,7 +1565,9 @@ fn run_vr(
       outputs: outputs,
       redeemers: redeemers,
       validity_range: vr,
-      // Chủ thread ký — cổng Nợ #36. Ca thiếu chữ ký nằm ở test riêng.
+      // Chữ ký chủ thread — chỉ để fixture giống tx thật. Nhánh `Consume` KHÔNG đọc
+      // `extra_signatories` nữa (cổng #36 hạ xuống một vế `all_vault_owners_are`
+      // 2026-09-15); danh sách này không đổi được kết quả của ca nào ở đây.
       extra_signatories: [in_datum.owner],
     }
   consume.spend(
@@ -1844,6 +1904,49 @@ test engage_mint_output_at_other_script_fail() fail {
     [ct_seed_input()],
     assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
     [ct_gen_out(util.script_address(ct_eng_sh_b), ct_seed_name(), ct_clean_genesis(), 0)],
+    [ct_owner],
+  )
+}
+
+// ── ĐỊA CHỈ: CÙNG payment credential nhưng THÊM stake credential → REJECT ──────
+//    (vá 2026-09-15) Sponsor dựng tx `MintEngage` hộ người dùng và đặt thread ở
+//    `Script(consume) + stake(sponsor)`. Người dùng vẫn ký — cổng dưới chỉ đòi
+//    `ed.owner` có trong `extra_signatories`, không đòi ai soi địa chỉ. Trước vá,
+//    `payment_credential == Script(policy_id)` nhận hình dạng này, và thread sinh ra ở
+//    một địa chỉ bech32 mà `lucid.utxosAt(consumeAddr)` không bao giờ trả về.
+//
+//    Ca này khác `engage_mint_clean_happy` ĐÚNG MỘT BIẾN: stake credential của output.
+//    Cặp xanh/đỏ đó là thứ chứng minh cổng đang đo ĐỊA CHỈ ĐẦY ĐỦ, không đo cái khác.
+test engage_mint_output_with_stake_credential_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [
+      ct_gen_out(
+        util.script_address_staked(ct_eng_sh, #"beefbeef"), ct_seed_name(),
+        ct_clean_genesis(), 0,
+      ),
+    ],
+    [ct_owner],
+  )
+}
+
+// Cùng hình dạng, stake credential là của CHÍNH chủ thread → VẪN REJECT.
+//
+// Không phải siết thừa: mint-gate không có cách nào biết một stake key có thuộc về
+// `ed.owner` hay không (`owner` là payment key hash, stake credential là khoá KHÁC), nên
+// "stake của chính chủ" là một lời tự khai, và một cổng nhận lời tự khai thì nhận luôn
+// lời của sponsor. Quy tắc đọc được bằng một phép so: thread sinh ở địa chỉ ENTERPRISE.
+test engage_mint_output_stake_credential_of_owner_fail() fail {
+  run_mint(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [
+      ct_gen_out(
+        util.script_address_staked(ct_eng_sh, ct_owner), ct_seed_name(),
+        ct_clean_genesis(), 0,
+      ),
+    ],
     [ct_owner],
   )
 }
@@ -2701,13 +2804,20 @@ test consume_engage_output_stake_credential_added_rejected() fail {
   )
 }
 
-// HỢP LỆ, sát ngay cạnh: thread SINH RA ở một địa chỉ CÓ stake credential thì nó GIỮ
-// đúng địa chỉ đó. Khác ca trên đúng một biến — địa chỉ của INPUT.
+// HỢP LỆ, sát ngay cạnh: thread đậu ở một địa chỉ CÓ stake credential thì nó GIỮ đúng
+// địa chỉ đó. Khác ca trên đúng một biến — địa chỉ của INPUT.
 //
-// Đây là ca chặn bản vá quá tay: chốt đúng là "ĐỊA CHỈ BẢO TOÀN", KHÔNG phải "cấm
-// stake credential". Ép `stake_credential == None` sẽ giết ca này, và nó là một quyết
-// định chính sách (có cho phép địa chỉ engage uỷ quyền stake hay không) mà cổng vá lỗ
-// không có quyền tự ra.
+// Đây là ca chặn bản vá quá tay Ở NHÁNH SPEND: chốt đúng tại đây là "ĐỊA CHỈ BẢO TOÀN",
+// KHÔNG phải "cấm stake credential". Ép `stake_credential == None` ở nhánh spend sẽ
+// giết ca này VÀ khoá chết mọi thread đã nằm trên chuỗi ở một địa chỉ như thế — siết ở
+// cổng RA là sai chỗ, cùng lý lẽ với `did_len_ok`.
+//
+// 🔴 NHÃN (2026-09-15): hình dạng này nay là hình dạng CHƯA/KHÔNG TỚI ĐƯỢC. Chính sách
+// đã được quyết Ở CỔNG VÀO: `validate_mint_engage_id` ép output genesis nằm đúng địa chỉ
+// ENTERPRISE (`stake_credential: None`), nên không thread nào còn SINH RA ở địa chỉ có
+// stake credential. Ca này giữ lại đúng một việc — canh cho nhánh spend khỏi bị siết
+// nhầm thành "cấm stake credential" — chứ KHÔNG phải bằng chứng rằng đúc được một thread
+// như thế. Đừng đọc nó theo nghĩa thứ hai.
 test consume_engage_staked_address_preserved_ok() {
   let pp = ct_pp(6)
   let eng = ct_engage_input_staked(0, 10, #"beefbeef")
@@ -2783,6 +2893,10 @@ test bind_did_output_stake_credential_added_rejected() fail {
 }
 
 // HỢP LỆ sát cạnh: thread đậu sẵn ở địa chỉ có stake credential, output GIỮ nguyên.
+// Cùng NHÃN với `consume_engage_staked_address_preserved_ok`: sau khi mint-gate ghim
+// địa chỉ enterprise, hình dạng "thread đậu ở địa chỉ có stake credential" KHÔNG tới
+// được nữa. Ca này canh chiều siết-quá-tay của nhánh BindDID, không chứng minh gì về
+// tính hợp lệ của hình dạng đó.
 test bind_did_staked_address_preserved_ok() {
   let addr = util.script_address_staked(ct_eng_sh, #"beefbeef")
   let v = assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, ct_thread_name, 1)
@@ -2851,4 +2965,269 @@ test consume_ada_shuffled_between_threads_rejected() fail {
       ct_datum(11, 6, ct_img_price, ct_did),
     )
   run(pp, 1, 6, [a, b], [vault], [out_a, out_b], reds, rd, er0, ct_datum(10, 0, 0, ct_did))
+}
+
+// ══════════════════════════════════════════════════════════════
+// SÁU CHỐT KHÔNG CÓ NGƯỜI CANH — bài âm tính riêng cho từng chốt (2026-09-15)
+//
+// Nguồn: một lượt gỡ-chốt (thay từng chốt bằng `True`, chạy trọn bộ, đếm bài lật) trên
+// bản 148/148 cho thấy SÁU chốt gỡ ra mà bộ kiểm vẫn XANH. "Có bài đỏ ở chốt X" KHÔNG
+// phải "chốt X được ghim" (`Forall` §Kỷ luật phát ngôn mục 6), nên mỗi chốt dưới đây
+// nhận một ca riêng, dựng để CHẾT ĐÚNG DÒNG MANG TÊN NÓ.
+//
+// 🔴 ĐỌC TRƯỚC KHI DỌN MÃ: hai trong sáu chốt (`single_thread_nft` phía OUTPUT và
+// `n_in == n_out`) gỡ ra thì ca dưới đây VẪN ĐỎ — chúng che nhau. Số đo + phân tích ghi
+// ở ngay trên từng ca. Đừng đọc "ca vẫn đỏ" thành "chốt thừa": gỡ CẢ HAI thì ca xanh.
+//
+// HAI CA DÙNG HÌNH DẠNG HAI THREAD TRÙNG TÊN, cố ý, ngược với cảnh báo ở
+// `ct_thread_name_b`. Cảnh báo đó nói: fixture đa-thread dùng chung một tên đang đo một
+// hình dạng KHÔNG TỒN TẠI trên chuỗi (tên thread = `blake2b_256(cbor(seed))`, one-shot).
+// Đúng — và đó CHÍNH LÀ điều hai chốt này bảo vệ: chúng là lớp thứ hai cho ngày tính
+// one-shot bị làm hở. Ca đo một lớp phòng thủ chiều sâu buộc phải dựng cái hình dạng mà
+// lớp thứ nhất đang cấm; nếu không thì lớp thứ hai không có cách nào được đo.
+// ══════════════════════════════════════════════════════════════
+
+/// Continuing output với `owner` TUỲ Ý (mọi trường khác đúng khuôn một lượt consume).
+fn ct_cont_output_owner(owner: ByteArray, new_consumed: Int, new_epoch: Int) -> Output {
+  let v = assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, ct_thread_name, 1)
+  let d =
+    EngageDatum {
+      owner: owner,
+      consumed_count: new_consumed,
+      last_epoch: new_epoch,
+      did_commit: ct_did,
+      consumed_nanogic: ct_img_price,
+    }
+  util.mk_output(util.script_address(ct_eng_sh), v, d)
+}
+
+/// Output tại địa chỉ engage mang HAI thread NFT (gộp hai thread vào một UTxO).
+fn ct_cont_output_two_threads(lovelace: Int) -> Output {
+  let v0 = assets.add(assets.from_lovelace(lovelace), ct_eng_sh, ct_thread_name, 1)
+  let v = assets.add(v0, ct_eng_sh, ct_thread_name_b, 1)
+  util.mk_output(util.script_address(ct_eng_sh), v, ct_datum(11, 6, ct_img_price, ct_did))
+}
+
+/// Output tại địa chỉ engage KHÔNG mang thread NFT nào (datum vẫn đúng khuôn).
+fn ct_cont_output_no_thread(lovelace: Int) -> Output {
+  util.mk_output(
+    util.script_address(ct_eng_sh),
+    assets.from_lovelace(lovelace),
+    ct_datum(11, 6, ct_img_price, ct_did),
+  )
+}
+
+/// Output tại địa chỉ engage với value RỖNG TUYỆT ĐỐI — không ADA, không token.
+/// Ledger thật không nhận (min-UTxO), nhưng `Transaction` mock thì nhận, và đó đúng là
+/// hình dạng cần để cô lập `n_in == n_out` khỏi `engage_value_preserved`.
+fn ct_engage_output_zero_value() -> Output {
+  util.mk_output(
+    util.script_address(ct_eng_sh),
+    assets.zero,
+    ct_datum(11, 6, ct_img_price, ct_did),
+  )
+}
+
+/// Redeemer Consume với `price_ref` TUỲ Ý (ca trộn hai beacon giá trong một tx).
+fn ct_consume_redeemer_priced(
+  op_type: Int, op_count: Int, vault_ref: OutputReference, price_ref: OutputReference,
+) -> ConsumeRedeemer {
+  Consume { op_type, op_count, price_ref, vault_ref }
+}
+
+// ── CHỐT 1/6 — `od.owner == owner` trong `enforce_engagement` (A) ───────────────
+//
+// NẶNG NHẤT trong sáu. Chủ thread O tiêu thread CỦA CHÍNH MÌNH — mọi thứ khác hợp lệ,
+// MAGIC đốt là của O, chữ ký là của O — rồi khai `out.owner = X`. Từ giây đó X sở hữu
+// thread cùng TOÀN BỘ `consumed_nanogic` đã tích. Đó là CHUYỂN NHƯỢNG HỒ SƠ TIÊU MAGIC:
+// `BOUNDARIES.md §1` khai MAGIC không chuyển nhượng, `INV-MAGIC-CITIZEN` gắn thưởng vào
+// MAGIC ĐÃ TIÊU, và `consumed_*` là đầu vào C1 của quyền biểu quyết. Bán một thread đã
+// tích là bán đúng cái phiếu mà hệ cấm bán.
+//
+// Không chốt nào khác nhìn trường này: (B) chỉ so `consumed_count`/`consumed_nanogic`
+// theo cặp, còn `all_vault_owners_are` đọc `in_datum.owner`. Đối cực XANH: `consume_happy`
+// — khác ca này ĐÚNG MỘT BIẾN, `owner` của output.
+test consume_output_rotates_owner_to_stranger_fail() fail {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(
+    pp, 1, 6, [eng], [vault], [ct_cont_output_owner(#"deadbeef", 11, 6)], reds, rd,
+    eng_ref, ct_in_datum,
+  )
+}
+
+// ── CHỐT 2/6 — `single_thread_nft(o.value, own_hash)` phía OUTPUT ───────────────
+//
+// Hai Engage input (tên X, tên Y); output thứ nhất GỘP cả hai NFT, output thứ hai giữ
+// phần ADA còn lại và KHÔNG mang NFT nào. Σ value tại engage khớp tuyệt đối, `n_in ==
+// n_out` khớp — ca đi qua hai chốt đứng trước rồi chết tại chốt này.
+//
+// 🔴 SỐ ĐO, ĐỪNG SUY: gỡ chốt này thì ca VẪN ĐỎ — nó trôi xuống `out.value ==
+// inp.output.value` (phép so value THEO CẶP, vá 2026-09-15). Lý do là một chứng minh,
+// không phải một quan sát: phép so theo cặp + `expect [out]` + cổng định danh phía input
+// làm phép ghép input↔output ĐƠN ÁNH, và `n_in == n_out` nâng nó lên SONG ÁNH, nên mọi
+// output@engage là ảnh của đúng một input ⇒ mang đúng một NFT. Tức chốt này bị bao trọn
+// VỀ LOGIC bởi bộ chốt hiện có. Giữ lại vì nó rẻ và vì nó là vế đứng trước trong lập luận
+// song ánh đó — nhưng ai dọn mã phải biết mình đang gỡ một lớp DƯ, không phải một lớp
+// CHẾT: gỡ nó CÙNG LÚC với `n_in == n_out` thì `consume_extra_engage_output_no_input_fail`
+// ngay dưới chuyển sang XANH.
+//
+// ĐO 2026-09-15 (nền 156/156, gỡ = thay bằng `True`, chạy trọn bộ):
+//   gỡ MỘT MÌNH chốt này                      → 0 bài lật
+//   gỡ chốt này + `out.value == inp.output.value` → 3 bài lật, gồm CHÍNH ca này
+//   gỡ chốt này + `n_in == n_out`             → 1 bài lật (ca của chốt 4/6)
+test consume_output_merges_two_threads_fail() fail {
+  let pp = ct_pp(6)
+  let e0 = ct_engage_input(0, 10)
+  let e1 = ct_engage_input_b(1, 10)
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 20_000_000)])
+  let reds =
+    [Pair(Spend(er0), rd_as_data(rd)), Pair(Spend(er1), rd_as_data(rd)),
+     Pair(Spend(vault_ref), burn_rd)]
+  run(
+    pp, 1, 6, [e0, e1], [vault],
+    [ct_cont_output_two_threads(2_000_000), ct_cont_output_no_thread(2_000_000)],
+    reds, rd, er0, ct_in_datum,
+  )
+}
+
+// ── CHỐT 3/6 — `expect engage_value_preserved(tx, own_hash)` ────────────────────
+//
+// Đây là chốt mà chú thích tại chỗ gọi nó tự khai: "Bỏ dòng này là bỏ luôn lập luận song
+// ánh". Ca dưới đây dựng đúng hình dạng mà nó một mình chặn: HAI Engage input mang CÙNG
+// một tên thread. Cả hai ghép về cùng một output (phép lọc theo tên chỉ thấy một cái),
+// nên `expect [out]` im, `out.value == in.value` im, kế toán theo cặp im — chỉ Σ value
+// nhìn thấy `X:2` vào mà `X:1` ra.
+//
+// Hình dạng này không tồn tại chừng nào tên thread còn là `blake2b_256(cbor(seed))`
+// one-shot; xem khối chú thích đầu mục. Chốt này là LỚP THỨ HAI cho ngày đó, và ca này
+// là cách duy nhất đo được lớp thứ hai.
+test consume_duplicate_thread_name_value_sum_fail() fail {
+  let pp = ct_pp(6)
+  let e0 = ct_engage_input_named(0, 10, ct_thread_name)
+  let e1 = ct_engage_input_named(1, 10, ct_thread_name)
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 20_000_000)])
+  let reds =
+    [Pair(Spend(er0), rd_as_data(rd)), Pair(Spend(er1), rd_as_data(rd)),
+     Pair(Spend(vault_ref), burn_rd)]
+  // Ra: một thread tên X + một thread tên B — B chưa từng vào. Σ vào có X:2, Σ ra có X:1.
+  run(
+    pp, 1, 6, [e0, e1], [vault],
+    [
+      ct_cont_output_named(ct_thread_name, 11, 6, 1, ct_img_price),
+      ct_cont_output_named(ct_thread_name_b, 11, 6, 1, ct_img_price),
+    ],
+    reds, rd, er0, ct_in_datum,
+  )
+}
+
+// ── CHỐT 4/6 — `expect n_in == n_out` ──────────────────────────────────────────
+//
+// Một Engage input, HAI output tại địa chỉ engage: cái thứ hai không có input đối ứng.
+// Để cô lập đúng chốt này, output thừa mang value RỖNG — nhờ vậy Σ value tại engage vẫn
+// khớp tuyệt đối và `engage_value_preserved` (chốt đứng ngay sau) không cắn trước.
+//
+// 🔴 SỐ ĐO: gỡ chốt này thì ca VẪN ĐỎ — nó trôi xuống `single_thread_nft` phía output
+// (chốt 2/6), vì output rỗng không mang NFT nào. Hai chốt CHE NHAU: gỡ một cái thì cái
+// kia bắt, gỡ cả hai thì ca xanh. Đó là lý do cả hai ở lại, và là lý do ca này đứng ngay
+// dưới ca của chốt 2/6 — ai gỡ một trong hai phải đọc cả cặp.
+//
+// ĐO 2026-09-15 (nền 156/156): gỡ MỘT MÌNH `n_in == n_out` → 0 bài lật; gỡ nó CÙNG
+// `single_thread_nft` phía output → 1 bài lật, đúng ca này.
+test consume_extra_engage_output_no_input_fail() fail {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(
+    pp, 1, 6, [eng], [vault],
+    [ct_cont_output(11, 6, 1), ct_engage_output_zero_value()],
+    reds, rd, eng_ref, ct_in_datum,
+  )
+}
+
+// ── CHỐT 5/6 — `expect [out]` (phép lọc trả về ĐÚNG MỘT output) ─────────────────
+//
+// Hai Engage input CÙNG tên thread, hai output CÙNG tên đó, giá trị bằng nhau từng đơn
+// vị. Σ value khớp (`X:2` vào, `X:2` ra), `n_in == n_out` khớp, mọi kế toán theo cặp
+// khớp. Chỉ `expect [out]` thấy rằng phép lọc trả về HAI output cho MỘT input.
+//
+// Nới thành `[out, ..]` là ca này XANH ngay: cả hai input lấy output đầu tiên, và một
+// input↔một output tụt xuống nhiều input↔một output. Cùng họ hình-dạng-không-tồn-tại với
+// chốt 3/6 — xem khối chú thích đầu mục.
+test consume_two_inputs_same_thread_two_matching_outputs_fail() fail {
+  let pp = ct_pp(6)
+  let e0 = ct_engage_input_named(0, 10, ct_thread_name)
+  let e1 = ct_engage_input_named(1, 10, ct_thread_name)
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 20_000_000)])
+  let reds =
+    [Pair(Spend(er0), rd_as_data(rd)), Pair(Spend(er1), rd_as_data(rd)),
+     Pair(Spend(vault_ref), burn_rd)]
+  run(
+    pp, 1, 6, [e0, e1], [vault],
+    [
+      ct_cont_output_named(ct_thread_name, 11, 6, 1, ct_img_price),
+      ct_cont_output_named(ct_thread_name, 11, 6, 1, ct_img_price),
+    ],
+    reds, rd, er0, ct_in_datum,
+  )
+}
+
+// ── CHỐT 6/6 — `expect pr_i == price_ref` ──────────────────────────────────────
+//
+// Engage input thứ hai khai một `price_ref` KHÁC trong redeemer của nó. Invocation đang
+// chạy đọc bảng giá từ `price_ref` của CHÍNH NÓ rồi tính `req_i` cho MỌI input bằng bảng
+// đó, nên nếu không có chốt này thì input thứ hai được tính giá bằng một bảng mà redeemer
+// của nó không hề trỏ tới — hai invocation của cùng một tx đọc hai bảng khác nhau và mỗi
+// cái tự thấy mình cân.
+//
+// Trên chuỗi thật, beacon giá mang NFT one-shot nên chỉ tồn tại MỘT UTxO beacon hợp lệ
+// tại một thời điểm; chốt này là lớp thứ hai cho ngày tính one-shot đó bị làm hở, cùng
+// hạng với chốt 3/6 và 5/6. Ca không cần dựng beacon thứ hai: chốt so `price_ref` của
+// redeemer, không đọc datum của nó.
+test consume_second_engage_uses_other_price_ref_fail() fail {
+  let pp = ct_pp(6)
+  let e0 = ct_engage_input(0, 10)
+  let e1 = ct_engage_input_b(1, 10)
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd0 = ct_consume_redeemer(1, 1, vault_ref)
+  let rd1 =
+    ct_consume_redeemer_priced(1, 1, vault_ref, util.mk_ref_id(#"bb", ct_price_ref_ix + 1))
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 20_000_000)])
+  let reds =
+    [Pair(Spend(er0), rd_as_data(rd0)), Pair(Spend(er1), rd_as_data(rd1)),
+     Pair(Spend(vault_ref), burn_rd)]
+  run(
+    pp, 1, 6, [e0, e1], [vault],
+    [ct_cont_output(11, 6, 1), ct_cont_output_b(11, 6, 1)],
+    reds, rd0, er0, ct_in_datum,
+  )
 }

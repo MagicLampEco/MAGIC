@@ -27,7 +27,7 @@
 // KHÔNG còn hằng tên `454e47`.
 
 import {
-  Data, toUnit, validatorToScriptHash, validatorToAddress,
+  Constr, Data, toUnit, validatorToScriptHash, validatorToAddress,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type Assets,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
@@ -75,15 +75,26 @@ export interface ConsumeParams {
   /** Value output của vault — mặc định copy y nguyên vaultUtxo.assets (LAMP+ADA preserved;
    *  BurnBatch KHÔNG đụng LAMP, C-BURN-NO-LAMP). Chỉ override khi caller có lý do rõ. */
   vaultOutAssets?: Assets;
-  /** Owner pkh (hex) — addSignerKey cho ràng buộc owner-sig của BurnBatch (vault.ak). */
+  /** Khoá ký cho ràng buộc auth của `BurnBatch` ở phía VAULT (vault.ak): vault nhận
+   *  `owner` HOẶC `personal_delegate`. Vì `consume.ak` nay đòi
+   *  `VaultDatum.owner == EngageDatum.owner` (xem `vaultOwnerFromDatum` + CONSUME-010),
+   *  giá trị hợp lệ chỉ còn HAI: chính chủ thread, hoặc `personal_delegate` mà chủ thread
+   *  đã đặt trên vault của mình.
+   *  Trùng chủ thread thì bỏ trống cũng được — builder đã tự thêm chữ ký đó. */
   ownerSignerKeyHash?: string;
   /** Đường SPONSOR (Paymaster/Feecover): chủ thread KHÔNG ký tx
-   *  (`Paymaster/FEAT.md:44`). Cổng #36 của `consume.ak` có HAI vế — vế 2 nhận khi
-   *  MỌI vault trong tx thuộc chính chủ thread, vì khi đó MAGIC bị đốt là của chủ
-   *  thread và không hồ sơ ai khác bị ghi vào.
-   *  Chỉ đặt `true` khi điều kiện đó ĐÚNG. Đặt sai thì tx vẫn dựng được, vẫn nộp
-   *  được, rồi chết ở phase-2 với thông báo không nhắc gì tới chữ ký. Mặc định
-   *  `false` — thêm chữ ký chủ thread, luôn thoả vế 1. */
+   *  (`Paymaster/FEAT.md:44`) — app là `personal_delegate` và ký thay.
+   *
+   *  🔴 CỜ NÀY KHÔNG CÒN ĐỔI ĐƯỢC KẾT QUẢ CỦA VALIDATOR (vá 2026-09-15). Bản cũ của
+   *  dòng này viết rằng mặc định `false` "luôn thoả vế 1" — câu đó nay SAI, và nó sai
+   *  theo chiều nguy hiểm nhất: nó nói một đường là an toàn. Cổng quyền ghi của
+   *  `consume.ak` (`all_vault_owners_are`) chỉ còn MỘT vế, VÔ ĐIỀU KIỆN — mọi vault bị
+   *  đốt phải thuộc chủ thread. Không có vế chữ ký nào để thoả nữa.
+   *
+   *  Cái cờ này còn ảnh hưởng đúng một thứ: `required_signers` của tx. `false` (mặc
+   *  định) thêm chữ ký chủ thread — cần cho đường chủ tự ký `BurnBatch` ở vault. `true`
+   *  bỏ nó — dùng khi người ký là `personal_delegate` (truyền qua `ownerSignerKeyHash`).
+   *  Đặt sai chỉ làm tx thiếu/thừa một chữ ký ở tầng ví, KHÔNG mở thêm quyền nào. */
   sponsoredNoThreadSignature?: boolean;
   /** Collateral UTxO thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token). */
   collateralUtxo?: UTxO;
@@ -256,6 +267,30 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   // phải cộng requiredNanogic của MỌI input rồi phân bổ, không cộng riêng lẻ mù.
   if (!engageUtxo.datum) throw new Error("CONSUME-005: engage UTxO thiếu inline datum");
   const oldDatum: EngageDatumT = decodeEngageDatum(engageUtxo.datum);
+
+  // ── CỔNG CHỦ VAULT == CHỦ THREAD (CONSUME-010, vá 2026-09-15) ────────────────
+  //    `consume.ak` nhánh spend kết thúc bằng `all_vault_owners_are(...)` VÔ ĐIỀU KIỆN
+  //    (không còn vế `|| chữ ký chủ thread`). Nên một tx có `VaultDatum.owner !=
+  //    EngageDatum.owner` bị TỪ CHỐI 100%, không có tổ hợp chữ ký nào cứu được.
+  //    Dựng rồi nộp một tx như thế là mất collateral để biết một điều đọc được ở đây.
+  const vaultOwner = vaultOwnerFromDatum(vaultUtxo);
+  const threadOwner = oldDatum.owner.toLowerCase();
+  if (vaultOwner !== threadOwner) {
+    throw new Error(
+      `CONSUME-010: thread Engage và vault phải mở bằng CÙNG MỘT khoá.\n` +
+        `  owner của thread (EngageDatum) : ${threadOwner}\n` +
+        `  owner của vault  (VaultDatum)  : ${vaultOwner}\n` +
+        `  thread : ${engageUtxo.txHash}#${engageUtxo.outputIndex}\n` +
+        `  vault  : ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}\n` +
+        `Phải làm gì: dùng vault của CHÍNH chủ thread (${threadOwner}), hoặc mở một ` +
+        `thread Engage mới bằng khoá ${vaultOwner} rồi tiêu trên thread đó. ` +
+        `Không có đường xoay \`owner\` của một thread đã mở — cả \`Consume\` lẫn ` +
+        `\`BindDID\` đều ép \`owner\` bảo toàn, và không có redeemer thứ ba. ` +
+        `Trả phí hộ thì dùng \`personal_delegate\` trên vault CỦA CHỦ THREAD ` +
+        `(xem \`sponsoredNoThreadSignature\`), đừng đổi vault.`,
+    );
+  }
+
   const newEngageDatum: EngageDatumT = {
     owner: oldDatum.owner,
     consumed_count: oldDatum.consumed_count + opCount,
@@ -326,18 +361,20 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     .validFrom(Number(lowerMs))
     .validTo(Number(upperMs));
 
-  // Cổng #36 (`consume.ak` nhánh spend) có HAI vế: chủ thread ký, HOẶC mọi vault
-  // trong tx thuộc chính chủ thread. Mặc định đi vế 1 — thêm chữ ký chủ thread, lấy
-  // thẳng từ datum đang tiêu nên không có đường truyền nhầm khoá của người khác.
-  // Đường sponsor cố ý bỏ chữ ký này và dựa vào vế 2; xem
-  // `sponsoredNoThreadSignature`.
+  // Chữ ký chủ thread. Nó KHÔNG còn mở quyền nào ở `consume.ak` (cổng quyền ghi chỉ
+  // còn một vế: mọi vault thuộc chủ thread — đã ép fail-closed ở CONSUME-010 bên trên).
+  // Nó phục vụ ràng buộc auth của `BurnBatch` Ở PHÍA VAULT, nơi vault nhận
+  // `owner` HOẶC `personal_delegate`. Lấy thẳng từ datum đang tiêu nên không có đường
+  // truyền nhầm khoá của người khác.
   if (!sponsoredNoThreadSignature) {
-    txBuilder = txBuilder.addSignerKey(oldDatum.owner.toLowerCase());
+    txBuilder = txBuilder.addSignerKey(threadOwner);
   }
 
-  // BurnBatch đòi owner của VAULT ký (vault.ak) — có thể là khoá khác chủ thread.
-  // Trùng khoá thì bỏ qua, thêm hai lần một pkh là dựng ra tx sai hình dạng.
-  if (ownerSignerKeyHash && ownerSignerKeyHash.toLowerCase() !== oldDatum.owner.toLowerCase()) {
+  // Đường Paymaster/Feecover: người ký `BurnBatch` là `personal_delegate` của vault,
+  // tức MỘT KHOÁ KHÁC chủ thread. Đó là ca hợp lệ DUY NHẤT còn lại cho nhánh này —
+  // "owner của vault khác chủ thread" thì CONSUME-010 đã chặn ở trên.
+  // Trùng khoá thì bỏ qua: thêm hai lần một pkh là dựng ra tx sai hình dạng.
+  if (ownerSignerKeyHash && ownerSignerKeyHash.toLowerCase() !== threadOwner) {
     txBuilder = txBuilder.addSignerKey(ownerSignerKeyHash);
   }
 
@@ -353,6 +390,56 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     `nanogic ${oldDatum.consumed_nanogic}→${newEngageDatum.consumed_nanogic}`;
 
   return { tx, requiredNanogic, currentEpoch, newEngageDatum, summary };
+}
+
+/**
+ * `owner` của một vault UTxO — đọc TRƯỜNG 0 của datum, KHÔNG import kiểu `VaultDatum`.
+ *
+ * Cùng khuôn với on-chain: `consume.ak` ▸ `all_vault_owners_are` cũng chỉ
+ * `un_constr_data` rồi lấy `fields[0]`, cố ý không phụ thuộc kiểu của vault (mỗi loại
+ * vault một deploy — xem apply-param `burn_batch_constr`). Giữ hai bên cùng một phép
+ * đọc là điều kiện để cổng off-chain nói đúng cái mà validator sẽ nói.
+ *
+ * FAIL-CLOSED ở mọi hình dạng lạ. Không có nhánh nào trả về giá trị đệm: on-chain mỗi
+ * bước dưới đây là một `expect`, nên một datum không đọc được ở đây cũng là một tx chết
+ * ở phase-2. Ném ra lý do cụ thể, đừng nuốt.
+ *
+ * @throws CONSUME-010 nếu vault UTxO thiếu datum, datum không phải Constr, không có
+ *         trường nào, hoặc trường 0 không phải ByteArray.
+ */
+function vaultOwnerFromDatum(vaultUtxo: UTxO): string {
+  const at = `${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`;
+  if (!vaultUtxo.datum) {
+    throw new Error(
+      `CONSUME-010: vault UTxO ${at} thiếu inline datum. ` +
+        `\`consume.ak\` đọc \`owner\` từ trường 0 của datum vault (\`expect ` +
+        `InlineDatum(vd)\`), nên UTxO không datum không dùng làm vault được.`,
+    );
+  }
+  let decoded: unknown;
+  try {
+    decoded = Data.from(vaultUtxo.datum);
+  } catch (e) {
+    throw new Error(
+      `CONSUME-010: datum của vault UTxO ${at} không giải mã được thành Plutus Data: ` +
+        `${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  if (!(decoded instanceof Constr) || decoded.fields.length === 0) {
+    throw new Error(
+      `CONSUME-010: datum của vault UTxO ${at} không phải Constr có trường. ` +
+        `\`VaultDatum\` phải là \`Constr(_, [owner, ..])\` — UTxO này có đúng là vault ` +
+        `không, hay đang trỏ nhầm sang một script khác?`,
+    );
+  }
+  const owner = decoded.fields[0];
+  if (typeof owner !== "string") {
+    throw new Error(
+      `CONSUME-010: trường 0 của datum vault ${at} không phải ByteArray ` +
+        `(nhận ${typeof owner}). Trường 0 của \`VaultDatum\` là \`owner\` (pkh 28 byte).`,
+    );
+  }
+  return owner.toLowerCase();
 }
 
 /**

@@ -421,6 +421,30 @@ async function main() {
 
   // ── Engage output datum: consumed_count += op_count, last_epoch=current ───────
   const oldEngage: EngageDatumT = decodeEngageDatum(engageUtxo.datum);
+
+  // 🔴 CHỦ THREAD PHẢI LÀ CHỦ VAULT (vá 2026-09-15). `consume.ak` nhánh spend kết thúc
+  //    bằng `all_vault_owners_are(...)` VÔ ĐIỀU KIỆN — vế `|| chữ ký chủ thread` đã bị
+  //    gỡ, nên `VaultDatum.owner != EngageDatum.owner` bị từ chối 100%, không tổ hợp chữ
+  //    ký nào cứu được. Bản cũ ở cuối hàm này còn `addSignerKey(engageOwner)` cho đúng ca
+  //    đó — một chữ ký cho một tx chắc chắn chết ở phase-2, tức mất collateral để biết
+  //    một điều đọc được ngay tại đây. Đã gỡ.
+  //    (Chủ vault đã được đối chiếu với ví đang chạy ở khối kiểm phía trên, nên so với
+  //    `ownerPkh` là so đúng đại lượng.)
+  {
+    const engageOwner = oldEngage.owner.toLowerCase();
+    if (engageOwner !== ownerPkh.toLowerCase()) {
+      throw new Error(
+        `Thread Engage ${engageUtxo.txHash}#${engageUtxo.outputIndex} KHÔNG thuộc ví đang chạy.\n` +
+        `  owner trong EngageDatum : ${engageOwner}\n` +
+        `  ví đang chạy / chủ vault: ${ownerPkh}\n` +
+        `Thread và vault phải mở bằng CÙNG MỘT khoá. Không có đường xoay \`owner\` của ` +
+        `một thread đã mở (cả \`Consume\` lẫn \`BindDID\` đều ép \`owner\` bảo toàn, và ` +
+        `không có redeemer thứ ba). Trỏ ENGAGE_UTXO sang một thread của ví này, hoặc ` +
+        `đúc một thread mới bằng ví này rồi cập nhật ENGAGE_UTXO.`,
+      );
+    }
+  }
+
   const newEngage: EngageDatumT = {
     owner: oldEngage.owner,
     consumed_count: oldEngage.consumed_count + opCount,
@@ -484,12 +508,6 @@ async function main() {
     .addSignerKey(ownerPkh)                      // vault BurnBatch: owner phải ký
     .validFrom(Number(lowerMs))
     .validTo(Number(upperMs));
-
-  // Chủ THREAD Engage cũng phải ký (Nợ #36 — `consume.ak` nhánh spend). Thường
-  // trùng `ownerPkh`, nên chỉ thêm khi khác — thêm trùng một pkh là dựng tx sai
-  // hình dạng. Lấy từ datum đang tiêu, không giả định hai bên là một người.
-  const engageOwner = oldEngage.owner.toLowerCase();
-  if (engageOwner !== ownerPkh.toLowerCase()) txBuild = txBuild.addSignerKey(engageOwner);
 
   const tx = await txBuild.complete({ presetWalletInputs: [collateral] });
 

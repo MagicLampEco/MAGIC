@@ -167,6 +167,43 @@ Cổng chặn tái phát: `MagicSDK/src/lampPolicy.ts` ▸ `assertLampPolicyId`,
 SDK đi qua. Đó là cổng chống **tái phát một sai lầm đã biết**, danh sách ĐÓNG; nó không phải
 cổng xác thực, và một policy chữ-ký-đơn mới từ ví khác vẫn đi qua được.
 
+#### Cho việc rút đời-một về: đo 2026-09-14, và chỗ chặn KHÔNG nằm ở chỗ tưởng
+
+Địa chỉ của vault đời-một trên Preview là
+`addr_test1wp7y9t8f35rh9y4l38w3wsm7ztcwfmxxyvwfc52hqxjfseg6n5czz` (script-enterprise, suy
+từ hash ở trên). Đo thẳng trên chuỗi hôm nay:
+
+| | |
+|---|---|
+| UTxO vault đang nằm ở đó | **5** |
+| Σ tLAMP **nhái** (`28e916b0…`) | **5005** |
+| Σ `lamp_locked` | **30** — nằm ở 3 trong 5 vault, mỗi cái 10, mỗi cái 1 lịch |
+| 2 vault còn lại | `lamp_locked = 0` ⟹ rút thẳng được, không cần fire |
+
+Con số này **không mới**: `scripts/run_schedule_fire.sh` đã ghi đúng nó từ 2026-08-16, cùng
+nguyên nhân — mỗi lượt nghiệm thu trọn chuỗi lại đẻ một vault mới. Hai phép đo độc lập, cách
+nhau gần một tháng, ra cùng một con số. Đây là rác nghiệm thu trên một token nhái, **không
+phải tài sản của ai**.
+
+**Đường ra còn sống.** `l_avail = lamp_balance − lamp_locked` (`ScheduleGen/…/vault.ak` ▸
+`validate_withdraw_lamp`, chốt W-3), nên 30 đang khoá kia chỉ hạ được ở `validate_fire`, mà
+fire cần shard **cùng đời** với vault. Đo cùng ngày: cả hai đời shard trên Preview đều còn
+nguyên **16/16** UTxO — đời ghi ở bảng trên (`165b30aa…`,
+`addr_test1wqt9kv924jvd67llr627jvfwgcva50s2m32j2h3na3s90cqxntmgk`) lẫn đời ghi ở
+`state.Preview.sh` (`f5769884…`). Nên đường fire→withdraw đi được: ~2 giao dịch fire mỗi
+vault khoá (`max_fires_per_tx_catchup = 8`, mỗi lịch 10 lượt) cộng 5 lượt withdraw.
+
+🔴 **Nhưng nửa CÔNG BỐ thì bị chặn, và chặn có chủ ý.** Muốn có vault đời-hai thì phải
+apply-param một policy id LAMP thật theo mạng — mà cả `scripts/state.Preview.sh:3` lẫn
+`scripts/state.Preprod.sh:3` **cố ý không giữ giá trị nào**, và `assertLampPolicyId` ném
+đúng vào `28e916b0…` là thứ duy nhất kho này đang có. Giá trị canonical thuộc kho LAMP
+(Genesis ▸ lampPolicies) và bên đó **chưa đúc**.
+
+Hệ quả về THỨ TỰ, viết ra vì nó ngược với trực giác "dọn trước cho sạch": rút đời-một về
+**trước** khi có đời-hai không thu lại giá trị nào (token nhái), mà bỏ lại một khoảng không
+có vault ScheduleGen nào chạy được trên Preview — dài bằng thời gian chờ kho LAMP, tức
+không có hạn. Việc rút nên đi **cùng đợt** với việc công bố đời-hai, không đi trước nó.
+
 ---
 
 ## Bản dựng — ba thứ phải đủ mới tái lập được một địa chỉ

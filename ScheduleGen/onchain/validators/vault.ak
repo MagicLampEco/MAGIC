@@ -2437,7 +2437,7 @@ test cf_commit_at_cap_then_fire_ok() {
 //
 // Số của VALIDATOR, `aiken check` 2026-09-14, `maxTxExMem = 16 500 000`:
 //
-//   nhánh (n)      | trước vá #48 |  sau vá #48  | đổi
+//   nhánh (n)      | trước Nợ #48 |  sau Nợ #48  | đổi
 //   commit (39)    |    55,1 %    |    54,6 %    |  −1,1 %
 //   fire   (40)    |    61,3 %    |    51,1 %    | −16,6 %
 //
@@ -2451,7 +2451,7 @@ test cf_commit_at_cap_then_fire_ok() {
 //
 // (1) **COMMIT giờ chết TRƯỚC FIRE** (52 < 55). Bản trước ghi ngược (fire 53 <
 //     commit 55) và kết luận "cửa RA hẹp hơn cửa VÀO". Kết luận ấy đúng với số
-//     lúc đó; bản vá #48 hạ fire 16,6 % mà gần như không chạm commit, nên thứ tự
+//     lúc đó; bản vá cho Nợ #48 hạ fire 16,6 % mà gần như không chạm commit, nên thứ tự
 //     đảo. Cổng đếm holding ở `validate_commit` vẫn cần — chỉ là lý do đã đổi:
 //     nay nó canh chính nhánh hẹp nhất, không còn canh hộ nhánh kia.
 //
@@ -2461,7 +2461,7 @@ test cf_commit_at_cap_then_fire_ok() {
 //
 //       · fire  → `coalesce_holdings` + `lock.ak` ▸ `unlock_oldest`. Đã vá, và
 //         phép đo xác nhận: −16,6 %.
-//       · commit → `list.sort` (`lock.ak:14`). Bản vá #48 chạm mọi thứ TRỪ
+//       · commit → `list.sort` (`lock.ak:14`). Bản vá cho Nợ #48 chạm mọi thứ TRỪ
 //         `list.sort`, và commit đứng yên (−1,1 %). Đó là phép đo kiểu gỡ-chốt:
 //         thay phần còn lại mà số không đổi ⟹ phần còn lại không phải thủ phạm.
 //         `list.sort` của Aiken là sắp-xếp-chèn, O(n²) ở ca xấu nhất;

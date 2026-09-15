@@ -88,7 +88,7 @@ pub const max_batches_per_vault : Int = 32
 // Hạ 64 → 40 ngày 2026-09-14. 64 nằm TRÊN trần vật lý: một vault chạm trần cũ
 // thì KHÔNG tiêu được, và fire là nhánh duy nhất hạ được `lamp_locked`.
 //
-// KHÔNG chép số đo xuống đây. Bản trước của khối này chép, rồi bản vá #48 đo lại
+// KHÔNG chép số đo xuống đây. Bản trước của khối này chép, rồi bản vá cho Nợ #48 đo lại
 // và ĐẢO hai kết luận — chỗ chép thì không ai báo cho, nên nó nằm đây nói ngược
 // với chính tệp nó trỏ tới, suốt từ lúc vá. Đó là bản sao chết im lặng, đúng lớp
 // mà `BOUNDARIES.md` cảnh báo, và lần này nó chết ở nơi người ta tra để chọn trần.

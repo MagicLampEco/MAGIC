@@ -79,7 +79,7 @@ trình biên dịch `v1.1.21+42babe5`
 |---|---|
 | `shard_nft.shard_nft` | `b2211b6008397f1b5996f834e0d060bfff48a16a3dd971207c333e71` |
 | `vault.shard` | `b1836db9658800284b43631ac1b44a8fb80c1d4f0fc0b6b9725fe63f` |
-| `vault.vault` | `1c4cd06ee2db1d0a13c74377fc8fbb72fca838e6d880943b33201800` |
+| `vault.vault` | `b7d68fc94597679334c92e6c5f71fbbe34348e2d01850ee8dc0c703c` |
 
 ### `UMKeeper/onchain`
 

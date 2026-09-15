@@ -5,6 +5,56 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-09-15 — Sổ hash validator đã sai 1 ngày, và cổng canh nó chạy ở không chỗ nào
+
+**Đổi gì.**
+
+1. **`scripts/BUILD-RECORD.md` dựng lại.** Hai dòng sai:
+   `ScheduleGen` ▸ `vault.vault` `b7d68fc9…` → `1c4cd06e…`, và
+   `PrepaidGen` ▸ `prepaid.prepaid_vault` `5d54273f…` → `7454612c…`.
+2. **`verify:build-record` nay chạy ở CI** — job `sổ BUILD-RECORD khớp hiện vật` trong
+   `.github/workflows/pr-verify.yml`, **không bám phạm vi**, và `result` coi mọi kết quả
+   khác `success` (kể cả `skipped`) là ĐỎ.
+3. **`deploy:all` đổi `record:build` → `build:blueprints && verify:build-record`.**
+4. **Thêm `scripts/build_blueprints.sh`** — dựng `plutus.json` cho cả 9 project rồi ĐẾM
+   hai đầu (số `aiken.toml` so số `plutus.json`), đỏ khi lệch hoặc khi bằng 0.
+5. **Văn xuôi trong `BUILD-RECORD.md` dời xuống dưới mốc `MÁY SINH — HẾT`.**
+
+**Vì sao.**
+
+`vault.vault` ghi sai trong sổ từ **2026-09-14 12:07** — `c95f1acf` đổi `lock.ak` (đổi
+bytes), lượt chạm sổ gần nhất trước đó là `69c39a89` lúc 10:17. Cùng một trình biên dịch
+hai phía (`v1.1.21+42babe5`), nên đây là lệch thật, không phải chuyện công cụ.
+
+Cổng bắt được chuyện này **đã tồn tại từ trước**. Nó chỉ không chạy ở đâu cả:
+`grep -rn 'verify:build-record\|record:build' .github/` trả về rỗng. Và `deploy:all` gọi
+`record:build` — *ghi đè* — chứ không gọi `verify:build-record` — *so sánh*. Nên ở đúng
+lúc một con số sai nhất có thể gây hại, quy trình deploy **xoá bằng chứng** thay vì nêu nó
+lên, và không bước nào đỏ.
+
+Gạch 4 tồn tại vì không có nó thì cổng mới xanh đúng lúc nó không đo gì: `verify:build-record`
+so sổ với hiện vật **đang nằm trên đĩa**, không tự dựng. Hiện vật cũ hơn mã nguồn thì phép
+so đối chiếu một bản cũ với một bản cũ khác rồi in "khớp" — trạng thái KHÔNG ĐO ĐƯỢC mang
+màu của KHỚP.
+
+Gạch 5 tồn tại vì `record:build` ghi đè **toàn bộ** khối máy sinh. Một bản vá trước đã đặt
+chú thích và một khối văn xuôi giải thích `fund_nft` biến mất vào trong khối đó; lượt dựng
+lại đầu tiên xoá sạch. Bộ kiểm không đỏ, `git status` vẫn sạch — văn xuôi không có bài kiểm
+nào canh.
+
+**Cái gì gãy nếu ai đó đang bám bản cũ.**
+
+- Ai đã chép `b7d68fc9…` hoặc `5d54273f…` ra khỏi kho đang giữ hash của bytes không còn tồn
+  tại. `prepaid_vault` chưa lên mạng nào nên không có di trú; `vault.vault` thì phải đối
+  chiếu lại với `scripts/DEPLOYED.md` trước khi dùng con số cũ cho bất cứ việc gì.
+- `npm run deploy:all` nay **DỪNG** khi sổ lệch, thay vì lặng lẽ ghi đè sổ rồi deploy tiếp.
+  Đó là chiều đúng: sổ lệch nghĩa là không ai biết bytes sắp lên chuỗi là bytes nào.
+- Viết chữ vào giữa khối `MÁY SINH` của `BUILD-RECORD.md` nay làm CI ĐỎ, chứ không còn
+  biến mất trong im lặng ở lượt `record:build` kế tiếp.
+
+**Đo bằng cách nào.** Gỡ-chốt, hai chiều: đổi `vault.vault` trong sổ về hash cũ ⟹
+`verify:build-record` `exit=1`; khôi phục ⟹ `exit=0`.
+
 ## 2026-09-14 — Kho thôi tự đúc "LAMP": ba runner dừng thay vì đúc, và cổng dời về một chỗ
 
 **Đổi gì.**

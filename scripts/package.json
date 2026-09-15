@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Deploy + test scripts for MagicLamp Preview testnet",
   "scripts": {
-    "deploy:all": "npm run verify:toolchain && npm run check:params && npm run record:build && npm run deploy:lamp && npm run deploy:um && npm run deploy:shards && npm run deploy:instant-vault",
+    "deploy:all": "npm run verify:toolchain && npm run check:params && npm run build:blueprints && npm run verify:build-record && npm run deploy:lamp && npm run deploy:um && npm run deploy:shards && npm run deploy:instant-vault",
+    "build:blueprints": "bash build_blueprints.sh",
     "deploy:lamp": "npx tsx deploy/01_mint_lamp.ts",
     "deploy:um": "npx tsx deploy/02_deploy_um.ts",
     "deploy:shards": "npx tsx deploy/03_deploy_shards.ts",

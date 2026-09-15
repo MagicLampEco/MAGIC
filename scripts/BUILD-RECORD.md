@@ -60,19 +60,8 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `prepaid.paid_fund` (nay có CẢ handler `mint` — policy NFT quỹ) | `901afa900f27355ff071f6490d550d17f5a565b476dce04313c80397` |
-| `prepaid.prepaid_vault` (nay có CẢ handler `mint` — policy NFT vault) | `5d54273ffaa3f6fa4251b2a2814b59c4e2a91e20e488fe636296275e` |
-
-> **`fund_nft.fund_nft` đã BIẾN MẤT khỏi bảng này, không phải bị bỏ sót** — bản
-> `2a3195949a6417d8a08c082148d7f04f6fb0e2898fc9b7bb3aa2a7e1` (850 B) là script
-> cuối cùng của nó. Validator đứng riêng ấy không ép được địa chỉ của output mang
-> NFT, nên cổng genesis sổ quỹ của nó chỉ sống đúng một giao dịch (`DevStatus.md`
-> Nợ #69). Việc của nó chuyển vào `paid_fund` ▸ `validate_mint_fund_nft`, ở đó
-> `policy_id` **chính là** script hash của `paid_fund` nên phép ép địa chỉ tự trỏ
-> vào mình. Hệ quả cho ai dựng tham số deploy: `fund_nft_policy` **không còn là
-> một apply-param** — nó bằng `paid_fund_hash` theo định nghĩa. `paid_fund` nay
-> nhận 3 tham số (`carp_policy_id · carp_asset_name · ms_per_epoch`), `prepaid_vault`
-> nhận 4 (`carp_policy_id · carp_asset_name · paid_fund_hash · ms_per_epoch`).
+| `prepaid.paid_fund` | `901afa900f27355ff071f6490d550d17f5a565b476dce04313c80397` |
+| `prepaid.prepaid_vault` | `7454612c227f7cf332d384d6d57980dfc5b7bec8854139e6d649327a` |
 
 ### `ProfileChange/onchain`
 
@@ -90,7 +79,7 @@ trình biên dịch `v1.1.21+42babe5`
 |---|---|
 | `shard_nft.shard_nft` | `b2211b6008397f1b5996f834e0d060bfff48a16a3dd971207c333e71` |
 | `vault.shard` | `b1836db9658800284b43631ac1b44a8fb80c1d4f0fc0b6b9725fe63f` |
-| `vault.vault` | `b7d68fc94597679334c92e6c5f71fbbe34348e2d01850ee8dc0c703c` |
+| `vault.vault` | `1c4cd06ee2db1d0a13c74377fc8fbb72fca838e6d880943b33201800` |
 
 ### `UMKeeper/onchain`
 
@@ -102,3 +91,35 @@ trình biên dịch `v1.1.21+42babe5`
 | `um_nft.um_nft` | `f38ed1b66fadd5f1da408519bf9a8966a409ae24e31e1cec7dbe09d3` |
 
 <!-- MÁY SINH — HẾT -->
+
+---
+
+## Ghi chú của người — nằm NGOÀI khối máy sinh, có chủ ý
+
+Khối trên do `npm run record:build` ghi đè **toàn bộ**, nên mọi câu chữ đặt trong đó
+sẽ biến mất ở lượt dựng lại kế tiếp mà không ai báo. Chỗ đúng để viết là dưới đây.
+
+Điều này đã xảy ra một lần, và đáng ghi lại vì nó không tự lộ ra: một bản vá thêm chú
+thích `(nay có CẢ handler mint)` vào ngay trong bảng máy sinh, cộng một khối văn xuôi
+giải thích `fund_nft` biến mất. Lượt `record:build` đầu tiên sau đó xoá sạch cả hai. Bộ
+kiểm không đỏ, `git status` vẫn sạch — thứ mất đi là văn xuôi, mà văn xuôi thì không có
+bài kiểm nào canh.
+
+### `fund_nft.fund_nft` đã BIẾN MẤT khỏi bảng trên, không phải bị bỏ sót
+
+Bản `2a3195949a6417d8a08c082148d7f04f6fb0e2898fc9b7bb3aa2a7e1` (850 B) là script cuối
+cùng của nó. Validator đứng riêng ấy không ép được địa chỉ của output mang NFT, nên cổng
+genesis sổ quỹ của nó chỉ sống đúng một giao dịch (`DevStatus.md` ▸ Nợ #69). Việc của nó
+chuyển vào `paid_fund` ▸ `validate_mint_fund_nft`, ở đó `policy_id` **chính là** script
+hash của `paid_fund` nên phép ép địa chỉ tự trỏ vào mình.
+
+Hệ quả cho ai dựng tham số deploy: `fund_nft_policy` **không còn là một apply-param** —
+nó bằng `paid_fund_hash` theo định nghĩa.
+
+| validator | apply-param, theo thứ tự |
+|---|---|
+| `prepaid.paid_fund` | `carp_policy_id · carp_asset_name · ms_per_epoch` |
+| `prepaid.prepaid_vault` | `carp_policy_id · carp_asset_name · paid_fund_hash · ms_per_epoch` |
+
+Hai dòng `prepaid.*` trong bảng máy sinh nay có **cả** handler `mint` — `paid_fund` phát
+policy NFT quỹ, `prepaid_vault` phát policy NFT vault (`INV-VAULT-IDENTITY`).

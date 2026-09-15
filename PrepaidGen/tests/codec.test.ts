@@ -16,6 +16,7 @@ import {
   PREPAID_CREDIT_FIELDS,
   PREPAID_VAULT_DATUM_FIELDS,
   VAULT_ATTRIBUTION_FIELDS,
+  VAULT_ID_REDEEMER_ORDER,
   VAULT_REDEEMER_ORDER,
 } from "../offchain/src/types.js";
 import { BURN_BATCH_CONSTR } from "../offchain/src/constants.js";
@@ -93,6 +94,27 @@ describe("constructor index redeemer khớp Aiken", () => {
 
   it("PaidFundRedeemer", () => {
     expect(enumVariants("PaidFundRedeemer")).toEqual([...FUND_REDEEMER_ORDER]);
+  });
+
+  it("PrepaidVaultIdRedeemer", () => {
+    expect(enumVariants("PrepaidVaultIdRedeemer")).toEqual([
+      ...VAULT_ID_REDEEMER_ORDER,
+    ]);
+  });
+
+  // `seed` là một OutputReference (constr), KHÔNG phải tx hash trần. Tên tài sản
+  // là blake2b_256(cbor.serialise(seed)) nên sai hình dạng ⇒ sai tên ⇒ giao dịch
+  // dựng được nhưng chết lúc submit.
+  it("seed của MintVaultId là OutputReference, không phải ByteArray", () => {
+    const body = typeBody("PrepaidVaultIdRedeemer");
+    expect(body).toMatch(/MintVaultId\s*\{\s*seed\s*:\s*OutputReference\s*\}/);
+  });
+
+  // Đóng đường đốt: `types.ak` khai rằng redeemer này KHÔNG có nhánh thứ hai, và
+  // on-chain `validate_mint_vault_id` ép `quantity_of(tx.mint, …) == 1`. Thêm một
+  // nhánh bên TS là dựng ra constr 1 mà on-chain không có.
+  it("PrepaidVaultIdRedeemer có ĐÚNG một nhánh (không có đường đốt)", () => {
+    expect(enumVariants("PrepaidVaultIdRedeemer")).toHaveLength(1);
   });
 
   it("BurnBatch nằm ĐÚNG constr 2 — ConsumeMAGIC ghim burn_batch_constr (§7.3)", () => {

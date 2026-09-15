@@ -102,6 +102,37 @@ export const PaidFundRedeemerSchema = Data.Enum([
 ]);
 export type PaidFundRedeemer = Data.Static<typeof PaidFundRedeemerSchema>;
 
+// ── OutputReference ──────────────────────────────────────────
+// Trên PlutusV3 `TxOutRef` mã hoá PHẲNG: `Constr 0 [B <32 byte>, I idx]` — lớp
+// bọc `TxId` của V2 đã bỏ. Đây là lý do `transaction_id` là `Data.Bytes()` chứ
+// không phải một `Data.Object` lồng thêm một tầng.
+export const OutputReferenceSchema = Data.Object({
+  transaction_id: Data.Bytes(), // 32 byte
+  output_index: Data.Integer(),
+});
+export type OutputReference = Data.Static<typeof OutputReferenceSchema>;
+
+// ── PrepaidVaultIdRedeemer ───────────────────────────────────
+// Redeemer của handler `mint` trên CHÍNH validator `prepaid_vault`
+// (INV-VAULT-IDENTITY). Policy id của NFT = script hash của vault, nên không có
+// tham số biên dịch nào trỏ chéo và không có vòng tham chiếu.
+//
+// `seed` là một **OutputReference đầy đủ**, KHÔNG phải tx hash trần: tên tài sản
+// là `blake2b_256(cbor.serialise(seed))`, và `cbor.serialise` của Aiken mã hoá cả
+// constructor lẫn hai trường. Đưa vào tx hash trần thì băm ra một tên khác, ví
+// dựng được giao dịch, và nó chết lúc submit chứ không lúc build.
+//
+// KHÔNG có nhánh đốt — đúng theo `types.ak`. Thêm một `Data.Literal` thứ hai vào
+// đây là dựng ra constr 1 mà on-chain không có, và mọi tx dùng nó bị từ chối.
+export const PrepaidVaultIdRedeemerSchema = Data.Enum([
+  Data.Object({
+    MintVaultId: Data.Object({ seed: OutputReferenceSchema }), // constr 0
+  }),
+]);
+export type PrepaidVaultIdRedeemer = Data.Static<
+  typeof PrepaidVaultIdRedeemerSchema
+>;
+
 // ══════════════════════════════════════════════════════════════
 // Bảng THỨ TỰ — nguồn để kiểm chéo với types.ak
 // ══════════════════════════════════════════════════════════════
@@ -118,6 +149,10 @@ export const VAULT_REDEEMER_ORDER = [
 ] as const;
 
 export const FUND_REDEEMER_ORDER = ["FundLock", "FundSettle", "FundClaim"] as const;
+
+export const VAULT_ID_REDEEMER_ORDER = ["MintVaultId"] as const;
+
+export const OUTPUT_REFERENCE_FIELDS = ["transaction_id", "output_index"] as const;
 
 export const MAGIC_BATCH_FIELDS = [
   "batch_id",

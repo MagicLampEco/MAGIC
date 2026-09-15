@@ -118,21 +118,51 @@ redeemer `BurnBatch` qua `un_constr_data` với `burn_batch_constr` per-vault. V
   └──────────────────────┘   trả lại hạn-mức    dịch vụ (ConsumeMAGIC)
 ```
 
-### 2.1 Ba script
+### 2.1 Hai script
 
 | Script | Vai | Tham số |
 |---|---|---|
-| `fund_nft` (minting) | đúc NFT định danh quỹ, tên = `blake2b_224(tx_id ∥ idx)` của một input bị tiêu → không trùng, không đúc lại được | không có |
-| `paid_fund` (spend) | giữ CARP khoá + sổ quỹ; quyết toán (`FundSettle`) và trả provider (`FundClaim`) | `carp_policy_id`, `carp_asset_name`, `fund_nft_policy`, `ms_per_epoch` |
-| `prepaid_vault` (spend **+ mint**) | hạn-mức + `magic_batches` của một người dùng; đồng thời là policy của NFT định danh vault (`asset_name = blake2b_256(cbor.serialise(seed))`, policy id = chính script hash — tự tham chiếu, không tham số, không vòng) | `carp_policy_id`, `carp_asset_name`, `fund_nft_policy`, `paid_fund_hash`, `ms_per_epoch` |
+| `paid_fund` (spend **+ mint**) | giữ CARP khoá + sổ quỹ; quyết toán (`FundSettle`) và trả provider (`FundClaim`); đồng thời là policy của NFT định danh quỹ (`asset_name = blake2b_256(tx_id ∥ be8(idx))` của một input bị tiêu → không trùng, không đúc lại được; policy id = chính script hash) | `carp_policy_id`, `carp_asset_name`, `ms_per_epoch` |
+| `prepaid_vault` (spend **+ mint**) | hạn-mức + `magic_batches` của một người dùng; đồng thời là policy của NFT định danh vault (`asset_name = blake2b_256(cbor.serialise(seed))`, policy id = chính script hash — tự tham chiếu, không tham số, không vòng) | `carp_policy_id`, `carp_asset_name`, `paid_fund_hash`, `ms_per_epoch` |
 
+> **`fund_nft` đã bị GỘP vào `paid_fund` ngày 2026-09-15 và tệp `validators/fund_nft.ak` đã
+> xoá.** Đó không phải một lần dọn dẹp — nó là bản vá cho một lỗ rút được sạch quỹ. Một minting
+> policy đứng riêng **không kiểm được địa chỉ của output mang NFT**: bản cũ lọc carrier chỉ bằng
+> `quantity_of(...) == 1` và tự ghi trong chú thích rằng kiểm địa chỉ sẽ tạo vòng tham chiếu
+> `fund_nft → paid_fund → prepaid_vault → fund_nft`. Vòng ấy không có thật — phá bằng đúng khuôn
+> tự-trỏ-vào-mình mà kho đã dùng hai lần (`validate_mint_vault_id` ngay dưới, và
+> `validate_mint_engage_id` bên ConsumeMAGIC), tức ép `payment_credential == Script(policy_id)`.
+> Đường khai thác mà bản cũ để hở, ba bước: (1) đúc NFT quỹ vào một **ví thường**, datum sạch —
+> cổng cho qua; (2) tiêu output ví đó bằng chữ ký thường, **không validator nào chạy**, tạo output
+> mới ở địa chỉ quỹ với datum bịa `magic_settled` khổng lồ; (3) người dùng khoá CARP vào quỹ đó,
+> `FundClaim` rút sạch vì `outstanding` âm kéo `buffer_floor` xuống âm. Bằng chứng lỗ nằm trong
+> chính bộ kiểm cũ: `fn_addr()` của `fund_nft.ak` là **một địa chỉ ví**, và mọi bài — kể cả bài
+> happy đang xanh — đặt NFT quỹ vào đó.
+>
+> **Hệ quả tham số: hai apply-param `fund_nft_policy` + `paid_fund_hash` nay là MỘT.** Policy NFT
+> quỹ bằng đúng script hash của `paid_fund`, nên mọi chỗ cần nó suy thẳng từ `paid_fund_hash`.
+> Hai tham số song song cho phép deploy một bộ bytes mà hai giá trị **lệch nhau** — đúng lớp lỗi
+> mà `BOUNDARIES.md §5` gọi là bài học đắt nhất của kho (không test nào đỏ, không compile nào
+> gãy, sai chỉ lộ ra dưới dạng một vault không ai tiêu được). Một giá trị thì không lệch được.
+>
 > **Hai công thức tên tài sản nằm cạnh nhau trong module này, và chúng KHÁC nhau — cố ý.**
-> NFT quỹ dùng `blake2b_224(tx_id ∥ idx)`; NFT vault dùng `blake2b_256(cbor.serialise(seed))`.
+> NFT quỹ dùng `blake2b_256(tx_id ∥ be8(idx))` (`compute_fund_id`); NFT vault dùng
+> `blake2b_256(cbor.serialise(seed))` (`vault_id_name`). Cùng hàm băm, **khác thứ được băm**.
 > Bản thứ hai theo `BOUNDARIES.md §2` ▸ `INV-VAULT-IDENTITY`, là bất biến toàn kho mà
 > `ScheduleGen` và `InstantGen` đã theo. Ai định gộp về một công thức thì đó là đổi bytes của
-> `fund_nft`, không phải một lần dọn dẹp.
+> `paid_fund`, không phải một lần dọn dẹp.
 >
-> **Handler `mint` này là thứ được THÊM ngày 2026-09-15, không phải thứ vốn có.** Trước đó
+> **Định danh một vault là NFT của nó, KHÔNG phải địa chỉ.** Giao dịch đúc được phép để lại một
+> output thứ hai ở **đúng địa chỉ vault**, mang datum khai `prepaid_credits` khổng lồ. Output ấy
+> **không tiêu được** (chết ở `single_nft_name` vì không mang NFT) nên nó không sinh giá trị
+> on-chain — nhưng nó giải mã được thành `PrepaidVaultDatum` và nằm đúng chỗ mọi bảng điều khiển
+> gọi `utxosAt(vaultAddress)`. Cho nên **off-chain phải lọc theo `(policy = script hash vault,
+> số lượng 1)`**, đừng lọc theo địa chỉ. Cùng câu đó áp cho quỹ: lọc theo
+> `(policy = script hash quỹ, tên = fund_id, số lượng 1)`. Đây cố ý **không** vá bằng một cổng
+> on-chain — cổng đó phải cấm mọi output phụ ở địa chỉ vault trong giao dịch đúc, tốn ex-unit
+> mỗi lần đúc để chặn một thứ không tiêu được; một dòng quy ước off-chain rẻ hơn và đúng chỗ hơn.
+>
+> **Handler `mint` của `prepaid_vault` là thứ được THÊM ngày 2026-09-15, không phải thứ vốn có.** Trước đó
 > `prepaid_vault` chỉ khai `spend` + `else`, nên Cardano — vốn không chạy validator lúc TẠO
 > một UTxO — để người tạo tự đặt datum đầu tiên. Dựng được một vault khai `prepaid_credits`
 > tuỳ ý mà không khoá một đồng CARP nào, rồi `PrepaidDraw` đọc đúng cái datum đó và cấp MAGIC
@@ -141,16 +171,36 @@ redeemer `BurnBatch` qua `un_constr_data` với `burn_batch_constr` per-vault. V
 > mọi nhánh spend đòi NFT còn nguyên qua MỘT điểm nghẽn trong thân `spend` (cố ý không chép
 > cổng vào 5 hàm `validate_*`: chép 5 bản là 5 chỗ sót được, mà sót thì không gì đỏ).
 >
-> Đo chứ không khai: gỡ lời gọi cổng ra rồi chạy trọn bộ ⟹ **đúng 12 bài lật đỏ, không bài nào
-> khác**. Neo theo tên hàm: `validators/prepaid.ak` ▸ `validate_mint_vault_id` ·
-> `vault_identity_preserved`.
+> Đo chứ không khai — **đây là nguồn DUY NHẤT của các con số này trong kho; chú thích trong mã
+> cố ý không chép chúng xuống.** Phép đo: thay đúng một chốt bằng `expect True`, chạy trọn bộ
+> (122 bài), đếm bài lật. Đo lại 2026-09-15 trên `aiken v1.1.21+42babe5`:
+>
+> | chốt gỡ ra (neo theo tên hàm) | bài lật |
+> |---|---|
+> | `vault_identity_preserved` — cả lời gọi trong thân `spend` | **13** |
+> | `vault_identity_preserved` ▸ `single_nft_name(vault_output…) == nft_name` | 11 |
+> | `single_nft_name` ▸ `expect qty == 1` | 1 (`pp_spend_nft_qty_two`) |
+> | `validate_mint_vault_id` ▸ `quantity_of(tx.mint, …) == 1` (cổng chặn ĐỐT) | 1 (`pp_mint_burn_rejected`) |
+> | `validate_mint_vault_id` ▸ `single_nft_name(vault_out…) == nft_name` | 1 |
+> | `validate_mint_vault_id` ▸ `stake_credential == None` | 1 |
+> | `validate_mint_vault_id` ▸ `reference_script == None` | 1 |
+> | `validate_mint_fund_nft` ▸ `payment_credential == Script(policy_id)` | 2 |
+> | `validate_mint_fund_nft` ▸ `expect qty == 1` (cổng chặn ĐỐT) | 1 |
+> | `validate_mint_fund_nft` ▸ `single_nft_name` · `stake_credential` · `reference_script` · `last_updated_epoch == 0` | 1 mỗi chốt |
+> | `validate_fund_settle` ▸ `par_carp_from_magic(magic_settled) <= credit_issued` | 1 (`pp_fund_settle_over_issued`) |
+>
+> Một chi tiết phản trực giác đáng ghi: gỡ `single_nft_name(vault_output…)` làm **11** bài lật chứ
+> không phải 1, vì `nft_name` khi đó không còn ai dùng ⟹ lời gọi `single_nft_name` phía **input**
+> cũng bị loại như mã chết ⟹ cổng "vault bịa không mang NFT" biến mất theo. Nghĩa là cổng phía
+> input sống được là nhờ kết quả của nó được dùng ở phía output; đừng đọc con số 11 thành "chốt
+> này canh 11 bài".
 
-**Thứ tự deploy (không có vòng tham chiếu):** `fund_nft` (không phụ thuộc gì) → `paid_fund` (nhận
-`fund_nft_policy`) → `prepaid_vault` (nhận `paid_fund_hash` + `fund_nft_policy`).
+**Thứ tự deploy (không có vòng tham chiếu):** `paid_fund` (chỉ phụ thuộc CARP + `ms_per_epoch`) →
+`prepaid_vault` (nhận `paid_fund_hash`).
 
 Chiều ngược (quỹ cần biết vault) **không** đi qua tham số biên dịch — nếu đi thì thành vòng
 `vault → fund → vault`. Thay vào đó `PaidFundDatum.vault_hash` được **ghim tại genesis** bởi chính
-`fund_nft` và bất biến sau đó. Nhờ vậy:
+handler `mint` của `paid_fund` và bất biến sau đó. Nhờ vậy:
 
 - Vault xác thực quỹ bằng **địa chỉ** (`paid_fund_hash`) **+ NFT** → người dùng không thể bị lừa
   khoá CARP vào một "quỹ" giả.
@@ -282,21 +332,22 @@ PaidFundRedeemer                             constr
 | **C-PP-7** chỉ quyết toán MAGIC TIÊU THẬT | `FundSettle` chỉ cộng phần `current_amount` giảm trên batch có `contract_id == fund_id`, `source == 3`, **và** `created_epoch == epoch hiện tại`; và bắt buộc vault được tiêu bằng redeemer constr 2 (`BurnBatch`). MAGIC hết hạn hoặc bị dọn **không bao giờ** thành `magic_settled` | quỹ `validate_settle` (INV-MAGIC-CITIZEN) |
 | **C-PP-8** DID bất biến | `did_commit` giống hệt input↔output ở **mọi** redeemer của vault | vault, mọi nhánh |
 | **C-PP-9** phân quyền | Lock: `platform` HOẶC `owner` ký · Draw: `owner` HOẶC `personal_delegate` ký · BurnBatch: `owner` HOẶC `personal_delegate` · Prune: **không cần chữ ký** · SetDelegate: **chỉ** `owner` · FundClaim: `platform` | vault + quỹ |
-| **C-PP-10** chống thoả-mãn-kép | đúng 1 vault input tại địa chỉ vault; đúng 1 output vault; đúng 1 input và đúng 1 output mang NFT quỹ; không đúc/đốt token của `fund_nft_policy` trong mọi giao dịch vận hành | vault + quỹ |
+| **C-PP-10** chống thoả-mãn-kép | đúng 1 vault input tại địa chỉ vault; đúng 1 output vault; đúng 1 input và đúng 1 output mang NFT quỹ; không đúc/đốt token của policy NFT quỹ (= script hash `paid_fund`) trong mọi giao dịch vận hành | vault + quỹ |
 | **C-PP-11** epoch không nhập nhằng | cả hai biên `validity_range` là `Finite` và cùng rơi vào một epoch (`e_lo == e_hi`) | `get_epoch` (SEC-02, giống ScheduleGen) |
 | **C-PP-12** trần cứng | `MAX_BATCHES_PER_VAULT = 32`, `MAX_PREPAID_CREDITS = 20`, `MIN_LOCK_CARPDROP = 10⁹` (1 CARP), `MIN_DRAW_CARPDROP = 10⁶` | vault |
-| **C-PP-13** không đúc token | MAGIC không phải token; không nhánh nào của module này gọi `tx.mint` cho CARP; token quỹ chỉ đúc đúng một lần ở `fund_nft` | vault + quỹ |
+| **C-PP-13** không đúc token | MAGIC không phải token; không nhánh nào của module này gọi `tx.mint` cho CARP; token quỹ chỉ đúc đúng một lần ở handler `mint` của `paid_fund`, và số lượng âm bị chặn ở đó (không có đường ĐỐT) | vault + quỹ |
 | **C-PP-14** không chạm backing chung | validator PrepaidGen không có tham số LAMP, không đọc `br`/GreenBack/oracle | cấu trúc — kiểm bằng đọc chữ ký tham số |
-| **C-PP-15** genesis quỹ sạch | NFT quỹ chỉ đúc được khi output mang nó có `PaidFundDatum` với `credit_issued = magic_settled = provider_claimed = carp_locked = 0`, `fund_id == asset name`, `buffer_bps ≥ 1500` | `fund_nft` |
+| **C-PP-15** genesis quỹ sạch | NFT quỹ chỉ đúc được khi output mang nó **nằm ở đúng địa chỉ quỹ** (`payment_credential == Script(policy_id)`, `stake_credential == None`, không `reference_script`, chỉ MỘT tên dưới policy quỹ) và có `PaidFundDatum` với `credit_issued = magic_settled = provider_claimed = carp_locked = last_updated_epoch = 0`, `fund_id == asset name`, `buffer_bps ≥ 1500`, `platform`/`vault_hash` dài đúng 28 byte | `paid_fund.mint` ▸ `validate_mint_fund_nft` |
 
 ---
 
 ## 5. Luồng giao dịch
 
-### 5.1 Genesis quỹ (`fund_nft` mint)
+### 5.1 Genesis quỹ (handler `mint` của `paid_fund`)
 Input: một UTxO bất kỳ của platform (làm nguồn tên duy nhất) → mint 1 NFT tên
-`blake2b_224(tx_id ∥ output_index)` → output tại địa chỉ `paid_fund` mang NFT + `PaidFundDatum`
-toàn số 0, `vault_hash` = hash của `prepaid_vault` đã deploy, `buffer_bps ≥ 1500`.
+`blake2b_256(tx_id ∥ be8(output_index))` → output **tại chính địa chỉ `paid_fund`** (đây là mệnh
+đề mà bản tách-script không viết được — xem §2.1) mang NFT + `PaidFundDatum` toàn số 0,
+`vault_hash` = hash của `prepaid_vault` đã deploy, `buffer_bps ≥ 1500`.
 
 ### 5.2 `PrepaidLock` — 2 script co-spend
 ```

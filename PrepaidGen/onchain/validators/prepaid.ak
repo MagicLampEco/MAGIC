@@ -14,11 +14,29 @@
 //
 // PHÁ VÒNG THAM CHIẾU: prepaid_vault nhận `paid_fund_hash` làm tham số; chiều
 // ngược KHÔNG đi qua tham số biên dịch (sẽ thành vòng) mà qua
-// `PaidFundDatum.vault_hash` ghim tại genesis bởi fund_nft và bất biến sau đó.
-// Nhờ vậy quỹ vẫn ghim được vault thật khi quyết toán — khác khuôn shard.ak của
-// ScheduleGen (shard chấp nhận bất kỳ input nào giải mã ra VaultDatum, được ở đó
-// vì shard KHÔNG có thẩm quyền; bê nguyên sang đây là mở đường cho vault giả bơm
-// magic_settled rồi rút CARP).
+// `PaidFundDatum.vault_hash` ghim tại genesis bởi handler `mint` của paid_fund và
+// bất biến sau đó. Nhờ vậy quỹ vẫn ghim được vault thật khi quyết toán — khác
+// khuôn shard.ak của ScheduleGen (shard chấp nhận bất kỳ input nào giải mã ra
+// VaultDatum, được ở đó vì shard KHÔNG có thẩm quyền; bê nguyên sang đây là mở
+// đường cho vault giả bơm magic_settled rồi rút CARP).
+//
+// MỘT THAM SỐ, KHÔNG PHẢI HAI (đổi 2026-09-15). Trước bản này, NFT định danh quỹ
+// là một script riêng (`fund_nft.ak`), nên `fund_nft_policy` và `paid_fund_hash`
+// là HAI apply-param độc lập — dựng được một bộ bytes mà hai giá trị LỆCH nhau,
+// đúng lớp lỗi mà `BOUNDARIES.md §5` gọi là bài học đắt nhất của kho (danh sách
+// apply-param lệch chữ ký validator: không test nào đỏ, không compile nào gãy).
+// Nay handler `mint` của NFT quỹ nằm trong CHÍNH `paid_fund`, nên
+// `fund_nft_policy == paid_fund_hash` theo định nghĩa: một giá trị thì không lệch
+// được. Mọi chỗ cần "policy NFT quỹ" suy thẳng từ `paid_fund_hash`.
+//
+// Và đó không chỉ là dọn tham số — nó là thứ vá được lỗ genesis. Một policy đứng
+// riêng KHÔNG kiểm được địa chỉ output mang NFT (sẽ thành vòng fund_nft →
+// paid_fund → prepaid_vault → fund_nft), nên NFT quỹ đúc sạch ra được một ví
+// thường; tiêu ví đó bằng chữ ký thường KHÔNG chạy validator nào, và người tiêu
+// tự đặt một `PaidFundDatum` bịa ở địa chỉ quỹ. Gộp vào `paid_fund` thì
+// `policy_id` CHÍNH LÀ script hash của quỹ, nên câu "carrier phải nằm ở
+// `Script(policy_id)`" tự trỏ vào mình — cùng khuôn `validate_mint_vault_id` dưới
+// đây và `validate_mint_engage_id` của ConsumeMAGIC.
 
 use aiken/builtin
 use aiken/cbor
@@ -26,7 +44,8 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto
 use aiken/interval.{Finite, IntervalBoundType}
-use cardano/address.{Address, Script}
+use aiken/primitive/bytearray
+use cardano/address.{Address, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Spend, Transaction,
@@ -41,11 +60,12 @@ use magiclamp/protocol/types.{
 }
 use magiclamp/protocol/constants.{
   batch_source_prepaid, max_batches_per_vault, max_prepaid_credits,
-  min_draw_carpdrop, min_lock_carpdrop, prepaid_decay_window, prepaid_profile,
+  min_buffer_bps, min_draw_carpdrop, min_lock_carpdrop, prepaid_decay_window,
+  prepaid_profile,
 }
 use magiclamp/protocol/math.{
-  buffer_floor, compute_batch_id, outstanding_of, par_carp_from_magic,
-  par_magic_from_carp,
+  buffer_floor, compute_batch_id, compute_fund_id, outstanding_of,
+  par_carp_from_magic, par_magic_from_carp,
 }
 
 // Constructor index của các nhánh redeemer — dùng khi đọc redeemer của script
@@ -82,7 +102,6 @@ const rd_burn_batch: Int = 2   // §7.3/§11 — ConsumeMAGIC ghim burn_batch_co
 validator prepaid_vault(
   carp_policy_id  : PolicyId,
   carp_asset_name : ByteArray,
-  fund_nft_policy : PolicyId,
   paid_fund_hash  : ByteArray,
   ms_per_epoch    : Int,
 ) {
@@ -120,7 +139,7 @@ validator prepaid_vault(
       PrepaidLock { fund_id, amount_carpdrop } ->
         validate_lock(
           datum, fund_id, amount_carpdrop, current_epoch, vault_addr,
-          carp_policy_id, carp_asset_name, fund_nft_policy, paid_fund_hash, tx,
+          carp_policy_id, carp_asset_name, paid_fund_hash, tx,
         )
 
       PrepaidDraw { fund_id, amount_carpdrop } ->
@@ -154,14 +173,22 @@ validator prepaid_vault(
 }
 
 // ══════════════════════════════════════════════════════════════
-// paid_fund
+// paid_fund — sổ quỹ (spend) VÀ policy của NFT định danh quỹ (mint)
 // ══════════════════════════════════════════════════════════════
+// Hai handler trong MỘT script là điều kiện cần để cổng genesis nói được câu
+// "NFT này phải nằm ở địa chỉ quỹ": `policy_id` của handler `mint` bằng đúng
+// script hash của handler `spend`, nên `Script(policy_id)` CHÍNH LÀ địa chỉ quỹ.
+// Xem khối đầu tệp, mục "MỘT THAM SỐ, KHÔNG PHẢI HAI".
 validator paid_fund(
   carp_policy_id  : PolicyId,
   carp_asset_name : ByteArray,
-  fund_nft_policy : PolicyId,
   ms_per_epoch    : Int,
 ) {
+  // ── mint: policy NFT định danh quỹ (policy_id == script hash này) ────────
+  mint(_redeemer: Data, policy_id: PolicyId, tx: Transaction) {
+    validate_mint_fund_nft(policy_id, tx)
+  }
+
   spend(
     datum_opt : Option<PaidFundDatum>,
     redeemer  : PaidFundRedeemer,
@@ -171,6 +198,11 @@ validator paid_fund(
     expect Some(fund_in) = datum_opt
     let current_epoch = get_epoch(tx, ms_per_epoch)
     let fund_addr = own_addr(own_ref, tx.inputs)
+
+    // Policy NFT quỹ == script hash của chính validator này. KHÔNG còn là
+    // apply-param: hai tham số song song thì lệch được, một giá trị suy ra thì
+    // không.
+    let fund_nft_policy = script_hash_of(fund_addr)
 
     // C-PP-10: đúng một quỹ input tại địa chỉ này, và nó phải MANG NFT quỹ
     expect list.count(tx.inputs, fn(i) { i.output.address == fund_addr }) == 1
@@ -245,22 +277,22 @@ fn validate_lock(
   vault_addr      : Address,
   carp_policy_id  : PolicyId,
   carp_asset_name : ByteArray,
-  fund_nft_policy : PolicyId,
   paid_fund_hash  : ByteArray,
   tx              : Transaction,
 ) -> Bool {
   // C-PP-12
   expect amount >= min_lock_carpdrop
 
+  // Policy NFT quỹ == script hash quỹ (mint gộp vào `paid_fund`).
+  let fund_nft_policy = paid_fund_hash
+
   // Quỹ phải ở ĐÚNG địa chỉ paid_fund và mang NFT one-shot đúng tên fund_id.
   // Đây là thứ bảo vệ người khoá khỏi "quỹ giả" do kẻ tấn công dựng.
   let fund_in_utxo =
     find_fund_utxo_at(
-      list.map(tx.inputs, fn(i) { i.output }), paid_fund_hash, fund_nft_policy,
-      fund_id,
+      list.map(tx.inputs, fn(i) { i.output }), paid_fund_hash, fund_id,
     )
-  let fund_out_utxo =
-    find_fund_utxo_at(tx.outputs, paid_fund_hash, fund_nft_policy, fund_id)
+  let fund_out_utxo = find_fund_utxo_at(tx.outputs, paid_fund_hash, fund_id)
   let fund_in = decode_fund(fund_in_utxo)
   let fund_out = decode_fund(fund_out_utxo)
 
@@ -624,7 +656,25 @@ fn validate_fund_settle(
   expect fund_out.provider_claimed == fund_in.provider_claimed
   expect fund_out.carp_locked == fund_in.carp_locked
 
-  // Không thể quyết toán quá phần hạn-mức đã cấp.
+  // ĐÂY LÀ CHỖ GIỮ `outstanding >= 0`, và nó phải nằm ở CHỖ GHI chứ không phải
+  // ở `outstanding_of`/`buffer_floor`.
+  //
+  // `outstanding_of(credit_issued, magic_settled) = credit_issued −
+  // par_carp_from_magic(magic_settled)`, và `buffer_floor` nhân nó với một hệ số
+  // dương. Cả hai KHÔNG kẹp sàn 0 — cố ý. `outstanding < 0` kéo `buffer_floor <
+  // 0`, và mọi phép so `carp_locked >= buffer_floor` ở `validate_fund_claim`
+  // thành vô điều kiện ⇒ rút sạch quỹ. Kẹp `max(0, …)` trong hai hàm đó là bịt
+  // TRIỆU CHỨNG: nó biến một trạng thái bất khả thi thành một trạng thái trông
+  // bình thường, không ai kêu, và bản off-chain (P8) phải kẹp theo nếu không thì
+  // hai bên lệch bit.
+  //
+  // Quy nạp, ba vế, không vế nào ngoài module này:
+  //   · genesis — `validate_mint_fund_nft` ép `credit_issued = magic_settled = 0`;
+  //   · `magic_settled` CHỈ tăng ở nhánh này, và dòng dưới đây là trần của nó;
+  //   · `credit_issued` chỉ tăng (FundLock) hoặc đứng yên (FundSettle/FundClaim
+  //     đều ép `fund_out.credit_issued == fund_in.credit_issued`).
+  // ⇒ `par_carp_from_magic(magic_settled) <= credit_issued` là bất biến, tức
+  // `outstanding >= 0` ở mọi UTxO quỹ tiêu được. Bài canh: `pp_fund_settle_over_issued`.
   expect par_carp_from_magic(fund_out.magic_settled) <= fund_out.credit_issued
   True
 }
@@ -727,7 +777,16 @@ fn single_nft_name(value: Value, policy: PolicyId) -> ByteArray {
 // Cổng bảo toàn dùng chung cho MỌI nhánh spend:
 //   - NFT định danh: input bị tiêu phải mang ĐÚNG một token dưới policy = script
 //     hash đọc từ chính payment credential của nó, và output tiếp nối phải mang
-//     lại ĐÚNG cặp (policy, name) đó. Vault bịa (không NFT) chết ở `single_nft_name`.
+//     lại ĐÚNG cặp (policy, name) đó — CHỈ cặp đó, không tên thứ hai dưới cùng
+//     policy. Vault bịa (không NFT) chết ở `single_nft_name`.
+//
+//     Hai đầu đều đi qua `single_nft_name` chứ không phải `quantity_of(...) == 1`:
+//     `quantity_of` trả lời "có đúng NFT đó", nó KHÔNG trả lời "chỉ có NFT đó".
+//     Chênh lệch giữa hai câu là một tên thứ hai dưới chính policy vault; cổng
+//     `|policies| <= 2` bên dưới đếm POLICY nên không thấy nó. Nguồn sinh ra tên
+//     thứ hai đã được liệt kê đóng và không tới được (handler `mint` ép
+//     `dict.size(tx.mint tại policy này) == 1`), nên đây là phòng-thủ-chiều-sâu,
+//     không phải vá một lỗ đang mở — nhưng nó rẻ đúng bằng một lời gọi hàm.
 //   - lovelace(out) ≥ lovelace(in): không ai rút bớt ADA tối thiểu của vault
 //     (nạp thêm thì được).
 //   - |policies(out)| ≤ 2: nhiều nhất {ADA, NFT vault}. Vault PrepaidGen không bao
@@ -736,7 +795,7 @@ fn single_nft_name(value: Value, policy: PolicyId) -> ByteArray {
 fn vault_identity_preserved(vault_input: Input, vault_output: Output) -> Bool {
   expect Script(vault_id_policy) = vault_input.output.address.payment_credential
   let nft_name = single_nft_name(vault_input.output.value, vault_id_policy)
-  expect assets.quantity_of(vault_output.value, vault_id_policy, nft_name) == 1
+  expect single_nft_name(vault_output.value, vault_id_policy) == nft_name
   expect
     assets.lovelace_of(vault_output.value) >= assets.lovelace_of(
       vault_input.output.value,
@@ -785,6 +844,26 @@ fn validate_mint_vault_id(
     )
   expect [vault_out] = carriers
 
+  // ── CHỈ NFT đó dưới policy vault, không tên thứ hai ──────────────────────
+  // Xem lý do ở chú thích của `vault_identity_preserved`: bộ lọc `carriers` bên
+  // trên dùng `quantity_of` nên nó không loại được một tên thứ hai đi kèm.
+  expect single_nft_name(vault_out.value, policy_id) == nft_name
+
+  // ── Địa chỉ vault phải CHÍNH TẮC: không stake credential ─────────────────
+  // `Script(h)` và `(Script(h), stake=người lạ)` là HAI địa chỉ khác nhau nhưng
+  // cùng chạy validator này, nên không ghim thì mỗi vault đỗ được ở một địa chỉ
+  // riêng và không còn "địa chỉ vault" nào để `utxosAt` quét. Ghim None không
+  // đóng cơ chế nào: không dòng nào trong module đọc stake credential, và mọi
+  // phép so địa chỉ ở nhánh spend là so ĐẦY ĐỦ (`o.address == vault_addr`) nên
+  // một vault có stake vẫn tiêu được — nó chỉ vô hình với người đi tìm.
+  expect vault_out.address.stake_credential == None
+
+  // ── Không gắn sẵn reference script ───────────────────────────────────────
+  // Ref-script đội min-ADA của UTxO lên, mà `vault_identity_preserved` chỉ cho
+  // lovelace ĐI LÊN và không nhánh nào rút ADA ra khỏi vault ⇒ phần ADA ấy khoá
+  // vĩnh viễn. Đây là khoá-vốn im lặng, không phải lỗi giao dịch.
+  expect vault_out.reference_script == None
+
   // ── Datum genesis phải là inline và giải mã ra PrepaidVaultDatum ─────────
   expect InlineDatum(datum_data) = vault_out.datum
   expect vd: PrepaidVaultDatum = datum_data
@@ -817,6 +896,94 @@ fn validate_mint_vault_id(
   // ── Không bụi token, không CARP trong vault genesis: nhiều nhất {ADA, NFT} ─
   expect list.length(assets.policies(vault_out.value)) <= 2
 
+  True
+}
+
+// ══════════════════════════════════════════════════════════════
+// FUND — genesis NFT định danh quỹ (C-PP-15)
+// ══════════════════════════════════════════════════════════════
+//
+// MỘT policy dùng chung cho MỌI quỹ (không tham số hoá theo seed): nếu mỗi quỹ
+// một policy thì `paid_fund_hash` của prepaid_vault lại thành per-quỹ, tức mỗi
+// platform một script vault riêng — đúng cái phép thử apply-param ở
+// `BOUNDARIES.md §2` loại bỏ ("giá trị này đổi theo cái gì?": đổi theo từng lần
+// tạo ⟹ KHÔNG).
+//
+// Tính duy nhất đến từ INPUT BỊ TIÊU chứ không từ tham số biên dịch:
+//   asset_name = blake2b_256(tx_hash ∥ be8(output_index)) của một input trong
+//   chính giao dịch đúc. UTxO tiêu được tối đa một lần ⇒ tên không bao giờ lặp,
+//   không ai đúc lại được tên cũ.
+//
+// Đồng thời đây là CỔNG GENESIS của sổ quỹ: datum của output mang NFT phải sạch
+// (mọi số cộng dồn = 0) và buffer_bps ≥ 15%. Không có cổng này thì một quỹ có
+// thể "sinh ra" với magic_settled khổng lồ, kéo `outstanding` âm, kéo
+// `buffer_floor` âm, và mọi phép so `≥ buffer_floor` thành vô điều kiện ⇒
+// FundClaim rút sạch CARP của người khác.
+//
+// VÌ SAO NÓ PHẢI Ở TRONG `paid_fund` CHỨ KHÔNG PHẢI MỘT SCRIPT RIÊNG: chỉ ở đây
+// mới ép được ĐỊA CHỈ của output mang NFT. Bản trước (`validators/fund_nft.ak`,
+// đã xoá 2026-09-15) lọc carrier CHỈ bằng `quantity_of(...) == 1` và tự ghi
+// trong chú thích rằng không kiểm được địa chỉ vì sẽ thành vòng tham chiếu. Vòng
+// đó không có thật — phá bằng đúng khuôn tự-trỏ-vào-mình mà kho đã dùng hai lần
+// (`validate_mint_vault_id` ở ngay trên, `validate_mint_engage_id` bên
+// ConsumeMAGIC). Đường khai thác mà nó để hở, ba bước:
+//   1. đúc NFT quỹ vào một output VÍ THƯỜNG, datum sạch → cổng cũ cho qua;
+//   2. tiêu output ví đó bằng chữ ký thường — KHÔNG validator nào chạy (đây là
+//      minting policy, giao dịch 2 không mint) — rồi tạo output ở địa chỉ quỹ
+//      với datum bịa `magic_settled` khổng lồ;
+//   3. người dùng khoá CARP vào quỹ đó; `FundClaim` rút sạch.
+fn validate_mint_fund_nft(policy_id: PolicyId, tx: Transaction) -> Bool {
+  // ── Đúng MỘT tên tài sản dưới policy này, số lượng đúng 1 ────────────────
+  // Cặp ràng buộc này cũng đóng luôn đường ĐỐT: mọi số lượng âm chết tại đây.
+  expect [Pair(name, qty)] = assets.tokens(tx.mint, policy_id) |> dict.to_pairs
+  expect qty == 1
+
+  // ── ONE-SHOT: tên phải bắt nguồn từ một input BỊ TIÊU trong chính tx này ─
+  expect
+    list.any(
+      tx.inputs,
+      fn(i) {
+        compute_fund_id(
+          i.output_reference.transaction_id,
+          i.output_reference.output_index,
+        ) == name
+      },
+    )
+
+  // ── Đúng MỘT output mang NFT, VÀ nó phải nằm ở địa chỉ quỹ ───────────────
+  // `policy_id == script hash của chính validator này` ⇒ `Script(policy_id)` là
+  // địa chỉ tiêu của quỹ. Đây là mệnh đề mà bản tách-script không viết được.
+  let carriers =
+    list.filter(
+      tx.outputs,
+      fn(o) {
+        o.address.payment_credential == Script(policy_id) && assets.quantity_of(
+          o.value,
+          policy_id,
+          name,
+        ) == 1
+      },
+    )
+  expect [fund_utxo] = carriers
+
+  // Cùng ba cổng hình-dạng-địa-chỉ với genesis vault, cùng lý do — xem
+  // `validate_mint_vault_id`. Ba dòng này ở đây là bản đối chứng của ba dòng ở
+  // đó: hai cổng genesis cạnh nhau mà một bên lỏng hơn thì bên lỏng là bên sai.
+  expect single_nft_name(fund_utxo.value, policy_id) == name
+  expect fund_utxo.address.stake_credential == None
+  expect fund_utxo.reference_script == None
+
+  // ── Sổ quỹ genesis SẠCH ─────────────────────────────────────────────────
+  let fd = decode_fund(fund_utxo)
+  expect fd.fund_id == name
+  expect fd.carp_locked == 0
+  expect fd.credit_issued == 0
+  expect fd.magic_settled == 0
+  expect fd.provider_claimed == 0
+  expect fd.last_updated_epoch == 0
+  expect fd.buffer_bps >= min_buffer_bps
+  expect bytearray.length(fd.platform) == 28
+  expect bytearray.length(fd.vault_hash) == 28
   True
 }
 
@@ -903,10 +1070,9 @@ fn vault_output_carp(
 // Tìm UTxO quỹ trong một danh sách Output: phải Ở ĐÚNG script quỹ và mang đúng
 // 1 NFT tên fund_id. Ép DUY NHẤT để trạng thái quỹ không bị tách làm hai.
 fn find_fund_utxo_at(
-  outs            : List<Output>,
-  paid_fund_hash  : ByteArray,
-  fund_nft_policy : PolicyId,
-  fund_id         : ByteArray,
+  outs           : List<Output>,
+  paid_fund_hash : ByteArray,
+  fund_id        : ByteArray,
 ) -> Output {
   let matches =
     list.filter(
@@ -914,7 +1080,7 @@ fn find_fund_utxo_at(
       fn(o) {
         is_at_script(o.address, paid_fund_hash) && assets.quantity_of(
           o.value,
-          fund_nft_policy,
+          paid_fund_hash,
           fund_id,
         ) == 1
       },
@@ -995,7 +1161,10 @@ const t_carp_policy: ByteArray = #"222222222222222222222222222222222222222222222
 // CarpetMint đổi số. Bản trước ghi #"43415250" (4 byte, hex ASCII "CARP") nên
 // mọi bài kiểm chạy trên một hình dạng không tồn tại trên chuỗi.
 const t_carp_name: ByteArray = #"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
-const t_fund_policy: ByteArray = #"33333333333333333333333333333333333333333333333333333333"
+// Policy của NFT quỹ KHÔNG còn là một hằng riêng. Handler `mint` nằm trong chính
+// `paid_fund`, nên policy id BẰNG script hash quỹ theo định nghĩa. Giữ hai hằng
+// khác nhau trong bộ kiểm là dựng ra một thế giới không tồn tại trên chuỗi, và
+// mọi bài chạy trên thế giới đó sẽ xanh vì lý do sai.
 const t_fund_id: ByteArray =
   #"aaaa000000000000000000000000000000000000000000000000000000000000"
 const t_other_fund: ByteArray =
@@ -1136,7 +1305,7 @@ fn t_fd(
 fn t_fund_value(carp: Int, nft_name: ByteArray) -> assets.Value {
   assets.from_lovelace(2_000_000)
     |> assets.add(t_carp_policy, t_carp_name, carp)
-    |> assets.add(t_fund_policy, nft_name, 1)
+    |> assets.add(t_fund_hash, nft_name, 1)
 }
 
 fn t_fund_out_at(datum: PaidFundDatum, carp: Int, addr: Address) -> Output {
@@ -1205,7 +1374,7 @@ fn lock_tx(
 fn run_lock(datum: PrepaidVaultDatum, tx: Transaction) -> Bool {
   validate_lock(
     datum, t_fund_id, lock_amt, t_epoch, t_vault_addr(), t_carp_policy,
-    t_carp_name, t_fund_policy, t_fund_hash, tx,
+    t_carp_name, t_fund_hash, tx,
   )
 }
 
@@ -1392,7 +1561,7 @@ test pp_lock_below_min() fail {
   let tx = lock_tx(din, dout, fin, 0, fout, 1, [t_platform])
   validate_lock(
     din, t_fund_id, 1, t_epoch, t_vault_addr(), t_carp_policy, t_carp_name,
-    t_fund_policy, t_fund_hash, tx,
+    t_fund_hash, tx,
   )
 }
 
@@ -1923,7 +2092,7 @@ fn run_fund(
 ) -> Bool {
   fund_common_checks(
     fin, t_fund_in(fin, fin_carp), t_fund_addr(), t_carp_policy, t_carp_name,
-    t_fund_policy, t_epoch, redeemer, tx,
+    t_fund_hash, t_epoch, redeemer, tx,
   )
 }
 
@@ -2253,6 +2422,26 @@ test pp_fund_value_mismatch() fail {
   )
 }
 
+// ── FundSettle: trần của `magic_settled` (giữ outstanding ≥ 0) ─
+//
+// Bài canh cho dòng `par_carp_from_magic(fund_out.magic_settled) <=
+// fund_out.credit_issued` trong `validate_fund_settle`. Gỡ dòng đó ra thì bài
+// này chuyển sang xanh — và với nó là đường: `outstanding` âm ⇒ `buffer_floor`
+// âm ⇒ mọi phép so `carp_locked >= buffer_floor` ở `validate_fund_claim` thành
+// vô điều kiện ⇒ rút sạch CARP của người khác.
+test pp_fund_settle_over_issued() fail {
+  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  let fout = t_fd(lock_amt, lock_amt, 1_500_000_000, 0, 1_500)
+  let tx =
+    settle_tx(
+      [t_batch(#"b1", 1_500_000_000, t_epoch, t_fund_id)],
+      [],
+      fin, lock_amt, fout, lock_amt,
+      BurnBatch { burns: [(#"b1", 1_500_000_000)] },
+    )
+  run_fund(fin, lock_amt, tx, FundSettle)
+}
+
 // ══════════════════════════════════════════════════════════════
 // get_epoch — SEC-02 (C-PP-11)
 // ══════════════════════════════════════════════════════════════
@@ -2295,8 +2484,12 @@ test pp_epoch_open_upper() fail {
 //                      vì một cổng khác của nhánh.
 //   `_forged_vault`  — input KHÔNG mang NFT (vault bịa, chưa policy nào vét datum).
 //   `_nft_escapes`   — input mang NFT nhưng output tiếp nối thì không.
-// Gỡ lời gọi `vault_identity_preserved` ở thân `spend` ⟹ cả MƯỜI bài âm tính
-// chuyển sang xanh cùng lúc.
+//
+// Gỡ lời gọi `vault_identity_preserved` ở thân `spend` ⟹ toàn bộ nhóm bài âm
+// tính này chuyển sang xanh cùng lúc. SỐ ĐO nằm ở MỘT nơi — `DESIGN.md §2.1` —
+// và cố ý không chép xuống đây: một con số chép ở hai chỗ thì chỗ chép chết im
+// lặng ngay lần thêm bài kế tiếp (bản trước của dòng này ghi "MƯỜI", `DESIGN.md`
+// ghi "12", đo thật ra 12; nay là 13).
 
 // ── Fixtures genesis ──────────────────────────────────────────
 
@@ -2362,7 +2555,7 @@ fn t_mint_tx(
 
 fn run_mint(seed: OutputReference, tx: Transaction) -> Bool {
   prepaid_vault.mint(
-    t_carp_policy, t_carp_name, t_fund_policy, t_fund_hash, ms_ep,
+    t_carp_policy, t_carp_name, t_fund_hash, ms_ep,
     MintVaultId { seed }, t_vault_hash, tx,
   )
 }
@@ -2593,7 +2786,7 @@ fn run_spend(
   tx       : Transaction,
 ) -> Bool {
   prepaid_vault.spend(
-    t_carp_policy, t_carp_name, t_fund_policy, t_fund_hash, ms_ep,
+    t_carp_policy, t_carp_name, t_fund_hash, ms_ep,
     Some(datum), redeemer, t_own_ref(), tx,
   )
 }
@@ -2828,4 +3021,360 @@ test pp_spend_dust_stuffed() fail {
       reference_script: None,
     }
   sp_prune_run(t_vault_in(sp_prune_din()), vout)
+}
+
+// TẤN CÔNG: vault mang HAI đơn vị NFT định danh, cả vào lẫn ra.
+//
+// Bài này canh `expect qty == 1` trong `single_nft_name`, và nó phải dựng CẢ HAI
+// đầu cùng mang 2 đơn vị — nếu chỉ một đầu thì phép so tên/số lượng ở đầu kia
+// giết nó trước, và bài đo mất khả năng phân biệt hai bên đột biến. Hai đơn vị
+// cùng tên nghĩa là hai UTxO tách ra sau này đều "là" vault, mỗi cái mang một
+// bản datum — đúng thứ mà `list.count(... == vault_addr) == 1` không bắt được vì
+// nó đếm ĐỊA CHỈ chứ không đếm định danh.
+test pp_spend_nft_qty_two() fail {
+  let nft = t_vault_nft()
+  let vin =
+    Input {
+      output_reference: t_own_ref(),
+      output: Output {
+        address: t_vault_addr(),
+        value: assets.from_lovelace(2_000_000) |> assets.add(t_vault_hash, nft, 2),
+        datum: InlineDatum(sp_prune_din()),
+        reference_script: None,
+      },
+    }
+  let vout =
+    Output {
+      address: t_vault_addr(),
+      value: assets.from_lovelace(2_000_000) |> assets.add(t_vault_hash, nft, 2),
+      datum: InlineDatum(sp_prune_dout()),
+      reference_script: None,
+    }
+  sp_prune_run(vin, vout)
+}
+
+// ── Genesis vault: ba cổng hình dạng output ───────────────────
+
+// TẤN CÔNG: vault đỗ ở (script vault, stake của người lạ) — cùng validator,
+// KHÁC địa chỉ ⇒ biến mất khỏi mọi `utxosAt(vaultAddress)`.
+test pp_mint_stake_credential_set() fail {
+  let name = t_vault_nft()
+  let out =
+    Output {
+      ..t_genesis_out(t_genesis_vd(), name),
+      address: t_vault_addr() |> address.with_delegation_key(t_stranger),
+    }
+  run_mint(
+    t_seed_ref(),
+    t_mint_tx(
+      [t_seed_input(t_seed_ref())], [out],
+      assets.from_asset(t_vault_hash, name, 1), [t_owner],
+    ),
+  )
+}
+
+// TẤN CÔNG: gắn sẵn reference script vào vault genesis → min-ADA đội lên và khoá
+// vĩnh viễn (lovelace chỉ được phép ĐI LÊN, không nhánh nào rút ADA).
+test pp_mint_reference_script_attached() fail {
+  let name = t_vault_nft()
+  let out =
+    Output {
+      ..t_genesis_out(t_genesis_vd(), name),
+      reference_script: Some(t_evil_hash),
+    }
+  run_mint(
+    t_seed_ref(),
+    t_mint_tx(
+      [t_seed_input(t_seed_ref())], [out],
+      assets.from_asset(t_vault_hash, name, 1), [t_owner],
+    ),
+  )
+}
+
+// TẤN CÔNG: carrier mang thêm một TÊN thứ hai dưới chính policy vault. Cổng
+// `|policies| <= 2` đếm POLICY nên nó không thấy; chỉ `single_nft_name` thấy.
+test pp_mint_second_name_on_carrier() fail {
+  let name = t_vault_nft()
+  let out =
+    Output {
+      ..t_genesis_out(t_genesis_vd(), name),
+      value: assets.from_lovelace(2_000_000)
+        |> assets.add(t_vault_hash, name, 1)
+        |> assets.add(t_vault_hash, #"6666", 1),
+    }
+  run_mint(
+    t_seed_ref(),
+    t_mint_tx(
+      [t_seed_input(t_seed_ref())], [out],
+      assets.from_asset(t_vault_hash, name, 1), [t_owner],
+    ),
+  )
+}
+
+// TẤN CÔNG: ĐỐT NFT định danh vault (số lượng âm trong tx.mint).
+//
+// Bài canh cho `expect assets.quantity_of(tx.mint, policy_id, nft_name) == 1` —
+// mệnh đề mà `types.ak` viện dẫn khi khai rằng redeemer này KHÔNG có nhánh đốt.
+// Mọi thứ còn lại của giao dịch được dựng HỢP LỆ (seed bị tiêu, carrier đúng chỗ,
+// datum sạch, chủ ký) để bài chết đúng ở dòng mang tên nó và để phép gỡ-chốt đo
+// được: gỡ dòng ấy ra thì bài này chuyển sang xanh, tức đường đốt mở ra.
+test pp_mint_burn_rejected() fail {
+  let name = t_vault_nft()
+  run_mint(
+    t_seed_ref(),
+    t_mint_tx(
+      [t_seed_input(t_seed_ref())],
+      [t_genesis_out(t_genesis_vd(), name)],
+      assets.from_asset(t_vault_hash, name, -1),
+      [t_owner],
+    ),
+  )
+}
+
+// ══════════════════════════════════════════════════════════════
+// C-PP-15 — genesis quỹ (handler `mint` của `paid_fund`)
+// ══════════════════════════════════════════════════════════════
+//
+// Bộ này CHUYỂN TỪ `validators/fund_nft.ak` (đã xoá 2026-09-15) sang đây, và
+// `fn_addr()` của bản cũ — một địa chỉ VÍ — đã được đổi thành địa chỉ SCRIPT của
+// quỹ. Ghi lại vì nó là bài học, không phải một lần dời tệp: bản cũ đặt NFT quỹ
+// vào ví ở MỌI bài kể cả bài happy, nên bài happy xanh CHÍNH LÀ bằng chứng cổng
+// cho phép NFT quỹ rơi vào ví — bộ kiểm mù đúng ở chỗ nó phải nhìn.
+
+fn fg_wallet_addr() -> Address {
+  Address { payment_credential: VerificationKey(t_platform), stake_credential: None }
+}
+
+// Seed: một UTxO ví thường bị tiêu trong chính giao dịch đúc.
+fn fg_seed_input() -> Input {
+  Input {
+    output_reference: t_fund_ref(),
+    output: Output {
+      address: fg_wallet_addr(),
+      value: assets.from_lovelace(5_000_000),
+      datum: NoDatum,
+      reference_script: None,
+    },
+  }
+}
+
+// Tên NFT quỹ được TÍNH bằng chính `compute_fund_id`, không chép hằng băm.
+fn fg_name() -> ByteArray {
+  compute_fund_id(t_fund_tx, 0)
+}
+
+fn fg_datum(
+  fund_id : ByteArray,
+  locked  : Int,
+  issued  : Int,
+  settled : Int,
+  claimed : Int,
+  buffer  : Int,
+  epoch   : Int,
+) -> PaidFundDatum {
+  PaidFundDatum {
+    fund_id,
+    platform: t_platform,
+    vault_hash: t_vault_hash,
+    carp_locked: locked,
+    credit_issued: issued,
+    magic_settled: settled,
+    provider_claimed: claimed,
+    buffer_bps: buffer,
+    last_updated_epoch: epoch,
+  }
+}
+
+fn fg_clean() -> PaidFundDatum {
+  fg_datum(fg_name(), 0, 0, 0, 0, 1_500, 0)
+}
+
+fn fg_carrier_at(name: ByteArray, d: PaidFundDatum, qty: Int, addr: Address) -> Output {
+  Output {
+    address: addr,
+    value: assets.from_lovelace(2_000_000) |> assets.add(t_fund_hash, name, qty),
+    datum: InlineDatum(d),
+    reference_script: None,
+  }
+}
+
+fn fg_carrier(name: ByteArray, d: PaidFundDatum) -> Output {
+  fg_carrier_at(name, d, 1, t_fund_addr())
+}
+
+fn run_fund_mint(outs: List<Output>, m: Value) -> Bool {
+  paid_fund.mint(
+    t_carp_policy, t_carp_name, ms_ep,
+    Void, t_fund_hash,
+    Transaction { ..placeholder, inputs: [fg_seed_input()], outputs: outs, mint: m },
+  )
+}
+
+// Giao dịch đúc chuẩn, chỉ khác nhau ở datum quỹ.
+fn fg_mint_with(d: PaidFundDatum) -> Bool {
+  let name = fg_name()
+  run_fund_mint([fg_carrier(name, d)], assets.from_asset(t_fund_hash, name, 1))
+}
+
+// happy: tiêu seed → tên duy nhất, sổ quỹ sạch, đệm ≥ 15%, NFT ở ĐÚNG địa chỉ quỹ.
+test fg_mint_ok() {
+  fg_mint_with(fg_clean())
+}
+
+// TẤN CÔNG CỐT LÕI (bước 1 của kịch bản ba bước): đúc NFT quỹ vào một VÍ THƯỜNG.
+//
+// Bản `fund_nft.ak` cũ cho qua vì nó lọc carrier chỉ bằng `quantity_of == 1`.
+// Sau đó tiêu output ví ấy bằng chữ ký thường — KHÔNG validator nào chạy — rồi
+// đỗ một `PaidFundDatum` bịa ở địa chỉ quỹ. Đây là bài canh cho mệnh đề
+// `o.address.payment_credential == Script(policy_id)`.
+test fg_mint_nft_to_wallet() fail {
+  let name = fg_name()
+  run_fund_mint(
+    [fg_carrier_at(name, fg_clean(), 1, fg_wallet_addr())],
+    assets.from_asset(t_fund_hash, name, 1),
+  )
+}
+
+// TẤN CÔNG: đúc vào một SCRIPT khác (biến thể của bài trên — địa chỉ phải là
+// đúng script quỹ, không phải "một script nào đó").
+test fg_mint_nft_to_other_script() fail {
+  let name = fg_name()
+  run_fund_mint(
+    [fg_carrier_at(name, fg_clean(), 1, address.from_script(t_evil_hash))],
+    assets.from_asset(t_fund_hash, name, 1),
+  )
+}
+
+// TẤN CÔNG: quỹ đỗ ở (script quỹ, stake người lạ) → vô hình với `utxosAt`.
+test fg_mint_stake_credential_set() fail {
+  let name = fg_name()
+  run_fund_mint(
+    [
+      fg_carrier_at(
+        name, fg_clean(), 1,
+        t_fund_addr() |> address.with_delegation_key(t_stranger),
+      ),
+    ],
+    assets.from_asset(t_fund_hash, name, 1),
+  )
+}
+
+// TẤN CÔNG: gắn reference script vào quỹ genesis.
+test fg_mint_reference_script_attached() fail {
+  let name = fg_name()
+  let out =
+    Output { ..fg_carrier(name, fg_clean()), reference_script: Some(t_evil_hash) }
+  run_fund_mint([out], assets.from_asset(t_fund_hash, name, 1))
+}
+
+// TẤN CÔNG: carrier mang thêm một tên thứ hai dưới chính policy quỹ.
+test fg_mint_second_name_on_carrier() fail {
+  let name = fg_name()
+  let out =
+    Output {
+      ..fg_carrier(name, fg_clean()),
+      value: assets.from_lovelace(2_000_000)
+        |> assets.add(t_fund_hash, name, 1)
+        |> assets.add(t_fund_hash, #"6666", 1),
+    }
+  run_fund_mint([out], assets.from_asset(t_fund_hash, name, 1))
+}
+
+// TẤN CÔNG: tên không bắt nguồn từ input nào bị tiêu → đúc trùng/giả tên.
+test fg_mint_forged_name() fail {
+  let name = #"ffff000000000000000000000000000000000000000000000000000000000000"
+  run_fund_mint(
+    [fg_carrier(name, fg_datum(name, 0, 0, 0, 0, 1_500, 0))],
+    assets.from_asset(t_fund_hash, name, 1),
+  )
+}
+
+// TẤN CÔNG: đúc 2 bản cùng tên → trạng thái quỹ tách đôi.
+test fg_mint_qty_two() fail {
+  let name = fg_name()
+  run_fund_mint(
+    [fg_carrier_at(name, fg_clean(), 2, t_fund_addr())],
+    assets.from_asset(t_fund_hash, name, 2),
+  )
+}
+
+// TẤN CÔNG: ĐỐT NFT quỹ (số lượng âm). NFT quỹ là vĩnh viễn ở v0.1.
+test fg_mint_burn_rejected() fail {
+  let name = fg_name()
+  run_fund_mint(
+    [fg_carrier(name, fg_clean())],
+    assets.from_asset(t_fund_hash, name, -1),
+  )
+}
+
+// TẤN CÔNG: đúc kèm một tên lạ dưới cùng policy (quỹ thứ hai không qua cổng).
+test fg_mint_extra_name() fail {
+  let name = fg_name()
+  run_fund_mint(
+    [fg_carrier(name, fg_clean())],
+    assets.from_asset(t_fund_hash, name, 1) |> assets.add(t_fund_hash, #"6666", 1),
+  )
+}
+
+// TẤN CÔNG CỐT LÕI: quỹ sinh ra đã khai magic_settled khổng lồ → `outstanding`
+// âm → `buffer_floor` âm → FundClaim rút CARP của người khác.
+test fg_mint_dirty_settled() fail {
+  fg_mint_with(fg_datum(fg_name(), 0, 0, 999_000_000_000, 0, 1_500, 0))
+}
+
+// TẤN CÔNG: quỹ sinh ra đã khai credit_issued > 0 (phá C-PP-3 ngay từ đầu).
+test fg_mint_dirty_issued() fail {
+  fg_mint_with(fg_datum(fg_name(), 0, 1_000_000, 0, 0, 1_500, 0))
+}
+
+// TẤN CÔNG: khai carp_locked > 0 mà không có CARP thật trong UTxO.
+test fg_mint_dirty_locked() fail {
+  fg_mint_with(fg_datum(fg_name(), 1_000_000, 0, 0, 0, 1_500, 0))
+}
+
+// TẤN CÔNG: khai provider_claimed > 0 để nới trần F2 ngay từ genesis.
+test fg_mint_dirty_claimed() fail {
+  fg_mint_with(fg_datum(fg_name(), 0, 0, 0, 1_000_000, 1_500, 0))
+}
+
+// TẤN CÔNG: đệm buffer-Paid dưới 15%.
+test fg_mint_buffer_too_low() fail {
+  fg_mint_with(fg_datum(fg_name(), 0, 0, 0, 0, 1_499, 0))
+}
+
+// TẤN CÔNG: bơm last_updated_epoch lúc tạo.
+test fg_mint_epoch_forged() fail {
+  fg_mint_with(fg_datum(fg_name(), 0, 0, 0, 0, 1_500, t_epoch))
+}
+
+// TẤN CÔNG: fund_id trong datum khác tên NFT → định danh trôi.
+test fg_mint_id_mismatch() fail {
+  fg_mint_with(fg_datum(#"abcd", 0, 0, 0, 0, 1_500, 0))
+}
+
+// TẤN CÔNG: platform không phải một pkh 28 byte (khoá đòi của quỹ thành rác).
+test fg_mint_platform_wrong_length() fail {
+  let name = fg_name()
+  let d = PaidFundDatum { ..fg_clean(), platform: #"77" }
+  run_fund_mint([fg_carrier(name, d)], assets.from_asset(t_fund_hash, name, 1))
+}
+
+// TẤN CÔNG: vault_hash không phải script hash 28 byte.
+test fg_mint_vault_hash_wrong_length() fail {
+  let name = fg_name()
+  let d = PaidFundDatum { ..fg_clean(), vault_hash: #"11" }
+  run_fund_mint([fg_carrier(name, d)], assets.from_asset(t_fund_hash, name, 1))
+}
+
+// TẤN CÔNG: NFT đúc ra nhưng không output nào giữ (không có sổ quỹ).
+test fg_mint_no_carrier() fail {
+  let name = fg_name()
+  run_fund_mint([], assets.from_asset(t_fund_hash, name, 1))
+}
+
+// TẤN CÔNG: datum quỹ không inline → không cổng nào đọc được trạng thái genesis.
+test fg_mint_no_inline_datum() fail {
+  let name = fg_name()
+  let out = Output { ..fg_carrier(name, fg_clean()), datum: NoDatum }
+  run_fund_mint([out], assets.from_asset(t_fund_hash, name, 1))
 }

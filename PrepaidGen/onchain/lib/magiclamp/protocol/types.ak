@@ -50,7 +50,7 @@ pub type PrepaidVaultDatum {
 }
 
 // ── PaidFundDatum — quỹ Paid của platform ─────────────────────
-// vault_hash ghim tại genesis (fund_nft) và bất biến: đây là thứ phá vòng tham
+// vault_hash ghim tại genesis (handler `mint` của paid_fund) và bất biến: đây là thứ phá vòng tham
 // chiếu vault ⇄ fund mà vẫn cho quỹ có thẩm quyền khi quyết toán.
 pub type PaidFundDatum {
   fund_id            : ByteArray,   // == asset name NFT quỹ
@@ -101,7 +101,7 @@ pub type PaidFundRedeemer {
 // (`vault_identity_preserved`) và không nhánh nào đóng vault, nên một nhánh đốt sẽ
 // là mã chết — thêm vào chỉ tạo một cửa sẵn sàng mở ra nếu sau này ai đó nới cổng
 // bảo toàn. Hệ quả phải biết trước: NFT vault và phần ADA tối thiểu đi kèm là VĨNH
-// VIỄN, y như NFT quỹ ở `fund_nft.ak`.
+// VIỄN, y như NFT quỹ ở handler `mint` của `paid_fund`.
 pub type PrepaidVaultIdRedeemer {
   // constr 0 — đúc NFT định danh + đỗ một UTxO vault ở trạng thái genesis sạch.
   // `seed` là UTxO bị tiêu trong chính giao dịch đúc: nó là thứ làm tên tài sản

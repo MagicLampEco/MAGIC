@@ -73,7 +73,10 @@ function vault(
 ): PrepaidVaultDatum {
   return {
     owner: OWNER,
-    did_commit: "deadbeef",
+    // Vault ĐÃ gắn DID: đúng 32 byte, khuôn duy nhất mà nhánh ghi on-chain cho
+    // qua (rỗng = chưa gắn). Bản trước là "deadbeef" (4 byte) — độ dài đó không
+    // tới được trên chuỗi từ khi cổng đúc ghim rỗng và `SetDidCommit` ghim 32.
+    did_commit: "d1".repeat(32),
     prepaid_credits: credits.map((c) => ({
       fund_id: c.fund_id,
       remaining: c.remaining,

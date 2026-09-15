@@ -27,7 +27,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `consume.consume` | `5e218121ec47798adc034beeacc5f922108cc7055edcd6e7c806e614` |
+| `consume.consume` | `3bd9ae5ed66e6d496a22634257fcbfcd15fbb2ded8089c4d701196b9` |
 | `price_nft.price_nft` | `82080eb9cb27d9eb7e603b7e3ecc460db12103b1829203b55d549d64` |
 | `price_param.price_param` | `3ea8f97b561d71688e6c4b6aacf02e6879ad6cdc9d134d53ad07da28` |
 
@@ -60,9 +60,19 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `fund_nft.fund_nft` | `2a3195949a6417d8a08c082148d7f04f6fb0e2898fc9b7bb3aa2a7e1` |
-| `prepaid.paid_fund` | `fa4a1df824e7b1a37216b903c4e8701a5bf203c88cae59ba87e55def` |
-| `prepaid.prepaid_vault` | `5e566d91a5a5f34f5b2621177f42933ae4f1cfc6c615aaf0648f1b63` |
+| `prepaid.paid_fund` (nay có CẢ handler `mint` — policy NFT quỹ) | `901afa900f27355ff071f6490d550d17f5a565b476dce04313c80397` |
+| `prepaid.prepaid_vault` (nay có CẢ handler `mint` — policy NFT vault) | `5d54273ffaa3f6fa4251b2a2814b59c4e2a91e20e488fe636296275e` |
+
+> **`fund_nft.fund_nft` đã BIẾN MẤT khỏi bảng này, không phải bị bỏ sót** — bản
+> `2a3195949a6417d8a08c082148d7f04f6fb0e2898fc9b7bb3aa2a7e1` (850 B) là script
+> cuối cùng của nó. Validator đứng riêng ấy không ép được địa chỉ của output mang
+> NFT, nên cổng genesis sổ quỹ của nó chỉ sống đúng một giao dịch (`DevStatus.md`
+> Nợ #69). Việc của nó chuyển vào `paid_fund` ▸ `validate_mint_fund_nft`, ở đó
+> `policy_id` **chính là** script hash của `paid_fund` nên phép ép địa chỉ tự trỏ
+> vào mình. Hệ quả cho ai dựng tham số deploy: `fund_nft_policy` **không còn là
+> một apply-param** — nó bằng `paid_fund_hash` theo định nghĩa. `paid_fund` nay
+> nhận 3 tham số (`carp_policy_id · carp_asset_name · ms_per_epoch`), `prepaid_vault`
+> nhận 4 (`carp_policy_id · carp_asset_name · paid_fund_hash · ms_per_epoch`).
 
 ### `ProfileChange/onchain`
 

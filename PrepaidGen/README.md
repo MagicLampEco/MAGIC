@@ -38,7 +38,7 @@ PrepaidGen/
 ├── DESIGN.md                 # thiết kế + bất biến + [CẦN XÁC NHẬN]
 ├── onchain/
 │   ├── lib/magiclamp/protocol/{constants,types,math,vectors}.ak
-│   └── validators/{prepaid,fund_nft}.ak    # prepaid_vault + paid_fund + policy NFT quỹ
+│   └── validators/prepaid.ak  # prepaid_vault + paid_fund (mỗi cái vừa spend vừa mint NFT định danh của chính nó)
 ├── offchain/src/{constants,types,math,prepaid,index}.ts
 └── tests/{vectors,math…}.ts  # p8 · prepaid · codec
 ```

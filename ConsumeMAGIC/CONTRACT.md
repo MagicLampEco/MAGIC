@@ -270,10 +270,22 @@ Validator ÉP:
   state. **App PHẢI cấp dịch vụ theo DELTA của trường này** (xem EXEC.md §"Xác nhận thanh toán").
 - **C-CM-7 (genesis SẠCH — handler `mint`):** thread NFT chỉ ra đời qua `MintEngage { seed }` của
   chính `consume`. Ép: `seed` bị TIÊU trong tx (one-shot ⇒ singleton vĩnh viễn); đúng 1 asset dưới
-  policy, qty +1, tên = `blake2b_256(cbor.serialise(seed))`; **đúng 1 output tại địa chỉ script này**
-  mang NFT (chống "mint sạch → dời nhà bẩn"); datum inline decode được `EngageDatum`; `owner ∈
-  extra_signatories`; `consumed_count == 0 ∧ consumed_nanogic == 0 ∧ last_epoch == 0`; output genesis
-  có nhiều nhất 2 policy (`{ADA, thread NFT}`).
+  policy, qty +1, tên = `blake2b_256(cbor.serialise(seed))`; **đúng 1 output tại ĐỊA CHỈ ĐẦY ĐỦ của
+  script này** mang NFT (chống "mint sạch → dời nhà bẩn"); datum inline decode được `EngageDatum`;
+  `owner ∈ extra_signatories`; `consumed_count == 0 ∧ consumed_nanogic == 0 ∧ last_epoch == 0`;
+  output genesis có nhiều nhất 2 policy (`{ADA, thread NFT}`).
+  **Địa chỉ ĐẦY ĐỦ, không chỉ payment credential (vá 2026-09-15):** cổng so
+  `o.address == Address { payment_credential: Script(policy_id), stake_credential: None }`, tức thread
+  sinh ra ở **địa chỉ enterprise**. Trước vá, stake credential do người dựng tx chọn tự do: một
+  sponsor đặt thread ở `Script(consume) + stake(sponsor)`, người dùng vẫn ký (cổng chỉ đòi `ed.owner`
+  ký) mà không soi địa chỉ, và thread biến mất khỏi mọi công cụ tra theo địa chỉ
+  (`lucid.utxosAt(consumeAddr)` trả rỗng) trong khi phần thưởng stake của min-ADA chảy về sponsor.
+  Sau bản vá nhánh spend cùng ngày (`out.address == in.address` ở **cả hai** nhánh), địa chỉ lúc sinh
+  là địa chỉ **vĩnh viễn** — nên chốt phải đặt ở cổng **VÀO**. Siết ở cổng spend là khoá chết mọi
+  thread đã nằm trên chuỗi (cùng lý lẽ với `did_len_ok`). Bài canh:
+  `engage_mint_output_with_stake_credential_fail` và
+  `engage_mint_output_stake_credential_of_owner_fail` (kể cả stake của chính chủ cũng bị từ chối —
+  mint-gate không có cách nào xác minh một stake key thuộc về `ed.owner`).
   **Vì sao phải ép ở lúc MINT:** Cardano KHÔNG chạy validator lúc TẠO UTxO. Bất biến delta ở spend
   chỉ khoá phần TĂNG, **không khoá GỐC** — không có cổng mint thì kẻ tấn công đặt
   `consumed_nanogic` bịa (vd 1e18) ngay từ genesis và mọi app đọc "đã tiêu 1e18" sẽ cấp dịch vụ
@@ -283,11 +295,10 @@ Validator ÉP:
   xuyên-instance) + cổng "mọi input tại địa chỉ engage mang đúng 1 thread NFT"; tx `MintEngage` thì
   tiêu UTxO seed của VÍ. Hai việc tách hẳn — off-chain dựng hai tx riêng.
 
-- **C-CM-9 (quyền ghi vào thread — Nợ #36):** nhánh `spend` ép
-  `owner ∈ tx.extra_signatories` **HOẶC** `VaultDatum.owner == EngageDatum.owner` trên **MỌI**
-  `vault_ref` phân biệt (đọc trường 0 của datum vault bằng `un_constr_data`, KHÔNG import
-  `VaultDatum` — cùng khuôn `read_vault_burns`). Neo:
-  `onchain/validators/consume.ak` (sau `expect total_burned == total_required`).
+- **C-CM-9 (quyền ghi vào thread — Nợ #36):** nhánh `spend` ép **MỘT vế, VÔ ĐIỀU KIỆN** —
+  `VaultDatum.owner == EngageDatum.owner` trên **MỌI** `vault_ref` phân biệt (đọc trường 0 của
+  datum vault bằng `un_constr_data`, KHÔNG import `VaultDatum` — cùng khuôn `read_vault_burns`).
+  Neo: `onchain/validators/consume.ak` ▸ `all_vault_owners_are`, gọi ở cuối `validate_consume`.
 
   *Vì sao cần:* C-CM-4 chỉ ép `owner` **bảo toàn** qua tx, không ép `owner` cho phép. Thiếu cổng
   này, bất kỳ ai có MAGIC trong vault của **chính mình** đều co-spend được thread Engage của người
@@ -295,22 +306,41 @@ Validator ÉP:
   của quyền biểu quyết, mà hệ này cấm biểu quyết theo tiền — nên đó là đường mua phiếu bằng tiền,
   chỉ vòng qua một bước.
 
-  *Vì sao KHÔNG chỉ đòi chữ ký:* đường sponsor Paymaster/Feecover cố ý để người dùng **không ký**
-  (`Paymaster/FEAT.md:44`) — app chỉ là `personal_delegate` của vault **của chính người dùng**, và
-  vault cho phép BurnBatch theo `owner HOẶC personal_delegate`
-  (`InstantGen/onchain/validators/vault.ak:900`). Vế thứ hai nhận đúng đường đó mà không mở lại lỗ:
-  MAGIC bị đốt là của chính chủ thread ⇒ không hồ sơ ai khác bị ghi vào. Ai được tiêu vault đó là
-  việc của vault gác, không phải của lớp này — và vault gác bằng `owner HOẶC personal_delegate`,
-  trong đó `personal_delegate` chỉ **đặt được bằng chữ ký owner** (`validate_set_delegate`). Nên
-  vế 2 là **uỷ quyền tường minh** của chính chủ thread, không phải một lỗ bỏ ngỏ.
+  *Vì sao KHÔNG có vế `owner ∈ tx.extra_signatories` (bỏ 2026-09-15):* bản trước của mục này ghi
+  hai vế nối bằng **HOẶC**, và biện minh vế `VaultDatum.owner == EngageDatum.owner` như phần **bổ
+  sung** cho vế chữ ký. Ngược: bảo đảm "MAGIC bị đốt là MAGIC của chính chủ thread" do **một mình**
+  vế chủ-vault giữ, còn vế chữ ký là vế **dễ thoả nhất** (chủ thread luôn ký giao dịch của chính
+  mình) nên `||` ngắn mạch làm vế kia gần như không bao giờ chạy. Lập luận đầy đủ, kèm đường đi lọt
+  dựng được bằng các thao tác hợp lệ, viết tại chỗ sửa —
+  `onchain/validators/consume.ak` ▸ khối *"VÌ SAO KHÔNG CÒN VẾ `|| chữ ký chủ thread`"* ngay trên
+  `all_vault_owners_are`. **Không chép lại ở đây**: một bản sao của lập luận sẽ trôi khỏi bản gốc
+  mà không gì báo, và bản trước của mục này đã trôi đúng như thế.
 
-  *Vì sao ràng trên MỌI vault_ref, không phải "có một cái khớp":* tx trộn một vault của chủ thread
-  với một vault của người lạ, không chữ ký, thì phần đốt ở vault người lạ vẫn chảy vào `consumed_*`
-  của chủ thread. Test `consume_mixed_vault_owners_no_sig_fail` giữ đúng vế này — đổi `list.all`
-  thành `list.any` là test đó đỏ ngay.
+  *Đường sponsor Paymaster/Feecover KHÔNG bị bỏ theo:* ở đó vault cũng thuộc **chính người dùng**
+  (app chỉ là `personal_delegate` — `InstantGen/onchain/validators/vault.ak` ▸ `validate_burn_batch`,
+  auth = `owner` HOẶC `personal_delegate`), nên cổng thoả mà không cần chữ ký nào ở lớp này. Bài
+  canh: `consume_sponsor_no_signature_ok`. Ai được tiêu vault là việc của **vault** gác, không phải
+  của lớp này.
 
-  *Off-chain:* `buildConsumeTx` mặc định thêm chữ ký chủ thread (vế 1). Đường sponsor đặt
-  `sponsoredNoThreadSignature: true` và tự chịu trách nhiệm về điều kiện vế 2.
+  *`list.all` chứ không `list.any`:* danh sách `vault_ref` phân biệt hiện chỉ có thể dài đúng MỘT
+  phần tử — cả hai loại vault đang phục vụ đều ép đúng một input tại địa chỉ vault trong một tx
+  (`InstantGen/.../vault.ak` ▸ `validate_burn_batch` `DS-1`; `ScheduleGen/.../vault.ak` ▸
+  `C-VAULT-DS-1`, đặt đầu nhánh `spend` nên áp cho mọi redeemer). `list.all` là chiều fail-closed
+  cho ngày một loại vault mới bỏ chốt đó. Bài `consume_two_engage_two_vault_happy` mã hoá hình dạng
+  nhiều vault và **đã được gắn nhãn CHƯA TỚI ĐƯỢC** tại chỗ — đừng đọc nó thành "tx nhiều vault
+  dựng được hôm nay".
+
+  *Hệ quả phải khai cho tích hợp viên — **thread và vault phải mở bằng CÙNG MỘT khoá**.* Sau bản vá:
+  `Consume` ép `owner` bảo toàn (`enforce_engagement`), `BindDID` ép `owner` bảo toàn, và **không có
+  redeemer thứ ba** ⇒ **không có đường xoay `owner` của một thread**. Một thread mà chủ của nó không
+  sở hữu vault ở `vault_script_hash` đã apply thì **không bao giờ tiêu được**, và hồ sơ đã tích luỹ
+  trong đó không cứu được — không có đường chuyển nó sang thread khác (đó chính là điều C-CM-4 +
+  `enforce_engagement` bảo đảm). Đúc thread bằng ví nào thì mở vault bằng đúng ví đó.
+
+  *Off-chain:* `buildConsumeTx` **chặn fail-closed lúc DỰNG** bằng `CONSUME-010` khi
+  `VaultDatum.owner != EngageDatum.owner` — nộp tx như thế chỉ mất collateral để biết một điều đọc
+  được trước khi ký. Cờ `sponsoredNoThreadSignature` **không còn ảnh hưởng tới kết quả validator**;
+  nó chỉ thêm/bớt một mục trong `required_signers` cho ràng buộc auth ở phía **vault**.
 
 `did_commit` (MVP = `#""` rỗng): tương lai = blake2b256 commitment liên kết engagement ↔ DID sinh trắc
 (PhoenixKey, Governance C1/C3 attribution). Đặt 1 lần lúc genesis, immutable sau đó. Validator KHÔNG

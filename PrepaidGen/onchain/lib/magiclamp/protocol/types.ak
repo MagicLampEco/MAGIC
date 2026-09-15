@@ -2,6 +2,8 @@
 // Field order == Plutus Data encoding order. Đổi thứ tự một bên là hỏng giải mã
 // bên kia (§11) — twin ở offchain/src/types.ts.
 
+use cardano/transaction.{OutputReference}
+
 pub type Natural = Int
 
 // ── MagicBatch — theo ĐÚNG §4.1 canonical (7 trường) ──────────
@@ -87,4 +89,22 @@ pub type PaidFundRedeemer {
   FundLock                                 // constr 0 — co-spend với PrepaidLock
   FundSettle                               // constr 1 — co-spend với BurnBatch
   FundClaim { amount_carpdrop: Natural }   // constr 2 — provider rút, trần F2
+}
+
+// ── Vault-identity NFT redeemer (INV-VAULT-IDENTITY) ──────────
+// Redeemer của handler `mint` trên chính validator `prepaid_vault`. Policy id của
+// NFT = script hash của vault ⇒ không có tham số biên dịch nào trỏ chéo, không có
+// vòng tham chiếu (cùng khuôn `VaultIdRedeemer` của ScheduleGen, giữ nguyên hình
+// dạng dây để SDK dùng chung một bộ mã hoá).
+//
+// KHÔNG có nhánh đốt: mọi nhánh spend đều đòi NFT còn nguyên trên output tiếp nối
+// (`vault_identity_preserved`) và không nhánh nào đóng vault, nên một nhánh đốt sẽ
+// là mã chết — thêm vào chỉ tạo một cửa sẵn sàng mở ra nếu sau này ai đó nới cổng
+// bảo toàn. Hệ quả phải biết trước: NFT vault và phần ADA tối thiểu đi kèm là VĨNH
+// VIỄN, y như NFT quỹ ở `fund_nft.ak`.
+pub type PrepaidVaultIdRedeemer {
+  // constr 0 — đúc NFT định danh + đỗ một UTxO vault ở trạng thái genesis sạch.
+  // `seed` là UTxO bị tiêu trong chính giao dịch đúc: nó là thứ làm tên tài sản
+  // duy nhất (một UTxO tiêu được tối đa một lần).
+  MintVaultId { seed: OutputReference }
 }

@@ -124,7 +124,26 @@ redeemer `BurnBatch` qua `un_constr_data` với `burn_batch_constr` per-vault. V
 |---|---|---|
 | `fund_nft` (minting) | đúc NFT định danh quỹ, tên = `blake2b_224(tx_id ∥ idx)` của một input bị tiêu → không trùng, không đúc lại được | không có |
 | `paid_fund` (spend) | giữ CARP khoá + sổ quỹ; quyết toán (`FundSettle`) và trả provider (`FundClaim`) | `carp_policy_id`, `carp_asset_name`, `fund_nft_policy`, `ms_per_epoch` |
-| `prepaid_vault` (spend) | hạn-mức + `magic_batches` của một người dùng | `carp_policy_id`, `carp_asset_name`, `fund_nft_policy`, `paid_fund_hash`, `ms_per_epoch` |
+| `prepaid_vault` (spend **+ mint**) | hạn-mức + `magic_batches` của một người dùng; đồng thời là policy của NFT định danh vault (`asset_name = blake2b_256(cbor.serialise(seed))`, policy id = chính script hash — tự tham chiếu, không tham số, không vòng) | `carp_policy_id`, `carp_asset_name`, `fund_nft_policy`, `paid_fund_hash`, `ms_per_epoch` |
+
+> **Hai công thức tên tài sản nằm cạnh nhau trong module này, và chúng KHÁC nhau — cố ý.**
+> NFT quỹ dùng `blake2b_224(tx_id ∥ idx)`; NFT vault dùng `blake2b_256(cbor.serialise(seed))`.
+> Bản thứ hai theo `BOUNDARIES.md §2` ▸ `INV-VAULT-IDENTITY`, là bất biến toàn kho mà
+> `ScheduleGen` và `InstantGen` đã theo. Ai định gộp về một công thức thì đó là đổi bytes của
+> `fund_nft`, không phải một lần dọn dẹp.
+>
+> **Handler `mint` này là thứ được THÊM ngày 2026-09-15, không phải thứ vốn có.** Trước đó
+> `prepaid_vault` chỉ khai `spend` + `else`, nên Cardano — vốn không chạy validator lúc TẠO
+> một UTxO — để người tạo tự đặt datum đầu tiên. Dựng được một vault khai `prepaid_credits`
+> tuỳ ý mà không khoá một đồng CARP nào, rồi `PrepaidDraw` đọc đúng cái datum đó và cấp MAGIC
+> từ hư không. Cổng genesis nay ghim `prepaid_credits == []` ∧ `magic_batches == []` ∧
+> `next_batch_index == 0` ∧ `personal_delegate == None` ∧ `attribution` rỗng ∧ chủ phải ký, và
+> mọi nhánh spend đòi NFT còn nguyên qua MỘT điểm nghẽn trong thân `spend` (cố ý không chép
+> cổng vào 5 hàm `validate_*`: chép 5 bản là 5 chỗ sót được, mà sót thì không gì đỏ).
+>
+> Đo chứ không khai: gỡ lời gọi cổng ra rồi chạy trọn bộ ⟹ **đúng 12 bài lật đỏ, không bài nào
+> khác**. Neo theo tên hàm: `validators/prepaid.ak` ▸ `validate_mint_vault_id` ·
+> `vault_identity_preserved`.
 
 **Thứ tự deploy (không có vòng tham chiếu):** `fund_nft` (không phụ thuộc gì) → `paid_fund` (nhận
 `fund_nft_policy`) → `prepaid_vault` (nhận `paid_fund_hash` + `fund_nft_policy`).

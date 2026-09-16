@@ -45,7 +45,12 @@ pub type PrepaidVaultDatum {
   prepaid_credits    : List<PrepaidCredit>,
   magic_batches      : List<MagicBatch>,
   next_batch_index   : Natural,
-  personal_delegate  : Option<ByteArray>,    // §7.6 Paymaster
+  // 🪦 BIA MỘ — quyền chết 2026-09-16 (Nợ #14), trường ở lại. Không phải vì "gỡ
+  // ra thì vỡ decode mọi UTxO đã tạo" (hash đã đổi, UTxO đời trước ở địa chỉ
+  // khác), mà vì gỡ nó đẩy mọi trường sau lên một chỉ số — và có bên đọc theo
+  // VỊ TRÍ, lấy nhầm trường mà không kêu. §7.6 mô tả đường đã chết; giữ con trỏ
+  // để người tra biết nó nói về cái gì, đừng đọc thành đường đang chạy.
+  personal_delegate  : Option<ByteArray>,    // 🪦 §7.6 Paymaster (đường đã chết)
   last_updated_epoch : Natural,
   attribution        : VaultAttribution,
 }
@@ -81,7 +86,10 @@ pub type PrepaidVaultRedeemer {
   // constr 3 — dọn batch chết, TRẢ LẠI hạn-mức. Permissionless (§7.4).
   PrunePrepaid
 
-  // constr 4 — owner đặt/đổi consume-delegate (§7.6)
+  // constr 4 — 🪦 owner nay CHỈ XOÁ ĐƯỢC (`new_delegate == None`). Vế "đặt/đổi
+  // consume-delegate (§7.6)" chết 2026-09-16 (Nợ #14). Variant ở lại nguyên chỗ
+  // làm bia mộ nhị phân — chính khối chú thích dưới đây nói vì sao không được
+  // xê dịch nó. Xem bia mộ ở `validate_set_delegate` và ở `authed_owner`.
   SetDelegate { new_delegate: Option<ByteArray> }
 
   // constr 5 — owner gắn PersonDID MỘT LẦN, không đảo ngược (§7.5).

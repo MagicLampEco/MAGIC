@@ -252,3 +252,26 @@ describe("meter state — magic_consumed + did_lamp_map", () => {
     expect(updateGlobalMagic(base_magic, magic_consumed)).toBe(70_000_000n);
   });
 });
+
+// ── 4. BIA MỘ — đường app-sponsor không thoả được (Nợ #14, 2026-09-16) ─────────
+//
+// Số đo đứng sau khối này, ghi lại vì nó là lý do khối tồn tại: thêm một `throw`
+// VÔ ĐIỀU KIỆN vào ngay dòng đầu `buildSponsorTx` rồi chạy trọn bộ kiểm ⟹ **26/26
+// vẫn XANH**. Tức trước hôm nay bộ kiểm này không chạm hàm dựng một lần nào; ba lớp
+// khai ở đầu tệp phủ codec, toán và chuyển trạng thái meter — không lớp nào phủ
+// chính bên dựng. Một `throw` mà không bài nào thấy là một `throw` sẽ bị gỡ nhầm.
+describe("buildSponsorTx — cổng PM-1.5 không còn đầu vào nào thoả", () => {
+  it("ném NGAY, không trả về một giao dịch trông hoàn chỉnh", async () => {
+    const { buildSponsorTx } = await import("../offchain/src/paymaster.js");
+    // Tham số cố ý RỖNG: nếu hàm chạy tới bất kỳ cổng nào của chính nó (PM-001…),
+    // câu lỗi sẽ khác, và ca này đỏ. Đó là điều kiện phân biệt — nó đòi hàm chết ở
+    // dòng ĐẦU, không phải chết ở đâu đó rồi tình cờ cũng ném.
+    await expect(buildSponsorTx({} as never)).rejects.toThrow(/PM-000/);
+  });
+
+  it("câu lỗi chỉ được đường đi tiếp, không chỉ vào chính nó", async () => {
+    const { buildSponsorTx } = await import("../offchain/src/paymaster.js");
+    // Một câu "không dựng được" mà không nói đi đâu tiếp thì người vận hành vẫn kẹt.
+    await expect(buildSponsorTx({} as never)).rejects.toThrow(/D16/);
+  });
+});

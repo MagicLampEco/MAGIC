@@ -402,8 +402,9 @@ fn validate_draw(
   // C-PP-12
   expect amount >= min_draw_carpdrop
 
-  // C-PP-9: owner HOẶC consume-delegate (Paymaster §7.6)
-  expect authed_owner_or_delegate(datum, tx)
+  // C-PP-9: CHỈ chủ sở hữu. Vế `HOẶC consume-delegate (Paymaster §7.6)` chết
+  // 2026-09-16 — xem bia mộ ở `authed_owner`.
+  expect authed_owner(datum, tx)
 
   // C-PP-2: phải có ĐÚNG một dòng hạn-mức của quỹ này, và đủ số dư.
   expect list.count(datum.prepaid_credits, fn(c) { c.fund_id == fund_id }) == 1
@@ -473,7 +474,7 @@ fn validate_burn_batch(
   carp_asset_name : ByteArray,
   tx              : Transaction,
 ) -> Bool {
-  expect authed_owner_or_delegate(datum, tx)
+  expect authed_owner(datum, tx)
   expect list.length(burns) > 0
 
   let expected_batches = apply_burns(datum.magic_batches, burns, current_epoch)
@@ -610,6 +611,19 @@ fn validate_set_delegate(
   // CHỈ owner — delegate không được tự uỷ quyền tiếp.
   expect list.has(tx.extra_signatories, datum.owner)
 
+  // 🪦 BIA MỘ — nhánh này nay CHỈ XOÁ ĐƯỢC, không đặt được (2026-09-16, Nợ #14).
+  // `SetDelegate` (constr 4) ở lại nguyên chỗ vì chỉ số constructor là hợp đồng
+  // nhị phân — `SetDidCommit` nằm sau nó, gỡ variant này là đẩy `SetDidCommit`
+  // lên một bậc.
+  //
+  // 🪦 Lý do CŨ — "giữ lại để một vault lỡ mang `Some(d)` còn dọn được" — TỰ
+  // CHỌI CHÍNH NÓ: bản vá đổi bytes ⟹ đổi script hash ⟹ đổi địa chỉ, nên vault
+  // đời trước bị tiêu bởi bytes CŨ và validator này không thấy chúng. Việc dọn
+  // đời cũ là DI TRÚ, không phải việc của dòng này (Nợ #14). Dưới hash NÀY,
+  // `Some` không sinh ra được, nên dòng dưới và `fail` tương đương về hành vi;
+  // giữ dạng này vì nhánh còn đi tới được nên bài kiểm chứng minh được cả hai vế.
+  expect new_delegate == None
+
   let out = get_vault_output(tx.outputs, vault_addr)
   expect out.owner == datum.owner
   expect out.did_commit == datum.did_commit         // C-PP-8
@@ -672,10 +686,12 @@ fn validate_set_did_commit(
   expect datum.did_commit == #""
 
   // ── (2) CHỮ KÝ CỦA CHÍNH `owner` ────────────────────────────────────────
-  // KHÔNG nhận `personal_delegate`: thứ được uỷ quyền ở đường Paymaster là TRẢ
-  // TIỀN hộ, còn ở đây là KHAI MÌNH LÀ AI. Và vì (1) chỉ cho ghi một lần, một
-  // delegate ghi trước là nạn nhân mất luôn đường gắn DID thật — hỏng không
-  // hoàn tác được, đúng lớp hại mà `authed_owner_or_delegate` không được đụng.
+  // KHÔNG nhận `personal_delegate`. Vế đó nay đã chết ở MỌI nhánh (2026-09-16,
+  // Nợ #14), nên dòng này không còn là ngoại lệ — nhưng lý do riêng của nó vẫn
+  // đáng giữ, vì nó là lý do khiến nhánh này ĐÚNG NGAY TỪ ĐẦU: thứ từng được uỷ
+  // quyền ở đường Paymaster là TRẢ TIỀN hộ, còn ở đây là KHAI MÌNH LÀ AI. Và vì
+  // (1) chỉ cho ghi một lần, một delegate ghi trước là nạn nhân mất luôn đường
+  // gắn DID thật — hỏng không hoàn tác được.
   expect list.has(tx.extra_signatories, datum.owner)
 
   // ── (3) GIÁ TRỊ MỚI KHÁC RỖNG ───────────────────────────────────────────
@@ -1221,11 +1237,22 @@ fn no_fund_mint(tx: Transaction, fund_nft_policy: PolicyId) -> Bool {
   dict.is_empty(assets.tokens(tx.mint, fund_nft_policy))
 }
 
-fn authed_owner_or_delegate(datum: PrepaidVaultDatum, tx: Transaction) -> Bool {
-  list.has(tx.extra_signatories, datum.owner) || when datum.personal_delegate is {
-    Some(d) -> list.has(tx.extra_signatories, d)
-    None -> False
-  }
+// 🪦 BIA MỘ — hàm này từng tên `authed_owner_or_delegate` và từng có vế
+// `|| personal_delegate`. Vế đó CHẾT 2026-09-16 (Nợ #14) cùng cả nhánh uỷ nhiệm.
+//
+// Vì sao ca này là ca ĐẮT NHẤT trong ba module: vị từ ở đây gác HAI handler,
+// `PrepaidDraw` (`validate_draw`) và `BurnBatch` (`validate_burn_batch`). Mọi
+// bản vá đặt cổng ở BurnBatch — kể cả cổng co-spend từng được đề xuất — đều bỏ
+// sót `PrepaidDraw`, nhánh biến `prepaid_credits.remaining` (hạn mức mua bằng
+// CARP, KHÔNG có hạn dùng) thành một batch MAGIC `decay_window = 1` chết ở vách
+// epoch kế. Trần duy nhất là `amount <= c.remaining`, nên một delegate rút trọn
+// hạn mức trong một giao dịch, chủ không ký. Đổi tên hàm là cố ý: cái tên cũ là
+// thứ mời người sau nối lại vế đã chết.
+//
+// Đổi tên `pub`/private trong `lib`/`validators` KHÔNG đổi script hash; và
+// PrepaidGen chưa deploy ở mạng nào (`scripts/DEPLOYED.md` không có mục nào).
+fn authed_owner(datum: PrepaidVaultDatum, tx: Transaction) -> Bool {
+  list.has(tx.extra_signatories, datum.owner)
 }
 
 // Có ĐÚNG MỘT input tại script `vault_hash`, và redeemer Spend của nó là nhánh
@@ -1756,8 +1783,13 @@ test pp_draw_ok() {
   run_draw(din, draw_amt, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
 }
 
-// happy: delegate (Paymaster §7.6) rút hộ.
-test pp_draw_by_delegate_ok() {
+// ĐƯỜNG TẤN CÔNG Nợ #14, nhánh KHÔNG đi qua BurnBatch — delegate rút hạn mức
+// trả trước của chủ, chủ KHÔNG ký. Bài này từng là `pp_draw_by_delegate_ok`
+// ("happy: delegate (Paymaster §7.6) rút hộ") và từng XANH; đảo dấu 2026-09-16.
+//
+// Đây là bài chứng minh vì sao cổng co-spend ở BurnBatch không đóng được bán
+// kính: giao dịch này không chạm BurnBatch một lần nào.
+test pp_draw_by_delegate_rejected() fail {
   let base = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
   let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
   let dout =
@@ -1776,6 +1808,30 @@ test pp_draw_by_delegate_ok() {
       last_updated_epoch: t_epoch,
     }
   run_draw(din, draw_amt, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_delegate]))
+}
+
+// ĐỐI CHỨNG DƯƠNG: CÙNG datum còn mang `Some(d)` của đời trước, chỉ đổi người
+// ký sang chủ ⟹ CHẤP NHẬN. Cặp này phân biệt "chặn vì người ký sai" với "chặn
+// vì datum có delegate".
+test pp_draw_owner_signs_with_stale_delegate_ok() {
+  let base = t_vd([t_credit(t_fund_id, 5_000_000_000)], [])
+  let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
+  let dout =
+    PrepaidVaultDatum {
+      ..din,
+      prepaid_credits: [
+        PrepaidCredit {
+          fund_id: t_fund_id,
+          remaining: 4_000_000_000,
+          issued_epoch: 5,
+          last_draw_epoch: t_epoch,
+        },
+      ],
+      magic_batches: [drawn_batch(0)],
+      next_batch_index: 1,
+      last_updated_epoch: t_epoch,
+    }
+  run_draw(din, draw_amt, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
 }
 
 // TẤN CÔNG cốt lõi: sinh MAGIC mà KHÔNG có hạn-mức nào của quỹ đó.
@@ -2032,6 +2088,35 @@ test pp_burn_no_auth() fail {
   )
 }
 
+// ĐƯỜNG TẤN CÔNG Nợ #14, handler thứ hai do CÙNG vị từ auth gác — delegate ký
+// một mình, huỷ MAGIC sống của chủ. PrepaidGen trước 2026-09-16 KHÔNG có bài
+// nào ở hình dạng này: `pp_burn_no_auth` dùng `t_stranger`, mà người lạ thì bị
+// chặn ở cả bản cũ lẫn bản mới ⟹ nó không phân biệt được hai bên đột biến.
+test pp_burn_by_delegate_rejected() fail {
+  let base = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
+  let doutb = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 1)
+  let dout = PrepaidVaultDatum { ..doutb, personal_delegate: Some(t_delegate) }
+  run_burn(
+    din,
+    [(#"b1", 600_000_000)],
+    t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_delegate]),
+  )
+}
+
+// ĐỐI CHỨNG DƯƠNG cho bài ngay trên: cùng datum mang delegate cũ, chủ ký ⟹ qua.
+test pp_burn_owner_signs_with_stale_delegate_ok() {
+  let base = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
+  let doutb = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 1)
+  let dout = PrepaidVaultDatum { ..doutb, personal_delegate: Some(t_delegate) }
+  run_burn(
+    din,
+    [(#"b1", 600_000_000)],
+    t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]),
+  )
+}
+
 // TẤN CÔNG: giả mạo did_commit khi tiêu (phá attribution DID).
 test pp_burn_did_forged() fail {
   let din = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
@@ -2165,7 +2250,10 @@ fn run_setdel(
   )
 }
 
-test pp_setdelegate_ok() {
+// ĐẶT một delegate mới — chủ ký, mọi vế khác hợp lệ, vẫn phải bị TỪ CHỐI.
+// Bài này từng là `pp_setdelegate_ok` và từng XANH; đảo dấu 2026-09-16.
+// Đây là bài canh duy nhất cho cổng bia-mộ `new_delegate == None` ở module này.
+test pp_setdelegate_set_rejected() fail {
   let din = t_vd([t_credit(t_fund_id, 10)], [])
   let dout =
     PrepaidVaultDatum {
@@ -2176,30 +2264,39 @@ test pp_setdelegate_ok() {
   run_setdel(din, Some(t_delegate), t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
 }
 
-// TẤN CÔNG: delegate tự uỷ quyền tiếp cho mình.
+// ĐỐI CHỨNG DƯƠNG: đường XOÁ còn sống — chủ dọn được một trường `Some(d)` lỡ
+// mang từ đời trước. Không có bài này thì một bản vá bịt luôn cả nhánh vẫn xanh.
+test pp_setdelegate_clear_ok() {
+  let base = t_vd([t_credit(t_fund_id, 10)], [])
+  let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
+  let dout =
+    PrepaidVaultDatum { ..din, personal_delegate: None, last_updated_epoch: t_epoch }
+  run_setdel(din, None, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
+}
+
+// TẤN CÔNG: chính delegate cũ đụng vào trường của mình, chủ không ký.
+// Dựng dưới dạng XOÁ có chủ ý: dạng ĐẶT nay chết ở cổng bia-mộ và bài sẽ đỏ vì
+// lý do khác hẳn cái tên nó mang.
 test pp_setdelegate_by_delegate() fail {
   let base = t_vd([], [])
   let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
   let dout =
-    PrepaidVaultDatum {
-      ..din,
-      personal_delegate: Some(t_stranger),
-      last_updated_epoch: t_epoch,
-    }
-  run_setdel(din, Some(t_stranger), t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_delegate]))
+    PrepaidVaultDatum { ..din, personal_delegate: None, last_updated_epoch: t_epoch }
+  run_setdel(din, None, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_delegate]))
 }
 
-// TẤN CÔNG: đổi delegate kèm bơm hạn-mức.
+// TẤN CÔNG: dọn delegate kèm bơm hạn-mức.
 test pp_setdelegate_mints_credit() fail {
-  let din = t_vd([t_credit(t_fund_id, 10)], [])
+  let base = t_vd([t_credit(t_fund_id, 10)], [])
+  let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
   let dout =
     PrepaidVaultDatum {
       ..din,
       prepaid_credits: [t_credit(t_fund_id, 10_000_000)],
-      personal_delegate: Some(t_delegate),
+      personal_delegate: None,
       last_updated_epoch: t_epoch,
     }
-  run_setdel(din, Some(t_delegate), t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
+  run_setdel(din, None, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2253,8 +2350,11 @@ test pp_setdid_no_owner_sig() fail {
 }
 
 // TẤN CÔNG: `personal_delegate` khai danh tính hộ. Uỷ quyền TRẢ PHÍ không phải
-// uỷ quyền KHAI MÌNH LÀ AI — bài này là thứ chặn ai đó "tiện tay" đổi vế (2)
-// thành `authed_owner_or_delegate` cho đồng bộ với Draw/BurnBatch.
+// uỷ quyền KHAI MÌNH LÀ AI — bài này từng là thứ chặn ai đó "tiện tay" đổi vế
+// (2) thành `authed_owner_or_delegate` cho đồng bộ với Draw/BurnBatch.
+// Sau 2026-09-16 hai nhánh kia CŨNG chỉ nhận chủ, nên cái bẫy "cho đồng bộ" hết
+// đường xảy ra. Bài vẫn giữ: nó canh vế (2) một cách độc lập với việc hàng xóm
+// đang chặt hay lỏng, và đó đúng là thứ một bài canh phải làm.
 test pp_setdid_by_delegate() fail {
   let din = PrepaidVaultDatum { ..sd_din(), personal_delegate: Some(t_delegate) }
   let dout = PrepaidVaultDatum { ..din, did_commit: t_did, last_updated_epoch: t_epoch }
@@ -2300,11 +2400,14 @@ test pp_setdid_end_to_end() {
       branch_tx(t_vault_in(g), t_vault_out(after), [], [], [t_owner]),
     )
 
-  let after2 = PrepaidVaultDatum { ..after, personal_delegate: Some(t_delegate) }
+  // Bước (3) dùng `SetDelegate` ở dạng XOÁ (2026-09-16): nhánh này vẫn là một
+  // nhánh spend KHÁC và vẫn chứng minh được `did_commit` sống qua nó, nhưng
+  // dạng ĐẶT đã chết nên không dựng bước này bằng `Some(...)` được nữa.
+  let after2 = PrepaidVaultDatum { ..after, personal_delegate: None }
   expect after2.did_commit == t_did
   run_spend(
     after,
-    SetDelegate { new_delegate: Some(t_delegate) },
+    SetDelegate { new_delegate: None },
     branch_tx(t_vault_in(after), t_vault_out(after2), [], [], [t_owner]),
   )
 }
@@ -3203,14 +3306,20 @@ test pp_spend_prune_nft_escapes() fail {
 
 // ── Nhánh 5/5 — SetDelegate ───────────────────────────────────
 
+// Dựng ở dạng XOÁ (2026-09-16): nhánh `SetDelegate` nay chỉ xoá được, nên bộ
+// bài "nhánh 5/5" phải đi qua dạng còn sống, không thì nó đo cổng bia-mộ chứ
+// không đo cổng NFT định danh vault mà nó mang tên.
 fn sp_setdel_din() -> PrepaidVaultDatum {
-  t_vd([t_credit(t_fund_id, 10)], [])
+  PrepaidVaultDatum {
+    ..t_vd([t_credit(t_fund_id, 10)], []),
+    personal_delegate: Some(t_delegate),
+  }
 }
 
 fn sp_setdel_dout() -> PrepaidVaultDatum {
   PrepaidVaultDatum {
     ..sp_setdel_din(),
-    personal_delegate: Some(t_delegate),
+    personal_delegate: None,
     last_updated_epoch: t_epoch,
   }
 }
@@ -3218,7 +3327,7 @@ fn sp_setdel_dout() -> PrepaidVaultDatum {
 fn sp_setdel_run(vin: Input, vout: Output) -> Bool {
   run_spend(
     sp_setdel_din(),
-    SetDelegate { new_delegate: Some(t_delegate) },
+    SetDelegate { new_delegate: None },
     branch_tx(vin, vout, [], [], [t_owner]),
   )
 }

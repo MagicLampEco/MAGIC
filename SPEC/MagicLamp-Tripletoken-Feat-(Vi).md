@@ -416,7 +416,15 @@ biến on-chain vẫn thoả, mà bên bán thiếu 10×. `consumed_nanogic` đ�
 `did_commit` (MVP = `#""` rỗng) → tương lai = `blake2b256` commitment liên kết engagement ↔ PhoenixKey DID sinh trắc (Governance C1/C3 attribution). Đặt 1 lần genesis, immutable. **Thuộc PhoenixKey backend → giao Long** (ranh giới: MAGIC-team không sửa).
 
 ### §7.6 Paymaster — tiêu hộ, MAGIC không rời vault
-App đặt `personal_delegate = Some(app_pkh)` qua `SetDelegate` ở vault → app ký `BurnBatch` tiêu MAGIC HỘ user (trả phí tx) mà **MAGIC vẫn nằm trong vault user**. Đạt UX paymaster KHÔNG vi phạm "MAGIC không transfer".
+**Mục tiêu KHÔNG đổi:** app trả phí giao dịch hộ người dùng, mà **MAGIC vẫn nằm trong vault người dùng** — đạt UX paymaster không vi phạm "MAGIC không transfer".
+
+🪦 **Cơ chế cũ đã bị bỏ khỏi mô hình 2026-09-16.** Bản trước của mục này viết: *"App đặt `personal_delegate = Some(app_pkh)` qua `SetDelegate` ở vault → app ký `BurnBatch` tiêu MAGIC HỘ user."* Nhánh uỷ nhiệm nay không còn: `SetDelegate` ở cả ba vault chỉ **XOÁ** được (`expect new_delegate == None`), cửa đúc ép `personal_delegate == None`, và `BurnBatch` chỉ nhận chữ ký chủ sở hữu. Không có hình dạng giao dịch nào dựng lại được đường đó.
+
+Đừng hiện thực hoá cơ chế cũ từ mục này. Cái mất là một **cơ chế**, không phải một **yêu cầu**.
+
+| mã | trạng thái | ràng buộc đang có hiệu lực (fail-closed) | khai ở |
+|---|---|---|---|
+| D16 | cơ chế uỷ quyền thay thế để ngỏ | cổng PM-1.5 (`all_vaults_delegate_app`) đứng ở trạng thái không thoả được · `buildSponsorTx` ném `PM-000` thay vì dựng · Paymaster chưa deploy ở mạng nào | `DevStatus.md` ▸ D16 · Nợ #74 |
 
 ---
 

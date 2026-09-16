@@ -128,8 +128,9 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   // Mọi trường TÍCH LUỸ phải rỗng/0 — validate_mint_vault_id ép từng trường một.
   if (vault.personalDelegate != null) {
     throw new Error(
-      `vault.personalDelegate không dùng được ở createVault: datum khởi sinh ` +
-      `bắt buộc personal_delegate == None. Dùng SetDelegate sau khi vault tồn tại.`,
+      `vault.personalDelegate không dùng được: datum khởi sinh bắt buộc ` +
+      `personal_delegate == None, và nhánh uỷ nhiệm đã bị bỏ khỏi mô hình ngày ` +
+      `2026-09-16 (Nợ #14) — SetDelegate nay chỉ XOÁ được, không đặt được.`,
     );
   }
   const initialVault = buildInitialVaultDatum({

@@ -178,6 +178,12 @@ pub type VaultDatum {
   delegation_cert       : DelegationCertificate,
   activity_state        : ActivityState,
   streak_state          : StreakState,
+  // 🪦 BIA MỘ trường 15 — quyền chết 2026-09-16 (Nợ #14), trường ở lại. Lý do
+  // KHÔNG phải "gỡ ra thì vỡ decode mọi UTxO đã tạo": hash đã đổi nên UTxO đời
+  // trước nằm ở địa chỉ khác, ngoài tầm với của validator này dù có gỡ hay không.
+  // Lý do thật: gỡ trường 15 đẩy mọi trường sau nó lên một chỉ số, và có bên đọc
+  // theo VỊ TRÍ — `Paymaster` ▸ `vault_delegate_is` gọi thẳng `list.at(fields, 15)`.
+  // Bên đó lấy nhầm trường và KHÔNG kêu; các bên đọc qua lược đồ thì hỏng ồn ào.
   personal_delegate     : Option<ByteArray>,
   attribution           : VaultAttribution,
 }
@@ -238,9 +244,10 @@ pub type VaultRedeemer {
   // constr 4  WithdrawLamp: withdraw unlocked LAMP back to wallet (SPEC_V1 §1)
   WithdrawLamp  { amount: Natural }
 
-  // constr 5  SetDelegate: set/clear the consume-delegate (personal_delegate).
-  // Owner-only, no cooldown. Reuses the existing personal_delegate field (15);
-  // does NOT add a datum field. Some(d) lets d trigger BurnBatch on owner's
-  // behalf (app paymaster) WITHOUT moving MAGIC; None restricts to owner.
+  // constr 5  SetDelegate: 🪦 nay CHỈ XOÁ ĐƯỢC (`new_delegate == None`).
+  // Owner-only, no cooldown. Reuses the existing personal_delegate field (15).
+  // Bản cũ của dòng này viết "Some(d) lets d trigger BurnBatch on owner's behalf
+  // (app paymaster)" — đường đó CHẾT 2026-09-16 (Nợ #14). Variant ở lại nguyên
+  // chỗ làm bia mộ nhị phân; xem `validate_set_delegate`.
   SetDelegate   { new_delegate: Option<ByteArray> }
 }

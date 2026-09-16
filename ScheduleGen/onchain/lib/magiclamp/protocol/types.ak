@@ -152,6 +152,18 @@ pub type VaultDatum {
   delegation_cert       : DelegationCertificate,
   activity_state        : ActivityState,
   streak_state          : StreakState,
+  // 🪦 BIA MỘ trường 15 — quyền chết 2026-09-16 (Nợ #14), trường ở lại.
+  // Lý do PHẢI ở lại KHÔNG phải "gỡ ra thì vỡ decode mọi UTxO đã tạo" (câu đó ở
+  // đầu tệp đúng cho lược đồ nói chung, và KHÔNG áp cho ca này): bản vá đã đổi
+  // bytes ⟹ đổi script hash ⟹ đổi địa chỉ, nên UTxO đời trước nằm ngoài tầm với
+  // của validator này dù ta có gỡ trường hay không.
+  //
+  // Lý do THẬT là ở đây và bây giờ: gỡ trường 15 đẩy MỌI trường sau nó lên một
+  // chỉ số. Ba bên đọc theo VỊ TRÍ chứ không theo tên — lược đồ `MagicSDK` ▸
+  // `src/schemas.ts`, bộ dựng datum off-chain, và `Paymaster` ▸
+  // `vault_delegate_is` đọc thẳng `list.at(fields, 15)`. Cả ba lệch một ô cùng
+  // lúc, và Aiken nghiêm ngặt về SỐ trường theo CẢ HAI chiều nên bên nào cũng
+  // hỏng ồn ào — trừ bên đọc thô, bên đó lấy nhầm trường và im.
   personal_delegate     : Option<ByteArray>,
   attribution           : VaultAttribution,
 }
@@ -173,14 +185,17 @@ pub type VaultRedeemer {
 
   // constr 2  BurnBatch: datum-consume MAGIC (D1) — giảm current_amount của
   //           các batch theo `burns = [(batch_id, amount)]`. KHÔNG tx.mint,
-  //           KHÔNG token. Auth: owner HOẶC personal_delegate (consume-delegate).
+  //           KHÔNG token. Auth: CHỈ owner — vế `HOẶC personal_delegate` chết
+  //           2026-09-16 (Nợ #14).
   BurnBatch { burns: List<(ByteArray, Natural)> }
 
   // constr 3  WithdrawLamp: withdraw unlocked LAMP back to wallet (SPEC_V1 §1)
   WithdrawLamp { amount: Natural }
 
-  // constr 4  SetDelegate: owner đặt/đổi consume-delegate (personal_delegate).
-  //           Tách concern khỏi commit/withdraw; KHÔNG cooldown (đổi rẻ).
+  // constr 4  SetDelegate: 🪦 nay CHỈ XOÁ ĐƯỢC (`new_delegate == None`).
+  //           Variant ở lại nguyên chỗ vì chỉ số constructor là hợp đồng nhị
+  //           phân — gỡ nó là đẩy `PruneExpired` (constr 5) lên một bậc và vỡ
+  //           decode mọi redeemer đã phát. Xem bia mộ ở `validate_set_delegate`.
   SetDelegate { new_delegate: Option<ByteArray> }
 
   // constr 5  PruneExpired: dọn rác batch ĐÃ CHẾT, permissionless, không đụng

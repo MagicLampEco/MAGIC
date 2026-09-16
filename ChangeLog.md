@@ -5,6 +5,27 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-09-15 — Hai giới hạn được ghi vào sổ nợ trước khi chúng thành mã: `Paymaster` và `C1`
+
+**Đổi gì.** Chỉ `DevStatus.md`. Không một dòng mã nào đổi, có chủ ý.
+
+1. **Nợ #73 mới — `Paymaster/onchain/validators/paymaster.ak:145` so `Address` ĐẦY ĐỦ với
+   apply-param `treasury_addr`.** Phía kho LAMP, nhánh `Refill` chỉ ràng payment credential
+   của output (`util.ak:118-123` ▸ `is_at_script`), nên stake part đổi được sau deploy. Một
+   lần đổi là `lamp_to_treasury` cộng ra 0 vĩnh viễn ⟹ mọi giao dịch bảo trợ phí bị từ chối.
+2. **Nợ #47 thêm khối CHỐT** — ràng buộc tạm, fail-closed: `C1` không quy kết qua
+   `did_commit` trần · không tài liệu nào trong kho gán nhãn "chống-Sybil" cho `C1`/`C2` ·
+   vế xác thực đi cùng chuyến đúc của `consume`, không mở chuyến đổi hash riêng.
+
+**Vì sao.** Cả hai đều là giới hạn ĐÃ ĐO ĐƯỢC mà chưa có chỗ neo trong kho — chúng chỉ sống
+trong thư giữa các nhà, và thư thì già đi lặng lẽ. Vế (2) là ràng buộc **phòng ngừa**: phép
+liệt kê đóng trong kho cho 7 dòng chứa chữ "Sybil" và không dòng nào đang gán nhãn đó cho
+`C1`/`C2`.
+
+**Cái gì gãy nếu ai đó đang bám bản cũ.** Không gì gãy ở tầng mã. Ai đang định nới
+`o.address == treasury_addr` thành so payment credential thì đọc Nợ #73 trước: nới ở đó
+không gỡ bảo đảm mà dời nó sang chỗ không ai canh.
+
 ## 2026-09-15 — Sổ hash validator đã sai 1 ngày, và cổng canh nó chạy ở không chỗ nào
 
 **Đổi gì.**

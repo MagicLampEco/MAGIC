@@ -25,7 +25,11 @@ CLAUDE.md
 # Trạng thái deploy cục bộ theo mạng (giá trị công khai, bản ghi chuẩn là scripts/DEPLOYED.md).
 # Cả bản sao lưu: hash cũ trong tệp .bak là mồi cho việc deploy nhầm vào địa chỉ đã chết.
 scripts/state.*.sh
-scripts/state.*.sh.bak-*
+# Và MỌI hậu tố, không riêng `.bak-`. Luật cũ chỉ chặn đúng chuỗi người ta đã nghĩ ra
+# lúc viết nó; lúc cách ly một sổ mang đời LAMP sai thì cái tên tự nhiên lại là
+# `state.Preprod.sh.doi-lamp-<hash>-<ngày>`, và nó hiện lên untracked ngay. Một tệp như
+# thế mang hash của một đời đã chết, đúng loại mồi mà dòng chú thích trên nói tới.
+scripts/state.*.sh.*
 # Bản sao lưu của sổ trạng thái kia cũng vậy. `*.env` ở trên đã chặn chính tệp đó, nhưng
 # một hậu tố `.bak-…` làm nó THÔI khớp `*.env` — và lúc dời sổ sang đời mới thì đúng là
 # người ta tạo ra những tệp có hậu tố ấy. Đo thật: `deployed.Preprod.env.bak-doi-cu` hiện

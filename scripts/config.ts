@@ -76,6 +76,14 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
     "chính sách chữ-ký-đơn suy từ khoá ví deploy của kho này — không trần phát hành, " +
     "không SupplyState, không cổng WHO; đã có lúc cung lên 72 tỷ, gấp đôi trần 36 tỷ. " +
     "Nó đúc được cả REG và SUPPLY nên bắt chước trọn hình dạng của lamp_mint thật.",
+  "3628b069a032490ca24863f48fe36f902d6cf676e1f5b5d3e7845d44":
+    "mang đúng asset 744c414d50, cung 1.000.000. NGUY hơn hàng nhái thường vì nó NẰM " +
+    "SẴN trong UTxO của một ví deploy đang dùng — một vòng lặp chọn tài sản theo TÊN " +
+    "nhặt phải nó mà không cần ai tấn công. Hai sổ trong hệ ghi XUẤT XỨ khác nhau cho " +
+    "cùng policy này (hàng thử cũ đã bỏ / ví phí tự đúc cho chính nó), nghĩa là ít " +
+    "nhất một sổ đang ghi sai nguồn. Cổng KHÔNG đọc xuất xứ — nó so policy id — nên " +
+    "chênh đó không đổi hành vi chặn; ghi ra để lần truy ngược sau không ra sai chỗ. " +
+    "Chép có nhãn 2026-09-16.",
 };
 
 /** Đời LAMP **THẬT** nhưng ĐÃ BỊ THAY. Khác loại với bảng trên, và chỗ khác nhau

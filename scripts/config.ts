@@ -76,12 +76,51 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
     "chính sách chữ-ký-đơn suy từ khoá ví deploy của kho này — không trần phát hành, " +
     "không SupplyState, không cổng WHO; đã có lúc cung lên 72 tỷ, gấp đôi trần 36 tỷ. " +
     "Nó đúc được cả REG và SUPPLY nên bắt chước trọn hình dạng của lamp_mint thật.",
+};
+
+/** Đời LAMP **THẬT** nhưng ĐÃ BỊ THAY. Khác loại với bảng trên, và chỗ khác nhau
+ * đó quyết định thông điệp lỗi phải nói gì.
+ *
+ * `28e916b0…` chưa bao giờ là LAMP: chữ-ký-đơn, không trần, không `SupplyState`.
+ * `7a1a7aed…` và `d9c09230…` thì CÓ one-shot proof, CÓ `SupplyState`, chỉ là đời
+ * cũ. Gộp chung một bảng thì thông điệp lỗi khai sai bản chất của loại thứ hai,
+ * và người đọc đi tìm một token nhái không tồn tại.
+ *
+ * Vì sao bảng này phải có, đo được hôm nay: ví Preprod DUY NHẤT có tADA đang cầm
+ * `d9c09230…` (10⁹ đơn vị). Bảng cũ liệt `28e916b0…` và `7a1a7aed…` nhưng KHÔNG
+ * có `d9c09230…` — nên một lượt E2E chạy bằng đúng ví đó sẽ đi lọt cổng này và
+ * xanh trọn vẹn trên một đời đã chết. Cổng im lặng đúng ca nó sinh ra để chặn.
+ *
+ * Nguồn phân loại: kho LAMP ▸ `Genesis/offchain/src/lampPolicies.ts`. Chép có
+ * nhãn (chưa có đường nhập khẩu), ngày 2026-09-16. Đã gửi thư hỏi kho LAMP xem
+ * sổ nguồn có `d9c09230…` chưa — nếu chưa thì chỗ thiếu ở nguồn, không ở bản chép.
+ */
+const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
   "7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9":
-    "bản diễn tập đời trước, đã bị thay (SUPERSEDED).",
+    "đời `preprod/preview-nativesig`, đã bị thay. Policy giống nhau xuyên mạng vì " +
+    "cả bốn khe marker đều neo bởi native-sig ví deploy — người giữ khoá đúc lại " +
+    "SUPPLY NFT lượt hai là đúc lại trọn cap.",
+  "d9c09230079b810ab5ed92e8db4c190d42efc42db6aac028656f7e07":
+    "đời `preprod-oneshot-12param`, đã bị thay bởi `8169b76c…` " +
+    "(`preprod-oneshot-14param`, đúc 2026-09-14). Đây là thứ ví Preprod có tADA " +
+    "đang cầm — nên nó là đời DỄ dùng nhầm nhất, không phải đời khó gặp nhất.",
 };
 
 function requireLampPolicyId(): string {
   const v = process.env.LAMP_POLICY_ID ?? "";
+  const doi = SUPERSEDED_LAMP_POLICIES[v];
+  if (doi) {
+    throw new Error(
+      `LAMP_POLICY_ID đang trỏ vào một đời LAMP ĐÃ BỊ THAY: ${v}\n` +
+      `  ${doi}\n` +
+      `  · Đây KHÔNG phải token nhái — đừng đi tìm một kẻ giả mạo. Nó là LAMP thật ` +
+      `của một đời đã chết, nên mọi phép so hình dạng đều cho nó đi qua.\n` +
+      `  · Hại cụ thể nếu cứ chạy: \`03_deploy_shards.ts\` và \`07_create_schedule_vault.ts\` ` +
+      `đều apply-param theo policy này ⟹ 16 shard one-shot và vault sinh ra ở một ` +
+      `script hash không ai dùng nữa, và mất thêm 2 epoch chờ để làm lại.\n` +
+      `  · Lấy đời ACTIVE theo mạng từ kho LAMP (Genesis ▸ \`activeLampPolicyId\`).`,
+    );
+  }
   const why = NON_LAMP_LOOKALIKE_POLICIES[v];
   if (why) {
     throw new Error(

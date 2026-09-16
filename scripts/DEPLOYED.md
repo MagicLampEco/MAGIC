@@ -65,9 +65,34 @@ Hai dòng đáng đọc kỹ, vì chúng là hai kiểu hiểu sai khác nhau:
   cố ý đặt tên để không ai nhầm — và nó nằm cạnh `tLAMP` dưới **cùng một policy**, tức chính
   sách đó không phân biệt được "hàng thử" với "hàng thật" bằng bất cứ thứ gì ngoài tên.
 
-Một policy nữa đã chết nhưng còn trong danh sách từ chối của SDK:
-`7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9` — bản diễn tập đời trước, đã bị
-thay.
+Một policy nữa, và dòng cũ ở đây tả **sai theo hướng làm nhẹ đi**:
+`7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9`.
+
+Bản cũ gọi nó là *"policy chữ-ký-đơn đã chết — bản diễn tập đời trước, đã bị thay"*. Hai
+chỗ sai, đo lại trên Koios Preprod 2026-09-16:
+
+- **KHÔNG phải chữ-ký-đơn.** `POST /script_info` trả `"type": "plutusV3"`; nó do `lamp_mint`
+  bản 12 tham số đúc. Chỗ "native-sig" có thật nhưng nằm ở **bốn khe marker**
+  (thread/registry/kho/meter), trỏ vào policy native-sig của ví deploy — không phải ở policy
+  LAMP. Khác biệt này không phải chuyện chữ: chính sách chữ-ký-đơn thì đọc điều kiện đúc
+  bằng mắt, còn Plutus thì **không ai biết có trần phát hành hay không nếu chưa giải mã
+  2.919 byte script**.
+- **KHÔNG "đã chết".** Vì bốn khe marker là native-sig, mà native-sig **không one-shot**,
+  người giữ MỘT khoá đúc lại được SUPPLY NFT lượt hai, dựng `SupplyState` thứ hai với
+  `dist_minted = 0`, rồi đúc lại **trọn cap**. Tức nó **không có trần phát hành thực thi
+  được** — một câu mạnh hơn "đã chết", theo chiều xấu. `/asset_info`: `total_supply`
+  10 000 000 000 · `mint_cnt` 1 · `burn_cnt` 0 · tạo 2026-07-13T16:03:33Z.
+
+Và nó **không phải hàng nhái** — nó là một đời LAMP THẬT đã bị thay. Xếp nó vào danh sách
+hàng nhái là xếp sai chỗ, lần sau tra không ra. Kho này đã tách đúng hai bảng từ trước
+(`scripts/config.ts` ▸ `NON_LAMP_LOOKALIKE_POLICIES` so với `SUPERSEDED_LAMP_POLICIES`);
+chỉ dòng sổ này còn kẹt ở bản cũ. Nguồn phân loại: kho LAMP ▸
+`Genesis/offchain/src/lampPolicies.ts` ▸ bản ghi `preprod-native-sig-12param`, trạng thái
+`SUPERSEDED`.
+
+> Dòng sai ấy đang nói rằng một rủi ro **đã được hiểu**, trong khi nó chưa. Đó là kiểu sai
+> đắt hơn một dòng trống. Hai nhà khác tìm ra nó độc lập trong cùng một ngày, mỗi nhà một
+> phép đo riêng — và cả hai đều đọc dòng này trước khi đo.
 
 ### Dòng `LAMP` trên Preview — ba lượt đúc, trải 26 ngày
 
@@ -193,11 +218,16 @@ nguyên **16/16** UTxO — đời ghi ở bảng trên (`165b30aa…`,
 `state.Preview.sh` (`f5769884…`). Nên đường fire→withdraw đi được: ~2 giao dịch fire mỗi
 vault khoá (`max_fires_per_tx_catchup = 8`, mỗi lịch 10 lượt) cộng 5 lượt withdraw.
 
-🔴 **Nhưng nửa CÔNG BỐ thì bị chặn, và chặn có chủ ý.** Muốn có vault đời-hai thì phải
-apply-param một policy id LAMP thật theo mạng — mà cả `scripts/state.Preview.sh:3` lẫn
-`scripts/state.Preprod.sh:3` **cố ý không giữ giá trị nào**, và `assertLampPolicyId` ném
-đúng vào `28e916b0…` là thứ duy nhất kho này đang có. Giá trị canonical thuộc kho LAMP
-(Genesis ▸ lampPolicies) và bên đó **chưa đúc**.
+🔴 **Nửa CÔNG BỐ từng bị chặn, và chặn có chủ ý — trên Preview thì vẫn chặn.** Muốn có
+vault đời-hai thì phải apply-param một policy id LAMP thật theo mạng, mà
+`scripts/state.Preview.sh:3` **cố ý không giữ giá trị nào**, và `assertLampPolicyId` ném
+đúng vào `28e916b0…` là thứ duy nhất kho này có cho mạng đó.
+
+> **Trên PREPROD thì chỗ chặn này đã mở, 2026-09-16.** Kho LAMP đã đúc đời
+> `preprod-oneshot-14param` (`8169b76c…`) và đã chuyển 30.000 tLAMP thật sang ví deploy.
+> Câu *"kho LAMP chưa đúc"* ở bản trước của dòng này nay **sai** cho Preprod và vẫn
+> **đúng** cho Preview — một câu, hai mạng, hai giá trị chân lý. Đời Preprod mới ghi ở
+> mục *"Preprod — đời tLAMP thật"* bên dưới.
 
 Hệ quả về THỨ TỰ, viết ra vì nó ngược với trực giác "dọn trước cho sạch": rút đời-một về
 **trước** khi có đời-hai không thu lại giá trị nào (token nhái), mà bỏ lại một khoảng không
@@ -325,7 +355,15 @@ Ba điều đọc thẳng từ đó:
    dữ kiện nào mà bảng đời 1 ở trên chưa có, nên đã xoá để hai bản khác nhau thôi nằm cạnh
    nhau gây đọc nhầm.
 
-## Preprod — 2026-08-12
+## Preprod — 2026-08-12 · ĐỜI ĐÃ MỒ CÔI
+
+> 🔴 **Mọi giá trị trong mục này dựng trên `28e916b0…`, KHÔNG phải LAMP.** Đó là chính sách
+> chữ-ký-đơn suy từ khoá ví deploy — không trần, không `SupplyState`. Vì `lamp_policy_id` là
+> apply-param (tham số lúc BIÊN DỊCH), mọi hash dưới đây là địa chỉ của một đời khác với đời
+> đang chạy. Không dùng lại một giá trị nào ở đây. Đời đang chạy ở mục kế tiếp.
+>
+> Giữ mục này chứ không xoá, vì nó là thứ duy nhất giải thích được các UTxO còn nằm trên
+> Preprod dưới những địa chỉ đó.
 
 | Thứ | Giá trị |
 |---|---|
@@ -350,6 +388,65 @@ Ba điều đọc thẳng từ đó:
 | UM NFT policy | `8bd51c8ed0ae559acf13e7d12801e2635fe4ae30b8fe62a416cb6a25` |
 | UM script hash | `c81d0a41ccb2487cb764923f01e04a8419d13d0485a16ac05495c935` |
 | Shard NFT policy | `b6ea66ab9fe55747930294be0a74bc4eba1136c72e90c0585ee2bf7b` |
+
+---
+
+## Preprod — đời tLAMP THẬT, 2026-09-16
+
+Đời đầu tiên của kho này dựng trên một policy LAMP thật. Nguồn giá trị:
+kho LAMP ▸ `Genesis/offchain/src/lampPolicies.ts` ▸ bản ghi `preprod-oneshot-14param`,
+trạng thái `ACTIVE`. **Bản sao có nhãn**, chép 2026-09-16 — không phải nguồn.
+
+| Thứ | Giá trị |
+|---|---|
+| LAMP policy | `8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd` · asset `744c414d50` |
+| UM script hash | `8fe2ae7dffab57a9ec03db6372d9f6633465d30bd52c3a80c3bdab53` |
+| UM NFT policy | `057760113ea0a2f69566f8b3a07a505c7e2798d4d286343e0b89540a` |
+| Shard script hash | `97e967d2570f195503dbcae9841e7d6ed776b49af4d82058f3234dfb` |
+| Shard NFT policy | `e1642d073079945376e6b507d066c13fc8ac07a977b82863c2297e77` (16/16) |
+| Vault ScheduleGen | `18375a7d46d4a1ba63e414c7cfa825a7de2531909769ee26534b3edd` |
+| Vault ScheduleGen (địa chỉ) | `addr_test1wqvrwknagm22rwnrus2v0nagyknauff3jztknm3x2d9nahga0t3ee` |
+| ConsumeMAGIC script hash | `1d792c6f36828e45bd82212896ef95f3814a0a78ebf86b82c26cbb56` |
+| ConsumeMAGIC (địa chỉ) | `addr_test1wqwhjtr0x6pgu3dasgsj39h0jheczjs20r4ls6uzcfktk4s6qqe4k` |
+| PriceParam (địa chỉ) | `addr_test1wqhfsdg85h7ru6utfy8tts793trnmh6vj9juxv0za66drgqmv3c5t` |
+| Price NFT policy | `7805e6909ba2f06f14ba342de7a9d3cc783066b4daa3d5fe35bf489b` |
+
+| Bước | TX |
+|---|---|
+| `02_deploy_um` | `58650f35eaa289ffc0811d3a342c3ac70a88fe51a64babd4a55b75dd625e5a4b` |
+| `03_deploy_shards` | `8071e44d6c3001f498bfd7bc00e38c180eba09e338461e9e73ecfb08810badc9` |
+| `06_publish_ref_scripts` (vault) | `8ec9ae46389b594258cda7c315de6eb82eeabf72ec241a897563d5b8852847f6#0` |
+| `06_publish_ref_scripts` (shard) | `b40b05749475a2395c21c40bc6cffdf09ce48f44a12b5407756c3b857a0aca5c#0` |
+| `07_create_schedule_vault` | `338538968ea997b07d220402f22cfe4fcdf6b537813f636efb2704031cecc268` |
+| `09_deploy_consume` | `999354825f15c32eeb57ee74fb0c7cfa4ef812095500b0fdd0e78689905e020b` |
+| `09` ref-script consume | `628ff91ad8c483e6af97c577291b49c6c6e0f98bac7b3f0c8afeed597706bf91#0` |
+| `ScheduleCommit` | `4ed8b6c40a5436468139337e5994b5e520f176d83504b86832b6a9ce33019ae6` |
+
+**Bước 05 (vault InstantGen) CỐ Ý chưa chạy ở đời này.** Nó không phải điều kiện tiên quyết
+của bước 09: `scripts/deploy/09_deploy_consume.ts:91-94` đọc
+`VAULT_HASH ?? VAULT_SCHEDULE_HASH ?? VAULT_INSTANT_HASH` — ba biến, một là đủ. Và đường
+InstantGen chưa cấp nổi một nanogic (Nợ #19), nên khoá 10.000 tLAMP vào đó lúc này không
+mua được gì cho vòng E2E.
+
+**Lịch đã cam kết** — `L = 10`, `λ = 1 tLAMP` mỗi lượt, `rate_locked_q = 8000000000`
+(0,008 MAGIC mỗi LAMP, bất biến theo T8), shard 6/16, tổng 0,08 MAGIC bảo đảm.
+`commit_epoch = 20712` · fire đầu `20714` · fire cuối `20723`.
+
+🔴 **Hai đồng hồ, đừng lẫn.** Epoch trong bảng trên là **epoch giao thức** của hệ này
+(`ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`, Preprod = 86 400 000 ms = 1 ngày),
+**không** phải epoch mạng Cardano (Preprod = 5 ngày). Hai đại lượng còn khác cả gốc toạ độ:
+`posixMsToEpoch` không trừ genesis, nên bước 02 in `Current epoch: 20712` trong khi Preprod
+Cardano ở khoảng 233. Lấy nhịp mainnet (432 000 000) gán cho Preprod là ra lịch lệch gấp
+năm — đã có hai nhà khác tính nhầm đúng chỗ này trong một ngày.
+
+⟹ `schedule_delay = 2` epoch giao thức = **~2 ngày đồng hồ**, không phải 10 ngày. Và
+`schedule_decay_window = 1` ⟹ một batch MAGIC chỉ sống **đúng một ngày UTC**: fire và tiêu
+phải xong trong cùng epoch giao thức, nên bước 09 chạy TRƯỚC fire chứ không sau.
+
+⏳ **Đời này sống trong một CỬA SỔ, không vĩnh viễn.** Kho LAMP đóng băng `8169b76c…` theo
+ĐỢT đầu-cuối; sau đợt đó còn một lượt đúc lại, và lượt đó đổi policy id. Chưa có lịch. Vì
+`lamp_policy_id` là apply-param, cả cụm trong mục này mồ côi khi lượt ấy xảy ra. Nghĩa vụ
+báo trước thuộc về bên phát hành — kho này không phải đi hỏi.
 
 ---
 
@@ -404,3 +501,52 @@ Vá `cap_pp` một mình KHÔNG mở được cửa. Xem `DevStatus.md` Nợ #19
 **Hệ quả cho thứ tự thao tác của người dùng:** InstantGen là **khoản ứng trước** trên dòng
 ScheduleGen đã cam kết, không phải cửa độc lập. Kể cả sau khi vá, thứ tự tối thiểu vẫn là
 `Wakeme → ScheduleCommit → chờ 2 epoch → ScheduleFire → BurnBatch → InstantGen`.
+
+### Cùng ngày, muộn hơn — InstantGen đã cấp và đã bị tiêu THẬT
+
+Đoạn ngay trên viết *"Vá `cap_pp` một mình KHÔNG mở được cửa"* và *"thứ tự tối thiểu vẫn là
+`Wakeme → ScheduleCommit → chờ 2 epoch → ScheduleFire → BurnBatch → InstantGen`"*. Vế thứ
+nhất vẫn đúng. **Vế thứ hai đã sai** kể từ bản vá Nợ #19 chiều 2026-09-16: cửa vào của vòng
+nay mở bằng một hằng biên dịch, nên InstantGen KHÔNG còn xếp sau ScheduleFire.
+
+| việc | tx |
+|---|---|
+| 04 BackingBeacon | `642479ba1e7ee11ee95c67345bcede8197c357ac01207101757f5bd8245a99be` |
+| 05 vault InstantGen (1001 LAMP) | `a4669a94485d16d700164cd3ff8e91dc8bb602fc9e19999c50f153a90862aad7` |
+| ref-script vault instant | `9f737208c775e9283b5b5fdffa3b9c64e11c15f6c0318e15652b31bdae7b99ff#0` |
+| **InstantGen cấp MAGIC** | `720e1817dc12a418751eb40326648bf5498d22d87c4f815a1089daf8622987f6` |
+| 09 consume — bản cho vault InstantGen | `086a9a04c54b4703de135c2f926b44f197cf1009bd694c03f2988010e6440fdd` |
+| ref-script consume instant | `6846f574c078877bf4b7e7ad07b9afa815a1bd5ead3a3eef36faf35b157caa2d#0` |
+| **tiêu MAGIC thật** | `b60afb5294b39b7332e4748cf42b4281ef511c7ec503311707d36e68726a43da` |
+
+| thứ | giá trị |
+|---|---|
+| vault InstantGen, script hash | `56b834369368a95e8be72782347f13e1432d0b14548f376f60cb2745` |
+| vault InstantGen, địa chỉ | `addr_test1wpttsdpkjd52jh5tuuncydrlz0s5xtgtz32g7dm0vr9jw3gg88xph` |
+| NFT danh-tính vault | `56b83436…c62257e4dde7a581d56d011ce0e2f6d08e55d6efb1b9e4071034d15444882129` |
+| BackingBeacon, NFT policy | `28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4` |
+| BackingBeacon, script hash | `9788cd32aa4b695dff6d98c8d7805d5b758099139695fe6bff5c3902` |
+| consume (đời InstantGen), script hash | `4fcc3e843cd64cae10148dfcc5801d5f0f38d207f49a46f5d43c1053` |
+
+**Số đo lượt cấp, in ra bởi chính lượt chạy:** `reward(consumed) 210.2100 ·
+cap_surplus(br) 0.3333 · 0.5 × pp 4.0040 → GRANTED 0.3333 MAGIC (bound by cap_surplus)`.
+Ba con số đó khớp từng đơn vị với bài kiểm `ig_prop_seed_is_not_the_binding_brake`, và
+đó là chỗ đáng đọc: **hạt giống là vế LỚN NHẤT trong ba vế**, nên nới nó lên không nới
+được đồng MAGIC nào. Hạt giống mở khoá, nó không trả.
+
+**`28e916b0…` ở bảng trên là BackingBeacon NFT policy, KHÔNG phải một đời LAMP.** Cùng
+chuỗi hex ấy xuất hiện ở mục `## Preprod — 2026-08-12 · ĐỜI ĐÃ MỒ CÔI` trong vai một tài
+sản mang tên LAMP. Hai vai khác nhau dưới cùng một hex — chưa truy được vì sao trùng, và
+ghi ra đây chính vì chưa truy được: một chuỗi hex trùng mà hai chỗ tả hai thứ khác nhau
+là đúng hình dạng bẫy `PHA-2`, nên đừng đọc bảng này thành "beacon dựng từ đời LAMP cũ"
+mà cũng đừng đọc thành "hai thứ chắc chắn không liên quan".
+
+**Bản `consume` phải deploy RIÊNG cho mỗi LOẠI vault.** `consume` bị apply-param bằng
+`vault_script_hash` (`BOUNDARIES.md §2`), nên bản deploy cho ScheduleGen
+(`1d792c6f36828e45bd82212896ef95f3814a0a78ebf86b82c26cbb56`) **không** tiêu được vault
+InstantGen. Đây không phải ghi chú kiến trúc — nó là một bước thao tác, và bỏ qua nó thì
+lượt tiêu chết ở chỗ trông như lỗi dựng giao dịch.
+
+**Chưa ghim được, đừng đọc mục này rộng hơn nó nói:** hạt giống cấp một lần mỗi **VAULT**,
+không phải mỗi **NGƯỜI**. Các validator ở đây không mang PersonDID, nên thứ chặn một người
+mở N vault là chi phí mở vault chứ không phải một bất biến on-chain.

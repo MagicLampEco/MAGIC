@@ -761,6 +761,43 @@ test pm_two_vault() {
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CHỐT NÀO THẬT SỰ ĐƯỢC GHIM — số ĐO bằng ablation, không suy từ tên bài
+//
+// 🔴 PHẠM VI. Đo 2026-09-16 trên ĐÚNG chín chốt mà chín ca âm dưới đây mang tên.
+// Phép đo: thay thân chốt bằng `expect True` (cắm một dấu riêng rồi kiểm dấu có
+// trong tệp trước khi đọc kết quả), chạy TRỌN bộ kiểm, một chốt một lượt:
+//     script -q /dev/null aiken check Paymaster/onchain
+// Đọc ở dòng `Summary` + danh sách `FAIL [mem`. Bộ kiểm còn xanh khi đã gỡ chốt
+// ⟹ KHÔNG bài nào canh chốt đó (`Forall §Kỷ luật phát ngôn` mục 6). Khối này
+// KHÔNG nói gì về các chốt ngoài chín cái đã liệt kê.
+//
+// TRƯỚC bản vá fixture này (bản `51fff820`): gỡ từng chốt trong CẢ CHÍN → mỗi lần
+// đều `35 checks, 0 errors`. **0/9 được ghim.** Chín ca âm đều đỏ đúng dòng mang
+// tên chúng, nhưng chúng chết ở cổng PM-TREASURY phía sau: fixture rót
+// `lamp_to_tsy = 0` trong khi `lamp_this > 0`, nên gỡ chốt đầu thì giao dịch chỉ
+// trượt xuống cổng thu và vẫn bị từ chối. Đúng ca "bài trượt xuống chốt kế tiếp".
+//
+// SAU bản vá (`lamp_to_tsy` bám đúng `lamp_this` từng ca; `global_magic_epoch`
+// bám đúng Σ burns):
+//   ĐƯỢC GHIM — gỡ chốt là ca tương ứng đỏ
+//     PM-1  app cosign          → pm_neg_no_cosign
+//     PM-1.5 vault delegate     → pm_neg_not_delegate, pm_neg_delegate_none
+//     PM-3.5 sàn DAO            → pm_neg_below_floor
+//     PM-3.5 sponsor ≠ 0        → pm_neg_sponsor_zero
+//     PM-10 policy stale        → pm_neg_stale_policy
+//     PM-10 policy NFT          → pm_neg_fake_policy_nft
+//   CHƯA ghim MỘT MÌNH — hai chốt TRÙNG NHAU, gỡ một cái thì cái kia đỡ:
+//     PM-3 ↔ PM-12 (trần lamp)  → gỡ CẢ HAI ⟹ pm_neg_over_lamp_cap +
+//                                  pm_neg_fake_magic đỏ
+//     PM-7 (NFT ở output) ↔ PM-11 (`value_preserved`) → gỡ CẢ HAI ⟹
+//                                  pm_neg_meter_nft_drain + pm_neg_drain_ada đỏ
+//   KHÔNG ghim, và KHÔNG có chốt song sinh nào giải thích:
+//     PM-2 `magic_consumed > 0` → gỡ nó (một mình, và kèm cả PM-3 + PM-12) đều
+//     không làm ca nào đỏ thêm. Không ca âm nào dựng `magic_consumed == 0`.
+//     Sổ nợ: `DevStatus.md` ▸ Nợ #77.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── NEG PM-1: thiếu app cosign → fail ────────────────────────────────────────
 test pm_neg_no_cosign() fail {
   let pol = ct_policy(500_000_000, 0, 10_000_000_000, 100_000_000_000, 6)
@@ -773,10 +810,10 @@ test pm_neg_no_cosign() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [], [Pair(Spend(vref), burn_rd)], 0)
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-1.5: app KHÔNG phải delegate của vault → fail ──────────────────────
@@ -791,10 +828,10 @@ test pm_neg_not_delegate() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-1.5: vault delegate None → fail ───────────────────────────────────
@@ -809,10 +846,10 @@ test pm_neg_delegate_none() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-3: lamp_this vượt trần tỷ giá → fail ──────────────────────────────
@@ -827,10 +864,13 @@ test pm_neg_over_lamp_cap() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 5_000_001)], global_lamp_epoch: 5_000_001,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_001, 0)  // > cap 5M
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  // `lamp_to_tsy` phải bám ĐÚNG `lamp_this` của từng ca, không phải một hằng chung:
+  // cổng kho là `lamp_to_treasury >= lamp_this`, nên rót thiếu 1 oildrop là ca này
+  // chết ở cổng kho chứ không chết ở PM-3 — đúng thứ ca này mang tên.
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_001)
 }
 
 // ── NEG PM-3.5: lamp_per_magic_q < sàn → fail ────────────────────────────────
@@ -845,10 +885,10 @@ test pm_neg_below_floor() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 4_000_000)], global_lamp_epoch: 4_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 4_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-3.5: sponsor=0 khi protocol_fee_active → fail ─────────────────────
@@ -863,10 +903,10 @@ test pm_neg_sponsor_zero() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 0)], global_lamp_epoch: 0,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 0, 0)  // sponsor 0
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-5: per-DID cap vượt → fail ────────────────────────────────────────
@@ -937,11 +977,11 @@ test pm_neg_stale_policy() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 20,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   // current 20 − policy 1 = 19 > max_stale 10 → fail
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 20, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 20, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-10: fake policy beacon (NFT qty=0) → fail ─────────────────────────
@@ -956,10 +996,10 @@ test pm_neg_fake_policy_nft() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 0, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  run(pol, 0, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-2: khai magic_consumed giả — burn THẬT chỉ 10M nhưng app khai lamp_this
@@ -975,10 +1015,11 @@ test pm_neg_fake_magic() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 10_000_000)], global_lamp_epoch: 10_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 10_000_000, 0)  // khai 10M > cap 5M
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  // Rót đủ 10M vào kho để cổng kho KHÔNG bắt hộ: ca này phải chết vì trần tỷ giá.
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 10_000_000)
 }
 
 // ── NEG PM-7: 2 meter input @script → double-meter → count fail ──────────────
@@ -1058,10 +1099,10 @@ test pm_neg_meter_nft_drain() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 0, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 0, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-8: meter_in epoch FUTURE > current → meter_in.epoch <= current fail ─
@@ -1163,11 +1204,15 @@ test pm_neg_did_cap_overflow() fail {
   let meter_o = ct_meter_output(m_out, 1, 2_000_000)
   // PM-TREASURY đứng TRƯỚC cổng hard-cap mang tên bài này → phải trả đủ LAMP về kho,
   // nếu không bài đỏ ở cổng thu chứ không ở cổng did-entries.
+  // 🪦 Bản trước dựng output này bằng `builtin.constr_data(0, [])` — đúng hình dạng
+  // mà khối chú thích của `run_to` gọi là CHẾT VĨNH VIỄN (`TreasuryDatum` có 2 trường,
+  // `fold_ledger` giải mã bằng `expect td: TreasuryDatum = d`). Bộ kiểm là nguồn duy
+  // nhất trong kho mô tả "output trả tiền về kho trông như thế nào", và đây là bài duy
+  // nhất dựng giao dịch bằng tay, nên nó cũng là bài dễ được chép làm mẫu nhất.
   let tsy_o =
-    util.mk_output(
+    util.mk_output_no_datum(
       ct_treasury_addr(),
       assets.add(assets.from_lovelace(2_000_000), ct_lamp_policy, ct_lamp_asset_name, 5_000_000),
-      builtin.constr_data(0, []),
     )
   let tx =
     Transaction {

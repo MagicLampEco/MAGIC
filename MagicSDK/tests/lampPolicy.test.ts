@@ -8,7 +8,11 @@
 
 import { describe, it, expect } from "vitest";
 
-import { assertLampPolicyId, NON_LAMP_LOOKALIKE_POLICIES } from "../src/lampPolicy.js";
+import {
+  assertLampPolicyId,
+  NON_LAMP_LOOKALIKE_POLICIES,
+  SUPERSEDED_LAMP_POLICIES,
+} from "../src/lampPolicy.js";
 import { buildParamsList } from "../src/validatorScripts.js";
 import type { ProtocolParams } from "../src/types.js";
 
@@ -44,6 +48,42 @@ describe("assertLampPolicyId — danh sách từ chối", () => {
     for (const p of Object.keys(NON_LAMP_LOOKALIKE_POLICIES)) {
       expect(() => assertLampPolicyId(p, "t")).toThrow(/KHÔNG PHẢI LAMP/);
     }
+  });
+});
+
+describe("assertLampPolicyId — đời LAMP đã bị thay", () => {
+  /** Đời `preprod-oneshot-12param`. Chính là thứ ví Preprod có tADA đang cầm. */
+  const SUPERSEDED = "d9c09230079b810ab5ed92e8db4c190d42efc42db6aac028656f7e07";
+
+  it("chặn đời đã bị thay — đây là đời DỄ dùng nhầm nhất, không phải khó gặp nhất", () => {
+    expect(SUPERSEDED).toMatch(/^[0-9a-f]{56}$/);
+    expect(() => assertLampPolicyId(SUPERSEDED, "t")).toThrow(/ĐÃ BỊ THAY/);
+  });
+
+  it("mọi mục trong danh sách đều bị chặn, không chỉ mục đầu", () => {
+    for (const p of Object.keys(SUPERSEDED_LAMP_POLICIES)) {
+      expect(() => assertLampPolicyId(p, "t")).toThrow(/ĐÃ BỊ THAY/);
+    }
+  });
+
+  it("hai bảng nói HAI câu khác nhau — gộp là dạy người đọc làm sai một trong hai", () => {
+    // Ca này là thứ phân biệt được hai bên đột biến: gộp `SUPERSEDED_LAMP_POLICIES`
+    // vào bảng nhái thì nó đỏ, trong khi mọi ca "có ném không" ở trên vẫn xanh.
+    expect(() => assertLampPolicyId(SUPERSEDED, "t")).toThrow(/KHÔNG phải token nhái/);
+    expect(() => assertLampPolicyId(LOOKALIKE, "t")).not.toThrow(/ĐÃ BỊ THAY/);
+  });
+
+  it("hai danh sách KHÔNG giao nhau — một policy chỉ mang đúng một mức", () => {
+    for (const p of Object.keys(SUPERSEDED_LAMP_POLICIES)) {
+      expect(NON_LAMP_LOOKALIKE_POLICIES[p]).toBeUndefined();
+    }
+  });
+
+  it("cổng đứng ở buildParamsList cũng chặn đời đã bị thay", () => {
+    // Đường mà bên tích hợp thật sự đi. Cổng chỉ nằm trong `assertLampPolicyId`
+    // mà không với tới đây thì apply-param vẫn nhận đời chết.
+    expect(() => buildParamsList("Schedule", proto(SUPERSEDED), MS_PER))
+      .toThrow(/ĐÃ BỊ THAY/);
   });
 });
 

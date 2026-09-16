@@ -31,6 +31,14 @@
 // Gói này cố ý KHÔNG chép giá trị đó xuống: một bản sao không có đường về nguồn sẽ
 // chết im lặng đúng lúc kho LAMP triển khai lại.
 
+// HAI BẢNG, KHÔNG PHẢI MỘT — và gộp chúng là gộp hai loại sai khác hẳn nhau
+//
+// "token nhái" và "đời LAMP đã bị thay" đòi hai hành động khác nhau ở người đọc:
+// cái đầu bảo đi tìm một kẻ giả mạo, cái sau bảo đi lấy đời ACTIVE. Một câu lỗi
+// chung dạy người ta làm sai một trong hai. Bản trước của tệp này xếp
+// `7a1a7aed…` — một LAMP THẬT của đời trước, có one-shot proof, có `SupplyState`
+// — vào bảng nhái với chú thích "đã bị thay", tức tự mâu thuẫn ngay trong dòng.
+
 /** Policy id đã BIẾT là không phải LAMP, kèm lý do. Danh sách ĐÓNG, chép tay
  *  2026-09-14 — xem đầu tệp về thứ nó chống và thứ nó không chống. */
 export const NON_LAMP_LOOKALIKE_POLICIES: Readonly<Record<string, string>> = Object.freeze({
@@ -39,8 +47,18 @@ export const NON_LAMP_LOOKALIKE_POLICIES: Readonly<Record<string, string>> = Obj
     "ai giữ khoá thì đúc thêm tuỳ ý. Nó đã đúc 19 dòng trên Preview và 8 dòng trên " +
     "Preprod, trong đó có cả \"LAMP\", \"tLAMP\", \"CARP\" và \"MAGIC\". Dòng tLAMP " +
     "mang TRỌN 36 tỷ, tức ngược hẳn mô hình lazy-mint của LAMP.",
+});
+
+/** LAMP THẬT của một đời đã bị thay. Không phải hàng nhái — mọi phép so hình
+ *  dạng đều cho chúng đi qua, và một lượt chạy bằng chúng vẫn XANH. Danh sách
+ *  ĐÓNG, chép tay 2026-09-16. */
+export const SUPERSEDED_LAMP_POLICIES: Readonly<Record<string, string>> = Object.freeze({
   "7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9":
-    "Bản diễn tập đời trước, đã bị thay (SUPERSEDED).",
+    "Bản diễn tập đời trước, đã bị thay.",
+  "d9c09230079b810ab5ed92e8db4c190d42efc42db6aac028656f7e07":
+    "Đời `preprod-oneshot-12param`, đã bị thay bởi `8169b76c…` " +
+    "(`preprod-oneshot-14param`, đúc 2026-09-14). Đây là thứ ví Preprod có tADA " +
+    "đang cầm, nên nó là đời DỄ dùng nhầm nhất, không phải đời khó gặp nhất.",
 });
 
 const HEX56 = /^[0-9a-f]{56}$/;
@@ -58,6 +76,19 @@ const HEX56 = /^[0-9a-f]{56}$/;
  */
 export function assertLampPolicyId(policyId: string | undefined, where: string): string {
   const v = policyId ?? "";
+
+  const doi = SUPERSEDED_LAMP_POLICIES[v];
+  if (doi) {
+    throw new Error(
+      `[${where}] lampPolicyId trỏ vào một đời LAMP ĐÃ BỊ THAY: ${v}\n` +
+      `  ${doi}\n` +
+      `  Đây KHÔNG phải token nhái — đừng đi tìm một kẻ giả mạo. Nó là LAMP thật ` +
+      `của một đời đã chết, nên mọi phép so hình dạng đều cho nó đi qua và một ` +
+      `lượt chạy bằng nó vẫn XANH.\n` +
+      `  Policy id nướng vào bytes lúc biên dịch ⟹ vault sinh ra ở một script hash ` +
+      `không ai dùng nữa. Lấy đời ACTIVE theo mạng từ kho LAMP (Genesis ▸ lampPolicies).`,
+    );
+  }
 
   const why = NON_LAMP_LOOKALIKE_POLICIES[v];
   if (why) {

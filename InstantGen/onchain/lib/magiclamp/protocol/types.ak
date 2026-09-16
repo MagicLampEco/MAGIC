@@ -178,6 +178,12 @@ pub type VaultDatum {
   delegation_cert       : DelegationCertificate,
   activity_state        : ActivityState,
   streak_state          : StreakState,
+  // 🪦 BIA MỘ trường 15 — quyền chết 2026-09-16 (Nợ #14), trường ở lại. Lý do
+  // KHÔNG phải "gỡ ra thì vỡ decode mọi UTxO đã tạo": hash đã đổi nên UTxO đời
+  // trước nằm ở địa chỉ khác, ngoài tầm với của validator này dù có gỡ hay không.
+  // Lý do thật: gỡ trường 15 đẩy mọi trường sau nó lên một chỉ số, và có bên đọc
+  // theo VỊ TRÍ — `Paymaster` ▸ `vault_delegate_is` gọi thẳng `list.at(fields, 15)`.
+  // Bên đó lấy nhầm trường và KHÔNG kêu; các bên đọc qua lược đồ thì hỏng ồn ào.
   personal_delegate     : Option<ByteArray>,
   attribution           : VaultAttribution,
 }

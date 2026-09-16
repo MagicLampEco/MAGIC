@@ -831,10 +831,23 @@ fn validate_set_delegate(
   // 🪦 BIA MỘ — nhánh này nay CHỈ XOÁ ĐƯỢC, không đặt được (2026-09-16, Nợ #14).
   // Nhánh redeemer `SetDelegate` (constr 4) ở lại nguyên chỗ vì chỉ số
   // constructor là hợp đồng nhị phân; cái chết là QUYỀN, không phải cái vỏ.
-  // Vì sao không cho nhánh này `fail` luôn: vault trên Preview/Preprod có thể
-  // còn mang `Some(d)` của đời trước, và đây là đường DUY NHẤT xoá nó. Bịt
-  // luôn thì trường rác nằm lại vĩnh viễn, và bất cứ bên đọc nào về sau
-  // (ví dụ cổng PM-1.5 của Paymaster) lại dựng đường uỷ quyền dậy từ nó.
+  // 🪦 Lý do CŨ ghi ở đây — "vault trên Preview/Preprod còn mang `Some(d)` và
+  // đây là đường DUY NHẤT xoá nó" — TỰ CHỌI CHÍNH NÓ, và phải viết ra kẻo ai
+  // đó khôi phục nó: bản vá này đổi bytes ⟹ đổi script hash ⟹ đổi ĐỊA CHỈ.
+  // Vault đời trước nằm ở địa chỉ CŨ và bị tiêu bởi bytes CŨ; validator này
+  // không bao giờ nhìn thấy chúng. Đường dọn `Some(d)` của chúng là validator
+  // cũ, thứ vẫn còn ĐẶT được — tức lỗ không đóng bằng cách sửa mã, chỉ đóng
+  // bằng di trú (Nợ #14).
+  //
+  // Dưới hash NÀY thì `Some` không sinh ra được: cửa đúc ép
+  // `expect vd.personal_delegate == None`, và không nhánh nào khác ghi trường
+  // đó. Nên `expect new_delegate == None` ở đây và `fail` là TƯƠNG ĐƯƠNG về
+  // hành vi — không đầu vào nào phân biệt được hai bên.
+  //
+  // Giữ dạng này vì nó rẻ hơn về thứ khác: nhánh còn ĐI TỚI ĐƯỢC nên bài kiểm
+  // chạy thật qua nó và chứng minh được "đặt thì bị từ chối, xoá thì qua" —
+  // `fail` chỉ chứng minh được vế đầu. Đây là lựa chọn về khả năng đo, không
+  // phải một phòng tuyến; đừng viện dòng này làm bằng chứng rằng lỗ đã đóng.
   expect new_delegate == None
 
   let output_datum = get_vault_output(tx.outputs, vault_addr)

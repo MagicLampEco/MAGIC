@@ -152,6 +152,18 @@ pub type VaultDatum {
   delegation_cert       : DelegationCertificate,
   activity_state        : ActivityState,
   streak_state          : StreakState,
+  // 🪦 BIA MỘ trường 15 — quyền chết 2026-09-16 (Nợ #14), trường ở lại.
+  // Lý do PHẢI ở lại KHÔNG phải "gỡ ra thì vỡ decode mọi UTxO đã tạo" (câu đó ở
+  // đầu tệp đúng cho lược đồ nói chung, và KHÔNG áp cho ca này): bản vá đã đổi
+  // bytes ⟹ đổi script hash ⟹ đổi địa chỉ, nên UTxO đời trước nằm ngoài tầm với
+  // của validator này dù ta có gỡ trường hay không.
+  //
+  // Lý do THẬT là ở đây và bây giờ: gỡ trường 15 đẩy MỌI trường sau nó lên một
+  // chỉ số. Ba bên đọc theo VỊ TRÍ chứ không theo tên — lược đồ `MagicSDK` ▸
+  // `src/schemas.ts`, bộ dựng datum off-chain, và `Paymaster` ▸
+  // `vault_delegate_is` đọc thẳng `list.at(fields, 15)`. Cả ba lệch một ô cùng
+  // lúc, và Aiken nghiêm ngặt về SỐ trường theo CẢ HAI chiều nên bên nào cũng
+  // hỏng ồn ào — trừ bên đọc thô, bên đó lấy nhầm trường và im.
   personal_delegate     : Option<ByteArray>,
   attribution           : VaultAttribution,
 }

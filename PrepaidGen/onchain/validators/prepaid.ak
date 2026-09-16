@@ -614,8 +614,14 @@ fn validate_set_delegate(
   // 🪦 BIA MỘ — nhánh này nay CHỈ XOÁ ĐƯỢC, không đặt được (2026-09-16, Nợ #14).
   // `SetDelegate` (constr 4) ở lại nguyên chỗ vì chỉ số constructor là hợp đồng
   // nhị phân — `SetDidCommit` nằm sau nó, gỡ variant này là đẩy `SetDidCommit`
-  // lên một bậc. Đường XOÁ giữ lại để một vault lỡ mang `Some(d)` còn dọn được;
-  // bịt luôn thì trường rác nằm lại và bên đọc về sau dựng lại quyền từ nó.
+  // lên một bậc.
+  //
+  // 🪦 Lý do CŨ — "giữ lại để một vault lỡ mang `Some(d)` còn dọn được" — TỰ
+  // CHỌI CHÍNH NÓ: bản vá đổi bytes ⟹ đổi script hash ⟹ đổi địa chỉ, nên vault
+  // đời trước bị tiêu bởi bytes CŨ và validator này không thấy chúng. Việc dọn
+  // đời cũ là DI TRÚ, không phải việc của dòng này (Nợ #14). Dưới hash NÀY,
+  // `Some` không sinh ra được, nên dòng dưới và `fail` tương đương về hành vi;
+  // giữ dạng này vì nhánh còn đi tới được nên bài kiểm chứng minh được cả hai vế.
   expect new_delegate == None
 
   let out = get_vault_output(tx.outputs, vault_addr)

@@ -76,6 +76,33 @@ export interface SponsorParams {
   network: Network;
   /** Tip POSIX ms hiện tại (đầu vào tính epoch + validity-range). */
   tipPosixMs: bigint;
+  /**
+   * Địa chỉ Treasury — PHẢI khớp BYTE-ĐỐI-BYTE với apply-param `treasury_addr` (#10)
+   * của chính `paymasterScript` đang truyền vào.
+   *
+   * Không phải tuỳ chọn, và không có giá trị mặc định nào đúng được. `paymaster.ak:145`
+   * lọc output bằng `o.address == treasury_addr` — phép so `Address` là so CẢ payment
+   * credential LẪN stake credential, nên một địa chỉ "nhìn giống nhau trong ví" vẫn là
+   * một giá trị Plutus Data khác và bộ lọc sẽ rỗng.
+   *
+   * Bản trước của hàm này KHÔNG có trường nào cho đích rót, và chỉ dựng đúng MỘT lệnh
+   * trả tiền — về `meterUtxo.address`. Vì `lampThis` mặc định bằng TRẦN (tức dương), mọi
+   * giao dịch dựng bằng builder mặc định rơi vào nhánh `lamp_this > 0` của `:142` và bị
+   * validator từ chối **100% ngay lần chạy đầu**, kể cả khi apply-param hoàn toàn đúng.
+   * Bên kiểm và bên dựng khi đó không cùng một khái niệm về đích — chỗ lỏng ở tệp này,
+   * chỗ lộ ra ở tệp kia.
+   */
+  treasuryAddress: string;
+  /**
+   * Đơn vị tài sản LAMP (`policyId + assetNameHex`) — PHẢI khớp cặp apply-param
+   * `lamp_policy_id` (#?) + `lamp_asset_name` của `paymasterScript`.
+   *
+   * Định danh tài sản là CẶP. Asset name một mình không bao giờ là điều kiện đủ: testnet
+   * của kho có 27 dòng tài sản mang tên của hệ dưới một policy chữ-ký-đơn không phải của
+   * LAMP (`scripts/DEPLOYED.md`). Truyền `unit` dựng từ tên hiển thị là dựng ra một giao
+   * dịch rót token nhái vào kho.
+   */
+  lampUnit: string;
   /** TUỲ CHỌN: LAMP app sponsor op này (oildrop). Mặc định = lamp_cap (sponsor tối đa).
    *  Validator ép 0 ≤ lamp_this ≤ lamp_cap; nếu protocol_fee_active thì > 0. */
   lampThisOverride?: bigint;
@@ -111,6 +138,25 @@ function refKey(u: UTxO): string {
 // ── Builder ───────────────────────────────────────────────────────────────────
 
 /**
+ * 🪦 Cổng PM-1.5 KHÔNG CÒN ĐẦU VÀO NÀO THOẢ — đặt `false` chỉ khi D16 đã chốt.
+ *
+ * `paymaster.ak` ▸ `all_vaults_delegate_app` đòi MỌI vault input mang
+ * `personal_delegate == Some(app_authority)`. Nhánh uỷ nhiệm bị bỏ khỏi mô hình
+ * 2026-09-16 (Nợ #14): `SetDelegate` ở cả ba vault nay chỉ XOÁ được, và cửa đúc
+ * (`validate_mint_vault_id`) ép `personal_delegate == None`. Nên không vault nào
+ * đặt được `Some`, và cổng không có đầu vào nào thoả.
+ *
+ * Vì sao builder phải NÉM thay vì cứ dựng: để chạy tiếp thì nó trả về một giao dịch
+ * trông hoàn chỉnh, app ký, nộp, rồi nút chuỗi từ chối bằng một câu không nhắc gì tới
+ * uỷ quyền. Người vận hành đọc câu đó và đi tìm sai chỗ — đúng một cái vỏ im lặng, chỉ
+ * khác là nó im ở phía DỰNG chứ không ở phía đọc.
+ *
+ * Kiểu ghi là `boolean` chứ không để TypeScript suy ra `true`: xem chú thích tại chỗ
+ * dùng, ngay trong `buildSponsorTx`.
+ */
+const SPONSOR_PATH_HAS_NO_SATISFYING_INPUT: boolean = true;
+
+/**
  * Dựng tx app-sponsor. KHÔNG mint MAGIC. Caller (app) sign bằng app_authority + submit.
  *
  * Bất biến builder bám validator (paymaster.ak):
@@ -127,10 +173,49 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
   const {
     lucid, meterUtxo, vaultInputs, policyBeaconUtxo, protocolBeaconUtxo,
     paymasterScript, vaultScript, didKey, meterNftUnit, network, tipPosixMs,
+    treasuryAddress, lampUnit,
     lampThisOverride, adaThisOverride,
   } = params;
 
+  // ── PM-000: đường này KHÔNG thoả được nữa — dừng ở đây, đừng dựng ──────────
+  //
+  // Cổng PM-1.5 (`paymaster.ak` ▸ `all_vaults_delegate_app`) đòi MỌI vault input mang
+  // `personal_delegate == Some(app_authority)`. Nhánh uỷ nhiệm đã bị bỏ khỏi mô hình
+  // 2026-09-16 (Nợ #14): `SetDelegate` ở cả ba vault nay chỉ XOÁ được, và cửa đúc ép
+  // `personal_delegate == None`. Nên không vault nào đặt được `Some`, và cổng không
+  // có đầu vào nào thoả.
+  //
+  // Vì sao NÉM thay vì cứ dựng: nếu để chạy tiếp, hàm này trả về một giao dịch trông
+  // hoàn chỉnh, app ký nó, nộp nó, rồi nút chuỗi từ chối bằng một câu không nhắc gì
+  // tới uỷ quyền. Người vận hành đọc câu đó và đi tìm sai chỗ — đúng một cái vỏ im
+  // lặng, chỉ khác là nó im ở phía DỰNG chứ không ở phía đọc. Phí đã trả, thời gian
+  // đã mất, và nguyên nhân nằm ở một tệp khác.
+  //
+  // D16 ĐÃ CHỐT 2026-09-16: giữ nguyên trạng thái không-thoả-được, KHÔNG chốt cơ chế
+  // thay thế lúc này (Paymaster chưa deploy ở mạng nào ⟹ không có thiệt hại đang chạy
+  // và không có hạn chót ép chọn vội). Nên dòng này ở lại cho tới khi có một lượt chốt
+  // MỚI — không phải cho tới khi ai đó thấy nó cản đường chạy thử.
+  // Cờ khai bằng `boolean` (không phải hằng literal) là CỐ Ý: gõ `throw` trần ở đây
+  // làm toàn bộ thân hàm thành mã không-tới-được, và TypeScript **ngừng thu hẹp kiểu**
+  // trong vùng đó — ba lời gọi bên dưới đổi màu đỏ ngay, dù không dòng nào trong chúng
+  // bị sửa. Giữ thân hàm còn được kiểm kiểu là điều kiện để nó còn dùng lại được khi
+  // D16 chốt; một thân hàm đã thôi được kiểm sẽ trôi lặng lẽ khỏi phần còn lại của tệp.
+  if (SPONSOR_PATH_HAS_NO_SATISFYING_INPUT) {
+    throw new Error(
+      "PM-000: đường app-sponsor không thoả được — cổng PM-1.5 đòi mọi vault input mang " +
+      "personal_delegate == Some(app_authority), mà nhánh uỷ nhiệm đã bị bỏ khỏi mô hình " +
+      "(Nợ #14): SetDelegate nay chỉ xoá được và vault sinh ra luôn mang None. " +
+      "Không có hình dạng giao dịch nào qua được cổng đó. Cơ chế thay thế còn để ngỏ — " +
+      "xem DevStatus.md ▸ D16 và Nợ #74.",
+    );
+  }
+
   if (vaultInputs.length < 1) throw new Error("PM-001: cần ≥1 vault input để sponsor");
+  // Ném, không đệm. Một chuỗi rỗng ở đây dựng ra một giao dịch trông hoàn chỉnh rồi bị
+  // validator từ chối ở `paymaster.ak:144` — lỗi đọc được lúc đó là lỗi của on-chain, và
+  // nó trỏ đi chỗ khác.
+  if (!treasuryAddress) throw new Error("PM-015: thiếu treasuryAddress (phải khớp apply-param treasury_addr)");
+  if (!lampUnit) throw new Error("PM-016: thiếu lampUnit (policyId+assetNameHex của LAMP)");
 
   // ── đọc beacons (datum CBOR → struct) ───────────────────────────────────────
   if (!policyBeaconUtxo.datum) throw new Error("PM-002: policy beacon thiếu inline datum");
@@ -264,7 +349,20 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
       meterUtxo.address,
       { kind: "inline", value: encodeSponsorMeter(newMeter) },
       meterOutAssets,
-    )
+    );
+
+  // ── PM-TREASURY: rót `lamp_this` oildrop về Treasury ────────────────────────
+  //
+  // `paymaster.ak:142-155` chỉ đòi khoản này khi `lamp_this > 0`, nên ở đây cũng vậy —
+  // thêm một output 0 LAMP là dựng ra một UTxO thừa phải trả min-ADA cho không.
+  //
+  // Địa chỉ phải khớp BYTE-ĐỐI-BYTE với apply-param, không phải "cùng một ví". Đó là
+  // điều bên kiểm đang so, và nó so cả phần stake.
+  if (lampThis > 0n) {
+    txBuilder = txBuilder.pay.ToAddress(treasuryAddress, { [lampUnit]: lampThis });
+  }
+
+  txBuilder = txBuilder
     // PM-1: app_authority (VerificationKeyHash hex) PHẢI ký (= delegate trigger BurnBatch).
     // addSignerKey nhận keyHash hex trực tiếp → ép vào extra_signatories (list.has on-chain).
     .addSignerKey(policy.app_authority)

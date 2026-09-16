@@ -102,3 +102,54 @@ export class OwnerLockTable {
 /** Hash giữ chỗ giữa lúc giành khoá và lúc dựng xong. Không phải hash hợp lệ (64 hex),
  *  nên nó không bao giờ khớp `releaseByTxHash` của một giao dịch thật. */
 export const PENDING_TX_HASH = "pending";
+
+/**
+ * Sổ hash thân của những giao dịch mà CHÍNH dịch vụ này đã phát ra.
+ *
+ * ── VÌ SAO NÓ TỒN TẠI ─────────────────────────────────────────────────────────
+ * `/tx/submit` nộp lên chuỗi bằng khoá nhà cung cấp của người vận hành. Không có sổ
+ * này thì nó nhận `tx_cbor` BẤT KỲ và nộp: hạn mức của người vận hành thành cổng nộp
+ * công cộng, mọi quy kết lạm dụng rơi vào dự án của người vận hành, và người nộp thật
+ * đứng sau IP lẫn khoá của người vận hành. Đường vào đó không đòi hỏi gì ngoài thẻ bài
+ * mà mọi bản app đều có.
+ *
+ * ── VÌ SAO KHÔNG DÙNG LUÔN `OwnerLockTable` ───────────────────────────────────
+ * Bảng khoá XOÁ dòng ngay khi nộp xong, nên một lần nộp lại vì rớt mạng sẽ bị từ chối
+ * bởi đúng cổng vừa dựng lên để chặn người lạ. Sổ này giữ dòng tới khi hết hạn, nên
+ * nộp lại cùng một giao dịch vẫn đi qua; chuỗi tự lo phần trùng lặp.
+ *
+ * ── NÓ KHÔNG PHẢI CÁI GÌ ──────────────────────────────────────────────────────
+ * Nó KHÔNG trả lời câu "người gọi có quyền với `owner_pkh` này không" — câu đó chưa có
+ * cổng nào trong dịch vụ, xem `DevStatus.md` ▸ Nợ #78. Nó chỉ trả lời "giao dịch này
+ * có phải do tôi dựng không". Và như bảng khoá, nó nằm trong bộ nhớ MỘT tiến trình:
+ * chạy hai bản sao sau bộ cân tải thì mỗi bản chỉ nhận lại giao dịch của chính nó.
+ */
+export class IssuedTxRegistry {
+  private readonly issued = new Map<string, number>();
+
+  constructor(private readonly ttlMs: number) {}
+
+  record(txHash: string, nowMs: number): void {
+    this.issued.set(txHash, nowMs + this.ttlMs);
+  }
+
+  /** `true` khi dịch vụ này đã phát ra đúng giao dịch đó và dòng chưa hết hạn. */
+  wasIssued(txHash: string, nowMs: number): boolean {
+    const exp = this.issued.get(txHash);
+    if (exp === undefined) return false;
+    if (exp <= nowMs) { this.issued.delete(txHash); return false; }
+    return true;
+  }
+
+  sweep(nowMs: number): number {
+    let n = 0;
+    for (const [h, exp] of this.issued) {
+      if (exp <= nowMs) { this.issued.delete(h); n++; }
+    }
+    return n;
+  }
+
+  size(): number {
+    return this.issued.size;
+  }
+}

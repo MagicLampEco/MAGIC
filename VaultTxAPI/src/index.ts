@@ -17,7 +17,7 @@ export {
 export { BlockfrostChainReader, RecordedChainReader } from "./chain.js";
 export type { ChainReader, ChainTip, OutRef } from "./chain.js";
 
-export { OwnerLockTable, PENDING_TX_HASH } from "./locks.js";
+export { IssuedTxRegistry, OwnerLockTable, PENDING_TX_HASH } from "./locks.js";
 export type { LockRecord } from "./locks.js";
 
 export { summarizeTx, txBodyHash } from "./summary.js";

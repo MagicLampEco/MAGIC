@@ -110,6 +110,56 @@ describe("summarizeTx — mọi con số suy từ CBOR", () => {
     expect(a.vault.owner_pkh).toBe(b.vault.owner_pkh);
   });
 
+  it("ĐỘT BIẾN: `balance_delta` cũng ĐỌC datum — số 0 ở ca commit là sự thật, không phải hằng", () => {
+    // Ở ca ScheduleCommit, `balance_delta` bằng 0 là ĐÚNG GIAO THỨC, không phải một
+    // fixture làm cho xong: `ScheduleGen/onchain/validators/vault.ak` ▸ `validate_commit`
+    // ép `output.lamp_balance == datum.lamp_balance` ("commit moves no LAMP").
+    //
+    // Nhưng một số 0 đúng vẫn không ghim được gì: một hiện thực trả thẳng hằng `"0"` cho
+    // `balance_delta` đi qua mọi bài ở trên mà không bài nào đỏ. Điều kiện cắn phải là
+    // một giao dịch có `lamp_balance` KHÁC ở hai đầu — ca đó có thật ở nhánh rút
+    // (`vault.ak` ▸ `new_lamp_balance = input_datum.lamp_balance - amount`).
+    const before = datumHex({ lampBalanceOildrop: 1_001_000_000n, lampLockedOildrop: 2_000_000n });
+    const tx = buildTxCbor({
+      inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
+      feeLovelace: FEE,
+      outputs: [{
+        address: VAULT_ADDRESS,
+        assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 641_000_000n, [VAULT_ID_UNIT]: 1n },
+        inlineDatumHex: datumHex({ lampBalanceOildrop: 641_000_000n, lampLockedOildrop: 2_000_000n }),
+      }],
+    });
+    const s = summarizeTx(tx, ctx(before));
+
+    expect(s.lamp.balance_delta_oildrop).toBe("-360000000");
+    expect(s.lamp.balance_delta_lamp).toBe("-360.000000");
+    // Và trường hàng xóm KHÔNG được trôi theo — hai trường này đọc hai chỗ khác nhau.
+    expect(s.lamp.locked_delta_oildrop).toBe("0");
+  });
+
+  it("HAI output cùng ở địa chỉ vault ⟹ ném, không lặng lẽ tóm tắt cái đầu tiên", () => {
+    // Một giao dịch có hai output ở địa chỉ vault là thứ người dùng KHÔNG đọc ra được từ
+    // một bản tóm tắt nói về "output vault". Chọn bừa cái đầu là dựng một cái vỏ im
+    // lặng: bản tóm tắt vẫn đủ trường, vẫn hợp lệ, và nói về một nửa giao dịch.
+    const tx = buildTxCbor({
+      inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
+      feeLovelace: FEE,
+      outputs: [
+        {
+          address: VAULT_ADDRESS,
+          assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
+          inlineDatumHex: datumHex({ lampLockedOildrop: 23_000_000n, batches: [BATCH_LIVE] }),
+        },
+        {
+          address: VAULT_ADDRESS,
+          assets: { lovelace: 2_000_000n },
+          inlineDatumHex: datumHex({ lampLockedOildrop: 2_000_000n, batches: [BATCH_LIVE] }),
+        },
+      ],
+    });
+    expect(() => summarizeTx(tx, ctx(BEFORE_COMMIT))).toThrow(TxSummaryUndecodableError);
+  });
+
   it("MAGIC sinh ra đọc từ batch MỚI trong datum output", () => {
     const tx = buildTxCbor({
       feeLovelace: FEE,

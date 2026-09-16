@@ -10,12 +10,13 @@
 // không nằm ở giá trị. Hai trường cho một đại lượng là cố ý: máy đọc trường thô
 // (`_oildrop`), người đọc trường đã chia (`_lamp`).
 
-/** 1 LAMP = 10^6 oildrop. */
-export const OILDROP_PER_LAMP = 1_000_000n;
-/** 1 MAGIC = 10^9 nanogic. */
-export const NANOGIC_PER_MAGIC = 1_000_000_000n;
-/** Q-format của giao thức. */
-export const Q = 1_000_000_000n;
+// Ba hằng dưới đây TRỎ về ProtocolUtils, không chép giá trị.
+//
+// 🪦 Bản trước gõ lại `1_000_000n` / `1_000_000_000n` tại chỗ. Chúng trùng giá trị hôm
+// nay, nên không bài kiểm nào đỏ và không ai biết có hai bản — đúng ca `Forall §Một
+// nguồn, nhiều con trỏ`: phép thử một dòng là *"số này khi nguồn của nó đổi, ai báo cho
+// chỗ này biết?"*, và câu trả lời ở bản trước là "không ai".
+export { NANOGIC_PER_MAGIC, OILDROP_PER_LAMP, Q } from "@magiclamp/protocol-utils";
 
 export const OILDROP_DECIMALS = 6;
 export const NANOGIC_DECIMALS = 9;

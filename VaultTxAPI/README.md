@@ -259,6 +259,18 @@ hình dạng thân bài của ba đường dựng, nên nó là một quyết đ
   `summary` — chúng chạy trên CBOR thật dựng tại chỗ bằng CML.
 - **Khoá mềm chỉ đúng với một tiến trình.** Hai bản sau bộ cân tải thì cần một chỗ giữ
   chung (Redis, hoặc một hàng đợi theo `owner_pkh`).
+- **`lamp.policy_id` của tệp deploy chưa đi qua `assertLampPolicyId`.** Cổng ấy ở
+  `MagicSDK/src/lampPolicy.ts` và nó chặn hai lớp giá trị mà mọi phép so hình dạng đều cho
+  đi qua: policy nhái mang đúng chữ "tLAMP", và LAMP THẬT của một đời đã bị thay. Ở đây
+  `parseDeployment` mới ép hình dạng (56 hex), tức đo một đại lượng khác. **Ràng buộc TẠM
+  đang có hiệu lực (fail-closed):** `lamp.policy_id` là trường **bắt buộc** của tệp deploy
+  — không có thì dịch vụ không khởi động, nên không có đường chạy bằng một giá trị mặc
+  định. Mẫu của bộ kiểm dùng một policy id **tổng hợp** (`tests/fixtures/preview.ts`), cố
+  ý không phải giá trị có thật trên mạng nào, để không ai chép nhầm từ đó ra.
+- **Thẻ bài là MỘT bí mật dùng chung, không gắn với `owner_pkh` nào.** Đường `/tx/submit`
+  đã chặn việc mượn dịch vụ để nộp giao dịch lạ (chỉ nộp thứ chính nó vừa dựng), nhưng
+  người cầm thẻ bài vẫn dựng được giao dịch mang `owner_pkh` của người khác và qua đó giữ
+  khoá mềm của họ. Trạng thái và hình dạng bản vá ghi ở `DevStatus.md` ▸ Nợ #78.
 - **Chủ có nhiều vault chưa dựng được.** Hiện trả `409 VAULT_AMBIGUOUS`. Gỡ nó cần một
   trường định danh vault trong thân bài — lại là một quyết định về hình dạng API.
 - **`/tx/consume` chọn thread Engage từ cấu hình**, nên một triển khai phục vụ nhiều app

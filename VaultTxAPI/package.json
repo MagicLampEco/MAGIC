@@ -17,7 +17,6 @@
   "//dependencies": "Bốn gói `@magiclamp/*` dưới `sdk` là dependency CỦA MagicSDK, khai lại ở đây có chủ đích: không có workspace ở gốc kho, nên npm KHÔNG cài dependency của một liên kết `file:` vào cây của gói tiêu thụ. Không khai thì `npm install` từ checkout sạch chạy xanh rồi mọi import của MagicSDK gãy ở lượt chạy đầu tiên — hỏng muộn, và hỏng ở một chỗ không nhắc gì tới cài đặt.",
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.30",
-    "@noble/hashes": "^1.4.0",
     "@magiclamp/protocol-utils": "file:../ProtocolUtils",
     "@magiclamp/sdk": "file:../MagicSDK",
     "@magiclamp/consumemagic": "file:../ConsumeMAGIC/offchain",

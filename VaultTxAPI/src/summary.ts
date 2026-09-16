@@ -213,14 +213,31 @@ function findVaultOutput(
   outputs: DecodedOutput[],
   vaultAddress: string,
 ): { view: OutputView; datum: DecodedVaultDatum } | null {
-  for (const o of outputs) {
-    if (o.view.address !== vaultAddress) continue;
-    if (o.inlineDatumHex === null) continue;
-    // Output ở địa chỉ vault mà datum KHÔNG đọc được là chuyện phải ném, không phải
-    // chuyện bỏ qua rồi đi tìm output khác: nó nghĩa là lược đồ của kho đã trôi.
-    return { view: o.view, datum: decodeVaultDatum(o.inlineDatumHex, `datum của output #${o.view.index}`) };
+  // Đòi DUY NHẤT, không lấy cái đầu tiên.
+  //
+  // 🪦 Bản trước `return` ngay ở lần khớp đầu. Dưới đúng mô hình đe doạ mà đầu tệp này
+  // tự khai — một máy chủ bị chiếm dựng một giao dịch khác hẳn rồi kèm một bản tóm tắt
+  // đẹp đẽ — đó là đường đi lọt: output #0 ở địa chỉ vault mang datum vô hại, output #2
+  // cũng ở địa chỉ vault mang toàn bộ tài sản và datum thật. Bản tóm tắt mô tả #0, và
+  // người dùng ký. Mảng `outputs` thô CÓ liệt kê #2, nhưng màn hình xác nhận hiện các
+  // trường đã tính chứ không hiện mảng thô.
+  //
+  // On-chain đã ép một-vào-một-ra (`C-VAULT-OUT-1`), nên hình dạng hai-output-vault bị
+  // validator từ chối. Nhưng nó bị từ chối SAU KHI người dùng đã ký, và cả gói này tồn
+  // tại để người dùng biết mình đang ký cái gì TRƯỚC lúc đó.
+  const atVault = outputs.filter(o => o.view.address === vaultAddress && o.inlineDatumHex !== null);
+  if (atVault.length > 1) {
+    throw new TxSummaryUndecodableError(
+      `Giao dịch có ${atVault.length} output ở địa chỉ vault. Bản tóm tắt chỉ mô tả được ` +
+      `MỘT, nên mô tả bất kỳ cái nào trong số đó cũng là mô tả thiếu.`,
+      { vault_output_indexes: atVault.map(o => o.view.index).join(",") },
+    );
   }
-  return null;
+  const o = atVault[0];
+  if (o === undefined) return null;
+  // Output ở địa chỉ vault mà datum KHÔNG đọc được là chuyện phải ném, không phải
+  // chuyện bỏ qua rồi đi tìm output khác: nó nghĩa là lược đồ của kho đã trôi.
+  return { view: o.view, datum: decodeVaultDatum(o.inlineDatumHex!, `datum của output #${o.view.index}`) };
 }
 
 function decodeVaultDatum(hex: string, where: string): DecodedVaultDatum {
@@ -259,6 +276,19 @@ function magicDelta(before: DecodedVaultDatum, after: DecodedVaultDatum): {
   const totalBefore = sum(before);
   const totalAfter = sum(after);
   const expiredDropped = totalBefore + minted - burned - totalAfter;
+
+  // Đẳng thức kế toán vỡ ⟹ NÉM, đừng định dạng một số âm rồi trả ra như một sự thật.
+  // `nanogicToMagic` xử lý dấu âm bình thường, nên không có gì kêu: màn hình xác nhận
+  // sẽ hiện `expired_dropped_magic: "-0.004000000"` và người dùng không có cách nào
+  // biết đó là "dịch vụ không hiểu giao dịch này" chứ không phải "một con số lạ".
+  // Vỡ ở đây đúng nghĩa là dựng ra một CBOR mà không đọc lại được.
+  if (expiredDropped < 0n) {
+    throw new TxSummaryUndecodableError(
+      "Kế toán MAGIC không khớp: tổng trước + lô mới − đã đốt − tổng sau ra số ÂM. " +
+      "Một giả định của bản tóm tắt đã vỡ, nên mọi con số MAGIC ở đây không tin được.",
+      { expired_dropped_nanogic: expiredDropped.toString() },
+    );
+  }
 
   return { minted, burned, expiredDropped, totalAfter };
 }

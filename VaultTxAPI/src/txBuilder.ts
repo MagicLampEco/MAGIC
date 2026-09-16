@@ -26,7 +26,7 @@ import {
   decodePriceParam, requiredFromBeacon,
   type PlutusJson, type VaultModule,
 } from "@magiclamp/sdk";
-import type { Network } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch, type Network } from "@magiclamp/protocol-utils";
 
 import type { ChainReader, ChainTip } from "./chain.js";
 import type { Deployment } from "./config.js";
@@ -93,8 +93,12 @@ export interface SdkTxBuilderDeps {
  * (ref-script, shard, beacon giá, thread Engage) mà lượt dựng gói này không có. Đừng đọc
  * "biên dịch xanh" thành "chạy đúng". Xem README §"Còn thiếu".
  */
+/** Hạn dùng của ảnh chụp tham số giao thức. Ngắn có chủ đích — xem `lucidFor`. */
+const PROTOCOL_PARAMS_TTL_MS = 10 * 60 * 1000;
+
 export class SdkTxBuilder implements TxBuilderPort {
-  private lucidCache: LucidEvolution | null = null;
+  private protocolParams: Awaited<ReturnType<Blockfrost["getProtocolParameters"]>> | null = null;
+  private protocolParamsAt = 0;
 
   constructor(private readonly deps: SdkTxBuilderDeps) {}
 
@@ -206,13 +210,40 @@ export class SdkTxBuilder implements TxBuilderPort {
 
   /** Lucid + ví CHỈ-ĐỌC. Ví không có khoá; nó chỉ cung cấp địa chỉ đổi tiền thừa và
    *  danh sách UTxO để chọn đầu vào trả phí. */
+  /**
+   * MỘT thực thể lucid cho MỘT lượt dựng. Không dùng lại giữa các yêu cầu.
+   *
+   * 🪦 Bản trước giữ một `lucidCache: LucidEvolution | null` sống suốt tiến trình rồi
+   * gọi `selectWallet.fromAddress(...)` trên nó ở mỗi lượt. `selectWallet` GHI vào
+   * thực thể dùng chung, và sau lúc chọn ví còn nhiều `await` nữa trước khi giao dịch
+   * được dựng (đọc script tham chiếu, đọc UTxO shard, đọc beacon giá). `node:http`
+   * phục vụ các yêu cầu xen kẽ nhau, nên hai người dùng bấm nút gần nhau là đủ để:
+   *
+   *   lượt A chọn ví A → A `await` → lượt B chọn ví B (ĐÈ) → A quay lại và dựng
+   *
+   * ⟹ giao dịch trả cho A mang UTxO trả phí, tài sản thế chấp và **địa chỉ nhận tiền
+   * thừa** của B. Không cần kẻ tấn công: lưu lượng bình thường của một dịch vụ nhiều
+   * người dùng tự làm hỏng. Và `userAddress` mà `scheduleCommit` truyền xuống KHÔNG
+   * cứu được — SDK lấy địa chỉ đổi tiền thừa từ ví đã chọn của lucid, không từ tham số
+   * đó. Nghĩa là mọi khẳng định về chiến lược địa chỉ ở README §7 neo vào một biến
+   * TOÀN CỤC GHI ĐƯỢC, không neo vào một tham số.
+   *
+   * Tham số giao thức thì vẫn dùng lại được — chúng là ảnh chụp CHỈ-ĐỌC của mạng, không
+   * phải trạng thái của một người gọi. Giữ chúng ở đây để việc dựng một thực thể mới
+   * KHÔNG tốn thêm một lượt gọi nhà cung cấp; hạn dùng ngắn để một lần đổi tham số mạng
+   * không sống mãi trong tiến trình.
+   */
   private async lucidFor(ctx: BuildContext): Promise<LucidEvolution> {
-    if (this.lucidCache === null) {
-      this.lucidCache = await Lucid(
-        new Blockfrost(this.deps.blockfrostUrl, this.deps.blockfrostProjectId),
-        this.deps.network,
-      );
+    const provider = new Blockfrost(this.deps.blockfrostUrl, this.deps.blockfrostProjectId);
+    const now = Date.now();
+    if (this.protocolParams === null || now - this.protocolParamsAt > PROTOCOL_PARAMS_TTL_MS) {
+      this.protocolParams = await provider.getProtocolParameters();
+      this.protocolParamsAt = now;
     }
+    const lucid = await Lucid(provider, this.deps.network, {
+      presetProtocolParameters: this.protocolParams,
+    });
+
     const walletUtxos = await this.deps.chain.utxosAt(ctx.changeAddress);
     if (walletUtxos.length === 0) {
       throw new TxBuildRejectedError(
@@ -221,8 +252,8 @@ export class SdkTxBuilder implements TxBuilderPort {
         { change_address: ctx.changeAddress },
       );
     }
-    this.lucidCache.selectWallet.fromAddress(ctx.changeAddress, walletUtxos);
-    return this.lucidCache;
+    lucid.selectWallet.fromAddress(ctx.changeAddress, walletUtxos);
+    return lucid;
   }
 
   private async scheduleScripts(vaultScriptHash: string): Promise<{
@@ -297,11 +328,28 @@ function assertShardsPresent(shardUtxos: UTxO[], address: string): void {
   }
 }
 
-/** Epoch GIAO THỨC (`posix_ms / ms_per_epoch`, KHÔNG trừ genesis). Preview/Preprod và
- *  Mainnet dùng chung hằng này trong giao thức MagicLamp. */
-const MS_PER_EPOCH = 86_400_000n;
-function protocolEpoch(posixMs: bigint, _network: Network): bigint {
-  return posixMs / MS_PER_EPOCH;
+/**
+ * Epoch GIAO THỨC (`posix_ms / ms_per_epoch`, KHÔNG trừ genesis).
+ *
+ * 🪦 Bản trước hiện thực hàm này bằng một hằng chép cứng `86_400_000n` cho MỌI mạng,
+ * kèm chú thích khai rằng "Preview/Preprod và Mainnet dùng chung hằng này". Câu đó
+ * SAI, và nguồn bác nó nằm trong chính gói đã có ở `package.json`:
+ * `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK` cho Mainnet
+ * `432_000_000n`. Tham số `network` nhận vào rồi bị bỏ đi.
+ *
+ * Vì sao không bài kiểm nào bắt được: Preview và Preprod **cùng** mang giá trị
+ * `86_400_000n`, trùng đúng hằng chép cứng, và bộ kiểm chạy `network: "Preview"` ⟹ ca
+ * kiểm xanh ở CẢ HAI cực đột biến. Đây là phép thử phải chạy cho mọi hằng-theo-mạng
+ * mới: *hai mạng thử nghiệm có cùng giá trị không? cùng ⟹ bộ kiểm không phân biệt
+ * được hai cực, và trục mạng chưa được đo.*
+ *
+ * Chiều hỏng nếu nó sống tới Mainnet: `currentEpoch` lệch ~5× ⟹ `planBurnBatch` coi
+ * MỌI lô MAGIC là đã hết hạn ⟹ người dùng có đủ MAGIC nhận một câu từ chối của giao
+ * thức nói sai về số dư của chính họ; và lô nào lọt qua thì datum output mang epoch
+ * sai, bị validator từ chối **sau khi người dùng đã ký**.
+ */
+export function protocolEpoch(posixMs: bigint, network: Network): bigint {
+  return posixMsToEpoch(posixMs, network);
 }
 
 /**

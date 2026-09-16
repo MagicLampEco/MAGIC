@@ -9,6 +9,7 @@
 //   404 VAULT_NOT_FOUND          chủ này chưa có vault ở phạm vi đã cấu hình
 //   405 METHOD_NOT_ALLOWED       method sai
 //   409 OWNER_TX_IN_FLIGHT       chủ này đã có một tx chưa nộp — xem `locks.ts`
+//   409 VAULT_AMBIGUOUS         chủ có nhiều vault, yêu cầu không nói cái nào
 //   409 VAULT_IDENTITY_DUPLICATE hai UTxO cùng mang một NFT danh-tính vault
 //   422 TX_BUILD_REJECTED        dựng được tới nơi nhưng giao thức từ chối (L×λ > L_avail,
 //                                MAGIC còn sống < required, shard hết chỗ…)

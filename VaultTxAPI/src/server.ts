@@ -17,7 +17,7 @@ import type { PlutusJson } from "@magiclamp/sdk";
 import { BlockfrostChainReader } from "./chain.js";
 import { loadConfig, isLoopback } from "./config.js";
 import { handle } from "./http.js";
-import { OwnerLockTable } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable } from "./locks.js";
 import { VaultTxService } from "./service.js";
 import { SdkTxBuilder } from "./txBuilder.js";
 
@@ -31,6 +31,9 @@ const chain = new BlockfrostChainReader({
 });
 
 const locks = new OwnerLockTable(cfg.lockTtlMs);
+// Sổ phát-hành sống LÂU HƠN khoá mềm: khoá nhả lúc nộp, còn một lần nộp lại vì rớt
+// mạng phải đi qua được. Bốn lần là đủ rộng cho ca người dùng ký chậm, và vẫn hữu hạn.
+const issued = new IssuedTxRegistry(cfg.lockTtlMs * 4);
 
 const service = new VaultTxService({
   network: cfg.network,
@@ -45,6 +48,7 @@ const service = new VaultTxService({
     vaultPlutusJson,
   }),
   locks,
+  issued,
   lockTtlMs: cfg.lockTtlMs,
 });
 

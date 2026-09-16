@@ -15,7 +15,7 @@ import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { parseDeployment, type Deployment } from "../src/config.js";
 import { ChainUnavailableError } from "../src/errors.js";
 import { handle, type RouterDeps } from "../src/http.js";
-import { OwnerLockTable } from "../src/locks.js";
+import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
 import { txBodyHash } from "../src/summary.js";
 import { RecordedTxBuilder, enterpriseAddressOf } from "../src/txBuilder.js";
@@ -94,6 +94,7 @@ interface Harness {
   service: VaultTxService;
   builder: RecordedTxBuilder;
   locks: OwnerLockTable;
+  issued: IssuedTxRegistry;
   chain: RecordedChainReader;
   router: RouterDeps;
   internalErrors: { ref: string; cause: unknown }[];
@@ -119,12 +120,14 @@ function harness(opts: {
     consume: opts.commitCbor ?? commitTxCbor(3n),
   });
   const locks = new OwnerLockTable(TTL);
+  const issued = new IssuedTxRegistry(TTL * 4);
   const service = new VaultTxService({
     network: "Preview",
     deployment: DEPLOYMENT,
     chain,
     builder,
     locks,
+    issued,
     lockTtlMs: TTL,
     now: () => NOW,
   });
@@ -139,7 +142,7 @@ function harness(opts: {
     token: opts.token ?? "",
     logInternal: (ref, cause) => internalErrors.push({ ref, cause }),
   };
-  return { service, builder, locks, chain, router, internalErrors };
+  return { service, builder, locks, issued, chain, router, internalErrors };
 }
 
 function post(url: string, body: unknown, headers: Record<string, string> = {}) {
@@ -290,9 +293,38 @@ describe("/tx/submit — ghép chứng ký của app, dịch vụ không ký gì
 
   it("nút chuỗi báo hash KHÁC ⟹ 502, không im lặng coi là xong", async () => {
     const h = harness({ submitResult: "ff".repeat(32) });
+    // 🪦 Bản trước nộp thẳng `commitTxCbor(3n)` mà KHÔNG dựng trước. Sau khi cổng xuất
+    // xứ vào, ca đó vẫn xanh — nhưng nó chết ở cổng xuất xứ, cũng mang đúng 502 và đúng
+    // mã `SUBMIT_REJECTED`, tức đúng màu đúng tên mà sai chốt (`Forall §Kỷ luật phát
+    // ngôn mục 6`). Phải dựng trước để đi tới được phép so hash của nút chuỗi.
+    await h.service.scheduleCommit({ ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA });
     await expect(h.service.submit({
       txCbor: commitTxCbor(3n), witnessCbor: fakeWitnessSetCbor(),
     })).rejects.toMatchObject({ httpStatus: 502, code: "SUBMIT_REJECTED" });
+    // Và đây là dòng PHÂN BIỆT hai chốt: chốt xuất xứ chặn TRƯỚC khi nộp, chốt này báo
+    // SAU khi đã nộp. Bỏ dòng này thì ca lại xanh ở cả hai bên đột biến.
+    expect(h.chain.submitted).toHaveLength(1);
+  });
+
+  it("nộp một giao dịch dịch vụ CHƯA TỪNG dựng ⟹ từ chối, và không có gì lên chuỗi", async () => {
+    // Không có cổng này thì `/tx/submit` là một đường nộp mượn được: ai cầm thẻ bài
+    // chia sẻ cũng đẩy được giao dịch bất kỳ qua khoá nhà cung cấp của người vận hành.
+    const cbor = commitTxCbor(3n);
+    const h = harness({ submitResult: txBodyHash(cbor) });
+    await expect(h.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toMatchObject({ httpStatus: 502, code: "SUBMIT_REJECTED" });
+    expect(h.chain.submitted).toEqual([]);
+  });
+
+  it("giao dịch đã dựng nhưng QUÁ HẠN nộp ⟹ từ chối, và không có gì lên chuỗi", async () => {
+    const cbor = commitTxCbor(3n);
+    const hash = txBodyHash(cbor);
+    const h = harness({ submitResult: hash });
+    await h.service.scheduleCommit({ ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA });
+    expect(h.issued.wasIssued(hash, NOW)).toBe(true);
+    // Sổ phát hành có hạn dùng riêng, dài hơn khoá của chủ — quá hạn thì tờ giấy phép
+    // nộp hết hiệu lực, không phải "còn hiệu lực nhưng chưa dùng".
+    expect(h.issued.wasIssued(hash, NOW + TTL * 4 + 1)).toBe(false);
   });
 
   it("cbor không phải hex ⟹ 400", async () => {

@@ -128,7 +128,11 @@ export function isLoopback(host: string): boolean {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const network = req(env, "VAULT_TX_API_NETWORK") as Network;
-  if (!(network in BLOCKFROST_URL_BY_NETWORK)) {
+  // `Object.hasOwn`, KHÔNG `in`: `in` đi theo chuỗi nguyên mẫu, nên
+  // `VAULT_TX_API_NETWORK=valueOf` (hay `toString`, `constructor`…) đi qua được cổng
+  // này. Nó vẫn fail-closed ở cổng asset name phía dưới, nhưng câu lỗi người vận hành
+  // nhận được lúc đó nói về `asset_name_hex` và trỏ họ đi sai chỗ.
+  if (!Object.hasOwn(BLOCKFROST_URL_BY_NETWORK, network)) {
     throw new Error(
       `[config] VAULT_TX_API_NETWORK="${network}" không hợp lệ. ` +
       `Nhận: ${Object.keys(BLOCKFROST_URL_BY_NETWORK).join(" | ")}.`,

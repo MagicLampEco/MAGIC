@@ -17,7 +17,7 @@ import type { Network } from "@magiclamp/protocol-utils";
 import type { ChainReader } from "./chain.js";
 import type { Deployment, VaultScope } from "./config.js";
 import { BadRequestError, SubmitRejectedError, TxSummaryUndecodableError } from "./errors.js";
-import { OwnerLockTable } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable } from "./locks.js";
 import { summarizeTx, txBodyHash, type RequestedIntent, type TxSummary } from "./summary.js";
 import { enterpriseAddressOf, type BuildContext, type TxBuilderPort } from "./txBuilder.js";
 import { findVaultsAtScope, pickSingleVault, type FoundVault, type IgnoredUtxo } from "./vaultLookup.js";
@@ -48,6 +48,8 @@ export interface VaultTxServiceDeps {
   chain: ChainReader;
   builder: TxBuilderPort;
   locks: OwnerLockTable;
+  /** Sổ hash thân của giao dịch do CHÍNH dịch vụ này phát ra — `/tx/submit` tra nó. */
+  issued: IssuedTxRegistry;
   lockTtlMs: number;
   /** Đồng hồ, tiêm được để phép kiểm dựng ca hết hạn mà không phải chờ thật. */
   now?: () => number;
@@ -139,6 +141,8 @@ export class VaultTxService {
       });
       const txHash = txBodyHash(built.txCbor);
       this.deps.locks.bindTxHash(ownerPkh, txHash);
+      // Ghi vào sổ phát-hành TRƯỚC khi trả về: `/tx/submit` chỉ nộp thứ có trong sổ.
+      this.deps.issued.record(txHash, this.now());
 
       return {
         txCbor: built.txCbor,
@@ -157,8 +161,21 @@ export class VaultTxService {
    * Ghép chứng ký của app vào giao dịch rồi nộp.
    *
    * Dịch vụ KHÔNG ký gì ở đây: nó nhận một `TransactionWitnessSet` đã ký sẵn từ app và
-   * ghép vào. Thân giao dịch KHÔNG bị đụng tới, nên hash trước và sau phải bằng nhau —
-   * và đó là thứ được kiểm, chứ không phải được giả định.
+   * ghép vào.
+   *
+   * 🔴 Phép so `bodyHashBefore`/`bodyHashAfter` dưới đây ĐỪNG đọc thành một cổng. Bản
+   * trước của khối chú thích này viết *"hash trước và sau phải bằng nhau — và đó là thứ
+   * được kiểm, chứ không phải được giả định"*; câu đó nói quá. `assembled` được dựng từ
+   * **chính `tx.body()`**, nên hai vế băm cùng một vật: không có hình dạng đầu vào nào
+   * làm nó đỏ, và không ca kiểm nào làm nó đỏ. Nó đo dư âm mã hoá CBOR khi CML tuần tự
+   * hoá lại, không đo tính toàn vẹn của việc ghép chứng ký — việc ghép, theo cấu trúc,
+   * không chạm thân. Giữ lại vì rẻ; đừng tính nó vào độ phủ.
+   *
+   * Cổng THẬT của đường này là phép tra sổ phát-hành ngay dưới.
+   *
+   * Còn một thứ nữa chưa vá và phải nói ra: phép so với hash của nút chuỗi chạy SAU
+   * `chain.submitTx`, nên khi nó đỏ thì giao dịch đã lên chuỗi rồi — lời "từ chối" ấy
+   * là một báo cáo, không phải một cái chặn.
    */
   async submit(req: { txCbor: string; witnessCbor: string }): Promise<SubmitResponse> {
     assertHex(req.txCbor, "tx_cbor");
@@ -190,6 +207,23 @@ export class VaultTxService {
     }
 
     const bodyHashBefore = CML.hash_transaction(tx.body()).to_hex();
+
+    // ── XUẤT XỨ: chỉ nộp thứ CHÍNH dịch vụ này đã dựng ──────────────────────────
+    // Cổng này phải đứng TRƯỚC `chain.submitTx`. Không có nó, đường này nhận một
+    // `tx_cbor` bất kỳ — giao dịch của dapp khác, giao dịch rác, giao dịch hàng loạt —
+    // và nộp bằng khoá nhà cung cấp của người vận hành. Điều kiện duy nhất là thẻ bài
+    // chia sẻ, thứ nằm sẵn trong mọi bản app.
+    //
+    // Nó KHÔNG phải cổng uỷ quyền: nó không nói người gọi có quyền với `owner_pkh`
+    // nào (Nợ #78). Nó chỉ chặn việc mượn đường nộp.
+    if (!this.deps.issued.wasIssued(bodyHashBefore, this.now())) {
+      throw new SubmitRejectedError(
+        "Giao dịch này không do dịch vụ dựng ra, hoặc đã quá hạn nộp. Dịch vụ chỉ nộp " +
+        "giao dịch chính nó vừa phát hành — hãy gọi lại một trong các đường /tx/* để " +
+        "dựng bản mới rồi ký bản đó.",
+        { body_hash: bodyHashBefore },
+      );
+    }
 
     const builder = CML.TransactionWitnessSetBuilder.new();
     builder.add_existing(tx.witness_set());

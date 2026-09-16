@@ -25,7 +25,19 @@ export const VAULT_ID_UNIT =
 /** Địa chỉ shard Preview — chỉ dùng làm khoá tra trong bảng UTxO ghi sẵn. */
 export const SHARD_ADDRESS = "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x";
 
-export const LAMP_POLICY_ID = "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4";
+/**
+ * Policy id TỔNG HỢP, cố ý không phải một giá trị có thật trên mạng nào.
+ *
+ * 🪦 Bản trước dùng `28e916b0…`. Đó là một policy id CÓ THẬT trên Preview/Preprod, và
+ * nó nằm trong danh sách chặn của `MagicSDK/src/lampPolicy.ts` ▸
+ * `NON_LAMP_LOOKALIKE_POLICIES`: chính sách chữ-ký-đơn suy từ khoá một ví triển khai,
+ * đã đúc cả "LAMP", "tLAMP", "CARP" và "MAGIC". Một fixture cầm đúng giá trị bị chặn là
+ * một fixture dạy sai — nó là chỗ người ta chép đi khi cần "một policy id để thử".
+ *
+ * Giá trị dưới đây không mang thông tin nào ngoài hình dạng (56 hex), và đó là toàn bộ
+ * thứ các bài kiểm của gói này cần: không bài nào tra tài sản theo policy THẬT.
+ */
+export const LAMP_POLICY_ID = "f1".repeat(28);
 /** "tLAMP" — apply-param #2 theo mạng. Mainnet phải là "LAMP" (`4c414d50`). */
 export const LAMP_ASSET_NAME_HEX = "744c414d50";
 export const LAMP_UNIT = LAMP_POLICY_ID + LAMP_ASSET_NAME_HEX;

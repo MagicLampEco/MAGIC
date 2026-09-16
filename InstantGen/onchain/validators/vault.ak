@@ -54,9 +54,12 @@ use magiclamp/protocol/types.{
 use magiclamp/protocol/constants.{
   magic_decay_window, max_backing_stale, max_batches_per_vault,
   max_loyalty_holdings, min_instant_holding, pm_q_ember, pm_q_flame,
-  pm_q_lantern, profile_change_cooldown,
+  pm_q_lantern, profile_change_cooldown, wakeme_seed_credit,
 }
-use magiclamp/protocol/math.{compute_instant_grant}
+use magiclamp/protocol/math.{
+  compute_cap_pp, compute_cap_surplus, compute_instant_grant,
+  compute_reward_from_consumed,
+}
 use magiclamp/protocol/decay.{count_expired, is_expired, prune_expired}
 use magiclamp/protocol/um.{
   get_um_for_instant, validate_um_history_length, validate_um_range,
@@ -267,13 +270,23 @@ fn validate_mint_vault_id(
   expect list.all(vd.loyalty_holdings, fn(h) { !h.is_locked })
   expect list.length(vd.loyalty_holdings) <= max_loyalty_holdings
 
-  // MAGIC / consumed state MUST be empty — this is the exact lever the attack
-  // fabricated.
+  // MAGIC state MUST be empty, and the consumed credit MUST be exactly the
+  // Wakeme seed — this equality is the exact lever the attack fabricated.
+  //
+  // What blocks the fabrication is the `==`, not the number on its right. The
+  // attack authored an ARBITRARY consumed_credit; pinning the field to a
+  // compile-time constant refuses every value the creator could pick, 0 and
+  // `wakeme_seed_credit + 1` alike. Both directions are pinned by
+  // `mint_genesis_zero_credit_rejected` and `mint_genesis_credit_off_by_one_rejected`.
+  //
+  // Pinning it to 0 additionally shut the InstantGen loop for good (Nợ #19):
+  // the only writer of `consumed_credit` sits behind `BurnBatch`, which needs a
+  // batch that only InstantGen can create. See `constants.ak` ▸ `wakeme_seed_credit`.
   expect vd.magic_batches == []
   expect vd.next_batch_index == 0
   expect vd.activity_state == ActivityState {
     recent_burn_epochs: [],
-    consumed_credit: 0,
+    consumed_credit: wakeme_seed_credit,
   }
 
   // Every other ledger empty/zeroed.
@@ -2136,14 +2149,71 @@ test ig_pos_no_schedule_still_gens() {
 //   · gỡ `expect total_burned > 0` (`:930`) → 1 đỏ: `bb_neg_empty_batches_cannot_burn`.
 //     Trước bài này chốt đó **không bài nào canh** — gỡ ra thì cả 100 bài vẫn xanh.
 
-// IG-NEG-GENESIS-CLOSED: cửa 1 — vault đúng trạng thái genesis không gen được.
-test ig_neg_genesis_state_cannot_gen() fail {
+// IG-NEG-ZERO-CREDIT: tín dụng tiêu bằng 0 thì không gen được.
+//
+// Bài này TỪNG mang tên `ig_neg_genesis_state_cannot_gen` và tên đó nay sai:
+// genesis không còn mang `consumed_credit = 0` mà mang `wakeme_seed_credit`.
+// Thân bài thì không đổi một dòng — nó vẫn dựng `t_ig_din(0)` — nên nếu chỉ
+// chạy lại bộ kiểm thì nó vẫn xanh và cái tên vẫn nói dối. Đổi tên là phần
+// việc thật, không phải phần dọn dẹp: mệnh đề "trạng thái genesis không gen
+// được" đã bị chính bản vá này lật, còn mệnh đề "credit 0 không gen được" thì
+// vẫn đúng và vẫn đáng canh.
+test ig_neg_zero_credit_cannot_gen() fail {
   let base = t_ig_din(0)
   let din =
     VaultDatum { ..base, gen_schedules: [], magic_batches: [] }
   let dout = t_ig_dout(din, 0, 10)
   let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
   t_ig_call(din, 0, 10, tx)
+}
+
+// IG-POS-WAKEME: đối ngẫu của bài trên — vault ở ĐÚNG trạng thái genesis nay
+// đi hết được một vòng InstantGen và cấp MAGIC thật.
+//
+// Đây là bài chứng minh Nợ #19 đã mở ở vế còn sống của nó. Nó cố ý dựng đúng
+// hình dạng mà đường mint cho phép — `gen_schedules: []` và `magic_batches: []`
+// — chứ không dựng một datum tiện tay: bài cũ `ig_pos_*` xanh trên một trạng
+// thái mà genesis cấm, và đó là lý do bộ kiểm xanh trong khi trên chuỗi không
+// vault nào cấp nổi một nanogic.
+//
+// 333_333_333 là số đo, không phải số chọn: xem `ig_prop_seed_is_not_the_binding_brake`
+// ngay dưới, nơi ba vế được tính riêng rồi so.
+test ig_pos_wakeme_seed_can_gen() {
+  let base = t_ig_din(wakeme_seed_credit)
+  let din =
+    VaultDatum { ..base, gen_schedules: [], magic_batches: [] }
+  let grant = 333_333_333
+  let dout = t_ig_dout(din, grant, 10)
+  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, grant, 10, tx)
+}
+
+// IG-PROP-SEED-NOT-BINDING: hạt giống MỞ KHOÁ, nó không TRẢ.
+//
+// Chốt an toàn của cả bản vá nằm ở đây, không ở hai bài trên: cấp thực là
+// `min(reward, cap_surplus, cap_pp)`, nên hạt giống chỉ định được số tiền khi
+// nó là vế NHỎ NHẤT. Bài này ghim rằng ở cỡ Wakeme nó là vế LỚN NHẤT — tức
+// nới hạt giống lên không nới được đồng MAGIC nào, và vòi vẫn do hai phanh
+// kinh tế giữ.
+//
+// Cố ý KHÔNG ghim "phanh nào đang bó" — `cap_surplus` trôi theo beacon và
+// `f_cap_surplus_q` còn là hàng rào tạm (Nợ #49), nên một bài ghim tên phanh
+// sẽ đỏ ở đúng ca hợp lệ rồi bị sửa cho xanh.
+test ig_prop_seed_is_not_the_binding_brake() {
+  let reward = compute_reward_from_consumed(wakeme_seed_credit, 1_000_000_000, pm_q_flame)
+  let surplus = compute_cap_surplus(2_000_000_000, 1_000_000_000_000)
+  let pp = compute_cap_pp(1_000_000_000)
+  let grant =
+    compute_instant_grant(
+      wakeme_seed_credit, 1_000_000_000, pm_q_flame,
+      2_000_000_000, 1_000_000_000_000, 1_000_000_000,
+    )
+  // hạt giống không phải vế bó
+  expect reward > surplus
+  expect reward > pp
+  // và cấp thực bằng đúng vế nhỏ nhất trong hai phanh kinh tế
+  expect grant == 333_333_333
+  grant < reward
 }
 
 // BB-NEG-EMPTY: cửa 2 — không có batch nào thì không đốt được, nên
@@ -2480,7 +2550,15 @@ fn t_mint_call(seed: OutputReference, policy_id: PolicyId, tx: Transaction) -> B
 fn t_clean_genesis(balance: Int) -> VaultDatum {
   // Any valid profile passes the mint gate (profile is no longer pinned).
   // Keep Lantern here; t_datum defaults to Flame for spend-path fixtures.
-  VaultDatum { ..t_datum(balance, 0, [t_holding(balance, 5, False)]), profile: Lantern }
+  // `t_datum` zeroes consumed_credit; genesis pins it to the Wakeme seed.
+  VaultDatum {
+    ..t_datum(balance, 0, [t_holding(balance, 5, False)]),
+    profile: Lantern,
+    activity_state: ActivityState {
+      recent_burn_epochs: [],
+      consumed_credit: wakeme_seed_credit,
+    },
+  }
 }
 
 // ── POC: fabricated vault spent via InstantGen now FAILS ──────────────────
@@ -2532,7 +2610,10 @@ test mint_clean_genesis_ok() {
 }
 
 // ── poc_dirty_mint_rejected: dirty datum at mint → rejected ────────────────
-// Non-empty magic_batches AND nonzero consumed_credit — the exact fabrication.
+// Non-empty magic_batches AND a self-authored consumed_credit — the exact
+// fabrication. 10^18 is far from `wakeme_seed_credit`, so this pins the gate
+// only in the coarse direction; the two bài ngay dưới pin it at the boundary,
+// which is where a gate written as `>=` instead of `==` would survive.
 test poc_dirty_mint_rejected() fail {
   let seed = t_mint_seed()
   let name = t_mint_name(seed)
@@ -2559,6 +2640,49 @@ test poc_dirty_mint_lamp_overclaim_rejected() fail {
   // datum claims 1000 LAMP but only 100 LAMP sits in the output.
   let vd  = t_clean_genesis(1000)
   let out = t_genesis_output(vd, 100, t_vault_hash, name)
+  let m   = assets.from_asset(t_vault_hash, name, 1)
+  let tx  = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: consumed_credit = 0 at genesis → rejected ────────────────────────
+// Cổng là một dấu BẰNG, nên nó từ chối cả chiều THẤP. Ghi bài này ra vì 0 là
+// giá trị cổng cũ ÉP, nên nó là giá trị dễ sót lại nhất trong một máy dựng
+// giao dịch chưa cập nhật — và một vault mở với credit 0 sẽ lại kẹt đúng
+// Nợ #19, lần này im lặng, vì nó vẫn là một vault hợp lệ về mọi mặt khác.
+test mint_genesis_zero_credit_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let vd =
+    VaultDatum {
+      ..t_clean_genesis(bal),
+      activity_state: ActivityState { recent_burn_epochs: [], consumed_credit: 0 },
+    }
+  let out = t_genesis_output(vd, bal, t_vault_hash, name)
+  let m   = assets.from_asset(t_vault_hash, name, 1)
+  let tx  = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: consumed_credit = seed + 1 → rejected ────────────────────────────
+// Ca lệch MỘT nanogic. Đây là bài phân biệt được `==` với `<=`, mà
+// `poc_dirty_mint_rejected` (10^18) thì không: gate viết thành `<=` vẫn từ
+// chối 10^18 và vẫn xanh ở đó, trong khi nó mở đường cho người tạo vault tự
+// chọn mọi giá trị dưới trần.
+test mint_genesis_credit_off_by_one_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let vd =
+    VaultDatum {
+      ..t_clean_genesis(bal),
+      activity_state: ActivityState {
+        recent_burn_epochs: [],
+        consumed_credit: wakeme_seed_credit + 1,
+      },
+    }
+  let out = t_genesis_output(vd, bal, t_vault_hash, name)
   let m   = assets.from_asset(t_vault_hash, name, 1)
   let tx  = t_mint_tx(seed, out, m, [t_owner])
   t_mint_call(seed, t_vault_hash, tx)

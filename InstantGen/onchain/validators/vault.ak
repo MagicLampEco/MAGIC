@@ -2688,6 +2688,62 @@ test mint_genesis_credit_off_by_one_rejected() fail {
   t_mint_call(seed, t_vault_hash, tx)
 }
 
+// ── mint: tài sản thứ tư lọt vào output genesis → từ chối ──────────────────
+// Cổng `policies(vault_out.value) <= 3` ở `validate_mint_vault_id` có từ trước
+// hai bài này. Cái thiếu không phải cổng, là BÀI CANH nó: gỡ hẳn dòng đó rồi
+// chạy trọn bộ (đo 2026-09-16) thì 105/105 vẫn xanh — nên tới hôm nay câu
+// "nhánh mint đã ép hình dạng" không neo được vào phép đo nào.
+//
+// Hậu quả nếu cổng biến mất KHÔNG nằm ở nhánh mint. Output genesis mang tài
+// sản thứ tư khoá vào êm, rồi `validate_vault_value` từ chối MỌI lượt chi sau
+// đó — và LAMP chỉ ra được qua chính nhánh bị từ chối ấy. Vault hợp lệ thành
+// vault chết vĩnh viễn, không lượt nào sửa ngược được.
+//
+// Hai bài đi THÀNH CẶP, và cặp mới là phép đo. Fixture genesis dùng ở các bài
+// trên (`t_genesis_output`) KHÔNG kèm lovelace nên nó chỉ có HAI policy: một
+// bài âm tính dựng trên nó vẫn xanh cả khi cổng bị gỡ, tức không phân biệt
+// được hai cực. Bài dương ở đây mang đủ ba policy hợp lệ của một vault thật
+// (ADA · LAMP · NFT danh-tính) — tức đúng trần, không dưới trần — nên bài âm
+// ngay dưới là bước thứ TƯ, chỗ duy nhất dấu `<= 3` nói lên điều gì.
+fn t_genesis_output_ada(
+  vd: VaultDatum, balance: Int, policy: PolicyId, name: ByteArray, dust: Bool,
+) -> Output {
+  let base =
+    assets.from_lovelace(2_000_000)
+      |> assets.add(t_lamp_policy, #"744c414d50", balance)
+      |> assets.add(policy, name, 1)
+  Output {
+    address: address.from_script(policy),
+    value: if dust {
+      assets.add(base, t_other_policy, #"6475737400", 1)
+    } else {
+      base
+    },
+    datum: InlineDatum(vd),
+    reference_script: None,
+  }
+}
+
+test mint_genesis_three_policies_ok() {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out  = t_genesis_output_ada(t_clean_genesis(bal), bal, t_vault_hash, name, False)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx   = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+test mint_genesis_fourth_asset_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out  = t_genesis_output_ada(t_clean_genesis(bal), bal, t_vault_hash, name, True)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx   = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
 // ── mint: genesis seed not spent → one-shot broken → rejected ──────────────
 test mint_no_genesis_seed_rejected() fail {
   let seed = t_mint_seed()

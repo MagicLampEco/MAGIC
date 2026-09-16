@@ -164,8 +164,58 @@ export const POLICY_IDS = {
 // testnets "tLAMP". A testnet default here would silently bake a tLAMP vault
 // on a mainnet deploy — the exact lock this param exists to prevent.
 // LAMP_ASSET_NAME env only overrides for a non-canonical mint.
+//
+// 🔴 VẾ ASSET NAME TỪNG KHÔNG CÓ CỔNG NÀO, trong khi câu lỗi của cổng policy ngay
+// trên đã hứa hai lần là "phải so CẢ policy id lẫn asset name hex". Đo 2026-09-16,
+// nạp tệp này với các bộ biến môi trường:
+//
+//   LAMP_ASSET_NAME=deadbeefcafe  → QUA    (hex hợp lệ, không phải LAMP)
+//   LAMP_ASSET_NAME=4c414d50      → QUA    (tên MAINNET trên một mạng thử)
+//   LAMP_ASSET_NAME=              → QUA    (RỖNG — `??` không bắt chuỗi rỗng)
+//
+// Ca rỗng là ca nặng nhất, và nó vẫn ra một script hash trông hợp lệ: vault sinh
+// ra mang `lamp_asset_name` là chuỗi byte rỗng, nên `quantity_of(value, policy, "")`
+// trả 0 mãi mãi — LAMP gửi vào không bao giờ được vault nhận ra. Rót đúng địa chỉ,
+// nằm ngoài sổ. Và đường đi tới đó không xa: hai sổ trạng thái hiện có đều đã xoá
+// `LAMP_POLICY_ID` bằng cách bỏ hẳn dòng, nên người dọn tiếp theo làm điều tự nhiên
+// với asset name là để lại `LAMP_ASSET_NAME=`.
+//
+// Hai vế của MỘT cặp định danh nay đi qua hai cổng cùng mức nghiêm.
+function requireLampAssetName(): string {
+  const canonical = lampAssetName(NETWORK);
+  const raw = process.env.LAMP_ASSET_NAME;
+  if (raw === undefined) return canonical;
+
+  if (!/^([0-9a-f]{2})+$/.test(raw)) {
+    throw new Error(
+      `LAMP_ASSET_NAME sai hình dạng (nhận ${JSON.stringify(raw)}). Phải là hex ` +
+      `thường, SỐ KÝ TỰ CHẴN, và KHÔNG được rỗng.\n` +
+      `  · Chuỗi rỗng đi lọt mọi phép kiểm hình dạng lỏng và vẫn ra một script hash ` +
+      `hợp lệ — vault đó không bao giờ nhận ra LAMP của chính nó, và không giao dịch ` +
+      `nào báo lỗi.\n` +
+      `  · Bỏ hẳn biến này đi thì giá trị canonical theo mạng (${canonical}) được dùng. ` +
+      `Để trống KHÔNG phải cách bỏ.`,
+    );
+  }
+
+  if (raw !== canonical && process.env.LAMP_ASSET_NAME_NONCANONICAL !== "1") {
+    throw new Error(
+      `LAMP_ASSET_NAME=${raw} KHÁC giá trị canonical của mạng ${NETWORK} ` +
+      `(${canonical}).\n` +
+      `  · Đây là tham số apply-param #2 của mọi vault: sai ở đây là sai script hash, ` +
+      `sai địa chỉ, và không sửa được bằng cách đổi cấu hình về sau.\n` +
+      `  · Trộn hai mạng đi qua êm nếu không có cổng này — tên mainnet \`4c414d50\` ` +
+      `là một chuỗi hex hoàn toàn hợp lệ trên Preprod.\n` +
+      `  · Thật sự đang trỏ vào một lượt đúc KHÔNG canonical thì khai rõ ý định: ` +
+      `đặt LAMP_ASSET_NAME_NONCANONICAL=1 trong cùng một lệnh.`,
+    );
+  }
+
+  return raw;
+}
+
 export const ASSET_NAMES = {
-  lamp:      process.env.LAMP_ASSET_NAME ?? lampAssetName(NETWORK),
+  get lamp(): string { return requireLampAssetName(); },
   um_nft:    "554d44",     // "UMD"
   shard_nft: "5348415244", // "SHARD"
   backing:   "425251",     // "BRQ" — BackingBeacon

@@ -111,6 +111,25 @@ function refKey(u: UTxO): string {
 // ── Builder ───────────────────────────────────────────────────────────────────
 
 /**
+ * 🪦 Cổng PM-1.5 KHÔNG CÒN ĐẦU VÀO NÀO THOẢ — đặt `false` chỉ khi D16 đã chốt.
+ *
+ * `paymaster.ak` ▸ `all_vaults_delegate_app` đòi MỌI vault input mang
+ * `personal_delegate == Some(app_authority)`. Nhánh uỷ nhiệm bị bỏ khỏi mô hình
+ * 2026-09-16 (Nợ #14): `SetDelegate` ở cả ba vault nay chỉ XOÁ được, và cửa đúc
+ * (`validate_mint_vault_id`) ép `personal_delegate == None`. Nên không vault nào
+ * đặt được `Some`, và cổng không có đầu vào nào thoả.
+ *
+ * Vì sao builder phải NÉM thay vì cứ dựng: để chạy tiếp thì nó trả về một giao dịch
+ * trông hoàn chỉnh, app ký, nộp, rồi nút chuỗi từ chối bằng một câu không nhắc gì tới
+ * uỷ quyền. Người vận hành đọc câu đó và đi tìm sai chỗ — đúng một cái vỏ im lặng, chỉ
+ * khác là nó im ở phía DỰNG chứ không ở phía đọc.
+ *
+ * Kiểu ghi là `boolean` chứ không để TypeScript suy ra `true`: xem chú thích tại chỗ
+ * dùng, ngay trong `buildSponsorTx`.
+ */
+const SPONSOR_PATH_HAS_NO_SATISFYING_INPUT: boolean = true;
+
+/**
  * Dựng tx app-sponsor. KHÔNG mint MAGIC. Caller (app) sign bằng app_authority + submit.
  *
  * Bất biến builder bám validator (paymaster.ak):
@@ -129,6 +148,39 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
     paymasterScript, vaultScript, didKey, meterNftUnit, network, tipPosixMs,
     lampThisOverride, adaThisOverride,
   } = params;
+
+  // ── PM-000: đường này KHÔNG thoả được nữa — dừng ở đây, đừng dựng ──────────
+  //
+  // Cổng PM-1.5 (`paymaster.ak` ▸ `all_vaults_delegate_app`) đòi MỌI vault input mang
+  // `personal_delegate == Some(app_authority)`. Nhánh uỷ nhiệm đã bị bỏ khỏi mô hình
+  // 2026-09-16 (Nợ #14): `SetDelegate` ở cả ba vault nay chỉ XOÁ được, và cửa đúc ép
+  // `personal_delegate == None`. Nên không vault nào đặt được `Some`, và cổng không
+  // có đầu vào nào thoả.
+  //
+  // Vì sao NÉM thay vì cứ dựng: nếu để chạy tiếp, hàm này trả về một giao dịch trông
+  // hoàn chỉnh, app ký nó, nộp nó, rồi nút chuỗi từ chối bằng một câu không nhắc gì
+  // tới uỷ quyền. Người vận hành đọc câu đó và đi tìm sai chỗ — đúng một cái vỏ im
+  // lặng, chỉ khác là nó im ở phía DỰNG chứ không ở phía đọc. Phí đã trả, thời gian
+  // đã mất, và nguyên nhân nằm ở một tệp khác.
+  //
+  // D16 ĐÃ CHỐT 2026-09-16: giữ nguyên trạng thái không-thoả-được, KHÔNG chốt cơ chế
+  // thay thế lúc này (Paymaster chưa deploy ở mạng nào ⟹ không có thiệt hại đang chạy
+  // và không có hạn chót ép chọn vội). Nên dòng này ở lại cho tới khi có một lượt chốt
+  // MỚI — không phải cho tới khi ai đó thấy nó cản đường chạy thử.
+  // Cờ khai bằng `boolean` (không phải hằng literal) là CỐ Ý: gõ `throw` trần ở đây
+  // làm toàn bộ thân hàm thành mã không-tới-được, và TypeScript **ngừng thu hẹp kiểu**
+  // trong vùng đó — ba lời gọi bên dưới đổi màu đỏ ngay, dù không dòng nào trong chúng
+  // bị sửa. Giữ thân hàm còn được kiểm kiểu là điều kiện để nó còn dùng lại được khi
+  // D16 chốt; một thân hàm đã thôi được kiểm sẽ trôi lặng lẽ khỏi phần còn lại của tệp.
+  if (SPONSOR_PATH_HAS_NO_SATISFYING_INPUT) {
+    throw new Error(
+      "PM-000: đường app-sponsor không thoả được — cổng PM-1.5 đòi mọi vault input mang " +
+      "personal_delegate == Some(app_authority), mà nhánh uỷ nhiệm đã bị bỏ khỏi mô hình " +
+      "(Nợ #14): SetDelegate nay chỉ xoá được và vault sinh ra luôn mang None. " +
+      "Không có hình dạng giao dịch nào qua được cổng đó. Cơ chế thay thế còn để ngỏ — " +
+      "xem DevStatus.md ▸ D16 và Nợ #74.",
+    );
+  }
 
   if (vaultInputs.length < 1) throw new Error("PM-001: cần ≥1 vault input để sponsor");
 

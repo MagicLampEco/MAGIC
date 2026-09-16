@@ -45,7 +45,12 @@ pub type PrepaidVaultDatum {
   prepaid_credits    : List<PrepaidCredit>,
   magic_batches      : List<MagicBatch>,
   next_batch_index   : Natural,
-  personal_delegate  : Option<ByteArray>,    // §7.6 Paymaster
+  // 🪦 BIA MỘ — quyền chết 2026-09-16 (Nợ #14), trường ở lại. Không phải vì "gỡ
+  // ra thì vỡ decode mọi UTxO đã tạo" (hash đã đổi, UTxO đời trước ở địa chỉ
+  // khác), mà vì gỡ nó đẩy mọi trường sau lên một chỉ số — và có bên đọc theo
+  // VỊ TRÍ, lấy nhầm trường mà không kêu. §7.6 mô tả đường đã chết; giữ con trỏ
+  // để người tra biết nó nói về cái gì, đừng đọc thành đường đang chạy.
+  personal_delegate  : Option<ByteArray>,    // 🪦 §7.6 Paymaster (đường đã chết)
   last_updated_epoch : Natural,
   attribution        : VaultAttribution,
 }

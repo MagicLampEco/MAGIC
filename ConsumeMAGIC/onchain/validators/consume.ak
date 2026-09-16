@@ -335,8 +335,16 @@ fn did_len_ok(did: ByteArray) -> Bool {
 //
 // KHÔNG uỷ quyền: đây là thao tác gắn DANH TÍNH, đòi chữ ký của CHÍNH `owner`.
 // 🪦 Vế `|| personal_delegate` mà dòng này từng đối chiếu (nhánh consume, đường
-// Paymaster/Feecover) đã CHẾT 2026-09-16 (Nợ #14) — nay không còn nhánh nào
-// trong hệ nhận uỷ quyền, nên đây không còn là ngoại lệ mà là luật chung.
+// Paymaster/Feecover) đã CHẾT 2026-09-16 (Nợ #14). Ba vị từ ký của ba vault
+// (ScheduleGen · InstantGen · PrepaidGen) nay chỉ nhận chữ ký chủ sở hữu — danh
+// sách ĐÓNG, đếm được bằng `grep -rn "personal_delegate is {"` ngoài `Legacy/`
+// → 0. Nên với `personal_delegate`, đây không còn là ngoại lệ mà là luật chung.
+//
+// KHÔNG đọc rộng hơn thế. Bản trước viết "không còn nhánh nào TRONG HỆ nhận uỷ
+// quyền" — một lượng từ toàn xưng không có phép liệt kê nào đứng sau, và nó SAI:
+// `delegation_cert` (uỷ quyền STAKE) vẫn là một trường sống của datum, và kho
+// Treasury CÓ uỷ quyền stake theo D14. Hai thứ cùng mang chữ "uỷ quyền" mà khác
+// hẳn nhau — cái chết là uỷ quyền TIÊU, không phải uỷ quyền STAKE.
 //
 // DOUBLE-SATISFACTION: mọi bất biến dưới đây cục bộ theo `own_hash` và bị kẹp bởi
 // `#in == #out == 1`, nên một tx phục vụ đúng MỘT thread. Trộn một input BindDID với

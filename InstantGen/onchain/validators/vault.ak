@@ -1048,8 +1048,18 @@ fn validate_set_delegate(
   // 🪦 BIA MỘ — nhánh này nay CHỈ XOÁ ĐƯỢC, không đặt được (2026-09-16, Nợ #14).
   // `SetDelegate` (constr 5) ở lại nguyên chỗ: chỉ số constructor là hợp đồng
   // nhị phân, đổi thứ tự variant là vỡ decode mọi redeemer đã phát. Cái chết là
-  // QUYỀN, không phải cái vỏ. Đường XOÁ phải sống, vì vault trên Preview/Preprod
-  // có thể còn mang `Some(d)` của đời trước và đây là nhánh duy nhất dọn nó.
+  // QUYỀN, không phải cái vỏ.
+  //
+  // 🪦 Lý do CŨ ghi ở đây — "vault Preview/Preprod còn mang `Some(d)` và đây là
+  // nhánh duy nhất dọn nó" — TỰ CHỌI CHÍNH NÓ: bản vá đổi bytes ⟹ đổi script
+  // hash ⟹ đổi địa chỉ, nên vault đời trước bị tiêu bởi bytes CŨ và validator
+  // này không bao giờ thấy chúng. Dọn `Some(d)` đời cũ là việc DI TRÚ, không
+  // phải việc của dòng này (Nợ #14).
+  //
+  // Dưới hash NÀY, `Some` không sinh ra được — cửa đúc ép
+  // `personal_delegate == None` và không nhánh nào khác ghi trường đó — nên
+  // dòng dưới và `fail` tương đương về hành vi. Giữ dạng này vì nhánh còn đi
+  // tới được, nên bài kiểm chứng minh được CẢ HAI vế (đặt bị từ chối / xoá qua).
   expect new_delegate == None
 
   let output_datum = find_vault_output_datum(tx.outputs, vault_addr)

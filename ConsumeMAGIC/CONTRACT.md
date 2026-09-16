@@ -316,11 +316,16 @@ Validator ÉP:
   `all_vault_owners_are`. **Không chép lại ở đây**: một bản sao của lập luận sẽ trôi khỏi bản gốc
   mà không gì báo, và bản trước của mục này đã trôi đúng như thế.
 
-  *Đường sponsor Paymaster/Feecover KHÔNG bị bỏ theo:* ở đó vault cũng thuộc **chính người dùng**
-  (app chỉ là `personal_delegate` — `InstantGen/onchain/validators/vault.ak` ▸ `validate_burn_batch`,
-  auth = `owner` HOẶC `personal_delegate`), nên cổng thoả mà không cần chữ ký nào ở lớp này. Bài
-  canh: `consume_sponsor_no_signature_ok`. Ai được tiêu vault là việc của **vault** gác, không phải
-  của lớp này.
+  🪦 *Bản trước của mục này viết:* "**Đường sponsor Paymaster/Feecover KHÔNG bị bỏ theo** — ở đó app
+  chỉ là `personal_delegate`, auth của `validate_burn_batch` = `owner` HOẶC `personal_delegate`, nên
+  cổng thoả mà không cần chữ ký nào ở lớp này." **Vế uỷ nhiệm đó đã chết 2026-09-16 (Nợ #14):** cả ba
+  vault nay chỉ nhận chữ ký chủ sở hữu ở `BurnBatch`, nên không còn đường nào để app ký thay.
+
+  *Điều CÒN đúng, và nó là điều mục này cần nói:* lớp `consume` **không tự dựng cổng chữ ký của
+  riêng nó**. Ai được tiêu vault là việc của **vault** gác. Bài canh `consume_sponsor_no_signature_ok`
+  vẫn giữ và vẫn có nghĩa — chỉ đổi nghĩa: nó đo rằng lớp này không thêm cổng, chứ không còn đo rằng
+  một đường sponsor chạy được. Trạng thái của đường sponsor đọc ở `DevStatus.md` ▸ Nợ #74, không đọc
+  ở đây.
 
   *`list.all` chứ không `list.any`:* danh sách `vault_ref` phân biệt hiện chỉ có thể dài đúng MỘT
   phần tử — cả hai loại vault đang phục vụ đều ép đúng một input tại địa chỉ vault trong một tx
@@ -366,9 +371,17 @@ tích luỹ; pin cứng về `#""` sẽ khoá chết đường liên kết DID s
   **nghiệp vụ hạ tầng** (ảnh, CID).
 - Generators sinh + giảm MAGIC (datum). ConsumeMAGIC định giá + ghi attribution; vault validator là nơi
   DUY NHẤT giảm `magic_batches`. KHÔNG token, KHÔNG `tx.mint`.
-- **Paymaster (dài hạn):** app đặt `personal_delegate = Some(app_pkh)` qua `SetDelegate` ở vault → app
-  ký `BurnBatch` tiêu MAGIC HỘ user (trả phí tx) mà MAGIC vẫn nằm trong vault user. UX paymaster đạt
-  được KHÔNG vi phạm "MAGIC không transfer".
+- **Paymaster (dài hạn):** 🪦 hình dạng cũ — *app đặt `personal_delegate = Some(app_pkh)` qua
+  `SetDelegate` rồi ký `BurnBatch` hộ user* — **đã chết 2026-09-16 (Nợ #14)**: `SetDelegate` nay chỉ
+  xoá được, và `BurnBatch` ở cả ba vault chỉ nhận chữ ký chủ sở hữu. Mục tiêu thì **không đổi** (đạt
+  UX trả phí hộ mà MAGIC vẫn nằm trong vault user, không vi phạm "MAGIC không transfer"); cái mất là
+  một cơ chế, không phải một yêu cầu.
+
+  | mã | trạng thái | ràng buộc đang có hiệu lực (fail-closed) | khai ở |
+  |---|---|---|---|
+  | D16 | cơ chế uỷ quyền thay thế để ngỏ | cổng PM-1.5 đứng ở trạng thái không thoả được; `buildSponsorTx` ném `PM-000`; Paymaster chưa deploy ở mạng nào | `DevStatus.md` ▸ D16 · Nợ #74 |
+
+  Đừng hiện thực hoá hình dạng cũ từ dòng này.
 
 ## D. Phải build (bám CONTRACT, có Agent audit phản biện mỗi vòng)
 - **SPEC**: FEAT (luồng consume: app gọi → đọc giá → đốt → verify; bảng op_type) + MATH (chứng minh

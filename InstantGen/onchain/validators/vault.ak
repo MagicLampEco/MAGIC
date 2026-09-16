@@ -871,18 +871,18 @@ fn validate_withdraw_lamp(
 // by the co-spending ConsumeMAGIC validator". Câu đó chỉ đúng KHI ConsumeMAGIC có
 // mặt trong tx, và KHÔNG có gì trong hàm này bắt nó có mặt: không ràng buộc input
 // nào ở địa chỉ `consume`, không đọc PriceParam beacon. Liên kết giá là MỘT CHIỀU
-// — consume.ak ép về phía vault, vault không ép ngược lại.
+// — consume.ak ép về phía vault, vault không ép ngược lại. Câu này VẪN ĐÚNG sau
+// 2026-09-16 và không được đọc thành "đã vá": vá dưới đây thu hẹp NGƯỜI KÝ, nó
+// không dựng liên kết giá hai chiều.
 //
-// Hệ quả đang sống: một `personal_delegate` ký được một tx BurnBatch trần trụi,
-// không kèm Engage input, không giao dịch vụ gì, và đốt sạch MAGIC của chủ vault.
-// Chủ không mất LAMP và không mất ADA (hai chốt dưới chặn đúng), nhưng mất toàn bộ
-// quyền-tiêu-dịch-vụ đã trả tiền để có. `personal_delegate` hiện là
-// `Option<ByteArray>` trần: không hạn mức, không phạm vi op, không hạn dùng.
-//
-// Vá đề xuất (ĐỤNG VALIDATOR — chờ chủ nhân gật, xem DevStatus.md): khi người ký
-// là delegate chứ không phải chủ, đòi ≥1 input ở `engage_script_hash` với redeemer
-// `Consume`. Đường chủ-tự-ký có thể miễn. Phát hiện: hội đồng rà trước push
-// 2026-08-12, trục cơ chế.
+// 🪦 ĐÃ VÁ 2026-09-16 (Nợ #14) — bản trước của khối này mô tả một lỗ ĐANG SỐNG
+// ("một `personal_delegate` ký được một tx BurnBatch trần trụi … đốt sạch MAGIC
+// của chủ vault") và đề xuất cổng co-spend làm bản vá. Cả hai vế nay đã cũ:
+//   • Lỗ: chết cùng nhánh uỷ nhiệm — auth nay là CHỈ CHỦ SỞ HỮU.
+//   • Bản vá đề xuất: bị BÁC, không phải bị hoãn. Cổng co-spend đặt ở BurnBatch
+//     về nguyên tắc không đóng được bán kính, vì cùng vị từ auth gác nhiều
+//     handler và `PrepaidDraw` (PrepaidGen) KHÔNG đi qua BurnBatch. Phạm vi lấy
+//     bằng TÊN HANDLER thay vì bằng grep vị từ auth là chỗ hỏng phương pháp.
 // ═══════════════════════════════════════════════════════════════
 fn validate_burn_batch(
   input_datum    : VaultDatum,
@@ -898,18 +898,22 @@ fn validate_burn_batch(
   let vault_addr = find_own_address(own_ref, tx.inputs)
   expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
 
-  // ── AUTH: owner OR consume-delegate signs ─────────────────
-  let authed =
-    list.has(tx.extra_signatories, input_datum.owner) || when input_datum.personal_delegate is {
-      Some(d) -> list.has(tx.extra_signatories, d)
-      None -> False
-    }
-  expect authed
+  // ── AUTH: CHỈ CHỦ SỞ HỮU ký ───────────────────────────────
+  // 🪦 BIA MỘ — nhánh uỷ nhiệm (`personal_delegate`) CHẾT 2026-09-16 (Nợ #14).
+  // Vế cũ là `owner || personal_delegate`, và nó đủ một mình để đốt sạch MAGIC
+  // của chủ vault: không cần Engage input, không cần ConsumeMAGIC có mặt, không
+  // hạn mức, không hạn dùng. Trường datum `personal_delegate` (field 15) GIỮ
+  // NGUYÊN chỗ làm bia mộ nhị phân — vault InstantGen đang sống trên
+  // Preview/Preprod, bỏ trường là vỡ decode mọi UTxO đã tạo.
+  //
+  // Datum còn mang `Some(d)` của đời trước thì đường uỷ quyền bị TỪ CHỐI, không
+  // phải bỏ qua: vế owner đứng một mình nên chữ ký delegate không thoả gì cả.
+  expect list.has(tx.extra_signatories, input_datum.owner)
 
   // ── MONOTONIC EPOCH guard (MAINNET-BLOCK — epoch gaming) ──
-  // The delegate path means a non-owner can call this; a backwards epoch would
-  // revive a DEAD batch (liveness keys on created_epoch vs current_epoch) and
-  // let the delegate burn MAGIC that the §4.2 cliff already reset to zero.
+  // Giữ nguyên sau khi nhánh uỷ nhiệm chết: một epoch lùi làm SỐNG LẠI batch đã
+  // chết (§4.2 tính sống theo created_epoch vs current_epoch), và chính chủ cũng
+  // dựng được tx như vậy. Cổng này canh THỜI GIAN, không canh người ký.
   expect current_epoch >= input_datum.last_updated_epoch
 
   // ── Lazy profile apply (like every handler) ───────────────
@@ -1040,6 +1044,13 @@ fn validate_set_delegate(
 
   // ONLY owner may change the delegate (a delegate cannot re-delegate itself)
   expect list.has(tx.extra_signatories, input_datum.owner)
+
+  // 🪦 BIA MỘ — nhánh này nay CHỈ XOÁ ĐƯỢC, không đặt được (2026-09-16, Nợ #14).
+  // `SetDelegate` (constr 5) ở lại nguyên chỗ: chỉ số constructor là hợp đồng
+  // nhị phân, đổi thứ tự variant là vỡ decode mọi redeemer đã phát. Cái chết là
+  // QUYỀN, không phải cái vỏ. Đường XOÁ phải sống, vì vault trên Preview/Preprod
+  // có thể còn mang `Some(d)` của đời trước và đây là nhánh duy nhất dọn nó.
+  expect new_delegate == None
 
   let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
 
@@ -1586,11 +1597,25 @@ test bb_positive_multi() {
   validate_burn_batch(din, [(bid_a, 300), (bid_b, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
-// BB-POS-4: consume-delegate (paymaster) can trigger burn; owner did NOT sign
-test bb_positive_delegate_signs() {
+// BB-NEG-DELEGATE: đường tấn công Nợ #14 — delegate ký một mình, chủ KHÔNG ký,
+// đốt MAGIC của chủ. Bài này từng là `bb_positive_delegate_signs` và từng XANH;
+// nó đảo dấu 2026-09-16 khi nhánh uỷ nhiệm bị bỏ khỏi mô hình. Mọi vế khác của
+// giao dịch hợp lệ — sai đúng MỘT thứ là người ký.
+test bb_delegate_signs_rejected() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// BB-POS-4: ĐỐI CHỨNG DƯƠNG của bài ngay trên — CÙNG datum còn mang `Some(d)`
+// của đời trước, chỉ đổi người ký sang chủ ⟹ CHẤP NHẬN. Cặp này phân biệt
+// "chặn vì người ký sai" với "chặn vì datum có delegate"; thiếu nó thì một bản
+// vá quá tay (khoá luôn vault còn delegate) vẫn xanh trọn bộ.
+test bb_owner_signs_with_stale_delegate_ok() {
+  let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
+  let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
@@ -1698,8 +1723,10 @@ test bb_neg_consumed_credit_inflated() fail {
 
 // ── SetDelegate (D1) ──────────────────────────────────────────
 
-// SD-POS-1: owner sets delegate from None → Some
-test sd_positive_set() {
+// SD-NEG-SET: chủ ĐẶT một delegate mới, mọi vế khác hợp lệ → vẫn TỪ CHỐI.
+// Bài này từng là `sd_positive_set` và từng XANH; đảo dấu 2026-09-16 (Nợ #14).
+// Đây là bài canh duy nhất cho cổng bia-mộ `new_delegate == None`.
+test sd_set_rejected() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
   let dout = VaultDatum {
     ..din,
@@ -1722,53 +1749,61 @@ test sd_positive_clear() {
   validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
-// SD-NEG-1: owner did not sign → reject
+// SD-NEG-1: owner did not sign → reject.
+// Dựng dưới dạng XOÁ (`new_delegate: None`) có chủ ý sau 2026-09-16: để
+// `Some(...)` thì bài chết ở cổng bia-mộ và không còn đo cổng chữ ký nữa.
 test sd_neg_no_owner_sig() fail {
-  let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
-  let dout = VaultDatum {
-    ..din,
-    personal_delegate: Some(t_delegate),
-    last_updated_epoch: 10,
-  }
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
-  validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
-}
-
-// SD-NEG-2: delegate tries to set itself (not owner) → reject
-test sd_neg_delegate_cannot_set() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
   let dout = VaultDatum {
     ..din,
-    personal_delegate: Some(t_owner),
+    personal_delegate: None,
+    last_updated_epoch: 10,
+  }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// SD-NEG-2: chính delegate cũ tự dọn trường của mình (không có chữ ký chủ) →
+// từ chối. Khác SD-NEG-1 ở người ký (rỗng vs delegate), nên hai bài không che
+// nhau: một bài đo "không ai ký", bài kia đo "sai người ký".
+test sd_neg_delegate_cannot_clear() fail {
+  let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
+  let dout = VaultDatum {
+    ..din,
+    personal_delegate: None,
     last_updated_epoch: 10,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
-  validate_set_delegate(din, Some(t_owner), 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
-// SD-NEG-3: output datum mutates MAGIC alongside delegate change → reject
+// SD-NEG-3: output datum mutates MAGIC alongside the delegate change → reject.
+// Dựng lại thành thao tác XOÁ (2026-09-16): dạng ĐẶT nay chết ở cổng bia-mộ,
+// nên nó không còn chạm tới chốt bất-biến-trường mà bài này mang tên.
 test sd_neg_mutates_magic() fail {
-  let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
+  let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
   let dout = VaultDatum {
     ..din,
     magic_batches: [t_burn_batch(bid_a, 500)],   // illicit MAGIC change
-    personal_delegate: Some(t_delegate),
+    personal_delegate: None,
     last_updated_epoch: 10,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
-// SD-NEG-4: output delegate != redeemer new_delegate → reject
+// SD-NEG-4: output delegate != redeemer new_delegate → reject.
+// Redeemer nói XOÁ (`None`) nhưng datum ra vẫn giữ delegate cũ — hình dạng
+// "giả vờ dọn": qua được cổng bia-mộ rồi chết ở chốt khớp trường.
 test sd_neg_delegate_mismatch() fail {
-  let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
+  let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
   let dout = VaultDatum {
     ..din,
-    personal_delegate: Some(t_owner),   // mismatch vs redeemer Some(t_delegate)
+    personal_delegate: Some(t_delegate),   // mismatch vs redeemer None
     last_updated_epoch: 10,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
-  validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2276,15 +2311,18 @@ test val_neg_pe_dust_stuffed() fail {
   validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
-// VAL-NEG-3: BurnBatch drains ADA on the delegate path → reject.
+// VAL-NEG-3: BurnBatch rút ADA ra khỏi vault → từ chối.
+// Người ký đổi delegate → CHỦ ngày 2026-09-16: sau khi nhánh uỷ nhiệm chết, một
+// bài ký bằng delegate sẽ chết ở cổng chữ ký và KHÔNG còn chạm tới cổng ADA —
+// vẫn đỏ, vẫn mang đúng tên, mà không đo gì nữa.
 test val_neg_burn_ada_drained() fail {
-  let din  = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
+  let din  = t_burn_din([t_burn_batch(bid_a, 1000)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
   let tx =
     t_tx(
       [t_vault_input_ada(din, 5_000_000, 100)],
       [t_vault_output_ada(dout, 2_000_000, 100)],
-      [t_delegate],
+      [t_owner],
     )
   validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
@@ -2302,14 +2340,18 @@ test val_pos_ada_topup_ok() {
   validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
-// EPOCH-NEG-1: BurnBatch with current_epoch < last_updated_epoch (backwards
-// time, delegate path) → reject by the monotonicity guard.
+// EPOCH-NEG-1: BurnBatch với current_epoch < last_updated_epoch (thời gian lùi)
+// → cổng đơn điệu từ chối.
+// Người ký đổi delegate → CHỦ ngày 2026-09-16, cùng lý do như VAL-NEG-3: cổng
+// chữ ký đứng TRƯỚC cổng epoch, nên bài ký bằng delegate không còn tới được chốt
+// mang tên nó. Ca này vẫn có nghĩa với chủ: chính chủ cũng lùi được epoch để làm
+// sống lại batch mà §4.2 đã đưa về không.
 test epoch_neg_burn_backwards() fail {
-  let din_base = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
-  // vault already at epoch 20; attacker claims epoch 10 to revive dead MAGIC.
+  let din_base = t_burn_din([t_burn_batch(bid_a, 1000)], None)
+  // vault already at epoch 20; the owner claims epoch 10 to revive dead MAGIC.
   let din = VaultDatum { ..din_base, last_updated_epoch: 20 }
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 

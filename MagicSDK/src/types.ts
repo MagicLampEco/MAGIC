@@ -105,10 +105,13 @@ export interface InitialVaultConfig {
   profile?: Profile;
   /** Min-ADA lovelace to attach to vault UTxO (default 2_000_000). */
   vaultLovelace?: bigint;
-  /** @deprecated KHÔNG dùng được lúc tạo vault.
-   *  `validate_mint_vault_id` ép `personal_delegate == None` ở datum khởi sinh
-   *  (genesis phải sạch). Truyền giá trị khác null ⇒ createVault ném lỗi.
-   *  Đặt uỷ quyền cá nhân bằng redeemer `SetDelegate` sau khi vault đã tồn tại. */
+  /** @deprecated 🪦 KHÔNG còn đường nào dùng được — nhánh uỷ nhiệm bị bỏ khỏi mô
+   *  hình ngày 2026-09-16 (Nợ #14). `validate_mint_vault_id` ép
+   *  `personal_delegate == None` ở datum khởi sinh, và redeemer `SetDelegate`
+   *  nay chỉ XOÁ được. Truyền giá trị khác null ⇒ createVault ném lỗi.
+   *
+   *  Trường ở lại trong kiểu để người gọi cũ nhận một câu nói rõ chuyện gì đã
+   *  đổi, thay vì một lỗi kiểu không nói gì. */
   personalDelegate?: string | null;
 }
 

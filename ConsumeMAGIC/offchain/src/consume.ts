@@ -75,26 +75,25 @@ export interface ConsumeParams {
   /** Value output của vault — mặc định copy y nguyên vaultUtxo.assets (LAMP+ADA preserved;
    *  BurnBatch KHÔNG đụng LAMP, C-BURN-NO-LAMP). Chỉ override khi caller có lý do rõ. */
   vaultOutAssets?: Assets;
-  /** Khoá ký cho ràng buộc auth của `BurnBatch` ở phía VAULT (vault.ak): vault nhận
-   *  `owner` HOẶC `personal_delegate`. Vì `consume.ak` nay đòi
-   *  `VaultDatum.owner == EngageDatum.owner` (xem `vaultOwnerFromDatum` + CONSUME-010),
-   *  giá trị hợp lệ chỉ còn HAI: chính chủ thread, hoặc `personal_delegate` mà chủ thread
-   *  đã đặt trên vault của mình.
-   *  Trùng chủ thread thì bỏ trống cũng được — builder đã tự thêm chữ ký đó. */
+  /** 🪦 BIA MỘ (2026-09-16, Nợ #14) — GIÁ TRỊ HỢP LỆ DUY NHẤT nay là chính chủ thread,
+   *  và bỏ trống cũng được vì builder tự thêm chữ ký đó. Truyền một khoá KHÁC sẽ ném.
+   *
+   *  Trường ở lại trong kiểu thay vì bị xoá để người gọi cũ nhận được một câu nói rõ
+   *  chuyện gì đã đổi, thay vì một lỗi kiểu không nói gì.
+   *
+   *  Vì sao chỉ còn một: vault nay đòi ĐÚNG chữ ký `owner` ở `BurnBatch` (vế
+   *  `|| personal_delegate` đã chết), còn CONSUME-010 ép
+   *  `VaultDatum.owner == EngageDatum.owner`. Hai ràng buộc ghép lại còn đúng một khoá. */
   ownerSignerKeyHash?: string;
-  /** Đường SPONSOR (Paymaster/Feecover): chủ thread KHÔNG ký tx
-   *  (`Paymaster/FEAT.md:44`) — app là `personal_delegate` và ký thay.
+  /** 🪦 BIA MỘ (2026-09-16, Nợ #14) — cờ này nay CHỈ NÉM. Đặt `true` là dựng một tx
+   *  không bao giờ qua được: `BurnBatch` ở phía vault đòi chữ ký chủ vault, và chủ vault
+   *  phải là chủ thread.
    *
-   *  🔴 CỜ NÀY KHÔNG CÒN ĐỔI ĐƯỢC KẾT QUẢ CỦA VALIDATOR (vá 2026-09-15). Bản cũ của
-   *  dòng này viết rằng mặc định `false` "luôn thoả vế 1" — câu đó nay SAI, và nó sai
-   *  theo chiều nguy hiểm nhất: nó nói một đường là an toàn. Cổng quyền ghi của
-   *  `consume.ak` (`all_vault_owners_are`) chỉ còn MỘT vế, VÔ ĐIỀU KIỆN — mọi vault bị
-   *  đốt phải thuộc chủ thread. Không có vế chữ ký nào để thoả nữa.
-   *
-   *  Cái cờ này còn ảnh hưởng đúng một thứ: `required_signers` của tx. `false` (mặc
-   *  định) thêm chữ ký chủ thread — cần cho đường chủ tự ký `BurnBatch` ở vault. `true`
-   *  bỏ nó — dùng khi người ký là `personal_delegate` (truyền qua `ownerSignerKeyHash`).
-   *  Đặt sai chỉ làm tx thiếu/thừa một chữ ký ở tầng ví, KHÔNG mở thêm quyền nào. */
+   *  Lịch sử để lại vì nó là ca mẫu của việc chú thích già đi nguy hiểm: bản 2026-09-15
+   *  đã phải đính chính câu "mặc định `false` luôn thoả vế 1" — câu đó nói một đường là
+   *  an toàn trong khi cổng quyền ghi của `consume.ak` (`all_vault_owners_are`) chỉ còn
+   *  MỘT vế vô điều kiện. Đường SPONSOR (Paymaster/Feecover) mà cờ này phục vụ đã bị bỏ
+   *  khỏi mô hình, không phải bị hoãn. */
   sponsoredNoThreadSignature?: boolean;
   /** Collateral UTxO thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token). */
   collateralUtxo?: UTxO;
@@ -286,8 +285,8 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
         `thread Engage mới bằng khoá ${vaultOwner} rồi tiêu trên thread đó. ` +
         `Không có đường xoay \`owner\` của một thread đã mở — cả \`Consume\` lẫn ` +
         `\`BindDID\` đều ép \`owner\` bảo toàn, và không có redeemer thứ ba. ` +
-        `Trả phí hộ thì dùng \`personal_delegate\` trên vault CỦA CHỦ THREAD ` +
-        `(xem \`sponsoredNoThreadSignature\`), đừng đổi vault.`,
+        `Không còn đường "trả phí hộ" nào ở tầng này: nhánh uỷ nhiệm ` +
+        `(\`personal_delegate\`) đã bị bỏ khỏi mô hình ngày 2026-09-16.`,
     );
   }
 
@@ -361,22 +360,39 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     .validFrom(Number(lowerMs))
     .validTo(Number(upperMs));
 
-  // Chữ ký chủ thread. Nó KHÔNG còn mở quyền nào ở `consume.ak` (cổng quyền ghi chỉ
-  // còn một vế: mọi vault thuộc chủ thread — đã ép fail-closed ở CONSUME-010 bên trên).
-  // Nó phục vụ ràng buộc auth của `BurnBatch` Ở PHÍA VAULT, nơi vault nhận
-  // `owner` HOẶC `personal_delegate`. Lấy thẳng từ datum đang tiêu nên không có đường
-  // truyền nhầm khoá của người khác.
-  if (!sponsoredNoThreadSignature) {
-    txBuilder = txBuilder.addSignerKey(threadOwner);
+  // 🪦 BIA MỘ (2026-09-16, Nợ #14) — hai tuỳ chọn dưới đây từng dựng nên đường
+  // uỷ nhiệm ở PHÍA DỰNG. Nhánh uỷ nhiệm đã bị bỏ khỏi mô hình, nên `vault.ak`
+  // nay đòi ĐÚNG chữ ký chủ vault ở `BurnBatch`, và CONSUME-010 bên trên đã ép
+  // chủ vault == chủ thread. Hệ quả: một tx thiếu chữ ký chủ thread, hoặc mang
+  // thêm chữ ký của một khoá thứ hai thay cho nó, KHÔNG BAO GIỜ qua được nữa.
+  //
+  // Ném ở đây thay vì lặng lẽ dựng tiếp: chỗ lỏng nằm ở bên kiểm, chỗ hỏng lộ ra
+  // ở bên dựng. Để nguyên thì người gọi nhận về một tx trông hợp lệ và chỉ biết
+  // mình sai khi mạng từ chối — đúng kiểu vỏ im lặng.
+  if (sponsoredNoThreadSignature) {
+    throw new Error(
+      `sponsoredNoThreadSignature đã chết 2026-09-16 cùng nhánh uỷ nhiệm ` +
+        `(\`personal_delegate\`). \`BurnBatch\` ở phía vault nay đòi ĐÚNG chữ ký ` +
+        `của chủ vault, và CONSUME-010 ép chủ vault == chủ thread ` +
+        `(${threadOwner}). Bỏ cờ này đi; không còn đường trả phí hộ ở tầng chữ ký.`,
+    );
+  }
+  if (ownerSignerKeyHash && ownerSignerKeyHash.toLowerCase() !== threadOwner) {
+    throw new Error(
+      `ownerSignerKeyHash khác chủ thread đã chết 2026-09-16 cùng nhánh uỷ nhiệm.\n` +
+        `  chủ thread     : ${threadOwner}\n` +
+        `  khoá truyền vào: ${ownerSignerKeyHash.toLowerCase()}\n` +
+        `Chỉ chủ vault ký được \`BurnBatch\`, và chủ vault phải là chủ thread ` +
+        `(CONSUME-010). Truyền đúng khoá đó, hoặc bỏ trống — builder tự thêm.`,
+    );
   }
 
-  // Đường Paymaster/Feecover: người ký `BurnBatch` là `personal_delegate` của vault,
-  // tức MỘT KHOÁ KHÁC chủ thread. Đó là ca hợp lệ DUY NHẤT còn lại cho nhánh này —
-  // "owner của vault khác chủ thread" thì CONSUME-010 đã chặn ở trên.
-  // Trùng khoá thì bỏ qua: thêm hai lần một pkh là dựng ra tx sai hình dạng.
-  if (ownerSignerKeyHash && ownerSignerKeyHash.toLowerCase() !== threadOwner) {
-    txBuilder = txBuilder.addSignerKey(ownerSignerKeyHash);
-  }
+  // Chữ ký chủ thread. Nó KHÔNG mở quyền nào ở `consume.ak` (cổng quyền ghi chỉ
+  // còn một vế: mọi vault thuộc chủ thread — đã ép fail-closed ở CONSUME-010 bên
+  // trên). Nó phục vụ ràng buộc auth của `BurnBatch` Ở PHÍA VAULT, nơi vault nay
+  // chỉ nhận `owner`. Lấy thẳng từ datum đang tiêu nên không có đường truyền nhầm
+  // khoá của người khác.
+  txBuilder = txBuilder.addSignerKey(threadOwner);
 
   // Collateral thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token).
   const tx = collateralUtxo

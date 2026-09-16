@@ -238,9 +238,10 @@ pub type VaultRedeemer {
   // constr 4  WithdrawLamp: withdraw unlocked LAMP back to wallet (SPEC_V1 §1)
   WithdrawLamp  { amount: Natural }
 
-  // constr 5  SetDelegate: set/clear the consume-delegate (personal_delegate).
-  // Owner-only, no cooldown. Reuses the existing personal_delegate field (15);
-  // does NOT add a datum field. Some(d) lets d trigger BurnBatch on owner's
-  // behalf (app paymaster) WITHOUT moving MAGIC; None restricts to owner.
+  // constr 5  SetDelegate: 🪦 nay CHỈ XOÁ ĐƯỢC (`new_delegate == None`).
+  // Owner-only, no cooldown. Reuses the existing personal_delegate field (15).
+  // Bản cũ của dòng này viết "Some(d) lets d trigger BurnBatch on owner's behalf
+  // (app paymaster)" — đường đó CHẾT 2026-09-16 (Nợ #14). Variant ở lại nguyên
+  // chỗ làm bia mộ nhị phân; xem `validate_set_delegate`.
   SetDelegate   { new_delegate: Option<ByteArray> }
 }

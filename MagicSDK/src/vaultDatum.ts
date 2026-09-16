@@ -35,8 +35,10 @@ export interface InitialVaultDatumInputs {
  *     `validate_mint_vault_id` ép `attribution == VaultAttribution {
  *     attribution_root: #"", last_event_epoch: 0, total_events: 0 }`.
  *
- *   - `personal_delegate = None` bắt buộc tại lúc sinh. Muốn đặt uỷ quyền cá
- *     nhân thì dùng redeemer `SetDelegate` SAU khi vault đã tồn tại.
+ *   - `personal_delegate = None` bắt buộc tại lúc sinh, và 🪦 nay KHÔNG CÒN
+ *     đường nào đặt nó về khác `None`: nhánh uỷ nhiệm bị bỏ khỏi mô hình ngày
+ *     2026-09-16 (Nợ #14). Redeemer `SetDelegate` vẫn tồn tại — chỉ số
+ *     constructor là hợp đồng nhị phân — nhưng chỉ XOÁ được.
  *
  *   - `lamp_locked = 0` always at creation. Locks only happen via Schedule
  *     Commit (ScheduleFire chỉ mở khoá, LAMP vẫn ở trong vault — I-ACT-7).
@@ -92,9 +94,10 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
     }
     // Genesis phải SẠCH: validate_mint_vault_id ép `personal_delegate == None`.
     throw new Error(
-      `personalDelegate không đặt được lúc tạo vault: validate_mint_vault_id ` +
-      `ép personal_delegate == None ở datum khởi sinh. Tạo vault trước, rồi ` +
-      `dùng redeemer SetDelegate.`,
+      `personalDelegate không đặt được: nhánh uỷ nhiệm đã bị bỏ khỏi mô hình ` +
+      `ngày 2026-09-16 (Nợ #14). Cổng đúc vẫn ép personal_delegate == None ở ` +
+      `datum khởi sinh, và redeemer SetDelegate nay CHỈ XOÁ được — không còn ` +
+      `đường nào đặt trường này về khác None.`,
     );
   }
 

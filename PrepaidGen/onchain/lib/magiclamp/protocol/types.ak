@@ -81,7 +81,10 @@ pub type PrepaidVaultRedeemer {
   // constr 3 — dọn batch chết, TRẢ LẠI hạn-mức. Permissionless (§7.4).
   PrunePrepaid
 
-  // constr 4 — owner đặt/đổi consume-delegate (§7.6)
+  // constr 4 — 🪦 owner nay CHỈ XOÁ ĐƯỢC (`new_delegate == None`). Vế "đặt/đổi
+  // consume-delegate (§7.6)" chết 2026-09-16 (Nợ #14). Variant ở lại nguyên chỗ
+  // làm bia mộ nhị phân — chính khối chú thích dưới đây nói vì sao không được
+  // xê dịch nó. Xem bia mộ ở `validate_set_delegate` và ở `authed_owner`.
   SetDelegate { new_delegate: Option<ByteArray> }
 
   // constr 5 — owner gắn PersonDID MỘT LẦN, không đảo ngược (§7.5).

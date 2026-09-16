@@ -252,8 +252,17 @@ fn validate_consume(
     //    thread. Nói cách khác, MAGIC bị đốt là MAGIC của chính chủ thread, nên
     //    không có phiếu nào bị mua — người dựng giao dịch không ghi được vào hồ sơ
     //    ai khác ngoài người sở hữu số MAGIC vừa tiêu. Ai được tiêu vault đó thì do
-    //    CHÍNH VAULT gác (`owner` HOẶC `personal_delegate`,
-    //    `InstantGen/onchain/validators/vault.ak:903`), không phải việc của lớp này.
+    //    CHÍNH VAULT gác — nay là CHỈ `owner`
+    //    (`InstantGen/onchain/validators/vault.ak` ▸ `validate_burn_batch`), không
+    //    phải việc của lớp này.
+    //
+    //    🪦 ĐỌC PHẦN CÒN LẠI CỦA KHỐI NÀY NHƯ LỊCH SỬ (bia mộ 2026-09-16, Nợ #14).
+    //    Mọi câu dưới đây nói "vault cho qua vì `personal_delegate == Some(A)`" mô tả
+    //    một trạng thái ĐÃ CHẾT: nhánh uỷ nhiệm bị bỏ khỏi mô hình, cả ba vault
+    //    (ScheduleGen · InstantGen · PrepaidGen) nay chỉ nhận chữ ký chủ sở hữu.
+    //    Chúng được GIỮ vì chúng là lý do tồn tại của cổng `all_vault_owners_are`, và
+    //    cổng đó KHÔNG được gỡ theo: nó là lớp phòng thủ độc lập với lớp chữ ký, và
+    //    "hôm nay không dựng được đường đó" không phải "không cần cổng".
     //
     //    🔴 VÌ SAO KHÔNG CÒN VẾ `|| chữ ký chủ thread` (vá 2026-09-15).
     //    Bản cũ viết `list.has(tx.extra_signatories, owner) || all_vault_owners_are(..)`.
@@ -324,9 +333,10 @@ fn did_len_ok(did: ByteArray) -> Bool {
 // ĐI MỘT CHIỀU, ĐÚNG MỘT LẦN: rỗng → 32 byte → đóng băng. Không đường về, không đổi
 // từ giá trị này sang giá trị khác (vì cổng đòi giá trị hiện tại phải RỖNG).
 //
-// KHÔNG uỷ quyền: đây là thao tác gắn DANH TÍNH, đòi chữ ký của CHÍNH `owner`. Vế
-// `|| personal_delegate` dùng ở nhánh consume (đường Paymaster/Feecover) KHÔNG áp ở
-// đây — ở đó cái được uỷ quyền là TRẢ TIỀN hộ, còn ở đây là KHAI mình là ai.
+// KHÔNG uỷ quyền: đây là thao tác gắn DANH TÍNH, đòi chữ ký của CHÍNH `owner`.
+// 🪦 Vế `|| personal_delegate` mà dòng này từng đối chiếu (nhánh consume, đường
+// Paymaster/Feecover) đã CHẾT 2026-09-16 (Nợ #14) — nay không còn nhánh nào
+// trong hệ nhận uỷ quyền, nên đây không còn là ngoại lệ mà là luật chung.
 //
 // DOUBLE-SATISFACTION: mọi bất biến dưới đây cục bộ theo `own_hash` và bị kẹp bởi
 // `#in == #out == 1`, nên một tx phục vụ đúng MỘT thread. Trộn một input BindDID với
@@ -1155,11 +1165,14 @@ test consume_foreign_vault_no_signer_fail() fail {
   )
 }
 
-// ── Đường SPONSOR (Paymaster/Feecover): chủ thread KHÔNG ký ──────────────────
-// `Paymaster/FEAT.md:44` — người dùng cố ý không ký tx sponsor; app là
-// `personal_delegate` của vault CỦA CHÍNH người dùng
-// (`InstantGen/onchain/validators/vault.ak:900`: BurnBatch = owner HOẶC delegate).
-// MAGIC bị đốt là của chủ thread ⇒ cổng #36 nhận, không cần chữ ký nào ở lớp này.
+// ── LỚP NÀY không đòi chữ ký nào của chủ thread ──────────────────────────────
+// 🪦 Bài này từng mang tên đường SPONSOR (Paymaster/Feecover), nơi app là
+// `personal_delegate` của vault người dùng và ký thay. Đường đó CHẾT 2026-09-16
+// (Nợ #14) — cả ba vault nay chỉ nhận chữ ký chủ sở hữu ở `BurnBatch`.
+//
+// Bài vẫn giữ và vẫn có nghĩa, chỉ đổi nghĩa: nó đo rằng `consume.ak` KHÔNG tự
+// dựng thêm một cổng chữ ký của riêng mình. MAGIC bị đốt là của chủ thread ⇒
+// cổng #36 nhận. Chữ ký là việc của vault, và vault có cổng riêng đã siết.
 // (Bản cũ của dòng này viết "vế 2 của cổng #36" — cổng nay chỉ còn MỘT vế, không đánh số.)
 // Đây là test chặn chính bản vá #36 quá chặt mà chính người viết đã commit trước đó.
 test consume_sponsor_no_signature_ok() {

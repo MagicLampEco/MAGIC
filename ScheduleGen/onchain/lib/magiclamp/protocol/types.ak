@@ -173,14 +173,17 @@ pub type VaultRedeemer {
 
   // constr 2  BurnBatch: datum-consume MAGIC (D1) — giảm current_amount của
   //           các batch theo `burns = [(batch_id, amount)]`. KHÔNG tx.mint,
-  //           KHÔNG token. Auth: owner HOẶC personal_delegate (consume-delegate).
+  //           KHÔNG token. Auth: CHỈ owner — vế `HOẶC personal_delegate` chết
+  //           2026-09-16 (Nợ #14).
   BurnBatch { burns: List<(ByteArray, Natural)> }
 
   // constr 3  WithdrawLamp: withdraw unlocked LAMP back to wallet (SPEC_V1 §1)
   WithdrawLamp { amount: Natural }
 
-  // constr 4  SetDelegate: owner đặt/đổi consume-delegate (personal_delegate).
-  //           Tách concern khỏi commit/withdraw; KHÔNG cooldown (đổi rẻ).
+  // constr 4  SetDelegate: 🪦 nay CHỈ XOÁ ĐƯỢC (`new_delegate == None`).
+  //           Variant ở lại nguyên chỗ vì chỉ số constructor là hợp đồng nhị
+  //           phân — gỡ nó là đẩy `PruneExpired` (constr 5) lên một bậc và vỡ
+  //           decode mọi redeemer đã phát. Xem bia mộ ở `validate_set_delegate`.
   SetDelegate { new_delegate: Option<ByteArray> }
 
   // constr 5  PruneExpired: dọn rác batch ĐÃ CHẾT, permissionless, không đụng

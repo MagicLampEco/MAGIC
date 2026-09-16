@@ -350,8 +350,42 @@ const ct_max_did: Int = 64
 const ct_mspe: Int = 86_400_000               // Preview
 const ct_burn_constr: Int = 2                 // InstantGen BurnBatch
 const ct_lamp_asset_name: AssetName = #"744c414d50"  // SEC-01 fix: "tLAMP"
-fn ct_treasury_addr() -> Address {            // SEC-01 fix: mock treasury address
-  util.script_address(#"beef")
+
+// ── Địa chỉ kho dùng trong bộ kiểm ────────────────────────────────────────────
+// 🔴 Kho PHẢI là BASE ADDRESS (có stake part), không phải enterprise.
+// Bản cũ dùng `util.script_address(#"beef")` ⟹ stake_credential = None, và CÙNG
+// một giá trị đó vừa làm apply-param `treasury_addr` vừa làm địa chỉ dựng output
+// ⟹ phép so `o.address == treasury_addr` khớp TẦM THƯỜNG ở mọi ca, nên cổng thu
+// LAMP (PM-TREASURY) có độ phủ 0: gỡ hẳn mệnh đề `lamp_to_treasury >= lamp_this`
+// mà bộ kiểm vẫn 28/28 xanh (đo bằng ablation 2026-09-16).
+// Tệ hơn: cấu hình enterprise đó là cấu hình mà cổng deploy CẤM —
+// `scripts/deployParams.ts` ▸ `assertTreasuryStakeDecided` ném lỗi nếu kho không
+// có stake part. Bộ kiểm on-chain chưa bao giờ chạy đúng hình dạng sẽ deploy.
+const ct_treasury_pay: ByteArray = #"beef"    // payment script hash của kho
+const ct_treasury_stake: ByteArray = #"5eed"  // stake part THẬT của kho
+const ct_drifted_stake: ByteArray = #"5eed01" // kho đã trôi stake part (sau Refill)
+const ct_attacker_stake: ByteArray = #"a77ac4" // stake credential của kẻ tấn công
+
+/// Kho THẬT: base address = (payment script, stake vkh). Đây là giá trị đi vào
+/// apply-param `treasury_addr` của MỌI ca kiểm.
+fn ct_treasury_addr() -> Address {
+  util.script_address_staked(ct_treasury_pay, ct_treasury_stake)
+}
+
+/// Ca âm 1 — enterprise: ĐÚNG payment credential, KHÔNG có stake part.
+fn ct_treasury_addr_enterprise() -> Address {
+  util.script_address(ct_treasury_pay)
+}
+
+/// Ca âm 2 — kho đã trôi: đúng payment credential, stake vkh KHÁC.
+fn ct_treasury_addr_drifted() -> Address {
+  util.script_address_staked(ct_treasury_pay, ct_drifted_stake)
+}
+
+/// Ca âm 3 — đúng payment credential, stake credential của kẻ tấn công
+/// (khác cả GIÁ TRỊ lẫn LOẠI credential).
+fn ct_treasury_addr_attacker_stake() -> Address {
+  util.script_address_stake_script(ct_treasury_pay, ct_attacker_stake)
 }
 
 fn ct_policy_ref() -> OutputReference {
@@ -487,6 +521,8 @@ fn rd_data(r: PaymasterRedeemer) -> Data {
 
 /// Run validator: cấu hình đầy đủ. validity-range cửa sổ hẹp quanh cur_epoch.
 /// lamp_to_tsy: oildrop LAMP gửi về treasury (SEC-01). Nếu > 0 thêm output @treasury_addr.
+/// Apply-param `treasury_addr` LUÔN là `ct_treasury_addr()` (base address) — ca nào cần
+/// output rơi ở địa chỉ KHÁC thì gọi `run_to`.
 fn run(
   policy        : SponsorPolicy,
   policy_nft_q  : Int,
@@ -505,6 +541,35 @@ fn run(
   extra_reds    : Pairs<ScriptPurpose, Data>,
   lamp_to_tsy   : Int,
 ) -> Bool {
+  run_to(
+    policy, policy_nft_q, protocol, protocol_nft_q, meter_in, meter_nft_in,
+    meter_in_lvl, meter_out, meter_nft_out, meter_out_lvl, vault_inputs,
+    cur_epoch, rd, signers, extra_reds, lamp_to_tsy, ct_treasury_addr(),
+  )
+}
+
+/// Như `run` nhưng ĐỊA CHỈ nhận LAMP tách khỏi apply-param `treasury_addr`.
+/// Đây là thứ bản cũ KHÔNG có: một mock duy nhất dùng cho cả hai vế làm phép so
+/// `o.address == treasury_addr` khớp tầm thường ⟹ cổng PM-TREASURY không đo được.
+fn run_to(
+  policy        : SponsorPolicy,
+  policy_nft_q  : Int,
+  protocol      : ProtocolFeeParams,
+  protocol_nft_q: Int,
+  meter_in      : SponsorMeter,
+  meter_nft_in  : Int,
+  meter_in_lvl  : Int,
+  meter_out     : SponsorMeter,
+  meter_nft_out : Int,
+  meter_out_lvl : Int,
+  vault_inputs  : List<Input>,
+  cur_epoch     : Int,
+  rd            : PaymasterRedeemer,
+  signers       : List<ByteArray>,
+  extra_reds    : Pairs<ScriptPurpose, Data>,
+  lamp_to_tsy   : Int,
+  tsy_out_addr  : Address,
+) -> Bool {
   let meter_i = ct_meter_input(meter_in, meter_nft_in, meter_in_lvl)
   let meter_o = ct_meter_output(meter_out, meter_nft_out, meter_out_lvl)
   // SEC-01 fix: tạo treasury output nếu lamp_to_tsy > 0
@@ -517,7 +582,7 @@ fn run(
           ct_lamp_asset_name,
           lamp_to_tsy,
         )
-      [util.mk_output(ct_treasury_addr(), tsy_val, builtin.constr_data(0, []))]
+      [util.mk_output(tsy_out_addr, tsy_val, builtin.constr_data(0, []))]
     } else {
       []
     }
@@ -781,7 +846,9 @@ test pm_neg_did_cap() fail {
       global_magic_epoch: 0,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)  // 9.999G + 5M = 10.004G > 10G
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  // lamp_to_tsy = lamp_this: PM-TREASURY đứng TRƯỚC PM-5, để 0 thì bài này chết ở
+  // cổng thu LAMP chứ không ở cổng did-cap mang tên nó (đo bằng ablation 2026-09-16).
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-6: global cap vượt → fail ─────────────────────────────────────────
@@ -804,7 +871,8 @@ test pm_neg_global_cap() fail {
       global_magic_epoch: 0,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)  // global 99.998G + 5M > 100G
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  // lamp_to_tsy = lamp_this — xem ghi chú ở pm_neg_did_cap.
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG PM-10: policy stale (epoch quá cũ) → fail ────────────────────────────
@@ -918,11 +986,14 @@ test pm_neg_drain_ada() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,  // = Σ burns, để KHÔNG chết ở state-transition
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   // meter_in 10 ADA, meter_out 2 ADA → drain 8 ADA
-  run(pol, 1, proto, 1, m_in, 1, 10_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  // lamp_to_tsy = lamp_this + global_magic_epoch ĐÚNG (= burns 10M): thiếu một trong
+  // hai thì bài chết ở PM-TREASURY hoặc ở cổng state-transition, cả hai đều đứng
+  // TRƯỚC PM-11 value-preservation mang tên bài này.
+  run(pol, 1, proto, 1, m_in, 1, 10_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG: meter NFT bị rút ở output (qty 0) → PM-7 fail ───────────────────────
@@ -955,10 +1026,11 @@ test pm_neg_meter_future_epoch() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
-  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 0)
+  // lamp_to_tsy = lamp_this — xem ghi chú ở pm_neg_did_cap.
+  run(pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000, [vault], 6, rd, [ct_app_auth], [Pair(Spend(vref), burn_rd)], 5_000_000)
 }
 
 // ── NEG: state transition sai (meter_out global không khớp base+lamp_this) → fail
@@ -1034,17 +1106,25 @@ test pm_neg_did_cap_overflow() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(#"feed", 1_000_000), (ct_owner, 5_000_000)], global_lamp_epoch: 6_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 10_000_000,  // = Σ burns, để KHÔNG chết ở state-transition
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
   let meter_i = ct_meter_input(m_in, 1, 2_000_000)
   let meter_o = ct_meter_output(m_out, 1, 2_000_000)
+  // PM-TREASURY đứng TRƯỚC cổng hard-cap mang tên bài này → phải trả đủ LAMP về kho,
+  // nếu không bài đỏ ở cổng thu chứ không ở cổng did-entries.
+  let tsy_o =
+    util.mk_output(
+      ct_treasury_addr(),
+      assets.add(assets.from_lovelace(2_000_000), ct_lamp_policy, ct_lamp_asset_name, 5_000_000),
+      builtin.constr_data(0, []),
+    )
   let tx =
     Transaction {
       ..placeholder,
       inputs: [meter_i, vault],
       reference_inputs: [ct_policy_input(pol, 1), ct_protocol_input(proto, 1)],
-      outputs: [meter_o],
+      outputs: [meter_o, tsy_o],
       redeemers: [Pair(Spend(ct_meter_ref()), rd_data(rd)), Pair(Spend(vref), burn_rd)],
       extra_signatories: [ct_app_auth],
       validity_range: interval.between(6 * ct_mspe, 6 * ct_mspe + 1),
@@ -1056,4 +1136,73 @@ test pm_neg_did_cap_overflow() fail {
     ct_treasury_addr(), ct_lamp_asset_name,
     Some(m_in), rd, ct_meter_ref(), tx,
   )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PM-TREASURY — cổng thu LAMP DUY NHẤT của kho. Khối này là phép đo của riêng nó.
+//
+// Trước 2026-09-16 cổng đó có ĐỘ PHỦ 0: gỡ hẳn mệnh đề `lamp_to_treasury >=
+// lamp_this` mà 28/28 bài vẫn xanh. Nguyên nhân ở fixture, không ở validator —
+// `ct_treasury_addr()` cũ là enterprise address và được dùng cho CẢ apply-param
+// LẪN địa chỉ dựng output, nên `o.address == treasury_addr` khớp tầm thường.
+//
+// Bốn ca âm dưới đây đều giữ NGUYÊN mọi điều kiện khác của `pm_happy` và chỉ
+// đổi đúng một thứ, nên chúng chết ở PM-TREASURY chứ không ở cổng nào khác. Ca
+// dương `pm_pos_treasury_base_address_exact` là ĐỐI CHỨNG: không có nó thì bốn
+// ca âm có thể đỏ vì một lý do tầm thường nào đó chứ không vì cổng làm việc.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Cấu hình chuẩn dùng chung cho cả khối PM-TREASURY: bản sao đúng của `pm_happy`
+/// (burns 10M, rate 0.5×Q → lamp_cap 5M, lamp_this 5M), chỉ thay ĐỊA CHỈ nhận
+/// LAMP và SỐ LƯỢNG gửi về kho.
+fn tsy_case(lamp_to_tsy: Int, tsy_out_addr: Address) -> Bool {
+  let pol = ct_policy(500_000_000, 0, 10_000_000_000, 100_000_000_000, 6)
+  let proto = ct_protocol(500_000_000, True, 6)
+  let vref = util.mk_ref_id(#"a1", 0)
+  let vault = ct_vault_input(0, Some(ct_app_auth))
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let m_in = empty_meter(6)
+  let m_out =
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 10_000_000,
+    }
+  let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
+  run_to(
+    pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000,
+    [vault], 6, rd, [ct_app_auth],
+    [Pair(Spend(vref), burn_rd)],
+    lamp_to_tsy, tsy_out_addr,
+  )
+}
+
+// ── ĐỐI CHỨNG DƯƠNG: base address == base address, đủ LAMP → CHẤP NHẬN ───────
+test pm_pos_treasury_base_address_exact() {
+  tsy_case(5_000_000, ct_treasury_addr())
+}
+
+// ── NEG PM-TREASURY 1: output tới ENTERPRISE address (stake = None) trong khi
+//    apply-param là base address. Cùng payment credential, vẫn phải bị TỪ CHỐI.
+test pm_neg_treasury_enterprise_address() fail {
+  tsy_case(5_000_000, ct_treasury_addr_enterprise())
+}
+
+// ── NEG PM-TREASURY 2: kho đã TRÔI stake part (mô phỏng sau `Refill`). Đúng
+//    payment credential, stake vkh khác → TỪ CHỐI.
+test pm_neg_treasury_stake_drifted() fail {
+  tsy_case(5_000_000, ct_treasury_addr_drifted())
+}
+
+// ── NEG PM-TREASURY 3: đúng payment credential, stake credential của KẺ TẤN CÔNG
+//    (khác cả giá trị lẫn loại credential) → TỪ CHỐI. Đây là ca "phần thưởng uỷ
+//    quyền trên ADA của kho chảy về khoá stake của kẻ khác".
+test pm_neg_treasury_attacker_stake() fail {
+  tsy_case(5_000_000, ct_treasury_addr_attacker_stake())
+}
+
+// ── NEG PM-TREASURY 4: ĐÚNG địa chỉ nhưng THIẾU 1 oildrop → ghim CHIỀU của phép
+//    so `>=`, thứ mà ba ca địa chỉ ở trên không chạm tới.
+test pm_neg_treasury_amount_short() fail {
+  tsy_case(4_999_999, ct_treasury_addr())
 }

@@ -2303,8 +2303,12 @@ fn t_run_commit(n: Int) -> Bool {
 
 // PASS — (trần − 2) holding vào, tách một cái ⟹ trần − 1, còn đúng một suất
 // cho lượt fire đầu tiên tách tiếp. Đó là trạng thái LỚN NHẤT còn ra được.
+//
+// Bài này KIÊM chân CHẠY-TRỌN của CẶP 1 trong mục THANG ĐO — nó dùng chung
+// `commit_scale_n` với `probe_commit_fixture_cap`, và vì nó PASS nên nó đỏ ngay
+// nếu cổng đếm holding bị siết thêm một nấc.
 test c_commit_at_holding_cap_ok() {
-  t_run_commit(max_loyalty_holdings - 2)
+  t_run_commit(commit_scale_n)
 }
 
 // REJECT — (trần − 1) vào, tách một cái ⟹ chạm đúng trần, và lúc đó lượt fire
@@ -2312,6 +2316,10 @@ test c_commit_at_holding_cap_ok() {
 // LAMP vào được, trong khi `validate_fire` — nhánh DUY NHẤT hạ được
 // `lamp_locked` — đã ép đúng trần này từ đầu. Cửa vào rộng hơn cửa ra là định
 // nghĩa của một cái bẫy.
+//
+// ⛔ ĐỪNG DÙNG BÀI NÀY LÀM CHÂN THANG ĐO. Nó là `fail`, nên nó xanh dù chết ở
+// cổng đầu tiên hay chạy tới dòng cuối — chính chỗ đó làm thang đo commit gãy
+// im lặng hai ngày (xem mục THANG ĐO ▸ luật (2)).
 test c_commit_over_holding_cap_rejected() fail {
   t_run_commit(max_loyalty_holdings - 1)
 }
@@ -2391,7 +2399,11 @@ fn hc_datum_after_commit(n: Int) -> VaultDatum {
 }
 
 /// Trọn một giao dịch commit khoá-trọn hợp lệ với `n` holding vào.
-fn hc_run_commit(n: Int) -> Bool {
+///
+/// Tách fixture khỏi lượt chạy vì đúng lý do đã tách `t_commit_fixture`: fixture
+/// tự gọi `select_lamp_for_lock`, tức đúng hàm validator gọi lại bên trong. Không
+/// trừ nó ra thì mọi con số đọc được đều cộng thêm một lần chạy thừa.
+fn hc_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
   let din  = t_datum(hc_balance, 0, hc_holdings(n))
   let dout = hc_datum_after_commit(n)
   let tx =
@@ -2400,6 +2412,11 @@ fn hc_run_commit(n: Int) -> Bool {
       [t_vault_output(dout, hc_balance),
        hc_shard_out(hc_shard(hc_balance, hc_balance, 0, 1, hc_epoch))],
       [t_owner])
+  (din, tx)
+}
+
+fn hc_run_commit(n: Int) -> Bool {
+  let (din, tx) = hc_commit_fixture(n)
   validate_commit(din, hc_l, hc_lambda, hc_epoch, t_own_ref(), t_vault_addr(),
                   t_lamp_policy, t_lamp_name, t_shard_policy, tx)
 }
@@ -2466,26 +2483,48 @@ test cf_commit_at_cap_then_fire_ok() {
 
 // ── Trần ExUnit của hai nhánh mang LAMP — số ĐO, không ngoại suy ─────────────
 //
-// Cách đo: chạy trọn giao dịch qua `t_run_commit` / `t_run_fire_n`, rồi TRỪ chi
-// phí dựng fixture (`probe_commit_fixture_cap` / `probe_fire_fixture_cap`), vì
-// fixture tự gọi lại chính hàm O(n²) mà validator gọi. Thang đo nằm NGAY DƯỚI
-// trong tệp này — đừng gỡ nó ra nữa.
+// Cách đo (một lệnh `aiken check`): trừ theo từng CẶP ở mục THANG ĐO bên dưới,
+// vì fixture tự gọi lại chính hàm O(n²) mà validator gọi. Mỗi cặp phải tự khai
+// CẤU HÌNH của nó và CỔNG nào đang có hiệu lực ở đó — luật đầy đủ nằm ở mục
+// THANG ĐO, đọc nó trước khi sửa bất cứ cổng nào ở trên.
 //
-// Số của VALIDATOR, `aiken check` 2026-09-14, `maxTxExMem = 16 500 000`:
+//   cặp                             | n  | cổng chặn nó ở đâu
+//   commit khoá TRỌN                | 39 | `< max_loyalty_holdings` trên độ dài
+//     (nặng nhất còn được CHẤP NHẬN) |    | SAU commit. Khoá trọn không cắt
+//                                   |    | holding nào ⟹ 39 vào lọt.
+//   commit khoá MỘT PHẦN            | 38 | cùng cổng đó, nhưng
+//                                   |    | `select_lamp_for_lock` cắt +1 ⟹ 39
+//                                   |    | BỊ TỪ CHỐI, 38 mới là trần của họ này
+//   fire                            | 40 | `<= max_loyalty_holdings`
 //
-//   nhánh (n)      | trước Nợ #48 |  sau Nợ #48  | đổi
-//   commit (39)    |    55,1 %    |    54,6 %    |  −1,1 %
-//   fire   (40)    |    61,3 %    |    51,1 %    | −16,6 %
+// Số của VALIDATOR, `aiken check` 2026-09-16, `maxTxExMem = 16 500 000`. Giao
+// dịch thật chạy THÊM validator `shard` trong cùng ngân sách — đo được 272 689
+// (1,7 %) và KHÔNG duyệt holding, nên coi là hằng số ⟹ phần còn cho `vault` là
+// 16 227 311, và đó mới là ngưỡng để nói "lọt" hay "vượt".
 //
-// Giao dịch thật chạy THÊM validator `shard` trong cùng ngân sách 16,5 M — đo
-// được ~272 689 (1,7 %) và KHÔNG duyệt holding, nên coi là hằng số. Ngân sách
-// còn cho `vault` là ~98,3 %.
+//   nhánh (n)                  |       mem | % của 16,5 M | % phần `vault`
+//   commit khoá TRỌN    (39)   | 9 336 270 |    56,6 %    |    57,5 %  ← HẸP NHẤT
+//   commit khoá 1 PHẦN  (38)   | 8 621 399 |    52,3 %    |    53,1 %
+//   fire                (40)   | 8 437 447 |    51,1 %    |    52,0 %
 //
-// Điểm chết ước theo bậc hai: commit n ≈ 52, fire n ≈ 55.
+// **NHÁNH HẸP NHẤT SAU BẢN VÁ Nợ #48 LÀ COMMIT** — đo lại 2026-09-16 bằng bảng
+// trên, không chép từ bản ghi nào.
+//
+// ĐIỂM CHẾT — đo, KHÔNG ngoại suy (2026-09-16). Cấu hình trên trần không được
+// chấp nhận, nên phép đo này bắt buộc chạy dưới một đột biến: đổi hằng trong
+// CẢ HAI cổng thành `10_000` và GIỮ NGUYÊN phép `list.length`. Thay cổng bằng
+// `expect True` là sai phép đo — nó bỏ luôn phép đếm độ dài và hạ số đọc được
+// ~92 K (commit) / ~107 K (fire), tức đo thiếu đúng phần đang muốn đo.
+//
+//   commit khoá 1 phần   n=54  15 866 161  lọt   |  n=55  16 397 964  VƯỢT
+//   fire                 n=59  15 972 425  lọt   |  n=60  16 439 795  VƯỢT
+//
+// Bản ghi trước ước "commit n ≈ 52, fire n ≈ 55" bằng ngoại suy bậc hai từ MỘT
+// điểm; cả hai đều thấp hơn thực tế. Ước đã bỏ, số đo thay chỗ.
 //
 // 🔴 HAI ĐIỀU ĐẢO SO VỚI BẢN GHI TRƯỚC — cả hai do đo lại, không do suy luận:
 //
-// (1) **COMMIT giờ chết TRƯỚC FIRE** (52 < 55). Bản trước ghi ngược (fire 53 <
+// (1) **COMMIT chết TRƯỚC FIRE** (55 < 60). Bản trước ghi ngược (fire 53 <
 //     commit 55) và kết luận "cửa RA hẹp hơn cửa VÀO". Kết luận ấy đúng với số
 //     lúc đó; bản vá cho Nợ #48 hạ fire 16,6 % mà gần như không chạm commit, nên thứ tự
 //     đảo. Cổng đếm holding ở `validate_commit` vẫn cần — chỉ là lý do đã đổi:
@@ -2506,8 +2545,11 @@ test cf_commit_at_cap_then_fire_ok() {
 //
 // CÒN NỢ — P4, thay `list.sort` bằng sắp-xếp-trộn đảo-phần-tử-hoà: CHƯA làm, và
 // cố ý chưa. Nó là thứ DUY NHẤT hạ được nhánh commit, nhưng ở trần 40 hiện tại
-// commit mới dùng 54,6 % nên nó không mua được gì. Mốc kích hoạt: khi nào có
-// người cần nâng trần quá ~48. Điều kiện đi kèm (chủ dự án đã chốt): phải có bài
+// commit mới dùng 56,6 % nên nó không mua được gì. Mốc kích hoạt: khi nào có
+// người muốn nâng trần — và lúc đó ĐO lại bằng bảng ĐIỂM CHẾT ở trên cho ĐÚNG
+// họ fixture khoá TRỌN, vì đó mới là họ hẹp nhất. Bản trước ghi mốc "~48"; con
+// số ấy suy từ ước "commit ≈ 52" mà phép đo đã lật, nên nó đi theo, không giữ.
+// Điều kiện đi kèm (chủ dự án đã chốt): phải có bài
 // kiểm tính chất `msort == list.sort` trên đầu vào dày phần tử hoà xanh TRƯỚC,
 // vì `list.sort` ĐẢO phần tử hoà còn sắp-xếp-trộn thường thì không — đổi chỗ đó
 // là đổi KẾT QUẢ, không phải đổi tốc độ.
@@ -2558,34 +2600,83 @@ fn t_run_fire_n(n: Int) -> Bool {
 
 // ── THANG ĐO — giữ trong tệp, đừng gỡ lần nữa ───────────────────────────────
 //
-// Bốn bài dưới đây KHÔNG khẳng định điều gì về hiệu năng — Aiken không cho đặt
+// Các bài dưới đây KHÔNG khẳng định điều gì về hiệu năng — Aiken không cho đặt
 // ngưỡng ExUnit trong `test`. Việc của chúng là làm phép trừ chạy được bằng MỘT
 // lệnh: `aiken check` in mem/cpu cho từng bài, và
 //
-//     validator = t_run_*(n)  −  probe_*_fixture_n
+//     validator = <chân CHẠY-TRỌN>(n)  −  <chân DỰNG-FIXTURE>(n)   ← CÙNG một n
 //
-// Bản trước đã gỡ thang đo ra sau khi đọc số, và cái giá là lần đo lại phải dựng
-// lại từ đầu — đủ đắt để không ai đo lại, nên một tối ưu hoá không có cách nào
-// chứng minh mình đã mua được biên nào.
+// LUẬT CỦA THANG ĐO — ba dòng, đọc trước khi sửa bất cứ cổng nào ở trên:
+//
+//  (1) Thang đo nào cũng phải TỰ KHAI nó đang đo ở cấu hình nào và cổng nào
+//      đang có hiệu lực ở đó. Hai chân của một cặp lấy `n` từ CÙNG một hằng
+//      dưới đây, không ai gõ lại số.
+//  (2) Chân CHẠY-TRỌN bắt buộc là `test` thường (phải PASS), KHÔNG BAO GIỜ là
+//      `test ... fail`. Đây là vế sống còn: một bài `fail` vẫn xanh dù nó chết
+//      ở cổng đầu tiên hay chạy tới dòng cuối, nên nó không bao giờ kêu khi cấu
+//      hình của nó thôi được chấp nhận. Bài PASS thì kêu — siết cổng một nấc là
+//      nó đỏ ngay trong cùng lượt chạy.
+//  (3) Một `probe` ĐỨNG MỘT MÌNH không phải thang đo. Nó chỉ dựng fixture; nó
+//      không biết validator có chạy hết nhánh hay không, và nó không tự kêu.
+//
+// CA ĐÃ TRẢ GIÁ (2026-09-14 → 2026-09-16), lý do ba dòng trên tồn tại: thang đo
+// commit từng lấy chân chạy-trọn là `c_commit_over_holding_cap_rejected` — một
+// bài `fail` ở n = trần − 1. CÙNG NGÀY, cổng đếm holding của `validate_commit`
+// đảo `<=` → `<`, nên n = trần − 1 thôi được chấp nhận và bài đó rẽ ngang TẠI
+// cổng, bỏ qua toàn bộ phần việc sau nó. Bộ kiểm vẫn 99/99 xanh; phép trừ vẫn
+// chạy; con số đọc ra tụt 315 037 mem (54,6 % → 52,7 %) — LỆCH THEO CHIỀU DỄ
+// CHỊU, nên không ai nghi. Số sai nằm trong bản ghi hai ngày.
 
+// `n` của từng cặp — khai MỘT chỗ. Sửa cổng ở trên thì sửa cả ở đây, và bài
+// chạy-trọn tương ứng sẽ đỏ ngay nếu quên.
+//
+//  · `commit_scale_n`      — họ khoá MỘT PHẦN. `select_lamp_for_lock` cắt một
+//    holding ⟹ độ dài SAU commit là n+1, mà cổng là `<` ⟹ n tối đa = trần − 2.
+//  · `commit_full_scale_n` — họ khoá TRỌN. Không cắt cái nào ⟹ độ dài giữ
+//    nguyên ⟹ n tối đa = trần − 1. Đây là cấu hình commit NẶNG NHẤT còn được
+//    chấp nhận, tức trần ExUnit thật của nhánh này.
+//  · `fire_scale_n`        — cổng fire là `<=` ⟹ chạm đúng trần vẫn lọt.
+const commit_scale_n      : Int = max_loyalty_holdings - 2
+const commit_full_scale_n : Int = max_loyalty_holdings - 1
+const fire_scale_n        : Int = max_loyalty_holdings
+
+// CẶP 1 — commit khoá MỘT PHẦN. Chân chạy-trọn là `c_commit_at_holding_cap_ok`
+// ở trên (PASS, cùng `commit_scale_n`), KHÔNG phải bài `fail` cạnh nó.
 test probe_commit_fixture_cap() {
-  let (din, tx) = t_commit_fixture(max_loyalty_holdings - 1)
-  list.length(din.loyalty_holdings) == max_loyalty_holdings - 1 && list.length(
+  let (din, tx) = t_commit_fixture(commit_scale_n)
+  list.length(din.loyalty_holdings) == commit_scale_n && list.length(
     tx.inputs,
   ) == 2
 }
 
+// CẶP 2 — commit khoá TRỌN, cấu hình NẶNG NHẤT còn được chấp nhận. Trước lượt
+// này chưa có chân chạy-trọn đứng riêng cho nó: `hc_run_commit(trần − 1)` chỉ
+// sống bên trong `cf_commit_at_cap_then_fire_ok`, mà bài đó chạy KÈM một lượt
+// fire nên số của nó không tách ra được.
+test measure_commit_full_lock_run() {
+  hc_run_commit(commit_full_scale_n)
+}
+
+test probe_commit_full_lock_fixture() {
+  let (din, tx) = hc_commit_fixture(commit_full_scale_n)
+  list.length(din.loyalty_holdings) == commit_full_scale_n && list.length(
+    tx.inputs,
+  ) == 2
+}
+
+// CẶP 3 — fire.
 test probe_fire_fixture_cap() {
-  let (din, tx) = t_fire_fixture(max_loyalty_holdings)
-  list.length(din.loyalty_holdings) == max_loyalty_holdings && list.length(
+  let (din, tx) = t_fire_fixture(fire_scale_n)
+  list.length(din.loyalty_holdings) == fire_scale_n && list.length(
     tx.inputs,
   ) == 2
 }
 
-// Bài canh trần: fire ở ĐÚNG trần holding phải còn chạy được. Nó không đo
-// ExUnit (Aiken không cho khẳng định ngưỡng trong `test`), nó giữ cho fixture
-// `t_run_fire_n` sống để lần sau còn dựng lại thang đo bằng một dòng.
-test f_fire_at_holding_cap_ok() { t_run_fire_n(max_loyalty_holdings) }
+// Chân chạy-trọn của CẶP 3, kiêm bài canh trần: fire ở ĐÚNG trần holding phải
+// còn chạy được. Nó không đo ExUnit (Aiken không cho khẳng định ngưỡng trong
+// `test`), nó giữ cho fixture `t_run_fire_n` sống để lần sau còn dựng lại thang
+// đo bằng một dòng — và vì nó PASS, nó kêu nếu cổng fire bị siết.
+test f_fire_at_holding_cap_ok() { t_run_fire_n(fire_scale_n) }
 
 // ── SetDelegate tests ─────────────────────────────────────────
 

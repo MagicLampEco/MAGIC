@@ -52,7 +52,8 @@ pub const m_max_q: Int = 2_000_000_000
 /// ⇒ nó thực sự ràng buộc, không phải cap trang trí đặt TRÊN trần thật.
 pub const max_op_prices: Int = 16
 
-/// TRẦN TRÊN của `base_price` — 10¹⁴ nanogic = 100.000 MAGIC cho MỘT đơn vị nghiệp vụ.
+/// TRẦN TRÊN của `base_price` — 10¹² nanogic = 1.000 MAGIC cho MỘT đơn vị nghiệp vụ.
+/// (Hạ từ 10¹⁴ ngày 2026-09-12 — lý do đầy đủ ở khối "CON SỐ" bên dưới.)
 ///
 /// VÌ SAO CẦN: trước bản vá này `valid_param` chỉ có ràng buộc DƯỚI (`base_price >= 0`
 /// và GATE `base_price * m_min >= q`). Cả hai chặn giá tụt về 0 (drain miễn phí); KHÔNG
@@ -61,40 +62,85 @@ pub const max_op_prices: Int = 16
 /// khoá. Và không ai lệch ra được: beacon chỉ committee sửa, `consume` bắt buộc đọc beacon
 /// còn hạn, không có đường vòng.
 ///
-/// CON SỐ, và vì sao là 10¹⁴ chứ không phải số khác:
+/// CON SỐ, và vì sao là 10¹² chứ không phải số khác:
 ///   · Dòng ĐẮT NHẤT trong sổ op_type chuẩn là `did.transfer` = 10¹⁰ nanogic
-///     (`ConsumeMAGIC/CONTRACT.md`, bảng op_type). Trần này = 10.000× dòng đó.
+///     (`ConsumeMAGIC/CONTRACT.md`, bảng op_type). Trần này = 100× dòng đó.
 ///   · `base_price` là giá MỘT ĐƠN VỊ; khối lượng đi qua `op_count`. Lưu 1 TB không cần
 ///     base_price to — nó là `op_count = 1.048.576` ở base 10⁹. Nên trần chỉ phải phủ
 ///     "đơn vị đắt nhất", KHÔNG phải "giao dịch đắt nhất".
 ///   · Phép thử "đắt hay KHOÁ" là một TỶ LỆ, không phải một lượng: giá-một-đơn-vị ở
 ///     `m_max` chia cho sản lượng MAGIC toàn mạng mỗi epoch. Trần LAMP khoá được là 20%
-///     cung (`PARTICIPATION_CAP_BPS = 2000`) = 7,2×10⁹ LAMP. Ở 10¹⁴, một đơn vị tại
-///     demand 2,0× tốn 2×10¹⁴ nanogic — dưới 10⁻² của sản lượng ở MỌI chế độ rate đang
-///     bàn, tức còn hàng trăm lượt/epoch toàn mạng. Chưa phải khoá.
-///   · Đã loại 10¹¹ và 10¹²: chúng sống được hôm nay nhưng chết nếu suất sinh ngả về
-///     ρ = 1 MAGIC/LAMP/epoch (SPEC §"RATE_REF_Q") thay vì rate đang cài — giá danh nghĩa
-///     phải tăng 76,19×–125× (dải theo `S(L)`; ~76× là ca `L=200`) thì dư địa chỉ còn
-///     1,3–13×. Trần dưới 100× dư địa là một cuộc di trú đã hẹn giờ.
-///     [D2 ĐÃ CHỐT 2026-09-05 — `DevStatus.md` ▸ D2: chuẩn hoá bằng cách kéo InstantGen
-///     XUỐNG suất ScheduleGen, KHÔNG nâng lên ρ=1. Điều kiện trên vì thế KHÔNG kích hoạt;
-///     giữ đoạn này làm hồ sơ vì sao 10¹¹/10¹² bị loại, không phải làm cảnh báo đang chờ.] Đã loại 10¹⁵: một đơn vị ở m_max ăn ~2% sản lượng MAGIC/epoch của cả
-///     mạng — đó là khoá mặc áo giá.
-///   · Bất đối xứng chi phí quyết định chỗ làm tròn lên: thêm 10× dư địa tốn ĐÚNG 0 (cùng
-///     một phép so sánh Int trong vòng `list.all` sẵn có), còn đặt hụt tốn một cuộc di trú
-///     UTxO có tiền thật — hằng này là hằng BIÊN DỊCH, đổi nó là đổi script hash.
+///     cung (`PARTICIPATION_CAP_BPS = 2000`) = 7,2×10⁹ LAMP.
+///
+///     🔴 BẢN TRƯỚC CỦA ĐOẠN NÀY KẾT LUẬN "chưa phải khoá" BẰNG MỘT PHÉP TÍNH THIẾU MỘT
+///     THỪA SỐ BẰNG `L` — sửa 2026-09-12. Chỗ sai: nó lấy `ρ = R·S(L)·10⁻¹²` làm "rate
+///     mỗi epoch". `ρ` KHÔNG phải rate mỗi epoch — nó là MAGIC trên mỗi LAMP-khoá cho
+///     TRỌN vòng đời lịch `L` epoch. Rate mỗi epoch là `ρ/L`.
+///     Đối chứng bằng vector chuẩn TV-SCH-02 (`ScheduleGen/.../math.ak` ▸ `compute_m_i`):
+///     λ=4000 LAMP · L=100 ⟹ khoá 400.000 LAMP, mỗi epoch ra 45 MAGIC
+///     ⟹ suất thật = 45/400.000 = 1,125×10⁻⁴ = ρ/L, với ρ = 0,01125. Tỷ số đúng bằng L.
+///
+///     Số đúng, cả hai chế độ `L` ở hai đầu mút (`S(L)` đơn điệu nên đây là dải đầy đủ):
+///       L=200: sản lượng toàn mạng = 7,2×10⁹ × 0,013125/200 = 4,725×10⁵ MAGIC/epoch
+///              ⟹ 10⁻² của nó = 4.725 MAGIC.   Vế trái 200.000 ⟹ VƯỢT 42,3×.
+///       L=10 : sản lượng toàn mạng = 7,2×10⁹ × 0,008/10     = 5,76×10⁶ MAGIC/epoch
+///              ⟹ 10⁻² của nó = 57.600 MAGIC.  Vế trái 200.000 ⟹ VƯỢT 3,5×.
+///     Vượt ở CẢ HAI đầu mút ⟹ ở 10¹⁴ bất biến cuối khối này KHÔNG thoả. Ở giá trần,
+///     một đơn vị nghiệp vụ ăn 42% (L=200) sản lượng MAGIC mỗi epoch của TOÀN MẠNG —
+///     theo đúng phép thử ngay trên, đó là KHOÁ, không phải đắt.
+///
+///     ⟹ HẠ VỀ 10¹², chủ dự án chốt 2026-09-12. Đây là hằng BIÊN DỊCH: đổi nó là đổi
+///     script hash ⟹ phải deploy lại và công bố ref-script CIP-33 mới cho `consume`.
+///
+///     🔴 VÀ MỘT ĐÍNH CHÍNH TRONG CHÍNH KHỐI NÀY: bản 2026-09-12 sáng viết *"mức thoả ở
+///     ca chặt nhất là 10¹² (dư 4,7×)"*. Con số 4,7× đó BỎ QUÊN thừa số `m_max_q / q = 2`
+///     ở vế trái — đúng cái vế mà bất biến viết ra ngay bên dưới. Dư địa thật:
+///       vế trái  = 10¹² × 2 / 10⁹      = 2.000 MAGIC
+///       vế phải  = 4.725×10⁵ / 100     = 4.725 MAGIC   (ca chặt nhất, L=200)
+///       ⟹ thoả, dư **2,36×** — không phải 4,7×.
+///     Nêu ra vì đây là lần thứ HAI cùng một khối văn bản mất một thừa số, và cả hai lần
+///     đều mất ở vế đang được rút gọn để đọc cho nhanh. Bậc 10¹³ cho vế trái 20.000 > 4.725
+///     ⟹ trượt. Nên 10¹² là bậc mười LỚN NHẤT còn thoả, không phải một lựa chọn thoải mái.
+///   · HỒ SƠ vì sao 10¹¹/10¹² từng bị loại — và vì sao lý do đó KHÔNG còn đứng:
+///     lập luận cũ là chúng sống được hôm nay nhưng chết nếu suất sinh ngả về
+///     ρ = 1 MAGIC/LAMP/epoch (SPEC §"RATE_REF_Q"). D2 ĐÃ CHỐT 2026-09-05
+///     (`DevStatus.md` ▸ D2): chuẩn hoá bằng cách kéo InstantGen XUỐNG suất ScheduleGen,
+///     KHÔNG nâng lên ρ=1 ⟹ điều kiện đó không kích hoạt. Cộng với hệ số `L` vừa sửa ở
+///     trên, 10¹² không những sống được mà còn là mức DUY NHẤT trong dải đang bàn thoả
+///     được bất biến ở cuối khối này. Nói gọn: cả hai chân của lập luận loại 10¹² đều đã
+///     đổ, một chân vì quyết định, một chân vì số học.
+///     Đã loại 10¹⁵: một đơn vị ở m_max ăn ~2% sản lượng MAGIC/epoch của cả mạng theo
+///     phép tính CŨ — với hệ số `L` đã sửa thì con số thật còn tệ hơn.
+///   · Lập luận "làm tròn LÊN cho rộng" ở bản trước đọc bất đối xứng chi phí đúng chiều
+///     nhưng áp sai chỗ: thêm dư địa cho một BACKSTOP quả thật tốn 0 phép tính, nhưng nó
+///     KHÔNG tốn 0 về an toàn — mỗi bậc 10× nới thêm là một bậc committee đặt được một
+///     giá khoá cả mạng. Dư địa rẻ khi trần chỉ chặn thảm hoạ; nó hết rẻ đúng lúc trần
+///     vượt qua ngưỡng KHOÁ. Đó là chỗ phép tính thiếu `L` che mất.
 ///
 /// ĐÂY LÀ BACKSTOP CHỐNG THẢM HOẠ, KHÔNG PHẢI KHOẢNG GIÁ GỢI Ý. Đừng đọc "1e13 vẫn dưới
 /// trần mà" thành lý do đặt giá cao. Bảng mẫu đang deploy dùng 10⁹.
 ///
-/// 🔴 TRẦN NÀY KHÔNG CỨU ĐƯỢC `did.rotate`. Ở 10¹⁴, xoay khoá tốn 200.000 MAGIC, mà người
-/// nắm mức tối thiểu sinh ra vài phần trăm MAGIC mỗi epoch ⇒ vẫn khoá tuyệt đối. Phòng
+/// 🔴 TRẦN NÀY VẪN KHÔNG CỨU ĐƯỢC `did.rotate` — hạ trần chỉ làm đòn rẻ đi, không gỡ được.
+/// Ở 10¹², xoay khoá tốn 2.000 MAGIC ở `m_max` (trước là 200.000). Rẻ hơn 100 lần, nhưng
+/// phép thử không phải "bao nhiêu tiền", mà là "người nắm mức tối thiểu sinh được bao nhiêu
+/// mỗi epoch": `min_instant_holding` (`InstantGen/.../constants.ak`) sinh ra một phần rất
+/// nhỏ của 2.000 MAGIC mỗi epoch ⇒ vẫn khoá tuyệt đối. Phòng
 /// tuyến đúng cho thao tác an ninh là một DẢI op_type dành riêng với trần thứ hai chặt hơn,
 /// cũng ở lúc biên dịch. Đó là việc khác, còn mở — xem `DevStatus.md` Nợ #43.
 ///
-/// BẤT BIẾN PHẢI KIỂM LẠI nếu DAO đổi rate sinh MAGIC:
-///   `max_base_price × m_max_q / q  ≤  10⁻²  ×  (LAMP khoá tối đa × rate mỗi epoch)`
-pub const max_base_price: Int = 100_000_000_000_000
+/// BẤT BIẾN — nay ĐƯỢC MỘT BÀI KIỂM GHIM, không còn là văn xuôi:
+///   `max_base_price × m_max_q / q  ≤  10⁻²  ×  (LAMP_khoá_tối_đa × ρ(L) / L)`
+///
+/// Bài ghim: `max_base_price_duoi_nguong_khoa_toan_mang` ở cuối tệp này. Trước 2026-09-12
+/// bất biến này chỉ tồn tại dưới dạng CHỮ, và đó đúng là lý do nó trôi mất một thừa số
+/// trong hai bản liên tiếp mà không gì đỏ. Đổi bất kỳ vế nào ⟹ bài đó đỏ.
+///
+/// `/ L` là phần bản trước THIẾU. Viết đủ chữ để không ai rút gọn nó đi lần nữa:
+///   `ρ(L) = snapshot_base_rate_q × S(L) × 10⁻¹²` là MAGIC trên mỗi LAMP-khoá cho TRỌN
+///   `L` epoch của một lịch, KHÔNG phải cho một epoch. Chia `L` mới ra suất mỗi epoch.
+/// Đo lại bằng: `ScheduleGen/.../math.ak` ▸ `compute_m_i` với vector TV-SCH-02
+///   · đọc ở: tỷ số giữa (MAGIC một lần bắn) và (λ × L) — phải bằng ρ/L, không bằng ρ.
+pub const max_base_price: Int = 1_000_000_000_000
 
 /// Tìm base_price cho op_type trong bảng giá. None nếu op_type không tồn tại.
 /// AN TOÀN nhờ `valid_param` đã ép bảng giá TĂNG NGẶT theo op_type — nếu không,
@@ -375,10 +421,58 @@ test valid_param_cap_rejects_one_bad_row_among_good() {
 
 test valid_param_cap_leaves_headroom_for_dearest_standard_row() {
   // Dòng đắt nhất trong sổ op_type chuẩn (`did.transfer` = 1e10 nanogic) phải còn
-  // rất xa trần — nếu test này đỏ thì trần đã đặt quá thấp và sổ giá sắp không dùng
+  // xa trần — nếu test này đỏ thì trần đã đặt quá thấp và sổ giá sắp không dùng
   // được, chứ không phải test sai.
+  //
+  // Hệ số 10.000× của bản trước KHÔNG suy ra từ đâu cả: nó là "cho thật rộng" viết
+  // thành số, và nó chỉ sống được vì trần lúc ấy là 10¹⁴ — tức nó đo cái trần chứ
+  // không ràng buộc cái trần. Hạ trần về 10¹² (2026-09-12) làm nó đỏ, và đó là bằng
+  // chứng duy nhất ta có rằng nó từng ràng buộc thứ gì: nó ràng buộc SAI CHIỀU.
+  //
+  // Hệ số mới là 100×, và nó có nguồn: cận TRÊN thật của trần là bất biến chống-khoá
+  // (`max_base_price_below_network_lock_threshold` ngay dưới) cho 10¹², cận DƯỚI là
+  // dòng đắt nhất trong sổ. Hai cận kẹp lại chỉ còn đúng hai bậc mười — nên bài này
+  // nay là một cái kẹp thật, không phải một con số cho đẹp.
   let dearest_standard = 10_000_000_000
-  max_base_price >= dearest_standard * 10_000
+  max_base_price >= dearest_standard * 100
+}
+
+/// Bất biến chống-KHOÁ-toàn-mạng, viết ở docstring `max_base_price` từ 2026-08-28 nhưng
+/// tới 2026-09-12 mới có bài kiểm. Đúng khoảng trống đó là chỗ nó mất một thừa số bằng
+/// `L` qua hai bản liên tiếp mà không gì đỏ — văn xuôi không tự kiểm được chính nó.
+///
+///   `max_base_price × m_max_q / q  ≤  10⁻² × (LAMP_khoá_tối_đa × ρ(L) / L)`
+///
+/// 🔶 BA HẰNG DƯỚI ĐÂY LÀ BẢN CHÉP, không phải nguồn. Nguồn ở kho ScheduleGen, và
+/// `magiclamp/consume` KHÔNG phụ thuộc `magiclamp/protocol` (hai `aiken.toml` rời) nên
+/// không import được — đây là mức 3 "chép có nhãn", không phải lười:
+///   · `snapshot_base_rate_q` ← `ScheduleGen/onchain/lib/magiclamp/protocol/constants.ak`
+///   · hệ số đoạn 3 của `S_Q`  ← cùng tệp đó (`s_seg3_intercept_q`, `s_seg3_slope_q`)
+///   · chép ngày 2026-09-12, đối chứng bằng `compute_rate_locked_q(R, 200)`.
+/// Bên nguồn có bài ghim cùng con số (`rate_at_max_length_mirrored_in_consumemagic`),
+/// nên đổi hằng bên đó làm ĐỎ bên đó kèm câu chỉ thẳng sang tệp này.
+///
+/// Vì sao lấy `L = 200`: vế phải tỷ lệ với `ρ(L)/L = R·S_Q(L)/(10¹²·L)`, mà `S_Q` tăng
+/// dưới-tuyến-tính ⟹ `ρ/L` GIẢM theo `L` ⟹ `L` lớn nhất là ca chặt nhất. 200 là trần
+/// độ dài lịch. Ở `L = 10` vế phải rộng hơn 12,2×, nên ghim ca chặt là đủ cho cả dải.
+test max_base_price_below_network_lock_threshold() {
+  // 20% cung LAMP (`PARTICIPATION_CAP_BPS = 2000` trên trần 36 tỷ), tính bằng oildrop.
+  let lamp_cap_oildrop = 7_200_000_000 * 1_000_000
+  let longest_schedule = 200
+  // S_Q(200) trên đoạn 3: intercept 2,5e9 + slope 2,5e6 × (200 − 150)
+  let s_q_longest = 2_500_000_000 + 2_500_000 * ( longest_schedule - 150 )
+  let rate_q = 5_000_000_000 * s_q_longest / q
+  // Sản lượng MAGIC (nanogic) mỗi epoch của TOÀN MẠNG nếu khoá hết trần tham gia.
+  let network_output_per_epoch =
+    lamp_cap_oildrop * rate_q / q / longest_schedule
+  and {
+    // Ghim từng bước, để khi bài đỏ thì biết ĐỎ Ở BƯỚC NÀO chứ không chỉ biết "sai".
+    s_q_longest == 2_625_000_000,
+    rate_q == 13_125_000_000,
+    network_output_per_epoch == 472_500_000_000_000,
+    // Vế trái: giá MỘT đơn vị nghiệp vụ ở trần, tại demand cao nhất.
+    max_base_price * m_max_q / q <= network_output_per_epoch / 100,
+  }
 }
 
 test valid_param_rejects_unpinned_m_max() {

@@ -120,7 +120,7 @@ import { createLucid, buildScheduleCommitTx, buildScheduleFireTx, signAndSubmit,
 const lucid  = await createLucid(process.env.BLOCKFROST_KEY!);
 const shardUtxos = await lucid.utxosAt(shardScriptAddress);  // all 16
 
-// ── Phase 1: Commit (user signs) ─────────────────────────────────
+// ── Bước 1: Commit (user signs) ─────────────────────────────────
 const commitResult = await buildScheduleCommitTx({
   lucid, vaultUtxo, shardUtxos,
   scheduleLength: 100n,         // L=100 orders (~500 days)
@@ -136,7 +136,7 @@ console.log(commitResult.summary);
 
 await signAndSubmit(lucid, commitResult.tx);
 
-// ── Phase 2: Fire (PERMISSIONLESS — keeper submits) ───────────────
+// ── Bước 2: Fire (PERMISSIONLESS — keeper submits) ───────────────
 // Keeper monitors: current_epoch ≥ start_fire_epoch + fired_count
 lucid.selectWallet.fromPrivateKey(process.env.KEEPER_KEY!);
 

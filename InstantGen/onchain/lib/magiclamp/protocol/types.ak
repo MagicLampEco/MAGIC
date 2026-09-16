@@ -144,7 +144,7 @@ pub type VaultAttribution {
 //   3) SPEC §7.3 đã xử đúng câu hỏi này cho trường anh em phía engage.
 // Cộng INV-MAGIC-CITIZEN (`BOUNDARIES.md §2`): thưởng gắn MAGIC ĐÃ TIÊU — một LƯỢNG.
 //
-// Nhãn cũ là nhãn của một trường CHẾT thời tiền-PHA-2 (`DESIGN-PHASE2.md §4.1`: chưa
+// Nhãn cũ là nhãn của một trường CHẾT thời trước DESIGN-2 (`DESIGN-PHASE2.md §4.1`: chưa
 // handler nào từng ghi vào nó). Đổi tên KHÔNG đụng chuỗi, nhưng ĐÃ vỡ API MagicSDK —
 // breaking, cố ý.
 // 🔴 KHÔNG "thêm một trường cho nghĩa kia" — thêm trường là hỏng decode mọi UTxO đang

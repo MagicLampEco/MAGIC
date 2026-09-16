@@ -13,7 +13,7 @@
 // -----------------------------
 // * VacuumGen và SnapshotGen — cả hai đã dời sang `Legacy/`.
 //   Vacuum vi phạm I-ACT-7 (validator của nó chuyển LAMP ra treasury); Snapshot
-//   chưa bao giờ hội tụ về vault datum PHA-2. Không còn validator trong cây làm
+//   chưa bao giờ hội tụ về vault datum DESIGN-2. Không còn validator trong cây làm
 //   việc, nên `VaultType` cũng đã thu về "Instant" | "Schedule" (types.ts).
 //
 // Named re-exports only (no `export *`): the module packages each ship their own

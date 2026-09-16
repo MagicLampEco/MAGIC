@@ -187,6 +187,20 @@ pub fn script_address_staked(hash: ByteArray, stake_pkh: ByteArray) -> Address {
   }
 }
 
+/// Base address với stake part là một SCRIPT credential (khác LOẠI với
+/// `script_address_staked`, vốn dùng VerificationKey). Dùng để dựng ca âm "cùng
+/// payment credential, stake credential của kẻ tấn công" — hai địa chỉ chỉ khác
+/// nhau ở phần stake vẫn là hai `Address` KHÁC NHAU với phép so `==`.
+pub fn script_address_stake_script(
+  hash: ByteArray,
+  stake_script_hash: ByteArray,
+) -> Address {
+  Address {
+    payment_credential: Script(hash),
+    stake_credential: Some(Inline(Script(stake_script_hash))),
+  }
+}
+
 pub fn vk_address(pkh: ByteArray) -> Address {
   Address { payment_credential: VerificationKey(pkh), stake_credential: None }
 }

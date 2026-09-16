@@ -154,7 +154,7 @@ L_avail = lamp_balance − lamp_locked
 
 ## 7. Loyalty holdings — InstantGen KHÔNG chạm
 
-**I-ACT-7 (PHA-2): LAMP đứng yên.** InstantGen không trừ `lamp_paid`, không sắp xếp
+**I-ACT-7 (DESIGN-2): LAMP đứng yên.** InstantGen không trừ `lamp_paid`, không sắp xếp
 lại `loyalty_holdings`. Validator ép ba trường LAMP byte-identical giữa input và output.
 
 Đường DUY NHẤT holdings thay đổi là `WithdrawLamp` — chính chủ rút về ví mình, chọn

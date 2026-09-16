@@ -1,6 +1,18 @@
-// scripts/deploy/01_mint_lamp.ts — Mint testnet LAMP token
-// Run: npx tsx deploy/01_mint_lamp.ts
-// Result: LAMP_POLICY_ID printed → copy vào .env
+// scripts/deploy/01_mint_lamp.ts — đúc token diễn tập trên testnet.
+//
+// 🔴 KHÔNG CÒN NẰM TRONG BẤT KỲ ĐƯỜNG CHẠY NÀO, và đó là chủ ý. Ba runner E2E từng
+//    gọi tệp này khi `LAMP_POLICY_ID` rỗng; nay cả ba DỪNG thay vì đúc.
+//
+//    Thứ tệp này tạo ra KHÔNG PHẢI LAMP. Policy là native `{type:"sig", keyHash:<pkh
+//    ví>}`: không trần phát hành, không `SupplyState`, không cổng WHO, và đúc lần hai
+//    thì cộng dồn lên tài sản cũ. Nó hiển thị ra đúng chữ `tLAMP`, nên không phân biệt
+//    được bằng tên. Kho LAMP đã xếp bản Preprod của nó vào nhóm "trông giống LAMP
+//    nhưng KHÔNG phải LAMP".
+//
+//    Giữ tệp lại vì việc dựng một token giả lập trên testnet vẫn có lúc cần, và vì nó
+//    đã mang hai cổng thật (từ chối Mainnet · đòi `LAMP_MINT_CONFIRM` khớp mạng). Nhưng
+//    đừng dùng đầu ra của nó làm `LAMP_POLICY_ID` cho một lượt chạy được coi là bằng
+//    chứng: một lượt xanh với token nhái trông y hệt một lượt xanh với token thật.
 
 import {
   Lucid, Blockfrost,
@@ -91,7 +103,13 @@ async function main() {
   if (process.env.LAMP_MINT_CONFIRM !== NETWORK) {
     console.error(`\n✗ DỪNG — bước này ĐÚC ${LAMP_TOTAL_SUPPLY} oildrop lên ${NETWORK}. Ghi lên chuỗi là không hoàn tác được.`);
     console.error(`  Trên ${NETWORK} chưa có tài sản này, nên đúc lần đầu là hợp lệ. Nếu đúng ý:`);
-    console.error(`     LAMP_MINT_CONFIRM=${NETWORK} npx tsx deploy/01_mint_lamp.ts`);
+    // 🔴 KHÔNG in ra một lệnh `npx tsx` chạy thẳng. Tệp này cần Blockfrost key + seed ví,
+    //    hai thứ chỉ do wrapper `run_*.sh` nạp vào môi trường; gõ thẳng từ shell sạch sẽ
+    //    hỏng ở CHỖ KHÁC, và người vận hành sẽ tự ghép lệnh quanh cổng này. Tự ghép lệnh
+    //    quanh một cổng đúc chính là đường đã dẫn tới 72 tỷ tLAMP ngày 2026-08-28.
+    console.error(`     export LAMP_MINT_CONFIRM=${NETWORK}   # rồi chạy lại wrapper đã gọi bước này`);
+    console.error(`  Bước này không chạy độc lập được: nó đọc Blockfrost key + seed ví từ môi`);
+    console.error(`  trường, do wrapper \`scripts/run_*.sh\` nạp vào. Chạy qua wrapper, đừng gọi thẳng.`);
     process.exit(1);
   }
 

@@ -108,7 +108,13 @@ npm install @magiclamp/sdk @lucid-evolution/lucid
 Tiền đề ở repo MAGIC (làm một lần, do đội MAGIC làm):
 
 1. `aiken build` cho `InstantGen`, `ScheduleGen`, `UMKeeper` → sinh `onchain/plutus.json`.
-2. Mint LAMP → có `LAMP_POLICY_ID`.
+2. Lấy `LAMP_POLICY_ID` **canonical theo mạng** từ kho LAMP (Genesis ▸ `lampPolicies`).
+   Kho MAGIC **không đúc LAMP** và không phải nguồn của giá trị này — mọi chuỗi E2E ở
+   đây dừng nếu biến chưa được đặt. Chữ `LAMP`/`tLAMP` hiện ra trong ví hay explorer
+   KHÔNG đủ để kết luận: trên Cardano tài sản được định danh bằng cặp (policy id,
+   asset name), và tên hiển thị thì ai cũng đúc được. SDK chặn các policy nhái đã
+   biết (`assertLampPolicyId`), nhưng đó là cổng chống tái phát sai lầm cũ, không
+   phải cổng xác thực tính chính danh.
 3. Deploy datum UM → có `UM_NFT_POLICY_ID` + hash script UM (cần cho Instant).
 4. Deploy 16 shard → có `SHARD_NFT_POLICY_ID` (cần cho Schedule).
 
@@ -855,7 +861,7 @@ Không cơ chế nào còn "trả LAMP sang Treasury". Bảng cũ ghi `Transfer 
 Instant/Vacuum/Schedule là mô tả mô hình **đã bỏ**.
 
 Các báo cáo testnet trong `Legacy/` ghi kết quả Preview của mô hình **trước**
-PHA-2 — đọc như tư liệu lịch sử, không phải mô tả hành vi hiện tại.
+DESIGN-2 — đọc như tư liệu lịch sử, không phải mô tả hành vi hiện tại.
 
 ### Q3: Chuyển LAMP đi ví khác được chưa?
 

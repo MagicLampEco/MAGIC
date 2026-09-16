@@ -14,7 +14,7 @@
 Hệ MagicLamp có **ba token** với ba vai loại trừ nhau:
 
 - **LAMP** — tài sản nền. Cố định **36 tỷ, không mint thêm, không burn** (giảm lưu hành = chuyển Treasury kế toán). Nguồn sinh MAGIC; tài sản tham gia governance (không token-weighted); nguồn backing hợp đồng tín dụng MAGIC.
-- **MAGIC** — quyền-tiêu-dịch-vụ. **Không phải token** (không policy-id, không mint): là **số kế toán trong vault datum**, gắn PersonDID, **không chuyển nhượng**. Sinh mỗi epoch, **dùng-hết-trong-epoch-hoặc-mất** (§4). Chỉ chuộc-ra-dịch-vụ, không ra tiền.
+- **MAGIC** — quyền-tiêu-dịch-vụ. **Không phải token** (không policy-id, không mint): là **số kế toán trong vault datum**, gắn **VÍ** (khoá thanh toán của chủ vault), **không chuyển nhượng**. PersonDID đi kèm để **quy kết**, không để gác quyền — xem `INV-MAGIC-WALLET-BOUND` (§bất biến). Sinh mỗi epoch, **dùng-hết-trong-epoch-hoặc-mất** (§4). Chỉ chuộc-ra-dịch-vụ, không ra tiền.
 - **CARP** — đồng-thanh-khoản ổn định. Native token có policy-id riêng, chuyển nhượng, giữ giá bằng **sàn-tiện-ích** (luôn đổi được sang MAGIC để tiêu). Cổng-vào bằng fiat cho người chưa có LAMP.
 
 Quy luật: **LAMP sinh MAGIC; CARP chở giá trị tới nơi tiêu; MAGIC tiêu xong hoặc tan biến.** Chi tiết ẩn dụ + lý do "ba chứ không một": whitepaper §1–§5.
@@ -31,7 +31,15 @@ Quy luật: **LAMP sinh MAGIC; CARP chở giá trị tới nơi tiêu; MAGIC ti�
 ### §1.2 MAGIC — quyền-tiêu-dịch-vụ (lớp tuân-thủ-sạch)
 - **Bản chất:** đơn-vị-tiêu-dịch-vụ trả trước, neo **sức-mua-dịch-vụ nội sinh** (`P* = 1`, `base_price` đổi chỉ qua DAO). **KHÔNG neo fiat.**
 - **Bốn thuộc tính bất biến (làm nó sạch):**
-  1. **Không chuyển nhượng** — chỉ chủ PersonDID tiêu được.
+  1. **Không chuyển nhượng** — không có đường nào chuyển MAGIC từ vault này sang vault khác.
+     🔴 **Người tiêu được là chủ VÍ, không phải chủ PersonDID** (chốt 2026-09-12, sửa SPEC cho
+     khớp mã đang chạy). Bản cũ của dòng này viết *"chỉ chủ PersonDID tiêu được"* và câu đó
+     **chưa bao giờ đúng với mã**: `consume.ak` gác cả ba đường bằng
+     `list.has(tx.extra_signatories, <datum>.owner)` (`:238` Consume · `:320` BindDID · `:408`
+     đúc thread), và `owner` là `paymentCredential.hash` của ví
+     (`scripts/deploy/09_deploy_consume.ts:116-119`). `did_commit` chỉ bị kiểm ĐỘ DÀI và ép bất
+     biến (`consume.ak:416-422`, `:759`) — không chỗ nào đối chiếu nó với một chữ ký.
+     ⟹ ai giữ khoá thanh toán của ví đó tiêu được MAGIC của thread đó.
   2. **Per-epoch, dùng-hoặc-mất** — sinh ở epoch nào phải tiêu ở epoch đó; snapshot epoch sau **reset về 0** (§4). Không tích trữ, không cộng dồn.
   3. **Không chuộc ra tiền** — chỉ chuộc-ra-DỊCH-VỤ. Không đổi ngược thành LAMP/CARP/fiat.
   4. **Không là token** — là số kế toán trong vault datum; **Gen ≠ Mint**. Cấm viết "mint MAGIC".
@@ -172,7 +180,15 @@ Ba cửa: **InstantGen · ScheduleGen · PrepaidGen**. Chia chung:
 - **MAGIC sinh ra là per-epoch** (§4.2) — mọi cửa đều nạp vào batch của epoch hiện tại.
 - **Thưởng keyed-consumed** (INV-MAGIC-CITIZEN): độ lớn thưởng tính theo MAGIC **đã tiêu thụ thật**, không theo LAMP-giữ hay MAGIC-đang-cầm.
 
-**Wakeme lent-LAMP KHÔNG phải cửa riêng.** Khoản ≤ 1001 LAMP hệ cho người mới mượn (đặt trong vault closed-loop, LAMP đứng yên, user không bao giờ sở hữu) là **nguồn-LAMP** để chạy InstantGen/ScheduleGen — cùng hai phương thức áp cho LAMP người dùng tự mua. Không có "cửa GenDrip" ngang hàng. Cơ chế tấm-pin (LAMP luân chuyển pot→vault→pot) thuộc `PhoenixKey-Wakeme-{Math,Tech}.md`.
+**Wakeme lent-LAMP KHÔNG phải cửa riêng.** Khoản ≤ 1001 LAMP hệ cho người mới mượn là **nguồn-LAMP** để chạy InstantGen/ScheduleGen — cùng hai phương thức áp cho LAMP người dùng tự mua. Không có "cửa GenDrip" ngang hàng.
+
+**Khoản mượn đó KHÔNG BAO GIỜ RỜI két Wakeme.** Nó không sang két của MAGIC, không sang ví người dùng, không đi đâu cả: giá trị LAMP trong két Wakeme là **bất biến qua mọi lượt Gen**. Engine gen **chỉ ĐỌC** số dư ấy qua `reference_input` (CIP-31) — nhất quán với I-ACT-7 ở §6.1 — và két Wakeme **không có redeemer nào cho Gen**. Việc "cho mượn" là một bút toán trong datum của chính két đó (`conditional_lamp` → `owned_lamp`), không phải một lần chuyển tài sản.
+
+> Viết dài đến thế vì bản trước của đoạn này nói *"đặt trong vault closed-loop"* và *"cơ chế tấm-pin (LAMP luân chuyển pot→vault→pot)"*, và hai cụm ấy đọc thành **LAMP vẫn đi, chỉ đi vòng**. Cách đọc sai lại là cách đọc tự nhiên hơn với người đang dựng một cái két — nó suýt dẫn tới một bản ScheduleGen đòi LAMP mượn phải nằm trong két của MAGIC.
+>
+> Cái hỏng nếu làm theo cách đọc sai: hai đường thu hồi của Wakeme (`Reclaim` khi người dùng ngồi im qua ngày, `ReclaimEpoch` khi ngồi im ≥ 1001 kỳ) chi **từ chính két đó**. LAMP rời két là hai đường ấy chi vào một két rỗng — hệ cho mượn ≤ 1001 LAMP mỗi người và **không còn đường lấy lại**. Không lỗi nào hiện ra; pot chỉ cạn dần theo số người đăng ký. Bất biến bị phá là `L(két) == conditional_lamp + owned_lamp`.
+
+Cơ chế đầy đủ của két Wakeme thuộc `PhoenixKey-Wakeme-{Math,Tech}.md`. Ở kho này chỉ cần đúng một điều: `L_lent` trong §6.3 **đọc từ datum két Wakeme**, không đọc từ `lamp_balance` của két MAGIC.
 
 > **MAGIC là FUNGIBLE — nguyên tắc gốc (chốt 2026-07-30).** Một khi MAGIC đã sinh, hệ **KHÔNG BAO GIỜ phân biệt nó theo nguồn** (Instant/Schedule/Prepaid/LAMP-mượn hay LAMP-sở-hữu). MAGIC hành xử như đơn-vị fungible: mọi MAGIC-đã-tiêu đếm như nhau vào §6.2-thành-phần-2, §6.3 reward(consumed), §10 C1. Hệ quả thiết kế: **mọi rào chống-lạm-dụng phải đặt Ở TẦNG SINH (generation), không gắn nhãn MAGIC hay lọc theo nguồn ở tầng tiêu/kế-toán.** (Trường `source` trên batch — nếu có — chỉ dùng cho decay-param lúc tạo, KHÔNG được ảnh hưởng giá-trị-tiêu hay C1.)
 >
@@ -237,8 +253,42 @@ cap_surplus = 0                                   khi đỏ
   - **`INV-GEN-BUDGET` giữ KHÔNG cần đếm — hai điều kiện CỨNG:** (1) **khoá giải phóng CHỈ theo chuyển-epoch, CẤM giải theo burn** (đốt MAGIC không được "trả chỗ" LAMP-khoá) — cổng `current_epoch > lock_epoch` đặt ở **MỌI** đường thả `lamp_locked` (Withdraw/unlock/ProfileChange), sót một đường là thủng; (2) **làm tròn LÊN LAMP-khoá** cho mỗi `m` MAGIC (`⌈ m × Q / RATE_REF_Q ⌉`) — không bao giờ khoá thiếu tỷ lệ. Cần thêm đường thả **permissionless-sau-epoch** chống kẹt vốn nếu owner mất khoá.
 - *Ví dụ:* DID nắm 1000 LAMP (`L_avail`=1000). Schedule-commit khoá 600 → `L_avail`=400 → InstantGen còn tối đa ⌊400·ρ⌋=400 MAGIC/epoch. Mua & khoá thêm LAMP nâng trần ngay; LAMP đã khoá không dùng lại tới sang epoch.
 - `br = B/S`: `B` = backing thật (oracle LAMP CHỈ định-giá B — F6), `S` = cung MAGIC hiệu lực (đã Gen chưa tiêu chưa reset). `br_safe = 1.5`.
+- **`INV-BACKING-NO-LAMP` — `B` KHÔNG được chứa LAMP (chốt 2026-09-12).** MAGIC sinh trên **thặng
+  dư của GreenBack**, tức trên phần ĐÃ được back; `B` không việc gì phải tự đi neo vào chính tài
+  sản mà nó đang cấp quyền-tiêu để đổi lấy.
+
+  Vì sao thành bất biến chứ không phải sở thích — nó đã hỏng một lần trong thiết kế, ở đúng phía
+  sai. `B` chứa LAMP ⟹ `B ∝ P_LAMP` ⟹ giá LAMP sập thì `br` sập ⟹ `cap_surplus = 0` ⟹ **khoá Gen
+  đúng lúc thị trường gấu**: nông dân không trồng được cây vì giá token sập. Đó là nghịch đúng
+  mục tiêu "phục vụ kinh tế thực". Chiều lên cũng hỏng nhưng nhẹ hơn: `P_LAMP` tăng ⟹ `B` tăng ⟹
+  `cap_surplus` nới, trong khi số cây trồng được không đổi.
+
+  Nguyên tắc này **đã có sẵn cho CARP** — `F5-CARP-FIAT-NEUTRAL` cấm "thuần-LAMP vào core". Đây
+  là áp cùng nguyên tắc cho `B` của MAGIC; không phải luật mới, là chỗ luật cũ chưa phủ tới.
+
+  ⚠️ **CHƯA HOÀ GIẢI VỚI §6.4 BƯỚC (3)** — xem ghi chú ở §6.4. Bất biến này đã chốt; cách hoà
+  giải thì chưa. Ràng buộc TẠM THỜI: coi LAMP mà GreenBack nắm là **tồn kho**, KHÔNG đưa vào `B`
+  của `br`. Fail-closed (`B` nhỏ hơn ⟹ `cap_surplus` nhỏ hơn ⟹ gen ít hơn).
 - **Xanh** (`br > br_safe`): được Gen. **Đỏ** (`br ≤ br_safe`): `cap = 0` (khoá Gen). Sau Gen: `br' ≥ br_safe`.
-- **`INV-SURPLUS-RATION` — cap_surplus phải RATIONED toàn-mạng (chốt 2026-07-31, 16-shard).** `cap_surplus` rút từ **pool backing CHUNG** → nếu mỗi DID đọc một `br`-beacon (reference-input, KHÔNG trừ-dần) rồi tự rút phần mình, **N chủ-thể (kể cả trung thực) mint/gen tập-thể VƯỢT backing → depeg** (đây là "lỗ Q2" — phía SINH/rút, KHÔNG phải phía mint-CDP: mint qua CDP `MCR≥2` là **accretive**, `Σcol≥2·Σdebt ⟹ br≥2` tự-động, không cần accumulator). Vá: tổng-surplus-khả-cấp mỗi epoch chia vào **16 shard** (tái dùng `SHARD_COUNT`/`SHARD_CAP` của ScheduleGen); keeper refresh đầu epoch; mỗi lần gen/rút-tồn **SPEND-và-DECREMENT** một shard → **trần toàn-cục CỨNG = Σ shard-cap**, atomic on-chain, "số chủ-thể" biến mất, contention chia 16. KHÔNG pro-rata theo beacon-read (stale = chính lỗ). Neo cuối fail-safe vẫn là `⌊L_avail×RATE/Q⌋` (LAMP-khoá vật lý, độc-lập-oracle).
+- **`INV-SURPLUS-RATION` — cap_surplus phải RATIONED toàn-mạng (chốt 2026-07-31, 16-shard).** `cap_surplus` rút từ **pool backing CHUNG** → nếu mỗi DID đọc một `br`-beacon (reference-input, KHÔNG trừ-dần) rồi tự rút phần mình, **N chủ-thể (kể cả trung thực) mint/gen tập-thể VƯỢT backing → depeg** (đây là "lỗ Q2" — phía SINH/rút, KHÔNG phải phía mint-CDP: mint qua CDP `MCR≥2` là **accretive**, `Σcol≥2·Σdebt ⟹ cr_carp≥2` tự-động, không cần accumulator).
+
+> 🔴 **`cr_carp` KHÔNG phải `br` — đổi ký hiệu 2026-09-12, hai dòng trên từng dùng chung một chữ.**
+> `br = B/S` (dòng đầu mục này): `S` = cung **MAGIC**. `cr_carp = Σcol/Σdebt`: `Σdebt` = nợ
+> **CARP** của CDP. Hai đại lượng khác loại, khác mẫu số, khác token.
+>
+> Suy ngược từ chính hệ quả đã viết: mệnh đề `Σcol ≥ 2·Σdebt ⟹ (tỷ lệ) ≥ 2` **chỉ hợp lệ về
+> đại số** nếu tỷ lệ đó `:= Σcol/Σdebt`. Từ `Σcol ≥ 2·Σdebt` không suy ra được gì về `B/S` nếu
+> không có một giả thiết nối `Σdebt` với `S` — và giả thiết đó không có ở đâu trong tệp này.
+> Mint CARP qua CDP không đổi `S` một chút nào (`F1-MAGIC-ONE-WAY`).
+>
+> **Vì sao phải ghi rõ chứ không sửa lặng:** vế trong ngoặc là thứ ấn định **PHẠM VI** của
+> `INV-SURPLUS-RATION` — nó nói lỗ Q2 chỉ ở phía SINH, phía mint-CDP tự lành. Lập luận đó đứng
+> trên việc hai ký hiệu là một. Tách ra rồi thì câu *"phía mint-CDP tự lành"* **chưa được chứng
+> minh trong tệp này**; nó có thể vẫn đúng, nhưng đúng vì lý do khác. Cho tới khi có chứng minh,
+> đọc nó là một **giả định đang có hiệu lực**, không phải một kết luận.
+>
+> Ràng buộc TẠM THỜI đang áp trong lúc chờ: `INV-SURPLUS-RATION` giữ nguyên phạm vi hiện hành
+> (chỉ gác phía SINH). Đây là fail-closed về phía MAGIC và **không** gác phía CDP. Vá: tổng-surplus-khả-cấp mỗi epoch chia vào **16 shard** (tái dùng `SHARD_COUNT`/`SHARD_CAP` của ScheduleGen); keeper refresh đầu epoch; mỗi lần gen/rút-tồn **SPEND-và-DECREMENT** một shard → **trần toàn-cục CỨNG = Σ shard-cap**, atomic on-chain, "số chủ-thể" biến mất, contention chia 16. KHÔNG pro-rata theo beacon-read (stale = chính lỗ). Neo cuối fail-safe vẫn là `⌊L_avail×RATE/Q⌋` (LAMP-khoá vật lý, độc-lập-oracle).
 
 > **Vì sao bỏ hệ-số `0.5×` cũ:** bản trước chặn `InstantGen ≤ 0.5 × pp_schedule` để (a) giữ Instant < Schedule cho kênh tích-backing sống, (b) chặn cá voi hút cạn `cap_surplus`. Vai (a) nay do **LAMP-khoá** đảm nhiệm (Instant + Schedule cùng rút một pool `L_avail`; khoá của cửa này tự trừ khả-dụng của cửa kia, không double-dip 2×pp); vai (b) do chính `cap_surplus` giữ. Dùng **full `⌊L_avail×RATE/Q⌋`** làm trần thứ ba.
 
@@ -251,7 +301,19 @@ cap_surplus = 0                                   khi đỏ
 ### §6.4 ScheduleGen — dòng đều dài hạn, GreenBack đỡ
 **Mục đích:** cần **dòng MAGIC đều đặn nhiều epoch** (ví dụ trả công đội kỹ thuật vài tháng). Nắm/khoá LAMP, hệ bảo đảm `pp` MAGIC **mỗi epoch** trong `N` epoch. LAMP đứng yên, trả nguyên vẹn khi hết hợp đồng.
 
-**Bốn bước:** (1) Ký hợp đồng `pp` MAGIC/epoch × `N` epoch qua cổng-giới-hạn; (2) Tạo MAGIC vào GreenBack (chưa lưu thông); (3) GreenBack mua LAMP khi rẻ → góp backing + đỡ giá lúc sập (giữ đủ `buffer_ep = 2` epoch); (4) **Mỗi epoch sinh batch mới ≤ `pp`** (trần cứng per-epoch), tiêu trong epoch đó — vẫn use-or-lose, KHÔNG hoard.
+**Bốn bước:** (1) Ký hợp đồng `pp` MAGIC/epoch × `N` epoch qua cổng-giới-hạn; (2) Tạo MAGIC vào GreenBack (chưa lưu thông); (3) GreenBack mua LAMP khi rẻ → **đỡ giá** lúc sập (giữ đủ `buffer_ep = 2` epoch). **LAMP mua về là TỒN KHO của GreenBack, KHÔNG vào `B`** — xem khối ngay dưới; (4) **Mỗi epoch sinh batch mới ≤ `pp`** (trần cứng per-epoch), tiêu trong epoch đó — vẫn use-or-lose, KHÔNG hoard.
+
+> **HOÀ GIẢI ĐÃ CHỐT (chủ dự án, 2026-09-12): LAMP GreenBack nắm là TỒN KHO, không vào `B`.**
+> Bản cũ của bước (3) viết LAMP mua về *"góp backing"*, và câu đó nghịch `INV-BACKING-NO-LAMP`
+> (§6.3). Gốc của mâu thuẫn là **hai vai khác nhau bị gộp trong một dòng**: **đỡ giá** (GreenBack
+> NẮM LAMP để mua vào lúc thị trường sập) và **góp backing** (đưa LAMP vào mẫu số của `br`). Vai
+> đầu không đòi vai sau — `§6.4` bậc cứu (2) *"bán LAMP thặng dư GreenBack"* cũng chỉ cần GreenBack
+> NẮM LAMP, không cần nó nằm trong `B`.
+>
+> Cho nên phân biệt phải giữ ở mọi chỗ sau: GreenBack **có hai loại tài sản**. Tồn kho LAMP dùng
+> để can thiệp giá và để bán khi cần cứu; `B` là thứ duy nhất đi vào `br` và vào `cap_surplus`.
+> Trộn hai loại lại là dựng đúng cái vòng mà `INV-BACKING-NO-LAMP` sinh ra để chặn: `B ∝ P_LAMP`
+> ⟹ giá LAMP sập ⟹ `cap_surplus = 0` ⟹ khoá Gen đúng lúc thị trường gấu.
 
 > **Schedule-fire chung ngân sách qua LAMP-KHOÁ (chốt 2026-07-30).** Schedule-commit đã khoá LAMP hợp-đồng (`lamp_locked += Y`) → `L_avail` của Instant tự trừ đi Y. Không cần bộ đếm chung: `gen_schedule(Y) + gen_instant(≤ L_avail) ≤ lamp_balance` đúng ở MỌI epoch nhờ bảo toàn LAMP. Nếu DID đã khoá hết LAMP cho Schedule thì InstantGen epoch đó = 0 (và ngược lại). Sang epoch: khoá giải, cả hai phục hồi.
 
@@ -417,7 +479,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | Hằng | Giá trị |
 |---|---|
 | `MAX_BATCHES_PER_VAULT` | 32 |
-| `MAX_LOYALTY_HOLDINGS` | 64 |
+| `MAX_LOYALTY_HOLDINGS` | 40 |
 | `MAX_GEN_SCHEDULES` | 20 |
 | `SHARD_COUNT` | 16 |
 | `SHARD_CAP` | 4.5×10¹⁴ oildrop |
@@ -462,6 +524,11 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | **INV-CONSUMED-ATTRIB** | consumed vào tư-cách chỉ đếm cross-DID (consumer ⟂ provider/backer) — chống reflexive-gen |
 | **INV-SURPLUS-RATION** | cap_surplus rationed 16-shard spend-decrement (trần toàn-cục cứng, chống N-DID vượt backing) |
 | **INV-VACUUM-ISOLATION** | VacuumBack leak ≡ 0 khỏi backing_core |
+| **INV-MAGIC-WALLET-BOUND** | MAGIC gắn **VÍ** (`datum.owner` = `paymentCredential.hash`), KHÔNG gắn PersonDID. Quyền tiêu do chữ ký khoá thanh toán quyết định (`consume.ak:238,320,408`); `did_commit` là **commitment quy kết**, chỉ bị kiểm độ dài và ép bất biến (`:416-422`, `:759`), không gác quyền. Chốt 2026-09-12 — SPEC sửa theo mã, không sửa mã theo SPEC. **Hệ quả phải giữ trên mọi giao diện:** không được hứa "chỉ chủ danh tính mới tiêu được"; câu đúng là MAGIC gắn với **ví này**, mỗi lần tiêu ghi kèm một danh tính để truy nguồn |
+| **INV-BACKING-NO-LAMP** | `B` KHÔNG chứa LAMP (chốt 2026-09-12, §6.3). `B ∝ P_LAMP` ⟹ `cap_surplus = 0` đúng lúc thị trường gấu ⟹ khoá Gen khi kinh tế thực cần nhất. Cùng nguyên tắc `F5` đã áp cho CARP. ⚠️ chưa hoà giải với §6.4 bước (3) — ràng buộc tạm: LAMP GreenBack nắm là TỒN KHO, không vào `B` |
+| **INV-RATE-GOVERNED** | Suất sinh `ρ` KHÔNG phải hằng biên dịch. **Giai-đoạn-1 (chốt 2026-09-12): tham số quản trị đăng bằng tx, quyền đăng nằm ở MỘT khoá công ty, và `trần cứng biên dịch` cho giá trị đăng được là ĐIỀU KIỆN ĐỦ để mở đường đăng** — trần phải vào CÙNG lượt với đường đăng, không để sau (`compute_cap_pp` hiện không có trần trên). Giai-đoạn-2 (đích): nội sinh `ρ_{e+1} = clamp(ρ_e·D_e/G_e, ρ_e/2, ρ_e·2)`, zero oracle — mở khi `did_commit` sống. Giai-đoạn-1 là **tình thế**, không phải đích |
+| **INV-RATE-KEY-SINGLE** | Khoá đăng `ρ` giai-đoạn-1 là **một khoá đơn**, và điều đó được chấp nhận CÓ ĐIỀU KIỆN: rủi ro "đặt sai một lần" bị chặn bởi trần cứng biên dịch, **không** bị chặn bởi động cơ của bên giữ khoá. 🔴 Mọi câu biện minh cho chỗ lỏng quanh `ρ` phải có **cùng chủ ngữ với mối đe doạ**: đe doạ là *"bất kỳ ai chiếm được quyền đặt"*, không phải *"bên đặt không có động cơ đặt sai"*. Trần chặn được **biên độ**, KHÔNG chặn được **tần suất** — đó là phần rủi ro còn hở, đã biết, chấp nhận cho giai-đoạn-1 |
+| **INV-LOCKED-RATE-CAPPED** | T8 giữ đúng chữ (suất đã ký không TĂNG) bằng trần trôi: `M_i = min(λ·rate_locked_q/Q, λ·ρ_e/Q)`. Chặn đòn khoá `L=200` ngay trước khi hạ suất để giữ suất cũ 2,7 năm |
 | **P8** | bit-identical Aiken ↔ TS |
 | **C-OVERFLOW** | BigInt mọi amount |
 | **C-CM-1..5** | bất biến ConsumeMAGIC (§7.4) |

@@ -24,7 +24,23 @@ Hợp đồng Cardano L1 (PlutusV3, Aiken) cho hệ ba token:
   > kiểm là `tổng ≤ 36 tỷ`, không phải `tổng == 36 tỷ`.
 - **MAGIC** — quyền-tiêu-dịch-vụ. **Không phải token**: là số kế toán trong datum vault,
   gắn PersonDID, **không chuyển nhượng**, dùng-hết-hoặc-mất theo epoch.
+
+  > Trên Preview **có** một native token hiện ra chữ `MAGIC`, và nó KHÔNG làm sai câu trên.
+  > Bất biến này là phát biểu về **hành vi của validator**, không phải về trạng thái mạng
+  > Cardano — cùng dạng với việc đúc một token tên `BITCOIN` trên Cardano không phá bất biến
+  > 21 triệu của Bitcoin. Mức đúng là **va chạm không gian tên, không chạm giao thức**; rủi
+  > ro thật nằm ngoài giao thức (ví và explorer hiện chữ đó), và vá bằng thao tác on-chain
+  > cộng một trang công bố, **không vá bằng validator**. Kiểm kê trọn, lịch sử đúc và phép đo
+  > chứng minh mã không bao giờ tra tài sản theo tên: `scripts/DEPLOYED.md` ▸ *"Tên hiện ra
+  > trong ví KHÔNG phải định danh"*.
 - **CARP** — đồng-thanh-khoản, native token riêng, chuyển nhượng được.
+
+**Định danh tài sản = cặp `(policy id, asset name)`. Policy id là điều kiện ĐỦ; asset name
+KHÔNG BAO GIỜ là điều kiện đủ.** Ở dòng `4c414d50`, vế asset name đúng với cả hàng thật lẫn
+hàng nhái, nên nó không mang thông tin — một cổng hiện thực câu này thành phép so HOẶC vẫn
+qua được mọi lần thử. Testnet của kho có **27 dòng tài sản** mang tên của hệ này dưới một
+policy chữ-ký-đơn không phải của LAMP; danh sách và hệ quả ở `scripts/DEPLOYED.md`, cổng
+chặn tái phát ở `MagicSDK/src/lampPolicy.ts` ▸ `assertLampPolicyId`.
 
 Mỗi module cùng khuôn: `onchain/` (Aiken) · `offchain/` (TypeScript + vitest) · `tests/`
 (vector chuẩn). **Không có workspace ở gốc** — mỗi `offchain/` là gói npm độc lập, cài và
@@ -54,9 +70,44 @@ theo spec §6.1 / L4. Neo — **theo TÊN HÀM, không theo số dòng**:
 > không phải mã. Đó là kiểu hỏng im lặng: người tra thấy một dòng hợp lệ và tưởng đã kiểm.
 
 > Bản cũ của dòng này viết công thức là `M = L × R × UM × PM / Q³`. **Tên biến đó đã cũ**
-> — từ PHA-2, thưởng khoá theo `consumed` chứ không theo `L` (INV-MAGIC-CITIZEN: thưởng
+> — từ DESIGN-2, thưởng khoá theo `consumed` chứ không theo `L` (INV-MAGIC-CITIZEN: thưởng
 > gắn MAGIC ĐÃ TIÊU, không gắn MAGIC nắm giữ). Hình dạng ba-bước-sàn thì không đổi, và
 > đó mới là phần bất biến.
+
+**`DESIGN-2` là gì, và vì sao nó không còn tên `PHA-2`** (đổi 2026-09-12). `DESIGN-2` là
+**đời thiết kế thứ hai của kho này** — mốc mà `I-ACT-7` bắt LAMP ĐỨNG YÊN và thưởng khoá
+theo `consumed` thay vì theo `L`. Nó là một MỐC THIẾT KẾ, không phải một pha vòng đời của
+thứ gì.
+
+Chuỗi `PHA-2` bị bỏ vì tới lúc đó **ba khái niệm khác nhau cùng đội lốt "phase 2"**, và
+không bản nào tự khai:
+
+| chuỗi | nghĩa | chủ |
+|---|---|---|
+| `PHA-2` (cũ, kho này) | đời thiết kế thứ hai → nay là **`DESIGN-2`** | kho MAGIC |
+| `PHA-2` (Wakeme) | pha vòng đời vault, `n > 1001` → nay là **`Epochy`** (pha đầu là `Daily`) | PhoenixKey |
+| `phase-2` / `PHASE2` | **kiểm tra pha 2 của sổ cái Cardano** (script chạy rồi từ chối), đối lại pha 1 | thuật ngữ Cardano |
+
+Mục thứ ba là thuật ngữ chuẩn của nền tảng — **không đổi, không đụng**. Nó xuất hiện hợp lệ
+trong mã bắt lỗi, ví dụ `CarpetMint/offchain/src/16_deadman_gates.ts` ▸ hằng `PHASE2` phân
+biệt "bị từ chối lúc chạy script" với "bị từ chối ở tầng sổ cái". Chính vì nó là claim mạnh
+nhất trên cái tên đó mà hai mục kia phải nhường.
+
+Giá đã trả trước khi đổi: một vòng hỏi-đáp của chủ dự án để tìm ra `PHA-2` của kho này
+KHÔNG phải `PHA-2` của Wakeme. Cùng hình dạng với bẫy `28e916b0…` — cùng tên hiển thị,
+khác đời, không bản nào tự khai. Ai gặp `PHA-1`/`PHA-2` trong kho này thì đó là tài liệu
+chưa được quét: dạng **có gạch nối** đã về **0** ngoài `Legacy/` (`Legacy/` để yên theo §5).
+
+> **Dạng có KHOẢNG TRẮNG thì chưa** — `PHA 1` / `PHA 2` còn **45 dòng / 22 tệp** (đo
+> 2026-09-14, ngoài `Legacy/` và ngoài `.claude/`), gồm cả `ScheduleGen/onchain/validators/vault.ak`,
+> `InstantGen/tests/vectors.ts` và một tệp mang tên `InstantGen/DESIGN-PHASE2.md`.
+>
+> Bản trước của dòng này viết "kho đã về **0**" mà không kèm chữ "có gạch nối". Đợt dọn
+> đo bằng `grep "PHA-[12]"`, thấy 0, rồi phát biểu như thể **khái niệm** đã biến mất —
+> `grep` đo VĂN BẢN, không đo KHÁI NIỆM. Câu sai đó nằm trong chính tệp mà mọi agent
+> `@import` mỗi phiên, nên nó không chỉ sai, nó còn được đọc mỗi ngày: người gặp `PHA 2`
+> trong `vault.ak` rồi tra ở đây sẽ kết luận mình đang nhìn tài liệu của kho khác — đúng
+> vòng hỏi-đáp mà việc đổi tên này sinh ra để tránh.
 
 **Ngược lại, `required` của ConsumeMAGIC gộp rồi sàn MỘT lần.** `required =
 ⌊base_price × demand_mult × op_count / Q⌋` — KHÔNG sàn từng op rồi nhân. Hai quy tắc
@@ -126,9 +177,54 @@ bằng hash của nó. Không phải sửa Aiken. Xem `scripts/run_consume_sched
 chối. Nên mọi thay đổi trong bộ định giá phải giữ hai phía khớp tuyệt đối.
 
 **Giới hạn cứng cưỡng chế on-chain** — khai ở cả `constants.ts` lẫn `constants.ak` của
-từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYALTY_HOLDINGS=64`,
+từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYALTY_HOLDINGS=40`,
 `MAX_GEN_SCHEDULES=20`, `MAX_FIRES_PER_TX_CATCHUP=8`, `SHARD_COUNT=16`,
 `SHARD_CAP=4.5×10¹⁴ oildrop`.
+
+> `MAX_LOYALTY_HOLDINGS` hạ **64 → 40** ngày 2026-09-14. Bản cũ đặt trần TRÊN trần vật
+> lý: một vault chạm trần cũ thì **KHÔNG TIÊU ĐƯỢC**, và `validate_fire` là nhánh duy
+> nhất hạ được `lamp_locked`.
+>
+> Ba điều phản trực giác, viết ra vì chúng là **kết luận**, không phải số đo — nên chúng
+> không già đi theo mỗi lần đo lại.
+>
+> **(a)** `validate_commit` phải có cổng đếm holding chứ không chỉ `validate_fire`; bản
+> cũ thiếu đúng cổng đó.
+>
+> **(b) Và cổng ở nhánh commit mang dấu NGHIÊM (`<`), không phải `<=`** như ba cổng kia.
+> Đường RA tự nó dài thêm ĐÚNG một phần tử: `unlock_oldest` cắt holding ở biên lượt nhả
+> thành `(epoch, đã mở)` + `(epoch, còn khoá)`, mà `same_bucket` đòi trùng cả `is_locked`
+> nên `coalesce_holdings` không gộp hai mảnh đó. Chạm đúng trần ở bước commit vì thế là
+> dựng một vault khoá LAMP vĩnh viễn — vào được, không ra được, và không có cửa phụ vì
+> `lamp_locked` chỉ giảm ở nhánh fire. Một suất là **đủ** và là **tối thiểu**; chứng minh
+> chặn trên nằm cạnh chính cổng đó trong `validators/vault.ak`, cùng hai bài canh
+> (`c_commit_full_lock_at_cap_rejected`, `cf_commit_at_cap_then_fire_ok`).
+>
+> **(c) Hai nhánh có hai thủ phạm KHÁC NHAU** — câu "thủ phạm không phải `list.sort`"
+> đúng cho FIRE và **sai cho COMMIT**. Nhánh nào đang hẹp nhất thì **đã đảo một lần** sau
+> bản vá cho **Nợ #48** (`DevStatus.md`), và có thể đảo nữa; đừng nhớ thứ tự, hãy tra.
+>
+> `#48` một mình là chuỗi MƠ HỒ trong kho này và đừng viết nó trơ: nó vừa là **Nợ #48** ở
+> `DevStatus.md` vừa là một **PR #48** trên GitHub nói về chuyện khác hẳn. Cùng hình dạng
+> với bẫy `PHA-2` và bẫy `28e916b0…` — cùng ký hiệu, khác đời, không bản nào tự khai. Viết
+> `Nợ #48` hoặc `PR #48`, đủ chữ để người tra không phải đoán.
+>
+> **Số đo KHÔNG nằm ở đây, và cũng không nằm ở `constants.ak`** — chỉ ở MỘT chỗ:
+> `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Trần ExUnit của hai nhánh mang LAMP"*,
+> ngay trên `t_fire_datum_n`, cùng với cách đo, thang đo (`probe_commit_fixture_cap` /
+> `probe_fire_fixture_cap`), mốc kích hoạt phần còn nợ, và lý do KHÔNG nâng trần theo
+> phần biên vừa mua được. Đo lại là một lệnh `aiken check`.
+>
+> Bản trước của khối này vẫn chép số xuống dù chính nó dặn đừng chép — và phần chép lại
+> là phần sai, đúng lần thứ hai. Chú thích ở `constants.ak` cũng chép, cũng sai, và nằm
+> đúng chỗ người ta tra để chọn trần. Hai bản sao đó nay đã gỡ.
+>
+> 🔴 **Và bản hoà này đã bỏ một câu của nhánh kia: "fire chết TRƯỚC commit".** Câu đó
+> đúng lúc viết và **đã bị chính phép đo lật** sau bản vá cho Nợ #48 — nay commit là nhánh hẹp
+> nhất. Nó bị bỏ chứ không được giữ kèm đính chính, vì trí nhớ thì nạp cùng lúc: giữ cả
+> hai bản là giữ một mâu thuẫn, và không bản nào tự khai là đã bị bác. Vế còn sống của
+> câu đó — *cửa RA hẹp hơn cửa VÀO nên commit phải có cổng* — nằm nguyên ở mục (a) và (b)
+> bên trên, và mục (b) không phụ thuộc nhánh nào đang hẹp hơn.
 
 ---
 
@@ -153,8 +249,22 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
   dấu `{` đầu tiên. Bản cũ của dòng này viết "không in gì khi bị đưa qua pipe" và bảo
   dùng `script -q` — **sai**, và cái sai đó tốn nhiều lượt chạy lại.
 
-  🔴 **Nhưng có một ca `aiken check` thoát 1 mà KHÔNG in một dòng chẩn nào**: hằng hex
-  **lẻ ký tự** (`#"a11ce"`). Tự đo trên v1.1.21, cùng cây nguồn, chỉ đổi độ dài hằng:
+  🔴 **Và ca im lặng RỘNG HƠN một hằng hex lẻ — đo lại 2026-09-14.** Trên v1.1.21, khi
+  stdout KHÔNG phải terminal, `aiken check` in **rỗng cho MỌI lỗi biên dịch**, không chỉ
+  ca hằng hex. Đo bằng một lỗi kiểu cố ý (`let x: Int = #"aa"`): chuyển hướng ⟹ stdout
+  RỖNG, stderr chỉ hai dòng `Compiling`; **cùng lệnh đó** chạy dưới `script -q /dev/null`
+  ⟹ in đủ khối `× I struggled to unify…`. Nên câu "qua pipe đổi định dạng chứ không im
+  lặng" ở ngay trên đúng cho ca **THÀNH CÔNG** và sai cho ca **LỖI** — và đó là chiều
+  hỏng tệ hơn, vì nó im đúng lúc có thứ cần đọc.
+
+  **Quy trình đúng, hai bước, đừng bỏ bước hai:**
+  `aiken check 2>/dev/null > out.json` → mã thoát 0 thì `json.load(out.json)`; mã thoát
+  KHÁC 0 thì **chạy lại dưới `script -q /dev/null aiken check`** rồi đọc output đó. Đi
+  thẳng vào `json.load` ở nhánh lỗi sẽ ném `ValueError` trên một tệp rỗng, và lỗi bạn
+  đọc được là lỗi của trình phân tích JSON — nó trỏ đi chỗ khác.
+
+  Ca hằng hex **lẻ ký tự** (`#"a11ce"`) vẫn ghi lại ở đây vì nó là ca đầu tiên tìm ra và
+  vì nó cho một số đo gọn:
 
   ```
   #"a11ce"   (5)  → exit=1, TOÀN BỘ stdout+stderr = 42 byte: "Compiling magiclamp/… (.)"

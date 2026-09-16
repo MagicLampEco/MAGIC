@@ -14,7 +14,7 @@
 
 ## Khi nào cần?
 
-- `MAX_LOYALTY_HOLDINGS = 64` — nếu vault có nhiều holdings → ExUnit exhaustion (A5)
+- `MAX_LOYALTY_HOLDINGS = 40` (hạ từ 64 ngày 2026-09-14) — nếu vault có nhiều holdings → ExUnit exhaustion (A5)
 - Mỗi lần vault **nhận thêm LAMP** (người dùng nạp vào) → thêm 1 holding mới (age=0)
 - Sau nhiều giao dịch → holdings phân mảnh → cần merge
 

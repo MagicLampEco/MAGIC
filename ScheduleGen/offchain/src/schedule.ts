@@ -17,6 +17,7 @@ import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, nextFireEpoch, countEligibleFires,
   selectLampForLock, unlockLockedAmount, isExpired, lAvail,
+  assertHoldingCapAfterCommit,
   lampToOildrop, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import {
@@ -134,7 +135,7 @@ export async function createLucid(apiKey: string): Promise<LucidEvolution> {
 }
 
 // ══════════════════════════════════════════════════════════════
-// Phase 1: buildScheduleCommitTx
+// Bước 1: buildScheduleCommitTx
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleCommitTx(params: CommitParams): Promise<CommitResult> {
   const { lucid, vaultUtxo, shardUtxos, scheduleLength: L, lampPerEpoch: lambda } = params;
@@ -202,6 +203,9 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   // Lock youngest holdings (C-SCH-8, T5)
   const newHoldings = selectLampForLock(vaultDatum.loyalty_holdings, totalLock);
 
+  // C-SCH-HOLD — gương của `validate_commit`; lý lẽ ở `math.ts` cạnh hàm này.
+  assertHoldingCapAfterCommit(newHoldings.length, "buildScheduleCommit");
+
   // Updated vault datum (A02: field-by-field)
   let newVaultDatum: VaultDatum = {
     ...vaultDatum,
@@ -245,13 +249,27 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   if (!params.skipOwnerSig) txBuilder = txBuilder.addSignerKey(vaultDatum.owner);
   const tx = await txBuilder.complete();
 
+  // MAGIC mỗi LAMP = rate_locked_q × 10⁻¹² × 10⁶ / 10⁶ … viết thẳng cho khỏi suy:
+  //   M_i[nanogic] = λ[oildrop] · r / Q  ⟹  M[MAGIC]/L[LAMP] = r · 10⁶ / (Q · 10⁹) = r/10¹²
+  // Tính bằng BigInt tới 6 chữ số thập phân rồi mới dựng chuỗi — không đi qua Number.
+  const magicPerLampMicro = (rateLockedQ * 1_000_000n) / 1_000_000_000_000n;
+  const magicPerLampStr =
+    `${magicPerLampMicro / 1_000_000n}.` +
+    `${(magicPerLampMicro % 1_000_000n).toString().padStart(6, "0")}`;
+
   const summary = [
     `═══ ScheduleGen Commit ═══`,
     `Commit epoch:    ${commitEpoch}`,
     `Schedule length: ${L} orders (~${fmtDays(L, network)})`,
     `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oil)`,
     `Total locked:    ${totalLock / 1_000_000n} tLAMP`,
-    `rate_locked_q:   ${rateLockedQ} (immutable forever — T8)`,
+    // ĐƠN VỊ PHẢI IN RA, đừng để người đọc tự suy. `rate_locked_q / Q` là
+    // **nanogic trên mỗi oildrop**, KHÔNG phải MAGIC trên mỗi LAMP — hai thang
+    // lệch nhau đúng 10³ (λ ở thang 10⁶, M_i ở thang 10⁹, mã chỉ chia Q một lần).
+    // Bản trước in trần con số `8000000000` và nó đọc thành "8 MAGIC mỗi LAMP",
+    // sai 1000 lần. Nên in luôn cả suất đã quy về đơn vị người dùng.
+    `rate_locked_q:   ${rateLockedQ} = ${qToStr(rateLockedQ)} nanogic/oildrop`,
+    `  ⟹ suất thật:   ${magicPerLampStr} MAGIC mỗi LAMP (immutable forever — T8)`,
     `M_i per fire:    ${nanogicToMagicStr(mPerFire)} MAGIC`,
     `Total MAGIC:     ${nanogicToMagicStr(mPerFire * L)} MAGIC (guaranteed)`,
     `First fire:      epoch ${startFireEpoch} (~${fmtDays(SCHEDULE_DELAY, network)})`,
@@ -272,7 +290,7 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
 }
 
 // ══════════════════════════════════════════════════════════════
-// Phase 2: buildScheduleFireTx — PERMISSIONLESS (C-SCH-FIRE-PERMISSION)
+// Bước 2: buildScheduleFireTx — PERMISSIONLESS (C-SCH-FIRE-PERMISSION)
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleFireTx(params: FireParams): Promise<FireResult> {
   const { lucid, vaultUtxo, shardUtxos, scheduleId } = params;
@@ -294,11 +312,21 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const sched = vaultDatum.gen_schedules.find(s => s.schedule_id === scheduleId);
   if (!sched) throw new Error(`Schedule ${scheduleId} not found`);
 
+  // §4.2: thu rác TRƯỚC khi đếm — cùng một bản vá với `validate_fire` bên Aiken,
+  // và bản cũ ở đây hỏng y hệt: nó đếm `magic_batches.length` CHƯA prune trong khi
+  // `updatedBatches` bên dưới lại dựng trên danh sách ĐÃ prune. Hai chỗ đọc hai
+  // danh sách khác nhau ⟹ đủ 32 batch đã chết là `batchBudget = 0` ⟹ `firesInTx = 0`
+  // ⟹ ném GEN-SCH-... trong khi giao dịch đó hoàn toàn hợp lệ. P8: đổi cùng commit
+  // với `ScheduleGen/onchain/validators/vault.ak` ▸ `validate_fire`.
+  const liveBatches = vaultDatum.magic_batches.filter(
+    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch),
+  );
+
   // C-FIRE-1 ≥: count eligible fires (catch-up)
   const firesInTx = countEligibleFires(
     sched.start_fire_epoch, sched.fired_count,
     sched.schedule_length, currentEpoch,
-    vaultDatum.magic_batches.length,
+    liveBatches.length,
   );
   if (firesInTx === 0)
     throw new Error(`No eligible fires: next fire at epoch ${nextFireEpoch(sched.start_fire_epoch, sched.fired_count)}, current=${currentEpoch}`);
@@ -323,10 +351,8 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     halved:              false,
   }));
 
-  // §4.2: collect DEAD batches on the way out.
-  const liveBatches = vaultDatum.magic_batches.filter(
-    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch),
-  );
+  // §4.2: xác đi ra cùng giao dịch này. `liveBatches` đã tính ở TRÊN, trước khi
+  // đếm fire — cố ý một lần, vì hai lần lọc là hai cơ hội lệch nhau.
   const updatedBatches = [...liveBatches, ...newBatches];
   if (updatedBatches.length > MAX_BATCHES_PER_VAULT)
     throw new Error(`GEN-VAULT-001: would exceed 32 batches`);

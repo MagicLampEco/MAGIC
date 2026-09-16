@@ -71,7 +71,24 @@ pub fn min3(a: Int, b: Int, c: Int) -> Int {
 //
 //   reward = ⌊ ⌊ ⌊ consumed × R_reward / Q ⌋ × UM / Q ⌋ × PM / Q ⌋
 //
-// 3 sequential floor steps (≤ 3 nanogic total error, result ≤ true value).
+// 3 sequential floor steps. `result ≤ true value` — ĐÚNG, mọi hạng tử sai số ≥ 0.
+//
+// 🔴 CẬN SAI SỐ: `< 3,94` nanogic, KHÔNG phải `≤ 3`. Bản trước của dòng này viết
+// "≤ 3 nanogic" ở CẢ HAI phía P8 (`math.ts` cùng câu) — sửa 2026-09-12.
+//
+// Vì sao "3 bước sàn ⟹ ≤ 3 ulp" KHÔNG áp được ở đây: quy tắc đó chỉ đúng khi mọi
+// hệ số ĐỨNG SAU một bước sàn đều ≤ 1. Bước 2 nhân `um_q/Q ≤ 2,0` (`constants.ak`
+// ▸ `um_max_q`) — nó GIÃN, nên nó khuếch đại sai số của bước 1 lên gấp đôi.
+//
+//   Δ = α·(um_q/Q)(pm_q/Q) + β·(pm_q/Q) + γ,  mọi hạng tử ≥ 0
+//   α = frac(consumed·R/Q) = frac(consumed/5) ≤ 0,8   (R = 2×10⁸)
+//   β < 1 ;  γ = frac(s2·23/20) ≤ 19/20 = 0,95        (pm_q ≤ 1,15×10⁹)
+//   ⟹ Δ ≤ 0,8×2×1,15 + 1×1,15 + 0,95 = 3,94
+//
+// Hệ quả kinh tế ~0 (3,94×10⁻⁹ MAGIC). Ghi ra vì không bài kiểm nào đỏ được cho một
+// chú thích, nên nó sống sót mọi cổng — và nó là loại câu người sau trích lại làm
+// bằng chứng. Cùng lỗi, cùng nguyên nhân, ở `compute_cap_surplus`: hệ số bước 2 tới
+// 8,5× nên cận bên đó là `< 6,44` nanogic.
 //
 // INV-CASHBACK-BOUND (reward ≤ consumed) holds by parameter construction:
 //   R_reward × UM_MAX × PM_MAX = 0.20 × 2.00 × 1.15 = 0.46 < 1
@@ -112,6 +129,37 @@ pub fn compute_reward_from_consumed(
 // `br_q` and `magic_supply` come from the BackingBeacon reference input; a
 // missing/stale/depegged beacon never reaches this function — the validator
 // rejects the tx first (fail-closed, no default br).
+//
+// ══ CÔNG THỨC NÀY LÀ GÌ, nói bằng một câu (chứng minh 2026-09-12) ══
+//
+// `cap_surplus = f × ΔS_max`, với `ΔS_max` là KHOẢNG TRỐNG CÒN LẠI TỚI SÀN:
+//   `ΔS_max = max{ ΔS : B/(S+ΔS) ≥ br_safe } = S·(br − br_safe)/br_safe`
+// Chứng minh: `B/(S+ΔS) ≥ br_safe ⟺ B ≥ br_safe(S+ΔS)` (nhân `S+ΔS > 0`, giữ chiều)
+//   `⟺ ΔS ≤ B/br_safe − S ⟺ ΔS ≤ S(br−br_safe)/br_safe` (thay `B = br·S`). Đẳng thức
+//   ĐẠT ĐƯỢC ⟹ đây là cận CHẶT, không phải cận lỏng.
+// Đối chứng bằng vector có sẵn `TV-IG-CAP-SURPLUS-01` (`InstantGen/tests/vectors.ts`):
+//   `S = 1000 MAGIC`, `br = 2,0` → `33_333_333_333` nanogic; và `2000/(1000+333,33…)`
+//   `= 1,5 = br_safe` đúng chạm sàn.
+//
+// Bổ đề đứng được là NHỜ `B` KHÔNG đổi khi gen (`I-ACT-7`: LAMP đứng yên, chỉ đọc
+// reference input). Ngày nào gen chạm được `B` thì bổ đề chết và `f` mất hết nghĩa.
+//
+// ⚠️ `f = 0,10` MỘT MÌNH KHÔNG GIỮ ĐƯỢC SÀN. Beacon là reference input ⟹ đọc mà
+// KHÔNG trừ dần. `N` lần gen trong cùng một epoch đều đọc cùng `br₀` và mỗi lần lấy
+// `f·H₀` ⟹ tổng `N·f·H₀ > H₀` khi **`N > 1/f = 10`**. Quá 10 lượt là THỦNG SÀN, và
+// không cần chiếm oracle nào — chỉ cần 11 vault thật gọi trong cùng epoch.
+// Phanh cho việc đó là `INV-SURPLUS-RATION` (16 shard, `SPEC` §6.3), KHÔNG phải hàm
+// này. 🔴 Đo 2026-09-12: `grep -rn 'shard\|SHARD' InstantGen --include=*.ak
+// --include=*.ts` → **0 kết quả**; 16-shard mới chỉ có trong `DESIGN-PHASE2.md`,
+// `FEAT.md`, `EXEC.md`. Nên hôm nay đây là trần MỖI-LƯỢT-GỌI, không phải trần toàn
+// mạng — đừng đọc tên `cap_surplus` thành một bảo đảm nó chưa có.
+//
+// SAI SỐ ba bước sàn: `Δ = α·E/br_safe + β·Q/br_safe + γ < 6,44` nanogic, độc lập
+// `S`, và luôn THIẾU-không-thừa (`c ≤ T`, mọi hạng tử ≥ 0). Cùng cơ chế đã làm cận
+// của `compute_reward_from_consumed` lớn hơn "3 ulp": bước 2 nhân `E/Q ≤ 8,5` — nó
+// GIÃN. Bước 3 NHÂN-trước-CHIA là thứ giữ sai số nhỏ, không phải thứ làm nó lớn:
+// viết chia-trước (`⌊s2/br_safe⌋·Q`) thì lượng tử hoá nhảy lên 1 MAGIC và mọi vault
+// dưới ~15 MAGIC cung nhận cap = 0.
 pub fn compute_cap_surplus(br_q: Int, magic_supply: Int) -> Int {
   if br_q <= br_safe_q {
     0
@@ -180,6 +228,25 @@ pub fn instant_rate_q_derived() -> Int {
 // The floor is applied in two steps rather than one fused
 // `l_avail * rate / (q * 2)`: §6.1 requires each Q-format step to floor on its
 // own, and the fused form rounds differently at odd multiples.
+/// 🔴 HỆ SỐ `/2` — MỘT TRONG HAI CHÂN LÝ DO ĐÃ CHẾT 2026-09-12. ĐỌC TRƯỚC KHI GỠ.
+///
+/// Bản thiết kế ghi `0.5×` có **hai** vai, không phải một:
+///   (1) giữ Instant < Schedule để **kênh tích-backing** sống — Schedule khoá LAMP
+///       ⟹ GreenBack mua LAMP ⟹ `B` tăng; Instant không bơm backing, nên nếu Instant
+///       được full `pp` thì ai cũng chọn Instant, Schedule chết, `br` yếu.
+///   (2) chặn cá voi hút cạn `cap_surplus`.
+///
+/// **Vai (1) KHÔNG CÒN HIỆU LỰC.** `INV-BACKING-NO-LAMP` (chốt 2026-09-12) cấm LAMP
+/// vào `B`, và `SPEC` §6.4 bước (3) đã sửa: LAMP GreenBack mua là **tồn kho**, dùng
+/// đỡ giá, không vào mẫu số của `br`. Không còn "kênh tích-backing" nào để giữ sống.
+///
+/// **Vai (2) VẪN ĐỨNG, và nay nó là chân DUY NHẤT đỡ hệ số này.**
+///
+/// Viết ra đây vì đây đúng hình dạng hỏng-im-lặng: lý do (1) nằm trong một biên bản
+/// thiết kế, hệ số nằm trong mã, và không có gì nối hai chỗ. Ai đọc biên bản đó sau
+/// này sẽ thấy một lý do đã chết mà trông như còn sống — rồi gỡ `0.5×` bằng lập luận
+/// "kênh tích-backing không còn thì hệ số này vô nghĩa", trong khi vai (2) chưa được
+/// thay bằng gì. Gỡ hệ số này đòi **thay vai (2) trước**, không phải bác vai (1).
 pub fn compute_cap_pp(l_avail_oildrop: Int) -> Int {
   let per_epoch = l_avail_oildrop * instant_rate_q / q
   per_epoch / 2
@@ -210,6 +277,43 @@ pub fn compute_instant_grant(
 // a segment constant without moving the literal and this goes red.
 test ig_instant_rate_q_matches_derivation() {
   instant_rate_q_derived() == instant_rate_q
+}
+
+/// Ghim CÂU TRẢ LỜI cho câu hỏi "`cap_surplus` là gì" — không phải ghim một con số.
+///
+/// Ba vế, cố ý tách rời để khi đỏ thì biết ĐỎ Ở VẾ NÀO:
+///   1. `cap` khớp vector chuẩn `TV-IG-CAP-SURPLUS-01`;
+///   2. `cap × 10` LẤP ĐÚNG khoảng trống tới sàn — đây là mệnh đề "cap_surplus =
+///      f × khoảng-trống", viết thành thứ máy kiểm được thay vì thành văn xuôi;
+///   3. `cap × 1001` VƯỢT khoảng trống — tức `N > 1/f = 1000` lượt gen trong cùng
+///      một epoch là thủng sàn. Vế này là SỐ ĐO của một lỗ đang mở
+///      (`INV-SURPLUS-RATION` chưa có mã), không phải một lời cảnh báo.
+///
+/// Bài này neo theo `f_cap_surplus_q` chứ không theo số 10 hay 1000: khi `f` hạ
+/// 0,10 → 0,001 (2026-09-14) thì hệ số ở vế 2/3 đi theo, và ĐÓ LÀ ĐIỂM — mệnh đề
+/// được ghim là "cap = f × khoảng-trống", không phải "cap = một phần mười".
+///
+/// Vế 3 sẽ vẫn XANH sau khi 16-shard được hiện thực — nó nói về `compute_cap_surplus`
+/// đứng một mình, và hàm này đúng là không giữ được sàn một mình. Đừng đọc nó xanh
+/// thành "lỗ đã vá".
+test cap_surplus_is_f_times_headroom_to_floor() {
+  let supply = 1_000_000_000_000
+  // 1000 MAGIC
+  let br = 2_000_000_000
+  // 2,0
+  let cap = compute_cap_surplus(br, supply)
+  // Khoảng trống tới sàn: S·(br − br_safe)/br_safe = 1000 × 0,5/1,5 MAGIC
+  let headroom = supply * ( br - br_safe_q ) / br_safe_q
+  // n = 1/f, suy THẲNG từ hằng — không gõ tay, để bài tự đi theo khi `f` đổi.
+  let n = q / f_cap_surplus_q
+  and {
+    cap == 333_333_333,
+    headroom == 333_333_333_333,
+    n == 1000,
+    headroom - cap * n >= 0,
+    headroom - cap * n < n,
+    cap * ( n + 1 ) > headroom,
+  }
 }
 
 // S_Q values quoted in ScheduleGen's own comments. If the mirror drifts from

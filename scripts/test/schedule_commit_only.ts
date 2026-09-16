@@ -87,7 +87,82 @@ async function main() {
     if (wantedTx && u.txHash !== wantedTx) return false;
     try { return Data.from(u.datum, VaultDatumSchema).owner === ownerPkh; } catch { return false; }
   });
-  if (!vaultUtxo) { console.error("❌ Vault not found"); process.exit(1); }
+  // 🔴 `Vault not found` GỘP BỐN NGUYÊN NHÂN ĐÒI BỐN HÀNH ĐỘNG KHÁC NHAU.
+  //
+  //  Bộ lọc trên có bốn vế loại: địa chỉ rỗng · không datum · khác `wantedTx` · khác
+  //  chủ. Bốn vế đó in ra CÙNG MỘT dòng, nên người đọc không biết mình đang ở ca nào —
+  //  và hai trong bốn ca đòi hành động NGƯỢC NHAU: ca "vault đã dời" thì phải đi TIẾP
+  //  sang chặng 2, ca "vault chưa có" thì phải quay LẠI bước [4/5]. Đoán sai chiều ở
+  //  đây tốn một lượt cam kết thừa (thêm một `gen_schedule` vào vault đang sống) hoặc
+  //  một lượt tạo vault thừa (chôn 10.000 tLAMP).
+  //
+  //  Ca nguy nhất là **vault đã dời**: `ScheduleCommit` TIÊU UTxO vault
+  //  (`ScheduleGen/offchain/src/schedule.ts` ▸ `buildScheduleCommitTx` ▸ `.collectFrom`),
+  //  nên một lượt cam kết ĐÃ THÀNH CÔNG làm `VAULT_TX_HASH` đã ghim trỏ vào một UTxO
+  //  đã chết. Triệu chứng của "cam kết đã xong" và của "vault chưa bao giờ có" giống
+  //  hệt nhau nếu chỉ đọc một dòng.
+  if (!vaultUtxo) {
+    const coDatum = vaultUtxos.filter((u) => u.datum);
+    const cuaMinh = coDatum.filter((u) => {
+      try { return Data.from(u.datum!, VaultDatumSchema).owner === ownerPkh; } catch { return false; }
+    });
+    console.error(`\n❌ Không tìm được vault khớp bộ lọc. Số đo tại ${vaultAddr}:`);
+    console.error(`   UTxO tại địa chỉ vault : ${vaultUtxos.length}`);
+    console.error(`   … trong đó có datum    : ${coDatum.length}`);
+    console.error(`   … trong đó chủ là mình : ${cuaMinh.length}   (owner = ${ownerPkh})`);
+    console.error(`   VAULT_TX_HASH đang ghim: ${wantedTx ?? "(không ghim)"}`);
+
+    for (const u of cuaMinh) {
+      const d = Data.from(u.datum!, VaultDatumSchema) as any;
+      console.error(
+        `   • ${u.txHash}#${u.outputIndex}` +
+        `  gen_schedules=${(d.gen_schedules as any[]).length}` +
+        `  magic_batches=${(d.magic_batches as any[]).length}` +
+        `  lamp_locked=${d.lamp_locked}`,
+      );
+    }
+
+    if (cuaMinh.length > 0 && wantedTx && !cuaMinh.some((u) => u.txHash === wantedTx)) {
+      const song = cuaMinh[0]!;
+      const d = Data.from(song.datum!, VaultDatumSchema) as any;
+      const daCoLich = (d.gen_schedules as any[]).length > 0;
+      console.error(
+        `\n⟹ VAULT ĐÃ DỜI. Vault của mình còn SỐNG, chỉ là ở tx khác hash đang ghim.\n` +
+        `   Nguyên nhân thường gặp nhất: một lượt cam kết TRƯỚC ĐÂY đã chạy xong —\n` +
+        `   cam kết TIÊU UTxO vault rồi tạo lại, nên hash tạo-vault không còn trỏ đúng.\n` +
+        (daCoLich
+          ? `   🔴 Vault này ĐÃ CÓ ${(d.gen_schedules as any[]).length} lịch. ĐỪNG cam kết lại —\n` +
+            `      cam kết lần nữa chỉ thêm một lịch thừa vào vault đang sống. Việc cần làm\n` +
+            `      là ĐI TIẾP sang chặng 2 với hash dưới đây (chờ đủ 2 epoch kể từ lúc cam\n` +
+            `      kết thật, không phải kể từ bây giờ):\n\n` +
+            `      bash run_consume_schedule_e2e.sh ${NETWORK} 2 ${song.txHash}\n`
+          : `   Vault này CHƯA có lịch nào ⟹ lượt cam kết trước chưa xong, hoặc vault vừa\n` +
+            `   dời vì một lý do khác. Cập nhật dòng VAULT_TX_HASH_SCHEDULE trong\n` +
+            `   deployed.${NETWORK}.env thành ${song.txHash} rồi chạy lại chặng 1.\n`),
+      );
+      process.exit(1);
+    }
+    if (vaultUtxos.length === 0) {
+      console.error(
+        `\n⟹ ĐỊA CHỈ VAULT RỖNG. Hai khả năng, đòi hai hành động ngược nhau:\n` +
+        `   (a) vault chưa từng được tạo ở địa chỉ NÀY — thường là apply-param đã đổi nên\n` +
+        `       địa chỉ đổi theo. Đối chiếu địa chỉ in ở đầu với scripts/DEPLOYED.md.\n` +
+        `   (b) chỉ mục Blockfrost còn trễ. Chờ ~1 phút rồi chạy lại; lượt chạy này KHÔNG\n` +
+        `       gửi giao dịch nào nên chạy lại không mất gì.\n` +
+        `   ⛔ ĐỪNG xoá VAULT_TX_HASH_SCHEDULE để "tạo vault mới" trước khi phân biệt xong:\n` +
+        `      ở ca (b) nó chôn thêm 10.000 tLAMP vào một vault thứ hai.`,
+      );
+      process.exit(1);
+    }
+    if (cuaMinh.length === 0) {
+      console.error(
+        `\n⟹ CÓ VAULT NHƯNG KHÔNG CÁI NÀO CỦA VÍ NÀY. Ví đang dùng không phải chủ vault,\n` +
+        `   hoặc địa chỉ vault này thuộc một lượt deploy khác. Kiểm biến seed đang nạp.`,
+      );
+      process.exit(1);
+    }
+    process.exit(1);
+  }
   console.log(`Vault UTxO:     ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`);
 
   // One-shot policy issues 16 DISTINCT asset names (SHARD#0..15, = "SHARD" ∥

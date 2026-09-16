@@ -9,7 +9,29 @@ pub const q : Int = 1_000_000_000   // [Immutable]
 // (`slots_per_epoch = 432_000` đã xoá 2026-08-09: 0 call site, sai với Preview.)
 
 // ── SnapshotGen base rate (used to compute rate_locked_q at commit) ──
-pub const snapshot_base_rate_q : Int = 5_000_000_000  // [Constitutional]
+//
+// 🔴 NHÃN `[Constitutional]` NAY LÀ NHÃN CỦA MỘT GIAI ĐOẠN, KHÔNG PHẢI CỦA HẰNG NÀY.
+// Chủ dự án chốt 2026-09-12: suất sinh `ρ` **không được là hằng biên dịch**
+// (`SPEC` ▸ `INV-RATE-GOVERNED`). Giá trị dưới đây là bản đang chạy của
+// **giai đoạn 1 — tình thế, để chạy được chuỗi nghiệm thu**, không phải đích.
+//
+// Vì sao một hằng biên dịch là SAI LOẠI HỘP ở đây, chứ không phải sai con số:
+// giá trị đúng của `ρ` phụ thuộc **mức LAMP tham gia** và **cầu dịch vụ thực** —
+// hai đại lượng không ai biết lúc deploy. Số đo: ở trần tham gia 20% cung
+// (7,2×10⁹ LAMP), suất này phát ~4,2×10⁹ MAGIC mỗi năm; dưới neo của chủ dự án
+// (1 MAGIC ≈ giá mint một cây) đó là một lượng dịch vụ thực không nền kinh tế nào
+// trong tầm nhìn hấp thụ nổi. Ở mức tham gia nhỏ thì cùng con số này lại quá ít.
+// Không tồn tại một hằng nào đúng cho cả hai đầu.
+//
+// Đích (giai đoạn 2, mở khi `did_commit` sống — `SPEC` §13): nội sinh, zero oracle
+//   ρ_{e+1} = clamp( ρ_e · D_e / G_e , ρ_e/2 , ρ_e·2 )
+// với `D` = MAGIC đã tiêu cross-DID, `G` = MAGIC đã phát. Nó tự đúng dấu với giá
+// LAMP mà KHÔNG đọc giá: giá lên ⟹ nhiều người khoá LAMP ⟹ `G` tăng ⟹ `ρ` giảm.
+//
+// ĐỪNG đọc `[Constitutional]` thành "đã chốt, đừng đụng". Đọc nó thành: đổi giá trị
+// này hôm nay vẫn là đổi script hash, nên nó phải đổi CÙNG lúc chuyển sang tham số
+// quản trị, không đổi lẻ.
+pub const snapshot_base_rate_q : Int = 5_000_000_000  // [Giai-đoạn-1, sẽ thành tham số quản trị]
 
 // ── S(L) piecewise segments (§11.3, §19.6) [Constitutional] ──────────
 pub const s_seg1_intercept_q : Int = 1_500_000_000   // 1.5
@@ -33,6 +55,29 @@ pub const schedule_delay : Int = 2   // epochs
 
 // ── Schedule batch cliff [Constitutional] ────────────────────────────
 pub const schedule_decay_window : Int = 1   // cliff at k=1
+// GIỮ NGUYÊN 1 — chủ dự án chốt 2026-09-15, và chốt bằng lý do SẢN PHẨM, không phải
+// lý do kỹ thuật: *"MAGIC không dùng sẽ mất đi giống như ánh nắng không dùng sẽ mất
+// đi, chứ không thể mang sang ngày hôm sau tiêu được."*
+//
+// Đây là hằng số mà người dùng cuối phải hiểu được, nên nó bị khoá bởi thứ đắt hơn
+// một lần biên dịch: một lời hứa đã phát ra. Ai định nâng nó lên vì lý do kỹ thuật
+// (cho người dùng đỡ lỡ nhịp, cho bài nghiệm thu dễ chạy) thì đang đổi một câu
+// giải thích được lấy một câu phải giải thích — hỏi chủ dự án trước.
+//
+// Hai hệ quả phải cầm theo khi đọc con số này, cả hai đều phản trực giác:
+//
+// (1) MỘT epoch là một khoảng THỜI GIAN KHÁC NHAU theo mạng. `ms_per_epoch` của
+//     testnet là 86_400_000 (1 ngày), của mainnet là 432_000_000 (5 ngày). Cùng
+//     hằng số này cho ra cửa tiêu ~1 ngày khi nghiệm thu và ~5 ngày khi chạy thật.
+//     Nên một bài nghiệm thu chật vật trên testnet KHÔNG có nghĩa người dùng
+//     mainnet cũng chật vật, và ngược lại — đừng suy một bên ra bên kia.
+//
+// (2) Cộng với `schedule_delay = 2` ở ngay trên, một vòng đời trọn vẹn của lịch
+//     trải qua ít nhất ba epoch: commit, chờ, rồi fire-và-tiêu-trong-cùng-epoch.
+//     Vế cuối là vế hẹp: batch sinh ra ở `validate_fire` và chết ở cuối epoch đó
+//     (`validators/vault.ak` ▸ `validate_fire`, chỗ đặt `expires_at_epoch`), còn
+//     nhánh đốt nằm ở `validators/vault.ak` ▸ `validate_burn_batch`. Fire hôm nay
+//     mà tiêu hôm sau là mất trắng — không có nhánh nào cứu, và đó là chủ ý.
 
 // ── Catch-up limit [Routine] ─────────────────────────────────────────
 pub const max_fires_per_tx_catchup : Int = 8
@@ -40,7 +85,18 @@ pub const max_fires_per_tx_catchup : Int = 8
 // ── System limits [Routine] ──────────────────────────────────────────
 pub const max_gen_schedules     : Int = 20
 pub const max_batches_per_vault : Int = 32
-pub const max_loyalty_holdings  : Int = 64
+// Hạ 64 → 40 ngày 2026-09-14. 64 nằm TRÊN trần vật lý: một vault chạm trần cũ
+// thì KHÔNG tiêu được, và fire là nhánh duy nhất hạ được `lamp_locked`.
+//
+// KHÔNG chép số đo xuống đây. Bản trước của khối này chép, rồi bản vá cho Nợ #48 đo lại
+// và ĐẢO hai kết luận — chỗ chép thì không ai báo cho, nên nó nằm đây nói ngược
+// với chính tệp nó trỏ tới, suốt từ lúc vá. Đó là bản sao chết im lặng, đúng lớp
+// mà `BOUNDARIES.md` cảnh báo, và lần này nó chết ở nơi người ta tra để chọn trần.
+//
+// Một nguồn duy nhất cho số đo, cách đo, thang đo, và mốc kích hoạt phần còn nợ:
+// `validators/vault.ak` ▸ khối "Trần ExUnit của hai nhánh mang LAMP", ngay trên
+// `t_fire_datum_n`. Đo lại là một lệnh `aiken check`.
+pub const max_loyalty_holdings  : Int = 40
 
 // ── Shard [Constitutional] ────────────────────────────────────────────
 pub const shard_count : Int = 16

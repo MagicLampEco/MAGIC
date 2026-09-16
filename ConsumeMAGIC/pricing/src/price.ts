@@ -209,7 +209,8 @@ export const MAX_OP_PRICES = 16;
 
 /**
  * Trần TRÊN của `base_price` — khớp `pricing.ak:max_base_price` (P8, cùng commit).
- * 10¹⁴ nanogic = 100.000 MAGIC cho MỘT đơn vị nghiệp vụ.
+ * 10¹² nanogic = 1.000 MAGIC cho MỘT đơn vị nghiệp vụ.
+ * (Hạ từ 10¹⁴ ngày 2026-09-12: ở 10¹⁴ bất biến chống-khoá-toàn-mạng KHÔNG thoả.)
  *
  * Lý do đầy đủ + các con số đã cân nhắc rồi loại nằm ở docstring bên Aiken; đừng chép
  * xuống đây, một sự thật một nơi giữ. Hai điều phải nhớ khi đọc mã này:
@@ -218,7 +219,7 @@ export const MAX_OP_PRICES = 16;
  *  - Trần này KHÔNG cứu được thao tác an ninh (`did.rotate`) khỏi đòn khoá-bằng-giá.
  *    Việc đó cần một dải op_type riêng — Nợ #43, còn mở.
  */
-export const MAX_BASE_PRICE = 100_000_000_000_000n;
+export const MAX_BASE_PRICE = 1_000_000_000_000n;
 
 /** Một dòng bảng giá, đúng hình dạng `OpPrice` on-chain (BigInt cả hai trường). */
 export interface OpPriceRow {
@@ -313,7 +314,7 @@ export function assertValidPriceParam(pp: PriceParamLike): void {
     if (row.base_price > MAX_BASE_PRICE) {
       throw new Error(
         `PRICE-016: dòng ${i} (op_type=${row.op_type}) có base_price=${row.base_price}, ` +
-          `vượt trần ${MAX_BASE_PRICE} nanogic (= 100.000 MAGIC / một đơn vị nghiệp vụ). ` +
+          `vượt trần ${MAX_BASE_PRICE} nanogic (= 1.000 MAGIC / một đơn vị nghiệp vụ). ` +
           `Trần là backstop chống khoá-dịch-vụ-bằng-giá; xem \`pricing.ak:max_base_price\`.`,
       );
     }

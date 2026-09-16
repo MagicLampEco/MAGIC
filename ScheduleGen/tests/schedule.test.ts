@@ -6,11 +6,12 @@ import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
   computeShardId, countEligibleFires, nextFireEpoch,
   nanogicToMagicStr, lampToOildrop, unlockLockedAmount, isExpired, isLive,
+  selectLampForLock, assertHoldingCapAfterCommit,
 } from "../offchain/src/math.js";
 import {
   SCHEDULE_MIN_LENGTH, SCHEDULE_MAX_LENGTH,
   MIN_LAMP_PER_FIRE, SHARD_CAP, SNAPSHOT_BASE_RATE_Q, Q,
-  MAX_FIRES_PER_TX_CATCHUP, MAX_BATCHES_PER_VAULT,
+  MAX_FIRES_PER_TX_CATCHUP, MAX_BATCHES_PER_VAULT, MAX_LOYALTY_HOLDINGS,
 } from "../offchain/src/constants.js";
 import {
   TV_SCH_01, TV_SCH_02, TV_SCH_03, TV_SCH_04, TV_SCH_05,
@@ -224,6 +225,44 @@ describe("countEligibleFires — C-FIRE-1 ≥, catch-up", () => {
   it("Batch budget cap: vault full limits fires", () => {
     const fires = countEligibleFires(52n, 0n, 100n, 59n, 30);  // 30 existing batches, budget=2
     expect(fires).toBeLessThanOrEqual(2);  // only 2 slots remain
+  });
+
+  // ── Ngõ cụt 32 batch — bài canh phía off-chain (P8 với Aiken
+  // `f_fire_full_of_dead_batches_now_fires` / `..._live_batches_still_rejected`).
+  //
+  // Cái phải canh KHÔNG nằm trong `countEligibleFires` mà nằm ở BÊN GỌI:
+  // `buildScheduleFireTx` từng truyền `magic_batches.length` thô. Hai bài dưới
+  // ghim đúng hợp đồng của tham số đó — "số batch CÒN SỐNG" — bằng cùng phép lọc
+  // `isExpired` mà bên dựng tx dùng.
+  const mkBatches = (n: number, createdEpoch: bigint): MagicBatch[] =>
+    Array.from({ length: n }, (_, i) => ({
+      batch_id:            i.toString(16).padStart(2, "0"),
+      source:              "Schedule" as const,
+      created_epoch:       createdEpoch,
+      initial_amount:      1n,
+      current_amount:      1n,
+      decay_window:        1n,
+      profile_at_creation: null,
+      contract_id:         null,
+      halved:              false,
+    }));
+
+  const liveCount = (bs: MagicBatch[], epoch: bigint) =>
+    bs.filter(b => !isExpired(b.created_epoch, b.decay_window, epoch)).length;
+
+  it("32 batch ĐÃ CHẾT không được khoá fire — đếm trên danh sách còn sống", () => {
+    const batches = mkBatches(MAX_BATCHES_PER_VAULT, 50n);   // chết ở epoch 59
+    expect(liveCount(batches, 59n)).toBe(0);
+    // Hành vi CŨ (đếm thô) cho 0 ⟹ ngõ cụt. Hành vi ĐÚNG cho > 0.
+    expect(countEligibleFires(52n, 0n, 100n, 59n, batches.length)).toBe(0);
+    expect(countEligibleFires(52n, 0n, 100n, 59n, liveCount(batches, 59n)))
+      .toBeGreaterThan(0);
+  });
+
+  it("32 batch CÒN SỐNG vẫn phải khoá fire — trần không bị nới", () => {
+    const batches = mkBatches(MAX_BATCHES_PER_VAULT, 59n);   // sống ở epoch 59
+    expect(liveCount(batches, 59n)).toBe(MAX_BATCHES_PER_VAULT);
+    expect(countEligibleFires(52n, 0n, 100n, 59n, liveCount(batches, 59n))).toBe(0);
   });
 });
 
@@ -496,7 +535,7 @@ describe("I-ACT-7 — LAMP đứng yên across a fire", () => {
 
   // Nợ #30 — THE BOUND. Every partial release splits a holding and nothing is
   // ever dropped, so without coalescing the list grew +1 per fire against
-  // max_loyalty_holdings=64, freezing the vault's LAMP. Mirrors Aiken
+  // max_loyalty_holdings (40 kể từ 2026-09-14), freezing the vault's LAMP. Mirrors Aiken
   // ul_repeated_does_not_grow (vault.ak) byte-for-byte (P8).
   it("unlockLockedAmount: repeated partial releases do not grow the list", () => {
     const h1 = unlockLockedAmount([{ amount: 1000n, acquired_epoch: 5n, is_locked: true }], 100n);
@@ -582,4 +621,48 @@ describe("C-OVERFLOW — TV-OVERFLOW-02: trung gian S_Q × R_snap vượt Number
     expect(Number(exact + 1n)).toBe(Number(exact));
     expect(Number(exact + 1000n)).toBe(Number(exact));
   });
+});
+
+describe("C-SCH-HOLD — cửa VÀO phải hẹp hơn cửa RA đúng một suất", () => {
+  // Số học đứng sau dấu `<`. Hai bài dưới neo theo HẰNG, không theo số 40.
+  function fullyUnlocked(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      amount: 1_000_000n, acquired_epoch: BigInt(i + 1), is_locked: false,
+    }));
+  }
+
+  it("khoá TRỌN không cắt holding nào — độ dài giữ nguyên", () => {
+    const before = fullyUnlocked(MAX_LOYALTY_HOLDINGS);
+    const after  = selectLampForLock(before, BigInt(MAX_LOYALTY_HOLDINGS) * 1_000_000n);
+    expect(after).toHaveLength(MAX_LOYALTY_HOLDINGS);
+    expect(after.every(h => h.is_locked)).toBe(true);
+  });
+
+  it("nhưng lượt fire đầu tiên cắt một cái — danh sách dài thêm ĐÚNG 1", () => {
+    const locked = selectLampForLock(
+      fullyUnlocked(MAX_LOYALTY_HOLDINGS),
+      BigInt(MAX_LOYALTY_HOLDINGS) * 1_000_000n);
+    // Nhả 4,3 LAMP: ăn trọn 4 holding rồi CẮT cái thứ 5 ⟹ +1 phần tử.
+    expect(unlockLockedAmount(locked, 4_300_000n))
+      .toHaveLength(MAX_LOYALTY_HOLDINGS + 1);
+  });
+
+  it("chạm đúng trần sau commit bị chặn — đó là lối vào của bẫy khoá vĩnh viễn", () => {
+    expect(() => assertHoldingCapAfterCommit(MAX_LOYALTY_HOLDINGS, "t"))
+      .toThrow("GEN-SCH-007");
+  });
+
+  it("trần − 1 đi qua — và một suất đó vừa đủ cho lượt fire cắt thêm", () => {
+    expect(() => assertHoldingCapAfterCommit(MAX_LOYALTY_HOLDINGS - 1, "t")).not.toThrow();
+    const locked = selectLampForLock(
+      fullyUnlocked(MAX_LOYALTY_HOLDINGS - 1),
+      BigInt(MAX_LOYALTY_HOLDINGS - 1) * 1_000_000n);
+    expect(unlockLockedAmount(locked, 4_300_000n))
+      .toHaveLength(MAX_LOYALTY_HOLDINGS);   // chạm trần, KHÔNG vượt
+  });
+
+  // CHƯA GHIM: bốn bài trên ghim HÀM `assertHoldingCapAfterCommit` và số học
+  // của nó, KHÔNG ghim lời gọi bên trong `buildScheduleCommit` — gỡ dòng gọi ở
+  // `schedule.ts` thì bộ kiểm này vẫn xanh. Ghim được lời gọi cần một khung
+  // dựng giao dịch Lucid mà kho chưa có; cổng thật cho ca đó là validator.
 });

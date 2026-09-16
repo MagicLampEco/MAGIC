@@ -6,6 +6,7 @@ import {
   BATCH_SOURCE_PREPAID,
   BURN_BATCH_CONSTR,
   CARP_ASSET_NAME,
+  CARP_SUPERSEDED_GENERATIONS,
   CARP_POLICY_ID,
   carpAssetClass,
   MAX_BATCHES_PER_VAULT,
@@ -72,7 +73,10 @@ function vault(
 ): PrepaidVaultDatum {
   return {
     owner: OWNER,
-    did_commit: "deadbeef",
+    // Vault ĐÃ gắn DID: đúng 32 byte, khuôn duy nhất mà nhánh ghi on-chain cho
+    // qua (rỗng = chưa gắn). Bản trước là "deadbeef" (4 byte) — độ dài đó không
+    // tới được trên chuỗi từ khi cổng đúc ghim rỗng và `SetDidCommit` ghim 32.
+    did_commit: "d1".repeat(32),
     prepaid_credits: credits.map((c) => ({
       fund_id: c.fund_id,
       remaining: c.remaining,
@@ -525,6 +529,98 @@ describe("cấu hình mạng đã verify", () => {
     expect(() => carpAssetClass("Mainnet")).toThrow(/CHƯA CÓ CARP/);
     // Câu báo phải đọc được và phải nói đúng cái bẫy: đừng điền LACE.
     expect(() => carpAssetClass("Preview")).toThrow(/LACE/);
+  });
+
+  it("giá trị CARP đang dùng KHÔNG trùng đời nào đã được thay", () => {
+    // LỌC THEO LOẠI. Bản trước so MỌI `prior` với MỌI giá trị đang dùng, tức
+    // một dòng `kind: "policy"` cũng được đem so với một asset name. Phép so
+    // chéo loại KHÔNG BAO GIỜ khớp — nó luôn qua, và nó phình số phép so lên
+    // trong khi không thêm một chút độ phủ nào. Cổng tự khai sai MỨC của
+    // chính nó: nhãn đọc là "đã đối chiếu N lần", phần có nghĩa nhỏ hơn N.
+    // Đếm được phần bị loại thì mới khai đúng mức được — nhà CarpetMint nêu,
+    // 2026-09-16, thư `cm0916mg-b`.
+    const byKind = {
+      policy:     Object.values(CARP_POLICY_ID).filter((v): v is string => v !== null),
+      asset_name: Object.values(CARP_ASSET_NAME).filter((v): v is string => v !== null),
+    } as const;
+
+    // Danh sách phải KHÁC RỖNG. Một mảng rỗng làm mọi vòng lặp dưới xanh mà
+    // không so gì — trạng thái "không đo được" đội lốt trạng thái "khớp".
+    expect(CARP_SUPERSEDED_GENERATIONS.length).toBeGreaterThan(0);
+
+    let soCoNghia = 0;
+    for (const prior of CARP_SUPERSEDED_GENERATIONS) {
+      for (const v of byKind[prior.kind]) {
+        soCoNghia += 1;
+        if (prior.isFullLength) {
+          expect(v).not.toBe(prior.value);
+        } else {
+          // Dòng cụt: so TIỀN TỐ. Coi một tiền tố như giá trị đầy đủ thì phép
+          // so không bao giờ khớp, và bài kiểm xanh mà chưa kiểm gì.
+          expect(v.startsWith(prior.value)).toBe(false);
+        }
+      }
+    }
+
+    // Sau khi lọc, số phép so NHỎ HƠN bản cũ. Đó là con số đúng, không phải
+    // một bước lùi về độ phủ. Nhưng nó phải khác 0 ở CẢ HAI loại — nếu một
+    // loại không còn phép so nào thì vòng trên xanh mà loại đó không được
+    // canh, và không có gì kêu lên.
+    expect(soCoNghia).toBeGreaterThan(0);
+    for (const kind of ["policy", "asset_name"] as const) {
+      const coDoi  = CARP_SUPERSEDED_GENERATIONS.some((p) => p.kind === kind);
+      const coDung = byKind[kind].length > 0;
+      expect(coDoi && coDung).toBe(true);
+    }
+  });
+
+  it("vế asset name MÙ đúng ca vá-engine — và điều đó không làm nó vô dụng", () => {
+    // Đo được, nhà CarpetMint 2026-09-16: một lượt vá engine đổi ruột hàm gác
+    // tham số khởi tạo ⟹ byte-code đổi ⟹ `policy_id` đổi
+    // (`3672c05a…` → `90bb276e…`), trong khi **asset name giữ nguyên**.
+    //
+    // Nên một dòng `kind: "asset_name"` KHÔNG BAO GIỜ bắt được ca vá-engine.
+    // Nó vẫn bắt ca đổi `(tag, did)` — dòng `aa93b3b4…` trong danh sách là
+    // bằng chứng ca đó có thật. Hai ca, hai đại lượng; gộp làm một thì vế
+    // asset name tự khai một độ phủ nó không có.
+    //
+    // Bài này ghim chính cấu trúc đó: danh sách phải có ÍT NHẤT một dòng
+    // `kind: "policy"`, vì đó là vế DUY NHẤT bắt được ca vá-engine.
+    const theoPolicy = CARP_SUPERSEDED_GENERATIONS.filter((p) => p.kind === "policy");
+    expect(theoPolicy.length).toBeGreaterThan(0);
+  });
+
+  it("ÂM: cùng asset name, khác policy ⟹ KHÔNG phải CARP", () => {
+    // `BOUNDARIES.md` §1: định danh tài sản là CẶP `(policy id, asset name)`.
+    // Policy id là điều kiện ĐỦ; asset name KHÔNG BAO GIỜ là điều kiện đủ.
+    // Bài này dựng đúng con hàng nhái mà câu đó nói tới: giữ nguyên asset
+    // name thật, đổi mỗi policy.
+    const that = carpAssetClass("Preprod");
+    const nhai = {
+      policyId: "00".repeat(28),        // 56 ký tự hex hợp lệ, không phải CARP
+      assetName: that.assetName,        // TRÙNG KHÍT asset name thật
+    };
+
+    // Vế asset name một mình KHÔNG phân biệt được hai thứ — đó chính là lý do
+    // nó không được phép đứng một mình ở bất cứ cổng nào.
+    expect(nhai.assetName).toBe(that.assetName);
+
+    // Phép so ĐÚNG là so cặp: khác một vế là khác tài sản.
+    const bang = (a: typeof that, b: typeof that) =>
+      a.policyId === b.policyId && a.assetName === b.assetName;
+    expect(bang(nhai, that)).toBe(false);
+
+    // Và unit (policy‖name) — dạng mà mọi bên dựng giao dịch dùng — phải khác.
+    expect(nhai.policyId + nhai.assetName).not.toBe(that.policyId + that.assetName);
+  });
+
+  it("mỗi đời đã được thay tự khai được độ dài của chính nó", () => {
+    for (const prior of CARP_SUPERSEDED_GENERATIONS) {
+      if (prior.isFullLength) expect(prior.value).toHaveLength(56);
+      else expect(prior.value.length).toBeLessThan(56);
+      expect(prior.value).toMatch(/^[0-9a-f]+$/);
+      expect(prior.supersededOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
   });
 
   it("burn_batch_constr = 2, đồng nhất với InstantGen/ScheduleGen (§11)", () => {

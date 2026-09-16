@@ -93,12 +93,11 @@ npx tsx test/consume_only.ts
 truyền env giữa các bước qua stdout (nên **cũng đứt ở bước 2** vì lý do trên):
 
 ```bash
-cd /Users/ductiger/Projects/MAGIC
-AGENT_SECRETS=<đường dẫn .env của hệ agent> bash scripts/run_consume_e2e.sh Preview   # hoặc Preprod
+BLOCKFROST_KEY=… WALLET_SEED='…' bash scripts/run_consume_e2e.sh Preview   # hoặc Preprod
 ```
 
-**Secret** (`BLOCKFROST_KEY`, seed ví deploy) đọc từ `$AGENT_SECRETS`, KHÔNG đặt trong
-`scripts/.env` — `detect_deploy_wallet.ts` tự dò tên biến seed và chỉ dùng giá trị, không in ra.
+**Secret** (`BLOCKFROST_KEY`, `WALLET_SEED`) đi vào bằng **giá trị** qua môi trường, đặt ngay
+trước lệnh. KHÔNG đặt trong `scripts/.env`, và kho này cố ý không biết chúng được cất ở đâu.
 
 **Knob (env, có default — xem `09_deploy_consume.ts:16-20`):**
 

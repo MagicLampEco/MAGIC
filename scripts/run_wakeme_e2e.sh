@@ -8,7 +8,8 @@
 # vault closed-loop), người dùng có chạy được ScheduleGen và InstantGen không —
 # đo bằng tx thật, không bằng test đơn vị.
 #
-# Secret chỉ lấy value từ $AGENT_SECRETS, không in ra.
+# Bí mật đi vào bằng GIÁ TRỊ qua môi trường, không in ra:
+#   BLOCKFROST_KEY=… WALLET_SEED='…' bash run_wakeme_e2e.sh Preprod
 # Prereq hạ tầng (LAMP/UM/shard/beacon) là ONE-SHOT mỗi mạng → lưu state.$NET.sh.
 #
 # Các bước:
@@ -26,23 +27,29 @@ set -uo pipefail
 
 NET="${1:-Preview}"
 case "$NET" in
-  Preview) BF_VAR="Blockfrost_GreenSun_Preview" ;;
-  Preprod) BF_VAR="Blockfrost_Aladin_Preprod" ;;
+  Preview|Preprod) ;;
   *) echo "✗ Tham số 1 phải là Preview hoặc Preprod (nhận: $NET)"; exit 2 ;;
 esac
 # Cổng này DỪNG kịch bản trước khi nó chạm vào bất cứ thứ gì. Thông điệp phải nói được
 # người đọc PHẢI LÀM GÌ — bản cũ chỉ nói "chưa set", và một lượt chạy chết ở đây không để
 # lại dấu vết nào trên chuỗi, nên nó đọc y hệt một lượt chạy đã xong.
-: "${AGENT_SECRETS:?
-  ✗ AGENT_SECRETS chưa set. Kịch bản DỪNG — KHÔNG có gì được thực hiện, KHÔNG giao dịch nào
-    được gửi. Đừng đọc lần chạy này thành 'đã chạy rồi'.
+#
+# Kịch bản nhận GIÁ TRỊ qua môi trường và KHÔNG biết chúng được cất ở đâu. Đó là ràng buộc
+# cố ý, không phải chỗ còn thiếu. Một tệp mã biết đường tới kho khoá là một tệp CHỈ ĐƯỜNG,
+# và nó chỉ đường cho cả người không nên biết — kể cả khi nó không in ra giá trị nào.
+: "${BLOCKFROST_KEY:?
+  ✗ BLOCKFROST_KEY chưa có trong môi trường. Kịch bản DỪNG — KHÔNG có gì được thực hiện,
+    KHÔNG giao dịch nào được gửi. Đừng đọc lần chạy này thành \'đã chạy rồi\'.
 
-    Biến này phải trỏ tới tệp kho khoá của CHÍNH MÁY BẠN. Kho mã này cố ý KHÔNG ghi đường
-    dẫn đó ở bất cứ đâu, nên nó không thể tự điền hộ.
+    Đặt giá trị ngay trước lệnh, để bí mật sống trong đúng một tiến trình và không đi qua
+    tệp nào:
+        BLOCKFROST_KEY=… WALLET_SEED=\'…\' bash run_wakeme_e2e.sh Preprod
 
-    Đặt một lần cho mọi phiên terminal:
-        echo \'export AGENT_SECRETS=\"đường/dẫn/kho/khoá/của/bạn\"\' >> ~/.zshenv
-        source ~/.zshenv
+    Khoá phải đúng mạng đang chạy. Khoá của mạng khác vẫn là chuỗi hợp lệ và vẫn gọi được
+    — nó chỉ trả về dữ liệu của mạng kia, và không có gì kêu lên.
+}"
+: "${WALLET_SEED:?
+  ✗ WALLET_SEED chưa có trong môi trường. Kịch bản DỪNG — KHÔNG giao dịch nào được gửi.
 }"
 cd "$(dirname "$0")"
 
@@ -54,16 +61,8 @@ if [ -f "$STATE_FILE" ]; then
   set -a; . "./$STATE_FILE"; set +a
 fi
 
-SEED_VAR="$(npx tsx detect_deploy_wallet.ts)"
-export NETWORK="$NET"
-# Bỏ nháy bao quanh — $AGENT_SECRETS có dòng ghi dạng KEY="giá trị", mà cut giữ
-# nguyên dấu nháy ⟹ mnemonic hỏng ngay ở từ đầu và từ cuối.
-unquote() { sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"; }
-export BLOCKFROST_KEY="$(grep "^${BF_VAR}=" "$AGENT_SECRETS" | cut -d= -f2- | unquote)"
-export WALLET_SEED="$(grep "^${SEED_VAR}=" "$AGENT_SECRETS" | cut -d= -f2- | unquote)"
-[ -n "${BLOCKFROST_KEY:-}" ] || { echo "✗ không lấy được $BF_VAR"; exit 1; }
-[ -n "${WALLET_SEED:-}" ]    || { echo "✗ không lấy được seed $SEED_VAR"; exit 1; }
-echo "▶ NETWORK=$NET · ví=$SEED_VAR · Blockfrost + seed đã nạp (không in)."
+export NETWORK="$NET" BLOCKFROST_KEY WALLET_SEED
+echo "▶ NETWORK=$NET · Blockfrost + seed đã nhận từ môi trường (không in)."
 
 step() { echo; echo "══════ $* ══════"; }
 
@@ -71,14 +70,31 @@ step() { echo; echo "══════ $* ══════"; }
 step "[00] chuẩn bị ví (UTxO thuần ADA cho collateral + genesis one-shot)"
 npx tsx prepare_wallet.ts 2>&1 || { echo "✗ prepare_wallet lỗi"; exit 1; }
 
-# ── [0a] LAMP ───────────────────────────────────────────────────────────────
+# ── [0a] LAMP — NHẬN từ ngoài, KHÔNG tự đúc ─────────────────────────────────
+#
+# Bước này TỪNG chạy `deploy/01_mint_lamp.ts`. Nó đã bị bỏ, và lý do không phải
+# gọn gàng:
+#
+#   · Policy của bước đó là native `{type:"sig", keyHash:<pkh ví>}` — suy tất định
+#     từ khoá ví, KHÔNG có trần phát hành, KHÔNG có `SupplyState`, KHÔNG có cổng
+#     WHO. Nó bắt chước được cả nhãn `REG` và `SUPPLY` của `lamp_mint` thật.
+#   · Chạy lần hai thì CỘNG DỒN lên tài sản cũ. Ngày 2026-08-28 nó đẩy cung tLAMP
+#     Preprod lên 72 tỷ, gấp đôi trần 36 tỷ, và không validator nào đỏ.
+#   · Token nó đúc hiển thị đúng chữ `tLAMP`, nên lọc theo tên hiển thị không phân
+#     biệt được. Kho LAMP đã xếp policy đó vào danh sách "trông giống LAMP nhưng
+#     KHÔNG phải LAMP".
+#
+# Nên chuỗi này không còn tự tạo LAMP nữa. `LAMP_POLICY_ID` phải do người chạy đưa
+# vào, lấy giá trị canonical THEO MẠNG từ kho LAMP. Thiếu thì DỪNG — và dừng ở đây
+# rẻ hơn nhiều so với dừng sau khi vault đã ăn tiền gửi.
 if [ -z "${LAMP_POLICY_ID:-}" ]; then
-  step "[0a] mint LAMP (01)"
-  OUT="$(npx tsx deploy/01_mint_lamp.ts 2>&1)"; printf "%s\n" "$OUT"
-  export LAMP_POLICY_ID="$(printf '%s\n' "$OUT" | grep -oE 'LAMP_POLICY_ID=[0-9a-f]+' | head -1 | cut -d= -f2-)"
-  [ -n "${LAMP_POLICY_ID:-}" ] || { echo "✗ 01 lỗi"; exit 1; }
-  persist LAMP_POLICY_ID "$LAMP_POLICY_ID"
-else echo "  ✓ [0a] dùng lại LAMP_POLICY_ID=$LAMP_POLICY_ID"; fi
+  echo "✗ [0a] LAMP_POLICY_ID chưa có."
+  echo "     Chuỗi này KHÔNG tự đúc LAMP nữa. Đặt LAMP_POLICY_ID bằng policy canonical"
+  echo "     của $NET (lấy từ kho LAMP ▸ Genesis ▸ lampPolicies) rồi chạy lại."
+  echo "     So CẢ policy id lẫn asset name hex — chữ \"tLAMP\" hiện ra không đủ để kết luận."
+  exit 1
+fi
+echo "  ✓ [0a] LAMP_POLICY_ID nhận từ môi trường: $LAMP_POLICY_ID"
 
 # ── [0b] UM ─────────────────────────────────────────────────────────────────
 if [ -z "${UM_NFT_POLICY_ID:-}" ] || [ -z "${UM_DATUM_HASH:-}" ]; then

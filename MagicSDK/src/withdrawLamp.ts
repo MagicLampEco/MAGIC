@@ -4,7 +4,7 @@
 // Lý do: LF (Loyalty Factor §6.3) là weighted-average tuổi holding × amount;
 // giữ holding CŨ → LF cao → MAGIC sinh ra nhiều. Rút newest-first
 // = sacrifice 0 tuổi loyalty (vs rút oldest-first sẽ phá max LF user đã tích).
-// Sau PHA-2 (I-ACT-7 — LAMP đứng yên), đây là đường DUY NHẤT LAMP rời vault:
+// Sau DESIGN-2 (I-ACT-7 — LAMP đứng yên), đây là đường DUY NHẤT LAMP rời vault:
 // chính chủ rút về ví mình. Không handler nào chuyển LAMP đi nơi khác.
 //
 // ONCHAIN STATUS: ĐÃ HIỆN THỰC ĐẦY ĐỦ ở cả hai vault đang sống —
@@ -24,6 +24,7 @@ import {
   type Network,
 } from "@magiclamp/protocol-utils";
 
+import { assertLampPolicyId } from "./lampPolicy.js";
 import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { VaultType } from "./types.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
@@ -143,7 +144,10 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     scriptHashToCredential(validatorToScriptHash(vaultScript)),
   );
   const destination = params.destinationAddress ?? (await lucid.wallet().address());
-  const lampUnit = toUnit(lampPolicyId, assetName);
+  // Đường này dựng unit thẳng, không đi qua `buildParamsList` — nên nó cần cổng
+  // riêng. Rút LAMP ra khỏi vault bằng một policy sai thì tx chỉ đơn giản không tìm
+  // thấy tài sản, và lỗi lộ ra ở tầng dựng giao dịch chứ không nói policy nào sai.
+  const lampUnit = toUnit(assertLampPolicyId(lampPolicyId, "withdrawLamp"), assetName);
 
   // ── Build redeemer — resolve constr index from plutus.json at runtime ──
   // No hardcoded indices: SDK reads the Aiken enum from plutus.json, finds

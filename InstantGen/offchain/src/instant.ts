@@ -24,7 +24,7 @@ import {
   computeInstantGrant, getUmForInstant, isExpired,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
-import { getTipSlot, posixMsToEpoch, msPerEpoch, vaultOutValue, assertVaultIdentityKept, type Network } from "@magiclamp/protocol-utils";
+import { getTipSlot, posixMsToEpoch, msPerEpoch, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, type Network } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatum, UMDatum, BackingBeaconDatum, VaultRedeemer,
@@ -56,7 +56,8 @@ export interface InstantGenParams {
   vaultScript: Validator;
   /** LAMP policy id (hex) — must match `lamp_policy_id` param applied to validator. */
   lampPolicyId: string;
-  /** LAMP asset name (hex). Defaults to TESTNET_CONFIG.lampAssetName. */
+  /** LAMP asset name (hex). Bỏ trống thì DẪN THEO MẠNG qua `lampAssetName(network)`,
+   *  KHÔNG rơi về hằng testnet. Chỉ đặt tay khi LAMP được mint dưới tên phi chuẩn. */
   lampAssetName?: string;
   /** Network — picks ms_per_epoch for POSIX-based epoch math (must match validator). */
   network?: Network;
@@ -122,7 +123,16 @@ export async function buildInstantGenTx(
     vaultScript, lampPolicyId,
   } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
-  const lampAssetName = params.lampAssetName ?? TESTNET_CONFIG.lampAssetName;
+  // Suy theo MẠNG, không lấy mặc định testnet. Bản cũ rơi về `TESTNET_CONFIG`
+  // ("tLAMP") kể cả khi network là Mainnet — đúng thứ BOUNDARIES.md §2 gọi là dựng
+  // ra một vault mainnet không bao giờ nhìn thấy LAMP của chính nó. Override tường
+  // minh vẫn được tôn trọng, cho ca mint không chuẩn.
+  //
+  // ScheduleGen đã vá đúng lỗi này và viết lại lý do ở `schedule.ts` ▸ `lampAssetName`;
+  // bản sao ở đây nằm chưa vá cho tới 2026-09-14. Đó là lý do rule đòi quét anh em
+  // TRƯỚC khi đóng một đợt vá: đợt vá lấy phạm vi bằng phạm vi của triệu chứng thì
+  // để lại nguyên nguyên nhân, và bản chưa vá không tự khai là nó chưa được vá.
+  const lampAssetName = params.lampAssetName ?? lampAssetNameFor(network);
 
   // A vault UTxO always carries ADA; assert it so the output cannot be built
   // with an under-stated lovelace amount (Assets is an index signature).

@@ -50,12 +50,22 @@ pub type PriceParam {
 ///   `length == 0` HOẶC `length == 32`. Không ghim thì một did_commit dài tuỳ ý đi
 ///   được vào datum — vừa phình UTxO vừa buộc mọi bên đọc tự đoán khuôn.
 ///
-///   ĐƯỜNG ĐI MỘT CHIỀU, ĐÚNG MỘT LẦN:
-///     rỗng ──BindDID──▶ 32 byte ──▶ (đóng băng vĩnh viễn)
+///   HAI chỗ GHI, không phải một — và chỗ thứ nhất là GENESIS:
+///     (đúc thread) ─┬─▶ rỗng ──BindDID──▶ 32 byte ──▶ (đóng băng vĩnh viễn)
+///                   └─▶ 32 byte TỰ CHỌN ─────────────▶ (đóng băng vĩnh viễn)
+///   - cổng đúc `validate_mint_engage_id` ghim ĐỘ DÀI (`did_len_ok`) và CỐ Ý không ghim
+///     NỘI DUNG ⇒ một thread hợp lệ khởi đầu THẲNG ở 32 byte do người đúc tự chọn.
+///     Bài dương tính khoá chủ ý đó: `engage_mint_did_commit_free_happy`.
 ///   - nhánh `Consume` ép `output.did_commit == input.did_commit` (bất biến tuyệt đối);
-///   - nhánh `BindDID` là đường DUY NHẤT ghi được, và chỉ khi giá trị hiện tại RỖNG.
+///   - nhánh `BindDID` là đường ghi duy nhất CÒN LẠI **sau** genesis, và chỉ khi giá trị
+///     hiện tại RỖNG.
 ///   Không có đường đi ngược (32 byte → rỗng) và không có đường đổi giá trị này sang
 ///   giá trị khác.
+///
+///   🔴 AI DỰNG VẾ CHỐNG-MƯỢN ĐỌC KỸ DÒNG NÀY. Bản trước của khối này viết *"`BindDID`
+///   là đường DUY NHẤT ghi được"* — bỏ mất vế hạn định *"còn lại"* mà `consume.ak` (đầu
+///   tệp) vẫn giữ đúng. Một vế chống-mượn dựng trên mệnh đề thiếu đó sẽ canh `BindDID`
+///   và để hở nguyên đường genesis, tức **một bản vá rỗng trông y hệt một bản vá**.
 ///
 ///   VÌ SAO cần BindDID: thread mở trong giai đoạn này có did_commit rỗng (lớp gắn DID
 ///   chưa bật). Nếu did_commit bất biến TUYỆT ĐỐI qua mọi giao dịch thì khi hệ bật

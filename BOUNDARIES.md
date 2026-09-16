@@ -210,7 +210,7 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 > `Nợ #48` hoặc `PR #48`, đủ chữ để người tra không phải đoán.
 >
 > **Số đo KHÔNG nằm ở đây, và cũng không nằm ở `constants.ak`** — chỉ ở MỘT chỗ:
-> `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Trần ExUnit của hai nhánh mang LAMP"*,
+> `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Chi phí ExUnit theo TRỤC `loyalty_holdings`"*,
 > ngay trên `t_fire_datum_n`, cùng với cách đo, **BA** cặp thang đo (tên từng cặp khai
 > tại mục *"THANG ĐO"* trong chính tệp đó — đừng chép xuống đây), mốc kích hoạt phần còn
 > nợ, và lý do KHÔNG nâng trần theo phần biên vừa mua được. Đo lại là một lệnh

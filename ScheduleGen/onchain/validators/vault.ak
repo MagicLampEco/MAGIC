@@ -2339,11 +2339,30 @@ const hc_l       : Int = 10
 const hc_lambda  : Int = 4_300_000        // 10 × 4,3 = 43 ⟹ khoá TRỌN
 const hc_epoch   : Int = 5
 
+// 🔴 HỌ NÀY CHỈ DỰNG ĐƯỢC TỚI `n = 43`, và nó KHÔNG tự báo khi vượt.
+//
+// Nó giữ tổng bằng `hc_balance` bằng cách CO phần tử cuối: `43 LAMP − (n−1) × 1
+// LAMP`. Nên `n = 44` cho một holding bằng 0, và `n ≥ 45` cho holding ÂM. Mà
+// validator vẫn NHẬN: nó chỉ ép `sum_holdings(output) == lamp_balance`, không ép
+// từng phần tử dương. `hc_run_commit(50)` vì thế PASS và trả về một con số hợp lệ
+// — của một datum không tồn tại được trên chuỗi.
+//
+// Chỗ này đắt vì khối "Chi phí ExUnit" ở dưới DẶN người nâng trần đo lại bằng
+// đúng họ này. Cái bẫy nằm ngay trên đường tài liệu chỉ tới. Muốn đo ở `n > 43`
+// thì đổi sang chia đều trước, đừng co đuôi.
 fn hc_holdings(n: Int) -> List<LoyaltyHolding> {
   list.concat(
     t_holdings_rec(n - 1, []),
     [t_holding(hc_balance - ( n - 1 ) * hc_unit, n, False)],
   )
+}
+
+/// Canh đúng cái cảnh báo ngay trên. Bài này đỏ nếu ai nới `hc_balance`/`hc_unit`
+/// mà không nhìn lại biên — và nó là bài PASS, nên nó kêu ngay trong lượt chạy đó.
+test hc_holdings_positive_only_up_to_43() {
+  expect list.all(hc_holdings(43), fn(h) { h.amount > 0 })
+  expect !list.all(hc_holdings(44), fn(h) { h.amount > 0 })
+  list.any(hc_holdings(45), fn(h) { h.amount < 0 })
 }
 
 fn hc_sched() -> GenSchedule {
@@ -2481,7 +2500,25 @@ test cf_commit_at_cap_then_fire_ok() {
   }
 }
 
-// ── Trần ExUnit của hai nhánh mang LAMP — số ĐO, không ngoại suy ─────────────
+// ── Chi phí ExUnit theo TRỤC `loyalty_holdings` — số ĐO, không ngoại suy ────
+//
+// 🔴 PHẠM VI — đọc trước con số, vì nhan đề cũ ("Trần ExUnit của hai nhánh mang
+// LAMP") khai LỚN HƠN thứ phép đo này đo được, và mọi kết luận treo trên nó đã
+// nghiêng theo chiều nguy hiểm.
+//
+// Ba fixture dưới đây tham số hoá theo `n` của `loyalty_holdings` và để các
+// danh sách KHÁC trong datum ở 0 hoặc 1 phần tử. Nhưng cùng hai nhánh đó còn
+// duyệt `magic_batches` (cổng `<= 32`) và `gen_schedules` (cổng `< 20`):
+// `prune_expired`, `count_eligible_fires`, `list.concat`, và các phép so bằng
+// cấu trúc đều chạy trên chúng. Ba trục được cổng cho phép lớn ĐỒNG THỜI, nên:
+//
+//   · con số trong bảng là **CẬN DƯỚI của chi phí**, không phải trần của nhánh;
+//   · bảng ĐIỂM CHẾT nói về một cấu hình validator CHẤP NHẬN, nhưng không phải
+//     cấu hình nặng nhất mà nó chấp nhận;
+//   · và một dòng "lọt" ở đây KHÔNG chứng minh cấu hình đó lọt trên chuỗi.
+//
+// Phép đo còn thiếu — nạp cả ba trục ở cổng cùng lúc — ghi thành Nợ, không nới
+// trong lượt này. Cho tới khi có nó, đọc mọi số dưới đây kèm đúng câu này.
 //
 // Cách đo (một lệnh `aiken check`): trừ theo từng CẶP ở mục THANG ĐO bên dưới,
 // vì fixture tự gọi lại chính hàm O(n²) mà validator gọi. Mỗi cặp phải tự khai
@@ -2503,12 +2540,22 @@ test cf_commit_at_cap_then_fire_ok() {
 // 16 227 311, và đó mới là ngưỡng để nói "lọt" hay "vượt".
 //
 //   nhánh (n)                  |       mem | % của 16,5 M | % phần `vault`
-//   commit khoá TRỌN    (39)   | 9 336 270 |    56,6 %    |    57,5 %  ← HẸP NHẤT
+//   commit khoá TRỌN    (39)   | 9 336 270 |    56,6 %    |    57,5 %
 //   commit khoá 1 PHẦN  (38)   | 8 621 399 |    52,3 %    |    53,1 %
 //   fire                (40)   | 8 437 447 |    51,1 %    |    52,0 %
 //
-// **NHÁNH HẸP NHẤT SAU BẢN VÁ Nợ #48 LÀ COMMIT** — đo lại 2026-09-16 bằng bảng
-// trên, không chép từ bản ghi nào.
+// Phép trừ TRỪ DÔI một chút: ba chân dựng-fixture kèm thêm một `list.length`
+// O(n) mà ba chân chạy-trọn không có, nên con số trên THẤP HƠN chi phí validator
+// thật. Chiều lệch an toàn (không che một ca vượt trần), nhưng nó là sai số, và
+// một sai số không khai thì lần sau có người trừ nó lần nữa.
+//
+// ⚠️ **"COMMIT LÀ NHÁNH HẸP NHẤT" — CHƯA CÓ BẰNG CHỨNG, đừng xây tiếp lên.**
+// Bảng trên xếp hạng ba nhánh trên MỘT trục. Hai trục còn lại không phân bố đều
+// giữa chúng: nhánh fire duyệt `magic_batches` ở `prune_expired` và
+// `count_eligible_fires`, nhánh commit thì duyệt `gen_schedules`. Thứ hạng đo ở
+// `magic_batches = 0` không suy ra được thứ hạng ở `magic_batches = 32`. Bản
+// trước của khối này phát biểu thứ hạng như một kết luận; nay hạ xuống đúng mức
+// là **một thứ hạng trên một trục**.
 //
 // ĐIỂM CHẾT — đo, KHÔNG ngoại suy (2026-09-16). Cấu hình trên trần không được
 // chấp nhận, nên phép đo này bắt buộc chạy dưới một đột biến: đổi hằng trong
@@ -2516,8 +2563,23 @@ test cf_commit_at_cap_then_fire_ok() {
 // `expect True` là sai phép đo — nó bỏ luôn phép đếm độ dài và hạ số đọc được
 // ~92 K (commit) / ~107 K (fire), tức đo thiếu đúng phần đang muốn đo.
 //
-//   commit khoá 1 phần   n=54  15 866 161  lọt   |  n=55  16 397 964  VƯỢT
-//   fire                 n=59  15 972 425  lọt   |  n=60  16 439 795  VƯỢT
+// 🔴 CỘT `n` LÀ SỐ HOLDING **ĐẦU VÀO**, KHÔNG phải đại lượng mà cổng so. Cổng so
+// `list.length(output.loyalty_holdings)`. Họ khoá MỘT PHẦN cho `độ dài ra = n+1`
+// (`select_lamp_for_lock` cắt một cái); họ fire cho `độ dài ra = n`. Nên dòng
+// commit dưới đây nói về ĐỘ DÀI RA 55 và 56, không phải 54 và 55 — ai đọc "55"
+// rồi đặt thẳng vào `max_loyalty_holdings` sẽ lệch một nấc, đúng chiều với ca
+// `<=`/`<` mà bản vá cho Nợ #48 vừa trả giá.
+//
+//   nhánh                n vào |  độ dài ra |        mem | kết quả
+//   commit khoá 1 phần      54 |         55 | 15 866 161 | lọt
+//   commit khoá 1 phần      55 |         56 | 16 397 964 | VƯỢT
+//   fire                    59 |         59 | 15 972 425 | lọt
+//   fire                    60 |         60 | 16 439 795 | VƯỢT
+//
+// Bảng này KHÔNG có dòng cho họ khoá TRỌN — đúng họ mà khối trên khai là nặng
+// nhất — vì `hc_holdings` không dựng được tới đó (xem cảnh báo tại chính hàm
+// ấy). Nên với nhánh commit, hai dòng trên là **cận trên của trần**, không phải
+// trần: họ nặng hơn chạm ngưỡng sớm hơn.
 //
 // Bản ghi trước ước "commit n ≈ 52, fire n ≈ 55" bằng ngoại suy bậc hai từ MỘT
 // điểm; cả hai đều thấp hơn thực tế. Ước đã bỏ, số đo thay chỗ.
@@ -2544,19 +2606,25 @@ test cf_commit_at_cap_then_fire_ok() {
 //         (`t_commit_l = 10`), nên nó không thể tạo ra mức đó.
 //
 // CÒN NỢ — P4, thay `list.sort` bằng sắp-xếp-trộn đảo-phần-tử-hoà: CHƯA làm, và
-// cố ý chưa. Nó là thứ DUY NHẤT hạ được nhánh commit, nhưng ở trần 40 hiện tại
-// commit mới dùng 56,6 % nên nó không mua được gì. Mốc kích hoạt: khi nào có
-// người muốn nâng trần — và lúc đó ĐO lại bằng bảng ĐIỂM CHẾT ở trên cho ĐÚNG
-// họ fixture khoá TRỌN, vì đó mới là họ hẹp nhất. Bản trước ghi mốc "~48"; con
-// số ấy suy từ ước "commit ≈ 52" mà phép đo đã lật, nên nó đi theo, không giữ.
+// cố ý chưa. Nó là thứ DUY NHẤT hạ được nhánh commit. Bản trước của dòng này nói
+// thêm rằng "ở trần 40 commit mới dùng 56,6 % nên nó không mua được gì" — câu ấy
+// đã GỠ: 56,6 % là số của một trục, và biên thật hẹp hơn thế. Việc P4 có mua được
+// gì hay không thì phép đo ba-trục mới trả lời được.
+// Mốc kích hoạt: khi nào có người muốn nâng trần — và lúc đó ĐO lại bằng bảng
+// ĐIỂM CHẾT ở trên, NHƯNG họ fixture khoá TRỌN chỉ dựng được tới `n = 43` (xem
+// cảnh báo tại `hc_holdings`), nên phải sửa fixture trước rồi mới đo. Bản trước
+// ghi mốc "~48"; con số ấy suy từ ước "commit ≈ 52" mà phép đo đã lật, nên nó
+// đi theo, không giữ.
 // Điều kiện đi kèm (chủ dự án đã chốt): phải có bài
 // kiểm tính chất `msort == list.sort` trên đầu vào dày phần tử hoà xanh TRƯỚC,
 // vì `list.sort` ĐẢO phần tử hoà còn sắp-xếp-trộn thường thì không — đổi chỗ đó
 // là đổi KẾT QUẢ, không phải đổi tốc độ.
 //
-// TRẦN GIỮ NGUYÊN 40, không nâng theo phần biên vừa mua được. Ba lý do: phần
-// biên rơi vào nhánh fire, mà nhánh hẹp nhất bây giờ là commit — không nhúc
-// nhích; số trên là của validator trong bài kiểm, chưa mang kích thước giao
+// TRẦN GIỮ NGUYÊN 40, không nâng theo phần biên vừa mua được. Kết luận này là
+// kết luận DUY NHẤT trong khối còn nguyên sau khi phạm vi được siết lại — và nó
+// nay đứng vì lý do MẠNH HƠN, không yếu hơn: biên thật hẹp hơn con số đã đo,
+// không rộng hơn. Ba lý do: phần biên rơi vào nhánh fire, trong khi chưa biết
+// nhánh nào hẹp nhất khi nạp đủ ba trục; số trên là của validator trong bài kiểm, chưa mang kích thước giao
 // dịch, datum, hay lượt đổi tham số giao thức; và chính khoảng biên là thứ
 // ngăn lặp lại ca "vault chạm trần thì không tiêu được".
 

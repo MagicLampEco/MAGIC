@@ -247,6 +247,20 @@ fn read_protocol(
 // ── PM-1.5: mọi vault input do vault_refs trỏ PHẢI có personal_delegate==Some(app) ─
 // VaultDatum.personal_delegate = field index 15 (append-only). Đọc field-agnostic
 // qua un_constr_data để KHÔNG import VaultDatum (tránh coupling cross-module type).
+//
+// 🔴 🪦 CỔNG NÀY KHÔNG CÒN THOẢ ĐƯỢC SAU 2026-09-16 (Nợ #14) — đọc trước khi sửa.
+// Nhánh uỷ nhiệm bị bỏ khỏi mô hình: `SetDelegate` ở cả ba vault
+// (ScheduleGen · InstantGen · PrepaidGen) nay chỉ XOÁ được, không đặt được, nên
+// không vault nào còn có `personal_delegate == Some(app)`. Hệ quả: đường Sponsor
+// của Paymaster đứng lại — fail-closed, không phải lỗ.
+//
+// KHÔNG tự vá bằng cách nới cổng này. Paymaster chưa deploy ở mạng nào
+// (`scripts/DEPLOYED.md` không có mục nào cho nó), nên đây là chuyện THỜI THIẾT
+// KẾ, và mô hình quyền của Paymaster là thứ chủ dự án chốt chứ không phải thứ
+// suy ra từ một cổng. Câu phải hỏi trước khi gõ dòng đầu tiên: app chứng minh
+// được người dùng đồng ý bằng CÁI GÌ, khi không còn trường uỷ quyền trong datum?
+// Cổng để nguyên cho tới lúc có câu trả lời — một cổng không thoả được thì chặn
+// mọi thứ, còn một cổng bị nới vội thì cho qua đúng thứ vừa bỏ.
 fn all_vaults_delegate_app(
   tx            : Transaction,
   vault_refs    : List<OutputReference>,
@@ -545,6 +559,7 @@ fn run(
     policy, policy_nft_q, protocol, protocol_nft_q, meter_in, meter_nft_in,
     meter_in_lvl, meter_out, meter_nft_out, meter_out_lvl, vault_inputs,
     cur_epoch, rd, signers, extra_reds, lamp_to_tsy, ct_treasury_addr(),
+    ct_lamp_policy, ct_lamp_asset_name,
   )
 }
 
@@ -569,6 +584,14 @@ fn run_to(
   extra_reds    : Pairs<ScriptPurpose, Data>,
   lamp_to_tsy   : Int,
   tsy_out_addr  : Address,
+  // Định danh tài sản rót vào kho, tách khỏi apply-param `lamp_policy_id`.
+  // Cùng lý do với `tsy_out_addr`: một mock dùng cho cả hai vế làm phép so khớp
+  // tầm thường. Cổng đích có HAI nửa — AI nhận (`o.address == treasury_addr`) và
+  // NHẬN CÁI GÌ (`quantity_of(o.value, lamp_policy_id, lamp_asset_name)`) — và
+  // bản cũ chỉ tách được nửa thứ nhất: gỡ HẲN vế policy id, hoặc gỡ HẲN vế asset
+  // name, bộ kiểm vẫn xanh toàn phần (đo bằng ablation 2026-09-16).
+  tsy_policy    : PolicyId,
+  tsy_name      : AssetName,
 ) -> Bool {
   let meter_i = ct_meter_input(meter_in, meter_nft_in, meter_in_lvl)
   let meter_o = ct_meter_output(meter_out, meter_nft_out, meter_out_lvl)
@@ -578,11 +601,32 @@ fn run_to(
       let tsy_val =
         assets.add(
           assets.from_lovelace(2_000_000),
-          ct_lamp_policy,
-          ct_lamp_asset_name,
+          tsy_policy,
+          tsy_name,
           lamp_to_tsy,
         )
-      [util.mk_output(tsy_out_addr, tsy_val, builtin.constr_data(0, []))]
+      // 🔴 KHÔNG DATUM — và đây là hình dạng, không phải tiện tay.
+      //
+      // Bên giữ kho là `LAMP/Distribution/onchain/validators/treasury.ak` ▸
+      // `fold_ledger`: nhánh `NoDatum -> acc` cộng value vào `value_in` mà bỏ
+      // qua phần sổ cái, tức UTxO không datum HÚT ĐƯỢC bằng `Refill`; tệp đó
+      // khai thẳng đây là hình dạng của LAMP rót về kho qua A-DEST, và có hai
+      // bài canh (`refill_absorb_no_datum_utxo_ok`, `refill_run_on_no_datum_input_ok`).
+      // Bên dựng giao dịch cũng phát ra đúng hình dạng này: `paymaster.ts` ▸
+      // `buildSponsorTx` dùng `pay.ToAddress`, không gắn datum.
+      //
+      // Bản trước của dòng này dựng `InlineDatum(Constr 0 [])`. Validator kho
+      // KHÔNG soi datum nên nó vẫn xanh — nhưng `fold_ledger` giải mã nhánh
+      // `InlineDatum(d)` bằng `expect td: TreasuryDatum = d`, mà `TreasuryDatum`
+      // có 2 trường còn `Constr 0 []` có 0, và Aiken nghiêm ngặt số trường CẢ
+      // HAI CHIỀU (`BOUNDARIES.md §2`) ⟹ mọi `Refill` chạm UTxO đó chết ở dòng
+      // `expect`, và không nhánh nào khác cứu. Tức bộ kiểm — nguồn DUY NHẤT
+      // trong kho mô tả "output trả tiền về kho trông như thế nào" — đang khai
+      // một hình dạng KẸT VĨNH VIỄN. Ai sửa builder cho khớp nó thì mỗi lần
+      // bảo trợ ném vĩnh viễn `lamp_this` + min-ADA vào một UTxO không ai hút
+      // nổi, và không gì đỏ. Đúng ca `Forall §Rót đúng ĐỊA CHỈ không phải rót
+      // vào SỔ`, chỉ khác chiều vào.
+      [util.mk_output_no_datum(tsy_out_addr, tsy_val)]
     } else {
       []
     }
@@ -843,7 +887,13 @@ test pm_neg_did_cap() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 10_004_000_000)], global_lamp_epoch: 10_004_000_000,
-      global_magic_epoch: 0,
+      // = Σ burns. Để 0 thì bài này còn chết ở chốt chuyển-trạng-thái
+      // `global_magic_epoch == base_magic + magic_consumed` — một chốt THỨ HAI,
+      // độc lập với cổng did-cap mang tên bài. Đo bằng ablation 2026-09-16: gỡ
+      // hẳn PM-5 **và** PM-6 mà bộ kiểm vẫn 33/33; phải gỡ thêm chốt chuyển-
+      // trạng-thái thì bài này mới lật. Hai cổng cùng giữ một bài đỏ = bài đó
+      // không ghim cổng nào.
+      global_magic_epoch: 1_000_000_000,
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)  // 9.999G + 5M = 10.004G > 10G
   // lamp_to_tsy = lamp_this: PM-TREASURY đứng TRƯỚC PM-5, để 0 thì bài này chết ở
@@ -868,7 +918,7 @@ test pm_neg_global_cap() fail {
     SponsorMeter {
       app_id: ct_app_id, epoch: 6,
       did_lamp_map: [(ct_owner, 100_003_000_000)], global_lamp_epoch: 100_003_000_000,
-      global_magic_epoch: 0,
+      global_magic_epoch: 1_000_000_000,  // = Σ burns — xem ghi chú ở pm_neg_did_cap
     }
   let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)  // global 99.998G + 5M > 100G
   // lamp_to_tsy = lamp_this — xem ghi chú ở pm_neg_did_cap.
@@ -1156,6 +1206,16 @@ test pm_neg_did_cap_overflow() fail {
 /// (burns 10M, rate 0.5×Q → lamp_cap 5M, lamp_this 5M), chỉ thay ĐỊA CHỈ nhận
 /// LAMP và SỐ LƯỢNG gửi về kho.
 fn tsy_case(lamp_to_tsy: Int, tsy_out_addr: Address) -> Bool {
+  tsy_case_pair(lamp_to_tsy, tsy_out_addr, ct_lamp_policy, ct_lamp_asset_name)
+}
+
+/// Như `tsy_case` nhưng đổi được ĐỊNH DANH tài sản rót vào kho.
+fn tsy_case_pair(
+  lamp_to_tsy  : Int,
+  tsy_out_addr : Address,
+  tsy_policy   : PolicyId,
+  tsy_name     : AssetName,
+) -> Bool {
   let pol = ct_policy(500_000_000, 0, 10_000_000_000, 100_000_000_000, 6)
   let proto = ct_protocol(500_000_000, True, 6)
   let vref = util.mk_ref_id(#"a1", 0)
@@ -1173,7 +1233,7 @@ fn tsy_case(lamp_to_tsy: Int, tsy_out_addr: Address) -> Bool {
     pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000,
     [vault], 6, rd, [ct_app_auth],
     [Pair(Spend(vref), burn_rd)],
-    lamp_to_tsy, tsy_out_addr,
+    lamp_to_tsy, tsy_out_addr, tsy_policy, tsy_name,
   )
 }
 
@@ -1205,4 +1265,33 @@ test pm_neg_treasury_attacker_stake() fail {
 //    so `>=`, thứ mà ba ca địa chỉ ở trên không chạm tới.
 test pm_neg_treasury_amount_short() fail {
   tsy_case(4_999_999, ct_treasury_addr())
+}
+
+// ── NEG PM-TREASURY 5+6: nửa TÀI SẢN của cổng đích ───────────────────────────
+//
+// Bốn ca trên ghim nửa "AI nhận" và chiều của phép so `>=`. Chúng KHÔNG chạm
+// nửa "NHẬN CÁI GÌ": đo 2026-09-16 bằng hai đột biến độc lập — đếm theo asset
+// name qua MỌI policy, rồi đếm theo policy qua MỌI tên — bộ kiểm **xanh toàn
+// phần ở cả hai**. Tức vế `policy_id` và vế `asset_name` của
+// `assets.quantity_of(o.value, lamp_policy_id, lamp_asset_name)` đều gỡ ra được
+// mà không bài nào lật.
+//
+// Chỗ này không phải một góc hiếm. `BOUNDARIES.md §1` ghi thành bất biến của
+// kho: **định danh tài sản là CẶP `(policy id, asset name)`; policy id là điều
+// kiện ĐỦ, asset name KHÔNG BAO GIỜ là** — và testnet đang có **27 dòng tài
+// sản** mang tên của hệ này dưới một policy chữ-ký-đơn không phải của LAMP,
+// trong đó có một dòng `tLAMP` mang trọn 36 tỷ. Kịch bản hỏng nếu ai "tối ưu"
+// phép đếm thành so theo tên: app bảo trợ rót token nhái vào kho, phép đếm
+// cộng đủ, giao dịch được chấp nhận, sổ ghi `lamp_this` như đã trả phí thật.
+// Kho nhận rác, sổ ghi có, bộ kiểm xanh.
+//
+// Hai bài đối xứng vì mỗi bài chỉ ghim được MỘT vế: bài đầu sai policy (đúng
+// tên), bài sau sai tên (đúng policy). Cả hai giữ nguyên địa chỉ kho và giữ
+// nguyên lượng, nên chúng không thể đỏ nhờ ba ca địa chỉ hay ca thiếu-lượng.
+test pm_neg_treasury_lookalike_policy() fail {
+  tsy_case_pair(5_000_000, ct_treasury_addr(), #"2222", ct_lamp_asset_name)
+}
+
+test pm_neg_treasury_wrong_asset_name() fail {
+  tsy_case_pair(5_000_000, ct_treasury_addr(), ct_lamp_policy, #"6c616d70")
 }

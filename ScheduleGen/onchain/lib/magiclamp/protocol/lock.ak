@@ -103,7 +103,7 @@ pub fn unlock_locked_amount(
 ///    and fixed first" — sai thứ tự, và nó nằm trong mã nguồn nên người sau đọc sẽ tin.)
 /// Hai bản giữ byte-identical có chủ ý — đừng "cải tiến" một bên (P8).
 ///
-/// ExUnits ĐÃ cắn — số đo ở `validators/vault.ak` mục "Trần ExUnit". Bản dưới đây giữ
+/// ExUnits ĐÃ cắn — số đo ở `validators/vault.ak` mục "Chi phí ExUnit theo TRỤC `loyalty_holdings`". Bản dưới đây giữ
 /// nguyên O(n²) trên GIẤY nhưng hạ hằng số xuống nhiều lần, bằng cách để bộ tích luỹ
 /// nằm NGƯỢC suốt vòng lặp và chỉ lật một lần ở cuối:
 ///

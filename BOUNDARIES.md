@@ -210,10 +210,18 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
 > `Nợ #48` hoặc `PR #48`, đủ chữ để người tra không phải đoán.
 >
 > **Số đo KHÔNG nằm ở đây, và cũng không nằm ở `constants.ak`** — chỉ ở MỘT chỗ:
-> `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Trần ExUnit của hai nhánh mang LAMP"*,
-> ngay trên `t_fire_datum_n`, cùng với cách đo, thang đo (`probe_commit_fixture_cap` /
-> `probe_fire_fixture_cap`), mốc kích hoạt phần còn nợ, và lý do KHÔNG nâng trần theo
-> phần biên vừa mua được. Đo lại là một lệnh `aiken check`.
+> `ScheduleGen/onchain/validators/vault.ak` ▸ khối *"Chi phí ExUnit theo TRỤC `loyalty_holdings`"*,
+> ngay trên `t_fire_datum_n`, cùng với cách đo, **BA** cặp thang đo (tên từng cặp khai
+> tại mục *"THANG ĐO"* trong chính tệp đó — đừng chép xuống đây), mốc kích hoạt phần còn
+> nợ, và lý do KHÔNG nâng trần theo phần biên vừa mua được. Đo lại là một lệnh
+> `aiken check`.
+>
+> Bản trước của dòng này liệt kê **hai** cặp và gọi tên chúng ra (`probe_commit_fixture_cap` /
+> `probe_fire_fixture_cap`). Liệt kê thiếu vì nhánh commit có **hai họ fixture** cho cùng
+> một nhánh mã — khoá TRỌN và khoá MỘT PHẦN — và chúng cho hai trần khác nhau ở cùng một
+> `n`, vì `select_lamp_for_lock` cắt một holding ở họ thứ hai nên độ dài SAU commit lệch
+> một. Một danh sách tên gọi trong tài liệu thì già đi theo mỗi cặp mới; một con trỏ tới
+> mục khai thì không.
 >
 > Bản trước của khối này vẫn chép số xuống dù chính nó dặn đừng chép — và phần chép lại
 > là phần sai, đúng lần thứ hai. Chú thích ở `constants.ak` cũng chép, cũng sai, và nằm

@@ -94,7 +94,7 @@ pub const max_batches_per_vault : Int = 32
 // mà `BOUNDARIES.md` cảnh báo, và lần này nó chết ở nơi người ta tra để chọn trần.
 //
 // Một nguồn duy nhất cho số đo, cách đo, thang đo, và mốc kích hoạt phần còn nợ:
-// `validators/vault.ak` ▸ khối "Trần ExUnit của hai nhánh mang LAMP", ngay trên
+// `validators/vault.ak` ▸ khối "Chi phí ExUnit theo TRỤC `loyalty_holdings`", ngay trên
 // `t_fire_datum_n`. Đo lại là một lệnh `aiken check`.
 pub const max_loyalty_holdings  : Int = 40
 

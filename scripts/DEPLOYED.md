@@ -501,3 +501,52 @@ Vá `cap_pp` một mình KHÔNG mở được cửa. Xem `DevStatus.md` Nợ #19
 **Hệ quả cho thứ tự thao tác của người dùng:** InstantGen là **khoản ứng trước** trên dòng
 ScheduleGen đã cam kết, không phải cửa độc lập. Kể cả sau khi vá, thứ tự tối thiểu vẫn là
 `Wakeme → ScheduleCommit → chờ 2 epoch → ScheduleFire → BurnBatch → InstantGen`.
+
+### Cùng ngày, muộn hơn — InstantGen đã cấp và đã bị tiêu THẬT
+
+Đoạn ngay trên viết *"Vá `cap_pp` một mình KHÔNG mở được cửa"* và *"thứ tự tối thiểu vẫn là
+`Wakeme → ScheduleCommit → chờ 2 epoch → ScheduleFire → BurnBatch → InstantGen`"*. Vế thứ
+nhất vẫn đúng. **Vế thứ hai đã sai** kể từ bản vá Nợ #19 chiều 2026-09-16: cửa vào của vòng
+nay mở bằng một hằng biên dịch, nên InstantGen KHÔNG còn xếp sau ScheduleFire.
+
+| việc | tx |
+|---|---|
+| 04 BackingBeacon | `642479ba1e7ee11ee95c67345bcede8197c357ac01207101757f5bd8245a99be` |
+| 05 vault InstantGen (1001 LAMP) | `a4669a94485d16d700164cd3ff8e91dc8bb602fc9e19999c50f153a90862aad7` |
+| ref-script vault instant | `9f737208c775e9283b5b5fdffa3b9c64e11c15f6c0318e15652b31bdae7b99ff#0` |
+| **InstantGen cấp MAGIC** | `720e1817dc12a418751eb40326648bf5498d22d87c4f815a1089daf8622987f6` |
+| 09 consume — bản cho vault InstantGen | `086a9a04c54b4703de135c2f926b44f197cf1009bd694c03f2988010e6440fdd` |
+| ref-script consume instant | `6846f574c078877bf4b7e7ad07b9afa815a1bd5ead3a3eef36faf35b157caa2d#0` |
+| **tiêu MAGIC thật** | `b60afb5294b39b7332e4748cf42b4281ef511c7ec503311707d36e68726a43da` |
+
+| thứ | giá trị |
+|---|---|
+| vault InstantGen, script hash | `56b834369368a95e8be72782347f13e1432d0b14548f376f60cb2745` |
+| vault InstantGen, địa chỉ | `addr_test1wpttsdpkjd52jh5tuuncydrlz0s5xtgtz32g7dm0vr9jw3gg88xph` |
+| NFT danh-tính vault | `56b83436…c62257e4dde7a581d56d011ce0e2f6d08e55d6efb1b9e4071034d15444882129` |
+| BackingBeacon, NFT policy | `28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4` |
+| BackingBeacon, script hash | `9788cd32aa4b695dff6d98c8d7805d5b758099139695fe6bff5c3902` |
+| consume (đời InstantGen), script hash | `4fcc3e843cd64cae10148dfcc5801d5f0f38d207f49a46f5d43c1053` |
+
+**Số đo lượt cấp, in ra bởi chính lượt chạy:** `reward(consumed) 210.2100 ·
+cap_surplus(br) 0.3333 · 0.5 × pp 4.0040 → GRANTED 0.3333 MAGIC (bound by cap_surplus)`.
+Ba con số đó khớp từng đơn vị với bài kiểm `ig_prop_seed_is_not_the_binding_brake`, và
+đó là chỗ đáng đọc: **hạt giống là vế LỚN NHẤT trong ba vế**, nên nới nó lên không nới
+được đồng MAGIC nào. Hạt giống mở khoá, nó không trả.
+
+**`28e916b0…` ở bảng trên là BackingBeacon NFT policy, KHÔNG phải một đời LAMP.** Cùng
+chuỗi hex ấy xuất hiện ở mục `## Preprod — 2026-08-12 · ĐỜI ĐÃ MỒ CÔI` trong vai một tài
+sản mang tên LAMP. Hai vai khác nhau dưới cùng một hex — chưa truy được vì sao trùng, và
+ghi ra đây chính vì chưa truy được: một chuỗi hex trùng mà hai chỗ tả hai thứ khác nhau
+là đúng hình dạng bẫy `PHA-2`, nên đừng đọc bảng này thành "beacon dựng từ đời LAMP cũ"
+mà cũng đừng đọc thành "hai thứ chắc chắn không liên quan".
+
+**Bản `consume` phải deploy RIÊNG cho mỗi LOẠI vault.** `consume` bị apply-param bằng
+`vault_script_hash` (`BOUNDARIES.md §2`), nên bản deploy cho ScheduleGen
+(`1d792c6f36828e45bd82212896ef95f3814a0a78ebf86b82c26cbb56`) **không** tiêu được vault
+InstantGen. Đây không phải ghi chú kiến trúc — nó là một bước thao tác, và bỏ qua nó thì
+lượt tiêu chết ở chỗ trông như lỗi dựng giao dịch.
+
+**Chưa ghim được, đừng đọc mục này rộng hơn nó nói:** hạt giống cấp một lần mỗi **VAULT**,
+không phải mỗi **NGƯỜI**. Các validator ở đây không mang PersonDID, nên thứ chặn một người
+mở N vault là chi phí mở vault chứ không phải một bất biến on-chain.

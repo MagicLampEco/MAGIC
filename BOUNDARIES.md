@@ -139,6 +139,33 @@ mainnet không bao giờ nhìn thấy LAMP của chính nó.
 Mọi nhánh spend đòi NFT còn nguyên. Off-chain tạo vault **bắt buộc** mint NFT — quên là
 LAMP kẹt vĩnh viễn. Lý do: Cardano chỉ chạy validator lúc tiêu, không bao giờ lúc tạo.
 
+**INV-ONE-PERSON-ONE-VAULT — mỗi người MỘT DID, mỗi DID MỘT vault.** Chốt 2026-09-16. Đây là
+bất biến chống Sybil cho mọi thứ được cấp một lần cho mỗi vault — hiện là hạt giống
+`wakeme_seed_credit` ghim ở genesis (`InstantGen/onchain/lib/magiclamp/protocol/constants.ak`).
+Không có nó, "một lần mỗi vault" chỉ bằng "một lần mỗi lần trả phí mở vault".
+
+Bất biến này nói HÌNH DẠNG cưỡng chế chứ không chỉ nói mục tiêu: buộc vault vào DID rồi ép tính
+duy nhất ở cổng genesis. Ba lối khác — hạ giá trị hạt giống, thêm hàng rào tỷ lệ, đếm theo thiết
+bị — đều KHÔNG thoả, và đã loại.
+
+**Trạng thái cưỡng chế, đo 2026-09-17: repo này CHƯA ép vế nào.**
+
+- `validate_mint_vault_id` (`InstantGen/onchain/validators/vault.ak`) đọc **0** reference input;
+  hai chỗ duy nhất dùng `tx.reference_inputs` đều nằm ở nhánh spend (`:409` UM, `:418` beacon).
+- `grep -rn "taad|anchor_nft|person_did" InstantGen/onchain --include="*.ak"` → **0 dòng**.
+
+Hai vế đang được ép ở repo danh tính: `PhoenixKeyDID/Validator` ▸ `validators/taad.ak` ▸
+`genesis_uniqueness_ok` cho vế *một người = một DID*, và ▸ `validators/wakeme_vault.ak` ▸
+`anchor_nft_name` (apply-param `= blake2b_256(did)`) cho vế *một DID = một vault*. Vault của
+InstantGen là một script KHÁC, nên chuỗi đó chỉ khép lại khi genesis của nó trỏ tới NFT anchor
+của đúng DID ấy.
+
+Thứ còn thiếu vì thế là **MỘT tham chiếu ở cổng genesis**, KHÔNG phải một trường danh tính trong
+datum: thêm trường là đổi số trường của datum ⟹ đổi lược đồ ⟹ buộc di trú mọi UTxO đang sống
+(xem "Thêm trường ở cuối" bên dưới).
+
+Ràng buộc TẠM đang có hiệu lực cho tới khi vá, fail-closed: **chỉ chạy testnet**.
+
 **Apply-param được phép thay đổi theo LOẠI script, KHÔNG theo từng thực thể.** Đây là
 kết luận của D12, chốt 2026-08-28 sau khi hai kiến trúc `INV-VAULT-IDENTITY` không tương
 thích nhị phân cùng tồn tại trong kho. Bản được giữ là bản đang mô tả ngay bên trên: mint

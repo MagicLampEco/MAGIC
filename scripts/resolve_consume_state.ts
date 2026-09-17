@@ -20,14 +20,16 @@
 // Ra (stdout, để wrapper `eval`):
 //   export PRICE_BEACON_UTXO=…#n · export ENGAGE_UTXO=…#n
 //   export CONSUME_ADDRESS=… · export PRICE_PARAM_ADDRESS=…
+//   export REF_CONSUME_UTXO=…#n   (khi tìm thấy ở bãi đỗ; ví khác ví deploy: đặt REF_PARK_ADDRESS)
 // Thoát khác 0 khi thiếu biến vào, hoặc khi không còn UTxO nào mang NFT — cả hai đều
 // là "hạ tầng cũ không dùng lại được", và người gọi phải BIẾT điều đó chứ không phải
 // lặng lẽ deploy đè.
 
 import {
-  Lucid, Blockfrost, credentialToAddress, scriptHashToCredential, type UTxO,
+  Lucid, Blockfrost, credentialToAddress, scriptHashToCredential, validatorToScriptHash, type UTxO,
 } from "@lucid-evolution/lucid";
 import { NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet } from "./config.js";
+import { parkAddressFor } from "./refScripts.js";
 
 function need(name: string): string {
   const v = process.env[name];
@@ -132,6 +134,32 @@ async function main() {
   console.log(`export PRICE_PARAM_ADDRESS=${priceAddr}`);
   console.log(`export PRICE_BEACON_UTXO=${beacon.txHash}#${beacon.outputIndex}`);
   console.log(`export ENGAGE_UTXO=${engage.txHash}#${engage.outputIndex}`);
+
+  // Ref-script `consume` ở bãi đỗ. Bãi đỗ suy từ ví NGƯỜI DEPLOY (`parkAddressFor`), không
+  // phải ví người chạy tệp này — nên người dùng khác ví deploy phải đặt REF_PARK_ADDRESS
+  // (in ở bước 09). Không thấy thì chỉ cảnh báo: hai biến trên vẫn đúng, và `consume_only`
+  // tự kiểm hash của REF_CONSUME_UTXO trước khi dựng tx.
+  const parkAddr = process.env.REF_PARK_ADDRESS
+    ?? parkAddressFor(NETWORK, await lucid.wallet().address());
+  let ref: UTxO | undefined;
+  try {
+    ref = (await lucid.utxosAt(parkAddr)).find(
+      (u) => u.scriptRef && validatorToScriptHash(u.scriptRef) === consumeHash,
+    );
+  } catch (e: any) {
+    // Không làm hỏng cả lượt: bốn biến phía trên đã in và vẫn đúng.
+    console.error(`⚠ không đọc được bãi đỗ ${parkAddr}: ${e?.message ?? e} — REF_CONSUME_UTXO KHÔNG được in.`);
+    return;
+  }
+  if (ref) {
+    console.error(`  consume ref      ${ref.txHash}#${ref.outputIndex}`);
+    console.log(`export REF_CONSUME_UTXO=${ref.txHash}#${ref.outputIndex}`);
+  } else {
+    console.error(
+      `⚠ không thấy ref-script consume ${consumeHash} tại bãi đỗ ${parkAddr}. ` +
+        `Chạy bằng ví khác ví deploy thì đặt REF_PARK_ADDRESS rồi chạy lại.`,
+    );
+  }
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

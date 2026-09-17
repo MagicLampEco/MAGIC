@@ -536,10 +536,19 @@ Ba con số đó khớp từng đơn vị với bài kiểm `ig_prop_seed_is_not
 
 **`28e916b0…` ở bảng trên là BackingBeacon NFT policy, KHÔNG phải một đời LAMP.** Cùng
 chuỗi hex ấy xuất hiện ở mục `## Preprod — 2026-08-12 · ĐỜI ĐÃ MỒ CÔI` trong vai một tài
-sản mang tên LAMP. Hai vai khác nhau dưới cùng một hex — chưa truy được vì sao trùng, và
-ghi ra đây chính vì chưa truy được: một chuỗi hex trùng mà hai chỗ tả hai thứ khác nhau
-là đúng hình dạng bẫy `PHA-2`, nên đừng đọc bảng này thành "beacon dựng từ đời LAMP cũ"
-mà cũng đừng đọc thành "hai thứ chắc chắn không liên quan".
+sản mang tên LAMP. Trùng là **theo cấu tạo**, không phải tình cờ: cả hai đều là policy
+chữ-ký-đơn `{ type: "sig", keyHash: <pkh ví triển khai> }` (`deploy/04_deploy_backing_fixture.ts`
+▸ `nftScript`), và ví triển khai Preprod có payment key hash
+`2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4`. Đo 2026-09-17:
+
+```
+mintingPolicyToId(scriptFromNative({ type: "sig", keyHash: "2e5e1418…318f4" }))
+→ 28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4
+```
+
+Hệ quả: **mọi tài sản đúc bằng policy chữ-ký-đơn của ví này đều mang cùng policy id**, dù tên
+tài sản là `BRQ` hay `tLAMP`. Policy id ở đây chỉ nói "ví này ký", không nói tài sản là gì.
+Đổi ví triển khai thì beacon mới mang policy khác, và vault cũ không nhận nó.
 
 **Bản `consume` phải deploy RIÊNG cho mỗi LOẠI vault.** `consume` bị apply-param bằng
 `vault_script_hash` (`BOUNDARIES.md §2`), nên bản deploy cho ScheduleGen
@@ -550,3 +559,47 @@ lượt tiêu chết ở chỗ trông như lỗi dựng giao dịch.
 **Chưa ghim được, đừng đọc mục này rộng hơn nó nói:** hạt giống cấp một lần mỗi **VAULT**,
 không phải mỗi **NGƯỜI**. Các validator ở đây không mang PersonDID, nên thứ chặn một người
 mở N vault là chi phí mở vault chứ không phải một bất biến on-chain.
+
+### 2026-09-17 — InstantGen cấp lại, lịch ScheduleGen thứ hai, và làm mới beacon bằng `PostPrice`
+
+Epoch giao thức 20713. Mọi tx ký bằng ví triển khai pkh `2e5e1418…318f4`.
+
+| việc | tx |
+|---|---|
+| 04 BackingBeacon, làm mới epoch 20713 | `ff0d28951cc9e38d0597a3f7381f8c400f2bbe988a49d7db32350332e24a1b82` |
+| tách UTxO thuần ADA làm collateral (2 × 10 ADA) | `4462b57e58dc3d3daa885b66a90361a38d7b0ff2534eb33466f1b8793ce94322` |
+| 05 vault InstantGen thứ hai (1001 tLAMP) | `acd7661d6559cf165ca31a1e4c82944f9a3cc724113a52249f565f43c2411a2c` |
+| **InstantGen cấp 4,004 MAGIC** | `c888e76640b5ac591747f99182c57ed6867d2931d048d97aebb8f9adadadc670` |
+| **tiêu 0,01 MAGIC** (consume `4fcc3e84…`) | `9e85fd59322f979e8770f7cbe66086623f509633404f6d912f1b048193309053` |
+| ScheduleCommit thứ hai (λ = 400 tLAMP, L = 10) | `d476cf7e5f1947cc5a7cf9e655fd293e9571cc578f21aee31bc4361691c435a4` |
+| `PostPrice` beacon của consume InstantGen, 20712 → 20713 | `553107ec6bb8bc28ea911225252dff006d2dc9531c5406048dc9342b56d15813` |
+| `PostPrice` beacon của consume ScheduleGen, 20712 → 20713 | `bf9fc979e10c122d649d1c69dc17f27124e75a872e740dc7267df848ec1f70cd` |
+
+| thứ | giá trị |
+|---|---|
+| Price NFT policy, consume InstantGen | `f9fef855237bd4bf6a5a5459ff18bb94628ad141b7a1afecd27fd9d7` |
+| PriceParam script hash, consume InstantGen | `181a3c366bbd26e2bccf7381013c0a7ff4ff8af71efb6e2b97d09179` |
+| PriceParam script hash, consume ScheduleGen | `2e983507a5fc3e6b8b490eb5c3c58ac73ddf4c9165c331e2eeb4d1a0` |
+
+**Số đo lượt cấp:** 4,004 MAGIC, bị chặn bởi `cap_pp` (`⌊1001 × 0,008⌋ / 2`). Lượt 16/09
+bị chặn bởi `cap_surplus` vì `magic_supply` của beacon khi đó nhỏ; beacon 17/09 đặt
+`magic_supply = 10¹⁵`, nên vế ràng buộc chuyển sang `cap_pp`. Cả hai đều là số của beacon
+DỰNG-TẠM, không phản ánh dự trữ thật.
+
+**Hai lịch ScheduleGen trên cùng một vault** (vault UTxO sau commit: `d476cf7e…#0`):
+
+| lịch | λ | L | fire đầu | MAGIC mỗi lượt |
+|---|---|---|---|---|
+| commit `4ed8b6c4…` (16/09) | 1 tLAMP | 10 | epoch 20714 | 0,008 |
+| commit `d476cf7e…` (17/09) | 400 tLAMP | 10 | epoch 20715 | 3,2 |
+
+**Làm mới price beacon: `PostPrice`, KHÔNG chạy lại bước 09.** Bước 09 đúc price NFT
+one-shot mới ⟹ đổi hash `price_param` ⟹ đổi hash `consume` ⟹ mọi thread Engage đang sống
+thành mồ côi. `PostPrice` tiêu beacon rồi tạo lại cùng địa chỉ, cùng value, chỉ đẩy `epoch`;
+validator đòi chữ ký committee, `epoch` tăng ngặt và không vượt epoch của cửa sổ hiệu lực
+(`ConsumeMAGIC/onchain/validators/price_param.ak` ▸ nhánh `PostPrice`).
+
+**Một tx thừa, vô hại:** `c17913faadeb63ea0affad3085abce6b9690f85baefcf2975402b0ff8e1b5249` là
+lượt chạy bước 04 bằng một ví KHÁC. Nó đúc một beacon dưới policy chữ-ký-đơn của ví đó
+(`e5a606ff…`), mà vault InstantGen không đọc — vault chỉ nhận beacon dưới
+`backing_nft_policy` đã apply-param. Beacon đó mồ côi; đừng dùng nó.

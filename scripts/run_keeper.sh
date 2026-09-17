@@ -38,6 +38,21 @@ fi
 export NETWORK="$NET" BLOCKFROST_KEY WALLET_SEED KEEPER_PRICE_BEACONS
 echo "▶ keeper · NETWORK=$NET · $(date -u +%FT%TZ) · secret đã nhận từ môi trường (không in)."
 
+# Khoá chống chạy chồng: hai lượt cùng lúc tranh cùng UTxO ví và cùng thấy "chưa làm".
+# `mkdir` là thao tác nguyên tử (macOS không có `flock`). Khoá cũ hơn 2 giờ coi là của một
+# lượt đã chết (máy tắt giữa chừng) và được gỡ, kèm một dòng báo.
+LOCK=".keeper.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +120 2>/dev/null)" ]; then
+    echo "⚠ khoá $LOCK cũ hơn 2 giờ — coi là lượt đã chết, gỡ và chạy tiếp."
+    rmdir "$LOCK" && mkdir "$LOCK" || { echo "✗ không lấy được khoá"; exit 1; }
+  else
+    echo "· có lượt keeper khác đang chạy (khoá $LOCK) — lượt này bỏ qua."
+    exit 0
+  fi
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
 npx tsx keeper/keeper.ts
 RC=$?
 case $RC in

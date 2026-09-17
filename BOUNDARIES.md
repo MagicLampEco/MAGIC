@@ -70,8 +70,8 @@ theo spec §6.1 / L4. Neo — **theo TÊN HÀM, không theo số dòng**:
 > không phải mã. Đó là kiểu hỏng im lặng: người tra thấy một dòng hợp lệ và tưởng đã kiểm.
 
 > Bản cũ của dòng này viết công thức là `M = L × R × UM × PM / Q³`. **Tên biến đó đã cũ**
-> — từ DESIGN-2, thưởng khoá theo `consumed` chứ không theo `L` (INV-MAGIC-CITIZEN: thưởng
-> gắn MAGIC ĐÃ TIÊU, không gắn MAGIC nắm giữ). Hình dạng ba-bước-sàn thì không đổi, và
+> — từ DESIGN-2, thưởng khoá theo `consumed` chứ không theo `L` (xem mục **INV-MAGIC-CITIZEN**
+> bên dưới). Hình dạng ba-bước-sàn thì không đổi, và
 > đó mới là phần bất biến.
 
 **`DESIGN-2` là gì, và vì sao nó không còn tên `PHA-2`** (đổi 2026-09-12). `DESIGN-2` là
@@ -155,16 +155,93 @@ bị — đều KHÔNG thoả, và đã loại.
 - `grep -rn "taad|anchor_nft|person_did" InstantGen/onchain --include="*.ak"` → **0 dòng**.
 
 Hai vế đang được ép ở repo danh tính: `PhoenixKeyDID/Validator` ▸ `validators/taad.ak` ▸
-`genesis_uniqueness_ok` cho vế *một người = một DID*, và ▸ `validators/wakeme_vault.ak` ▸
-`anchor_nft_name` (apply-param `= blake2b_256(did)`) cho vế *một DID = một vault*. Vault của
-InstantGen là một script KHÁC, nên chuỗi đó chỉ khép lại khi genesis của nó trỏ tới NFT anchor
-của đúng DID ấy.
+`genesis_uniqueness_ok` cho vế *một người = một DID*. Vế *một DID = một két* của két Wakeme bên
+đó được ép bằng hai chỗ: `validators/wakeme_vault.ak` ▸ `anchor_nft_name` (apply-param
+`= blake2b_256(did)`) buộc két vào DID, và `lib/phoenixkey/wakeme_logic.ak` ▸
+`genesis_anchor_flip_ok` CHI anchor rồi lật cờ `wakeme_vault_policy` từ `None` sang `Some` (khoá
+vĩnh viễn). Vault của InstantGen là một script KHÁC, nên không cơ chế nào ở trên phủ nó.
 
-Thứ còn thiếu vì thế là **MỘT tham chiếu ở cổng genesis**, KHÔNG phải một trường danh tính trong
-datum: thêm trường là đổi số trường của datum ⟹ đổi lược đồ ⟹ buộc di trú mọi UTxO đang sống
-(xem "Thêm trường ở cuối" bên dưới).
+Một tham chiếu tới NFT anchor ở cổng genesis là **CẦN nhưng chưa ĐỦ**. Reference input được
+**đọc**, không bị **tiêu**, nên nó buộc vault vào một DID có thật mà không chặn được N vault cùng
+một DID. One-shot của `INV-VAULT-IDENTITY` cũng không cứu, vì `asset_name = blake2b_256(seed)`
+khoá theo UTxO, mà một người giữ được nhiều UTxO. Cây danh tính mang đúng một bit mỗi DID (có /
+không). Datum anchor có một ô cờ, nhưng ô đó thuộc riêng két Wakeme; thêm ô cho vault của repo
+này là đổi lược đồ datum anchor bên kia, cùng loại chi phí với lối bị loại ngay dưới.
+
+**Hướng đã chốt (2026-09-17): repo này giữ một accumulator RIÊNG, khoá theo DID.** Mở vault = một
+lượt chuyển trạng thái của accumulator (DID từ *chưa có vault* sang *đã có vault*) trong cùng giao
+dịch genesis, cộng bằng chứng thành viên DID ở cây danh tính. Lối bị loại là nới cấu trúc lá của
+cây danh tính: nó đổi encoding lá ⟹ đổi `root` ⟹ đổi hash validator bên đó, và đặt một bất biến
+của repo này vào cấu trúc mà repo khác có quyền đổi.
+
+Bước chuyển là **MỘT CHIỀU**: đóng vault KHÔNG đưa DID về *chưa có vault*. Nếu đưa về được, người
+dùng đóng rồi mở lại là nhận lại hạt giống.
+
+**CHƯA CHỐT — giá trị của lá accumulator.** Một bit (*đã có vault*) là đủ cho tính duy nhất, nhưng
+sau genesis thì không tra ngược được vault nào thuộc DID nào (DID không nằm trong datum,
+`asset_name` suy từ `seed`). Ràng buộc tạm: không luồng nào trong repo này được giả định tra ngược
+được từ vault ra DID.
+
+**CHƯA CHỐT — hình dạng bằng chứng.** Đo 2026-09-17 bằng `aiken check` v1.1.21 trên thư viện SMT
+của repo danh tính: ở chiều sâu 256, `verify` tốn 4.459.801 mem, `register_transition_ok` tốn
+8.921.112 mem; và hai danh sách 256 sibling dạng Plutus Data dài khoảng 17.412 byte, **vượt trần
+kích thước giao dịch 16.384 byte** (tính bằng bộ sinh, chưa dựng giao dịch thật). Nên hình dạng
+"hai bằng chứng SMT đầy đủ trong giao dịch genesis" không dựng được. Ràng buộc tạm: chưa viết mã cổng
+genesis nào cho tới khi hình dạng được chốt.
+
+Không vế nào ở trên là một trường danh tính trong `VaultDatum` của repo này: thêm trường là đổi số trường của datum ⟹
+đổi lược đồ ⟹ buộc di trú mọi UTxO đang sống (xem "Thêm trường ở cuối" bên dưới).
+
+Hệ quả vận hành phải biết TRƯỚC khi dựng:
+- **Trần song song của việc mở vault = số shard của accumulator**, không phải số block: đổi
+  `root` là tiêu một UTxO rồi tạo lại. Số shard vì thế là tham số công suất, và đổi nó sau khi
+  dựng là dựng lại cụm.
+- **Cụm accumulator là điều kiện tiên quyết của mọi vault.** Một lượt dựng lại bỏ sót nó thì cổng
+  genesis đòi chi một UTxO shard của accumulator không tồn tại ⟹ không vault nào mở được.
 
 Ràng buộc TẠM đang có hiệu lực cho tới khi vá, fail-closed: **chỉ chạy testnet**.
+
+**INV-MAGIC-CITIZEN — độ lớn thưởng do MAGIC ĐÃ TIÊU quyết; LAMP chỉ làm cổng, trần hoặc hệ số
+nhân; không gắn MAGIC đang cầm.** Nguồn: `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` bảng bất biến.
+Chủ dự án chốt giữ lại 2026-09-17. "Đã tiêu" nghĩa là bị trừ khỏi `magic_batches` qua nhánh
+`BurnBatch`; MAGIC **hết hạn KHÔNG tính**.
+
+Phạm vi: **vế thưởng của InstantGen (SPEC §6.3) và mọi hệ số, ưu đãi cộng lên đó** trong repo
+này. KHÔNG áp cho lượng SINH của ScheduleGen: ở đó MAGIC sinh tỉ lệ LAMP cam kết là cơ chế gốc
+(`ScheduleGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_m_i`), không phải thưởng. Quyền
+biểu quyết theo `LAMP/Governance/VotingPower/CONTRACT.md`.
+
+**LAMP được phép vào công thức thưởng, nhưng chỉ ở ba vai** (SPEC §6.2–§6.3, `g(0) = 0`): **cổng** (ngưỡng,
+ví dụ `min_instant_holding`), **trần** (một vế trong `min`, ví dụ `compute_cap_pp`), hoặc **hệ số
+nhân** lên hàm của lượng đã tiêu. LAMP làm hạng tử cộng, hoặc làm ra một con số dương khi lượng đã
+tiêu bằng 0, là vi phạm.
+
+Chỗ cưỡng chế, theo TÊN HÀM:
+- `InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_reward_from_consumed` — vế thưởng,
+  nhận `consumed`, `um_q` (UM) và `pm_q` (enum hồ sơ), không nhận tham số LAMP. Lượng cấp thật là
+  `compute_instant_grant = min(vế thưởng, cap_surplus, compute_cap_pp(L_avail))`: LAMP chỉ vào ở vế
+  TRẦN, nên nó hạ được lượng cấp chứ không nâng lượng cấp vượt vế thưởng.
+- Ở vault InstantGen và ScheduleGen (`onchain/validators/vault.ak` của mỗi module),
+  `consumed_credit` chỉ tăng ở `validate_burn_batch`; `validate_prune_expired` không cộng gì vào
+  nó. Chỉ vault InstantGen đổi `consumed_credit` thành thưởng.
+
+**Lệch spec đang mở:** SPEC §6.3 đếm MAGIC tiêu từ **mọi** nguồn, gồm cả PrepaidGen. Nhưng
+`PrepaidGen` ▸ `validate_burn_batch` không ghi vào `consumed_credit` nào (`grep consumed_credit`
+trong `prepaid.ak` → 0 dòng), nên MAGIC tiêu từ PrepaidGen hiện không sinh thưởng. Ràng buộc tạm:
+MAGIC tiêu từ PrepaidGen không sinh thưởng (fail-closed — thiếu thưởng, không thừa). Định nghĩa
+"đã tiêu" cùng dạng có ở PrepaidGen nhưng cho kế toán trả nhà cung cấp, không cho thưởng:
+`PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_fund_settle` (C-PP-7) chỉ cộng MAGIC tiêu
+thật vào `magic_settled`.
+
+**Ngoại lệ DUY NHẤT trong phạm vi `consumed_credit`, và nó có biên:** genesis của InstantGen ghim
+`consumed_credit == wakeme_seed_credit` (hạt giống Wakeme), tức ghi nhận một lượng *chưa* tiêu
+thật. Ngoại lệ này chỉ an toàn khi được cấp **một lần mỗi người**, nên nó phụ thuộc trực tiếp vào
+`INV-ONE-PERSON-ONE-VAULT` ở trên. Chừng nào vế đó chưa được ép, hạt giống là chỗ hở của bất biến
+này.
+
+Phép thử một dòng trước khi thêm bất kỳ phần thưởng hay ưu đãi nào: *"người tiêu 0 MAGIC thì con
+số này có bằng 0 không, và LAMP có vào công thức ở vai nào NGOÀI ba vai trên không?"* Không bằng 0,
+hoặc có vai thứ tư ⟹ vi phạm.
 
 **Apply-param được phép thay đổi theo LOẠI script, KHÔNG theo từng thực thể.** Đây là
 kết luận của D12, chốt 2026-08-28 sau khi hai kiến trúc `INV-VAULT-IDENTITY` không tương

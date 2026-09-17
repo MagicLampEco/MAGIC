@@ -29,6 +29,21 @@ import { instantVaultParams } from "../deployParams.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
 
+// ── CHÉP CÓ NHÃN (Forall §Một nguồn, mức 3) ────────────────────────────────
+// Nguồn: `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸
+// `wakeme_seed_credit`, và bản gương TypeScript ở
+// `InstantGen/offchain/src/constants.ts` ▸ `WAKEME_SEED_CREDIT`. Chép 2026-09-16.
+//
+// Vì sao chép chứ không trỏ: `scripts/` là gói npm riêng và KHÔNG phụ thuộc
+// `InstantGen/offchain` (xem `scripts/package.json` ▸ dependencies) — không có
+// module nào để trỏ tới.
+//
+// Bản sao này KHÔNG chết im lặng, và đó là lý do chép được: cổng genesis là một
+// dấu BẰNG trên chuỗi (`InstantGen/onchain/validators/vault.ak` ▸ nhánh mint).
+// Lệch một nanogic thì giao dịch bị validator từ chối ngay, trước khi có gì lên
+// chuỗi. Người báo cho bản sao này biết nguồn đã đổi chính là validator.
+const WAKEME_SEED_CREDIT = 1_001_000_000_000n;   // 1001 MAGIC in nanogic
+
 // VaultDatum schema (same across all 4 modules — matches Aiken).
 const VaultDatumSchema = Data.Object({
   owner:                 Data.Bytes(),
@@ -239,7 +254,10 @@ async function main() {
       current: [], pending: null,
       current_effective_epoch: 0n, last_changed_epoch: 0n,
     },
-    activity_state:        { recent_burn_epochs: [], consumed_credit: 0n },
+    // PIN: `expect vd.activity_state == ActivityState { [], wakeme_seed_credit }`.
+    // KHÔNG phải 0 — đó là giá trị cổng cũ ép, và nó khoá vault lại ở Nợ #19.
+    // Cổng là dấu BẰNG nên mọi giá trị khác, kể cả 0, bị từ chối trên chuỗi.
+    activity_state:        { recent_burn_epochs: [], consumed_credit: WAKEME_SEED_CREDIT },
     streak_state:          { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate:     null,
     attribution:           {

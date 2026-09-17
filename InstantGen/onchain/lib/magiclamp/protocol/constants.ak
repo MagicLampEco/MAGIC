@@ -32,6 +32,46 @@ pub const instant_decay_window : Int = magic_decay_window
 // The LAMP is never moved (I-ACT-7); it only gates the door.
 pub const min_instant_holding : Int = 10_000_000   // 10 LAMP in oildrop
 
+// ── Wakeme seed credit (§6.3 — the WAY IN to the InstantGen loop) ─
+// [Constitutional] the `consumed_credit` a vault carries at GENESIS.
+//
+// Why this is not 0, and why it is not a faucet.
+//
+// Pinning genesis to 0 was not an initial value, it was a SHUT DOOR. Read the
+// call graph: InstantGen takes `consumed` from `consumed_credit` and then
+// requires `grant > 0`; `consumed_credit` only ever rises inside `BurnBatch`;
+// `BurnBatch` requires a non-empty `magic_batches`; and `magic_batches` is only
+// ever appended to by the InstantGen branch itself. A vault opened at genesis
+// cannot complete one lap — that is Nợ #19, and it is why InstantGen has never
+// paid out a single nanogic on any network.
+//
+// The seed opens exactly that door and lifts no ceiling. The amount actually
+// granted is still `min(reward, cap_surplus, cap_pp)`, so the seed only decides
+// the payout if it is the SMALLEST of the three — and at Wakeme size it is by
+// far the largest. Measured on the fixture beacon (UM 1.0, br 2.0, supply 1000
+// MAGIC, 1000 LAMP in the vault): reward 210_210_000_000 · cap_surplus
+// 333_333_333 · cap_pp 4_000_000_000 ⟹ grant 333_333_333, decided by
+// `cap_surplus`, three orders of magnitude below the seed's own reward.
+//
+// So the seed UNLOCKS, it does not PAY. Which of the two economic brakes binds
+// is not fixed and must not be asserted here — `cap_surplus` moves with the
+// beacon and `f_cap_surplus_q` is itself a temporary fence (Nợ #49). The claim
+// that is pinned, and the only one that matters for safety, is that the seed is
+// never the binding one: `ig_prop_seed_is_not_the_binding_brake`.
+//
+// It is also usable exactly ONCE per vault: the InstantGen branch writes
+// `consumed_credit: 0` into the output datum, so after the first grant the vault
+// is back at 0 and only genuinely consumed MAGIC can refill it.
+//
+// The genesis gate stays an equality against this compile-time constant, so a
+// vault creator still cannot choose their own credit. That equality — not the
+// value 0 — is what closed the fabrication described at `poc_dirty_mint_rejected`.
+//
+// 1001 is the number of LAMP the system lends at Wakeme
+// (`scripts/run_wakeme_e2e.sh`), so the constant carries a meaning instead of
+// being decoration.
+pub const wakeme_seed_credit : Int = 1_001_000_000_000   // 1001 MAGIC in nanogic
+
 // ── InstantGen — magnitude (§6.3 keyed-consumed) ─────────────
 // [Significant] reward rate applied to MAGIC ALREADY CONSUMED.
 // INV-CASHBACK-BOUND requires reward ≤ consumed for every DID, so the whole

@@ -25,6 +25,20 @@ export const INSTANT_DECAY_WINDOW = MAGIC_DECAY_WINDOW;   // alias
 // [Routine] LAMP that must SIT in the vault to open the door. Never moves.
 export const MIN_INSTANT_HOLDING = 10_000_000n;      // 10 LAMP in oildrop
 
+// ── Wakeme seed credit (§6.3 — the WAY IN to the InstantGen loop) ─
+// [Constitutional] MUST equal `wakeme_seed_credit` in
+// `InstantGen/onchain/lib/magiclamp/protocol/constants.ak`, where the full
+// reasoning lives. Short version: genesis pinned `consumed_credit` to 0, and
+// because the only writer of that field sits behind `BurnBatch` — which needs a
+// batch only InstantGen can create — a vault opened at genesis could never
+// complete one lap (Nợ #19). The seed opens that door without lifting any
+// ceiling: the payout is still `min(reward, cap_surplus, cap_pp)` and the seed
+// is never the smallest of the three at Wakeme size.
+//
+// A builder that writes anything else here — 0 included — has its genesis tx
+// rejected on chain, by design.
+export const WAKEME_SEED_CREDIT = 1_001_000_000_000n;   // 1001 MAGIC in nanogic
+
 // ── InstantGen — magnitude (§6.3 keyed-consumed) ─────────────
 // [Significant] rate applied to MAGIC ALREADY CONSUMED.
 // INV-CASHBACK-BOUND: rate × UM_MAX × PM_MAX = 0.20 × 2.00 × 1.15 = 0.46 < 1

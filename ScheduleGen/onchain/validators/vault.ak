@@ -3165,6 +3165,108 @@ test poc_dirty_mint_lamp_overclaim_rejected() fail {
 }
 
 // ── mint: genesis seed not spent → one-shot broken → rejected ──────────────
+// ── Cổng `policies <= 3`: bốn bài dưới đây là bài canh ĐẦU TIÊN của nó ─────
+// Cả hai cổng — `validate_mint_vault_id` (nhánh genesis) và
+// `validate_vault_value` (mọi nhánh chi) — có trong mã từ trước. Cái thiếu là
+// bài canh. Đo 2026-09-16, gỡ HẲN từng dòng rồi chạy trọn bộ:
+//   gỡ cổng ở nhánh mint  → 103/103 xanh
+//   gỡ cổng ở nhánh chi   → 103/103 xanh
+// Nên tới hôm nay câu "vault này ép hình dạng tài sản" không neo được vào phép
+// đo nào ở nhà ScheduleGen. (InstantGen ghim được nửa nhánh chi qua
+// `val_neg_pe_dust_stuffed`; nhà này không có bài nào cho nửa nào.)
+//
+// Vì sao mất cổng mint lại đắt hơn vẻ ngoài: output genesis mang tài sản thứ
+// tư khoá vào ÊM, rồi `validate_vault_value` từ chối mọi lượt chi sau đó. LAMP
+// chỉ ra được qua chính nhánh bị từ chối ấy ⟹ vault hợp lệ thành vault chết
+// vĩnh viễn. Cổng an toàn ở cửa RA là thứ giết vault, nên ép một nửa tệ hơn
+// không ép — và bản vá chỉ cứu được vault mở từ nay, không ép ngược được
+// vault đã tạo.
+//
+// Fixture cố ý mang ĐỦ ba policy hợp lệ (ADA · LAMP · NFT danh-tính) rồi mới
+// thêm cái thứ tư. `t_genesis_output`/`t_vault_output` không kèm lovelace nên
+// chúng chỉ có HAI policy: một bài âm tính dựng trên chúng vẫn xanh cả khi cổng
+// bị gỡ — tức không phân biệt được hai cực, tức không kiểm gì. Bài dương ở đây
+// đứng ĐÚNG trần, nên bài âm là bước thứ TƯ, chỗ duy nhất dấu `<= 3` nói lên
+// điều gì. Tài sản thứ tư dùng `t_shard_policy` chứ không phải dust bất kỳ:
+// đó là policy DUY NHẤT mà một máy dựng giao dịch của chính hệ này có thể vô ý
+// nhét vào (chú thích ở `validate_vault_value` khai vault KHÔNG BAO GIỜ mang
+// shard NFT).
+fn t_value_3_or_4(balance: Int, name: ByteArray, policy: PolicyId, fourth: Bool) -> Value {
+  let base =
+    assets.from_lovelace(2_000_000)
+      |> assets.add(t_lamp_policy, t_lamp_name, balance)
+      |> assets.add(policy, name, 1)
+  if fourth {
+    assets.add(base, t_shard_policy, #"73686172640000", 1)
+  } else {
+    base
+  }
+}
+
+test mint_genesis_three_policies_ok() {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out =
+    Output {
+      address: address.from_script(t_vault_hash),
+      value: t_value_3_or_4(bal, name, t_vault_hash, False),
+      datum: InlineDatum(t_clean_genesis(bal)),
+      reference_script: None,
+    }
+  let m  = assets.from_asset(t_vault_hash, name, 1)
+  let tx = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+test mint_genesis_fourth_asset_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let out =
+    Output {
+      address: address.from_script(t_vault_hash),
+      value: t_value_3_or_4(bal, name, t_vault_hash, True),
+      datum: InlineDatum(t_clean_genesis(bal)),
+      reference_script: None,
+    }
+  let m  = assets.from_asset(t_vault_hash, name, 1)
+  let tx = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+fn t_spend_pair(fourth: Bool) -> (Input, Output) {
+  let d = t_clean_genesis(100)
+  let inp =
+    Input {
+      output_reference: t_own_ref(),
+      output: Output {
+        address: t_vault_addr(),
+        value: t_value_3_or_4(100, t_vault_id_name, t_vault_hash, False),
+        datum: InlineDatum(d),
+        reference_script: None,
+      },
+    }
+  let out =
+    Output {
+      address: t_vault_addr(),
+      value: t_value_3_or_4(100, t_vault_id_name, t_vault_hash, fourth),
+      datum: InlineDatum(d),
+      reference_script: None,
+    }
+  (inp, out)
+}
+
+test spend_three_policies_ok() {
+  let (inp, out) = t_spend_pair(False)
+  validate_vault_value(inp, out)
+}
+
+test spend_fourth_asset_rejected() fail {
+  let (inp, out) = t_spend_pair(True)
+  validate_vault_value(inp, out)
+}
+
 test mint_no_genesis_seed_rejected() fail {
   let seed = t_mint_seed()
   let name = t_mint_name(seed)

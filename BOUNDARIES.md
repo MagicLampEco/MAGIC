@@ -182,6 +182,13 @@ sau genesis thì không tra ngược được vault nào thuộc DID nào (DID k
 `asset_name` suy từ `seed`). Ràng buộc tạm: không luồng nào trong repo này được giả định tra ngược
 được từ vault ra DID.
 
+**CHƯA CHỐT — hình dạng bằng chứng.** Đo 2026-09-17 bằng `aiken check` v1.1.21 trên thư viện SMT
+của repo danh tính: ở chiều sâu 256, `verify` tốn 4.459.801 mem, `register_transition_ok` tốn
+8.921.112 mem; và hai danh sách 256 sibling dạng Plutus Data dài khoảng 17.412 byte, **vượt trần
+kích thước giao dịch 16.384 byte** (tính bằng bộ sinh, chưa dựng giao dịch thật). Nên hình dạng
+"hai bằng chứng SMT đầy đủ trong giao dịch genesis" không dựng được. Ràng buộc tạm: chưa viết mã cổng
+genesis nào cho tới khi hình dạng được chốt.
+
 Không vế nào ở trên là một trường danh tính trong `VaultDatum` của repo này: thêm trường là đổi số trường của datum ⟹
 đổi lược đồ ⟹ buộc di trú mọi UTxO đang sống (xem "Thêm trường ở cuối" bên dưới).
 

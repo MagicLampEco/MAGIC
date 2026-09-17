@@ -160,11 +160,50 @@ Hai vế đang được ép ở repo danh tính: `PhoenixKeyDID/Validator` ▸ `
 InstantGen là một script KHÁC, nên chuỗi đó chỉ khép lại khi genesis của nó trỏ tới NFT anchor
 của đúng DID ấy.
 
-Thứ còn thiếu vì thế là **MỘT tham chiếu ở cổng genesis**, KHÔNG phải một trường danh tính trong
-datum: thêm trường là đổi số trường của datum ⟹ đổi lược đồ ⟹ buộc di trú mọi UTxO đang sống
-(xem "Thêm trường ở cuối" bên dưới).
+Một tham chiếu tới NFT anchor ở cổng genesis là **CẦN nhưng chưa ĐỦ**. Reference input được
+**đọc**, không bị **tiêu**, nên nó buộc vault vào một DID có thật mà không chặn được N vault cùng
+một DID. One-shot của `INV-VAULT-IDENTITY` cũng không cứu, vì `asset_name = blake2b_256(seed)`
+khoá theo UTxO, mà một người giữ được nhiều UTxO. Cây danh tính ở repo danh tính mang đúng một bit
+mỗi DID (có / không), nên cũng không có ô nào ghi "DID này đã mở vault".
+
+**Hướng đã chốt (2026-09-17): repo này giữ một accumulator RIÊNG, khoá theo DID.** Mở vault = một
+lượt chuyển trạng thái của accumulator (DID từ *chưa có vault* sang *đã có vault*) trong cùng giao
+dịch genesis, cộng bằng chứng thành viên DID ở cây danh tính. Lối bị loại là nới cấu trúc lá của
+cây danh tính: nó đổi encoding lá ⟹ đổi `root` ⟹ đổi hash validator bên đó, và đặt một bất biến
+của repo này vào cấu trúc mà repo khác có quyền đổi.
+
+Không vế nào ở trên là một trường danh tính trong datum: thêm trường là đổi số trường của datum ⟹
+đổi lược đồ ⟹ buộc di trú mọi UTxO đang sống (xem "Thêm trường ở cuối" bên dưới).
+
+Hệ quả vận hành phải biết TRƯỚC khi dựng:
+- **Trần song song của việc mở vault = số shard của accumulator**, không phải số block: đổi
+  `root` là tiêu một UTxO rồi tạo lại. Số shard vì thế là tham số công suất, và đổi nó sau khi
+  dựng là dựng lại cụm.
+- **Cụm accumulator là điều kiện tiên quyết của mọi vault.** Một lượt dựng lại bỏ sót nó thì cổng
+  genesis đòi chi một thread không tồn tại ⟹ không vault nào mở được.
 
 Ràng buộc TẠM đang có hiệu lực cho tới khi vá, fail-closed: **chỉ chạy testnet**.
+
+**INV-MAGIC-CITIZEN — thưởng gắn MAGIC ĐÃ TIÊU, không gắn LAMP nắm giữ hay MAGIC đang cầm.**
+Nguồn: `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` bảng bất biến. Chủ dự án chốt giữ lại
+2026-09-17. "Đã tiêu" nghĩa là bị đốt thật qua `BurnBatch`; MAGIC **hết hạn KHÔNG tính**.
+
+Chỗ cưỡng chế, theo TÊN HÀM:
+- `InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_reward_from_consumed` — đầu vào
+  duy nhất của độ lớn thưởng là `consumed`, không có tham số LAMP.
+- `consumed_credit` chỉ tăng ở `validate_burn_batch` (cả `InstantGen/` lẫn `ScheduleGen/`
+  `onchain/validators/vault.ak`); `validate_prune_expired` không cộng gì vào nó.
+- `PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_fund_settle` (C-PP-7) — chỉ phần MAGIC tiêu
+  thật mới vào `magic_settled`.
+
+**Ngoại lệ DUY NHẤT, và nó có biên:** genesis của InstantGen ghim
+`consumed_credit == wakeme_seed_credit` (hạt giống Wakeme), tức ghi nhận một lượng *chưa* tiêu
+thật. Ngoại lệ này chỉ an toàn khi được cấp **một lần mỗi người**, nên nó phụ thuộc trực tiếp vào
+`INV-ONE-PERSON-ONE-VAULT` ở trên. Chừng nào vế đó chưa được ép, hạt giống là chỗ hở của bất biến
+này.
+
+Phép thử một dòng trước khi thêm bất kỳ phần thưởng, ưu đãi hay trọng số nào: *"con số này có đổi
+khi người dùng giữ thêm LAMP mà không tiêu thêm MAGIC không?"* Có ⟹ vi phạm.
 
 **Apply-param được phép thay đổi theo LOẠI script, KHÔNG theo từng thực thể.** Đây là
 kết luận của D12, chốt 2026-08-28 sau khi hai kiến trúc `INV-VAULT-IDENTITY` không tương

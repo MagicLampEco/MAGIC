@@ -511,6 +511,13 @@ async function main() {
 
   const tx = await txBuild.complete({ presetWalletInputs: [collateral] });
 
+  // DRY_RUN=1: `complete()` đã chạy thử validator cục bộ — dừng trước khi ký, cùng quy ước
+  // với test/mint_engage_only.ts.
+  if (process.env.DRY_RUN === "1") {
+    console.log("✔ DRY RUN: tx dựng xong và qua validator khi chạy thử. Không ký, không gửi.");
+    return;
+  }
+
   const signed = await tx.sign.withWallet().complete();
   const txHash = await signed.submit();
 

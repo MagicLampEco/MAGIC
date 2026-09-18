@@ -35,6 +35,12 @@ scripts/state.*.sh.*
 # người ta tạo ra những tệp có hậu tố ấy. Đo thật: `deployed.Preprod.env.bak-doi-cu` hiện
 # lên untracked ngay lần dời đầu tiên.
 scripts/*.bak-*
+# Sổ ngoài chuỗi cách ly theo đời (`deployed.Preprod.env.doi-lamp-<hash>-<ngày>`): cùng lý do
+# với `state.*.sh.*` ở trên — mang hash của một đời đã chết.
+scripts/deployed.*.env.*
+# Sổ và khoá của keeper (scripts/keeper/keeper.ts, scripts/run_keeper.sh) — trạng thái cục bộ.
+scripts/keeper-state.*.json
+scripts/.keeper.lock/
 __pycache__/
 
 # Cache của vitest/vite (sinh khi chạy bộ kiểm) — artifact, không commit

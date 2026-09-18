@@ -33,6 +33,7 @@
 // chưa đọc lại được kết quả (đừng chạy lại mù, soi explorer trước).
 
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   Lucid, Blockfrost, Data, Constr,
   credentialToAddress, scriptHashToCredential, validatorToScriptHash,
@@ -84,10 +85,33 @@ async function tipMs(): Promise<bigint> {
   return BigInt(tip.time) * 1000n;
 }
 
+// `awaitTx` của provider Blockfrost trong Lucid không có trần thời gian: tx bị rớt khỏi
+// mempool thì nó chờ mãi và mọi bước sau không chạy. Nên chờ có trần; hết trần thì trả
+// false để bước đó ghi "chưa đo được" (mã thoát 2), không ghi "xong" cũng không ghi "hỏng".
+const AWAIT_TX_MS = Number(process.env.KEEPER_AWAIT_TX_MS ?? 300_000);
+async function awaitTxBounded(lucid: LucidEvolution, txHash: string): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<boolean>((r) => { timer = setTimeout(() => r(false), AWAIT_TX_MS); });
+  try {
+    return await Promise.race([lucid.awaitTx(txHash).then(() => true), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Vòng hỏi của `awaitTx` chạy trong `setInterval` không có `catch`: Blockfrost trả 5xx dạng
+// HTML là lời hứa bị từ chối không ai bắt, và Node mặc định giết tiến trình mà không in dòng
+// ✗ nào — trong khi tx có thể đã gửi. Bắt ở đây, in ra, để trần thời gian ở trên xử lý tiếp.
+process.on("unhandledRejection", (e) => {
+  console.error(`⚠ lỗi nền không ai bắt (thường là vòng hỏi awaitTx): ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+});
+
 // Chạy một kịch bản sẵn có, trả stdout để đọc tx hash. Kế thừa môi trường của tiến trình này.
+// Có trần thời gian: tiến trình con treo (awaitTx bên trong nó) thì bị giết, không kéo cả lượt.
 function runScript(file: string, extraEnv: Record<string, string>): { code: number; out: string } {
   const r = spawnSync("npx", ["tsx", file], {
     env: { ...process.env, ...extraEnv }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+    timeout: Number(process.env.KEEPER_CHILD_TIMEOUT_MS ?? 900_000),
   });
   const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   process.stdout.write(out.split("\n").map((l) => `    │ ${l}`).join("\n") + "\n");
@@ -190,7 +214,10 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
         .complete();
       const signed = await tx.sign.withWallet().complete();
       const txHash = await signed.submit();
-      await lucid.awaitTx(txHash);
+      if (!(await awaitTxBounded(lucid, txHash))) {
+        record(tag, "unverified", `tx ${txHash} đã gửi, chưa thấy vào khối sau ${AWAIT_TX_MS / 1000}s — soi explorer trước khi chạy lại`);
+        continue;
+      }
       record(tag, "done", `epoch ${pp.epoch} → ${epoch} · tx ${txHash} · beacon mới ${txHash}#0`);
     } catch (e) {
       record(tag, "fail", String((e as Error)?.message ?? e).slice(0, 400));
@@ -259,11 +286,19 @@ async function stepFire(lucid: LucidEvolution, nowMs: bigint) {
   // In phạm vi đã quét: "không lịch nào tới hạn" trên 0 vault đọc được là KHÔNG ĐO ĐƯỢC,
   // không phải "không có việc" — thường là hash vault lệch hoặc schema datum đổi.
   const scope = `${atAddr.length} UTxO · ${vaults} vault đọc được · ${unreadable} bỏ qua (không NFT/không decode) · ${schedules} lịch còn ô`;
+  if (vaults === 0 && owners.length > 0) return record("fire", "skip", `không vault nào của KEEPER_FIRE_OWNERS (${scope})`);
   if (vaults === 0) return record("fire", "fail", `không đọc được vault nào ở ${vaultAddr} (${scope})`);
   if (due.length === 0) {
     return record("fire", "skip", `không lịch nào tới hạn ở epoch ${epoch}; sớm nhất ${nextDue ?? "—"} (${scope})`);
   }
 
+  // Trần số việc mỗi lượt: fire là permissionless nên bất kỳ ai cũng dựng được nhiều vault
+  // hợp lệ để keeper trả phí. Phần vượt trần để lượt sau.
+  const maxJobs = Number(process.env.KEEPER_MAX_FIRE_JOBS ?? 10);
+  if (due.length > maxJobs) {
+    record("fire", "skip", `${due.length} lịch tới hạn, lượt này bắn ${maxJobs} (KEEPER_MAX_FIRE_JOBS), phần còn lại để lượt sau`);
+    due.length = maxJobs;
+  }
   for (const job of due) {
     const tag = `fire ${job.scheduleId.slice(0, 8)}…`;
     if (DRY) { record(tag, "skip", `DRY: sẽ bắn ${job.fires} lượt`); continue; }
@@ -280,7 +315,10 @@ async function stepFire(lucid: LucidEvolution, nowMs: bigint) {
       });
       const signed = await result.tx.sign.withWallet().complete();
       const txHash = await signed.submit();
-      await lucid.awaitTx(txHash);
+      if (!(await awaitTxBounded(lucid, txHash))) {
+        record(tag, "unverified", `tx ${txHash} đã gửi, chưa thấy vào khối sau ${AWAIT_TX_MS / 1000}s — soi explorer trước khi chạy lại`);
+        continue;
+      }
       // Đo bằng batch MỚI SINH, không bằng tổng: fire dọn batch chết trong cùng tx
       // (xem scripts/test/schedule_fire_only.ts, khối "ĐO BẰNG BATCH MỚI").
       let measured = false;
@@ -301,39 +339,69 @@ async function stepFire(lucid: LucidEvolution, nowMs: bigint) {
       }
       if (!measured) record(tag, "unverified", `tx ${txHash} đã vào khối, chưa đọc lại được vault — soi explorer trước khi chạy lại`);
     } catch (e) {
-      record(tag, "fail", String((e as Error)?.message ?? e).slice(0, 400));
+      const msg = String((e as Error)?.message ?? e);
+      // Lượt khác (hoặc chính chủ vault) vừa bắn trước ⟹ không còn việc, không phải hỏng.
+      if (msg.includes("No eligible fires")) record(tag, "skip", msg.slice(0, 200));
+      else record(tag, "fail", msg.slice(0, 400));
     }
   }
 }
 
 // ── 4. InstantGen hằng ngày (tuỳ chọn) ────────────────────────────────────────
+// Sổ nhỏ ngoài chuỗi, chỉ giữ epoch đã THỬ cấp. Vì sao không dò trên chuỗi: dấu "có batch
+// sinh hôm nay" bị chính việc dùng bình thường xoá — `apply_burns` bỏ batch về 0 — nên
+// tiêu hết MAGIC là lượt sau mở thêm vault và khoá thêm LAMP. Ghi TRƯỚC khi gọi bước 05:
+// một lượt hỏng giữa chừng thì hôm đó không thử lại (thiếu một lượt cấp, không thừa vault).
+const STATE_FILE = process.env.KEEPER_STATE_FILE ?? `keeper-state.${NETWORK}.json`;
+function readState(): { instantAttemptEpoch?: string } {
+  if (!existsSync(STATE_FILE)) return {};
+  return JSON.parse(readFileSync(STATE_FILE, "utf8"));   // hỏng định dạng ⟹ ném, bước ghi fail
+}
+
 async function stepInstant(lucid: LucidEvolution, ownerPkh: string, epoch: bigint) {
   const addr = process.env.VAULT_INSTANT_ADDR;
-  if (!addr) return record("instant", "fail", "thiếu VAULT_INSTANT_ADDR");
-  // Đã có batch sinh trong epoch này ở một vault của ví ⟹ hôm nay đã cấp, không khoá thêm LAMP.
-  const grantedToday = (await lucid.utxosAt(addr)).some((u) => {
-    if (!u.datum) return false;
-    try {
-      const vd = Data.from(u.datum, InstantVaultDatumSchema as never) as {
-        owner: string; magic_batches: { created_epoch: bigint }[];
-      };
-      return vd.owner === ownerPkh && vd.magic_batches.some((b) => b.created_epoch === epoch);
-    } catch { return false; }
-  });
-  if (grantedToday) return record("instant", "skip", `ví đã có batch InstantGen ở epoch ${epoch}`);
+  const vaultHash = process.env.VAULT_INSTANT_HASH;
+  if (!addr || !vaultHash) return record("instant", "fail", "thiếu VAULT_INSTANT_ADDR / VAULT_INSTANT_HASH");
+
+  const state = readState();
+  if (state.instantAttemptEpoch === epoch.toString()) {
+    return record("instant", "skip", `đã thử cấp ở epoch ${epoch} (sổ ${STATE_FILE})`);
+  }
   const lamp = process.env.KEEPER_INSTANT_LAMP ?? "1001";
   if (DRY) return record("instant", "skip", `DRY: sẽ tạo vault ${lamp} LAMP rồi cấp`);
+  writeFileSync(STATE_FILE, JSON.stringify({ ...state, instantAttemptEpoch: epoch.toString() }, null, 2) + "\n");
 
   // Bước 05 nuốt lỗi và thoát 0 (`main().catch(console.error)`), nên phải đọc tx hash
   // trong output, không tin mã thoát.
   const created = runScript("deploy/05_create_instant_vault.ts", { LAMP_DEPOSIT: lamp, PROFILE: "Flame" });
   const vaultTx = created.out.match(/TX hash:\s+([0-9a-f]{64})/)?.[1];
-  if (!vaultTx) return record("instant", "fail", "bước 05 không in tx hash — vault chưa tạo");
+  if (!vaultTx) {
+    return record("instant", "unverified", "bước 05 không in tx hash — soi ví trên explorer xem vault đã tạo chưa; hôm nay không thử lại");
+  }
   await sleep(20_000); // indexer trễ sau awaitTx
   const granted = runScript("test/instant_only.ts", { VAULT_TX_HASH: vaultTx });
-  const grantTx = granted.out.match(/([0-9a-f]{64})/g)?.filter((h) => h !== vaultTx).pop();
   if (granted.code !== 0) return record("instant", "fail", `vault ${vaultTx} đã tạo, bước cấp thoát ${granted.code}`);
-  record("instant", "done", `vault ${vaultTx} · cấp ${grantTx ?? "(đọc tx ở log trên)"}`);
+
+  // `instant_only` chỉ gửi, không chờ vào khối. Đọc lại vault (theo NFT danh tính, đúng
+  // owner) cho tới khi thấy batch của epoch này; không thấy thì là CHƯA ĐO ĐƯỢC.
+  for (let i = 1; i <= 12; i++) {
+    const hit = (await lucid.utxosAt(addr)).find((u) => {
+      if (!u.datum || !Object.keys(u.assets).some((k) => k.startsWith(vaultHash))) return false;
+      try {
+        const vd = Data.from(u.datum, InstantVaultDatumSchema as never) as {
+          owner: string; magic_batches: { created_epoch: bigint; current_amount: bigint }[];
+        };
+        return vd.owner === ownerPkh && vd.magic_batches.some((b) => b.created_epoch === epoch);
+      } catch { return false; }
+    });
+    if (hit && hit.txHash !== vaultTx) {
+      const vd = Data.from(hit.datum!, InstantVaultDatumSchema as never) as { magic_batches: { created_epoch: bigint; current_amount: bigint }[] };
+      const amount = vd.magic_batches.filter((b) => b.created_epoch === epoch).reduce((s, b) => s + b.current_amount, 0n);
+      return record("instant", "done", `vault ${vaultTx} · cấp tx ${hit.txHash} · ${amount} nanogic`);
+    }
+    await sleep(20_000);
+  }
+  record("instant", "unverified", `vault ${vaultTx} đã tạo, lệnh cấp đã gửi, chưa đọc lại được batch — soi explorer`);
 }
 
 async function main() {
@@ -355,9 +423,11 @@ async function main() {
     try { await fn(); } catch (e) { record(name, "fail", String((e as Error)?.message ?? e).slice(0, 400)); }
   };
   await guard("backing", () => stepBacking(lucid, ownerPkh, epoch));
-  await guard("price",   () => stepPrice(lucid, ownerPkh, nowMs));
-  await guard("fire",    () => stepFire(lucid, nowMs));
-  await guard("instant", () => stepInstant(lucid, ownerPkh, epoch));
+  // Lấy lại tip trước mỗi bước: bước trước có thể chạy nhiều phút, và cửa sổ hiệu lực của
+  // PostPrice (tới +10 phút) dựng trên mốc cũ thì đã nằm trong quá khứ.
+  await guard("price",   async () => stepPrice(lucid, ownerPkh, await tipMs()));
+  await guard("fire",    async () => stepFire(lucid, await tipMs()));
+  await guard("instant", async () => stepInstant(lucid, ownerPkh, (await tipMs()) / PROTOCOL.MS_PER_EPOCH));
 
   const fails = report.filter((r) => r.outcome === "fail").length;
   const unverified = report.filter((r) => r.outcome === "unverified").length;

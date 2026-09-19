@@ -3,8 +3,20 @@
 > **Tài liệu:** `MagicLamp-Tripletoken-Feat-(Vi).md` — đặc tả kỹ thuật cho **chuyên gia và lập trình viên**.
 > **Đối tượng:** người triển khai on-chain/off-chain, kiểm toán, tích hợp. Phần diễn giải phổ thông (câu chuyện, pháp lý cho người dùng) nằm ở bản công bố `Launch/Whitepaper-MagicLamp-Tokenomic-(Vi).md` — tài liệu này **tham chiếu tới** bản đó, không lặp lại.
 > **Phạm vi:** hợp nhất đặc tả **GenMAGIC** (§6) và **ConsumeMAGIC** (§7) vào một nơi. Cơ chế ổn định CARP chi tiết ở `CarpetMint-Core-Spec-Vi.md` (tài liệu này chỉ nêu giao diện).
-> **Phiên bản:** v2.0 — 2026-09-17. Nâng cấp từ bản chưa đánh số (mốc Changelog cuối 2026-08-04) vì chủ dự án chốt 2026-09-17 **mô hình sinh MAGIC chung** cho InstantGen và ScheduleGen: cùng ba đầu vào `L` (LAMP trong vault) · `usage_ratio` (consumed/generated, 6 epoch đã qua) · `GB` (thặng dư GreenBack), khác nhau chỉ ở thời tính. Bản trước lấy độ lớn InstantGen từ MAGIC-đã-tiêu tuyệt đối (`g(consumed)`), nên người tiêu 0 nhận 0 — trái ý định trên và chặn người mới có MAGIC ngay. Bump MAJOR vì công thức sinh và bất biến `INV-MAGIC-CITIZEN` đổi nghĩa, kéo theo đổi datum vault ⟹ vault phải deploy lại (§6.1.6).
+> **Phiên bản:** v2.1 — 2026-09-19 (xem Changelog 2026-09-19 ngay dưới). v2.0 — 2026-09-17. Nâng cấp từ bản chưa đánh số (mốc Changelog cuối 2026-08-04) vì chủ dự án chốt 2026-09-17 **mô hình sinh MAGIC chung** cho InstantGen và ScheduleGen: cùng ba đầu vào `L` (LAMP trong vault) · `usage_ratio` (consumed/generated, 6 epoch đã qua) · `GB` (thặng dư GreenBack), khác nhau chỉ ở thời tính. Bản trước lấy độ lớn InstantGen từ MAGIC-đã-tiêu tuyệt đối (`g(consumed)`), nên người tiêu 0 nhận 0 — trái ý định trên và chặn người mới có MAGIC ngay. Bump MAJOR vì công thức sinh và bất biến `INV-MAGIC-CITIZEN` đổi nghĩa, kéo theo đổi datum vault ⟹ vault phải deploy lại (§6.1.6).
 > **Vai:** spec build-fact tokenomics MAGIC, sống trong repo MAGIC (chủ dự án chốt 2026-08-04: tài liệu chính chủ về MAGIC nằm trong repo MAGIC; whitepaper /Launch + tài liệu LAMP chỉ **tham chiếu**, KHÔNG định-nghĩa-lại). Khi lệch với `MagicLamp-3Token-DacTa-Vi.md`, GenMAGIC/ConsumeMAGIC rời hoặc whitepaper /Launch → tệp này thắng. Khi lệch với MÃ đang chạy → mã là dữ kiện về hiện trạng, lệch phải được ghi ra (không im lặng chọn bên).
+>
+> **Changelog 2026-09-19 (v2.1):** chủ dự án chốt bốn điểm treo của mô hình sinh (§13, bảng
+> *"ĐÃ CHỐT 2026-09-19"*): `CC-GEN-GB-ROLE` · `CC-GEN-SCHEDULE-FIXED` · `CC-GEN-COLD-START` ·
+> `CC-GEN-L-TIMING`; và `B` thành một DANH MỤC token (§6.3 F6). **Bump MINOR, không MAJOR:**
+> bốn mục là quyết định cho các điểm ĐÃ ĐƯỢC ĐÁNH DẤU treo trong v2.0, không mục nào lật một
+> công thức hay một bất biến của v2.0 — `INV-MAGIC-CITIZEN` và `F(L, usage_ratio, GB)` giữ
+> nguyên nghĩa. Thêm `CC-GEN-LOCK-FIELD` vào danh mục CHƯA CHỐT (§6.1.4).
+>
+> Vì sao phải có mục này: bản trước ship bốn quyết định 19/09 dưới nhãn *"v2.0 — 2026-09-17"*,
+> nên hai tài liệu khác nhau về HÀNH VI cùng mang một số phiên bản, và `BOUNDARIES.md` trỏ
+> *"SPEC v2.0 §13"* thì người tra không phân biệt được bản nào. Một con trỏ có số phiên bản mà
+> số đó không phân biệt được hai bản thì nó chỉ trông như đã ghim.
 >
 > **Changelog 2026-09-17 (v2.0):** (1) §6.1.1–§6.1.6 mới: công thức sinh chung `F(L, usage_ratio, GB)` kèm `scale_limit`, định nghĩa cửa sổ đếm và bắn bù, beacon GreenBack mô phỏng + bộ đếm shard, khoá `INV-INSTANT-LOCK` tách theo script vault, bảng quyền đặc quyền, thời điểm hiệu lực; (2) §6.3 viết lại theo mô hình chung, bỏ `reward(consumed)` khỏi công thức cấp; (3) §6.4 thêm đầu vào chung chốt lúc ký; (4) `INV-MAGIC-CITIZEN` + `INV-CASHBACK-BOUND` viết lại (§2, §12); (5) §6.2 `eligibility` GIỮ nguyên văn, gắn CHƯA CHỐT vì không còn cơ-sở-tính để nhân.
 >
@@ -306,7 +318,24 @@ Vì sao cộng dồn chứ không một-lần/epoch: (a) `GB` đọc tại giao 
 Đây là lựa chọn có giá, và giá nằm ở đâu thì nói thẳng: **toàn bộ rủi ro thiếu hụt GreenBack sau khi ký dồn lên cổng `κ`** (§6.4) — `κ` là thứ quyết định một hợp đồng có được ký hay không, và sau chữ ký thì không còn van nào hạ nghĩa vụ xuống nữa. Đổi lại, người dùng nhận đúng thứ được hứa: *một lượng MAGIC cố định mỗi epoch, không đổi bất kỳ điều gì*. Bậc thang cứu (§6.4) vì thế **không được** dùng bậc "điều chỉnh tỷ giá hợp đồng" cho hợp đồng ĐÃ ký.
 
 **Không dùng cùng một LAMP hai lần.** InstantGen và ScheduleGen là **hai script vault khác nhau**; một LAMP nằm ở đúng một UTxO, nên LAMP trong vault này không phải LAMP trong vault kia. Trong mỗi script:
-- **Vault InstantGen:** `lamp_available = lamp_balance − instant_locked` khi `current_epoch <= instant_lock_epoch + 1`, ngược lại `lamp_balance` (khoá tự hết hạn theo epoch, không cần đường thả). `instant_locked` + `instant_lock_epoch` là trường riêng. InstantGen hiện KHÔNG có nhánh commit (`InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸ `VaultRedeemer`: `InstantGen` · `PruneExpired` · `BurnBatch` · `UpdateProfile` · `WithdrawLamp`; `WithdrawLamp` phải từ chối rút phần `instant_locked` còn hiệu lực), nên không có phần khoá Schedule trong vault này.
+- **Vault InstantGen:** `lamp_available = lamp_balance − instant_locked` khi `current_epoch <= instant_lock_epoch + 1`, ngược lại `lamp_balance` (khoá tự hết hạn theo epoch, không cần đường thả). `instant_locked` + `instant_lock_epoch` là trường riêng. InstantGen hiện KHÔNG có nhánh commit (`InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸ `VaultRedeemer`, **6 nhánh**: `InstantGen` (constr 0) · `PruneExpired` (1) · `BurnBatch` (2) · `UpdateProfile` (3) · `WithdrawLamp` (4) · `SetDelegate` (5, 🪦 nay chỉ xoá được); `WithdrawLamp` phải từ chối rút phần `instant_locked` còn hiệu lực), nên không có phần khoá Schedule trong vault này.
+
+  > 🔴 **CHƯA CHỐT — `CC-GEN-LOCK-FIELD`: `instant_locked` là trường MỚI hay dùng lại `lamp_locked`?**
+  > Đây không phải câu hỏi phong cách; nó là một cái bẫy đang mở. Vault InstantGen **đã có**
+  > trường `lamp_locked` (di sản khuôn datum dùng chung), và `InstantGen/onchain/validators/vault.ak:401`
+  > đã trừ nó rồi: `l_avail(applied_input.lamp_balance, applied_input.lamp_locked)`. Nhưng §6.3 của
+  > chính tệp này lại viết khoá Instant là `lamp_locked += L_used`. Hai mục cùng tệp, hai tên cho
+  > một khoá — người hiện thực đọc §6.3 sẽ cộng khoá Instant vào đúng trường mà mục này bảo phải
+  > tách ra, và **không phép kiểm nào đỏ** vì cả hai đều là `Int` trong cùng datum.
+  >
+  > Cái giá của mỗi lối, để chốt được bằng một câu: thêm trường ⟹ đổi số trường datum ⟹ **di trú
+  > mọi UTxO đang sống** (`BOUNDARIES.md` §2 ▸ *"Thêm trường ở cuối KHÔNG giữ được UTxO đã tạo"*);
+  > dùng lại `lamp_locked` ⟹ không di trú, nhưng một trường mang hai nghĩa ở hai script, và ngày
+  > InstantGen có nhánh commit thì hai nghĩa chồng nhau không tách được nữa.
+  >
+  > **Ràng buộc TẠM đang có hiệu lực, fail-closed:** chưa viết nhánh mã nào GHI vào khoá Instant
+  > cho tới khi tên trường được chốt. Đo được: `grep -rn "instant_locked" --include=*.ak` → 0 dòng,
+  > và không nhánh nào trong 6 redeemer đặt `lamp_locked` khác 0.
 - **Vault ScheduleGen:** `lamp_available = lamp_balance − lamp_locked`; `lamp_locked` là khoá hợp đồng, giải dần theo từng lượt fire (`validate_fire` ▸ `lamp_released`).
 LAMP-mượn đọc qua reference input thì KHÔNG có bảo toàn trên — `CC-GEN-LENT-READ` (§13).
 

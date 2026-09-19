@@ -24,6 +24,13 @@ import {
 
 // Giá trị giữ chỗ — chỉ TÊN và THỨ TỰ mới được kiểm ở đây.
 const P28 = "00".repeat(28);
+// Asset name của CARP là một BĂM 28 byte do nhà CarpetMint phát — KHÔNG phải hex
+// của chuỗi "CARP"/"tCARP". Bản trước dùng `"7443415250"` ở bốn ca dưới, và tệp
+// này đúng là chỗ người vận hành đi tìm "giá trị mẫu": kho đang tự dạy lại con số
+// sai mà `PrepaidGen/offchain/src/constants.ts` đã vá ngày 2026-09-11.
+// Cổng này chỉ so TÊN + THỨ TỰ nên giá trị không đổi kết quả — nó chỉ đổi thứ
+// người đọc chép đi. Cặp THẬT lấy ở `carpAssetClass(network)`, không lấy ở đây.
+const CARP_NAME_28 = "11".repeat(28);
 const SEED = { txHash: "11".repeat(32), outputIndex: 0 };
 const MS = 86_400_000n;
 
@@ -175,21 +182,21 @@ const CASES: Case[] = [
     module: "PrepaidGen", title: "prepaid.paid_fund.mint",
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: paidFundParams({
-      carpPolicyId: P28, carpAssetName: "7443415250", msPerEpoch: MS,
+      carpPolicyId: P28, carpAssetName: CARP_NAME_28, msPerEpoch: MS,
     }),
   },
   {
     module: "PrepaidGen", title: "prepaid.paid_fund.spend",
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: paidFundParams({
-      carpPolicyId: P28, carpAssetName: "7443415250", msPerEpoch: MS,
+      carpPolicyId: P28, carpAssetName: CARP_NAME_28, msPerEpoch: MS,
     }),
   },
   {
     module: "PrepaidGen", title: "prepaid.prepaid_vault.mint",
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: prepaidVaultParams({
-      carpPolicyId: P28, carpAssetName: "7443415250",
+      carpPolicyId: P28, carpAssetName: CARP_NAME_28,
       paidFundHash: P28, msPerEpoch: MS,
     }),
   },
@@ -197,7 +204,7 @@ const CASES: Case[] = [
     module: "PrepaidGen", title: "prepaid.prepaid_vault.spend",
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: prepaidVaultParams({
-      carpPolicyId: P28, carpAssetName: "7443415250",
+      carpPolicyId: P28, carpAssetName: CARP_NAME_28,
       paidFundHash: P28, msPerEpoch: MS,
     }),
   },

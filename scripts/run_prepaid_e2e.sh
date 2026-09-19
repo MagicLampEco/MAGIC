@@ -9,26 +9,30 @@
 #
 # ── TRẠNG THÁI KỸ THUẬT ──────────────────────────────────────────────────────
 #
-# | mã       | treo cái gì                          | ràng buộc TẠM (fail-closed)          | khai ở            |
-# |----------|--------------------------------------|--------------------------------------|-------------------|
-# | Nợ #71   | cặp định danh CARP `(policy_id,      | `requireCarpIdentity()` NÉM khi thiếu | `scripts/config.ts` |
-# |          | asset_name)` cho apply-param #1/#2   | ⟹ bước `--deploy` từ chối ở dòng đầu  | `deploy/10_deploy_prepaid.ts` |
-# |          | của `paid_fund` và `prepaid_vault`   | của `main()`: trước ví, trước mạng,   | `DevStatus.md`      |
-# |          |                                      | trước phí. Bước 1–3 KHÔNG phụ thuộc.  |                   |
+# | mã       | treo cái gì                          | ràng buộc TẠM (fail-closed)           | khai ở            |
+# |----------|--------------------------------------|---------------------------------------|-------------------|
+# | Nợ #71   | cặp định danh CARP cho apply-param    | KHÔNG còn treo trên PREPROD. Cặp      | `PrepaidGen/offchain/src/constants.ts` |
+# |          | #1/#2 của `paid_fund` và             | canonical nằm ở `carpAssetClass()`,   | `scripts/config.ts` |
+# |          | `prepaid_vault`                       | và `requireCarpIdentity()` lấy từ đó. | `DevStatus.md`      |
+# |          |                                       | MAINNET vẫn ĐÓNG: `CARP_POLICY_ID`    |                   |
+# |          |                                       | của Mainnet là `null` ⟹ hàm NÉM.      |                   |
 #
-# Vì sao ràng buộc nằm ở đây chứ không ở một biến cấu hình điền sau: hai giá trị
-# đó là APPLY-PARAM, tức tham số lúc BIÊN DỊCH. Chúng là một phần của BYTES, nên
-# đổi chúng là đổi script hash ⟹ đổi địa chỉ ⟹ mọi UTxO đã tạo ở địa chỉ cũ thành
-# mồ côi. Một giá trị giữ chỗ vẫn cho ra hash 28 byte hợp lệ và vẫn deploy êm —
-# cái ra đời là một quỹ không bao giờ nhìn thấy CARP của chính nó, và không lệnh
-# nào báo đỏ.
+# Vì sao ràng buộc nằm ở tầng mã chứ không ở một biến cấu hình điền sau: hai giá
+# trị đó là APPLY-PARAM, tức tham số lúc BIÊN DỊCH. Chúng là một phần của BYTES,
+# nên đổi chúng là đổi script hash ⟹ đổi địa chỉ ⟹ mọi UTxO đã tạo ở địa chỉ cũ
+# thành mồ côi. Một giá trị giữ chỗ vẫn cho ra hash 28 byte hợp lệ và vẫn deploy
+# êm — cái ra đời là một quỹ không bao giờ nhìn thấy CARP của chính nó, và không
+# lệnh nào báo đỏ.
 #
 # KHÔNG đúc một token tạm để lấp chỗ đó. Preprod đã có HAI dòng tài sản cùng hiện
 # ra chữ tCARP dưới hai policy khác nhau; dòng thứ ba làm nặng thêm đúng chỗ đang
-# phải gỡ, và không phép kiểm hình dạng nào phân biệt được ba dòng ấy.
+# phải gỡ, và không phép kiểm hình dạng nào phân biệt được ba dòng ấy. Đó là lý do
+# `requireCarpIdentity()` đối chiếu với cặp CANONICAL chứ không chỉ đo hình dạng:
+# hình dạng cho cả hai dòng đi qua.
 #
-# Bước 1–3 chạy được ngay và chạy ở đây. Tách như vậy là cố ý: một cụm nằm im chờ
-# một dữ kiện sẽ âm thầm già đi, còn một cụm chạy mỗi ngày thì hỏng ở đâu kêu ở đó.
+# Bước 1–3 KHÔNG chạm ví và KHÔNG chạm mạng — chúng chạy mỗi lượt. Tách như vậy là
+# cố ý: một cụm nằm im chờ một dữ kiện sẽ âm thầm già đi, còn một cụm chạy mỗi ngày
+# thì hỏng ở đâu kêu ở đó.
 #
 # ── THỨ TỰ KHÔNG ĐẢO ĐƯỢC ────────────────────────────────────────────────────
 #

@@ -692,4 +692,9 @@ epoch nó được sinh"* (`InstantGen/onchain/lib/magiclamp/protocol/constants.
 nhãn `[Constitutional]`) — và vòng này là bằng chứng nó dùng được, không chỉ là bằng chứng nó chặt.
 
 **Trạng thái bốn thuật toán trên Preprod sau lượt này:** ScheduleGen ✅ commit·fire·consume ·
-InstantGen ✅ cấp·consume · ConsumeMAGIC ✅ cả hai đời vault · PrepaidGen ❌ chưa có đường deploy.
+InstantGen ✅ cấp·consume · ConsumeMAGIC ✅ cả hai đời vault · PrepaidGen ⏸ đường deploy ĐÃ CÓ
+(`scripts/deploy/10_deploy_prepaid.ts` + `scripts/run_prepaid_e2e.sh`), CHƯA chạy genesis.
+
+> Bản trước của dòng này viết PrepaidGen *"❌ chưa có đường deploy"*. Sai, và sai theo kiểu
+> đắt: *"chưa có"* bảo người đọc đi VIẾT một thứ đã tồn tại, còn *"có nhưng chưa chạy"* bảo họ
+> đi chạy nó. Hai câu dẫn tới hai việc khác nhau, và chỉ một trong hai là việc cần làm.

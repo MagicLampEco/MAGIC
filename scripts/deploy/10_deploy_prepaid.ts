@@ -1,15 +1,23 @@
 // scripts/deploy/10_deploy_prepaid.ts — PrepaidGen: quỹ Paid + vault trả trước.
 // Run: npx tsx deploy/10_deploy_prepaid.ts
 //
-// ⛔ BƯỚC NÀY CỐ TÌNH KHÔNG CHẠY ĐƯỢC KHI CHƯA CÓ CẶP ĐỊNH DANH CARP ĐÃ CHỐT.
-//    `config.ts` ▸ `requireCarpIdentity` ném ngay dòng đầu của `main`. Đó là
-//    trạng thái ĐÚNG, không phải một lỗi cấu hình cần vòng qua: `carp_policy_id`
-//    và `carp_asset_name` là apply-param lúc BIÊN DỊCH, nên một giá trị giữ chỗ
-//    ở đó vẫn ra script hash hợp lệ và vẫn deploy êm — cái ra đời là một quỹ
-//    không bao giờ nhìn thấy CARP của chính nó.
+// ⛔ BƯỚC NÀY CHẠY ĐƯỢC TRÊN PREPROD, VÀ ĐÓNG TRÊN MAINNET/PREVIEW.
+//    `config.ts` ▸ `requireCarpIdentity` lấy cặp định danh CARP từ
+//    `PrepaidGen/offchain/src/constants.ts` ▸ `carpAssetClass(network)` — cửa DUY
+//    NHẤT của cặp đó, fail-closed sẵn. Preprod có cặp (đo 2026-09-11, nguồn nhà
+//    CarpetMint); Mainnet và Preview là `null` ⟹ hàm NÉM ở dòng đầu của `main`.
 //
-//    Mã thì viết trước, và đó là chủ ý: khi cặp định danh tới thì chỉ còn một
-//    bước biên dịch, không còn một đợt viết mã dưới áp lực.
+//    Bản trước của khối này viết "CỐ TÌNH KHÔNG CHẠY ĐƯỢC KHI CHƯA CÓ CẶP ĐỊNH
+//    DANH CARP ĐÃ CHỐT". Cặp ĐÃ chốt từ 2026-09-11 và nằm trong chính kho này —
+//    câu đó khai một bước chạy được là đang bị nhà khác chặn, tức đúng lớp hại mà
+//    `POLICY_IDS.backing` vừa phải gỡ: một việc nằm im vì một lý do đã hết hiệu lực,
+//    và không có gì kêu lên.
+//
+//    `carp_policy_id`/`carp_asset_name` vẫn là apply-param lúc BIÊN DỊCH: một giá
+//    trị giữ chỗ vẫn ra script hash hợp lệ và vẫn deploy êm — cái ra đời là một quỹ
+//    không bao giờ nhìn thấy CARP của chính nó, và ba nhánh tiêu của nó (`FundLock`
+//    · `FundSettle` · `FundClaim`) đều chết. Đó là lý do cổng đối chiếu CANONICAL
+//    chứ không chỉ đo hình dạng.
 //
 // HAI GIAO DỊCH, KHÔNG PHẢI MỘT — và thứ tự không đảo được:
 //
@@ -120,6 +128,7 @@ const PrepaidVaultDatum = PrepaidVaultDatumSchema as unknown as PrepaidVaultDatu
 
 /** `min_buffer_bps` — neo: PrepaidGen/onchain/lib/magiclamp/protocol/constants.ak */
 const MIN_BUFFER_BPS = 1_500n;
+const MAX_BUFFER_BPS = 10_000n;
 
 async function main() {
   console.log("=== Step 10: PrepaidGen — quỹ Paid + vault trả trước ===\n");
@@ -134,6 +143,22 @@ async function main() {
       `BUFFER_BPS=${bufferBps} dưới sàn hiến định ${MIN_BUFFER_BPS} (15%).\n` +
       `  · validate_mint_fund_nft ép \`fd.buffer_bps >= min_buffer_bps\`, nên giao ` +
       `dịch sẽ chết trên chuỗi — cổng này chỉ để nó chết trước khi mất phí.`,
+    );
+  }
+  // TRẦN, không chỉ SÀN. On-chain CHỈ có sàn (`prepaid.ak` ▸ `validate_mint_fund_nft`),
+  // và `buffer_bps` BẤT BIẾN trọn đời quỹ (`fund_common_checks` ▸ `buffer_bps` vào ==
+  // ra). Nên một số 0 gõ thừa không đỏ ở đâu cả: `BUFFER_BPS=150000` cho
+  // `buffer_floor = 16 × outstanding`, mà `validate_fund_claim` ép
+  // `carp_locked >= buffer_floor` ⟹ MỌI lượt rút một phần bị chặn vĩnh viễn, và
+  // không nhánh nào sửa được `buffer_bps`. Lối thoát duy nhất là bỏ quỹ và dựng quỹ
+  // mới — trong khi CARP người dùng đã khoá vào thì nằm lại tới khi quyết toán hết.
+  if (bufferBps > MAX_BUFFER_BPS) {
+    throw new Error(
+      `BUFFER_BPS=${bufferBps} vượt trần ${MAX_BUFFER_BPS} (100%).\n` +
+      `  · Đây là cổng OFF-CHAIN thuần: validator chỉ ép SÀN, nên giá trị này deploy ` +
+      `êm và khoá cứng đường rút của provider vĩnh viễn.\n` +
+      `  · \`buffer_bps\` bất biến trọn đời quỹ — sai ở đây không sửa được bằng một ` +
+      `giao dịch về sau, chỉ sửa được bằng cách bỏ quỹ.`,
     );
   }
 
@@ -151,6 +176,15 @@ async function main() {
       `\`validate_mint_fund_nft\` ép \`bytearray.length(fd.platform) == 28\`.`,
     );
   }
+  // HÌNH DẠNG KHÔNG PHẢI QUYỀN ĐIỀU KHIỂN. `fd.platform` bất biến trọn đời quỹ và là
+  // khoá DUY NHẤT rút được CARP ra (`validate_fund_claim` ▸ `list.has(tx.extra_signatories,
+  // fund_in.platform)`); cổng genesis on-chain chỉ ép ĐỘ DÀI 28 byte. Nên một pkh gõ
+  // nhầm hoặc chép từ sổ cũ cho ra một quỹ hợp lệ, nhận CARP thật, và KHÔNG AI rút
+  // được số CARP đó — `PrepaidLock` vẫn chạy vì nhánh ấy nhận platform HOẶC owner ký.
+  // Bắt chính giao dịch genesis phải mang chữ ký đó là cách rẻ nhất biến một chuỗi hex
+  // thành một bằng chứng có khoá. Mặc định (`ownerPkh`) thì ví đang chạy đã ký sẵn;
+  // rủi ro chỉ mở ra khi đặt env, và đó đúng là lúc không có gì đối chiếu.
+  const platformIsOwner = platformPkh === ownerPkh;
 
   // ── Apply params THEO TÊN — thứ tự do blueprint quyết định ───────────────
   const bp = await loadBlueprint("PrepaidGen");
@@ -217,7 +251,7 @@ async function main() {
   // constructor rỗng thay vì `undefined` để CBOR luôn hợp lệ.
   const fundMintRedeemer = Data.to(new Constr(0, []));
 
-  const txA = await lucid
+  let txABuilder = lucid
     .newTx()
     .collectFrom([fundSeed])
     .mintAssets({ [fundUnit]: 1n }, fundMintRedeemer)
@@ -226,8 +260,15 @@ async function main() {
       fundAddress,
       { kind: "inline", value: Data.to(fundDatum, PaidFundDatum) },
       { lovelace: 2_000_000n, [fundUnit]: 1n },
-    )
-    .complete();
+    );
+
+  // Chữ ký platform là cổng OFF-CHAIN thuần — `validate_mint_fund_nft` KHÔNG đòi nó.
+  // Nó ở đây để một `PLATFORM_PKH` không ai cầm khoá thì giao dịch không dựng nổi,
+  // thay vì dựng êm rồi khoá CARP của người dùng lại vĩnh viễn. Khi platform trùng
+  // owner thì ví đang chạy đã ký, thêm vào cũng không đổi gì.
+  if (!platformIsOwner) txABuilder = txABuilder.addSignerKey(platformPkh);
+
+  const txA = await txABuilder.complete();
 
   const signedA = await txA.sign.withWallet().complete();
   const txHashA = await signedA.submit();

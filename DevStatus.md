@@ -17,29 +17,49 @@ Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. L
 
 | Module | Vai | vitest | `aiken check` |
 |---|---|---|---|
-| `ProtocolUtils` | thư viện dùng chung (hằng, Q-format, BigInt) | 26 | — |
-| `InstantGen` | sinh MAGIC theo yêu cầu, vault hợp nhất DESIGN-2 | 59 | 97 |
-| `ScheduleGen` | hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard | 43 | 79 |
-| `UMKeeper` | cập nhật hệ số cầu mạng UM mỗi epoch | 20 | 10 |
-| `ConsumeMAGIC` | tiêu thụ MAGIC (đốt theo giá nghiệp vụ) | 83 | 135 |
-| `ConsumeMAGIC/pricing` | `@magiclamp/consumemagic-pricing` — bộ định giá | 62 | (dùng chung) |
-| `MagicSDK` | mặt tiền cho bên tích hợp | 52 | — |
-| `Paymaster` | trả phí hộ (SponsorMeter) | 26 | 28 |
+| `ProtocolUtils` | thư viện dùng chung (hằng, Q-format, BigInt) | 49 | — |
+| `InstantGen` | sinh MAGIC theo yêu cầu, vault hợp nhất DESIGN-2 | 59 | 107 |
+| `ScheduleGen` | hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard | 49 | 107 |
+| `UMKeeper` | cập nhật hệ số cầu mạng UM mỗi epoch | 27 | 14 |
+| `ConsumeMAGIC` | tiêu thụ MAGIC (đốt theo giá nghiệp vụ) | 102 | 156 |
+| `ConsumeMAGIC/pricing` | `@magiclamp/consumemagic-pricing` — bộ định giá | 67 | (dùng chung) |
+| `MagicSDK` | mặt tiền cho bên tích hợp | 103 | — |
+| `Paymaster` | trả phí hộ (SponsorMeter) | 28 | 35 |
 | `FlowRate` | điều tiết nhịp | 19 | (không có `aiken.toml`) |
-| `PrepaidGen` | cửa sinh thứ ba — người dùng trả CARP | 75 | 72 |
+| `PrepaidGen` | cửa sinh thứ ba — người dùng trả CARP | 88 | 139 |
+| `Eligibility` | tư cách nhận — cổng vào của vòng gen | 29 | 36 |
+| `VaultReadAPI` | mặt tiền ĐỌC vault qua HTTP | 44 | — |
+| `VaultTxAPI` | mặt tiền DỰNG giao dịch qua HTTP (5 đường `/tx/*`) | 74 | — |
+| `scripts` | đường deploy + cổng đếm apply-param | — (xem khối đo) | — |
 
 > ⚠️ **Mọi số của `GetMAGIC` trong các khối đo có ngày ở dưới là SỐ LỊCH SỬ.** Module đã xoá
 > khỏi kho ngày **2026-09-14** — xem mục `## Đã xoá khỏi kho — 2026-09-14`. Các khối đó đúng
 > với ngày ghi trên chúng và cố ý không sửa; đừng cộng chúng vào tổng hôm nay, và đừng đi tìm
 > thư mục đó.
 
-> Cột `aiken check` đo lại **2026-09-11** bằng đúng lệnh ở khối dưới, trên nhánh
-> `fix/identity-gates-shard-va-binddid`: InstantGen **97** · ScheduleGen **79** · UMKeeper 10 ·
-> ConsumeMAGIC **135** · GetMAGIC 23 · Paymaster 28 · PrepaidGen 72 — tất cả `failed: 0`.
-> Ba số in đậm là số ĐÃ ĐỔI so với lần đo 2026-08-29 (85 · 64 · 107); chênh lệch đến từ các
-> ca thêm vào cùng hai bản vá 2026-09-07 (`COSPEND-ADDR/NFT` ở ScheduleGen, độ dài
-> `did_commit` ở ConsumeMAGIC). Cột `vitest` đo lại **chỉ InstantGen** (59, trước ghi 55);
-> các module còn lại ở cột đó **chưa đo lại trong lượt này** — đừng trích chúng như số mới.
+> **Đo lại TOÀN BỘ 2026-09-19 — cả hai cột, cùng một lượt, và phạm vi là một liệt kê ĐÓNG.**
+> `aiken check` **628 / 628 pass / 0 fail**: Consolidate 21 · ConsumeMAGIC 156 · Eligibility 36 ·
+> InstantGen 107 · Paymaster 35 · PrepaidGen 139 · ProfileChange 13 · ScheduleGen 107 ·
+> UMKeeper 14. `vitest` **812 / 812 pass**: AppEconomics 54 · Consolidate 12 ·
+> ConsumeMAGIC/offchain 102 · ConsumeMAGIC/pricing 67 · Eligibility 29 · FlowRate 19 ·
+> InstantGen 59 · MagicSDK 103 · Paymaster 28 · PrepaidGen 88 · ProfileChange 8 ·
+> ProtocolUtils 49 · ScheduleGen 49 · UMKeeper 27 · VaultReadAPI 44 · VaultTxAPI 74.
+>
+> **Phạm vi, và phần bị loại — đếm chứ không chỉ khai.** Vùng quét là cây làm việc, trừ
+> `Legacy/`, `node_modules/` và `.claude/worktrees/`. Trong vùng đó có **đúng 9** tệp
+> `aiken.toml` và cả 9 đều đã đo; có **17** gói khai script `test` và **16** chạy bằng vitest —
+> gói thứ 17 là `scripts/`, mà `npm test` của nó KHÔNG phải vitest: nó gọi
+> `scripts/check_param_names.ts`, cổng đối chiếu danh sách apply-param với chữ ký blueprint.
+> Lượt chạy 2026-09-19: **19 khớp, 0 lệch, 0 chưa build**. Không đếm nó vào 812 vì nó không
+> đếm test; bỏ nó khỏi lời khai thì mới là sai, vì nó canh đúng thứ `BOUNDARIES.md §5` gọi là
+> bài học đắt nhất của kho. Phần nằm ngoài mà chính luật loại trừ cũng không nhìn thấy:
+> `.claude/worktrees/` còn **hai** cây làm việc cũ mang bản sao đủ cả 9 `aiken.toml` — chúng bị
+> loại ĐÚNG (bản sao, không phải nguồn) nhưng chúng là nợ dọn dẹp, không phải nền phông.
+>
+> Số cũ ở khối này (`aiken` InstantGen 97 · ScheduleGen 79 · UMKeeper 10 · ConsumeMAGIC 135 ·
+> Paymaster 28 · PrepaidGen 72, đo 2026-09-11) đã bị thay, không giữ kèm đính chính: bảng trên
+> nạp cùng lúc với khối này, nên giữ cả hai là giữ một mâu thuẫn mà không bản nào tự khai là đã
+> bị bác.
 
 ```bash
 # vitest một module
@@ -272,7 +292,7 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 | # | Việc | Vì sao chưa |
 |---|---|---|
 | 1 | Chưa deploy mạng nào | cần credential + quyết định của chủ nhân |
-| 2 | `BackingBeacon` (§6.3) chưa có bytes thật | chờ CarpetMint deploy lại — policy id của CARP **sẽ đổi**, đang để all-zero fail-closed nên InstantGen đóng cửa an toàn |
+| 2 | `BackingBeacon` (§6.3) — mặc định all-zero, và **người ghi nó là keeper của CHÍNH kho này** | 🔴 **Dòng này trước đây khai "chờ CarpetMint deploy lại" và đó là một lời khai SAI về quyền sở hữu** (`BOUNDARIES.md` ▸ *"`B` là một DANH MỤC token"*, chủ dự án chốt 2026-09-18): beacon backing do keeper tầng GreenBack của kho này ghi, không phải engine CarpetMint — nên nó chưa bao giờ là một việc phải chờ nhà khác. Bytes THẬT thì **đã có trên Preprod** từ 2026-09-16: `scripts/DEPLOYED.md` ▸ mục *"Cùng ngày, muộn hơn — InstantGen đã cấp và đã bị tiêu THẬT"* ghi NFT policy `28e916b0…` và script hash `9788cd32…`, ghi bằng `scripts/deploy/04_deploy_backing_fixture.ts`. Còn nợ là **mainnet**: chưa có lượt ghi nào, và mặc định all-zero ở `scripts/config.ts` ▸ `backing` giữ InstantGen đóng cửa ở đó. **Hành vi fail-closed GIỮ NGUYÊN** — chỗ sai là lời khai, không phải cổng |
 | ~~3~~ | ~~Chưa có CI~~ **ĐÃ CÓ — đo 2026-09-11** | `.github/` tồn tại ở cả cây làm việc lẫn `origin/main`: `git ls-tree -r --name-only origin/main .github` → `.github/scripts/detect_scope.py`, `.github/scripts/install_sibling_deps.py`, `.github/workflows/pr-verify.yml`. Chính Nợ #27 đã ghi "Đã mã hoá thứ tự tôpô vào `.github/workflows/pr-verify.yml`" mà dòng này không được cập nhật theo — bản sao chết im lặng trong cùng một bảng. **Chưa đo**: workflow có thật sự chạy xanh trên một PR nào chưa (cần xem lịch sử Actions, ngoài tầm cây làm việc) |
 | 4 | `AppEconomics` chưa hội tụ | xem mục mồ côi |
 | ~~5~~ | ~~Nguồn `PrepaidGen` **chưa mất** — đang treo trong `refs/stash@{0}`~~ **ĐÃ KHÔI PHỤC VÀO CÂY — đo 2026-09-11**: `git ls-tree -r --name-only origin/main \| grep -c '^PrepaidGen/'` → **24**, và cùng con số đó trên `HEAD`; `wc -l PrepaidGen/onchain/validators/prepaid.ak` → **2076**. Tag `preserve/prepaidgen-stash-2026-07-30` vẫn còn (`git tag -l 'preserve/*'`), giữ nguyên làm phao. Hồ sơ cũ để lại nguyên văn bên dưới vì nó chứa bài học về `--all` không quét `refs/stash`. ~~24 tệp nguồn (`prepaid.ak`, `fund_nft.ak`, trọn `offchain/src`, `tests/`, `DESIGN.md`). Bản ghi cũ ở đây kết luận "đã mất" vì `git log --all --diff-filter=A` trả rỗng — nhưng `--all` **không quét `refs/stash`**, nên rỗng ở đó không có nghĩa là mất. Nguyên nhân gốc: code viết trên `feat/genmagic-v0.2-handoff`, **chưa từng commit**, bị `git stash` tự hứng lúc chuyển nhánh 2026-07-30 và không ai `pop` lại. Đã neo bằng tag `preserve/prepaidgen-stash-2026-07-30` để `git stash clear/drop` không xoá được. Kiểm: `git ls-tree -r --name-only preserve/prepaidgen-stash-2026-07-30^{commit}^3 \| grep -c '^PrepaidGen/'` → 24~~ |

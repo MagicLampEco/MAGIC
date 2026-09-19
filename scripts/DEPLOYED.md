@@ -650,3 +650,46 @@ sched d3fdcc7f…  λ=400 tLAMP  L=10  fire đầu 20715  fired_count 1
    `1d792c6f36828e45bd82212896ef95f3814a0a78ebf86b82c26cbb56` đã deploy nhưng **chưa có lượt
    tiêu nào** — `run_consume_schedule_e2e.sh` dừng đúng ở *"No eligible fires … 20714"* hôm
    17/09 vì lúc đó chưa có batch. Nay có; vòng đó chạy được.
+
+### 2026-09-19 — 🔴 Lần ĐẦU tiêu MAGIC do **ScheduleGen** sinh, trên Preprod
+
+Hai lượt tiêu trước (16/09, 17/09) đều trên MAGIC của InstantGen. Lượt này đi qua bản `consume`
+đời ScheduleGen `1d792c6f36828e45bd82212896ef95f3814a0a78ebf86b82c26cbb56` — bản đã deploy từ
+16/09 và tới hôm nay chưa được dùng lần nào.
+
+| việc | tx |
+|---|---|
+| **tiêu 0,01 MAGIC từ batch ScheduleGen** | `5004cbc89706136afda08a29d5828c1c8a96640f74e2decf4b64eabe4b63adbc` |
+
+```
+op_type=1 × op_count=1 → required = 10 000 000 nanogic
+Gom 2 batch cho required: 809e6ac4→8 000 000 + 014f9072→2 000 000
+  809e6ac4…   8 000 000 −   8 000 000 = 0
+  014f9072… 3 200 000 000 −  2 000 000 = 3 198 000 000
+consumed_count: 0 → 1        (Engage UTxO mới: 5004cbc8…#0)
+beacon epoch 20715, stale 0  ·  vault UTxO vào: 6a2c56ea…#0
+```
+
+**Vì sao lượt này đo được nhiều hơn hai lượt trước:** nó **gộp HAI batch** trong một lần đốt, và
+ưu tiên batch sắp chết trước (`809e6ac4…` bị vét sạch, phần thiếu lấy từ batch lớn). Hai lượt
+InstantGen trước chỉ chạm một batch, nên đường đa-batch của `validate_burn_batch` chưa từng chạy
+thật trên chuỗi. Nay đã chạy.
+
+**Ba UTxO phải DÒ LẠI, không được đọc từ sổ** — `PRICE_BEACON_UTXO` trong `state.Preprod.sh` đã
+chết từ lượt `PostPrice` đầu tiên. Đường đúng là `scripts/resolve_consume_state.ts` (chỉ đọc), dò
+theo NFT danh tính — chỉ `CONSUME_SCRIPT_HASH` · `PRICE_PARAM_HASH` · `PRICE_NFT_UNIT` ·
+`ENGAGE_NFT_UNIT` là bất biến:
+
+```
+$ bash _Agents/bin/preprod-env.sh npx tsx resolve_consume_state.ts
+  beacon   d6a93107853df0dbb13bf165861e632612e5d71e43d6c88fe3aa832da7b72f83#0   ← đã đổi
+  engage   999354825f15c32eeb57ee74fb0c7cfa4ef812095500b0fdd0e78689905e020b#1   ← chưa từng bị tiêu
+```
+
+**`decay_window = 1` nay đã được chứng minh bằng một vòng đầy-đủ trong CÙNG một epoch:** fire lúc
+00:08 UTC và tiêu lúc ~11:00 UTC, cùng epoch 20715. Hằng số đó nói *"một lô chỉ sống trong đúng
+epoch nó được sinh"* (`InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸ `magic_decay_window`,
+nhãn `[Constitutional]`) — và vòng này là bằng chứng nó dùng được, không chỉ là bằng chứng nó chặt.
+
+**Trạng thái bốn thuật toán trên Preprod sau lượt này:** ScheduleGen ✅ commit·fire·consume ·
+InstantGen ✅ cấp·consume · ConsumeMAGIC ✅ cả hai đời vault · PrepaidGen ❌ chưa có đường deploy.

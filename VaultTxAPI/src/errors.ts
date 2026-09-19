@@ -129,6 +129,20 @@ export class TxBuildRejectedError extends TxApiError {
   }
 }
 
+/**
+ * Một năng lực có mã nhưng CHƯA được khai đủ cấu hình để mở.
+ *
+ * `501` chứ không `404`: đường này TỒN TẠI, nó chưa được bật. `404` bảo bên gọi đi
+ * sửa URL — việc không có gì để sửa; `501` bảo họ đi hỏi người vận hành, và đó là
+ * việc đúng. `503` cũng sai vì nó hứa "thử lại sau", trong khi không có thời gian
+ * nào làm một mục cấu hình tự xuất hiện.
+ */
+export class ConfigMissingError extends TxApiError {
+  constructor(message: string, details: Record<string, unknown> = {}) {
+    super(501, "CONFIG_MISSING", message, details);
+  }
+}
+
 export class ChainUnavailableError extends TxApiError {
   constructor(message: string, details: Record<string, unknown> = {}, cause?: unknown) {
     super(502, "CHAIN_UNAVAILABLE", message, details);

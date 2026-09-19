@@ -49,6 +49,30 @@ export interface ConsumeDeployment {
   priceBeaconNftUnit: string;
 }
 
+/**
+ * Hai reference input mà `InstantGen` ĐỌC lúc chạy. Cả hai là dữ kiện của dịch vụ,
+ * không suy được từ yêu cầu HTTP — nên cấu hình phải KHAI, giống `consume` ở trên.
+ *
+ * 🔴 Vì sao beacon backing phải là một mục cấu hình chứ không phải một mặc định:
+ * `validate_instant_gen` fail-closed quanh nó — thiếu beacon, beacon quá hạn, hoặc
+ * cờ `depeg` bật thì giao dịch sinh BỊ TỪ CHỐI. Một mặc định all-zero ở đây cho ra
+ * một dịch vụ luôn dựng tx và tx nào cũng chết trên chuỗi, với một thông điệp không
+ * trỏ về cấu hình. Không có giá trị nào thay được một địa chỉ thật.
+ *
+ * Người ghi beacon backing là keeper tầng GreenBack của kho này (chốt 2026-09-19) —
+ * không phải engine CarpetMint. Ai đi tìm chủ của giá trị này thì tìm ở đó.
+ */
+export interface InstantDeployment {
+  /** Địa chỉ chứa datum UM (hệ số cầu mạng, keeper cập nhật mỗi epoch). */
+  umDatumAddress: string;
+  /** NFT của datum UM — `policyId + assetNameHex`. */
+  umNftUnit: string;
+  /** Địa chỉ chứa beacon backing (`B` là một DANH MỤC token, chốt 2026-09-18). */
+  backingBeaconAddress: string;
+  /** NFT của beacon backing. */
+  backingBeaconNftUnit: string;
+}
+
 export interface Deployment {
   /** Bản chép chép từ đâu, ngày nào. BẮT BUỘC. */
   source: string;
@@ -64,6 +88,10 @@ export interface Deployment {
    *  ScheduleCommit và Consume KHÔNG dựng nổi tx nào. */
   refScriptUtxos: { vault: OutRefConfig; shard: OutRefConfig; consume: OutRefConfig };
   consume: ConsumeDeployment;
+  /** Tuỳ chọn: thiếu mục này thì đường `/tx/instant-gen` ĐÓNG (404), các đường khác
+   *  chạy bình thường. Đóng một cửa vì thiếu dữ kiện thì tốt hơn mở nó ra để mọi tx
+   *  chết trên chuỗi. */
+  instant?: InstantDeployment;
 }
 
 /**
@@ -245,9 +273,24 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
     engageNftUnit: unit(str(c.engage_nft_unit, "consume.engage_nft_unit"), "consume.engage_nft_unit"),
     priceBeaconAddress: scriptAddress(str(c.price_beacon_address, "consume.price_beacon_address"), prefix, network, "consume.price_beacon_address").address,
     priceBeaconNftUnit: unit(str(c.price_beacon_nft_unit, "consume.price_beacon_nft_unit"), "consume.price_beacon_nft_unit"),
+
   };
 
-  return { source, lampPolicyId, lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume };
+  // Mục `instant` là TUỲ CHỌN. Vắng ⟹ `/tx/instant-gen` đóng; CÓ ⟹ mọi trường bắt
+  // buộc, phân tích bằng đúng bộ hàm NÉM như `consume`. Không có nửa vời: một mục
+  // khai thiếu một trường là một cửa mở ra rồi chết trên chuỗi.
+  let instant: InstantDeployment | undefined;
+  if (o.instant !== undefined) {
+    const i = obj(o.instant, "instant");
+    instant = {
+      umDatumAddress: scriptAddress(str(i.um_datum_address, "instant.um_datum_address"), prefix, network, "instant.um_datum_address").address,
+      umNftUnit: unit(str(i.um_nft_unit, "instant.um_nft_unit"), "instant.um_nft_unit"),
+      backingBeaconAddress: scriptAddress(str(i.backing_beacon_address, "instant.backing_beacon_address"), prefix, network, "instant.backing_beacon_address").address,
+      backingBeaconNftUnit: unit(str(i.backing_beacon_nft_unit, "instant.backing_beacon_nft_unit"), "instant.backing_beacon_nft_unit"),
+    };
+  }
+
+  return { source, lampPolicyId, lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, instant };
 }
 
 // ── phụ trợ phân tích, mỗi cái NÉM chứ không đệm ──────────────────────────────

@@ -422,6 +422,12 @@ trạng thái `ACTIVE`. **Bản sao có nhãn**, chép 2026-09-16 — không ph�
 | `09` ref-script consume | `628ff91ad8c483e6af97c577291b49c6c6e0f98bac7b3f0c8afeed597706bf91#0` |
 | `ScheduleCommit` | `4ed8b6c40a5436468139337e5994b5e520f176d83504b86832b6a9ce33019ae6` |
 
+🔴 **Câu ngay dưới đã HẾT HIỆU LỰC trong cùng ngày — đọc tiếp mục *"Cùng ngày, muộn hơn —
+InstantGen đã cấp và đã bị tiêu THẬT"* trước khi dùng nó.** Bước 05 ĐÃ chạy lúc muộn hơn
+2026-09-16, sau bản vá Nợ #19 (`2c4a173d`), và vault InstantGen nay có script hash
+`56b83436…` trên Preprod. Giữ nguyên văn câu cũ vì lý do nêu trong nó vẫn đúng tại thời
+điểm viết; nhưng một người đọc dừng ở đây sẽ kết luận ngược với trạng thái thật.
+
 **Bước 05 (vault InstantGen) CỐ Ý chưa chạy ở đời này.** Nó không phải điều kiện tiên quyết
 của bước 09: `scripts/deploy/09_deploy_consume.ts:91-94` đọc
 `VAULT_HASH ?? VAULT_SCHEDULE_HASH ?? VAULT_INSTANT_HASH` — ba biến, một là đủ. Và đường

@@ -136,8 +136,13 @@ async function main() {
   );
   if (!backingBeaconUtxo) {
     console.error("\n❌ BackingBeacon UTxO not found at", beaconScriptAddress);
-    console.error("   InstantGen is SHUT until CARP ships the beacon (§6.3, fail-closed).");
-    console.error("   Set BACKING_NFT_POLICY_ID + BACKING_SCRIPT_HASH once it exists.");
+    // The beacon is written by THIS repo's GreenBack-tier keeper, not by the CarpetMint
+    // engine — see BOUNDARIES.md, "`B` là một DANH MỤC token". The previous wording here
+    // said InstantGen was waiting on CARP, which pointed whoever hit this line at the
+    // wrong house and at a wait that was never going to end on its own.
+    console.error("   InstantGen is SHUT until this repo's keeper posts the beacon (§6.3, fail-closed).");
+    console.error("   Write it with deploy/04_deploy_backing_fixture.ts, then set");
+    console.error("   BACKING_NFT_POLICY_ID + BACKING_SCRIPT_HASH to what that run prints.");
     process.exit(1);
   }
   console.log(`Backing beacon:     ${backingBeaconUtxo.txHash}#${backingBeaconUtxo.outputIndex}\n`);

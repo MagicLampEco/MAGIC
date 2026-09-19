@@ -2,12 +2,18 @@
 //
 // Tách khỏi `server.ts` để phép kiểm gọi thẳng vào đây, không phải mở cổng mạng.
 //
-// ── ĐÚNG BỐN ĐƯỜNG DỰNG, KHÔNG THÊM ────────────────────────────────────────────
+// ── ĐÚNG NĂM ĐƯỜNG DỰNG, KHÔNG THÊM ────────────────────────────────────────────
+//   POST /tx/instant-gen       { owner_pkh }
 //   POST /tx/schedule-commit   { owner_pkh, schedule_length, lamp_per_epoch }
 //   POST /tx/schedule-fire     { owner_pkh, schedule_id }
 //   POST /tx/consume           { owner_pkh, op_type, op_count }
 //   POST /tx/submit            { tx_cbor, witness_cbor }
 //   GET  /health               (không thẻ bài, không chạm chuỗi)
+//
+// `/tx/instant-gen` KHÔNG nhận `amount`, và đó là chủ ý. Lượng cấp là
+// `min(vế thưởng, cap_surplus, cap_pp)` do validator tính từ trạng thái vault cộng
+// hai reference input. Nhận một con số ở đây là dựng một cái nút hứa thứ nó không
+// quyết được, rồi để chuỗi bác — người dùng đọc câu bác đó không ra được việc phải làm.
 //
 // ── VÌ SAO SỐ TIỀN PHẢI GỬI LÊN DƯỚI DẠNG CHUỖI ────────────────────────────────
 // `lamp_per_epoch` tính bằng oildrop, và trần LAMP là 36×10^15 oildrop trong khi 2^53
@@ -87,6 +93,12 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
     const body = asObject(req.body);
 
     switch (path) {
+      case "/tx/instant-gen": {
+        const out = await deps.service.instantGen({
+          ownerPkh: reqString(body, "owner_pkh"),
+        });
+        return { status: 200, body: toBuildBody(out) };
+      }
       case "/tx/schedule-commit": {
         const out = await deps.service.scheduleCommit({
           ownerPkh: reqString(body, "owner_pkh"),

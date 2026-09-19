@@ -615,3 +615,81 @@ export function assertVaultIdentityKept(
     );
   }
 }
+
+// ── Script tham chiếu CIP-33 ─────────────────────────────────────────────────
+//
+// Vì sao CHÍNH SÁCH nằm ở đây mà PHÉP BĂM thì không: băm một script cần lucid, còn
+// gói này cố ý không có dependency nào (nó được nạp qua `file:` + `prepare.mjs`, và
+// `BOUNDARIES.md §4` ghi rõ đó là chỗ dễ vỡ nhất của đường cài). Nên chỗ gọi — vốn
+// đã cầm lucid — tự băm rồi đưa hash vào đây; ở đây chỉ so chuỗi và dựng câu lỗi.
+//
+// Cái được: MỘT bộ mã lỗi cho mọi module. Trước đó cùng một hỏng ra ba mã khác nhau
+// (`CONSUME-004/005`, `BIND-DID-004/005`, và một bản nữa ở SDK), nên người đọc log
+// không tra ngược được về một nguyên nhân.
+
+/** Một UTxO ứng viên làm script tham chiếu, đã quy về thứ phép so cần. */
+export interface RefScriptCandidate {
+  /** `txHash#outputIndex` — chỉ dùng để dựng câu lỗi. */
+  at: string;
+  /** Hash của script UTxO này ĐANG mang; `null` khi nó không mang `scriptRef`. */
+  gotHash: string | null;
+  /**
+   * Vai mà chỗ gọi ĐỊNH dùng UTxO này — chỉ có khi chỗ gọi biết trước (ca một
+   * script một UTxO). Đưa được thì câu `REFSCRIPT-001` nêu luôn tên, và người đọc
+   * log phân biệt được `vault (WithdrawLamp)` với `vault (UpdateProfile)`.
+   */
+  intendedFor?: string;
+}
+
+/** Một script mà giao dịch BẮT BUỘC phải có chứng từ. */
+export interface RefScriptRequirement {
+  /** Tên người đọc hiểu, ví dụ `vault (WithdrawLamp)` — đi thẳng vào câu lỗi. */
+  what: string;
+  wantHash: string;
+}
+
+/**
+ * Ép tập UTxO tham chiếu phủ ĐỦ các script được đòi.
+ *
+ * Vì sao phải so HASH chứ không chỉ đếm "có scriptRef": `readFrom` một UTxO mang
+ * script SAI vẫn dựng ra một giao dịch hợp lệ về hình dạng, `complete()` không kêu,
+ * và nó chết trên chuỗi SAU KHI người dùng đã ký — người dùng thấy màn ký bình
+ * thường, ký, rồi nhận một lỗi không trỏ về đâu. Một cổng đếm-suông không phân biệt
+ * được hai cực đó.
+ *
+ * Phép phủ theo TẬP, không theo thứ tự: chỗ gọi truyền một danh sách UTxO mà không
+ * có gì bảo đảm thứ tự khớp với thứ tự script. Ghép theo chỉ số là dựng ra một phép
+ * kiểm xanh khi hai script bị đổi chỗ.
+ *
+ * @throws `REFSCRIPT-001` khi một ứng viên không mang `scriptRef`.
+ * @throws `REFSCRIPT-002` khi một script được đòi không có ứng viên nào mang.
+ */
+export function assertRefScriptsCover(
+  candidates: RefScriptCandidate[],
+  required:   RefScriptRequirement[],
+): void {
+  for (const c of candidates) {
+    if (c.gotHash === null) {
+      throw new Error(
+        `REFSCRIPT-001: UTxO ${c.at} được đưa vào làm script tham chiếu` +
+        `${c.intendedFor === undefined ? "" : ` của ${c.intendedFor}`} nhưng nó ` +
+        `KHÔNG mang scriptRef. Đọc từ nó sẽ dựng ra một giao dịch thiếu script, và ` +
+        `nó chết trên chuỗi sau khi người dùng đã ký.`,
+      );
+    }
+  }
+
+  const have = new Set(candidates.map((c) => c.gotHash as string));
+  for (const r of required) {
+    if (!have.has(r.wantHash)) {
+      throw new Error(
+        `REFSCRIPT-002: không UTxO tham chiếu nào mang ${r.what}.\n` +
+        `  cần:  ${r.wantHash}\n` +
+        `  thấy: ${candidates.length === 0 ? "(không có UTxO nào)" : [...have].join("\n         ")}\n` +
+        `Hai hash khác nhau nghĩa là bản deploy đã trôi khỏi bytes mà mã đang cầm — ` +
+        `apply-param là tham số lúc BIÊN DỊCH, nên đổi một giá trị là đổi hash, đổi ` +
+        `địa chỉ, và phải công bố một script tham chiếu CIP-33 mới.`,
+      );
+    }
+  }
+}

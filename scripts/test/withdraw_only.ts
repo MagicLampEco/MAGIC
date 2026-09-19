@@ -28,6 +28,7 @@ import {
 } from "../config.js";
 
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
+import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
 import type { VaultType, ProtocolParams } from "../../MagicSDK/src/types.js";
 
@@ -149,6 +150,9 @@ async function main() {
       lampAssetName: ASSET_NAMES.lamp,
       destinationAddress: process.env.DEST_ADDR ?? address,
       tipPosixMs: tip.posixMs,
+      // Kịch bản này chạy trên vault vừa dựng, datum còn nhỏ, nên inline vừa trần.
+      // Chưa nối đường CIP-33 ở đây — nợ có địa chỉ, `DevStatus.md` Nợ #64.
+      vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
     });
 
     // ── Tamper: rebuild tx with mutated output datum / signer ──

@@ -46,7 +46,12 @@ Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. L
 > ProtocolUtils 49 · ScheduleGen 49 · UMKeeper 27 · VaultReadAPI 44 · VaultTxAPI 74.
 >
 > **Phạm vi, và phần bị loại — đếm chứ không chỉ khai.** Vùng quét là cây làm việc, trừ
-> `Legacy/`, `node_modules/` và `.claude/worktrees/`. Trong vùng đó có **đúng 9** tệp
+> `Legacy/`, `node_modules/`, `.claude/worktrees/` — **và `**/onchain/build/packages/**`**, là
+> thư viện Aiken do trình quản lý gói tải về. Luật thứ tư này trước đây KHÔNG được khai, trong
+> khi nó là luật quyết định con số: `find . -name aiken.toml` trừ ba luật đầu cho **24** tệp,
+> trong đó **15** nằm dưới `build/packages/`. Một con số đứng trên một luật loại trừ không khai
+> thì nó không sai, nó chỉ không kiểm lại được — và người đọc sau sẽ đếm ra 24 rồi tưởng sổ lệch.
+> Trong vùng đó có **đúng 9** tệp
 > `aiken.toml` và cả 9 đều đã đo; có **17** gói khai script `test` và **16** chạy bằng vitest —
 > gói thứ 17 là `scripts/`, mà `npm test` của nó KHÔNG phải vitest: nó gọi
 > `scripts/check_param_names.ts`, cổng đối chiếu danh sách apply-param với chữ ký blueprint.
@@ -54,7 +59,12 @@ Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. L
 > đếm test; bỏ nó khỏi lời khai thì mới là sai, vì nó canh đúng thứ `BOUNDARIES.md §5` gọi là
 > bài học đắt nhất của kho. Phần nằm ngoài mà chính luật loại trừ cũng không nhìn thấy:
 > `.claude/worktrees/` còn **hai** cây làm việc cũ mang bản sao đủ cả 9 `aiken.toml` — chúng bị
-> loại ĐÚNG (bản sao, không phải nguồn) nhưng chúng là nợ dọn dẹp, không phải nền phông.
+> loại ĐÚNG (bản sao, không phải nguồn) nhưng chúng là nợ dọn dẹp, không phải nền phông. Và
+> `Legacy/` giấu **hai** gói CÓ chạy vitest (`Legacy/VacuumGen/offchain`,
+> `Legacy/stale-genmodel-2026-07/SnapshotGen/offchain`); chúng bị loại ĐÚNG, nhưng "trừ
+> `Legacy/`" một mình không nói cho ai biết là đang trừ đi hai bộ kiểm chứ không phải không trừ
+> gì. Đếm lại cả hai phần bị loại: `find . -name aiken.toml -path '*/build/packages/*' | wc -l`
+> và `git ls-files 'Legacy/**/package.json'`.
 >
 > Số cũ ở khối này (`aiken` InstantGen 97 · ScheduleGen 79 · UMKeeper 10 · ConsumeMAGIC 135 ·
 > Paymaster 28 · PrepaidGen 72, đo 2026-09-11) đã bị thay, không giữ kèm đính chính: bảng trên

@@ -24,6 +24,7 @@ import {
 } from "../config.js";
 
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
+import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
 import type { Profile, VaultType, ProtocolParams } from "../../MagicSDK/src/types.js";
 
@@ -131,6 +132,9 @@ async function main() {
       vaultPlutusJson: plutusJson,
       network: NETWORK,
       tipPosixMs: tip.posixMs,
+      // Vault vừa dựng, datum còn nhỏ — inline vừa trần. Chưa nối CIP-33 ở đây:
+      // nợ có địa chỉ, `DevStatus.md` Nợ #64.
+      vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
     });
 
     let finalTx = result.tx;

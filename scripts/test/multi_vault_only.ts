@@ -32,6 +32,7 @@ import {
 } from "../config.js";
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
+import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
 import { listVaultsForOwner } from "../../MagicSDK/src/listVaults.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
 import { VaultDatumSchema } from "../../MagicSDK/src/schemas.js";
@@ -217,6 +218,8 @@ async function runMv3(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
     lampAssetName: ASSET_NAMES.lamp,
     destinationAddress: address,
     tipPosixMs: tip.posixMs,
+    // Vault vừa dựng, datum còn nhỏ — inline vừa trần. Nợ #64 giữ đường CIP-33.
+    vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
   });
 
   const signed = await result.tx.sign.withWallet().complete();
@@ -255,6 +258,8 @@ async function runMv4(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
     vaultPlutusJson: plutusJson,
     network: NETWORK,
     tipPosixMs: tip.posixMs,
+    // Vault vừa dựng, datum còn nhỏ — inline vừa trần. Nợ #64 giữ đường CIP-33.
+    vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
   });
 
   const signed = await result.tx.sign.withWallet().complete();

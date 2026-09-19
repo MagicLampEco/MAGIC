@@ -22,6 +22,17 @@ export {
   NON_LAMP_LOOKALIKE_POLICIES,
 } from "./lampPolicy.js";
 
+// Script tham chiếu CIP-33. Xuất ra vì bên tích hợp nào tự dựng giao dịch cũng cần
+// phép kiểm này: đọc từ một UTxO mang script SAI vẫn dựng ra giao dịch, và nó chết
+// trên chuỗi SAU khi người dùng đã ký. Xem đầu `refScript.ts` cho số đo trần 16 384 B.
+export {
+  assertRefScriptMatches,
+  assertRefScriptsMatchAll,
+  resolveRefScript,
+  ACCEPT_INLINE_SCRIPT_CEILING,
+  type AcceptInlineScriptCeiling,
+} from "./refScript.js";
+
 // NFT danh-tính vault (INV-VAULT-IDENTITY) — mọi integrator tự dựng tx tạo vault
 // đều cần đúng hai thứ này, nếu không vault sinh ra sẽ KHÔNG tiêu được.
 export {

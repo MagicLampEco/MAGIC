@@ -25,6 +25,10 @@ import {
 } from "@magiclamp/protocol-utils";
 
 import { assertLampPolicyId } from "./lampPolicy.js";
+import {
+  resolveRefScript,
+  type AcceptInlineScriptCeiling,
+} from "./refScript.js";
 import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { VaultType } from "./types.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
@@ -43,6 +47,13 @@ export interface WithdrawLampParams {
   amountOildrop:       bigint;
   /** Applied vault validator (same one used at createVault). */
   vaultScript:     Validator;
+  /** UTxO CIP-33 mang script tham chiếu của vault — giao dịch ĐỌC nó (`readFrom`)
+   *  thay vì nhét trọn script vào thân. BẮT BUỘC: vault đã tích dữ liệu thì thiếu
+   *  nó là KHÔNG dựng nổi giao dịch, và `WithdrawLamp` là nhánh DUY NHẤT đưa LAMP
+   *  rời vault. Thật sự muốn đi đường inline thì truyền
+   *  `ACCEPT_INLINE_SCRIPT_CEILING` — xem `refScript.ts` cho lý do nó phải được
+   *  CHỌN chứ không được mặc định. */
+  vaultRefScriptUtxo: UTxO | AcceptInlineScriptCeiling;
   /** Vault type — for logging / error messages only. Constructor index for
    *  the WithdrawLamp redeemer is resolved at runtime from `vaultPlutusJson`
    *  (so SDK can't desync with onchain enum order). */
@@ -170,10 +181,17 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
-  const tx = await lucid
-    .newTx()
-    .collectFrom([vaultUtxo], redeemer)
-    .attach.SpendingValidator(vaultScript)
+  // Phép kiểm hash nằm TRƯỚC `complete()`: một ref UTxO sai đọc vào vẫn dựng ra
+  // giao dịch, và nó chết trên chuỗi SAU khi người dùng đã ký. `null` ở đây nghĩa
+  // là chỗ gọi đã TƯỜNG MINH chọn đường inline, không phải là nó quên truyền.
+  const refUtxo = resolveRefScript(
+    params.vaultRefScriptUtxo, vaultScript, "vault (WithdrawLamp)",
+  );
+  const txWithScript = refUtxo === null
+    ? lucid.newTx().collectFrom([vaultUtxo], redeemer).attach.SpendingValidator(vaultScript)
+    : lucid.newTx().collectFrom([vaultUtxo], redeemer).readFrom([refUtxo]);
+
+  const tx = await txWithScript
     .pay.ToAddressWithData(
       vaultAddress,
       { kind: "inline", value: Data.to(newVaultDatum as never, VaultDatumSchema) },

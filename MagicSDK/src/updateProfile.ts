@@ -29,6 +29,10 @@ import {
   type Network,
 } from "@magiclamp/protocol-utils";
 
+import {
+  resolveRefScript,
+  type AcceptInlineScriptCeiling,
+} from "./refScript.js";
 import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { Profile, VaultType } from "./types.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
@@ -50,6 +54,9 @@ export interface UpdateProfileParams {
   vaultPlutusJson: PlutusJson;
   network:      Network;
   tipPosixMs?:  bigint;
+  /** UTxO CIP-33 mang script tham chiếu của vault — xem `refScript.ts`. Vắng thì
+   *  script vẫn được nhét inline như trước. */
+  vaultRefScriptUtxo: UTxO | AcceptInlineScriptCeiling;
 }
 
 export interface UpdateProfileResult {
@@ -130,10 +137,15 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
-  const tx = await lucid
-    .newTx()
-    .collectFrom([vaultUtxo], redeemer)
-    .attach.SpendingValidator(vaultScript)
+  // `null` = chỗ gọi đã TƯỜNG MINH chọn đường inline, không phải quên truyền.
+  const refUtxo = resolveRefScript(
+    params.vaultRefScriptUtxo, vaultScript, "vault (UpdateProfile)",
+  );
+  const txWithScript = refUtxo === null
+    ? lucid.newTx().collectFrom([vaultUtxo], redeemer).attach.SpendingValidator(vaultScript)
+    : lucid.newTx().collectFrom([vaultUtxo], redeemer).readFrom([refUtxo]);
+
+  const tx = await txWithScript
     .pay.ToAddressWithData(
       vaultAddress,
       { kind: "inline", value: Data.to(newVaultDatum as never, VaultDatumSchema) },

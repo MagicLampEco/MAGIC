@@ -25,12 +25,40 @@ import {
   type Network,
   vaultOutValue,
   assertVaultIdentityKept,
+  assertRefScriptsCover,
 } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatum, VaultRedeemer, ShardRedeemer,
   type GenSchedule, type MagicBatch, type LoyaltyHolding,
 } from "./types.js";
+
+// ── Cổng CIP-33 ───────────────────────────────────────────────
+//
+// Module này BẮT BUỘC đi đường script tham chiếu: đính kèm cả hai validator vượt
+// trần 16 384 B (xem chú thích `refScriptUtxos` ở `CommitParams`), nên `readFrom`
+// là đường duy nhất dựng nổi giao dịch. Đúng vì thế mà nó là chỗ cần cổng nhất.
+//
+// Không có cổng thì một danh sách ref UTxO CŨ — keeper vẫn cầm sau một lượt
+// redeploy, khi apply-param đổi ⟹ hash đổi ⟹ CIP-33 mới — vẫn dựng ra giao dịch
+// bình thường. `complete()` không kêu. Nó chết ở phase-1 SAU KHI đã ký, với một
+// lỗi không nêu UTxO nào sai. Và `ScheduleFire` là nhánh DUY NHẤT hạ `lamp_locked`
+// (BOUNDARIES §2), nên mất nó là LAMP kẹt.
+//
+// Mã lỗi + câu lỗi dùng chung với SDK, định nghĩa ở `@magiclamp/protocol-utils`.
+function assertRefScriptsFor(
+  refUtxos: UTxO[],
+  required: { script: Validator; what: string }[],
+): UTxO[] {
+  assertRefScriptsCover(
+    refUtxos.map((u) => ({
+      at:      `${u.txHash}#${u.outputIndex}`,
+      gotHash: u.scriptRef == null ? null : validatorToScriptHash(u.scriptRef as Validator),
+    })),
+    required.map((r) => ({ what: r.what, wantHash: validatorToScriptHash(r.script) })),
+  );
+  return refUtxos;
+}
 
 // ── Shard datum schema ────────────────────────────────────────
 import { Data as D } from "@lucid-evolution/lucid";
@@ -239,7 +267,10 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     .collectFrom([vaultUtxo], redeemer)
     .collectFrom([shardUtxo], shardRed);
   txBuilder = params.refScriptUtxos?.length
-    ? txBuilder.readFrom(params.refScriptUtxos)
+    ? txBuilder.readFrom(assertRefScriptsFor(params.refScriptUtxos, [
+        { script: vaultScript, what: "vault (ScheduleCommit)" },
+        { script: shardScript, what: "shard (ScheduleCommit)" },
+      ]))
     : txBuilder.attach.SpendingValidator(vaultScript).attach.SpendingValidator(shardScript);
   txBuilder = txBuilder
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) }, vaultUtxo.assets)
@@ -431,7 +462,10 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     .collectFrom([vaultUtxo], redeemer)
     .collectFrom([shardUtxo], shardRed);
   fireBuilder = params.refScriptUtxos?.length
-    ? fireBuilder.readFrom(params.refScriptUtxos)
+    ? fireBuilder.readFrom(assertRefScriptsFor(params.refScriptUtxos, [
+        { script: vaultScript, what: "vault (ScheduleFire)" },
+        { script: shardScript, what: "shard (ScheduleFire)" },
+      ]))
     : fireBuilder.attach.SpendingValidator(vaultScript).attach.SpendingValidator(shardScript);
   const tx = await fireBuilder
     // I-ACT-7: the vault output carries EXACTLY the LAMP it came in with.

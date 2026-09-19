@@ -606,6 +606,7 @@ const result = await updateProfile({
   vaultType:       "Instant",
   vaultPlutusJson: plutus,         // để tra chỉ số constructor lúc chạy
   network:         "Preview",
+  vaultRefScriptUtxo: vaultRefUtxo, // BẮT BUỘC — xem §9.1
 });
 
 // result.summary in ra effective_epoch + cảnh báo áp-dụng-trễ
@@ -660,6 +661,7 @@ const result = await withdrawLamp({
   vaultPlutusJson: plutus,
   network:         "Preview",
   lampPolicyId:    LAMP_POLICY_ID,
+  vaultRefScriptUtxo: vaultRefUtxo, // BẮT BUỘC — xem §9.1
   // destinationAddress: mặc định = địa chỉ ví đang chọn
 });
 
@@ -681,6 +683,41 @@ gửi sang ví khác. Bỏ trống thì LAMP về chính ví đang ký.
 > mất MAGIC đã tích; dựng lại value vault từ `{lovelace, lamp}` là bỏ rơi NFT danh tính ⇒ tx
 > bị từ chối. Luật đang cưỡng chế: [`SPEC_V1.md §1`](./SPEC_V1.md). Trạng thái:
 > [`DevStatus.md`](../DevStatus.md).
+
+### 9.1 `vaultRefScriptUtxo` — BẮT BUỘC, và vì sao
+
+`withdrawLamp` và `updateProfile` đòi tham số này. Nó là UTxO đã đỗ sẵn trên chuỗi
+mang script tham chiếu CIP-33 của vault; giao dịch **đọc** nó thay vì chở trọn
+script trong thân.
+
+```ts
+// UTxO công bố bởi bước deploy — tra ở scripts/DEPLOYED.md theo mạng
+const vaultRefUtxo = (await lucid.utxosByOutRef([
+  { txHash: REF_SCRIPT_TX, outputIndex: REF_SCRIPT_IX },
+]))[0];
+```
+
+**Vì sao không để tuỳ chọn.** Script vault đã apply param ăn phần lớn trần
+16 384 byte của một giao dịch Cardano. Vault vừa tạo thì datum nhỏ nên đường nhét
+inline vẫn chạy — và nó chạy trong mọi bài kiểm, mọi lần thử tay. Nó hỏng ở vault
+đã tích `magic_batches` và `loyalty_holdings`, tức người dùng lâu năm, trên nhánh
+**duy nhất** đưa LAMP rời vault. Một mặc định im lặng ở đây là một cái phanh chỉ
+gãy với người có nhiều tài sản nhất.
+
+Thật sự muốn đi đường inline (vault vừa tạo, kịch bản kiểm thử) thì viết ra:
+
+```ts
+import { ACCEPT_INLINE_SCRIPT_CEILING } from "@magiclamp/sdk";
+// …
+vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
+```
+
+Câu đó tự khai ở diff rằng ai đó đã cân nhắc. Quên thì **không biên dịch được** —
+hỏng lúc gõ mã, không phải lúc người dùng đã ký.
+
+SDK **kiểm hash** của script trong UTxO đó trước khi dựng giao dịch. Đọc nhầm một
+ref UTxO cũ vẫn dựng ra giao dịch hợp lệ về hình dạng và chỉ chết trên chuỗi *sau
+khi người dùng đã ký* — nên cổng này ném sớm, kèm cả hai hash để đối chiếu.
 
 ### Chọn holding: mới nhất trước
 
@@ -799,6 +836,9 @@ Mã lấy đúng từ `src/`. Mã nào không có ở đây thì không tồn t�
 | `UPDATE-001` | `updateProfile` | `vaultType === "Schedule"` | ScheduleGen không có redeemer `UpdateProfile` |
 | `UPDATE-002` | `updateProfile` | profile mới trùng profile hiện tại | chọn profile khác |
 | `C-PC-V2` | `updateProfile` | chưa hết thời gian nguội | thông điệp có nêu còn phải chờ mấy epoch |
+| `REFSCRIPT-001` | `withdrawLamp` · `updateProfile` · ScheduleGen | UTxO truyền vào không mang `scriptRef` | truyền đúng UTxO công bố ở bước deploy (§9.1) |
+| `REFSCRIPT-002` | như trên | UTxO mang một script **khác** — thường là bản deploy đã trôi | lấy lại UTxO tham chiếu mới; thông điệp in cả hai hash để đối chiếu |
+| `REFSCRIPT-003` | như trên | `scriptRef` có `type` không giải mã được | dữ liệu provider hỏng hoặc sai đời Plutus — kiểm lại nguồn UTxO |
 
 Ngoài ra, các lỗi không mã nhưng nói thẳng vấn đề:
 

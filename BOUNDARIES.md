@@ -218,6 +218,27 @@ Ba điều phải giữ khi sửa mã, vì chúng là hình dạng chứ không 
 - Quyền biểu quyết KHÔNG đổi: vẫn keyed MAGIC-đã-tiêu cross-DID, theo
   `LAMP/Governance/VotingPower/CONTRACT.md`.
 
+**Bốn điểm treo của mô hình sinh đã được chủ dự án chốt 2026-09-19** (chi tiết + cái giá từng
+mục: SPEC v2.0 §13, bảng *"ĐÃ CHỐT 2026-09-19"*). Hai mục dưới đây đổi thứ người sửa mã phải làm,
+nên nêu ở đây thay vì chỉ trỏ:
+
+- **`CC-GEN-L-TIMING` — LAMP dùng để sinh bị khoá tới hết epoch SAU**, không phải hết epoch hiện
+  tại. Cổng `current_epoch > instant_lock_epoch + 1` phải áp ở **MỌI** nhánh đọc `lamp_available`
+  hoặc rút LAMP (`InstantGen` · `WithdrawLamp` · `UpdateProfile`) — sót một nhánh là thủng, và
+  đây đúng là ca mà `§5` cảnh báo: đổi ràng buộc thì grep TOÀN BỘ nơi gọi.
+- **`CC-GEN-COLD-START` — vault chưa có lịch sử đứng ở mức TRUNG TÍNH**, và ở trạng thái đó
+  `scale_limit` không ràng buộc. Hệ quả: đóng vault rồi mở lại là một cách xoá lịch sử xấu có lợi.
+  **Ràng buộc TẠM đang có hiệu lực, fail-closed: chỉ chạy testnet** tới khi
+  `INV-ONE-PERSON-ONE-VAULT` được ép ở cổng genesis.
+
+**`B` là một DANH MỤC token** (chủ dự án chốt 2026-09-18), không phải một tài sản đơn: ADA, NIGHT,
+CHECK, WORK, có thể thêm. Ba hệ quả cho người sửa mã — một danh mục cần **một nguồn giá mỗi tài
+sản** (F6 đổi hình dạng, SPEC §6.3); `INV-BACKING-NO-LAMP` **không đổi**; và người ghi beacon
+backing là **keeper tầng GreenBack của kho này**, không phải engine CarpetMint. Ba chỗ trong kho
+còn khai ngược điều cuối và phải sửa khi đụng tới: `scripts/config.ts` ▸ mặc định `backing` ·
+`scripts/test/instant_only.ts` ▸ câu `"SHUT until CARP ships the beacon"` · `DevStatus.md` Nợ #2.
+Hành vi fail-closed (mặc định all-zero) thì **giữ nguyên** — chỗ sai là lời khai, không phải cổng.
+
 Hiệu lực: chỉ cho vault **deploy lại**; không hồi tố vault Preprod đang sống (SPEC v2.0 §6.1.6).
 
 **Hiện trạng mã — CHƯA theo mục trên** (kiểm 2026-09-17). Chỗ đang chạy, theo TÊN HÀM:

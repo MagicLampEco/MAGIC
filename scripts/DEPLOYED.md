@@ -603,3 +603,98 @@ validator đòi chữ ký committee, `epoch` tăng ngặt và không vượt epo
 lượt chạy bước 04 bằng một ví KHÁC. Nó đúc một beacon dưới policy chữ-ký-đơn của ví đó
 (`e5a606ff…`), mà vault InstantGen không đọc — vault chỉ nhận beacon dưới
 `backing_nft_policy` đã apply-param. Beacon đó mồ côi; đừng dùng nó.
+
+### 2026-09-18/19 — 🔴 ScheduleFire đã chạy trên **Preprod**, do keeper tự bắn
+
+Sổ này cho tới hôm nay ghi *"ScheduleFire ✅ Preview"* — tức Preprod thì chưa. **Câu đó đã hết
+đúng.** Keeper trên máy chủ (hẹn giờ mỗi giờ, phút 05 UTC) bắn ba lượt mà không ai bấm tay:
+
+| tx | thời điểm (UTC) | epoch |
+|---|---|---|
+| `92a7093aead26721183539492389d960dc29ab106384ad385d4602af522dbb8f` | 2026-09-18 00:06:47 | 20714 |
+| `11836b15c4538a6465c0e890df7726e26f63262dc0da7f388480ad6310cc2626` | 2026-09-19 00:08:10 | 20715 |
+| `6a2c56eacd47d2b897635ae71cccf8ff7ec3f489f7805b91ed1c27159753f087` | 2026-09-19 00:08:28 | 20715 |
+
+Mỗi tx tiêu **hai** script: vault ScheduleGen `18375a7d46d4a1ba63e414c7cfa825a7de2531909769ee26534b3edd`
+và shard tổng hợp `97e967d2570f195503dbcae9841e7d6ed776b49af4d82058f3234dfb`. Chi phí đo được:
+vault ~1,24–1,29 M mem / ~449–466 M step; shard ~0,72–0,75 M mem / ~234–246 M step.
+
+**Cách kiểm lại — phép đo, không phải trạng thái chép:**
+
+```
+$ curl -H "project_id: <khoá>" \
+    "https://cardano-preprod.blockfrost.io/api/v0/addresses/<VAULT_SCHEDULE_ADDR>/transactions?order=desc"
+$ curl -H "project_id: <khoá>" "…/api/v0/txs/<hash>/redeemers"     # hai mục spend là dấu của fire
+```
+
+Trạng thái vault đọc bằng `VaultReadService` lúc 2026-09-19 (epoch 20715):
+
+```
+utxo_ref            6a2c56ea…#0
+available_nanogic   3208000000      accrued 3208000000      expired 0
+lamp_balance        10000 tLAMP     lamp_locked 3608 tLAMP
+batch Schedule 20715 → 20716     8000000  live
+batch Schedule 20715 → 20716  3200000000  live
+sched ce29701b…  λ=1 tLAMP    L=10  fire đầu 20714  fired_count 2
+sched d3fdcc7f…  λ=400 tLAMP  L=10  fire đầu 20715  fired_count 1
+```
+
+**Hai điều đọc được từ đây mà lượt Preview không cho:**
+
+1. **`decay_window = 1` không giết MAGIC khi có lịch chạy đều.** Trên Preview, 64 triệu nanogic
+   bắn một đợt rồi hết hạn trước khi ai tiêu kịp, và sổ đọc thành "hằng số này làm mất trắng".
+   Ở đây lịch bắn **mỗi epoch**, nên luôn có một batch sống trong ngày. Hằng số không đổi; cái
+   đổi là **nhịp**. Đừng trích dòng Preview như một phát biểu về hằng số.
+2. **Chưa lượt nào TIÊU số MAGIC này.** Hai lượt tiêu đã ghi ở mục trên đều trên MAGIC của
+   InstantGen, qua bản `consume` đời InstantGen `4fcc3e84…`. Bản đời ScheduleGen
+   `1d792c6f36828e45bd82212896ef95f3814a0a78ebf86b82c26cbb56` đã deploy nhưng **chưa có lượt
+   tiêu nào** — `run_consume_schedule_e2e.sh` dừng đúng ở *"No eligible fires … 20714"* hôm
+   17/09 vì lúc đó chưa có batch. Nay có; vòng đó chạy được.
+
+### 2026-09-19 — 🔴 Lần ĐẦU tiêu MAGIC do **ScheduleGen** sinh, trên Preprod
+
+Hai lượt tiêu trước (16/09, 17/09) đều trên MAGIC của InstantGen. Lượt này đi qua bản `consume`
+đời ScheduleGen `1d792c6f36828e45bd82212896ef95f3814a0a78ebf86b82c26cbb56` — bản đã deploy từ
+16/09 và tới hôm nay chưa được dùng lần nào.
+
+| việc | tx |
+|---|---|
+| **tiêu 0,01 MAGIC từ batch ScheduleGen** | `5004cbc89706136afda08a29d5828c1c8a96640f74e2decf4b64eabe4b63adbc` |
+
+```
+op_type=1 × op_count=1 → required = 10 000 000 nanogic
+Gom 2 batch cho required: 809e6ac4→8 000 000 + 014f9072→2 000 000
+  809e6ac4…   8 000 000 −   8 000 000 = 0
+  014f9072… 3 200 000 000 −  2 000 000 = 3 198 000 000
+consumed_count: 0 → 1        (Engage UTxO mới: 5004cbc8…#0)
+beacon epoch 20715, stale 0  ·  vault UTxO vào: 6a2c56ea…#0
+```
+
+**Vì sao lượt này đo được nhiều hơn hai lượt trước:** nó **gộp HAI batch** trong một lần đốt, và
+ưu tiên batch sắp chết trước (`809e6ac4…` bị vét sạch, phần thiếu lấy từ batch lớn). Hai lượt
+InstantGen trước chỉ chạm một batch, nên đường đa-batch của `validate_burn_batch` chưa từng chạy
+thật trên chuỗi. Nay đã chạy.
+
+**Ba UTxO phải DÒ LẠI, không được đọc từ sổ** — `PRICE_BEACON_UTXO` trong `state.Preprod.sh` đã
+chết từ lượt `PostPrice` đầu tiên. Đường đúng là `scripts/resolve_consume_state.ts` (chỉ đọc), dò
+theo NFT danh tính — chỉ `CONSUME_SCRIPT_HASH` · `PRICE_PARAM_HASH` · `PRICE_NFT_UNIT` ·
+`ENGAGE_NFT_UNIT` là bất biến:
+
+```
+$ bash _Agents/bin/preprod-env.sh npx tsx resolve_consume_state.ts
+  beacon   d6a93107853df0dbb13bf165861e632612e5d71e43d6c88fe3aa832da7b72f83#0   ← đã đổi
+  engage   999354825f15c32eeb57ee74fb0c7cfa4ef812095500b0fdd0e78689905e020b#1   ← chưa từng bị tiêu
+```
+
+**`decay_window = 1` nay đã được chứng minh bằng một vòng đầy-đủ trong CÙNG một epoch:** fire lúc
+00:08 UTC và tiêu lúc ~11:00 UTC, cùng epoch 20715. Hằng số đó nói *"một lô chỉ sống trong đúng
+epoch nó được sinh"* (`InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸ `magic_decay_window`,
+nhãn `[Constitutional]`) — và vòng này là bằng chứng nó dùng được, không chỉ là bằng chứng nó chặt.
+
+**Trạng thái bốn thuật toán trên Preprod sau lượt này:** ScheduleGen ✅ commit·fire·consume ·
+InstantGen ✅ cấp·consume · ConsumeMAGIC ✅ cả hai đời vault · PrepaidGen ⏸ đường deploy ĐÃ CÓ
+(`scripts/deploy/10_deploy_prepaid.ts` + `scripts/run_prepaid_e2e.sh`), CHƯA chạy genesis.
+
+> Bản trước của dòng này viết PrepaidGen *"❌ chưa có đường deploy"*. Sai, và sai theo kiểu
+> đắt: *"chưa có"* bảo người đọc đi VIẾT một thứ đã tồn tại, còn *"có nhưng chưa chạy"* bảo họ
+> đi chạy nó. Hai câu dẫn tới hai việc khác nhau, và chỉ một trong hai là việc cần làm.

@@ -8,6 +8,8 @@ import type { LucidEvolution } from "@lucid-evolution/lucid";
 // Giới hạn shard là ràng buộc cưỡng chế on-chain — giữ MỘT nguồn duy nhất.
 // Khai lại ở đây từng làm hai nơi có thể trôi khỏi nhau mà không test nào đỏ.
 import { SHARD_COUNT, SHARD_CAP } from "../ScheduleGen/offchain/src/constants.js";
+// Cửa DUY NHẤT của cặp định danh CARP — xem khối chú thích ở `requireCarpIdentity`.
+import { carpAssetClass, type CarpNetwork } from "../PrepaidGen/offchain/src/constants.js";
 
 // ── Network ───────────────────────────────────────────────────
 export const NETWORK: Network = (process.env.NETWORK ?? "Preview") as Network;
@@ -34,7 +36,9 @@ export const SCRIPT_HASHES = {
   vault_schedule:  process.env.VAULT_SCHEDULE_HASH  ?? "FILL_AFTER_AIKEN_BUILD",
   shard:           process.env.SHARD_HASH           ?? "FILL_AFTER_AIKEN_BUILD",
   um_datum:        process.env.UM_DATUM_HASH        ?? "FILL_AFTER_AIKEN_BUILD",
-  // BackingBeacon script hash (§6.3)  [CẦN XÁC NHẬN — chờ CARP]
+  // BackingBeacon script hash (§6.3) — chưa deploy. Người GHI beacon là keeper
+  // tầng GreenBack của MagicLamp (chốt 2026-09-19), không phải nhà CARP; xem
+  // ghi chú dài ở `POLICY_IDS.backing`.
   // All-zero default = beacon not deployed ⟹ InstantGen SHUT (fail-closed).
   backing_beacon:  process.env.BACKING_SCRIPT_HASH  ?? "00".repeat(28),
 };
@@ -157,11 +161,16 @@ export const POLICY_IDS = {
   get lamp(): string { return requireLampPolicyId(); },
   um_nft:   process.env.UM_NFT_POLICY_ID   ?? "FILL_AFTER_DEPLOY_UM",
   shard_nft:process.env.SHARD_NFT_POLICY_ID ?? "FILL_AFTER_DEPLOY_SHARDS",
-  // BackingBeacon NFT (§6.3)  [CẦN XÁC NHẬN — chờ CARP]
-  // Default = all-zero: no UTxO can carry a token under a zero policy, so the
-  // InstantGen reference-input lookup fails and Gen stays SHUT (fail-closed).
-  // Never replace this with a fabricated value to "make it run".
+  // BackingBeacon NFT (§6.3) — chưa deploy.
+  // 🔴 VAI ĐÃ ĐƯỢC CHỐT LẠI 2026-09-19: beacon này do keeper tầng GreenBack của
+  // MagicLamp ghi, KHÔNG phải một thứ chờ nhà CARP giao. Dòng cũ ở đây khai
+  // "chờ CARP" và khai đó tự già: nó làm việc trông như đang bị chặn bởi bên
+  // khác trong khi nó nằm trong tầm tay nhà này.
+  // Hành vi thì GIỮ NGUYÊN — all-zero: không UTxO nào mang nổi token dưới một
+  // policy toàn số 0, nên phép tra reference input hỏng và Gen ĐÓNG (fail-closed).
+  // Đừng thay bằng một giá trị bịa để "cho nó chạy".
   backing:  process.env.BACKING_NFT_POLICY_ID ?? "00".repeat(28),
+  get carp(): string { return requireCarpIdentity().policyId; },
 };
 
 // ── Asset names (hex) ─────────────────────────────────────────
@@ -227,7 +236,126 @@ export const ASSET_NAMES = {
   um_nft:    "554d44",     // "UMD"
   shard_nft: "5348415244", // "SHARD"
   backing:   "425251",     // "BRQ" — BackingBeacon
+  get carp(): string { return requireCarpIdentity().assetName; },
 };
+
+// ── CARP — apply-param #1 và #2 của CẢ HAI validator PrepaidGen ──
+//
+// KHÔNG có giá trị mặc định, và KHÔNG có bản all-zero fail-closed như `backing`
+// ở trên. Hai cách fail-closed đó KHÁC NHAU, và chỗ khác nhau là chỗ quyết định:
+//
+//   `backing` đi vào REFERENCE INPUT lúc chạy. All-zero ⟹ không UTxO nào mang nổi
+//   token dưới policy đó ⟹ phép tra hỏng ⟹ InstantGen ĐÓNG. Sai mà an toàn.
+//
+//   `carp_policy_id` đi vào APPLY-PARAM lúc BIÊN DỊCH. All-zero vẫn ra bytes, vẫn
+//   ra script hash 28 byte, vẫn deploy êm — và cái ra đời là một quỹ không bao giờ
+//   nhìn thấy CARP của chính nó, cùng một vault ghim `paid_fund_hash` của cái quỹ
+//   đó. Không giao dịch nào đỏ; hỏng lộ ra lúc có người khoá CARP thật vào.
+//
+// Nên ở đây cổng phải NÉM, không được đệm. Cùng lý do và cùng hình dạng với
+// `requireLampPolicyId` bên trên.
+//
+// 🔴 VÀ HÌNH DẠNG KHÔNG PHẢI ĐỊNH DANH. Cặp `(policy_id, asset_name)` là định danh;
+// asset name một mình không bao giờ là điều kiện đủ (BOUNDARIES.md §1). Mọi chuỗi
+// 56 ký tự hex đều qua được một phép kiểm hình dạng, kể cả policy của một đời CARP
+// đã bị thay. Nên cổng dưới đây đối chiếu với cặp CANONICAL, không chỉ đo hình dạng.
+//
+// Bản trước của khối này viết "Trên Preprod hiện có HAI dòng tài sản cùng hiện ra
+// chữ tCARP dưới hai policy khác nhau" và KHÔNG neo vào đâu. Kiểm kê trọn của chính
+// kho (`scripts/DEPLOYED.md`, đo 2026-09-14 qua Blockfrost `/assets/policy/`) trả
+// **0 dòng** mang tên `tCARP`; dòng duy nhất mang tên CARP là `43415250` trên
+// **Preview** (`DEPLOYED.md:49`). Câu đó bị XOÁ chứ không giữ kèm đính chính — nó
+// còn là LÝ LẼ giữ cổng ở mức chỉ-đo-hình-dạng ("hình dạng không phân biệt được hai
+// policy, nên thôi"), tức một dữ kiện sai đang chống đỡ một cổng lỏng.
+// 🔴 CẶP CANONICAL ĐÃ CÓ TRONG KHO — cổng này KHÔNG được dựng lại nó.
+//
+// `PrepaidGen/offchain/src/constants.ts` ▸ `carpAssetClass(network)` là cửa DUY
+// NHẤT của cặp `(policy_id, asset_name)`, fail-closed sẵn (mạng chưa có CARP thì
+// NÉM, không trả chuỗi rỗng). Bản trước của hàm dưới đây đọc thẳng hai biến môi
+// trường rồi tự kiểm hình dạng — tức một NGUỒN THỨ HAI cho cùng một sự thật, và
+// là nguồn lỏng hơn. Ba chỗ nó lỏng hơn, đo được:
+//
+//   · `/^[0-9a-f]{56}$/` cho `"00".repeat(28)` ĐI QUA — đúng giá trị mà chú thích
+//     ngay trên nó cảnh báo là chết người. Và thành ngữ đó có sẵn cách 98 dòng
+//     (`backing` ở trên dùng all-zero làm mặc định HỢP LỆ), nên chép sang là việc
+//     tự nhiên nhất người vận hành làm.
+//   · `/^([0-9a-f]{2})+$/` cho `"7443415250"` (hex ASCII của "tCARP") ĐI QUA, trong
+//     khi `HEX28` bên PrepaidGen chặn — asset name CARP là một BĂM 28 byte, không
+//     phải ticker mã hoá. Đó đúng là lớp lỗi đã vá 2026-09-11.
+//   · Không đối chiếu với giá trị canonical nào, dù kho đã giữ sẵn cặp Preprod.
+//
+// Nên hàm này nay chỉ còn hai việc: gọi cửa canonical, và gác đường ĐÈ bằng biến
+// môi trường ở cùng mức nghiêm với `requireLampAssetName` bên trên.
+export interface CarpIdentity { policyId: string; assetName: string }
+
+const CARP_HEX28 = /^[0-9a-f]{56}$/;
+const CARP_ALL_ZERO = "00".repeat(28);
+
+export function requireCarpIdentity(): CarpIdentity {
+  // Ném ở đây khi mạng chưa có CARP — câu của `carpAssetClass` đã nói rõ phải làm gì.
+  const canonical = carpAssetClass(NETWORK as CarpNetwork);
+
+  const rawPolicy = process.env.CARP_POLICY_ID;
+  const rawName   = process.env.CARP_ASSET_NAME;
+  if (rawPolicy === undefined && rawName === undefined) return canonical;
+
+  // Đè một vế mà bỏ vế kia là trộn hai đời CARP: policy của đời này, tên của đời kia.
+  if (rawPolicy === undefined || rawName === undefined) {
+    throw new Error(
+      `CARP_POLICY_ID và CARP_ASSET_NAME phải đi THÀNH CẶP — đang có đúng một vế.\n` +
+      `  · Định danh tài sản là CẶP; asset name một mình không bao giờ là điều kiện đủ ` +
+      `(BOUNDARIES.md §1).\n` +
+      `  · Đè một vế thì vế kia lặng lẽ lấy giá trị canonical, và cái ra đời là một quỹ ` +
+      `ghim policy của một đời CARP với tên của một đời khác.\n` +
+      `  · Bỏ hẳn CẢ HAI biến thì cặp canonical của mạng ${NETWORK} được dùng.`,
+    );
+  }
+
+  for (const [ten, gt] of [["CARP_POLICY_ID", rawPolicy], ["CARP_ASSET_NAME", rawName]] as const) {
+    if (!CARP_HEX28.test(gt)) {
+      throw new Error(
+        `${ten} sai hình dạng (nhận ${JSON.stringify(gt)}). Phải là 56 ký tự hex thường ` +
+        `— 28 byte, cả policy id lẫn asset name.\n` +
+        `  · Asset name CARP là một BĂM 28 byte do nhà CarpetMint phát, KHÔNG phải hex của ` +
+        `chuỗi "CARP"/"tCARP". Một ticker mã hoá (\`7443415250\`) đi lọt phép kiểm "hex chẵn" ` +
+        `và bị \`HEX28\` bên PrepaidGen chặn — hai cổng cho cùng một sự thật thì bản lỏng hơn ` +
+        `là bản quyết định.\n` +
+        `  · Chuỗi rỗng vẫn ra script hash hợp lệ, rồi quỹ gọi \`quantity_of(value, policy, "")\` ` +
+        `và luôn nhận 0: CARP khoá vào nằm TRONG SÂN quỹ và NGOÀI SỔ quỹ.`,
+      );
+    }
+    if (gt === CARP_ALL_ZERO) {
+      throw new Error(
+        `${ten} toàn số 0. Đây là apply-param lúc BIÊN DỊCH, không phải một biến cấu hình ` +
+        `điền sau.\n` +
+        `  · All-zero vẫn ra bytes, vẫn ra script hash 28 byte hợp lệ, vẫn deploy êm — cái ` +
+        `ra đời là một quỹ không bao giờ nhìn thấy CARP của chính nó, và không giao dịch nào ` +
+        `báo đỏ.\n` +
+        `  · Mặc định all-zero của \`backing\` ở trên là hợp lệ vì \`backing\` đi vào REFERENCE ` +
+        `INPUT lúc CHẠY: all-zero ⟹ tra hỏng ⟹ cửa ĐÓNG. Hai cách fail-closed đó khác nhau; ` +
+        `đừng chép thành ngữ từ chỗ kia sang chỗ này.`,
+      );
+    }
+  }
+
+  if (rawPolicy !== canonical.policyId || rawName !== canonical.assetName) {
+    if (process.env.CARP_IDENTITY_NONCANONICAL !== "1") {
+      throw new Error(
+        `Cặp CARP đang đè KHÁC cặp canonical của mạng ${NETWORK}.\n` +
+        `  · canonical : ${canonical.policyId} / ${canonical.assetName}\n` +
+        `  · đang đè   : ${rawPolicy} / ${rawName}\n` +
+        `  · Preprod có HAI dòng tài sản cùng hiện ra chữ \`tCARP\` dưới hai policy khác ` +
+        `nhau, và phép kiểm hình dạng cho CẢ HAI đi qua. Hình dạng KHÔNG phải định danh.\n` +
+        `  · Sai ở đây là sai script hash ⟹ sai địa chỉ ⟹ không sửa được bằng cách đổi cấu ` +
+        `hình về sau, chỉ sửa được bằng biên dịch lại và công bố script tham chiếu mới.\n` +
+        `  · Thật sự đang trỏ vào một đời CARP KHÔNG canonical thì khai rõ ý định: đặt ` +
+        `CARP_IDENTITY_NONCANONICAL=1 trong cùng một lệnh.`,
+      );
+    }
+  }
+
+  return { policyId: rawPolicy, assetName: rawName };
+}
 
 // ── Addresses (điền sau khi deploy) ──────────────────────────
 export const ADDRESSES = {

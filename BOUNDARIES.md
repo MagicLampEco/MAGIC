@@ -70,13 +70,13 @@ theo spec §6.1 / L4. Neo — **theo TÊN HÀM, không theo số dòng**:
 > không phải mã. Đó là kiểu hỏng im lặng: người tra thấy một dòng hợp lệ và tưởng đã kiểm.
 
 > Bản cũ của dòng này viết công thức là `M = L × R × UM × PM / Q³`. **Tên biến đó đã cũ**
-> — từ DESIGN-2, thưởng khoá theo `consumed` chứ không theo `L` (xem mục **INV-MAGIC-CITIZEN**
-> bên dưới). Hình dạng ba-bước-sàn thì không đổi, và
+> — lượng sinh nay theo công thức chung ở `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` v2.0 §6.1.1
+> (xem mục **INV-MAGIC-CITIZEN** bên dưới). Hình dạng ba-bước-sàn thì không đổi, và
 > đó mới là phần bất biến.
 
 **`DESIGN-2` là gì, và vì sao nó không còn tên `PHA-2`** (đổi 2026-09-12). `DESIGN-2` là
-**đời thiết kế thứ hai của kho này** — mốc mà `I-ACT-7` bắt LAMP ĐỨNG YÊN và thưởng khoá
-theo `consumed` thay vì theo `L`. Nó là một MỐC THIẾT KẾ, không phải một pha vòng đời của
+**đời thiết kế thứ hai của kho này** — mốc mà `I-ACT-7` bắt LAMP ĐỨNG YÊN (công thức lượng sinh
+hiện hành: SPEC v2.0 §6.1.1). Nó là một MỐC THIẾT KẾ, không phải một pha vòng đời của
 thứ gì.
 
 Chuỗi `PHA-2` bị bỏ vì tới lúc đó **ba khái niệm khác nhau cùng đội lốt "phase 2"**, và
@@ -201,47 +201,62 @@ Hệ quả vận hành phải biết TRƯỚC khi dựng:
 
 Ràng buộc TẠM đang có hiệu lực cho tới khi vá, fail-closed: **chỉ chạy testnet**.
 
-**INV-MAGIC-CITIZEN — độ lớn thưởng do MAGIC ĐÃ TIÊU quyết; LAMP chỉ làm cổng, trần hoặc hệ số
-nhân; không gắn MAGIC đang cầm.** Nguồn: `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` bảng bất biến.
-Chủ dự án chốt giữ lại 2026-09-17. "Đã tiêu" nghĩa là bị trừ khỏi `magic_batches` qua nhánh
-`BurnBatch`; MAGIC **hết hạn KHÔNG tính**.
+**INV-MAGIC-CITIZEN — InstantGen và ScheduleGen sinh theo MỘT công thức chung của ba đầu vào: LAMP
+trong vault, tỷ lệ consumed/generated, thặng dư GreenBack; không gắn MAGIC đang cầm.** Nguồn duy
+nhất của công thức, vai từng thành phần và danh mục CHƯA CHỐT:
+`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` v2.0 §6.1.1–§6.1.6 và bảng §12 — đừng chép công thức
+xuống đây. Chủ dự án chốt 2026-09-17, thay bản trước của mục này (độ lớn thưởng do MAGIC đã tiêu
+quyết, LAMP chỉ làm cổng/trần/hệ số, người tiêu 0 nhận 0) — bản đó trái ý định "người dùng tự sinh
+MAGIC bằng LAMP của họ" và bị bỏ, không giữ kèm đính chính.
 
-Phạm vi: **vế thưởng của InstantGen (SPEC §6.3) và mọi hệ số, ưu đãi cộng lên đó** trong repo
-này. KHÔNG áp cho lượng SINH của ScheduleGen: ở đó MAGIC sinh tỉ lệ LAMP cam kết là cơ chế gốc
-(`ScheduleGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_m_i`), không phải thưởng. Quyền
-biểu quyết theo `LAMP/Governance/VotingPower/CONTRACT.md`.
+Ba điều phải giữ khi sửa mã, vì chúng là hình dạng chứ không phải con số:
+- "Đã tiêu" = bị trừ khỏi `magic_batches` qua nhánh `BurnBatch`; MAGIC **hết hạn KHÔNG tính** là
+  đã tiêu nhưng **vẫn tính** là đã sinh.
+- Tỷ lệ tiêu thụ chỉ **hạ** được lượng sinh xuống sàn, không nâng quá suất `ρ`; thặng dư GreenBack
+  chỉ là **trần + cổng**, không nhân. Hai điều này là thứ giữ phanh vật lý theo LAMP-khoá đứng vững
+  khi khoá beacon bị chiếm (SPEC v2.0 §6.1.5).
+- Quyền biểu quyết KHÔNG đổi: vẫn keyed MAGIC-đã-tiêu cross-DID, theo
+  `LAMP/Governance/VotingPower/CONTRACT.md`.
 
-**LAMP được phép vào công thức thưởng, nhưng chỉ ở ba vai** (SPEC §6.2–§6.3, `g(0) = 0`): **cổng** (ngưỡng,
-ví dụ `min_instant_holding`), **trần** (một vế trong `min`, ví dụ `compute_cap_pp`), hoặc **hệ số
-nhân** lên hàm của lượng đã tiêu. LAMP làm hạng tử cộng, hoặc làm ra một con số dương khi lượng đã
-tiêu bằng 0, là vi phạm.
+**Bốn điểm treo của mô hình sinh đã được chủ dự án chốt 2026-09-19** (chi tiết + cái giá từng
+mục: SPEC v2.0 §13, bảng *"ĐÃ CHỐT 2026-09-19"*). Hai mục dưới đây đổi thứ người sửa mã phải làm,
+nên nêu ở đây thay vì chỉ trỏ:
 
-Chỗ cưỡng chế, theo TÊN HÀM:
+- **`CC-GEN-L-TIMING` — LAMP dùng để sinh bị khoá tới hết epoch SAU**, không phải hết epoch hiện
+  tại. Cổng `current_epoch > instant_lock_epoch + 1` phải áp ở **MỌI** nhánh đọc `lamp_available`
+  hoặc rút LAMP (`InstantGen` · `WithdrawLamp` · `UpdateProfile`) — sót một nhánh là thủng, và
+  đây đúng là ca mà `§5` cảnh báo: đổi ràng buộc thì grep TOÀN BỘ nơi gọi.
+- **`CC-GEN-COLD-START` — vault chưa có lịch sử đứng ở mức TRUNG TÍNH**, và ở trạng thái đó
+  `scale_limit` không ràng buộc. Hệ quả: đóng vault rồi mở lại là một cách xoá lịch sử xấu có lợi.
+  **Ràng buộc TẠM đang có hiệu lực, fail-closed: chỉ chạy testnet** tới khi
+  `INV-ONE-PERSON-ONE-VAULT` được ép ở cổng genesis.
+
+**`B` là một DANH MỤC token** (chủ dự án chốt 2026-09-18), không phải một tài sản đơn: ADA, NIGHT,
+CHECK, WORK, có thể thêm. Ba hệ quả cho người sửa mã — một danh mục cần **một nguồn giá mỗi tài
+sản** (F6 đổi hình dạng, SPEC §6.3); `INV-BACKING-NO-LAMP` **không đổi**; và người ghi beacon
+backing là **keeper tầng GreenBack của kho này**, không phải engine CarpetMint. Ba chỗ trong kho
+còn khai ngược điều cuối và phải sửa khi đụng tới: `scripts/config.ts` ▸ mặc định `backing` ·
+`scripts/test/instant_only.ts` ▸ câu `"SHUT until CARP ships the beacon"` · `DevStatus.md` Nợ #2.
+Hành vi fail-closed (mặc định all-zero) thì **giữ nguyên** — chỗ sai là lời khai, không phải cổng.
+
+Hiệu lực: chỉ cho vault **deploy lại**; không hồi tố vault Preprod đang sống (SPEC v2.0 §6.1.6).
+
+**Hiện trạng mã — CHƯA theo mục trên** (kiểm 2026-09-17). Chỗ đang chạy, theo TÊN HÀM:
 - `InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_reward_from_consumed` — vế thưởng,
   nhận `consumed`, `um_q` (UM) và `pm_q` (enum hồ sơ), không nhận tham số LAMP. Lượng cấp thật là
   `compute_instant_grant = min(vế thưởng, cap_surplus, compute_cap_pp(L_avail))`: LAMP chỉ vào ở vế
-  TRẦN, nên nó hạ được lượng cấp chứ không nâng lượng cấp vượt vế thưởng.
+  TRẦN, và `compute_cap_pp` còn chia đôi suất.
 - Ở vault InstantGen và ScheduleGen (`onchain/validators/vault.ak` của mỗi module),
   `consumed_credit` chỉ tăng ở `validate_burn_batch`; `validate_prune_expired` không cộng gì vào
-  nó. Chỉ vault InstantGen đổi `consumed_credit` thành thưởng.
+  nó. Không tệp mã nào đếm tỷ lệ consumed/generated.
+- Genesis của InstantGen ghim `consumed_credit == wakeme_seed_credit`. Dưới mô hình mới hạt giống
+  không vào công thức sinh; vai còn lại của nó là CHƯA CHỐT `CC-GEN-SEED-CREDIT` (SPEC v2.0 §13).
+- MAGIC tiêu từ PrepaidGen không ghi vào `consumed_credit` nào (`grep consumed_credit` trong
+  `prepaid.ak` → 0 dòng) — khớp ràng buộc tạm `CC-GEN-PREPAID-IN-RATIO` (SPEC v2.0 §13).
 
-**Lệch spec đang mở:** SPEC §6.3 đếm MAGIC tiêu từ **mọi** nguồn, gồm cả PrepaidGen. Nhưng
-`PrepaidGen` ▸ `validate_burn_batch` không ghi vào `consumed_credit` nào (`grep consumed_credit`
-trong `prepaid.ak` → 0 dòng), nên MAGIC tiêu từ PrepaidGen hiện không sinh thưởng. Ràng buộc tạm:
-MAGIC tiêu từ PrepaidGen không sinh thưởng (fail-closed — thiếu thưởng, không thừa). Định nghĩa
-"đã tiêu" cùng dạng có ở PrepaidGen nhưng cho kế toán trả nhà cung cấp, không cho thưởng:
-`PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_fund_settle` (C-PP-7) chỉ cộng MAGIC tiêu
-thật vào `magic_settled`.
-
-**Ngoại lệ DUY NHẤT trong phạm vi `consumed_credit`, và nó có biên:** genesis của InstantGen ghim
-`consumed_credit == wakeme_seed_credit` (hạt giống Wakeme), tức ghi nhận một lượng *chưa* tiêu
-thật. Ngoại lệ này chỉ an toàn khi được cấp **một lần mỗi người**, nên nó phụ thuộc trực tiếp vào
-`INV-ONE-PERSON-ONE-VAULT` ở trên. Chừng nào vế đó chưa được ép, hạt giống là chỗ hở của bất biến
-này.
-
-Phép thử một dòng trước khi thêm bất kỳ phần thưởng hay ưu đãi nào: *"người tiêu 0 MAGIC thì con
-số này có bằng 0 không, và LAMP có vào công thức ở vai nào NGOÀI ba vai trên không?"* Không bằng 0,
-hoặc có vai thứ tư ⟹ vi phạm.
+Phép thử một dòng trước khi sửa công thức sinh: *"hệ số tiêu thụ có nâng được suất quá `ρ` không,
+và thặng dư GreenBack có đang NHÂN vào lượng sinh thay vì chặn trên không?"* Một trong hai là có ⟹
+kẻ chiếm khoá beacon hoặc kẻ tự-tiêu-cho-mình vượt được phanh LAMP-khoá ⟹ vi phạm.
 
 **Apply-param được phép thay đổi theo LOẠI script, KHÔNG theo từng thực thể.** Đây là
 kết luận của D12, chốt 2026-08-28 sau khi hai kiến trúc `INV-VAULT-IDENTITY` không tương

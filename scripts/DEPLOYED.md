@@ -603,3 +603,50 @@ validator đòi chữ ký committee, `epoch` tăng ngặt và không vượt epo
 lượt chạy bước 04 bằng một ví KHÁC. Nó đúc một beacon dưới policy chữ-ký-đơn của ví đó
 (`e5a606ff…`), mà vault InstantGen không đọc — vault chỉ nhận beacon dưới
 `backing_nft_policy` đã apply-param. Beacon đó mồ côi; đừng dùng nó.
+
+### 2026-09-18/19 — 🔴 ScheduleFire đã chạy trên **Preprod**, do keeper tự bắn
+
+Sổ này cho tới hôm nay ghi *"ScheduleFire ✅ Preview"* — tức Preprod thì chưa. **Câu đó đã hết
+đúng.** Keeper trên máy chủ (hẹn giờ mỗi giờ, phút 05 UTC) bắn ba lượt mà không ai bấm tay:
+
+| tx | thời điểm (UTC) | epoch |
+|---|---|---|
+| `92a7093aead26721183539492389d960dc29ab106384ad385d4602af522dbb8f` | 2026-09-18 00:06:47 | 20714 |
+| `11836b15c4538a6465c0e890df7726e26f63262dc0da7f388480ad6310cc2626` | 2026-09-19 00:08:10 | 20715 |
+| `6a2c56eacd47d2b897635ae71cccf8ff7ec3f489f7805b91ed1c27159753f087` | 2026-09-19 00:08:28 | 20715 |
+
+Mỗi tx tiêu **hai** script: vault ScheduleGen `18375a7d46d4a1ba63e414c7cfa825a7de2531909769ee26534b3edd`
+và shard tổng hợp `97e967d2570f195503dbcae9841e7d6ed776b49af4d82058f3234dfb`. Chi phí đo được:
+vault ~1,24–1,29 M mem / ~449–466 M step; shard ~0,72–0,75 M mem / ~234–246 M step.
+
+**Cách kiểm lại — phép đo, không phải trạng thái chép:**
+
+```
+$ curl -H "project_id: <khoá>" \
+    "https://cardano-preprod.blockfrost.io/api/v0/addresses/<VAULT_SCHEDULE_ADDR>/transactions?order=desc"
+$ curl -H "project_id: <khoá>" "…/api/v0/txs/<hash>/redeemers"     # hai mục spend là dấu của fire
+```
+
+Trạng thái vault đọc bằng `VaultReadService` lúc 2026-09-19 (epoch 20715):
+
+```
+utxo_ref            6a2c56ea…#0
+available_nanogic   3208000000      accrued 3208000000      expired 0
+lamp_balance        10000 tLAMP     lamp_locked 3608 tLAMP
+batch Schedule 20715 → 20716     8000000  live
+batch Schedule 20715 → 20716  3200000000  live
+sched ce29701b…  λ=1 tLAMP    L=10  fire đầu 20714  fired_count 2
+sched d3fdcc7f…  λ=400 tLAMP  L=10  fire đầu 20715  fired_count 1
+```
+
+**Hai điều đọc được từ đây mà lượt Preview không cho:**
+
+1. **`decay_window = 1` không giết MAGIC khi có lịch chạy đều.** Trên Preview, 64 triệu nanogic
+   bắn một đợt rồi hết hạn trước khi ai tiêu kịp, và sổ đọc thành "hằng số này làm mất trắng".
+   Ở đây lịch bắn **mỗi epoch**, nên luôn có một batch sống trong ngày. Hằng số không đổi; cái
+   đổi là **nhịp**. Đừng trích dòng Preview như một phát biểu về hằng số.
+2. **Chưa lượt nào TIÊU số MAGIC này.** Hai lượt tiêu đã ghi ở mục trên đều trên MAGIC của
+   InstantGen, qua bản `consume` đời InstantGen `4fcc3e84…`. Bản đời ScheduleGen
+   `1d792c6f36828e45bd82212896ef95f3814a0a78ebf86b82c26cbb56` đã deploy nhưng **chưa có lượt
+   tiêu nào** — `run_consume_schedule_e2e.sh` dừng đúng ở *"No eligible fires … 20714"* hôm
+   17/09 vì lúc đó chưa có batch. Nay có; vòng đó chạy được.

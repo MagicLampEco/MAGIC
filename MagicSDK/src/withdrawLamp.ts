@@ -25,6 +25,7 @@ import {
 } from "@magiclamp/protocol-utils";
 
 import { assertLampPolicyId } from "./lampPolicy.js";
+import { assertRefScriptMatches } from "./refScript.js";
 import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { VaultType } from "./types.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
@@ -43,6 +44,12 @@ export interface WithdrawLampParams {
   amountOildrop:       bigint;
   /** Applied vault validator (same one used at createVault). */
   vaultScript:     Validator;
+  /** UTxO CIP-33 mang script tham chiếu của vault. Có thì giao dịch ĐỌC nó
+   *  (`readFrom`) thay vì nhét trọn ~12 kB script vào thân — xem `refScript.ts`
+   *  cho số đo và cho lý do vault đã tích dữ liệu thì thiếu nó là KHÔNG dựng nổi
+   *  giao dịch. Vắng thì vẫn nhét inline như trước, nên đây là bổ sung tương
+   *  thích ngược, không phải đổi hợp đồng. */
+  vaultRefScriptUtxo?: UTxO;
   /** Vault type — for logging / error messages only. Constructor index for
    *  the WithdrawLamp redeemer is resolved at runtime from `vaultPlutusJson`
    *  (so SDK can't desync with onchain enum order). */
@@ -170,10 +177,16 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 
-  const tx = await lucid
-    .newTx()
-    .collectFrom([vaultUtxo], redeemer)
-    .attach.SpendingValidator(vaultScript)
+  // Script tham chiếu nếu có, nếu không thì nhét inline. Phép kiểm hash nằm
+  // TRƯỚC `complete()`: một ref UTxO sai đọc vào vẫn dựng ra giao dịch, và nó
+  // chết trên chuỗi SAU khi người dùng đã ký.
+  const refUtxo = params.vaultRefScriptUtxo;
+  const txWithScript = refUtxo === undefined
+    ? lucid.newTx().collectFrom([vaultUtxo], redeemer).attach.SpendingValidator(vaultScript)
+    : lucid.newTx().collectFrom([vaultUtxo], redeemer)
+        .readFrom([assertRefScriptMatches(refUtxo, vaultScript, "vault (WithdrawLamp)")]);
+
+  const tx = await txWithScript
     .pay.ToAddressWithData(
       vaultAddress,
       { kind: "inline", value: Data.to(newVaultDatum as never, VaultDatumSchema) },

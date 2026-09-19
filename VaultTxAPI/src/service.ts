@@ -16,7 +16,7 @@ import type { Network } from "@magiclamp/protocol-utils";
 
 import type { ChainReader } from "./chain.js";
 import type { Deployment, VaultScope } from "./config.js";
-import { BadRequestError, SubmitRejectedError, TxSummaryUndecodableError } from "./errors.js";
+import { BadRequestError, ConfigMissingError, SubmitRejectedError, TxSummaryUndecodableError } from "./errors.js";
 import { IssuedTxRegistry, OwnerLockTable } from "./locks.js";
 import { summarizeTx, txBodyHash, type RequestedIntent, type TxSummary } from "./summary.js";
 import { enterpriseAddressOf, type BuildContext, type TxBuilderPort } from "./txBuilder.js";
@@ -79,6 +79,33 @@ export class VaultTxService {
    * Chủ nào có cả hai thì `pickSingleVault` ném `VAULT_AMBIGUOUS` — xem `errors.ts` cho
    * lý do không chọn đại.
    */
+  /**
+   * InstantGen — vault loại `Instant`. Không tham số: lượng cấp do validator quyết.
+   *
+   * 🔴 Cổng cấu hình nằm Ở ĐÂY, không ở tầng dựng. Đây là một quyết định, không phải
+   * chỗ tiện tay: đặt nó trong `SdkTxBuilder` thì nó biến mất cùng lúc với `SdkTxBuilder`
+   * — bất kỳ bản dựng nào khác được nối vào cũng làm đường này báo "mở" trong khi bốn
+   * giá trị cấu hình vẫn vắng. Một cổng chỉ sống trong MỘT hiện thực của một cổng cắm
+   * thì nó gác hiện thực đó, không gác khái niệm.
+   */
+  async instantGen(req: { ownerPkh: string }): Promise<BuildResponse> {
+    if (this.deps.deployment.instant === undefined) {
+      throw new ConfigMissingError(
+        `Đường InstantGen chưa được cấu hình: bản deploy thiếu mục \`instant\` ` +
+        `(\`um_datum_address\` · \`um_nft_unit\` · \`backing_beacon_address\` · ` +
+        `\`backing_beacon_nft_unit\`).\n` +
+        `  · InstantGen ĐỌC hai reference input lúc chạy, và \`validate_instant_gen\` ` +
+        `fail-closed quanh chúng: thiếu beacon, beacon quá hạn, hoặc cờ \`depeg\` bật ` +
+        `thì giao dịch bị TỪ CHỐI.\n` +
+        `  · Nên mở đường này khi chưa có đủ bốn giá trị là dựng tx nào cũng chết trên ` +
+        `chuỗi, với một câu không trỏ về cấu hình. Đóng là trạng thái đúng.`,
+        { missing: "deployment.instant" },
+      );
+    }
+    return this.buildOne("Instant", "instant_gen", req.ownerPkh, (ctx, b) =>
+      b.instantGen(ctx, {}));
+  }
+
   async consume(req: { ownerPkh: string; opType: number; opCount: bigint }): Promise<BuildResponse> {
     return this.buildOne(undefined, "consume", req.ownerPkh, (ctx, b) =>
       b.consume(ctx, { opType: req.opType, opCount: req.opCount }));

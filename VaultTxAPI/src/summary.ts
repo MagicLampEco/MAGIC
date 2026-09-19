@@ -25,7 +25,7 @@ import { lovelaceToAda, nanogicToMagic, oildropToLamp, raw } from "./units.js";
 
 /** Nhãn của đường HTTP đã gọi. Đây là thứ DUY NHẤT trong `summary` không suy từ CBOR,
  *  nên nó mang tên nói rõ điều đó. Mọi con số đều suy từ CBOR. */
-export type RequestedIntent = "schedule_commit" | "schedule_fire" | "consume";
+export type RequestedIntent = "instant_gen" | "schedule_commit" | "schedule_fire" | "consume";
 
 export interface SummaryContext {
   /** Địa chỉ vault — dùng để nhận ra output tiếp-nối trong danh sách output. */

@@ -22,7 +22,7 @@ import {
   type LucidEvolution, type Script, type UTxO,
 } from "@lucid-evolution/lucid";
 import {
-  buildConsumeTx, buildScheduleCommitTx, buildScheduleFireTx, buildVaultBurnBatch,
+  buildConsumeTx, buildInstantGenTx, buildScheduleCommitTx, buildScheduleFireTx, buildVaultBurnBatch,
   decodePriceParam, requiredFromBeacon,
   type PlutusJson, type VaultModule,
 } from "@magiclamp/sdk";
@@ -51,6 +51,7 @@ export interface TxBuilderPort {
   scheduleCommit(ctx: BuildContext, p: { scheduleLength: bigint; lampPerEpoch: bigint }): Promise<BuiltTx>;
   scheduleFire(ctx: BuildContext, p: { scheduleId: string }): Promise<BuiltTx>;
   consume(ctx: BuildContext, p: { opType: number; opCount: bigint }): Promise<BuiltTx>;
+  instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx>;
 }
 
 /** `VaultType` của cấu hình → `VaultModule` của `buildVaultBurnBatch`. Hai module kiểm
@@ -144,6 +145,61 @@ export class SdkTxBuilder implements TxBuilderPort {
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
       refScriptUtxos,
+    }));
+    return { txCbor: r.tx.toCBOR() };
+  }
+
+  /**
+   * InstantGen — không nhận tham số nào ngoài chủ vault, và đó là điểm.
+   *
+   * Lượng cấp KHÔNG do người gọi chọn: nó là `min(vế thưởng, cap_surplus, cap_pp)`,
+   * tính từ trạng thái vault cộng hai reference input. Một tham số `amount` ở đây sẽ
+   * là một con số người dùng gõ vào rồi bị validator bác — tức một cái nút hứa một
+   * thứ nó không quyết được.
+   *
+   * Hai reference input là chỗ đường này fail-closed, và nó fail-closed ở TẦNG CHUỖI
+   * chứ không ở tầng dịch vụ: thiếu beacon, beacon quá hạn, hoặc cờ `depeg` bật thì
+   * `validate_instant_gen` từ chối. Dịch vụ không đoán hộ — nó chỉ dựng, và để câu
+   * từ chối của chuỗi đi thẳng về người gọi qua `rejectAsProtocol`.
+   */
+  async instantGen(ctx: BuildContext, _p: Record<string, never>): Promise<BuiltTx> {
+    const d = this.deps.deployment;
+    // KHÔNG phải bản sao thứ hai của cổng cấu hình — cổng đó ở `VaultTxService.instantGen`
+    // và nó là bản quyết định. Đây là một BẤT BIẾN NỘI BỘ để thu hẹp kiểu: tới được đây
+    // với `instant === undefined` nghĩa là ai đó gọi thẳng tầng dựng, bỏ qua tầng dịch vụ.
+    // Nói đúng bản chất thay vì lặp lại câu của cổng kia, vì hai bản sao của một cổng thì
+    // bản lỏng hơn là bản quyết định và không bản nào tự khai mình lỏng hơn.
+    if (d.instant === undefined) {
+      throw new Error(
+        "[bất biến nội bộ] SdkTxBuilder.instantGen được gọi khi `deployment.instant` vắng. " +
+        "Cổng cấu hình nằm ở VaultTxService.instantGen — lượt gọi này đã đi vòng qua nó.",
+      );
+    }
+
+    const lucid = await this.lucidFor(ctx);
+    const [vaultRef] = await this.deps.chain.utxosByOutRef([d.refScriptUtxos.vault]);
+    const vaultScript = scriptOfRef(vaultRef, "vault");
+    assertScriptHash(vaultScript, ctx.vault.scope.scriptHash, "vault");
+
+    const umDatumUtxo = pickByNft(
+      await this.deps.chain.utxosAt(d.instant.umDatumAddress), d.instant.umNftUnit, "datum UM",
+    );
+    const backingBeaconUtxo = pickByNft(
+      await this.deps.chain.utxosAt(d.instant.backingBeaconAddress), d.instant.backingBeaconNftUnit,
+      "beacon backing",
+    );
+
+    const r = await rejectAsProtocol(() => buildInstantGenTx({
+      lucid,
+      vaultUtxo: ctx.vault.utxo,
+      umDatumUtxo,
+      backingBeaconUtxo,
+      userAddress: ctx.changeAddress,
+      vaultScript,
+      lampPolicyId: d.lampPolicyId,
+      lampAssetName: d.lampAssetNameHex,
+      network: this.deps.network,
+      tipPosixMs: ctx.tip.blockTimePosixMs,
     }));
     return { txCbor: r.tx.toCBOR() };
   }
@@ -409,5 +465,8 @@ export class RecordedTxBuilder implements TxBuilderPort {
   }
   consume(_ctx: BuildContext, p: { opType: number; opCount: bigint }): Promise<BuiltTx> {
     return this.serve("consume", p);
+  }
+  instantGen(_ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx> {
+    return this.serve("instant_gen", p);
   }
 }

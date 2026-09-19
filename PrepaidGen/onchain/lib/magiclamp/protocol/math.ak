@@ -83,3 +83,36 @@ pub fn compute_fund_id(tx_hash: ByteArray, output_index: Int) -> ByteArray {
     bytearray.concat(tx_hash, bytearray.from_int_big_endian(output_index, 8)),
   )
 }
+
+// ── Vector chuẩn P8: compute_fund_id ↔ scripts/fundId.ts ────────────────────
+// Ba giá trị dưới đây do `scripts/fundId.ts` ▸ `fundIdAssetName` sinh ra
+// (2026-09-19). Bài này là TRAP-DOOR cho phép trùng-bit giữa hai hiện thực: nó
+// đỏ khi một trong hai bên đổi mà bên kia không đổi.
+//
+// VÌ SAO CẦN, dù công thức chỉ có một dòng: bên TypeScript phải tự tay mã hoá
+// `output_index` thành ĐÚNG 8 byte big-endian. Cách viết tự nhiên hơn — dùng độ
+// dài tối thiểu — chạy trót lọt, trả về 64 ký tự hex, và cho một tên tài sản
+// KHÁC. Lúc đó `validate_mint_fund_nft` không khớp input nào và giao dịch chết
+// với một thông điệp không trỏ về chỗ sai.
+//
+// Ca `#0` là ca quan trọng nhất và là ca dễ lọt nhất: index 0 mã hoá tối thiểu
+// ra MỘT byte, nên một bản dựng sai vẫn "trông đúng" ở mọi ca người ta thử tay.
+//
+// VÌ SAO KHÔNG Ở `vectors.ak` — đừng "dọn" nó sang đó. Bảng kia giữ vector SỐ cho
+// các hàm số học và người đọc nó là `offchain/src/math.ts`, module KHÔNG hiện thực
+// `compute_fund_id`. Vector này neo một cặp khác hẳn: hàm băm định danh ở đây ↔
+// `scripts/fundId.ts`. Chuyển sang bảng kia là đưa một vector vào tầm mắt của một
+// bên không có gì để đối chiếu, và lấy nó khỏi tầm mắt của bên có.
+//
+// Đã đo trap-door 2026-09-19: đổi `from_int_big_endian(output_index, 8)` thành `4`
+// ⟹ ĐÚNG MỘT bài đỏ, chính bài này (139 tổng, 138 xanh). Không bài nào khác trong
+// module bắt được thay đổi đó.
+test tv_fund_id_matches_typescript() {
+  let tx_a = #"1111111111111111111111111111111111111111111111111111111111111111"
+  let tx_b = #"abababababababababababababababababababababababababababababababab"
+  and {
+    compute_fund_id(tx_a, 0) == #"89a14e509dfb8c8a861d91e275c12d7dacb33d6ec5a80bda7657e85651f34e37",
+    compute_fund_id(tx_a, 3) == #"e676bdc6ff18e85229e58bf657990d4f6ab7775921e10cfc4198dec82a57be1e",
+    compute_fund_id(tx_b, 7) == #"9abebc9dfb5819fc04fdc74cef430436ec9a1ba841ceec1dabc63615714c6778",
+  }
+}

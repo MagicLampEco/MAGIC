@@ -19,6 +19,7 @@ import {
   instantVaultParams, scheduleVaultParams, umDatumParams, shardSpendParams,
   oneShotGenesisParams, priceParamParams, consumeParams, paymasterParams,
   addressData, consolidateParams, profileChangeParams,
+  paidFundParams, prepaidVaultParams,
 } from "./deployParams.js";
 
 // Giá trị giữ chỗ — chỉ TÊN và THỨ TỰ mới được kiểm ở đây.
@@ -158,6 +159,47 @@ const CASES: Case[] = [
     module: "ProfileChange", title: "vault_profile.vault_profile.spend",
     usedBy: "(chưa có deploy script — cổng dựng trước)",
     params: profileChangeParams({ msPerEpoch: MS }),
+  },
+  // ── PrepaidGen ────────────────────────────────────────────────
+  // Bốn case, không phải hai: `mint` và `spend` của cùng một validator có DANH
+  // SÁCH THAM SỐ RIÊNG trong blueprint. Kiểm một handler rồi suy ra handler kia
+  // là suy, không phải đo — và ở đây `mint` là handler dựng genesis, tức chỗ mà
+  // một tham số lệch sinh ra vault/quỹ hỏng ngay từ UTxO đầu tiên.
+  //
+  // `10_deploy_prepaid.ts` TỒN TẠI nhưng cố tình KHÔNG chạy được khi chưa có cặp
+  // định danh CARP đã chốt (`config.ts` ▸ `requireCarpIdentity` ném). Cổng này
+  // vẫn chạy được trong trạng thái đó, vì nó chỉ đọc blueprint và chỉ so TÊN +
+  // THỨ TỰ — nó không cần một giá trị CARP thật. Đó là điểm: phần kiểm được thì
+  // kiểm ngay, đừng để cả cụm nằm im chờ một dữ kiện của nhà khác.
+  {
+    module: "PrepaidGen", title: "prepaid.paid_fund.mint",
+    usedBy: "deploy/10_deploy_prepaid.ts",
+    params: paidFundParams({
+      carpPolicyId: P28, carpAssetName: "7443415250", msPerEpoch: MS,
+    }),
+  },
+  {
+    module: "PrepaidGen", title: "prepaid.paid_fund.spend",
+    usedBy: "deploy/10_deploy_prepaid.ts",
+    params: paidFundParams({
+      carpPolicyId: P28, carpAssetName: "7443415250", msPerEpoch: MS,
+    }),
+  },
+  {
+    module: "PrepaidGen", title: "prepaid.prepaid_vault.mint",
+    usedBy: "deploy/10_deploy_prepaid.ts",
+    params: prepaidVaultParams({
+      carpPolicyId: P28, carpAssetName: "7443415250",
+      paidFundHash: P28, msPerEpoch: MS,
+    }),
+  },
+  {
+    module: "PrepaidGen", title: "prepaid.prepaid_vault.spend",
+    usedBy: "deploy/10_deploy_prepaid.ts",
+    params: prepaidVaultParams({
+      carpPolicyId: P28, carpAssetName: "7443415250",
+      paidFundHash: P28, msPerEpoch: MS,
+    }),
   },
 ];
 

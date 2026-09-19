@@ -34,7 +34,9 @@ export const SCRIPT_HASHES = {
   vault_schedule:  process.env.VAULT_SCHEDULE_HASH  ?? "FILL_AFTER_AIKEN_BUILD",
   shard:           process.env.SHARD_HASH           ?? "FILL_AFTER_AIKEN_BUILD",
   um_datum:        process.env.UM_DATUM_HASH        ?? "FILL_AFTER_AIKEN_BUILD",
-  // BackingBeacon script hash (§6.3)  [CẦN XÁC NHẬN — chờ CARP]
+  // BackingBeacon script hash (§6.3) — chưa deploy. Người GHI beacon là keeper
+  // tầng GreenBack của MagicLamp (chốt 2026-09-19), không phải nhà CARP; xem
+  // ghi chú dài ở `POLICY_IDS.backing`.
   // All-zero default = beacon not deployed ⟹ InstantGen SHUT (fail-closed).
   backing_beacon:  process.env.BACKING_SCRIPT_HASH  ?? "00".repeat(28),
 };
@@ -157,11 +159,16 @@ export const POLICY_IDS = {
   get lamp(): string { return requireLampPolicyId(); },
   um_nft:   process.env.UM_NFT_POLICY_ID   ?? "FILL_AFTER_DEPLOY_UM",
   shard_nft:process.env.SHARD_NFT_POLICY_ID ?? "FILL_AFTER_DEPLOY_SHARDS",
-  // BackingBeacon NFT (§6.3)  [CẦN XÁC NHẬN — chờ CARP]
-  // Default = all-zero: no UTxO can carry a token under a zero policy, so the
-  // InstantGen reference-input lookup fails and Gen stays SHUT (fail-closed).
-  // Never replace this with a fabricated value to "make it run".
+  // BackingBeacon NFT (§6.3) — chưa deploy.
+  // 🔴 VAI ĐÃ ĐƯỢC CHỐT LẠI 2026-09-19: beacon này do keeper tầng GreenBack của
+  // MagicLamp ghi, KHÔNG phải một thứ chờ nhà CARP giao. Dòng cũ ở đây khai
+  // "chờ CARP" và khai đó tự già: nó làm việc trông như đang bị chặn bởi bên
+  // khác trong khi nó nằm trong tầm tay nhà này.
+  // Hành vi thì GIỮ NGUYÊN — all-zero: không UTxO nào mang nổi token dưới một
+  // policy toàn số 0, nên phép tra reference input hỏng và Gen ĐÓNG (fail-closed).
+  // Đừng thay bằng một giá trị bịa để "cho nó chạy".
   backing:  process.env.BACKING_NFT_POLICY_ID ?? "00".repeat(28),
+  get carp(): string { return requireCarpIdentity().policyId; },
 };
 
 // ── Asset names (hex) ─────────────────────────────────────────
@@ -227,7 +234,64 @@ export const ASSET_NAMES = {
   um_nft:    "554d44",     // "UMD"
   shard_nft: "5348415244", // "SHARD"
   backing:   "425251",     // "BRQ" — BackingBeacon
+  get carp(): string { return requireCarpIdentity().assetName; },
 };
+
+// ── CARP — apply-param #1 và #2 của CẢ HAI validator PrepaidGen ──
+//
+// KHÔNG có giá trị mặc định, và KHÔNG có bản all-zero fail-closed như `backing`
+// ở trên. Hai cách fail-closed đó KHÁC NHAU, và chỗ khác nhau là chỗ quyết định:
+//
+//   `backing` đi vào REFERENCE INPUT lúc chạy. All-zero ⟹ không UTxO nào mang nổi
+//   token dưới policy đó ⟹ phép tra hỏng ⟹ InstantGen ĐÓNG. Sai mà an toàn.
+//
+//   `carp_policy_id` đi vào APPLY-PARAM lúc BIÊN DỊCH. All-zero vẫn ra bytes, vẫn
+//   ra script hash 28 byte, vẫn deploy êm — và cái ra đời là một quỹ không bao giờ
+//   nhìn thấy CARP của chính nó, cùng một vault ghim `paid_fund_hash` của cái quỹ
+//   đó. Không giao dịch nào đỏ; hỏng lộ ra lúc có người khoá CARP thật vào.
+//
+// Nên ở đây cổng phải NÉM, không được đệm. Cùng lý do và cùng hình dạng với
+// `requireLampPolicyId` bên trên.
+//
+// 🔴 VÀ HÌNH DẠNG KHÔNG PHẢI ĐỊNH DANH. Trên Preprod hiện có HAI dòng tài sản cùng
+// hiện ra chữ `tCARP` dưới hai policy khác nhau — cả hai đều 56 ký tự hex thường,
+// nên phép kiểm hình dạng dưới đây cho cả hai đi qua và KHÔNG phân biệt được.
+// Cặp `(policy_id, asset_name)` là định danh; asset name một mình không bao giờ là
+// điều kiện đủ (BOUNDARIES.md §1). Lấy cặp ĐÃ CHỐT từ kho CarpetMint, đừng suy từ
+// tên hiển thị trong ví hay explorer.
+export interface CarpIdentity { policyId: string; assetName: string }
+
+export function requireCarpIdentity(): CarpIdentity {
+  const policyId  = process.env.CARP_POLICY_ID  ?? "";
+  const assetName = process.env.CARP_ASSET_NAME ?? "";
+
+  if (!/^[0-9a-f]{56}$/.test(policyId)) {
+    throw new Error(
+      `CARP_POLICY_ID thiếu hoặc sai hình dạng (nhận ${JSON.stringify(policyId)}). ` +
+      `Phải là 56 ký tự hex thường.\n` +
+      `  · ĐỪNG đúc một token tạm để lấp chỗ này. Preprod đã có HAI dòng mang tên ` +
+      `tCARP dưới hai policy khác nhau; thêm một dòng thứ ba làm nặng thêm đúng chỗ ` +
+      `đang phải gỡ.\n` +
+      `  · Đây là apply-param lúc biên dịch: một giá trị giữ chỗ ở đây sinh ra một ` +
+      `script hash hợp lệ và một quỹ mù với CARP, không lệnh nào báo đỏ.\n` +
+      `  · Chưa có cặp định danh đã chốt ⟹ đường deploy PrepaidGen ĐÓNG. Đó là ` +
+      `trạng thái đúng, không phải một lỗi cấu hình cần vòng qua.`,
+    );
+  }
+
+  if (!/^([0-9a-f]{2})+$/.test(assetName)) {
+    throw new Error(
+      `CARP_ASSET_NAME sai hình dạng (nhận ${JSON.stringify(assetName)}). Phải là hex ` +
+      `thường, SỐ KÝ TỰ CHẴN, và KHÔNG được rỗng.\n` +
+      `  · Chuỗi rỗng đi lọt mọi phép kiểm lỏng và vẫn ra script hash hợp lệ: quỹ sinh ` +
+      `ra gọi \`quantity_of(value, policy, "")\` và luôn nhận 0. CARP khoá vào nằm trong ` +
+      `sân quỹ và ngoài sổ quỹ.\n` +
+      `  · Bỏ trống KHÔNG phải cách khai "chưa biết" — cách khai đó là không chạy bước này.`,
+    );
+  }
+
+  return { policyId, assetName };
+}
 
 // ── Addresses (điền sau khi deploy) ──────────────────────────
 export const ADDRESSES = {

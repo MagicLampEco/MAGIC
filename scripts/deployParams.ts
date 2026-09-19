@@ -128,6 +128,66 @@ export function profileChangeParams(i: { msPerEpoch: bigint }): ParamMap {
   return { ms_per_epoch: i.msPerEpoch };
 }
 
+// ── PrepaidGen — prepaid.paid_fund.{mint,spend} (3 tham số) ──────
+// Neo: PrepaidGen/onchain/validators/prepaid.ak — `validator paid_fund(...)`.
+//
+// `paid_fund` KHÔNG nhận hash của vault. Đó là điều kiện làm chuỗi apply MỘT
+// CHIỀU và không khép vòng:
+//
+//   paid_fund(carp…) → paid_fund_hash → prepaid_vault(carp…, paid_fund_hash, …)
+//
+// Chiều ngược — quỹ ghim được vault thật lúc quyết toán — KHÔNG đi qua tham số
+// biên dịch mà qua `PaidFundDatum.vault_hash`, ghim tại genesis bởi handler
+// `mint` của chính `paid_fund` rồi bất biến. Ai đảo thứ tự này sẽ cần hash của
+// vault trước khi nó tồn tại, và lối thoát duy nhất là dựng một giá trị giữ chỗ —
+// đó là đường đi tới một script hash trông hợp lệ mà sai vĩnh viễn.
+//
+// KHÔNG có `fund_nft_policy`: handler `mint` nằm trong chính `paid_fund`, nên
+// policy id của NFT quỹ BẰNG script hash của quỹ theo định nghĩa. Trước
+// 2026-09-15 đó là hai apply-param độc lập, và hai giá trị song song thì lệch
+// được — đúng lớp lỗi mà `BOUNDARIES.md §5` gọi là bài học đắt nhất của kho.
+export interface PaidFundParamInputs {
+  carpPolicyId:  string;
+  carpAssetName: string;
+  msPerEpoch:    bigint;
+}
+
+export function paidFundParams(i: PaidFundParamInputs): ParamMap {
+  return {
+    carp_policy_id:  i.carpPolicyId,
+    carp_asset_name: i.carpAssetName,
+    ms_per_epoch:    i.msPerEpoch,
+  };
+}
+
+// ── PrepaidGen — prepaid.prepaid_vault.{mint,spend} (4 tham số) ──
+// Neo: PrepaidGen/onchain/validators/prepaid.ak — `validator prepaid_vault(...)`.
+//
+// `paid_fund_hash` là hash của `paid_fund` ĐÃ apply đúng ba tham số trên. Truyền
+// hash của bản CHƯA apply cũng ra 28 byte hex hợp lệ và cũng deploy êm — và vault
+// sinh ra sẽ từ chối mọi quỹ thật, vĩnh viễn.
+//
+// `carp_asset_name` nằm GIỮA `carp_policy_id` và `paid_fund_hash`. Bỏ sót nó
+// không phải là "thiếu tham số cuối": nó ĐẨY `paid_fund_hash` vào đúng chỗ của
+// asset name và `ms_per_epoch` vào chỗ của `paid_fund_hash`. Ba giá trị vẫn là
+// hex hợp lệ, `applyParamsToScript` không kiểm arity, và hash thu được trông
+// bình thường — cùng hình dạng với ca `consolidateParams` ở trên.
+export interface PrepaidVaultParamInputs {
+  carpPolicyId:  string;
+  carpAssetName: string;
+  paidFundHash:  string;
+  msPerEpoch:    bigint;
+}
+
+export function prepaidVaultParams(i: PrepaidVaultParamInputs): ParamMap {
+  return {
+    carp_policy_id:  i.carpPolicyId,
+    carp_asset_name: i.carpAssetName,
+    paid_fund_hash:  i.paidFundHash,
+    ms_per_epoch:    i.msPerEpoch,
+  };
+}
+
 // ── UMKeeper — um_datum.um_datum_validator.spend (3 tham số) ─────
 // Neo: UMKeeper/onchain/validators/um_datum.ak.
 export interface UmDatumParamInputs {

@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# scripts/run_prepaid_e2e.sh — PrepaidGen từ genesis tới tiêu MAGIC.
+#
+#   bash run_prepaid_e2e.sh Preprod            # chạy hết phần chạy được không cần CARP
+#   bash run_prepaid_e2e.sh Preprod --deploy   # thêm hai giao dịch genesis
+#
+# Bí mật đi vào bằng GIÁ TRỊ qua môi trường, không in ra:
+#   BLOCKFROST_KEY=… WALLET_SEED='…' bash run_prepaid_e2e.sh Preprod --deploy
+#
+# ── TRẠNG THÁI KỸ THUẬT ──────────────────────────────────────────────────────
+#
+# | mã       | treo cái gì                          | ràng buộc TẠM (fail-closed)          | khai ở            |
+# |----------|--------------------------------------|--------------------------------------|-------------------|
+# | Nợ #71   | cặp định danh CARP `(policy_id,      | `requireCarpIdentity()` NÉM khi thiếu | `scripts/config.ts` |
+# |          | asset_name)` cho apply-param #1/#2   | ⟹ bước `--deploy` từ chối ở dòng đầu  | `deploy/10_deploy_prepaid.ts` |
+# |          | của `paid_fund` và `prepaid_vault`   | của `main()`: trước ví, trước mạng,   | `DevStatus.md`      |
+# |          |                                      | trước phí. Bước 1–3 KHÔNG phụ thuộc.  |                   |
+#
+# Vì sao ràng buộc nằm ở đây chứ không ở một biến cấu hình điền sau: hai giá trị
+# đó là APPLY-PARAM, tức tham số lúc BIÊN DỊCH. Chúng là một phần của BYTES, nên
+# đổi chúng là đổi script hash ⟹ đổi địa chỉ ⟹ mọi UTxO đã tạo ở địa chỉ cũ thành
+# mồ côi. Một giá trị giữ chỗ vẫn cho ra hash 28 byte hợp lệ và vẫn deploy êm —
+# cái ra đời là một quỹ không bao giờ nhìn thấy CARP của chính nó, và không lệnh
+# nào báo đỏ.
+#
+# KHÔNG đúc một token tạm để lấp chỗ đó. Preprod đã có HAI dòng tài sản cùng hiện
+# ra chữ tCARP dưới hai policy khác nhau; dòng thứ ba làm nặng thêm đúng chỗ đang
+# phải gỡ, và không phép kiểm hình dạng nào phân biệt được ba dòng ấy.
+#
+# Bước 1–3 chạy được ngay và chạy ở đây. Tách như vậy là cố ý: một cụm nằm im chờ
+# một dữ kiện sẽ âm thầm già đi, còn một cụm chạy mỗi ngày thì hỏng ở đâu kêu ở đó.
+#
+# ── THỨ TỰ KHÔNG ĐẢO ĐƯỢC ────────────────────────────────────────────────────
+#
+#   paid_fund(carp…) → paid_fund_hash → prepaid_vault(carp…, paid_fund_hash, …)
+#
+#   Chiều ngược — quỹ ghim được vault thật lúc quyết toán — đi qua DỮ LIỆU
+#   (`PaidFundDatum.vault_hash`, ghim tại genesis), KHÔNG qua tham số biên dịch.
+#   Đảo thứ tự là cần hash của vault trước khi nó tồn tại, và lối thoát duy nhất
+#   là một giá trị giữ chỗ — tức một script hash trông hợp lệ mà sai vĩnh viễn.
+set -euo pipefail
+
+NETWORK="${1:?Thiếu mạng. Dùng: bash run_prepaid_e2e.sh Preprod [--deploy]}"
+MODE="${2:-}"
+
+cd "$(dirname "$0")"
+ROOT="$PWD/.."
+CHECK_JSON="/tmp/prepaid-check.$$.json"
+trap 'rm -f "$CHECK_JSON"' EXIT
+
+echo "=== PrepaidGen E2E · mạng $NETWORK ==="
+echo
+
+# ── (1) Aiken: validator biên dịch được và bộ kiểm xanh ─────────────────────
+# Phép đo này KHÔNG phụ thuộc cặp định danh CARP: apply-param chưa xảy ra ở bước
+# này, `aiken check` chạy trên bản CHƯA apply.
+echo "── (1) aiken check · PrepaidGen/onchain"
+(
+  cd "$ROOT/PrepaidGen/onchain"
+  # Quy trình HAI BƯỚC, đừng bỏ bước hai (BOUNDARIES.md §4): qua pipe, v1.1.21 in
+  # RỖNG cho MỌI lỗi biên dịch. Đi thẳng vào trình đọc JSON ở nhánh lỗi sẽ ném một
+  # lỗi phân tích cú pháp, và lỗi đó trỏ đi chỗ khác.
+  if aiken check 2>/dev/null > "$CHECK_JSON"; then
+    node -e '
+      const d = require(process.argv[1]).summary;
+      console.log(`   ${d.passed}/${d.total} xanh, ${d.failed} đỏ`);
+      if (d.failed > 0) process.exit(1);
+    ' "$CHECK_JSON"
+  else
+    echo "   ✗ aiken check ĐỎ. Output qua pipe RỖNG là hành vi đã biết của v1.1.21," >&2
+    echo "     KHÔNG phải 'không rõ nguyên nhân': chạy lại dưới" >&2
+    echo "     \`script -q /dev/null aiken check\` để đọc được lỗi thật." >&2
+    exit 1
+  fi
+)
+
+# ── (2) Cổng tên apply-param ────────────────────────────────────────────────
+# Cũng không cần CARP thật: cổng chỉ so TÊN + THỨ TỰ với blueprint, bằng giá trị
+# giữ chỗ. Đây là chốt chặn lớp lỗi mà `applyParamsToScript` không bắt — nó không
+# kiểm arity, nên thiếu một tham số vẫn ra script hash 28 byte trông hợp lệ.
+echo
+echo "── (2) đối chiếu tên + thứ tự apply-param"
+npx tsx check_param_names.ts | grep -E "PrepaidGen|Tổng kết" | sed 's/^/   /'
+
+# ── (3) Kiểu của toàn bộ scripts/ ───────────────────────────────────────────
+echo
+echo "── (3) tsc --noEmit · scripts/"
+npx tsc --noEmit -p tsconfig.json && echo "   ✓ 0 lỗi kiểu"
+
+if [ "$MODE" != "--deploy" ]; then
+  echo
+  echo "── DỪNG Ở ĐÂY (không có --deploy)."
+  echo "   Ba bước trên là toàn bộ phần đo được mà không cần cặp định danh CARP."
+  exit 0
+fi
+
+# ── (4) Hai giao dịch genesis ───────────────────────────────────────────────
+# `10_deploy_prepaid.ts` tự gác: `requireCarpIdentity()` là dòng đầu của `main()`.
+# KHÔNG lặp lại phép kiểm đó ở đây — hai bản sao của một cổng thì bản lỏng hơn là
+# bản quyết định, và không bản nào tự khai mình lỏng hơn.
+echo
+echo "── (4) genesis: quỹ Paid + vault trả trước"
+NETWORK="$NETWORK" npx tsx deploy/10_deploy_prepaid.ts
+
+echo
+echo "── CÒN THIẾU sau bước 4, để PrepaidGen TIÊU được MAGIC:"
+echo "   · một bản \`consume\` apply-param bằng \`vault_script_hash\` của vault vừa tạo."
+echo "     \`consume\` ghim vault theo LOẠI (BOUNDARIES.md §2) ⟹ mỗi cửa gen một bản."
+echo "   · một beacon giá còn tươi (\`PostPrice\`), và một thread Engage."
+echo "   Đường đã chạy thật cho ScheduleGen: \`run_consume_schedule_e2e.sh\` chặng 2."
+echo
+echo "🔴 Ghi cặp định danh CARP NGAY CẠNH mọi hash vừa in ra, trong sổ deploy."
+echo "   Hash ở trên GHIM một đời CARP. Đời đổi ⟹ hash đổi ⟹ địa chỉ đổi, và một"
+echo "   dòng sổ không mang định danh thì lần sau không ai phân biệt nổi hai đời."

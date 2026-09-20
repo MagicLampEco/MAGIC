@@ -246,24 +246,63 @@ nghiệm thu, không phải tài sản của ai — nên việc này gấp về 
 
 | Module | vitest | `aiken check` | Vướng ở đâu |
 |---|---|---|---|
-| `Consolidate` | 12 | 21 | là script hash RIÊNG nên vault ở địa chỉ InstantGen không bao giờ chạy được validator của nó — tàn dư mô hình "4 module chung một vault" |
-| `ProfileChange` | 8 | 13 | như trên |
 | `AppEconomics` | 54 | — | `SPEC.md` còn bám GenMAGIC v3.3 |
 
-> Bản trước ghi hai module đầu "không có `aiken.toml` riêng để build standalone". **Sai** — cả
-> hai đều có `onchain/aiken.toml` được track, và `aiken build` chạy 0 lỗi. Vật cản được nêu
-> không tồn tại, nên D4 suýt treo vì lý do sai: người gỡ treo sẽ đi tạo một tệp đã có sẵn thay
-> vì xử lý vật cản thật (script hash riêng). Bản trước cũng ghi `AppEconomics/SPEC.md` "tự khai
-> NORMATIVE" — dòng đó đã được gỡ khỏi tệp kia rồi.
+`Consolidate` và `ProfileChange` từng đứng ở bảng này; cả hai đã **xoá khỏi kho** — xem
+`## Đã xoá khỏi kho — 2026-09-21`. Mục này vì thế còn đúng MỘT dòng, và mọi câu nói "ba
+module" ở bản trước đã hết đúng theo.
 
-**Cả ba đều KHÔNG có NFT danh tính.** `vault_consolidate.ak` và `vault_profile.ak` chỉ có
-handler `spend`, không có `mint`, và đếm được 0 tham chiếu tới NFT vault. Chưa hại vì chưa có
-tài sản đi qua; nhưng nếu D4 chốt hội tụ thì phải nối `INV-VAULT-IDENTITY` **trước**, không thì
-mở lại lỗ 2-ADA-datum-bịa.
+`AppEconomics` **không có NFT danh tính**. Ngày nào nó hội tụ thì phải nối
+`INV-VAULT-IDENTITY` **trước**, không thì mở lại lỗ 2-ADA-datum-bịa.
 
-Ba module này **chưa được quyết**: hội tụ vào mô hình ba-token, hay **xoá**. (Không còn lựa
-chọn "dời `Legacy/`" — chủ nhân đã bãi bỏ `Legacy/` ngày 2026-08-09; xem `## Không được xoá`.)
-Chờ chốt PM/tư-cách trong spec canonical rồi mới xử — dọn sớm là dọn mù.
+| mã | treo cái gì | ràng buộc TẠM đang có hiệu lực (fail-closed) | khai ở |
+|---|---|---|---|
+| `D4-APPECONOMICS` | `AppEconomics` hội tụ vào mô hình ba-token, hay xoá | không deploy, không nối vào luồng nào; `SPEC.md` của nó KHÔNG phải nguồn chuẩn cho PM/tư-cách — nguồn chuẩn là `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` | mục này |
+
+## Đã xoá khỏi kho — 2026-09-21
+
+**`Consolidate/`** (16 tệp) và **`ProfileChange/`** (17 tệp).
+
+Lý do, theo đúng thứ tự sức nặng:
+
+1. **Mỗi module là một script hash RIÊNG, nên validator của nó không bao giờ chạy được trên
+   vault đang sống.** Vault InstantGen và vault ScheduleGen nằm ở địa chỉ của script CỦA
+   CHÚNG; một UTxO ở địa chỉ đó chỉ chạy validator đó. Hai module này là tàn dư của mô hình
+   cũ "bốn module chung một vault" — mô hình đó đã chết khi DESIGN-2 tách script, và từ lúc
+   ấy hai validator này **không có đường nào được gọi**. Đây không phải tính năng chưa xong,
+   mà là tính năng không có cửa vào.
+2. **Không module nào có NFT danh tính.** `vault_consolidate.ak` và `vault_profile.ak` chỉ có
+   handler `spend`, không có `mint`, và đếm được 0 tham chiếu tới NFT vault ⟹ hội tụ chúng
+   sẽ phải nối `INV-VAULT-IDENTITY` trước, tức viết lại chứ không phải nối vào.
+3. **Chưa từng lên chuỗi nào.** `grep -ciE "consolidate|profilechange|vault_profile"
+   scripts/DEPLOYED.md` → **0** ⟹ không chỉ số constructor nào, không tên tài sản nào, không
+   UTxO nào mất đường giải mã. Đây là điều kiện bắt buộc theo `## Không được xoá`.
+
+**Số đo trong kho đổi theo — đừng tra bản cũ.** Các dòng tổng `aiken check` và `vitest` ở
+mục đầu tệp này được đo TRƯỚC lượt xoá, nên chúng còn cộng `Consolidate` (21 aiken · 12
+vitest) và `ProfileChange` (13 aiken · 8 vitest). Cách đúng là chạy lại, không phải trừ tay:
+một phép trừ tay là đúng lớp lỗi mà chính tệp này đã ghi lại một lần ở Nợ #27.
+
+Ba chỗ **cố ý giữ tên hai module** thay vì xoá dòng, vì ở đó cái tên đang gánh một khẳng
+định chứ không phải một con trỏ: `InstantGen/onchain/validators/vault.ak` ▸ `same_script`,
+`ScheduleGen/onchain/validators/vault.ak` ▸ `same_script`, và
+`ScheduleGen/onchain/lib/magiclamp/protocol/types.ak` (ghi chú Nợ #39). Cả ba nói *"kho này
+đã biết quy tắc trước khi áp nó ở đây"* — rút ngắn danh sách là âm thầm làm yếu đúng câu đó.
+Mỗi chỗ nay tự khai module đã xoá và trỏ về mục này.
+
+`ChangeLog.md` và `ProtocolUtils/CODE_REVIEW.md` giữ nguyên: cả hai là bản ghi lịch sử, đúng
+tại thời điểm viết, và `CODE_REVIEW.md` vốn đã kê cả `SnapshotGen`/`VacuumGen` — hai module
+xoá từ trước.
+
+**Cổng `scripts/check_param_names.ts` mất hai ca, và đó là HẠ ĐỘ PHỦ có khai.** Tập được phủ
+co lại đúng bằng tập tồn tại: cổng đọc `<Module>/onchain/plutus.json`, và hai blueprint đó
+không còn nguồn nào trong kho sinh ra nữa. Số ca còn lại đếm được bằng cách chạy cổng.
+
+**Còn lại trên đĩa, KHÔNG trong git:** `Consolidate/onchain/{plutus.json,build}`,
+`ProfileChange/onchain/{plutus.json,build}` và hai `offchain/node_modules` — đều bị
+`.gitignore` chặn nên không lên remote. Không xoá trong lượt này vì `BOUNDARIES.md §5` điều
+kiện 1 chỉ cho xoá thẳng thứ ĐÃ COMMIT. Dọn bằng tay khi thấy cần:
+`rm -rf Consolidate ProfileChange` sau khi lượt xoá này đã vào nhánh chính.
 
 ## Đã xoá khỏi kho — 2026-09-14
 
@@ -313,7 +352,7 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 | 10 | `UMKeeper/offchain/src/keeper.ts` **chưa từng chạy với node thật** | Tệp này trước đây **không biên dịch được** (4 lỗi kiểu) và không ai biết: gói không có `tsconfig.json` nên `tsc --noEmit` chưa từng chạy, còn vitest chỉ chạm `math.ts`. Nó cũng import `@lucid-evolution/lucid` mà `package.json` không khai. Đã vá cả ba (thêm `tsconfig.json`, khai dep, dựng cặp `Data.Static` mà lucid-evolution bắt buộc) ⇒ nay `npm run typecheck` xanh, `npm test` 20/20. Nhưng **xanh kiểu ≠ chạy đúng**: `getEpochStats` vẫn là bản giả trả số cố định, và chưa có lần chạy nào với Blockfrost. Liên quan D7 |
 | 11 | ~~4 gói + `scripts/` chưa có `tsconfig.json`~~ **ĐÃ VÁ 2026-08-12, trừ `scripts/`** | Bản ghi cũ ở đây **sai hai chiều**: nó bỏ sót `FlowRate/offchain` và `ProtocolUtils` (gói P8 chuẩn, 25 tệp import). Nay cả sáu đều có `tsconfig.json` + script `typecheck`. Năm gói xanh 0 lỗi. Còn hai chỗ đỏ, ghi riêng ở #12 và #13 |
 | 12 | ~~`scripts/` typecheck **18 lỗi**~~ **0 lỗi 2026-08-17 — nhưng con số này ĐO ĐƯỢC HAI GIÁ TRỊ tuỳ máy** | 🔴 Đây mới là điều đáng ghi, không phải con số 0. `scripts/tsconfig.json` kéo cả `../MagicSDK/src/*` vào phạm vi, mà `MagicSDK` **không có `node_modules`**. Cùng một cây mã cho hai kết quả: chưa cài MagicSDK → **13 lỗi**, trong đó 10 `TS2307 Cannot find module '@lucid-evolution/lucid'` (nhiễu môi trường) và **3 `TS2365` trộn `number` với `bigint`** — đúng cái `BOUNDARIES.md` gọi là "lỗi tràn số đang chờ xảy ra"; cài MagicSDK xong (`npm install` tại `MagicSDK/`) → **0 lỗi**, cả ba `TS2365` biến mất vì `@magiclamp/protocol-utils` giải được kiểu nên `bigint` không còn suy thành `number`. Nghĩa là **cổng typecheck của `scripts/` chỉ nói thật khi hàng xóm đã cài** — cùng lớp Nợ #27, và đúng lý do cổng CI phải cài phụ thuộc `file:` theo thứ tự tôpô trước khi kiểm. Đừng ghi "0 lỗi" mà không ghi kèm điều kiện. *(Lịch sử: 19 → 18 → 13 → 0.)* Gói duy nhất chạm ví thật. Nay đã có `tsconfig.json` + `npm run typecheck`, và cổng bắt được ngay một lỗi THẬT: `test/consume_only.ts` dựng `EngageDatum` thiếu `consumed_nanogic` ⇒ tx dựng ra bị validator từ chối (W-CM-12) — đã vá. 19 lỗi còn lại thuộc hai lớp: (a) `Data.to(x, Schema)` truyền lược đồ thay vì kiểu tĩnh — cùng lớp đã vá ở UMKeeper; (b) hai bản `@lucid-evolution/lucid` (`scripts/node_modules` vs `InstantGen/offchain/node_modules`) cho hai định danh kiểu khác nhau. Con số này chỉ được phép GIẢM |
-| 13 | ~~`ProfileChange/offchain` typecheck **3 lỗi**~~ **ĐÃ VÁ 2026-08-17** | `src/profile.ts` import `Tx` — lucid-evolution 0.4.30 không export tên đó; và một `Data.to` truyền lược đồ. Trước 2026-08-12 gói không có `tsconfig.json` nên chưa ai thấy. Nay `npm run typecheck` in đúng hai dòng banner rồi im — **0 lỗi**. Số phận module vẫn buộc vào D4 (hội tụ hay xoá), nhưng nó không còn là nợ kỹ thuật |
+| 13 | ~~`ProfileChange/offchain` typecheck **3 lỗi**~~ **ĐÃ VÁ 2026-08-17 · MODULE ĐÃ XOÁ 2026-09-21** | `src/profile.ts` import `Tx` — lucid-evolution 0.4.30 không export tên đó; và một `Data.to` truyền lược đồ. Trước 2026-08-12 gói không có `tsconfig.json` nên chưa ai thấy. Nay dòng này chỉ còn giá trị lịch sử: module đã xoá khỏi kho, xem `## Đã xoá khỏi kho — 2026-09-21` |
 | 14 | 🔴 `validate_burn_batch` **không đòi ConsumeMAGIC co-spend** — liên kết giá MỘT CHIỀU | `InstantGen/onchain/validators/vault.ak:851-936`: auth = chủ HOẶC `personal_delegate`, và không ràng buộc input nào ở địa chỉ `consume`, không đọc PriceParam beacon. `consume.ak:95` ép chặt chiều consume→vault; chiều ngược lại bỏ ngỏ. Hệ quả: một delegate ký được tx BurnBatch trần trụi, không giao dịch vụ gì, đốt sạch MAGIC của chủ vault (LAMP và ADA vẫn an toàn — hai chốt dưới chặn đúng). `personal_delegate` hiện là `Option<ByteArray>` trần: không hạn mức, không phạm vi op, không hạn dùng. Vá đụng validator ⇒ xem D8. ✅ **ĐÓNG 2026-09-16 — chủ dự án chốt BỎ HẲN nhánh uỷ nhiệm, không siết nó.** Bán kính thật rộng hơn tên nợ này: `grep 'personal_delegate is {'` ra **3** vị từ ký (`ScheduleGen`/`InstantGen` ▸ `validate_burn_batch`, `PrepaidGen` ▸ `authed_owner_or_delegate`), còn `grep` theo tên hàm đó chỉ ra **1/3** — và vị từ PrepaidGen gác **HAI** handler, trong đó `PrepaidDraw` **không** đi qua `BurnBatch`, nên một cổng co-spend đặt ở `BurnBatch` (phương án D8-a) về nguyên tắc không đóng nổi bán kính. Vá cần **HAI nhát**: (1) vị từ ký chỉ còn chủ sở hữu; (2) `validate_set_delegate` thành **chỉ-xoá-được** (`expect new_delegate == None`) ở cả ba module — bỏ nhát (2) thì lỗ mở lại ở tệp khác. Chọn clear-only chứ không `fail` vì vault Preview/Preprod còn mang `Some(d)`; bịt luôn thì trường rác nằm lại vĩnh viễn. Variant `SetDelegate` và trường datum **giữ nguyên làm bia mộ** (chỉ số constructor là hợp đồng nhị phân). Sau vá: `grep -rn "personal_delegate is {" --include="*.ak"` ngoài `Legacy/` → **0**. Ablation 6 phép, mỗi phép cắm dấu riêng và xác nhận dấu trước khi đọc kết quả: **không phép nào sống sót**; phép PrepaidGen lật **4 bài thuộc 2 handler khác nhau** ⟹ bán kính đóng ở VỊ TỪ, không ở tên handler. 🔴 Hai hệ quả KHÔNG tự biến mất: **BA script hash ĐÃ ĐỔI** ⟹ phải công bố lại ref-script CIP-33 cho cả ba và deploy lại bản `consume` apply-param theo hash mới. Đo bằng `aiken build` ở CẢ HAI phía (`origin/main` = `4d91dfd0`, và nhánh này), đọc trường `hash` trong `plutus.json`: `ScheduleGen vault.vault` `1c4cd06ee2db1d0a13c74377fc8fbb72fca838e6d880943b33201800` → `743d634eb14adf32003aceccbb98e0ac3a3c63f02faa0422df433c5f` · `InstantGen vault.vault` `d11bc4d1df5fd14bc8359e3b5787fdbbb59c7fdc2ecbbb73e1e9f0f8` → `8f5e8da0ba36035945c16c37bc3517e1457893556b41b9ec08545165` · `PrepaidGen prepaid.prepaid_vault` `7454612c227f7cf332d384d6d57980dfc5b7bec8854139e6d649327a` → `a4048266fc77489206806212af1d5c1acab25b1734be8ca43e3fd3d7`. Ba script KHÔNG đổi, cũng đo cùng lượt: `ScheduleGen vault.shard` · `ScheduleGen shard_nft` · `PrepaidGen prepaid.paid_fund`. 🪦 Bản trước của dòng này kể **hai** và bỏ sót `PrepaidGen` — đúng cái module mà chính dòng ngay trên vừa chứng minh là có bán kính RỘNG NHẤT (vị từ gác hai handler). Nó không phải lỗi gõ: nó là hệ quả của việc đếm hash theo TÊN NỢ thay vì theo phép dựng, và nếu để nguyên thì một trong ba vault sẽ có ref-script cũ trỏ vào bytes đã chết mà không gì kêu. Và **vá validator KHÔNG vá vault đang sống** — UTxO ở địa chỉ cũ vẫn chạy luật cũ vĩnh viễn, đóng thật thì phải di trú (testnet nên mất mát bằng 0, nhưng là việc phải làm trước mainnet). Nợ mới sinh ra từ đợt này: **Nợ #74** |
 | 15 | Không ai kiểm chữ ký chủ trên nhánh **spend** của Engage | `ConsumeMAGIC/onchain/validators/consume.ak` dùng `extra_signatories` đúng MỘT lần, ở nhánh **mint** (`:253`). Nhánh spend chỉ ép `owner` được bảo toàn. Hôm nay đây là TÍNH NĂNG (nó cho phép Feecover ứng trước cho ví 0 MAGIC — đã trả lời PhoenixKey 2026-08-12), nhưng nó cũng nghĩa là ai cũng bơm được `consumed_count`/`consumed_nanogic` của người khác. Sẽ thành lỗ ngay khi attribution/ISPO đọc hai trục đó |
 | ~~16~~ | ~~`GetMAGIC/onchain` biên dịch sạch nhưng **0 test Aiken**~~ **ĐÓNG 2026-09-14 — module đã xoá khỏi kho** | Nội dung cũ của dòng này ở `8cfd5295:DevStatus.md`. Lý do xoá module: mục `## Đã xoá khỏi kho — 2026-09-14` |
@@ -392,7 +431,7 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 | D15 | `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md:16,90` viết "36 tỷ **cố định**, không mint thêm" — sửa thành **trần + lazy-mint**? | Đo 2026-09-06, ba nguồn cùng bác câu đó: (1) **kho sở hữu mô hình cung** là `LAMP`, và `LAMP/Papers/Whitepaper.md` §2 viết "Tổng **tối đa** 36 tỷ LAMP — bất biến, khắc on-chain (validator chặn mọi mint vượt 36 tỷ)"; (2) `BOUNDARIES.md §1` của chính kho này **đã** mang bản đã sửa, kèm giá đã trả: 2026-08-28 một chuỗi kiểm thử đúc chồng lên tLAMP Preprod bị báo nhầm là "gấp đôi cung" trong khi hỏng thật là **vượt trần**; (3) `AffiSo/Launch/Whitepaper-MagicLamp-Tokenomic-(Vi).md:84,86` trích thẳng câu của SPEC này và gọi nó là **sai**. Bất biến phải kiểm là `tổng ≤ 36 tỷ`, không phải `tổng == 36 tỷ`. **Không tự sửa** vì đây là lời hứa đối ngoại về kinh tế token (`Forall §Tự quyết` A.7) — bản thay thế phải được duyệt trước khi vào tệp. Việc kèm theo, thuộc kho khác: `AffiSo/Launch/Pots-Catalog-Vi.md:5` vẫn còn câu "cố định, no-burn" — mâu thuẫn nội bộ ngay trong kho đã sửa |
 | D2 | ✅ **ĐÃ CHỐT 2026-09-05 — CHUẨN HOÁ.** Chủ nhân: *"Thà sửa tham số kinh tế, mất công chút, nhưng không chấp nhận cửa chênh lệch, làm mục tiêu cho kẻ xấu lợi dụng."* **Số đo dứt điểm, để không ai phải suy lại:** `rate_locked_q = ⌊R_snap × S_Q(100)/Q⌋ = ⌊5×10⁹ × 2,25×10⁹ / 10⁹⌋ = 11_250_000_000` (`ScheduleGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_rate_locked_q`, hằng ở `constants.ak` ▸ `snapshot_base_rate_q`). `M_i = ⌊λ_oildrop × rate_locked_q / Q⌋` ⟹ 1 LAMP (10⁶ oildrop) sinh `1,125×10⁷` nanogic = **0,01125 MAGIC/LAMP/epoch**. Trần spec `⌊L_avail × RATE_REF_Q / Q⌋` với `RATE_REF_Q = 10¹²` cho 1 LAMP → `10⁹` nanogic = 1 MAGIC. Tỷ số **88,89× TẠI `L=100`** — `rate_locked_q` phụ thuộc mức trung thành `L` qua `S(L)` (`math.ak` ▸ `compute_s_q`, ba đoạn ở `constants.ak`), nên đây là MỘT ĐIỂM trên dải, không phải một hằng: `L=10` → S=1,6 → 0,008 → **125×**; `L=100` → 2,25 → 0,01125 → **88,89×**; `L=200` → 2,625 → 0,013125 → **76,19×**. Repo đã có sẵn đầu kia của dải: `ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak:76-77` ghi *"giá danh nghĩa phải tăng ~76×"* — cùng công thức, ca `L=200`. ⟹ **"suất chung" phải khai theo CÔNG THỨC `⌊R_snap × S(L)/Q⌋`, không theo một con số**, nếu không bản vá D1 sẽ ghim nhầm một điểm và lệch ở mọi `L` khác. **Chiều chuẩn hoá: kéo InstantGen XUỐNG bằng suất ScheduleGen, KHÔNG kéo ScheduleGen lên.** Hai trục độc lập: (a) khả hồi — nới trần rồi thì không thu lại được, còn siết thì siết được. **Nói cho đúng: nâng trần thứ ba KHÔNG phát thêm 88,89× MAGIC.** Cấp thực là `min(reward, cap_surplus, trần_ba)`, và `reward ≤ 0,20 × UM_MAX(2,0) × PM_MAX(1,15) × consumed = 0,46 × consumed` (`InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_reward_from_consumed`, `constants.ak` ▸ `instant_reward_rate_q`) — `INV-CASHBACK-BOUND` là bất biến tham số, không phải trần thứ ba. Nâng trần chỉ làm phanh thứ ba thôi ràng buộc; độ rộng cửa sau đó do `reward(consumed)` và `cap_surplus` định. 88,89× là tỷ số giữa hai TRẦN, không phải giữa hai sản lượng; (b) spec tự khai `RATE_REF_Q` là **trần trên** chứ không phải mục tiêu (`SPEC:269`: lớp per-dịch-vụ chỉ THU HẸP, không bao giờ nới), nên siết là hợp lệ, còn nâng ScheduleGen 88,89× là một quyết định kinh tế MỚI mà spec không đòi. **Nhưng đừng gọi nó là "ĐÚNG spec" — nó là LỆCH SPEC CÓ CHỦ Ý.** `SPEC:243` (*"Vì sao bỏ hệ-số `0.5×` cũ"*) đã cố ý XOÁ đúng loại hệ-số-siết on-chain mà D2 nay đặt lại (1/88,89 thay cho 1/2), với lý do vai đó đã chuyển sang `INV-INSTANT-LOCK` và `cap_surplus`. Và `SPEC:269` — dòng D2 viện dẫn, trích đúng chữ — đặt lớp siết ở **off-chain / spec dịch-vụ**, trong §6.4, không phải §6.3. ⟹ **nợ kèm theo: sửa `SPEC §6.3:224/231-232/243` cho khớp quyết định này**, nếu không SPEC và mã sẽ nói hai chuyện khác nhau ở đúng chỗ đã từng tốn một vòng đính chính. **Chưa có cửa chênh lệch trên thực địa** vì InstantGen hiện không cấp được 1 nanogic nào (Nợ #19: `cap_pp = 0`) — cửa chỉ mở ra ĐÚNG LÚC ai đó vá InstantGen. ⟹ ràng buộc thi hành: **bản vá trần InstantGen (D1) phải mang sẵn suất chung**, không được vá xong rồi mới chuẩn hoá sau. |
 | D3 | `did_commit` lúc genesis — **câu hỏi đã TÁCH LÀM HAI, và mã đã trả lời một nửa** | **Nửa ĐÃ CHỐT trong mã 2026-09-07 (khuôn):** không ép rỗng, chỉ ép **độ dài 0 hoặc đúng 32 byte**, ghim ở mọi chỗ GHI — `ConsumeMAGIC/onchain/validators/consume.ak` ▸ `did_len_ok` (mint genesis: cùng tệp, nhánh `validate_mint_engage_id`; BindDID: nhánh `validate_bind_did`). Lý do ghi ngay trong mã: *"Pin cứng về `#""` sẽ khoá chết đường liên kết DID sinh trắc mà KHÔNG thêm chút an toàn nào"*, và không ép ở nhánh `Consume` vì đó là cổng RA — ép ở đó biến mọi thread đã tồn tại sai khuôn thành bất khả tiêu. **Nửa CÒN MỞ (rủi ro gốc D3 nêu):** người đúc vẫn đặt được 32 byte **tuỳ ý**, không có gì chứng minh commitment đó là DID của chính họ — mã chỉ ép chữ ký `owner`, không ép chứng minh sở hữu. Và vì `did_commit` **bất biến** sau khi đặt (commit `c9bbe81f`), đặt sai là khoá vĩnh viễn ngoài lớp tư-cách. Cần chốt: đòi một chứng minh (oracle PhoenixKey ký) hay nhận rủi ro này ở lớp trên? |
-| D4 | `AppEconomics` · `ProfileChange` · `Consolidate` — hội tụ hay xoá? | chờ chốt PM/tư-cách trong spec canonical; dọn trước là dọn mù |
+| D4 | `AppEconomics` — hội tụ hay xoá? | `ProfileChange` và `Consolidate` đã tách khỏi mục này: cả hai **đã xoá khỏi kho 2026-09-21**. Ràng buộc tạm cho phần còn lại ở `## Mồ côi` ▸ `D4-APPECONOMICS` |
 | D5 | `_appeconomics_legacy.ts` + 31 ca test bám vào nó | buộc chung số phận với `AppEconomics` (D4) — nó là bản sao math của module đó |
 | D6 | `MagicSDK/V1_TESTNET_PLAN.md` — viết lại theo 2 vault hay xoá? | chưa deploy mạng nào; viết ma trận nghiệm thu bây giờ là viết mù lần hai |
 | D7 | `MAX_PRICE_STALE = 1` có đúng ý định? | mainnet 1 epoch = 5 ngày ⇒ `stale=1` là chấp nhận giá trễ 5 ngày. Và **chưa có keeper** post lại giá ⇒ hệ tự khoá sau 1 epoch |

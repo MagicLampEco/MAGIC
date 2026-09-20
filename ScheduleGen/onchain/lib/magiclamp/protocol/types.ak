@@ -105,7 +105,9 @@ pub type VaultAttribution {
 //
 // ── Nợ #39 ĐÃ ĐÓNG 2026-08-28 ────────────────────────────────────────────────
 // Trường này từng mang hai nhãn trong cùng một kho: `total_burns_count` (nghe như
-// ĐẾM) ở Consolidate/ProfileChange/MagicSDK, `consumed_credit` (LƯỢNG) ở đây. Cùng
+// ĐẾM) ở `MagicSDK` và ở hai module `Consolidate`/`ProfileChange` — hai module đó
+// đã XOÁ khỏi kho 2026-09-21 (`DevStatus.md` ▸ `## Đã xoá khỏi kho — 2026-09-21`),
+// nên hôm nay chỉ còn `MagicSDK` tra được; `consumed_credit` (LƯỢNG) ở đây. Cùng
 // vị trí, cùng kiểu, CÙNG hình dạng Plutus Data ⇒ decode không bao giờ báo lỗi, nên
 // va chạm nhãn là thứ chỉ lộ ra bằng số tiền sai.
 //

@@ -271,6 +271,23 @@ jobs:
   # `build_blueprints.sh` dựng hiện vật TRƯỚC khi so. Thiếu bước đó thì phép so
   # đối chiếu một bản cũ với một bản cũ khác rồi in "khớp" — trạng thái KHÔNG ĐO
   # ĐƯỢC mang màu của KHỚP.
+  # Bộ ca của cổng sổ trạng thái. Tách thành job riêng vì nó không cần Node cũng
+  # không cần Aiken — và vì trước đó KHÔNG cơ chế nào chạy nó: nó không có trong
+  # workflow này, không trong `DevStatus.md`, không trong `scripts/README.md`. Một
+  # bộ ca không ai chạy thì nó ghim đúng bằng không.
+  #
+  # Không đặt dưới `detect_scope.py`: cổng này gác chính lớp sai mà một diff "chỉ
+  # đụng scripts/" gây ra, nên lọc theo phạm vi là tắt nó đúng lúc cần nhất.
+  cong-so-trang-thai:
+    name: cổng sổ trạng thái (bash)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: bash test_state_book_guard.sh
+        run: bash scripts/test_state_book_guard.sh
+
   build-record:
     name: sổ BUILD-RECORD khớp hiện vật
     runs-on: ubuntu-latest
@@ -351,7 +368,7 @@ jobs:
 
   result:
     name: Kết quả Verify PR
-    needs: [scope, npm-verify, aiken-check, build-record]
+    needs: [scope, npm-verify, aiken-check, cong-so-trang-thai, build-record]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -363,6 +380,7 @@ jobs:
           echo "job scope: ${{ needs.scope.result }}"
           echo "job npm-verify: ${{ needs.npm-verify.result }}"
           echo "job aiken-check: ${{ needs.aiken-check.result }}"
+          echo "job cổng sổ trạng thái: ${{ needs.cong-so-trang-thai.result }}"
           echo "job build-record: ${{ needs.build-record.result }}"
 
           if [ "${{ needs.scope.result }}" != "success" ]; then
@@ -375,6 +393,13 @@ jobs:
           fi
           if [ "${{ needs.aiken-check.result }}" = "failure" ]; then
             echo "::error::Có ít nhất một project Aiken trong phạm vi bị đỏ."
+            exit 1
+          fi
+          # Cũng KHÔNG bám phạm vi, cùng lý do với build-record: cổng này gác đúng
+          # lớp sai mà một diff "chỉ đụng scripts/" gây ra. `skipped`/`cancelled`
+          # là KHÔNG ĐO ĐƯỢC, và phải kêu to hơn LỆCH.
+          if [ "${{ needs.cong-so-trang-thai.result }}" != "success" ]; then
+            echo "::error::Cổng sổ trạng thái không xanh (${{ needs.cong-so-trang-thai.result }})."
             exit 1
           fi
           # Job này KHÔNG bám phạm vi nên nó phải chạy ở MỌI PR. Bất cứ kết quả

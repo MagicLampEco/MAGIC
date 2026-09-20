@@ -767,7 +767,14 @@ lấy NFT one-shot làm thứ định danh một vault, **không lấy địa ch
 mọi vault cùng loại dùng chung nó. Trước đây hai giá trị này chỉ sống ở một tệp trên đĩa đã
 gitignore, tức bản duy nhất, tức mất máy là mất.
 
-**CÒN THIẾU để PrepaidGen tiêu được MAGIC** (cả bốn đều chưa chạy, đừng đọc mục này thành "xong"):
+**CÒN THIẾU để MAGIC do PrepaidGen SINH RA tiêu được qua ConsumeMAGIC** (cả bốn đều chưa chạy,
+đừng đọc mục này thành "xong"):
+
+> Bản trước của dòng này viết *"để PrepaidGen tiêu được MAGIC"*, và câu đó khai sai việc của
+> module. PrepaidGen **sinh**: `validate_draw` ghi một batch MAGIC vào `magic_batches` của vault
+> và chuyển CARP tương ứng sang bên nhận. MAGIC nằm lại trong vault để **làm cơ sở đo mức tiêu
+> thụ**; việc tiêu là của `ConsumeMAGIC`, script khác, giao dịch khác. Bốn mục dưới đây đều
+> thuộc chặng TIÊU — không mục nào là thứ PrepaidGen còn thiếu.
 
 1. một bản `consume` apply-param bằng `vault_script_hash = 9dbb9a8d…` — `consume` ghim vault theo
    LOẠI (`BOUNDARIES.md` §2), nên mỗi cửa gen cần một bản riêng;

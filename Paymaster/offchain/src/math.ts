@@ -13,6 +13,22 @@ import { Q } from "@magiclamp/protocol-utils";
 /** Scale factor Q (1 MAGIC = 1e9 nanogic). Khớp ProtocolUtils.Q + math.ak:12. */
 export const q: bigint = Q; // 1_000_000_000n
 
+// ── `magicConsumed` ở đây KHÔNG phải tín hiệu cầu của mô hình sinh ────────────────
+// Hai hàm dưới nhận `magicConsumed` làm THAM SỐ TÍNH TRẦN cho một lượt sponsor của
+// Paymaster: bao nhiêu MAGIC đã tiêu thì app được bù tới bấy nhiêu LAMP/ADA. Nó là
+// một đại lượng cục bộ của một giao dịch, không được lưu, không phơi ra ngoài.
+//
+// Tỷ lệ tiêu/sinh của mô hình sinh là thứ KHÁC: `usage_ratio` — tỷ lệ MỖI VAULT trên
+// cửa sổ 6 epoch, định nghĩa ở `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` v2.1 §6.1.1
+// và `INV-MAGIC-CITIZEN`. Nó chưa có trong mã ở bất cứ đâu, và `magicGenerated` không
+// tồn tại trong tệp này.
+//
+// Dòng này có vì hai tên đó đủ giống để một lượt `grep "magicConsumed"` dừng đúng ở
+// đây và kết luận "có nguồn tín hiệu cầu" — kết luận ngược, từ một kết quả tìm kiếm
+// hợp lệ. Nhà OriLife gặp đúng bẫy này theo chiều ngược lại 2026-09-20: họ quét
+// `ConsumeMAGIC/` + `AppEconomics/`, không thấy `usage_ratio`, và kết luận khái niệm
+// đó không tồn tại — trong khi nó nằm ở `SPEC/`, ngoài vùng quét.
+
 /**
  * Trần LAMP (oildrop) app được sponsor cho magic_consumed (nanogic) tại tỷ giá Q-format.
  * Floor division BigInt. magic_consumed ≥ 0, rate ≥ 0 → kết quả ≥ 0. Mirror math.ak:16-18.

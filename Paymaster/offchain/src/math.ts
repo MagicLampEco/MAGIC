@@ -18,21 +18,38 @@ export const q: bigint = Q; // 1_000_000_000n
 // Paymaster: bao nhiêu MAGIC đã tiêu thì app được bù tới bấy nhiêu LAMP/ADA. Nó là
 // một đại lượng cục bộ của một giao dịch, không được lưu, không phơi ra ngoài.
 //
-// Tỷ lệ tiêu/sinh của mô hình sinh là thứ KHÁC: `usage_ratio` — tỷ lệ MỖI VAULT trên
-// cửa sổ 6 epoch, định nghĩa ở `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` v2.1 §6.1.1
-// và `INV-MAGIC-CITIZEN`. `magicGenerated` không tồn tại trong tệp này.
+// Tỷ lệ tiêu/sinh của mô hình sinh là thứ KHÁC: tên đặc tả của nó là `usage_ratio` —
+// tỷ lệ MỖI VAULT trên cửa sổ 6 epoch, định nghĩa ở
+// `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` v2.1 §6.1.1 và `INV-MAGIC-CITIZEN`.
 //
 // Phạm vi của câu "chưa có trong mã", đo 2026-09-20 — một lượng từ toàn xưng không kèm
 // phép đếm thì già đi lặng lẽ, nên đây là phép đếm kèm ngày và kèm phần bị loại:
 //
-//     $ grep -rn 'usage_ratio' --include='*.ak' --include='*.ts' --include='*.rs' .
-//     (0 dòng, sau khi loại `Legacy/`)
+//     $ grep -rn 'usage_ratio' --include='*.ak' --include='*.ts' --include='*.rs' . \
+//         | grep -v '/Legacy/' | grep -v node_modules \
+//         | grep -v 'Paymaster/offchain/src/math.ts'
+//     → 0 dòng
 //     $ grep -rn 'usage_ratio' SPEC/     → 35 dòng / 1 tệp
 //     $ grep -rn 'usage_ratio' Legacy/   → 0 dòng / 0 tệp
 //
-// Tức: khái niệm này sống ĐÚNG MỘT CHỖ, và chỗ đó là đặc tả. Phần bị loại khỏi phép đếm
-// là `Legacy/` (đếm được: 0 dòng) và mọi đuôi tệp ngoài ba đuôi mã trên. Ai đọc lại dòng
-// này sau một đợt hiện thực hoá thì chạy lại chính hai lệnh đó, đừng tin con số.
+// Tức: khái niệm này sống ĐÚNG MỘT CHỖ trong mã-và-đặc-tả, và chỗ đó là đặc tả.
+//
+// 🔴 Vế `grep -v` cuối là BẮT BUỘC, không phải cho gọn. Tệp này là `.ts`, nằm trong
+// vùng quét, và chính khối chú thích này chứa chuỗi `usage_ratio` — nên câu lệnh
+// KHÔNG có vế đó trả về một số dòng KHÁC 0, và mọi dòng nó trả về đều ở ngay đây.
+// Bản trước của khối này viết đúng câu lệnh thiếu vế ấy rồi ghi kết quả là "0 dòng";
+// đo lại thì nó ra **5**. Ai làm theo hướng dẫn của chú thích sẽ đo ra điều NGƯỢC
+// LẠI với điều chú thích tồn tại để ngăn. Một phép đo tự đếm cả chỗ ghi nó thì nó
+// đang đếm tiếng vọng của mình.
+//
+// Cố ý KHÔNG ghi số dòng hiện tại của chính khối này: nó đổi mỗi lần ai đó sửa văn
+// xuôi ở đây (bản vá này đẩy 5 → 6 chỉ vì thêm mấy dòng giải thích), nên một con số
+// ở đó sẽ sai mà không gì báo. Số đáng ghim là số SAU khi loại, và nó là 0.
+//
+// Phần bị loại khỏi phép đếm, khai đủ: `Legacy/` (đếm được: 0 dòng) · `node_modules`
+// · chính tệp này (toàn văn xuôi, không dòng mã nào) · mọi đuôi tệp ngoài ba đuôi mã
+// trên. Ai đọc lại sau một đợt hiện thực hoá thì chạy lại chính các lệnh đó, đừng
+// tin con số.
 //
 // Dòng này có vì hai tên đó đủ giống để một lượt `grep "magicConsumed"` dừng đúng ở
 // đây và kết luận "có nguồn tín hiệu cầu" — kết luận ngược, từ một kết quả tìm kiếm

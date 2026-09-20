@@ -299,6 +299,12 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 
 ## Còn nợ — biết rõ, chưa làm
 
+**đã push chưa PR (nhánh `fix/preprod-epoch-5-ngay`) — 2026-09-20.** Đưa Preprod về nhịp
+epoch 5 ngày, bằng mainnet. Nhánh đã đẩy mà chưa có PR trông y hệt một nhánh đang chờ
+review, và nó không nằm trong hàng chờ nào để tự kêu lên — nên nó được khai ở đây.
+Nó là tiền đề của cả đợt deploy lại Preprod: `ms_per_epoch` là apply-param, nên mọi thứ
+dựng thêm trước khi nhánh này về đều ghim vào một script hash sắp chết.
+
 | # | Việc | Vì sao chưa |
 |---|---|---|
 | 1 | Chưa deploy mạng nào | cần credential + quyết định của chủ nhân |

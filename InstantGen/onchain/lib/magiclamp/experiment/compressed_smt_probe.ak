@@ -2012,38 +2012,47 @@ pub type ProbeRedeemer {
   depth: Int,
 }
 
+// ── Sáu bài dưới đây là PHÉP ĐO, không phải bài canh hành vi ──────────────────────
+// Mỗi bài ghim số byte CBOR của redeemer ở một độ sâu. Đo bằng: `aiken check` trong
+// `InstantGen/onchain` · đọc ở: dòng `trace` của chính bài đó (số đo thật), KHÔNG đọc
+// ở vế `==` (mốc ghim). Bản sinh đầu tiên ghim thiếu ĐÚNG MỘT byte ở cả sáu độ sâu
+// (384/385 · 724/725 · 963/964 · 928/929 · 2221/2222 · 8715/8716) — một lệch hệ thống
+// bằng hằng số ở mọi độ sâu là dấu của bộ sinh đếm sai vỏ CBOR, không phải của phép đo
+// hỏng. Ghim nay đặt bằng số ĐO ĐƯỢC ngày 2026-09-20 trên Aiken v1.1.21.
+//
+// Đo lại mà lệch ⟹ vỏ CBOR đã đổi ⟹ mọi con số kích thước dẫn từ đây phải tính lại.
 test cs_d10_leaf_redeemer_cbor_len() {
   let r = ProbeRedeemer { terminal: Leaf(d10_leaf_key), rev_siblings: d10_leaf_rev, depth: 10 }
   trace bytearray.length(cbor.serialise(r))
-  bytearray.length(cbor.serialise(r)) == 384
+  bytearray.length(cbor.serialise(r)) == 385
 }
 
 test cs_d20_leaf_redeemer_cbor_len() {
   let r = ProbeRedeemer { terminal: Leaf(d20_leaf_key), rev_siblings: d20_leaf_rev, depth: 20 }
   trace bytearray.length(cbor.serialise(r))
-  bytearray.length(cbor.serialise(r)) == 724
+  bytearray.length(cbor.serialise(r)) == 725
 }
 
 test cs_d27_leaf_redeemer_cbor_len() {
   let r = ProbeRedeemer { terminal: Leaf(d27_leaf_key), rev_siblings: d27_leaf_rev, depth: 27 }
   trace bytearray.length(cbor.serialise(r))
-  bytearray.length(cbor.serialise(r)) == 963
+  bytearray.length(cbor.serialise(r)) == 964
 }
 
 test cs_d27_empty_redeemer_cbor_len() {
   let r = ProbeRedeemer { terminal: Empty, rev_siblings: d27_empty_rev, depth: 27 }
   trace bytearray.length(cbor.serialise(r))
-  bytearray.length(cbor.serialise(r)) == 928
+  bytearray.length(cbor.serialise(r)) == 929
 }
 
 test cs_d64_leaf_redeemer_cbor_len() {
   let r = ProbeRedeemer { terminal: Leaf(d64_leaf_key), rev_siblings: d64_leaf_rev, depth: 64 }
   trace bytearray.length(cbor.serialise(r))
-  bytearray.length(cbor.serialise(r)) == 2221
+  bytearray.length(cbor.serialise(r)) == 2222
 }
 
 test cs_d255_leaf_redeemer_cbor_len() {
   let r = ProbeRedeemer { terminal: Leaf(d255_leaf_key), rev_siblings: d255_leaf_rev, depth: 255 }
   trace bytearray.length(cbor.serialise(r))
-  bytearray.length(cbor.serialise(r)) == 8715
+  bytearray.length(cbor.serialise(r)) == 8716
 }

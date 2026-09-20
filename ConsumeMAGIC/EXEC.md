@@ -34,17 +34,18 @@ TÊN thread Engage).
 
 ```bash
 # Bước 0: build Aiken validators
-cd /Users/ductiger/Projects/MAGIC/ConsumeMAGIC/onchain
+cd /Users/ductiger/Projects/MagicLampEco/MAGIC/ConsumeMAGIC/onchain
 aiken build   # → onchain/plutus.json (3 validator: consume, price_nft, price_param)
 
 # Bước 1: deploy vault InstantGen (prereq — cho VAULT_INSTANT_HASH)
-cd /Users/ductiger/Projects/MAGIC/scripts && npm install
+cd /Users/ductiger/Projects/MagicLampEco/MAGIC/scripts && npm install
 npx tsx deploy/05_create_instant_vault.ts
 # → cũng in REF_VAULT_INSTANT_UTXO (ref-script CIP-33 của chính vault này)
 
 # Bước 2: sinh MAGIC để có cái mà tiêu
-# ⛔ ĐANG KẸT — xem cảnh báo ngay dưới khối này. InstantGen chưa cấp được 1 nanogic.
 npx tsx test/instant_only.ts
+# → đã cấp thật hai lần trên Preprod: 0,3333 MAGIC (16/09) và 4,004 MAGIC (17/09).
+#   Đọc ở dòng `GRANTED … MAGIC (bound by …)` — nó nói luôn vế nào đang chặn.
 
 # Bước 3: deploy toàn bộ hạ tầng ConsumeMAGIC (1 tx, 5 việc)
 npx tsx deploy/09_deploy_consume.ts
@@ -65,18 +66,44 @@ npx tsx test/consume_only.ts
 > `script_inputs_confined_to` chỉ duyệt `tx.inputs`, không chạm `reference_inputs`
 > (`onchain/lib/magiclamp/consume/util.ak:104-118`) nên chốt đó không cản readFrom.
 
-> ⛔ **Bước 2 hôm nay KHÔNG chạy được — chuỗi e2e đang đứt ở đây.**
+> ✅ **Bước 2 CHẠY ĐƯỢC. Bản trước của khối này nói ngược, và nó đã tốn của nhà khác một
+> vòng rà.**
 >
-> `test/instant_only.ts` sẽ fail ở `expect grant > 0`. Không phải lỗi của script: trần thứ
-> ba của InstantGen là `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`
-> (`InstantGen/onchain/lib/magiclamp/protocol/math.ak`), mà vault Instant luôn có
-> `gen_schedules = []` ⇒ trần **0** ⇒ `min3(...) = 0`. Đây là fail-closed có chủ ý, không
-> phải thứ đi vòng được bằng env hay tham số. Trạng thái:
-> [`DevStatus.md`](../DevStatus.md) — "Còn nợ" #6 và "Chờ chủ nhân chốt" D1.
+> Bản cũ viết *"`test/instant_only.ts` sẽ fail ở `expect grant > 0`"* và quy nguyên nhân cho
+> `compute_cap_pp(schedules) = Σ(gen_schedules) / 2` đọc 0 ở vault không có lịch. **Cánh tay
+> đó đã được vá** (Nợ #19, chiều 2026-09-16): `compute_cap_pp` nay không còn nhận `schedules`,
+> nó chỉ nhận `l_avail_oildrop` — xem `InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸
+> `compute_cap_pp`, và bài kiểm `ig_cap_pp_one_lamp` trong cùng tệp.
 >
-> **Đường thay thế duy nhất để có MAGIC mà tiêu:** ScheduleGen — deploy vault Schedule
-> (`deploy/07_create_schedule_vault.ts`), rồi commit + fire
-> (`npm run test:schedule-commit` → `npm run test:schedule-fire`). Cửa Schedule đang dùng được.
+> Bác bằng số đo trên chuỗi, không bằng lập luận — hai lượt cấp THẬT trên Preprod, cả hai
+> vào một vault chưa từng tiêu MAGIC:
+>
+> | ngày | tx cấp | cấp được | vế đang chặn |
+> |---|---|---|---|
+> | 2026-09-16 | `720e1817dc12a418751eb40326648bf5498d22d87c4f815a1089daf8622987f6` | 0,3333 MAGIC | `cap_surplus` |
+> | 2026-09-17 | `c888e76640b5ac591747f99182c57ed6867d2931d048d97aebb8f9adadadc670` | 4,004 MAGIC | `cap_pp` |
+>
+> Và MAGIC ấy đã bị tiêu thật, nên vòng khép: `b60afb5294b39b7332e4748cf42b4281ef511c7ec503311707d36e68726a43da`
+> (16/09) và `9e85fd59322f979e8770f7cbe66086623f509633404f6d912f1b048193309053` (17/09).
+> Chi tiết + bảng định danh: [`scripts/DEPLOYED.md`](../scripts/DEPLOYED.md).
+>
+> **Vì sao một vault "nguội" vẫn cấp được — chỗ dễ suy nhầm.** `compute_reward_from_consumed`
+> đọc `consumed_credit`, và người ta dễ kết luận *"vault mới ⟹ `consumed == 0` ⟹ thưởng 0 ⟹
+> lượt tiêu đầu tiên không có vốn"*. Sai ở tiền đề: genesis của InstantGen **ghim**
+> `consumed_credit == wakeme_seed_credit`, khác 0 (`InstantGen/onchain/lib/magiclamp/protocol/constants.ak`).
+> Số đo 16/09 in ra `reward(consumed) 210.2100` — vế thưởng là vế **lớn nhất** trong ba vế,
+> nên nới hạt giống lên không nới được đồng MAGIC nào. Hạt giống mở khoá, nó không trả.
+>
+> **Hai vế còn lại thì đúng là cổng thật, và chúng đổi theo beacon:** `cap_surplus` về 0 khi
+> `br_q <= br_safe_q` hoặc `magic_supply == 0`. Beacon 16/09 có `magic_supply` nhỏ nên
+> `cap_surplus` chặn; beacon 17/09 đặt `magic_supply = 10¹⁵` nên vế chặn chuyển sang `cap_pp`.
+> Cả hai là số của beacon **dựng-tạm**, không phải dự trữ thật — đừng đọc con số cấp được
+> thành một con số sản xuất.
+>
+> **Đường ScheduleGen vẫn dùng được** và vẫn là đường thứ hai để có MAGIC: deploy vault
+> Schedule (`deploy/07_create_schedule_vault.ts`), rồi commit + fire
+> (`npm run test:schedule-commit` → `npm run test:schedule-fire`). Nó **không còn** là "đường
+> thay thế duy nhất", và InstantGen **không còn** xếp sau ScheduleFire.
 >
 > Nhưng **chưa cắm thẳng vào được**: `09_deploy_consume.ts` hôm nay ghim vault Instant —
 > nó ném lỗi nếu thiếu `VAULT_INSTANT_HASH`, và đặt cứng `BURN_BATCH_CONSTR = 2n`
@@ -86,8 +113,15 @@ npx tsx test/consume_only.ts
 > một cái là ra **sai script hash**, tức sai địa chỉ Engage, và không có gì báo. Đối chiếu
 > bằng `cd scripts && npm run check:params` trước khi deploy.
 >
-> **Cái gì gãy nếu bám bản cũ:** người mới đọc sẽ ngồi debug credential / Blockfrost /
-> min-ADA cho một bước không bao giờ xanh, vì bản cũ liệt nó như bước thường.
+> **Cái gì gãy nếu bám bản cũ** — và chiều hỏng đã ĐẢO, nên đừng nhớ câu cũ. Bản cũ hơn nữa
+> liệt bước 2 như bước thường, hại là người đọc ngồi debug một bước không bao giờ xanh. Bản
+> vừa bị thay thì hại ngược lại: nó dán nhãn ⛔ lên một bước **đang chạy được**, nên người đọc
+> bỏ qua cửa InstantGen và đi vòng qua ScheduleGen — mất hai epoch chờ (`SCHEDULE_DELAY = 2`)
+> cho một thứ lấy được ngay. Nhà OriLife đọc đúng bản đó và dừng lại (`ol0920magic-e`); chi
+> phí là một vòng thư hỏi-đáp giữa hai nhà, không phải một lỗi kỹ thuật.
+>
+> Đây là lý do khối này ghi **tx hash** chứ không ghi một lời khai: một câu "đã vá" già đi
+> lặng lẽ, một tx hash thì tra lại được bất cứ lúc nào.
 
 **Chạy cả 4 bước nối env tự động** — `scripts/run_consume_e2e.sh` làm đúng chuỗi trên và
 truyền env giữa các bước qua stdout (nên **cũng đứt ở bước 2** vì lý do trên):
@@ -192,15 +226,15 @@ hoặc chạy thẳng lệnh ở §3.
 
 ```bash
 # Aiken onchain tests (yêu cầu aiken >= 1.1.0)
-cd /Users/ductiger/Projects/MAGIC/ConsumeMAGIC/onchain
+cd /Users/ductiger/Projects/MagicLampEco/MAGIC/ConsumeMAGIC/onchain
 aiken check   # chạy tất cả test trong validators/ + lib/
 
 # TypeScript pricing tests
-cd /Users/ductiger/Projects/MAGIC/ConsumeMAGIC/pricing
+cd /Users/ductiger/Projects/MagicLampEco/MAGIC/ConsumeMAGIC/pricing
 npm install && npm test
 
 # TypeScript offchain (codec round-trip + builder typecheck)
-cd /Users/ductiger/Projects/MAGIC/ConsumeMAGIC/offchain
+cd /Users/ductiger/Projects/MagicLampEco/MAGIC/ConsumeMAGIC/offchain
 npm install && npm test           # số ca: xem DevStatus.md
 npm run typecheck                 # tsc --noEmit: types.ts + engageId.ts + consume.ts + index.ts
 ```

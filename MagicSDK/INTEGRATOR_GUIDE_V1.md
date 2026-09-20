@@ -560,10 +560,19 @@ sổ mã do Registry giữ.
 |---|---|---|
 | 1 | xử một ảnh | có |
 | 2 | neo một CID | có |
-| 3 | lưu trữ (MB) | có |
-| 4 | tính toán (MB) | có |
-| 5 | `job_post` | **chưa** — chờ chốt `base_price` |
-| 6 | `contract_settle` | **chưa** — chờ chốt `base_price` |
+| 3 | một lần lưu trữ | có |
+| 4 | một lần tính toán | có |
+| 5 · 6 | — | **đã RÚT 2026-09-21**, hai số để trống vĩnh viễn |
+
+> ⚠️ **Mã 3 và 4 đếm LẦN, không đếm MB** — bảng này từng ghi "(MB)" và đó là một đơn vị mã
+> chưa bao giờ tính. `required_for` nhân `op_count` như một bội số thuần; không chỗ nào quy
+> đổi byte. Gửi `op_count = 12` cho một tệp 12 MB là trả tiền cho **12 lần lưu**, không phải
+> cho 12 MB. Sổ đầy đủ: `ConsumeMAGIC/CONTRACT.md §A`.
+>
+> **5 và 6 bị rút theo đề nghị của chính nhà đã xin chúng** — `op_type` tả một nghiệp vụ hạ
+> tầng mà bên tiêu thụ MAGIC thật sự chạy, không tả một sự kiện nghiệp vụ của nền tảng cắm
+> vào. Hai số không được cấp lại cho thứ khác: chúng đã đi ra ngoài và từng trả về giá hợp
+> lệ ở mã của một nhà tích hợp. Lý do đầy đủ: `ConsumeMAGIC/CONTRACT.md §A`.
 
 Thêm dòng vào bảng **không** cần deploy lại gì: `op_prices` nằm trong **datum** của beacon, post
 lại bằng `buildPostPriceTx` là xong.

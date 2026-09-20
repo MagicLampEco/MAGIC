@@ -20,8 +20,19 @@ export const q: bigint = Q; // 1_000_000_000n
 //
 // Tỷ lệ tiêu/sinh của mô hình sinh là thứ KHÁC: `usage_ratio` — tỷ lệ MỖI VAULT trên
 // cửa sổ 6 epoch, định nghĩa ở `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` v2.1 §6.1.1
-// và `INV-MAGIC-CITIZEN`. Nó chưa có trong mã ở bất cứ đâu, và `magicGenerated` không
-// tồn tại trong tệp này.
+// và `INV-MAGIC-CITIZEN`. `magicGenerated` không tồn tại trong tệp này.
+//
+// Phạm vi của câu "chưa có trong mã", đo 2026-09-20 — một lượng từ toàn xưng không kèm
+// phép đếm thì già đi lặng lẽ, nên đây là phép đếm kèm ngày và kèm phần bị loại:
+//
+//     $ grep -rn 'usage_ratio' --include='*.ak' --include='*.ts' --include='*.rs' .
+//     (0 dòng, sau khi loại `Legacy/`)
+//     $ grep -rn 'usage_ratio' SPEC/     → 35 dòng / 1 tệp
+//     $ grep -rn 'usage_ratio' Legacy/   → 0 dòng / 0 tệp
+//
+// Tức: khái niệm này sống ĐÚNG MỘT CHỖ, và chỗ đó là đặc tả. Phần bị loại khỏi phép đếm
+// là `Legacy/` (đếm được: 0 dòng) và mọi đuôi tệp ngoài ba đuôi mã trên. Ai đọc lại dòng
+// này sau một đợt hiện thực hoá thì chạy lại chính hai lệnh đó, đừng tin con số.
 //
 // Dòng này có vì hai tên đó đủ giống để một lượt `grep "magicConsumed"` dừng đúng ở
 // đây và kết luận "có nguồn tín hiệu cầu" — kết luận ngược, từ một kết quả tìm kiếm

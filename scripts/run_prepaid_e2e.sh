@@ -52,6 +52,21 @@ ROOT="$PWD/.."
 CHECK_JSON="/tmp/prepaid-check.$$.json"
 trap 'rm -f "$CHECK_JSON"' EXIT
 
+# ── Nạp tham số CÔNG KHAI của mạng, giống hai runner consume ─────────────────
+# Hai sổ, một mạng: `run_wakeme_e2e.sh` và `run_schedule_fire.sh` ghi vào
+# `state.$NET.sh`; hai runner consume đọc `deployed.$NET.env`. Runner này trước đây
+# KHÔNG đọc sổ nào — nên nó chạy với `LAMP_POLICY_ID` rỗng trong khi giá trị đúng
+# đang nằm trên đĩa, và chỗ hỏng lộ ra ở một thông báo nói về thứ khác.
+# Đọc sổ CŨ trước, sổ MỚI sau ⟹ `deployed.$NET.env` thắng khi cả hai cùng có.
+# Chỉ tham số công khai đi đường này; bí mật vẫn vào bằng GIÁ TRỊ qua môi trường.
+for STATE in "state.$NETWORK.sh" "deployed.$NETWORK.env"; do
+  if [ -f "$STATE" ]; then
+    echo "▶ Đọc prereq: $STATE"
+    set -a; . "./$STATE"; set +a
+  fi
+done
+export NETWORK
+
 echo "=== PrepaidGen E2E · mạng $NETWORK ==="
 echo
 

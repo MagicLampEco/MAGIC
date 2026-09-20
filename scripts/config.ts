@@ -93,10 +93,22 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
 /** Đời LAMP **THẬT** nhưng ĐÃ BỊ THAY. Khác loại với bảng trên, và chỗ khác nhau
  * đó quyết định thông điệp lỗi phải nói gì.
  *
- * `28e916b0…` chưa bao giờ là LAMP: chữ-ký-đơn, không trần, không `SupplyState`.
- * `7a1a7aed…` và `d9c09230…` thì CÓ one-shot proof, CÓ `SupplyState`, chỉ là đời
- * cũ. Gộp chung một bảng thì thông điệp lỗi khai sai bản chất của loại thứ hai,
- * và người đọc đi tìm một token nhái không tồn tại.
+ * BA đời, BA loại — đừng gộp hai đời sau làm một:
+ *   `28e916b0…` chưa bao giờ là LAMP: chữ-ký-đơn, không trần, không `SupplyState`.
+ *   `d9c09230…` CÓ one-shot proof, CÓ `SupplyState`, chỉ là đời cũ.
+ *   `7a1a7aed…` thì KHÁC: nó neo native-sig ⇒ KHÔNG one-shot ⇒ không có trần
+ *   cung cưỡng chế được. Người giữ khoá đúc lại SUPPLY NFT lượt hai là đúc lại
+ *   trọn cap — xem đúng bảng bên dưới, `SUPERSEDED_LAMP_POLICIES["7a1a7aed…"]`.
+ *
+ * Gộp chung một bảng thì thông điệp lỗi khai sai bản chất của loại thứ hai, và
+ * người đọc đi tìm một token nhái không tồn tại.
+ *
+ * > Bản trước của đoạn này xếp `7a1a7aed…` chung với `d9c09230…` là "CÓ one-shot
+ * > proof, chỉ là đời cũ" — NGƯỢC với chính bảng nằm ngay dưới nó. Cổng không
+ * > hỏng vì cổng đọc BẢNG, không đọc chú thích; cái hỏng là chú thích giải thích
+ * > VÌ SAO bảng tồn tại, và người sửa cổng lần sau đọc nó trước. Kho LAMP soi ra
+ * > và đối chiếu với sổ nguồn `Genesis/offchain/src/lampPolicies.ts:124`
+ * > (`anchor: "native-sig-markers"`), thư `lamp0920mg`, 2026-09-20.
  *
  * Vì sao bảng này phải có, đo được hôm nay: ví Preprod DUY NHẤT có tADA đang cầm
  * `d9c09230…` (10⁹ đơn vị). Bảng cũ liệt `28e916b0…` và `7a1a7aed…` nhưng KHÔNG
@@ -104,8 +116,16 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
  * xanh trọn vẹn trên một đời đã chết. Cổng im lặng đúng ca nó sinh ra để chặn.
  *
  * Nguồn phân loại: kho LAMP ▸ `Genesis/offchain/src/lampPolicies.ts`. Chép có
- * nhãn (chưa có đường nhập khẩu), ngày 2026-09-16. Đã gửi thư hỏi kho LAMP xem
- * sổ nguồn có `d9c09230…` chưa — nếu chưa thì chỗ thiếu ở nguồn, không ở bản chép.
+ * nhãn (chưa có đường nhập khẩu), ngày 2026-09-16. Câu hỏi cũ ở đây — sổ nguồn
+ * có `d9c09230…` chưa — đã có đáp: CÓ, `lampPolicies.ts:151-155`,
+ * `id: "preprod-oneshot-12param"`, `status: "SUPERSEDED"` (kho LAMP xác nhận
+ * 2026-09-20). Chỗ thiếu không ở nguồn.
+ *
+ * 🔴 `8169b76c…` ở `LAMP_ACTIVE` SẮP thành SUPERSEDED. Kho LAMP báo 2026-09-20:
+ * đợt đổi nhãn bốn marker đi CÙNG đợt đúc cuối, mà bốn nhãn là apply-param ⇒
+ * policy id đổi. Chưa có mốc ngày. Giá trị đang ghim ở `scripts/state.Preprod.sh`
+ * ▸ `LAMP_POLICY_ID`; khi có policy id đời cuối thì **dựng lại cả cụm**, đừng sửa
+ * lẻ một dòng (lý do ở chính tệp đó). Đừng nướng lại trước đợt ấy.
  */
 const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
   "7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9":

@@ -28,6 +28,7 @@ import { Data } from "@lucid-evolution/lucid";
 import { VaultDatumSchema, isBatchExpired, type VaultDatum } from "@magiclamp/sdk";
 
 import type { ChainUtxo } from "./chain.js";
+import type { VaultKind } from "./config.js";
 import { VaultDatumUndecodableError, VaultIdentityDuplicateError } from "./errors.js";
 
 /** Độ dài hex của một policy id / script hash (28 byte). */
@@ -59,6 +60,16 @@ export interface GenScheduleView {
 
 export interface VaultView {
   utxoRef: string;
+  /** Loại vault — tập ĐÓNG `VAULT_KINDS`. **BẮT BUỘC có mặt trên mọi vault.**
+   *
+   *  Nó không suy được từ datum: `VaultDatumSchema` của Instant và của Schedule giải mã
+   *  giống hệt nhau. Nguồn duy nhất là **địa chỉ** — mỗi `VaultScope` trong cấu hình gắn
+   *  một địa chỉ với đúng một loại, nên loại đi theo scope chứ không đi theo UTxO.
+   *
+   *  Vì sao bắt buộc chứ không tuỳ chọn: một trường có ở vault này và vắng ở vault kia thì
+   *  bên gọi không phân biệt được *"vault loại lạ"* với *"máy chủ bản cũ"* — hai thứ cần
+   *  hai cách xử. Vắng hẳn ở mọi vault thì ít ra nó nhất quán; vắng lỗ chỗ thì không. */
+  vaultKind: VaultKind;
   vaultAddress: string;
   /** `policyId + assetNameHex` của NFT danh-tính vault. Policy == script hash của vault. */
   vaultIdUnit: string;
@@ -135,6 +146,7 @@ export function readVaultsFromUtxos(
   vaultAddress: string,
   ownerPkh: string,
   atEpoch: bigint,
+  vaultKind: VaultKind,
 ): ReadVaultsResult {
   const vaults: VaultView[] = [];
   const ignored: IgnoredUtxo[] = [];
@@ -184,7 +196,7 @@ export function readVaultsFromUtxos(
       continue;
     }
 
-    vaults.push(toVaultView(u, datum, utxoRef, vaultAddress, vaultIdUnit, atEpoch));
+    vaults.push(toVaultView(u, datum, utxoRef, vaultAddress, vaultIdUnit, atEpoch, vaultKind));
   }
 
   // Thứ tự tất định — bên gọi so kết quả giữa hai lượt được.
@@ -213,6 +225,7 @@ function toVaultView(
   vaultAddress: string,
   vaultIdUnit: string,
   atEpoch: bigint,
+  vaultKind: VaultKind,
 ): VaultView {
   const rawBatches = datum.magic_batches as unknown as RawBatch[];
 
@@ -255,6 +268,7 @@ function toVaultView(
 
   return {
     utxoRef,
+    vaultKind,
     vaultAddress,
     vaultIdUnit,
     ownerPkh: datum.owner,

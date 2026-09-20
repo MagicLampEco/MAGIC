@@ -81,8 +81,10 @@ export class VaultReadService {
     const ignored: IgnoredUtxo[] = [];
     for (const scope of scopes) {
       const utxos = await this.chain.utxosAt(scope.address);
+      // `scope.vaultType` là nguồn DUY NHẤT của loại vault: nó không suy được từ datum
+      // (lược đồ Instant và Schedule giải mã giống hệt nhau), nó đi theo ĐỊA CHỈ.
       const r = readVaultsFromUtxos(
-        utxos, scope.scriptHash, scope.address, req.ownerPkh, atEpoch,
+        utxos, scope.scriptHash, scope.address, req.ownerPkh, atEpoch, scope.vaultType,
       );
       vaults.push(...r.vaults);
       ignored.push(...r.ignored);
@@ -117,6 +119,9 @@ export function toJsonBody(o: ReadOutcome): Record<string, unknown> {
     scopes_read: o.scopesRead.map(x => ({ vault_type: x.vaultType, address: x.address })),
     vaults: o.vaults.map(v => ({
       utxo_ref: v.utxoRef,
+      // BẮT BUỘC có mặt trên mọi vault, giá trị từ tập ĐÓNG `VAULT_KINDS`. Bên gọi cần nó
+      // để biết `consumed_credit_nanogic` đang mang nghĩa nào — xem docblock ở `vaultView.ts`.
+      vault_kind: v.vaultKind,
       vault_address: v.vaultAddress,
       vault_id_unit: v.vaultIdUnit,
       owner_pkh: v.ownerPkh,

@@ -43,6 +43,29 @@ describe("cấu hình sai phải CHẶN lúc khởi động, không âm thầm t
     expect(() => parseScopes(raw, "Preview")).toThrow(/không phải địa chỉ script/);
   });
 
+  it("`vault_type` ngoài tập ĐÓNG ⇒ ném, và câu lỗi KÊ RA tập hợp lệ", () => {
+    // `vault_kind` đi ra ngoài cho bên tiêu thụ dựng cổng fail-closed. Một chuỗi lạ lọt
+    // qua đây là bên gọi nhận một loại họ không có luật xử — và họ sẽ xếp nó vào một
+    // nhóm sẵn có. Chặn ở khởi động, nơi người vận hành đang đứng.
+    const raw = JSON.stringify([
+      { vault_type: "Prepaid", address: PREVIEW_VAULT_ADDRESS, source: "x" },
+    ]);
+    expect(() => parseScopes(raw, "Preview")).toThrow(/không thuộc tập đóng/);
+    // Câu lỗi phải kê tập hợp lệ: một lỗi nói "sai" mà không nói "đúng là gì" thì người
+    // vận hành đi đoán, và đoán ở đây là sửa cấu hình cho tới khi hết đỏ.
+    expect(() => parseScopes(raw, "Preview")).toThrow(/Instant/);
+    expect(() => parseScopes(raw, "Preview")).toThrow(/Schedule/);
+  });
+
+  it("cả hai giá trị của tập đóng đều qua được — cổng không siết nhầm sang ca hợp lệ", () => {
+    for (const kind of ["Instant", "Schedule"]) {
+      const raw = JSON.stringify([
+        { vault_type: kind, address: PREVIEW_VAULT_ADDRESS, source: "x" },
+      ]);
+      expect(parseScopes(raw, "Preview")[0]!.vaultType, kind).toBe(kind);
+    }
+  });
+
   it("thiếu `source` ⇒ ném — bản chép KHÔNG MANG NHÃN là bản chép sẽ chết im lặng", () => {
     const raw = JSON.stringify([{ vault_type: "Schedule", address: PREVIEW_VAULT_ADDRESS }]);
     expect(() => parseScopes(raw, "Preview")).toThrow(/source/);

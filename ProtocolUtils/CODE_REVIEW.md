@@ -21,7 +21,7 @@
 >
 > - **Mọi con số test trong tệp này** (kể cả ở §Trạng thái, không chỉ ở cuối) là ảnh chụp cũ.
 >   Số đang đúng: [`DevStatus.md`](../DevStatus.md).
-> - Mô hình đang đúng: [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> - Mô hình đang đúng: [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 >
 > Không cập nhật tệp này theo code nữa. Review mới thì mở biên bản mới.
 

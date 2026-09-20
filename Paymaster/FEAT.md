@@ -5,7 +5,7 @@
 > ⚠ **Con trỏ `LAMP/docs/SPEC-Paymaster.md` đã CHẾT.** Bản trước ghi tệp đó là "nguồn bám" —
 > nó không tồn tại (kiểm: `ls ../LAMP/docs/` báo không có thư mục). Đừng đi tìm, đừng dựng
 > lại từ trí nhớ. Spec canonical duy nhất:
-> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
 Nguồn bám (đọc thẳng ở đó, mã là trọng tài): `Paymaster/onchain/validators/paymaster.ak`;
 `Paymaster/onchain/lib/magiclamp/paymaster/{types,util,math}.ak`;

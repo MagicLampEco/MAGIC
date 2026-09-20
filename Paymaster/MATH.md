@@ -7,7 +7,7 @@
 > báo không có thư mục). Con trỏ cross-repo ấy đã chết; đừng đi tìm, đừng dựng lại từ trí nhớ.
 >
 > Spec canonical duy nhất:
-> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 > Trọng tài cho công thức là **mã**: `Paymaster/onchain/lib/magiclamp/paymaster/math.ak` và
 > bản gương `Paymaster/offchain/src/math.ts` (P8 buộc hai bên trùng BIT). Tệp này là bản mô
 > tả đi kèm — lệch thì mã đúng.

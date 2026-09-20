@@ -2,7 +2,7 @@
 
 Hợp đồng thông minh Cardano L1 (PlutusV3) cho hệ **ba token** LAMP · MAGIC · CARP.
 
-> **Nguồn chân lý:** [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> **Nguồn chân lý:** [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 > Mâu thuẫn giữa README này (hoặc bất kỳ tài liệu nào khác) với spec đó → **theo spec**.
 > README chỉ dẫn đường, không định nghĩa lại mô hình.
 >
@@ -34,7 +34,7 @@ CarpetMint sở hữu (`CarpetMint-Core-Spec-Vi.md §T1`); MAGIC chỉ tham chi�
 
 ```
 MAGIC/
-├── SPEC/                 # ĐẶC TẢ CANONICAL — đọc trước khi sửa bất cứ công thức nào
+├── Specs/                 # ĐẶC TẢ CANONICAL — đọc trước khi sửa bất cứ công thức nào
 ├── ProtocolUtils/        # Thư viện dùng chung (hằng số, Q-format, BigInt) — P8
 ├── InstantGen/           # Sinh MAGIC theo yêu cầu, vault hợp nhất DESIGN-2
 ├── ScheduleGen/          # Hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard

@@ -5,7 +5,7 @@ MagicLamp Network). Đọc xong thì dựng được: tạo vault → tìm vault
 rút LAMP.
 
 > **Mô hình chuẩn của cả hệ:**
-> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 > **Luật validator** mà mã dưới đây phải khớp: [`SPEC_V1.md`](./SPEC_V1.md).
 > **Module nào đang sống + số kiểm:** [`DevStatus.md`](../DevStatus.md).
 
@@ -90,7 +90,7 @@ khác nhau. Nó chi phối tham số decay và hệ số nhân của MAGIC sinh 
 
 Các hệ số cụ thể **không chép vào đây** — chúng là hằng protocol, sống ở
 `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` và bản song sinh TypeScript, và được
-`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` định nghĩa. Chép số vào tài liệu là cách chắc chắn
+`Specs/MagicLamp-Tripletoken-Feat-(Vi).md` định nghĩa. Chép số vào tài liệu là cách chắc chắn
 nhất để có hai giá trị mâu thuẫn.
 
 Điều **không đổi** dù bạn đổi profile: mỗi batch giữ `profile_at_creation` của riêng nó (T4,
@@ -425,7 +425,7 @@ dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trốn
 trái `I-ACT-7`; Snapshot chưa bao giờ hội tụ về `VaultDatum` hợp nhất. Không còn validator
 trong cây làm việc, nên cũng không có gì để export. Đừng dựng gì trên hai cái tên đó.
 
-`PrepaidGen` là cửa sinh thứ ba trong `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` §6.5 (nguồn
+`PrepaidGen` là cửa sinh thứ ba trong `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §6.5 (nguồn
 CARP: app/user khoá CARP, không phải sinh từ số dư LAMP như hai cửa kia). **Chưa có đường gọi
 qua SDK** vì mã chưa vào cây làm việc — nhưng mã **còn nguyên**, 24 tệp neo bằng tag
 `preserve/prepaidgen-stash-2026-07-30`. Bản trước của đoạn này viết *"mã nguồn đã mất (chỉ còn
@@ -934,6 +934,6 @@ thử đầu-cuối trên testnet và đối chiếu [`DevStatus.md`](../DevStat
   trong `vault.ak` trỏ thẳng về §1/§2/§3 của tệp đó
 - [`V1_TESTNET_PLAN.md`](./V1_TESTNET_PLAN.md) — ma trận test; **chưa hội tụ** về mô hình hai
   vault, còn nói về Snapshot/Vacuum
-- [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md) — mô
+- [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md) — mô
   hình ba token của cả hệ
 - [`DevStatus.md`](../DevStatus.md) — module nào đang sống, còn nợ gì, số kiểm hiện hành

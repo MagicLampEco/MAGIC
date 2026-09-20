@@ -3,7 +3,7 @@ GenMAGIC v3.3 · C-CONSOLIDATE-1..6 · T23 · P8
 
 > **Module MỒ CÔI — chưa được quyết hội tụ hay dời `Legacy/`.** Xem
 > [`DevStatus.md`](../DevStatus.md). Nguồn chân lý mô hình:
-> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md);
+> [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md);
 > số mục "§6.9" là di sản đánh số GenMAGIC v3.3, không phải mục lục spec canonical.
 > Validator ở đây là **script hash RIÊNG** (`vault_consolidate`), nên UTxO nằm ở địa chỉ
 > vault InstantGen **không bao giờ chạy** validator này. Vector trong tệp này chưa được đối

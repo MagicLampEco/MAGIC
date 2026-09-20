@@ -52,7 +52,7 @@ export function slotsPerEpoch(network: Network): bigint {
 //     hạn, cửa sổ fire) suy ra từ Preprod sẽ lệch 5× khi lên mainnet, và không gì kêu.
 //
 //     Trước ngày đó bảng này ghi Preprod = 86 400 000 (1 ngày). Con số ấy KHÔNG do ai
-//     quyết: đã tìm trong `SPEC/`, `BOUNDARIES.md`, `DevStatus.md`, `ChangeLog.md` và
+//     quyết: đã tìm trong `Specs/`, `BOUNDARIES.md`, `DevStatus.md`, `ChangeLog.md` và
 //     `git log -S` mà không có quyết định nào chọn nó, còn bằng chứng thì nghiêng về TAI
 //     NẠN — commit `640690bf` sinh CẢ HAI bảng trong cùng một hunk, bảng ms suy ra từ
 //     bảng slots lúc đó đang sai, và commit message không nhắc gì tới nén.

@@ -5,7 +5,7 @@
 > bằng cách trả LAMP vào Treasury", redeemer mang `lamp_paid`, ràng buộc C-INST-1..4
 > tính trên khoản chi, batch sống 2 epoch có halving ở `k=1`. **Không cái nào còn tồn
 > tại.** Mô tả cơ chế hiện hành ở **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn
-> chân lý là [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> chân lý là [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 >
 > **Gãy gì nếu dựng theo tệp này:** dựng một tx chuyển LAMP sang Treasury thì validator
 > từ chối thẳng — I-ACT-7 ép `lamp_balance` / `lamp_locked` / `loyalty_holdings` giống

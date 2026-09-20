@@ -5,7 +5,7 @@
 > PHA 2: "mua MAGIC bằng cách trả LAMP vào Treasury", redeemer mang `lamp_paid`,
 > apply-param có `treasury_addr`, và halving batch ở `k=1`. **Không cái nào còn tồn
 > tại.** Mô tả cơ chế hiện hành ở **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn
-> chân lý là [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> chân lý là [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 >
 > **Gãy gì nếu dựng theo tệp này:** apply một danh sách tham số có `treasury_addr`
 > sinh ra script hash KHÁC vault thật — `applyParamsToScript` không kiểm arity nên

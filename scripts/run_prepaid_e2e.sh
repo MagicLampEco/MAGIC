@@ -55,16 +55,40 @@ trap 'rm -f "$CHECK_JSON"' EXIT
 # ── Nạp tham số CÔNG KHAI của mạng, giống hai runner consume ─────────────────
 # Hai sổ, một mạng: `run_wakeme_e2e.sh` và `run_schedule_fire.sh` ghi vào
 # `state.$NET.sh`; hai runner consume đọc `deployed.$NET.env`. Runner này trước đây
-# KHÔNG đọc sổ nào — nên nó chạy với `LAMP_POLICY_ID` rỗng trong khi giá trị đúng
-# đang nằm trên đĩa, và chỗ hỏng lộ ra ở một thông báo nói về thứ khác.
+# KHÔNG đọc sổ nào.
+#
+# 🔴 PHẠM VI, đừng đọc rộng hơn: bốn bước dưới đây KHÔNG đổi hành vi vì có đoạn này.
+#   `deploy/10_deploy_prepaid.ts` chỉ lấy `BUFFER_BPS` và `PLATFORM_PKH` từ môi
+#   trường, và nó không nhập `POLICY_IDS` nên `requireLampPolicyId()` không nằm trên
+#   đường chạy của nó. Đoạn này là chuẩn bị cho các chặng SAU — chặng tiêu MAGIC đi
+#   qua `consume`, nơi `LAMP_POLICY_ID` mới thật sự được đọc — cộng với việc runner
+#   này thôi là runner duy nhất mù với hai sổ.
+#   (Bản đầu của chú thích này khai rằng runner "chạy với `LAMP_POLICY_ID` rỗng".
+#   Sai: biến đó không được đọc ở đây. Giữ lại lời đính chính vì bằng chứng mà bản
+#   đầu đưa ra — dòng `▶ Đọc prereq` — chứng minh sổ ĐÃ được nạp, không chứng minh
+#   việc nạp đó sửa cái gì.)
+#
 # Đọc sổ CŨ trước, sổ MỚI sau ⟹ `deployed.$NET.env` thắng khi cả hai cùng có.
 # Chỉ tham số công khai đi đường này; bí mật vẫn vào bằng GIÁ TRỊ qua môi trường.
+. "./state_book_guard.sh"
+assert_state_books_khong_khai_y_dinh "state.$NETWORK.sh" "deployed.$NETWORK.env"
+
+NET_ARGV="$NETWORK"
 for STATE in "state.$NETWORK.sh" "deployed.$NETWORK.env"; do
   if [ -f "$STATE" ]; then
     echo "▶ Đọc prereq: $STATE"
     set -a; . "./$STATE"; set +a
   fi
 done
+
+# Sổ KHÔNG được đổi mạng dưới chân người gõ lệnh. Hai runner consume tránh ca này
+# bằng cách giữ argv ở một biến riêng (`NET`) rồi mới export; ở đây thì KÊU thay vì
+# lặng lẽ khôi phục — một sổ đổi được mạng là một sổ hỏng, và nó nên hiện ra.
+if [ "$NETWORK" != "$NET_ARGV" ]; then
+  echo "✗ Sổ vừa nạp đổi mạng: dòng lệnh '$NET_ARGV' → sổ '$NETWORK'." >&2
+  echo "  Mọi hash dưới đây ghim theo mạng. Gỡ dòng \`NETWORK=\` khỏi sổ rồi chạy lại." >&2
+  exit 1
+fi
 export NETWORK
 
 echo "=== PrepaidGen E2E · mạng $NETWORK ==="

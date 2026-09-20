@@ -37,10 +37,12 @@ Neo: `onchain/validators/vault_consolidate.ak:106`. Đối chiếu máy: `cd scr
   `LAMP` trên mainnet. Nó nằm **GIỮA** hai tham số kia, nên bỏ nó đi không phải là
   "thiếu tham số cuối" mà là đẩy `ms_per_epoch` vào đúng chỗ của asset name — ra hash
   khác, im lặng, và vault sinh ra không ai spend được.
-- `ms_per_epoch` — nhịp epoch của GIAO THỨC tính bằng POSIX-ms: Preview/Preprod
-  `86_400_000`, Mainnet `432_000_000`. Preprod là **đồng hồ nén 5×** so với mạng thật (mạng thật
-  chạy 5 ngày/epoch) — đừng "sửa" nó cho khớp mạng, vì đây là apply-param: đổi số là
-  đổi script hash và giết mọi thứ đã deploy trên Preprod. Nguồn:
+- `ms_per_epoch` — nhịp epoch của GIAO THỨC tính bằng POSIX-ms: Preview `86_400_000`,
+  **Preprod và Mainnet `432_000_000`**. Preprod đổi 1 ngày → 5 ngày ngày 2026-09-20 để
+  trùng nhịp mạng thật, vì đó là nơi người ngoài tập thao tác trước khi bỏ tiền thật.
+  Đây là apply-param, nên lần đổi ấy đổi script hash: **mọi thứ đã deploy trên Preprod
+  trước ngày đó là mồ côi** và phải dựng lại — không vá được bằng cấu hình. Preview thì
+  giữ nén 1 ngày, cố ý, để vòng kiểm thử chạy nhanh. Nguồn:
   `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`.
 
 ```bash

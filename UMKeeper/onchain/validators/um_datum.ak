@@ -75,7 +75,8 @@ pub type UMRedeemer {
 // ── Validator ─────────────────────────────────────────────────
 // `ms_per_epoch` is applied per-network (Plutus validity_range is POSIX ms):
 //   Mainnet:        432_000_000
-//   Preview/Preprod: 86_400_000
+//   Preprod:        432_000_000   (đổi 86_400_000 → 432_000_000 ngày 2026-09-20)
+//   Preview:         86_400_000
 //
 // `um_policy` / `um_name` : NFT thẩm quyền của UM datum — phải còn ở output
 //   (value preservation → chống chuyển UM authority sang UTxO của attacker).

@@ -34,7 +34,7 @@ describe("PostPrice redeemer", () => {
 // ── 2. Cổng fail-closed ──────────────────────────────────────────────────────
 
 const NFT = "aa".repeat(28) + "5052494345"; // policy(28B) + "PRICE"
-const MSPE_PREPROD = 86_400_000n;
+const MSPE_PREPROD = 432_000_000n;  // 5 ngày — nhịp Preprod, chốt 2026-09-20
 
 const oldDatum: PriceParamT = {
   op_prices: [

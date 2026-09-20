@@ -39,20 +39,35 @@ describe("Epoch utilities", () => {
   // Chốt này tồn tại vì lần hỏng trước không có gì bắt được: bảng ms bị suy ra từ
   // bảng slot bằng một câu bình luận, nên một trong hai phải sai mà test vẫn xanh
   // (test dùng chính hằng sai đó làm chuẩn).
-  it("Preprod: nhịp giao thức KHÁC nhịp mạng — nén 5×, chưa có quyết định ghi lại", () => {
-    expect(msPerEpoch("Preprod")).toBe(86_400_000n);          // 1 ngày — nén 5× so với mạng
-    expect(slotsPerEpoch("Preprod")).toBe(432_000n);          // 5 ngày, mạng thật
-    expect(slotsPerEpoch("Preprod") * 1_000n).not.toBe(msPerEpoch("Preprod"));
+  // 🔴 CHỐT NÀY ĐÃ YẾU ĐI TỪ 2026-09-20, và phải nói ra chứ không lặng lẽ đảo dấu.
+  //
+  // Bản trước ghim `slotsPerEpoch("Preprod") * 1000 !== msPerEpoch("Preprod")` — tức
+  // ghim chính chỗ LỆCH, và nhờ thế nó bắt được ca "bảng ms bị suy ra từ bảng slot".
+  // Chủ dự án chốt Preprod về đúng nhịp mạng, nên ba mạng nay TRÙNG số, và cái bẫy cũ
+  // không còn phân biệt được hai bên đột biến: một hiện thực sai lầm `ms = slots × 1000`
+  // sẽ cho ra ĐÚNG cả ba giá trị và đi qua mọi phép so quan hệ.
+  //
+  // Nên chuyển sang ghim GIÁ TRỊ đã chốt của từng mạng, một dòng một mạng, không dùng
+  // vòng lặp và không dùng quan hệ giữa hai bảng. Phép này vẫn đỏ khi ai đó sửa một ô;
+  // nó KHÔNG còn bắt được việc ai đó xoá bảng ms rồi tính từ bảng slot. Cái đó hiện
+  // không có gì canh — ghi ra đây để người sau biết là nó hở, đừng đọc màu xanh thành kín.
+  it("MS_PER_EPOCH: ghim giá trị đã chốt của từng mạng", () => {
+    expect(msPerEpoch("Preview")).toBe(86_400_000n);           // 1 ngày
+    expect(msPerEpoch("Preprod")).toBe(432_000_000n);          // 5 ngày — chốt 2026-09-20
+    expect(msPerEpoch("Mainnet")).toBe(432_000_000n);          // 5 ngày
   });
-  it("Preview/Mainnet: hai nhịp trùng nhau — nên chốt trên phải chỉ đúng Preprod", () => {
-    for (const n of ["Preview", "Mainnet"] as const) {
-      expect(slotsPerEpoch(n) * 1_000n).toBe(msPerEpoch(n));
-    }
+  it("SLOTS_PER_EPOCH: ghim sự thật đo được trên chuỗi, bảng RIÊNG", () => {
+    expect(slotsPerEpoch("Preview")).toBe(86_400n);
+    expect(slotsPerEpoch("Preprod")).toBe(432_000n);
+    expect(slotsPerEpoch("Mainnet")).toBe(432_000n);
   });
-  it("epoch giao thức KHÔNG phải epoch Cardano (không trừ genesis)", () => {
-    // 2026-09-04, Preprod: epoch Cardano = 311; epoch giao thức cùng lúc ≈ 20 700.
+  it("epoch giao thức KHÔNG phải epoch Cardano — nhịp trùng nhau KHÔNG làm gốc trùng nhau", () => {
+    // Đây mới là chốt còn nguyên sức sau lần chốt trên, và là chốt dễ hiểu sai nhất:
+    // hai nhịp bằng nhau rồi thì rất dễ tưởng hai số epoch gặp nhau. Không — phép chia
+    // `posix_ms / ms_per_epoch` KHÔNG trừ genesis, nên gốc toạ độ vẫn lệch.
+    // 2026-09-04, Preprod: epoch Cardano = 311; epoch giao thức cùng lúc = 4 139.
     const tipMs = 1_788_393_600_000n;                          // start epoch 311
-    expect(posixMsToEpoch(tipMs, "Preprod")).toBe(20_699n);
+    expect(posixMsToEpoch(tipMs, "Preprod")).toBe(4_139n);
     expect(posixMsToEpoch(tipMs, "Preprod")).not.toBe(311n);
   });
   it("lampToOildrop: 1 LAMP = 10^6 oildrop", () => {

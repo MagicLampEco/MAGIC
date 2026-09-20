@@ -168,17 +168,43 @@ async function main() {
       }
     }
 
-    // Preview và Preprod DÙNG CHUNG mọi tham số theo mạng (cùng ms_per_epoch
-    // 86_400_000, cùng asset name "tLAMP") ⇒ hash trùng nhau là ĐÚNG, không
-    // phải dấu hiệu rơi tham số. Discriminator thật là testnet ↔ Mainnet.
-    const preview = hashes.get("Preview");
-    const mainnet = hashes.get("Mainnet");
-    if (preview && mainnet && preview === mainnet) {
-      console.log(
-        `  ❌ Preview == Mainnet — tham số theo mạng KHÔNG vào được script ` +
-        `(ms_per_epoch và/hoặc lamp_asset_name bị rơi).`,
-      );
-      failures++;
+    // Hai mạng phải cho hash TRÙNG NHAU khi và CHỈ KHI bộ tham số dựng cho chúng
+    // giống hệt nhau. Suy quan hệ đó từ chính `mod.build(net)` thay vì gõ tay một
+    // cặp mạng, vì cặp gõ tay già đi theo mỗi lần đổi bảng tham số:
+    //
+    //   · Bản trước ghim "Preview == Preprod là ĐÚNG" — đúng khi hai mạng chung
+    //     `ms_per_epoch = 86_400_000`. Chủ dự án chốt 2026-09-20 đưa Preprod về
+    //     432_000_000, nên câu đó thành sai mà không phép kiểm nào đỏ.
+    //   · Và nó chỉ so MỘT cặp (Preview ↔ Mainnet), nên nó mù với ca tham số rơi
+    //     giữa hai mạng còn lại.
+    //
+    // Luật dưới đây không cần biết validator nào nhận tham số nào: validator chỉ
+    // nhận `ms_per_epoch` thì Preprod và Mainnet dựng ra bộ tham số giống nhau và
+    // hash trùng nhau là ĐÚNG; validator nhận thêm `lamp_asset_name` thì chúng khác.
+    const paramKey = (net: Network) =>
+      JSON.stringify(mod.build(net), (_k, v) =>
+        typeof v === "bigint" ? `${v}n` : v);
+
+    for (let i = 0; i < NETWORKS.length; i++) {
+      for (let j = i + 1; j < NETWORKS.length; j++) {
+        const a = NETWORKS[i], b = NETWORKS[j];
+        const ha = hashes.get(a), hb = hashes.get(b);
+        if (!ha || !hb) continue;               // lượt apply đã hỏng, đã đếm ở trên
+        const paramTrung = paramKey(a) === paramKey(b);
+        if (paramTrung && ha !== hb) {
+          console.log(
+            `  ❌ ${a} và ${b} dựng CÙNG bộ tham số nhưng hash KHÁC nhau — ` +
+            `có thứ ngoài bộ tham số đang lọt vào bytes.`,
+          );
+          failures++;
+        } else if (!paramTrung && ha === hb) {
+          console.log(
+            `  ❌ ${a} và ${b} dựng bộ tham số KHÁC nhau mà hash TRÙNG — ` +
+            `tham số theo mạng không vào được script (bị rơi).`,
+          );
+          failures++;
+        }
+      }
     }
     console.log();
   }

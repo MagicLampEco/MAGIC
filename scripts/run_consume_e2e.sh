@@ -128,7 +128,8 @@ echo "  → VAULT_INSTANT_HASH=$VAULT_INSTANT_HASH"
 echo "  → REF_VAULT_INSTANT_UTXO=$REF_VAULT_INSTANT_UTXO"
 
 echo; echo "▶ [2/4] Gen MAGIC (InstantGen)…"
-echo "  ⚠ CHECKPOINT: nếu vault SHUT vì BackingBeacon all-zero (CARP chưa ship), bước này DỪNG."
+echo "  ⚠ CHECKPOINT: nếu vault SHUT vì BackingBeacon all-zero, bước này DỪNG."
+echo "    Beacon do keeper tầng GreenBack của kho này ghi — không chờ nhà nào khác."
 echo "    Khi đó [1] và [3] vẫn là 'leg-A infra deployed'; báo lại em để xử beacon-fixture."
 npx tsx test/instant_only.ts | tee /dev/tty
 

@@ -79,7 +79,9 @@ export interface ProtocolParams {
   /** Shard NFT policy ID. Required for Schedule. */
   shardPolicyId?: string;
   /** BackingBeacon NFT policy ID. Required for Instant (§6.3).
-   *  [CẦN XÁC NHẬN — beacon schema pending CARP]
+   *  Người GHI beacon là keeper tầng GreenBack của CHÍNH kho này (khoá
+   *  `greenback_beacon_writer`, SPEC v2.0 §6.3), không phải nhà CARP — xem
+   *  `BOUNDARIES.md` ▸ "`B` là một DANH MỤC token". Lược đồ datum: `DevStatus.md` Nợ #2.
    *  Pass the all-zero placeholder while the beacon is not deployed: no
    *  reference input can then match and InstantGen stays SHUT (fail-closed). */
   backingNftPolicyId?: string;

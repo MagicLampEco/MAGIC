@@ -42,7 +42,7 @@ là số kế toán trong `magic_batches[]` bên trong vault datum.
 |---|---|
 | Vault owner | Ký tx, nhận MagicBatch mới. **Không** chi LAMP — LAMP đứng yên (I-ACT-7) |
 | UMKeeper | Quy trình nền cập nhật UM datum mỗi epoch (§14) |
-| BackingBeacon (CARP) | Cấp `br_q` qua reference input để tính trần thặng dư (§6.3). Thiếu beacon ⟹ cửa Gen đóng |
+| BackingBeacon (keeper tầng GreenBack của kho này — khoá `greenback_beacon_writer`, SPEC v2.0 §6.3) | Cấp `br_q` qua reference input để tính trần thặng dư (§6.3). Thiếu beacon ⟹ cửa Gen đóng |
 | Cardano ledger | Đảm bảo eUTxO conservation |
 
 > Dòng "Treasury (script) — nhận LAMP paid" đã bỏ: không handler nào chuyển LAMP nữa.

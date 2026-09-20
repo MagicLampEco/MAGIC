@@ -158,7 +158,9 @@ async function main() {
       "⚠  BackingBeacon not configured (BACKING_NFT_POLICY_ID / BACKING_SCRIPT_HASH).\n" +
       "   The vault will still deploy, but InstantGen is SHUT: no reference input can\n" +
       "   satisfy the beacon lookup, so cap_surplus can never be evaluated.\n" +
-      "   This is the intended fail-closed state until CARP ships the beacon.",
+      "   This is the intended fail-closed state until this repo's own GreenBack-tier\n" +
+      "   keeper writes the beacon (BOUNDARIES.md; signing key `greenback_beacon_writer`,\n" +
+      "   SPEC v2.0 §6.3) — it is NOT something the CARP side has to ship.",
     );
   }
 

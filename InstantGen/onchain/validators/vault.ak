@@ -23,7 +23,9 @@
 //   backing_nft_policy  : PolicyId of the BackingBeacon NFT      [CẦN XÁC NHẬN]
 //   backing_script_hash : script hash of the BackingBeacon UTxO  [CẦN XÁC NHẬN]
 //                         Same two-layer pinning as UM. Deploy with an all-zero
-//                         pair while CARP has not shipped the beacon: no UTxO can
+//                         pair while this repo's own GreenBack-tier keeper has not
+//                         yet written the beacon (it is NOT a CARP deliverable —
+//                         see BOUNDARIES.md): no UTxO can
 //                         then satisfy the reference-input lookup, so InstantGen
 //                         is SHUT (cap = 0). Never invent a default `br`.
 //   ms_per_epoch        : POSIX ms per epoch (per-network)

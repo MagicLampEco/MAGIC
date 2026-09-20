@@ -407,7 +407,7 @@ async function stepInstant(lucid: LucidEvolution, ownerPkh: string, epoch: bigin
 async function main() {
   console.log(`=== keeper · ${NETWORK} · bước: ${[...STEPS].join(",")}${DRY ? " · DRY RUN" : ""} ===`);
   if (NETWORK === "Mainnet") {
-    throw new Error("Từ chối chạy trên Mainnet: bước backing dựng beacon GIẢ, và beacon thật thuộc phía CARP.");
+    throw new Error("Từ chối chạy trên Mainnet: bước backing dựng beacon GIẢ. Beacon thật do keeper tầng GreenBack của kho này ghi từ dự trữ có thật.");
   }
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);

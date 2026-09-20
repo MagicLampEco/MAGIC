@@ -234,10 +234,28 @@ nên nêu ở đây thay vì chỉ trỏ:
 **`B` là một DANH MỤC token** (chủ dự án chốt 2026-09-18), không phải một tài sản đơn: ADA, NIGHT,
 CHECK, WORK, có thể thêm. Ba hệ quả cho người sửa mã — một danh mục cần **một nguồn giá mỗi tài
 sản** (F6 đổi hình dạng, SPEC §6.3); `INV-BACKING-NO-LAMP` **không đổi**; và người ghi beacon
-backing là **keeper tầng GreenBack của kho này**, không phải engine CarpetMint. Ba chỗ trong kho
-còn khai ngược điều cuối và phải sửa khi đụng tới: `scripts/config.ts` ▸ mặc định `backing` ·
-`scripts/test/instant_only.ts` ▸ câu `"SHUT until CARP ships the beacon"` · `DevStatus.md` Nợ #2.
+backing là **keeper tầng GreenBack của kho này**, không phải engine CarpetMint.
 Hành vi fail-closed (mặc định all-zero) thì **giữ nguyên** — chỗ sai là lời khai, không phải cổng.
+
+> Bản trước của đoạn này kê cứng **"Ba chỗ"** rồi liệt kê ba tệp. Con số đó đếm một tập ĐANG LỚN
+> DẦN, nên nó sai theo đúng hai chiều cùng lúc: ba tệp được kê đã vá xong (nên con số đọc thành
+> một việc chưa làm mà thật ra đã làm), trong khi một lượt quét trọn kho ngày 2026-09-20 tìm ra
+> **11 tệp KHÁC** còn khai ngược — gồm `MagicSDK/README.md`, `MagicSDK/INTEGRATOR_GUIDE_V1.md`
+> và chú thích tham số trong `InstantGen/onchain/validators/vault.ak`, tức cả mặt tiền SDK mà
+> người tích hợp đọc. Người tra theo danh sách kia sẽ kết luận đã hết trong khi còn mười một tệp.
+> (Cả 11 đã vá trong cùng commit với dòng này.) Nên ở đây **không ghi số, ghi lệnh đếm**; nó trả lời
+> đúng câu *"bây giờ còn chỗ nào"* thay vì câu *"hôm viết dòng này còn chỗ nào"*:
+>
+> ```
+> grep -rn --include="*.ts" --include="*.md" --include="*.ak" --include="*.sh" \
+>   -iE "(beacon[^.]{0,80}(CARP|CarpetMint))|((CARP|CarpetMint)[^.]{0,80}beacon)" . \
+>   | grep -v "^./Legacy/" | grep -v node_modules | grep -v "/build/packages/"
+> ```
+>
+> Đọc ở: từng dòng trả về, và câu hỏi cho mỗi dòng là *"dòng này nói CARP **ghi** beacon, hay chỉ
+> nói CARP **đọc** nó?"* — chỉ vế thứ nhất mới sai. Ba luật loại trừ trong lệnh: `Legacy/` (kho
+> lịch sử, §5 để yên), `node_modules` và `build/packages/` (mã của bên thứ ba). Ngày 2026-09-20
+> ba luật đó loại ra **0** dòng khớp, nên con số 13 ở trên không phụ thuộc chúng.
 
 Hiệu lực: chỉ cho vault **deploy lại**; không hồi tố vault Preprod đang sống (SPEC v2.0 §6.1.6).
 

@@ -151,6 +151,17 @@ export function toJsonBody(o: ReadOutcome): Record<string, unknown> {
         fired_count: Number(g.firedCount),
       })),
     })),
+    // `consumed_credit_nanogic` CỐ Ý không có ở đây, và đây là chỗ khai lý do — trước bản
+    // này chỗ này im lặng, nên người đọc không phân biệt được "cố ý bỏ" với "chưa ai cần".
+    // Ba lý do độc lập, mỗi lý do một mình đã đủ:
+    //   1. Nó là SỐ DƯ, không phải luỹ kế — `validate_instant_gen` đặt nó về 0 mỗi lượt cấp
+    //      (`InstantGen/onchain/validators/vault.ak` ▸ `INV-CASHBACK-BOUND`). Tổng của các
+    //      số dư tại một thời điểm không nói gì về tổng đã tiêu.
+    //   2. Mỗi vault InstantGen khởi đầu ở `wakeme_seed_credit`, KHÁC 0. Cộng N vault là
+    //      cộng thêm N lần hạt giống — một con số chưa ai tiêu đồng nào.
+    //   3. Cùng tên trường mang hai nghĩa ở hai loại vault (xem docblock ở `vaultView.ts`).
+    //      Cộng một số dư với một bộ đếm ra một con số không có đơn vị.
+    // Ba trường dưới đây thì cộng được vì chúng cùng là lượng MAGIC tại một thời điểm.
     totals: {
       available_nanogic: s(o.vaults.reduce((t, v) => t + v.availableNanogic, 0n)),
       accrued_nanogic: s(o.vaults.reduce((t, v) => t + v.accruedNanogic, 0n)),

@@ -66,6 +66,32 @@ export interface VaultView {
   availableNanogic: bigint;
   accruedNanogic: bigint;
   expiredNanogic: bigint;
+  /** 🔴 **Đây KHÔNG phải "lượng MAGIC đã tiêu".** Nó là *tín dụng CÓ ĐƯỢC NHỜ tiêu* —
+   *  một **số dư tiêu được**, không phải một bộ đếm luỹ kế. Cái tên đọc ngược với vật thật,
+   *  nên đừng đặt nhãn cho người dùng từ cái tên này.
+   *
+   *  Vòng đời ở vault **InstantGen** (bốn vế, neo theo tên hàm trong
+   *  `InstantGen/onchain/validators/vault.ak`):
+   *    · `validate_mint_vault_id` — genesis ghim `= wakeme_seed_credit`, **khác 0**;
+   *    · `validate_burn_batch`    — `+= Σburns`, chỗ TĂNG duy nhất;
+   *    · `validate_instant_gen`   — đọc rồi **ĐẶT VỀ 0** (`INV-CASHBACK-BOUND`: tín dụng
+   *      được TIÊU, không được dùng lại — nên cùng một lần tiêu không đòi được hai lần);
+   *    · `validate_prune_expired` — **không đụng** (đụng là mở một đòn bẩy thưởng miễn phí).
+   *
+   *  ⟹ con số này **TỤT VỀ 0** sau mỗi lượt InstantGen cấp. Đó là bình thường, không phải
+   *  mất dữ liệu.
+   *
+   *  🔴 Và CÙNG TÊN TRƯỜNG mang HAI NGHĨA, tuỳ vault thuộc validator nào:
+   *    · vault **InstantGen**  — số dư tiêu được (vòng đời trên);
+   *    · vault **ScheduleGen** — genesis ghim `0`, tăng ở `validate_burn_batch`, và
+   *      **không nhánh nào đưa về 0** ⟹ ở đó nó là bộ đếm luỹ kế, và hiện **không ai đọc**
+   *      (chú thích ngay tại cổng genesis của `ScheduleGen/onchain/validators/vault.ak`
+   *      nói thẳng: *"accumulated by BurnBatch though unread today"*).
+   *
+   *  Hàm này đọc trường THÔ và **không phân biệt hai loại vault** — câu trả lời API vì thế
+   *  chưa có trường nào nói cho bên gọi biết nó đang cầm nghĩa nào. Đó là nợ đã khai, không
+   *  phải thiếu sót chưa biết; đề nghị thêm `vault_kind` đã gửi bên tiêu thụ.
+   */
   consumedCreditNanogic: bigint;
   lampBalanceOildrop: bigint;
   lampLockedOildrop: bigint;

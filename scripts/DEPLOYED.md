@@ -727,13 +727,30 @@ CARP policy id  : 4967df00c7e038fc7ce2abdc1e6d4c946342ffa905e059ab861dffc2
 CARP asset name : 30cb6a6b6a1c9746bf9eb081d914d96ede4c4c13e661404678a933a6
 ```
 
+> ⚠ **ĐỜI NÀY CÓ HẠN — hai hash dưới đây được biết trước là sẽ mồ côi.** Bên phát hành CARP đã
+> rút lại lời mời ghim cặp trên: `DevStatus.md` ▸ Nợ #71 (d) 🔴 ghi rằng mặt-script `anchor` của
+> engine đang đổi (`3672c05a…` → `90bb276e…`) ⟹ **policy id đổi cho MỌI instance**, kể cả
+> instance không đổi tham số, vì byte-code đổi chứ không riêng tham số. Đời CARP đổi ⟹ apply-param
+> #1/#2 đổi ⟹ script hash đổi ⟹ **địa chỉ đổi**, và toàn bộ những gì đỗ ở hai địa chỉ dưới đây
+> nằm lại ở đời cũ.
+>
+> Nợ #71 (d) dặn *"KHÔNG chạy bước biên dịch-để-deploy cho tới khi có thư kế tiếp"*. Genesis
+> 2026-09-20 **đã chạy bất kể dặn đó** — chủ dự án quyết, và cái giá là một lượt deploy lại khi
+> đời CARP đứng yên. Ghi ra đây để hai sổ thôi nói ngược nhau: mục này **không** bác Nợ #71 (d),
+> nó khai rằng đã đi ngược nó một lần có chủ ý.
+>
+> Việc phải làm khi có thư kế tiếp của bên phát hành: deploy lại cả cụm (mục 4 của **CÒN THIẾU**).
+> Đừng vá bằng cách sửa giá trị trong sổ — sửa sổ không dời được UTxO.
+
 | thứ | giá trị |
 |---|---|
 | `paid_fund` hash | `cca47a2882f2f173507b39fa047961dd1ff0cd2b65ab3fa2e82e68ab` |
 | `paid_fund` addr | `addr_test1wrx2g73gste0zu6s0vul5prev8w3luxd9dj6k0azaqhx32crxzvxj` |
+| `paid_fund` NFT unit | `cca47a2882f2f173507b39fa047961dd1ff0cd2b65ab3fa2e82e68ab` + `b8738fb3c49e0ab0909275167b99ccd35676a9198c273ad2559aa4928bdcbd48` |
 | (A) quỹ Paid genesis | tx `102ac34bde244a8a8fbb72db535a29dc501fdd2419bcc21283c0195d4f3df220` |
 | `prepaid_vault` hash | `9dbb9a8d38545bf99ef3796cfb81d6cbd8de1bd16b5526895cf0efbd` |
 | vault addr | `addr_test1wzwmhx5d8p29h7v77duke7up6m9a3hsm69442f5ftncwl0g83a9kr` |
+| vault NFT unit | `9dbb9a8d38545bf99ef3796cfb81d6cbd8de1bd16b5526895cf0efbd` + `f57ca60c4b0118791ad037af2513de3d129401e30c000fc8ebf4f1dff85de526` |
 | (B) vault trả trước genesis | tx `b516816554c0b54db43604b939df20a047ef9d6540b836d64dca5b8ee5aee82c` |
 | tách 5 UTxO thuần ADA (bước dọn ví) | tx `b4888ee891c6d1f57dc71a1f1c269900e8c38e8203ca6b5b463cb90c4797b80b` |
 
@@ -745,14 +762,22 @@ xem `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`) · `platform pkh
 `prepaid_vault(carp…, paid_fund_hash, …)`. Chiều ngược — quỹ ghim được vault thật — đi qua DỮ
 LIỆU (`PaidFundDatum.vault_hash` ghim tại genesis), không qua tham số biên dịch.
 
-**CÒN THIẾU để PrepaidGen tiêu được MAGIC** (cả ba đều chưa chạy, đừng đọc mục này thành "xong"):
+Hai dòng **NFT unit** ở bảng trên không phải phần thừa: `INV-VAULT-IDENTITY` (`BOUNDARIES.md` §2)
+lấy NFT one-shot làm thứ định danh một vault, **không lấy địa chỉ** — địa chỉ là script hash nên
+mọi vault cùng loại dùng chung nó. Trước đây hai giá trị này chỉ sống ở một tệp trên đĩa đã
+gitignore, tức bản duy nhất, tức mất máy là mất.
+
+**CÒN THIẾU để PrepaidGen tiêu được MAGIC** (cả bốn đều chưa chạy, đừng đọc mục này thành "xong"):
 
 1. một bản `consume` apply-param bằng `vault_script_hash = 9dbb9a8d…` — `consume` ghim vault theo
    LOẠI (`BOUNDARIES.md` §2), nên mỗi cửa gen cần một bản riêng;
 2. một beacon giá còn tươi (`PostPrice`) — `max_price_stale = 1` epoch;
 3. một thread Engage, và nó **không dùng chung được**: `ConsumeMAGIC/onchain/validators/consume.ak`
    ▸ `all_vault_owners_are` ép chủ Engage trùng chủ vault.
+4. **deploy lại cả cụm khi đời CARP đứng yên** — xem khối ⚠ ở đầu mục. Ba việc trên làm trước
+   cũng được, nhưng chúng ghim vào hai hash của đời CARP hiện tại, nên chúng sẽ phải làm lại
+   cùng lượt deploy đó. Ai định bỏ công vào mục 1 thì cân nhắc thứ tự trước.
 
 **Trạng thái bốn thuật toán trên Preprod, 2026-09-20:** ScheduleGen ✅ commit·fire·consume ·
 InstantGen ✅ cấp·consume · ConsumeMAGIC ✅ hai đời vault · PrepaidGen ✅ genesis (quỹ + vault),
-⏸ chưa tiêu được — thiếu đúng ba thứ kể trên.
+⏸ chưa tiêu được — thiếu đúng bốn thứ kể trên.

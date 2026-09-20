@@ -707,3 +707,52 @@ InstantGen ✅ cấp·consume · ConsumeMAGIC ✅ cả hai đời vault · Prepa
 > Bản trước của dòng này viết PrepaidGen *"❌ chưa có đường deploy"*. Sai, và sai theo kiểu
 > đắt: *"chưa có"* bảo người đọc đi VIẾT một thứ đã tồn tại, còn *"có nhưng chưa chạy"* bảo họ
 > đi chạy nó. Hai câu dẫn tới hai việc khác nhau, và chỉ một trong hai là việc cần làm.
+>
+> Dòng `PrepaidGen ⏸ … CHƯA chạy genesis` ở trên **hết đúng ngày 2026-09-20** — mục ngay dưới.
+> Giữ nguyên văn vì nó tả đúng trạng thái SAU lượt 19/09, và vì câu đính chính bên trên nó vẫn
+> còn hiệu lực.
+
+---
+
+## Preprod — 2026-09-20 · PrepaidGen genesis
+
+Chủ dự án chạy tay `bash run_prepaid_e2e.sh Preprod --deploy` (quyết định 2026-09-20: deploy
+Preprod là bất khả hồi nên mỗi lượt đi qua tay người, không nới quyền cho agent).
+
+**Cặp định danh CARP mà hai hash dưới đây GHIM** — chép ngay cạnh chúng, đúng cảnh báo mà chính
+bước deploy in ra, vì một dòng sổ không mang định danh thì lần sau không ai phân biệt nổi hai đời:
+
+```
+CARP policy id  : 4967df00c7e038fc7ce2abdc1e6d4c946342ffa905e059ab861dffc2
+CARP asset name : 30cb6a6b6a1c9746bf9eb081d914d96ede4c4c13e661404678a933a6
+```
+
+| thứ | giá trị |
+|---|---|
+| `paid_fund` hash | `cca47a2882f2f173507b39fa047961dd1ff0cd2b65ab3fa2e82e68ab` |
+| `paid_fund` addr | `addr_test1wrx2g73gste0zu6s0vul5prev8w3luxd9dj6k0azaqhx32crxzvxj` |
+| (A) quỹ Paid genesis | tx `102ac34bde244a8a8fbb72db535a29dc501fdd2419bcc21283c0195d4f3df220` |
+| `prepaid_vault` hash | `9dbb9a8d38545bf99ef3796cfb81d6cbd8de1bd16b5526895cf0efbd` |
+| vault addr | `addr_test1wzwmhx5d8p29h7v77duke7up6m9a3hsm69442f5ftncwl0g83a9kr` |
+| (B) vault trả trước genesis | tx `b516816554c0b54db43604b939df20a047ef9d6540b836d64dca5b8ee5aee82c` |
+| tách 5 UTxO thuần ADA (bước dọn ví) | tx `b4888ee891c6d1f57dc71a1f1c269900e8c38e8203ca6b5b463cb90c4797b80b` |
+
+Tham số lúc biên dịch: `ms_per_epoch = 86 400 000` (1 ngày — **khác** nhịp mạng Preprod 5 ngày,
+xem `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`) · `platform pkh 2e5e1418…` ·
+`buffer_bps = 1500`. Ví trả phí là ví triển khai testnet dùng chung Preview+Preprod.
+
+**Thứ tự không đảo được**, và nó đã chạy đúng chiều: `paid_fund(carp…)` → `paid_fund_hash` →
+`prepaid_vault(carp…, paid_fund_hash, …)`. Chiều ngược — quỹ ghim được vault thật — đi qua DỮ
+LIỆU (`PaidFundDatum.vault_hash` ghim tại genesis), không qua tham số biên dịch.
+
+**CÒN THIẾU để PrepaidGen tiêu được MAGIC** (cả ba đều chưa chạy, đừng đọc mục này thành "xong"):
+
+1. một bản `consume` apply-param bằng `vault_script_hash = 9dbb9a8d…` — `consume` ghim vault theo
+   LOẠI (`BOUNDARIES.md` §2), nên mỗi cửa gen cần một bản riêng;
+2. một beacon giá còn tươi (`PostPrice`) — `max_price_stale = 1` epoch;
+3. một thread Engage, và nó **không dùng chung được**: `ConsumeMAGIC/onchain/validators/consume.ak`
+   ▸ `all_vault_owners_are` ép chủ Engage trùng chủ vault.
+
+**Trạng thái bốn thuật toán trên Preprod, 2026-09-20:** ScheduleGen ✅ commit·fire·consume ·
+InstantGen ✅ cấp·consume · ConsumeMAGIC ✅ hai đời vault · PrepaidGen ✅ genesis (quỹ + vault),
+⏸ chưa tiêu được — thiếu đúng ba thứ kể trên.

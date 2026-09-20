@@ -1,8 +1,10 @@
 // scripts/deploy/04_deploy_backing_fixture.ts — BackingBeacon DỰNG-TẠM cho testnet.
 // Run: npx tsx deploy/04_deploy_backing_fixture.ts
 //
-// ⚠️ ĐÂY KHÔNG PHẢI BEACON THẬT. Beacon thật (§6.3) do phía CARP/CarpetMint phát
-// và cập nhật br = B/S theo dự trữ có thật. Cái này chỉ dựng một UTxO ĐÚNG HÌNH
+// ⚠️ ĐÂY KHÔNG PHẢI BEACON THẬT. Beacon thật (§6.3) do KEEPER TẦNG GREENBACK CỦA
+// CHÍNH KHO NÀY ghi và cập nhật br = B/S theo dự trữ có thật — không phải thứ chờ
+// nhà CARP giao (BOUNDARIES.md ▸ "`B` là một DANH MỤC token"; khoá ký là
+// `greenback_beacon_writer`, SPEC v2.0 §6.3). Cái này chỉ dựng một UTxO ĐÚNG HÌNH
 // DẠNG để cổng fail-closed của InstantGen mở được trên testnet, nhằm tách bạch
 // "gen hỏng vì thiếu beacon" khỏi "gen hỏng vì lý do khác". Con số br_q ở đây là
 // bịa, không phản ánh dự trữ nào.
@@ -52,7 +54,7 @@ async function main() {
   if (NETWORK === "Mainnet") {
     throw new Error(
       "Từ chối: beacon dựng-tạm KHÔNG được lên Mainnet. Cổng thặng dư §6.3 phải " +
-      "đọc beacon thật của phía CARP.",
+      "đọc beacon THẬT do keeper tầng GreenBack của kho này ghi.",
     );
   }
 

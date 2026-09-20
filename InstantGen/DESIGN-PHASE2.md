@@ -117,7 +117,9 @@ cấp thực = min( reward(consumed), cap_surplus(br), 0.5 × pp_schedule )
 ```
 
 Hai tầng tách bạch: tầng **dữ liệu nội bộ vault** (đã đủ, chạy được ngay) và
-tầng **beacon ngoài** (chờ CARP).
+tầng **beacon** — do keeper tầng GreenBack của CHÍNH kho này ghi (`BOUNDARIES.md` ▸
+*"`B` là một DANH MỤC token"*; khoá ký `greenback_beacon_writer`, SPEC v2.0 §6.3),
+không phải một thứ chờ nhà CARP giao.
 
 ### 4.1 `consumed` lấy từ đâu
 
@@ -204,7 +206,7 @@ cap_pp      = ⌊ pp_schedule / 2 ⌋
 > Đây là **quyết định kiến trúc**, không tự quyết. Trạng thái hiện tại (đóng) là
 > hướng an toàn đúng với "đỏ thì khoá Gen".
 
-### 4.4 `cap_surplus(br)` — cần beacon CARP
+### 4.4 `cap_surplus(br)` — cần beacon GreenBack của kho này
 
 ```
 xanh (br >  br_safe = 1.5):  cap = f · S · (br − br_safe) / br_safe   (f = 0.10)
@@ -219,9 +221,13 @@ s2 = ⌊ s1 × (br − safe)  / Q ⌋      -- f·S·(br − br_safe)
 s3 = ⌊ s2 × Q / br_safe_q ⌋         -- ÷ br_safe
 ```
 
-`br = B/S` là thông tin **phía CARP**, vault MAGIC không tự suy ra được.
+`br = B/S` là thông tin **ngoài vault** — validator không tự suy ra được, nên nó phải
+tới qua reference input. Người tính và ghi nó là **keeper tầng GreenBack của chính kho
+này** (`BOUNDARIES.md` ▸ *"`B` là một DANH MỤC token"*; khoá ký `greenback_beacon_writer`,
+SPEC v2.0 §6.3). `B` là một DANH MỤC (ADA, NIGHT, CHECK, WORK…), nên keeper cần **một
+nguồn giá mỗi tài sản** — xem SPEC §6.3.
 
-#### Schema beacon do MAGIC đề xuất — [CẦN XÁC NHẬN, gửi CARP đối chiếu]
+#### Lược đồ beacon do module này đề xuất
 
 ```aiken
 pub type BackingBeaconDatum {
@@ -346,8 +352,9 @@ Biến môi trường mới: `BACKING_NFT_POLICY_ID`, `BACKING_SCRIPT_HASH` (m�
 
 ## 7. Danh sách [CẦN XÁC NHẬN]
 
-1. **Schema `BackingBeaconDatum`** (mục 4.4) — chờ CARP đối chiếu và cấp beacon.
-   Trước khi có: InstantGen đóng.
+1. **Lược đồ `BackingBeaconDatum`** (mục 4.4) — người ghi beacon là keeper tầng
+   GreenBack của chính kho này, không phải nhà CARP. Ràng buộc TẠM đang có hiệu lực,
+   fail-closed: all-zero ⟹ InstantGen ĐÓNG. Khai ở `DevStatus.md` Nợ #2.
 2. **`instant_reward_rate_q = 0.20`** — spec §6.3 không cho dạng hàm
    `reward(consumed)`; 0.20 là đề xuất. Ràng buộc cứng duy nhất từ spec là
    `INV-CASHBACK-BOUND` (reward ≤ consumed), thoả với biên rộng (0.46 ở trường

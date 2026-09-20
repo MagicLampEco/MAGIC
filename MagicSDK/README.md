@@ -202,15 +202,17 @@ import theo đường dẫn repo (`InstantGen/offchain/src/instant.js`…) — �
 
 > ⚠ **InstantGen hôm nay ĐANG ĐÓNG, và có HAI chốt chặn ĐỘC LẬP — không phải một.**
 >
-> 1. **`backingBeaconUtxo` chưa tồn tại.** Nó là bắt buộc; chừng nào CARP chưa ship
->    BackingBeacon thì không reference input nào thoả, `cap_surplus` không tính được, tx bị
->    từ chối. ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #2)
+> 1. **`backingBeaconUtxo` chưa tồn tại.** Nó là bắt buộc; chừng nào chưa có BackingBeacon
+>    thì không reference input nào thoả, `cap_surplus` không tính được, tx bị từ chối.
+>    Người GHI beacon là **keeper tầng GreenBack của chính kho MAGIC** (khoá
+>    `greenback_beacon_writer`, SPEC v2.0 §6.3), **không** phải nhà CARP — nên đây không
+>    phải một việc bị chặn bởi bên ngoài. ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #2)
 > 2. **Trần thứ ba luôn bằng 0.** `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`, mà
 >    vault Instant luôn có `gen_schedules = []` ⇒ trần 0 ⇒ `min3(...) = 0` ⇒
 >    `expect grant > 0` fail. ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #6, "Chờ chủ nhân
 >    chốt" D1 — phải vá cùng lúc với `INV-INSTANT-LOCK`)
 >
-> Cả hai đều fail-closed theo thiết kế, không phải lỗi để đi vòng. **Ngày CARP giao beacon,
+> Cả hai đều fail-closed theo thiết kế, không phải lỗi để đi vòng. **Ngày beacon được ghi,
 > InstantGen VẪN cấp 0 nanogic** cho tới khi #2 được chốt và vá. Đừng hiện nút Instant dựa
 > trên mỗi tin "beacon đã có". Dùng `diagnoseCeilings()` để biết trần nào đang chặn.
 

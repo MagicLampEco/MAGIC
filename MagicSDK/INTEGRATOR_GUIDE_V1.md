@@ -66,7 +66,7 @@ Mỗi loại một validator riêng ⇒ một địa chỉ Cardano riêng:
 
 | `vaultType` | Khi nào dùng | LAMP có rời vault? | Phụ thuộc UM | Ghi chú |
 |---|---|---|---|---|
-| `Instant` | cấp theo lượng MAGIC **đã tiêu** (`consumed_credit`) | **Không** (`I-ACT-7`) | Có (fallback 0.5× khi UM cũ — C-UM-6) | đang fail-closed vì **HAI** chốt: (a) chờ BackingBeacon của CARP, (b) trần theo lịch luôn = 0 — xem §6.2 |
+| `Instant` | cấp theo lượng MAGIC **đã tiêu** (`consumed_credit`) | **Không** (`I-ACT-7`) | Có (fallback 0.5× khi UM cũ — C-UM-6) | đang fail-closed vì **HAI** chốt: (a) BackingBeacon chưa được ghi — người ghi là keeper tầng GreenBack của kho MAGIC, không phải nhà CARP, (b) trần theo lịch luôn = 0 — xem §6.2 |
 | `Schedule` | hợp đồng kỳ hạn, khoá suất lúc commit | **Không** — fire chỉ mở khoá | Không (suất đã khoá) | cửa dùng được hôm nay |
 
 `SnapshotGen` và `VacuumGen` đã dời sang `Legacy/` — validator của chúng không
@@ -391,8 +391,10 @@ dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trốn
 > (§6, phần ScheduleGen) — đó là đường app nên tích hợp.
 >
 > 1. **`backingBeaconUtxo` chưa tồn tại** (trần thặng dư backing). Nó là bắt buộc; chừng nào
->    CARP chưa ship beacon thì không reference input nào thoả, `cap_surplus` không tính được,
->    tx bị từ chối. Không có `br` mặc định nào được bịa ra để đi tiếp.
+>    beacon chưa được ghi thì không reference input nào thoả, `cap_surplus` không tính được,
+>    tx bị từ chối. Không có `br` mặc định nào được bịa ra để đi tiếp. Người GHI beacon là
+>    **keeper tầng GreenBack của chính kho MAGIC** (khoá `greenback_beacon_writer`,
+>    SPEC v2.0 §6.3), **không** phải nhà CARP.
 >    ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #2)
 > 2. **Trần theo lịch đã cam kết luôn bằng 0.** `computeCapPp` /
 >    `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`, mà vault Instant luôn có
@@ -409,7 +411,7 @@ dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trốn
 >    (`vault.ak:429-442`). Genesis ghim cả hai về 0 (`vault.ak:274-277`), và module **không có
 >    handler nạp MAGIC từ ngoài** — `VaultRedeemer` đúng 6 biến thể. Vòng kín.
 >
-> **Ngày CARP giao beacon, InstantGen VẪN cấp 0 nanogic. Vá trần ở #2 xong thì VẪN 0.** Chốt #3
+> **Ngày beacon được ghi, InstantGen VẪN cấp 0 nanogic. Vá trần ở #2 xong thì VẪN 0.** Chốt #3
 > không mở được bằng một bản vá công thức; nó chờ quyết định kiến trúc D1 (InstantGen ở lại làm
 > script riêng, hay hợp nhất vào vault ScheduleGen để `ScheduleFire` nuôi `consumed_credit`).
 > Xem [`DevStatus.md`](../DevStatus.md) "Chờ chủ nhân chốt" D1.
@@ -893,7 +895,7 @@ phải cửa thứ tư — chúng là mô hình cũ đã bỏ, chỉ còn bia m�
 | Cơ chế | Qua `@magiclamp/sdk`? | LAMP có rời vault? | Trạng thái |
 |---|---|---|---|
 | **Schedule** (hợp đồng kỳ hạn) | ✅ | **Không** — fire chỉ mở khoá | dùng được |
-| **Instant** (theo lượng đã tiêu) | ✅ | **Không** | fail-closed vì **HAI** chốt độc lập: chờ BackingBeacon của CARP **và** trần theo lịch luôn = 0 (`gen_schedules = []`) — xem §6.2 |
+| **Instant** (theo lượng đã tiêu) | ✅ | **Không** | fail-closed vì **HAI** chốt độc lập: BackingBeacon chưa được ghi (người ghi là keeper tầng GreenBack của kho MAGIC, không phải nhà CARP) **và** trần theo lịch luôn = 0 (`gen_schedules = []`) — xem §6.2 |
 | **Prepaid** (trả bằng CARP) | ❌ | — | mã CÒN (24 tệp, tag `preserve/prepaidgen-stash-2026-07-30`) nhưng chưa vào cây làm việc ⇒ chưa có đường gọi SDK |
 | **Snapshot / Vacuum** | ❌ | — | ở `Legacy/` |
 

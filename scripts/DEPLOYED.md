@@ -18,7 +18,10 @@ Chạy lại: `bash scripts/run_wakeme_e2e.sh Preview` · `bash scripts/run_wake
 
 > **Beacon `backing` là DỰNG-TẠM.** Nó không phản ánh dự trữ nào. `br_q = 2.0` là con số
 > bịa để mở cổng fail-closed §6.3 trên testnet, và `deploy/04_deploy_backing_fixture.ts`
-> từ chối chạy khi `NETWORK=Mainnet`. Beacon thật do phía CARP/CarpetMint phát.
+> từ chối chạy khi `NETWORK=Mainnet`. Beacon THẬT do **keeper tầng GreenBack của chính kho
+> này** ghi (`BOUNDARIES.md` ▸ *"`B` là một DANH MỤC token"*, chủ dự án chốt 2026-09-18;
+> khoá ký là `greenback_beacon_writer`, SPEC v2.0 §6.3) — **không** phải thứ chờ nhà CARP
+> giao. Còn nợ là một lượt ghi THẬT trên mainnet, và nó nằm trong tầm tay kho này.
 
 ---
 

@@ -14,6 +14,7 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatum } from "../../ScheduleGen/offchain/src/types.js";
+import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 
 async function fetchTip() {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -186,7 +187,17 @@ async function main() {
     //  (đo được trễ vài phút — xem `scripts/deploy/01b_restore_lamp_cap.ts:131-137`).
     //  Nên: thử lại có chờ, và hết lượt mà chưa thấy thì nói đúng là CHƯA ĐO ĐƯỢC,
     //  KHÔNG nói "hỏng" và cũng KHÔNG nói "xong".
-    await lucid.awaitTx(txHash);
+    //
+    //  🔴 Và phép chờ phải CÓ TRẦN. `lucid.awaitTx` trên nền Blockfrost không có hạn
+    //  giờ (`scripts/awaitTx.ts` nêu chỗ đo), nên một lượt chờ trần trụi đổi một lần
+    //  hỏng ỒN ÀO lấy một lần treo IM LẶNG — tệ hơn đúng ở chỗ nó không tự khai. Bốn
+    //  runner cùng thư mục đã theo khuôn này; tệp này là tệp cuối còn sót.
+    if (!(await awaitTxBounded(lucid, txHash))) {
+      console.error(`\n${chuaDoDuocMessage(txHash)}`);
+      console.error("ĐỪNG chạy lại fire trước khi biết lượt này vào hay không — mỗi lượt");
+      console.error("tiêu một ô `fired_count` của lịch, và ô đó không lấy lại được.");
+      process.exit(2);
+    }
 
     // 🔴 ĐO BẰNG BATCH MỚI, KHÔNG BẰNG TỔNG.
     //

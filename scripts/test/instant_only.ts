@@ -11,6 +11,11 @@
 //   (LAMP_PAID removed — PHA 2 pays no LAMP; the grant is keyed to consumed MAGIC)
 //   TAMPER=<mode>                — tamper mode for negative tests
 //   SKIP_OWNER_SIG=1             — negative test for owner sig
+//
+// ## Mã thoát — bảng CHUNG của thư mục này, nguồn ở `scripts/awaitTx.ts` ▸ `## Mã thoát`
+//   0 xong (tx ĐÃ vào khối) · 1 hỏng thật · 2 CHƯA ĐO ĐƯỢC · 3 lượt phá LỌT qua.
+//   🔴 `3` ở đây TRƯỚC 2026-09-21 là `2`. Đổi để một con số mang một nghĩa trong cả
+//   thư mục; xem lý do và phép kiểm an toàn ở nguồn.
 
 import {
   Lucid, Blockfrost, Data, Constr, toUnit,
@@ -23,6 +28,7 @@ import {
   lampToOildrop,
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { instantVaultParams, umDatumParams } from "../deployParams.js";
 import { buildInstantGenTx } from "../../InstantGen/offchain/src/instant.js";
 import { VaultDatumSchema, UMDatumSchema } from "../../InstantGen/offchain/src/types.js";
@@ -184,11 +190,7 @@ async function main() {
 
     const signed = await result.tx.sign.withWallet().complete();
     const txHash = await signed.submit();
-
-    console.log("\n╔════════════════════════════════════════════╗");
-    console.log("║              ✅ SUCCESS                    ║");
-    console.log("╚════════════════════════════════════════════╝");
-    console.log(`TX hash:   ${txHash}`);
+    console.log(`\nTX hash:   ${txHash}`);
     console.log(`Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
 
     // Cổng KIỂM CỰC — khuôn lấy từ bản NGHIÊM cùng thư mục (`withdraw_only.ts`).
@@ -199,8 +201,20 @@ async function main() {
     // §Cổng gác gọi là trạng thái mù, và nó mù đúng ở phía không ai đi kiểm.
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
       console.error("\n⚠  UNEXPECTED: tamper tx SUBMITTED — validator did not reject. Investigate.");
+      process.exit(3);
+    }
+
+    // `submit()` mới nói node NHẬN vào mempool. Bản trước in ✅ SUCCESS ngay tại đây, tức
+    // khai "xong" cho một việc chưa đo. Chuỗi [2]→[3]→[4] của `run_consume_e2e.sh` giả
+    // định bước này để lại MAGIC mới trong vault; tx rớt thì bước [4] hỏng và câu lỗi trỏ
+    // vào [4]. Lý do đầy đủ: `scripts/awaitTx.ts`.
+    if (!(await awaitTxBounded(lucid, txHash))) {
+      console.error(`\n${chuaDoDuocMessage(txHash)}`);
       process.exit(2);
     }
+    console.log("\n╔════════════════════════════════════════════╗");
+    console.log("║       ✅ SUCCESS — tx ĐÃ vào khối          ║");
+    console.log("╚════════════════════════════════════════════╝");
   } catch (err: any) {
     const msg = String(err?.message ?? err);
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {

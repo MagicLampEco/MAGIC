@@ -146,7 +146,30 @@ npx tsx test/instant_only.ts | tee /dev/tty
 #    (Hai UTxO beacon/engage KHÔNG cache được — chúng bị tiêu và tạo lại mỗi tx.)
 if [ -n "${CONSUME_SCRIPT_HASH:-}" ] && [ -n "${REF_CONSUME_UTXO:-}" ]; then
   echo; echo "▶ [3/4] Dùng lại hạ tầng consume $CONSUME_SCRIPT_HASH — dò UTxO sống…"
-  eval "$(npx tsx resolve_consume_state.ts)"
+  # 🔴 Bản trước ở đây là MỘT dòng `eval "$(npx tsx resolve_consume_state.ts)"`, không cổng
+  #   nào. Hai chỗ hỏng, cả hai im:
+  #
+  #   (a) `eval "$(cmd)"` vứt mã thoát của `cmd`. Mã thoát của cả câu là mã thoát của
+  #       `eval`, và `eval` trên một chuỗi RỖNG trả 0 — nên `set -e` không bắt. Resolver
+  #       `process.exit(1)` bốn chỗ (dòng 41 · 54 · 121 · 127) và không chỗ nào tới được
+  #       kịch bản này.
+  #   (b) Không biến nào được kiểm sau đó. Nhánh DEPLOY ngay dưới, cách 6 dòng, kiểm hai
+  #       biến rồi mới đi tiếp. Hai nhánh cùng dẫn tới đúng một bước [4], một nhánh nghiêm
+  #       một nhánh lỏng, không dòng nào giải thích vì sao khác.
+  #
+  #   Hệ quả: bước [4] chạy với `PRICE_BEACON_UTXO`/`ENGAGE_UTXO` rỗng hoặc CŨ (còn sót
+  #   trong môi trường từ sổ trạng thái), dựng tx trên một UTxO đã bị tiêu, và lỗi hiện ra
+  #   là một câu của Lucid về UTxO không tồn tại — trỏ vào bước [4], trong khi hỏng ở [3].
+  RESOLVED="$(npx tsx resolve_consume_state.ts)" || {
+    echo "✗ [3/4] resolve_consume_state.ts thoát khác 0 — KHÔNG dò được UTxO sống."
+    echo "     Đừng chạy tiếp bước [4]: nó sẽ dùng giá trị cũ còn sót trong môi trường."
+    exit 1
+  }
+  eval "$RESOLVED"
+  # Cùng hai cổng mà nhánh deploy dùng, cộng `ENGAGE_UTXO` — bước [4] co-spend nó.
+  [ -n "${PRICE_BEACON_UTXO:-}" ] || { echo "✗ [3/4] resolver không in PRICE_BEACON_UTXO"; exit 1; }
+  [ -n "${ENGAGE_UTXO:-}" ]       || { echo "✗ [3/4] resolver không in ENGAGE_UTXO"; exit 1; }
+  [ -n "${REF_CONSUME_UTXO:-}" ]  || { echo "✗ [3/4] REF_CONSUME_UTXO rỗng — bước [4] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
 else
   echo; echo "▶ [3/4] Deploy consume infra (price/engage NFT + beacon + Engage)…"
   OUT09="$(npx tsx deploy/09_deploy_consume.ts | tee /dev/tty)"

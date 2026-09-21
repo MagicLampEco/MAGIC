@@ -12,6 +12,11 @@
 //                 tamper_holdings | tamper_batches | tamper_value  (negative cases)
 //   SKIP_OWNER_SIG=1   omit signer (W-2 negative)
 //   VAULT_TX_HASH      pick specific vault UTxO by tx hash
+//
+// ## Mã thoát — bảng CHUNG của thư mục này, nguồn ở `scripts/awaitTx.ts` ▸ `## Mã thoát`
+//   0 xong (tx ĐÃ vào khối) · 1 hỏng thật · 2 CHƯA ĐO ĐƯỢC · 3 lượt phá LỌT qua.
+//   🔴 `3` ở đây TRƯỚC 2026-09-21 là `2`. Đổi để một con số mang một nghĩa trong cả
+//   thư mục; xem lý do và phép kiểm an toàn ở nguồn.
 //   DEST_ADDR          destination for withdrawn LAMP (default: caller wallet)
 
 import {
@@ -27,6 +32,7 @@ import {
   PROTOCOL, POLICY_IDS, ASSET_NAMES, SCRIPT_HASHES,
 } from "../config.js";
 
+import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
 import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
@@ -171,17 +177,24 @@ async function main() {
 
     const signed = await finalTx.sign.withWallet().complete();
     const txHash = await signed.submit();
-
-    console.log("╔════════════════════════════════════════════╗");
-    console.log("║              ✅ SUCCESS                    ║");
-    console.log("╚════════════════════════════════════════════╝");
-    console.log(`TX hash:   ${txHash}`);
+    console.log(`\nTX hash:   ${txHash}`);
     console.log(`Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
 
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
       console.error("\n⚠  UNEXPECTED: tamper tx SUBMITTED — validator did not reject. Investigate.");
+      process.exit(3);
+    }
+
+    // `submit()` mới nói node NHẬN vào mempool, chưa nói tx vào khối — lý do đầy đủ ở
+    // `scripts/awaitTx.ts`. Tệp này là bản NGHIÊM mà ba runner khác lấy khuôn cổng kiểm
+    // cực, nên nó cũng phải nghiêm ở vế này, không thì cái khuôn dạy thiếu một nửa.
+    if (!(await awaitTxBounded(lucid, txHash))) {
+      console.error(`\n${chuaDoDuocMessage(txHash)}`);
       process.exit(2);
     }
+    console.log("╔════════════════════════════════════════════╗");
+    console.log("║       ✅ SUCCESS — tx ĐÃ vào khối          ║");
+    console.log("╚════════════════════════════════════════════╝");
   } catch (err: any) {
     const msg = String(err?.message ?? err);
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {

@@ -6,6 +6,11 @@
 //   LAMP_PER_EPOCH=<int>    (λ in tLAMP, default 1)
 //   TAMPER=<mode>
 //   SKIP_OWNER_SIG=1
+//
+// ## Mã thoát — bảng CHUNG của thư mục này, nguồn ở `scripts/awaitTx.ts` ▸ `## Mã thoát`
+//   0 xong (tx ĐÃ vào khối) · 1 hỏng thật · 2 CHƯA ĐO ĐƯỢC · 3 lượt phá LỌT qua.
+//   🔴 `3` ở đây TRƯỚC 2026-09-21 là `2`. Đổi để một con số mang một nghĩa trong cả
+//   thư mục; xem lý do và phép kiểm an toàn ở nguồn.
 
 import {
   Lucid, Blockfrost, Data, Constr,
@@ -18,6 +23,7 @@ import {
   lampToOildrop,
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { buildScheduleCommitTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
@@ -211,10 +217,7 @@ async function main() {
     console.log(result.summary);
     const signed = await result.tx.sign.withWallet().complete();
     const txHash = await signed.submit();
-    console.log("\n╔════════════════════════════════════════════╗");
-    console.log("║              ✅ SUCCESS                    ║");
-    console.log("╚════════════════════════════════════════════╝");
-    console.log(`TX hash:    ${txHash}`);
+    console.log(`\nTX hash:    ${txHash}`);
     console.log(`Explorer:   https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
 
     // Cổng KIỂM CỰC — khuôn lấy từ bản NGHIÊM cùng thư mục (`withdraw_only.ts`).
@@ -223,8 +226,20 @@ async function main() {
     // NGƯỢC đúng lúc validator thôi chặn.
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
       console.error("\n⚠  UNEXPECTED: tamper tx SUBMITTED — validator did not reject. Investigate.");
+      process.exit(3);
+    }
+
+    // `submit()` mới nói node NHẬN vào mempool — `scripts/awaitTx.ts` nói vì sao chưa đủ.
+    // Ở nhánh commit thì hệ quả nặng nhất: `ScheduleCommit` khoá `L × λ` LAMP và
+    // C-VAC-12 cấm huỷ giữa chừng. Một lượt in "xong" cho tx rớt làm người chạy tưởng
+    // LAMP đã khoá, trong khi nó vẫn ở ví — rồi lượt sau khoá lần nữa.
+    if (!(await awaitTxBounded(lucid, txHash))) {
+      console.error(`\n${chuaDoDuocMessage(txHash)}`);
       process.exit(2);
     }
+    console.log("\n╔════════════════════════════════════════════╗");
+    console.log("║       ✅ SUCCESS — tx ĐÃ vào khối          ║");
+    console.log("╚════════════════════════════════════════════╝");
   } catch (err: any) {
     const msg = String(err?.message ?? err);
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {

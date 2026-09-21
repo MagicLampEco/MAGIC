@@ -278,7 +278,14 @@ async function main() {
         const es = await lucid.utxosAt(consumeAddr);
         engageUtxo = es.find((u) => u.txHash === txHash && (u.assets[engageNftUnit] ?? 0n) === 1n);
       }
-    } catch { /* index lag — retry */ }
+    } catch (e) {
+      // Nuốt được vì vùng `try` này CHỈ có lệnh gọi mạng — không phép khẳng định nào rơi
+      // vào đây (đối lại `scripts/test/consume_only.ts`, nơi một `catch` cùng chú thích
+      // từng nuốt mất một câu báo sai số). Nhưng vẫn phải IN: một chuỗi lỗi lặp lại là
+      // dấu của khoá sai hoặc sai mạng, và nếu im thì nó đội lốt "chỉ mục chậm" đủ 5 phút
+      // rồi kết bằng câu "UTxO chưa thấy" — đúng nhưng trỏ sai chỗ.
+      process.stdout.write(`   (chỉ mục chưa trả lời: ${String((e as Error)?.message ?? e).slice(0, 160)})\n`);
+    }
     process.stdout.write(`   attempt ${i + 1}: beacon=${!!beaconUtxo} engage=${!!engageUtxo}\n`);
     if (beaconUtxo && engageUtxo) break;
   }

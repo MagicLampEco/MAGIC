@@ -35,6 +35,31 @@ describe("constants — MVP base-price table", () => {
   it("op_type=2 (CID) = 0.001 MAGIC = 1_000_000 nanogic", () => {
     expect(MVP_BASE_PRICE[OP_CID]).toBe(1_000_000n);
   });
+
+  // Bài canh cho ca `ol0920magic-e`: bảng phụ này từng THIẾU mã 3 và 4 trong khi beacon
+  // đang deploy có đủ bốn dòng, và một nhà tiêu thụ đọc bảng thiếu rồi báo một chặn không
+  // có thật. Ca đó không đỏ ở đâu cả, vì thiếu một dòng không làm hỏng dòng nào còn lại.
+  //
+  // Neo vào TẬP KHOÁ, không neo vào từng giá: ca "thiếu một mã" là ca phải bắt, và một
+  // phép kiểm từng-giá-một không bắt được nó — nó chỉ kiểm những mã nó đã biết tên.
+  it("tập op_type khớp sổ CONTRACT.md §A — đúng bốn mã, không thiếu không thừa", () => {
+    const codes = Object.keys(MVP_BASE_PRICE).map(Number).sort((a, b) => a - b);
+    expect(codes).toEqual([1, 2, 3, 4]);
+  });
+
+  it("op_type=3 và 4 = 1 MAGIC MỖI LẦN (không phải mỗi MB)", () => {
+    expect(MVP_BASE_PRICE[3]).toBe(1_000_000_000n);
+    expect(MVP_BASE_PRICE[4]).toBe(1_000_000_000n);
+  });
+
+  // Ràng buộc on-chain `pricing.ak` ▸ base_price × m_min ≥ Q ⟹ base_price ≥ 2.
+  // Một dòng vi phạm nó thì beacon mang dòng ấy bị validator từ chối lúc PostPrice —
+  // tức hỏng lộ ra ở lượt deploy, xa chỗ người gõ con số. Kéo nó về đây.
+  it("mọi base_price thoả base_price × m_min ≥ Q", () => {
+    for (const [code, price] of Object.entries(MVP_BASE_PRICE)) {
+      expect((price * M_MIN_Q) / Q, `op_type ${code}`).toBeGreaterThanOrEqual(1n);
+    }
+  });
   it("bounds are 0.5×Q and 2.0×Q", () => {
     expect(M_MIN_Q).toBe(Q / 2n);
     expect(M_MAX_Q).toBe(2n * Q);

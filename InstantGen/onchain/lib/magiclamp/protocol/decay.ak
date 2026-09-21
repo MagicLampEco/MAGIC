@@ -73,7 +73,14 @@ pub fn live_total(batches: List<MagicBatch>, current_epoch: Int) -> Int {
 // 🔴 Con số này KHÔNG có ô nhớ trong datum, CỐ Ý. Một trường datum là một ô ghi
 // được, và mọi ô ghi được đòi một cổng đông-cứng ở MỌI nhánh — kể cả nhánh không
 // cần chữ ký (`PruneExpired`). Quên một nhánh là một đường giặt khoá mà không bài
-// kiểm nào đỏ. Một đại lượng suy ra thì không có ô, nên không có chỗ nào để quên.
+// kiểm nào đỏ.
+//
+// Nhưng đừng đọc thành *"không có chỗ nào để quên"* — bản trước của dòng này viết
+// thế và nó sai. Phép suy vẫn đọc `magic_batches`, một trường datum ghi được, qua
+// ba trường con (`source`, `created_epoch`, `initial_amount`) CỘNG tư cách thành
+// viên của danh sách. Mức đúng: ô ấy đã có sẵn cổng đông-cứng vì lý do khác (mỗi
+// nhánh so trọn danh sách đầu ra), nên phép suy không thêm nghĩa vụ MỚI. Cái đã
+// bị quên chính là tư cách thành viên — xem điều kiện 2.
 //
 // Bốn điều kiện giữ phép suy này đứng, cả bốn nằm trong chính tệp này hoặc ngay
 // cạnh nó — đổi một trong bốn là làm hỏng phanh, nên chúng được kê ra để lần sau
@@ -81,8 +88,18 @@ pub fn live_total(batches: List<MagicBatch>, current_epoch: Int) -> Int {
 //
 //   1. `is_expired` dùng `decay_window = 1` ⟹ batch sinh trong epoch này không bao
 //      giờ bị dọn TRONG epoch này, nên nó còn đó để đếm.
-//   2. `prune_expired` lọc DUY NHẤT theo `is_expired` ⟹ đốt sạch `current_amount`
-//      không làm batch biến mất; nó ở lại mang nguyên `initial_amount`.
+//   2. KHÔNG nhánh nào xoá một batch CÒN SỐNG khỏi danh sách. Hai đường xoá
+//      duy nhất là `prune_expired` (lọc DUY NHẤT theo `is_expired`) và
+//      `apply_burns` — mà `apply_burns` giữ batch đốt sạch ở lại với
+//      `current_amount: 0`, nên nó còn đó mang nguyên `initial_amount`.
+//
+//      🔴 Điều kiện này từng được viết là *"`prune_expired` lọc duy nhất theo
+//      `is_expired` ⟹ đốt sạch không làm batch biến mất"*. Câu đó đúng VỀ
+//      `prune_expired` và sai VỀ HỆ: `apply_burns` là đường xoá thứ hai, và
+//      bản trước của nó trả `None` khi số dư về 0. Ba nhà soát độc lập cùng
+//      chỉ ra chỗ này; một nhà dựng PoC chạy thật cho thấy 107/107 bài xanh
+//      CÙNG LÚC với một chuỗi lách được cổng. Bài học giữ lại: điều kiện phải
+//      nói về TẬP CÁC ĐƯỜNG XOÁ, không nói về một hàm có tên nghe như thế.
 //   3. `PruneExpired` (nhánh không cần chữ ký) dùng đúng vị từ ấy ⟹ người lạ không
 //      hạ được bộ đếm của nạn nhân.
 //   4. Sang epoch sau batch cũ thành `is_expired` và bị dọn ⟹ bộ đếm tự về 0,

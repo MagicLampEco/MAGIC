@@ -312,6 +312,15 @@ async function main() {
         return false;
       }
     });
+    // Cảnh báo kể cả khi ĐÃ tìm thấy két. Ném chỉ khi không tìm thấy là chưa đủ:
+    // ca "một loại két lệch lược đồ nhưng đúng két đầu tiên khớp" sẽ im hoàn
+    // toàn, và đó đúng là ca mà tín hiệu lệch có giá trị nhất.
+    if (vaultUtxo && khongGiaiMaDuoc.length > 0) {
+      console.warn(
+        `⚠ ${khongGiaiMaDuoc.length}/${vs.length} UTxO ở địa chỉ két KHÔNG giải mã nổi ` +
+        `trường owner (đã tìm được két nên vẫn chạy tiếp):\n  ` + khongGiaiMaDuoc.join("\n  "),
+      );
+    }
     if (!vaultUtxo && khongGiaiMaDuoc.length > 0) {
       throw new Error(
         `Không thấy vault của ${ownerPkh}, và ${khongGiaiMaDuoc.length}/${vs.length} UTxO ở địa chỉ ` +

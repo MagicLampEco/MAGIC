@@ -119,23 +119,52 @@ async function main() {
   const utxos = await lucid.utxosAt(vaultAddr);
   const wantedTx = process.env.VAULT_TX_HASH;
 
+  // 🔴 Lược đồ datum KHÔNG còn giống nhau giữa hai module: két Instant mang 18
+  // trường, két Schedule mang 17. Bản trước của khối này dùng `VaultDatumSchema`
+  // (17 trường) cho CẢ HAI, kèm chú thích khẳng định chúng giống nhau — nên trên
+  // một két Instant thì `Data.from` NÉM, `catch` nuốt lượt ném, và người chạy đọc
+  // được "không tìm thấy két" cho một két đang nằm ngay đó.
+  const { VaultDatumSchema, InstantVaultDatumSchema } =
+    await import("../../MagicSDK/src/schemas.js");
+  const vaultDatumSchema =
+    moduleName === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
+
   let vaultUtxo: UTxO | undefined;
+  const khongGiaiMaDuoc: string[] = [];
   for (const u of utxos) {
     if (!u.datum) continue;
     if (wantedTx && u.txHash !== wantedTx) continue;
-    // Match by owner — VaultDatumSchema lives per module; for simplicity use SDK schema
-    // (identical across modules per types.ak shape).
     try {
-      const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
-      const d = Data.from(u.datum, VaultDatumSchema);
+      const d = Data.from(u.datum, vaultDatumSchema as never) as { owner: string };
       if (d.owner === ownerPkh) {
         vaultUtxo = u;
         break;
       }
-    } catch { /* not a vault datum */ }
+    } catch (e) {
+      khongGiaiMaDuoc.push(
+        `${u.txHash}#${u.outputIndex}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  // Một UTxO không giải mã nổi ở ĐỊA CHỈ KÉT là tín hiệu lược đồ đã trôi, không
+  // phải rác. In nó ra kể cả khi đã tìm được két — nếu chỉ báo lúc không tìm
+  // thấy thì đúng ca "một loại két lệch mà két đầu tiên khớp" sẽ im hoàn toàn.
+  if (khongGiaiMaDuoc.length > 0) {
+    console.warn(
+      `⚠ ${khongGiaiMaDuoc.length} UTxO ở địa chỉ két KHÔNG giải mã được bằng lược đồ ` +
+      `${moduleName === "Instant" ? "InstantVaultDatumSchema (18 trường)" : "VaultDatumSchema (17 trường)"}:\n  ` +
+      khongGiaiMaDuoc.join("\n  "),
+    );
   }
 
   if (!vaultUtxo) {
+    if (khongGiaiMaDuoc.length > 0) {
+      throw new Error(
+        `Không tìm được két của chủ ${ownerPkh}, và ${khongGiaiMaDuoc.length} UTxO ở đó ` +
+        `không giải mã được. Đây là LƯỢC ĐỒ LỆCH, không phải "chưa có két" — xem cảnh báo ở trên.`,
+      );
+    }
     console.error("❌ Vault UTxO not found for owner. Run deploy:instant-vault (hoặc deploy:schedule-vault) first.");
     process.exit(1);
   }
@@ -167,7 +196,7 @@ async function main() {
       finalTx = await rebuildWithTamper(
         lucid, vaultUtxo, result.newVaultDatum, vaultScript, vaultAddr,
         amountOildrop, ownerPkh, tip.posixMs, plutusJson, tamper,
-        process.env.SKIP_OWNER_SIG === "1",
+        process.env.SKIP_OWNER_SIG === "1", vaultDatumSchema,
       );
       console.log(`⚠  TEST MODE: ${tamper || "skipOwnerSig"} — expecting validator REJECT.\n`);
     }
@@ -227,8 +256,11 @@ async function rebuildWithTamper(
   lucid: any, vaultUtxo: UTxO, newVaultDatum: any, vaultScript: any, vaultAddr: string,
   amountOildrop: bigint, ownerPkh: string, tipPosixMs: bigint, plutusJson: any,
   tamper: string, skipOwnerSig: boolean,
+  // Lược đồ phải do người GỌI chọn theo module — hàm này không đoán được nó
+  // đang dựng datum cho két 17 hay 18 trường, và đoán sai thì Lucid ném ở
+  // `Data.to` sau khi mọi thứ khác đã sẵn sàng.
+  vaultDatumSchema: unknown,
 ): Promise<any> {
-  const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
   const { resolveConstrIndex } = await import("../../MagicSDK/src/redeemerIndex.js");
   const { Constr, toUnit } = await import("@lucid-evolution/lucid");
   const lampUnit = toUnit(POLICY_IDS.lamp, ASSET_NAMES.lamp);
@@ -262,7 +294,7 @@ async function rebuildWithTamper(
     .attach.SpendingValidator(vaultScript)
     .pay.ToAddressWithData(
       vaultAddr,
-      { kind: "inline", value: Data.to(mutatedDatum, VaultDatumSchema) },
+      { kind: "inline", value: Data.to(mutatedDatum, vaultDatumSchema as any) },
       vaultOutputAssets,
     )
     .pay.ToAddress(await lucid.wallet().address(), { [lampUnit]: amountOildrop })

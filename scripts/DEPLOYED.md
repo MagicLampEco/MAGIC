@@ -293,6 +293,34 @@ D. UMKeeper/onchain/plutus.json khai v1.1.21+deadbee, máy chạy v1.1.21+42babe
    → "LỆCH BẢN DỰNG … dựng bằng v1.1.21+deadbee · máy đang chạy v1.1.21+42babe5"   exit=1
 ```
 
+### Script hash KHÔNG nói được MẠNG, và cũng không nói được ĐỜI
+
+Ba mục mạng dưới đây mỗi mục có một bảng hash. Đọc chúng theo chiều "hash này thuộc về đâu"
+là đọc ngược: **hash là hàm của apply-param, không phải hàm của mạng.** Hai hệ quả, và cái
+thứ hai mới là cái đã cắn một lần trong chính sổ này.
+
+**(a) Hai mạng trùng tham số thì trùng hash.** `ms_per_epoch` của Preprod đổi thành
+432.000.000 ngày 2026-09-20, bằng Mainnet. Với một validator mà `ms_per_epoch` là apply-param
+DUY NHẤT khác nhau giữa hai mạng, hai mạng sẽ cho đúng một hash.
+
+**(b) Nhưng phần lớn validator ở đây KHÔNG rơi vào (a) — và điều đó không an toàn hơn, chỉ
+khác kiểu.** `UMKeeper/onchain/validators/um_datum.ak` ▸ `um_datum_validator` nhận **ba**
+apply-param, trong đó `um_policy` là policy ONE-SHOT sinh từ một `genesis_ref` chọn lúc deploy
+(`um_nft.ak` ▸ `um_nft`; `scripts/deploy/02_deploy_um.ts` ▸ `umDatumParams`). Một UTxO tiêu
+được đúng một lần ⟹ **mỗi lượt deploy ra một hash khác, kể cả trên CÙNG một mạng với CÙNG
+`ms_per_epoch`.**
+
+Bằng chứng nằm ngay trong sổ này: mục *"Preprod — 2026-08-12 · ĐỜI ĐÃ MỒ CÔI"* và mục
+*"Preprod — đời tLAMP THẬT, 2026-09-16"* cùng mạng, cùng nhịp epoch lúc đó, mà hai hàng
+`UM script hash` khác nhau.
+
+**Cách phân biệt, theo thứ tự tin cậy:** tx-hash trong mục deploy (gắn chặt một lần deploy)
+→ địa chỉ bech32 (`addr_test…` vs `addr…`, phân biệt được mạng) → **script hash là thứ phân
+biệt kém nhất**, đừng dùng nó làm khoá tra.
+
+Ai vá một sự cố "hai mạng trùng hash" mà không đo trước xem validator đó có apply-param
+one-shot nào không thì đang vá một thứ không hỏng, và cái giá là một đợt deploy lại.
+
 ---
 
 ## Preview — 2026-08-12

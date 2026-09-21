@@ -96,7 +96,7 @@ Tham số validator (applied khi deploy) — **4 tham số, đúng thứ tự n�
 1. `lamp_policy_id: PolicyId` — policy ID của LAMP token
 2. `lamp_asset_name: ByteArray` — tham số **theo mạng**: `tLAMP` testnet / `LAMP` mainnet
 3. `shard_policy_id: PolicyId` — policy ID của SHARD NFT
-4. `ms_per_epoch: Int` — 86_400_000 (Preview/Preprod), 432_000_000 (Mainnet)
+4. `ms_per_epoch: Int` — 86_400_000 (Preview), 432_000_000 (Preprod, Mainnet)
 
 `treasury_addr` **không còn tồn tại** (I-ACT-7, xoá ở PHA 2).
 
@@ -265,7 +265,7 @@ VAULT_SCRIPT_HASH=<hash>       # từ aiken build → plutus.json
 SHARD_SCRIPT_HASH=<hash>       # từ aiken build → plutus.json
 SHARD_NFT_POLICY_ID=<hash>     # one-shot minting policy cho SHARD NFTs
 LAMP_ASSET_NAME=tLAMP          # THEO MẠNG: tLAMP testnet / LAMP mainnet — apply-param #2
-MS_PER_EPOCH=86400000          # Preview/Preprod; 432000000 Mainnet
+MS_PER_EPOCH=86400000          # Preview; 432000000 Preprod và Mainnet (đổi 2026-09-20)
 BLOCKFROST_KEY=<key>
 PRIVATE_KEY=<hex>
 ```

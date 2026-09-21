@@ -76,7 +76,8 @@ const rd_burn_batch: Int = 2   // §7.3/§11 — ConsumeMAGIC ghim burn_batch_co
 // ══════════════════════════════════════════════════════════════
 // prepaid_vault
 // ══════════════════════════════════════════════════════════════
-// `ms_per_epoch`: Mainnet 432_000_000 · Preview/Preprod 86_400_000.
+// `ms_per_epoch`: Mainnet 432_000_000 · Preprod 432_000_000 · Preview 86_400_000.
+// (Preprod đổi 86_400_000 → 432_000_000 ngày 2026-09-20 để trùng nhịp mạng thật.)
 //
 // INV-VAULT-IDENTITY (BOUNDARIES.md §2) — vì sao validator này vừa là policy đúc
 // vừa là script tiêu:
@@ -2778,7 +2779,7 @@ test pp_fund_settle_over_issued() fail {
 // get_epoch — SEC-02 (C-PP-11)
 // ══════════════════════════════════════════════════════════════
 
-const ms_ep: Int = 86_400_000   // Preview/Preprod
+const ms_ep: Int = 86_400_000   // Preview (Preprod nay 432_000_000, từ 2026-09-20)
 
 fn tx_range(lo: Int, hi: Int) -> Transaction {
   Transaction { ..placeholder, validity_range: interval.between(lo, hi) }

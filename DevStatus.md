@@ -338,6 +338,17 @@ Lý do từng cái: [`Legacy/README.md`](Legacy/README.md).
 
 ## Còn nợ — biết rõ, chưa làm
 
+**đang chờ review — PR #75 (nhánh `fix/preprod-epoch-5-ngay`) — mở 2026-09-20.** Đưa Preprod
+về nhịp epoch 5 ngày, bằng mainnet. Nó là tiền đề của cả đợt deploy lại Preprod:
+`ms_per_epoch` là apply-param, nên mọi thứ dựng thêm trước khi nhánh này về đều ghim vào một
+script hash sắp chết.
+
+> Dòng này trước đó khai *"đã push chưa PR"* — khuôn bắt buộc cho một nhánh đã lên remote mà
+> chưa vào hàng chờ review, vì nhánh loại đó trông y hệt một nhánh đang chờ và không nằm trong
+> hàng nào để tự kêu. Nhánh đã có PR thì lời khai ấy hết hiệu lực, và nó được **thay**, không
+> được giữ kèm đính chính: hai dòng cùng tả một nhánh thì dòng cũ vẫn ngang quyền trong mắt
+> người quét sau.
+
 | # | Việc | Vì sao chưa |
 |---|---|---|
 | 1 | Chưa deploy mạng nào | cần credential + quyết định của chủ nhân |

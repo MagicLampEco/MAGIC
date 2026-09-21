@@ -111,17 +111,39 @@ async function main() {
   const utxos = await lucid.utxosAt(vaultAddr);
   const wantedTx = process.env.VAULT_TX_HASH;
 
+  // 🔴 `UpdateProfile` là nhánh CHỈ CÓ ở InstantGen (`PLUTUS_PATH` ở trên chỉ
+  // nhận `Instant`), nên két ở đây LUÔN mang 18 trường. Bản trước dùng
+  // `VaultDatumSchema` (17 trường) rồi `catch` nuốt lượt ném ⟹ mọi lượt chạy
+  // báo "không tìm thấy két" cho đúng cái két nó vừa tạo.
+  const { InstantVaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
+
   let vaultUtxo: UTxO | undefined;
+  const khongGiaiMaDuoc: string[] = [];
   for (const u of utxos) {
     if (!u.datum) continue;
     if (wantedTx && u.txHash !== wantedTx) continue;
     try {
-      const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
-      const d = Data.from(u.datum, VaultDatumSchema);
+      const d = Data.from(u.datum, InstantVaultDatumSchema as never) as { owner: string };
       if (d.owner === ownerPkh) { vaultUtxo = u; break; }
-    } catch { /* skip */ }
+    } catch (e) {
+      khongGiaiMaDuoc.push(
+        `${u.txHash}#${u.outputIndex}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+  if (khongGiaiMaDuoc.length > 0) {
+    console.warn(
+      `⚠ ${khongGiaiMaDuoc.length} UTxO ở địa chỉ két KHÔNG giải mã được bằng ` +
+      `InstantVaultDatumSchema (18 trường):\n  ` + khongGiaiMaDuoc.join("\n  "),
+    );
   }
   if (!vaultUtxo) {
+    if (khongGiaiMaDuoc.length > 0) {
+      throw new Error(
+        `Không tìm được két của chủ ${ownerPkh}, và ${khongGiaiMaDuoc.length} UTxO ở đó ` +
+        `không giải mã được. Đây là LƯỢC ĐỒ LỆCH, không phải "chưa có két".`,
+      );
+    }
     console.error("❌ Vault UTxO not found. Run deploy:instant-vault first.");
     process.exit(1);
   }
@@ -196,7 +218,8 @@ async function rebuildWithTamper(
   newProfile: Profile, ownerPkh: string, tipPosixMs: bigint, plutusJson: any,
   tamper: string, skipOwnerSig: boolean,
 ): Promise<any> {
-  const { VaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
+  // UpdateProfile chỉ có ở InstantGen ⟹ 18 trường. Xem chú thích ở vòng tìm két.
+  const { InstantVaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
   const { resolveConstrIndex } = await import("../../MagicSDK/src/redeemerIndex.js");
   const { PROFILE_CONSTR_INDEX } = await import("../../MagicSDK/src/updateProfile.js");
   const { Constr } = await import("@lucid-evolution/lucid");
@@ -246,7 +269,7 @@ async function rebuildWithTamper(
     .attach.SpendingValidator(vaultScript)
     .pay.ToAddressWithData(
       vaultAddr,
-      { kind: "inline", value: Data.to(mutated, VaultDatumSchema) },
+      { kind: "inline", value: Data.to(mutated, InstantVaultDatumSchema as any) },
       vaultUtxo.assets,
     )
     .validFrom(lowerTime)

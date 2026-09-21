@@ -49,6 +49,22 @@ export { VaultIdRedeemerSchema } from "./schemas.js";
 // phá: không cái tên nào đổi nghĩa.
 export type { VaultDatum } from "./schemas.js";
 
+// ── Hình dạng THỨ HAI của datum két ──────────────────────────────────────────
+// `VaultDatumSchema` tả 17 trường (Schedule/Prepaid). `InstantVaultDatumSchema`
+// tả 18 — 17 trường đó cộng `instant_unlock_ms`. Bên tích hợp nào đọc két
+// InstantGen bắt buộc dùng lược đồ 18 trường: lệch số trường thì Lucid NÉM, nên
+// dùng nhầm là một ngoại lệ có tên chứ không phải một trường im lặng biến mất.
+// Chưa biết loại két ⟹ `decodeVaultDatumEitherShape`.
+export {
+  InstantVaultDatumSchema,
+  decodeVaultDatumEitherShape,
+} from "./schemas.js";
+export type {
+  InstantVaultDatum,
+  VaultDatumShapeKind,
+  VaultDatumEitherShape,
+} from "./schemas.js";
+
 export {
   listVaultsForOwner,
   type VaultRecord,

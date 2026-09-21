@@ -35,8 +35,11 @@ import type { Network } from "@magiclamp/protocol-utils";
  *     và không gì báo. Tập đóng biến ca đó thành một lỗi khởi động ồn ào ở ĐÂY, nơi người
  *     vận hành đang đứng, thay vì một con số sai ở màn hình người dùng.
  *
- * Tập này chỉ có hai phần tử vì `readVaultsFromUtxos` giải mã bằng `VaultDatumSchema` —
- * lược đồ của Instant/Schedule. Vault PrepaidGen có lược đồ KHÁC (nó mang `did_commit`),
+ * Tập này chỉ có hai phần tử vì `readVaultsFromUtxos` chỉ giải mã được HAI hình dạng
+ * datum: 18 trường (Instant) và 17 trường (Schedule) — xem `vaultView.ts` chỗ thử cả hai.
+ * (Bản trước của dòng này neo vào `VaultDatumSchema` và gọi nó là "lược đồ của
+ * Instant/Schedule"; từ lúc hai hình dạng tách ra, lược đồ ấy chỉ còn là của Schedule.)
+ * Vault PrepaidGen có lược đồ KHÁC (nó mang `did_commit`),
  * nên nó không đọc được bằng đường này và **không được kê sẵn ở đây**: kê một tên cho thứ
  * dịch vụ chưa đọc được là đặt tên cho một artifact chưa tồn tại.
  */

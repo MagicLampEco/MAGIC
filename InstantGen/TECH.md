@@ -12,8 +12,11 @@
 > báo lỗi — LAMP vào rồi kẹt vĩnh viễn. Danh sách tham số thật đọc ở `parameters[]` trong
 > `onchain/plutus.json`, đối chiếu bằng `cd scripts && npm run check:params`.
 >
-> Còn dùng được: nguyên tắc "thứ tự constructor = hợp đồng nhị phân", bố cục 17 trường
-> `VaultDatum`, và kỷ luật song ánh Aiken ↔ TypeScript (P8).
+> Còn dùng được: nguyên tắc "thứ tự constructor = hợp đồng nhị phân", bố cục **17 trường
+> ĐẦU** của `VaultDatum`, và kỷ luật song ánh Aiken ↔ TypeScript (P8). Từ 2026-09-21
+> `VaultDatum` của InstantGen có **18** trường — 17 trường đó cộng `instant_unlock_ms`
+> ở cuối; ScheduleGen/PrepaidGen vẫn 17. Nguồn duy nhất của bố cục là
+> `InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸ `VaultDatum`, đừng đếm ở đây.
 
 ---
 
@@ -66,7 +69,13 @@ pub type MagicBatch {
 
 TypeScript mirror: `MagicBatchSchema` (`types.ts:31`). Thứ tự field = thứ tự Plutus Data list.
 
-### 1.3 VaultDatum (types.ak:124) — 17 fields
+### 1.3 VaultDatum (`types.ak` ▸ `VaultDatum`) — 18 fields ở InstantGen, 17 ở ScheduleGen
+
+> Danh sách dưới đây là **17 trường đầu**, chung cho mọi loại két. InstantGen có thêm
+> trường thứ 18 `instant_unlock_ms` (`Natural`) ở CUỐI — thêm ở cuối nên chỉ số 0..16
+> không dịch, và bên nào đọc theo VỊ TRÍ (Paymaster đọc trường 15, ConsumeMAGIC đọc
+> trường 0) không phải đụng gì. Nhưng giải mã Plutus Data nghiêm ngặt về SỐ trường ở
+> cả hai chiều, nên một bên đọc TRỌN datum phải chọn đúng hình dạng theo loại két.
 
 Thứ tự field on-chain:
 1. owner (ByteArray)

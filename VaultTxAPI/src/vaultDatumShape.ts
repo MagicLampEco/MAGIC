@@ -21,9 +21,16 @@
 // `VaultDatumSchema` mà không sửa ở đây thì mã vẫn biên dịch. Cái CANH nó là
 // `tests/summary.test.ts` — mẫu ở đó đi qua chính `Data.to(..., VaultDatumSchema)`, nên
 // lược đồ đổi hình là mẫu đổi theo và phép kiểm nói cho biết.
+//
+// ── HAI HÌNH DẠNG, VÀ DỊCH VỤ NÀY KHÔNG BIẾT TRƯỚC LOẠI KÉT ────────────────────
+// Két InstantGen mang 18 trường, ScheduleGen 17 (`MagicSDK/src/schemas.ts` đầu tệp).
+// `VaultTxAPI` phục vụ cả bốn đường `instant_gen · schedule_commit · schedule_fire ·
+// consume`, và `service.ts` ▸ `scopesFor` chấp nhận `vaultType` BỎ TRỐNG — lúc đó nó
+// quét mọi scope và loại két chỉ biết được SAU khi đọc xong datum. Nên chỗ này phải
+// giải mã được cả hai hình dạng, và nó dùng `decodeVaultDatumEitherShape` của SDK
+// (nguồn duy nhất) chứ không tự thử hai lần.
 
-import { Data } from "@lucid-evolution/lucid";
-import { VaultDatumSchema } from "@magiclamp/sdk";
+import { decodeVaultDatumEitherShape, type VaultDatumShapeKind } from "@magiclamp/sdk";
 
 export interface DecodedMagicBatch {
   batch_id: string;
@@ -42,9 +49,22 @@ export interface DecodedVaultDatum {
   gen_schedules: { schedule_id: string }[];
   last_updated_epoch: bigint;
   activity_state: { consumed_credit: bigint };
+  /** Hình dạng datum ĐÃ ĐỌC ĐƯỢC — `"Instant"` (18 trường) hay `"Schedule"` (17).
+   *  Suy từ chính datum, không phải từ tham số của yêu cầu. */
+  vault_datum_kind: VaultDatumShapeKind;
+  /** Trường 17 của két Instant. `null` ở két Schedule, nơi trường KHÔNG TỒN TẠI —
+   *  không đệm `0n`, vì `0n` là giá trị hợp lệ của một két Instant chưa từng sinh. */
+  instant_unlock_ms: bigint | null;
 }
 
-/** Giải mã bằng lược đồ THẬT của SDK. Ném khi không khớp — người gọi chọn mã HTTP. */
+/** Giải mã bằng lược đồ THẬT của SDK, thử cả hai hình dạng. Ném khi không hình dạng
+ *  nào khớp — người gọi chọn mã HTTP. Không có nhánh nào trả `null`. */
 export function decodeVaultDatumOrThrow(hex: string): DecodedVaultDatum {
-  return Data.from(hex, VaultDatumSchema) as unknown as DecodedVaultDatum;
+  const decoded = decodeVaultDatumEitherShape(hex);
+  const datum = decoded.datum as unknown as DecodedVaultDatum;
+  return {
+    ...datum,
+    vault_datum_kind: decoded.kind,
+    instant_unlock_ms: decoded.instantUnlockMs,
+  };
 }

@@ -460,8 +460,15 @@ fn ct_meter_output(m: SponsorMeter, nft_qty: Int, lovelace: Int) -> Output {
 
 /// Vault input @vault script. Datum = full VaultDatum mock (chỉ cần đúng struct để
 /// đọc field 15 = personal_delegate). Build datum tối thiểu khớp 17 fields.
+///
+/// 17 ở đây là CỐ Ý và vẫn đúng sau khi InstantGen lên 18 trường (2026-09-21):
+/// `vault_delegate_is` đọc theo VỊ TRÍ qua `list.at(fields, 15)`, không giải mã trọn
+/// datum, nên nó không quan tâm danh sách dài 17 hay 18. Fixture này vì thế ghim đúng
+/// điều cần ghim — trường 15 nằm ở chỉ số 15 — và sẽ đỏ đúng lúc ai đó CHÈN một trường
+/// vào GIỮA thay vì thêm ở cuối. Đừng "cập nhật" nó thành 18: làm thế là buộc fixture
+/// đi theo một hình dạng mà mã đang đo cố ý không phụ thuộc vào.
 fn ct_vault_datum(delegate: Option<ByteArray>) -> Data {
-  // VaultDatum 17 fields (đọc field index 15 = personal_delegate).
+  // VaultDatum, 17 trường đầu (đọc field index 15 = personal_delegate).
   // Dùng Data thuần: Constr(0, [f0..f16]). Chỉ field 15 quan trọng cho test này.
   let fields: List<Data> =
     [

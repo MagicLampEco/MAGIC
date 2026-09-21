@@ -29,7 +29,9 @@ import {
   resolveRefScript,
   type AcceptInlineScriptCeiling,
 } from "./refScript.js";
-import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
+import {
+  InstantVaultDatumSchema, VaultDatumSchema, decodeVaultDatumEitherShape, type VaultDatum,
+} from "./schemas.js";
 import type { VaultType } from "./types.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
 
@@ -112,7 +114,13 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     throw new Error(`WITHDRAW-001: amountOildrop must be > 0 (got ${amountOildrop})`);
   }
 
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
+  // Két Instant mang 18 trường, két Schedule 17 (`schemas.ts` đầu tệp). Hàm này
+  // phục vụ CẢ HAI — `validate_withdraw_lamp` có ở cả hai validator — nên nó không
+  // được ghim một hình dạng. `datumSchema` giữ đúng hình dạng đã đọc để lượt mã hoá
+  // ở dưới trả về đúng số trường; lệch là validator từ chối sau khi người dùng đã ký.
+  const decoded = decodeVaultDatumEitherShape(vaultUtxo.datum!);
+  const vaultDatum = decoded.datum as VaultDatum;
+  const datumSchema = decoded.kind === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
 
   const lAvail = vaultDatum.lamp_balance - vaultDatum.lamp_locked;
   if (amountOildrop > lAvail) {
@@ -147,6 +155,14 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     // lên current epoch sẽ reset cửa sổ bắt-kịp và làm mất MAGIC đã tích. Rút
     // LAMP là việc trực giao với sinh MAGIC.
     // Everything else unchanged per A02.
+    //
+    // `instant_unlock_ms` (két Instant) đi theo phép trải `...vaultDatum` và ĐỨNG
+    // YÊN — đúng thứ `validate_withdraw_lamp` ép:
+    //   expect output_datum.instant_unlock_ms == input_datum.instant_unlock_ms
+    // Cùng nhánh đó còn ép `get_validity_lower_ms(tx) >= input_datum.instant_unlock_ms`,
+    // tức LAMP đang khoá thì lượt rút bị chuỗi từ chối. Cổng đó KHÔNG được dựng lại ở
+    // đây: SDK không nhìn thấy slot thật mà giao dịch sẽ vào, nên một phép kiểm phía
+    // này sẽ là một câu trả lời khác câu chuỗi trả lời.
   };
 
   // ── Addresses + units ───────────────────────────────────────────
@@ -194,7 +210,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   const tx = await txWithScript
     .pay.ToAddressWithData(
       vaultAddress,
-      { kind: "inline", value: Data.to(newVaultDatum as never, VaultDatumSchema) },
+      { kind: "inline", value: Data.to(newVaultDatum as never, datumSchema) },
       vaultOutputAssets,
     )
     .pay.ToAddress(destination, { [lampUnit]: amountOildrop })

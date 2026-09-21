@@ -7,11 +7,17 @@
 //
 //   Vì sao một tệp phục vụ được cả hai: `consume` KHÔNG giải mã `VaultDatum`. Nó chỉ
 //   đọc trường 0 (`owner`) qua `un_constr_data`
-//   (ConsumeMAGIC/onchain/validators/consume.ak:443-461). Và hai `VaultDatum` trùng
-//   khít — 17 trường, cùng tên, cùng thứ tự — còn `BurnBatch` là constr 2 ở cả hai
-//   (InstantGen/offchain/src/types.ts:184 · ScheduleGen/offchain/src/types.ts:179).
-//   Nên phần dựng tx giống hệt nhau; chỉ khác bộ apply-param dựng lại hash vault.
+//   (ConsumeMAGIC/onchain/validators/consume.ak ▸ khối `un_constr_data`), còn
+//   `BurnBatch` là constr 2 ở CẢ HAI module với cùng hình dạng trong. Nên phần dựng
+//   tx giống nhau; khác ở bộ apply-param dựng lại hash vault, và ở lược đồ datum.
 //   Chép tệp này thành hai bản là tạo ra hai thứ sẽ trôi khỏi nhau trong im lặng.
+//
+//   🔴 HAI `VaultDatum` KHÔNG còn trùng khít (từ 2026-09-21): InstantGen **18**
+//   trường, ScheduleGen **17**. Tệp này vì thế chọn lược đồ theo `VAULT_KIND` —
+//   xem `vaultDatumSchema` trong `main`. Bản trước khai "trùng khít — 17 trường" và
+//   dùng MỘT lược đồ cho cả hai; lúc InstantGen lên 18 thì đúng đường `schedule`
+//   (đường duy nhất chạy được) ném ở mọi UTxO, và `tsc` không kêu vì mọi chỗ gọi
+//   đều `as any`. Đừng gộp lại làm một, dù có ngày hai hình dạng bằng nhau trở lại.
 //
 //   ĐƯỜNG instant ĐANG KẸT (Nợ #19): `consumed_credit` chỉ tăng ở `BurnBatch`, mà
 //   `BurnBatch` đòi `magic_batches` khác rỗng, mà nhánh `InstantGen` là nơi DUY NHẤT
@@ -87,10 +93,22 @@ import {
   ConsumeRedeemerSchema,
   type ConsumeRedeemerT, type PriceParamT, type EngageDatumT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
-// Lược đồ dùng chung cho CẢ HAI loại vault: đo được là trùng khít — 17 trường, cùng
-// tên, cùng thứ tự, `BurnBatch` constr 2 ở cả hai. Nhập từ một nơi để nếu hai bên có
-// ngày trôi khỏi nhau thì `tsc` gãy ngay, thay vì tx im lặng sai.
-import { VaultDatumSchema, VaultRedeemerSchema } from "../../InstantGen/offchain/src/types.js";
+// ── HAI lược đồ datum, KHÔNG còn một ─────────────────────────────────────────
+// Từ 2026-09-21 hai `VaultDatum` KHÔNG còn trùng khít: InstantGen có **18** trường
+// (thêm `instant_unlock_ms` ở cuối), ScheduleGen vẫn **17**. Giải mã Plutus Data
+// nghiêm ngặt về số trường ở CẢ HAI CHIỀU, nên một lược đồ dùng cho cả hai loại là
+// một lượt ném chắc chắn ở loại còn lại — đo trên `@lucid-evolution/lucid` 0.4.30:
+//   cbor 18 trường đọc bằng lược đồ 17 → NÉM "Could not type cast to object."
+//   cbor 17 trường đọc bằng lược đồ 18 → NÉM cùng câu đó
+// Nhập nguyên tên từ hai module, đặt bí danh tại chỗ; KHÔNG chép định nghĩa xuống đây.
+import { VaultDatumSchema as InstantVaultDatumSchema } from "../../InstantGen/offchain/src/types.js";
+import { VaultDatumSchema as ScheduleVaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
+// `VaultRedeemerSchema` thì vẫn dùng được chung cho đúng một mục đích trong tệp này:
+// mã hoá nhánh `BurnBatch`, vốn là **constr 2 ở CẢ HAI** module với cùng hình dạng
+// trong (`burns: Array<Tuple<Bytes, Integer>>`) — xem hai khối `VaultRedeemerSchema`.
+// Phạm vi đó hẹp và có chủ ý: đừng dùng biến này để mã hoá nhánh nào khác, vì mọi
+// nhánh khác có chỉ số constructor LỆCH nhau giữa hai module.
+import { VaultRedeemerSchema } from "../../InstantGen/offchain/src/types.js";
 import { fetchRefScriptUtxo } from "../refScripts.js";
 
 const PRICE_NFT_NAME  = "5052494345";
@@ -150,6 +168,10 @@ async function main() {
     throw new Error(`VAULT_KIND phải là "schedule" hoặc "instant" — nhận "${vaultKind}".`);
   }
   const isSchedule = vaultKind === "schedule";
+  // Lược đồ datum theo LOẠI vault — xem khối nhập ở đầu tệp. Dùng CÙNG một biến cho
+  // cả `Data.from` lẫn `Data.to`: đọc bằng hình dạng này rồi ghi bằng hình dạng kia
+  // là đánh rơi hoặc bịa ra một trường, và tx đó dựng xong mới chết ở ledger.
+  const vaultDatumSchema = isSchedule ? ScheduleVaultDatumSchema : InstantVaultDatumSchema;
   const vaultHashEnv    = isSchedule ? "VAULT_SCHEDULE_HASH"     : "VAULT_INSTANT_HASH";
   const vaultRefEnv     = isSchedule ? "REF_VAULT_SCHEDULE_UTXO" : "REF_VAULT_INSTANT_UTXO";
   const vaultUtxoEnv    = isSchedule ? "SCHEDULE_VAULT_UTXO"     : "INSTANT_VAULT_UTXO";
@@ -276,10 +298,36 @@ async function main() {
     [vaultUtxo] = await lucid.utxosByOutRef([vref]);
   } else {
     const vs = await lucid.utxosAt(vaultAddr);
+    // ĐẾM chỗ không giải mã nổi thay vì nuốt nó. Một lượt ném ở đây có HAI nghĩa
+    // rất khác nhau — "UTxO rác ở địa chỉ vault" và "lược đồ đã lệch khỏi chuỗi" —
+    // và `catch { return false }` gộp cả hai thành "không tìm thấy vault", đúng câu
+    // không giúp người chạy đi tiếp được.
+    const khongGiaiMaDuoc: string[] = [];
     vaultUtxo = vs.find((u) => {
       if (!u.datum) return false;
-      try { return decodeVaultOwner(u.datum) === ownerPkh; } catch { return false; }
+      try {
+        return decodeVaultOwner(u.datum) === ownerPkh;
+      } catch (e: any) {
+        khongGiaiMaDuoc.push(`${u.txHash}#${u.outputIndex}: ${e?.message ?? e}`);
+        return false;
+      }
     });
+    // Cảnh báo kể cả khi ĐÃ tìm thấy két. Ném chỉ khi không tìm thấy là chưa đủ:
+    // ca "một loại két lệch lược đồ nhưng đúng két đầu tiên khớp" sẽ im hoàn
+    // toàn, và đó đúng là ca mà tín hiệu lệch có giá trị nhất.
+    if (vaultUtxo && khongGiaiMaDuoc.length > 0) {
+      console.warn(
+        `⚠ ${khongGiaiMaDuoc.length}/${vs.length} UTxO ở địa chỉ két KHÔNG giải mã nổi ` +
+        `trường owner (đã tìm được két nên vẫn chạy tiếp):\n  ` + khongGiaiMaDuoc.join("\n  "),
+      );
+    }
+    if (!vaultUtxo && khongGiaiMaDuoc.length > 0) {
+      throw new Error(
+        `Không thấy vault của ${ownerPkh}, và ${khongGiaiMaDuoc.length}/${vs.length} UTxO ở địa chỉ ` +
+        `vault KHÔNG giải mã nổi trường owner. Đây KHÔNG phải "vault chưa tồn tại":\n  ` +
+        khongGiaiMaDuoc.join("\n  "),
+      );
+    }
   }
   if (!vaultUtxo?.datum) throw new Error("InstantGen vault UTxO không tìm thấy (chạy test:instant trước, cùng epoch).");
 
@@ -337,7 +385,7 @@ async function main() {
   if (required <= 0n) throw new Error(`required=${required} (≤0).`);
 
   // ── Vault datum → chọn batch CÒN SỐNG đủ MAGIC cho required ───────────────────
-  const vaultDatum: any = Data.from(vaultUtxo.datum, VaultDatumSchema as any);
+  const vaultDatum: any = Data.from(vaultUtxo.datum, vaultDatumSchema as any);
   if (vaultDatum.pending_profile !== null) {
     throw new Error("Vault có pending_profile — test này không mô phỏng lazy-apply. Dùng vault khác.");
   }
@@ -417,7 +465,7 @@ async function main() {
       last_event_epoch: currentEpoch,
     },
   };
-  const newVaultDatumCbor = Data.to(newVaultDatum, VaultDatumSchema as any);
+  const newVaultDatumCbor = Data.to(newVaultDatum, vaultDatumSchema as any);
 
   // ── Engage output datum: consumed_count += op_count, last_epoch=current ───────
   const oldEngage: EngageDatumT = decodeEngageDatum(engageUtxo.datum);
@@ -576,9 +624,34 @@ async function main() {
 }
 
 // Decode chỉ field owner của VaultDatum (nhẹ, để lọc vault theo owner).
+//
+// KHÔNG dùng lược đồ đầy đủ ở đây, và đó là điểm chính chứ không phải tối ưu hoá:
+// lược đồ đầy đủ ràng hàm này vào SỐ TRƯỜNG của một loại vault, trong khi việc nó
+// làm là đọc trường 0 — trường mà cả hai hình dạng đều có, ở cùng chỗ, vì thứ tự
+// trường datum là hợp đồng nhị phân không được xê dịch. Đọc trường 0 qua cấu trúc
+// `Constr` thô là đúng cùng một việc mà validator làm:
+// `ConsumeMAGIC/onchain/validators/consume.ak` ▸ khối `un_constr_data`.
+//
+// Ràng buộc vào số trường ở đây đã tốn thật: khi InstantGen lên 18 trường, hàm này
+// vẫn cầm lược đồ 18 và được gọi cho CẢ vault ScheduleGen 17 trường, nên nó ném ở
+// mọi UTxO — mà chỗ gọi lọc (`.filter`) nuốt lượt ném đó thành `false`. Kết quả
+// người chạy đọc được là "không tìm thấy vault", không phải "lược đồ lệch".
 function decodeVaultOwner(datumCbor: string): string {
-  const d: any = Data.from(datumCbor, VaultDatumSchema as any);
-  return d.owner;
+  const d: any = Data.from(datumCbor);
+  if (typeof d !== "object" || d === null || !Array.isArray(d.fields)) {
+    throw new Error("datum không phải một Constr — không phải VaultDatum.");
+  }
+  const owner = d.fields[0];
+  // Trường 0 của VaultDatum là `owner`, một payment key hash: ĐÚNG 28 byte.
+  // Kiểm ở đây để một datum lạ hình dạng khác kêu lên ngay, thay vì trả về một
+  // chuỗi vô nghĩa rồi trượt xuống phép so `=== ownerPkh` và lặng lẽ thành `false`.
+  if (typeof owner !== "string" || !/^[0-9a-f]{56}$/.test(owner)) {
+    throw new Error(
+      `trường 0 không phải payment key hash 28 byte (nhận ${JSON.stringify(owner)?.slice(0, 40)}) ` +
+      `— datum này không phải VaultDatum.`,
+    );
+  }
+  return owner;
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

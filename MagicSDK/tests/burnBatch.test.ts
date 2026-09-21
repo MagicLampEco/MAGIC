@@ -12,7 +12,7 @@ import {
   planBurnBatch, buildVaultBurnBatch, applyPendingProfile, isBatchExpired,
   type MagicBatchLike,
 } from "../src/burnBatch.js";
-import { VaultDatumSchema } from "../src/schemas.js";
+import { InstantVaultDatumSchema, VaultDatumSchema } from "../src/schemas.js";
 import type { PlutusJson } from "../src/redeemerIndex.js";
 
 // Phần lớn ca dưới đây kiểm hành vi CHUNG của hai module vault, nên chạy qua bản
@@ -278,16 +278,23 @@ describe("buildVaultBurnBatch — CBOR redeemer + datum", () => {
     ...over,
   });
 
-  const utxoWith = (d: unknown) => ({
+  // Fixture phải mã hoá bằng ĐÚNG lược đồ của module đang thử — InstantGen 18 trường,
+  // ScheduleGen 17. Một fixture dùng chung một lược đồ cho cả hai là dựng một UTxO mà
+  // `buildVaultBurnBatch` không đọc nổi, và bài kiểm đỏ vì FIXTURE sai chứ không vì mã
+  // sai. `instant_unlock_ms` chỉ thêm ở nhánh Instant, và thêm ở CUỐI đúng thứ tự
+  // trường của `InstantVaultDatumSchema`.
+  const utxoWith = (d: Record<string, unknown>, m: "InstantGen" | "ScheduleGen") => ({
     txHash: "ab".repeat(32), outputIndex: 0,
     address: "addr_test1xxx", assets: { lovelace: 2_000_000n },
-    datum: Data.to(d as never, VaultDatumSchema),
+    datum: m === "InstantGen"
+      ? Data.to({ ...d, instant_unlock_ms: 0n } as never, InstantVaultDatumSchema)
+      : Data.to(d as never, VaultDatumSchema),
   });
 
   it("ScheduleGen: redeemer là Constr(BurnBatch) bọc List các tuple [bid, amt]", () => {
     const pj  = loadPlutus("ScheduleGen");
     const out = buildVaultBurnBatch({
-      vaultUtxo: utxoWith(encodable()) as never,
+      vaultUtxo: utxoWith(encodable(), "ScheduleGen") as never,
       required: 200n, currentEpoch: 5n,
       vaultModule: "ScheduleGen", vaultPlutusJson: pj,
     });
@@ -309,28 +316,46 @@ describe("buildVaultBurnBatch — CBOR redeemer + datum", () => {
       pending_profile: { new_profile: "Flame", effective_epoch: 5n },
     });
     const out = buildVaultBurnBatch({
-      vaultUtxo: utxoWith(d) as never,
+      vaultUtxo: utxoWith(d, "InstantGen") as never,
       required: 200n, currentEpoch: 5n,
       vaultModule: "InstantGen", vaultPlutusJson: pj,
     });
     expect(out.vaultBurnRedeemerCbor.startsWith("d87b")).toBe(true);
-    const back = Data.from(out.vaultOutDatumCbor, VaultDatumSchema) as never as {
+    const back = Data.from(out.vaultOutDatumCbor, InstantVaultDatumSchema) as never as {
       profile: string; pending_profile: unknown;
     };
     expect(back.profile).toBe("Flame");
     expect(back.pending_profile).toBeNull();
   });
 
-  it("hai module cho CBOR datum KHÁC nhau ở ca pending tới hạn", () => {
+  // ⚠ Bài này KHÔNG còn được phép so hai chuỗi CBOR. Từ khi InstantGen lên 18 trường,
+  // hai chuỗi khác nhau vì SỐ TRƯỜNG, nên `not.toBe(...)` xanh kể cả khi lazy-apply bị
+  // gỡ sạch — xanh vì arity, không phải xanh vì đúng. Phép đo phải neo vào chính thứ
+  // hai module làm khác nhau: `apply_pending_profile`.
+  it("hai module xử `pending_profile` tới hạn KHÁC nhau — Instant áp, Schedule giữ", () => {
     const d = () => encodable({
       profile: "Lantern",
       pending_profile: { new_profile: "Flame", effective_epoch: 5n },
     });
-    const mk = (m: "InstantGen" | "ScheduleGen") => buildVaultBurnBatch({
-      vaultUtxo: utxoWith(d()) as never,
-      required: 200n, currentEpoch: 5n,
-      vaultModule: m, vaultPlutusJson: loadPlutus(m),
-    }).vaultOutDatumCbor;
-    expect(mk("InstantGen")).not.toBe(mk("ScheduleGen"));
+    const mk = (m: "InstantGen" | "ScheduleGen") => {
+      const out = buildVaultBurnBatch({
+        vaultUtxo: utxoWith(d(), m) as never,
+        required: 200n, currentEpoch: 5n,
+        vaultModule: m, vaultPlutusJson: loadPlutus(m),
+      });
+      const schema = m === "InstantGen" ? InstantVaultDatumSchema : VaultDatumSchema;
+      return Data.from(out.vaultOutDatumCbor, schema) as never as {
+        profile: string; pending_profile: unknown;
+      };
+    };
+    const inst = mk("InstantGen");
+    const sched = mk("ScheduleGen");
+    // InstantGen chạy `apply_pending_profile` trước khi kiểm A02 ⟹ đã áp, pending rỗng.
+    expect(inst.profile).toBe("Flame");
+    expect(inst.pending_profile).toBeNull();
+    // ScheduleGen KHÔNG áp ⟹ hồ sơ cũ còn nguyên, pending còn nguyên.
+    // Gỡ nhánh `vaultModule === "InstantGen"` ở `planBurnBatch` là hai vế này va nhau.
+    expect(sched.profile).toBe("Lantern");
+    expect(sched.pending_profile).not.toBeNull();
   });
 });

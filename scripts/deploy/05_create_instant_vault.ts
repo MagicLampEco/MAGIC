@@ -44,7 +44,12 @@ import { parkAddressFor, publishRefScript } from "../refScripts.js";
 // chuỗi. Người báo cho bản sao này biết nguồn đã đổi chính là validator.
 const WAKEME_SEED_CREDIT = 1_001_000_000_000n;   // 1001 MAGIC in nanogic
 
-// VaultDatum schema (same across all 4 modules — matches Aiken).
+// VaultDatum schema — bản của InstantGen, 18 trường, gương của
+// `InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸ `VaultDatum`.
+//
+// 🔴 KHÔNG còn "dùng chung cho mọi loại vault" (bản trước của dòng này khai thế).
+// Két ScheduleGen/PrepaidGen giữ 17 trường; chỉ két Instant có `instant_unlock_ms`.
+// `07_create_schedule_vault.ts` và `10_deploy_prepaid.ts` vì thế KHÔNG chép theo.
 const VaultDatumSchema = Data.Object({
   owner:                 Data.Bytes(),
   lamp_balance:          Data.Integer(),
@@ -124,6 +129,7 @@ const VaultDatumSchema = Data.Object({
     last_event_epoch:  Data.Integer(),
     total_events:      Data.Integer(),
   }),
+  instant_unlock_ms:     Data.Integer(),
 });
 type VaultDatum = Data.Static<typeof VaultDatumSchema>;
 // Codec companion — xem chú thích ở InstantGen/offchain/src/types.ts.
@@ -232,7 +238,7 @@ async function main() {
   console.log(`Seed UTxO:          ${seedUtxo.txHash}#${seedUtxo.outputIndex}`);
   console.log(`Vault-ID NFT:       ${vaultScriptHash}.${vaultIdName}`);
 
-  // Initial vault datum — schema VaultDatum dùng chung cho mọi loại vault.
+  // Initial vault datum — hình dạng 18 trường của InstantGen (xem lược đồ ở trên).
   // MỌI hằng số dưới đây là một điều kiện on-chain của `validate_mint_vault_id`
   // (InstantGen/onchain/validators/vault.ak), không phải sở thích.
   const initialVault = {
@@ -268,6 +274,9 @@ async function main() {
       last_event_epoch: 0n,
       total_events:     0n,
     },
+    // PIN: `expect vd.instant_unlock_ms == 0` — két mới chưa từng sinh nên không
+    // khoá gì. Một giá trị khác 0 ở genesis bị cổng đúc từ chối (dấu BẰNG).
+    instant_unlock_ms:     0n,
   };
 
   const vaultDatum = Data.to(initialVault, VaultDatum);

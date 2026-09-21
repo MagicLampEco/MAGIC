@@ -135,7 +135,17 @@ export const StreakStateSchema = Data.Object({
 });
 export type StreakState = Data.Static<typeof StreakStateSchema>;
 
-// ── VaultDatum ───────────────────────────────────────────────
+// ── VaultDatum — 18 trường, RIÊNG của InstantGen ─────────────
+//
+// Gói này chỉ phục vụ InstantGen, nên lược đồ ở đây mang luôn trường 17
+// `instant_unlock_ms`. Két ScheduleGen/PrepaidGen KHÔNG có trường đó (17 trường)
+// — lý lẽ đầy đủ ở nguồn: `InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸
+// khối chú thích của `instant_unlock_ms`.
+//
+// Lệch số trường thì `Data.from` NÉM ("Could not type cast to object. Fields do
+// not match.", đo trên lucid 0.4.30, cả hai chiều), nên đọc nhầm một datum
+// ScheduleGen bằng lược đồ này là một ngoại lệ có tên, không phải một trường
+// `undefined` đi tiếp vào phép tính ở nơi khác.
 export const VaultDatumSchema = Data.Object({
   owner                 : Data.Bytes(),
   lamp_balance          : Data.Integer(),
@@ -154,6 +164,10 @@ export const VaultDatumSchema = Data.Object({
   streak_state          : StreakStateSchema,
   personal_delegate     : Data.Nullable(Data.Bytes()),
   attribution           : VaultAttributionSchema,
+  // Trường 17 — mốc POSIX mili-giây mà từ đó LAMP được rời két trở lại. `0` = chưa
+  // từng sinh. Genesis GHIM `== 0`; mọi nhánh spend khác `InstantGen` ép nó ĐỨNG YÊN;
+  // riêng `validate_instant_gen` ghi `max(cũ, validity_upper_ms + ms_per_epoch)`.
+  instant_unlock_ms     : Data.Integer(),
 });
 export type VaultDatum = Data.Static<typeof VaultDatumSchema>;
 

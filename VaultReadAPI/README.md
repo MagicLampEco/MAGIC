@@ -10,8 +10,11 @@ Nó **không** nhận khoá riêng, **không** dựng giao dịch, **không** gh
 
 ## 1. Vì sao thứ này ở nhà MAGIC chứ không ở nhà backend
 
-Định nghĩa `VaultDatum` — 17 trường, thứ tự trường là hợp đồng nhị phân — sống ở
-`MagicSDK/src/schemas.ts`. Bảo backend Java tự đọc datum là dựng **bản thứ hai** của
+Định nghĩa `VaultDatum` — thứ tự trường là hợp đồng nhị phân — sống ở
+`MagicSDK/src/schemas.ts`. Từ 2026-09-21 nó là **hai** hình dạng chứ không một:
+`VaultDatumSchema` (ScheduleGen · PrepaidGen) và `InstantVaultDatumSchema` (InstantGen,
+thêm `instant_unlock_ms` ở cuối). Số trường không chép xuống đây — đếm ở chính tệp đó.
+Bảo backend Java tự đọc datum là dựng **bản thứ hai** của
 định nghĩa ấy, và bản thứ hai sẽ lệch ngay lượt đổi datum đầu tiên. Lệch kiểu đó không
 kêu: nó ra một con số trông hợp lý.
 

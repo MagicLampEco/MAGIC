@@ -62,7 +62,9 @@ use magiclamp/protocol/math.{
   compute_cap_pp, compute_cap_surplus, compute_instant_grant,
   compute_reward_from_consumed,
 }
-use magiclamp/protocol/decay.{count_expired, is_expired, prune_expired}
+use magiclamp/protocol/decay.{
+  count_expired, instant_gen_in_epoch, is_expired, prune_expired,
+}
 use magiclamp/protocol/um.{
   get_um_for_instant, validate_um_history_length, validate_um_range,
 }
@@ -165,7 +167,7 @@ validator vault(
       // ── InstantGen redeemer ──────────────────────────────
       InstantGen { claimed_amount } ->
         validate_instant_gen(
-          input_datum, claimed_amount, current_epoch,
+          input_datum, claimed_amount, current_epoch, ms_per_epoch,
           own_ref, lamp_policy_id, lamp_asset_name, um_nft_policy, um_script_hash,
           backing_nft_policy, backing_script_hash, tx,
         )
@@ -259,7 +261,7 @@ fn validate_mint_vault_id(
   expect InlineDatum(datum_data) = vault_out.datum
   expect vd: VaultDatum = datum_data
 
-  // ── CLEAN genesis — constrain ALL 17 fields ─────────────────────────────
+  // ── CLEAN genesis — constrain ALL 18 fields ─────────────────────────────
   // owner: a pkh the creator controls (present in signatories) — no squatting
   // a victim's pkh, and the creator can actually spend the result.
   expect list.has(tx.extra_signatories, vd.owner)
@@ -314,6 +316,13 @@ fn validate_mint_vault_id(
     last_event_epoch: 0,
     total_events: 0,
   }
+  // Két mới chưa sinh lần nào ⟹ chưa khoá gì. Ghim ở đây vì đây là lúc DUY NHẤT
+  // ghim được: Cardano không chạy validator lúc tạo UTxO, nên một két dựng với
+  // `instant_unlock_ms` bịa sẵn sẽ không bao giờ bị nhánh spend nào hỏi tới —
+  // các nhánh đó chỉ ĐÔNG CỨNG trường, chúng không kiểm nó bắt đầu từ đâu. Bịa
+  // một mốc TƯƠNG LAI chỉ tự khoá mình, nhưng bịa được thì cũng ghim được, và
+  // một ô không ai ghim là một ô mở cho hình dạng khác sau này.
+  expect vd.instant_unlock_ms == 0
   // profile NOT pinned: it is a user-chosen STRATEGY (Ember/Flame/Lantern), not
   // accumulated state. The type is bounded to 3 valid values and (where
   // UpdateProfile exists) changeable under cooldown, so pinning gives no security
@@ -358,6 +367,7 @@ fn validate_instant_gen(
   input_datum         : VaultDatum,
   claimed_amount      : Int,
   current_epoch       : Int,
+  ms_per_epoch        : Int,
   own_ref             : OutputReference,
   lamp_policy_id      : PolicyId,
   lamp_asset_name     : ByteArray,
@@ -443,6 +453,33 @@ fn validate_instant_gen(
   expect grant > 0                       // no-op tx rejected
   expect claimed_amount == grant         // redeemer must state the exact grant
 
+  // ── C-INST-8 (`CC-GEN-LOCK-FIELD`): TRẦN THEO EPOCH, không theo lượt ─────────
+  //
+  // `compute_instant_grant` đã kẹp MỘT lượt sinh dưới `cap_pp(avail)`. Cổng này
+  // kẹp TỔNG của cả epoch dưới cùng cái trần đó. Không có nó, vòng
+  // `InstantGen → BurnBatch → InstantGen` lặp trong cùng một epoch — mỗi vòng lấy
+  // trọn trần một lần nữa trên cùng số LAMP — và trần duy nhất còn lại phía trên
+  // là phần thặng dư GreenBack chia theo két, tức cỡ 120 vòng mỗi epoch: vốn cần
+  // để đạt cùng một lượng MAGIC giảm đi 120 lần.
+  //
+  // 🔴 Cổng này MỘT MÌNH không đủ, và bản trước quy sai thủ phạm. Nó viết rằng
+  // `prune_expired` nhả lại suất; thủ phạm thật là `apply_burns`, hàm trả `None`
+  // khi số dư về 0 ⟹ batch biến mất ⟹ bộ đếm về 0 ngay trong epoch ⟹ cổng này
+  // qua. Đã vá tại `apply_burns` (batch đốt sạch ở lại với `current_amount: 0`).
+  // Hai thứ phải đi cùng nhau: cổng đếm, và bất biến "không nhánh nào xoá một
+  // batch còn sống". Gỡ một trong hai là mở lại vòng lặp.
+  //
+  // 🔴 Và một phanh nữa đang chặn ca đó hôm nay là phanh TÌNH CỜ, không phải cổng
+  // này: nhánh sinh đặt `consumed_credit: 0` ở đầu ra, nên một vòng KHÔNG đốt có
+  // `grant = 0`. Phanh ấy không chặn vòng CÓ đốt (`BurnBatch` cộng lại
+  // `consumed_credit`), và nó biến mất hẳn đúng lúc `INV-MAGIC-CITIZEN` vào mã.
+  // Nên cổng này phải đứng TRƯỚC thay đổi ấy, không phải sau.
+  //
+  // Bộ đếm suy ra từ chính `magic_batches` — không có trường datum nào giữ nó. Bốn
+  // điều kiện làm phép suy đứng vững nằm ở `decay.ak ▸ instant_gen_in_epoch`.
+  let gen_so_far = instant_gen_in_epoch(live_batches, current_epoch)
+  expect gen_so_far + grant <= compute_cap_pp(avail)
+
   // ── New batch for THIS epoch (§4.2 cliff) ────────────────
   let new_batch_id = compute_batch_id(own_ref, applied_input.next_batch_index)
   let new_batch =
@@ -506,6 +543,25 @@ fn validate_instant_gen(
   // Attribution hash-chain updated (C-ATT-1, C-ATT-2)
   expect output_datum.attribution.total_events == applied_input.attribution.total_events + 1
   expect output_datum.attribution.last_event_epoch == current_epoch
+
+  // ── C-INST-9: đặt khoá LAMP — đúng MỘT epoch kể từ bây giờ ──────────────────
+  //
+  // Neo vào cận TRÊN của `validity_range` (xem `types.ak` ▸ `instant_unlock_ms`):
+  // người gọi chỉ đẩy nó về phía sau được, nên mốc ngắn nhất họ đạt tới đúng bằng
+  // một epoch kể từ slot thật của giao dịch.
+  //
+  // `max` với mốc cũ: một lượt sinh thứ hai không được phép LÀM NGẮN khoá đang có.
+  // Không có `max` thì hai lượt sinh cách nhau vài giây — lượt sau với `grant` bé
+  // xíu — ghi đè mốc cũ bằng một mốc gần như trùng nó, và ở biên thì ghi đè bằng
+  // một mốc SỚM hơn. Cổng nào cũng qua, và khoá ngắn lại mà không dòng nào sai.
+  let unlock_from_now = get_validity_upper_ms(tx) + ms_per_epoch
+  let new_unlock_ms =
+    if applied_input.instant_unlock_ms > unlock_from_now {
+      applied_input.instant_unlock_ms
+    } else {
+      unlock_from_now
+    }
+  expect output_datum.instant_unlock_ms == new_unlock_ms
 
   // ── VALUE PRESERVATION (bind datum to real value) ─────────
   // The datum claims the LAMP balance is unchanged; bind that claim to the
@@ -588,6 +644,16 @@ fn validate_prune_expired(
   expect output_datum.personal_delegate == applied_input.personal_delegate
   expect output_datum.attribution == applied_input.attribution
 
+  // ── Khoá Instant ĐÔNG CỨNG (`CC-GEN-L-TIMING`) ────────────
+  //
+  // Nhánh này KHÔNG CẦN CHỮ KÝ, nên nó là nhánh nguy nhất trong cả két đối với
+  // một ô ghi được: thiếu dòng này thì bất kỳ ai cũng dựng được một lượt dọn rác
+  // hợp lệ có kèm `instant_unlock_ms: 0` ở đầu ra, và khoá của nạn nhân bốc hơi
+  // mà không nhánh nào sai và không bài kiểm nào đỏ. Đó đúng là lý do bộ đếm ở
+  // `C-INST-8` được để dạng SUY RA — một đại lượng không có ô thì không có dòng
+  // nào để quên. Trường này thì có ô, nên nó phải trả đủ giá ở MỌI nhánh spend.
+  expect output_datum.instant_unlock_ms == applied_input.instant_unlock_ms
+
   // ── VALUE PRESERVATION ────────────────────────────────────
   let prune_vault_output = find_vault_output(tx.outputs, vault_addr)
   let prune_vault_lamp =
@@ -647,6 +713,23 @@ fn get_current_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
   expect Some(upper_ms) = tx.validity_range.upper_bound.bound_type |> get_finite_slot
   expect upper_ms < ( epoch + 1 ) * ms_per_epoch
   epoch
+}
+
+/// Cận DƯỚI của `validity_range`, POSIX mili-giây. Dùng cho câu hỏi *"đã tới lúc
+/// chưa"*: người gọi chỉ hạ được nó xuống, và hạ xuống làm mốc đến MUỘN hơn — tức
+/// chiều gian lận duy nhất còn lại là tự làm khó mình.
+fn get_validity_lower_ms(tx: Transaction) -> Int {
+  expect Some(lower_ms) = tx.validity_range.lower_bound.bound_type |> get_finite_slot
+  lower_ms
+}
+
+/// Cận TRÊN của `validity_range`, POSIX mili-giây. Dùng cho câu hỏi *"khoá tới
+/// bao giờ"*: người gọi chỉ đẩy được nó về phía sau, và đẩy về sau làm khoá DÀI
+/// hơn. Xem khối lý lẽ ở `types.ak` ▸ `instant_unlock_ms` về việc vì sao cận dưới
+/// KHÔNG gác được câu hỏi này.
+fn get_validity_upper_ms(tx: Transaction) -> Int {
+  expect Some(upper_ms) = tx.validity_range.upper_bound.bound_type |> get_finite_slot
+  upper_ms
 }
 
 fn get_finite_slot(bound_type) -> Option<Int> {
@@ -831,6 +914,31 @@ fn validate_withdraw_lamp(
   let avail = l_avail(input_datum.lamp_balance, input_datum.lamp_locked)
   expect amount <= avail
 
+  // ── W-3b (`CC-GEN-L-TIMING`): LAMP đã nuôi một lượt sinh thì chưa đi đâu cả ──
+  //
+  // Đây là nửa thứ hai của cận bảo toàn. Nửa thứ nhất — `C-INST-8` ở nhánh sinh —
+  // giữ `Σ sinh ≤ trần theo LAMP` TRONG MỘT KÉT. Nó không giữ được gì khi chính
+  // số LAMP ấy rời két: rút ra, nạp vào két thứ hai, sinh tiếp, và két thứ hai có
+  // bộ đếm bằng 0. Cùng một đồng LAMP nuôi hai lượt sinh trong một cửa sổ ⟹ cận
+  // gãy. Cổng này là chỗ DUY NHẤT chặn đường đó, vì đây là nhánh duy nhất trong
+  // két làm `lamp_balance` giảm. Đếm lại tập nhánh ấy, đừng tin danh sách:
+  //
+  //   grep -n "lamp_balance -" InstantGen/onchain/validators/vault.ak
+  //
+  // Đọc ở: cột số dòng, rồi tra ngược ra hàm chứa nó bằng
+  // `grep -n "^fn " InstantGen/onchain/validators/vault.ak`. Lệnh cố ý KHÔNG khớp
+  // `lamp_balance ==` — mọi dòng `==` là chỗ GHIM `lamp_balance` đứng yên, tức
+  // đúng những nhánh KHÔNG cần cổng này.
+  //
+  // KHOÁ TOÀN BỘ chứ không khoá một lượng. `cap_pp` tính từ TRỌN `l_avail`, nên
+  // số LAMP đứng sau quyền sinh là cả phần khả dụng, không phải một phần nào đó
+  // của nó. Một trường `instant_locked` riêng vì thế đo lại đúng con số đã có, và
+  // trả thêm bằng một ô ghi được nữa phải đông cứng ở mọi nhánh.
+  //
+  // Cận DƯỚI của `validity_range` cho câu hỏi *"đã tới lúc chưa"*: người gọi chỉ
+  // hạ nó xuống được, mà hạ xuống thì mốc đến muộn hơn.
+  expect get_validity_lower_ms(tx) >= input_datum.instant_unlock_ms
+
   // W-4: exactly 1 vault input
   let vault_addr = find_own_address(own_ref, tx.inputs)
   expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
@@ -856,6 +964,8 @@ fn validate_withdraw_lamp(
   expect output_datum.streak_state == input_datum.streak_state
   expect output_datum.personal_delegate == input_datum.personal_delegate
   expect output_datum.attribution == input_datum.attribution
+  // Khoá Instant đông cứng — rút KHÔNG được đặt lại mốc (xem `validate_prune_expired`).
+  expect output_datum.instant_unlock_ms == input_datum.instant_unlock_ms
   // last_updated_epoch PRESERVED (PR #11 review pt4): withdraw must NOT advance
   // it — doing so would reset the Snapshot catch-up window and forfeit MAGIC
   // accrued over elapsed epochs. Withdraw is LAMP-only, orthogonal to snapshot.
@@ -954,7 +1064,7 @@ fn validate_burn_batch(
   let total_burned = sum_burns(burns)
   expect total_burned > 0
 
-  // ── A02: field-by-field output datum check (17 fields) ────
+  // ── A02: field-by-field output datum check (18 fields) ────
   let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
 
   expect output_datum.owner == applied.owner
@@ -979,6 +1089,10 @@ fn validate_burn_batch(
   expect output_datum.last_updated_epoch == current_epoch
   expect output_datum.attribution.total_events == applied.attribution.total_events + 1
   expect output_datum.attribution.last_event_epoch == current_epoch
+  // Khoá Instant đông cứng — đốt MAGIC không mở được khoá LAMP
+  // (xem `validate_prune_expired`). Chính vòng `sinh → đốt → sinh` là đường mà
+  // `C-INST-8` chặn, nên nhánh đốt mà nới được khoá là mở lại nửa kia của nó.
+  expect output_datum.instant_unlock_ms == applied.instant_unlock_ms
 
   // ── VALUE PRESERVATION (chống value-leak) ─────────────────
   let vault_output = find_vault_output(tx.outputs, vault_addr)
@@ -999,8 +1113,10 @@ fn validate_burn_batch(
 /// For each (batch_id, amount): there must be EXACTLY one matching batch; that
 /// batch must still be LIVE at `current_epoch` (§4.2 use-or-lose — a batch is
 /// spendable only inside its own created_epoch); 0 < amount ≤ current_amount;
-/// every other field stays immutable (T4); a batch whose result is 0 is pruned.
-/// List order is preserved for untouched batches. Over-burn, unknown batch_id
+/// every other field stays immutable (T4); a batch whose result is 0 STAYS in
+/// the list carrying `current_amount: 0` (see the red note in the body — it is
+/// what keeps `instant_gen_in_epoch` from being reset by a burn).
+/// List order is preserved for every batch. Over-burn, unknown batch_id
 /// and DEAD batch_id all fail.
 fn apply_burns(
   batches       : List<MagicBatch>,
@@ -1022,12 +1138,25 @@ fn apply_burns(
             // "pay" with MAGIC the protocol already reset.
             expect !is_expired(b, current_epoch)
             expect amt <= b.current_amount   // over-burn forbidden (== model, not ≥)
-            let new_amount = b.current_amount - amt
-            if new_amount == 0 {
-              None   // prune fully-consumed batch
-            } else {
-              Some(MagicBatch { ..b, current_amount: new_amount })
-            }
+            // 🔴 Batch đốt sạch Ở LẠI mang `current_amount: 0`, KHÔNG bị xoá.
+            //
+            // Bản trước trả `None` ở đây, và đó là đường lách cổng `C-INST-8`:
+            // bộ đếm `instant_gen_in_epoch` cộng `initial_amount` của các batch
+            // CÒN TRONG DANH SÁCH, nên xoá phần tử là xoá bộ đếm. Chuỗi
+            // `InstantGen → BurnBatch(đốt trọn) → InstantGen` vì thế lấy được
+            // trọn trần hai lần trong cùng một epoch, trên cùng số LAMP, chỉ
+            // bằng chữ ký của chính chủ két. Bài canh: `bb_full_burn_giu_batch`
+            // và `chain_gen_burn_gen_vuot_tran_bi_tu_choi`.
+            //
+            // Giữ lại là AN TOÀN ở mọi đường đọc khác: `batch_balance` trả
+            // `current_amount` cho batch còn sống nên một batch 0 đóng góp 0 vào
+            // `live_total`; `apply_burns` đòi `amt > 0` và `amt <= current_amount`
+            // nên không ai đốt lại được nó; `prune_expired` dọn nó ở epoch sau.
+            //
+            // Giá phải trả, nói thẳng: một suất trong trần `max_batches_per_vault`
+            // không còn được nhả lại bằng cách đốt. Đó là ĐÚNG — số lượt sinh
+            // trong một epoch phải bị chặn, và trần ấy chính là chỗ chặn.
+            Some(MagicBatch { ..b, current_amount: b.current_amount - amt })
           } else {
             Some(b)
           }
@@ -1101,6 +1230,8 @@ fn validate_set_delegate(
   expect output_datum.activity_state == input_datum.activity_state
   expect output_datum.streak_state == input_datum.streak_state
   expect output_datum.attribution == input_datum.attribution
+  // Khoá Instant đông cứng ở nhánh uỷ nhiệm (xem `validate_prune_expired`).
+  expect output_datum.instant_unlock_ms == input_datum.instant_unlock_ms
 
   // KEY: delegate set to new value; epoch advanced
   expect output_datum.personal_delegate == new_delegate
@@ -1159,6 +1290,8 @@ fn validate_update_profile(
   expect output_datum.streak_state == input_datum.streak_state
   expect output_datum.personal_delegate == input_datum.personal_delegate
   expect output_datum.attribution == input_datum.attribution
+  // Khoá Instant đông cứng ở nhánh đổi hồ sơ (xem `validate_prune_expired`).
+  expect output_datum.instant_unlock_ms == input_datum.instant_unlock_ms
 
   // KEY: profile stay old (lazy)
   expect output_datum.profile == input_datum.profile
@@ -1262,6 +1395,7 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
     attribution: VaultAttribution {
       attribution_root: #"", last_event_epoch: 0, total_events: 0,
     },
+    instant_unlock_ms: 0,
   }
 }
 
@@ -1279,8 +1413,34 @@ fn t_vault_input(datum: VaultDatum, balance: Int) -> Input {
   Input { output_reference: t_own_ref(), output: t_vault_output(datum, balance) }
 }
 
+// ── Khung thời gian cho bài kiểm ─────────────────────────────
+//
+// `placeholder` mang một `validity_range` VÔ HẠN hai đầu, nên mọi bài kiểm gọi
+// thẳng một hàm đọc thời gian sẽ chết ở `expect Some(...)`. Đặt một khoảng HỮU
+// HẠN ở đây để khung kiểm giống thứ nhánh `spend` thật luôn đòi hỏi: chính
+// `get_current_epoch` đã ép cả hai đầu phải hữu hạn trước khi phân nhánh.
+// Cố ý KHÔNG đặt `t_lo_ms = 0`: ở 0 thì "chưa từng sinh" (mốc `0`) và "đã hết
+// khoá" (mốc ≤ `t_lo_ms`) trùng nhau thành một giá trị, và bài kiểm nào cần
+// phân biệt hai trạng thái đó sẽ xanh vì hai vế bằng nhau chứ không vì cổng
+// đúng. Đẩy khung giờ ra khỏi 0 để hai trạng thái tách được.
+const t_lo_ms: Int = 10_000_000
+
+const t_hi_ms: Int = 10_000_001
+
+/// Một epoch Preprod/Mainnet tính bằng mili-giây (432.000 slot × 1000).
+const t_ms_per_epoch: Int = 432_000_000
+
+/// Mốc mở khoá mà một lượt sinh trong khung giờ trên phải ghi ra.
+const t_unlock_after_gen: Int = t_hi_ms + t_ms_per_epoch
+
 fn t_tx(ins: List<Input>, outs: List<Output>, signers: List<ByteArray>) -> Transaction {
-  Transaction { ..placeholder, inputs: ins, outputs: outs, extra_signatories: signers }
+  Transaction {
+    ..placeholder,
+    inputs: ins,
+    outputs: outs,
+    extra_signatories: signers,
+    validity_range: interval.between(t_lo_ms, t_hi_ms),
+  }
 }
 
 // ── WithdrawLamp ──────────────────────────────────────────────
@@ -1357,6 +1517,46 @@ test ds_continuing_output_must_keep_stake_cred() fail {
   validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
+// ── Khoá LAMP sau một lượt sinh (`CC-GEN-L-TIMING`, W-3b) ─────
+//
+// Khung giờ của `t_tx` là `[t_lo_ms, t_hi_ms] = [0, 1]`, nên một két mang mốc mở
+// khoá LỚN HƠN `t_lo_ms` là két đang khoá, và mốc `<= t_lo_ms` là két đã mở.
+// Hai ca dưới đây chỉ khác nhau ở đúng con số ấy — nếu cổng bị gỡ thì ca thứ
+// nhất chuyển sang xanh trong khi ca thứ hai không đổi, nên cặp này phân biệt
+// được hai cực thay vì cùng xanh ở cả hai.
+
+fn t_locked_datum(balance: Int, unlock_ms: Int) -> VaultDatum {
+  VaultDatum {
+    ..t_datum(balance, 0, [t_holding(balance, 5, False)]),
+    instant_unlock_ms: unlock_ms,
+  }
+}
+
+test w_locked_after_gen_rejected() fail {
+  let din  = t_locked_datum(100, t_hi_ms + 1)
+  let dout = t_locked_datum(95, t_hi_ms + 1)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+test w_after_unlock_ok() {
+  let din  = t_locked_datum(100, t_lo_ms - 1)
+  let dout = t_locked_datum(95, t_lo_ms - 1)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// Rút KHÔNG được đặt lại mốc: đầu ra khai `0` trong khi đầu vào mang một mốc
+// ĐÃ QUA. Lượt rút này hợp lệ ở mọi cổng khác — nó chỉ tiện tay xoá mốc — nên
+// không có dòng đông cứng thì đây là đường rửa khoá một bước, và nó dọn đường
+// cho lượt rút KẾ TIẾP diễn ra trong lúc khoá lẽ ra còn hiệu lực.
+test w_clears_lock_rejected() fail {
+  let din  = t_locked_datum(100, t_lo_ms - 1)
+  let dout = t_locked_datum(95, 0)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
 test w_advance_last_updated_rejected() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout =
@@ -1382,6 +1582,18 @@ fn up_output(din: VaultDatum, new_profile: ActivityProfile, current: Int) -> Vau
 test up_positive() {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = up_output(din, Ember, 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_update_profile(din, Ember, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// Đổi hồ sơ KHÔNG mở được khoá LAMP — cửa thứ tư của cùng một đường rửa khoá.
+test up_neg_clears_lock() fail {
+  let din =
+    VaultDatum {
+      ..t_datum(100, 0, [t_holding(100, 5, False)]),
+      instant_unlock_ms: 9_000_000,
+    }
+  let dout = VaultDatum { ..up_output(din, Ember, 10), instant_unlock_ms: 0 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_update_profile(din, Ember, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
@@ -1520,6 +1732,30 @@ test pe_neg_consumed_credit_inflated() fail {
   validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
+// P-NEG-7: dọn rác KHÔNG mở được khoá LAMP của nạn nhân.
+//
+// Nhánh này không cần chữ ký, nên nếu thiếu dòng đông cứng thì bất kỳ ai cũng
+// dựng được một lượt dọn hợp lệ có kèm `instant_unlock_ms: 0` ở đầu ra. Hai bài
+// dưới chỉ khác nhau ở đúng trường đó.
+test pe_neg_lock_cleared_by_stranger() fail {
+  let dead = t_instant_batch(9, 1000)
+  let din  =
+    VaultDatum { ..t_datum_with_batches([dead]), instant_unlock_ms: 9_000_000 }
+  let dout = t_datum_with_batches([])          // instant_unlock_ms = 0
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+test pe_positive_lock_preserved() {
+  let dead = t_instant_batch(9, 1000)
+  let din  =
+    VaultDatum { ..t_datum_with_batches([dead]), instant_unlock_ms: 9_000_000 }
+  let dout =
+    VaultDatum { ..t_datum_with_batches([]), instant_unlock_ms: 9_000_000 }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
+  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
 // P-NEG-6: phantom second vault output.
 test pe_neg_phantom_second_output() fail {
   let dead = t_instant_batch(9, 1000)
@@ -1612,12 +1848,37 @@ test bb_positive_partial() {
   validate_burn_batch(din, [(bid_a, 400)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
-// BB-POS-2: full burn prunes the batch
-test bb_positive_full_prunes() {
+// BB-POS-2: a FULL burn KEEPS the batch, at current_amount 0.
+//
+// Bài này từng mang tên `bb_positive_full_prunes` và khẳng định điều NGƯỢC LẠI.
+// Hành vi cũ là đường lách cổng `C-INST-8`: xoá phần tử khỏi danh sách là xoá
+// bộ đếm `instant_gen_in_epoch`. Xem khối đỏ trong `apply_burns`.
+test bb_full_burn_keeps_batch_at_zero() {
+  let din = t_burn_din([t_burn_batch(bid_a, 1000), t_burn_batch(bid_b, 500)], None)
+  let dout = t_burn_dout(din, [t_burn_batch(bid_a, 0), t_burn_batch(bid_b, 500)], 1000, 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(bid_a, 1000)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// BB-NEG: cực đối của bài trên. Đầu ra XOÁ batch đã đốt sạch ⟹ phải TỪ CHỐI.
+// Không có ca này thì bài trên một mình không phân biệt được hai cực: nó xanh
+// được chỉ vì `expect output_datum.magic_batches == expected_batches` so một
+// danh sách với chính nó.
+test bb_full_burn_dropping_batch_rejected() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000), t_burn_batch(bid_b, 500)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_b, 500)], 1000, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(bid_a, 1000)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// Một batch đã về 0 KHÔNG đốt lại được: `apply_burns` đòi `amt > 0` và
+// `amt <= current_amount`. Ca này ghim rằng việc giữ batch lại không mở ra một
+// đường đốt-hai-lần.
+test bb_zero_batch_not_burnable_again() fail {
+  let din = t_burn_din([t_burn_batch(bid_a, 0), t_burn_batch(bid_b, 500)], None)
+  let dout = t_burn_dout(din, [t_burn_batch(bid_a, 0), t_burn_batch(bid_b, 500)], 0, 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(bid_a, 1)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
 // BB-POS-3: multi-batch burn in one tx
@@ -1783,6 +2044,21 @@ test sd_positive_clear() {
 // SD-NEG-1: owner did not sign → reject.
 // Dựng dưới dạng XOÁ (`new_delegate: None`) có chủ ý sau 2026-09-16: để
 // `Some(...)` thì bài chết ở cổng bia-mộ và không còn đo cổng chữ ký nữa.
+// Đổi uỷ nhiệm KHÔNG mở được khoá LAMP. Cùng họ với `pe_neg_lock_cleared_by_stranger`
+// và `w_clears_lock_rejected`: mỗi nhánh spend là một cửa riêng để rửa khoá, và
+// một cửa không gác thì hai cửa kia gác cũng bằng thừa.
+test sd_neg_clears_lock() fail {
+  let din =
+    VaultDatum {
+      ..t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate)),
+      instant_unlock_ms: 9_000_000,
+    }
+  let dout = VaultDatum { ..din, personal_delegate: None, last_updated_epoch: 10,
+                          instant_unlock_ms: 0 }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
 test sd_neg_no_owner_sig() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
   let dout = VaultDatum {
@@ -1930,6 +2206,7 @@ fn t_ig_dout(din: VaultDatum, grant: Int, epoch: Int) -> VaultDatum {
       last_event_epoch: epoch,
       total_events:     din.attribution.total_events + 1,
     },
+    instant_unlock_ms: t_unlock_after_gen,
   }
 }
 
@@ -1946,13 +2223,14 @@ fn t_ig_tx(
     reference_inputs: refs,
     outputs: [t_vault_output(dout, lamp_out)],
     extra_signatories: signers,
+    validity_range: interval.between(t_lo_ms, t_hi_ms),
   }
 }
 
 fn t_ig_call(din: VaultDatum, claimed: Int, epoch: Int, tx: Transaction) -> Bool {
   validate_instant_gen(
-    din, claimed, epoch, t_own_ref(), t_lamp_policy, t_lamp_asset_name,
-    t_um_policy, t_um_hash, t_backing_policy, t_backing_hash, tx,
+    din, claimed, epoch, t_ms_per_epoch, t_own_ref(), t_lamp_policy,
+    t_lamp_asset_name, t_um_policy, t_um_hash, t_backing_policy, t_backing_hash, tx,
   )
 }
 
@@ -1978,6 +2256,149 @@ test ig_positive_grant() {
   let din  = t_ig_din(ig_credit)
   let dout = t_ig_dout(din, ig_grant, 10)
   let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+// ── C-INST-8: trần theo EPOCH, không theo lượt ────────────────
+//
+// `cap_pp(1000 LAMP) = 4×10^9 nanogic` (xem `math.ak ▸ ig_cap_pp_*`). Hai ca
+// dưới đây đặt sẵn một batch Instant CỦA CHÍNH EPOCH ĐANG XÉT vào két, rồi xin
+// thêm `ig_grant = 210×10^6`. Chúng chỉ khác nhau ở lượng đã sinh sẵn:
+//
+//   3.900×10^6 + 210×10^6 = 4.110×10^6  >  4.000×10^6  ⟹ TỪ CHỐI
+//   3.000×10^6 + 210×10^6 = 3.210×10^6  ≤  4.000×10^6  ⟹ CHO QUA
+//
+// Cặp này phân biệt được hai cực: gỡ cổng thì ca thứ nhất chuyển sang xanh,
+// ca thứ hai đứng yên. Một mình ca thứ nhất không chứng minh được gì — nó đỏ
+// được vì bất kỳ lý do nào khác trong cùng hàm.
+fn t_ig_din_with_gen(credit: Int, epoch: Int, already: Int) -> VaultDatum {
+  VaultDatum {
+    ..t_ig_din(credit),
+    magic_batches: [t_instant_batch(epoch, already)],
+    next_batch_index: 1,
+  }
+}
+
+test ig_epoch_cap_exceeded_rejected() fail {
+  let din  = t_ig_din_with_gen(ig_credit, 10, 3_900_000_000)
+  let dout = t_ig_dout(din, ig_grant, 10)
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+test ig_epoch_cap_within_ok() {
+  let din  = t_ig_din_with_gen(ig_credit, 10, 3_000_000_000)
+  let dout = t_ig_dout(din, ig_grant, 10)
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+// ── Bộ đếm phải SỐNG SÓT một lượt đốt trọn ──────────────────────────────────
+//
+// 🔴 Đây là cặp bài mà bản trước của PR này KHÔNG có, và chỗ thiếu ấy là chỗ
+// thủng. Ba bài epoch-cap ở trên đều dựng trạng thái bằng cách ĐẶT SẴN batch vào
+// datum, tức đo một trạng thái mà kẻ tấn công không cần đi qua. Chúng ghim được
+// CỔNG, không ghim được TÍNH CHẤT.
+//
+// Đường tấn công thật đi qua `BurnBatch`, và nó cần HAI bài mới nói đủ:
+//
+//   (a) `bb_full_burn_keeps_batch_at_zero` — sau khi đốt trọn, batch Ở LẠI mang
+//       `initial_amount` nguyên vẹn và `current_amount: 0`. Đây là bước chứng
+//       minh trạng thái dưới đây LÀ TRẠNG THÁI THẬT SAU MỘT LƯỢT ĐỐT, không
+//       phải một datum bịa ra cho vừa bài kiểm.
+//   (b) bài ngay dưới — sinh tiếp trên đúng trạng thái đó thì BỊ TỪ CHỐI.
+//
+// Ghép lại mới ra phát biểu cần: chuỗi `InstantGen → BurnBatch(đốt trọn) →
+// InstantGen` không vượt được trần. Bộ kiểm đơn vị của Aiken gọi validator đúng
+// một lần nên tự nó không hỏi được câu "tổng qua CHUỖI giao dịch"; câu đó phải
+// viết tay, và đây là cách viết tay nó.
+//
+// Bài này còn là ca DUY NHẤT trong bộ kiểm có `initial_amount ≠ current_amount`
+// đi vào `instant_gen_in_epoch`. Mọi fixture khác đặt hai trường bằng nhau, nên
+// đột biến `initial_amount → current_amount` trong `decay.ak` sống sót toàn bộ
+// bộ kiểm trước khi có bài này.
+fn t_ig_din_after_full_burn(credit: Int, epoch: Int, generated: Int) -> VaultDatum {
+  VaultDatum {
+    ..t_ig_din(credit),
+    magic_batches: [
+      MagicBatch {
+        batch_id:            #"aabbcc",
+        source:              Instant,
+        created_epoch:       epoch,
+        initial_amount:      generated,   // đã sinh ngần này trong epoch
+        current_amount:      0,           // và đã đốt sạch
+        decay_window:        magic_decay_window,
+        profile_at_creation: None,
+        contract_id:         None,
+        halved:              False,
+      },
+    ],
+    next_batch_index: 1,
+  }
+}
+
+test ig_epoch_cap_survives_full_burn_rejected() fail {
+  let din  = t_ig_din_after_full_burn(ig_credit, 10, 3_900_000_000)
+  let dout = t_ig_dout(din, ig_grant, 10)
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+// Cực đối của bài trên: cùng trạng thái đã-đốt-sạch, chỉ khác lượng đã sinh nằm
+// dưới trần ⟹ CHO QUA. Không có ca này thì bài trên đỏ được vì bất kỳ lý do nào
+// khác của việc batch mang số dư 0 (ví dụ một cổng nào đó cấm batch rỗng).
+test ig_epoch_cap_after_full_burn_within_ok() {
+  let din  = t_ig_din_after_full_burn(ig_credit, 10, 3_000_000_000)
+  let dout = t_ig_dout(din, ig_grant, 10)
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+// Bộ đếm phải tự về 0 khi sang epoch mới. Cùng lượng đã sinh của ca bị từ chối
+// ở trên, chỉ khác là nó thuộc epoch TRƯỚC ⟹ `prune_expired` dọn nó đi ⟹ cho
+// qua. Đây là ca chứng minh bộ đếm đo ĐÚNG CỬA SỔ chứ không đếm tất tần tật.
+test ig_epoch_cap_resets_next_epoch_ok() {
+  let din  = t_ig_din_with_gen(ig_credit, 9, 3_900_000_000)
+  let dout = t_ig_dout(din, ig_grant, 10)
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+// ── C-INST-9: lượt sinh phải GHI mốc khoá, và không được ghi ngắn ────────────
+
+test ig_lock_not_written_rejected() fail {
+  let din  = t_ig_din(ig_credit)
+  let dout = VaultDatum { ..t_ig_dout(din, ig_grant, 10), instant_unlock_ms: 0 }
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+// Lượt sinh thứ hai KHÔNG được rút ngắn khoá đang có. Két vào mang một mốc xa
+// hơn `t_unlock_after_gen`; đầu ra ghi mốc gần hơn ⟹ từ chối.
+test ig_lock_shortened_by_second_gen_rejected() fail {
+  let din =
+    VaultDatum {
+      ..t_ig_din(ig_credit),
+      instant_unlock_ms: t_unlock_after_gen + 1_000,
+    }
+  let dout = t_ig_dout(din, ig_grant, 10)
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+// Ca đối xứng: giữ nguyên mốc xa hơn thì cho qua.
+test ig_lock_kept_by_second_gen_ok() {
+  let din =
+    VaultDatum {
+      ..t_ig_din(ig_credit),
+      instant_unlock_ms: t_unlock_after_gen + 1_000,
+    }
+  let dout =
+    VaultDatum {
+      ..t_ig_dout(din, ig_grant, 10),
+      instant_unlock_ms: t_unlock_after_gen + 1_000,
+    }
+  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
   t_ig_call(din, ig_grant, 10, tx)
 }
 
@@ -2670,6 +3091,21 @@ test mint_genesis_zero_credit_rejected() fail {
   let out = t_genesis_output(vd, bal, t_vault_hash, name)
   let m   = assets.from_asset(t_vault_hash, name, 1)
   let tx  = t_mint_tx(seed, out, m, [t_owner])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── mint: két mới khai sẵn một mốc khoá → từ chối ──────────────────────────
+// Cardano không chạy validator lúc TẠO UTxO, nên đây là lúc duy nhất ghim được
+// giá trị khởi đầu của trường này. Các nhánh spend chỉ ĐÔNG CỨNG nó — chúng
+// không hỏi nó bắt đầu từ đâu.
+test mint_genesis_prefilled_lock_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let vd   = VaultDatum { ..t_clean_genesis(bal), instant_unlock_ms: 1 }
+  let out  = t_genesis_output(vd, bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx   = t_mint_tx(seed, out, m, [t_owner])
   t_mint_call(seed, t_vault_hash, tx)
 }
 

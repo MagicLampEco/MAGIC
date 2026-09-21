@@ -1,11 +1,22 @@
 // MagicSDK/src/vaultDatum.ts — build the initial VaultDatum at vault creation
 //
-// All 4 vault types share the same datum shape. Initial state is mostly
-// zero/empty: no batches, no orders, no schedules, no activity, no streak.
-// The only "interesting" fields are owner, lamp_balance, profile, and
-// last_updated_epoch.
+// Trạng thái khởi sinh gần như toàn bộ là rỗng/0: không batch, không order,
+// không lịch, không hoạt động, không chuỗi ngày. Trường "có nội dung" chỉ có
+// owner, lamp_balance, profile, last_updated_epoch.
+//
+// ── HAI HÌNH DẠNG, CHỌN BẰNG `vaultType` ──────────────────────────────────────
+// Bản trước khai *"All 4 vault types share the same datum shape"*. Nay SAI: két
+// InstantGen có thêm trường 17 `instant_unlock_ms` (xem `schemas.ts` đầu tệp).
+// `vaultType: "Instant"` ⟹ đối tượng trả về có thêm `instant_unlock_ms: 0n`
+// (genesis GHIM `== 0`, `InstantGen/onchain/validators/vault.ak` ▸
+// `validate_mint_vault_id`). Bỏ trống `vaultType` ⟹ hình dạng 17 trường, y hệt
+// hành vi cũ — thêm một tham số TUỲ CHỌN chứ không đổi chữ ký đã hứa.
+//
+// Dựng datum 17 trường cho một két Instant rồi mã hoá bằng lược đồ 18 trường thì
+// Lucid NÉM ngay lúc `Data.to` — hỏng trước khi có giao dịch nào, không phải một
+// két hỏng trên chuỗi.
 
-import type { Profile } from "./types.js";
+import type { Profile, VaultType } from "./types.js";
 
 export interface InitialVaultDatumInputs {
   ownerPkh:           string;
@@ -13,6 +24,9 @@ export interface InitialVaultDatumInputs {
   profile:            Profile;
   currentEpoch:       bigint;
   personalDelegate?:  string | null;
+  /** Loại két. `"Instant"` ⟹ thêm `instant_unlock_ms: 0n` ở cuối. Bỏ trống ⟹
+   *  hình dạng 17 trường (Schedule/Prepaid). */
+  vaultType?:         VaultType;
 }
 
 /**
@@ -79,6 +93,8 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
     last_event_epoch: bigint;
     total_events:     bigint;
   };
+  /** CHỈ có mặt khi `vaultType === "Instant"`. Vắng mặt = hình dạng 17 trường. */
+  instant_unlock_ms?:    bigint;
 } {
   const { ownerPkh, lampBalanceOildrop, profile, currentEpoch } = inputs;
 
@@ -140,5 +156,11 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
       last_event_epoch: 0n,
       total_events:     0n,
     },
+    // Trường 17, CHỈ két Instant. PIN on-chain: `expect vd.instant_unlock_ms == 0`
+    // (`InstantGen/onchain/validators/vault.ak` ▸ `validate_mint_vault_id`).
+    // `...(cond ? {x} : {})` chứ không `x: undefined`: một khoá mang `undefined`
+    // vẫn là một khoá, và `Data.to` đếm khoá — nó sẽ dựng ra 18 trường cho một két
+    // Schedule rồi hỏng ở một chỗ không nhắc gì tới loại két.
+    ...(inputs.vaultType === "Instant" ? { instant_unlock_ms: 0n } : {}),
   };
 }

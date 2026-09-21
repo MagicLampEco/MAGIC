@@ -26,7 +26,7 @@ import { withdrawLamp } from "../src/withdrawLamp.js";
 import { updateProfile } from "../src/updateProfile.js";
 import { ACCEPT_INLINE_SCRIPT_CEILING } from "../src/refScript.js";
 import { buildInitialVaultDatum } from "../src/vaultDatum.js";
-import { VaultDatumSchema } from "../src/schemas.js";
+import { InstantVaultDatumSchema, VaultDatumSchema } from "../src/schemas.js";
 
 const OWNER_PKH = "5b889dfd8fabd0234233dbb2e26b9b8e96ceffe77b0c55aa2e8efc21";
 const LAMP_POLICY = "4942de4a226f43c524c1273d752712366511d5fd7ae28bc1a1576077";
@@ -58,18 +58,29 @@ const PLUTUS_JSON = {
   },
 } as never;
 
-function vaultUtxo(): UTxO {
-  const datum = buildInitialVaultDatum({
+/**
+ * UTxO vault mẫu. `kind` BẮT BUỘC, không có mặc định — và đó là điểm chính.
+ *
+ * Hai hình dạng datum khác số trường (Instant 18 · Schedule 17), mà giải mã Plutus
+ * Data nghiêm ngặt về số trường ở cả hai chiều. Một fixture đoán hộ hình dạng sẽ làm
+ * bài kiểm đỏ vì FIXTURE chứ không vì mã, và người đọc bảng đỏ đi sửa nhầm chỗ. Bắt
+ * khai ra thì người viết bài phải trả lời "đường này chạm loại vault nào" — câu mà
+ * chính `updateProfile` (chỉ Instant) và `withdrawLamp` (cả hai) trả lời khác nhau.
+ */
+function vaultUtxo(kind: "Instant" | "Schedule"): UTxO {
+  const common = buildInitialVaultDatum({
     ownerPkh:           OWNER_PKH,
     lampBalanceOildrop: 1_000_000_000n,
     profile:            "Flame",
     currentEpoch:       CUR_EPOCH > 10n ? CUR_EPOCH - 10n : 0n,
   });
+  const datum = kind === "Instant" ? { ...common, instant_unlock_ms: 0n } : common;
+  const schema = kind === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
   return {
     txHash: "bb".repeat(32), outputIndex: 0,
     address: "addr_test1wqvrwknagm22rwnrus2v0nagyknauff3jztknm3x2d9nahga0t3ee",
     assets: { lovelace: 20_000_000n, [`${LAMP_POLICY}744c414d50`]: 1_000_000_000n },
-    datum: Data.to(datum as never, VaultDatumSchema),
+    datum: Data.to(datum as never, schema),
     datumHash: null, scriptRef: null,
   } as UTxO;
 }
@@ -132,7 +143,7 @@ describe("dây nối CIP-33 — withdrawLamp", () => {
     const ref = refUtxo(VAULT_SCRIPT);
 
     await withdrawLamp({
-      ...baseWithdraw, lucid, vaultUtxo: vaultUtxo(),
+      ...baseWithdraw, lucid, vaultUtxo: vaultUtxo("Schedule"),
       vaultRefScriptUtxo: ref, tipPosixMs: TIP_MS,
     } as never);
 
@@ -147,7 +158,7 @@ describe("dây nối CIP-33 — withdrawLamp", () => {
   it("🔴 ref UTxO mang script KHÁC ⟹ NÉM trước khi dựng, không để người dùng ký", async () => {
     const { lucid, calls } = recordingLucid();
     await expect(withdrawLamp({
-      ...baseWithdraw, lucid, vaultUtxo: vaultUtxo(),
+      ...baseWithdraw, lucid, vaultUtxo: vaultUtxo("Schedule"),
       vaultRefScriptUtxo: refUtxo(OTHER_SCRIPT), tipPosixMs: TIP_MS,
     } as never)).rejects.toThrow(/REFSCRIPT-002/);
     // Ném TRƯỚC khi chạm trình dựng: một lỗi sau `complete()` thì người dùng đã
@@ -158,7 +169,7 @@ describe("dây nối CIP-33 — withdrawLamp", () => {
   it("chọn đường inline TƯỜNG MINH ⟹ nhét script, và KHÔNG readFrom", async () => {
     const { lucid, calls } = recordingLucid();
     await withdrawLamp({
-      ...baseWithdraw, lucid, vaultUtxo: vaultUtxo(),
+      ...baseWithdraw, lucid, vaultUtxo: vaultUtxo("Schedule"),
       vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING, tipPosixMs: TIP_MS,
     } as never);
     expect(calls).toContain("attach.SpendingValidator");
@@ -180,7 +191,7 @@ describe("dây nối CIP-33 — updateProfile", () => {
     const ref = refUtxo(VAULT_SCRIPT);
 
     await updateProfile({
-      ...baseUpdate, lucid, vaultUtxo: vaultUtxo(),
+      ...baseUpdate, lucid, vaultUtxo: vaultUtxo("Instant"),
       vaultRefScriptUtxo: ref, tipPosixMs: TIP_MS,
     } as never);
 
@@ -193,7 +204,7 @@ describe("dây nối CIP-33 — updateProfile", () => {
     const { lucid } = recordingLucid();
     const bare = { ...refUtxo(VAULT_SCRIPT), scriptRef: null } as UTxO;
     await expect(updateProfile({
-      ...baseUpdate, lucid, vaultUtxo: vaultUtxo(),
+      ...baseUpdate, lucid, vaultUtxo: vaultUtxo("Instant"),
       vaultRefScriptUtxo: bare, tipPosixMs: TIP_MS,
     } as never)).rejects.toThrow(/REFSCRIPT-001[\s\S]*UpdateProfile|UpdateProfile[\s\S]*REFSCRIPT-001/);
   });

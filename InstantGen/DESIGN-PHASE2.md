@@ -343,7 +343,7 @@ Biến môi trường mới: `BACKING_NFT_POLICY_ID`, `BACKING_SCRIPT_HASH` (m�
 |---|---|
 | `BurnBatch` = constr 2, chữ ký `{ burns: List<(ByteArray, Int)> }` | **giữ nguyên** cả InstantGen lẫn ScheduleGen |
 | `ConsumeMAGIC/CONTRACT.md` v2 | không đụng; `consume.ak` không giải mã `VaultDatum` (§7.4) nên đổi ngữ nghĩa trường datum không ảnh hưởng |
-| Hình dạng Plutus Data của `VaultDatum` | không đổi (17 trường; `ActivityState` vẫn 2 trường; `MagicBatch` vẫn 9 trường) |
+| Hình dạng Plutus Data của `VaultDatum` | không đổi **bởi DESIGN-2** (17 trường; `ActivityState` vẫn 2 trường; `MagicBatch` vẫn 9 trường). 🔴 **Một thay đổi SAU đó đã đổi:** 2026-09-21, `CC-GEN-L-TIMING` thêm trường 18 `instant_unlock_ms` vào RIÊNG InstantGen — xem `BOUNDARIES.md` ▸ INV-MAGIC-CITIZEN. Dòng này tả phạm vi của DESIGN-2, không tả trạng thái hôm nay |
 | `VaultRedeemer` số biến thể + chỉ số | không đổi (0..5); chỉ nhãn constr 1 đổi tên, vẫn nullary |
 
 `ConsumeMAGIC/offchain` vẫn xanh sau thay đổi (số kiểm: [`DevStatus.md`](../DevStatus.md)).

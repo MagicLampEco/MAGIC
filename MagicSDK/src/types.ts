@@ -19,8 +19,11 @@ export type Profile = "Ember" | "Flame" | "Lantern";
  * — đó là Plutus Data đã lên chain, xem bia mộ trong tệp đó.)
  *
  * A user who wants both mechanisms needs 2 separate vaults (2 UTxOs at 2
- * different addresses). The VaultDatum shape is identical across both, but the
- * validator code (and hence the address) differs.
+ * different addresses).
+ *
+ * 🔴 Hình dạng datum KHÔNG còn giống nhau giữa hai loại: két `Instant` mang thêm
+ * trường 17 `instant_unlock_ms` (18 trường) trong khi `Schedule` giữ 17. Lược đồ
+ * và lý do: `schemas.ts` đầu tệp. Bản trước của dòng này khai ngược.
  */
 export type VaultType = "Instant" | "Schedule";
 

@@ -213,8 +213,9 @@ https://preview.cardanoscan.io/address/{SCRIPT_ADDRESS}
 
 | Lỗi | Xử lý |
 |---|---|
-| `BLOCKFROST_KEY missing in .env` | Đặt `BLOCKFROST_KEY=…` ngay trước lệnh. ĐỪNG ghi khoá vào `.env` |
-| `Either PRIVATE_KEY or WALLET_SEED required` | Đặt `WALLET_SEED='…'` ngay trước lệnh. ĐỪNG ghi seed xuống tệp |
+| `Thiếu biến môi trường BLOCKFROST_KEY.` | Đặt `BLOCKFROST_KEY=…` ngay trước lệnh. ĐỪNG ghi khoá xuống tệp |
+| `Thiếu biến môi trường: cần PRIVATE_KEY hoặc WALLET_SEED.` | Đặt `WALLET_SEED='…'` ngay trước lệnh. ĐỪNG ghi seed xuống tệp |
+| `KEEPER_STEPS có N tên không tồn tại` | Gõ sai tên bước. Tập hợp lệ in ngay dòng dưới; xem `ALL_STEPS` trong `keeper/keeper.ts` |
 | `Need at least 5 tADA` | Lấy tADA từ faucet |
 | `FILL_AFTER_AIKEN_BUILD` | Chạy `aiken build` ở `<Module>/onchain` rồi điền hash |
 | `Vault UTxO not found` | Chạy `npm run deploy:instant-vault` trước |

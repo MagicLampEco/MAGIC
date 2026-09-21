@@ -11,6 +11,11 @@
 //   SKIP_OWNER_SIG=1   omit signer (C-PC-V1 negative)
 //   FORCE_COOLDOWN=1   build tx even if cooldown not met (C-PC-V2 negative)
 //   VAULT_TX_HASH      pick specific vault UTxO
+//
+// ## Mã thoát — bảng CHUNG của thư mục này, nguồn ở `scripts/awaitTx.ts` ▸ `## Mã thoát`
+//   0 xong (tx ĐÃ vào khối) · 1 hỏng thật · 2 CHƯA ĐO ĐƯỢC · 3 lượt phá LỌT qua.
+//   🔴 `3` ở đây TRƯỚC 2026-09-21 là `2`. Đổi để một con số mang một nghĩa trong cả
+//   thư mục; xem lý do và phép kiểm an toàn ở nguồn.
 
 import {
   Lucid, Blockfrost, Data,
@@ -23,6 +28,7 @@ import {
   POLICY_IDS, ASSET_NAMES, SCRIPT_HASHES,
 } from "../config.js";
 
+import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
 import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
@@ -152,16 +158,24 @@ async function main() {
 
     const signed = await finalTx.sign.withWallet().complete();
     const txHash = await signed.submit();
-
-    console.log("╔════════════════════════════════════════════╗");
-    console.log("║              ✅ SUCCESS                    ║");
-    console.log("╚════════════════════════════════════════════╝");
-    console.log(`TX hash:   ${txHash}`);
+    console.log(`\nTX hash:   ${txHash}`);
 
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
       console.error("\n⚠  UNEXPECTED: tamper tx SUBMITTED — validator did not reject.");
+      process.exit(3);
+    }
+
+    // `submit()` mới nói node NHẬN vào mempool — `scripts/awaitTx.ts` nói vì sao đó chưa
+    // đủ. Riêng ở đây nó còn nặng hơn một bậc: UpdateProfile có thời gian nguội (không
+    // đổi hai lần trong 2 epoch liên tiếp), nên một lượt tưởng-đã-xong-mà-rớt làm lượt
+    // sau bị chính cổng nguội từ chối, và câu từ chối đó trỏ vào cổng chứ không vào tx rớt.
+    if (!(await awaitTxBounded(lucid, txHash))) {
+      console.error(`\n${chuaDoDuocMessage(txHash)}`);
       process.exit(2);
     }
+    console.log("╔════════════════════════════════════════════╗");
+    console.log("║       ✅ SUCCESS — tx ĐÃ vào khối          ║");
+    console.log("╚════════════════════════════════════════════╝");
   } catch (err: any) {
     const msg = String(err?.message ?? err);
     if (tamper || process.env.SKIP_OWNER_SIG === "1" || process.env.FORCE_COOLDOWN === "1") {

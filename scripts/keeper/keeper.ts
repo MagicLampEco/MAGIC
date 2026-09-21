@@ -25,12 +25,14 @@
 //   KEEPER_PRICE_BEACONS  danh sách `<price_nft_policy>:<price_param_hash>`, phân cách dấu
 //                         phẩy. Mỗi cặp là một instance `consume`. Bỏ trống ⟹ bỏ bước 2.
 //   KEEPER_STEPS          tập bước chạy, mặc định `backing,price,fire`. Thêm `instant` để cấp.
+//                         Tên lạ ⟹ DỪNG với mã 1 và kê ra tập hợp lệ (xem `ALL_STEPS`).
 //   KEEPER_INSTANT_LAMP   lượng LAMP khoá vào vault InstantGen mới ở bước 4 (mặc định 1001).
 //   KEEPER_FIRE_OWNERS    pkh chủ vault được bắn, phân cách dấu phẩy. Bỏ trống ⟹ mọi vault.
 //   KEEPER_DRY_RUN=1      chỉ đo và in việc sẽ làm, không gửi tx nào.
 //
-// Mã thoát: 0 = mọi bước xong hoặc không có việc · 1 = có bước hỏng · 2 = có tx đã gửi mà
-// chưa đọc lại được kết quả (đừng chạy lại mù, soi explorer trước).
+// Mã thoát: 0 = mọi bước xong hoặc không có việc · 1 = có bước hỏng, HOẶC `KEEPER_STEPS`
+// mang một tên không có thật · 2 = có tx đã gửi mà chưa đọc lại được kết quả (đừng chạy lại
+// mù, soi explorer trước).
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -45,6 +47,7 @@ import {
   POLICY_IDS, ASSET_NAMES, PROTOCOL,
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
+import { awaitTxBounded as awaitTxBoundedShared, DEFAULT_AWAIT_TX_MS } from "../awaitTx.js";
 import { priceParamParams, scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import {
   decodePriceParam, encodePriceParam, type PriceParamT,
@@ -66,14 +69,25 @@ const BackingBeaconDatumSchema = Data.Object({
 });
 
 const DRY = process.env.KEEPER_DRY_RUN === "1";
-const STEPS = new Set((process.env.KEEPER_STEPS ?? "backing,price,fire").split(",").map((s) => s.trim()));
+
+// Tập ĐÓNG các bước tồn tại. `guard` ở `main` chỉ chạy đúng những tên này, nên đây là
+// danh sách mà `KEEPER_STEPS` được đối chiếu vào. Thêm một bước là thêm tên vào đây —
+// quên thì bước đó bị loại VĨNH VIỄN và bản tổng kết vẫn nói "0 hỏng".
+const ALL_STEPS = ["backing", "price", "fire", "instant"] as const;
+type StepName = (typeof ALL_STEPS)[number];
+
+const STEPS = new Set((process.env.KEEPER_STEPS ?? "backing,price,fire").split(",").map((s) => s.trim()).filter((s) => s !== ""));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-type Outcome = "done" | "skip" | "fail" | "unverified";
+// `excluded` KHÔNG phải một biến thể của `skip`, và gộp hai cái là đúng lỗi mà cả bản vá
+// này tồn tại để chặn: `skip` nghĩa là bước ĐÃ CHẠY, đã đo, và kết luận không có việc —
+// một kết quả. `excluded` nghĩa là bước KHÔNG CHẠY vì cấu hình loại nó ra — một khoảng mù.
+// Hai thứ đó đọc giống nhau trong một dòng tổng kết và cần hai phản ứng khác nhau.
+type Outcome = "done" | "skip" | "fail" | "unverified" | "excluded";
 const report: { step: string; outcome: Outcome; note: string }[] = [];
 const record = (step: string, outcome: Outcome, note: string) => {
   report.push({ step, outcome, note });
-  const mark = { done: "✔", skip: "·", fail: "✗", unverified: "?" }[outcome];
+  const mark = { done: "✔", skip: "·", fail: "✗", unverified: "?", excluded: "⊘" }[outcome];
   console.log(`${mark} [${step}] ${note}`);
 };
 
@@ -85,19 +99,13 @@ async function tipMs(): Promise<bigint> {
   return BigInt(tip.time) * 1000n;
 }
 
-// `awaitTx` của provider Blockfrost trong Lucid không có trần thời gian: tx bị rớt khỏi
-// mempool thì nó chờ mãi và mọi bước sau không chạy. Nên chờ có trần; hết trần thì trả
-// false để bước đó ghi "chưa đo được" (mã thoát 2), không ghi "xong" cũng không ghi "hỏng".
-const AWAIT_TX_MS = Number(process.env.KEEPER_AWAIT_TX_MS ?? 300_000);
-async function awaitTxBounded(lucid: LucidEvolution, txHash: string): Promise<boolean> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<boolean>((r) => { timer = setTimeout(() => r(false), AWAIT_TX_MS); });
-  try {
-    return await Promise.race([lucid.awaitTx(txHash).then(() => true), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// Lý do phải có trần (và vì sao `lucid.awaitTx` trần trụi thì không đủ) nằm ở
+// `scripts/awaitTx.ts` — một nguồn, đừng chép xuống đây. Bản gốc của hàm ấy sống ở tệp
+// này; nó được đưa ra ngoài khi các runner trong `scripts/test/` cần đúng nó.
+// `KEEPER_AWAIT_TX_MS` giữ nguyên hiệu lực cho keeper, đè lên trần chung.
+const AWAIT_TX_MS = Number(process.env.KEEPER_AWAIT_TX_MS ?? DEFAULT_AWAIT_TX_MS);
+const awaitTxBounded = (lucid: LucidEvolution, txHash: string) =>
+  awaitTxBoundedShared(lucid, txHash, AWAIT_TX_MS);
 
 // Vòng hỏi của `awaitTx` chạy trong `setInterval` không có `catch`: Blockfrost trả 5xx dạng
 // HTML là lời hứa bị từ chối không ai bắt, và Node mặc định giết tiến trình mà không in dòng
@@ -416,6 +424,28 @@ async function main() {
   if (NETWORK === "Mainnet") {
     throw new Error("Từ chối chạy trên Mainnet: bước backing dựng beacon GIẢ. Beacon thật do keeper tầng GreenBack của kho này ghi từ dự trữ có thật.");
   }
+
+  // `KEEPER_STEPS` là một luật LOẠI TRỪ, nên nó phải tự khai (Forall §Cổng gác). Trước khi
+  // loại bất cứ bước nào, kiểm rằng mọi tên trong đó CÓ THẬT — một tên gõ nhầm (`fires`,
+  // `Price`) trước bản vá này làm bước tương ứng biến mất mà bản tổng kết vẫn in "hỏng 0".
+  // Fail-closed: dừng cả lượt, đừng chạy một tập con mà người gọi không định chạy.
+  //
+  // Cổng này đứng TRƯỚC `Lucid(...)`, `selectWallet` và `tipMs()` — tức trước lượt gọi
+  // mạng đầu tiên — vì nó đo một thứ hoàn toàn cục bộ: một chuỗi trong môi trường.
+  //
+  // Phạm vi của câu trên, vì nó dễ bị đọc rộng hơn thực tế: nó KHÔNG có nghĩa là cổng chạy
+  // được khi chưa có khoá. `config.ts` ném lỗi ngay lúc nạp mô-đun nếu thiếu `BLOCKFROST_KEY`,
+  // nên lượt chạy chết trước cả `main()`. Cái cổng này mua được là: không lượt gọi mạng nào,
+  // không giao dịch nào, và thông báo trỏ thẳng vào biến gõ sai thay vì vào một bản tổng kết
+  // trông như đã chạy đủ.
+  const unknown = [...STEPS].filter((s) => !(ALL_STEPS as readonly string[]).includes(s));
+  if (unknown.length > 0) {
+    console.error(`✗ KEEPER_STEPS có ${unknown.length} tên không tồn tại: ${unknown.join(", ")}`);
+    console.error(`  tập hợp lệ: ${ALL_STEPS.join(", ")}`);
+    console.error(`  DỪNG trước khi chạm mạng — không giao dịch nào được gửi.`);
+    process.exit(1);
+  }
+
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
   const ownerPkh = getAddressDetails(await lucid.wallet().address()).paymentCredential?.hash;
@@ -425,8 +455,12 @@ async function main() {
   const epoch = nowMs / PROTOCOL.MS_PER_EPOCH;
   console.log(`ví keeper pkh ${ownerPkh} · epoch ${epoch} · tip ${new Date(Number(nowMs)).toISOString()}\n`);
 
-  const guard = async (name: string, fn: () => Promise<unknown>) => {
-    if (!STEPS.has(name)) return;
+  const guard = async (name: StepName, fn: () => Promise<unknown>) => {
+    // Bước bị loại vẫn PHẢI vào sổ. Trước bản vá này chỗ đây là `return` trơ, nên một lượt
+    // `KEEPER_STEPS=backing` in "tổng: 1 mục · hỏng 0" rồi thoát 0 — đọc y hệt một lượt
+    // chạy đủ bốn bước. Bản tổng kết khi đó không sai một con số nào; nó chỉ không mang
+    // theo phạm vi của chính nó.
+    if (!STEPS.has(name)) return record(name, "excluded", "không nằm trong KEEPER_STEPS — bước này KHÔNG chạy, không đo được gì");
     try { await fn(); } catch (e) { record(name, "fail", String((e as Error)?.message ?? e).slice(0, 400)); }
   };
   await guard("backing", () => stepBacking(lucid, ownerPkh, epoch));
@@ -438,7 +472,18 @@ async function main() {
 
   const fails = report.filter((r) => r.outcome === "fail").length;
   const unverified = report.filter((r) => r.outcome === "unverified").length;
+  const excluded = report.filter((r) => r.outcome === "excluded");
+
+  // Dòng tổng kết mang theo PHẠM VI của chính nó: bao nhiêu bước tồn tại, bao nhiêu đã
+  // chạy, và tên những bước KHÔNG chạy. Đếm phần bị loại — không chỉ khai rằng có loại.
   console.log(`\n=== tổng: ${report.length} mục · hỏng ${fails} · chưa đo được ${unverified} ===`);
+  console.log(`=== phạm vi: ${ALL_STEPS.length - excluded.length}/${ALL_STEPS.length} bước đã chạy`
+    + (excluded.length > 0 ? ` · KHÔNG chạy: ${excluded.map((r) => r.step).join(", ")}` : "")
+    + ` (luật loại trừ: KEEPER_STEPS=${[...STEPS].join(",")}) ===`);
+
+  // Bước bị loại KHÔNG đổi mã thoát. Loại một bước là việc hợp lệ và người gọi cố ý làm;
+  // biến nó thành mã khác 0 sẽ dạy người ta bỏ qua mã thoát. Cái phải đổi là bản tổng kết
+  // đọc được, và nó vừa đổi ở hai dòng trên.
   process.exit(fails > 0 ? 1 : unverified > 0 ? 2 : 0);
 }
 

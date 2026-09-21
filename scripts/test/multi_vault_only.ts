@@ -9,6 +9,10 @@
 // SnapshotGen/VacuumGen đã dời sang Legacy/genmagic-v3.3 (mô hình GenMAGIC v3.3,
 // đã bỏ) — các case trước đây chạy trên vault Snapshot nay chạy trên vault Instant.
 //
+// ## Mã thoát — bảng CHUNG của thư mục này, nguồn ở `scripts/awaitTx.ts` ▸ `## Mã thoát`
+//   0 xong (tx ĐÃ vào khối) · 1 hỏng thật · 2 CHƯA ĐO ĐƯỢC.
+//   Tệp này KHÔNG có chế độ phá nên nó không bao giờ trả `3`.
+//
 // Each case is a discovery + isolation assertion — the script does NOT auto-create
 // vaults; you must have deployed N vaults beforehand (e.g. running
 // deploy:instant-vault twice, then deploy:schedule-vault once).
@@ -30,6 +34,7 @@ import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   PROTOCOL, POLICY_IDS, ASSET_NAMES, SCRIPT_HASHES,
 } from "../config.js";
+import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
 import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
@@ -224,7 +229,15 @@ async function runMv3(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
 
   const signed = await result.tx.sign.withWallet().complete();
   const txHash = await signed.submit();
-  console.log(`✓ Withdrew ${amountLamp} LAMP from Instant vault: ${txHash}`);
+  // Tệp này KHAI thẳng rằng phép kiểm cách ly là việc của người đọc ("re-query
+  // post-finality"). Lời khai đó chỉ dùng được khi tx THẬT SỰ vào khối — không thì người
+  // đọc soi một trạng thái không đổi và kết luận cách ly đúng, trong khi chẳng có gì đã
+  // xảy ra. Ca xanh-ở-cả-hai-cực. Lý do đầy đủ: `scripts/awaitTx.ts`.
+  if (!(await awaitTxBounded(lucid, txHash))) {
+    console.error(`\n${chuaDoDuocMessage(txHash)}`);
+    process.exit(2);
+  }
+  console.log(`✓ Withdrew ${amountLamp} LAMP from Instant vault (ĐÃ vào khối): ${txHash}`);
   console.log(`  Schedule vault expected unchanged — re-query post-finality to verify.`);
 }
 
@@ -264,7 +277,11 @@ async function runMv4(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
 
   const signed = await result.tx.sign.withWallet().complete();
   const txHash = await signed.submit();
-  console.log(`✓ UpdateProfile vault 1 → ${newProfile}: ${txHash}`);
+  if (!(await awaitTxBounded(lucid, txHash))) {
+    console.error(`\n${chuaDoDuocMessage(txHash)}`);
+    process.exit(2);
+  }
+  console.log(`✓ UpdateProfile vault 1 → ${newProfile} (ĐÃ vào khối): ${txHash}`);
   console.log(`  Vault 2, 3 expected: profile unchanged, pending_profile = None.`);
   console.log(`  Re-query post-finality and assert: only vault 1's pending_profile is Some(...).`);
 }

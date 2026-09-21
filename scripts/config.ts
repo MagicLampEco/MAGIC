@@ -18,8 +18,12 @@ export const BLOCKFROST_KEY = process.env.BLOCKFROST_KEY ?? "";
 export const PRIVATE_KEY    = process.env.PRIVATE_KEY ?? "";
 export const WALLET_SEED    = (process.env.WALLET_SEED ?? "").trim().replace(/\s+/g, " ");
 
-if (!BLOCKFROST_KEY)              throw new Error("BLOCKFROST_KEY missing in .env");
-if (!PRIVATE_KEY && !WALLET_SEED) throw new Error("Either PRIVATE_KEY or WALLET_SEED required in .env");
+// Thông báo chỉ nêu TÊN BIẾN còn thiếu, không nêu tệp nào giữ giá trị: chỉ đường tới kho
+// khoá là thứ cần TRƯỚC một giá trị, nên một câu lỗi "tìm ở tệp X" là một chỉ dẫn sai chỗ
+// kể cả khi nó đúng. Bản trước viết "missing in .env" và tệp đó còn không phải nơi giá trị
+// thật đang nằm, nên nó vừa lộ hướng vừa chỉ nhầm hướng.
+if (!BLOCKFROST_KEY)              throw new Error("Thiếu biến môi trường BLOCKFROST_KEY.");
+if (!PRIVATE_KEY && !WALLET_SEED) throw new Error("Thiếu biến môi trường: cần PRIVATE_KEY hoặc WALLET_SEED.");
 
 /** Select wallet from whichever credential is available. CRLF-safe for Windows. */
 export function selectWallet(lucid: LucidEvolution): void {

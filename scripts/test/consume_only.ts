@@ -530,22 +530,47 @@ async function main() {
   // ── Poll Engage UTxO mới → assert consumed_count += op_count ──────────────────
   console.log("\n⏳ Polling Engage output mới...");
   const consumeAddr = engageUtxo.address;
+  // 🔴 Vùng `try` ở đây ôm ĐÚNG lệnh gọi mạng, không ôm phép khẳng định.
+  //
+  // Bản trước gói cả ba việc — đọc UTxO, giải mã datum, so `consumed_count` — vào một
+  // `try` mà `catch` của nó mang chú thích `/* index lag */`. Nên câu `throw` báo SAI SỐ
+  // rơi vào chính cái `catch` đó và bị đọc thành "chỉ mục chưa kịp", vòng lặp chạy tiếp,
+  // rồi 5 phút sau tệp báo *"Engage output mới chưa thấy"* — một câu KHÔNG ĐÚNG: output
+  // đã thấy, chỉ là nó mang sai số. Ba trạng thái (khớp · LỆCH · chưa đo được) bị nén
+  // thành hai, và trạng thái bị nuốt đúng là trạng thái nói rằng validator đã ghi sai.
+  //
+  // Nay chỉ lỗi MẠNG được nuốt, và cả nó cũng phải in ra — một chuỗi lỗi mạng lặp lại là
+  // dấu của khoá sai hoặc mạng sai, không phải của chỉ mục chậm.
   for (let i = 0; i < 30; i++) {
     await sleep(10_000);
+
+    let fresh: UTxO | undefined;
     try {
       const es = await lucid.utxosAt(consumeAddr);
-      const fresh = es.find((u) => u.txHash === txHash && (u.assets[engageNftUnit] ?? 0n) === 1n);
-      if (fresh?.datum) {
-        const d = decodeEngageDatum(fresh.datum);
-        if (d.consumed_count === newEngage.consumed_count) {
-          console.log(`\n✅ Engage state confirmed: consumed_count = ${d.consumed_count} (=${oldEngage.consumed_count}+${opCount}).`);
-          console.log(`   New Engage UTxO: ${fresh.txHash}#${fresh.outputIndex}`);
-          return;
-        }
-        throw new Error(`consumed_count = ${d.consumed_count}, kỳ vọng ${newEngage.consumed_count}.`);
-      }
-    } catch (e) { /* index lag */ }
-    process.stdout.write(`   attempt ${i + 1}…\n`);
+      fresh = es.find((u) => u.txHash === txHash && (u.assets[engageNftUnit] ?? 0n) === 1n);
+    } catch (e) {
+      process.stdout.write(`   attempt ${i + 1}… (chỉ mục chưa trả lời: ${String((e as Error)?.message ?? e).slice(0, 160)})\n`);
+      continue;
+    }
+
+    if (!fresh?.datum) {
+      process.stdout.write(`   attempt ${i + 1}…\n`);
+      continue;
+    }
+
+    // Từ đây trở xuống KHÔNG còn nhánh nuốt lỗi. `decodeEngageDatum` ném ra là datum sai
+    // hình dạng — đó là một phát hiện, không phải độ trễ chỉ mục.
+    const d = decodeEngageDatum(fresh.datum);
+    if (d.consumed_count !== newEngage.consumed_count) {
+      throw new Error(
+        `SAI SỐ, không phải độ trễ: Engage UTxO ${fresh.txHash}#${fresh.outputIndex} `
+        + `mang consumed_count = ${d.consumed_count}, kỳ vọng ${newEngage.consumed_count} `
+        + `(= ${oldEngage.consumed_count} + ${opCount}). UTxO đã vào khối và đã đọc được.`,
+      );
+    }
+    console.log(`\n✅ Engage state confirmed: consumed_count = ${d.consumed_count} (=${oldEngage.consumed_count}+${opCount}).`);
+    console.log(`   New Engage UTxO: ${fresh.txHash}#${fresh.outputIndex}`);
+    return;
   }
   throw new Error("Engage output mới chưa thấy sau ~5 phút — kiểm tra tx trên explorer.");
 }

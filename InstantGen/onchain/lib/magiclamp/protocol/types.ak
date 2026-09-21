@@ -216,6 +216,31 @@ pub type VaultDatum {
   // — nên mức ngắn nhất họ đạt được đúng bằng "một epoch kể từ bây giờ". Cùng một
   // dòng mã, một cận gác được và một cận thì không.
   //
+  // 🔴 PHẠM VI — ĐỌC TRƯỚC KHI DỰA VÀO TRƯỜNG NÀY. Nó được đọc làm CỔNG ở đúng
+  // MỘT nhánh: `validate_withdraw_lamp` (`get_validity_lower_ms(tx) >=
+  // instant_unlock_ms`). Nhánh SINH ghi nó, và KHÔNG đọc nó làm cổng — không
+  // mệnh đề nào trong `validate_instant_gen` so mốc này với thời điểm hiện tại.
+  // Mọi nhánh còn lại chỉ GHIM nó đứng yên.
+  //
+  // Ép được:     một đồng LAMP không nuôi hai lượt sinh ở HAI KÉT trong cùng một
+  //              cửa sổ khoá — vì nó không rời được két thứ nhất.
+  // KHÔNG ép:    MỘT két sinh ở giây cuối epoch `e` rồi sinh lại ở giây đầu
+  //              `e+1` lấy HAI trần cách nhau vài giây, trên cùng số LAMP, không
+  //              cần chuyển đi đâu. Trần trong epoch do bộ đếm suy ra ở
+  //              `decay.ak ▸ instant_gen_in_epoch` giữ, mà bộ đếm ấy khoá theo
+  //              CHỈ SỐ epoch nên nó về 0 ở ranh giới; trường này thì chỉ canh
+  //              đường RA.
+  //
+  // Mức phát biểu đúng của cặp cơ chế, đừng viết rộng hơn: **≤1 trần mỗi CHỈ SỐ
+  // epoch cho mỗi két, cộng ≤1 lượt chuyển két mỗi CỬA SỔ KHOÁ**. Viết thành
+  // "≤1 trần mỗi epoch trên mỗi đồng LAMP" là khai một bảo đảm không có.
+  //
+  // Chủ dự án chốt 2026-09-21: GIỮ cơ chế, sửa lời khai cho đúng phạm vi. Cửa sổ
+  // này tốn 2× trần; lỗ `apply_burns` vá cùng ngày tốn 120×. Bịt nó là đổi mô
+  // hình (trần theo cửa sổ TRÔI thay vì theo chỉ số epoch), và mô hình đó đòi
+  // một ô datum ghi được để nhớ mốc — đánh đổi đúng thứ đắt nhất lấy thứ rẻ
+  // nhất. Ràng buộc TẠM đang có hiệu lực, fail-closed: CHỈ CHẠY TESTNET.
+  //
   // ĐẶT Ở CUỐI vì có bên đọc theo VỊ TRÍ — xem bia mộ trường 15 ngay trên. Thêm ở
   // cuối giữ nguyên chỉ số 0..16, nên `Paymaster` ▸ `vault_delegate_is`
   // (`list.at(fields, 15)`) và `ConsumeMAGIC` ▸ `consume.ak` (đọc trường 0) không

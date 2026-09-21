@@ -457,17 +457,23 @@ fn validate_instant_gen(
   //
   // `compute_instant_grant` đã kẹp MỘT lượt sinh dưới `cap_pp(avail)`. Cổng này
   // kẹp TỔNG của cả epoch dưới cùng cái trần đó. Không có nó, vòng
-  // `InstantGen → BurnBatch → InstantGen` lặp trong cùng một epoch — `BurnBatch`
-  // hạ `current_amount` về 0 rồi `prune_expired` nhả lại một suất trong trần 32
-  // batch — và mỗi vòng lại lấy trọn trần một lần nữa. Trần duy nhất còn lại phía
-  // trên là phần thặng dư GreenBack chia theo két, tức cỡ 120 vòng mỗi epoch: vốn
-  // cần để đạt cùng một lượng MAGIC giảm đi 120 lần.
+  // `InstantGen → BurnBatch → InstantGen` lặp trong cùng một epoch — mỗi vòng lấy
+  // trọn trần một lần nữa trên cùng số LAMP — và trần duy nhất còn lại phía trên
+  // là phần thặng dư GreenBack chia theo két, tức cỡ 120 vòng mỗi epoch: vốn cần
+  // để đạt cùng một lượng MAGIC giảm đi 120 lần.
   //
-  // 🔴 Phanh ĐANG chặn ca đó hôm nay là một phanh TÌNH CỜ, không phải cổng này:
-  // nhánh sinh đặt `consumed_credit: 0` ở đầu ra nên vòng hai có `grant = 0`.
-  // Phanh ấy biến mất đúng lúc `INV-MAGIC-CITIZEN` vào mã, vì lúc đó lượng sinh
-  // không còn đọc `consumed_credit` làm độ lớn nữa. Nên cổng này phải đứng TRƯỚC
-  // thay đổi ấy, không phải sau.
+  // 🔴 Cổng này MỘT MÌNH không đủ, và bản trước quy sai thủ phạm. Nó viết rằng
+  // `prune_expired` nhả lại suất; thủ phạm thật là `apply_burns`, hàm trả `None`
+  // khi số dư về 0 ⟹ batch biến mất ⟹ bộ đếm về 0 ngay trong epoch ⟹ cổng này
+  // qua. Đã vá tại `apply_burns` (batch đốt sạch ở lại với `current_amount: 0`).
+  // Hai thứ phải đi cùng nhau: cổng đếm, và bất biến "không nhánh nào xoá một
+  // batch còn sống". Gỡ một trong hai là mở lại vòng lặp.
+  //
+  // 🔴 Và một phanh nữa đang chặn ca đó hôm nay là phanh TÌNH CỜ, không phải cổng
+  // này: nhánh sinh đặt `consumed_credit: 0` ở đầu ra, nên một vòng KHÔNG đốt có
+  // `grant = 0`. Phanh ấy không chặn vòng CÓ đốt (`BurnBatch` cộng lại
+  // `consumed_credit`), và nó biến mất hẳn đúng lúc `INV-MAGIC-CITIZEN` vào mã.
+  // Nên cổng này phải đứng TRƯỚC thay đổi ấy, không phải sau.
   //
   // Bộ đếm suy ra từ chính `magic_batches` — không có trường datum nào giữ nó. Bốn
   // điều kiện làm phép suy đứng vững nằm ở `decay.ak ▸ instant_gen_in_epoch`.
@@ -1107,8 +1113,10 @@ fn validate_burn_batch(
 /// For each (batch_id, amount): there must be EXACTLY one matching batch; that
 /// batch must still be LIVE at `current_epoch` (§4.2 use-or-lose — a batch is
 /// spendable only inside its own created_epoch); 0 < amount ≤ current_amount;
-/// every other field stays immutable (T4); a batch whose result is 0 is pruned.
-/// List order is preserved for untouched batches. Over-burn, unknown batch_id
+/// every other field stays immutable (T4); a batch whose result is 0 STAYS in
+/// the list carrying `current_amount: 0` (see the red note in the body — it is
+/// what keeps `instant_gen_in_epoch` from being reset by a burn).
+/// List order is preserved for every batch. Over-burn, unknown batch_id
 /// and DEAD batch_id all fail.
 fn apply_burns(
   batches       : List<MagicBatch>,
@@ -1130,12 +1138,25 @@ fn apply_burns(
             // "pay" with MAGIC the protocol already reset.
             expect !is_expired(b, current_epoch)
             expect amt <= b.current_amount   // over-burn forbidden (== model, not ≥)
-            let new_amount = b.current_amount - amt
-            if new_amount == 0 {
-              None   // prune fully-consumed batch
-            } else {
-              Some(MagicBatch { ..b, current_amount: new_amount })
-            }
+            // 🔴 Batch đốt sạch Ở LẠI mang `current_amount: 0`, KHÔNG bị xoá.
+            //
+            // Bản trước trả `None` ở đây, và đó là đường lách cổng `C-INST-8`:
+            // bộ đếm `instant_gen_in_epoch` cộng `initial_amount` của các batch
+            // CÒN TRONG DANH SÁCH, nên xoá phần tử là xoá bộ đếm. Chuỗi
+            // `InstantGen → BurnBatch(đốt trọn) → InstantGen` vì thế lấy được
+            // trọn trần hai lần trong cùng một epoch, trên cùng số LAMP, chỉ
+            // bằng chữ ký của chính chủ két. Bài canh: `bb_full_burn_giu_batch`
+            // và `chain_gen_burn_gen_vuot_tran_bi_tu_choi`.
+            //
+            // Giữ lại là AN TOÀN ở mọi đường đọc khác: `batch_balance` trả
+            // `current_amount` cho batch còn sống nên một batch 0 đóng góp 0 vào
+            // `live_total`; `apply_burns` đòi `amt > 0` và `amt <= current_amount`
+            // nên không ai đốt lại được nó; `prune_expired` dọn nó ở epoch sau.
+            //
+            // Giá phải trả, nói thẳng: một suất trong trần `max_batches_per_vault`
+            // không còn được nhả lại bằng cách đốt. Đó là ĐÚNG — số lượt sinh
+            // trong một epoch phải bị chặn, và trần ấy chính là chỗ chặn.
+            Some(MagicBatch { ..b, current_amount: b.current_amount - amt })
           } else {
             Some(b)
           }
@@ -1827,12 +1848,37 @@ test bb_positive_partial() {
   validate_burn_batch(din, [(bid_a, 400)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
-// BB-POS-2: full burn prunes the batch
-test bb_positive_full_prunes() {
+// BB-POS-2: a FULL burn KEEPS the batch, at current_amount 0.
+//
+// Bài này từng mang tên `bb_positive_full_prunes` và khẳng định điều NGƯỢC LẠI.
+// Hành vi cũ là đường lách cổng `C-INST-8`: xoá phần tử khỏi danh sách là xoá
+// bộ đếm `instant_gen_in_epoch`. Xem khối đỏ trong `apply_burns`.
+test bb_full_burn_keeps_batch_at_zero() {
+  let din = t_burn_din([t_burn_batch(bid_a, 1000), t_burn_batch(bid_b, 500)], None)
+  let dout = t_burn_dout(din, [t_burn_batch(bid_a, 0), t_burn_batch(bid_b, 500)], 1000, 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(bid_a, 1000)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// BB-NEG: cực đối của bài trên. Đầu ra XOÁ batch đã đốt sạch ⟹ phải TỪ CHỐI.
+// Không có ca này thì bài trên một mình không phân biệt được hai cực: nó xanh
+// được chỉ vì `expect output_datum.magic_batches == expected_batches` so một
+// danh sách với chính nó.
+test bb_full_burn_dropping_batch_rejected() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000), t_burn_batch(bid_b, 500)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_b, 500)], 1000, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
   validate_burn_batch(din, [(bid_a, 1000)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+}
+
+// Một batch đã về 0 KHÔNG đốt lại được: `apply_burns` đòi `amt > 0` và
+// `amt <= current_amount`. Ca này ghim rằng việc giữ batch lại không mở ra một
+// đường đốt-hai-lần.
+test bb_zero_batch_not_burnable_again() fail {
+  let din = t_burn_din([t_burn_batch(bid_a, 0), t_burn_batch(bid_b, 500)], None)
+  let dout = t_burn_dout(din, [t_burn_batch(bid_a, 0), t_burn_batch(bid_b, 500)], 0, 10)
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  validate_burn_batch(din, [(bid_a, 1)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
 
 // BB-POS-3: multi-batch burn in one tx
@@ -2242,6 +2288,67 @@ test ig_epoch_cap_exceeded_rejected() fail {
 
 test ig_epoch_cap_within_ok() {
   let din  = t_ig_din_with_gen(ig_credit, 10, 3_000_000_000)
+  let dout = t_ig_dout(din, ig_grant, 10)
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+// ── Bộ đếm phải SỐNG SÓT một lượt đốt trọn ──────────────────────────────────
+//
+// 🔴 Đây là cặp bài mà bản trước của PR này KHÔNG có, và chỗ thiếu ấy là chỗ
+// thủng. Ba bài epoch-cap ở trên đều dựng trạng thái bằng cách ĐẶT SẴN batch vào
+// datum, tức đo một trạng thái mà kẻ tấn công không cần đi qua. Chúng ghim được
+// CỔNG, không ghim được TÍNH CHẤT.
+//
+// Đường tấn công thật đi qua `BurnBatch`, và nó cần HAI bài mới nói đủ:
+//
+//   (a) `bb_full_burn_keeps_batch_at_zero` — sau khi đốt trọn, batch Ở LẠI mang
+//       `initial_amount` nguyên vẹn và `current_amount: 0`. Đây là bước chứng
+//       minh trạng thái dưới đây LÀ TRẠNG THÁI THẬT SAU MỘT LƯỢT ĐỐT, không
+//       phải một datum bịa ra cho vừa bài kiểm.
+//   (b) bài ngay dưới — sinh tiếp trên đúng trạng thái đó thì BỊ TỪ CHỐI.
+//
+// Ghép lại mới ra phát biểu cần: chuỗi `InstantGen → BurnBatch(đốt trọn) →
+// InstantGen` không vượt được trần. Bộ kiểm đơn vị của Aiken gọi validator đúng
+// một lần nên tự nó không hỏi được câu "tổng qua CHUỖI giao dịch"; câu đó phải
+// viết tay, và đây là cách viết tay nó.
+//
+// Bài này còn là ca DUY NHẤT trong bộ kiểm có `initial_amount ≠ current_amount`
+// đi vào `instant_gen_in_epoch`. Mọi fixture khác đặt hai trường bằng nhau, nên
+// đột biến `initial_amount → current_amount` trong `decay.ak` sống sót toàn bộ
+// bộ kiểm trước khi có bài này.
+fn t_ig_din_after_full_burn(credit: Int, epoch: Int, generated: Int) -> VaultDatum {
+  VaultDatum {
+    ..t_ig_din(credit),
+    magic_batches: [
+      MagicBatch {
+        batch_id:            #"aabbcc",
+        source:              Instant,
+        created_epoch:       epoch,
+        initial_amount:      generated,   // đã sinh ngần này trong epoch
+        current_amount:      0,           // và đã đốt sạch
+        decay_window:        magic_decay_window,
+        profile_at_creation: None,
+        contract_id:         None,
+        halved:              False,
+      },
+    ],
+    next_batch_index: 1,
+  }
+}
+
+test ig_epoch_cap_survives_full_burn_rejected() fail {
+  let din  = t_ig_din_after_full_burn(ig_credit, 10, 3_900_000_000)
+  let dout = t_ig_dout(din, ig_grant, 10)
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+// Cực đối của bài trên: cùng trạng thái đã-đốt-sạch, chỉ khác lượng đã sinh nằm
+// dưới trần ⟹ CHO QUA. Không có ca này thì bài trên đỏ được vì bất kỳ lý do nào
+// khác của việc batch mang số dư 0 (ví dụ một cổng nào đó cấm batch rỗng).
+test ig_epoch_cap_after_full_burn_within_ok() {
+  let din  = t_ig_din_after_full_burn(ig_credit, 10, 3_000_000_000)
   let dout = t_ig_dout(din, ig_grant, 10)
   let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner])
   t_ig_call(din, ig_grant, 10, tx)

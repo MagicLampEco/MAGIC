@@ -61,13 +61,21 @@ export async function listVaultsForOwner(params: ListVaultsParams): Promise<Vaul
   const datumSchema = vaultType === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
 
   const records: VaultRecord[] = [];
+  // 🔴 Một UTxO mang datum ở ĐỊA CHỈ KÉT mà không giải mã nổi là tín hiệu lược
+  // đồ của kho đã trôi khỏi chuỗi, KHÔNG phải rác. `continue` im lặng biến nó
+  // thành "bạn chưa có két" — hai trạng thái rất khác nhau ra cùng một màn hình,
+  // đúng thứ tệp anh em `VaultReadAPI/src/vaultView.ts` đã xử bằng `throw`.
+  const khongGiaiMaDuoc: string[] = [];
   for (const u of allUtxos) {
     if (!u.datum) continue;   // skip UTxOs without inline datum (not our vault)
     let datum: VaultDatum;
     try {
       datum = Data.from(u.datum, datumSchema) as VaultDatum;
-    } catch {
-      continue;   // not a vault datum — skip
+    } catch (e) {
+      khongGiaiMaDuoc.push(
+        `${u.txHash}#${u.outputIndex}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      continue;
     }
     if (datum.owner !== ownerPkh) continue;
 
@@ -85,6 +93,25 @@ export async function listVaultsForOwner(params: ListVaultsParams): Promise<Vaul
       oldestEpoch,
       profile:        datum.profile,
     });
+  }
+
+  // Ném khi KHÔNG trả về được gì mà có thứ không giải mã nổi: đó là ca người
+  // dùng đọc thành "chưa có két". Còn khi đã trả về được ít nhất một két thì chỉ
+  // cảnh báo — ném ở đó sẽ giết một lượt đọc vẫn dùng được, mà tín hiệu lệch
+  // thì vẫn phải hiện ra chứ không được nuốt.
+  if (khongGiaiMaDuoc.length > 0) {
+    const chiTiet =
+      `${khongGiaiMaDuoc.length} UTxO ở địa chỉ két ${vaultAddress} không giải mã được bằng ` +
+      `lược đồ của loại "${vaultType}" (${vaultType === "Instant" ? "18" : "17"} trường):\n  ` +
+      khongGiaiMaDuoc.join("\n  ");
+    if (records.length === 0) {
+      throw new Error(
+        `${chiTiet}\n` +
+        `Đây là LƯỢC ĐỒ LỆCH, không phải "chủ này chưa có két". Đối chiếu hiện vật ` +
+        `với nguồn bằng \`scripts/check_datum_shape.ts\`.`,
+      );
+    }
+    console.warn(`⚠ ${chiTiet}`);
   }
 
   return records;

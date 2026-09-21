@@ -125,7 +125,16 @@ for (const mod of MODULES) {
       unmeasurable++;
       console.error(`  ? ${mod.padEnd(12)} CHƯA ĐO ĐƯỢC — ${e.message}`);
     } else {
-      throw e;
+      // Ngoại lệ CHƯA PHÂN LOẠI cũng là CHƯA ĐO ĐƯỢC, không phải LỆCH. Bản
+      // trước ném tiếp ⟹ node thoát 1 ⟹ runner dán nhãn "artifact đã trôi" cho
+      // một thứ chẳng liên quan gì tới artifact. Chiều hỏng vẫn đúng (vẫn
+      // chặn), nhưng nhãn sai đẩy người vận hành đi chạy `aiken build` rồi
+      // gặp lại đúng câu đó.
+      unmeasurable++;
+      console.error(
+        `  ? ${mod.padEnd(12)} CHƯA ĐO ĐƯỢC — ngoại lệ chưa phân loại: ` +
+        `${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+      );
     }
   }
 }

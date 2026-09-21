@@ -75,10 +75,15 @@ cd "$(dirname "$0")"
 # Ba trạng thái thoát + phần cổng này KHÔNG đo: `check_datum_shape.ts`.
 npx tsx check_datum_shape.ts || {
   rc=$?
-  if [ "$rc" = 2 ]; then
-    echo '✗ CHƯA ĐO ĐƯỢC hình dạng datum (xem dòng trên) — đây KHÔNG phải "khớp".'
-  else
+  # Chỉ mã thoát 1 = LỆCH. Mọi mã khác đọc thành CHƯA ĐO ĐƯỢC, kể cả khi `npx`
+  # hoặc `tsx` chết trước khi cổng kịp chạy — bản trước gộp chúng vào nhãn
+  # "artifact đã trôi", nên một máy thiếu `tsx` nhận được lời khuyên chạy
+  # `aiken build`, chạy xong vẫn đỏ với đúng câu đó.
+  if [ "$rc" = 1 ]; then
     echo '✗ Artifact đã trôi khỏi nguồn. Chạy `aiken build` trong module được nêu, rồi chạy lại.'
+  else
+    echo "✗ CHƯA ĐO ĐƯỢC hình dạng datum (mã thoát $rc) — đây KHÔNG phải \"khớp\"."
+    echo '  Mã thoát 2 = cổng chạy và không đo nổi. Mã khác = cổng KHÔNG CHẠY được.'
   fi
   echo '  KHÔNG giao dịch nào được gửi.'
   exit "$rc"

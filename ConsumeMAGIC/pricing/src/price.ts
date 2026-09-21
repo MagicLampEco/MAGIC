@@ -33,16 +33,37 @@ export const DEMAND_WINDOW = 6;
 
 // ── op_type base-price table (MVP, CONTRACT §A) ───────────────────────────────
 // Unit: nanogic (1 MAGIC = 1e9 nanogic). DAO-governable param on-chain (PriceParam).
-export const OP_IMAGE = 1; // process 1 image  → 0.01 MAGIC
-export const OP_CID = 2; //   anchor 1 CID     → 0.001 MAGIC
+export const OP_IMAGE = 1; // process 1 image      → 0.01  MAGIC
+export const OP_CID = 2; //   anchor 1 CID         → 0.001 MAGIC
+export const OP_RECOGNITION_STORAGE = 3; // one storage event  → 1 MAGIC
+export const OP_RECOGNITION_COMPUTE = 4; // one compute event  → 1 MAGIC
 
 /** Immutable readonly base-price map keyed by op_type → nanogic. */
 export type BasePriceTable = Readonly<Record<number, bigint>>;
 
-/** MVP base-price table. 0.01 MAGIC = 10_000_000n ng ; 0.001 MAGIC = 1_000_000n ng. */
+/**
+ * MVP base-price table — **KHÔNG phải nguồn có thẩm quyền, và KHÔNG nằm trên đường tiền.**
+ *
+ * Đường tiền đọc `pp.op_prices` của beacon `PriceParam` qua `requiredFromBeacon`
+ * (`ConsumeMAGIC/offchain/src/consume.ts`), và nó ném `CONSUME-007` khi `op_type` vắng
+ * trong BEACON — cố ý không lùi về bảng này. Bảng này chỉ là mặc định cho `pricePerOp`
+ * khi người gọi không truyền bảng nào (báo giá thử, bài kiểm, công cụ ngoại tuyến).
+ *
+ * Nhưng nó vẫn phải KHỚP sổ `CONTRACT.md §A`, vì người đọc mã không phân biệt được hai vai
+ * đó bằng mắt. Ca thật (`ol0920magic-e`, 2026-09-20): bảng này thiếu mã 3 và 4 trong khi
+ * beacon đang deploy CÓ đủ bốn dòng (`scripts/deploy/09_deploy_consume.ts` ▸ `priceParam`);
+ * một nhà tiêu thụ mở đúng tệp này, đếm hai dòng, và kết luận mã của họ chưa được định giá
+ * — một chặn không có thật, giữ họ đứng lại một vòng thư. Một bảng phụ lệch sổ thì nó không
+ * im lặng, nó nói SAI.
+ *
+ * Đơn vị: nanogic (1 MAGIC = 1e9). `base_price` là governance param on-chain do DAO chốt;
+ * số ở đây là giá TẠM cho tới lượt chốt đó.
+ */
 export const MVP_BASE_PRICE: BasePriceTable = Object.freeze({
-  [OP_IMAGE]: 10_000_000n, // 0.01 MAGIC
-  [OP_CID]: 1_000_000n, //   0.001 MAGIC
+  [OP_IMAGE]: 10_000_000n, //             0.01  MAGIC
+  [OP_CID]: 1_000_000n, //                0.001 MAGIC
+  [OP_RECOGNITION_STORAGE]: 1_000_000_000n, // 1 MAGIC — MỘT LẦN lưu, không phải MB
+  [OP_RECOGNITION_COMPUTE]: 1_000_000_000n, // 1 MAGIC — MỘT LẦN tính, không phải MB
 });
 
 // ── load_raw → demand history → SMA → clamp (FIR) ─────────────────────────────

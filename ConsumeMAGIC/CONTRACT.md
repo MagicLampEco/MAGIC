@@ -58,10 +58,36 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   | 2 | `CID` (neo bằng chứng) | 1_000_000 (0.001 MAGIC) | (gốc) | khớp `OP_CID`; mọi bên neo bằng chứng DÙNG LẠI mã này, KHÔNG xin mã mới |
   | 3 | `recognition_storage_event` | DAO chốt (tạm 1e9/lần) | OriLife/Registry | **một lần lưu**, không phải MB — xem cảnh báo dưới bảng |
   | 4 | `recognition_compute_event` | DAO chốt (tạm 1e9/lần) | OriLife/Registry | **một lần tính**, không phải MB — xem cảnh báo dưới bảng |
-  | 5 | `job_post` | DAO chốt (tạm 2_000_000) | AladinWork | đăng+phát tán 1 tin việc |
-  | 6 | `contract_settle` | DAO chốt (tạm 5_000_000) | AladinWork | tất toán 1 hợp đồng |
+  | 5 | — | — | — | **RÚT 2026-09-21** (`job_post`). Số để TRỐNG, không cấp lại — xem dưới |
+  | 6 | — | — | — | **RÚT 2026-09-21** (`contract_settle`). Số để TRỐNG, không cấp lại |
   | 7 | `did.rotate` | DAO chốt (tạm 2_000_000_000) | PhoenixKey | xoay khoá DID. **Thao tác an ninh** — xem cảnh báo dưới bảng |
   | 8 | `did.transfer` | DAO chốt (tạm 10_000_000_000) | PhoenixKey | chuyển DID; thương mại, chịu nhân theo cầu là đúng |
+
+  > 🔴 **Vì sao 5 và 6 bị rút, và vì sao hai số ấy ở lại dạng bia mộ.**
+  >
+  > Chính nhà xin hai mã đó đề nghị rút (`aw0920mg-b`, 2026-09-20), và lý do đứng vững nên
+  > kho này chuẩn: **`op_type` tả một NGHIỆP VỤ HẠ TẦNG mà bên tiêu thụ MAGIC thật sự chạy,
+  > không tả một SỰ KIỆN NGHIỆP VỤ của nền tảng cắm vào.** Bốn mã còn sống đều qua được phép
+  > thử đó — xử một ảnh, neo một CID, một lần lưu, một lần tính. "Đăng một tin việc" thì
+  > không: nó tả việc *nền tảng kia* làm.
+  >
+  > Cấp mã cho một sự kiện nghiệp vụ mở một tiền lệ không đóng lại được — mọi nền tảng cắm
+  > vào đều có sự kiện riêng, và mỗi cái xin được bằng đúng lập luận ấy.
+  >
+  > Vế thứ hai khoá vế thứ nhất: quy đổi tiền pháp định ↔ nanogic **chưa nhà nào chốt**, nên
+  > không có cơ sở định giá cho một dòng không có nghiệp vụ hạ tầng đứng sau. Hai lỗ đó không
+  > độc lập — bất kỳ `base_price` nào cho một dòng như thế cũng chỉ là một tỉ giá ngụy trang.
+  >
+  > **Hình dạng đúng, đã chuẩn cho nhà đó:** phí tiền tệ của nền tảng ở lại hoàn toàn
+  > off-chain và từ nay KHÔNG mang nhãn `op_type` nào; lượng MAGIC bị tiêu = tổng các op
+  > THẬT mà vòng đời hợp đồng kích hoạt — hôm nay là `op_type` 2 (neo cam kết thành CID),
+  > việc họ tự nối, không xin gì.
+  >
+  > **Số 5 và 6 KHÔNG được cấp lại cho thứ khác.** Chúng đã đi ra ngoài: `pricePerOp(5, …)`
+  > từng trả một con số hợp lệ suốt 45 ngày ở kho bên đó. Tái dùng số là để một bản sao chết
+  > trả về một giá của một mã khác, không kêu — cùng loại bia mộ với `BatchSource::Snapshot`.
+  > Trần 16 chặn **số dòng định giá đồng thời**, không chặn giá trị `op_type`; cấp số thì
+  > không có trần, nên để trống hai số là miễn phí.
   Mọi fixture/beacon/redeemer onchain PHẢI dùng đúng key này; không được lệch sang `0/1`.
 
   > 🔴 **Mã 3 và 4 từng khai đơn vị là MB. Sai — mã không đếm MB ở bất kỳ nghĩa nào.**

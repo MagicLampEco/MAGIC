@@ -27,12 +27,24 @@ describe("protocolEpoch — nhịp epoch là THAM SỐ THEO MẠNG, không phả
     expect(msPerEpoch("Mainnet")).not.toBe(msPerEpoch("Preview"));
   });
 
-  it("Preview và Preprod hiện TRÙNG nhịp — ghim trạng thái để lần đổi sau không âm thầm", () => {
-    // Đây là bài ghim TRẠNG THÁI, không phải một bất biến giao thức. Nguồn của cặp số
+  it("Preprod nay đi theo nhịp MAINNET, không còn theo Preview — ghim trạng thái sau lượt đổi 2026-09-20", () => {
+    // Đây là bài ghim TRẠNG THÁI, không phải một bất biến giao thức. Nguồn của bộ ba số
     // là `MS_PER_EPOCH_BY_NETWORK` trong ProtocolUtils, và chú thích tại chỗ đó là nơi
     // duy nhất mô tả vì sao nhịp Preprod đang mang giá trị nó đang mang. Sửa bảng ấy thì
-    // dòng dưới đỏ và trỏ thẳng về đây, thay vì một sai lệch epoch lộ ra ở Preprod.
-    expect(protocolEpoch(T, "Preprod")).toBe(protocolEpoch(T, "Preview"));
+    // hai dòng dưới đỏ và trỏ thẳng về đây, thay vì một sai lệch epoch lộ ra ở Preprod.
+    //
+    // 🪦 Bản trước ghim chiều NGƯỢC LẠI (`Preprod === Preview`) và nó đúng cho tới
+    // 2026-09-20. Lượt đổi nhịp chạm 13 tệp mà KHÔNG chạm dòng này, nên bài đỏ ở đây
+    // chính là bài đã làm đúng việc của nó. Phạm vi của câu "duy nhất": trong 23 job
+    // của lượt kiểm PR ấy, đây là job npm DUY NHẤT đỏ — 18 job npm kia và 4 job
+    // `aiken check` đều xanh. Nên đổi DẤU KỲ VỌNG, đừng xoá bài: xoá là gỡ luôn cái
+    // chuông cho lần đổi nhịp sau.
+    //
+    // Hai dòng, vì một dòng không đủ. Dòng `not.toBe` bắt việc ai đó đưa Preprod về lại
+    // nhịp 1 ngày; dòng `toBe` bắt việc ai đó đẩy nó sang một giá trị thứ ba không bằng
+    // mạng nào. Chỉ giữ dòng đầu thì mọi giá trị khác 86 400 000 đều đi lọt.
+    expect(protocolEpoch(T, "Preprod")).not.toBe(protocolEpoch(T, "Preview"));
+    expect(protocolEpoch(T, "Preprod")).toBe(protocolEpoch(T, "Mainnet"));
   });
 });
 

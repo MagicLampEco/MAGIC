@@ -393,11 +393,17 @@ function assertShardsPresent(shardUtxos: UTxO[], address: string): void {
  * `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK` cho Mainnet
  * `432_000_000n`. Tham số `network` nhận vào rồi bị bỏ đi.
  *
- * Vì sao không bài kiểm nào bắt được: Preview và Preprod **cùng** mang giá trị
+ * Vì sao không bài kiểm nào bắt được: lúc đó Preview và Preprod **cùng** mang giá trị
  * `86_400_000n`, trùng đúng hằng chép cứng, và bộ kiểm chạy `network: "Preview"` ⟹ ca
  * kiểm xanh ở CẢ HAI cực đột biến. Đây là phép thử phải chạy cho mọi hằng-theo-mạng
  * mới: *hai mạng thử nghiệm có cùng giá trị không? cùng ⟹ bộ kiểm không phân biệt
  * được hai cực, và trục mạng chưa được đo.*
+ *
+ * Sự trùng đó **hết từ 2026-09-20**: Preprod về `432_000_000n`, bằng mainnet. Phép thử
+ * một dòng ngay trên thì KHÔNG đổi — nó vẫn là thứ phải chạy cho mọi hằng-theo-mạng
+ * mới. Chỉ có kết quả của nó ở đây đổi: trục mạng nay đo được ngay trên hai mạng thử
+ * nghiệm, không còn phải mượn Mainnet. Ghi ra vì câu trên viết ở thì hiện tại, và một
+ * câu như thế thì già đi lặng lẽ — người đọc sau sẽ tra nó như một số đo đang đúng.
  *
  * Chiều hỏng nếu nó sống tới Mainnet: `currentEpoch` lệch ~5× ⟹ `planBurnBatch` coi
  * MỌI lô MAGIC là đã hết hạn ⟹ người dùng có đủ MAGIC nhận một câu từ chối của giao

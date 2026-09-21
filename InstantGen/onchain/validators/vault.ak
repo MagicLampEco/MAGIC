@@ -1058,7 +1058,7 @@ fn validate_burn_batch(
   let total_burned = sum_burns(burns)
   expect total_burned > 0
 
-  // ── A02: field-by-field output datum check (17 fields) ────
+  // ── A02: field-by-field output datum check (18 fields) ────
   let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
 
   expect output_datum.owner == applied.owner

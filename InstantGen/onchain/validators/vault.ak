@@ -771,9 +771,14 @@ fn find_backing_datum(
 /// The stake credential is deliberately ignored — nothing constrains it, so one
 /// script hash presents as arbitrarily many distinct `Address` values and every
 /// "exactly one at MY address" guard counts each of them separately. Same rule,
-/// same reason, as `ScheduleGen/onchain/validators/vault.ak` (Nợ #31),
-/// `Consolidate/onchain/validators/vault_consolidate.ak:19-20` and
-/// `ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak:67-72`.
+/// same reason, as `ScheduleGen/onchain/validators/vault.ak` (Nợ #31) and
+/// `ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak` ▸ `is_at_script`.
+///
+/// A third anchor used to stand here — `Consolidate/.../vault_consolidate.ak`.
+/// That module was removed from the repo on 2026-09-21 (`DevStatus.md` ▸
+/// `## Đã xoá khỏi kho — 2026-09-21`). The rule did not change with it; only the
+/// pointer did. Saying so beats deleting the line, because the line's job is to
+/// record that this repo KNEW the rule before it applied it here.
 fn same_script(a: Address, b: Address) -> Bool {
   a.payment_credential == b.payment_credential
 }

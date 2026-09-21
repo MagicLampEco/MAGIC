@@ -13,14 +13,6 @@ vào lịch sử — bằng máy, để không ai phải chép.
 
 <!-- MÁY SINH — BẮT ĐẦU. Đừng sửa tay: `npm run record:build` ghi đè. -->
 
-### `Consolidate/onchain`
-
-trình biên dịch `v1.1.21+42babe5`
-
-| validator | hash (CHƯA apply-param) |
-|---|---|
-| `vault_consolidate.vault_consolidate` | `cd5ebc26d3c8e8c3f403cee5a242ffde7cc232e6f8c5ff93b2fc152c` |
-
 ### `ConsumeMAGIC/onchain`
 
 trình biên dịch `v1.1.21+42babe5`
@@ -62,14 +54,6 @@ trình biên dịch `v1.1.21+42babe5`
 |---|---|
 | `prepaid.paid_fund` | `901afa900f27355ff071f6490d550d17f5a565b476dce04313c80397` |
 | `prepaid.prepaid_vault` | `a4048266fc77489206806212af1d5c1acab25b1734be8ca43e3fd3d7` |
-
-### `ProfileChange/onchain`
-
-trình biên dịch `v1.1.21+42babe5`
-
-| validator | hash (CHƯA apply-param) |
-|---|---|
-| `vault_profile.vault_profile` | `4a1d925e27ca00ff75368eb4d90de08557a22a56d1c33823cd3131be` |
 
 ### `ScheduleGen/onchain`
 

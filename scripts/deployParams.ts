@@ -107,27 +107,6 @@ export function shardSpendParams(
   };
 }
 
-// ── Consolidate — vault_consolidate.vault_consolidate.spend (3) ──
-// Neo: Consolidate/onchain/validators/vault_consolidate.ak:106.
-// `lamp_asset_name` là tham số THEO MẠNG (tLAMP testnet / LAMP mainnet) — nó nằm
-// GIỮA hai tham số kia, nên bỏ nó đi không phải là "thiếu param cuối" mà là ĐẨY
-// ms_per_epoch vào đúng chỗ của asset name. Hash sai, im lặng.
-export function consolidateParams(i: {
-  lampPolicyId: string; lampAssetName: string; msPerEpoch: bigint;
-}): ParamMap {
-  return {
-    lamp_policy_id:  i.lampPolicyId,
-    lamp_asset_name: i.lampAssetName,
-    ms_per_epoch:    i.msPerEpoch,
-  };
-}
-
-// ── ProfileChange — vault_profile.vault_profile.spend (1 tham số) ─
-// Neo: ProfileChange/onchain/validators/vault_profile.ak.
-export function profileChangeParams(i: { msPerEpoch: bigint }): ParamMap {
-  return { ms_per_epoch: i.msPerEpoch };
-}
-
 // ── PrepaidGen — prepaid.paid_fund.{mint,spend} (3 tham số) ──────
 // Neo: PrepaidGen/onchain/validators/prepaid.ak — `validator paid_fund(...)`.
 //
@@ -171,7 +150,8 @@ export function paidFundParams(i: PaidFundParamInputs): ParamMap {
 // không phải là "thiếu tham số cuối": nó ĐẨY `paid_fund_hash` vào đúng chỗ của
 // asset name và `ms_per_epoch` vào chỗ của `paid_fund_hash`. Ba giá trị vẫn là
 // hex hợp lệ, `applyParamsToScript` không kiểm arity, và hash thu được trông
-// bình thường — cùng hình dạng với ca `consolidateParams` ở trên.
+// bình thường — cùng hình dạng với `lamp_asset_name` trong `instantVaultParams`
+// ở trên, nơi một tham số THEO MẠNG cũng nằm GIỮA chứ không nằm cuối.
 export interface PrepaidVaultParamInputs {
   carpPolicyId:  string;
   carpAssetName: string;

@@ -20,9 +20,36 @@
 import { getAddressDetails } from "@lucid-evolution/lucid";
 import type { Network } from "@magiclamp/protocol-utils";
 
+/**
+ * Tập ĐÓNG các loại vault dịch vụ này đọc được. Đây là một **hợp đồng với bên gọi**, không
+ * phải một nhãn tự do của người vận hành: nó đi ra ngoài dưới trường `vault_kind`, và bên
+ * tiêu thụ dựng cổng fail-closed trên nó (*"giá trị lạ ⟹ không vẽ con số"*).
+ *
+ * Vì sao là tập ĐÓNG chứ không phải chuỗi tự do — hai lý do độc lập:
+ *
+ *  1. **Cùng một trường datum mang hai NGHĨA tuỳ loại vault.** `consumed_credit` là số dư
+ *     tiêu được ở vault Instant và là bộ đếm luỹ kế ở vault Schedule (xem docblock ở
+ *     `vaultView.ts`). Bên gọi không suy ra được nghĩa nếu không biết loại, và họ không có
+ *     đường nào khác để biết.
+ *  2. **Thêm loại thứ ba mà bên gọi đang đọc một tập cũ** thì họ xếp nó vào một nhóm sẵn có
+ *     và không gì báo. Tập đóng biến ca đó thành một lỗi khởi động ồn ào ở ĐÂY, nơi người
+ *     vận hành đang đứng, thay vì một con số sai ở màn hình người dùng.
+ *
+ * Tập này chỉ có hai phần tử vì `readVaultsFromUtxos` giải mã bằng `VaultDatumSchema` —
+ * lược đồ của Instant/Schedule. Vault PrepaidGen có lược đồ KHÁC (nó mang `did_commit`),
+ * nên nó không đọc được bằng đường này và **không được kê sẵn ở đây**: kê một tên cho thứ
+ * dịch vụ chưa đọc được là đặt tên cho một artifact chưa tồn tại.
+ */
+export const VAULT_KINDS = ["Instant", "Schedule"] as const;
+export type VaultKind = (typeof VAULT_KINDS)[number];
+
+export function isVaultKind(s: string): s is VaultKind {
+  return (VAULT_KINDS as readonly string[]).includes(s);
+}
+
 export interface VaultScope {
-  /** "Instant" | "Schedule" — khớp `VaultType` của MagicSDK. */
-  vaultType: string;
+  /** Loại vault — tập ĐÓNG `VAULT_KINDS`, khớp `VaultType` của MagicSDK. */
+  vaultType: VaultKind;
   address: string;
   /** Script hash suy TỪ địa chỉ, cũng là policy id của NFT danh-tính. Không cấu hình
    *  riêng: hai trường cho một sự thật là hai trường sẽ lệch nhau. */
@@ -116,6 +143,17 @@ export function parseScopes(raw: string, network: Network): VaultScope[] {
     const where = `VAULT_READ_API_VAULTS[${i}]`;
     if (typeof o.vault_type !== "string" || o.vault_type === "") {
       throw new Error(`[config] ${where}.vault_type thiếu.`);
+    }
+    if (!isVaultKind(o.vault_type)) {
+      // Fail-closed ở ĐÂY, lúc khởi động, chứ không để một chuỗi lạ đi ra dưới `vault_kind`.
+      // Bên gọi không có cách nào đoán nghĩa của một loại họ chưa biết, và đoán sai ở đó
+      // thì con số sai xuất hiện trên màn hình người dùng — xa chỗ gây ra nó nhất.
+      throw new Error(
+        `[config] ${where}.vault_type = "${o.vault_type}" không thuộc tập đóng ` +
+        `[${VAULT_KINDS.join(", ")}]. Thêm một loại vault là đổi một hợp đồng với bên gọi: ` +
+        `mở rộng ${"`VAULT_KINDS`"} và báo các nhà đang đọc ${"`vault_kind`"} trước, ` +
+        `đừng đổi riêng cấu hình.`,
+      );
     }
     if (typeof o.address !== "string" || o.address === "") {
       throw new Error(`[config] ${where}.address thiếu.`);

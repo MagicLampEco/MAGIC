@@ -176,4 +176,6 @@ async function main() {
   console.log(`   SHARD_NFT_POLICY_ID=${shardNftPolicyId}`);
 }
 
-main().catch(console.error);
+// Xem lý do ở `02_deploy_um.ts` cùng đợt vá: mã thoát 0 sau một lỗi làm mọi vòng
+// lặp và mọi `set -e` mù đúng ở lượt hỏng.
+main().catch((e) => { console.error(e); process.exit(1); });

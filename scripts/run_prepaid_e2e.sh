@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# scripts/run_prepaid_e2e.sh — PrepaidGen từ genesis tới tiêu MAGIC.
+# scripts/run_prepaid_e2e.sh — PrepaidGen từ genesis tới lượt SINH MAGIC.
+#
+# PrepaidGen KHÔNG tiêu MAGIC. Việc của nó là `validate_draw`: sinh một batch MAGIC
+# ghi vào `magic_batches` của vault, đồng thời chuyển CARP tương ứng sang bên nhận
+# (kho của nền tảng — OriLife, AladinWork…). Lượng MAGIC ấy nằm trong vault để
+# **làm cơ sở đo mức tiêu thụ** ở chặng sau.
+#
+# Chặng tiêu là việc của `ConsumeMAGIC`, một script khác, một giao dịch khác. Gộp
+# hai chặng dưới một cái tên là cách một người đọc sổ đi tìm cổng tiêu ở trong
+# `prepaid.ak` và không thấy gì — `grep consumed_credit PrepaidGen/onchain` → 0 dòng.
 #
 #   bash run_prepaid_e2e.sh Preprod            # chạy hết phần chạy được không cần CARP
 #   bash run_prepaid_e2e.sh Preprod --deploy   # thêm hai giao dịch genesis
@@ -47,10 +56,59 @@ set -euo pipefail
 NETWORK="${1:?Thiếu mạng. Dùng: bash run_prepaid_e2e.sh Preprod [--deploy]}"
 MODE="${2:-}"
 
+# Cùng cổng mà hai runner consume đã có. Runner này thiếu nó, trong khi nay còn
+# `export NETWORK` ra toàn tiến trình con — một chuỗi lạ đi xa hơn trước.
+case "$NETWORK" in
+  Preview|Preprod) ;;
+  *) echo "✗ Tham số 1 phải là Preview hoặc Preprod (nhận: $NETWORK)" >&2; exit 2 ;;
+esac
+
 cd "$(dirname "$0")"
 ROOT="$PWD/.."
 CHECK_JSON="/tmp/prepaid-check.$$.json"
 trap 'rm -f "$CHECK_JSON"' EXIT
+
+# ── Nạp tham số CÔNG KHAI của mạng, giống hai runner consume ─────────────────
+# Hai sổ, một mạng: `run_wakeme_e2e.sh` và `run_schedule_fire.sh` ghi vào
+# `state.$NET.sh`; hai runner consume đọc `deployed.$NET.env`. Runner này trước đây
+# KHÔNG đọc sổ nào.
+#
+# 🔴 PHẠM VI, và nó ĐỔI hành vi ở đúng một chỗ — đừng đọc thành "không đổi gì".
+#   `LAMP_POLICY_ID` thì không: `deploy/10_deploy_prepaid.ts` không nhập `POLICY_IDS`
+#   nên `requireLampPolicyId()` không nằm trên đường chạy của nó. Đoạn này là chuẩn
+#   bị cho chặng SAU — chặng tiêu MAGIC đi qua `consume`, nơi biến đó mới thật sự
+#   được đọc.
+#   NHƯNG `10_deploy_prepaid.ts` ĐỌC `BUFFER_BPS` và `PLATFORM_PKH` từ môi trường,
+#   nên từ lúc có đoạn này, một dòng nằm sẵn trong sổ quyết định được cả hai. Cái
+#   thứ nhất bị nướng vào datum quỹ và bất biến suốt đời quỹ; cái thứ hai là khoá
+#   duy nhất claim được CARP. Đó chính là lý do cổng ngay dưới gác cả hai tên.
+#   (Bản đầu của chú thích này khai rằng runner "chạy với `LAMP_POLICY_ID` rỗng".
+#   Sai: biến đó không được đọc ở đây. Bản thứ hai khai "bốn bước KHÔNG đổi hành
+#   vi", rồi nêu ngay hai biến chứng minh điều ngược lại — nó dùng đúng bằng chứng
+#   bác mình làm lý do cho mình.)
+#
+# Đọc sổ CŨ trước, sổ MỚI sau ⟹ `deployed.$NET.env` thắng khi cả hai cùng có.
+# Chỉ tham số công khai đi đường này; bí mật vẫn vào bằng GIÁ TRỊ qua môi trường.
+. "./state_book_guard.sh"
+assert_state_books_khong_khai_y_dinh "state.$NETWORK.sh" "deployed.$NETWORK.env"
+
+NET_ARGV="$NETWORK"
+for STATE in "state.$NETWORK.sh" "deployed.$NETWORK.env"; do
+  if [ -f "$STATE" ]; then
+    echo "▶ Đọc prereq: $STATE"
+    set -a; . "./$STATE"; set +a
+  fi
+done
+
+# Sổ KHÔNG được đổi mạng dưới chân người gõ lệnh. Hai runner consume tránh ca này
+# bằng cách giữ argv ở một biến riêng (`NET`) rồi mới export; ở đây thì KÊU thay vì
+# lặng lẽ khôi phục — một sổ đổi được mạng là một sổ hỏng, và nó nên hiện ra.
+if [ "$NETWORK" != "$NET_ARGV" ]; then
+  echo "✗ Sổ vừa nạp đổi mạng: dòng lệnh '$NET_ARGV' → sổ '$NETWORK'." >&2
+  echo "  Mọi hash dưới đây ghim theo mạng. Gỡ dòng \`NETWORK=\` khỏi sổ rồi chạy lại." >&2
+  exit 1
+fi
+export NETWORK
 
 echo "=== PrepaidGen E2E · mạng $NETWORK ==="
 echo
@@ -107,7 +165,7 @@ echo "── (4) genesis: quỹ Paid + vault trả trước"
 NETWORK="$NETWORK" npx tsx deploy/10_deploy_prepaid.ts
 
 echo
-echo "── CÒN THIẾU sau bước 4, để PrepaidGen TIÊU được MAGIC:"
+echo "── CÒN THIẾU sau bước 4, để MAGIC do PrepaidGen SINH RA tiêu được qua ConsumeMAGIC:"
 echo "   · một bản \`consume\` apply-param bằng \`vault_script_hash\` của vault vừa tạo."
 echo "     \`consume\` ghim vault theo LOẠI (BOUNDARIES.md §2) ⟹ mỗi cửa gen một bản."
 echo "   · một beacon giá còn tươi (\`PostPrice\`), và một thread Engage."

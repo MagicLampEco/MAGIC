@@ -3,7 +3,7 @@
 > **Tài liệu:** `MagicLamp-Tripletoken-Feat-(Vi).md` — đặc tả kỹ thuật cho **chuyên gia và lập trình viên**.
 > **Đối tượng:** người triển khai on-chain/off-chain, kiểm toán, tích hợp. Phần diễn giải phổ thông (câu chuyện, pháp lý cho người dùng) nằm ở bản công bố `Launch/Whitepaper-MagicLamp-Tokenomic-(Vi).md` — tài liệu này **tham chiếu tới** bản đó, không lặp lại.
 > **Phạm vi:** hợp nhất đặc tả **GenMAGIC** (§6) và **ConsumeMAGIC** (§7) vào một nơi. Cơ chế ổn định CARP chi tiết ở `CarpetMint-Core-Spec-Vi.md` (tài liệu này chỉ nêu giao diện).
-> **Phiên bản:** v2.1 — 2026-09-19 (xem Changelog 2026-09-19 ngay dưới). v2.0 — 2026-09-17. Nâng cấp từ bản chưa đánh số (mốc Changelog cuối 2026-08-04) vì chủ dự án chốt 2026-09-17 **mô hình sinh MAGIC chung** cho InstantGen và ScheduleGen: cùng ba đầu vào `L` (LAMP trong vault) · `usage_ratio` (consumed/generated, 6 epoch đã qua) · `GB` (thặng dư GreenBack), khác nhau chỉ ở thời tính. Bản trước lấy độ lớn InstantGen từ MAGIC-đã-tiêu tuyệt đối (`g(consumed)`), nên người tiêu 0 nhận 0 — trái ý định trên và chặn người mới có MAGIC ngay. Bump MAJOR vì công thức sinh và bất biến `INV-MAGIC-CITIZEN` đổi nghĩa, kéo theo đổi datum vault ⟹ vault phải deploy lại (§6.1.6).
+> **Phiên bản:** v2.2 — 2026-09-21. Bump MINOR vì bất biến `INV-INSTANT-LOCK` đổi **hình dạng cưỡng chế** (từ hai trường đếm/chỉ-số-epoch sang một bộ đếm SUY RA cộng một trường thời gian `instant_unlock_ms`) và đổi **trạng thái hiện thực** (từ *"mã hiện tại chưa hiện thực"* sang *"ĐÃ hiện thực"*), kéo theo `CC-GEN-LOCK-FIELD` rời danh mục CHƯA CHỐT. Không đổi công thức sinh nên không bump MAJOR. v2.1 — 2026-09-19 (xem Changelog 2026-09-19 ngay dưới). v2.0 — 2026-09-17. Nâng cấp từ bản chưa đánh số (mốc Changelog cuối 2026-08-04) vì chủ dự án chốt 2026-09-17 **mô hình sinh MAGIC chung** cho InstantGen và ScheduleGen: cùng ba đầu vào `L` (LAMP trong vault) · `usage_ratio` (consumed/generated, 6 epoch đã qua) · `GB` (thặng dư GreenBack), khác nhau chỉ ở thời tính. Bản trước lấy độ lớn InstantGen từ MAGIC-đã-tiêu tuyệt đối (`g(consumed)`), nên người tiêu 0 nhận 0 — trái ý định trên và chặn người mới có MAGIC ngay. Bump MAJOR vì công thức sinh và bất biến `INV-MAGIC-CITIZEN` đổi nghĩa, kéo theo đổi datum vault ⟹ vault phải deploy lại (§6.1.6).
 > **Vai:** spec build-fact tokenomics MAGIC, sống trong repo MAGIC (chủ dự án chốt 2026-08-04: tài liệu chính chủ về MAGIC nằm trong repo MAGIC; whitepaper /Launch + tài liệu LAMP chỉ **tham chiếu**, KHÔNG định-nghĩa-lại). Khi lệch với `MagicLamp-3Token-DacTa-Vi.md`, GenMAGIC/ConsumeMAGIC rời hoặc whitepaper /Launch → tệp này thắng. Khi lệch với MÃ đang chạy → mã là dữ kiện về hiện trạng, lệch phải được ghi ra (không im lặng chọn bên).
 >
 > **Changelog 2026-09-19 (v2.1):** chủ dự án chốt bốn điểm treo của mô hình sinh (§13, bảng
@@ -11,7 +11,7 @@
 > `CC-GEN-L-TIMING`; và `B` thành một DANH MỤC token (§6.3 F6). **Bump MINOR, không MAJOR:**
 > bốn mục là quyết định cho các điểm ĐÃ ĐƯỢC ĐÁNH DẤU treo trong v2.0, không mục nào lật một
 > công thức hay một bất biến của v2.0 — `INV-MAGIC-CITIZEN` và `F(L, usage_ratio, GB)` giữ
-> nguyên nghĩa. Thêm `CC-GEN-LOCK-FIELD` vào danh mục CHƯA CHỐT (§6.1.4).
+> nguyên nghĩa. Thêm `CC-GEN-LOCK-FIELD` vào danh mục CHƯA CHỐT (§6.1.4) — **mã này đã CHỐT 2026-09-21 ở v2.2, xem bảng ĐÃ CHỐT §13**; dòng changelog này giữ nguyên vì nó ghi việc của v2.1, không phải trạng thái hôm nay.
 >
 > Vì sao phải có mục này: bản trước ship bốn quyết định 19/09 dưới nhãn *"v2.0 — 2026-09-17"*,
 > nên hai tài liệu khác nhau về HÀNH VI cùng mang một số phiên bản, và `BOUNDARIES.md` trỏ
@@ -303,12 +303,16 @@ usage_ratio_q = 0                                          nếu Σ_{e−6..e−
 | Batch sống tới | hết epoch hiện tại | mỗi epoch trong `N` epoch một batch, hết epoch của nó |
 | Epoch sau | sinh lại theo số liệu epoch sau | lượng/epoch **cố định tuyệt đối** suốt hợp đồng (chốt 2026-09-19, `CC-GEN-SCHEDULE-FIXED`) |
 
-**InstantGen — cộng dồn trong epoch, khoá LAMP tới hết epoch SAU (`INV-INSTANT-LOCK`, chốt 2026-09-19).** Người dùng xin `m ≤ amount`. Mỗi lần sinh `m` khoá
+**InstantGen — cộng dồn trong epoch, chặn LAMP RỜI KÉT một epoch THỜI GIAN TRÔI (`INV-INSTANT-LOCK`, chốt 2026-09-19; hình dạng chốt 2026-09-21 `CC-GEN-LOCK-FIELD`).** Người dùng xin `m ≤ amount`. Mỗi lượt sinh `m` ứng với một lượng LAMP kế toán
 ```
 L_used = ⌈ m × Q × Q / (generation_rate_q × usage_factor_q) ⌉        -- chia MỘT lần, làm tròn LÊN
 ```
-**tới hết một epoch THỜI GIAN TRÔI kể từ lượt sinh** — xem khối *"Hình dạng đã hiện thực"* ngay dưới §6.1.4 để biết mã ép việc này bằng cách nào, vì hình dạng ấy **không** phải hình dạng chỉ-số-epoch mà bản trước của dòng này mô tả. Dẫn xuất cận: `L_used ≥ m·Q²/(ρ_e·uf)` ⟹ `m ≤ L_used·ρ_e·uf/Q²`; tổng khoá trong epoch `Σ L_used ≤ L₀` (LAMP sở hữu khả dụng đầu epoch) ⟹ `Σ m ≤ L₀·ρ_e·uf/Q²`. Vì `amount_by_lamp` sàn hai lần, `Σ m ≤ amount_by_lamp(L₀) + 1` nanogic. Cận này cần `ρ_e` và `usage_factor_q` hằng trong epoch: `usage_factor_q` hằng theo định nghĩa (§6.1.2); với `ρ_e`, **ràng buộc: giá trị `ρ` đăng mới chỉ có hiệu lực từ epoch SAU epoch đăng** (`INV-RATE-GOVERNED`). Không dùng suất đã làm tròn (`⌊ρ_e·uf/Q⌋`) để tính khoá: làm tròn XUỐNG mẫu số là khoá thiếu.
-Vì sao cộng dồn chứ không một-lần/epoch: (a) `GB` đọc tại giao dịch — nếu `GB` chặn lần đầu, chỉ phần LAMP tương ứng lượng đã cấp bị khoá, phần còn lại sinh tiếp được khi `GB` tăng; một-lần/epoch sẽ đốt mất quyền của cả epoch vì một giá trị `GB` thoáng qua; (b) không cần bộ đếm `gen_this_epoch` (đã bỏ 2026-07-30, §6.3); (c) ví sinh đúng lượng cần (§6.1.1).
+**tới hết một epoch THỜI GIAN TRÔI kể từ lượt sinh** — xem khối *"Hình dạng đã hiện thực"* ngay dưới §6.1.4 để biết mã ép việc này bằng cách nào, vì hình dạng ấy **không** phải hình dạng chỉ-số-epoch mà bản trước của dòng này mô tả. `L_used` ở trên là đại lượng **kế toán của spec**, KHÔNG phải một ô trong datum: mã không cộng dồn nó — nhánh sinh GHIM `lamp_locked` đứng yên (`InstantGen/onchain/validators/vault.ak` ▸ `validate_instant_gen`). Cận trong-epoch được giữ bằng một đường khác hẳn: bộ đếm suy ra `instant_gen_in_epoch` so với `compute_cap_pp(L_avail)` (cùng tệp, cổng `gen_so_far + grant <= compute_cap_pp(avail)`). Cận đúng vì thế là **`Σ m ≤ compute_cap_pp(L_avail)` cho mỗi CHỈ SỐ epoch của mỗi két**, chặt hơn `amount_by_lamp(L₀)` vì `compute_cap_pp` còn chia đôi suất (§6.3).
+
+> 🔴 Bản trước của dòng này dẫn xuất cận bằng `L_used ≥ m·Q²/(ρ_e·uf)` ⟹ `Σ L_used ≤ L₀` ⟹ `Σ m ≤ amount_by_lamp(L₀) + 1`. Dẫn xuất ấy chỉ đứng nếu mỗi lượt sinh **cộng dồn** `L_used` vào một ô khoá — cơ chế đó không tồn tại trong mã. Lượt sửa 2026-09-21 vá vế "tới hết epoch nào" ở đầu câu mà để nguyên vế chứng minh ở đuôi; đây là phần còn lại của chính lượt sửa đó. Bản cũ bị **bỏ**, không giữ kèm đính chính.
+
+Cận này cần `ρ_e` và `usage_factor_q` hằng trong epoch: `usage_factor_q` hằng theo định nghĩa (§6.1.2); với `ρ_e`, **ràng buộc: giá trị `ρ` đăng mới chỉ có hiệu lực từ epoch SAU epoch đăng** (`INV-RATE-GOVERNED`). Không dùng suất đã làm tròn (`⌊ρ_e·uf/Q⌋`) để tính khoá: làm tròn XUỐNG mẫu số là khoá thiếu.
+Vì sao cộng dồn chứ không một-lần/epoch: (a) `GB` đọc tại giao dịch — nếu `GB` chặn lần đầu, phần trần chưa dùng của epoch vẫn sinh tiếp được khi `GB` tăng (bộ đếm suy ra chỉ cộng phần ĐÃ cấp); một-lần/epoch sẽ đốt mất quyền của cả epoch vì một giá trị `GB` thoáng qua; (b) không cần một **TRƯỜNG DATUM** đếm `gen_this_epoch` (đã bỏ 2026-07-30, §6.3) — bộ đếm vẫn có, nhưng được SUY RA từ `magic_batches` (`decay.ak` ▸ `instant_gen_in_epoch`), không có ô nhớ; (c) ví sinh đúng lượng cần (§6.1.1).
 **LAMP-mượn KHÔNG khoá được bằng `INV-INSTANT-LOCK`:** nó nằm ở két Wakeme, vault MAGIC không có redeemer nào trên két đó. N vault cùng đọc một két ⟹ tới `N × LENT_PP_CAP` mỗi epoch chừng nào `INV-ONE-PERSON-ONE-VAULT` chưa được ép — `CC-GEN-LENT-READ` (§13).
 
 **ScheduleGen — chốt lúc ký.** Lúc ký: `GB_available ≥ pp × min(N, buffer_ep)` và giao dịch ký **trừ** đúng lượng đó khỏi shard (không chỉ đọc); cổng `κ` trên tổng nghĩa-vụ-còn-lại (§6.4); `usage_factor_q` và `scale_limit` (horizon `min(N, 6)`) tính một lần, lưu cùng hợp đồng. Dẫn xuất `min(N, buffer_ep)`: shard chỉ ứng được phần nghĩa vụ mà GreenBack cam kết giữ đệm (`buffer_ep = 2`, §6.4); phần còn lại của hợp đồng do cổng `κ` gánh, nên **với ScheduleGen, trần gộp toàn mạng là cổng `κ`, không phải `GB`**. Lượng mỗi epoch: `M_i = ⌊ min(⌊λ·rate_locked_q/Q⌋, ⌊λ·ρ_e/Q⌋) × usage_factor_locked_q / Q ⌋` (áp `scale_limit` như §6.1.1).
@@ -318,7 +322,7 @@ Vì sao cộng dồn chứ không một-lần/epoch: (a) `GB` đọc tại giao 
 Đây là lựa chọn có giá, và giá nằm ở đâu thì nói thẳng: **toàn bộ rủi ro thiếu hụt GreenBack sau khi ký dồn lên cổng `κ`** (§6.4) — `κ` là thứ quyết định một hợp đồng có được ký hay không, và sau chữ ký thì không còn van nào hạ nghĩa vụ xuống nữa. Đổi lại, người dùng nhận đúng thứ được hứa: *một lượng MAGIC cố định mỗi epoch, không đổi bất kỳ điều gì*. Bậc thang cứu (§6.4) vì thế **không được** dùng bậc "điều chỉnh tỷ giá hợp đồng" cho hợp đồng ĐÃ ký.
 
 **Không dùng cùng một LAMP hai lần.** InstantGen và ScheduleGen là **hai script vault khác nhau**; một LAMP nằm ở đúng một UTxO, nên LAMP trong vault này không phải LAMP trong vault kia. Trong mỗi script:
-- **Vault InstantGen:** `lamp_available = lamp_balance − lamp_locked`, và ở vault này `lamp_locked` mang **khoá hợp đồng Schedule**, KHÔNG mang khoá Instant — xem khối *"Hình dạng đã hiện thực"* ngay dưới. InstantGen hiện KHÔNG có nhánh commit (`InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸ `VaultRedeemer`, **6 nhánh**: `InstantGen` (constr 0) · `PruneExpired` (1) · `BurnBatch` (2) · `UpdateProfile` (3) · `WithdrawLamp` (4) · `SetDelegate` (5, 🪦 nay chỉ xoá được)), nên trên thực tế `lamp_locked` ở đây luôn bằng 0.
+- **Vault InstantGen:** `lamp_available = lamp_balance − lamp_locked`, và ở vault này `lamp_locked` mang **khoá hợp đồng Schedule**, KHÔNG mang khoá Instant — xem khối *"Hình dạng đã hiện thực"* ngay dưới. InstantGen hiện KHÔNG có nhánh commit (`InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸ `VaultRedeemer`, **6 nhánh**: `InstantGen` (constr 0) · `PruneExpired` (1) · `BurnBatch` (2) · `UpdateProfile` (3) · `WithdrawLamp` (4) · `SetDelegate` (5, 🪦 nay chỉ xoá được)), nên trên thực tế `lamp_locked` ở đây luôn bằng 0. Phép chứng minh đóng cho câu đó **không** phải "không có nhánh commit" (lập luận ấy hở, vì nó không loại trừ genesis — chỗ duy nhất dựng datum từ số không): genesis ghim `expect vd.lamp_locked == 0`, và cả sáu nhánh spend ghim `output_datum.lamp_locked == input.lamp_locked`. Ghim ở genesis cộng bất biến ở mọi nhánh ⟹ giá trị 0 không đi đâu được (`InstantGen/onchain/validators/vault.ak` ▸ `validate_mint_vault_id` và sáu hàm `validate_*`).
 
   > **`CC-GEN-LOCK-FIELD` — ĐÃ CHỐT 2026-09-21: không thêm trường `instant_locked` nào.**
   > Bản trước của khối này treo câu hỏi *"trường MỚI hay dùng lại `lamp_locked`"* và kê một ràng
@@ -336,7 +340,8 @@ Vì sao cộng dồn chứ không một-lần/epoch: (a) `GB` đọc tại giao 
   > 2. **Chặn LAMP RỜI két sau một lượt sinh** — một trường thời gian, `VaultDatum ▸
   >    instant_unlock_ms` (POSIX mili-giây, trường 17, đưa datum InstantGen lên **18 trường**;
   >    ScheduleGen giữ **17**). Nhánh sinh ghi `max(mốc cũ, cận-trên-validity + ms_per_epoch)`;
-  >    mọi nhánh khác ghim nó đứng yên.
+  >    bốn nhánh spend còn lại ghim nó đứng yên, và nhánh **mint** `MintVaultId` ghim nó **về 0**
+  >    (tập đầy đủ: 6 nhánh spend + nhánh mint).
   >
   > Đây là một lược đồ datum MỚI so với bản 17 trường, nên nó **đã** trả cái giá di trú mà khối cũ
   > cảnh báo — trả một lần, cho một trường, không phải hai.
@@ -347,8 +352,19 @@ Vì sao cộng dồn chứ không một-lần/epoch: (a) `GB` đọc tại giao 
   > có mệnh đề nào đọc trường này làm cổng — đo 2026-09-21 bằng cách đọc trọn
   > `validate_instant_gen`. Hệ quả phải khai:
   >
-  > - Ép được: **một đồng LAMP không nuôi hai lượt sinh ở HAI KÉT** trong cùng một cửa sổ khoá,
-  >   vì nó không rời được két thứ nhất.
+  > - Ép được: **một đồng LAMP không nuôi hai lượt sinh ở hai két INSTANTGEN** trong cùng một
+  >   cửa sổ khoá, vì nó không rời được két thứ nhất. Phạm vi "két InstantGen" là phần quan
+  >   trọng của câu, xem gạch ngay dưới.
+  > - **KHÔNG** ép được, và đây là chỗ dễ đọc rộng ra nhất: **biên giữa các MODULE.** Trường
+  >   này chỉ tồn tại ở InstantGen — `grep -rn "instant_unlock_ms" ScheduleGen --include="*.ak"`
+  >   trả **0 dòng** — và `validate_withdraw_lamp` của ScheduleGen chỉ gác ba điều (`amount > 0`,
+  >   chữ ký chủ, `amount <= avail`), không mệnh đề thời gian nào. Thêm nữa `ScheduleFire` nhả
+  >   `lamp_locked` NGAY trong epoch nó trả MAGIC, và nhánh đó không đòi chữ ký. Nên cùng một
+  >   lượng LAMP đứng sau được một lượt fire ScheduleGen **và** một trần InstantGen trong cùng
+  >   một CHỈ SỐ epoch, theo thứ tự tuần tự. Câu *"Không dùng cùng một LAMP hai lần"* ở đầu
+  >   §6.1.4 đúng cho tính **đồng thời**, không đúng cho tính **tuần tự**. Bịt chỗ này là đổi
+  >   mô hình sinh của ScheduleGen, nên nó KHÔNG được vá ở tầng tài liệu; ràng buộc tạm
+  >   fail-closed **chỉ chạy testnet** bao ca này, cùng ràng buộc với `CC-GEN-COLD-START`.
   > - **KHÔNG** ép được: một két sinh ở giây cuối epoch `e` rồi sinh lại ở giây đầu epoch `e+1`
   >   lấy **hai** trần cách nhau vài giây, trên cùng số LAMP, không cần chuyển đi đâu. Bộ đếm ở
   >   (1) khoá theo **chỉ số** epoch nên nó về 0 ở ranh giới; cổng ở (2) chỉ canh đường RA.
@@ -358,7 +374,12 @@ Vì sao cộng dồn chứ không một-lần/epoch: (a) `GB` đọc tại giao 
   >
   > **Cửa sổ ranh giới epoch: chủ dự án chốt 2026-09-21 GIỮ NGUYÊN cơ chế và sửa lời khai cho đúng
   > phạm vi.** Lý do: cửa sổ này tốn gấp **2** lần trần, trong khi lỗ `apply_burns` vá cùng ngày
-  > tốn tới **120** lần; bịt nó là đổi mô hình (trần theo cửa sổ trôi thay vì theo chỉ số epoch),
+  > tốn tới **120** lần. Hai con số này **không cùng đơn vị**, và nói rõ đơn vị thì nó củng cố
+  > lựa chọn giữ nguyên cơ chế: cửa sổ ranh giới là một khoản **ĐỈNH** — nó dồn suất của hai
+  > chỉ số epoch vào vài giây nhưng KHÔNG nâng nhịp dài hạn, vì `unlock = cận-trên + một epoch`
+  > luôn đặt mốc quá `(k+1)·P` nên LAMP không rời két trong chính chỉ số nó đã sinh; nhịp vẫn là
+  > 1 trần mỗi epoch cho mỗi lô LAMP. Lỗ `apply_burns` thì nâng chính **NHỊP**. Bịt cửa sổ ranh
+  > giới là đổi mô hình (trần theo cửa sổ trôi thay vì theo chỉ số epoch),
   > không phải một lượt vá. Lối bị loại: dựng trần theo cửa sổ trôi — nó đòi một ô datum ghi được
   > để nhớ mốc, tức đánh đổi đúng thứ đắt nhất lấy thứ rẻ nhất.
   > **Ràng buộc TẠM đang có hiệu lực, fail-closed: chỉ chạy testnet** (cùng ràng buộc với
@@ -366,7 +387,7 @@ Vì sao cộng dồn chứ không một-lần/epoch: (a) `GB` đọc tại giao 
 - **Vault ScheduleGen:** `lamp_available = lamp_balance − lamp_locked`; `lamp_locked` là khoá hợp đồng, giải dần theo từng lượt fire (`validate_fire` ▸ `lamp_released`).
 LAMP-mượn đọc qua reference input thì KHÔNG có bảo toàn trên — `CC-GEN-LENT-READ` (§13).
 
-**Thời điểm tính `L` — CHỐT 2026-09-19 (`CC-GEN-L-TIMING`): tính NGAY, nhưng KHOÁ tới hết epoch SAU.** LAMP nạp vào vault giữa epoch vào `lamp_available` ngay lập tức (giữ nguyên chốt 2026-07-30, §6.3); đổi lại, phần LAMP đã dùng để sinh bị giữ **qua trọn một epoch nữa** (`INV-INSTANT-LOCK`, ngay trên).
+**Thời điểm tính `L` — CHỐT 2026-09-19 (`CC-GEN-L-TIMING`): tính NGAY, nhưng chặn RỜI KÉT tới mốc `instant_unlock_ms`.** LAMP nạp vào vault giữa epoch vào `lamp_available` ngay lập tức (giữ nguyên chốt 2026-07-30, §6.3); đổi lại, **trọn phần LAMP khả dụng của két** bị chặn rời két tới mốc đó — một epoch thời-gian-trôi kể từ lượt sinh, không phải một lượng `L_used` riêng và không neo theo chỉ số epoch (`INV-INSTANT-LOCK`, ngay trên).
 
 Vì sao hai vế này đi cùng nhau chứ không phải chọn một: chúng trả lời **hai câu khác nhau**, và bản trước gộp làm một.
 - *"Tính ngay"* trả lời **ai được sinh** — hỏi LAMP phải nằm đủ lâu mới tính là dựng một hàng rào chống người dùng thật (mua LAMP xong phải chờ), trong khi kẻ thuê LAMP thì chờ được.
@@ -376,7 +397,7 @@ Vì sao hai vế này đi cùng nhau chứ không phải chọn một: chúng tr
 
 **Cận sinh chặt hơn, không lỏng hơn.** Cận cũ `Σ m ≤ amount_by_lamp(L₀) + 1` trong MỘT epoch vẫn đúng. Vế mới thêm: `L₀` của epoch kế đã **trừ sẵn** phần còn khoá, nên tổng qua hai epoch liên tiếp bị chặn chặt hơn trước. Không mệnh đề nào của `INV-GEN-BUDGET` bị nới.
 
-**Cái giá, ghi thẳng:** người dùng THẬT cũng chịu khoá dài gấp đôi — sinh hôm nay thì phần LAMP tương ứng tới hết ngày mai mới dùng lại được để sinh. `WithdrawLamp` cũng phải từ chối phần còn khoá trong cả hai epoch. Đây là đánh đổi có chủ ý: chống thuê chớp nhoáng bằng thời gian giữ, không bằng một hàng rào thời-gian-nắm-giữ ở đầu vào.
+**Cái giá, ghi thẳng:** người dùng THẬT cũng chịu khoá — sinh xong thì **trọn** phần LAMP khả dụng của két không rời được két cho tới mốc `instant_unlock_ms`. Độ dài thật là `(cận-trên-validity − now) + ms_per_epoch`, tức nằm trong `[P, 2P)` với `P` là một epoch: sinh với validity hẹp cho cửa sổ ngắn nhất, đúng `P`. `WithdrawLamp` từ chối trong trọn cửa sổ đó. Đây là đánh đổi có chủ ý: chống thuê chớp nhoáng bằng thời gian giữ, không bằng một hàng rào thời-gian-nắm-giữ ở đầu vào.
 
 ### §6.1.5 Bảng quyền đặc quyền của mô hình sinh
 
@@ -448,7 +469,9 @@ cấp thực = m ≤ min( amount_by_lamp , GB_available )    -- §6.1.1, §6.1.4
   > sau mỗi lần gen → trần tự siết"*. Cả hai vế **sai về mã đang chạy**: nhánh sinh không đụng
   > `lamp_locked`, và `L_avail` không co. Thứ giữ trần trong epoch là bộ đếm suy ra; thứ
   > `instant_unlock_ms` giữ là đường LAMP RA khỏi két. Hai cơ chế, hai vai — gộp chúng làm một là
-  > cách đọc ra một bảo đảm không có. Bản cũ bị **bỏ**, không giữ kèm đính chính. MAGIC sinh ra là **use-or-lose trong epoch** (§4.2): tiêu ngay trong epoch, phần dư **huỷ hết** khi snapshot sang epoch.
+  > cách đọc ra một bảo đảm không có. Bản cũ bị **bỏ**, không giữ kèm đính chính.
+
+  MAGIC sinh ra là **use-or-lose trong epoch** (§4.2): tiêu ngay trong epoch, phần dư **huỷ hết** khi snapshot sang epoch. (Câu này là luật đang có hiệu lực. Nó từng nằm lọt trong khối 🔴 ngay trên — tức trong đúng khối tự khai là văn bản đã bị bỏ — nên người đọc lướt được dạy bỏ qua nó. Đã tách ra.)
 - **KHÔNG có TRƯỜNG DATUM đếm `gen_this_epoch` (chốt bỏ 2026-07-30, giữ nguyên 2026-09-21).** Nhưng **có một bộ đếm** — nó được **SUY RA**, không có ô nhớ: `decay.ak ▸ instant_gen_in_epoch`. Chứng minh cận liên-két vẫn đứng: `Σ_vault gen ≤ Σ_vault lamp_balance = LAMP-DID-kiểm-soát` (bảo toàn LAMP: 1 token ở đúng 1 UTxO) → **số vault không xuất hiện trong bất đẳng thức**; chia N vault vô hại. Vế giữ cận đó là `instant_unlock_ms` chặn LAMP rời két, không phải `L_avail` co lại.
 
   > 🔴 Bản trước viết *"`L_avail_hiện_tại = lamp_balance − lamp_locked` **đã tự trừ** mọi phần đã
@@ -456,8 +479,8 @@ cấp thực = m ≤ min( amount_by_lamp , GB_available )    -- §6.1.1, §6.1.4
   > không đụng `lamp_locked`. Vế sau vì thế cũng sai — thiếu một bộ đếm thì `InstantGen →
   > BurnBatch → InstantGen` lặp được trong cùng epoch, và đó đúng là lỗ đã phải vá ngày
   > 2026-09-21. Câu đúng là *"không có TRƯỜNG đếm"*, không phải *"không có bộ đếm"*.
-  - **`INV-GEN-BUDGET` giữ KHÔNG cần đếm — hai điều kiện CỨNG:** (1) **khoá giải phóng CHỈ theo chuyển-epoch, CẤM giải theo burn** (đốt MAGIC không được "trả chỗ" LAMP-khoá) — cổng `get_validity_lower_ms(tx) >= input_datum.instant_unlock_ms` ở nhánh **rút** (`validate_withdraw_lamp`), cộng phép ghim `instant_unlock_ms` đứng yên ở **mọi** nhánh còn lại — sót một chỗ ghim là một đường rửa khoá. Vế *"cấm giải theo burn"* được `BurnBatch` giữ bằng đúng phép ghim đó, và được bộ đếm suy ra giữ ở vế thứ hai: `instant_gen_in_epoch` cộng `initial_amount` chứ không `current_amount`, nên đốt xong vẫn tính là **đã sinh**; (2) **làm tròn LÊN LAMP-khoá** cho mỗi `m` MAGIC (`⌈ m × Q × Q / (generation_rate_q × usage_factor_q) ⌉`, chia MỘT lần, §6.1.4) — không bao giờ khoá thiếu tỷ lệ. **Không cần đường thả riêng:** `instant_unlock_ms` là một mốc thời gian, nó tự tới nơi (§6.1.4), không giao dịch nào phải giải khoá. Mất khoá chủ thì LAMP vẫn không rút được, vì `WithdrawLamp` đòi chữ ký owner (`InstantGen/onchain/validators/vault.ak` ▸ `validate_withdraw_lamp`, kiểm `extra_signatories` chứa `owner`) — đó là rủi ro giữ khoá, không phải rủi ro kẹt do cơ chế khoá.
-- *Ví dụ:* DID nắm 1000 LAMP (`L_avail`=1000). Schedule-commit khoá 600 → `L_avail`=400 → InstantGen còn tối đa ⌊400·ρ·usage_factor⌋ ≤ 400 MAGIC/epoch (ví dụ đặt ρ = 1 MAGIC/LAMP/epoch cho dễ đọc; suất tạm hiện hành ở §11 nhỏ hơn). Mua & khoá thêm LAMP nâng trần ngay; LAMP đã khoá không dùng lại tới sang epoch.
+  - **`INV-GEN-BUDGET` giữ KHÔNG cần một TRƯỜNG đếm — hai điều kiện CỨNG:** (1) **khoá giải phóng CHỈ theo chuyển-epoch, CẤM giải theo burn** (đốt MAGIC không được "trả chỗ" LAMP-khoá) — cổng `get_validity_lower_ms(tx) >= input_datum.instant_unlock_ms` ở nhánh **rút** (`validate_withdraw_lamp`), cộng phép ghim `instant_unlock_ms` đứng yên ở **mọi** nhánh còn lại — sót một chỗ ghim là một đường rửa khoá. Vế *"cấm giải theo burn"* được `BurnBatch` giữ bằng đúng phép ghim đó, và được bộ đếm suy ra giữ ở vế thứ hai: bộ đếm ấy đứng nhờ **HAI** tính chất, không phải một — (i) `instant_gen_in_epoch` cộng `initial_amount` chứ không `current_amount`, nên đốt xong vẫn tính là **đã sinh**; và (ii) **tư cách thành viên trong `magic_batches` không co lại trong epoch** (`apply_burns` giữ batch đốt sạch ở lại với `current_amount: 0`; `prune_expired` lọc DUY NHẤT theo `is_expired`; `magic_decay_window = 1` nên batch của epoch này không bao giờ bị dọn trong epoch này). Tính chất (ii) mới là thứ đã hỏng một lần: trước bản vá 2026-09-21, `apply_burns` trả `None` khi số dư về 0, và lúc ấy **(i) vẫn đúng nguyên vẹn** mà bất biến vẫn thủng — chuỗi `InstantGen → BurnBatch(đốt trọn) → InstantGen` lấy trọn trần hai lần trong cùng epoch. Điều kiện phải nói về **tập các đường xoá**, không nói về tên một trường hay tên một hàm (`decay.ak` ▸ khối trên `instant_gen_in_epoch` kê đủ bốn điều kiện); (2) **làm tròn LÊN LAMP-khoá** cho mỗi `m` MAGIC (`⌈ m × Q × Q / (generation_rate_q × usage_factor_q) ⌉`, chia MỘT lần, §6.1.4) — không bao giờ khoá thiếu tỷ lệ. **Không cần đường thả riêng:** `instant_unlock_ms` là một mốc thời gian, nó tự tới nơi (§6.1.4), không giao dịch nào phải giải khoá. Mất khoá chủ thì LAMP vẫn không rút được, vì `WithdrawLamp` đòi chữ ký owner (`InstantGen/onchain/validators/vault.ak` ▸ `validate_withdraw_lamp`, kiểm `extra_signatories` chứa `owner`) — đó là rủi ro giữ khoá, không phải rủi ro kẹt do cơ chế khoá.
+- *Ví dụ:* DID nắm 1000 LAMP (`L_avail`=1000). Schedule-commit khoá 600 → `L_avail`=400 → InstantGen còn tối đa ⌊400·ρ·usage_factor⌋ ≤ 400 MAGIC/epoch (ví dụ đặt ρ = 1 MAGIC/LAMP/epoch cho dễ đọc; suất tạm hiện hành ở §11 nhỏ hơn). Mua & nắm thêm LAMP nâng trần ngay; sau một lượt sinh thì **không LAMP nào rời được két** cho tới mốc `instant_unlock_ms`, và trần trong epoch không phục hồi trước khi sang CHỈ SỐ epoch mới.
 - `br = B/S`: `B` = backing thật, `S` = cung MAGIC hiệu lực (đã Gen chưa tiêu chưa reset). `br_safe = 1.5`.
 
 - **`B` là một DANH MỤC token, chọn bằng biểu quyết quản trị, mỗi hệ một danh mục riêng** (chủ dự án chốt 2026-09-18). Danh mục của hệ MagicLamp: ADA, NIGHT, CHECK, WORK, và có thể thêm. Hệ khác tự chọn danh mục của họ.
@@ -508,7 +531,7 @@ cấp thực = m ≤ min( amount_by_lamp , GB_available )    -- §6.1.1, §6.1.4
 - Cờ `depeg` trên beacon bật ⟹ không sinh InstantGen, và không ký được hợp đồng ScheduleGen MỚI (§6.1.3). **`ScheduleFire` của hợp đồng ĐÃ ký thì chạy tiếp** — chốt 2026-09-19, xem §6.1.4 `CC-GEN-SCHEDULE-FIXED` và §6.4 mục (2). Lý do là lý do sản phẩm, không phải chỗ chưa làm: lượt fire tiêu LAMP đã khoá từ **trước** lúc depeg, nên chặn nó là phạt một người không gây ra việc — và nó đụng thẳng `C-VAC-12` (đã commit thì hoặc fire hoặc hết hạn, không hoàn giữa dòng). Fail-closed đúng ở cửa VÀO, không đúng ở cửa RA của một cam kết đã đóng băng. Cái giá đã ghi ở §12: kẻ chiếm khoá beacon không dừng được dòng đã ký, chỉ chặn được hợp đồng mới.
 - **`INV-CASHBACK-BOUND`**: hoàn-tiền/ưu-đãi-phí mỗi DID (VacuumBack §8 và mọi khoản cashback) ≤ MAGIC thật đã tiêu thụ của DID đó. **Không áp** cho lượng sinh từ LAMP của §6.1.1 — lượng đó bị chặn bởi `L × ρ_e` và `GB`, không bởi lượng đã tiêu.
 
-**Use-or-lose:** lượng sinh là **trần-suất mỗi epoch** — nạp vào batch epoch hiện tại, không cộng dồn qua epoch (§4.2). Sang epoch mới, `lamp_locked` giải phóng → `L_avail` phục hồi → cả Instant lẫn Schedule-fire lại có đủ trần.
+**Use-or-lose:** lượng sinh là **trần-suất mỗi epoch** — nạp vào batch epoch hiện tại, không cộng dồn qua epoch (§4.2). Sang CHỈ SỐ epoch mới, bộ đếm suy ra `instant_gen_in_epoch` về 0 → Instant lại có đủ trần; ở ScheduleGen, `lamp_locked` giải phóng theo từng lượt fire (`validate_fire` ▸ `lamp_released`) chứ không theo chuyển epoch. Ở két InstantGen `lamp_locked` luôn bằng 0 (ghim ở genesis và ở cả sáu nhánh spend), nên nó không tham gia gì vào việc phục hồi trần.
 
 ### §6.4 ScheduleGen — dòng đều dài hạn, GreenBack đỡ
 **Mục đích:** cần **dòng MAGIC đều đặn nhiều epoch** (ví dụ trả công đội kỹ thuật vài tháng). Nắm/khoá LAMP, hệ bảo đảm `pp` MAGIC **mỗi epoch** trong `N` epoch. LAMP đứng yên, trả nguyên vẹn khi hết hợp đồng.
@@ -754,7 +777,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | **F6-NO-EXTERNAL-INPUT** | cổng/ngưỡng chỉ căn số-dư-nội-bộ; oracle CHỈ định-giá `B` (một nguồn giá mỗi tài sản trong danh mục), KHÔNG điều khiển cổng — bản đầy đủ ở §2 |
 | **INV-MAGIC-CITIZEN** | Lượng sinh từ LAMP (InstantGen + ScheduleGen) = `min(amount_by_lamp, GB_available)` (§6.1.1): `L` là cơ sở nhân, `usage_ratio` (consumed/generated, 6 epoch đã qua, không gồm hết hạn) là hệ số nhân dải `[0.5, 1]`, phần hệ số trên sàn chỉ áp tới `scale_limit`, `GB` là trần + cổng; với ScheduleGen, trần gộp toàn mạng là cổng `κ` (§6.1.4). MAGIC đang cầm không vào công thức. Vault CÓ lịch sử mà tiêu 0 sinh ở **sàn**; vault CHƯA có lịch sử sinh ở **mức trung tính** (`CC-GEN-COLD-START`, chốt 2026-09-19) — hai trạng thái khác nhau, đừng gộp; người không nắm LAMP sinh 0. VP C1 (§10) vẫn keyed MAGIC-đã-tiêu cross-DID |
 | **INV-CASHBACK-BOUND** | hoàn-tiền/ưu-đãi-phí mỗi DID ≤ MAGIC thật đã tiêu; KHÔNG áp cho lượng sinh từ LAMP (§6.3) |
-| **INV-INSTANT-LOCK** | InstantGen chặn TRỌN phần LAMP khả dụng **rời két** tới mốc `VaultDatum ▸ instant_unlock_ms` = một epoch thời-gian-trôi kể từ lượt sinh (chốt 2026-09-19 `CC-GEN-L-TIMING`; hình dạng chốt 2026-09-21 `CC-GEN-LOCK-FIELD`). Cổng ở `validate_withdraw_lamp`; mọi nhánh khác ghim trường đứng yên. **ĐÃ hiện thực.** Phạm vi ép được và phạm vi KHÔNG ép được (cửa sổ ranh giới epoch trong một két): §6.1.4 ▸ khối `CC-GEN-LOCK-FIELD` |
+| **INV-INSTANT-LOCK** | InstantGen chặn TRỌN phần LAMP khả dụng **rời két** tới mốc `VaultDatum ▸ instant_unlock_ms` = một epoch thời-gian-trôi kể từ lượt sinh (chốt 2026-09-19 `CC-GEN-L-TIMING`; hình dạng chốt 2026-09-21 `CC-GEN-LOCK-FIELD`). Cổng ở `validate_withdraw_lamp`; bốn nhánh spend khác ghim trường đứng yên, nhánh mint ghim về 0. **ĐÃ hiện thực.** Phạm vi ép được và hai phạm vi KHÔNG ép được (cửa sổ ranh giới epoch trong một két; biên giữa các module): §6.1.4 ▸ khối `CC-GEN-LOCK-FIELD` |
 | **I-ACT-7** | LAMP đứng yên khi gen (chỉ đọc reference_input) |
 | **I-PERSON-5** | 1 PersonDID / 1 biometric_hash (chống Sybil-account) |
 | **INV-VAULT-IDENTITY** | vault mang `vault_id_nft` one-shot; kiểm NFT mọi điểm đọc balance/batches (chặn vault bịa 2-ADA) |
@@ -785,14 +808,15 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 2. Tham số hệ-số-năng-lực per-dịch-vụ (spec dịch-vụ riêng) — siết-thêm dưới trần on-chain (§6.4).
 3. `LENT_PP_CAP` (trần cứng LAMP-mượn, §6.1) — chọn giá trị hằng-hệ.
 
-**ĐÃ CHỐT 2026-09-19 — bốn mục rời khỏi danh sách dưới.** Ghi lại ở đây vì một mã biến mất khỏi danh sách treo mà không để dấu thì người tra lần sau không phân biệt được *"đã quyết"* với *"bị quên"*:
+**ĐÃ CHỐT — bốn mục 2026-09-19, một mục 2026-09-21; cả năm rời khỏi danh sách dưới.** Ghi lại ở đây vì một mã biến mất khỏi danh sách treo mà không để dấu thì người tra lần sau không phân biệt được *"đã quyết"* với *"bị quên"*:
 
 | mã | chốt gì | cái giá phải nhận, và nó nằm ở đâu |
 |---|---|---|
 | `CC-GEN-GB-ROLE` | `GB` là **trần + cổng**, không nhân (§6.1.1) | lúc thặng dư dồi dào, `GB` không tác động gì — lượng sinh do `L` và `usage_ratio` quyết |
 | `CC-GEN-SCHEDULE-FIXED` | lượng/epoch **cố định tuyệt đối** từ lúc ký; fire không dừng khi `depeg` (§6.1.4, §6.4) | sau chữ ký không còn van hạ nghĩa vụ — toàn bộ rủi ro dồn lên cổng `κ` lúc ký; bậc cứu "điều chỉnh tỷ giá hợp đồng" đã bỏ |
 | `CC-GEN-COLD-START` | vault mới ở **mức trung tính** (điểm giữa dải), `scale_limit` không ràng buộc ở trạng thái này (§6.1.2) | đóng-rồi-mở-lại vault xoá được lịch sử xấu ⟹ **chỉ chạy testnet** tới khi `INV-ONE-PERSON-ONE-VAULT` được ép |
-| `CC-GEN-L-TIMING` | LAMP tính **ngay**, nhưng bị chặn **rời két** tới mốc `instant_unlock_ms` — một epoch THỜI GIAN TRÔI, không phải một chỉ số epoch (§6.1.4, `INV-INSTANT-LOCK`) | người dùng thật cũng chịu khoá dài gấp đôi; `WithdrawLamp` từ chối trong trọn cửa sổ. **Giá CÒN LẠI, chốt 2026-09-21:** một két sinh ở hai bên ranh giới epoch lấy được hai trần cách nhau vài giây — giữ nguyên cơ chế, chỉ sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
+| `CC-GEN-L-TIMING` | LAMP tính **ngay**, nhưng bị chặn **rời két** tới mốc `instant_unlock_ms` — một epoch THỜI GIAN TRÔI, không phải một chỉ số epoch (§6.1.4, `INV-INSTANT-LOCK`) | người dùng thật cũng chịu khoá: cửa sổ thật là `(cận-trên-validity − now) + ms_per_epoch`, nằm trong `[P, 2P)` và do người gọi chọn; `WithdrawLamp` từ chối trong trọn cửa sổ. **Giá CÒN LẠI, chốt 2026-09-21:** một két sinh ở hai bên ranh giới epoch lấy được hai trần cách nhau vài giây — giữ nguyên cơ chế, chỉ sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
+| `CC-GEN-LOCK-FIELD` (chốt **2026-09-21**) | hình dạng khoá: **KHÔNG** thêm trường đếm nào; một bộ đếm SUY RA (`decay.ak` ▸ `instant_gen_in_epoch`) cộng một trường thời gian `VaultDatum ▸ instant_unlock_ms` (trường 17, chỉ có ở InstantGen) (§6.1.4) | lược đồ datum InstantGen 17→18 trường ⟹ đã trả giá di trú một lần. Hai phạm vi KHÔNG ép được còn mở: cửa sổ ranh giới epoch trong một két (đỉnh 2× trần, không nâng nhịp dài hạn), và biên giữa các module (ScheduleGen không có trường này, `WithdrawLamp` bên đó không có cổng thời gian). Cả hai: giữ cơ chế, sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
 
 **CHƯA CHỐT của mô hình sinh chung (v2.0)** — dạng `mã · treo gì · ràng buộc TẠM (fail-closed)`:
 - `CC-GEN-B-BASKET` · quy tắc kết nạp/loại bỏ token khỏi danh mục `B` · ai bỏ phiếu · chiết khấu theo thanh khoản · trần tỷ trọng mỗi tài sản (§6.3) · TẠM: danh mục chưa dùng để tính `br` thật; `GB` vẫn là giá trị mô phỏng do keeper đẩy.

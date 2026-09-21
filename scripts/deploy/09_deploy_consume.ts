@@ -63,7 +63,7 @@ import { parkAddressFor, publishRefScript } from "../refScripts.js";
 // Asset name const đọc từ validator (.ak `pub const ...`).
 const PRICE_NFT_NAME  = "5052494345"; // "PRICE" — price_nft.ak
 // BurnBatch = constr 2 trong VaultRedeemer của CẢ HAI vault sinh MAGIC:
-//   InstantGen  — InstantGen/onchain/lib/magiclamp/protocol/types.ak:219-220
+//   InstantGen  — InstantGen/onchain/lib/magiclamp/protocol/types.ak ▸ VaultRedeemer ▸ BurnBatch (constr 2)
 //   ScheduleGen — ScheduleGen/onchain/lib/magiclamp/protocol/types.ak:160-163
 // Nên một giá trị dùng chung được. (Bản cũ của `scripts/README.md` nói hai module
 // khác constr — SAI, và cái sai đó làm việc dễ trông như việc khó.)

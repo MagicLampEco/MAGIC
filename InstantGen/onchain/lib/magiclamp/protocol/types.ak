@@ -220,10 +220,25 @@ pub type VaultDatum {
   // MỘT nhánh: `validate_withdraw_lamp` (`get_validity_lower_ms(tx) >=
   // instant_unlock_ms`). Nhánh SINH ghi nó, và KHÔNG đọc nó làm cổng — không
   // mệnh đề nào trong `validate_instant_gen` so mốc này với thời điểm hiện tại.
-  // Mọi nhánh còn lại chỉ GHIM nó đứng yên.
+  // Bốn nhánh SPEND còn lại chỉ GHIM nó đứng yên. Ngoài sáu nhánh spend còn một
+  // loại THỨ BA, đừng bỏ khi đếm: nhánh MINT `MintVaultId` ghim nó VỀ 0
+  // (`validate_mint_vault_id`) — chỗ duy nhất ép được giá trị KHỞI ĐẦU, vì
+  // Cardano không chạy validator lúc tạo UTxO. Sót một chỗ ghim-đứng-yên là một
+  // đường rửa khoá; sót chỗ ghim-về-0 là một két sinh ra đã mang mốc bịa.
   //
-  // Ép được:     một đồng LAMP không nuôi hai lượt sinh ở HAI KÉT trong cùng một
-  //              cửa sổ khoá — vì nó không rời được két thứ nhất.
+  // Ép được:     một đồng LAMP không nuôi hai lượt sinh ở hai két INSTANTGEN
+  //              trong cùng một cửa sổ khoá — vì nó không rời được két thứ nhất.
+  //              Chữ "InstantGen" là phần gánh nghĩa của câu; xem gạch kế.
+  // KHÔNG ép:    biên giữa các MODULE. Trường này chỉ tồn tại ở đây —
+  //              `grep -rn "instant_unlock_ms" ScheduleGen --include="*.ak"` trả
+  //              0 dòng — và `validate_withdraw_lamp` bên đó chỉ gác `amount > 0`,
+  //              chữ ký chủ, `amount <= avail`; không mệnh đề thời gian nào.
+  //              `ScheduleFire` lại nhả `lamp_locked` NGAY trong epoch nó trả
+  //              MAGIC, và không đòi chữ ký. Nên cùng số LAMP đó đứng sau một
+  //              lượt fire ScheduleGen VÀ một trần InstantGen trong cùng một chỉ
+  //              số epoch, theo thứ tự tuần tự. Hướng ngược lại thì bị chặn.
+  //              Bịt chỗ này là đổi mô hình sinh ScheduleGen, không phải sửa ở
+  //              đây; ràng buộc tạm fail-closed CHỈ CHẠY TESTNET bao ca này.
   // KHÔNG ép:    MỘT két sinh ở giây cuối epoch `e` rồi sinh lại ở giây đầu
   //              `e+1` lấy HAI trần cách nhau vài giây, trên cùng số LAMP, không
   //              cần chuyển đi đâu. Trần trong epoch do bộ đếm suy ra ở
@@ -236,7 +251,9 @@ pub type VaultDatum {
   // "≤1 trần mỗi epoch trên mỗi đồng LAMP" là khai một bảo đảm không có.
   //
   // Chủ dự án chốt 2026-09-21: GIỮ cơ chế, sửa lời khai cho đúng phạm vi. Cửa sổ
-  // này tốn 2× trần; lỗ `apply_burns` vá cùng ngày tốn 120×. Bịt nó là đổi mô
+  // này tốn 2× trần ở ĐỈNH (dồn suất hai chỉ số epoch vào vài giây; nhịp dài
+  // hạn không đổi, vẫn 1 trần mỗi epoch mỗi lô LAMP); lỗ `apply_burns` vá cùng
+  // ngày thì nâng chính NHỊP, tới 120×. Khác đơn vị. Bịt nó là đổi mô
   // hình (trần theo cửa sổ TRÔI thay vì theo chỉ số epoch), và mô hình đó đòi
   // một ô datum ghi được để nhớ mốc — đánh đổi đúng thứ đắt nhất lấy thứ rẻ
   // nhất. Ràng buộc TẠM đang có hiệu lực, fail-closed: CHỈ CHẠY TESTNET.

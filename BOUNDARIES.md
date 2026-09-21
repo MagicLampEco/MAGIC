@@ -227,7 +227,10 @@ nên nêu ở đây thay vì chỉ trỏ:
   `VaultDatum ▸ instant_unlock_ms` (POSIX mili-giây, trường 17 — datum InstantGen **18 trường**,
   ScheduleGen **17**). Nhánh sinh ghi `max(mốc cũ, cận-trên-validity + ms_per_epoch)`; cổng nằm ở
   **đúng một** nhánh, `validate_withdraw_lamp` ▸ `expect get_validity_lower_ms(tx) >=
-  input_datum.instant_unlock_ms`; mọi nhánh còn lại **ghim trường đứng yên** — sót một chỗ ghim
+  input_datum.instant_unlock_ms`; bốn nhánh **spend** còn lại **ghim trường đứng yên**; và nhánh
+  **mint** `MintVaultId` ghim nó **về 0** — chỗ duy nhất ép được giá trị KHỞI ĐẦU, vì Cardano
+  không chạy validator lúc tạo UTxO. Tập đầy đủ là **6 nhánh spend + nhánh mint**, đừng đếm sáu
+  rồi tưởng đã đóng — sót một chỗ ghim
   là một đường rửa khoá, và đây đúng là ca mà `§5` cảnh báo: đổi ràng buộc thì grep TOÀN BỘ nơi gọi.
 
   > 🔴 Bản trước của gạch này mô tả hai trường `instant_locked` + `instant_lock_epoch` và một cổng
@@ -246,7 +249,13 @@ nên nêu ở đây thay vì chỉ trỏ:
   LAMP, **không cần chuyển két**. Mức phát biểu đúng: **≤1 trần mỗi CHỈ SỐ epoch cho mỗi két, cộng
   ≤1 lượt chuyển két mỗi CỬA SỔ KHOÁ** — KHÔNG phải *"≤1 trần mỗi epoch trên mỗi đồng LAMP"*.
   Chủ dự án chốt 2026-09-21: **giữ nguyên cơ chế, sửa lời khai** (cửa sổ này tốn 2× trần, trong khi
-  lỗ `apply_burns` vá cùng ngày tốn 120×; bịt nó là đổi mô hình). Ràng buộc TẠM đang có hiệu lực,
+  lỗ `apply_burns` vá cùng ngày tốn 120×; bịt nó là đổi mô hình). Hai con số đó **khác đơn vị**:
+  cửa sổ ranh giới là một khoản **ĐỈNH** (dồn suất hai chỉ số epoch vào vài giây) và KHÔNG nâng
+  nhịp dài hạn — vẫn 1 trần mỗi epoch cho mỗi lô LAMP, vì mốc ghi ra luôn quá `(k+1)·P`; lỗ
+  `apply_burns` thì nâng chính **NHỊP**. **Một phạm vi thứ hai KHÔNG ép được: biên giữa các
+  MODULE.** Trường này chỉ có ở InstantGen; ScheduleGen không có nó và `WithdrawLamp` bên đó
+  không có cổng thời gian, nên cùng một lượng LAMP đứng sau được một lượt fire ScheduleGen và
+  một trần InstantGen trong cùng một chỉ số epoch, theo thứ tự tuần tự. Ràng buộc TẠM đang có hiệu lực,
   fail-closed: **chỉ chạy testnet** — cùng ràng buộc với `CC-GEN-COLD-START` ngay dưới, không phải
   một ràng buộc thứ hai.
 - **`CC-GEN-COLD-START` — vault chưa có lịch sử đứng ở mức TRUNG TÍNH**, và ở trạng thái đó

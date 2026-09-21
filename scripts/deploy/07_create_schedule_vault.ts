@@ -251,4 +251,7 @@ async function main() {
   console.log(`   VAULT_SCHEDULE_ID_UNIT=${vaultIdUnit}     # NFT danh-tính vault (policy = vault hash)`);
 }
 
-main().catch(console.error);
+// Xem lý do ở `02_deploy_um.ts` cùng đợt vá: mã thoát 0 sau một lỗi làm mọi vòng
+// lặp và mọi `set -e` mù đúng ở lượt hỏng — và vòng dựng vault cho 12 ví mô phỏng
+// là đúng loại vòng lặp đó.
+main().catch((e) => { console.error(e); process.exit(1); });

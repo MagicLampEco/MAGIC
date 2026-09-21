@@ -321,4 +321,9 @@ async function main() {
   console.log(`   REF_VAULT_INSTANT_UTXO=${vaultRef}      # chân vault của tx consume`);
 }
 
-main().catch(console.error);
+// Xem lý do ở `02_deploy_um.ts` cùng đợt vá. Riêng tệp này đã có một bản vá VÒNG
+// TRÁNH sống trong `scripts/keeper/keeper.ts` (*"Bước 05 nuốt lỗi và thoát 0, nên
+// phải đọc tx hash trong output, không tin mã thoát"*) — tức kho đã BIẾT lỗi này
+// và đi vòng qua nó ở một tệp khác thay vì vá tại gốc. Nay vá tại gốc; chỗ vòng
+// tránh kia vô hại nhưng không còn cần thiết.
+main().catch((e) => { console.error(e); process.exit(1); });

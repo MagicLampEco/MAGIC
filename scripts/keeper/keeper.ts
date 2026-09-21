@@ -371,8 +371,15 @@ async function stepInstant(lucid: LucidEvolution, ownerPkh: string, epoch: bigin
   if (DRY) return record("instant", "skip", `DRY: sẽ tạo vault ${lamp} LAMP rồi cấp`);
   writeFileSync(STATE_FILE, JSON.stringify({ ...state, instantAttemptEpoch: epoch.toString() }, null, 2) + "\n");
 
-  // Bước 05 nuốt lỗi và thoát 0 (`main().catch(console.error)`), nên phải đọc tx hash
-  // trong output, không tin mã thoát.
+  // 🔴 Câu cũ ở đây — *"bước 05 nuốt lỗi và thoát 0, nên phải đọc tx hash trong output,
+  // không tin mã thoát"* — ĐÃ CHẾT: `05_create_instant_vault.ts` nay thoát 1 khi hỏng.
+  // Giữ nguyên cách đọc tx hash thì vẫn đúng, nhưng LÝ DO đã khác, và lý do sai còn
+  // tệ hơn không có lý do: nó dạy người đọc rằng mã thoát của các bước deploy không
+  // đáng tin, mà nay chúng đáng tin (24/24 tệp trong `scripts/**` thoát khác 0 khi hỏng).
+  //
+  // Lý do CÒN SỐNG để vẫn đọc tx hash: mã thoát nói bước đó có chạy xong không, KHÔNG
+  // nói vault nào vừa được tạo — và bước kế cần chính cái tx hash ấy. Hai câu hỏi khác
+  // nhau, nên hai phép đo khác nhau.
   const created = runScript("deploy/05_create_instant_vault.ts", { LAMP_DEPOSIT: lamp, PROFILE: "Flame" });
   const vaultTx = created.out.match(/TX hash:\s+([0-9a-f]{64})/)?.[1];
   if (!vaultTx) {

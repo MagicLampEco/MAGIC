@@ -158,6 +158,21 @@ async function main() {
     console.log(`\nĐã gửi. TX hash: ${txHash}`);
     console.log(`Explorer: https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
 
+    // ── Cổng KIỂM CỰC, đặt NGAY SAU submit ───────────────────────────────────
+    //  Dòng `:143` khai "expecting REJECT" rồi bản cũ KHÔNG kiểm gì: lượt phá nộp
+    //  LỌT sẽ đi tiếp xuống khối đo batch bên dưới và in ✅, còn lượt bị từ chối
+    //  ĐÚNG thì rơi vào `catch` và in ❌. Hai nhãn đi NGƯỢC đúng lúc có chuyện.
+    //  Khuôn lấy từ bản NGHIÊM cùng thư mục (`withdraw_only.ts`).
+    //
+    //  🔴 Mã thoát là **3**, KHÔNG phải 2 — tệp này đã dùng 2 cho "CHƯA ĐO ĐƯỢC"
+    //  ở khối dưới. Dùng lại 2 ở đây là để một con số mang hai nghĩa trong cùng
+    //  một tệp, đúng cái hỏng mà chính cổng này sinh ra để chặn. Ba mã, ba nghĩa:
+    //      1 = hỏng thật · 2 = chưa đo được · 3 = lượt phá LỌT qua validator
+    if (tamper) {
+      console.error("\n⚠  UNEXPECTED: tamper tx SUBMITTED — validator did not reject. Investigate.");
+      process.exit(3);
+    }
+
     // ── 🔴 ĐỌC LẠI VAULT TRƯỚC KHI NÓI "XONG" ────────────────────────────────
     //  Bản cũ in "✅ SUCCESS" ngay sau `submit()`. `submit()` chỉ nói NODE ĐÃ NHẬN
     //  tx vào mempool — nó KHÔNG nói tx đã vào khối, và tuyệt đối không nói MAGIC
@@ -245,10 +260,18 @@ async function main() {
       process.exit(2);   // mã thoát RIÊNG: 2 = chưa đo được, 1 = hỏng thật
     }
   } catch (err: any) {
+    const msg = String(err?.message ?? err);
+    if (tamper) {
+      console.log("╔════════════════════════════════════════════╗");
+      console.log("║   ✅ REJECTED (as expected for negative)   ║");
+      console.log("╚════════════════════════════════════════════╝");
+      console.log(`Reason:   ${msg.slice(0, 300)}`);
+      return;
+    }
     console.error("\n╔════════════════════════════════════════════╗");
     console.error("║              ❌ FAILED                     ║");
     console.error("╚════════════════════════════════════════════╝");
-    console.error(String(err?.message ?? err));
+    console.error(msg);
     process.exit(1);
   }
 }

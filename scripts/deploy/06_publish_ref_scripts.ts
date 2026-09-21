@@ -22,6 +22,7 @@
 
 import { Lucid, Blockfrost } from "@lucid-evolution/lucid";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
+import { minAdaForRefScriptWithMargin } from "../minAda.js";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, PROTOCOL,
@@ -62,8 +63,18 @@ async function main() {
   const publish = (label: string, script: typeof vaultScript, hash: string, lovelace: bigint) =>
     publishRefScript({ lucid, parkAddr, label, script, hash, lovelace, parked });
 
-  const vaultRef = await publish("vault ref", vaultScript, vaultHash, 35_000_000n);
-  const shardRef = await publish("shard ref", shardScript, shardHash, 20_000_000n);
+  // min-ADA TÍNH từ chính script đã apply-param, không gõ cứng. Hai con số cũ
+  // (35 và 20 ADA) đều THẤP HƠN min-ADA thật — đo 2026-09-21: vault cần ≈53,1
+  // ADA, shard cần ≈23,8 ADA. Sổ cái từ chối output thiếu min-ADA ở lúc GỬI, tức
+  // sau khi người chạy đã ký; nên một con số đoán ở đây không hỏng ồn, nó hỏng
+  // muộn. Lý do chọn biên 20% và giới hạn của phép tính: `scripts/minAda.ts`.
+  const vaultLovelace = minAdaForRefScriptWithMargin(vaultScript.script);
+  const shardLovelace = minAdaForRefScriptWithMargin(shardScript.script);
+  console.log(`min-ADA vault ref:  ${vaultLovelace / 1_000_000n} ADA (script ${vaultScript.script.length / 2} byte)`);
+  console.log(`min-ADA shard ref:  ${shardLovelace / 1_000_000n} ADA (script ${shardScript.script.length / 2} byte)\n`);
+
+  const vaultRef = await publish("vault ref", vaultScript, vaultHash, vaultLovelace);
+  const shardRef = await publish("shard ref", shardScript, shardHash, shardLovelace);
 
   console.log("\n── nạp vào env ──");
   console.log(`   REF_VAULT_SCHEDULE_UTXO=${vaultRef}`);

@@ -46,8 +46,10 @@ import { applyVaultValidator } from "./validatorScripts.js";
 import { assertLampPolicyId } from "./lampPolicy.js";
 import { buildInitialVaultDatum } from "./vaultDatum.js";
 import { vaultIdAssetName } from "./vaultId.js";
+import { minAdaForVaultWithMargin } from "./minAdaVault.js";
 
-const DEFAULT_VAULT_LOVELACE  = 2_000_000n;
+// 🪦 `DEFAULT_VAULT_LOVELACE = 2_000_000n` đã GỠ. Nó là một hằng đứng ở chỗ
+// một phép tính phải đứng — xem `minAdaVault.ts`. Đừng dựng lại nó.
 const DEFAULT_PROFILE         = "Flame" as const;
 
 export async function createVault(params: CreateVaultParams): Promise<CreateVaultResult> {
@@ -58,7 +60,6 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   // bakes into the validator, or the vault UTxO carries an asset the script
   // cannot see.
   const assetName = protocol.lampAssetName ?? lampAssetName(protocol.network);
-  const vaultLovelace = vault.vaultLovelace ?? DEFAULT_VAULT_LOVELACE;
   const profile       = vault.profile ?? DEFAULT_PROFILE;
 
   // ── Sanity checks ────────────────────────────────────────────
@@ -152,6 +153,25 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   // lệch thì `Data.to` ném ngay tại đây, trước khi có giao dịch nào.
   const datumSchema = vaultType === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
   const vaultDatumCbor = Data.to(initialVault as never, datumSchema);
+
+  // ── min-ADA: TÍNH từ chính datum, không gõ cứng (Nợ #43, vế còn lại) ───────
+  // Bản trước mặc định một hằng 2 ADA cho một UTxO mà datum phình theo số batch
+  // và số holding. Hằng ấy đúng ở két rỗng và sai ngay từ batch đầu tiên — và
+  // sổ cái từ chối ở lúc GỬI, sau khi người dùng đã ký. Xem `minAdaVault.ts`.
+  //
+  // Người gọi truyền tay thì phải LỚN HƠN mức tính được, không nhỏ hơn: một
+  // giá trị tay quá thấp là đúng cái hỏng đang vá, nên nó bị NÉM chứ không bị
+  // âm thầm nâng lên. Lời gọi tay hợp lệ duy nhất là nâng thêm.
+  const minVaultLovelace = minAdaForVaultWithMargin(vaultDatumCbor);
+  if (vault.vaultLovelace !== undefined && vault.vaultLovelace < minVaultLovelace) {
+    throw new Error(
+      `vault.vaultLovelace = ${vault.vaultLovelace} lovelace THẤP HƠN min-ADA tính được ` +
+      `${minVaultLovelace} cho datum ${vaultDatumCbor.length / 2} byte. Sổ cái sẽ từ chối ` +
+      `giao dịch ở lúc GỬI, sau khi đã ký. Bỏ trống trường này để SDK tự tính, hoặc truyền ` +
+      `một giá trị LỚN HƠN.`,
+    );
+  }
+  const vaultLovelace = vault.vaultLovelace ?? minVaultLovelace;
 
   // ── Build tx ─────────────────────────────────────────────────
   // 4 mảnh BẮT BUỘC khớp nhau, thiếu một là validator từ chối:

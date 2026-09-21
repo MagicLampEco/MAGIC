@@ -36,7 +36,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `vault.vault` | `f984733d4559ca7a2fb88ed1bea12b59f984201c073fe6ba2503ffd1` |
+| `vault.vault` | `283208dc5893004ddae1b61b10c8e4a757237ea826454f626272a293` |
 
 ### `Paymaster/onchain`
 

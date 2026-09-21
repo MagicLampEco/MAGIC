@@ -33,7 +33,7 @@ import {
   resolveRefScript,
   type AcceptInlineScriptCeiling,
 } from "./refScript.js";
-import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
+import { InstantVaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { Profile, VaultType } from "./types.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
 
@@ -93,7 +93,12 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
     );
   }
 
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatumSchema);
+  // Cổng ngay trên đã loại `"Schedule"`, và `VaultType` là tập ĐÓNG hai phần tử ⟹
+  // tới dòng này chỉ còn két Instant, tức hình dạng 18 trường. Dùng thẳng lược đồ
+  // Instant chứ không đi qua `decodeVaultDatumEitherShape`: ở đây loại két đã BIẾT,
+  // nên một phép thử-hai-hình-dạng sẽ nhận cả datum 17 trường — mà một datum 17
+  // trường ở đường này nghĩa là ai đó đưa nhầm két, và đó là thứ phải kêu.
+  const vaultDatum = Data.from(vaultUtxo.datum!, InstantVaultDatumSchema) as VaultDatum;
 
   // C-PC-V3
   if (newProfile === vaultDatum.profile) {
@@ -126,6 +131,8 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
     profile_changed_epoch: currentEpoch,
     last_updated_epoch:    currentEpoch,
     // profile, magic_batches, lamp_*, etc.: unchanged (C-PC-V4)
+    // `instant_unlock_ms` đi theo phép trải và ĐỨNG YÊN — `validate_update_profile`
+    // ép `output_datum.instant_unlock_ms == input_datum.instant_unlock_ms`.
   };
 
   const vaultAddress = credentialToAddress(
@@ -148,7 +155,7 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
   const tx = await txWithScript
     .pay.ToAddressWithData(
       vaultAddress,
-      { kind: "inline", value: Data.to(newVaultDatum as never, VaultDatumSchema) },
+      { kind: "inline", value: Data.to(newVaultDatum as never, InstantVaultDatumSchema) },
       vaultUtxo.assets,   // assets unchanged
     )
     .addSignerKey(vaultDatum.owner)

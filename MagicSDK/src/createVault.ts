@@ -41,7 +41,7 @@ import { Data, toUnit, type UTxO } from "@lucid-evolution/lucid";
 import { msPerEpoch, lampAssetName, type Network } from "@magiclamp/protocol-utils";
 
 import type { CreateVaultParams, CreateVaultResult } from "./types.js";
-import { VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
+import { InstantVaultDatumSchema, VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
 import { applyVaultValidator } from "./validatorScripts.js";
 import { assertLampPolicyId } from "./lampPolicy.js";
 import { buildInitialVaultDatum } from "./vaultDatum.js";
@@ -138,6 +138,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     lampBalanceOildrop:   vault.lampDeposit,
     profile,
     currentEpoch,
+    vaultType,
   });
 
   // Lucid Evolution's Data.to expects a TObject-typed value; the
@@ -145,7 +146,12 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   // compatible at runtime but the inferred TS type doesn't match the
   // schema's TUnsafe<...> wrappers. Cast — same workaround used by
   // every other vault SDK in this repo (instant.ts, schedule.ts).
-  const vaultDatumCbor = Data.to(initialVault as never, VaultDatumSchema);
+  //
+  // Lược đồ đi theo `vaultType`, không phải một lược đồ chung: két Instant mang
+  // 18 trường, két Schedule 17 (`schemas.ts` đầu tệp). Hai vế phải khớp nhau —
+  // lệch thì `Data.to` ném ngay tại đây, trước khi có giao dịch nào.
+  const datumSchema = vaultType === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
+  const vaultDatumCbor = Data.to(initialVault as never, datumSchema);
 
   // ── Build tx ─────────────────────────────────────────────────
   // 4 mảnh BẮT BUỘC khớp nhau, thiếu một là validator từ chối:
@@ -254,7 +260,7 @@ function formatSummary(o: {
 // ── re-exports for convenience ────────────────────────────────
 export { applyVaultValidator, applyShardValidator } from "./validatorScripts.js";
 export { buildInitialVaultDatum } from "./vaultDatum.js";
-export { VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
+export { InstantVaultDatumSchema, VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
 export { vaultIdAssetName, vaultIdSeedCbor, type VaultIdSeed } from "./vaultId.js";
 export type {
   Profile, VaultType, ProtocolParams, ValidatorBundle,

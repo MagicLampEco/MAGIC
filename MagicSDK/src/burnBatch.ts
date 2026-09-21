@@ -5,7 +5,9 @@
 // trong tầm ConsumeMAGIC:
 //
 //     vaultBurnRedeemerCbor   — redeemer `BurnBatch { burns }`
-//     vaultOutDatumCbor       — datum output tiếp-nối (A02), 17 trường
+//     vaultOutDatumCbor       — datum output tiếp-nối (A02); 17 trường với ScheduleGen,
+//                               18 với InstantGen (thêm `instant_unlock_ms`, xem
+//                               `schemas.ts` đầu tệp). Lược đồ chọn theo `vaultModule`.
 //
 // Trước tệp này, chỗ DUY NHẤT trong kho biết dựng hai thứ đó là một kịch bản test
 // (`scripts/test/consume_only.ts`). Nghĩa là mọi app muốn tiêu MAGIC phải tự đọc
@@ -31,7 +33,7 @@
 
 import { Constr, Data, type UTxO } from "@lucid-evolution/lucid";
 
-import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
+import { InstantVaultDatumSchema, VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
 
 /** Nhãn biến thể trong `pub type VaultRedeemer`. */
@@ -208,7 +210,10 @@ export function planBurnBatch(
     );
   }
 
-  // ── A02: 17 trường, chỉ 5 chỗ được đổi ──────────────────────────────────────────
+  // ── A02: chỉ 5 chỗ được đổi, mọi trường còn lại đi qua nguyên vẹn ───────────────
+  // `instant_unlock_ms` (chỉ két InstantGen) nằm trong "mọi trường còn lại": nó đi theo
+  // phép trải `...applied` và ĐỨNG YÊN, đúng thứ `validate_burn_batch` ép
+  // (`expect output_datum.instant_unlock_ms == applied.instant_unlock_ms`).
   // vault.ak:556-578 kiểm TỪNG trường. Mọi trường không nêu ở đây đi qua nguyên vẹn TỪ
   // `applied` — với ScheduleGen `applied === datum`; với InstantGen `applied` đã nuốt
   // `pending_profile` tới hạn, đúng như `:913` làm trước khi kiểm `:940-942`.
@@ -284,7 +289,12 @@ export function buildVaultBurnBatch(
     );
   }
 
-  const datum = Data.from(p.vaultUtxo.datum, VaultDatumSchema);
+  // Lược đồ đi theo `vaultModule`, tham số đã BẮT BUỘC từ trước: InstantGen 18 trường,
+  // ScheduleGen 17 (`schemas.ts` đầu tệp). Không dùng `decodeVaultDatumEitherShape` ở
+  // đây vì loại két đã biết — thử-hai-hình-dạng sẽ nhận một datum ScheduleGen ở đường
+  // InstantGen rồi dựng tiếp trên đó, và đó đúng là lượt truyền nhầm cần kêu.
+  const datumSchema = p.vaultModule === "InstantGen" ? InstantVaultDatumSchema : VaultDatumSchema;
+  const datum = Data.from(p.vaultUtxo.datum, datumSchema) as VaultDatum;
 
   if (datum.last_updated_epoch > p.currentEpoch) {
     throw new Error(
@@ -310,7 +320,7 @@ export function buildVaultBurnBatch(
 
   return {
     vaultBurnRedeemerCbor: Data.to(redeemer),
-    vaultOutDatumCbor:     Data.to(plan.newDatum as never, VaultDatumSchema),
+    vaultOutDatumCbor:     Data.to(plan.newDatum as never, datumSchema),
     burns:                 plan.burns,
     newDatum:              plan.newDatum,
     expiredDropped:        plan.expiredDropped,

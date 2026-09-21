@@ -5,8 +5,40 @@
 // `pub type VaultDatum { ... }` definition in
 // `<Module>/onchain/lib/magiclamp/protocol/types.ak`.
 //
-// Mọi loại vault dùng CHUNG một VaultDatum — chỉ code validator (và do đó địa
-// chỉ vault theo network) là khác.
+// ══ HAI HÌNH DẠNG VaultDatum, KHÔNG CÒN MỘT ════════════════════════════════
+// Bản trước của dòng này khai *"Mọi loại vault dùng CHUNG một VaultDatum"*. Câu
+// đó **nay SAI**, và nó sai từ lúc `InstantGen` thêm trường 17.
+//
+//   `VaultDatumSchema`        — 17 trường. ScheduleGen · PrepaidGen, và là hình
+//                               dạng mà mọi bên đọc chung đã nhập từ trước.
+//   `InstantVaultDatumSchema` — 17 trường ĐÓ cộng `instant_unlock_ms` ở CUỐI
+//                               (chỉ số 17) ⟹ 18 trường. Chỉ InstantGen.
+//
+// VÌ SAO KHÁC NHAU, chứ không phải "chưa kịp đồng bộ". `instant_unlock_ms` là
+// mốc khoá LAMP sau một lượt sinh Instant (`CC-GEN-L-TIMING`). Két ScheduleGen
+// **không có nhánh sinh Instant**, nên ở đó trường này sẽ là một ô KHÔNG CÓ
+// NGƯỜI GHI — và một ô như thế phải trả bằng một cổng đông-cứng ở mỗi nhánh
+// spend, hai trong số đó permissionless. Lý lẽ đầy đủ nằm ở nguồn, đừng chép
+// xuống đây: `InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸ khối chú
+// thích của `instant_unlock_ms`.
+//
+// 🔴 LỆCH SỐ TRƯỜNG LÀM DECODE HỎNG ỒN ÀO — ĐÓ LÀ TÍNH CHẤT MUỐN CÓ.
+// Đo 2026-09-21 trên `@lucid-evolution/lucid` 0.4.30, cả HAI chiều:
+//
+//     Data.from(<CBOR 18 trường>, <lược đồ 17 trường>)
+//       → ném: "Could not type cast to object. Fields do not match."
+//     Data.from(<CBOR 17 trường>, <lược đồ 18 trường>)
+//       → ném: "Could not type cast to object. Fields do not match."
+//
+// Cùng chiều với Aiken (`expect n: NewD = d` nghiêm ngặt về số trường, cả hai
+// chiều — xem `BOUNDARIES.md` §2). Nên đọc nhầm hình dạng là một ngoại lệ có
+// tên, không phải một trường `undefined` đi tiếp vào phép tính ở nơi khác. Ai
+// cần đọc két mà CHƯA biết loại thì gọi `decodeVaultDatumEitherShape` bên dưới;
+// **đừng** bọc `Data.from` trong một `catch` trả `null` — đó đúng là cái vỏ im
+// lặng mà kho này cấm.
+//
+// Hai lược đồ dựng từ MỘT danh sách trường chung (`VAULT_DATUM_COMMON_FIELDS`),
+// không chép hai lần: một bản chép sẽ trôi khỏi bản gốc mà không gì báo.
 //
 // ══ BIA MỘ — ĐỪNG XOÁ `Snapshot` / `Vacuum` Ở TỆP NÀY ══════════════════════
 // `VaultType` (types.ts) đã thu về "Instant" | "Schedule" vì SnapshotGen và
@@ -123,9 +155,9 @@ const VaultAttributionSchema = Data.Object({
   total_events:     Data.Integer(),
 });
 
-/** Full VaultDatum schema — used to serialize the initial datum at vault creation
- *  and to decode existing vault UTxOs in downstream builders (Instant/Schedule). */
-export const VaultDatumSchema = Data.Object({
+/** 17 trường chung của MỌI loại két, theo ĐÚNG thứ tự khai = chỉ số trường Plutus.
+ *  Đây là NGUỒN: hai lược đồ bên dưới trải danh sách này vào, không chép lại nó. */
+const VAULT_DATUM_COMMON_FIELDS = {
   owner:                 Data.Bytes(),
   lamp_balance:          Data.Integer(),
   lamp_locked:           Data.Integer(),
@@ -143,9 +175,77 @@ export const VaultDatumSchema = Data.Object({
   streak_state:          StreakStateSchema,
   personal_delegate:     Data.Nullable(Data.Bytes()),
   attribution:           VaultAttributionSchema,
+};
+
+/** VaultDatum 17 trường — ScheduleGen, PrepaidGen, và mọi bên đọc chung.
+ *
+ *  Tên này KHÔNG đổi dù nay nó chỉ tả một trong hai hình dạng: nó đã xuất ra ngoài
+ *  và nhiều nhà đang nhập. Đổi tên là một breaking change của SDK để đổi lấy đúng
+ *  một chữ. */
+export const VaultDatumSchema = Data.Object({ ...VAULT_DATUM_COMMON_FIELDS });
+
+/** VaultDatum 18 trường — CHỈ InstantGen. 17 trường chung + `instant_unlock_ms`
+ *  ở chỉ số 17. Thêm ở CUỐI nên chỉ số 0..16 giữ nguyên, và các bên đọc theo VỊ TRÍ
+ *  (`Paymaster` ▸ `vault_delegate_is` đọc trường 15, `ConsumeMAGIC` ▸ `consume.ak`
+ *  đọc trường 0) không phải đụng gì. */
+export const InstantVaultDatumSchema = Data.Object({
+  ...VAULT_DATUM_COMMON_FIELDS,
+  instant_unlock_ms:     Data.Integer(),
 });
 
 export type VaultDatum = ReturnType<typeof Data.from<typeof VaultDatumSchema>>;
+export type InstantVaultDatum = ReturnType<typeof Data.from<typeof InstantVaultDatumSchema>>;
+
+/** Loại két suy ra từ SỐ TRƯỜNG của datum. Tập ĐÓNG, khớp `VaultType` của `types.ts`. */
+export type VaultDatumShapeKind = "Instant" | "Schedule";
+
+export interface VaultDatumEitherShape {
+  /** `"Instant"` khi datum có 18 trường, `"Schedule"` khi có 17. */
+  kind: VaultDatumShapeKind;
+  datum: VaultDatum | InstantVaultDatum;
+  /** Trường 17 khi `kind === "Instant"`; `null` khi `"Schedule"` — ở đó trường
+   *  KHÔNG TỒN TẠI, và `null` nói đúng điều đó. Đừng đệm `0n`: `0n` là một giá
+   *  trị hợp lệ của một két Instant chưa từng sinh, nên đệm nó là xoá mất chỗ
+   *  phân biệt "không có trường" với "có trường, bằng 0". */
+  instantUnlockMs: bigint | null;
+}
+
+/**
+ * Giải mã một datum két khi CHƯA biết nó thuộc loại nào — thử hình dạng 18 trường
+ * trước, rồi 17.
+ *
+ * Thử Instant trước là có chủ ý: hai lược đồ loại trừ nhau (Lucid ném ở cả hai
+ * chiều lệch số trường — xem đầu tệp), nên thứ tự không đổi KẾT QUẢ, chỉ đổi số
+ * lần thử ở đường đi phổ biến hơn.
+ *
+ * 🔴 KHÔNG NUỐT LỖI. Cả hai hình dạng đều không khớp ⟹ NÉM, và câu lỗi nêu đích
+ * danh hai hình dạng đã thử cùng câu lỗi gốc của từng lần. Trả `null` hay `{}` ở
+ * đây là dựng một cái vỏ im lặng: một két không đọc được và một két rỗng sẽ ra
+ * cùng một màn hình.
+ */
+export function decodeVaultDatumEitherShape(hex: string): VaultDatumEitherShape {
+  let instantError: string;
+  try {
+    const datum = Data.from(hex, InstantVaultDatumSchema);
+    return {
+      kind: "Instant",
+      datum,
+      instantUnlockMs: (datum as unknown as { instant_unlock_ms: bigint }).instant_unlock_ms,
+    };
+  } catch (e) {
+    instantError = (e as Error).message;
+  }
+
+  try {
+    return { kind: "Schedule", datum: Data.from(hex, VaultDatumSchema), instantUnlockMs: null };
+  } catch (e) {
+    throw new Error(
+      `Datum két không khớp hình dạng nào trong hai hình dạng đang sống. ` +
+      `InstantVaultDatumSchema (18 trường): ${instantError} — ` +
+      `VaultDatumSchema (17 trường): ${(e as Error).message}`,
+    );
+  }
+}
 
 // ── VaultIdRedeemer — redeemer của handler `mint` trên chính validator vault ──
 //

@@ -10,7 +10,7 @@
 
 import { Data, type LucidEvolution, type UTxO } from "@lucid-evolution/lucid";
 import { applyVaultValidator } from "./validatorScripts.js";
-import { VaultDatumSchema, type VaultDatum } from "./schemas.js";
+import { InstantVaultDatumSchema, VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
 export interface VaultRecord {
@@ -55,12 +55,17 @@ export async function listVaultsForOwner(params: ListVaultsParams): Promise<Vaul
 
   const allUtxos = await lucid.utxosAt(vaultAddress);
 
+  // Mỗi địa chỉ vault phục vụ ĐÚNG MỘT loại két, nên hình dạng datum suy ra từ
+  // `vaultType` chứ không phải thử hai lần: Instant 18 trường, Schedule 17
+  // (`schemas.ts` đầu tệp).
+  const datumSchema = vaultType === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
+
   const records: VaultRecord[] = [];
   for (const u of allUtxos) {
     if (!u.datum) continue;   // skip UTxOs without inline datum (not our vault)
     let datum: VaultDatum;
     try {
-      datum = Data.from(u.datum, VaultDatumSchema);
+      datum = Data.from(u.datum, datumSchema) as VaultDatum;
     } catch {
       continue;   // not a vault datum — skip
     }

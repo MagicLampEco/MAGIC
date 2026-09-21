@@ -25,7 +25,7 @@ import {
   nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, type Network } from "@magiclamp/protocol-utils";
-import { slotToUnixTime } from "@lucid-evolution/lucid";
+import { slotToUnixTime, unixTimeToSlot } from "@lucid-evolution/lucid";
 import {
   VaultDatum, UMDatum, BackingBeaconDatum, VaultRedeemer,
   type MagicBatch,
@@ -245,6 +245,31 @@ export async function buildInstantGenTx(
     epoch: currentEpoch,
   });
 
+  // ── Validity range (POSIX ms, matches validator's epoch math) ─
+  // Tính TRƯỚC khi dựng datum: `instant_unlock_ms` neo vào cận TRÊN của chính
+  // khoảng này, nên hai thứ không được tính ở hai chỗ rời nhau.
+  const lowerTime = Number(tipPosixMs);
+  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
+
+  // ── C-INST-9: mốc khoá LAMP sau lượt sinh ─────────────────────
+  //
+  // Gương của `validate_instant_gen`:
+  //     unlock_from_now = get_validity_upper_ms(tx) + ms_per_epoch
+  //     new_unlock_ms   = max(input.instant_unlock_ms, unlock_from_now)
+  //
+  // 🔴 `get_validity_upper_ms` đọc cận trên mà SỔ CÁI trình ra, KHÔNG phải con số
+  // mili-giây ta truyền vào `.validTo()`. Lucid quy nó về SLOT trước
+  // (`validTo` → `unixTimeToSlot` → `unixTimeToEnclosingSlot`, tức làm tròn XUỐNG
+  // biên slot), rồi script đọc lại bằng `slotToBeginUnixTime`. Lấy thẳng
+  // `upperTime` là lệch tới gần một độ dài slot, và lệch bao nhiêu cũng đủ làm
+  // `expect output_datum.instant_unlock_ms == new_unlock_ms` vỡ. Nên đi đúng vòng
+  // quy đổi mà chuỗi sẽ đi.
+  const upperMsOnChain = BigInt(slotToUnixTime(network, unixTimeToSlot(network, upperTime)));
+  const unlockFromNow = upperMsOnChain + msPerEpoch(network);
+  const newUnlockMs = vaultDatum.instant_unlock_ms > unlockFromNow
+    ? vaultDatum.instant_unlock_ms
+    : unlockFromNow;
+
   // ── Build updated VaultDatum (A02: field-by-field) ────────────
   // I-ACT-7: lamp_balance / lamp_locked / loyalty_holdings are copied verbatim.
   const newVaultDatum: VaultDatum = {
@@ -255,6 +280,8 @@ export async function buildInstantGenTx(
     // INV-CASHBACK-BOUND: the credit is SPENT, never reusable.
     activity_state:     { ...vaultDatum.activity_state, consumed_credit: 0n },
     attribution:        newAttribution,
+    // Trường 17 — đây là nhánh DUY NHẤT ghi nó; mọi nhánh spend khác ép đứng yên.
+    instant_unlock_ms:  newUnlockMs,
   };
 
   // ── Build transaction ─────────────────────────────────────────
@@ -275,9 +302,8 @@ export async function buildInstantGenTx(
 
   const lampUnit = toUnit(lampPolicyId, lampAssetName);
 
-  // Validity range: lower bound = current tip POSIX ms; upper = end of POSIX-epoch.
-  const lowerTime = Number(tipPosixMs);
-  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
+  // `lowerTime` / `upperTime` đã tính ở trên, cạnh `newUnlockMs` — hai thứ neo vào
+  // cùng một cận nên phải nằm cùng chỗ.
 
   // I-ACT-7: the vault output carries EXACTLY the LAMP it came in with.
   const lampOut = vaultDatum.lamp_balance - (params.tamperLampOutOil ?? 0n);

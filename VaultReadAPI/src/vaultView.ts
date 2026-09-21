@@ -3,8 +3,10 @@
 // Hàm thuần, không mạng, không khoá, không I/O ⇒ phép kiểm chạy thẳng vào đây.
 //
 // ── HAI THỨ TỆP NÀY CỐ Ý KHÔNG TỰ LÀM ───────────────────────────────────────────
-// 1. Giải mã datum. Dùng `VaultDatumSchema` của MagicSDK, không khai lại lược đồ.
-//    Chép lược đồ sang đây là dựng bản thứ hai sẽ lệch ngay lượt đổi datum đầu tiên.
+// 1. Giải mã datum. Dùng `decodeVaultDatumEitherShape` của MagicSDK, không khai lại
+//    lược đồ và cũng không tự thử hai hình dạng. Chép lược đồ sang đây là dựng bản thứ
+//    hai sẽ lệch ngay lượt đổi datum đầu tiên. (Có HAI hình dạng: két Instant 18
+//    trường, Schedule 17 — xem `MagicSDK/src/schemas.ts` đầu tệp.)
 // 2. Luật hết hạn. Dùng `isBatchExpired` của MagicSDK (`MagicSDK/src/burnBatch.ts`),
 //    vốn là gương của `is_expired` ở `ScheduleGen/onchain/validators/vault.ak:630-632`.
 //    Viết lại `current_epoch - created >= decay_window` ở đây là tạo bản thứ ba của
@@ -24,8 +26,7 @@
 // hạn và một màn hình hiện 0 vì đường đọc gãy trông giống hệt nhau — đó đúng là thứ
 // gói này sinh ra để tách.
 
-import { Data } from "@lucid-evolution/lucid";
-import { VaultDatumSchema, isBatchExpired, type VaultDatum } from "@magiclamp/sdk";
+import { decodeVaultDatumEitherShape, isBatchExpired, type VaultDatum } from "@magiclamp/sdk";
 
 import type { ChainUtxo } from "./chain.js";
 import type { VaultKind } from "./config.js";
@@ -62,9 +63,22 @@ export interface VaultView {
   utxoRef: string;
   /** Loại vault — tập ĐÓNG `VAULT_KINDS`. **BẮT BUỘC có mặt trên mọi vault.**
    *
-   *  Nó không suy được từ datum: `VaultDatumSchema` của Instant và của Schedule giải mã
-   *  giống hệt nhau. Nguồn duy nhất là **địa chỉ** — mỗi `VaultScope` trong cấu hình gắn
-   *  một địa chỉ với đúng một loại, nên loại đi theo scope chứ không đi theo UTxO.
+   *  Nguồn là **địa chỉ**: mỗi `VaultScope` trong cấu hình gắn một địa chỉ với đúng một
+   *  loại, nên loại đi theo scope chứ không đi theo UTxO. Đó vẫn là nguồn có thẩm quyền,
+   *  vì địa chỉ là thứ quyết định validator nào sẽ chạy.
+   *
+   *  🔴 Bản trước của dòng này viết *"nó không suy được từ datum: `VaultDatumSchema` của
+   *  Instant và của Schedule giải mã giống hệt nhau"*. Câu đó **nay SAI**: két Instant
+   *  mang 18 trường, Schedule 17 (`MagicSDK/src/schemas.ts` đầu tệp), nên SỐ TRƯỜNG
+   *  phân biệt được hai loại.
+   *
+   *  Hệ quả phải khai, vì nó là một lỗ ĐÃ BIẾT chứ không phải chỗ chưa nghĩ tới: hai
+   *  nguồn (scope và số trường) nay đối chiếu được, và hàm này **CHƯA đối chiếu**. Một
+   *  cấu hình trỏ scope `Instant` vào một địa chỉ két Schedule sẽ trả về mọi con số
+   *  đúng kèm một nhãn `vaultKind` sai, và không gì kêu. Chưa vá ở đây vì phép đối
+   *  chiếu đó lật một quyết định đang được ghim bằng bài kiểm
+   *  (`tests/vaultView.test.ts` ▸ *"CÙNG một UTxO đọc dưới scope Instant ⇒ vaultKind =
+   *  Instant"*), và lật một quyết định không phải việc của một lượt đổi lược đồ.
    *
    *  Vì sao bắt buộc chứ không tuỳ chọn: một trường có ở vault này và vắng ở vault kia thì
    *  bên gọi không phân biệt được *"vault loại lạ"* với *"máy chủ bản cũ"* — hai thứ cần
@@ -184,7 +198,10 @@ export function readVaultsFromUtxos(
 
     let datum: VaultDatum;
     try {
-      datum = Data.from(u.inlineDatumHex, VaultDatumSchema);
+      // Thử CẢ HAI hình dạng: két Instant 18 trường, Schedule 17. Mặt tiền này phục vụ
+      // cả hai scope, nên ghim một hình dạng là biến mọi két của loại kia thành
+      // `VAULT_DATUM_UNDECODABLE` — một 502 cho một két hoàn toàn lành.
+      datum = decodeVaultDatumEitherShape(u.inlineDatumHex).datum as VaultDatum;
     } catch (e) {
       // NÉM, không `continue`. UTxO này mang NFT danh-tính vault ⇒ nó LÀ vault ⇒
       // không giải mã được nghĩa là lược đồ của kho đã trôi khỏi chuỗi.

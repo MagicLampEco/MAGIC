@@ -186,6 +186,46 @@ pub type VaultDatum {
   // Bên đó lấy nhầm trường và KHÔNG kêu; các bên đọc qua lược đồ thì hỏng ồn ào.
   personal_delegate     : Option<ByteArray>,
   attribution           : VaultAttribution,
+  // ── Trường 17: khoá LAMP sau một lượt sinh (`CC-GEN-L-TIMING`) ───────────────
+  //
+  // Mốc THỜI GIAN (POSIX mili-giây, cùng đơn vị với `tx.validity_range`) mà từ đó
+  // LAMP được rời khỏi két trở lại. `0` = chưa từng sinh, không khoá gì.
+  //
+  // VÌ SAO KHOÁ NÀY CẦN. Cận an toàn của mô hình sinh (`Specs §6.1.5`) là
+  // `Σ sinh ≤ Σ LAMP-trên-chuỗi × trần ρ`, và cận đó chỉ đúng nếu **một đồng LAMP
+  // không nuôi hai lượt sinh trong cùng một cửa sổ**. Bộ đếm suy ra ở
+  // `decay.ak ▸ instant_gen_in_epoch` giữ cận đó TRONG MỘT KÉT; trường này giữ nó
+  // khi LAMP nhảy két. Lập luận đứng sau nó là BẢO TOÀN, không phải kinh tế — một
+  // lập luận kinh tế ("thuê LAMP đắt") bác được bằng số đo của chính kho này, vì
+  // từ 84 LAMP trở lên `cap_surplus` cắn trước `cap_pp` nên thuê thêm LAMP không
+  // nâng được một nanogic nào.
+  //
+  // VÌ SAO ĐO BẰNG THỜI GIAN CHỨ KHÔNG BẰNG CHỈ SỐ EPOCH. Khoá neo theo chỉ số
+  // epoch để người gọi tự chọn thời lượng qua thời điểm sinh: sinh phút cuối epoch
+  // thì giữ gần 0, sinh đầu epoch thì giữ trọn một epoch. Kẻ tấn công cần MAGIC cho
+  // một lượt đốt tức thì nên luôn chọn phút cuối; người dùng thật phải tiêu rải nên
+  // chọn đầu epoch. Tức cơ chế thu của người ngay nhiều hơn kẻ gian, và chính kẻ
+  // gian chọn mức thu của mình. Neo theo thời gian trôi thu đúng một epoch của mọi
+  // người, và bỏ luôn động cơ dồn giao dịch vào cuối epoch (thứ gây tranh chấp
+  // beacon).
+  //
+  // 🔴 NEO VÀO CẬN TRÊN CỦA `validity_range`, KHÔNG vào cận dưới. Người gọi muốn
+  // khoá ngắn: cận dưới họ đẩy lùi được về đầu epoch (`get_current_epoch` chỉ đòi
+  // nó cùng epoch), nên neo vào đó là để họ tự bấm nút rút ngắn. Cận trên thì họ
+  // chỉ đẩy được về phía SAU — đẩy lùi quá slot thật là giao dịch không vào khối
+  // — nên mức ngắn nhất họ đạt được đúng bằng "một epoch kể từ bây giờ". Cùng một
+  // dòng mã, một cận gác được và một cận thì không.
+  //
+  // ĐẶT Ở CUỐI vì có bên đọc theo VỊ TRÍ — xem bia mộ trường 15 ngay trên. Thêm ở
+  // cuối giữ nguyên chỉ số 0..16, nên `Paymaster` ▸ `vault_delegate_is`
+  // (`list.at(fields, 15)`) và `ConsumeMAGIC` ▸ `consume.ak` (đọc trường 0) không
+  // phải đụng gì.
+  //
+  // KHÔNG có ở `ScheduleGen`: két bên đó không có nhánh sinh Instant, nên trường
+  // này ở đó sẽ là một ô KHÔNG CÓ NGƯỜI GHI — phải trả bằng một cổng đông-cứng ở
+  // mỗi nhánh spend, hai trong số đó không cần chữ ký. Hai lược đồ khác nhau là
+  // cái giá rẻ hơn, và nó hỏng ỒN ÀO (decode sai số trường) thay vì im.
+  instant_unlock_ms     : Natural,
 }
 
 // ── UM Datum ─────────────────────────────────────────────────

@@ -13,7 +13,7 @@
 // cliff, and there is no halving step at any k.
 
 use aiken/collection/list
-use magiclamp/protocol/types.{MagicBatch}
+use magiclamp/protocol/types.{Instant, MagicBatch}
 
 // ── Liveness ─────────────────────────────────────────────────
 
@@ -61,6 +61,51 @@ pub fn batch_balance(batch: MagicBatch, current_epoch: Int) -> Int {
 /// Total live MAGIC across a batch list (S-side accounting, off-chain mirror).
 pub fn live_total(batches: List<MagicBatch>, current_epoch: Int) -> Int {
   list.foldl(batches, 0, fn(b, acc) { acc + batch_balance(b, current_epoch) })
+}
+
+// ── Bộ đếm lượng đã SINH trong epoch hiện tại (`CC-GEN-LOCK-FIELD`) ──────────
+//
+// Đây là phanh ĐỘC LẬP-ORACLE của `InstantGen`: tổng lượng sinh trong một epoch
+// phải nằm dưới trần theo LAMP, chứ không phải mỗi lượt sinh nằm dưới trần. Không
+// có nó thì `InstantGen → BurnBatch → InstantGen` lặp được trong cùng một epoch,
+// mỗi vòng lấy trọn trần, và trần duy nhất phía trên là phần thặng dư GreenBack.
+//
+// 🔴 Con số này KHÔNG có ô nhớ trong datum, CỐ Ý. Một trường datum là một ô ghi
+// được, và mọi ô ghi được đòi một cổng đông-cứng ở MỌI nhánh — kể cả nhánh không
+// cần chữ ký (`PruneExpired`). Quên một nhánh là một đường giặt khoá mà không bài
+// kiểm nào đỏ. Một đại lượng suy ra thì không có ô, nên không có chỗ nào để quên.
+//
+// Bốn điều kiện giữ phép suy này đứng, cả bốn nằm trong chính tệp này hoặc ngay
+// cạnh nó — đổi một trong bốn là làm hỏng phanh, nên chúng được kê ra để lần sau
+// ai sửa `is_expired` hay `prune_expired` đọc được hệ quả:
+//
+//   1. `is_expired` dùng `decay_window = 1` ⟹ batch sinh trong epoch này không bao
+//      giờ bị dọn TRONG epoch này, nên nó còn đó để đếm.
+//   2. `prune_expired` lọc DUY NHẤT theo `is_expired` ⟹ đốt sạch `current_amount`
+//      không làm batch biến mất; nó ở lại mang nguyên `initial_amount`.
+//   3. `PruneExpired` (nhánh không cần chữ ký) dùng đúng vị từ ấy ⟹ người lạ không
+//      hạ được bộ đếm của nạn nhân.
+//   4. Sang epoch sau batch cũ thành `is_expired` và bị dọn ⟹ bộ đếm tự về 0,
+//      không nhánh nào phải nhớ xoá nó.
+//
+// Đọc `initial_amount` chứ không `current_amount`: câu hỏi là *"đã sinh ra bao
+// nhiêu trong epoch này"*, không phải *"còn lại bao nhiêu"*. Tiêu rồi vẫn tính là
+// đã sinh — đó đúng là thứ làm vòng lặp đốt-rồi-sinh-lại vô hiệu.
+pub fn instant_gen_in_epoch(
+  batches       : List<MagicBatch>,
+  current_epoch : Int,
+) -> Int {
+  list.foldl(
+    batches,
+    0,
+    fn(b, acc) {
+      if b.source == Instant && b.created_epoch == current_epoch {
+        acc + b.initial_amount
+      } else {
+        acc
+      }
+    },
+  )
 }
 
 // ── `halved` is a dead field under the cliff model ────────────

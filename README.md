@@ -44,8 +44,6 @@ MAGIC/
 ├── MagicSDK/             # Mặt tiền cho bên tích hợp
 ├── Paymaster/            # Trả phí hộ (SponsorMeter)
 ├── FlowRate/             # Điều tiết nhịp
-├── Consolidate/          # Gộp holding phân mảnh   (validator một phần)
-├── ProfileChange/        # Đổi profile 2 bước      (validator một phần)
 ├── AppEconomics/         # Lớp thưởng app          (chưa hội tụ ba-token)
 ├── scripts/              # Deploy + kiểm thử testnet
 └── Legacy/               # KHO LƯU TRỮ — không đọc, không build, không deploy
@@ -75,7 +73,7 @@ commit "npm install từ checkout sạch" — cập nhật nhánh, đừng dựn
 Chạy cả loạt:
 
 ```bash
-for m in InstantGen ScheduleGen UMKeeper Consolidate ProfileChange ConsumeMAGIC AppEconomics; do
+for m in InstantGen ScheduleGen UMKeeper ConsumeMAGIC AppEconomics; do
   echo "=== $m ===" && (cd $m/offchain && npm install --silent && npm test)
 done
 ```

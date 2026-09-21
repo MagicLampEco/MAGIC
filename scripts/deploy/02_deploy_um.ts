@@ -140,4 +140,8 @@ async function main() {
   console.log(`   UM_NFT_POLICY_ID=${umNftPolicyId}  # one-shot singleton (genesis ${genesisUtxo.txHash}#${genesisUtxo.outputIndex})`);
 }
 
-main().catch(console.error);
+// Nuốt lỗi rồi thoát 0 là dựng một cái vỏ im lặng ở đúng chỗ đắt nhất: một vòng
+// lặp gọi kịch bản này nhiều lượt sẽ đi tiếp qua lượt đã hỏng, và sổ ghi đủ số
+// bước "xong" cho một số bước chưa từng chạy. `console.error` in ra traceback
+// nhưng mã thoát vẫn 0, nên `set -e` và mọi vòng lặp đều không thấy gì.
+main().catch((e) => { console.error(e); process.exit(1); });

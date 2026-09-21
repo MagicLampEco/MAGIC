@@ -28,6 +28,7 @@ import { Data } from "@lucid-evolution/lucid";
 import { VaultDatumSchema, isBatchExpired, type VaultDatum } from "@magiclamp/sdk";
 
 import type { ChainUtxo } from "./chain.js";
+import type { VaultKind } from "./config.js";
 import { VaultDatumUndecodableError, VaultIdentityDuplicateError } from "./errors.js";
 
 /** Độ dài hex của một policy id / script hash (28 byte). */
@@ -59,6 +60,16 @@ export interface GenScheduleView {
 
 export interface VaultView {
   utxoRef: string;
+  /** Loại vault — tập ĐÓNG `VAULT_KINDS`. **BẮT BUỘC có mặt trên mọi vault.**
+   *
+   *  Nó không suy được từ datum: `VaultDatumSchema` của Instant và của Schedule giải mã
+   *  giống hệt nhau. Nguồn duy nhất là **địa chỉ** — mỗi `VaultScope` trong cấu hình gắn
+   *  một địa chỉ với đúng một loại, nên loại đi theo scope chứ không đi theo UTxO.
+   *
+   *  Vì sao bắt buộc chứ không tuỳ chọn: một trường có ở vault này và vắng ở vault kia thì
+   *  bên gọi không phân biệt được *"vault loại lạ"* với *"máy chủ bản cũ"* — hai thứ cần
+   *  hai cách xử. Vắng hẳn ở mọi vault thì ít ra nó nhất quán; vắng lỗ chỗ thì không. */
+  vaultKind: VaultKind;
   vaultAddress: string;
   /** `policyId + assetNameHex` của NFT danh-tính vault. Policy == script hash của vault. */
   vaultIdUnit: string;
@@ -66,6 +77,32 @@ export interface VaultView {
   availableNanogic: bigint;
   accruedNanogic: bigint;
   expiredNanogic: bigint;
+  /** 🔴 **Đây KHÔNG phải "lượng MAGIC đã tiêu".** Nó là *tín dụng CÓ ĐƯỢC NHỜ tiêu* —
+   *  một **số dư tiêu được**, không phải một bộ đếm luỹ kế. Cái tên đọc ngược với vật thật,
+   *  nên đừng đặt nhãn cho người dùng từ cái tên này.
+   *
+   *  Vòng đời ở vault **InstantGen** (bốn vế, neo theo tên hàm trong
+   *  `InstantGen/onchain/validators/vault.ak`):
+   *    · `validate_mint_vault_id` — genesis ghim `= wakeme_seed_credit`, **khác 0**;
+   *    · `validate_burn_batch`    — `+= Σburns`, chỗ TĂNG duy nhất;
+   *    · `validate_instant_gen`   — đọc rồi **ĐẶT VỀ 0** (`INV-CASHBACK-BOUND`: tín dụng
+   *      được TIÊU, không được dùng lại — nên cùng một lần tiêu không đòi được hai lần);
+   *    · `validate_prune_expired` — **không đụng** (đụng là mở một đòn bẩy thưởng miễn phí).
+   *
+   *  ⟹ con số này **TỤT VỀ 0** sau mỗi lượt InstantGen cấp. Đó là bình thường, không phải
+   *  mất dữ liệu.
+   *
+   *  🔴 Và CÙNG TÊN TRƯỜNG mang HAI NGHĨA, tuỳ vault thuộc validator nào:
+   *    · vault **InstantGen**  — số dư tiêu được (vòng đời trên);
+   *    · vault **ScheduleGen** — genesis ghim `0`, tăng ở `validate_burn_batch`, và
+   *      **không nhánh nào đưa về 0** ⟹ ở đó nó là bộ đếm luỹ kế, và hiện **không ai đọc**
+   *      (chú thích ngay tại cổng genesis của `ScheduleGen/onchain/validators/vault.ak`
+   *      nói thẳng: *"accumulated by BurnBatch though unread today"*).
+   *
+   *  Hàm này đọc trường THÔ và **không phân biệt hai loại vault** — câu trả lời API vì thế
+   *  chưa có trường nào nói cho bên gọi biết nó đang cầm nghĩa nào. Đó là nợ đã khai, không
+   *  phải thiếu sót chưa biết; đề nghị thêm `vault_kind` đã gửi bên tiêu thụ.
+   */
   consumedCreditNanogic: bigint;
   lampBalanceOildrop: bigint;
   lampLockedOildrop: bigint;
@@ -109,6 +146,7 @@ export function readVaultsFromUtxos(
   vaultAddress: string,
   ownerPkh: string,
   atEpoch: bigint,
+  vaultKind: VaultKind,
 ): ReadVaultsResult {
   const vaults: VaultView[] = [];
   const ignored: IgnoredUtxo[] = [];
@@ -158,7 +196,7 @@ export function readVaultsFromUtxos(
       continue;
     }
 
-    vaults.push(toVaultView(u, datum, utxoRef, vaultAddress, vaultIdUnit, atEpoch));
+    vaults.push(toVaultView(u, datum, utxoRef, vaultAddress, vaultIdUnit, atEpoch, vaultKind));
   }
 
   // Thứ tự tất định — bên gọi so kết quả giữa hai lượt được.
@@ -187,6 +225,7 @@ function toVaultView(
   vaultAddress: string,
   vaultIdUnit: string,
   atEpoch: bigint,
+  vaultKind: VaultKind,
 ): VaultView {
   const rawBatches = datum.magic_batches as unknown as RawBatch[];
 
@@ -229,6 +268,7 @@ function toVaultView(
 
   return {
     utxoRef,
+    vaultKind,
     vaultAddress,
     vaultIdUnit,
     ownerPkh: datum.owner,

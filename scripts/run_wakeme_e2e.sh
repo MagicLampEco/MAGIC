@@ -58,6 +58,12 @@ persist() { printf '%s=%s\n' "$1" "$2" >> "$STATE_FILE"; }
 
 if [ -f "$STATE_FILE" ]; then
   echo "▶ Đọc prereq đã lưu: $STATE_FILE"
+  # Gác TRƯỚC khi nạp. Runner này vừa GHI sổ (persist ở trên) vừa chạy các bước
+  # deploy nướng `lampAssetName` vào apply-param — `03_deploy_shards.ts`,
+  # `05_create_instant_vault.ts`, `07_create_schedule_vault.ts`. Sai ở đó là sai
+  # script hash ⟹ sai địa chỉ, không sửa được bằng cấu hình về sau.
+  . "./state_book_guard.sh"
+  assert_state_books_khong_khai_y_dinh "$STATE_FILE"
   set -a; . "./$STATE_FILE"; set +a
 fi
 

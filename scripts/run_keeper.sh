@@ -28,6 +28,10 @@ STATE_FILE="state.$NET.sh"
 [ -f "$STATE_FILE" ] || { echo "✗ Không thấy $STATE_FILE — keeper cần hash/ref đã deploy."; exit 1; }
 # Giữ giá trị người gọi đặt: state file nạp SAU sẽ đè im lặng nếu không cất trước.
 CALLER_BEACONS="${KEEPER_PRICE_BEACONS:-}"
+# Thế phòng thủ ngay trên đây là bản làm tay cho ĐÚNG MỘT biến. Cổng dưới đây là
+# bản chung cho nhóm biến mà không phép kiểm nào đứng sau.
+. "./state_book_guard.sh"
+assert_state_books_khong_khai_y_dinh "$STATE_FILE"
 set -a; . "./$STATE_FILE"; set +a
 if [ -n "$CALLER_BEACONS" ]; then
   KEEPER_PRICE_BEACONS="$CALLER_BEACONS"

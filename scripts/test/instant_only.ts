@@ -190,11 +190,29 @@ async function main() {
     console.log("╚════════════════════════════════════════════╝");
     console.log(`TX hash:   ${txHash}`);
     console.log(`Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
+
+    // Cổng KIỂM CỰC — khuôn lấy từ bản NGHIÊM cùng thư mục (`withdraw_only.ts`).
+    // Thiếu cổng này thì tệp KHAI "expecting REJECT" ở trên rồi KHÔNG kiểm, và hai
+    // nhãn đi NGƯỢC đúng lúc có chuyện: lượt phá nộp LỌT in ✅ rồi thoát 0, còn lượt
+    // bị từ chối ĐÚNG lại rơi vào `catch` và in ❌ rồi thoát 1. Một phép đo không mang
+    // khái niệm "kỳ vọng" thì nó trả kết quả hợp lệ ở CẢ HAI cực — đúng ca `Forall`
+    // §Cổng gác gọi là trạng thái mù, và nó mù đúng ở phía không ai đi kiểm.
+    if (tamper || process.env.SKIP_OWNER_SIG === "1") {
+      console.error("\n⚠  UNEXPECTED: tamper tx SUBMITTED — validator did not reject. Investigate.");
+      process.exit(2);
+    }
   } catch (err: any) {
+    const msg = String(err?.message ?? err);
+    if (tamper || process.env.SKIP_OWNER_SIG === "1") {
+      console.log("╔════════════════════════════════════════════╗");
+      console.log("║   ✅ REJECTED (as expected for negative)   ║");
+      console.log("╚════════════════════════════════════════════╝");
+      console.log(`Reason:    ${msg.slice(0, 300)}`);
+      return;
+    }
     console.error("\n╔════════════════════════════════════════════╗");
     console.error("║              ❌ FAILED                     ║");
     console.error("╚════════════════════════════════════════════╝");
-    const msg = String(err?.message ?? err);
     console.error(msg);
     if (err?.stack) console.error("\nStack:\n" + err.stack);
     process.exit(1);

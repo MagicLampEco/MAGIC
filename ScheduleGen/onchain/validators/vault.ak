@@ -1002,8 +1002,11 @@ fn get_vault_output(outputs: List<Output>, vault_addr: Address) -> VaultDatum {
 ///
 /// This repo already knew the rule and applied it in two other modules — this
 /// was the one live vault it was forgotten in:
-///   · `Consolidate/onchain/validators/vault_consolidate.ak:19-20`
-///   · `ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak:67-72` (`is_at_script`)
+///   · `ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak` ▸ `is_at_script`
+///   · `Consolidate/.../vault_consolidate.ak` — module REMOVED 2026-09-21
+///     (`DevStatus.md` ▸ `## Đã xoá khỏi kho — 2026-09-21`). Kept named, not
+///     deleted: the point of this list is that the rule was known before it was
+///     applied here, and a shorter list would quietly weaken that claim.
 ///
 /// Counting is by payment credential; IDENTITY of the continuing output is a
 /// separate, stricter check (`find_vault_output_raw` pins the full address).

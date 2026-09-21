@@ -18,7 +18,7 @@ import {
 import {
   instantVaultParams, scheduleVaultParams, umDatumParams, shardSpendParams,
   oneShotGenesisParams, priceParamParams, consumeParams, paymasterParams,
-  addressData, consolidateParams, profileChangeParams,
+  addressData,
   paidFundParams, prepaidVaultParams,
 } from "./deployParams.js";
 
@@ -152,21 +152,11 @@ const CASES: Case[] = [
       lampAssetName: "744c414d50",
     }),
   },
-  {
-    // Chưa có deploy script. Vào cổng vì tài liệu của chính module này từng khai
-    // 2 tham số trong khi validator nhận 3 — ai làm theo tài liệu sẽ bake
-    // ms_per_epoch vào đúng chỗ của lamp_asset_name.
-    module: "Consolidate", title: "vault_consolidate.vault_consolidate.spend",
-    usedBy: "(chưa có deploy script — cổng dựng trước)",
-    params: consolidateParams({
-      lampPolicyId: P28, lampAssetName: "744c414d50", msPerEpoch: MS,
-    }),
-  },
-  {
-    module: "ProfileChange", title: "vault_profile.vault_profile.spend",
-    usedBy: "(chưa có deploy script — cổng dựng trước)",
-    params: profileChangeParams({ msPerEpoch: MS }),
-  },
+  // Hai ca `Consolidate` và `ProfileChange` đã gỡ 2026-09-21 cùng lúc với việc
+  // xoá hai module khỏi kho — xem `DevStatus.md ▸ ## Đã xoá khỏi kho — 2026-09-21`.
+  // Gỡ một ca khỏi cổng là HẠ ĐỘ PHỦ, nên nó phải tự khai: ở đây tập được phủ
+  // co lại đúng bằng tập tồn tại, vì cổng đọc `<Module>/onchain/plutus.json` và
+  // hai blueprint đó không còn được sinh ra từ nguồn nào trong kho nữa.
   // ── PrepaidGen ────────────────────────────────────────────────
   // Bốn case, không phải hai: `mint` và `spend` của cùng một validator có DANH
   // SÁCH THAM SỐ RIÊNG trong blueprint. Kiểm một handler rồi suy ra handler kia

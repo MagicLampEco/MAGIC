@@ -54,6 +54,8 @@ cd "$(dirname "$0")"
 
 STATE_FILE="state.$NET.sh"
 [ -f "$STATE_FILE" ] || { echo "✗ Không thấy $STATE_FILE — chạy run_wakeme_e2e.sh một lần để dựng prereq."; exit 1; }
+. "./state_book_guard.sh"
+assert_state_books_khong_khai_y_dinh "$STATE_FILE"
 set -a; . "./$STATE_FILE"; set +a
 
 # Script tham chiếu CIP-33 là BẮT BUỘC: đính kèm cả vault + shard làm tx vượt

@@ -79,6 +79,13 @@ grab_txhash() { printf '%s\n' "$1" | grep -oE 'TX hash:[[:space:]]+[0-9a-f]{64}'
 #   sẵn đúng `LAMP_POLICY_ID=28e916b0…` — câu trả lời nằm trên đĩa, ở sổ bên kia.
 #   Đó mới là nguyên nhân gốc của lần đúc chồng 2026-08-28, không phải "quên hỏi chuỗi".
 #   Đọc sổ CŨ trước, sổ MỚI sau ⟹ giá trị của `deployed.$NET.env` thắng khi cả hai có.
+#
+# Gác trước khi nạp: `set -a` đưa MỌI dòng gán trong sổ vào môi trường, kể cả những
+# biến mà `config.ts` coi là lời khai ý định của người gõ lệnh. Lý do đầy đủ nằm ở
+# `state_book_guard.sh` — đừng chép xuống đây.
+. "./state_book_guard.sh"
+assert_state_books_khong_khai_y_dinh "state.$NET.sh" "deployed.$NET.env"
+
 LEGACY_STATE="state.$NET.sh"
 if [ -f "$LEGACY_STATE" ]; then
   echo "▶ Đọc prereq của runner khác: $LEGACY_STATE"

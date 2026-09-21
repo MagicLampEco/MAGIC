@@ -216,11 +216,28 @@ async function main() {
     console.log("╚════════════════════════════════════════════╝");
     console.log(`TX hash:    ${txHash}`);
     console.log(`Explorer:   https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
+
+    // Cổng KIỂM CỰC — khuôn lấy từ bản NGHIÊM cùng thư mục (`withdraw_only.ts`).
+    // Xem lý do đầy đủ ở `instant_only.ts` cùng đợt vá: thiếu cổng này thì dòng
+    // "expecting REJECT" ở trên là một lời khai không được kiểm, và hai nhãn đi
+    // NGƯỢC đúng lúc validator thôi chặn.
+    if (tamper || process.env.SKIP_OWNER_SIG === "1") {
+      console.error("\n⚠  UNEXPECTED: tamper tx SUBMITTED — validator did not reject. Investigate.");
+      process.exit(2);
+    }
   } catch (err: any) {
+    const msg = String(err?.message ?? err);
+    if (tamper || process.env.SKIP_OWNER_SIG === "1") {
+      console.log("╔════════════════════════════════════════════╗");
+      console.log("║   ✅ REJECTED (as expected for negative)   ║");
+      console.log("╚════════════════════════════════════════════╝");
+      console.log(`Reason:     ${msg.slice(0, 300)}`);
+      return;
+    }
     console.error("\n╔════════════════════════════════════════════╗");
     console.error("║              ❌ FAILED                     ║");
     console.error("╚════════════════════════════════════════════╝");
-    console.error(String(err?.message ?? err));
+    console.error(msg);
     process.exit(1);
   }
 }

@@ -17,8 +17,48 @@ import {
 
 const readPreview = (atEpoch: bigint) => readVaultsFromUtxos(
   [PREVIEW_VAULT_UTXO], PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_ADDRESS,
-  PREVIEW_OWNER_PKH, atEpoch,
+  PREVIEW_OWNER_PKH, atEpoch, "Schedule",
 );
+
+describe("`vaultKind` — BẮT BUỘC có mặt, và đi theo SCOPE chứ không theo datum", () => {
+  it("mọi vault trả về đều mang `vaultKind` đúng bằng loại của scope", () => {
+    const { vaults } = readPreview(BATCH_EPOCH);
+    expect(vaults).toHaveLength(1);
+    expect(vaults[0]!.vaultKind).toBe("Schedule");
+  });
+
+  it("CÙNG một UTxO đọc dưới scope Instant ⇒ `vaultKind` = Instant", () => {
+    // Đây là bài phân biệt được HAI CỰC, và nó là lý do trường này tồn tại: datum của
+    // Instant và của Schedule giải mã GIỐNG HỆT nhau, nên không phép đọc datum nào suy
+    // ra được loại. Nếu ai đó sau này "cải tiến" bằng cách đoán loại từ datum, bài này
+    // đỏ — vì cùng một byte datum phải cho hai kết quả khác nhau ở hai scope.
+    const r = readVaultsFromUtxos(
+      [PREVIEW_VAULT_UTXO], PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_ADDRESS,
+      PREVIEW_OWNER_PKH, BATCH_EPOCH, "Instant",
+    );
+    expect(r.vaults[0]!.vaultKind).toBe("Instant");
+  });
+
+  it("không vault nào thiếu trường — vắng LỖ CHỖ là ca bên gọi không xử được", () => {
+    // Vắng ở MỌI vault thì bên gọi biết là máy chủ bản cũ. Vắng ở MỘT SỐ vault thì họ
+    // không phân biệt được "loại lạ" với "bản cũ" — hai thứ cần hai cách xử.
+    const v1 = synthUtxo({
+      txHash: "3a".repeat(32),
+      datumHex: synthDatumHex(SYNTH_OWNER, [{ id: "e0".repeat(16), createdEpoch: PIN_EPOCH, amountNanogic: 5n }]),
+      vaultIdAssetNameSeed: "31",
+    });
+    const v2 = synthUtxo({
+      txHash: "3b".repeat(32),
+      datumHex: synthDatumHex(SYNTH_OWNER, [{ id: "e1".repeat(16), createdEpoch: PIN_EPOCH, amountNanogic: 9n }]),
+      vaultIdAssetNameSeed: "32",
+    });
+    const r = readVaultsFromUtxos(
+      [v1, v2], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH, "Instant",
+    );
+    expect(r.vaults).toHaveLength(2);
+    for (const v of r.vaults) expect(v.vaultKind).toBe("Instant");
+  });
+});
 
 describe("vault Preview thật — tx e5fd34b1…, 8 lần fire ScheduleGen", () => {
   it("ở epoch 20700 (epoch sinh ra 8 batch): tiêu được ĐÚNG 64 000 000 nanogic", () => {
@@ -86,7 +126,7 @@ describe("vault Preview thật — tx e5fd34b1…, 8 lần fire ScheduleGen", ()
   it("hỏi bằng PKH của người KHÁC: 0 vault, và UTxO bị khai là OWNER_MISMATCH", () => {
     const r = readVaultsFromUtxos(
       [PREVIEW_VAULT_UTXO], PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_ADDRESS,
-      SYNTH_OTHER_OWNER, BATCH_EPOCH,
+      SYNTH_OTHER_OWNER, BATCH_EPOCH, "Schedule",
     );
     expect(r.vaults).toHaveLength(0);
     expect(r.ignored).toEqual([
@@ -99,7 +139,7 @@ describe("vault Preview thật — tx e5fd34b1…, 8 lần fire ScheduleGen", ()
 describe("GHIM phép cộng `available` — đột biến nào cũng phải làm bài này ĐỎ", () => {
   const utxo = synthUtxo({ txHash: "aa".repeat(32), datumHex: synthDatumHex(SYNTH_OWNER, PIN_BATCHES) });
   const read = () => readVaultsFromUtxos(
-    [utxo], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH,
+    [utxo], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH, "Schedule",
   ).vaults[0]!;
 
   it("available = Σ batch CÒN SỐNG = 975", () => {
@@ -145,14 +185,14 @@ describe("UTxO ở địa chỉ vault mà KHÔNG phải vault", () => {
       ]),
       vaultIdAssetNameSeed: null,          // KHÔNG có NFT danh-tính
     });
-    const r = readVaultsFromUtxos([forged], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH);
+    const r = readVaultsFromUtxos([forged], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH, "Schedule");
     expect(r.vaults).toHaveLength(0);
     expect(r.ignored).toEqual([{ utxoRef: `${"ff".repeat(32)}#0`, reason: "NO_VAULT_ID_NFT" }]);
   });
 
   it("UTxO không datum, không NFT ⇒ NO_VAULT_ID_NFT (không ném)", () => {
     const junk = synthUtxo({ txHash: "0a".repeat(32), datumHex: null, vaultIdAssetNameSeed: null });
-    const r = readVaultsFromUtxos([junk], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH);
+    const r = readVaultsFromUtxos([junk], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH, "Schedule");
     expect(r.vaults).toHaveLength(0);
     expect(r.ignored[0]!.reason).toBe("NO_VAULT_ID_NFT");
   });
@@ -162,7 +202,7 @@ describe("hai ca phải KÊU TO, không được nuốt", () => {
   it("MANG NFT danh-tính mà datum không giải mã được ⇒ NÉM (lược đồ đã trôi)", () => {
     const drifted = synthUtxo({ txHash: "0b".repeat(32), datumHex: "d87980" });  // constr0 rỗng
     expect(() => readVaultsFromUtxos(
-      [drifted], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH,
+      [drifted], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH, "Schedule",
     )).toThrow(VaultDatumUndecodableError);
   });
 
@@ -180,7 +220,7 @@ describe("hai ca phải KÊU TO, không được nuốt", () => {
       vaultIdAssetNameSeed: "7f",          // CÙNG NFT ⇒ cùng một vault
     });
     expect(() => readVaultsFromUtxos(
-      [before, after], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH,
+      [before, after], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH, "Schedule",
     )).toThrow(VaultIdentityDuplicateError);
   });
 
@@ -195,7 +235,7 @@ describe("hai ca phải KÊU TO, không được nuốt", () => {
       datumHex: synthDatumHex(SYNTH_OWNER, [{ id: "d1".repeat(16), createdEpoch: PIN_EPOCH, amountNanogic: 7n }]),
       vaultIdAssetNameSeed: "22",          // NFT KHÁC ⇒ vault khác
     });
-    const r = readVaultsFromUtxos([v1, v2], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH);
+    const r = readVaultsFromUtxos([v1, v2], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH, "Schedule");
     expect(r.vaults).toHaveLength(2);
     expect(r.vaults.reduce((t, v) => t + v.availableNanogic, 0n)).toBe(10n);
   });

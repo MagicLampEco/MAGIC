@@ -46,6 +46,20 @@ cổng fail-closed ở §5.
 |---|---|---|
 | `owner_pkh` (đường dẫn) | có | 56 ký tự hex thường — khoá băm thanh toán 28 byte của chủ vault |
 | `vault_type` (truy vấn) | không | `Schedule` \| `Instant`. Bỏ trống = đọc mọi loại đã cấu hình |
+
+> 🔴 **`vault_kind` trong thân bài là BẮT BUỘC, và nó không thừa so với `scopes_read`.**
+> `scopes_read` nói *"lượt này đã soi những địa chỉ nào"*; `vault_kind` nói *"vault NÀY
+> thuộc loại nào"*. Bỏ trống `vault_type` thì một lượt trả về vault của nhiều loại, và
+> lúc đó `scopes_read` không ghép được vault nào với loại nào.
+>
+> Phải có vì **cùng một trường mang hai nghĩa tuỳ loại**: `consumed_credit_nanogic` là
+> một **số dư tiêu được** ở vault `Instant` (bị đặt về 0 mỗi lượt InstantGen cấp) và là
+> một **bộ đếm luỹ kế** ở vault `Schedule` (không nhánh nào đưa về 0). Chi tiết vòng đời:
+> docblock trên `consumedCreditNanogic` ở `src/vaultView.ts`.
+>
+> Giá trị thuộc **tập ĐÓNG** `Instant | Schedule` (`src/config.ts` ▸ `VAULT_KINDS`), ép ở
+> cổng khởi động. Bên gọi nên fail-closed: gặp giá trị ngoài tập đã biết thì **đừng vẽ con
+> số**, vì một loại vault mới có thể mang nghĩa mới cho đúng trường đó.
 | `at_epoch` (truy vấn) | không | ép epoch **giao thức**. Bỏ trống = lấy từ đỉnh chuỗi |
 
 **Mã trả về — BA CA, BA MÃ. Đây là toàn bộ giá trị của mặt tiền này.**
@@ -80,6 +94,7 @@ cổng fail-closed ở §5.
   "vaults": [
     {
       "utxo_ref": "e5fd34b1…#0",
+      "vault_kind": "Schedule",
       "vault_address": "addr_test1w…",
       "vault_id_unit": "76a5aaa6…f181a6",
       "owner_pkh": "2e5e1418…",

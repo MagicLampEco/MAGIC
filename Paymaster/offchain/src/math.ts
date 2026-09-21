@@ -20,7 +20,7 @@ export const q: bigint = Q; // 1_000_000_000n
 //
 // Tỷ lệ tiêu/sinh của mô hình sinh là thứ KHÁC: tên đặc tả của nó là `usage_ratio` —
 // tỷ lệ MỖI VAULT trên cửa sổ 6 epoch, định nghĩa ở
-// `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` v2.1 §6.1.1 và `INV-MAGIC-CITIZEN`.
+// `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` v2.1 §6.1.1 và `INV-MAGIC-CITIZEN`.
 //
 // Phạm vi của câu "chưa có trong mã", đo 2026-09-20 — một lượng từ toàn xưng không kèm
 // phép đếm thì già đi lặng lẽ, nên đây là phép đếm kèm ngày và kèm phần bị loại:
@@ -29,8 +29,13 @@ export const q: bigint = Q; // 1_000_000_000n
 //         | grep -v '/Legacy/' | grep -v node_modules \
 //         | grep -v 'Paymaster/offchain/src/math.ts'
 //     → 0 dòng
-//     $ grep -rn 'usage_ratio' SPEC/     → 35 dòng / 1 tệp
+//     $ grep -rn 'usage_ratio' Specs/    → 35 dòng / 1 tệp
 //     $ grep -rn 'usage_ratio' Legacy/   → 0 dòng / 0 tệp
+//
+// Thư mục đặc tả đổi tên `SPEC/` → `Specs/` ngày 2026-09-20. Ba con trỏ trong khối này
+// đi theo tên mới — đo lại sau lượt đổi: vẫn 35 dòng / 1 tệp, tức chỉ đường dẫn đổi,
+// không phải nội dung. Lệnh viết bằng tên cũ chạy hôm nay trả **0 dòng**, và số 0 đó
+// đọc y hệt số 0 của một phép đo thành công ở dòng ngay trên.
 //
 // Tức: khái niệm này sống ĐÚNG MỘT CHỖ trong mã-và-đặc-tả, và chỗ đó là đặc tả.
 //
@@ -55,7 +60,7 @@ export const q: bigint = Q; // 1_000_000_000n
 // đây và kết luận "có nguồn tín hiệu cầu" — kết luận ngược, từ một kết quả tìm kiếm
 // hợp lệ. Nhà OriLife gặp đúng bẫy này theo chiều ngược lại 2026-09-20: họ quét
 // `ConsumeMAGIC/` + `AppEconomics/`, không thấy `usage_ratio`, và kết luận khái niệm
-// đó không tồn tại — trong khi nó nằm ở `SPEC/`, ngoài vùng quét.
+// đó không tồn tại — trong khi nó nằm ở `Specs/`, ngoài vùng quét.
 
 /**
  * Trần LAMP (oildrop) app được sponsor cho magic_consumed (nanogic) tại tỷ giá Q-format.

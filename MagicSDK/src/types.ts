@@ -108,7 +108,19 @@ export interface InitialVaultConfig {
   lampDeposit: bigint;
   /** Profile at creation. Default "Flame". */
   profile?: Profile;
-  /** Min-ADA lovelace to attach to vault UTxO (default 2_000_000). */
+  /** Lovelace to attach to the vault UTxO (default 2_000_000).
+   *
+   *  ⚠ The name says "min-ADA" but the default is NOT computed from min-ADA — it
+   *  is a constant. A vault UTxO carries an 18-field datum plus LAMP and the
+   *  vault-id NFT, and the datum grows with `magic_batches` (cap 32) and
+   *  `loyalty_holdings` (cap 40). Near those caps 2 ADA is very likely below the
+   *  ledger's min-ADA, and the ledger rejects such an output at SUBMIT time —
+   *  after the user has signed.
+   *
+   *  Not yet measured at the datum cap; no test covers it. Until it is, pass an
+   *  explicit value for any vault expected to accumulate batches. The ref-script
+   *  side of this problem is already fixed — see `scripts/minAda.ts`, which
+   *  measured the previously hardcoded ref-script values to be BELOW min-ADA. */
   vaultLovelace?: bigint;
   /** @deprecated 🪦 KHÔNG còn đường nào dùng được — nhánh uỷ nhiệm bị bỏ khỏi mô
    *  hình ngày 2026-09-16 (Nợ #14). `validate_mint_vault_id` ép

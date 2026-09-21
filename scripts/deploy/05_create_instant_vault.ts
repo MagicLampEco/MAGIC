@@ -28,6 +28,7 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { instantVaultParams } from "../deployParams.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
+import { minAdaForRefScriptWithMargin } from "../minAda.js";
 
 // ── CHÉP CÓ NHÃN (Forall §Một nguồn, mức 3) ────────────────────────────────
 // Nguồn: `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸
@@ -319,9 +320,14 @@ async function main() {
   //   validator cho 17.310 byte, vượt trần 16.384 ⟹ phải readFrom, không attach.
   const parkAddr = parkAddressFor(NETWORK, address);
   console.log(`\n⏳ Công bố ref-script vault tại bãi đỗ ${parkAddr} …`);
+  // min-ADA TÍNH từ script đã apply-param — xem `scripts/minAda.ts`. Con số cũ
+  // 35 ADA thấp hơn min-ADA thật (đo 2026-09-21: ≈49,2 ADA cho bản chưa
+  // apply-param, tức cận dưới), nên bước này không gửi nổi giao dịch.
+  const refLovelace = minAdaForRefScriptWithMargin(vaultScript.script);
+  console.log(`   min-ADA ref-script: ${refLovelace / 1_000_000n} ADA (script ${vaultScript.script.length / 2} byte)`);
   const vaultRef = await publishRefScript({
     lucid, parkAddr, label: "vault instant ref",
-    script: vaultScript, hash: vaultScriptHash, lovelace: 35_000_000n,
+    script: vaultScript, hash: vaultScriptHash, lovelace: refLovelace,
   });
 
   console.log(`\n📋 Copy to .env:`);

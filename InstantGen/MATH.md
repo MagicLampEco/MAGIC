@@ -6,7 +6,7 @@
 > nay là `consumed_credit` — MAGIC người dùng đã tiêu thụ thật — và batch sống đúng một
 > epoch (`decay_window = 1`, cliff), không có bước giảm nửa. Mô tả hiện hành ở
 > **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)** §3–§4; nguồn chân lý là
-> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 >
 > **Gãy gì nếu bám bản cũ:** phía off-chain tính `M` từ `L_paid` sẽ ra một con số khác
 > con số validator tự tính lại; validator đòi **đúng bằng** nên tx bị từ chối. Lịch

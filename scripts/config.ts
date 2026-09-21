@@ -125,11 +125,21 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
  * `id: "preprod-oneshot-12param"`, `status: "SUPERSEDED"` (kho LAMP xác nhận
  * 2026-09-20). Chỗ thiếu không ở nguồn.
  *
- * 🔴 `8169b76c…` ở `LAMP_ACTIVE` SẮP thành SUPERSEDED. Kho LAMP báo 2026-09-20:
- * đợt đổi nhãn bốn marker đi CÙNG đợt đúc cuối, mà bốn nhãn là apply-param ⇒
- * policy id đổi. Chưa có mốc ngày. Giá trị đang ghim ở `scripts/state.Preprod.sh`
- * ▸ `LAMP_POLICY_ID`; khi có policy id đời cuối thì **dựng lại cả cụm**, đừng sửa
- * lẻ một dòng (lý do ở chính tệp đó). Đừng nướng lại trước đợt ấy.
+ * ✅ `8169b76c…` ở `LAMP_ACTIVE` **KHÔNG** thành SUPERSEDED — chốt 2026-09-21
+ * (thư `lam921mag-a`). Bản trước của chú thích này cảnh báo ngược: *"SẮP thành
+ * SUPERSEDED, đợt đổi nhãn bốn marker đi CÙNG đợt đúc cuối, mà bốn nhãn là
+ * apply-param ⇒ policy id đổi"*. Chủ dự án kho LAMP chốt đúc THÊM dưới chính
+ * policy đang chạy, không dựng policy mới. Sổ nguồn: `Genesis/offchain/src/
+ * lampPolicies.ts` ▸ `preprod-oneshot-14param`, `status: "ACTIVE"`,
+ * `supersededBy: null`, `mintParamCount: 14`.
+ *
+ * ⟹ `lamp_policy_id` không đổi ⟹ script hash cụm vault không đổi ⟹ **không phải
+ * dựng lại vì lý do này**. (Cụm vẫn sẽ dựng lại một lượt, nhưng vì nhịp epoch +
+ * hình dạng datum — lý do KHÁC, mốc KHÁC. Đừng gộp hai cái làm một.)
+ *
+ * Phạm vi HẸP: câu trên nói về **Preprod**. Policy mạng chính là một giá trị khác
+ * và chưa tồn tại; kho LAMP không khai nó là "sẽ giống". Nghĩa vụ báo trước khi
+ * giá trị đổi vẫn nguyên hiệu lực.
  */
 const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
   "7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9":
@@ -394,13 +404,27 @@ export const ADDRESSES = {
 //                     Mainnet 432_000). Chỉ dùng khi phải diễn giải slot thật.
 //                     KHÔNG đi vào apply-param của validator nào.
 //   MS_PER_EPOCH    — nhịp của GIAO THỨC, và là apply-param #4 của mọi vault validator
-//                     (xem `deployParams.ts`). Preprod cố tình KHÁC nhịp mạng.
+//                     (xem `deployParams.ts`). Ta CHỌN giá trị này, chuỗi không áp nó.
 //
-// Công thức `ms_per_epoch = slots_per_epoch × 1000` từng đứng ở đúng dòng này và nó
-// SAI: nó đúng cho Preview và Mainnet, sai cho Preprod. Ai áp lại công thức đó rồi
-// chỉnh `MS_PER_EPOCH_BY_NETWORK` cho "khớp" sẽ đổi apply-param ⟹ đổi script hash ⟹
-// đổi địa chỉ vault ⟹ mọi thứ đang sống trên Preprod (`scripts/DEPLOYED.md` §Preprod:
-// vault `94c0c8b2…`, UM `c81d0a41…`) thành mồ côi, không ai spend được nữa.
+// 🔴 TỪ 2026-09-20 HAI BẢNG TRÙNG SỐ TRÊN CẢ BA MẠNG — và đó là lúc mục này nguy hiểm
+// nhất, không phải lúc nó thành thừa. Preprod đổi `86_400_000 → 432_000_000` nên
+// `ms_per_epoch = slots_per_epoch × 1000` nay đúng ở Preview, Preprod lẫn Mainnet.
+//
+// Bản trước của khối này lập luận "đừng suy ra nhau VÌ công thức sai ở Preprod". Lý do
+// đó đã chết, còn KẾT LUẬN thì không — và giữ một kết luận đúng bằng một lý do đã chết
+// là cách nhanh nhất để người sau gỡ luôn kết luận. Lý do còn sống:
+//
+//   · `SLOTS_PER_EPOCH` do chuỗi Cardano quyết, ta ĐO nó, không đặt nó.
+//   · `MS_PER_EPOCH` do ta đặt, và nó đi vào bytes của validator.
+//   Hai đại lượng khác CHỦ. Chúng đang bằng nhau là một TRÙNG HỢP của bộ giá trị hôm
+//   nay, không phải một bất biến — nên không có gì bảo đảm lần sau còn trùng.
+//
+// Ai thấy hai bảng trùng rồi "gộp cho gọn" bằng công thức × 1000 sẽ biến một giá trị ta
+// chọn thành một giá trị chuỗi áp. Kể từ đó, một lần chuỗi đổi nhịp là apply-param tự
+// đổi theo ⟹ đổi script hash ⟹ đổi địa chỉ vault ⟹ mọi thứ đang sống trên Preprod
+// (`scripts/DEPLOYED.md` ▸ "Preprod — đời tLAMP THẬT, 2026-09-16") thành mồ côi, không
+// ai spend được nữa. Không lệnh nào báo, vì cả hai bảng vẫn "đúng".
+//
 // Nguồn duy nhất của hai bảng: `ProtocolUtils/src/index.ts` — đọc ghi chú ở đó trước
 // khi đụng bất cứ con số nào.
 export const PROTOCOL = {

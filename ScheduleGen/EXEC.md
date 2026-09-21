@@ -36,7 +36,7 @@ VAULT_SCRIPT_HASH=<từ plutus.json — vault validator>
 SHARD_SCRIPT_HASH=<từ plutus.json — shard validator>
 SHARD_NFT_POLICY_ID=<one-shot minting policy cho 16 SHARD NFTs>
 LAMP_ASSET_NAME=tLAMP    # THEO MẠNG: tLAMP testnet / LAMP mainnet
-MS_PER_EPOCH=86400000
+MS_PER_EPOCH=86400000    # THEO MẠNG: Preview 86400000 / Preprod và Mainnet 432000000
 ```
 
 Validator `vault` nhận **4** apply-param, đúng thứ tự: `lamp_policy_id`,

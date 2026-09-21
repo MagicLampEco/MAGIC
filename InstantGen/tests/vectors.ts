@@ -1,6 +1,6 @@
 // tests/vectors.ts — InstantGen NORMATIVE test vectors (PHA 2)
 //
-// Source of truth: SPEC/MagicLamp-Tripletoken-Feat-(Vi).md §4.2, §6.3, §11, §12.
+// Source of truth: Specs/MagicLamp-Tripletoken-Feat-(Vi).md §4.2, §6.3, §11, §12.
 // P8: the Aiken and TypeScript implementations MUST produce bit-identical
 // output for every vector below. Every intermediate step is spelled out so a
 // reviewer can recompute the value by hand.

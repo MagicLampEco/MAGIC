@@ -38,31 +38,34 @@ export function slotsPerEpoch(network: Network): bigint {
 //     Validator tính `epoch = posix_ms / ms_per_epoch` từ validity_range (PlutusV3
 //     mang POSIX ms, không mang slot). Phép chia đó KHÔNG trừ genesis, nên số epoch
 //     của giao thức chưa bao giờ là số epoch của Cardano và không thể trở thành nó:
-//     hôm nay Preprod chạy epoch Cardano 311 còn epoch giao thức ≈ 20 700. Cho nên
+//     hôm nay Preprod chạy epoch Cardano 311 còn epoch giao thức ≈ 4 139. Cho nên
 //     chỉnh nhịp này cho khớp Preprod cũng KHÔNG làm hai số gặp nhau — nó chỉ đổi
 //     độ dài một epoch giao thức, và đổi apply-param ⟹ đổi script hash ⟹ giết mọi
-//     thứ đã deploy.
+//     thứ đã deploy. Hai con số vẫn là hai con số kể cả sau lần chốt 2026-09-20 bên
+//     dưới: nhịp bằng nhau KHÔNG làm gốc toạ độ bằng nhau, vì phép chia không trừ
+//     genesis. Đừng đem epoch giao thức so với số epoch của Blockfrost hay explorer.
 //
-//     Preprod ở đây là 1 ngày, tức KHÁC nhịp mạng thật (5 ngày). Hệ quả thực tế là một
-//     đồng hồ nén 5×: một vòng decay / hết hạn / cửa sổ fire chạy hết trong một ngày.
+//     ✅ ĐÃ CHỐT 2026-09-20 — chủ dự án: Preprod đi theo nhịp mạng thật (5 ngày), bằng
+//     nhịp mainnet. Lý do là vai của mạng, không phải sự gọn của con số: Preprod là nơi
+//     nhà phát triển ngoài và người dùng mới tập thao tác trước khi bỏ tiền thật, nên một
+//     đồng hồ nén 5× ở đó dạy sai về thứ họ sắp gặp — mọi phép đo thời gian (decay, hết
+//     hạn, cửa sổ fire) suy ra từ Preprod sẽ lệch 5× khi lên mainnet, và không gì kêu.
 //
-//     ⚠ NHƯNG ĐỪNG GỌI ĐÓ LÀ THIẾT KẾ CHỪNG NÀO CHƯA CÓ AI GHI LẠI. Đã tìm trong
-//     `SPEC/`, `BOUNDARIES.md`, `DevStatus.md`, `ChangeLog.md` và `git log -S`: không
-//     có một quyết định nào chọn con số này. Bằng chứng hiện có nghiêng về phía TAI NẠN
-//     — commit `640690bf` sinh CẢ HAI bảng trong cùng một hunk, bảng ms suy ra từ bảng
-//     slots đang sai, và commit message không nhắc gì tới nén.
+//     Trước ngày đó bảng này ghi Preprod = 86 400 000 (1 ngày). Con số ấy KHÔNG do ai
+//     quyết: đã tìm trong `Specs/`, `BOUNDARIES.md`, `DevStatus.md`, `ChangeLog.md` và
+//     `git log -S` mà không có quyết định nào chọn nó, còn bằng chứng thì nghiêng về TAI
+//     NẠN — commit `640690bf` sinh CẢ HAI bảng trong cùng một hunk, bảng ms suy ra từ
+//     bảng slots lúc đó đang sai, và commit message không nhắc gì tới nén.
 //
-//     Giữ nguyên số thì có lý do vững, và lý do đó KHÔNG phải "vì cố ý": nó là
-//     apply-param của các script đang sống trên Preprod (`scripts/DEPLOYED.md` §Preprod),
-//     nên đổi là đổi script hash là giết chúng. Đó là lý do HOÃN SỬA, không phải bằng
-//     chứng CHỦ ĐÍCH — hai thứ khác nhau, và trộn chúng lại là biến một tai nạn thành
-//     "nguồn" cho người sau viện dẫn.
-//
-//     Việc còn nợ: một mục trong `DevStatus.md` chốt xem giữ nén 5× là chính sách hay
-//     là nợ phải trả trước mainnet. Trước khi có mục đó, đọc bảng này như "chưa quyết".
+//     🔴 GIÁ PHẢI TRẢ, biết trước và đã chấp nhận: đây là apply-param, nên đổi số là đổi
+//     bytes ⟹ đổi script hash ⟹ đổi địa chỉ. MỌI script đang sống trên Preprod
+//     (`scripts/DEPLOYED.md` §Preprod) thành mồ côi và phải deploy lại; UTxO ở địa chỉ cũ
+//     không ai spend được nữa. Đổi số ở đây KHÔNG tự làm việc đó — nó chỉ làm lượt build
+//     tiếp theo sinh ra địa chỉ khác. Ai đọc dòng này mà thấy sổ deploy vẫn ghi địa chỉ
+//     cũ thì đó là sổ chưa được dựng lại, không phải hai nguồn mâu thuẫn.
 export const MS_PER_EPOCH_BY_NETWORK = {
   Preview:   86_400_000n,   // 1 ngày — trùng nhịp mạng Preview
-  Preprod:   86_400_000n,   // 1 ngày — KHÁC nhịp mạng (5 ngày); chưa có quyết định nào ghi lại
+  Preprod:  432_000_000n,   // 5 ngày — trùng nhịp mạng Preprod (chốt 2026-09-20)
   Mainnet:  432_000_000n,   // 5 ngày — trùng nhịp mainnet
 } as const;
 

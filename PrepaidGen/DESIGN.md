@@ -1,6 +1,6 @@
 # PrepaidGen — Thiết kế module (v0.1)
 
-> **Phạm vi:** cửa sinh MAGIC thứ ba theo `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md §6.5` —
+> **Phạm vi:** cửa sinh MAGIC thứ ba theo `Specs/MagicLamp-Tripletoken-Feat-(Vi).md §6.5` —
 > khoá CARP vào quỹ Paid của platform, đổi thành quyền-tiêu MAGIC gắn DID, một chiều, tự-back.
 > **Nguồn chân lý:** §4 (MAGIC per-epoch), §5 (giao diện CARP), §6.5, §7 (ConsumeMAGIC — interface
 > KHOÁ), §11 (hằng số + constructor index), §12 (bất biến). Bổ sung: `Carpet-CARP-DacTa-Vi.md §5.1`

@@ -293,6 +293,34 @@ D. UMKeeper/onchain/plutus.json khai v1.1.21+deadbee, máy chạy v1.1.21+42babe
    → "LỆCH BẢN DỰNG … dựng bằng v1.1.21+deadbee · máy đang chạy v1.1.21+42babe5"   exit=1
 ```
 
+### Script hash KHÔNG nói được MẠNG, và cũng không nói được ĐỜI
+
+Ba mục mạng dưới đây mỗi mục có một bảng hash. Đọc chúng theo chiều "hash này thuộc về đâu"
+là đọc ngược: **hash là hàm của apply-param, không phải hàm của mạng.** Hai hệ quả, và cái
+thứ hai mới là cái đã cắn một lần trong chính sổ này.
+
+**(a) Hai mạng trùng tham số thì trùng hash.** `ms_per_epoch` của Preprod đổi thành
+432.000.000 ngày 2026-09-20, bằng Mainnet. Với một validator mà `ms_per_epoch` là apply-param
+DUY NHẤT khác nhau giữa hai mạng, hai mạng sẽ cho đúng một hash.
+
+**(b) Nhưng phần lớn validator ở đây KHÔNG rơi vào (a) — và điều đó không an toàn hơn, chỉ
+khác kiểu.** `UMKeeper/onchain/validators/um_datum.ak` ▸ `um_datum_validator` nhận **ba**
+apply-param, trong đó `um_policy` là policy ONE-SHOT sinh từ một `genesis_ref` chọn lúc deploy
+(`um_nft.ak` ▸ `um_nft`; `scripts/deploy/02_deploy_um.ts` ▸ `umDatumParams`). Một UTxO tiêu
+được đúng một lần ⟹ **mỗi lượt deploy ra một hash khác, kể cả trên CÙNG một mạng với CÙNG
+`ms_per_epoch`.**
+
+Bằng chứng nằm ngay trong sổ này: mục *"Preprod — 2026-08-12 · ĐỜI ĐÃ MỒ CÔI"* và mục
+*"Preprod — đời tLAMP THẬT, 2026-09-16"* cùng mạng, cùng nhịp epoch lúc đó, mà hai hàng
+`UM script hash` khác nhau.
+
+**Cách phân biệt, theo thứ tự tin cậy:** tx-hash trong mục deploy (gắn chặt một lần deploy)
+→ địa chỉ bech32 (`addr_test…` vs `addr…`, phân biệt được mạng) → **script hash là thứ phân
+biệt kém nhất**, đừng dùng nó làm khoá tra.
+
+Ai vá một sự cố "hai mạng trùng hash" mà không đo trước xem validator đó có apply-param
+one-shot nào không thì đang vá một thứ không hỏng, và cái giá là một đợt deploy lại.
+
 ---
 
 ## Preview — 2026-08-12
@@ -452,10 +480,42 @@ năm — đã có hai nhà khác tính nhầm đúng chỗ này trong một ngà
 `schedule_decay_window = 1` ⟹ một batch MAGIC chỉ sống **đúng một ngày UTC**: fire và tiêu
 phải xong trong cùng epoch giao thức, nên bước 09 chạy TRƯỚC fire chứ không sau.
 
-⏳ **Đời này sống trong một CỬA SỔ, không vĩnh viễn.** Kho LAMP đóng băng `8169b76c…` theo
-ĐỢT đầu-cuối; sau đợt đó còn một lượt đúc lại, và lượt đó đổi policy id. Chưa có lịch. Vì
-`lamp_policy_id` là apply-param, cả cụm trong mục này mồ côi khi lượt ấy xảy ra. Nghĩa vụ
-báo trước thuộc về bên phát hành — kho này không phải đi hỏi.
+> 🔴 **Ba đoạn trên là bản ghi của ĐỜI NÀY, và con số của chúng đã CHẾT ngày 2026-09-20.**
+> Giữ nguyên chữ vì đây là nhật ký một lượt triển khai, không phải hướng dẫn — nhưng đừng
+> đọc nó thành nhịp hiện hành. `ms_per_epoch` của Preprod nay là **432 000 000 ms = 5 ngày**,
+> bằng mainnet (`ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`).
+>
+> Nhịp hiện hành, cùng hai hằng ấy: `schedule_delay = 2` ⟹ **10 ngày** tới fire đầu, và một
+> vòng trọn vẹn (commit → chờ → fire-và-tiêu-trong-CÙNG-epoch) ⟹ **15 ngày**. Một batch
+> MAGIC sống **5 ngày**, không phải một ngày UTC.
+>
+> Vế *"bước 09 chạy TRƯỚC fire chứ không sau"* thì **vẫn đúng** và không phụ thuộc nhịp —
+> nó đến từ `schedule_decay_window = 1`, tức fire và tiêu phải cùng một epoch, dài bao nhiêu
+> cũng thế.
+>
+> Và vế *"hai đồng hồ, đừng lẫn"* ở ngay trên **vẫn nguyên hiệu lực, nay còn dễ lẫn hơn**:
+> hai con số đã trùng nhau về giá trị trên cả ba mạng, nên phép thử "khác số thì khác đồng
+> hồ" hết dùng được. Gốc toạ độ vẫn khác (`posixMsToEpoch` không trừ genesis), nên epoch
+> giao thức ~20713 so với epoch Cardano ~233 — đó mới là chỗ phân biệt còn sống.
+
+✅ **Đời này KHÔNG còn sống trong một cửa sổ** (cập nhật 2026-09-21, thư `lam921mag-a`).
+Bản trước của dòng này viết *"kho LAMP đóng băng `8169b76c…` theo ĐỢT đầu-cuối; sau đợt đó
+còn một lượt đúc lại, và lượt đó đổi policy id"*. **Chủ dự án kho LAMP đã chốt ngược lại:**
+đợt đúc cuối trên Preprod đúc THÊM dưới chính policy đang chạy, không dựng policy mới.
+
+| | |
+|---|---|
+| policyId | `8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd` |
+| assetName (hex) | `744c414d50` |
+| trạng thái ở sổ nguồn | `ACTIVE`, `supersededBy: null` — `Genesis/offchain/src/lampPolicies.ts` ▸ `preprod-oneshot-14param` |
+
+⟹ `lamp_policy_id` không đổi ⟹ **script hash cụm vault không đổi ⟹ không phải dựng lại vì
+lý do này**, và tLAMP đang nằm trong vault Preprod ở nguyên đó. Không có giai đoạn hai đời
+cùng sống, không có đường di trú nào phải dựng.
+
+**Đọc HẸP, đừng đọc rộng:** câu trên nói về **Preprod**. Policy mạng chính là một giá trị
+KHÁC và **chưa tồn tại** — kho LAMP không khai nó là "sẽ giống". Nghĩa vụ báo trước khi giá
+trị đổi vẫn nguyên hiệu lực; quyết định "không đổi" không huỷ nó, chỉ làm nó chưa tới lúc dùng.
 
 ---
 

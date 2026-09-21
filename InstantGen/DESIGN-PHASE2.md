@@ -3,7 +3,7 @@
 **Trạng thái:** đã triển khai. Số kiểm giữ ở một nơi duy nhất —
 [`DevStatus.md`](../DevStatus.md); muốn số tươi thì chạy `aiken check` trong `onchain/`
 và `npm test` trong `offchain/`.
-**Nguồn chân lý:** `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` §4.2, §6.1, §6.3, §11, §12.
+**Nguồn chân lý:** `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §4.2, §6.1, §6.3, §11, §12.
 **Tài liệu này thay thế:** `HALVING-SPEC.md` (halving không còn tồn tại) và mọi mô tả
 "InstantGen = mua MAGIC bằng LAMP" trong `README.md` / `FEAT.md` / `MATH.md` / `TECH.md`.
 

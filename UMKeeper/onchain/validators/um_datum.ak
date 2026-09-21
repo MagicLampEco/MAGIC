@@ -75,7 +75,24 @@ pub type UMRedeemer {
 // ── Validator ─────────────────────────────────────────────────
 // `ms_per_epoch` is applied per-network (Plutus validity_range is POSIX ms):
 //   Mainnet:        432_000_000
-//   Preview/Preprod: 86_400_000
+//   Preprod:        432_000_000   (đổi 86_400_000 → 432_000_000 ngày 2026-09-20)
+//   Preview:         86_400_000
+//
+// ⚠ Mainnet và Preprod nay TRÙNG giá trị này. Đừng suy ra "hai mạng sẽ cùng script
+//   hash" — suy luận đó sai, và sai theo hướng làm người ta đi vá một thứ không hỏng.
+//   `um_policy` dưới đây cũng là apply-param, mà nó là policy ONE-SHOT sinh từ một
+//   `genesis_ref` chọn lúc deploy (`um_nft.ak` ▸ `validator um_nft(genesis_ref)`;
+//   `scripts/deploy/02_deploy_um.ts` ▸ `umDatumParams`). Một UTxO tiêu được đúng một
+//   lần ⟹ MỖI LẦN deploy ra một `um_policy` khác ⟹ một script hash khác. Hai lần
+//   deploy không bao giờ trùng hash, kể cả trên CÙNG một mạng với CÙNG `ms_per_epoch`.
+//
+//   Bằng chứng trong sổ, hai đời Preprod cùng nhịp mà khác hash:
+//   `scripts/DEPLOYED.md` ▸ "Preprod — 2026-08-12 · ĐỜI ĐÃ MỒ CÔI" và
+//   "Preprod — đời tLAMP THẬT, 2026-09-16".
+//
+//   Hệ quả đọc theo chiều NGƯỢC LẠI mới là chiều đúng để cảnh giác: script hash KHÔNG
+//   nói được nó thuộc mạng nào, và cũng KHÔNG nói được nó thuộc ĐỜI nào. Phân biệt
+//   bằng địa chỉ bech32 (`addr_test…` / `addr…`) và bằng tx-hash trong sổ.
 //
 // `um_policy` / `um_name` : NFT thẩm quyền của UM datum — phải còn ở output
 //   (value preservation → chống chuyển UM authority sang UTxO của attacker).

@@ -3,7 +3,7 @@
 Tệp này được track, dùng chung cho cả người và agent. `CLAUDE.md` là tệp nội bộ của từng
 máy và chỉ `@import` tệp này — đừng chép nội dung sang đó.
 
-> Mô hình chuẩn: [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> Mô hình chuẩn: [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 > Trạng thái module: [`DevStatus.md`](DevStatus.md). Lịch sử: [`ChangeLog.md`](ChangeLog.md).
 
 ---
@@ -70,7 +70,7 @@ theo spec §6.1 / L4. Neo — **theo TÊN HÀM, không theo số dòng**:
 > không phải mã. Đó là kiểu hỏng im lặng: người tra thấy một dòng hợp lệ và tưởng đã kiểm.
 
 > Bản cũ của dòng này viết công thức là `M = L × R × UM × PM / Q³`. **Tên biến đó đã cũ**
-> — lượng sinh nay theo công thức chung ở `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` v2.0 §6.1.1
+> — lượng sinh nay theo công thức chung ở `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` v2.0 §6.1.1
 > (xem mục **INV-MAGIC-CITIZEN** bên dưới). Hình dạng ba-bước-sàn thì không đổi, và
 > đó mới là phần bất biến.
 
@@ -204,7 +204,7 @@ Ràng buộc TẠM đang có hiệu lực cho tới khi vá, fail-closed: **ch�
 **INV-MAGIC-CITIZEN — InstantGen và ScheduleGen sinh theo MỘT công thức chung của ba đầu vào: LAMP
 trong vault, tỷ lệ consumed/generated, thặng dư GreenBack; không gắn MAGIC đang cầm.** Nguồn duy
 nhất của công thức, vai từng thành phần và danh mục CHƯA CHỐT:
-`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` v2.0 §6.1.1–§6.1.6 và bảng §12 — đừng chép công thức
+`Specs/MagicLamp-Tripletoken-Feat-(Vi).md` v2.0 §6.1.1–§6.1.6 và bảng §12 — đừng chép công thức
 xuống đây. Chủ dự án chốt 2026-09-17, thay bản trước của mục này (độ lớn thưởng do MAGIC đã tiêu
 quyết, LAMP chỉ làm cổng/trần/hệ số, người tiêu 0 nhận 0) — bản đó trái ý định "người dùng tự sinh
 MAGIC bằng LAMP của họ" và bị bỏ, không giữ kèm đính chính.

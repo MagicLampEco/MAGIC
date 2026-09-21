@@ -67,10 +67,15 @@ pub const schedule_decay_window : Int = 1   // cliff at k=1
 // Hai hệ quả phải cầm theo khi đọc con số này, cả hai đều phản trực giác:
 //
 // (1) MỘT epoch là một khoảng THỜI GIAN KHÁC NHAU theo mạng. `ms_per_epoch` của
-//     testnet là 86_400_000 (1 ngày), của mainnet là 432_000_000 (5 ngày). Cùng
-//     hằng số này cho ra cửa tiêu ~1 ngày khi nghiệm thu và ~5 ngày khi chạy thật.
-//     Nên một bài nghiệm thu chật vật trên testnet KHÔNG có nghĩa người dùng
+//     PREVIEW là 86_400_000 (1 ngày); Preprod và mainnet là 432_000_000 (5 ngày).
+//     Cùng hằng số này cho ra cửa tiêu ~1 ngày trên Preview và ~5 ngày trên hai mạng
+//     kia. Nên một bài nghiệm thu chật vật trên PREVIEW KHÔNG có nghĩa người dùng
 //     mainnet cũng chật vật, và ngược lại — đừng suy một bên ra bên kia.
+//
+//     Chữ "testnet" ở dòng này trước đây gộp Preview với Preprod, và nay gộp thế là
+//     SAI: Preprod đổi 1 ngày → 5 ngày ngày 2026-09-20, đúng để lối suy trên không
+//     còn cần thiết ở đó. Preprod phải đo ra cùng con số với mainnet, vì nó là nơi
+//     người ngoài tập việc. Preview thì cố ý giữ nén, để vòng kiểm thử chạy nhanh.
 //
 // (2) Cộng với `schedule_delay = 2` ở ngay trên, một vòng đời trọn vẹn của lịch
 //     trải qua ít nhất ba epoch: commit, chờ, rồi fire-và-tiêu-trong-cùng-epoch.

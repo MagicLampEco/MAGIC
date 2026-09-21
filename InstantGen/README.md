@@ -5,7 +5,7 @@
 > bằng LAMP": LAMP đứng yên trong vault (I-ACT-7), batch sống đúng 1 epoch
 > (§4.2, không có halving), và độ lớn tính theo MAGIC đã tiêu thụ thật (§6.3).
 > Mô tả cơ chế hiện hành ở **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn
-> chân lý là `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`.
+> chân lý là `Specs/MagicLamp-Tripletoken-Feat-(Vi).md`.
 >
 > **Gãy gì nếu bám bản cũ:** ví dụ SDK dưới đây truyền `lampPaidOildrop` và bảng ký hiệu
 > ghi `INSTANT_DECAY_WINDOW = 2 epochs`. Cả hai đã bỏ — validator ép LAMP đứng yên và

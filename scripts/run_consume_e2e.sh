@@ -57,6 +57,25 @@ esac
 }"
 cd "$(dirname "$0")"
 
+# ── Cổng: artifact `plutus.json` còn khớp NGUỒN Aiken không? ──────────────────
+# Artifact bị `.gitignore` chặn nên nó KHÔNG đi theo nhánh và KHÔNG đi theo commit:
+# đổi nhánh là đủ để bản dựng trên đĩa tả một lược đồ mà không nhánh nào trong kho
+# đang khai. Mọi bước deploy phía dưới đọc CHÍNH nó, và giải mã Plutus Data của
+# Aiken nghiêm ngặt về số trường theo cả hai chiều — nên một vault dựng theo artifact
+# cũ là một vault validator hiện tại không đọc nổi, tức LAMP vào được và không ra
+# được. Đặt cổng ở ĐÂY, trước mọi lượt gọi mạng, để không giao dịch nào được gửi.
+# Ba trạng thái thoát + phần cổng này KHÔNG đo: `check_datum_shape.ts`.
+npx tsx check_datum_shape.ts || {
+  rc=$?
+  if [ "$rc" = 2 ]; then
+    echo '✗ CHƯA ĐO ĐƯỢC hình dạng datum (xem dòng trên) — đây KHÔNG phải "khớp".'
+  else
+    echo '✗ Artifact đã trôi khỏi nguồn. Chạy `aiken build` trong module được nêu, rồi chạy lại.'
+  fi
+  echo '  KHÔNG giao dịch nào được gửi.'
+  exit "$rc"
+}
+
 STATE_FILE="deployed.$NET.env"
 persist() { printf '%s=%s\n' "$1" "$2" >> "$STATE_FILE"; }
 

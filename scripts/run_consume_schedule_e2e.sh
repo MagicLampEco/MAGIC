@@ -65,6 +65,25 @@ case "$PHASE" in 1|2) ;; *) echo "✗ Tham số 2 phải là 1 hoặc 2 (nhận:
 }"
 cd "$(dirname "$0")"
 
+# ── Cổng: artifact `plutus.json` còn khớp NGUỒN Aiken không? ──────────────────
+# Artifact bị `.gitignore` chặn nên nó KHÔNG đi theo nhánh và KHÔNG đi theo commit:
+# đổi nhánh là đủ để bản dựng trên đĩa tả một lược đồ mà không nhánh nào trong kho
+# đang khai. Mọi bước deploy phía dưới đọc CHÍNH nó, và giải mã Plutus Data của
+# Aiken nghiêm ngặt về số trường theo cả hai chiều — nên một vault dựng theo artifact
+# cũ là một vault validator hiện tại không đọc nổi, tức LAMP vào được và không ra
+# được. Đặt cổng ở ĐÂY, trước mọi lượt gọi mạng, để không giao dịch nào được gửi.
+# Ba trạng thái thoát + phần cổng này KHÔNG đo: `check_datum_shape.ts`.
+npx tsx check_datum_shape.ts || {
+  rc=$?
+  if [ "$rc" = 2 ]; then
+    echo '✗ CHƯA ĐO ĐƯỢC hình dạng datum (xem dòng trên) — đây KHÔNG phải "khớp".'
+  else
+    echo '✗ Artifact đã trôi khỏi nguồn. Chạy `aiken build` trong module được nêu, rồi chạy lại.'
+  fi
+  echo '  KHÔNG giao dịch nào được gửi.'
+  exit "$rc"
+}
+
 STATE_FILE="deployed.$NET.env"
 persist() { printf '%s=%s\n' "$1" "$2" >> "$STATE_FILE"; }
 grab()    { printf '%s\n' "$2" | grep -oE "$1=[0-9a-f]+(#[0-9]+)?" | head -1 | cut -d= -f2- || true; }
@@ -299,7 +318,24 @@ export VAULT_HASH="$VAULT_SCHEDULE_HASH"
 #    lại sau mỗi tx consume, cache chúng là trỏ vào UTxO đã chết.
 if [ -n "${CONSUME_SCRIPT_HASH:-}" ] && [ -n "${REF_CONSUME_UTXO:-}" ]; then
   echo; echo "▶ [1/3] Dùng lại hạ tầng consume $CONSUME_SCRIPT_HASH — dò UTxO sống…"
-  eval "$(npx tsx resolve_consume_state.ts)"
+  # 🔴 Bản trước ở đây là MỘT dòng `eval "$(npx tsx resolve_consume_state.ts)"`. Cùng
+  #   một lỗ đã vá ở `run_consume_e2e.sh` — lý lẽ đầy đủ nằm ở đó, đừng chép xuống đây.
+  #   Tóm tắt đủ để biết vì sao dòng này dài hơn: `eval "$(cmd)"` VỨT mã thoát của
+  #   `cmd`, và `eval` trên một chuỗi rỗng trả 0, nên `set -e` không bao giờ bắn dù
+  #   resolver `process.exit(1)`.
+  #
+  #   Tệp này lọt đợt vá trước vì đợt ấy lấy phạm vi bằng phạm vi của TRIỆU CHỨNG —
+  #   lỗi được báo ở `run_consume_e2e.sh` nên chỉ tệp đó được mở. Hai runner là anh em
+  #   cùng thư mục, dùng chung đúng một resolver.
+  RESOLVED="$(npx tsx resolve_consume_state.ts)" || {
+    echo "✗ [1/3] resolve_consume_state.ts thoát khác 0 — KHÔNG dò được UTxO sống."
+    echo "     Đừng chạy tiếp: bước sau sẽ dùng giá trị cũ còn sót trong môi trường."
+    exit 1
+  }
+  eval "$RESOLVED"
+  [ -n "${PRICE_BEACON_UTXO:-}" ] || { echo "✗ [1/3] resolver không in PRICE_BEACON_UTXO"; exit 1; }
+  [ -n "${ENGAGE_UTXO:-}" ]       || { echo "✗ [1/3] resolver không in ENGAGE_UTXO"; exit 1; }
+  [ -n "${REF_CONSUME_UTXO:-}" ]  || { echo "✗ [1/3] REF_CONSUME_UTXO rỗng — bước [3] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
 else
   echo; echo "▶ [1/3] Deploy hạ tầng consume (09) — ĐẶT TRƯỚC fire, có chủ ý…"
   OUT09="$(npx tsx deploy/09_deploy_consume.ts | tee /dev/tty)"

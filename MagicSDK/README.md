@@ -4,7 +4,7 @@ Mặt tiền TypeScript của giao thức MAGIC trên Cardano. **Không phụ th
 Cardano nào giữ LAMP đều dùng được.
 
 > Mô hình chuẩn của cả hệ (ba token LAMP · MAGIC · CARP):
-> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 > Ràng buộc khi sửa mã: [`BOUNDARIES.md`](../BOUNDARIES.md).
 > Module nào đang sống + số kiểm: [`DevStatus.md`](../DevStatus.md).
 > Chuyện đã xảy ra: [`ChangeLog.md`](../ChangeLog.md).
@@ -79,7 +79,7 @@ MAGIC **không phải native token** — là số kế toán trong `magic_batche
 UTxO ở địa chỉ script vault). Có LAMP trong ví ≠ có MAGIC. Muốn sinh MAGIC: tạo vault → gọi
 một cửa sinh.
 
-🔴 **Mô hình có ĐÚNG BA cửa sinh, không phải hai** (`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`
+🔴 **Mô hình có ĐÚNG BA cửa sinh, không phải hai** (`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`
 §6): **ScheduleGen · InstantGen · PrepaidGen**. Hai cửa đầu sinh từ **số dư LAMP trong vault
 của người dùng**; cửa thứ ba, PrepaidGen, người dùng **trả CARP** (§6.5). SDK này hiện gọi
 được **hai** cửa — không phải vì mô hình chỉ có hai, mà vì mã PrepaidGen chưa vào cây làm

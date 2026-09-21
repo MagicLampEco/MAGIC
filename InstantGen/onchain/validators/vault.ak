@@ -1,5 +1,5 @@
 // validators/vault.ak — Vault spending validator (InstantGen)
-// Normative: SPEC/MagicLamp-Tripletoken-Feat-(Vi).md §4.2, §6.1, §6.3, §7, §12.
+// Normative: Specs/MagicLamp-Tripletoken-Feat-(Vi).md §4.2, §6.1, §6.3, §7, §12.
 // PlutusV3 / Aiken ≥ 1.1.x
 //
 // MODEL (PHA 2 — three invariants that reshaped this file):

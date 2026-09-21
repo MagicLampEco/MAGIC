@@ -3,7 +3,7 @@
 > **Vai:** ghi **chuyện đã xảy ra**, mới nhất trên đầu. Mỗi mục nêu đủ ba vế: *đổi gì ·
 > vì sao · cái gì gãy nếu ai đó đang bám bản cũ*. Trạng thái hiện tại thì xem
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
-> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
 ## 2026-09-15 — Hai giới hạn được ghi vào sổ nợ trước khi chúng thành mã: `Paymaster` và `C1`
 
@@ -268,7 +268,7 @@ chuẩn của InstantGen (`TV-IG-GRANT-02`, và ca `LAMP nâng TRẦN…` trong 
 `scripts/check_param_names.ts` (bỏ import + ca kiểm), `DevStatus.md`, và một chú thích trong
 `ScheduleGen/onchain/validators/vault.ak` từng trỏ sang nợ của module này.
 
-**Vì sao.** `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md:174` (§6.1) chốt đúng ba cửa sinh —
+**Vì sao.** `Specs/MagicLamp-Tripletoken-Feat-(Vi).md:174` (§6.1) chốt đúng ba cửa sinh —
 *"Ba cửa: InstantGen · ScheduleGen · PrepaidGen"* — và chuỗi `GetMAGIC` không xuất hiện một lần
 nào trong đặc tả. Một cửa fiat→MAGIC sinh quyền-tiêu mà không có LAMP hay CARP đứng sau, nên nó
 không phải tính năng còn dở mà là tính năng **mâu thuẫn với bất biến**: MAGIC là quyền-tiêu suy
@@ -294,7 +294,7 @@ chưa ghim địa chỉ.
 - `PrepaidGen/offchain/src/constants.ts`: `CARP_POLICY_ID` cho cả ba mạng chuyển sang `null`
   và **ném** khi bị hỏi, thay cho ba giá trị hex đã gõ sẵn. Preview **không có CARP**; Mainnet
   chưa deploy. Bài kiểm cũ ghim đúng con số sai nên nó xanh suốt.
-- `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` §10: nguồn của C1 đổi từ `consumed_count` sang
+- `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §10: nguồn của C1 đổi từ `consumed_count` sang
   `consumed_nanogic` — đúng tên trường mà chính §10 viện dẫn.
 - `DevStatus.md` + `scripts/DEPLOYED.md`: dòng `ScheduleFire` ghi "chờ" trong khi Preview đã
   bắn 8 lượt (`fired_count: 8`, 64.000.000 nanogic). Đo lại trên chuỗi và ghi kèm **lệnh
@@ -443,14 +443,14 @@ UMKeeper — lệnh đó chưa bao giờ chạy được gì, `keeper.ts` là th
 
 **Đổi gì.** `SnapshotGen/` sang `Legacy/stale-genmodel-2026-07/`, `VacuumGen/` sang `Legacy/`, cùng 10 báo
 cáo testnet, `SnapshotGen-Simulator.HTML`, `DEVELOPER_GUIDE.md` và 5 tệp script chỉ phục
-vụ hai module đó. Đặc tả canonical `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` được mang về
+vụ hai module đó. Đặc tả canonical `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` được mang về
 nhánh làm việc. `README.md` viết lại theo mô hình ba-token. Dựng `ChangeLog.md`,
 `DevStatus.md`, `Legacy/README.md`. Tham chiếu treo trong `scripts/` vá cùng đợt.
 
 **Vì sao.** Ba lớp chi phí đo được trong chính repo này: (1) mỗi lần rà soát, người và
 agent phải mở lại 52 tệp của hai module đã chết chỉ để kết luận "bỏ rồi"; (2) cả ba tài
 liệu-vào-đầu (`README.md`, `CLAUDE.md`, `DEVELOPER_GUIDE.md`) dẫn người đọc vào mô hình đã
-bỏ, và mọi con trỏ "nguồn chân lý" trong mã đều treo vì `SPEC/` không có trên nhánh này;
+bỏ, và mọi con trỏ "nguồn chân lý" trong mã đều treo vì `Specs/` không có trên nhánh này;
 (3) các báo cáo testnet của module **còn sống** lại mô tả công thức **đã chết**
 (`M = L×R×UM×PM/Q³`, "fire chuyển Treasury") — nguy hiểm hơn tài liệu chết hẳn vì trông
 vẫn còn thời sự.

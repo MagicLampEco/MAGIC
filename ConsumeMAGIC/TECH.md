@@ -1,6 +1,6 @@
 # ConsumeMAGIC — TECH (mô hình v2: engagement-state)
 
-> **MAGIC KHÔNG phải token.** `SPEC/MagicLamp-Tripletoken-Feat-(Vi).md` §4.1: MAGIC không
+> **MAGIC KHÔNG phải token.** `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §4.1: MAGIC không
 > có policy-id, không đúc, không có `tx.mint`. "Tiêu MAGIC" = handler `BurnBatch` của
 > **vault generator** hạ `current_amount` trong `VaultDatum.magic_batches`; `consume.ak`
 > chỉ là lớp ĐỊNH GIÁ + ENGAGEMENT, ép hai validator khớp nhau trong cùng một tx.

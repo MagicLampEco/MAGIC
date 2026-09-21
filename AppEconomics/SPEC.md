@@ -1,7 +1,7 @@
 # AppEconomics v2.1 — Đặc tả module (KHÔNG normative)
 
 > ⚠ **Tệp này KHÔNG phải nguồn chân lý.** Nguồn duy nhất:
-> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 > Ràng buộc chung: [`BOUNDARIES.md`](../BOUNDARIES.md).
 >
 > **Trạng thái module: MỒ CÔI** — xem [`DevStatus.md`](../DevStatus.md). Chưa quyết hội tụ

@@ -5,7 +5,7 @@
 > `InstantGen { lamp_paid }`, `ApplyHalving` ở constr 1, apply-param có `treasury_addr`,
 > và một output Treasury trong sơ đồ tx. **Không cái nào còn tồn tại.** Mô tả hiện hành ở
 > **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn chân lý là
-> [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 >
 > **Gãy gì nếu dựng theo tệp này:** lược đồ redeemer sai làm tx không giải mã được đúng
 > nhánh; danh sách apply-param sai sinh ra script hash khác vault thật mà không lệnh nào

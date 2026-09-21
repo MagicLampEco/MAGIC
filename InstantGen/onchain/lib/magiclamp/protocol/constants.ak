@@ -1,5 +1,5 @@
 // lib/constants.ak — MagicLamp Tripletoken protocol constants (InstantGen)
-// Normative: SPEC/MagicLamp-Tripletoken-Feat-(Vi).md §4.2, §6.1, §6.3, §11.
+// Normative: Specs/MagicLamp-Tripletoken-Feat-(Vi).md §4.2, §6.1, §6.3, §11.
 // MUST stay in sync with offchain/src/constants.ts (P8).
 
 // ── Precision ────────────────────────────────────────────────

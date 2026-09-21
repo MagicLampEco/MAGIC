@@ -1,7 +1,7 @@
 # UMKeeper — Feature Specification
 ## Hệ số cầu mạng UM
 
-> Nguồn chân lý: [`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+> Nguồn chân lý: [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 > Các số mục "§8/§9/§10/§14" trong tệp này là di sản đánh số GenMAGIC v3.3 — giữ lại để
 > tra cứu lịch sử, KHÔNG phải mục lục của spec canonical. Trạng thái module:
 > [`DevStatus.md`](../DevStatus.md).

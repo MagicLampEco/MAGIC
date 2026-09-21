@@ -8,7 +8,7 @@ nhánh trong `InstantGen/onchain/validators/vault.ak` và
 
 **Đối tượng:** dev on-chain (Aiken). Dev off-chain xem
 [`INTEGRATOR_GUIDE_V1.md`](./INTEGRATOR_GUIDE_V1.md). Mô hình chuẩn của cả hệ:
-[`SPEC/MagicLamp-Tripletoken-Feat-(Vi).md`](../SPEC/MagicLamp-Tripletoken-Feat-(Vi).md).
+[`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 Module nào đang sống: [`DevStatus.md`](../DevStatus.md).
 
 **Phạm vi:** hai vault còn sống. `SnapshotGen` và `VacuumGen` đã dời sang

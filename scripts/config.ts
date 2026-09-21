@@ -121,11 +121,21 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
  * `id: "preprod-oneshot-12param"`, `status: "SUPERSEDED"` (kho LAMP xác nhận
  * 2026-09-20). Chỗ thiếu không ở nguồn.
  *
- * 🔴 `8169b76c…` ở `LAMP_ACTIVE` SẮP thành SUPERSEDED. Kho LAMP báo 2026-09-20:
- * đợt đổi nhãn bốn marker đi CÙNG đợt đúc cuối, mà bốn nhãn là apply-param ⇒
- * policy id đổi. Chưa có mốc ngày. Giá trị đang ghim ở `scripts/state.Preprod.sh`
- * ▸ `LAMP_POLICY_ID`; khi có policy id đời cuối thì **dựng lại cả cụm**, đừng sửa
- * lẻ một dòng (lý do ở chính tệp đó). Đừng nướng lại trước đợt ấy.
+ * ✅ `8169b76c…` ở `LAMP_ACTIVE` **KHÔNG** thành SUPERSEDED — chốt 2026-09-21
+ * (thư `lam921mag-a`). Bản trước của chú thích này cảnh báo ngược: *"SẮP thành
+ * SUPERSEDED, đợt đổi nhãn bốn marker đi CÙNG đợt đúc cuối, mà bốn nhãn là
+ * apply-param ⇒ policy id đổi"*. Chủ dự án kho LAMP chốt đúc THÊM dưới chính
+ * policy đang chạy, không dựng policy mới. Sổ nguồn: `Genesis/offchain/src/
+ * lampPolicies.ts` ▸ `preprod-oneshot-14param`, `status: "ACTIVE"`,
+ * `supersededBy: null`, `mintParamCount: 14`.
+ *
+ * ⟹ `lamp_policy_id` không đổi ⟹ script hash cụm vault không đổi ⟹ **không phải
+ * dựng lại vì lý do này**. (Cụm vẫn sẽ dựng lại một lượt, nhưng vì nhịp epoch +
+ * hình dạng datum — lý do KHÁC, mốc KHÁC. Đừng gộp hai cái làm một.)
+ *
+ * Phạm vi HẸP: câu trên nói về **Preprod**. Policy mạng chính là một giá trị khác
+ * và chưa tồn tại; kho LAMP không khai nó là "sẽ giống". Nghĩa vụ báo trước khi
+ * giá trị đổi vẫn nguyên hiệu lực.
  */
 const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
   "7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9":

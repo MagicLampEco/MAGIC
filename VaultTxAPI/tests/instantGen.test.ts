@@ -75,9 +75,14 @@ function instantTxCbor(): string {
     outputs: [{
       address: VAULT_ADDRESS,
       assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
+      // `instantUnlockMs` BẮT BUỘC ở đây: nó chọn hình dạng datum 18 trường của
+      // InstantGen. Bỏ nó đi là dựng datum 17 trường (Schedule) trên đường instant —
+      // một trạng thái on-chain bất khả thi, mà bộ kiểm vẫn xanh trọn vẹn cho tới khi
+      // `summarizeTx` có cổng ý-định-khớp-hình-dạng. Giá trị: một mốc thật, khác 0.
       inlineDatumHex: datumHex({
         lampLockedOildrop: 0n,
         batches: [{ id: "c0".repeat(16), createdEpoch: 20_700n, amountNanogic: 4_000_000n }],
+        instantUnlockMs: 1_789_000_000_000n,
       }),
     }],
   });
@@ -90,7 +95,9 @@ function vaultUtxo() {
   return {
     txHash: INPUT_TX_HASH, outputIndex: 0, address: VAULT_ADDRESS,
     assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
-    datum: datumHex({ lampLockedOildrop: 0n, batches: [] }),
+    // Két Instant CHƯA TỪNG sinh ⟹ mốc `0n`, không phải vắng trường. Genesis ghim
+    // đúng giá trị đó (`validate_mint_vault_id`), nên đây là hình dạng đầu vào thật.
+    datum: datumHex({ lampLockedOildrop: 0n, batches: [], instantUnlockMs: 0n }),
   };
 }
 

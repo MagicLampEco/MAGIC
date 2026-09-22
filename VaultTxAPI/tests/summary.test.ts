@@ -39,13 +39,20 @@ const BEFORE_COMMIT = datumHex({
   batches: [BATCH_LIVE],
 });
 
-function ctx(inputVaultDatumHex: string): SummaryContext {
+/** `intent` là tham số chứ không phải hằng gõ cứng: `summarizeTx` nay ĐỌC nó (cổng
+ *  ý-định-khớp-hình-dạng datum), nên một mẫu dán nhãn sai sẽ kiểm nhầm nhánh. Bản
+ *  trước gõ cứng `"schedule_commit"` cho mọi ca, kể cả các ca InstantGen — lúc ấy vô
+ *  hại vì nhãn không đi vào phép tính nào, nhưng nó là cái bẫy cho đúng lượt này. */
+function ctx(
+  inputVaultDatumHex: string,
+  intent: SummaryContext["requestedIntent"] = "schedule_commit",
+): SummaryContext {
   return {
     vaultAddress: VAULT_ADDRESS,
     inputVaultDatumHex,
     lampUnit: LAMP_UNIT,
     network: "Preview",
-    requestedIntent: "schedule_commit",
+    requestedIntent: intent,
   };
 }
 
@@ -279,7 +286,7 @@ const BEFORE_INSTANT = datumHex({ batches: [BATCH_LIVE], instantUnlockMs: 0n });
 
 describe("summary ▸ instant_unlock_ms — mốc POSIX ms, đọc từ datum ĐẦU RA", () => {
   it("két Instant ⟹ mốc ra dưới dạng CHUỖI chữ số, đúng giá trị trong CBOR", () => {
-    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT));
+    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT, "instant_gen"));
     expect(s.vault.instant_unlock_ms).toBe("1763000000000");
   });
 
@@ -297,13 +304,13 @@ describe("summary ▸ instant_unlock_ms — mốc POSIX ms, đọc từ datum Đ
     // Vế thứ ba của cặp: chứng minh `"0"` là một giá trị ĐẠT TỚI ĐƯỢC ở nhánh Instant.
     // Không có ca này thì ca Schedule ở trên còn xanh được nhờ một hiện thực trả `null`
     // cho MỌI thứ — nó sẽ không phân biệt hai cực, chỉ trông như đang phân biệt.
-    const s = summarizeTx(instantGenTx(0n), ctx(BEFORE_INSTANT));
+    const s = summarizeTx(instantGenTx(0n), ctx(BEFORE_INSTANT, "instant_gen"));
     expect(s.vault.instant_unlock_ms).toBe("0");
   });
 
   it("ĐỘT BIẾN: đổi MỐC trong CBOR ⟹ summary đổi theo, và chỉ ở trường đó", () => {
-    const a = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT));
-    const b = summarizeTx(instantGenTx(UNLOCK_B), ctx(BEFORE_INSTANT));
+    const a = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT, "instant_gen"));
+    const b = summarizeTx(instantGenTx(UNLOCK_B), ctx(BEFORE_INSTANT, "instant_gen"));
 
     expect(a.vault.instant_unlock_ms).toBe("1763000000000");
     expect(b.vault.instant_unlock_ms).toBe("1763432000000");
@@ -313,6 +320,72 @@ describe("summary ▸ instant_unlock_ms — mốc POSIX ms, đọc từ datum Đ
     expect(a.fee_lovelace).toBe(b.fee_lovelace);
     expect(a.vault.owner_pkh).toBe(b.vault.owner_pkh);
     expect(a.magic.total_after_nanogic).toBe(b.magic.total_after_nanogic);
+  });
+});
+
+// ── Ý ĐỊNH phải khớp HÌNH DẠNG datum — CẶP ca kiểm ───────────────────────────────
+//
+// Cực này quan trọng hơn nó trông: trước khi có cổng, một lượt `instant_gen` dựng
+// nhầm datum 17 trường đi TRỌN đường và trả `200` kèm `instant_unlock_ms: null`. Mà
+// `null` được tài liệu khai nghĩa là "két Schedule — trường không tồn tại", nên bên
+// hiển thị đọc đúng tài liệu rồi kết luận ngược.
+//
+// Hai cực phải đứng cạnh nhau, vì một mình ca ném thì xanh được bằng một hiện thực
+// ném cho MỌI datum Schedule — và như thế thì mọi lượt `schedule_commit` hỏng theo.
+describe("summary ▸ ý định khớp hình dạng datum", () => {
+  it("`instant_gen` + datum đầu ra hình dạng Schedule ⟹ NÉM, không trả bản tóm tắt", () => {
+    expect(() => summarizeTx(commitTx(3n), ctx(BEFORE_COMMIT, "instant_gen")))
+      .toThrow(/instant_gen.*Schedule|Schedule.*instant_gen/s);
+  });
+
+  it("CỰC ĐỐI — `schedule_commit` + đúng datum Schedule ⟹ KHÔNG ném", () => {
+    // Không có ca này thì ca trên xanh nhờ một hiện thực ném cho mọi datum 17 trường.
+    const s = summarizeTx(commitTx(3n), ctx(BEFORE_COMMIT, "schedule_commit"));
+    expect(s.vault.instant_unlock_ms).toBeNull();
+  });
+
+  it("CỰC ĐỐI — `instant_gen` + đúng datum Instant ⟹ KHÔNG ném", () => {
+    // Và không có ca này thì ca đầu xanh nhờ một hiện thực ném cho MỌI `instant_gen`.
+    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT, "instant_gen"));
+    expect(s.vault.instant_unlock_ms).toBe("1763000000000");
+  });
+});
+
+// ── `instant_unlock_ms_before` — ba câu, không phải một con số trơ ────────────────
+//
+// Trường `after` một mình không phân biệt được "lượt này ĐẶT khoá" với "lượt này KÉO
+// DÀI khoá" với "lượt này KHÔNG ĐỤNG mốc" — cả ba hiện ra cùng một mốc tương lai. Ba
+// ca dưới đây là ba cực đó; bỏ bất kỳ ca nào thì hai cực còn lại lẫn vào nhau.
+describe("summary ▸ instant_unlock_ms_before", () => {
+  /** Datum đầu vào Instant ĐÃ có khoá, để dựng ca "kéo dài". */
+  const BEFORE_LOCKED = datumHex({ batches: [BATCH_LIVE], instantUnlockMs: UNLOCK_A });
+
+  it("ĐẶT lần đầu: before \"0\" → after mốc thật", () => {
+    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT, "instant_gen"));
+    expect(s.vault.instant_unlock_ms_before).toBe("0");
+    expect(s.vault.instant_unlock_ms).toBe("1763000000000");
+  });
+
+  it("KÉO DÀI: before và after đều là mốc thật, và after xa hơn", () => {
+    const s = summarizeTx(instantGenTx(UNLOCK_B), ctx(BEFORE_LOCKED, "instant_gen"));
+    expect(s.vault.instant_unlock_ms_before).toBe("1763000000000");
+    expect(s.vault.instant_unlock_ms).toBe("1763432000000");
+    expect(BigInt(s.vault.instant_unlock_ms!)).toBeGreaterThan(
+      BigInt(s.vault.instant_unlock_ms_before!),
+    );
+  });
+
+  it("KHÔNG DỜI: before == after ⟹ bên hiển thị nói được là lượt này không khoá thêm", () => {
+    // Bốn nhánh spend ghim trường đứng yên. Không có vế `_before` thì một lượt như
+    // thế vẫn hiện một mốc tương lai, và nó đọc thành "giao dịch này khoá tôi".
+    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_LOCKED, "instant_gen"));
+    expect(s.vault.instant_unlock_ms_before).toBe(s.vault.instant_unlock_ms);
+  });
+
+  it("CỰC ĐỐI — két Schedule ⟹ cả hai vế đều `null`, không vế nào đệm \"0\"", () => {
+    const s = summarizeTx(commitTx(3n), ctx(BEFORE_COMMIT, "schedule_commit"));
+    expect(s.vault.instant_unlock_ms_before).toBeNull();
+    expect(s.vault.instant_unlock_ms).toBeNull();
   });
 });
 

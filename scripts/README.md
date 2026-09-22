@@ -78,16 +78,24 @@ SnapshotGen/VacuumGen — mô hình GenMAGIC v3.3 đã bỏ. Số bước giữ 
 
 ---
 
-## ⛔ Chuỗi e2e đang ĐỨT ở bước sinh MAGIC
+## Hai cửa sinh MAGIC đều chạy được
 
-`npm run test:instant` **hôm nay không xanh được**, và đó không phải lỗi script: trần thứ
-ba của InstantGen là `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`
-(`InstantGen/onchain/lib/magiclamp/protocol/math.ak`), mà vault Instant luôn có
-`gen_schedules = []` ⇒ trần **0** ⇒ `min3(...) = 0`. Fail-closed có chủ ý, không đi vòng
-được bằng env hay tham số. Trạng thái: [`DevStatus.md`](../DevStatus.md) — "Còn nợ" #6 và
-"Chờ chủ nhân chốt" D1.
+> 🔴 **Bản trước của mục này mang nhãn `⛔ Chuỗi e2e đang ĐỨT ở bước sinh MAGIC` và nó đã
+> SAI.** Nó viết rằng trần thứ ba của InstantGen là `compute_cap_pp(schedules) =
+> Σ(gen_schedules) / 2`, mà vault Instant luôn có `gen_schedules = []` ⟹ trần **0** ⟹ không
+> cấp được một nanogic nào. Nguyên nhân đó **không còn tồn tại trong mã**: `compute_cap_pp`
+> nhận đúng một tham số, `l_avail_oildrop`
+> (`InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_cap_pp`), và
+> `grep -c "gen_schedules" math.ak` → **0**. InstantGen đã cấp thật trên Preprod (tx
+> `720e1817dc12a418…`, 0,3333 MAGIC).
+>
+> Vì sao cái sai này đắt hơn một dòng lạc trong tài liệu: đây là **sổ tay người vận hành
+> đọc ngay trước khi deploy**, và nó mang một nhãn ⛔ kèm câu *"không đi vòng được"*. Người
+> đọc không đi kiểm một cửa đã được dán biển cấm — họ đổi đường. Một nhãn ⛔ **không tự hết
+> hạn**; nó già đi theo nhịp của mã mà nó tả, không theo nhịp của tệp chứa nó.
 
-**Đường duy nhất để có MAGIC mà tiêu:** cửa ScheduleGen.
+Cả hai cửa đều dùng được. Cửa **ScheduleGen** vẫn là cửa có chuỗi e2e đầy đủ và đã cắm sẵn
+vào ConsumeMAGIC, nên nó là đường mặc định khi cần MAGIC để tiêu:
 
 ```bash
 npm run deploy:schedule-vault
@@ -138,7 +146,7 @@ npm run deploy:consume          # → PRICE_NFT_POLICY, PRICE_PARAM_SCRIPT_HASH,
 
 Chép giá trị in ra vào `.env` sau mỗi bước.
 
-**Hoặc chạy cả chuỗi, tự nối env giữa các bước** (cũng đứt ở bước sinh MAGIC, vì lý do trên):
+**Hoặc chạy cả chuỗi, tự nối env giữa các bước:**
 
 ```bash
 BLOCKFROST_KEY=… WALLET_SEED='…' bash scripts/run_consume_e2e.sh Preview
@@ -149,7 +157,7 @@ BLOCKFROST_KEY=… WALLET_SEED='…' bash scripts/run_consume_e2e.sh Preview
 ## Test sau khi deploy
 
 ```bash
-npm run test:instant           # ⛔ chưa xanh được — xem mục ĐỨT ở trên
+npm run test:instant
 npm run test:schedule-commit
 npm run test:schedule-fire
 npm run test:withdraw
@@ -219,6 +227,6 @@ https://preview.cardanoscan.io/address/{SCRIPT_ADDRESS}
 | `Need at least 5 tADA` | Lấy tADA từ faucet |
 | `FILL_AFTER_AIKEN_BUILD` | Chạy `aiken build` ở `<Module>/onchain` rồi điền hash |
 | `Vault UTxO not found` | Chạy `npm run deploy:instant-vault` trước |
-| `expect grant > 0` ở `test:instant` | KHÔNG phải lỗi cấu hình — trần thứ ba bằng 0, xem mục ĐỨT ở trên |
+| `expect grant > 0` ở `test:instant` | Một trong ba trần đang bằng 0. Trần thứ ba là `compute_cap_pp(l_avail_oildrop)` ⟹ soi LAMP khả dụng trong két trước; hai trần kia là vế thưởng và `cap_surplus`. Nhãn cũ ở đây khai nguyên nhân là `Σ(gen_schedules)/2` — nguyên nhân đó không còn trong mã |
 | Sai địa chỉ script sau deploy | `npm run check:params` — gần như luôn là lệch apply-param |
 | Tx timeout | Tăng fee hoặc thử lại — Preview đôi khi chậm |

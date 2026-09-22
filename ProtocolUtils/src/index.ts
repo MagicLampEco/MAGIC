@@ -81,6 +81,91 @@ export function posixMsToEpoch(posixMs: bigint, network: Network): bigint {
   return posixMs / msPerEpoch(network);
 }
 
+// ══════════════════════════════════════════════════════════════
+// §2.4-bis  Khoảng hiệu lực (validity range) — một slot là đơn vị NHỎ NHẤT
+// ══════════════════════════════════════════════════════════════
+
+/** Độ dài một slot Cardano, mili-giây.
+ *
+ *  `1000` đúng trên **cả ba** mạng ta chạy — đo ở `SLOT_CONFIG_NETWORK` của
+ *  `@lucid-evolution/plutus`: `Mainnet/Preview/Preprod` đều `slotLength: 1e3`.
+ *  Thêm một mạng có `slotLength` khác thì hằng này phải thành bảng theo mạng, y
+ *  như `MS_PER_EPOCH_BY_NETWORK`.
+ *
+ *  🔴 Vì sao con số này phải nằm ở đây thay vì ẩn trong Lucid: **biên validity mà
+ *  script ĐỌC ĐƯỢC luôn là biên SLOT, không phải con số mili-giây ta truyền vào.**
+ *  Lucid quy `.validFrom()`/`.validTo()` về slot bằng cách làm tròn XUỐNG, rồi
+ *  script đọc lại bằng `slotToBeginUnixTime`. Nên trừ `1n` mili-giây **không** lùi
+ *  được một slot, và hai mốc cách nhau 999 ms là CÙNG một slot. */
+export const SLOT_LENGTH_MS = 1_000n;
+
+/** Mốc POSIX của ĐẦU slot chứa `posixMs`.
+ *
+ *  Dùng được phép chia thẳng vì `zeroTime` của cả ba mạng đều ≡ 0 (mod 1000)
+ *  (`Mainnet 1596059091e3` · `Preview 1666656e6` · `Preprod 16540416e5+1728e6`),
+ *  nên biên slot trùng biên 1000 ms của chính đồng hồ POSIX. Đó là một dữ kiện đo
+ *  được, không phải một quy ước — mạng nào lệch thì hàm này sai, và `assertSlotGrid`
+ *  ngay dưới là chỗ nó kêu lên. */
+export function slotFloorMs(posixMs: bigint): bigint {
+  return posixMs / SLOT_LENGTH_MS * SLOT_LENGTH_MS;
+}
+
+/** Lỗi ném ra khi cửa sổ hiệu lực suy biến — KHÔNG phải lỗi lập trình, mà là một
+ *  trạng thái hợp lệ của đồng hồ: ở slot cuối mỗi epoch giao thức thì **không
+ *  giao dịch nào dựng được**. Mang theo số mili-giây phải chờ để chỗ gọi nói được
+ *  cho người dùng biết phải làm gì. */
+export class EmptyValidityWindowError extends Error {
+  readonly waitMs: bigint;
+  readonly retryAfterMs: bigint;
+  constructor(waitMs: bigint, retryAfterMs: bigint) {
+    super(
+      `Cửa sổ hiệu lực suy biến: tip đang ở slot CUỐI của epoch giao thức, ` +
+      `mọi cận trên hợp lệ đều rơi vào chính slot đó ⟹ khoảng rỗng ⟹ sổ cái từ chối. ` +
+      `Chờ ${waitMs} ms (tới mốc POSIX ${retryAfterMs}) rồi dựng lại.`,
+    );
+    this.name = "EmptyValidityWindowError";
+    this.waitMs = waitMs;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export interface EpochValidityWindow {
+  /** truyền vào `.validFrom()` */
+  lowerMs: number;
+  /** truyền vào `.validTo()` — đã căn về ĐẦU slot, nên vòng quy đổi của Lucid là
+   *  phép đồng nhất và `get_validity_upper_ms` của validator đọc đúng số này. */
+  upperMs: number;
+}
+
+/** Cửa sổ hiệu lực cho một giao dịch mà validator đòi **cả hai biên nằm trong cùng
+ *  một epoch giao thức** (`epoch = lower_ms / P` và `expect upper_ms < (epoch+1)*P`).
+ *
+ *  `reserveTrailingSlots` chừa lại N slot ở cuối epoch. Chỗ duy nhất cần nó là
+ *  `InstantGen`: mốc mở khoá nó ghi vào datum là `cận-trên + P`, nên nếu cận trên là
+ *  slot CUỐI của epoch thì mốc ấy cũng là slot cuối của epoch sau — và lượt rút đúng
+ *  tại mốc được quảng cáo sẽ suy biến, **mọi lần**. Chừa một slot đẩy mốc ra khỏi ô đó.
+ *
+ *  @throws {EmptyValidityWindowError} khi tip ở slot cuối (sau khi trừ phần chừa).
+ */
+export function epochValidityWindow(
+  tipPosixMs: bigint,
+  network: Network,
+  reserveTrailingSlots: bigint = 0n,
+): EpochValidityWindow {
+  const p      = msPerEpoch(network);
+  const epoch  = posixMsToEpoch(tipPosixMs, network);
+  const lowerSlotMs = slotFloorMs(tipPosixMs);
+  // Mốc hợp lệ cuối cùng là `(epoch+1)*P - 1`; đầu slot chứa nó là `(epoch+1)*P - 1000`.
+  const upperSlotMs = slotFloorMs((epoch + 1n) * p - 1n)
+                    - reserveTrailingSlots * SLOT_LENGTH_MS;
+
+  if (upperSlotMs <= lowerSlotMs) {
+    const retryAfterMs = (epoch + 1n) * p;
+    throw new EmptyValidityWindowError(retryAfterMs - tipPosixMs, retryAfterMs);
+  }
+  return { lowerMs: Number(tipPosixMs), upperMs: Number(upperSlotMs) };
+}
+
 // LAMP carries a DIFFERENT asset name per network — mainnet "LAMP", testnets
 // "tLAMP". Every vault validator takes it as compile-time param #2, so a wrong
 // value here bakes a vault that can never see its own LAMP (MAINNET-BLOCK).

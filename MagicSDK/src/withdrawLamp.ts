@@ -19,7 +19,7 @@ import {
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
 } from "@lucid-evolution/lucid";
 import {
-  getTipSlot, posixMsToEpoch, msPerEpoch,
+  getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow,
   cmpBigIntDesc, sortAiken, lampAssetName,
   type Network,
 } from "@magiclamp/protocol-utils";
@@ -194,8 +194,8 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   // remainingLamp == 0 thì vault vẫn tồn tại (min-ADA + NFT danh tính), giữ 0 LAMP.
 
   // ── Validity range (POSIX ms, matches validator's epoch math) ────
-  const lowerTime = Number(tipPosixMs);
-  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
+  const { lowerMs: lowerTime, upperMs: upperTime } =
+    epochValidityWindow(tipPosixMs, network);
 
   // Phép kiểm hash nằm TRƯỚC `complete()`: một ref UTxO sai đọc vào vẫn dựng ra
   // giao dịch, và nó chết trên chuỗi SAU khi người dùng đã ký. `null` ở đây nghĩa

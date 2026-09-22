@@ -8,7 +8,7 @@ import {
   slotToUnixTime,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
 } from "@lucid-evolution/lucid";
-import { posixMsToEpoch, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch, msPerEpoch, epochValidityWindow, type Network } from "@magiclamp/protocol-utils";
 import {
   computeUMRaw, clampUM, clampStep, appendHistory, computeSMA, computeNewUM,
   type UMDatum,
@@ -126,8 +126,8 @@ export async function buildUMUpdateTx(
   const redeemer = Data.to({ UMUpdate: { new_raw: submittedRaw } }, UMRedeemerPlutus);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const tipMs    = tipPosixMs ?? BigInt(Date.now());
-  const lowerTime = Number(tipMs);
-  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
+  const { lowerMs: lowerTime, upperMs: upperTime } =
+    epochValidityWindow(tipMs, network);
 
   const tx = await lucid
     .newTx()

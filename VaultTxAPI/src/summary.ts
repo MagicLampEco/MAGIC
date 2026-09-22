@@ -80,6 +80,24 @@ export interface TxSummary {
     batch_count_after: number;
     gen_schedule_count_before: number;
     gen_schedule_count_after: number;
+    /**
+     * Mốc LAMP RỜI KÉT được, POSIX **mili-giây**, dạng chuỗi chữ số.
+     * `null` ở két Schedule — nơi trường KHÔNG TỒN TẠI, không phải nơi nó bằng 0.
+     *
+     * Đây là **mốc tuyệt đối, không phải một số đếm epoch.** Nói rõ vì câu hỏi tới
+     * từ bên tích hợp là *"đếm epoch loại nào — giao thức hay Cardano?"*, và câu trả
+     * lời đúng là **không loại nào**: `INV-INSTANT-LOCK` không đếm epoch. Validator
+     * ghi `max(mốc cũ, cận-trên-validity + ms_per_epoch)` rồi cổng ở
+     * `validate_withdraw_lamp` so `get_validity_lower_ms(tx) >= instant_unlock_ms`.
+     * Người hiển thị **không cần biết `ms_per_epoch`, không cần đổi đơn vị, không
+     * cần đọc đỉnh chuỗi** — in thẳng mốc này ra giờ địa phương là xong.
+     *
+     * Hệ quả phải biết trước khi viết chữ lên màn: độ dài khoá thật nằm trong
+     * `[P, 2P)` với `P = ms_per_epoch`, và phần lẻ do **chính người gọi** chọn qua
+     * cận-trên-validity của giao dịch. Ví đặt validity 3 giờ thì khoá thành `P + 3h`.
+     * Nên đừng in một câu cố định kiểu "khoá đúng một epoch" — in mốc.
+     */
+    instant_unlock_ms: string | null;
   };
   outputs: OutputView[];
 }
@@ -138,6 +156,11 @@ export function summarizeTx(txCborHex: string, ctx: SummaryContext): TxSummary {
       output_index: vaultHit.view.index,
       owner_pkh: after.owner,
       last_updated_epoch: raw(after.last_updated_epoch),
+      // Đọc từ datum ĐẦU RA đã giải mã lại từ chính CBOR sắp ký, không từ tham số
+      // của yêu cầu — cùng nguyên tắc với mọi số khác trong bản tóm tắt này.
+      // `null` đi thẳng ra `null`: không đệm `"0"`, vì `0` là giá trị hợp lệ của một
+      // két Instant chưa từng sinh, còn `null` nghĩa là két này không có trường đó.
+      instant_unlock_ms: after.instant_unlock_ms === null ? null : raw(after.instant_unlock_ms),
       batch_count_before: before.magic_batches.length,
       batch_count_after: after.magic_batches.length,
       gen_schedule_count_before: before.gen_schedules.length,

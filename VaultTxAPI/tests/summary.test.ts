@@ -239,6 +239,83 @@ describe("summarizeTx — hình dạng lạ thì NÉM, không đệm", () => {
   });
 });
 
+// ── `instant_unlock_ms` — CẶP ca kiểm, không phải một ca dương ────────────────────
+//
+// Ca dương một mình ở đây xanh được vì một lý do RỖNG: một hiện thực trả thẳng chuỗi
+// chữ số của bất kỳ đâu cũng qua nó. Cực đối là ca Schedule — nơi trường KHÔNG TỒN TẠI
+// và câu trả lời đúng là `null`, KHÔNG phải `"0"`. Hai cực đó phân biệt được ba hiện
+// thực sai mà một ca dương không phân biệt nổi:
+//
+//   (a) đệm `"0"` khi không có trường   → ca Schedule đỏ
+//   (b) trả hằng, không đọc datum       → ca ĐỘT BIẾN đỏ (hai mốc khác nhau)
+//   (c) đọc từ tham số yêu cầu          → không có tham số nào để đọc; ca ĐỘT BIẾN đỏ
+//
+// Mốc chọn là hai số ĐÔI MỘT KHÁC NHAU và khác mọi số khác trong tệp này, để một bản
+// tóm tắt lấy nhầm trường không thể tình cờ đúng.
+const UNLOCK_A = 1_763_000_000_000n;   // ~2025-11-13
+const UNLOCK_B = 1_763_432_000_000n;   // ~2025-11-18, cách A đúng 5 ngày
+
+/** Giao dịch InstantGen: datum đầu ra hình dạng Instant (18 trường), mang mốc khoá. */
+function instantGenTx(unlockMs: bigint): string {
+  return buildTxCbor({
+    inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
+    feeLovelace: FEE,
+    outputs: [
+      {
+        address: VAULT_ADDRESS,
+        assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
+        inlineDatumHex: datumHex({
+          batches: [BATCH_LIVE, BATCH_NEW],
+          instantUnlockMs: unlockMs,
+        }),
+      },
+      { address: CHANGE_ADDRESS, assets: { lovelace: 9_400_000n } },
+    ],
+  });
+}
+
+/** Datum ĐẦU VÀO hình dạng Instant, chưa từng sinh ⟹ mốc khoá bằng 0. */
+const BEFORE_INSTANT = datumHex({ batches: [BATCH_LIVE], instantUnlockMs: 0n });
+
+describe("summary ▸ instant_unlock_ms — mốc POSIX ms, đọc từ datum ĐẦU RA", () => {
+  it("két Instant ⟹ mốc ra dưới dạng CHUỖI chữ số, đúng giá trị trong CBOR", () => {
+    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT));
+    expect(s.vault.instant_unlock_ms).toBe("1763000000000");
+  });
+
+  it("CỰC ĐỐI — két Schedule KHÔNG có trường này ⟹ `null`, KHÔNG phải \"0\"", () => {
+    // Đây là ca ghim được thứ ca trên không ghim: phân biệt *vắng mặt* với *bằng 0*.
+    // Một két Instant chưa từng sinh CÓ trường và nó bằng 0 — nếu ở đây trả `"0"` thì
+    // hai trạng thái khác hẳn nhau đọc ra giống hệt nhau, và màn hình sẽ in "hết khoá
+    // lúc 1970" cho một két không hề có cơ chế khoá.
+    const s = summarizeTx(commitTx(3n), ctx(BEFORE_COMMIT));
+    expect(s.vault.instant_unlock_ms).toBeNull();
+    expect(s.vault.instant_unlock_ms).not.toBe("0");
+  });
+
+  it("két Instant CHƯA TỪNG SINH ⟹ \"0\", và \"0\" ≠ null", () => {
+    // Vế thứ ba của cặp: chứng minh `"0"` là một giá trị ĐẠT TỚI ĐƯỢC ở nhánh Instant.
+    // Không có ca này thì ca Schedule ở trên còn xanh được nhờ một hiện thực trả `null`
+    // cho MỌI thứ — nó sẽ không phân biệt hai cực, chỉ trông như đang phân biệt.
+    const s = summarizeTx(instantGenTx(0n), ctx(BEFORE_INSTANT));
+    expect(s.vault.instant_unlock_ms).toBe("0");
+  });
+
+  it("ĐỘT BIẾN: đổi MỐC trong CBOR ⟹ summary đổi theo, và chỉ ở trường đó", () => {
+    const a = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT));
+    const b = summarizeTx(instantGenTx(UNLOCK_B), ctx(BEFORE_INSTANT));
+
+    expect(a.vault.instant_unlock_ms).toBe("1763000000000");
+    expect(b.vault.instant_unlock_ms).toBe("1763432000000");
+    expect(a.vault.instant_unlock_ms).not.toBe(b.vault.instant_unlock_ms);
+
+    // Không đổi trong CBOR thì không được đổi trong bản tóm tắt.
+    expect(a.fee_lovelace).toBe(b.fee_lovelace);
+    expect(a.vault.owner_pkh).toBe(b.vault.owner_pkh);
+    expect(a.magic.total_after_nanogic).toBe(b.magic.total_after_nanogic);
+  });
+});
+
 describe("txBodyHash", () => {
   it("là hash 64 hex của THÂN giao dịch, và đổi khi thân đổi", () => {
     const h3 = txBodyHash(commitTx(3n));

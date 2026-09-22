@@ -89,9 +89,17 @@ không bản nào tự khai:
 | `phase-2` / `PHASE2` | **kiểm tra pha 2 của sổ cái Cardano** (script chạy rồi từ chối), đối lại pha 1 | thuật ngữ Cardano |
 
 Mục thứ ba là thuật ngữ chuẩn của nền tảng — **không đổi, không đụng**. Nó xuất hiện hợp lệ
-trong mã bắt lỗi, ví dụ `CarpetMint/offchain/src/16_deadman_gates.ts` ▸ hằng `PHASE2` phân
-biệt "bị từ chối lúc chạy script" với "bị từ chối ở tầng sổ cái". Chính vì nó là claim mạnh
-nhất trên cái tên đó mà hai mục kia phải nhường.
+trong mã bắt lỗi, ví dụ ở **kho anh em `CarpetMint`** (KHÔNG phải một module của kho này —
+nó là một kho riêng cạnh kho này, `MagicLampEco/CarpetMint`) ▸ `offchain/src/16_deadman_gates.ts`
+▸ hằng `PHASE2` phân biệt "bị từ chối lúc chạy script" với "bị từ chối ở tầng sổ cái". Chính
+vì nó là claim mạnh nhất trên cái tên đó mà hai mục kia phải nhường.
+
+> Bản trước viết đường dẫn trần `CarpetMint/offchain/src/…`, và trong một tệp mà mọi agent
+> `@import` mỗi phiên thì một đường trần **đọc thành đường trong kho này**. Người tra sẽ
+> `ls CarpetMint/` ở gốc MAGIC, không thấy gì, rồi kết luận con trỏ đã chết — trong khi tệp
+> vẫn còn nguyên ở kho bên cạnh. Đo 2026-09-22: `ls MAGIC/CarpetMint` → `No such file or
+> directory`; `ls MagicLampEco/CarpetMint/offchain/src/16_deadman_gates.ts` → tệp có thật,
+> `grep -n PHASE2` trả dòng 154 và 158.
 
 Giá đã trả trước khi đổi: một vòng hỏi-đáp của chủ dự án để tìm ra `PHA-2` của kho này
 KHÔNG phải `PHA-2` của Wakeme. Cùng hình dạng với bẫy `28e916b0…` — cùng tên hiển thị,

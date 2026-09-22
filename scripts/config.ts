@@ -125,19 +125,33 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
  * `id: "preprod-oneshot-12param"`, `status: "SUPERSEDED"` (kho LAMP xác nhận
  * 2026-09-20). Chỗ thiếu không ở nguồn.
  *
- * ✅ `8169b76c…` ở `LAMP_ACTIVE` **KHÔNG** thành SUPERSEDED — chốt 2026-09-21
- * (thư `lam921mag-a`). Bản trước của chú thích này cảnh báo ngược: *"SẮP thành
- * SUPERSEDED, đợt đổi nhãn bốn marker đi CÙNG đợt đúc cuối, mà bốn nhãn là
- * apply-param ⇒ policy id đổi"*. Chủ dự án kho LAMP chốt đúc THÊM dưới chính
- * policy đang chạy, không dựng policy mới. Sổ nguồn: `Genesis/offchain/src/
- * lampPolicies.ts` ▸ `preprod-oneshot-14param`, `status: "ACTIVE"`,
- * `supersededBy: null`, `mintParamCount: 14`.
+ * ⚠ `8169b76c…` là đời ĐANG SỐNG trên Preprod hôm nay, và **KHÔNG phải đời cuối**.
+ * Kho LAMP đã chốt đóng băng ba validator Distribution rồi đúc genesis MỚI từ mã
+ * đã đóng băng ⟹ `lampPid` SẼ đổi (thư `lam921mag-d`, 2026-09-21). Policy id mới
+ * chưa tồn tại: nó chỉ sinh ra sau lượt đúc, và lượt đúc chưa chạy.
  *
- * ⟹ `lamp_policy_id` không đổi ⟹ script hash cụm vault không đổi ⟹ **không phải
- * dựng lại vì lý do này**. (Cụm vẫn sẽ dựng lại một lượt, nhưng vì nhịp epoch +
- * hình dạng datum — lý do KHÁC, mốc KHÁC. Đừng gộp hai cái làm một.)
+ * 🔴 Bản trước của khối này kết luận ngược — *"`lamp_policy_id` không đổi ⟹ script
+ * hash cụm vault không đổi ⟹ không phải dựng lại vì lý do này"* — dẫn thư
+ * `lam921mag-a`. Câu đó bị lật bởi `lam921mag-d` **trong cùng ngày**, và nó nằm ở
+ * đây thêm một ngày. Bài học không phải "đọc kỹ hơn": một kết luận suy từ MỘT lá
+ * thư thì già đúng bằng tốc độ nhà bên kia đổi ý, và không có gì trong tệp này
+ * kêu lên khi điều đó xảy ra. Thứ chép được vào mã là **dữ kiện đo lại được**
+ * (một policy id, một trạng thái trong sổ nguồn); thứ KHÔNG chép được là một
+ * **suy luận về tương lai** dựng trên dữ kiện ấy.
  *
- * Phạm vi HẸP: câu trên nói về **Preprod**. Policy mạng chính là một giá trị khác
+ * Hệ quả đúng, và nó hẹp hơn nhiều: cụm vault **sẽ** phải dựng lại, và `lampPid`
+ * nay là một trong các lý do — cộng vào nhịp epoch và hình dạng datum đã biết từ
+ * trước. Ba lý do, một lượt dựng lại; đừng đếm thành ba lượt.
+ *
+ * ⚠ Bảng `LAMP_ACTIVE` bên dưới **giữ nguyên** `8169b76c…`, cố ý. Nó vẫn là đời
+ * duy nhất hợp lệ trên Preprod cho tới khi lượt đúc mới chạy; chuyển nó sang
+ * SUPERSEDED bây giờ là chặn mọi lượt E2E Preprod hợp lệ — fail-closed sai chiều.
+ * Sổ nguồn kho LAMP cũng chưa đổi: `Genesis/offchain/src/lampPolicies.ts` ▸
+ * `preprod-oneshot-14param` vẫn `status: "ACTIVE"`, `supersededBy: null` (đọc
+ * 2026-09-22). Mốc đổi bảng này là **lá thư mang policy id mới + tx hash**, không
+ * phải ngày quyết định của bên kia.
+ *
+ * Phạm vi HẸP: đoạn trên nói về **Preprod**. Policy mạng chính là một giá trị khác
  * và chưa tồn tại; kho LAMP không khai nó là "sẽ giống". Nghĩa vụ báo trước khi
  * giá trị đổi vẫn nguyên hiệu lực.
  */

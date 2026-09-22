@@ -442,11 +442,31 @@ từng module, phải giữ đồng bộ: `MAX_BATCHES_PER_VAULT=32`, `MAX_LOYAL
   lặng" ở ngay trên đúng cho ca **THÀNH CÔNG** và sai cho ca **LỖI** — và đó là chiều
   hỏng tệ hơn, vì nó im đúng lúc có thứ cần đọc.
 
-  **Quy trình đúng, hai bước, đừng bỏ bước hai:**
-  `aiken check 2>/dev/null > out.json` → mã thoát 0 thì `json.load(out.json)`; mã thoát
-  KHÁC 0 thì **chạy lại dưới `script -q /dev/null aiken check`** rồi đọc output đó. Đi
-  thẳng vào `json.load` ở nhánh lỗi sẽ ném `ValueError` trên một tệp rỗng, và lỗi bạn
-  đọc được là lỗi của trình phân tích JSON — nó trỏ đi chỗ khác.
+  **Quy trình đúng — rẽ theo "JSON có đọc được không", KHÔNG rẽ theo mã thoát:**
+  ```
+  aiken check 2>/dev/null > out.json
+    thử json.load(out.json) TRƯỚC, bất kể mã thoát
+    rỗng / hỏng cú pháp → mới chạy lại dưới `script -q /dev/null aiken check`
+  ```
+  Đi thẳng vào `json.load` mà không bắt `ValueError` thì trên một tệp rỗng bạn đọc được
+  lỗi của trình phân tích JSON — nó trỏ đi chỗ khác. Đó là vế cảnh báo gốc, vẫn đúng.
+
+  🔴 **Nhưng ĐIỀU KIỆN RẼ NHÁNH thì đừng lấy mã thoát**, vì thoát-khác-0 có **HAI** hình
+  dạng, không phải một (đo trên 1.1.21):
+  - **Bài kiểm ĐỎ** (exit 1) — stdout vẫn in **JSON ĐẦY ĐỦ**: 33.659 byte,
+    `summary.failed = 2`, đọc `.modules[].tests[].status` ngay được.
+  - **Lỗi BIÊN DỊCH** — stdout **RỖNG**. Chỉ ca này mới cần `script -q /dev/null`.
+
+  Bản trước của mục này rẽ sang `script -q` cho **mọi** lượt thoát khác 0, nên nó chạy
+  lại trọn bộ mỗi khi có một bài đỏ. Với **đo đột biến** thì nó đắt thật, vì đo đột biến
+  *cố ý* làm đỏ: mỗi chốt tốn hai lượt chạy thay vì một. Nguồn phép đo hẹp hơn: nhà Tiger
+  (`tg-magic-tin-hieu-0922`, đo 2026-09-16); kho này nhận vì nó chặt hơn bản đang có,
+  chưa tự dựng lại.
+
+  **Và một cờ sai trông y hệt bẫy trên nhưng khác nguyên nhân:** `aiken check -C <thư mục>`
+  kiểu git là **cờ không tồn tại** — nó in usage-error rồi thoát **mã 0**. Đường gọi đúng
+  là đường dẫn trần: `aiken check <thư mục>`. Ca này nguy hơn ca stdout rỗng, vì mã thoát
+  0 đọc thành "đã kiểm, sạch".
 
   Ca hằng hex **lẻ ký tự** (`#"a11ce"`) vẫn ghi lại ở đây vì nó là ca đầu tiên tìm ra và
   vì nó cho một số đo gọn:

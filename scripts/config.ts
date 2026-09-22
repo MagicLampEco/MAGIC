@@ -143,9 +143,26 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
  * nay là một trong các lý do — cộng vào nhịp epoch và hình dạng datum đã biết từ
  * trước. Ba lý do, một lượt dựng lại; đừng đếm thành ba lượt.
  *
- * ⚠ Bảng `LAMP_ACTIVE` bên dưới **giữ nguyên** `8169b76c…`, cố ý. Nó vẫn là đời
- * duy nhất hợp lệ trên Preprod cho tới khi lượt đúc mới chạy; chuyển nó sang
- * SUPERSEDED bây giờ là chặn mọi lượt E2E Preprod hợp lệ — fail-closed sai chiều.
+ * ⚠ `8169b76c…` cố ý **KHÔNG** có mặt trong `SUPERSEDED_LAMP_POLICIES` bên dưới —
+ * và câu đó phải viết theo chiều ấy, vì bảng bên dưới là một danh sách **CHẶN**:
+ * có tên trong đó nghĩa là bị từ chối. (Bản trước của dòng này gọi nó là *"bảng
+ * `LAMP_ACTIVE`"*, một cái tên không tồn tại ở đâu trong hệ — `grep -rn LAMP_ACTIVE`
+ * chỉ ra đúng dòng đang tự đặt tên. Một cái tên tự phát minh thì không có nguồn để
+ * đối chiếu, nên nó cũng không có gì bắt nó phải đúng; ở đây nó còn mang nghĩa
+ * NGƯỢC với vật thật, nên người tra đi tìm một bảng cho-phép không có.)
+ *
+ * Giữ nó ngoài bảng chặn là cố ý: nó vẫn là đời duy nhất hợp lệ trên Preprod cho
+ * tới khi lượt đúc mới chạy; thêm nó vào bây giờ là chặn mọi lượt E2E Preprod hợp
+ * lệ. Nhưng đừng gọi lựa chọn đó là *"fail-closed sai chiều"* — hai chiều hỏng ở
+ * đây KHÔNG đối xứng: chặn sớm thì hỏng **thấy được** (ném lỗi, người chạy biết
+ * ngay, gỡ ra trong một dòng), còn để lọt thì hỏng **không ai thấy** (một lượt E2E
+ * xanh trọn vẹn trên một đời đã chết — đúng ca `d9c09230…` ghi ở trên). Chọn giữ
+ * nguyên là chọn chiều hỏng **im lặng**, và cái giá của lựa chọn đó là dòng treo
+ * ngay dưới đây, không phải một nhãn nghe cho yên tâm.
+ *
+ * - [!] `8169b76c…` còn đứng ngoài bảng chặn — đo bằng: `grep -n "8169b76c"
+ *   scripts/config.ts MagicSDK/src/lampPolicy.ts` · đọc ở: nó nằm trong khối bảng
+ *   hay chỉ trong chú thích · 2026-09-22: chỉ trong chú thích, bảng chưa có.
  * Sổ nguồn kho LAMP cũng chưa đổi: `Genesis/offchain/src/lampPolicies.ts` ▸
  * `preprod-oneshot-14param` vẫn `status: "ACTIVE"`, `supersededBy: null` (đọc
  * 2026-09-22). Mốc đổi bảng này là **lá thư mang policy id mới + tx hash**, không

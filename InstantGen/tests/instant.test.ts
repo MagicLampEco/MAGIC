@@ -71,6 +71,12 @@ function makeVault(overrides: Partial<VaultDatum> = {}): VaultDatum {
     streak_state:          { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate:     null,
     attribution:           { attribution_root: "00".repeat(32), last_event_epoch: 0n, total_events: 0n },
+    // Trường 17. Thiếu nó ở bản trước, và KHÔNG gì báo: bộ kiểm này không bao giờ mã
+    // hoá datum, còn `tsc` thì không phủ thư mục `tests/` (xem Nợ #81). Trình biên
+    // dịch chỉ kêu khi phạm vi được mở rộng bằng tay — `TS2322: instant_unlock_ms?:
+    // bigint không gán được cho instant_unlock_ms: bigint`. Một `Data.to` thêm vào
+    // đây sẽ ném `Could not type cast to constructor`, và lỗi đó trỏ đi chỗ khác.
+    instant_unlock_ms:     0n,
     ...overrides,
   };
 }

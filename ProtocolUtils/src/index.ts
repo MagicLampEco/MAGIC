@@ -114,13 +114,17 @@ export function slotFloorMs(posixMs: bigint): bigint {
  *  trạng thái hợp lệ của đồng hồ: ở slot cuối mỗi epoch giao thức thì **không
  *  giao dịch nào dựng được**. Mang theo số mili-giây phải chờ để chỗ gọi nói được
  *  cho người dùng biết phải làm gì. */
+// 🔴 Thông điệp KHÔNG được nói "tip đang ở slot CUỐI của epoch" — bản đầu nói thế và
+// nó sai ngay khi `reserveTrailingSlots > 0`: với một slot được chừa, tip ở slot ÁP
+// CHÓT cũng ném, và người đọc sẽ đi soi đồng hồ của mình thay vì soi tham số chừa.
+// Ca lật ra nó: `InstantGen/tests/instantTxWindow.test.ts` ▸ "C-bis".
 export class EmptyValidityWindowError extends Error {
   readonly waitMs: bigint;
   readonly retryAfterMs: bigint;
   constructor(waitMs: bigint, retryAfterMs: bigint) {
     super(
-      `Cửa sổ hiệu lực suy biến: tip đang ở slot CUỐI của epoch giao thức, ` +
-      `mọi cận trên hợp lệ đều rơi vào chính slot đó ⟹ khoảng rỗng ⟹ sổ cái từ chối. ` +
+      `Cửa sổ hiệu lực suy biến: cận trên hợp lệ cuối cùng của epoch giao thức này ` +
+      `không còn đứng SAU tip ⟹ khoảng rỗng ⟹ sổ cái từ chối. ` +
       `Chờ ${waitMs} ms (tới mốc POSIX ${retryAfterMs}) rồi dựng lại.`,
     );
     this.name = "EmptyValidityWindowError";

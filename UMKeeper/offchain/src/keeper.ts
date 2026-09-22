@@ -22,6 +22,32 @@ export {
 // ── Local constants used for tx serialization only ────────────
 const Q = 1_000_000_000n;
 
+// ══════════════════════════════════════════════════════════════
+// Dấu nhật ký — HỢP ĐỒNG với bên vận hành, không phải chuỗi trang trí
+// ══════════════════════════════════════════════════════════════
+//
+// Bên vận hành canh sức khoẻ keeper bằng NỘI DUNG nhật ký, KHÔNG bằng mã thoát.
+// Lý do đo được: vòng lặp dưới bắt mọi lỗi vào `catch` rồi đi tiếp, nên tiến trình
+// thoát 0 kể cả ở lượt không làm gì cả — và nó đã làm đúng thế suốt thời gian
+// `buildUMUpdateTx` ném ở mọi lần gọi (Nợ #80). Mã thoát ở đây là một phép đo đang
+// nói "tôi không biết" bằng giọng của "ổn".
+//
+// Ba dấu dưới đây vì thế là BỀ MẶT CÔNG KHAI: đổi chuỗi là phá phép canh của bên
+// vận hành, và phá im lặng — cảnh báo của họ đơn giản không bao giờ bắn nữa. Đổi
+// thì phải báo cho bên đang canh TRƯỚC, đúng như đổi một trường API.
+// Bài ghim: `UMKeeper/tests/umTxWindow.test.ts` ▸ "D".
+//
+// Điều kiện SỐNG mà bên vận hành canh là sự CÓ MẶT của `LOG_MARKER_UPDATED` trong
+// một cửa sổ thời gian — không phải sự VẮNG MẶT của `LOG_MARKER_ERROR`. Hai thứ đó
+// khác nhau ở đúng ca tệ nhất: một lượt thoát sớm, im lặng, không in dấu nào.
+
+/** In khi một lượt cập nhật UM đã lên chuỗi. Dấu SỐNG — canh sự có mặt của nó. */
+export const LOG_MARKER_UPDATED    = "[UM Keeper] UPDATED";
+/** In khi thấy epoch mới, TRƯỚC khi dựng giao dịch. Một mình nó KHÔNG phải thành công. */
+export const LOG_MARKER_EPOCH_SEEN = "[UM Keeper] NEW-EPOCH";
+/** In khi một lượt hỏng. Tiến trình vẫn thoát 0 — đó là lý do phải canh theo nhật ký. */
+export const LOG_MARKER_ERROR      = "[UM Keeper] ERROR";
+
 export interface EpochStats {
   epoch      : bigint;
   totalBurns : bigint;   // nanogic burned this epoch
@@ -83,9 +109,29 @@ const UMDatumSchema = Data.Object({
 type UMDatumPlutus = Data.Static<typeof UMDatumSchema>;
 const UMDatumPlutus = UMDatumSchema as unknown as UMDatumPlutus;
 
-const UMRedeemerSchema = Data.Enum([
-  Data.Object({ UMUpdate: Data.Object({ new_raw: Data.Integer() }) }),
-]);
+// 🔴 KHÔNG viết lược đồ này bằng `Data.Enum` có ĐÚNG MỘT biến thể.
+//
+// Trên `@lucid-evolution/lucid` 0.4.30, `Data.Enum` một-biến-thể KHÔNG mã hoá được.
+// Đo bằng cả ba hình dạng, cả ba đều ném:
+//     Data.Enum([Data.Literal("X")])                    → "Could not type cast to void"
+//     Data.Enum([Data.Object({X: Data.Object({})})])     → "Could not type cast to void"
+//     Data.Enum([Data.Object({X: Data.Object({i: …})})]) → "Could not type cast to integer"
+// Hai biến thể trở lên thì chạy bình thường. Lucid quy trường hợp một-biến-thể về
+// một đường khác và đường đó vỡ.
+//
+// Hệ quả trước bản vá: `buildUMUpdateTx` NÉM ở mọi lần gọi ⟹ keeper không bao giờ
+// cập nhật được UM. Không bài kiểm nào bắt được vì không bài kiểm nào nhập tệp này
+// (Nợ #79) — vòng lặp keeper lại nuốt lỗi vào `catch` rồi ghi nhật ký, nên trên máy
+// thật nó trông như "chưa tới epoch mới" chứ không như một thứ hỏng.
+//
+// `UMRedeemer` phía Aiken có đúng MỘT constructor (`um_datum.ak` ▸ `UMRedeemer`),
+// nên `Constr(0, [new_raw])` là hình dạng đúng — và `Data.Object` cho ra chính nó:
+// `Data.to({new_raw: 1n}, …)` = `d8799f01ff`. Bài ghim byte: `tests/umTxWindow.test.ts`.
+//
+// Cùng bẫy đã được ghi ở `ConsumeMAGIC/offchain/src/types.ts` (vá bằng `Data.void()`)
+// từ trước mà không được quét sang các module anh em. Bốn chỗ một-biến-thể còn lại
+// trong kho đều là bia mộ hoặc đường chưa mã hoá lần nào — xem Nợ #80.
+const UMRedeemerSchema = Data.Object({ new_raw: Data.Integer() });
 type UMRedeemerPlutus = Data.Static<typeof UMRedeemerSchema>;
 const UMRedeemerPlutus = UMRedeemerSchema as unknown as UMRedeemerPlutus;
 
@@ -123,7 +169,7 @@ export async function buildUMUpdateTx(
   );
   // `new_raw` gửi lên là con số ĐÃ KẸP BƯỚC, không phải tỉ lệ đo được: validator
   // từ chối (không kẹp hộ) mọi bước vượt `um_max_step_q`.
-  const redeemer = Data.to({ UMUpdate: { new_raw: submittedRaw } }, UMRedeemerPlutus);
+  const redeemer = Data.to({ new_raw: submittedRaw }, UMRedeemerPlutus);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const tipMs    = tipPosixMs ?? BigInt(Date.now());
   const { lowerMs: lowerTime, upperMs: upperTime } =
@@ -211,19 +257,19 @@ export function startUMKeeper(config: KeeperConfig): () => void {
       // Check if update needed
       if (currentEpoch <= datum.last_updated_epoch) return;
 
-      console.log(`[UM Keeper] New epoch ${currentEpoch} detected. Updating UM...`);
+      console.log(`${LOG_MARKER_EPOCH_SEEN} ${currentEpoch}`);
 
       const stats  = await getEpochStats(lucid, currentEpoch, shardAddresses);
       const result = await buildUMUpdateTx(lucid, umUtxo, stats, umScript, network);
       const signed = await result.tx.sign.withWallet().complete();
       const txHash = await signed.submit();
 
-      console.log(`[UM Keeper] Updated UM at epoch ${currentEpoch}. TX: ${txHash}`);
+      console.log(`${LOG_MARKER_UPDATED} epoch=${currentEpoch} tx=${txHash}`);
       console.log(result.summary);
       config.onUpdate?.(result);
 
     } catch (err) {
-      console.error(`[UM Keeper] Error:`, err);
+      console.error(`${LOG_MARKER_ERROR}`, err);
       config.onError?.(err as Error);
     }
   }

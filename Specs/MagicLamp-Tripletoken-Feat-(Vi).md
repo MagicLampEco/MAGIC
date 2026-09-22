@@ -397,7 +397,20 @@ Vì sao hai vế này đi cùng nhau chứ không phải chọn một: chúng tr
 
 **Cận sinh chặt hơn, không lỏng hơn.** Cận cũ `Σ m ≤ amount_by_lamp(L₀) + 1` trong MỘT epoch vẫn đúng. Vế mới thêm: `L₀` của epoch kế đã **trừ sẵn** phần còn khoá, nên tổng qua hai epoch liên tiếp bị chặn chặt hơn trước. Không mệnh đề nào của `INV-GEN-BUDGET` bị nới.
 
-**Cái giá, ghi thẳng:** người dùng THẬT cũng chịu khoá — sinh xong thì **trọn** phần LAMP khả dụng của két không rời được két cho tới mốc `instant_unlock_ms`. Độ dài thật là `(cận-trên-validity − now) + ms_per_epoch`, tức nằm trong `[P, 2P)` với `P` là một epoch: sinh với validity hẹp cho cửa sổ ngắn nhất, đúng `P`. `WithdrawLamp` từ chối trong trọn cửa sổ đó. Đây là đánh đổi có chủ ý: chống thuê chớp nhoáng bằng thời gian giữ, không bằng một hàng rào thời-gian-nắm-giữ ở đầu vào.
+**Cái giá, ghi thẳng:** người dùng THẬT cũng chịu khoá — sinh xong thì **trọn** phần LAMP khả dụng của két không rời được két cho tới mốc `instant_unlock_ms`. Độ dài thật là `(cận-trên-validity − now) + ms_per_epoch`. `WithdrawLamp` từ chối trong trọn cửa sổ đó.
+
+> **Cửa sổ ấy có HAI cận, và chúng do HAI TẦNG khác nhau ép — một ký hiệu khoảng gộp chúng lại sẽ khai sai mức của một nửa.**
+>
+> | tầng | cửa sổ | ai ép, và đổi nó tốn gì |
+> |---|---|---|
+> | **validator** (mã kho này) | `[P, 2P)` | `get_current_epoch`: phép `/` của Aiken chia SÀN ⟹ `epoch·P ≤ lower_ms`, cộng `expect upper_ms < (epoch+1)·P`. Đổi được bằng một lượt sửa mã |
+> | **sổ cái Cardano** (ép thêm) | `[P + 1 slot, 2P − 1 slot]` | `invalid_before ≤ slot < invalid_hereafter` loại cửa sổ rỗng; mọi biên validity là biên SLOT. Đổi được bằng… đổi giao thức Cardano |
+>
+> Đầu `= P` **được validator chấp nhận** — đo bằng đột biến: đặt cận trên bằng cận dưới rồi chạy trọn bộ kiểm InstantGen, **125/125 vẫn xanh**. Thứ chặn nó là sổ cái, không phải mã ở đây. Ai sửa `get_validity_upper_ms` sang đọc cận DƯỚI sẽ làm khoá tụt xuống 0 mà **không bài kiểm nào đỏ**.
+>
+> Đơn vị nhỏ nhất là **một slot = 1000 ms**, không phải một mili-giây (`slotLength: 1e3` trên cả ba mạng; `zeroTime` cả ba ≡ 0 mod 1000). Nên tập độ dài đạt được là **hữu hạn và đóng hai đầu** — trừ 1 mili-giây không lùi được một slot.
+>
+> **Hệ quả cho bên tích hợp: đừng in một quãng, in một MỐC TUYỆT ĐỐI** (`VaultTxAPI ▸ summary.ts ▸ instant_unlock_ms`). Màn hình viết *"khoá khoảng một epoch"* rồi đếm ngược `P` sẽ luôn sớm. Đây là đánh đổi có chủ ý: chống thuê chớp nhoáng bằng thời gian giữ, không bằng một hàng rào thời-gian-nắm-giữ ở đầu vào.
 
 ### §6.1.5 Bảng quyền đặc quyền của mô hình sinh
 
@@ -815,7 +828,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | `CC-GEN-GB-ROLE` | `GB` là **trần + cổng**, không nhân (§6.1.1) | lúc thặng dư dồi dào, `GB` không tác động gì — lượng sinh do `L` và `usage_ratio` quyết |
 | `CC-GEN-SCHEDULE-FIXED` | lượng/epoch **cố định tuyệt đối** từ lúc ký; fire không dừng khi `depeg` (§6.1.4, §6.4) | sau chữ ký không còn van hạ nghĩa vụ — toàn bộ rủi ro dồn lên cổng `κ` lúc ký; bậc cứu "điều chỉnh tỷ giá hợp đồng" đã bỏ |
 | `CC-GEN-COLD-START` | vault mới ở **mức trung tính** (điểm giữa dải), `scale_limit` không ràng buộc ở trạng thái này (§6.1.2) | đóng-rồi-mở-lại vault xoá được lịch sử xấu ⟹ **chỉ chạy testnet** tới khi `INV-ONE-PERSON-ONE-VAULT` được ép |
-| `CC-GEN-L-TIMING` | LAMP tính **ngay**, nhưng bị chặn **rời két** tới mốc `instant_unlock_ms` — một epoch THỜI GIAN TRÔI, không phải một chỉ số epoch (§6.1.4, `INV-INSTANT-LOCK`) | người dùng thật cũng chịu khoá: cửa sổ thật là `(cận-trên-validity − now) + ms_per_epoch`, nằm trong `[P, 2P)` và do người gọi chọn; `WithdrawLamp` từ chối trong trọn cửa sổ. **Giá CÒN LẠI, chốt 2026-09-21:** một két sinh ở hai bên ranh giới epoch lấy được hai trần cách nhau vài giây — giữ nguyên cơ chế, chỉ sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
+| `CC-GEN-L-TIMING` | LAMP tính **ngay**, nhưng bị chặn **rời két** tới mốc `instant_unlock_ms` — một epoch THỜI GIAN TRÔI, không phải một chỉ số epoch (§6.1.4, `INV-INSTANT-LOCK`) | người dùng thật cũng chịu khoá: cửa sổ thật là `(cận-trên-validity − now) + ms_per_epoch` — `[P, 2P)` ở tầng validator, `[P + 1 slot, 2P − 1 slot]` sau khi sổ cái loại cửa sổ rỗng (§6.1.4, bảng hai tầng). **KHÔNG phải "do người gọi chọn"**: mọi bộ dựng trong kho ghim cận trên vào cuối epoch giao thức, nên phần lẻ do **thời điểm sinh** quyết, không do ví chọn TTL; `WithdrawLamp` từ chối trong trọn cửa sổ. **Giá CÒN LẠI, chốt 2026-09-21:** một két sinh ở hai bên ranh giới epoch lấy được hai trần cách nhau vài giây — giữ nguyên cơ chế, chỉ sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
 | `CC-GEN-LOCK-FIELD` (chốt **2026-09-21**) | hình dạng khoá: **KHÔNG** thêm trường đếm nào; một bộ đếm SUY RA (`decay.ak` ▸ `instant_gen_in_epoch`) cộng một trường thời gian `VaultDatum ▸ instant_unlock_ms` (trường 17, chỉ có ở InstantGen) (§6.1.4) | lược đồ datum InstantGen 17→18 trường ⟹ đã trả giá di trú một lần. Hai phạm vi KHÔNG ép được còn mở: cửa sổ ranh giới epoch trong một két (đỉnh 2× trần, không nâng nhịp dài hạn), và biên giữa các module (ScheduleGen không có trường này, `WithdrawLamp` bên đó không có cổng thời gian). Cả hai: giữ cơ chế, sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
 
 **CHƯA CHỐT của mô hình sinh chung (v2.0)** — dạng `mã · treo gì · ràng buộc TẠM (fail-closed)`:

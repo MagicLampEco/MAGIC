@@ -105,10 +105,18 @@ export interface TxSummary {
      * bản thân JSON thì vẫn là lời khai của bên phát — bên duyệt TRƯỚC KHI KÝ phải
      * tự đọc mốc từ `tx_cbor`, đừng tin trường này thay cho phép đọc đó.
      *
-     * Hệ quả phải biết trước khi viết chữ lên màn: độ dài khoá thật nằm trong
-     * `[P, 2P)` với `P = ms_per_epoch`, và phần lẻ do **chính người gọi** chọn qua
-     * cận-trên-validity của giao dịch. Ví đặt validity 3 giờ thì khoá thành `P + 3h`.
-     * Nên đừng in một câu cố định kiểu "khoá đúng một epoch" — in mốc.
+     * Hệ quả phải biết trước khi viết chữ lên màn: độ dài khoá thật là `[P, 2P)` ở
+     * tầng VALIDATOR, và `[P + 1 slot, 2P − 1 slot]` sau khi sổ cái loại cửa sổ rỗng
+     * (bảng hai tầng: `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §6.1.4).
+     *
+     * 🔴 Phần lẻ **KHÔNG** do người gọi chọn — bản trước của dòng này viết thế và nó
+     * dạy sai cho bên tích hợp về việc ai cầm cái nút đó. Mọi bộ dựng trong kho ghim
+     * cận trên vào **cuối epoch giao thức** (`epochValidityWindow`), không vào
+     * `now + TTL`, nên phần lẻ do **thời điểm sinh** quyết. Câu "ví đặt validity 3 giờ
+     * thì khoá thành `P + 3h`" mô tả một bộ dựng giả định không tồn tại ở đây.
+     *
+     * Nên đừng in một quãng, cũng đừng in một câu cố định kiểu "khoá đúng một epoch"
+     * — in MỐC.
      */
     instant_unlock_ms: string | null;
     /**

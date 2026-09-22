@@ -334,9 +334,11 @@ async function main(): Promise<void> {
     console.log(`   PHẢI DỪNG: dựng GIAO DỊCH lên cụm này. Chúng hỏng trước khi chạm chuỗi`);
     console.log(`              (giải mã datum sai số trường) hoặc bị sổ cái từ chối.`);
     console.log();
-    console.log(`   Trước khi dựng lại, kiểm apply-param đã là bản HIỆN HÀNH chưa — gồm cả`);
-    console.log(`   \`lampPolicyId\`, mà nguồn chân lý nằm ở kho LAMP (Genesis ▸ lampPolicies),`);
-    console.log(`   KHÔNG ở kho này. Dựng lại bằng một \`lampPid\` sắp bị thay là dựng hai lần.`);
+    console.log(`   Trước khi dựng lại, HỎI kho LAMP xem \`lampPolicyId\` đang dùng còn là đời`);
+    console.log(`   hiện hành không — nguồn chân lý nằm ở đó (Genesis ▸ lampPolicies), KHÔNG ở`);
+    console.log(`   kho này. Đó là một câu HỎI, không phải một lượt CHỜ: câu trả lời "đời mới`);
+    console.log(`   chưa chạy" là câu trả lời hợp lệ, và khi đó dựng lại bằng đời đang sống là`);
+    console.log(`   đúng — chấp nhận có thể phải dựng lần hai.`);
     process.exit(1);
   }
   console.log(`✓ Ba module khớp đời. Vẫn phải đối chiếu địa chỉ trên chuỗi trước khi gửi tx.`);

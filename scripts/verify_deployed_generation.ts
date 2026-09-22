@@ -285,8 +285,39 @@ async function main(): Promise<void> {
   console.log(`Sổ ghi sai thì cổng im: nó mạnh đúng bằng độ đúng của sổ.`);
   console.log();
 
-  if (tally.drift > 0 || tally.unmeasurable > 0) {
-    console.log(`❌ KHÔNG deploy, và KHÔNG dựng giao dịch cho tới khi sạch.`);
+  // ── Phương thuốc phải TỒN TẠI, và phải khác nhau theo trạng thái ──────────
+  //
+  // 🔴 Bản đầu của khối này in "❌ KHÔNG deploy cho tới khi sạch" cho CẢ HAI
+  // trạng thái xấu. Với LỆCH thì câu đó **vòng tròn**: cụm lệch đời thì cách
+  // DUY NHẤT làm nó hết lệch chính là deploy lại. Người đọc bị chặn khỏi đúng
+  // việc gỡ được nó.
+  //
+  // Một cổng kê phương thuốc SAI còn tệ hơn cổng im: cổng im thì người ta đi
+  // tìm; cổng kê sai thì người ta làm theo, thấy không gỡ được, rồi kết luận
+  // *cổng hỏng* — và lần sau bỏ qua nó. (Vế này do nhà CarpetMint gửi sang
+  // 2026-09-22 sau khi tự dính: một cổng của họ kê "chạy lại bộ xuất" trong khi
+  // bộ xuất tự từ chối chạy.)
+  //
+  // Hai trạng thái xấu, hai việc NGƯỢC nhau:
+  //   LỆCH          → PHẢI dựng lại cụm. Thứ phải dừng là DỰNG GIAO DỊCH.
+  //   KHÔNG ĐO ĐƯỢC → chưa biết gì. Dừng CẢ HAI cho tới khi đo được.
+  if (tally.unmeasurable > 0) {
+    console.log(`⚠️  KHÔNG ĐO ĐƯỢC ${tally.unmeasurable} module — đây là trạng thái MÙ, không phải "sạch".`);
+    console.log(`   Dừng CẢ HAI việc (dựng lại cụm VÀ dựng giao dịch) cho tới khi đo được:`);
+    console.log(`   chưa biết cụm đang sống đời nào thì không chọn được việc nào là đúng.`);
+    process.exit(1);
+  }
+  if (tally.drift > 0) {
+    console.log(`❌ LỆCH ${tally.drift} module — cụm đang sống KHÔNG phải bytes mã này dựng ra.`);
+    console.log();
+    console.log(`   PHẢI LÀM : dựng lại cụm. Đó là cách DUY NHẤT hết lệch — đừng đọc dòng này`);
+    console.log(`              thành "đừng deploy".`);
+    console.log(`   PHẢI DỪNG: dựng GIAO DỊCH lên cụm này. Chúng hỏng trước khi chạm chuỗi`);
+    console.log(`              (giải mã datum sai số trường) hoặc bị sổ cái từ chối.`);
+    console.log();
+    console.log(`   Trước khi dựng lại, kiểm apply-param đã là bản HIỆN HÀNH chưa — gồm cả`);
+    console.log(`   \`lampPolicyId\`, mà nguồn chân lý nằm ở kho LAMP (Genesis ▸ lampPolicies),`);
+    console.log(`   KHÔNG ở kho này. Dựng lại bằng một \`lampPid\` sắp bị thay là dựng hai lần.`);
     process.exit(1);
   }
   console.log(`✓ Ba module khớp đời. Vẫn phải đối chiếu địa chỉ trên chuỗi trước khi gửi tx.`);

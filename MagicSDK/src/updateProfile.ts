@@ -25,7 +25,7 @@ import {
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
 } from "@lucid-evolution/lucid";
 import {
-  getTipSlot, posixMsToEpoch, msPerEpoch,
+  getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow,
   type Network,
 } from "@magiclamp/protocol-utils";
 
@@ -141,8 +141,8 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
   );
   const redeemer = encodeUpdateProfileRedeemer(vaultPlutusJson, newProfile);
 
-  const lowerTime = Number(tipPosixMs);
-  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
+  const { lowerMs: lowerTime, upperMs: upperTime } =
+    epochValidityWindow(tipPosixMs, network);
 
   // `null` = chỗ gọi đã TƯỜNG MINH chọn đường inline, không phải quên truyền.
   const refUtxo = resolveRefScript(

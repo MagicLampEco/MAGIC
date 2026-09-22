@@ -9,6 +9,7 @@ import {
   DRM_LOOKBACK,
   msPerEpoch, slotsPerEpoch, posixMsToEpoch,
   vaultOutValue, droppedUnits, assertVaultIdentityKept, sortAiken,
+  SLOT_LENGTH_MS, slotFloorMs, epochValidityWindow, EmptyValidityWindowError,
 } from "../src/index.js";
 
 const MAGIC = Q;
@@ -423,5 +424,89 @@ describe("vaultOutValue — INV-VAULT-IDENTITY", () => {
   it("thông điệp lỗi gọi ĐÚNG TÊN đơn vị bị rơi, không nói chung chung", () => {
     const saiCach = { lovelace: 5_000_000n, [LAMP]: 400_000n };
     expect(() => assertVaultIdentityKept(vaultIn, saiCach)).toThrow(NFT);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// epochValidityWindow — khoảng hiệu lực không được RỖNG
+//
+// Mỗi chốt viết theo CẶP CỰC ĐỐI. Một ca dương đứng một mình ở đây xanh được vì
+// lý do rỗng: hầu hết mốc thời gian đều không suy biến, nên "không ném" là trạng
+// thái mặc định của hàm. Chỉ cặp (suy biến ⟹ ném) + (kề nó một slot ⟹ không ném)
+// mới ghim được ranh giới.
+// ══════════════════════════════════════════════════════════════
+describe("epochValidityWindow", () => {
+  const P = msPerEpoch("Preprod");            // 432_000_000n
+  const e = 4143n;                            // một epoch bất kỳ
+  const bienTren = (e + 1n) * P;              // mốc ĐẦU của epoch kế
+  const slotCuoi = bienTren - SLOT_LENGTH_MS; // đầu slot CUỐI của epoch e
+
+  it("slotFloorMs căn đúng về đầu slot", () => {
+    expect(slotFloorMs(bienTren - 1n)).toBe(slotCuoi);
+    expect(slotFloorMs(slotCuoi)).toBe(slotCuoi);
+    expect(slotFloorMs(slotCuoi - 1n)).toBe(slotCuoi - SLOT_LENGTH_MS);
+  });
+
+  it("giữa epoch: cận trên là đầu slot cuối, và hai biên KHÁC slot", () => {
+    const w = epochValidityWindow(e * P + 12_345n, "Preprod");
+    expect(BigInt(w.upperMs)).toBe(slotCuoi);
+    expect(slotFloorMs(BigInt(w.lowerMs))).not.toBe(BigInt(w.upperMs));
+  });
+
+  it("cận trên luôn < (epoch+1)*P — điều validator expect", () => {
+    const w = epochValidityWindow(e * P + 7n, "Preprod");
+    expect(BigInt(w.upperMs) < bienTren).toBe(true);
+    expect(posixMsToEpoch(slotFloorMs(BigInt(w.lowerMs)), "Preprod")).toBe(e);
+  });
+
+  // ── CẶP: ranh giới của ca suy biến ─────────────────────────────
+  it("tip ở slot CUỐI epoch ⟹ NÉM, và nói rõ phải chờ bao lâu", () => {
+    let caught: unknown;
+    try { epochValidityWindow(slotCuoi, "Preprod"); } catch (err) { caught = err; }
+    expect(caught).toBeInstanceOf(EmptyValidityWindowError);
+    expect((caught as EmptyValidityWindowError).waitMs).toBe(SLOT_LENGTH_MS);
+    expect((caught as EmptyValidityWindowError).retryAfterMs).toBe(bienTren);
+  });
+
+  it("tip ở slot ÁP CHÓT — cực đối của ca trên — thì KHÔNG ném", () => {
+    expect(() => epochValidityWindow(slotCuoi - SLOT_LENGTH_MS, "Preprod")).not.toThrow();
+  });
+
+  it("cuối slot cuối (còn 1 ms) vẫn ném — trừ 1 mili-giây KHÔNG lùi được một slot", () => {
+    expect(() => epochValidityWindow(bienTren - 1n, "Preprod")).toThrow(EmptyValidityWindowError);
+  });
+
+  // ── CẶP: phần chừa slot của InstantGen ─────────────────────────
+  //
+  // Đây là chốt đắt nhất trong khối: nó ghim rằng mốc mở khoá KHÔNG rơi vào ô chết.
+  it("reserve=1 đẩy mốc mở khoá ra khỏi slot cuối ⟹ rút tại mốc dựng được", () => {
+    const w = epochValidityWindow(e * P + 1_000n, "Preprod", 1n);
+    const moc = BigInt(w.upperMs) + P;                 // gương của validator
+    expect(BigInt(w.upperMs)).toBe(slotCuoi - SLOT_LENGTH_MS);
+    // rút ĐÚNG tại mốc: phải dựng được, không suy biến
+    expect(() => epochValidityWindow(moc, "Preprod")).not.toThrow();
+  });
+
+  it("reserve=0 — cực đối — cho mốc rơi ĐÚNG slot cuối ⟹ rút tại mốc NÉM", () => {
+    const w = epochValidityWindow(e * P + 1_000n, "Preprod", 0n);
+    const moc = BigInt(w.upperMs) + P;
+    expect(BigInt(w.upperMs)).toBe(slotCuoi);
+    expect(() => epochValidityWindow(moc, "Preprod")).toThrow(EmptyValidityWindowError);
+  });
+
+  it("khoá vẫn nằm trong [P, 2P) với reserve=1, ở cả hai cực của epoch", () => {
+    for (const tip of [e * P, e * P + P - 2n * SLOT_LENGTH_MS - 1n]) {
+      const w = epochValidityWindow(tip, "Preprod", 1n);
+      const doDai = BigInt(w.upperMs) + P - slotFloorMs(BigInt(w.lowerMs));
+      expect(doDai >= P).toBe(true);
+      expect(doDai < 2n * P).toBe(true);
+    }
+  });
+
+  it("Preview (P=1 ngày) cùng hành vi — hằng slot không phụ thuộc nhịp epoch", () => {
+    const Pv = msPerEpoch("Preview");
+    const cuoiPv = 900n * Pv - SLOT_LENGTH_MS;
+    expect(() => epochValidityWindow(cuoiPv, "Preview")).toThrow(EmptyValidityWindowError);
+    expect(() => epochValidityWindow(cuoiPv - SLOT_LENGTH_MS, "Preview")).not.toThrow();
   });
 });

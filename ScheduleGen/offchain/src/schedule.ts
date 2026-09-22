@@ -21,7 +21,7 @@ import {
   lampToOildrop, nanogicToMagicStr, qToStr,
 } from "./math.js";
 import {
-  getTipSlot, posixMsToEpoch, msPerEpoch, lampAssetName as lampAssetNameFor,
+  getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow, lampAssetName as lampAssetNameFor,
   type Network,
   vaultOutValue,
   assertVaultIdentityKept,
@@ -259,8 +259,8 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   const shardAddr = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
   const redeemer  = Data.to({ ScheduleCommit: { schedule_length: L, lamp_per_epoch: lambda } }, VaultRedeemer);
   const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: totalLock, delta_committed: totalLock } }, ShardRedeemer);
-  const lowerTime = Number(tipPosixMs);
-  const upperTime = Number((commitEpoch + 1n) * msPerEpoch(network) - 1n);
+  const { lowerMs: lowerTime, upperMs: upperTime } =
+    epochValidityWindow(tipPosixMs, network);
 
   let txBuilder = lucid
     .newTx()
@@ -446,8 +446,8 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const lampUnit   = toUnit(lampPolicyId, lampAssetName);
   const redeemer   = Data.to({ ScheduleFire: { schedule_id: scheduleId } }, VaultRedeemer);
   const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(firesInTx), lambda: sched.lamp_per_epoch } }, ShardRedeemer);
-  const lowerTime  = Number(tipPosixMs);
-  const upperTime  = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
+  const { lowerMs: lowerTime, upperMs: upperTime } =
+    epochValidityWindow(tipPosixMs, network);
 
   // Value ra của vault, tách thành CÂU LỆNH RIÊNG để chốt bên dưới không biến mất cùng
   // lần viết lại biểu thức value — đó chính là lần viết lại nó sinh ra để bắt.

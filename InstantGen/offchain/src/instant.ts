@@ -24,7 +24,7 @@ import {
   computeInstantGrant, getUmForInstant, isExpired,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
-import { getTipSlot, posixMsToEpoch, msPerEpoch, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, type Network } from "@magiclamp/protocol-utils";
+import { getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, type Network } from "@magiclamp/protocol-utils";
 import { slotToUnixTime, unixTimeToSlot } from "@lucid-evolution/lucid";
 import {
   VaultDatum, UMDatum, BackingBeaconDatum, VaultRedeemer,
@@ -248,8 +248,15 @@ export async function buildInstantGenTx(
   // ── Validity range (POSIX ms, matches validator's epoch math) ─
   // Tính TRƯỚC khi dựng datum: `instant_unlock_ms` neo vào cận TRÊN của chính
   // khoảng này, nên hai thứ không được tính ở hai chỗ rời nhau.
-  const lowerTime = Number(tipPosixMs);
-  const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
+  //
+  // 🔴 `reserveTrailingSlots: 1` — KHÔNG phải một khoảng đệm cho chắc.
+  // Mốc ghi vào datum là `cận-trên + P`. Cận trên mặc định là slot CUỐI của epoch
+  // này ⟹ mốc rơi đúng slot CUỐI của epoch sau ⟹ lượt rút **tại đúng mốc được
+  // quảng cáo** có `validFrom` và `validTo` cùng một slot ⟹ khoảng rỗng ⟹ sổ cái
+  // từ chối, **mọi lần**. Chừa một slot đẩy mốc ra khỏi ô chết đó.
+  // Giá phải trả: khoá ngắn đi đúng 1000 ms, vẫn nằm trong `[P, 2P)`.
+  const { lowerMs: lowerTime, upperMs: upperTime } =
+    epochValidityWindow(tipPosixMs, network, 1n);
 
   // ── C-INST-9: mốc khoá LAMP sau lượt sinh ─────────────────────
   //
@@ -260,11 +267,20 @@ export async function buildInstantGenTx(
   // 🔴 `get_validity_upper_ms` đọc cận trên mà SỔ CÁI trình ra, KHÔNG phải con số
   // mili-giây ta truyền vào `.validTo()`. Lucid quy nó về SLOT trước
   // (`validTo` → `unixTimeToSlot` → `unixTimeToEnclosingSlot`, tức làm tròn XUỐNG
-  // biên slot), rồi script đọc lại bằng `slotToBeginUnixTime`. Lấy thẳng
-  // `upperTime` là lệch tới gần một độ dài slot, và lệch bao nhiêu cũng đủ làm
-  // `expect output_datum.instant_unlock_ms == new_unlock_ms` vỡ. Nên đi đúng vòng
-  // quy đổi mà chuỗi sẽ đi.
+  // biên slot), rồi script đọc lại bằng `slotToBeginUnixTime`.
+  // `epochValidityWindow` đã trả về mốc căn ĐẦU slot, nên vòng quy đổi dưới đây
+  // phải là phép ĐỒNG NHẤT. Giữ nó lại làm phép đối chứng chứ không phải làm phép
+  // tính: nó chạy bằng bảng slot thật của Lucid, nên nếu giả định "biên slot trùng
+  // biên 1000 ms" của `slotFloorMs` sai trên một mạng nào đó thì chỗ này kêu —
+  // thay vì để `expect output_datum.instant_unlock_ms == new_unlock_ms` vỡ trên chuỗi.
   const upperMsOnChain = BigInt(slotToUnixTime(network, unixTimeToSlot(network, upperTime)));
+  if (upperMsOnChain !== BigInt(upperTime)) {
+    throw new Error(
+      `Lưới slot lệch: epochValidityWindow trả ${upperTime} nhưng vòng quy đổi của ` +
+      `Lucid cho ${upperMsOnChain} trên mạng ${network}. ` +
+      `SLOT_LENGTH_MS hoặc giả định zeroTime ≡ 0 (mod 1000) không còn đúng.`,
+    );
+  }
   const unlockFromNow = upperMsOnChain + msPerEpoch(network);
   const newUnlockMs = vaultDatum.instant_unlock_ms > unlockFromNow
     ? vaultDatum.instant_unlock_ms

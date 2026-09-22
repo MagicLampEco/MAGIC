@@ -47,7 +47,34 @@ export const NON_LAMP_LOOKALIKE_POLICIES: Readonly<Record<string, string>> = Obj
     "ai giữ khoá thì đúc thêm tuỳ ý. Nó đã đúc 19 dòng trên Preview và 8 dòng trên " +
     "Preprod, trong đó có cả \"LAMP\", \"tLAMP\", \"CARP\" và \"MAGIC\". Dòng tLAMP " +
     "mang TRỌN 36 tỷ, tức ngược hẳn mô hình lazy-mint của LAMP.",
+  "3628b069a032490ca24863f48fe36f902d6cf676e1f5b5d3e7845d44":
+    "Mang đúng asset 744c414d50, cung 1.000.000. NGUY hơn hàng nhái thường vì nó " +
+    "NẰM SẴN trong UTxO của một ví triển khai đang dùng — một vòng lặp chọn tài sản " +
+    "theo TÊN nhặt phải nó mà không cần ai tấn công. Hai sổ trong hệ ghi XUẤT XỨ " +
+    "khác nhau cho cùng policy này, nghĩa là ít nhất một sổ đang ghi sai nguồn; cổng " +
+    "so policy id chứ không đọc xuất xứ nên chênh đó không đổi hành vi chặn.",
 });
+
+// 🔴 Mục `3628b069…` ngay trên thêm 2026-09-22, và lý do nó VẮNG một tuần là thứ
+// đáng ghi hơn chính mục đó.
+//
+// Nó được thêm vào `scripts/config.ts` ngày 2026-09-16 và KHÔNG được thêm vào đây.
+// Hai bảng chép tay, không bảng nào trỏ sang bảng kia, nên chúng trôi khỏi nhau mà
+// không gì kêu — `grep -rn 3628b069 --include="*.ts" .` trả về đúng MỘT chỗ suốt
+// quãng đó. Và mục bị thiếu lại là mục NGUY nhất theo chính lời khai của nó: nó
+// không cần ai tấn công.
+//
+// Chỗ trớ trêu: đầu tệp này khai nó tồn tại vì cổng ở `scripts/` "KHÔNG với tới"
+// đường mà người ngoài thật sự đi, và gọi bản vá trước là "một bản vá lấy phạm vi
+// bằng phạm vi của triệu chứng". Nó vừa tái diễn đúng điều đó với chính mình.
+//
+// - [!] Hai bảng vẫn là hai bản chép tay, không đường nhập khẩu — đo bằng:
+//     grep -oE '^  "[0-9a-f]{56}"' scripts/config.ts
+//     grep -oE '^  "[0-9a-f]{56}"' MagicSDK/src/lampPolicy.ts
+//   đọc ở: hai danh sách khoá có TRÙNG NHAU không (so tập, không so số đếm — hai
+//   bảng lệch nhau hai mục khác nhau vẫn cho cùng một số) · 2026-09-22: trùng, cùng
+//   4 khoá. Đường sửa tận gốc là SDK xuất hai bảng và `scripts/config.ts` nhập —
+//   chưa làm vì kho này chưa phụ thuộc gói đó.
 
 /** LAMP THẬT của một đời đã bị thay. Không phải hàng nhái — mọi phép so hình
  *  dạng đều cho chúng đi qua, và một lượt chạy bằng chúng vẫn XANH. Danh sách

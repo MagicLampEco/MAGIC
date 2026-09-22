@@ -498,10 +498,22 @@ phải xong trong cùng epoch giao thức, nên bước 09 chạy TRƯỚC fire 
 > hồ" hết dùng được. Gốc toạ độ vẫn khác (`posixMsToEpoch` không trừ genesis), nên epoch
 > giao thức ~20713 so với epoch Cardano ~233 — đó mới là chỗ phân biệt còn sống.
 
-✅ **Đời này KHÔNG còn sống trong một cửa sổ** (cập nhật 2026-09-21, thư `lam921mag-a`).
-Bản trước của dòng này viết *"kho LAMP đóng băng `8169b76c…` theo ĐỢT đầu-cuối; sau đợt đó
-còn một lượt đúc lại, và lượt đó đổi policy id"*. **Chủ dự án kho LAMP đã chốt ngược lại:**
-đợt đúc cuối trên Preprod đúc THÊM dưới chính policy đang chạy, không dựng policy mới.
+⚠ **Đời này ĐANG sống trên Preprod, và nó KHÔNG phải đời cuối** (cập nhật 2026-09-22).
+
+🔴 Bản trước của khối này kết luận ngược — *"đợt đúc cuối trên Preprod đúc THÊM dưới chính
+policy đang chạy, không dựng policy mới"* ⟹ *"không phải dựng lại vì lý do này"* — dẫn thư
+`lam921mag-a` (2026-09-21). Câu đó bị lật bởi `lam921mag-d` **trong cùng ngày**: kho LAMP
+đóng băng ba validator Distribution rồi đúc genesis MỚI từ mã đã đóng băng ⟹ `lampPid` **sẽ**
+đổi, và địa chỉ cụm Distribution đổi trong cùng lượt.
+
+Chỗ đắt không phải một dòng sai trong chú thích — là **dòng sai này nằm ở sổ deploy**, tệp
+người ta mở ra ngay trước khi chạy một lượt triển khai. Một đợt vá cùng ngày đã sửa
+`scripts/config.ts` rồi đóng lại, và để nguyên bản sao ở đây: đợt vá lấy phạm vi bằng phạm
+vi của **triệu chứng**, không bằng phạm vi của **nguyên nhân**. Lệnh đếm lại bất cứ lúc nào:
+
+```
+grep -rn "không phải dựng lại\|đúc THÊM dưới chính policy" . | grep -v node_modules
+```
 
 | | |
 |---|---|
@@ -509,9 +521,14 @@ còn một lượt đúc lại, và lượt đó đổi policy id"*. **Chủ d�
 | assetName (hex) | `744c414d50` |
 | trạng thái ở sổ nguồn | `ACTIVE`, `supersededBy: null` — `Genesis/offchain/src/lampPolicies.ts` ▸ `preprod-oneshot-14param` |
 
-⟹ `lamp_policy_id` không đổi ⟹ **script hash cụm vault không đổi ⟹ không phải dựng lại vì
-lý do này**, và tLAMP đang nằm trong vault Preprod ở nguyên đó. Không có giai đoạn hai đời
-cùng sống, không có đường di trú nào phải dựng.
+⟹ cụm vault **sẽ** phải dựng lại, và `lampPid` nay là một trong các lý do — cộng vào nhịp
+epoch và hình dạng datum đã biết từ trước. **Ba lý do, MỘT lượt dựng lại**; đừng đếm thành ba
+lượt. Policy id mới chưa tồn tại: nó chỉ sinh ra sau lượt đúc, và lượt đúc chưa chạy.
+
+Mốc để sửa bảng trong `scripts/config.ts` và `MagicSDK/src/lampPolicy.ts` là **lá thư mang
+policy id mới + tx hash**, không phải ngày quyết định của bên kia. Hai bảng đó là bản chép
+tay không có đường nhập khẩu, nên **không cơ chế nào trong kho này tự khởi động việc sửa** —
+xem dòng treo ở `scripts/config.ts` cạnh `SUPERSEDED_LAMP_POLICIES`.
 
 **Đọc HẸP, đừng đọc rộng:** câu trên nói về **Preprod**. Policy mạng chính là một giá trị
 KHÁC và **chưa tồn tại** — kho LAMP không khai nó là "sẽ giống". Nghĩa vụ báo trước khi giá

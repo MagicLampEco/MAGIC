@@ -18,5 +18,9 @@
     "@types/node": "^20.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
+  },
+  "//overrides": "libsodium-wrappers-sumo 0.7.16 là một bản phát hành HỎNG: dist/modules-sumo-esm/ chỉ có libsodium-wrappers.mjs, thiếu đúng libsodium-sumo.mjs mà chính tệp đó nhập ⟹ nhập keeper.js là ERR_MODULE_NOT_FOUND. Dải @cardano-sdk/crypto đòi là ^0.7.5 nên npm hoist bản mới nhất; ba gói anh em (InstantGen, ScheduleGen, MagicSDK) đều ở 0.7.10 và chạy được. Ghim cho khớp anh em, KHÔNG nâng. Bộ kiểm cũ không lộ ra vì nó chưa bao giờ nhập keeper.js — xem Nợ #79.",
+  "overrides": {
+    "libsodium-wrappers-sumo": "0.7.10"
   }
 }

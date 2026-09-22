@@ -83,9 +83,29 @@ const UMDatumSchema = Data.Object({
 type UMDatumPlutus = Data.Static<typeof UMDatumSchema>;
 const UMDatumPlutus = UMDatumSchema as unknown as UMDatumPlutus;
 
-const UMRedeemerSchema = Data.Enum([
-  Data.Object({ UMUpdate: Data.Object({ new_raw: Data.Integer() }) }),
-]);
+// 🔴 KHÔNG viết lược đồ này bằng `Data.Enum` có ĐÚNG MỘT biến thể.
+//
+// Trên `@lucid-evolution/lucid` 0.4.30, `Data.Enum` một-biến-thể KHÔNG mã hoá được.
+// Đo bằng cả ba hình dạng, cả ba đều ném:
+//     Data.Enum([Data.Literal("X")])                    → "Could not type cast to void"
+//     Data.Enum([Data.Object({X: Data.Object({})})])     → "Could not type cast to void"
+//     Data.Enum([Data.Object({X: Data.Object({i: …})})]) → "Could not type cast to integer"
+// Hai biến thể trở lên thì chạy bình thường. Lucid quy trường hợp một-biến-thể về
+// một đường khác và đường đó vỡ.
+//
+// Hệ quả trước bản vá: `buildUMUpdateTx` NÉM ở mọi lần gọi ⟹ keeper không bao giờ
+// cập nhật được UM. Không bài kiểm nào bắt được vì không bài kiểm nào nhập tệp này
+// (Nợ #79) — vòng lặp keeper lại nuốt lỗi vào `catch` rồi ghi nhật ký, nên trên máy
+// thật nó trông như "chưa tới epoch mới" chứ không như một thứ hỏng.
+//
+// `UMRedeemer` phía Aiken có đúng MỘT constructor (`um_datum.ak` ▸ `UMRedeemer`),
+// nên `Constr(0, [new_raw])` là hình dạng đúng — và `Data.Object` cho ra chính nó:
+// `Data.to({new_raw: 1n}, …)` = `d8799f01ff`. Bài ghim byte: `tests/umTxWindow.test.ts`.
+//
+// Cùng bẫy đã được ghi ở `ConsumeMAGIC/offchain/src/types.ts` (vá bằng `Data.void()`)
+// từ trước mà không được quét sang các module anh em. Bốn chỗ một-biến-thể còn lại
+// trong kho đều là bia mộ hoặc đường chưa mã hoá lần nào — xem Nợ #80.
+const UMRedeemerSchema = Data.Object({ new_raw: Data.Integer() });
 type UMRedeemerPlutus = Data.Static<typeof UMRedeemerSchema>;
 const UMRedeemerPlutus = UMRedeemerSchema as unknown as UMRedeemerPlutus;
 
@@ -123,7 +143,7 @@ export async function buildUMUpdateTx(
   );
   // `new_raw` gửi lên là con số ĐÃ KẸP BƯỚC, không phải tỉ lệ đo được: validator
   // từ chối (không kẹp hộ) mọi bước vượt `um_max_step_q`.
-  const redeemer = Data.to({ UMUpdate: { new_raw: submittedRaw } }, UMRedeemerPlutus);
+  const redeemer = Data.to({ new_raw: submittedRaw }, UMRedeemerPlutus);
   // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
   const tipMs    = tipPosixMs ?? BigInt(Date.now());
   const { lowerMs: lowerTime, upperMs: upperTime } =

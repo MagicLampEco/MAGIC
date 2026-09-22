@@ -106,7 +106,7 @@ bash run_consume_schedule_e2e.sh Preprod 2 <VAULT_TX_HASH>    # 09 → fire → 
 🔴 **ĐÍNH CHÍNH — bản trước của đoạn này SAI, và cái sai đó làm việc dễ trông như việc khó.**
 Nó viết rằng phải truyền *"constr `BurnBatch` của `VaultRedeemer` ScheduleGen"* như thể nó
 khác InstantGen. Không khác: `BurnBatch` là **constr 2 ở cả hai** —
-`InstantGen/onchain/lib/magiclamp/protocol/types.ak:219-220` và
+`InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸ `VaultRedeemer` ▸ `BurnBatch` (constr 2) và
 `ScheduleGen/onchain/lib/magiclamp/protocol/types.ak:160-163`. Nên `BURN_BATCH_CONSTR = 2n`
 dùng nguyên được, và việc phải làm chỉ là truyền `vaultScriptHash` khác.
 

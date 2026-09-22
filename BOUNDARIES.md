@@ -222,10 +222,42 @@ Ba điều phải giữ khi sửa mã, vì chúng là hình dạng chứ không 
 mục: SPEC v2.0 §13, bảng *"ĐÃ CHỐT 2026-09-19"*). Hai mục dưới đây đổi thứ người sửa mã phải làm,
 nên nêu ở đây thay vì chỉ trỏ:
 
-- **`CC-GEN-L-TIMING` — LAMP dùng để sinh bị khoá tới hết epoch SAU**, không phải hết epoch hiện
-  tại. Cổng `current_epoch > instant_lock_epoch + 1` phải áp ở **MỌI** nhánh đọc `lamp_available`
-  hoặc rút LAMP (`InstantGen` · `WithdrawLamp` · `UpdateProfile`) — sót một nhánh là thủng, và
-  đây đúng là ca mà `§5` cảnh báo: đổi ràng buộc thì grep TOÀN BỘ nơi gọi.
+- **`CC-GEN-L-TIMING` — LAMP dùng để sinh bị chặn RỜI KÉT trọn một epoch THỜI GIAN TRÔI.** Hình
+  dạng chốt 2026-09-21 (`CC-GEN-LOCK-FIELD`), đã hiện thực: một trường thời gian
+  `VaultDatum ▸ instant_unlock_ms` (POSIX mili-giây, trường 17 — datum InstantGen **18 trường**,
+  ScheduleGen **17**). Nhánh sinh ghi `max(mốc cũ, cận-trên-validity + ms_per_epoch)`; cổng nằm ở
+  **đúng một** nhánh, `validate_withdraw_lamp` ▸ `expect get_validity_lower_ms(tx) >=
+  input_datum.instant_unlock_ms`; bốn nhánh **spend** còn lại **ghim trường đứng yên**; và nhánh
+  **mint** `MintVaultId` ghim nó **về 0** — chỗ duy nhất ép được giá trị KHỞI ĐẦU, vì Cardano
+  không chạy validator lúc tạo UTxO. Tập đầy đủ là **6 nhánh spend + nhánh mint**, đừng đếm sáu
+  rồi tưởng đã đóng — sót một chỗ ghim
+  là một đường rửa khoá, và đây đúng là ca mà `§5` cảnh báo: đổi ràng buộc thì grep TOÀN BỘ nơi gọi.
+
+  > 🔴 Bản trước của gạch này mô tả hai trường `instant_locked` + `instant_lock_epoch` và một cổng
+  > `current_epoch > instant_lock_epoch + 1` áp ở MỌI nhánh đọc `lamp_available`. **Không định danh
+  > nào trong đó tồn tại** — `grep -rn "instant_locked\|instant_lock_epoch" --include="*.ak"
+  > --include="*.ts"` (ngoài `Legacy/`, `node_modules`) trả **1 dòng, và là một chú thích**. Sai
+  > kiểu này đắt gấp đôi ở đúng tệp này: nó là tệp mọi agent `@import` mỗi phiên, nên một người
+  > sắp sửa mã sẽ đi grep một cái tên không có, không thấy gì, rồi kết luận *"chưa hiện thực"* —
+  > trong khi cơ chế đang chạy dưới một cái tên khác. Bản cũ bị **bỏ**, không giữ kèm đính chính.
+
+  **PHẠM VI — thứ cặp cơ chế này KHÔNG ép.** Trần lượng sinh trong một epoch do một bộ đếm SUY RA
+  giữ (`protocol/decay.ak` ▸ `instant_gen_in_epoch`), và nó khoá theo **CHỈ SỐ** epoch nên về 0 ở
+  ranh giới. `instant_unlock_ms` chỉ canh đường LAMP **RA**, không được đọc làm cổng ở nhánh
+  **sinh** — đo 2026-09-21 bằng cách đọc trọn `validate_instant_gen`. Hệ quả: một két sinh ở giây
+  cuối epoch `e` rồi sinh lại ở giây đầu `e+1` lấy **hai** trần cách nhau vài giây, trên cùng số
+  LAMP, **không cần chuyển két**. Mức phát biểu đúng: **≤1 trần mỗi CHỈ SỐ epoch cho mỗi két, cộng
+  ≤1 lượt chuyển két mỗi CỬA SỔ KHOÁ** — KHÔNG phải *"≤1 trần mỗi epoch trên mỗi đồng LAMP"*.
+  Chủ dự án chốt 2026-09-21: **giữ nguyên cơ chế, sửa lời khai** (cửa sổ này tốn 2× trần, trong khi
+  lỗ `apply_burns` vá cùng ngày tốn 120×; bịt nó là đổi mô hình). Hai con số đó **khác đơn vị**:
+  cửa sổ ranh giới là một khoản **ĐỈNH** (dồn suất hai chỉ số epoch vào vài giây) và KHÔNG nâng
+  nhịp dài hạn — vẫn 1 trần mỗi epoch cho mỗi lô LAMP, vì mốc ghi ra luôn quá `(k+1)·P`; lỗ
+  `apply_burns` thì nâng chính **NHỊP**. **Một phạm vi thứ hai KHÔNG ép được: biên giữa các
+  MODULE.** Trường này chỉ có ở InstantGen; ScheduleGen không có nó và `WithdrawLamp` bên đó
+  không có cổng thời gian, nên cùng một lượng LAMP đứng sau được một lượt fire ScheduleGen và
+  một trần InstantGen trong cùng một chỉ số epoch, theo thứ tự tuần tự. Ràng buộc TẠM đang có hiệu lực,
+  fail-closed: **chỉ chạy testnet** — cùng ràng buộc với `CC-GEN-COLD-START` ngay dưới, không phải
+  một ràng buộc thứ hai.
 - **`CC-GEN-COLD-START` — vault chưa có lịch sử đứng ở mức TRUNG TÍNH**, và ở trạng thái đó
   `scale_limit` không ràng buộc. Hệ quả: đóng vault rồi mở lại là một cách xoá lịch sử xấu có lợi.
   **Ràng buộc TẠM đang có hiệu lực, fail-closed: chỉ chạy testnet** tới khi

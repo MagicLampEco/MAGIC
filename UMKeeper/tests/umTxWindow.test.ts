@@ -8,7 +8,10 @@
 import { describe, it, expect } from "vitest";
 import { msPerEpoch } from "@magiclamp/protocol-utils";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
-import { buildUMUpdateTx } from "../offchain/src/keeper.js";
+import {
+  buildUMUpdateTx,
+  LOG_MARKER_UPDATED, LOG_MARKER_EPOCH_SEEN, LOG_MARKER_ERROR,
+} from "../offchain/src/keeper.js";
 
 const NETWORK = "Preprod" as const;
 const P    = msPerEpoch(NETWORK);
@@ -113,5 +116,28 @@ describe("buildUMUpdateTx — cửa sổ hiệu lực", () => {
     // của cả nhánh keeper, nên nó phải đỏ ngay chứ không chỉ nằm trong chú thích.
     expect(tx.signerKeys).toEqual([]);
     expect(res.epoch).toBe(E);
+  });
+
+  it("D. ba dấu nhật ký đứng yên — bên vận hành canh theo chúng, không theo mã thoát", () => {
+    // 🔴 Bài này KHÔNG kiểm hành vi. Nó ghim một BỀ MẶT CÔNG KHAI.
+    //
+    // Bên vận hành canh sức khoẻ keeper bằng sự CÓ MẶT của dấu "đã cập nhật" trong một
+    // cửa sổ thời gian, vì mã thoát không phân biệt được chạy-được với hỏng: vòng lặp
+    // bắt mọi lỗi vào `catch` rồi đi tiếp, nên tiến trình thoát 0 ở cả hai ca — và nó
+    // đã làm đúng thế suốt thời gian `buildUMUpdateTx` ném ở mọi lần gọi.
+    //
+    // Đổi một chuỗi dưới đây là phá phép canh đó, và phá IM LẶNG: cảnh báo bên kia
+    // đơn giản không bao giờ bắn nữa. Bài này biến "im lặng" thành "đỏ", để người đổi
+    // biết mình đang đổi một hợp đồng chứ không phải một dòng trang trí.
+    expect(LOG_MARKER_UPDATED).toBe("[UM Keeper] UPDATED");
+    expect(LOG_MARKER_EPOCH_SEEN).toBe("[UM Keeper] NEW-EPOCH");
+    expect(LOG_MARKER_ERROR).toBe("[UM Keeper] ERROR");
+
+    // Và ba dấu phải PHÂN BIỆT được nhau bằng phép khớp tiền tố — nếu một dấu là tiền
+    // tố của dấu khác thì phép canh "đếm dòng UPDATED" cũng đếm luôn dòng kia.
+    const ds = [LOG_MARKER_UPDATED, LOG_MARKER_EPOCH_SEEN, LOG_MARKER_ERROR];
+    for (const a of ds) for (const b of ds) {
+      if (a !== b) expect(b.startsWith(a)).toBe(false);
+    }
   });
 });

@@ -22,6 +22,32 @@ export {
 // ── Local constants used for tx serialization only ────────────
 const Q = 1_000_000_000n;
 
+// ══════════════════════════════════════════════════════════════
+// Dấu nhật ký — HỢP ĐỒNG với bên vận hành, không phải chuỗi trang trí
+// ══════════════════════════════════════════════════════════════
+//
+// Bên vận hành canh sức khoẻ keeper bằng NỘI DUNG nhật ký, KHÔNG bằng mã thoát.
+// Lý do đo được: vòng lặp dưới bắt mọi lỗi vào `catch` rồi đi tiếp, nên tiến trình
+// thoát 0 kể cả ở lượt không làm gì cả — và nó đã làm đúng thế suốt thời gian
+// `buildUMUpdateTx` ném ở mọi lần gọi (Nợ #80). Mã thoát ở đây là một phép đo đang
+// nói "tôi không biết" bằng giọng của "ổn".
+//
+// Ba dấu dưới đây vì thế là BỀ MẶT CÔNG KHAI: đổi chuỗi là phá phép canh của bên
+// vận hành, và phá im lặng — cảnh báo của họ đơn giản không bao giờ bắn nữa. Đổi
+// thì phải báo cho bên đang canh TRƯỚC, đúng như đổi một trường API.
+// Bài ghim: `UMKeeper/tests/umTxWindow.test.ts` ▸ "D".
+//
+// Điều kiện SỐNG mà bên vận hành canh là sự CÓ MẶT của `LOG_MARKER_UPDATED` trong
+// một cửa sổ thời gian — không phải sự VẮNG MẶT của `LOG_MARKER_ERROR`. Hai thứ đó
+// khác nhau ở đúng ca tệ nhất: một lượt thoát sớm, im lặng, không in dấu nào.
+
+/** In khi một lượt cập nhật UM đã lên chuỗi. Dấu SỐNG — canh sự có mặt của nó. */
+export const LOG_MARKER_UPDATED    = "[UM Keeper] UPDATED";
+/** In khi thấy epoch mới, TRƯỚC khi dựng giao dịch. Một mình nó KHÔNG phải thành công. */
+export const LOG_MARKER_EPOCH_SEEN = "[UM Keeper] NEW-EPOCH";
+/** In khi một lượt hỏng. Tiến trình vẫn thoát 0 — đó là lý do phải canh theo nhật ký. */
+export const LOG_MARKER_ERROR      = "[UM Keeper] ERROR";
+
 export interface EpochStats {
   epoch      : bigint;
   totalBurns : bigint;   // nanogic burned this epoch
@@ -231,19 +257,19 @@ export function startUMKeeper(config: KeeperConfig): () => void {
       // Check if update needed
       if (currentEpoch <= datum.last_updated_epoch) return;
 
-      console.log(`[UM Keeper] New epoch ${currentEpoch} detected. Updating UM...`);
+      console.log(`${LOG_MARKER_EPOCH_SEEN} ${currentEpoch}`);
 
       const stats  = await getEpochStats(lucid, currentEpoch, shardAddresses);
       const result = await buildUMUpdateTx(lucid, umUtxo, stats, umScript, network);
       const signed = await result.tx.sign.withWallet().complete();
       const txHash = await signed.submit();
 
-      console.log(`[UM Keeper] Updated UM at epoch ${currentEpoch}. TX: ${txHash}`);
+      console.log(`${LOG_MARKER_UPDATED} epoch=${currentEpoch} tx=${txHash}`);
       console.log(result.summary);
       config.onUpdate?.(result);
 
     } catch (err) {
-      console.error(`[UM Keeper] Error:`, err);
+      console.error(`${LOG_MARKER_ERROR}`, err);
       config.onError?.(err as Error);
     }
   }

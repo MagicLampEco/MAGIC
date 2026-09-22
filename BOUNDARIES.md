@@ -337,9 +337,27 @@ viết *"MVP là MỘT policy / MỘT vault — mỗi vault deploy một `genesi
 id khác nhau, và `consume.ak` được apply-param bởi đúng cặp policy/name của vault nó phục
 vụ"*. Ghép hai vế lại: `genesis_ref` đổi theo từng lần tạo vault ⟹ policy id đổi theo từng
 vault ⟹ `consume` đổi hash theo từng vault. Mỗi người dùng mở vault là kho phải biên dịch,
-deploy và công bố ref-script một bản `consume` RIÊNG. Cộng với Nợ #20 (`consume` đã phải
-tách giao dịch vì vượt trần 16.384 byte) thì chi phí mở một vault tăng tuyến tính theo số
-người dùng — trong khi mô hình là **mỗi PersonDID một vault**.
+deploy và công bố ref-script một bản `consume` RIÊNG. Cộng với việc `consume` **bắt buộc**
+phải dùng ref-script CIP-33 (đính kèm cả hai validator vào một tx = **17.310 byte**, vượt trần
+16.384 — đo 2026-08-17, neo ở `ConsumeMAGIC/offchain/src/consume.ts` ▸ khối chú thích trên
+`refInputs`), thì chi phí mở một vault tăng tuyến tính theo số người dùng — trong khi mô hình
+là **mỗi PersonDID một vault**.
+
+> 🔴 Bản trước của câu trên viết *"Cộng với Nợ #20 (`consume` đã phải **tách giao dịch** vì
+> vượt trần 16.384 byte)"*. **Hai sai trong một dấu ngoặc**, và cả hai đều đọc trôi:
+>
+> **(a) Sai số nợ.** Nợ #20 (`DevStatus.md`) nói về **ScheduleGen** — công bố ref-script cho
+> `vault` + `shard` phải tách hai giao dịch. Nó không nói gì về `consume`.
+>
+> **(b) Sai cách vá, và đây là vế đắt hơn.** `consume` **KHÔNG** tách giao dịch. Đường vá là
+> `readFrom` hai ref-script trong **MỘT** tx — con trỏ tới UTxO đã đỗ trên chain thay vì bê
+> CBOR vào tx. Ràng buộc cho phép làm thế: `script_inputs_confined_to` chỉ duyệt `tx.inputs`,
+> KHÔNG chạm `reference_inputs` (`ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak:104-118`).
+>
+> Vì sao câu sai này nguy hơn một con trỏ chết: nó **hành động được**. Người đọc nó rồi đi
+> dựng một luồng hai-giao-dịch sẽ viết ra mã chạy được, tốn gấp đôi phí, và không phép kiểm
+> nào đỏ — trong khi đường một-tx đã có sẵn và đã chạy thật trên Preprod. Một con trỏ chết thì
+> người ta biết mình đang lạc; một chỉ dẫn sai thì không.
 
 Bản được giữ vẫn có `vault_script_hash` làm apply-param (`ConsumeMAGIC/onchain/validators/consume.ak:75-83`,
 7 tham số) và điều đó ĐÚNG phép thử: nó đổi theo *loại* vault, không theo từng vault. Ba

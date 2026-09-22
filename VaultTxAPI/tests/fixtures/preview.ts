@@ -15,7 +15,9 @@
 // gõ tay sẽ đóng băng ở hình dạng cũ và vẫn xanh sau khi datum thật đã trôi.
 
 import { Data } from "@lucid-evolution/lucid";
-import { VaultDatumSchema, buildInitialVaultDatum } from "@magiclamp/sdk";
+import {
+  InstantVaultDatumSchema, VaultDatumSchema, buildInitialVaultDatum,
+} from "@magiclamp/sdk";
 
 export const VAULT_ADDRESS = "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x";
 export const VAULT_SCRIPT_HASH = "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf";
@@ -65,6 +67,17 @@ export interface DatumSpec {
   consumedCreditNanogic?: bigint;
   lastUpdatedEpoch?: bigint;
   genScheduleCount?: number;
+  /**
+   * Đặt giá trị ⟹ dựng datum hình dạng **Instant** (18 trường) với
+   * `instant_unlock_ms` bằng đúng giá trị đó. Bỏ trống ⟹ hình dạng **Schedule**
+   * (17 trường), nơi trường này KHÔNG TỒN TẠI.
+   *
+   * Hai hình dạng phải dựng bằng HAI lược đồ khác nhau chứ không phải một lược đồ
+   * cộng một trường tuỳ chọn: giải mã Plutus Data của Aiken nghiêm ngặt về SỐ
+   * TRƯỜNG theo cả hai chiều, nên một mẫu 18 trường đọc bằng lược đồ 17 sẽ hỏng
+   * đúng như trên chuỗi. Đó chính là thuộc tính cần mẫu này giữ.
+   */
+  instantUnlockMs?: bigint;
 }
 
 function batch(spec: BatchSpec): Record<string, unknown> {
@@ -117,5 +130,12 @@ export function datumHex(spec: DatumSpec = {}): string {
       consumed_credit: spec.consumedCreditNanogic ?? 0n,
     },
   };
-  return Data.to(full as never, VaultDatumSchema);
+
+  if (spec.instantUnlockMs === undefined) {
+    return Data.to(full as never, VaultDatumSchema);
+  }
+  return Data.to(
+    { ...full, instant_unlock_ms: spec.instantUnlockMs } as never,
+    InstantVaultDatumSchema,
+  );
 }

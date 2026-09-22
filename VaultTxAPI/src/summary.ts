@@ -80,6 +80,51 @@ export interface TxSummary {
     batch_count_after: number;
     gen_schedule_count_before: number;
     gen_schedule_count_after: number;
+    /**
+     * Mốc LAMP RỜI KÉT được, POSIX **mili-giây**, dạng chuỗi chữ số.
+     * `null` ở két Schedule — nơi trường KHÔNG TỒN TẠI, không phải nơi nó bằng 0.
+     *
+     * Đây là **mốc tuyệt đối, không phải một số đếm epoch.** Nói rõ vì câu hỏi tới
+     * từ bên tích hợp là *"đếm epoch loại nào — giao thức hay Cardano?"*, và câu trả
+     * lời đúng là **không loại nào**: `INV-INSTANT-LOCK` không đếm epoch. Validator
+     * ghi `max(mốc cũ, cận-trên-validity + ms_per_epoch)` rồi cổng ở
+     * `validate_withdraw_lamp` so `get_validity_lower_ms(tx) >= instant_unlock_ms`.
+     * Người hiển thị **không cần biết `ms_per_epoch`, không cần đổi đơn vị, không
+     * cần đọc đỉnh chuỗi**. Nhưng *"in thẳng ra giờ địa phương"* chỉ đúng cho nhánh
+     * thứ ba trong BA nhánh dưới đây — bản trước của dòng này nói hai, và nhánh bị
+     * bỏ là nhánh in ra năm 1970:
+     *
+     *   `null`  két Schedule, trường KHÔNG TỒN TẠI  →  đừng nhắc gì tới khoá
+     *   `"0"`   két Instant CHƯA TỪNG sinh          →  "chưa có khoá nào"
+     *   `>0`    đang khoá                            →  in mốc, giờ địa phương
+     *
+     * Cặp ca kiểm ở `tests/summary.test.ts` phân biệt đủ ba nhánh; câu dặn ở đây
+     * từng xoá mất sự phân biệt đó ở đúng bước người dùng nhìn thấy.
+     *
+     * ⚠ Trường này là **TIỆN ÍCH**, không phải bằng chứng. Nó suy từ CBOR thật, chứ
+     * bản thân JSON thì vẫn là lời khai của bên phát — bên duyệt TRƯỚC KHI KÝ phải
+     * tự đọc mốc từ `tx_cbor`, đừng tin trường này thay cho phép đọc đó.
+     *
+     * Hệ quả phải biết trước khi viết chữ lên màn: độ dài khoá thật nằm trong
+     * `[P, 2P)` với `P = ms_per_epoch`, và phần lẻ do **chính người gọi** chọn qua
+     * cận-trên-validity của giao dịch. Ví đặt validity 3 giờ thì khoá thành `P + 3h`.
+     * Nên đừng in một câu cố định kiểu "khoá đúng một epoch" — in mốc.
+     */
+    instant_unlock_ms: string | null;
+    /**
+     * Cùng mốc đó, đọc từ datum ĐẦU VÀO. Có nó thì bên hiển thị nói được BA câu
+     * khác nhau, thiếu nó thì cả ba ra một con số trơ giống hệt nhau:
+     *
+     *   before == after   lượt này KHÔNG dời mốc (bốn nhánh spend ghim nó đứng yên
+     *                     — một lượt `burn_batch` vẫn hiện mốc tương lai, và không
+     *                     có vế này thì nó đọc thành "giao dịch này khoá tôi")
+     *   before == 0       lượt này ĐẶT khoá lần đầu
+     *   0 < before < after lượt này KÉO DÀI một khoá đang có
+     *
+     * Mọi số vault khác trong bản tóm tắt đều đi theo cặp `_before`/`_after`; mốc
+     * này từng là ngoại lệ duy nhất, và `before` thì đã nằm sẵn trong tay ở đây.
+     */
+    instant_unlock_ms_before: string | null;
   };
   outputs: OutputView[];
 }
@@ -105,6 +150,30 @@ export function summarizeTx(txCborHex: string, ctx: SummaryContext): TxSummary {
 
   const before = decodeVaultDatum(ctx.inputVaultDatumHex, "datum của UTxO vault đang bị tiêu");
   const after = vaultHit.datum;
+
+  // ── Ý ĐỊNH phải khớp HÌNH DẠNG datum ──────────────────────────────────────────
+  //
+  // Hai hình dạng `VaultDatum` phân biệt bằng SỐ TRƯỜNG (17 Schedule / 18 Instant),
+  // và `decodeVaultDatumEitherShape` nhận cả hai ở MỌI địa chỉ. Nên trước cổng này
+  // một lượt `instant_gen` dựng nhầm datum 17 trường đi trọn đường: dịch vụ trả 200,
+  // ghi vào sổ phát-hành, và bản tóm tắt nói `instant_unlock_ms: null`.
+  //
+  // `null` thì lại được khai nghĩa ngay trên kia là *"két Schedule — trường KHÔNG
+  // TỒN TẠI"*. Trên đường `instant_gen` câu đó SAI: nghĩa thật là *"datum đầu ra mất
+  // trường khoá"*. Bên hiển thị đọc đúng tài liệu rồi kết luận ngược, và người dùng
+  // ký một giao dịch validator chắc chắn bác. Không mất tài sản — chuỗi fail-closed
+  // — nhưng cái hỏng đi qua đúng con đường không ai nhìn.
+  //
+  // Ném ở đây chứ không đệm: một bản tóm tắt tự mâu thuẫn là thứ không ai nên ký.
+  if (ctx.requestedIntent === "instant_gen" && after.instant_unlock_ms === null) {
+    throw new TxSummaryUndecodableError(
+      "datum đầu ra của một lượt `instant_gen` mang hình dạng két Schedule " +
+      "(17 trường, không có `instant_unlock_ms`). Giao dịch này sẽ bị validator " +
+      "InstantGen từ chối, nên dịch vụ không phát nó ra kèm một bản tóm tắt " +
+      "trông bình thường.",
+      { requested_intent: ctx.requestedIntent, vault_datum_kind: after.vault_datum_kind },
+    );
+  }
 
   const magic = magicDelta(before, after);
 
@@ -138,6 +207,13 @@ export function summarizeTx(txCborHex: string, ctx: SummaryContext): TxSummary {
       output_index: vaultHit.view.index,
       owner_pkh: after.owner,
       last_updated_epoch: raw(after.last_updated_epoch),
+      // Đọc từ datum ĐẦU RA đã giải mã lại từ chính CBOR sắp ký, không từ tham số
+      // của yêu cầu — cùng nguyên tắc với mọi số khác trong bản tóm tắt này.
+      // `null` đi thẳng ra `null`: không đệm `"0"`, vì `0` là giá trị hợp lệ của một
+      // két Instant chưa từng sinh, còn `null` nghĩa là két này không có trường đó.
+      instant_unlock_ms: after.instant_unlock_ms === null ? null : raw(after.instant_unlock_ms),
+      instant_unlock_ms_before:
+        before.instant_unlock_ms === null ? null : raw(before.instant_unlock_ms),
       batch_count_before: before.magic_batches.length,
       batch_count_after: after.magic_batches.length,
       gen_schedule_count_before: before.gen_schedules.length,

@@ -39,13 +39,20 @@ const BEFORE_COMMIT = datumHex({
   batches: [BATCH_LIVE],
 });
 
-function ctx(inputVaultDatumHex: string): SummaryContext {
+/** `intent` là tham số chứ không phải hằng gõ cứng: `summarizeTx` nay ĐỌC nó (cổng
+ *  ý-định-khớp-hình-dạng datum), nên một mẫu dán nhãn sai sẽ kiểm nhầm nhánh. Bản
+ *  trước gõ cứng `"schedule_commit"` cho mọi ca, kể cả các ca InstantGen — lúc ấy vô
+ *  hại vì nhãn không đi vào phép tính nào, nhưng nó là cái bẫy cho đúng lượt này. */
+function ctx(
+  inputVaultDatumHex: string,
+  intent: SummaryContext["requestedIntent"] = "schedule_commit",
+): SummaryContext {
   return {
     vaultAddress: VAULT_ADDRESS,
     inputVaultDatumHex,
     lampUnit: LAMP_UNIT,
     network: "Preview",
-    requestedIntent: "schedule_commit",
+    requestedIntent: intent,
   };
 }
 
@@ -236,6 +243,149 @@ describe("summarizeTx — hình dạng lạ thì NÉM, không đệm", () => {
 
   it("datum của UTxO ĐANG BỊ TIÊU không khớp lược đồ ⟹ ném", () => {
     expect(() => summarizeTx(commitTx(3n), ctx("d87980"))).toThrow(TxSummaryUndecodableError);
+  });
+});
+
+// ── `instant_unlock_ms` — CẶP ca kiểm, không phải một ca dương ────────────────────
+//
+// Ca dương một mình ở đây xanh được vì một lý do RỖNG: một hiện thực trả thẳng chuỗi
+// chữ số của bất kỳ đâu cũng qua nó. Cực đối là ca Schedule — nơi trường KHÔNG TỒN TẠI
+// và câu trả lời đúng là `null`, KHÔNG phải `"0"`. Hai cực đó phân biệt được ba hiện
+// thực sai mà một ca dương không phân biệt nổi:
+//
+//   (a) đệm `"0"` khi không có trường   → ca Schedule đỏ
+//   (b) trả hằng, không đọc datum       → ca ĐỘT BIẾN đỏ (hai mốc khác nhau)
+//   (c) đọc từ tham số yêu cầu          → không có tham số nào để đọc; ca ĐỘT BIẾN đỏ
+//
+// Mốc chọn là hai số ĐÔI MỘT KHÁC NHAU và khác mọi số khác trong tệp này, để một bản
+// tóm tắt lấy nhầm trường không thể tình cờ đúng.
+const UNLOCK_A = 1_763_000_000_000n;   // ~2025-11-13
+const UNLOCK_B = 1_763_432_000_000n;   // ~2025-11-18, cách A đúng 5 ngày
+
+/** Giao dịch InstantGen: datum đầu ra hình dạng Instant (18 trường), mang mốc khoá. */
+function instantGenTx(unlockMs: bigint): string {
+  return buildTxCbor({
+    inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
+    feeLovelace: FEE,
+    outputs: [
+      {
+        address: VAULT_ADDRESS,
+        assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
+        inlineDatumHex: datumHex({
+          batches: [BATCH_LIVE, BATCH_NEW],
+          instantUnlockMs: unlockMs,
+        }),
+      },
+      { address: CHANGE_ADDRESS, assets: { lovelace: 9_400_000n } },
+    ],
+  });
+}
+
+/** Datum ĐẦU VÀO hình dạng Instant, chưa từng sinh ⟹ mốc khoá bằng 0. */
+const BEFORE_INSTANT = datumHex({ batches: [BATCH_LIVE], instantUnlockMs: 0n });
+
+describe("summary ▸ instant_unlock_ms — mốc POSIX ms, đọc từ datum ĐẦU RA", () => {
+  it("két Instant ⟹ mốc ra dưới dạng CHUỖI chữ số, đúng giá trị trong CBOR", () => {
+    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT, "instant_gen"));
+    expect(s.vault.instant_unlock_ms).toBe("1763000000000");
+  });
+
+  it("CỰC ĐỐI — két Schedule KHÔNG có trường này ⟹ `null`, KHÔNG phải \"0\"", () => {
+    // Đây là ca ghim được thứ ca trên không ghim: phân biệt *vắng mặt* với *bằng 0*.
+    // Một két Instant chưa từng sinh CÓ trường và nó bằng 0 — nếu ở đây trả `"0"` thì
+    // hai trạng thái khác hẳn nhau đọc ra giống hệt nhau, và màn hình sẽ in "hết khoá
+    // lúc 1970" cho một két không hề có cơ chế khoá.
+    const s = summarizeTx(commitTx(3n), ctx(BEFORE_COMMIT));
+    expect(s.vault.instant_unlock_ms).toBeNull();
+    expect(s.vault.instant_unlock_ms).not.toBe("0");
+  });
+
+  it("két Instant CHƯA TỪNG SINH ⟹ \"0\", và \"0\" ≠ null", () => {
+    // Vế thứ ba của cặp: chứng minh `"0"` là một giá trị ĐẠT TỚI ĐƯỢC ở nhánh Instant.
+    // Không có ca này thì ca Schedule ở trên còn xanh được nhờ một hiện thực trả `null`
+    // cho MỌI thứ — nó sẽ không phân biệt hai cực, chỉ trông như đang phân biệt.
+    const s = summarizeTx(instantGenTx(0n), ctx(BEFORE_INSTANT, "instant_gen"));
+    expect(s.vault.instant_unlock_ms).toBe("0");
+  });
+
+  it("ĐỘT BIẾN: đổi MỐC trong CBOR ⟹ summary đổi theo, và chỉ ở trường đó", () => {
+    const a = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT, "instant_gen"));
+    const b = summarizeTx(instantGenTx(UNLOCK_B), ctx(BEFORE_INSTANT, "instant_gen"));
+
+    expect(a.vault.instant_unlock_ms).toBe("1763000000000");
+    expect(b.vault.instant_unlock_ms).toBe("1763432000000");
+    expect(a.vault.instant_unlock_ms).not.toBe(b.vault.instant_unlock_ms);
+
+    // Không đổi trong CBOR thì không được đổi trong bản tóm tắt.
+    expect(a.fee_lovelace).toBe(b.fee_lovelace);
+    expect(a.vault.owner_pkh).toBe(b.vault.owner_pkh);
+    expect(a.magic.total_after_nanogic).toBe(b.magic.total_after_nanogic);
+  });
+});
+
+// ── Ý ĐỊNH phải khớp HÌNH DẠNG datum — CẶP ca kiểm ───────────────────────────────
+//
+// Cực này quan trọng hơn nó trông: trước khi có cổng, một lượt `instant_gen` dựng
+// nhầm datum 17 trường đi TRỌN đường và trả `200` kèm `instant_unlock_ms: null`. Mà
+// `null` được tài liệu khai nghĩa là "két Schedule — trường không tồn tại", nên bên
+// hiển thị đọc đúng tài liệu rồi kết luận ngược.
+//
+// Hai cực phải đứng cạnh nhau, vì một mình ca ném thì xanh được bằng một hiện thực
+// ném cho MỌI datum Schedule — và như thế thì mọi lượt `schedule_commit` hỏng theo.
+describe("summary ▸ ý định khớp hình dạng datum", () => {
+  it("`instant_gen` + datum đầu ra hình dạng Schedule ⟹ NÉM, không trả bản tóm tắt", () => {
+    expect(() => summarizeTx(commitTx(3n), ctx(BEFORE_COMMIT, "instant_gen")))
+      .toThrow(/instant_gen.*Schedule|Schedule.*instant_gen/s);
+  });
+
+  it("CỰC ĐỐI — `schedule_commit` + đúng datum Schedule ⟹ KHÔNG ném", () => {
+    // Không có ca này thì ca trên xanh nhờ một hiện thực ném cho mọi datum 17 trường.
+    const s = summarizeTx(commitTx(3n), ctx(BEFORE_COMMIT, "schedule_commit"));
+    expect(s.vault.instant_unlock_ms).toBeNull();
+  });
+
+  it("CỰC ĐỐI — `instant_gen` + đúng datum Instant ⟹ KHÔNG ném", () => {
+    // Và không có ca này thì ca đầu xanh nhờ một hiện thực ném cho MỌI `instant_gen`.
+    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT, "instant_gen"));
+    expect(s.vault.instant_unlock_ms).toBe("1763000000000");
+  });
+});
+
+// ── `instant_unlock_ms_before` — ba câu, không phải một con số trơ ────────────────
+//
+// Trường `after` một mình không phân biệt được "lượt này ĐẶT khoá" với "lượt này KÉO
+// DÀI khoá" với "lượt này KHÔNG ĐỤNG mốc" — cả ba hiện ra cùng một mốc tương lai. Ba
+// ca dưới đây là ba cực đó; bỏ bất kỳ ca nào thì hai cực còn lại lẫn vào nhau.
+describe("summary ▸ instant_unlock_ms_before", () => {
+  /** Datum đầu vào Instant ĐÃ có khoá, để dựng ca "kéo dài". */
+  const BEFORE_LOCKED = datumHex({ batches: [BATCH_LIVE], instantUnlockMs: UNLOCK_A });
+
+  it("ĐẶT lần đầu: before \"0\" → after mốc thật", () => {
+    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_INSTANT, "instant_gen"));
+    expect(s.vault.instant_unlock_ms_before).toBe("0");
+    expect(s.vault.instant_unlock_ms).toBe("1763000000000");
+  });
+
+  it("KÉO DÀI: before và after đều là mốc thật, và after xa hơn", () => {
+    const s = summarizeTx(instantGenTx(UNLOCK_B), ctx(BEFORE_LOCKED, "instant_gen"));
+    expect(s.vault.instant_unlock_ms_before).toBe("1763000000000");
+    expect(s.vault.instant_unlock_ms).toBe("1763432000000");
+    expect(BigInt(s.vault.instant_unlock_ms!)).toBeGreaterThan(
+      BigInt(s.vault.instant_unlock_ms_before!),
+    );
+  });
+
+  it("KHÔNG DỜI: before == after ⟹ bên hiển thị nói được là lượt này không khoá thêm", () => {
+    // Bốn nhánh spend ghim trường đứng yên. Không có vế `_before` thì một lượt như
+    // thế vẫn hiện một mốc tương lai, và nó đọc thành "giao dịch này khoá tôi".
+    const s = summarizeTx(instantGenTx(UNLOCK_A), ctx(BEFORE_LOCKED, "instant_gen"));
+    expect(s.vault.instant_unlock_ms_before).toBe(s.vault.instant_unlock_ms);
+  });
+
+  it("CỰC ĐỐI — két Schedule ⟹ cả hai vế đều `null`, không vế nào đệm \"0\"", () => {
+    const s = summarizeTx(commitTx(3n), ctx(BEFORE_COMMIT, "schedule_commit"));
+    expect(s.vault.instant_unlock_ms_before).toBeNull();
+    expect(s.vault.instant_unlock_ms).toBeNull();
   });
 });
 

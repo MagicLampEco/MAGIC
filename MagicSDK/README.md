@@ -207,14 +207,18 @@ import theo đường dẫn repo (`InstantGen/offchain/src/instant.js`…) — �
 >    Người GHI beacon là **keeper tầng GreenBack của chính kho MAGIC** (khoá
 >    `greenback_beacon_writer`, SPEC v2.0 §6.3), **không** phải nhà CARP — nên đây không
 >    phải một việc bị chặn bởi bên ngoài. ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #2)
-> 2. **Trần thứ ba luôn bằng 0.** `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`, mà
->    vault Instant luôn có `gen_schedules = []` ⇒ trần 0 ⇒ `min3(...) = 0` ⇒
->    `expect grant > 0` fail. ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #6, "Chờ chủ nhân
->    chốt" D1 — phải vá cùng lúc với `INV-INSTANT-LOCK`)
+> 2. 🔴 **BỎ — bản trước của mục này khai *"trần thứ ba luôn bằng 0"* và câu đó đã SAI.**
+>    Nó dẫn `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`; hàm đó nay nhận **đúng một**
+>    tham số `l_avail_oildrop` (`InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸
+>    `compute_cap_pp`), và `grep -c "gen_schedules" math.ak` → **0**. Nợ #6 và Nợ #19 đều đã
+>    đóng; InstantGen đã cấp thật trên Preprod (tx `720e1817dc12a418…`, 0,3333 MAGIC, bó bởi
+>    `cap_surplus`) rồi số đó bị tiêu thật (`b60afb5294b39b73…`).
 >
-> Cả hai đều fail-closed theo thiết kế, không phải lỗi để đi vòng. **Ngày beacon được ghi,
-> InstantGen VẪN cấp 0 nanogic** cho tới khi #2 được chốt và vá. Đừng hiện nút Instant dựa
-> trên mỗi tin "beacon đã có". Dùng `diagnoseCeilings()` để biết trần nào đang chặn.
+> Chốt #1 fail-closed theo thiết kế, không phải lỗi để đi vòng. Nó là chốt **duy nhất** còn
+> lại trong danh sách này, nên câu cũ *"ngày beacon được ghi, InstantGen VẪN cấp 0 nanogic"*
+> nay cũng **bỏ** — nó treo trên #2, mà #2 đã chết. Vẫn đừng hiện nút Instant dựa trên mỗi
+> tin "beacon đã có": dùng `diagnoseCeilings()` để biết trần nào đang chặn, vì một trần khác
+> (`cap_surplus`, vế thưởng) vẫn bó được lượng cấp xuống rất nhỏ mà không có gì báo.
 
 ### `buildInitialVaultDatum(inputs)` · `VaultDatumSchema` · `VaultIdRedeemerSchema`
 

@@ -396,28 +396,32 @@ dùng biết **trần nào** đang chặn họ, thay vì báo một lỗi trốn
 >    **keeper tầng GreenBack của chính kho MAGIC** (khoá `greenback_beacon_writer`,
 >    SPEC v2.0 §6.3), **không** phải nhà CARP.
 >    ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #2)
-> 2. **Trần theo lịch đã cam kết luôn bằng 0.** `computeCapPp` /
->    `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`, mà vault Instant luôn có
->    `gen_schedules = []` ⇒ trần 0 ⇒ `min3(...) = 0` ⇒ `expect grant > 0` fail. Đây KHÔNG
->    phải hệ quả của #1 — nó chặn độc lập, kể cả khi beacon đã có.
->    ([`DevStatus.md`](../DevStatus.md) "Còn nợ" #6 và "Chờ chủ nhân chốt" D1: phải viết lại
->    trần theo SPEC §6.3 **cùng lúc** với `INV-INSTANT-LOCK`, không thì mở đường flash-rent LAMP)
+> 2. 🔴 **BỎ — bản trước khai *"trần theo lịch đã cam kết luôn bằng 0"*, và câu đó đã SAI.**
+>    Nó dẫn `compute_cap_pp(schedules) = Σ(gen_schedules) / 2`. Hàm đó nay nhận **đúng một**
+>    tham số `l_avail_oildrop` (`InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸
+>    `compute_cap_pp`), `grep -c "gen_schedules" math.ak` → **0**, và Nợ #6 đã đóng. Vế còn
+>    sống của mục cũ — *phải vá cùng lúc với khoá LAMP, không thì mở đường flash-rent* — **đã
+>    làm**: nay là trường `instant_unlock_ms` (`BOUNDARIES.md` ▸ `CC-GEN-LOCK-FIELD`).
 >
-> 3. 🔴 **`consumed_credit` bằng 0 vì CẤU TRÚC, không vì cấu hình.** Thưởng InstantGen khoá
->    theo MAGIC **đã tiêu** (`INV-MAGIC-CITIZEN`), tức `activity_state.consumed_credit`. Trong
->    module InstantGen, `consumed_credit` chỉ tăng ở một chỗ — nhánh `BurnBatch`
->    (`InstantGen/onchain/validators/vault.ak:947`) — mà nhánh đó chỉ đốt được `magic_batches`,
->    và nơi DUY NHẤT tạo `magic_batches` trong module này là chính nhánh `InstantGen`
->    (`vault.ak:429-442`). Genesis ghim cả hai về 0 (`vault.ak:274-277`), và module **không có
->    handler nạp MAGIC từ ngoài** — `VaultRedeemer` đúng 6 biến thể. Vòng kín.
+> 3. 🔴 **BỎ — bản trước khai *"`consumed_credit` bằng 0 vì CẤU TRÚC"* và kết luận vòng kín
+>    không mở được bằng một bản vá.** Vòng đó **đã mở**, và mở bằng đúng một hằng biên dịch:
+>    genesis nay ghim `consumed_credit` vào `wakeme_seed_credit`
+>    (`InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸ `wakeme_seed_credit`) thay
+>    cho 0. Nợ #19 đóng 2026-09-16 bằng ba giao dịch thật trên Preprod, không bằng bài kiểm
+>    đơn vị: két `a4669a94485d16d7…` · cấp `720e1817dc12a418…` · tiêu `b60afb5294b39b73…`.
 >
-> **Ngày beacon được ghi, InstantGen VẪN cấp 0 nanogic. Vá trần ở #2 xong thì VẪN 0.** Chốt #3
-> không mở được bằng một bản vá công thức; nó chờ quyết định kiến trúc D1 (InstantGen ở lại làm
-> script riêng, hay hợp nhất vào vault ScheduleGen để `ScheduleFire` nuôi `consumed_credit`).
-> Xem [`DevStatus.md`](../DevStatus.md) "Chờ chủ nhân chốt" D1.
+>    **Hạt giống MỞ KHOÁ chứ không TRẢ** — cấp thực vẫn là `min(reward, cap_surplus, cap_pp)`,
+>    và chuỗi in ra `reward 210,2100 · cap_surplus 0,3333 · cap_pp 4,0040`, tức hạt giống là
+>    vế LỚN NHẤT nên nới nó không nới được đồng MAGIC nào. Dùng được **một lần mỗi két**.
 >
-> Đừng bật nút Instant chỉ vì #1 đã xong — `diagnoseCeilings()` chỉ đúng trần nào đang chặn,
-> dùng nó thay vì đoán.
+>    **Và đừng đọc câu trên rộng hơn nó nói:** một lần mỗi **KÉT**, không phải mỗi **NGƯỜI**.
+>    Chặn một người mở N két hiện là chi phí mở két, chưa phải một bất biến on-chain — xem
+>    `BOUNDARIES.md` ▸ `INV-ONE-PERSON-ONE-VAULT`, ràng buộc tạm đang có hiệu lực là **chỉ
+>    chạy testnet**.
+>
+> Chốt #1 là chốt **duy nhất** còn lại trong danh sách này. Vẫn đừng bật nút Instant chỉ vì #1
+> đã xong — `diagnoseCeilings()` chỉ đúng trần nào đang chặn, dùng nó thay vì đoán, vì
+> `cap_surplus` và vế thưởng vẫn bó được lượng cấp xuống rất nhỏ mà không có gì báo.
 
 ### 6.3. Không có cửa nào khác qua SDK
 
@@ -904,7 +908,7 @@ phải cửa thứ tư — chúng là mô hình cũ đã bỏ, chỉ còn bia m�
 | Cơ chế | Qua `@magiclamp/sdk`? | LAMP có rời vault? | Trạng thái |
 |---|---|---|---|
 | **Schedule** (hợp đồng kỳ hạn) | ✅ | **Không** — fire chỉ mở khoá | dùng được |
-| **Instant** (theo lượng đã tiêu) | ✅ | **Không** | fail-closed vì **HAI** chốt độc lập: BackingBeacon chưa được ghi (người ghi là keeper tầng GreenBack của kho MAGIC, không phải nhà CARP) **và** trần theo lịch luôn = 0 (`gen_schedules = []`) — xem §6.2 |
+| **Instant** (theo lượng đã tiêu) | ✅ | **Không** | fail-closed vì **MỘT** chốt: BackingBeacon chưa được ghi (người ghi là keeper tầng GreenBack của kho MAGIC, không phải nhà CARP). Vế thứ hai của dòng cũ — *"trần theo lịch luôn = 0 (`gen_schedules = []`)"* — đã **BỎ**, nguyên nhân đó không còn trong mã; xem §6.2 |
 | **Prepaid** (trả bằng CARP) | ❌ | — | mã CÒN (24 tệp, tag `preserve/prepaidgen-stash-2026-07-30`) nhưng chưa vào cây làm việc ⇒ chưa có đường gọi SDK |
 | **Snapshot / Vacuum** | ❌ | — | ở `Legacy/` |
 

@@ -175,7 +175,13 @@ async function checkModule(
   if (liveHash === undefined || liveHash === "" || /^FILL_/.test(liveHash)) {
     tally.unmeasurable++;
     console.log(`  ⚠️  KHÔNG ĐO ĐƯỢC — sổ không có \`${spec.liveHashKey}\` (hoặc còn là giá trị giữ chỗ).`);
-    console.log(`     Cổng này KHÔNG chạy cho module đó. Đừng đọc thành "sạch".\n`);
+    console.log(`     Hai ca KHÁC NHAU trốn sau một dòng vắng, và cổng này không tách được chúng:`);
+    console.log(`       (a) module CHƯA deploy trên mạng này ⟹ không có gì để đối chiếu, và cũng`);
+    console.log(`           không có gì để dựng giao dịch lên. Đó là một kết luận hợp lệ.`);
+    console.log(`       (b) đã deploy nhưng hash không được ghi về sổ ⟹ có bytes đang sống mà`);
+    console.log(`           KHÔNG ai đối chiếu được. Đây mới là ca nguy.`);
+    console.log(`     PHẢI LÀM: tra \`scripts/DEPLOYED.md\` xem module này đã có lượt deploy nào`);
+    console.log(`               trên ${net} chưa, rồi ghi kết quả vào sổ — kể cả khi kết quả là (a).\n`);
     return;
   }
 
@@ -184,7 +190,11 @@ async function checkModule(
   if (Array.isArray(built)) {
     tally.unmeasurable++;
     console.log(`  ⚠️  KHÔNG ĐO ĐƯỢC — sổ thiếu ${built.length} tham số: ${built.join(", ")}`);
-    console.log(`     Cổng này KHÔNG chạy cho module đó. Đừng đọc thành "sạch".\n`);
+    console.log(`     Khác ca trên ở chỗ đắt nhất: sổ CÓ ghi hash đang sống, tức có bytes đang`);
+    console.log(`     sống thật, mà thiếu đầu vào để dựng lại nên không ai đối chiếu được.`);
+    console.log(`     PHẢI LÀM: xin bản chép đủ của sổ từ người chạy lượt deploy. Đừng điền tay —`);
+    console.log(`               một tham số đoán ra sẽ cho một hash sai, và cổng sẽ nói LỆCH cho`);
+    console.log(`               một cụm có thể đang đúng đời.\n`);
     return;
   }
 
@@ -298,13 +308,22 @@ async function main(): Promise<void> {
   // 2026-09-22 sau khi tự dính: một cổng của họ kê "chạy lại bộ xuất" trong khi
   // bộ xuất tự từ chối chạy.)
   //
-  // Hai trạng thái xấu, hai việc NGƯỢC nhau:
+  // Hai trạng thái xấu, hai việc KHÁC nhau:
   //   LỆCH          → PHẢI dựng lại cụm. Thứ phải dừng là DỰNG GIAO DỊCH.
-  //   KHÔNG ĐO ĐƯỢC → chưa biết gì. Dừng CẢ HAI cho tới khi đo được.
+  //   KHÔNG ĐO ĐƯỢC → dừng dựng giao dịch; việc còn lại do TỪNG dòng ⚠️ kê,
+  //                   vì hai ca "chưa deploy" và "deploy rồi mất dòng ghi" gỡ
+  //                   theo hai đường ngược nhau.
+  //
+  // Vế thứ hai là vế CarpetMint gửi sang cùng ngày, hẹp hơn một bậc: vá xong
+  // một nhánh thì soi các nhánh ANH EM trong cùng câu lệnh rẽ TRƯỚC khi đóng.
+  // Lượt vá đầu ở đây lấy phạm vi bằng phạm vi của triệu chứng, nên nó chạm
+  // đúng nhánh LỆCH và để nguyên hai nhánh KHÔNG-ĐO-ĐƯỢC dùng chung một câu.
   if (tally.unmeasurable > 0) {
     console.log(`⚠️  KHÔNG ĐO ĐƯỢC ${tally.unmeasurable} module — đây là trạng thái MÙ, không phải "sạch".`);
-    console.log(`   Dừng CẢ HAI việc (dựng lại cụm VÀ dựng giao dịch) cho tới khi đo được:`);
-    console.log(`   chưa biết cụm đang sống đời nào thì không chọn được việc nào là đúng.`);
+    console.log(`   Dừng DỰNG GIAO DỊCH cho tới khi đo được: chưa biết cụm đang sống đời nào thì`);
+    console.log(`   không biết giao dịch đang gửi tới đâu.`);
+    console.log(`   Còn dựng lại cụm thì KHÔNG cấm ở đây — mỗi dòng ⚠️ bên trên kê việc riêng của`);
+    console.log(`   nó, và một trong hai ca là "chưa deploy bao giờ", nơi dựng lại chính là việc đúng.`);
     process.exit(1);
   }
   if (tally.drift > 0) {

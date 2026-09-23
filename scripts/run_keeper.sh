@@ -63,23 +63,28 @@ elif [ -z "${KEEPER_PRICE_BEACONS:-}" ] && [ -n "${PRICE_NFT_POLICY:-}" ] && [ -
   KEEPER_PRICE_BEACONS="$PRICE_NFT_POLICY:$PRICE_PARAM_HASH"
 fi
 
-export NETWORK="$NET" BLOCKFROST_KEY WALLET_SEED KEEPER_PRICE_BEACONS
-echo "▶ keeper · NETWORK=$NET · $(date -u +%FT%TZ) · secret đã nhận từ môi trường (không in)."
+# Chỗ keeper GHI: khoá chống chạy chồng + sổ `keeper-state.<mạng>.json` của bước instant. Trong
+# mã của `scripts/` (không tính `node_modules`), đó là hai thứ duy nhất trên đường keeper ghi
+# xuống đĩa; `npx`/`tsx` ghi bộ đệm vào HOME và thư mục tạm. Dưới systemd có `StateDirectory=` thì cả hai vào
+# thư mục trạng thái của unit, và cây mã được giữ chỉ-đọc. Không có (chạy tay, máy dev) thì về
+# thư mục hiện tại như trước. `STATE_DIRECTORY` có thể mang nhiều đường nối bằng `:`; lấy đường đầu.
+KEEPER_DATA_DIR="${STATE_DIRECTORY:-.}"
+KEEPER_DATA_DIR="${KEEPER_DATA_DIR%%:*}"
+KEEPER_STATE_FILE="${KEEPER_STATE_FILE:-$KEEPER_DATA_DIR/keeper-state.$NET.json}"
 
-# Khoá chống chạy chồng: hai lượt cùng lúc tranh cùng UTxO ví và cùng thấy "chưa làm".
-# `mkdir` là thao tác nguyên tử (macOS không có `flock`). Khoá cũ hơn 2 giờ coi là của một
-# lượt đã chết (máy tắt giữa chừng) và được gỡ, kèm một dòng báo.
-LOCK=".keeper.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
-  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +120 2>/dev/null)" ]; then
-    echo "⚠ khoá $LOCK cũ hơn 2 giờ — coi là lượt đã chết, gỡ và chạy tiếp."
-    rmdir "$LOCK" && mkdir "$LOCK" || { echo "✗ không lấy được khoá"; exit 1; }
-  else
-    echo "· có lượt keeper khác đang chạy (khoá $LOCK) — lượt này bỏ qua."
-    exit 0
-  fi
-fi
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+export NETWORK="$NET" BLOCKFROST_KEY WALLET_SEED KEEPER_PRICE_BEACONS KEEPER_STATE_FILE
+echo "▶ keeper · NETWORK=$NET · $(date -u +%FT%TZ) · secret đã nhận từ môi trường (không in)."
+echo "· ghi vào: $KEEPER_DATA_DIR"
+
+# Ba trạng thái của khoá — lấy được · lượt khác đang giữ · không tạo được — tả ở `keeper_lock.sh`.
+. "./keeper_lock.sh"
+acquire_keeper_lock "$KEEPER_DATA_DIR"
+case $? in
+  0) ;;
+  3) exit 0 ;;
+  *) echo '  KHÔNG giao dịch nào được gửi.'; exit 1 ;;
+esac
+trap 'rmdir "$KEEPER_LOCK" 2>/dev/null' EXIT
 
 npx tsx keeper/keeper.ts
 RC=$?

@@ -11,7 +11,8 @@
 //
 // MỖI BƯỚC TỰ ĐO TRƯỚC RỒI MỚI GỬI: beacon đã ở epoch hiện tại thì bỏ qua, lịch chưa tới
 // hạn thì bỏ qua, ví đã có batch InstantGen trong epoch này thì bỏ qua. Nên hẹn giờ chạy
-// mỗi giờ cũng không gửi thừa tx nào.
+// mỗi giờ cũng không gửi thừa tx nào. Beacon ghi epoch TƯƠNG LAI thì HỎNG, không bỏ qua
+// (`keeper/beaconEpoch.ts` ▸ `beaconEpochState` nói vì sao).
 //
 // Price beacon làm mới bằng redeemer `PostPrice` trên `price_param` — TUYỆT ĐỐI không chạy
 // lại `deploy/09_deploy_consume.ts`: bước đó đúc price NFT one-shot mới, đổi hash `consume`,
@@ -49,6 +50,7 @@ import {
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { awaitTxBounded as awaitTxBoundedShared, DEFAULT_AWAIT_TX_MS } from "../awaitTx.js";
 import { priceParamParams, scheduleVaultParams, shardSpendParams } from "../deployParams.js";
+import { beaconEpochState, aheadMessage } from "./beaconEpoch.js";
 import {
   decodePriceParam, encodePriceParam, type PriceParamT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
@@ -147,9 +149,9 @@ async function stepBacking(lucid: LucidEvolution, ownerPkh: string, epoch: bigin
   const d = Data.from(beacons[0]!.datum!, BackingBeaconDatumSchema as never) as {
     br_q: bigint; magic_supply: bigint; last_updated_epoch: bigint;
   };
-  if (d.last_updated_epoch >= epoch) {
-    return record("backing", "skip", `đã ở epoch ${d.last_updated_epoch}`);
-  }
+  const backingState = beaconEpochState(d.last_updated_epoch, epoch);
+  if (backingState === "ahead") return record("backing", "fail", aheadMessage(d.last_updated_epoch, epoch));
+  if (backingState === "current") return record("backing", "skip", `đã ở epoch ${d.last_updated_epoch}`);
   if (DRY) return record("backing", "skip", `DRY: sẽ làm mới ${d.last_updated_epoch} → ${epoch}`);
   // Giữ nguyên br_q và magic_supply đang có — keeper chỉ đẩy epoch, không đổi con số.
   const r = runScript("deploy/04_deploy_backing_fixture.ts", {
@@ -205,7 +207,9 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
     if (found.length !== 1) { record(tag, "fail", `thấy ${found.length} beacon (cần đúng 1)`); continue; }
     const beacon = found[0]!;
     const pp = decodePriceParam(beacon.datum!);
-    if (pp.epoch >= epoch) { record(tag, "skip", `đã ở epoch ${pp.epoch}`); continue; }
+    const priceState = beaconEpochState(pp.epoch, epoch);
+    if (priceState === "ahead") { record(tag, "fail", aheadMessage(pp.epoch, epoch)); continue; }
+    if (priceState === "current") { record(tag, "skip", `đã ở epoch ${pp.epoch}`); continue; }
     if (DRY) { record(tag, "skip", `DRY: sẽ PostPrice ${pp.epoch} → ${epoch}`); continue; }
 
     // Chỉ đẩy epoch. Bảng giá, demand_mult, m_min, m_max giữ nguyên; value giữ nguyên

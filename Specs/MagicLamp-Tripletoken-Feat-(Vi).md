@@ -355,16 +355,23 @@ Vì sao cộng dồn chứ không một-lần/epoch: (a) `GB` đọc tại giao 
   > - Ép được: **một đồng LAMP không nuôi hai lượt sinh ở hai két INSTANTGEN** trong cùng một
   >   cửa sổ khoá, vì nó không rời được két thứ nhất. Phạm vi "két InstantGen" là phần quan
   >   trọng của câu, xem gạch ngay dưới.
-  > - **KHÔNG** ép được, và đây là chỗ dễ đọc rộng ra nhất: **biên giữa các MODULE.** Trường
-  >   này chỉ tồn tại ở InstantGen — `grep -rn "instant_unlock_ms" ScheduleGen --include="*.ak"`
-  >   trả **0 dòng** — và `validate_withdraw_lamp` của ScheduleGen chỉ gác ba điều (`amount > 0`,
-  >   chữ ký chủ, `amount <= avail`), không mệnh đề thời gian nào. Thêm nữa `ScheduleFire` nhả
-  >   `lamp_locked` NGAY trong epoch nó trả MAGIC, và nhánh đó không đòi chữ ký. Nên cùng một
-  >   lượng LAMP đứng sau được một lượt fire ScheduleGen **và** một trần InstantGen trong cùng
-  >   một CHỈ SỐ epoch, theo thứ tự tuần tự. Câu *"Không dùng cùng một LAMP hai lần"* ở đầu
-  >   §6.1.4 đúng cho tính **đồng thời**, không đúng cho tính **tuần tự**. Bịt chỗ này là đổi
-  >   mô hình sinh của ScheduleGen, nên nó KHÔNG được vá ở tầng tài liệu; ràng buộc tạm
-  >   fail-closed **chỉ chạy testnet** bao ca này, cùng ràng buộc với `CC-GEN-COLD-START`.
+  > - **ÉP ĐƯỢC, tuy không phải bằng trường này: biên giữa các MODULE.** Trường `instant_unlock_ms`
+  >   quả thật chỉ có ở InstantGen (`grep -rn "instant_unlock_ms" ScheduleGen --include="*.ak"` →
+  >   **0 dòng**) và `validate_withdraw_lamp` của ScheduleGen chỉ gác ba điều (`amount > 0`, chữ ký
+  >   chủ, `amount <= avail`). Nhưng thứ đóng chuỗi *ScheduleGen → InstantGen* không phải cổng RA —
+  >   là cổng VÀO: **không két nào nhận thêm LAMP sau genesis.** `lamp_balance` ghim đúng một lần ở
+  >   nhánh mint (`InstantGen/onchain/validators/vault.ak:272`, `ScheduleGen/…/vault.ak:1123`), năm
+  >   nhánh spend còn lại của InstantGen ghim nó đứng yên (`:508 :619 :1071 :1219 :1281`), và đường
+  >   duy nhất đổi nó là `WithdrawLamp` — một phép TRỪ (`:949`; ScheduleGen `:1215`). Không
+  >   `VaultRedeemer` nào có biến thể nạp. ⟹ chuỗi đó đòi **mở một két MỚI**, nên nó là đường
+  >   **luân chuyển két**, đã nằm dưới `INV-ONE-PERSON-ONE-VAULT`, không phải một lỗ riêng.
+  >
+  >   > 🔴 **Bản trước khai ngược vế này** — viết rằng biên module KHÔNG ép được, và rằng *"cùng một
+  >   > lượng LAMP đứng sau được một lượt fire ScheduleGen và một trần InstantGen trong cùng một chỉ
+  >   > số epoch"*. Nó đo **đúng một đầu đường** (cửa RA của ScheduleGen) rồi kết luận về cả đường.
+  >   > Chủ dự án bắt được chỗ này 2026-09-24 bằng một câu số học: 1000 LAMP mà ScheduleGen đã giữ
+  >   > 400 thì InstantGen chỉ còn 600 — hai trần không cộng lên cùng một lượng LAMP được. Đo lại
+  >   > thì lý do còn mạnh hơn thế: LAMP không đi từ két này sang két kia mà không mở két mới.
   > - **KHÔNG** ép được: một két sinh ở giây cuối epoch `e` rồi sinh lại ở giây đầu epoch `e+1`
   >   lấy **hai** trần cách nhau vài giây, trên cùng số LAMP, không cần chuyển đi đâu. Bộ đếm ở
   >   (1) khoá theo **chỉ số** epoch nên nó về 0 ở ranh giới; cổng ở (2) chỉ canh đường RA.
@@ -807,7 +814,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | **F6-NO-EXTERNAL-INPUT** | cổng/ngưỡng chỉ căn số-dư-nội-bộ; oracle CHỈ định-giá `B` (một nguồn giá mỗi tài sản trong danh mục), KHÔNG điều khiển cổng — bản đầy đủ ở §2 |
 | **INV-MAGIC-CITIZEN** | Lượng sinh từ LAMP (InstantGen + ScheduleGen) = `min(amount_by_lamp, GB_available)` (§6.1.1): `L` là cơ sở nhân, `usage_ratio` (consumed/generated, 6 epoch đã qua, không gồm hết hạn) là hệ số nhân dải `[0.5, 1]`, phần hệ số trên sàn chỉ áp tới `scale_limit`, `GB` là trần + cổng; với ScheduleGen, trần gộp toàn mạng là cổng `κ` (§6.1.4). MAGIC đang cầm không vào công thức. Vault CÓ lịch sử mà tiêu 0 sinh ở **sàn**; vault CHƯA có lịch sử sinh ở **mức trung tính** (`CC-GEN-COLD-START`, chốt 2026-09-19) — hai trạng thái khác nhau, đừng gộp; người không nắm LAMP sinh 0. VP C1 (§10) vẫn keyed MAGIC-đã-tiêu cross-DID |
 | **INV-CASHBACK-BOUND** | hoàn-tiền/ưu-đãi-phí mỗi DID ≤ MAGIC thật đã tiêu; KHÔNG áp cho lượng sinh từ LAMP (§6.3) |
-| **INV-INSTANT-LOCK** | InstantGen chặn TRỌN phần LAMP khả dụng **rời két** tới mốc `VaultDatum ▸ instant_unlock_ms` = một epoch thời-gian-trôi kể từ lượt sinh (chốt 2026-09-19 `CC-GEN-L-TIMING`; hình dạng chốt 2026-09-21 `CC-GEN-LOCK-FIELD`). Cổng ở `validate_withdraw_lamp`; bốn nhánh spend khác ghim trường đứng yên, nhánh mint ghim về 0. **ĐÃ hiện thực.** Phạm vi ép được và hai phạm vi KHÔNG ép được (cửa sổ ranh giới epoch trong một két; biên giữa các module): §6.1.4 ▸ khối `CC-GEN-LOCK-FIELD` |
+| **INV-INSTANT-LOCK** | InstantGen chặn TRỌN phần LAMP khả dụng **rời két** tới mốc `VaultDatum ▸ instant_unlock_ms` = một epoch thời-gian-trôi kể từ lượt sinh (chốt 2026-09-19 `CC-GEN-L-TIMING`; hình dạng chốt 2026-09-21 `CC-GEN-LOCK-FIELD`). Cổng ở `validate_withdraw_lamp`; bốn nhánh spend khác ghim trường đứng yên, nhánh mint ghim về 0. **ĐÃ hiện thực.** Phạm vi ép được và **một** phạm vi KHÔNG ép được (cửa sổ ranh giới epoch trong một két): §6.1.4 ▸ khối `CC-GEN-LOCK-FIELD`. Biên giữa các module **không** nằm trong danh sách đó — nó đóng bằng cổng VÀO (không két nào nhận LAMP sau genesis), sửa 2026-09-24 |
 | **I-ACT-7** | LAMP đứng yên khi gen (chỉ đọc reference_input) |
 | **I-PERSON-5** | 1 PersonDID / 1 biometric_hash (chống Sybil-account) |
 | **INV-VAULT-IDENTITY** | vault mang `vault_id_nft` one-shot; kiểm NFT mọi điểm đọc balance/batches (chặn vault bịa 2-ADA) |
@@ -847,7 +854,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | `CC-GEN-COLD-START` | vault mới ở **mức trung tính** (điểm giữa dải), `scale_limit` không ràng buộc ở trạng thái này (§6.1.2) | đóng-rồi-mở-lại vault xoá được lịch sử xấu ⟹ **chỉ chạy testnet** tới khi `INV-ONE-PERSON-ONE-VAULT` được ép |
 | `CC-GEN-L-TIMING` | LAMP tính **ngay**, nhưng bị chặn **rời két** tới mốc `instant_unlock_ms` — một epoch THỜI GIAN TRÔI, không phải một chỉ số epoch (§6.1.4, `INV-INSTANT-LOCK`) | người dùng thật cũng chịu khoá: cửa sổ thật là `(cận-trên-validity − now) + ms_per_epoch` — `[P, 2P)` ở tầng validator, `[P + 1 slot, 2P − 1 slot]` sau khi sổ cái loại cửa sổ rỗng (§6.1.4, bảng hai tầng). **KHÔNG phải "do người gọi chọn"**: mọi bộ dựng trong kho ghim cận trên vào cuối epoch giao thức, nên phần lẻ do **thời điểm sinh** quyết, không do ví chọn TTL; `WithdrawLamp` từ chối trong trọn cửa sổ. **Giá CÒN LẠI, chốt 2026-09-21:** một két sinh ở hai bên ranh giới epoch lấy được hai trần cách nhau vài giây — giữ nguyên cơ chế, chỉ sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
 | `CC-GEN-ELIGIBILITY` (chốt **2026-09-24**) | hệ số tư-cách §6.2 (`eligibility ∈ [Q, 2.5Q]`) **KHÔNG BAO GIỜ** nhân vào `F` — vĩnh viễn, không còn là ràng buộc tạm (§6.2, khối đầu mục) | mất **0** tín hiệu thật, vì `offPeakFactor` chưa bao giờ sống (`Eligibility/…/math.ak` ▸ *"DELIBERATELY ABSENT"*). Cái giá thật nằm ở chỗ khác: nghĩa vụ điều tiết giờ dời sang tầng giá tiêu (`ConsumeMAGIC/CONTRACT.md` ▸ `CC-LOAD-COUNT-UNIT`), nên tới khi tầng đó chạy thì hệ **không có** van thấp-điểm nào. Module `Eligibility/` thành bản ghi lịch sử, xoá khi hệ số thay thế lên chuỗi |
-| `CC-GEN-LOCK-FIELD` (chốt **2026-09-21**) | hình dạng khoá: **KHÔNG** thêm trường đếm nào; một bộ đếm SUY RA (`decay.ak` ▸ `instant_gen_in_epoch`) cộng một trường thời gian `VaultDatum ▸ instant_unlock_ms` (trường 17, chỉ có ở InstantGen) (§6.1.4) | lược đồ datum InstantGen 17→18 trường ⟹ đã trả giá di trú một lần. Hai phạm vi KHÔNG ép được còn mở: cửa sổ ranh giới epoch trong một két (đỉnh 2× trần, không nâng nhịp dài hạn), và biên giữa các module (ScheduleGen không có trường này, `WithdrawLamp` bên đó không có cổng thời gian). Cả hai: giữ cơ chế, sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
+| `CC-GEN-LOCK-FIELD` (chốt **2026-09-21**) | hình dạng khoá: **KHÔNG** thêm trường đếm nào; một bộ đếm SUY RA (`decay.ak` ▸ `instant_gen_in_epoch`) cộng một trường thời gian `VaultDatum ▸ instant_unlock_ms` (trường 17, chỉ có ở InstantGen) (§6.1.4) | lược đồ datum InstantGen 17→18 trường ⟹ đã trả giá di trú một lần. **MỘT** phạm vi KHÔNG ép được còn mở: cửa sổ ranh giới epoch trong một két (đỉnh 2× trần, không nâng nhịp dài hạn) — giữ cơ chế, sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet. Bản trước kê **hai**, mục thứ hai là *"biên giữa các module"* và nó **SAI** — chuỗi ScheduleGen→InstantGen đòi mở két mới vì không két nào nhận LAMP sau genesis, nên nó thuộc `INV-ONE-PERSON-ONE-VAULT`; đo + lý do ở §6.1.4 ▸ khối `CC-GEN-LOCK-FIELD` |
 
 **CHƯA CHỐT của mô hình sinh chung (v2.0)** — dạng `mã · treo gì · ràng buộc TẠM (fail-closed)`:
 - `CC-GEN-B-BASKET` · quy tắc kết nạp/loại bỏ token khỏi danh mục `B` · ai bỏ phiếu · chiết khấu theo thanh khoản · trần tỷ trọng mỗi tài sản (§6.3) · TẠM: danh mục chưa dùng để tính `br` thật; `GB` vẫn là giá trị mô phỏng do keeper đẩy.

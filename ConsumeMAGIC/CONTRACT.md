@@ -185,9 +185,36 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   > là hằng governance, chưa phải đại lượng đo — cảnh báo `op_type=7` ở §A chưa xảy ra được trên
   > cụm đang chạy, và sẽ xảy ra ngay khi bộ đếm được dựng.
   >
-  > | mã định danh | treo cái gì | ràng buộc TẠM đang có hiệu lực | khai ở |
-  > |---|---|---|---|
-  > | `CC-LOAD-COUNT-UNIT` | đơn vị của `ops_served_epoch`: số tx, theo lớp, hay theo trọng số từng mã | không bộ đếm nào được cộng `op_count` của hai `op_type` khác nhau; chưa có bộ đếm thì `demand_mult` giữ nguyên giá trị deploy | tệp này, §A |
+  > **ĐÃ CHỐT 2026-09-24 — `CC-LOAD-COUNT-UNIT`: `demand_mult` TÁCH THEO `op_type`, không còn một
+  > giá trị chung toàn hệ.** Câu hỏi *"đơn vị của `ops_served_epoch` là gì"* mất hiệu lực, vì nó chỉ
+  > cần trả lời khi nhiều mã phải chung một bộ đếm. Mỗi mã có bộ đếm riêng đo bằng đơn vị của
+  > chính nó, nên không phép cộng nào bắc qua hai đơn vị — ràng buộc tạm cũ trở thành hệ quả
+  > cấu trúc thay vì một điều phải nhớ.
+  >
+  > Hình dạng, và cái giá của nó:
+  >
+  > - `OpPrice` nhận **trường thứ ba** `demand_mult`; `required_for` đọc `op.demand_mult` thay cho
+  >   `pp.demand_mult`. Giải mã Plutus Data của Aiken NGHIÊM NGẶT VỀ SỐ TRƯỜNG (`BOUNDARIES.md` §2),
+  >   nên đây là **đổi lược đồ**, không phải thêm tuỳ chọn.
+  > - **Không UTxO người dùng nào di trú.** Beacon `PriceParam` là UTxO do keeper viết lại mỗi epoch.
+  >   Validator đổi ⟹ script hash đổi ⟹ **địa chỉ mới**, nên beacon cũ vẫn tiêu được bằng validator
+  >   cũ ở địa chỉ cũ; việc phải làm là bootstrap beacon mới (NFT one-shot mới) chứ không phải cứu
+  >   beacon cũ. Kéo theo: deploy lại `consume` (apply-param bởi `price_nft_policy` ·
+  >   `price_nft_name` · `price_param_script_hash`), công bố ref-script CIP-33 mới, và **cập nhật
+  >   cấu hình của mọi bên tiêu thụ** — gồm `KEEPER_PRICE_BEACONS` của máy chủ keeper.
+  > - **Dải `[m_min, m_max]` phải đi theo xuống từng dòng**, kiểm trong `list.all` của `valid_param`,
+  >   `m_min`/`m_max` vẫn ghim tuyệt đối về hằng. 🔴 **Đường tắt phải loại tường minh:** gấp nhu cầu
+  >   vào thẳng `base_price` cho ra cùng hiệu ứng giá mà **không** đổi lược đồ — và nó **phá dải**.
+  >   Dải là thứ duy nhất chặn biên độ một lượt đăng giá; bỏ nó thì chỉ còn `max_base_price = 10¹²`
+  >   đứng giữa một lượt đăng và một mức giá gấp trăm lần.
+  > - **Ràng buộc TẠM cho tới khi lược đồ mới lên chuỗi (fail-closed, giữ nguyên bản cũ):** không bộ
+  >   đếm nào được cộng `op_count` của hai `op_type` khác nhau; chưa có bộ đếm thì `demand_mult` giữ
+  >   nguyên giá trị đặt lúc deploy.
+  > - **Hệ quả phải biết trước, vì nó siết một trần khác:** thêm một trường mỗi dòng làm tăng chi phí
+  >   quét bảng, mà đường cong chi phí đó đã được đo và chính nó đặt ra `max_op_prices = 16`
+  >   (`pricing.ak` ▸ khối trên hằng: n=16 → 940 K mem · n=24 → 1,84 M · n=32 → 3,05 M ⟹ 32 đã BỊ
+  >   LOẠI). Nên lượt này làm trần 16 dòng **chặt hơn**, không lỏng hơn — phải đo lại MEM trong cùng
+  >   đợt, đừng để sang đợt sau.
 - **Bất biến:** `price` đơn điệu không-giảm theo `load`; bị chặn `[base×m_min, base×m_max]`; pure BigInt,
   không float; hội tụ về `base×SMA` trong ≤ N epoch khi load ổn định.
 

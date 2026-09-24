@@ -140,7 +140,8 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   > ép mọi Engage input trong một tx phải cùng `price_ref`, và bảng genesis
   > [`09_deploy_consume.ts`](../scripts/deploy/09_deploy_consume.ts) đặt chung mã của MAGIC
   > lẫn OriLife. Nên khi đếm chỗ trống thì đếm cho cả hệ: sau khi sổ dưới lấy 13–18, tổng mã
-  > đã cấp là 14 ⇒ **còn 2 dòng** cho bảng dùng chung. Hết chỗ thì phải nâng `max_op_prices`
+  > đã cấp là 14; mã 19 (fuel của runtime Cave, bên dùng Dhost — số chốt 2026-09-24, tên và quy
+  > ước đo nằm ở sổ `Registry`) nâng lên 15 ⇒ **còn 1 dòng** cho bảng dùng chung. Hết chỗ thì phải nâng `max_op_prices`
   > (đo lại ex-unit) hoặc tách beacon, không phải im lặng chen thêm dòng.
 
   > 🔴 **`op_type=7` đang bị định giá SAI về nguyên tắc, và MAGIC ghi nhận điều đó.**
@@ -171,6 +172,22 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   (3) **anti-windup miễn phí** (không có khâu tích phân → không windup — đúng kết luận audit);
   (4) nhất quán toàn protocol (đã có tiền lệ UMKeeper chạy đúng, tái dùng `ProtocolUtils.clamp` + SMA).
   `load_raw = ops_served_epoch / target_capacity` (governance param). Mặc định `m_min=0.5, m_max=2.0`.
+
+  > ⚠️ **`ops_served_epoch` không phải tổng thô `op_count` của mọi `op_type`.** `op_count` mang đơn
+  > vị riêng của từng mã: một ảnh, một CID, một triệu fuel. Cộng thẳng chúng thì cỡ đơn vị mà một
+  > bên chọn quyết định giá của mọi bên còn lại — một job tính toán nặng đếm thành hàng trăm lượt
+  > và đẩy `demand_mult` lên cho người neo CID.
+  >
+  > Trạng thái đo 2026-09-24: **chưa có mã nào đếm `ops_served_epoch`**. `computeLoadRaw`
+  > (`pricing/src/price.ts`) không có nơi gọi ngoài bài kiểm của nó; keeper
+  > (`scripts/keeper/keeper.ts` ▸ bước price) chỉ đẩy `epoch` và giữ nguyên `demand_mult` đặt lúc
+  > deploy; `price_param.ak` chỉ kẹp `demand_mult` trong `[m_min, m_max]`. Nên `demand_mult` hôm nay
+  > là hằng governance, chưa phải đại lượng đo — cảnh báo `op_type=7` ở §A chưa xảy ra được trên
+  > cụm đang chạy, và sẽ xảy ra ngay khi bộ đếm được dựng.
+  >
+  > | mã định danh | treo cái gì | ràng buộc TẠM đang có hiệu lực | khai ở |
+  > |---|---|---|---|
+  > | `CC-LOAD-COUNT-UNIT` | đơn vị của `ops_served_epoch`: số tx, theo lớp, hay theo trọng số từng mã | không bộ đếm nào được cộng `op_count` của hai `op_type` khác nhau; chưa có bộ đếm thì `demand_mult` giữ nguyên giá trị deploy | tệp này, §A |
 - **Bất biến:** `price` đơn điệu không-giảm theo `load`; bị chặn `[base×m_min, base×m_max]`; pure BigInt,
   không float; hội tụ về `base×SMA` trong ≤ N epoch khi load ổn định.
 

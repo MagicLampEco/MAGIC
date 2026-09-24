@@ -158,7 +158,7 @@ const isExpired = (b: MagicBatchT, epoch: bigint) => epoch - b.created_epoch >= 
 
 async function main() {
   console.log("╔══════════════════════════════════════════════╗");
-  console.log("║  ConsumeMAGIC — tiêu MAGIC thật (Preview)    ║");
+  console.log(`║  ConsumeMAGIC — tiêu MAGIC thật (${NETWORK.padEnd(7)})    ║`);
   console.log("╚══════════════════════════════════════════════╝\n");
 
   const opType  = BigInt(process.env.op_type ?? "1");

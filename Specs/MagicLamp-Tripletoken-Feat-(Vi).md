@@ -431,7 +431,17 @@ Hiện trạng mã, tách khỏi ý hướng trên (kiểm 2026-09-17): `Instant
 
 ### §6.2 Tư-cách (`eligibility`) — hệ-số-NHÂN vào TỶ LỆ sinh (1 tham số, 4 thành phần)
 
-> **CHƯA CHỐT: `CC-GEN-ELIGIBILITY` · treo:** mục này (chủ dự án chốt 2026-08-04) nhân `eligibility` vào `g(consumed)`; từ v2.0 công thức cấp (§6.1.1) không còn `g(consumed)`, và thành phần `consumedFactor` trùng vai với `usage_ratio`. Quyết định 2026-09-17 không nói gì trực tiếp về `eligibility` nên mục dưới đây GIỮ NGUYÊN VĂN. **Ràng buộc TẠM:** `eligibility` KHÔNG được nhân vào `F` (§6.1.1). Fail-closed: `eligibility ≥ Q`, bỏ nó chỉ làm lượng sinh nhỏ hơn hoặc bằng. Mã hiện tại cũng không hiện thực nó (`compute_reward_from_consumed` nhận `pm_q` enum, không phải `eligibility`). **Phần lập luận trong mục giữ nguyên văn không còn hiệu lực:** đoạn "Vì sao F8-sạch", ghi chú "Ngưỡng đóng-góp" (đầu-cơ thuần bị `g(consumed)=0` chặn) và mọi con trỏ "§6.3" tới `g(consumed)` đều đứng trên mô hình cũ; từ v2.0 người tiêu 0 vẫn sinh ở sàn, lý giải F3 ở §6.1.1. **Cái giá của ràng buộc tạm:** bỏ `eligibility` là bỏ luôn `offPeakFactor` — tín hiệu thấp-điểm duy nhất đi vào lượng sinh; `F` hiện không có thành phần nào thay nó.
+> **ĐÃ CHỐT 2026-09-24 — `CC-GEN-ELIGIBILITY`: hệ số `eligibility` của mục này KHÔNG BAO GIỜ nhân vào `F` (§6.1.1).** Đây là quyết định VĨNH VIỄN, không còn là ràng buộc tạm. Ba lý do, mỗi lý do neo riêng:
+>
+> 1. **Nó phá đúng cái phanh mà `INV-ORACLE-INDEP` gọi là điều kiện sống-còn.** Bất đẳng thức phải giữ là `Σ amount ≤ Σ LAMP-khả-dụng × ρ_e`, và điều giữ nó là `usage_factor_q ≤ Q`. `eligibility ∈ [Q, 2.5Q]` là một hệ số NÂNG, nên nó phá cùng bất đẳng thức bằng **cùng cơ chế** mà `CC-GEN-GB-ROLE` đã bác năm ngày trước đó (2026-09-19) khi ép `GB` về vai trần. Hai mục không thể trả lời ngược nhau cho cùng một câu hỏi.
+> 2. **Cái giá từng ghi ở đây KHÔNG CÓ THẬT.** Bản trước viết *"bỏ `eligibility` là bỏ luôn `offPeakFactor` — tín hiệu thấp-điểm duy nhất đi vào lượng sinh"*. `offPeakFactor` **chưa bao giờ sống**: `Eligibility/onchain/lib/magiclamp/eligibility/math.ak` ▸ khối trên `eligibility_q` khai nguyên văn *"DELIBERATELY ABSENT, callers pass off_peak_r = 0 in MVP"*, và bản từng nằm đó đo dư địa tải MẠNG nên trả cùng một số cho mọi người — một hằng phẳng cộng cho mọi vault. Ràng buộc đang áp làm mất **0** tín hiệu thật.
+> 3. **Nhãn nuôi ba trong bốn thành phần là nhãn TỰ KHAI.** `InstantGen/onchain/validators/vault.ak` ▸ `validate_burn_batch` đòi đúng một két input cộng chữ ký chủ — không Engage input, không `PriceParam` reference. Mọi hệ số keyed theo *cách* người dùng tiêu vì thế là thứ chính họ đặt được, nên chỉ an toàn ở vai hệ số **HẠ** (≤ Q), không bao giờ ở vai hệ số NÂNG.
+>
+> **Nghĩa vụ điều tiết giờ chuyển sang tầng GIÁ TIÊU**, không ở tầng sinh: `ConsumeMAGIC/CONTRACT.md` ▸ `CC-LOAD-COUNT-UNIT`. Ở đó nhãn thấp-điểm lấy từ `demand_mult` của beacon `PriceParam` — một reference input đã tồn tại, không phải một đại lượng ai đó phải tự khai.
+>
+> **Cổng máy giữ quyết định này:** `InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `ig_eligibility_ceiling_would_break_the_bound` — bài khẳng định rằng nối trần tư-cách 2,50× vào chỗ `pm_q` cho ra hoàn lại ĐÚNG BẰNG số đã tiêu (hoà vốn, vòng tiêu-rồi-được-hoàn thôi hội tụ).
+>
+> **Số phận của mục bên dưới:** giữ nguyên văn làm bản ghi lịch sử cho tới khi hệ số thấp-điểm ở tầng giá lên chuỗi; lúc đó cả module `Eligibility/` được XOÁ (§5 `BOUNDARIES.md`). **Phần lập luận trong mục không còn hiệu lực:** đoạn "Vì sao F8-sạch", ghi chú "Ngưỡng đóng-góp" và mọi con trỏ "§6.3" tới `g(consumed)` đều đứng trên mô hình trước v2.0; từ v2.0 người tiêu 0 vẫn sinh ở sàn, lý giải F3 ở §6.1.1.
 Tư-cách là **một hệ số duy nhất `eligibility`** nhân vào cơ-sở-tính `g(consumed)` ở §6.3. Gộp 4 thành phần dưới dạng **TỔNG-CÓ-TRỌNG-SỐ** (KHÔNG phải tích — tích làm gãy bất biến chống-ôm-tối-ưu; chốt 2026-07-17, rà soát lại 2026-08-04):
 
 ```
@@ -821,7 +831,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 2. Tham số hệ-số-năng-lực per-dịch-vụ (spec dịch-vụ riêng) — siết-thêm dưới trần on-chain (§6.4).
 3. `LENT_PP_CAP` (trần cứng LAMP-mượn, §6.1) — chọn giá trị hằng-hệ.
 
-**ĐÃ CHỐT — bốn mục 2026-09-19, một mục 2026-09-21; cả năm rời khỏi danh sách dưới.** Ghi lại ở đây vì một mã biến mất khỏi danh sách treo mà không để dấu thì người tra lần sau không phân biệt được *"đã quyết"* với *"bị quên"*:
+**ĐÃ CHỐT — bốn mục 2026-09-19, một mục 2026-09-21, một mục 2026-09-24; cả sáu rời khỏi danh sách dưới.** Ghi lại ở đây vì một mã biến mất khỏi danh sách treo mà không để dấu thì người tra lần sau không phân biệt được *"đã quyết"* với *"bị quên"*:
 
 | mã | chốt gì | cái giá phải nhận, và nó nằm ở đâu |
 |---|---|---|
@@ -829,6 +839,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 | `CC-GEN-SCHEDULE-FIXED` | lượng/epoch **cố định tuyệt đối** từ lúc ký; fire không dừng khi `depeg` (§6.1.4, §6.4) | sau chữ ký không còn van hạ nghĩa vụ — toàn bộ rủi ro dồn lên cổng `κ` lúc ký; bậc cứu "điều chỉnh tỷ giá hợp đồng" đã bỏ |
 | `CC-GEN-COLD-START` | vault mới ở **mức trung tính** (điểm giữa dải), `scale_limit` không ràng buộc ở trạng thái này (§6.1.2) | đóng-rồi-mở-lại vault xoá được lịch sử xấu ⟹ **chỉ chạy testnet** tới khi `INV-ONE-PERSON-ONE-VAULT` được ép |
 | `CC-GEN-L-TIMING` | LAMP tính **ngay**, nhưng bị chặn **rời két** tới mốc `instant_unlock_ms` — một epoch THỜI GIAN TRÔI, không phải một chỉ số epoch (§6.1.4, `INV-INSTANT-LOCK`) | người dùng thật cũng chịu khoá: cửa sổ thật là `(cận-trên-validity − now) + ms_per_epoch` — `[P, 2P)` ở tầng validator, `[P + 1 slot, 2P − 1 slot]` sau khi sổ cái loại cửa sổ rỗng (§6.1.4, bảng hai tầng). **KHÔNG phải "do người gọi chọn"**: mọi bộ dựng trong kho ghim cận trên vào cuối epoch giao thức, nên phần lẻ do **thời điểm sinh** quyết, không do ví chọn TTL; `WithdrawLamp` từ chối trong trọn cửa sổ. **Giá CÒN LẠI, chốt 2026-09-21:** một két sinh ở hai bên ranh giới epoch lấy được hai trần cách nhau vài giây — giữ nguyên cơ chế, chỉ sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
+| `CC-GEN-ELIGIBILITY` (chốt **2026-09-24**) | hệ số tư-cách §6.2 (`eligibility ∈ [Q, 2.5Q]`) **KHÔNG BAO GIỜ** nhân vào `F` — vĩnh viễn, không còn là ràng buộc tạm (§6.2, khối đầu mục) | mất **0** tín hiệu thật, vì `offPeakFactor` chưa bao giờ sống (`Eligibility/…/math.ak` ▸ *"DELIBERATELY ABSENT"*). Cái giá thật nằm ở chỗ khác: nghĩa vụ điều tiết giờ dời sang tầng giá tiêu (`ConsumeMAGIC/CONTRACT.md` ▸ `CC-LOAD-COUNT-UNIT`), nên tới khi tầng đó chạy thì hệ **không có** van thấp-điểm nào. Module `Eligibility/` thành bản ghi lịch sử, xoá khi hệ số thay thế lên chuỗi |
 | `CC-GEN-LOCK-FIELD` (chốt **2026-09-21**) | hình dạng khoá: **KHÔNG** thêm trường đếm nào; một bộ đếm SUY RA (`decay.ak` ▸ `instant_gen_in_epoch`) cộng một trường thời gian `VaultDatum ▸ instant_unlock_ms` (trường 17, chỉ có ở InstantGen) (§6.1.4) | lược đồ datum InstantGen 17→18 trường ⟹ đã trả giá di trú một lần. Hai phạm vi KHÔNG ép được còn mở: cửa sổ ranh giới epoch trong một két (đỉnh 2× trần, không nâng nhịp dài hạn), và biên giữa các module (ScheduleGen không có trường này, `WithdrawLamp` bên đó không có cổng thời gian). Cả hai: giữ cơ chế, sửa lời khai; ràng buộc tạm fail-closed: chỉ chạy testnet |
 
 **CHƯA CHỐT của mô hình sinh chung (v2.0)** — dạng `mã · treo gì · ràng buộc TẠM (fail-closed)`:
@@ -838,7 +849,6 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 - `CC-GEN-QUOTA-RESALE` · rào nào chặn bán lại quyền-tiêu ngoài chuỗi (§6.1.1) · TẠM: chỉ chạy testnet.
 - `CC-GEN-USAGE-FLOOR` · giá trị `usage_factor_floor_q` chưa có dẫn xuất kinh tế (chỉ có ràng buộc `0 < sàn ≤ Q` và tiền lệ `m_min = 0.5Q` ở §11) · TẠM: `0.5Q`, không hạ về 0, không nâng quá Q.
 - `CC-GEN-RATE-VALUE` · giá trị `generation_rate_q`: giá trị spec ρ = 1 MAGIC/LAMP/epoch (`RATE_REF_Q`, §11) và mã InstantGen `instant_rate_q` (`constants.ak`) chia đôi còn 0,004 · TẠM: `4·10⁹`.
-- `CC-GEN-ELIGIBILITY` · §6.2 `eligibility` không còn cơ-sở-tính để nhân; bỏ nó là mất tín hiệu thấp-điểm · TẠM: không nhân vào `F`.
 - `CC-GEN-PREPAID-IN-RATIO` · MAGIC tiêu từ PrepaidGen có vào `usage_ratio` không (§6.5) · TẠM: không.
 - `CC-GEN-RATIO-PER-DID` · gộp `usage_ratio` theo DID qua vault Instant và vault Schedule · TẠM: tính riêng từng vault.
 - `CC-GEN-LENT-READ` · đọc `L_lent` từ két Wakeme qua reference input chưa có ở kho nào; khi mở, N vault cùng đọc một két nhận tới `N × LENT_PP_CAP` mỗi epoch (§6.1.4) · TẠM: `L_lent_avail = 0` ở mọi vault.

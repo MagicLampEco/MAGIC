@@ -509,6 +509,13 @@ cấp thực = m ≤ min( amount_by_lamp , GB_available )    -- §6.1.1, §6.1.4
 - **`B` là một DANH MỤC token, chọn bằng biểu quyết quản trị, mỗi hệ một danh mục riêng** (chủ dự án chốt 2026-09-18). Danh mục của hệ MagicLamp: ADA, NIGHT, CHECK, WORK, và có thể thêm. Hệ khác tự chọn danh mục của họ.
   - **Hệ quả cho oracle, và nó đổi hình dạng F6:** một danh mục nhiều tài sản cần **một nguồn giá cho TỪNG tài sản**, không phải một oracle giá LAMP duy nhất. Câu cũ *"oracle giá LAMP CHỈ định-giá `B`"* đúng khi `B` là một thứ; nay nó là một tập. Vế **không điều khiển cổng** của F6 thì không đổi — đó mới là phần bất biến.
   - **`INV-BACKING-NO-LAMP` không đổi:** LAMP không nằm trong danh mục (chốt 2026-09-12, ngay dưới).
+  - **Nguồn giá phải dựng ở kho này — không có sẵn ở kho nào khác để nối vào.** Engine CarpetMint
+    không phát giá cho tài sản nào: `ρ` trong `GlobalState` bên đó là một tham số **suất** do quorum
+    ký, không phải một giá. Đo 2026-09-24 trên `MagicLampEco/CarpetMint` (trừ `node_modules`) bằng
+    một lượt quét tên quy ước — `price_oracle|oracle_price|ada_usd|price_feed|usd_price` → **0
+    dòng**; phép quét này đo TÊN nên là cận dưới, và kho giữ engine đó cũng tự đo, ra cùng kết luận.
+    ⟹ dựng một nguồn giá cho từng tài sản ở tầng GreenBack của kho này KHÔNG trùng lặp thứ đã có.
+    Vế này không gỡ ràng buộc tạm ngay dưới — nó chỉ chặn một giả định sai về chỗ lấy giá.
   - **CHƯA CHỐT: `CC-GEN-B-BASKET` · treo:** quy tắc kết nạp và loại bỏ một token khỏi danh mục · ai bỏ phiếu · chiết khấu theo thanh khoản · **trần tỷ trọng cho mỗi tài sản**. Vế cuối là vế có răng: một danh mục không có trần tỷ trọng thì một token kém thanh khoản chiếm chỗ của cả danh mục, và `br` vẫn đọc ra một con số đẹp. **Ràng buộc TẠM, fail-closed:** danh mục CHƯA được dùng để tính `br` thật — `GB` vẫn là giá trị **mô phỏng** do keeper đẩy (§6.1.3), và không luồng nào trong kho định giá một tài sản nào của danh mục.
   - **Ai ghi beacon backing:** keeper tầng GreenBack của MagicLamp. **Không phải** engine CarpetMint: `GlobalStateDatum` của engine mang giá của tài sản thế chấp CDP, không mang `B` lẫn `S`, nên về nguyên tắc nó không tính được `br` (đo 2026-09-19). Keeper của kho này đã ghi beacon thật trên Preprod từ 2026-09-17.
 - **`INV-BACKING-NO-LAMP` — `B` KHÔNG được chứa LAMP (chốt 2026-09-12).** MAGIC sinh trên **thặng

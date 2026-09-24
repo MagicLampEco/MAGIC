@@ -215,6 +215,17 @@ async function main() {
       tamperOutputDatum, skipOwnerSig: process.env.SKIP_OWNER_SIG === "1",
     });
     console.log(result.summary);
+    // DRY_RUN=1: validator đã chạy thử trong `complete()`; dừng trước khi ký. Cùng quy ước
+    // với test/instant_only.ts. Ở nhánh này nó đáng giá hơn chỗ khác: commit thật khoá
+    // `L × λ` LAMP và C-VAC-12 cấm huỷ giữa chừng.
+    if (process.env.DRY_RUN === "1") {
+      if (tamper || process.env.SKIP_OWNER_SIG === "1") {
+        console.error("\n⚠  UNEXPECTED (DRY RUN): tamper tx qua validator khi chạy thử.");
+        process.exit(3);
+      }
+      console.log("\n✔ DRY RUN: tx dựng xong và qua validator khi chạy thử. Không ký, không gửi.");
+      return;
+    }
     const signed = await result.tx.sign.withWallet().complete();
     const txHash = await signed.submit();
     console.log(`\nTX hash:    ${txHash}`);

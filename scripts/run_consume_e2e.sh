@@ -168,8 +168,14 @@ npx tsx test/instant_only.ts | tee /dev/tty
 #    của `consume` ⟹ đổi script hash ⟹ đổi ĐỊA CHỈ ⟹ mọi Engage UTxO cũ thành mồ côi
 #    cùng toàn bộ kế toán tiêu dùng. Chạy ĐÚNG MỘT LẦN, sau đó dò UTxO sống theo NFT.
 #    (Hai UTxO beacon/engage KHÔNG cache được — chúng bị tiêu và tạo lại mỗi tx.)
-if [ -n "${CONSUME_SCRIPT_HASH:-}" ] && [ -n "${REF_CONSUME_UTXO:-}" ]; then
-  echo; echo "▶ [3/4] Dùng lại hạ tầng consume $CONSUME_SCRIPT_HASH — dò UTxO sống…"
+#
+# Bộ khoá consume mang hậu tố `_INSTANT` (scripts/consumeBook.ts). Bản trước dùng khoá
+# không hậu tố, và trên một sổ có cả hai loại vault thì bộ đó là của ScheduleGen: bước [3]
+# "dùng lại" consume của ScheduleGen, rồi bước [4] (không đặt VAULT_KIND) tiêu trên vault
+# ScheduleGen. Đường này mang tên InstantGen mà không chạm vault InstantGen lần nào.
+export VAULT_KIND=instant
+if [ -n "${CONSUME_SCRIPT_HASH_INSTANT:-}" ] && [ -n "${REF_CONSUME_UTXO_INSTANT:-}" ]; then
+  echo; echo "▶ [3/4] Dùng lại hạ tầng consume $CONSUME_SCRIPT_HASH_INSTANT — dò UTxO sống…"
   # 🔴 Bản trước ở đây là MỘT dòng `eval "$(npx tsx resolve_consume_state.ts)"`, không cổng
   #   nào. Hai chỗ hỏng, cả hai im:
   #
@@ -191,19 +197,19 @@ if [ -n "${CONSUME_SCRIPT_HASH:-}" ] && [ -n "${REF_CONSUME_UTXO:-}" ]; then
   }
   eval "$RESOLVED"
   # Cùng hai cổng mà nhánh deploy dùng, cộng `ENGAGE_UTXO` — bước [4] co-spend nó.
-  [ -n "${PRICE_BEACON_UTXO:-}" ] || { echo "✗ [3/4] resolver không in PRICE_BEACON_UTXO"; exit 1; }
-  [ -n "${ENGAGE_UTXO:-}" ]       || { echo "✗ [3/4] resolver không in ENGAGE_UTXO"; exit 1; }
-  [ -n "${REF_CONSUME_UTXO:-}" ]  || { echo "✗ [3/4] REF_CONSUME_UTXO rỗng — bước [4] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
+  [ -n "${PRICE_BEACON_UTXO_INSTANT:-}" ] || { echo "✗ [3/4] resolver không in PRICE_BEACON_UTXO_INSTANT"; exit 1; }
+  [ -n "${ENGAGE_UTXO_INSTANT:-}" ]       || { echo "✗ [3/4] resolver không in ENGAGE_UTXO_INSTANT"; exit 1; }
+  [ -n "${REF_CONSUME_UTXO_INSTANT:-}" ]  || { echo "✗ [3/4] REF_CONSUME_UTXO_INSTANT rỗng — bước [4] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
 else
-  echo; echo "▶ [3/4] Deploy consume infra (price/engage NFT + beacon + Engage)…"
+  echo; echo "▶ [3/4] Deploy consume infra cho vault InstantGen (price/engage NFT + beacon + Engage)…"
   OUT09="$(npx tsx deploy/09_deploy_consume.ts | tee /dev/tty)"
   eval "$(printf '%s\n' "$OUT09" | grep '^export ' || true)"
-  [ -n "${PRICE_BEACON_UTXO:-}" ] || { echo "✗ 09 không in export block (09 lỗi?)"; exit 1; }
-  [ -n "${REF_CONSUME_UTXO:-}" ] || { echo "✗ 09 không in REF_CONSUME_UTXO — bước [4] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
+  [ -n "${PRICE_BEACON_UTXO_INSTANT:-}" ] || { echo "✗ 09 không in export block (09 lỗi?)"; exit 1; }
+  [ -n "${REF_CONSUME_UTXO_INSTANT:-}" ] || { echo "✗ 09 không in REF_CONSUME_UTXO_INSTANT — bước [4] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
   for v in CONSUME_SCRIPT_HASH PRICE_NFT_POLICY PRICE_NFT_UNIT PRICE_PARAM_HASH \
            ENGAGE_NFT_POLICY ENGAGE_NFT_UNIT MAX_PRICE_STALE REF_CONSUME_UTXO; do
-    eval "val=\${$v:-}"
-    [ -n "$val" ] && persist "$v" "$val"
+    eval "val=\${${v}_INSTANT:-}"
+    [ -n "$val" ] && persist "${v}_INSTANT" "$val"
   done
 fi
 

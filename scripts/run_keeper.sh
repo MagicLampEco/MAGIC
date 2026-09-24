@@ -10,7 +10,7 @@
 # giờ an toàn hơn hẹn đúng một lần sau nửa đêm UTC — một lượt trượt vì mạng thì lượt sau bù.
 #
 # Danh sách price beacon lấy từ KEEPER_PRICE_BEACONS (`<price_nft_policy>:<price_param_hash>`,
-# phẩy). Không đặt thì dùng cặp PRICE_NFT_POLICY:PRICE_PARAM_HASH của state file.
+# phẩy). Không đặt thì suy từ state file — thứ tự và lý do ở `keeper_beacons.sh`.
 #
 # Bí mật đi vào bằng GIÁ TRỊ qua môi trường. Kịch bản không biết chúng được cất ở đâu.
 set -uo pipefail
@@ -57,11 +57,10 @@ CALLER_BEACONS="${KEEPER_PRICE_BEACONS:-}"
 . "./state_book_guard.sh"
 assert_state_books_khong_khai_y_dinh "$STATE_FILE"
 set -a; . "./$STATE_FILE"; set +a
-if [ -n "$CALLER_BEACONS" ]; then
-  KEEPER_PRICE_BEACONS="$CALLER_BEACONS"
-elif [ -z "${KEEPER_PRICE_BEACONS:-}" ] && [ -n "${PRICE_NFT_POLICY:-}" ] && [ -n "${PRICE_PARAM_HASH:-}" ]; then
-  KEEPER_PRICE_BEACONS="$PRICE_NFT_POLICY:$PRICE_PARAM_HASH"
-fi
+. "./keeper_beacons.sh"
+derive_keeper_price_beacons "$CALLER_BEACONS"
+export KEEPER_PRICE_BEACONS
+echo "· price beacon: $(printf '%s' "$KEEPER_PRICE_BEACONS" | tr ',' '\n' | grep -c .) cặp · nguồn: $KEEPER_PRICE_BEACONS_SOURCE"
 
 # Chỗ keeper GHI: khoá chống chạy chồng + sổ `keeper-state.<mạng>.json` của bước instant. Trong
 # mã của `scripts/` (không tính `node_modules`), đó là hai thứ duy nhất trên đường keeper ghi

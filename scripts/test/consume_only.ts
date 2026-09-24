@@ -2,8 +2,10 @@
 // Run: VAULT_KIND=schedule npx tsx test/consume_only.ts
 //
 // ── HAI ĐƯỜNG, MỘT TỆP ────────────────────────────────────────────────────────
-//   `VAULT_KIND=schedule` (mặc định)  — vault ScheduleGen. ĐƯỜNG DUY NHẤT CHẠY ĐƯỢC.
-//   `VAULT_KIND=instant`              — vault InstantGen. Đang kẹt, xem dưới.
+//   `VAULT_KIND=schedule`  — vault ScheduleGen.
+//   `VAULT_KIND=instant`   — vault InstantGen.
+//   BẮT BUỘC, không mặc định (scripts/consumeBook.ts nói vì sao). Mỗi loại một bản
+//   consume, bộ khoá trong sổ mang hậu tố `_SCHEDULE` / `_INSTANT`.
 //
 //   Vì sao một tệp phục vụ được cả hai: `consume` KHÔNG giải mã `VaultDatum`. Nó chỉ
 //   đọc trường 0 (`owner`) qua `un_constr_data`
@@ -19,29 +21,29 @@
 //   (đường duy nhất chạy được) ném ở mọi UTxO, và `tsc` không kêu vì mọi chỗ gọi
 //   đều `as any`. Đừng gộp lại làm một, dù có ngày hai hình dạng bằng nhau trở lại.
 //
-//   ĐƯỜNG instant ĐANG KẸT (Nợ #19): `consumed_credit` chỉ tăng ở `BurnBatch`, mà
-//   `BurnBatch` đòi `magic_batches` khác rỗng, mà nhánh `InstantGen` là nơi DUY NHẤT
-//   ghi `magic_batches` — vòng tự tham chiếu. ScheduleGen không có vòng đó:
-//   `ScheduleFire` ghi thẳng `magic_batches` (ScheduleGen/onchain/validators/vault.ak:483)
-//   và `BurnBatch` nằm ngay trong cùng validator (vault.ak:512).
+//   (Khối "ĐƯỜNG instant ĐANG KẸT, Nợ #19" từng đứng ở đây đã bỏ: Nợ #19 đóng
+//   2026-09-16, InstantGen đã cấp và tiêu thật trên Preprod — `DevStatus.md` bảng
+//   module ▸ InstantGen.)
 //
 // PREREQ (theo thứ tự):
 //   1a. VAULT_KIND=schedule: 01/03/06/07 → commit → chờ 2 epoch → fire
 //       ⟹ vault ScheduleGen UTxO mang ≥1 MagicBatch CÒN SỐNG.
-//   1b. VAULT_KIND=instant : 01/02/05 + test:instant (hiện chưa qua được, xem Nợ #19).
-//   2. 09_deploy_consume         → có PriceParam beacon + Engage UTxO.
+//   1b. VAULT_KIND=instant : 01/02/04/05 + test:instant.
+//   2. VAULT_KIND=<cùng loại> 09_deploy_consume → PriceParam beacon + Engage UTxO.
 //   ⚠  §4.2 use-or-lose (decay_window=1): batch chỉ tiêu được trong ĐÚNG epoch nó
-//      được sinh. Trên Preview 1 epoch = 1 ngày → gen (test:instant) + consume PHẢI
-//      cùng epoch (cùng ngày UTC). Beacon epoch cũng nên = epoch hiện tại (stale 0).
+//      được sinh. Độ dài epoch là của MẠNG (`msPerEpoch`, Preprod 5 ngày) ⟹ gen +
+//      consume PHẢI cùng epoch. Beacon epoch cũng nên = epoch hiện tại (stale 0).
 //
 // ENV (từ deploy trước):
 //   LAMP_POLICY_ID, UM_NFT_POLICY_ID, UM_DATUM_HASH, BACKING_NFT_POLICY_ID,
 //   VAULT_KIND=schedule: LAMP_POLICY_ID, SHARD_NFT_POLICY_ID, VAULT_SCHEDULE_HASH
 //   VAULT_KIND=instant : LAMP_POLICY_ID, UM_NFT_POLICY_ID, UM_DATUM_HASH,
 //                        BACKING_NFT_POLICY_ID, BACKING_SCRIPT_HASH, VAULT_INSTANT_HASH
-//   PRICE_NFT_POLICY, ENGAGE_NFT_POLICY, MAX_PRICE_STALE — để reconstruct consume hash.
-//   PRICE_BEACON_UTXO, ENGAGE_UTXO           — "txHash#idx" (in ra bởi 09).
-//   REF_CONSUME_UTXO       — ref-script `consume` (09 in ra).      BẮT BUỘC.
+//   Bộ khoá consume, hậu tố theo VAULT_KIND (`_SCHEDULE` / `_INSTANT`, 09 in ra):
+//     CONSUME_SCRIPT_HASH, PRICE_NFT_POLICY, PRICE_PARAM_HASH, MAX_PRICE_STALE — dựng lại hash.
+//     PRICE_NFT_UNIT, ENGAGE_NFT_UNIT — dò beacon + Engage SỐNG theo NFT. Con trỏ
+//       PRICE_BEACON_UTXO / ENGAGE_UTXO trong sổ KHÔNG được đọc: chúng chết sau một lượt keeper.
+//     REF_CONSUME_UTXO — ref-script `consume`. BẮT BUỘC.
 //   REF_VAULT_SCHEDULE_UTXO / REF_VAULT_INSTANT_UTXO — ref-script vault. BẮT BUỘC.
 //   SCHEDULE_VAULT_UTXO / INSTANT_VAULT_UTXO  — "txHash#idx" của vault đã gen (tuỳ chọn;
 //                                               nếu thiếu → tự tìm ở vault addr theo owner).
@@ -110,6 +112,8 @@ import { VaultDatumSchema as ScheduleVaultDatumSchema } from "../../ScheduleGen/
 // nhánh khác có chỉ số constructor LỆCH nhau giữa hai module.
 import { VaultRedeemerSchema } from "../../InstantGen/offchain/src/types.js";
 import { fetchRefScriptUtxo } from "../refScripts.js";
+import { parseVaultKind, selectConsumeBook } from "../consumeBook.js";
+import { findLiveConsumeUtxos } from "../consumeLive.js";
 
 const PRICE_NFT_NAME  = "5052494345";
 const BURN_BATCH_CONSTR = 2n;
@@ -160,13 +164,17 @@ async function main() {
   const opCount = BigInt(process.env.op_count ?? "1");
   if (opCount < 1n) throw new Error("op_count phải ≥ 1");
 
+  // Loại vault KHÔNG có mặc định — `run_consume_e2e.sh` (đường InstantGen) từng gọi tệp
+  // này không đặt nó và tiêu trên vault ScheduleGen. Bộ khoá consume đọc theo hậu tố của
+  // loại vault (`scripts/consumeBook.ts`); `req(...)` phía dưới đọc tên không hậu tố đã
+  // được chép từ đúng bộ đó.
+  const vaultKind = parseVaultKind(process.env.VAULT_KIND);
+  selectConsumeBook(process.env, vaultKind, [
+    "CONSUME_SCRIPT_HASH", "PRICE_NFT_POLICY", "PRICE_NFT_UNIT", "PRICE_PARAM_HASH",
+    "ENGAGE_NFT_UNIT", "MAX_PRICE_STALE", "REF_CONSUME_UTXO",
+  ]);
   const priceNftPolicy  = req("PRICE_NFT_POLICY");
-  const maxPriceStale   = BigInt(process.env.MAX_PRICE_STALE ?? "1");
-
-  const vaultKind = (process.env.VAULT_KIND ?? "schedule").toLowerCase();
-  if (vaultKind !== "schedule" && vaultKind !== "instant") {
-    throw new Error(`VAULT_KIND phải là "schedule" hoặc "instant" — nhận "${vaultKind}".`);
-  }
+  const maxPriceStale   = BigInt(req("MAX_PRICE_STALE"));
   const isSchedule = vaultKind === "schedule";
   // Lược đồ datum theo LOẠI vault — xem khối nhập ở đầu tệp. Dùng CÙNG một biến cho
   // cả `Data.from` lẫn `Data.to`: đọc bằng hình dạng này rồi ghi bằng hình dạng kia
@@ -269,12 +277,25 @@ async function main() {
   const ownerPkh = paymentCredential.hash;
 
   // ── Fetch 3 UTxO: beacon (ref), engage (spend), vault (spend BurnBatch) ───────
-  const beaconRef = parseOutRef(req("PRICE_BEACON_UTXO"));
-  const engageRef = parseOutRef(req("ENGAGE_UTXO"));
-  const [priceBeaconUtxo] = await lucid.utxosByOutRef([beaconRef]);
-  const [engageUtxo]      = await lucid.utxosByOutRef([engageRef]);
-  if (!priceBeaconUtxo?.datum) throw new Error("Beacon UTxO thiếu hoặc không có inline datum.");
-  if (!engageUtxo?.datum)      throw new Error("Engage UTxO thiếu hoặc không có inline datum.");
+  //   Dò UTxO SỐNG theo NFT định danh, không đọc con trỏ `txHash#idx` trong sổ: beacon bị
+  //   keeper tiêu-rồi-tạo-lại mỗi epoch, Engage bị tiêu-rồi-tạo-lại mỗi tx consume, nên
+  //   con trỏ lưu hôm qua là UTxO đã chết (`scripts/consumeLive.ts`).
+  const live = await findLiveConsumeUtxos({
+    lucid, network: NETWORK, consumeHash,
+    priceParamHash, priceNftUnit: req("PRICE_NFT_UNIT"), engageNftUnit,
+  });
+  const priceBeaconUtxo = live.beacon;
+  const engageUtxo      = live.engage;
+  if (!priceBeaconUtxo) {
+    throw new Error(
+      `Không thấy UTxO nào mang price NFT ${req("PRICE_NFT_UNIT")} tại ${live.priceAddr}. ` +
+      `Chạy resolve_consume_state.ts (VAULT_KIND=${vaultKind}) để phân biệt "chỉ mục trễ" với ` +
+      `"beacon đã chết" TRƯỚC khi nghĩ tới chuyện chạy lại bước 09.`,
+    );
+  }
+  if (!engageUtxo) throw new Error(`Không thấy luồng Engage ${engageNftUnit} tại ${live.consumeAddr}.`);
+  if (!priceBeaconUtxo.datum) throw new Error("Beacon UTxO không có inline datum.");
+  if (!engageUtxo.datum)      throw new Error("Engage UTxO không có inline datum.");
   if ((engageUtxo.assets[engageNftUnit] ?? 0n) !== 1n) throw new Error("Engage UTxO không mang đúng 1 thread NFT.");
 
   // ── Hai ref-script (bắt buộc — xem đầu tệp) ──────────────────────────────────

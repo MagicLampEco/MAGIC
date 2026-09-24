@@ -89,6 +89,7 @@ import {
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { requiredForOp } from "@magiclamp/consumemagic-pricing";
+import { epochValidityWindow } from "@magiclamp/protocol-utils";
 import { consumeParams, instantVaultParams, scheduleVaultParams } from "../deployParams.js";
 import {
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
@@ -157,7 +158,7 @@ const isExpired = (b: MagicBatchT, epoch: bigint) => epoch - b.created_epoch >= 
 
 async function main() {
   console.log("╔══════════════════════════════════════════════╗");
-  console.log("║  ConsumeMAGIC — tiêu MAGIC thật (Preview)    ║");
+  console.log(`║  ConsumeMAGIC — tiêu MAGIC thật (${NETWORK.padEnd(7)})    ║`);
   console.log("╚══════════════════════════════════════════════╝\n");
 
   const opType  = BigInt(process.env.op_type ?? "1");
@@ -387,14 +388,17 @@ async function main() {
   const tipPosixMs = BigInt(tip.time) * 1000n;
   const mspe = PROTOCOL.MS_PER_EPOCH;
   const currentEpoch = tipPosixMs / mspe;
-  // Cửa sổ = TRỌN epoch hiện tại [epochStart, epochEnd-1]. PHẢI chứa `now` (ledger từ
-  // chối nếu now > validTo) NHƯNG vẫn ≤ 1 epoch cho cả 2 validator:
+  // Cửa sổ = `epochValidityWindow`: [tip, min(cuối epoch, tip + VALIDITY_MAX_AHEAD_MS)].
+  // PHẢI chứa `now` (ledger từ chối nếu now > validTo) và nằm trọn trong epoch cho cả 2
+  // validator:
   //   vault.ak get_current_epoch: epoch = lower/mspe; ép upper < (epoch+1)*mspe.
   //   consume.ak util.get_epoch:  epoch = upper/mspe (floor); ép upper-lower ≤ mspe.
-  // ⚠  buildConsumeTx dùng [epochStart, epochStart+1] → validTo ở QUÁ KHỨ so với now →
-  //    ledger reject (OutsideValidityInterval). Đây là lý do THỨ HAI phải dựng tay.
-  const lowerMs = currentEpoch * mspe;          // đầu epoch → floor = currentEpoch, ≤ now
-  const upperMs = (currentEpoch + 1n) * mspe - 1n; // cuối epoch → floor = currentEpoch, ≥ now
+  // Bản trước lấy TRỌN epoch [epochStart, epochEnd-1]: với epoch 5 ngày, cận trên vượt
+  // chân trời node ⟹ TimeTranslationPastHorizon lúc GỬI. `DRY_RUN` không bắt được ca đó
+  // (validator chạy cục bộ, không qua node).
+  const win = epochValidityWindow(tipPosixMs, NETWORK);
+  const lowerMs = BigInt(win.lowerMs);
+  const upperMs = BigInt(win.upperMs);
 
   // ── Giá có thẩm quyền từ beacon ──────────────────────────────────────────────
   const pp: PriceParamT = decodePriceParam(priceBeaconUtxo.datum);

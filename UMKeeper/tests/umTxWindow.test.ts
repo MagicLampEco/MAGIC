@@ -6,7 +6,7 @@
 // chưa từng được chạy một lần nào.
 
 import { describe, it, expect } from "vitest";
-import { msPerEpoch } from "@magiclamp/protocol-utils";
+import { msPerEpoch, VALIDITY_MAX_AHEAD_MS } from "@magiclamp/protocol-utils";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import {
   buildUMUpdateTx,
@@ -67,8 +67,15 @@ async function nemVoiChoDoi(tipPosixMs: bigint) {
 
 describe("buildUMUpdateTx — cửa sổ hiệu lực", () => {
 
-  it("A. không chừa slot nào ⟹ `validTo` là slot CUỐI của epoch", async () => {
+  it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch (chân trời node)", async () => {
     const tip = E * P + 1_000n;
+    const { tx } = await dung(tip);
+
+    expect(tx.validTo).toBe(Number(tip + VALIDITY_MAX_AHEAD_MS));
+  });
+
+  it("A. giờ cuối epoch, không chừa slot nào ⟹ `validTo` là slot CUỐI của epoch", async () => {
+    const tip = (E + 1n) * P - 1_800_000n;
     const { tx } = await dung(tip);
 
     expect(tx.validFrom).toBe(Number(tip));

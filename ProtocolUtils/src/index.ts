@@ -141,13 +141,33 @@ export interface EpochValidityWindow {
   upperMs: number;
 }
 
+/** Cận trên xa nhất, tính từ tip, mà một giao dịch được đặt.
+ *
+ *  🔴 Không có trần này thì cận trên là slot cuối của epoch GIAO THỨC, và sổ cái từ
+ *  chối giao dịch với `TimeTranslationPastHorizon` mỗi khi mốc đó nằm quá chân trời
+ *  quy đổi slot→thời gian của node. Chân trời chỉ được bảo đảm tới safe zone `3k/f`
+ *  tính từ tip sổ cái (Preprod và Mainnet: 129.600 slot = 36 giờ). Lúc epoch giao
+ *  thức dài 1 ngày thì cuối epoch luôn nằm trong chân trời, nên lỗi không lộ. Với
+ *  Preprod 5 ngày thì nó lộ: đo 2026-09-24, tip ở slot ~134.542.000, cận trên xin
+ *  134.956.798 (cuối epoch 4144), chân trời node trả về kết thúc ở 134.870.400.
+ *  `DRY_RUN` KHÔNG bắt được ca này: validator chạy cục bộ trong `complete()`, không
+ *  qua node — chỉ lượt gửi thật mới chạm chân trời.
+ *
+ *  1 giờ nằm dưới chân trời bảo đảm của mọi mạng, và dư cho khoảng dựng → ký → gửi.
+ *  Keeper giá (`scripts/keeper/keeper.ts`) đã dùng 10 phút từ trước. */
+export const VALIDITY_MAX_AHEAD_MS = 3_600_000n;
+
 /** Cửa sổ hiệu lực cho một giao dịch mà validator đòi **cả hai biên nằm trong cùng
  *  một epoch giao thức** (`epoch = lower_ms / P` và `expect upper_ms < (epoch+1)*P`).
+ *
+ *  Cận trên = cái SỚM hơn trong hai mốc: slot hợp lệ cuối của epoch (trừ phần chừa),
+ *  và `tip + VALIDITY_MAX_AHEAD_MS` (xem hằng đó vì sao phải có trần).
  *
  *  `reserveTrailingSlots` chừa lại N slot ở cuối epoch. Chỗ duy nhất cần nó là
  *  `InstantGen`: mốc mở khoá nó ghi vào datum là `cận-trên + P`, nên nếu cận trên là
  *  slot CUỐI của epoch thì mốc ấy cũng là slot cuối của epoch sau — và lượt rút đúng
  *  tại mốc được quảng cáo sẽ suy biến, **mọi lần**. Chừa một slot đẩy mốc ra khỏi ô đó.
+ *  Phép `min` không mở lại ô đó: khi trần thắng thì cận trên nằm TRƯỚC vùng chừa.
  *
  *  @throws {EmptyValidityWindowError} khi tip ở slot cuối (sau khi trừ phần chừa).
  */
@@ -155,13 +175,21 @@ export function epochValidityWindow(
   tipPosixMs: bigint,
   network: Network,
   reserveTrailingSlots: bigint = 0n,
+  maxAheadMs: bigint = VALIDITY_MAX_AHEAD_MS,
 ): EpochValidityWindow {
+  // Trần dưới một slot thì khoảng rỗng vì TRẦN, không vì cuối epoch — lỗi ném ra lúc
+  // đó sẽ bảo người gọi chờ tới epoch sau, một lời khuyên sai. Ném đúng tên.
+  if (maxAheadMs < SLOT_LENGTH_MS) {
+    throw new RangeError(`maxAheadMs=${maxAheadMs} nhỏ hơn một slot (${SLOT_LENGTH_MS} ms)`);
+  }
   const p      = msPerEpoch(network);
   const epoch  = posixMsToEpoch(tipPosixMs, network);
   const lowerSlotMs = slotFloorMs(tipPosixMs);
   // Mốc hợp lệ cuối cùng là `(epoch+1)*P - 1`; đầu slot chứa nó là `(epoch+1)*P - 1000`.
-  const upperSlotMs = slotFloorMs((epoch + 1n) * p - 1n)
-                    - reserveTrailingSlots * SLOT_LENGTH_MS;
+  const epochUpperSlotMs = slotFloorMs((epoch + 1n) * p - 1n)
+                         - reserveTrailingSlots * SLOT_LENGTH_MS;
+  const aheadSlotMs = slotFloorMs(tipPosixMs + maxAheadMs);
+  const upperSlotMs = aheadSlotMs < epochUpperSlotMs ? aheadSlotMs : epochUpperSlotMs;
 
   if (upperSlotMs <= lowerSlotMs) {
     const retryAfterMs = (epoch + 1n) * p;

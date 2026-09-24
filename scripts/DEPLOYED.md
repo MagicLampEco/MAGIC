@@ -34,6 +34,36 @@ và đã chép vào `MagicSDK/src/lampPolicy.ts`:
 
 > **policy id là điều kiện ĐỦ, và asset name KHÔNG BAO GIỜ là điều kiện đủ.**
 
+### Ca mạnh nhất cho câu trên KHÔNG phải hàng nhái — là hai hàng THẬT
+
+Kiểm kê dưới đây nói về một policy chữ-ký-đơn đúc hàng nhái, và ca đó dễ bác: *"ai lại đi tra
+tài sản bằng tên"*. Ca sau thì không bác được, vì **cả hai bên đều hợp lệ** và không bên nào
+làm gì sai.
+
+Engine CARP dựng hai thực thể trên Preprod — một đang phục vụ, một chỉ dùng một lần để diễn
+tập. Hai token neo của chúng (đo 2026-09-24, đọc từ sổ trạng thái của kho đó):
+
+| thực thể | policy id | asset name |
+|---|---|---|
+| đang phục vụ | `86ea67178d3739965449535eb1f875b37ba2eede4ee5781f89bc310b` | `110d0c97df39bcee5ca6875485c493e7cd7608cac38c84b281d18c4f` |
+| diễn tập | `3016010d2ba7a6c112c2dd8958da8b3ab4e4f4ae63d3cc60fdb5674d` | `110d0c97df39bcee5ca6875485c493e7cd7608cac38c84b281d18c4f` |
+
+**Asset name trùng BYTE-CHO-BYTE, và trùng là ĐÚNG**: nó là `blake2b_224(instance_tag ++ did)`,
+mà hai thực thể dùng cùng tag và cùng DID. Không ai đúc nhái; hàm băm làm đúng việc của nó.
+
+Ba điều rút ra, và điều thứ ba mới là điều đắt:
+
+1. Kho này miễn nhiễm ở tầng giao thức — policy khác nhau, và mã không bao giờ tra theo tên.
+2. Một phép so **HOẶC** (`policy khớp` ∨ `tên khớp`) qua được mọi lần thử trên dữ liệu thật
+   rồi hỏng đúng ở ca này. Đó là lý do câu bất biến viết là *"asset name không bao giờ là
+   điều kiện đủ"* chứ không phải *"đừng tin tên"*.
+3. **Một hàm băm xác định thì trùng tên là hệ quả THIẾT KẾ, không phải tai nạn.** Nên ca này
+   tái diễn mỗi lần một thực thể được dựng lại với cùng tag + DID — nó không hiếm dần theo
+   thời gian như hàng nhái, nó xuất hiện đúng theo lịch triển khai.
+
+Cặp định danh dùng cho `carpAssetClass(network)` là hàng **đang phục vụ**; đời BASE mới sẽ
+kèm cặp mới trước lượt chuyển đầu tiên.
+
 ### Kiểm kê dưới policy `28e916b0…`
 
 `28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4` là **chính sách chữ-ký-đơn suy từ
@@ -236,6 +266,34 @@ Hệ quả về THỨ TỰ, viết ra vì nó ngược với trực giác "dọn
 **trước** khi có đời-hai không thu lại giá trị nào (token nhái), mà bỏ lại một khoảng không
 có vault ScheduleGen nào chạy được trên Preview — dài bằng thời gian chờ kho LAMP, tức
 không có hạn. Việc rút nên đi **cùng đợt** với việc công bố đời-hai, không đi trước nó.
+
+---
+
+## Bảng giá đang deploy — một số `op_type` LẠ không ném lỗi, nó trả giá của mã khác
+
+Rủi ro này không nằm trong kho, nên không phép kiểm nào ở đây bắt được, mà nó đáp xuống đúng
+bảng giá đang chạy. Ghi ở đây vì đây là sổ của những thứ **đã deploy**.
+
+`pricePerOp(op_type, …)` tra bảng theo số. Một bên tích hợp gửi số `3` thì hàm trả giá của
+dòng `3` **trong bảng này** — nó không biết, và không thể biết, bên kia định nghĩa số 3 là gì.
+Không có nhánh lỗi nào cho "mã không phải của bạn": nhánh duy nhất ném lỗi là "số không có
+trong bảng".
+
+Ca cụ thể, đếm 2026-09-24: một đặc tả ngoài kho tự đánh số và dùng **3** cho một nghiệp vụ
+neo-ngay, trong khi dòng `3` của bảng đang deploy là `recognition_storage_event`, giá 1 MAGIC
+(nguồn của bảng: `scripts/deploy/09_deploy_consume.ts`). Nếu bên đó phát số 3 ra thực địa,
+mỗi lần neo sẽ thu **1 MAGIC** thay vì giá của chính nó, và cả hai phía đều thấy một giao dịch
+hợp lệ. Bên đó hiện **chưa phát số nào** — chưa có chỗ nào trong mã của họ gán số cho `op_type`
+— nên hôm nay chưa hỏng.
+
+Hai điều phải giữ khi động vào bảng giá:
+
+1. **Số trong bảng này chỉ có nghĩa khi nó đến từ sổ toàn hệ.** Một đặc tả tự đánh số là một
+   không gian khoá thứ hai, và hai không gian khoá cùng đếm từ 1 thì va chạm là chắc chắn,
+   không phải rủi ro.
+2. **Đừng dựng cổng "từ chối mã lạ" ở tầng giá.** Validator không có cách nào biết ai được cấp
+   số nào; cưỡng chế duy nhất về `op_type` trong mã là *không trùng TRONG MỘT bảng*. Chỗ chặn
+   đúng là lúc cấp số, không phải lúc tra giá.
 
 ---
 

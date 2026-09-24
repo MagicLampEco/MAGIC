@@ -260,12 +260,34 @@ nên nêu ở đây thay vì chỉ trỏ:
   lỗ `apply_burns` vá cùng ngày tốn 120×; bịt nó là đổi mô hình). Hai con số đó **khác đơn vị**:
   cửa sổ ranh giới là một khoản **ĐỈNH** (dồn suất hai chỉ số epoch vào vài giây) và KHÔNG nâng
   nhịp dài hạn — vẫn 1 trần mỗi epoch cho mỗi lô LAMP, vì mốc ghi ra luôn quá `(k+1)·P`; lỗ
-  `apply_burns` thì nâng chính **NHỊP**. **Một phạm vi thứ hai KHÔNG ép được: biên giữa các
-  MODULE.** Trường này chỉ có ở InstantGen; ScheduleGen không có nó và `WithdrawLamp` bên đó
-  không có cổng thời gian, nên cùng một lượng LAMP đứng sau được một lượt fire ScheduleGen và
-  một trần InstantGen trong cùng một chỉ số epoch, theo thứ tự tuần tự. Ràng buộc TẠM đang có hiệu lực,
-  fail-closed: **chỉ chạy testnet** — cùng ràng buộc với `CC-GEN-COLD-START` ngay dưới, không phải
-  một ràng buộc thứ hai.
+  `apply_burns` thì nâng chính **NHỊP**. Ràng buộc TẠM đang có hiệu lực, fail-closed: **chỉ chạy
+  testnet** — cùng ràng buộc với `CC-GEN-COLD-START` ngay dưới, không phải một ràng buộc thứ hai.
+
+  > 🔴 **Bản trước dựng ở đây một "phạm vi thứ hai KHÔNG ép được: biên giữa các MODULE" — không
+  > có phạm vi đó.** Câu cũ nói cùng một lượng LAMP ăn được một lượt fire ScheduleGen *và* một
+  > trần InstantGen trong cùng một chỉ số epoch, theo thứ tự tuần tự. Nó **đo đúng một đầu
+  > đường**: `validate_withdraw_lamp` của ScheduleGen quả thật không có mệnh đề thời gian nào.
+  > Nhưng LAMP đi RA khỏi một két thì phải đi VÀO một két khác, và **không két nào nhận LAMP sau
+  > genesis** — đó là đầu đường chưa ai đo.
+  >
+  > Đo 2026-09-24, cả hai module: `lamp_balance` ghim ĐÚNG MỘT LẦN ở nhánh mint
+  > (`InstantGen/onchain/validators/vault.ak:272`, `ScheduleGen/onchain/validators/vault.ak:1123`
+  > — `expect vd.lamp_balance == lamp_qty`), năm nhánh spend còn lại của InstantGen ghim
+  > `output_datum.lamp_balance == applied_input.lamp_balance` (`:508 :619 :1071 :1219 :1281`),
+  > và đường DUY NHẤT đổi được nó là `WithdrawLamp`, một phép TRỪ (`:949` `let new_lamp_balance =
+  > input_datum.lamp_balance - amount`; bên ScheduleGen là `:1215`). Không `VaultRedeemer` nào có
+  > biến thể nạp: InstantGen 6 biến thể, ScheduleGen 7, không cái nào là `DepositLamp`. Gửi thêm
+  > LAMP tới địa chỉ két chỉ tạo một UTxO RIÊNG — muốn gộp vào thì phải tiêu két, mà mọi nhánh
+  > tiêu đều ghim hoặc trừ.
+  >
+  > ⟹ Chuỗi *ScheduleGen → InstantGen trong cùng một epoch* đòi **mở một két MỚI**, tức nó là
+  > đường **luân chuyển két** mà `INV-ONE-PERSON-ONE-VAULT` đang chặn, KHÔNG phải một lỗ thứ hai
+  > ở biên module. Ghi nó thành một mục riêng là đếm một lỗ hai lần, và tệ hơn: nó làm
+  > `INV-ONE-PERSON-ONE-VAULT` trông như chỉ lo một nửa việc.
+  >
+  > Bài học chung, vì nó tái diễn được: **một đường đi có hai đầu, đo cửa RA rồi kết luận về cả
+  > đường là một phép đo thiếu vế.** Câu hỏi phải hỏi cùng lúc là *"ra được thì vào đâu, và cửa
+  > vào đó mở bằng nhánh nào?"*
 - **`CC-GEN-COLD-START` — vault chưa có lịch sử đứng ở mức TRUNG TÍNH**, và ở trạng thái đó
   `scale_limit` không ràng buộc. Hệ quả: đóng vault rồi mở lại là một cách xoá lịch sử xấu có lợi.
   **Ràng buộc TẠM đang có hiệu lực, fail-closed: chỉ chạy testnet** tới khi

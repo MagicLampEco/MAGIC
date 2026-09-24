@@ -15,6 +15,22 @@ Chạy lại: `bash scripts/run_wakeme_e2e.sh Preview` · `bash scripts/run_wake
 > Nên: **đừng chép giá trị từ đây vào một lần chạy mới.** Lấy từ `scripts/state.<Mạng>.sh`
 > do chính lượt chạy sinh ra, hoặc dựng lại rồi đọc `plutus.json`. Tệp này để trả lời câu
 > *"lần đó ra cái gì"*, không trả lời câu *"bây giờ là cái gì"*.
+>
+> 🔴 **Và một script hash không nói được MẠNG, cũng không nói được ĐỜI.** Hai vế, vế thứ hai
+> hay bị bỏ. Hash là hàm của *bytes validator sau khi apply-param*, nên hai đời trên **cùng một
+> mạng** ra hai hash khác nhau — và điều đó có nghĩa là bạn không thể đi ngược: cầm một hash
+> trong tay, tệp này là thứ duy nhất nói nó thuộc đời nào. **Tra theo MỤC ĐỜI, đừng tra theo
+> hash.**
+>
+> `ms_per_epoch` cũng không phân biệt hộ: hai đời Preprod trong chính tệp này mang **cùng**
+> giá trị đó mà khác hash — mục *"Preprod — 2026-08-12 · ĐỜI ĐÃ MỒ CÔI"* (`c81d0a41…`) và mục
+> *"Preprod — đời tLAMP THẬT, 2026-09-16"* (`8fe2ae7d…`). Chọn nhầm đời không báo lỗi lúc dựng
+> giao dịch: nó dựng xong, ký xong, rồi chết ở tầng sổ cái.
+>
+> Chiều NGƯỢC LẠI — *"hai lượt deploy có thể trùng hash không"* — thì **không**, và đừng dựng
+> cảnh báo cho nó: mỗi lượt deploy tiêu một UTxO khác nhau cho NFT one-shot, mà UTxO tiêu được
+> đúng một lần, nên một tham số one-shot khác nhau đã đủ làm bytes khác nhau. Cảnh giác đặt ở
+> chiều đó là cảnh giác cho một ca không xảy ra được.
 
 > **Beacon `backing` là DỰNG-TẠM.** Nó không phản ánh dự trữ nào. `br_q = 2.0` là con số
 > bịa để mở cổng fail-closed §6.3 trên testnet, và `deploy/04_deploy_backing_fixture.ts`

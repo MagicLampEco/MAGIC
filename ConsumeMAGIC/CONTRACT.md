@@ -36,9 +36,11 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
 - **`base_price[op_type]`**: bảng giá danh nghĩa per loại nghiệp vụ, **governance param** (DAO chỉnh).
   Ví dụ MVP: `xử lý 1 ảnh = 0.01 MAGIC`, `neo 1 CID = 0.001 MAGIC`. Đơn vị nanogic (1 MAGIC = 1e9).
 - **Sổ `op_type` KHÔNG ở tệp này.** Sổ toàn hệ là `MagicLampEco/Registry` ▸
-  `Specs/Resource-Dictionary.md` §2 (chốt 2026-09-02). Xin mã mới thì xin ở đó, kèm đơn vị vật
-  lý, ai đo được (phải là bên thứ ba, không phải lời khai bên bán), và neo `file:line` tới chỗ
-  mã thật đang đếm đại lượng đó.
+  `Specs/Resource-Dictionary.md` ▸ bảng §2 — neo `main@8a23f72` (2026-09-24). Luật ngân sách
+  dòng giá ở cùng kho ▸ **RD-6**. Xin mã mới thì xin ở đó, kèm đơn vị vật lý, ai đo được (phải
+  là bên thứ ba, không phải lời khai bên bán), và neo `file:line` tới chỗ mã thật đang đếm đại
+  lượng đó. Kho Registry đã nhận ràng buộc gửi thư TRƯỚC khi cấp mã tiêu dòng thứ 16, để lịch
+  deploy hai bên không lệch.
 
   > 🔴 **Bảng số ở đây đã bị GỠ 2026-09-24, và lý do đáng đọc trước khi ai định chép lại.**
   >

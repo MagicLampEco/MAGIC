@@ -572,7 +572,8 @@ sổ mã do Registry giữ.
 > chưa bao giờ tính. `required_for` nhân `op_count` như một bội số thuần; không chỗ nào quy
 > đổi byte. Gửi `op_count = 12` cho một tệp 12 MB là trả tiền cho **12 lần lưu**, không phải
 > cho 12 MB. Sổ `op_type` đầy đủ **không ở kho này**: `MagicLampEco/Registry` ▸
-> `Specs/Resource-Dictionary.md` §2. `ConsumeMAGIC/CONTRACT.md §A` chỉ giữ bảng giá đang deploy.
+> `Specs/Resource-Dictionary.md` §2, neo `main@8a23f72` (2026-09-24).
+> `ConsumeMAGIC/CONTRACT.md §A` chỉ giữ bảng giá đang deploy.
 >
 > **5 và 6 bị rút theo đề nghị của chính nhà đã xin chúng** — `op_type` tả một nghiệp vụ hạ
 > tầng mà bên tiêu thụ MAGIC thật sự chạy, không tả một sự kiện nghiệp vụ của nền tảng cắm

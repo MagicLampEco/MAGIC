@@ -193,7 +193,8 @@ async function main() {
       // mỗi dòng phải thoả base_price × m_min ≥ Q (pricing.ak:127-135) ⟹ base_price ≥ 2.
       // Trần 16 dòng (pricing.ak:53) — đang dùng 4.
       // Nghĩa của từng `op_type` tra ở sổ gốc: MagicLampEco/Registry ▸
-      // Specs/Resource-Dictionary.md §2. Bốn dòng dưới đây là bảng giá THẬT đang
+      // Specs/Resource-Dictionary.md §2, neo main@8a23f72 (2026-09-24).
+      // Bốn dòng dưới đây là bảng giá THẬT đang
       // deploy, và CHÍNH TỆP NÀY là nguồn của nó — CONTRACT.md §A chỉ chép lại để
       // đọc nhanh, lệch thì tệp này thắng.
       { op_type: 1n, base_price:    10_000_000n }, // ảnh          0.01 MAGIC

@@ -35,33 +35,48 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
 
 - **`base_price[op_type]`**: bảng giá danh nghĩa per loại nghiệp vụ, **governance param** (DAO chỉnh).
   Ví dụ MVP: `xử lý 1 ảnh = 0.01 MAGIC`, `neo 1 CID = 0.001 MAGIC`. Đơn vị nanogic (1 MAGIC = 1e9).
-- **Sổ op_type — `Registry` giữ sổ toàn hệ (chủ nhân chốt 2026-09-02); bảng dưới là các mã
-  MAGIC đang dùng, `base_price` là governance param do DAO chốt.**
+- **Sổ `op_type` KHÔNG ở tệp này.** Sổ toàn hệ là `MagicLampEco/Registry` ▸
+  `Specs/Resource-Dictionary.md` §2 (chốt 2026-09-02). Xin mã mới thì xin ở đó, kèm đơn vị vật
+  lý, ai đo được (phải là bên thứ ba, không phải lời khai bên bán), và neo `file:line` tới chỗ
+  mã thật đang đếm đại lượng đó.
 
-  Trước đây dòng này ghi *"MAGIC là registrar duy nhất"*. Hết đúng từ 2026-09-02: cấp mã mới
-  thì xin ở `Registry`, kèm đơn vị vật lý, ai đo được (phải là bên thứ ba, không phải lời khai
-  bên bán), và neo `file:line` tới chỗ mã thật đang đếm đại lượng đó. Mã 1–8 dưới đây **giữ
-  nguyên nghĩa** — `Registry` đã dời sáu định nghĩa trùng số của mình xuống 13–18, vì luật gỡ
-  trùng là *số đã nối vào mã chạy thì giữ, định nghĩa chưa nối vào đâu thì nhường*.
+  > 🔴 **Bảng số ở đây đã bị GỠ 2026-09-24, và lý do đáng đọc trước khi ai định chép lại.**
+  >
+  > Bản cũ chép dãy số từ sổ gốc rồi sống đời riêng của nó. Đo ngày 2026-09-24: bản chép
+  > **thiếu hai mã đang sống** — 9 và 11 — nên **mọi phép đếm chạy trên nó đều ra cận dưới**.
+  > Kể cả phép đếm của người đang soát nó: một lượt soát dùng chính bảng này đếm ra "còn 3
+  > dòng" trong khi số đúng là "còn 1", và cả hai vế của chuỗi suy luận đều sai (thừa hai bia
+  > mộ, thiếu hai mã thật) — hai sai số triệt tiêu nhau nên không chỗ nào kêu.
+  >
+  > Cùng cơ chế đó đã sinh ra va chạm số 9 trước đây: kho này xin một mã đã có chủ, vì bản
+  > chép ở đây không biết mã đó tồn tại.
+  >
+  > **Phép thử một dòng cho lần sau:** *con số `op_type` sắp gõ vào tệp này, khi sổ gốc đổi,
+  > ai báo cho chỗ này biết?* Không ai — nên chỗ này không giữ số. Thứ tệp này giữ là bảng giá
+  > THẬT đang deploy (dưới), vì đó là thứ kho này sở hữu.
+  >
+  > Cưỡng chế duy nhất về `op_type` trong mã vẫn chỉ là `sorted_strict_op_types` (không trùng
+  > TRONG MỘT bảng) — không có gì on-chain hay off-chain biết ai được cấp số nào. Đó là lý do
+  > sổ gốc phải là nơi tra, không phải một bản chép tiện tay.
 
-  > ⚠️ **Hai lỗ trong chính đoạn trên, ghi ra để đừng ai tưởng đã xong.**
-  > (1) `Registry` chưa có địa chỉ ở đâu trong kho này — không repo, không URL, không quy
-  > trình. Đoạn này bắt người xin mã kèm neo `file:line`, mà bản thân nó không neo được
-  > `Registry`. (2) Sáu định nghĩa 13–18 **không được chép lại ở đây**, nên bảng này không
-  > tra ngược được: đọc xong vẫn không biết 13–18 là gì. Đến khi (1) có địa chỉ hoặc (2)
-  > được chép vào, coi hai câu trên là **ghi nhận một quyết định**, không phải một sổ dùng
-  > được. Cưỡng chế duy nhất về `op_type` trong mã vẫn chỉ là `sorted_strict_op_types`
-  > (không trùng TRONG MỘT bảng) — không có gì on-chain hay off-chain biết ai được cấp số nào.
-  | op_type | tên | base_price MVP (nanogic) | cấp cho | ghi chú |
-  |---|---|---|---|---|
-  | 1 | `ảnh` | 10_000_000 (0.01 MAGIC) | (gốc) | khớp `OP_IMAGE` `pricing/src/price.ts` |
-  | 2 | `CID` (neo bằng chứng) | 1_000_000 (0.001 MAGIC) | (gốc) | khớp `OP_CID`; mọi bên neo bằng chứng DÙNG LẠI mã này, KHÔNG xin mã mới |
-  | 3 | `recognition_storage_event` | DAO chốt (tạm 1e9/lần) | OriLife/Registry | **một lần lưu**, không phải MB — xem cảnh báo dưới bảng |
-  | 4 | `recognition_compute_event` | DAO chốt (tạm 1e9/lần) | OriLife/Registry | **một lần tính**, không phải MB — xem cảnh báo dưới bảng |
-  | 5 | — | — | — | **RÚT 2026-09-21** (`job_post`). Số để TRỐNG, không cấp lại — xem dưới |
-  | 6 | — | — | — | **RÚT 2026-09-21** (`contract_settle`). Số để TRỐNG, không cấp lại |
-  | 7 | `did.rotate` | DAO chốt (tạm 2_000_000_000) | PhoenixKey | xoay khoá DID. **Thao tác an ninh** — xem cảnh báo dưới bảng |
-  | 8 | `did.transfer` | DAO chốt (tạm 10_000_000_000) | PhoenixKey | chuyển DID; thương mại, chịu nhân theo cầu là đúng |
+- **Bảng giá ĐANG DEPLOY** — nguồn là `scripts/deploy/09_deploy_consume.ts` ▸ `priceParam`, không
+  phải tệp này; dòng dưới để đọc nhanh, lệch thì mã thắng. `base_price` là governance param do
+  DAO chốt; đơn vị nanogic (1 MAGIC = 10⁹).
+
+  | op_type | nghiệp vụ | base_price đang deploy | đơn vị của `op_count` |
+  |---|---|---|---|
+  | 1 | xử lý ảnh | 10 000 000 (0,01 MAGIC) | **một tấm ảnh** |
+  | 2 | neo CID (bằng chứng) | 1 000 000 (0,001 MAGIC) | **một lần neo** — mọi bên neo bằng chứng DÙNG LẠI mã này, không xin mã mới |
+  | 3 | `recognition_storage_event` | 1 000 000 000 (1 MAGIC) | **một lần lưu**, KHÔNG phải MB |
+  | 4 | `recognition_compute_event` | 1 000 000 000 (1 MAGIC) | **một lần tính**, KHÔNG phải MB |
+
+  Bốn dòng trên trần 16 (`pricing.ak` ▸ `max_op_prices`). Trần đó là ngân sách của **TOÀN HỆ**,
+  không phải mỗi mã một chỗ: mỗi bản `consume` được apply-param bởi đúng một beacon, và beacon
+  ấy phải mang mọi mã mà bản `consume` đó phục vụ.
+
+- **Hai số kho này từng xin rồi RÚT: 5 và 6.** Đây là quyết định của chính kho này nên nó ở lại
+  đây; nghĩa của hai số thì tra ở sổ gốc như mọi số khác. Khối ngay dưới giải thích vì sao rút
+  và vì sao chúng phải ở lại dạng bia mộ.
 
   > 🔴 **Vì sao 5 và 6 bị rút, và vì sao hai số ấy ở lại dạng bia mộ.**
   >
@@ -88,7 +103,9 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   > trả về một giá của một mã khác, không kêu — cùng loại bia mộ với `BatchSource::Snapshot`.
   > Trần 16 chặn **số dòng định giá đồng thời**, không chặn giá trị `op_type`; cấp số thì
   > không có trần, nên để trống hai số là miễn phí.
-  Mọi fixture/beacon/redeemer onchain PHẢI dùng đúng key này; không được lệch sang `0/1`.
+
+  Mọi fixture/beacon/redeemer onchain PHẢI dùng đúng giá trị `op_type` của sổ gốc; không được
+  lệch sang `0/1` hay một dãy đánh lại cho tiện.
 
   > 🔴 **Mã 3 và 4 từng khai đơn vị là MB. Sai — mã không đếm MB ở bất kỳ nghĩa nào.**
   > `required_for` nhân `op_count` (`onchain/lib/magiclamp/consume/pricing.ak:204`), và

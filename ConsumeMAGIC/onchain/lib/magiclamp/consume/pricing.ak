@@ -64,7 +64,9 @@ pub const max_op_prices: Int = 16
 ///
 /// CON SỐ, và vì sao là 10¹² chứ không phải số khác:
 ///   · Dòng ĐẮT NHẤT trong sổ op_type chuẩn là `did.transfer` = 10¹⁰ nanogic
-///     (`ConsumeMAGIC/CONTRACT.md`, bảng op_type). Trần này = 100× dòng đó.
+///     (sổ ở `MagicLampEco/Registry` ▸ `Specs/Resource-Dictionary.md` §2 — kho này
+///     KHÔNG giữ bản chép của dãy số, xem `ConsumeMAGIC/CONTRACT.md §A`).
+///     Trần này = 100× dòng đó.
 ///   · `base_price` là giá MỘT ĐƠN VỊ; khối lượng đi qua `op_count`. Lưu 1 TB không cần
 ///     base_price to — nó là `op_count = 1.048.576` ở base 10⁹. Nên trần chỉ phải phủ
 ///     "đơn vị đắt nhất", KHÔNG phải "giao dịch đắt nhất".

@@ -10,6 +10,7 @@ import {
   msPerEpoch, slotsPerEpoch, posixMsToEpoch,
   vaultOutValue, droppedUnits, assertVaultIdentityKept, sortAiken,
   SLOT_LENGTH_MS, slotFloorMs, epochValidityWindow, EmptyValidityWindowError,
+  VALIDITY_MAX_AHEAD_MS,
 } from "../src/index.js";
 
 const MAGIC = Q;
@@ -447,10 +448,38 @@ describe("epochValidityWindow", () => {
     expect(slotFloorMs(slotCuoi - 1n)).toBe(slotCuoi - SLOT_LENGTH_MS);
   });
 
-  it("giữa epoch: cận trên là đầu slot cuối, và hai biên KHÁC slot", () => {
-    const w = epochValidityWindow(e * P + 12_345n, "Preprod");
-    expect(BigInt(w.upperMs)).toBe(slotCuoi);
+  // ── CẶP: trần chân trời (VALIDITY_MAX_AHEAD_MS) ────────────────
+  //
+  // Bản trước ghim "giữa epoch ⟹ cận trên là slot cuối" — chính hành vi mà node từ
+  // chối (`TimeTranslationPastHorizon`) khi epoch giao thức dài hơn chân trời.
+  it("đầu epoch: TRẦN thắng — cận trên là tip + trần, không phải cuối epoch", () => {
+    const tip = e * P + 12_345n;
+    const w = epochValidityWindow(tip, "Preprod");
+    expect(BigInt(w.upperMs)).toBe(slotFloorMs(tip + VALIDITY_MAX_AHEAD_MS));
+    expect(BigInt(w.upperMs) < slotCuoi).toBe(true);
     expect(slotFloorMs(BigInt(w.lowerMs))).not.toBe(BigInt(w.upperMs));
+  });
+
+  it("cực đối — trong giờ cuối epoch thì CUỐI EPOCH thắng, trần không cắt thêm", () => {
+    const w = epochValidityWindow(bienTren - 1_800_000n, "Preprod");
+    expect(BigInt(w.upperMs)).toBe(slotCuoi);
+  });
+
+  it("cận trên không bao giờ quá tip + trần, ở mọi vị trí trong epoch", () => {
+    for (const tip of [e * P, e * P + P / 2n, bienTren - VALIDITY_MAX_AHEAD_MS - 1n]) {
+      const w = epochValidityWindow(tip, "Preprod");
+      expect(BigInt(w.upperMs) - tip <= VALIDITY_MAX_AHEAD_MS).toBe(true);
+    }
+  });
+
+  it("trần rơi đúng vào slot bị chừa ⟹ vẫn lùi về trước vùng chừa (min không mở lại ô chết)", () => {
+    const w = epochValidityWindow(slotCuoi - VALIDITY_MAX_AHEAD_MS, "Preprod", 1n);
+    expect(BigInt(w.upperMs)).toBe(slotCuoi - SLOT_LENGTH_MS);
+  });
+
+  it("trần dưới một slot ⟹ RangeError, không phải EmptyValidityWindowError", () => {
+    expect(() => epochValidityWindow(e * P, "Preprod", 0n, SLOT_LENGTH_MS - 1n)).toThrow(RangeError);
+    expect(() => epochValidityWindow(e * P, "Preprod", 0n, SLOT_LENGTH_MS)).not.toThrow();
   });
 
   it("cận trên luôn < (epoch+1)*P — điều validator expect", () => {
@@ -479,8 +508,10 @@ describe("epochValidityWindow", () => {
   // ── CẶP: phần chừa slot của InstantGen ─────────────────────────
   //
   // Đây là chốt đắt nhất trong khối: nó ghim rằng mốc mở khoá KHÔNG rơi vào ô chết.
+  // Tip đặt trong giờ cuối epoch: ở đầu epoch trần thắng và cận trên không chạm vùng
+  // chừa, nên cặp này sẽ xanh ở cả hai cực của `reserve` — không ghim gì.
   it("reserve=1 đẩy mốc mở khoá ra khỏi slot cuối ⟹ rút tại mốc dựng được", () => {
-    const w = epochValidityWindow(e * P + 1_000n, "Preprod", 1n);
+    const w = epochValidityWindow(bienTren - 1_800_000n, "Preprod", 1n);
     const moc = BigInt(w.upperMs) + P;                 // gương của validator
     expect(BigInt(w.upperMs)).toBe(slotCuoi - SLOT_LENGTH_MS);
     // rút ĐÚNG tại mốc: phải dựng được, không suy biến
@@ -488,7 +519,7 @@ describe("epochValidityWindow", () => {
   });
 
   it("reserve=0 — cực đối — cho mốc rơi ĐÚNG slot cuối ⟹ rút tại mốc NÉM", () => {
-    const w = epochValidityWindow(e * P + 1_000n, "Preprod", 0n);
+    const w = epochValidityWindow(bienTren - 1_800_000n, "Preprod", 0n);
     const moc = BigInt(w.upperMs) + P;
     expect(BigInt(w.upperMs)).toBe(slotCuoi);
     expect(() => epochValidityWindow(moc, "Preprod")).toThrow(EmptyValidityWindowError);

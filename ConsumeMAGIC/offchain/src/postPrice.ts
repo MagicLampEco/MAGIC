@@ -24,7 +24,7 @@ import {
   type Validator,
   type Assets,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { msPerEpoch, epochValidityWindow, type Network } from "@magiclamp/protocol-utils";
 import { assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
 import {
   encodePriceParam,
@@ -215,10 +215,13 @@ export async function buildPostPriceTx(
     outAssets.lovelace = (outAssets.lovelace ?? 0n) + topUpLovelace;
   }
 
-  // ── Validity range: TRỌN epoch hiện tại, hai biên Finite ────────────────────
+  // ── Validity range: trong epoch hiện tại, hai biên Finite, cận trên có trần ──
   // `util.get_epoch` đòi cả hai biên Finite, hi - lo ≤ mspe, và ⌊lo/mspe⌋ == ⌊hi/mspe⌋.
-  const lowerMs = currentEpoch * mspe;
-  const upperMs = (currentEpoch + 1n) * mspe - 1n;
+  // Bản cũ lấy TRỌN epoch; cận trên ở cuối epoch 5 ngày vượt chân trời node
+  // (TimeTranslationPastHorizon) — xem `VALIDITY_MAX_AHEAD_MS` ở protocol-utils.
+  const win = epochValidityWindow(tipPosixMs, network);
+  const lowerMs = BigInt(win.lowerMs);
+  const upperMs = BigInt(win.upperMs);
 
   // Địa chỉ giữ NGUYÊN chuỗi của input: `beacon_out.address == beacon_in.address` so
   // địa chỉ ĐẦY ĐỦ, gồm cả stake credential. Dựng lại địa chỉ từ script hash sẽ mất

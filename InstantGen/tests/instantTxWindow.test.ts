@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import { Data } from "@lucid-evolution/lucid";
-import { msPerEpoch, EmptyValidityWindowError } from "@magiclamp/protocol-utils";
+import { msPerEpoch, EmptyValidityWindowError, VALIDITY_MAX_AHEAD_MS } from "@magiclamp/protocol-utils";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import { buildInstantGenTx } from "../offchain/src/instant.js";
 import {
@@ -150,9 +150,14 @@ describe("buildInstantGenTx — cửa sổ hiệu lực và mốc khoá", () => 
   // Đây là cặp ghim `reserveTrailingSlots: 1n`. Đổi nó về `0n` thì ca A đỏ ở
   // `validTo` và ca B đỏ ở mốc trong datum. Trước tệp này, đổi `1n`→`0n` để lại
   // 338 bài xanh.
+  //
+  // Tip nằm trong GIỜ CUỐI epoch: ở đầu epoch trần `VALIDITY_MAX_AHEAD_MS` thắng và
+  // cận trên không chạm vùng chừa, nên cặp này sẽ xanh ở cả `1n` lẫn `0n`.
+
+  const TIP_GIO_CUOI = (E + 1n) * P - 1_800_000n;
 
   it("A. `validTo` là slot ÁP CHÓT của epoch, không phải slot cuối", async () => {
-    const tip = E * P + 1_000n;
+    const tip = TIP_GIO_CUOI;
     const { tx } = await dung(tip);
 
     expect(tx.validFrom).toBe(Number(tip));
@@ -160,8 +165,17 @@ describe("buildInstantGenTx — cửa sổ hiệu lực và mốc khoá", () => 
     expect(tx.validTo).toBe(Number((E + 1n) * P - 2n * SLOT));
   });
 
-  it("B. mốc trong datum KHÔNG rơi vào slot cuối của epoch sau", async () => {
+  it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch (chân trời node)", async () => {
     const tip = E * P + 1_000n;
+    const { tx } = await dung(tip);
+
+    expect(tx.validTo).toBe(Number(tip + VALIDITY_MAX_AHEAD_MS));
+    // mốc khoá vẫn là cận-trên + P: khoá không ngắn đi, chỉ mở sớm hơn đúng phần cắt.
+    expect(unlockMsTrongDatum(tx) - BigInt(tx.validTo!)).toBe(P);
+  });
+
+  it("B. mốc trong datum KHÔNG rơi vào slot cuối của epoch sau", async () => {
+    const tip = TIP_GIO_CUOI;
     const { tx } = await dung(tip);
 
     const slotCuoiEpochSau = (E + 2n) * P - SLOT;   // ô chết: rút tại đây là khoảng rỗng

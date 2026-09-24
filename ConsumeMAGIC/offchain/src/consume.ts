@@ -13,12 +13,14 @@
 // CBOR hex sẵn (redeemer + datum output) để tránh coupling type cross-module. Builder
 // chịu trách nhiệm phần Engage + GHÉP cả hai continuing output (vault + engage).
 //
-// VALIDITY RANGE: cửa sổ = TRỌN epoch hiện tại [epochStart, epochEnd-1] — PHẢI chứa
-// `now` (ledger từ chối nếu now > validTo) NHƯNG vẫn ≤ 1 epoch cho cả hai validator:
-//   vault.ak get_current_epoch: epoch = lower/mspe (đầu epoch → currentEpoch, ≤ now).
-//   consume.ak util.get_epoch:  epoch = upper/mspe floor (cuối epoch → currentEpoch, ≥ now).
-// (Bản cũ dùng [epochStart, epochStart+1ms] → validTo ở QUÁ KHỨ so với now giữa epoch →
-//  ledger reject OutsideValidityInterval. Đã vá.)
+// VALIDITY RANGE: `epochValidityWindow` (protocol-utils) — [tip, min(cuối epoch,
+// tip + VALIDITY_MAX_AHEAD_MS)]. PHẢI chứa `now` (ledger từ chối nếu now > validTo),
+// nằm trọn trong epoch hiện tại cho cả hai validator:
+//   vault.ak get_current_epoch: epoch = lower/mspe.
+//   consume.ak util.get_epoch:  epoch = upper/mspe floor.
+// (Bản [epochStart, epochStart+1ms] → validTo ở QUÁ KHỨ giữa epoch → OutsideValidityInterval.
+//  Bản [epochStart, epochEnd-1] → cận trên quá chân trời node khi epoch giao thức dài
+//  hơn safe zone → TimeTranslationPastHorizon; đo trên Preprod 2026-09-24. Cả hai đã bỏ.)
 // `util.get_epoch` ép THÊM: hai biên đều Finite VÀ ⌊lo/mspe⌋ == ⌊hi/mspe⌋ (trọn MỘT
 // epoch) — cửa sổ dưới đây thoả theo dựng, không được nới ra ngoài biên epoch.
 //
@@ -30,7 +32,7 @@ import {
   Constr, Data, toUnit, validatorToScriptHash, validatorToAddress,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type Assets,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { msPerEpoch, epochValidityWindow, type Network } from "@magiclamp/protocol-utils";
 import { Q, assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
 import {
   ConsumeRedeemerSchema,
@@ -248,9 +250,10 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   // ── epoch tham chiếu = từ UPPER bound (khớp util.get_epoch vá) ───────────────
   const mspe = msPerEpoch(network);
   const currentEpoch = tipPosixMs / mspe;
-  // cửa sổ CHẶT: lower = đầu epoch hiện tại; upper = lower + 1ms (cùng epoch sau floor)
-  const lowerMs = currentEpoch * mspe;              // đầu epoch → floor = currentEpoch, ≤ now
-  const upperMs = (currentEpoch + 1n) * mspe - 1n;  // cuối epoch → floor = currentEpoch, ≥ now
+  // Cửa sổ nằm trọn trong epoch của tip, cận trên có trần (xem khối VALIDITY RANGE đầu tệp).
+  const win = epochValidityWindow(tipPosixMs, network);
+  const lowerMs = BigInt(win.lowerMs);
+  const upperMs = BigInt(win.upperMs);
 
   // ── stale guard offchain (mirror C-CM-5; fail sớm trước khi submit) ──────────
   if (currentEpoch < pp.epoch) {

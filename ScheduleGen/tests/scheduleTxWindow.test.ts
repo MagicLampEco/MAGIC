@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from "vitest";
 import { Data } from "@lucid-evolution/lucid";
-import { msPerEpoch } from "@magiclamp/protocol-utils";
+import { msPerEpoch, VALIDITY_MAX_AHEAD_MS } from "@magiclamp/protocol-utils";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import { buildScheduleCommitTx, buildScheduleFireTx } from "../offchain/src/schedule.js";
 import { computeShardId } from "../offchain/src/math.js";
@@ -217,14 +217,21 @@ async function nemVoiChoDoi(
 
 describe("buildScheduleCommitTx — cửa sổ hiệu lực", () => {
 
-  it("A. không chừa slot nào ⟹ `validTo` là slot CUỐI của epoch", async () => {
-    const tip = E * P + 1_000n;
+  it("A. giờ cuối epoch, không chừa slot nào ⟹ `validTo` là slot CUỐI của epoch", async () => {
+    const tip = (E + 1n) * P - 1_800_000n;
     const { tx } = await dungCommit(tip);
 
     expect(tx.validFrom).toBe(Number(tip));
     // Mốc hợp lệ cuối là (E+1)P − 1; đầu slot chứa nó là (E+1)P − 1000. KHÔNG lùi
     // thêm: chỗ gọi này không truyền `reserveTrailingSlots`.
     expect(tx.validTo).toBe(Number((E + 1n) * P - SLOT));
+  });
+
+  it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch (chân trời node)", async () => {
+    const tip = E * P + 1_000n;
+    const { tx } = await dungCommit(tip);
+
+    expect(tx.validTo).toBe(Number(tip + VALIDITY_MAX_AHEAD_MS));
   });
 
   it("B. tip ở slot CUỐI ⟹ NÉM, kèm đúng số mili-giây phải chờ", async () => {
@@ -267,12 +274,19 @@ describe("buildScheduleCommitTx — cửa sổ hiệu lực", () => {
 
 describe("buildScheduleFireTx — cửa sổ hiệu lực", () => {
 
-  it("A. không chừa slot nào ⟹ `validTo` là slot CUỐI của epoch", async () => {
-    const tip = E * P + 1_000n;
+  it("A. giờ cuối epoch, không chừa slot nào ⟹ `validTo` là slot CUỐI của epoch", async () => {
+    const tip = (E + 1n) * P - 1_800_000n;
     const { tx } = await dungFire(tip);
 
     expect(tx.validFrom).toBe(Number(tip));
     expect(tx.validTo).toBe(Number((E + 1n) * P - SLOT));
+  });
+
+  it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch (chân trời node)", async () => {
+    const tip = E * P + 1_000n;
+    const { tx } = await dungFire(tip);
+
+    expect(tx.validTo).toBe(Number(tip + VALIDITY_MAX_AHEAD_MS));
   });
 
   it("B. tip ở slot CUỐI ⟹ NÉM, kèm đúng số mili-giây phải chờ", async () => {

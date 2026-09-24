@@ -188,6 +188,18 @@ async function main() {
 
     console.log(result.summary);
 
+    // DRY_RUN=1: `buildInstantGenTx` đã `complete()` — validator đã chạy thử cục bộ.
+    // Dừng trước khi ký, cùng quy ước với test/consume_only.ts và test/mint_engage_only.ts.
+    // Lượt phá mà dựng được tới đây là lọt, nên vẫn thoát 3 như lượt gửi thật.
+    if (process.env.DRY_RUN === "1") {
+      if (tamper || process.env.SKIP_OWNER_SIG === "1") {
+        console.error("\n⚠  UNEXPECTED (DRY RUN): tamper tx qua validator khi chạy thử.");
+        process.exit(3);
+      }
+      console.log("\n✔ DRY RUN: tx dựng xong và qua validator khi chạy thử. Không ký, không gửi.");
+      return;
+    }
+
     const signed = await result.tx.sign.withWallet().complete();
     const txHash = await signed.submit();
     console.log(`\nTX hash:   ${txHash}`);

@@ -48,14 +48,16 @@ npx tsx test/instant_only.ts
 #   Đọc ở dòng `GRANTED … MAGIC (bound by …)` — nó nói luôn vế nào đang chặn.
 
 # Bước 3: deploy toàn bộ hạ tầng ConsumeMAGIC (1 tx, 5 việc)
-npx tsx deploy/09_deploy_consume.ts
-# → in ra block export: PRICE_NFT_POLICY, PRICE_PARAM_SCRIPT_HASH, CONSUME_SCRIPT_HASH,
+VAULT_KIND=instant npx tsx deploy/09_deploy_consume.ts
+# → in ra block export, mọi khoá mang hậu tố _INSTANT (scripts/consumeBook.ts):
+#   PRICE_NFT_POLICY, PRICE_PARAM_HASH, CONSUME_SCRIPT_HASH,
 #   ENGAGE_NFT_POLICY (== CONSUME_SCRIPT_HASH), ENGAGE_NFT_UNIT, ENGAGE_UTXO,
 #   REF_CONSUME_UTXO (ref-script CIP-33 của `consume`, 09 tự công bố bằng tx riêng)
 
 # Bước 4: tiêu MAGIC thật (co-spend Engage + vault BurnBatch)
-#   BẮT BUỘC có REF_CONSUME_UTXO (bước 3) + REF_VAULT_INSTANT_UTXO (bước 1) trong env.
-npx tsx test/consume_only.ts
+#   BẮT BUỘC có REF_CONSUME_UTXO_INSTANT (bước 3) + REF_VAULT_INSTANT_UTXO (bước 1) trong env.
+#   Beacon + Engage SỐNG được dò theo NFT, không đọc con trỏ UTxO trong sổ.
+VAULT_KIND=instant npx tsx test/consume_only.ts
 # Expected: vault.magic_batches GIẢM đúng required, consumed_count tăng đúng op_count
 ```
 

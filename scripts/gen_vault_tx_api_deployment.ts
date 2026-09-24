@@ -42,6 +42,7 @@ import { lampAssetName, type Network } from "@magiclamp/protocol-utils";
 // `backing`) là hằng chuỗi thường; hai trường còn lại của bảng đó là getter đòi biến
 // môi trường, nên đừng duyệt cả bảng — chỉ đọc đúng hai trường cần.
 import { ASSET_NAMES } from "./config.js";
+import { consumeKey, type ConsumeKeyName } from "./consumeBook.js";
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -145,6 +146,12 @@ function main(): void {
   // lượt. Sinh hai khối cho hai loại thay vì cố nhét cả hai vào một.
   const refVaultKey = vaultKind === "Instant" ? "REF_VAULT_INSTANT_UTXO" : "REF_VAULT_SCHEDULE_UTXO";
   const vaultAddrKey = vaultKind === "Instant" ? "VAULT_INSTANT_ADDR" : "VAULT_SCHEDULE_ADDR";
+  // Bộ khoá consume của ĐÚNG loại vault này (scripts/consumeBook.ts). Bản trước đọc khoá
+  // không hậu tố: trên sổ Preprod dựng lại 2026-09-23 bộ đó là của ScheduleGen, nên
+  // `--vault Instant` (mặc định) ghép vault InstantGen với consume của ScheduleGen, và
+  // `VaultTxAPI` dựng ra tx tiêu chết ở phase-1 mà khối này không có dấu hiệu gì sai.
+  const ck = (name: ConsumeKeyName) =>
+    consumeKey(name, vaultKind === "Instant" ? "instant" : "schedule");
 
   const deployment: Record<string, unknown> = {
     source: `${network} · ${vaultKind} · sinh từ ${path.replace(/^.*\/MAGIC\//, "")} (sửa lần cuối ${mtime}) tại commit ${gitSha()}`,
@@ -168,13 +175,13 @@ function main(): void {
     ref_script_utxos: {
       vault: need(book, refVaultKey, `script tham chiếu của vault ${vaultKind}`),
       shard: need(book, "REF_SHARD_UTXO", "script tham chiếu của shard"),
-      consume: need(book, "REF_CONSUME_UTXO", "script tham chiếu của ConsumeMAGIC"),
+      consume: need(book, ck("REF_CONSUME_UTXO"), "script tham chiếu của ConsumeMAGIC"),
     },
     consume: {
-      engage_address: need(book, "CONSUME_ADDRESS", "địa chỉ luồng Engage"),
-      engage_nft_unit: need(book, "ENGAGE_NFT_UNIT", "NFT định danh luồng Engage"),
-      price_beacon_address: hashToAddress(need(book, "PRICE_PARAM_HASH", "địa chỉ beacon PriceParam"), network),
-      price_beacon_nft_unit: need(book, "PRICE_NFT_UNIT", "NFT định danh beacon PriceParam"),
+      engage_address: need(book, ck("CONSUME_ADDRESS"), "địa chỉ luồng Engage"),
+      engage_nft_unit: need(book, ck("ENGAGE_NFT_UNIT"), "NFT định danh luồng Engage"),
+      price_beacon_address: hashToAddress(need(book, ck("PRICE_PARAM_HASH"), "địa chỉ beacon PriceParam"), network),
+      price_beacon_nft_unit: need(book, ck("PRICE_NFT_UNIT"), "NFT định danh beacon PriceParam"),
     },
   };
 

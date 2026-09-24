@@ -18,7 +18,10 @@
 // HAI đã đỗ vì đính kèm cả hai validator cho 17.310 byte, vượt trần 16.384.
 //
 // PREREQ (đã deploy trước, nạp qua env — xem config.ts):
-//   VAULT_INSTANT_HASH   — hash vault InstantGen (deploy 05). BẮT BUỘC.
+//   VAULT_KIND           — schedule | instant. BẮT BUỘC, không mặc định.
+//   VAULT_SCHEDULE_HASH (bước 07) hoặc VAULT_INSTANT_HASH (bước 05), theo VAULT_KIND.
+// RA: bộ khoá có hậu tố `_SCHEDULE` / `_INSTANT` (scripts/consumeBook.ts). Hai lượt, mỗi
+//   loại vault một lượt, cho hai bộ khoá nằm cạnh nhau trong sổ, không đè nhau.
 //   NETWORK, BLOCKFROST_KEY, WALLET_SEED/PRIVATE_KEY.
 //
 // KNOB (env, có default):
@@ -54,6 +57,7 @@ import {
 } from "../../ConsumeMAGIC/offchain/src/types.js";
 import { vaultIdAssetName, mintVaultIdRedeemer } from "../vaultId.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
+import { consumeKey, parseVaultKind, vaultHashKey, type ConsumeKeyName } from "../consumeBook.js";
 
 // EngageDatum lấy thẳng từ codec của module (5 trường, khớp `pub type EngageDatum`
 // trong ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak). Từng có một bản khai
@@ -82,24 +86,27 @@ async function main() {
   // (ConsumeMAGIC/onchain/validators/consume.ak:443-461) — nên cùng mã nguồn phục vụ
   // được cả vault InstantGen lẫn vault ScheduleGen, mỗi loại một instance, hash riêng.
   //
-  // VÌ SAO CẦN ĐƯỜNG ScheduleGen: InstantGen hiện chưa cấp nổi 1 nanogic (Nợ #19 —
-  // `consumed_credit` chỉ tăng ở BurnBatch, mà BurnBatch cần `magic_batches` khác rỗng,
-  // mà nhánh InstantGen là nơi duy nhất ghi nó). ScheduleGen KHÔNG có vòng đó:
-  // `ScheduleFire` ghi thẳng `magic_batches` (ScheduleGen/onchain/validators/vault.ak:483)
-  // và `BurnBatch` nằm ngay trong cùng validator (vault.ak:512). Nên cửa sinh–tiêu
-  // MAGIC đóng kín trong ScheduleGen, và đó là đường DUY NHẤT đã chạy thật trên chuỗi.
-  const vaultScriptHash =
-    process.env.VAULT_HASH ??
-    process.env.VAULT_SCHEDULE_HASH ??
-    process.env.VAULT_INSTANT_HASH;
+  // Loại vault là tham số BẮT BUỘC, không suy từ biến nào đang có mặt. Bản trước lấy
+  // `VAULT_HASH ?? VAULT_SCHEDULE_HASH ?? VAULT_INSTANT_HASH`: sổ có cả hai vault thì mọi
+  // lượt đều ra bản cho ScheduleGen, kể cả lượt định dựng cho InstantGen; và khoá in ra
+  // không hậu tố nên lượt thứ hai đè lượt thứ nhất trong sổ. Xem `scripts/consumeBook.ts`.
+  // (Bản trước còn nói InstantGen "chưa cấp nổi 1 nanogic" — Nợ #19 đã đóng 2026-09-16,
+  // `DevStatus.md` bảng module ▸ InstantGen.)
+  const vaultKind = parseVaultKind(process.env.VAULT_KIND);
+  const vaultScriptHash = process.env[vaultHashKey(vaultKind)];
   if (!vaultScriptHash || vaultScriptHash === "FILL_AFTER_AIKEN_BUILD") {
     throw new Error(
-      "Thiếu hash vault. Đặt MỘT trong ba, theo loại vault mà instance consume này phục vụ:\n" +
-      "  VAULT_SCHEDULE_HASH — đường ScheduleGen (chạy được hôm nay); deploy bằng bước 07\n" +
-      "  VAULT_INSTANT_HASH  — đường InstantGen  (đang kẹt Nợ #19);   deploy bằng bước 05\n" +
-      "  VAULT_HASH          — ghi đè tường minh, thắng cả hai biến trên",
+      `Thiếu ${vaultHashKey(vaultKind)} — hash vault ${vaultKind} mà bản consume này phục vụ ` +
+      `(${vaultKind === "schedule" ? "bước 07" : "bước 05"} in ra).`,
     );
   }
+  if (process.env.VAULT_HASH && process.env.VAULT_HASH !== vaultScriptHash) {
+    throw new Error(
+      `VAULT_HASH (${process.env.VAULT_HASH}) ≠ ${vaultHashKey(vaultKind)} (${vaultScriptHash}). ` +
+      `VAULT_HASH không còn là đường ghi đè: bỏ nó đi, hoặc chọn đúng VAULT_KIND.`,
+    );
+  }
+  console.log(`Loại vault:           ${vaultKind}`);
   const maxPriceStale = BigInt(process.env.MAX_PRICE_STALE ?? "1");
   const priceThreshold = BigInt(process.env.PRICE_THRESHOLD ?? "1");
   const demandMultQ = BigInt(process.env.PRICE_DEMAND_MULT ?? PROTOCOL.Q.toString());
@@ -305,18 +312,25 @@ async function main() {
 
   console.log(`\n✅ Confirmed.`);
   console.log(`\n📋 Copy vào env (cho scripts/test/consume_only.ts):`);
-  console.log(`export CONSUME_SCRIPT_HASH=${consumeHash}`);
-  console.log(`export CONSUME_ADDRESS=${consumeAddr}`);
-  console.log(`export PRICE_NFT_POLICY=${priceNftPolicy}`);
-  console.log(`export PRICE_NFT_UNIT=${priceNftUnit}`);
-  console.log(`export PRICE_PARAM_HASH=${priceParamHash}`);
-  console.log(`export PRICE_BEACON_UTXO=${beaconUtxo.txHash}#${beaconUtxo.outputIndex}`);
-  console.log(`export ENGAGE_NFT_POLICY=${engageNftPolicy}`);
-  console.log(`export ENGAGE_NFT_UNIT=${engageNftUnit}`);
-  console.log(`export ENGAGE_UTXO=${engageUtxo.txHash}#${engageUtxo.outputIndex}`);
-  console.log(`export MAX_PRICE_STALE=${maxPriceStale}   # PHẢI khớp lúc reconstruct consume hash`);
-  console.log(`export REF_CONSUME_UTXO=${consumeRef}      # chân consume của tx consume`);
-  console.log(`#  chân còn lại: REF_VAULT_INSTANT_UTXO — lấy từ bước 05`);
+  // Khoá mang hậu tố loại vault — `scripts/consumeBook.ts` nói vì sao.
+  const out = (name: ConsumeKeyName, v: string, note = "") =>
+    console.log(`export ${consumeKey(name, vaultKind)}=${v}${note ? `   # ${note}` : ""}`);
+  out("CONSUME_SCRIPT_HASH", consumeHash);
+  out("CONSUME_ADDRESS", consumeAddr);
+  out("PRICE_NFT_POLICY", priceNftPolicy);
+  out("PRICE_NFT_UNIT", priceNftUnit);
+  out("PRICE_PARAM_HASH", priceParamHash);
+  out("PRICE_BEACON_UTXO", `${beaconUtxo.txHash}#${beaconUtxo.outputIndex}`);
+  out("ENGAGE_NFT_POLICY", engageNftPolicy);
+  out("ENGAGE_NFT_UNIT", engageNftUnit);
+  out("ENGAGE_UTXO", `${engageUtxo.txHash}#${engageUtxo.outputIndex}`);
+  out("MAX_PRICE_STALE", String(maxPriceStale), "PHẢI khớp lúc reconstruct consume hash");
+  out("REF_CONSUME_UTXO", consumeRef, "chân consume của tx consume");
+  console.log(
+    `#  chân còn lại: ${vaultKind === "schedule"
+      ? "REF_VAULT_SCHEDULE_UTXO — lấy từ bước 06"
+      : "REF_VAULT_INSTANT_UTXO — lấy từ bước 05"}`,
+  );
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -22,16 +22,16 @@
 #
 # ── VÌ SAO PHẢI HAI CHẶNG ────────────────────────────────────────────────────
 #   `schedule_delay = 2` epoch (ScheduleGen/onchain/lib/magiclamp/protocol/constants.ak:32),
-#   là hằng số hiến định, không nới bằng env được. Preprod 1 epoch giao thức =
-#   86.400.000 ms = 1 ngày (ProtocolUtils/src/index.ts:30), ranh giới nửa đêm UTC
-#   ⟹ chờ THẬT 24-48 giờ tuỳ giờ cam kết. Cam kết ngay trước nửa đêm UTC là rẻ nhất.
+#   là hằng số hiến định, không nới bằng env được. Độ dài epoch là của MẠNG
+#   (ProtocolUtils ▸ `msPerEpoch`): Preview 1 ngày, Preprod 5 ngày (từ 2026-09-20)
+#   ⟹ trên Preprod chờ THẬT 5-10 ngày tuỳ lúc cam kết. Cam kết sát ranh giới epoch là rẻ nhất.
 #
-# 🔴 CHẶNG 2 PHẢI XONG TRONG MỘT NGÀY UTC. `schedule_decay_window = 1`
+# 🔴 CHẶNG 2 PHẢI XONG TRONG MỘT EPOCH. `schedule_decay_window = 1`
 #   (constants.ak:35) ⟹ một batch MAGIC chỉ sống trong ĐÚNG epoch nó được sinh.
 #   Fire hôm nay mà tiêu ngày mai là mất trắng số MAGIC đó. Vì thế bước 09 (dựng hạ
-#   tầng consume) nằm TRƯỚC bước fire trong chặng 2 — đảo lại là mất một ngày.
+#   tầng consume) nằm TRƯỚC bước fire trong chặng 2 — đảo lại là mất một epoch.
 #   Đỡ một chút: `ScheduleCommit` với L=10 cho 10 lần fire, mỗi epoch một lần, nên
-#   hỏng ngày này thì ngày sau làm lại, không phải chờ 2 epoch nữa.
+#   hỏng epoch này thì epoch sau làm lại, không phải chờ 2 epoch nữa.
 set -euo pipefail
 
 NET="${1:-Preprod}"
@@ -286,21 +286,32 @@ fi
 # dẫn đầu, và bash đọc `08`/`09` là bát phân KHÔNG HỢP LỆ ⟹ với `set -e` cả kịch bản
 # chết bằng `value too great for base` ở đúng phút 08/09 — hỏng ồn nhưng thông điệp
 # không nhắc gì tới giờ giấc. Đã dựng lại lỗi này rồi mới sửa.
-CON_LAI_GIAY=$(( 86400 - ( 10#$(date -u +%H) * 3600 + 10#$(date -u +%M) * 60 + 10#$(date -u +%S) ) ))
-if [ -n "${CONSUME_SCRIPT_HASH:-}" ] && [ -n "${REF_CONSUME_UTXO:-}" ]; then
+#
+# 🔴 Ranh giới là ranh giới EPOCH, không phải nửa đêm mỗi ngày. Bản trước lấy `86400 −
+# giây-đã-qua-trong-ngày`, đúng khi epoch dài 1 ngày. Preprod nay 5 ngày (`msPerEpoch`,
+# ProtocolUtils) — ranh giới vẫn rơi vào 00:00Z nhưng chỉ một lần mỗi 5 ngày, nên bản cũ
+# chặn thừa 12-20 phút trước MỌI nửa đêm và nói sai lý do. Đọc độ dài epoch từ nguồn của
+# nó; không đọc được thì DỪNG, đừng lùi về 1 ngày.
+MS_EPOCH="$(node -e "import('@magiclamp/protocol-utils').then(m => console.log(String(m.msPerEpoch('$NET'))))" 2>/dev/null || true)"
+case "$MS_EPOCH" in
+  ''|*[!0-9]*) echo "✗ KHÔNG ĐO ĐƯỢC độ dài epoch của $NET (msPerEpoch) — dừng, không gửi gì."; exit 2 ;;
+esac
+GIAY_EPOCH=$(( MS_EPOCH / 1000 ))
+CON_LAI_GIAY=$(( GIAY_EPOCH - $(date -u +%s) % GIAY_EPOCH ))
+if [ -n "${CONSUME_SCRIPT_HASH_SCHEDULE:-}" ] && [ -n "${REF_CONSUME_UTXO_SCHEDULE:-}" ]; then
   NGUONG=720          # 12 phút — hạ tầng consume đã có, bỏ qua được bước 09
 else
   NGUONG=1200         # 20 phút — còn phải deploy hạ tầng consume
 fi
-printf '⏱  Còn %d phút %02d giây tới nửa đêm UTC (ngưỡng cần: %d phút).\n' \
+printf '⏱  Còn %d phút %02d giây tới ranh giới epoch (ngưỡng cần: %d phút).\n' \
   $(( CON_LAI_GIAY / 60 )) $(( CON_LAI_GIAY % 60 )) $(( NGUONG / 60 ))
 if [ "$CON_LAI_GIAY" -lt "$NGUONG" ]; then
   echo
   echo "⛔ KHÔNG ĐỦ THỜI GIAN — dừng TRƯỚC khi chạm vào bất cứ thứ gì."
   echo "   Chạy tiếp bây giờ thì fire sinh batch ở epoch này, bước tiêu rơi sang epoch"
-  echo "   sau, và batch đó đã chết (schedule_decay_window = 1). Mất một ô fire + một ngày."
+  echo "   sau, và batch đó đã chết (schedule_decay_window = 1). Mất một ô fire + một epoch."
   echo
-  echo "   Chờ qua nửa đêm UTC rồi chạy lại đúng lệnh này — lịch còn nhiều ô fire, không"
+  echo "   Chờ qua ranh giới epoch rồi chạy lại đúng lệnh này — lịch còn nhiều ô fire, không"
   echo "   phải chờ lại 2 epoch."
   echo
   echo "   Biết mình đang làm gì và vẫn muốn chạy: BO_QUA_CONG_NUA_DEM=1 bash $0 $NET 2 $VAULT_TX"
@@ -313,7 +324,9 @@ for v in LAMP_POLICY_ID SHARD_NFT_POLICY_ID VAULT_SCHEDULE_HASH REF_VAULT_SCHEDU
 done
 
 # 09 TRƯỚC fire: batch MAGIC chỉ sống trong đúng epoch nó sinh ra (decay_window=1).
-export VAULT_HASH="$VAULT_SCHEDULE_HASH"
+# Bộ khoá consume mang hậu tố `_SCHEDULE` (scripts/consumeBook.ts); 09 chọn vault theo
+# VAULT_KIND, không theo VAULT_HASH nữa.
+export VAULT_KIND=schedule
 
 # 🔴 09 ĐÚC PRICE NFT ONE-SHOT. Chạy lại nó là genesis_ref mới ⟹ price_nft_policy mới
 #    ⟹ apply-param của `consume` đổi ⟹ script hash đổi ⟹ ĐỊA CHỈ đổi ⟹ mọi Engage
@@ -321,8 +334,8 @@ export VAULT_HASH="$VAULT_SCHEDULE_HASH"
 #    ĐÚNG MỘT LẦN cho mỗi loại vault, rồi từ đó DÒ LẠI UTxO sống theo NFT danh tính.
 #    Chỉ hash/policy mới cache được — PRICE_BEACON_UTXO và ENGAGE_UTXO bị tiêu và tạo
 #    lại sau mỗi tx consume, cache chúng là trỏ vào UTxO đã chết.
-if [ -n "${CONSUME_SCRIPT_HASH:-}" ] && [ -n "${REF_CONSUME_UTXO:-}" ]; then
-  echo; echo "▶ [1/3] Dùng lại hạ tầng consume $CONSUME_SCRIPT_HASH — dò UTxO sống…"
+if [ -n "${CONSUME_SCRIPT_HASH_SCHEDULE:-}" ] && [ -n "${REF_CONSUME_UTXO_SCHEDULE:-}" ]; then
+  echo; echo "▶ [1/3] Dùng lại hạ tầng consume $CONSUME_SCRIPT_HASH_SCHEDULE — dò UTxO sống…"
   # 🔴 Bản trước ở đây là MỘT dòng `eval "$(npx tsx resolve_consume_state.ts)"`. Cùng
   #   một lỗ đã vá ở `run_consume_e2e.sh` — lý lẽ đầy đủ nằm ở đó, đừng chép xuống đây.
   #   Tóm tắt đủ để biết vì sao dòng này dài hơn: `eval "$(cmd)"` VỨT mã thoát của
@@ -338,20 +351,20 @@ if [ -n "${CONSUME_SCRIPT_HASH:-}" ] && [ -n "${REF_CONSUME_UTXO:-}" ]; then
     exit 1
   }
   eval "$RESOLVED"
-  [ -n "${PRICE_BEACON_UTXO:-}" ] || { echo "✗ [1/3] resolver không in PRICE_BEACON_UTXO"; exit 1; }
-  [ -n "${ENGAGE_UTXO:-}" ]       || { echo "✗ [1/3] resolver không in ENGAGE_UTXO"; exit 1; }
-  [ -n "${REF_CONSUME_UTXO:-}" ]  || { echo "✗ [1/3] REF_CONSUME_UTXO rỗng — bước [3] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
+  [ -n "${PRICE_BEACON_UTXO_SCHEDULE:-}" ] || { echo "✗ [1/3] resolver không in PRICE_BEACON_UTXO_SCHEDULE"; exit 1; }
+  [ -n "${ENGAGE_UTXO_SCHEDULE:-}" ]       || { echo "✗ [1/3] resolver không in ENGAGE_UTXO_SCHEDULE"; exit 1; }
+  [ -n "${REF_CONSUME_UTXO_SCHEDULE:-}" ]  || { echo "✗ [1/3] REF_CONSUME_UTXO_SCHEDULE rỗng — bước [3] không dựng nổi tx (vượt trần 16384 byte)"; exit 1; }
 else
-  echo; echo "▶ [1/3] Deploy hạ tầng consume (09) — ĐẶT TRƯỚC fire, có chủ ý…"
+  echo; echo "▶ [1/3] Deploy hạ tầng consume (09) cho vault ScheduleGen — ĐẶT TRƯỚC fire, có chủ ý…"
   OUT09="$(npx tsx deploy/09_deploy_consume.ts | tee /dev/tty)"
   eval "$(printf '%s\n' "$OUT09" | grep '^export ' || true)"
-  [ -n "${PRICE_BEACON_UTXO:-}" ] || { echo "✗ 09 không in export block"; exit 1; }
-  [ -n "${REF_CONSUME_UTXO:-}" ]  || { echo "✗ 09 không in REF_CONSUME_UTXO — bước [3] không dựng nổi tx"; exit 1; }
+  [ -n "${PRICE_BEACON_UTXO_SCHEDULE:-}" ] || { echo "✗ 09 không in export block"; exit 1; }
+  [ -n "${REF_CONSUME_UTXO_SCHEDULE:-}" ]  || { echo "✗ 09 không in REF_CONSUME_UTXO_SCHEDULE — bước [3] không dựng nổi tx"; exit 1; }
   # Lưu ĐỊNH DANH BẤT BIẾN (không lưu hai UTxO — chúng đổi sau mỗi tx).
   for v in CONSUME_SCRIPT_HASH PRICE_NFT_POLICY PRICE_NFT_UNIT PRICE_PARAM_HASH \
            ENGAGE_NFT_POLICY ENGAGE_NFT_UNIT MAX_PRICE_STALE REF_CONSUME_UTXO; do
-    eval "val=\${$v:-}"
-    [ -n "$val" ] && persist "$v" "$val"
+    eval "val=\${${v}_SCHEDULE:-}"
+    [ -n "$val" ] && persist "${v}_SCHEDULE" "$val"
   done
 fi
 
@@ -360,7 +373,6 @@ export VAULT_TX_HASH="$VAULT_TX"
 npx tsx test/schedule_fire_only.ts
 
 echo; echo "▶ [3/3] Tiêu MAGIC thật (co-spend Engage + vault ScheduleGen BurnBatch)…"
-export VAULT_KIND=schedule
 npx tsx test/consume_only.ts
 
 echo; echo "✅ HOÀN TẤT e2e consume qua ScheduleGen trên $NET"

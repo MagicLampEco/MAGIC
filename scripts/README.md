@@ -121,8 +121,12 @@ dùng nguyên được, và việc phải làm chỉ là truyền `vaultScriptHa
 Không sửa một dòng Aiken nào, vì `consume` **không giải mã `VaultDatum`** — nó đọc đúng
 trường 0 (`owner`) qua `un_constr_data` (`ConsumeMAGIC/onchain/validators/consume.ak:443-461`),
 cố ý, để một mã nguồn phục vụ được nhiều loại vault, mỗi loại một instance đã apply-param.
-`09_deploy_consume.ts` nay nhận `VAULT_HASH` / `VAULT_SCHEDULE_HASH` / `VAULT_INSTANT_HASH`,
-và `test/consume_only.ts` nhận `VAULT_KIND=schedule|instant`.
+`09_deploy_consume.ts`, `test/consume_only.ts`, `test/mint_engage_only.ts` và
+`resolve_consume_state.ts` đều đòi `VAULT_KIND=schedule|instant`, không có mặc định. Bộ
+khoá consume trong sổ mang hậu tố theo loại vault (`CONSUME_SCRIPT_HASH_SCHEDULE`,
+`CONSUME_SCRIPT_HASH_INSTANT`, …) để hai bản consume nằm cạnh nhau không đè nhau — lý do
+và danh sách khoá ở [`consumeBook.ts`](consumeBook.ts). Keeper tự nhặt beacon giá của cả
+hai bản ([`keeper_beacons.sh`](keeper_beacons.sh)).
 
 Vẫn đúng một điều trong đoạn cũ, và nó là điều quan trọng nhất: các giá trị đó đi vào
 **apply-param** — sai một cái là sai script hash, tức sai địa chỉ Engage, và không có gì
@@ -139,9 +143,9 @@ npm run deploy:um               # → UM_NFT_POLICY_ID, UM_DATUM_HASH
 npm run deploy:shards           # → SHARD_NFT_POLICY_ID
 npm run deploy:instant-vault    # → VAULT_OWNER_PKH, VAULT_INSTANT_HASH
 npm run deploy:schedule-vault   # → VAULT_SCHEDULE_HASH
-npm run deploy:consume          # → PRICE_NFT_POLICY, PRICE_PARAM_SCRIPT_HASH,
-                                #   CONSUME_SCRIPT_HASH, ENGAGE_NFT_POLICY
-                                #   (== CONSUME_SCRIPT_HASH), ENGAGE_NFT_UNIT, ENGAGE_UTXO
+VAULT_KIND=schedule npm run deploy:consume   # → *_SCHEDULE: PRICE_NFT_POLICY, PRICE_PARAM_HASH,
+VAULT_KIND=instant  npm run deploy:consume   #   CONSUME_SCRIPT_HASH, ENGAGE_NFT_POLICY (== CONSUME_SCRIPT_HASH),
+                                             #   ENGAGE_NFT_UNIT, ENGAGE_UTXO, REF_CONSUME_UTXO — *_INSTANT tương tự
 ```
 
 Chép giá trị in ra vào `.env` sau mỗi bước.
@@ -178,7 +182,7 @@ Cần sẵn trong env **hai** ref-script CIP-33, nếu không tx không dựng n
 hai validator = 17.310 byte, vượt trần 16.384):
 
 - `REF_VAULT_INSTANT_UTXO` — bước `05_create_instant_vault.ts` in ra.
-- `REF_CONSUME_UTXO` — bước `09_deploy_consume.ts` in ra.
+- `REF_CONSUME_UTXO_INSTANT` — bước `09_deploy_consume.ts` (chạy với `VAULT_KIND=instant`) in ra.
 
 Bước nào tính ra hash thì bước đó công bố ref-script; `06_publish_ref_scripts.ts` chỉ
 lo hai script ScheduleGen. Bãi đỗ dùng chung ở [`refScripts.ts`](refScripts.ts).

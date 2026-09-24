@@ -12,13 +12,14 @@
 //
 // ENV bắt buộc (đúng bộ dựng lại hash `consume` của consume_only.ts):
 //   NETWORK · BLOCKFROST_KEY · WALLET_SEED (hoặc PRIVATE_KEY)
-//   CONSUME_SCRIPT_HASH · PRICE_NFT_POLICY · PRICE_PARAM_HASH · MAX_PRICE_STALE
 //   VAULT_KIND=instant|schedule  (chọn VAULT_INSTANT_HASH hoặc VAULT_SCHEDULE_HASH)
+//   CONSUME_SCRIPT_HASH · PRICE_NFT_POLICY · PRICE_PARAM_HASH · MAX_PRICE_STALE — mỗi khoá
+//     mang hậu tố `_SCHEDULE` / `_INSTANT` theo VAULT_KIND (scripts/consumeBook.ts)
 // ENV tuỳ chọn:
 //   DID_COMMIT   hex 32 byte, hoặc bỏ trống (validator chỉ nhận rỗng hoặc đúng 32 byte)
 //   DRY_RUN=1    dựng + chạy thử validator (evaluate) nhưng KHÔNG ký, KHÔNG gửi
 //
-// In ra: ENGAGE_NFT_UNIT, ENGAGE_UTXO — nạp vào consume_only.ts.
+// In ra: ENGAGE_NFT_UNIT_<LOẠI>, ENGAGE_UTXO_<LOẠI> — nạp vào consume_only.ts.
 
 import {
   Lucid, Blockfrost, Data,
@@ -30,6 +31,7 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { consumeParams } from "../deployParams.js";
 import { EngageDatumSchema } from "../../ConsumeMAGIC/offchain/src/types.js";
 import { vaultIdAssetName, mintVaultIdRedeemer } from "../vaultId.js";
+import { consumeKey, parseVaultKind, selectConsumeBook, vaultHashKey } from "../consumeBook.js";
 
 const PRICE_NFT_NAME    = "5052494345"; // "PRICE" — price_nft.ak
 const BURN_BATCH_CONSTR = 2n;           // cùng giá trị với deploy/09_deploy_consume.ts
@@ -43,11 +45,13 @@ function req(name: string): string {
 async function main() {
   console.log(`=== Đúc thread Engage cho ví đang ký · ${NETWORK}${process.env.DRY_RUN === "1" ? " · DRY RUN" : ""} ===\n`);
 
-  const kind = req("VAULT_KIND");
-  const vaultScriptHash =
-    kind === "instant"  ? req("VAULT_INSTANT_HASH")  :
-    kind === "schedule" ? req("VAULT_SCHEDULE_HASH") :
-    (() => { throw new Error(`VAULT_KIND phải là instant hoặc schedule (nhận: ${kind})`); })();
+  const kind = parseVaultKind(process.env.VAULT_KIND);
+  const vaultScriptHash = req(vaultHashKey(kind));
+  // Bộ khoá consume theo hậu tố của loại vault (`scripts/consumeBook.ts`); `req(...)` phía
+  // dưới đọc tên không hậu tố đã được chép từ đúng bộ đó.
+  selectConsumeBook(process.env, kind, [
+    "CONSUME_SCRIPT_HASH", "PRICE_NFT_POLICY", "PRICE_PARAM_HASH", "MAX_PRICE_STALE",
+  ]);
   const expectedConsume = req("CONSUME_SCRIPT_HASH");
 
   // Dựng lại `consume` từ tham số rồi ĐỐI CHIẾU hash. Lệch ⟹ bộ biến trỏ sang một instance
@@ -138,8 +142,8 @@ async function main() {
     process.exit(2);
   }
   console.log("\n✔ Thread Engage đã nằm trên chuỗi. Nạp vào consume_only.ts:");
-  console.log(`export ENGAGE_NFT_UNIT=${nftUnit}`);
-  console.log(`export ENGAGE_UTXO=${out.txHash}#${out.outputIndex}`);
+  console.log(`export ${consumeKey("ENGAGE_NFT_UNIT", kind)}=${nftUnit}`);
+  console.log(`export ${consumeKey("ENGAGE_UTXO", kind)}=${out.txHash}#${out.outputIndex}`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

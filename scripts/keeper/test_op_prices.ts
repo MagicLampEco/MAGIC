@@ -1,0 +1,56 @@
+// scripts/keeper/test_op_prices.ts — bộ ca của `parseOpPriceSet` / `applyOpPriceSet`. Không gọi mạng.
+// Chạy: npx tsx keeper/test_op_prices.ts   (từ thư mục scripts/)
+// Dòng cuối NÓI RA trạng thái: `=== ĐẠT ===` hoặc `=== HỎNG: n ca sai ===`.
+import { assertValidPriceParam, M_MIN_Q, M_MAX_Q } from "@magiclamp/consumemagic-pricing";
+import { applyOpPriceSet, parseOpPriceSet } from "./opPrices.js";
+
+let failures = 0;
+const check = (label: string, ok: boolean, detail = "") => {
+  if (!ok) failures++;
+  console.log(`  ${ok ? "✓" : "✗"} ${label}${ok ? "" : ` — ${detail}`}`);
+};
+const throws = (f: () => unknown) => { try { f(); return false; } catch { return true; } };
+
+// Bảng đang nằm trên hai beacon Preprod (đọc Koios 2026-09-25): op 1–4.
+const beacon = [
+  { op_type: 1n, base_price: 10_000_000n },
+  { op_type: 2n, base_price: 1_000_000n },
+  { op_type: 3n, base_price: 1_000_000_000n },
+  { op_type: 4n, base_price: 1_000_000_000n },
+];
+
+// Ca dùng thật: thêm 7 và 8.
+const set78 = parseOpPriceSet("7:2000000000, 8:10000000000");
+const r78 = applyOpPriceSet(beacon, set78);
+check("thêm 7·8 → 6 dòng, tăng ngặt",
+  r78.rows.map((r) => r.op_type).join(",") === "1,2,3,4,7,8", r78.rows.map((r) => r.op_type).join(","));
+check("thêm 7·8 → hai thay đổi, cả hai là dòng mới",
+  r78.changes.length === 2 && r78.changes.every((c) => c.from === undefined), JSON.stringify(r78.changes, (_, v) => String(v)));
+check("bảng sau khi thêm vẫn qua assertValidPriceParam",
+  !throws(() => assertValidPriceParam({ op_prices: r78.rows, demand_mult: 1_000_000_000n, m_min: M_MIN_Q, m_max: M_MAX_Q, epoch: 4145n })));
+
+// Cặp quyết định cho "keeper không gửi thừa": chạy lại khi beacon đã mang 7·8 thì KHÔNG có thay đổi.
+const again = applyOpPriceSet(r78.rows, set78);
+check("chạy lại trên bảng đã có 7·8 → 0 thay đổi", again.changes.length === 0, `${again.changes.length} thay đổi`);
+
+// Đổi giá dòng đã có: ghi được giá cũ.
+const bump = applyOpPriceSet(beacon, parseOpPriceSet("2:2000000"));
+check("đổi giá op 2 → một thay đổi mang giá cũ",
+  bump.changes.length === 1 && bump.changes[0]!.from === 1_000_000n && bump.changes[0]!.to === 2_000_000n);
+check("đổi giá không xoá dòng nào", bump.rows.length === beacon.length);
+
+// Biến rỗng ⟹ không đổi gì (đường mặc định của keeper).
+check("biến rỗng → 0 dòng", parseOpPriceSet(undefined).length === 0 && parseOpPriceSet("").length === 0);
+
+// Ca âm: sai dạng và trùng op_type phải NÉM, không bỏ qua.
+check("sai dạng '7=2' → ném", throws(() => parseOpPriceSet("7=2")));
+check("số âm '7:-1' → ném", throws(() => parseOpPriceSet("7:-1")));
+check("trùng op_type trong biến → ném", throws(() => parseOpPriceSet("7:1,7:2")));
+
+// Giá vượt luật on-chain: hàm gộp không tự chặn, assertValidPriceParam phải chặn.
+const tooLow = applyOpPriceSet(beacon, parseOpPriceSet("7:1"));
+check("base_price=1 (base×m_min < Q) → assertValidPriceParam ném",
+  throws(() => assertValidPriceParam({ op_prices: tooLow.rows, demand_mult: 1_000_000_000n, m_min: M_MIN_Q, m_max: M_MAX_Q, epoch: 4145n })));
+
+console.log(failures === 0 ? "\n=== ĐẠT ===" : `\n=== HỎNG: ${failures} ca sai ===`);
+process.exit(failures === 0 ? 0 : 1);

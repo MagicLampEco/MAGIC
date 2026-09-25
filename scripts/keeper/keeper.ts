@@ -29,6 +29,11 @@
 //                         Tên lạ ⟹ DỪNG với mã 1 và kê ra tập hợp lệ (xem `ALL_STEPS`).
 //   KEEPER_INSTANT_LAMP   lượng LAMP khoá vào vault InstantGen mới ở bước 4 (mặc định 1001).
 //   KEEPER_FIRE_OWNERS    pkh chủ vault được bắn, phân cách dấu phẩy. Bỏ trống ⟹ mọi vault.
+//   KEEPER_OP_PRICES_SET  dòng giá đặt vào bảng của MỌI beacon ở bước 2, dạng
+//                         `<op_type>:<base_price>,…` (nanogic). Thêm dòng mới hoặc đổi giá dòng
+//                         đã có, không xoá dòng nào. Đi CÙNG lượt đẩy epoch, vì validator chỉ nhận
+//                         một PostPrice mỗi epoch (`keeper/opPrices.ts` nói vì sao). Beacon đã ở
+//                         epoch hiện tại thì báo epoch nào mới đặt được, không gửi gì.
 //   KEEPER_DRY_RUN=1      chỉ đo và in việc sẽ làm, không gửi tx nào.
 //
 // Mã thoát: 0 = mọi bước xong hoặc không có việc · 1 = có bước hỏng, HOẶC `KEEPER_STEPS`
@@ -51,6 +56,8 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { awaitTxBounded as awaitTxBoundedShared, DEFAULT_AWAIT_TX_MS } from "../awaitTx.js";
 import { priceParamParams, scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { beaconEpochState, aheadMessage } from "./beaconEpoch.js";
+import { applyOpPriceSet, describeChanges, parseOpPriceSet } from "./opPrices.js";
+import { assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
 import {
   decodePriceParam, encodePriceParam, type PriceParamT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
@@ -183,6 +190,9 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
   const priceParamV = findValidator(blueprint, "price_param.price_param.spend");
   const committee   = (process.env.PRICE_COMMITTEE ?? ownerPkh).split(",").map((s) => s.trim()).filter(Boolean);
   const threshold   = BigInt(process.env.PRICE_THRESHOLD ?? "1");
+  let opPriceSet: ReturnType<typeof parseOpPriceSet>;
+  try { opPriceSet = parseOpPriceSet(process.env.KEEPER_OP_PRICES_SET); }
+  catch (e) { return record("price", "fail", `${(e as Error).message} — không gửi gì`); }
 
   for (const pair of pairs) {
     const [policy, expectedHash] = pair.split(":");
@@ -209,12 +219,22 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
     const pp = decodePriceParam(beacon.datum!);
     const priceState = beaconEpochState(pp.epoch, epoch);
     if (priceState === "ahead") { record(tag, "fail", aheadMessage(pp.epoch, epoch)); continue; }
-    if (priceState === "current") { record(tag, "skip", `đã ở epoch ${pp.epoch}`); continue; }
-    if (DRY) { record(tag, "skip", `DRY: sẽ PostPrice ${pp.epoch} → ${epoch}`); continue; }
+    const { rows: opPrices, changes } = applyOpPriceSet(pp.op_prices, opPriceSet);
+    const tableNote = changes.length > 0 ? ` · bảng giá: ${describeChanges(changes)}` : "";
+    if (priceState === "current") {
+      // Bảng giá còn chờ mà beacon đã ở epoch này: đây KHÔNG phải "không có việc". Nói rõ lúc nào đặt được.
+      record(tag, "skip", changes.length === 0
+        ? `đã ở epoch ${pp.epoch}`
+        : `đã ở epoch ${pp.epoch}; bảng giá chờ (${describeChanges(changes)}) — validator chỉ nhận một PostPrice mỗi epoch, đặt được từ epoch ${epoch + 1n} (${new Date(Number((epoch + 1n) * mspe)).toISOString()})`);
+      continue;
+    }
 
-    // Chỉ đẩy epoch. Bảng giá, demand_mult, m_min, m_max giữ nguyên; value giữ nguyên
-    // (validator đòi non-ADA y hệt và lovelace không giảm).
-    const next: PriceParamT = { ...pp, epoch };
+    // Đẩy epoch; bảng giá chỉ đổi theo KEEPER_OP_PRICES_SET. demand_mult, m_min, m_max giữ
+    // nguyên; value giữ nguyên (validator đòi non-ADA y hệt và lovelace không giảm).
+    const next: PriceParamT = { ...pp, op_prices: opPrices, epoch };
+    try { assertValidPriceParam(next); }
+    catch (e) { record(tag, "fail", `bảng giá sau khi đặt không hợp lệ: ${(e as Error).message.slice(0, 300)} — không gửi gì`); continue; }
+    if (DRY) { record(tag, "skip", `DRY: sẽ PostPrice ${pp.epoch} → ${epoch}${tableNote}`); continue; }
     try {
       const tx = await lucid.newTx()
         .collectFrom([beacon], Data.to(new Constr(0, [])) /* PostPrice = constr 0 (price_param.ak ▸ PriceParamRedeemer) */)
@@ -230,7 +250,7 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
         record(tag, "unverified", `tx ${txHash} đã gửi, chưa thấy vào khối sau ${AWAIT_TX_MS / 1000}s — soi explorer trước khi chạy lại`);
         continue;
       }
-      record(tag, "done", `epoch ${pp.epoch} → ${epoch} · tx ${txHash} · beacon mới ${txHash}#0`);
+      record(tag, "done", `epoch ${pp.epoch} → ${epoch}${tableNote} · tx ${txHash} · beacon mới ${txHash}#0`);
     } catch (e) {
       record(tag, "fail", String((e as Error)?.message ?? e).slice(0, 400));
     }

@@ -229,8 +229,8 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
       continue;
     }
 
-    // Đẩy epoch; bảng giá chỉ đổi theo KEEPER_OP_PRICES_SET. demand_mult, m_min, m_max giữ
-    // nguyên; value giữ nguyên (validator đòi non-ADA y hệt và lovelace không giảm).
+    // Đẩy epoch; bảng giá chỉ đổi theo KEEPER_OP_PRICES_SET (dòng đã có giữ demand_mult của nó,
+    // dòng mới nhận Q). m_min, m_max giữ nguyên; value giữ nguyên (validator đòi non-ADA y hệt và lovelace không giảm).
     const next: PriceParamT = { ...pp, op_prices: opPrices, epoch };
     try { assertValidPriceParam(next); }
     catch (e) { record(tag, "fail", `bảng giá sau khi đặt không hợp lệ: ${(e as Error).message.slice(0, 300)} — không gửi gì`); continue; }

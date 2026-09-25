@@ -203,8 +203,22 @@ fn validate_consume(
     expect required > 0
 
     // ── ENGAGE state: ghép 1-1 input↔output, KHÔNG so tổng ─────────────────────
-    // (1) #out@engage == #in@engage (no collapse). Cùng với (2)+(3) nó là vế chứng
-    //     minh phép ghép ở (4) là SONG ÁNH, không chỉ là ánh xạ.
+    // (1) #out@engage == #in@engage (no collapse).
+    //
+    //     🔴 Mệnh đề này THỪA — nó được SUY RA từ ba chốt khác, và không gánh tải nào.
+    //     Chứng minh, đếm token dưới `own_hash` ở hai vế:
+    //       · cổng định danh phía input (trên) ⟹ mỗi input@engage mang ĐÚNG 1 token, qty 1
+    //         ⟹ tổng qty dưới own_hash ở vế vào = n_in;
+    //       · vòng (A) trong `enforce_engagement` ⟹ mỗi output@engage mang ĐÚNG 1 token,
+    //         qty 1 ⟹ tổng qty ở vế ra = n_out;
+    //       · (3) `engage_value_preserved` ép TOÀN BỘ value vào == ra ⟹ hai tổng bằng nhau.
+    //     ⟹ n_in == n_out. Đo bằng đột biến 2026-09-25 (nền 192/192): gỡ riêng dòng này
+    //     → 0 bài lật. Đó là ĐỘT BIẾN TƯƠNG ĐƯƠNG — không có bài nào giết được nó, nên
+    //     "sống sót" ở đây KHÔNG phải một lỗ của bộ kiểm.
+    //     Bản trước của chú thích này gọi nó là "vế chứng minh song ánh". Sai hướng: song
+    //     ánh đứng trên (A) + (3) + phép ghép theo TÊN ở (4). Giữ dòng này làm phòng thủ
+    //     chiều sâu, chi phí hai lượt duyệt danh sách. Ai định gỡ một trong ba chốt kia
+    //     thì phải biết dòng này KHÔNG thay được chốt đó — nó chỉ là hệ quả của chúng.
     let n_in = util.count_inputs_at_script(tx.inputs, own_hash)
     let n_out = util.count_outputs_at_script(tx.outputs, own_hash)
     expect n_in == n_out
@@ -2264,7 +2278,11 @@ test consume_fake_engage_input_no_nft_fail() fail {
 // ĐO EX-UNIT KỊCH BẢN XẤU NHẤT trên đường `consume` THẬT
 //   bảng giá ĐẦY (max_op_prices = 16 dòng) × 2 Engage input × 1 vault.
 //   Số đo dán trong báo cáo; đây là mốc hồi quy để lần sau đổi cấu trúc dữ liệu
-//   còn có cái mà so. Trần tx Cardano: 14 M mem / 10 G cpu.
+//   còn có cái mà so. Trần tx Cardano KHÁC NHAU theo mạng — so với MAINNET, trần chặt
+//   hơn: `maxTxExecutionUnits` mainnet 16,5 M mem / 10 G cpu, Preprod 17,5 M mem
+//   (đo 2026-09-25, Koios `cli_protocol_params` của từng mạng). Bản trước ghi "14 M
+//   mem" — số của đời tham số cũ, sai với cả hai mạng. Đừng chép số Preprod làm trần:
+//   một tx vừa khít 17 M chạy được trên Preprod và chết trên mainnet.
 // ══════════════════════════════════════════════════════════════
 
 /// Bảng giá n dòng, op_type TĂNG NGẶT 1..n (dạng chuẩn tắc bắt buộc sau VÁ #C).

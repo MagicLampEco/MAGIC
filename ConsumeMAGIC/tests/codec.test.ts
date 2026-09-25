@@ -12,6 +12,8 @@ import {
   encodeEngageDatum, decodeEngageDatum, encodePriceParam, decodePriceParam,
   encodeConsumeRedeemer, encodeEngageMintRedeemer, decodeEngageMintRedeemer,
   encodeBindDidRedeemer, CONSUME_REDEEMER_CONSTR, BIND_DID_REDEEMER_CONSTR,
+  encodeCloseThreadRedeemer, CLOSE_THREAD_REDEEMER_CONSTR,
+  encodeBurnEngageRedeemer, MINT_ENGAGE_REDEEMER_CONSTR, BURN_ENGAGE_REDEEMER_CONSTR,
   type EngageDatumT, type PriceParamT, type EngageMintRedeemerT,
 } from "../offchain/src/types.js";
 
@@ -26,12 +28,13 @@ const engage: EngageDatumT = {
   consumed_nanogic: 0n,
 };
 
+// CC-LOAD-COUNT-UNIT (2026-09-25): `demand_mult` nay là trường THỨ BA của MỖI DÒNG
+// `OpPrice`, không còn một trường rời ở mức `PriceParam`.
 const pp: PriceParamT = {
   op_prices: [
-    { op_type: 1n, base_price: 10_000_000n },
-    { op_type: 2n, base_price: 1_000_000n },
+    { op_type: 1n, base_price: 10_000_000n, demand_mult: 1_000_000_000n },
+    { op_type: 2n, base_price: 1_000_000n, demand_mult: 1_000_000_000n },
   ],
-  demand_mult: 1_000_000_000n,
   m_min: 500_000_000n,
   m_max: 2_000_000_000n,
   epoch: 6n,
@@ -123,17 +126,24 @@ describe("EngageMintRedeemer codec (MintEngage { seed } — Constr 0 [ Constr 0 
   });
 });
 
-describe("PriceParam codec (constr 0: op_prices, demand_mult, m_min, m_max, epoch)", () => {
+describe("PriceParam codec (constr 0: op_prices, m_min, m_max, epoch)", () => {
   it("round-trips byte-perfect", () => {
     const cbor = encodePriceParam(pp);
     expect(decodePriceParam(cbor)).toEqual(pp);
   });
 
-  it("preserves op_prices order + field order", () => {
+  it("preserves op_prices order + field order (demand_mult nay ở TỪNG DÒNG)", () => {
     const d = decodePriceParam(encodePriceParam(pp));
-    expect(d.op_prices[0]).toEqual({ op_type: 1n, base_price: 10_000_000n });
-    expect(d.op_prices[1]).toEqual({ op_type: 2n, base_price: 1_000_000n });
-    expect(d.demand_mult).toBe(1_000_000_000n);
+    expect(d.op_prices[0]).toEqual({
+      op_type: 1n,
+      base_price: 10_000_000n,
+      demand_mult: 1_000_000_000n,
+    });
+    expect(d.op_prices[1]).toEqual({
+      op_type: 2n,
+      base_price: 1_000_000n,
+      demand_mult: 1_000_000_000n,
+    });
     expect(d.m_min).toBe(500_000_000n);
     expect(d.m_max).toBe(2_000_000_000n);
     expect(d.epoch).toBe(6n);
@@ -201,6 +211,36 @@ describe("ConsumeRedeemer enum — chỉ số constructor là HỢP ĐỒNG NH�
     expect(encodeBindDidRedeemer()).not.toBe(consumeCbor);
     expect(consumeCbor.startsWith("d879")).toBe(true); // Constr 0
     expect(encodeBindDidRedeemer().startsWith("d87a")).toBe(true); // Constr 1
+  });
+
+  // Gương của `redeemer_constr_index_pinned` (consume.ak): CloseThread ở constr 2, không field.
+  it("CloseThread ở constr 2, KHÔNG field, bytes == d87b80", () => {
+    const raw = Data.from(encodeCloseThreadRedeemer()) as { index: number; fields: unknown[] };
+    expect(raw.index).toBe(CLOSE_THREAD_REDEEMER_CONSTR);
+    expect(raw.index).toBe(2);
+    expect(raw.fields).toHaveLength(0);
+    // Constr 2 → CBOR tag 123 = 0xd87b; danh sách rỗng = 0x80.
+    expect(encodeCloseThreadRedeemer()).toBe("d87b80");
+    expect(encodeCloseThreadRedeemer()).not.toBe(encodeBindDidRedeemer());
+  });
+});
+
+// Gương của `mint_redeemer_constr_index_pinned` (consume.ak).
+describe("EngageMintRedeemer: MintEngage constr 0 · BurnEngage constr 1", () => {
+  it("MintEngage mã hoá ở constr 0, một field", () => {
+    const cbor = encodeEngageMintRedeemer({ seed: { transaction_id: "aa", output_index: 0n } });
+    const raw = Data.from(cbor) as { index: number; fields: unknown[] };
+    expect(raw.index).toBe(MINT_ENGAGE_REDEEMER_CONSTR);
+    expect(raw.index).toBe(0);
+    expect(raw.fields).toHaveLength(1);
+  });
+
+  it("BurnEngage ở constr 1, KHÔNG field, bytes == d87a80", () => {
+    const raw = Data.from(encodeBurnEngageRedeemer()) as { index: number; fields: unknown[] };
+    expect(raw.index).toBe(BURN_ENGAGE_REDEEMER_CONSTR);
+    expect(raw.index).toBe(1);
+    expect(raw.fields).toHaveLength(0);
+    expect(encodeBurnEngageRedeemer()).toBe("d87a80");
   });
 });
 

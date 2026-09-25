@@ -70,8 +70,8 @@ use cardano/transaction.{
 }
 use magiclamp/consume/pricing
 use magiclamp/consume/types.{
-  BindDID, Consume, ConsumeRedeemer, EngageDatum, EngageMintRedeemer, MintEngage,
-  OpPrice, PriceParam,
+  BindDID, BurnEngage, CloseThread, Consume, ConsumeRedeemer, EngageDatum,
+  EngageMintRedeemer, MintEngage, OpPrice, PriceParam,
 }
 use magiclamp/consume/util
 
@@ -91,8 +91,11 @@ validator consume(
   /// `owner` tuỳ ý — bất biến delta ở spend (Σng(out) == Σng(in) + total_required)
   /// chỉ khoá PHẦN TĂNG, KHÔNG khoá GỐC.
   mint(redeemer: EngageMintRedeemer, policy_id: PolicyId, tx: Transaction) {
-    let MintEngage { seed } = redeemer
-    validate_mint_engage_id(seed, policy_id, tx)
+    when redeemer is {
+      MintEngage { seed } -> validate_mint_engage_id(seed, policy_id, tx)
+      // Đường ĐỐT thread NFT (đóng thread). Quyền nằm ở nhánh spend CloseThread.
+      BurnEngage -> validate_burn_engage(policy_id, tx)
+    }
   }
 
   spend(
@@ -115,6 +118,8 @@ validator consume(
         )
       // Gắn PersonDID vào thread. Đường RIÊNG, không đụng giá / vault / epoch.
       BindDID -> validate_bind_did(tx, own_hash, in_datum)
+      // Đóng thread, lấy lại min-ADA. Không đọc giá, không đụng vault.
+      CloseThread -> validate_close_thread(tx, own_hash, own_ref, in_datum)
     }
   }
 
@@ -439,6 +444,114 @@ fn validate_bind_did(
     // ── (8) và ĐÚNG KHUÔN 32 byte ─────────────────────────────────────────────
     did_len_ok(od.did_commit),
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_close_thread — ĐÓNG thread, trả lại min-ADA (redeemer constr 2)
+//
+// Chủ dự án duyệt 2026-09-25. Trước redeemer này, min-ADA của mỗi Engage UTxO bị khoá
+// VĨNH VIỄN: `Consume` và `BindDID` đều ép `#out@engage == #in@engage`, nên không nhánh
+// nào tiêu được UTxO engage mà không dựng lại một UTxO engage khác.
+//
+// HÌNH DẠNG: đóng = ĐỐT thread NFT, không phải "để lại một UTxO rỗng". Nếu chỉ cho ADA
+// đi ra mà NFT vẫn sống, thread hoá thành một cái vỏ mang định danh còn nguyên nhưng
+// không còn state — và mọi bên đọc theo NFT sẽ thấy một thread "tồn tại" mà không tra
+// được gì. Đốt NFT làm thread biến mất HẲN.
+//
+// 🔴 KHÔNG ÉP ĐÍCH CỦA ADA — có chủ ý. Người dựng tx chọn đích, và chữ ký `owner` ở (a)
+// là cái duyệt lựa chọn đó. Ép đích về một địa chỉ suy từ `owner` (vd `VerificationKey
+// (owner)`) sẽ giết mọi ví script, ví nhiều chữ ký, và mọi luồng có người trả phí hộ —
+// trong khi không thêm bảo đảm nào: người ký ĐÃ thấy toàn bộ tx trước khi ký.
+//
+// DOUBLE-SATISFACTION và ca TRỘN VỚI `Consume`:
+//   · Trộn `CloseThread` với `Consume` trong một tx thì invocation `Consume` CHẾT.
+//     Bài canh: `close_mixed_with_consume_consume_side_fail`.
+//
+//     🔴 NHƯNG NÓ KHÔNG CHẾT Ở `#in@engage == #out@engage`, và bản đầu của khối này
+//     khai sai đúng chỗ đó. Đo bằng đột biến 2026-09-25 (nền 192/192):
+//       · gỡ MỘT MÌNH `expect n_in == n_out`              → ca này VẪN ĐỎ (0 bài lật)
+//       · gỡ nó CÙNG `engage_value_preserved`             → ca này VẪN ĐỎ (1 bài lật,
+//         là `consume_duplicate_thread_name_value_sum_fail`, không phải ca này)
+//     Nên phát biểu đúng mức là *"có bài đỏ ở ca trộn"*, và thứ canh nó nằm SÂU HƠN:
+//     theo đọc mã, đó là phép ghép cặp `expect [out] = list.filter(...)` trong
+//     `enforce_engagement` (thread bị đóng không có output nào mang tên NFT của nó),
+//     rồi tới `expect Consume { .. } = find_consume_redeemer(...)` ngay dưới. CHƯA đo
+//     tách được hai chốt đó, nên đừng viết rằng chúng "đã được ghim".
+//     Ghi ra vì `n_in == n_out` là câu trả lời TRỰC GIÁC ở đây, và nó sai: ai tin nó
+//     rồi gỡ một trong hai chốt thật sẽ thấy bộ kiểm vẫn xanh.
+//   · Chiều còn lại cũng đóng, độc lập: (c) dưới đây cấm MỌI output tại địa chỉ engage
+//     mang NFT dưới `own_hash` — mà một `Consume` hợp lệ buộc phải có đúng một output
+//     như thế cho thread của nó ⇒ invocation `CloseThread` cũng CHẾT.
+//     Bài canh: `close_mixed_with_consume_close_side_fail`.
+//   · Đóng NHIỀU thread trong một tx thì hợp lệ: mỗi invocation kiểm ĐÚNG NFT của input
+//     mình (theo tên), nên không thread nào "mượn" lượt đốt của thread khác.
+//
+// KHÔNG ép `consumed_count` / `consumed_nanogic` ở trạng thái nào — có chủ ý. Đóng thread
+// là quyền của chủ thread trên hồ sơ của CHÍNH MÌNH; ràng buộc "chỉ đóng được khi chưa
+// tiêu gì" sẽ biến ADA của mọi thread đã dùng thành khoá chết, đúng thứ redeemer này sinh
+// ra để gỡ. Hệ quả tư-cách biểu quyết đã khai ở docstring `CloseThread` (`types.ak`).
+// ═══════════════════════════════════════════════════════════════
+fn validate_close_thread(
+  tx       : Transaction,
+  own_hash : ByteArray,
+  own_ref  : OutputReference,
+  in_datum : EngageDatum,
+) -> Bool {
+  // ── (a) CHỮ KÝ CỦA CHÍNH CHỦ THREAD ──────────────────────────────────────────
+  //    Vế DUY NHẤT về quyền trong cả đường đóng. Thiếu nó thì bất kỳ ai cũng đóng được
+  //    thread của người khác: xoá hồ sơ tư-cách của họ và bỏ túi min-ADA.
+  expect list.has(tx.extra_signatories, in_datum.owner)
+
+  // ── (b) ĐÚNG NFT CỦA INPUT NÀY BỊ ĐỐT (−1) ───────────────────────────────────
+  //    `thread_nft_name` fail-closed: input phải mang ĐÚNG 1 token dưới own_hash, qty 1.
+  //    Rồi ép CHÍNH tên đó xuất hiện trong `tx.mint` với lượng −1 — không phải "có một
+  //    lượt đốt nào đó", mà đúng lượt đốt của thread đang tiêu. Khác biệt này load-bearing
+  //    ở tx đóng nhiều thread: nếu chỉ hỏi "có đốt gì đó" thì N thread dùng chung MỘT
+  //    lượt đốt, N−1 NFT sống sót mà state của chúng đã biến mất.
+  expect Some(own_input) =
+    list.find(tx.inputs, fn(i) { i.output_reference == own_ref })
+  let name = thread_nft_name(own_input.output.value, own_hash)
+  expect assets.quantity_of(tx.mint, own_hash, name) == -1
+
+  // ── (c) KHÔNG output nào ở địa chỉ engage còn mang NFT dưới own_hash ──────────
+  //    Phòng thủ chiều sâu: (b) + bảo toàn value của ledger đã bảo đảm NFT vừa đốt
+  //    không nằm ở output nào. Mệnh đề này mạnh hơn — nó cấm luôn MỌI NFT khác dưới
+  //    own_hash đỗ lại địa chỉ engage trong tx đóng, nên nó là vế đóng chiều còn lại
+  //    của ca trộn với `Consume` (xem khối trên) mà không phải đọc redeemer của ai.
+  list.all(
+    tx.outputs,
+    fn(o) {
+      if util.is_at_script(o.address, own_hash) {
+        assets.tokens(o.value, own_hash) |> dict.is_empty
+      } else {
+        True
+      }
+    },
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// validate_burn_engage — handler MINT cho đường ĐỐT (redeemer constr 1)
+//
+// Vế DUY NHẤT: mọi lượng dưới policy này trong `tx.mint` đều ÂM. Không kiểm quyền —
+// quyền do nhánh spend `CloseThread` giữ, và nó giữ được vì thread NFT chỉ sống ở địa
+// chỉ script engage: đốt nó buộc phải tiêu UTxO đó, tức buộc phải chạy `CloseThread`.
+//
+// `expect !list.is_empty(...)` là vế fail-closed, không phải vế trang trí: một tx khai
+// `BurnEngage` mà KHÔNG đốt gì dưới policy này sẽ thoả `list.all` trên list rỗng (chân
+// lý rỗng) và PASS. Nó vô hại hôm nay, nhưng nó là một redeemer luôn-đúng — và một
+// redeemer luôn-đúng là thứ mọi ràng buộc thêm vào sau sẽ vô tình đi vòng qua.
+// ═══════════════════════════════════════════════════════════════
+fn validate_burn_engage(policy_id: PolicyId, tx: Transaction) -> Bool {
+  let own_tokens = assets.tokens(tx.mint, policy_id) |> dict.to_pairs
+  expect !list.is_empty(own_tokens)
+  list.all(
+    own_tokens,
+    fn(p) {
+      let Pair(_name, qty) = p
+      qty < 0
+    },
+  )
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -892,10 +1005,10 @@ fn ct_price_ref() -> OutputReference {
 fn ct_pp(epoch: Int) -> PriceParam {
   PriceParam {
     op_prices: [
-      OpPrice { op_type: 1, base_price: 10_000_000 },  // ảnh 0.01 MAGIC
-      OpPrice { op_type: 2, base_price: 1_000_000 },    // CID 0.001 MAGIC
+      // demand 1.0× ở cả hai dòng → price ảnh = 10_000_000
+      OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: 1_000_000_000 },  // ảnh 0.01 MAGIC
+      OpPrice { op_type: 2, base_price: 1_000_000, demand_mult: 1_000_000_000 },    // CID 0.001 MAGIC
     ],
-    demand_mult: 1_000_000_000,   // 1.0× → price ảnh = 10_000_000
     m_min: 500_000_000,
     m_max: 2_000_000_000,
     epoch: epoch,
@@ -1330,8 +1443,7 @@ test consume_fake_beacon_no_nft_fail() fail {
 test consume_negative_base_price_fail() fail {
   let bad_pp =
     PriceParam {
-      op_prices: [OpPrice { op_type: 1, base_price: 10_000_000 }, OpPrice { op_type: 2, base_price: -1 }],
-      demand_mult: 1_000_000_000, m_min: 500_000_000, m_max: 2_000_000_000, epoch: 6,
+      op_prices: [OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: 1_000_000_000 }, OpPrice { op_type: 2, base_price: -1, demand_mult: 1_000_000_000 }], m_min: 500_000_000, m_max: 2_000_000_000, epoch: 6,
     }
   let eng = ct_engage_input(0, 10)
   let vault = ct_vault_input(0)
@@ -2160,14 +2272,16 @@ fn ct_ops(n: Int) -> List<OpPrice> {
   if n <= 0 {
     []
   } else {
-    list.concat(ct_ops(n - 1), [OpPrice { op_type: n, base_price: 10_000_000 }])
+    list.concat(
+      ct_ops(n - 1),
+      [OpPrice { op_type: n, base_price: 10_000_000, demand_mult: 1_000_000_000 }],
+    )
   }
 }
 
 fn ct_pp_full(epoch: Int) -> PriceParam {
   PriceParam {
     op_prices: ct_ops(pricing.max_op_prices),
-    demand_mult: 1_000_000_000,
     m_min: 500_000_000,
     m_max: 2_000_000_000,
     epoch: epoch,
@@ -2556,20 +2670,39 @@ test bind_did_output_bad_datum_fail() fail {
 
 // ══════════════════════════════════════════════════════════════
 // CHỈ SỐ CONSTRUCTOR = HỢP ĐỒNG NHỊ PHÂN
-//   `Consume` phải ở constr 0 (đã lên chuỗi), `BindDID` ở constr 1 (thêm ở CUỐI).
-//   Đảo thứ tự / chèn giữa là đổi cách decode ⇒ mọi tx dựng theo chỉ số cũ vỡ.
-//   Gương off-chain: `tests/codec.test.ts` ghim đúng hai số này.
+//   `Consume` phải ở constr 0 (đã lên chuỗi), `BindDID` ở constr 1, `CloseThread` ở
+//   constr 2 (mỗi cái thêm ở CUỐI). Đảo thứ tự / chèn giữa là đổi cách decode ⇒ mọi tx
+//   dựng theo chỉ số cũ vỡ. Gương off-chain: `tests/codec.test.ts` ghim đúng ba số này.
 // ══════════════════════════════════════════════════════════════
 test redeemer_constr_index_pinned() {
   let consume_d: Data = rd_as_data(ct_consume_redeemer(1, 1, util.mk_ref(0)))
   let Pair(ix_consume, fields_consume) = builtin.un_constr_data(consume_d)
   let bind_d: Data = rd_as_data(BindDID)
   let Pair(ix_bind, fields_bind) = builtin.un_constr_data(bind_d)
+  let close_d: Data = rd_as_data(CloseThread)
+  let Pair(ix_close, fields_close) = builtin.un_constr_data(close_d)
   and {
     ix_consume == 0,
     list.length(fields_consume) == 4,
     ix_bind == 1,
     list.length(fields_bind) == 0,
+    ix_close == 2,
+    list.length(fields_close) == 0,
+  }
+}
+
+// ── Chỉ số constructor của redeemer MINT (EngageMintRedeemer) ─────────────────
+//    `MintEngage` constr 0 (đã lên chuỗi), `BurnEngage` constr 1 (thêm ở CUỐI).
+test mint_redeemer_constr_index_pinned() {
+  let mint_d: Data = MintEngage { seed: ct_seed() }
+  let Pair(ix_mint, fields_mint) = builtin.un_constr_data(mint_d)
+  let burn_d: Data = BurnEngage
+  let Pair(ix_burn, fields_burn) = builtin.un_constr_data(burn_d)
+  and {
+    ix_mint == 0,
+    list.length(fields_mint) == 1,
+    ix_burn == 1,
+    list.length(fields_burn) == 0,
   }
 }
 
@@ -3269,5 +3402,268 @@ test consume_second_engage_uses_other_price_ref_fail() fail {
     pp, 1, 6, [e0, e1], [vault],
     [ct_cont_output(11, 6, 1), ct_cont_output_b(11, 6, 1)],
     reds, rd0, er0, ct_in_datum,
+  )
+}
+
+// ══════════════════════════════════════════════════════════════
+// ĐÓNG THREAD — `CloseThread` (spend) + `BurnEngage` (mint)
+//   Chủ dự án duyệt 2026-09-25. Mỗi chốt một CẶP dương/âm; ca dương một mình không
+//   chứng minh được chốt nào (nó xanh được vì lý do rỗng).
+// ══════════════════════════════════════════════════════════════
+
+/// Đích của min-ADA thu hồi. Validator CỐ Ý không ép địa chỉ này — fixture chỉ dựng
+/// một đích hợp lý để tx có hình dạng thật.
+fn ct_close_payout() -> Output {
+  util.mk_output_no_datum(util.vk_address(ct_owner), assets.from_lovelace(2_000_000))
+}
+
+fn run_close(
+  inputs   : List<Input>,
+  mint_v   : Value,
+  outputs  : List<Output>,
+  sigs     : List<ByteArray>,
+  own_ref  : OutputReference,
+  in_datum : EngageDatum,
+) -> Bool {
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: inputs,
+      mint: mint_v,
+      outputs: outputs,
+      extra_signatories: sigs,
+    }
+  consume.spend(
+    ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
+    ct_mspe, ct_price_param_sh, Some(in_datum), CloseThread, own_ref, tx,
+  )
+}
+
+/// Handler MINT với redeemer `BurnEngage` (policy_id == script hash engage).
+fn run_burn(mint_v: Value) -> Bool {
+  let tx = Transaction { ..placeholder, mint: mint_v }
+  consume.mint(
+    ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
+    ct_mspe, ct_price_param_sh, BurnEngage, ct_eng_sh, tx,
+  )
+}
+
+// ── DƯƠNG: chủ ký, NFT của chính thread bị đốt −1, không output nào ở engage ───
+test close_thread_happy() {
+  run_close(
+    [ct_engage_input(0, 10)],
+    assets.from_asset(ct_eng_sh, ct_thread_name, -1),
+    [ct_close_payout()],
+    [ct_owner],
+    util.mk_ref_id(#"e1", 0),
+    ct_in_datum,
+  )
+}
+
+// ── DƯƠNG: thread ĐÃ TIÊU vẫn đóng được (không ép consumed_* ở trạng thái nào) ──
+//    Chốt này là một QUYẾT ĐỊNH, không phải chỗ hở: ràng buộc "chỉ đóng khi chưa tiêu"
+//    sẽ khoá chết min-ADA của đúng những thread đã dùng — thứ redeemer này sinh ra để gỡ.
+//    Ca này là bài canh cho quyết định đó: ai siết thêm sẽ thấy nó đỏ.
+test close_thread_with_history_happy() {
+  let used =
+    EngageDatum { ..ct_in_datum, consumed_count: 99, consumed_nanogic: 990_000_000 }
+  run_close(
+    [ct_engage_input(0, 99)],
+    assets.from_asset(ct_eng_sh, ct_thread_name, -1),
+    [ct_close_payout()],
+    [ct_owner],
+    util.mk_ref_id(#"e1", 0),
+    used,
+  )
+}
+
+// ── ÂM (a): THIẾU chữ ký chủ thread ───────────────────────────────────────────
+//    Không có vế này thì ai cũng đóng được thread của người khác: xoá hồ sơ tư-cách
+//    của họ và bỏ túi min-ADA.
+test close_thread_no_owner_signature_fail() fail {
+  run_close(
+    [ct_engage_input(0, 10)],
+    assets.from_asset(ct_eng_sh, ct_thread_name, -1),
+    [ct_close_payout()],
+    [],
+    util.mk_ref_id(#"e1", 0),
+    ct_in_datum,
+  )
+}
+
+// ── ÂM (a-bis): chữ ký của NGƯỜI KHÁC, không phải chủ thread ──────────────────
+//    Phân biệt "có ai đó ký" với "ĐÚNG chủ ký" — hai chốt khác nhau, ca trên không
+//    phân biệt được.
+test close_thread_signed_by_stranger_fail() fail {
+  run_close(
+    [ct_engage_input(0, 10)],
+    assets.from_asset(ct_eng_sh, ct_thread_name, -1),
+    [ct_close_payout()],
+    [#"deadbeef"],
+    util.mk_ref_id(#"e1", 0),
+    ct_in_datum,
+  )
+}
+
+// ── ÂM (b): NFT KHÔNG bị đốt — ADA đi ra, thread vẫn sống ─────────────────────
+//    Đây là ca đắt nhất nếu lọt: min-ADA rời UTxO trong khi thread NFT còn nguyên ⇒
+//    một UTxO engage dưới min-ADA, không tiêu lại được bằng nhánh nào ⇒ thread chết
+//    mà không ai biết. Chốt (b) là thứ ép "đóng" nghĩa là BIẾN MẤT, không phải "rút ruột".
+test close_thread_nft_not_burned_fail() fail {
+  run_close(
+    [ct_engage_input(0, 10)],
+    assets.zero,
+    [ct_close_payout()],
+    [ct_owner],
+    util.mk_ref_id(#"e1", 0),
+    ct_in_datum,
+  )
+}
+
+// ── ÂM (b-bis): đốt SAI TÊN — mượn lượt đốt của thread khác ───────────────────
+//    Vế "có một lượt đốt nào đó" sẽ cho ca này qua. Trên tx đóng nhiều thread, đó là
+//    N thread dùng chung MỘT lượt đốt: N−1 NFT sống sót mà state đã biến mất.
+test close_thread_burns_wrong_name_fail() fail {
+  run_close(
+    [ct_engage_input(0, 10)],
+    assets.from_asset(ct_eng_sh, ct_thread_name_b, -1),
+    [ct_close_payout()],
+    [ct_owner],
+    util.mk_ref_id(#"e1", 0),
+    ct_in_datum,
+  )
+}
+
+// ── ÂM (b-ter): lượng đốt KHÔNG phải −1 ───────────────────────────────────────
+test close_thread_burn_qty_not_minus_one_fail() fail {
+  run_close(
+    [ct_engage_input(0, 10)],
+    assets.from_asset(ct_eng_sh, ct_thread_name, -2),
+    [ct_close_payout()],
+    [ct_owner],
+    util.mk_ref_id(#"e1", 0),
+    ct_in_datum,
+  )
+}
+
+// ── ÂM (c): còn một output ở địa chỉ engage mang NFT dưới own_hash ────────────
+//    Hình dạng THẬT: đóng thread A trong khi thread B được dựng lại ở địa chỉ engage.
+//    Chốt (c) cấm mọi NFT dưới own_hash đỗ lại địa chỉ engage trong một tx đóng.
+test close_thread_output_keeps_nft_at_engage_fail() fail {
+  run_close(
+    [ct_engage_input(0, 10), ct_engage_input_b(1, 10)],
+    assets.from_asset(ct_eng_sh, ct_thread_name, -1),
+    [ct_cont_output_b(10, 0, 1), ct_close_payout()],
+    [ct_owner],
+    util.mk_ref_id(#"e1", 0),
+    ct_in_datum,
+  )
+}
+
+// ── DƯƠNG (c): đóng HAI thread cùng lúc vẫn hợp lệ ───────────────────────────
+//    Cặp đối của ca trên: (c) cấm NFT ĐỖ LẠI, không cấm nhiều thread cùng đóng. Mỗi
+//    invocation kiểm ĐÚNG NFT của input mình theo TÊN, nên không ai mượn lượt đốt của ai.
+test close_two_threads_happy() {
+  let mint_v =
+    assets.from_asset(ct_eng_sh, ct_thread_name, -1)
+      |> assets.add(ct_eng_sh, ct_thread_name_b, -1)
+  run_close(
+    [ct_engage_input(0, 10), ct_engage_input_b(1, 10)],
+    mint_v,
+    [ct_close_payout()],
+    [ct_owner],
+    util.mk_ref_id(#"e1", 1),
+    ct_in_datum,
+  )
+}
+
+// ══════════════════════════════════════════════════════════════
+// `BurnEngage` — handler MINT
+// ══════════════════════════════════════════════════════════════
+
+// ── DƯƠNG: chỉ đốt ───────────────────────────────────────────────────────────
+test burn_engage_happy() {
+  run_burn(assets.from_asset(ct_eng_sh, ct_thread_name, -1))
+}
+
+// ── ÂM: lượng DƯƠNG dưới policy này → TỪ CHỐI ────────────────────────────────
+//    `BurnEngage` mà đúc được là một đường đúc thread bỏ qua TOÀN BỘ cổng genesis
+//    (`validate_mint_engage_id`): datum bịa, owner tuỳ ý, không cần seed.
+test burn_engage_positive_qty_fail() fail {
+  run_burn(assets.from_asset(ct_eng_sh, ct_thread_name, 1))
+}
+
+// ── ÂM: TRỘN đốt một cái, đúc một cái trong cùng tx ──────────────────────────
+//    Đây là đường "đổi tên thread": NFT cũ chết, NFT mới sinh ra mà không qua cổng
+//    genesis nào. `list.all(... qty < 0)` là vế chặn nó.
+test burn_engage_mixed_mint_and_burn_fail() fail {
+  let mint_v =
+    assets.from_asset(ct_eng_sh, ct_thread_name, -1)
+      |> assets.add(ct_eng_sh, ct_thread_name_b, 1)
+  run_burn(mint_v)
+}
+
+// ── ÂM: `BurnEngage` mà KHÔNG đốt gì dưới policy này ─────────────────────────
+//    `list.all` trên list rỗng là chân lý rỗng ⇒ redeemer luôn-đúng. Vế
+//    `!list.is_empty` chặn đúng chỗ đó.
+test burn_engage_empty_mint_fail() fail {
+  run_burn(assets.from_asset(#"0a0a", #"544f4b", 5))
+}
+
+// ══════════════════════════════════════════════════════════════
+// TRỘN `CloseThread` với `Consume` trong MỘT tx → TỪ CHỐI ở CẢ HAI nhánh
+// ══════════════════════════════════════════════════════════════
+
+/// tx trộn: thread A đóng (NFT bị đốt, không có output), thread B đang Consume.
+fn ct_mixed_close_consume_tx() -> Transaction {
+  let pp = ct_pp(6)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let er_close = util.mk_ref_id(#"e1", 0)
+  let er_cons = util.mk_ref_id(#"e1", 1)
+  let rd_cons = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  Transaction {
+    ..placeholder,
+    inputs: [ct_engage_input(0, 10), ct_engage_input_b(1, 10), ct_vault_input(0)],
+    reference_inputs: [ct_beacon_ref(pp, 1)],
+    outputs: [ct_cont_output_b(11, 6, 1), ct_close_payout()],
+    mint: assets.from_asset(ct_eng_sh, ct_thread_name, -1),
+    redeemers: [
+      Pair(Spend(er_close), rd_as_data(CloseThread)),
+      Pair(Spend(er_cons), rd_as_data(rd_cons)),
+      Pair(Spend(vault_ref), burn_rd),
+    ],
+    extra_signatories: [ct_owner],
+    validity_range: interval.between(6 * ct_mspe, 6 * ct_mspe + 1),
+  }
+}
+
+// ── ÂM, phía Consume ────────────────────────────────────────────────────────
+//    Thread A đóng ⇒ mất output của nó ⇒ n_in = 2, n_out = 1.
+//
+//    🔴 ĐỪNG GHI CA NÀY LÀ "BÀI CANH CHO `n_in == n_out`". Đo bằng đột biến
+//    2026-09-25 (nền 192/192): gỡ `expect n_in == n_out` một mình → ca này VẪN ĐỎ;
+//    gỡ nó cùng `engage_value_preserved` → vẫn đỏ. Thứ canh nó nằm sâu hơn (phép ghép
+//    cặp trong `enforce_engagement`), và chưa ai đo tách được chốt đó. Xem khối
+//    docstring của `validate_close_thread` để biết mức phát biểu đúng.
+test close_mixed_with_consume_consume_side_fail() fail {
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  consume.spend(
+    ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
+    ct_mspe, ct_price_param_sh, Some(ct_in_datum),
+    ct_consume_redeemer(1, 1, vault_ref), util.mk_ref_id(#"e1", 1),
+    ct_mixed_close_consume_tx(),
+  )
+}
+
+// ── ÂM, phía CloseThread: chốt (c) ──────────────────────────────────────────
+//    Chiều còn lại, ĐỘC LẬP với chốt trên: output của thread B mang NFT dưới own_hash
+//    ⇒ (c) nổ. Hai chiều cùng đóng nghĩa là gỡ một chốt thì chốt kia vẫn bắt — nên
+//    đừng đọc cặp này thành "đã ghim hai lần cùng một thứ".
+test close_mixed_with_consume_close_side_fail() fail {
+  consume.spend(
+    ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
+    ct_mspe, ct_price_param_sh, Some(ct_in_datum), CloseThread,
+    util.mk_ref_id(#"e1", 0), ct_mixed_close_consume_tx(),
   )
 }

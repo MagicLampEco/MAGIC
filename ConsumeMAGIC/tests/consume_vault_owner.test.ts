@@ -24,9 +24,9 @@ const OWNER_VAULT  = "de".repeat(28);
 // Bảng giá hợp lệ tối thiểu (mirror `valid_param`): op_type tăng ngặt, m_min/m_max pin,
 // base_price × m_min ≥ Q. Beacon phải qua `assertValidPriceParam` TRƯỚC cổng đang đo,
 // nếu không ca sẽ chết sớm và không đo gì.
+// CC-LOAD-COUNT-UNIT (2026-09-25): `demand_mult` nay là trường THỨ BA của MỖI DÒNG.
 const priceDatum = encodePriceParam({
-  op_prices: [{ op_type: 1n, base_price: 10_000_000n }],
-  demand_mult: 1_000_000_000n,
+  op_prices: [{ op_type: 1n, base_price: 10_000_000n, demand_mult: 1_000_000_000n }],
   m_min: 500_000_000n,
   m_max: 2_000_000_000n,
   epoch: 0n,

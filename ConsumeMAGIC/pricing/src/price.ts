@@ -38,8 +38,27 @@ export const OP_CID = 2; //   anchor 1 CID         → 0.001 MAGIC
 export const OP_RECOGNITION_STORAGE = 3; // one storage event  → 1 MAGIC
 export const OP_RECOGNITION_COMPUTE = 4; // one compute event  → 1 MAGIC
 
-/** Immutable readonly base-price map keyed by op_type → nanogic. */
-export type BasePriceTable = Readonly<Record<number, bigint>>;
+/**
+ * Một dòng giá — gương của `OpPrice` on-chain (`consume/types.ak`), BigInt cả ba
+ * trường. `demand_mult` scale Q.
+ */
+export interface PriceRow {
+  base_price: bigint;
+  demand_mult: bigint;
+}
+
+/**
+ * Bảng giá keyed by op_type → dòng giá.
+ *
+ * 🔴 ĐỔI HÌNH DẠNG 2026-09-25 (`CC-LOAD-COUNT-UNIT`): trước đây là
+ * `Record<number, bigint>` (chỉ base_price) và `demand_mult` đi vào các hàm định giá
+ * như một THAM SỐ RỜI. Hình dạng đó nay không dựng lại được, và đó là chủ ý: với hệ
+ * số tách theo `op_type`, một tham số `demandMultQ` rời cho phép người gọi ghép một
+ * hệ số của mã này với bảng giá của mã kia, im lặng, và ra một con số hợp lệ. Kiểu dữ
+ * liệu là chỗ rẻ nhất để đóng đường đó — người gọi cũ sẽ vỡ ở tầng kiểu, không vỡ ở
+ * tầng số tiền.
+ */
+export type PriceTable = Readonly<Record<number, PriceRow>>;
 
 /**
  * MVP base-price table — **KHÔNG phải nguồn có thẩm quyền, và KHÔNG nằm trên đường tiền.**
@@ -58,12 +77,17 @@ export type BasePriceTable = Readonly<Record<number, bigint>>;
  *
  * Đơn vị: nanogic (1 MAGIC = 1e9). `base_price` là governance param on-chain do DAO chốt;
  * số ở đây là giá TẠM cho tới lượt chốt đó.
+ *
+ * `demand_mult` ở đây để 1.0× cho mọi dòng: bảng này là giá DANH NGHĨA ngoại tuyến,
+ * không phải trạng thái tải của một cụm nào. Hệ số thật đọc từ beacon.
+ * (Tên cũ `MVP_BASE_PRICE` đã đổi cùng lượt — cái tên ấy nay nói sai, vì mỗi dòng
+ * mang cả hệ số chứ không chỉ mang giá gốc.)
  */
-export const MVP_BASE_PRICE: BasePriceTable = Object.freeze({
-  [OP_IMAGE]: 10_000_000n, //             0.01  MAGIC
-  [OP_CID]: 1_000_000n, //                0.001 MAGIC
-  [OP_RECOGNITION_STORAGE]: 1_000_000_000n, // 1 MAGIC — MỘT LẦN lưu, không phải MB
-  [OP_RECOGNITION_COMPUTE]: 1_000_000_000n, // 1 MAGIC — MỘT LẦN tính, không phải MB
+export const MVP_PRICE_TABLE: PriceTable = Object.freeze({
+  [OP_IMAGE]: { base_price: 10_000_000n, demand_mult: Q }, //             0.01  MAGIC
+  [OP_CID]: { base_price: 1_000_000n, demand_mult: Q }, //                0.001 MAGIC
+  [OP_RECOGNITION_STORAGE]: { base_price: 1_000_000_000n, demand_mult: Q }, // 1 MAGIC — MỘT LẦN lưu, không phải MB
+  [OP_RECOGNITION_COMPUTE]: { base_price: 1_000_000_000n, demand_mult: Q }, // 1 MAGIC — MỘT LẦN tính, không phải MB
 });
 
 // ── load_raw → demand history → SMA → clamp (FIR) ─────────────────────────────
@@ -142,22 +166,23 @@ export function demandMult(
  * (SPEC §7.4 C-CM-2). Over-burn bị từ chối y như under-burn — bản cũ của bình luận
  * này ghi `magic_burned ≥ required`, thuộc mô hình token-mint đã chết.
  *
- * @param opType         op_type key into the base-price table.
- * @param demandMultQ    demand multiplier in Q-format (output of demandMult).
- * @param basePriceTable governance base-price map (nanogic per op).
+ * `demand_mult` đọc từ CHÍNH DÒNG (`CC-LOAD-COUNT-UNIT`), không còn là tham số rời —
+ * gương của on-chain `pricing.price_of(pp, op_type)`, vốn cũng chỉ nhận beacon + mã.
+ *
+ * @param opType     op_type key into the price table.
+ * @param priceTable governance price table (base_price + demand_mult per op).
  * @returns price in nanogic for ONE op of this type.
  * @throws  if op_type is absent from the table (unknown op = no authoritative price).
  */
 export function pricePerOp(
   opType: number,
-  demandMultQ: bigint,
-  basePriceTable: BasePriceTable = MVP_BASE_PRICE,
+  priceTable: PriceTable = MVP_PRICE_TABLE,
 ): bigint {
-  const base = basePriceTable[opType];
-  if (base === undefined) {
-    throw new Error(`PRICE-001: unknown op_type ${opType} (not in base-price table)`);
+  const row = priceTable[opType];
+  if (row === undefined) {
+    throw new Error(`PRICE-001: unknown op_type ${opType} (not in price table)`);
   }
-  return (base * demandMultQ) / Q;
+  return (row.base_price * row.demand_mult) / Q;
 }
 
 /**
@@ -179,8 +204,7 @@ export function pricePerOp(
 export function requiredForOp(
   opType: number,
   opCount: bigint,
-  demandMultQ: bigint,
-  basePriceTable: BasePriceTable = MVP_BASE_PRICE,
+  priceTable: PriceTable = MVP_PRICE_TABLE,
 ): bigint {
   if (opCount < 1n) {
     throw new Error(
@@ -188,11 +212,11 @@ export function requiredForOp(
         `\`expect op_count >= 1\`; trả 0 im lặng là fail-open trên đường tiền.`,
     );
   }
-  const base = basePriceTable[opType];
-  if (base === undefined) {
-    throw new Error(`PRICE-001: unknown op_type ${opType} (not in base-price table)`);
+  const row = priceTable[opType];
+  if (row === undefined) {
+    throw new Error(`PRICE-001: unknown op_type ${opType} (not in price table)`);
   }
-  return (base * demandMultQ * opCount) / Q;
+  return (row.base_price * row.demand_mult * opCount) / Q;
 }
 
 /**
@@ -204,12 +228,11 @@ export function requiredForOp(
  */
 export function requiredBurn(
   items: ReadonlyArray<{ opType: number; opCount: bigint }>,
-  demandMultQ: bigint,
-  basePriceTable: BasePriceTable = MVP_BASE_PRICE,
+  priceTable: PriceTable = MVP_PRICE_TABLE,
 ): bigint {
   let total = 0n;
   for (const { opType, opCount } of items) {
-    total += requiredForOp(opType, opCount, demandMultQ, basePriceTable);
+    total += requiredForOp(opType, opCount, priceTable);
   }
   return total;
 }
@@ -229,6 +252,18 @@ export function requiredBurn(
 export const MAX_OP_PRICES = 16;
 
 /**
+ * `op_type` bị ép GIÁ CỐ ĐỊNH: `demand_mult` của dòng đó PHẢI đúng bằng `Q` (1.0×).
+ * Khớp BIT với hằng Aiken `pricing.ak` ▸ `fixed_price_op_types` (P8, cùng thay đổi).
+ *
+ * Lý do đầy đủ nằm ở docstring bên Aiken — đừng chép xuống đây, một sự thật một nơi
+ * giữ. Bản rút gọn để đọc mã này: mã 7 là `did.rotate`, một THAO TÁC AN NINH. Một hệ
+ * số bám theo tải làm nó ĐẮT LÊN đúng lúc nhiều người cùng phải xoay khoá (đợt lộ
+ * khoá hàng loạt), và cái đó tự khuếch đại. Trần `m_max = 2.0×` chặn ĐỘ LỚN, không
+ * chặn CHIỀU.
+ */
+export const FIXED_PRICE_OP_TYPES: readonly bigint[] = Object.freeze([7n]);
+
+/**
  * Trần TRÊN của `base_price` — khớp `pricing.ak:max_base_price` (P8, cùng commit).
  * 10¹² nanogic = 1.000 MAGIC cho MỘT đơn vị nghiệp vụ.
  * (Hạ từ 10¹⁴ ngày 2026-09-12: ở 10¹⁴ bất biến chống-khoá-toàn-mạng KHÔNG thoả.)
@@ -242,16 +277,19 @@ export const MAX_OP_PRICES = 16;
  */
 export const MAX_BASE_PRICE = 1_000_000_000_000n;
 
-/** Một dòng bảng giá, đúng hình dạng `OpPrice` on-chain (BigInt cả hai trường). */
+/** Một dòng bảng giá, đúng hình dạng `OpPrice` on-chain (BigInt cả BA trường). */
 export interface OpPriceRow {
   op_type: bigint;
   base_price: bigint;
+  demand_mult: bigint;
 }
 
-/** Hình dạng datum `PriceParam` on-chain (cấu trúc, không phụ thuộc Lucid). */
+/**
+ * Hình dạng datum `PriceParam` on-chain (cấu trúc, không phụ thuộc Lucid) — BỐN
+ * trường. `demand_mult` đã xuống `OpPriceRow`; xem `OpPriceSchema` bên `offchain`.
+ */
 export interface PriceParamLike {
   op_prices: ReadonlyArray<OpPriceRow>;
-  demand_mult: bigint;
   m_min: bigint;
   m_max: bigint;
   epoch: bigint;
@@ -266,7 +304,13 @@ export interface PriceParamLike {
  *  - PRICE-010 `m_min`/`m_max` PIN về hằng giao thức. Check tương-đối
  *    (m_min ≤ demand ≤ m_max) KHÔNG chặn được band-escape vì demand bám theo m_max:
  *    đặt m_max khổng lồ thì giá nổ ~1e6× mà vẫn "trong band".
- *  - PRICE-011 band tương-đối (defense-in-depth, giữ dù đã pin).
+ *  - PRICE-011 band tương-đối, nay áp cho TỪNG DÒNG (`CC-LOAD-COUNT-UNIT`):
+ *    `demand_mult` đã rời mức datum xuống `OpPriceRow`, nên phép kẹp band đi xuống
+ *    theo. 🔴 Đường tắt đã LOẠI tường minh: gấp nhu cầu vào thẳng `base_price` cho ra
+ *    cùng hiệu ứng giá mà không đổi lược đồ — và nó PHÁ band, vì band chỉ kẹp
+ *    `demand_mult`, không kẹp `base_price`.
+ *  - PRICE-017 GIÁ CỐ ĐỊNH: `op_type ∈ FIXED_PRICE_OP_TYPES ⇒ demand_mult === Q`.
+ *    KHÔNG suy ra được từ PRICE-011: một hệ số 1,5× nằm gọn trong band.
  *  - PRICE-012 `epoch ≥ 0`.
  *  - PRICE-013 trần 16 dòng. `valid_param` chạy MỘT LẦN / Engage input ⇒ bảng vài
  *    nghìn dòng làm MỌI tx consume vượt ex-unit = DoS toàn cơ chế.
@@ -287,7 +331,7 @@ export interface PriceParamLike {
  * Aiken và JS chỉ đúng khi MỌI toán hạng ≥ 0 (Aiken `/` là floor, JS BigInt `/` là
  * trunc-về-0; chúng lệch nhau trên số âm).
  *
- * @throws PRICE-010..PRICE-016 (mã kèm chỉ số dòng khi lỗi thuộc về một dòng cụ thể).
+ * @throws PRICE-010..PRICE-017 (mã kèm chỉ số dòng khi lỗi thuộc về một dòng cụ thể).
  */
 export function assertValidPriceParam(pp: PriceParamLike): void {
   if (pp.m_min !== M_MIN_Q || pp.m_max !== M_MAX_Q) {
@@ -295,11 +339,6 @@ export function assertValidPriceParam(pp: PriceParamLike): void {
       `PRICE-010: m_min/m_max phải PIN đúng hằng giao thức ` +
         `(m_min=${M_MIN_Q}, m_max=${M_MAX_Q}), nhận (${pp.m_min}, ${pp.m_max}). ` +
         `Band lệch hằng = band-escape: demand bám theo m_max nên giá nổ mà vẫn "trong band".`,
-    );
-  }
-  if (pp.demand_mult < pp.m_min || pp.demand_mult > pp.m_max) {
-    throw new Error(
-      `PRICE-011: demand_mult=${pp.demand_mult} ngoài [${pp.m_min}, ${pp.m_max}]`,
     );
   }
   if (pp.epoch < 0n) {
@@ -330,6 +369,23 @@ export function assertValidPriceParam(pp: PriceParamLike): void {
           `GATE đòi base_price × m_min ≥ Q (${row.base_price} × ${pp.m_min} < ${Q}). ` +
           `Dưới GATE thì giá làm tròn về 0 ở demand thấp nhất ⇒ drain miễn phí. ` +
           `base_price ≤ 0 luôn rớt GATE này.`,
+      );
+    }
+    if (row.demand_mult < pp.m_min || row.demand_mult > pp.m_max) {
+      throw new Error(
+        `PRICE-011: dòng ${i} (op_type=${row.op_type}) có demand_mult=${row.demand_mult}, ` +
+          `ngoài band [${pp.m_min}, ${pp.m_max}]. Band là thứ DUY NHẤT chặn biên độ một ` +
+          `lượt đăng giá; bỏ nó thì chỉ còn MAX_BASE_PRICE đứng giữa một lượt đăng và một ` +
+          `mức giá gấp trăm lần.`,
+      );
+    }
+    if (FIXED_PRICE_OP_TYPES.includes(row.op_type) && row.demand_mult !== Q) {
+      throw new Error(
+        `PRICE-017: dòng ${i} có op_type=${row.op_type} thuộc FIXED_PRICE_OP_TYPES nên ` +
+          `demand_mult phải ĐÚNG BẰNG Q (${Q}), nhận ${row.demand_mult}. Đây là thao tác ` +
+          `an ninh: giá của nó không được nhúc nhích theo tải, CẢ HAI CHIỀU — rẻ đi lúc ` +
+          `tải thấp cũng là đắt lên lúc tải cao. Band [m_min, m_max] KHÔNG bắt hộ luật ` +
+          `này (${row.demand_mult} vẫn có thể nằm trong band).`,
       );
     }
     if (row.base_price > MAX_BASE_PRICE) {

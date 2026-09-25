@@ -293,14 +293,33 @@ lại phụ thuộc policy nếu policy là param ⇒ **fixed-point blake2b, kh�
 `mint` vào chính `consume` ⇒ `policy_id (mint) == script_hash == payment_credential của địa chỉ
 spend`, biết qua **TỰ THAM CHIẾU** — không param, không vòng.
 
-**Redeemer (mọi cái đều Constr 0):**
+**Redeemer.** Chỉ số constructor là hợp đồng nhị phân: variant mới chỉ THÊM Ở CUỐI. Bản trước
+của dòng này viết "mọi cái đều Constr 0", câu đó đã sai từ lúc có `BindDID`. Chỉ số được ghim
+ở `consume.ak` ▸ `redeemer_constr_index_pinned` / `mint_redeemer_constr_index_pinned` và gương
+TS ở `tests/codec.test.ts`.
 
-| Redeemer | Dạng | Chỗ dùng |
-|---|---|---|
-| `Consume` | `[op_type: Int, op_count: Int, price_ref: OutRef, vault_ref: OutRef]` | spend Engage UTxO |
-| `MintEngage` | `[seed: OutRef]` | handler `mint` của chính `consume` (genesis thread) |
-| `PostPrice` | `[]` | spend beacon PriceParam (`price_param.ak`) |
-| `MintGenesis` | `[]` | `price_nft.ak` |
+| Redeemer | Constr | Dạng | Chỗ dùng |
+|---|---|---|---|
+| `Consume` | 0 | `[op_type: Int, op_count: Int, price_ref: OutRef, vault_ref: OutRef]` | spend Engage UTxO |
+| `BindDID` | 1 | `[]` | spend Engage UTxO, ghi `did_commit` một lần |
+| `CloseThread` | 2 | `[]` | spend Engage UTxO: đóng thread, trả min-ADA |
+| `MintEngage` | 0 | `[seed: OutRef]` | handler `mint` của chính `consume` (genesis thread) |
+| `BurnEngage` | 1 | `[]` | handler `mint`: chỉ-đốt, đi cùng `CloseThread` |
+| `PostPrice` | 0 | `[]` | spend beacon PriceParam (`price_param.ak`) |
+| `MintGenesis` | 0 | `[]` | `price_nft.ak`: one-shot + datum genesis phải qua `pricing.valid_param` |
+
+**`CloseThread` (thêm 2026-09-25).** Điều kiện, neo ở `consume.ak` ▸ `validate_close_thread`:
+`owner` ký · đốt đúng tên NFT của input đang tiêu với lượng −1 · không output nào ở địa chỉ engage
+mang NFT dưới policy này. KHÔNG ép đích của min-ADA, và KHÔNG đòi `consumed_count` /
+`consumed_nanogic` ở trạng thái nào. Hệ quả phải biết: **lịch sử tiêu trên thread chỉ bền tới khi
+chủ thread đóng nó.** Lớp nào đọc `consumed_nanogic` làm đầu vào tư cách thì không được giả định
+thread tồn tại mãi. Đóng rồi mở lại thì bắt đầu từ 0 (genesis-clean), nên thao tác này chỉ HẠ
+được tư cách của chính người ký. Thread đúc dưới script cũ không có đường này.
+
+**Cổng genesis beacon (thêm 2026-09-25).** `price_nft` ép datum của output mang NFT vừa đúc decode
+được `PriceParam` và qua `valid_param`. Phạm vi: cổng ép datum HỢP LỆ, KHÔNG ép beacon nằm ở địa
+chỉ `price_param`. Thêm điều kiện địa chỉ sẽ sinh vòng apply-param. Beacon đúc sai địa chỉ thì vô
+dụng, vì `consume` chỉ đọc beacon ở địa chỉ script.
 
 **`EngageDatum` — 5 trường, THỨ TỰ này là hợp đồng codec:**
 

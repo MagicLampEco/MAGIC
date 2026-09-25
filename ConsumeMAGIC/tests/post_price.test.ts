@@ -36,12 +36,12 @@ describe("PostPrice redeemer", () => {
 const NFT = "aa".repeat(28) + "5052494345"; // policy(28B) + "PRICE"
 const MSPE_PREPROD = 432_000_000n;  // 5 ngày — nhịp Preprod, chốt 2026-09-20
 
+// CC-LOAD-COUNT-UNIT (2026-09-25): `demand_mult` nay là trường THỨ BA của MỖI DÒNG.
 const oldDatum: PriceParamT = {
   op_prices: [
-    { op_type: 1n, base_price: 10_000_000n },
-    { op_type: 2n, base_price: 1_000_000n },
+    { op_type: 1n, base_price: 10_000_000n, demand_mult: Q },
+    { op_type: 2n, base_price: 1_000_000n, demand_mult: Q },
   ],
-  demand_mult: Q,
   m_min: M_MIN_Q,
   m_max: M_MAX_Q,
   epoch: 100n,
@@ -65,7 +65,6 @@ function params(over: Record<string, unknown> = {}) {
     priceParamScript: { type: "PlutusV3", script: "aabb" },
     priceNftUnit: NFT,
     newOpPrices: oldDatum.op_prices,
-    newDemandMult: Q,
     committeeSignerKeyHashes: ["c1".repeat(14), "c2".repeat(14)],
     threshold: 2,
     network: "Preprod",
@@ -127,7 +126,9 @@ describe("cổng buildPostPriceTx", () => {
   it("POSTPRICE-007 chặn base_price làm giá sập về 0", async () => {
     // base × m_min < Q ⇒ giá một đơn vị làm tròn về 0 ⇒ rút dịch vụ miễn phí.
     await expect(
-      buildPostPriceTx(params({ newOpPrices: [{ op_type: 1n, base_price: 1n }] })),
+      buildPostPriceTx(
+        params({ newOpPrices: [{ op_type: 1n, base_price: 1n, demand_mult: Q }] }),
+      ),
     ).rejects.toThrow(/POSTPRICE-007/);
   });
 

@@ -143,7 +143,7 @@ function utxoToRef(u: UTxO): OutputReferenceT {
 // ── required (giá CÓ THẨM QUYỀN, đọc TỪ beacon datum) ─────────────────────────
 
 /**
- * required = ⌊ base_price × demand_mult × op_count / Q ⌋  (nanogic).
+ * required = ⌊ base_price[op_type] × demand_mult[op_type] × op_count / Q ⌋ (nanogic).
  *
  * FIX #3 (P8 fold-floor) + FIX #4 (price authority):
  *  - base_price đọc TỪ pp.op_prices (beacon datum) THEO op_type — KHÔNG hardcode bảng
@@ -179,7 +179,11 @@ export function requiredFromBeacon(
         `(giá có thẩm quyền phải đến từ beacon, không fallback MVP trên đường tiền)`,
     );
   }
-  return (row.base_price * pp.demand_mult * opCount) / Q;
+  // `demand_mult` đọc từ CHÍNH DÒNG vừa tra (CC-LOAD-COUNT-UNIT, 2026-09-25) — gương
+  // của on-chain `lookup_row` + `required_for`. Một lần tra, một dòng, hai trường:
+  // tra base ở đây rồi lấy hệ số ở chỗ khác là mở đường cho hai lần tra rơi vào hai
+  // dòng khác nhau.
+  return (row.base_price * row.demand_mult * opCount) / Q;
 }
 
 // ── Builder ───────────────────────────────────────────────────────────────────

@@ -48,10 +48,13 @@ export interface PostPriceParams {
   priceNftUnit: string;
   /** Bảng giá mới. `m_min`/`m_max`/`epoch` KHÔNG nhận ở đây:
    *  m_min/m_max bị validator ghim vào hằng compile-time nên builder copy từ datum cũ;
-   *  epoch do builder tính từ `tipPosixMs` (xem `newEpoch`). */
+   *  epoch do builder tính từ `tipPosixMs` (xem `newEpoch`).
+   *  `demand_mult` nay là TRƯỜNG CỦA TỪNG DÒNG (`CC-LOAD-COUNT-UNIT`, 2026-09-25):
+   *  tham số `newDemandMult` cũ đã bị GỠ, không thay bằng mặc định nào. Một giá trị
+   *  mặc định ở đây sẽ ghi đè im lặng lên hệ số của mọi dòng — đúng chỗ mà một lượt
+   *  đăng giá "chỉ đẩy epoch" vô tình reset cả bảng về 1.0×. Muốn giữ nguyên hệ số
+   *  thì chép `op_prices` của datum cũ sang, tường minh. */
   newOpPrices: ReadonlyArray<OpPriceT>;
-  /** demand_mult mới (Q-format, Q = 1e9). */
-  newDemandMult: bigint;
   /** Key hash của những thành viên committee sẽ ký tx này. PHẢI phân biệt đôi một
    *  và đủ `threshold` — mirror `util.all_distinct` + `count_sigs >= threshold`. */
   committeeSignerKeyHashes: ReadonlyArray<string>;
@@ -113,7 +116,7 @@ export async function buildPostPriceTx(
 ): Promise<PostPriceResult> {
   const {
     lucid, priceBeaconUtxo, priceParamScript, priceParamRefUtxo,
-    priceNftUnit, newOpPrices, newDemandMult,
+    priceNftUnit, newOpPrices,
     committeeSignerKeyHashes, threshold, network, tipPosixMs,
     topUpLovelace = 0n, collateralUtxo, overrideEpoch,
   } = params;
@@ -175,8 +178,11 @@ export async function buildPostPriceTx(
   // m_min/m_max copy từ datum cũ: validator ghim chúng vào hằng compile-time, nên
   // đây là hai trường builder KHÔNG được nhận từ caller.
   const newDatum: PriceParamT = {
-    op_prices: newOpPrices.map((r) => ({ op_type: r.op_type, base_price: r.base_price })),
-    demand_mult: newDemandMult,
+    op_prices: newOpPrices.map((r) => ({
+      op_type: r.op_type,
+      base_price: r.base_price,
+      demand_mult: r.demand_mult,
+    })),
     m_min: oldDatum.m_min,
     m_max: oldDatum.m_max,
     epoch: newEpoch,
@@ -192,8 +198,8 @@ export async function buildPostPriceTx(
       op_prices: newDatum.op_prices.map((r) => ({
         op_type: r.op_type,
         base_price: r.base_price,
+        demand_mult: r.demand_mult,
       })),
-      demand_mult: newDatum.demand_mult,
       m_min: newDatum.m_min,
       m_max: newDatum.m_max,
       epoch: newDatum.epoch,
@@ -252,7 +258,8 @@ export async function buildPostPriceTx(
     : await txBuilder.complete();
 
   const summary =
-    `post-price epoch ${oldDatum.epoch}→${newEpoch} | demand ${oldDatum.demand_mult}→${newDemandMult} | ` +
+    `post-price epoch ${oldDatum.epoch}→${newEpoch} | ` +
+    `demand ${newDatum.op_prices.map((r) => `${r.op_type}:${r.demand_mult}`).join(",")} | ` +
     `${newDatum.op_prices.length} op | ký ${signers.length}/${threshold} | ` +
     `script ${validatorToScriptHash(priceParamScript).slice(0, 12)}…`;
 

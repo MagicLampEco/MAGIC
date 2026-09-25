@@ -939,3 +939,148 @@ gitignore, tức bản duy nhất, tức mất máy là mất.
 **Trạng thái bốn thuật toán trên Preprod, 2026-09-20:** ScheduleGen ✅ commit·fire·consume ·
 InstantGen ✅ cấp·consume · ConsumeMAGIC ✅ hai đời vault · PrepaidGen ✅ genesis (quỹ + vault),
 ⏸ chưa tiêu được — thiếu đúng bốn thứ kể trên.
+
+---
+
+## Preprod — 2026-09-23/24 · cụm consume tách theo loại vault
+
+Nguồn: `scripts/state.Preprod.sh` (dòng ~100–236, phần lớn do bộ bọc ghi tự động, vài dòng
+điền tay khi bộ bọc không nhặt được) và `scripts/consumeBook.ts` (khoá mang hậu tố
+`_SCHEDULE`/`_INSTANT` — cụm này là lượt ĐẦU dùng khoá tách theo loại vault). Bước 02, 03,
+04, 05, 06, 07, 09 (VAULT_KIND=schedule) chạy 2026-09-23; bước 04 (làm mới beacon backing)
+và 09 (VAULT_KIND=instant) chạy lại 2026-09-24. PrepaidGen KHÔNG dựng lại trong cụm này —
+vẫn đời genesis 2026-09-20 (mục trên).
+
+Cụm apply-param bằng tLAMP policy `8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd`
+· asset `744c414d50` (đời "tLAMP THẬT" 2026-09-16, mục cùng tên phía trên) — xem cảnh báo
+ở mục 2 cuối phần này, đời policy này SẼ đổi.
+
+### Hash theo loại vault
+
+| trường | InstantGen | ScheduleGen | PrepaidGen |
+|---|---|---|---|
+| vault script hash | `3ec10a065a8c1071928495576e197f1cd286916a55dce361d2a437ce` | `214835186a98d0655efd999ae34accb15e6b92a47c2f3be389a8fb9e` | `9dbb9a8d38545bf99ef3796cfb81d6cbd8de1bd16b5526895cf0efbd` (đời 20/09, không đụng) |
+| vault addr | `addr_test1wqlvzzsxt2xpquvjsj24wmse0uwd9p53df2aecmp62jr0nsu6k9xk` | `addr_test1wqs5sdgcd2vdqe27lkve4c62ejc4u6uj537z7wlr3x50h8st5zuyh` | `addr_test1wzwmhx5d8p29h7v77duke7up6m9a3hsm69442f5ftncwl0g83a9kr` |
+| vault ID NFT (policy+name rút gọn) | `3ec10a06…aedd6621…` | `21483518…3030c1b1…` | `9dbb9a8d…f57ca60c…` |
+| consume script hash | `d52c4aa9f535a45eaf157157b15bc50fbcac5b5b9558fa7fc2d42091` | `2885109fd7822e2e6fce3801b009826498719807e2764b15487e27ee` | chưa có bản consume |
+| consume addr | `addr_test1wr2jcj4f7566gh40z4c40v2mc58metzmtw2437nlct2zpygggu4f8` | `addr_test1wq5g2yyl67pzutn0ecuqrvqfsfjfsuvcql38vjc4fplz0mspy6hzr` | — |
+| price NFT policy | `64eb5e8ae3b6cc2f8b9129ed9de49baaf945022bf99377feb8fcd192` | `e2858e152fe8774b1502809dd52d2e6f461ac67f31101aa392ecd61b` | — |
+| price_param script hash | `c3eebc1b43e65807273e0c9c4f5b674af3feabe89604974560874f93` | `a24282bd467b1d3a1ff5e51ee1739c84b3d15bf864fa1067b95c4ae3` | — |
+| engage NFT (policy+name rút gọn) | `d52c4aa9…c702a4b0…` | `2885109f…4f93aa28…` | — |
+| max_price_stale | 1 epoch | 1 epoch | — |
+
+Đây là bảng RÚT GỌN để đọc nhanh — khoá đầy đủ nằm ở `scripts/state.Preprod.sh` (hậu tố
+`_INSTANT`/`_SCHEDULE`). `*_UTXO` (beacon, Engage, ref-script) đổi theo mỗi lượt keeper
+chạy — KHÔNG chép ở đây, dò lại bằng Koios hoặc `scripts/consumeLive.ts` (xem mục
+"Trạng thái on-chain" bên dưới thay vì tin giá trị cũ).
+
+### Tx các bước
+
+| Bước | TX |
+|---|---|
+| `05_create_instant_vault` (23/09) | `4b5acb72eaabd853c493449e0197f8d5df3fefc5eafc2e3a6aefb09fc5301183` |
+| `06_publish_ref_scripts` — vault Instant (23/09) | `795951fb03700584b23f8ef65f5dda82e5784e364527917f40422c89f3a75721#0` |
+| `06_publish_ref_scripts` — vault Schedule (23/09) | `02f7dd0dc9dacbd392449d1943181379eea92591126eef4842a9ad1c2f25ef46#0` |
+| `06_publish_ref_scripts` — shard (23/09) | `4721de02e92dcda9e71b13d8c607a7091ffb3cd1f813e4b21b46f4660f269d6b#0` |
+| `07_create_schedule_vault` (23/09) | `51b38217d82e6f53330d5c3fc69524c338655d55cdbebeb49dda58375ea9a8fa` |
+| `09_deploy_consume` VAULT_KIND=schedule (23/09) | `40a26805fad8ea501ca5b4fcbfbb7a74ccccc6d663fd4b3ce27f61c05b50152f` |
+| `09` ref-script consume — schedule (23/09) | `b9664ffa5d86d3b6057a398c7042d59340e3da0629c114989aa56ccc3302d17a#0` |
+| `04_deploy_backing_fixture` (23/09) | `0f9d49fe25f7f581a7d39ab3cd665faf992d8a8e58f7f2d609db1c8ef8787203` — 🔴 đã bị chi, xem dòng dưới |
+| `04_deploy_backing_fixture` (24/09, đè bản 23/09) | `d8620fad634b595ab2a880ff7b349d45aa41294cbad3484057b6a5a6a3c48cd9` |
+| `09_deploy_consume` VAULT_KIND=instant (24/09) | `869f1b5e6d5566618da21b399185c3ef7086c18732a19764b0c1eb5c10ec62fd` |
+| `09` ref-script consume — instant (24/09) | `37a9b0d5166c9d3484d0efd90c1fb379ef2b60608f0ee9bec1789ba56dfe80a6#0` |
+
+Bước 02 (`UM_DATUM_HASH=c2c5091f36f7d3e0a99cbe741898a9bd4f1eb22af3f649f6e28439fd`,
+`UM_NFT_POLICY_ID=ef10d2e4b37c65bed5215fd29ddbc71317c7bb870920f209ad58a53c`) và bước 03
+(`SHARD_HASH=672f7845fd9ff911db667207036163f3848fc04ddd4c551cec438c95`,
+`SHARD_NFT_POLICY_ID=032a996bb8bd7342e63681fa7bdd1edd31cf4159fcf2bccd209f8265`) không có
+dòng tx trong đoạn sổ đã đọc (dòng 100–236 của `state.Preprod.sh`) — bộ bọc chỉ in
+`TEN=giá trị`, không log tx mint riêng ở hai bước này trong đoạn đó.
+
+### Consume có đúng là bản apply-param bằng vault đã ghi không
+
+Nguồn Aiken của `ConsumeMAGIC/onchain` KHÔNG đổi từ lúc dựng cụm này:
+`git log --oneline --since=2026-09-23 -- ConsumeMAGIC/onchain` tại `44a0a53c` ra RỖNG.
+`aiken build ConsumeMAGIC/onchain` tại commit đó chạy sạch, sinh `plutus.json`. Dựng lại hash bằng đúng hàm `applyParamsToScript` +
+`validatorToScriptHash` mà `scripts/applyParams.ts` dùng, 7 tham số theo đúng thứ tự
+blueprint (`price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
+max_price_stale, ms_per_epoch, price_param_script_hash` — `scripts/deployParams.ts` ▸
+`consumeParams`). `ms_per_epoch = 432 000 000` (Preprod, `ProtocolUtils/src/index.ts` ▸
+`MS_PER_EPOCH_BY_NETWORK`), `burn_batch_constr = 2` (`09_deploy_consume.ts` ▸
+`BURN_BATCH_CONSTR`); `price_nft_policy` và `price_param_script_hash` lấy NGUYÊN VĂN từ sổ
+(không tự suy từ committee — xem giới hạn bên dưới).
+
+| loại vault | `vault_script_hash` nạp vào | hash dựng lại | hash trong sổ | kết quả |
+|---|---|---|---|---|
+| InstantGen | `3ec10a06…` | `d52c4aa9f535a45eaf157157b15bc50fbcac5b5b9558fa7fc2d42091` | `d52c4aa9f535a45eaf157157b15bc50fbcac5b5b9558fa7fc2d42091` | **KHỚP** |
+| ScheduleGen | `21483518…` | `2885109fd7822e2e6fce3801b009826498719807e2764b15487e27ee` | `2885109fd7822e2e6fce3801b009826498719807e2764b15487e27ee` | **KHỚP** |
+
+Hash dựng lại khớp tuyệt đối theo dấu bằng chuỗi, và `vault_script_hash` là tham số plain
+(không suy diễn từ giá trị khác) ⟹ consume Instant thật sự apply-param bằng
+`VAULT_INSTANT_HASH`, consume Schedule thật sự apply-param bằng `VAULT_SCHEDULE_HASH` —
+không lệch kiểu D12 (`BOUNDARIES.md` §2, "Apply-param được phép thay đổi theo LOẠI script").
+
+**Giới hạn của phép đo này:** `price_param_script_hash` KHÔNG được tự dựng lại từ
+`committee`/`threshold` trong lần đo này — hai giá trị đó cần `ownerPkh` của ví triển khai.
+Phép đo lấy `PRICE_PARAM_HASH_INSTANT`/`_SCHEDULE` NGUYÊN
+VĂN từ sổ làm đầu vào cho `consumeParams`. Nếu bản thân `price_param` đã lệch committee thì
+phép đo này KHÔNG bắt được — nó chỉ bắt được lệch `vault_script_hash`.
+
+**Đối chiếu độc lập trên chuỗi (Koios, không phụ thuộc lượt dựng lại ở trên):** ref-script
+tại `REF_CONSUME_UTXO_INSTANT` (`37a9b0d5…#0`) tự báo
+`reference_script.hash = d52c4aa9f535a45eaf157157b15bc50fbcac5b5b9558fa7fc2d42091`; ref-script
+tại `REF_CONSUME_UTXO_SCHEDULE` (`b9664ffa…#0`) tự báo
+`reference_script.hash = 2885109fd7822e2e6fce3801b009826498719807e2764b15487e27ee`. Koios
+tính hash này từ bytes CBOR thật đang nằm trên chuỗi, không đọc từ sổ trạng thái — khớp cả
+hai với bảng trên. Vế này chỉ chứng minh script trên chuỗi là script mang hash đó; vế
+"apply-param bằng vault nào" là của phép dựng lại ở trên.
+
+### Trạng thái on-chain, đo 2026-09-25 (Koios `address_utxos`/`utxo_info`, `_extended: true`)
+
+- Vault InstantGen (`addr_test1wql…`): 1 UTxO, mang vault-ID NFT `aedd6621…`, còn tLAMP
+  (asset `744c414d50`).
+- Vault ScheduleGen (`addr_test1wqs…`): 1 UTxO, mang vault-ID NFT `3030c1b1…`, còn tLAMP.
+- Vault PrepaidGen (`addr_test1wzw…`): 1 UTxO, mang vault-ID NFT `f57ca60c…` (không đổi từ
+  20/09).
+- Consume Instant (`addr_test1wr2…`): 1 UTxO. Engage đã DỜI sang UTxO mới (`4c212b7c…#0`,
+  cùng đơn vị `c702a4b0…`); `ENGAGE_UTXO_INSTANT` ghi trong sổ (`869f1b5e…#1`) nay
+  **is_spent: true** — thread bị tiêu rồi tạo lại ở lượt tiêu MAGIC đầu tiên trên vault
+  InstantGen (`4c212b7c…`).
+- Consume Schedule (`addr_test1wq5…`): 1 UTxO. Engage vẫn ở đúng UTxO gốc bước 09
+  (`40a26805…#1`, đơn vị `4f93aa28…`), `is_spent: false` — chưa có lượt tiêu nào trên
+  cụm ScheduleGen này.
+- Beacon giá **Instant** — địa chỉ suy từ `price_param_hash`
+  (`addr_test1wrp7a0qmg0n9spe88cxfcn6mva908l4taztqf969vzr5lycls7clt`, KHÔNG phải địa chỉ
+  consume): UTxO gốc bước 09 (`869f1b5e…#0`) vẫn sống (`is_spent: false`), epoch `4144`.
+- Beacon giá **Schedule** — địa chỉ `addr_test1wz3y9q4agea36wsl7hj3actnnjzt852mlpj05yr8h9wy4ccqqhvnu`:
+  UTxO gốc trong sổ (`40a26805…#0`) đã bị chi (`is_spent: true` — ít nhất một lượt
+  `PostPrice` đã chạy); beacon SỐNG hiện ở
+  `de325d873701e4abdf5f9309fd917013db9b0b108af0b3256f67f807694a5c7a#0`, cùng epoch `4144`.
+- Cả hai beacon giải CBOR datum ra CÙNG bảng giá 4 dòng: op 1 = 10 000 000 · op 2 =
+  1 000 000 · op 3 = 1 000 000 000 · op 4 = 1 000 000 000 nanogic (bảng khởi tạo của
+  bước 09; chưa lượt nào thêm dòng), `demand_mult = 1,0×`, `m_min = 0,5×`,
+  `m_max = 2,0×`. Trường cuối cùng của datum (`191030` hex = 4144 thập phân) là `epoch`.
+- Backing beacon (bước 04): bản 23/09 (`0f9d49fe…#0`) `is_spent: true`; bản 24/09
+  (`d8620fad…#0`) đang sống, mang asset hex `425251` ("BR").
+- Năm ref-script (`consume` Instant/Schedule, vault Instant/Schedule, shard): cả năm UTxO
+  còn sống (`is_spent: false`), mỗi cái tự báo đúng `reference_script.hash` như bảng ở mục
+  "Consume có đúng là bản apply-param…"
+  / bảng hash theo loại vault.
+
+### Hai điều sắp đổi — đừng đọc cụm này như thứ cố định
+
+1. **Lược đồ `PriceParam` đã CHỐT đổi, chưa lên chuỗi.** `ConsumeMAGIC/CONTRACT.md` §A ▸
+   `CC-LOAD-COUNT-UNIT` (chốt 2026-09-24, commit `8306789a`): `OpPrice` nhận thêm trường
+   thứ ba `demand_mult` (tách theo `op_type`, thay cho một `demand_mult` dùng chung toàn
+   `PriceParam` như hiện tại). Mã: MagicLampEco/MAGIC#101. Đây là ĐỔI LƯỢC ĐỒ — Aiken giải mã Plutus Data nghiêm ngặt
+   về số trường cả hai chiều (`BOUNDARIES.md` §2) — nên **hai beacon đang sống ở mục trên
+   sẽ không đọc được bằng validator mới**. Việc phải làm khi lược đồ lên chuỗi: bootstrap
+   beacon mới (NFT one-shot mới), deploy lại `consume`, công bố lại ref-script CIP-33, cập
+   nhật cấu hình mọi bên tiêu thụ (gồm `KEEPER_PRICE_BEACONS`). Đừng ghim hash
+   `d52c4aa9…`/`2885109f…` của mục này vào cấu hình dài hạn.
+2. **tLAMP policy `8169b76c…` SẼ đổi, không phải đời cuối** — xem mục "Preprod — đời tLAMP
+   THẬT, 2026-09-16" phía trên, khối ⚠ cập nhật 2026-09-22: kho LAMP đã đóng băng ba
+   validator Distribution để đúc genesis mới, `lampPid` sẽ đổi theo. Toàn bộ cụm ở mục này
+   (vault, consume, beacon) apply-param bằng policy `8169b76c…`. Hai lần đổi này có lịch
+   ĐỘC LẬP: lượt dựng lại vì lược đồ (mục 1) không chờ policy mới, và khi policy đổi thì cả
+   cụm dựng lại thêm một lần nữa.

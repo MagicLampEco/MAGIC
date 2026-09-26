@@ -35,7 +35,13 @@ MAGIC (CREDIT, số kế toán, KHÔNG token/mint/burn, **fungible — cấm nh�
 3. **PrepaidGen: 3 CARP → 3 MAGIC** (PSM-par 1:1; cửa gen nguồn CARP vì hết hạn-mức-LAMP).
 4. **Consume 5 MAGIC** (2 sẵn + 3 mới, **fungible — không nhãn nguồn**). Cơ sở VP + hệ-số-gen epoch sau.
 
-**GreenCheque** (khái niệm CarpetMint): công-cụ-nợ khi mint CARP, 2 phần — (a) Pledge → hoàn borrower; (b) phí → LAMP-backer.
+**GreenCheque** (công cụ kế toán của **instance MagicLamp**, không phải primitive của engine CarpetMint — engine chỉ có
+`debt` trong datum CDP): công-cụ-nợ khi mint CARP, 2 phần — (a) Pledge → hoàn borrower; (b) phí → LAMP-backer.
+
+> Trạng thái: **chỉ có chữ, chưa có mã** — `git grep -i -e greencheque -e green_cheque -- '*.ak' '*.ts'` → 0 dòng
+> (2026-09-26). Và nó chỉ được định nghĩa cho đường **ĐÚC qua CDP**. Đường **RÚT GreenBack-tồn** (§4, Deep-Green)
+> **không** được định nghĩa là sinh nợ hay không — đó là khoảng trống của mô hình, không phải câu trả lời "không nợ".
+> Ràng buộc tạm: không lớp nào (điểm ghi công, quyền biểu quyết, kế toán quỹ) được đọc sự có/vắng GreenCheque làm đầu vào.
 
 ## §3. Bất biến bảo-toàn (thay "Pledge không quy đổi", anh chốt §3)
 
@@ -77,6 +83,26 @@ Neo cuối fail-safe = `⌊L_avail×RATE/Q⌋` (LAMP-khoá vật lý, độc-l�
 
 Ràng buộc cứng: **tx KHÔNG spend output do chính nó tạo** → nếu PrepaidGen tạo batch MAGIC mà consume phải burn
 trên CÙNG vault UTxO → buộc 2 tx (trừ khi gộp redeemer `GenBurn` — xem §8).
+
+> 🔴 **Ràng buộc cứng thứ hai, do chính `consume` ép — và nó làm HOT-PATH bên dưới KHÔNG DỰNG ĐƯỢC.**
+> `ConsumeMAGIC/onchain/validators/consume.ak` ▸ `validate_consume`:
+> `expect util.script_inputs_confined_to(tx.inputs, own_hash, vault_script_hash)` — mọi input khoá bởi script trong tx
+> đốt MAGIC phải ở **đúng hai hash**: chính instance consume đó, hoặc vault của nó
+> (`lib/magiclamp/consume/util.ak` ▸ `script_inputs_confined_to`). Cổng này chặn hai instance consume cùng đếm một lượt
+> đốt vault, và nó đứng.
+>
+> Hệ quả: khối `spend:` bên dưới — `prepaid_vault` + `paid_fund` + `CarpetMint.CDP` cùng tx với `consume.ak[engage]` +
+> `vault[BurnBatch]` — là **năm** hash script ⟹ `consume` từ chối. Tài liệu mâu thuẫn với mã ⟹ **mã thắng**. Những gì
+> còn ghép được trong CÙNG tx đốt MAGIC:
+> - input từ **ví khoá** (không phải script) — CARP người dùng/composer đang cầm;
+> - **đúc** (mint không phải input, nên không chạm cổng này);
+> - **reference input** (cổng chỉ duyệt `tx.inputs`).
+>
+> Mọi mảnh phải TIÊU một UTxO script khác (quỹ PrepaidGen, CDP CarpetMint, GreenBack-tồn, ô quỹ đối tác) đi ở **tx
+> riêng**, trước hoặc sau lượt đốt; muốn nối hai tx thì nối bằng khoá đối soát cộng phép kiểm đồng-tx phía bên đọc, vì
+> không còn tính nguyên tử. Số ExUnit "6 script ≈ 5–8M mem" bên dưới đo trên PoC dựng trước cổng này, không mô tả tx
+> nào dựng được hôm nay. Trần tx hiện hành: mainnet 16,5 M mem, Preprod 17,5 M mem (Koios `cli_protocol_params`,
+> 2026-09-25), không phải 14 M.
 
 **HOT-PATH (per-engagement) — gộp tối đa 1 tx:**
 ```

@@ -142,6 +142,9 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
       "VAULT_TX_API_TIMEOUT_MS",
       "VAULT_TX_API_LOCK_TTL_MS",
       "BLOCKFROST_PROJECT_ID",
+      // Token ứng dụng Feecover (proxy phí, `feeProxy.ts`): token API dạng GIÁ TRỊ như khoá
+      // Blockfrost, không phải khoá ký — chữ ký ví trả phí do Feecover tạo, dịch vụ chỉ chuyển tiếp.
+      "FEECOVER_APP_TOKEN",
     ]);
     // Chỉ tính hai hình dạng ĐỌC thật: truy cập thuộc tính trên `env`, và chuỗi tên
     // truyền vào bộ đọc.

@@ -11,6 +11,27 @@
 //   409 OWNER_TX_IN_FLIGHT       chủ này đã có một tx chưa nộp — xem `locks.ts`
 //   409 VAULT_AMBIGUOUS         chủ có nhiều vault, yêu cầu không nói cái nào
 //   409 VAULT_IDENTITY_DUPLICATE hai UTxO cùng mang một NFT danh-tính vault
+//   400 FEE_PAYER_SHAPE / FEE_PAYER_INVALID   `fee_payer` sai hình dạng / sai mạng / UTxO lạ
+//   400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT     `fee_payer` cùng `change_address`
+//   400 FEE_PAYER_UNSUPPORTED    `fee_payer` ở gốc thân bài của `/tx/create-vault` (dùng `funding.fee_payer`)
+//   422 FEE_PAYER_TX_MISMATCH    giao dịch vừa dựng lệch luật ví trả phí (`feePayer.ts`)
+//   422 FEE_PAYER_DEPOSIT_UNSOURCED  `/tx/open-thread` chỉ có `fee_payer`: không ai trả min-ADA thread
+//   400 ENGAGE_REF_SHAPE / ENGAGE_REF_MISMATCH  `engage_ref` sai hình dạng / không phải thread của chủ
+//   404 ENGAGE_THREAD_NOT_FOUND  chủ chưa có thread Engage — mở bằng `POST /tx/open-thread`
+//   409 ENGAGE_THREAD_AMBIGUOUS  chủ có nhiều thread, yêu cầu không kèm `engage_ref`
+//   409 ENGAGE_THREAD_EXISTS     `/tx/open-thread` khi chủ đã có thread
+//   422 ENGAGE_THREAD_DATUM_UNDECODABLE  `engage_ref` mang NFT nhưng datum không giải được
+//   422 OPEN_THREAD_TX_MISMATCH  giao dịch mở thread vừa dựng lệch (NFT/output/datum genesis)
+//   501 OPEN_THREAD_FUNDING_UNSUPPORTED  `/tx/open-thread` kèm `funding` — chưa hỗ trợ
+//   401 FEE_PROXY_APP_UNKNOWN    `X-Feecover-Token` không khớp ứng dụng nào (hoặc không có ứng dụng mặc định)
+//   400 FEE_PROXY_PURPOSE_UNMAPPED  ứng dụng chưa có mục đích Feecover cho route đó
+//   403 FEE_PROXY_APP_PURPOSE    mục đích mang tiền tố của ứng dụng khác / thiếu tiền tố của chính ứng dụng
+//   403 FEE_PROXY_TX_NOT_ISSUED  `/fee/sign` cho tx không do dịch vụ phát, hoặc quá hạn xin ký
+//   400 FEE_PROXY_NO_FEE_PAYER   `/fee/sign` cho tx không dùng ví trả phí
+//   4xx FEE_PROXY_REJECTED       Feecover từ chối — mã trạng thái + `rule`/`message`/`reasons` chuyển nguyên
+//   501 FEE_PROXY_UNAVAILABLE    bản deploy không khai `feecover`
+//   502 FEE_PROXY_UPSTREAM       Feecover không trả lời / trả 5xx / trả sai hình dạng
+//   502 FEE_PROXY_UPSTREAM_MISMATCH  Feecover ký một tx có hash khác tx đã gửi
 //   422 TX_BUILD_REJECTED        dựng được tới nơi nhưng giao thức từ chối (L×λ > L_avail,
 //                                MAGIC còn sống < required, shard hết chỗ…)
 //   422 TX_SUMMARY_UNDECODABLE   dựng ra CBOR mà không đọc lại được — xem `summary.ts`

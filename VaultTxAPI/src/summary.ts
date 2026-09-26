@@ -139,6 +139,8 @@ export interface TxSummary {
     instant_unlock_ms_before: string | null;
   };
   outputs: OutputView[];
+  /** Chỉ khi yêu cầu có `fee_payer`: đọc lại TỪ CBOR bởi `feePayer.ts` ▸ `checkFeePayerTx`. */
+  fee_payer?: import("./feePayer.js").FeePayerSummary;
 }
 
 /**

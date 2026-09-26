@@ -23,35 +23,37 @@
 // hạn dùng TỪ CBOR, đối chiếu với UTxO dịch vụ tự đọc từ chuỗi, và ném 422
 // `FUNDING_TX_MISMATCH` ở vế đầu tiên lệch.
 
-import { CML, getAddressDetails, slotToUnixTime, valueToAssets, type UTxO } from "@lucid-evolution/lucid";
+import { CML, getAddressDetails, valueToAssets, type UTxO } from "@lucid-evolution/lucid";
 import {
-  FundingError, assertDidPaymentAddress, DID_PAYMENT_SPEND_REDEEMER, FUNDING_MAX_VALIDITY_MS,
+  FundingError, assertDidPaymentAddress, DID_PAYMENT_SPEND_REDEEMER,
   type Network,
 } from "@magiclamp/protocol-utils";
 import { didPaymentLucidPorts } from "@magiclamp/sdk";
 
 import type { ChainReader } from "./chain.js";
 import { CodedApiError } from "./errors.js";
+import {
+  FUNDING_FEE_PAYER_CODES, OUTREF, assertFeePayerAddress, checkCollateral, checkValidTo,
+  parseFeePayerShape, readFeePayerUtxo as readFeePayerUtxoShared, refStr,
+  type FeePayerRequest, type OutRefLike,
+} from "./feePayer.js";
 import { raw } from "./units.js";
 
 const HASH28 = /^[0-9a-f]{56}$/;
 const CBOR_HEX = /^(?:[0-9a-f]{2})+$/;
-const OUTREF = /^([0-9a-f]{64})#(0|[1-9][0-9]{0,4})$/;
 
-export interface OutRefLike { txHash: string; outputIndex: number }
+export type { OutRefLike } from "./feePayer.js";
 
 export interface FundingRequest {
   type: "did_payment";
   didPaymentScriptCbor: string;
   address: string;
-  feePayer: { utxoRef: OutRefLike; address: string };
+  feePayer: FeePayerRequest;
   /** Tuỳ chọn khi có `owner_witness` (dùng chung); BẮT BUỘC khi không có. */
   anchorRef?: OutRefLike;
   controllerPkh?: string;
   deviceKeyHash?: string;
 }
-
-const refStr = (r: OutRefLike) => `${r.txHash}#${r.outputIndex}`;
 
 // ── đọc thân bài ─────────────────────────────────────────────────────────────
 
@@ -73,16 +75,8 @@ export function parseFunding(body: Record<string, unknown>): FundingRequest | un
     throw bad(".did_payment_script_cbor", "hex thường, số ký tự chẵn, khác rỗng");
   }
   if (typeof o.address !== "string" || o.address === "") throw bad(".address", "chuỗi địa chỉ bech32 khác rỗng");
-  const fp = o.fee_payer;
-  if (fp === null || typeof fp !== "object" || Array.isArray(fp)) throw bad(".fee_payer", `đối tượng { "utxo", "address" }`);
-  const fpo = fp as Record<string, unknown>;
-  const fpExtra = Object.keys(fpo).filter(k => k !== "utxo" && k !== "address");
-  if (fpExtra.length > 0) {
-    throw new CodedApiError(400, "FUNDING_SHAPE", `"funding.fee_payer" có trường lạ: ${fpExtra.join(", ")}.`, { extra_fields: fpExtra });
-  }
-  const fpRef = typeof fpo.utxo === "string" ? OUTREF.exec(fpo.utxo) : null;
-  if (fpRef === null) throw bad(".fee_payer.utxo", `chuỗi "<tx_hash 64 hex>#<index>"`);
-  if (typeof fpo.address !== "string" || fpo.address === "") throw bad(".fee_payer.address", "chuỗi địa chỉ bech32 khác rỗng");
+  // Cùng hàm đọc với `fee_payer` ở gốc thân bài (`feePayer.ts`); chỉ khác tên trường + mã lỗi.
+  const feePayer = parseFeePayerShape(o.fee_payer, FUNDING_FEE_PAYER_CODES);
   let anchorRef: OutRefLike | undefined;
   if (o.anchor_ref !== undefined) {
     const m = typeof o.anchor_ref === "string" ? OUTREF.exec(o.anchor_ref) : null;
@@ -96,7 +90,7 @@ export function parseFunding(body: Record<string, unknown>): FundingRequest | un
     type: "did_payment",
     didPaymentScriptCbor: o.did_payment_script_cbor,
     address: o.address,
-    feePayer: { utxoRef: { txHash: fpRef[1]!, outputIndex: Number(fpRef[2]!) }, address: fpo.address },
+    feePayer,
     anchorRef,
     controllerPkh: o.controller_pkh as string | undefined,
     deviceKeyHash: o.device_key_hash as string | undefined,
@@ -118,14 +112,7 @@ export function fundingApiErrorOf(e: FundingError): CodedApiError {
  */
 export function assertFundingAddresses(network: Network, f: FundingRequest): void {
   const wantId = network === "Mainnet" ? 1 : 0;
-  let fp: ReturnType<typeof getAddressDetails> | undefined;
-  try { fp = getAddressDetails(f.feePayer.address); } catch { fp = undefined; }
-  if (fp === undefined || fp.networkId !== wantId || fp.paymentCredential?.type !== "Key" || !f.feePayer.address.startsWith("addr")) {
-    throw new CodedApiError(400, "FUNDING_FEE_PAYER_INVALID",
-      `"funding.fee_payer.address" phải là địa chỉ bech32 của mạng ${network} với phần thanh toán là KHOÁ ` +
-      `(tài sản thế chấp không được là UTxO script).`,
-      { payment_credential: fp?.paymentCredential?.type ?? null, network_id: fp?.networkId ?? null });
-  }
+  assertFeePayerAddress(network, f.feePayer, FUNDING_FEE_PAYER_CODES);
   let fa: ReturnType<typeof getAddressDetails> | undefined;
   try { fa = getAddressDetails(f.address); } catch { fa = undefined; }
   if (fa === undefined || fa.networkId !== wantId || !f.address.startsWith("addr")) {
@@ -192,22 +179,10 @@ export class ChainDidPaymentAnchorReader implements DidPaymentAnchorReader {
   }
 }
 
-/** UTxO trả phí: phải ở ĐÚNG `fee_payer.address` và thuần ADA. */
-export async function readFeePayerUtxo(chain: ChainReader, f: FundingRequest): Promise<UTxO> {
-  const [u] = await chain.utxosByOutRef([f.feePayer.utxoRef]);
-  const utxo = u as UTxO;
-  if (utxo.address !== f.feePayer.address) {
-    throw new CodedApiError(400, "FUNDING_FEE_PAYER_INVALID",
-      `UTxO trả phí ${refStr(f.feePayer.utxoRef).slice(0, 12)}… không nằm ở funding.fee_payer.address.`,
-      { fee_payer_utxo: refStr(f.feePayer.utxoRef) });
-  }
-  const units = Object.keys(utxo.assets).filter(k => utxo.assets[k] !== 0n);
-  if (units.length !== 1 || units[0] !== "lovelace" || utxo.scriptRef != null) {
-    throw new CodedApiError(400, "FUNDING_FEE_PAYER_INVALID",
-      `UTxO trả phí phải thuần ADA, không token, không script tham chiếu (nó còn là tài sản thế chấp).`,
-      { fee_payer_utxo: refStr(f.feePayer.utxoRef), units });
-  }
-  return utxo;
+/** UTxO trả phí của `funding`: phải ở ĐÚNG `funding.fee_payer.address` và thuần ADA
+ *  (`feePayer.ts` ▸ `readFeePayerUtxo`, mã `FUNDING_FEE_PAYER_INVALID`). */
+export function readFeePayerUtxo(chain: ChainReader, f: FundingRequest): Promise<UTxO> {
+  return readFeePayerUtxoShared(chain, f.feePayer, FUNDING_FEE_PAYER_CODES);
 }
 
 // ── đọc lại CBOR ─────────────────────────────────────────────────────────────
@@ -225,6 +200,8 @@ export interface FundingCheckContext {
   didPaymentUtxos: UTxO[];
   /** Bộ ký `did_payment` phải có trong `required_signers`. */
   signers: [controllerPkh: string, deviceKeyHash: string];
+  /** Trần `Σ collateral_inputs − collateral_return` (`deployment.feePayerCollateralLovelace`). */
+  maxCollateralLovelace: bigint;
 }
 
 export interface AmountView { lovelace: string; lamp_oildrop: string; other_assets: { unit: string; quantity: string }[] }
@@ -245,6 +222,8 @@ export interface FundingSummary {
     input_lovelace: string;
     fee_lovelace: string;
     change_lovelace: string;
+    /** `Σ collateral_inputs − collateral_return` — thứ bên trả phí có thể mất nếu script hỏng. */
+    collateral_at_risk_lovelace: string;
     collateral_return_lovelace: string | null;
   };
   valid_to_posix_ms: string;
@@ -313,20 +292,10 @@ export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): Fundin
     throw mismatch(`redeemer Spend không khớp input did_payment`, { want_indexes: wantIdx, got: spends });
   }
 
-  // (3) thế chấp: chỉ UTxO trả phí; collateral_return về đúng ví trả phí.
-  const cl = body.collateral_inputs();
-  for (let i = 0; cl !== undefined && i < cl.len(); i++) {
-    const k = key(cl.get(i).transaction_id().to_hex(), cl.get(i).index());
-    if (k !== feeKey) throw mismatch(`tài sản thế chấp ${k} không phải UTxO trả phí`);
-  }
-  const cr = body.collateral_return();
-  let collateralReturn: bigint | null = null;
-  if (cr !== undefined) {
-    if (cr.address().to_bech32(undefined) !== ctx.feePayerAddress) {
-      throw mismatch(`collateral_return không về funding.fee_payer.address`);
-    }
-    collateralReturn = cr.amount().coin();
-  }
+  // (3) thế chấp: chỉ UTxO trả phí; collateral_return về đúng ví trả phí; lượng có thể mất
+  //     ≤ trần cấu hình. Hàm DÙNG CHUNG với đường `fee_payer` (`feePayer.ts`).
+  const { atRisk, collateralReturn } = checkCollateral(
+    body, feeKey, ctx.feePayerUtxo, ctx.feePayerAddress, ctx.maxCollateralLovelace, mismatch);
 
   // (4) output: chỉ vault / ví Phoenix / ví trả phí.
   const allowed = new Set([ctx.vaultAddress, ctx.fundingAddress, ctx.feePayerAddress]);
@@ -377,12 +346,7 @@ export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): Fundin
   for (const s of ctx.signers) {
     if (!signers.includes(s)) throw mismatch(`required_signers thiếu ${s} (did_payment đòi controller + thiết bị)`);
   }
-  const ttl = body.ttl();
-  if (ttl === undefined) throw mismatch(`giao dịch không có hạn dùng (validTo) — ví trả phí đòi ≤ 1 giờ`);
-  const validTo = BigInt(slotToUnixTime(ctx.network, Number(ttl)));
-  if (validTo > ctx.tipPosixMs + FUNDING_MAX_VALIDITY_MS) {
-    throw mismatch(`hạn dùng ${validTo} quá 1 giờ kể từ đỉnh chuỗi ${ctx.tipPosixMs}`);
-  }
+  const validTo = checkValidTo(body, ctx.network, ctx.tipPosixMs, mismatch);
 
   return {
     type: "did_payment",
@@ -397,6 +361,7 @@ export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): Fundin
       input_lovelace: raw(feeIn),
       fee_lovelace: raw(fee),
       change_lovelace: raw(feeChange),
+      collateral_at_risk_lovelace: raw(atRisk),
       collateral_return_lovelace: collateralReturn === null ? null : raw(collateralReturn),
     },
     valid_to_posix_ms: raw(validTo),

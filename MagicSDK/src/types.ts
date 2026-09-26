@@ -167,6 +167,10 @@ export interface CreateVaultParams {
    *  chọn. Có trường này thì ví đang chọn CHỈ trả phí + làm tài sản thế chấp + làm seed;
    *  phần thối của `did_payment` về lại `funding.address`. Xem `didPaymentLucid.ts`. */
   funding?: DidPaymentFundingInput;
+  /** Lượng thế chấp TƯỜNG MINH (lovelace) — đặt khi phí + thế chấp do ví trả phí bên thứ ba
+   *  gánh (mô hình Feecover, trần mất thế chấp 3 tADA). Bỏ trống ⟹ lucid tự đặt (5 ADA).
+   *  Hình dạng: `@magiclamp/protocol-utils` ▸ `collateralCompleteOptions`. */
+  collateralLovelace?: bigint;
 }
 
 /** Result of `createVault()` — ready for caller to sign + submit. */

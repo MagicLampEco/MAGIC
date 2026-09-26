@@ -22,6 +22,7 @@ import { VaultTxService } from "./service.js";
 import { SdkTxBuilder } from "./txBuilder.js";
 import { DidStakeWitnessProvider } from "./owner.js";
 import { ChainDidPaymentAnchorReader } from "./funding.js";
+import { FeeProxy } from "./feeProxy.js";
 
 const cfg = loadConfig();
 const vaultPlutusJson = JSON.parse(readFileSync(cfg.vaultPlutusJsonPath, "utf8")) as PlutusJson;
@@ -65,6 +66,15 @@ const service = new VaultTxService({
   lockTtlMs: cfg.lockTtlMs,
 });
 
+// Proxy Feecover: chỉ khi bản deploy khai `feecover`. Token vào từ cấu hình dưới dạng GIÁ TRỊ;
+// không dòng nhật ký nào dưới đây in nó.
+const feeProxy = cfg.deployment.feecover === undefined ? undefined : new FeeProxy({
+  settings: cfg.deployment.feecover,
+  ...(cfg.feecoverAppToken === undefined ? {} : { magicToken: cfg.feecoverAppToken }),
+  issued,
+  fetch: (url, init) => fetch(url, init),
+});
+
 /** Trần thân bài. Một `tx_cbor` + `witness_cbor` nằm gọn dưới mức này; vượt là thứ
  *  không phải yêu cầu hợp lệ, và đọc tiếp chỉ để tốn bộ nhớ. */
 const MAX_BODY_BYTES = 512 * 1024;
@@ -88,6 +98,7 @@ const server = createServer((rq, rs) => {
           chainLabel: chain.label,
           changeAddressStrategy: cfg.changeAddressStrategy,
           token: cfg.token,
+          ...(feeProxy === undefined ? {} : { feeProxy }),
           logInternal: (ref, cause) => {
             console.error(`[vault-tx-api] ${ref} ←`, cause instanceof Error ? cause.stack : cause);
           },
@@ -126,7 +137,7 @@ server.listen(cfg.port, cfg.host, () => {
   }
 });
 
-const sweeper = setInterval(() => { locks.sweep(Date.now()); }, 30_000);
+const sweeper = setInterval(() => { const t = Date.now(); locks.sweep(t); issued.sweep(t); }, 30_000);
 sweeper.unref();
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {

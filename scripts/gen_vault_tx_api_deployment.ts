@@ -38,10 +38,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { credentialToAddress, scriptHashToCredential } from "@lucid-evolution/lucid";
 import { lampAssetName, type Network } from "@magiclamp/protocol-utils";
-// `ASSET_NAMES` là NGUỒN của vế tên tài sản. Hai trường được đọc ở đây (`um_nft`,
-// `backing`) là hằng chuỗi thường; hai trường còn lại của bảng đó là getter đòi biến
-// môi trường, nên đừng duyệt cả bảng — chỉ đọc đúng hai trường cần.
-import { ASSET_NAMES } from "./config.js";
+// Vế tên tài sản lấy từ `assetNames.ts`, KHÔNG từ `config.ts`: nạp `config.ts` là đòi khoá
+// Blockfrost + ví ngay lúc import, trái với lời hứa "không đọc bí mật nào" ở đầu tệp này.
+import { STATIC_ASSET_NAMES as ASSET_NAMES } from "./assetNames.js";
 import { consumeKey, type ConsumeKeyName } from "./consumeBook.js";
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
@@ -179,7 +178,10 @@ function main(): void {
     },
     consume: {
       engage_address: need(book, ck("CONSUME_ADDRESS"), "địa chỉ luồng Engage"),
-      engage_nft_unit: need(book, ck("ENGAGE_NFT_UNIT"), "NFT định danh luồng Engage"),
+      // KHÔNG phát `engage_nft_unit`: dịch vụ chọn thread theo CHỦ (policy = script hash
+      // consume, suy từ `engage_address`), và cấu hình còn khoá đó thì dịch vụ từ chối khởi
+      // động — một thread cố định chỉ phục vụ được đúng một chủ vì `consume.ak` ép chủ
+      // thread == chủ vault.
       price_beacon_address: hashToAddress(need(book, ck("PRICE_PARAM_HASH"), "địa chỉ beacon PriceParam"), network),
       price_beacon_nft_unit: need(book, ck("PRICE_NFT_UNIT"), "NFT định danh beacon PriceParam"),
     },
@@ -219,6 +221,25 @@ function main(): void {
       `  nó có nghĩa là màn GenMAGIC của bên tiêu thụ vẫn chưa dùng được.\n` +
       `  Thiếu, đúng tên khoá trong sổ trạng thái:\n` +
       thieu.map((t) => `    · ${t}\n`).join(""),
+    );
+  }
+
+  // ── Mục `did_stake`: tham số theo mạng của nhân chứng chủ `Script(h)` ─────────────
+  //
+  // `anchor_nft_policy` là policy NFT anchor DID của PhoenixKey trên mạng này — apply-param
+  // của `did_stake`, nên nó là một dữ kiện deploy và nằm trong sổ trạng thái như mọi dữ kiện
+  // deploy khác (khoá `ANCHOR_NFT_POLICY`). Vắng ⟹ không phát mục; `VaultTxAPI` trả 501
+  // `OWNER_SCRIPT_WITNESS_UNAVAILABLE` cho chủ script, chủ khoá không bị ảnh hưởng.
+  const anchorPolicy = book.ANCHOR_NFT_POLICY;
+  if (anchorPolicy !== undefined && anchorPolicy !== "") {
+    if (!/^[0-9a-f]{56}$/.test(anchorPolicy)) {
+      throw new Error(`✗ ANCHOR_NFT_POLICY trong sổ trạng thái phải là 56 hex thường (nhận ${anchorPolicy.length} ký tự).`);
+    }
+    deployment.did_stake = { anchor_nft_policy: anchorPolicy };
+  } else {
+    process.stderr.write(
+      `⚠ Mục \`did_stake\` KHÔNG được phát (sổ trạng thái thiếu ANCHOR_NFT_POLICY) ⟹ mọi yêu cầu\n` +
+      `  có chủ script (ví PhoenixKey) nhận 501 OWNER_SCRIPT_WITNESS_UNAVAILABLE. Chủ khoá không bị ảnh hưởng.\n`,
     );
   }
 

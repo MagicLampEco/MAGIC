@@ -3,12 +3,16 @@
 // Tách khỏi `server.ts` để phép kiểm gọi thẳng vào đây, không phải mở cổng mạng.
 //
 // ── ĐÚNG NĂM ĐƯỜNG DỰNG, KHÔNG THÊM ────────────────────────────────────────────
-//   POST /tx/instant-gen       { owner, [owner_witness], [change_address] }
+//   POST /tx/instant-gen       { owner, [owner_witness], [change_address | fee_payer] }
 //   POST /tx/schedule-commit   { owner, …, schedule_length, lamp_per_epoch }
 //   POST /tx/schedule-fire     { owner, …, schedule_id }
-//   POST /tx/consume           { owner, …, op_type, op_count }
+//   POST /tx/consume           { owner, …, op_type, op_count, [engage_ref] }
+//   POST /tx/open-thread       { owner, [owner_witness], [change_address] }
+//                              (`fee_payer` một mình ⟹ 422; `funding` ⟹ 501 — xem `service.ts`)
 //   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 //   POST /tx/submit            { tx_cbor, witness_cbor }
+//   POST /fee/utxo             { route }       [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`)
+//   POST /fee/sign             { tx_cbor }     [X-Feecover-Token]
 //
 // `owner = { type: "key" | "script", hash }`; `owner_pkh` còn nhận làm bí danh của
 // `{ type: "key" }` — xem `owner.ts`. Cùng có mà lệch ⟹ 400 `OWNER_ALIAS_MISMATCH`.
@@ -29,7 +33,13 @@
 import {
   BadRequestError, TxApiError, UnauthorizedError, newReferenceCode,
 } from "./errors.js";
-import { toBuildBody, toCreateVaultBody, toSubmitBody, type OwnerRequest, type VaultTxService } from "./service.js";
+import {
+  toBuildBody, toCreateVaultBody, toOpenThreadBody, toSubmitBody, type OwnerRequest, type VaultTxService,
+} from "./service.js";
+import { parseEngageRef } from "./engage.js";
+import { CodedApiError } from "./errors.js";
+import type { FeeProxy } from "./feeProxy.js";
+import { parseFeePayer } from "./feePayer.js";
 import { parseOwnerFields, parseOwnerWitness } from "./owner.js";
 import { parseFunding } from "./funding.js";
 import { OwnerAuthError } from "@magiclamp/protocol-utils";
@@ -62,6 +72,8 @@ export interface RouterDeps {
   /** Nơi ghi nguyên nhân gốc của lỗi ngoài dự kiến, kèm mã tham chiếu đã trả ra ngoài.
    *  Không có nó thì "mã tham chiếu" chỉ là một câu chung chung mặc đồng phục. */
   logInternal: (referenceCode: string, cause: unknown) => void;
+  /** Proxy Feecover. Vắng ⟹ `/fee/utxo` + `/fee/sign` trả 501 `FEE_PROXY_UNAVAILABLE`. */
+  feeProxy?: FeeProxy;
 }
 
 export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpResponse> {
@@ -86,12 +98,28 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         })),
         // Nói thẳng ở chỗ máy đọc được, không chỉ ở README.
         holds_signing_material: false,
+        // Chỉ trạng thái, không bao giờ token hay băm của nó.
+        feecover: deps.feeProxy === undefined ? "absent" : "configured",
       },
     };
   }
 
   try {
     requireToken(req, deps.token);
+
+    if (path === "/fee/utxo" || path === "/fee/sign") {
+      if (req.method !== "POST") return methodNotAllowed("POST");
+      if (deps.feeProxy === undefined) {
+        throw new CodedApiError(501, "FEE_PROXY_UNAVAILABLE",
+          `Proxy phí Feecover chưa được cấu hình ở dịch vụ này (bản deploy thiếu khối "feecover").`);
+      }
+      const body = asObject(req.body);
+      const callerToken = req.headers["x-feecover-token"] ?? req.headers["X-Feecover-Token"];
+      const out = path === "/fee/utxo"
+        ? await deps.feeProxy.utxo(body.route, callerToken)
+        : await deps.feeProxy.sign(body.tx_cbor, callerToken);
+      return { status: 200, body: out };
+    }
 
     if (!path.startsWith("/tx/")) {
       return { status: 404, body: err("NOT_FOUND", `Không có đường "${path}".`) };
@@ -125,8 +153,16 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
           ...ownerReq(body),
           opType: reqSmallInt(body, "op_type"),
           opCount: reqBigint(body, "op_count"),
+          engageRef: parseEngageRef(body.engage_ref),
         });
         return { status: 200, body: toBuildBody(out) };
+      }
+      case "/tx/open-thread": {
+        const out = await deps.service.openThread({
+          ...ownerReq(body),
+          fundingRequested: body.funding !== undefined,
+        });
+        return { status: 200, body: toOpenThreadBody(out) };
       }
       case "/tx/create-vault": {
         const kind = body.kind;
@@ -218,6 +254,7 @@ function ownerReq(body: Record<string, unknown>): OwnerRequest {
     owner: parseOwnerFields(body),
     ownerWitness: parseOwnerWitness(body),
     changeAddress: changeAddress as string | undefined,
+    feePayer: parseFeePayer(body),
   };
 }
 

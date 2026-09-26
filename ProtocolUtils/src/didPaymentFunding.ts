@@ -32,6 +32,39 @@ export const DID_PAYMENT_SPEND_REDEEMER = "d87980";
 /** Trần hạn dùng của giao dịch có ví trả phí bên thứ ba (mô hình Feecover): ≤ 1 giờ. */
 export const FUNDING_MAX_VALIDITY_MS = 3_600_000n;
 
+/**
+ * Lượng thế chấp MẶC ĐỊNH khi giao dịch có ví trả phí bên thứ ba (mô hình Feecover): bên đó
+ * chỉ chịu mất thế chấp tới một trần theo mục đích, hiện là 3 tADA. Mặc định của lucid là
+ * 5 ADA ⟹ để lucid tự chọn là dựng ra một giao dịch bên trả phí từ chối ký.
+ *
+ * Đây là MẶC ĐỊNH, không phải trần: bên vận hành khai lượng thật trong cấu hình của mình
+ * (`VaultTxAPI` ▸ `fee_payer_collateral_lovelace`), và cổng đọc lại CBOR so với giá trị đó.
+ */
+export const FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE = 3_000_000n;
+
+/**
+ * Tuỳ chọn `.complete(...)` đặt lượng thế chấp TƯỜNG MINH. Bộ dựng nào nhận tham số
+ * `collateralLovelace` đều đi qua hàm này, để luật hình dạng nằm ở một chỗ.
+ *
+ *   · `undefined` ⟹ `undefined`: giữ nguyên hành vi cũ (lucid tự đặt).
+ *   · khác `bigint` hoặc ≤ 0 ⟹ NÉM. Không đệm về mặc định của lucid: một con số sai ở đây mà
+ *     lặng lẽ thành 5 ADA là đúng cái giao dịch bên trả phí sẽ từ chối.
+ *
+ * Lượng thật lucid đặt là `max(collateralPercentage × phí, setCollateral)`; phí bình thường
+ * nhỏ hơn nhiều nên vế sau thắng. Vế trước thắng thì giao dịch mất nhiều hơn giá trị này, và
+ * phép đọc lại CBOR ở tầng dịch vụ phải bắt được — đừng coi hàm này là cổng.
+ */
+export function collateralCompleteOptions(collateralLovelace: bigint | undefined): { setCollateral: bigint } | undefined {
+  if (collateralLovelace === undefined) return undefined;
+  if (typeof collateralLovelace !== "bigint" || collateralLovelace <= 0n) {
+    throw new RangeError(
+      `collateralLovelace phải là bigint > 0 (nhận ${String(collateralLovelace)}). ` +
+      `Không đệm về mặc định 5 ADA của lucid — bên trả phí sẽ từ chối giao dịch đó.`,
+    );
+  }
+  return { setCollateral: collateralLovelace };
+}
+
 export type FundingErrorCode =
   | "FUNDING_SHAPE"
   | "FUNDING_SCRIPT_MISMATCH"

@@ -33,7 +33,7 @@ import {
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type Assets,
   type TxBuilder,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, epochValidityWindow, type Network } from "@magiclamp/protocol-utils";
+import { msPerEpoch, epochValidityWindow, collateralCompleteOptions, type Network } from "@magiclamp/protocol-utils";
 import {
   applyOwnerAuth, resolveOwnerAuth, ownerRefOf, ownerRefFromPlutusData, sameOwner,
   ownerRefToString, ownerCredentialOf, OwnerAuthError,
@@ -136,6 +136,10 @@ export interface ConsumeParams {
   network: Network;
   /** Tip POSIX ms hiện tại (đầu vào để tính epoch + validity-range). */
   tipPosixMs: bigint;
+  /** Lượng thế chấp TƯỜNG MINH (lovelace) — đặt khi phí + thế chấp do ví trả phí bên thứ ba
+   *  gánh (mô hình Feecover, trần mất thế chấp 3 tADA). Bỏ trống ⟹ lucid tự đặt (5 ADA).
+   *  Hình dạng: `@magiclamp/protocol-utils` ▸ `collateralCompleteOptions`. */
+  collateralLovelace?: bigint;
 }
 
 export interface ConsumeResult {
@@ -428,9 +432,10 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   txBuilder = applyOwnerAuth(txBuilder, resolveOwnerAuth(threadOwner, ownerAuth));
 
   // Collateral thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token).
+  const collateralOpts = collateralCompleteOptions(params.collateralLovelace);
   const tx = collateralUtxo
-    ? await txBuilder.complete({ presetWalletInputs: [collateralUtxo] })
-    : await txBuilder.complete();
+    ? await txBuilder.complete({ presetWalletInputs: [collateralUtxo], ...collateralOpts })
+    : await txBuilder.complete(collateralOpts);
 
   const summary =
     `consume op_type=${opType} ×${opCount} | required=${requiredNanogic} ng | ` +
@@ -560,6 +565,14 @@ export interface MintEngageParams {
   /** Lovelace gắn kèm thread UTxO (min-ADA). Default 2 ADA. */
   lovelace?: bigint;
   network: Network;
+  /** UTxO script tham chiếu CIP-33 của `consume`. Có ⟹ `readFrom` thay cho đính kèm script
+   *  (policy vẫn là script hash của nó); vắng ⟹ đính `consumeScript` như cũ. */
+  consumeRefUtxo?: UTxO;
+  /** Lượng thế chấp TƯỜNG MINH (lovelace) — xem `ConsumeParams.collateralLovelace`. */
+  collateralLovelace?: bigint;
+  /** Cận trên hiệu lực (POSIX ms). Đặt khi phí do ví trả phí bên thứ ba gánh (hạn ≤ 1 giờ);
+   *  vắng ⟹ không đặt `validTo` (hành vi cũ). */
+  validToMs?: bigint;
 }
 
 export interface MintEngageResult {
@@ -640,17 +653,30 @@ export async function buildMintEngageTx(
     seed: { transaction_id: seed.txHash, output_index: BigInt(seedUtxo.outputIndex) },
   });
 
-  const txBuilder = lucid
+  if (params.consumeRefUtxo !== undefined) {
+    const refScript = params.consumeRefUtxo.scriptRef;
+    if (refScript == null || validatorToScriptHash(refScript) !== policyId) {
+      throw new Error(
+        `MINT-ENGAGE-004: consumeRefUtxo không mang script consume (policy ${policyId}).`,
+      );
+    }
+  }
+  let base = lucid
     .newTx()
     .collectFrom([seedUtxo]) // one-shot: seed PHẢI nằm trong inputs
-    .mintAssets({ [unit]: 1n }, mintRedeemer)
-    .attach.MintingPolicy(consumeScript)
+    .mintAssets({ [unit]: 1n }, mintRedeemer);
+  base = params.consumeRefUtxo !== undefined
+    ? base.readFrom([params.consumeRefUtxo])
+    : base.attach.MintingPolicy(consumeScript);
+  if (params.validToMs !== undefined) base = base.validTo(Number(params.validToMs));
+  const txBuilder = base
     .pay.ToAddressWithData(
       engageAddress,
       { kind: "inline", value: encodeEngageDatum(genesisDatum) },
       { lovelace, [unit]: 1n }, // ≤ 2 policy: ADA + thread NFT
     );
-  const tx = await applyOwnerAuth(txBuilder, ownerAuth).complete();
+  const tx = await applyOwnerAuth(txBuilder, ownerAuth)
+    .complete(collateralCompleteOptions(params.collateralLovelace));
 
   const summary =
     `mint engage thread ${unit} | seed=${seed.txHash}#${seedUtxo.outputIndex} | ` +

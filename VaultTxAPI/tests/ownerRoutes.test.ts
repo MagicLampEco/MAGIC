@@ -41,7 +41,6 @@ const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
   },
   consume: {
     engage_address: VAULT_ADDRESS,
-    engage_nft_unit: `${"44".repeat(28)}deadbeef`,
     price_beacon_address: VAULT_ADDRESS,
     price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
   },

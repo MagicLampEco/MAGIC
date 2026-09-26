@@ -1,7 +1,10 @@
 // ConsumeMAGIC pricing — giá CÓ THẨM QUYỀN tính từ PriceParam beacon.
 // NORMATIVE: CONTRACT.md §A + §E. Pure BigInt, KHÔNG float.
 //
-//   required = ⌊ base_price[op_type] × demand_mult × op_count / Q ⌋   (Q=1e9, scale)
+//   required = ⌊ base_price[op_type] × demand_mult[op_type] × op_count / Q ⌋  (Q=1e9)
+//
+// `demand_mult` đọc từ CHÍNH DÒNG giá (`op.demand_mult`), không còn một giá trị chung
+// ở mức `PriceParam` — `CC-LOAD-COUNT-UNIT`, chốt 2026-09-24 (CONTRACT.md §A).
 //
 // GỘP-SÀN MỘT LẦN cho cả tổng. KHÔNG sàn từng lượt rồi nhân:
 //   price(op_type) = ⌊ base × demand_mult / Q ⌋  chỉ để HIỂN THỊ cho người dùng.
@@ -28,6 +31,36 @@ pub const m_min_q: Int = 500_000_000
 
 pub const m_max_q: Int = 2_000_000_000
 
+/// Những `op_type` bị ép GIÁ CỐ ĐỊNH: `demand_mult` của dòng đó PHẢI đúng bằng `q`
+/// (1.0×), nên giá của chúng KHÔNG nhúc nhích theo tải.
+///
+/// VÌ SAO — `op_type = 7` (`did.rotate`) là THAO TÁC AN NINH, không phải một dịch vụ
+/// tính tiền theo cung-cầu. Hai chiều hỏng, cả hai đều nằm ở CHIỀU chứ không ở ĐỘ LỚN
+/// (trần `m_max = 2.0×` chặn được độ lớn, không chặn được chiều) — xem khối
+/// "🟢 `op_type=7` từng bị định giá SAI về nguyên tắc — ĐÃ VÁ" trong
+/// `ConsumeMAGIC/CONTRACT.md §A`:
+///   (a) ai bơm một mã RẺ với khối lượng lớn cũng đẩy hệ số của mã 7 lên trần, không
+///       cần biết PhoenixKey tồn tại — sau `CC-LOAD-COUNT-UNIT` thì bộ đếm đã tách
+///       theo mã nên đường này đã hẹp lại, nhưng nó chỉ hẹp vì bộ đếm, không vì luật;
+///   (b) một đợt lộ khoá hàng loạt khiến nhiều người cùng Rotate ⇒ tải của CHÍNH mã 7
+///       tăng ⇒ Rotate đắt lên. Việc cần gấp nhất thành đắt nhất đúng lúc cần rẻ nhất,
+///       và nó TỰ KHUẾCH ĐẠI. Bộ đếm tách theo mã KHÔNG cứu được ca (b) — chỉ luật này
+///       cứu được. Đó là lý do hai thay đổi đi CÙNG một lượt.
+///
+/// Hình dạng đã chọn là DẢI QUY ƯỚC ở lúc BIÊN DỊCH, không phải một cờ `fixed: Bool`
+/// trong datum: cờ trong datum là thứ committee tự đặt được, tức là để chính bên bị
+/// nghi tự khai mình có bị ràng buộc hay không (cùng họ với "trần để trong datum do
+/// cùng khoá ký = trần giả"). Hằng biên dịch nằm trong script hash ⇒ đổi nó là đổi
+/// địa chỉ, phải deploy lại và công bố ref-script CIP-33 mới.
+///
+/// KHÔNG kèm trần `op_count` riêng cho mã cố định: phí xoay khoá tăng theo số lần
+/// xoay (dãy Fibonacci ở tầng PhoenixKey) đi vào `op_count`, nên chặn `op_count` là
+/// chặn đúng cơ chế chống lạm dụng của bên kia. Chủ dự án chốt.
+///
+/// `base_price × m_min ≥ q` VẪN áp cho dòng cố định (xem `valid_param`): luật này
+/// chặn giá-về-0, nó độc lập với việc hệ số có đứng yên hay không.
+pub const fixed_price_op_types: List<Int> = [7]
+
 /// Trần số dòng trong bảng giá `op_prices`.
 ///
 /// VÌ SAO CẦN CAP: `valid_param` chạy MỘT LẦN / Engage input (mỗi invocation của
@@ -36,17 +69,49 @@ pub const m_max_q: Int = 2_000_000_000
 /// beacon chỉ sửa được bởi chính committee.
 ///
 /// VÌ SAO 16 — chọn theo SỐ ĐO `aiken check`, không theo cảm giác. Chi phí
-/// `valid_param` trên bảng ĐẦY (gồm cả dựng list trong test):
-///     n= 8 → 339 K mem /  111 M cpu
-///     n=12 → 601 K mem /  199 M cpu
-///     n=16 → 940 K mem /  314 M cpu
-///     n=24 → 1.84 M mem /  625 M cpu
-///     n=32 → 3.05 M mem / 1.04 B cpu
-///   Trần tx Cardano: 14 M mem / 10 B cpu. Ràng buộc BINDING là MEM, không phải CPU.
-///   Ở n=16, một tx gộp 3 Engage input trả ~2.8 M mem (20% ngân sách) riêng cho việc
-///   kiểm bảng giá — còn chỗ cho phần còn lại của validator (tx 2-engage hiện đo
-///   2.00 M mem tổng). Ở n=32, chỉ riêng 2 invocation đã ngốn ~6.1 M (44%) ⇒ LOẠI.
+/// `valid_param` trên bảng ĐẦY (gồm cả dựng list trong test) — ĐO LẠI 2026-09-25 dưới
+/// lược đồ `OpPrice` BA trường (`demand_mult` xuống từng dòng, `CC-LOAD-COUNT-UNIT`):
+///     n= 8 →  425 K mem / 135 M cpu
+///     n=12 →  676 K mem / 215 M cpu
+///     n=16 →  962 K mem / 306 M cpu
+///     n=24 → 1.64 M mem / 523 M cpu
+///     n=32 → 2.46 M mem / 784 M cpu
+///   Trần tx Cardano ĐỔI THEO MẠNG — xem `consume.ak` ▸ khối đầu mục "ĐO EX-UNIT
+///   KỊCH BẢN XẤU NHẤT" (mainnet 16,5 M mem / 10 G cpu, Preprod 17,5 M mem — Koios
+///   `cli_protocol_params`, đo 2026-09-25). Đừng chép lại con số ở đây: một bản sao
+///   lệch với khối kia ở lần đo tiếp theo mà không gì báo — đúng ca đã xảy ra với "14 M
+///   mem" ở bản trước, số của đời tham số cũ. Ràng buộc BINDING là MEM, không phải CPU,
+///   trên cả hai mạng.
+///   Ở n=16, một tx gộp 3 Engage input trả ~2.89 M mem riêng cho việc kiểm bảng giá —
+///   dưới 20% ngân sách ngay cả ở trần CHẶT hơn (mainnet 16,5 M). Ở n=32, chỉ riêng 2
+///   invocation đã ngốn ~4.93 M — dưới 30% ở trần chặt nhất.
 ///   MVP dùng 2 loại nghiệp vụ ⇒ 16 vẫn dư 8× cho mở rộng.
+///
+///   🔴 SỐ ĐỔI, TRẦN KHÔNG ĐỔI — và đừng đọc hai việc đó thành một. Lược đồ mới làm
+///   `valid_param` ĐẮT HƠN ở n nhỏ (thêm hai vế band + một vế giá-cố-định cho MỖI dòng:
+///   n=8 từ 339 K lên 425 K) nhưng RẺ HƠN ở n lớn (n=32 từ 3.05 M xuống 2.46 M, vì
+///   `demand_mult` không còn phải đọc lại từ mức datum trong mỗi vòng). Nên biên của
+///   n=32 nới từ 44% xuống 35% ngân sách. Đó là một dữ kiện, KHÔNG phải một lý do nâng
+///   trần: trần là một quyết định của chủ dự án, và bảng số này chỉ nói nâng lên thì
+///   tốn bao nhiêu, không nói có nên nâng không. Ai muốn nâng thì hỏi, đừng suy từ biên.
+///
+///   Ex-unit của đường `consume` THẬT (không phải riêng `valid_param`) KHÔNG chép xuống
+///   đây: một bản sao sẽ chết im lặng ở lần đổi cấu trúc kế tiếp. Đo bằng một lệnh
+///   `aiken check` rồi đọc `execution_units` của BA bài ở `consume.ak`, cùng nhóm "ĐO
+///   EX-UNIT KỊCH BẢN XẤU NHẤT":
+///     `probe_fixture_only_full_table_two_engage`       — chỉ dựng fixture, KHÔNG gọi `consume.spend`.
+///     `consume_worst_case_full_table_two_engage_happy` — fixture + MỘT lần gọi `consume.spend` (own_ref = er0).
+///     `probe_two_invocations_full_table_two_engage`    — fixture + HAI lần gọi `consume.spend` (er0 và er1).
+///   Per-tx THẬT (2 Engage) = số đo bài THỨ BA trừ số đo bài THỨ NHẤT. ĐỪNG trừ cho
+///   bài THỨ HAI (`consume_worst_case_full_table_two_engage_happy`): Aiken test gọi
+///   thẳng hàm validator theo `own_ref` mình truyền vào, KHÔNG tự lặp theo số input
+///   như Cardano thật (Cardano chạy validator một lần / redeemer Spend) — bài thứ hai
+///   chỉ gọi MỘT lần dù tx dựng đủ hai Engage input, nên số của nó thiếu đúng một lần
+///   invocation so với một tx 2-Engage thật.
+///   (Bản trước của khối này chép một con số "tx 2-engage hiện đo 2.00 M mem tổng" từ
+///   ĐÚNG bài thứ hai — tức chép số của "fixture + 1 invocation" rồi gọi nó là số của
+///   một tx, và không gì báo. Ba bài trên là cách vá: tách fixture ra khỏi invocation
+///   thay vì đọc một bài gộp cả hai rồi đoán tỷ lệ.)
 ///
 /// Cap này nằm DƯỚI trần ledger thật (16 dòng ≈ 256 byte datum, xa trần datum-size)
 /// ⇒ nó thực sự ràng buộc, không phải cap trang trí đặt TRÊN trần thật.
@@ -145,15 +210,16 @@ pub const max_op_prices: Int = 16
 ///   · đọc ở: tỷ số giữa (MAGIC một lần bắn) và (λ × L) — phải bằng ρ/L, không bằng ρ.
 pub const max_base_price: Int = 1_000_000_000_000
 
-/// Tìm base_price cho op_type trong bảng giá. None nếu op_type không tồn tại.
+/// Tìm DÒNG GIÁ cho op_type trong bảng. None nếu op_type không tồn tại.
 /// AN TOÀN nhờ `valid_param` đã ép bảng giá TĂNG NGẶT theo op_type — nếu không,
 /// `list.find` lấy dòng ĐẦU trong khi bản off-chain viết bằng map (last-wins) lấy
 /// dòng CUỐI ⇒ hai phía lệch giá im lặng.
-pub fn lookup_base(op_prices: List<OpPrice>, op_type: Int) -> Option<Int> {
-  when list.find(op_prices, fn(p) { p.op_type == op_type }) is {
-    Some(p) -> Some(p.base_price)
-    None -> None
-  }
+///
+/// Trả cả DÒNG chứ không chỉ `base_price` (đổi 2026-09-25, `CC-LOAD-COUNT-UNIT`):
+/// `demand_mult` nay nằm trong chính dòng đó, nên trả một trường rồi đi tra trường
+/// kia ở chỗ khác là mở ra một lối cho hai lần tra rơi vào hai dòng khác nhau.
+pub fn lookup_row(op_prices: List<OpPrice>, op_type: Int) -> Option<OpPrice> {
+  list.find(op_prices, fn(p) { p.op_type == op_type })
 }
 
 /// [VÁ 2026-08-09 #C] Bảng giá phải TĂNG NGẶT theo `op_type`.
@@ -181,9 +247,11 @@ fn increasing_after(prev: Int, rest: List<OpPrice>) -> Bool {
 
 /// Bất biến datum PriceParam (C-CM-2 defense-in-depth, CONTRACT §E "mọi giá trị ≥ 0"):
 ///   BAND TUYỆT ĐỐI: m_min == m_min_q ∧ m_max == m_max_q (pin, chống band-escape #1b);
-///   0 ≤ m_min ≤ m_max ; m_min ≤ demand_mult ≤ m_max ; epoch ≥ 0 ; MỌI base_price ≥ 0;
+///   0 ≤ m_min ≤ m_max ; epoch ≥ 0 ; MỌI base_price ≥ 0;
 ///   BẢNG GIÁ: len(op_prices) ≤ max_op_prices ∧ op_type TĂNG NGẶT (dạng chuẩn tắc);
-///   GATE-giá-tối-thiểu: MỌI op có base_price × m_min ≥ q.
+///   GATE-giá-tối-thiểu: MỌI op có base_price × m_min ≥ q;
+///   BAND THEO TỪNG DÒNG: MỌI op có m_min ≤ op.demand_mult ≤ m_max;
+///   GIÁ CỐ ĐỊNH: op_type ∈ fixed_price_op_types ⇒ op.demand_mult == q.
 /// Lý do các tầng:
 ///   - Pin m_min/m_max: PostPrice cẩu thả đặt m_max khổng lồ ⇒ price = base×demand/q nổ
 ///     ~1e6× (verified). Check tương-đối (m_min≤demand≤m_max) KHÔNG chặn được vì demand
@@ -201,6 +269,17 @@ fn increasing_after(prev: Int, rest: List<OpPrice>) -> Bool {
 ///     ràng buộc DƯỚI. Không có cận trên thì committee đặt giá tuỳ ý và người dùng không
 ///     cản được — khoá dịch vụ bằng giá. Xem `max_base_price` để biết con số và giới hạn
 ///     của nó.
+///   - [CC-LOAD-COUNT-UNIT 2026-09-25] BAND theo TỪNG DÒNG: `demand_mult` rời khỏi
+///     mức `PriceParam` xuống `OpPrice`, nên phép kẹp band phải đi xuống theo. Bỏ
+///     sót vế này là bỏ luôn thứ DUY NHẤT chặn biên độ một lượt đăng giá — còn lại
+///     chỉ `max_base_price` đứng giữa một lượt đăng và một mức giá gấp trăm lần.
+///     `m_min`/`m_max` vẫn ghim TUYỆT ĐỐI về hằng ở mức datum (band là thứ dùng
+///     chung, không phải thứ mỗi dòng tự khai).
+///     🔴 Đường tắt đã LOẠI tường minh: gấp nhu cầu vào thẳng `base_price` cho ra
+///     cùng hiệu ứng giá mà KHÔNG đổi lược đồ — và nó PHÁ band, vì band chỉ kẹp
+///     `demand_mult`, không kẹp `base_price`.
+///   - [CC-LOAD-COUNT-UNIT 2026-09-25] GIÁ CỐ ĐỊNH cho `fixed_price_op_types`: xem
+///     hằng đó và `demand_mult_pinned_if_fixed`.
 ///   - [VÁ 2026-08-09] cap độ dài + op_type TĂNG NGẶT: xem `max_op_prices` /
 ///     `sorted_strict_op_types`. Trùng op_type ⇒ on-chain `list.find` lấy dòng ĐẦU,
 ///     off-chain viết bằng map lấy dòng CUỐI ⇒ hai phía lệch giá (10×) mà KHÔNG bên nào
@@ -214,14 +293,14 @@ pub fn valid_param(pp: PriceParam) -> Bool {
     // check tương-đối GIỮ NGUYÊN (defense-in-depth, redundant sau pin nhưng không bỏ)
     pp.m_min >= 0,
     pp.m_min <= pp.m_max,
-    pp.demand_mult >= pp.m_min,
-    pp.demand_mult <= pp.m_max,
     pp.epoch >= 0,
     // BẢNG GIÁ: có trần (ex-unit bị chặn) + khoá tra cứu KHÔNG nhập nhằng
     list.length(pp.op_prices) <= max_op_prices,
     sorted_strict_op_types(pp.op_prices),
     // per-op: base ≥ 0 VÀ giá ≥ 1 nanogic ở demand thấp nhất (#1b, không ngoại lệ)
     // VÀ base ≤ trần (Nợ #32 — chặn khoá-dịch-vụ-bằng-giá; xem `max_base_price`)
+    // VÀ demand_mult của CHÍNH DÒNG nằm trong band (CC-LOAD-COUNT-UNIT)
+    // VÀ dòng thuộc `fixed_price_op_types` có demand_mult ĐÚNG BẰNG q.
     list.all(
       pp.op_prices,
       fn(op) {
@@ -229,17 +308,34 @@ pub fn valid_param(pp: PriceParam) -> Bool {
           op.base_price >= 0,
           op.base_price * pp.m_min >= q,
           op.base_price <= max_base_price,
+          op.demand_mult >= pp.m_min,
+          op.demand_mult <= pp.m_max,
+          demand_mult_pinned_if_fixed(op),
         }
       },
     ),
   }
 }
 
+/// Dòng có `op_type` thuộc `fixed_price_op_types` ⇒ `demand_mult` PHẢI == `q` (1.0×).
+/// Dòng khác ⇒ luật này không nói gì (band ở chỗ gọi vẫn áp).
+///
+/// Viết thành hàm riêng thay vì nhét vào biểu thức `and` để cổng này có MỘT CÁI TÊN
+/// tra được — đột biến nó thành `True` là phép đo trực tiếp xem nó có đang canh gì
+/// không, không phải sửa một vế lẫn trong sáu vế.
+pub fn demand_mult_pinned_if_fixed(op: OpPrice) -> Bool {
+  if list.has(fixed_price_op_types, op.op_type) {
+    op.demand_mult == q
+  } else {
+    True
+  }
+}
+
 /// Giá 1 đơn vị nghiệp vụ op_type theo beacon (nanogic). Floor division (BigInt).
 /// Đơn điệu không-giảm theo demand_mult; bị chặn [base×m_min/Q, base×m_max/Q].
 pub fn price_of(pp: PriceParam, op_type: Int) -> Option<Int> {
-  when lookup_base(pp.op_prices, op_type) is {
-    Some(base) -> Some(base * pp.demand_mult / q)
+  when lookup_row(pp.op_prices, op_type) is {
+    Some(op) -> Some(op.base_price * op.demand_mult / q)
     None -> None
   }
 }
@@ -252,8 +348,8 @@ pub fn price_of(pp: PriceParam, op_type: Int) -> Option<Int> {
 /// chia Q MỘT lần ⇒ chỉ mất < 1 nanogic cho CẢ dòng. BigInt (Int Aiken) — không tràn.
 /// P8: offchain requiredBurn / requiredFromBeacon PHẢI dùng CÙNG fold-floor này.
 pub fn required_for(pp: PriceParam, op_type: Int, op_count: Int) -> Option<Int> {
-  when lookup_base(pp.op_prices, op_type) is {
-    Some(base) -> Some(base * pp.demand_mult * op_count / q)
+  when lookup_row(pp.op_prices, op_type) is {
+    Some(op) -> Some(op.base_price * op.demand_mult * op_count / q)
     None -> None
   }
 }
@@ -263,10 +359,9 @@ pub fn required_for(pp: PriceParam, op_type: Int, op_count: Int) -> Option<Int> 
 fn pp_mvp(demand: Int) -> PriceParam {
   PriceParam {
     op_prices: [
-      OpPrice { op_type: 1, base_price: 10_000_000 },  // ảnh 0.01 MAGIC
-      OpPrice { op_type: 2, base_price: 1_000_000 },    // CID 0.001 MAGIC
+      OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: demand },  // ảnh 0.01 MAGIC
+      OpPrice { op_type: 2, base_price: 1_000_000, demand_mult: demand },    // CID 0.001 MAGIC
     ],
-    demand_mult: demand,
     m_min: 500_000_000,    // 0.5×
     m_max: 2_000_000_000,  // 2.0×
     epoch: 100,
@@ -310,8 +405,7 @@ test required_fold_floor_no_undercharge() {
   // Chênh 333 nanogic bị thu THIẾU ở bản cũ. Phải == bản mới (giá trị fold đúng).
   let pp =
     PriceParam {
-      op_prices: [OpPrice { op_type: 1, base_price: 1_000_000 }],
-      demand_mult: 1_333_333_333,
+      op_prices: [OpPrice { op_type: 1, base_price: 1_000_000, demand_mult: 1_333_333_333 }],
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -328,7 +422,9 @@ test valid_param_ok() {
 }
 
 test valid_param_out_of_clamp() {
-  // demand_mult > m_max → datum không hợp lệ.
+  // demand_mult > m_max → datum không hợp lệ. Sau CC-LOAD-COUNT-UNIT, `pp_mvp` đặt
+  // hệ số vào TỪNG DÒNG, nên bài này nay đo BAND-THEO-DÒNG chứ không còn đo một
+  // trường ở mức datum — cùng câu chữ, khác chỗ cưỡng chế.
   !valid_param(pp_mvp(3_000_000_000))
 }
 
@@ -337,8 +433,7 @@ test valid_param_gate_rejects_tiny_base() {
   // ⇒ giá 0 ⇒ drain miễn phí. GATE base×m_min ≥ q: 1×5e8 = 5e8 < 1e9 → reject.
   let bad =
     PriceParam {
-      op_prices: [OpPrice { op_type: 1, base_price: 1 }],
-      demand_mult: q,
+      op_prices: [OpPrice { op_type: 1, base_price: 1, demand_mult: q }],
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -350,8 +445,7 @@ test valid_param_gate_accepts_min_base() {
   // Biên GATE: base_price=2 → 2×5e8 = 1e9 ≥ q → hợp lệ (⌊2×5e8/1e9⌋ = 1 nanogic).
   let ok =
     PriceParam {
-      op_prices: [OpPrice { op_type: 1, base_price: 2 }],
-      demand_mult: q,
+      op_prices: [OpPrice { op_type: 1, base_price: 2, demand_mult: q }],
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -364,8 +458,7 @@ test valid_param_cap_accepts_at_ceiling() {
   // Kiểm ở đúng biên vì `<=` và `<` chỉ khác nhau tại đúng điểm này.
   let ok =
     PriceParam {
-      op_prices: [OpPrice { op_type: 1, base_price: max_base_price }],
-      demand_mult: q,
+      op_prices: [OpPrice { op_type: 1, base_price: max_base_price, demand_mult: q }],
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -378,8 +471,7 @@ test valid_param_cap_rejects_one_above_ceiling() {
   // nên cặp test này ghim `<=` chứ không phải `<`, và ngược lại.
   let bad =
     PriceParam {
-      op_prices: [OpPrice { op_type: 1, base_price: max_base_price + 1 }],
-      demand_mult: q,
+      op_prices: [OpPrice { op_type: 1, base_price: max_base_price + 1, demand_mult: q }],
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -394,10 +486,9 @@ test valid_param_cap_rejects_lock_the_service_price() {
   let bad =
     PriceParam {
       op_prices: [
-        OpPrice { op_type: 1, base_price: 10_000_000 },
-        OpPrice { op_type: 7, base_price: 9_223_372_036_854_775_807 },
+        OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: q },
+        OpPrice { op_type: 7, base_price: 9_223_372_036_854_775_807, demand_mult: q },
       ],
-      demand_mult: q,
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -410,11 +501,10 @@ test valid_param_cap_rejects_one_bad_row_among_good() {
   let bad =
     PriceParam {
       op_prices: [
-        OpPrice { op_type: 1, base_price: 10_000_000 },
-        OpPrice { op_type: 2, base_price: 1_000_000 },
-        OpPrice { op_type: 8, base_price: max_base_price + 1 },
+        OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: q },
+        OpPrice { op_type: 2, base_price: 1_000_000, demand_mult: q },
+        OpPrice { op_type: 8, base_price: max_base_price + 1, demand_mult: q },
       ],
-      demand_mult: q,
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -482,8 +572,7 @@ test valid_param_rejects_unpinned_m_max() {
   // FIX #1b (band-escape): m_max lệch hằng (dù chỉ +1) → pin fail → reject.
   let bad =
     PriceParam {
-      op_prices: [OpPrice { op_type: 1, base_price: 10_000_000 }],
-      demand_mult: q,
+      op_prices: [OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: q }],
       m_min: 500_000_000,
       m_max: 2_000_000_001,
       epoch: 100,
@@ -495,8 +584,7 @@ test valid_param_rejects_huge_m_max() {
   // m_max khổng lồ (2e15) + demand bám theo → giá nổ ~1e6×. Pin m_max chặn tận gốc.
   let bad =
     PriceParam {
-      op_prices: [OpPrice { op_type: 1, base_price: 10_000_000 }],
-      demand_mult: 2_000_000_000_000_000,
+      op_prices: [OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: 2_000_000_000_000_000 }],
       m_min: 500_000_000,
       m_max: 2_000_000_000_000_000,
       epoch: 100,
@@ -507,8 +595,7 @@ test valid_param_rejects_huge_m_max() {
 test valid_param_rejects_negative_epoch() {
   let bad =
     PriceParam {
-      op_prices: [OpPrice { op_type: 1, base_price: 10_000_000 }],
-      demand_mult: q,
+      op_prices: [OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: q }],
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: -1,
@@ -525,10 +612,9 @@ test valid_param_rejects_duplicate_op_type() {
   let bad =
     PriceParam {
       op_prices: [
-        OpPrice { op_type: 1, base_price: 10_000_000 },
-        OpPrice { op_type: 1, base_price: 99_000_000 },
+        OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: q },
+        OpPrice { op_type: 1, base_price: 99_000_000, demand_mult: q },
       ],
-      demand_mult: q,
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -543,14 +629,16 @@ fn mk_ops(n: Int) -> List<OpPrice> {
   if n <= 0 {
     []
   } else {
-    list.concat(mk_ops(n - 1), [OpPrice { op_type: n, base_price: 10_000_000 }])
+    list.concat(
+      mk_ops(n - 1),
+      [OpPrice { op_type: n, base_price: 10_000_000, demand_mult: q }],
+    )
   }
 }
 
 fn pp_with_ops(ops: List<OpPrice>) -> PriceParam {
   PriceParam {
     op_prices: ops,
-    demand_mult: q,
     m_min: 500_000_000,
     m_max: 2_000_000_000,
     epoch: 100,
@@ -575,10 +663,9 @@ test valid_param_rejects_zero_base_price() {
   let bad =
     PriceParam {
       op_prices: [
-        OpPrice { op_type: 1, base_price: 10_000_000 },
-        OpPrice { op_type: 2, base_price: 0 },
+        OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: q },
+        OpPrice { op_type: 2, base_price: 0, demand_mult: q },
       ],
-      demand_mult: q,
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -592,10 +679,9 @@ test valid_param_negative_base_price_fail() {
   let bad =
     PriceParam {
       op_prices: [
-        OpPrice { op_type: 1, base_price: 10_000_000 },
-        OpPrice { op_type: 2, base_price: -1 },   // dòng giá âm
+        OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: q },
+        OpPrice { op_type: 2, base_price: -1, demand_mult: q },   // dòng giá âm
       ],
-      demand_mult: q,
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -612,10 +698,9 @@ test valid_param_rejects_unsorted_op_types() {
   let bad =
     PriceParam {
       op_prices: [
-        OpPrice { op_type: 2, base_price: 1_000_000 },
-        OpPrice { op_type: 1, base_price: 10_000_000 },
+        OpPrice { op_type: 2, base_price: 1_000_000, demand_mult: q },
+        OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: q },
       ],
-      demand_mult: q,
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -633,11 +718,10 @@ test valid_param_rejects_equal_neighbour_op_types() {
   let bad =
     PriceParam {
       op_prices: [
-        OpPrice { op_type: 1, base_price: 10_000_000 },
-        OpPrice { op_type: 1, base_price: 99_000_000 },
-        OpPrice { op_type: 2, base_price: 1_000_000 },
+        OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: q },
+        OpPrice { op_type: 1, base_price: 99_000_000, demand_mult: q },
+        OpPrice { op_type: 2, base_price: 1_000_000, demand_mult: q },
       ],
-      demand_mult: q,
       m_min: 500_000_000,
       m_max: 2_000_000_000,
       epoch: 100,
@@ -648,6 +732,120 @@ test valid_param_rejects_equal_neighbour_op_types() {
 test sorted_strict_op_types_edge_cases() {
   // Bảng rỗng và bảng 1 dòng: hợp lệ theo định nghĩa (không có cặp nào để so).
   sorted_strict_op_types([]) && sorted_strict_op_types(
-    [OpPrice { op_type: 7, base_price: 10_000_000 }],
+    [OpPrice { op_type: 7, base_price: 10_000_000, demand_mult: q }],
   )
+}
+
+// ── PROBE đo ex-unit cho đường cong `max_op_prices` ───────────────────────────
+//
+// Số trong docstring `max_op_prices` SINH RA TỪ ĐÂY. Trước 2026-09-25 khối số ấy
+// không có bài nào đứng sau: nó là một dãy chép tay, và một dãy chép tay thì không ai
+// biết nó đã già đi bao lâu. Đo lại là một lệnh `aiken check`, đọc ở
+// `.modules[].tests[].execution_units.mem` của JSON (cột bảng màu chỉ có 3 chữ số có
+// nghĩa — không dùng nó để lập ngân sách).
+//
+// Ba bài này gồm CẢ chi phí dựng list trong bài kiểm, đúng quy ước của dãy số cũ, để
+// hai bản còn so được với nhau. n = 24 và n = 32 KHÔNG đo được tại chỗ: `valid_param`
+// chặn ở `list.length <= max_op_prices` rồi `and` ngắn mạch, nên con số đo ra sẽ là
+// chi phí của phép CHẶN chứ không phải của phép QUÉT. Cách đo hai mốc đó: chép kho ra
+// thư mục nháp, nâng `max_op_prices` ở BẢN CHÉP, thêm hai probe cùng khuôn.
+
+test probe_valid_param_n8() {
+  valid_param(pp_with_ops(mk_ops(8)))
+}
+
+test probe_valid_param_n12() {
+  valid_param(pp_with_ops(mk_ops(12)))
+}
+
+test probe_valid_param_n16() {
+  valid_param(pp_with_ops(mk_ops(16)))
+}
+
+// ── CC-LOAD-COUNT-UNIT + GIÁ CỐ ĐỊNH cho `did.rotate` (2026-09-25) ─────────────
+//
+// Hai chốt mới, hai bộ bài. Mọi fixture dưới đây chép từ MỘT khuôn và đổi ĐÚNG MỘT
+// trường so với bài dương của nó — bài âm đổi hai trường thì nó gác vế đầu tiên chặn
+// được, không gác vế ghi trong docstring.
+
+/// Khuôn hai dòng: mã 7 (`did.rotate`, GIÁ CỐ ĐỊNH) và mã 8 (dòng thường).
+/// Hai `base_price` BẰNG NHAU để mọi chênh lệch giá quan sát được chỉ có thể đến từ
+/// `demand_mult` — base khác nhau thì bài so giá không phân biệt được hai nguyên nhân.
+fn pp_rotate_pair(demand_rotate: Int, demand_other: Int) -> PriceParam {
+  PriceParam {
+    op_prices: [
+      OpPrice { op_type: 7, base_price: 10_000_000, demand_mult: demand_rotate },
+      OpPrice { op_type: 8, base_price: 10_000_000, demand_mult: demand_other },
+    ],
+    m_min: m_min_q,
+    m_max: m_max_q,
+    epoch: 100,
+  }
+}
+
+test fixed_price_op_isolated_from_neighbour_demand_surge() {
+  // NGHIỆM THU Feecover: hàng xóm tăng nhu cầu tới TRẦN không được kéo giá xoay khoá.
+  // Đây là bài duy nhất trong tệp đo CẢ HAI cực của cùng một lượt đăng giá — một bài
+  // chỉ kiểm "mã 7 không đổi" mà không kiểm "mã 8 CÓ đổi" thì nó vẫn xanh khi
+  // `demand_mult` bị bỏ quên hoàn toàn (mọi giá đứng yên là một cách thoả nửa vế).
+  let before = pp_rotate_pair(q, q)
+  let after = pp_rotate_pair(q, m_max_q)
+  and {
+    // Lượt đăng 2.0× cho mã 8 là HỢP LỆ — cổng mới không chặn nhầm dòng thường.
+    valid_param(before),
+    valid_param(after),
+    // Hàng xóm ĐỔI: 3 op × 10.000.000 × 1.0× = 30.000.000 → × 2.0× = 60.000.000.
+    required_for(before, 8, 3) == Some(30_000_000),
+    required_for(after, 8, 3) == Some(60_000_000),
+    // Mã 7 ĐỨNG YÊN với CÙNG op_count, trước và sau cùng một lượt đăng.
+    required_for(after, 7, 3) == required_for(before, 7, 3),
+    required_for(after, 7, 3) == Some(30_000_000),
+  }
+}
+
+test valid_param_accepts_fixed_op_at_q() {
+  // ĐỐI CHỨNG (chống vá quá tay): mã 7 ở đúng 1.0× vẫn đăng được.
+  valid_param(pp_rotate_pair(q, q))
+}
+
+test valid_param_rejects_fixed_op_demand_above_q() {
+  // Mã 7 đăng 1.5×: TRONG band [0.5×, 2.0×] nên band KHÔNG bắt hộ. Chỉ
+  // `demand_mult_pinned_if_fixed` từ chối được ca này.
+  !valid_param(pp_rotate_pair(1_500_000_000, q))
+}
+
+test valid_param_rejects_fixed_op_demand_at_m_min() {
+  // Mã 7 đăng 0.5× = ĐÚNG BIÊN DƯỚI của band — hợp lệ với mọi cổng cũ, kể cả cổng
+  // band vừa hạ xuống từng dòng. Bài này tồn tại để cổng giá cố định KHÔNG bị đọc
+  // thành một bản sao của band: rẻ hơn cũng là ĐỔI THEO TẢI, và một thao tác an ninh
+  // được giảm giá lúc tải thấp thì đối xứng của nó là bị tăng giá lúc tải cao.
+  !valid_param(pp_rotate_pair(m_min_q, q))
+}
+
+test valid_param_rejects_row_demand_above_band() {
+  // Dòng THƯỜNG (mã 8, không thuộc `fixed_price_op_types`) vượt trần band 1 nanogic.
+  // Dùng mã thường có chủ đích: đặt ở mã 7 thì cổng giá cố định bắt trước và bài này
+  // không còn đo band nữa.
+  !valid_param(pp_rotate_pair(q, m_max_q + 1))
+}
+
+test valid_param_rejects_row_demand_below_band() {
+  // Đối xứng dưới: 1 nanogic dưới sàn band. Sàn là thứ chặn giá tụt gần 0 bằng hệ số
+  // trong khi `base_price` vẫn qua GATE.
+  !valid_param(pp_rotate_pair(q, m_min_q - 1))
+}
+
+test required_for_fixed_op_has_no_count_cap() {
+  // KHÔNG có trần `op_count` riêng cho mã cố định (chủ dự án chốt): phí xoay khoá
+  // tăng theo SỐ LẦN xoay ở tầng PhoenixKey và đi vào `op_count`, nên chặn `op_count`
+  // là chặn đúng cơ chế chống lạm dụng của bên kia.
+  // demand == q ⇒ required rút gọn đúng bằng base × op_count, không dư làm tròn.
+  let pp = pp_rotate_pair(q, q)
+  required_for(pp, 7, 1_000_000) == Some(10_000_000 * 1_000_000)
+}
+
+test fixed_price_op_types_contains_rotate() {
+  // Ghim NỘI DUNG của hằng, không chỉ ghim hành vi: đổi danh sách mà quên đổi luật
+  // (hoặc ngược lại) thì bài này đỏ trước khi một beacon sai lên chuỗi.
+  list.has(fixed_price_op_types, 7) && !list.has(fixed_price_op_types, 8)
 }

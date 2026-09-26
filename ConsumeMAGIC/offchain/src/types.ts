@@ -6,13 +6,15 @@
 //
 // Bảng constr (khớp types.ak):
 //   OutputReference { transaction_id: ByteArray, output_index: Int }   constr 0
-//   OpPrice         { op_type, base_price }                            constr 0
-//   PriceParam      { op_prices, demand_mult, m_min, m_max, epoch }    constr 0
+//   OpPrice         { op_type, base_price, demand_mult }               constr 0
+//   PriceParam      { op_prices, m_min, m_max, epoch }                 constr 0
 //   EngageDatum     { owner, consumed_count, last_epoch, did_commit,
 //                     consumed_nanogic }                               constr 0
 //   ConsumeRedeemer     = Consume     { op_type, op_count, price_ref, vault_ref } constr 0
 //                       | BindDID                                                 constr 1
+//                       | CloseThread                                             constr 2
 //   EngageMintRedeemer  = MintEngage  { seed: OutputReference }                   constr 0
+//                       | BurnEngage                                              constr 1
 
 import { Constr, Data } from "@lucid-evolution/lucid";
 
@@ -24,17 +26,31 @@ export const OutputReferenceSchema = Data.Object({
 });
 export type OutputReferenceT = Data.Static<typeof OutputReferenceSchema>;
 
-// ── OpPrice ───────────────────────────────────────────────────────────────────
+// ── OpPrice — 3 TRƯỜNG (CC-LOAD-COUNT-UNIT, 2026-09-25) ───────────────────────
+// `demand_mult` là trường THỨ BA, scale Q. Hệ số co giãn của RIÊNG dòng này — nó đã
+// rời khỏi mức `PriceParam`, xem lược đồ ngay dưới.
+//
+// 🔴 Thêm trường là ĐỔI LƯỢC ĐỒ, không phải thêm tuỳ chọn: giải mã Plutus Data của
+// Aiken nghiêm ngặt về SỐ TRƯỜNG theo cả hai chiều, nên một beacon 2-trường đã lên
+// chuỗi KHÔNG đọc được bằng lược đồ này và ngược lại. Việc phải làm là bootstrap
+// beacon MỚI (NFT one-shot mới), không phải cứu beacon cũ. Không UTxO người dùng nào
+// di trú — `EngageDatum` không đụng tới.
 export const OpPriceSchema = Data.Object({
   op_type: Data.Integer(),
   base_price: Data.Integer(),
+  demand_mult: Data.Integer(),
 });
 export type OpPriceT = Data.Static<typeof OpPriceSchema>;
 
-// ── PriceParam (beacon datum) ─────────────────────────────────────────────────
+// ── PriceParam (beacon datum) — 4 TRƯỜNG ──────────────────────────────────────
+// `demand_mult` ở mức này đã bị BỎ HẲN, không để lại bia mộ. Khác ca
+// `BatchSource::Snapshot` (bia mộ giữ chỉ số constructor cho UTxO đã lên chuỗi): ở
+// đây đổi số trường của `OpPrice` đã làm mọi beacon cũ không đọc được, nên không có
+// UTxO nào cần giữ chỉ số. Giữ lại trường này thì nó thành NGUỒN THỨ HAI cho cùng một
+// đại lượng — hai chỗ khai hệ số nhu cầu, không cổng nào nói chỗ nào thắng.
+// `m_min`/`m_max` ở lại vì chúng là BAND dùng chung, ghim tuyệt đối về hằng.
 export const PriceParamSchema = Data.Object({
   op_prices: Data.Array(OpPriceSchema),
-  demand_mult: Data.Integer(),
   m_min: Data.Integer(),
   m_max: Data.Integer(),
   epoch: Data.Integer(),
@@ -64,15 +80,17 @@ export const EngageDatumSchema = Data.Object({
 });
 export type EngageDatumT = Data.Static<typeof EngageDatumSchema>;
 
-// ── ConsumeRedeemer — enum 2 variant ──────────────────────────────────────────
+// ── ConsumeRedeemer — enum 3 variant ──────────────────────────────────────────
 //   Consume { op_type, op_count, price_ref, vault_ref }  → Constr 0
 //   BindDID                                              → Constr 1
+//   CloseThread                                          → Constr 2
 //
 // 🔴 CHỈ SỐ CONSTRUCTOR LÀ HỢP ĐỒNG NHỊ PHÂN với on-chain (types.ak). Variant mới
-//    chỉ được THÊM Ở CUỐI. Hai hằng dưới đây tồn tại để chỗ nào cần con số thì ĐỌC
-//    chúng, không gõ lại — và `tests/codec.test.ts` ghim cả hai.
+//    chỉ được THÊM Ở CUỐI. Các hằng dưới đây tồn tại để chỗ nào cần con số thì ĐỌC
+//    chúng, không gõ lại — và `tests/codec.test.ts` ghim từng hằng.
 export const CONSUME_REDEEMER_CONSTR = 0;
 export const BIND_DID_REDEEMER_CONSTR = 1;
+export const CLOSE_THREAD_REDEEMER_CONSTR = 2;
 
 // Variant `Consume` giữ nguyên lược đồ cũ: Data.Object cho RA ĐÚNG bytes Constr 0.
 // KHÔNG chuyển sang Data.Enum để "cho giống enum Aiken" — Lucid 0.4.x cast lỗi
@@ -97,6 +115,14 @@ export type ConsumeRedeemerT = Data.Static<typeof ConsumeRedeemerSchema>;
 export const encodeBindDidRedeemer = (): string =>
   Data.to(new Constr(BIND_DID_REDEEMER_CONSTR, []));
 
+/**
+ * Redeemer `CloseThread` — Constr(2, []), KHÔNG field. Đóng thread Engage: `owner` ký,
+ * đốt đúng NFT thread (−1, kèm `BurnEngage` ở nhánh mint), không output nào mang NFT
+ * quay về địa chỉ engage. Đích của min-ADA do người dựng tx chọn — validator không ép.
+ */
+export const encodeCloseThreadRedeemer = (): string =>
+  Data.to(new Constr(CLOSE_THREAD_REDEEMER_CONSTR, []));
+
 // ── EngageMintRedeemer = MintEngage { seed } (constr 0) ───────────────────────
 // Handler `mint` nằm TRONG chính validator `consume` (multi-purpose): policy id
 // của thread NFT == script hash của `consume` sau khi apply 7 param. KHÔNG còn
@@ -109,6 +135,14 @@ export const EngageMintRedeemerSchema = Data.Object({
   seed: OutputReferenceSchema,
 });
 export type EngageMintRedeemerT = Data.Static<typeof EngageMintRedeemerSchema>;
+
+// Variant thứ hai `BurnEngage` (Constr 1, không field) — nhánh mint chỉ-đốt, đi cùng
+// `CloseThread`. Lược đồ `MintEngage` ở trên GIỮ NGUYÊN (bytes đã lên chuỗi); variant
+// mới dựng bằng Constr từ hằng, cùng khuôn `encodeBindDidRedeemer`.
+export const MINT_ENGAGE_REDEEMER_CONSTR = 0;
+export const BURN_ENGAGE_REDEEMER_CONSTR = 1;
+export const encodeBurnEngageRedeemer = (): string =>
+  Data.to(new Constr(BURN_ENGAGE_REDEEMER_CONSTR, []));
 
 // ── PriceParamRedeemer = PostPrice (constr 0) ─────────────────────────────────
 // 🔴 KHAI BÁO CHO NGƯỜI ĐỌC, KHÔNG PHẢI BỘ MÃ HOÁ DÙNG ĐƯỢC. Đo trên

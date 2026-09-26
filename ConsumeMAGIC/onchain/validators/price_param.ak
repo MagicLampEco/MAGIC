@@ -133,10 +133,9 @@ const pp_nft_name: ByteArray = #"5052494345"
 fn mk_pp(epoch: Int, demand: Int) -> PriceParam {
   PriceParam {
     op_prices: [
-      OpPrice { op_type: 1, base_price: 10_000_000 },
-      OpPrice { op_type: 2, base_price: 1_000_000 },
+      OpPrice { op_type: 1, base_price: 10_000_000, demand_mult: demand },
+      OpPrice { op_type: 2, base_price: 1_000_000, demand_mult: demand },
     ],
-    demand_mult: demand,
     m_min: 500_000_000,
     m_max: 2_000_000_000,
     epoch: epoch,
@@ -356,6 +355,68 @@ test price_param_token_kept_happy() {
   // ĐỐI CHỨNG (chống vá quá tay): token lạ ĐÃ nằm sẵn trong beacon, giữ nguyên y hệt
   // ⇒ vẫn post giá được. Ràng buộc là "bằng", không phải "cấm có token".
   pp_spend(pp_committee, pp_threshold, pp_tx_tok(7, 7, 2_000_000))
+}
+
+// ── CC-LOAD-COUNT-UNIT: cổng GIÁ CỐ ĐỊNH phải được NỐI vào PostPrice ──────────
+//
+// `pricing.valid_param` đã có bài riêng ở `pricing.ak`. Bốn bài dưới đây đo một thứ
+// KHÁC và không suy ra được từ bài kia: rằng đường ghi beacon THẬT SỰ đi qua cổng đó.
+// Một cổng định nghĩa đầy đủ mà không có chỗ gọi nào là mẫu lỗi đã gặp — và nó không
+// đỏ ở đâu cả, vì chính bài kiểm của cổng vẫn xanh.
+
+/// Datum out với mã 7 (`did.rotate`, giá cố định) + mã 8 (dòng thường).
+fn pp_rotate_datum(epoch: Int, demand_rotate: Int, demand_other: Int) -> PriceParam {
+  PriceParam {
+    op_prices: [
+      OpPrice { op_type: 7, base_price: 10_000_000, demand_mult: demand_rotate },
+      OpPrice { op_type: 8, base_price: 10_000_000, demand_mult: demand_other },
+    ],
+    m_min: 500_000_000,
+    m_max: 2_000_000_000,
+    epoch: epoch,
+  }
+}
+
+/// tx PostPrice đăng đúng `out_datum`; mọi vế khác giữ y hệt đường hợp lệ
+/// (`price_param_happy`) để bài âm chỉ khác ở ĐÚNG bảng giá.
+fn pp_tx_datum(out_datum: PriceParam) -> Transaction {
+  let addr = util.script_address(pp_sh)
+  let v = assets.add(assets.from_lovelace(2_000_000), pp_nft_policy, pp_nft_name, 1)
+  let b_in = util.mk_input(util.mk_ref(0), util.mk_output(addr, v, mk_pp(5, 1_000_000_000)))
+  let b_out = util.mk_output(addr, v, out_datum)
+  Transaction {
+    ..placeholder,
+    inputs: [b_in],
+    outputs: [b_out],
+    extra_signatories: [#"c1", #"c2"],
+    mint: assets.zero,
+    validity_range: interval.between(6 * pp_mspe, 6 * pp_mspe + 1),
+  }
+}
+
+test price_param_rotate_row_at_q_happy() {
+  // ĐỐI CHỨNG: mã 7 ở đúng 1.0× và mã 8 ở TRẦN 2.0× → PostPrice đi qua. Không có bài
+  // này thì ba bài âm dưới không phân biệt được "cổng chặn đúng ca" với "đường đăng
+  // giá đã chết vì một lý do khác".
+  pp_spend(pp_committee, pp_threshold, pp_tx_datum(pp_rotate_datum(6, 1_000_000_000, 2_000_000_000)))
+}
+
+test price_param_rotate_row_demand_above_q_fail() fail {
+  // Committee đăng 1.5× cho mã 7 — TRONG band, nên trước vá đây là một lượt post
+  // HỢP LỆ. Đó đúng là đòn của khối `op_type=7` trong CONTRACT.md §A.
+  pp_spend(pp_committee, pp_threshold, pp_tx_datum(pp_rotate_datum(6, 1_500_000_000, 1_000_000_000)))
+}
+
+test price_param_rotate_row_demand_at_m_min_fail() fail {
+  // 0.5× = đúng biên dưới band. Chiều "rẻ đi" cũng bị chặn: một hệ số nhúc nhích được
+  // theo tải thì nó nhúc nhích cả hai chiều.
+  pp_spend(pp_committee, pp_threshold, pp_tx_datum(pp_rotate_datum(6, 500_000_000, 1_000_000_000)))
+}
+
+test price_param_ordinary_row_demand_out_of_band_fail() fail {
+  // Dòng THƯỜNG (mã 8) vượt trần band 1 nanogic → band-theo-dòng từ chối. Đặt ở mã
+  // thường có chủ đích: ở mã 7 thì cổng giá cố định bắt trước và bài mất nghĩa.
+  pp_spend(pp_committee, pp_threshold, pp_tx_datum(pp_rotate_datum(6, 1_000_000_000, 2_000_000_001)))
 }
 
 test price_param_ada_topup_with_token_happy() {

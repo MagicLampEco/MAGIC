@@ -28,7 +28,8 @@
 //   MAX_PRICE_STALE   — số epoch cho phép giá cũ (default 1). Baked vào consume hash.
 //   PRICE_COMMITTEE   — danh sách pkh (hex, phẩy) được post giá về sau (default = ví deploy).
 //   PRICE_THRESHOLD   — M-of-N committee threshold (default 1).
-//   PRICE_DEMAND_MULT — demand_mult Q-format của beacon (default Q = 1_000_000_000 = 1.0×).
+//   (PRICE_DEMAND_MULT đã BỎ: demand_mult nay nằm trên từng dòng OpPrice — CC-LOAD-COUNT-UNIT.
+//    Đặt biến đó thì kịch bản ném lỗi, không lặng lẽ bỏ qua.)
 //
 // ⚠  DANH SÁCH THAM SỐ KHÔNG khai tay ở file này nữa — đọc thẳng
 //     `parameters[].title` từ ConsumeMAGIC/onchain/plutus.json qua
@@ -57,6 +58,7 @@ import {
 } from "../../ConsumeMAGIC/offchain/src/types.js";
 import { vaultIdAssetName, mintVaultIdRedeemer } from "../vaultId.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
+import { assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
 import { consumeKey, parseVaultKind, vaultHashKey, type ConsumeKeyName } from "../consumeBook.js";
 
 // EngageDatum lấy thẳng từ codec của module (5 trường, khớp `pub type EngageDatum`
@@ -109,7 +111,13 @@ async function main() {
   console.log(`Loại vault:           ${vaultKind}`);
   const maxPriceStale = BigInt(process.env.MAX_PRICE_STALE ?? "1");
   const priceThreshold = BigInt(process.env.PRICE_THRESHOLD ?? "1");
-  const demandMultQ = BigInt(process.env.PRICE_DEMAND_MULT ?? PROTOCOL.Q.toString());
+  if (process.env.PRICE_DEMAND_MULT !== undefined) {
+    throw new Error(
+      "PRICE_DEMAND_MULT đã bỏ: demand_mult nay là trường của từng dòng OpPrice (CC-LOAD-COUNT-UNIT). " +
+      "Bỏ biến đó đi; bảng khởi tạo đặt demand_mult = Q cho mọi dòng.",
+    );
+  }
+  const Q = PROTOCOL.Q;
 
   // Load ConsumeMAGIC validators.
   const blueprint   = await loadBlueprint("ConsumeMAGIC");
@@ -204,19 +212,25 @@ async function main() {
       // Bốn dòng dưới đây là bảng giá THẬT đang
       // deploy, và CHÍNH TỆP NÀY là nguồn của nó — CONTRACT.md §A chỉ chép lại để
       // đọc nhanh, lệch thì tệp này thắng.
-      { op_type: 1n, base_price:    10_000_000n }, // ảnh          0.01 MAGIC
-      { op_type: 2n, base_price:     1_000_000n }, // neo CID      0.001 MAGIC
+      // demand_mult nằm trên TỪNG dòng (CC-LOAD-COUNT-UNIT), khởi tạo = Q (1,0×) cho mọi dòng.
+      // Mã trong dải giá cố định (pricing.ak ▸ fixed_price_op_types, hiện [7]) BẮT BUỘC = Q.
+      { op_type: 1n, base_price:    10_000_000n, demand_mult: Q }, // ảnh          0.01 MAGIC
+      { op_type: 2n, base_price:     1_000_000n, demand_mult: Q }, // neo CID      0.001 MAGIC
       // ĐƠN VỊ LÀ LẦN, KHÔNG PHẢI MB. `required_for` nhân `op_count` như bội số thuần
       // (pricing.ak:204) — không có chỗ nào quy đổi byte. Chú thích "/MB" cũ ở đây
       // mô tả một đơn vị mà mã chưa bao giờ tính. Xem CONTRACT.md §A sổ op_type.
-      { op_type: 3n, base_price: 1_000_000_000n }, // lưu trữ  /lần  1 MAGIC
-      { op_type: 4n, base_price: 1_000_000_000n }, // tính toán/lần  1 MAGIC
+      { op_type: 3n, base_price: 1_000_000_000n, demand_mult: Q }, // lưu trữ  /lần  1 MAGIC
+      { op_type: 4n, base_price: 1_000_000_000n, demand_mult: Q }, // tính toán/lần  1 MAGIC
+      // 7 · 8: chủ dự án gật 2026-09-25, giá TẠM cho giai đoạn test (M₀ = 2 MAGIC).
+      { op_type: 7n, base_price:  2_000_000_000n, demand_mult: Q }, // did.rotate    2 MAGIC, giá cố định
+      { op_type: 8n, base_price: 10_000_000_000n, demand_mult: Q }, // did.transfer 10 MAGIC
     ],
-    demand_mult: demandMultQ, // 1.0× → price = base
     m_min: 500_000_000n,      // 0.5×
     m_max: 2_000_000_000n,    // 2.0×
     epoch: currentEpoch,
   };
+  // Cổng off-chain chạy TRƯỚC để hỏng sớm; on-chain `price_nft` cũng ép valid_param lúc đúc.
+  assertValidPriceParam(priceParam);
   const priceDatumCbor = encodePriceParam(priceParam);
 
   // ── Engage genesis datum — MỌI trục kế toán = 0 (validate_mint_engage_id) ────
@@ -244,7 +258,7 @@ async function main() {
   console.log(`Consume hash:         ${consumeHash}`);
   console.log(`Consume address:      ${consumeAddr}`);
   console.log(`max_price_stale:      ${maxPriceStale}`);
-  console.log(`demand_mult (Q):      ${demandMultQ}\n`);
+  console.log(`Bảng giá khởi tạo:    ${priceParam.op_prices.map((r) => `${r.op_type}=${r.base_price}×${r.demand_mult}`).join(" ")}\n`);
 
   // ── 1 tx: consume g1+g2, mint 2 NFT, tạo beacon + Engage ─────────────────────
   const tx = await lucid

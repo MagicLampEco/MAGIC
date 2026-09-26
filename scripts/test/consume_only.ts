@@ -149,7 +149,10 @@ function computeRequired(pp: PriceParamT, opType: bigint, opCount: bigint): bigi
   const row = pp.op_prices.find((p) => p.op_type === opType);
   if (!row) throw new Error(`op_type ${opType} không có trong beacon op_prices`);
   // Bảng giá là của BEACON đang sống trên chuỗi, không phải bảng MVP mặc định.
-  return requiredForOp(Number(opType), opCount, pp.demand_mult, { [Number(opType)]: row.base_price });
+  // demand_mult nay là của TỪNG dòng (CC-LOAD-COUNT-UNIT), không còn trên PriceParam.
+  return requiredForOp(Number(opType), opCount, {
+    [Number(opType)]: { base_price: row.base_price, demand_mult: row.demand_mult },
+  });
 }
 
 // Mirror InstantGen decay.ak: is_expired = current - created >= decay_window.

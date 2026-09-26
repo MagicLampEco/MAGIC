@@ -56,11 +56,8 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { awaitTxBounded as awaitTxBoundedShared, DEFAULT_AWAIT_TX_MS } from "../awaitTx.js";
 import { priceParamParams, scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { beaconEpochState, aheadMessage } from "./beaconEpoch.js";
-import { applyOpPriceSet, describeChanges, parseOpPriceSet } from "./opPrices.js";
-import { assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
-import {
-  decodePriceParam, encodePriceParam, type PriceParamT,
-} from "../../ConsumeMAGIC/offchain/src/types.js";
+import { applyOpPriceSet, describeChanges, parseOpPriceSet, resolvePricePush, type ResolvedPricePush } from "./opPrices.js";
+import { decodePriceParam, encodePriceParam } from "../../ConsumeMAGIC/offchain/src/types.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatum as ScheduleVaultDatum } from "../../ScheduleGen/offchain/src/types.js";
 import { countEligibleFires, isExpired, nextFireEpoch } from "../../ScheduleGen/offchain/src/math.js";
@@ -219,8 +216,9 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
     const pp = decodePriceParam(beacon.datum!);
     const priceState = beaconEpochState(pp.epoch, epoch);
     if (priceState === "ahead") { record(tag, "fail", aheadMessage(pp.epoch, epoch)); continue; }
-    const { rows: opPrices, changes } = applyOpPriceSet(pp.op_prices, opPriceSet);
-    const tableNote = changes.length > 0 ? ` · bảng giá: ${describeChanges(changes)}` : "";
+    // Chỉ cần `changes` ở đây (thông báo lượt "current"); bảng đẩy thật do `resolvePricePush`
+    // tự gộp lại bên dưới — nó phải tự quyết có lùi về bảng cũ hay không nên không nhận `rows` từ đây.
+    const { changes } = applyOpPriceSet(pp.op_prices, opPriceSet);
     if (priceState === "current") {
       // Bảng giá còn chờ mà beacon đã ở epoch này: đây KHÔNG phải "không có việc". Nói rõ lúc nào đặt được.
       record(tag, "skip", changes.length === 0
@@ -229,12 +227,22 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
       continue;
     }
 
-    // Đẩy epoch; bảng giá chỉ đổi theo KEEPER_OP_PRICES_SET. demand_mult, m_min, m_max giữ
-    // nguyên; value giữ nguyên (validator đòi non-ADA y hệt và lovelace không giảm).
-    const next: PriceParamT = { ...pp, op_prices: opPrices, epoch };
-    try { assertValidPriceParam(next); }
-    catch (e) { record(tag, "fail", `bảng giá sau khi đặt không hợp lệ: ${(e as Error).message.slice(0, 300)} — không gửi gì`); continue; }
-    if (DRY) { record(tag, "skip", `DRY: sẽ PostPrice ${pp.epoch} → ${epoch}${tableNote}`); continue; }
+    // Đẩy epoch; bảng giá chỉ đổi theo KEEPER_OP_PRICES_SET (dòng đã có giữ demand_mult của nó,
+    // dòng mới nhận Q). m_min, m_max giữ nguyên; value giữ nguyên (validator đòi non-ADA y hệt và lovelace không giảm).
+    // Bảng SAU KHI ĐẶT không hợp lệ ⟹ ĐỪNG `continue` bỏ luôn lượt đẩy epoch: `max_price_stale = 1`
+    // thì bỏ một lượt vì một lần gõ sai KEEPER_OP_PRICES_SET là mọi Consume chết sau ~2 epoch.
+    // `resolvePricePush` lùi về bảng giá ĐANG TRÊN CHUỖI khi bảng mới sai, VẪN đẩy epoch, và trả
+    // cảnh báo để ghi lại bằng record() — không nuốt. Chỉ khi cả bảng lùi cũng sai (hỏng dữ liệu
+    // trên chuỗi, không phải do biến môi trường) thì mới bỏ qua lượt như cũ.
+    let resolved: ResolvedPricePush;
+    try { resolved = resolvePricePush(pp, opPriceSet, epoch); }
+    catch (e) {
+      record(tag, "fail", `cả bảng giá mới lẫn bảng giá đang trên chuỗi đều không hợp lệ — không gửi gì: ${(e as Error).message.slice(0, 300)}`);
+      continue;
+    }
+    if (resolved.priceWarning) record(tag, "fail", resolved.priceWarning);
+    const { next, tableNote: pushTableNote } = resolved;
+    if (DRY) { record(tag, "skip", `DRY: sẽ PostPrice ${pp.epoch} → ${epoch}${pushTableNote}`); continue; }
     try {
       const tx = await lucid.newTx()
         .collectFrom([beacon], Data.to(new Constr(0, [])) /* PostPrice = constr 0 (price_param.ak ▸ PriceParamRedeemer) */)
@@ -250,7 +258,7 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
         record(tag, "unverified", `tx ${txHash} đã gửi, chưa thấy vào khối sau ${AWAIT_TX_MS / 1000}s — soi explorer trước khi chạy lại`);
         continue;
       }
-      record(tag, "done", `epoch ${pp.epoch} → ${epoch}${tableNote} · tx ${txHash} · beacon mới ${txHash}#0`);
+      record(tag, "done", `epoch ${pp.epoch} → ${epoch}${pushTableNote} · tx ${txHash} · beacon mới ${txHash}#0`);
     } catch (e) {
       record(tag, "fail", String((e as Error)?.message ?? e).slice(0, 400));
     }

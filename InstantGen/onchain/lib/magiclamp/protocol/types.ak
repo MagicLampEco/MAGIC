@@ -3,6 +3,8 @@
 // Normative: §4.1 MagicBatch, §5 VaultDatum
 // All field names and ordering must match on-chain encoding exactly.
 
+use cardano/address.{Credential}
+
 // ── Primitive alias ──────────────────────────────────────────
 pub type Natural = Int
 
@@ -163,7 +165,10 @@ pub type StreakState {
 // ── §5.1 VaultDatum (full) ───────────────────────────────────
 // worst-case ~12KB; tx limit 16KB (§5.1 Datum size note)
 pub type VaultDatum {
-  owner                 : ByteArray,               // VerificationKeyHash
+  // Trường 0 — ConsumeMAGIC đọc đúng chỉ số này bằng `un_constr_data`, đừng dời.
+  // `Credential`: VerificationKey(pkh) ⟹ chủ ký; Script(h) ⟹ tx rút (lượng bất kỳ,
+  // kể cả 0) từ stake-credential Script(h). Xác thực: `owner_auth.owner_authorized`.
+  owner                 : Credential,
   lamp_balance          : Natural,
   lamp_locked           : Natural,
   loyalty_holdings      : List<LoyaltyHolding>,

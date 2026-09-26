@@ -1,6 +1,8 @@
 // lib/types.ak — GenMAGIC v3.3 Data Types (ScheduleGen)
 // Extends shared protocol types with shard-specific types.
 
+use cardano/address.{Credential}
+
 pub type Natural = Int
 
 pub type BatchSource {
@@ -139,7 +141,11 @@ pub type StreakState {
 }
 
 pub type VaultDatum {
-  owner                 : ByteArray,
+  // Trường 0 — ConsumeMAGIC đọc đúng chỉ số này bằng `un_constr_data`, đừng dời.
+  // `Credential`: VerificationKey(pkh) ⟹ chủ ký; Script(h) ⟹ tx rút (lượng bất kỳ,
+  // kể cả 0) từ stake-credential Script(h). Xác thực: `owner_auth.owner_authorized`.
+  // Shard: `math.compute_shard_id` băm 28 byte BÊN TRONG credential.
+  owner                 : Credential,
   lamp_balance          : Natural,
   lamp_locked           : Natural,
   loyalty_holdings      : List<LoyaltyHolding>,

@@ -62,12 +62,13 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto
 use aiken/interval
-use cardano/address.{Address, Script}
+use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, ScriptPurpose, Spend, Transaction,
   placeholder,
 }
+use magiclamp/consume/owner_auth.{owner_authorized}
 use magiclamp/consume/pricing
 use magiclamp/consume/types.{
   BindDID, BurnEngage, CloseThread, Consume, ConsumeRedeemer, EngageDatum,
@@ -414,7 +415,7 @@ fn validate_bind_did(
   //    Thiếu vế này thì bất kỳ ai cũng gắn được một DID do MÌNH chọn vào thread của
   //    người khác, và vì cổng (1) chỉ cho ghi MỘT LẦN nên nạn nhân mất luôn đường
   //    gắn DID thật của họ — hỏng không hoàn tác được.
-  expect list.has(tx.extra_signatories, in_datum.owner)
+  expect owner_authorized(tx, in_datum.owner)
 
   // ── (3) ĐÚNG 1 vào, ĐÚNG 1 ra tại địa chỉ engage ─────────────────────────────
   //    Không gộp hai thread, không tách một thread. Đồng thời làm continuing output
@@ -514,7 +515,7 @@ fn validate_close_thread(
   // ── (a) CHỮ KÝ CỦA CHÍNH CHỦ THREAD ──────────────────────────────────────────
   //    Vế DUY NHẤT về quyền trong cả đường đóng. Thiếu nó thì bất kỳ ai cũng đóng được
   //    thread của người khác: xoá hồ sơ tư-cách của họ và bỏ túi min-ADA.
-  expect list.has(tx.extra_signatories, in_datum.owner)
+  expect owner_authorized(tx, in_datum.owner)
 
   // ── (b) ĐÚNG NFT CỦA INPUT NÀY BỊ ĐỐT (−1) ───────────────────────────────────
   //    `thread_nft_name` fail-closed: input phải mang ĐÚNG 1 token dưới own_hash, qty 1.
@@ -634,9 +635,10 @@ fn validate_mint_engage_id(
   expect ed: EngageDatum = datum_data
 
   // ── GENESIS SẠCH — ràng TỪNG field STATE TÍCH LUỸ ─────────────────────────
-  // owner: pkh mà người đúc THẬT SỰ kiểm soát (có trong signatories) ⇒ không đúc
+  // owner: credential mà người đúc THẬT SỰ kiểm soát (khoá ký, hoặc script gật qua mục
+  // rút — `owner_authorized`) ⇒ không đúc
   // thread "nhân danh" ví nạn nhân để bơm attribution rác cho họ.
-  expect list.has(tx.extra_signatories, ed.owner)
+  expect owner_authorized(tx, ed.owner)
   // Hai trục kế toán PHẢI bắt đầu từ 0. `consumed_nanogic` là trục bị khai thác:
   // bất biến spend chỉ khoá DELTA nên gốc bịa 1e18 sẽ sống mãi trong state và mọi
   // app đọc "đã tiêu 1e18 nanogic" sẽ cấp dịch vụ miễn phí.
@@ -778,7 +780,7 @@ fn sum_burns_over_vault_refs(
 fn all_vault_owners_are(
   inputs     : List<Input>,
   vault_refs : List<OutputReference>,
-  owner      : ByteArray,
+  owner      : Credential,
 ) -> Bool {
   list.all(
     vault_refs,
@@ -788,7 +790,9 @@ fn all_vault_owners_are(
       expect InlineDatum(vd) = vault_in.output.datum
       let Pair(_, fields) = builtin.un_constr_data(vd)
       expect [owner_data, ..] = fields
-      expect vault_owner: ByteArray = owner_data
+      // Trường 0 của MỌI loại vault là `Credential` (đổi 2026-09-26 cùng lúc ở ba
+      // cửa gen). So `==` là so CẢ tag lẫn 28 byte: `VerificationKey(h)` ≠ `Script(h)`.
+      expect vault_owner: Credential = owner_data
       vault_owner == owner
     },
   )
@@ -884,7 +888,7 @@ fn thread_nft_name(value: Value, own_hash: ByteArray) -> AssetName {
 fn enforce_engagement(
   tx            : Transaction,
   own_hash      : ByteArray,
-  owner         : ByteArray,
+  owner         : Credential,
   did_commit    : ByteArray,
   current_epoch : Int,
   pp            : PriceParam,
@@ -988,6 +992,15 @@ const ct_price_name: AssetName = #"5052494345"      // "PRICE"
 /// nó PHẢI == script hash của địa chỉ engage (tự tham chiếu).
 const ct_thread_name: AssetName = #"454e47"          // "ENG"
 const ct_owner: ByteArray = #"0bada55e"
+
+/// Danh sách chữ ký "giống tx thật" cho một chủ: khoá ⟹ [pkh]; script ⟹ [] (script
+/// không ký, nó gật qua mục rút).
+fn ct_sigs_of(owner: Credential) -> List<ByteArray> {
+  when owner is {
+    VerificationKey(pkh) -> [pkh]
+    Script(_) -> []
+  }
+}
 const ct_did: ByteArray = #""                        // did_commit rỗng = chưa gắn DID
 /// did_commit ĐÚNG KHUÔN (32 byte). Viết thẳng ra hex vì `const` Aiken không gọi hàm.
 /// 64 ký tự hex = 32 byte — đếm lại khi sửa: hằng hex LẺ ký tự làm `aiken check`
@@ -1058,7 +1071,7 @@ fn ct_engage_input_at(sh: ByteArray, ref_ix: Int, consumed: Int) -> Input {
 
 fn ct_datum(consumed: Int, epoch: Int, nanogic: Int, did: ByteArray) -> EngageDatum {
   EngageDatum {
-    owner: ct_owner,
+    owner: VerificationKey(ct_owner),
     consumed_count: consumed,
     last_epoch: epoch,
     did_commit: did,
@@ -1132,6 +1145,11 @@ fn ct_vault_input(ref_ix: Int) -> Input {
 
 /// Vault input mang datum ĐÚNG hình dạng: Constr(_, [owner, ..]) với owner tuỳ ý.
 fn ct_vault_input_owned(ref_ix: Int, owner: ByteArray) -> Input {
+  ct_vault_input_cred(ref_ix, VerificationKey(owner))
+}
+
+/// Như trên nhưng chủ vault là `Credential` tuỳ ý (khoá hoặc script).
+fn ct_vault_input_cred(ref_ix: Int, owner: Credential) -> Input {
   let v = assets.from_lovelace(2_000_000)
   let owner_data: Data = owner
   let d: Data = builtin.constr_data(0, [owner_data])
@@ -1193,7 +1211,7 @@ fn run_beacon(
 ) -> Bool {
   run_sigs(
     beacon, cur_epoch, engage_inputs, vault_inputs, outputs, redeemers, rd,
-    own_ref, in_datum, [in_datum.owner],
+    own_ref, in_datum, ct_sigs_of(in_datum.owner),
   )
 }
 
@@ -1210,9 +1228,30 @@ fn run_sigs(
   in_datum      : EngageDatum,
   sigs          : List<ByteArray>,
 ) -> Bool {
+  run_sigs_w(
+    beacon, cur_epoch, engage_inputs, vault_inputs, outputs, redeemers, rd,
+    own_ref, in_datum, sigs, [],
+  )
+}
+
+/// Như `run_sigs` + danh sách mục rút (chủ `Script(h)` gật qua withdraw-zero).
+fn run_sigs_w(
+  beacon        : Input,
+  cur_epoch     : Int,
+  engage_inputs : List<Input>,
+  vault_inputs  : List<Input>,
+  outputs       : List<Output>,
+  redeemers     : Pairs<ScriptPurpose, Data>,
+  rd            : ConsumeRedeemer,
+  own_ref       : OutputReference,
+  in_datum      : EngageDatum,
+  sigs          : List<ByteArray>,
+  wds           : Pairs<Credential, Int>,
+) -> Bool {
   let tx =
     Transaction {
       ..placeholder,
+      withdrawals: wds,
       inputs: list.concat(engage_inputs, vault_inputs),
       reference_inputs: [beacon],
       outputs: outputs,
@@ -1235,7 +1274,7 @@ fn run_sigs(
 
 const ct_in_datum: EngageDatum =
   EngageDatum {
-    owner: ct_owner,
+    owner: VerificationKey(ct_owner),
     consumed_count: 10,
     last_epoch: 0,
     did_commit: ct_did,
@@ -1715,7 +1754,7 @@ fn run_vr(
       // Chữ ký chủ thread — chỉ để fixture giống tx thật. Nhánh `Consume` KHÔNG đọc
       // `extra_signatories` nữa (cổng #36 hạ xuống một vế `all_vault_owners_are`
       // 2026-09-15); danh sách này không đổi được kết quả của ca nào ở đây.
-      extra_signatories: [in_datum.owner],
+      extra_signatories: ct_sigs_of(in_datum.owner),
     }
   consume.spend(
     ct_price_policy, ct_price_name,
@@ -1969,6 +2008,16 @@ fn run_mint(
   outputs : List<Output>,
   sigs    : List<ByteArray>,
 ) -> Bool {
+  run_mint_w(inputs, mint_v, outputs, sigs, [])
+}
+
+fn run_mint_w(
+  inputs  : List<Input>,
+  mint_v  : Value,
+  outputs : List<Output>,
+  sigs    : List<ByteArray>,
+  wds     : Pairs<Credential, Int>,
+) -> Bool {
   let tx =
     Transaction {
       ..placeholder,
@@ -1976,6 +2025,7 @@ fn run_mint(
       mint: mint_v,
       outputs: outputs,
       extra_signatories: sigs,
+      withdrawals: wds,
     }
   consume.mint(
     ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
@@ -2081,7 +2131,8 @@ test engage_mint_output_with_stake_credential_fail() fail {
 // Cùng hình dạng, stake credential là của CHÍNH chủ thread → VẪN REJECT.
 //
 // Không phải siết thừa: mint-gate không có cách nào biết một stake key có thuộc về
-// `ed.owner` hay không (`owner` là payment key hash, stake credential là khoá KHÁC), nên
+// `ed.owner` hay không (`owner` là payment credential — khoá hoặc script — còn stake
+// credential là một credential KHÁC), nên
 // "stake của chính chủ" là một lời tự khai, và một cổng nhận lời tự khai thì nhận luôn
 // lời của sponsor. Quy tắc đọc được bằng một phép so: thread sinh ở địa chỉ ENTERPRISE.
 test engage_mint_output_stake_credential_of_owner_fail() fail {
@@ -2353,7 +2404,7 @@ fn ct_fixture_full_table_two_engage() -> (Transaction, OutputReference, OutputRe
       reference_inputs: [beacon],
       outputs: [ct_cont_output(11, 6, 1), ct_cont_output_b(11, 6, 1)],
       redeemers: reds,
-      extra_signatories: [ct_in_datum.owner],
+      extra_signatories: ct_sigs_of(ct_in_datum.owner),
       validity_range: interval.between(6 * ct_mspe, 6 * ct_mspe + 1),
     }
   (tx, er0, er1, rd)
@@ -2472,7 +2523,7 @@ fn ct_bind_output(
 ) -> Output {
   let v = assets.add(assets.from_lovelace(lovelace), ct_eng_sh, ct_thread_name, nft_qty)
   let d = EngageDatum {
-    owner: owner,
+    owner: VerificationKey(owner),
     consumed_count: consumed,
     last_epoch: epoch,
     did_commit: did,
@@ -2491,12 +2542,24 @@ fn run_bind(
   own_ref  : OutputReference,
   in_datum : EngageDatum,
 ) -> Bool {
+  run_bind_w(inputs, outputs, sigs, own_ref, in_datum, [])
+}
+
+fn run_bind_w(
+  inputs   : List<Input>,
+  outputs  : List<Output>,
+  sigs     : List<ByteArray>,
+  own_ref  : OutputReference,
+  in_datum : EngageDatum,
+  wds      : Pairs<Credential, Int>,
+) -> Bool {
   let tx =
     Transaction {
       ..placeholder,
       inputs: inputs,
       outputs: outputs,
       extra_signatories: sigs,
+      withdrawals: wds,
       redeemers: [Pair(Spend(own_ref), rd_as_data(BindDID))],
     }
   consume.spend(
@@ -2510,7 +2573,7 @@ fn run_bind(
 /// mọi trục để ca "nhân tiện sửa trường khác" phân biệt được hai cực.
 const ct_bind_in: EngageDatum =
   EngageDatum {
-    owner: ct_owner,
+    owner: VerificationKey(ct_owner),
     consumed_count: 7,
     last_epoch: 3,
     did_commit: #"",
@@ -3242,7 +3305,7 @@ test consume_ada_shuffled_between_threads_rejected() fail {
 // ══════════════════════════════════════════════════════════════
 
 /// Continuing output với `owner` TUỲ Ý (mọi trường khác đúng khuôn một lượt consume).
-fn ct_cont_output_owner(owner: ByteArray, new_consumed: Int, new_epoch: Int) -> Output {
+fn ct_cont_output_owner(owner: Credential, new_consumed: Int, new_epoch: Int) -> Output {
   let v = assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, ct_thread_name, 1)
   let d =
     EngageDatum {
@@ -3311,7 +3374,7 @@ test consume_output_rotates_owner_to_stranger_fail() fail {
   let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
   let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
   run(
-    pp, 1, 6, [eng], [vault], [ct_cont_output_owner(#"deadbeef", 11, 6)], reds, rd,
+    pp, 1, 6, [eng], [vault], [ct_cont_output_owner(VerificationKey(#"deadbeef"), 11, 6)], reds, rd,
     eng_ref, ct_in_datum,
   )
 }
@@ -3506,6 +3569,18 @@ fn run_close(
   own_ref  : OutputReference,
   in_datum : EngageDatum,
 ) -> Bool {
+  run_close_w(inputs, mint_v, outputs, sigs, own_ref, in_datum, [])
+}
+
+fn run_close_w(
+  inputs   : List<Input>,
+  mint_v   : Value,
+  outputs  : List<Output>,
+  sigs     : List<ByteArray>,
+  own_ref  : OutputReference,
+  in_datum : EngageDatum,
+  wds      : Pairs<Credential, Int>,
+) -> Bool {
   let tx =
     Transaction {
       ..placeholder,
@@ -3513,6 +3588,7 @@ fn run_close(
       mint: mint_v,
       outputs: outputs,
       extra_signatories: sigs,
+      withdrawals: wds,
     }
   consume.spend(
     ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
@@ -3747,4 +3823,185 @@ test close_mixed_with_consume_close_side_fail() fail {
     ct_mspe, ct_price_param_sh, Some(ct_in_datum), CloseThread,
     util.mk_ref_id(#"e1", 0), ct_mixed_close_consume_tx(),
   )
+}
+
+// ══════════════════════════════════════════════════════════════
+// CHỦ LÀ `Credential` — `owner_authorized` ở MintEngage / BindDID / CloseThread, và
+// `all_vault_owners_are` so `Credential` ở Consume.
+//   Mỗi bài âm khác cặp dương của nó ĐÚNG MỘT biến (mục rút, danh sách ký, hoặc tag
+//   của chủ vault), nên nó chỉ đỏ được ở cổng owner.
+// ══════════════════════════════════════════════════════════════
+
+const ct_owner_script: ByteArray =
+  #"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+
+const ct_other_script: ByteArray =
+  #"5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d"
+
+fn ct_wd(h: ByteArray) -> Pairs<Credential, Int> {
+  [Pair(Script(h), 0)]
+}
+
+/// Engage input tại `ct_eng_sh` mang datum TUỲ Ý (1 NFT `ct_thread_name`).
+fn ct_engage_input_datum(ref_ix: Int, d: EngageDatum) -> Input {
+  let v = assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, ct_thread_name, 1)
+  util.mk_input(
+    util.mk_ref_id(#"e1", ref_ix),
+    util.mk_output(util.script_address(ct_eng_sh), v, d),
+  )
+}
+
+fn ct_engage_output_datum(d: EngageDatum) -> Output {
+  let v = assets.add(assets.from_lovelace(2_000_000), ct_eng_sh, ct_thread_name, 1)
+  util.mk_output(util.script_address(ct_eng_sh), v, d)
+}
+
+// ── MintEngage ──
+fn oc_mint(owner: Credential, sigs: List<ByteArray>, wds: Pairs<Credential, Int>) -> Bool {
+  run_mint_w(
+    [ct_seed_input()],
+    assets.from_asset(ct_eng_sh, ct_seed_name(), 1),
+    [
+      ct_gen_out(
+        util.script_address(ct_eng_sh), ct_seed_name(),
+        EngageDatum { ..ct_clean_genesis(), owner: owner }, 0,
+      ),
+    ],
+    sigs,
+    wds,
+  )
+}
+
+test engage_mint_owner_script_withdraw_zero_ok() {
+  oc_mint(Script(ct_owner_script), [], ct_wd(ct_owner_script))
+}
+
+test engage_mint_owner_script_no_withdrawal_fail() fail {
+  oc_mint(Script(ct_owner_script), [], [])
+}
+
+test engage_mint_owner_script_other_withdrawal_fail() fail {
+  oc_mint(Script(ct_owner_script), [], ct_wd(ct_other_script))
+}
+
+test engage_mint_owner_script_hash_in_signatories_fail() fail {
+  oc_mint(Script(ct_owner_script), [ct_owner_script], [])
+}
+
+test engage_mint_owner_vk_script_withdrawal_unsigned_fail() fail {
+  oc_mint(VerificationKey(ct_owner), [], ct_wd(ct_owner))
+}
+
+// ── BindDID ──
+fn oc_bind(owner: Credential, sigs: List<ByteArray>, wds: Pairs<Credential, Int>) -> Bool {
+  let din = EngageDatum { ..ct_bind_in, owner: owner }
+  run_bind_w(
+    [ct_engage_input_datum(0, din)],
+    [ct_engage_output_datum(EngageDatum { ..din, did_commit: ct_did32 })],
+    sigs,
+    util.mk_ref_id(#"e1", 0),
+    din,
+    wds,
+  )
+}
+
+test bind_did_owner_script_withdraw_zero_ok() {
+  oc_bind(Script(ct_owner_script), [], ct_wd(ct_owner_script))
+}
+
+test bind_did_owner_script_no_withdrawal_fail() fail {
+  oc_bind(Script(ct_owner_script), [], [])
+}
+
+test bind_did_owner_script_other_withdrawal_fail() fail {
+  oc_bind(Script(ct_owner_script), [], ct_wd(ct_other_script))
+}
+
+test bind_did_owner_script_hash_in_signatories_fail() fail {
+  oc_bind(Script(ct_owner_script), [ct_owner_script], [])
+}
+
+test bind_did_owner_vk_script_withdrawal_unsigned_fail() fail {
+  oc_bind(VerificationKey(ct_owner), [], ct_wd(ct_owner))
+}
+
+// ── CloseThread ──
+fn oc_close(owner: Credential, sigs: List<ByteArray>, wds: Pairs<Credential, Int>) -> Bool {
+  let din = EngageDatum { ..ct_in_datum, owner: owner }
+  run_close_w(
+    [ct_engage_input_datum(0, din)],
+    assets.from_asset(ct_eng_sh, ct_thread_name, -1),
+    [ct_close_payout()],
+    sigs,
+    util.mk_ref_id(#"e1", 0),
+    din,
+    wds,
+  )
+}
+
+test close_thread_owner_script_withdraw_zero_ok() {
+  oc_close(Script(ct_owner_script), [], ct_wd(ct_owner_script))
+}
+
+test close_thread_owner_script_no_withdrawal_fail() fail {
+  oc_close(Script(ct_owner_script), [], [])
+}
+
+test close_thread_owner_script_other_withdrawal_fail() fail {
+  oc_close(Script(ct_owner_script), [], ct_wd(ct_other_script))
+}
+
+test close_thread_owner_script_hash_in_signatories_fail() fail {
+  oc_close(Script(ct_owner_script), [ct_owner_script], [])
+}
+
+test close_thread_owner_vk_script_withdrawal_unsigned_fail() fail {
+  oc_close(VerificationKey(ct_owner), [], ct_wd(ct_owner))
+}
+
+// ── Consume: chủ script, withdraw-zero, và cổng `script_inputs_confined_to` ──
+//    Mục rút KHÔNG thêm input, nên nó không đụng `script_inputs_confined_to`. Bài dương
+//    chạy trọn validator (kể cả cổng đó); bài `_extra_input_at_owner_script_` là cặp âm
+//    chứng minh cổng vẫn sống khi có mục rút: tiêu thêm một UTxO tại CHÍNH script chủ
+//    thì bị từ chối.
+fn oc_consume(
+  thread_owner : Credential,
+  vault_owner  : Credential,
+  extra_inputs : List<Input>,
+) -> Bool {
+  let pp = ct_pp(6)
+  let din = EngageDatum { ..ct_in_datum, owner: thread_owner }
+  let eng = ct_engage_input_datum(0, din)
+  let vault = ct_vault_input_cred(0, vault_owner)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run_sigs_w(
+    ct_beacon_ref(pp, 1), 6, [eng], list.concat([vault], extra_inputs),
+    [ct_cont_output_owner(thread_owner, 11, 6)], reds, rd, eng_ref, din, [],
+    ct_wd(ct_owner_script),
+  )
+}
+
+test consume_owner_script_withdraw_zero_ok() {
+  oc_consume(Script(ct_owner_script), Script(ct_owner_script), [])
+}
+
+// Cùng 28 byte, khác tag: thread `Script(h)`, vault `VerificationKey(h)` ⟹ không cùng chủ.
+test consume_owner_script_vault_owner_vk_same_bytes_fail() fail {
+  oc_consume(Script(ct_owner_script), VerificationKey(ct_owner_script), [])
+}
+
+test consume_owner_script_extra_input_at_owner_script_fail() fail {
+  let at_owner_script =
+    util.mk_input(
+      util.mk_ref_id(#"0c", 0),
+      util.mk_output_no_datum(
+        util.script_address(ct_owner_script),
+        assets.from_lovelace(2_000_000),
+      ),
+    )
+  oc_consume(Script(ct_owner_script), Script(ct_owner_script), [at_owner_script])
 }

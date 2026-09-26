@@ -4,6 +4,7 @@
 use aiken/collection/list
 use aiken/crypto
 use aiken/primitive/bytearray
+use cardano/address.{Credential, Script, VerificationKey}
 use magiclamp/protocol/constants.{
   q, shard_count, snapshot_base_rate_q,
   s_seg1_intercept_q, s_seg1_slope_q,
@@ -170,12 +171,23 @@ pub fn check_sch_rate(lambda_oildrop: Int, rate_locked_q: Int) -> Bool {
 // §5.5 shard_id computation (C-SCH-FIRE-SHARD, A19)
 // ══════════════════════════════════════════════════════════════
 //
-// shard_id(owner) = first_byte(blake2b256(owner)) % 16
+// shard_id(owner) = first_byte(blake2b256(inner_hash(owner))) % 16
 // MUST be computed from vault.owner (NOT stored in GenSchedule)
 // C-SCH-FIRE-SHARD: validator verifies fire tx updates correct shard
+//
+// `owner` là `Credential`; băm 28 byte BÊN TRONG (pkh hoặc script hash), KHÔNG băm
+// `cbor.serialise(owner)`. Lý do: chủ VerificationKey(pkh) giữ nguyên shard như thời
+// owner còn là pkh trần, nên bộ tính shard off-chain (nhận hash hex) không phải đổi.
+// Hệ quả chấp nhận: VerificationKey(h) và Script(h) rơi cùng shard — shard chỉ là
+// phân tải bộ đếm, không phải ranh giới quyền, nên trùng shard không mở gì.
 
-pub fn compute_shard_id(owner_pkh: ByteArray) -> Int {
-  let hash = crypto.blake2b_256(owner_pkh)
+pub fn compute_shard_id(owner: Credential) -> Int {
+  let inner =
+    when owner is {
+      VerificationKey(pkh) -> pkh
+      Script(h) -> h
+    }
+  let hash = crypto.blake2b_256(inner)
   // byte đầu mod shard_count. Dùng hằng, không ghi thẳng 16: `shard_nft.ak` đã dùng
   // `shard_count`, nên một chỗ ghi số sẽ tách khỏi chỗ kia trong im lặng khi đổi.
   bytearray.at(hash, 0) % shard_count

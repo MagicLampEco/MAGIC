@@ -236,7 +236,7 @@ Chủ dự án chốt giữ hai validator (2026-09-05); số đo này đứng v�
 
 ### Vault ScheduleGen đời-một trên Preview — nghỉ CÙNG ĐỢT với đời-hai, không nghỉ trước
 
-- [!] Rút 5 vault đời-một về và công bố script tham chiếu CIP-33 của đời-hai — **một đợt, không tách**. Chặn ở policy id LAMP thật theo mạng: hai sổ trạng thái cố ý không giữ giá trị nào và `assertLampPolicyId` ném đúng giá trị duy nhất kho này đang có; giá trị canonical thuộc kho LAMP (Genesis ▸ lampPolicies), bên đó chưa đúc. — đo bằng: `grep -c '^LAMP_POLICY_ID=' scripts/state.Preview.sh scripts/state.Preprod.sh` · đọc ở: số đếm của **cả hai** tệp, hết chặn khi cả hai ra `1` (một tệp ra 1 là mới xong nửa đường, và nửa còn lại không tự kêu) · 2026-09-14: cả hai ra `0`.
+- [!] Rút 5 vault đời-một về và công bố script tham chiếu CIP-33 của đời-hai — **một đợt, không tách**. Chặn ở policy id LAMP thật theo mạng: hai sổ trạng thái cố ý không giữ giá trị nào và `assertLampPolicyId` ném đúng giá trị duy nhất kho này đang có; giá trị canonical thuộc kho LAMP (Genesis ▸ lampPolicies), bên đó chưa đúc. — đo bằng: `grep -c '^LAMP_POLICY_ID=' scripts/state.Preview.sh scripts/state.Preprod.sh` · đọc ở: số đếm của **cả hai** tệp, hết chặn khi cả hai ra `1` (một tệp ra 1 là mới xong nửa đường, và nửa còn lại không tự kêu) · 2026-09-14: cả hai ra `0` · 2026-09-26: kho LAMP đã đúc đời Preprod `53bc12ad…8743` (Preview vẫn chưa đúc) — việc này (Preview) còn treo; sổ Preprod ghi giá trị mới sau lượt dựng lại cụm.
 
 Kiểm kê, đường ra, và lý do KHÔNG rút trước: `scripts/DEPLOYED.md` ▸ *"Cho việc rút đời-một
 về"*. Tóm tắt một dòng cho người chỉ cần biết mức độ: 5005 tLAMP ở đó là **token nhái**, rác

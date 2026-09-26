@@ -597,12 +597,15 @@ grep -rn "không phải dựng lại\|đúc THÊM dưới chính policy" . | gre
 
 ⟹ cụm vault **sẽ** phải dựng lại, và `lampPid` nay là một trong các lý do — cộng vào nhịp
 epoch và hình dạng datum đã biết từ trước. **Ba lý do, MỘT lượt dựng lại**; đừng đếm thành ba
-lượt. Policy id mới chưa tồn tại: nó chỉ sinh ra sau lượt đúc, và lượt đúc chưa chạy.
+lượt. Lúc viết đoạn này policy id mới chưa tồn tại. **Cập nhật 2026-09-26:** lượt đúc đã chạy, đời Preprod
+mới là `53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743` (genesis tx
+`21f39c9b92c51080a6dd769f637f6fb0e6ae8307eb0089c597d63f9b031aa716`, thư `lam0926mg-lp` của kho LAMP).
 
 Mốc để sửa bảng trong `scripts/config.ts` và `MagicSDK/src/lampPolicy.ts` là **lá thư mang
 policy id mới + tx hash**, không phải ngày quyết định của bên kia. Hai bảng đó là bản chép
-tay không có đường nhập khẩu, nên **không cơ chế nào trong kho này tự khởi động việc sửa** —
-xem dòng treo ở `scripts/config.ts` cạnh `SUPERSEDED_LAMP_POLICIES`.
+tay không có đường nhập khẩu, nên **không cơ chế nào trong kho này tự khởi động việc sửa**.
+Mốc đó tới 2026-09-26: cả hai bảng đã thêm `8169b76c…` vào `SUPERSEDED_LAMP_POLICIES`, và
+dòng treo từng nằm cạnh bảng trong `scripts/config.ts` đã đóng.
 
 **Đọc HẸP, đừng đọc rộng:** câu trên nói về **Preprod**. Policy mạng chính là một giá trị
 KHÁC và **chưa tồn tại** — kho LAMP không khai nó là "sẽ giống". Nghĩa vụ báo trước khi giá
@@ -1083,7 +1086,7 @@ hai với bảng trên. Vế này chỉ chứng minh script trên chuỗi là sc
    beacon mới (NFT one-shot mới), deploy lại `consume`, công bố lại ref-script CIP-33, cập
    nhật cấu hình mọi bên tiêu thụ (gồm `KEEPER_PRICE_BEACONS`). Đừng ghim hash
    `d52c4aa9…`/`2885109f…` của mục này vào cấu hình dài hạn.
-2. **tLAMP policy `8169b76c…` SẼ đổi, không phải đời cuối** — xem mục "Preprod — đời tLAMP
+2. **tLAMP policy `8169b76c…` ĐÃ ĐỔI (2026-09-26 → `53bc12ad…8743`), không phải đời cuối** — xem mục "Preprod — đời tLAMP
    THẬT, 2026-09-16" phía trên, khối ⚠ cập nhật 2026-09-22: kho LAMP đã đóng băng ba
    validator Distribution để đúc genesis mới, `lampPid` sẽ đổi theo. Toàn bộ cụm ở mục này
    (vault, consume, beacon) apply-param bằng policy `8169b76c…`. Hai lần đổi này có lịch

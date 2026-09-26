@@ -126,48 +126,19 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
  * `id: "preprod-oneshot-12param"`, `status: "SUPERSEDED"` (kho LAMP xác nhận
  * 2026-09-20). Chỗ thiếu không ở nguồn.
  *
- * ⚠ `8169b76c…` là đời ĐANG SỐNG trên Preprod hôm nay, và **KHÔNG phải đời cuối**.
- * Kho LAMP đã chốt đóng băng ba validator Distribution rồi đúc genesis MỚI từ mã
- * đã đóng băng ⟹ `lampPid` SẼ đổi (thư `lam921mag-d`, 2026-09-21). Policy id mới
- * chưa tồn tại: nó chỉ sinh ra sau lượt đúc, và lượt đúc chưa chạy.
+ * `8169b76c…` (`preprod-oneshot-14param`, đúc 2026-09-14) ĐÃ BỊ THAY, và nay nằm trong
+ * bảng chặn bên dưới. Mốc đổi là lá thư mang policy id mới + tx hash, đúng như dòng treo
+ * cũ ở đây chờ: thư `lam0926mg-lp` (kho LAMP, 2026-09-26) báo đời Preprod mới
+ * `53bc12ad…8743`, genesis tx `21f39c9b…a716`, chép từ state lượt đúc ở commit LAMP
+ * `d5db3b6`. Nguồn chân lý là chuỗi; kho LAMP khai mọi policy Preprod trước đó là cụm
+ * CŨ — không đúc thêm, không phát thêm.
  *
- * 🔴 Bản trước của khối này kết luận ngược — *"`lamp_policy_id` không đổi ⟹ script
- * hash cụm vault không đổi ⟹ không phải dựng lại vì lý do này"* — dẫn thư
- * `lam921mag-a`. Câu đó bị lật bởi `lam921mag-d` **trong cùng ngày**, và nó nằm ở
- * đây thêm một ngày. Bài học không phải "đọc kỹ hơn": một kết luận suy từ MỘT lá
- * thư thì già đúng bằng tốc độ nhà bên kia đổi ý, và không có gì trong tệp này
- * kêu lên khi điều đó xảy ra. Thứ chép được vào mã là **dữ kiện đo lại được**
- * (một policy id, một trạng thái trong sổ nguồn); thứ KHÔNG chép được là một
- * **suy luận về tương lai** dựng trên dữ kiện ấy.
- *
- * Hệ quả đúng, và nó hẹp hơn nhiều: cụm vault **sẽ** phải dựng lại, và `lampPid`
- * nay là một trong các lý do — cộng vào nhịp epoch và hình dạng datum đã biết từ
- * trước. Ba lý do, một lượt dựng lại; đừng đếm thành ba lượt.
- *
- * ⚠ `8169b76c…` cố ý **KHÔNG** có mặt trong `SUPERSEDED_LAMP_POLICIES` bên dưới —
- * và câu đó phải viết theo chiều ấy, vì bảng bên dưới là một danh sách **CHẶN**:
- * có tên trong đó nghĩa là bị từ chối. (Bản trước của dòng này gọi nó là *"bảng
- * `LAMP_ACTIVE`"*, một cái tên không tồn tại ở đâu trong hệ — `grep -rn LAMP_ACTIVE`
- * chỉ ra đúng dòng đang tự đặt tên. Một cái tên tự phát minh thì không có nguồn để
- * đối chiếu, nên nó cũng không có gì bắt nó phải đúng; ở đây nó còn mang nghĩa
- * NGƯỢC với vật thật, nên người tra đi tìm một bảng cho-phép không có.)
- *
- * Giữ nó ngoài bảng chặn là cố ý: nó vẫn là đời duy nhất hợp lệ trên Preprod cho
- * tới khi lượt đúc mới chạy; thêm nó vào bây giờ là chặn mọi lượt E2E Preprod hợp
- * lệ. Nhưng đừng gọi lựa chọn đó là *"fail-closed sai chiều"* — hai chiều hỏng ở
- * đây KHÔNG đối xứng: chặn sớm thì hỏng **thấy được** (ném lỗi, người chạy biết
- * ngay, gỡ ra trong một dòng), còn để lọt thì hỏng **không ai thấy** (một lượt E2E
- * xanh trọn vẹn trên một đời đã chết — đúng ca `d9c09230…` ghi ở trên). Chọn giữ
- * nguyên là chọn chiều hỏng **im lặng**, và cái giá của lựa chọn đó là dòng treo
- * ngay dưới đây, không phải một nhãn nghe cho yên tâm.
- *
- * - [!] `8169b76c…` còn đứng ngoài bảng chặn — đo bằng: `grep -n "8169b76c"
- *   scripts/config.ts MagicSDK/src/lampPolicy.ts` · đọc ở: nó nằm trong khối bảng
- *   hay chỉ trong chú thích · 2026-09-22: chỉ trong chú thích, bảng chưa có.
- * Sổ nguồn kho LAMP cũng chưa đổi: `Genesis/offchain/src/lampPolicies.ts` ▸
- * `preprod-oneshot-14param` vẫn `status: "ACTIVE"`, `supersededBy: null` (đọc
- * 2026-09-22). Mốc đổi bảng này là **lá thư mang policy id mới + tx hash**, không
- * phải ngày quyết định của bên kia.
+ * Hệ quả cho kho này: mọi bước đọc `POLICY_IDS.lamp` apply-param hoặc lọc tài sản theo
+ * `lampPid` — đừng kê tay, đếm bằng `git grep -n 'POLICY_IDS.lamp' -- scripts/` (gồm cả
+ * bước công bố ref-script 06, bước đắt nhất nếu sai). `consume` apply-param theo hash vault
+ * nên đổi theo — cụm phải dựng lại theo đời mới. Sổ trạng thái Preprod nào còn
+ * ghi `8169b76c…` sẽ bị cổng này chặn ở lần đọc `POLICY_IDS.lamp` đầu tiên — đó là chủ ý:
+ * hỏng THẤY ĐƯỢC, sửa bằng một dòng trong sổ trạng thái.
  *
  * Phạm vi HẸP: đoạn trên nói về **Preprod**. Policy mạng chính là một giá trị khác
  * và chưa tồn tại; kho LAMP không khai nó là "sẽ giống". Nghĩa vụ báo trước khi
@@ -182,6 +153,10 @@ const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
     "đời `preprod-oneshot-12param`, đã bị thay bởi `8169b76c…` " +
     "(`preprod-oneshot-14param`, đúc 2026-09-14). Đây là thứ ví Preprod có tADA " +
     "đang cầm — nên nó là đời DỄ dùng nhầm nhất, không phải đời khó gặp nhất.",
+  "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
+    "đời `preprod-oneshot-14param` (đúc 2026-09-14), đã bị thay bởi `53bc12ad…8743` " +
+    "(genesis tx `21f39c9b…a716`, thư `lam0926mg-lp` 2026-09-26). Cụm vault Preprod " +
+    "23–24/09 apply-param bằng đời này, nên sổ trạng thái của cụm đó mang nó.",
 };
 
 function requireLampPolicyId(): string {
@@ -193,7 +168,8 @@ function requireLampPolicyId(): string {
       `  ${doi}\n` +
       `  · Đây KHÔNG phải token nhái — đừng đi tìm một kẻ giả mạo. Nó là LAMP thật ` +
       `của một đời đã chết, nên mọi phép so hình dạng đều cho nó đi qua.\n` +
-      `  · Hại cụ thể nếu cứ chạy: \`03_deploy_shards.ts\` và \`07_create_schedule_vault.ts\` ` +
+      `  · Hại cụ thể nếu cứ chạy: mọi bước đọc \`POLICY_IDS.lamp\` (shard 03, vault 05/07, ` +
+      `ref-script 06, keeper — đếm đủ bằng \`git grep -n 'POLICY_IDS.lamp' -- scripts/\`) ` +
       `đều apply-param theo policy này ⟹ 16 shard one-shot và vault sinh ra ở một ` +
       `script hash không ai dùng nữa, và mất thêm 2 epoch chờ để làm lại.\n` +
       `  · Lấy đời ACTIVE theo mạng từ kho LAMP (Genesis ▸ \`activeLampPolicyId\`).`,

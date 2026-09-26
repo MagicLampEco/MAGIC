@@ -3876,6 +3876,12 @@ test engage_mint_owner_script_withdraw_zero_ok() {
   oc_mint(Script(ct_owner_script), [], ct_wd(ct_owner_script))
 }
 
+// Rút LƯỢNG > 0 từ Script(h) ⟹ nhận: lượng chỉ nói số dư thưởng, không nói tx là của ai.
+// Vế chứng chỉ vòng đời stake được ghim ở bài kiểm đơn vị của `consume/owner_auth.ak`.
+test engage_mint_owner_script_positive_withdrawal_ok() {
+  oc_mint(Script(ct_owner_script), [], [Pair(Script(ct_owner_script), 1)])
+}
+
 test engage_mint_owner_script_no_withdrawal_fail() fail {
   oc_mint(Script(ct_owner_script), [], [])
 }
@@ -3907,6 +3913,12 @@ fn oc_bind(owner: Credential, sigs: List<ByteArray>, wds: Pairs<Credential, Int>
 
 test bind_did_owner_script_withdraw_zero_ok() {
   oc_bind(Script(ct_owner_script), [], ct_wd(ct_owner_script))
+}
+
+// Rút LƯỢNG > 0 từ Script(h) ⟹ nhận: lượng chỉ nói số dư thưởng, không nói tx là của ai.
+// Vế chứng chỉ vòng đời stake được ghim ở bài kiểm đơn vị của `consume/owner_auth.ak`.
+test bind_did_owner_script_positive_withdrawal_ok() {
+  oc_bind(Script(ct_owner_script), [], [Pair(Script(ct_owner_script), 1)])
 }
 
 test bind_did_owner_script_no_withdrawal_fail() fail {
@@ -3941,6 +3953,12 @@ fn oc_close(owner: Credential, sigs: List<ByteArray>, wds: Pairs<Credential, Int
 
 test close_thread_owner_script_withdraw_zero_ok() {
   oc_close(Script(ct_owner_script), [], ct_wd(ct_owner_script))
+}
+
+// Rút LƯỢNG > 0 từ Script(h) ⟹ nhận: lượng chỉ nói số dư thưởng, không nói tx là của ai.
+// Vế chứng chỉ vòng đời stake được ghim ở bài kiểm đơn vị của `consume/owner_auth.ak`.
+test close_thread_owner_script_positive_withdrawal_ok() {
+  oc_close(Script(ct_owner_script), [], [Pair(Script(ct_owner_script), 1)])
 }
 
 test close_thread_owner_script_no_withdrawal_fail() fail {

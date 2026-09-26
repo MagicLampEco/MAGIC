@@ -17,6 +17,8 @@
 //   · Lượng rút = ĐÚNG số dư thưởng hiện có của tài khoản `Script(h)` — ledger ép, không
 //     phải validator. Tra qua cổng `rewardAccount`, KHÔNG gõ cứng 0. Tài khoản chưa đăng
 //     ký ⟹ `OWNER_STAKE_NOT_REGISTERED`, không dựng giao dịch.
+//   · Validator từ chối tx có chứng chỉ vòng đời stake về `Script(h)` (đăng ký, huỷ, uỷ
+//     thác). Hàm này không thêm chứng chỉ nào; bên gọi cũng đừng thêm vào cùng tx.
 //
 // Gói này cố ý không phụ thuộc Lucid (xem `ownerAuth.ts`), nên ba việc cần thư viện Cardano
 // — băm script, dựng địa chỉ thưởng, đọc tài khoản thưởng — đi vào qua `DidStakePorts`. Mỗi

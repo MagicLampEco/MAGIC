@@ -6,7 +6,10 @@
 //
 //     VerificationKey(pkh) ⟹ pkh ∈ tx.extra_signatories
 //     Script(h)            ⟹ tx.withdrawals có khoá Script(h) — validator KHÔNG ép lượng;
-//                             ledger ép lượng == số dư thưởng hiện có (xem `OwnerAuth`)
+//                             ledger ép lượng == số dư thưởng hiện có (xem `OwnerAuth`);
+//                             VÀ tx không mang chứng chỉ vòng đời stake nào (đăng ký /
+//                             huỷ / uỷ thác / đăng ký-kèm-uỷ-thác) về Script(h) — bộ dựng
+//                             đừng gộp việc đổi vòng đời stake với việc cần quyền chủ
 //
 // Mã hoá Plutus Data — blueprint `cardano/address/Credential` (đối chiếu `plutus.json` của
 // bốn module sau `aiken build`, 2026-09-26):

@@ -131,7 +131,9 @@ OWNER_AUTH_MISMATCH`, trước khi hỏi chuỗi bất cứ điều gì. Anchor 
 `anchor_nft_policy` của mạng, không ⟹ `400 OWNER_ANCHOR_INVALID`. Tài khoản thưởng chưa đăng
 ký ⟹ `422 OWNER_STAKE_NOT_REGISTERED`. Lượng rút là **đúng số dư thưởng lúc dựng** (ledger
 đòi vậy), nên một ranh giới epoch có cộng thưởng xen giữa dựng và nộp làm tx hết hợp lệ —
-dựng lại. Trạng thái Active của anchor **không** kiểm ở đây: lược đồ datum anchor thuộc repo
+dựng lại. Validator từ chối tx mang chứng chỉ đăng ký / huỷ đăng ký / uỷ thác cho chính
+`Script(h)` — đó là hình dạng tx thu hồi, nên đổi vòng đời stake phải nằm ở tx riêng. Trạng
+thái Active của anchor **không** kiểm ở đây: lược đồ datum anchor thuộc repo
 danh tính, và `did_stake` từ chối trên chuỗi nếu anchor không Active.
 
 Chủ khoá mà gửi `owner_witness` ⟹ `400 OWNER_WITNESS_UNEXPECTED`.

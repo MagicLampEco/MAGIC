@@ -31,7 +31,7 @@ const batch = (
 });
 
 const datumWith = (batches: MagicBatchLike[], over: Record<string, unknown> = {}) => ({
-  owner: "aa".repeat(28),
+  owner: { VerificationKey: ["aa".repeat(28)] },
   lamp_balance: 1_000_000n, lamp_locked: 0n,
   loyalty_holdings: [], magic_batches: batches, next_batch_index: BigInt(batches.length),
   vacuum_orders: [], gen_schedules: [],
@@ -262,7 +262,7 @@ describe("buildVaultBurnBatch — CBOR redeemer + datum", () => {
   // `DelegationCertificateSchema` nên không mã hoá được. Khối này cần datum mã hoá
   // THẬT, nên khai đủ trường theo đúng schema.
   const encodable = (over: Record<string, unknown> = {}) => ({
-    owner: "aa".repeat(28),
+    owner: { VerificationKey: ["aa".repeat(28)] },
     lamp_balance: 1_000_000n, lamp_locked: 0n,
     loyalty_holdings: [], magic_batches: [batch("a1", 500n, 5n)], next_batch_index: 1n,
     vacuum_orders: [], gen_schedules: [],

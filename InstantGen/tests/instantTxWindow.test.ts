@@ -14,7 +14,7 @@ import { msPerEpoch, EmptyValidityWindowError, VALIDITY_MAX_AHEAD_MS } from "@ma
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import { buildInstantGenTx } from "../offchain/src/instant.js";
 import {
-  VaultDatum, UMDatum, BackingBeaconDatum,
+  VaultDatum, UMDatum, BackingBeaconDatum, OwnerCredentialSchema,
   type VaultDatum as TVaultDatum,
   type UMDatum as TUMDatum,
   type BackingBeaconDatum as TBackingBeaconDatum,
@@ -31,6 +31,7 @@ const LAMP_POLICY = "aa".repeat(28);
 const LAMP_NAME   = "744c414d50";             // "tLAMP" ở dạng hex
 const LAMP_UNIT   = LAMP_POLICY + LAMP_NAME;
 const VAULT_ID_UNIT = "bb".repeat(28) + "cc".repeat(8);
+const OWNER_PKH   = "0a".repeat(28);
 
 // Script tối giản hợp lệ — chỉ dùng để suy ra địa chỉ, không bao giờ được chạy.
 const VAULT_SCRIPT = { type: "PlutusV3" as const, script: "49480100002221200101" };
@@ -54,7 +55,7 @@ function makeSchedule(overrides: Partial<GenSchedule> = {}): GenSchedule {
 
 function makeVault(overrides: Partial<TVaultDatum> = {}): TVaultDatum {
   return {
-    owner:                 "aabbccdd",
+    owner:                 { VerificationKey: [OWNER_PKH] },
     lamp_balance:          100_000_000_000n,
     lamp_locked:           0n,
     loyalty_holdings:      [{ amount: 100_000_000_000n, acquired_epoch: 50n, is_locked: false }],
@@ -92,7 +93,11 @@ function utxo(datumHex: string, assets: Record<string, bigint>, ix = 0) {
   } as any;
 }
 
-async function dung(tipPosixMs: bigint, vaultOverrides: Partial<TVaultDatum> = {}) {
+async function dung(
+  tipPosixMs: bigint,
+  vaultOverrides: Partial<TVaultDatum> = {},
+  builderOverrides: Record<string, unknown> = {},
+) {
   const fake = makeLucidFake();
   const res = await buildInstantGenTx({
     lucid: fake.lucid as any,
@@ -108,6 +113,7 @@ async function dung(tipPosixMs: bigint, vaultOverrides: Partial<TVaultDatum> = {
     lampAssetName: LAMP_NAME,
     network:      NETWORK,
     tipPosixMs,
+    ...builderOverrides,
   } as any);
   return { res, tx: fake.onlyTx() };
 }
@@ -227,8 +233,81 @@ describe("buildInstantGenTx — cửa sổ hiệu lực và mốc khoá", () => 
     expect(tx.collectFrom).toHaveLength(1);
     expect(tx.readFrom[0]).toHaveLength(2);      // UM + BackingBeacon
     expect(tx.outputs).toHaveLength(1);          // chỉ trả về chính két
-    expect(tx.signerKeys).toEqual(["aabbccdd"]); // chủ két phải ký
+    expect(tx.signerKeys).toEqual([OWNER_PKH]); // chủ két phải ký
+    expect(tx.withdrawals).toEqual([]);          // chủ khoá: không mục rút nào
     expect(res.currentEpoch).toBe(E);
     expect(res.newLampBalance).toBe(100_000_000_000n);  // I-ACT-7: LAMP đứng yên
+  });
+});
+
+// ── Chủ két là `Credential` (on-chain 856804fa) ───────────────────────────────
+//
+// Bytes kỳ vọng dựng tay từ blueprint `cardano/address/Credential` (đối chiếu
+// `InstantGen/onchain/plutus.json` 2026-09-26): VerificationKey = Constr 0 [bytes 28],
+// Script = Constr 1 [bytes 28]. Lucid 0.4.30 mã hoá Constr có trường bằng danh sách
+// độ dài bất định (`9f … ff`) — cả hai dạng validator đều giải mã như nhau.
+const SCRIPT_H = "5c".repeat(28);
+const CBOR_VK  = `d8799f581c${OWNER_PKH}ff`;
+const CBOR_SC  = `d87a9f581c${SCRIPT_H}ff`;
+
+describe("VaultDatum.owner — mã hoá Credential khớp blueprint", () => {
+  it("VerificationKey ⟹ Constr 0, Script ⟹ Constr 1, cùng 28 byte", () => {
+    expect(Data.to({ VerificationKey: [OWNER_PKH] }, OwnerCredentialSchema as never)).toBe(CBOR_VK);
+    expect(Data.to({ Script: [SCRIPT_H] }, OwnerCredentialSchema as never)).toBe(CBOR_SC);
+  });
+
+  it("trường 0 của datum 18 trường mang ĐÚNG bytes Credential", () => {
+    const hex = Data.to(makeVault({ owner: { Script: [SCRIPT_H] } }), VaultDatum);
+    // Constr 0 của VaultDatum mở bằng `d8799f`, rồi ngay sau là trường 0.
+    expect(hex.startsWith(`d8799f${CBOR_SC}`)).toBe(true);
+    expect(Data.from(hex, VaultDatum).owner).toEqual({ Script: [SCRIPT_H] });
+  });
+
+  it("CỰC ĐỐI: datum dựng theo lược đồ cũ (owner = pkh trần) KHÔNG giải mã được", () => {
+    const moi = Data.to(makeVault(), VaultDatum);
+    // Thay trường 0 bằng bytes trần — đúng hình dạng mà validator trước 856804fa ghi ra.
+    const cu = `d8799f581c${OWNER_PKH}` + moi.slice(`d8799f${CBOR_VK}`.length);
+    expect(() => Data.from(cu, VaultDatum)).toThrow();
+  });
+
+  it("CỰC ĐỐI: hash 27 byte ⟹ lược đồ từ chối mã hoá", () => {
+    expect(() => Data.to({ VerificationKey: ["0a".repeat(27)] }, OwnerCredentialSchema as never)).toThrow();
+  });
+});
+
+describe("buildInstantGenTx — chứng minh quyền chủ theo nhánh", () => {
+  const TIP = E * P + 1_000n;
+
+  it("chủ khoá ⟹ addSignerKey(pkh), KHÔNG mục rút", async () => {
+    const { tx } = await dung(TIP);
+    expect(tx.signerKeys).toEqual([OWNER_PKH]);
+    expect(tx.withdrawals).toEqual([]);
+  });
+
+  it("chủ script ⟹ attachWithdraw ĐÚNG MỘT LẦN, KHÔNG ký bằng h", async () => {
+    let goi = 0;
+    const { tx } = await dung(TIP, { owner: { Script: [SCRIPT_H] } }, {
+      ownerAuth: {
+        kind: "script",
+        hash: SCRIPT_H,
+        attachWithdraw: (t: any) => { goi++; return t.withdraw("stake_test1_gia", 0n, "d87980"); },
+      },
+    });
+    expect(goi).toBe(1);
+    expect(tx.signerKeys).not.toContain(SCRIPT_H);
+    expect(tx.signerKeys).toEqual([]);
+    expect(tx.withdrawals).toEqual([{ rewardAddress: "stake_test1_gia", amount: 0n, redeemer: "d87980" }]);
+  });
+
+  it("CỰC ĐỐI: chủ script mà không có ownerAuth ⟹ NÉM OWNER_SCRIPT_WITNESS_UNAVAILABLE", async () => {
+    await expect(dung(TIP, { owner: { Script: [SCRIPT_H] } })).rejects.toThrow(
+      /OWNER_SCRIPT_WITNESS_UNAVAILABLE/,
+    );
+  });
+
+  it("CỰC ĐỐI: ownerAuth khoá cho két chủ script cùng 28 byte ⟹ OWNER_AUTH_MISMATCH", async () => {
+    await expect(
+      dung(TIP, { owner: { Script: [OWNER_PKH] } }, { ownerAuth: { kind: "key", pkh: OWNER_PKH } }),
+    ).rejects.toThrow(/OWNER_AUTH_MISMATCH/);
   });
 });

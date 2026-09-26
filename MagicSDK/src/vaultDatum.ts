@@ -61,7 +61,7 @@ export interface InitialVaultDatumInputs {
  * đối chiếu trực tiếp với `validate_mint_vault_id` trước khi sửa bất kỳ dòng nào.
  */
 export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
-  owner:                 string;
+  owner:                 { VerificationKey: [string] };
   lamp_balance:          bigint;
   lamp_locked:           bigint;
   loyalty_holdings:      Array<{ amount: bigint; acquired_epoch: bigint; is_locked: boolean }>;
@@ -118,7 +118,8 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
   }
 
   return {
-    owner:        ownerPkh,
+    // Chủ là `Credential`; đường tạo két của SDK hiện chỉ mở nhánh khoá.
+    owner:        { VerificationKey: [ownerPkh] },
     lamp_balance: lampBalanceOildrop,
     lamp_locked:  0n,
     loyalty_holdings: [{

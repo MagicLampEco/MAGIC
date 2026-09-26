@@ -29,6 +29,7 @@ import {
 } from "../config.js";
 
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
+import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
 import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
@@ -123,8 +124,8 @@ async function main() {
     if (!u.datum) continue;
     if (wantedTx && u.txHash !== wantedTx) continue;
     try {
-      const d = Data.from(u.datum, InstantVaultDatumSchema as never) as { owner: string };
-      if (d.owner === ownerPkh) { vaultUtxo = u; break; }
+      const d = Data.from(u.datum, InstantVaultDatumSchema as never) as { owner: unknown };
+      if (sameOwner(ownerRefOf(d.owner), { type: "key", hash: ownerPkh })) { vaultUtxo = u; break; }
     } catch (e) {
       khongGiaiMaDuoc.push(
         `${u.txHash}#${u.outputIndex}: ${e instanceof Error ? e.message : String(e)}`,

@@ -236,7 +236,7 @@ async function main() {
   // ── Engage genesis datum — MỌI trục kế toán = 0 (validate_mint_engage_id) ────
   //   expect ed.consumed_count == 0 / ed.consumed_nanogic == 0 / ed.last_epoch == 0
   const engageDatumCbor = Data.to({
-    owner:            ownerPkh,
+    owner:            { VerificationKey: [ownerPkh] },   // Credential; nhánh khoá ⟹ ví ký
     consumed_count:   0n,
     last_epoch:       0n,   // PIN: state tích luỹ, genesis PHẢI 0 (không phải epoch hiện tại)
     did_commit:       "",   // rỗng lúc tạo; điền MỘT LẦN sau bằng redeemer BindDID

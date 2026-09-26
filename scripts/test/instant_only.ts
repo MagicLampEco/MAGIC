@@ -32,6 +32,7 @@ import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { instantVaultParams, umDatumParams } from "../deployParams.js";
 import { buildInstantGenTx } from "../../InstantGen/offchain/src/instant.js";
 import { VaultDatumSchema, UMDatumSchema } from "../../InstantGen/offchain/src/types.js";
+import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 
 // PHA 2: nothing is paid. LAMP only sits in the vault to open eligibility.
 
@@ -102,7 +103,7 @@ async function main() {
     if (wantedTx && u.txHash !== wantedTx) return false;
     try {
       const d = Data.from(u.datum, VaultDatumSchema);
-      return d.owner === ownerPkh;
+      return sameOwner(ownerRefOf(d.owner), { type: "key", hash: ownerPkh });
     } catch { return false; }
   });
   if (!vaultUtxo) {
@@ -159,7 +160,7 @@ async function main() {
     if (tamper === "lamp_balance") return { ...d, lamp_balance: d.lamp_balance + 1n };
     if (tamper === "keep_credit")
       return { ...d, activity_state: { ...d.activity_state, consumed_credit: 1n } };
-    if (tamper === "wrong_owner") return { ...d, owner: "ff".repeat(28) };
+    if (tamper === "wrong_owner") return { ...d, owner: { VerificationKey: ["ff".repeat(28)] } };
     throw new Error(`Unknown TAMPER: ${tamper}`);
   }) : undefined;
   // TAMPER=lamp_out sends LAMP out of the vault — must be REJECTED (I-ACT-7).

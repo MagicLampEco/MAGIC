@@ -813,3 +813,6 @@ export function assertRefScriptsCover(
     }
   }
 }
+
+// Chủ vault / thread là `Credential` (commit on-chain 856804fa) — kiểu + chính sách, không Lucid.
+export * from "./ownerAuth.js";

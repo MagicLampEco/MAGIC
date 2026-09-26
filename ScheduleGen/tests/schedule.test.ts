@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeSQ, computeRateLockedQ, computeMi, checkSchRate,
-  computeShardId, countEligibleFires, nextFireEpoch,
+  computeShardId, computeShardIdFromHash, countEligibleFires, nextFireEpoch,
   nanogicToMagicStr, lampToOildrop, unlockLockedAmount, isExpired, isLive,
   selectLampForLock, assertHoldingCapAfterCommit,
 } from "../offchain/src/math.js";
@@ -16,7 +16,7 @@ import {
 import {
   TV_SCH_01, TV_SCH_02, TV_SCH_03, TV_SCH_04, TV_SCH_05,
   TV_SCH_06, TV_SCH_CATCHUP_LIMIT, TV_SCH_T_DET, TV_SCH_FIRE3,
-  TV_SCH_ACT7, TV_SCH_CLIFF,
+  TV_SCH_ACT7, TV_SCH_CLIFF, TV_SCH_SHARD_CRED,
 } from "./vectors.js";
 import type { VaultDatum, GenSchedule, MagicBatch } from "../offchain/src/types.js";
 
@@ -24,7 +24,7 @@ import type { VaultDatum, GenSchedule, MagicBatch } from "../offchain/src/types.
 
 function makeVault(overrides: Partial<VaultDatum> = {}): VaultDatum {
   return {
-    owner: "aabbccdd00112233",
+    owner: { VerificationKey: ["aa".repeat(28)] } as VaultDatum["owner"],
     lamp_balance:   250_000_000_000_000n,   // 250M LAMP (Bob's example)
     lamp_locked:    0n,
     loyalty_holdings: [{ amount: 250_000_000_000_000n, acquired_epoch: 0n, is_locked: false }],
@@ -272,26 +272,26 @@ describe("countEligibleFires — C-FIRE-1 ≥, catch-up", () => {
 
 describe("computeShardId — §5.5, C-SCH-FIRE-SHARD", () => {
 
-  it("Returns value in [0,15]", () => {
-    const pkhs = ["aabbccdd", "11223344", "deadbeef", "cafebabe", "00000000"];
-    for (const pkh of pkhs) {
-      const id = computeShardId(pkh);
-      expect(id).toBeGreaterThanOrEqual(0);
-      expect(id).toBeLessThanOrEqual(15);
+  it("TV-SCH-SHARD-CRED: VerificationKey(h) ⟹ đúng shard của vector (P8)", () => {
+    for (const v of TV_SCH_SHARD_CRED) {
+      expect(computeShardId({ VerificationKey: [v.inner] })).toBe(v.shard_id);
+      expect(computeShardIdFromHash(v.inner)).toBe(v.shard_id);
     }
   });
 
-  it("Deterministic: same PKH always gives same shard_id", () => {
-    const pkh = "aabbccdd00112233";
-    expect(computeShardId(pkh)).toBe(computeShardId(pkh));
+  it("TV-SCH-SHARD-CRED: Script(h) rơi CÙNG shard với VerificationKey(h) (khai ở on-chain)", () => {
+    for (const v of TV_SCH_SHARD_CRED) {
+      expect(computeShardId({ Script: [v.inner] })).toBe(v.shard_id);
+    }
   });
 
-  it("C-SCH-FIRE-SHARD: different owners → possibly different shards", () => {
-    const alice = computeShardId("aaaaaaaabbbbbbbb");
-    const bob   = computeShardId("ccccccccdddddddd");
-    // No assertion on specific values — just verify the function is stable
-    expect(typeof alice).toBe("number");
-    expect(typeof bob).toBe("number");
+  it("CỰC ĐỐI: vector phân biệt được — bốn đầu vào cho ít nhất ba shard khác nhau", () => {
+    // Một hàm hằng (trả 0 mọi lúc) sẽ đỏ ở hai ca trên chỉ khi vector KHÔNG đều nhau.
+    expect(new Set(TV_SCH_SHARD_CRED.map((v) => v.shard_id)).size).toBeGreaterThanOrEqual(3);
+  });
+
+  it("CỰC ĐỐI: pkh trần (hình dạng owner cũ) ⟹ NÉM, không băm nhầm chuỗi", () => {
+    expect(() => computeShardId("00".repeat(28) as never)).toThrow(/OWNER_CREDENTIAL_SHAPE/);
   });
 });
 

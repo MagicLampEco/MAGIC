@@ -63,6 +63,7 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { paidFundParams, prepaidVaultParams } from "../deployParams.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 import { fundIdAssetName } from "../fundId.js";
+import { OwnerCredentialSchema } from "../../PrepaidGen/offchain/src/types.js";
 
 // ── Lược đồ datum ────────────────────────────────────────────────
 // Neo: PrepaidGen/onchain/lib/magiclamp/protocol/types.ak ▸ PaidFundDatum,
@@ -110,7 +111,7 @@ type PaidFundDatum = Data.Static<typeof PaidFundDatumSchema>;
 const PaidFundDatum = PaidFundDatumSchema as unknown as PaidFundDatum;
 
 const PrepaidVaultDatumSchema = Data.Object({
-  owner:            Data.Bytes(),
+  owner:            OwnerCredentialSchema,   // Credential — nguồn: PrepaidGen/offchain/src/types.ts
   did_commit:       Data.Bytes(),
   prepaid_credits:  Data.Array(Data.Object({
     fund_id:         Data.Bytes(),
@@ -423,7 +424,7 @@ async function main() {
   console.log(`NFT vault:          ${vaultHash}.${vaultIdName}`);
 
   const vaultDatum: PrepaidVaultDatum = {
-    owner:              ownerPkh,      // PIN: `list.has(tx.extra_signatories, vd.owner)`
+    owner:              { VerificationKey: [ownerPkh] },   // PIN: `owner_authorized(tx, vd.owner)` — nhánh khoá ⟹ ví ký
     did_commit:         "",            // PIN: `expect vd.did_commit == #""`
     prepaid_credits:    [],            // PIN
     magic_batches:      [],            // PIN

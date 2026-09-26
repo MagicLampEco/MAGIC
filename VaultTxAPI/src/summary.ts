@@ -20,7 +20,7 @@
 import { CML, valueToAssets } from "@lucid-evolution/lucid";
 
 import { TxSummaryUndecodableError } from "./errors.js";
-import { decodeVaultDatumOrThrow, type DecodedVaultDatum } from "./vaultDatumShape.js";
+import { decodeVaultDatumOrThrow, keyOwnerPkh, type DecodedVaultDatum } from "./vaultDatumShape.js";
 import { lovelaceToAda, nanogicToMagic, oildropToLamp, raw } from "./units.js";
 
 /** Nhãn của đường HTTP đã gọi. Đây là thứ DUY NHẤT trong `summary` không suy từ CBOR,
@@ -213,7 +213,7 @@ export function summarizeTx(txCborHex: string, ctx: SummaryContext): TxSummary {
     vault: {
       address: vaultHit.view.address,
       output_index: vaultHit.view.index,
-      owner_pkh: after.owner,
+      owner_pkh: keyOwnerPkh(after.owner),
       last_updated_epoch: raw(after.last_updated_epoch),
       // Đọc từ datum ĐẦU RA đã giải mã lại từ chính CBOR sắp ký, không từ tham số
       // của yêu cầu — cùng nguyên tắc với mọi số khác trong bản tóm tắt này.

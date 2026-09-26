@@ -33,6 +33,7 @@ import {
 } from "../config.js";
 
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
+import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
 import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
@@ -135,8 +136,8 @@ async function main() {
     if (!u.datum) continue;
     if (wantedTx && u.txHash !== wantedTx) continue;
     try {
-      const d = Data.from(u.datum, vaultDatumSchema as never) as { owner: string };
-      if (d.owner === ownerPkh) {
+      const d = Data.from(u.datum, vaultDatumSchema as never) as { owner: unknown };
+      if (sameOwner(ownerRefOf(d.owner), { type: "key", hash: ownerPkh })) {
         vaultUtxo = u;
         break;
       }

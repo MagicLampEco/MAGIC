@@ -21,6 +21,7 @@ import {
   VaultAmbiguousError, VaultDatumUndecodableError, VaultIdentityDuplicateError, VaultNotFoundError,
 } from "./errors.js";
 import { decodeVaultDatumOrThrow, type DecodedVaultDatum } from "./vaultDatumShape.js";
+import { sameOwner } from "@magiclamp/protocol-utils";
 
 export interface FoundVault {
   utxo: UTxO;
@@ -68,7 +69,7 @@ export function findVaultsAtScope(
     }
 
     byIdUnit.set(idUnit, [...(byIdUnit.get(idUnit) ?? []), ref]);
-    if (datum.owner !== ownerPkh) { ignored.push({ utxoRef: ref, reason: "OWNER_MISMATCH" }); continue; }
+    if (!sameOwner(datum.owner, { type: "key", hash: ownerPkh })) { ignored.push({ utxoRef: ref, reason: "OWNER_MISMATCH" }); continue; }
     vaults.push({ utxo: u, datum, vaultIdUnit: idUnit, scope });
   }
 

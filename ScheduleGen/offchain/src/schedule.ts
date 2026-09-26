@@ -4,9 +4,10 @@
 import {
   Lucid, Blockfrost, Data, toUnit,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
-  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
+  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type TxBuilder,
 } from "@lucid-evolution/lucid";
 import { blake2b } from "@noble/hashes/blake2b";
+import { applyOwnerAuth, resolveOwnerAuth, ownerRefOf, type OwnerAuth } from "@magiclamp/protocol-utils";
 import {
   TESTNET_CONFIG, SCHEDULE_DELAY, SCHEDULE_DECAY_WINDOW,
   MAX_FIRES_PER_TX_CATCHUP, MAX_GEN_SCHEDULES, MAX_BATCHES_PER_VAULT,
@@ -107,6 +108,10 @@ export interface CommitParams {
   network?        : Network;
   tipPosixMs?     : bigint;
   tamperOutputDatum?: (d: any) => any;
+  /** Cách chứng minh quyền chủ (`VaultDatum.owner` là `Credential`). Bỏ trống: chủ khoá ⟹
+   *  `addSignerKey(pkh)` từ datum; chủ script ⟹ NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. */
+  ownerAuth?      : OwnerAuth<TxBuilder>;
+  /** TEST ONLY: bỏ hẳn bước chứng minh quyền chủ. */
   skipOwnerSig?   : boolean;
   /** UTxO mang scriptRef của vault + shard (CIP-33). Có thì tx ĐỌC script từ
    *  chain thay vì đính kèm. ĐÍNH KÈM CẢ HAI VALIDATOR VƯỢT TRẦN 16 KB
@@ -277,7 +282,12 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatum) }, shardUtxo.assets)
     .validFrom(lowerTime)
     .validTo(upperTime);
-  if (!params.skipOwnerSig) txBuilder = txBuilder.addSignerKey(vaultDatum.owner);
+  if (!params.skipOwnerSig) {
+    txBuilder = applyOwnerAuth(
+      txBuilder,
+      resolveOwnerAuth(ownerRefOf(vaultDatum.owner), params.ownerAuth),
+    );
+  }
   const tx = await txBuilder.complete();
 
   // MAGIC mỗi LAMP = rate_locked_q × 10⁻¹² × 10⁶ / 10⁶ … viết thẳng cho khỏi suy:

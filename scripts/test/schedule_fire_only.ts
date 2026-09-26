@@ -14,6 +14,7 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatum } from "../../ScheduleGen/offchain/src/types.js";
+import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 
 async function fetchTip() {
@@ -73,7 +74,7 @@ async function main() {
   const wantedTx = process.env.VAULT_TX_HASH;
   const mine = (u: { datum?: string | null }) => {
     if (!u.datum) return false;
-    try { return Data.from(u.datum, VaultDatum).owner === ownerPkh; } catch { return false; }
+    try { return sameOwner(ownerRefOf(Data.from(u.datum, VaultDatum).owner), { type: "key", hash: ownerPkh }); } catch { return false; }
   };
   let vaultUtxo;
   for (let attempt = 1; attempt <= 5; attempt++) {

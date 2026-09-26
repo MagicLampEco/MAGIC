@@ -35,7 +35,7 @@ describe("buildInitialVaultDatum", () => {
       profile:        "Flame",
       currentEpoch:   20589n,
     });
-    expect(d.owner).toBe(PKH_28);
+    expect(d.owner).toEqual({ VerificationKey: [PKH_28] });
     expect(d.lamp_balance).toBe(1_000_000_000n);
     expect(d.lamp_locked).toBe(0n);
     expect(d.profile).toBe("Flame");
@@ -132,7 +132,7 @@ describe("VaultDatumSchema CBOR roundtrip", () => {
     });
     const cbor    = Data.to(original as never, VaultDatumSchema);
     const decoded = Data.from(cbor, VaultDatumSchema);
-    expect(decoded.owner).toBe(original.owner);
+    expect(decoded.owner).toEqual(original.owner);
     expect(decoded.lamp_balance).toBe(original.lamp_balance);
     expect(decoded.profile).toBe(original.profile);
     expect(decoded.last_updated_epoch).toBe(original.last_updated_epoch);

@@ -26,6 +26,7 @@ import {
 } from "@lucid-evolution/lucid";
 import {
   getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow,
+  applyOwnerAuth, resolveOwnerAuth, ownerRefOf, ownerRefToString,
   type Network,
 } from "@magiclamp/protocol-utils";
 
@@ -152,16 +153,17 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
     ? lucid.newTx().collectFrom([vaultUtxo], redeemer).attach.SpendingValidator(vaultScript)
     : lucid.newTx().collectFrom([vaultUtxo], redeemer).readFrom([refUtxo]);
 
-  const tx = await txWithScript
+  const txBody = txWithScript
     .pay.ToAddressWithData(
       vaultAddress,
       { kind: "inline", value: Data.to(newVaultDatum as never, InstantVaultDatumSchema) },
       vaultUtxo.assets,   // assets unchanged
     )
-    .addSignerKey(vaultDatum.owner)
     .validFrom(lowerTime)
-    .validTo(upperTime)
-    .complete();
+    .validTo(upperTime);
+  // Chủ là `Credential`: khoá ⟹ `addSignerKey(pkh)`; script ⟹ NÉM
+  // `OWNER_SCRIPT_WITNESS_UNAVAILABLE` (SDK chưa nhận chứng từ stake-script của chủ).
+  const tx = await applyOwnerAuth(txBody, resolveOwnerAuth(ownerRefOf(vaultDatum.owner))).complete();
 
   const summary = [
     `═══ UpdateProfile (lazy) ═══`,

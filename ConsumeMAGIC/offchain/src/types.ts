@@ -18,6 +18,16 @@
 
 import { Constr, Data } from "@lucid-evolution/lucid";
 
+// ── Credential (chủ thread) ───────────────────────────────────────────────────
+// Gương của `cardano/address/Credential` (blueprint, đối chiếu 2026-09-26):
+//   VerificationKey(h) = Constr 0 [bytes 28]   Script(h) = Constr 1 [bytes 28]
+// `Data.Static` của lược đồ này trùng kiểu `OwnerCredential` ở `@magiclamp/protocol-utils`.
+export const OwnerCredentialSchema = Data.Enum([
+  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
+  Data.Object({ Script: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
+]);
+export type OwnerCredentialData = Data.Static<typeof OwnerCredentialSchema>;
+
 // ── OutputReference (cardano/transaction.OutputReference) ─────────────────────
 // Aiken: OutputReference { transaction_id: ByteArray, output_index: Int }.
 export const OutputReferenceSchema = Data.Object({
@@ -72,7 +82,7 @@ export type PriceParamT = Data.Static<typeof PriceParamSchema>;
 //   Thiếu trường này ⇒ Constr 0 có 4 field ⇒ `expect ed: EngageDatum` on-chain
 //   nổ ⇒ mọi tx mint/spend Engage bị từ chối.
 export const EngageDatumSchema = Data.Object({
-  owner: Data.Bytes(),
+  owner: OwnerCredentialSchema,
   consumed_count: Data.Integer(),
   last_epoch: Data.Integer(),
   did_commit: Data.Bytes(),

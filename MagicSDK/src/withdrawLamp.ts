@@ -21,6 +21,7 @@ import {
 import {
   getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow,
   cmpBigIntDesc, sortAiken, lampAssetName,
+  applyOwnerAuth, resolveOwnerAuth, ownerRefOf, ownerRefToString,
   type Network,
 } from "@magiclamp/protocol-utils";
 
@@ -207,22 +208,23 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     ? lucid.newTx().collectFrom([vaultUtxo], redeemer).attach.SpendingValidator(vaultScript)
     : lucid.newTx().collectFrom([vaultUtxo], redeemer).readFrom([refUtxo]);
 
-  const tx = await txWithScript
+  const txBody = txWithScript
     .pay.ToAddressWithData(
       vaultAddress,
       { kind: "inline", value: Data.to(newVaultDatum as never, datumSchema) },
       vaultOutputAssets,
     )
     .pay.ToAddress(destination, { [lampUnit]: amountOildrop })
-    .addSignerKey(vaultDatum.owner)
     .validFrom(lowerTime)
-    .validTo(upperTime)
-    .complete();
+    .validTo(upperTime);
+  // Chủ là `Credential`: khoá ⟹ `addSignerKey(pkh)`; script ⟹ NÉM
+  // `OWNER_SCRIPT_WITNESS_UNAVAILABLE` (SDK chưa nhận chứng từ stake-script của chủ).
+  const tx = await applyOwnerAuth(txBody, resolveOwnerAuth(ownerRefOf(vaultDatum.owner))).complete();
 
   const summary = [
     `═══ WithdrawLamp ═══`,
     `Vault:           ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`,
-    `Owner:           ${vaultDatum.owner}`,
+    `Owner:           ${ownerRefToString(ownerRefOf(vaultDatum.owner))}`,
     `Amount:          ${amountOildrop / 1_000_000n} LAMP (${amountOildrop} oildrop)`,
     `LAMP before:     ${vaultDatum.lamp_balance / 1_000_000n}`,
     `LAMP after:      ${remainingLamp / 1_000_000n}`,

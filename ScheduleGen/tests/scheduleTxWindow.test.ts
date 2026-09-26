@@ -20,7 +20,7 @@ import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import { buildScheduleCommitTx, buildScheduleFireTx } from "../offchain/src/schedule.js";
 import { computeShardId } from "../offchain/src/math.js";
 import {
-  VaultDatum,
+  VaultDatum, OwnerCredentialSchema,
   type VaultDatum as TVaultDatum,
   type GenSchedule,
 } from "../offchain/src/types.js";
@@ -31,7 +31,10 @@ const P       = msPerEpoch(NETWORK);          // 432_000_000 ms
 const E       = 100n;
 const SLOT    = 1_000n;
 
-const OWNER       = "aabbccdd00112233";
+// Chủ là `Credential`. "0a"×28 rơi shard 10 (TV-SCH-SHARD-CRED, `vectors.ts`).
+const OWNER_PKH   = "0a".repeat(28);
+const OWNER       = { VerificationKey: [OWNER_PKH] } as TVaultDatum["owner"];
+const SCRIPT_H    = "5c".repeat(28);
 const LAMP_POLICY = "aa".repeat(28);
 const LAMP_NAME   = "744c414d50";             // "tLAMP" ở dạng hex
 const LAMP_UNIT   = LAMP_POLICY + LAMP_NAME;
@@ -146,11 +149,16 @@ function vaultUtxoFor(d: TVaultDatum) {
   return utxo(Data.to(d, VaultDatum), VAULT_ASSETS);
 }
 
-async function dungCommit(tipPosixMs: bigint) {
+async function dungCommit(
+  tipPosixMs: bigint,
+  vaultOverrides: Partial<TVaultDatum> = {},
+  builderOverrides: Record<string, unknown> = {},
+) {
   const fake = makeLucidFake();
   const res = await buildScheduleCommitTx({
+    ...builderOverrides,
     lucid:          fake.lucid as any,
-    vaultUtxo:      vaultUtxoFor(makeVault()),
+    vaultUtxo:      vaultUtxoFor(makeVault(vaultOverrides)),
     shardUtxos:     shardUtxos(),
     scheduleLength: 10n,
     lampPerEpoch:   1_000_000_000n,
@@ -263,7 +271,10 @@ describe("buildScheduleCommitTx — cửa sổ hiệu lực", () => {
     // Commit là nhánh của CHỦ KÉT: nó khoá LAMP của người ta. Một ngày nào đó
     // `addSignerKey` biến mất khỏi đây thì bất kỳ ai cũng khoá được LAMP của người
     // khác — phải đỏ ngay, không chỉ nằm trong chú thích.
-    expect(tx.signerKeys).toEqual([OWNER]);
+    expect(tx.signerKeys).toEqual([OWNER_PKH]);
+    expect(tx.withdrawals).toEqual([]);            // chủ khoá: không mục rút
+    // Shard tiêu phải là shard của 28 byte BÊN TRONG credential (vector: 10).
+    expect((tx.collectFrom[1]!.utxos[0] as { outputIndex: number }).outputIndex).toBe(10);
     // Redeemer theo BYTE: Constr 0 [10, 1_000_000_000] — một lược đồ sai hình dạng
     // mà vẫn mã hoá được sẽ trượt qua phép kiểm "không ném" rồi chết trên chuỗi.
     expect(tx.collectFrom[0]!.redeemer).toBe("d8799f0a1a3b9aca00ff");
@@ -317,6 +328,7 @@ describe("buildScheduleFireTx — cửa sổ hiệu lực", () => {
     // nhánh DUY NHẤT hạ `lamp_locked` (BOUNDARIES §2): khoá nó lại sau một chữ ký
     // là khoá LAMP của người đã bỏ đi.
     expect(tx.signerKeys).toEqual([]);
+    expect(tx.withdrawals).toEqual([]);   // fire không đòi quyền chủ ở nhánh nào
     expect(tx.collectFrom[0]!.redeemer).toBe("d87a9f435c4ed0ff");   // Constr 1 [h'5c4ed0']
     expect(res.firesInTx).toBe(1);
     expect(res.lampReleased).toBe(1_000_000_000n);
@@ -324,5 +336,62 @@ describe("buildScheduleFireTx — cửa sổ hiệu lực", () => {
     // I-ACT-7: LAMP chỉ được NHẢ khỏi phần khoá, không rời két. Bài này ghim
     // rằng shard cũng trở về đúng chỗ chứ không bị dựng lại.
     expect(computeShardId(OWNER)).toBeLessThan(16);
+  });
+});
+
+// ── Chủ két là `Credential` (on-chain 856804fa) ───────────────────────────────
+// Bytes kỳ vọng dựng tay từ blueprint `cardano/address/Credential` (đối chiếu
+// `ScheduleGen/onchain/plutus.json` 2026-09-26).
+describe("VaultDatum.owner (ScheduleGen) — mã hoá Credential khớp blueprint", () => {
+  it("VerificationKey ⟹ Constr 0, Script ⟹ Constr 1", () => {
+    expect(Data.to({ VerificationKey: [OWNER_PKH] }, OwnerCredentialSchema as never))
+      .toBe(`d8799f581c${OWNER_PKH}ff`);
+    expect(Data.to({ Script: [SCRIPT_H] }, OwnerCredentialSchema as never))
+      .toBe(`d87a9f581c${SCRIPT_H}ff`);
+  });
+
+  it("trường 0 của datum 17 trường mang ĐÚNG bytes Credential", () => {
+    const hex = Data.to(makeVault({ owner: { Script: [SCRIPT_H] } }), VaultDatum);
+    expect(hex.startsWith(`d8799fd87a9f581c${SCRIPT_H}ff`)).toBe(true);
+  });
+
+  it("CỰC ĐỐI: owner = pkh trần (lược đồ cũ) ⟹ không giải mã được", () => {
+    const moi = Data.to(makeVault(), VaultDatum);
+    const cu = `d8799f581c${OWNER_PKH}` + moi.slice(`d8799fd8799f581c${OWNER_PKH}ff`.length);
+    expect(() => Data.from(cu, VaultDatum)).toThrow();
+  });
+});
+
+describe("buildScheduleCommitTx — chứng minh quyền chủ theo nhánh", () => {
+  const TIP = E * P + 1_000n;
+
+  it("chủ script ⟹ attachWithdraw ĐÚNG MỘT LẦN, KHÔNG ký bằng h, shard theo h", async () => {
+    let goi = 0;
+    const { tx } = await dungCommit(TIP, { owner: { Script: [SCRIPT_H] } }, {
+      ownerAuth: {
+        kind: "script",
+        hash: SCRIPT_H,
+        attachWithdraw: (t: any) => { goi++; return t.withdraw("stake_test1_gia", 0n, "d87980"); },
+      },
+    });
+    expect(goi).toBe(1);
+    expect(tx.signerKeys).toEqual([]);
+    expect(tx.withdrawals).toHaveLength(1);
+    // "5c"×28 rơi shard 9 (TV-SCH-SHARD-CRED).
+    expect((tx.collectFrom[1]!.utxos[0] as { outputIndex: number }).outputIndex).toBe(9);
+  });
+
+  it("CỰC ĐỐI: chủ script mà không có ownerAuth ⟹ OWNER_SCRIPT_WITNESS_UNAVAILABLE", async () => {
+    await expect(dungCommit(TIP, { owner: { Script: [SCRIPT_H] } })).rejects.toThrow(
+      /OWNER_SCRIPT_WITNESS_UNAVAILABLE/,
+    );
+  });
+
+  it("CỰC ĐỐI: ownerAuth script khác hash chủ ⟹ OWNER_AUTH_MISMATCH", async () => {
+    await expect(
+      dungCommit(TIP, { owner: { Script: [SCRIPT_H] } }, {
+        ownerAuth: { kind: "script", hash: "5d".repeat(28), attachWithdraw: (t: any) => t },
+      }),
+    ).rejects.toThrow(/OWNER_AUTH_MISMATCH/);
   });
 });

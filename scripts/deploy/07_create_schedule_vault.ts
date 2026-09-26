@@ -26,10 +26,11 @@ import {
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { scheduleVaultParams } from "../deployParams.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
+import { OwnerCredentialSchema } from "../../ScheduleGen/offchain/src/types.js";
 
 // (Schema duplicated from 05/06 — same VaultDatum across all 4 vault modules.)
 const VaultDatumSchema = Data.Object({
-  owner:                 Data.Bytes(),
+  owner:                 OwnerCredentialSchema,   // Credential — nguồn: ScheduleGen/offchain/src/types.ts
   lamp_balance:          Data.Integer(),
   lamp_locked:           Data.Integer(),
   loyalty_holdings:      Data.Array(Data.Object({
@@ -199,7 +200,7 @@ async function main() {
   // MỌI hằng số dưới đây là điều kiện on-chain của `validate_mint_vault_id`
   // (ScheduleGen/onchain/validators/vault.ak:878-914), không phải sở thích.
   const initialVault = {
-    owner:                 ownerPkh,
+    owner:                 { VerificationKey: [ownerPkh] as [string] },   // chủ = khoá của ví chạy script
     lamp_balance:          INITIAL_LAMP_DEPOSIT,
     lamp_locked:           0n,               // PIN: `expect vd.lamp_locked == 0`
     loyalty_holdings:      [{

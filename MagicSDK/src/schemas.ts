@@ -149,6 +149,14 @@ const StreakStateSchema = Data.Object({
   last_active_epoch: Data.Integer(),
 });
 
+// ── Credential (chủ vault) ── gương `cardano/address/Credential` (blueprint 2026-09-26):
+//   VerificationKey(h) = Constr 0 [bytes 28]   Script(h) = Constr 1 [bytes 28]
+// `Data.Static` trùng kiểu `OwnerCredential` ở `@magiclamp/protocol-utils`.
+export const OwnerCredentialSchema = Data.Enum([
+  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
+  Data.Object({ Script: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
+]);
+
 const VaultAttributionSchema = Data.Object({
   attribution_root: Data.Bytes(),
   last_event_epoch: Data.Integer(),
@@ -158,7 +166,7 @@ const VaultAttributionSchema = Data.Object({
 /** 17 trường chung của MỌI loại két, theo ĐÚNG thứ tự khai = chỉ số trường Plutus.
  *  Đây là NGUỒN: hai lược đồ bên dưới trải danh sách này vào, không chép lại nó. */
 const VAULT_DATUM_COMMON_FIELDS = {
-  owner:                 Data.Bytes(),
+  owner:                 OwnerCredentialSchema,
   lamp_balance:          Data.Integer(),
   lamp_locked:           Data.Integer(),
   loyalty_holdings:      Data.Array(LoyaltyHoldingSchema),

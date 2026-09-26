@@ -42,7 +42,7 @@ function engageUtxo(
 const OWNER = "0b".repeat(28);
 
 const cleanDatum: EngageDatumT = {
-  owner: OWNER,
+  owner: { VerificationKey: [OWNER] },
   consumed_count: 7n,
   last_epoch: 3n,
   did_commit: "",

@@ -10,6 +10,7 @@
 
 import { Data, type LucidEvolution, type UTxO } from "@lucid-evolution/lucid";
 import { applyVaultValidator } from "./validatorScripts.js";
+import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 import { InstantVaultDatumSchema, VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
@@ -77,7 +78,9 @@ export async function listVaultsForOwner(params: ListVaultsParams): Promise<Vaul
       );
       continue;
     }
-    if (datum.owner !== ownerPkh) continue;
+    // Chủ là `Credential`; bộ lọc theo pkh chỉ khớp nhánh khoá. Két chủ-script cùng
+    // 28 byte là chủ KHÁC (on-chain so cả tag), nên không lọt vào đây.
+    if (!sameOwner(ownerRefOf(datum.owner), { type: "key", hash: ownerPkh.toLowerCase() })) continue;
 
     const holdings = datum.loyalty_holdings as { amount: bigint; acquired_epoch: bigint; is_locked: boolean }[];
     const oldestEpoch = holdings.length === 0

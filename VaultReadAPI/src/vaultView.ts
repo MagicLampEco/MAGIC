@@ -27,6 +27,7 @@
 // gói này sinh ra để tách.
 
 import { decodeVaultDatumEitherShape, isBatchExpired, type VaultDatum } from "@magiclamp/sdk";
+import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 
 import type { ChainUtxo } from "./chain.js";
 import type { VaultKind } from "./config.js";
@@ -208,7 +209,8 @@ export function readVaultsFromUtxos(
       throw new VaultDatumUndecodableError(utxoRef, (e as Error).message);
     }
 
-    if (datum.owner !== ownerPkh) {
+    // Chủ là `Credential`: truy vấn theo pkh chỉ khớp nhánh khoá (so cả tag lẫn hash).
+    if (!sameOwner(ownerRefOf(datum.owner), { type: "key", hash: ownerPkh })) {
       ignored.push({ utxoRef, reason: "OWNER_MISMATCH" });
       continue;
     }
@@ -288,7 +290,8 @@ function toVaultView(
     vaultKind,
     vaultAddress,
     vaultIdUnit,
-    ownerPkh: datum.owner,
+    // Đã qua bộ lọc nhánh khoá bên trên ⟹ hash này là pkh.
+    ownerPkh: ownerRefOf(datum.owner).hash,
     availableNanogic,
     accruedNanogic,
     expiredNanogic: accruedNanogic - availableNanogic,

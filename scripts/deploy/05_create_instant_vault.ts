@@ -29,6 +29,7 @@ import { instantVaultParams } from "../deployParams.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
 import { minAdaForRefScriptWithMargin } from "../minAda.js";
+import { OwnerCredentialSchema } from "../../InstantGen/offchain/src/types.js";
 
 // ── CHÉP CÓ NHÃN (Forall §Một nguồn, mức 3) ────────────────────────────────
 // Nguồn: `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸
@@ -52,7 +53,7 @@ const WAKEME_SEED_CREDIT = 1_001_000_000_000n;   // 1001 MAGIC in nanogic
 // Két ScheduleGen/PrepaidGen giữ 17 trường; chỉ két Instant có `instant_unlock_ms`.
 // `07_create_schedule_vault.ts` và `10_deploy_prepaid.ts` vì thế KHÔNG chép theo.
 const VaultDatumSchema = Data.Object({
-  owner:                 Data.Bytes(),
+  owner:                 OwnerCredentialSchema,   // Credential — nguồn: InstantGen/offchain/src/types.ts
   lamp_balance:          Data.Integer(),
   lamp_locked:           Data.Integer(),
   loyalty_holdings:      Data.Array(Data.Object({
@@ -243,7 +244,7 @@ async function main() {
   // MỌI hằng số dưới đây là một điều kiện on-chain của `validate_mint_vault_id`
   // (InstantGen/onchain/validators/vault.ak), không phải sở thích.
   const initialVault = {
-    owner:                 ownerPkh,
+    owner:                 { VerificationKey: [ownerPkh] as [string] },   // chủ = khoá của ví chạy script
     lamp_balance:          INITIAL_LAMP_DEPOSIT,
     lamp_locked:           0n,                 // PIN: `expect vd.lamp_locked == 0`
     loyalty_holdings:      [{

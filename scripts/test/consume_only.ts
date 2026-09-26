@@ -89,7 +89,10 @@ import {
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { requiredForOp } from "@magiclamp/consumemagic-pricing";
-import { epochValidityWindow } from "@magiclamp/protocol-utils";
+import {
+  epochValidityWindow, ownerRefFromPlutusData, ownerRefOf, ownerRefToString, sameOwner,
+  type OwnerRef,
+} from "@magiclamp/protocol-utils";
 import { consumeParams, instantVaultParams, scheduleVaultParams } from "../deployParams.js";
 import {
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
@@ -331,7 +334,7 @@ async function main() {
     vaultUtxo = vs.find((u) => {
       if (!u.datum) return false;
       try {
-        return decodeVaultOwner(u.datum) === ownerPkh;
+        return sameOwner(decodeVaultOwner(u.datum), { type: "key", hash: ownerPkh.toLowerCase() });
       } catch (e: any) {
         khongGiaiMaDuoc.push(`${u.txHash}#${u.outputIndex}: ${e?.message ?? e}`);
         return false;
@@ -357,7 +360,7 @@ async function main() {
   if (!vaultUtxo?.datum) throw new Error("InstantGen vault UTxO không tìm thấy (chạy test:instant trước, cùng epoch).");
 
   // 🔴 KIỂM CHỦ VAULT Ở CẢ HAI NHÁNH, không chỉ nhánh tự tìm.
-  //  Nhánh tự tìm (else ở trên) lọc theo `decodeVaultOwner(...) === ownerPkh`, nên nó
+  //  Nhánh tự tìm (else ở trên) lọc theo `sameOwner(decodeVaultOwner(...), key(ownerPkh))`, nên nó
   //  không bao giờ trả về vault của người khác. Nhánh GHIM qua env thì trước đây nhận
   //  bất cứ out-ref nào người chạy đưa vào — dán nhầm hash của một lượt chạy trước với
   //  ví khác là tx dựng xong xuôi rồi mới chết ở `expect authed` trong
@@ -365,7 +368,7 @@ async function main() {
   //  Hỏng ồn, tài sản an toàn — nhưng tốn nguyên một cửa sổ epoch để biết một điều
   //  off-chain trả lời được ngay, và cửa sổ đó chỉ dài ĐÚNG một epoch.
   {
-    let chuVault: string;
+    let chuVault: OwnerRef;
     try {
       chuVault = decodeVaultOwner(vaultUtxo.datum);
     } catch (e: any) {
@@ -374,10 +377,10 @@ async function main() {
         `UTxO này có phải vault không, hay đang trỏ nhầm sang một script khác?`,
       );
     }
-    if (chuVault.toLowerCase() !== ownerPkh.toLowerCase()) {
+    if (!sameOwner(chuVault, { type: "key", hash: ownerPkh.toLowerCase() })) {
       throw new Error(
         `Vault ${vaultUtxo.txHash}#${vaultUtxo.outputIndex} KHÔNG thuộc ví đang dùng.\n` +
-        `  owner trong datum : ${chuVault}\n` +
+        `  owner trong datum : ${ownerRefToString(chuVault)}\n` +
         `  ví đang chạy      : ${ownerPkh}\n` +
         `BurnBatch đòi chữ ký của owner, nên tx này chắc chắn bị từ chối. ` +
         `Kiểm lại ${vaultUtxoEnv} (hoặc bỏ nó đi để kịch bản tự tìm vault của ví này).`,
@@ -507,11 +510,11 @@ async function main() {
   //    (Chủ vault đã được đối chiếu với ví đang chạy ở khối kiểm phía trên, nên so với
   //    `ownerPkh` là so đúng đại lượng.)
   {
-    const engageOwner = oldEngage.owner.toLowerCase();
-    if (engageOwner !== ownerPkh.toLowerCase()) {
+    const engageOwner = ownerRefOf(oldEngage.owner);
+    if (!sameOwner(engageOwner, { type: "key", hash: ownerPkh.toLowerCase() })) {
       throw new Error(
         `Thread Engage ${engageUtxo.txHash}#${engageUtxo.outputIndex} KHÔNG thuộc ví đang chạy.\n` +
-        `  owner trong EngageDatum : ${engageOwner}\n` +
+        `  owner trong EngageDatum : ${ownerRefToString(engageOwner)}\n` +
         `  ví đang chạy / chủ vault: ${ownerPkh}\n` +
         `Thread và vault phải mở bằng CÙNG MỘT khoá. Không có đường xoay \`owner\` của ` +
         `một thread đã mở (cả \`Consume\` lẫn \`BindDID\` đều ép \`owner\` bảo toàn, và ` +
@@ -664,22 +667,15 @@ async function main() {
 // vẫn cầm lược đồ 18 và được gọi cho CẢ vault ScheduleGen 17 trường, nên nó ném ở
 // mọi UTxO — mà chỗ gọi lọc (`.filter`) nuốt lượt ném đó thành `false`. Kết quả
 // người chạy đọc được là "không tìm thấy vault", không phải "lược đồ lệch".
-function decodeVaultOwner(datumCbor: string): string {
+function decodeVaultOwner(datumCbor: string): OwnerRef {
   const d: any = Data.from(datumCbor);
   if (typeof d !== "object" || d === null || !Array.isArray(d.fields)) {
     throw new Error("datum không phải một Constr — không phải VaultDatum.");
   }
-  const owner = d.fields[0];
-  // Trường 0 của VaultDatum là `owner`, một payment key hash: ĐÚNG 28 byte.
-  // Kiểm ở đây để một datum lạ hình dạng khác kêu lên ngay, thay vì trả về một
-  // chuỗi vô nghĩa rồi trượt xuống phép so `=== ownerPkh` và lặng lẽ thành `false`.
-  if (typeof owner !== "string" || !/^[0-9a-f]{56}$/.test(owner)) {
-    throw new Error(
-      `trường 0 không phải payment key hash 28 byte (nhận ${JSON.stringify(owner)?.slice(0, 40)}) ` +
-      `— datum này không phải VaultDatum.`,
-    );
-  }
-  return owner;
+  // Trường 0 của VaultDatum là `owner: Credential` (Constr 0|1 [bytes 28]). Hình dạng lạ
+  // (kể cả pkh trần của lược đồ cũ) NÉM `OWNER_CREDENTIAL_SHAPE` ngay, thay vì trượt
+  // xuống phép so và lặng lẽ thành `false`.
+  return ownerRefFromPlutusData(d.fields[0]);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

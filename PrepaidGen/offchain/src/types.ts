@@ -35,9 +35,20 @@ export const VaultAttributionSchema = Data.Object({
 });
 export type VaultAttribution = Data.Static<typeof VaultAttributionSchema>;
 
+// ── Credential (chủ vault) ───────────────────────────────────
+// Gương của `cardano/address/Credential` (blueprint, đối chiếu 2026-09-26):
+//   VerificationKey(h) = Constr 0 [bytes 28]   Script(h) = Constr 1 [bytes 28]
+// `Data.Static` của lược đồ này trùng kiểu `OwnerCredential` ở `./ownerAuth.ts`.
+// Khác `CredentialSchema` bên dưới (đích nhận CARP): lược đồ này ép đúng 28 byte.
+export const OwnerCredentialSchema = Data.Enum([
+  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
+  Data.Object({ Script: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
+]);
+export type OwnerCredentialData = Data.Static<typeof OwnerCredentialSchema>;
+
 // ── PrepaidVaultDatum ────────────────────────────────────────
 export const PrepaidVaultDatumSchema = Data.Object({
-  owner: Data.Bytes(),
+  owner: OwnerCredentialSchema,
   did_commit: Data.Bytes(),
   prepaid_credits: Data.Array(PrepaidCreditSchema),
   magic_batches: Data.Array(MagicBatchSchema),

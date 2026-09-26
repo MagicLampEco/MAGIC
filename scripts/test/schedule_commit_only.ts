@@ -24,6 +24,7 @@ import {
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
+import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { buildScheduleCommitTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
@@ -91,7 +92,7 @@ async function main() {
   const vaultUtxo = vaultUtxos.find((u) => {
     if (!u.datum) return false;
     if (wantedTx && u.txHash !== wantedTx) return false;
-    try { return Data.from(u.datum, VaultDatumSchema).owner === ownerPkh; } catch { return false; }
+    try { return sameOwner(ownerRefOf(Data.from(u.datum, VaultDatumSchema).owner), { type: "key", hash: ownerPkh }); } catch { return false; }
   });
   // 🔴 `Vault not found` GỘP BỐN NGUYÊN NHÂN ĐÒI BỐN HÀNH ĐỘNG KHÁC NHAU.
   //
@@ -110,7 +111,7 @@ async function main() {
   if (!vaultUtxo) {
     const coDatum = vaultUtxos.filter((u) => u.datum);
     const cuaMinh = coDatum.filter((u) => {
-      try { return Data.from(u.datum!, VaultDatumSchema).owner === ownerPkh; } catch { return false; }
+      try { return sameOwner(ownerRefOf(Data.from(u.datum!, VaultDatumSchema).owner), { type: "key", hash: ownerPkh }); } catch { return false; }
     });
     console.error(`\n❌ Không tìm được vault khớp bộ lọc. Số đo tại ${vaultAddr}:`);
     console.error(`   UTxO tại địa chỉ vault : ${vaultUtxos.length}`);

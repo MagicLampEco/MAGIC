@@ -105,6 +105,18 @@ export class BadRequestError extends VaultReadError {
   }
 }
 
+/** `owner` và bí danh `owner_pkh` cùng có mà chỉ hai chủ khác nhau. Mã RIÊNG, không gộp vào
+ *  `BAD_REQUEST`: app cần phân biệt "gửi sai khuôn" với "gửi hai chủ mâu thuẫn". */
+export class OwnerAliasMismatchError extends VaultReadError {
+  constructor(owner: { type: string; hash: string }, alias: { type: string; hash: string }) {
+    super(400, "OWNER_ALIAS_MISMATCH",
+      `owner = ${owner.type}:${owner.hash.slice(0, 12)}… nhưng owner_pkh = ${alias.hash.slice(0, 12)}…. ` +
+      `Hai trường cùng có thì phải chỉ cùng một chủ.`,
+      { owner, owner_pkh: alias.hash },
+    );
+  }
+}
+
 export class UnauthorizedError extends VaultReadError {
   constructor(message = "Thiếu hoặc sai thẻ bài.") {
     super(401, "UNAUTHORIZED", message);

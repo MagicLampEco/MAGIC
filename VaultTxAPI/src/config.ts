@@ -92,6 +92,10 @@ export interface Deployment {
    *  chạy bình thường. Đóng một cửa vì thiếu dữ kiện thì tốt hơn mở nó ra để mọi tx
    *  chết trên chuỗi. */
   instant?: InstantDeployment;
+  /** Tuỳ chọn: tham số theo mạng cho nhân chứng chủ `Script(h)` = `did_stake` (PhoenixKey).
+   *  Vắng ⟹ mọi yêu cầu có chủ script trả 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ khoá
+   *  không bị ảnh hưởng. */
+  didStake?: { anchorNftPolicy: string };
 }
 
 /**
@@ -290,7 +294,18 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
     };
   }
 
-  return { source, lampPolicyId, lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, instant };
+  // Mục `did_stake` TUỲ CHỌN, cùng luật với `instant`: có thì đủ trường và đúng hình dạng.
+  let didStake: { anchorNftPolicy: string } | undefined;
+  if (o.did_stake !== undefined) {
+    const d = obj(o.did_stake, "did_stake");
+    const p = str(d.anchor_nft_policy, "did_stake.anchor_nft_policy");
+    if (!/^[0-9a-f]{56}$/.test(p)) {
+      throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.anchor_nft_policy phải là 56 hex thường.");
+    }
+    didStake = { anchorNftPolicy: p };
+  }
+
+  return { source, lampPolicyId, lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, instant, didStake };
 }
 
 // ── phụ trợ phân tích, mỗi cái NÉM chứ không đệm ──────────────────────────────

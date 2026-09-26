@@ -36,9 +36,13 @@ function batch(spec: BatchSpec): Record<string, unknown> {
   };
 }
 
-export function synthDatumHex(ownerPkh: string, batches: BatchSpec[]): string {
+/** `owner`: chuỗi 56 hex = chủ khoá (bí danh cũ); `{ type, hash }` = Credential bất kỳ. */
+export function synthDatumHex(
+  owner: string | { type: "key" | "script"; hash: string },
+  batches: BatchSpec[],
+): string {
   const base = buildInitialVaultDatum({
-    ownerPkh,
+    ...(typeof owner === "string" ? { ownerPkh: owner } : { owner }),
     lampBalanceOildrop: 1_000_000n,
     profile: "Flame",
     currentEpoch: 0n,

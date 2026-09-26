@@ -156,6 +156,20 @@ Chép giá trị in ra vào `.env` sau mỗi bước.
 BLOCKFROST_KEY=… WALLET_SEED='…' bash scripts/run_consume_e2e.sh Preview
 ```
 
+**Chạy làm tiến trình con, mỗi ví một tiến trình** (ví qua `PRIVATE_KEY`, đặt ngay trước
+lệnh; `config.ts ▸ selectWallet` ưu tiên nó hơn `WALLET_SEED`):
+
+| Tệp | Env riêng | Kết quả máy đọc |
+|---|---|---|
+| `deploy/05_create_instant_vault.ts`, `deploy/07_create_schedule_vault.ts` | `LAMP_DEPOSIT` (LAMP, số nguyên dương, mặc định 10000) · `PROFILE` · `DRY_RUN=1` · `WRITE_STATE_BOOK=1\|0` | dòng cuối stdout: `RESULT {"vault_outref":…,"vault_nft":…,"owner":{"type":"key","hash":…},"dry_run":…}` |
+| `test/consume_only.ts` | `ENGAGE_OUTREF=<tx>#<i>` — thread Engage của chính ví ký, thắng thread của sổ; owner ≠ ví ký ⟹ ném trước khi dựng tx | — |
+| `test/schedule_fire_only.ts` | `DRY_RUN=1` | — |
+
+Chủ vault luôn là khoá của ví ký. Dòng cho sổ (`VAULT_*_HASH=…`, và ở bước 05 là cả bước
+công bố ref-script `REF_VAULT_INSTANT_UTXO`) chỉ in khi ký bằng `WALLET_SEED` hoặc khi
+`WRITE_STATE_BOOK=1`; `DRY_RUN=1` không bao giờ in. Quy tắc + lý do:
+`runResult.ts ▸ decideStateBook`. Ca kiểm: `npx tsx test_run_result.ts`.
+
 ---
 
 ## Test sau khi deploy

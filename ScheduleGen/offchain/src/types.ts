@@ -6,6 +6,16 @@ import { Data } from "@lucid-evolution/lucid";
 // ── Primitive ────────────────────────────────────────────────
 export type Natural = bigint;
 
+// ── Credential (chủ vault) ───────────────────────────────────
+// Gương của `cardano/address/Credential` (blueprint, đối chiếu 2026-09-26):
+//   VerificationKey(h) = Constr 0 [bytes 28]   Script(h) = Constr 1 [bytes 28]
+// `Data.Static` của lược đồ này trùng kiểu `OwnerCredential` ở `@magiclamp/protocol-utils`.
+export const OwnerCredentialSchema = Data.Enum([
+  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
+  Data.Object({ Script: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
+]);
+export type OwnerCredentialData = Data.Static<typeof OwnerCredentialSchema>;
+
 // ── BatchSource ──────────────────────────────────────────────
 // Constr 0=Snapshot, 1=Instant, 2=Vacuum, 3=Schedule
 export type BatchSource = "Snapshot" | "Instant" | "Vacuum" | "Schedule";
@@ -137,7 +147,9 @@ export type StreakState = Data.Static<typeof StreakStateSchema>;
 
 // ── VaultDatum ───────────────────────────────────────────────
 export const VaultDatumSchema = Data.Object({
-  owner                 : Data.Bytes(),
+  // Trường 0 — `Credential`. ConsumeMAGIC đọc đúng chỉ số này. Shard: `computeShardId`
+  // băm 28 byte BÊN TRONG credential (gương `math.ak` ▸ `compute_shard_id`).
+  owner                 : OwnerCredentialSchema,
   lamp_balance          : Data.Integer(),
   lamp_locked           : Data.Integer(),
   loyalty_holdings      : Data.Array(LoyaltyHoldingSchema),

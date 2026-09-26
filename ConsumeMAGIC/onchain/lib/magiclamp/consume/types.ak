@@ -10,6 +10,7 @@
 //                   spend bằng BurnBatch với Σburns == required (validator vault là
 //                   nơi DUY NHẤT giảm MAGIC). KHÔNG mint.
 
+use cardano/address.{Credential}
 use cardano/transaction.{OutputReference}
 
 /// Một dòng giá danh nghĩa per loại nghiệp vụ (governance param).
@@ -111,7 +112,10 @@ pub type PriceParam {
 ///   ⇒ giá trị THẬT đã trả nằm on-chain. App PHẢI cấp dịch vụ theo delta của trường
 ///   này, KHÔNG theo `consumed_count` (count giữ lại chỉ để thống kê/attribution).
 pub type EngageDatum {
-  owner            : ByteArray,
+  // Chủ thread: khoá (`VerificationKey`) HOẶC script (`Script`) — xác thực bằng
+  // `owner_auth.owner_authorized`. So `==` với trường 0 của datum vault ở
+  // `all_vault_owners_are` (cùng tag, cùng 28 byte).
+  owner            : Credential,
   consumed_count   : Int,
   last_epoch       : Int,
   did_commit       : ByteArray,

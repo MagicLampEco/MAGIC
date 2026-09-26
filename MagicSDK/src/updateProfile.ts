@@ -22,11 +22,12 @@ import {
   Constr, Data,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
   slotToUnixTime,
-  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
+  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type TxBuilder,
 } from "@lucid-evolution/lucid";
 import {
   getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow,
-  type Network,
+  applyOwnerAuth, resolveOwnerAuth, ownerRefOf, ownerRefToString,
+  type Network, type OwnerAuth,
 } from "@magiclamp/protocol-utils";
 
 import {
@@ -54,6 +55,11 @@ export interface UpdateProfileParams {
   vaultPlutusJson: PlutusJson;
   network:      Network;
   tipPosixMs?:  bigint;
+  /** Cách chứng minh quyền chủ vault (`@magiclamp/protocol-utils` ▸ `OwnerAuth`).
+   *  Bỏ trống: chủ là khoá ⟹ `addSignerKey(pkh)` lấy từ datum; chủ là script ⟹ NÉM
+   *  `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. Chủ script (PhoenixKey `did_stake`) dựng bằng
+   *  `didStakeOwnerAuthLucid`. Truyền mà khác chủ trong datum ⟹ `OWNER_AUTH_MISMATCH`. */
+  ownerAuth?:  OwnerAuth<TxBuilder>;
   /** UTxO CIP-33 mang script tham chiếu của vault — xem `refScript.ts`. Vắng thì
    *  script vẫn được nhét inline như trước. */
   vaultRefScriptUtxo: UTxO | AcceptInlineScriptCeiling;
@@ -152,16 +158,17 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
     ? lucid.newTx().collectFrom([vaultUtxo], redeemer).attach.SpendingValidator(vaultScript)
     : lucid.newTx().collectFrom([vaultUtxo], redeemer).readFrom([refUtxo]);
 
-  const tx = await txWithScript
+  const txBody = txWithScript
     .pay.ToAddressWithData(
       vaultAddress,
       { kind: "inline", value: Data.to(newVaultDatum as never, InstantVaultDatumSchema) },
       vaultUtxo.assets,   // assets unchanged
     )
-    .addSignerKey(vaultDatum.owner)
     .validFrom(lowerTime)
-    .validTo(upperTime)
-    .complete();
+    .validTo(upperTime);
+  // Chủ là `Credential`: khoá ⟹ `addSignerKey(pkh)`; script ⟹ `params.ownerAuth` gắn mục
+  // rút `Script(h)`, thiếu thì NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE`.
+  const tx = await applyOwnerAuth(txBody, resolveOwnerAuth(ownerRefOf(vaultDatum.owner), params.ownerAuth)).complete();
 
   const summary = [
     `═══ UpdateProfile (lazy) ═══`,

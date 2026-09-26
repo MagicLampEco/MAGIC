@@ -31,6 +31,7 @@
 // (nguồn duy nhất) chứ không tự thử hai lần.
 
 import { decodeVaultDatumEitherShape, type VaultDatumShapeKind } from "@magiclamp/sdk";
+import { ownerRefOf, OwnerAuthError, type OwnerRef } from "@magiclamp/protocol-utils";
 
 export interface DecodedMagicBatch {
   batch_id: string;
@@ -42,7 +43,8 @@ export interface DecodedMagicBatch {
 
 /** Chỉ khai các trường mã này ĐỌC. Phần còn lại của datum vẫn ở đó, chỉ là không dùng. */
 export interface DecodedVaultDatum {
-  owner: string;
+  /** Chủ là `Credential` trên chuỗi; ở đây đã đọc thành `{ type, hash }`. */
+  owner: OwnerRef;
   lamp_balance: bigint;
   lamp_locked: bigint;
   magic_batches: DecodedMagicBatch[];
@@ -64,7 +66,20 @@ export function decodeVaultDatumOrThrow(hex: string): DecodedVaultDatum {
   const datum = decoded.datum as unknown as DecodedVaultDatum;
   return {
     ...datum,
+    owner: ownerRefOf((decoded.datum as unknown as { owner: unknown }).owner),
     vault_datum_kind: decoded.kind,
     instant_unlock_ms: decoded.instantUnlockMs,
   };
+}
+
+/** pkh của chủ két — CHỈ cho két chủ-khoá. Các route theo `owner_pkh` chỉ phục vụ nhánh
+ *  khoá; gặp két chủ-script thì NÉM, không trả hash script dưới nhãn `owner_pkh`. */
+export function keyOwnerPkh(owner: OwnerRef): string {
+  if (owner.type !== "key") {
+    throw new OwnerAuthError(
+      "OWNER_CREDENTIAL_SHAPE",
+      `két này có chủ là script ${owner.hash}; trường owner_pkh chỉ mang được pkh của chủ-khoá.`,
+    );
+  }
+  return owner.hash;
 }

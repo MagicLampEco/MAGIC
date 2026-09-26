@@ -7,7 +7,7 @@ import { VaultDatumUndecodableError, VaultIdentityDuplicateError } from "../src/
 import {
   BATCH_EPOCH, EXPECTED_NANOGIC, PREVIEW_OWNER_PKH, PREVIEW_VAULT_ADDRESS,
   PREVIEW_VAULT_ID_UNIT, PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_UTXO,
-  TIP_EPOCH_AT_RECORD,
+  TIP_EPOCH_AT_RECORD, PREVIEW_VAULT_DATUM_HEX_RECORDED,
 } from "./fixtures/preview-e5fd34b1.js";
 import {
   PIN_ACCRUED, PIN_AVAILABLE, PIN_BATCHES, PIN_EPOCH, PIN_EXPIRED,
@@ -238,5 +238,28 @@ describe("hai ca phải KÊU TO, không được nuốt", () => {
     const r = readVaultsFromUtxos([v1, v2], SYNTH_SCRIPT_HASH, SYNTH_ADDRESS, SYNTH_OWNER, PIN_EPOCH, "Schedule");
     expect(r.vaults).toHaveLength(2);
     expect(r.vaults.reduce((t, v) => t + v.availableNanogic, 0n)).toBe(10n);
+  });
+});
+
+describe("owner là Credential — datum lược đồ cũ không được đọc như két lành", () => {
+  it("ÂM — datum ghi nguyên văn (owner = pkh trần) ⟹ VaultDatumUndecodableError, không lọc im", () => {
+    const legacy = { ...PREVIEW_VAULT_UTXO, inlineDatumHex: PREVIEW_VAULT_DATUM_HEX_RECORDED };
+    expect(() => readVaultsFromUtxos(
+      [legacy], PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_ADDRESS,
+      PREVIEW_OWNER_PKH, BATCH_EPOCH, "Schedule",
+    )).toThrow(VaultDatumUndecodableError);
+  });
+
+  it("CỰC ĐỐI — cùng 28 byte nhưng chủ là Script(h) ⟹ OWNER_MISMATCH, không trả về", () => {
+    const asScript = {
+      ...PREVIEW_VAULT_UTXO,
+      inlineDatumHex: PREVIEW_VAULT_UTXO.inlineDatumHex!.replace(/^d8799fd8799f581c/, "d8799fd87a9f581c"),
+    };
+    const { vaults, ignored } = readVaultsFromUtxos(
+      [asScript], PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_ADDRESS,
+      PREVIEW_OWNER_PKH, BATCH_EPOCH, "Schedule",
+    ) as { vaults: unknown[]; ignored: { reason: string }[] };
+    expect(vaults).toHaveLength(0);
+    expect(ignored.map((i) => i.reason)).toEqual(["OWNER_MISMATCH"]);
   });
 });

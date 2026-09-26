@@ -26,6 +26,7 @@ import {
 } from "./math.js";
 import { Data } from "@lucid-evolution/lucid";
 import { AddressSchema } from "./types.js";
+import { ownerRefOf, ownerRefToString, type OwnerRef } from "./ownerAuth.js";
 import type {
   MagicBatch,
   PaidFundDatum,
@@ -69,31 +70,41 @@ export function hasCreditLine(
   return credits.some((c) => c.fund_id === fundId);
 }
 
+/** Ai phải chứng minh quyền ở một lượt `PrepaidLock` (C-PP-9). */
+export type LockSigner =
+  | { by: "owner"; owner: OwnerRef }
+  | { by: "platform"; pkh: string };
+
 /**
- * C-PP-9 (siết 2026-09-26): pkh BẮT BUỘC có trong `extra_signatories` của một
- * lượt `PrepaidLock`. Builder gọi hàm này rồi `addSignerKey` đúng giá trị trả về.
+ * C-PP-9 (siết 2026-09-26): ai phải chứng minh quyền ở một lượt `PrepaidLock`.
  *
  *   · MỞ DÒNG MỚI (vault chưa có dòng cho `fundId`) ⟹ CHỈ `owner`. Gọi với
  *     `by = "platform"` ở ca này là NÉM — không lặng lẽ đổi sang owner, vì người
  *     gọi đang dựng một giao dịch mà khoá họ cầm không ký được.
  *   · NẠP THÊM vào dòng đã có ⟹ `platform` (app khoá hộ) hoặc `owner`.
+ *
+ * Trả `{ by: "owner", owner }` — KHÔNG trả một pkh: chủ là `Credential`, nhánh
+ * `Script(h)` chứng minh bằng mục rút chứ không bằng chữ ký (`resolveOwnerAuth` +
+ * `applyOwnerAuth` ở `./ownerAuth.ts`). Trả `{ by: "platform", pkh }` thì builder
+ * `addSignerKey(pkh)`: `platform` vẫn là pkh trần (`PaidFundDatum.platform`).
  */
 export function lockRequiredSigner(
   vault: PrepaidVaultDatum,
   fund: PaidFundDatum,
   fundId: string,
   by: "owner" | "platform",
-): string {
+): LockSigner {
   const opensNewLine = !hasCreditLine(vault.prepaid_credits, fundId);
-  if (by === "owner") return vault.owner;
+  const owner = ownerRefOf(vault.owner);
+  if (by === "owner") return { by: "owner", owner };
   if (opensNewLine) {
     reject(
       "C-PP-9",
-      `lượt khoá MỞ DÒNG MỚI cho quỹ ${fundId} cần chữ ký owner ${vault.owner}; ` +
+      `lượt khoá MỞ DÒNG MỚI cho quỹ ${fundId} cần quyền của owner ${ownerRefToString(owner)}; ` +
         `chữ ký platform chỉ đủ khi nạp thêm vào dòng đã có`,
     );
   }
-  return fund.platform;
+  return { by: "platform", pkh: fund.platform };
 }
 
 /** Hạn-mức sau khi khoá thêm `amount` vào quỹ `fundId` (C-PP-12). */

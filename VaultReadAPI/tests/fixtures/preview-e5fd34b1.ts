@@ -52,8 +52,32 @@ export const BATCH_EPOCH = 20700n;
 /** Σ current_amount của 8 batch. Con số nghiệm thu. */
 export const EXPECTED_NANOGIC = 64_000_000n;
 
-export const PREVIEW_VAULT_DATUM_HEX =
+/** Datum NGUYÊN VĂN như ghi từ chuỗi 2026-09-11 — lược đồ CŨ (trường 0 = pkh trần).
+ *  Validator hiện hành (`owner: Credential`) không đọc được hình dạng này; bài kiểm dùng
+ *  nó làm ca ÂM. Đừng sửa chuỗi này: nó là bằng chứng, không phải mẫu. */
+export const PREVIEW_VAULT_DATUM_HEX_RECORDED =
   "d8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41a3baa0c401a001e84809fd8799f1a3b8b87c01950d3d87980ffd8799f1a001e84801950d3d87a80ffff9fd8799f582021f46e3394e9ce982ac69f87c735698a570ef806e90c79189202038b0014ad43d87c801950dc1a007a12001a007a120001d87a80d8799f582088ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3effd87980ffd8799f5820e98b7b65d5ce0d2fed1e4a3b8a9414ac7a579c69a6c6a999afc40da8a77903f2d87c801950dc1a007a12001a007a120001d87a80d8799f582088ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3effd87980ffd8799f58200b4143bdb80572430abead060c3fec1e7af3bb0d6a2c41afc3828841a8a7e9d5d87c801950dc1a007a12001a007a120001d87a80d8799f582088ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3effd87980ffd8799f58200705a8b704e7ef539595b6d248bc9bcbbb6b70425a8fb508dea7a050fff5c37fd87c801950dc1a007a12001a007a120001d87a80d8799f582088ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3effd87980ffd8799f5820be1b0aa4ec2742ed2a3b534e550677fed389ffbdc119a7516f6d68f29627a923d87c801950dc1a007a12001a007a120001d87a80d8799f582088ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3effd87980ffd8799f582021a91bcc18861c5db5cd44516bcc2abe9acfb84436c9548d402a3d43d4c6643fd87c801950dc1a007a12001a007a120001d87a80d8799f582088ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3effd87980ffd8799f58205e3b5e1cbf0d05d56e676781a08b36128f981ede328b9f2c106467f0a221c0e1d87c801950dc1a007a12001a007a120001d87a80d8799f582088ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3effd87980ffd8799f5820eb746affcf518ce94a9ac74545595035b7c9f25730ea4a5b3bcd13aa47cda9f3d87c801950dc1a007a12001a007a120001d87a80d8799f582088ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3effd87980ffff08809fd8799f582088ab4f79e9c05447ae3ec31eb6ae1dd0bc7fd1f9fe5b4cfbb91c85132e5b8a3e1950d31950d51950de0a1a000f42401b00000001dcd650001b000000012a05f2001a5f5e100008d87a80ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f8000ffd8799f0000ffd87a80d8799f400000ffff";
+
+/**
+ * Di trú ĐÚNG MỘT trường: bọc trường 0 (`owner`) từ `bytes 28` thành
+ * `VerificationKey(bytes 28)` = `d8799f 581c<h> ff`. Mọi byte còn lại giữ nguyên, nên
+ * mọi con số nghiệm thu (8 batch, 64 000 000 nanogic, epoch 20700) vẫn đến từ chuỗi.
+ * Tiền tố không khớp ⟹ NÉM: không đoán vị trí trường.
+ */
+function wrapOwnerAsKeyCredential(hex: string, pkh: string): string {
+  const oldHead = `d8799f581c${pkh}`;
+  if (!hex.startsWith(oldHead)) {
+    throw new Error(`fixture: datum không bắt đầu bằng Constr0[bytes28 = ${pkh}] — không di trú được`);
+  }
+  return `d8799fd8799f581c${pkh}ff` + hex.slice(oldHead.length);
+}
+
+/** Datum ở lược đồ HIỆN HÀNH (`owner = VerificationKey(pkh)`), suy từ bản ghi bằng
+ *  `wrapOwnerAsKeyCredential` — không gõ tay. */
+export const PREVIEW_VAULT_DATUM_HEX = wrapOwnerAsKeyCredential(
+  PREVIEW_VAULT_DATUM_HEX_RECORDED,
+  "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+);
 
 export const PREVIEW_VAULT_UTXO: ChainUtxo = {
   txHash: "e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd76",

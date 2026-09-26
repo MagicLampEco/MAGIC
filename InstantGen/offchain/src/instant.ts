@@ -14,7 +14,7 @@
 import {
   Lucid, Blockfrost, Data, toUnit,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
-  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
+  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type TxBuilder,
 } from "@lucid-evolution/lucid";
 import {
   TESTNET_CONFIG, MAX_BATCHES_PER_VAULT, MAGIC_DECAY_WINDOW,
@@ -25,6 +25,7 @@ import {
   nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, type Network } from "@magiclamp/protocol-utils";
+import { applyOwnerAuth, resolveOwnerAuth, ownerRefOf, type OwnerAuth } from "@magiclamp/protocol-utils";
 import { slotToUnixTime, unixTimeToSlot } from "@lucid-evolution/lucid";
 import {
   VaultDatum, UMDatum, BackingBeaconDatum, VaultRedeemer,
@@ -65,7 +66,12 @@ export interface InstantGenParams {
   tipPosixMs?: bigint;
   /** TEST ONLY: mutate output datum (negative tests). */
   tamperOutputDatum?: (d: any) => any;
-  /** TEST ONLY: skip required-signer for owner-sig negative test. */
+  /** Cách chứng minh quyền chủ vault (`VaultDatum.owner` là `Credential`).
+   *  Bỏ trống: chủ là khoá ⟹ `addSignerKey(pkh)` lấy từ datum; chủ là script ⟹ NÉM
+   *  `OWNER_SCRIPT_WITNESS_UNAVAILABLE` (bộ dựng không bịa redeemer của stake-script chủ).
+   *  Truyền mà khác chủ trong datum ⟹ NÉM `OWNER_AUTH_MISMATCH`. */
+  ownerAuth?: OwnerAuth<TxBuilder>;
+  /** TEST ONLY: bỏ hẳn bước chứng minh quyền chủ (ca âm của cổng owner). */
   skipOwnerSig?: boolean;
   /** TEST ONLY: send LAMP out of the vault to prove I-ACT-7 rejects it. */
   tamperLampOutOil?: bigint;
@@ -350,7 +356,12 @@ export async function buildInstantGenTx(
     .validFrom(lowerTime)
     .validTo(upperTime);
 
-  if (!params.skipOwnerSig) txBuilder = txBuilder.addSignerKey(vaultDatum.owner);
+  if (!params.skipOwnerSig) {
+    txBuilder = applyOwnerAuth(
+      txBuilder,
+      resolveOwnerAuth(ownerRefOf(vaultDatum.owner), params.ownerAuth),
+    );
+  }
   const tx = await txBuilder.complete();
 
   const summary = buildSummary({

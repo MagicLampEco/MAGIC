@@ -13,22 +13,45 @@
 // ở MỌI đường spend (`validate_vault_value` → `single_nft_name`), nên một vault
 // tạo ra mà không có NFT là vault KHÔNG AI SPEND ĐƯỢC. Không validator nào chạy
 // lúc TẠO UTxO, nên thiếu mint thì tx vẫn vào chuỗi và log vẫn in "đã tạo".
+//
+// Env (ngoài bộ khoá deploy đọc qua config.ts):
+//   LAMP_DEPOSIT      — LAMP nạp vào vault, số nguyên DƯƠNG (đơn vị LAMP, mặc định 10000).
+//                       Sai hình dạng (0, âm, rỗng, "1e3") ⟹ ném trước khi dựng gì.
+//   PROFILE           — Ember | Flame | Lantern (mặc định Flame).
+//   DRY_RUN=1         — dựng + chạy thử validator, KHÔNG ký, KHÔNG gửi, KHÔNG công bố
+//                       ref-script, KHÔNG in dòng cho sổ. Vẫn in RESULT (dry_run:true).
+//   WRITE_STATE_BOOK  — "1"/"0": có in khối dòng cho sổ + công bố ref-script hay không.
+//                       Vắng thì quyết theo ví ký — xem `runResult.ts ▸ decideStateBook`.
+//
+// Chủ vault LUÔN là khoá của ví ký (PRIVATE_KEY, hoặc WALLET_SEED khi không có
+// PRIVATE_KEY — `config.ts ▸ selectWallet`). Không có biến đặt chủ khác: cổng đúc đòi
+// chữ ký của chủ, nên một chủ khác ví ký là giao dịch không ký nổi.
+//
+// Dòng CUỐI stdout, khi thành công, luôn là đúng một dòng máy đọc:
+//   RESULT {"vault_outref":"<tx>#<i>","vault_nft":"<unit>","owner":{"type":"key","hash":"<56 hex>"},"dry_run":<bool>}
+// Hỏng thì không có dòng RESULT và mã thoát 1.
 
 import {
   Lucid, Blockfrost, Data, toUnit,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
 } from "@lucid-evolution/lucid";
+import { ownerRefOf } from "@magiclamp/protocol-utils";
 import {
-  NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
+  NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, PRIVATE_KEY, selectWallet,
   POLICY_IDS, ASSET_NAMES, PROTOCOL, SCRIPT_HASHES,
   lampToOildrop,
 } from "../config.js";
+import {
+  parsePositiveInteger, parseFlag, decideStateBook, resultLine, assertTxHash,
+} from "../runResult.js";
+import { outputIndexWithUnit } from "../txOutputIndex.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { instantVaultParams } from "../deployParams.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
 import { minAdaForRefScriptWithMargin } from "../minAda.js";
+import { OwnerCredentialSchema } from "../../InstantGen/offchain/src/types.js";
 
 // ── CHÉP CÓ NHÃN (Forall §Một nguồn, mức 3) ────────────────────────────────
 // Nguồn: `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸
@@ -52,7 +75,7 @@ const WAKEME_SEED_CREDIT = 1_001_000_000_000n;   // 1001 MAGIC in nanogic
 // Két ScheduleGen/PrepaidGen giữ 17 trường; chỉ két Instant có `instant_unlock_ms`.
 // `07_create_schedule_vault.ts` và `10_deploy_prepaid.ts` vì thế KHÔNG chép theo.
 const VaultDatumSchema = Data.Object({
-  owner:                 Data.Bytes(),
+  owner:                 OwnerCredentialSchema,   // Credential — nguồn: InstantGen/offchain/src/types.ts
   lamp_balance:          Data.Integer(),
   lamp_locked:           Data.Integer(),
   loyalty_holdings:      Data.Array(Data.Object({
@@ -137,15 +160,30 @@ type VaultDatum = Data.Static<typeof VaultDatumSchema>;
 // Giá trị thời-chạy y nguyên, chỉ gắn lại nhãn kiểu tĩnh.
 const VaultDatum = VaultDatumSchema as unknown as VaultDatum;
 
-const INITIAL_LAMP_DEPOSIT = lampToOildrop(BigInt(process.env.LAMP_DEPOSIT ?? "10000"));
-const INITIAL_PROFILE      = (process.env.PROFILE ?? "Flame") as "Ember" | "Flame" | "Lantern";
+const PROFILES = ["Ember", "Flame", "Lantern"] as const;
+type Profile = (typeof PROFILES)[number];
+function parseProfile(raw: string | undefined): Profile {
+  const v = raw ?? "Flame";
+  if (!(PROFILES as readonly string[]).includes(v)) {
+    throw new Error(`PROFILE phải là một trong ${PROFILES.join(" | ")}, nhận "${v}".`);
+  }
+  return v as Profile;
+}
 // LAMP_LOCKED / LAST_UPDATED_OFFSET đã BỎ: `validate_mint_vault_id` ép datum
 // khởi sinh SẠCH — `lamp_locked == 0` và `last_updated_epoch == 0`. Ai còn đặt
 // env cũ sẽ bị chặn ngay dưới đây thay vì tạo ra một vault không spend được.
 const LEGACY_ENV = ["LAMP_LOCKED", "LAST_UPDATED_OFFSET"] as const;
 
 async function main() {
-  console.log("=== Step 5: Create InstantGen Vault UTxO ===\n");
+  // Đọc + kiểm env TRƯỚC mọi lệnh gọi mạng: sai hình dạng thì ném, không dựng gì.
+  const INITIAL_LAMP_DEPOSIT = lampToOildrop(parsePositiveInteger(process.env.LAMP_DEPOSIT, "LAMP_DEPOSIT", 10_000n));
+  const INITIAL_PROFILE      = parseProfile(process.env.PROFILE);
+  const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
+  const book   = decideStateBook({
+    dryRun, flag: process.env.WRITE_STATE_BOOK, signsWithPrivateKey: PRIVATE_KEY !== "",
+  });
+
+  console.log(`=== Step 5: Create InstantGen Vault UTxO${dryRun ? " · DRY RUN" : ""} ===\n`);
 
   // LAMP: cổng nằm ở `config.ts` ▸ `requireLampPolicyId`, tự ném khi thiếu.
   if (POLICY_IDS.um_nft === "FILL_AFTER_DEPLOY_UM") throw new Error("Run step 02 first; missing UM_NFT_POLICY_ID.");
@@ -243,7 +281,7 @@ async function main() {
   // MỌI hằng số dưới đây là một điều kiện on-chain của `validate_mint_vault_id`
   // (InstantGen/onchain/validators/vault.ak), không phải sở thích.
   const initialVault = {
-    owner:                 ownerPkh,
+    owner:                 { VerificationKey: [ownerPkh] as [string] },   // chủ = khoá của ví chạy script
     lamp_balance:          INITIAL_LAMP_DEPOSIT,
     lamp_locked:           0n,                 // PIN: `expect vd.lamp_locked == 0`
     loyalty_holdings:      [{
@@ -302,8 +340,33 @@ async function main() {
     .addSignerKey(ownerPkh)                             // (4)
     .complete();
 
+  // Chỉ số output vault đọc từ THÂN tx, TRƯỚC khi ký/gửi: chữ ký không đổi thân nên chỉ số
+  // này là chỉ số thật sau khi gửi. Đặt trước `submit` để một lần đọc hỏng ném khi CHƯA
+  // có gì lên chuỗi, không phải sau khi vault đã tạo mà không in được RESULT.
+  const vaultOutIndex = outputIndexWithUnit(tx, vaultScriptAddress, vaultIdUnit);
+  const bodyHash      = assertTxHash(tx.toHash(), "tx.toHash()");
+  // Owner in ra được SUY TỪ datum vừa mã hoá, không gõ lại: RESULT nói đúng thứ nằm trên chuỗi.
+  const ownerRef      = ownerRefOf(initialVault.owner);
+
+  if (dryRun) {
+    // `complete()` đã chạy thử validator cục bộ. `vault_outref` dùng hash THÂN tx chưa ký
+    // (`TxSignBuilder.toHash()` = `hash_transaction(body)`), chính là tx id nếu ký và gửi
+    // nguyên thân này — nhưng không có UTxO nào tồn tại, nên `dry_run:true` là bắt buộc để
+    // đọc đúng. Không in "TX hash:" để runner nào bắt nhãn đó không ghi nhầm vào sổ.
+    console.log(`\n✔ DRY RUN: tx dựng xong và qua validator khi chạy thử. Không ký, không gửi.`);
+    console.log(`   Hash thân tx (chưa gửi): ${bodyHash}`);
+    console.log(`   Sổ trạng thái: không ghi — ${book.reason}`);
+    console.log(resultLine({
+      vault_outref: `${bodyHash}#${vaultOutIndex}`, vault_nft: vaultIdUnit, owner: ownerRef, dry_run: true,
+    }));
+    return;
+  }
+
   const signed = await tx.sign.withWallet().complete();
-  const txHash = await signed.submit();
+  const txHash = assertTxHash(await signed.submit(), "submit()");
+  if (txHash !== bodyHash) {
+    throw new Error(`Tx hash sau khi gửi (${txHash}) ≠ hash thân tx lúc dựng (${bodyHash}) — chỉ số output ${vaultOutIndex} không còn tin được. Soi tx trên explorer.`);
+  }
   // Chờ xác nhận: bước sau tiêu chính UTxO thối của tx này. Không chờ thì node
   // vẫn thấy UTxO cũ ⟹ BadInputsUTxO. Chuỗi deploy trước đây không bước nào chờ.
   await lucid.awaitTx(txHash);
@@ -311,6 +374,20 @@ async function main() {
   console.log(`\n✅ InstantGen vault created!`);
   console.log(`   TX hash:   ${txHash}`);
   console.log(`   Explorer:  https://${NETWORK.toLowerCase()}.cardanoscan.io/transaction/${txHash}`);
+
+  const result = resultLine({
+    vault_outref: `${txHash}#${vaultOutIndex}`, vault_nft: vaultIdUnit, owner: ownerRef, dry_run: false,
+  });
+
+  if (!book.write) {
+    // Ref-script vault là CỦA LOẠI vault, không của từng vault: hash vault chỉ phụ thuộc
+    // apply-param (BOUNDARIES.md ▸ "Apply-param được phép thay đổi theo LOẠI script"), nên
+    // bản ví deploy đã công bố dùng được cho mọi vault Instant. Mỗi ví riêng tự công bố
+    // thêm một bản ở bãi đỗ của nó là chôn ~49 ADA cho một thứ đã có.
+    console.log(`\nSổ trạng thái: không ghi, không công bố ref-script — ${book.reason}`);
+    console.log(result);
+    return;
+  }
 
   // ── Ref-script CIP-33 của chính vault này (tx riêng, idempotent) ─────────────
   //   Bước nào tính ra hash thì bước đó công bố ref-script — cùng lối với bước 09
@@ -334,6 +411,7 @@ async function main() {
   console.log(`   VAULT_INSTANT_HASH=${vaultScriptHash}   # applied for NETWORK=${NETWORK}`);
   console.log(`   VAULT_INSTANT_ID_UNIT=${vaultIdUnit}    # NFT danh-tính vault (policy = vault hash)`);
   console.log(`   REF_VAULT_INSTANT_UTXO=${vaultRef}      # chân vault của tx consume`);
+  console.log(result);   // PHẢI là dòng cuối stdout
 }
 
 // Xem lý do ở `02_deploy_um.ts` cùng đợt vá. Riêng tệp này đã có một bản vá VÒNG

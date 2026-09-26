@@ -11,7 +11,8 @@ import {
   slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr,
   selectLampForLock, removeLockedAmount, cmpBigIntAsc,
   unlockLockedAmount, coalesceHoldings,
-  type LoyaltyHolding,
+  ownerInnerHash,
+  type LoyaltyHolding, type OwnerCredential,
 } from "@magiclamp/protocol-utils";
 import { blake2b } from "@noble/hashes/blake2b";
 
@@ -127,15 +128,24 @@ export function checkSchRate(lambdaOil: bigint, rateLockedQ: bigint): boolean {
 }
 
 // ══════════════════════════════════════════════════════════════
-// §5.5 shard_id — deterministic from owner PKH (C-SCH-FIRE-SHARD)
+// §5.5 shard_id — deterministic from owner credential (C-SCH-FIRE-SHARD)
 // ══════════════════════════════════════════════════════════════
 //
-// shard_id(owner) = first_byte(blake2b256(owner)) % 16
-// MUST match onchain/lib/math.ak: compute_shard_id (P8)
+// shard_id(owner) = first_byte(blake2b256(inner_hash(owner))) % 16
+// MUST match onchain/lib/magiclamp/protocol/math.ak ▸ compute_shard_id (P8).
+//
+// `owner` là `Credential`; băm 28 byte BÊN TRONG, KHÔNG băm cbor của credential — chủ
+// VerificationKey(pkh) giữ nguyên shard như thời owner còn là pkh trần. Hệ quả chấp nhận
+// (khai ở on-chain): VerificationKey(h) và Script(h) rơi cùng shard.
 
-export function computeShardId(ownerPkh: string): number {
-  const hash = blake2b(Buffer.from(ownerPkh, "hex"), { dkLen: 32 });
+/** Công thức thô trên 28 byte hex — cũng là phép on-chain dùng làm ca đối chiếu. */
+export function computeShardIdFromHash(innerHashHex: string): number {
+  const hash = blake2b(Buffer.from(innerHashHex, "hex"), { dkLen: 32 });
   return hash[0]! % SHARD_COUNT;
+}
+
+export function computeShardId(owner: OwnerCredential): number {
+  return computeShardIdFromHash(ownerInnerHash(owner));
 }
 
 // ══════════════════════════════════════════════════════════════

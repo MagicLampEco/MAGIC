@@ -1,5 +1,10 @@
 // scripts/test/schedule_fire_only.ts — ScheduleGen Fire smoke test.
 // Reads first gen_schedule from vault datum; fires up to MAX_FIRES_PER_TX_CATCHUP.
+//
+// DRY_RUN=1 — dựng + chạy thử validator (`complete()` trong `buildScheduleFireTx`), KHÔNG
+// ký, KHÔNG gửi. Cùng quy ước với test/schedule_commit_only.ts và test/instant_only.ts.
+// Giá trị khác "1"/"0" ⟹ ném (`runResult.ts ▸ parseFlag`): `DRY_RUN=true` mà bị đọc
+// thành "chạy thật" là một lượt fire lên chuỗi đúng lúc người gõ tin là đang chạy thử.
 
 import {
   Lucid, Blockfrost, Data, Constr,
@@ -14,7 +19,9 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatum } from "../../ScheduleGen/offchain/src/types.js";
+import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
+import { parseFlag } from "../runResult.js";
 
 async function fetchTip() {
   const res = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -37,6 +44,7 @@ async function refScriptUtxos(lucid: any) {
 }
 
 async function main() {
+  const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
   console.log("╔════════════════════════════════════════════╗");
   console.log(`║  ScheduleFire smoke test — ${NETWORK.padEnd(15)}║`);
   console.log("╚════════════════════════════════════════════╝\n");
@@ -73,7 +81,7 @@ async function main() {
   const wantedTx = process.env.VAULT_TX_HASH;
   const mine = (u: { datum?: string | null }) => {
     if (!u.datum) return false;
-    try { return Data.from(u.datum, VaultDatum).owner === ownerPkh; } catch { return false; }
+    try { return sameOwner(ownerRefOf(Data.from(u.datum, VaultDatum).owner), { type: "key", hash: ownerPkh }); } catch { return false; }
   };
   let vaultUtxo;
   for (let attempt = 1; attempt <= 5; attempt++) {
@@ -154,6 +162,17 @@ async function main() {
       tamperOutputDatum,
     });
     console.log(result.summary);
+    // DRY_RUN=1: validator đã chạy thử trong `complete()`; dừng trước khi ký. Lượt phá
+    // (TAMPER) mà QUA được chạy thử là kết quả sai, không phải "dry run xong" — thoát 3,
+    // cùng mã với cổng kiểm cực của nhánh gửi thật bên dưới.
+    if (dryRun) {
+      if (tamper) {
+        console.error("\n⚠  UNEXPECTED (DRY RUN): tamper tx qua validator khi chạy thử.");
+        process.exit(3);
+      }
+      console.log("\n✔ DRY RUN: tx dựng xong và qua validator khi chạy thử. Không ký, không gửi.");
+      return;
+    }
     const signed = await result.tx.sign.withWallet().complete();
     const txHash = await signed.submit();
     console.log(`\nĐã gửi. TX hash: ${txHash}`);

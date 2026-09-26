@@ -12,7 +12,15 @@ export {
   TxApiError, BadRequestError, UnauthorizedError, VaultNotFoundError, VaultAmbiguousError,
   VaultIdentityDuplicateError, OwnerTxInFlightError, TxBuildRejectedError, ChainUnavailableError,
   VaultDatumUndecodableError, TxSummaryUndecodableError, SubmitRejectedError, newReferenceCode,
+  CodedApiError, ownerApiErrorOf,
 } from "./errors.js";
+
+export {
+  parseOwnerFields, parseOwnerWitness, ownerLockKey, DidStakeWitnessProvider,
+} from "./owner.js";
+export type {
+  ScriptOwnerWitness, ResolvedOwnerWitness, OwnerWitnessProvider, DidStakeProviderDeps,
+} from "./owner.js";
 
 export { BlockfrostChainReader, RecordedChainReader } from "./chain.js";
 export type { ChainReader, ChainTip, OutRef } from "./chain.js";
@@ -20,8 +28,10 @@ export type { ChainReader, ChainTip, OutRef } from "./chain.js";
 export { IssuedTxRegistry, OwnerLockTable, PENDING_TX_HASH } from "./locks.js";
 export type { LockRecord } from "./locks.js";
 
-export { summarizeTx, txBodyHash } from "./summary.js";
-export type { TxSummary, SummaryContext, RequestedIntent, OutputView } from "./summary.js";
+export { summarizeTx, summarizeCreateVaultTx, txBodyHash } from "./summary.js";
+export type {
+  TxSummary, SummaryContext, RequestedIntent, OutputView, CreateVaultSummary,
+} from "./summary.js";
 
 export { decodeVaultDatumOrThrow } from "./vaultDatumShape.js";
 export type { DecodedVaultDatum, DecodedMagicBatch } from "./vaultDatumShape.js";

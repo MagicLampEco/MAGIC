@@ -92,7 +92,7 @@ function vault(
   batches: MagicBatch[] = [],
 ): PrepaidVaultDatum {
   return {
-    owner: OWNER,
+    owner: { VerificationKey: [OWNER] },
     // Vault ĐÃ gắn DID: đúng 32 byte, khuôn duy nhất mà nhánh ghi on-chain cho
     // qua (rỗng = chưa gắn). Bản trước là "deadbeef" (4 byte) — độ dài đó không
     // tới được trên chuỗi từ khi cổng đúc ghim rỗng và `SetDidCommit` ghim 32.
@@ -664,7 +664,10 @@ describe("C-PP-9 — mở dòng mới đòi owner, nạp thêm nhận platform",
   });
 
   it("mở dòng mới: owner ký → được", () => {
-    expect(lockRequiredSigner(vault(), f, FUND_ID, "owner")).toBe(OWNER);
+    expect(lockRequiredSigner(vault(), f, FUND_ID, "owner")).toEqual({
+      by: "owner",
+      owner: { type: "key", hash: OWNER },
+    });
   });
 
   it("ÂM — mở dòng mới: platform ký → NÉM (cặp của bài trên)", () => {
@@ -678,7 +681,30 @@ describe("C-PP-9 — mở dòng mới đòi owner, nạp thêm nhận platform",
 
   it("nạp thêm vào dòng đã có: platform ký → được (luồng app khoá hộ)", () => {
     const v = vault([{ fund_id: FUND_ID, remaining: 5n }]);
-    expect(lockRequiredSigner(v, f, FUND_ID, "platform")).toBe(PLATFORM);
+    expect(lockRequiredSigner(v, f, FUND_ID, "platform")).toEqual({ by: "platform", pkh: PLATFORM });
+  });
+});
+
+describe("C-PP-9 — nhánh chủ: khoá và script trả về HAI chủ khác nhau", () => {
+  const f = fund(0n, 0n);
+  const H = "ab".repeat(28);
+  const withOwner = (owner: PrepaidVaultDatum["owner"]): PrepaidVaultDatum => ({ ...vault(), owner });
+
+  it("VerificationKey(h) ⟹ owner {type:key}", () => {
+    expect(lockRequiredSigner(withOwner({ VerificationKey: [H] }), f, FUND_ID, "owner")).toEqual({
+      by: "owner",
+      owner: { type: "key", hash: H },
+    });
+  });
+
+  it("CỰC ĐỐI — Script(h) cùng 28 byte ⟹ owner {type:script}, KHÔNG thành pkh để ký", () => {
+    const r = lockRequiredSigner(withOwner({ Script: [H] }), f, FUND_ID, "owner");
+    expect(r).toEqual({ by: "owner", owner: { type: "script", hash: H } });
+    expect(r).not.toHaveProperty("pkh");
+  });
+
+  it("ÂM — chủ script, mở dòng mới, platform ký → vẫn NÉM", () => {
+    expect(() => lockRequiredSigner(withOwner({ Script: [H] }), f, FUND_ID, "platform")).toThrow(/C-PP-9/);
   });
 });
 

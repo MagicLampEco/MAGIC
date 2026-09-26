@@ -57,13 +57,15 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto
 use aiken/interval.{Finite, IntervalBoundType}
-use cardano/address.{Address, Script}
+use aiken/primitive/bytearray
+use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Spend, Transaction,
   placeholder,
 }
 
+use magiclamp/protocol/owner_auth.{owner_authorized}
 use magiclamp/protocol/types.{
   ActivityState, BurnBatch, DelegationCertificate, Flame, GenSchedule,
   LoyaltyHolding, MagicBatch, PruneExpired, Schedule,
@@ -76,7 +78,7 @@ use magiclamp/protocol/constants.{
   snapshot_base_rate_q, schedule_min_length, schedule_max_length,
   min_lamp_per_fire, schedule_delay, schedule_decay_window,
   max_fires_per_tx_catchup, max_gen_schedules, max_batches_per_vault,
-  max_loyalty_holdings, shard_cap,
+  max_loyalty_holdings, shard_cap, shard_count,
 }
 use magiclamp/protocol/math.{
   compute_s_q, compute_rate_locked_q, compute_m_i,
@@ -312,7 +314,7 @@ fn validate_commit(
   )
 
   // C-VAC-1 equivalent: user signs
-  expect list.has(tx.extra_signatories, datum.owner)
+  expect owner_authorized(tx, datum.owner)
 
   // C-SCH-1: L ∈ [10,200]
   expect l >= schedule_min_length && l <= schedule_max_length
@@ -628,7 +630,7 @@ fn validate_burn_batch(
   // giao dịch bị TỪ CHỐI, kể cả khi datum còn mang `Some(d)` của đời trước.
   // Trường datum giữ nguyên chỗ (bia mộ nhị phân): bỏ nó đi là vỡ decode mọi
   // UTxO vault đang sống trên Preview/Preprod.
-  expect list.has(tx.extra_signatories, input_datum.owner)
+  expect owner_authorized(tx, input_datum.owner)
 
   // ── burns must be non-empty and each amount > 0 ──────────────
   expect list.length(burns) > 0
@@ -827,7 +829,7 @@ fn validate_set_delegate(
   )
 
   // ONLY owner may change the delegate (a delegate cannot re-delegate).
-  expect list.has(tx.extra_signatories, input_datum.owner)
+  expect owner_authorized(tx, input_datum.owner)
 
   // 🪦 BIA MỘ — nhánh này nay CHỈ XOÁ ĐƯỢC, không đặt được (2026-09-16, Nợ #14).
   // Nhánh redeemer `SetDelegate` (constr 4) ở lại nguyên chỗ vì chỉ số
@@ -1115,8 +1117,9 @@ fn validate_mint_vault_id(
   expect vd: VaultDatum = datum_data
 
   // ── CLEAN genesis — constrain ALL 17 fields ─────────────────────────────
-  // owner: a pkh the creator controls (present in signatories).
-  expect list.has(tx.extra_signatories, vd.owner)
+  // owner: a Credential the creator controls — VerificationKey(pkh) ký, hoặc
+  // Script(h) có mục rút trong tx (owner_auth). Chống chiếm chỗ credential người khác.
+  expect owner_authorized(tx, vd.owner)
 
   // LAMP accounting bound to the REAL deposited LAMP (no over-claim).
   let lamp_qty = assets.quantity_of(vault_out.value, lamp_policy_id, lamp_asset_name)
@@ -1203,7 +1206,7 @@ fn validate_withdraw_lamp(
   // W-1
   expect amount > 0
   // W-2
-  expect list.has(tx.extra_signatories, input_datum.owner)
+  expect owner_authorized(tx, input_datum.owner)
   // W-3
   let avail = l_avail(input_datum.lamp_balance, input_datum.lamp_locked)
   expect amount <= avail
@@ -1432,8 +1435,9 @@ fn compute_schedule_id_from_ref(own_ref: OutputReference, index: Int) -> ByteArr
 // Tests
 // ═══════════════════════════════════════════════════════════════
 
-const t_owner: ByteArray =
+const t_owner_pkh: ByteArray =
   #"00000000000000000000000000000000000000000000000000000000"
+const t_owner: Credential = VerificationKey(t_owner_pkh)
 const t_delegate: ByteArray =
   #"99999999999999999999999999999999999999999999999999999999"
 const t_vault_hash: ByteArray =
@@ -1553,20 +1557,20 @@ fn t_tx(ins: List<Input>, outs: List<Output>, signers: List<ByteArray>) -> Trans
 test w_positive_partial() {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_amount_zero() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(din, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(din, 100)], [t_owner_pkh])
   validate_withdraw_lamp(din, 0, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test w_over_avail() fail {
   let din = t_datum(100, 100, [t_holding(100, 5, True)])
   let dout = t_datum(95, 100, [t_holding(95, 5, True)])
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -1584,7 +1588,7 @@ test w_phantom_second_output() fail {
     t_tx(
       [t_vault_input(din, 100)],
       [t_vault_output(dout, 95), t_vault_output(dout, 95)],
-      [t_owner],
+      [t_owner_pkh],
     )
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
@@ -1594,7 +1598,7 @@ test w_phantom_second_output() fail {
 // "at MY address" by full address let the twin read as somebody else's UTxO.
 
 fn t_vault_addr_staked() -> Address {
-  address.from_script(t_vault_hash) |> address.with_delegation_key(t_owner)
+  address.from_script(t_vault_hash) |> address.with_delegation_key(t_owner_pkh)
 }
 
 fn t_vault_output_staked(datum: VaultDatum, balance: Int) -> Output {
@@ -1609,7 +1613,7 @@ test ds_phantom_output_under_stake_cred_rejected() fail {
     t_tx(
       [t_vault_input(din, 100)],
       [t_vault_output(dout, 95), t_vault_output_staked(dout, 95)],
-      [t_owner],
+      [t_owner_pkh],
     )
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
@@ -1620,7 +1624,7 @@ test ds_phantom_output_under_stake_cred_rejected() fail {
 test ds_continuing_output_must_keep_stake_cred() fail {
   let din  = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output_staked(dout, 95)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output_staked(dout, 95)], [t_owner_pkh])
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -1631,7 +1635,7 @@ test w_advance_last_updated_rejected() fail {
       ..t_datum(95, 0, [t_holding(95, 5, False)]),
       last_updated_epoch: 5,
     }
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -1662,21 +1666,21 @@ fn t_out_b(
 test bb_partial_reduce() {
   let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60), t_batch(#"bb", 50)], 1, 40, 7)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_full_prune() {
   let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
   let dout = t_out_b([t_batch(#"bb", 50)], 1, 100, 7)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 100)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_multi_burn() {
   let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 90), t_batch_reduced(#"bb", 50, 30)], 1, 30, 7)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 10), (#"bb", 20)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -1703,7 +1707,7 @@ test bb_owner_signs_with_stale_delegate_ok() {
   let din  = VaultDatum { ..base, personal_delegate: Some(t_delegate) }
   let doutb = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
   let dout  = VaultDatum { ..doutb, personal_delegate: Some(t_delegate) }
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -1712,7 +1716,7 @@ test bb_owner_signs_with_stale_delegate_ok() {
 test bb_dead_batch_rejected() fail {
   let din  = t_datum_b([t_batch(#"aa", 100)])            // created_epoch = 7
   let dout = t_out_b([], 1, 40, 8)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 40)], 8, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -1721,7 +1725,7 @@ test bb_dead_batch_collected() {
   let dead = MagicBatch { ..t_batch(#"cc", 999), created_epoch: 6 }
   let din  = t_datum_b([dead, t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -1729,14 +1733,14 @@ test bb_dead_batch_collected() {
 test bb_consumed_credit_not_advanced() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 0, 7)   // credit stayed 0
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_consumed_credit_inflated() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40_000, 7)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -1751,21 +1755,21 @@ test bb_over_burn() fail {
   // amount > current_amount → reject (cannot burn more than batch holds)
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([], 1, 150, 7)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 150)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_zero_amount() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch(#"aa", 100)], 1, 0, 7)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 0)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_empty_burns() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch(#"aa", 100)], 1, 0, 7)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -1773,14 +1777,14 @@ test bb_lamp_leak_rejected() fail {
   // output datum claims lamp_balance 100 but only 80 LAMP in the output value
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7)
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 80)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 80)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
 test bb_attribution_not_incremented() fail {
   let din = t_datum_b([t_batch(#"aa", 100)])
   let dout = t_out_b([t_batch_reduced(#"aa", 100, 60)], 0, 40, 7)   // total_events stayed 0
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -2307,7 +2311,7 @@ fn t_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
     t_tx(
       [t_vault_input(din, balance), t_commit_shard_in()],
       [t_vault_output(dout, balance), t_commit_shard_out(total_lock)],
-      [t_owner],
+      [t_owner_pkh],
     )
   (din, tx)
 }
@@ -2447,7 +2451,7 @@ fn hc_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
       [t_vault_input(din, hc_balance), hc_shard_in(hc_shard(0, 0, 0, 0, hc_epoch))],
       [t_vault_output(dout, hc_balance),
        hc_shard_out(hc_shard(hc_balance, hc_balance, 0, 1, hc_epoch))],
-      [t_owner])
+      [t_owner_pkh])
   (din, tx)
 }
 
@@ -2771,7 +2775,7 @@ test sd_set_rejected() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout =
     VaultDatum { ..din, personal_delegate: Some(t_delegate), last_updated_epoch: 9 }
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_set_delegate(din, Some(t_delegate), 9, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -2783,7 +2787,7 @@ test sd_clear() {
     }
   let dout =
     VaultDatum { ..din, personal_delegate: None, last_updated_epoch: 9 }
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_set_delegate(din, None, 9, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -2816,7 +2820,7 @@ test sd_no_other_field_change() fail {
       last_updated_epoch: 9,
       lamp_balance: 200,
     }
-  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 200)], [t_owner])
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 200)], [t_owner_pkh])
   validate_set_delegate(din, None, 9, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -3025,7 +3029,7 @@ test shard_out_same_address_ok() {
 
 /// FAIL — NFT shard + datum bay sang ví trần. Đây là chính ca Nợ #35.
 test shard_out_moved_to_wallet_rejected() fail {
-  let wallet = address.from_verification_key(t_owner)
+  let wallet = address.from_verification_key(t_owner_pkh)
   let out = t_shard_out_at(wallet, 6, 1000)
   find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
 }
@@ -3033,7 +3037,7 @@ test shard_out_moved_to_wallet_rejected() fail {
 /// FAIL — cùng script hash, khác stake credential. Ghim nửa payment là chưa đủ:
 /// một script hash hiện ra thành N địa chỉ (cùng lý do Nợ #31).
 test shard_out_restaked_rejected() fail {
-  let restaked = t_shard_addr() |> address.with_delegation_key(t_owner)
+  let restaked = t_shard_addr() |> address.with_delegation_key(t_owner_pkh)
   let out = t_shard_out_at(restaked, 6, 1000)
   find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
 }
@@ -3052,7 +3056,7 @@ test shard_in_at_script_ok() {
 /// input ở ví thì output "cùng địa chỉ" cũng ở ví, và cả hai vế đều thoả. Phải
 /// từ chối ngay ở đầu vào — fail-closed.
 test shard_in_from_wallet_rejected() fail {
-  let wallet = address.from_verification_key(t_owner)
+  let wallet = address.from_verification_key(t_owner_pkh)
   let inp =
     Input {
       output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
@@ -3082,7 +3086,7 @@ fn t_seed_input(seed: OutputReference) -> Input {
   Input {
     output_reference: seed,
     output: Output {
-      address: address.from_script(t_owner),
+      address: address.from_script(t_owner_pkh),
       value: assets.from_lovelace(2_000_000),
       datum: NoDatum,
       reference_script: None,
@@ -3131,7 +3135,7 @@ test mint_clean_genesis_ok() {
   let vd   = t_clean_genesis(bal)
   let out  = t_genesis_output(vd, bal, t_vault_hash, name)
   let m    = assets.from_asset(t_vault_hash, name, 1)
-  let tx   = t_mint_tx(seed, out, m, [t_owner])
+  let tx   = t_mint_tx(seed, out, m, [t_owner_pkh])
   t_mint_call(seed, t_vault_hash, tx)
 }
 
@@ -3152,7 +3156,7 @@ test poc_dirty_mint_rejected() fail {
     }
   let out = t_genesis_output(dirty, bal, t_vault_hash, name)
   let m   = assets.from_asset(t_vault_hash, name, 1)
-  let tx  = t_mint_tx(seed, out, m, [t_owner])
+  let tx  = t_mint_tx(seed, out, m, [t_owner_pkh])
   t_mint_call(seed, t_vault_hash, tx)
 }
 
@@ -3164,7 +3168,7 @@ test poc_dirty_mint_lamp_overclaim_rejected() fail {
   let vd  = t_clean_genesis(1000)
   let out = t_genesis_output(vd, 100, t_vault_hash, name)
   let m   = assets.from_asset(t_vault_hash, name, 1)
-  let tx  = t_mint_tx(seed, out, m, [t_owner])
+  let tx  = t_mint_tx(seed, out, m, [t_owner_pkh])
   t_mint_call(seed, t_vault_hash, tx)
 }
 
@@ -3219,7 +3223,7 @@ test mint_genesis_three_policies_ok() {
       reference_script: None,
     }
   let m  = assets.from_asset(t_vault_hash, name, 1)
-  let tx = t_mint_tx(seed, out, m, [t_owner])
+  let tx = t_mint_tx(seed, out, m, [t_owner_pkh])
   t_mint_call(seed, t_vault_hash, tx)
 }
 
@@ -3235,7 +3239,7 @@ test mint_genesis_fourth_asset_rejected() fail {
       reference_script: None,
     }
   let m  = assets.from_asset(t_vault_hash, name, 1)
-  let tx = t_mint_tx(seed, out, m, [t_owner])
+  let tx = t_mint_tx(seed, out, m, [t_owner_pkh])
   t_mint_call(seed, t_vault_hash, tx)
 }
 
@@ -3283,7 +3287,7 @@ test mint_no_genesis_seed_rejected() fail {
       inputs: [t_seed_input(OutputReference { transaction_id: t_tx_id, output_index: 99 })],
       outputs: [out],
       mint: m,
-      extra_signatories: [t_owner],
+      extra_signatories: [t_owner_pkh],
     }
   t_mint_call(seed, t_vault_hash, tx)
 }
@@ -3295,7 +3299,7 @@ test mint_wrong_qty_rejected() fail {
   let bal  = 100
   let out  = t_genesis_output(t_clean_genesis(bal), bal, t_vault_hash, name)
   let m    = assets.from_asset(t_vault_hash, name, 2)
-  let tx   = t_mint_tx(seed, out, m, [t_owner])
+  let tx   = t_mint_tx(seed, out, m, [t_owner_pkh])
   t_mint_call(seed, t_vault_hash, tx)
 }
 
@@ -3318,7 +3322,7 @@ test poc_fabricated_magic_schedule_fails() fail {
   let fake = t_batch(#"aa", 1_000_000_000_000_000_000)   // fabricated 10^18
   let din  = t_datum_b([fake])
   let tx   =
-    t_tx([t_vault_input_nonft(din, 100)], [t_vault_output_nonft(din, 100)], [t_owner])
+    t_tx([t_vault_input_nonft(din, 100)], [t_vault_output_nonft(din, 100)], [t_owner_pkh])
   validate_fire(din, #"aa", 7, t_own_ref(), t_vault_addr(),
                 t_lamp_policy, t_lamp_name, t_shard_policy, tx)
 }
@@ -3328,7 +3332,7 @@ test poc_fabricated_magic_burn_batch_fails() fail {
   let fake = t_batch(#"aa", 1_000_000_000_000_000_000)
   let din  = t_datum_b([fake])
   let tx   =
-    t_tx([t_vault_input_nonft(din, 100)], [t_vault_output_nonft(din, 100)], [t_owner])
+    t_tx([t_vault_input_nonft(din, 100)], [t_vault_output_nonft(din, 100)], [t_owner_pkh])
   validate_burn_batch(din, [(#"aa", 500)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -3336,7 +3340,7 @@ test poc_fabricated_magic_burn_batch_fails() fail {
 test spend_preserves_nft_ok() {
   let din  = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
-  let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner])
+  let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
 
@@ -3344,6 +3348,116 @@ test spend_preserves_nft_ok() {
 test spend_drops_nft_fail() fail {
   let din  = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
-  let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output_nonft(dout, 95)], [t_owner])
+  let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output_nonft(dout, 95)], [t_owner_pkh])
   validate_withdraw_lamp(din, 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// owner: Credential — cổng `owner_authorized` (lib/owner_auth.ak)
+// ═══════════════════════════════════════════════════════════════
+// Mỗi cặp dùng CHUNG một bộ dựng (`t_bb_owner_case` / `t_mint_owner_case`): tx hợp lệ ở mọi
+// mặt khác, chỉ ba đầu vào xác thực thay đổi — `owner`, danh sách ký, danh sách rút. Bài
+// dương cùng bộ dựng xanh ⟹ bài âm đỏ vì cổng owner, không vì một ràng buộc khác.
+
+const t_owner_script: ByteArray =
+  #"abababababababababababababababababababababababababababab"
+
+const t_other_script: ByteArray =
+  #"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+
+fn t_bb_owner_case(
+  owner: Credential, signers: List<ByteArray>, ws: Pairs<Credential, Int>,
+) -> Bool {
+  let din  = VaultDatum { ..t_datum_b([t_batch(#"aa", 100)]), owner: owner }
+  let dout =
+    VaultDatum { ..t_out_b([t_batch_reduced(#"aa", 100, 60)], 1, 40, 7), owner: owner }
+  let tx =
+    Transaction {
+      ..t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], signers),
+      withdrawals: ws,
+    }
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+fn t_mint_owner_case(
+  owner: Credential, signers: List<ByteArray>, ws: Pairs<Credential, Int>,
+) -> Bool {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let bal  = 100
+  let vd   = VaultDatum { ..t_clean_genesis(bal), owner: owner }
+  let out  = t_genesis_output(vd, bal, t_vault_hash, name)
+  let m    = assets.from_asset(t_vault_hash, name, 1)
+  let tx   = Transaction { ..t_mint_tx(seed, out, m, signers), withdrawals: ws }
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// (5) đối chứng: chủ VerificationKey ký, qua đúng bộ dựng dùng cho các ca Script.
+test owner_vk_signed_burn_batch_ok() {
+  t_bb_owner_case(t_owner, [t_owner_pkh], [])
+}
+
+test owner_vk_signed_mint_ok() {
+  t_mint_owner_case(t_owner, [t_owner_pkh], [])
+}
+
+// (1) chủ Script(h), tx rút 0 từ Script(h) ⟹ nhận.
+test owner_script_zero_withdrawal_burn_batch_ok() {
+  t_bb_owner_case(Script(t_owner_script), [], [Pair(Script(t_owner_script), 0)])
+}
+
+test owner_script_zero_withdrawal_mint_ok() {
+  t_mint_owner_case(Script(t_owner_script), [], [Pair(Script(t_owner_script), 0)])
+}
+
+// (2) chủ Script(h), không có mục rút ⟹ từ chối.
+test owner_script_no_withdrawal_burn_batch_rejected() fail {
+  t_bb_owner_case(Script(t_owner_script), [], [])
+}
+
+test owner_script_no_withdrawal_mint_rejected() fail {
+  t_mint_owner_case(Script(t_owner_script), [], [])
+}
+
+// (3) chủ Script(h), rút từ Script(h') khác ⟹ từ chối.
+test owner_script_foreign_withdrawal_burn_batch_rejected() fail {
+  t_bb_owner_case(Script(t_owner_script), [], [Pair(Script(t_other_script), 0)])
+}
+
+test owner_script_foreign_withdrawal_mint_rejected() fail {
+  t_mint_owner_case(Script(t_owner_script), [], [Pair(Script(t_other_script), 0)])
+}
+
+// (3b) cùng 28 byte nhưng mục rút là VerificationKey(h), không phải Script(h) ⟹ từ chối.
+test owner_script_vk_keyed_withdrawal_burn_batch_rejected() fail {
+  t_bb_owner_case(
+    Script(t_owner_script), [], [Pair(VerificationKey(t_owner_script), 0)],
+  )
+}
+
+// (4) chủ Script(h), h chỉ nằm trong extra_signatories ⟹ từ chối.
+test owner_script_hash_as_signer_burn_batch_rejected() fail {
+  t_bb_owner_case(Script(t_owner_script), [t_owner_script], [])
+}
+
+test owner_script_hash_as_signer_mint_rejected() fail {
+  t_mint_owner_case(Script(t_owner_script), [t_owner_script], [])
+}
+
+// (6) chủ VerificationKey(pkh), có mục rút Script(pkh) nhưng pkh KHÔNG ký ⟹ từ chối.
+test owner_vk_script_withdrawal_unsigned_burn_batch_rejected() fail {
+  t_bb_owner_case(t_owner, [], [Pair(Script(t_owner_pkh), 0)])
+}
+
+test owner_vk_script_withdrawal_unsigned_mint_rejected() fail {
+  t_mint_owner_case(t_owner, [], [Pair(Script(t_owner_pkh), 0)])
+}
+
+// shard: chủ VerificationKey(pkh) giữ nguyên shard của thời owner còn là pkh trần.
+test owner_vk_shard_id_matches_raw_pkh_formula() {
+  let raw = bytearray.at(crypto.blake2b_256(t_owner_pkh), 0) % shard_count
+  and {
+    compute_shard_id(t_owner) == raw,
+    compute_shard_id(Script(t_owner_pkh)) == raw,
+  }
 }

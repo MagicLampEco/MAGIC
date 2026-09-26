@@ -21,6 +21,7 @@ import {
   VaultAmbiguousError, VaultDatumUndecodableError, VaultIdentityDuplicateError, VaultNotFoundError,
 } from "./errors.js";
 import { decodeVaultDatumOrThrow, type DecodedVaultDatum } from "./vaultDatumShape.js";
+import { sameOwner, type OwnerRef } from "@magiclamp/protocol-utils";
 
 export interface FoundVault {
   utxo: UTxO;
@@ -45,7 +46,7 @@ export interface IgnoredUtxo {
 export function findVaultsAtScope(
   utxos: UTxO[],
   scope: VaultScope,
-  ownerPkh: string,
+  owner: OwnerRef,
 ): { vaults: FoundVault[]; ignored: IgnoredUtxo[] } {
   const vaults: FoundVault[] = [];
   const ignored: IgnoredUtxo[] = [];
@@ -68,7 +69,8 @@ export function findVaultsAtScope(
     }
 
     byIdUnit.set(idUnit, [...(byIdUnit.get(idUnit) ?? []), ref]);
-    if (datum.owner !== ownerPkh) { ignored.push({ utxoRef: ref, reason: "OWNER_MISMATCH" }); continue; }
+    // So CẢ tag lẫn hash: két chủ-script cùng 28 byte với một pkh là chủ KHÁC.
+    if (!sameOwner(datum.owner, owner)) { ignored.push({ utxoRef: ref, reason: "OWNER_MISMATCH" }); continue; }
     vaults.push({ utxo: u, datum, vaultIdUnit: idUnit, scope });
   }
 
@@ -85,10 +87,10 @@ export function findVaultsAtScope(
  * Không có → `VAULT_NOT_FOUND` (404). Nhiều hơn một → `VAULT_AMBIGUOUS` (409). Cả hai
  * đều là câu trả lời dứt khoát; không ca nào rơi vào một giá trị mặc định.
  */
-export function pickSingleVault(found: FoundVault[], ownerPkh: string, vaultType: string, addresses: string[]): FoundVault {
-  if (found.length === 0) throw new VaultNotFoundError(ownerPkh, addresses);
+export function pickSingleVault(found: FoundVault[], ownerLabel: string, vaultType: string, addresses: string[]): FoundVault {
+  if (found.length === 0) throw new VaultNotFoundError(ownerLabel, addresses);
   if (found.length > 1) {
-    throw new VaultAmbiguousError(ownerPkh, vaultType, found.map(f => `${f.utxo.txHash}#${f.utxo.outputIndex}`));
+    throw new VaultAmbiguousError(ownerLabel, vaultType, found.map(f => `${f.utxo.txHash}#${f.utxo.outputIndex}`));
   }
   return found[0]!;
 }

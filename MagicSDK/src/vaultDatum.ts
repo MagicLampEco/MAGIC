@@ -16,10 +16,16 @@
 // Lucid NÉM ngay lúc `Data.to` — hỏng trước khi có giao dịch nào, không phải một
 // két hỏng trên chuỗi.
 
+import { ownerCredentialOf, type OwnerCredential, type OwnerRef } from "@magiclamp/protocol-utils";
 import type { Profile, VaultType } from "./types.js";
+import { resolveOwnerInput } from "./ownerInput.js";
 
 export interface InitialVaultDatumInputs {
-  ownerPkh:           string;
+  /** Chủ vault — `Credential` dạng JSON. Nhánh `script` hợp lệ: genesis ép
+   *  `owner_authorized(tx, vd.owner)`, nên giao dịch tạo phải mang mục rút `Script(h)`. */
+  owner?:             OwnerRef;
+  /** Bí danh nhánh khoá của `owner` (= `{ type: "key", hash: ownerPkh }`). */
+  ownerPkh?:          string;
   lampBalanceOildrop:     bigint;
   profile:            Profile;
   currentEpoch:       bigint;
@@ -61,7 +67,7 @@ export interface InitialVaultDatumInputs {
  * đối chiếu trực tiếp với `validate_mint_vault_id` trước khi sửa bất kỳ dòng nào.
  */
 export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
-  owner:                 string;
+  owner:                 OwnerCredential;
   lamp_balance:          bigint;
   lamp_locked:           bigint;
   loyalty_holdings:      Array<{ amount: bigint; acquired_epoch: bigint; is_locked: boolean }>;
@@ -96,14 +102,14 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
   /** CHỈ có mặt khi `vaultType === "Instant"`. Vắng mặt = hình dạng 17 trường. */
   instant_unlock_ms?:    bigint;
 } {
-  const { ownerPkh, lampBalanceOildrop, profile, currentEpoch } = inputs;
+  const { lampBalanceOildrop, profile, currentEpoch } = inputs;
 
   if (lampBalanceOildrop <= 0n) {
     throw new Error(`lampDeposit must be > 0 oildrop (got ${lampBalanceOildrop})`);
   }
-  if (!/^[0-9a-fA-F]{56}$/.test(ownerPkh)) {
-    throw new Error(`ownerPkh must be 28-byte hex (got "${ownerPkh}")`);
-  }
+  // Ném `OWNER_HASH_INVALID` ("ownerPkh must be 28-byte hex") / `OWNER_AUTH_MISMATCH` /
+  // `OWNER_CREDENTIAL_SHAPE` — quy tắc ở `ownerInput.ts`.
+  const owner = resolveOwnerInput(inputs, "buildInitialVaultDatum");
   if (inputs.personalDelegate != null) {
     if (!/^[0-9a-fA-F]{56}$/.test(inputs.personalDelegate)) {
       throw new Error(`personalDelegate must be 28-byte hex if set`);
@@ -118,7 +124,8 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
   }
 
   return {
-    owner:        ownerPkh,
+    // Chủ là `Credential`: `{VerificationKey:[h]}` hoặc `{Script:[h]}`.
+    owner:        ownerCredentialOf(owner),
     lamp_balance: lampBalanceOildrop,
     lamp_locked:  0n,
     loyalty_holdings: [{

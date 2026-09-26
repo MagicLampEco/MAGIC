@@ -36,6 +36,11 @@ export interface RecordedTx {
   attached    : unknown[];
   outputs     : RecordedOutput[];
   signerKeys  : string[];
+  /** Mỗi lượt `.withdraw(rewardAddress, amount, redeemer)` — nhánh chủ-script gắn qua
+   *  `attachWithdraw`; bộ dựng tự nó không bao giờ gọi. */
+  withdrawals : Array<{ rewardAddress: string; amount: bigint; redeemer?: string }>;
+  /** Mỗi lượt `.mintAssets(assets, redeemer)`. */
+  mints       : Array<{ assets: Record<string, bigint>; redeemer?: string }>;
   /** Mili-giây POSIX đúng như bộ dựng truyền vào — KHÔNG quy về slot. */
   validFrom   : number | undefined;
   validTo     : number | undefined;
@@ -89,6 +94,7 @@ export function makeLucidFake(opts: { utxoByUnit?: Record<string, unknown> } = {
   function newTx() {
     const ghi: RecordedTx = {
       collectFrom: [], readFrom: [], attached: [], outputs: [], signerKeys: [],
+      withdrawals: [], mints: [],
       validFrom: undefined, validTo: undefined, completed: false,
     };
     txs.push(ghi);
@@ -105,6 +111,7 @@ export function makeLucidFake(opts: { utxoByUnit?: Record<string, unknown> } = {
       attach: strict({
         SpendingValidator(v: unknown) { ghi.attached.push(v); return proxied; },
         MintingPolicy  (v: unknown) { ghi.attached.push(v); return proxied; },
+        WithdrawalValidator(v: unknown) { ghi.attached.push(v); return proxied; },
       }, "txBuilder.attach"),
       pay: strict({
         ToAddressWithData(address: string, datum: unknown, assets: Record<string, bigint>) {
@@ -115,6 +122,14 @@ export function makeLucidFake(opts: { utxoByUnit?: Record<string, unknown> } = {
       validFrom(ms: number) { ghi.validFrom = ms; return proxied; },
       validTo  (ms: number) { ghi.validTo   = ms; return proxied; },
       addSignerKey(pkh: string) { ghi.signerKeys.push(pkh); return proxied; },
+      withdraw(rewardAddress: string, amount: bigint, redeemer?: string) {
+        ghi.withdrawals.push({ rewardAddress, amount, redeemer });
+        return proxied;
+      },
+      mintAssets(assets: Record<string, bigint>, redeemer?: string) {
+        ghi.mints.push({ assets, redeemer });
+        return proxied;
+      },
       async complete() {
         ghi.completed = true;
         // Đối tượng giao dịch: đủ cho `sign.withWallet().complete()` rồi `submit()`.

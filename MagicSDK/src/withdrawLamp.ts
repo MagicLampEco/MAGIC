@@ -16,12 +16,13 @@ import {
   Constr, Data, toUnit,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential,
   slotToUnixTime,
-  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
+  type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type TxBuilder,
 } from "@lucid-evolution/lucid";
 import {
   getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow,
   cmpBigIntDesc, sortAiken, lampAssetName,
-  type Network,
+  applyOwnerAuth, resolveOwnerAuth, ownerRefOf, ownerRefToString,
+  type Network, type OwnerAuth,
 } from "@magiclamp/protocol-utils";
 
 import { assertLampPolicyId } from "./lampPolicy.js";
@@ -72,6 +73,11 @@ export interface WithdrawLampParams {
   destinationAddress?: string;
   /** Override tip POSIX ms for deterministic testing. */
   tipPosixMs?:     bigint;
+  /** Cách chứng minh quyền chủ vault (`@magiclamp/protocol-utils` ▸ `OwnerAuth`).
+   *  Bỏ trống: chủ là khoá ⟹ `addSignerKey(pkh)` lấy từ datum; chủ là script ⟹ NÉM
+   *  `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. Chủ script (PhoenixKey `did_stake`) dựng bằng
+   *  `didStakeOwnerAuthLucid`. Truyền mà khác chủ trong datum ⟹ `OWNER_AUTH_MISMATCH`. */
+  ownerAuth?:  OwnerAuth<TxBuilder>;
 }
 
 export interface WithdrawLampResult {
@@ -207,22 +213,23 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     ? lucid.newTx().collectFrom([vaultUtxo], redeemer).attach.SpendingValidator(vaultScript)
     : lucid.newTx().collectFrom([vaultUtxo], redeemer).readFrom([refUtxo]);
 
-  const tx = await txWithScript
+  const txBody = txWithScript
     .pay.ToAddressWithData(
       vaultAddress,
       { kind: "inline", value: Data.to(newVaultDatum as never, datumSchema) },
       vaultOutputAssets,
     )
     .pay.ToAddress(destination, { [lampUnit]: amountOildrop })
-    .addSignerKey(vaultDatum.owner)
     .validFrom(lowerTime)
-    .validTo(upperTime)
-    .complete();
+    .validTo(upperTime);
+  // Chủ là `Credential`: khoá ⟹ `addSignerKey(pkh)`; script ⟹ `params.ownerAuth` gắn mục
+  // rút `Script(h)`, thiếu thì NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE`.
+  const tx = await applyOwnerAuth(txBody, resolveOwnerAuth(ownerRefOf(vaultDatum.owner), params.ownerAuth)).complete();
 
   const summary = [
     `═══ WithdrawLamp ═══`,
     `Vault:           ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`,
-    `Owner:           ${vaultDatum.owner}`,
+    `Owner:           ${ownerRefToString(ownerRefOf(vaultDatum.owner))}`,
     `Amount:          ${amountOildrop / 1_000_000n} LAMP (${amountOildrop} oildrop)`,
     `LAMP before:     ${vaultDatum.lamp_balance / 1_000_000n}`,
     `LAMP after:      ${remainingLamp / 1_000_000n}`,

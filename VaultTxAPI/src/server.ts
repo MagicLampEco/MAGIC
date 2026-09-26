@@ -20,6 +20,8 @@ import { handle } from "./http.js";
 import { IssuedTxRegistry, OwnerLockTable } from "./locks.js";
 import { VaultTxService } from "./service.js";
 import { SdkTxBuilder } from "./txBuilder.js";
+import { DidStakeWitnessProvider } from "./owner.js";
+import { ChainDidPaymentAnchorReader } from "./funding.js";
 
 const cfg = loadConfig();
 const vaultPlutusJson = JSON.parse(readFileSync(cfg.vaultPlutusJsonPath, "utf8")) as PlutusJson;
@@ -36,6 +38,17 @@ const locks = new OwnerLockTable(cfg.lockTtlMs);
 const issued = new IssuedTxRegistry(cfg.lockTtlMs * 4);
 
 const service = new VaultTxService({
+  // Nhân chứng chủ script: chỉ khi bản deploy khai `did_stake`. Vắng ⟹ chủ script nhận 501.
+  ownerWitness: cfg.deployment.didStake === undefined ? undefined : new DidStakeWitnessProvider({
+    network: cfg.network,
+    chain,
+    anchorNftPolicy: cfg.deployment.didStake.anchorNftPolicy,
+  }),
+  // `funding` did_payment đọc anchor DID dưới CÙNG tham số theo mạng. Vắng ⟹ 501 FUNDING_UNAVAILABLE.
+  didPaymentAnchor: cfg.deployment.didStake === undefined ? undefined : new ChainDidPaymentAnchorReader({
+    chain,
+    anchorNftPolicy: cfg.deployment.didStake.anchorNftPolicy,
+  }),
   network: cfg.network,
   deployment: cfg.deployment,
   chain,

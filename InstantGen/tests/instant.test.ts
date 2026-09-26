@@ -54,7 +54,7 @@ function makeSchedule(overrides: Partial<GenSchedule> = {}): GenSchedule {
 
 function makeVault(overrides: Partial<VaultDatum> = {}): VaultDatum {
   return {
-    owner:                 "aabbccdd",
+    owner:                 { VerificationKey: ["0a".repeat(28)] },
     lamp_balance:          100_000_000_000n,  // 100,000 LAMP — eligibility only
     lamp_locked:           0n,
     loyalty_holdings:      [{ amount: 100_000_000_000n, acquired_epoch: 50n, is_locked: false }],

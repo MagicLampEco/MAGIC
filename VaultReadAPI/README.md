@@ -43,11 +43,19 @@ cổng fail-closed ở §5.
 
 ## 3. Hợp đồng
 
-### `GET /vault/by-owner/{owner_pkh}`
+### `GET /vault/by-owner/{owner}`
 
 | tham số | bắt buộc | nghĩa |
 |---|---|---|
-| `owner_pkh` (đường dẫn) | có | 56 ký tự hex thường — khoá băm thanh toán 28 byte của chủ vault |
+| `owner` (đường dẫn) | có | `key:<56 hex>` hoặc `script:<56 hex>` — chủ `Credential` của vault. `<56 hex>` trần là bí danh của `key:<56 hex>` (đường đời cũ `owner_pkh`) |
+
+> Chủ `key:h` và chủ `script:h` cùng 28 byte là **hai chủ khác nhau**: mỗi truy vấn chỉ trả
+> vault của đúng chủ đó. Thân bài mang `owner: { type, hash }` ở gốc và trên từng vault;
+> `owner_pkh` giữ lại cho bên đọc đời cũ và là `null` khi chủ là script — bên đọc đời cũ
+> gặp `null` thì phải đọc `owner`, đừng coi là "không có chủ".
+>
+> Gọi trong tiến trình (`resolveReadOwner` ở `src/service.ts`) nhận cả `owner` lẫn bí danh
+> `ownerPkh`; hai trường cùng có mà chỉ hai chủ khác nhau ⟹ `400 OWNER_ALIAS_MISMATCH`.
 | `vault_type` (truy vấn) | không | `Schedule` \| `Instant`. Bỏ trống = đọc mọi loại đã cấu hình |
 
 > 🔴 **`vault_kind` trong thân bài là BẮT BUỘC, và nó không thừa so với `scopes_read`.**
@@ -74,7 +82,8 @@ cổng fail-closed ở §5.
 | **không đọc được chuỗi** | `502` | `{ error: { code: "CHAIN_UNAVAILABLE", … } }` |
 | datum của một vault **không giải mã được** | `502` | `{ error: { code: "VAULT_DATUM_UNDECODABLE", … } }` |
 | hai UTxO cùng một NFT danh-tính | `409` | `{ error: { code: "VAULT_IDENTITY_DUPLICATE", … } }` |
-| `owner_pkh` / `at_epoch` sai định dạng | `400` | `BAD_REQUEST` |
+| `owner` / `at_epoch` sai định dạng (tag lạ, hex sai, chữ hoa) | `400` | `BAD_REQUEST` |
+| `owner` và bí danh `ownerPkh` (gọi trong tiến trình) chỉ hai chủ khác nhau | `400` | `OWNER_ALIAS_MISMATCH` |
 | thiếu/sai thẻ bài | `401` | `UNAUTHORIZED` |
 | `vault_type` không có trong cấu hình | `404` | `UNKNOWN_VAULT_SCOPE` |
 | method khác `GET` | `405` | `METHOD_NOT_ALLOWED` |

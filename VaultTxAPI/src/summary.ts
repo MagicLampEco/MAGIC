@@ -21,6 +21,7 @@ import { CML, valueToAssets } from "@lucid-evolution/lucid";
 
 import { TxSummaryUndecodableError } from "./errors.js";
 import { decodeVaultDatumOrThrow, type DecodedVaultDatum } from "./vaultDatumShape.js";
+import { ownerRefFromPlutusData, type OwnerRef } from "@magiclamp/protocol-utils";
 import { lovelaceToAda, nanogicToMagic, oildropToLamp, raw } from "./units.js";
 
 /** Nhãn của đường HTTP đã gọi. Đây là thứ DUY NHẤT trong `summary` không suy từ CBOR,
@@ -74,7 +75,10 @@ export interface TxSummary {
   vault: {
     address: string;
     output_index: number;
-    owner_pkh: string;
+    /** Chủ trong datum output — `Credential` dạng JSON. */
+    owner: OwnerRef;
+    /** Bí danh cũ: `owner.hash` khi chủ là khoá; `null` khi chủ là script. */
+    owner_pkh: string | null;
     last_updated_epoch: string;
     batch_count_before: number;
     batch_count_after: number;
@@ -213,7 +217,8 @@ export function summarizeTx(txCborHex: string, ctx: SummaryContext): TxSummary {
     vault: {
       address: vaultHit.view.address,
       output_index: vaultHit.view.index,
-      owner_pkh: after.owner,
+      owner: { type: after.owner.type, hash: after.owner.hash },
+      owner_pkh: after.owner.type === "key" ? after.owner.hash : null,
       last_updated_epoch: raw(after.last_updated_epoch),
       // Đọc từ datum ĐẦU RA đã giải mã lại từ chính CBOR sắp ký, không từ tham số
       // của yêu cầu — cùng nguyên tắc với mọi số khác trong bản tóm tắt này.
@@ -375,4 +380,118 @@ function magicDelta(before: DecodedVaultDatum, after: DecodedVaultDatum): {
   }
 
   return { minted, burned, expiredDropped, totalAfter };
+}
+
+// ── Tạo vault: tóm tắt SUY TỪ CBOR, cùng luật với `summarizeTx` ──────────────────
+//
+// Genesis không có datum vault đầu vào để so, nên bản này không tính "chênh lệch" mà ĐỌC
+// thẳng thứ sắp nằm trên chuỗi: output ở địa chỉ vault (đúng MỘT), NFT danh-tính (đúng 1,
+// và được ĐÚC trong chính tx này), số LAMP nạp, chủ trong datum, và danh sách khoá phải
+// ký. Bất kỳ vế nào lệch với thứ bên dựng khai ⟹ `TX_SUMMARY_UNDECODABLE`: người dùng không
+// được ký một giao dịch mà bản tóm tắt của nó không tự đứng được.
+
+export interface CreateVaultSummaryContext {
+  vaultAddress: string;
+  vaultNftUnit: string;
+  lampUnit: string;
+  network: string;
+}
+
+export interface CreateVaultSummary {
+  requested_intent: "create_vault";
+  network: string;
+  fee_lovelace: string;
+  fee_ada: string;
+  vault: {
+    address: string;
+    output_index: number;
+    nft_unit: string;
+    owner: OwnerRef;
+    lamp_deposit_oildrop: string;
+    lamp_deposit_lamp: string;
+    lovelace: string;
+    ada: string;
+  };
+  /** Khoá băm phải ký (trường `required_signers` của thân tx), theo thứ tự trong tx. */
+  required_signers: string[];
+  outputs: OutputView[];
+  /** Chỉ khi yêu cầu có `funding`: đọc lại TỪ CBOR bởi `funding.ts` ▸ `checkFundingTx`. */
+  funding?: import("./funding.js").FundingSummary;
+}
+
+export function summarizeCreateVaultTx(txCborHex: string, ctx: CreateVaultSummaryContext): CreateVaultSummary {
+  const { body, outputs } = decodeBody(txCborHex);
+  const atVault = outputs.filter(o => o.view.address === ctx.vaultAddress);
+  if (atVault.length !== 1) {
+    throw new TxSummaryUndecodableError(
+      `giao dịch tạo vault có ${atVault.length} output ở địa chỉ vault (cần đúng 1)`,
+      { vault_output_indexes: atVault.map(o => o.view.index).join(",") },
+    );
+  }
+  const out = atVault[0]!;
+  const nft = out.view.assets.find(a => a.unit === ctx.vaultNftUnit);
+  if (nft === undefined || nft.quantity !== "1") {
+    throw new TxSummaryUndecodableError("output vault không mang đúng 1 NFT danh-tính đã khai", { vault_nft: ctx.vaultNftUnit });
+  }
+  const tx = CML.Transaction.from_cbor_hex(txCborHex);
+  const mint = tx.body().mint();
+  const minted = mint === undefined ? {} : valueToAssets(CML.Value.new(0n, mint.as_positive_multiasset()));
+  if (minted[ctx.vaultNftUnit] !== 1n) {
+    throw new TxSummaryUndecodableError(
+      "NFT danh-tính không được ĐÚC trong chính giao dịch này (INV-VAULT-IDENTITY đòi one-shot ở genesis)",
+      { vault_nft: ctx.vaultNftUnit },
+    );
+  }
+  if (out.inlineDatumHex === null) {
+    throw new TxSummaryUndecodableError("output vault không mang datum inline");
+  }
+  let owner: OwnerRef;
+  let lampBalance: bigint;
+  try {
+    const d = CML.PlutusData.from_cbor_hex(out.inlineDatumHex).as_constr_plutus_data();
+    if (d === undefined) throw new Error("datum không phải Constr");
+    const f = d.fields();
+    const f0 = f.get(0).as_constr_plutus_data();
+    const f0h = f0?.fields().get(0).as_bytes();
+    if (f0 === undefined || f0h === undefined || f0.fields().len() !== 1) throw new Error("trường 0 không phải Credential");
+    owner = ownerRefFromPlutusData({ index: Number(f0.alternative()), fields: [bytesToHex(f0h)] });
+    const f1 = f.get(1).as_integer();
+    if (f1 === undefined) throw new Error("trường 1 (lamp_balance) không phải số nguyên");
+    lampBalance = BigInt(f1.to_str());
+  } catch (e) {
+    throw new TxSummaryUndecodableError(`datum vault vừa dựng không đọc được: ${(e as Error).message}`);
+  }
+  const lampInOutput = BigInt(out.view.assets.find(a => a.unit === ctx.lampUnit)?.quantity ?? "0");
+  if (lampInOutput !== lampBalance || lampBalance <= 0n) {
+    throw new TxSummaryUndecodableError(
+      `datum khai lamp_balance = ${lampBalance} nhưng output vault mang ${lampInOutput} oildrop LAMP`,
+    );
+  }
+  const rs = tx.body().required_signers();
+  const requiredSigners: string[] = [];
+  for (let i = 0; rs !== undefined && i < rs.len(); i++) requiredSigners.push(rs.get(i).to_hex());
+  return {
+    requested_intent: "create_vault",
+    network: ctx.network,
+    fee_lovelace: raw(body.fee),
+    fee_ada: lovelaceToAda(body.fee),
+    vault: {
+      address: ctx.vaultAddress,
+      output_index: out.view.index,
+      nft_unit: ctx.vaultNftUnit,
+      owner,
+      lamp_deposit_oildrop: raw(lampBalance),
+      lamp_deposit_lamp: oildropToLamp(lampBalance),
+      lovelace: out.view.lovelace,
+      ada: out.view.ada,
+    },
+    required_signers: requiredSigners,
+    outputs: outputs.map(o => o.view),
+  };
+}
+
+function bytesToHex(b: Uint8Array): string {
+  let s = "";
+  for (const x of b) s += x.toString(16).padStart(2, "0");
+  return s;
 }

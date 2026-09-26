@@ -28,7 +28,8 @@
 //   KEEPER_STEPS          tập bước chạy, mặc định `backing,price,fire`. Thêm `instant` để cấp.
 //                         Tên lạ ⟹ DỪNG với mã 1 và kê ra tập hợp lệ (xem `ALL_STEPS`).
 //   KEEPER_INSTANT_LAMP   lượng LAMP khoá vào vault InstantGen mới ở bước 4 (mặc định 1001).
-//   KEEPER_FIRE_OWNERS    pkh chủ vault được bắn, phân cách dấu phẩy. Bỏ trống ⟹ mọi vault.
+//   KEEPER_FIRE_OWNERS    hash 28 byte BÊN TRONG credential chủ vault (pkh hoặc script hash)
+//                         được bắn, phân cách dấu phẩy. Bỏ trống ⟹ mọi vault.
 //   KEEPER_OP_PRICES_SET  dòng giá đặt vào bảng của MỌI beacon ở bước 2, dạng
 //                         `<op_type>:<base_price>,…` (nanogic). Thêm dòng mới hoặc đổi giá dòng
 //                         đã có, không xoá dòng nào. Đi CÙNG lượt đẩy epoch, vì validator chỉ nhận
@@ -62,6 +63,7 @@ import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js"
 import { VaultDatum as ScheduleVaultDatum } from "../../ScheduleGen/offchain/src/types.js";
 import { countEligibleFires, isExpired, nextFireEpoch } from "../../ScheduleGen/offchain/src/math.js";
 import { VaultDatumSchema as InstantVaultDatumSchema } from "../../InstantGen/offchain/src/types.js";
+import { ownerInnerHash, ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 
 const PRICE_NFT_NAME = "5052494345"; // "PRICE" — ConsumeMAGIC/onchain/validators/price_nft.ak
 
@@ -286,7 +288,7 @@ async function stepFire(lucid: LucidEvolution, nowMs: bigint) {
   );
   const vaultAddr = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
   const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(shardHash));
-  const owners = (process.env.KEEPER_FIRE_OWNERS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const owners = (process.env.KEEPER_FIRE_OWNERS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   const refs = [process.env.REF_VAULT_SCHEDULE_UTXO, process.env.REF_SHARD_UTXO]
     .filter((s): s is string => !!s)
     .map((s) => { const [h, i] = s.split("#"); return { txHash: h!, outputIndex: Number(i) }; });
@@ -308,7 +310,8 @@ async function stepFire(lucid: LucidEvolution, nowMs: bigint) {
   for (const u of atAddr) {
     const vd = decode(u);
     if (!vd) { unreadable++; continue; }
-    if (owners.length > 0 && !owners.includes(vd.owner)) continue;
+    // Chủ là `Credential`; danh sách so theo 28 byte BÊN TRONG (pkh hoặc script hash).
+    if (owners.length > 0 && !owners.includes(ownerInnerHash(vd.owner))) continue;
     vaults++;
     const unit = Object.keys(u.assets).find((k) => k.startsWith(vaultIdPrefix))!;
     const live = vd.magic_batches.filter((b) => !isExpired(b.created_epoch, b.decay_window, epoch)).length;
@@ -436,9 +439,9 @@ async function stepInstant(lucid: LucidEvolution, ownerPkh: string, epoch: bigin
       if (!u.datum || !Object.keys(u.assets).some((k) => k.startsWith(vaultHash))) return false;
       try {
         const vd = Data.from(u.datum, InstantVaultDatumSchema as never) as {
-          owner: string; magic_batches: { created_epoch: bigint; current_amount: bigint }[];
+          owner: unknown; magic_batches: { created_epoch: bigint; current_amount: bigint }[];
         };
-        return vd.owner === ownerPkh && vd.magic_batches.some((b) => b.created_epoch === epoch);
+        return sameOwner(ownerRefOf(vd.owner), { type: "key", hash: ownerPkh }) && vd.magic_batches.some((b) => b.created_epoch === epoch);
       } catch { return false; }
     });
     if (hit && hit.txHash !== vaultTx) {

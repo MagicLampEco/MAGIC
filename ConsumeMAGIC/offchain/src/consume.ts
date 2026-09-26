@@ -31,8 +31,14 @@
 import {
   Constr, Data, toUnit, validatorToScriptHash, validatorToAddress,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type Assets,
+  type TxBuilder,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch, epochValidityWindow, type Network } from "@magiclamp/protocol-utils";
+import {
+  applyOwnerAuth, resolveOwnerAuth, ownerRefOf, ownerRefFromPlutusData, sameOwner,
+  ownerRefToString, ownerCredentialOf, OwnerAuthError,
+  type OwnerAuth, type OwnerRef,
+} from "@magiclamp/protocol-utils";
 import { Q, assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
 import {
   ConsumeRedeemerSchema,
@@ -77,6 +83,15 @@ export interface ConsumeParams {
   /** Value output của vault — mặc định copy y nguyên vaultUtxo.assets (LAMP+ADA preserved;
    *  BurnBatch KHÔNG đụng LAMP, C-BURN-NO-LAMP). Chỉ override khi caller có lý do rõ. */
   vaultOutAssets?: Assets;
+  /** Cách chứng minh quyền chủ cho `BurnBatch` ở PHÍA VAULT (chủ vault == chủ thread,
+   *  CONSUME-010). Chủ là `Credential`:
+   *    · bỏ trống, chủ là khoá  ⟹ builder `addSignerKey(pkh)` lấy từ datum thread;
+   *    · bỏ trống, chủ là script ⟹ NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE` — builder không
+   *      bịa redeemer / chứng từ của stake-script chủ;
+   *    · truyền mà khác chủ ⟹ NÉM `OWNER_AUTH_MISMATCH`.
+   *  Nhánh script gọi `attachWithdraw` ĐÚNG MỘT LẦN; một mục rút `Script(h)` thoả cả
+   *  vault lẫn mọi cổng khác cần quyền chủ trong cùng tx. */
+  ownerAuth?: OwnerAuth<TxBuilder>;
   /** 🪦 BIA MỘ (2026-09-16, Nợ #14) — GIÁ TRỊ HỢP LỆ DUY NHẤT nay là chính chủ thread,
    *  và bỏ trống cũng được vì builder tự thêm chữ ký đó. Truyền một khoá KHÁC sẽ ném.
    *
@@ -207,7 +222,7 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     lucid, engageUtxo, vaultUtxo, priceBeaconUtxo,
     consumeScript, vaultScript, opType, opCount,
     vaultBurnRedeemerCbor, vaultOutDatumCbor, vaultOutAssets,
-    ownerSignerKeyHash, sponsoredNoThreadSignature = false, collateralUtxo,
+    ownerSignerKeyHash, sponsoredNoThreadSignature = false, collateralUtxo, ownerAuth,
     engageNftUnit, consumeRefUtxo, vaultRefUtxo, network, tipPosixMs,
   } = params;
 
@@ -279,17 +294,21 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   //    (không còn vế `|| chữ ký chủ thread`). Nên một tx có `VaultDatum.owner !=
   //    EngageDatum.owner` bị TỪ CHỐI 100%, không có tổ hợp chữ ký nào cứu được.
   //    Dựng rồi nộp một tx như thế là mất collateral để biết một điều đọc được ở đây.
-  const vaultOwner = vaultOwnerFromDatum(vaultUtxo);
-  const threadOwner = oldDatum.owner.toLowerCase();
-  if (vaultOwner !== threadOwner) {
+  //    Chủ là `Credential`: so CẢ tag lẫn 28 byte (`sameOwner`) — đúng phép `==` của
+  //    `all_vault_owners_are`. Khoá và script trùng 28 byte là HAI chủ khác nhau.
+  const vaultOwner: OwnerRef = vaultOwnerFromDatum(vaultUtxo);
+  const threadOwner: OwnerRef = ownerRefOf(oldDatum.owner);
+  const threadOwnerStr = ownerRefToString(threadOwner);
+  const vaultOwnerStr = ownerRefToString(vaultOwner);
+  if (!sameOwner(vaultOwner, threadOwner)) {
     throw new Error(
       `CONSUME-010: thread Engage và vault phải mở bằng CÙNG MỘT khoá.\n` +
-        `  owner của thread (EngageDatum) : ${threadOwner}\n` +
-        `  owner của vault  (VaultDatum)  : ${vaultOwner}\n` +
+        `  owner của thread (EngageDatum) : ${threadOwnerStr}\n` +
+        `  owner của vault  (VaultDatum)  : ${vaultOwnerStr}\n` +
         `  thread : ${engageUtxo.txHash}#${engageUtxo.outputIndex}\n` +
         `  vault  : ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}\n` +
-        `Phải làm gì: dùng vault của CHÍNH chủ thread (${threadOwner}), hoặc mở một ` +
-        `thread Engage mới bằng khoá ${vaultOwner} rồi tiêu trên thread đó. ` +
+        `Phải làm gì: dùng vault của CHÍNH chủ thread (${threadOwnerStr}), hoặc mở một ` +
+        `thread Engage mới bằng chủ ${vaultOwnerStr} rồi tiêu trên thread đó. ` +
         `Không có đường xoay \`owner\` của một thread đã mở — cả \`Consume\` lẫn ` +
         `\`BindDID\` đều ép \`owner\` bảo toàn, và không có redeemer thứ ba. ` +
         `Không còn đường "trả phí hộ" nào ở tầng này: nhánh uỷ nhiệm ` +
@@ -381,13 +400,17 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
       `sponsoredNoThreadSignature đã chết 2026-09-16 cùng nhánh uỷ nhiệm ` +
         `(\`personal_delegate\`). \`BurnBatch\` ở phía vault nay đòi ĐÚNG chữ ký ` +
         `của chủ vault, và CONSUME-010 ép chủ vault == chủ thread ` +
-        `(${threadOwner}). Bỏ cờ này đi; không còn đường trả phí hộ ở tầng chữ ký.`,
+        `(${threadOwnerStr}). Bỏ cờ này đi; không còn đường trả phí hộ ở tầng chữ ký.`,
     );
   }
-  if (ownerSignerKeyHash && ownerSignerKeyHash.toLowerCase() !== threadOwner) {
+  // Chủ script không có "khoá ký" nào — mọi giá trị ở trường bia mộ này đều sai với nó.
+  if (
+    ownerSignerKeyHash &&
+    !sameOwner({ type: "key", hash: ownerSignerKeyHash.toLowerCase() }, threadOwner)
+  ) {
     throw new Error(
       `ownerSignerKeyHash khác chủ thread đã chết 2026-09-16 cùng nhánh uỷ nhiệm.\n` +
-        `  chủ thread     : ${threadOwner}\n` +
+        `  chủ thread     : ${threadOwnerStr}\n` +
         `  khoá truyền vào: ${ownerSignerKeyHash.toLowerCase()}\n` +
         `Chỉ chủ vault ký được \`BurnBatch\`, và chủ vault phải là chủ thread ` +
         `(CONSUME-010). Truyền đúng khoá đó, hoặc bỏ trống — builder tự thêm.`,
@@ -399,7 +422,10 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   // trên). Nó phục vụ ràng buộc auth của `BurnBatch` Ở PHÍA VAULT, nơi vault nay
   // chỉ nhận `owner`. Lấy thẳng từ datum đang tiêu nên không có đường truyền nhầm
   // khoá của người khác.
-  txBuilder = txBuilder.addSignerKey(threadOwner);
+  //
+  // Chủ là `Credential`: khoá ⟹ `addSignerKey`; script ⟹ `attachWithdraw` đúng một lần,
+  // KHÔNG `addSignerKey(h)` (`applyOwnerAuth`).
+  txBuilder = applyOwnerAuth(txBuilder, resolveOwnerAuth(threadOwner, ownerAuth));
 
   // Collateral thuần ADA (tránh CollateralContainsNonADA khi ví có UTxO token).
   const tx = collateralUtxo
@@ -428,9 +454,9 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
  * ở phase-2. Ném ra lý do cụ thể, đừng nuốt.
  *
  * @throws CONSUME-010 nếu vault UTxO thiếu datum, datum không phải Constr, không có
- *         trường nào, hoặc trường 0 không phải ByteArray.
+ *         trường nào, hoặc trường 0 không phải `Credential` (Constr 0|1 [bytes 28]).
  */
-function vaultOwnerFromDatum(vaultUtxo: UTxO): string {
+function vaultOwnerFromDatum(vaultUtxo: UTxO): OwnerRef {
   const at = `${vaultUtxo.txHash}#${vaultUtxo.outputIndex}`;
   if (!vaultUtxo.datum) {
     throw new Error(
@@ -455,14 +481,20 @@ function vaultOwnerFromDatum(vaultUtxo: UTxO): string {
         `không, hay đang trỏ nhầm sang một script khác?`,
     );
   }
-  const owner = decoded.fields[0];
-  if (typeof owner !== "string") {
-    throw new Error(
-      `CONSUME-010: trường 0 của datum vault ${at} không phải ByteArray ` +
-        `(nhận ${typeof owner}). Trường 0 của \`VaultDatum\` là \`owner\` (pkh 28 byte).`,
-    );
+  // Gương của `expect vault_owner: Credential = owner_data` ở `all_vault_owners_are`.
+  // Giữ mã lỗi có tên của `OwnerAuthError` để tầng API ánh xạ, thêm ngữ cảnh CONSUME-010.
+  try {
+    return ownerRefFromPlutusData(decoded.fields[0]);
+  } catch (e) {
+    if (e instanceof OwnerAuthError) {
+      throw new OwnerAuthError(
+        e.code,
+        `CONSUME-010: trường 0 của datum vault ${at} không phải Credential ` +
+          `(Constr 0|1 [bytes 28]). ${e.message.replace(`${e.code}: `, "")}`,
+      );
+    }
+    throw e;
   }
-  return owner.toLowerCase();
 }
 
 /**
@@ -511,8 +543,12 @@ export interface MintEngageParams {
   consumeScript: Validator;
   /** UTxO seed one-shot: PHẢI bị TIÊU trong chính tx này (`list.any(tx.inputs, ...)`). */
   seedUtxo: UTxO;
-  /** Owner pkh (hex) — `validate_mint_engage_id` ép `list.has(tx.extra_signatories, owner)`. */
-  ownerPkh: string;
+  /** Chủ thread (`EngageDatum.owner` là `Credential`). `validate_mint_engage_id` ép
+   *  `owner_authorized(tx, ed.owner)`: khoá ⟹ chữ ký; script ⟹ mục rút `Script(h)`.
+   *  Truyền ĐÚNG MỘT trong hai: `ownerAuth`, hoặc `ownerPkh` (bí danh nhánh khoá). */
+  ownerAuth?: OwnerAuth<TxBuilder>;
+  /** Bí danh của `ownerAuth: { kind: "key", pkh }` — giữ cho người gọi cũ. */
+  ownerPkh?: string;
   /**
    * `did_commit` — đặt lúc genesis, và **bất biến DƯỚI nhánh `Consume`** (nhánh đó ép
    * `out == in`). KHÔNG phải bất biến tuyệt đối: redeemer `BindDID` là đường ghi thứ hai,
@@ -559,13 +595,23 @@ export async function buildMintEngageTx(
   params: MintEngageParams,
 ): Promise<MintEngageResult> {
   const {
-    lucid, consumeScript, seedUtxo, ownerPkh,
+    lucid, consumeScript, seedUtxo, ownerPkh, ownerAuth: ownerAuthIn,
     didCommit = "", lovelace = 2_000_000n, network,
   } = params;
 
-  if (!/^[0-9a-fA-F]{56}$/.test(ownerPkh)) {
+  if ((ownerAuthIn === undefined) === (ownerPkh === undefined)) {
+    throw new Error(
+      `MINT-ENGAGE-003: truyền ĐÚNG MỘT trong \`ownerAuth\` hoặc \`ownerPkh\` ` +
+        `(nhận ${ownerAuthIn === undefined ? "cả hai trống" : "cả hai"}).`,
+    );
+  }
+  if (ownerPkh !== undefined && !/^[0-9a-fA-F]{56}$/.test(ownerPkh)) {
     throw new Error(`MINT-ENGAGE-001: ownerPkh phải là hex 28 byte, nhận "${ownerPkh}"`);
   }
+  const ownerAuth: OwnerAuth<TxBuilder> =
+    ownerAuthIn ?? { kind: "key", pkh: ownerPkh!.toLowerCase() };
+  // Hình dạng sai (hash không 28 byte, kind lạ) ném ở đây, trước khi chạm Lucid.
+  const ownerCred = ownerCredentialOf(ownerAuth);
   if (didCommit !== "" && !/^([0-9a-fA-F]{2})+$/.test(didCommit)) {
     throw new Error(`MINT-ENGAGE-002: did_commit phải là hex (hoặc rỗng), nhận "${didCommit}"`);
   }
@@ -583,7 +629,7 @@ export async function buildMintEngageTx(
   // tại — nó là "epoch consume gần nhất", thread chưa consume lần nào ⇒ 0 (validator
   // ép `expect ed.last_epoch == 0`).
   const genesisDatum: EngageDatumT = {
-    owner: ownerPkh.toLowerCase(),
+    owner: ownerCred,
     consumed_count: 0n,
     last_epoch: 0n,
     did_commit: didCommit.toLowerCase(),
@@ -594,7 +640,7 @@ export async function buildMintEngageTx(
     seed: { transaction_id: seed.txHash, output_index: BigInt(seedUtxo.outputIndex) },
   });
 
-  const tx = await lucid
+  const txBuilder = lucid
     .newTx()
     .collectFrom([seedUtxo]) // one-shot: seed PHẢI nằm trong inputs
     .mintAssets({ [unit]: 1n }, mintRedeemer)
@@ -603,9 +649,8 @@ export async function buildMintEngageTx(
       engageAddress,
       { kind: "inline", value: encodeEngageDatum(genesisDatum) },
       { lovelace, [unit]: 1n }, // ≤ 2 policy: ADA + thread NFT
-    )
-    .addSignerKey(ownerPkh.toLowerCase())
-    .complete();
+    );
+  const tx = await applyOwnerAuth(txBuilder, ownerAuth).complete();
 
   const summary =
     `mint engage thread ${unit} | seed=${seed.txHash}#${seedUtxo.outputIndex} | ` +
@@ -634,6 +679,10 @@ export interface BindDidParams {
   consumeRefUtxo?: UTxO;
   /** Collateral UTxO thuần ADA. */
   collateralUtxo?: UTxO;
+  /** Cách chứng minh quyền chủ thread. Bỏ trống: chủ là khoá ⟹ `addSignerKey(pkh)` lấy
+   *  từ datum; chủ là script ⟹ NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. Khác chủ ⟹ NÉM
+   *  `OWNER_AUTH_MISMATCH`. */
+  ownerAuth?: OwnerAuth<TxBuilder>;
 }
 
 export interface BindDidResult {
@@ -660,7 +709,7 @@ export interface BindDidResult {
  */
 export async function buildBindDidTx(params: BindDidParams): Promise<BindDidResult> {
   const {
-    lucid, engageUtxo, consumeScript, didCommit, consumeRefUtxo, collateralUtxo,
+    lucid, engageUtxo, consumeScript, didCommit, consumeRefUtxo, collateralUtxo, ownerAuth,
   } = params;
 
   const did = didCommit.toLowerCase();
@@ -726,16 +775,17 @@ export async function buildBindDidTx(params: BindDidParams): Promise<BindDidResu
       { kind: "inline", value: encodeEngageDatum(newEngageDatum) },
       { ...engageUtxo.assets },
     )
-    // Chữ ký của CHÍNH chủ thread — lấy từ datum đang tiêu, không nhận từ caller
-    // (nhận từ caller là mở một chỗ để truyền nhầm khoá người khác).
-    .addSignerKey(oldDatum.owner.toLowerCase());
+    ;
+  // Quyền của CHÍNH chủ thread — chủ lấy từ datum đang tiêu; `ownerAuth` của caller chỉ
+  // được nhận khi trùng chủ đó (`resolveOwnerAuth` ném `OWNER_AUTH_MISMATCH`).
+  txBuilder = applyOwnerAuth(txBuilder, resolveOwnerAuth(ownerRefOf(oldDatum.owner), ownerAuth));
 
   const tx = collateralUtxo
     ? await txBuilder.complete({ presetWalletInputs: [collateralUtxo] })
     : await txBuilder.complete();
 
   const summary =
-    `bind did thread=${resolvedNftUnit} | owner=${oldDatum.owner} | ` +
+    `bind did thread=${resolvedNftUnit} | owner=${ownerRefToString(ownerRefOf(oldDatum.owner))} | ` +
     `did_commit "" → ${did} | count=${oldDatum.consumed_count} ` +
     `nanogic=${oldDatum.consumed_nanogic} last_epoch=${oldDatum.last_epoch} (giữ nguyên)`;
 

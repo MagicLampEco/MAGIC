@@ -2,7 +2,7 @@
 // Field order == Plutus Data encoding order. Đổi thứ tự một bên là hỏng giải mã
 // bên kia (§11) — twin ở offchain/src/types.ts.
 
-use cardano/address.{Address}
+use cardano/address.{Address, Credential}
 use cardano/transaction.{OutputReference}
 
 pub type Natural = Int
@@ -40,7 +40,10 @@ pub type VaultAttribution {
 // ── PrepaidVaultDatum ─────────────────────────────────────────
 // KHÔNG có trường LAMP nào — C-PP-14 (PrepaidGen không chạm backing chung).
 pub type PrepaidVaultDatum {
-  owner              : ByteArray,
+  // Chủ vault: khoá (`VerificationKey`) HOẶC script (`Script`) — xác thực bằng
+  // `owner_auth.owner_authorized`. Giữ NGUYÊN vị trí trường 0: `consume` đọc chủ vault
+  // theo vị trí (`all_vault_owners_are`), không import kiểu này.
+  owner              : Credential,
   did_commit         : ByteArray,            // §7.5 — RỖNG lúc genesis, đặt MỘT LẦN
                                              // qua `SetDidCommit`, rồi bất biến
   prepaid_credits    : List<PrepaidCredit>,

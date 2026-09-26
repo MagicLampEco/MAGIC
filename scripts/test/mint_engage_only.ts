@@ -99,7 +99,7 @@ async function main() {
   }
 
   const datum = Data.to({
-    owner:            ownerPkh,
+    owner:            { VerificationKey: [ownerPkh] },   // Credential; nhánh khoá ⟹ ví ký
     consumed_count:   0n,
     last_epoch:       0n,
     did_commit:       didCommit,

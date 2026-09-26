@@ -20,8 +20,11 @@ import {
 /** did_commit đúng khuôn 32 byte (64 ký tự hex) — gương của `ct_did32` trong consume.ak. */
 const DID_32 = "d1".repeat(32);
 
+/** Chủ thread 28 byte (lược đồ ép đúng 28). */
+const OWNER_H = "0bada55e".repeat(7);
+
 const engage: EngageDatumT = {
-  owner: "0bada55e",
+  owner: { VerificationKey: [OWNER_H] },
   consumed_count: 10n,
   last_epoch: 0n,
   did_commit: "", // MVP rỗng
@@ -53,10 +56,10 @@ describe("EngageDatum codec — 5 trường (constr 0: owner, consumed_count, la
     const raw = Data.from(encodeEngageDatum(engage)) as { fields: unknown[]; index: number };
     expect(raw.index).toBe(0);
     expect(raw.fields).toHaveLength(5);
-    expect(raw.fields).toEqual(["0bada55e", 10n, 0n, "", 0n]);
+    expect(raw.fields).toEqual([new Constr(0, [OWNER_H]), 10n, 0n, "", 0n]);
 
     const d = decodeEngageDatum(encodeEngageDatum(engage));
-    expect(d.owner).toBe("0bada55e");
+    expect(d.owner).toEqual({ VerificationKey: [OWNER_H] });
     expect(d.consumed_count).toBe(10n);
     expect(d.last_epoch).toBe(0n);
     expect(d.did_commit).toBe("");
@@ -82,7 +85,7 @@ describe("EngageDatum codec — 5 trường (constr 0: owner, consumed_count, la
 
   it("datum genesis SẠCH: ba trục kế toán đều 0 (validate_mint_engage_id)", () => {
     const genesis: EngageDatumT = {
-      owner: "0bada55e",
+      owner: { VerificationKey: [OWNER_H] },
       consumed_count: 0n,
       last_epoch: 0n,
       did_commit: "",
@@ -92,6 +95,23 @@ describe("EngageDatum codec — 5 trường (constr 0: owner, consumed_count, la
     expect(raw.fields[1]).toBe(0n); // consumed_count
     expect(raw.fields[2]).toBe(0n); // last_epoch — state tích luỹ, KHÔNG phải epoch hiện tại
     expect(raw.fields[4]).toBe(0n); // consumed_nanogic
+  });
+});
+
+describe("EngageDatum.owner là Credential — mã hoá ghim theo blueprint", () => {
+  it("VerificationKey(h): trường 0 = d8799f581c<h>ff", () => {
+    expect(encodeEngageDatum(engage).startsWith(`d8799fd8799f581c${OWNER_H}ff`)).toBe(true);
+  });
+
+  it("CỰC ĐỐI — Script(h) cùng 28 byte: trường 0 = d87a9f581c<h>ff", () => {
+    const s = encodeEngageDatum({ ...engage, owner: { Script: [OWNER_H] } });
+    expect(s.startsWith(`d8799fd87a9f581c${OWNER_H}ff`)).toBe(true);
+    expect(decodeEngageDatum(s).owner).toEqual({ Script: [OWNER_H] });
+  });
+
+  it("ÂM — datum lược đồ cũ (owner = pkh trần) KHÔNG giải mã được", () => {
+    const old = Data.to(new Constr(0, [OWNER_H, 10n, 0n, "", 0n]));
+    expect(() => decodeEngageDatum(old)).toThrow();
   });
 });
 

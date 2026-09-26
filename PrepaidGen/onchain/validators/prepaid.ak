@@ -45,13 +45,14 @@ use aiken/collection/list
 use aiken/crypto
 use aiken/interval.{Finite, IntervalBoundType}
 use aiken/primitive/bytearray
-use cardano/address.{Address, Script, VerificationKey}
+use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Spend, Transaction,
   placeholder,
 }
 
+use magiclamp/protocol/owner_auth.{owner_authorized}
 use magiclamp/protocol/types.{
   BurnBatch, FundClaim, FundLock, FundSettle, MagicBatch, MintVaultId,
   PaidFundDatum, PaidFundRedeemer, PrepaidCredit, PrepaidDraw, PrepaidLock,
@@ -642,7 +643,7 @@ fn validate_set_delegate(
   tx              : Transaction,
 ) -> Bool {
   // CHỈ owner — delegate không được tự uỷ quyền tiếp.
-  expect list.has(tx.extra_signatories, datum.owner)
+  expect owner_authorized(tx, datum.owner)
 
   // 🪦 BIA MỘ — nhánh này nay CHỈ XOÁ ĐƯỢC, không đặt được (2026-09-16, Nợ #14).
   // `SetDelegate` (constr 4) ở lại nguyên chỗ vì chỉ số constructor là hợp đồng
@@ -725,7 +726,7 @@ fn validate_set_did_commit(
   // quyền ở đường Paymaster là TRẢ TIỀN hộ, còn ở đây là KHAI MÌNH LÀ AI. Và vì
   // (1) chỉ cho ghi một lần, một delegate ghi trước là nạn nhân mất luôn đường
   // gắn DID thật — hỏng không hoàn tác được.
-  expect list.has(tx.extra_signatories, datum.owner)
+  expect owner_authorized(tx, datum.owner)
 
   // ── (3) GIÁ TRỊ MỚI KHÁC RỖNG ───────────────────────────────────────────
   // Không có vế này thì "gắn DID" bằng chuỗi rỗng là một no-op hợp lệ: vô hại
@@ -1051,10 +1052,11 @@ fn validate_mint_vault_id(
   expect vd: PrepaidVaultDatum = datum_data
 
   // ── GENESIS SẠCH ────────────────────────────────────────────────────────
-  // owner: một pkh mà người tạo thật sự điều khiển. Không có vế này thì bất kỳ ai
+  // owner: một credential mà người tạo thật sự điều khiển — khoá ký, hoặc script gật
+  // qua mục rút (`owner_authorized`). Không có vế này thì bất kỳ ai
   // cũng dựng được vault mang tên người khác (mọi nhánh spend sau đó đọc `owner`
   // làm quyền).
-  expect list.has(tx.extra_signatories, vd.owner)
+  expect owner_authorized(tx, vd.owner)
 
   expect vd.prepaid_credits == []
   expect vd.magic_batches == []
@@ -1071,9 +1073,9 @@ fn validate_mint_vault_id(
   // Bản trước để trường này TỰ DO ở đây, với lý lẽ "§7.5 nói đặt một lần lúc tạo
   // vault, mà lúc tạo vault chính là giao dịch này". Lý lẽ đó đúng về thời điểm
   // và sai về THẨM QUYỀN. Chỗ duy nhất kiểm danh tính trong giao dịch đúc là
-  // `list.has(tx.extra_signatories, vd.owner)` ngay trên, và không vế nào buộc
+  // `owner_authorized(tx, vd.owner)` ngay trên, và không vế nào buộc
   // `owner` có liên hệ gì với `did_commit` — nên cùng một chữ ký vừa chứng minh
-  // "tôi điều khiển pkh này" vừa được tính là chứng cho một cam kết DID bất kỳ.
+  // "tôi điều khiển owner này" vừa được tính là chứng cho một cam kết DID bất kỳ.
   //
   // Và nó BẤT BIẾN TRỌN ĐỜI: năm nhánh spend còn lại đều ép `out.did_commit ==
   // datum.did_commit` (C-PP-8), nên một vault sinh ra với cam kết bịa thì không
@@ -1352,7 +1354,7 @@ fn no_fund_mint(tx: Transaction, fund_nft_policy: PolicyId) -> Bool {
 // Từ 2026-09-26 hàm này gác thêm lượt `PrepaidLock` MỞ DÒNG MỚI (C-PP-9, xem
 // `validate_lock`).
 fn authed_owner(datum: PrepaidVaultDatum, tx: Transaction) -> Bool {
-  list.has(tx.extra_signatories, datum.owner)
+  owner_authorized(tx, datum.owner)
 }
 
 // Có ĐÚNG MỘT input tại script `vault_hash`, và redeemer Spend của nó là nhánh
@@ -1484,7 +1486,7 @@ fn t_vd(
   batches : List<MagicBatch>,
 ) -> PrepaidVaultDatum {
   PrepaidVaultDatum {
-    owner: t_owner,
+    owner: VerificationKey(t_owner),
     did_commit: t_did,
     prepaid_credits: credits,
     magic_batches: batches,
@@ -3311,7 +3313,7 @@ fn t_seed_input(ref: OutputReference) -> Input {
 // Datum genesis SẠCH: mọi cần gạt ở trạng thái khởi tạo, kể cả `did_commit`.
 fn t_genesis_vd() -> PrepaidVaultDatum {
   PrepaidVaultDatum {
-    owner: t_owner,
+    owner: VerificationKey(t_owner),
     did_commit: #"",
     prepaid_credits: [],
     magic_batches: [],
@@ -4308,5 +4310,183 @@ test fg_mint_beneficiary_bad_hash_length() fail {
   fg_mint_ben(
     Address { payment_credential: VerificationKey(#"bebe"), stake_credential: None },
     None,
+  )
+}
+
+// ══════════════════════════════════════════════════════════════
+// CHỦ LÀ `Credential` — `owner_authorized` trên genesis + hai nhánh spend
+//   Mỗi bài âm khác cặp dương của nó ĐÚNG MỘT biến (mục rút hoặc danh sách ký),
+//   nên nó chỉ đỏ được ở cổng owner. Cổng `platform` của quỹ KHÔNG đổi (vẫn pkh).
+// ══════════════════════════════════════════════════════════════
+
+const t_owner_script: ByteArray =
+  #"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+
+const t_other_script: ByteArray =
+  #"5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d"
+
+fn with_withdrawals(tx: Transaction, wds: Pairs<Credential, Int>) -> Transaction {
+  Transaction { ..tx, withdrawals: wds }
+}
+
+// ── genesis ──
+fn oc_mint_tx(owner: Credential, signers: List<ByteArray>) -> Transaction {
+  let name = t_vault_nft()
+  t_mint_tx(
+    [t_seed_input(t_seed_ref())],
+    [t_genesis_out(PrepaidVaultDatum { ..t_genesis_vd(), owner: owner }, name)],
+    assets.from_asset(t_vault_hash, name, 1),
+    signers,
+  )
+}
+
+test pp_owner_script_mint_withdraw_zero_ok() {
+  run_mint(
+    t_seed_ref(),
+    with_withdrawals(
+      oc_mint_tx(Script(t_owner_script), []),
+      [Pair(Script(t_owner_script), 0)],
+    ),
+  )
+}
+
+test pp_owner_script_mint_no_withdrawal_rejected() fail {
+  run_mint(t_seed_ref(), oc_mint_tx(Script(t_owner_script), []))
+}
+
+test pp_owner_script_mint_other_withdrawal_rejected() fail {
+  run_mint(
+    t_seed_ref(),
+    with_withdrawals(
+      oc_mint_tx(Script(t_owner_script), []),
+      [Pair(Script(t_other_script), 0)],
+    ),
+  )
+}
+
+test pp_owner_script_mint_hash_in_signatories_rejected() fail {
+  run_mint(t_seed_ref(), oc_mint_tx(Script(t_owner_script), [t_owner_script]))
+}
+
+test pp_owner_vk_mint_script_withdrawal_unsigned_rejected() fail {
+  run_mint(
+    t_seed_ref(),
+    with_withdrawals(
+      oc_mint_tx(VerificationKey(t_owner), []),
+      [Pair(Script(t_owner), 0)],
+    ),
+  )
+}
+
+// ── spend: SetDidCommit (`validate_set_did_commit`, gọi thẳng `owner_authorized`) ──
+fn oc_sd_din(owner: Credential) -> PrepaidVaultDatum {
+  PrepaidVaultDatum { ..sd_din(), owner: owner }
+}
+
+fn oc_sd_tx(owner: Credential, signers: List<ByteArray>) -> Transaction {
+  let din = oc_sd_din(owner)
+  let dout = PrepaidVaultDatum { ..din, did_commit: t_did, last_updated_epoch: t_epoch }
+  sd_tx(din, dout, signers)
+}
+
+test pp_owner_script_setdid_withdraw_zero_ok() {
+  let owner = Script(t_owner_script)
+  run_setdid(
+    oc_sd_din(owner), t_did,
+    with_withdrawals(oc_sd_tx(owner, []), [Pair(Script(t_owner_script), 0)]),
+  )
+}
+
+test pp_owner_script_setdid_no_withdrawal_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_setdid(oc_sd_din(owner), t_did, oc_sd_tx(owner, []))
+}
+
+test pp_owner_script_setdid_other_withdrawal_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_setdid(
+    oc_sd_din(owner), t_did,
+    with_withdrawals(oc_sd_tx(owner, []), [Pair(Script(t_other_script), 0)]),
+  )
+}
+
+test pp_owner_script_setdid_hash_in_signatories_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_setdid(oc_sd_din(owner), t_did, oc_sd_tx(owner, [t_owner_script]))
+}
+
+test pp_owner_vk_setdid_script_withdrawal_unsigned_rejected() fail {
+  let owner = VerificationKey(t_owner)
+  run_setdid(
+    oc_sd_din(owner), t_did,
+    with_withdrawals(oc_sd_tx(owner, []), [Pair(Script(t_owner), 0)]),
+  )
+}
+
+// ── spend: PrepaidDraw (`authed_owner`) ──
+fn oc_draw_din(owner: Credential) -> PrepaidVaultDatum {
+  PrepaidVaultDatum { ..t_vd([t_credit(t_fund_id, 5_000_000_000)], []), owner: owner }
+}
+
+fn oc_draw_tx(owner: Credential, signers: List<ByteArray>) -> Transaction {
+  let din = oc_draw_din(owner)
+  let dout =
+    PrepaidVaultDatum {
+      ..din,
+      prepaid_credits: [
+        PrepaidCredit {
+          fund_id: t_fund_id,
+          remaining: 4_000_000_000,
+          issued_epoch: 5,
+          last_draw_epoch: t_epoch,
+        },
+      ],
+      magic_batches: [drawn_batch(0)],
+      next_batch_index: 1,
+      last_updated_epoch: t_epoch,
+    }
+  t_tx([t_vault_in(din)], [t_vault_out(dout)], signers)
+}
+
+test pp_owner_script_draw_withdraw_zero_ok() {
+  let owner = Script(t_owner_script)
+  run_draw(
+    oc_draw_din(owner), draw_amt,
+    with_withdrawals(oc_draw_tx(owner, []), [Pair(Script(t_owner_script), 0)]),
+  )
+}
+
+test pp_owner_script_draw_no_withdrawal_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_draw(oc_draw_din(owner), draw_amt, oc_draw_tx(owner, []))
+}
+
+test pp_owner_script_draw_other_withdrawal_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_draw(
+    oc_draw_din(owner), draw_amt,
+    with_withdrawals(oc_draw_tx(owner, []), [Pair(Script(t_other_script), 0)]),
+  )
+}
+
+test pp_owner_script_draw_hash_in_signatories_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_draw(oc_draw_din(owner), draw_amt, oc_draw_tx(owner, [t_owner_script]))
+}
+
+test pp_owner_vk_draw_script_withdrawal_unsigned_rejected() fail {
+  let owner = VerificationKey(t_owner)
+  run_draw(
+    oc_draw_din(owner), draw_amt,
+    with_withdrawals(oc_draw_tx(owner, []), [Pair(Script(t_owner), 0)]),
+  )
+}
+
+// Cặp dương của bài trên: cùng tx, CHỈ thêm chữ ký pkh ⟹ nhận (mục rút thừa vô hại).
+test pp_owner_vk_draw_signed_with_script_withdrawal_ok() {
+  let owner = VerificationKey(t_owner)
+  run_draw(
+    oc_draw_din(owner), draw_amt,
+    with_withdrawals(oc_draw_tx(owner, [t_owner]), [Pair(Script(t_owner), 0)]),
   )
 }

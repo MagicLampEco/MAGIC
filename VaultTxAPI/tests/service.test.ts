@@ -154,7 +154,7 @@ describe("🔴 summary KHÔNG phải tiếng vọng của yêu cầu", () => {
     const h = harness({ commitCbor: commitTxCbor(3n) });
 
     const out = await h.service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 17n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 17n, lampPerEpoch: LAMBDA,
     });
 
     // Tham số yêu cầu ĐÃ tới tầng dựng — nên bài này không xanh vì tham số bị mất đường.
@@ -170,10 +170,10 @@ describe("🔴 summary KHÔNG phải tiếng vọng của yêu cầu", () => {
 
   it("cùng yêu cầu, CBOR khác ⟹ summary khác — tức nó đi theo CBOR", async () => {
     const a = await harness({ commitCbor: commitTxCbor(3n) }).service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 17n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 17n, lampPerEpoch: LAMBDA,
     });
     const b = await harness({ commitCbor: commitTxCbor(10n) }).service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 17n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 17n, lampPerEpoch: LAMBDA,
     });
     expect(a.summary.lamp.locked_delta_oildrop).toBe("21000000");
     expect(b.summary.lamp.locked_delta_oildrop).toBe("70000000");
@@ -185,7 +185,7 @@ describe("VaultTxService — đường dựng", () => {
   it("trả tx CHƯA KÝ, hash thân giao dịch, và mốc hết hạn", async () => {
     const h = harness();
     const out = await h.service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
     });
     expect(out.txCbor).toBe(commitTxCbor(3n));
     expect(out.txHash).toBe(txBodyHash(out.txCbor));
@@ -198,14 +198,14 @@ describe("VaultTxService — đường dựng", () => {
   it("chủ CHƯA CÓ vault ⟹ 404, KHÔNG phải một tx rỗng", async () => {
     const h = harness();
     await expect(h.service.scheduleCommit({
-      ownerPkh: OTHER_OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OTHER_OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
     })).rejects.toMatchObject({ httpStatus: 404, code: "VAULT_NOT_FOUND" });
   });
 
   it("KHÔNG đọc được chuỗi ⟹ 502, KHÔNG phải 404 — hai ca khác nhau", async () => {
     const h = harness({ failWith: new ChainUnavailableError("nút chết", { transport: "http" }) });
     await expect(h.service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
     })).rejects.toMatchObject({ httpStatus: 502, code: "CHAIN_UNAVAILABLE" });
   });
 
@@ -214,7 +214,7 @@ describe("VaultTxService — đường dựng", () => {
       utxos: [vaultUtxo(), vaultUtxo({ txHash: "cc".repeat(32), outputIndex: 1 })],
     });
     await expect(h.service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
     })).rejects.toMatchObject({ httpStatus: 409, code: "VAULT_IDENTITY_DUPLICATE" });
   });
 
@@ -225,7 +225,7 @@ describe("VaultTxService — đường dựng", () => {
       })],
     });
     await expect(h.service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
     })).rejects.toMatchObject({ httpStatus: 409, code: "VAULT_AMBIGUOUS" });
   });
 
@@ -236,32 +236,32 @@ describe("VaultTxService — đường dựng", () => {
     };
     const h = harness({ utxos: [vaultUtxo(), noNft] });
     const out = await h.service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
     });
     expect(out.ignored).toEqual([{ utxoRef: `${"dd".repeat(32)}#3`, reason: "NO_VAULT_ID_NFT" }]);
   });
 
-  it("owner_pkh sai khuôn ⟹ 400", async () => {
+  it("owner.hash sai khuôn ⟹ 400 OWNER_HASH_INVALID", async () => {
     const h = harness();
     await expect(h.service.scheduleCommit({
-      ownerPkh: "ABC", scheduleLength: 3n, lampPerEpoch: LAMBDA,
-    })).rejects.toMatchObject({ httpStatus: 400, code: "BAD_REQUEST" });
+      owner: { type: "key", hash: "ABC" }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
+    })).rejects.toMatchObject({ httpStatus: 400, code: "OWNER_HASH_INVALID" });
   });
 });
 
 describe("Khoá mềm theo chủ vault — đua UTxO", () => {
   it("lượt dựng thứ hai cho cùng chủ ⟹ 409 OWNER_TX_IN_FLIGHT", async () => {
     const h = harness();
-    await h.service.scheduleCommit({ ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA });
+    await h.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
     await expect(h.service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
     })).rejects.toMatchObject({ httpStatus: 409, code: "OWNER_TX_IN_FLIGHT" });
   });
 
   it("dựng HỎNG thì nhả khoá — một lần lỗi không khoá chủ đó suốt thời hạn", async () => {
     const h = harness({ utxos: [] });
     await expect(h.service.scheduleCommit({
-      ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA,
+      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
     })).rejects.toMatchObject({ code: "VAULT_NOT_FOUND" });
     expect(h.locks.peek(OWNER_PKH, NOW)).toBeNull();
   });
@@ -281,7 +281,7 @@ describe("/tx/submit — ghép chứng ký của app, dịch vụ không ký gì
     const hash = txBodyHash(cbor);
     const h = harness({ submitResult: hash });
 
-    await h.service.scheduleCommit({ ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA });
+    await h.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
     expect(h.locks.peek(OWNER_PKH, NOW)).not.toBeNull();
 
     const out = await h.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() });
@@ -297,7 +297,7 @@ describe("/tx/submit — ghép chứng ký của app, dịch vụ không ký gì
     // xứ vào, ca đó vẫn xanh — nhưng nó chết ở cổng xuất xứ, cũng mang đúng 502 và đúng
     // mã `SUBMIT_REJECTED`, tức đúng màu đúng tên mà sai chốt (`Forall §Kỷ luật phát
     // ngôn mục 6`). Phải dựng trước để đi tới được phép so hash của nút chuỗi.
-    await h.service.scheduleCommit({ ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA });
+    await h.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
     await expect(h.service.submit({
       txCbor: commitTxCbor(3n), witnessCbor: fakeWitnessSetCbor(),
     })).rejects.toMatchObject({ httpStatus: 502, code: "SUBMIT_REJECTED" });
@@ -320,7 +320,7 @@ describe("/tx/submit — ghép chứng ký của app, dịch vụ không ký gì
     const cbor = commitTxCbor(3n);
     const hash = txBodyHash(cbor);
     const h = harness({ submitResult: hash });
-    await h.service.scheduleCommit({ ownerPkh: OWNER_PKH, scheduleLength: 3n, lampPerEpoch: LAMBDA });
+    await h.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
     expect(h.issued.wasIssued(hash, NOW)).toBe(true);
     // Sổ phát hành có hạn dùng riêng, dài hơn khoá của chủ — quá hạn thì tờ giấy phép
     // nộp hết hiệu lực, không phải "còn hiệu lực nhưng chưa dùng".
@@ -373,7 +373,7 @@ describe("Bộ định tuyến", () => {
       owner_pkh: OWNER_PKH, schedule_length: "17", lamp_per_epoch: "7000000",
     }), h.router);
     expect(r.status).toBe(200);
-    expect(Object.keys(r.body).sort()).toEqual(["expires_at", "ignored", "summary", "tx_cbor", "tx_hash"]);
+    expect(Object.keys(r.body).sort()).toEqual(["expires_at", "ignored", "required_signers", "summary", "tx_cbor", "tx_hash", "witness_notes"]);
     const summary = r.body.summary as { lamp: { locked_delta_oildrop: string } };
     // Lại một lần nữa, qua trọn đường HTTP: bản tóm tắt đi theo CBOR, không theo thân bài.
     expect(summary.lamp.locked_delta_oildrop).toBe("21000000");

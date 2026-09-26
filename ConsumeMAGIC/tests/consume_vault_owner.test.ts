@@ -34,15 +34,17 @@ const priceDatum = encodePriceParam({
 
 const engageDatum = (owner: string): string =>
   encodeEngageDatum({
-    owner,
+    owner: { VerificationKey: [owner] },
     consumed_count: 0n,
     last_epoch: 0n,
     did_commit: "",
     consumed_nanogic: 0n,
   } satisfies EngageDatumT);
 
-/** Datum vault ở đúng hình dạng mà `all_vault_owners_are` đọc: Constr(_, [owner, ..]). */
-const vaultDatum = (owner: string): string => Data.to(new Constr(0, [owner, 0n]));
+/** Datum vault ở đúng hình dạng mà `all_vault_owners_are` đọc: Constr(_, [owner, ..]),
+ *  `owner` là `Credential` — tag 0 khoá, tag 1 script. */
+const vaultDatum = (owner: string, tag: 0 | 1 = 0): string =>
+  Data.to(new Constr(0, [new Constr(tag, [owner]), 0n]));
 
 const mkUtxo = (over: Partial<UTxO>): UTxO => ({
   txHash: "00".repeat(32),
@@ -105,10 +107,25 @@ describe("buildConsumeTx — CONSUME-010: thread và vault phải cùng một kh
     await expect(buildConsumeTx(intDatum)).rejects.toThrow(/CONSUME-010.*Constr/s);
   });
 
-  it("trường 0 của datum vault không phải ByteArray → CONSUME-010", async () => {
+  it("trường 0 của datum vault không phải Credential → CONSUME-010 + OWNER_CREDENTIAL_SHAPE", async () => {
     const wrongField = baseParams({
       vaultUtxo: mkUtxo({ outputIndex: 1, datum: Data.to(new Constr(0, [42n])) }),
     });
-    await expect(buildConsumeTx(wrongField)).rejects.toThrow(/CONSUME-010.*ByteArray/s);
+    await expect(buildConsumeTx(wrongField)).rejects.toThrow(/OWNER_CREDENTIAL_SHAPE.*CONSUME-010.*Credential/s);
+  });
+
+  it("ÂM — vault lược đồ cũ (trường 0 = pkh trần, đúng chủ) → OWNER_CREDENTIAL_SHAPE", async () => {
+    // Cùng 28 byte với chủ thread: bản cũ so chuỗi thì cho qua; on-chain `expect
+    // vault_owner: Credential` thì chết. Ca này ghim rằng builder đọc như on-chain.
+    const legacy = baseParams({
+      vaultUtxo: mkUtxo({ outputIndex: 1, datum: Data.to(new Constr(0, [OWNER_THREAD, 0n])) }),
+    });
+    await expect(buildConsumeTx(legacy)).rejects.toThrow(/OWNER_CREDENTIAL_SHAPE/);
+  });
+
+  it("CỰC ĐỐI — vault Script(h), thread VerificationKey(h) cùng 28 byte → CONSUME-010", async () => {
+    // Khác ca "TRÙNG chủ" ở trên ĐÚNG MỘT BIẾN: tag của credential vault.
+    const tagOnly = baseParams({ vaultUtxo: mkUtxo({ outputIndex: 1, datum: vaultDatum(OWNER_THREAD, 1) }) });
+    await expect(buildConsumeTx(tagOnly)).rejects.toThrow(/CONSUME-010.*key:.*script:/s);
   });
 });

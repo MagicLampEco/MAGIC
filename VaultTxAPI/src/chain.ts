@@ -20,6 +20,7 @@
 import { applyDoubleCborEncoding, scriptFromNative, type Script, type UTxO } from "@lucid-evolution/lucid";
 
 import { ChainUnavailableError, SubmitRejectedError } from "./errors.js";
+import type { RewardAccountState } from "@magiclamp/protocol-utils";
 
 export interface ChainTip {
   blockHeight: number;
@@ -44,6 +45,10 @@ export interface ChainReader {
   tip(): Promise<ChainTip>;
   /** Nộp một giao dịch ĐÃ KÝ (CBOR hex). Trả tx hash của chuỗi. */
   submitTx(signedCborHex: string): Promise<string>;
+  /** Tài khoản thưởng của một địa chỉ `stake…` — cho nhân chứng chủ script (`did_stake`):
+   *  ledger đòi mục rút bằng ĐÚNG số dư, và từ chối mọi mục rút của tài khoản chưa đăng ký.
+   *  Đọc không được thì NÉM; không bao giờ trả một trạng thái đoán. */
+  rewardAccount(rewardAddress: string): Promise<RewardAccountState>;
 }
 
 /** Mốc tỉnh táo: 2020-01-01T00:00:00Z tính bằng giây. Nhỏ hơn mốc này gần như chắc chắn
@@ -106,6 +111,30 @@ export class BlockfrostChainReader implements ChainReader {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Blockfrost `/accounts/{stake_address}`:
+   *   404            ⟹ tài khoản CHƯA TỪNG xuất hiện ⟹ chưa đăng ký (câu trả lời thật).
+   *   200 `active`   ⟹ đang đăng ký; `withdrawable_amount` là số dư rút được (chuỗi lovelace).
+   * Hình dạng khác ⟹ `CHAIN_UNAVAILABLE`, không đệm `0`: một số dư đệm sai là một giao dịch
+   * ledger từ chối sau khi người dùng đã ký.
+   */
+  async rewardAccount(rewardAddress: string): Promise<RewardAccountState> {
+    const { status, body } = await this.getJson(`/accounts/${encodeURIComponent(rewardAddress)}`);
+    if (status === 404) return { registered: false, withdrawableLovelace: 0n };
+    const b = body as { active?: unknown; withdrawable_amount?: unknown } | null;
+    if (
+      status !== 200 || b === null || typeof b !== "object" ||
+      typeof b.active !== "boolean" ||
+      typeof b.withdrawable_amount !== "string" || !/^\d+$/.test(b.withdrawable_amount)
+    ) {
+      throw new ChainUnavailableError(
+        `Nút chuỗi trả HTTP ${status} / hình dạng lạ khi đọc tài khoản thưởng.`,
+        { transport: "http", node_http_status: status, node: this.label },
+      );
+    }
+    return { registered: b.active, withdrawableLovelace: BigInt(b.withdrawable_amount) };
   }
 
   async utxosAt(address: string): Promise<UTxO[]> {
@@ -387,5 +416,16 @@ export class RecordedChainReader implements ChainReader {
       throw new SubmitRejectedError("Bản ghi không khai kết quả nộp.", { node: this.label });
     }
     return this.submitResult;
+  }
+
+  /** Tài khoản thưởng ghi sẵn. Không khai ⟹ NÉM, không đoán "chưa đăng ký". */
+  rewardAccounts: Record<string, RewardAccountState> = {};
+  async rewardAccount(rewardAddress: string): Promise<RewardAccountState> {
+    if (this.failWith) throw this.failWith;
+    const hit = this.rewardAccounts[rewardAddress];
+    if (hit === undefined) {
+      throw new ChainUnavailableError(`Bản ghi không có tài khoản thưởng ${rewardAddress}.`, { node: this.label });
+    }
+    return hit;
   }
 }

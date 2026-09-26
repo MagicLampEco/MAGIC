@@ -142,10 +142,25 @@ export const TV_SCH_FIRE_PERM = {
   magic_to_alice:    true,    // MAGIC → Alice's vault ✓
   lamp_stays_in_vault: true,  // PHA 2 / I-ACT-7: LAMP does NOT move — the fire
                               // only RELEASES the lock. No Treasury leg exists.
-  shard_correct:     true,    // C-SCH-FIRE-SHARD: shard = first_byte(blake2b256(alice_pkh)) % 16 ✓
+  shard_correct:     true,    // C-SCH-FIRE-SHARD: shard = first_byte(blake2b256(inner_hash(alice.owner))) % 16 ✓
   // Rationale A18: Alice may lose key after commit → schedule stuck forever
   // Fire is fulfilling a pre-committed LAMP obligation, not a discretionary action
 };
+
+// ══════════════════════════════════════════════════════════════
+// TV-SCH-SHARD-CRED: shard_id của chủ `Credential` (on-chain 856804fa)
+// ══════════════════════════════════════════════════════════════
+// Gương của `math.ak` ▸ `compute_shard_id`: băm 28 byte BÊN TRONG credential.
+// On-chain ghim `compute_shard_id(VerificationKey(h)) == compute_shard_id(Script(h))
+// == blake2b_256(h)[0] % 16` (`validators/vault.ak` ▸ test
+// `owner_vk_shard_id_matches_raw_pkh_formula`). Byte đầu băm dưới đây tính ĐỘC LẬP bằng
+// Python `hashlib.blake2b(digest_size=32)` ngày 2026-09-26, không bằng thư viện mã TS dùng.
+export const TV_SCH_SHARD_CRED = [
+  { inner: "00".repeat(28), first_byte: 93,  shard_id: 13 },
+  { inner: "0a".repeat(28), first_byte: 106, shard_id: 10 },
+  { inner: "ab".repeat(28), first_byte: 142, shard_id: 14 },
+  { inner: "5c".repeat(28), first_byte: 233, shard_id: 9 },
+] as const;
 
 // ══════════════════════════════════════════════════════════════
 // T-DET: All M_i in the same contract are identical

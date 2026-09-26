@@ -78,7 +78,7 @@ export const NON_LAMP_LOOKALIKE_POLICIES: Readonly<Record<string, string>> = Obj
 
 /** LAMP THẬT của một đời đã bị thay. Không phải hàng nhái — mọi phép so hình
  *  dạng đều cho chúng đi qua, và một lượt chạy bằng chúng vẫn XANH. Danh sách
- *  ĐÓNG, chép tay 2026-09-16. */
+ *  ĐÓNG, chép tay 2026-09-16; thêm `8169b76c…` 2026-09-26. */
 export const SUPERSEDED_LAMP_POLICIES: Readonly<Record<string, string>> = Object.freeze({
   "7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9":
     "Bản diễn tập đời trước, đã bị thay.",
@@ -86,6 +86,9 @@ export const SUPERSEDED_LAMP_POLICIES: Readonly<Record<string, string>> = Object
     "Đời `preprod-oneshot-12param`, đã bị thay bởi `8169b76c…` " +
     "(`preprod-oneshot-14param`, đúc 2026-09-14). Đây là thứ ví Preprod có tADA " +
     "đang cầm, nên nó là đời DỄ dùng nhầm nhất, không phải đời khó gặp nhất.",
+  "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
+    "Đời `preprod-oneshot-14param` (đúc 2026-09-14), đã bị thay bởi `53bc12ad…8743` " +
+    "(genesis tx `21f39c9b…a716`, 2026-09-26). Cụm vault Preprod 23–24/09 dùng đời này.",
 });
 
 const HEX56 = /^[0-9a-f]{56}$/;

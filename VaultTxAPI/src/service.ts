@@ -33,7 +33,7 @@ import {
 import {
   ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
 } from "./owner.js";
-import { IssuedTxRegistry, OwnerLockTable } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable, type IssuedRoute } from "./locks.js";
 import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
   type CreateVaultSummary, type RequestedIntent, type TxSummary,
@@ -249,7 +249,10 @@ export class VaultTxService {
       });
       const txHash = txBodyHash(built.txCbor);
       this.deps.locks.bindTxHash(ownerKey, txHash);
-      this.deps.issued.record(txHash, this.now());
+      // Mã ghi sổ Feecover của tx mở thread = tên NFT thread, khi nó đúng khuôn hash 64 hex.
+      this.deps.issued.record(txHash, this.now(), {
+        route: "open-thread", feeRef: hash64NameOf(summary.engage.nft_unit),
+      });
       return {
         txCbor: built.txCbor,
         txHash,
@@ -334,8 +337,12 @@ export class VaultTxService {
       }
       const txHash = txBodyHash(built.txCbor);
       this.deps.locks.bindTxHash(ownerKey, txHash);
-      // Ghi vào sổ phát-hành TRƯỚC khi trả về: `/tx/submit` chỉ nộp thứ có trong sổ.
-      this.deps.issued.record(txHash, this.now());
+      // Ghi vào sổ phát-hành TRƯỚC khi trả về: `/tx/submit` chỉ nộp thứ có trong sổ, và
+      // `/fee/sign` đọc route + UTxO ví trả phí từ đây chứ không nhận từ app.
+      this.deps.issued.record(txHash, this.now(), {
+        route: routeOfIntent(intent),
+        ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
+      });
 
       return {
         txCbor: built.txCbor,
@@ -498,7 +505,15 @@ export class VaultTxService {
       }
       const txHash = txBodyHash(built.txCbor);
       this.deps.locks.bindTxHash(ownerKey, txHash);
-      this.deps.issued.record(txHash, this.now());
+      // Mã ghi sổ Feecover cho `create_vault` = vault_id = tên NFT vault (blake2b_256 ⟹ 64 hex).
+      const vaultNftName = hash64NameOf(built.vaultNftUnit);
+      if (vaultNftName === undefined) {
+        throw new Error(`NFT vault vừa dựng không mang tên 64 hex (unit dài ${built.vaultNftUnit.length}).`);
+      }
+      this.deps.issued.record(txHash, this.now(), {
+        route: "create-vault", feeRef: vaultNftName,
+        ...(funding === undefined ? {} : { feePayerUtxo: refStr(funding.feePayer.utxoRef) }),
+      });
       return {
         txCbor: built.txCbor,
         txHash,
@@ -773,4 +788,26 @@ export function toBuildBody(r: BuildResponse): Record<string, unknown> {
 
 export function toSubmitBody(r: SubmitResponse): Record<string, unknown> {
   return { tx_hash: r.txHash, lock_released_for: r.lockReleasedFor };
+}
+
+// ── sổ phát-hành: route + mã ghi sổ Feecover ─────────────────────────────────
+
+const ROUTE_OF_INTENT: Record<string, IssuedRoute> = {
+  schedule_commit: "schedule-commit",
+  schedule_fire: "schedule-fire",
+  instant_gen: "instant-gen",
+  consume: "consume",
+};
+
+/** Ý định dựng → tên route. Ý định lạ ⟹ NÉM: ghi sai route là xin ký dưới sai mục đích. */
+function routeOfIntent(intent: string): IssuedRoute {
+  const r = ROUTE_OF_INTENT[intent];
+  if (r === undefined) throw new Error(`Ý định dựng "${intent}" chưa có route trong sổ phát-hành.`);
+  return r;
+}
+
+/** Tên tài sản của một unit (`policy 56 hex + tên`) khi tên đúng khuôn hash 64 hex; khác ⟹ `undefined`. */
+function hash64NameOf(unit: string): string | undefined {
+  const name = unit.slice(56);
+  return /^[0-9a-f]{64}$/.test(name) ? name : undefined;
 }

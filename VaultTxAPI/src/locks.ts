@@ -124,27 +124,87 @@ export const PENDING_TX_HASH = "pending";
  * có phải do tôi dựng không". Và như bảng khoá, nó nằm trong bộ nhớ MỘT tiến trình:
  * chạy hai bản sao sau bộ cân tải thì mỗi bản chỉ nhận lại giao dịch của chính nó.
  */
+/** Tên đường dựng đã phát ra một giao dịch — khoá tra bảng mục đích Feecover (`feeProxy.ts`). */
+export type IssuedRoute =
+  "create-vault" | "instant-gen" | "schedule-commit" | "schedule-fire" | "consume" | "open-thread";
+
+export const ISSUED_ROUTES: readonly IssuedRoute[] =
+  ["create-vault", "instant-gen", "schedule-commit", "schedule-fire", "consume", "open-thread"];
+
+/**
+ * Điều sổ phát-hành biết về một giao dịch, ngoài hash thân của nó.
+ *
+ * `/fee/sign` KHÔNG nhận `purpose` hay `ref` từ app: nó lấy cả hai từ đây. App chỉ đưa CBOR,
+ * nên nó không giả được mục đích (xin ký một tx tạo vault dưới mục đích tiêu MAGIC) cũng không
+ * giả được mã ghi sổ của Feecover.
+ */
+export interface IssuedTxMeta {
+  route: IssuedRoute;
+  /** Mã ghi sổ Feecover khi nó KHÔNG phải hash thân tx: create-vault ⟹ tên NFT vault (64 hex),
+   *  open-thread ⟹ tên NFT thread (64 hex). Vắng ⟹ hash thân tx. */
+  feeRef?: string;
+  /** UTxO ví trả phí (`txhash#idx`) mà tx tiêu. Vắng ⟹ tx không có ví trả phí bên thứ ba. */
+  feePayerUtxo?: string;
+}
+
+export interface IssuedTxEntry extends IssuedTxMeta {
+  /** Hết mốc này thì `/tx/submit` không nhận nữa. */
+  expiresAtMs: number;
+  /** Hết mốc này thì `/fee/sign` không xin chữ ký nữa: UTxO phí đã hết giờ giữ chỗ ở Feecover. */
+  signableUntilMs: number;
+}
+
 export class IssuedTxRegistry {
-  private readonly issued = new Map<string, number>();
+  private readonly issued = new Map<string, IssuedTxEntry>();
+  /** UTxO ví trả phí phát qua `/fee/utxo` → hết giờ giữ chỗ (`reserved_until`) ở Feecover. */
+  private readonly feeReservations = new Map<string, number>();
 
   constructor(private readonly ttlMs: number) {}
 
-  record(txHash: string, nowMs: number): void {
-    this.issued.set(txHash, nowMs + this.ttlMs);
+  /**
+   * Ghi một giao dịch vừa phát.
+   *
+   * Tx tiêu một UTxO phí đã được giữ chỗ qua `/fee/utxo` thì dòng của nó xin ký được tới ĐÚNG
+   * `reserved_until` rồi thôi — sau mốc đó Feecover có thể đã giao UTxO ấy cho tx khác, và xin
+   * ký tiếp là xin ký một tx tiêu đồ của người khác. Dòng vẫn sống ít nhất tới `reserved_until`
+   * (kể cả khi TTL của sổ ngắn hơn), để lượt ký kịp trong giờ giữ chỗ không bị sổ đánh rơi.
+   * UTxO phí không qua `/fee/utxo` (app tự đưa) ⟹ hạn ký = hạn của sổ.
+   */
+  record(txHash: string, nowMs: number, meta: IssuedTxMeta): void {
+    const ttlExpiry = nowMs + this.ttlMs;
+    const reserved = meta.feePayerUtxo === undefined ? undefined : this.feeReservations.get(meta.feePayerUtxo);
+    this.issued.set(txHash, {
+      ...meta,
+      expiresAtMs: reserved === undefined ? ttlExpiry : Math.max(ttlExpiry, reserved),
+      signableUntilMs: reserved === undefined ? ttlExpiry : reserved,
+    });
+  }
+
+  /** Ghi giờ giữ chỗ của một UTxO phí vừa phát qua `/fee/utxo`. */
+  noteFeeReservation(utxoRef: string, reservedUntilMs: number): void {
+    this.feeReservations.set(utxoRef, reservedUntilMs);
   }
 
   /** `true` khi dịch vụ này đã phát ra đúng giao dịch đó và dòng chưa hết hạn. */
   wasIssued(txHash: string, nowMs: number): boolean {
-    const exp = this.issued.get(txHash);
-    if (exp === undefined) return false;
-    if (exp <= nowMs) { this.issued.delete(txHash); return false; }
-    return true;
+    return this.lookup(txHash, nowMs) !== null;
+  }
+
+  /** Dòng của giao dịch, hoặc `null` khi không có / đã hết hạn nộp. */
+  lookup(txHash: string, nowMs: number): IssuedTxEntry | null {
+    const e = this.issued.get(txHash);
+    if (e === undefined) return null;
+    if (e.expiresAtMs <= nowMs) { this.issued.delete(txHash); return null; }
+    return e;
   }
 
   sweep(nowMs: number): number {
     let n = 0;
-    for (const [h, exp] of this.issued) {
-      if (exp <= nowMs) { this.issued.delete(h); n++; }
+    for (const [h, e] of this.issued) {
+      if (e.expiresAtMs <= nowMs) { this.issued.delete(h); n++; }
+    }
+    for (const [u, until] of this.feeReservations) {
+      if (until <= nowMs) this.feeReservations.delete(u);
     }
     return n;
   }

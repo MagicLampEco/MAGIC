@@ -68,14 +68,20 @@ kiểm. Hoàn nguyên thì 56/56 xanh.
 ## 3. Bề mặt HTTP
 
 ```
-POST /tx/instant-gen       { owner, [owner_witness], [change_address] }
-POST /tx/schedule-commit   { owner, [owner_witness], [change_address], schedule_length, lamp_per_epoch }
-POST /tx/schedule-fire     { owner, [owner_witness], [change_address], schedule_id }
-POST /tx/consume           { owner, [owner_witness], [change_address], op_type, op_count }
+POST /tx/instant-gen       { owner, [owner_witness], change_address | fee_payer }
+POST /tx/schedule-commit   { owner, [owner_witness], change_address | fee_payer, schedule_length, lamp_per_epoch }
+POST /tx/schedule-fire     { owner, [owner_witness], change_address | fee_payer, schedule_id }
+POST /tx/consume           { owner, [owner_witness], change_address | fee_payer, op_type, op_count, [engage_ref] }
+POST /tx/open-thread       { owner, [owner_witness], change_address }
 POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 POST /tx/submit            { tx_cbor, witness_cbor }
+POST /fee/utxo             { route }        [X-Feecover-Token]   — proxy ví trả phí, xem dưới
+POST /fee/sign             { tx_cbor }      [X-Feecover-Token]
 GET  /health
 ```
+
+Chủ khoá được bỏ trống `change_address` (dịch vụ suy địa chỉ enterprise của khoá, §7); chủ
+script thì phải gửi một trong hai trường.
 
 Bốn đường dựng trên vault có sẵn trả:
 
@@ -248,6 +254,121 @@ Bước 2 và 3 đổi chỗ cho nhau được; điều không được là **đ
 một byte của thân (kể cả để "sửa phí") là đổi `tx_hash`, và mọi chữ ký đã có mất hiệu lực —
 phải dựng lại, không vá.
 
+### Ví trả phí bên thứ ba: `fee_payer`
+
+Bốn đường dựng trên vault có sẵn (`instant-gen`, `schedule-commit`, `schedule-fire`,
+`consume`) nhận `fee_payer` thay cho `change_address`:
+
+```jsonc
+"fee_payer": {
+  "utxo": "<tx_hash 64 hex>#<i>",   // ĐÚNG MỘT UTxO thuần ADA của ví trả phí
+  "address": "addr_test1v…"         // địa chỉ khoá ký chứa UTxO đó
+}
+```
+
+UTxO đó trả phí và làm tài sản thế chấp; tiền thối ADA và `collateral_return` về đúng
+`fee_payer.address`. Lượng thế chấp đặt **tường minh** bằng `fee_payer_collateral_lovelace`
+của cấu hình (§6), và cũng là trần mà phép đọc lại ép lên phần thế chấp có thể mất. Dịch vụ
+đọc lại `tx_cbor` (input, output, thế chấp, hạn dùng) và trả `summary.fee_payer`; lệch ⟹
+`422 FEE_PAYER_TX_MISMATCH`, không phát tx. Ví trả phí chỉ được mất đúng bằng phí.
+
+- `fee_payer` cùng `change_address` ⟹ `400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT`.
+- `/tx/create-vault` nhận ví trả phí qua `funding.fee_payer`, không qua `fee_payer` ở gốc
+  thân bài ⟹ `400 FEE_PAYER_UNSUPPORTED`.
+- `/tx/open-thread` khoá min-ADA vào output thread, mà ví trả phí chỉ được mất đúng bằng phí
+  ⟹ `fee_payer` một mình trả `422 FEE_PAYER_DEPOSIT_UNSOURCED`; gửi `change_address`.
+
+### Thread Engage: chọn theo chủ, `engage_ref`, `POST /tx/open-thread`
+
+`/tx/consume` cần thread Engage của **chính chủ** (validator `consume` ép chủ thread == chủ
+vault). Dịch vụ tìm thread theo chủ ở địa chỉ `consume.engage_address`, với policy NFT thread
+= script hash của `consume` (suy từ địa chỉ, không cấu hình riêng).
+
+- Chủ chưa có thread ⟹ `404 ENGAGE_THREAD_NOT_FOUND` — mở bằng `POST /tx/open-thread`.
+- Chủ có nhiều thread ⟹ `409 ENGAGE_THREAD_AMBIGUOUS`; gửi `"engage_ref": "<tx_hash>#<i>"`
+  để chỉ đích danh. `engage_ref` không phải thread của chủ ⟹ `400 ENGAGE_REF_MISMATCH`.
+
+`POST /tx/open-thread` dựng giao dịch đúc NFT thread và tạo output thread genesis cho chủ.
+Chủ đã có thread ⟹ `409 ENGAGE_THREAD_EXISTS`. Dịch vụ đọc lại NFT, output và datum genesis
+từ `tx_cbor` (lệch ⟹ `422 OPEN_THREAD_TX_MISMATCH`). Lời đáp:
+
+```jsonc
+{
+  "tx_cbor": "…", "tx_hash": "…",
+  "engage_nft": "<policy 56 hex><tên>", "engage_address": "addr_test1w…",
+  "owner": { "type": "key", "hash": "…" },
+  "required_signers": ["…"], "witness_notes": ["…"], "summary": { … }, "expires_at": "…"
+}
+```
+
+`funding` ở đường này chưa hỗ trợ ⟹ `501 OPEN_THREAD_FUNDING_UNSUPPORTED`.
+
+### Proxy phí Feecover: `POST /fee/utxo`, `POST /fee/sign`
+
+Feecover là dịch vụ ký phần ví trả phí của giao dịch, theo **mục đích**, và nhận ra ứng
+dụng gọi bằng token. Token nằm trong app di động là token công khai, nên token của ứng dụng
+`magic` chỉ nằm ở dịch vụ này (`FEECOVER_APP_TOKEN`); app đi qua hai đường proxy. Cả hai vẫn
+đòi thẻ bài của dịch vụ (`Authorization: Bearer …`) như mọi đường khác.
+
+**`POST /fee/utxo {route}`** — `route` là tên đường dựng sẽ dùng (`"consume"`,
+`"create-vault"`…). Dịch vụ tra mục đích theo bảng của ứng dụng, gọi `GET /v1/utxo` của
+Feecover, và trả đúng hình dạng mà `fee_payer` / `funding.fee_payer` nhận — app chép thẳng:
+
+```jsonc
+{
+  "fee_payer": { "utxo": "<tx_hash>#<i>", "address": "addr_test1v…" },
+  "reserved_until": "2026-09-26T12:10:00.000Z",   // Feecover giữ UTxO này cho ứng dụng tới mốc đó
+  "purpose": "consume_magic"
+}
+```
+
+**`POST /fee/sign {tx_cbor}`** — chỉ cho giao dịch **chính dịch vụ này đã phát**, có ví trả
+phí, và còn hạn ký. App **không** gửi `purpose` hay `ref`: dịch vụ lấy route (⟹ mục đích) và
+mã ghi sổ từ sổ phát-hành của mình, nên app không giả được cả hai. Mã ghi sổ (`ref`) gửi
+Feecover: `create-vault` ⟹ tên NFT vault (64 hex cuối `vault_nft`); `open-thread` ⟹ tên NFT
+thread; route khác ⟹ hash thân tx. Lời đáp:
+
+```jsonc
+{ "tx_hash": "…", "witness_set": "<CBOR hex>", "net_lovelace": "…", "fee_lovelace": "…" }
+```
+
+`witness_set` là bộ chứng ký của ví trả phí. Dịch vụ đối chiếu `txHash` Feecover trả với hash
+thân tự tính; lệch ⟹ `502 FEE_PROXY_UPSTREAM_MISMATCH`, không trả chữ ký.
+
+**Hạn ký.** UTxO lấy qua `/fee/utxo` thì tx tiêu nó chỉ xin ký được tới `reserved_until`; sau
+mốc đó ⟹ `403 FEE_PROXY_TX_NOT_ISSUED` (Feecover có thể đã giao UTxO cho người khác) — xin
+UTxO mới và dựng lại. `fee_payer` app tự đưa (không qua `/fee/utxo`) thì hạn ký là hạn của sổ
+phát-hành.
+
+**Ứng dụng khác `magic`.** Không gửi tiêu đề `X-Feecover-Token` ⟹ đi dưới ứng dụng `magic`.
+Ứng dụng khác (ví dụ `orilife`) gửi token Feecover **của chính họ** ở `X-Feecover-Token`;
+dịch vụ băm SHA-256, tra ra ứng dụng khai `token_sha256` đó, dùng bảng mục đích của ứng dụng
+đó và chuyển tiếp đúng token người gọi gửi (không lưu, không ghi nhật ký). Mục đích mang tiền
+tố `<app>_` chỉ đi với đúng ứng dụng `<app>`, và ứng dụng khác `magic` chỉ dùng mục đích tiền
+tố tên mình; vi phạm ⟹ `403 FEE_PROXY_APP_PURPOSE`. Token không khớp ứng dụng nào ⟹ `401
+FEE_PROXY_APP_UNKNOWN`, Feecover không bị gọi.
+
+**Lời từ chối của Feecover** (4xx) đi ra nguyên mã trạng thái dưới `FEE_PROXY_REJECTED`, với
+`details` = `{ upstream_status, rule?, message?, reasons? }` — ví dụ `422` kèm `rule: "L12"`,
+`403 rule: "L14"` (ứng dụng bị chặn trong cửa sổ Catalyst), `429` (hết suất giữ chỗ), `409`
+(UTxO đang giữ cho ứng dụng khác). Feecover không trả lời trong hạn chót, trả 5xx, hoặc trả
+thân sai hình dạng ⟹ `502 FEE_PROXY_UPSTREAM`.
+
+### Luồng cho app dùng ví PhoenixKey
+
+1. `POST /fee/utxo {"route": "consume"}` ⟹ `fee_payer`, `reserved_until`.
+2. Gọi đường dựng với đúng `fee_payer` đó (`/tx/consume` … `"fee_payer": {…}`; với
+   `/tx/create-vault` đặt vào `funding.fee_payer`) ⟹ `tx_cbor`, `tx_hash`.
+3. App ký phần của chủ trên `tx_hash` (khoá chủ, hoặc controller + khoá thiết bị của ví
+   Phoenix) ⟹ bộ chứng ký của chủ.
+4. `POST /fee/sign {"tx_cbor": …}` ⟹ `witness_set` của ví trả phí. Bước 3 và 4 đổi chỗ được;
+   cả hai phải xong trước `reserved_until`.
+5. Ghép hai bộ chứng ký thành một `TransactionWitnessSet`, rồi
+   `POST /tx/submit {"tx_cbor": …, "witness_cbor": …}`.
+
+Không bước nào được đổi thân giao dịch: đổi một byte là đổi `tx_hash`, và mọi chữ ký đã có
+mất hiệu lực — dựng lại, không vá.
+
 ### 🔴 Số tiền là CHUỖI chữ số, cả vào lẫn ra
 
 Trần LAMP là `36×10^15` oildrop; `2^53 ≈ 9,007×10^15`. Một trường oildrop **có thật** vượt
@@ -287,6 +408,27 @@ Nên:
 | `funding`, dịch vụ chưa cấu hình `did_stake` (đọc anchor) | `501 FUNDING_UNAVAILABLE` |
 | tài khoản thưởng `Script(h)` chưa đăng ký | `422 OWNER_STAKE_NOT_REGISTERED` |
 | chủ script, dịch vụ chưa cấu hình `did_stake` | `501 OWNER_SCRIPT_WITNESS_UNAVAILABLE` |
+| `fee_payer` sai khuôn / sai mạng · không phải khoá · UTxO không ở đó hoặc không thuần ADA | `400 FEE_PAYER_SHAPE` / `400 FEE_PAYER_INVALID` |
+| `fee_payer` cùng `change_address` | `400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT` |
+| `fee_payer` ở gốc thân bài của `/tx/create-vault` | `400 FEE_PAYER_UNSUPPORTED` |
+| tx vừa dựng lệch luật ví trả phí | `422 FEE_PAYER_TX_MISMATCH` |
+| `/tx/open-thread` chỉ có `fee_payer` (không ai trả min-ADA thread) | `422 FEE_PAYER_DEPOSIT_UNSOURCED` |
+| `engage_ref` sai khuôn / không phải thread của chủ | `400 ENGAGE_REF_SHAPE` / `400 ENGAGE_REF_MISMATCH` |
+| chủ chưa có thread Engage | `404 ENGAGE_THREAD_NOT_FOUND` |
+| chủ có nhiều thread, không kèm `engage_ref` | `409 ENGAGE_THREAD_AMBIGUOUS` |
+| `/tx/open-thread` khi chủ đã có thread | `409 ENGAGE_THREAD_EXISTS` |
+| `engage_ref` mang NFT nhưng datum không giải được | `422 ENGAGE_THREAD_DATUM_UNDECODABLE` |
+| tx mở thread vừa dựng lệch (NFT / output / datum genesis) | `422 OPEN_THREAD_TX_MISMATCH` |
+| `/tx/open-thread` kèm `funding` | `501 OPEN_THREAD_FUNDING_UNSUPPORTED` |
+| `X-Feecover-Token` không khớp ứng dụng nào | `401 FEE_PROXY_APP_UNKNOWN` |
+| ứng dụng chưa có mục đích cho route đó | `400 FEE_PROXY_PURPOSE_UNMAPPED` |
+| mục đích thuộc ứng dụng khác / thiếu tiền tố tên ứng dụng | `403 FEE_PROXY_APP_PURPOSE` |
+| `/fee/sign` cho tx không do dịch vụ phát, hoặc quá hạn ký | `403 FEE_PROXY_TX_NOT_ISSUED` |
+| `/fee/sign` cho tx không dùng ví trả phí | `400 FEE_PROXY_NO_FEE_PAYER` |
+| Feecover từ chối | mã 4xx của Feecover + `FEE_PROXY_REJECTED` |
+| dịch vụ không cấu hình `feecover` | `501 FEE_PROXY_UNAVAILABLE` |
+| Feecover không trả lời / 5xx / thân sai hình dạng | `502 FEE_PROXY_UPSTREAM` |
+| Feecover ký một tx có hash khác | `502 FEE_PROXY_UPSTREAM_MISMATCH` |
 | thiếu/sai thẻ bài | `401 UNAUTHORIZED` |
 | chủ **chưa có** vault | `404 VAULT_NOT_FOUND` ← **không phải** `200` với tx rỗng |
 | method sai | `405 METHOD_NOT_ALLOWED` |
@@ -362,11 +504,14 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `VAULT_TX_API_BLOCKFROST_URL` | không | dẫn theo `NETWORK` |
 | `VAULT_TX_API_TIMEOUT_MS` | không | `20000` |
 | `VAULT_TX_API_LOCK_TTL_MS` | không | `180000` |
+| `FEECOVER_APP_TOKEN` | khi cấu hình có `feecover.apps.magic` | — **GIÁ TRỊ** token ứng dụng Feecover (token API, không phải khoá ký) |
 
 Cổng fail-closed lúc khởi động: thiếu biến bắt buộc · bind ngoài loopback mà thẻ bài rỗng ·
 tên tài sản LAMP không khớp mạng (`tLAMP` testnet / `LAMP` mainnet — apply-param #2) · địa
 chỉ sai tiền tố mạng · địa chỉ không phải địa chỉ script · hai mục vault trùng địa chỉ ·
-blueprint không đọc được. Tất cả **từ chối khởi động**, không cảnh báo rồi chạy tiếp — người
+blueprint không đọc được · khối `feecover` có ứng dụng `magic` mà `FEECOVER_APP_TOKEN` rỗng ·
+URL Feecover không phải `https://` (hoặc `http://` loopback) · bảng mục đích nêu route không
+có. Tất cả **từ chối khởi động**, không cảnh báo rồi chạy tiếp — người
 bị chặn lúc khởi động là người vận hành, còn hoãn sang lúc chạy thì người bị chặn là người
 dùng.
 
@@ -379,11 +524,29 @@ dùng.
   "shard_address": "addr_test1w…",
   "ref_script_utxos": { "vault": "…#0", "shard": "…#1", "consume": "…#2" },
   "consume": {
-    "engage_address": "addr_test1w…",       "engage_nft_unit": "…",
+    "engage_address": "addr_test1w…",       // thread Engage chọn theo chủ lúc chạy
     "price_beacon_address": "addr_test1w…", "price_beacon_nft_unit": "…"
+  },
+  "fee_payer_collateral_lovelace": "3000000",      // tuỳ chọn, CHUỖI; thế chấp khi có ví trả phí
+  "did_stake": { "anchor_nft_policy": "<56 hex>" }, // tuỳ chọn — chủ script + funding did_payment
+  "feecover": {                                     // tuỳ chọn — proxy phí, xem §3
+    "url": "https://feecover.example",              // https://, hoặc http:// tới loopback
+    "timeout_ms": 15000,                            // tuỳ chọn, mặc định 15000
+    "apps": {
+      "magic":   { "purposes": { "create-vault": "create_vault", "consume": "consume_magic" } },
+      "orilife": { "token_sha256": "<SHA-256 hex của token orilife>",
+                   "purposes": { "consume": "orilife_consume_magic" } }
+    }
   }
 }
 ```
+
+Khoá cũ `consume.engage_nft_unit` đã bị gỡ: khai nó thì dịch vụ từ chối khởi động (một NFT
+thread cố định chỉ phục vụ được một người). Trong `feecover.apps`, ứng dụng `magic` không có
+`token_sha256` — token của nó vào qua `FEECOVER_APP_TOKEN`; ứng dụng khác khai SHA-256 của
+token của họ, dịch vụ không giữ token đó. Mục đích cho `instant-gen` / `schedule-*` và
+`open-thread` chưa có ở Feecover nên chưa có trong mẫu; route vắng khỏi bảng thì proxy trả
+`400 FEE_PROXY_PURPOSE_UNMAPPED` cho tx của route đó.
 
 `script_hash` **không** cấu hình riêng — nó suy từ chính địa chỉ. Hai trường cho một sự
 thật là hai trường sẽ lệch nhau.
@@ -447,13 +610,17 @@ Có thì đủ trường và đúng hình dạng, không thì cổng khởi đ�
 - **Chưa có lượt nộp thật nào của đường chủ script hay `/tx/create-vault`.** Bài kiểm dùng
   bộ dựng ghi sẵn và nhân chứng giả; `SdkTxBuilder.createVault` chưa chạy trên Preview.
 
-- **`funding` did_payment chưa qua Lucid thật, chưa lên chuỗi.** Bài kiểm của SDK dùng một
-  trình dựng ghi lại lượt gọi (hình dạng: UTxO nào chi, redeemer, phần thối về đâu, ai ký),
-  bài kiểm của dịch vụ đọc lại CBOR dựng bằng CML. Chưa kiểm: `complete()` của Lucid có chọn
-  đúng `fee_payer.utxo` làm tài sản thế chấp và có đặt `collateral_return` về `fee_payer.address`
-  hay không — đọc mã Lucid Evolution 0.4.30 (`applyCollateral`) cho thấy nó dùng ví đang chọn
-  và `changeAddress`, và phép đọc lại CBOR sẽ ném `422 FUNDING_TX_MISMATCH` nếu không đúng thế;
-  ExUnit của `did_payment` chưa đo; trạng thái Active của anchor không kiểm ở đây.
+- **`funding` did_payment và `fee_payer` chưa qua Lucid thật, chưa lên chuỗi.** Bài kiểm của
+  SDK dùng một trình dựng ghi lại lượt gọi, bài kiểm của dịch vụ đọc lại CBOR dựng bằng CML.
+  Thế chấp được đặt tường minh (`fee_payer_collateral_lovelace`) chứ không để trình dựng tự
+  chọn, và phép đọc lại CBOR ném `422` nếu thế chấp không lấy từ `fee_payer.utxo` hoặc
+  `collateral_return` không về `fee_payer.address`. Chưa đo: ExUnit của `did_payment`; trạng
+  thái Active của anchor không kiểm ở đây.
+- **Proxy phí mới chạy với Feecover giả.** Bài kiểm tiêm một `fetch` giả; chưa có lượt ký thật
+  nào qua Feecover. Proxy không soi nội dung `witness_set` Feecover trả (chỉ đối chiếu
+  `txHash`); app ghép rồi nộp, và nút chuỗi là nơi bác một chữ ký sai.
+- **Sổ phát-hành và bảng giữ chỗ nằm trong bộ nhớ một tiến trình**, như khoá mềm: hai bản sau
+  bộ cân tải thì `/fee/sign` chỉ nhận tx do chính bản đó phát.
 
 - **`SdkTxBuilder` CHƯA từng dựng một giao dịch thật trên chuỗi.** Nó qua `tsc --noEmit` và
   qua bài quét không-chạm-khoá, và nó gọi đúng bốn hàm của `@magiclamp/sdk` với chữ ký
@@ -477,8 +644,8 @@ Có thì đủ trường và đúng hình dạng, không thì cổng khởi đ�
   khoá mềm của họ. Trạng thái và hình dạng bản vá ghi ở `DevStatus.md` ▸ Nợ #78.
 - **Chủ có nhiều vault chưa dựng được.** Hiện trả `409 VAULT_AMBIGUOUS`. Gỡ nó cần một
   trường định danh vault trong thân bài — lại là một quyết định về hình dạng API.
-- **`/tx/consume` chọn thread Engage từ cấu hình**, nên một triển khai phục vụ nhiều app
-  cùng lúc chưa nói được *tiêu cho app nào*. Cùng họ với gạch trên.
+- **Thread Engage chọn theo chủ, chưa theo app.** Một chủ dùng nhiều app thì có nhiều thread
+  và phải gửi `engage_ref`; dịch vụ chưa tự biết *tiêu cho app nào*.
 - **Chưa có bộ nhớ đệm.** Mỗi lượt dựng là vài lượt gọi Blockfrost.
 - **Chỉ Blockfrost.** `ChainReader` là giao diện; thêm Kupo/Ogmios là thêm một lớp hiện
   thực, không phải sửa lõi.

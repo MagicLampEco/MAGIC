@@ -4397,6 +4397,16 @@ test pp_owner_script_setdid_withdraw_zero_ok() {
   )
 }
 
+// Rút LƯỢNG > 0 từ Script(h): hình dạng tx quét sạch tài khoản thưởng (tx thu hồi
+// `did_stake`), không phải bằng chứng chủ phê duyệt ⟹ từ chối.
+test pp_owner_script_setdid_positive_withdrawal_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_setdid(
+    oc_sd_din(owner), t_did,
+    with_withdrawals(oc_sd_tx(owner, []), [Pair(Script(t_owner_script), 1)]),
+  )
+}
+
 test pp_owner_script_setdid_no_withdrawal_rejected() fail {
   let owner = Script(t_owner_script)
   run_setdid(oc_sd_din(owner), t_did, oc_sd_tx(owner, []))
@@ -4453,6 +4463,16 @@ test pp_owner_script_draw_withdraw_zero_ok() {
   run_draw(
     oc_draw_din(owner), draw_amt,
     with_withdrawals(oc_draw_tx(owner, []), [Pair(Script(t_owner_script), 0)]),
+  )
+}
+
+// Rút LƯỢNG > 0 từ Script(h): hình dạng tx quét sạch tài khoản thưởng (tx thu hồi
+// `did_stake`), không phải bằng chứng chủ phê duyệt ⟹ từ chối.
+test pp_owner_script_draw_positive_withdrawal_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_draw(
+    oc_draw_din(owner), draw_amt,
+    with_withdrawals(oc_draw_tx(owner, []), [Pair(Script(t_owner_script), 1)]),
   )
 }
 

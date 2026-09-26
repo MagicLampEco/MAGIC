@@ -8,10 +8,10 @@ use cardano/transaction.{Transaction}
 // `VaultDatum.owner` là `Credential`, không còn là pkh trần. Hai nhánh, KHÔNG nhánh thứ ba:
 //
 //   VerificationKey(pkh) ⟹ pkh nằm trong `tx.extra_signatories` (hành vi cũ, nguyên vẹn).
-//   Script(h)            ⟹ `tx.withdrawals` có khoá `Script(h)`. Lượng rút KHÔNG ép — rút
-//                          0 là đủ. Ledger chỉ chấp nhận một mục rút khi validator
-//                          `withdraw` của h CHẠY và gật, nên sự có mặt của khoá đó là bằng
-//                          chứng script chủ đã phê duyệt CHÍNH giao dịch này.
+//   Script(h)            ⟹ `tx.withdrawals` có khoá `Script(h)` với lượng ĐÚNG BẰNG 0.
+//                          Ledger chỉ nhận một mục rút khi validator `withdraw` của h
+//                          CHẠY và gật, nên mục rút đó là bằng chứng script chủ đã phê
+//                          duyệt CHÍNH giao dịch này.
 //
 // Hai chỗ cố ý KHÔNG tính:
 //   - `Script(h)` mà h chỉ nằm trong `extra_signatories`: một script hash không ký được, và
@@ -23,9 +23,13 @@ use cardano/transaction.{Transaction}
 // Rủi ro do NGƯỜI DÙNG chọn, không do validator này: script chủ phải tự ràng buộc nó phê
 // duyệt cái gì. Một stake-script gật vô điều kiện thì ai cũng rút 0 được ⟹ ai cũng là chủ.
 //
-// Lượng rút: validator này không ép, nhưng LEDGER ép — mục rút phải bằng ĐÚNG số dư thưởng
-// hiện có của credential. Chưa uỷ thác pool thì số dư là 0 ("withdraw-zero"); đã uỷ thác thì
-// số dư có thể > 0, và bộ dựng tx gõ cứng 0 sẽ bị ledger từ chối. Bộ dựng phải TRA số dư.
+// Lượng rút phải là 0, không chỉ "có mục rút" (2026-09-26). Ledger ép mục rút bằng ĐÚNG số
+// dư thưởng hiện có, nên lượng > 0 nghĩa là tx đang QUÉT SẠCH tài khoản thưởng — đúng hình
+// dạng tx thu hồi `did_stake`: DID không hoạt động bị huỷ đăng ký mà không cần chữ ký chủ, và
+// Cardano đòi số dư = 0 trước khi huỷ, nên tx đó bắt buộc mang một mục rút từ `Script(h)`.
+// Nhận lượng > 0 là để người nộp tx thu hồi thành chủ vault của nạn nhân ngay trong tx đó.
+// Hệ quả cho bộ dựng: số dư thưởng > 0 thì rút sạch ở một tx RIÊNG trước (tx đó không chạm
+// vault), rồi mới dựng tx cần quyền chủ.
 //
 // h phải ĐÃ ĐĂNG KÝ làm stake credential. Chưa đăng ký, hoặc bị huỷ đăng ký, thì không mục rút
 // nào hợp lệ ⟹ mọi nhánh cần owner đóng băng tới khi đăng ký lại.
@@ -36,6 +40,6 @@ use cardano/transaction.{Transaction}
 pub fn owner_authorized(tx: Transaction, owner: Credential) -> Bool {
   when owner is {
     VerificationKey(pkh) -> list.has(tx.extra_signatories, pkh)
-    Script(h) -> pairs.has_key(tx.withdrawals, Script(h))
+    Script(h) -> pairs.get_first(tx.withdrawals, Script(h)) == Some(0)
   }
 }

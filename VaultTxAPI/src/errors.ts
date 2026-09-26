@@ -237,12 +237,12 @@ export class CodedApiError extends TxApiError {
  *
  *   OWNER_HASH_INVALID · OWNER_CREDENTIAL_SHAPE · OWNER_AUTH_MISMATCH  → 400 (bên gọi gửi sai)
  *   OWNER_SCRIPT_WITNESS_UNAVAILABLE                                    → 400 (thiếu nhân chứng)
- *   OWNER_STAKE_NOT_REGISTERED                                          → 422 (trạng thái chuỗi)
+ *   OWNER_STAKE_NOT_REGISTERED · OWNER_STAKE_REWARDS_PENDING           → 422 (trạng thái chuỗi)
  *   OWNER_WITHDRAW_RETURNED_NOTHING                                     → 500 (lỗi nhân chứng phía dịch vụ)
  */
 export function ownerApiErrorOf(e: { code: string; message: string }): CodedApiError {
   const status =
-    e.code === "OWNER_STAKE_NOT_REGISTERED" ? 422
+    e.code === "OWNER_STAKE_NOT_REGISTERED" || e.code === "OWNER_STAKE_REWARDS_PENDING" ? 422
     : e.code === "OWNER_WITHDRAW_RETURNED_NOTHING" ? 500
     : 400;
   return new CodedApiError(status, e.code, e.message);

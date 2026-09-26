@@ -69,7 +69,7 @@ const base = {
 const scriptAuth = (ctrl = CTRL) => didStakeOwnerAuthLucid({
   owner: { type: "script", hash: DID_H }, didStakeScriptCbor: DID_STAKE, anchorRefUtxo: ANCHOR,
   controllerPkh: ctrl, deviceKeyHash: DEV, network: "Preview",
-}, async () => ({ registered: true, withdrawableLovelace: 5n }));
+}, async () => ({ registered: true, withdrawableLovelace: 0n }));
 
 async function codeOf(p: Promise<unknown>): Promise<string> {
   try { await p; return "KHÔNG NÉM"; } catch (e) {
@@ -108,14 +108,14 @@ describe("createVault + funding did_payment", () => {
     expect(r.names()).not.toContain("validTo");
   });
 
-  it("chủ script: bộ ký did_payment trùng nhân chứng ⟹ KHÔNG ký/đọc anchor lần hai; mục rút thối về ví Phoenix", async () => {
+  it("chủ script: bộ ký did_payment trùng nhân chứng ⟹ KHÔNG ký/đọc anchor lần hai; mục rút (0) không đổi phần thối về ví Phoenix", async () => {
     const r = recordingLucid([FEE_UTXO]);
     await createVault({ ...base, lucid: r.lucid, vault: { owner: { type: "script", hash: DID_H }, lampDeposit: 800_000_000n }, ownerAuth: await scriptAuth(), funding: funding() } as never);
     expect(r.argsOf("addSignerKey")).toEqual([[CTRL], [DEV]]);
     expect(r.argsOf("readFrom")).toEqual([[[ANCHOR]]]);
     const vaultOut = r.argsOf("pay.ToAddressWithData")[0]![2] as Record<string, bigint>;
     const ret = r.argsOf("pay.ToAddress")[0]![1] as Record<string, bigint>;
-    expect(ret.lovelace).toBe(DP_BIG.assets.lovelace! + 5n - vaultOut.lovelace!);
+    expect(ret.lovelace).toBe(DP_BIG.assets.lovelace! - vaultOut.lovelace!);
   });
 
   it("CỰC ĐỐI: chủ script, controller của nhân chứng khác funding ⟹ FUNDING_WITNESS_MISMATCH, không dựng tx", async () => {

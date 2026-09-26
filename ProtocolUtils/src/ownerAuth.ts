@@ -54,11 +54,12 @@ export interface OwnerRef {
  *                thứ đó do bên ví (Phoenix) biết, và nó phải tự thêm mục rút
  *                `Script(hash)` kèm chứng từ của script đó.
  *
- *                ⚠ Validator không ép lượng rút, nhưng LEDGER thì ép: mục rút phải bằng
- *                ĐÚNG số dư thưởng hiện có của tài khoản `Script(hash)`, và tài khoản đó
- *                phải đã ĐĂNG KÝ. "Rút 0" chỉ đúng khi số dư đang là 0 (DID đã uỷ thác
- *                pool thì số dư > 0). Bên cung cấp `attachWithdraw` phải tra số dư rồi rút
- *                đúng số đó; chưa đăng ký ⟹ `OWNER_STAKE_NOT_REGISTERED`, không dựng tx.
+ *                ⚠ Validator ép lượng rút == 0 (`owner_auth.ak` ▸ `owner_authorized`), và
+ *                LEDGER ép lượng rút bằng ĐÚNG số dư thưởng của tài khoản `Script(hash)`,
+ *                tài khoản đó phải đã ĐĂNG KÝ. Hai ràng buộc gặp nhau ở đúng một chỗ: số
+ *                dư đang là 0. Bên cung cấp `attachWithdraw` tra số dư: chưa đăng ký ⟹
+ *                `OWNER_STAKE_NOT_REGISTERED`; số dư > 0 ⟹ `OWNER_STAKE_REWARDS_PENDING`
+ *                (rút sạch thưởng ở tx riêng trước). Cả hai không dựng tx.
  */
 export type OwnerAuth<Tx = unknown> =
   | { kind: "key"; pkh: string }
@@ -71,6 +72,7 @@ export type OwnerAuthErrorCode =
   | "OWNER_AUTH_MISMATCH"
   | "OWNER_SCRIPT_WITNESS_UNAVAILABLE"
   | "OWNER_STAKE_NOT_REGISTERED"
+  | "OWNER_STAKE_REWARDS_PENDING"
   | "OWNER_WITHDRAW_RETURNED_NOTHING";
 
 export class OwnerAuthError extends Error {

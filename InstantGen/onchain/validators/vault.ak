@@ -3306,6 +3306,16 @@ test owner_script_zero_withdrawal_mint_ok() {
   t_mint_owner_case(Script(t_owner_script), [], [Pair(Script(t_owner_script), 0)])
 }
 
+// (1b) chủ Script(h), rút LƯỢNG > 0 từ Script(h) ⟹ từ chối. Đó là hình dạng tx quét sạch
+// tài khoản thưởng (tx thu hồi `did_stake`), không phải bằng chứng chủ phê duyệt.
+test owner_script_positive_withdrawal_burn_batch_rejected() fail {
+  t_bb_owner_case(Script(t_owner_script), [], [Pair(Script(t_owner_script), 1)])
+}
+
+test owner_script_positive_withdrawal_mint_rejected() fail {
+  t_mint_owner_case(Script(t_owner_script), [], [Pair(Script(t_owner_script), 1)])
+}
+
 // (2) chủ Script(h), không có mục rút ⟹ từ chối.
 test owner_script_no_withdrawal_burn_batch_rejected() fail {
   t_bb_owner_case(Script(t_owner_script), [], [])

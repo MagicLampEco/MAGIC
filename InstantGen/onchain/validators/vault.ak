@@ -42,6 +42,7 @@ use aiken/primitive/bytearray
 use aiken/interval.{Finite}
 use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value}
+use cardano/certificate.{Certificate, UnregisterCredential}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction, placeholder,
 }
@@ -3264,6 +3265,13 @@ const t_other_script: ByteArray =
 fn t_bb_owner_case(
   owner: Credential, signers: List<ByteArray>, ws: Pairs<Credential, Int>,
 ) -> Bool {
+  t_bb_owner_case_c(owner, signers, ws, [])
+}
+
+fn t_bb_owner_case_c(
+  owner: Credential, signers: List<ByteArray>, ws: Pairs<Credential, Int>,
+  cs: List<Certificate>,
+) -> Bool {
   let din =
     VaultDatum { ..t_burn_din([t_burn_batch(bid_a, 1000)], None), owner: owner }
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 600)], 400, 10)
@@ -3271,6 +3279,7 @@ fn t_bb_owner_case(
     Transaction {
       ..t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], signers),
       withdrawals: ws,
+      certificates: cs,
     }
   validate_burn_batch(din, [(bid_a, 400)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
 }
@@ -3278,13 +3287,20 @@ fn t_bb_owner_case(
 fn t_mint_owner_case(
   owner: Credential, signers: List<ByteArray>, ws: Pairs<Credential, Int>,
 ) -> Bool {
+  t_mint_owner_case_c(owner, signers, ws, [])
+}
+
+fn t_mint_owner_case_c(
+  owner: Credential, signers: List<ByteArray>, ws: Pairs<Credential, Int>,
+  cs: List<Certificate>,
+) -> Bool {
   let seed = t_mint_seed()
   let name = t_mint_name(seed)
   let bal  = 100
   let vd   = VaultDatum { ..t_clean_genesis(bal), owner: owner }
   let out  = t_genesis_output(vd, bal, t_vault_hash, name)
   let m    = assets.from_asset(t_vault_hash, name, 1)
-  let tx   = Transaction { ..t_mint_tx(seed, out, m, signers), withdrawals: ws }
+  let tx   = Transaction { ..t_mint_tx(seed, out, m, signers), withdrawals: ws, certificates: cs }
   t_mint_call(seed, t_vault_hash, tx)
 }
 
@@ -3306,14 +3322,38 @@ test owner_script_zero_withdrawal_mint_ok() {
   t_mint_owner_case(Script(t_owner_script), [], [Pair(Script(t_owner_script), 0)])
 }
 
-// (1b) chủ Script(h), rút LƯỢNG > 0 từ Script(h) ⟹ từ chối. Đó là hình dạng tx quét sạch
-// tài khoản thưởng (tx thu hồi `did_stake`), không phải bằng chứng chủ phê duyệt.
-test owner_script_positive_withdrawal_burn_batch_rejected() fail {
+// (1b) chủ Script(h), rút LƯỢNG > 0 từ Script(h) ⟹ nhận. Lượng chỉ nói số dư thưởng đang
+// là bao nhiêu (ledger ép mục rút == số dư), không nói tx là của ai.
+test owner_script_positive_withdrawal_burn_batch_ok() {
   t_bb_owner_case(Script(t_owner_script), [], [Pair(Script(t_owner_script), 1)])
 }
 
-test owner_script_positive_withdrawal_mint_rejected() fail {
+test owner_script_positive_withdrawal_mint_ok() {
   t_mint_owner_case(Script(t_owner_script), [], [Pair(Script(t_owner_script), 1)])
+}
+
+// (1c) hình dạng tx THU HỒI: chứng chỉ huỷ đăng ký `Script(h)` + rút 0, không chữ ký ⟹ từ
+// chối. Đổi ĐÚNG một biến (thêm chứng chỉ) so với (1).
+test owner_script_unregister_cert_burn_batch_rejected() fail {
+  t_bb_owner_case_c(
+    Script(t_owner_script), [], [Pair(Script(t_owner_script), 0)],
+    [UnregisterCredential { credential: Script(t_owner_script), refund: Never }],
+  )
+}
+
+test owner_script_unregister_cert_mint_rejected() fail {
+  t_mint_owner_case_c(
+    Script(t_owner_script), [], [Pair(Script(t_owner_script), 0)],
+    [UnregisterCredential { credential: Script(t_owner_script), refund: Never }],
+  )
+}
+
+// (1d) cặp dương của (1c): chứng chỉ về credential KHÁC không chạm cổng chủ.
+test owner_script_other_cert_burn_batch_ok() {
+  t_bb_owner_case_c(
+    Script(t_owner_script), [], [Pair(Script(t_owner_script), 0)],
+    [UnregisterCredential { credential: Script(t_other_script), refund: Never }],
+  )
 }
 
 // (2) chủ Script(h), không có mục rút ⟹ từ chối.

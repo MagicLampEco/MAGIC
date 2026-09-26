@@ -47,6 +47,7 @@ use aiken/interval.{Finite, IntervalBoundType}
 use aiken/primitive/bytearray
 use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value}
+use cardano/certificate.{Certificate, UnregisterCredential}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Spend, Transaction,
   placeholder,
@@ -4329,6 +4330,10 @@ fn with_withdrawals(tx: Transaction, wds: Pairs<Credential, Int>) -> Transaction
   Transaction { ..tx, withdrawals: wds }
 }
 
+fn with_certs(tx: Transaction, cs: List<Certificate>) -> Transaction {
+  Transaction { ..tx, certificates: cs }
+}
+
 // ── genesis ──
 fn oc_mint_tx(owner: Credential, signers: List<ByteArray>) -> Transaction {
   let name = t_vault_nft()
@@ -4397,13 +4402,25 @@ test pp_owner_script_setdid_withdraw_zero_ok() {
   )
 }
 
-// Rút LƯỢNG > 0 từ Script(h): hình dạng tx quét sạch tài khoản thưởng (tx thu hồi
-// `did_stake`), không phải bằng chứng chủ phê duyệt ⟹ từ chối.
-test pp_owner_script_setdid_positive_withdrawal_rejected() fail {
+// Rút LƯỢNG > 0 từ Script(h) ⟹ nhận: lượng chỉ nói số dư thưởng, không nói tx là của ai.
+test pp_owner_script_setdid_positive_withdrawal_ok() {
   let owner = Script(t_owner_script)
   run_setdid(
     oc_sd_din(owner), t_did,
     with_withdrawals(oc_sd_tx(owner, []), [Pair(Script(t_owner_script), 1)]),
+  )
+}
+
+// Hình dạng tx THU HỒI: huỷ đăng ký Script(h) + rút 0 ⟹ từ chối. Đổi ĐÚNG một biến so với
+// `pp_owner_script_setdid_withdraw_zero_ok`.
+test pp_owner_script_setdid_unregister_cert_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_setdid(
+    oc_sd_din(owner), t_did,
+    with_certs(
+      with_withdrawals(oc_sd_tx(owner, []), [Pair(Script(t_owner_script), 0)]),
+      [UnregisterCredential { credential: Script(t_owner_script), refund: Never }],
+    ),
   )
 }
 
@@ -4466,13 +4483,24 @@ test pp_owner_script_draw_withdraw_zero_ok() {
   )
 }
 
-// Rút LƯỢNG > 0 từ Script(h): hình dạng tx quét sạch tài khoản thưởng (tx thu hồi
-// `did_stake`), không phải bằng chứng chủ phê duyệt ⟹ từ chối.
-test pp_owner_script_draw_positive_withdrawal_rejected() fail {
+// Rút LƯỢNG > 0 từ Script(h) ⟹ nhận.
+test pp_owner_script_draw_positive_withdrawal_ok() {
   let owner = Script(t_owner_script)
   run_draw(
     oc_draw_din(owner), draw_amt,
     with_withdrawals(oc_draw_tx(owner, []), [Pair(Script(t_owner_script), 1)]),
+  )
+}
+
+// Hình dạng tx THU HỒI trên nhánh rút tiền: huỷ đăng ký Script(h) + rút 0 ⟹ từ chối.
+test pp_owner_script_draw_unregister_cert_rejected() fail {
+  let owner = Script(t_owner_script)
+  run_draw(
+    oc_draw_din(owner), draw_amt,
+    with_certs(
+      with_withdrawals(oc_draw_tx(owner, []), [Pair(Script(t_owner_script), 0)]),
+      [UnregisterCredential { credential: Script(t_owner_script), refund: Never }],
+    ),
   )
 }
 

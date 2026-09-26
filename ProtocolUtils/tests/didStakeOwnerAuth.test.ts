@@ -57,27 +57,26 @@ async function codeOf(p: Promise<unknown>): Promise<string> {
 }
 
 describe("didStakeOwnerAuth — ca dương", () => {
-  it("gắn anchor + rút 0 + redeemer Constr0[] + script inline + controller & device", async () => {
-    const { p } = ports({ registered: true, withdrawableLovelace: 0n });
+  it("gắn anchor + rút ĐÚNG số dư của cổng + redeemer Constr0[] + script inline + controller & device", async () => {
+    const { p } = ports({ registered: true, withdrawableLovelace: 1_234_567n });
     const auth = await didStakeOwnerAuth<FakeTx, typeof ANCHOR>(input(), p);
     const tx = applyOwnerAuth(new FakeTx(), resolveOwnerAuth({ type: "script", hash: SH }, auth));
     expect(tx.reads).toEqual([[ANCHOR]]);
-    expect(tx.withdrawals).toEqual([["stake_test1_5c5c5c5c", 0n, "d87980"]]);
+    expect(tx.withdrawals).toEqual([["stake_test1_5c5c5c5c", 1_234_567n, "d87980"]]);
     expect(DID_STAKE_AUTHORIZE_REDEEMER).toBe("d87980");
     expect(tx.scripts).toEqual([{ type: "PlutusV3", script: CBOR }]);
     expect(tx.signers).toEqual([CTRL, DEV]);
     // KHÔNG ký bằng h: một script hash không ký được.
     expect(tx.signers).not.toContain(SH);
     expect(auth.details.requiredSigners).toEqual([CTRL, DEV]);
-    expect(auth.details.withdrawLovelace).toBe(0n);
+    expect(auth.details.withdrawLovelace).toBe(1_234_567n);
   });
 
-  it("CẶP: số dư 0 thì dựng (rút 0); số dư 1 hoặc 7 thì NÉM OWNER_STAKE_REWARDS_PENDING, không dựng", async () => {
-    const auth = await didStakeOwnerAuth<FakeTx, typeof ANCHOR>(input(), ports({ registered: true, withdrawableLovelace: 0n }).p);
-    expect(auth.attachWithdraw(new FakeTx()).withdrawals[0]![1]).toBe(0n);
-    for (const bal of [1n, 7n]) {
-      expect(await codeOf(didStakeOwnerAuth<FakeTx, typeof ANCHOR>(input(), ports({ registered: true, withdrawableLovelace: bal }).p)))
-        .toBe("OWNER_STAKE_REWARDS_PENDING");
+  it("CẶP: số dư 0 thì rút 0, số dư 7 thì rút 7 — lượng rút đi theo cổng, không gõ cứng", async () => {
+    for (const bal of [0n, 7n]) {
+      const auth = await didStakeOwnerAuth<FakeTx, typeof ANCHOR>(input(), ports({ registered: true, withdrawableLovelace: bal }).p);
+      const tx = auth.attachWithdraw(new FakeTx());
+      expect(tx.withdrawals[0]![1]).toBe(bal);
     }
   });
 });

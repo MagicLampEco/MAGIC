@@ -176,11 +176,10 @@ export class DidStakeWitnessProvider implements OwnerWitnessProvider {
       requiredSigners: [...auth.details.requiredSigners],
       notes: [
         `Chủ script ${owner.hash}: giao dịch rút ${auth.details.withdrawLovelace} lovelace từ ` +
-          `${auth.details.rewardAddress} (validator chỉ nhận rút 0; số dư thưởng lúc dựng là 0) ` +
-          `với redeemer Authorize, script did_stake đính inline.`,
+          `${auth.details.rewardAddress} (đúng số dư thưởng lúc dựng) với redeemer Authorize, ` +
+          `script did_stake đính inline.`,
         `Cần chữ ký của controller ${w.controllerPkh} VÀ khoá thiết bị ${w.deviceKeyHash}.`,
-        `Anchor DID phải đang Active; nộp sau một ranh giới epoch có cộng thưởng thì ledger ` +
-          `từ chối — rút sạch thưởng ở tx riêng rồi dựng lại.`,
+        `Anchor DID phải đang Active; nộp sau một ranh giới epoch có cộng thưởng thì dựng lại.`,
       ],
     };
   }

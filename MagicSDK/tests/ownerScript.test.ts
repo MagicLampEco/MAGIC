@@ -54,7 +54,7 @@ const PLUTUS_JSON = {
   },
 } as never;
 
-const REWARD = async () => ({ registered: true, withdrawableLovelace: 0n });
+const REWARD = async () => ({ registered: true, withdrawableLovelace: 5n });
 
 function scriptAuth(script = DID_SCRIPT) {
   return didStakeOwnerAuthLucid({
@@ -135,12 +135,12 @@ describe("didStakeOwnerAuthLucid — hash THẬT (blake2b_224 qua Lucid)", () =>
 });
 
 describe("withdrawLamp — nhánh chủ", () => {
-  it("chủ script + nhân chứng ⟹ rút 0, đính did_stake, ký controller+device, KHÔNG ký h", async () => {
+  it("chủ script + nhân chứng ⟹ rút đúng số dư, đính did_stake, ký controller+device, KHÔNG ký h", async () => {
     const r = recordingLucid();
     await withdrawLamp({ ...baseWithdraw, lucid: r.lucid, vaultUtxo: vaultUtxo("Schedule", { type: "script", hash: DID_H }), ownerAuth: await scriptAuth() } as never);
     const w = r.argsOf("withdraw");
     expect(w).toHaveLength(1);
-    expect(w[0]![1]).toBe(0n);
+    expect(w[0]![1]).toBe(5n);
     expect(w[0]![2]).toBe("d87980");
     expect(r.argsOf("attach.WithdrawalValidator")).toEqual([[{ type: "PlutusV3", script: DID_SCRIPT }]]);
     expect(r.argsOf("addSignerKey")).toEqual([[CTRL], [DEV]]);

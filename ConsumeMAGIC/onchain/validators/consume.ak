@@ -3876,9 +3876,9 @@ test engage_mint_owner_script_withdraw_zero_ok() {
   oc_mint(Script(ct_owner_script), [], ct_wd(ct_owner_script))
 }
 
-// Rút LƯỢNG > 0 từ Script(h): hình dạng tx quét sạch tài khoản thưởng (tx thu hồi
-// `did_stake`), không phải bằng chứng chủ phê duyệt ⟹ từ chối.
-test engage_mint_owner_script_positive_withdrawal_fail() fail {
+// Rút LƯỢNG > 0 từ Script(h) ⟹ nhận: lượng chỉ nói số dư thưởng, không nói tx là của ai.
+// Vế chứng chỉ vòng đời stake được ghim ở bài kiểm đơn vị của `consume/owner_auth.ak`.
+test engage_mint_owner_script_positive_withdrawal_ok() {
   oc_mint(Script(ct_owner_script), [], [Pair(Script(ct_owner_script), 1)])
 }
 
@@ -3915,9 +3915,9 @@ test bind_did_owner_script_withdraw_zero_ok() {
   oc_bind(Script(ct_owner_script), [], ct_wd(ct_owner_script))
 }
 
-// Rút LƯỢNG > 0 từ Script(h): hình dạng tx quét sạch tài khoản thưởng (tx thu hồi
-// `did_stake`), không phải bằng chứng chủ phê duyệt ⟹ từ chối.
-test bind_did_owner_script_positive_withdrawal_fail() fail {
+// Rút LƯỢNG > 0 từ Script(h) ⟹ nhận: lượng chỉ nói số dư thưởng, không nói tx là của ai.
+// Vế chứng chỉ vòng đời stake được ghim ở bài kiểm đơn vị của `consume/owner_auth.ak`.
+test bind_did_owner_script_positive_withdrawal_ok() {
   oc_bind(Script(ct_owner_script), [], [Pair(Script(ct_owner_script), 1)])
 }
 
@@ -3955,9 +3955,9 @@ test close_thread_owner_script_withdraw_zero_ok() {
   oc_close(Script(ct_owner_script), [], ct_wd(ct_owner_script))
 }
 
-// Rút LƯỢNG > 0 từ Script(h): hình dạng tx quét sạch tài khoản thưởng (tx thu hồi
-// `did_stake`), không phải bằng chứng chủ phê duyệt ⟹ từ chối.
-test close_thread_owner_script_positive_withdrawal_fail() fail {
+// Rút LƯỢNG > 0 từ Script(h) ⟹ nhận: lượng chỉ nói số dư thưởng, không nói tx là của ai.
+// Vế chứng chỉ vòng đời stake được ghim ở bài kiểm đơn vị của `consume/owner_auth.ak`.
+test close_thread_owner_script_positive_withdrawal_ok() {
   oc_close(Script(ct_owner_script), [], [Pair(Script(ct_owner_script), 1)])
 }
 

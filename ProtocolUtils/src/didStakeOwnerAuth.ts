@@ -14,23 +14,19 @@
 //     KHÔNG kiểm ở đây: lược đồ datum anchor thuộc nhà Phoenix, kho này không giữ nó. Anchor
 //     không Active ⟹ `did_stake` từ chối trên chuỗi.
 //   · `required_signers` = khoá controller + MỘT khoá thiết bị.
-//   · Lượng rút LUÔN là 0 — validator ép từ 2026-09-26 (`owner_auth.ak` ▸
-//     `owner_authorized`: `get_first(withdrawals, Script(h)) == Some(0)`). Ledger lại ép
-//     lượng rút bằng ĐÚNG số dư thưởng, nên chỉ dựng được khi số dư đang là 0. Tra số dư qua
-//     cổng `rewardAccount`:
-//       - chưa đăng ký ⟹ `OWNER_STAKE_NOT_REGISTERED`;
-//       - số dư > 0 ⟹ `OWNER_STAKE_REWARDS_PENDING`. Bên ví rút sạch thưởng ở một tx RIÊNG
-//         (không chạm vault) rồi gọi lại.
-//     Không dựng giao dịch ở cả hai ca. Vì sao validator ép 0: lượng > 0 là hình dạng tx quét
-//     sạch tài khoản thưởng, tức tx thu hồi `did_stake` — tx đó không có chữ ký chủ.
+//   · Lượng rút = ĐÚNG số dư thưởng hiện có của tài khoản `Script(h)` — ledger ép, không
+//     phải validator. Tra qua cổng `rewardAccount`, KHÔNG gõ cứng 0. Tài khoản chưa đăng
+//     ký ⟹ `OWNER_STAKE_NOT_REGISTERED`, không dựng giao dịch.
+//   · Validator từ chối tx có chứng chỉ vòng đời stake về `Script(h)` (đăng ký, huỷ, uỷ
+//     thác). Hàm này không thêm chứng chỉ nào; bên gọi cũng đừng thêm vào cùng tx.
 //
 // Gói này cố ý không phụ thuộc Lucid (xem `ownerAuth.ts`), nên ba việc cần thư viện Cardano
 // — băm script, dựng địa chỉ thưởng, đọc tài khoản thưởng — đi vào qua `DidStakePorts`. Mỗi
 // gói có Lucid tự nối cổng (MagicSDK ▸ `didStakeLucidPorts`).
 //
-// ⚠ Số dư chụp LÚC GỌI hàm này. DID đã uỷ thác pool mà nộp sau một ranh giới epoch có cộng
-//   thưởng thì ledger từ chối (0 ≠ số dư mới). Dựng xong thì nộp ngay; bị từ chối vì lượng
-//   rút thì gọi lại hàm này — nó sẽ trả `OWNER_STAKE_REWARDS_PENDING`.
+// ⚠ Số dư chụp LÚC GỌI hàm này. Giao dịch nộp sau một ranh giới epoch mà thưởng vừa được
+//   cộng thì ledger từ chối (lượng rút ≠ số dư). Dựng xong thì nộp ngay; bị từ chối vì
+//   lượng rút thì dựng lại, đừng sửa số tay.
 
 import type { Network } from "./index.js";
 import {
@@ -162,16 +158,7 @@ export async function didStakeOwnerAuth<Tx extends DidStakeTxLike<Tx>, U>(
         `đăng ký stake credential.`,
     );
   }
-  if (acct.withdrawableLovelace !== 0n) {
-    throw new OwnerAuthError(
-      "OWNER_STAKE_REWARDS_PENDING",
-      `tài khoản thưởng ${rewardAddress} (script:${ownerHash}) đang có ` +
-        `${acct.withdrawableLovelace} lovelace thưởng. Validator chỉ nhận mục rút 0 làm bằng ` +
-        `chứng chủ, còn ledger ép mục rút bằng đúng số dư — nên rút sạch thưởng ở một giao ` +
-        `dịch riêng (không chạm vault) rồi gọi lại.`,
-    );
-  }
-  const amount = 0n;
+  const amount = acct.withdrawableLovelace;
   const script = { type: "PlutusV3" as const, script: cbor };
 
   return {

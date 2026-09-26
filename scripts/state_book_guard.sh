@@ -29,10 +29,15 @@
 #       cổng ấy được `config.ts` viết thành chữ: "đặt … TRONG CÙNG MỘT LỆNH". Một
 #       dòng nằm sẵn trong sổ khai hộ vĩnh viễn, nên nó phá đúng tiền đề đó.
 #
-#   (b) bốn tên KHÔNG có cổng nào đứng sau:
+#   (b) các tên KHÔNG có cổng nào đứng sau:
 #       · `BUFFER_BPS`   — `deploy/10_deploy_prepaid.ts` nướng vào datum quỹ, và
 #                          chính tệp đó khai nó BẤT BIẾN suốt đời quỹ.
 #       · `PLATFORM_PKH` — khoá DUY NHẤT claim được CARP của quỹ.
+#       · `BENEFICIARY_ADDRESS` · `BENEFICIARY_DATUM` — đích nhận CARP của mọi lượt
+#                          `FundClaim`, nướng vào datum quỹ và bất biến suốt đời
+#                          quỹ (thêm 2026-09-26). `10_deploy_prepaid.ts` cố ý KHÔNG
+#                          có giá trị mặc định cho hai biến này; một dòng trong sổ
+#                          là một mặc định đặt lén, thắng vĩnh viễn.
 #       · `WALLET_SEED` · `BLOCKFROST_KEY` — đổi ví ký và đổi nhà cung cấp dữ
 #                          liệu chuỗi. Runner chỉ đánh dấu chúng để export, không
 #                          khôi phục giá trị, nên một dòng trong sổ thắng vĩnh viễn.
@@ -72,15 +77,16 @@
 # sổ có an toàn không — đổi một lỗ lấy một lỗ khác. Ghi ra đây để lần sau không
 # phải nghĩ lại từ đầu.
 
-# Tám tên này là một bản sao có nhãn, đúng mức 3 của `Forall §Một nguồn`. Nguồn:
+# Các tên này là một bản sao có nhãn, đúng mức 3 của `Forall §Một nguồn`. Nguồn:
 # `scripts/config.ts` ▸ `requireCarpIdentity` và ▸ phép kiểm
 # `LAMP_ASSET_NAME_NONCANONICAL` cho nhóm (a); `scripts/deploy/10_deploy_prepaid.ts`
-# cho `BUFFER_BPS` + `PLATFORM_PKH`. Mốc chép 2026-09-20. Không cơ chế nào ép hai
+# cho `BUFFER_BPS` + `PLATFORM_PKH` (mốc chép 2026-09-20) và `BENEFICIARY_ADDRESS` +
+# `BENEFICIARY_DATUM` (mốc chép 2026-09-26). Không cơ chế nào ép hai
 # danh sách đi cùng nhau — đổi bên kia thì đổi cả ở đây.
-STATE_BOOK_CO_Y_DINH='CARP_IDENTITY_NONCANONICAL|LAMP_ASSET_NAME_NONCANONICAL|CARP_POLICY_ID|CARP_ASSET_NAME|BUFFER_BPS|PLATFORM_PKH|WALLET_SEED|BLOCKFROST_KEY'
+STATE_BOOK_CO_Y_DINH='CARP_IDENTITY_NONCANONICAL|LAMP_ASSET_NAME_NONCANONICAL|CARP_POLICY_ID|CARP_ASSET_NAME|BUFFER_BPS|PLATFORM_PKH|BENEFICIARY_ADDRESS|BENEFICIARY_DATUM|WALLET_SEED|BLOCKFROST_KEY'
 
 # assert_state_books_khong_khai_y_dinh <sổ> [sổ…]
-# Ném (exit 1) khi một sổ có mặt chứa dòng gán một trong tám tên trên, VÀ khi một
+# Ném (exit 1) khi một sổ có mặt chứa dòng gán một trong các tên trên, VÀ khi một
 # sổ có mặt mà không quét được.
 #
 # Ba trạng thái, không phải hai (`Forall §Cổng gác`): khớp · lệch · KHÔNG ĐO ĐƯỢC.

@@ -24,9 +24,12 @@ import {
   parCarpFromMagic,
   parMagicFromCarp,
 } from "./math.js";
+import { Data } from "@lucid-evolution/lucid";
+import { AddressSchema } from "./types.js";
 import type {
   MagicBatch,
   PaidFundDatum,
+  PlutusAddress,
   PrepaidCredit,
   PrepaidVaultDatum,
 } from "./types.js";
@@ -54,6 +57,44 @@ export interface OutRef {
 // ══════════════════════════════════════════════════════════════
 // PrepaidLock
 // ══════════════════════════════════════════════════════════════
+
+/**
+ * Vault đã có dòng hạn-mức cho `fundId` chưa. Cùng vị từ `has_credit_line` bên
+ * Aiken — dùng cho cả rẽ gộp/thêm lẫn cổng chữ ký C-PP-9.
+ */
+export function hasCreditLine(
+  credits: readonly PrepaidCredit[],
+  fundId: string,
+): boolean {
+  return credits.some((c) => c.fund_id === fundId);
+}
+
+/**
+ * C-PP-9 (siết 2026-09-26): pkh BẮT BUỘC có trong `extra_signatories` của một
+ * lượt `PrepaidLock`. Builder gọi hàm này rồi `addSignerKey` đúng giá trị trả về.
+ *
+ *   · MỞ DÒNG MỚI (vault chưa có dòng cho `fundId`) ⟹ CHỈ `owner`. Gọi với
+ *     `by = "platform"` ở ca này là NÉM — không lặng lẽ đổi sang owner, vì người
+ *     gọi đang dựng một giao dịch mà khoá họ cầm không ký được.
+ *   · NẠP THÊM vào dòng đã có ⟹ `platform` (app khoá hộ) hoặc `owner`.
+ */
+export function lockRequiredSigner(
+  vault: PrepaidVaultDatum,
+  fund: PaidFundDatum,
+  fundId: string,
+  by: "owner" | "platform",
+): string {
+  const opensNewLine = !hasCreditLine(vault.prepaid_credits, fundId);
+  if (by === "owner") return vault.owner;
+  if (opensNewLine) {
+    reject(
+      "C-PP-9",
+      `lượt khoá MỞ DÒNG MỚI cho quỹ ${fundId} cần chữ ký owner ${vault.owner}; ` +
+        `chữ ký platform chỉ đủ khi nạp thêm vào dòng đã có`,
+    );
+  }
+  return fund.platform;
+}
 
 /** Hạn-mức sau khi khoá thêm `amount` vào quỹ `fundId` (C-PP-12). */
 export function creditsAfterLock(
@@ -347,4 +388,125 @@ export function liveMagic(vault: PrepaidVaultDatum, epoch: bigint): bigint {
   return vault.magic_batches
     .filter((b) => b.created_epoch === epoch)
     .reduce((acc, b) => acc + b.current_amount, 0n);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Đích nhận CARP của FundClaim (L1'', 2026-09-26)
+// ══════════════════════════════════════════════════════════════
+
+const HASH28_HEX = /^[0-9a-f]{56}$/;
+
+function addressKey(a: PlutusAddress): string {
+  return Data.to(a, AddressSchema as unknown as PlutusAddress);
+}
+
+function credentialHash(a: PlutusAddress): { kind: "Key" | "Script"; hash: string } {
+  const pc = a.payment_credential;
+  if ("VerificationKey" in pc) return { kind: "Key", hash: pc.VerificationKey[0] };
+  return { kind: "Script", hash: pc.Script[0] };
+}
+
+/**
+ * Gương cổng genesis quỹ (`validate_mint_fund_nft`) cho phần L1''. Trả về danh
+ * sách pkh BẮT BUỘC ký giao dịch genesis (hiện là `[platform]`). Ném ở đúng những
+ * chỗ on-chain từ chối — builder gọi trước khi dựng tx để chết ở chỗ rẻ nhất.
+ *
+ * `fundScriptHash` = script hash của `paid_fund` đã apply (= policy NFT quỹ).
+ */
+export function assertFundGenesis(
+  fund: PaidFundDatum,
+  fundScriptHash: string,
+): string[] {
+  if (!HASH28_HEX.test(fund.platform)) {
+    reject("C-PP-15", `platform phải là pkh 28 byte, nhận "${fund.platform}"`);
+  }
+  if (!HASH28_HEX.test(fund.vault_hash)) {
+    reject("C-PP-15", `vault_hash phải là script hash 28 byte, nhận "${fund.vault_hash}"`);
+  }
+  const ben = fund.beneficiary;
+  if (ben.stake_credential !== null) {
+    reject("C-PP-15", "beneficiary không được mang stake credential (claim so địa chỉ đầy đủ)");
+  }
+  const { kind, hash } = credentialHash(ben);
+  if (!HASH28_HEX.test(hash)) {
+    reject("C-PP-15", `hash của beneficiary phải 28 byte, nhận "${hash}"`);
+  }
+  if (kind === "Script" && hash === fundScriptHash) {
+    reject("C-PP-15", "beneficiary trùng script quỹ — mọi claim chết, CARP kẹt");
+  }
+  if (kind === "Script" && hash === fund.vault_hash) {
+    reject("C-PP-15", "beneficiary trùng script vault — output không NFT vault, CARP chết");
+  }
+  if (kind === "Script" && fund.beneficiary_datum === null) {
+    reject(
+      "C-PP-15",
+      "beneficiary là script thì BẮT BUỘC ghim beneficiary_datum (rót đúng địa chỉ ≠ rót vào sổ)",
+    );
+  }
+  return [fund.platform];
+}
+
+/** Hình dạng output tới bên hưởng mà `validate_fund_claim` đòi. */
+export interface BeneficiaryPayout {
+  address: PlutusAddress;
+  paymentCredential: { kind: "Key" | "Script"; hash: string };
+  carp: bigint;
+  /** CBOR hex của inline datum; `null` ⟹ output KHÔNG datum. */
+  inlineDatumCbor: string | null;
+}
+
+/**
+ * Output DUY NHẤT tới bên hưởng cho một lượt `FundClaim { amount }`. Builder đặt
+ * đúng `carp` CARP (cộng min-ADA), đúng datum, ở địa chỉ enterprise của
+ * `paymentCredential` — và KHÔNG tiêu input nào ở địa chỉ đó (phí + tiền thừa đi
+ * từ địa chỉ khác, vd địa chỉ base của cùng khoá).
+ */
+export function claimBeneficiaryOutput(
+  fund: PaidFundDatum,
+  amount: bigint,
+): BeneficiaryPayout {
+  if (amount <= 0n) reject("C-PP-6", `lượng rút ${amount} phải > 0`);
+  return {
+    address: fund.beneficiary,
+    paymentCredential: credentialHash(fund.beneficiary),
+    carp: amount,
+    inlineDatumCbor:
+      fund.beneficiary_datum === null ? null : Data.to(fund.beneficiary_datum),
+  };
+}
+
+/** Một output của tx claim, dạng đủ để đối chiếu cổng đích. */
+export interface ClaimOutputView {
+  address: PlutusAddress;
+  carp: bigint;
+  inlineDatumCbor: string | null;
+}
+
+/**
+ * Gương cổng đích của `validate_fund_claim`: không input tại bên hưởng · đúng MỘT
+ * output tại bên hưởng · CARP == amount · datum khớp. So địa chỉ ĐẦY ĐỦ.
+ */
+export function assertClaimDestination(
+  fund: PaidFundDatum,
+  amount: bigint,
+  inputAddresses: readonly PlutusAddress[],
+  outputs: readonly ClaimOutputView[],
+): void {
+  const ben = addressKey(fund.beneficiary);
+  if (inputAddresses.some((a) => addressKey(a) === ben)) {
+    reject("C-PP-6", "tx claim có input tại beneficiary — phí/tiền thừa phải đi từ địa chỉ khác");
+  }
+  const hits = outputs.filter((o) => addressKey(o.address) === ben);
+  if (hits.length !== 1) {
+    reject("C-PP-6", `cần ĐÚNG MỘT output tại beneficiary, có ${hits.length}`);
+  }
+  const paid = hits[0]!;
+  if (paid.carp !== amount) {
+    reject("C-PP-6", `output tới beneficiary mang ${paid.carp} CARP ≠ amount ${amount}`);
+  }
+  const want =
+    fund.beneficiary_datum === null ? null : Data.to(fund.beneficiary_datum);
+  if (paid.inlineDatumCbor !== want) {
+    reject("C-PP-6", "datum output tới beneficiary không khớp beneficiary_datum đã ghim");
+  }
 }

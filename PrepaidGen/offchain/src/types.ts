@@ -48,7 +48,39 @@ export const PrepaidVaultDatumSchema = Data.Object({
 });
 export type PrepaidVaultDatum = Data.Static<typeof PrepaidVaultDatumSchema>;
 
+// ── Address (Plutus) ─────────────────────────────────────────
+// Gương của `cardano/address.{Address}` bên Aiken:
+//   Credential      = VerificationKey(hash) constr 0 | Script(hash) constr 1
+//   StakeCredential = Inline(Credential)   constr 0 | Pointer{…}   constr 1
+//   Address         = Constr 0 [payment_credential, Option<StakeCredential>]
+// Thứ tự nhánh LÀ mã hoá — đảo `VerificationKey`/`Script` là đọc khoá thành script.
+export const CredentialSchema = Data.Enum([
+  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes()]) }),
+  Data.Object({ Script: Data.Tuple([Data.Bytes()]) }),
+]);
+export type Credential = Data.Static<typeof CredentialSchema>;
+
+export const StakeCredentialSchema = Data.Enum([
+  Data.Object({ Inline: Data.Tuple([CredentialSchema]) }),
+  Data.Object({
+    Pointer: Data.Object({
+      slot_number: Data.Integer(),
+      transaction_index: Data.Integer(),
+      certificate_index: Data.Integer(),
+    }),
+  }),
+]);
+
+export const AddressSchema = Data.Object({
+  payment_credential: CredentialSchema,
+  stake_credential: Data.Nullable(StakeCredentialSchema),
+});
+export type PlutusAddress = Data.Static<typeof AddressSchema>;
+
 // ── PaidFundDatum ────────────────────────────────────────────
+// Hai trường cuối thêm 2026-09-26 (L1''): đích nhận CARP của FundClaim, ghim
+// genesis, bất biến. THÊM Ở CUỐI giữ chỉ số trường cũ nhưng KHÔNG giữ khả năng
+// đọc UTxO quỹ 9 trường đời trước (BOUNDARIES.md §2).
 export const PaidFundDatumSchema = Data.Object({
   fund_id: Data.Bytes(),
   platform: Data.Bytes(),
@@ -59,6 +91,8 @@ export const PaidFundDatumSchema = Data.Object({
   provider_claimed: Data.Integer(),
   buffer_bps: Data.Integer(),
   last_updated_epoch: Data.Integer(),
+  beneficiary: AddressSchema, // genesis ép: không stake, ≠ script quỹ/vault
+  beneficiary_datum: Data.Nullable(Data.Any()), // Script(_) ⟹ bắt buộc có
 });
 export type PaidFundDatum = Data.Static<typeof PaidFundDatumSchema>;
 
@@ -222,4 +256,6 @@ export const PAID_FUND_DATUM_FIELDS = [
   "provider_claimed",
   "buffer_bps",
   "last_updated_epoch",
+  "beneficiary",
+  "beneficiary_datum",
 ] as const;

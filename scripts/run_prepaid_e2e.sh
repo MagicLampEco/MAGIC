@@ -106,6 +106,9 @@ trap 'rm -f "$CHECK_JSON"' EXIT
 #   nên từ lúc có đoạn này, một dòng nằm sẵn trong sổ quyết định được cả hai. Cái
 #   thứ nhất bị nướng vào datum quỹ và bất biến suốt đời quỹ; cái thứ hai là khoá
 #   duy nhất claim được CARP. Đó chính là lý do cổng ngay dưới gác cả hai tên.
+#   Từ 2026-09-26 nó đọc thêm `BENEFICIARY_ADDRESS` + `BENEFICIARY_DATUM` (đích
+#   nhận CARP của FundClaim, bất biến suốt đời quỹ, KHÔNG có mặc định) — cổng gác
+#   luôn hai tên đó: chúng phải đặt TRONG CÙNG LỆNH gọi runner, không nằm trong sổ.
 #   (Bản đầu của chú thích này khai rằng runner "chạy với `LAMP_POLICY_ID` rỗng".
 #   Sai: biến đó không được đọc ở đây. Bản thứ hai khai "bốn bước KHÔNG đổi hành
 #   vi", rồi nêu ngay hai biến chứng minh điều ngược lại — nó dùng đúng bằng chứng
@@ -186,6 +189,8 @@ fi
 # bản quyết định, và không bản nào tự khai mình lỏng hơn.
 echo
 echo "── (4) genesis: quỹ Paid + vault trả trước"
+# Fail-closed: thiếu BENEFICIARY_ADDRESS / BENEFICIARY_DATUM thì bước này NÉM
+# trước khi chạm mạng (xem khối env ở đầu `deploy/10_deploy_prepaid.ts`).
 NETWORK="$NETWORK" npx tsx deploy/10_deploy_prepaid.ts
 
 echo

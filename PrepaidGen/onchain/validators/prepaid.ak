@@ -262,6 +262,11 @@ fn fund_common_checks(
   expect fund_out.platform == fund_in.platform
   expect fund_out.vault_hash == fund_in.vault_hash
   expect fund_out.buffer_bps == fund_in.buffer_bps
+  // Đích nhận CARP của FundClaim (L1'', 2026-09-26): ghim genesis, bất biến ở MỌI
+  // nhánh spend. Một bản ở đây phủ cả ba nhánh — đổi đích giữa chừng là mở lại
+  // đúng đường "chiếm khoá platform ⟹ rút về ví mình" mà hai trường này đóng.
+  expect fund_out.beneficiary == fund_in.beneficiary
+  expect fund_out.beneficiary_datum == fund_in.beneficiary_datum
   expect fund_out.last_updated_epoch == current_epoch
 
   // C-PP-3: carp_locked == credit_issued − provider_claimed (đúng từ genesis 0/0/0)
@@ -271,7 +276,9 @@ fn fund_common_checks(
     FundLock -> validate_fund_lock(fund_in, fund_out, tx)
     FundSettle -> validate_fund_settle(fund_in, fund_out, current_epoch, tx)
     FundClaim { amount_carpdrop } ->
-      validate_fund_claim(fund_in, fund_out, amount_carpdrop, tx)
+      validate_fund_claim(
+        fund_in, fund_out, amount_carpdrop, carp_policy_id, carp_asset_name, tx,
+      )
   }
 }
 
@@ -305,12 +312,29 @@ fn validate_lock(
   let fund_in = decode_fund(fund_in_utxo)
   let fund_out = decode_fund(fund_out_utxo)
 
-  // C-PP-9: platform HOẶC owner ký (app khoá hộ user là hợp lệ — §9 nguồn B)
+  // C-PP-9 (siết 2026-09-26, vá DoS "platform || owner"):
+  //   · MỞ DÒNG MỚI (vault chưa có dòng hạn-mức cho `fund_id`) ⟹ CHỈ `owner` ký.
+  //   · NẠP THÊM vào dòng ĐÃ CÓ ⟹ `platform` HOẶC `owner` (app khoá hộ user là
+  //     hợp lệ — §9 nguồn B).
+  //
+  // Vì sao phải tách: genesis quỹ thì ai cũng lập được (với platform = pkh của
+  // chính mình), nên "platform nào cũng được" nghĩa là NGƯỜI LẠ tiêu được UTxO
+  // vault của nạn nhân. Người lạ lấp 20 chỗ `max_prepaid_credits` với 1 CARP mỗi
+  // chỗ, và dòng KHÔNG BAO GIỜ bị xoá (`types.ak` ▸ `PrepaidCredit`) ⟹ vault mất
+  // cửa nạp vĩnh viễn; còn nạp lại vào dòng của chính họ thì chặn cửa vault
+  // (tranh UTxO) vô hạn lần, đủ để nạn nhân không `BurnBatch` kịp trong epoch.
+  // Đòi chữ ký owner ở lượt mở dòng đóng cả hai với người lạ; bề mặt còn lại là
+  // platform mà CHÍNH owner đã chọn mở dòng cho.
+  //
+  // Điều kiện "dòng mới" là CÙNG vị từ mà `add_credit` dùng để rẽ nhánh gộp/thêm
+  // (`has_credit_line`) — hai chỗ cùng một hàm thì không lệch được nhau.
+  let opens_new_line = !has_credit_line(datum.prepaid_credits, fund_id)
   expect
-    list.has(tx.extra_signatories, fund_in.platform) || list.has(
-      tx.extra_signatories,
-      datum.owner,
-    )
+    if opens_new_line {
+      authed_owner(datum, tx)
+    } else {
+      list.has(tx.extra_signatories, fund_in.platform) || authed_owner(datum, tx)
+    }
 
   // C-PP-13
   expect no_fund_mint(tx, fund_nft_policy)
@@ -323,6 +347,8 @@ fn validate_lock(
   expect fund_out.platform == fund_in.platform
   expect fund_out.vault_hash == fund_in.vault_hash
   expect fund_out.buffer_bps == fund_in.buffer_bps
+  expect fund_out.beneficiary == fund_in.beneficiary
+  expect fund_out.beneficiary_datum == fund_in.beneficiary_datum
   expect fund_out.carp_locked == fund_in.carp_locked + amount
   expect fund_out.credit_issued == fund_in.credit_issued + amount
   expect fund_out.magic_settled == fund_in.magic_settled
@@ -353,6 +379,12 @@ fn validate_lock(
   True
 }
 
+// Vault đã có dòng hạn-mức cho `fund_id` chưa. Dùng chung cho `add_credit` (rẽ
+// gộp/thêm) và cổng chữ ký C-PP-9 ở `validate_lock` (rẽ owner / platform||owner).
+fn has_credit_line(credits: List<PrepaidCredit>, fund_id: ByteArray) -> Bool {
+  list.any(credits, fn(c) { c.fund_id == fund_id })
+}
+
 // Cộng hạn-mức: có dòng thì cộng vào, chưa có thì thêm vào CUỐI danh sách.
 fn add_credit(
   credits : List<PrepaidCredit>,
@@ -360,7 +392,7 @@ fn add_credit(
   amount  : Int,
   epoch   : Int,
 ) -> List<PrepaidCredit> {
-  if list.any(credits, fn(c) { c.fund_id == fund_id }) {
+  if has_credit_line(credits, fund_id) {
     list.map(
       credits,
       fn(c) {
@@ -843,13 +875,44 @@ fn sum_settled(
 // FUND — FundClaim (C-PP-6 = F2)
 // ══════════════════════════════════════════════════════════════
 fn validate_fund_claim(
-  fund_in  : PaidFundDatum,
-  fund_out : PaidFundDatum,
-  amount   : Int,
-  tx       : Transaction,
+  fund_in         : PaidFundDatum,
+  fund_out        : PaidFundDatum,
+  amount          : Int,
+  carp_policy_id  : PolicyId,
+  carp_asset_name : ByteArray,
+  tx              : Transaction,
 ) -> Bool {
   expect list.has(tx.extra_signatories, fund_in.platform)
   expect amount > 0
+
+  // ── ĐÍCH (L1'', 2026-09-26): CARP rút ra phải tới ĐÚNG bên hưởng đã ghim ──
+  // Hình dạng "không input tại đích + đúng MỘT output tại đích", KHÔNG phải "delta
+  // tại đích". Cấm input tại đích thì tiền thừa của người dựng tx không thể rơi
+  // về đích, nên lý do cũ để loại dạng một-output (tiền thừa lẫn vào) mất hiệu
+  // lực; và dạng này ghim được cả DATUM, thứ mà "delta" không ghim.
+  //
+  // So ĐỊA CHỈ ĐẦY ĐỦ (genesis ép `beneficiary.stake_credential == None`): output
+  // ở (cùng payment cred, stake người lạ) KHÔNG tính là tới đích, nên không ai
+  // gắn stake của mình lên tiền của bên hưởng. Hệ quả vận hành: phí và tiền thừa
+  // của tx claim phải đi từ một địa chỉ KHÁC `beneficiary` (vd địa chỉ base của
+  // cùng khoá — nó khác địa chỉ enterprise của bên hưởng).
+  //
+  // Datum khớp: `None` ⟹ `NoDatum`, `Some(d)` ⟹ `InlineDatum(d)`. Bên hưởng là
+  // script thì thiếu datum là "rót đúng địa chỉ, ngoài sổ" — CARP nằm ở đó mà
+  // không nhánh nào của kho đích tiêu lại được. Ràng buộc này là CẦN, chưa ĐỦ:
+  // khả năng tiêu lại của cặp (beneficiary, beneficiary_datum) phải được chứng
+  // minh ngoài chuỗi trước khi lập quỹ (mục nợ trong `DevStatus.md`).
+  let ben = fund_in.beneficiary
+  expect !list.any(tx.inputs, fn(i) { i.output.address == ben })
+  expect [paid] = list.filter(tx.outputs, fn(o) { o.address == ben })
+  expect
+    assets.quantity_of(paid.value, carp_policy_id, carp_asset_name) == amount
+  expect
+    when fund_in.beneficiary_datum is {
+      None -> paid.datum == NoDatum
+      Some(d) -> paid.datum == InlineDatum(d)
+    }
+
   expect fund_out.carp_locked == fund_in.carp_locked - amount
   expect fund_out.provider_claimed == fund_in.provider_claimed + amount
   expect fund_out.credit_issued == fund_in.credit_issued
@@ -1113,6 +1176,38 @@ fn validate_mint_fund_nft(policy_id: PolicyId, tx: Transaction) -> Bool {
   expect fd.buffer_bps >= min_buffer_bps
   expect bytearray.length(fd.platform) == 28
   expect bytearray.length(fd.vault_hash) == 28
+
+  // ── Platform phải KÝ genesis (L1'', 2026-09-26) ─────────────────────────
+  // Không có vế này thì ai cũng lập được một quỹ mang pkh của platform thật với
+  // `beneficiary` là ví mình, dẫn người dùng của platform khoá CARP vào đó, rồi
+  // chờ keeper của platform ký `FundClaim` cho "quỹ mang pkh của tôi" — CARP chảy
+  // về kẻ mạo danh. Ghim đích mà không bắt platform ký là làm hệ XẤU đi so với
+  // lúc đích còn do người ký claim tự chọn.
+  expect list.has(tx.extra_signatories, fd.platform)
+
+  // ── Hình dạng đích nhận CARP (ghim trọn đời, xem `fund_common_checks`) ───
+  let ben = fd.beneficiary
+  // Không stake: cùng lý do với địa chỉ quỹ ở trên, và claim so địa chỉ ĐẦY ĐỦ.
+  expect ben.stake_credential == None
+  // Khuôn 28 byte cho hash của payment credential — cùng lớp với hai dòng độ dài
+  // ở trên: một hash sai độ dài không có output nào đỗ được ở đó, nên mọi claim
+  // chết và CARP người dùng kẹt sau buffer vĩnh viễn.
+  expect
+    when ben.payment_credential is {
+      VerificationKey(h) -> bytearray.length(h) == 28
+      Script(h) -> bytearray.length(h) == 28
+    }
+  // Đích là quỹ: output tới đích lại là output quỹ ⟹ claim không bao giờ đúng
+  // hình dạng. Đích là vault: output không mang NFT vault ⟹ không nhánh nào tiêu
+  // lại được (`vault_identity_preserved`). Cả hai là CARP chết.
+  expect ben.payment_credential != Script(policy_id)
+  expect ben.payment_credential != Script(fd.vault_hash)
+  // Đích là script ⟹ BẮT BUỘC ghim datum (xem khối ĐÍCH ở `validate_fund_claim`).
+  expect
+    when ben.payment_credential is {
+      Script(_) -> fd.beneficiary_datum != None
+      VerificationKey(_) -> True
+    }
   True
 }
 
@@ -1250,8 +1345,12 @@ fn no_fund_mint(tx: Transaction, fund_nft_policy: PolicyId) -> Bool {
 // hạn mức trong một giao dịch, chủ không ký. Đổi tên hàm là cố ý: cái tên cũ là
 // thứ mời người sau nối lại vế đã chết.
 //
-// Đổi tên `pub`/private trong `lib`/`validators` KHÔNG đổi script hash; và
-// PrepaidGen chưa deploy ở mạng nào (`scripts/DEPLOYED.md` không có mục nào).
+// Đổi tên `pub`/private trong `lib`/`validators` KHÔNG đổi script hash. (Bản trước
+// của dòng này còn viết "PrepaidGen chưa deploy ở mạng nào" — sai từ 2026-09-20:
+// `scripts/DEPLOYED.md` có mục PrepaidGen Preprod. Tra ở đó, đừng suy từ đây.)
+//
+// Từ 2026-09-26 hàm này gác thêm lượt `PrepaidLock` MỞ DÒNG MỚI (C-PP-9, xem
+// `validate_lock`).
 fn authed_owner(datum: PrepaidVaultDatum, tx: Transaction) -> Bool {
   list.has(tx.extra_signatories, datum.owner)
 }
@@ -1293,6 +1392,10 @@ const t_stranger: ByteArray = #"888888888888888888888888888888888888888888888888
 const t_vault_hash: ByteArray = #"11111111111111111111111111111111111111111111111111111111"
 const t_fund_hash: ByteArray = #"44444444444444444444444444444444444444444444444444444444"
 const t_evil_hash: ByteArray = #"66666666666666666666666666666666666666666666666666666666"
+// Bên hưởng CARP của FundClaim (L1''): một pkh riêng và một script riêng, KHÔNG
+// trùng platform/vault/quỹ — để bài nào đỏ thì đỏ vì đúng vế đang canh.
+const t_ben_pkh: ByteArray = #"bebebebebebebebebebebebebebebebebebebebebebebebebebebebe"
+const t_ben_script: ByteArray = #"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
 const t_carp_policy: ByteArray = #"22222222222222222222222222222222222222222222222222222222"
 // `carp_asset_name` thật là một BĂM 28 byte do nhà CarpetMint phát (xem
 // `offchain/src/constants.ts` §"Cấu hình mạng: CARP", đo 2026-09-11) — KHÔNG
@@ -1341,6 +1444,21 @@ fn t_own_ref() -> OutputReference {
 
 fn t_fund_ref() -> OutputReference {
   OutputReference { transaction_id: t_fund_tx, output_index: 0 }
+}
+
+// Địa chỉ enterprise (không stake) của bên hưởng — đúng khuôn genesis ép.
+fn t_ben_addr() -> Address {
+  Address { payment_credential: VerificationKey(t_ben_pkh), stake_credential: None }
+}
+
+fn t_ben_script_addr() -> Address {
+  address.from_script(t_ben_script)
+}
+
+// Datum ghim cho bên hưởng là script (ví dụ datum sổ của một kho).
+fn t_ben_datum() -> Data {
+  let d: Data = #"0b0b"
+  d
 }
 
 // ── Vault fixtures ────────────────────────────────────────────
@@ -1449,6 +1567,8 @@ fn t_fd(
     provider_claimed,
     buffer_bps,
     last_updated_epoch: t_epoch,
+    beneficiary: t_ben_addr(),
+    beneficiary_datum: None,
   }
 }
 
@@ -1528,7 +1648,9 @@ fn run_lock(datum: PrepaidVaultDatum, tx: Transaction) -> Bool {
   )
 }
 
-// happy: khoá 1 CARP → hạn-mức mới, CARP thật vào quỹ.
+// happy: khoá 1 CARP → hạn-mức mới, CARP thật vào quỹ. MỞ DÒNG MỚI ⟹ chữ ký
+// owner (C-PP-9 siết 2026-09-26). Các bài tấn công mở-dòng-mới bên dưới cũng ký
+// bằng owner để chúng đỏ vì ĐÚNG vế mình canh, không đỏ vì thiếu chữ ký.
 test pp_lock_ok() {
   let din = t_vd([], [])
   let dout =
@@ -1546,7 +1668,7 @@ test pp_lock_ok() {
     }
   let fin = t_fd(0, 0, 0, 0, 1_500)
   let fout = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
-  run_lock(din, lock_tx(din, dout, fin, 0, fout, lock_amt, [t_platform]))
+  run_lock(din, lock_tx(din, dout, fin, 0, fout, lock_amt, [t_owner]))
 }
 
 // happy: khoá thêm vào hạn-mức đã có → cộng dồn, không thêm dòng.
@@ -1589,7 +1711,7 @@ test pp_lock_credit_without_carp() fail {
   let fin = t_fd(0, 0, 0, 0, 1_500)
   let fout = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
   // output quỹ chỉ mang 0 CARP dù datum khai lock_amt
-  run_lock(din, lock_tx(din, dout, fin, 0, fout, 0, [t_platform]))
+  run_lock(din, lock_tx(din, dout, fin, 0, fout, 0, [t_owner]))
 }
 
 // TẤN CÔNG: credit_issued tăng nhiều hơn carp_locked.
@@ -1610,7 +1732,7 @@ test pp_lock_credit_gt_carp() fail {
     }
   let fin = t_fd(0, 0, 0, 0, 1_500)
   let fout = t_fd(lock_amt, 10 * lock_amt, 0, 0, 1_500)
-  run_lock(din, lock_tx(din, dout, fin, 0, fout, lock_amt, [t_platform]))
+  run_lock(din, lock_tx(din, dout, fin, 0, fout, lock_amt, [t_owner]))
 }
 
 // TẤN CÔNG: "quỹ" nằm ở địa chỉ của kẻ tấn công (NFT đúng, địa chỉ sai).
@@ -1642,7 +1764,7 @@ test pp_lock_fake_fund_address() fail {
         },
       ],
       [t_vault_out(dout), t_fund_out_at(fout, lock_amt, evil)],
-      [t_platform],
+      [t_owner],
     )
   run_lock(din, tx)
 }
@@ -1666,7 +1788,7 @@ test pp_lock_wrong_vault_hash() fail {
   let fin = PaidFundDatum { ..t_fd(0, 0, 0, 0, 1_500), vault_hash: t_evil_hash }
   let fout =
     PaidFundDatum { ..t_fd(lock_amt, lock_amt, 0, 0, 1_500), vault_hash: t_evil_hash }
-  run_lock(din, lock_tx(din, dout, fin, 0, fout, lock_amt, [t_platform]))
+  run_lock(din, lock_tx(din, dout, fin, 0, fout, lock_amt, [t_owner]))
 }
 
 // TẤN CÔNG: không ai trong {platform, owner} ký.
@@ -1708,7 +1830,7 @@ test pp_lock_below_min() fail {
     }
   let fin = t_fd(0, 0, 0, 0, 1_500)
   let fout = t_fd(1, 1, 0, 0, 1_500)
-  let tx = lock_tx(din, dout, fin, 0, fout, 1, [t_platform])
+  let tx = lock_tx(din, dout, fin, 0, fout, 1, [t_owner])
   validate_lock(
     din, t_fund_id, 1, t_epoch, t_vault_addr(), t_carp_policy, t_carp_name,
     t_fund_hash, tx,
@@ -1734,7 +1856,154 @@ test pp_lock_did_forged() fail {
     }
   let fin = t_fd(0, 0, 0, 0, 1_500)
   let fout = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
-  run_lock(din, lock_tx(din, dout, fin, 0, fout, lock_amt, [t_platform]))
+  run_lock(din, lock_tx(din, dout, fin, 0, fout, lock_amt, [t_owner]))
+}
+
+
+// ── C-PP-9 siết 2026-09-26: MỞ DÒNG MỚI đòi owner; NẠP THÊM giữ platform||owner ──
+//
+// Ba bài dưới cùng hình dạng `pp_lock_ok` / `pp_lock_topup_ok` và chỉ đổi ĐÚNG
+// MỘT yếu tố (người ký, hoặc dòng đang có là của quỹ nào), nên chúng phân biệt
+// được hai phía của phép đột biến "cổng mở-dòng-mới ≡ True".
+
+fn new_line_dout(din: PrepaidVaultDatum) -> PrepaidVaultDatum {
+  PrepaidVaultDatum {
+    ..din,
+    prepaid_credits: list.concat(
+      din.prepaid_credits,
+      [
+        PrepaidCredit {
+          fund_id: t_fund_id,
+          remaining: lock_amt,
+          issued_epoch: t_epoch,
+          last_draw_epoch: t_epoch,
+        },
+      ],
+    ),
+    last_updated_epoch: t_epoch,
+  }
+}
+
+// TẤN CÔNG: mở dòng mới chỉ với chữ ký platform (cặp của `pp_lock_ok`).
+test pp_lock_new_line_platform_only() fail {
+  let din = t_vd([], [])
+  let fin = t_fd(0, 0, 0, 0, 1_500)
+  let fout = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  run_lock(
+    din,
+    lock_tx(din, new_line_dout(din), fin, 0, fout, lock_amt, [t_platform]),
+  )
+}
+
+// TẤN CÔNG (đúng kịch bản DoS): NGƯỜI LẠ tự lập một quỹ hợp lệ với platform =
+// pkh của mình, rồi dùng nó chiếm một chỗ trong vault của nạn nhân.
+test pp_lock_stranger_fund_new_line() fail {
+  let din = t_vd([], [])
+  let fin = PaidFundDatum { ..t_fd(0, 0, 0, 0, 1_500), platform: t_stranger }
+  let fout =
+    PaidFundDatum { ..t_fd(lock_amt, lock_amt, 0, 0, 1_500), platform: t_stranger }
+  run_lock(
+    din,
+    lock_tx(din, new_line_dout(din), fin, 0, fout, lock_amt, [t_stranger]),
+  )
+}
+
+// TẤN CÔNG: vault ĐÃ có dòng — nhưng của quỹ KHÁC. Lượt này vẫn là mở dòng mới
+// cho `t_fund_id`, nên chữ ký platform không đủ. Bài này bắt đột biến nới vị từ
+// "dòng mới" thành "vault còn rỗng".
+test pp_lock_new_line_beside_other_fund_platform_only() fail {
+  let din = t_vd([t_credit(t_other_fund, 500)], [])
+  let fin = t_fd(0, 0, 0, 0, 1_500)
+  let fout = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  run_lock(
+    din,
+    lock_tx(din, new_line_dout(din), fin, 0, fout, lock_amt, [t_platform]),
+  )
+}
+
+// happy: cùng tình huống trên nhưng owner ký (cặp dương của bài trên).
+test pp_lock_new_line_beside_other_fund_owner_ok() {
+  let din = t_vd([t_credit(t_other_fund, 500)], [])
+  let fin = t_fd(0, 0, 0, 0, 1_500)
+  let fout = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  run_lock(
+    din,
+    lock_tx(din, new_line_dout(din), fin, 0, fout, lock_amt, [t_owner]),
+  )
+}
+
+// happy: NẠP THÊM vào dòng đã có chỉ với chữ ký platform — luồng "app khoá hộ"
+// giữ nguyên (cặp của `pp_lock_topup_ok`, chỉ đổi người ký).
+test pp_lock_topup_platform_only_ok() {
+  let din = t_vd([t_credit(t_fund_id, 500)], [])
+  let dout =
+    PrepaidVaultDatum {
+      ..din,
+      prepaid_credits: [
+        PrepaidCredit {
+          fund_id: t_fund_id,
+          remaining: 500 + lock_amt,
+          issued_epoch: 5,
+          last_draw_epoch: 5,
+        },
+      ],
+      last_updated_epoch: t_epoch,
+    }
+  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  let fout = t_fd(2 * lock_amt, 2 * lock_amt, 0, 0, 1_500)
+  run_lock(din, lock_tx(din, dout, fin, lock_amt, fout, 2 * lock_amt, [t_platform]))
+}
+
+// TẤN CÔNG: nạp thêm mà không ai trong {platform, owner} ký — vế cũ vẫn có người canh.
+test pp_lock_topup_no_auth() fail {
+  let din = t_vd([t_credit(t_fund_id, 500)], [])
+  let dout =
+    PrepaidVaultDatum {
+      ..din,
+      prepaid_credits: [
+        PrepaidCredit {
+          fund_id: t_fund_id,
+          remaining: 500 + lock_amt,
+          issued_epoch: 5,
+          last_draw_epoch: 5,
+        },
+      ],
+      last_updated_epoch: t_epoch,
+    }
+  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  let fout = t_fd(2 * lock_amt, 2 * lock_amt, 0, 0, 1_500)
+  run_lock(din, lock_tx(din, dout, fin, lock_amt, fout, 2 * lock_amt, [t_stranger]))
+}
+
+// TẤN CÔNG: lượt khoá đổi đích nhận CARP của quỹ. `validate_lock` tự khai "kiểm
+// TOÀN BỘ delta quỹ" — bài này ghim hai dòng đích trong khối đó (gọi thẳng
+// `validate_lock`, không qua `fund_common_checks`).
+test pp_lock_fund_beneficiary_changed() fail {
+  let din = t_vd([], [])
+  let fin = t_fd(0, 0, 0, 0, 1_500)
+  let fout =
+    PaidFundDatum {
+      ..t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      beneficiary: address.from_verification_key(t_stranger),
+    }
+  run_lock(
+    din,
+    lock_tx(din, new_line_dout(din), fin, 0, fout, lock_amt, [t_owner]),
+  )
+}
+
+test pp_lock_fund_beneficiary_datum_changed() fail {
+  let din = t_vd([], [])
+  let fin = t_fd(0, 0, 0, 0, 1_500)
+  let fout =
+    PaidFundDatum {
+      ..t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      beneficiary_datum: Some(t_ben_datum()),
+    }
+  run_lock(
+    din,
+    lock_tx(din, new_line_dout(din), fin, 0, fout, lock_amt, [t_owner]),
+  )
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2623,6 +2892,23 @@ test pp_fund_settle_drains_carp() fail {
 
 // ── FundClaim ─────────────────────────────────────────────────
 
+// Output tới bên hưởng, đúng hình dạng mà `validate_fund_claim` đòi: đúng địa
+// chỉ, đúng `carp` CARP, datum khớp `fin.beneficiary_datum`.
+fn t_ben_out(fin: PaidFundDatum, carp: Int) -> Output {
+  Output {
+    address: fin.beneficiary,
+    value: assets.from_lovelace(2_000_000)
+      |> assets.add(t_carp_policy, t_carp_name, carp),
+    datum: when fin.beneficiary_datum is {
+      None -> NoDatum
+      Some(d) -> InlineDatum(d)
+    },
+    reference_script: None,
+  }
+}
+
+// Lượng trả bên hưởng = phần `carp_locked` giảm theo DATUM (= `amount` ở mọi bài
+// dưới): các bài tấn công cũ nhờ vậy chỉ đỏ vì vế chúng canh, không đỏ vì đích.
 fn claim_tx(
   fin       : PaidFundDatum,
   fin_carp  : Int,
@@ -2630,7 +2916,14 @@ fn claim_tx(
   fout_carp : Int,
   signers   : List<ByteArray>,
 ) -> Transaction {
-  t_tx([t_fund_in(fin, fin_carp)], [t_fund_out(fout, fout_carp)], signers)
+  t_tx(
+    [t_fund_in(fin, fin_carp)],
+    [
+      t_fund_out(fout, fout_carp),
+      t_ben_out(fin, fin.carp_locked - fout.carp_locked),
+    ],
+    signers,
+  )
 }
 
 // happy: quỹ đã tiêu hết → provider rút toàn bộ (outstanding = 0 ⇒ đệm = 0).
@@ -2740,8 +3033,184 @@ test pp_fund_nft_escapes() fail {
   let fout = t_fd(0, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_500)
   let evil = address.from_script(t_evil_hash)
   let tx =
-    t_tx([t_fund_in(fin, 1_000_000_000)], [t_fund_out_at(fout, 0, evil)], [t_platform])
+    t_tx(
+      [t_fund_in(fin, 1_000_000_000)],
+      [t_fund_out_at(fout, 0, evil), t_ben_out(fin, 1_000_000_000)],
+      [t_platform],
+    )
   run_fund(fin, 1_000_000_000, tx, FundClaim { amount_carpdrop: 1_000_000_000 })
+}
+
+// ── FundClaim — ĐÍCH (L1'', 2026-09-26) ───────────────────────
+//
+// Mọi bài dưới dựng từ `pp_fund_claim_full_ok` và đổi ĐÚNG MỘT yếu tố.
+
+fn full_fin() -> PaidFundDatum {
+  t_fd(1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 1_500)
+}
+
+fn full_fout() -> PaidFundDatum {
+  t_fd(0, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_500)
+}
+
+fn run_full_claim(ins: List<Input>, outs: List<Output>) -> Bool {
+  run_fund(
+    full_fin(), 1_000_000_000,
+    t_tx(ins, outs, [t_platform]),
+    FundClaim { amount_carpdrop: 1_000_000_000 },
+  )
+}
+
+// TẤN CÔNG CỐT LÕI: người ký claim (khoá platform bị chiếm) đẩy CARP về ví mình
+// thay vì bên hưởng đã ghim.
+test pp_fund_claim_to_wrong_address() fail {
+  let fin = full_fin()
+  run_full_claim(
+    [t_fund_in(fin, 1_000_000_000)],
+    [
+      t_fund_out(full_fout(), 0),
+      Output { ..t_ben_out(fin, 1_000_000_000), address: address.from_verification_key(t_stranger) },
+    ],
+  )
+}
+
+// TẤN CÔNG: gắn stake credential của người lạ lên output tới bên hưởng (cùng
+// payment cred, khác địa chỉ đầy đủ) — không tính là tới đích.
+test pp_fund_claim_beneficiary_stake_swapped() fail {
+  let fin = full_fin()
+  run_full_claim(
+    [t_fund_in(fin, 1_000_000_000)],
+    [
+      t_fund_out(full_fout(), 0),
+      Output {
+        ..t_ben_out(fin, 1_000_000_000),
+        address: t_ben_addr() |> address.with_delegation_key(t_stranger),
+      },
+    ],
+  )
+}
+
+// TẤN CÔNG: bên hưởng có input trong tx ⟹ tiền thừa lẫn vào đích, "một output"
+// mất nghĩa. Input chỉ mang ADA — mọi vế khác vẫn đúng.
+test pp_fund_claim_input_at_beneficiary() fail {
+  let fin = full_fin()
+  let ben_in =
+    Input {
+      output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+      output: Output {
+        address: t_ben_addr(),
+        value: assets.from_lovelace(5_000_000),
+        datum: NoDatum,
+        reference_script: None,
+      },
+    }
+  run_full_claim(
+    [t_fund_in(fin, 1_000_000_000), ben_in],
+    [t_fund_out(full_fout(), 0), t_ben_out(fin, 1_000_000_000)],
+  )
+}
+
+// TẤN CÔNG: HAI output tại bên hưởng (một đủ CARP, một chỉ ADA).
+test pp_fund_claim_two_outputs_at_beneficiary() fail {
+  let fin = full_fin()
+  run_full_claim(
+    [t_fund_in(fin, 1_000_000_000)],
+    [
+      t_fund_out(full_fout(), 0),
+      t_ben_out(fin, 1_000_000_000),
+      t_ben_out(fin, 0),
+    ],
+  )
+}
+
+// TẤN CÔNG: output tới bên hưởng thiếu 1 carpdrop so với `amount`.
+test pp_fund_claim_carp_short() fail {
+  let fin = full_fin()
+  run_full_claim(
+    [t_fund_in(fin, 1_000_000_000)],
+    [t_fund_out(full_fout(), 0), t_ben_out(fin, 999_999_999)],
+  )
+}
+
+// TẤN CÔNG: bên hưởng ghim `None` mà output mang datum.
+test pp_fund_claim_datum_on_key_beneficiary() fail {
+  let fin = full_fin()
+  run_full_claim(
+    [t_fund_in(fin, 1_000_000_000)],
+    [
+      t_fund_out(full_fout(), 0),
+      Output { ..t_ben_out(fin, 1_000_000_000), datum: InlineDatum(t_ben_datum()) },
+    ],
+  )
+}
+
+// Bên hưởng là SCRIPT với datum ghim — dựng quỹ và output tương ứng.
+fn script_ben_fin() -> PaidFundDatum {
+  PaidFundDatum {
+    ..full_fin(),
+    beneficiary: t_ben_script_addr(),
+    beneficiary_datum: Some(t_ben_datum()),
+  }
+}
+
+fn script_ben_fout() -> PaidFundDatum {
+  PaidFundDatum {
+    ..full_fout(),
+    beneficiary: t_ben_script_addr(),
+    beneficiary_datum: Some(t_ben_datum()),
+  }
+}
+
+fn run_script_ben_claim(ben_out: Output) -> Bool {
+  let fin = script_ben_fin()
+  run_fund(
+    fin, 1_000_000_000,
+    t_tx(
+      [t_fund_in(fin, 1_000_000_000)],
+      [t_fund_out(script_ben_fout(), 0), ben_out],
+      [t_platform],
+    ),
+    FundClaim { amount_carpdrop: 1_000_000_000 },
+  )
+}
+
+// happy: bên hưởng là script, output mang ĐÚNG datum ghim.
+test pp_fund_claim_script_beneficiary_ok() {
+  run_script_ben_claim(t_ben_out(script_ben_fin(), 1_000_000_000))
+}
+
+// TẤN CÔNG ("rót đúng địa chỉ, ngoài sổ"): bên hưởng là script, output KHÔNG datum.
+test pp_fund_claim_script_beneficiary_no_datum() fail {
+  run_script_ben_claim(
+    Output { ..t_ben_out(script_ben_fin(), 1_000_000_000), datum: NoDatum },
+  )
+}
+
+// TẤN CÔNG: bên hưởng là script, output mang datum KHÁC datum ghim.
+test pp_fund_claim_script_beneficiary_wrong_datum() fail {
+  let other: Data = #"0c0c"
+  run_script_ben_claim(
+    Output { ..t_ben_out(script_ben_fin(), 1_000_000_000), datum: InlineDatum(other) },
+  )
+}
+
+// TẤN CÔNG: một nhánh spend quỹ đổi đích (bất biến ở `fund_common_checks`).
+test pp_fund_beneficiary_changed() fail {
+  let fin = full_fin()
+  let fout = PaidFundDatum { ..full_fout(), beneficiary: address.from_verification_key(t_stranger) }
+  run_full_claim(
+    [t_fund_in(fin, 1_000_000_000)],
+    [t_fund_out(fout, 0), t_ben_out(fin, 1_000_000_000)],
+  )
+}
+
+test pp_fund_beneficiary_datum_changed() fail {
+  let fin = full_fin()
+  let fout = PaidFundDatum { ..full_fout(), beneficiary_datum: Some(t_ben_datum()) }
+  run_full_claim(
+    [t_fund_in(fin, 1_000_000_000)],
+    [t_fund_out(fout, 0), t_ben_out(fin, 1_000_000_000)],
+  )
 }
 
 // TẤN CÔNG: datum quỹ khai một đằng, CARP trong UTxO một nẻo.
@@ -3164,7 +3633,7 @@ fn sp_lock_tx(vin: Input, vout: Output) -> Transaction {
     vin, vout,
     [t_fund_in(t_fd(0, 0, 0, 0, 1_500), 0)],
     [t_fund_out(t_fd(lock_amt, lock_amt, 0, 0, 1_500), lock_amt)],
-    [t_platform],
+    [t_owner],   // mở dòng mới ⟹ owner (C-PP-9 siết 2026-09-26)
   )
 }
 
@@ -3570,6 +4039,8 @@ fn fg_datum(
     provider_claimed: claimed,
     buffer_bps: buffer,
     last_updated_epoch: epoch,
+    beneficiary: t_ben_addr(),
+    beneficiary_datum: None,
   }
 }
 
@@ -3590,12 +4061,28 @@ fn fg_carrier(name: ByteArray, d: PaidFundDatum) -> Output {
   fg_carrier_at(name, d, 1, t_fund_addr())
 }
 
-fn run_fund_mint(outs: List<Output>, m: Value) -> Bool {
+fn run_fund_mint_signed(
+  outs    : List<Output>,
+  m       : Value,
+  signers : List<ByteArray>,
+) -> Bool {
   paid_fund.mint(
     t_carp_policy, t_carp_name, ms_ep,
     Void, t_fund_hash,
-    Transaction { ..placeholder, inputs: [fg_seed_input()], outputs: outs, mint: m },
+    Transaction {
+      ..placeholder,
+      inputs: [fg_seed_input()],
+      outputs: outs,
+      mint: m,
+      extra_signatories: signers,
+    },
   )
+}
+
+// Mặc định platform KÝ (genesis đòi từ 2026-09-26) — các bài tấn công cũ nhờ vậy
+// chỉ đỏ vì vế chúng canh.
+fn run_fund_mint(outs: List<Output>, m: Value) -> Bool {
+  run_fund_mint_signed(outs, m, [t_platform])
 }
 
 // Giao dịch đúc chuẩn, chỉ khác nhau ở datum quỹ.
@@ -3765,4 +4252,61 @@ test fg_mint_no_inline_datum() fail {
   let name = fg_name()
   let out = Output { ..fg_carrier(name, fg_clean()), datum: NoDatum }
   run_fund_mint([out], assets.from_asset(t_fund_hash, name, 1))
+}
+
+// ── Genesis quỹ — L1'' (2026-09-26) ───────────────────────────
+// Mỗi bài đổi ĐÚNG MỘT yếu tố so với `fg_mint_ok`.
+
+// TẤN CÔNG (quỹ mạo danh): lập quỹ mang pkh của platform thật mà platform không ký.
+test fg_mint_no_platform_sig() fail {
+  let name = fg_name()
+  run_fund_mint_signed(
+    [fg_carrier(name, fg_clean())],
+    assets.from_asset(t_fund_hash, name, 1),
+    [t_stranger],
+  )
+}
+
+fn fg_mint_ben(ben: Address, ben_datum: Option<Data>) -> Bool {
+  fg_mint_with(
+    PaidFundDatum { ..fg_clean(), beneficiary: ben, beneficiary_datum: ben_datum },
+  )
+}
+
+// TẤN CÔNG: bên hưởng mang stake credential.
+test fg_mint_beneficiary_stake_set() fail {
+  fg_mint_ben(t_ben_addr() |> address.with_delegation_key(t_stranger), None)
+}
+
+// TẤN CÔNG: bên hưởng là chính script quỹ (datum có, để chỉ vế này đỏ).
+test fg_mint_beneficiary_is_fund_script() fail {
+  fg_mint_ben(address.from_script(t_fund_hash), Some(t_ben_datum()))
+}
+
+// TẤN CÔNG: bên hưởng là script vault mà quỹ trỏ tới (datum có).
+test fg_mint_beneficiary_is_vault_script() fail {
+  fg_mint_ben(address.from_script(t_vault_hash), Some(t_ben_datum()))
+}
+
+// happy: bên hưởng là một script khác, có datum ghim.
+test fg_mint_script_beneficiary_with_datum_ok() {
+  fg_mint_ben(t_ben_script_addr(), Some(t_ben_datum()))
+}
+
+// TẤN CÔNG: bên hưởng là script mà KHÔNG ghim datum (cặp của bài trên).
+test fg_mint_script_beneficiary_no_datum() fail {
+  fg_mint_ben(t_ben_script_addr(), None)
+}
+
+// happy: bên hưởng là khoá thường, có ghim datum — cho phép (khoá tiêu được bất kể datum).
+test fg_mint_key_beneficiary_with_datum_ok() {
+  fg_mint_ben(t_ben_addr(), Some(t_ben_datum()))
+}
+
+// TẤN CÔNG: hash của bên hưởng sai độ dài ⟹ không output nào đỗ được ở đó.
+test fg_mint_beneficiary_bad_hash_length() fail {
+  fg_mint_ben(
+    Address { payment_credential: VerificationKey(#"bebe"), stake_credential: None },
+    None,
+  )
 }

@@ -57,6 +57,8 @@ chay dat  'nằm bên phải dấu bằng'                'GHI_CHU="xem CARP_POL
 echo "── phải CHẶN: nhóm (b) — tên KHÔNG có phép kiểm nào đứng sau"
 chay chan 'BUFFER_BPS (nướng vào datum quỹ, bất biến)'  'BUFFER_BPS=500'
 chay chan 'PLATFORM_PKH (khoá duy nhất claim CARP)'     'PLATFORM_PKH=deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+chay chan 'BENEFICIARY_ADDRESS (đích claim, bất biến)'  'BENEFICIARY_ADDRESS=addr_test1vxxx'
+chay chan 'BENEFICIARY_DATUM (datum đích, bất biến)'    'BENEFICIARY_DATUM=none'
 chay chan 'WALLET_SEED (đổi ví ký)'                     'WALLET_SEED=xxx'
 chay chan 'BLOCKFROST_KEY (đổi nhà cung cấp dữ liệu)'   'BLOCKFROST_KEY=xxx'
 

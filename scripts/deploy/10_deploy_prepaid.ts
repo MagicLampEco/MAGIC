@@ -41,8 +41,14 @@
 // Env vars:
 //   CARP_POLICY_ID    — BẮT BUỘC, 56 hex. Không có ⟹ bước này đóng.
 //   CARP_ASSET_NAME   — BẮT BUỘC, hex chẵn, không rỗng.
-//   PLATFORM_PKH      — pkh provider giữ quỹ (mặc định: pkh của ví đang chạy)
+//   PLATFORM_PKH      — pkh provider giữ quỹ (mặc định: pkh của ví đang chạy).
+//                       On-chain ĐÒI chữ ký này ở genesis (từ 2026-09-26).
 //   BUFFER_BPS        — đệm buffer-Paid, mặc định 1500 (= min_buffer_bps)
+//   BENEFICIARY_ADDRESS — BẮT BUỘC, KHÔNG mặc định. Địa chỉ bech32 ENTERPRISE (không
+//                       stake) nhận CARP mỗi lượt `FundClaim`, ghim trọn đời quỹ.
+//   BENEFICIARY_DATUM — BẮT BUỘC, KHÔNG mặc định: `none` (output không datum) hoặc
+//                       CBOR hex của Plutus Data (output mang inline datum đó).
+//                       Beneficiary là script ⟹ phải là CBOR, không được `none`.
 
 import {
   Lucid, Blockfrost, Data, Constr, toUnit,
@@ -63,6 +69,28 @@ import { fundIdAssetName } from "../fundId.js";
 // PrepaidVaultDatum. Thứ tự trường là HỢP ĐỒNG NHỊ PHÂN — xê dịch một trường là
 // đổi cách giải mã mọi UTxO đã tạo (BOUNDARIES.md §2).
 
+// `cardano/address.{Address}` — thứ tự nhánh LÀ mã hoá (VerificationKey 0, Script 1).
+// Gương của `PrepaidGen/offchain/src/types.ts` ▸ `AddressSchema`; tệp này giữ bản
+// riêng vì `scripts/` và `PrepaidGen/offchain` là hai gói npm, hai bản lucid.
+const CredentialSchema = Data.Enum([
+  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes()]) }),
+  Data.Object({ Script: Data.Tuple([Data.Bytes()]) }),
+]);
+const AddressSchema = Data.Object({
+  payment_credential: CredentialSchema,
+  // Genesis ép `stake_credential == None`, nên chỉ cần mã hoá được nhánh None;
+  // khai đủ hai nhánh để lược đồ vẫn là gương đúng của Aiken.
+  stake_credential: Data.Nullable(Data.Enum([
+    Data.Object({ Inline: Data.Tuple([CredentialSchema]) }),
+    Data.Object({ Pointer: Data.Object({
+      slot_number: Data.Integer(),
+      transaction_index: Data.Integer(),
+      certificate_index: Data.Integer(),
+    }) }),
+  ])),
+});
+type PlutusAddress = Data.Static<typeof AddressSchema>;
+
 const PaidFundDatumSchema = Data.Object({
   fund_id:            Data.Bytes(),
   platform:           Data.Bytes(),
@@ -73,6 +101,10 @@ const PaidFundDatumSchema = Data.Object({
   provider_claimed:   Data.Integer(),
   buffer_bps:         Data.Integer(),
   last_updated_epoch: Data.Integer(),
+  // Thêm Ở CUỐI 2026-09-26 (L1''). Quỹ 9 trường đời trước KHÔNG đọc được bằng
+  // lược đồ này, và ngược lại — Aiken nghiêm về số trường cả hai chiều.
+  beneficiary:        AddressSchema,
+  beneficiary_datum:  Data.Nullable(Data.Any()),
 });
 type PaidFundDatum = Data.Static<typeof PaidFundDatumSchema>;
 const PaidFundDatum = PaidFundDatumSchema as unknown as PaidFundDatum;
@@ -126,6 +158,77 @@ const PrepaidVaultDatumSchema = Data.Object({
 type PrepaidVaultDatum = Data.Static<typeof PrepaidVaultDatumSchema>;
 const PrepaidVaultDatum = PrepaidVaultDatumSchema as unknown as PrepaidVaultDatum;
 
+/**
+ * Đọc đích nhận CARP từ env, fail-closed: thiếu một trong hai biến ⟹ NÉM, không
+ * đệm giá trị nào (đích đệm = một quỹ trả doanh thu về chỗ không ai định chọn,
+ * và `beneficiary` bất biến trọn đời quỹ).
+ *
+ * Gương các cổng `validate_mint_fund_nft` nằm ĐƯỢC ở đây (không stake, datum bắt
+ * buộc khi là script). Hai cổng so với hash quỹ/vault chạy sau khi apply param.
+ */
+function readBeneficiary(): {
+  address: PlutusAddress;
+  datum: Data | null;
+  kind: "Key" | "Script";
+  hash: string;
+} {
+  const bech = process.env.BENEFICIARY_ADDRESS;
+  if (!bech) {
+    throw new Error(
+      "BENEFICIARY_ADDRESS chưa đặt. Đích nhận CARP của FundClaim ghim TRỌN ĐỜI quỹ " +
+      "(`PaidFundDatum.beneficiary`), nên bước này không chọn hộ.",
+    );
+  }
+  const rawDatum = process.env.BENEFICIARY_DATUM;
+  if (rawDatum === undefined || rawDatum === "") {
+    throw new Error(
+      "BENEFICIARY_DATUM chưa đặt. Ghi `none` (output không datum) hoặc CBOR hex của " +
+      "Plutus Data — không có giá trị mặc định.",
+    );
+  }
+  const details = getAddressDetails(bech);
+  const wantNetworkId = NETWORK === "Mainnet" ? 1 : 0;
+  if (details.networkId !== wantNetworkId) {
+    throw new Error(
+      `BENEFICIARY_ADDRESS thuộc networkId ${details.networkId}, mạng đang chạy là ${NETWORK}.`,
+    );
+  }
+  const pc = details.paymentCredential;
+  if (!pc) throw new Error("BENEFICIARY_ADDRESS không có payment credential.");
+  if (details.stakeCredential) {
+    throw new Error(
+      "BENEFICIARY_ADDRESS phải là địa chỉ ENTERPRISE (không stake). " +
+      "`validate_mint_fund_nft` ép `beneficiary.stake_credential == None`, và " +
+      "`validate_fund_claim` so địa chỉ đầy đủ.",
+    );
+  }
+  let datum: Data | null;
+  if (rawDatum === "none") {
+    datum = null;
+  } else {
+    if (!/^([0-9a-f]{2})+$/.test(rawDatum)) {
+      throw new Error("BENEFICIARY_DATUM phải là `none` hoặc CBOR hex chẵn, chữ thường.");
+    }
+    datum = Data.from(rawDatum);   // ném nếu không phải Plutus Data hợp lệ
+  }
+  if (pc.type === "Script" && datum === null) {
+    throw new Error(
+      "Beneficiary là SCRIPT mà BENEFICIARY_DATUM = none. On-chain từ chối " +
+      "(`Script(_) ⟹ beneficiary_datum != None`): CARP tới script không datum là " +
+      "CARP không nhánh nào của kho đích tiêu lại được.",
+    );
+  }
+  const cred = pc.type === "Key"
+    ? { VerificationKey: [pc.hash] as [string] }
+    : { Script: [pc.hash] as [string] };
+  return {
+    address: { payment_credential: cred, stake_credential: null },
+    datum,
+    kind: pc.type,
+    hash: pc.hash,
+  };
+}
+
 /** `min_buffer_bps` — neo: PrepaidGen/onchain/lib/magiclamp/protocol/constants.ak */
 const MIN_BUFFER_BPS = 1_500n;
 const MAX_BUFFER_BPS = 10_000n;
@@ -136,6 +239,7 @@ async function main() {
   // Cổng fail-closed. Ném TRƯỚC khi chạm ví hay mạng: một bước deploy dừng lại vì
   // thiếu dữ kiện thì phải dừng ở chỗ RẺ NHẤT, không phải sau khi đã đốt phí.
   const carp = requireCarpIdentity();
+  const beneficiary = readBeneficiary();
 
   const bufferBps = BigInt(process.env.BUFFER_BPS ?? MIN_BUFFER_BPS.toString());
   if (bufferBps < MIN_BUFFER_BPS) {
@@ -177,13 +281,11 @@ async function main() {
     );
   }
   // HÌNH DẠNG KHÔNG PHẢI QUYỀN ĐIỀU KHIỂN. `fd.platform` bất biến trọn đời quỹ và là
-  // khoá DUY NHẤT rút được CARP ra (`validate_fund_claim` ▸ `list.has(tx.extra_signatories,
-  // fund_in.platform)`); cổng genesis on-chain chỉ ép ĐỘ DÀI 28 byte. Nên một pkh gõ
-  // nhầm hoặc chép từ sổ cũ cho ra một quỹ hợp lệ, nhận CARP thật, và KHÔNG AI rút
-  // được số CARP đó — `PrepaidLock` vẫn chạy vì nhánh ấy nhận platform HOẶC owner ký.
-  // Bắt chính giao dịch genesis phải mang chữ ký đó là cách rẻ nhất biến một chuỗi hex
-  // thành một bằng chứng có khoá. Mặc định (`ownerPkh`) thì ví đang chạy đã ký sẵn;
-  // rủi ro chỉ mở ra khi đặt env, và đó đúng là lúc không có gì đối chiếu.
+  // khoá DUY NHẤT ký được `FundClaim` (`validate_fund_claim` ▸ `list.has(tx.extra_signatories,
+  // fund_in.platform)`). Từ 2026-09-26 cổng genesis on-chain ĐÒI chữ ký đó (trước
+  // đây chỉ ép độ dài 28 byte, nên một pkh gõ nhầm cho ra quỹ hợp lệ mà không ai
+  // rút được) — dòng `addSignerKey(platformPkh)` bên dưới là để giao dịch đáp ứng
+  // cổng ấy, không còn là cổng off-chain thuần.
   const platformIsOwner = platformPkh === ownerPkh;
 
   // ── Apply params THEO TÊN — thứ tự do blueprint quyết định ───────────────
@@ -210,6 +312,16 @@ async function main() {
   );
   const vaultAddress = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
 
+  // Hai cổng genesis còn lại chỉ đo được sau khi biết hash đã apply.
+  if (beneficiary.kind === "Script" && beneficiary.hash === fundHash) {
+    throw new Error("BENEFICIARY_ADDRESS là chính script quỹ — mọi FundClaim sẽ chết.");
+  }
+  if (beneficiary.kind === "Script" && beneficiary.hash === vaultHash) {
+    throw new Error(
+      "BENEFICIARY_ADDRESS là script vault — output không mang NFT vault, CARP chết.",
+    );
+  }
+
   console.log(`Network:            ${NETWORK}`);
   console.log(`CARP policy:        ${carp.policyId}`);
   console.log(`CARP asset name:    ${carp.assetName}`);
@@ -219,7 +331,16 @@ async function main() {
   console.log(`prepaid_vault hash: ${vaultHash}`);
   console.log(`vault address:      ${vaultAddress}`);
   console.log(`platform pkh:       ${platformPkh}`);
-  console.log(`buffer_bps:         ${bufferBps}\n`);
+  console.log(`buffer_bps:         ${bufferBps}`);
+  console.log(`beneficiary:        ${process.env.BENEFICIARY_ADDRESS} (${beneficiary.kind})`);
+  console.log(`beneficiary datum:  ${beneficiary.datum === null ? "none" : process.env.BENEFICIARY_DATUM}\n`);
+  if (beneficiary.kind === "Script") {
+    console.log(
+      "⚠  Beneficiary là SCRIPT: on-chain chỉ ép HÌNH DẠNG (địa chỉ + datum), không ép " +
+      "khả năng tiêu lại.\n   Trước khi lập quỹ này, chi thử một UTxO ở đúng cặp " +
+      "(BENEFICIARY_ADDRESS, BENEFICIARY_DATUM) trên testnet — DevStatus.md ▸ Nợ #85.\n",
+    );
+  }
 
   // ── (A) Genesis quỹ ──────────────────────────────────────────────────────
   // `validate_mint_fund_nft` ép: đúng một tên dưới policy, qty 1, tên suy từ một
@@ -245,6 +366,8 @@ async function main() {
     provider_claimed:   0n,            // PIN
     buffer_bps:         bufferBps,     // PIN: `>= min_buffer_bps`
     last_updated_epoch: 0n,            // PIN
+    beneficiary:        beneficiary.address, // PIN trọn đời: không stake, ≠ quỹ/vault
+    beneficiary_datum:  beneficiary.datum,   // PIN: Script ⟹ bắt buộc có
   };
 
   // Handler `mint` của paid_fund bỏ qua redeemer (`_redeemer: Data`); gửi một
@@ -262,11 +385,19 @@ async function main() {
       { lovelace: 2_000_000n, [fundUnit]: 1n },
     );
 
-  // Chữ ký platform là cổng OFF-CHAIN thuần — `validate_mint_fund_nft` KHÔNG đòi nó.
-  // Nó ở đây để một `PLATFORM_PKH` không ai cầm khoá thì giao dịch không dựng nổi,
-  // thay vì dựng êm rồi khoá CARP của người dùng lại vĩnh viễn. Khi platform trùng
-  // owner thì ví đang chạy đã ký, thêm vào cũng không đổi gì.
-  if (!platformIsOwner) txABuilder = txABuilder.addSignerKey(platformPkh);
+  // Chữ ký platform nay là cổng ON-CHAIN (`validate_mint_fund_nft` ▸
+  // `list.has(tx.extra_signatories, fd.platform)`, 2026-09-26): không có nó thì ai
+  // cũng lập được quỹ mạo danh platform thật với đích là ví mình. Luôn khai signer —
+  // kể cả khi platform trùng ví đang chạy — để `extra_signatories` mang đúng pkh
+  // đó; ví chỉ ký witness thôi thì KHÔNG đưa pkh vào `extra_signatories`.
+  // `sign.withWallet()` chỉ ký bằng ví đang chạy: `PLATFORM_PKH` khác ví thì tx dựng
+  // được mà không submit được — đó là cố ý, fail-closed.
+  txABuilder = txABuilder.addSignerKey(platformPkh);
+  if (!platformIsOwner) {
+    console.log(
+      `⚠  PLATFORM_PKH ≠ ví đang chạy: giao dịch (A) cần thêm chữ ký của ${platformPkh}.`,
+    );
+  }
 
   const txA = await txABuilder.complete();
 

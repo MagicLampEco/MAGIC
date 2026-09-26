@@ -415,6 +415,8 @@ export interface CreateVaultSummary {
   /** Khoá băm phải ký (trường `required_signers` của thân tx), theo thứ tự trong tx. */
   required_signers: string[];
   outputs: OutputView[];
+  /** Chỉ khi yêu cầu có `funding`: đọc lại TỪ CBOR bởi `funding.ts` ▸ `checkFundingTx`. */
+  funding?: import("./funding.js").FundingSummary;
 }
 
 export function summarizeCreateVaultTx(txCborHex: string, ctx: CreateVaultSummaryContext): CreateVaultSummary {

@@ -72,7 +72,7 @@ POST /tx/instant-gen       { owner, [owner_witness], [change_address] }
 POST /tx/schedule-commit   { owner, [owner_witness], [change_address], schedule_length, lamp_per_epoch }
 POST /tx/schedule-fire     { owner, [owner_witness], [change_address], schedule_id }
 POST /tx/consume           { owner, [owner_witness], [change_address], op_type, op_count }
-POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address, [profile] }
+POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 POST /tx/submit            { tx_cbor, witness_cbor }
 GET  /health
 ```
@@ -144,7 +144,8 @@ CHANGE_ADDRESS_INVALID`): UTxO trả phí + tài sản thế chấp lấy từ �
   "owner": { "type": "key" | "script", "hash": "…" },   // hoặc bí danh owner_pkh
   "owner_witness": { … },                               // chỉ chủ script
   "lamp_amount": "1001000000",                          // CHUỖI oildrop, > 0
-  "change_address": "addr_test1…",                      // BẮT BUỘC: LAMP nạp lấy từ ví này
+  "change_address": "addr_test1…",                      // ĐÚNG MỘT trong change_address / funding
+  "funding": { … },                                     // nạp từ ví Phoenix — xem dưới
   "profile": "Ember" | "Flame" | "Lantern"              // bỏ trống = Flame
 }
 // ra 200
@@ -174,6 +175,79 @@ trong chính tx, trường 0 của datum là `Credential`, `lamp_balance` bằng
 ⟹ `422 TX_SUMMARY_UNDECODABLE`, không phát tx. `kind` không có vault tương ứng trong cấu hình
 ⟹ lỗi cấu hình, không chọn đại một địa chỉ.
 
+#### Nguồn LAMP: `change_address` (đường cũ) hoặc `funding` (ví Phoenix)
+
+Không có `funding` ⟹ hành vi cũ: LAMP, phí và tài sản thế chấp lấy từ UTxO ở `change_address`,
+tiền thối về đó.
+
+Có `funding` ⟹ LAMP đến từ ví Phoenix, một địa chỉ **script** `did_payment`. Tài sản thế chấp
+không được là UTxO script, nên phí + thế chấp buộc phải từ một ví khoá ký thứ hai (mô hình
+bên trả phí):
+
+```jsonc
+"funding": {
+  "type": "did_payment",
+  "did_payment_script_cbor": "<hex>",      // did_payment ĐÃ apply (anchor_nft_policy, blake2b_256(utf8(did)))
+  "address": "addr_test1w…",               // ví Phoenix: payment credential = Script(hash của cbor trên)
+  "fee_payer": {
+    "utxo": "<tx_hash 64 hex>#<i>",        // ĐÚNG MỘT UTxO thuần ADA: trả phí + thế chấp + seed NFT
+    "address": "addr_test1v…"              // địa chỉ khoá ký chứa UTxO đó
+  },
+  // Ba trường dưới: chủ SCRIPT có owner_witness ⟹ bỏ trống, dùng chung bộ của owner_witness
+  // (khai thì phải TRÙNG). Chủ KHOÁ ⟹ BẮT BUỘC (did_payment vẫn đòi anchor + hai chữ ký).
+  "anchor_ref": "<tx_hash 64 hex>#<i>",
+  "controller_pkh": "<56 hex>",
+  "device_key_hash": "<56 hex>"
+}
+```
+
+Vai của từng ví, và dịch vụ ĐỌC LẠI từ `tx_cbor` rằng giao dịch đúng như thế (lệch bất kỳ vế
+nào ⟹ `422 FUNDING_TX_MISMATCH`, không phát tx):
+
+| | ví Phoenix (`funding.address`) | ví trả phí (`fee_payer`) |
+|---|---|---|
+| input | UTxO `did_payment`, mỗi cái redeemer `Spend` = `Constr 0 []` (`d87980`), script đính inline | đúng `fee_payer.utxo` |
+| chọn UTxO | tiền tố ngắn nhất của dãy sắp theo LAMP giảm dần đủ LAMP + min-ADA vault + min-ADA phần thối (tối thiểu với riêng vế LAMP; có vế ADA thì là tham lam) | không chọn — chỉ UTxO đã khai |
+| trả cho | LAMP + min-ADA của output vault | phí; là tài sản thế chấp |
+| tiền thối | LAMP / token khác / ADA còn lại, cộng mục rút `did_stake` nếu chủ là script ⟹ **về `funding.address`**, không bao giờ về ví trả phí | ADA thối + `collateral_return` ⟹ về `fee_payer.address`; ví này góp đúng `phí + thối`, không đồng nào vào vault |
+| reference input | anchor DID (Active) | — |
+| ký | controller + khoá thiết bị | khoá thanh toán của `fee_payer.address` |
+
+Output nào khác ba địa chỉ vault / `funding.address` / `fee_payer.address` ⟹ `422`. Hạn dùng
+(`validTo`) ≤ 1 giờ kể từ đỉnh chuỗi lúc dựng. Dịch vụ **không** gọi dịch vụ trả phí nào — nó
+chỉ nhận UTxO của bên trả phí qua tham số.
+
+**`change_address` cùng `funding` ⟹ `400 FUNDING_CHANGE_ADDRESS_CONFLICT`.** Ở đường cũ
+`change_address` gánh ba vai (nguồn LAMP, nguồn phí, đích tiền thối); `funding` đã tách ba vai
+đó ra hai địa chỉ có tên. Nhận thêm `change_address` là nhận một địa chỉ không có vai nào — chọn
+nghĩa cho nó là đoán ý người gọi, và đoán sai là thối tiền về một ví không ai khai.
+
+`summary` có thêm khối `funding` (mọi số là chuỗi):
+
+```jsonc
+"funding": {
+  "type": "did_payment", "address": "addr_test1w…",
+  "did_payment_inputs": ["<tx>#<i>", …],                       // UTxO ví Phoenix bị chi
+  "spent":    { "lovelace": "…", "lamp_oildrop": "…", "other_assets": [ … ] },  // tổng chi
+  "returned": { "lovelace": "…", "lamp_oildrop": "…", "other_assets": [ … ] },  // thối về ví Phoenix
+  "withdrawal_lovelace": "…",                                  // mục rút did_stake (chủ script), đã tính vào phần thối
+  "fee_payer": { "address": "…", "utxo": "…", "input_lovelace": "…", "fee_lovelace": "…",
+                 "change_lovelace": "…", "collateral_return_lovelace": "…" | null },
+  "valid_to_posix_ms": "…"
+}
+```
+
+**Thứ tự ký.** Mọi chữ ký ký trên hash THÂN giao dịch (`tx_hash`):
+
+1. Dịch vụ dựng; thân giao dịch trả về là bản **chốt**.
+2. Ví Phoenix ký bằng controller + khoá thiết bị (và, nếu chủ là khoá, khoá chủ).
+3. Bên trả phí ký UTxO của họ bằng khoá thanh toán của `fee_payer.address`.
+4. Ghép mọi chứng ký rồi `/tx/submit`.
+
+Bước 2 và 3 đổi chỗ cho nhau được; điều không được là **đổi thân sau khi đã có chữ ký**: đổi
+một byte của thân (kể cả để "sửa phí") là đổi `tx_hash`, và mọi chữ ký đã có mất hiệu lực —
+phải dựng lại, không vá.
+
 ### 🔴 Số tiền là CHUỖI chữ số, cả vào lẫn ra
 
 Trần LAMP là `36×10^15` oildrop; `2^53 ≈ 9,007×10^15`. Một trường oildrop **có thật** vượt
@@ -202,6 +276,15 @@ Nên:
 | script gửi lên không băm ra `owner.hash` | `400 OWNER_AUTH_MISMATCH` |
 | UTxO anchor không mang tài sản dưới `anchor_nft_policy` | `400 OWNER_ANCHOR_INVALID` |
 | thiếu / sai `change_address` | `400 CHANGE_ADDRESS_REQUIRED` / `400 CHANGE_ADDRESS_INVALID` |
+| `funding` sai hình dạng / trường lạ / chủ khoá thiếu anchor·controller·thiết bị | `400 FUNDING_SHAPE` |
+| `did_payment_script_cbor` không băm ra payment credential `Script(h)` của `funding.address` | `400 FUNDING_SCRIPT_MISMATCH` |
+| `fee_payer.address` không phải khoá / sai mạng; UTxO trả phí không ở đó hoặc không thuần ADA | `400 FUNDING_FEE_PAYER_INVALID` |
+| `funding` cùng `change_address` | `400 FUNDING_CHANGE_ADDRESS_CONFLICT` |
+| `funding` khai anchor/controller/thiết bị khác `owner_witness` | `400 FUNDING_WITNESS_MISMATCH` |
+| anchor của `funding` không mang tài sản dưới `anchor_nft_policy` | `400 FUNDING_ANCHOR_INVALID` |
+| ví `did_payment` không đủ LAMP + min-ADA | `422 FUNDING_INSUFFICIENT` |
+| tx vừa dựng lệch hợp đồng `funding` (input/output/redeemer/thế chấp/chữ ký/hạn dùng) | `422 FUNDING_TX_MISMATCH` |
+| `funding`, dịch vụ chưa cấu hình `did_stake` (đọc anchor) | `501 FUNDING_UNAVAILABLE` |
 | tài khoản thưởng `Script(h)` chưa đăng ký | `422 OWNER_STAKE_NOT_REGISTERED` |
 | chủ script, dịch vụ chưa cấu hình `did_stake` | `501 OWNER_SCRIPT_WITNESS_UNAVAILABLE` |
 | thiếu/sai thẻ bài | `401 UNAUTHORIZED` |
@@ -363,6 +446,14 @@ Có thì đủ trường và đúng hình dạng, không thì cổng khởi đ�
   vẫn bị `did_stake` từ chối lúc nộp, không phải lúc dựng.
 - **Chưa có lượt nộp thật nào của đường chủ script hay `/tx/create-vault`.** Bài kiểm dùng
   bộ dựng ghi sẵn và nhân chứng giả; `SdkTxBuilder.createVault` chưa chạy trên Preview.
+
+- **`funding` did_payment chưa qua Lucid thật, chưa lên chuỗi.** Bài kiểm của SDK dùng một
+  trình dựng ghi lại lượt gọi (hình dạng: UTxO nào chi, redeemer, phần thối về đâu, ai ký),
+  bài kiểm của dịch vụ đọc lại CBOR dựng bằng CML. Chưa kiểm: `complete()` của Lucid có chọn
+  đúng `fee_payer.utxo` làm tài sản thế chấp và có đặt `collateral_return` về `fee_payer.address`
+  hay không — đọc mã Lucid Evolution 0.4.30 (`applyCollateral`) cho thấy nó dùng ví đang chọn
+  và `changeAddress`, và phép đọc lại CBOR sẽ ném `422 FUNDING_TX_MISMATCH` nếu không đúng thế;
+  ExUnit của `did_payment` chưa đo; trạng thái Active của anchor không kiểm ở đây.
 
 - **`SdkTxBuilder` CHƯA từng dựng một giao dịch thật trên chuỗi.** Nó qua `tsc --noEmit` và
   qua bài quét không-chạm-khoá, và nó gọi đúng bốn hàm của `@magiclamp/sdk` với chữ ký

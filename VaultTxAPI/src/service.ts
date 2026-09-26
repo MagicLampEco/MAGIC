@@ -12,8 +12,12 @@
 // Bước 4 là lý do gói này tồn tại ở dạng hiện tại. Xem `summary.ts`.
 
 import { CML } from "@lucid-evolution/lucid";
-import { OwnerAuthError, sameOwner, type Network, type OwnerRef } from "@magiclamp/protocol-utils";
+import { FundingError, OwnerAuthError, sameOwner, type Network, type OwnerRef } from "@magiclamp/protocol-utils";
 import type { Profile } from "@magiclamp/sdk";
+import {
+  assertFundingAddresses, checkFundingTx, fundingApiErrorOf, fundingWitnessOf, readFeePayerUtxo,
+  type DidPaymentAnchorReader, type FundingRequest,
+} from "./funding.js";
 
 import type { ChainReader } from "./chain.js";
 import type { Deployment, VaultScope } from "./config.js";
@@ -29,7 +33,9 @@ import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
   type CreateVaultSummary, type RequestedIntent, type TxSummary,
 } from "./summary.js";
-import { assertChangeAddress, enterpriseAddressOf, type BuildContext, type TxBuilderPort } from "./txBuilder.js";
+import {
+  assertChangeAddress, enterpriseAddressOf, type BuildContext, type CreateVaultContext, type TxBuilderPort,
+} from "./txBuilder.js";
 import { findVaultsAtScope, pickSingleVault, type FoundVault, type IgnoredUtxo } from "./vaultLookup.js";
 
 const PKH_HEX = /^[0-9a-f]{56}$/;
@@ -64,8 +70,11 @@ export interface CreateVaultRequest extends OwnerRequest {
   kind: "instant" | "schedule";
   /** oildrop, > 0. */
   lampAmount: bigint;
-  changeAddress: string;
+  /** Đường cũ: nguồn LAMP + phí + đích tiền thối. Có `funding` thì CẤM (xem `funding.ts`). */
+  changeAddress?: string;
   profile?: Profile;
+  /** Nạp LAMP từ ví Phoenix (`did_payment`), phí từ ví trả phí. */
+  funding?: FundingRequest;
 }
 
 export interface CreateVaultResponse {
@@ -100,6 +109,9 @@ export interface VaultTxServiceDeps {
   /** Nhân chứng chủ script (did_stake). Vắng ⟹ chủ script nhận 501
    *  `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ khoá không bị ảnh hưởng. */
   ownerWitness?: OwnerWitnessProvider;
+  /** Đọc anchor DID cho `funding` did_payment. Vắng ⟹ 501 `FUNDING_UNAVAILABLE`. Cùng tham số
+   *  theo mạng `anchor_nft_policy` với nhân chứng did_stake. */
+  didPaymentAnchor?: DidPaymentAnchorReader;
 }
 
 export class VaultTxService {
@@ -260,27 +272,74 @@ export class VaultTxService {
       );
     }
     const scope = scopes[0]!;
-    if (typeof req.changeAddress !== "string" || req.changeAddress === "") {
-      throw new CodedApiError(400, "CHANGE_ADDRESS_REQUIRED", `"change_address" bắt buộc khi tạo vault.`);
+    const funding = req.funding;
+    if (funding !== undefined && req.changeAddress !== undefined) {
+      throw new CodedApiError(400, "FUNDING_CHANGE_ADDRESS_CONFLICT",
+        `"change_address" và "funding" không đi cùng nhau: có "funding" thì phí + tiền thối ADA về ` +
+        `"funding.fee_payer.address", tiền thối LAMP/token về "funding.address". Bỏ "change_address".`);
     }
-    const changeAddress = assertChangeAddress(this.deps.network, req.changeAddress);
+    if (funding === undefined && (typeof req.changeAddress !== "string" || req.changeAddress === "")) {
+      throw new CodedApiError(400, "CHANGE_ADDRESS_REQUIRED",
+        `"change_address" bắt buộc khi tạo vault (hoặc gửi "funding" để nạp từ ví Phoenix).`);
+    }
+    const changeAddress = funding === undefined
+      ? assertChangeAddress(this.deps.network, req.changeAddress!)
+      : funding.feePayer.address;
     this.assertWitnessShapeFor(req);
+    let fundingSigners: ReturnType<typeof fundingWitnessOf> | undefined;
+    if (funding !== undefined) {
+      if (this.deps.didPaymentAnchor === undefined) {
+        throw new CodedApiError(501, "FUNDING_UNAVAILABLE",
+          `Dịch vụ chưa được cấu hình đọc anchor DID (thiếu mục \`did_stake\` trong bản deploy) — ` +
+          `không dựng được giao dịch chi did_payment.`, { missing: "deployment.did_stake" });
+      }
+      assertFundingAddresses(this.deps.network, funding);
+      fundingSigners = fundingWitnessOf(funding, req.ownerWitness);
+    }
     const ownerKey = ownerLockKey(owner);
     const startedAt = this.now();
     this.deps.locks.acquire(ownerKey, startedAt);
     try {
       const tip = await this.deps.chain.tip();
       const witness = await this.witnessFor(req);
+      let fundingCtx: CreateVaultContext["funding"];
+      if (funding !== undefined) {
+        const anchor = await this.deps.didPaymentAnchor!.read(fundingSigners!.anchorRef);
+        const feePayerUtxo = await readFeePayerUtxo(this.deps.chain, funding);
+        const utxos = await this.deps.chain.utxosAt(funding.address);
+        fundingCtx = {
+          input: {
+            didPaymentScriptCbor: funding.didPaymentScriptCbor, address: funding.address, utxos,
+            anchorRefUtxo: anchor, controllerPkh: fundingSigners!.controllerPkh, deviceKeyHash: fundingSigners!.deviceKeyHash,
+          },
+          feePayerUtxo,
+        };
+      }
       const built = await this.deps.builder.createVault(
-        { owner, ownerAuth: witness?.auth, scope, tip, changeAddress },
+        { owner, ownerAuth: witness?.auth, scope, tip, changeAddress, funding: fundingCtx },
         { lampAmount: req.lampAmount, profile: req.profile },
       );
+      const lampUnit = this.deps.deployment.lampPolicyId + this.deps.deployment.lampAssetNameHex;
       const summary = summarizeCreateVaultTx(built.txCbor, {
         vaultAddress: scope.address,
         vaultNftUnit: built.vaultNftUnit,
-        lampUnit: this.deps.deployment.lampPolicyId + this.deps.deployment.lampAssetNameHex,
+        lampUnit,
         network: this.deps.network,
       });
+      if (funding !== undefined && fundingCtx !== undefined) {
+        summary.funding = checkFundingTx(built.txCbor, {
+          network: this.deps.network,
+          tipPosixMs: tip.blockTimePosixMs,
+          vaultAddress: scope.address,
+          vaultNftUnit: built.vaultNftUnit,
+          lampUnit,
+          fundingAddress: funding.address,
+          feePayerAddress: funding.feePayer.address,
+          feePayerUtxo: fundingCtx.feePayerUtxo,
+          didPaymentUtxos: fundingCtx.input.utxos,
+          signers: [fundingSigners!.controllerPkh, fundingSigners!.deviceKeyHash],
+        });
+      }
       if (!sameOwner(summary.vault.owner, owner)) {
         throw new TxSummaryUndecodableError(
           `datum vault vừa dựng mang chủ ${summary.vault.owner.type}:${summary.vault.owner.hash} ` +
@@ -302,7 +361,9 @@ export class VaultTxService {
         vaultAddress: scope.address,
         owner,
         requiredSigners: summary.required_signers,
-        witnessNotes: this.notesFor(owner, witness, changeAddress),
+        witnessNotes: funding === undefined
+          ? this.notesFor(owner, witness, changeAddress)
+          : fundingNotes(owner, witness, funding, fundingSigners!),
         summary,
         expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
       };
@@ -473,7 +534,30 @@ function assertHex(v: string, name: string): void {
 /** `OwnerAuthError` (ném từ bộ dựng / nhân chứng) → lỗi API có mã; lỗi khác đi nguyên. */
 function asOwnerApiError(e: unknown): unknown {
   if (e instanceof OwnerAuthError) return ownerApiErrorOf(e);
+  if (e instanceof FundingError) return fundingApiErrorOf(e);
   return e;
+}
+
+/**
+ * Ghi chú ký cho đường `funding`. Thứ tự là thứ bắt buộc, không phải gợi ý: chữ ký nào cũng
+ * ký trên hash THÂN giao dịch, nên thân phải chốt TRƯỚC mọi chữ ký, và đổi thân sau đó thì
+ * mọi chữ ký đã có đều mất hiệu lực.
+ */
+function fundingNotes(
+  owner: OwnerRef, w: ResolvedOwnerWitness | undefined, f: FundingRequest,
+  s: { controllerPkh: string; deviceKeyHash: string },
+): string[] {
+  const fp = `${f.feePayer.utxoRef.txHash}#${f.feePayer.utxoRef.outputIndex}`;
+  return [
+    ...(owner.type === "key" ? [`Chủ khoá: ký bằng khoá ${owner.hash}.`] : (w?.notes ?? [])),
+    `LAMP + min-ADA của vault chi từ ví Phoenix ${f.address} (script did_payment, redeemer Spend, ` +
+      `script đính inline); phần thối về lại đúng địa chỉ đó.`,
+    `Ví Phoenix ký bằng controller ${s.controllerPkh} VÀ khoá thiết bị ${s.deviceKeyHash}.`,
+    `Phí + tài sản thế chấp: UTxO ${fp} của ${f.feePayer.address}; tiền thối ADA và collateral_return ` +
+      `về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó.`,
+    `Thứ tự: thân giao dịch này là bản CHỐT — ký trên đúng tx_hash trả về; đổi bất kỳ byte nào ` +
+      `của thân sau đó thì mọi chữ ký đã có mất hiệu lực. Hạn dùng ≤ 1 giờ kể từ lúc dựng.`,
+  ];
 }
 
 /** Chủ phải là `{ type: "key" | "script", hash: 56 hex thường }` — dịch vụ gọi thẳng cũng bị kiểm. */

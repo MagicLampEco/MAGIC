@@ -24,7 +24,7 @@ import {
 import {
   buildConsumeTx, buildInstantGenTx, buildScheduleCommitTx, buildScheduleFireTx, buildVaultBurnBatch,
   createVault, decodePriceParam, requiredFromBeacon,
-  type PlutusJson, type Profile, type VaultModule, type VaultType,
+  type DidPaymentFundingInput, type PlutusJson, type Profile, type VaultModule, type VaultType,
 } from "@magiclamp/sdk";
 import { posixMsToEpoch, OwnerAuthError, type Network, type OwnerAuth, type OwnerRef } from "@magiclamp/protocol-utils";
 
@@ -64,7 +64,11 @@ export interface CreateVaultContext {
   ownerAuth?: OwnerAuth<TxBuilder>;
   scope: VaultScope;
   tip: ChainTip;
+  /** Ví trả phí + nhận tiền thối ADA. Có `funding` ⟹ = `funding.fee_payer.address`. */
   changeAddress: string;
+  /** Nạp từ ví Phoenix. Có mặt ⟹ ví của lucid chỉ mang ĐÚNG `feePayerUtxo` (không đọc thêm
+   *  UTxO nào ở địa chỉ trả phí), và LAMP đến từ `input.utxos`. */
+  funding?: { input: DidPaymentFundingInput; feePayerUtxo: UTxO };
 }
 
 export interface BuiltCreateVault extends BuiltTx {
@@ -340,7 +344,7 @@ export class SdkTxBuilder implements TxBuilderPort {
    * đích; lệch ⟹ `CHAIN_UNAVAILABLE`, không tạo vault ở một địa chỉ ngoài cấu hình.
    */
   async createVault(ctx: CreateVaultContext, p: { lampAmount: bigint; profile?: Profile }): Promise<BuiltCreateVault> {
-    const lucid = await this.lucidFor(ctx);
+    const lucid = await this.lucidFor(ctx, ctx.funding === undefined ? undefined : [ctx.funding.feePayerUtxo]);
     const d = this.deps.deployment;
     const [vaultRef] = await this.deps.chain.utxosByOutRef([d.refScriptUtxos.vault]);
     const vaultScript = scriptOfRef(vaultRef, "vault");
@@ -357,11 +361,12 @@ export class SdkTxBuilder implements TxBuilderPort {
       vault: { owner: ctx.owner, lampDeposit: p.lampAmount, profile: p.profile },
       ownerAuth: ctx.ownerAuth,
       tipPosixMs: ctx.tip.blockTimePosixMs,
+      funding: ctx.funding?.input,
     }));
     return { txCbor: r.tx.toCBOR(), vaultNftUnit: r.vaultIdUnit };
   }
 
-  private async lucidFor(ctx: { changeAddress: string }): Promise<LucidEvolution> {
+  private async lucidFor(ctx: { changeAddress: string }, presetWalletUtxos?: UTxO[]): Promise<LucidEvolution> {
     const provider = new Blockfrost(this.deps.blockfrostUrl, this.deps.blockfrostProjectId);
     const now = Date.now();
     if (this.protocolParams === null || now - this.protocolParamsAt > PROTOCOL_PARAMS_TTL_MS) {
@@ -372,7 +377,7 @@ export class SdkTxBuilder implements TxBuilderPort {
       presetProtocolParameters: this.protocolParams,
     });
 
-    const walletUtxos = await this.deps.chain.utxosAt(ctx.changeAddress);
+    const walletUtxos = presetWalletUtxos ?? await this.deps.chain.utxosAt(ctx.changeAddress);
     if (walletUtxos.length === 0) {
       throw new TxBuildRejectedError(
         `Địa chỉ ${ctx.changeAddress.slice(0, 20)}… không có UTxO nào để trả phí và làm tài sản ` +
@@ -526,7 +531,7 @@ function asProtocolError(e: unknown): unknown {
  */
 export class RecordedTxBuilder implements TxBuilderPort {
   /** Tham số của lượt gọi gần nhất — để phép kiểm xác nhận nó ĐÃ bị bỏ qua. */
-  lastCall: { route: string; params: unknown; ownerAuthKind?: "key" | "script" } | null = null;
+  lastCall: { route: string; params: unknown; ownerAuthKind?: "key" | "script"; changeAddress?: string; funding?: CreateVaultContext["funding"] } | null = null;
   constructor(
     private readonly txCborByRoute: Record<string, string>,
     /** NFT danh-tính mà bản ghi `create_vault` khai đã đúc. */
@@ -553,6 +558,7 @@ export class RecordedTxBuilder implements TxBuilderPort {
   }
   async createVault(ctx: CreateVaultContext, p: { lampAmount: bigint; profile?: Profile }): Promise<BuiltCreateVault> {
     const b = await this.serve("create_vault", p, ctx);
+    this.lastCall = { ...this.lastCall!, changeAddress: ctx.changeAddress, funding: ctx.funding };
     if (this.createVaultNftUnit === undefined) throw new Error("[RecordedTxBuilder] không khai NFT cho create_vault.");
     return { ...b, vaultNftUnit: this.createVaultNftUnit };
   }

@@ -30,6 +30,13 @@ export interface TxSpec {
   mint?: Record<string, bigint>;
   /** Khoá băm 28 byte, theo thứ tự, vào `required_signers` của thân. */
   requiredSigners?: string[];
+  /** Tài sản thế chấp + output trả lại thế chấp (ca `funding`). */
+  collateralInputs?: { txHash: string; outputIndex: number }[];
+  collateralReturn?: TxOutputSpec;
+  /** Redeemer Spend: chỉ số input THEO THỨ TỰ ĐÃ SẮP của ledger + data CBOR hex. */
+  spendRedeemers?: { index: number; dataHex: string }[];
+  /** Slot hết hạn (validTo). */
+  ttlSlot?: bigint;
 }
 
 /** Chuỗi byte (hex) → CBOR bytestring hex; đủ cho tên tài sản ≤ 32 byte. */
@@ -78,7 +85,30 @@ export function buildTxCbor(spec: TxSpec): string {
     for (const h of spec.requiredSigners) rs.add(CML.Ed25519KeyHash.from_hex(h));
     body.set_required_signers(rs);
   }
-  return CML.Transaction.new(body, CML.TransactionWitnessSet.new(), true, undefined).to_cbor_hex();
+  if (spec.collateralInputs !== undefined) {
+    const cl = CML.TransactionInputList.new();
+    for (const i of spec.collateralInputs) {
+      cl.add(CML.TransactionInput.new(CML.TransactionHash.from_hex(i.txHash), BigInt(i.outputIndex)));
+    }
+    body.set_collateral_inputs(cl);
+  }
+  if (spec.collateralReturn !== undefined) {
+    body.set_collateral_return(CML.TransactionOutput.new(
+      CML.Address.from_bech32(spec.collateralReturn.address), assetsToValue(spec.collateralReturn.assets), undefined,
+    ));
+  }
+  if (spec.ttlSlot !== undefined) body.set_ttl(spec.ttlSlot);
+  const ws = CML.TransactionWitnessSet.new();
+  if (spec.spendRedeemers !== undefined) {
+    const list = CML.LegacyRedeemerList.new();
+    for (const r of spec.spendRedeemers) {
+      list.add(CML.LegacyRedeemer.new(
+        CML.RedeemerTag.Spend, BigInt(r.index), CML.PlutusData.from_cbor_hex(r.dataHex), CML.ExUnits.new(0n, 0n),
+      ));
+    }
+    ws.set_redeemers(CML.Redeemers.new_arr_legacy_redeemer(list));
+  }
+  return CML.Transaction.new(body, ws, true, undefined).to_cbor_hex();
 }
 
 /**

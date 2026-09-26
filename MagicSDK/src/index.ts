@@ -209,3 +209,11 @@ export {
   type DidStakeOwnerAuth, type DidStakeWitnessInput, type DidStakeWitnessDetails,
   type RewardAccountState,
 } from "@magiclamp/protocol-utils";
+
+// ── Nạp LAMP từ ví Phoenix (script `did_payment`) — `createVault({ funding })` ──
+export { didPaymentLucidPorts, type DidPaymentFundingInput } from "./didPaymentLucid.js";
+export {
+  FundingError, assertDidPaymentAddress, planDidPaymentFunding,
+  DID_PAYMENT_SPEND_REDEEMER, FUNDING_MAX_VALIDITY_MS,
+  type FundingErrorCode, type DidPaymentPorts, type DidPaymentPlan, type FundingUtxoLike,
+} from "@magiclamp/protocol-utils";

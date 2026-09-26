@@ -2,6 +2,7 @@
 import type { LucidEvolution, TxBuilder, TxSignBuilder, UTxO, Validator } from "@lucid-evolution/lucid";
 import type { Network, OwnerAuth, OwnerRef } from "@magiclamp/protocol-utils";
 import type { PlutusJson } from "./redeemerIndex.js";
+import type { DidPaymentFundingInput } from "./didPaymentLucid.js";
 
 export type Profile = "Ember" | "Flame" | "Lantern";
 
@@ -162,6 +163,10 @@ export interface CreateVaultParams {
    *  tự chọn tất định từ UTxO của ví. UTxO này BẮT BUỘC là input của tx tạo
    *  vault; tên NFT = blake2b_256(cbor.serialise(OutputReference của nó)). */
   seedUtxo?: UTxO;
+  /** Nạp LAMP + min-ADA của vault từ ví Phoenix (script `did_payment`) thay vì từ ví đang
+   *  chọn. Có trường này thì ví đang chọn CHỈ trả phí + làm tài sản thế chấp + làm seed;
+   *  phần thối của `did_payment` về lại `funding.address`. Xem `didPaymentLucid.ts`. */
+  funding?: DidPaymentFundingInput;
 }
 
 /** Result of `createVault()` — ready for caller to sign + submit. */
@@ -188,4 +193,10 @@ export interface CreateVaultResult {
   owner: OwnerRef;
   /** Human-readable summary for logs / UI. */
   summary: string;
+  /** Chỉ khi có `funding`: UTxO `did_payment` đã chi, tổng chi, và output thối về ví Phoenix. */
+  funding?: {
+    selected: UTxO[];
+    spent: Record<string, bigint>;
+    returned: Record<string, bigint> | null;
+  };
 }

@@ -43,9 +43,12 @@ import {
 } from "@lucid-evolution/lucid";
 import {
   msPerEpoch, lampAssetName, applyOwnerAuth, resolveOwnerAuth, ownerRefToString,
-  type Network,
+  assertDidPaymentAddress, planDidPaymentFunding, FundingError,
+  DID_PAYMENT_SPEND_REDEEMER, FUNDING_MAX_VALIDITY_MS,
+  type Network, type OwnerAuth, type DidPaymentPlan,
 } from "@magiclamp/protocol-utils";
 import { resolveOwnerInput } from "./ownerInput.js";
+import { didPaymentLucidPorts, type DidPaymentFundingInput } from "./didPaymentLucid.js";
 
 import type { CreateVaultParams, CreateVaultResult } from "./types.js";
 import { InstantVaultDatumSchema, VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
@@ -99,9 +102,15 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   const lampUnit = toUnit(protocol.lampPolicyId, assetName);
   const walletAddress = await lucid.wallet().address();
   const walletUtxos   = await lucid.wallet().getUtxos();
-  const lampBalance   = walletUtxos.reduce(
+  const funding       = params.funding;
+  // Có `funding` ⟹ LAMP đến từ ví Phoenix, ví đang chọn chỉ trả phí: kiểm hash và nhân
+  // chứng của chủ ngay đây, TRƯỚC khi dựng gì. Số dư LAMP của ví Phoenix kiểm ở bước chọn
+  // UTxO bên dưới (cần min-ADA của vault, mà min-ADA cần datum).
+  const fundingPorts = funding === undefined ? undefined : fundingPortsOf(lucid, funding);
+  const lampBalance   = funding !== undefined ? vault.lampDeposit : walletUtxos.reduce(
     (s, u) => s + (u.assets[lampUnit] ?? 0n), 0n,
   );
+  if (funding !== undefined) assertFundingWitness(funding, ownerAuth);
   if (lampBalance < vault.lampDeposit) {
     throw new Error(
       `Wallet has ${lampBalance} oildrop LAMP (= ${lampBalance / 1_000_000n} LAMP); ` +
@@ -182,6 +191,27 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   }
   const vaultLovelace = vault.vaultLovelace ?? minVaultLovelace;
 
+  // ── Nạp từ did_payment: chọn tối thiểu đủ LAMP + min-ADA vault + min-ADA phần thối ──
+  // Mục rút `did_stake` (chủ script) là tiền của CHỦ DID vào giao dịch: nó thối về ví
+  // Phoenix cùng phần thối, không để bộ cân bằng dồn sang ví trả phí.
+  let fundingPlan: DidPaymentPlan<UTxO> | undefined;
+  if (funding !== undefined) {
+    fundingPlan = planDidPaymentFunding({
+      utxos: funding.utxos,
+      need: { lovelace: vaultLovelace, [lampUnit]: vault.lampDeposit },
+      primaryUnit: lampUnit,
+      returnAddress: funding.address,
+      extraLovelace: withdrawLovelaceOf(ownerAuth),
+    }, fundingPorts!);
+    const seedTaken = fundingPlan.selected.some(
+      u => u.txHash === seedUtxo.txHash && u.outputIndex === seedUtxo.outputIndex,
+    );
+    if (seedTaken) {
+      throw new FundingError("FUNDING_SHAPE",
+        `seed UTxO trùng một UTxO did_payment — seed phải là UTxO của ví trả phí.`);
+    }
+  }
+
   // ── Build tx ─────────────────────────────────────────────────
   // 4 mảnh BẮT BUỘC khớp nhau, thiếu một là validator từ chối:
   //   (1) seed UTxO nằm trong inputs                → one-shot uniqueness
@@ -205,7 +235,25 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
         [vaultIdUnit]: 1n,
       },
     );
-  const tx = await applyOwnerAuth(txBody, ownerAuth).complete();   // (4)
+  // (5) chỉ khi nạp từ did_payment: chi UTxO đã chọn, mỗi cái một redeemer `Spend`, script
+  //     đính inline; phần thối về CHÍNH ví Phoenix; hạn dùng ≤ 1 giờ (mô hình ví trả phí bên
+  //     thứ ba). Anchor + controller + thiết bị: chủ script thì nhân chứng `did_stake` đã gắn
+  //     đúng bộ đó (`assertFundingWitness` so), gắn lại là nhân đôi reference input và chữ ký.
+  let fundedBody = txBody;
+  if (funding !== undefined && fundingPlan !== undefined) {
+    fundedBody = fundedBody
+      .collectFrom(fundingPlan.selected, DID_PAYMENT_SPEND_REDEEMER)
+      .attach.SpendingValidator({ type: "PlutusV3", script: funding.didPaymentScriptCbor.toLowerCase() });
+    if (fundingPlan.returned !== null) fundedBody = fundedBody.pay.ToAddress(funding.address, fundingPlan.returned);
+    if (ownerAuth.kind !== "script") {
+      fundedBody = fundedBody
+        .readFrom([funding.anchorRefUtxo])
+        .addSignerKey(funding.controllerPkh)
+        .addSignerKey(funding.deviceKeyHash);
+    }
+    fundedBody = fundedBody.validTo(Number(tipPosixMs + FUNDING_MAX_VALIDITY_MS));
+  }
+  const tx = await applyOwnerAuth(fundedBody, ownerAuth).complete();   // (4)
 
   const summary = formatSummary({
     vaultType,
@@ -229,7 +277,58 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     seedUtxo,
     owner,
     summary,
+    ...(fundingPlan === undefined ? {} : {
+      funding: { selected: fundingPlan.selected, spent: fundingPlan.spent, returned: fundingPlan.returned },
+    }),
   };
+}
+
+// ── nạp từ did_payment ────────────────────────────────────────
+
+function fundingPortsOf(lucid: CreateVaultParams["lucid"], funding: DidPaymentFundingInput) {
+  const cpub = (lucid as { config?: () => { protocolParameters?: { coinsPerUtxoByte?: unknown } } })
+    .config?.().protocolParameters?.coinsPerUtxoByte;
+  if (typeof cpub !== "bigint") {
+    throw new FundingError("FUNDING_SHAPE",
+      `lucid không có tham số giao thức coinsPerUtxoByte — không tính được min-ADA của phần thối.`);
+  }
+  const ports = didPaymentLucidPorts(cpub);
+  assertDidPaymentAddress(funding.didPaymentScriptCbor, funding.address, ports);
+  if (!Array.isArray(funding.utxos) || funding.anchorRefUtxo === null || typeof funding.anchorRefUtxo !== "object") {
+    throw new FundingError("FUNDING_SHAPE", `funding.utxos phải là mảng và funding.anchorRefUtxo phải có.`);
+  }
+  return ports;
+}
+
+/**
+ * Bộ ký của `did_payment` = controller + thiết bị. Chủ script thì nhân chứng `did_stake` đã
+ * mang bộ ký của nó; hai bộ PHẢI trùng (cùng một DID), không nhận bộ khác. Nhân chứng không
+ * khai `details.requiredSigners` ⟹ không so được ⟹ NÉM, không đoán.
+ */
+function assertFundingWitness(funding: DidPaymentFundingInput, ownerAuth: OwnerAuth<any>): void {
+  const hex28 = /^[0-9a-f]{56}$/;
+  if (!hex28.test(funding.controllerPkh) || !hex28.test(funding.deviceKeyHash)) {
+    throw new FundingError("FUNDING_SHAPE", `controllerPkh / deviceKeyHash phải là 56 hex thường.`);
+  }
+  if (ownerAuth.kind !== "script") return;
+  const signers = (ownerAuth as { details?: { requiredSigners?: unknown } }).details?.requiredSigners;
+  if (!Array.isArray(signers) || signers.length !== 2 ||
+      signers[0] !== funding.controllerPkh || signers[1] !== funding.deviceKeyHash) {
+    throw new FundingError("FUNDING_WITNESS_MISMATCH",
+      `bộ ký của did_payment (controller + thiết bị) phải TRÙNG bộ ký của nhân chứng did_stake.`,
+      { owner_auth_signers: Array.isArray(signers) ? signers : null });
+  }
+}
+
+/** Lượng rút `did_stake` đi vào giao dịch; chủ khoá ⟹ 0. Chủ script không khai ⟹ NÉM. */
+function withdrawLovelaceOf(ownerAuth: OwnerAuth<any>): bigint {
+  if (ownerAuth.kind !== "script") return 0n;
+  const w = (ownerAuth as { details?: { withdrawLovelace?: unknown } }).details?.withdrawLovelace;
+  if (typeof w !== "bigint" || w < 0n) {
+    throw new FundingError("FUNDING_WITNESS_MISMATCH",
+      `nhân chứng chủ script không khai details.withdrawLovelace — không biết phần rút phải thối về đâu.`);
+  }
+  return w;
 }
 
 /** Script vault từ ĐÚNG MỘT nguồn: blueprint chưa apply, hoặc bản đã apply + hash chờ đợi. */

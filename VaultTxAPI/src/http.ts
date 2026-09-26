@@ -7,7 +7,7 @@
 //   POST /tx/schedule-commit   { owner, …, schedule_length, lamp_per_epoch }
 //   POST /tx/schedule-fire     { owner, …, schedule_id }
 //   POST /tx/consume           { owner, …, op_type, op_count }
-//   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address, [profile] }
+//   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 //   POST /tx/submit            { tx_cbor, witness_cbor }
 //
 // `owner = { type: "key" | "script", hash }`; `owner_pkh` còn nhận làm bí danh của
@@ -31,6 +31,7 @@ import {
 } from "./errors.js";
 import { toBuildBody, toCreateVaultBody, toSubmitBody, type OwnerRequest, type VaultTxService } from "./service.js";
 import { parseOwnerFields, parseOwnerWitness } from "./owner.js";
+import { parseFunding } from "./funding.js";
 import { OwnerAuthError } from "@magiclamp/protocol-utils";
 import { ownerApiErrorOf } from "./errors.js";
 
@@ -136,12 +137,14 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         if (profile !== undefined && profile !== "Ember" && profile !== "Flame" && profile !== "Lantern") {
           throw new BadRequestError(`"profile" phải là "Ember" | "Flame" | "Lantern" (bỏ trống = "Flame").`);
         }
+        // `change_address` và `funding` loại trừ nhau — tầng dịch vụ quyết (400 có mã), không
+        // phải ở đây, để lời gọi thẳng vào dịch vụ cũng bị kiểm.
         const out = await deps.service.createVault({
           ...ownerReq(body),
           kind,
           lampAmount: reqBigint(body, "lamp_amount"),
-          changeAddress: reqString(body, "change_address"),
           profile,
+          funding: parseFunding(body),
         });
         return { status: 200, body: toCreateVaultBody(out) };
       }

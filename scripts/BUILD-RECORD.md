@@ -19,7 +19,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `consume.consume` | `064b7df97343c61e3869e248c771ac1a682109445a76995820987bf3` |
+| `consume.consume` | `661499cc2e2e05eed7ec5d30b4150a872297f8e0b40ffd9003a7e11e` |
 | `price_nft.price_nft` | `16e849f1952237ccc3baf57c7e35bcff9c0756e97e11671c3dee6287` |
 | `price_param.price_param` | `065be9fb44b8badc2b4c3a360f44643b63912eccf0193aa091cdb514` |
 
@@ -36,7 +36,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `vault.vault` | `848da20f814b37d82bb3a7f09347474601f5579bf84bbd8eb3283cb2` |
+| `vault.vault` | `0ea5726c55addfdf4b15f9ff6dc654b8869b9dacfdf60d486e5e8547` |
 
 ### `Paymaster/onchain`
 
@@ -52,8 +52,8 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `prepaid.paid_fund` | `21f6b9e9f2987b744bfd7a3a8fc58c7c7209a17be3f5882649a7aa2f` |
-| `prepaid.prepaid_vault` | `7dd79ac69a70f8601a4427c854f564327009c2328a54de3c28103cc8` |
+| `prepaid.paid_fund` | `217e79e92323efd7c2c74d9447a44004e0f50684a1d2145a5cbd8501` |
+| `prepaid.prepaid_vault` | `57280cbe012924b7e8399c9ca4e17721544e4698de600b2a777b5d2d` |
 
 ### `ScheduleGen/onchain`
 
@@ -62,8 +62,8 @@ trình biên dịch `v1.1.21+42babe5`
 | validator | hash (CHƯA apply-param) |
 |---|---|
 | `shard_nft.shard_nft` | `b2211b6008397f1b5996f834e0d060bfff48a16a3dd971207c333e71` |
-| `vault.shard` | `b1836db9658800284b43631ac1b44a8fb80c1d4f0fc0b6b9725fe63f` |
-| `vault.vault` | `743d634eb14adf32003aceccbb98e0ac3a3c63f02faa0422df433c5f` |
+| `vault.shard` | `f08a20dd8a70ae0e1808963d998c374bca77816157ee86673b4cf491` |
+| `vault.vault` | `9f80ec036a3a62b17e53b64f4cfc873fd0f2cc13661d799730289ab8` |
 
 ### `UMKeeper/onchain`
 

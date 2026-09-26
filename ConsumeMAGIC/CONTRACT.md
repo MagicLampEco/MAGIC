@@ -95,10 +95,24 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   > không có cơ sở định giá cho một dòng không có nghiệp vụ hạ tầng đứng sau. Hai lỗ đó không
   > độc lập — bất kỳ `base_price` nào cho một dòng như thế cũng chỉ là một tỉ giá ngụy trang.
   >
-  > **Hình dạng đúng, đã chuẩn cho nhà đó:** phí tiền tệ của nền tảng ở lại hoàn toàn
-  > off-chain và từ nay KHÔNG mang nhãn `op_type` nào; lượng MAGIC bị tiêu = tổng các op
-  > THẬT mà vòng đời hợp đồng kích hoạt — hôm nay là `op_type` 2 (neo cam kết thành CID),
-  > việc họ tự nối, không xin gì.
+  > ~~Hình dạng cũ: phí tiền tệ của nền tảng ở lại hoàn toàn off-chain, không mang nhãn
+  > `op_type` nào.~~ **Bị thay 2026-09-26:** chủ dự án chốt phí nền tảng định giá bằng
+  > MAGIC, trả bằng CARP và đi qua ConsumeMAGIC. Hai lập luận ở trên vẫn đứng, và hình dạng
+  > mới được chọn để thoả cả hai:
+  >
+  > - **Một mã DÙNG CHUNG cho mọi phí nền tảng, không một mã cho mỗi nền tảng.** Tiền lệ
+  >   "mỗi nền tảng một mã" không đóng lại được, và mỗi mã chiếm một chỗ trong trần 16 dòng
+  >   của beacon. Một mã chung thì nền tảng thứ N không xin gì thêm. Bên nào thu phí thì đọc
+  >   ở attribution và `beneficiary` của quỹ, không đọc ở `op_type`.
+  > - **Mã đó là ĐƠN VỊ MAGIC, không phải một giá.** `base_price` = 1 000 000 nanogic
+  >   (0,001 MAGIC) và `op_count` = số phí tính bằng đơn vị ấy; `demand_mult` giữ đúng `Q`,
+  >   keeper KHÔNG co giãn dòng này. Như vậy DAO không phải đặt một tỉ giá nào, và giá phí là
+  >   quyết định của nền tảng. Mức 10⁶ là mức nhỏ nhất thoả ràng buộc mở mã
+  >   `base_price × m_min ≥ Q` ở dưới, với `m_min = 0,5`.
+  > - Số của mã do sổ gốc cấp. **Không** dùng lại 5 hay 6.
+  >
+  > Lượng MAGIC mà các op HẠ TẦNG trong vòng đời hợp đồng tiêu (ví dụ `op_type` 2, neo cam
+  > kết thành CID) vẫn là dòng riêng, không gộp vào dòng phí.
   >
   > **Số 5 và 6 KHÔNG được cấp lại cho thứ khác.** Chúng đã đi ra ngoài: `pricePerOp(5, …)`
   > từng trả một con số hợp lệ suốt 45 ngày ở kho bên đó. Tái dùng số là để một bản sao chết
@@ -489,7 +503,8 @@ tích luỹ; pin cứng về `#""` sẽ khoá chết đường liên kết DID s
   hay UMKeeper (mint-side) — chỉ MƯỢN cấu trúc FIR.
 - **ConsumeMAGIC (B)** đọc giá từ PriceParam, ghi engagement-state + ép Σburns. KHÔNG định giá đối tượng
   (con bò vs gà) — đó là việc **app component** (OriLife `animal_fee`), ngoài phạm vi. MAGIC chỉ định giá
-  **nghiệp vụ hạ tầng** (ảnh, CID).
+  **nghiệp vụ hạ tầng** (ảnh, CID). Dòng phí nền tảng dùng chung (§A, khối "Vì sao 5 và 6 bị rút") là
+  đơn vị MAGIC do nền tảng tự đặt số lượng, MAGIC không định giá nó.
 - Generators sinh + giảm MAGIC (datum). ConsumeMAGIC định giá + ghi attribution; vault validator là nơi
   DUY NHẤT giảm `magic_batches`. KHÔNG token, KHÔNG `tx.mint`.
 - **Paymaster (dài hạn):** 🪦 hình dạng cũ — *app đặt `personal_delegate = Some(app_pkh)` qua

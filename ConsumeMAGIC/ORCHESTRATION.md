@@ -27,7 +27,8 @@ MAGIC (CREDIT, số kế toán, KHÔNG token/mint/burn, **fungible — cấm nh�
 ## §2. Hai ví dụ OriLife (đã hoà giải với anh — giữ nguyên bất biến)
 
 **ex1 — định danh cây:** consume 3 MAGIC + chuyển 1 CARP vào OriLife Vault.
-- Nguồn 1 CARP theo `br` (§4): nếu user đã cầm CARP → dùng CARP đó (br vô can). Nếu hệ phải cấp → route theo bảng-br.
+- Nguồn 1 CARP: user tự trả bằng CARP đang cầm → dùng CARP đó, không sinh nợ. User không tự trả → hệ cấp, và **đường cấp** (ĐÚC qua CDP hay RÚT GreenBack-tồn) do `br` + mức GreenBack-tồn quyết theo bảng §4 — **không** do việc user có cầm CARP ở ví nào hay không. Việc cầm CARP chỉ quyết trục NỢ (§4, gạch *"Biến-quyết"*).
+  > Bản trước viết *"nếu user đã cầm CARP → dùng CARP đó (br vô can)"*, tức cầm CARP quyết cả đường cấp. Câu đó ngược §4 và ngược ex2 ngay dưới, và nó mở một đường lách: chuyển CARP sang ví khác để được đi đường RÚT-tồn. Theo câu hiện hành, giấu CARP không đổi được đường cấp.
 
 **ex2 — thuê thợ (Oanh không có CARP, có LAMP, đã hết hạn-mức-gen-từ-LAMP):**
 1. Oanh mở CDP khoá LAMP → **mint 108 CARP** (một event, một **GreenCheque** nợ = 108, MCR≥2.0).

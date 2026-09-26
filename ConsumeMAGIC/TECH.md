@@ -151,7 +151,7 @@ price_param_script_hash          : địa chỉ bắt buộc của beacon PriceP
 | W-CM-2 | Mọi input do SCRIPT khoá chỉ ở `own_hash` hoặc `vault_script_hash` — chặn double-satisfaction XUYÊN-INSTANCE | `util.script_inputs_confined_to` |
 | W-CM-3 | Mọi input@engage mang ĐÚNG 1 thread NFT dưới `own_hash` (cổng định danh, fail-closed với UTxO giả) | `single_thread_nft` trong `list.all` đầu `spend` |
 | W-CM-4 | Beacon PriceParam nằm đúng `price_param_script_hash` và mang đúng 1 NFT `(price_nft_policy, price_nft_name)` | `read_price_param` |
-| W-CM-5 | `pricing.valid_param(pp)` — **8 ràng buộc**: pin `m_min`/`m_max` về hằng, cap 16 dòng, `op_type` tăng ngặt, GATE `base_price × m_min ≥ Q`, clamp invariant, `epoch ≥ 0`. Bảng đầy đủ: `CONTRACT.md §B1` · tóm tắt + lý do: §2.4 dưới | `pricing.valid_param` |
+| W-CM-5 | `pricing.valid_param(pp)` — **13 mệnh đề**: pin `m_min`/`m_max` về hằng, cap 16 dòng, `op_type` tăng ngặt, GATE `base_price × m_min ≥ Q`, trần `base_price`, band `demand_mult` mỗi dòng, giá cố định cho `fixed_price_op_types`, `epoch ≥ 0`. Bảng đầy đủ: `CONTRACT.md §B1` · tóm tắt + lý do (đếm lại từ mã): §2.4 dưới | `pricing.valid_param` |
 | W-CM-6 | `0 ≤ current_epoch − pp.epoch ≤ max_price_stale` | hai `expect` sau `util.get_epoch` |
 | W-CM-7 | **`total_burned == total_required`** (DẤU BẰNG — over-burn và under-burn đều bị từ chối). `total_required` gộp qua MỌI Engage input; `total_burned` gộp qua các `vault_ref` PHÂN BIỆT | `sum_required_over_engage_inputs` · `distinct_vault_refs_over_engage_inputs` · `sum_burns_over_vault_refs` |
 | W-CM-8 | `#out@engage == #in@engage` | `util.count_inputs_at_script` / `util.count_outputs_at_script` |
@@ -212,27 +212,40 @@ File: `onchain/lib/magiclamp/consume/pricing.ak`
   — **fold-floor MỘT lần**, KHÔNG phải `price_of × op_count`. Lý do + hệ quả: MATH.md §2.2.
 - `q = 1_000_000_000` — khớp `ProtocolUtils.Q`.
 
-#### `valid_param(pp)` — 8 ràng buộc, **không cái nào thừa**
+#### `valid_param(pp)` — 13 mệnh đề phân biệt, **không cái nào thừa**
 
-Bảng ràng buộc chuẩn tắc là **`CONTRACT.md §B1`** — đọc ở đó, đừng chép về đây. Tóm tắt để
-biết có bao nhiêu cổng mà không gỡ nhầm:
+Bảng ràng buộc chuẩn tắc là **`CONTRACT.md §B1`** — đọc ở đó, đừng chép về đây. Bảng dưới đây
+dựng lại TỪ mã (`onchain/lib/magiclamp/consume/pricing.ak` ▸ `valid_param` +
+`demand_mult_pinned_if_fixed`), đếm từng mệnh đề `and { … }` — kể cả các mệnh đề nằm trong
+`list.all` (mỗi dòng bảng giá). Bản trước ghi "8 ràng buộc" và liệt 8 dòng; mã có **13** mệnh đề
+phân biệt — thiếu 5: `op.base_price >= 0` (tường minh, không chỉ suy ra từ #9), `op.base_price
+<= max_base_price` (PRICE-016), `demand_mult_pinned_if_fixed` (PRICE-017), và dòng cũ
+`pp.demand_mult ∈ [pp.m_min, pp.m_max]` đã CHẾT — sau `CC-LOAD-COUNT-UNIT` (2026-09-24)
+`demand_mult` không còn ở mức `PriceParam`, band chuyển XUỐNG từng dòng `OpPrice` (#11, #12).
 
-| # | Ràng buộc | Vì sao load-bearing |
-|---|---|---|
-| 1 | `pp.m_min == m_min_q` (`500_000_000`) | PIN về hằng. Check tương-đối KHÔNG chặn band-escape |
-| 2 | `pp.m_max == m_max_q` (`2_000_000_000`) | Thiếu pin: `PostPrice` đặt `m_max` khổng lồ, `demand` bám theo ⇒ giá nổ ~1e6× mà vẫn "trong band" |
-| 3 | `list.length(pp.op_prices) <= max_op_prices` (16) | `valid_param` chạy 1 lần / Engage input ⇒ bảng phình = DoS ex-unit MỌI tx consume, không hạ được vì beacon chỉ committee sửa |
-| 4 | `sorted_strict_op_types(pp.op_prices)` | Trùng `op_type`: on-chain `list.find` lấy dòng ĐẦU, map off-chain lấy dòng CUỐI ⇒ hai phía lệch giá 10× mà KHÔNG bên nào báo lỗi |
-| 5 | `op.base_price * pp.m_min >= q` (mỗi dòng) | GATE giá-về-0: giá 1 đơn vị ở demand thấp nhất vẫn ≥ 1 nanogic. Bao hàm luôn `base_price == 0` (nhánh chết — `consume` ép `required > 0`) |
-| 6 | `pp.m_min >= 0`, `pp.m_min <= pp.m_max` | belt sau khi pin — defense-in-depth, giữ nguyên |
-| 7 | `pp.demand_mult ∈ [pp.m_min, pp.m_max]` | clamp invariant |
-| 8 | `pp.epoch >= 0` | chống epoch âm trước phép trừ stale |
+| # | Mệnh đề | Mã | Vì sao load-bearing |
+|---|---|---|---|
+| 1 | `pp.m_min == m_min_q` (`500_000_000`) | PRICE-010 | PIN về hằng. Check tương-đối KHÔNG chặn band-escape |
+| 2 | `pp.m_max == m_max_q` (`2_000_000_000`) | PRICE-010 | Thiếu pin: `PostPrice` đặt `m_max` khổng lồ, `demand` bám theo ⇒ giá nổ ~1e6× mà vẫn "trong band" |
+| 3 | `pp.m_min >= 0` | defense-in-depth | belt sau khi pin #1 — dư nhưng giữ, không phải cổng độc lập |
+| 4 | `pp.m_min <= pp.m_max` | defense-in-depth | belt sau khi pin #1+#2 — dư nhưng giữ |
+| 5 | `pp.epoch >= 0` | PRICE-012 | chống epoch âm trước phép trừ stale ở `consume.ak` |
+| 6 | `list.length(pp.op_prices) <= max_op_prices` (16) | PRICE-013 | `valid_param` chạy 1 lần / Engage input ⇒ bảng phình = DoS ex-unit MỌI tx consume, không hạ được vì beacon chỉ committee sửa |
+| 7 | `sorted_strict_op_types(pp.op_prices)` | PRICE-014 | Trùng `op_type`: on-chain `list.find` lấy dòng ĐẦU, map off-chain lấy dòng CUỐI ⇒ hai phía lệch giá 10× mà KHÔNG bên nào báo lỗi |
+| 8 | `op.base_price >= 0` (mỗi dòng) | sàn tường minh | không phải "thừa" — #9 bao hàm nó CHỈ KHI `pp.m_min > 0`; giữ tách để không phụ vào giả định đó |
+| 9 | `op.base_price * pp.m_min >= q` (mỗi dòng) | PRICE-015 | GATE giá-về-0: giá 1 đơn vị ở demand thấp nhất vẫn ≥ 1 nanogic. Cấm `base_price == 0` (nhánh chết — `consume` ép `required > 0`) |
+| 10 | `op.base_price <= max_base_price` (mỗi dòng) | PRICE-016 | trần TRÊN — không cái nào ở #8/#9 chặn giá vọt lên; thiếu nó là khoá được quyền của người khác bằng giá (Nợ #32) |
+| 11 | `op.demand_mult >= pp.m_min` (mỗi dòng) | PRICE-011 | band DƯỚI, nay ở mức TỪNG DÒNG (`CC-LOAD-COUNT-UNIT`) — trước 2026-09-24 áp ở mức `PriceParam` |
+| 12 | `op.demand_mult <= pp.m_max` (mỗi dòng) | PRICE-011 | band TRÊN, cùng lý do #11 |
+| 13 | `demand_mult_pinned_if_fixed(op)` (mỗi dòng) | PRICE-017 | `op_type ∈ fixed_price_op_types` (hiện `[7]`) ⇒ `demand_mult == q` — giá KHÔNG nhúc nhích theo tải cho thao tác an ninh (`ConsumeMAGIC/CONTRACT.md §A`) |
 
-> ⚠ **Bốn cổng mới — #1+#2 (pin band), #3 (cap độ dài), #4 (tăng ngặt), #5 (GATE giá-về-0) —
-> trông "thừa" nếu chỉ đọc bảng cũ 4 điều.** Bản trước của mục này chỉ
-> liệt `m_min ≥ 0` / `m_min ≤ m_max` / clamp / `base_price ≥ 0` — ai "dọn phần thừa" theo
-> bản đó sẽ gỡ đúng pin-hằng, cap độ dài, tăng-ngặt và GATE giá-về-0. Mỗi cái là một đường
-> tấn công đã được vá. Trọng tài là mã: `onchain/lib/magiclamp/consume/pricing.ak:valid_param`.
+> ⚠ **Nhiều mệnh đề trông "thừa" nếu chỉ đọc bảng cũ, ngắn hơn.** Bản cũ nhất chỉ liệt
+> `m_min ≥ 0` / `m_min ≤ m_max` / clamp mức `PriceParam` / `base_price ≥ 0`; bản kế đó thêm
+> pin-hằng (#1, #2), cap độ dài (#6), tăng-ngặt (#7), GATE giá-về-0 (#9); bản này thêm tiếp trần
+> trên (#10) và giá-cố-định (#13), và HẠ band từ mức `PriceParam` xuống từng dòng (#11, #12). Ai
+> "dọn phần thừa" theo một bản cũ sẽ gỡ đúng một đường tấn công đã được vá ở bản sau. Trọng tài
+> là mã: `onchain/lib/magiclamp/consume/pricing.ak` ▸ `valid_param` +
+> `demand_mult_pinned_if_fixed` — đếm lại bằng cách mở hàm và đếm dấu phẩy trong từng `and { }`.
 
 Bản gương off-chain: `pricing/src/price.ts:assertValidPriceParam` (+ `toCanonicalOpPrices`
 sắp bảng trước khi post), ném `PRICE-010..015`. Chạy TRƯỚC khi post beacon — bảng sai chỉ lộ

@@ -163,22 +163,35 @@ price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 1e9,
   > ước đo nằm ở sổ `Registry`) nâng lên 15 ⇒ **còn 1 dòng** cho bảng dùng chung. Hết chỗ thì phải nâng `max_op_prices`
   > (đo lại ex-unit) hoặc tách beacon, không phải im lặng chen thêm dòng.
 
-  > 🔴 **`op_type=7` đang bị định giá SAI về nguyên tắc, và MAGIC ghi nhận điều đó.**
-  > `price_of`/`required_for` (`onchain/lib/magiclamp/consume/pricing.ak`) nhân
-  > `pp.demand_mult` vào `base_price` của **mọi** `op_type`, mà `demand_mult` tính từ
-  > `ops_served_epoch` — bộ đếm **gộp toàn hệ**, không tách theo `op_type`. Hệ quả:
-  > (a) ai bơm `op_type` rẻ khối lượng lớn cũng đẩy giá xoay khoá DID lên tới trần `2.0×`
-  > cho tất cả mọi người, không cần biết PhoenixKey tồn tại; (b) một đợt lộ khoá hàng
-  > loạt khiến nhiều người cùng Rotate ⇒ `ops_served_epoch` tăng ⇒ Rotate đắt lên —
-  > **việc cần gấp nhất thành đắt nhất đúng lúc cần rẻ nhất**, và tự khuếch đại. Trần
-  > `2.0×` chặn được độ lớn, không chặn được chiều. Phát hiện: Phoenix, thư 2026-08-10.
+  > 🟢 **`op_type=7` từng bị định giá SAI về nguyên tắc — ĐÃ VÁ, `CC-LOAD-COUNT-UNIT`
+  > 2026-09-24.** Chiều hỏng gốc (vẫn giữ lại để nhớ VÌ SAO hằng dưới đây tồn tại):
+  > `price_of`/`required_for` (`onchain/lib/magiclamp/consume/pricing.ak`) từng nhân
+  > `pp.demand_mult` — MỘT giá trị DÙNG CHUNG cho **mọi** `op_type` — vào `base_price`
+  > của từng mã, mà `demand_mult` đó tính từ `ops_served_epoch`, bộ đếm **gộp toàn hệ**.
+  > Hệ quả: (a) ai bơm `op_type` rẻ khối lượng lớn cũng đẩy giá xoay khoá DID lên tới
+  > trần `2.0×` cho tất cả mọi người, không cần biết PhoenixKey tồn tại; (b) một đợt lộ
+  > khoá hàng loạt khiến nhiều người cùng Rotate ⇒ `ops_served_epoch` tăng ⇒ Rotate đắt
+  > lên — **việc cần gấp nhất thành đắt nhất đúng lúc cần rẻ nhất**, và tự khuếch đại.
+  > Trần `2.0×` chặn được độ lớn, không chặn được chiều. Phát hiện: Phoenix, thư
+  > 2026-08-10.
   >
-  > Đường vá **chưa làm** — nó đụng validator nên GATED, chờ chủ nhân gật. Hai hình dạng:
-  > thêm cờ `fixed: Bool` vào `OpPrice` (đổi lược đồ datum của beacon đang sống, phải
-  > post lại mọi beacon), hoặc quy ước một **dải `op_type` là giá cố định** (đổi hàm giá,
-  > KHÔNG đổi lược đồ datum, không phải migrate beacon). MAGIC nghiêng về dải quy ước.
+  > **Đường vá đã chọn: quy ước dải `op_type` giá cố định**, không phải cờ `fixed: Bool`
+  > trong datum (lý do chọn dải thay vì cờ: nằm ở hằng biên dịch ⇒ đổi nó là đổi script
+  > hash, không phải một giá trị committee tự khai được — xem docstring
+  > `fixed_price_op_types`). Đồng thời `demand_mult` RỜI khỏi mức `PriceParam` XUỐNG
+  > từng dòng `OpPrice` (chính là `CC-LOAD-COUNT-UNIT` — mỗi mã có bộ đếm cầu-giá RIÊNG,
+  > không còn dùng chung một bộ đếm toàn hệ), nên phần (a)/(b) ở trên không còn xảy ra
+  > được cho các mã KHÁC mã 7 nữa; và với mã 7, tầng dưới đây khoá cứng hệ số về 1,0×
+  > bất kể `ops_served_epoch` của mã 7 là bao nhiêu:
+  > - `onchain/lib/magiclamp/consume/pricing.ak` ▸ `fixed_price_op_types` — hằng biên
+  >   dịch, hiện = `[7]`.
+  > - `onchain/lib/magiclamp/consume/pricing.ak` ▸ `demand_mult_pinned_if_fixed` — ép
+  >   `op.demand_mult == q` cho mọi dòng có `op_type ∈ fixed_price_op_types`.
+  > - `onchain/lib/magiclamp/consume/pricing.ak` ▸ `valid_param` — gọi gate trên cho
+  >   TỪNG dòng của bảng giá (PRICE-017), nên một `PostPrice` đặt hệ số khác 1,0× cho
+  >   mã 7 bị từ chối trước khi beacon kịp lên chuỗi.
   >
-  > **Đính chính một suy luận:** cờ/dải giá cố định **không** làm tx thôi phải đọc beacon
+  > **Đính chính một suy luận cũ:** dải giá cố định **không** làm tx thôi phải đọc beacon
   > — `base_price` vẫn nằm trong datum beacon. Muốn tx độc lập beacon thì phải bake
   > `base_price` thành apply-param, và như vậy là mất luôn quyền DAO chỉnh giá đó.
   **Ràng buộc khi mở op_type** (đề nghị AladinWork, MAGIC tán thành): nếu `base_price > 0` thì

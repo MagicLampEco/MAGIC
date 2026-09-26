@@ -37,7 +37,8 @@ pub const m_max_q: Int = 2_000_000_000
 /// VÌ SAO — `op_type = 7` (`did.rotate`) là THAO TÁC AN NINH, không phải một dịch vụ
 /// tính tiền theo cung-cầu. Hai chiều hỏng, cả hai đều nằm ở CHIỀU chứ không ở ĐỘ LỚN
 /// (trần `m_max = 2.0×` chặn được độ lớn, không chặn được chiều) — xem khối
-/// "🔴 `op_type=7` đang bị định giá SAI" trong `ConsumeMAGIC/CONTRACT.md §A`:
+/// "🟢 `op_type=7` từng bị định giá SAI về nguyên tắc — ĐÃ VÁ" trong
+/// `ConsumeMAGIC/CONTRACT.md §A`:
 ///   (a) ai bơm một mã RẺ với khối lượng lớn cũng đẩy hệ số của mã 7 lên trần, không
 ///       cần biết PhoenixKey tồn tại — sau `CC-LOAD-COUNT-UNIT` thì bộ đếm đã tách
 ///       theo mã nên đường này đã hẹp lại, nhưng nó chỉ hẹp vì bộ đếm, không vì luật;
@@ -75,9 +76,15 @@ pub const fixed_price_op_types: List<Int> = [7]
 ///     n=16 →  962 K mem / 306 M cpu
 ///     n=24 → 1.64 M mem / 523 M cpu
 ///     n=32 → 2.46 M mem / 784 M cpu
-///   Trần tx Cardano: 14 M mem / 10 B cpu. Ràng buộc BINDING là MEM, không phải CPU.
-///   Ở n=16, một tx gộp 3 Engage input trả ~2.89 M mem (21% ngân sách) riêng cho việc
-///   kiểm bảng giá. Ở n=32, chỉ riêng 2 invocation đã ngốn ~4.93 M (35%).
+///   Trần tx Cardano ĐỔI THEO MẠNG — xem `consume.ak` ▸ khối đầu mục "ĐO EX-UNIT
+///   KỊCH BẢN XẤU NHẤT" (mainnet 16,5 M mem / 10 G cpu, Preprod 17,5 M mem — Koios
+///   `cli_protocol_params`, đo 2026-09-25). Đừng chép lại con số ở đây: một bản sao
+///   lệch với khối kia ở lần đo tiếp theo mà không gì báo — đúng ca đã xảy ra với "14 M
+///   mem" ở bản trước, số của đời tham số cũ. Ràng buộc BINDING là MEM, không phải CPU,
+///   trên cả hai mạng.
+///   Ở n=16, một tx gộp 3 Engage input trả ~2.89 M mem riêng cho việc kiểm bảng giá —
+///   dưới 20% ngân sách ngay cả ở trần CHẶT hơn (mainnet 16,5 M). Ở n=32, chỉ riêng 2
+///   invocation đã ngốn ~4.93 M — dưới 30% ở trần chặt nhất.
 ///   MVP dùng 2 loại nghiệp vụ ⇒ 16 vẫn dư 8× cho mở rộng.
 ///
 ///   🔴 SỐ ĐỔI, TRẦN KHÔNG ĐỔI — và đừng đọc hai việc đó thành một. Lược đồ mới làm
@@ -89,11 +96,22 @@ pub const fixed_price_op_types: List<Int> = [7]
 ///   tốn bao nhiêu, không nói có nên nâng không. Ai muốn nâng thì hỏi, đừng suy từ biên.
 ///
 ///   Ex-unit của đường `consume` THẬT (không phải riêng `valid_param`) KHÔNG chép xuống
-///   đây: nó là đầu ra của `consume.ak` ▸ `consume_worst_case_full_table_two_engage_happy`,
-///   và một bản sao của nó sẽ chết im lặng ở lần đổi cấu trúc kế tiếp. Đo bằng một lệnh
-///   `aiken check` rồi đọc `execution_units` của đúng bài đó.
-///   (Bản trước của khối này chép một con số "tx 2-engage hiện đo 2.00 M mem tổng" —
-///   nó đã lệch thật, và không gì báo.)
+///   đây: một bản sao sẽ chết im lặng ở lần đổi cấu trúc kế tiếp. Đo bằng một lệnh
+///   `aiken check` rồi đọc `execution_units` của BA bài ở `consume.ak`, cùng nhóm "ĐO
+///   EX-UNIT KỊCH BẢN XẤU NHẤT":
+///     `probe_fixture_only_full_table_two_engage`       — chỉ dựng fixture, KHÔNG gọi `consume.spend`.
+///     `consume_worst_case_full_table_two_engage_happy` — fixture + MỘT lần gọi `consume.spend` (own_ref = er0).
+///     `probe_two_invocations_full_table_two_engage`    — fixture + HAI lần gọi `consume.spend` (er0 và er1).
+///   Per-tx THẬT (2 Engage) = số đo bài THỨ BA trừ số đo bài THỨ NHẤT. ĐỪNG trừ cho
+///   bài THỨ HAI (`consume_worst_case_full_table_two_engage_happy`): Aiken test gọi
+///   thẳng hàm validator theo `own_ref` mình truyền vào, KHÔNG tự lặp theo số input
+///   như Cardano thật (Cardano chạy validator một lần / redeemer Spend) — bài thứ hai
+///   chỉ gọi MỘT lần dù tx dựng đủ hai Engage input, nên số của nó thiếu đúng một lần
+///   invocation so với một tx 2-Engage thật.
+///   (Bản trước của khối này chép một con số "tx 2-engage hiện đo 2.00 M mem tổng" từ
+///   ĐÚNG bài thứ hai — tức chép số của "fixture + 1 invocation" rồi gọi nó là số của
+///   một tx, và không gì báo. Ba bài trên là cách vá: tách fixture ra khỏi invocation
+///   thay vì đọc một bài gộp cả hai rồi đoán tỷ lệ.)
 ///
 /// Cap này nằm DƯỚI trần ledger thật (16 dòng ≈ 256 byte datum, xa trần datum-size)
 /// ⇒ nó thực sự ràng buộc, không phải cap trang trí đặt TRÊN trần thật.

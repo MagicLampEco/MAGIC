@@ -2322,6 +2322,69 @@ test consume_worst_case_full_table_two_engage_happy() {
   run(pp, 1, 6, [e0, e1], [vault], [ct_cont_output(11, 6, 1), ct_cont_output_b(11, 6, 1)], reds, rd, er0, ct_in_datum)
 }
 
+// Bài trên chỉ gọi `consume.spend` MỘT LẦN (own_ref = er0) dù tx dựng đủ hai Engage
+// input — Aiken test gọi thẳng hàm validator theo `own_ref` mình truyền vào, KHÔNG
+// tự lặp theo số input như Cardano thật (Cardano chạy validator một lần / redeemer
+// Spend). Số đo của nó vì thế là fixture + MỘT invocation, không phải fixture + HAI —
+// đọc nó như "ex-unit của một tx 2-Engage" là đọc THIẾU một lần gọi.
+//
+// Hai bài dưới đây tách hai vế: bài NÀY chỉ dựng fixture (không gọi `consume.spend`),
+// bài KIA gọi đủ HAI lần (một lần mỗi Engage input, đúng số lần Cardano thật chạy).
+// Per-tx THẬT (2 Engage) = số đo bài HAI-invocation trừ số đo bài fixture-only —
+// ĐỪNG trừ cho bài `consume_worst_case_full_table_two_engage_happy` ở trên, vì nó
+// thiếu đúng một lần invocation.
+fn ct_fixture_full_table_two_engage() -> (Transaction, OutputReference, OutputReference, ConsumeRedeemer) {
+  let pp = ct_pp_full(6)
+  let e0 = ct_engage_input(0, 10)
+  let e1 = ct_engage_input_b(1, 10)
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(pricing.max_op_prices, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 20_000_000)])
+  let reds =
+    [Pair(Spend(er0), rd_as_data(rd)), Pair(Spend(er1), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  let beacon = ct_beacon_ref(pp, 1)
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: list.concat([e0, e1], [vault]),
+      reference_inputs: [beacon],
+      outputs: [ct_cont_output(11, 6, 1), ct_cont_output_b(11, 6, 1)],
+      redeemers: reds,
+      extra_signatories: [ct_in_datum.owner],
+      validity_range: interval.between(6 * ct_mspe, 6 * ct_mspe + 1),
+    }
+  (tx, er0, er1, rd)
+}
+
+/// CHỈ dựng fixture của kịch bản xấu nhất — không gọi `consume.spend`. Trả một Bool
+/// PHỤ THUỘC dữ liệu vừa dựng (không phải `True` trơ) để trình biên dịch không rút
+/// gọn phần dựng fixture thành hằng số rồi làm số đo mất nghĩa.
+test probe_fixture_only_full_table_two_engage() {
+  let (tx, er0, er1, _rd) = ct_fixture_full_table_two_engage()
+  list.length(tx.inputs) == 3 && list.length(tx.redeemers) == 3 && er0 != er1
+}
+
+/// CÙNG fixture, gọi `consume.spend` HAI LẦN — một lần cho mỗi Engage input, đúng số
+/// lần Cardano thật chạy validator trên một tx có hai Spend input cùng script. Đây là
+/// số đo dùng để trừ ra chi phí PER-TX thật (xem chú thích trên `ct_fixture_full_table_two_engage`).
+test probe_two_invocations_full_table_two_engage() {
+  let (tx, er0, er1, rd) = ct_fixture_full_table_two_engage()
+  let ok0 =
+    consume.spend(
+      ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
+      ct_mspe, ct_price_param_sh, Some(ct_in_datum), rd, er0, tx,
+    )
+  let ok1 =
+    consume.spend(
+      ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
+      ct_mspe, ct_price_param_sh, Some(ct_in_datum), rd, er1, tx,
+    )
+  ok0 && ok1
+}
+
 
 
 // ── SPEND: GỘP hai thread vào MỘT UTxO → "đúng 1 NFT / UTxO" chặn ──────────────

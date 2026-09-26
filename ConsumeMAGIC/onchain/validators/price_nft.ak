@@ -32,20 +32,37 @@ validator price_nft(genesis_ref: OutputReference) {
     expect assets.quantity_of(tx.mint, policy_id, price_nft_name) == 1
 
     // ── CỔNG GENESIS CỦA BẢNG GIÁ (thêm 2026-09-25) ───────────────────────────
-    //    LỖ ĐÃ VÁ: `price_param` chỉ chạy khi beacon bị TIÊU (PostPrice). Bảng giá
-    //    ĐẦU TIÊN chưa bao giờ đi qua validator nào — Cardano không chạy validator
-    //    lúc TẠO UTxO — nên `valid_param` không hề canh nó. Beacon genesis đặt được
-    //    `m_max` khổng lồ, `base_price` = 0 (drain miễn phí), hoặc dòng `op_type = 7`
-    //    có `demand_mult != q`, và mọi `consume` sau đó đọc bảng ấy như bảng có thẩm
-    //    quyền. Đây là ĐÚNG khoảnh khắc duy nhất ép được, cùng lý lẽ với
+    //    PHÒNG THỦ LỚP NGOÀI, KHÔNG phải vế có thẩm quyền. Vế CÓ THẨM QUYỀN nằm ở
+    //    `consume.ak` ▸ `validate_consume`, chạy `expect pricing.valid_param(pp)` ở
+    //    MỌI lần đọc bảng giá (mỗi lần Engage tiêu MAGIC) — từ TRƯỚC cổng này, không
+    //    đổi bởi cổng này. Một beacon mang `pp` sai thì tự nó không tiêu được ở
+    //    `consume`; cổng ở đây không phải điều kiện CẦN cho an toàn của `consume`.
+    //
+    //    Việc cổng này bắt: dựng tay lúc genesis lỡ ghi `m_max` khổng lồ, `base_price
+    //    = 0` (drain miễn phí), hay dòng `op_type = 7` có `demand_mult != q` — bắt
+    //    NGAY lúc đúc thay vì để một beacon hỏng nằm sẵn trên chuỗi tới lần Engage
+    //    đầu tiên mới lộ ra là mọi tx consume đọc nó đều fail. Cùng lý lẽ với
     //    `validate_mint_engage_id` bên `consume.ak`.
+    //
+    //    PHẠM VI hẹp hơn tên gọi: cổng chỉ ép datum của output MANG NFT trong CHÍNH
+    //    giao dịch mint, và KHÔNG ép địa chỉ của output đó (lý do ở dưới). Cardano
+    //    không chạy validator lúc TẠO UTxO, nên có đường VÒNG QUA cổng mà không chạm
+    //    `price_nft` lần hai: tx1 đúc NFT ra MỘT ĐỊA CHỈ BẤT KỲ (kể cả ví thường) với
+    //    `pp` hợp lệ để qua cổng; tx2 gửi NFT đó tới địa chỉ `price_param` với DATUM
+    //    TUỲ Ý — tx2 chỉ là một khoản thanh toán thường (spend từ ví, không phải spend
+    //    từ script), nên không validator nào chạy để soi datum mới ở đó. Beacon nằm ở
+    //    địa chỉ `price_param` lúc này mang một `pp` chưa từng qua `valid_param`.
+    //    Đường này KHÔNG hạ an toàn của `consume` (vế đọc ở đó tự kiểm lại), nhưng nó
+    //    là lý do cổng KHÔNG phải "khoảnh khắc DUY NHẤT ép được": cổng chỉ ép được lúc
+    //    ĐÚC, không ép được datum tại địa chỉ mà `consume` sẽ đọc.
     //
     //    KHÔNG ép ĐỊA CHỈ của output này — có chủ ý, và đây là ràng buộc cứng chứ
     //    không phải lựa chọn phong cách: `price_param` nhận policy của `price_nft`
     //    làm apply-param, nên `price_nft` mà nhận `price_param_script_hash` ngược lại
     //    là một vòng apply-param (fixed-point blake2b) ⇒ KHÔNG deploy được. Chuỗi
-    //    phải giữ TUYẾN TÍNH: price_nft → price_param → consume. Vế địa chỉ đã được
-    //    `consume.ak` ▸ `read_price_param` giữ ở phía ĐỌC, nên nó không bị bỏ trống.
+    //    phải giữ TUYẾN TÍNH: price_nft → price_param → consume. Vế địa chỉ được
+    //    `consume.ak` ▸ `read_price_param` ép ở phía ĐỌC (mọi lần đọc, không chỉ lúc
+    //    đúc) — khe hở hai-tx ở trên nằm ở phía MINT, không nằm ở phía đọc này.
     //
     //    Hiệu lực: chỉ cho beacon đúc MỚI. Beacon cũ không bị (và không thể) hồi tố —
     //    nhưng lược đồ `PriceParam` vừa đổi (`OpPrice` 3 trường) nên mọi beacon đang

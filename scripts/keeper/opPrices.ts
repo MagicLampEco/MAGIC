@@ -10,7 +10,8 @@
 // Thuần, không gọi mạng. Kiểm tính hợp lệ của bảng sau khi gộp là việc của
 // `assertValidPriceParam` (ConsumeMAGIC/pricing) — hàm này không chép lại luật đó.
 
-import { Q, toCanonicalOpPrices, type OpPriceRow } from "@magiclamp/consumemagic-pricing";
+import { Q, toCanonicalOpPrices, assertValidPriceParam, type OpPriceRow } from "@magiclamp/consumemagic-pricing";
+import type { PriceParamT } from "../../ConsumeMAGIC/offchain/src/types.js";
 
 /**
  * Một dòng đặt qua biến môi trường: CHỈ giá gốc. `demand_mult` không đặt được từ đây — dòng
@@ -64,4 +65,47 @@ export function describeChanges(changes: ReadonlyArray<OpPriceChange>): string {
   return changes
     .map((c) => (c.from === undefined ? `+op ${c.op_type}=${c.to}` : `op ${c.op_type}: ${c.from}→${c.to}`))
     .join(", ");
+}
+
+export interface ResolvedPricePush {
+  next: PriceParamT;
+  tableNote: string;
+  /** Có mặt ⟺ bảng giá từ `KEEPER_OP_PRICES_SET` bị BỎ QUA vì không hợp lệ — nơi gọi phải
+   *  ghi cảnh báo này ra, không được nuốt. `next` khi đó giữ nguyên `op_prices` của `current`. */
+  priceWarning?: string;
+}
+
+/**
+ * Gộp `set` vào bảng giá hiện có rồi kiểm hợp lệ, sẵn sàng post lên beacon ở `epoch` mới.
+ *
+ * Bảng SAU KHI GỘP không hợp lệ ⟹ ĐỪNG bỏ luôn lượt đẩy epoch. Validator chỉ nhận một
+ * PostPrice mỗi epoch (`price_param.ak`), và với `max_price_stale = 1`
+ * (`ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak`), bỏ một lượt vì một lần gõ sai
+ * biến môi trường làm mọi Consume chết sau ~2 epoch (beacon quá hạn). Nên khi bảng mới sai,
+ * hàm này lùi về bảng giá ĐANG TRÊN CHUỖI (`current.op_prices`, không áp `set`) và VẪN đẩy
+ * epoch — trả `priceWarning` để nơi gọi báo cho người vận hành, không tự ý im lặng bỏ qua.
+ *
+ * Chỉ khi CHÍNH bảng đang trên chuỗi cũng không hợp lệ (hỏng dữ liệu, không phải do `set`)
+ * thì hàm này mới ném — nơi gọi lúc đó bỏ qua lượt như cũ, vì không còn gì an toàn để gửi.
+ */
+export function resolvePricePush(
+  current: PriceParamT,
+  set: ReadonlyArray<OpPriceSetRow>,
+  epoch: bigint,
+): ResolvedPricePush {
+  const { rows, changes } = applyOpPriceSet(current.op_prices, set);
+  const tableNote = changes.length > 0 ? ` · bảng giá: ${describeChanges(changes)}` : "";
+  const proposed: PriceParamT = { ...current, op_prices: rows, epoch };
+  try {
+    assertValidPriceParam(proposed);
+    return { next: proposed, tableNote };
+  } catch (e) {
+    const fallback: PriceParamT = { ...current, epoch };
+    assertValidPriceParam(fallback); // ném tiếp nếu cả bảng đang trên chuỗi cũng sai — nơi gọi bỏ lượt
+    return {
+      next: fallback,
+      tableNote: "",
+      priceWarning: `bảng giá KEEPER_OP_PRICES_SET không hợp lệ, ĐÃ BỎ QUA — giữ bảng giá đang trên chuỗi, chỉ đẩy epoch: ${(e as Error).message.slice(0, 300)}`,
+    };
+  }
 }

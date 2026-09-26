@@ -47,6 +47,15 @@
 //   REF_VAULT_SCHEDULE_UTXO / REF_VAULT_INSTANT_UTXO — ref-script vault. BẮT BUỘC.
 //   SCHEDULE_VAULT_UTXO / INSTANT_VAULT_UTXO  — "txHash#idx" của vault đã gen (tuỳ chọn;
 //                                               nếu thiếu → tự tìm ở vault addr theo owner).
+//   ENGAGE_OUTREF — "txHash#idx" của thread Engage CỦA VÍ ĐANG KÝ (tuỳ chọn). Có thì dùng
+//     đúng UTxO đó thay cho thread dò theo `ENGAGE_NFT_UNIT_<LOẠI>` của sổ — đường cho mỗi
+//     ví một thread riêng (bộ điều phối gọi tệp này làm tiến trình con, ví qua PRIVATE_KEY).
+//     Sai định dạng / đã bị tiêu / không ở địa chỉ consume / không mang đúng 1 thread NFT /
+//     owner ≠ ví ký ⟹ NÉM trước khi dựng tx.
+//     🔴 Cố ý KHÔNG đặt tên `ENGAGE_UTXO`: đó là khoá không hậu tố của sổ cũ, và
+//     `state.Preprod.sh` còn mang dòng gán nó (đếm 2026-09-26: 2 dòng). Runner nạp sổ bằng
+//     `set -a` nên con trỏ chết ấy sẽ vào môi trường và thắng thread sống — đúng thứ
+//     `consumeBook.ts ▸ selectConsumeBook` sinh ra để chặn (nó XOÁ `ENGAGE_UTXO`).
 //   op_type (default 1), op_count (default 1).
 //
 // ── VÌ SAO HAI REF-SCRIPT LÀ BẮT BUỘC, không phải tuỳ chọn ─────────────────────
@@ -118,17 +127,15 @@ import { VaultRedeemerSchema } from "../../InstantGen/offchain/src/types.js";
 import { fetchRefScriptUtxo } from "../refScripts.js";
 import { parseVaultKind, selectConsumeBook } from "../consumeBook.js";
 import { findLiveConsumeUtxos } from "../consumeLive.js";
+import { parseOutRef } from "../runResult.js";
 
 const PRICE_NFT_NAME  = "5052494345";
 const BURN_BATCH_CONSTR = 2n;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isPureAda = (u: UTxO) => Object.keys(u.assets).every((k) => k === "lovelace");
-function parseOutRef(s: string): { txHash: string; outputIndex: number } {
-  const [h, i] = s.split("#");
-  if (!h || i === undefined) throw new Error(`OutRef sai định dạng (cần txHash#idx): ${s}`);
-  return { txHash: h, outputIndex: Number(i) };
-}
+// `parseOutRef` dùng chung bản NGHIÊM ở `runResult.ts` (64 hex chữ thường + chỉ số thập
+// phân). Bản cục bộ trước đây chỉ tách ở '#', nên "abc#x" đi qua thành outputIndex NaN.
 function req(name: string, hint = "chạy 09_deploy_consume trước"): string {
   const v = process.env[name];
   if (!v) throw new Error(`Env ${name} bắt buộc — ${hint}.`);
@@ -176,6 +183,11 @@ async function main() {
   // loại vault (`scripts/consumeBook.ts`); `req(...)` phía dưới đọc tên không hậu tố đã
   // được chép từ đúng bộ đó.
   const vaultKind = parseVaultKind(process.env.VAULT_KIND);
+  // Đọc ENGAGE_OUTREF TRƯỚC khi nạp bộ khoá sổ, và kiểm hình dạng ngay: sai thì ném
+  // trước mọi lệnh gọi mạng.
+  const engageOverrideRef = process.env.ENGAGE_OUTREF === undefined
+    ? null
+    : parseOutRef(process.env.ENGAGE_OUTREF, "ENGAGE_OUTREF");
   selectConsumeBook(process.env, vaultKind, [
     "CONSUME_SCRIPT_HASH", "PRICE_NFT_POLICY", "PRICE_NFT_UNIT", "PRICE_PARAM_HASH",
     "ENGAGE_NFT_UNIT", "MAX_PRICE_STALE", "REF_CONSUME_UTXO",
@@ -214,7 +226,9 @@ async function main() {
   // Thread token Engage do CHÍNH consume đúc ⇒ policy id == consume script hash.
   // Tên asset = blake2b_256(cbor(seed)) nên KHÔNG suy ra được từ hash: lấy nguyên
   // ENGAGE_NFT_UNIT do deploy/09 in ra.
-  const engageNftUnit   = req("ENGAGE_NFT_UNIT");
+  // Thread của SỔ. Với ENGAGE_OUTREF, biến này được thay bằng thread NFT đọc từ chính
+  // UTxO đó (mỗi ví một thread, cùng policy = consume hash, khác asset name).
+  let engageNftUnit     = req("ENGAGE_NFT_UNIT");
   const engageNftPolicy = engageNftUnit.slice(0, 56);
 
   if (process.env.CONSUME_SCRIPT_HASH && process.env.CONSUME_SCRIPT_HASH !== consumeHash) {
@@ -283,6 +297,43 @@ async function main() {
   if (!paymentCredential) throw new Error("Cannot get payment credential");
   const ownerPkh = paymentCredential.hash;
 
+  // ── ENGAGE_OUTREF: thread của CHÍNH ví đang ký, kiểm đủ TRƯỚC khi dựng gì ─────
+  let engageOverride: UTxO | null = null;
+  if (engageOverrideRef) {
+    const tag = `ENGAGE_OUTREF=${engageOverrideRef.txHash}#${engageOverrideRef.outputIndex}`;
+    const [u] = await lucid.utxosByOutRef([engageOverrideRef]);
+    if (!u) {
+      throw new Error(
+        `${tag} không có trên chuỗi: đã bị tiêu (mỗi tx consume tiêu-rồi-tạo-lại thread) hoặc ` +
+        `chỉ mục chưa thấy. Lấy outref MỚI của thread rồi chạy lại.`,
+      );
+    }
+    const consumeAddrExpected = credentialToAddress(NETWORK, scriptHashToCredential(consumeHash));
+    if (u.address !== consumeAddrExpected) {
+      throw new Error(`${tag} nằm ở ${u.address}, không ở địa chỉ consume ${consumeAddrExpected} (loại vault ${vaultKind}).`);
+    }
+    const threadUnits = Object.entries(u.assets).filter(([k]) => k !== "lovelace" && k.slice(0, 56) === consumeHash);
+    if (threadUnits.length !== 1 || threadUnits[0]![1] !== 1n) {
+      throw new Error(
+        `${tag} phải mang đúng 1 thread NFT dưới policy ${consumeHash}, thấy ` +
+        `${threadUnits.map(([k, q]) => `${k}×${q}`).join(", ") || "không có"}.`,
+      );
+    }
+    if (!u.datum) throw new Error(`${tag} không có inline datum.`);
+    const threadOwner = ownerRefOf(decodeEngageDatum(u.datum).owner);
+    if (!sameOwner(threadOwner, { type: "key", hash: ownerPkh.toLowerCase() })) {
+      throw new Error(
+        `${tag} KHÔNG thuộc ví đang ký.\n` +
+        `  owner trong EngageDatum : ${ownerRefToString(threadOwner)}\n` +
+        `  ví đang ký              : key:${ownerPkh}\n` +
+        `consume bắt chủ thread == chủ vault == người ký; tx này chắc chắn bị từ chối.`,
+      );
+    }
+    engageOverride = u;
+    engageNftUnit  = threadUnits[0]![0];
+    console.log(`Engage (ENGAGE_OUTREF): ${u.txHash}#${u.outputIndex} · thread ${engageNftUnit}`);
+  }
+
   // ── Fetch 3 UTxO: beacon (ref), engage (spend), vault (spend BurnBatch) ───────
   //   Dò UTxO SỐNG theo NFT định danh, không đọc con trỏ `txHash#idx` trong sổ: beacon bị
   //   keeper tiêu-rồi-tạo-lại mỗi epoch, Engage bị tiêu-rồi-tạo-lại mỗi tx consume, nên
@@ -292,7 +343,16 @@ async function main() {
     priceParamHash, priceNftUnit: req("PRICE_NFT_UNIT"), engageNftUnit,
   });
   const priceBeaconUtxo = live.beacon;
-  const engageUtxo      = live.engage;
+  // Với ENGAGE_OUTREF, bộ dò đã tìm theo đúng thread NFT của UTxO đó; hai kết quả phải
+  // trùng outref. Lệch nghĩa là thread đã đi tiếp (bị tiêu) giữa hai lần đọc.
+  if (engageOverride && live.engage
+      && (live.engage.txHash !== engageOverride.txHash || live.engage.outputIndex !== engageOverride.outputIndex)) {
+    throw new Error(
+      `ENGAGE_OUTREF=${engageOverride.txHash}#${engageOverride.outputIndex} nhưng thread ${engageNftUnit} ` +
+      `đang sống ở ${live.engage.txHash}#${live.engage.outputIndex} — thread đã đi tiếp, lấy outref mới.`,
+    );
+  }
+  const engageUtxo      = engageOverride ?? live.engage;
   if (!priceBeaconUtxo) {
     throw new Error(
       `Không thấy UTxO nào mang price NFT ${req("PRICE_NFT_UNIT")} tại ${live.priceAddr}. ` +
@@ -322,7 +382,7 @@ async function main() {
 
   let vaultUtxo: UTxO | undefined;
   if (process.env[vaultUtxoEnv]) {
-    const vref = parseOutRef(process.env[vaultUtxoEnv]!);
+    const vref = parseOutRef(process.env[vaultUtxoEnv]!, vaultUtxoEnv);
     [vaultUtxo] = await lucid.utxosByOutRef([vref]);
   } else {
     const vs = await lucid.utxosAt(vaultAddr);

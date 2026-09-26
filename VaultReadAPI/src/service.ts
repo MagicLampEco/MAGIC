@@ -20,13 +20,50 @@ import { posixMsToEpoch, type Network } from "@magiclamp/protocol-utils";
 
 import type { ChainReader } from "./chain.js";
 import type { VaultScope } from "./config.js";
-import { BadRequestError, UnknownVaultScopeError } from "./errors.js";
+import { sameOwner, type OwnerRef } from "@magiclamp/protocol-utils";
+import { OwnerAliasMismatchError, BadRequestError, UnknownVaultScopeError } from "./errors.js";
 import { readVaultsFromUtxos, type IgnoredUtxo, type VaultView } from "./vaultView.js";
 
 const PKH_HEX = /^[0-9a-f]{56}$/;
 
+/**
+ * Chủ từ yêu cầu: `owner` hoặc bí danh `ownerPkh`, hash 56 hex THƯỜNG. Cả hai cùng có mà
+ * khác chủ ⟹ 400 `OWNER_ALIAS_MISMATCH` — chọn một bên là đoán ý người gọi.
+ */
+export function resolveReadOwner(req: { owner?: OwnerRef; ownerPkh?: string }): OwnerRef {
+  let alias: OwnerRef | undefined;
+  if (req.ownerPkh !== undefined) {
+    if (typeof req.ownerPkh !== "string" || !PKH_HEX.test(req.ownerPkh)) {
+      throw new BadRequestError(
+        "owner_pkh phải là 56 ký tự hex thường (khoá băm 28 byte).",
+        { owner_pkh_length: String(req.ownerPkh).length },
+      );
+    }
+    alias = { type: "key", hash: req.ownerPkh };
+  }
+  let o: OwnerRef | undefined;
+  if (req.owner !== undefined) {
+    const { type, hash } = (req.owner ?? {}) as { type?: unknown; hash?: unknown };
+    if ((type !== "key" && type !== "script") || typeof hash !== "string" || !PKH_HEX.test(hash)) {
+      throw new BadRequestError(
+        "owner phải là { type: \"key\" | \"script\", hash: 56 ký tự hex thường }.",
+        { owner_type: typeof type === "string" ? type : typeof type },
+      );
+    }
+    o = { type, hash };
+  }
+  if (o && alias && !sameOwner(o, alias)) {
+    throw new OwnerAliasMismatchError(o, alias);
+  }
+  const r = o ?? alias;
+  if (r === undefined) throw new BadRequestError("Thiếu chủ (owner hoặc owner_pkh).");
+  return r;
+}
+
 export interface ReadRequest {
-  ownerPkh: string;
+  /** Chủ cần đọc. Truyền `owner` HOẶC bí danh `ownerPkh` (= `{ type: "key" }`). */
+  owner?: OwnerRef;
+  ownerPkh?: string;
   vaultType?: string;
   /** Ép epoch giao thức thay vì lấy từ đỉnh chuỗi. Chỉ để tra lại lịch sử / kiểm thử. */
   atEpoch?: bigint;
@@ -34,7 +71,9 @@ export interface ReadRequest {
 
 export interface ReadOutcome {
   network: Network;
-  ownerPkh: string;
+  owner: OwnerRef;
+  /** `owner.hash` khi chủ là khoá; `null` khi chủ là script. */
+  ownerPkh: string | null;
   atEpoch: bigint;
   atEpochSource: "chain_tip" | "caller";
   chainTip: { blockHeight: number; blockHash: string; blockTimePosixMs: bigint };
@@ -62,12 +101,7 @@ export class VaultReadService {
   }
 
   async read(req: ReadRequest): Promise<ReadOutcome> {
-    if (!PKH_HEX.test(req.ownerPkh)) {
-      throw new BadRequestError(
-        "owner_pkh phải là 56 ký tự hex thường (khoá băm 28 byte).",
-        { owner_pkh_length: req.ownerPkh.length },
-      );
-    }
+    const owner = resolveReadOwner(req);
     const scopes = this.scopesFor(req.vaultType);
 
     // Đọc đỉnh chuỗi TRƯỚC. Hỏng ở đây ⇒ `CHAIN_UNAVAILABLE` ⇒ ta không trả một
@@ -84,7 +118,7 @@ export class VaultReadService {
       // `scope.vaultType` là nguồn DUY NHẤT của loại vault: nó không suy được từ datum
       // (lược đồ Instant và Schedule giải mã giống hệt nhau), nó đi theo ĐỊA CHỈ.
       const r = readVaultsFromUtxos(
-        utxos, scope.scriptHash, scope.address, req.ownerPkh, atEpoch, scope.vaultType,
+        utxos, scope.scriptHash, scope.address, owner, atEpoch, scope.vaultType,
       );
       vaults.push(...r.vaults);
       ignored.push(...r.ignored);
@@ -92,7 +126,8 @@ export class VaultReadService {
 
     return {
       network: this.network,
-      ownerPkh: req.ownerPkh,
+      owner,
+      ownerPkh: owner.type === "key" ? owner.hash : null,
       atEpoch,
       atEpochSource: req.atEpoch === undefined ? "chain_tip" : "caller",
       chainTip: tip,
@@ -108,6 +143,7 @@ export class VaultReadService {
 export function toJsonBody(o: ReadOutcome): Record<string, unknown> {
   return {
     network: o.network,
+    owner: { type: o.owner.type, hash: o.owner.hash },
     owner_pkh: o.ownerPkh,
     at_epoch: Number(o.atEpoch),
     at_epoch_source: o.atEpochSource,
@@ -124,6 +160,7 @@ export function toJsonBody(o: ReadOutcome): Record<string, unknown> {
       vault_kind: v.vaultKind,
       vault_address: v.vaultAddress,
       vault_id_unit: v.vaultIdUnit,
+      owner: { type: v.owner.type, hash: v.owner.hash },
       owner_pkh: v.ownerPkh,
       available_nanogic: s(v.availableNanogic),
       accrued_nanogic: s(v.accruedNanogic),

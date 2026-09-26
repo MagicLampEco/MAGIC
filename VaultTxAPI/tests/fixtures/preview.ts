@@ -61,6 +61,8 @@ export interface BatchSpec {
 
 export interface DatumSpec {
   ownerPkh?: string;
+  /** Chủ `Credential` đầy đủ; có thì thắng `ownerPkh`. */
+  owner?: { type: "key" | "script"; hash: string };
   lampBalanceOildrop?: bigint;
   lampLockedOildrop?: bigint;
   batches?: BatchSpec[];
@@ -113,7 +115,7 @@ function genSchedule(i: number): Record<string, unknown> {
 /** Datum đầy đủ, dựng bằng LƯỢC ĐỒ THẬT rồi ghi đè các trường phép kiểm quan tâm. */
 export function datumHex(spec: DatumSpec = {}): string {
   const base = buildInitialVaultDatum({
-    ownerPkh: spec.ownerPkh ?? OWNER_PKH,
+    ...(spec.owner !== undefined ? { owner: spec.owner } : { ownerPkh: spec.ownerPkh ?? OWNER_PKH }),
     lampBalanceOildrop: spec.lampBalanceOildrop ?? 1_001_000_000n,
     profile: "Flame",
     currentEpoch: 20_700n,

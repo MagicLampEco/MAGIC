@@ -111,6 +111,7 @@ export function makeLucidFake(opts: { utxoByUnit?: Record<string, unknown> } = {
       attach: strict({
         SpendingValidator(v: unknown) { ghi.attached.push(v); return proxied; },
         MintingPolicy  (v: unknown) { ghi.attached.push(v); return proxied; },
+        WithdrawalValidator(v: unknown) { ghi.attached.push(v); return proxied; },
       }, "txBuilder.attach"),
       pay: strict({
         ToAddressWithData(address: string, datum: unknown, assets: Record<string, bigint>) {

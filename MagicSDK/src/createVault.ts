@@ -37,8 +37,15 @@
 //   const signed = await tx.sign.withWallet().complete();
 //   const txHash = await signed.submit();
 
-import { Data, toUnit, type UTxO } from "@lucid-evolution/lucid";
-import { msPerEpoch, lampAssetName, type Network } from "@magiclamp/protocol-utils";
+import {
+  Data, toUnit, validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  type UTxO, type Validator,
+} from "@lucid-evolution/lucid";
+import {
+  msPerEpoch, lampAssetName, applyOwnerAuth, resolveOwnerAuth, ownerRefToString,
+  type Network,
+} from "@magiclamp/protocol-utils";
+import { resolveOwnerInput } from "./ownerInput.js";
 
 import type { CreateVaultParams, CreateVaultResult } from "./types.js";
 import { InstantVaultDatumSchema, VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
@@ -68,15 +75,17 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   // một phép kiểm-rỗng trông như đã kiểm: bản trước chỉ hỏi chuỗi có rỗng không, nên
   // một policy nhái 56-hex đi qua không tiếng động.
   assertLampPolicyId(protocol.lampPolicyId, "createVault");
-  if (vault.lampDeposit <= 0n) {
+  if (typeof vault.lampDeposit !== "bigint" || vault.lampDeposit <= 0n) {
     throw new Error(`vault.lampDeposit must be > 0 oildrop (got ${vault.lampDeposit})`);
   }
-  // Per-vault-type sanity is enforced inside applyVaultValidator.
+  // Chủ + cách chứng minh quyền chủ — kiểm TRƯỚC khi chạm ví hay chuỗi. Genesis ép
+  // `owner_authorized(tx, vd.owner)`, nên chủ script mà thiếu nhân chứng thì không có
+  // giao dịch tạo nào qua được: ném ngay ở đây, không dựng một tx chết.
+  const owner = resolveOwnerInput(vault, "createVault");
+  const ownerAuth = resolveOwnerAuth(owner, params.ownerAuth);
 
-  // ── Apply validator per-network → vault address ──────────────
-  const { vaultScript, vaultScriptHash, vaultAddress } = applyVaultValidator(
-    vaultType, validators, protocol,
-  );
+  // ── Validator vault: tự apply, HOẶC nhận bản đã apply kèm hash chờ đợi ──
+  const { vaultScript, vaultScriptHash, vaultAddress } = resolveVaultScript(params);
 
   // ── Current PROTOCOL epoch ────────────────────────────────────
   // Validator computes epoch = posix_ms / ms_per_epoch. Initial datum's
@@ -135,7 +144,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     );
   }
   const initialVault = buildInitialVaultDatum({
-    ownerPkh:         vault.ownerPkh,
+    owner,
     lampBalanceOildrop:   vault.lampDeposit,
     profile,
     currentEpoch,
@@ -178,10 +187,11 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   //   (1) seed UTxO nằm trong inputs                → one-shot uniqueness
   //   (2) mint đúng 1 NFT (policy = vault hash)     → dict.size(own_tokens) == 1
   //   (3) NFT nằm trong output tại địa chỉ vault    → carriers == [vault_out]
-  //   (4) owner ký (extra_signatories)              → list.has(tx.extra_signatories, vd.owner)
+  //   (4) quyền chủ                                  → owner_authorized(tx, vd.owner):
+  //       khoá ⟹ pkh ký; script ⟹ mục rút Script(h) (`applyOwnerAuth`)
   // Vault vừa là spending validator vừa là minting policy ⇒ CÙNG một CBOR đã
   // apply params; policy_id chính là vaultScriptHash.
-  const tx = await lucid
+  const txBody = lucid
     .newTx()
     .collectFrom([seedUtxo])                          // (1)
     .mintAssets({ [vaultIdUnit]: 1n }, mintRedeemer)  // (2)
@@ -194,9 +204,8 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
         [lampUnit]:    vault.lampDeposit,
         [vaultIdUnit]: 1n,
       },
-    )
-    .addSignerKey(vault.ownerPkh)                     // (4)
-    .complete();
+    );
+  const tx = await applyOwnerAuth(txBody, ownerAuth).complete();   // (4)
 
   const summary = formatSummary({
     vaultType,
@@ -204,7 +213,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     walletAddress,
     vaultAddress,
     vaultScriptHash,
-    ownerPkh: vault.ownerPkh,
+    owner: ownerRefToString(owner),
     profile,
     lampDeposit: vault.lampDeposit,
     currentEpoch,
@@ -218,8 +227,41 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     vaultIdAssetName: vaultIdName,
     vaultIdUnit,
     seedUtxo,
+    owner,
     summary,
   };
+}
+
+/** Script vault từ ĐÚNG MỘT nguồn: blueprint chưa apply, hoặc bản đã apply + hash chờ đợi. */
+function resolveVaultScript(params: CreateVaultParams): {
+  vaultScript: Validator; vaultScriptHash: string; vaultAddress: string;
+} {
+  const { validators, appliedVault, vaultType, protocol } = params;
+  if ((validators === undefined) === (appliedVault === undefined)) {
+    throw new Error(
+      `createVault: truyền ĐÚNG MỘT trong \`validators\` (blueprint chưa apply) và ` +
+      `\`appliedVault\` (script đã apply + expectedScriptHash) — nhận ` +
+      `${validators === undefined ? "cả hai trống" : "cả hai"}.`,
+    );
+  }
+  if (validators !== undefined) {
+    // Per-vault-type sanity is enforced inside applyVaultValidator.
+    return applyVaultValidator(vaultType, validators, protocol);
+  }
+  const script = appliedVault!.script;
+  const expected = appliedVault!.expectedScriptHash;
+  if (script?.type !== "PlutusV3" || typeof script.script !== "string" || script.script === "") {
+    throw new Error(`createVault: appliedVault.script phải là PlutusV3 CBOR khác rỗng.`);
+  }
+  const vaultScriptHash = validatorToScriptHash(script);
+  if (typeof expected !== "string" || vaultScriptHash !== expected.toLowerCase()) {
+    throw new Error(
+      `createVault: appliedVault.script băm ra ${vaultScriptHash} nhưng expectedScriptHash = ` +
+      `${String(expected)}. Tạo vault ở địa chỉ này là tạo nó NGOÀI lần deploy đang dùng.`,
+    );
+  }
+  const vaultAddress = credentialToAddress(protocol.network, scriptHashToCredential(vaultScriptHash));
+  return { vaultScript: script, vaultScriptHash, vaultAddress };
 }
 
 // ── helpers ───────────────────────────────────────────────────
@@ -253,7 +295,7 @@ function formatSummary(o: {
   walletAddress:    string;
   vaultAddress:     string;
   vaultScriptHash:  string;
-  ownerPkh:         string;
+  owner:            string;
   profile:          string;
   lampDeposit:      bigint;
   currentEpoch:     bigint;
@@ -263,7 +305,7 @@ function formatSummary(o: {
   return [
     `═══ MagicLamp createVault ═══`,
     `Vault type:      ${o.vaultType}  (${o.network})`,
-    `Owner pkh:       ${o.ownerPkh}`,
+    `Owner:           ${o.owner}`,
     `Profile:         ${o.profile}`,
     `LAMP deposit:    ${o.lampDeposit / 1_000_000n} LAMP (${o.lampDeposit} oildrop)`,
     `Current epoch:   ${o.currentEpoch}  (POSIX-derived)`,
@@ -273,7 +315,7 @@ function formatSummary(o: {
     `Vault-ID NFT:    ${o.vaultScriptHash}.${o.vaultIdName}`,
     `Wallet (funder): ${o.walletAddress}`,
     ``,
-    `✓  Unsigned tx ready. Caller must sign + submit (owner key must sign).`,
+    `✓  Unsigned tx ready. Caller must sign + submit (owner witness: key signature or Script(h) withdrawal).`,
   ].join("\n");
 }
 

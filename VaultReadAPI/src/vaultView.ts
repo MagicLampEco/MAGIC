@@ -27,7 +27,7 @@
 // gói này sinh ra để tách.
 
 import { decodeVaultDatumEitherShape, isBatchExpired, type VaultDatum } from "@magiclamp/sdk";
-import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { ownerRefOf, sameOwner, type OwnerRef } from "@magiclamp/protocol-utils";
 
 import type { ChainUtxo } from "./chain.js";
 import type { VaultKind } from "./config.js";
@@ -88,7 +88,11 @@ export interface VaultView {
   vaultAddress: string;
   /** `policyId + assetNameHex` của NFT danh-tính vault. Policy == script hash của vault. */
   vaultIdUnit: string;
-  ownerPkh: string;
+  /** Chủ trong datum — `Credential` dạng JSON. */
+  owner: OwnerRef;
+  /** Bí danh cũ: bằng `owner.hash` khi chủ là khoá, `null` khi chủ là script (một script
+   *  hash KHÔNG phải khoá băm thanh toán — trả nó dưới tên `owner_pkh` là nói sai). */
+  ownerPkh: string | null;
   availableNanogic: bigint;
   accruedNanogic: bigint;
   expiredNanogic: bigint;
@@ -151,7 +155,8 @@ export interface ReadVaultsResult {
  *                        `mint` chạy dưới chính script hash đó
  *                        (`ScheduleGen/onchain/validators/vault.ak:100`).
  * @param vaultAddress    Địa chỉ bech32, chỉ để đưa vào kết quả.
- * @param ownerPkh        28 byte hex. Chỉ vault có `datum.owner` khớp mới được trả.
+ * @param owner           Chủ cần lọc, so CẢ tag lẫn hash. Chuỗi 56 hex là bí danh nhánh khoá
+ *                        (= `{ type: "key", hash }`). Chỉ vault có `datum.owner` khớp được trả.
  * @param atEpoch         Epoch GIAO THỨC dùng để phán batch sống/chết. KHÔNG phải epoch
  *                        Cardano — xem `ProtocolUtils/src/index.ts` §"HAI ĐỒNG HỒ".
  */
@@ -159,13 +164,14 @@ export function readVaultsFromUtxos(
   utxos: ChainUtxo[],
   vaultScriptHash: string,
   vaultAddress: string,
-  ownerPkh: string,
+  owner: OwnerRef | string,
   atEpoch: bigint,
   vaultKind: VaultKind,
 ): ReadVaultsResult {
   const vaults: VaultView[] = [];
   const ignored: IgnoredUtxo[] = [];
   const seenVaultId = new Map<string, string>();   // vaultIdUnit → utxoRef đã thấy
+  const wanted: OwnerRef = typeof owner === "string" ? { type: "key", hash: owner } : owner;
 
   for (const u of utxos) {
     const utxoRef = `${u.txHash}#${u.outputIndex}`;
@@ -209,8 +215,9 @@ export function readVaultsFromUtxos(
       throw new VaultDatumUndecodableError(utxoRef, (e as Error).message);
     }
 
-    // Chủ là `Credential`: truy vấn theo pkh chỉ khớp nhánh khoá (so cả tag lẫn hash).
-    if (!sameOwner(ownerRefOf(datum.owner), { type: "key", hash: ownerPkh })) {
+    // Chủ là `Credential`: so CẢ tag lẫn hash — két chủ-script cùng 28 byte với một pkh là
+    // chủ KHÁC, không lọt sang truy vấn nhánh khoá và ngược lại.
+    if (!sameOwner(ownerRefOf(datum.owner), wanted)) {
       ignored.push({ utxoRef, reason: "OWNER_MISMATCH" });
       continue;
     }
@@ -290,8 +297,8 @@ function toVaultView(
     vaultKind,
     vaultAddress,
     vaultIdUnit,
-    // Đã qua bộ lọc nhánh khoá bên trên ⟹ hash này là pkh.
-    ownerPkh: ownerRefOf(datum.owner).hash,
+    owner: ownerRefOf(datum.owner),
+    ownerPkh: ownerRefOf(datum.owner).type === "key" ? ownerRefOf(datum.owner).hash : null,
     availableNanogic,
     accruedNanogic,
     expiredNanogic: accruedNanogic - availableNanogic,

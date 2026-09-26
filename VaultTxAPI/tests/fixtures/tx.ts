@@ -26,6 +26,17 @@ export interface TxSpec {
   inputs?: { txHash: string; outputIndex: number }[];
   outputs: TxOutputSpec[];
   feeLovelace: bigint;
+  /** `unit` → số lượng DƯƠNG được đúc trong chính giao dịch (ca tạo vault). */
+  mint?: Record<string, bigint>;
+  /** Khoá băm 28 byte, theo thứ tự, vào `required_signers` của thân. */
+  requiredSigners?: string[];
+}
+
+/** Chuỗi byte (hex) → CBOR bytestring hex; đủ cho tên tài sản ≤ 32 byte. */
+function cborBytesHex(hex: string): string {
+  const n = hex.length / 2;
+  const head = n < 24 ? (0x40 + n).toString(16) : "58" + n.toString(16).padStart(2, "0");
+  return head + hex;
 }
 
 /** CBOR hex của một giao dịch CHƯA KÝ (bộ chứng ký rỗng). */
@@ -48,6 +59,25 @@ export function buildTxCbor(spec: TxSpec): string {
   }
 
   const body = CML.TransactionBody.new(inputs, outputs, spec.feeLovelace);
+  if (spec.mint !== undefined) {
+    const mint = CML.Mint.new();
+    const byPolicy = new Map<string, [string, bigint][]>();
+    for (const [unit, q] of Object.entries(spec.mint)) {
+      const p = unit.slice(0, 56);
+      byPolicy.set(p, [...(byPolicy.get(p) ?? []), [unit.slice(56), q]]);
+    }
+    for (const [p, names] of byPolicy) {
+      const m = CML.MapAssetNameToNonZeroInt64.new();
+      for (const [name, q] of names) m.insert(CML.AssetName.from_cbor_hex(cborBytesHex(name)), q);
+      mint.insert_assets(CML.ScriptHash.from_hex(p), m);
+    }
+    body.set_mint(mint);
+  }
+  if (spec.requiredSigners !== undefined) {
+    const rs = CML.Ed25519KeyHashList.new();
+    for (const h of spec.requiredSigners) rs.add(CML.Ed25519KeyHash.from_hex(h));
+    body.set_required_signers(rs);
+  }
   return CML.Transaction.new(body, CML.TransactionWitnessSet.new(), true, undefined).to_cbor_hex();
 }
 

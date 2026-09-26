@@ -3,11 +3,15 @@
 // Tách khỏi `server.ts` để phép kiểm gọi thẳng vào đây, không phải mở cổng mạng.
 //
 // ── ĐÚNG NĂM ĐƯỜNG DỰNG, KHÔNG THÊM ────────────────────────────────────────────
-//   POST /tx/instant-gen       { owner_pkh }
-//   POST /tx/schedule-commit   { owner_pkh, schedule_length, lamp_per_epoch }
-//   POST /tx/schedule-fire     { owner_pkh, schedule_id }
-//   POST /tx/consume           { owner_pkh, op_type, op_count }
+//   POST /tx/instant-gen       { owner, [owner_witness], [change_address] }
+//   POST /tx/schedule-commit   { owner, …, schedule_length, lamp_per_epoch }
+//   POST /tx/schedule-fire     { owner, …, schedule_id }
+//   POST /tx/consume           { owner, …, op_type, op_count }
+//   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address, [profile] }
 //   POST /tx/submit            { tx_cbor, witness_cbor }
+//
+// `owner = { type: "key" | "script", hash }`; `owner_pkh` còn nhận làm bí danh của
+// `{ type: "key" }` — xem `owner.ts`. Cùng có mà lệch ⟹ 400 `OWNER_ALIAS_MISMATCH`.
 //   GET  /health               (không thẻ bài, không chạm chuỗi)
 //
 // `/tx/instant-gen` KHÔNG nhận `amount`, và đó là chủ ý. Lượng cấp là
@@ -25,7 +29,10 @@
 import {
   BadRequestError, TxApiError, UnauthorizedError, newReferenceCode,
 } from "./errors.js";
-import { toBuildBody, toSubmitBody, type VaultTxService } from "./service.js";
+import { toBuildBody, toCreateVaultBody, toSubmitBody, type OwnerRequest, type VaultTxService } from "./service.js";
+import { parseOwnerFields, parseOwnerWitness } from "./owner.js";
+import { OwnerAuthError } from "@magiclamp/protocol-utils";
+import { ownerApiErrorOf } from "./errors.js";
 
 export interface HttpRequest {
   method: string;
@@ -94,14 +101,12 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
 
     switch (path) {
       case "/tx/instant-gen": {
-        const out = await deps.service.instantGen({
-          ownerPkh: reqString(body, "owner_pkh"),
-        });
+        const out = await deps.service.instantGen(ownerReq(body));
         return { status: 200, body: toBuildBody(out) };
       }
       case "/tx/schedule-commit": {
         const out = await deps.service.scheduleCommit({
-          ownerPkh: reqString(body, "owner_pkh"),
+          ...ownerReq(body),
           scheduleLength: reqBigint(body, "schedule_length"),
           lampPerEpoch: reqBigint(body, "lamp_per_epoch"),
         });
@@ -109,18 +114,36 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
       }
       case "/tx/schedule-fire": {
         const out = await deps.service.scheduleFire({
-          ownerPkh: reqString(body, "owner_pkh"),
+          ...ownerReq(body),
           scheduleId: reqHex(body, "schedule_id"),
         });
         return { status: 200, body: toBuildBody(out) };
       }
       case "/tx/consume": {
         const out = await deps.service.consume({
-          ownerPkh: reqString(body, "owner_pkh"),
+          ...ownerReq(body),
           opType: reqSmallInt(body, "op_type"),
           opCount: reqBigint(body, "op_count"),
         });
         return { status: 200, body: toBuildBody(out) };
+      }
+      case "/tx/create-vault": {
+        const kind = body.kind;
+        if (kind !== "instant" && kind !== "schedule") {
+          throw new BadRequestError(`"kind" phải là "instant" hoặc "schedule".`);
+        }
+        const profile = body.profile;
+        if (profile !== undefined && profile !== "Ember" && profile !== "Flame" && profile !== "Lantern") {
+          throw new BadRequestError(`"profile" phải là "Ember" | "Flame" | "Lantern" (bỏ trống = "Flame").`);
+        }
+        const out = await deps.service.createVault({
+          ...ownerReq(body),
+          kind,
+          lampAmount: reqBigint(body, "lamp_amount"),
+          changeAddress: reqString(body, "change_address"),
+          profile,
+        });
+        return { status: 200, body: toCreateVaultBody(out) };
       }
       case "/tx/submit": {
         const out = await deps.service.submit({
@@ -134,6 +157,11 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
     }
   } catch (e) {
     if (e instanceof TxApiError) return { status: e.httpStatus, body: e.toBody() };
+    // Lỗi quyền chủ lọt tới đây (không qua tầng dịch vụ) vẫn giữ NGUYÊN mã.
+    if (e instanceof OwnerAuthError) {
+      const a = ownerApiErrorOf(e);
+      return { status: a.httpStatus, body: a.toBody() };
+    }
     // Ngoài dự kiến: KHÔNG traceback, KHÔNG đường dẫn nội bộ, KHÔNG tên biến môi trường.
     // Người gọi nhận một MÃ THAM CHIẾU tra ngược được ở nhật ký của chính dịch vụ.
     const ref = newReferenceCode();
@@ -175,6 +203,19 @@ function asObject(body: unknown): Record<string, unknown> {
     throw new BadRequestError("Thân bài phải là một đối tượng JSON.");
   }
   return body as Record<string, unknown>;
+}
+
+/** Chủ + nhân chứng + địa chỉ đổi tiền thừa (tuỳ chọn) — phần chung của mọi đường có chủ. */
+function ownerReq(body: Record<string, unknown>): OwnerRequest {
+  const changeAddress = body.change_address;
+  if (changeAddress !== undefined && (typeof changeAddress !== "string" || changeAddress === "")) {
+    throw new BadRequestError(`"change_address" phải là chuỗi địa chỉ bech32 khác rỗng.`);
+  }
+  return {
+    owner: parseOwnerFields(body),
+    ownerWitness: parseOwnerWitness(body),
+    changeAddress: changeAddress as string | undefined,
+  };
 }
 
 function reqString(body: Record<string, unknown>, name: string): string {

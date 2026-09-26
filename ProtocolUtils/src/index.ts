@@ -816,3 +816,6 @@ export function assertRefScriptsCover(
 
 // Chủ vault / thread là `Credential` (commit on-chain 856804fa) — kiểu + chính sách, không Lucid.
 export * from "./ownerAuth.js";
+
+// Nhân chứng chủ `Script(h)` khi h là `did_stake` (PhoenixKey) — cổng Cardano tiêm từ ngoài.
+export * from "./didStakeOwnerAuth.js";

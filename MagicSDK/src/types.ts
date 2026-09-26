@@ -1,6 +1,6 @@
 // MagicSDK/src/types.ts — public types for createVault and friends
-import type { LucidEvolution, TxSignBuilder, UTxO, Validator } from "@lucid-evolution/lucid";
-import type { Network } from "@magiclamp/protocol-utils";
+import type { LucidEvolution, TxBuilder, TxSignBuilder, UTxO, Validator } from "@lucid-evolution/lucid";
+import type { Network, OwnerAuth, OwnerRef } from "@magiclamp/protocol-utils";
 import type { PlutusJson } from "./redeemerIndex.js";
 
 export type Profile = "Ember" | "Flame" | "Lantern";
@@ -99,10 +99,14 @@ export interface ProtocolParams {
  * Most fields have sensible defaults; advanced callers can override.
  */
 export interface InitialVaultConfig {
-  /** Owner payment key hash (28-byte hex). The only key authorized to
-   *  sign owner-required actions (InstantGen, ScheduleCommit, UpdateProfile,
-   *  BurnBatch, WithdrawLamp). ScheduleFire is permissionless. */
-  ownerPkh: string;
+  /** Chủ vault — `Credential` dạng JSON (`{ type: "key" | "script", hash }`). Chủ là người
+   *  DUY NHẤT qua được `owner_authorized` ở các nhánh cần quyền chủ (InstantGen,
+   *  ScheduleCommit, UpdateProfile, BurnBatch, WithdrawLamp — và cả genesis).
+   *  ScheduleFire không cần chủ. Truyền `owner` HOẶC bí danh `ownerPkh`; cả hai thì phải
+   *  cùng chủ (xem `ownerInput.ts`). */
+  owner?: OwnerRef;
+  /** Bí danh nhánh khoá: `ownerPkh: h` ≡ `owner: { type: "key", hash: h }`. */
+  ownerPkh?: string;
   /** Initial LAMP locked into the vault, in oildrop (1 LAMP = 10^6 oildrop).
    *  Caller's wallet MUST hold ≥ this amount of LAMP. */
   lampDeposit: bigint;
@@ -139,8 +143,17 @@ export interface CreateVaultParams {
   vaultType: VaultType;
   /** Network + policy configuration. */
   protocol: ProtocolParams;
-  /** Validator script CBOR (unapplied). */
-  validators: ValidatorBundle;
+  /** Validator script CBOR (unapplied). Truyền ĐÚNG MỘT trong `validators` và
+   *  `appliedVault`. */
+  validators?: ValidatorBundle;
+  /** Script vault ĐÃ apply (ví dụ đọc từ UTxO script tham chiếu của lần deploy). Dùng khi
+   *  bên gọi không giữ blueprint + đủ tham số để tự apply. `expectedScriptHash` BẮT BUỘC:
+   *  script băm ra khác nó ⟹ NÉM, không tạo vault ở một địa chỉ ngoài cấu hình. */
+  appliedVault?: { script: Validator; expectedScriptHash: string };
+  /** Chứng minh quyền chủ ở genesis (`validate_mint_vault_id` ép `owner_authorized`).
+   *  Bỏ trống: chủ khoá ⟹ `addSignerKey(pkh)`; chủ script ⟹ NÉM
+   *  `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. */
+  ownerAuth?: OwnerAuth<TxBuilder>;
   /** Initial vault state. */
   vault: InitialVaultConfig;
   /** Override current epoch derivation (for deterministic tests). */
@@ -171,6 +184,8 @@ export interface CreateVaultResult {
   vaultIdUnit: string;
   /** UTxO đã dùng làm seed one-shot (đã được ép vào inputs của tx). */
   seedUtxo: UTxO;
+  /** Chủ đã ghi vào datum. */
+  owner: OwnerRef;
   /** Human-readable summary for logs / UI. */
   summary: string;
 }

@@ -196,3 +196,16 @@ export {
   type BurnEntry,
   type MagicBatchLike,
 } from "./burnBatch.js";
+
+// ── Chủ là `Credential` — đọc tham số chủ + nhân chứng chủ `did_stake` (PhoenixKey) ──
+// Chủ script chứng minh quyền bằng một mục rút `Script(h)`; `didStakeOwnerAuthLucid` dựng
+// `OwnerAuth` đó cho đúng một loại script chủ. Chính sách nằm ở `@magiclamp/protocol-utils`.
+export { resolveOwnerInput } from "./ownerInput.js";
+export { didStakeLucidPorts, didStakeOwnerAuthLucid } from "./didStakeLucid.js";
+export {
+  OwnerAuthError, didStakeOwnerAuth, DID_STAKE_AUTHORIZE_REDEEMER,
+  ownerRefOf, ownerRefToString, sameOwner,
+  type OwnerAuth, type OwnerRef, type OwnerAuthErrorCode,
+  type DidStakeOwnerAuth, type DidStakeWitnessInput, type DidStakeWitnessDetails,
+  type RewardAccountState,
+} from "@magiclamp/protocol-utils";

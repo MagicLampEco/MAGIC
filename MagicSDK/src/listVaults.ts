@@ -10,7 +10,8 @@
 
 import { Data, type LucidEvolution, type UTxO } from "@lucid-evolution/lucid";
 import { applyVaultValidator } from "./validatorScripts.js";
-import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { ownerRefOf, sameOwner, type OwnerRef } from "@magiclamp/protocol-utils";
+import { resolveOwnerInput } from "./ownerInput.js";
 import { InstantVaultDatumSchema, VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
@@ -36,8 +37,10 @@ export interface ListVaultsParams {
   vaultType:  VaultType;
   protocol:   ProtocolParams;
   validators: ValidatorBundle;
-  /** 28-byte hex PKH to filter by. Returns ONLY vaults whose datum.owner matches. */
-  ownerPkh:   string;
+  /** Chủ cần lọc — so CẢ tag lẫn hash (`sameOwner`). Truyền `owner` HOẶC bí danh `ownerPkh`. */
+  owner?:     OwnerRef;
+  /** Bí danh nhánh khoá: `ownerPkh: h` ≡ `owner: { type: "key", hash: h }`. */
+  ownerPkh?:  string;
 }
 
 /**
@@ -50,7 +53,8 @@ export interface ListVaultsParams {
  * however they want.
  */
 export async function listVaultsForOwner(params: ListVaultsParams): Promise<VaultRecord[]> {
-  const { lucid, vaultType, protocol, validators, ownerPkh } = params;
+  const { lucid, vaultType, protocol, validators } = params;
+  const owner = resolveOwnerInput(params, "listVaultsForOwner");
 
   const { vaultAddress } = applyVaultValidator(vaultType, validators, protocol);
 
@@ -78,9 +82,9 @@ export async function listVaultsForOwner(params: ListVaultsParams): Promise<Vaul
       );
       continue;
     }
-    // Chủ là `Credential`; bộ lọc theo pkh chỉ khớp nhánh khoá. Két chủ-script cùng
-    // 28 byte là chủ KHÁC (on-chain so cả tag), nên không lọt vào đây.
-    if (!sameOwner(ownerRefOf(datum.owner), { type: "key", hash: ownerPkh.toLowerCase() })) continue;
+    // Chủ là `Credential`; so CẢ tag lẫn hash. Két chủ-script cùng 28 byte với một pkh là
+    // chủ KHÁC (on-chain so cả tag), nên không lọt sang bộ lọc nhánh khoá và ngược lại.
+    if (!sameOwner(ownerRefOf(datum.owner), owner)) continue;
 
     const holdings = datum.loyalty_holdings as { amount: bigint; acquired_epoch: bigint; is_locked: boolean }[];
     const oldestEpoch = holdings.length === 0

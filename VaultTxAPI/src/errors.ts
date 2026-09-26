@@ -198,3 +198,31 @@ export class SubmitRejectedError extends TxApiError {
 export function newReferenceCode(): string {
   return `ref_${randomBytes(6).toString("hex")}`;
 }
+
+/**
+ * Lỗi 4xx/5xx mang MÃ RIÊNG — cho các ca mà app phải phân biệt được với nhau (chủ sai
+ * hình dạng · hai trường chủ mâu thuẫn · thiếu nhân chứng chủ script · chưa đăng ký stake).
+ * Gộp chúng vào `BAD_REQUEST` là bắt app đoán từ câu chữ.
+ */
+export class CodedApiError extends TxApiError {
+  constructor(httpStatus: number, code: string, message: string, details: Record<string, unknown> = {}) {
+    super(httpStatus, code, message, details);
+  }
+}
+
+/**
+ * `OwnerAuthError` (ném từ bộ dựng / nhân chứng) → mã HTTP. GIỮ NGUYÊN `code`: tầng API ánh
+ * xạ theo mã, không theo câu chữ.
+ *
+ *   OWNER_HASH_INVALID · OWNER_CREDENTIAL_SHAPE · OWNER_AUTH_MISMATCH  → 400 (bên gọi gửi sai)
+ *   OWNER_SCRIPT_WITNESS_UNAVAILABLE                                    → 400 (thiếu nhân chứng)
+ *   OWNER_STAKE_NOT_REGISTERED                                          → 422 (trạng thái chuỗi)
+ *   OWNER_WITHDRAW_RETURNED_NOTHING                                     → 500 (lỗi nhân chứng phía dịch vụ)
+ */
+export function ownerApiErrorOf(e: { code: string; message: string }): CodedApiError {
+  const status =
+    e.code === "OWNER_STAKE_NOT_REGISTERED" ? 422
+    : e.code === "OWNER_WITHDRAW_RETURNED_NOTHING" ? 500
+    : 400;
+  return new CodedApiError(status, e.code, e.message);
+}

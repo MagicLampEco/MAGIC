@@ -71,7 +71,13 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
       return { status: 404, body: { error: { code: "NOT_FOUND", message: `Không có đường "${path}".`, details: {} } } };
     }
 
-    const ownerPkh = decodeURIComponent(m[1]!).toLowerCase();
+    // Đoạn đường: `<56 hex>` (bí danh nhánh khoá) HOẶC `key:<56 hex>` / `script:<56 hex>`.
+    // Không chữ hoa: hash là hex THƯỜNG, và một đường hai cách viết là hai khoá bộ đệm.
+    const seg = decodeURIComponent(m[1]!);
+    const typed = /^(key|script):(.*)$/.exec(seg);
+    const ownerReq = typed === null
+      ? { ownerPkh: seg }
+      : { owner: { type: typed[1] as "key" | "script", hash: typed[2]! } };
     const vaultType = u.searchParams.get("vault_type") ?? undefined;
     const atEpochRaw = u.searchParams.get("at_epoch");
     let atEpoch: bigint | undefined;
@@ -82,7 +88,7 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
       atEpoch = BigInt(atEpochRaw);
     }
 
-    const outcome = await deps.service.read({ ownerPkh, vaultType, atEpoch });
+    const outcome = await deps.service.read({ ...ownerReq, vaultType, atEpoch });
     return { status: 200, body: toJsonBody(outcome) };
   } catch (e) {
     if (e instanceof VaultReadError) {

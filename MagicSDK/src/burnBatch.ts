@@ -31,7 +31,8 @@
 // profile CŨ ⟹ `expect output_datum.profile == applied.profile` vỡ ⟹ tx bị từ chối,
 // đúng loại lỗi "không nói trường nào" mà tệp này sinh ra để gỡ.
 
-import { Constr, Data, type UTxO } from "@lucid-evolution/lucid";
+import { Constr, Data, type TxBuilder, type UTxO } from "@lucid-evolution/lucid";
+import { ownerRefOf, resolveOwnerAuth, type OwnerAuth } from "@magiclamp/protocol-utils";
 
 import { InstantVaultDatumSchema, VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
@@ -249,6 +250,11 @@ export interface BuildVaultBurnBatchParams {
   /** plutus.json của module vault — chỉ số constructor `BurnBatch` suy lúc chạy, nên SDK
    *  không lệch được với thứ tự enum on-chain. */
   vaultPlutusJson: PlutusJson;
+  /** Chứng minh quyền chủ vault. Hàm này KHÔNG dựng giao dịch nên không gắn gì; nó chỉ
+   *  ĐỐI CHIẾU với chủ trong datum và trả lại ở `ownerAuth` để truyền nguyên vào
+   *  `buildConsumeTx({ ownerAuth })`. Bỏ trống: chủ khoá ⟹ nhánh key từ datum; chủ script
+   *  ⟹ NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE` — ném ở đây rẻ hơn ném sau khi đã tra giá. */
+  ownerAuth?:      OwnerAuth<TxBuilder>;
 }
 
 export interface BuildVaultBurnBatchResult {
@@ -261,6 +267,8 @@ export interface BuildVaultBurnBatchResult {
   /** Batch đã chết và bị bỏ trong lần này — MAGIC trong đó mất trắng (§4.2). App nên
    *  hiện cho người dùng thấy, vì đây là mất mát thật và không hoàn được. */
   expiredDropped:        MagicBatchLike[];
+  /** Đã đối chiếu với `datum.owner` — truyền thẳng vào `buildConsumeTx({ ownerAuth })`. */
+  ownerAuth:             OwnerAuth<TxBuilder>;
 }
 
 /**
@@ -303,6 +311,8 @@ export function buildVaultBurnBatch(
     );
   }
 
+  const ownerAuth = resolveOwnerAuth(ownerRefOf(datum.owner), p.ownerAuth);
+
   const plan = planBurnBatch(datum, p.required, p.currentEpoch, p.vaultModule);
 
   const burnIx = resolveConstrIndex(p.vaultPlutusJson, VAULT_VALIDATOR_TITLE, BURN_BATCH_TAG);
@@ -324,5 +334,6 @@ export function buildVaultBurnBatch(
     burns:                 plan.burns,
     newDatum:              plan.newDatum,
     expiredDropped:        plan.expiredDropped,
+    ownerAuth,
   };
 }

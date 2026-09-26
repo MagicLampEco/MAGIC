@@ -44,7 +44,7 @@ import {
 import {
   msPerEpoch, lampAssetName, applyOwnerAuth, resolveOwnerAuth, ownerRefToString,
   assertDidPaymentAddress, planDidPaymentFunding, FundingError,
-  DID_PAYMENT_SPEND_REDEEMER, FUNDING_MAX_VALIDITY_MS,
+  DID_PAYMENT_SPEND_REDEEMER, FUNDING_MAX_VALIDITY_MS, collateralCompleteOptions,
   type Network, type OwnerAuth, type DidPaymentPlan,
 } from "@magiclamp/protocol-utils";
 import { resolveOwnerInput } from "./ownerInput.js";
@@ -253,7 +253,8 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     }
     fundedBody = fundedBody.validTo(Number(tipPosixMs + FUNDING_MAX_VALIDITY_MS));
   }
-  const tx = await applyOwnerAuth(fundedBody, ownerAuth).complete();   // (4)
+  const tx = await applyOwnerAuth(fundedBody, ownerAuth)
+    .complete(collateralCompleteOptions(params.collateralLovelace));   // (4)
 
   const summary = formatSummary({
     vaultType,

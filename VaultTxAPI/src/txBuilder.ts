@@ -22,7 +22,7 @@ import {
   type LucidEvolution, type Script, type TxBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
 import {
-  buildConsumeTx, buildInstantGenTx, buildScheduleCommitTx, buildScheduleFireTx, buildVaultBurnBatch,
+  buildConsumeTx, buildInstantGenTx, buildMintEngageTx, buildScheduleCommitTx, buildScheduleFireTx, buildVaultBurnBatch,
   createVault, decodePriceParam, requiredFromBeacon,
   type DidPaymentFundingInput, type PlutusJson, type Profile, type VaultModule, type VaultType,
 } from "@magiclamp/sdk";
@@ -41,8 +41,28 @@ export interface BuildContext {
   vault: FoundVault;
   tip: ChainTip;
   /** Địa chỉ nhận tiền thừa + nguồn UTxO trả phí. Suy theo chiến lược khai trong cấu
-   *  hình — xem `ChangeAddressStrategy` ở `config.ts` cho khẳng định đi kèm. */
+   *  hình — xem `ChangeAddressStrategy` ở `config.ts` cho khẳng định đi kèm. Có `feePayerUtxo`
+   *  ⟹ = `fee_payer.address`. */
   changeAddress: string;
+  /** Ví trả phí bên thứ ba (`fee_payer`). Có ⟹ ví của lucid mang ĐÚNG UTxO này (phí + thế
+   *  chấp), không đọc thêm UTxO nào ở địa chỉ đó. Luật đầy đủ: `feePayer.ts`. */
+  feePayerUtxo?: UTxO;
+  /** Lượng thế chấp tường minh (lovelace) — đặt cùng `feePayerUtxo`. */
+  collateralLovelace?: bigint;
+}
+
+/** Ngữ cảnh mở thread Engage — không có vault đầu vào, không có thread đầu vào. */
+export interface OpenThreadContext {
+  owner: OwnerRef;
+  ownerAuth?: OwnerAuth<TxBuilder>;
+  tip: ChainTip;
+  /** Ví trả min-ADA của thread + phí + thế chấp, nhận tiền thối. Seed one-shot lấy từ đây. */
+  changeAddress: string;
+}
+
+export interface BuiltOpenThread extends BuiltTx {
+  /** `policyId + assetName` của NFT thread mà bộ dựng KHAI đã đúc — dịch vụ đọc lại CBOR để đối chiếu. */
+  engageNftUnit: string;
 }
 
 export interface BuiltTx {
@@ -53,9 +73,11 @@ export interface BuiltTx {
 export interface TxBuilderPort {
   scheduleCommit(ctx: BuildContext, p: { scheduleLength: bigint; lampPerEpoch: bigint }): Promise<BuiltTx>;
   scheduleFire(ctx: BuildContext, p: { scheduleId: string }): Promise<BuiltTx>;
-  consume(ctx: BuildContext, p: { opType: number; opCount: bigint }): Promise<BuiltTx>;
+  /** `engageUtxo`: thread của CHÍNH chủ, đã chọn bởi `engage.ts` ▸ `pickEngageThread`. */
+  consume(ctx: BuildContext, p: { opType: number; opCount: bigint; engageUtxo: UTxO }): Promise<BuiltTx>;
   instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx>;
   createVault(ctx: CreateVaultContext, p: { lampAmount: bigint; profile?: Profile }): Promise<BuiltCreateVault>;
+  openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread>;
 }
 
 /** Ngữ cảnh tạo vault — không có vault đầu vào, chỉ có địa chỉ đích. */
@@ -69,6 +91,8 @@ export interface CreateVaultContext {
   /** Nạp từ ví Phoenix. Có mặt ⟹ ví của lucid chỉ mang ĐÚNG `feePayerUtxo` (không đọc thêm
    *  UTxO nào ở địa chỉ trả phí), và LAMP đến từ `input.utxos`. */
   funding?: { input: DidPaymentFundingInput; feePayerUtxo: UTxO };
+  /** Lượng thế chấp tường minh (lovelace) — đặt cùng `funding` (ví trả phí bên thứ ba). */
+  collateralLovelace?: bigint;
 }
 
 export interface BuiltCreateVault extends BuiltTx {
@@ -167,6 +191,7 @@ export class SdkTxBuilder implements TxBuilderPort {
       tipPosixMs: ctx.tip.blockTimePosixMs,
       refScriptUtxos,
       ownerAuth: ctx.ownerAuth,
+      collateralLovelace: ctx.collateralLovelace,
     }));
     return { txCbor: r.tx.toCBOR() };
   }
@@ -189,6 +214,7 @@ export class SdkTxBuilder implements TxBuilderPort {
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
       refScriptUtxos,
+      collateralLovelace: ctx.collateralLovelace,
     }));
     return { txCbor: r.tx.toCBOR() };
   }
@@ -245,11 +271,12 @@ export class SdkTxBuilder implements TxBuilderPort {
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
       ownerAuth: ctx.ownerAuth,
+      collateralLovelace: ctx.collateralLovelace,
     }));
     return { txCbor: r.tx.toCBOR() };
   }
 
-  async consume(ctx: BuildContext, p: { opType: number; opCount: bigint }): Promise<BuiltTx> {
+  async consume(ctx: BuildContext, p: { opType: number; opCount: bigint; engageUtxo: UTxO }): Promise<BuiltTx> {
     const lucid = await this.lucidFor(ctx);
     const d = this.deps.deployment;
 
@@ -259,10 +286,10 @@ export class SdkTxBuilder implements TxBuilderPort {
     const vaultScript = scriptOfRef(vaultRef, "vault");
     assertScriptHash(vaultScript, ctx.vault.scope.scriptHash, "vault");
     const consumeScript = scriptOfRef(consumeRef, "consume");
-
-    const engageUtxo = pickByNft(
-      await this.deps.chain.utxosAt(d.consume.engageAddress), d.consume.engageNftUnit, "thread Engage",
-    );
+    // Policy của NFT thread = script hash consume; `engageScriptHash` suy từ `engage_address`.
+    // Script tham chiếu băm ra hash khác ⟹ thread đã chọn không thuộc script này.
+    assertScriptHash(consumeScript, d.consume.engageScriptHash, "consume");
+    const engageUtxo = p.engageUtxo;
     const priceBeaconUtxo = pickByNft(
       await this.deps.chain.utxosAt(d.consume.priceBeaconAddress), d.consume.priceBeaconNftUnit, "beacon PriceParam",
     );
@@ -303,13 +330,40 @@ export class SdkTxBuilder implements TxBuilderPort {
       // khai ở đây — quyền chủ đi qua mục rút `Script(h)` của `ownerAuth`.
       ownerSignerKeyHash: ctx.owner.type === "key" ? ctx.owner.hash : undefined,
       ownerAuth: ctx.ownerAuth,
-      engageNftUnit: d.consume.engageNftUnit,
       consumeRefUtxo: consumeRef,
       vaultRefUtxo: vaultRef,
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
+      collateralLovelace: ctx.collateralLovelace,
     }));
     return { txCbor: r.tx.toCBOR() };
+  }
+
+  /**
+   * Mở thread Engage (genesis) qua `@magiclamp/sdk` ▸ `buildMintEngageTx`. Seed one-shot là
+   * một UTxO của ví `changeAddress` (ưu tiên thuần ADA, chọn tất định theo `txHash#idx`), nên
+   * ví đó trả min-ADA của thread + phí. Script consume đọc qua ref CIP-33 và phải băm ra đúng
+   * `engageScriptHash`.
+   */
+  async openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread> {
+    const d = this.deps.deployment;
+    const walletUtxos = await this.deps.chain.utxosAt(ctx.changeAddress);
+    const lucid = await this.lucidFor(ctx, walletUtxos);
+    const [consumeRef] = await this.deps.chain.utxosByOutRef([d.refScriptUtxos.consume]);
+    const consumeScript = scriptOfRef(consumeRef, "consume");
+    assertScriptHash(consumeScript, d.consume.engageScriptHash, "consume");
+    const sorted = [...walletUtxos].sort((a, b) =>
+      a.txHash === b.txHash ? a.outputIndex - b.outputIndex : a.txHash < b.txHash ? -1 : 1);
+    const seedUtxo = sorted.find(u => Object.keys(u.assets).every(k => k === "lovelace")) ?? sorted[0]!;
+    const r = await rejectAsProtocol(() => buildMintEngageTx({
+      lucid,
+      consumeScript,
+      seedUtxo,
+      ownerAuth: ctx.ownerAuth ?? { kind: "key", pkh: ctx.owner.hash },
+      network: this.deps.network,
+      consumeRefUtxo: consumeRef,
+    }));
+    return { txCbor: r.tx.toCBOR(), engageNftUnit: r.engageNftUnit };
   }
 
   /** Lucid + ví CHỈ-ĐỌC. Ví không có khoá; nó chỉ cung cấp địa chỉ đổi tiền thừa và
@@ -362,11 +416,12 @@ export class SdkTxBuilder implements TxBuilderPort {
       ownerAuth: ctx.ownerAuth,
       tipPosixMs: ctx.tip.blockTimePosixMs,
       funding: ctx.funding?.input,
+      collateralLovelace: ctx.collateralLovelace,
     }));
     return { txCbor: r.tx.toCBOR(), vaultNftUnit: r.vaultIdUnit };
   }
 
-  private async lucidFor(ctx: { changeAddress: string }, presetWalletUtxos?: UTxO[]): Promise<LucidEvolution> {
+  private async lucidFor(ctx: { changeAddress: string; feePayerUtxo?: UTxO }, presetWalletUtxos?: UTxO[]): Promise<LucidEvolution> {
     const provider = new Blockfrost(this.deps.blockfrostUrl, this.deps.blockfrostProjectId);
     const now = Date.now();
     if (this.protocolParams === null || now - this.protocolParamsAt > PROTOCOL_PARAMS_TTL_MS) {
@@ -377,7 +432,9 @@ export class SdkTxBuilder implements TxBuilderPort {
       presetProtocolParameters: this.protocolParams,
     });
 
-    const walletUtxos = presetWalletUtxos ?? await this.deps.chain.utxosAt(ctx.changeAddress);
+    // Có ví trả phí ⟹ ví lucid mang ĐÚNG UTxO đó: bên trả phí chỉ cho tiêu một UTxO.
+    const walletUtxos = presetWalletUtxos
+      ?? (ctx.feePayerUtxo !== undefined ? [ctx.feePayerUtxo] : await this.deps.chain.utxosAt(ctx.changeAddress));
     if (walletUtxos.length === 0) {
       throw new TxBuildRejectedError(
         `Địa chỉ ${ctx.changeAddress.slice(0, 20)}… không có UTxO nào để trả phí và làm tài sản ` +
@@ -531,14 +588,22 @@ function asProtocolError(e: unknown): unknown {
  */
 export class RecordedTxBuilder implements TxBuilderPort {
   /** Tham số của lượt gọi gần nhất — để phép kiểm xác nhận nó ĐÃ bị bỏ qua. */
-  lastCall: { route: string; params: unknown; ownerAuthKind?: "key" | "script"; changeAddress?: string; funding?: CreateVaultContext["funding"] } | null = null;
+  lastCall: {
+    route: string; params: unknown; ownerAuthKind?: "key" | "script"; changeAddress?: string;
+    funding?: CreateVaultContext["funding"]; feePayerUtxo?: UTxO; collateralLovelace?: bigint; engageUtxo?: UTxO;
+  } | null = null;
   constructor(
     private readonly txCborByRoute: Record<string, string>,
     /** NFT danh-tính mà bản ghi `create_vault` khai đã đúc. */
     private readonly createVaultNftUnit?: string,
+    /** NFT thread mà bản ghi `open_thread` khai đã đúc. */
+    private readonly openThreadNftUnit?: string,
   ) {}
   private async serve(route: string, params: unknown, ctx?: { ownerAuth?: OwnerAuth<TxBuilder> }): Promise<BuiltTx> {
     this.lastCall = { route, params, ownerAuthKind: ctx?.ownerAuth?.kind };
+    const b = ctx as Partial<BuildContext> | undefined;
+    if (b?.feePayerUtxo !== undefined) this.lastCall.feePayerUtxo = b.feePayerUtxo;
+    if (b?.collateralLovelace !== undefined) this.lastCall.collateralLovelace = b.collateralLovelace;
     const cbor = this.txCborByRoute[route];
     if (cbor === undefined) throw new Error(`[RecordedTxBuilder] không có CBOR ghi sẵn cho "${route}".`);
     return { txCbor: cbor };
@@ -550,8 +615,16 @@ export class RecordedTxBuilder implements TxBuilderPort {
   scheduleFire(ctx: BuildContext, p: { scheduleId: string }): Promise<BuiltTx> {
     return this.serve("schedule_fire", p, ctx);
   }
-  consume(ctx: BuildContext, p: { opType: number; opCount: bigint }): Promise<BuiltTx> {
-    return this.serve("consume", p, ctx);
+  async consume(ctx: BuildContext, p: { opType: number; opCount: bigint; engageUtxo: UTxO }): Promise<BuiltTx> {
+    const b = await this.serve("consume", { opType: p.opType, opCount: p.opCount }, ctx);
+    this.lastCall!.engageUtxo = p.engageUtxo;
+    return b;
+  }
+  async openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread> {
+    const b = await this.serve("open_thread", {}, ctx);
+    this.lastCall = { ...this.lastCall!, changeAddress: ctx.changeAddress };
+    if (this.openThreadNftUnit === undefined) throw new Error("[RecordedTxBuilder] không khai NFT cho open_thread.");
+    return { ...b, engageNftUnit: this.openThreadNftUnit };
   }
   instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx> {
     return this.serve("instant_gen", p, ctx);

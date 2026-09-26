@@ -234,6 +234,40 @@ describe("buildMintEngageTx — ghi owner là Credential, chứng minh quyền t
     ).rejects.toThrow(/MINT-ENGAGE-003/);
   });
 
+  it("consumeRefUtxo đúng script ⟹ readFrom, KHÔNG đính MintingPolicy; validToMs ⟹ validTo", async () => {
+    const fake = makeLucidFake();
+    const ref = { ...mkUtxo({ txHash: "22".repeat(32), outputIndex: 0 }), scriptRef: consumeScript };
+    await buildMintEngageTx({
+      lucid: fake.lucid as LucidEvolution, consumeScript, seedUtxo, ownerPkh: KEY_H, network: "Preview",
+      consumeRefUtxo: ref, validToMs: 1_789_000_000_000n, collateralLovelace: 3_000_000n,
+    });
+    const tx = fake.onlyTx();
+    expect(tx.readFrom).toEqual([[ref]]);
+    expect(tx.attached).toEqual([]);
+    expect(tx.validTo).toBe(1_789_000_000_000);
+  });
+
+  it("CẶP: không có consumeRefUtxo ⟹ đính MintingPolicy như cũ, không readFrom, không validTo", async () => {
+    const fake = makeLucidFake();
+    await buildMintEngageTx({
+      lucid: fake.lucid as LucidEvolution, consumeScript, seedUtxo, ownerPkh: KEY_H, network: "Preview",
+    });
+    const tx = fake.onlyTx();
+    expect(tx.readFrom).toEqual([]);
+    expect(tx.attached).toEqual([consumeScript]);
+    expect(tx.validTo).toBeUndefined();
+  });
+
+  it("ÂM — consumeRefUtxo mang script KHÁC (hoặc không mang script) ⟹ MINT-ENGAGE-004 trước khi chạm Lucid", async () => {
+    const other = { type: "PlutusV3" as const, script: "4746010000222220" };
+    for (const scriptRef of [other, undefined]) {
+      await expect(buildMintEngageTx({
+        lucid: undefined as unknown as LucidEvolution, consumeScript, seedUtxo, ownerPkh: KEY_H, network: "Preview",
+        consumeRefUtxo: { ...mkUtxo({ txHash: "22".repeat(32), outputIndex: 0 }), scriptRef },
+      })).rejects.toThrow(/MINT-ENGAGE-004/);
+    }
+  });
+
   it("ÂM — không truyền cái nào ⟹ MINT-ENGAGE-003", async () => {
     await expect(
       buildMintEngageTx({

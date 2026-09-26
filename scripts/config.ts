@@ -2,6 +2,7 @@
 // Điền vào sau khi hoàn thành từng bước deploy
 // KHÔNG commit file này nếu chứa private key thật
 
+import { STATIC_ASSET_NAMES } from "./assetNames.js";
 import "dotenv/config";
 import { slotsPerEpoch, msPerEpoch, lampAssetName, type Network } from "@magiclamp/protocol-utils";
 import type { LucidEvolution } from "@lucid-evolution/lucid";
@@ -298,9 +299,7 @@ function requireLampAssetName(): string {
 
 export const ASSET_NAMES = {
   get lamp(): string { return requireLampAssetName(); },
-  um_nft:    "554d44",     // "UMD"
-  shard_nft: "5348415244", // "SHARD"
-  backing:   "425251",     // "BRQ" — BackingBeacon
+  ...STATIC_ASSET_NAMES, // um_nft · shard_nft · backing — nguồn ở `assetNames.ts`
   get carp(): string { return requireCarpIdentity().assetName; },
 };
 

@@ -40,10 +40,14 @@ export { findVaultsAtScope, pickSingleVault, vaultIdUnitOf } from "./vaultLookup
 export type { FoundVault, IgnoredUtxo } from "./vaultLookup.js";
 
 export { SdkTxBuilder, RecordedTxBuilder, enterpriseAddressOf, vaultModuleOf } from "./txBuilder.js";
-export type { TxBuilderPort, BuildContext, BuiltTx, SdkTxBuilderDeps } from "./txBuilder.js";
+export type { TxBuilderPort, BuildContext, BuiltTx, SdkTxBuilderDeps, OpenThreadContext, BuiltOpenThread } from "./txBuilder.js";
+export { pickEngageThread, threadsOf, checkOpenThreadTx, parseEngageRef } from "./engage.js";
+export type { EngageThread, OpenThreadSummary } from "./engage.js";
+export { checkFeePayerTx, parseFeePayer } from "./feePayer.js";
+export type { FeePayerRequest, FeePayerSummary } from "./feePayer.js";
 
-export { VaultTxService, toBuildBody, toSubmitBody } from "./service.js";
-export type { BuildResponse, SubmitResponse, VaultTxServiceDeps } from "./service.js";
+export { VaultTxService, toBuildBody, toOpenThreadBody, toSubmitBody } from "./service.js";
+export type { BuildResponse, OpenThreadResponse, SubmitResponse, VaultTxServiceDeps } from "./service.js";
 
 export { handle } from "./http.js";
 export type { HttpRequest, HttpResponse, RouterDeps } from "./http.js";

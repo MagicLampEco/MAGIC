@@ -22,7 +22,7 @@
 import { readFileSync } from "node:fs";
 
 import { getAddressDetails } from "@lucid-evolution/lucid";
-import type { Network } from "@magiclamp/protocol-utils";
+import { FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE, type Network } from "@magiclamp/protocol-utils";
 
 export interface VaultScope {
   /** "Instant" | "Schedule" — khớp `VaultType` của MagicSDK. */
@@ -39,10 +39,18 @@ export interface OutRefConfig {
 }
 
 export interface ConsumeDeployment {
-  /** Địa chỉ chứa thread Engage (state per-app). */
+  /** Địa chỉ chứa thread Engage (state per-app) = địa chỉ script `consume`. */
   engageAddress: string;
-  /** NFT thread — `policyId + assetNameHex`. Tên là blake2b_256(cbor(seed)), không phải hằng. */
-  engageNftUnit: string;
+  /**
+   * Script hash của `consume`, SUY từ `engageAddress` — cũng là policy id của MỌI NFT thread
+   * (`ConsumeMAGIC/offchain/src/engageId.ts` ▸ `engageNftUnit`). Không cấu hình riêng: hai
+   * trường cho một sự thật là hai trường sẽ lệch nhau.
+   *
+   * 🪦 Trường cũ `engage_nft_unit` (một NFT thread CỐ ĐỊNH) đã bị gỡ: nó ghim dịch vụ vào
+   * ĐÚNG MỘT thread, trong khi `consume.ak` ép chủ thread == chủ vault ⟹ mọi người dùng khác
+   * không tiêu được MAGIC. Thread nay chọn theo TỪNG chủ lúc chạy (`engage.ts`).
+   */
+  engageScriptHash: string;
   /** Địa chỉ chứa beacon PriceParam. */
   priceBeaconAddress: string;
   /** NFT của beacon giá. */
@@ -96,6 +104,17 @@ export interface Deployment {
    *  Vắng ⟹ mọi yêu cầu có chủ script trả 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ khoá
    *  không bị ảnh hưởng. */
   didStake?: { anchorNftPolicy: string };
+  /**
+   * Lượng thế chấp (lovelace) đặt TƯỜNG MINH khi giao dịch có ví trả phí bên thứ ba
+   * (`fee_payer` / `funding.fee_payer`, mô hình Feecover). Khoá JSON
+   * `fee_payer_collateral_lovelace`, chuỗi chữ số; vắng ⟹
+   * `@magiclamp/protocol-utils` ▸ `FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE`.
+   *
+   * Nó vừa là giá trị đưa vào `setCollateral`, vừa là TRẦN mà phép đọc lại CBOR ép lên
+   * `Σ collateral_inputs − collateral_return`. Bên trả phí chỉ chịu mất thế chấp tới trần
+   * của họ — đặt số này lớn hơn trần đó là dựng giao dịch họ từ chối ký.
+   */
+  feePayerCollateralLovelace: bigint;
 }
 
 /**
@@ -272,12 +291,22 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
   };
 
   const c = obj(o.consume, "consume");
+  // FAIL-CLOSED với cấu hình cũ: khoá `engage_nft_unit` còn nằm đó là người vận hành đang tin
+  // rằng dịch vụ phục vụ ĐÚNG thread đó. Lặng lẽ bỏ qua nó thì niềm tin ấy sai mà không gì
+  // báo; từ chối khởi động thì họ đọc được câu dưới đây đúng lúc sửa cấu hình.
+  if (c.engage_nft_unit !== undefined) {
+    throw new Error(
+      "[config] VAULT_TX_API_DEPLOYMENT.consume.engage_nft_unit đã bị gỡ. Dịch vụ nay chọn " +
+      "thread Engage theo TỪNG chủ (policy = script hash của consume, suy từ engage_address); " +
+      "một NFT thread cố định chỉ phục vụ được đúng một người. Bỏ khoá này khỏi cấu hình.",
+    );
+  }
+  const engage = scriptAddress(str(c.engage_address, "consume.engage_address"), prefix, network, "consume.engage_address");
   const consume: ConsumeDeployment = {
-    engageAddress: scriptAddress(str(c.engage_address, "consume.engage_address"), prefix, network, "consume.engage_address").address,
-    engageNftUnit: unit(str(c.engage_nft_unit, "consume.engage_nft_unit"), "consume.engage_nft_unit"),
+    engageAddress: engage.address,
+    engageScriptHash: engage.scriptHash,
     priceBeaconAddress: scriptAddress(str(c.price_beacon_address, "consume.price_beacon_address"), prefix, network, "consume.price_beacon_address").address,
     priceBeaconNftUnit: unit(str(c.price_beacon_nft_unit, "consume.price_beacon_nft_unit"), "consume.price_beacon_nft_unit"),
-
   };
 
   // Mục `instant` là TUỲ CHỌN. Vắng ⟹ `/tx/instant-gen` đóng; CÓ ⟹ mọi trường bắt
@@ -305,7 +334,23 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
     didStake = { anchorNftPolicy: p };
   }
 
-  return { source, lampPolicyId, lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, instant, didStake };
+  // Chuỗi chữ số, không nhận số JSON — cùng luật với mọi số tiền ở `http.ts`.
+  let feePayerCollateralLovelace = FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE;
+  if (o.fee_payer_collateral_lovelace !== undefined) {
+    const v = o.fee_payer_collateral_lovelace;
+    if (typeof v !== "string" || !/^[1-9][0-9]*$/.test(v)) {
+      throw new Error(
+        "[config] VAULT_TX_API_DEPLOYMENT.fee_payer_collateral_lovelace phải là CHUỖI chữ số " +
+        "lovelace > 0 (ví dụ \"3000000\"), không phải số JSON.",
+      );
+    }
+    feePayerCollateralLovelace = BigInt(v);
+  }
+
+  return {
+    source, lampPolicyId, lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, instant, didStake,
+    feePayerCollateralLovelace,
+  };
 }
 
 // ── phụ trợ phân tích, mỗi cái NÉM chứ không đệm ──────────────────────────────

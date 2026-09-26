@@ -63,7 +63,6 @@ const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
   },
   consume: {
     engage_address: VAULT_ADDRESS,
-    engage_nft_unit: `${"44".repeat(28)}deadbeef`,
     price_beacon_address: VAULT_ADDRESS,
     price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
   },
@@ -81,6 +80,7 @@ interface FundedOpts {
   redeemers?: { index: number; dataHex: string }[];
   ttlMs?: number | null;
   feeChange?: bigint;
+  collateralReturn?: bigint;
 }
 
 /** Tx tạo vault nạp từ DP1 + DP2: chi 7 ADA + 1 100 LAMP, vault nhận 5 ADA + 1 001 LAMP,
@@ -104,7 +104,8 @@ function fundedTx(o: FundedOpts = {}): string {
     requiredSigners: o.signers ?? (owner.type === "key" ? [OWNER_PKH, CTRL, DEV] : [CTRL, DEV]),
     outputs,
     collateralInputs: [ref(FEE_UTXO)],
-    collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 5_000_000n } },
+    // Thế chấp có thể mất = 10 − 7 = 3 ADA, đúng trần mặc định `fee_payer_collateral_lovelace`.
+    collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: o.collateralReturn ?? 7_000_000n } },
     // Thứ tự đã sắp của ledger: d1… < d2… < fa… ⟹ DP1 = 0, DP2 = 1.
     spendRedeemers: o.redeemers ?? [{ index: 0, dataHex: SPEND }, { index: 1, dataHex: SPEND }],
     ttlSlot: o.ttlMs === null ? undefined : BigInt(unixTimeToSlot("Preview", NOW + (o.ttlMs ?? 1_800_000))),
@@ -193,11 +194,14 @@ describe("POST /tx/create-vault + funding did_payment — dương", () => {
       withdrawal_lovelace: "0",
       fee_payer: {
         address: FEE_ADDRESS, utxo: `${FEE_UTXO.txHash}#0`, input_lovelace: "10000000",
-        fee_lovelace: "190000", change_lovelace: "9810000", collateral_return_lovelace: "5000000",
+        fee_lovelace: "190000", change_lovelace: "9810000", collateral_return_lovelace: "7000000",
+        collateral_at_risk_lovelace: "3000000",
       },
       valid_to_posix_ms: String(NOW + 1_800_000),
     });
     expect(h.builder.lastCall?.changeAddress).toBe(FEE_ADDRESS);
+    // Thế chấp tường minh = trần cấu hình (mặc định 3 ADA), không để lucid tự đặt 5 ADA.
+    expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
     expect(h.builder.lastCall?.funding?.feePayerUtxo).toBe(FEE_UTXO);
     expect(h.builder.lastCall?.funding?.input.utxos).toEqual([DP1, DP2, DP3]);
     expect(h.builder.lastCall?.funding?.input.anchorRefUtxo).toBe(ANCHOR);
@@ -328,6 +332,8 @@ describe("POST /tx/create-vault + funding — đọc lại CBOR (cực đối, 4
     ["thiếu chữ ký thiết bị", fundedTx({ signers: [OWNER_PKH, CTRL] })],
     ["không có hạn dùng", fundedTx({ ttlMs: null })],
     ["hạn dùng quá 1 giờ", fundedTx({ ttlMs: 3_700_000 })],
+    // Trần mặc định 3 ADA: return 6,999999 ADA ⟹ có thể mất 3 000 001 lovelace, vượt trần 1.
+    ["thế chấp có thể mất vượt trần 3 ADA (1 lovelace)", fundedTx({ collateralReturn: 6_999_999n })],
   ];
   for (const [name, cbor] of cases) {
     it(name, async () => {

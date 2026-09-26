@@ -3,10 +3,12 @@
 // Tách khỏi `server.ts` để phép kiểm gọi thẳng vào đây, không phải mở cổng mạng.
 //
 // ── ĐÚNG NĂM ĐƯỜNG DỰNG, KHÔNG THÊM ────────────────────────────────────────────
-//   POST /tx/instant-gen       { owner, [owner_witness], [change_address] }
+//   POST /tx/instant-gen       { owner, [owner_witness], [change_address | fee_payer] }
 //   POST /tx/schedule-commit   { owner, …, schedule_length, lamp_per_epoch }
 //   POST /tx/schedule-fire     { owner, …, schedule_id }
-//   POST /tx/consume           { owner, …, op_type, op_count }
+//   POST /tx/consume           { owner, …, op_type, op_count, [engage_ref] }
+//   POST /tx/open-thread       { owner, [owner_witness], [change_address] }
+//                              (`fee_payer` một mình ⟹ 422; `funding` ⟹ 501 — xem `service.ts`)
 //   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 //   POST /tx/submit            { tx_cbor, witness_cbor }
 //
@@ -29,7 +31,11 @@
 import {
   BadRequestError, TxApiError, UnauthorizedError, newReferenceCode,
 } from "./errors.js";
-import { toBuildBody, toCreateVaultBody, toSubmitBody, type OwnerRequest, type VaultTxService } from "./service.js";
+import {
+  toBuildBody, toCreateVaultBody, toOpenThreadBody, toSubmitBody, type OwnerRequest, type VaultTxService,
+} from "./service.js";
+import { parseEngageRef } from "./engage.js";
+import { parseFeePayer } from "./feePayer.js";
 import { parseOwnerFields, parseOwnerWitness } from "./owner.js";
 import { parseFunding } from "./funding.js";
 import { OwnerAuthError } from "@magiclamp/protocol-utils";
@@ -125,8 +131,16 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
           ...ownerReq(body),
           opType: reqSmallInt(body, "op_type"),
           opCount: reqBigint(body, "op_count"),
+          engageRef: parseEngageRef(body.engage_ref),
         });
         return { status: 200, body: toBuildBody(out) };
+      }
+      case "/tx/open-thread": {
+        const out = await deps.service.openThread({
+          ...ownerReq(body),
+          fundingRequested: body.funding !== undefined,
+        });
+        return { status: 200, body: toOpenThreadBody(out) };
       }
       case "/tx/create-vault": {
         const kind = body.kind;
@@ -218,6 +232,7 @@ function ownerReq(body: Record<string, unknown>): OwnerRequest {
     owner: parseOwnerFields(body),
     ownerWitness: parseOwnerWitness(body),
     changeAddress: changeAddress as string | undefined,
+    feePayer: parseFeePayer(body),
   };
 }
 

@@ -24,6 +24,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor, emptyWitnessSetCbor, fakeWitnessSetCbor } from "./fixtures/tx.js";
+import { ENGAGE_ADDRESS, threadUtxo } from "./fixtures/engage.js";
 
 const LAMBDA = 7_000_000n;
 const FEE = 178_000n;
@@ -49,8 +50,7 @@ const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
     vault: `${"11".repeat(32)}#0`, shard: `${"22".repeat(32)}#1`, consume: `${"33".repeat(32)}#2`,
   },
   consume: {
-    engage_address: VAULT_ADDRESS,
-    engage_nft_unit: `${"44".repeat(28)}deadbeef`,
+    engage_address: ENGAGE_ADDRESS,
     price_beacon_address: VAULT_ADDRESS,
     price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
   },
@@ -108,7 +108,8 @@ function harness(opts: {
   token?: string;
 } = {}): Harness {
   const chain = new RecordedChainReader(
-    { [VAULT_ADDRESS]: opts.utxos ?? [vaultUtxo()] },
+    // Thread Engage của chủ: `/tx/consume` chọn thread theo chủ lúc chạy (`engage.ts`).
+    { [VAULT_ADDRESS]: opts.utxos ?? [vaultUtxo()], [ENGAGE_ADDRESS]: [threadUtxo({ type: "key", hash: OWNER_PKH }, "7e".repeat(32))] },
     TIP,
     [],
     opts.failWith,

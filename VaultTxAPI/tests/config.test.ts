@@ -43,7 +43,6 @@ function deploymentJson(over: Record<string, unknown> = {}): string {
     },
     consume: {
       engage_address: VAULT_ADDRESS,
-      engage_nft_unit: `${"44".repeat(28)}deadbeef`,
       price_beacon_address: VAULT_ADDRESS,
       price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
     },
@@ -116,6 +115,30 @@ describe("loadConfig — cổng fail-closed", () => {
 describe("parseDeployment — bản chép phải mang nhãn và phải khớp MẠNG", () => {
   it("thiếu `source` ⟹ ném", () => {
     expect(() => parseDeployment(deploymentJson({ source: "   " }), "Preview")).toThrow(/source/);
+  });
+
+  it("CẶP: cấu hình cũ còn `consume.engage_nft_unit` ⟹ ném (không khởi động); bỏ khoá đó ⟹ nạp được", () => {
+    const consume = {
+      engage_address: VAULT_ADDRESS,
+      price_beacon_address: VAULT_ADDRESS,
+      price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
+    };
+    expect(() => parseDeployment(deploymentJson({
+      consume: { ...consume, engage_nft_unit: `${"44".repeat(28)}deadbeef` },
+    }), "Preview")).toThrow(/engage_nft_unit/);
+    const d = parseDeployment(deploymentJson({ consume }), "Preview");
+    // policy thread = script hash consume, SUY từ engage_address.
+    expect(d.consume.engageScriptHash).toMatch(/^[0-9a-f]{56}$/);
+    expect(d.feePayerCollateralLovelace).toBe(3_000_000n);
+  });
+
+  it("`fee_payer_collateral_lovelace`: chuỗi chữ số thì nhận; số JSON / chuỗi lạ ⟹ ném", () => {
+    expect(parseDeployment(deploymentJson({ fee_payer_collateral_lovelace: "2500000" }), "Preview")
+      .feePayerCollateralLovelace).toBe(2_500_000n);
+    expect(() => parseDeployment(deploymentJson({ fee_payer_collateral_lovelace: 2500000 }), "Preview"))
+      .toThrow(/fee_payer_collateral_lovelace/);
+    expect(() => parseDeployment(deploymentJson({ fee_payer_collateral_lovelace: "3e6" }), "Preview"))
+      .toThrow(/fee_payer_collateral_lovelace/);
   });
 
   it("tên tài sản LAMP phải khớp mạng (tLAMP testnet / LAMP mainnet)", () => {

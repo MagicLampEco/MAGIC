@@ -24,7 +24,7 @@ import {
   computeInstantGrant, getUmForInstant, isExpired,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
-import { getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, type Network } from "@magiclamp/protocol-utils";
+import { getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, collateralCompleteOptions, type Network } from "@magiclamp/protocol-utils";
 import { applyOwnerAuth, resolveOwnerAuth, ownerRefOf, type OwnerAuth } from "@magiclamp/protocol-utils";
 import { slotToUnixTime, unixTimeToSlot } from "@lucid-evolution/lucid";
 import {
@@ -75,6 +75,10 @@ export interface InstantGenParams {
   skipOwnerSig?: boolean;
   /** TEST ONLY: send LAMP out of the vault to prove I-ACT-7 rejects it. */
   tamperLampOutOil?: bigint;
+  /** Lượng thế chấp TƯỜNG MINH (lovelace) — đặt khi phí + thế chấp do ví trả phí bên thứ ba
+   *  gánh (mô hình Feecover, trần mất thế chấp 3 tADA). Bỏ trống ⟹ lucid tự đặt (5 ADA).
+   *  Hình dạng: `@magiclamp/protocol-utils` ▸ `collateralCompleteOptions`. */
+  collateralLovelace?: bigint;
 }
 
 export interface InstantGenResult {
@@ -362,7 +366,7 @@ export async function buildInstantGenTx(
       resolveOwnerAuth(ownerRefOf(vaultDatum.owner), params.ownerAuth),
     );
   }
-  const tx = await txBuilder.complete();
+  const tx = await txBuilder.complete(collateralCompleteOptions(params.collateralLovelace));
 
   const summary = buildSummary({
     grant,

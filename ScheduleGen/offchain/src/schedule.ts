@@ -27,6 +27,7 @@ import {
   vaultOutValue,
   assertVaultIdentityKept,
   assertRefScriptsCover,
+  collateralCompleteOptions,
 } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
@@ -118,6 +119,10 @@ export interface CommitParams {
    *  (đo thật trên Preview: 17303 > 16384), nên đây không phải tối ưu — không
    *  có nó thì ScheduleCommit không dựng nổi tx nào. */
   refScriptUtxos? : UTxO[];
+  /** Lượng thế chấp TƯỜNG MINH (lovelace) — đặt khi phí + thế chấp do ví trả phí bên thứ ba
+   *  gánh (mô hình Feecover, trần mất thế chấp 3 tADA). Bỏ trống ⟹ lucid tự đặt (5 ADA).
+   *  Hình dạng: `@magiclamp/protocol-utils` ▸ `collateralCompleteOptions`. */
+  collateralLovelace?: bigint;
 }
 
 export interface CommitResult {
@@ -149,6 +154,8 @@ export interface FireParams {
   tamperLampOutOil?: bigint;
   /** Xem `CommitParams.refScriptUtxos` — ScheduleFire cũng tiêu hai script. */
   refScriptUtxos? : UTxO[];
+  /** Xem `CommitParams.collateralLovelace`. */
+  collateralLovelace?: bigint;
 }
 
 export interface FireResult {
@@ -288,7 +295,7 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
       resolveOwnerAuth(ownerRefOf(vaultDatum.owner), params.ownerAuth),
     );
   }
-  const tx = await txBuilder.complete();
+  const tx = await txBuilder.complete(collateralCompleteOptions(params.collateralLovelace));
 
   // MAGIC mỗi LAMP = rate_locked_q × 10⁻¹² × 10⁶ / 10⁶ … viết thẳng cho khỏi suy:
   //   M_i[nanogic] = λ[oildrop] · r / Q  ⟹  M[MAGIC]/L[LAMP] = r · 10⁶ / (Q · 10⁹) = r/10¹²
@@ -495,7 +502,7 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless
     .validFrom(lowerTime)
     .validTo(upperTime)
-    .complete();
+    .complete(collateralCompleteOptions(params.collateralLovelace));
 
   const summary = [
     `═══ ScheduleGen Fire ═══`,

@@ -22,6 +22,17 @@ use cardano/transaction.{Transaction, placeholder}
 //
 // Rủi ro do NGƯỜI DÙNG chọn, không do validator này: script chủ phải tự ràng buộc nó phê
 // duyệt cái gì. Một stake-script gật vô điều kiện thì ai cũng rút 0 được ⟹ ai cũng là chủ.
+//
+// Lượng rút: validator này không ép, nhưng LEDGER ép — mục rút phải bằng ĐÚNG số dư thưởng
+// hiện có của credential. Chưa uỷ thác pool thì số dư là 0 ("withdraw-zero"); đã uỷ thác thì
+// số dư có thể > 0, và bộ dựng tx gõ cứng 0 sẽ bị ledger từ chối. Bộ dựng phải TRA số dư.
+//
+// h phải ĐÃ ĐĂNG KÝ làm stake credential. Chưa đăng ký, hoặc bị huỷ đăng ký, thì không mục rút
+// nào hợp lệ ⟹ mọi nhánh cần owner đóng băng tới khi đăng ký lại.
+//
+// Chủ `Script(h)` KẾ THỪA vòng đời của h: script h từ chối (ví dụ DID rời trạng thái hoạt động,
+// hay h đổi vì script gốc bị dựng lại với tham số khác) ⟹ mọi nhánh cần owner đóng băng, và
+// datum KHÔNG có nhánh đổi chủ. Nhánh `validate_withdraw_lamp` / `Draw` nằm trong số đó.
 // Và h phải được ĐĂNG KÝ làm stake credential trên chuỗi, không thì không mục rút nào dựng
 // được ⟹ thread không đóng/gắn DID được nữa. Cả hai là việc của bên dựng thread ngoài chuỗi.
 //

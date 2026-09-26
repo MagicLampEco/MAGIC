@@ -892,6 +892,11 @@ CARP asset name : 30cb6a6b6a1c9746bf9eb081d914d96ede4c4c13e661404678a933a6
 >
 > Việc phải làm khi có thư kế tiếp của bên phát hành: deploy lại cả cụm (mục 4 của **CÒN THIẾU**).
 > Đừng vá bằng cách sửa giá trị trong sổ — sửa sổ không dời được UTxO.
+>
+> **Lý do mồ côi thứ hai, độc lập với đời CARP (2026-09-26):** mã của cả hai script đã đổi
+> (chữ ký owner khi mở dòng hạn-mức mới; platform ký genesis quỹ; `PaidFundDatum` thêm
+> `beneficiary` + `beneficiary_datum`). Quỹ 9 trường ở dưới không đọc được bằng lược đồ mới —
+> deploy lại bằng mã cũ là dựng lại đúng lỗ vừa vá. Chi tiết + hash hai phía: `DevStatus.md` ▸ Nợ #85.
 
 | thứ | giá trị |
 |---|---|

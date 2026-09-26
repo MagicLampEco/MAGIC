@@ -313,8 +313,14 @@ PaidFundDatum {
   provider_claimed   : Int,         // carpdrop cộng dồn đã trả provider
   buffer_bps         : Int,         // ≥ 1500, bất biến
   last_updated_epoch : Int,
+  beneficiary        : Address,     // đích nhận CARP của FundClaim, ghim genesis, bất biến
+  beneficiary_datum  : Option<Data>, // None ⟹ output NoDatum · Some(d) ⟹ InlineDatum(d)
 }
 ```
+
+Hai trường cuối thêm 2026-09-26 (L1''). THÊM Ở CUỐI giữ chỉ số trường cũ nhưng **không** giữ khả
+năng đọc UTxO quỹ 9 trường đời trước (`BOUNDARIES.md` §2) — cụm Preprod đời trước mồ côi
+(`DevStatus.md` ▸ Nợ #71 (f), Nợ #85).
 
 ### 3.5 Redeemer
 
@@ -357,16 +363,16 @@ PaidFundRedeemer                             constr
 | **C-PP-3** sổ quỹ khớp value | mọi đường ra/vào quỹ đều ép `carp_locked(out) == CARP thật trong output quỹ`; `carp_locked == credit_issued − provider_claimed` | quỹ, mọi nhánh |
 | **C-PP-4** một chiều, không hoàn (F2) | không redeemer nào trả CARP về người khoá; hạn-mức không đổi ngược thành CARP; lối ra CARP **duy nhất** là `FundClaim` cho provider | cấu trúc — không tồn tại nhánh nào khác |
 | **C-PP-5** cliff per-epoch | mọi batch sinh ra có `created_epoch == epoch hiện tại`, `decay_window == 1`; `BurnBatch` **từ chối** batch có `created_epoch ≠ epoch hiện tại`; batch chết chỉ có thể bị dọn | vault `validate_draw`, `validate_burn_batch`, `validate_prune` |
-| **C-PP-6** trần đòi của provider (F2) | `provider_claimed' ≤ ⌊magic_settled / par_scale⌋` **và** `carp_locked' ≥ outstanding' + ⌊outstanding' × buffer_bps / 10000⌋`, với `outstanding' = credit_issued − ⌊magic_settled/par_scale⌋` | quỹ `validate_claim` |
+| **C-PP-6** trần đòi của provider (F2) + đích | `provider_claimed' ≤ ⌊magic_settled / par_scale⌋` **và** `carp_locked' ≥ outstanding' + ⌊outstanding' × buffer_bps / 10000⌋`, với `outstanding' = credit_issued − ⌊magic_settled/par_scale⌋`. **Đích (2026-09-26):** không input nào tại `beneficiary`; **đúng một** output tại `beneficiary` (so địa chỉ ĐẦY ĐỦ); CARP ở output đó == `amount`; datum output == `NoDatum` khi `beneficiary_datum = None`, == `InlineDatum(d)` khi `Some(d)`. `beneficiary`/`beneficiary_datum` bất biến ở mọi nhánh spend quỹ | quỹ `validate_fund_claim`; bất biến ở `fund_common_checks` + khối delta quỹ của `validate_lock` |
 | **C-PP-7** chỉ quyết toán MAGIC TIÊU THẬT | `FundSettle` chỉ cộng phần `current_amount` giảm trên batch có `contract_id == fund_id`, `source == 3`, **và** `created_epoch == epoch hiện tại`; và bắt buộc vault được tiêu bằng redeemer constr 2 (`BurnBatch`). MAGIC hết hạn hoặc bị dọn **không bao giờ** thành `magic_settled` | quỹ `validate_settle` (INV-MAGIC-CITIZEN) |
 | **C-PP-8** DID ghi MỘT LẦN rồi bất biến | genesis ép `did_commit == #""`; `SetDidCommit` là nhánh **GHI duy nhất** và chỉ chạy được khi giá trị hiện tại còn rỗng, giá trị mới khác rỗng và dài đúng 32 byte; năm redeemer còn lại ép `did_commit` giống hệt input↔output. Ràng buộc độ dài đặt ở **chỗ GHI**, cố ý KHÔNG đặt ở nhánh bảo toàn — đặt ở đó là biến mọi vault đã nằm trên chuỗi với did sai khuôn thành bất khả tiêu | vault: `validate_mint_vault_id` + `validate_set_did_commit` + năm nhánh còn lại |
-| **C-PP-9** phân quyền | Lock: `platform` HOẶC `owner` ký · Draw: `owner` HOẶC `personal_delegate` ký · BurnBatch: `owner` HOẶC `personal_delegate` · Prune: **không cần chữ ký** · SetDelegate: **chỉ** `owner` · SetDidCommit: **chỉ** `owner` (uỷ quyền TRẢ PHÍ không phải uỷ quyền KHAI DANH TÍNH, và vì cổng chỉ cho ghi một lần nên một delegate ghi trước là nạn nhân mất luôn đường gắn DID thật) · FundClaim: `platform` | vault + quỹ |
+| **C-PP-9** phân quyền | Lock **mở dòng mới** (vault chưa có dòng hạn-mức cho `fund_id` — cùng vị từ `has_credit_line` mà `add_credit` dùng): **chỉ** `owner` ký (siết 2026-09-26 — genesis quỹ ai cũng lập được, nên "platform nào cũng được" để người lạ lấp 20 chỗ `MAX_PREPAID_CREDITS` vĩnh viễn và tranh UTxO vault vô hạn) · Lock **nạp thêm** vào dòng đã có: `platform` HOẶC `owner` (luồng app khoá hộ giữ nguyên) · Draw: **chỉ** `owner` · BurnBatch: **chỉ** `owner` (vế `personal_delegate` chết 2026-09-16, Nợ #14) · Prune: **không cần chữ ký** · SetDelegate: **chỉ** `owner`, và chỉ xoá được · SetDidCommit: **chỉ** `owner` (uỷ quyền TRẢ PHÍ không phải uỷ quyền KHAI DANH TÍNH, và vì cổng chỉ cho ghi một lần nên một delegate ghi trước là nạn nhân mất luôn đường gắn DID thật) · FundClaim: `platform` · genesis quỹ: `platform` (2026-09-26) | vault + quỹ |
 | **C-PP-10** chống thoả-mãn-kép | đúng 1 vault input tại địa chỉ vault; đúng 1 output vault; đúng 1 input và đúng 1 output mang NFT quỹ; không đúc/đốt token của policy NFT quỹ (= script hash `paid_fund`) trong mọi giao dịch vận hành | vault + quỹ |
 | **C-PP-11** epoch không nhập nhằng | cả hai biên `validity_range` là `Finite` và cùng rơi vào một epoch (`e_lo == e_hi`) | `get_epoch` (SEC-02, giống ScheduleGen) |
 | **C-PP-12** trần cứng | `MAX_BATCHES_PER_VAULT = 32`, `MAX_PREPAID_CREDITS = 20`, `MIN_LOCK_CARPDROP = 10⁹` (1 CARP), `MIN_DRAW_CARPDROP = 10⁶` | vault |
 | **C-PP-13** không đúc token | MAGIC không phải token; không nhánh nào của module này gọi `tx.mint` cho CARP; token quỹ chỉ đúc đúng một lần ở handler `mint` của `paid_fund`, và số lượng âm bị chặn ở đó (không có đường ĐỐT) | vault + quỹ |
 | **C-PP-14** không chạm backing chung | validator PrepaidGen không có tham số LAMP, không đọc `br`/GreenBack/oracle | cấu trúc — kiểm bằng đọc chữ ký tham số |
-| **C-PP-15** genesis quỹ sạch | NFT quỹ chỉ đúc được khi output mang nó **nằm ở đúng địa chỉ quỹ** (`payment_credential == Script(policy_id)`, `stake_credential == None`, không `reference_script`, chỉ MỘT tên dưới policy quỹ) và có `PaidFundDatum` với `credit_issued = magic_settled = provider_claimed = carp_locked = last_updated_epoch = 0`, `fund_id == asset name`, `buffer_bps ≥ 1500`, `platform`/`vault_hash` dài đúng 28 byte | `paid_fund.mint` ▸ `validate_mint_fund_nft` |
+| **C-PP-15** genesis quỹ sạch | NFT quỹ chỉ đúc được khi output mang nó **nằm ở đúng địa chỉ quỹ** (`payment_credential == Script(policy_id)`, `stake_credential == None`, không `reference_script`, chỉ MỘT tên dưới policy quỹ) và có `PaidFundDatum` với `credit_issued = magic_settled = provider_claimed = carp_locked = last_updated_epoch = 0`, `fund_id == asset name`, `buffer_bps ≥ 1500`, `platform`/`vault_hash` dài đúng 28 byte. **Từ 2026-09-26:** `platform` **ký** giao dịch genesis (chặn quỹ mạo danh platform thật); `beneficiary.stake_credential == None`; hash của `beneficiary.payment_credential` dài 28 byte; `beneficiary.payment_credential ∉ {Script(policy_id), Script(vault_hash)}`; `Script(_) ⟹ beneficiary_datum = Some(_)`. Ràng buộc datum là CẦN, chưa ĐỦ: khả năng tiêu lại của cặp `(beneficiary, beneficiary_datum)` phải thử ngoài chuỗi (`DevStatus.md` ▸ Nợ #85) | `paid_fund.mint` ▸ `validate_mint_fund_nft` |
 
 ---
 
@@ -376,13 +382,14 @@ PaidFundRedeemer                             constr
 Input: một UTxO bất kỳ của platform (làm nguồn tên duy nhất) → mint 1 NFT tên
 `blake2b_256(tx_id ∥ be8(output_index))` → output **tại chính địa chỉ `paid_fund`** (đây là mệnh
 đề mà bản tách-script không viết được — xem §2.1) mang NFT + `PaidFundDatum` toàn số 0,
-`vault_hash` = hash của `prepaid_vault` đã deploy, `buffer_bps ≥ 1500`.
+`vault_hash` = hash của `prepaid_vault` đã deploy, `buffer_bps ≥ 1500`, và cặp đích
+`beneficiary` + `beneficiary_datum` (C-PP-15). `signers: platform` — bắt buộc từ 2026-09-26.
 
 ### 5.2 `PrepaidLock` — 2 script co-spend
 ```
 inputs : vault UTxO (constr 0) · quỹ UTxO (constr 0) · UTxO CARP của người khoá
 outputs: vault' (hạn-mức +amount) · quỹ' (carp_locked +amount, CARP thật +amount)
-signers: platform HOẶC owner
+signers: MỞ DÒNG MỚI → owner · NẠP THÊM vào dòng đã có → platform HOẶC owner   (2026-09-26)
 ```
 Vault ép **toàn bộ** delta hai bên; quỹ ép "có vault thật cùng tiêu + trường bất biến không đổi +
 sổ khớp value".
@@ -391,7 +398,7 @@ sổ khớp value".
 ```
 inputs : vault UTxO (constr 1)
 outputs: vault' (remaining −amount; thêm 1 MagicBatch amount×1000 nanogic, epoch hiện tại)
-signers: owner HOẶC personal_delegate
+signers: owner   (vế personal_delegate chết 2026-09-16, Nợ #14)
 ```
 Quỹ **không** tham gia → không tranh chấp UTxO quỹ ở đường nóng.
 
@@ -410,11 +417,12 @@ Bỏ mọi batch `created_epoch < epoch hiện tại`, cộng `⌊current_amount
 
 ### 5.6 `FundClaim`
 ```
-inputs : quỹ UTxO (constr 2)
-outputs: quỹ' (carp_locked −amount) + CARP tới ví provider
+inputs : quỹ UTxO (constr 2) · UTxO trả phí — KHÔNG ở địa chỉ `beneficiary`
+outputs: quỹ' (carp_locked −amount) · ĐÚNG MỘT output tại `beneficiary`: `amount` CARP + datum ghim
 signers: platform
 ```
-Trần: C-PP-6.
+Trần + đích: C-PP-6. Phí và tiền thừa đi từ một địa chỉ khác `beneficiary` (vd địa chỉ base của
+cùng khoá — nó khác địa chỉ enterprise của bên hưởng, vì claim so địa chỉ đầy đủ).
 
 ---
 
@@ -436,7 +444,7 @@ Trần: C-PP-6.
 |---|---|---|---|---|
 | nâng cấp validator | không ai (không có `Migrate`) | — | — | không tồn tại bề mặt tấn công |
 | tạm dừng | **không ai** — không có nút dừng | — | — | không tồn tại |
-| giữ khoá ký | `platform` (1-of-1) của từng quỹ | 1 chữ ký | có, nhưng chỉ bằng cách mở quỹ mới | khoá platform bị chiếm → kẻ chiếm chạy `FundClaim` tới trần C-PP-6. **Trần đó chặn được bao nhiêu:** không rút quá phần MAGIC người dùng đã **tiêu thật**, tức phần dịch vụ platform đã nợ và đã giao. Hạn-mức chưa tiêu của người dùng **không** rút được. Thiệt hại tối đa = doanh thu đã kiếm được của chính platform |
+| giữ khoá ký | `platform` (1-of-1) của từng quỹ | 1 chữ ký | có, nhưng chỉ bằng cách mở quỹ mới | khoá platform bị chiếm → kẻ chiếm chạy `FundClaim` tới trần C-PP-6 — nhưng từ 2026-09-26 CARP chỉ tới được **`beneficiary` đã ghim** ở genesis, không tới ví kẻ chiếm; phần mất còn lại là chọn thời điểm claim. Kẻ chiếm khoá platform vẫn tranh được UTxO vault của những người dùng **đã tự mở dòng** cho quỹ đó (nạp thêm nhận chữ ký platform). **Trần đó chặn được bao nhiêu:** không rút quá phần MAGIC người dùng đã **tiêu thật**, tức phần dịch vụ platform đã nợ và đã giao. Hạn-mức chưa tiêu của người dùng **không** rút được. Thiệt hại tối đa = doanh thu đã kiếm được của chính platform |
 | đổi tham số | không ai (`buffer_bps` bất biến) | — | — | không tồn tại |
 | rút quỹ | `platform`, chặn cứng bởi C-PP-6 | 1 chữ ký + trần on-chain | — | như trên |
 | đổi ánh xạ nhãn→hash | không ai — `fund_id` = tên NFT one-shot, `vault_hash` ghim genesis, cả hai bất biến | — | — | không tồn tại |

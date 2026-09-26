@@ -2,6 +2,7 @@
 // Field order == Plutus Data encoding order. Đổi thứ tự một bên là hỏng giải mã
 // bên kia (§11) — twin ở offchain/src/types.ts.
 
+use cardano/address.{Address}
 use cardano/transaction.{OutputReference}
 
 pub type Natural = Int
@@ -68,6 +69,17 @@ pub type PaidFundDatum {
   provider_claimed   : Natural,     // carpdrop cộng dồn đã trả provider
   buffer_bps         : Natural,     // ≥ 1500, bất biến
   last_updated_epoch : Natural,
+  // ── Đích nhận CARP của FundClaim (thêm 2026-09-26, L1'') ────
+  // Ghim tại genesis, bất biến trọn đời quỹ. Trước bản này đích do người dựng tx
+  // FundClaim tự chọn, nên chiếm khoá platform = rút sạch về ví mình; nay kẻ
+  // chiếm khoá chỉ đẩy được CARP về ĐÚNG bên hưởng đã ghim.
+  //
+  // THÊM Ở CUỐI giữ chỉ số các trường cũ, KHÔNG giữ khả năng đọc UTxO quỹ đã tạo
+  // bằng lược đồ 9 trường (BOUNDARIES.md §2 — Aiken nghiêm về số trường cả hai
+  // chiều). Chấp nhận ở đây vì cụm Preprod đời trước đã mồ côi (DevStatus.md).
+  beneficiary        : Address,     // genesis ép: không stake, ≠ script quỹ/vault
+  beneficiary_datum  : Option<Data>, // None ⟹ output NoDatum; Some(d) ⟹ InlineDatum(d)
+                                     // Script(_) ⟹ BẮT BUỘC Some (genesis ép)
 }
 
 // ── Vault redeemer ────────────────────────────────────────────

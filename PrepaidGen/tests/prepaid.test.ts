@@ -1,6 +1,7 @@
 // tests/prepaid.test.ts — PrepaidGen: math + máy trạng thái + nhánh tấn công
 // Chạy: cd offchain && npx vitest run ../tests/prepaid.test.ts
 
+import { Constr, Data } from "@lucid-evolution/lucid";
 import { describe, expect, it } from "vitest";
 import {
   BATCH_SOURCE_PREPAID,
@@ -30,7 +31,12 @@ import {
 } from "../offchain/src/math.js";
 import {
   PrepaidRuleError,
+  assertClaimDestination,
+  assertFundGenesis,
   assertFundInvariant,
+  claimBeneficiaryOutput,
+  hasCreditLine,
+  lockRequiredSigner,
   burnBatches,
   creditsAfterLock,
   drawMagic,
@@ -42,10 +48,13 @@ import {
   pruneExpired,
   settleDelta,
 } from "../offchain/src/prepaid.js";
-import type {
-  MagicBatch,
-  PaidFundDatum,
-  PrepaidVaultDatum,
+import {
+  AddressSchema,
+  PaidFundDatumSchema,
+  type MagicBatch,
+  type PaidFundDatum,
+  type PlutusAddress,
+  type PrepaidVaultDatum,
 } from "../offchain/src/types.js";
 import {
   TV_PP_01,
@@ -64,6 +73,17 @@ const OTHER_FUND = "bb".repeat(32);
 const OWNER = "00".repeat(28);
 const PLATFORM = "77".repeat(28);
 const VAULT_HASH = "11".repeat(28);
+const FUND_HASH = "44".repeat(28);
+const STRANGER = "88".repeat(28);
+const BEN_PKH = "be".repeat(28);
+const BEN_SCRIPT = "5c".repeat(28);
+
+function keyAddr(hash: string): PlutusAddress {
+  return { payment_credential: { VerificationKey: [hash] }, stake_credential: null };
+}
+function scriptAddr(hash: string): PlutusAddress {
+  return { payment_credential: { Script: [hash] }, stake_credential: null };
+}
 const OWN_REF = { txHash: "33".repeat(32), outputIndex: 0n };
 const EPOCH = 100n;
 
@@ -125,6 +145,8 @@ function fund(
     provider_claimed: providerClaimed,
     buffer_bps: bufferBps,
     last_updated_epoch: EPOCH,
+    beneficiary: keyAddr(BEN_PKH),
+    beneficiary_datum: null,
   };
 }
 
@@ -625,5 +647,186 @@ describe("cấu hình mạng đã verify", () => {
 
   it("burn_batch_constr = 2, đồng nhất với InstantGen/ScheduleGen (§11)", () => {
     expect(BURN_BATCH_CONSTR).toBe(2);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// C-PP-9 siết 2026-09-26 — chữ ký của lượt PrepaidLock
+// ══════════════════════════════════════════════════════════════
+
+describe("C-PP-9 — mở dòng mới đòi owner, nạp thêm nhận platform", () => {
+  const f = fund(0n, 0n);
+
+  it("vị từ dòng-mới là THEO QUỸ, không phải 'vault rỗng'", () => {
+    const v = vault([{ fund_id: OTHER_FUND, remaining: 5n }]);
+    expect(hasCreditLine(v.prepaid_credits, FUND_ID)).toBe(false);
+    expect(hasCreditLine(v.prepaid_credits, OTHER_FUND)).toBe(true);
+  });
+
+  it("mở dòng mới: owner ký → được", () => {
+    expect(lockRequiredSigner(vault(), f, FUND_ID, "owner")).toBe(OWNER);
+  });
+
+  it("ÂM — mở dòng mới: platform ký → NÉM (cặp của bài trên)", () => {
+    expect(() => lockRequiredSigner(vault(), f, FUND_ID, "platform")).toThrow(/C-PP-9/);
+  });
+
+  it("ÂM — vault có dòng của quỹ KHÁC vẫn là mở dòng mới cho quỹ này", () => {
+    const v = vault([{ fund_id: OTHER_FUND, remaining: 5n }]);
+    expect(() => lockRequiredSigner(v, f, FUND_ID, "platform")).toThrow(/C-PP-9/);
+  });
+
+  it("nạp thêm vào dòng đã có: platform ký → được (luồng app khoá hộ)", () => {
+    const v = vault([{ fund_id: FUND_ID, remaining: 5n }]);
+    expect(lockRequiredSigner(v, f, FUND_ID, "platform")).toBe(PLATFORM);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// L1'' — đích nhận CARP của FundClaim
+// ══════════════════════════════════════════════════════════════
+
+describe("Address — mã hoá khớp `cardano/address.{Address}` của Aiken", () => {
+  it("enterprise khoá = Constr0[Constr0[pkh], Constr1[]]", () => {
+    const manual = Data.to(
+      new Constr(0, [new Constr(0, [BEN_PKH]), new Constr(1, [])]),
+    );
+    expect(Data.to(keyAddr(BEN_PKH), AddressSchema as unknown as PlutusAddress)).toBe(manual);
+  });
+
+  it("enterprise script = Constr0[Constr1[hash], Constr1[]]", () => {
+    const manual = Data.to(
+      new Constr(0, [new Constr(1, [BEN_SCRIPT]), new Constr(1, [])]),
+    );
+    expect(Data.to(scriptAddr(BEN_SCRIPT), AddressSchema as unknown as PlutusAddress)).toBe(manual);
+  });
+
+  it("PaidFundDatum 11 trường, hai trường đích ở CUỐI", () => {
+    const f = fund(0n, 0n);
+    const d = Data.from(Data.to(f, PaidFundDatumSchema as unknown as PaidFundDatum)) as Constr<unknown>;
+    expect(d.fields).toHaveLength(11);
+    // beneficiary_datum = None ⟹ Constr 1 []
+    expect((d.fields[10] as Constr<unknown>).index).toBe(1);
+  });
+});
+
+describe("genesis quỹ — gương `validate_mint_fund_nft` (L1'')", () => {
+  const clean = (over: Partial<PaidFundDatum> = {}): PaidFundDatum => ({
+    ...fund(0n, 0n),
+    ...over,
+  });
+
+  it("sạch → platform phải ký", () => {
+    expect(assertFundGenesis(clean(), FUND_HASH)).toEqual([PLATFORM]);
+  });
+
+  it("script beneficiary CÓ datum → được", () => {
+    expect(() =>
+      assertFundGenesis(
+        clean({ beneficiary: scriptAddr(BEN_SCRIPT), beneficiary_datum: "0b0b" }),
+        FUND_HASH,
+      ),
+    ).not.toThrow();
+  });
+
+  it("ÂM — script beneficiary KHÔNG datum", () => {
+    expect(() =>
+      assertFundGenesis(clean({ beneficiary: scriptAddr(BEN_SCRIPT) }), FUND_HASH),
+    ).toThrow(/beneficiary_datum/);
+  });
+
+  it("ÂM — beneficiary mang stake credential", () => {
+    const withStake: PlutusAddress = {
+      ...keyAddr(BEN_PKH),
+      stake_credential: { Inline: [{ VerificationKey: [STRANGER] }] },
+    };
+    expect(() => assertFundGenesis(clean({ beneficiary: withStake }), FUND_HASH)).toThrow(
+      /stake/,
+    );
+  });
+
+  it("ÂM — beneficiary trùng script quỹ", () => {
+    expect(() =>
+      assertFundGenesis(
+        clean({ beneficiary: scriptAddr(FUND_HASH), beneficiary_datum: "0b0b" }),
+        FUND_HASH,
+      ),
+    ).toThrow(/script quỹ/);
+  });
+
+  it("ÂM — beneficiary trùng script vault", () => {
+    expect(() =>
+      assertFundGenesis(
+        clean({ beneficiary: scriptAddr(VAULT_HASH), beneficiary_datum: "0b0b" }),
+        FUND_HASH,
+      ),
+    ).toThrow(/script vault/);
+  });
+
+  it("ÂM — hash beneficiary sai độ dài", () => {
+    expect(() => assertFundGenesis(clean({ beneficiary: keyAddr("bebe") }), FUND_HASH)).toThrow(
+      /28 byte/,
+    );
+  });
+});
+
+describe("FundClaim — gương cổng đích (L1'')", () => {
+  const f = fund(1_000_000_000n, 1_000_000_000n, 1_000_000_000n);
+  const AMT = 1_000_000_000n;
+  const fundAddr = scriptAddr(FUND_HASH);
+  const good = () => {
+    const p = claimBeneficiaryOutput(f, AMT);
+    return { address: p.address, carp: p.carp, inlineDatumCbor: p.inlineDatumCbor };
+  };
+
+  it("builder dựng output đúng hình dạng → cổng nhận", () => {
+    expect(claimBeneficiaryOutput(f, AMT).paymentCredential).toEqual({
+      kind: "Key",
+      hash: BEN_PKH,
+    });
+    expect(() =>
+      assertClaimDestination(f, AMT, [fundAddr], [{ address: fundAddr, carp: 0n, inlineDatumCbor: null }, good()]),
+    ).not.toThrow();
+  });
+
+  it("ÂM — input tại beneficiary", () => {
+    expect(() =>
+      assertClaimDestination(f, AMT, [fundAddr, keyAddr(BEN_PKH)], [good()]),
+    ).toThrow(/input tại beneficiary/);
+  });
+
+  it("ÂM — hai output tại beneficiary", () => {
+    expect(() =>
+      assertClaimDestination(f, AMT, [fundAddr], [good(), { ...good(), carp: 0n }]),
+    ).toThrow(/ĐÚNG MỘT/);
+  });
+
+  it("ÂM — CARP ≠ amount", () => {
+    expect(() =>
+      assertClaimDestination(f, AMT, [fundAddr], [{ ...good(), carp: AMT - 1n }]),
+    ).toThrow(/≠ amount/);
+  });
+
+  it("ÂM — datum sai", () => {
+    expect(() =>
+      assertClaimDestination(f, AMT, [fundAddr], [{ ...good(), inlineDatumCbor: Data.to("0b0b") }]),
+    ).toThrow(/datum/);
+  });
+
+  it("ÂM — output về ví người lạ", () => {
+    expect(() =>
+      assertClaimDestination(f, AMT, [fundAddr], [{ ...good(), address: keyAddr(STRANGER) }]),
+    ).toThrow(/ĐÚNG MỘT/);
+  });
+
+  it("script beneficiary: output mang ĐÚNG inline datum ghim", () => {
+    const fs = { ...f, beneficiary: scriptAddr(BEN_SCRIPT), beneficiary_datum: "0b0b" };
+    const p = claimBeneficiaryOutput(fs, AMT);
+    expect(p.inlineDatumCbor).toBe(Data.to("0b0b"));
+    expect(() =>
+      assertClaimDestination(fs, AMT, [fundAddr], [
+        { address: p.address, carp: AMT, inlineDatumCbor: null },
+      ]),
+    ).toThrow(/datum/);
   });
 });

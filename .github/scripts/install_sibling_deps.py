@@ -19,14 +19,26 @@ giữa 20 lỗi giả thì không ai nhìn thấy, và cổng mất tác dụng 
 CÁCH LÀM
 --------
 Quét mọi import tương đối trong gói, giữ lại những cái trỏ RA NGOÀI gói, tìm gói npm
-gần nhất chứa đích, rồi `npm install` ở đó. Không khoá cứng tên gói nào — thêm một
-import xuyên gói mới thì bước này tự thấy.
+gần nhất chứa đích. Không khoá cứng tên gói nào — thêm một import xuyên gói mới thì
+bước này tự thấy.
+
+Rồi lấy BAO ĐÓNG, theo hai cạnh:
+  - import tương đối của chính gói anh em (anh em của anh em);
+  - `file:` dependency của gói anh em. tsc đi qua `file:` dep như đi qua một thư mục
+    thường (npm cài nó bằng symlink), nên nguồn của gói đích cũng được biên dịch, và
+    `node_modules` của gói đích cũng phải có.
+Cài theo thứ tự tôpô trên cạnh `file:` — gói được phụ thuộc cài trước — vì npm chạy
+`prepare` của một `file:` dep ngay trong thư mục của nó (xem bước cài tôpô trong
+`pr-verify.yml`).
+
+Ca sinh ra bao đóng (2026-09-26): `scripts/farmers` import `VaultReadAPI/src`, mà
+`VaultReadAPI` phụ thuộc `file:../MagicSDK`. Bản không đệ quy cài `VaultReadAPI` rồi
+dừng; tsc đi tiếp vào `MagicSDK/src` và ra đúng đám lỗi giả nói ở trên.
 
 GIỚI HẠN, nói rõ để không ai tưởng nó làm nhiều hơn thực tế:
   - Chỉ đọc import TĨNH dạng `from "..."`. Không thấy `import()` động, không thấy
     `require()`, không thấy đường dẫn ghép từ biến.
-  - Không đệ quy: nếu gói anh em lại import tương đối sang gói thứ ba thì gói thứ ba
-    không được cài. Chưa cần, và thêm đệ quy khi chưa có ca thật là đoán trước.
+  - Gói đang kiểm KHÔNG được cài lại ở đây — bước trước của job đã cài nó.
 """
 import json
 import os
@@ -51,20 +63,10 @@ def owning_package(root: str, path: str):
     return None
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        print("dùng: install_sibling_deps.py <đường-dẫn-gói>", file=sys.stderr)
-        return 2
-
-    root = os.getcwd()
-    pkg = os.path.normpath(sys.argv[1])
+def relative_siblings(root: str, pkg: str):
+    """Các gói khác mà mã của `pkg` import qua đường dẫn tương đối."""
     pkg_abs = os.path.join(root, pkg)
-
-    if not os.path.isfile(os.path.join(pkg_abs, "package.json")):
-        print(f"{pkg}: không có package.json — bỏ qua.")
-        return 0
-
-    siblings = set()
+    found = set()
     for dirpath, dirnames, filenames in os.walk(pkg_abs):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for fn in filenames:
@@ -80,14 +82,65 @@ def main() -> int:
                     continue  # vẫn trong gói — không phải anh em
                 owner = owning_package(root, target)
                 if owner and owner != pkg:
-                    siblings.add(owner)
+                    found.add(os.path.normpath(owner))
+    return found
+
+
+def file_deps(root: str, pkg: str):
+    """Các gói mà `pkg` khai là `file:` dependency (dependencies + devDependencies)."""
+    m = json.load(open(os.path.join(root, pkg, "package.json"), encoding="utf8"))
+    out = []
+    for spec in {**m.get("dependencies", {}), **m.get("devDependencies", {})}.values():
+        if isinstance(spec, str) and spec.startswith("file:"):
+            d = os.path.normpath(os.path.join(pkg, spec[5:]))
+            if os.path.isfile(os.path.join(root, d, "package.json")):
+                out.append(d)
+    return out
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("dùng: install_sibling_deps.py <đường-dẫn-gói>", file=sys.stderr)
+        return 2
+
+    root = os.getcwd()
+    pkg = os.path.normpath(sys.argv[1])
+
+    if not os.path.isfile(os.path.join(root, pkg, "package.json")):
+        print(f"{pkg}: không có package.json — bỏ qua.")
+        return 0
+
+    # Bao đóng theo import tương đối — gói anh em, anh em của anh em, …
+    siblings, queue = set(), [pkg]
+    while queue:
+        cur = queue.pop()
+        for s in relative_siblings(root, cur):
+            if s != pkg and s not in siblings:
+                siblings.add(s)
+                queue.append(s)
 
     if not siblings:
         print(f"{pkg}: không import tương đối ra ngoài gói — không phải cài gì thêm.")
         return 0
 
-    for d in sorted(siblings):
-        print(f"::group::npm install {d} (gói anh em của {pkg})")
+    # Thứ tự tôpô theo cạnh `file:`, hậu thứ tự: gói được phụ thuộc đứng trước.
+    order, seen = [], set()
+
+    def walk(d: str):
+        if d in seen:
+            return
+        seen.add(d)
+        for dep in file_deps(root, d):
+            walk(dep)
+        if d != pkg:
+            order.append(d)
+
+    for s in sorted(siblings):
+        walk(s)
+
+    print(f"{pkg}: gói anh em {sorted(siblings)} → cài theo thứ tự {order}")
+    for d in order:
+        print(f"::group::npm install {d} (bao đóng gói anh em của {pkg})")
         subprocess.run(
             ["npm", "install", "--no-audit", "--no-fund"],
             cwd=os.path.join(root, d),

@@ -133,8 +133,10 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
  * `d5db3b6`. Nguồn chân lý là chuỗi; kho LAMP khai mọi policy Preprod trước đó là cụm
  * CŨ — không đúc thêm, không phát thêm.
  *
- * Hệ quả cho kho này: `03_deploy_shards.ts`, `05`, `07` apply-param theo `lampPid`, còn
- * `consume` apply-param theo hash vault nên đổi theo — cụm phải dựng lại theo đời mới. Sổ trạng thái Preprod nào còn
+ * Hệ quả cho kho này: mọi bước đọc `POLICY_IDS.lamp` apply-param hoặc lọc tài sản theo
+ * `lampPid` — đừng kê tay, đếm bằng `git grep -n 'POLICY_IDS.lamp' -- scripts/` (gồm cả
+ * bước công bố ref-script 06, bước đắt nhất nếu sai). `consume` apply-param theo hash vault
+ * nên đổi theo — cụm phải dựng lại theo đời mới. Sổ trạng thái Preprod nào còn
  * ghi `8169b76c…` sẽ bị cổng này chặn ở lần đọc `POLICY_IDS.lamp` đầu tiên — đó là chủ ý:
  * hỏng THẤY ĐƯỢC, sửa bằng một dòng trong sổ trạng thái.
  *
@@ -166,7 +168,8 @@ function requireLampPolicyId(): string {
       `  ${doi}\n` +
       `  · Đây KHÔNG phải token nhái — đừng đi tìm một kẻ giả mạo. Nó là LAMP thật ` +
       `của một đời đã chết, nên mọi phép so hình dạng đều cho nó đi qua.\n` +
-      `  · Hại cụ thể nếu cứ chạy: \`03_deploy_shards.ts\` và \`07_create_schedule_vault.ts\` ` +
+      `  · Hại cụ thể nếu cứ chạy: mọi bước đọc \`POLICY_IDS.lamp\` (shard 03, vault 05/07, ` +
+      `ref-script 06, keeper — đếm đủ bằng \`git grep -n 'POLICY_IDS.lamp' -- scripts/\`) ` +
       `đều apply-param theo policy này ⟹ 16 shard one-shot và vault sinh ra ở một ` +
       `script hash không ai dùng nữa, và mất thêm 2 epoch chờ để làm lại.\n` +
       `  · Lấy đời ACTIVE theo mạng từ kho LAMP (Genesis ▸ \`activeLampPolicyId\`).`,

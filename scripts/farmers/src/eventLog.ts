@@ -30,6 +30,8 @@ export interface StepEvent {
   detail?: string;
   txHash: string | null;
   fee: string | null;
+  /** Dữ kiện để lại cho bước sau của cùng nông dân (runner.ts ▸ `Artifacts`); vắng = không có. */
+  artifacts?: Record<string, string>;
   at: string;
 }
 

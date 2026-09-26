@@ -22,6 +22,18 @@ export function ownerOf(w: OwnerSource): VaultOwner {
   return w.paymentKeyHash;
 }
 
+/**
+ * Trường `owner` dạng Credential nhánh khoá — `VerificationKey(pkh)` = Constr 0 [bytes], CBOR
+ * `d8799f581c<pkh>ff` — đã giải mã bằng `Data.from`. Dùng cho EngageDatum của thread consume:
+ * bộ đúc thread (`scripts/test/mint_engage_only.ts`, nhánh owner-cred) ghi đúng hình dạng này.
+ * Hình dạng cũ (ByteArray trần) trả `false` ⟹ thread đó không được nhận là của nông dân.
+ */
+export function isKeyCredential(d: unknown, pkh: string): boolean {
+  if (typeof d !== "object" || d === null) return false;
+  const c = d as { index?: unknown; fields?: unknown };
+  return c.index === 0 && Array.isArray(c.fields) && c.fields.length === 1 && c.fields[0] === pkh;
+}
+
 /** So hai giá trị `owner` theo cấu trúc — sống qua lần đổi ByteArray → Credential. */
 export function sameOwner(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);

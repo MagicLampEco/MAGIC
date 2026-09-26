@@ -41,18 +41,20 @@ describe("bước chưa dựng được ⟹ skip kèm lý do", () => {
   const ctx = (action: string, mode: ExecContext["mode"] = "dry"): ExecContext => {
     const step = p.steps.find((s) => s.action === action);
     if (!step) throw new Error(`kế hoạch không có ${action}`);
-    return { mode, plan: p, step, farmer: p.farmers.find((f) => f.farmer === step.farmer) ?? null, mutated: false };
+    return { mode, plan: p, step, farmer: p.farmers.find((f) => f.farmer === step.farmer) ?? null, mutated: false, state: {} };
   };
-  it("prepaid_lock · schedule_fire(dry) · beacon_inversion · vault_open ⟹ skip có mã lý do", async () => {
+  it("prepaid_lock · fund_tcarp · beacon_inversion ⟹ skip trỏ đúng việc còn thiếu; vault_open hết lý do cũ", async () => {
     const got: Record<string, unknown> = {};
-    for (const a of ["prepaid_lock", "schedule_fire", "beacon_inversion", "vault_open_instant", "vault_open_schedule"] as const) {
+    for (const a of ["prepaid_lock", "fund_tcarp", "beacon_inversion", "vault_open_instant", "vault_open_schedule", "schedule_fire"] as const) {
       if (!p.steps.some((s) => s.action === a)) continue;
       got[a] = await table[a]!(ctx(a));
     }
     expect(got.beacon_inversion).toMatchObject({ kind: "skip", reason: "keeper-responsibility" });
-    if (got.prepaid_lock) expect(got.prepaid_lock).toMatchObject({ kind: "skip", reason: "no-tx-builder" });
-    if (got.schedule_fire) expect(got.schedule_fire).toMatchObject({ kind: "skip", reason: "no-dry-path" });
+    if (got.prepaid_lock) expect(got.prepaid_lock).toMatchObject({ kind: "skip", reason: "no-prepaid-lock-builder" });
+    if (got.fund_tcarp) expect(got.fund_tcarp).toMatchObject({ kind: "skip", reason: "fund-lacks-tcarp-leg" });
+    // env rỗng (không BLOCKFROST_KEY) ⟹ không tiến trình con nào chạy; lý do cụ thể phụ thuộc bản tệp con trong cây.
     for (const v of Object.values(got)) expect(v).toMatchObject({ kind: "skip" });
+    for (const v of Object.values(got)) expect((v as { reason: string }).reason).not.toBe("no-vault-genesis-builder");
   });
   it("did_mint không có cấu hình taad ⟹ skip, KHÔNG phải built", async () => {
     const r = await table.did_mint!(ctx("did_mint"));

@@ -15,6 +15,8 @@ import {
   Lucid,
   SLOT_CONFIG_NETWORK,
   applyDoubleCborEncoding,
+  credentialToAddress,
+  scriptHashToCredential,
   utxoToTransactionInput,
   utxoToTransactionOutput,
   validatorToScriptHash,
@@ -25,6 +27,13 @@ import {
   type Script,
   type UTxO,
 } from "@lucid-evolution/lucid";
+
+/** Địa chỉ ENTERPRISE của một script — dạng mà `deploy/05|07` (vault) và `mint_engage_only.ts`
+ *  (thread consume) dùng: `credentialToAddress(NETWORK, scriptHashToCredential(hash))`. */
+export function scriptEnterpriseAddress(network: Network, scriptHash: string): string {
+  if (!/^[0-9a-f]{56}$/.test(scriptHash)) throw new Error(`script hash phải 56 hex, nhận "${scriptHash}"`);
+  return credentialToAddress(network, scriptHashToCredential(scriptHash));
+}
 
 export interface ChainAccess {
   label: "blockfrost" | "koios";

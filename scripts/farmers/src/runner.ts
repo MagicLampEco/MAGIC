@@ -12,18 +12,23 @@ import type { FarmerProfile, Plan, PlanStep } from "./plan.ts";
 
 export type Mode = "dry" | "live";
 
+/** Dữ kiện một bước để lại cho các bước SAU của CÙNG nông dân (vd `vault_nft`, `engage_nft`).
+ *  Executor đặt; runner chỉ gom, theo luật ở `runDay` ▸ `absorb`. Không bao giờ chứa hạt giống. */
+export type Artifacts = Readonly<Record<string, string>>;
+
 /** Kết cục THÔ của một lần thực thi — executor chỉ được trả một trong các dạng này. */
 export type Outcome =
   /** Dựng xong + validator chạy thử cục bộ qua; KHÔNG gửi (chế độ dry). */
-  | { kind: "built"; fee: bigint | null; detail?: string }
+  | { kind: "built"; fee: bigint | null; detail?: string; artifacts?: Artifacts }
   /** Đã gửi và thấy vào khối. */
-  | { kind: "confirmed"; txHash: string; fee: bigint | null; detail?: string }
+  | { kind: "confirmed"; txHash: string; fee: bigint | null; detail?: string; artifacts?: Artifacts }
   /** Đã gửi (node nhận) mà chưa thấy vào khối trong hạn chờ. */
   | { kind: "submitted-unconfirmed"; txHash: string | null; fee: bigint | null; detail?: string }
   /** Bị từ chối. `byScript` = có dấu hiệu chính validator từ chối (không phải lỗi mạng/coin). */
   | { kind: "rejected"; byScript: boolean; detail: string }
-  /** Hỏng vì lý do khác validator: dựng hỏng, thiếu định danh, mạng. */
-  | { kind: "error"; detail: string }
+  /** Hỏng vì lý do khác validator: dựng hỏng, thiếu định danh, mạng. `reason` = mã máy đọc
+   *  được thay cho `build-error` chung (vd `child-owner-mismatch`, `child-result-malformed`). */
+  | { kind: "error"; detail: string; reason?: string }
   /** Điều kiện tiên quyết trên chuỗi chưa có (ví chưa được cấp vốn, vault chưa mở…). */
   | { kind: "prereq-missing"; detail: string }
   /** Kho chưa có bộ dựng cho hành động này. */
@@ -41,6 +46,8 @@ export interface ExecContext {
   farmer: FarmerProfile | null;
   /** Tập dượt đột biến đường ống: executor PHẢI làm hỏng có chủ ý đầu vào của bước này. */
   mutated: boolean;
+  /** Trạng thái của `step.farmer`: artifacts gom từ các bước trước (xem `runDay` ▸ `absorb`). */
+  state: Artifacts;
 }
 
 export type Executor = (ctx: ExecContext) => Promise<Outcome>;
@@ -52,6 +59,7 @@ export interface StatusVerdict {
   txHash: string | null;
   fee: string | null;
   detail?: string;
+  artifacts?: Artifacts;
 }
 
 /** Luật dịch DUY NHẤT: (kỳ vọng, chế độ, kết cục) → trạng thái sổ. */
@@ -59,7 +67,8 @@ export function statusOf(expect: PlanStep["expect"], mode: Mode, o: Outcome): St
   const fee = "fee" in o && o.fee !== null && o.fee !== undefined ? o.fee.toString() : null;
   const txHash = "txHash" in o ? (o.txHash ?? null) : null;
   const detail = "detail" in o ? o.detail : undefined;
-  const v = (status: EventStatus, reason: string): StatusVerdict => ({ status, reason, txHash, fee, detail });
+  const artifacts = "artifacts" in o ? o.artifacts : undefined;
+  const v = (status: EventStatus, reason: string): StatusVerdict => ({ status, reason, txHash, fee, detail, ...(artifacts ? { artifacts } : {}) });
 
   if (o.kind === "skip") return v("skip", o.reason);
   if (o.kind === "not-implemented") return v("unverified", "no-builder");
@@ -81,7 +90,7 @@ export function statusOf(expect: PlanStep["expect"], mode: Mode, o: Outcome): St
     case "confirmed": return v("done", "tx-confirmed");
     case "submitted-unconfirmed": return v("unverified", "submitted-not-confirmed");
     case "rejected": return v("fail", o.byScript ? "rejected-by-validator" : "rejected");
-    case "error": return v("fail", "build-error");
+    case "error": return v("fail", o.reason ?? "build-error");
   }
 }
 
@@ -109,6 +118,17 @@ export async function runDay(plan: Plan, day: number, log: EventLog, executors: 
       : [],
   );
   const farmerOf = new Map(plan.farmers.map((f) => [f.farmer, f] as const));
+  // Trạng thái nông dân = artifacts của các dòng sự kiện ĐỦ ĐIỀU KIỆN, theo thứ tự sổ (dòng
+  // sau đè dòng trước). Đủ điều kiện: cùng kế hoạch · cùng CHẾ ĐỘ (artifact của lượt dry —
+  // vd outref của một tx chưa gửi — không bao giờ đi vào lượt live) · và dòng đó là `done`,
+  // hoặc (chỉ ở dry) `dry-built-not-submitted`. Dòng `fail`/`skip` không để lại gì.
+  const stateOf = new Map<string, Record<string, string>>();
+  const absorb = (e: StepEvent): void => {
+    if (e.planDigest !== plan.digest || e.mode !== opts.mode || !e.artifacts) return;
+    if (!(e.status === "done" || (opts.mode === "dry" && e.reason === "dry-built-not-submitted"))) return;
+    stateOf.set(e.farmer, { ...(stateOf.get(e.farmer) ?? {}), ...e.artifacts });
+  };
+  opts.priorEvents.forEach(absorb);
 
   for (const step of plan.steps.filter((s) => s.day === day)) {
     if (log.has(step.stepId)) continue;
@@ -139,7 +159,8 @@ export async function runDay(plan: Plan, day: number, log: EventLog, executors: 
       outcome = { kind: "not-implemented", detail: `không có executor cho ${step.action}` };
     } else {
       try {
-        outcome = await exec({ mode: opts.mode, plan, step, farmer: farmerOf.get(step.farmer) ?? null, mutated });
+        const state: Artifacts = { ...(stateOf.get(step.farmer) ?? {}) };
+        outcome = await exec({ mode: opts.mode, plan, step, farmer: farmerOf.get(step.farmer) ?? null, mutated, state });
       } catch (e) {
         // Executor ném = hỏng không phân loại được. Vẫn một dòng, không bao giờ im.
         outcome = { kind: "error", detail: `executor threw: ${String((e as Error)?.message ?? e).slice(0, 400)}` };
@@ -147,6 +168,7 @@ export async function runDay(plan: Plan, day: number, log: EventLog, executors: 
     }
     const verdict = statusOf(step.expect, opts.mode, outcome);
     const ev = log.record(step, opts.mode, { ...verdict, detail: mutated ? `[MUTATED] ${verdict.detail ?? ""}` : verdict.detail });
+    absorb(ev);
     if (ev.status === "done") done.add(step.stepId);
     if (opts.mode === "dry" && ev.reason === "dry-built-not-submitted") dryBuilt.add(step.stepId);
     out.push(ev);

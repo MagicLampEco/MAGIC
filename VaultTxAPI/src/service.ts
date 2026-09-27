@@ -15,7 +15,8 @@ import { CML, type UTxO } from "@lucid-evolution/lucid";
 import { FundingError, OwnerAuthError, sameOwner, type Network, type OwnerRef } from "@magiclamp/protocol-utils";
 import type { Profile } from "@magiclamp/sdk";
 import {
-  assertFundingAddresses, checkFundingTx, fundingApiErrorOf, fundingWitnessOf, readFeePayerUtxo,
+  assertFundingAddresses, checkFundingTx, checkSelfFundedTx, fundingApiErrorOf, fundingWitnessOf,
+  readCollateralUtxo, readFeePayerUtxo,
   type DidPaymentAnchorReader, type FundingRequest,
 } from "./funding.js";
 
@@ -463,15 +464,20 @@ export class VaultTxService {
     if (funding !== undefined && req.changeAddress !== undefined) {
       throw new CodedApiError(400, "FUNDING_CHANGE_ADDRESS_CONFLICT",
         `"change_address" và "funding" không đi cùng nhau: có "funding" thì phí + tiền thối ADA về ` +
-        `"funding.fee_payer.address", tiền thối LAMP/token về "funding.address". Bỏ "change_address".`);
+        `"funding.fee_payer.address" (hoặc, với fee_source "did_payment", mọi tiền thối về "funding.address"), ` +
+        `tiền thối LAMP/token về "funding.address". Bỏ "change_address".`);
     }
+    // Ví Phoenix tự trả phí: ví khoá của người dùng chỉ làm thế chấp.
+    const selfFunded = funding?.feeSource === "did_payment";
     if (funding === undefined && (typeof req.changeAddress !== "string" || req.changeAddress === "")) {
       throw new CodedApiError(400, "CHANGE_ADDRESS_REQUIRED",
         `"change_address" bắt buộc khi tạo vault (hoặc gửi "funding" để nạp từ ví Phoenix).`);
     }
+    // Địa chỉ ví của lucid. Chế độ tự trả phí: ví thế chấp — lucid thối gì về đây thì phép đọc
+    // lại CBOR (`checkSelfFundedTx`) chặn; nó chỉ được nhận `collateral_return`.
     const changeAddress = funding === undefined
       ? assertChangeAddress(this.deps.network, req.changeAddress!)
-      : funding.feePayer.address;
+      : selfFunded ? funding.collateral!.address : funding.feePayer!.address;
     this.assertWitnessShapeFor(req);
     let fundingSigners: ReturnType<typeof fundingWitnessOf> | undefined;
     if (funding !== undefined) {
@@ -493,15 +499,18 @@ export class VaultTxService {
       let fundingCtx: CreateVaultContext["funding"];
       if (funding !== undefined) {
         const anchor = await this.deps.didPaymentAnchor!.read(fundingSigners!.anchorRef);
-        const feePayerUtxo = quote?.feePayerUtxo ?? await readFeePayerUtxo(this.deps.chain, funding);
         const utxos = await this.deps.chain.utxosAt(funding.address);
-        fundingCtx = {
-          input: {
-            didPaymentScriptCbor: funding.didPaymentScriptCbor, address: funding.address, utxos,
-            anchorRefUtxo: anchor, controllerPkh: fundingSigners!.controllerPkh, deviceKeyHash: fundingSigners!.deviceKeyHash,
-          },
-          feePayerUtxo,
+        const input = {
+          didPaymentScriptCbor: funding.didPaymentScriptCbor, address: funding.address, utxos,
+          anchorRefUtxo: anchor, controllerPkh: fundingSigners!.controllerPkh, deviceKeyHash: fundingSigners!.deviceKeyHash,
         };
+        if (selfFunded) {
+          const collateralUtxo = await readCollateralUtxo(this.deps.chain, funding);
+          fundingCtx = { input: { ...input, feeSource: "did_payment", collateralUtxo }, collateralUtxo };
+        } else {
+          const feePayerUtxo = quote?.feePayerUtxo ?? await readFeePayerUtxo(this.deps.chain, funding);
+          fundingCtx = { input, feePayerUtxo };
+        }
       }
       const built = await this.deps.builder.createVault(
         {
@@ -517,7 +526,21 @@ export class VaultTxService {
         lampUnit,
         network: this.deps.network,
       });
-      if (funding !== undefined && fundingCtx !== undefined) {
+      if (funding !== undefined && fundingCtx !== undefined && selfFunded) {
+        summary.funding = checkSelfFundedTx(built.txCbor, {
+          network: this.deps.network,
+          tipPosixMs: tip.blockTimePosixMs,
+          vaultAddress: scope.address,
+          vaultNftUnit: built.vaultNftUnit,
+          lampUnit,
+          fundingAddress: funding.address,
+          collateralAddress: funding.collateral!.address,
+          collateralUtxo: fundingCtx.collateralUtxo!,
+          didPaymentUtxos: fundingCtx.input.utxos,
+          signers: [fundingSigners!.controllerPkh, fundingSigners!.deviceKeyHash],
+          maxCollateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
+        });
+      } else if (funding !== undefined && fundingCtx !== undefined) {
         summary.funding = checkFundingTx(built.txCbor, {
           network: this.deps.network,
           tipPosixMs: tip.blockTimePosixMs,
@@ -525,8 +548,8 @@ export class VaultTxService {
           vaultNftUnit: built.vaultNftUnit,
           lampUnit,
           fundingAddress: funding.address,
-          feePayerAddress: funding.feePayer.address,
-          feePayerUtxo: fundingCtx.feePayerUtxo,
+          feePayerAddress: funding.feePayer!.address,
+          feePayerUtxo: fundingCtx.feePayerUtxo!,
           didPaymentUtxos: fundingCtx.input.utxos,
           signers: [fundingSigners!.controllerPkh, fundingSigners!.deviceKeyHash],
           maxCollateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
@@ -553,7 +576,7 @@ export class VaultTxService {
         this.deps.locks.bindTxHash(ownerKey, txHash);
         this.deps.issued.record(txHash, this.now(), {
           route: "create-vault", feeRef: vaultNftName,
-          ...(funding === undefined ? {} : { feePayerUtxo: refStr(funding.feePayer.utxoRef) }),
+          ...(funding?.feePayer === undefined ? {} : { feePayerUtxo: refStr(funding.feePayer.utxoRef) }),
         });
       }
       return {
@@ -756,13 +779,27 @@ function fundingNotes(
   owner: OwnerRef, w: ResolvedOwnerWitness | undefined, f: FundingRequest,
   s: { controllerPkh: string; deviceKeyHash: string },
 ): string[] {
-  const fp = `${f.feePayer.utxoRef.txHash}#${f.feePayer.utxoRef.outputIndex}`;
+  const ownerNotes = owner.type === "key" ? [`Chủ khoá: ký bằng khoá ${owner.hash}.`] : (w?.notes ?? []);
+  if (f.feeSource === "did_payment") {
+    const c = f.collateral!;
+    return [
+      ...ownerNotes,
+      `LAMP + min-ADA của vault + PHÍ chi từ ví Phoenix ${f.address} (script did_payment, redeemer Spend, ` +
+        `script đính inline); seed NFT két là một UTxO did_payment trong số đó; phần thối về lại đúng địa chỉ đó.`,
+      `Ví Phoenix ký bằng controller ${s.controllerPkh} VÀ khoá thiết bị ${s.deviceKeyHash}.`,
+      `Thế chấp: UTxO ${refStr(c.utxoRef)} của ${c.address} — ví này KHÔNG góp input tiêu nào, chỉ nhận ` +
+        `collateral_return; nó vẫn phải ký bằng khoá thanh toán của địa chỉ đó (input thế chấp cần chữ ký).`,
+      `Thứ tự: thân giao dịch này là bản CHỐT — ký trên đúng tx_hash trả về; đổi bất kỳ byte nào ` +
+        `của thân sau đó thì mọi chữ ký đã có mất hiệu lực. Hạn dùng ≤ 1 giờ kể từ lúc dựng.`,
+    ];
+  }
+  const fp = `${f.feePayer!.utxoRef.txHash}#${f.feePayer!.utxoRef.outputIndex}`;
   return [
-    ...(owner.type === "key" ? [`Chủ khoá: ký bằng khoá ${owner.hash}.`] : (w?.notes ?? [])),
+    ...ownerNotes,
     `LAMP + min-ADA của vault chi từ ví Phoenix ${f.address} (script did_payment, redeemer Spend, ` +
       `script đính inline); phần thối về lại đúng địa chỉ đó.`,
     `Ví Phoenix ký bằng controller ${s.controllerPkh} VÀ khoá thiết bị ${s.deviceKeyHash}.`,
-    `Phí + tài sản thế chấp: UTxO ${fp} của ${f.feePayer.address}; tiền thối ADA và collateral_return ` +
+    `Phí + tài sản thế chấp: UTxO ${fp} của ${f.feePayer!.address}; tiền thối ADA và collateral_return ` +
       `về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó.`,
     `Thứ tự: thân giao dịch này là bản CHỐT — ký trên đúng tx_hash trả về; đổi bất kỳ byte nào ` +
       `của thân sau đó thì mọi chữ ký đã có mất hiệu lực. Hạn dùng ≤ 1 giờ kể từ lúc dựng.`,

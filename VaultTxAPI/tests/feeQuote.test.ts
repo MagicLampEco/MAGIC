@@ -276,6 +276,19 @@ describe("/tx/quote — params KHÔNG được mang ví trả phí", () => {
     expect(codeOf(b)).toBe("FEE_QUOTE_FUNDING_REQUIRED");
   });
 
+  it("create-vault: params.funding.fee_source = did_payment ⟹ 400 FEE_QUOTE_SELF_FUNDED; CẶP fee_source = fee_payer ⟹ KHÔNG mã đó", async () => {
+    const h = harness();
+    const funding = { type: "did_payment", did_payment_script_cbor: "aa", address: OWNER_FEE_ADDRESS };
+    const cv = { owner_pkh: OWNER_PKH, kind: "schedule", lamp_amount: "1000000" };
+    const a = await handle(quote({ route: "create-vault", params: { ...cv, funding: { ...funding, fee_source: "did_payment" } } }), h.router);
+    expect(a.status).toBe(400);
+    expect(codeOf(a)).toBe("FEE_QUOTE_SELF_FUNDED");
+    expect((a.body as { error: { details: { field: string } } }).error.details.field).toBe("params.funding.fee_source");
+    expect(h.builder.seen).toHaveLength(0);
+    const b = await handle(quote({ route: "create-vault", params: { ...cv, funding: { ...funding, fee_source: "fee_payer" } } }), h.router);
+    expect(codeOf(b)).not.toBe("FEE_QUOTE_SELF_FUNDED");
+  });
+
   it("CẶP: cùng params, bỏ fee_payer ⟹ 200", async () => {
     const h = harness();
     bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));

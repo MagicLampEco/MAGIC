@@ -54,4 +54,29 @@ export interface DidPaymentFundingInput {
   anchorRefUtxo: UTxO;
   controllerPkh: string;
   deviceKeyHash: string;
+  /**
+   * Ai trả phí. Vắng hoặc `"wallet"` ⟹ hành vi cũ: ví đang chọn trả phí, làm thế chấp, làm
+   * seed, nhận tiền thối ADA của chính nó.
+   *
+   * `"did_payment"` (opt-in) ⟹ ví Phoenix trả TẤT CẢ: LAMP, min-ADA vault và PHÍ; tiền thối về
+   * `address`. Seed NFT két là một UTxO `did_payment` trong tập đã chọn. Ví đang chọn chỉ làm
+   * THẾ CHẤP bằng đúng `collateralUtxo`, `collateral_return` về lại địa chỉ ví đó; nó không
+   * góp input tiêu nào, không nhận output nào.
+   */
+  feeSource?: "wallet" | "did_payment";
+  /** BẮT BUỘC khi `feeSource = "did_payment"`, CẤM ở chế độ khác: UTxO thuần ADA của ví đang
+   *  chọn, dành riêng làm thế chấp. */
+  collateralUtxo?: UTxO;
+  /** Chỉ ở `feeSource = "did_payment"`: lovelace giữ chỗ cho phí lúc CHỌN UTxO did_payment.
+   *  Phí thật đo sau khi dựng; nó vượt phần giữ chỗ ⟹ `FUNDING_INSUFFICIENT`. Mặc định
+   *  `DID_PAYMENT_FEE_HEADROOM_LOVELACE`. */
+  feeHeadroomLovelace?: bigint;
 }
+
+/**
+ * Phần giữ chỗ phí mặc định khi ví Phoenix tự trả phí. Nó chỉ ảnh hưởng việc CHỌN UTxO (kéo thêm
+ * UTxO nếu tập đang chọn không đủ phí + min-ADA phần thối); phí thật vẫn là phí đo được, phần dư
+ * về lại ví Phoenix. Giao dịch tạo vault đính inline hai script (vault + did_payment) nên phí cỡ
+ * 1 ADA; 3 ADA là biên an toàn, không phải một con số đo.
+ */
+export const DID_PAYMENT_FEE_HEADROOM_LOVELACE = 3_000_000n;

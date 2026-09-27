@@ -214,7 +214,9 @@ export {
 } from "@magiclamp/protocol-utils";
 
 // ── Nạp LAMP từ ví Phoenix (script `did_payment`) — `createVault({ funding })` ──
-export { didPaymentLucidPorts, type DidPaymentFundingInput } from "./didPaymentLucid.js";
+export {
+  didPaymentLucidPorts, DID_PAYMENT_FEE_HEADROOM_LOVELACE, type DidPaymentFundingInput,
+} from "./didPaymentLucid.js";
 export {
   FundingError, assertDidPaymentAddress, planDidPaymentFunding,
   DID_PAYMENT_SPEND_REDEEMER, FUNDING_MAX_VALIDITY_MS,

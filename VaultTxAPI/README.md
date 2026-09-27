@@ -257,6 +257,75 @@ Bước 2 và 3 đổi chỗ cho nhau được; điều không được là **đ
 một byte của thân (kể cả để "sửa phí") là đổi `tx_hash`, và mọi chữ ký đã có mất hiệu lực —
 phải dựng lại, không vá.
 
+#### Ví Phoenix tự trả phí: `funding.fee_source = "did_payment"` (opt-in)
+
+`fee_source` vắng hoặc `"fee_payer"` ⟹ đúng như trên. `"did_payment"` ⟹ ví Phoenix trả **mọi
+thứ** — LAMP, min-ADA của vault và **phí**; tiền thối về `funding.address`. Ví khoá của người
+dùng chỉ **đứng thế chấp** (ledger cấm thế chấp là UTxO script, nên vẫn cần một ví khoá ký):
+
+```jsonc
+"funding": {
+  "type": "did_payment",
+  "did_payment_script_cbor": "<hex>",
+  "address": "addr_test1w…",
+  "fee_source": "did_payment",
+  "collateral": {
+    "utxo": "<tx_hash 64 hex>#<i>",        // ĐÚNG MỘT UTxO thuần ADA, không script tham chiếu: CHỈ làm thế chấp
+    "address": "addr_test1v…"              // địa chỉ KHOÁ chứa UTxO đó; nhận collateral_return
+  },
+  "anchor_ref": "…", "controller_pkh": "…", "device_key_hash": "…"   // như trên
+}
+```
+
+Hai chế độ loại trừ nhau về TRƯỜNG: `fee_source: "did_payment"` kèm `fee_payer`, hoặc chế độ
+mặc định kèm `collateral` ⟹ `400 FUNDING_SHAPE` (một trường không có vai là dấu người gọi đang
+tưởng mình ở chế độ kia). `fee_source` khác hai giá trị trên ⟹ `400 FUNDING_SHAPE`.
+`collateral.address` không phải khoá / sai mạng, hoặc UTxO không ở đó / không thuần ADA ⟹
+`400 FUNDING_COLLATERAL_INVALID`.
+
+| | ví Phoenix (`funding.address`) | ví thế chấp (`collateral`) |
+|---|---|---|
+| input | UTxO `did_payment` đã chọn — **không input nào khác** | không input tiêu nào; chỉ `collateral_inputs` = `collateral.utxo` |
+| seed NFT két | tên NFT = `blake2b_256(cbor(seed))` với seed là **một UTxO did_payment bị chi** | — |
+| trả cho | LAMP + min-ADA vault + phí | không đồng nào (trừ khi script thất bại: mất phần thế chấp) |
+| tiền thối | mọi phần dư ⟹ về `funding.address` | chỉ `collateral_return`; **không output nào** về ví này |
+| ký | controller + khoá thiết bị | khoá thanh toán của `collateral.address` (input thế chấp đòi chữ ký) |
+
+Phép đọc lại CBOR của chế độ này (`funding.ts` ▸ `checkSelfFundedTx`) ném `422
+FUNDING_TX_MISMATCH` khi: có input ngoài tập did_payment đã biết (kể cả UTxO của ví thế chấp) ·
+tên NFT két không băm từ đúng một input did_payment · thế chấp không phải `collateral.utxo` hoặc
+`collateral_return` không về `collateral.address` hoặc lượng có thể mất vượt
+`fee_payer_collateral_lovelace` · có output về ví thế chấp hay địa chỉ lạ · bảo toàn lệch
+(`did_payment chi + mục rút = vault (trừ NFT) + thối + phí`) · thiếu chữ ký controller/thiết bị ·
+hạn dùng quá 1 giờ.
+
+`summary.funding` ở chế độ này KHÔNG có khối `fee_payer`; thay bằng:
+
+```jsonc
+"self_funded": {
+  "fee_source": "did_payment",
+  "seed_utxo": "<tx>#<i>",                  // một phần tử của did_payment_inputs
+  "fee_lovelace": "…",                      // phí đọc từ CBOR, trả từ ví Phoenix
+  "collateral": { "address": "…", "utxo": "…",
+                  "collateral_at_risk_lovelace": "…",       // Σ collateral_inputs − collateral_return
+                  "collateral_return_lovelace": "…" | null }
+}
+```
+
+**Giới hạn của Lucid Evolution 0.4.30 — vì sao bộ dựng đi hai lượt.** `complete()` dùng MỘT địa
+chỉ cho cả tiền thối lẫn `collateral_return`. Đặt nó là `funding.address` thì thối đúng chỗ nhưng
+`collateral_return` rơi vào ví Phoenix; đặt là ví thế chấp thì phần dư bị thối sang ví thế chấp.
+Nên SDK (`MagicSDK/src/createVault.ts` ▸ `completeSelfFunded`) dựng hai lượt, cả hai không tự chọn
+coin và chỉ cho lucid thấy đúng `collateral.utxo`: lượt ĐO với địa chỉ thối = ví Phoenix để lấy
+phí, rồi lượt THẬT với địa chỉ thối = ví thế chấp và output thối về ví Phoenix ghi TƯỜNG MINH =
+phần dư − phí đo (bù chênh độ dài địa chỉ; hụt vài byte thì cộng dần, tối đa 4 lượt). Hình dạng
+cuối được SDK đọc lại (`assertSelfFundedShape`) rồi dịch vụ đọc lại lần nữa (`checkSelfFundedTx`).
+Việc CHỌN UTxO did_payment giữ chỗ phí bằng `DID_PAYMENT_FEE_HEADROOM_LOVELACE` (3 ADA — biên an
+toàn, không phải số đo); phí đo vượt phần giữ chỗ ⟹ `422 FUNDING_INSUFFICIENT`.
+
+`/tx/quote` không áp cho chế độ này (không có ví trả phí nào để báo giá) ⟹ `400
+FEE_QUOTE_SELF_FUNDED`; phí thật nằm ở `summary.funding.self_funded.fee_lovelace`.
+
 ### Ví trả phí bên thứ ba: `fee_payer`
 
 Bốn đường dựng trên vault có sẵn (`instant-gen`, `schedule-commit`, `schedule-fire`,
@@ -505,6 +574,8 @@ Nên:
 | `funding` sai hình dạng / trường lạ / chủ khoá thiếu anchor·controller·thiết bị | `400 FUNDING_SHAPE` |
 | `did_payment_script_cbor` không băm ra payment credential `Script(h)` của `funding.address` | `400 FUNDING_SCRIPT_MISMATCH` |
 | `fee_payer.address` không phải khoá / sai mạng; UTxO trả phí không ở đó hoặc không thuần ADA | `400 FUNDING_FEE_PAYER_INVALID` |
+| `funding.fee_source = "did_payment"`: `collateral.address` không phải khoá / sai mạng; UTxO thế chấp không ở đó hoặc không thuần ADA | `400 FUNDING_COLLATERAL_INVALID` |
+| `funding.fee_source` lạ · thiếu `collateral` (tự trả phí) · trộn `fee_payer` với `fee_source: "did_payment"` · `collateral` ở chế độ mặc định | `400 FUNDING_SHAPE` |
 | `funding` cùng `change_address` | `400 FUNDING_CHANGE_ADDRESS_CONFLICT` |
 | `funding` khai anchor/controller/thiết bị khác `owner_witness` | `400 FUNDING_WITNESS_MISMATCH` |
 | anchor của `funding` không mang tài sản dưới `anchor_nft_policy` | `400 FUNDING_ANCHOR_INVALID` |
@@ -528,6 +599,7 @@ Nên:
 | `/tx/quote`: thân sai hình dạng · `route` lạ | `400 FEE_QUOTE_SHAPE` / `400 FEE_QUOTE_ROUTE_UNKNOWN` |
 | `/tx/quote`: `params` mang `fee_payer` / `funding.fee_payer` | `400 FEE_QUOTE_FEE_PAYER_IN_PARAMS` |
 | `/tx/quote` cho `create-vault` không có `params.funding` | `400 FEE_QUOTE_FUNDING_REQUIRED` |
+| `/tx/quote` cho `create-vault` với `params.funding.fee_source = "did_payment"` | `400 FEE_QUOTE_SELF_FUNDED` |
 | `/tx/quote`: gửi trường cũ `owner_fee_address` (số ít) · `owner_fee_addresses` không phải mảng chuỗi | `400 FEE_QUOTE_SHAPE` |
 | `/tx/quote`: một phần tử `owner_fee_addresses` không phải địa chỉ khoá / sai mạng | `400 FEE_QUOTE_OWNER_ADDRESS_INVALID` |
 | `/tx/quote`: `owner_fee_addresses` quá 10 phần tử | `400 FEE_QUOTE_OWNER_ADDRESSES_TOO_MANY` |
@@ -743,6 +815,11 @@ Có thì đủ trường và đúng hình dạng, không thì cổng khởi đ�
   chọn, và phép đọc lại CBOR ném `422` nếu thế chấp không lấy từ `fee_payer.utxo` hoặc
   `collateral_return` không về `fee_payer.address`. Chưa đo: ExUnit của `did_payment`; trạng
   thái Active của anchor không kiểm ở đây.
+- **`fee_source: "did_payment"` chưa lên chuỗi, và dịch vụ chưa chạy nó qua Lucid.** Bài kiểm
+  SDK (`MagicSDK/tests/didPaymentSelfFunded.test.ts`) dựng bằng Lucid thật, ngoại tuyến, với hai
+  script luôn-đúng — nên nó kiểm HÌNH DẠNG giao dịch, không kiểm validator thật. Bài kiểm dịch vụ
+  dùng CBOR ghi sẵn dựng bằng CML; `SdkTxBuilder.createVault` ở chế độ này chưa chạy lần nào. Chưa
+  đo: phí thật khi đính inline vault + did_payment thật so với phần giữ chỗ 3 ADA; ExUnit.
 - **Proxy phí mới chạy với Feecover giả.** Bài kiểm tiêm một `fetch` giả; chưa có lượt ký thật
   nào qua Feecover. Proxy không soi nội dung `witness_set` Feecover trả (chỉ đối chiếu
   `txHash`); app ghép rồi nộp, và nút chuỗi là nơi bác một chữ ký sai.

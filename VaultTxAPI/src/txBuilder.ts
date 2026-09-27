@@ -84,16 +84,38 @@ export interface TxBuilderPort {
 }
 
 /** Ngữ cảnh tạo vault — không có vault đầu vào, chỉ có địa chỉ đích. */
+/**
+ * UTxO DUY NHẤT mà ví của lucid mang khi tạo vault có `funding`. Chế độ ví trả phí: UTxO trả phí.
+ * Chế độ ví Phoenix tự trả phí (`input.feeSource = "did_payment"`): UTxO thế chấp của ví khoá — nó
+ * cũng phải là CÙNG UTxO mà SDK nhận qua `input.collateralUtxo`, nếu không ví của lucid và thế chấp
+ * khai cho SDK là hai UTxO khác nhau. Thiếu/lệch ⟹ NÉM: đó là lỗi nối dây trong gói này.
+ */
+export function walletUtxoOfFunding(f: NonNullable<CreateVaultContext["funding"]>): UTxO {
+  if (f.input.feeSource === "did_payment") {
+    const c = f.collateralUtxo;
+    const ic = f.input.collateralUtxo;
+    if (c === undefined || ic === undefined || c.txHash !== ic.txHash || c.outputIndex !== ic.outputIndex) {
+      throw new Error("[bất biến nội bộ] tạo vault tự trả phí: thiếu collateralUtxo hoặc lệch với funding.input.collateralUtxo.");
+    }
+    if (f.feePayerUtxo !== undefined) throw new Error("[bất biến nội bộ] tạo vault tự trả phí: không được mang feePayerUtxo.");
+    return c;
+  }
+  if (f.feePayerUtxo === undefined) throw new Error("[bất biến nội bộ] tạo vault qua ví trả phí: thiếu feePayerUtxo.");
+  return f.feePayerUtxo;
+}
+
 export interface CreateVaultContext {
   owner: OwnerRef;
   ownerAuth?: OwnerAuth<TxBuilder>;
   scope: VaultScope;
   tip: ChainTip;
-  /** Ví trả phí + nhận tiền thối ADA. Có `funding` ⟹ = `funding.fee_payer.address`. */
+  /** Ví trả phí + nhận tiền thối ADA. Có `funding` ⟹ = `funding.fee_payer.address`; chế độ
+   *  `fee_source: "did_payment"` ⟹ = `funding.collateral.address` (chỉ nhận `collateral_return`). */
   changeAddress: string;
-  /** Nạp từ ví Phoenix. Có mặt ⟹ ví của lucid chỉ mang ĐÚNG `feePayerUtxo` (không đọc thêm
-   *  UTxO nào ở địa chỉ trả phí), và LAMP đến từ `input.utxos`. */
-  funding?: { input: DidPaymentFundingInput; feePayerUtxo: UTxO };
+  /** Nạp từ ví Phoenix. Có mặt ⟹ ví của lucid chỉ mang ĐÚNG MỘT UTxO — `feePayerUtxo` (chế độ
+   *  ví trả phí) hoặc `collateralUtxo` (chế độ ví Phoenix tự trả phí, `input.feeSource =
+   *  "did_payment"`) — không đọc thêm UTxO nào ở địa chỉ đó, và LAMP đến từ `input.utxos`. */
+  funding?: { input: DidPaymentFundingInput; feePayerUtxo?: UTxO; collateralUtxo?: UTxO };
   /** Lượng thế chấp tường minh (lovelace) — đặt cùng `funding` (ví trả phí bên thứ ba). */
   collateralLovelace?: bigint;
 }
@@ -417,7 +439,7 @@ export class SdkTxBuilder implements TxBuilderPort {
    * đích; lệch ⟹ `CHAIN_UNAVAILABLE`, không tạo vault ở một địa chỉ ngoài cấu hình.
    */
   async createVault(ctx: CreateVaultContext, p: { lampAmount: bigint; profile?: Profile }): Promise<BuiltCreateVault> {
-    const lucid = await this.lucidFor(ctx, ctx.funding === undefined ? undefined : [ctx.funding.feePayerUtxo]);
+    const lucid = await this.lucidFor(ctx, ctx.funding === undefined ? undefined : [walletUtxoOfFunding(ctx.funding)]);
     const d = this.deps.deployment;
     const [vaultRef] = await this.deps.chain.utxosByOutRef([d.refScriptUtxos.vault]);
     const vaultScript = scriptOfRef(vaultRef, "vault");

@@ -38,8 +38,8 @@
 //   const txHash = await signed.submit();
 
 import {
-  Data, toUnit, validatorToScriptHash, credentialToAddress, scriptHashToCredential,
-  type UTxO, type Validator,
+  CML, Data, toUnit, validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  type TxBuilder, type TxSignBuilder, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
 import {
   msPerEpoch, lampAssetName, applyOwnerAuth, resolveOwnerAuth, ownerRefToString,
@@ -48,7 +48,9 @@ import {
   type Network, type OwnerAuth, type DidPaymentPlan,
 } from "@magiclamp/protocol-utils";
 import { resolveOwnerInput } from "./ownerInput.js";
-import { didPaymentLucidPorts, type DidPaymentFundingInput } from "./didPaymentLucid.js";
+import {
+  didPaymentLucidPorts, DID_PAYMENT_FEE_HEADROOM_LOVELACE, type DidPaymentFundingInput,
+} from "./didPaymentLucid.js";
 
 import type { CreateVaultParams, CreateVaultResult } from "./types.js";
 import { InstantVaultDatumSchema, VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
@@ -113,37 +115,16 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     (s, u) => s + (u.assets[lampUnit] ?? 0n), 0n,
   );
   if (funding !== undefined) assertFundingWitness(funding, ownerAuth);
+  // Chế độ ví Phoenix tự trả phí: kiểm UTxO thế chấp + phần giữ chỗ phí TRƯỚC khi dựng gì.
+  const selfFunded = funding === undefined
+    ? undefined
+    : selfFundedModeOf(funding, walletAddress, fundingPorts!);
   if (lampBalance < vault.lampDeposit) {
     throw new Error(
       `Wallet has ${lampBalance} oildrop LAMP (= ${lampBalance / 1_000_000n} LAMP); ` +
       `need ${vault.lampDeposit} oildrop (= ${vault.lampDeposit / 1_000_000n} LAMP).`,
     );
   }
-
-  // ── Chọn seed UTxO → danh tính vault (INV-VAULT-IDENTITY) ────
-  // NFT danh-tính là one-shot theo seed: seed phải là input THẬT của chính tx
-  // này (`expect list.any(tx.inputs, ...)` trong validate_mint_vault_id), nên
-  // nó được ép vào tx bằng .collectFrom([...]) chứ không để coin-selection
-  // quyết định.
-  const seedUtxo = params.seedUtxo ?? pickSeedUtxo(walletUtxos);
-  const vaultIdName = vaultIdAssetName({
-    txHash:      seedUtxo.txHash,
-    outputIndex: seedUtxo.outputIndex,
-  });
-  const vaultIdUnit = toUnit(vaultScriptHash, vaultIdName);
-
-  // Redeemer mint: MintVaultId { seed } — constructor 0 (xem schemas.ts).
-  const mintRedeemer = Data.to(
-    {
-      MintVaultId: {
-        seed: {
-          transaction_id: seedUtxo.txHash,
-          output_index:   BigInt(seedUtxo.outputIndex),
-        },
-      },
-    } as never,
-    VaultIdRedeemerSchema,
-  );
 
   // ── Build initial VaultDatum ─────────────────────────────────
   // Mọi trường TÍCH LUỸ phải rỗng/0 — validate_mint_vault_id ép từng trường một.
@@ -196,23 +177,64 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   // ── Nạp từ did_payment: chọn tối thiểu đủ LAMP + min-ADA vault + min-ADA phần thối ──
   // Mục rút `did_stake` (chủ script) là tiền của CHỦ DID vào giao dịch: nó thối về ví
   // Phoenix cùng phần thối, không để bộ cân bằng dồn sang ví trả phí.
+  //
+  // Ví Phoenix tự trả phí ⟹ giữ chỗ thêm `headroom` lovelace lúc CHỌN, để tập đã chọn đủ cả phí
+  // + min-ADA phần thối. Phí thật đo sau khi dựng (`completeSelfFunded`).
+  const vaultNeed: Record<string, bigint> = { lovelace: vaultLovelace, [lampUnit]: vault.lampDeposit };
+  const extraLovelace = funding === undefined ? 0n : withdrawLovelaceOf(ownerAuth);
   let fundingPlan: DidPaymentPlan<UTxO> | undefined;
   if (funding !== undefined) {
     fundingPlan = planDidPaymentFunding({
       utxos: funding.utxos,
-      need: { lovelace: vaultLovelace, [lampUnit]: vault.lampDeposit },
+      need: selfFunded === undefined
+        ? vaultNeed
+        : { ...vaultNeed, lovelace: vaultLovelace + selfFunded.headroom },
       primaryUnit: lampUnit,
       returnAddress: funding.address,
-      extraLovelace: withdrawLovelaceOf(ownerAuth),
+      extraLovelace,
     }, fundingPorts!);
+  }
+
+  // ── Chọn seed UTxO → danh tính vault (INV-VAULT-IDENTITY) ────
+  // NFT danh-tính là one-shot theo seed: seed phải là input THẬT của chính tx
+  // này (`expect list.any(tx.inputs, ...)` trong validate_mint_vault_id), nên
+  // nó được ép vào tx bằng .collectFrom([...]) chứ không để coin-selection
+  // quyết định.
+  //
+  // Validator KHÔNG hỏi seed thuộc ví nào — chỉ hỏi nó có trong inputs. Nên ở chế độ ví Phoenix
+  // tự trả phí, seed là một UTxO did_payment ĐÃ nằm trong tập chi (không thêm input nào); ở chế
+  // độ ví trả phí, seed là UTxO của ví trả phí và KHÔNG được trùng UTxO did_payment.
+  const seedUtxo = selfFunded !== undefined
+    ? seedFromSelected(params.seedUtxo, fundingPlan!.selected)
+    : params.seedUtxo ?? pickSeedUtxo(walletUtxos);
+  if (selfFunded === undefined && fundingPlan !== undefined) {
     const seedTaken = fundingPlan.selected.some(
       u => u.txHash === seedUtxo.txHash && u.outputIndex === seedUtxo.outputIndex,
     );
     if (seedTaken) {
       throw new FundingError("FUNDING_SHAPE",
-        `seed UTxO trùng một UTxO did_payment — seed phải là UTxO của ví trả phí.`);
+        `seed UTxO trùng một UTxO did_payment — seed phải là UTxO của ví trả phí ` +
+        `(hoặc đặt funding.feeSource = "did_payment" để ví Phoenix tự trả phí và làm seed).`);
     }
   }
+  const vaultIdName = vaultIdAssetName({
+    txHash:      seedUtxo.txHash,
+    outputIndex: seedUtxo.outputIndex,
+  });
+  const vaultIdUnit = toUnit(vaultScriptHash, vaultIdName);
+
+  // Redeemer mint: MintVaultId { seed } — constructor 0 (xem schemas.ts).
+  const mintRedeemer = Data.to(
+    {
+      MintVaultId: {
+        seed: {
+          transaction_id: seedUtxo.txHash,
+          output_index:   BigInt(seedUtxo.outputIndex),
+        },
+      },
+    } as never,
+    VaultIdRedeemerSchema,
+  );
 
   // ── Build tx ─────────────────────────────────────────────────
   // 4 mảnh BẮT BUỘC khớp nhau, thiếu một là validator từ chối:
@@ -223,40 +245,60 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   //       khoá ⟹ pkh ký; script ⟹ mục rút Script(h) (`applyOwnerAuth`)
   // Vault vừa là spending validator vừa là minting policy ⇒ CÙNG một CBOR đã
   // apply params; policy_id chính là vaultScriptHash.
-  const txBody = lucid
-    .newTx()
-    .collectFrom([seedUtxo])                          // (1)
-    .mintAssets({ [vaultIdUnit]: 1n }, mintRedeemer)  // (2)
-    .attach.MintingPolicy(vaultScript)
-    .pay.ToAddressWithData(                           // (3)
-      vaultAddress,
-      { kind: "inline", value: vaultDatumCbor },
-      {
-        lovelace:      vaultLovelace,
-        [lampUnit]:    vault.lampDeposit,
-        [vaultIdUnit]: 1n,
-      },
-    );
-  // (5) chỉ khi nạp từ did_payment: chi UTxO đã chọn, mỗi cái một redeemer `Spend`, script
-  //     đính inline; phần thối về CHÍNH ví Phoenix; hạn dùng ≤ 1 giờ (mô hình ví trả phí bên
-  //     thứ ba). Anchor + controller + thiết bị: chủ script thì nhân chứng `did_stake` đã gắn
-  //     đúng bộ đó (`assertFundingWitness` so), gắn lại là nhân đôi reference input và chữ ký.
-  let fundedBody = txBody;
-  if (funding !== undefined && fundingPlan !== undefined) {
-    fundedBody = fundedBody
-      .collectFrom(fundingPlan.selected, DID_PAYMENT_SPEND_REDEEMER)
-      .attach.SpendingValidator({ type: "PlutusV3", script: funding.didPaymentScriptCbor.toLowerCase() });
-    if (fundingPlan.returned !== null) fundedBody = fundedBody.pay.ToAddress(funding.address, fundingPlan.returned);
-    if (ownerAuth.kind !== "script") {
-      fundedBody = fundedBody
-        .readFrom([funding.anchorRefUtxo])
-        .addSignerKey(funding.controllerPkh)
-        .addSignerKey(funding.deviceKeyHash);
+  //
+  // Dựng thân qua một hàm vì chế độ ví Phoenix tự trả phí dựng HAI lần (đo phí rồi dựng thật);
+  // mỗi lần một `newTx()` mới, cùng một thứ tự gọi.
+  const assemble = (didPaymentReturn: Record<string, bigint> | null): TxBuilder => {
+    let body = lucid.newTx();
+    // (1) Seed là UTxO did_payment ⟹ nó đã nằm trong `collectFrom(selected, Spend)` dưới đây;
+    //     thu thêm một lần nữa (không redeemer) là nhân đôi input.
+    if (selfFunded === undefined) body = body.collectFrom([seedUtxo]);
+    body = body
+      .mintAssets({ [vaultIdUnit]: 1n }, mintRedeemer)  // (2)
+      .attach.MintingPolicy(vaultScript)
+      .pay.ToAddressWithData(                           // (3)
+        vaultAddress,
+        { kind: "inline", value: vaultDatumCbor },
+        {
+          lovelace:      vaultLovelace,
+          [lampUnit]:    vault.lampDeposit,
+          [vaultIdUnit]: 1n,
+        },
+      );
+    // (5) chỉ khi nạp từ did_payment: chi UTxO đã chọn, mỗi cái một redeemer `Spend`, script
+    //     đính inline; phần thối về CHÍNH ví Phoenix; hạn dùng ≤ 1 giờ (mô hình ví trả phí bên
+    //     thứ ba). Anchor + controller + thiết bị: chủ script thì nhân chứng `did_stake` đã gắn
+    //     đúng bộ đó (`assertFundingWitness` so), gắn lại là nhân đôi reference input và chữ ký.
+    if (funding !== undefined && fundingPlan !== undefined) {
+      body = body
+        .collectFrom(fundingPlan.selected, DID_PAYMENT_SPEND_REDEEMER)
+        .attach.SpendingValidator({ type: "PlutusV3", script: funding.didPaymentScriptCbor.toLowerCase() });
+      if (didPaymentReturn !== null) body = body.pay.ToAddress(funding.address, didPaymentReturn);
+      if (ownerAuth.kind !== "script") {
+        body = body
+          .readFrom([funding.anchorRefUtxo])
+          .addSignerKey(funding.controllerPkh)
+          .addSignerKey(funding.deviceKeyHash);
+      }
+      body = body.validTo(Number(tipPosixMs + FUNDING_MAX_VALIDITY_MS));
     }
-    fundedBody = fundedBody.validTo(Number(tipPosixMs + FUNDING_MAX_VALIDITY_MS));
+    return applyOwnerAuth(body, ownerAuth);                    // (4)
+  };
+
+  let tx: TxSignBuilder;
+  let selfFundedResult: { fee: bigint; returned: Record<string, bigint> | null } | undefined;
+  if (selfFunded !== undefined) {
+    const r = await completeSelfFunded({
+      lucid, assemble, walletAddress, funding: funding!, plan: fundingPlan!, ports: fundingPorts!,
+      vaultNeed, extraLovelace, headroom: selfFunded.headroom, collateralUtxo: selfFunded.collateralUtxo,
+      collateralLovelace: params.collateralLovelace,
+    });
+    tx = r.tx;
+    selfFundedResult = { fee: r.fee, returned: r.returned };
+  } else {
+    tx = await assemble(fundingPlan?.returned ?? null)
+      .complete(collateralCompleteOptions(params.collateralLovelace));
   }
-  const tx = await applyOwnerAuth(fundedBody, ownerAuth)
-    .complete(collateralCompleteOptions(params.collateralLovelace));   // (4)
 
   const summary = formatSummary({
     vaultType,
@@ -270,6 +312,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     currentEpoch,
     vaultIdName,
     seedRef: `${seedUtxo.txHash}#${seedUtxo.outputIndex}`,
+    walletRole: selfFunded !== undefined ? "collateral only" : "funder",
   });
 
   return {
@@ -281,9 +324,207 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     owner,
     summary,
     ...(fundingPlan === undefined ? {} : {
-      funding: { selected: fundingPlan.selected, spent: fundingPlan.spent, returned: fundingPlan.returned },
+      funding: selfFundedResult === undefined
+        ? { selected: fundingPlan.selected, spent: fundingPlan.spent, returned: fundingPlan.returned }
+        : {
+          selected: fundingPlan.selected, spent: fundingPlan.spent,
+          returned: selfFundedResult.returned, feeLovelace: selfFundedResult.fee,
+        },
     }),
   };
+}
+
+// ── chế độ ví Phoenix tự trả phí (`funding.feeSource = "did_payment"`) ──────────
+
+/**
+ * Kiểm chế độ phí. Vắng/`"wallet"` ⟹ `undefined` (hành vi cũ) và CẤM kèm `collateralUtxo`: một
+ * UTxO thế chấp khai ra mà không có vai là dấu người gọi tưởng mình đang ở chế độ khác.
+ *
+ * `"did_payment"` ⟹ `collateralUtxo` BẮT BUỘC: ở ĐÚNG địa chỉ ví đang chọn (địa chỉ đó nhận
+ * `collateral_return`), payment credential là KHOÁ (ledger cấm thế chấp là UTxO script), thuần
+ * ADA và không script tham chiếu (lucid loại UTxO mang script tham chiếu khỏi thế chấp).
+ */
+function selfFundedModeOf(
+  funding: DidPaymentFundingInput, walletAddress: string, ports: ReturnType<typeof didPaymentLucidPorts>,
+): { collateralUtxo: UTxO; headroom: bigint } | undefined {
+  const mode = funding.feeSource;
+  if (mode !== undefined && mode !== "wallet" && mode !== "did_payment") {
+    throw new FundingError("FUNDING_SHAPE", `funding.feeSource phải là "wallet" hoặc "did_payment".`);
+  }
+  if (mode !== "did_payment") {
+    if (funding.collateralUtxo !== undefined || funding.feeHeadroomLovelace !== undefined) {
+      throw new FundingError("FUNDING_SHAPE",
+        `funding.collateralUtxo / feeHeadroomLovelace chỉ dùng khi funding.feeSource = "did_payment".`);
+    }
+    return undefined;
+  }
+  const c = funding.collateralUtxo;
+  if (c === undefined || c === null || typeof c !== "object") {
+    throw new FundingError("FUNDING_SHAPE",
+      `funding.feeSource = "did_payment" cần funding.collateralUtxo — UTxO thuần ADA của ví đang chọn, chỉ làm thế chấp.`);
+  }
+  if (c.address !== walletAddress) {
+    throw new FundingError("FUNDING_SHAPE",
+      `funding.collateralUtxo phải nằm ở địa chỉ ví đang chọn (${walletAddress.slice(0, 20)}…): ` +
+      `collateral_return về địa chỉ đó.`, { collateral_address: c.address });
+  }
+  let credType: string;
+  try { credType = ports.paymentCredentialOf(c.address).type; } catch { credType = "?"; }
+  const units = Object.keys(c.assets ?? {}).filter(k => c.assets[k] !== 0n);
+  if (credType !== "Key" || units.length !== 1 || units[0] !== "lovelace" || c.scriptRef != null) {
+    throw new FundingError("FUNDING_SHAPE",
+      `funding.collateralUtxo phải thuần ADA, không script tham chiếu, ở địa chỉ KHOÁ.`,
+      { payment_credential: credType, units });
+  }
+  const headroom = funding.feeHeadroomLovelace ?? DID_PAYMENT_FEE_HEADROOM_LOVELACE;
+  if (typeof headroom !== "bigint" || headroom <= 0n) {
+    throw new FundingError("FUNDING_SHAPE", `funding.feeHeadroomLovelace phải là bigint > 0.`);
+  }
+  return { collateralUtxo: c, headroom };
+}
+
+/** Seed ở chế độ tự trả phí: UTxO did_payment TRONG tập đã chọn. Người gọi chỉ định mà nó nằm
+ *  ngoài tập ⟹ NÉM (không lặng lẽ thêm input, không lặng lẽ đổi seed). */
+function seedFromSelected(requested: UTxO | undefined, selected: UTxO[]): UTxO {
+  if (requested === undefined) return pickSeedUtxo(selected);
+  const hit = selected.find(u => u.txHash === requested.txHash && u.outputIndex === requested.outputIndex);
+  if (hit === undefined) {
+    throw new FundingError("FUNDING_SHAPE",
+      `seedUtxo ${requested.txHash.slice(0, 12)}…#${requested.outputIndex} không nằm trong tập UTxO ` +
+      `did_payment đã chọn — ở chế độ ví Phoenix tự trả phí, seed phải là một UTxO bị chi của ví đó.`,
+      { selected: selected.map(u => `${u.txHash}#${u.outputIndex}`) });
+  }
+  return hit;
+}
+
+/** Số lần dựng lại tối đa khi phí đoán hụt vài byte (bề rộng CBOR của số lovelace đổi). */
+const SELF_FUNDED_MAX_ATTEMPTS = 4;
+
+function isBalanceInsufficient(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return m.includes("UTxO Balance Insufficient");
+}
+
+/**
+ * Dựng giao dịch mà phí đến từ `did_payment` và ví đang chọn CHỈ làm thế chấp.
+ *
+ * ── GIỚI HẠN CỦA LUCID EVOLUTION 0.4.30 MÀ HÀM NÀY ĐI VÒNG ──────────────────────────────
+ * `complete()` dùng MỘT địa chỉ cho cả tiền thối lẫn `collateral_return`
+ * (`applyCollateral(totalCollateral, collateralInput, changeAddress)` trong
+ * `@lucid-evolution/lucid/dist/index.js`). Đặt `changeAddress = did_payment` thì thối đúng chỗ
+ * nhưng `collateral_return` rơi vào ví Phoenix; đặt `changeAddress = ví thế chấp` thì phần dư
+ * ≥ min-ADA bị thối sang ví thế chấp. Không tuỳ chọn nào tách hai địa chỉ.
+ *
+ * Nên dựng hai lượt, cả hai `coinSelection: false` (không input nào của ví ngoài thế chấp) và
+ * `presetWalletInputs: [collateralUtxo]` (thế chấp chỉ được chọn từ đúng UTxO đó):
+ *   (a) ĐO: `changeAddress = did_payment`, không output thối tường minh ⟹ lucid tự tính phí
+ *       `F_a` của hình dạng có tiền thối về did_payment.
+ *   (b) THẬT: `changeAddress = ví thế chấp`, output thối TƯỜNG MINH về did_payment = phần dư −
+ *       `g`, với `g = F_a + minFeeA × (byte địa chỉ ví thế chấp − byte địa chỉ did_payment)` — hai
+ *       lượt chỉ khác nhau ở địa chỉ `collateral_return`. Còn dư 0 ⟹ không output nào về ví thế
+ *       chấp. Hụt vài byte (bề rộng CBOR) ⟹ lucid ném "UTxO Balance Insufficient" ⟹ `g += minFeeA`
+ *       rồi dựng lại, tối đa `SELF_FUNDED_MAX_ATTEMPTS` lượt.
+ * Dư nhỏ hơn min-ADA thì CML đốt phần dư thành phí thay vì thối (đo 2026-09-27 trên 0.4.30), nên
+ * `g` hơi cao chỉ làm phí cao hơn, không đẩy tiền sang ví thế chấp. Hình dạng cuối được ĐỌC LẠI
+ * từ CBOR (`assertSelfFundedShape`) — không tin lập luận trên.
+ */
+async function completeSelfFunded(a: {
+  lucid: CreateVaultParams["lucid"];
+  assemble: (ret: Record<string, bigint> | null) => TxBuilder;
+  walletAddress: string;
+  funding: DidPaymentFundingInput;
+  plan: DidPaymentPlan<UTxO>;
+  ports: ReturnType<typeof didPaymentLucidPorts>;
+  vaultNeed: Record<string, bigint>;
+  extraLovelace: bigint;
+  headroom: bigint;
+  collateralUtxo: UTxO;
+  collateralLovelace: bigint | undefined;
+}): Promise<{ tx: TxSignBuilder; fee: bigint; returned: Record<string, bigint> | null }> {
+  const base = {
+    ...(collateralCompleteOptions(a.collateralLovelace) ?? {}),
+    coinSelection: false,
+    presetWalletInputs: [a.collateralUtxo],
+  };
+  const pp = (a.lucid as { config?: () => { protocolParameters?: { minFeeA?: unknown } } })
+    .config?.().protocolParameters;
+  const minFeeA = typeof pp?.minFeeA === "number" || typeof pp?.minFeeA === "bigint" ? BigInt(pp.minFeeA) : undefined;
+  if (minFeeA === undefined || minFeeA <= 0n) {
+    throw new FundingError("FUNDING_SHAPE", `lucid không có tham số giao thức minFeeA — không đo được phí.`);
+  }
+
+  // (a) lượt ĐO.
+  const probe = await a.assemble(null).complete({ ...base, changeAddress: a.funding.address });
+  const probeFee = CML.Transaction.from_cbor_hex(probe.toCBOR()).body().fee();
+  const addrLen = (addr: string) => BigInt(CML.Address.from_bech32(addr).to_raw_bytes().length);
+  let g = probeFee + minFeeA * (addrLen(a.walletAddress) - addrLen(a.funding.address));
+
+  // Tổng vào từ did_payment (+ mục rút của chủ DID) trừ output vault (NFT vừa đúc không tính).
+  const pool: Record<string, bigint> = { ...a.plan.spent };
+  pool.lovelace = (pool.lovelace ?? 0n) + a.extraLovelace;
+  for (const [k, v] of Object.entries(a.vaultNeed)) pool[k] = (pool[k] ?? 0n) - v;
+
+  for (let attempt = 0; attempt < SELF_FUNDED_MAX_ATTEMPTS; attempt++, g += minFeeA) {
+    if (g > a.headroom) {
+      throw new FundingError("FUNDING_INSUFFICIENT",
+        `phí đo được ${g} lovelace vượt phần giữ chỗ ${a.headroom} — nâng funding.feeHeadroomLovelace.`,
+        { fee_lovelace: String(g), fee_headroom_lovelace: String(a.headroom) });
+    }
+    const tokens = Object.fromEntries(Object.entries(pool).filter(([k, v]) => k !== "lovelace" && v > 0n));
+    const lovelace = (pool.lovelace ?? 0n) - g;
+    const returned = Object.keys(tokens).length === 0 && lovelace === 0n ? null : { lovelace, ...tokens };
+    if (returned !== null && lovelace < a.ports.minLovelaceFor(a.funding.address, tokens)) {
+      throw new FundingError("FUNDING_INSUFFICIENT",
+        `sau phí ${g} lovelace, phần thối về did_payment còn ${lovelace} lovelace — dưới min-ADA.`,
+        { fee_lovelace: String(g), returned_lovelace: String(lovelace) });
+    }
+    let tx: TxSignBuilder;
+    try {
+      tx = await a.assemble(returned).complete({ ...base, changeAddress: a.walletAddress });
+    } catch (e) {
+      if (isBalanceInsufficient(e)) continue;
+      throw e;
+    }
+    assertSelfFundedShape(tx.toCBOR(), a.plan.selected, a.collateralUtxo, a.walletAddress, g);
+    return { tx, fee: g, returned };
+  }
+  throw new FundingError("FUNDING_SHAPE",
+    `không dựng được giao dịch tự trả phí sau ${SELF_FUNDED_MAX_ATTEMPTS} lượt (phí cuối thử ${g - minFeeA}).`);
+}
+
+/**
+ * Đọc lại CBOR của lượt THẬT: input đúng bằng tập did_payment đã chọn; thế chấp đúng
+ * `collateralUtxo`; `collateral_return` (nếu có) về ví thế chấp; không output nào về ví thế chấp;
+ * phí đúng `g` (không phần dư nào bị thối đi đâu khác). Lệch ⟹ NÉM, không trả tx.
+ *
+ * Xuất ra để bài kiểm gọi TRỰC TIẾP từng vế: với Lucid thật, bộ dựng đúng không bao giờ sinh
+ * hình dạng sai, nên đi qua `createVault` thì không bài nào chạm được nhánh ném. Không re-export
+ * ở `index.ts` — đây không phải API công khai.
+ */
+export function assertSelfFundedShape(
+  txCbor: string, selected: UTxO[], collateralUtxo: UTxO, walletAddress: string, fee: bigint,
+): void {
+  const body = CML.Transaction.from_cbor_hex(txCbor).body();
+  const key = (h: string, i: number | bigint) => `${h}#${Number(i)}`;
+  const want = new Set(selected.map(u => key(u.txHash, u.outputIndex)));
+  const got: string[] = [];
+  for (let i = 0; i < body.inputs().len(); i++) {
+    got.push(key(body.inputs().get(i).transaction_id().to_hex(), body.inputs().get(i).index()));
+  }
+  const bad = (m: string) => new FundingError("FUNDING_SHAPE", `giao dịch tự trả phí lệch hình dạng: ${m}`);
+  if (got.length !== want.size || got.some(k => !want.has(k))) throw bad(`input ${got.join(", ")} khác tập did_payment đã chọn`);
+  const cl = body.collateral_inputs();
+  const collKey = key(collateralUtxo.txHash, collateralUtxo.outputIndex);
+  if (cl === undefined || cl.len() !== 1 || key(cl.get(0).transaction_id().to_hex(), cl.get(0).index()) !== collKey) {
+    throw bad(`thế chấp phải đúng một UTxO ${collKey}`);
+  }
+  const cr = body.collateral_return();
+  if (cr !== undefined && cr.address().to_bech32(undefined) !== walletAddress) throw bad(`collateral_return không về ví thế chấp`);
+  const outs = body.outputs();
+  for (let i = 0; i < outs.len(); i++) {
+    if (outs.get(i).address().to_bech32(undefined) === walletAddress) throw bad(`output #${i} về ví thế chấp`);
+  }
+  if (body.fee() !== fee) throw bad(`phí ${body.fee()} khác phí đã tính ${fee}`);
 }
 
 // ── nạp từ did_payment ────────────────────────────────────────
@@ -403,6 +644,7 @@ function formatSummary(o: {
   currentEpoch:     bigint;
   vaultIdName:      string;
   seedRef:          string;
+  walletRole:       "funder" | "collateral only";
 }): string {
   return [
     `═══ MagicLamp createVault ═══`,
@@ -415,7 +657,7 @@ function formatSummary(o: {
     `Vault hash:      ${o.vaultScriptHash}`,
     `Seed UTxO:       ${o.seedRef}`,
     `Vault-ID NFT:    ${o.vaultScriptHash}.${o.vaultIdName}`,
-    `Wallet (funder): ${o.walletAddress}`,
+    `Wallet (${o.walletRole}): ${o.walletAddress}`,
     ``,
     `✓  Unsigned tx ready. Caller must sign + submit (owner witness: key signature or Script(h) withdrawal).`,
   ].join("\n");

@@ -593,6 +593,7 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `FEECOVER_APP_TOKEN` | khi cấu hình có `feecover.apps.magic` | — **GIÁ TRỊ** token ứng dụng Feecover (token API, không phải khoá ký) |
 
 Cổng fail-closed lúc khởi động: thiếu biến bắt buộc · bind ngoài loopback mà thẻ bài rỗng ·
+policy LAMP nhái hoặc thuộc một đời đã bị thay (`assertLampPolicyId`; lối tập dượt xem dưới) ·
 tên tài sản LAMP không khớp mạng (`tLAMP` testnet / `LAMP` mainnet — apply-param #2) · địa
 chỉ sai tiền tố mạng · địa chỉ không phải địa chỉ script · hai mục vault trùng địa chỉ ·
 blueprint không đọc được · khối `feecover` có ứng dụng `magic` mà `FEECOVER_APP_TOKEN` rỗng ·
@@ -605,7 +606,7 @@ dùng.
 // VAULT_TX_API_DEPLOYMENT
 {
   "source": "Preview, deploy 2026-09-11, tx e5fd34b1…",   // BẮT BUỘC — xem dưới
-  "lamp":   { "policy_id": "28e916…", "asset_name_hex": "744c414d50" },
+  "lamp":   { "policy_id": "<56 hex>", "asset_name_hex": "744c414d50" },  // + "rehearsal_ack" tuỳ chọn — xem dưới
   "vaults": [{ "vault_type": "Schedule", "address": "addr_test1w…" }],
   "shard_address": "addr_test1w…",
   "ref_script_utxos": { "vault": "…#0", "shard": "…#1", "consume": "…#2" },
@@ -633,6 +634,20 @@ thread cố định chỉ phục vụ được một người). Trong `feecover.
 token của họ, dịch vụ không giữ token đó. Mục đích cho `instant-gen` / `schedule-*` và
 `open-thread` chưa có ở Feecover nên chưa có trong mẫu; route vắng khỏi bảng thì proxy trả
 `400 FEE_PROXY_PURPOSE_UNMAPPED` cho tx của route đó.
+
+`lamp.policy_id` đi qua `@magiclamp/sdk` ▸ `assertLampPolicyId` ngay lúc khởi động
+(`parseDeployment`): policy nhái đã biết và LAMP THẬT của một đời đã bị thay đều bị từ chối,
+dù chúng đúng 56 hex. Mẫu cũ ở đây ghi `28e916…` — đó chính là một policy nhái trong bảng
+chặn, nên nay nó làm dịch vụ từ chối khởi động; đừng chép nó ra.
+
+`lamp.rehearsal_ack` (tuỳ chọn, chuỗi) mở **lối tập dượt** cho một đời đã bị thay: chỉ có
+tác dụng khi policy nằm trong `MagicSDK/src/lampPolicy.ts` ▸ `REHEARSAL_LAMP_POLICIES`,
+giá trị bằng **ĐÚNG** `lamp.policy_id`, và `VAULT_TX_API_NETWORK` là `Preview`/`Preprod`.
+Thiếu một điều thì dịch vụ vẫn từ chối khởi động với câu lỗi đời-đã-bị-thay. Khi được cho
+qua, dịch vụ in một dòng `⚠ [config] TẬP DƯỢT` ra stderr, và ack đi tiếp tới `createVault`
+của SDK (cổng chạy lại ở đó). Bảng tập dượt hiện chỉ có `8169b76c…`, và sẽ gỡ khi kho LAMP
+gửi policy Preprod cuối (sau 04/10). `scripts/gen_vault_tx_api_deployment.ts` phát trường
+này khi lượt sinh chạy với `LAMP_REHEARSAL_ACK` trong môi trường — không lấy từ sổ trạng thái.
 
 `script_hash` **không** cấu hình riêng — nó suy từ chính địa chỉ. Hai trường cho một sự
 thật là hai trường sẽ lệch nhau.
@@ -716,14 +731,15 @@ Có thì đủ trường và đúng hình dạng, không thì cổng khởi đ�
   `summary` — chúng chạy trên CBOR thật dựng tại chỗ bằng CML.
 - **Khoá mềm chỉ đúng với một tiến trình.** Hai bản sau bộ cân tải thì cần một chỗ giữ
   chung (Redis, hoặc một hàng đợi theo `owner_pkh`).
-- **`lamp.policy_id` của tệp deploy chưa đi qua `assertLampPolicyId`.** Cổng ấy ở
-  `MagicSDK/src/lampPolicy.ts` và nó chặn hai lớp giá trị mà mọi phép so hình dạng đều cho
-  đi qua: policy nhái mang đúng chữ "tLAMP", và LAMP THẬT của một đời đã bị thay. Ở đây
-  `parseDeployment` mới ép hình dạng (56 hex), tức đo một đại lượng khác. **Ràng buộc TẠM
-  đang có hiệu lực (fail-closed):** `lamp.policy_id` là trường **bắt buộc** của tệp deploy
-  — không có thì dịch vụ không khởi động, nên không có đường chạy bằng một giá trị mặc
-  định. Mẫu của bộ kiểm dùng một policy id **tổng hợp** (`tests/fixtures/preview.ts`), cố
-  ý không phải giá trị có thật trên mạng nào, để không ai chép nhầm từ đó ra.
+- **Cổng policy LAMP lúc khởi động chỉ chặn những gì ĐÃ BIẾT là sai.** `parseDeployment`
+  nay gọi `assertLampPolicyId` (`MagicSDK/src/lampPolicy.ts`) — policy nhái đã biết và LAMP
+  thật của một đời đã bị thay bị từ chối khởi động (`tests/config.test.ts` ▸ khối
+  *"cổng policy LAMP"*). Nó KHÔNG chứng minh policy là chính danh: một policy nhái mới, chưa
+  vào bảng, vẫn qua. Mẫu của bộ kiểm dùng một policy id **tổng hợp**
+  (`tests/fixtures/preview.ts`), cố ý không phải giá trị có thật trên mạng nào, để không ai
+  chép nhầm từ đó ra. Lối tập dượt (`lamp.rehearsal_ack`) là ngoại lệ **tạm**: gỡ khi kho
+  LAMP gửi policy Preprod cuối (sau 04/10) — gỡ khoá khỏi bảng của SDK là đủ, không phải sửa
+  dịch vụ.
 - **Thẻ bài là MỘT bí mật dùng chung, không gắn với `owner_pkh` nào.** Đường `/tx/submit`
   đã chặn việc mượn dịch vụ để nộp giao dịch lạ (chỉ nộp thứ chính nó vừa dựng), nhưng
   người cầm thẻ bài vẫn dựng được giao dịch mang `owner_pkh` của người khác và qua đó giữ

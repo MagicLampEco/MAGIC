@@ -120,7 +120,9 @@ export function buildParamsList(
   // sửa được bằng cách đổi cấu hình sau. Nên cổng đứng ở ĐÂY chứ không ở chỗ gọi:
   // `applyVaultValidator` · `createVault` · `listVaults` đều đi qua hàm này, còn
   // một cổng đặt ở từng chỗ gọi thì chỗ gọi thứ tư sẽ không có.
-  const lampPolicyId = assertLampPolicyId(protocol.lampPolicyId, "buildParamsList");
+  const lampPolicyId = assertLampPolicyId(
+    protocol.lampPolicyId, "buildParamsList", protocol.lampRehearsalAck, protocol.network,
+  );
 
   // Param #2 on every vault. Network-derived; an explicit override is honoured
   // so a caller on a custom network can pass its own asset name.

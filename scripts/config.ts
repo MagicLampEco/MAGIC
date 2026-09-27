@@ -80,7 +80,7 @@ export const SCRIPT_HASHES = {
  * Chép có nhãn vì không có đường nhập khẩu: kho này chưa phụ thuộc gói đó.
  * Chép ngày 2026-09-14.
  */
-const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
+export const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
   "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4":
     "chính sách chữ-ký-đơn suy từ khoá ví deploy của kho này — không trần phát hành, " +
     "không SupplyState, không cổng WHO; đã có lúc cung lên 72 tỷ, gấp đôi trần 36 tỷ. " +
@@ -144,7 +144,7 @@ const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
  * và chưa tồn tại; kho LAMP không khai nó là "sẽ giống". Nghĩa vụ báo trước khi
  * giá trị đổi vẫn nguyên hiệu lực.
  */
-const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
+export const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
   "7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9":
     "đời `preprod/preview-nativesig`, đã bị thay. Policy giống nhau xuyên mạng vì " +
     "cả bốn khe marker đều neo bởi native-sig ví deploy — người giữ khoá đúc lại " +
@@ -159,10 +159,66 @@ const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
     "23–24/09 apply-param bằng đời này, nên sổ trạng thái của cụm đó mang nó.",
 };
 
+/** Đời đã bị thay mà được CHO QUA khi người chạy xác nhận THEO GIÁ TRỊ. Danh sách ĐÓNG.
+ *
+ * Chủ dự án quyết 2026-09-27: dựng một cụm TẬP DƯỢT dùng một lần trên Preprod bằng
+ * `8169b76c…` — ví deploy chỉ giữ tLAMP của đời đó, và kho LAMP sẽ đổi policy thêm lần
+ * nữa sau 04/10. Cụm phục vụ người dùng dựng MỘT lần trên policy cuối.
+ *
+ * `8169b76c…` VẪN nằm trong `SUPERSEDED_LAMP_POLICIES` ngay trên — sự thật "đã bị thay"
+ * không đổi. Bảng này chỉ nói "được cho qua khi có xác nhận", và cho qua khi ĐỦ BA điều:
+ *   1. policy nằm trong bảng này;
+ *   2. `LAMP_REHEARSAL_ACK` bằng ĐÚNG chuỗi policy đó — không phải `=1`: một cờ `=1`
+ *      mở cho mọi khoá của bảng, kể cả khoá thêm về sau mà người bật cờ chưa thấy;
+ *   3. `NETWORK` là một mạng THỬ đã biết (`Preview` | `Preprod`) — `Mainnet`, hay một
+ *      chuỗi lạ, là không được phép.
+ * Thiếu một điều ⟹ câu lỗi đời-đã-bị-thay nguyên văn như trước.
+ *
+ * `LAMP_REHEARSAL_ACK` là một LỜI KHAI Ý ĐỊNH, đặt trong cùng một lệnh; nó bị cấm nằm
+ * trong sổ trạng thái (`state_book_guard.sh` ▸ `STATE_BOOK_CO_Y_DINH`) — một dòng trong
+ * sổ khai hộ vĩnh viễn, và lúc đó xác nhận không còn là xác nhận.
+ *
+ * Chép có nhãn (chưa có đường nhập khẩu), ngày 2026-09-27. Bản kia:
+ * `MagicSDK/src/lampPolicy.ts` ▸ `REHEARSAL_LAMP_POLICIES`; hai bảng phải trùng tập
+ * khoá — đo bằng `npx tsx test_lamp_policy_gate.ts`.
+ *
+ * ĐIỀU KIỆN GỠ: gỡ khoá `8169b76c…` khi kho LAMP gửi policy Preprod cuối (sau 04/10).
+ * Gỡ xong thì bảng rỗng và lối mở tự đóng.
+ */
+export const REHEARSAL_LAMP_POLICIES: Record<string, string> = {
+  "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
+    "cụm TẬP DƯỢT dùng một lần trên Preprod (chủ dự án quyết 2026-09-27): ví deploy chỉ " +
+    "giữ tLAMP của đời này. Gỡ khi kho LAMP gửi policy Preprod cuối (sau 04/10).",
+};
+
+/** Mạng được phép chạy lối mở tập dượt. Danh sách ĐÓNG. */
+const REHEARSAL_NETWORKS: ReadonlySet<string> = new Set(["Preview", "Preprod"]);
+
+let rehearsalWarned = false;
+
 function requireLampPolicyId(): string {
-  const v = process.env.LAMP_POLICY_ID ?? "";
+  return checkLampPolicyId(
+    process.env.LAMP_POLICY_ID ?? "", process.env.LAMP_REHEARSAL_ACK, NETWORK,
+  );
+}
+
+/** Lõi thuần của `requireLampPolicyId`: nhận giá trị thay vì đọc môi trường, để bộ kiểm
+ * (`test_lamp_policy_gate.ts`) đổi được MẠNG — `NETWORK` là hằng nạp một lần lúc import. */
+export function checkLampPolicyId(v: string, ack: string | undefined, network: string): string {
   const doi = SUPERSEDED_LAMP_POLICIES[v];
-  if (doi) {
+  const rehearsal = doi !== undefined
+    && Object.hasOwn(REHEARSAL_LAMP_POLICIES, v)
+    && ack === v
+    && REHEARSAL_NETWORKS.has(network);
+  if (rehearsal && !rehearsalWarned) {
+    rehearsalWarned = true;
+    console.warn(
+      `⚠ TẬP DƯỢT: LAMP_POLICY_ID=${v} là một đời LAMP ĐÃ BỊ THAY, cho qua vì ` +
+      `LAMP_REHEARSAL_ACK xác nhận đúng giá trị này trên ${network} — cụm dựng ra là cụm ` +
+      `tập dượt dùng một lần, KHÔNG phục vụ người dùng.`,
+    );
+  }
+  if (doi && !rehearsal) {
     throw new Error(
       `LAMP_POLICY_ID đang trỏ vào một đời LAMP ĐÃ BỊ THAY: ${v}\n` +
       `  ${doi}\n` +

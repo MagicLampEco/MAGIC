@@ -62,6 +62,12 @@ chay chan 'BENEFICIARY_DATUM (datum đích, bất biến)'    'BENEFICIARY_DATUM
 chay chan 'WALLET_SEED (đổi ví ký)'                     'WALLET_SEED=xxx'
 chay chan 'BLOCKFROST_KEY (đổi nhà cung cấp dữ liệu)'   'BLOCKFROST_KEY=xxx'
 
+echo "── LAMP_REHEARSAL_ACK: xác nhận tập dượt không được nằm sẵn trong sổ"
+# Cặp đối xứng: cùng một sổ mang LAMP_POLICY_ID của đời tập dượt, chỉ khác dòng ack.
+chay chan 'sổ mang LAMP_REHEARSAL_ACK'  'LAMP_POLICY_ID=8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd
+LAMP_REHEARSAL_ACK=8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd'
+chay dat  'cùng sổ đó, gỡ dòng ack'     'LAMP_POLICY_ID=8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd'
+
 echo "── phải CHẶN: KHÔNG ĐO ĐƯỢC ≠ sổ sạch"
 # Ca này ghim chỗ `|| true` từng nuốt mã thoát ≥2 của grep. Sổ CÓ MẶT nhưng không
 # đọc được: bản cũ trả ĐẠT, tức trả lời "sạch" cho một câu nó không đọc nổi.

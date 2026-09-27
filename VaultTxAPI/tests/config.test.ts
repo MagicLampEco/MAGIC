@@ -10,8 +10,10 @@ import { join } from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { createVault } from "@magiclamp/sdk";
+
 import { loadConfig, parseDeployment } from "../src/config.js";
-import { enterpriseAddressOf } from "../src/txBuilder.js";
+import { createVaultProtocol, enterpriseAddressOf } from "../src/txBuilder.js";
 import {
   LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, OWNER_PKH, SHARD_ADDRESS, VAULT_ADDRESS,
 } from "./fixtures/preview.js";
@@ -181,5 +183,97 @@ describe("parseDeployment — bản chép phải mang nhãn và phải khớp M�
   it("JSON hỏng / không phải đối tượng ⟹ ném", () => {
     expect(() => parseDeployment("{", "Preview")).toThrow(/JSON hợp lệ/);
     expect(() => parseDeployment("[]", "Preview")).toThrow(/ĐỐI TƯỢNG/);
+  });
+});
+
+// ── `lamp.policy_id` đi qua cổng policy của SDK lúc khởi động, kèm lối mở tập dượt ──
+//
+// Mỗi ca dương có một ca âm chỉ khác ĐÚNG MỘT biến (ack · policy · mạng).
+
+describe("parseDeployment — cổng policy LAMP (assertLampPolicyId) và lối mở tập dượt", () => {
+  /** Đời tập dượt — nằm trong CẢ bảng đã-bị-thay lẫn bảng tập dượt của SDK. */
+  const REHEARSAL = "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd";
+  /** Đã bị thay, NGOÀI bảng tập dượt. */
+  const SUPERSEDED_ONLY = "d9c09230079b810ab5ed92e8db4c190d42efc42db6aac028656f7e07";
+  /** Đời ACTIVE Preprod — `scripts/config.ts` (thư `lam0926mg-lp`, 2026-09-26). */
+  const ACTIVE = "53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743";
+  const LOOKALIKE = "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4";
+
+  const dep = (policy: string, ack?: string) => deploymentJson({
+    lamp: {
+      policy_id: policy, asset_name_hex: LAMP_ASSET_NAME_HEX,
+      ...(ack === undefined ? {} : { rehearsal_ack: ack }),
+    },
+  });
+
+  it("policy tổng hợp của fixture vẫn qua cổng — không có ack", () => {
+    const d = parseDeployment(deploymentJson(), "Preview");
+    expect(d.lampPolicyId).toBe(LAMP_POLICY_ID);
+    expect(d.lampRehearsalAck).toBeUndefined();
+  });
+
+  it("policy nhái 28e916b0 ⟹ từ chối khởi động (chỗ README từng khai là chưa đi qua)", () => {
+    expect(() => parseDeployment(dep(LOOKALIKE), "Preprod")).toThrow(/KHÔNG PHẢI LAMP/);
+  });
+
+  it("8169b76c không ack ⟹ từ chối", () => {
+    expect(() => parseDeployment(dep(REHEARSAL), "Preprod")).toThrow(/\[parseDeployment\].*ĐÃ BỊ THAY/);
+  });
+
+  it("8169b76c ack = chính nó, Preprod ⟹ qua, ack được giữ trong Deployment", () => {
+    const d = parseDeployment(dep(REHEARSAL, REHEARSAL), "Preprod");
+    expect(d.lampPolicyId).toBe(REHEARSAL);
+    expect(d.lampRehearsalAck).toBe(REHEARSAL);
+  });
+
+  it("8169b76c ack = chính nó, Mainnet ⟹ từ chối ở cổng policy", () => {
+    expect(() => parseDeployment(dep(REHEARSAL, REHEARSAL), "Mainnet")).toThrow(/ĐÃ BỊ THAY/);
+  });
+
+  it("d9c09230 (ngoài bảng tập dượt) ack = chính nó ⟹ vẫn từ chối", () => {
+    expect(() => parseDeployment(dep(SUPERSEDED_ONLY, SUPERSEDED_ONLY), "Preprod")).toThrow(/ĐÃ BỊ THAY/);
+  });
+
+  it("ack = 8169b76c nhưng policy = d9c09230 ⟹ từ chối", () => {
+    expect(() => parseDeployment(dep(SUPERSEDED_ONLY, REHEARSAL), "Preprod")).toThrow(/ĐÃ BỊ THAY/);
+  });
+
+  it("ACTIVE 53bc12ad không ack ⟹ qua", () => {
+    expect(parseDeployment(dep(ACTIVE), "Preprod").lampPolicyId).toBe(ACTIVE);
+  });
+
+  it("rehearsal_ack không phải chuỗi ⟹ từ chối, không lặng lẽ bỏ qua", () => {
+    expect(() => parseDeployment(dep(REHEARSAL, 1 as never), "Preprod")).toThrow(/lamp\.rehearsal_ack/);
+  });
+});
+
+describe("createVaultProtocol — ack đi từ tệp deploy tới createVault của SDK", () => {
+  const REHEARSAL = "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd";
+  const OWNER = { type: "key" as const, hash: OWNER_PKH };
+
+  // `createVault` của SDK gọi cổng policy TRƯỚC phép kiểm `lampDeposit`. Ca dương đưa
+  // `lampDeposit = 0` nên vấp ở câu về `lampDeposit` — tức cổng policy đã cho qua.
+  const run = (protocol: ReturnType<typeof createVaultProtocol>) => createVault({
+    lucid: {} as never,
+    vaultType: "Schedule",
+    protocol,
+    vault: { owner: OWNER, lampDeposit: 0n },
+  } as never);
+
+  it("deploy có rehearsal_ack ⟹ SDK cho qua cổng policy", async () => {
+    const d = parseDeployment(deploymentJson({
+      lamp: { policy_id: REHEARSAL, asset_name_hex: LAMP_ASSET_NAME_HEX, rehearsal_ack: REHEARSAL },
+    }), "Preprod");
+    const p = createVaultProtocol(d, "Preprod");
+    expect(p.lampRehearsalAck).toBe(REHEARSAL);
+    await expect(run(p)).rejects.toThrow(/lampDeposit must be > 0/);
+  });
+
+  it("cùng deploy đó mà rơi ack ⟹ SDK chặn ở cổng policy (ca đối xứng)", async () => {
+    const d = parseDeployment(deploymentJson({
+      lamp: { policy_id: REHEARSAL, asset_name_hex: LAMP_ASSET_NAME_HEX, rehearsal_ack: REHEARSAL },
+    }), "Preprod");
+    const { lampRehearsalAck: _bo, ...khongAck } = createVaultProtocol(d, "Preprod");
+    await expect(run(khongAck)).rejects.toThrow(/\[createVault\].*ĐÃ BỊ THAY/);
   });
 });

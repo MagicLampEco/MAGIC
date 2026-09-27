@@ -25,6 +25,7 @@ import { readFileSync } from "node:fs";
 
 import { getAddressDetails } from "@lucid-evolution/lucid";
 import { FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE, type Network } from "@magiclamp/protocol-utils";
+import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
 
 import { ISSUED_ROUTES, type IssuedRoute } from "./locks.js";
 
@@ -88,7 +89,12 @@ export interface InstantDeployment {
 export interface Deployment {
   /** Bản chép chép từ đâu, ngày nào. BẮT BUỘC. */
   source: string;
+  /** Đã qua `@magiclamp/sdk` ▸ `assertLampPolicyId` lúc khởi động (`parseDeployment`). */
   lampPolicyId: string;
+  /** Xác nhận lối mở TẬP DƯỢT (`lamp.rehearsal_ack` của tệp deploy) — bằng ĐÚNG
+   *  `lampPolicyId`. Vắng ⟹ mọi đời LAMP đã bị thay bị chặn lúc khởi động. Có mặt thì nó
+   *  đi tiếp tới `createVault` của SDK, nơi cổng chạy lại lần nữa. */
+  lampRehearsalAck?: string;
   /** Tên tài sản LAMP dạng hex. THEO MẠNG: `tLAMP` testnet, `LAMP` mainnet. Đây là
    *  apply-param #2 của mọi vault — hardcode giá trị testnet vào mã là dựng ra một vault
    *  mainnet không bao giờ nhìn thấy LAMP của chính nó (BOUNDARIES §2). */
@@ -322,6 +328,20 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
 
   const lamp = obj(o.lamp, "lamp");
   const lampPolicyId = hex(str(lamp.policy_id, "lamp.policy_id"), 56, "lamp.policy_id");
+  // Hình dạng thôi chưa đủ: policy nhái mang chữ "tLAMP" và LAMP THẬT của một đời đã bị
+  // thay đều là 56 hex hợp lệ. Cổng của SDK chặn hai lớp đó — chạy nó ở ĐÂY để lỗi lộ ra
+  // lúc khởi động (người bị chặn là người vận hành), không phải lúc dựng giao dịch.
+  const lampRehearsalAck = lamp.rehearsal_ack === undefined
+    ? undefined
+    : str(lamp.rehearsal_ack, "lamp.rehearsal_ack");
+  assertLampPolicyId(lampPolicyId, "parseDeployment", lampRehearsalAck, network);
+  if (lampRehearsalAck !== undefined && Object.hasOwn(SUPERSEDED_LAMP_POLICIES, lampPolicyId)) {
+    console.warn(
+      `⚠ [config] TẬP DƯỢT: lamp.policy_id=${lampPolicyId} là một đời LAMP ĐÃ BỊ THAY, cho qua ` +
+      `vì lamp.rehearsal_ack xác nhận đúng giá trị này trên ${network} — dịch vụ đang phục vụ ` +
+      `một cụm tập dượt dùng một lần, KHÔNG phục vụ người dùng.`,
+    );
+  }
   const lampAssetNameHex = hexEven(str(lamp.asset_name_hex, "lamp.asset_name_hex"), "lamp.asset_name_hex");
   const lampAssetName = Buffer.from(lampAssetNameHex, "hex").toString("utf8");
   if (lampAssetName !== LAMP_ASSET_NAME_BY_NETWORK[network]) {
@@ -418,7 +438,8 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
   const feecover = o.feecover === undefined ? undefined : parseFeecover(o.feecover);
 
   return {
-    source, lampPolicyId, lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, instant, didStake,
+    source, lampPolicyId, ...(lampRehearsalAck === undefined ? {} : { lampRehearsalAck }),
+    lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, instant, didStake,
     feePayerCollateralLovelace, ...(feecover === undefined ? {} : { feecover }),
   };
 }

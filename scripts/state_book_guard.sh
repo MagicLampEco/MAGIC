@@ -83,7 +83,12 @@
 # cho `BUFFER_BPS` + `PLATFORM_PKH` (mốc chép 2026-09-20) và `BENEFICIARY_ADDRESS` +
 # `BENEFICIARY_DATUM` (mốc chép 2026-09-26). Không cơ chế nào ép hai
 # danh sách đi cùng nhau — đổi bên kia thì đổi cả ở đây.
-STATE_BOOK_CO_Y_DINH='CARP_IDENTITY_NONCANONICAL|LAMP_ASSET_NAME_NONCANONICAL|CARP_POLICY_ID|CARP_ASSET_NAME|BUFFER_BPS|PLATFORM_PKH|BENEFICIARY_ADDRESS|BENEFICIARY_DATUM|WALLET_SEED|BLOCKFROST_KEY'
+#
+# `LAMP_REHEARSAL_ACK` (thêm 2026-09-27) thuộc nhóm (a): lời khai ý định của lối mở
+# tập dượt ở `config.ts` ▸ `REHEARSAL_LAMP_POLICIES`. Cổng thứ hai của nó đòi ack bằng
+# ĐÚNG giá trị policy — nhưng một sổ ghi sẵn cả `LAMP_POLICY_ID` lẫn ack cùng giá trị
+# thì qua cổng đó ở MỌI lượt nạp sổ, tức xác nhận không còn là xác nhận.
+STATE_BOOK_CO_Y_DINH='CARP_IDENTITY_NONCANONICAL|LAMP_ASSET_NAME_NONCANONICAL|LAMP_REHEARSAL_ACK|CARP_POLICY_ID|CARP_ASSET_NAME|BUFFER_BPS|PLATFORM_PKH|BENEFICIARY_ADDRESS|BENEFICIARY_DATUM|WALLET_SEED|BLOCKFROST_KEY'
 
 # assert_state_books_khong_khai_y_dinh <sổ> [sổ…]
 # Ném (exit 1) khi một sổ có mặt chứa dòng gán một trong các tên trên, VÀ khi một

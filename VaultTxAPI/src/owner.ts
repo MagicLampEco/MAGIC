@@ -132,6 +132,24 @@ export function ownerLockKey(owner: OwnerRef): string {
   return owner.type === "key" ? owner.hash : `script:${owner.hash}`;
 }
 
+// ── nhận diện NFT anchor ───────────────────────────────────────────────────────
+
+/**
+ * UTxO có mang một NFT anchor DID dưới `policy` không: tên 32 byte
+ * (`blake2b_256(utf8(did))`) và số lượng ĐÚNG 1.
+ *
+ * "Có tài sản bất kỳ dưới policy" là chưa đủ: `taad` còn đúc token shard (`pk-uniq\x00`…,
+ * 8 byte) và cursor dưới CÙNG policy, và chúng nằm trên UTxO ở địa chỉ `taad`. Một
+ * `anchor_ref` trỏ vào shard lọt qua phép cũ rồi chết ở bước sau với mã sai loại
+ * (`OWNER_STAKE_NOT_REGISTERED` thay vì `OWNER_ANCHOR_INVALID`) — đo trên Preprod
+ * 2026-09-27. Trên chuỗi vẫn an toàn vì `did_stake` ép đúng tên; đây là cổng để người
+ * dùng đọc được đúng lỗi, không phải cổng an ninh.
+ */
+export function carriesAnchorNft(assets: Record<string, bigint>, policy: string): boolean {
+  return Object.entries(assets).some(([unit, q]) =>
+    unit.length === 56 + 64 && unit.startsWith(policy) && q === 1n);
+}
+
 // ── hiện thực: did_stake ───────────────────────────────────────────────────────
 
 export interface DidStakeProviderDeps {
@@ -142,7 +160,7 @@ export interface DidStakeProviderDeps {
 }
 
 /**
- * Nhân chứng `did_stake`: đọc UTxO anchor, kiểm nó mang tài sản dưới `anchor_nft_policy`,
+ * Nhân chứng `did_stake`: đọc UTxO anchor, kiểm nó mang NFT anchor dưới `anchor_nft_policy`,
  * tra tài khoản thưởng, rồi giao cho `didStakeOwnerAuthLucid` (so hash + dựng mục rút).
  *
  * Trạng thái Active của anchor KHÔNG kiểm ở đây — lược đồ datum anchor thuộc repo danh tính.
@@ -154,12 +172,11 @@ export class DidStakeWitnessProvider implements OwnerWitnessProvider {
   async resolve(owner: OwnerRef, w: ScriptOwnerWitness): Promise<ResolvedOwnerWitness> {
     const [anchor] = await this.deps.chain.utxosByOutRef([w.anchorRef]);
     const anchorUtxo = anchor as UTxO;
-    const underPolicy = Object.entries(anchorUtxo.assets)
-      .filter(([unit, q]) => unit.startsWith(this.deps.anchorNftPolicy) && q > 0n);
-    if (underPolicy.length === 0) {
+    if (!carriesAnchorNft(anchorUtxo.assets, this.deps.anchorNftPolicy)) {
       throw new CodedApiError(400, "OWNER_ANCHOR_INVALID",
         `UTxO anchor ${w.anchorRef.txHash.slice(0, 12)}…#${w.anchorRef.outputIndex} không mang ` +
-        `tài sản nào dưới anchor_nft_policy của mạng này — không phải anchor DID.`,
+        `NFT anchor nào (tên 32 byte, số lượng 1) dưới anchor_nft_policy của mạng này — ` +
+        `không phải anchor DID.`,
         { anchor_ref: `${w.anchorRef.txHash}#${w.anchorRef.outputIndex}` });
     }
     const chain = this.deps.chain;

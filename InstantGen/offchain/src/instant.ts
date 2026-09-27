@@ -21,7 +21,7 @@ import {
   MIN_INSTANT_HOLDING, MAX_BACKING_STALE, PM_Q,
 } from "./constants.js";
 import {
-  computeInstantGrant, getUmForInstant, isExpired,
+  computeInstantGrant, getUmForInstant, isExpired, instantGenInEpoch,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, collateralCompleteOptions, type Network } from "@magiclamp/protocol-utils";
@@ -229,6 +229,22 @@ export async function buildInstantGenTx(
       `(consumed_credit=${consumed}, L_avail=${lAvail} oildrop). InstantGen only pays out ` +
       `against MAGIC actually consumed, and never above half the per-epoch rate that the ` +
       `same LAMP would earn on the shortest ScheduleGen commitment.`,
+    );
+  }
+
+  // ── C-INST-8: trần theo EPOCH, không theo lượt ─────────────
+  // Gương của `validate_instant_gen`: `expect gen_so_far + grant <= compute_cap_pp(avail)`.
+  // `grant` do validator tự tính và redeemer phải khai ĐÚNG nó, nên bộ dựng không được
+  // hạ `grant` cho vừa trần — chỉ được từ chối. Thiếu cổng này thì lượt sinh thứ hai
+  // trong cùng epoch chết ở pha đánh giá script (`Spend[0] … crashed`), một câu không
+  // nói gì với người dùng (đo trên Preprod 2026-09-27).
+  const genSoFar = instantGenInEpoch(liveBatches, currentEpoch);
+  const capPpEpoch = computeCapPp(lAvail);
+  if (genSoFar + grant > capPpEpoch) {
+    throw new Error(
+      `GEN-INST-008: epoch ${currentEpoch} đã sinh ${genSoFar} nanogic qua InstantGen; ` +
+      `lượt này cấp ${grant} sẽ vượt trần epoch ${capPpEpoch} (cap_pp của L_avail=${lAvail} ` +
+      `oildrop). Trần về 0 ở epoch ${currentEpoch + 1n} — sinh lại từ đó.`,
     );
   }
 

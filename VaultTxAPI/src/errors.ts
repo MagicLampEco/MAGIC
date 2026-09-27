@@ -245,5 +245,9 @@ export function ownerApiErrorOf(e: { code: string; message: string }): CodedApiE
     e.code === "OWNER_STAKE_NOT_REGISTERED" ? 422
     : e.code === "OWNER_WITHDRAW_RETURNED_NOTHING" ? 500
     : 400;
-  return new CodedApiError(status, e.code, e.message);
+  // `OwnerAuthError` tự chèn `${code}: ` vào đầu câu; trường `code` đã mang mã, nên câu
+  // trả cho app bỏ tiền tố đó — app hiện nguyên câu máy chủ cho người dùng.
+  const prefix = `${e.code}: `;
+  const message = e.message.startsWith(prefix) ? e.message.slice(prefix.length) : e.message;
+  return new CodedApiError(status, e.code, message);
 }

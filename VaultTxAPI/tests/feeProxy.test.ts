@@ -120,7 +120,7 @@ const DP_SCRIPT = "4746010000222220";
 const DP_ADDRESS = credentialToAddress("Preview",
   scriptHashToCredential(validatorToScriptHash({ type: "PlutusV3", script: DP_SCRIPT })));
 const ANCHOR_POLICY = "a0".repeat(28);
-const ANCHOR = utxo("ab".repeat(32), 0, DP_ADDRESS, { lovelace: 2_000_000n, [`${ANCHOR_POLICY}01`]: 1n });
+const ANCHOR = utxo("ab".repeat(32), 0, DP_ADDRESS, { lovelace: 2_000_000n, [`${ANCHOR_POLICY}${"01".repeat(32)}`]: 1n });
 const DP1 = utxo("d1".repeat(32), 0, DP_ADDRESS, { lovelace: 3_000_000n, [LAMP_UNIT]: 600_000_000n });
 const DP2 = utxo("d2".repeat(32), 1, DP_ADDRESS, { lovelace: 4_000_000n, [LAMP_UNIT]: 500_000_000n });
 

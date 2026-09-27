@@ -307,17 +307,43 @@ UTxO đó (`owner_address.fee_payer`).
 Dịch vụ chạy **đúng đường dựng** của `route` với `params` cộng một `fee_payer` do nó chèn, rồi
 đọc phí lại **từ CBOR** như `summary`. Báo giá **không** giữ khoá của chủ, **không** giữ chỗ
 UTxO nào, **không** ghi sổ phát-hành (tx của báo giá không nộp được, không xin ký được),
-**không** gọi Feecover — không `/v1/utxo`, nên hỏi giá không làm cạn kho UTxO của Feecover.
+**không** xin Feecover UTxO hay chữ ký — không `/v1/utxo`, không `/v1/sign`, nên hỏi giá không
+làm cạn kho UTxO của Feecover. Lượt gọi Feecover duy nhất là câu hỏi `GET /v1/fee-sources`
+(dưới đây), vốn không giữ chỗ.
 
 - **`feecover`** — dựng trên một UTxO **tổng hợp** (không có trên chuỗi; lucid đánh giá script
   cục bộ từ UTxO được đưa). `fee_lovelace` là **ước lượng chặn trên**: UTxO tổng hợp lấy địa chỉ
   base (dài hơn enterprise), lượng và chỉ số output có mã hoá rộng nhất, khoá khác khoá chủ. Đo
   (lucid 0.4.30): cao hơn phí thật trên một ví enterprise chỉ số nhỏ tối đa 3 168 lovelace, không
   thấp hơn theo các trục đó (trục chưa ghim: địa chỉ con trỏ); số đo + cách đo lại ở khối chú thích `SYNTH_*` trong `src/feeQuote.ts`.
-  `available=false` khi bản deploy không khai `feecover` (`FEE_QUOTE_FEECOVER_UNCONFIGURED`),
-  không có ứng dụng mặc định `magic` (`FEE_QUOTE_FEECOVER_NO_DEFAULT_APP`), ứng dụng đó chưa có
-  mục đích cho route (`FEE_QUOTE_FEECOVER_PURPOSE_UNMAPPED`), hoặc mục đích mang tiền tố của ứng
-  dụng khác (`FEE_QUOTE_FEECOVER_PURPOSE_FOREIGN`). Phí vẫn có khi `available=false`.
+  - **Nguồn của `available`: chính Feecover.** Dịch vụ tra mục đích của `route` trong bảng
+    `feecover.apps.magic.purposes` (cùng bảng `/fee/utxo` dùng), rồi hỏi
+    `GET <feecover.url>/v1/fee-sources?purpose=<mục đích>` với `Authorization: Bearer
+    <FEECOVER_APP_TOKEN>`, hết giờ `min(feecover.timeout_ms, FEE_SOURCES_TIMEOUT_MS = 3 000 ms)`.
+    Câu trả lời `{ purpose, feecover: { available, rule?, message? } }` được chuyển **nguyên**:
+    `available`, và `rule` / `message` khi Feecover gửi. Feecover không giữ chỗ UTxO cho câu hỏi
+    này. Lượt dựng đầu chạy trước: `params` hỏng thì Feecover không bị hỏi.
+  - **Fail-closed:** `available=true` **chỉ** khi Feecover trả 200, đúng hình dạng, đúng mục đích
+    đã hỏi, và `feecover.available === true`. Mọi lối khác là `available=false` kèm `reason`:
+
+    | `reason` | khi nào | trường kèm |
+    |---|---|---|
+    | `FEE_QUOTE_FEECOVER_DECLINED` | Feecover trả lời `available: false` (ví dụ `rule: "L14"`, cửa sổ Catalyst) | `rule`, `message` nếu Feecover gửi |
+    | `FEE_QUOTE_FEECOVER_UNCONFIGURED` | bản deploy không khai `feecover` | — |
+    | `FEE_QUOTE_FEECOVER_NO_DEFAULT_APP` | không có ứng dụng mặc định `magic` | — |
+    | `FEE_QUOTE_FEECOVER_TOKEN_ABSENT` | có ứng dụng `magic` nhưng dịch vụ không cầm token của nó | — |
+    | `FEE_QUOTE_FEECOVER_PURPOSE_UNMAPPED` | ứng dụng `magic` chưa có mục đích cho `route` | — |
+    | `FEE_QUOTE_FEECOVER_PURPOSE_FOREIGN` | mục đích mang tiền tố của ứng dụng khác | — |
+    | `FEE_QUOTE_FEECOVER_TIMEOUT` | Feecover không trả lời trong hạn | — |
+    | `FEE_QUOTE_FEECOVER_UNREACHABLE` | không gọi được (DNS, TCP, TLS…) — câu lỗi thư viện không chuyển | — |
+    | `FEE_QUOTE_FEECOVER_HTTP_STATUS` | Feecover trả mã khác 200 | `upstream_status`; với 4xx thêm `rule`, `message` nếu có |
+    | `FEE_QUOTE_FEECOVER_BAD_RESPONSE` | 200 nhưng thân không phải JSON, thiếu/sai kiểu `feecover.available`, `rule`/`message` không phải chuỗi, hoặc `purpose` khác mục đích đã hỏi | — |
+
+    Năm lý do cấu hình (`UNCONFIGURED` tới `PURPOSE_FOREIGN`) quyết tại chỗ, Feecover **không**
+    bị hỏi.
+    Token không đi vào phản hồi: một `rule`/`message` của Feecover chứa token thì câu trả lời 200
+    bị coi là `BAD_RESPONSE`, còn ở 4xx thì hai trường đó bị bỏ.
+  - Phí vẫn có khi `available=false`.
 - **`owner_address`** — nguồn trả phí là **ví khoá của chính chủ**.
   - `needed_lovelace` là lượng tối thiểu một UTxO thuần ADA phải có để tx dựng được với nó làm
     `fee_payer`: `max(phí, thế chấp) + min-ADA`, suy từ cách lucid chọn input trả phí và thế chấp

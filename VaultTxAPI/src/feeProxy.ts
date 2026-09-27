@@ -9,6 +9,10 @@
 //   POST /fee/utxo {route}      → xin một UTxO ví trả phí cho route dựng tx sắp gọi
 //   POST /fee/sign {tx_cbor}    → xin chữ ký ví trả phí cho một tx CHÍNH dịch vụ này đã phát
 //
+// Và một đường KHÔNG mở cho app, chỉ báo giá (`feeQuote.ts`) gọi: `feeSources(route)` hỏi
+// `GET /v1/fee-sources` của Feecover xem nguồn Feecover có nhận route đó lúc này không. Feecover
+// không giữ chỗ UTxO cho câu hỏi này, nên hỏi mỗi lần báo giá được.
+//
 // ── APP KHÔNG CHỌN ĐƯỢC MỤC ĐÍCH, KHÔNG CHỌN ĐƯỢC MÃ GHI SỔ ─────────────────
 // `/fee/sign` chỉ nhận CBOR. Route (⟹ mục đích) và mã ghi sổ (`ref`) lấy từ sổ phát-hành
 // (`locks.ts` ▸ `IssuedTxRegistry`), nơi route dựng tx đã ghi lúc phát. Một tx không có trong
@@ -51,6 +55,54 @@ export interface FeeProxyDeps {
   fetch: FetchLike;
   now?: () => number;
 }
+
+/**
+ * Hết giờ của câu hỏi `/v1/fee-sources`. Ngắn hơn hạn chót chung (`feecover.timeout_ms`, mặc định
+ * 15 s) vì câu hỏi nằm trên đường báo giá — app đang chờ để hiện lựa chọn nguồn phí, và hết giờ
+ * chỉ làm nguồn Feecover hiện "không có" (fail-closed), không làm hỏng báo giá. Lấy số NHỎ hơn
+ * giữa hằng này và `feecover.timeout_ms`: bản deploy đặt ngắn hơn thì bản deploy thắng.
+ */
+export const FEE_SOURCES_TIMEOUT_MS = 3_000;
+
+/** Vì sao KHÔNG có câu trả lời của Feecover cho `/v1/fee-sources`. Mỗi giá trị là một lý do máy đọc. */
+export type FeeSourcesFailure =
+  /** Bản deploy không khai ứng dụng mặc định `magic`. */
+  | "no_default_app"
+  /** Có ứng dụng `magic` nhưng proxy không cầm token của nó. */
+  | "token_absent"
+  /** Ứng dụng `magic` chưa có mục đích cho route. */
+  | "purpose_unmapped"
+  /** Mục đích của route mang tiền tố của ứng dụng khác. */
+  | "purpose_foreign"
+  /** Feecover không trả lời trong hạn (`FEE_SOURCES_TIMEOUT_MS`). */
+  | "timeout"
+  /** Lượt gọi ném trước khi có mã trạng thái (DNS, TCP, TLS…). */
+  | "unreachable"
+  /** Feecover trả mã khác 200. */
+  | "http_status"
+  /** 200 nhưng thân không đúng hợp đồng `{ purpose, feecover: { available, rule?, message? } }`. */
+  | "bad_response";
+
+/**
+ * Kết quả `feeSources`. `answered: true` là câu Feecover trả lời, chuyển NGUYÊN; `answered: false`
+ * là không hỏi được — người dùng kết quả PHẢI coi nguồn Feecover là không có (fail-closed).
+ */
+export type FeeSourcesAnswer =
+  | { answered: true; purpose: string; available: boolean; rule?: string; message?: string }
+  | { answered: false; failure: FeeSourcesFailure; upstreamStatus?: number; rule?: string; message?: string };
+
+/** Lượt gọi Feecover chưa diễn giải: có mã trạng thái, hoặc hết giờ, hoặc không tới được. */
+type Sent =
+  | { kind: "status"; status: number; json: unknown }
+  | { kind: "timeout"; timeoutMs: number }
+  | { kind: "unreachable"; errorName: string };
+
+/** Mã lỗi cấu hình của `resolveApp`/`purposeFor` → lý do `feeSources` không hỏi. Mã khác ⟹ ném nguyên. */
+const FEE_SOURCES_FAILURE_OF_CODE: Readonly<Record<string, FeeSourcesFailure>> = {
+  FEE_PROXY_APP_UNKNOWN: "no_default_app",
+  FEE_PROXY_PURPOSE_UNMAPPED: "purpose_unmapped",
+  FEE_PROXY_APP_PURPOSE: "purpose_foreign",
+};
 
 /** Route mà mã ghi sổ Feecover là tên NFT, không phải hash thân tx. */
 const NFT_REF_ROUTES: ReadonlySet<IssuedRoute> = new Set<IssuedRoute>(["create-vault", "open-thread"]);
@@ -158,12 +210,65 @@ export class FeeProxy {
   }
 
   /**
-   * Mục đích Feecover mà `/fee/utxo` SẼ xin cho `route` dưới ứng dụng mặc định — cùng hai hàm
-   * `resolveApp` + `purposeFor` với đường thật, nên cùng mã lỗi. KHÔNG gọi mạng, KHÔNG giữ chỗ:
-   * báo giá (`feeQuote.ts`) hỏi "Feecover có trả phí cho route này không" mà không rút UTxO nào.
+   * Hỏi Feecover nguồn Feecover có nhận `route` lúc này không, dưới ứng dụng mặc định:
+   * `GET /v1/fee-sources?purpose=<mục đích>` với token của ứng dụng đó. Mục đích tra bằng cùng hai
+   * hàm `resolveApp` + `purposeFor` với `/fee/utxo`, nên báo giá hỏi đúng mục đích mà đường thật
+   * sẽ xin. Feecover KHÔNG giữ chỗ UTxO cho câu hỏi này.
+   *
+   * KHÔNG ném với mọi lối hỏng lường trước được (cấu hình thiếu, mạng, hết giờ, mã ≠ 200, thân sai
+   * hình dạng): trả `answered: false` kèm lý do có tên. Chỉ ném lỗi không lường trước — lỗi nội bộ,
+   * không phải câu trả lời "không có".
+   *
+   * Token không đi vào kết quả: kết quả chỉ có các trường liệt kê ở `FeeSourcesAnswer`, và một câu
+   * chữ của Feecover có chứa token thì cả câu trả lời bị coi là sai hình dạng.
    */
-  defaultPurposeFor(route: IssuedRoute): string {
-    return this.purposeFor(this.resolveApp(undefined), route);
+  async feeSources(route: IssuedRoute): Promise<FeeSourcesAnswer> {
+    if (this.deps.settings.apps.has(FEECOVER_DEFAULT_APP) && this.deps.magicToken === undefined) {
+      return { answered: false, failure: "token_absent" };
+    }
+    let caller: ResolvedApp;
+    let purpose: string;
+    try {
+      caller = this.resolveApp(undefined);
+      purpose = this.purposeFor(caller, route);
+    } catch (e) {
+      const failure = e instanceof CodedApiError ? FEE_SOURCES_FAILURE_OF_CODE[e.code] : undefined;
+      if (failure === undefined) throw e;
+      return { answered: false, failure };
+    }
+
+    const sent = await this.send("GET", `/v1/fee-sources?purpose=${encodeURIComponent(purpose)}`, caller.token,
+      undefined, Math.min(this.deps.settings.timeoutMs, FEE_SOURCES_TIMEOUT_MS));
+    if (sent.kind === "timeout") return { answered: false, failure: "timeout" };
+    if (sent.kind === "unreachable") return { answered: false, failure: "unreachable" };
+
+    const leaks = (v: unknown) => typeof v === "string" && v.includes(caller.token);
+    const o = asRecord(sent.json);
+    if (sent.status !== 200) {
+      const out: FeeSourcesAnswer = { answered: false, failure: "http_status", upstreamStatus: sent.status };
+      // 4xx: câu của Feecover nói được vì sao (401 token, 403 mục đích, 422 mục đích lạ) — chuyển
+      // nguyên như `/fee/utxo`. 5xx: thân là lỗi hệ thống của Feecover, không chuyển.
+      if (sent.status >= 400 && sent.status < 500) {
+        if (typeof o?.rule === "string" && !leaks(o.rule)) out.rule = o.rule;
+        if (typeof o?.message === "string" && !leaks(o.message)) out.message = o.message;
+      }
+      return out;
+    }
+    const fc = o === undefined ? undefined : asRecord(o.feecover);
+    if (
+      o === undefined || o.purpose !== purpose || fc === undefined
+      || typeof fc.available !== "boolean"
+      || (fc.rule !== undefined && typeof fc.rule !== "string")
+      || (fc.message !== undefined && typeof fc.message !== "string")
+      || leaks(fc.rule) || leaks(fc.message)
+    ) {
+      return { answered: false, failure: "bad_response" };
+    }
+    return {
+      answered: true, purpose, available: fc.available,
+      ...(typeof fc.rule === "string" ? { rule: fc.rule } : {}),
+      ...(typeof fc.message === "string" ? { message: fc.message } : {}),
+    };
   }
 
   // ── ứng dụng + mục đích ─────────────────────────────────────────────────────
@@ -210,36 +315,11 @@ export class FeeProxy {
   // ── gọi mạng ────────────────────────────────────────────────────────────────
 
   private async call(method: "GET" | "POST", path: string, token: string, body?: string): Promise<unknown> {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), this.deps.settings.timeoutMs);
-    let status: number;
-    let text: string;
-    try {
-      const res = await this.deps.fetch(`${this.deps.settings.url}${path}`, {
-        method,
-        headers: {
-          authorization: `Bearer ${token}`,
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
-        },
-        ...(body === undefined ? {} : { body }),
-        signal: ctl.signal,
-      });
-      status = res.status;
-      text = await res.text();
-    } catch (e) {
-      // Chỉ TÊN lỗi: câu lỗi của thư viện mạng không phải thứ proxy kiểm soát được nội dung.
-      throw upstreamError(ctl.signal.aborted
-        ? `Feecover không trả lời trong ${this.deps.settings.timeoutMs} ms.`
-        : `Không gọi được Feecover (${e instanceof Error ? e.name : "lỗi mạng"}).`);
-    } finally {
-      clearTimeout(timer);
-    }
-    let json: unknown;
-    try {
-      json = text === "" ? undefined : JSON.parse(text);
-    } catch {
-      json = undefined;
-    }
+    const sent = await this.send(method, path, token, body, this.deps.settings.timeoutMs);
+    if (sent.kind === "timeout") throw upstreamError(`Feecover không trả lời trong ${sent.timeoutMs} ms.`);
+    // Chỉ TÊN lỗi: câu lỗi của thư viện mạng không phải thứ proxy kiểm soát được nội dung.
+    if (sent.kind === "unreachable") throw upstreamError(`Không gọi được Feecover (${sent.errorName}).`);
+    const { status, json } = sent;
     if (status === 200) return json;
     if (status >= 400 && status < 500) {
       // Chuyển NGUYÊN mã trạng thái + `rule`/`message`/`reasons` — câu của Feecover nói được
@@ -256,6 +336,40 @@ export class FeeProxy {
         details);
     }
     throw upstreamError(`Feecover trả mã ${status}.`, { upstream_status: status });
+  }
+
+  /** Một lượt gọi Feecover, CHƯA diễn giải: mỗi đường tự quyết mã/thông điệp của mình. */
+  private async send(method: "GET" | "POST", path: string, token: string, body: string | undefined, timeoutMs: number): Promise<Sent> {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    let status: number;
+    let text: string;
+    try {
+      const res = await this.deps.fetch(`${this.deps.settings.url}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body }),
+        signal: ctl.signal,
+      });
+      status = res.status;
+      text = await res.text();
+    } catch (e) {
+      return ctl.signal.aborted
+        ? { kind: "timeout", timeoutMs }
+        : { kind: "unreachable", errorName: e instanceof Error ? e.name : "lỗi mạng" };
+    } finally {
+      clearTimeout(timer);
+    }
+    let json: unknown;
+    try {
+      json = text === "" ? undefined : JSON.parse(text);
+    } catch {
+      json = undefined;
+    }
+    return { kind: "status", status, json };
   }
 }
 

@@ -395,3 +395,33 @@ describe("buildInstantGenTx — hồ sơ chờ (apply_pending_profile)", () => {
     expect(out.pending_profile).toEqual({ new_profile: "Ember", effective_epoch: E + 1n });
   });
 });
+
+// ── Script vault: ĐỌC từ ref-script CIP-33 thay vì đính kèm ─────────────
+// Đo Preprod 27/09 (tx 66185661…): đính kèm chiếm 11.599 / 12.634 byte. Cặp ca: có UTxO
+// ref đúng script ⟹ readFrom, 0 đính kèm; vắng ⟹ đính kèm như cũ; UTxO sai/không mang
+// script ⟹ NÉM trước khi dựng.
+describe("vault script: readFrom ref-script khi có", () => {
+  const tip = E * P + 1_000n;
+  const refUtxo = (scriptRef: unknown) => ({ ...utxo("", { lovelace: 20_000_000n }, 7), scriptRef });
+
+  it("có ref đúng script ⟹ đọc, không đính kèm", async () => {
+    const ref = refUtxo(VAULT_SCRIPT);
+    const { tx } = await dung(tip, {}, { vaultRefScriptUtxo: ref });
+    expect(tx.attached).toEqual([]);
+    expect(tx.readFrom.flat()).toContain(ref);
+  });
+
+  it("CỰC ĐỐI — vắng ref ⟹ đính kèm script vault", async () => {
+    const { tx } = await dung(tip);
+    expect(tx.attached).toEqual([VAULT_SCRIPT]);
+  });
+
+  it("ref mang script KHÁC ⟹ GEN-INST-009", async () => {
+    const other = { type: "PlutusV3" as const, script: "49480100002221200102" };
+    await expect(dung(tip, {}, { vaultRefScriptUtxo: refUtxo(other) })).rejects.toThrow(/GEN-INST-009/);
+  });
+
+  it("ref không mang script ⟹ GEN-INST-009", async () => {
+    await expect(dung(tip, {}, { vaultRefScriptUtxo: refUtxo(null) })).rejects.toThrow(/GEN-INST-009/);
+  });
+});

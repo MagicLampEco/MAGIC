@@ -307,6 +307,7 @@ export class SdkTxBuilder implements TxBuilderPort {
       backingBeaconUtxo,
       userAddress: ctx.changeAddress,
       vaultScript,
+      vaultRefScriptUtxo: vaultRef,
       lampPolicyId: d.lampPolicyId,
       lampAssetName: d.lampAssetNameHex,
       network: this.deps.network,

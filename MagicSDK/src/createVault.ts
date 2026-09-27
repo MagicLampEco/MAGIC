@@ -77,7 +77,9 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   // đây để câu lỗi mang tên đường người ngoài thật sự đi, và để chỗ này không còn là
   // một phép kiểm-rỗng trông như đã kiểm: bản trước chỉ hỏi chuỗi có rỗng không, nên
   // một policy nhái 56-hex đi qua không tiếng động.
-  assertLampPolicyId(protocol.lampPolicyId, "createVault");
+  assertLampPolicyId(
+    protocol.lampPolicyId, "createVault", protocol.lampRehearsalAck, protocol.network,
+  );
   if (typeof vault.lampDeposit !== "bigint" || vault.lampDeposit <= 0n) {
     throw new Error(`vault.lampDeposit must be > 0 oildrop (got ${vault.lampDeposit})`);
   }

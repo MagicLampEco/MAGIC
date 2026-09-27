@@ -166,6 +166,14 @@ function main(): void {
       // `VaultTxAPI` sẽ bắt được (nó giải hex rồi so với tên theo mạng), nhưng nó bắt
       // ở lượt khởi động dịch vụ chứ không ở đây — và câu lỗi lúc đó nói về mạng.
       asset_name_hex: assertHex(lampAssetName(network), "lamp.asset_name_hex"),
+      // Xác nhận lối mở TẬP DƯỢT (`config.ts` ▸ `REHEARSAL_LAMP_POLICIES`). Lấy từ MÔI
+      // TRƯỜNG của lượt sinh, KHÔNG từ sổ: nó là lời khai ý định, và `state_book_guard.sh`
+      // cấm nó nằm trong sổ. Vắng biến ⟹ không phát trường ⟹ `VaultTxAPI` chặn mọi đời
+      // đã bị thay lúc khởi động. Có biến mà khác policy ⟹ `VaultTxAPI` cũng chặn — tệp
+      // này không kiểm hộ, để chỉ MỘT cổng quyết.
+      ...(process.env.LAMP_REHEARSAL_ACK === undefined
+        ? {}
+        : { rehearsal_ack: process.env.LAMP_REHEARSAL_ACK }),
     },
     vaults: [
       { vault_type: vaultKind, address: need(book, vaultAddrKey, `địa chỉ vault ${vaultKind}`) },

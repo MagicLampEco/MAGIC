@@ -68,6 +68,8 @@ export interface WithdrawLampParams {
   network:         Network;
   /** LAMP minting policy + asset name. */
   lampPolicyId:    string;
+  /** Xác nhận lối mở TẬP DƯỢT — cùng nghĩa với `ProtocolParams.lampRehearsalAck`. */
+  lampRehearsalAck?: string;
   lampAssetName?:  string;        // default = lampAssetName(network)
   /** Where the withdrawn LAMP goes. Default = wallet's own address. */
   destinationAddress?: string;
@@ -180,7 +182,7 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
   // Đường này dựng unit thẳng, không đi qua `buildParamsList` — nên nó cần cổng
   // riêng. Rút LAMP ra khỏi vault bằng một policy sai thì tx chỉ đơn giản không tìm
   // thấy tài sản, và lỗi lộ ra ở tầng dựng giao dịch chứ không nói policy nào sai.
-  const lampUnit = toUnit(assertLampPolicyId(lampPolicyId, "withdrawLamp"), assetName);
+  const lampUnit = toUnit(assertLampPolicyId(lampPolicyId, "withdrawLamp", params.lampRehearsalAck, network), assetName);
 
   // ── Build redeemer — resolve constr index from plutus.json at runtime ──
   // No hardcoded indices: SDK reads the Aiken enum from plutus.json, finds

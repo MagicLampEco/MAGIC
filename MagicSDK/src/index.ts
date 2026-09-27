@@ -19,7 +19,10 @@ export {
 // danh sách từ chối chống được và thứ nó KHÔNG chống được.
 export {
   assertLampPolicyId,
+  isRehearsalAcknowledged,
   NON_LAMP_LOOKALIKE_POLICIES,
+  SUPERSEDED_LAMP_POLICIES,
+  REHEARSAL_LAMP_POLICIES,
 } from "./lampPolicy.js";
 
 // Script tham chiếu CIP-33. Xuất ra vì bên tích hợp nào tự dựng giao dịch cũng cần

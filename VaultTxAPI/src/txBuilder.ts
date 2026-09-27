@@ -145,6 +145,22 @@ export function enterpriseAddressOf(network: Network, ownerPkh: string): string 
   return credentialToAddress(network, keyHashToCredential(ownerPkh));
 }
 
+/** Tham số giao thức mà `SdkTxBuilder.createVault` đưa vào `@magiclamp/sdk` ▸ `createVault`.
+ *  Tách thành hàm để bộ kiểm ghim được đường `lamp.rehearsal_ack` → SDK: rơi trường ack ở
+ *  đây thì dịch vụ khởi động XANH (`parseDeployment` đã cho qua) rồi mọi lượt tạo vault
+ *  của cụm tập dượt bị SDK chặn — hỏng muộn, và hỏng ở người dùng. */
+export function createVaultProtocol(
+  d: Deployment,
+  network: Network,
+): Parameters<typeof createVault>[0]["protocol"] {
+  return {
+    network,
+    lampPolicyId: d.lampPolicyId,
+    lampAssetName: d.lampAssetNameHex,
+    ...(d.lampRehearsalAck === undefined ? {} : { lampRehearsalAck: d.lampRehearsalAck }),
+  };
+}
+
 export interface SdkTxBuilderDeps {
   network: Network;
   blockfrostUrl: string;
@@ -409,11 +425,7 @@ export class SdkTxBuilder implements TxBuilderPort {
     const r = await rejectAsProtocol(() => createVault({
       lucid,
       vaultType: ctx.scope.vaultType as VaultType,
-      protocol: {
-        network: this.deps.network,
-        lampPolicyId: d.lampPolicyId,
-        lampAssetName: d.lampAssetNameHex,
-      },
+      protocol: createVaultProtocol(d, this.deps.network),
       appliedVault: { script: vaultScript, expectedScriptHash: ctx.scope.scriptHash },
       vault: { owner: ctx.owner, lampDeposit: p.lampAmount, profile: p.profile },
       ownerAuth: ctx.ownerAuth,

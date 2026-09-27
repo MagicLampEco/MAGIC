@@ -67,6 +67,10 @@ export interface ProtocolParams {
   /** LAMP minting-policy ID. Required for both Instant and Schedule — it pins
    *  the vault's LAMP UTxO asset unit. */
   lampPolicyId: string;
+  /** Xác nhận lối mở TẬP DƯỢT (`lampPolicy.ts` ▸ `REHEARSAL_LAMP_POLICIES`): phải bằng
+   *  ĐÚNG `lampPolicyId`, và `network` phải là mạng thử. Bỏ trống ⟹ một đời LAMP đã bị
+   *  thay vẫn bị chặn như trước. Không có tác dụng với policy ngoài bảng tập dượt. */
+  lampRehearsalAck?: string;
   /** LAMP asset name as hex. Bỏ trống thì DẪN THEO MẠNG qua
    *  `lampAssetName(network)`: Mainnet "4c414d50" = "LAMP", Preview/Preprod
    *  "744c414d50" = "tLAMP" (`ProtocolUtils/src/index.ts:48-52`). KHÔNG có mặc

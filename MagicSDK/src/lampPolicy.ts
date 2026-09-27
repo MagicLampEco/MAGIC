@@ -69,12 +69,13 @@ export const NON_LAMP_LOOKALIKE_POLICIES: Readonly<Record<string, string>> = Obj
 // bằng phạm vi của triệu chứng". Nó vừa tái diễn đúng điều đó với chính mình.
 //
 // - [!] Hai bảng vẫn là hai bản chép tay, không đường nhập khẩu — đo bằng:
-//     grep -oE '^  "[0-9a-f]{56}"' scripts/config.ts
-//     grep -oE '^  "[0-9a-f]{56}"' MagicSDK/src/lampPolicy.ts
-//   đọc ở: hai danh sách khoá có TRÙNG NHAU không (so tập, không so số đếm — hai
-//   bảng lệch nhau hai mục khác nhau vẫn cho cùng một số) · 2026-09-22: trùng, cùng
-//   4 khoá. Đường sửa tận gốc là SDK xuất hai bảng và `scripts/config.ts` nhập —
-//   chưa làm vì kho này chưa phụ thuộc gói đó.
+//     cd scripts && npx tsx test_lamp_policy_gate.ts
+//   đọc ở: khối "── hai bản chép tay trùng TẬP KHOÁ", so TỪNG bảng một (nhái · đã bị
+//   thay · tập dượt), so tập chứ không so số đếm · 2026-09-27: trùng cả ba bảng.
+//   Phép `grep -oE '^  "[0-9a-f]{56}"'` cũ không còn đủ: nó gộp mọi bảng làm một, nên
+//   một khoá chuyển nhầm từ bảng này sang bảng kia vẫn cho cùng một tập. Đường sửa
+//   tận gốc là SDK xuất các bảng và `scripts/config.ts` nhập — chưa làm vì `scripts/`
+//   chưa phụ thuộc gói đó.
 
 /** LAMP THẬT của một đời đã bị thay. Không phải hàng nhái — mọi phép so hình
  *  dạng đều cho chúng đi qua, và một lượt chạy bằng chúng vẫn XANH. Danh sách
@@ -91,6 +92,59 @@ export const SUPERSEDED_LAMP_POLICIES: Readonly<Record<string, string>> = Object
     "(genesis tx `21f39c9b…a716`, 2026-09-26). Cụm vault Preprod 23–24/09 dùng đời này.",
 });
 
+// LỐI MỞ TẬP DƯỢT — một ngoại lệ CÓ XÁC NHẬN THEO GIÁ TRỊ, không phải một cờ bật/tắt
+//
+// Chủ dự án quyết 2026-09-27: dựng một cụm TẬP DƯỢT dùng một lần trên Preprod bằng
+// `8169b76c…`, vì ví deploy chỉ giữ tLAMP của đời đó, và kho LAMP sẽ đổi policy thêm
+// lần nữa sau 04/10. Cụm phục vụ người dùng sẽ dựng MỘT lần trên policy cuối — dựng nó
+// trên `53bc12ad…` bây giờ là dựng hai lần.
+//
+// Sự thật "`8169b76c…` đã bị thay" KHÔNG đổi: khoá đó vẫn nằm trong
+// `SUPERSEDED_LAMP_POLICIES`. Bảng dưới chỉ nói "được CHO QUA khi người chạy xác nhận".
+//
+// Vì sao xác nhận là CHÍNH CHUỖI policy chứ không phải `=1`: một cờ `=1` mở cửa cho mọi
+// khoá trong bảng, kể cả khoá được thêm về sau mà người bật cờ chưa từng thấy; và một
+// cờ `=1` nằm quên trong cấu hình thì cho qua cả đời mà nó không định nói tới. Xác nhận
+// bằng giá trị thì chỉ mở đúng cửa nó gọi tên.
+//
+// Ba điều kiện, ghép bằng VÀ — thiếu một là ném câu lỗi cũ, nguyên văn:
+//   1. policy nằm trong `REHEARSAL_LAMP_POLICIES` (bảng ĐÓNG, dưới);
+//   2. `rehearsalAck` bằng ĐÚNG chuỗi policy đó;
+//   3. mạng là một mạng THỬ đã biết (`Preview` | `Preprod`). Mạng vắng, lạ, hay
+//      `Mainnet` ⟹ không được phép. SDK CÓ khái niệm mạng (`ProtocolParams.network`,
+//      `WithdrawLampParams.network`), nên điều kiện này áp ở đây như ở `scripts/`;
+//      người gọi không truyền mạng thì lối mở đóng — fail-closed.
+//
+// Hàm cổng KHÔNG in cảnh báo: SDK là thư viện, và cổng chạy nhiều lần trong một lượt
+// dựng (`createVault` rồi `buildParamsList`). Lớp ứng dụng in một lần lúc nạp cấu hình
+// (`VaultTxAPI` ▸ `parseDeployment`, `scripts/config.ts` ▸ `requireLampPolicyId`).
+
+/** Đời đã bị thay mà được CHO QUA khi có xác nhận theo giá trị. Danh sách ĐÓNG, chép
+ *  tay 2026-09-27; phải trùng tập khoá với `scripts/config.ts` ▸ bảng cùng tên.
+ *
+ *  ĐIỀU KIỆN GỠ: gỡ khoá `8169b76c…` khi kho LAMP gửi policy Preprod cuối (sau 04/10).
+ *  Gỡ xong thì bảng rỗng, và lối mở tự đóng — không cần sửa hàm cổng. */
+export const REHEARSAL_LAMP_POLICIES: Readonly<Record<string, string>> = Object.freeze({
+  "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
+    "Cụm TẬP DƯỢT dùng một lần trên Preprod (chủ dự án quyết 2026-09-27): ví deploy chỉ " +
+    "giữ tLAMP của đời này. Gỡ khi kho LAMP gửi policy Preprod cuối (sau 04/10).",
+});
+
+/** Mạng được phép chạy lối mở tập dượt. Danh sách ĐÓNG: mạng không nằm đây — kể cả
+ *  một chuỗi lạ — là không được phép. */
+const REHEARSAL_NETWORKS: ReadonlySet<string> = new Set(["Preview", "Preprod"]);
+
+/** Ba điều kiện của lối mở tập dượt — xem khối chú thích trên `REHEARSAL_LAMP_POLICIES`. */
+export function isRehearsalAcknowledged(
+  policyId: string,
+  rehearsalAck: string | undefined,
+  network: string | undefined,
+): boolean {
+  return Object.hasOwn(REHEARSAL_LAMP_POLICIES, policyId)
+    && rehearsalAck === policyId
+    && network !== undefined && REHEARSAL_NETWORKS.has(network);
+}
+
 const HEX56 = /^[0-9a-f]{56}$/;
 
 /**
@@ -101,14 +155,23 @@ const HEX56 = /^[0-9a-f]{56}$/;
  * policy id nướng vào bytes lúc biên dịch, nên sai ở đó là sai script hash, sai địa
  * chỉ vault, và không sửa được bằng cách đổi cấu hình về sau.
  *
- * @param policyId giá trị người gọi đưa vào
- * @param where    tên chỗ gọi, để câu lỗi chỉ đúng đường (vd "applyVaultValidator")
+ * @param policyId     giá trị người gọi đưa vào
+ * @param where        tên chỗ gọi, để câu lỗi chỉ đúng đường (vd "applyVaultValidator")
+ * @param rehearsalAck xác nhận lối mở tập dượt — phải bằng ĐÚNG `policyId`. Bỏ trống ⟹
+ *                     hành vi y hệt trước khi có lối mở.
+ * @param network      mạng của lượt dựng. Lối mở chỉ mở trên `Preview` | `Preprod`;
+ *                     vắng ⟹ đóng.
  */
-export function assertLampPolicyId(policyId: string | undefined, where: string): string {
+export function assertLampPolicyId(
+  policyId: string | undefined,
+  where: string,
+  rehearsalAck?: string,
+  network?: string,
+): string {
   const v = policyId ?? "";
 
   const doi = SUPERSEDED_LAMP_POLICIES[v];
-  if (doi) {
+  if (doi && !isRehearsalAcknowledged(v, rehearsalAck, network)) {
     throw new Error(
       `[${where}] lampPolicyId trỏ vào một đời LAMP ĐÃ BỊ THAY: ${v}\n` +
       `  ${doi}\n` +

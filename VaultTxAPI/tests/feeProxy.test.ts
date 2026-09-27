@@ -467,6 +467,15 @@ describe("POST /fee/sign — lời đáp Feecover", () => {
       expect(r.status, JSON.stringify(c)).toBe(502);
       expect(codeOf(r)).toBe("FEE_PROXY_UPSTREAM");
     }
+    // CẶP: hết giờ và không tới được cùng mã nhưng HAI câu — `send` dùng chung với `/v1/fee-sources`
+    // phải giữ hai lối tách nhau; câu lỗi thư viện ("fetch failed") không lọt ra, chỉ TÊN lỗi.
+    const messageOf = async (c: Reply) => {
+      const h = harness({ feecover: fakeFeecover({ sign: () => c }) });
+      const r = await h.call("POST", "/fee/sign", { tx_cbor: (await issueConsume(h)).cbor });
+      return (r.body as { error: { message: string } }).error.message;
+    };
+    expect(await messageOf("hang")).toBe("Feecover không trả lời trong 200 ms.");
+    expect(await messageOf("throw")).toBe("Không gọi được Feecover (TypeError).");
   });
 });
 

@@ -16,9 +16,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { parseDeployment, type Deployment } from "../src/config.js";
-import { FeeProxy, type FetchLike } from "../src/feeProxy.js";
+import { FEE_SOURCES_TIMEOUT_MS, FeeProxy, type FetchLike } from "../src/feeProxy.js";
 import { handle, type RouterDeps } from "../src/http.js";
-import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
+import { IssuedTxRegistry, OwnerLockTable, type IssuedRoute } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
 import {
   enterpriseAddressOf,
@@ -122,8 +122,26 @@ const FEECOVER_NO_MAGIC = {
   apps: { orilife: { token_sha256: "ab".repeat(32), purposes: { consume: "orilife_consume_magic" } } },
 };
 
+/** Token ứng dụng `magic` mà proxy giữ trong phép kiểm. Không được xuất hiện trong phản hồi nào. */
+const MAGIC_TOKEN = "magic-app-token-for-tests-" + "q".repeat(24);
+
+type FetchInit = Parameters<FetchLike>[1];
+interface FetchCall { url: string; init: FetchInit }
+type FeecoverReply = (url: string, init: FetchInit) => Promise<{ status: number; text(): Promise<string> }>;
+const reply = (status: number, body: unknown): Promise<{ status: number; text(): Promise<string> }> =>
+  Promise.resolve({ status, text: async () => (typeof body === "string" ? body : JSON.stringify(body)) });
+const purposeOf = (url: string) => new URL(url).searchParams.get("purpose");
+/** Feecover mặc định: `/v1/fee-sources` trả `available: true` cho đúng mục đích được hỏi; đường khác 500. */
+const FEECOVER_OPEN: FeecoverReply = async (url) => new URL(url).pathname === "/v1/fee-sources"
+  ? reply(200, { purpose: purposeOf(url), feecover: { available: true } })
+  : reply(500, "");
+
 interface HarnessOpts {
   feecover?: Record<string, unknown>;
+  /** Câu trả lời của Feecover giả. Vắng ⟹ `FEECOVER_OPEN`. */
+  feecoverReply?: FeecoverReply;
+  /** `null` ⟹ proxy KHÔNG cầm token ứng dụng mặc định. */
+  magicToken?: string | null;
   ownerUtxos?: UTxO[];
   /** UTxO ở các địa chỉ khác (ví chủ thứ hai, …), theo địa chỉ. */
   addressUtxos?: Record<string, UTxO[]>;
@@ -151,20 +169,22 @@ function harness(o: HarnessOpts = {}) {
   const record = vi.spyOn(issued, "record");
   const acquire = vi.spyOn(locks, "acquire");
   const fetchCalls: string[] = [];
-  const fetch: FetchLike = async (url) => { fetchCalls.push(url); return { status: 500, text: async () => "" }; };
+  const fetchLog: FetchCall[] = [];
+  const answer = o.feecoverReply ?? FEECOVER_OPEN;
+  const fetch: FetchLike = async (url, init) => { fetchCalls.push(url); fetchLog.push({ url, init }); return answer(url, init); };
   const service = new VaultTxService({
     network: "Preview", deployment, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
   });
   const feeProxy = deployment.feecover === undefined ? undefined : new FeeProxy({
-    settings: deployment.feecover, magicToken: "magic-app-token-for-tests-" + "q".repeat(24), issued, fetch,
-    now: () => NOW,
+    settings: deployment.feecover, issued, fetch, now: () => NOW,
+    ...(o.magicToken === null ? {} : { magicToken: o.magicToken ?? MAGIC_TOKEN }),
   });
   const router: RouterDeps = {
     service, deploymentSource: deployment.source, vaultScopes: deployment.vaults, network: "Preview",
     chainLabel: "recorded", changeAddressStrategy: "enterprise_from_owner_pkh", token: "", logInternal: () => {},
     ...(feeProxy === undefined ? {} : { feeProxy }),
   };
-  return { builder, router, issued, locks, record, acquire, fetchCalls };
+  return { builder, router, issued, locks, record, acquire, fetchCalls, fetchLog };
 }
 
 const post = (url: string, body: unknown) => ({ method: "POST", url, headers: {}, body });
@@ -174,7 +194,9 @@ const COMMIT = { owner_pkh: OWNER_PKH, schedule_length: "3", lamp_per_epoch: "70
 const quote = (body: Record<string, unknown>) => post("/tx/quote", body);
 
 interface QuoteBody {
-  feecover: { fee_lovelace: string; available: boolean; reason?: string };
+  feecover: {
+    fee_lovelace: string; available: boolean; reason?: string; rule?: string; message?: string; upstream_status?: number;
+  };
   owner_address: {
     fee_lovelace: string; available: boolean; needed_lovelace: string; collateral_lovelace: string;
     fee_payer?: { utxo: string; address: string }; reason?: string;
@@ -317,18 +339,21 @@ describe("/tx/quote — feecover.available", () => {
     const b = bodyOf(await handle(quote({ route: "schedule-commit", params: COMMIT }), h.router));
     expect(b.feecover.available).toBe(false);
     expect(b.feecover.reason).toBe("FEE_QUOTE_FEECOVER_PURPOSE_UNMAPPED");
+    expect(h.fetchCalls).toHaveLength(0);
   });
 
   it("feecover khai mà không có app mặc định ⟹ false, FEE_QUOTE_FEECOVER_NO_DEFAULT_APP", async () => {
     const h = harness({ feecover: FEECOVER_NO_MAGIC });
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
     expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), available: false, reason: "FEE_QUOTE_FEECOVER_NO_DEFAULT_APP" });
+    expect(h.fetchCalls).toHaveLength(0);
   });
 
-  it("CẶP: app mặc định có mục đích cho consume ⟹ true, không reason", async () => {
+  it("CẶP: app mặc định có mục đích cho consume, Feecover trả true ⟹ true, không reason; hỏi đúng một lượt", async () => {
     const h = harness({ feecover: FEECOVER_MAGIC });
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
     expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), available: true });
+    expect(h.fetchCalls).toEqual(["https://feecover.example/v1/fee-sources?purpose=consume_magic"]);
   });
 
   it("UTxO tổng hợp: địa chỉ base (dài hơn enterprise), khoá khác chủ, KHÔNG đọc chuỗi cho nó", async () => {
@@ -524,23 +549,24 @@ describe("/tx/quote — owner_address.available", () => {
 
 // ── không giữ chỗ gì ───────────────────────────────────────────────────────────
 
-describe("/tx/quote — không ghi sổ phát-hành, không giành khoá, không gọi Feecover", () => {
+describe("/tx/quote — không ghi sổ phát-hành, không giành khoá, không xin Feecover UTxO/chữ ký", () => {
   const OWNER_FEE_UTXO = ownerAda(50_000_000n);
   const FP = { utxo: `${OWNER_FEE_UTXO.txHash}#0`, address: OWNER_FEE_ADDRESS };
 
-  it("báo giá đủ ba lượt dựng ⟹ sổ rỗng, khoá không bị giành, Feecover 0 lượt; /tx/consume ngay sau vẫn 200", async () => {
+  it("báo giá đủ ba lượt dựng ⟹ sổ rỗng, khoá không bị giành, Feecover chỉ bị HỎI /v1/fee-sources; /tx/consume ngay sau vẫn 200", async () => {
     const h = harness({ feecover: FEECOVER_MAGIC, ownerUtxos: [OWNER_FEE_UTXO], refUtxos: [OWNER_FEE_UTXO] });
     bodyOf(await handle(quote({ route: "consume", params: CONSUME, owner_fee_addresses: [OWNER_FEE_ADDRESS] }), h.router));
     expect(h.builder.seen).toHaveLength(3);
     expect(h.record).not.toHaveBeenCalled();
     expect(h.issued.size()).toBe(0);
     expect(h.acquire).not.toHaveBeenCalled();
-    expect(h.fetchCalls).toHaveLength(0);
+    // Lượt duy nhất là câu hỏi không giữ chỗ — không /v1/utxo, không /v1/sign.
+    expect(h.fetchCalls.map(u => new URL(u).pathname)).toEqual(["/v1/fee-sources"]);
     // Khoá của chủ còn trống: đường dựng thật chạy được ngay, và CHỈ nó ghi sổ.
     const direct = await handle(post("/tx/consume", { ...CONSUME, fee_payer: FP }), h.router);
     expect(direct.status, JSON.stringify(direct.body)).toBe(200);
     expect(h.record).toHaveBeenCalledTimes(1);
-    expect(h.fetchCalls).toHaveLength(0);
+    expect(h.fetchCalls).toHaveLength(1);
   });
 
   it("CẶP đối chứng: đường dựng thật ghi sổ + giành khoá; lượt thứ hai cùng chủ ⟹ 409", async () => {
@@ -551,5 +577,208 @@ describe("/tx/quote — không ghi sổ phát-hành, không giành khoá, không
     expect(h.acquire).toHaveBeenCalledTimes(1);
     const again = await handle(post("/tx/consume", { ...CONSUME, fee_payer: FP }), h.router);
     expect(again.status).toBe(409);
+  });
+});
+
+// ── nguồn Feecover HỎI Feecover: `GET /v1/fee-sources` ─────────────────────────
+
+/** Hai route có mục đích: phép kiểm query `purpose` đổi đúng một biến (route). */
+const FEECOVER_TWO = {
+  url: "https://feecover.example",
+  apps: { magic: { purposes: { consume: "consume_magic", "schedule-commit": "schedule_commit" } } },
+};
+/** Hạn chót nhỏ nhất cấu hình nhận (100 ms) — bài hết giờ không phải chờ `FEE_SOURCES_TIMEOUT_MS`. */
+const FEECOVER_FAST = { ...FEECOVER_MAGIC, timeout_ms: 100 };
+
+/** Báo giá consume với Feecover giả trả `(status, body)` cho `/v1/fee-sources`; trả khối `feecover` + phản hồi thô. */
+async function askFeecover(status: number, body: unknown, o: HarnessOpts = {}) {
+  const h = harness({ feecover: FEECOVER_MAGIC, feecoverReply: () => reply(status, body), ...o });
+  const r = await handle(quote({ route: "consume", params: CONSUME }), h.router);
+  const b = bodyOf(r);
+  // Token không bao giờ nằm trong phản hồi — áp cho MỌI ca đi qua hàm này.
+  expect(JSON.stringify(r.body)).not.toContain(MAGIC_TOKEN);
+  return { fc: b.feecover, h };
+}
+const FEE = String(FEE_BASE);
+
+describe("/tx/quote — feecover.available HỎI Feecover (/v1/fee-sources)", () => {
+  it("CẶP: Feecover trả available=true ⟹ true; chỉ đổi available thành false ⟹ false, FEE_QUOTE_FEECOVER_DECLINED", async () => {
+    const yes = await askFeecover(200, { purpose: "consume_magic", feecover: { available: true } });
+    expect(yes.fc).toEqual({ fee_lovelace: FEE, available: true });
+    const no = await askFeecover(200, { purpose: "consume_magic", feecover: { available: false } });
+    expect(no.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_DECLINED" });
+  });
+
+  it("CẶP: rule + message của Feecover chuyển NGUYÊN (false L14 · và cả khi true)", async () => {
+    const message = `ứng dụng "magic" không được trả phí hộ trong cửa sổ đo Catalyst.`;
+    const no = await askFeecover(200, { purpose: "consume_magic", feecover: { available: false, rule: "L14", message } });
+    expect(no.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_DECLINED", rule: "L14", message });
+    const yes = await askFeecover(200, { purpose: "consume_magic", feecover: { available: true, rule: "R", message: "m" } });
+    expect(yes.fc).toEqual({ fee_lovelace: FEE, available: true, rule: "R", message: "m" });
+  });
+
+  it("yêu cầu: GET đúng URL, Authorization = Bearer <token ứng dụng>, không thân bài, có signal", async () => {
+    const { h } = await askFeecover(200, { purpose: "consume_magic", feecover: { available: true } });
+    expect(h.fetchLog).toHaveLength(1);
+    const c = h.fetchLog[0]!;
+    expect(c.url).toBe("https://feecover.example/v1/fee-sources?purpose=consume_magic");
+    expect(c.init.method).toBe("GET");
+    expect(c.init.headers).toEqual({ authorization: `Bearer ${MAGIC_TOKEN}` });
+    expect(c.init.body).toBeUndefined();
+    expect(c.init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("CẶP query purpose: cùng cấu hình, đổi route consume → schedule-commit ⟹ purpose đổi theo bảng ánh xạ", async () => {
+    const h = harness({ feecover: FEECOVER_TWO });
+    bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
+    const b = bodyOf(await handle(quote({ route: "schedule-commit", params: COMMIT }), h.router));
+    expect(b.feecover.available).toBe(true);
+    expect(h.fetchCalls.map(purposeOf)).toEqual(["consume_magic", "schedule_commit"]);
+  });
+
+  it("CẶP purpose phải khớp: Feecover trả lời cho mục đích KHÁC ⟹ false, BAD_RESPONSE", async () => {
+    const { fc } = await askFeecover(200, { purpose: "schedule_commit", feecover: { available: true } });
+    expect(fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE" });
+  });
+
+  it("thân sai hình dạng ⟹ false, FEE_QUOTE_FEECOVER_BAD_RESPONSE (mỗi ca lệch đúng một chỗ so với ca đúng)", async () => {
+    const good = { purpose: "consume_magic", feecover: { available: true } };
+    expect((await askFeecover(200, good)).fc.available).toBe(true);
+    const bad: unknown[] = [
+      "không phải JSON",
+      "",
+      [good],
+      { purpose: "consume_magic" },
+      { purpose: "consume_magic", feecover: null },
+      { purpose: "consume_magic", feecover: { available: "true" } },
+      { purpose: "consume_magic", feecover: {} },
+      { feecover: { available: true } },
+      { purpose: "consume_magic", feecover: { available: true, rule: 14 } },
+      { purpose: "consume_magic", feecover: { available: true, message: null } },
+    ];
+    for (const body of bad) {
+      const { fc } = await askFeecover(200, body);
+      expect(fc, JSON.stringify(body)).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE" });
+    }
+  });
+
+  it("CẶP HTTP: 500 ⟹ HTTP_STATUS + upstream_status, KHÔNG chuyển rule/message; 403 cùng thân ⟹ chuyển rule/message", async () => {
+    const body = { rule: "L14", message: "bị chặn" };
+    const five = await askFeecover(500, body);
+    expect(five.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 500 });
+    const four = await askFeecover(403, body);
+    expect(four.fc).toEqual({
+      fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 403, rule: "L14", message: "bị chặn",
+    });
+  });
+
+  it("CẶP 200 đúng mã: 201 với thân ĐÚNG hình dạng available=true ⟹ vẫn false, HTTP_STATUS", async () => {
+    const good = { purpose: "consume_magic", feecover: { available: true } };
+    const c = await askFeecover(201, good);
+    expect(c.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 201 });
+  });
+
+  it("lỗi mạng (fetch ném) ⟹ false, FEE_QUOTE_FEECOVER_UNREACHABLE; câu lỗi thư viện không lọt ra", async () => {
+    const h = harness({ feecover: FEECOVER_MAGIC, feecoverReply: async () => { throw new TypeError(`fetch failed ${MAGIC_TOKEN}`); } });
+    const r = await handle(quote({ route: "consume", params: CONSUME }), h.router);
+    expect(bodyOf(r).feecover).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_UNREACHABLE" });
+    expect(JSON.stringify(r.body)).not.toContain(MAGIC_TOKEN);
+    expect(JSON.stringify(r.body)).not.toContain("fetch failed");
+  });
+
+  it("CẶP hết giờ: Feecover chỉ trả khi bị huỷ ⟹ TIMEOUT; cùng Feecover trả ngay ⟹ true", async () => {
+    const hang: FeecoverReply = (_url, init) => new Promise((_res, rej) => {
+      init.signal.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" })));
+    });
+    const h = harness({ feecover: FEECOVER_FAST, feecoverReply: hang });
+    const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
+    expect(b.feecover).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_TIMEOUT" });
+    const ok = harness({ feecover: FEECOVER_FAST });
+    expect(bodyOf(await handle(quote({ route: "consume", params: CONSUME }), ok.router)).feecover.available).toBe(true);
+  });
+
+  it("CẶP token: app mặc định khai mà proxy không cầm token ⟹ false, TOKEN_ABSENT, Feecover KHÔNG bị hỏi; có token ⟹ true", async () => {
+    const none = harness({ feecover: FEECOVER_MAGIC, magicToken: null });
+    const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME }), none.router));
+    expect(b.feecover).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_TOKEN_ABSENT" });
+    expect(none.fetchCalls).toHaveLength(0);
+    const some = harness({ feecover: FEECOVER_MAGIC });
+    expect(bodyOf(await handle(quote({ route: "consume", params: CONSUME }), some.router)).feecover.available).toBe(true);
+  });
+
+  it("CẶP token không lọt: Feecover dội lại token trong message (200) ⟹ BAD_RESPONSE; message thường ⟹ chuyển nguyên", async () => {
+    const echo = await askFeecover(200, { purpose: "consume_magic", feecover: { available: true, message: `token ${MAGIC_TOKEN}` } });
+    expect(echo.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE" });
+    const plain = await askFeecover(200, { purpose: "consume_magic", feecover: { available: true, message: "token hợp lệ" } });
+    expect(plain.fc).toEqual({ fee_lovelace: FEE, available: true, message: "token hợp lệ" });
+  });
+
+  it("CẶP token không lọt ở 4xx: 401 dội token trong rule/message ⟹ bỏ hai trường đó; 401 câu thường ⟹ chuyển", async () => {
+    const echo = await askFeecover(401, { rule: MAGIC_TOKEN, message: `sai token ${MAGIC_TOKEN}` });
+    expect(echo.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 401 });
+    const plain = await askFeecover(401, { rule: "AUTH", message: "thiếu hoặc sai token." });
+    expect(plain.fc).toEqual({
+      fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 401,
+      rule: "AUTH", message: "thiếu hoặc sai token.",
+    });
+  });
+
+  it("CẶP thứ tự: params hỏng ⟹ lỗi đường dựng, Feecover KHÔNG bị hỏi; params đúng ⟹ hỏi một lượt", async () => {
+    const h = harness({ feecover: FEECOVER_MAGIC });
+    const bad = await handle(quote({ route: "consume", params: { ...CONSUME, op_count: 2 } }), h.router);
+    expect(codeOf(bad)).toBe("BAD_REQUEST");
+    expect(h.fetchCalls).toHaveLength(0);
+    bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
+    expect(h.fetchCalls).toHaveLength(1);
+  });
+});
+
+// ── hết giờ riêng của /v1/fee-sources — gọi thẳng `FeeProxy.feeSources` với đồng hồ giả ──
+
+describe("FeeProxy.feeSources — hết giờ FEE_SOURCES_TIMEOUT_MS", () => {
+  const proxyWith = (timeoutMs: number) => {
+    let signal: AbortSignal | undefined;
+    const fetch: FetchLike = (_url, init) => new Promise((_res, rej) => {
+      signal = init.signal;
+      init.signal.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" })));
+    });
+    const proxy = new FeeProxy({
+      settings: {
+        url: "https://feecover.example", timeoutMs,
+        apps: new Map([["magic", { purposes: new Map<IssuedRoute, string>([["consume", "consume_magic"]]) }]]),
+      },
+      magicToken: MAGIC_TOKEN, issued: new IssuedTxRegistry(TTL), fetch,
+    });
+    return { proxy, aborted: () => signal?.aborted };
+  };
+
+  it("CẶP: hạn chót chung 15 s ⟹ câu hỏi bị huỷ ĐÚNG ở FEE_SOURCES_TIMEOUT_MS, chưa huỷ ở −1 ms", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { proxy, aborted } = proxyWith(15_000);
+      const p = proxy.feeSources("consume");
+      await vi.advanceTimersByTimeAsync(FEE_SOURCES_TIMEOUT_MS - 1);
+      expect(aborted()).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(aborted()).toBe(true);
+      expect(await p).toEqual({ answered: false, failure: "timeout" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("CẶP: bản deploy đặt hạn chót NGẮN hơn (100 ms) ⟹ bản deploy thắng", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { proxy, aborted } = proxyWith(100);
+      const p = proxy.feeSources("consume");
+      await vi.advanceTimersByTimeAsync(99);
+      expect(aborted()).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(aborted()).toBe(true);
+      expect(await p).toEqual({ answered: false, failure: "timeout" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

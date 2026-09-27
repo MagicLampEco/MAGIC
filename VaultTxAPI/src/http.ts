@@ -12,7 +12,7 @@
 //   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 //   POST /tx/submit            { tx_cbor, witness_cbor }
 //   POST /tx/quote             { route, params, [owner_fee_addresses] } (báo giá phí — `feeQuote.ts`;
-//                              không dựng tx nào để ký, không giữ chỗ, không gọi Feecover)
+//                              không dựng tx nào để ký, không giữ chỗ; hỏi Feecover `/v1/fee-sources`)
 //   POST /fee/utxo             { route }       [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`)
 //   POST /fee/sign             { tx_cbor }     [X-Feecover-Token]
 //

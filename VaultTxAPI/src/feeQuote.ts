@@ -1,7 +1,7 @@
 // VaultTxAPI/src/feeQuote.ts — `POST /tx/quote`: báo giá phí cho HAI nguồn trả phí, TRƯỚC khi dựng.
 //
 //   { route, params, [owner_fee_addresses] }
-//   → { feecover:      { fee_lovelace, available, [reason] },
+//   → { feecover:      { fee_lovelace, available, [reason], [rule], [message], [upstream_status] },
 //       owner_address: { fee_lovelace, available, needed_lovelace, collateral_lovelace,
 //                        [fee_payer: { utxo, address }], [reason] },
 //       valid_until }
@@ -16,6 +16,9 @@
 //     giữ chỗ một UTxO của kho Feecover cho một lần hỏi giá). Nên dựng trên MỘT UTxO TỔNG HỢP,
 //     không đọc chuỗi cho nó. Lucid đánh giá script CỤC BỘ từ UTxO nó được đưa (xem
 //     `SYNTH_*` bên dưới cho bằng chứng thực thi), nên UTxO không có trên chuỗi vẫn dựng được.
+//     `available` thì HỎI Feecover (`GET /v1/fee-sources`, không giữ chỗ — `FeeProxy.feeSources`)
+//     và chuyển nguyên câu trả lời; không hỏi được ⟹ `false` kèm lý do có tên, không bao giờ
+//     `true` khi chưa hỏi (`feecoverSource`).
 //   · Chủ: đọc UTxO ở MỌI địa chỉ trong `owner_fee_addresses` (CHỈ ĐỌC), chọn một UTxO theo
 //     quy tắc ở `orderOwnerFeeCandidates`, dựng với nó làm `fee_payer` và trả lại nó ở
 //     `owner_address.fee_payer` — cùng hình dạng thân `fee_payer` của đường dựng, để app chép
@@ -23,8 +26,10 @@
 //     `/fee/sign`.
 //
 // ── BA THỨ BÁO GIÁ KHÔNG LÀM ─────────────────────────────────────────────────────
-// Không giữ khoá mềm của chủ, không ghi sổ phát-hành (`IssuedTxRegistry`), không gọi Feecover.
-// Tx dựng ra ở đây không đi ra ngoài: một báo giá không nộp được, không xin ký được.
+// Không giữ khoá mềm của chủ, không ghi sổ phát-hành (`IssuedTxRegistry`), không xin Feecover
+// UTxO hay chữ ký (`/v1/utxo`, `/v1/sign`) — lượt gọi Feecover duy nhất là câu hỏi
+// `/v1/fee-sources`, vốn không giữ chỗ. Tx dựng ra ở đây không đi ra ngoài: một báo giá không nộp
+// được, không xin ký được.
 //
 // ── MÃ LỖI ────────────────────────────────────────────────────────────────────────
 // Lỗi của thân báo giá: `FEE_QUOTE_*` (400). Lỗi của `params`: ĐÚNG mã đường dựng trả —
@@ -34,7 +39,7 @@ import { CML, credentialToAddress, getAddressDetails, type UTxO } from "@lucid-e
 
 import { parseBuildRequest, runBuild, type BuildResult } from "./buildRequest.js";
 import { CodedApiError } from "./errors.js";
-import type { FeeProxy } from "./feeProxy.js";
+import type { FeeProxy, FeeSourcesFailure } from "./feeProxy.js";
 import { assertFeePayerAddress, isPureAdaFeeUtxo, refStr, type FeePayerCodes } from "./feePayer.js";
 import { ISSUED_ROUTES, type IssuedRoute } from "./locks.js";
 import type { VaultTxService } from "./service.js";
@@ -51,12 +56,29 @@ export type FeeQuoteReason =
   | "FEE_QUOTE_FEECOVER_NO_DEFAULT_APP"
   | "FEE_QUOTE_FEECOVER_PURPOSE_UNMAPPED"
   | "FEE_QUOTE_FEECOVER_PURPOSE_FOREIGN"
+  | "FEE_QUOTE_FEECOVER_TOKEN_ABSENT"
+  | "FEE_QUOTE_FEECOVER_TIMEOUT"
+  | "FEE_QUOTE_FEECOVER_UNREACHABLE"
+  | "FEE_QUOTE_FEECOVER_HTTP_STATUS"
+  | "FEE_QUOTE_FEECOVER_BAD_RESPONSE"
+  | "FEE_QUOTE_FEECOVER_DECLINED"
   | "FEE_QUOTE_OWNER_ADDRESSES_ABSENT"
   | "FEE_QUOTE_OWNER_NO_ADA_UTXO"
   | "FEE_QUOTE_OWNER_INSUFFICIENT";
 
 export interface FeeQuoteResponse {
-  feecover: { fee_lovelace: string; available: boolean; reason?: FeeQuoteReason };
+  feecover: {
+    fee_lovelace: string;
+    /** `true` CHỈ khi Feecover trả lời `/v1/fee-sources` với `available: true`. */
+    available: boolean;
+    /** Có đúng khi `available = false`. */
+    reason?: FeeQuoteReason;
+    /** Nguyên văn `rule` / `message` của Feecover (câu trả lời 200, hoặc lời từ chối 4xx). */
+    rule?: string;
+    message?: string;
+    /** Chỉ với `FEE_QUOTE_FEECOVER_HTTP_STATUS`: mã Feecover trả. */
+    upstream_status?: number;
+  };
   owner_address: {
     fee_lovelace: string;
     available: boolean;
@@ -172,11 +194,17 @@ function ownerFeeAddressCodes(i: number): FeePayerCodes {
   return { field, addressField: field, shape: "FEE_QUOTE_SHAPE", invalid: "FEE_QUOTE_OWNER_ADDRESS_INVALID" };
 }
 
-/** Mã lỗi `FeeProxy.defaultPurposeFor` → lý do Feecover không có. Mã khác ⟹ ném nguyên. */
-const FEECOVER_REASON_OF_PROXY_CODE: Readonly<Record<string, FeeQuoteReason>> = {
-  FEE_PROXY_APP_UNKNOWN: "FEE_QUOTE_FEECOVER_NO_DEFAULT_APP",
-  FEE_PROXY_PURPOSE_UNMAPPED: "FEE_QUOTE_FEECOVER_PURPOSE_UNMAPPED",
-  FEE_PROXY_APP_PURPOSE: "FEE_QUOTE_FEECOVER_PURPOSE_FOREIGN",
+/** Lối không hỏi được Feecover → lý do trong báo giá. `Record` trên cả kiểu hợp ⟹ thêm một lối
+ *  hỏng ở `feeProxy.ts` mà quên ánh xạ ở đây là lỗi biên dịch, không phải một `undefined` im lặng. */
+const FEECOVER_REASON_OF_FAILURE: Readonly<Record<FeeSourcesFailure, FeeQuoteReason>> = {
+  no_default_app: "FEE_QUOTE_FEECOVER_NO_DEFAULT_APP",
+  token_absent: "FEE_QUOTE_FEECOVER_TOKEN_ABSENT",
+  purpose_unmapped: "FEE_QUOTE_FEECOVER_PURPOSE_UNMAPPED",
+  purpose_foreign: "FEE_QUOTE_FEECOVER_PURPOSE_FOREIGN",
+  timeout: "FEE_QUOTE_FEECOVER_TIMEOUT",
+  unreachable: "FEE_QUOTE_FEECOVER_UNREACHABLE",
+  http_status: "FEE_QUOTE_FEECOVER_HTTP_STATUS",
+  bad_response: "FEE_QUOTE_FEECOVER_BAD_RESPONSE",
 };
 
 export async function quoteFee(body: Record<string, unknown>, deps: FeeQuoteDeps): Promise<FeeQuoteResponse> {
@@ -197,10 +225,8 @@ export async function quoteFee(body: Record<string, unknown>, deps: FeeQuoteDeps
   const generic = await measure(synthUtxo(synthAddress));
   const horizons = [generic.horizonMs];
 
-  const fc = feecoverAvailability(deps.feeProxy, route);
-  const feecover: FeeQuoteResponse["feecover"] = fc === null
-    ? { fee_lovelace: raw(generic.fee), available: true }
-    : { fee_lovelace: raw(generic.fee), available: false, reason: fc };
+  // Hỏi Feecover SAU lượt dựng đầu: `params` hỏng thì báo giá dừng ở trên, Feecover không bị hỏi.
+  const feecover: FeeQuoteResponse["feecover"] = { fee_lovelace: raw(generic.fee), ...await feecoverSource(deps.feeProxy, route) };
 
   let owner: FeeQuoteResponse["owner_address"] | undefined;
   if (ownerFeeAddresses.length === 0) {
@@ -400,17 +426,24 @@ function feePayerFigures(r: BuildResult): { fee: bigint; collateral: bigint; val
 
 // ── Feecover ─────────────────────────────────────────────────────────────────────
 
-/** `null` = Feecover trả phí cho route này dưới ứng dụng mặc định; khác = lý do không. */
-function feecoverAvailability(feeProxy: FeeProxy | undefined, route: IssuedRoute): FeeQuoteReason | null {
-  if (feeProxy === undefined) return "FEE_QUOTE_FEECOVER_UNCONFIGURED";
-  try {
-    feeProxy.defaultPurposeFor(route);
-    return null;
-  } catch (e) {
-    const reason = e instanceof CodedApiError ? FEECOVER_REASON_OF_PROXY_CODE[e.code] : undefined;
-    if (reason === undefined) throw e;
-    return reason;
+/**
+ * Khối `feecover` (trừ phí) của báo giá: câu trả lời `/v1/fee-sources` của Feecover, chuyển NGUYÊN
+ * `available` + `rule` + `message`. FAIL-CLOSED: `available: true` chỉ đi ra từ một câu trả lời 200
+ * đúng hình dạng mang `available: true`; mọi lối khác là `false` kèm `reason` có tên.
+ */
+async function feecoverSource(
+  feeProxy: FeeProxy | undefined, route: IssuedRoute,
+): Promise<Omit<FeeQuoteResponse["feecover"], "fee_lovelace">> {
+  if (feeProxy === undefined) return { available: false, reason: "FEE_QUOTE_FEECOVER_UNCONFIGURED" };
+  const a = await feeProxy.feeSources(route);
+  const words = { ...(a.rule === undefined ? {} : { rule: a.rule }), ...(a.message === undefined ? {} : { message: a.message }) };
+  if (a.answered) {
+    return a.available ? { available: true, ...words } : { available: false, reason: "FEE_QUOTE_FEECOVER_DECLINED", ...words };
   }
+  return {
+    available: false, reason: FEECOVER_REASON_OF_FAILURE[a.failure], ...words,
+    ...(a.upstreamStatus === undefined ? {} : { upstream_status: a.upstreamStatus }),
+  };
 }
 
 // ── phụ trợ ──────────────────────────────────────────────────────────────────────

@@ -314,6 +314,15 @@ function parseQuoteBody(body: Record<string, unknown>): {
     if (f !== null && typeof f === "object" && !Array.isArray(f) && (f as Record<string, unknown>).fee_payer !== undefined) {
       throw feePayerInParams("params.funding.fee_payer");
     }
+    // Chế độ ví Phoenix tự trả phí không có ví trả phí nào để báo giá: phí chi từ chính ví
+    // Phoenix. Báo giá chèn `fee_payer` vào — để trôi xuống thì đường dựng trả `FUNDING_SHAPE`
+    // ("fee_payer không dùng được…"), một câu nói về trường người gọi KHÔNG gửi. Nói thẳng ở đây.
+    if (f !== null && typeof f === "object" && !Array.isArray(f) && (f as Record<string, unknown>).fee_source === "did_payment") {
+      throw new CodedApiError(400, "FEE_QUOTE_SELF_FUNDED",
+        `Báo giá không áp cho "funding.fee_source" = "did_payment": ví Phoenix tự trả phí, không có ví ` +
+        `trả phí nào để báo giá. Gọi thẳng /tx/create-vault — phí đo được nằm ở ` +
+        `"summary.funding.self_funded.fee_lovelace".`, { field: "params.funding.fee_source" });
+    }
   }
   return { route: route as IssuedRoute, params: p, ownerFeeAddresses: parseOwnerFeeAddresses(body.owner_fee_addresses) };
 }
@@ -385,6 +394,8 @@ function feePayerFigures(r: BuildResult): { fee: bigint; collateral: bigint; val
   if (r.route === "create-vault") {
     const f = r.out.summary.funding;
     if (f === undefined) throw new Error("[bất biến nội bộ] báo giá create-vault: bản tóm tắt thiếu `funding`.");
+    // `parseQuoteBody` chặn chế độ tự trả phí (`FEE_QUOTE_SELF_FUNDED`), nên thiếu `fee_payer` là lệch.
+    if (f.fee_payer === undefined) throw new Error("[bất biến nội bộ] báo giá create-vault: bản tóm tắt thiếu `funding.fee_payer`.");
     return {
       fee: BigInt(f.fee_payer.fee_lovelace), collateral: BigInt(f.fee_payer.collateral_at_risk_lovelace),
       validToMs: BigInt(f.valid_to_posix_ms), expiresAt: r.out.expiresAt,

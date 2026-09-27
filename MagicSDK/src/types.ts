@@ -169,7 +169,9 @@ export interface CreateVaultParams {
   seedUtxo?: UTxO;
   /** Nạp LAMP + min-ADA của vault từ ví Phoenix (script `did_payment`) thay vì từ ví đang
    *  chọn. Có trường này thì ví đang chọn CHỈ trả phí + làm tài sản thế chấp + làm seed;
-   *  phần thối của `did_payment` về lại `funding.address`. Xem `didPaymentLucid.ts`. */
+   *  phần thối của `did_payment` về lại `funding.address`. `funding.feeSource = "did_payment"`
+   *  (opt-in) ⟹ ví Phoenix trả cả phí và seed là UTxO của nó; ví đang chọn CHỈ làm thế chấp.
+   *  Xem `didPaymentLucid.ts`. */
   funding?: DidPaymentFundingInput;
   /** Lượng thế chấp TƯỜNG MINH (lovelace) — đặt khi phí + thế chấp do ví trả phí bên thứ ba
    *  gánh (mô hình Feecover, trần mất thế chấp 3 tADA). Bỏ trống ⟹ lucid tự đặt (5 ADA).
@@ -206,5 +208,7 @@ export interface CreateVaultResult {
     selected: UTxO[];
     spent: Record<string, bigint>;
     returned: Record<string, bigint> | null;
+    /** Chỉ khi `funding.feeSource = "did_payment"`: phí đo từ CBOR, trả từ ví Phoenix. */
+    feeLovelace?: bigint;
   };
 }

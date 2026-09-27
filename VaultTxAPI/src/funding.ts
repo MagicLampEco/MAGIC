@@ -28,14 +28,14 @@ import {
   FundingError, assertDidPaymentAddress, DID_PAYMENT_SPEND_REDEEMER,
   type Network,
 } from "@magiclamp/protocol-utils";
-import { didPaymentLucidPorts } from "@magiclamp/sdk";
+import { didPaymentLucidPorts, vaultIdAssetName } from "@magiclamp/sdk";
 
 import type { ChainReader } from "./chain.js";
 import { CodedApiError } from "./errors.js";
 import {
   FUNDING_FEE_PAYER_CODES, OUTREF, assertFeePayerAddress, checkCollateral, checkValidTo,
   parseFeePayerShape, readFeePayerUtxo as readFeePayerUtxoShared, refStr,
-  type FeePayerRequest, type OutRefLike,
+  type FeePayerCodes, type FeePayerRequest, type OutRefLike,
 } from "./feePayer.js";
 import { raw } from "./units.js";
 
@@ -44,11 +44,28 @@ const CBOR_HEX = /^(?:[0-9a-f]{2})+$/;
 
 export type { OutRefLike } from "./feePayer.js";
 
+/**
+ * Mã lỗi của `funding.collateral` (chế độ `fee_source: "did_payment"`). Cùng hình dạng + cùng hàm
+ * đọc/kiểm với `funding.fee_payer`, khác MÃ: mã đi theo TRƯỜNG bị sai (`feePayer.ts` khối đầu tệp).
+ */
+export const FUNDING_COLLATERAL_CODES: FeePayerCodes = {
+  field: "funding.collateral", shape: "FUNDING_SHAPE", invalid: "FUNDING_COLLATERAL_INVALID",
+};
+
 export interface FundingRequest {
   type: "did_payment";
   didPaymentScriptCbor: string;
   address: string;
-  feePayer: FeePayerRequest;
+  /**
+   * `"fee_payer"` (mặc định, hành vi cũ): ví trả phí bên thứ ba trả phí + thế chấp + làm seed.
+   * `"did_payment"` (opt-in): ví Phoenix trả phí, seed là UTxO did_payment của nó, ví khoá của
+   * người dùng (`collateral`) CHỈ làm thế chấp. Không địa chỉ bên trả phí nào ở vai nào.
+   */
+  feeSource: "fee_payer" | "did_payment";
+  /** Có ⟺ `feeSource = "fee_payer"`. */
+  feePayer?: FeePayerRequest;
+  /** Có ⟺ `feeSource = "did_payment"`: UTxO thuần ADA dành riêng làm thế chấp + địa chỉ khoá. */
+  collateral?: FeePayerRequest;
   /** Tuỳ chọn khi có `owner_witness` (dùng chung); BẮT BUỘC khi không có. */
   anchorRef?: OutRefLike;
   controllerPkh?: string;
@@ -65,7 +82,10 @@ export function parseFunding(body: Record<string, unknown>): FundingRequest | un
     new CodedApiError(400, "FUNDING_SHAPE", `"funding${field}" phải là ${want}.`, { field: `funding${field}` });
   if (f === null || typeof f !== "object" || Array.isArray(f)) throw bad("", "một đối tượng JSON");
   const o = f as Record<string, unknown>;
-  const allowed = ["type", "did_payment_script_cbor", "address", "fee_payer", "anchor_ref", "controller_pkh", "device_key_hash"];
+  const allowed = [
+    "type", "did_payment_script_cbor", "address", "fee_payer", "fee_source", "collateral",
+    "anchor_ref", "controller_pkh", "device_key_hash",
+  ];
   const extra = Object.keys(o).filter(k => !allowed.includes(k));
   if (extra.length > 0) {
     throw new CodedApiError(400, "FUNDING_SHAPE", `"funding" có trường lạ: ${extra.join(", ")}.`, { extra_fields: extra });
@@ -75,8 +95,19 @@ export function parseFunding(body: Record<string, unknown>): FundingRequest | un
     throw bad(".did_payment_script_cbor", "hex thường, số ký tự chẵn, khác rỗng");
   }
   if (typeof o.address !== "string" || o.address === "") throw bad(".address", "chuỗi địa chỉ bech32 khác rỗng");
+  // `fee_source` vắng ⟹ "fee_payer" (hành vi cũ). Hai chế độ loại trừ nhau về TRƯỜNG: mỗi chế
+  // độ đòi đúng một trong `fee_payer` / `collateral` và cấm cái kia — một trường không có vai
+  // là dấu người gọi đang tưởng mình ở chế độ khác, đoán thay họ là thối/đặt thế chấp nhầm ví.
+  const feeSource = o.fee_source ?? "fee_payer";
+  if (feeSource !== "fee_payer" && feeSource !== "did_payment") throw bad(".fee_source", `"fee_payer" hoặc "did_payment"`);
+  const wrongField = feeSource === "did_payment" ? "fee_payer" : "collateral";
+  if (o[wrongField] !== undefined) {
+    throw new CodedApiError(400, "FUNDING_SHAPE",
+      `"funding.${wrongField}" không dùng được khi "funding.fee_source" = "${feeSource}".`, { field: `funding.${wrongField}` });
+  }
   // Cùng hàm đọc với `fee_payer` ở gốc thân bài (`feePayer.ts`); chỉ khác tên trường + mã lỗi.
-  const feePayer = parseFeePayerShape(o.fee_payer, FUNDING_FEE_PAYER_CODES);
+  const feePayer = feeSource === "fee_payer" ? parseFeePayerShape(o.fee_payer, FUNDING_FEE_PAYER_CODES) : undefined;
+  const collateral = feeSource === "did_payment" ? parseFeePayerShape(o.collateral, FUNDING_COLLATERAL_CODES) : undefined;
   let anchorRef: OutRefLike | undefined;
   if (o.anchor_ref !== undefined) {
     const m = typeof o.anchor_ref === "string" ? OUTREF.exec(o.anchor_ref) : null;
@@ -90,7 +121,9 @@ export function parseFunding(body: Record<string, unknown>): FundingRequest | un
     type: "did_payment",
     didPaymentScriptCbor: o.did_payment_script_cbor,
     address: o.address,
-    feePayer,
+    feeSource,
+    ...(feePayer === undefined ? {} : { feePayer }),
+    ...(collateral === undefined ? {} : { collateral }),
     anchorRef,
     controllerPkh: o.controller_pkh as string | undefined,
     deviceKeyHash: o.device_key_hash as string | undefined,
@@ -112,7 +145,9 @@ export function fundingApiErrorOf(e: FundingError): CodedApiError {
  */
 export function assertFundingAddresses(network: Network, f: FundingRequest): void {
   const wantId = network === "Mainnet" ? 1 : 0;
-  assertFeePayerAddress(network, f.feePayer, FUNDING_FEE_PAYER_CODES);
+  // Ví khoá của chế độ nào cũng phải là địa chỉ KHOÁ đúng mạng: thế chấp không được là UTxO script.
+  if (f.feeSource === "did_payment") assertFeePayerAddress(network, f.collateral!, FUNDING_COLLATERAL_CODES);
+  else assertFeePayerAddress(network, f.feePayer!, FUNDING_FEE_PAYER_CODES);
   let fa: ReturnType<typeof getAddressDetails> | undefined;
   try { fa = getAddressDetails(f.address); } catch { fa = undefined; }
   if (fa === undefined || fa.networkId !== wantId || !f.address.startsWith("addr")) {
@@ -182,7 +217,15 @@ export class ChainDidPaymentAnchorReader implements DidPaymentAnchorReader {
 /** UTxO trả phí của `funding`: phải ở ĐÚNG `funding.fee_payer.address` và thuần ADA
  *  (`feePayer.ts` ▸ `readFeePayerUtxo`, mã `FUNDING_FEE_PAYER_INVALID`). */
 export function readFeePayerUtxo(chain: ChainReader, f: FundingRequest): Promise<UTxO> {
+  if (f.feePayer === undefined) throw new Error("[bất biến nội bộ] readFeePayerUtxo gọi ở chế độ không có fee_payer.");
   return readFeePayerUtxoShared(chain, f.feePayer, FUNDING_FEE_PAYER_CODES);
+}
+
+/** UTxO thế chấp của chế độ `fee_source: "did_payment"`: ở ĐÚNG `funding.collateral.address`,
+ *  thuần ADA, không script tham chiếu (cùng vị từ với UTxO trả phí), mã `FUNDING_COLLATERAL_INVALID`. */
+export function readCollateralUtxo(chain: ChainReader, f: FundingRequest): Promise<UTxO> {
+  if (f.collateral === undefined) throw new Error("[bất biến nội bộ] readCollateralUtxo gọi ở chế độ không có collateral.");
+  return readFeePayerUtxoShared(chain, f.collateral, FUNDING_COLLATERAL_CODES);
 }
 
 // ── đọc lại CBOR ─────────────────────────────────────────────────────────────
@@ -216,7 +259,8 @@ export interface FundingSummary {
   returned: AmountView;
   /** Mục rút did_stake (chủ script) — thuộc chủ DID, đã tính vào phần thối. */
   withdrawal_lovelace: string;
-  fee_payer: {
+  /** Chế độ `fee_source: "fee_payer"` (mặc định). Vắng ⟺ có `self_funded`. */
+  fee_payer?: {
     address: string;
     utxo: string;
     input_lovelace: string;
@@ -225,6 +269,21 @@ export interface FundingSummary {
     /** `Σ collateral_inputs − collateral_return` — thứ bên trả phí có thể mất nếu script hỏng. */
     collateral_at_risk_lovelace: string;
     collateral_return_lovelace: string | null;
+  };
+  /** Chế độ `fee_source: "did_payment"`: phí trả từ ví Phoenix, seed là UTxO did_payment, ví khoá
+   *  chỉ làm thế chấp. Mọi số đọc TỪ CBOR. */
+  self_funded?: {
+    fee_source: "did_payment";
+    /** UTxO did_payment mà tên NFT két băm từ đó — một trong `did_payment_inputs`. */
+    seed_utxo: string;
+    fee_lovelace: string;
+    collateral: {
+      address: string;
+      utxo: string;
+      /** `Σ collateral_inputs − collateral_return`. */
+      collateral_at_risk_lovelace: string;
+      collateral_return_lovelace: string | null;
+    };
   };
   valid_to_posix_ms: string;
 }
@@ -249,24 +308,9 @@ function view(a: Record<string, bigint>, lampUnit: string): AmountView {
   };
 }
 
-export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): FundingSummary {
-  const tx = CML.Transaction.from_cbor_hex(txCbor);
-  const body = tx.body();
-  const key = (h: string, i: number | bigint) => `${h}#${Number(i)}`;
-  const feeKey = key(ctx.feePayerUtxo.txHash, ctx.feePayerUtxo.outputIndex);
-  const dp = new Map(ctx.didPaymentUtxos.map(u => [key(u.txHash, u.outputIndex), u]));
-
-  // (1) input: đúng một UTxO trả phí + ≥1 UTxO did_payment đã biết; không gì khác.
-  const inputs: string[] = [];
-  const il = body.inputs();
-  for (let i = 0; i < il.len(); i++) inputs.push(key(il.get(i).transaction_id().to_hex(), il.get(i).index()));
-  const foreign = inputs.filter(k => k !== feeKey && !dp.has(k));
-  if (foreign.length > 0) throw mismatch(`input lạ ${foreign.join(", ")}`, { foreign_inputs: foreign });
-  const spentKeys = inputs.filter(k => dp.has(k));
-  if (!inputs.includes(feeKey)) throw mismatch(`thiếu UTxO trả phí ${feeKey} trong input`);
-  if (spentKeys.length === 0) throw mismatch(`không có UTxO did_payment nào trong input`);
-
-  // (2) redeemer Spend: đúng một cho mỗi input did_payment, data = Constr 0 [].
+/** Redeemer Spend: đúng một cho mỗi input did_payment (chỉ số theo thứ tự ĐÃ SẮP của ledger),
+ *  data = `Constr 0 []`; không redeemer Spend nào cho input khác. Dùng chung cho hai chế độ. */
+function checkSpendRedeemers(tx: CML.Transaction, inputs: string[], spentKeys: string[]): void {
   const sorted = [...inputs].sort((a, b) => {
     const [ha, ia] = a.split("#"); const [hb, ib] = b.split("#");
     return ha! < hb! ? -1 : ha! > hb! ? 1 : Number(ia) - Number(ib);
@@ -291,6 +335,168 @@ export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): Fundin
   if (JSON.stringify(wantIdx) !== JSON.stringify(gotIdx) || spends.some(s => s.data !== DID_PAYMENT_SPEND_REDEEMER)) {
     throw mismatch(`redeemer Spend không khớp input did_payment`, { want_indexes: wantIdx, got: spends });
   }
+}
+
+/** Mục rút trong thân (mục rút `did_stake` của chủ script) — tiền của chủ DID vào giao dịch. */
+function withdrawalOf(body: CML.TransactionBody): bigint {
+  let withdrawal = 0n;
+  const wd = body.withdrawals();
+  if (wd !== undefined) {
+    const ks = wd.keys();
+    for (let i = 0; i < ks.len(); i++) withdrawal += wd.get(ks.get(i)) ?? 0n;
+  }
+  return withdrawal;
+}
+
+export interface SelfFundedCheckContext {
+  network: Network;
+  tipPosixMs: bigint;
+  vaultAddress: string;
+  vaultNftUnit: string;
+  lampUnit: string;
+  fundingAddress: string;
+  collateralAddress: string;
+  collateralUtxo: UTxO;
+  /** Mọi UTxO dịch vụ đọc được ở `fundingAddress` lúc dựng. */
+  didPaymentUtxos: UTxO[];
+  signers: [controllerPkh: string, deviceKeyHash: string];
+  /** Trần `Σ collateral_inputs − collateral_return` (cùng cấu hình với ví trả phí). */
+  maxCollateralLovelace: bigint;
+}
+
+/**
+ * Đọc lại CBOR của chế độ `fee_source: "did_payment"` (ví Phoenix tự trả phí). Lệch ⟹ 422
+ * `FUNDING_TX_MISMATCH` ở vế đầu tiên lệch. Không tin bộ dựng ở vế nào:
+ *   (1) input: CHỈ UTxO did_payment đã biết, ≥ 1 — nên KHÔNG input nào của ví thế chấp;
+ *   (2) seed: NFT két đúc trong CBOR có tên = blake2b_256(cbor(seed)) của ĐÚNG MỘT input did_payment;
+ *   (3) redeemer Spend mỗi input did_payment;
+ *   (4) thế chấp: chỉ UTxO khai, có mặt, `collateral_return` về ví thế chấp, lượng có thể mất ≤ trần;
+ *   (5) output: chỉ vault + ví Phoenix — không output nào về ví thế chấp hay địa chỉ lạ;
+ *   (6) bảo toàn: did_payment chi (+ mục rút) = vault (trừ NFT) + thối + PHÍ; token không vào phí;
+ *   (7) bộ ký did_payment + hạn dùng.
+ */
+export function checkSelfFundedTx(txCbor: string, ctx: SelfFundedCheckContext): FundingSummary {
+  const tx = CML.Transaction.from_cbor_hex(txCbor);
+  const body = tx.body();
+  const key = (h: string, i: number | bigint) => `${h}#${Number(i)}`;
+  const collKey = key(ctx.collateralUtxo.txHash, ctx.collateralUtxo.outputIndex);
+  const dp = new Map(ctx.didPaymentUtxos.map(u => [key(u.txHash, u.outputIndex), u]));
+
+  // (1)
+  const inputs: string[] = [];
+  const il = body.inputs();
+  for (let i = 0; i < il.len(); i++) inputs.push(key(il.get(i).transaction_id().to_hex(), il.get(i).index()));
+  const foreign = inputs.filter(k => !dp.has(k));
+  if (foreign.length > 0) {
+    throw mismatch(`input ngoài ví Phoenix ${foreign.join(", ")} — ở chế độ fee_source did_payment chỉ UTxO did_payment được chi`,
+      { foreign_inputs: foreign });
+  }
+  if (inputs.length === 0) throw mismatch(`không có UTxO did_payment nào trong input`);
+
+  // (2) tên NFT két phải băm từ một input did_payment. Validator chỉ đòi seed ∈ inputs; ở chế độ
+  //     này (1) đã chứng minh inputs ⊆ did_payment, nên đây là phép đọc NGƯỢC: seed nào sinh ra
+  //     tên này, để khai ra trong bản tóm tắt và để một NFT băm từ UTxO ngoài tập bị bắt.
+  const mint = body.mint();
+  const minted = mint === undefined ? {} : valueToAssets(CML.Value.new(0n, mint.as_positive_multiasset()));
+  if (minted[ctx.vaultNftUnit] !== 1n) throw mismatch(`giao dịch không đúc đúng 1 NFT két ${ctx.vaultNftUnit.slice(0, 16)}…`);
+  const nftName = ctx.vaultNftUnit.slice(56);
+  const seeds = inputs.filter(k => {
+    const [h, i] = k.split("#");
+    return vaultIdAssetName({ txHash: h!, outputIndex: Number(i) }) === nftName;
+  });
+  if (seeds.length !== 1) {
+    throw mismatch(`tên NFT két không băm từ input did_payment nào — seed phải là một UTxO did_payment bị chi`,
+      { vault_nft: ctx.vaultNftUnit });
+  }
+
+  // (3)
+  checkSpendRedeemers(tx, inputs, inputs);
+
+  // (4)
+  const cl = body.collateral_inputs();
+  if (cl === undefined || cl.len() === 0) throw mismatch(`giao dịch chạy script mà không có tài sản thế chấp`);
+  const { atRisk, collateralReturn } = checkCollateral(
+    body, collKey, ctx.collateralUtxo, ctx.collateralAddress, ctx.maxCollateralLovelace, mismatch);
+
+  // (5)
+  const allowed = new Set([ctx.vaultAddress, ctx.fundingAddress]);
+  const ol = body.outputs();
+  const vaultOut: Record<string, bigint> = {};
+  const fundOut: Record<string, bigint> = {};
+  for (let i = 0; i < ol.len(); i++) {
+    const o = ol.get(i);
+    const addr = o.address().to_bech32(undefined);
+    if (!allowed.has(addr)) {
+      throw mismatch(`output #${i} đi tới ${addr === ctx.collateralAddress ? "ví thế chấp" : `địa chỉ lạ ${addr}`}`, { output_index: i });
+    }
+    sum(addr === ctx.vaultAddress ? vaultOut : fundOut, valueToAssets(o.amount()));
+  }
+
+  // (6)
+  const fee = body.fee();
+  const withdrawal = withdrawalOf(body);
+  const spent: Record<string, bigint> = {};
+  for (const k of inputs) sum(spent, dp.get(k)!.assets);
+  const vaultNoNft = { ...vaultOut, [ctx.vaultNftUnit]: (vaultOut[ctx.vaultNftUnit] ?? 0n) - 1n };
+  const units = new Set([...Object.keys(spent), ...Object.keys(vaultNoNft), ...Object.keys(fundOut), "lovelace"]);
+  for (const u of units) {
+    const left = (spent[u] ?? 0n) + (u === "lovelace" ? withdrawal : 0n);
+    const right = (vaultNoNft[u] ?? 0n) + (fundOut[u] ?? 0n) + (u === "lovelace" ? fee : 0n);
+    if (left !== right) {
+      throw mismatch(`bảo toàn ${u === "lovelace" ? "lovelace" : u.slice(0, 16) + "…"}: did_payment chi ${left}, vault + thối${u === "lovelace" ? " + phí" : ""} nhận ${right}`, { unit: u });
+    }
+  }
+
+  // (7)
+  const rs = body.required_signers();
+  const signers: string[] = [];
+  for (let i = 0; rs !== undefined && i < rs.len(); i++) signers.push(rs.get(i).to_hex());
+  for (const s of ctx.signers) {
+    if (!signers.includes(s)) throw mismatch(`required_signers thiếu ${s} (did_payment đòi controller + thiết bị)`);
+  }
+  const validTo = checkValidTo(body, ctx.network, ctx.tipPosixMs, mismatch);
+
+  return {
+    type: "did_payment",
+    address: ctx.fundingAddress,
+    did_payment_inputs: inputs,
+    spent: view(spent, ctx.lampUnit),
+    returned: view(fundOut, ctx.lampUnit),
+    withdrawal_lovelace: raw(withdrawal),
+    self_funded: {
+      fee_source: "did_payment",
+      seed_utxo: seeds[0]!,
+      fee_lovelace: raw(fee),
+      collateral: {
+        address: ctx.collateralAddress,
+        utxo: collKey,
+        collateral_at_risk_lovelace: raw(atRisk),
+        collateral_return_lovelace: collateralReturn === null ? null : raw(collateralReturn),
+      },
+    },
+    valid_to_posix_ms: raw(validTo),
+  };
+}
+
+export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): FundingSummary {
+  const tx = CML.Transaction.from_cbor_hex(txCbor);
+  const body = tx.body();
+  const key = (h: string, i: number | bigint) => `${h}#${Number(i)}`;
+  const feeKey = key(ctx.feePayerUtxo.txHash, ctx.feePayerUtxo.outputIndex);
+  const dp = new Map(ctx.didPaymentUtxos.map(u => [key(u.txHash, u.outputIndex), u]));
+
+  // (1) input: đúng một UTxO trả phí + ≥1 UTxO did_payment đã biết; không gì khác.
+  const inputs: string[] = [];
+  const il = body.inputs();
+  for (let i = 0; i < il.len(); i++) inputs.push(key(il.get(i).transaction_id().to_hex(), il.get(i).index()));
+  const foreign = inputs.filter(k => k !== feeKey && !dp.has(k));
+  if (foreign.length > 0) throw mismatch(`input lạ ${foreign.join(", ")}`, { foreign_inputs: foreign });
+  const spentKeys = inputs.filter(k => dp.has(k));
+  if (!inputs.includes(feeKey)) throw mismatch(`thiếu UTxO trả phí ${feeKey} trong input`);
+  if (spentKeys.length === 0) throw mismatch(`không có UTxO did_payment nào trong input`);
+
+  // (2) redeemer Spend: đúng một cho mỗi input did_payment, data = Constr 0 [].
+  checkSpendRedeemers(tx, inputs, spentKeys);
 
   // (3) thế chấp: chỉ UTxO trả phí; collateral_return về đúng ví trả phí; lượng có thể mất
   //     ≤ trần cấu hình. Hàm DÙNG CHUNG với đường `fee_payer` (`feePayer.ts`).

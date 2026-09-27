@@ -243,6 +243,16 @@ describe("POST /tx/create-vault + funding — âm ở cổng tĩnh (bộ dựng 
     expect(h.builder.lastCall).toBeNull();
   });
 
+  // Cặp dương: bài "chủ khoá: 200, summary.funding đọc TỪ CBOR…" — cùng thân, ví trả phí chỉ nằm
+  // trong `funding`. Bài này đổi đúng một biến: thêm `fee_payer` ở gốc.
+  it("`fee_payer` ở GỐC thân bài (không trong funding) ⟹ 400 FEE_PAYER_UNSUPPORTED", async () => {
+    const h = harness();
+    const r = await handle(post(body({ fee_payer: { utxo: `${FEE_UTXO.txHash}#0`, address: FEE_ADDRESS } })), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(400);
+    expect(codeOf(r)).toBe("FEE_PAYER_UNSUPPORTED");
+    expect(h.builder.lastCall).toBeNull();
+  });
+
   it("UTxO trả phí không nằm ở fee_payer.address, hoặc mang token ⟹ 400 FUNDING_FEE_PAYER_INVALID", async () => {
     const h = harness();
     const r = await handle(post(body({}, { fee_payer: { utxo: `${DP1.txHash}#0`, address: FEE_ADDRESS } })), h.router);

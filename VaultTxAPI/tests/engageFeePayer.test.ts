@@ -124,7 +124,7 @@ function harness(opts: { threads?: UTxO[]; cbor?: string; openCbor?: string; dec
   );
   const cbor = opts.cbor ?? feeTx();
   const builder = new RecordedTxBuilder(
-    { schedule_commit: cbor, consume: cbor, open_thread: opts.openCbor ?? openTx() },
+    { schedule_commit: cbor, schedule_fire: cbor, consume: cbor, open_thread: opts.openCbor ?? openTx() },
     undefined,
     opts.declaredUnit ?? THREAD_UNIT,
   );
@@ -145,6 +145,12 @@ const codeOf = (r: { body: unknown }) => (r.body as { error: { code: string } })
 const FEE_PAYER = { utxo: `${FEE_UTXO.txHash}#0`, address: FEE_ADDRESS };
 const commit = (over: Record<string, unknown> = {}) =>
   post("/tx/schedule-commit", { owner_pkh: OWNER_PKH, schedule_length: "3", lamp_per_epoch: "7000000", ...over });
+// `schedule_id` không cần khớp một lịch thật trong datum: `RecordedTxBuilder` không đọc tham
+// số, nó chỉ trả CBOR ghi sẵn — validate "lịch này có tồn tại" là việc của bộ dựng thật, không
+// phải của `VaultTxService`.
+const SCHEDULE_ID = "a0".repeat(32);
+const scheduleFire = (over: Record<string, unknown> = {}) =>
+  post("/tx/schedule-fire", { owner_pkh: OWNER_PKH, schedule_id: SCHEDULE_ID, ...over });
 
 // ── fee_payer ────────────────────────────────────────────────────────────────
 
@@ -224,6 +230,41 @@ describe("fee_payer — đọc lại CBOR (cực đối, 422 FEE_PAYER_TX_MISMAT
   }
 });
 
+// ── /tx/schedule-fire — CÙNG cổng fee_payer với schedule-commit (chung `buildOne`) ──────
+
+describe("fee_payer — schedule-fire", () => {
+  it("schedule-fire: 200, summary.fee_payer đọc TỪ CBOR; bộ dựng nhận đúng UTxO trả phí + thế chấp 3 ADA", async () => {
+    const h = harness();
+    const r = await handle(scheduleFire({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const b = r.body as { summary: { fee_payer: Record<string, unknown> } };
+    expect(b.summary.fee_payer).toEqual({
+      address: FEE_ADDRESS, utxo: `${FEE_UTXO.txHash}#0`, input_lovelace: "10000000",
+      fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
+      collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
+      valid_to_posix_ms: String(NOW + 1_800_000),
+    });
+    expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
+    expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
+  });
+
+  it("CẶP: không có fee_payer ⟹ summary không có fee_payer, bộ dựng không nhận UTxO trả phí", async () => {
+    const h = harness();
+    const r = await handle(scheduleFire(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((r.body as { summary: Record<string, unknown> }).summary.fee_payer).toBeUndefined();
+    expect(h.builder.lastCall?.feePayerUtxo).toBeUndefined();
+  });
+
+  it("fee_payer cùng change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT", async () => {
+    const h = harness();
+    const r = await handle(scheduleFire({ fee_payer: FEE_PAYER, change_address: CHANGE_ADDRESS }), h.router);
+    expect(r.status).toBe(400);
+    expect(codeOf(r)).toBe("FEE_PAYER_CHANGE_ADDRESS_CONFLICT");
+    expect(h.builder.lastCall).toBeNull();
+  });
+});
+
 // ── /tx/consume chọn thread theo chủ ─────────────────────────────────────────
 
 const consume = (over: Record<string, unknown> = {}) =>
@@ -286,6 +327,41 @@ describe("/tx/consume — thread Engage theo chủ", () => {
   });
 });
 
+// ── /tx/consume — CÙNG cổng fee_payer với schedule-commit (chung `buildOne`) ────────────
+
+describe("fee_payer — consume", () => {
+  it("consume: 200, summary.fee_payer đọc TỪ CBOR; bộ dựng nhận đúng UTxO trả phí + thế chấp 3 ADA", async () => {
+    const h = harness();
+    const r = await handle(consume({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const b = r.body as { summary: { fee_payer: Record<string, unknown> } };
+    expect(b.summary.fee_payer).toEqual({
+      address: FEE_ADDRESS, utxo: `${FEE_UTXO.txHash}#0`, input_lovelace: "10000000",
+      fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
+      collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
+      valid_to_posix_ms: String(NOW + 1_800_000),
+    });
+    expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
+    expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
+  });
+
+  it("CẶP: không có fee_payer ⟹ summary không có fee_payer, bộ dựng không nhận UTxO trả phí", async () => {
+    const h = harness();
+    const r = await handle(consume(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((r.body as { summary: Record<string, unknown> }).summary.fee_payer).toBeUndefined();
+    expect(h.builder.lastCall?.feePayerUtxo).toBeUndefined();
+  });
+
+  it("fee_payer cùng change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT", async () => {
+    const h = harness();
+    const r = await handle(consume({ fee_payer: FEE_PAYER, change_address: CHANGE_ADDRESS }), h.router);
+    expect(r.status).toBe(400);
+    expect(codeOf(r)).toBe("FEE_PAYER_CHANGE_ADDRESS_CONFLICT");
+    expect(h.builder.lastCall).toBeNull();
+  });
+});
+
 // ── /tx/open-thread ──────────────────────────────────────────────────────────
 
 const open = (over: Record<string, unknown> = {}) =>
@@ -343,4 +419,121 @@ describe("/tx/open-thread", () => {
       expect(codeOf(r)).toBe("OPEN_THREAD_TX_MISMATCH");
     });
   }
+});
+
+// ── /tx/instant-gen — fee_payer, harness RIÊNG ───────────────────────────────────────────
+//
+// InstantGen đòi `deployment.instant` (bốn giá trị) VÀ vault_type "Instant"; `summarizeTx`
+// còn ép datum ĐẦU RA phải Instant-shaped (18 trường, `instant_unlock_ms` khác null) — khác
+// hẳn `DEPLOYMENT`/`VAULT_UTXO` dùng ở trên (Schedule-shaped, 17 trường). Nên đường này cần
+// một harness riêng, không tái dùng `harness()` phía trên; phần còn lại (`FEE_PAYER`,
+// `FEE_UTXO`, `FEE_ADDRESS`, `CHANGE_ADDRESS`) vẫn dùng chung.
+
+const UM_NFT_UNIT = `${"66".repeat(28)}554d`;
+const BACKING_NFT_UNIT = `${"77".repeat(28)}6242`;
+
+const INSTANT_DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
+  source: "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+  lamp: { policy_id: LAMP_POLICY_ID, asset_name_hex: LAMP_ASSET_NAME_HEX },
+  vaults: [{ vault_type: "Instant", address: VAULT_ADDRESS }],
+  shard_address: SHARD_ADDRESS,
+  ref_script_utxos: {
+    vault: `${"11".repeat(32)}#0`, shard: `${"22".repeat(32)}#1`, consume: `${"33".repeat(32)}#2`,
+  },
+  consume: {
+    engage_address: ENGAGE_ADDRESS,
+    price_beacon_address: VAULT_ADDRESS,
+    price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
+  },
+  instant: {
+    um_datum_address: VAULT_ADDRESS,
+    um_nft_unit: UM_NFT_UNIT,
+    backing_beacon_address: VAULT_ADDRESS,
+    backing_beacon_nft_unit: BACKING_NFT_UNIT,
+  },
+}), "Preview");
+
+const INSTANT_VAULT_UTXO = utxo(INPUT_TX_HASH, 0, VAULT_ADDRESS,
+  { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
+  datumHex({ lampLockedOildrop: 0n, batches: [], instantUnlockMs: 0n }));
+
+/** Tx đi qua vault Instant, phí do FEE_UTXO (10 ADA) trả — cùng số với `feeTx()` ở trên. */
+function instantGenFeeTx(): string {
+  return buildTxCbor({
+    inputs: [ref(INSTANT_VAULT_UTXO), ref(FEE_UTXO)],
+    feeLovelace: FEE,
+    outputs: [
+      {
+        address: VAULT_ADDRESS,
+        assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
+        // `instantUnlockMs` BẮT BUỘC: chọn hình dạng datum 18 trường mà `summarizeTx` đòi
+        // cho ý-định `instant_gen` (xem khối chú thích đầu mục này).
+        inlineDatumHex: datumHex({
+          lampLockedOildrop: 0n,
+          batches: [{ id: "c0".repeat(16), createdEpoch: 20_700n, amountNanogic: 4_000_000n }],
+          instantUnlockMs: 1_789_000_000_000n,
+        }),
+      },
+      { address: FEE_ADDRESS, assets: { lovelace: 10_000_000n - FEE } },
+    ],
+    requiredSigners: [OWNER_PKH],
+    collateralInputs: [ref(FEE_UTXO)],
+    collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
+    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 1_800_000)),
+  });
+}
+
+function instantHarness() {
+  const chain = new RecordedChainReader(
+    { [VAULT_ADDRESS]: [INSTANT_VAULT_UTXO] },
+    TIP,
+    [INSTANT_VAULT_UTXO, FEE_UTXO],
+  );
+  const builder = new RecordedTxBuilder({ instant_gen: instantGenFeeTx() });
+  const issued = new IssuedTxRegistry(TTL * 4);
+  const locks = new OwnerLockTable(TTL);
+  const service = new VaultTxService({
+    network: "Preview", deployment: INSTANT_DEPLOYMENT, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
+  });
+  const router: RouterDeps = {
+    service, deploymentSource: INSTANT_DEPLOYMENT.source, vaultScopes: INSTANT_DEPLOYMENT.vaults, network: "Preview",
+    chainLabel: "recorded", changeAddressStrategy: "enterprise_from_owner_pkh", token: "", logInternal: () => {},
+  };
+  return { builder, router };
+}
+
+const instantGen = (over: Record<string, unknown> = {}) =>
+  post("/tx/instant-gen", { owner_pkh: OWNER_PKH, ...over });
+
+describe("fee_payer — instant-gen", () => {
+  it("instant-gen: 200, summary.fee_payer đọc TỪ CBOR; bộ dựng nhận đúng UTxO trả phí + thế chấp 3 ADA", async () => {
+    const h = instantHarness();
+    const r = await handle(instantGen({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const b = r.body as { summary: { fee_payer: Record<string, unknown> } };
+    expect(b.summary.fee_payer).toEqual({
+      address: FEE_ADDRESS, utxo: `${FEE_UTXO.txHash}#0`, input_lovelace: "10000000",
+      fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
+      collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
+      valid_to_posix_ms: String(NOW + 1_800_000),
+    });
+    expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
+    expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
+  });
+
+  it("CẶP: không có fee_payer ⟹ summary không có fee_payer, bộ dựng không nhận UTxO trả phí", async () => {
+    const h = instantHarness();
+    const r = await handle(instantGen(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((r.body as { summary: Record<string, unknown> }).summary.fee_payer).toBeUndefined();
+    expect(h.builder.lastCall?.feePayerUtxo).toBeUndefined();
+  });
+
+  it("fee_payer cùng change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT", async () => {
+    const h = instantHarness();
+    const r = await handle(instantGen({ fee_payer: FEE_PAYER, change_address: CHANGE_ADDRESS }), h.router);
+    expect(r.status).toBe(400);
+    expect(codeOf(r)).toBe("FEE_PAYER_CHANGE_ADDRESS_CONFLICT");
+    expect(h.builder.lastCall).toBeNull();
+  });
 });

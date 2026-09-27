@@ -79,12 +79,30 @@ describe("buildInitialVaultDatum", () => {
       current: [], pending: null,
       current_effective_epoch: 0n, last_changed_epoch: 0n,
     });
-    // ActivityState { recent_burn_epochs: [], consumed_credit: 0 }
+    // Không `vaultType` = hình dạng Schedule (17 trường) ⟹ `consumed_credit: 0`.
+    // Két Instant ghim giá trị KHÁC — xem cặp ca "consumed_credit theo loại két" bên dưới.
     expect(d.activity_state).toEqual({ recent_burn_epochs: [], consumed_credit: 0n });
     // sum_holdings(loyalty_holdings) == lamp_balance
     const sum = d.loyalty_holdings.reduce((s, h) => s + h.amount, 0n);
     expect(sum).toBe(d.lamp_balance);
     expect(d.loyalty_holdings.every(h => !h.is_locked)).toBe(true);
+  });
+
+  // Cặp ca: hai cổng đúc ghim HAI giá trị. Một giá trị chung (0 hay hạt giống) làm đỏ
+  // đúng một vế — bản cũ đặt 0 cho cả hai và két Instant chết ở Mint[0] trên Preprod.
+  describe("consumed_credit theo loại két", () => {
+    const base = {
+      ownerPkh: PKH_28, lampBalanceOildrop: 20_000_000n,
+      profile: "Flame" as const, currentEpoch: 4144n,
+    };
+    it("Instant ⟹ wakeme_seed_credit (1001 MAGIC)", () => {
+      const d = buildInitialVaultDatum({ ...base, vaultType: "Instant" });
+      expect(d.activity_state.consumed_credit).toBe(1_001_000_000_000n);
+    });
+    it("Schedule ⟹ 0", () => {
+      const d = buildInitialVaultDatum({ ...base, vaultType: "Schedule" });
+      expect(d.activity_state.consumed_credit).toBe(0n);
+    });
   });
 
   it("rejects ownerPkh not 28-byte hex", () => {

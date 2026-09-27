@@ -38,9 +38,10 @@ export interface ChainReader {
   /** Nhãn để ghi nhật ký / `/health`. KHÔNG mang khoá, KHÔNG mang URL đầy đủ. */
   readonly label: string;
   utxosAt(address: string): Promise<UTxO[]>;
-  /** UTxO theo tham chiếu — dùng cho script tham chiếu CIP-33, nên hiện thực PHẢI
-   *  điền `scriptRef`; thiếu nó thì `readFrom` của lucid không có gì để đọc và builder
-   *  quay về `attach`, tức vượt trần 16 384 byte. */
+  /** UTxO theo tham chiếu. Hiện thực PHẢI điền `scriptRef` khi output mang script tham
+   *  chiếu (CIP-33) — thiếu nó thì `readFrom` của lucid không có gì để đọc. Output KHÔNG
+   *  mang script thì trả UTxO không có `scriptRef`, đừng ném: hàm này còn đọc UTxO trả phí,
+   *  UTxO vault, UTxO anchor. Việc đòi script thuộc về `txBuilder.ts` ▸ `scriptOfRef`. */
   utxosByOutRef(refs: OutRef[]): Promise<UTxO[]>;
   tip(): Promise<ChainTip>;
   /** Nộp một giao dịch ĐÃ KÝ (CBOR hex). Trả tx hash của chuỗi. */
@@ -195,16 +196,14 @@ export class BlockfrostChainReader implements ChainReader {
       if (typeof address !== "string") {
         throw new ChainUnavailableError("Output của giao dịch thiếu `address`.", { transport: "http", node: this.label });
       }
-      const utxo = await this.toUtxo({ ...hit, tx_hash: ref.txHash }, address);
-      if (utxo.scriptRef === undefined || utxo.scriptRef === null) {
-        throw new ChainUnavailableError(
-          `UTxO ${ref.txHash.slice(0, 12)}…#${ref.outputIndex} KHÔNG mang script tham chiếu. ` +
-          `Không có nó thì builder phải đính kèm validator vào tx, và cặp vault+shard đo thật ` +
-          `trên Preview là 17 303 byte > trần 16 384 ⟹ không tx nào dựng nổi.`,
-          { out_ref: `${ref.txHash}#${ref.outputIndex}`, node: this.label },
-        );
-      }
-      out.push(utxo);
+      // KHÔNG ép `scriptRef` ở đây. Hàm này là bộ đọc-theo-tham-chiếu DUY NHẤT của dịch vụ,
+      // và nó còn đọc những UTxO không bao giờ mang script: UTxO trả phí thuần ADA
+      // (`feePayer.ts` ▸ `readFeePayerUtxo`, nơi `isPureAdaFeeUtxo` lại ĐÒI `scriptRef`
+      // vắng mặt), các input khác của `checkFeePayer` (gồm cả UTxO vault), UTxO anchor
+      // (`owner.ts`, `funding.ts`). Ép ở đây làm mọi đường đó trả `CHAIN_UNAVAILABLE` trên
+      // Blockfrost thật (Preprod 2026-09-27). Phép ép đúng chỗ là `txBuilder.ts` ▸
+      // `scriptOfRef`, nơi duy nhất cần script — mọi UTxO ref-script đều đi qua nó.
+      out.push(await this.toUtxo({ ...hit, tx_hash: ref.txHash }, address));
     }
     return out;
   }

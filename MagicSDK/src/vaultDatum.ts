@@ -19,6 +19,7 @@
 import { ownerCredentialOf, type OwnerCredential, type OwnerRef } from "@magiclamp/protocol-utils";
 import type { Profile, VaultType } from "./types.js";
 import { resolveOwnerInput } from "./ownerInput.js";
+import { WAKEME_SEED_CREDIT } from "@magiclamp/instantgen-sdk";
 
 export interface InitialVaultDatumInputs {
   /** Chủ vault — `Credential` dạng JSON. Nhánh `script` hợp lệ: genesis ép
@@ -148,9 +149,17 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
       current_effective_epoch: 0n,
       last_changed_epoch:      0n,
     },
+    // Hai cổng đúc ghim HAI giá trị khác nhau, nên đây là một phép rẽ theo loại két chứ
+    // không phải một hằng chung:
+    //   Instant  → `consumed_credit: wakeme_seed_credit`
+    //              (`InstantGen/onchain/validators/vault.ak` ▸ `validate_mint_vault_id`)
+    //   Schedule → `consumed_credit: 0`
+    //              (`ScheduleGen/onchain/validators/vault.ak` ▸ `validate_mint_vault_id`)
+    // Bản cũ đặt 0 cho cả hai; két Instant dựng qua SDK vì thế chết ở Mint[0] trên chuỗi
+    // (Preprod 2026-09-27), trong khi két Schedule vẫn xanh nên bộ kiểm không kêu.
     activity_state: {
       recent_burn_epochs: [],
-      consumed_credit:    0n,
+      consumed_credit:    inputs.vaultType === "Instant" ? WAKEME_SEED_CREDIT : 0n,
     },
     streak_state: {
       current_streak:    0n,

@@ -51,6 +51,9 @@ import { engageAssetName, type EngageIdSeed } from "./engageId.js";
 
 // ── Params ────────────────────────────────────────────────────────────────────
 
+/** Sàn lovelace của thread Engage lúc đúc — xem `buildMintEngageTx` ▸ `MINT-ENGAGE-004`. */
+export const ENGAGE_MIN_LOVELACE = 2_000_000n;
+
 export interface ConsumeParams {
   /** Lucid instance (Preview). */
   lucid: LucidEvolution;
@@ -140,6 +143,11 @@ export interface ConsumeParams {
    *  gánh (mô hình Feecover, trần mất thế chấp 3 tADA). Bỏ trống ⟹ lucid tự đặt (5 ADA).
    *  Hình dạng: `@magiclamp/protocol-utils` ▸ `collateralCompleteOptions`. */
   collateralLovelace?: bigint;
+  /** `max_price_stale` mà `consumeScript` đã apply (số epoch beacon giá được phép trễ).
+   *  Có ⟹ bộ dựng từ chối sớm (`CONSUME-011`) beacon trễ hơn mức đó, thay vì dựng một tx
+   *  mà `consume.ak` sẽ bác ở `current_epoch - pp.epoch <= max_price_stale`. Vắng ⟹ không
+   *  kiểm ở đây (chuỗi vẫn kiểm). Giá trị là dữ kiện deploy: khoá `MAX_PRICE_STALE` ở sổ. */
+  maxPriceStale?: bigint;
 }
 
 export interface ConsumeResult {
@@ -281,6 +289,13 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   // ── stale guard offchain (mirror C-CM-5; fail sớm trước khi submit) ──────────
   if (currentEpoch < pp.epoch) {
     throw new Error(`CONSUME-004: beacon epoch ${pp.epoch} > current ${currentEpoch} (tương lai)`);
+  }
+  if (params.maxPriceStale !== undefined && currentEpoch - pp.epoch > params.maxPriceStale) {
+    throw new Error(
+      `CONSUME-011: beacon giá ghi ở epoch ${pp.epoch}, nay là epoch ${currentEpoch} — trễ ` +
+      `${currentEpoch - pp.epoch} epoch, vượt mức cho phép ${params.maxPriceStale}. Chờ keeper ` +
+      `ghi giá epoch này rồi dựng lại.`,
+    );
   }
 
   // ── EngageDatum cũ → mới ────────────────────────────────────────────────────
@@ -612,6 +627,18 @@ export async function buildMintEngageTx(
     didCommit = "", lovelace = 2_000_000n, network,
   } = params;
 
+  // `enforce_engagement` ép `out.value == inp.output.value` TUYỆT ĐỐI ở mọi lượt tiêu thread,
+  // còn Lucid tự NÂNG lovelace đầu ra lên min-ADA khi datum phình (DID + số đếm lớn). Thread
+  // đúc sát min-ADA của datum genesis vì thế chết ở lượt Consume/BindDID đầu tiên đẩy datum
+  // qua ngưỡng — và không có builder đóng thread. Đo bằng CML của Lucid 0.4.30 (2026-09-27):
+  // datum đầy (có DID, số đếm 9 byte) cần 1.555.910 lovelace. Sàn là mức mặc định 2 ADA.
+  if (lovelace < ENGAGE_MIN_LOVELACE) {
+    throw new Error(
+      `MINT-ENGAGE-004: lovelace ${lovelace} < sàn ${ENGAGE_MIN_LOVELACE} của thread Engage — ` +
+      `thread đúc dưới sàn sẽ không tiêu được khi datum lớn lên.`,
+    );
+  }
+
   if ((ownerAuthIn === undefined) === (ownerPkh === undefined)) {
     throw new Error(
       `MINT-ENGAGE-003: truyền ĐÚNG MỘT trong \`ownerAuth\` hoặc \`ownerPkh\` ` +
@@ -705,6 +732,8 @@ export interface BindDidParams {
   consumeRefUtxo?: UTxO;
   /** Collateral UTxO thuần ADA. */
   collateralUtxo?: UTxO;
+  /** Lượng thế chấp TƯỜNG MINH (lovelace) — xem `ConsumeParams.collateralLovelace`. */
+  collateralLovelace?: bigint;
   /** Cách chứng minh quyền chủ thread. Bỏ trống: chủ là khoá ⟹ `addSignerKey(pkh)` lấy
    *  từ datum; chủ là script ⟹ NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. Khác chủ ⟹ NÉM
    *  `OWNER_AUTH_MISMATCH`. */
@@ -806,9 +835,10 @@ export async function buildBindDidTx(params: BindDidParams): Promise<BindDidResu
   // được nhận khi trùng chủ đó (`resolveOwnerAuth` ném `OWNER_AUTH_MISMATCH`).
   txBuilder = applyOwnerAuth(txBuilder, resolveOwnerAuth(ownerRefOf(oldDatum.owner), ownerAuth));
 
+  const collateralOpts = collateralCompleteOptions(params.collateralLovelace);
   const tx = collateralUtxo
-    ? await txBuilder.complete({ presetWalletInputs: [collateralUtxo] })
-    : await txBuilder.complete();
+    ? await txBuilder.complete({ presetWalletInputs: [collateralUtxo], ...collateralOpts })
+    : await txBuilder.complete(collateralOpts);
 
   const summary =
     `bind did thread=${resolvedNftUnit} | owner=${ownerRefToString(ownerRefOf(oldDatum.owner))} | ` +

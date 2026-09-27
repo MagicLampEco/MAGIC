@@ -322,13 +322,21 @@ export class FeeProxy {
     const { status, json } = sent;
     if (status === 200) return json;
     if (status >= 400 && status < 500) {
-      // Chuyển NGUYÊN mã trạng thái + `rule`/`message`/`reasons` — câu của Feecover nói được
-      // người dùng phải làm gì (L14 cửa sổ Catalyst, 429 hết suất giữ chỗ…).
+      // Câu của Feecover nói được người dùng phải làm gì (L14 cửa sổ Catalyst, 429 hết suất giữ
+      // chỗ…) nên `rule`/`message`/`reasons` đi tiếp — trừ chuỗi nào chứa token của dịch vụ.
+      const leaks = (v: string) => v.includes(token);
       const o = asRecord(json);
       const details: Record<string, unknown> = { upstream_status: status };
-      if (typeof o?.rule === "string") details.rule = o.rule;
-      if (typeof o?.message === "string") details.message = o.message;
-      if (Array.isArray(o?.reasons) && o.reasons.every(r => typeof r === "string")) details.reasons = o.reasons;
+      if (typeof o?.rule === "string" && !leaks(o.rule)) details.rule = o.rule;
+      if (typeof o?.message === "string" && !leaks(o.message)) details.message = o.message;
+      if (Array.isArray(o?.reasons) && o.reasons.every(r => typeof r === "string" && !leaks(r))) details.reasons = o.reasons;
+      // Chỉ các mã nói về YÊU CẦU của người dùng mới giữ nguyên (403 gồm luật L14 chặn ứng dụng theo
+      // cửa sổ — một quyết định chính sách app phải thấy). 401/404 của Feecover nói về
+      // quan hệ DỊCH VỤ ↔ Feecover (token dịch vụ hỏng, đường sai): chuyển
+      // nguyên thì app đọc 401 thành "token CỦA APP sai" và đi sửa nhầm chỗ.
+      if (!PASS_THROUGH_UPSTREAM_STATUS.has(status)) {
+        throw upstreamError(`Feecover từ chối yêu cầu của dịch vụ (${status}) — lỗi cấu hình phía dịch vụ, không phải của app.`, details);
+      }
       throw new CodedApiError(status, "FEE_PROXY_REJECTED",
         typeof details.message === "string"
           ? `Feecover từ chối (${status}): ${details.message}`
@@ -378,6 +386,10 @@ function appPurposeError(app: string, route: string, purpose: string, why: strin
     `Ứng dụng "${app}" không được xin phí dưới mục đích "${purpose}" (route "${route}"): ${why}.`,
     { app, route, purpose });
 }
+
+/** Mã 4xx của Feecover được chuyển nguyên cho app: chúng nói về chính giao dịch / lượt xin
+ *  (thân yêu cầu hỏng, luật chặn ứng dụng, UTxO đang giữ cho bên khác, luật phí từ chối, hết suất). */
+const PASS_THROUGH_UPSTREAM_STATUS: ReadonlySet<number> = new Set([400, 403, 409, 422, 429]);
 
 function upstreamError(message: string, details: Record<string, unknown> = {}): CodedApiError {
   return new CodedApiError(502, "FEE_PROXY_UPSTREAM", message, details);

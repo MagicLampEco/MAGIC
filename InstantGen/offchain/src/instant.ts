@@ -21,7 +21,7 @@ import {
   MIN_INSTANT_HOLDING, MAX_BACKING_STALE, PM_Q,
 } from "./constants.js";
 import {
-  computeInstantGrant, getUmForInstant, isExpired, instantGenInEpoch,
+  computeInstantGrant, getUmForInstant, isExpired, instantGenInEpoch, applyPendingProfile,
   nanogicToMagicStr, qToStr,
 } from "./math.js";
 import { getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, collateralCompleteOptions, type Network } from "@magiclamp/protocol-utils";
@@ -152,7 +152,7 @@ export async function buildInstantGenTx(
   }
 
   // ── Decode datums ────────────────────────────────────────────
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
+  const rawVaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
   const umDatum    = Data.from(umDatumUtxo.datum!, UMDatum);
   const backing    = Data.from(backingBeaconUtxo.datum!, BackingBeaconDatum);
 
@@ -160,6 +160,12 @@ export async function buildInstantGenTx(
   const tipPosixMs = params.tipPosixMs
     ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const currentEpoch = posixMsToEpoch(tipPosixMs, network);
+
+  // `validate_instant_gen` tính trên `apply_pending_profile(input_datum, current_epoch)`:
+  // hệ số PM lấy từ hồ sơ ĐÃ ÁP, và datum ra phải mang `profile`/`pending_profile` đã áp.
+  // Dùng datum thô thì két vừa đổi hồ sơ khai sai `claimed_amount` và giữ `pending_profile`
+  // cũ ⟹ chuỗi từ chối với một câu không trỏ về đâu.
+  const vaultDatum = applyPendingProfile(rawVaultDatum, currentEpoch);
 
   // ── C-INST-1: LAMP must SIT in the vault (eligibility only) ──
   if (vaultDatum.lamp_balance < MIN_INSTANT_HOLDING) {

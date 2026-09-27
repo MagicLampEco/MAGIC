@@ -25,7 +25,7 @@ export type {
 export { BlockfrostChainReader, RecordedChainReader } from "./chain.js";
 export type { ChainReader, ChainTip, OutRef } from "./chain.js";
 
-export { IssuedTxRegistry, OwnerLockTable, PENDING_TX_HASH, ISSUED_ROUTES } from "./locks.js";
+export { IssuedTxRegistry, OwnerLockTable, PendingSpends, PENDING_TX_HASH, ISSUED_ROUTES } from "./locks.js";
 export type { IssuedRoute, IssuedTxMeta, IssuedTxEntry } from "./locks.js";
 export { FeeProxy } from "./feeProxy.js";
 export type { FeeProxyDeps, FetchLike } from "./feeProxy.js";

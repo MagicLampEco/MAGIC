@@ -15,8 +15,9 @@ import {
 } from "@lucid-evolution/lucid";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import {
-  buildConsumeTx, buildBindDidTx, buildMintEngageTx, type ConsumeParams,
+  buildConsumeTx, buildBindDidTx, buildMintEngageTx, ENGAGE_MIN_LOVELACE, type ConsumeParams,
 } from "../offchain/src/consume.js";
+import { msPerEpoch } from "@magiclamp/protocol-utils";
 import {
   encodeEngageDatum, decodeEngageDatum, encodePriceParam, type EngageDatumT,
 } from "../offchain/src/types.js";
@@ -284,5 +285,41 @@ describe("buildMintEngageTx — ghi owner là Credential, chứng minh quyền t
         network: "Preview",
       }),
     ).rejects.toThrow(/OWNER_HASH_INVALID/);
+  });
+});
+
+// ── Cổng phía bộ dựng khớp validator: giá cũ (CONSUME-011) · sàn lovelace thread (MINT-ENGAGE-004) ──
+
+describe("buildConsumeTx — beacon giá cũ quá `maxPriceStale` (CONSUME-011)", () => {
+  // Validator ép `current_epoch − pp.epoch <= max_price_stale` (apply-param #5 của consume).
+  // Bộ dựng không kiểm thì lượt dựng thành công và chết ở pha script với câu không đọc được.
+  const tip = 1_700_000_000_000n;
+  const lag = tip / msPerEpoch("Preview");   // priceDatum.epoch = 0 ⟹ trễ đúng `lag` epoch
+
+  it("trễ đúng bằng mức cho phép ⟹ dựng được", async () => {
+    const fake = makeLucidFake();
+    await buildConsumeTx(consumeParams({ VerificationKey: [KEY_H] }, fake.lucid, { tipPosixMs: tip, maxPriceStale: lag }));
+    expect(fake.onlyTx().completed).toBe(true);
+  });
+  it("CỰC ĐỐI: trễ hơn mức cho phép MỘT epoch ⟹ NÉM CONSUME-011", async () => {
+    const fake = makeLucidFake();
+    await expect(
+      buildConsumeTx(consumeParams({ VerificationKey: [KEY_H] }, fake.lucid, { tipPosixMs: tip, maxPriceStale: lag - 1n })),
+    ).rejects.toThrow(/CONSUME-011/);
+  });
+});
+
+describe("buildMintEngageTx — sàn lovelace của thread (MINT-ENGAGE-004)", () => {
+  const seedUtxo = mkUtxo({ txHash: "11".repeat(32), outputIndex: 3 });
+  const mint = (lovelace: bigint) => buildMintEngageTx({
+    lucid: makeLucidFake().lucid as LucidEvolution, consumeScript, seedUtxo, ownerPkh: KEY_H,
+    network: "Preview", lovelace,
+  });
+
+  it("đúng sàn ⟹ dựng được", async () => {
+    await expect(mint(ENGAGE_MIN_LOVELACE)).resolves.toBeDefined();
+  });
+  it("CỰC ĐỐI: dưới sàn một lovelace ⟹ NÉM MINT-ENGAGE-004", async () => {
+    await expect(mint(ENGAGE_MIN_LOVELACE - 1n)).rejects.toThrow(/MINT-ENGAGE-004/);
   });
 });

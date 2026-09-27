@@ -19,7 +19,7 @@
 
 import { applyDoubleCborEncoding, scriptFromNative, type Script, type UTxO } from "@lucid-evolution/lucid";
 
-import { ChainUnavailableError, SubmitRejectedError } from "./errors.js";
+import { ChainUnavailableError, CodedApiError, SubmitRejectedError } from "./errors.js";
 import type { RewardAccountState } from "@magiclamp/protocol-utils";
 
 export interface ChainTip {
@@ -69,6 +69,16 @@ export class BlockfrostChainReader implements ChainReader {
   private readonly baseUrl: string;
   private readonly projectId: string;
   private readonly timeoutMs: number;
+  /**
+   * Script theo hash — bộ nhớ đệm ĐÚNG TUYỆT ĐỐI vì khoá là hash nội dung: một hash không bao
+   * giờ đổi script. Không có nó, mỗi UTxO mang script tham chiếu tốn HAI lượt gọi nút ở MỖI
+   * lần đọc địa chỉ. Địa chỉ vault / engage / beacon ai cũng gửi tới được, nên một người lạ
+   * rải N UTxO mang script là nhân mọi yêu cầu lên 2N lượt gọi, trả bằng hạn mức của người
+   * vận hành. Đệm theo hash hạ chi phí đó về 2 lượt cho MỖI script khác nhau, một lần.
+   * Có trần để bộ nhớ không phình vô hạn; đầy thì bỏ mục cũ nhất.
+   */
+  private readonly scriptCache = new Map<string, Promise<Script>>();
+  static readonly SCRIPT_CACHE_MAX = 1024;
 
   constructor(opts: BlockfrostReaderOptions) {
     if (!opts.projectId) {
@@ -169,6 +179,13 @@ export class BlockfrostChainReader implements ChainReader {
     const out: UTxO[] = [];
     for (const ref of refs) {
       const { status, body } = await this.getJson(`/txs/${ref.txHash}/utxos`);
+      if (status === 404) {
+        // Tham chiếu phần lớn do APP gửi (UTxO trả phí, anchor) — một hash không có trên chuỗi
+        // là lỗi của yêu cầu, không phải nút chuỗi chết.
+        throw new CodedApiError(400, "UTXO_NOT_FOUND",
+          `Không có giao dịch ${ref.txHash.slice(0, 12)}… trên chuỗi — tham chiếu UTxO sai, hoặc giao dịch chưa vào khối.`,
+          { out_ref: `${ref.txHash}#${ref.outputIndex}` });
+      }
       if (status !== 200 || body === null || typeof body !== "object") {
         throw new ChainUnavailableError(
           `Nút chuỗi trả HTTP ${status} khi đọc giao dịch ${ref.txHash.slice(0, 12)}… của một UTxO tham chiếu.`,
@@ -184,13 +201,22 @@ export class BlockfrostChainReader implements ChainReader {
       }
       const hit = (outputs as { output_index?: unknown }[]).find(o => o.output_index === ref.outputIndex);
       if (hit === undefined) {
-        // Đây KHÔNG phải "không có gì ở đó" — cấu hình đang trỏ vào một output không tồn
-        // tại. Trả rỗng ở đây là để builder lặng lẽ rơi về `attach` rồi vượt trần 16 KB.
-        throw new ChainUnavailableError(
-          `Giao dịch ${ref.txHash.slice(0, 12)}… không có output #${ref.outputIndex} — ` +
-          `cấu hình ref_script_utxos đang trỏ vào một chỗ không tồn tại.`,
-          { transport: "http", node: this.label, out_ref: `${ref.txHash}#${ref.outputIndex}` },
-        );
+        // Trả rỗng ở đây là để builder lặng lẽ rơi về `attach` rồi vượt trần 16 KB — nên NÉM.
+        // Tham chiếu có thể do app gửi (UTxO trả phí, anchor) hoặc do cấu hình
+        // (`ref_script_utxos`); `out_ref` nói là cái nào.
+        throw new CodedApiError(400, "UTXO_NOT_FOUND",
+          `Giao dịch ${ref.txHash.slice(0, 12)}… không có output #${ref.outputIndex}.`,
+          { out_ref: `${ref.txHash}#${ref.outputIndex}` });
+      }
+      // `/txs/{hash}/utxos` trả CẢ output đã tiêu (lịch sử giao dịch), khác `/addresses/…/utxos`.
+      // Không kiểm thì một UTxO trả phí / anchor đã tiêu vẫn qua mọi cổng, giao dịch dựng xong,
+      // người dùng ký, rồi chuỗi từ chối vì input không còn. Blockfrost ghi hash giao dịch tiêu
+      // nó ở `consumed_by_tx` (đo Preprod 2026-09-27: output sống mang `null`).
+      const consumedBy = (hit as { consumed_by_tx?: unknown }).consumed_by_tx;
+      if (typeof consumedBy === "string" && consumedBy !== "") {
+        throw new CodedApiError(409, "UTXO_SPENT",
+          `UTxO ${ref.txHash.slice(0, 12)}…#${ref.outputIndex} đã bị giao dịch ${consumedBy.slice(0, 12)}… tiêu.`,
+          { out_ref: `${ref.txHash}#${ref.outputIndex}`, consumed_by_tx: consumedBy });
       }
       const address = (hit as { address?: unknown }).address;
       if (typeof address !== "string") {
@@ -317,8 +343,22 @@ export class BlockfrostChainReader implements ChainReader {
     return utxo;
   }
 
+  /** Script theo hash, qua bộ nhớ đệm. Lượt đọc hỏng KHÔNG được đệm — lần sau đọc lại. */
+  private scriptByHash(hash: string): Promise<Script> {
+    const hit = this.scriptCache.get(hash);
+    if (hit !== undefined) return hit;
+    const p = this.fetchScriptByHash(hash);
+    this.scriptCache.set(hash, p);
+    p.catch(() => { if (this.scriptCache.get(hash) === p) this.scriptCache.delete(hash); });
+    if (this.scriptCache.size > BlockfrostChainReader.SCRIPT_CACHE_MAX) {
+      const oldest = this.scriptCache.keys().next().value;
+      if (oldest !== undefined) this.scriptCache.delete(oldest);
+    }
+    return p;
+  }
+
   /** Script theo hash — lấy từ chuỗi, không từ một bản chép trong cấu hình. */
-  private async scriptByHash(hash: string): Promise<Script> {
+  private async fetchScriptByHash(hash: string): Promise<Script> {
     const meta = await this.getJson(`/scripts/${hash}`);
     if (meta.status !== 200 || meta.body === null || typeof meta.body !== "object") {
       throw new ChainUnavailableError(
@@ -358,6 +398,31 @@ export class BlockfrostChainReader implements ChainReader {
         );
     }
   }
+}
+
+/**
+ * Bọc một `ChainReader`: `utxosAt` bỏ những UTxO là input của giao dịch vừa nộp mà nút đọc
+ * chưa thấy bị tiêu (`PendingSpends`). Dùng cho BỘ DỰNG — để lucid không chọn lại một UTxO ví
+ * hay shard vừa tiêu làm input. Đường tra vault của dịch vụ KHÔNG đi qua lớp này: nó đọc bản
+ * gốc rồi từ chối 409 có tên, vì lọc vault đi thì người dùng nhận "chưa có vault".
+ */
+export class PendingSpendsFilteredChain implements ChainReader {
+  constructor(
+    private readonly inner: ChainReader,
+    private readonly pending: { has(ref: string, nowMs: number): boolean },
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+
+  get label(): string { return this.inner.label; }
+
+  async utxosAt(address: string): Promise<UTxO[]> {
+    const t = this.now();
+    return (await this.inner.utxosAt(address)).filter(u => !this.pending.has(`${u.txHash}#${u.outputIndex}`, t));
+  }
+  utxosByOutRef(refs: OutRef[]): Promise<UTxO[]> { return this.inner.utxosByOutRef(refs); }
+  tip(): Promise<ChainTip> { return this.inner.tip(); }
+  submitTx(signedCborHex: string): Promise<string> { return this.inner.submitTx(signedCborHex); }
+  rewardAccount(rewardAddress: string): Promise<RewardAccountState> { return this.inner.rewardAccount(rewardAddress); }
 }
 
 function truncate(s: string, n: number): string {

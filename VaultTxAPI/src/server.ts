@@ -14,10 +14,10 @@ import { createServer, type IncomingMessage } from "node:http";
 
 import type { PlutusJson } from "@magiclamp/sdk";
 
-import { BlockfrostChainReader } from "./chain.js";
+import { BlockfrostChainReader, PendingSpendsFilteredChain } from "./chain.js";
 import { loadConfig, isLoopback } from "./config.js";
 import { handle } from "./http.js";
-import { IssuedTxRegistry, OwnerLockTable } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "./locks.js";
 import { VaultTxService } from "./service.js";
 import { SdkTxBuilder } from "./txBuilder.js";
 import { DidStakeWitnessProvider } from "./owner.js";
@@ -37,6 +37,12 @@ const locks = new OwnerLockTable(cfg.lockTtlMs);
 // Sổ phát-hành sống LÂU HƠN khoá mềm: khoá nhả lúc nộp, còn một lần nộp lại vì rớt
 // mạng phải đi qua được. Bốn lần là đủ rộng cho ca người dùng ký chậm, và vẫn hữu hạn.
 const issued = new IssuedTxRegistry(cfg.lockTtlMs * 4);
+// Input của giao dịch vừa nộp, giữ bằng đúng TTL khoá: đủ cho một giao dịch vào khối, và
+// giao dịch rơi khỏi mempool thì UTxO cũ dùng lại được sau mốc đó.
+const pending = new PendingSpends(cfg.lockTtlMs);
+// Bộ dựng đọc qua lớp lọc để không chọn lại UTxO ví / shard vừa tiêu; đường tra vault của
+// dịch vụ đọc bản gốc rồi trả 409 PREVIOUS_TX_PENDING có tên.
+const builderChain = new PendingSpendsFilteredChain(chain, pending);
 
 const service = new VaultTxService({
   // Nhân chứng chủ script: chỉ khi bản deploy khai `did_stake`. Vắng ⟹ chủ script nhận 501.
@@ -58,11 +64,12 @@ const service = new VaultTxService({
     blockfrostUrl: cfg.blockfrostUrl,
     blockfrostProjectId: cfg.blockfrostProjectId,
     deployment: cfg.deployment,
-    chain,
+    chain: builderChain,
     vaultPlutusJson,
   }),
   locks,
   issued,
+  pending,
   lockTtlMs: cfg.lockTtlMs,
 });
 
@@ -137,7 +144,7 @@ server.listen(cfg.port, cfg.host, () => {
   }
 });
 
-const sweeper = setInterval(() => { const t = Date.now(); locks.sweep(t); issued.sweep(t); }, 30_000);
+const sweeper = setInterval(() => { const t = Date.now(); locks.sweep(t); issued.sweep(t); pending.sweep(t); }, 30_000);
 sweeper.unref();
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {

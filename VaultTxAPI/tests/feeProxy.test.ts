@@ -427,6 +427,31 @@ describe("POST /fee/sign — lời đáp Feecover", () => {
     expect(codeOf(r2)).toBe("FEE_PROXY_REJECTED");
   });
 
+  it("CỰC ĐỐI của ca trên: 401/404 của Feecover nói về DỊCH VỤ ⟹ 502 FEE_PROXY_UPSTREAM, không 401 cho app", async () => {
+    for (const st of [401, 404]) {
+      const h = harness({ feecover: fakeFeecover({ sign: { status: st, body: { message: "token dịch vụ không hợp lệ" } } }) });
+      const r = await h.call("POST", "/fee/sign", { tx_cbor: (await issueConsume(h)).cbor });
+      expect(r.status, `Feecover ${st}`).toBe(502);
+      expect(codeOf(r)).toBe("FEE_PROXY_UPSTREAM");
+      expect(detailsOf(r)).toMatchObject({ upstream_status: st, message: "token dịch vụ không hợp lệ" });
+    }
+    // Còn 403 (luật L14 chặn ứng dụng theo cửa sổ) là quyết định chính sách ⟹ đi nguyên.
+    const h = harness({ feecover: fakeFeecover({ sign: { status: 403, body: { rule: "L14", message: "cửa sổ Catalyst" } } }) });
+    const r = await h.call("POST", "/fee/sign", { tx_cbor: (await issueConsume(h)).cbor });
+    expect(r.status).toBe(403);
+    expect(codeOf(r)).toBe("FEE_PROXY_REJECTED");
+  });
+
+  it("câu 4xx của Feecover có chứa token của dịch vụ ⟹ câu đó KHÔNG đi ra app", async () => {
+    const h = harness({ feecover: fakeFeecover({
+      sign: { status: 422, body: { rule: "L1", message: `token ${MAGIC_TOKEN} sai`, reasons: [`x ${MAGIC_TOKEN}`] } },
+    }) });
+    const r = await h.call("POST", "/fee/sign", { tx_cbor: (await issueConsume(h)).cbor });
+    expect(r.status).toBe(422);
+    expect(JSON.stringify(r.body)).not.toContain(MAGIC_TOKEN);
+    expect(detailsOf(r)).toEqual({ upstream_status: 422, rule: "L1" });
+  });
+
   it("Feecover ký một tx có hash KHÁC ⟹ 502 FEE_PROXY_UPSTREAM_MISMATCH", async () => {
     const h = harness({ feecover: fakeFeecover({
       sign: { status: 200, body: { txHash: "00".repeat(32), witnessSet: "a100", netLovelace: "1", feeLovelace: "1" } },

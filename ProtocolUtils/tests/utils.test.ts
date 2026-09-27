@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import {
   slotToEpoch, lampToOildrop, nanogicToMagicStr,
+  getTipSlot, TipSlotError, GENESIS_UNIX, SHELLEY_START, BYRON_SLOTS_PER_EPOCH,
   selectLampForLock, removeLockedAmount, unlockLockedAmount, sumHoldings, sumLocked,
   pruneActivityWindow, countActiveAppsInOacWindow, addBurnToActivity,
   isqrt, isqrt10th, verifyVd, vDampened, mulQ, clamp,
@@ -19,10 +20,14 @@ const MAGIC = Q;
 // Epoch + conversions
 // ══════════════════════════════════════════════════════════════
 describe("Epoch utilities", () => {
-  it("slotToEpoch Mainnet: 432_000 slots = 1 epoch", () => {
-    expect(slotToEpoch(432_000n, "Mainnet")).toBe(1n);
-    expect(slotToEpoch(863_999n, "Mainnet")).toBe(1n);
-    expect(slotToEpoch(864_000n, "Mainnet")).toBe(2n);
+  it("slotToEpoch Mainnet: 208 epoch Byron đứng trước, rồi 432_000 slot/epoch", () => {
+    // VÁ 2026-09-27: bản trước ghim "slot 432_000 = epoch 1" — bỏ qua thời Byron (21 600
+    // slot/epoch). Slot 4 492 800 là slot đầu của epoch 208, mốc Shelley của Mainnet.
+    expect(slotToEpoch(432_000n, "Mainnet")).toBe(20n);
+    expect(slotToEpoch(4_492_799n, "Mainnet")).toBe(207n);
+    expect(slotToEpoch(4_492_800n, "Mainnet")).toBe(208n);
+    expect(slotToEpoch(4_924_799n, "Mainnet")).toBe(208n);
+    expect(slotToEpoch(4_924_800n, "Mainnet")).toBe(209n);
   });
   it("slotToEpoch Preview: 86_400 slots = 1 epoch", () => {
     expect(slotToEpoch(86_400n, "Preview")).toBe(1n);
@@ -32,9 +37,22 @@ describe("Epoch utilities", () => {
   it("slotToEpoch Preprod: 432_000 slots = 1 epoch (mạng thật 5 ngày)", () => {
     // VÁ 2026-09-05: bản trước ghim 86_400 và đó là số SAI về mạng — Preprod chạy
     // 5 ngày/epoch, đo Blockfrost `/epochs/latest` (epoch 311 dài 432 000 s).
-    expect(slotToEpoch(432_000n, "Preprod")).toBe(1n);
-    expect(slotToEpoch(863_999n, "Preprod")).toBe(1n);
-    expect(slotToEpoch(864_000n, "Preprod")).toBe(2n);
+    // VÁ 2026-09-27: 4 epoch Byron (21 600 slot/epoch) đứng trước slot 86 400. Bản trước
+    // chia thẳng slot cho 432 000 nên thấp đúng 4 epoch.
+    expect(slotToEpoch(86_399n, "Preprod")).toBe(3n);
+    expect(slotToEpoch(86_400n, "Preprod")).toBe(4n);
+    expect(slotToEpoch(518_399n, "Preprod")).toBe(4n);
+    expect(slotToEpoch(518_400n, "Preprod")).toBe(5n);
+  });
+  it("mốc Shelley khớp số epoch Byron × 21 600 slot ở cả ba mạng", () => {
+    for (const n of ["Preview", "Preprod", "Mainnet"] as const) {
+      expect(BigInt(SHELLEY_START[n].zeroSlot)).toBe(BigInt(SHELLEY_START[n].byronEpochs) * BYRON_SLOTS_PER_EPOCH);
+    }
+  });
+  it("GENESIS_UNIX sinh từ mốc Shelley — Preprod 1655683200, Mainnet 1591566291", () => {
+    // Hằng gõ tay cũ: Preprod 1654041600 (tip ước lượng chạy trước 19 ngày), Mainnet
+    // 1596491091 (chạy sau 57 ngày). Giá trị đúng: zeroTime − zeroSlot.
+    expect(GENESIS_UNIX).toEqual({ Preview: 1666656000, Preprod: 1655683200, Mainnet: 1591566291 });
   });
 
   // ── Hai đồng hồ phải ở lại HAI đồng hồ ────────────────────────────────────
@@ -539,5 +557,28 @@ describe("epochValidityWindow", () => {
     const cuoiPv = 900n * Pv - SLOT_LENGTH_MS;
     expect(() => epochValidityWindow(cuoiPv, "Preview")).toThrow(EmptyValidityWindowError);
     expect(() => epochValidityWindow(cuoiPv - SLOT_LENGTH_MS, "Preview")).not.toThrow();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// getTipSlot — rẽ theo hình dạng provider, không nuốt lỗi
+// ══════════════════════════════════════════════════════════════
+describe("getTipSlot", () => {
+  it("provider có getBlock ⟹ trả đúng slot của tip", async () => {
+    const lucid = { provider: { getBlock: async () => ({ slot: 12_345 }) } };
+    await expect(getTipSlot(lucid, "Preprod")).resolves.toBe(12_345);
+  });
+  it("CỰC ĐỐI: tip thiếu slot ⟹ NÉM TIP-SLOT-001, không trả slot 0", async () => {
+    const lucid = { provider: { getBlock: async () => ({}) } };
+    await expect(getTipSlot(lucid, "Preprod")).rejects.toBeInstanceOf(TipSlotError);
+  });
+  it("CỰC ĐỐI: getBlock hỏng ⟹ NÉM TIP-SLOT-001, không rơi về đồng hồ", async () => {
+    const lucid = { provider: { getBlock: async () => { throw new Error("503"); } } };
+    await expect(getTipSlot(lucid, "Preprod")).rejects.toMatchObject({ code: "TIP-SLOT-001" });
+  });
+  it("provider không có getBlock ⟹ slot theo đồng hồ máy, qua GENESIS_UNIX đúng mạng", async () => {
+    const nowS = Math.floor(Date.now() / 1000);
+    const s = await getTipSlot({ provider: {} }, "Preprod");
+    expect(Math.abs(s - (nowS - 1_655_683_200))).toBeLessThanOrEqual(2);
   });
 });

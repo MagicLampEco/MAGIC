@@ -14,8 +14,9 @@ import { describe, expect, it } from "vitest";
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { parseDeployment, type Deployment } from "../src/config.js";
 import { ChainUnavailableError } from "../src/errors.js";
+import type { UTxO } from "@lucid-evolution/lucid";
 import { handle, type RouterDeps } from "../src/http.js";
-import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
+import { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
 import { txBodyHash } from "../src/summary.js";
 import { RecordedTxBuilder, enterpriseAddressOf } from "../src/txBuilder.js";
@@ -106,8 +107,10 @@ function harness(opts: {
   failWith?: ChainUnavailableError;
   submitResult?: string;
   token?: string;
+  pending?: PendingSpends;
+  chainClass?: typeof RecordedChainReader;
 } = {}): Harness {
-  const chain = new RecordedChainReader(
+  const chain = new (opts.chainClass ?? RecordedChainReader)(
     // Thread Engage của chủ: `/tx/consume` chọn thread theo chủ lúc chạy (`engage.ts`).
     { [VAULT_ADDRESS]: opts.utxos ?? [vaultUtxo()], [ENGAGE_ADDRESS]: [threadUtxo({ type: "key", hash: OWNER_PKH }, "7e".repeat(32))] },
     TIP,
@@ -129,6 +132,7 @@ function harness(opts: {
     builder,
     locks,
     issued,
+    pending: opts.pending,
     lockTtlMs: TTL,
     now: () => NOW,
   });
@@ -374,7 +378,7 @@ describe("Bộ định tuyến", () => {
       owner_pkh: OWNER_PKH, schedule_length: "17", lamp_per_epoch: "7000000",
     }), h.router);
     expect(r.status).toBe(200);
-    expect(Object.keys(r.body).sort()).toEqual(["expires_at", "ignored", "required_signers", "summary", "tx_cbor", "tx_hash", "witness_notes"]);
+    expect(Object.keys(r.body).sort()).toEqual(["expires_at", "ignored", "ignored_other_owner_count", "required_signers", "summary", "tx_cbor", "tx_hash", "witness_notes"]);
     const summary = r.body.summary as { lamp: { locked_delta_oildrop: string } };
     // Lại một lần nữa, qua trọn đường HTTP: bản tóm tắt đi theo CBOR, không theo thân bài.
     expect(summary.lamp.locked_delta_oildrop).toBe("21000000");
@@ -402,5 +406,76 @@ describe("Bộ định tuyến", () => {
     // Mã đó PHẢI tra được ở nhật ký — nếu không, nó chỉ là "có lỗi xảy ra" mặc đồng phục.
     expect(broken.internalErrors).toHaveLength(1);
     expect(broken.internalErrors[0]!.ref).toBe(body.error.details.reference_code);
+  });
+});
+
+// ── Sau /tx/submit: input vừa tiêu chưa vào khối · nút từ chối thì nhả khoá ─────────────
+
+const COMMIT = (h: Harness) =>
+  h.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
+
+describe("/tx/submit xong ⟹ UTxO vault vừa tiêu không được dựng lại trước khi vào khối", () => {
+  it("dựng lại trên đúng UTxO vừa nộp ⟹ 409 PREVIOUS_TX_PENDING", async () => {
+    const cbor = commitTxCbor(3n);
+    const h = harness({ submitResult: txBodyHash(cbor), pending: new PendingSpends(TTL) });
+    await COMMIT(h);
+    await h.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() });
+    // Nút đọc (bản ghi) vẫn trả UTxO cũ — đúng như Blockfrost trước khi giao dịch vào khối.
+    await expect(COMMIT(h)).rejects.toMatchObject({ httpStatus: 409, code: "PREVIOUS_TX_PENDING" });
+  });
+  it("CỰC ĐỐI: UTxO vault KHÁC (giao dịch trước đã vào khối) ⟹ dựng được", async () => {
+    const cbor = commitTxCbor(3n);
+    const pending = new PendingSpends(TTL);
+    const h = harness({ submitResult: txBodyHash(cbor), pending });
+    await COMMIT(h);
+    await h.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() });
+    const h2 = harness({ utxos: [vaultUtxo({ txHash: "9e".repeat(32) })], pending });
+    await expect(COMMIT(h2)).resolves.toBeDefined();
+  });
+  it("sổ chỉ ghi khi nút NHẬN giao dịch — nút từ chối thì không ghi", async () => {
+    const pending = new PendingSpends(TTL);
+    const h = harness({ pending });   // không khai submitResult ⟹ bản ghi ném SubmitRejectedError
+    await COMMIT(h);
+    await expect(h.service.submit({ txCbor: commitTxCbor(3n), witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toMatchObject({ code: "SUBMIT_REJECTED" });
+    expect(pending.has(`${INPUT_TX_HASH}#0`, NOW)).toBe(false);
+  });
+});
+
+describe("/tx/submit — nút từ chối thì nhả khoá, mất kết nối thì giữ", () => {
+  it("nút TỪ CHỐI ⟹ khoá của chủ được nhả (giao dịch đó không bao giờ lên chuỗi)", async () => {
+    const h = harness();   // bản ghi không khai kết quả nộp ⟹ SubmitRejectedError
+    await COMMIT(h);
+    expect(h.locks.peek(OWNER_PKH, NOW)).not.toBeNull();
+    await expect(h.service.submit({ txCbor: commitTxCbor(3n), witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toMatchObject({ code: "SUBMIT_REJECTED" });
+    expect(h.locks.peek(OWNER_PKH, NOW)).toBeNull();
+  });
+  it("CỰC ĐỐI: mất kết nối lúc nộp ⟹ GIỮ khoá (không biết giao dịch đã vào mempool chưa)", async () => {
+    class DeadOnSubmit extends RecordedChainReader {
+      override async submitTx(): Promise<string> { throw new ChainUnavailableError("quá giờ", { transport: "timeout" }); }
+    }
+    const h = harness({ chainClass: DeadOnSubmit });
+    await COMMIT(h);
+    await expect(h.service.submit({ txCbor: commitTxCbor(3n), witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toBeInstanceOf(ChainUnavailableError);
+    expect(h.locks.peek(OWNER_PKH, NOW)).not.toBeNull();
+  });
+});
+
+describe("thân bài dựng — vault của chủ KHÁC chỉ được đếm", () => {
+  it("vault của chủ khác ⟹ không liệt kê trong `ignored`, đếm ở `ignored_other_owner_count`", async () => {
+    const other = vaultUtxo({
+      txHash: "ee".repeat(32),
+      idUnit: VAULT_ID_UNIT.slice(0, 56) + "ee".repeat(32),
+      datum: datumHex({ lampLockedOildrop: 0n, batches: [], ownerPkh: OTHER_OWNER_PKH }),
+    });
+    const noNft = { txHash: "dd".repeat(32), outputIndex: 3, address: VAULT_ADDRESS, assets: { lovelace: 2_000_000n }, datum: VAULT_DATUM_BEFORE };
+    const h = harness({ utxos: [vaultUtxo(), other, noNft as ReturnType<typeof vaultUtxo>] });
+    const r = await handle(post("/tx/schedule-commit", { owner_pkh: OWNER_PKH, schedule_length: "3", lamp_per_epoch: String(LAMBDA) }), h.router);
+    expect(r.status).toBe(200);
+    const body = r.body as { ignored: { reason: string }[]; ignored_other_owner_count: number };
+    expect(body.ignored.map(x => x.reason)).toEqual(["NO_VAULT_ID_NFT"]);
+    expect(body.ignored_other_owner_count).toBe(1);
   });
 });

@@ -221,13 +221,31 @@ export const MIN_BURN_FOR_OAC    = 1_000_000_000n;  // 1 MAGIC
 // §2.4 Epoch utilities
 // ══════════════════════════════════════════════════════════════
 
-// Cardano genesis UNIX timestamps per network (used as fallback when Blockfrost
-// is unavailable). Preview Shelley genesis: slot 0 = block 1 (2022-10-25).
+// Mốc đầu thời Shelley của từng mạng — NGUỒN DUY NHẤT cho mọi phép đổi slot ↔ thời gian
+// trong gói này. Chép từ `@lucid-evolution/plutus` ▸ `SLOT_CONFIG_NETWORK` (zeroTime ·
+// zeroSlot), cộng số epoch Byron đứng trước (mỗi epoch Byron = 21 600 slot × 20 s).
+// Gói này cố ý không phụ thuộc lucid, nên bảng được CHÉP; `InstantGen/tests/math.test.ts`
+// ▸ "SHELLEY_START khớp SLOT_CONFIG_NETWORK" đối chiếu hai bảng — lucid đổi thì bài đó đỏ.
+export const SHELLEY_START = {
+  Preview: { zeroTimeMs: 1_666_656_000_000, zeroSlot: 0,         byronEpochs: 0 },
+  Preprod: { zeroTimeMs: 1_655_769_600_000, zeroSlot: 86_400,    byronEpochs: 4 },
+  Mainnet: { zeroTimeMs: 1_596_059_091_000, zeroSlot: 4_492_800, byronEpochs: 208 },
+} as const;
+
+/** Mốc UNIX (giây) của "slot 0" nếu kéo dài tuyến tính nhịp 1 s/slot của thời Shelley về
+ *  trước — đúng phép mà `slotToUnixTime` của lucid dùng. SINH từ `SHELLEY_START`.
+ *
+ *  Bản trước gõ tay ba hằng, sai hai: Preprod `1654041600` (lệch 1 641 600 s ⟹ mốc tip
+ *  ước lượng chạy TRƯỚC thật 19 ngày) và Mainnet `1596491091` (chạy SAU 57 ngày) — đo
+ *  2026-09-27 bằng `slotToUnixTime(n, getTipSlot(…)) − Date.now()`. */
 export const GENESIS_UNIX: Record<"Preview" | "Preprod" | "Mainnet", number> = {
-  Preview:  1666656000,  // 2022-10-25
-  Preprod:  1654041600,  // 2022-06-01
-  Mainnet:  1596491091,  // 2020-08-03
+  Preview: SHELLEY_START.Preview.zeroTimeMs / 1000 - SHELLEY_START.Preview.zeroSlot,
+  Preprod: SHELLEY_START.Preprod.zeroTimeMs / 1000 - SHELLEY_START.Preprod.zeroSlot,
+  Mainnet: SHELLEY_START.Mainnet.zeroTimeMs / 1000 - SHELLEY_START.Mainnet.zeroSlot,
 };
+
+/** Số slot của một epoch thời Byron (20 s/slot, 5 ngày/epoch). */
+export const BYRON_SLOTS_PER_EPOCH = 21_600n;
 
 export type Network = "Preview" | "Preprod" | "Mainnet";
 
@@ -241,25 +259,56 @@ export type Network = "Preview" | "Preprod" | "Mainnet";
  *   dán cảnh báo lên đúng hàm không ai gọi trong khi để `getCurrentEpoch` trần.)
  */
 export function slotToEpoch(slot: bigint, network: Network): bigint {
-  return slot / slotsPerEpoch(network);
+  // Thời Byron đứng trước Shelley trên Preprod (4 epoch) và Mainnet (208 epoch) với nhịp
+  // khác. Bản trước chia thẳng cho số slot/epoch Shelley nên thấp 4 epoch trên Preprod và
+  // ~198 epoch trên Mainnet.
+  const start = SHELLEY_START[network];
+  const zeroSlot = BigInt(start.zeroSlot);
+  if (slot < zeroSlot) return slot / BYRON_SLOTS_PER_EPOCH;
+  return BigInt(start.byronEpochs) + (slot - zeroSlot) / slotsPerEpoch(network);
 }
 
-/** Get current tip slot from a Lucid-compatible provider.
- *  Falls back to wall-clock estimate using the network's genesis UNIX time.
- *  Hardcoding 1666656000 in callers breaks Preprod/Mainnet — always pass `network`.
+/** Lỗi khi không đọc được tip từ provider. `code` cố định để bên gọi rẽ nhánh. */
+export class TipSlotError extends Error {
+  readonly code = "TIP-SLOT-001";
+  constructor(message: string) {
+    super(`TIP-SLOT-001: ${message}`);
+    this.name = "TipSlotError";
+  }
+}
+
+/** Slot hiện tại.
+ *
+ *  Hai đường, rẽ theo HÌNH DẠNG provider chứ không theo việc gọi có hỏng hay không:
+ *  - provider có `getBlock` ⟹ đọc tip thật. Gọi hỏng, hoặc tip không mang `slot` ⟹ NÉM
+ *    `TipSlotError`. Bản trước nuốt mọi lỗi rồi rơi về đồng hồ, và `tip.slot ?? 0` biến
+ *    một tip thiếu trường thành slot 0 — mốc năm 2022 đi thẳng vào cửa sổ hiệu lực.
+ *  - provider không có `getBlock` (mọi provider của `@lucid-evolution` — interface
+ *    `Provider` không khai hàm này) ⟹ slot theo đồng hồ máy, qua đúng bảng mốc mà lucid
+ *    dùng để đổi ngược. Đây cũng là cách `lucid.currentSlot()` tính, và sổ cái xét cửa
+ *    sổ hiệu lực theo cùng đồng hồ đó.
+ *
+ *  Cần mốc của tip thật (ví dụ đồng bộ với một khối vừa đọc) thì truyền `tipPosixMs`
+ *  vào bộ dựng thay vì dựa vào hàm này.
  */
 export async function getTipSlot(
   lucid   : { provider: unknown },
   network : Network = "Preview",
 ): Promise<number> {
-  try {
-    const tip = await (lucid.provider as { getBlock: (s: string) => Promise<{ slot?: number }> })
-      .getBlock("latest");
-    return tip.slot ?? 0;
-  } catch {
-    const genesis = GENESIS_UNIX[network] ?? GENESIS_UNIX.Preview;
-    return Math.max(0, Math.floor(Date.now() / 1000) - genesis);
+  const provider = lucid.provider as { getBlock?: (s: string) => Promise<{ slot?: number }> } | undefined;
+  if (typeof provider?.getBlock === "function") {
+    let tip: { slot?: number } | undefined;
+    try {
+      tip = await provider.getBlock("latest");
+    } catch (e) {
+      throw new TipSlotError(`provider.getBlock("latest") hỏng: ${(e as Error)?.message ?? String(e)}`);
+    }
+    if (typeof tip?.slot !== "number" || !Number.isFinite(tip.slot) || tip.slot < 0) {
+      throw new TipSlotError(`tip không mang slot hợp lệ (nhận ${JSON.stringify(tip?.slot)}).`);
+    }
+    return tip.slot;
   }
+  return Math.floor(Date.now() / 1000) - GENESIS_UNIX[network];
 }
 
 /** Epoch CARDANO hiện tại, đọc từ provider.

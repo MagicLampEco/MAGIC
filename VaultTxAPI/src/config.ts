@@ -60,6 +60,13 @@ export interface ConsumeDeployment {
   priceBeaconAddress: string;
   /** NFT của beacon giá. */
   priceBeaconNftUnit: string;
+  /**
+   * Apply-param #5 của `consume` — số epoch tối đa beacon giá được trễ so với epoch hiện tại.
+   * CÓ ⟹ bộ dựng từ chối trước (`CONSUME-011`, 422 đọc được). VẮNG ⟹ không kiểm ở dịch vụ,
+   * validator vẫn ép, và lượt trễ chết ở pha script với câu không trỏ về beacon.
+   * Phải BẰNG đúng giá trị đã apply vào script `consume` đang chạy — lấy từ cùng sổ trạng thái.
+   */
+  maxPriceStale?: bigint;
 }
 
 /**
@@ -395,6 +402,9 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
     engageScriptHash: engage.scriptHash,
     priceBeaconAddress: scriptAddress(str(c.price_beacon_address, "consume.price_beacon_address"), prefix, network, "consume.price_beacon_address").address,
     priceBeaconNftUnit: unit(str(c.price_beacon_nft_unit, "consume.price_beacon_nft_unit"), "consume.price_beacon_nft_unit"),
+    ...(c.max_price_stale === undefined
+      ? {}
+      : { maxPriceStale: nonNegativeInt(c.max_price_stale, "consume.max_price_stale") }),
   };
 
   // Mục `instant` là TUỲ CHỌN. Vắng ⟹ `/tx/instant-gen` đóng; CÓ ⟹ mọi trường bắt
@@ -549,6 +559,13 @@ function str(v: unknown, where: string): string {
     throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where} thiếu hoặc không phải chuỗi.`);
   }
   return v;
+}
+
+/** Số nguyên ≥ 0, nhận số JSON an toàn hoặc chuỗi thập phân. Mọi hình dạng khác ⟹ NÉM. */
+function nonNegativeInt(v: unknown, where: string): bigint {
+  if (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) return BigInt(v);
+  if (typeof v === "string" && /^[0-9]+$/.test(v)) return BigInt(v);
+  throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where} phải là số nguyên ≥ 0 (số hoặc chuỗi thập phân).`);
 }
 
 function hex(v: string, len: number, where: string): string {

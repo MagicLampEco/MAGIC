@@ -34,7 +34,7 @@ import {
 import {
   ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
 } from "./owner.js";
-import { IssuedTxRegistry, OwnerLockTable, type IssuedRoute } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type IssuedRoute } from "./locks.js";
 import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
   type CreateVaultSummary, type RequestedIntent, type TxSummary,
@@ -135,6 +135,9 @@ export interface VaultTxServiceDeps {
   /** Nhân chứng chủ script (did_stake). Vắng ⟹ chủ script nhận 501
    *  `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ khoá không bị ảnh hưởng. */
   ownerWitness?: OwnerWitnessProvider;
+  /** Input của giao dịch vừa nộp (`PendingSpends`). Vắng ⟹ không chặn dựng lại trên UTxO vừa
+   *  tiêu — hành vi cũ, chỉ để phép kiểm cũ khỏi phải khai. */
+  pending?: PendingSpends;
   /** Đọc anchor DID cho `funding` did_payment. Vắng ⟹ 501 `FUNDING_UNAVAILABLE`. Cùng tham số
    *  theo mạng `anchor_nft_policy` với nhân chứng did_stake. */
   didPaymentAnchor?: DidPaymentAnchorReader;
@@ -268,7 +271,7 @@ export class VaultTxService {
     const d = this.deps.deployment.consume;
     const ownerKey = ownerLockKey(owner);
     const startedAt = this.now();
-    this.deps.locks.acquire(ownerKey, startedAt);
+    const lockGen = this.deps.locks.acquire(ownerKey, startedAt);
     try {
       const tip = await this.deps.chain.tip();
       const existing = threadsOf(await this.deps.chain.utxosAt(d.engageAddress), d.engageScriptHash, owner);
@@ -284,7 +287,7 @@ export class VaultTxService {
         declaredUnit: built.engageNftUnit, owner, network: this.deps.network,
       });
       const txHash = txBodyHash(built.txCbor);
-      this.deps.locks.bindTxHash(ownerKey, txHash);
+      this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
       // Mã ghi sổ Feecover của tx mở thread = tên NFT thread, khi nó đúng khuôn hash 64 hex.
       this.deps.issued.record(txHash, this.now(), {
         route: "open-thread", feeRef: hash64NameOf(summary.engage.nft_unit),
@@ -301,7 +304,7 @@ export class VaultTxService {
         expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
       };
     } catch (e) {
-      this.deps.locks.release(ownerKey);
+      this.deps.locks.release(ownerKey, lockGen);
       throw asOwnerApiError(e);
     }
   }
@@ -322,7 +325,7 @@ export class VaultTxService {
     this.assertWitnessShapeFor(req);
     assertQuoteMatches(quote, feePayer);
     const startedAt = this.now();
-    if (quote === undefined) this.deps.locks.acquire(ownerKey, startedAt);
+    const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
       const feePayerUtxo = feePayer === undefined
@@ -339,6 +342,7 @@ export class VaultTxService {
         ignored.push(...r.ignored);
       }
       const vault = pickSingleVault(found, ownerKey, vaultType ?? "bất kỳ", scopes.map(s => s.address));
+      this.assertNotPendingSpent(vault.utxo);
 
       const ctx: BuildContext = {
         owner,
@@ -375,7 +379,7 @@ export class VaultTxService {
       }
       const txHash = txBodyHash(built.txCbor);
       if (quote === undefined) {
-        this.deps.locks.bindTxHash(ownerKey, txHash);
+        this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
         // Ghi vào sổ phát-hành TRƯỚC khi trả về: `/tx/submit` chỉ nộp thứ có trong sổ, và
         // `/fee/sign` đọc route + UTxO ví trả phí từ đây chứ không nhận từ app.
         this.deps.issued.record(txHash, this.now(), {
@@ -394,8 +398,22 @@ export class VaultTxService {
         witnessNotes: this.notesFor(owner, witness, changeAddress, feePayer),
       };
     } catch (e) {
-      if (quote === undefined) this.deps.locks.release(ownerKey);
+      if (quote === undefined) this.deps.locks.release(ownerKey, lockGen);
       throw asOwnerApiError(e);
+    }
+  }
+
+  /**
+   * UTxO vault là input của một giao dịch vừa nộp qua dịch vụ này mà nút đọc chưa thấy bị tiêu
+   * ⟹ 409. Dựng tiếp trên nó thì người dùng ký xong mới bị chuỗi từ chối vì input không còn.
+   */
+  private assertNotPendingSpent(u: UTxO): void {
+    const ref = `${u.txHash}#${u.outputIndex}`;
+    if (this.deps.pending?.has(ref, this.now())) {
+      throw new CodedApiError(409, "PREVIOUS_TX_PENDING",
+        `Giao dịch trước của vault này đã nộp nhưng chưa vào khối — UTxO ${ref} đang bị nó tiêu. ` +
+        `Thử lại sau khi giao dịch đó vào khối (thường dưới một phút).`,
+        { utxo_ref: ref });
     }
   }
 
@@ -492,7 +510,7 @@ export class VaultTxService {
     assertQuoteMatches(quote, funding?.feePayer);
     const ownerKey = ownerLockKey(owner);
     const startedAt = this.now();
-    if (quote === undefined) this.deps.locks.acquire(ownerKey, startedAt);
+    const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
       const witness = await this.witnessFor(req);
@@ -573,7 +591,7 @@ export class VaultTxService {
         throw new Error(`NFT vault vừa dựng không mang tên 64 hex (unit dài ${built.vaultNftUnit.length}).`);
       }
       if (quote === undefined) {
-        this.deps.locks.bindTxHash(ownerKey, txHash);
+        this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
         this.deps.issued.record(txHash, this.now(), {
           route: "create-vault", feeRef: vaultNftName,
           ...(funding?.feePayer === undefined ? {} : { feePayerUtxo: refStr(funding.feePayer.utxoRef) }),
@@ -593,7 +611,7 @@ export class VaultTxService {
         expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
       };
     } catch (e) {
-      if (quote === undefined) this.deps.locks.release(ownerKey);
+      if (quote === undefined) this.deps.locks.release(ownerKey, lockGen);
       throw asOwnerApiError(e);
     }
   }
@@ -729,13 +747,23 @@ export class VaultTxService {
       );
     }
 
-    const chainHash = await this.deps.chain.submitTx(assembled.to_cbor_hex());
+    let chainHash: string;
+    try {
+      chainHash = await this.deps.chain.submitTx(assembled.to_cbor_hex());
+    } catch (e) {
+      // Nút TỪ CHỐI (không phải mất kết nối) ⟹ giao dịch này không bao giờ lên chuỗi, nên giữ
+      // khoá tới hết hạn chỉ chặn chủ dựng lại bản đúng. Mất kết nối / quá giờ thì KHÔNG nhả:
+      // không biết giao dịch đã vào mempool hay chưa.
+      if (e instanceof SubmitRejectedError) this.deps.locks.releaseByTxHash(bodyHashBefore);
+      throw e;
+    }
     if (chainHash !== bodyHashBefore) {
       throw new SubmitRejectedError(
         "Nút chuỗi báo một tx hash khác với hash thân giao dịch mà dịch vụ vừa nộp.",
         { submitted_hash: bodyHashBefore, node_hash: chainHash },
       );
     }
+    this.deps.pending?.note(inputRefsOf(req.txCbor).map(refStr), this.now());
     const lockReleasedFor = this.deps.locks.releaseByTxHash(bodyHashBefore);
     return { txHash: bodyHashBefore, lockReleasedFor };
   }
@@ -871,7 +899,10 @@ export function toBuildBody(r: BuildResponse): Record<string, unknown> {
     tx_hash: r.txHash,
     summary: r.summary,
     expires_at: r.expiresAt,
-    ignored: r.ignored.map(x => ({ utxo_ref: x.utxoRef, reason: x.reason })),
+    // UTxO của CHỦ KHÁC chỉ được ĐẾM, không liệt kê: danh sách đó lớn theo số vault của cả hệ
+    // (mỗi lượt dựng trả về tham chiếu vault của mọi người khác), không nói gì với chủ đang hỏi.
+    ignored: r.ignored.filter(x => x.reason !== "OWNER_MISMATCH").map(x => ({ utxo_ref: x.utxoRef, reason: x.reason })),
+    ignored_other_owner_count: r.ignored.filter(x => x.reason === "OWNER_MISMATCH").length,
     required_signers: r.requiredSigners,
     witness_notes: r.witnessNotes,
   };

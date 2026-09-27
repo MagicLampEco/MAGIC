@@ -158,44 +158,24 @@ Gửi UTxO với datum này đến UM datum address, kèm UM NFT token.
 
 ## Bước 5: Tạo Vault UTxO
 
-```typescript
-import { createLucid } from "@magiclamp/instantgen-sdk";
-import { Data } from "@lucid-evolution/lucid";
-import { VaultDatumSchema } from "./src/types.js";
+**Dùng `@magiclamp/sdk` ▸ `createVault` với `vaultType: "Instant"`** — đừng tự gửi một UTxO
+kèm datum tới địa chỉ vault.
 
-const lucid = await createLucid(process.env.BLOCKFROST_KEY!);
-lucid.selectWallet.fromPrivateKey(process.env.PRIVATE_KEY!);
+Bản trước của mục này dựng datum bằng tay rồi "gửi UTxO tới địa chỉ script". UTxO tạo theo
+cách đó là **UTxO chết**: không mang NFT định danh vault (`INV-VAULT-IDENTITY`, `BOUNDARIES.md`
+§2), mà mọi nhánh tiêu đều đòi NFT đó — LAMP gửi vào kẹt vĩnh viễn. Cardano không chạy
+validator lúc TẠO UTxO, nên không gì chặn lượt gửi ấy. Datum mẫu cũ còn sai hình dạng:
+`owner` là pkh trần thay vì `Credential`, và thiếu trường 17 `instant_unlock_ms` (datum
+InstantGen có 18 trường — `offchain/src/types.ts` ▸ `VaultDatumSchema`).
 
-const initialVault = {
-  owner:                 "your_pkh_hex",
-  lamp_balance:          10_000_000_000n,  // 10,000 LAMP
-  lamp_locked:           0n,
-  loyalty_holdings:      [{
-    amount:         10_000_000_000n,
-    acquired_epoch: BigInt(currentEpoch),
-    is_locked:      false,
-  }],
-  magic_batches:         [],
-  next_batch_index:      0n,
-  vacuum_orders:         [],
-  gen_schedules:         [],
-  profile:               "Flame",
-  profile_changed_epoch: 0n,
-  pending_profile:       null,
-  last_updated_epoch:    BigInt(currentEpoch),
-  delegation_cert:       { current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n },
-  activity_state:        { recent_burn_epochs: [], consumed_credit: 0n },
-  streak_state:          { current_streak: 0n, last_active_epoch: 0n },
-  personal_delegate:     null,
-  attribution:           {
-    attribution_root: "0".repeat(64),    // 32 zero bytes
-    last_event_epoch: 0n,
-    total_events:     0n,
-  },
-};
+Đường đúng làm ba việc trong CÙNG một giao dịch: đúc NFT định danh (`MintVaultId`, tên =
+`blake2b_256(cbor.serialise(seed))`), dựng datum genesis ghim đúng giá trị mà nhánh mint ép,
+và tính min-ADA theo datum thật:
 
-// Send vault UTxO to script address with LAMP + datum
-```
+- `MagicSDK/src/createVault.ts` ▸ `createVault` — ví dụ gọi ở khối chú thích đầu tệp;
+- `MagicSDK/src/vaultDatum.ts` ▸ `buildInitialVaultDatum` — datum genesis;
+- `MagicSDK/src/vaultId.ts` ▸ `vaultIdAssetName` — tên NFT;
+- qua HTTP: `POST /tx/create-vault` của `VaultTxAPI` gọi đúng hàm trên.
 
 ---
 

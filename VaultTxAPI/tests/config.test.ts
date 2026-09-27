@@ -134,6 +134,17 @@ describe("parseDeployment — bản chép phải mang nhãn và phải khớp M�
     expect(d.feePayerCollateralLovelace).toBe(3_000_000n);
   });
 
+  it("`consume.max_price_stale`: vắng ⟹ undefined; số / chuỗi thập phân ⟹ bigint; âm / chuỗi lạ ⟹ ném", () => {
+    const consume = JSON.parse(deploymentJson()).consume;
+    expect(parseDeployment(deploymentJson(), "Preview").consume.maxPriceStale).toBeUndefined();
+    expect(parseDeployment(deploymentJson({ consume: { ...consume, max_price_stale: 2 } }), "Preview").consume.maxPriceStale).toBe(2n);
+    expect(parseDeployment(deploymentJson({ consume: { ...consume, max_price_stale: "3" } }), "Preview").consume.maxPriceStale).toBe(3n);
+    for (const bad of [-1, 1.5, "2 epoch", "", null]) {
+      expect(() => parseDeployment(deploymentJson({ consume: { ...consume, max_price_stale: bad } }), "Preview"))
+        .toThrow(/max_price_stale/);
+    }
+  });
+
   it("`fee_payer_collateral_lovelace`: chuỗi chữ số thì nhận; số JSON / chuỗi lạ ⟹ ném", () => {
     expect(parseDeployment(deploymentJson({ fee_payer_collateral_lovelace: "2500000" }), "Preview")
       .feePayerCollateralLovelace).toBe(2_500_000n);

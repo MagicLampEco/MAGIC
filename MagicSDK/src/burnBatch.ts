@@ -36,6 +36,7 @@ import { ownerRefOf, resolveOwnerAuth, type OwnerAuth } from "@magiclamp/protoco
 
 import { InstantVaultDatumSchema, VaultDatumSchema, type VaultDatum } from "./schemas.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
+import { applyPendingProfile as applyPendingProfileInstant } from "@magiclamp/instantgen-sdk";
 
 /** Nhãn biến thể trong `pub type VaultRedeemer`. */
 const BURN_BATCH_TAG = "BurnBatch";
@@ -84,12 +85,8 @@ export type VaultModule = "InstantGen" | "ScheduleGen";
  * pending sẽ vỡ `expect output_datum.pending_profile == input_datum.pending_profile`.
  */
 export function applyPendingProfile<T extends VaultDatum>(datum: T, currentEpoch: bigint): T {
-  const pending = (datum as unknown as {
-    pending_profile: { new_profile: unknown; effective_epoch: bigint } | null;
-  }).pending_profile;
-  if (pending === null || pending === undefined) return datum;
-  if (currentEpoch < pending.effective_epoch) return datum;
-  return { ...datum, profile: pending.new_profile, pending_profile: null } as T;
+  // Một nguồn: bộ dựng sinh MAGIC (`buildInstantGenTx`) dùng cùng hàm này.
+  return applyPendingProfileInstant(datum as never, currentEpoch) as T;
 }
 
 /**
@@ -194,14 +191,21 @@ export function planBurnBatch(
     throw new Error(`[burnBatch] BUG nội bộ: còn thiếu ${remain} nanogic sau khi duyệt hết batch sống.`);
   }
 
-  // Gương của `apply_burns` + `prune_expired` (vault.ak:545-546): trừ theo từng batch,
-  // bỏ batch về 0, rồi bỏ mọi batch đã chết — kể cả batch không ai đụng tới.
+  // Gương của `apply_burns` + `prune_expired`: trừ theo từng batch, rồi bỏ mọi batch đã
+  // chết — kể cả batch không ai đụng tới.
+  //
+  // ⚠ Batch đốt trọn về 0: HAI MODULE XỬ NGƯỢC NHAU.
+  // - ScheduleGen ▸ `apply_burns`: `if na == 0 { None }` ⟹ batch 0 bị BỎ.
+  // - InstantGen ▸ `apply_burns`: luôn `Some(..)` ⟹ batch 0 Ở LẠI. Nó phải ở lại vì
+  //   `instant_gen_in_epoch` cộng `initial_amount` của batch còn trong danh sách — xoá nó
+  //   là xoá bộ đếm trần C-INST-8. Validator so `magic_batches` bằng tuyệt đối, nên bỏ
+  //   batch 0 ở đây là mọi lượt tiêu đốt trọn một batch InstantGen bị từ chối.
   const expectedBatches = batches
     .map(b => {
       const take = burnBy.get(b.batch_id);
       return take === undefined ? b : { ...b, current_amount: b.current_amount - take };
     })
-    .filter(b => b.current_amount > 0n)
+    .filter(b => vaultModule === "InstantGen" || b.current_amount > 0n)
     .filter(b => !isBatchExpired(b, currentEpoch));
 
   if (expectedBatches.length > MAX_BATCHES_PER_VAULT) {

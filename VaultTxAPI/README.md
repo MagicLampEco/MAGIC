@@ -92,7 +92,8 @@ Bốn đường dựng trên vault có sẵn trả:
   "tx_hash": "3f1c…",        // hash THÂN giao dịch — app đối chiếu sau khi ký
   "summary": { … },          // §2
   "expires_at": "2026-09-11T16:28:03.000Z",
-  "ignored": [],             // UTxO ở địa chỉ vault cố ý không tính, kèm lý do
+  "ignored": [],             // UTxO ở địa chỉ vault cố ý không tính, kèm lý do (trừ vault của chủ khác)
+  "ignored_other_owner_count": 0, // vault của CHỦ KHÁC ở cùng địa chỉ — chỉ đếm, không liệt kê
   "required_signers": ["…"], // đọc từ required_signers của CHÍNH tx_cbor
   "witness_notes": ["…"]     // việc phải làm ngoài chữ ký (chủ script: mục rút did_stake…)
 }
@@ -527,8 +528,11 @@ FEE_PROXY_APP_UNKNOWN`, Feecover không bị gọi.
 **Lời từ chối của Feecover** (4xx) đi ra nguyên mã trạng thái dưới `FEE_PROXY_REJECTED`, với
 `details` = `{ upstream_status, rule?, message?, reasons? }` — ví dụ `422` kèm `rule: "L12"`,
 `403 rule: "L14"` (ứng dụng bị chặn trong cửa sổ Catalyst), `429` (hết suất giữ chỗ), `409`
-(UTxO đang giữ cho ứng dụng khác). Feecover không trả lời trong hạn chót, trả 5xx, hoặc trả
-thân sai hình dạng ⟹ `502 FEE_PROXY_UPSTREAM`.
+(UTxO đang giữ cho ứng dụng khác), `400`. Feecover không trả lời trong hạn chót, trả 5xx, trả
+thân sai hình dạng, hoặc trả **`401`/`404`** (token của DỊCH VỤ với Feecover hỏng, đường sai —
+lỗi cấu hình phía dịch vụ, chuyển nguyên thì app đọc `401` thành "token của app sai") ⟹
+`502 FEE_PROXY_UPSTREAM`, `details.upstream_status` giữ mã gốc. Chuỗi nào trong
+`rule`/`message`/`reasons` chứa token của dịch vụ thì bị bỏ, không đi ra app.
 
 ### Luồng cho app dùng ví PhoenixKey
 
@@ -611,9 +615,13 @@ Nên:
 | mục đích thuộc ứng dụng khác / thiếu tiền tố tên ứng dụng | `403 FEE_PROXY_APP_PURPOSE` |
 | `/fee/sign` cho tx không do dịch vụ phát, hoặc quá hạn ký | `403 FEE_PROXY_TX_NOT_ISSUED` |
 | `/fee/sign` cho tx không dùng ví trả phí | `400 FEE_PROXY_NO_FEE_PAYER` |
-| Feecover từ chối | mã 4xx của Feecover + `FEE_PROXY_REJECTED` |
+| Feecover từ chối (`400`/`403`/`409`/`422`/`429`) | mã đó + `FEE_PROXY_REJECTED` |
 | dịch vụ không cấu hình `feecover` | `501 FEE_PROXY_UNAVAILABLE` |
-| Feecover không trả lời / 5xx / thân sai hình dạng | `502 FEE_PROXY_UPSTREAM` |
+| Feecover không trả lời / 5xx / `401` / `404` / thân sai hình dạng | `502 FEE_PROXY_UPSTREAM` |
+| tham chiếu UTxO (ví trả phí, anchor) không có trên chuỗi / sai số output | `400 UTXO_NOT_FOUND` |
+| tham chiếu UTxO đã bị tiêu | `409 UTXO_SPENT` (`details.consumed_by_tx`) |
+| UTxO vault là input của một tx vừa nộp qua dịch vụ mà chưa vào khối | `409 PREVIOUS_TX_PENDING` — thử lại sau khi tx đó vào khối |
+| beacon giá trễ quá `consume.max_price_stale` epoch | `422 TX_BUILD_REJECTED` với câu `CONSUME-011` |
 | Feecover ký một tx có hash khác | `502 FEE_PROXY_UPSTREAM_MISMATCH` |
 | thiếu/sai thẻ bài | `401 UNAUTHORIZED` |
 | chủ **chưa có** vault | `404 VAULT_NOT_FOUND` ← **không phải** `200` với tx rỗng |
@@ -649,7 +657,13 @@ câu của chuỗi lúc đó không nhắc gì tới chuyện có hai giao dịc
 Nên `409 OWNER_TX_IN_FLIGHT`, và khoá **giữ tới lúc nộp**, không nhả ngay sau khi dựng:
 nhả sớm thì không chặn được gì, vì UTxO vault vẫn chưa bị tiêu. Ba đường mở khoá:
 `/tx/submit` đúng giao dịch đó · hết hạn (`VAULT_TX_API_LOCK_TTL_MS`, mặc định 180 s, cũng
-là `expires_at`) · dựng hỏng thì nhả ngay.
+là `expires_at`) · dựng hỏng thì nhả ngay · nút chuỗi TỪ CHỐI giao dịch lúc nộp (mất kết nối
+lúc nộp thì KHÔNG nhả — không biết giao dịch đã vào mempool chưa). Khoá mang thẻ thế hệ: một
+lượt dựng chậm quá hạn không nhả, cũng không gắn hash lên khoá của lượt sau.
+
+**Sau khi nộp**, khoá nhả nhưng nút đọc chuỗi chỉ thấy input bị tiêu khi giao dịch vào khối.
+Trong khe đó dịch vụ giữ input của giao dịch vừa nộp (cùng TTL khoá): dựng lại trên đúng UTxO
+vault ấy ⟹ `409 PREVIOUS_TX_PENDING`; bộ dựng không chọn lại UTxO ví/shard ấy làm input.
 
 **Giới hạn đã biết:** khoá nằm trong bộ nhớ của **một tiến trình**. Chạy hai bản sau một
 bộ cân tải thì hai bảng khoá không thấy nhau và khoá không còn nghĩa. Xem §8.
@@ -712,7 +726,8 @@ dùng.
   "ref_script_utxos": { "vault": "…#0", "shard": "…#1", "consume": "…#2" },
   "consume": {
     "engage_address": "addr_test1w…",       // thread Engage chọn theo chủ lúc chạy
-    "price_beacon_address": "addr_test1w…", "price_beacon_nft_unit": "…"
+    "price_beacon_address": "addr_test1w…", "price_beacon_nft_unit": "…",
+    "max_price_stale": "1"                  // tuỳ chọn — apply-param #5 của consume; có ⟹ từ chối sớm CONSUME-011
   },
   "fee_payer_collateral_lovelace": "3000000",      // tuỳ chọn, CHUỖI; thế chấp khi có ví trả phí
   "did_stake": { "anchor_nft_policy": "<56 hex>" }, // tuỳ chọn — chủ script + funding did_payment

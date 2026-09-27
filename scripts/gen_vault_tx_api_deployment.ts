@@ -192,6 +192,9 @@ function main(): void {
       // thread == chủ vault.
       price_beacon_address: hashToAddress(need(book, ck("PRICE_PARAM_HASH"), "địa chỉ beacon PriceParam"), network),
       price_beacon_nft_unit: need(book, ck("PRICE_NFT_UNIT"), "NFT định danh beacon PriceParam"),
+      // Apply-param #5 của đúng bản `consume` ở trên — dịch vụ dùng nó để từ chối sớm
+      // (CONSUME-011) lượt dựng mà validator sẽ bác vì beacon giá trễ.
+      max_price_stale: need(book, ck("MAX_PRICE_STALE"), "số epoch beacon giá được phép trễ (apply-param #5 của consume)"),
     },
   };
 

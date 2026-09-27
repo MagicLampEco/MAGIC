@@ -23,10 +23,13 @@ export interface LockRecord {
   /** Hash thân giao dịch đang giữ khoá — `/tx/submit` nhả khoá bằng chính hash này. */
   txHash: string;
   expiresAtMs: number;
+  /** Thế hệ của lượt giành khoá — `acquire` trả nó, `bindTxHash`/`release` phải đưa lại. */
+  gen: number;
 }
 
 export class OwnerLockTable {
   private readonly held = new Map<string, LockRecord>();
+  private nextGen = 1;
 
   constructor(private readonly ttlMs: number) {}
 
@@ -36,25 +39,40 @@ export class OwnerLockTable {
    * KHÔNG trả `false` và KHÔNG trả `null`: một giá trị đệm ở đây sẽ đi tiếp vào đường
    * dựng và ra một giao dịch thứ hai. Bận thì NÉM, và ném đúng mã 409.
    */
-  acquire(ownerPkh: string, nowMs: number): void {
+  acquire(ownerPkh: string, nowMs: number): number {
     const cur = this.held.get(ownerPkh);
     if (cur !== undefined && cur.expiresAtMs > nowMs) {
       throw new OwnerTxInFlightError(ownerPkh, cur.txHash, new Date(cur.expiresAtMs).toISOString());
     }
     // Chỗ giữ chỗ: hash thật chỉ biết sau khi dựng xong. Giữ chỗ TRƯỚC là thứ đóng khe
     // đua giữa hai yêu cầu vào cùng lúc — đăng ký sau khi dựng thì cả hai đã dựng rồi.
-    this.held.set(ownerPkh, { ownerPkh, txHash: PENDING_TX_HASH, expiresAtMs: nowMs + this.ttlMs });
+    const gen = this.nextGen++;
+    this.held.set(ownerPkh, { ownerPkh, txHash: PENDING_TX_HASH, expiresAtMs: nowMs + this.ttlMs, gen });
+    return gen;
   }
 
-  /** Gắn hash thật vào khoá vừa giành, sau khi đã dựng xong. */
-  bindTxHash(ownerPkh: string, txHash: string): void {
+  /**
+   * Gắn hash thật vào khoá vừa giành, sau khi đã dựng xong.
+   *
+   * `gen` là thẻ mà `acquire` trả. Một lượt dựng chậm quá TTL thì khoá của nó đã hết hạn và
+   * có thể đã bị lượt SAU giành lại; không có thẻ, lượt chậm gắn hash của nó đè lên khoá
+   * của lượt sau (hoặc `release` nhả mất khoá của lượt sau), và lượt thứ ba lại dựng trên
+   * đúng UTxO vault đó. Thẻ lệch ⟹ không làm gì. Vắng thẻ ⟹ hành vi cũ, chỉ để giữ tương
+   * thích cho mã gọi ngoài dịch vụ.
+   */
+  bindTxHash(ownerPkh: string, txHash: string, gen?: number): void {
     const cur = this.held.get(ownerPkh);
     if (cur === undefined) return;
+    if (gen !== undefined && cur.gen !== gen) return;
     this.held.set(ownerPkh, { ...cur, txHash });
   }
 
-  /** Nhả khoá khi dựng HỎNG — nếu không, một lần lỗi khoá chủ đó lại suốt thời hạn. */
-  release(ownerPkh: string): void {
+  /** Nhả khoá khi dựng HỎNG — nếu không, một lần lỗi khoá chủ đó lại suốt thời hạn.
+   *  `gen` như ở `bindTxHash`: thẻ lệch ⟹ khoá đó của lượt khác, không nhả. */
+  release(ownerPkh: string, gen?: number): void {
+    const cur = this.held.get(ownerPkh);
+    if (cur === undefined) return;
+    if (gen !== undefined && cur.gen !== gen) return;
     this.held.delete(ownerPkh);
   }
 
@@ -96,6 +114,48 @@ export class OwnerLockTable {
 
   size(): number {
     return this.held.size;
+  }
+}
+
+/**
+ * Input của những giao dịch vừa nộp mà có thể CHƯA vào khối.
+ *
+ * `/tx/submit` nhả khoá của chủ ngay khi nút nhận giao dịch. Nhưng nút đọc UTxO (Blockfrost)
+ * chỉ thấy input bị tiêu khi giao dịch đã vào khối — khoảng 20 giây tới vài phút. Trong khe
+ * đó một lượt dựng mới đọc lại ĐÚNG UTxO vừa tiêu, dựng xong, người dùng ký, và chuỗi từ chối
+ * vì input không còn. Sổ này giữ các input đó tới hết hạn để đường dựng từ chối SỚM (409) và
+ * để bộ dựng không chọn lại chúng làm input trả phí.
+ *
+ * Hết hạn mà giao dịch vẫn chưa vào khối (bị rơi khỏi mempool) thì UTxO cũ dùng lại được —
+ * đúng, vì nó thật sự chưa bị tiêu.
+ */
+export class PendingSpends {
+  private readonly spent = new Map<string, number>();
+
+  constructor(private readonly ttlMs: number) {}
+
+  /** Ghi các input (`txhash#idx`) của một giao dịch vừa nộp thành công. */
+  note(refs: readonly string[], nowMs: number): void {
+    for (const r of refs) this.spent.set(r, nowMs + this.ttlMs);
+  }
+
+  has(ref: string, nowMs: number): boolean {
+    const until = this.spent.get(ref);
+    if (until === undefined) return false;
+    if (until <= nowMs) { this.spent.delete(ref); return false; }
+    return true;
+  }
+
+  sweep(nowMs: number): number {
+    let n = 0;
+    for (const [r, until] of this.spent) {
+      if (until <= nowMs) { this.spent.delete(r); n++; }
+    }
+    return n;
+  }
+
+  size(): number {
+    return this.spent.size;
   }
 }
 

@@ -360,3 +360,38 @@ describe("buildInstantGenTx — trần theo epoch (C-INST-8)", () => {
     expect(res.grantNanogic).toBe(grant);
   });
 });
+
+// ── apply_pending_profile ở bộ dựng ────────────────────────────
+//
+// `validate_instant_gen` tính trên `apply_pending_profile(input, current_epoch)`: hệ số PM
+// lấy từ hồ sơ ĐÃ ÁP, và datum ra phải mang profile/pending đã áp. Cặp ca chỉ khác
+// `effective_epoch` (tới hạn ở E / chưa tới ở E+1) — một hiện thực bỏ bước áp đỏ ở ca đầu,
+// một hiện thực áp bất kể hạn đỏ ở ca sau.
+describe("buildInstantGenTx — hồ sơ chờ (apply_pending_profile)", () => {
+  const TIP_E = E * P + 1_000n;
+  const datumRa = (tx: any) => Data.from((tx.outputs[0].datum as any).value, VaultDatum) as any;
+
+  it("pending tới hạn ⟹ tính theo hồ sơ MỚI, datum ra đã áp và pending rỗng", async () => {
+    const flame = (await dung(TIP_E, { profile: "Flame" })).res.grantNanogic;
+    const ember = (await dung(TIP_E, { profile: "Ember" })).res.grantNanogic;
+    expect(ember).not.toBe(flame);   // tiền đề: hai hồ sơ cho hai con số khác nhau
+    const { res, tx } = await dung(TIP_E, {
+      profile: "Flame", pending_profile: { new_profile: "Ember", effective_epoch: E },
+    });
+    expect(res.grantNanogic).toBe(ember);
+    const out = datumRa(tx);
+    expect(out.profile).toBe("Ember");
+    expect(out.pending_profile).toBeNull();
+  });
+
+  it("CỰC ĐỐI: pending CHƯA tới hạn ⟹ giữ hồ sơ cũ và giữ nguyên pending", async () => {
+    const flame = (await dung(TIP_E, { profile: "Flame" })).res.grantNanogic;
+    const { res, tx } = await dung(TIP_E, {
+      profile: "Flame", pending_profile: { new_profile: "Ember", effective_epoch: E + 1n },
+    });
+    expect(res.grantNanogic).toBe(flame);
+    const out = datumRa(tx);
+    expect(out.profile).toBe("Flame");
+    expect(out.pending_profile).toEqual({ new_profile: "Ember", effective_epoch: E + 1n });
+  });
+});

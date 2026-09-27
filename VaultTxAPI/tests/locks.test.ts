@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 
 import { OwnerTxInFlightError } from "../src/errors.js";
-import { OwnerLockTable, PENDING_TX_HASH } from "../src/locks.js";
+import { OwnerLockTable, PENDING_TX_HASH, PendingSpends } from "../src/locks.js";
 
 const OWNER = "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4";
 const OTHER = "11".repeat(28);
@@ -77,5 +77,39 @@ describe("OwnerLockTable", () => {
     expect(t.sweep(TTL)).toBe(1);
     expect(t.size()).toBe(1);
     expect(t.peek(OTHER, TTL)).not.toBeNull();
+  });
+});
+
+// ── Thẻ thế hệ: lượt dựng chậm quá TTL không được đụng khoá của lượt SAU ──────────
+
+describe("OwnerLockTable — thẻ thế hệ", () => {
+  it("lượt A quá hạn, lượt B giành lại; A hỏng rồi release(gen A) ⟹ khoá B CÒN", () => {
+    const t = new OwnerLockTable(TTL);
+    const genA = t.acquire(OWNER, 0);
+    const genB = t.acquire(OWNER, TTL);            // A đã hết hạn
+    t.release(OWNER, genA);
+    expect(t.peek(OWNER, TTL)).not.toBeNull();
+    expect(() => t.acquire(OWNER, TTL + 1)).toThrow(OwnerTxInFlightError);
+    t.release(OWNER, genB);
+    expect(t.peek(OWNER, TTL)).toBeNull();
+  });
+  it("CỰC ĐỐI: bindTxHash(gen A) không đè hash lên khoá của B; bindTxHash(gen B) thì có", () => {
+    const t = new OwnerLockTable(TTL);
+    const genA = t.acquire(OWNER, 0);
+    const genB = t.acquire(OWNER, TTL);
+    t.bindTxHash(OWNER, "aa".repeat(32), genA);
+    expect(t.peek(OWNER, TTL)!.txHash).toBe(PENDING_TX_HASH);
+    t.bindTxHash(OWNER, TX_HASH, genB);
+    expect(t.peek(OWNER, TTL)!.txHash).toBe(TX_HASH);
+  });
+});
+
+describe("PendingSpends", () => {
+  it("giữ input tới hết TTL rồi thôi", () => {
+    const p = new PendingSpends(TTL);
+    p.note([`${"ab".repeat(32)}#0`], 1_000);
+    expect(p.has(`${"ab".repeat(32)}#0`, 1_000 + TTL - 1)).toBe(true);
+    expect(p.has(`${"ab".repeat(32)}#1`, 1_000)).toBe(false);
+    expect(p.has(`${"ab".repeat(32)}#0`, 1_000 + TTL)).toBe(false);
   });
 });

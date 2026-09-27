@@ -18,6 +18,8 @@ import {
   lampToOildrop,
   nanogicToMagicStr,
 } from "../offchain/src/math.js";
+import { SHELLEY_START, getTipSlot } from "@magiclamp/protocol-utils";
+import { SLOT_CONFIG_NETWORK, slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   TV_CLIFF_01, TV_CLIFF_02,
   TV_IG_REWARD_01, TV_IG_REWARD_02, TV_IG_REWARD_03, TV_IG_REWARD_ZERO,
@@ -370,11 +372,30 @@ describe("C-OVERFLOW — BigInt everywhere", () => {
 
 describe("Utility — formatting & conversion", () => {
 
-  it("slotToEpoch Mainnet: 432000 slots = 1 epoch", () => {
+  it("slotToEpoch Mainnet: thời Byron 21 600 slot/epoch, Shelley từ slot 4 492 800 = epoch 208", () => {
     expect(slotToEpoch(0n, "Mainnet")).toBe(0n);
-    expect(slotToEpoch(431_999n, "Mainnet")).toBe(0n);
-    expect(slotToEpoch(432_000n, "Mainnet")).toBe(1n);
-    expect(slotToEpoch(864_000n, "Mainnet")).toBe(2n);
+    expect(slotToEpoch(21_599n, "Mainnet")).toBe(0n);
+    expect(slotToEpoch(21_600n, "Mainnet")).toBe(1n);
+    expect(slotToEpoch(4_492_800n, "Mainnet")).toBe(208n);
+    expect(slotToEpoch(4_924_800n, "Mainnet")).toBe(209n);
+  });
+
+  it("SHELLEY_START khớp SLOT_CONFIG_NETWORK của lucid ở cả ba mạng", () => {
+    // `ProtocolUtils` không phụ thuộc lucid nên CHÉP bảng mốc; bài này là đường báo khi
+    // lucid đổi. Lệch ⟹ mốc tip ước lượng của mọi bộ dựng lệch theo.
+    for (const n of ["Preview", "Preprod", "Mainnet"] as const) {
+      expect(SHELLEY_START[n].zeroTimeMs).toBe(SLOT_CONFIG_NETWORK[n].zeroTime);
+      expect(SHELLEY_START[n].zeroSlot).toBe(SLOT_CONFIG_NETWORK[n].zeroSlot);
+      expect(SLOT_CONFIG_NETWORK[n].slotLength).toBe(1000);
+    }
+  });
+
+  it("getTipSlot theo đồng hồ + slotToUnixTime của lucid ⟹ đúng giờ hiện tại ở cả ba mạng", async () => {
+    // Đo 2026-09-27 trước bản vá: Preprod +19 ngày, Mainnet −57 ngày, Preview 0.
+    for (const n of ["Preview", "Preprod", "Mainnet"] as const) {
+      const ms = slotToUnixTime(n, await getTipSlot({ provider: {} }, n));
+      expect(Math.abs(ms - Date.now())).toBeLessThan(5_000);
+    }
   });
 
   it("lampToOildrop: 1 LAMP = 10^6 oildrop", () => {

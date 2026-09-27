@@ -217,6 +217,22 @@ export function instantGenInEpoch(
   return acc;
 }
 
+/**
+ * Gương của `profile.ak ▸ apply_pending_profile`: hồ sơ chờ đã tới hạn thì áp, và
+ * `pending_profile` về rỗng. Mọi nhánh của két InstantGen tính trên bản ĐÃ ÁP (hệ số PM
+ * lẫn phép so datum ra), nên bộ dựng phải áp trước khi tính bất cứ gì.
+ *
+ * CHỈ InstantGen: ScheduleGen so datum ra với datum vào THÔ, áp ở đó là sai.
+ */
+export function applyPendingProfile<
+  T extends { profile: unknown; pending_profile: { new_profile: unknown; effective_epoch: bigint } | null },
+>(datum: T, currentEpoch: bigint): T {
+  const pending = datum.pending_profile;
+  if (pending === null || pending === undefined) return datum;
+  if (currentEpoch < pending.effective_epoch) return datum;
+  return { ...datum, profile: pending.new_profile, pending_profile: null } as T;
+}
+
 export function isLive(
   createdEpoch: bigint,
   decayWindow : bigint,

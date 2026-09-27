@@ -107,11 +107,20 @@ describe("planBurnBatch — chọn batch", () => {
 });
 
 describe("planBurnBatch — prune (vault.ak:545-546)", () => {
-  it("batch cháy về 0 bị bỏ khỏi output", () => {
+  it("ScheduleGen: batch cháy về 0 bị bỏ khỏi output (apply_burns trả None)", () => {
     const p = planSG(datumWith([batch("a1", 200n, 5n), batch("a2", 300n, 5n)]), 200n, 5n);
     const ids = (p.newDatum as never as { magic_batches: MagicBatchLike[] })
       .magic_batches.map(b => b.batch_id);
     expect(ids).toEqual(["a2"]);
+  });
+
+  it("InstantGen: batch cháy về 0 Ở LẠI với current_amount 0 (apply_burns trả Some)", () => {
+    // Cặp với ca ScheduleGen ngay trên: cùng đầu vào, chỉ khác module. Validator InstantGen
+    // so `magic_batches` bằng tuyệt đối và GIỮ batch 0 (bộ đếm trần C-INST-8 đọc nó), nên
+    // bỏ nó ở đây là mọi lượt tiêu đốt trọn một batch bị từ chối trên chuỗi.
+    const p = planBurnBatch(datumWith([batch("a1", 200n, 5n), batch("a2", 300n, 5n)]), 200n, 5n, "InstantGen");
+    const out = (p.newDatum as never as { magic_batches: MagicBatchLike[] }).magic_batches;
+    expect(out.map(b => [b.batch_id, b.current_amount])).toEqual([["a1", 0n], ["a2", 300n]]);
   });
 
   it("batch ĐÃ CHẾT bị bỏ dù KHÔNG ai đụng tới — prune_expired chạy trên cả danh sách", () => {

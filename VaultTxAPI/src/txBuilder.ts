@@ -376,6 +376,8 @@ export class SdkTxBuilder implements TxBuilderPort {
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
       collateralLovelace: ctx.collateralLovelace,
+      // Vắng trong cấu hình ⟹ undefined ⟹ bộ dựng không kiểm, validator vẫn ép.
+      maxPriceStale: d.consume.maxPriceStale,
     }));
     return { txCbor: r.tx.toCBOR() };
   }

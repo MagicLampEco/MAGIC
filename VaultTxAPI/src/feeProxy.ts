@@ -157,6 +157,15 @@ export class FeeProxy {
     };
   }
 
+  /**
+   * Mục đích Feecover mà `/fee/utxo` SẼ xin cho `route` dưới ứng dụng mặc định — cùng hai hàm
+   * `resolveApp` + `purposeFor` với đường thật, nên cùng mã lỗi. KHÔNG gọi mạng, KHÔNG giữ chỗ:
+   * báo giá (`feeQuote.ts`) hỏi "Feecover có trả phí cho route này không" mà không rút UTxO nào.
+   */
+  defaultPurposeFor(route: IssuedRoute): string {
+    return this.purposeFor(this.resolveApp(undefined), route);
+  }
+
   // ── ứng dụng + mục đích ─────────────────────────────────────────────────────
 
   private resolveApp(callerToken: string | undefined): ResolvedApp {

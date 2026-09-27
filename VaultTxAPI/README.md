@@ -75,6 +75,7 @@ POST /tx/consume           { owner, [owner_witness], change_address | fee_payer,
 POST /tx/open-thread       { owner, [owner_witness], change_address }
 POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 POST /tx/submit            { tx_cbor, witness_cbor }
+POST /tx/quote             { route, params, [owner_fee_addresses] } — báo giá phí, xem dưới
 POST /fee/utxo             { route }        [X-Feecover-Token]   — proxy ví trả phí, xem dưới
 POST /fee/sign             { tx_cbor }      [X-Feecover-Token]
 GET  /health
@@ -280,6 +281,82 @@ của cấu hình (§6), và cũng là trần mà phép đọc lại ép lên ph
 - `/tx/open-thread` khoá min-ADA vào output thread, mà ví trả phí chỉ được mất đúng bằng phí
   ⟹ `fee_payer` một mình trả `422 FEE_PAYER_DEPOSIT_UNSOURCED`; gửi `change_address`.
 
+**Ví trả phí không nhất thiết là Feecover.** Một UTxO thuần ADA trên **địa chỉ khoá của chính
+chủ** dùng được làm `fee_payer` (hoặc `funding.fee_payer`), cùng luật như trên. Khi đó không cần
+Feecover: app tự ký phần ví trả phí bằng khoá của chủ, **không** gọi `/fee/sign` (đường đó xin
+Feecover ký cho một UTxO không phải của Feecover).
+`POST /tx/quote` báo trước UTxO của chủ có đủ không (`owner_address.available`) và chọn sẵn
+UTxO đó (`owner_address.fee_payer`).
+
+### Báo giá phí: `POST /tx/quote`
+
+```jsonc
+// vào
+{ "route": "consume",                       // một trong sáu đường dựng
+  "params": { "owner_pkh": "…", "op_type": 1, "op_count": "2" },   // đúng thân bài của đường đó,
+                                                                   // KHÔNG kèm fee_payer / funding.fee_payer
+  "owner_fee_addresses": ["addr_test1v…", "addr_test1q…"] }        // tuỳ chọn: 1..10 địa chỉ khoá của chủ
+// ra (số minh hoạ)
+{ "feecover":      { "fee_lovelace": "175016", "available": true },
+  "owner_address": { "fee_lovelace": "172552", "available": true, "needed_lovelace": "3969750",
+                     "collateral_lovelace": "3000000",
+                     "fee_payer": { "utxo": "0e0e…0e#2", "address": "addr_test1v…" } },
+  "valid_until": "2026-09-27T10:03:00.000Z" }
+```
+
+Dịch vụ chạy **đúng đường dựng** của `route` với `params` cộng một `fee_payer` do nó chèn, rồi
+đọc phí lại **từ CBOR** như `summary`. Báo giá **không** giữ khoá của chủ, **không** giữ chỗ
+UTxO nào, **không** ghi sổ phát-hành (tx của báo giá không nộp được, không xin ký được),
+**không** gọi Feecover — không `/v1/utxo`, nên hỏi giá không làm cạn kho UTxO của Feecover.
+
+- **`feecover`** — dựng trên một UTxO **tổng hợp** (không có trên chuỗi; lucid đánh giá script
+  cục bộ từ UTxO được đưa). `fee_lovelace` là **ước lượng chặn trên**: UTxO tổng hợp lấy địa chỉ
+  base (dài hơn enterprise), lượng và chỉ số output có mã hoá rộng nhất, khoá khác khoá chủ. Đo
+  (lucid 0.4.30): cao hơn phí thật trên một ví enterprise chỉ số nhỏ tối đa 3 168 lovelace, không
+  thấp hơn theo các trục đó (trục chưa ghim: địa chỉ con trỏ); số đo + cách đo lại ở khối chú thích `SYNTH_*` trong `src/feeQuote.ts`.
+  `available=false` khi bản deploy không khai `feecover` (`FEE_QUOTE_FEECOVER_UNCONFIGURED`),
+  không có ứng dụng mặc định `magic` (`FEE_QUOTE_FEECOVER_NO_DEFAULT_APP`), ứng dụng đó chưa có
+  mục đích cho route (`FEE_QUOTE_FEECOVER_PURPOSE_UNMAPPED`), hoặc mục đích mang tiền tố của ứng
+  dụng khác (`FEE_QUOTE_FEECOVER_PURPOSE_FOREIGN`). Phí vẫn có khi `available=false`.
+- **`owner_address`** — nguồn trả phí là **ví khoá của chính chủ**.
+  - `needed_lovelace` là lượng tối thiểu một UTxO thuần ADA phải có để tx dựng được với nó làm
+    `fee_payer`: `max(phí, thế chấp) + min-ADA`, suy từ cách lucid chọn input trả phí và thế chấp
+    trên cùng một UTxO (không cộng dồn phí với thế chấp: hai khoản không bị thu cùng lúc). Mỗi
+    địa chỉ có ngưỡng riêng (phí phụ thuộc độ dài địa chỉ), tính bằng một lượt dựng tổng hợp ở
+    đúng địa chỉ đó.
+  - `collateral_lovelace` **luôn có**: trần thế chấp bản deploy đặt cho ví trả phí
+    (`VAULT_TX_API_DEPLOYMENT.fee_payer_collateral_lovelace`) — khoản UTxO trả phí mất nếu script chết ở
+    pha 2. Là cấu hình, không đọc từ tx.
+  - `owner_fee_addresses`: mảng 1..10 địa chỉ, không trùng, mỗi phần tử phải là địa chỉ khoá
+    đúng mạng. Dịch vụ đọc UTxO ở mọi địa chỉ (chỉ đọc) rồi **chọn** theo quy tắc:
+    1. chỉ UTxO **thuần ADA, không script tham chiếu** — UTxO mang token bị bỏ qua dù lớn đến đâu;
+    2. chỉ UTxO có lovelace ≥ `needed_lovelace` **của chính địa chỉ chứa nó**;
+    3. chọn UTxO **nhỏ nhất** còn lại (giữ UTxO lớn cho việc khác);
+    4. hoà lovelace ⟹ địa chỉ đứng trước trong mảng; cùng địa chỉ ⟹ `tx_hash` nhỏ hơn, rồi chỉ số
+       output nhỏ hơn (so theo **số**: `#9` trước `#10`).
+  - Chọn được ⟹ `available=true`, `fee_lovelace` là phí của lượt dựng với chính UTxO đó, và
+    `fee_payer` = `{ "utxo": "<tx_hash>#<i>", "address": "<địa chỉ chứa UTxO>" }` — đúng hình dạng
+    thân `fee_payer` của đường dựng, app chép thẳng. `fee_payer` **chỉ có** khi `available=true`.
+  - Không chọn được ⟹ `available=false`, không `fee_payer`; `fee_lovelace` và `needed_lovelace` là
+    số **lớn nhất** qua mọi địa chỉ (một UTxO thuần ADA cỡ đó gửi tới địa chỉ nào trong mảng cũng
+    đủ). Lý do: `FEE_QUOTE_OWNER_ADDRESSES_ABSENT` (không gửi mảng, hoặc mảng rỗng — hai con số là
+    của ví tổng hợp, một ước lượng), `FEE_QUOTE_OWNER_NO_ADA_UTXO` (không địa chỉ nào có UTxO thuần
+    ADA), `FEE_QUOTE_OWNER_INSUFFICIENT` (có UTxO thuần ADA nhưng không cái nào đủ ngưỡng).
+  - Dùng UTxO đó làm `fee_payer`: app **tự ký** phần ví trả phí bằng khoá của chủ, **không** gọi
+    `/fee/sign`. Báo giá không giữ chỗ UTxO: giữa lúc hỏi và lúc dựng, UTxO có thể đã bị tiêu.
+- **`valid_until`** — hạn ngắn nhất giữa hạn dùng (`validTo`) của tx trong CBOR và `expires_at`
+  mà đường dựng trả, qua mọi lượt dựng của lần hỏi. Báo giá không sống lâu hơn tx nó mô tả.
+
+**Phí thật luôn là `summary.fee_payer.fee_lovelace`** (hoặc `summary.funding.fee_payer.fee_lovelace`)
+của lượt dựng thật — chuỗi thay đổi giữa lúc hỏi giá và lúc dựng thì hai số lệch nhau.
+
+Lỗi của thân báo giá mang mã `FEE_QUOTE_*`; lỗi của `params` (vault không có, số JSON cho trường
+tiền, …) mang **đúng mã** mà đường dựng trả. Hai ca đặc biệt:
+- `/tx/create-vault` chỉ báo giá được khi `params` có `funding` (đường duy nhất có ví trả phí);
+  vắng ⟹ `400 FEE_QUOTE_FUNDING_REQUIRED`.
+- `/tx/open-thread` không nhận ví trả phí (xem trên) ⟹ báo giá trả đúng `422
+  FEE_PAYER_DEPOSIT_UNSOURCED` của đường đó.
+
 ### Thread Engage: chọn theo chủ, `engage_ref`, `POST /tx/open-thread`
 
 `/tx/consume` cần thread Engage của **chính chủ** (validator `consume` ép chủ thread == chủ
@@ -422,6 +499,13 @@ Nên:
 | `engage_ref` mang NFT nhưng datum không giải được | `422 ENGAGE_THREAD_DATUM_UNDECODABLE` |
 | tx mở thread vừa dựng lệch (NFT / output / datum genesis) | `422 OPEN_THREAD_TX_MISMATCH` |
 | `/tx/open-thread` kèm `funding` | `501 OPEN_THREAD_FUNDING_UNSUPPORTED` |
+| `/tx/quote`: thân sai hình dạng · `route` lạ | `400 FEE_QUOTE_SHAPE` / `400 FEE_QUOTE_ROUTE_UNKNOWN` |
+| `/tx/quote`: `params` mang `fee_payer` / `funding.fee_payer` | `400 FEE_QUOTE_FEE_PAYER_IN_PARAMS` |
+| `/tx/quote` cho `create-vault` không có `params.funding` | `400 FEE_QUOTE_FUNDING_REQUIRED` |
+| `/tx/quote`: gửi trường cũ `owner_fee_address` (số ít) · `owner_fee_addresses` không phải mảng chuỗi | `400 FEE_QUOTE_SHAPE` |
+| `/tx/quote`: một phần tử `owner_fee_addresses` không phải địa chỉ khoá / sai mạng | `400 FEE_QUOTE_OWNER_ADDRESS_INVALID` |
+| `/tx/quote`: `owner_fee_addresses` quá 10 phần tử | `400 FEE_QUOTE_OWNER_ADDRESSES_TOO_MANY` |
+| `/tx/quote`: `owner_fee_addresses` có địa chỉ trùng | `400 FEE_QUOTE_OWNER_ADDRESSES_DUPLICATE` |
 | `X-Feecover-Token` không khớp ứng dụng nào | `401 FEE_PROXY_APP_UNKNOWN` |
 | ứng dụng chưa có mục đích cho route đó | `400 FEE_PROXY_PURPOSE_UNMAPPED` |
 | mục đích thuộc ứng dụng khác / thiếu tiền tố tên ứng dụng | `403 FEE_PROXY_APP_PURPOSE` |

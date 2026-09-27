@@ -139,6 +139,17 @@ export interface VaultTxServiceDeps {
   didPaymentAnchor?: DidPaymentAnchorReader;
 }
 
+/**
+ * Chế độ BÁO GIÁ của một đường dựng (`feeQuote.ts`): dựng + đọc lại CBOR y như đường thật, với
+ * UTxO trả phí do người gọi đưa sẵn (UTxO tổng hợp, hoặc UTxO đã đọc ở địa chỉ chủ) thay vì
+ * đọc theo tham chiếu trên chuỗi. Ba thứ KHÔNG xảy ra: không giành khoá mềm của chủ, không gắn
+ * hash vào khoá, không ghi sổ phát-hành — một báo giá không giữ chỗ gì và không nộp được.
+ */
+export interface QuoteMode {
+  /** UTxO trả phí; tham chiếu + địa chỉ phải trùng `fee_payer` (hoặc `funding.fee_payer`) của yêu cầu. */
+  feePayerUtxo: UTxO;
+}
+
 export class VaultTxService {
   private readonly now: () => number;
 
@@ -146,14 +157,33 @@ export class VaultTxService {
     this.now = deps.now ?? (() => Date.now());
   }
 
-  async scheduleCommit(req: OwnerRequest & { scheduleLength: bigint; lampPerEpoch: bigint }): Promise<BuildResponse> {
-    return this.buildOne("Schedule", "schedule_commit", req, (ctx, b) =>
-      b.scheduleCommit(ctx, { scheduleLength: req.scheduleLength, lampPerEpoch: req.lampPerEpoch }));
+  get network(): Network {
+    return this.deps.network;
   }
 
-  async scheduleFire(req: OwnerRequest & { scheduleId: string }): Promise<BuildResponse> {
+  /** Đọc UTxO ở một địa chỉ — CHỈ ĐỌC, dùng cho nguồn chủ của báo giá. */
+  utxosAt(address: string): Promise<UTxO[]> {
+    return this.deps.chain.utxosAt(address);
+  }
+
+  /** Trần thế chấp của ví trả phí do bản deploy đặt (`deployment.feePayerCollateralLovelace`). */
+  get feePayerCollateralLovelace(): bigint {
+    return this.deps.deployment.feePayerCollateralLovelace;
+  }
+
+  /** Tham số giao thức `coinsPerUtxoByte`, lấy từ bộ dựng (cùng ảnh chụp nó dùng để dựng). */
+  coinsPerUtxoByte(): Promise<bigint> {
+    return this.deps.builder.coinsPerUtxoByte();
+  }
+
+  async scheduleCommit(req: OwnerRequest & { scheduleLength: bigint; lampPerEpoch: bigint }, quote?: QuoteMode): Promise<BuildResponse> {
+    return this.buildOne("Schedule", "schedule_commit", req, (ctx, b) =>
+      b.scheduleCommit(ctx, { scheduleLength: req.scheduleLength, lampPerEpoch: req.lampPerEpoch }), quote);
+  }
+
+  async scheduleFire(req: OwnerRequest & { scheduleId: string }, quote?: QuoteMode): Promise<BuildResponse> {
     return this.buildOne("Schedule", "schedule_fire", req, (ctx, b) =>
-      b.scheduleFire(ctx, { scheduleId: req.scheduleId }));
+      b.scheduleFire(ctx, { scheduleId: req.scheduleId }), quote);
   }
 
   /**
@@ -172,7 +202,7 @@ export class VaultTxService {
    * giá trị cấu hình vẫn vắng. Một cổng chỉ sống trong MỘT hiện thực của một cổng cắm
    * thì nó gác hiện thực đó, không gác khái niệm.
    */
-  async instantGen(req: OwnerRequest): Promise<BuildResponse> {
+  async instantGen(req: OwnerRequest, quote?: QuoteMode): Promise<BuildResponse> {
     if (this.deps.deployment.instant === undefined) {
       throw new ConfigMissingError(
         `Đường InstantGen chưa được cấu hình: bản deploy thiếu mục \`instant\` ` +
@@ -187,7 +217,7 @@ export class VaultTxService {
       );
     }
     return this.buildOne("Instant", "instant_gen", req, (ctx, b) =>
-      b.instantGen(ctx, {}));
+      b.instantGen(ctx, {}), quote);
   }
 
   /**
@@ -195,12 +225,12 @@ export class VaultTxService {
    * chủ — không còn một NFT thread cố định trong cấu hình. `engageRef` chỉ đích danh khi chủ
    * có nhiều thread.
    */
-  async consume(req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike }): Promise<BuildResponse> {
+  async consume(req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike }, quote?: QuoteMode): Promise<BuildResponse> {
     const d = this.deps.deployment.consume;
     return this.buildOne(undefined, "consume", req, async (ctx, b) => {
       const thread = await pickEngageThread(this.deps.chain, d.engageAddress, d.engageScriptHash, ctx.owner, req.engageRef);
       return b.consume(ctx, { opType: req.opType, opCount: req.opCount, engageUtxo: thread.utxo });
-    });
+    }, quote);
   }
 
   /**
@@ -214,7 +244,7 @@ export class VaultTxService {
    * Chủ đã có thread ⟹ 409 `ENGAGE_THREAD_EXISTS` (mở thêm là khoá thêm min-ADA vô ích và làm
    * `/tx/consume` rơi vào `ENGAGE_THREAD_AMBIGUOUS`).
    */
-  async openThread(req: OpenThreadRequest): Promise<OpenThreadResponse> {
+  async openThread(req: OpenThreadRequest, quote?: QuoteMode): Promise<OpenThreadResponse> {
     const owner = assertOwnerRef(req.owner);
     if (req.fundingRequested === true) {
       throw new CodedApiError(501, "OPEN_THREAD_FUNDING_UNSUPPORTED",
@@ -226,6 +256,11 @@ export class VaultTxService {
       throw new CodedApiError(422, "FEE_PAYER_DEPOSIT_UNSOURCED",
         `Mở thread khoá min-ADA vào output thread, mà ví trả phí chỉ được mất ĐÚNG bằng phí — ` +
         `"fee_payer" một mình không có nguồn cho khoản đó. Gửi "change_address" (ví tự trả min-ADA + phí).`);
+    }
+    if (quote !== undefined) {
+      // Báo giá luôn mang ví trả phí nên đã dừng ở khối trên. Tới được đây là đường mở thread
+      // đã nhận ví trả phí mà chế độ báo giá của nó chưa được dựng: dừng, đừng giành khoá.
+      throw new Error("[bất biến nội bộ] báo giá /tx/open-thread không có ví trả phí — chưa hỗ trợ.");
     }
     const changeAddress = this.changeAddressFor(req);
     this.assertWitnessShapeFor(req);
@@ -275,6 +310,7 @@ export class VaultTxService {
     intent: RequestedIntent,
     req: OwnerRequest,
     build: (ctx: BuildContext, b: TxBuilderPort) => Promise<{ txCbor: string }>,
+    quote?: QuoteMode,
   ): Promise<BuildResponse> {
     const owner = assertOwnerRef(req.owner);
     const ownerKey = ownerLockKey(owner);
@@ -283,13 +319,14 @@ export class VaultTxService {
     const feePayer = this.feePayerFor(req);
     const changeAddress = feePayer?.address ?? this.changeAddressFor(req);
     this.assertWitnessShapeFor(req);
+    assertQuoteMatches(quote, feePayer);
     const startedAt = this.now();
-    this.deps.locks.acquire(ownerKey, startedAt);
+    if (quote === undefined) this.deps.locks.acquire(ownerKey, startedAt);
     try {
       const tip = await this.deps.chain.tip();
       const feePayerUtxo = feePayer === undefined
         ? undefined
-        : await readFeePayerUtxoShared(this.deps.chain, feePayer, FEE_PAYER_CODES);
+        : quote?.feePayerUtxo ?? await readFeePayerUtxoShared(this.deps.chain, feePayer, FEE_PAYER_CODES);
       const witness = await this.witnessFor(req);
 
       const found: FoundVault[] = [];
@@ -336,13 +373,15 @@ export class VaultTxService {
         summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, feePayerUtxo!, tip);
       }
       const txHash = txBodyHash(built.txCbor);
-      this.deps.locks.bindTxHash(ownerKey, txHash);
-      // Ghi vào sổ phát-hành TRƯỚC khi trả về: `/tx/submit` chỉ nộp thứ có trong sổ, và
-      // `/fee/sign` đọc route + UTxO ví trả phí từ đây chứ không nhận từ app.
-      this.deps.issued.record(txHash, this.now(), {
-        route: routeOfIntent(intent),
-        ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
-      });
+      if (quote === undefined) {
+        this.deps.locks.bindTxHash(ownerKey, txHash);
+        // Ghi vào sổ phát-hành TRƯỚC khi trả về: `/tx/submit` chỉ nộp thứ có trong sổ, và
+        // `/fee/sign` đọc route + UTxO ví trả phí từ đây chứ không nhận từ app.
+        this.deps.issued.record(txHash, this.now(), {
+          route: routeOfIntent(intent),
+          ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
+        });
+      }
 
       return {
         txCbor: built.txCbor,
@@ -354,7 +393,7 @@ export class VaultTxService {
         witnessNotes: this.notesFor(owner, witness, changeAddress, feePayer),
       };
     } catch (e) {
-      this.deps.locks.release(ownerKey);
+      if (quote === undefined) this.deps.locks.release(ownerKey);
       throw asOwnerApiError(e);
     }
   }
@@ -400,7 +439,7 @@ export class VaultTxService {
    *   · Không đọc vault đầu vào (chưa có), nên bản tóm tắt ĐỌC THẲNG output vault trong CBOR
    *     (`summarizeCreateVaultTx`) và đối chiếu chủ trong datum với chủ yêu cầu.
    */
-  async createVault(req: CreateVaultRequest): Promise<CreateVaultResponse> {
+  async createVault(req: CreateVaultRequest, quote?: QuoteMode): Promise<CreateVaultResponse> {
     const owner = assertOwnerRef(req.owner);
     if (req.kind !== "instant" && req.kind !== "schedule") {
       throw new BadRequestError(`"kind" phải là "instant" hoặc "schedule".`);
@@ -444,16 +483,17 @@ export class VaultTxService {
       assertFundingAddresses(this.deps.network, funding);
       fundingSigners = fundingWitnessOf(funding, req.ownerWitness);
     }
+    assertQuoteMatches(quote, funding?.feePayer);
     const ownerKey = ownerLockKey(owner);
     const startedAt = this.now();
-    this.deps.locks.acquire(ownerKey, startedAt);
+    if (quote === undefined) this.deps.locks.acquire(ownerKey, startedAt);
     try {
       const tip = await this.deps.chain.tip();
       const witness = await this.witnessFor(req);
       let fundingCtx: CreateVaultContext["funding"];
       if (funding !== undefined) {
         const anchor = await this.deps.didPaymentAnchor!.read(fundingSigners!.anchorRef);
-        const feePayerUtxo = await readFeePayerUtxo(this.deps.chain, funding);
+        const feePayerUtxo = quote?.feePayerUtxo ?? await readFeePayerUtxo(this.deps.chain, funding);
         const utxos = await this.deps.chain.utxosAt(funding.address);
         fundingCtx = {
           input: {
@@ -504,16 +544,18 @@ export class VaultTxService {
         );
       }
       const txHash = txBodyHash(built.txCbor);
-      this.deps.locks.bindTxHash(ownerKey, txHash);
       // Mã ghi sổ Feecover cho `create_vault` = vault_id = tên NFT vault (blake2b_256 ⟹ 64 hex).
       const vaultNftName = hash64NameOf(built.vaultNftUnit);
       if (vaultNftName === undefined) {
         throw new Error(`NFT vault vừa dựng không mang tên 64 hex (unit dài ${built.vaultNftUnit.length}).`);
       }
-      this.deps.issued.record(txHash, this.now(), {
-        route: "create-vault", feeRef: vaultNftName,
-        ...(funding === undefined ? {} : { feePayerUtxo: refStr(funding.feePayer.utxoRef) }),
-      });
+      if (quote === undefined) {
+        this.deps.locks.bindTxHash(ownerKey, txHash);
+        this.deps.issued.record(txHash, this.now(), {
+          route: "create-vault", feeRef: vaultNftName,
+          ...(funding === undefined ? {} : { feePayerUtxo: refStr(funding.feePayer.utxoRef) }),
+        });
+      }
       return {
         txCbor: built.txCbor,
         txHash,
@@ -528,7 +570,7 @@ export class VaultTxService {
         expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
       };
     } catch (e) {
-      this.deps.locks.release(ownerKey);
+      if (quote === undefined) this.deps.locks.release(ownerKey);
       throw asOwnerApiError(e);
     }
   }
@@ -725,6 +767,18 @@ function fundingNotes(
     `Thứ tự: thân giao dịch này là bản CHỐT — ký trên đúng tx_hash trả về; đổi bất kỳ byte nào ` +
       `của thân sau đó thì mọi chữ ký đã có mất hiệu lực. Hạn dùng ≤ 1 giờ kể từ lúc dựng.`,
   ];
+}
+
+/**
+ * Chế độ báo giá chỉ chạy khi yêu cầu MANG ví trả phí và UTxO đưa sẵn đúng là UTxO đó. Lệch là
+ * lỗi của người gọi trong gói này (`feeQuote.ts`), không phải của app ⟹ NÉM, không đoán.
+ */
+function assertQuoteMatches(quote: QuoteMode | undefined, fp: FeePayerRequest | undefined): void {
+  if (quote === undefined) return;
+  const u = quote.feePayerUtxo;
+  if (fp === undefined || refStr(fp.utxoRef) !== refStr(u) || fp.address !== u.address) {
+    throw new Error("[bất biến nội bộ] chế độ báo giá: UTxO trả phí đưa sẵn không khớp ví trả phí của yêu cầu.");
+  }
 }
 
 /** Chủ phải là `{ type: "key" | "script", hash: 56 hex thường }` — dịch vụ gọi thẳng cũng bị kiểm. */

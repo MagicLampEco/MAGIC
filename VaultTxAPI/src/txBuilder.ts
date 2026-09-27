@@ -78,6 +78,9 @@ export interface TxBuilderPort {
   instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx>;
   createVault(ctx: CreateVaultContext, p: { lampAmount: bigint; profile?: Profile }): Promise<BuiltCreateVault>;
   openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread>;
+  /** Tham số giao thức `coinsPerUtxoByte` của CÙNG ảnh chụp bộ dựng dùng — báo giá tính min-ADA
+   *  của UTxO trả phí từ đây (`feeQuote.ts`), không từ một hằng chép tay. */
+  coinsPerUtxoByte(): Promise<bigint>;
 }
 
 /** Ngữ cảnh tạo vault — không có vault đầu vào, chỉ có địa chỉ đích. */
@@ -421,15 +424,25 @@ export class SdkTxBuilder implements TxBuilderPort {
     return { txCbor: r.tx.toCBOR(), vaultNftUnit: r.vaultIdUnit };
   }
 
-  private async lucidFor(ctx: { changeAddress: string; feePayerUtxo?: UTxO }, presetWalletUtxos?: UTxO[]): Promise<LucidEvolution> {
-    const provider = new Blockfrost(this.deps.blockfrostUrl, this.deps.blockfrostProjectId);
+  async coinsPerUtxoByte(): Promise<bigint> {
+    const pp = await this.protocolParameters(new Blockfrost(this.deps.blockfrostUrl, this.deps.blockfrostProjectId));
+    return BigInt(pp.coinsPerUtxoByte);
+  }
+
+  /** Ảnh chụp tham số giao thức, làm mới sau `PROTOCOL_PARAMS_TTL_MS`. */
+  private async protocolParameters(provider: Blockfrost): Promise<NonNullable<SdkTxBuilder["protocolParams"]>> {
     const now = Date.now();
     if (this.protocolParams === null || now - this.protocolParamsAt > PROTOCOL_PARAMS_TTL_MS) {
       this.protocolParams = await provider.getProtocolParameters();
       this.protocolParamsAt = now;
     }
+    return this.protocolParams;
+  }
+
+  private async lucidFor(ctx: { changeAddress: string; feePayerUtxo?: UTxO }, presetWalletUtxos?: UTxO[]): Promise<LucidEvolution> {
+    const provider = new Blockfrost(this.deps.blockfrostUrl, this.deps.blockfrostProjectId);
     const lucid = await Lucid(provider, this.deps.network, {
-      presetProtocolParameters: this.protocolParams,
+      presetProtocolParameters: await this.protocolParameters(provider),
     });
 
     // Có ví trả phí ⟹ ví lucid mang ĐÚNG UTxO đó: bên trả phí chỉ cho tiêu một UTxO.
@@ -628,6 +641,13 @@ export class RecordedTxBuilder implements TxBuilderPort {
   }
   instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx> {
     return this.serve("instant_gen", p, ctx);
+  }
+  /** Tham số giao thức của bản ghi. Không khai ⟹ NÉM: một báo giá không được tính min-ADA
+   *  trên một con số bộ dựng giả tự đoán. */
+  coinsPerUtxoByteValue: bigint | undefined = undefined;
+  async coinsPerUtxoByte(): Promise<bigint> {
+    if (this.coinsPerUtxoByteValue === undefined) throw new Error("[RecordedTxBuilder] không khai coinsPerUtxoByte.");
+    return this.coinsPerUtxoByteValue;
   }
   async createVault(ctx: CreateVaultContext, p: { lampAmount: bigint; profile?: Profile }): Promise<BuiltCreateVault> {
     const b = await this.serve("create_vault", p, ctx);

@@ -191,6 +191,25 @@ describe("summarizeTx — mọi con số suy từ CBOR", () => {
     expect(s.lamp.locked_delta_lamp).toBe("-7.000000");
   });
 
+  // instant-gen QUY ĐỔI toàn bộ `consumed_credit` thành lượng cấp rồi đặt nó về 0. Hiệu có
+  // dấu thì ra "đốt âm 1001 MAGIC" (Preprod 2026-09-27). Cặp với bài ngay dưới: phần TĂNG
+  // vẫn phải đọc thành đốt, nên một bản vá kẹp mọi thứ về 0 cũng đỏ.
+  it("instant-gen hạ consumed_credit về 0 KHÔNG phải MAGIC bị đốt", () => {
+    const tx = buildTxCbor({
+      feeLovelace: FEE,
+      outputs: [{
+        address: VAULT_ADDRESS,
+        assets: { lovelace: 5_659_030n, [VAULT_ID_UNIT]: 1n },
+        inlineDatumHex: datumHex({ batches: [BATCH_NEW], consumedCreditNanogic: 0n }),
+      }],
+    });
+    const s = summarizeTx(tx, ctx(datumHex({ batches: [], consumedCreditNanogic: 1_001_000_000_000n })));
+
+    expect(s.magic.burned_nanogic).toBe("0");
+    expect(s.magic.minted_nanogic).toBe("8000000");
+    expect(s.magic.expired_dropped_nanogic).toBe("0");
+  });
+
   it("MAGIC đốt đọc từ consumed_credit, TÁCH khỏi phần mất hạn", () => {
     const tx = buildTxCbor({
       feeLovelace: FEE,

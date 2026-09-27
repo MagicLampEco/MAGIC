@@ -363,7 +363,12 @@ function magicDelta(before: DecodedVaultDatum, after: DecodedVaultDatum): {
     .filter(b => !beforeIds.has(b.batch_id))
     .reduce((t, b) => t + b.current_amount, 0n);
 
-  const burned = after.activity_state.consumed_credit - before.activity_state.consumed_credit;
+  // `consumed_credit` chỉ TĂNG ở `validate_burn_batch`; nó GIẢM (về 0) ở nhánh InstantGen,
+  // nơi toàn bộ tín dụng được quy đổi thành lượng cấp. Phần giảm đó không phải MAGIC bị
+  // đốt — lấy hiệu có dấu thì một lượt instant-gen hiện `burned_magic: "-1001.000000000"`
+  // (Preprod 2026-09-27). Chỉ phần TĂNG mới là đốt.
+  const creditDelta = after.activity_state.consumed_credit - before.activity_state.consumed_credit;
+  const burned = creditDelta > 0n ? creditDelta : 0n;
   const totalBefore = sum(before);
   const totalAfter = sum(after);
   const expiredDropped = totalBefore + minted - burned - totalAfter;

@@ -34,8 +34,9 @@ export const refStr = (r: OutRefLike): string => `${r.txHash}#${r.outputIndex}`;
 /** `{ utxo: "<txhash>#<idx>", address }` — cùng hình dạng ở `fee_payer` và `funding.fee_payer`. */
 export interface FeePayerRequest { utxoRef: OutRefLike; address: string }
 
-/** Tên trường + mã lỗi theo CHỖ trường nằm (xem khối đầu tệp). */
-export interface FeePayerCodes { field: string; shape: string; invalid: string }
+/** Tên trường + mã lỗi theo CHỖ trường nằm (xem khối đầu tệp). `addressField` vắng ⟹
+ *  `<field>.address`; báo giá (`feeQuote.ts`) kiểm một địa chỉ trần nên khai tên riêng. */
+export interface FeePayerCodes { field: string; shape: string; invalid: string; addressField?: string }
 
 export const FUNDING_FEE_PAYER_CODES: FeePayerCodes = {
   field: "funding.fee_payer", shape: "FUNDING_SHAPE", invalid: "FUNDING_FEE_PAYER_INVALID",
@@ -90,13 +91,25 @@ export function assertFeePayerAddress(network: Network, fp: FeePayerRequest, c: 
   try { d = getAddressDetails(fp.address); } catch { d = undefined; }
   if (d === undefined || d.networkId !== wantId || d.paymentCredential?.type !== "Key" || !fp.address.startsWith("addr")) {
     throw new CodedApiError(400, c.invalid,
-      `"${c.field}.address" phải là địa chỉ bech32 của mạng ${network} với phần thanh toán là KHOÁ ` +
+      `"${c.addressField ?? `${c.field}.address`}" phải là địa chỉ bech32 của mạng ${network} với phần thanh toán là KHOÁ ` +
       `(tài sản thế chấp không được là UTxO script).`,
       { payment_credential: d?.paymentCredential?.type ?? null, network_id: d?.networkId ?? null });
   }
 }
 
 // ── đọc chuỗi ────────────────────────────────────────────────────────────────
+
+/** Đơn vị tài sản khác 0 của một UTxO. */
+function nonZeroUnits(utxo: UTxO): string[] {
+  return Object.keys(utxo.assets).filter(k => utxo.assets[k] !== 0n);
+}
+
+/** UTxO dùng làm ví trả phí được: thuần ADA, không script tham chiếu (nó còn là tài sản thế chấp).
+ *  MỘT vị từ cho cả `readFeePayerUtxo` lẫn phép chọn UTxO của báo giá (`feeQuote.ts`). */
+export function isPureAdaFeeUtxo(utxo: UTxO): boolean {
+  const units = nonZeroUnits(utxo);
+  return units.length === 1 && units[0] === "lovelace" && utxo.scriptRef == null;
+}
 
 /** UTxO trả phí: phải ở ĐÚNG `fee_payer.address`, thuần ADA, không script tham chiếu. */
 export async function readFeePayerUtxo(chain: ChainReader, fp: FeePayerRequest, c: FeePayerCodes): Promise<UTxO> {
@@ -107,8 +120,8 @@ export async function readFeePayerUtxo(chain: ChainReader, fp: FeePayerRequest, 
       `UTxO trả phí ${refStr(fp.utxoRef).slice(0, 12)}… không nằm ở ${c.field}.address.`,
       { fee_payer_utxo: refStr(fp.utxoRef) });
   }
-  const units = Object.keys(utxo.assets).filter(k => utxo.assets[k] !== 0n);
-  if (units.length !== 1 || units[0] !== "lovelace" || utxo.scriptRef != null) {
+  const units = nonZeroUnits(utxo);
+  if (!isPureAdaFeeUtxo(utxo)) {
     throw new CodedApiError(400, c.invalid,
       `UTxO trả phí phải thuần ADA, không token, không script tham chiếu (nó còn là tài sản thế chấp).`,
       { fee_payer_utxo: refStr(fp.utxoRef), units });

@@ -11,6 +11,8 @@
 //                              (`fee_payer` một mình ⟹ 422; `funding` ⟹ 501 — xem `service.ts`)
 //   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 //   POST /tx/submit            { tx_cbor, witness_cbor }
+//   POST /tx/quote             { route, params, [owner_fee_addresses] } (báo giá phí — `feeQuote.ts`;
+//                              không dựng tx nào để ký, không giữ chỗ, không gọi Feecover)
 //   POST /fee/utxo             { route }       [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`)
 //   POST /fee/sign             { tx_cbor }     [X-Feecover-Token]
 //
@@ -23,25 +25,17 @@
 // hai reference input. Nhận một con số ở đây là dựng một cái nút hứa thứ nó không
 // quyết được, rồi để chuỗi bác — người dùng đọc câu bác đó không ra được việc phải làm.
 //
-// ── VÌ SAO SỐ TIỀN PHẢI GỬI LÊN DƯỚI DẠNG CHUỖI ────────────────────────────────
-// `lamp_per_epoch` tính bằng oildrop, và trần LAMP là 36×10^15 oildrop trong khi 2^53
-// ≈ 9,007×10^15. Một literal số JSON ở đó KHÔNG lỗi khi vượt ngưỡng — nó LÀM TRÒN, và
-// con số đã tròn vẫn dựng ra một giao dịch hợp lệ khoá nhầm số LAMP. Nên bộ định tuyến
-// TỪ CHỐI số JSON cho mọi trường tiền và đếm, và nói rõ vì sao trong thông báo lỗi.
-// `op_type` thì nhận số nguyên: nó là một nhãn nhỏ (1 = ảnh, 2 = CID), không phải tiền.
+// Số tiền trong thân bài là CHUỖI chữ số, không phải số JSON — lý do đo được ở khối đầu
+// `buildRequest.ts`, nơi đọc thân bài của sáu đường dựng (dùng chung với `/tx/quote`).
 
 import {
   BadRequestError, TxApiError, UnauthorizedError, newReferenceCode,
 } from "./errors.js";
-import {
-  toBuildBody, toCreateVaultBody, toOpenThreadBody, toSubmitBody, type OwnerRequest, type VaultTxService,
-} from "./service.js";
-import { parseEngageRef } from "./engage.js";
+import { toSubmitBody, type VaultTxService } from "./service.js";
+import { BUILD_ROUTE_OF_PATH, buildResultBody, parseBuildRequest, reqString, runBuild } from "./buildRequest.js";
 import { CodedApiError } from "./errors.js";
 import type { FeeProxy } from "./feeProxy.js";
-import { parseFeePayer } from "./feePayer.js";
-import { parseOwnerFields, parseOwnerWitness } from "./owner.js";
-import { parseFunding } from "./funding.js";
+import { quoteFee } from "./feeQuote.js";
 import { OwnerAuthError } from "@magiclamp/protocol-utils";
 import { ownerApiErrorOf } from "./errors.js";
 
@@ -128,72 +122,23 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
 
     const body = asObject(req.body);
 
-    switch (path) {
-      case "/tx/instant-gen": {
-        const out = await deps.service.instantGen(ownerReq(body));
-        return { status: 200, body: toBuildBody(out) };
-      }
-      case "/tx/schedule-commit": {
-        const out = await deps.service.scheduleCommit({
-          ...ownerReq(body),
-          scheduleLength: reqBigint(body, "schedule_length"),
-          lampPerEpoch: reqBigint(body, "lamp_per_epoch"),
-        });
-        return { status: 200, body: toBuildBody(out) };
-      }
-      case "/tx/schedule-fire": {
-        const out = await deps.service.scheduleFire({
-          ...ownerReq(body),
-          scheduleId: reqHex(body, "schedule_id"),
-        });
-        return { status: 200, body: toBuildBody(out) };
-      }
-      case "/tx/consume": {
-        const out = await deps.service.consume({
-          ...ownerReq(body),
-          opType: reqSmallInt(body, "op_type"),
-          opCount: reqBigint(body, "op_count"),
-          engageRef: parseEngageRef(body.engage_ref),
-        });
-        return { status: 200, body: toBuildBody(out) };
-      }
-      case "/tx/open-thread": {
-        const out = await deps.service.openThread({
-          ...ownerReq(body),
-          fundingRequested: body.funding !== undefined,
-        });
-        return { status: 200, body: toOpenThreadBody(out) };
-      }
-      case "/tx/create-vault": {
-        const kind = body.kind;
-        if (kind !== "instant" && kind !== "schedule") {
-          throw new BadRequestError(`"kind" phải là "instant" hoặc "schedule".`);
-        }
-        const profile = body.profile;
-        if (profile !== undefined && profile !== "Ember" && profile !== "Flame" && profile !== "Lantern") {
-          throw new BadRequestError(`"profile" phải là "Ember" | "Flame" | "Lantern" (bỏ trống = "Flame").`);
-        }
-        // `change_address` và `funding` loại trừ nhau — tầng dịch vụ quyết (400 có mã), không
-        // phải ở đây, để lời gọi thẳng vào dịch vụ cũng bị kiểm.
-        const out = await deps.service.createVault({
-          ...ownerReq(body),
-          kind,
-          lampAmount: reqBigint(body, "lamp_amount"),
-          profile,
-          funding: parseFunding(body),
-        });
-        return { status: 200, body: toCreateVaultBody(out) };
-      }
-      case "/tx/submit": {
-        const out = await deps.service.submit({
-          txCbor: reqString(body, "tx_cbor"),
-          witnessCbor: reqString(body, "witness_cbor"),
-        });
-        return { status: 200, body: toSubmitBody(out) };
-      }
-      default:
-        return { status: 404, body: err("NOT_FOUND", `Không có đường "${path}".`) };
+    if (path === "/tx/submit") {
+      const out = await deps.service.submit({
+        txCbor: reqString(body, "tx_cbor"),
+        witnessCbor: reqString(body, "witness_cbor"),
+      });
+      return { status: 200, body: toSubmitBody(out) };
     }
+    if (path === "/tx/quote") {
+      const out = await quoteFee(body, { service: deps.service, feeProxy: deps.feeProxy });
+      return { status: 200, body: out as unknown as Record<string, unknown> };
+    }
+    const route = BUILD_ROUTE_OF_PATH[path];
+    if (route === undefined) {
+      return { status: 404, body: err("NOT_FOUND", `Không có đường "${path}".`) };
+    }
+    const built = await runBuild(deps.service, parseBuildRequest(route, body));
+    return { status: 200, body: buildResultBody(built) };
   } catch (e) {
     if (e instanceof TxApiError) return { status: e.httpStatus, body: e.toBody() };
     // Lỗi quyền chủ lọt tới đây (không qua tầng dịch vụ) vẫn giữ NGUYÊN mã.
@@ -244,62 +189,3 @@ function asObject(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
-/** Chủ + nhân chứng + địa chỉ đổi tiền thừa (tuỳ chọn) — phần chung của mọi đường có chủ. */
-function ownerReq(body: Record<string, unknown>): OwnerRequest {
-  const changeAddress = body.change_address;
-  if (changeAddress !== undefined && (typeof changeAddress !== "string" || changeAddress === "")) {
-    throw new BadRequestError(`"change_address" phải là chuỗi địa chỉ bech32 khác rỗng.`);
-  }
-  return {
-    owner: parseOwnerFields(body),
-    ownerWitness: parseOwnerWitness(body),
-    changeAddress: changeAddress as string | undefined,
-    feePayer: parseFeePayer(body),
-  };
-}
-
-function reqString(body: Record<string, unknown>, name: string): string {
-  const v = body[name];
-  if (typeof v !== "string" || v === "") throw new BadRequestError(`Thiếu trường "${name}" (chuỗi khác rỗng).`);
-  return v;
-}
-
-function reqHex(body: Record<string, unknown>, name: string): string {
-  const v = reqString(body, name);
-  if (!/^[0-9a-f]+$/.test(v) || v.length % 2 !== 0) {
-    throw new BadRequestError(`"${name}" phải là hex thường, số ký tự CHẴN.`);
-  }
-  return v;
-}
-
-/**
- * Số nguyên lớn, BẮT BUỘC gửi dưới dạng CHUỖI thập phân.
- *
- * Số JSON bị từ chối có chủ đích: xem khối đầu tệp. Thông báo lỗi nói lý do, vì người
- * gặp nó sẽ nghĩ dịch vụ đang khó tính vô cớ.
- */
-function reqBigint(body: Record<string, unknown>, name: string): bigint {
-  const v = body[name];
-  if (typeof v === "number") {
-    throw new BadRequestError(
-      `"${name}" phải là CHUỖI chữ số, không phải số JSON. Số JSON là số dấu-phẩy-động: ` +
-      `một giá trị oildrop có thật vượt được 2^53 và lúc vượt thì nó không lỗi, nó làm tròn.`,
-      { received_type: "number" },
-    );
-  }
-  if (typeof v !== "string" || !/^\d+$/.test(v)) {
-    throw new BadRequestError(`"${name}" phải là chuỗi chữ số thập phân không âm.`);
-  }
-  const n = BigInt(v);
-  if (n <= 0n) throw new BadRequestError(`"${name}" phải > 0.`);
-  return n;
-}
-
-/** Nhãn nhỏ (ví dụ `op_type`): số nguyên JSON là đúng kiểu ở đây. */
-function reqSmallInt(body: Record<string, unknown>, name: string): number {
-  const v = body[name];
-  if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 1_000_000) {
-    throw new BadRequestError(`"${name}" phải là số nguyên trong [0, 1000000].`);
-  }
-  return v;
-}

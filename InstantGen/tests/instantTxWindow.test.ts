@@ -19,6 +19,7 @@ import {
   type UMDatum as TUMDatum,
   type BackingBeaconDatum as TBackingBeaconDatum,
   type GenSchedule,
+  type MagicBatch,
 } from "../offchain/src/types.js";
 
 // ── Bối cảnh: Preprod, epoch 100 ──────────────────────────────
@@ -309,5 +310,53 @@ describe("buildInstantGenTx — chứng minh quyền chủ theo nhánh", () => {
     await expect(
       dung(TIP, { owner: { Script: [OWNER_PKH] } }, { ownerAuth: { kind: "key", pkh: OWNER_PKH } }),
     ).rejects.toThrow(/OWNER_AUTH_MISMATCH/);
+  });
+});
+
+// ── C-INST-8: trần theo EPOCH ở bộ dựng ───────────────────────
+//
+// Validator ép `instant_gen_in_epoch(live) + grant <= compute_cap_pp(avail)`. Bộ dựng
+// thiếu cổng này thì lượt sinh thứ hai trong cùng epoch chết ở pha đánh giá script với
+// một câu mù (Preprod 2026-09-27). Cặp ca đứng ĐÚNG ở biên: đã sinh `cap − grant` thì
+// dựng được; thêm 1 nanogic thì NÉM `GEN-INST-008`. Một hiện thực dùng `<` thay `<=`,
+// hoặc đếm `current_amount` thay `initial_amount`, đỏ ở một trong hai vế.
+describe("buildInstantGenTx — trần theo epoch (C-INST-8)", () => {
+  const TIP_DAU = E * P + 1_000n;
+
+  function loDaSinh(initial: bigint, current: bigint, epoch = E, decayWindow = 1n): MagicBatch {
+    return {
+      batch_id: "e1".repeat(32), source: "Instant", created_epoch: epoch,
+      initial_amount: initial, current_amount: current, decay_window: decayWindow,
+      profile_at_creation: null, contract_id: null, halved: false,
+    } as MagicBatch;
+  }
+
+  async function grantVaCap() {
+    const { res } = await dung(TIP_DAU);
+    return { grant: res.grantNanogic, cap: res.ceilings.capPp };
+  }
+
+  it("đã sinh ĐÚNG cap − grant trong epoch ⟹ vẫn dựng được (biên bằng)", async () => {
+    const { grant, cap } = await grantVaCap();
+    expect(cap).toBeGreaterThan(grant);   // tiền đề: còn chỗ cho một lượt đầu
+    const { res } = await dung(TIP_DAU, { magic_batches: [loDaSinh(cap - grant, 0n)], next_batch_index: 1n });
+    expect(res.grantNanogic).toBe(grant);
+  });
+
+  it("CỰC ĐỐI: đã sinh cap − grant + 1 ⟹ NÉM GEN-INST-008 (đọc initial_amount, không current_amount)", async () => {
+    const { grant, cap } = await grantVaCap();
+    // current_amount = 0: đã tiêu sạch vẫn tính là ĐÃ SINH.
+    await expect(
+      dung(TIP_DAU, { magic_batches: [loDaSinh(cap - grant + 1n, 0n)], next_batch_index: 1n }),
+    ).rejects.toThrow(/GEN-INST-008/);
+  });
+
+  it("lô epoch TRƯỚC còn SỐNG vẫn không tính vào trần epoch này", async () => {
+    const { grant, cap } = await grantVaCap();
+    // Lô E−1 phải còn sống (decay_window 5) thì mới tới được bộ đếm: lô hết hạn bị dọn
+    // trước đó, và một ca dựng trên lô đã dọn xanh cả khi bộ đếm bỏ lọc epoch.
+    // Cùng lượng `cap` mà đặt ở epoch E thì ca trên đã NÉM — hai ca chỉ khác `created_epoch`.
+    const { res } = await dung(TIP_DAU, { magic_batches: [loDaSinh(cap, cap, E - 1n, 5n)], next_batch_index: 1n });
+    expect(res.grantNanogic).toBe(grant);
   });
 });

@@ -200,6 +200,23 @@ export function isExpired(
   return (currentEpoch - createdEpoch) >= decayWindow;
 }
 
+/**
+ * MAGIC đã sinh qua InstantGen trong CHỈ SỐ epoch này, đọc từ các batch còn sống.
+ * Gương của `decay.ak ▸ instant_gen_in_epoch` (P8): cộng `initial_amount` (không phải
+ * `current_amount` — đã tiêu vẫn tính là đã sinh) của mọi batch `source == Instant`
+ * có `created_epoch == currentEpoch`. Bốn điều kiện giữ phép suy đứng nằm cạnh bản Aiken.
+ */
+export function instantGenInEpoch(
+  batches     : ReadonlyArray<{ source: string; created_epoch: bigint; initial_amount: bigint }>,
+  currentEpoch: bigint,
+): bigint {
+  let acc = 0n;
+  for (const b of batches) {
+    if (b.source === "Instant" && b.created_epoch === currentEpoch) acc += b.initial_amount;
+  }
+  return acc;
+}
+
 export function isLive(
   createdEpoch: bigint,
   decayWindow : bigint,

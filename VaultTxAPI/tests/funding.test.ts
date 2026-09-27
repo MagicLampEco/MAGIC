@@ -46,7 +46,7 @@ const ANCHOR_POLICY = "a0".repeat(28);
 
 const utxo = (txHash: string, outputIndex: number, address: string, assets: Record<string, bigint>): UTxO =>
   ({ txHash, outputIndex, address, assets, datum: null, datumHash: null, scriptRef: null }) as UTxO;
-const ANCHOR = utxo("ab".repeat(32), 0, DP_ADDRESS, { lovelace: 2_000_000n, [`${ANCHOR_POLICY}01`]: 1n });
+const ANCHOR = utxo("ab".repeat(32), 0, DP_ADDRESS, { lovelace: 2_000_000n, [`${ANCHOR_POLICY}${"01".repeat(32)}`]: 1n });
 const FEE_UTXO = utxo("fa".repeat(32), 0, FEE_ADDRESS, { lovelace: 10_000_000n });
 const DP1 = utxo("d1".repeat(32), 0, DP_ADDRESS, { lovelace: 3_000_000n, [LAMP_UNIT]: 600_000_000n });
 const DP2 = utxo("d2".repeat(32), 1, DP_ADDRESS, { lovelace: 4_000_000n, [LAMP_UNIT]: 500_000_000n });

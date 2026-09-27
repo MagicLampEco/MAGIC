@@ -32,6 +32,7 @@ import { didPaymentLucidPorts, vaultIdAssetName } from "@magiclamp/sdk";
 
 import type { ChainReader } from "./chain.js";
 import { CodedApiError } from "./errors.js";
+import { carriesAnchorNft } from "./owner.js";
 import {
   FUNDING_FEE_PAYER_CODES, OUTREF, assertFeePayerAddress, checkCollateral, checkValidTo,
   parseFeePayerShape, readFeePayerUtxo as readFeePayerUtxoShared, refStr,
@@ -196,7 +197,7 @@ export function fundingWitnessOf(
 // ── đọc chuỗi ──────────────────────────────────────────────────────────────────
 
 export interface DidPaymentAnchorReader {
-  /** UTxO anchor DID; không mang tài sản dưới `anchor_nft_policy` ⟹ 400 `FUNDING_ANCHOR_INVALID`. */
+  /** UTxO anchor DID; không mang NFT anchor (tên 32 byte, số lượng 1) dưới `anchor_nft_policy` ⟹ 400 `FUNDING_ANCHOR_INVALID`. */
   read(ref: OutRefLike): Promise<UTxO>;
 }
 
@@ -204,10 +205,11 @@ export class ChainDidPaymentAnchorReader implements DidPaymentAnchorReader {
   constructor(private readonly deps: { chain: ChainReader; anchorNftPolicy: string }) {}
   async read(ref: OutRefLike): Promise<UTxO> {
     const [u] = await this.deps.chain.utxosByOutRef([ref]);
-    const hit = Object.entries((u as UTxO).assets).some(([unit, q]) => unit.startsWith(this.deps.anchorNftPolicy) && q > 0n);
-    if (!hit) {
+    // Cùng phép nhận diện với `did_stake` (`owner.ts` ▸ `carriesAnchorNft`): shard/cursor
+    // của `taad` nằm dưới cùng policy nhưng không phải anchor.
+    if (!carriesAnchorNft((u as UTxO).assets, this.deps.anchorNftPolicy)) {
       throw new CodedApiError(400, "FUNDING_ANCHOR_INVALID",
-        `UTxO anchor ${refStr(ref).slice(0, 12)}… không mang tài sản nào dưới anchor_nft_policy của mạng này.`,
+        `UTxO anchor ${refStr(ref).slice(0, 12)}… không mang NFT anchor nào (tên 32 byte, số lượng 1) dưới anchor_nft_policy của mạng này.`,
         { anchor_ref: refStr(ref) });
     }
     return u as UTxO;

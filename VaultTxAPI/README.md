@@ -128,8 +128,10 @@ Dịch vụ không ký và không giữ khoá, nên nó chỉ dựng được m�
 ```
 
 Script app gửi **không được tin**: dịch vụ băm lại, lệch `owner.hash` ⟹ `400
-OWNER_AUTH_MISMATCH`, trước khi hỏi chuỗi bất cứ điều gì. Anchor phải mang tài sản dưới
-`anchor_nft_policy` của mạng, không ⟹ `400 OWNER_ANCHOR_INVALID`. Tài khoản thưởng chưa đăng
+OWNER_AUTH_MISMATCH`. Anchor phải mang một NFT anchor (tên 32 byte, số lượng 1) dưới
+`anchor_nft_policy` của mạng, không ⟹ `400 OWNER_ANCHOR_INVALID`; token shard/cursor của
+`taad` cùng policy KHÔNG phải anchor. Thứ tự kiểm: đọc anchor TRƯỚC, so hash SAU — nên một
+yêu cầu sai cả hai nhận `OWNER_ANCHOR_INVALID`. Tài khoản thưởng chưa đăng
 ký ⟹ `422 OWNER_STAKE_NOT_REGISTERED`. Lượng rút là **đúng số dư thưởng lúc dựng** (ledger
 đòi vậy), nên một ranh giới epoch có cộng thưởng xen giữa dựng và nộp làm tx hết hợp lệ —
 dựng lại. Validator từ chối tx mang chứng chỉ đăng ký / huỷ đăng ký / uỷ thác cho chính

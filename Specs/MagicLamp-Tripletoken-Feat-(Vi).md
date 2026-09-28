@@ -635,12 +635,12 @@ MAGIC = số kế toán trong vault datum, **KHÔNG token, KHÔNG `tx.mint`**. T
 ### §7.2 Định giá — beacon `PriceParam` (reference input, có thẩm quyền)
 Giá lấy từ beacon **on-chain**, KHÔNG tin amount client mớm (chống spam thật).
 ```
-price(op_type, t) = base_price[op_type] × demand_mult(t) / Q          (Q = 10⁹, BigInt)
+price(op_type, t) = base_price[op_type] × demand_mult[op_type](t) / Q   (Q = 10⁹, BigInt)
 ```
 ```
 PriceParam {                       -- NFT one-shot, reference input (CIP-31), KHÔNG tiêu
-  op_prices   : List<OpPrice>,     -- OpPrice{ op_type: Int, base_price: Int }
-  demand_mult : Int,               -- hệ số co giãn (keeper cập nhật, scale Q)
+  op_prices   : List<OpPrice>,     -- OpPrice{ op_type: Int, base_price: Int, demand_mult: Int }
+                                   --   demand_mult tách theo op_type (keeper cập nhật, scale Q)
   m_min, m_max: Int,               -- clamp (scale Q); mặc định m_min=0.5Q, m_max=2.0Q
   epoch       : Int,               -- epoch cập nhật gần nhất (chống stale)
 }

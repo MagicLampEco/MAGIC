@@ -726,8 +726,8 @@ export interface BindDidParams {
   /** did_commit mới: hex 32 byte (64 ký tự), KHÁC rỗng. */
   didCommit: string;
   /** UTxO mang script tham chiếu CIP-33 của `consume`. Bỏ trống ⟹ `attach`.
-   *  Ở đây `attach` DÙNG ĐƯỢC trên chuỗi thật: tx này chỉ có MỘT validator (5.528 B
-   *  cho bản chưa apply-param, đo `plutus.json` 2026-09-07), không như đường consume
+   *  Ở đây `attach` DÙNG ĐƯỢC trên chuỗi thật: tx này chỉ có MỘT validator (6.105 B
+   *  cho bản chưa apply-param, đo `plutus.json` 2026-09-28 sau khi `OpPrice` mang `demand_mult`), không như đường consume
    *  phải gánh cả vault. Vẫn nên dùng ref-script khi đã công bố. */
   consumeRefUtxo?: UTxO;
   /** Collateral UTxO thuần ADA. */

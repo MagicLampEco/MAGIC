@@ -8,7 +8,7 @@ import {
   slotToUnixTime,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator,
 } from "@lucid-evolution/lucid";
-import { posixMsToEpoch, msPerEpoch, epochValidityWindow, type Network } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch, msPerEpoch, epochValidityWindow, getTipSlot, type Network } from "@magiclamp/protocol-utils";
 import {
   computeUMRaw, clampUM, clampStep, appendHistory, computeSMA, computeNewUM,
   type UMDatum,
@@ -249,9 +249,11 @@ export function startUMKeeper(config: KeeperConfig): () => void {
       if (!umUtxo.datum) return;
 
       const datum       = Data.from(umUtxo.datum, UMDatumPlutus);
-      const tip         = await (lucid.config().provider as any).getBlock("latest");
       const network     = config.network ?? "Preview";
-      const tipPosixMs  = BigInt(slotToUnixTime(network, tip.slot ?? 0));
+      // getTipSlot NÉM khi tip thiếu `slot` — bản trước `tip.slot ?? 0` biến tip hỏng thành
+      // mốc 2022, nhánh "chưa tới epoch mới" bên dưới chạy và keeper đứng im không một dòng log.
+      const tipSlot     = await getTipSlot({ provider: lucid.config().provider }, network);
+      const tipPosixMs  = BigInt(slotToUnixTime(network, tipSlot));
       const currentEpoch = posixMsToEpoch(tipPosixMs, network);
 
       // Check if update needed

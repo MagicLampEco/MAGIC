@@ -173,7 +173,7 @@ Ba điều đáng nhớ:
 - **`umScriptHash` / `backingScriptHash`** ghim reference input về đúng địa chỉ script chuẩn.
   NFT không phải singleton toàn cục nên chỉ kiểm NFT thôi là giả mạo được.
 
-Mainnet có `ms_per_epoch` khác Preview/Preprod. SDK tự apply qua `network` ⇒ hash validator
+`ms_per_epoch` khác nhau theo mạng (Preview 1 ngày; Preprod và Mainnet 5 ngày — `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`). SDK tự apply qua `network` ⇒ hash validator
 khác theo mạng ⇒ địa chỉ vault khác theo mạng.
 
 ---

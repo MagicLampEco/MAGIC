@@ -55,6 +55,12 @@ export interface InstantGenParams {
    *  (lamp_policy_id, um_nft_policy, um_script_hash, backing_nft_policy,
    *  backing_script_hash, ms_per_epoch). Required to spend the vault UTxO. */
   vaultScript: Validator;
+  /** UTxO CIP-33 mang script vault đã deploy. Có thì giao dịch ĐỌC script (`readFrom`) thay vì
+   *  đính kèm: đo trên Preprod 27/09 (tx `66185661…`), đính kèm chiếm 11.599 / 12.634 byte và
+   *  ≈0,33 ADA phí mỗi lượt, và datum vault còn lớn dần theo số batch tới trần 16.384 byte.
+   *  Hash script trên UTxO phải trùng hash `vaultScript` — lệch thì NÉM `GEN-INST-009`, vì
+   *  `readFrom` một script khác vẫn dựng xong và chỉ chết ở pha script. Vắng ⟹ đính kèm như cũ. */
+  vaultRefScriptUtxo?: UTxO;
   /** LAMP policy id (hex) — must match `lamp_policy_id` param applied to validator. */
   lampPolicyId: string;
   /** LAMP asset name (hex). Bỏ trống thì DẪN THEO MẠNG qua `lampAssetName(network)`,
@@ -364,11 +370,14 @@ export async function buildInstantGenTx(
   });
   assertVaultIdentityKept(vaultUtxo.assets, vaultOutAssets);
 
-  let txBuilder = lucid
-    .newTx()
-    .collectFrom([vaultUtxo], redeemer)
-    .attach.SpendingValidator(vaultScript)
-    .readFrom([umDatumUtxo, backingBeaconUtxo])   // reference inputs (not spent)
+  const vaultRef = params.vaultRefScriptUtxo;
+  if (vaultRef !== undefined) assertVaultRefScript(vaultRef, vaultScript);
+  const spend = lucid.newTx().collectFrom([vaultUtxo], redeemer);
+  const withScript = vaultRef !== undefined
+    ? spend.readFrom([vaultRef, umDatumUtxo, backingBeaconUtxo])
+    : spend.attach.SpendingValidator(vaultScript).readFrom([umDatumUtxo, backingBeaconUtxo]);
+
+  let txBuilder = withScript
     .pay.ToAddressWithData(
       vaultScriptAddress,
       { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) },
@@ -413,6 +422,19 @@ export async function buildInstantGenTx(
     newLampBalance: vaultDatum.lamp_balance,   // unchanged by construction
     summary,
   };
+}
+
+/** UTxO ref-script phải mang ĐÚNG script vault. Kiểm hash trên chính `scriptRef`. */
+function assertVaultRefScript(ref: UTxO, vaultScript: Validator): void {
+  const at = `${ref.txHash}#${ref.outputIndex}`;
+  if (!ref.scriptRef) {
+    throw new Error(`GEN-INST-009: UTxO ref-script ${at} không mang script tham chiếu nào.`);
+  }
+  const got = validatorToScriptHash(ref.scriptRef);
+  const want = validatorToScriptHash(vaultScript);
+  if (got !== want) {
+    throw new Error(`GEN-INST-009: UTxO ref-script ${at} mang script ${got}, không phải vault ${want}.`);
+  }
 }
 
 // ── Submit helper ────────────────────────────────────────────

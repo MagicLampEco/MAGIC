@@ -133,3 +133,79 @@ export class UnknownVaultScopeError extends VaultReadError {
     );
   }
 }
+
+// ── Chỉ mục DID ⟹ thread (`threadIndex.ts`) ─────────────────────────────────────
+//
+//   200 + { threads: [] }        chỉ mục TƯƠI, DID này không có thread nào
+//   404 THREAD_NOT_FOUND         chỉ mục TƯƠI, không có thread mang NFT này
+//   503 INDEX_STALE              chỉ mục trễ hơn ngưỡng, hoặc CHƯA đồng bộ lần nào — KHÔNG
+//                                biết, nên không trả danh sách
+//   503 THREAD_INDEX_DISABLED    tiến trình không cấu hình địa chỉ consume nào
+//   404 UNKNOWN_CONSUME_SCOPE    policy người gọi hỏi không nằm trong tập đang theo dõi
+//   502 THREAD_DATUM_UNDECODABLE UTxO mang đúng NFT thread nhưng datum không đọc được
+//   409 THREAD_IDENTITY_DUPLICATE hai UTxO cùng mang một NFT thread
+//
+// Vì sao "cũ" là 503 chứ không phải 200-kèm-cờ: bên tiêu thụ chính (Wakeme) dùng UTxO thread
+// làm reference input cho genesis. Một UTxO đã bị tiêu mà chỉ mục chưa biết ⟹ giao dịch của
+// họ bị chuỗi từ chối, người dùng mất suất, và một cờ `stale: true` nằm cạnh danh sách là thứ
+// một bên gọi vội vàng sẽ không đọc.
+
+export class IndexStaleError extends VaultReadError {
+  constructor(details: {
+    synced_slot: number | null;
+    tip_slot: number | null;
+    lag_blocks: number | null;
+    stale_threshold_blocks: number;
+    reason: "NEVER_SYNCED" | "LAG_EXCEEDED";
+    last_sync_error: string | null;
+  }) {
+    super(
+      503,
+      "INDEX_STALE",
+      details.reason === "NEVER_SYNCED"
+        ? "Chỉ mục thread chưa đồng bộ xong lần nào — chưa biết gì, không trả danh sách."
+        : `Chỉ mục thread trễ ${details.lag_blocks} khối, quá ngưỡng ${details.stale_threshold_blocks}. ` +
+          `Danh sách có thể chứa UTxO đã bị tiêu — không trả.`,
+      details,
+    );
+  }
+}
+
+export class ThreadIndexDisabledError extends VaultReadError {
+  constructor() {
+    super(503, "THREAD_INDEX_DISABLED",
+      "Tiến trình này không cấu hình địa chỉ consume nào (VAULT_READ_API_CONSUME_SCOPES) — chỉ mục thread tắt.");
+  }
+}
+
+export class ThreadNotFoundError extends VaultReadError {
+  constructor(unit: string) {
+    super(404, "THREAD_NOT_FOUND",
+      "Chỉ mục tươi và không có UTxO nào đang mang NFT thread này.", { asset: unit });
+  }
+}
+
+export class UnknownConsumeScopeError extends VaultReadError {
+  constructor(policy: string, known: string[]) {
+    super(404, "UNKNOWN_CONSUME_SCOPE",
+      `Policy ${policy.slice(0, 12)}… không phải script hash consume nào đang được theo dõi.`,
+      { policy, tracked: known });
+  }
+}
+
+export class ThreadDatumUndecodableError extends VaultReadError {
+  constructor(utxoRef: string, unit: string, reason: string) {
+    super(502, "THREAD_DATUM_UNDECODABLE",
+      `UTxO ${utxoRef} mang NFT thread nhưng datum không đọc được thành EngageDatum.`,
+      { utxo: utxoRef, asset: unit, reason });
+  }
+}
+
+export class ThreadIdentityDuplicateError extends VaultReadError {
+  constructor(unit: string, utxoRefs: string[]) {
+    super(409, "THREAD_IDENTITY_DUPLICATE",
+      `Hai UTxO cùng mang NFT thread ${unit.slice(0, 24)}… — bất khả trên sổ cái đã lắng. ` +
+      `Chỉ mục đang ở trạng thái không nhất quán; không chọn hộ.`,
+      { asset: unit, utxos: utxoRefs });
+  }
+}

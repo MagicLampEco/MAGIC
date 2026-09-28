@@ -8,9 +8,10 @@
 // Chỉ `GET`. Không nhận khoá riêng, không dựng giao dịch, không ghi gì. Mọi method
 // khác trả 405 ngay ở đây, trước khi chạm tới bất cứ đường đọc nào.
 
-import { VaultReadError, BadRequestError, UnauthorizedError } from "./errors.js";
+import { VaultReadError, BadRequestError, ThreadIndexDisabledError, UnauthorizedError } from "./errors.js";
 import { VaultReadService, toJsonBody } from "./service.js";
 import type { VaultScope } from "./config.js";
+import { freshnessToJson, threadToJson, type ThreadIndex } from "./threadIndex.js";
 
 export interface HttpRequest {
   method: string;
@@ -31,9 +32,43 @@ export interface RouterDeps {
   chainLabel: string;
   /** Thẻ bài chia sẻ. Chuỗi rỗng ⇒ không kiểm (chỉ hợp lệ khi bind loopback — `config.ts` ép). */
   token: string;
+  /** Chỉ mục DID ⟹ thread. Vắng ⟹ `/threads/*` trả 503 `THREAD_INDEX_DISABLED`. */
+  threads?: ThreadIndex;
 }
 
 const BY_OWNER = /^\/vault\/by-owner\/([^/?#]+)$/;
+const THREADS_BY_DID = /^\/threads\/by-did\/([^/?#]+)$/;
+const THREADS_BY_ASSET = /^\/threads\/by-asset\/([^/?#.]+)\.([^/?#.]+)$/;
+
+/** `/threads/*` — mọi nhánh chỉ đọc Map trong bộ nhớ của `ThreadIndex`, không gọi chuỗi. */
+function handleThreads(path: string, index: ThreadIndex | undefined): HttpResponse | null {
+  if (!path.startsWith("/threads/")) return null;
+  if (index === undefined) throw new ThreadIndexDisabledError();
+
+  if (path === "/threads/status") return { status: 200, body: index.status() };
+
+  const d = THREADS_BY_DID.exec(path);
+  if (d !== null) {
+    const r = index.byDid(decodeURIComponent(d[1]!));
+    return {
+      status: 200,
+      body: {
+        ...freshnessToJson(r.freshness),
+        threads: r.threads.map(threadToJson),
+        // Số UTxO mang NFT thread mà datum không đọc được, TOÀN chỉ mục — chúng không thể được
+        // gán cho DID nào, nên khác 0 nghĩa là danh sách trên CÓ THỂ thiếu. Chi tiết: /threads/status.
+        skipped_count: r.skippedCount,
+      },
+    };
+  }
+
+  const a = THREADS_BY_ASSET.exec(path);
+  if (a !== null) {
+    const r = index.byAsset(decodeURIComponent(a[1]!), decodeURIComponent(a[2]!));
+    return { status: 200, body: { ...freshnessToJson(r.freshness), thread: threadToJson(r.thread) } };
+  }
+  return null;
+}
 
 export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpResponse> {
   if (req.method !== "GET") {
@@ -65,6 +100,9 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
 
   try {
     requireToken(req, deps.token);
+
+    const t = handleThreads(path, deps.threads);
+    if (t !== null) return t;
 
     const m = BY_OWNER.exec(path);
     if (m === null) {

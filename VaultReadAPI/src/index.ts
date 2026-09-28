@@ -10,14 +10,22 @@ export type {
 export { VaultReadService, toJsonBody } from "./service.js";
 export type { ReadRequest, ReadOutcome } from "./service.js";
 
-export { BlockfrostChainReader, RecordedChainReader } from "./chain.js";
-export type { ChainReader, ChainUtxo, ChainTip, BlockfrostReaderOptions } from "./chain.js";
+export { BlockfrostChainReader, RecordedChainReader, normalizeTxEffect } from "./chain.js";
+export type {
+  ChainReader, ChainUtxo, ChainTip, BlockfrostReaderOptions,
+  ChainHistoryReader, ChainPoint, AddressTx, OutRef, AddressedUtxo, ChainTxEffect,
+} from "./chain.js";
+
+export { ThreadIndex, classifyThreadUtxo, threadToJson, freshnessToJson } from "./threadIndex.js";
+export type {
+  ThreadEntry, ThreadOwner, SkippedThread, SkipReason, ThreadClass, FreshnessView, ThreadIndexOptions,
+} from "./threadIndex.js";
 
 export { handle } from "./http.js";
 export type { HttpRequest, HttpResponse, RouterDeps } from "./http.js";
 
-export { loadConfig, parseScopes, isLoopback } from "./config.js";
-export type { AppConfig, VaultScope } from "./config.js";
+export { loadConfig, parseScopes, parseConsumeScopes, isLoopback } from "./config.js";
+export type { AppConfig, VaultScope, ConsumeScope, ThreadIndexConfig } from "./config.js";
 
 export {
   VaultReadError,
@@ -27,4 +35,10 @@ export {
   BadRequestError,
   UnauthorizedError,
   UnknownVaultScopeError,
+  IndexStaleError,
+  ThreadIndexDisabledError,
+  ThreadNotFoundError,
+  UnknownConsumeScopeError,
+  ThreadDatumUndecodableError,
+  ThreadIdentityDuplicateError,
 } from "./errors.js";

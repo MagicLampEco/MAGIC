@@ -12,6 +12,7 @@ import { BlockfrostChainReader } from "./chain.js";
 import { loadConfig, isLoopback } from "./config.js";
 import { handle } from "./http.js";
 import { VaultReadService } from "./service.js";
+import { ThreadIndex } from "./threadIndex.js";
 
 const cfg = loadConfig();
 
@@ -23,11 +24,18 @@ const chain = new BlockfrostChainReader({
 
 const service = new VaultReadService(cfg.network, cfg.scopes, chain);
 
+// Chỉ mục DID ⟹ thread: chỉ dựng khi có địa chỉ consume. Đồng bộ chạy nền; tới khi vòng đầu
+// xong, `/threads/*` trả 503 INDEX_STALE (NEVER_SYNCED) chứ không trả rỗng.
+const threads = cfg.consumeScopes.length > 0
+  ? new ThreadIndex(chain, cfg.consumeScopes, cfg.threadIndex)
+  : undefined;
+threads?.start();
+
 const server = createServer((rq, rs) => {
   const started = Date.now();
   handle(
     { method: rq.method ?? "GET", url: rq.url ?? "/", headers: rq.headers as Record<string, string | undefined> },
-    { service, scopes: cfg.scopes, network: cfg.network, chainLabel: chain.label, token: cfg.token },
+    { service, scopes: cfg.scopes, network: cfg.network, chainLabel: chain.label, token: cfg.token, threads },
   )
     .then(out => {
       const payload = JSON.stringify(out.body);
@@ -51,7 +59,7 @@ const server = createServer((rq, rs) => {
 server.listen(cfg.port, cfg.host, () => {
   console.error(
     `[vault-read-api] nghe ${cfg.host}:${cfg.port} · mạng ${cfg.network} · nút ${chain.label} · ` +
-    `${cfg.scopes.length} địa chỉ vault · thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"}`,
+    `${cfg.scopes.length} địa chỉ vault · ${cfg.consumeScopes.length} địa chỉ consume · thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"}`,
   );
   if (cfg.token === "" && isLoopback(cfg.host)) {
     console.error(
@@ -62,7 +70,7 @@ server.listen(cfg.port, cfg.host, () => {
 });
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
-  process.on(sig, () => { server.close(() => process.exit(0)); });
+  process.on(sig, () => { threads?.stop(); server.close(() => process.exit(0)); });
 }
 
 function log(method: string | undefined, url: string | undefined, status: number, ms: number): void {

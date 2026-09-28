@@ -79,7 +79,7 @@ const ShardDatum = ShardDatumSchema as unknown as ShardDatum;
 
 // ── Types ─────────────────────────────────────────────────────
 
-// Số ngày mỗi epoch KHÁC NHAU theo mạng: mainnet 5 ngày, Preview/Preprod 1 ngày
+// Số ngày mỗi epoch KHÁC NHAU theo mạng: Preview 1 ngày, Preprod và mainnet 5 ngày
 // (ProtocolUtils: MS_PER_EPOCH_BY_NETWORK). Bản trước hardcode `× 5` nên trên testnet
 // nó in "~10 days" cho một khoảng chờ thật là 2 ngày — người vận hành đọc số đó sẽ
 // tưởng hỏng rồi bỏ đi. Suy từ tham số mạng, đừng nhớ mòn.

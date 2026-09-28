@@ -275,15 +275,15 @@ Tiêu MAGIC = **1 tx co-spend 2 validator**:
 
 `consume.ak` đọc redeemer `BurnBatch` của `vault_ref` qua `tx.redeemers` (purpose Spend), giải mã
 `burns` bằng `builtin.un_constr_data` (param `burn_batch_constr` = constr index BurnBatch của vault đó:
-Instant=2, Snapshot=1, Vacuum=4, Schedule=2 — per-vault deploy). Hai validator đọc **CÙNG** PriceParam
+Instant=2, Schedule=2, Prepaid=2 — per-vault deploy; Snapshot/Vacuum đã bỏ khỏi kho). Hai validator đọc **CÙNG** PriceParam
 beacon + **CÙNG** `op_type/op_count` → giá không lệch. KHÔNG `tx.mint`.
 
 ### B1. Beacon `PriceParam` (reference input — CIP-31, KHÔNG tiêu)
 DAO/keeper post 1 UTxO mang `PriceParam` NFT one-shot (mẫu `beacon_nft.ak`). Datum:
 ```
 PriceParam {
-  op_prices    : List<OpPrice>,   // OpPrice{ op_type: Int, base_price: Int }  — bảng giá danh nghĩa
-  demand_mult  : Int,             // hệ số co giãn hiện hành (keeper cập nhật, scale Q)
+  op_prices    : List<OpPrice>,   // OpPrice{ op_type: Int, base_price: Int, demand_mult: Int }
+                                  //   demand_mult TÁCH theo op_type (CC-LOAD-COUNT-UNIT), scale Q
   m_min, m_max : Int,             // chặn clamp (scale Q)
   epoch        : Int,             // epoch cập nhật gần nhất (chống stale)
 }

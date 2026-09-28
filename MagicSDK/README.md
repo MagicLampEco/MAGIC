@@ -263,7 +263,10 @@ LAMP riêng:
 | Mạng | `ms_per_epoch` | Độ dài epoch | `lamp_asset_name` |
 |---|---|---|---|
 | Mainnet | 432.000.000 | 5 ngày | `LAMP` |
-| Preview / Preprod | 86.400.000 | 1 ngày | `tLAMP` |
+| Preprod | 432.000.000 | 5 ngày | `tLAMP` |
+| Preview | 86.400.000 | 1 ngày | `tLAMP` |
+
+Nguồn: `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK` — bảng này chép lại, lệch thì mã thắng.
 
 Cả hai đều là apply-param, nên hash validator khác theo mạng ⇒ **địa chỉ vault khác theo
 mạng**. Vault tạo trên Preview không dùng được trên Mainnet. Hardcode tên asset testnet vào

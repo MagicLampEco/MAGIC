@@ -131,6 +131,7 @@ export function creditsAfterLock(
       remaining: amount,
       issued_epoch: epoch,
       last_draw_epoch: epoch,
+      consumed_unsettled: 0n, // dòng mới chưa đốt gì ⟹ chưa nợ quỹ đồng nào
     },
   ];
   if (next.length > MAX_PREPAID_CREDITS) {
@@ -217,7 +218,14 @@ export function drawMagic(
 // BurnBatch
 // ══════════════════════════════════════════════════════════════
 
-/** Tiêu MAGIC dạng kế toán. Batch của epoch đã chết KHÔNG tiêu được (C-PP-5). */
+/**
+ * Tiêu MAGIC dạng kế toán. Batch của epoch đã chết KHÔNG tiêu được (C-PP-5).
+ *
+ * Mỗi lượt đốt còn GHI NỢ `amount` nanogic vào `consumed_unsettled` của dòng
+ * hạn-mức mang `fund_id == batch.contract_id`. Dòng đó phải tồn tại đúng một —
+ * thiếu là NÉM, không âm thầm bỏ qua: bỏ qua là đốt MAGIC mà không ai nợ ai,
+ * tức phần CARP đối ứng kẹt trong quỹ vĩnh viễn (đúng lỗ vá ngày 2026-09-28).
+ */
 export function burnBatches(
   vault: PrepaidVaultDatum,
   burns: readonly (readonly [string, bigint])[],
@@ -226,6 +234,7 @@ export function burnBatches(
   if (burns.length === 0) reject("C-PP-9", "danh sách burns rỗng");
 
   let batches: MagicBatch[] = [...vault.magic_batches];
+  let credits: PrepaidCredit[] = [...vault.prepaid_credits];
   for (const [batchId, amount] of burns) {
     if (amount <= 0n) reject("C-PP-9", `lượng tiêu ${amount} phải > 0`);
     const hits = batches.filter((b) => b.batch_id === batchId);
@@ -245,10 +254,12 @@ export function burnBatches(
       if (b.batch_id !== batchId) return [b];
       return left === 0n ? [] : [{ ...b, current_amount: left }];
     });
+    credits = addConsumed(credits, target.contract_id, amount);
   }
 
   return {
     ...vault,
+    prepaid_credits: credits,
     magic_batches: batches,
     last_updated_epoch: epoch,
     attribution: {
@@ -257,6 +268,26 @@ export function burnBatches(
       total_events: vault.attribution.total_events + 1n,
     },
   };
+}
+
+/** Gương `add_consumed` bên Aiken: ghi nợ vào ĐÚNG MỘT dòng, thiếu thì ném. */
+function addConsumed(
+  credits: readonly PrepaidCredit[],
+  fundId: string,
+  amount: bigint,
+): PrepaidCredit[] {
+  const hits = credits.filter((c) => c.fund_id === fundId);
+  if (hits.length !== 1) {
+    reject(
+      "C-PP-2",
+      `không có dòng hạn-mức nào cho quỹ ${fundId} — MAGIC đốt rồi mà không ai nợ ai`,
+    );
+  }
+  return credits.map((c) =>
+    c.fund_id === fundId
+      ? { ...c, consumed_unsettled: c.consumed_unsettled + amount }
+      : c,
+  );
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -299,34 +330,59 @@ export function pruneExpired(
 }
 
 // ══════════════════════════════════════════════════════════════
-// FundSettle
+// SettleLine (constr 6) + FundSettle
 // ══════════════════════════════════════════════════════════════
 
 /**
- * Σ phần `current_amount` GIẢM trên các batch của đúng quỹ này và CÒN SỐNG.
- * Batch hết hạn không bao giờ được tính — INV-MAGIC-CITIZEN (C-PP-7).
+ * Vault sau một lượt `SettleLine`: nợ quyết toán của dòng `fundId` về 0, mọi
+ * trường khác giữ nguyên. Ném khi dòng không tồn tại hoặc không nợ gì
+ * (reject-noop — on-chain đòi `delta > 0`).
+ *
+ * Giao dịch đi kèm BẮT BUỘC có UTxO quỹ mang `fundId`, tiêu bằng `FundSettle`,
+ * với `magic_settled` tăng đúng bằng `settleLineDebt(vault, fundId)`. Không kèm
+ * quỹ thì on-chain từ chối — đó là điểm khác bản trước 2026-09-28.
  */
-export function settleDelta(
+export function settleLine(
+  vault: PrepaidVaultDatum,
+  fundId: string,
+  epoch: bigint,
+): PrepaidVaultDatum {
+  const delta = settleLineDebt(vault, fundId);
+  if (delta <= 0n) {
+    reject("C-PP-7", `dòng hạn-mức của quỹ ${fundId} không nợ gì để quyết toán`);
+  }
+  return {
+    ...vault,
+    prepaid_credits: vault.prepaid_credits.map((c) =>
+      c.fund_id === fundId ? { ...c, consumed_unsettled: 0n } : c,
+    ),
+    last_updated_epoch: epoch,
+  };
+}
+
+/** Nợ quyết toán đang treo trên dòng `fundId`. Không có dòng ⟹ NÉM, không trả 0. */
+export function settleLineDebt(
+  vault: PrepaidVaultDatum,
+  fundId: string,
+): bigint {
+  const hits = vault.prepaid_credits.filter((c) => c.fund_id === fundId);
+  if (hits.length !== 1) {
+    reject("C-PP-2", `cần ĐÚNG MỘT dòng hạn-mức cho quỹ ${fundId}, có ${hits.length}`);
+  }
+  return hits[0]!.consumed_unsettled;
+}
+
+/**
+ * Gương `settle_line_delta` bên Aiken: phần nợ quỹ được xoá trong một giao dịch,
+ * đọc từ cặp datum vault vào/ra. Dòng phải có ở CẢ HAI đầu — dòng hạn-mức không
+ * bao giờ bị xoá, nên thiếu là hình dạng lạ và phải ném, không quy về 0.
+ */
+export function settleLineDelta(
   vaultIn: PrepaidVaultDatum,
   vaultOut: PrepaidVaultDatum,
   fundId: string,
-  epoch: bigint,
 ): bigint {
-  let acc = 0n;
-  for (const b of vaultIn.magic_batches) {
-    const relevant =
-      b.contract_id === fundId &&
-      b.source === BATCH_SOURCE_PREPAID &&
-      b.created_epoch === epoch;
-    if (!relevant) continue;
-    const after = vaultOut.magic_batches.find((o) => o.batch_id === b.batch_id);
-    const left = after ? after.current_amount : 0n;
-    if (left > b.current_amount) {
-      reject("C-PP-7", `batch ${b.batch_id} tăng số dư khi tiêu — không hợp lệ`);
-    }
-    acc += b.current_amount - left;
-  }
-  return acc;
+  return settleLineDebt(vaultIn, fundId) - settleLineDebt(vaultOut, fundId);
 }
 
 export function fundAfterSettle(

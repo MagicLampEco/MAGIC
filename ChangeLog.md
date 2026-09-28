@@ -5,6 +5,22 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-09-29 — PrepaidGen tách đốt và quyết toán: `consumed_unsettled` + `SettleLine`
+
+**Đổi gì.** `PrepaidCredit` thêm trường thứ 5 `consumed_unsettled`; `BurnBatch` ghi nợ vào đó;
+redeemer vault mới `SettleLine` (constr 6, permissionless) đưa nợ về 0 và cộng đúng bằng ấy vào
+`magic_settled` của quỹ trong cùng giao dịch. `FundSettle` chỉ còn nhận co-spend với `SettleLine`.
+Output quỹ và output vault tiếp nối không được mang reference script; quỹ không được rút ADA.
+CARP Preprod trỏ sang `86ea6717…/110d0c97…`. `scripts/consumeBook.ts` nhận loại két `prepaid`.
+
+**Vì sao.** Bản trước đo quyết toán bằng phần batch giảm TRONG giao dịch đốt: đốt không kèm quỹ
+thì mất dấu vĩnh viễn (CARP đối ứng kẹt trong quỹ), và `paid_fund.spend` chỉ nhận một quỹ mỗi tx
+nên lượt đốt chạm hai quỹ chỉ quyết toán được một.
+
+**Cái gì gãy nếu ai đó đang bám bản cũ.** Lược đồ datum vault đổi ⟹ hash đổi
+(`prepaid_vault 80d2ce80…`, `paid_fund bf12f3a4…`); cụm Preprod PrepaidGen 2026-09-20 không đọc
+được bằng mã mới. Ai dựng `FundSettle` cùng `BurnBatch` sẽ bị từ chối — phải gửi `SettleLine`.
+
 ## 2026-09-15 — Hai giới hạn được ghi vào sổ nợ trước khi chúng thành mã: `Paymaster` và `C1`
 
 **Đổi gì.** Chỉ `DevStatus.md`. Không một dòng mã nào đổi, có chủ ý.

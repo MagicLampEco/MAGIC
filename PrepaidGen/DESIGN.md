@@ -97,25 +97,28 @@ redeemer `BurnBatch` qua `un_constr_data` với `burn_batch_constr` per-vault. V
        CARP ví platform/user
               │  PrepaidLock (vault authoritative)
               ▼
-  ┌──────────────────────┐        đọc để quyết toán
-  │  PaidFund UTxO       │◄───────────────────────────┐
-  │  NFT one-shot        │                            │
-  │  carp_locked         │                            │
-  │  credit_issued       │        FundSettle          │
-  │  magic_settled       │  (fund authoritative)      │
-  │  provider_claimed    │                            │
-  └──────────┬───────────┘                            │
-             │ FundClaim ≤ trần F2                    │
-             ▼                                        │
-        ví provider                                   │
-                                                      │
-  ┌──────────────────────┐   PrepaidDraw   ┌──────────┴──────────┐
-  │ PrepaidVault UTxO    │ ─────────────►  │  MagicBatch epoch e │
-  │ prepaid_credits      │   hạn-mức→MAGIC │  decay_window = 1   │
-  │ magic_batches        │                 └─────────┬───────────┘
-  │ did_commit           │   PrunePrepaid            │ BurnBatch
-  │ personal_delegate    │ ◄─────────────  (chết)    ▼
-  └──────────────────────┘   trả lại hạn-mức    dịch vụ (ConsumeMAGIC)
+  ┌──────────────────────┐   SettleLine + FundSettle — giao dịch RIÊNG,
+  │  PaidFund UTxO       │◄──── một quỹ mỗi lượt, permissionless ──────┐
+  │  NFT one-shot        │      (delta = consumed_unsettled của dòng)  │
+  │  carp_locked         │                                            │
+  │  credit_issued       │                                            │
+  │  magic_settled       │                                            │
+  │  provider_claimed    │                                            │
+  └──────────┬───────────┘                                            │
+             │ FundClaim ≤ trần F2                                    │
+             ▼                                                        │
+        ví provider                                                   │
+                                                                      │
+  ┌──────────────────────┐   PrepaidDraw   ┌──────────────────────┐   │
+  │ PrepaidVault UTxO    │ ─────────────►  │  MagicBatch epoch e  │   │
+  │ prepaid_credits      │   hạn-mức→MAGIC │  decay_window = 1    │   │
+  │  ▸ remaining         │                 └─────────┬────────────┘   │
+  │  ▸ consumed_unsettled│◄── ghi nợ ────────────────┤ BurnBatch      │
+  │ magic_batches        │   PrunePrepaid            ▼                │
+  │ did_commit           │ ◄─────────────  (chết)  dịch vụ            │
+  │ personal_delegate    │   trả lại hạn-mức       (ConsumeMAGIC)     │
+  └──────────┬───────────┘                                            │
+             └────────────────────────────────────────────────────────┘
 ```
 
 ### 2.1 Hai script
@@ -238,8 +241,9 @@ cùng tiêu trong giao dịch (chống desync — bài học `C-SCH-SHARD-BIND`)
 | `PrepaidLock` | **vault** — kiểm cả delta quỹ (`carp_locked`, `credit_issued`) lẫn delta hạn-mức | quỹ: có đúng 1 vault input tại `datum.vault_hash` tiêu bằng constr 0; các trường bất biến của quỹ không đổi; `carp_locked` khớp value |
 | `PrepaidDraw` | **vault** (quỹ không tham gia giao dịch) | — |
 | `PrunePrepaid` | **vault** (quỹ không tham gia) | — |
-| `BurnBatch` | **vault** | ConsumeMAGIC ép `Σburns == required` |
-| `FundSettle` | **quỹ** — đọc thẳng cặp datum vào/ra của vault | vault chạy `BurnBatch` như thường, không biết đến quỹ |
+| `BurnBatch` | **vault** — trừ batch **và** ghi nợ vào `consumed_unsettled` của đúng dòng | ConsumeMAGIC ép `Σburns == required`; quỹ **không** tham gia giao dịch |
+| `SettleLine` | **vault** — kiểm cả delta quỹ lẫn delta sổ nợ (khuôn `PrepaidLock`); permissionless | quỹ: `FundSettle` đọc lại cặp datum vault vào/ra và đòi vault tiêu bằng constr 6 |
+| `FundSettle` | **quỹ** — đọc thẳng cặp datum vào/ra của vault | vault chạy `SettleLine` cho đúng `fund_id` này |
 | `FundClaim` | **quỹ** | — |
 
 ---
@@ -270,16 +274,25 @@ constructor index của một enum cục bộ. ScheduleGen dùng enum 4 nhánh +
 
 ```
 PrepaidCredit {
-  fund_id         : ByteArray,   // khoá — mỗi fund_id tối đa 1 dòng trong một vault
-  remaining       : Int,         // carpdrop chưa rút thành MAGIC
-  issued_epoch    : Int,         // epoch khoá lần đầu
-  last_draw_epoch : Int,
+  fund_id            : ByteArray,   // khoá — mỗi fund_id tối đa 1 dòng trong một vault
+  remaining          : Int,         // carpdrop chưa rút thành MAGIC
+  issued_epoch       : Int,         // epoch khoá lần đầu
+  last_draw_epoch    : Int,
+  consumed_unsettled : Int,         // nanogic đã đốt, quỹ CHƯA ghi nhận (thêm 2026-09-28)
 }
 ```
 
 Khoá theo `fund_id` (không có `credit_id` riêng) để `PrunePrepaid` biết trả hạn-mức về đâu **không
 nhập nhằng**. Dòng hạn-mức **không bao giờ bị xoá**, kể cả `remaining == 0` — nếu xoá thì batch chết
 sau đó không còn chỗ để trả lại. Trần `MAX_PREPAID_CREDITS = 20` quỹ / vault.
+
+`consumed_unsettled` là **sổ nợ quyết toán**, thêm ngày 2026-09-28. `BurnBatch` cộng vào nó đúng
+lượng vừa đốt; `SettleLine` (constr 6) đưa nó về 0 và chuyển đúng bằng ấy sang
+`PaidFundDatum.magic_settled`. Dòng này cũng là lý do trường phải nằm **trong `PrepaidCredit`** chứ
+không phải một tổng ở cấp vault: một vault có tối đa 20 quỹ, mà mỗi quỹ là một UTxO riêng và
+`paid_fund.spend` chỉ cho **một** quỹ input mỗi giao dịch — nợ phải tách theo quỹ thì mới trả
+được từng quỹ một. THÊM Ở CUỐI giữ chỉ số các trường cũ nhưng **không** giữ khả năng đọc UTxO vault
+đời trước (`BOUNDARIES.md` §2 — Aiken nghiêm về số trường cả hai chiều).
 
 ### 3.3 `PrepaidVaultDatum`
 
@@ -332,10 +345,11 @@ PrepaidVaultRedeemer                         constr
   PrunePrepaid                                  3
   SetDelegate { new_delegate }                  4
   SetDidCommit { did_commit }                   5   ← thêm 2026-09-15, Ở CUỐI
+  SettleLine  { fund_id }                       6   ← thêm 2026-09-28, Ở CUỐI
 
 PaidFundRedeemer                             constr
   FundLock                                      0
-  FundSettle                                    1
+  FundSettle                                    1   ← co-spend với SettleLine (6)
   FundClaim { amount_carpdrop }                 2
 ```
 
@@ -364,7 +378,7 @@ PaidFundRedeemer                             constr
 | **C-PP-4** một chiều, không hoàn (F2) | không redeemer nào trả CARP về người khoá; hạn-mức không đổi ngược thành CARP; lối ra CARP **duy nhất** là `FundClaim` cho provider | cấu trúc — không tồn tại nhánh nào khác |
 | **C-PP-5** cliff per-epoch | mọi batch sinh ra có `created_epoch == epoch hiện tại`, `decay_window == 1`; `BurnBatch` **từ chối** batch có `created_epoch ≠ epoch hiện tại`; batch chết chỉ có thể bị dọn | vault `validate_draw`, `validate_burn_batch`, `validate_prune` |
 | **C-PP-6** trần đòi của provider (F2) + đích | `provider_claimed' ≤ ⌊magic_settled / par_scale⌋` **và** `carp_locked' ≥ outstanding' + ⌊outstanding' × buffer_bps / 10000⌋`, với `outstanding' = credit_issued − ⌊magic_settled/par_scale⌋`. **Đích (2026-09-26):** không input nào tại `beneficiary`; **đúng một** output tại `beneficiary` (so địa chỉ ĐẦY ĐỦ); CARP ở output đó == `amount`; datum output == `NoDatum` khi `beneficiary_datum = None`, == `InlineDatum(d)` khi `Some(d)`. `beneficiary`/`beneficiary_datum` bất biến ở mọi nhánh spend quỹ | quỹ `validate_fund_claim`; bất biến ở `fund_common_checks` + khối delta quỹ của `validate_lock` |
-| **C-PP-7** chỉ quyết toán MAGIC TIÊU THẬT | `FundSettle` chỉ cộng phần `current_amount` giảm trên batch có `contract_id == fund_id`, `source == 3`, **và** `created_epoch == epoch hiện tại`; và bắt buộc vault được tiêu bằng redeemer constr 2 (`BurnBatch`). MAGIC hết hạn hoặc bị dọn **không bao giờ** thành `magic_settled` | quỹ `validate_settle` (INV-MAGIC-CITIZEN) |
+| **C-PP-7** chỉ quyết toán MAGIC TIÊU THẬT | *(đổi 2026-09-28)* chỉ `BurnBatch` cộng vào `consumed_unsettled`, và nó đã ép `created_epoch == epoch hiện tại` tại chỗ ghi (C-PP-5); `SettleLine` chuyển trọn số đó sang `magic_settled` rồi đưa dòng về 0, đòi `delta > 0`; `FundSettle` đọc lại chính delta ấy từ cặp datum vault vào/ra và đòi vault tiêu bằng constr 6. `PrunePrepaid` **không chạm** `consumed_unsettled` ⟹ MAGIC hết hạn không có đường nào thành `magic_settled` | vault `validate_burn_batch` + `validate_settle_line`; quỹ `validate_fund_settle` (INV-MAGIC-CITIZEN) |
 | **C-PP-8** DID ghi MỘT LẦN rồi bất biến | genesis ép `did_commit == #""`; `SetDidCommit` là nhánh **GHI duy nhất** và chỉ chạy được khi giá trị hiện tại còn rỗng, giá trị mới khác rỗng và dài đúng 32 byte; năm redeemer còn lại ép `did_commit` giống hệt input↔output. Ràng buộc độ dài đặt ở **chỗ GHI**, cố ý KHÔNG đặt ở nhánh bảo toàn — đặt ở đó là biến mọi vault đã nằm trên chuỗi với did sai khuôn thành bất khả tiêu | vault: `validate_mint_vault_id` + `validate_set_did_commit` + năm nhánh còn lại |
 | **C-PP-9** phân quyền | Lock **mở dòng mới** (vault chưa có dòng hạn-mức cho `fund_id` — cùng vị từ `has_credit_line` mà `add_credit` dùng): **chỉ** `owner` ký (siết 2026-09-26 — genesis quỹ ai cũng lập được, nên "platform nào cũng được" để người lạ lấp 20 chỗ `MAX_PREPAID_CREDITS` vĩnh viễn và tranh UTxO vault vô hạn) · Lock **nạp thêm** vào dòng đã có: `platform` HOẶC `owner` (luồng app khoá hộ giữ nguyên) · Draw: **chỉ** `owner` · BurnBatch: **chỉ** `owner` (vế `personal_delegate` chết 2026-09-16, Nợ #14) · Prune: **không cần chữ ký** · SetDelegate: **chỉ** `owner`, và chỉ xoá được · SetDidCommit: **chỉ** `owner` (uỷ quyền TRẢ PHÍ không phải uỷ quyền KHAI DANH TÍNH, và vì cổng chỉ cho ghi một lần nên một delegate ghi trước là nạn nhân mất luôn đường gắn DID thật) · FundClaim: `platform` · genesis quỹ: `platform` (2026-09-26) | vault + quỹ |
 | **C-PP-10** chống thoả-mãn-kép | đúng 1 vault input tại địa chỉ vault; đúng 1 output vault; đúng 1 input và đúng 1 output mang NFT quỹ; không đúc/đốt token của policy NFT quỹ (= script hash `paid_fund`) trong mọi giao dịch vận hành | vault + quỹ |
@@ -397,22 +411,43 @@ sổ khớp value".
 ### 5.3 `PrepaidDraw` — chỉ vault
 ```
 inputs : vault UTxO (constr 1)
-outputs: vault' (remaining −amount; thêm 1 MagicBatch amount×1000 nanogic, epoch hiện tại)
+outputs: vault' (remaining −amount; thêm 1 MagicBatch amount × PAR_SCALE nanogic (PAR_SCALE = 1), epoch hiện tại)
 signers: owner   (vế personal_delegate chết 2026-09-16, Nợ #14)
 ```
 Quỹ **không** tham gia → không tranh chấp UTxO quỹ ở đường nóng.
 
-### 5.4 Tiêu (`BurnBatch`) + quyết toán (`FundSettle`)
+### 5.4 Tiêu (`BurnBatch`) — quỹ KHÔNG tham gia
 ```
-inputs : vault UTxO (constr 2) · quỹ UTxO (constr 1) · Engage UTxO (ConsumeMAGIC)
-outputs: vault' (current_amount giảm) · quỹ' (magic_settled += Σ giảm) · Engage'
+inputs : vault UTxO (constr 2) · Engage UTxO (ConsumeMAGIC)
+outputs: vault' (current_amount giảm; consumed_unsettled của dòng tương ứng TĂNG bằng ấy) · Engage'
+signers: owner
 ```
-Quỹ tự tính `Σ` từ cặp datum vault vào/ra, chỉ đếm batch của **chính quỹ này** và **còn sống**.
-`FundSettle` là tuỳ chọn về mặt kỹ thuật (vault tiêu được mà không cần quỹ), nhưng provider **phải**
-kèm quỹ vào giao dịch nếu muốn được ghi nhận — không quyết toán thì không đòi được (F2).
+Mỗi `(batch_id, amt)` vừa trừ batch vừa **ghi nợ** `amt` vào `consumed_unsettled` của dòng hạn-mức
+có `fund_id == batch.contract_id`. Dòng đó phải tồn tại **đúng một** — thiếu là giao dịch bị từ
+chối, không phải bỏ qua.
+
+### 5.4b Quyết toán (`SettleLine` + `FundSettle`) — một quỹ mỗi giao dịch
+```
+inputs : vault UTxO (constr 6, SettleLine { fund_id }) · quỹ UTxO của fund_id (constr 1)
+outputs: vault' (consumed_unsettled của dòng đó về 0) · quỹ' (magic_settled += delta)
+signers: KHÔNG ai — permissionless
+```
+`delta` = toàn bộ `consumed_unsettled` của dòng; `delta > 0` bắt buộc (reject-noop). Vault kiểm cả
+hai đầu (khuôn `PrepaidLock`); quỹ đọc lại chính delta ấy từ cặp datum vault vào/ra và đòi vault
+tiêu bằng constr 6 — hai bên kiểm cùng một con số từ hai phía, không bên nào tin bên nào.
+
+> **Đây là thay đổi ngày 2026-09-28, và nó sửa một lỗ mất tiền.** Bản trước ghép quyết toán vào
+> chính giao dịch `BurnBatch` rồi đo delta bằng phần `current_amount` giảm **trong giao dịch đó**,
+> và mô tả `FundSettle` là *"tuỳ chọn về mặt kỹ thuật"*. Hai hệ quả, cả hai im lặng: (1) người dựng
+> giao dịch đốt là **chủ vault**, không phải provider — một `BurnBatch` không kèm quỹ vẫn được nhận,
+> và phần MAGIC ấy mất dấu vĩnh viễn, nên CARP đối ứng kẹt trong quỹ (provider không đòi được vì
+> F2, người dùng không lấy lại được vì C-PP-4), `outstanding` phình mãi và đường "tiêu hết rồi rút
+> hết" ở §6.1 không bao giờ tới đích; (2) `paid_fund.spend` ép **đúng một** quỹ input mỗi giao dịch,
+> nên một lượt đốt chạm batch của hai quỹ chỉ quyết toán được một. Tách sổ nợ ra khỏi giao dịch đốt
+> làm hai việc độc lập nhau về thời điểm và về số quỹ.
 
 ### 5.5 `PrunePrepaid` — permissionless
-Bỏ mọi batch `created_epoch < epoch hiện tại`, cộng `⌊current_amount / 1000⌋` về đúng dòng hạn-mức
+Bỏ mọi batch `created_epoch < epoch hiện tại`, cộng `⌊current_amount / PAR_SCALE⌋` (PAR_SCALE = 1) về đúng dòng hạn-mức
 `fund_id` tương ứng. Từ chối nếu không có gì để dọn (reject-noop, §7.4).
 
 ### 5.6 `FundClaim`

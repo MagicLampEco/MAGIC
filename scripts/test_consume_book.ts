@@ -2,7 +2,7 @@
 // Chạy từ scripts/:  npx tsx test_consume_book.ts
 // Dòng cuối: `=== ĐẠT ===` hoặc `=== HỎNG: n ca sai ===` (mã thoát 1).
 
-import { consumeKey, parseVaultKind, selectConsumeBook } from "./consumeBook.js";
+import { consumeKey, parseVaultKind, selectConsumeBook, vaultHashKey } from "./consumeBook.js";
 
 let sai = 0;
 function ca(ten: string, fn: () => void) {
@@ -22,12 +22,19 @@ function phaiNem(fn: () => void, chua: string) {
 }
 
 console.log("── parseVaultKind");
-ca("nhận schedule / instant, không phân biệt hoa thường", () => {
+ca("nhận schedule / instant / prepaid, không phân biệt hoa thường", () => {
   bang(parseVaultKind("schedule"), "schedule", "schedule");
   bang(parseVaultKind("INSTANT"), "instant", "INSTANT");
+  bang(parseVaultKind("Prepaid"), "prepaid", "Prepaid");
+});
+ca("mỗi loại trỏ đúng khoá hash vault của nó", () => {
+  bang(vaultHashKey("schedule"), "VAULT_SCHEDULE_HASH", "schedule");
+  bang(vaultHashKey("instant"), "VAULT_INSTANT_HASH", "instant");
+  bang(vaultHashKey("prepaid"), "VAULT_PREPAID_HASH", "prepaid");
+  bang(consumeKey("CONSUME_SCRIPT_HASH", "prepaid"), "CONSUME_SCRIPT_HASH_PREPAID", "consumeKey prepaid");
 });
 ca("không có mặc định: rỗng ⟹ ném", () => phaiNem(() => parseVaultKind(undefined), "Không có mặc định"));
-ca("giá trị lạ ⟹ ném", () => phaiNem(() => parseVaultKind("prepaid"), "prepaid"));
+ca("giá trị lạ ⟹ ném", () => phaiNem(() => parseVaultKind("snapshot"), "snapshot"));
 
 console.log("── selectConsumeBook");
 ca("chép đúng bộ của loại được chọn, không lấy bộ kia", () => {

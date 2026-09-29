@@ -24,6 +24,7 @@
 // từ hôm qua vẫn tự khai lag = 0, vì đỉnh nó biết cũng dừng ở hôm qua.
 
 import { decodeEngageDatum } from "@magiclamp/sdk";
+import { ownerRefOf } from "@magiclamp/protocol-utils";
 
 import type { ChainHistoryReader, ChainPoint, ChainTxEffect, ChainUtxo, AddressTx } from "./chain.js";
 import type { ConsumeScope, ThreadIndexConfig } from "./config.js";
@@ -93,32 +94,6 @@ export interface FreshnessView {
 
 // ── Chủ thread ──────────────────────────────────────────────────────────────────
 
-/**
- * `Credential` đã `Data.from` (`{VerificationKey:[h]} | {Script:[h]}`) → `{ type, hash }`.
- *
- * 🔴 BẢN CHÉP có nhãn của `ProtocolUtils/src/ownerAuth.ts` ▸ `ownerRefOf`, chép 2026-09-29.
- * Lý do chép thay vì import: `ProtocolUtils/dist` (thứ `@magiclamp/protocol-utils` thật sự
- * nạp) dựng 2026-08-16, TRƯỚC khi `ownerAuth.ts` được xuất — import nó hôm nay ra `undefined`
- * lúc chạy. Bản chép tự chết ồn ào: `tests/threadIndex.test.ts` ▸ *"bản chép ownerRefOf khớp
- * nguồn"* chạy cả hai trên cùng bộ đầu vào, đọc nguồn qua đường tương đối tới `src/`. Khi
- * `dist` được dựng lại, thay hàm này bằng import và xoá bài đó.
- */
-export function engageOwnerOf(c: unknown): ThreadOwner {
-  if (c !== null && typeof c === "object" && !Array.isArray(c)) {
-    const o = c as Record<string, unknown>;
-    const keys = Object.keys(o);
-    if (keys.length === 1) {
-      const tag = keys[0]!;
-      const v = o[tag];
-      if (Array.isArray(v) && v.length === 1 && typeof v[0] === "string" && /^[0-9a-fA-F]{56}$/.test(v[0])) {
-        if (tag === "VerificationKey") return { type: "key", hash: v[0].toLowerCase() };
-        if (tag === "Script") return { type: "script", hash: v[0].toLowerCase() };
-      }
-    }
-  }
-  throw new Error("trường owner không phải Credential ({VerificationKey:[h]} | {Script:[h]}, h 28 byte)");
-}
-
 // ── Phân loại một UTxO ──────────────────────────────────────────────────────────
 
 /** Đúng một tài sản dưới `policy`, số lượng 1, tên 32 byte ⟹ tên (hex). Ngược lại null. */
@@ -160,7 +135,7 @@ export function classifyThreadUtxo(u: ChainUtxo, consumeHash: string): ThreadCla
 
   let owner: ThreadOwner;
   try {
-    owner = engageOwnerOf(d.owner);
+    owner = ownerRefOf(d.owner);
   } catch (e) {
     return skip("OWNER_SHAPE", (e as Error).message);
   }

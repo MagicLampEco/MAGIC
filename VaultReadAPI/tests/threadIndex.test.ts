@@ -10,12 +10,10 @@ import { loadConfig, parseConsumeScopes } from "../src/config.js";
 import { VaultReadError } from "../src/errors.js";
 import { handle } from "../src/http.js";
 import { VaultReadService } from "../src/service.js";
-import { ThreadIndex, engageOwnerOf } from "../src/threadIndex.js";
-// Nguồn của `ownerRefOf` — đọc thẳng `src/` (tệp không import gì) vì `dist` đang cũ.
-import { ownerRefOf } from "../../ProtocolUtils/src/ownerAuth.js";
+import { ThreadIndex } from "../src/threadIndex.js";
 
 import {
-  ADDR_A, CFG, CONSUME_A, CONSUME_B, FakeHistoryChain, OWNER_PKH, SCOPE_A, SCOPE_B,
+  ADDR_A, CFG, CONSUME_A, CONSUME_B, FakeHistoryChain, SCOPE_A, SCOPE_B,
   didOf, threadDatumHex, threadOutput, threadUnit,
 } from "./fixtures/threads.js";
 import { PREVIEW_VAULT_ADDRESS, PREVIEW_VAULT_SCRIPT_HASH } from "./fixtures/preview-e5fd34b1.js";
@@ -422,24 +420,6 @@ describe("chuẩn hoá tác động giao dịch (Blockfrost) — hai luật củ
   it("thiếu cờ `reference` ⟹ NÉM, không coi là false", () => {
     const { reference: _drop, ...noFlag } = input({});
     expect(() => normalizeTxEffect("dd".repeat(32), true, [noFlag], [])).toThrow(VaultReadError);
-  });
-});
-
-describe("bản chép `engageOwnerOf` — tự chết ồn ào khi lệch nguồn", () => {
-  it("bản chép ownerRefOf khớp nguồn trên cả nhánh chấp nhận lẫn nhánh từ chối", () => {
-    const ok = [
-      { VerificationKey: [OWNER_PKH] },
-      { Script: ["AB".repeat(28)] },
-    ];
-    for (const c of ok) expect(engageOwnerOf(c)).toEqual(ownerRefOf(c));
-    const bad: unknown[] = [
-      null, [], {}, { VerificationKey: [] }, { VerificationKey: ["11"] },
-      { VerificationKey: [OWNER_PKH], Script: [OWNER_PKH] }, { Other: [OWNER_PKH] }, OWNER_PKH,
-    ];
-    for (const c of bad) {
-      expect(() => ownerRefOf(c)).toThrow();
-      expect(() => engageOwnerOf(c)).toThrow();
-    }
   });
 });
 

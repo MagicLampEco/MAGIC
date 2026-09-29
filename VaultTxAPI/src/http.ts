@@ -34,6 +34,7 @@ import {
 import { toSubmitBody, type VaultTxService } from "./service.js";
 import { BUILD_ROUTE_OF_PATH, buildResultBody, parseBuildRequest, reqString, runBuild } from "./buildRequest.js";
 import { CodedApiError } from "./errors.js";
+import type { BuildInfo } from "./buildInfo.js";
 import type { FeeProxy } from "./feeProxy.js";
 import { quoteFee } from "./feeQuote.js";
 import { OwnerAuthError } from "@magiclamp/protocol-utils";
@@ -68,6 +69,9 @@ export interface RouterDeps {
   logInternal: (referenceCode: string, cause: unknown) => void;
   /** Proxy Feecover. Vắng ⟹ `/fee/utxo` + `/fee/sign` trả 501 `FEE_PROXY_UNAVAILABLE`. */
   feeProxy?: FeeProxy;
+  /** Commit của mã đang chạy, đo lúc khởi động (`buildInfo.ts`). Vắng ⟹ `/health` khai
+   *  `commit_source: "not_measured"` thay vì im lặng. */
+  build?: BuildInfo;
 }
 
 export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpResponse> {
@@ -94,6 +98,11 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         holds_signing_material: false,
         // Chỉ trạng thái, không bao giờ token hay băm của nó.
         feecover: deps.feeProxy === undefined ? "absent" : "configured",
+        // Bên gọi so commit này với commit họ dựa vào, khỏi phải hỏi người vận hành.
+        commit: deps.build?.commit ?? null,
+        commit_dirty: deps.build?.dirty ?? null,
+        commit_source: deps.build?.source ?? "not_measured",
+        ...(deps.build?.reason === undefined ? {} : { commit_unavailable_reason: deps.build.reason }),
       },
     };
   }

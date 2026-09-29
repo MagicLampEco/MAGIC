@@ -84,6 +84,12 @@ GET  /health
 Chủ khoá được bỏ trống `change_address` (dịch vụ suy địa chỉ enterprise của khoá, §7); chủ
 script thì phải gửi một trong hai trường.
 
+`/health` khai commit của mã đang chạy để bên gọi tự đối chiếu, khỏi hỏi người vận hành:
+`commit` (40 hex), `commit_dirty` (cây có tệp track bị sửa tại chỗ ⟹ commit không đủ mô tả mã
+chạy), `commit_source`. Commit ĐO bằng `git rev-parse HEAD` ở cây mã lúc khởi động, không nhận
+qua biến môi trường (`src/buildInfo.ts`). Không đo được thì `commit: null`,
+`commit_source: "unavailable"` kèm `commit_unavailable_reason` — không đoán.
+
 Bốn đường dựng trên vault có sẵn trả:
 
 ```jsonc
@@ -843,12 +849,16 @@ Có thì đủ trường và đúng hình dạng, không thì cổng khởi đ�
 - **Sổ phát-hành và bảng giữ chỗ nằm trong bộ nhớ một tiến trình**, như khoá mềm: hai bản sau
   bộ cân tải thì `/fee/sign` chỉ nhận tx do chính bản đó phát.
 
-- **`SdkTxBuilder` CHƯA từng dựng một giao dịch thật trên chuỗi.** Nó qua `tsc --noEmit` và
-  qua bài quét không-chạm-khoá, và nó gọi đúng bốn hàm của `@magiclamp/sdk` với chữ ký
-  thật. Nhưng chạy nó cần một lần deploy sống (script tham chiếu, shard, beacon giá, thread
-  Engage) mà lượt dựng gói này không có. **Đừng đọc "biên dịch xanh" thành "chạy đúng".**
-  Phần đã đo bằng thực thi là: bộ định tuyến, khoá mềm, cổng cấu hình, và toàn bộ đường
-  `summary` — chúng chạy trên CBOR thật dựng tại chỗ bằng CML.
+- **`SdkTxBuilder` đã dựng giao dịch thật trên Preprod cho BỐN route, và chỉ bốn route đó.**
+  Ngày 2026-09-27, trên một cụm tập dượt (tLAMP `8169b76c…`, chủ vault dạng khoá), dịch vụ
+  chạy cục bộ đã dựng, được ký, nộp và vào khối: `create-vault` `7eed3990…` (khối 5225018),
+  `instant-gen` qua `fee_payer` `66185661…`, `open-thread` qua `change_address` `a5c59940…`,
+  `consume` qua `fee_payer` `64d33314…`. Hash đầy đủ tra được trên explorer Preprod theo tiền
+  tố. Ba lỗi lộ ra ở lượt đó đã vá ở `370d3b49`.
+  **Chưa chạy thật:** `schedule-commit`, `schedule-fire`, `burn-batch`, chủ dạng script
+  (`did_stake`), `funding` did_payment (xem trên), và mọi route qua Feecover thật. Phần
+  không-chuỗi (bộ định tuyến, khoá mềm, cổng cấu hình, đường `summary`) đo bằng CBOR thật dựng
+  tại chỗ bằng CML.
 - **Khoá mềm chỉ đúng với một tiến trình.** Hai bản sau bộ cân tải thì cần một chỗ giữ
   chung (Redis, hoặc một hàng đợi theo `owner_pkh`).
 - **Cổng policy LAMP lúc khởi động chỉ chặn những gì ĐÃ BIẾT là sai.** `parseDeployment`

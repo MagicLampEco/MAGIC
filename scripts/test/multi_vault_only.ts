@@ -21,6 +21,11 @@
 //   NETWORK=Preview CASE=mv2 npm run test:multi-vault
 //   NETWORK=Preview CASE=mv3 npm run test:multi-vault
 //   NETWORK=Preview CASE=mv4 npm run test:multi-vault
+//
+// Gen v2.0 — sổ trạng thái nạp vào env (thiếu ⟹ NÉM nêu tên): RATE_PARAM_HASH ·
+//   GREENBACK_BEACON_HASH · GB_SHARD_HASH (apply-param két Instant; két Schedule nướng
+//   hash `commit` mà `commit` nướng các hash đó). MV-4 (UpdateProfile) lượt đầu trong
+//   epoch mới đọc beacon ρ (+ két Wakeme đã ghim; `WAKEME_VAULT_UTXO` để chỉ định).
 
 import {
   Lucid, Blockfrost, Data,
@@ -34,6 +39,9 @@ import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   PROTOCOL, POLICY_IDS, ASSET_NAMES, SCRIPT_HASHES,
 } from "../config.js";
+import { genV2BeaconRefsFromBook } from "../deployParams.js";
+import { readRateBeaconUtxo, resolveWakemeVaultUtxo } from "./genV2Chain.js";
+import { decodeVaultDatum as decodeInstantVaultDatum } from "../../InstantGen/offchain/src/types.js";
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
@@ -70,7 +78,8 @@ async function loadValidators(spec: ModuleBundle): Promise<{
   if (!unapplied) throw new Error(`vault.vault.spend not found in ${spec.plutusJsonPath}`);
   return {
     plutusJson,
-    bundle: { vaultUnappliedCbor: unapplied.compiledCode },
+    // Schedule cần blueprint trọn: két nướng hash `commit` đã apply (`applyScheduleScripts`).
+    bundle: { vaultUnappliedCbor: unapplied.compiledCode, vaultPlutusJson: plutusJson },
   };
 }
 
@@ -79,15 +88,12 @@ function buildProtocol(): ProtocolParams {
     network: NETWORK,
     lampPolicyId: POLICY_IDS.lamp,
     lampAssetName: ASSET_NAMES.lamp,
-    umNftPolicyId: POLICY_IDS.um_nft,
-    umScriptHash: SCRIPT_HASHES.um_datum,
     // Không truyền treasuryAddress: dưới I-ACT-7 không handler nào của vault
     // Instant/Schedule chuyển LAMP, nên không còn tham số Treasury.
     shardPolicyId: POLICY_IDS.shard_nft,
-    // §6.3 BackingBeacon pins (Instant). All-zero default ⟹ Gen shut.
-    backingNftPolicyId: POLICY_IDS.backing,
-    backingScriptHash: SCRIPT_HASHES.backing_beacon,
-    // Apply-param #8 của vault Instant (két Wakeme). Getter: chỉ đọc khi SDK dựng danh
+    // Gen v2.0: năm hash GenBeacons từ sổ (UM + BackingBeacon đã rời két). Thiếu ⟹ NÉM.
+    ...genV2BeaconRefsFromBook(process.env),
+    // Apply-param #7 của vault Instant (két Wakeme). Getter: chỉ đọc khi SDK dựng danh
     // sách tham số Instant, nên ca chỉ-Schedule không chết theo trên mạng chưa có két.
     get wakemeVaultHash(): string { return SCRIPT_HASHES.wakeme_vault; },
   };
@@ -265,7 +271,26 @@ async function runMv4(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
   const newProfile: Profile = v1.profile === "Ember" ? "Flame" : "Ember";
 
   const { vaultScript } = applyVaultValidator("Instant", bundle, protocol);
+  // Gen v2.0: lượt đầu trong epoch mới làm mới checkpoint ⟹ đọc ρ (+ két Wakeme đã ghim).
+  const epoch = tip.posixMs / PROTOCOL.MS_PER_EPOCH;
+  // `listVaultsForOwner` trả datum theo kiểu chung; đọc hai ô checkpoint bằng lược đồ két
+  // Instant v2.0 của gói nền (datum khác hình dạng ⟹ NÉM, không đoán).
+  const v1Datum = decodeInstantVaultDatum(v1.utxo.datum!);
+  const refresh = v1Datum.cap_epoch < epoch;
+  const rateBeaconUtxo = refresh ? await readRateBeaconUtxo(lucid, genV2BeaconRefsFromBook(process.env)) : undefined;
+  const wakemeVaultUtxo = refresh
+    ? await resolveWakemeVaultUtxo(lucid, SCRIPT_HASHES.wakeme_vault, v1Datum.wakeme_link, process.env.WAKEME_VAULT_UTXO)
+    : undefined;
   const result = await updateProfile({
+    ...(rateBeaconUtxo ? { rateBeaconUtxo } : {}),
+    ...(wakemeVaultUtxo ? { wakemeVaultUtxo } : {}),
+    instantVaultParams: {
+      lampPolicyId:    POLICY_IDS.lamp,
+      lampAssetName:   ASSET_NAMES.lamp,
+      rateNftPolicy:   protocol.rateNftPolicy!,
+      rateScriptHash:  protocol.rateScriptHash!,
+      wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,
+    },
     lucid,
     vaultUtxo: v1.utxo,
     newProfile,

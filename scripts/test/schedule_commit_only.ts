@@ -6,6 +6,15 @@
 //   LAMP_PER_EPOCH=<int>    (λ in tLAMP, default 1)
 //   TAMPER=<mode>
 //   SKIP_OWNER_SIG=1
+//   DRY_RUN=1               — dựng + chạy thử validator, KHÔNG ký, KHÔNG gửi
+//
+// Gen v2.0 (sổ trạng thái, nạp vào env bởi runner — thiếu khoá nào ⟹ NÉM nêu tên):
+//   RATE_PARAM_HASH · GREENBACK_BEACON_HASH · GB_SHARD_HASH  — apply-param `commit`
+//   GB_SHARD_CAP_NANOGIC · VAULT_REGISTRY_HASH · REF_GB_SHARD_UTXO
+//   REF_COMMIT_SCHEDULE_UTXO — ref-script `commit` (withdraw-zero)
+//   REF_VAULT_SCHEDULE_UTXO · REF_SHARD_UTXO — ref-script két + shard LAMP (BẮT BUỘC)
+//   Nhánh ký uỷ cho `commit`: tx mang một mục rút 0 từ Script(hash commit); stake credential
+//   của nó phải đã đăng ký (deploy/08_register_commit_stake.ts).
 //
 // ## Mã thoát — bảng CHUNG của thư mục này, nguồn ở `scripts/awaitTx.ts` ▸ `## Mã thoát`
 //   0 xong (tx ĐÃ vào khối) · 1 hỏng thật · 2 CHƯA ĐO ĐƯỢC · 3 lượt phá LỌT qua.
@@ -16,6 +25,7 @@ import {
   Lucid, Blockfrost, Data, Constr,
   credentialToAddress, scriptHashToCredential,
   getAddressDetails,
+  type Validator,
 } from "@lucid-evolution/lucid";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
@@ -25,9 +35,13 @@ import {
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
-import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
+import { scheduleScriptPair, shardSpendParams } from "../deployParams.js";
 import { buildScheduleCommitTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
+import { parseFlag } from "../runResult.js";
+import {
+  fetchRefScript, readGenV2ChainRefs, readGenV2E2eBook, requireOutRefKey,
+} from "./genV2Chain.js";
 
 const L = BigInt(process.env.SCHEDULE_LENGTH ?? "10");
 const LAMBDA = lampToOildrop(BigInt(process.env.LAMP_PER_EPOCH ?? "1"));
@@ -41,16 +55,12 @@ async function fetchTip() {
 }
 
 // ── Script tham chiếu (CIP-33) ──────────────────────────────────────────────
-// Đính kèm CẢ HAI validator (vault + shard) làm tx vượt trần 16384 byte — đo
-// thật trên Preview: 17303. Nên hai bước ScheduleGen BẮT BUỘC đọc script từ
-// chain. Chạy `npx tsx deploy/06_publish_ref_scripts.ts` rồi nạp hai biến.
-async function refScriptUtxos(lucid: any) {
-  const refs = [process.env.REF_VAULT_SCHEDULE_UTXO, process.env.REF_SHARD_UTXO]
-    .filter((s): s is string => !!s)
-    .map((s) => { const [h, i] = s.split("#"); return { txHash: h!, outputIndex: Number(i) }; });
-  if (refs.length === 0) return undefined;
-  return await lucid.utxosByOutRef(refs);
-}
+// Đính kèm CẢ HAI validator (vault + shard) đã vượt trần 16384 byte — đo thật trên
+// Preview: 17303; Gen v2.0 còn thêm `gb_shard` và `commit`. Nên cả bốn BẮT BUỘC đọc
+// từ chain. Bản trước lọc bỏ biến vắng rồi rơi về đường đính kèm — tức một biến quên
+// nạp biến thành một tx không bao giờ dựng nổi, với câu lỗi nói về kích thước chứ
+// không nói về biến. Nay thiếu là NÉM nêu tên biến.
+const REF_HINT = "chạy `npx tsx deploy/06_publish_ref_scripts.ts` rồi nạp sổ";
 
 async function main() {
   console.log("╔════════════════════════════════════════════╗");
@@ -59,19 +69,25 @@ async function main() {
 
   // Apply-param THEO TÊN — dùng chung bản đồ giá trị với deploy/07 nên địa chỉ
   // dựng lại ở đây không thể lệch với vault đã deploy.
+  const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
+  // Sổ Gen v2.0 TRƯỚC mọi lệnh gọi mạng: thiếu khoá thì ném ngay, kể đủ khoá thiếu.
+  const gen = readGenV2E2eBook(process.env, { withScheduleCommit: true });
+  const refVaultOutRef = requireOutRefKey(process.env, "REF_VAULT_SCHEDULE_UTXO", REF_HINT);
+  const refShardOutRef = requireOutRefKey(process.env, "REF_SHARD_UTXO", REF_HINT);
+
   const blueprint      = await loadBlueprint("ScheduleGen");
-  const vaultUnapplied = findValidator(blueprint, "vault.vault.spend");
   const shardUnapplied = findValidator(blueprint, "vault.shard.spend");
 
-  const { script: vaultScript, hash: vaultHash } = appliedScript(
-    vaultUnapplied,
-    scheduleVaultParams({
-      lampPolicyId:  POLICY_IDS.lamp,
-      lampAssetName: ASSET_NAMES.lamp,
-      shardPolicyId: POLICY_IDS.shard_nft,
-      msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
-    }),
-  );
+  // Cặp `commit` → két, đúng thứ tự một chiều (`deployParams.ts` ▸ `scheduleScriptPair`).
+  const pair = scheduleScriptPair(blueprint, {
+    lampPolicyId:  POLICY_IDS.lamp,
+    lampAssetName: ASSET_NAMES.lamp,
+    shardPolicyId: POLICY_IDS.shard_nft,
+    msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    ...gen.beacons,
+  });
+  const vaultScript = pair.vaultScript;
+  const vaultHash   = pair.vaultHash;
   const { script: shardScript, hash: shardHash } = appliedScript(
     shardUnapplied,
     shardSpendParams({ shardPolicyId: POLICY_IDS.shard_nft, vaultScriptHash: vaultHash }),
@@ -80,7 +96,8 @@ async function main() {
   const shardAddr = credentialToAddress(NETWORK, scriptHashToCredential(shardHash));
 
   console.log(`Vault address:  ${vaultAddr}`);
-  console.log(`Shard address:  ${shardAddr}\n`);
+  console.log(`Shard address:  ${shardAddr}`);
+  console.log(`commit hash:    ${pair.commitHash}\n`);
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
@@ -203,9 +220,27 @@ async function main() {
     if (tamper || process.env.SKIP_OWNER_SIG === "1") {
       console.log(`⚠  TEST MODE: ${tamper ?? "skipOwnerSig"} — expecting REJECT.\n`);
     }
-    const refUtxos = await refScriptUtxos(lucid);
+    // Beacon ρ + GB, sổ két, 16 shard GB, ref `gb_shard` (kiểm hash theo sổ).
+    const chain = await readGenV2ChainRefs(lucid, gen);
+    const gbShardScript = chain.gbShardRefUtxo.scriptRef as Validator;   // hash đã kiểm = GB_SHARD_HASH
+    const [vaultRef, shardRef, commitRef] = await Promise.all([
+      fetchRefScript(lucid, refVaultOutRef, "REF_VAULT_SCHEDULE_UTXO", vaultHash),
+      fetchRefScript(lucid, refShardOutRef, "REF_SHARD_UTXO", shardHash),
+      fetchRefScript(lucid, gen.refCommitOutRef!, "REF_COMMIT_SCHEDULE_UTXO", pair.commitHash),
+    ]);
+    console.log(`Beacon ρ:       ${chain.rateBeaconUtxo.txHash}#${chain.rateBeaconUtxo.outputIndex}`);
+    console.log(`Beacon GB:      ${chain.gbBeaconUtxo.txHash}#${chain.gbBeaconUtxo.outputIndex}`);
+    console.log(`Sổ két (VRG):   ${chain.vaultRegistryUtxo.txHash}#${chain.vaultRegistryUtxo.outputIndex}\n`);
     const result = await buildScheduleCommitTx({
-      refScriptUtxos: refUtxos,
+      refScriptUtxos: [vaultRef, shardRef, chain.gbShardRefUtxo],
+      commitScript: pair.commitScript,
+      commitRefScriptUtxo: commitRef,
+      gen: { ...gen.beacons, gbShardCapNanogic: gen.gbShardCapNanogic },
+      rateBeaconUtxo: chain.rateBeaconUtxo,
+      gbBeaconUtxo: chain.gbBeaconUtxo,
+      vaultRegistryUtxo: chain.vaultRegistryUtxo,
+      gbShardUtxos: chain.gbShardUtxos,
+      gbShardScript,
       lucid, vaultUtxo, shardUtxos,
       scheduleLength: L, lampPerEpoch: LAMBDA,
       userAddress: address,
@@ -219,7 +254,7 @@ async function main() {
     // DRY_RUN=1: validator đã chạy thử trong `complete()`; dừng trước khi ký. Cùng quy ước
     // với test/instant_only.ts. Ở nhánh này nó đáng giá hơn chỗ khác: commit thật khoá
     // `L × λ` LAMP và C-VAC-12 cấm huỷ giữa chừng.
-    if (process.env.DRY_RUN === "1") {
+    if (dryRun) {
       if (tamper || process.env.SKIP_OWNER_SIG === "1") {
         console.error("\n⚠  UNEXPECTED (DRY RUN): tamper tx qua validator khi chạy thử.");
         process.exit(3);

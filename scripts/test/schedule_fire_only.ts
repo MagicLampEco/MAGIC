@@ -5,6 +5,11 @@
 // ký, KHÔNG gửi. Cùng quy ước với test/schedule_commit_only.ts và test/instant_only.ts.
 // Giá trị khác "1"/"0" ⟹ ném (`runResult.ts ▸ parseFlag`): `DRY_RUN=true` mà bị đọc
 // thành "chạy thật" là một lượt fire lên chuỗi đúng lúc người gõ tin là đang chạy thử.
+//
+// Gen v2.0: fire KHÔNG đọc beacon (đọc `m_per_epoch` đã chốt lúc ký), nhưng hash két đổi
+// vì két nướng hash `commit` (#5) — `commit` lại nướng ba hash GenBeacons. Nên vẫn cần sổ:
+//   RATE_PARAM_HASH · GREENBACK_BEACON_HASH · GB_SHARD_HASH (thiếu ⟹ NÉM nêu tên)
+//   REF_VAULT_SCHEDULE_UTXO · REF_SHARD_UTXO — ref-script két + shard LAMP (BẮT BUỘC)
 
 import {
   Lucid, Blockfrost, Data, Constr,
@@ -16,7 +21,8 @@ import {
   POLICY_IDS, ASSET_NAMES, ADDRESSES, PROTOCOL,
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
-import { scheduleVaultParams, shardSpendParams } from "../deployParams.js";
+import { genV2BeaconRefsFromBook, scheduleScriptPair, shardSpendParams } from "../deployParams.js";
+import { fetchRefScript, requireOutRefKey } from "./genV2Chain.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatum } from "../../ScheduleGen/offchain/src/types.js";
 import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
@@ -33,15 +39,9 @@ async function fetchTip() {
 
 // ── Script tham chiếu (CIP-33) ──────────────────────────────────────────────
 // Đính kèm CẢ HAI validator (vault + shard) làm tx vượt trần 16384 byte — đo
-// thật trên Preview: 17303. Nên hai bước ScheduleGen BẮT BUỘC đọc script từ
-// chain. Chạy `npx tsx deploy/06_publish_ref_scripts.ts` rồi nạp hai biến.
-async function refScriptUtxos(lucid: any) {
-  const refs = [process.env.REF_VAULT_SCHEDULE_UTXO, process.env.REF_SHARD_UTXO]
-    .filter((s): s is string => !!s)
-    .map((s) => { const [h, i] = s.split("#"); return { txHash: h!, outputIndex: Number(i) }; });
-  if (refs.length === 0) return undefined;
-  return await lucid.utxosByOutRef(refs);
-}
+// thật trên Preview: 17303. Nên hai biến BẮT BUỘC; thiếu ⟹ NÉM nêu tên biến (bản
+// trước lọc bỏ biến vắng rồi rơi về đường đính kèm không bao giờ dựng nổi).
+const REF_HINT = "chạy `npx tsx deploy/06_publish_ref_scripts.ts` rồi nạp sổ";
 
 async function main() {
   const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
@@ -50,19 +50,22 @@ async function main() {
   console.log("╚════════════════════════════════════════════╝\n");
 
   // Apply-param THEO TÊN — dùng chung bản đồ giá trị với deploy/07.
+  const beacons        = genV2BeaconRefsFromBook(process.env);   // thiếu ⟹ ném nêu tên khoá
+  const refVaultOutRef = requireOutRefKey(process.env, "REF_VAULT_SCHEDULE_UTXO", REF_HINT);
+  const refShardOutRef = requireOutRefKey(process.env, "REF_SHARD_UTXO", REF_HINT);
   const blueprint      = await loadBlueprint("ScheduleGen");
-  const vaultUnapplied = findValidator(blueprint, "vault.vault.spend");
   const shardUnapplied = findValidator(blueprint, "vault.shard.spend");
 
-  const { script: vaultScript, hash: vaultHash } = appliedScript(
-    vaultUnapplied,
-    scheduleVaultParams({
-      lampPolicyId:  POLICY_IDS.lamp,
-      lampAssetName: ASSET_NAMES.lamp,
-      shardPolicyId: POLICY_IDS.shard_nft,
-      msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
-    }),
-  );
+  // Cặp `commit` → két (`deployParams.ts` ▸ `scheduleScriptPair`); fire chỉ dùng nửa két.
+  const pair = scheduleScriptPair(blueprint, {
+    lampPolicyId:  POLICY_IDS.lamp,
+    lampAssetName: ASSET_NAMES.lamp,
+    shardPolicyId: POLICY_IDS.shard_nft,
+    msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    ...beacons,
+  });
+  const vaultScript = pair.vaultScript;
+  const vaultHash   = pair.vaultHash;
   const { script: shardScript, hash: shardHash } = appliedScript(
     shardUnapplied,
     shardSpendParams({ shardPolicyId: POLICY_IDS.shard_nft, vaultScriptHash: vaultHash }),
@@ -151,7 +154,10 @@ async function main() {
 
   try {
     if (tamper) console.log(`⚠  TEST MODE: ${tamper} — expecting REJECT.\n`);
-    const refUtxos = await refScriptUtxos(lucid);
+    const refUtxos = await Promise.all([
+      fetchRefScript(lucid, refVaultOutRef, "REF_VAULT_SCHEDULE_UTXO", vaultHash),
+      fetchRefScript(lucid, refShardOutRef, "REF_SHARD_UTXO", shardHash),
+    ]);
     const result = await buildScheduleFireTx({
       refScriptUtxos: refUtxos,
       lucid, vaultUtxo, shardUtxos, scheduleId,

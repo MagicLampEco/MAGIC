@@ -83,6 +83,40 @@ pub fn lent_lamp(
   lamp_policy: PolicyId,
   lamp_asset_name: AssetName,
 ) -> Int {
+  when
+    wakeme_read(
+      reference_inputs,
+      wakeme_vault_hash,
+      own_script_hash,
+      own_vault_name,
+      current_period,
+      lamp_policy,
+      lamp_asset_name,
+    )
+  is {
+    None -> 0
+    Some((_owner_commit, lent)) -> lent
+  }
+}
+
+/// Cùng luật với `lent_lamp`, nhưng trả cả DANH TÍNH két đã đọc (Gen v2.0, gói b1):
+///   `None`                     — không có két Wakeme nào trong reference input;
+///   `Some((owner_commit, L))`  — đúng một két thoả (a)(b)(c)(e); `L` có thể là 0
+///                                 theo hai ngoại lệ (d)(f).
+/// Hai két trở lên, hoặc một két sai vế fail ⟹ FAIL (không bao giờ `None`).
+///
+/// `owner_commit` là nguồn DUY NHẤT của `VaultDatum.wakeme_link`: link SUY RA từ két
+/// hợp lệ, không ai tự chọn. Vế (d)(f) trả `L = 0` nhưng vẫn trả `owner_commit`,
+/// vì két đó vẫn ghim đúng két IG này — chỉ phần mượn kỳ này không được tính.
+pub fn wakeme_read(
+  reference_inputs: List<Input>,
+  wakeme_vault_hash: ScriptHash,
+  own_script_hash: ScriptHash,
+  own_vault_name: AssetName,
+  current_period: Int,
+  lamp_policy: PolicyId,
+  lamp_asset_name: AssetName,
+) -> Option<(ByteArray, Int)> {
   // Luật 1 — lọc theo payment credential. Phần stake của địa chỉ KHÔNG xét: nó không
   // do validator Wakeme giữ, và không đổi được ai tiêu được UTxO.
   let wakeme_refs =
@@ -93,9 +127,10 @@ pub fn lent_lamp(
       },
     )
   when wakeme_refs is {
-    [] -> 0
+    [] -> None
     [wakeme_ref] ->
-      read_one_vault(
+      Some(
+        read_one_vault(
         wakeme_ref.output,
         wakeme_vault_hash,
         own_script_hash,
@@ -103,6 +138,7 @@ pub fn lent_lamp(
         current_period,
         lamp_policy,
         lamp_asset_name,
+      ),
       )
     // Luật 2 — hai két trở lên: fail thay vì chọn một, vì "chọn cái đầu" để người dựng
     // tx quyết két nào được đọc bằng thứ tự input.
@@ -119,7 +155,7 @@ fn read_one_vault(
   current_period: Int,
   lamp_policy: PolicyId,
   lamp_asset_name: AssetName,
-) -> Int {
+) -> (ByteArray, Int) {
   // (a) datum inline, Constr 0, ≥ 13 trường. Datum hash / không datum ⟹ fail ở `expect`.
   expect InlineDatum(raw) = vault.datum
   let Pair(tag, fields) = builtin.un_constr_data(raw)
@@ -171,7 +207,7 @@ fn read_one_vault(
   // chỉ đạt được khi mọi vế fail đều đúng.
   let lent = conditional_lamp + owned_lamp
   if gen_pin_period >= current_period {
-    0
+    (owner_commit, 0)
   } else {
     // (f) datum phải được value THẬT của két đỡ. Bất biến "datum khớp value" là lời
     // hứa của MỘT hash két Wakeme — validator sau hash đó giữ lời hứa, không ai khác.
@@ -182,9 +218,9 @@ fn read_one_vault(
     // trả đúng số datum khai, KHÔNG trả phần dư (ai cũng gửi thêm LAMP vào két được).
     let lamp_held = assets.quantity_of(vault.value, lamp_policy, lamp_asset_name)
     if lamp_held < lent {
-      0
+      (owner_commit, 0)
     } else {
-      lent
+      (owner_commit, lent)
     }
   }
 }

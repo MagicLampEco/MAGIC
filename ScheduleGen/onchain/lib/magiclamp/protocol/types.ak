@@ -226,3 +226,12 @@ pub type ShardRedeemer {
   ShardUpdateCommit { delta_locked: Natural, delta_committed: Natural }
   ShardUpdateFire   { fires_in_tx: Natural,  lambda: Natural }
 }
+
+// ── EpochUsage — một ô của cửa sổ `usage_window` (SPEC §6.1.2) ──────────────
+// BẢN CHÉP CÓ NHÃN của InstantGen/onchain/lib/magiclamp/protocol/types.ak ▸ `EpochUsage`
+// (2026-09-30). Thứ tự trường `generated, consumed` là hợp đồng nhị phân (constr 0,
+// hai trường); `gen_formula.ak` import từ đây. Sửa một bên phải sửa bên kia cùng commit.
+pub type EpochUsage {
+  generated: Int,
+  consumed: Int,
+}

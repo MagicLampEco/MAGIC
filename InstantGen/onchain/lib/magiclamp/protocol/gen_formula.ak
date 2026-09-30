@@ -21,16 +21,10 @@ use magiclamp/protocol/constants.{
   rho_max_q, scale_coverage_q, usage_factor_floor_q, usage_window_len,
 }
 use magiclamp/protocol/math.{min2}
+use magiclamp/protocol/types.{EpochUsage}
 
-/// Một ô của cửa sổ `usage_window` (SPEC §6.1.2): nanogic sinh và nanogic đốt
-/// (BurnBatch) của vault trong MỘT epoch.
-///
-/// Kiểu này CHƯA vào datum ở gói (a). Khi vào datum (gói sau), thứ tự trường
-/// `generated, consumed` là hợp đồng nhị phân (constr 0, hai trường).
-pub type EpochUsage {
-  generated: Int,
-  consumed: Int,
-}
+// `EpochUsage` (một ô cửa sổ, SPEC §6.1.2) đã vào datum két từ gói (b1): định nghĩa
+// DUY NHẤT nằm ở `types.ak` (hợp đồng nhị phân), import lại ở đây.
 
 fn usage_non_negative(u: EpochUsage) -> Bool {
   u.generated >= 0 && u.consumed >= 0

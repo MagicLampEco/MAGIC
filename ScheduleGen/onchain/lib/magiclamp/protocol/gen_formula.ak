@@ -1,4 +1,4 @@
-// BẢN CHÉP CÓ NHÃN của InstantGen/onchain/lib/magiclamp/protocol/gen_formula.ak @ 1e9a72d9 — sửa một bên phải sửa bên kia cùng commit (BOUNDARIES P8); bài so thân: ScheduleGen/tests/genFormulaMirror.test.ts
+// BẢN CHÉP CÓ NHÃN của InstantGen/onchain/lib/magiclamp/protocol/gen_formula.ak (đồng bộ 2026-09-30 cùng commit dời EpochUsage sang types.ak) — sửa một bên phải sửa bên kia cùng commit (BOUNDARIES P8); bài so thân: ScheduleGen/tests/genFormulaMirror.test.ts
 // lib/gen_formula.ak — công thức sinh chung Gen v2.0 `F(L, usage_ratio, GB)`
 // (SPEC §6.1.1–§6.1.3, INV-MAGIC-CITIZEN).
 //
@@ -22,16 +22,10 @@ use magiclamp/protocol/constants.{
   rho_max_q, scale_coverage_q, usage_factor_floor_q, usage_window_len,
 }
 use magiclamp/protocol/math.{min2}
+use magiclamp/protocol/types.{EpochUsage}
 
-/// Một ô của cửa sổ `usage_window` (SPEC §6.1.2): nanogic sinh và nanogic đốt
-/// (BurnBatch) của vault trong MỘT epoch.
-///
-/// Kiểu này CHƯA vào datum ở gói (a). Khi vào datum (gói sau), thứ tự trường
-/// `generated, consumed` là hợp đồng nhị phân (constr 0, hai trường).
-pub type EpochUsage {
-  generated: Int,
-  consumed: Int,
-}
+// `EpochUsage` (một ô cửa sổ, SPEC §6.1.2) đã vào datum két từ gói (b1): định nghĩa
+// DUY NHẤT nằm ở `types.ak` (hợp đồng nhị phân), import lại ở đây.
 
 fn usage_non_negative(u: EpochUsage) -> Bool {
   u.generated >= 0 && u.consumed >= 0

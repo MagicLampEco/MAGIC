@@ -23,6 +23,10 @@
 //   422 ENGAGE_THREAD_DATUM_UNDECODABLE  `engage_ref` mang NFT nhưng datum không giải được
 //   422 OPEN_THREAD_TX_MISMATCH  giao dịch mở thread vừa dựng lệch (NFT/output/datum genesis)
 //   501 OPEN_THREAD_FUNDING_UNSUPPORTED  `/tx/open-thread` kèm `funding` — chưa hỗ trợ
+//   400 DID_COMMIT_INVALID       `/tx/bind-did`: `did_commit` không phải đúng 64 ký tự hex thường (32 byte)
+//   409 DID_ALREADY_BOUND        `/tx/bind-did`: thread đã gắn DID (một chiều, một lần) — `details.did_commit` = giá trị hiện có
+//   422 BIND_DID_TX_MISMATCH     giao dịch gắn DID vừa dựng lệch (redeemer/value/datum/chữ ký chủ)
+//   501 BIND_DID_FEE_PAYER_UNSUPPORTED  `/tx/bind-did` kèm `fee_payer` — bộ dựng chưa đặt hạn dùng mà ví trả phí đòi
 //   401 FEE_PROXY_APP_UNKNOWN    `X-Feecover-Token` không khớp ứng dụng nào (hoặc không có ứng dụng mặc định)
 //   400 FEE_PROXY_PURPOSE_UNMAPPED  ứng dụng chưa có mục đích Feecover cho route đó
 //   403 FEE_PROXY_APP_PURPOSE    mục đích mang tiền tố của ứng dụng khác / thiếu tiền tố của chính ứng dụng

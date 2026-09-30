@@ -26,6 +26,7 @@ import {
   createVault, decodePriceParam, requiredFromBeacon,
   type DidPaymentFundingInput, type PlutusJson, type Profile, type VaultModule, type VaultType,
 } from "@magiclamp/sdk";
+import { buildBindDidTx } from "@magiclamp/consumemagic";
 import { posixMsToEpoch, OwnerAuthError, type Network, type OwnerAuth, type OwnerRef } from "@magiclamp/protocol-utils";
 
 import type { ChainReader, ChainTip } from "./chain.js";
@@ -60,6 +61,15 @@ export interface OpenThreadContext {
   changeAddress: string;
 }
 
+/** Ngữ cảnh gắn DID — không có vault đầu vào; thread đầu vào đi riêng trong tham số. */
+export interface BindDidContext {
+  owner: OwnerRef;
+  ownerAuth?: OwnerAuth<TxBuilder>;
+  tip: ChainTip;
+  /** Ví trả phí + thế chấp, nhận tiền thối. Value của thread bảo toàn tuyệt đối, nên ví này chỉ mất phí. */
+  changeAddress: string;
+}
+
 export interface BuiltOpenThread extends BuiltTx {
   /** `policyId + assetName` của NFT thread mà bộ dựng KHAI đã đúc — dịch vụ đọc lại CBOR để đối chiếu. */
   engageNftUnit: string;
@@ -78,6 +88,9 @@ export interface TxBuilderPort {
   instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx>;
   createVault(ctx: CreateVaultContext, p: { lampAmount: bigint; profile?: Profile }): Promise<BuiltCreateVault>;
   openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread>;
+  /** Gắn DID vào thread (redeemer `BindDID`). `engageUtxo`: thread của CHÍNH chủ, `did_commit` đang
+   *  rỗng — đã kiểm ở `VaultTxService.bindDid`. */
+  bindDid(ctx: BindDidContext, p: { engageUtxo: UTxO; didCommit: string }): Promise<BuiltTx>;
   /** Tham số giao thức `coinsPerUtxoByte` của CÙNG ảnh chụp bộ dựng dùng — báo giá tính min-ADA
    *  của UTxO trả phí từ đây (`feeQuote.ts`), không từ một hằng chép tay. */
   coinsPerUtxoByte(): Promise<bigint>;
@@ -410,6 +423,34 @@ export class SdkTxBuilder implements TxBuilderPort {
     return { txCbor: r.tx.toCBOR(), engageNftUnit: r.engageNftUnit };
   }
 
+  /**
+   * Gắn DID qua `@magiclamp/consumemagic` ▸ `buildBindDidTx` (không qua `@magiclamp/sdk`: SDK chưa
+   * xuất tên này). Script consume đọc qua ref CIP-33 của cấu hình, như `/tx/consume`, và phải băm
+   * ra đúng `engageScriptHash`. Không vault, không beacon giá, không validity-range — nhánh
+   * `BindDID` không tính giá và không đổi `last_epoch`.
+   *
+   * Ví của lucid = ví `changeAddress` (phí + thế chấp). Không có đường ví trả phí ở đây: bộ dựng
+   * không đặt `validTo`, mà luật ví trả phí đòi hạn dùng ≤ 1 giờ — tầng dịch vụ trả 501 trước khi
+   * tới được đây.
+   */
+  async bindDid(ctx: BindDidContext, p: { engageUtxo: UTxO; didCommit: string }): Promise<BuiltTx> {
+    const d = this.deps.deployment;
+    const lucid = await this.lucidFor(ctx);
+    const [consumeRef] = await this.deps.chain.utxosByOutRef([d.refScriptUtxos.consume]);
+    const consumeScript = scriptOfRef(consumeRef, "consume");
+    assertScriptHash(consumeScript, d.consume.engageScriptHash, "consume");
+    const r = await rejectAsProtocol(() => buildBindDidTx({
+      lucid,
+      engageUtxo: p.engageUtxo,
+      consumeScript,
+      didCommit: p.didCommit,
+      consumeRefUtxo: consumeRef,
+      // Vắng ⟹ chủ khoá: bộ dựng lấy pkh từ datum thread; chủ script: mục rút `Script(h)`.
+      ownerAuth: ctx.ownerAuth,
+    }));
+    return { txCbor: r.tx.toCBOR() };
+  }
+
   /** Lucid + ví CHỈ-ĐỌC. Ví không có khoá; nó chỉ cung cấp địa chỉ đổi tiền thừa và
    *  danh sách UTxO để chọn đầu vào trả phí. */
   /**
@@ -675,6 +716,11 @@ export class RecordedTxBuilder implements TxBuilderPort {
     this.lastCall = { ...this.lastCall!, changeAddress: ctx.changeAddress };
     if (this.openThreadNftUnit === undefined) throw new Error("[RecordedTxBuilder] không khai NFT cho open_thread.");
     return { ...b, engageNftUnit: this.openThreadNftUnit };
+  }
+  async bindDid(ctx: BindDidContext, p: { engageUtxo: UTxO; didCommit: string }): Promise<BuiltTx> {
+    const b = await this.serve("bind_did", { didCommit: p.didCommit }, ctx);
+    this.lastCall = { ...this.lastCall!, changeAddress: ctx.changeAddress, engageUtxo: p.engageUtxo };
+    return b;
   }
   instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx> {
     return this.serve("instant_gen", p, ctx);

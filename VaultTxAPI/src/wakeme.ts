@@ -1,10 +1,16 @@
-// VaultTxAPI/src/wakeme.ts — két Wakeme ghim két InstantGen: `wakeme_vault_ref` của `/tx/instant-gen`.
+// VaultTxAPI/src/wakeme.ts — két Wakeme ghim két InstantGen: `wakeme_vault_ref` của
+// `/tx/instant-gen`, `/tx/refresh-checkpoint` và `/tx/consume` (Gen v2.0).
 //
 // ── VALIDATOR ĐỌC GÌ ────────────────────────────────────────────────────────────
-// Nhánh sinh của vault InstantGen cộng `L_lent` từ ĐÚNG MỘT két Wakeme nằm trong REFERENCE
-// INPUTS (apply-param #8 `wakeme_vault_hash`, gương TS `@magiclamp/instantgen-sdk` ▸
-// `readLentLamp` ↔ Aiken `wakeme_lent.ak` ▸ `lent_lamp`). 0 két ⟹ `L_lent = 0`, hợp lệ;
-// ≥ 2 két ⟹ tx thất bại. Nên trường này TUỲ CHỌN, và vắng nó thì đường dựng y như cũ.
+// Két InstantGen v2.0 đọc `(owner_commit, L_lent)` từ ĐÚNG MỘT két Wakeme nằm trong REFERENCE
+// INPUTS (apply-param #8 `wakeme_vault_hash`) ở hai chỗ: lượt làm mới checkpoint
+// (`checkpoint.ak` ▸ `expected_checkpoint`) và nhánh sinh (`expected_checkpoint_for_gen`), cả
+// hai qua Aiken `wakeme_lent.ak` ▸ `wakeme_read`. Gương TS là `@magiclamp/instantgen-sdk` ▸
+// `readWakemeVault` — tệp này gọi đúng hàm đó. 0 két ⟹ `L_lent = 0`, hợp lệ; ≥ 2 két ⟹ tx
+// thất bại. Nên trường này TUỲ CHỌN — trừ ca két đã ghim (`wakeme_link` khác "") mà lượt này
+// làm mới checkpoint: khi đó validator đòi két, và `/tx/consume` trả 400
+// `WAKEME_VAULT_REF_REQUIRED` thay vì dựng một tx chắc chắn chết (`service.ts` ▸
+// `consumeCheckpointFor`).
 //
 // ── VÌ SAO KHÔNG TỰ QUÉT ĐỊA CHỈ KÉT ────────────────────────────────────────────
 // Không có chỉ mục "két nào ghim vault này": ghim nằm ở datum[11] của từng két, và mọi két
@@ -18,7 +24,7 @@
 //   không nằm ở script két        ⟹ 409 `WAKEME_VAULT_SCRIPT_MISMATCH`
 //   datum/NFT không đọc được      ⟹ 422 `WAKEME_VAULT_UNREADABLE`
 //   ghim vault khác / không ghim  ⟹ 409 `WAKEME_VAULT_PIN_MISMATCH` (kèm ghim thấy được)
-// Ba ca trên mà dựng tiếp thì validator từ chối cả tx (vế FAIL của `lent_lamp`).
+// Ba ca trên mà dựng tiếp thì validator từ chối cả tx (vế FAIL của `wakeme_read`).
 //
 // Hai ca validator CHO QUA với `L_lent = 0` — ghim trong chính kỳ đang sinh
 // (`gen_pin_period >= epoch`), hoặc value thiếu LAMP so với datum — thì KHÔNG từ chối: tx
@@ -94,8 +100,10 @@ type SeenPin = { hash: string; name: string } | null | "undecodable";
 /**
  * Đọc + kiểm két Wakeme do app chỉ đích danh. NÉM có mã ở mọi vế validator sẽ từ chối;
  * trả `counted: false` + `reason` ở hai vế validator cho qua với `L_lent = 0`.
- * `L_lent` lấy từ `readLentLamp` — CÙNG hàm bộ dựng gọi, nên con số ở đây trùng bit với
- * thứ đi vào `claimed_amount`.
+ * `L_lent` lấy từ `readWakemeVault` — CÙNG hàm bộ dựng SDK gọi (`instant.ts` ▸ `readWakeme`,
+ * `MagicSDK` ▸ `readWakemeForVault`), nên con số ở đây trùng bit với thứ đi vào trần
+ * `cap_nanogic` / `max_m` của lượt làm mới. (`claimed_amount` từ v2.0 là `m` do chủ chọn,
+ * không suy từ `L_lent`.)
  */
 export async function resolveWakemeVault(
   chain: ChainReader, ref: OutRefLike, own: WakemeOwnVault,
@@ -131,7 +139,7 @@ export async function resolveWakemeVault(
       currentPeriod: epoch, lampPolicyId: own.lampPolicyId, lampAssetName: own.lampAssetNameHex,
     });
   } catch (e) {
-    // Script và ghim đã kiểm ở trên; vế còn lại của `readLentLamp` là hình dạng datum/NFT.
+    // Script và ghim đã kiểm ở trên; vế còn lại của `readWakemeVault` là hình dạng datum/NFT.
     throw new CodedApiError(422, "WAKEME_VAULT_UNREADABLE",
       `két Wakeme ${key.slice(0, 16)}… không đạt luật đọc L_lent: ${e instanceof Error ? e.message : String(e)}`,
       { wakeme_vault_ref: key });
@@ -151,7 +159,7 @@ export async function resolveWakemeVault(
   const expected = reason === undefined ? conditional + owned : 0n;
   if (expected !== lent) {
     throw new Error(
-      `[bất biến nội bộ] L_lent của readLentLamp (${lent}) lệch phép suy lý do (${expected}) ở két ${key}.`);
+      `[bất biến nội bộ] L_lent của readWakemeVault (${lent}) lệch phép suy lý do (${expected}) ở két ${key}.`);
   }
 
   return {

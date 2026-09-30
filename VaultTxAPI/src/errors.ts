@@ -38,6 +38,29 @@
 //   501 FEE_PROXY_UNAVAILABLE    bản deploy không khai `feecover`
 //   502 FEE_PROXY_UPSTREAM       Feecover không trả lời / trả 5xx / trả sai hình dạng
 //   502 FEE_PROXY_UPSTREAM_MISMATCH  Feecover ký một tx có hash khác tx đã gửi
+//   400 WAKEME_VAULT_REF_REQUIRED  `/tx/consume` làm mới checkpoint của két đang ghim két Wakeme
+//                                (`wakeme_link` khác "") mà thân bài không kèm `wakeme_vault_ref`
+//   400 INSTANT_GEN_M_INVALID    `m` của `/tx/instant-gen` vắng / không phải chuỗi chữ số / bằng 0
+//   422 INSTANT_GEN_M_ABOVE_MAX  `m` vượt `max_m` tính trên đúng ảnh chụp beacon/shard sẽ dựng
+//   501 CONFIG_MISSING           đường có mã nhưng bản deploy thiếu mục cấu hình nó cần
+//                                (`gen_v2`, `ref_script_utxos.commit|gb_shard`…) — `details.missing`
+//                                nêu đúng khoá, `details.route` nêu đường
+//   400 UTXO_NOT_FOUND / 409 UTXO_SPENT  out-ref do bên gọi đưa không có / đã bị tiêu (`chain.ts`)
+//   409 PREVIOUS_TX_PENDING      tx trước của vault đã nộp nhưng chưa vào khối — UTxO vault đang bị nó tiêu
+//   400 CHANGE_ADDRESS_REQUIRED / CHANGE_ADDRESS_INVALID  thiếu / sai `change_address`
+//   400 OWNER_HASH_INVALID · OWNER_CREDENTIAL_SHAPE · OWNER_ALIAS_MISMATCH · OWNER_WITNESS_SHAPE ·
+//       OWNER_WITNESS_UNEXPECTED · OWNER_ANCHOR_INVALID   chủ / nhân chứng chủ sai (`owner.ts`)
+//   501|400 OWNER_SCRIPT_WITNESS_UNAVAILABLE  chủ script: dịch vụ chưa cấu hình (501) / bên gọi
+//                                thiếu nhân chứng (400). Mã từ `OwnerAuthError`: `ownerApiErrorOf`
+//   400 FUNDING_SHAPE · FUNDING_WITNESS_MISMATCH · FUNDING_ANCHOR_INVALID ·
+//       FUNDING_FEE_PAYER_INVALID · FUNDING_COLLATERAL_INVALID · FUNDING_CHANGE_ADDRESS_CONFLICT
+//                                khối `funding` của `/tx/create-vault` sai (`funding.ts`)
+//   422 FUNDING_TX_MISMATCH      tx tạo vault vừa dựng lệch luật `funding`; mã `FundingError` của
+//                                SDK đi nguyên (`FUNDING_INSUFFICIENT` ⟹ 422, còn lại 400)
+//   501 FUNDING_UNAVAILABLE      bản deploy thiếu `did_stake` ⟹ không đọc được anchor DID cho `funding`
+//   400 FEE_QUOTE_SHAPE · FEE_QUOTE_ROUTE_UNKNOWN · FEE_QUOTE_FUNDING_REQUIRED ·
+//       FEE_QUOTE_SELF_FUNDED · FEE_QUOTE_OWNER_ADDRESS_INVALID · FEE_QUOTE_OWNER_ADDRESSES_TOO_MANY ·
+//       FEE_QUOTE_OWNER_ADDRESSES_DUPLICATE · FEE_QUOTE_FEE_PAYER_IN_PARAMS  yêu cầu báo giá sai (`feeQuote.ts`)
 //   422 TX_BUILD_REJECTED        dựng được tới nơi nhưng giao thức từ chối (L×λ > L_avail,
 //                                MAGIC còn sống < required, shard hết chỗ…)
 //   422 TX_SUMMARY_UNDECODABLE   dựng ra CBOR mà không đọc lại được — xem `summary.ts`

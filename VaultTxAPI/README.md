@@ -68,10 +68,11 @@ kiểm. Hoàn nguyên thì 56/56 xanh.
 ## 3. Bề mặt HTTP
 
 ```
-POST /tx/instant-gen       { owner, [owner_witness], change_address | fee_payer, [wakeme_vault_ref] }
+POST /tx/instant-gen       { owner, [owner_witness], change_address | fee_payer, m, [wakeme_vault_ref] }
+POST /tx/refresh-checkpoint { owner, [owner_witness], change_address | fee_payer, [wakeme_vault_ref] }
 POST /tx/schedule-commit   { owner, [owner_witness], change_address | fee_payer, schedule_length, lamp_per_epoch }
 POST /tx/schedule-fire     { owner, [owner_witness], change_address | fee_payer, schedule_id }
-POST /tx/consume           { owner, [owner_witness], change_address | fee_payer, op_type, op_count, [engage_ref] }
+POST /tx/consume           { owner, [owner_witness], change_address | fee_payer, op_type, op_count, [engage_ref], [wakeme_vault_ref] }
 POST /tx/open-thread       { owner, [owner_witness], change_address }
 POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 POST /tx/submit            { tx_cbor, witness_cbor }
@@ -90,7 +91,8 @@ chạy), `commit_source`. Commit ĐO bằng `git rev-parse HEAD` ở cây mã l�
 qua biến môi trường (`src/buildInfo.ts`). Không đo được thì `commit: null`,
 `commit_source: "unavailable"` kèm `commit_unavailable_reason` — không đoán.
 
-Bốn đường dựng trên vault có sẵn trả:
+Năm đường dựng trên vault có sẵn (`instant-gen`, `refresh-checkpoint`, `schedule-commit`,
+`schedule-fire`, `consume`) trả:
 
 ```jsonc
 {
@@ -105,12 +107,78 @@ Bốn đường dựng trên vault có sẵn trả:
 }
 ```
 
-### `POST /tx/instant-gen`: két Wakeme cho mượn LAMP, `wakeme_vault_ref`
+### Gen v2.0: `summary.gen` trên mọi đường dựng vault
 
-Nhánh sinh của vault InstantGen cộng `L_lent` từ **đúng một** két Wakeme nằm trong
+`summary.gen` đọc năm ô sinh từ datum ĐẦU RA giải mã lại từ `tx_cbor` (`summary.ts` ▸
+`TxSummary.gen`), không từ tham số yêu cầu:
+
+```jsonc
+"gen": {
+  "cap_epoch": "1234",          // két Schedule ⟹ null (ô đó không tồn tại ở két Schedule)
+  "cap_nanogic": "750750000",   // két Schedule ⟹ null
+  "wakeme_link": "",            // "" = chưa ghim két Wakeme; két Schedule ⟹ null
+  "usage_window_epoch": "1234",
+  "usage_factor_q": "1000000000" // `usageFactorQ(usage_window)` của instantgen-sdk, Q = 10⁹
+}
+```
+
+### `POST /tx/instant-gen`: `m` do chủ chọn, trần `max_m`
+
+Từ Gen v2.0 lượng sinh `m` (nanogic) là **bắt buộc** và do chủ chọn; validator chỉ ép TRẦN.
+`m` là CHUỖI chữ số thập phân `> 0` — vắng / số JSON / không phải chữ số / `"0"` ⟹
+`400 INSTANT_GEN_M_INVALID`. Dịch vụ đọc beacon ρ, beacon GreenBack, sổ két và shard GB của
+két MỘT lần, tính `max_m` bằng `@magiclamp/instantgen-sdk` ▸ `instantGenLimits` trên đúng các
+UTxO đó rồi giao chúng xuống bộ dựng (`genV2.ts`). `m > max_m` ⟹ `422 INSTANT_GEN_M_ABOVE_MAX`
+kèm `details.max_m` và `details.m` — bộ dựng không được gọi. Dựng xong, `summary.gen_limits`:
+
+```jsonc
+"gen_limits": {
+  "max_m_nanogic": "750750000",
+  "remaining_after_nanogic": "746750000",  // max_m − lượng đúc đọc từ CBOR (âm ⟹ 422 TX_SUMMARY_UNDECODABLE)
+  "l_lent_oildrop": "0",
+  "gen_so_far_nanogic": "0",
+  "cap_nanogic": "750750000",
+  "cap_lamp_nanogic": "4004000000",
+  "gb_available_nanogic": "1000000000000000",
+  "checkpoint_refreshed": true             // lượt này làm mới checkpoint ⟹ beacon ρ vào tx
+}
+```
+
+Cần khối `gen_v2` và `ref_script_utxos.gb_shard` trong bản deploy (§6); thiếu ⟹
+`501 CONFIG_MISSING` với `details.missing` nêu đúng khoá. Mạng chưa có két Wakeme ⟹
+`501 WAKEME_VAULT_UNAVAILABLE` (apply-param #8 của két không có giá trị).
+
+### `POST /tx/refresh-checkpoint`
+
+Chủ ký, két Instant làm mới năm ô checkpoint (`cap_epoch`, `cap_nanogic`, `usage_window`,
+`usage_window_epoch`, `wakeme_link`) mà không sinh/tiêu gì. Luôn đọc beacon ρ (vắng trên
+chuỗi ⟹ `502 CHAIN_UNAVAILABLE`, không dựng). `wakeme_vault_ref` có ⟹ ghim/giữ két Wakeme đó;
+vắng ⟹ gỡ ghim (`wakeme_link := ""`). Cần khối `gen_v2` (thiếu ⟹ `501 CONFIG_MISSING`).
+
+### `POST /tx/consume` trên két Instant sang epoch mới
+
+Lượt tiêu đầu tiên trong epoch mới (`cap_epoch < e`) của két Instant làm mới checkpoint ở nhánh
+BurnBatch ⟹ tx cần beacon ρ ở reference input (vắng ⟹ `502 CHAIN_UNAVAILABLE`), và két Wakeme
+nếu két đang ghim (`wakeme_link` khác ""). Ca đó mà thân bài không kèm `wakeme_vault_ref` ⟹
+`400 WAKEME_VAULT_REF_REQUIRED` (`details.wakeme_link`), không dựng một tx chắc chắn chết. Cùng
+epoch, hoặc két Schedule ⟹ không đọc gì thêm (ScheduleGen không đọc két Wakeme).
+
+### `POST /tx/schedule-commit`: validator `commit`
+
+Nhánh ký của két Schedule v2.0 uỷ cho validator withdraw-zero `commit`, và lượt commit đọc
+beacon ρ + beacon GreenBack + sổ két, TIÊU shard GB. Cần khối `gen_v2`,
+`ref_script_utxos.commit` và `ref_script_utxos.gb_shard`; thiếu khoá nào ⟹ `501 CONFIG_MISSING`
+với `details.missing` nêu đúng khoá đó. Stake credential của `commit` phải được đăng ký trước
+(`buildRegisterCommitStakeTx` của SDK) — dịch vụ không dựng lượt đăng ký.
+
+### `wakeme_vault_ref`: két Wakeme cho mượn LAMP
+
+Két InstantGen v2.0 đọc `(owner_commit, L_lent)` từ **đúng một** két Wakeme nằm trong
 **reference inputs** của giao dịch — két có `gen_vault` (datum trường 11) ghim chính vault
-này. Không két ⟹ `L_lent = 0`, hợp lệ; hai két trở lên ⟹ chuỗi từ chối. Mã đọc:
-`@magiclamp/instantgen-sdk` ▸ `readLentLamp` (gương `wakeme_lent.ak` ▸ `lent_lamp`).
+này — ở lượt làm mới checkpoint và ở nhánh sinh. Không két ⟹ `L_lent = 0`, hợp lệ; hai két
+trở lên ⟹ chuỗi từ chối. Mã đọc: `@magiclamp/instantgen-sdk` ▸ `readWakemeVault` (gương
+`checkpoint.ak` ▸ `wakeme_lent.ak` ▸ `wakeme_read`). Trường này nhận ở `instant-gen`,
+`refresh-checkpoint` và `consume`.
 
 - **Vắng `wakeme_vault_ref`** ⟹ y như trước: không két nào, `L_lent = 0`, `summary` không có
   mục `wakeme`.
@@ -375,8 +443,8 @@ FEE_QUOTE_SELF_FUNDED`; phí thật nằm ở `summary.funding.self_funded.fee_l
 
 ### Ví trả phí bên thứ ba: `fee_payer`
 
-Bốn đường dựng trên vault có sẵn (`instant-gen`, `schedule-commit`, `schedule-fire`,
-`consume`) nhận `fee_payer` thay cho `change_address`:
+Năm đường dựng trên vault có sẵn (`instant-gen`, `refresh-checkpoint`, `schedule-commit`,
+`schedule-fire`, `consume`) nhận `fee_payer` thay cho `change_address`:
 
 ```jsonc
 "fee_payer": {
@@ -640,6 +708,11 @@ Nên:
 | tx vừa dựng lệch luật ví trả phí | `422 FEE_PAYER_TX_MISMATCH` |
 | `/tx/open-thread` chỉ có `fee_payer` (không ai trả min-ADA thread) | `422 FEE_PAYER_DEPOSIT_UNSOURCED` |
 | `engage_ref` sai khuôn / không phải thread của chủ | `400 ENGAGE_REF_SHAPE` / `400 ENGAGE_REF_MISMATCH` |
+| `/tx/instant-gen`: `m` vắng / số JSON / không phải chữ số / `"0"` | `400 INSTANT_GEN_M_INVALID` |
+| `/tx/instant-gen`: `m > max_m` (`details.max_m`, `details.m`) | `422 INSTANT_GEN_M_ABOVE_MAX` |
+| bản deploy thiếu `gen_v2` / `ref_script_utxos.commit` / `ref_script_utxos.gb_shard` mà đường cần (`details.missing`, `details.route`) | `501 CONFIG_MISSING` |
+| beacon ρ / GreenBack / sổ két vắng trên chuỗi, hoặc hai UTxO cùng NFT (`details.what`) | `502 CHAIN_UNAVAILABLE` |
+| `/tx/consume` làm mới checkpoint của két đang ghim két Wakeme, thiếu `wakeme_vault_ref` | `400 WAKEME_VAULT_REF_REQUIRED` |
 | `wakeme_vault_ref` sai khuôn | `400 WAKEME_VAULT_REF_SHAPE` |
 | `wakeme_vault_ref` trên mạng chưa có két Wakeme | `501 WAKEME_VAULT_UNAVAILABLE` |
 | `wakeme_vault_ref` không có trên chuỗi / đã bị tiêu | `404 WAKEME_VAULT_NOT_FOUND` / `409 WAKEME_VAULT_SPENT` |
@@ -775,7 +848,20 @@ dùng.
   "lamp":   { "policy_id": "<56 hex>", "asset_name_hex": "744c414d50" },  // + "rehearsal_ack" tuỳ chọn — xem dưới
   "vaults": [{ "vault_type": "Schedule", "address": "addr_test1w…" }],
   "shard_address": "addr_test1w…",
-  "ref_script_utxos": { "vault": "…#0", "shard": "…#1", "consume": "…#2" },
+  "ref_script_utxos": {
+    "vault": "…#0", "shard": "…#1", "consume": "…#2",
+    "commit": "…#3",     // tuỳ chọn — validator withdraw-zero `commit` (ScheduleGen v2.0); vắng ⟹ schedule-commit 501
+    "gb_shard": "…#4"    // tuỳ chọn — validator `gb_shard`; vắng ⟹ instant-gen + schedule-commit 501
+  },
+  "gen_v2": {                                   // tuỳ chọn; CÓ thì đủ mọi trường — vắng ⟹ các đường Gen v2.0 trả 501
+    "rate_beacon_address": "addr_test1w…",      // Script(rate_script_hash) — hash suy từ địa chỉ
+    "rate_nft_policy": "<56 hex>",              // NFT "RHO"
+    "greenback_beacon_address": "addr_test1w…", // Script(gb_beacon_script_hash)
+    "greenback_beacon_nft_policy": "<56 hex>",  // NFT "GBB"
+    "gb_shard_address": "addr_test1w…",         // Script(gb_shard_policy_id) — 16 shard NFT "GBS"‖id
+    "gb_shard_cap_nanogic": "1000000000000000", // CHUỖI chữ số > 0, đúng apply-param của gb_shard
+    "vault_registry_address": "addr_test1w…"    // sổ két, NFT "VRG"
+  },
   "consume": {
     "engage_address": "addr_test1w…",       // thread Engage chọn theo chủ lúc chạy
     "price_beacon_address": "addr_test1w…", "price_beacon_nft_unit": "…",
@@ -796,7 +882,10 @@ dùng.
 ```
 
 Khoá cũ `consume.engage_nft_unit` đã bị gỡ: khai nó thì dịch vụ từ chối khởi động (một NFT
-thread cố định chỉ phục vụ được một người). Trong `feecover.apps`, ứng dụng `magic` không có
+thread cố định chỉ phục vụ được một người). Khoá cũ `instant` (datum UM + beacon backing, Gen
+v1) cũng vậy: UM không còn trong công thức sinh, beacon backing thay bằng beacon GreenBack +
+shard GB của khối `gen_v2` — khai `instant` thì dịch vụ từ chối khởi động và câu lỗi nêu các
+trường `gen_v2` cần khai. Script hash / policy của `gen_v2` suy từ địa chỉ, như `vaults`. Trong `feecover.apps`, ứng dụng `magic` không có
 `token_sha256` — token của nó vào qua `FEECOVER_APP_TOKEN`; ứng dụng khác khai SHA-256 của
 token của họ, dịch vụ không giữ token đó. Mục đích cho `instant-gen` / `schedule-*` và
 `open-thread` chưa có ở Feecover nên chưa có trong mẫu; route vắng khỏi bảng thì proxy trả
@@ -836,7 +925,7 @@ bình thường.
 
 ```bash
 npm install
-npm test          # 56 bài, không cần mạng, không cần khoá
+npm test          # không cần mạng, không cần khoá — số bài: đọc dòng `Tests` của lệnh, đừng chép ra đây
 npm run typecheck
 npm start
 ```

@@ -186,10 +186,10 @@ export const PENDING_TX_HASH = "pending";
  */
 /** Tên đường dựng đã phát ra một giao dịch — khoá tra bảng mục đích Feecover (`feeProxy.ts`). */
 export type IssuedRoute =
-  "create-vault" | "instant-gen" | "schedule-commit" | "schedule-fire" | "consume" | "open-thread";
+  "create-vault" | "instant-gen" | "refresh-checkpoint" | "schedule-commit" | "schedule-fire" | "consume" | "open-thread";
 
 export const ISSUED_ROUTES: readonly IssuedRoute[] =
-  ["create-vault", "instant-gen", "schedule-commit", "schedule-fire", "consume", "open-thread"];
+  ["create-vault", "instant-gen", "refresh-checkpoint", "schedule-commit", "schedule-fire", "consume", "open-thread"];
 
 /**
  * Điều sổ phát-hành biết về một giao dịch, ngoài hash thân của nó.

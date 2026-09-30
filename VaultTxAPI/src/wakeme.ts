@@ -26,7 +26,7 @@
 // LAMP cho mượn" cho một lượt mà chuỗi tính bằng 0.
 
 import { CML, Constr, Data, getAddressDetails, type UTxO } from "@lucid-evolution/lucid";
-import { readLentLamp } from "@magiclamp/instantgen-sdk";
+import { readWakemeVault, type WakemeRead } from "@magiclamp/instantgen-sdk";
 import { posixMsToEpoch, wakemeVaultHash, type Network } from "@magiclamp/protocol-utils";
 
 import type { ChainReader } from "./chain.js";
@@ -72,6 +72,8 @@ export interface ResolvedWakeme {
   utxo: UTxO;
   scriptHash: string;
   summary: WakemeSummary;
+  /** `(owner_commit, L_lent)` — CÙNG phép đọc mà `instantGenLimits` / bộ dựng dùng (Gen v2.0). */
+  read: WakemeRead;
 }
 
 export interface WakemeOwnVault {
@@ -122,9 +124,9 @@ export async function resolveWakemeVault(
   }
 
   const epoch = posixMsToEpoch(own.tipPosixMs, own.network);
-  let lent: bigint;
+  let read: WakemeRead;
   try {
-    lent = readLentLamp(utxo, {
+    read = readWakemeVault(utxo, {
       wakemeVaultHash: scriptHash, ownScriptHash: own.vaultScriptHash, ownVaultName: vaultName,
       currentPeriod: epoch, lampPolicyId: own.lampPolicyId, lampAssetName: own.lampAssetNameHex,
     });
@@ -135,7 +137,8 @@ export async function resolveWakemeVault(
       { wakeme_vault_ref: key });
   }
 
-  // Suy LÝ DO từ cùng các trường `readLentLamp` đọc, rồi đối chiếu với con số của nó: hai
+  const lent = read.lent;
+  // Suy LÝ DO từ cùng các trường `readWakemeVault` đọc, rồi đối chiếu với con số của nó: hai
   // đường lệch nhau là lỗi của gói này, không phải của két — NÉM, không chọn một bên.
   const conditional = fields[3] as bigint;
   const owned = fields[7] as bigint;
@@ -154,6 +157,7 @@ export async function resolveWakemeVault(
   return {
     utxo,
     scriptHash,
+    read,
     summary: {
       ref: key,
       lent_lamp: lent.toString(),

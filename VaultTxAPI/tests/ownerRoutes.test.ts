@@ -21,6 +21,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor } from "./fixtures/tx.js";
+import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
@@ -38,7 +39,9 @@ const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
   shard_address: SHARD_ADDRESS,
   ref_script_utxos: {
     vault: `${"11".repeat(32)}#0`, shard: `${"22".repeat(32)}#1`, consume: `${"33".repeat(32)}#2`,
+    ...GEN_V2_REF_SCRIPTS,
   },
+  gen_v2: genV2Json("Preview"),
   consume: {
     engage_address: VAULT_ADDRESS,
     price_beacon_address: VAULT_ADDRESS,
@@ -93,7 +96,7 @@ function harness(opts: { createCbor?: string; witness?: OwnerWitnessProvider | n
     assets: { lovelace: 5_000_000n, [LAMP_UNIT]: DEPOSIT, [VAULT_ID_UNIT]: 1n },
     datum: datumHex({ owner: opts.vaultOwner ?? KEY_OWNER }),
   };
-  const chain = new RecordedChainReader({ [VAULT_ADDRESS]: [vaultUtxo] }, TIP);
+  const chain = new RecordedChainReader({ [VAULT_ADDRESS]: [vaultUtxo], ...genV2Chain("Preview", { epoch: 20_707n }) }, TIP);
   const builder = new RecordedTxBuilder(
     {
       create_vault: opts.createCbor ?? createTxCbor(KEY_OWNER, { signers: [OWNER_PKH] }),

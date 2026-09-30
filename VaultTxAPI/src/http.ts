@@ -2,11 +2,12 @@
 //
 // Tách khỏi `server.ts` để phép kiểm gọi thẳng vào đây, không phải mở cổng mạng.
 //
-// ── ĐÚNG NĂM ĐƯỜNG DỰNG, KHÔNG THÊM ────────────────────────────────────────────
-//   POST /tx/instant-gen       { owner, [owner_witness], [change_address | fee_payer], [wakeme_vault_ref] }
+// ── ĐÚNG BẢY ĐƯỜNG DỰNG, KHÔNG THÊM ────────────────────────────────────────────
+//   POST /tx/instant-gen       { owner, [owner_witness], [change_address | fee_payer], m, [wakeme_vault_ref] }
+//   POST /tx/refresh-checkpoint { owner, [owner_witness], [change_address | fee_payer], [wakeme_vault_ref] }
 //   POST /tx/schedule-commit   { owner, …, schedule_length, lamp_per_epoch }
 //   POST /tx/schedule-fire     { owner, …, schedule_id }
-//   POST /tx/consume           { owner, …, op_type, op_count, [engage_ref] }
+//   POST /tx/consume           { owner, …, op_type, op_count, [engage_ref], [wakeme_vault_ref] }
 //   POST /tx/open-thread       { owner, [owner_witness], [change_address] }
 //                              (`fee_payer` một mình ⟹ 422; `funding` ⟹ 501 — xem `service.ts`)
 //   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
@@ -20,13 +21,14 @@
 // `{ type: "key" }` — xem `owner.ts`. Cùng có mà lệch ⟹ 400 `OWNER_ALIAS_MISMATCH`.
 //   GET  /health               (không thẻ bài, không chạm chuỗi)
 //
-// `/tx/instant-gen` KHÔNG nhận `amount`, và đó là chủ ý. Lượng cấp là
-// `min(vế thưởng, cap_surplus, cap_pp)` do validator tính từ trạng thái vault cộng
-// hai reference input. Nhận một con số ở đây là dựng một cái nút hứa thứ nó không
-// quyết được, rồi để chuỗi bác — người dùng đọc câu bác đó không ra được việc phải làm.
+// `/tx/instant-gen` nhận `m` (nanogic) từ Gen v2.0: chủ chọn lượng sinh, validator chỉ ép
+// TRẦN (IG-8 cap_nanogic, IG-9 cap LAMP, IG-11 GB_available, IG-12 phần GB mỗi két). Dịch vụ
+// tính `max_m` trên đúng các UTxO beacon/shard sẽ giao xuống bộ dựng và bác TRƯỚC khi dựng:
+// `m` sai hình dạng ⟹ 400 `INSTANT_GEN_M_INVALID`; `m > max_m` ⟹ 422 `INSTANT_GEN_M_ABOVE_MAX`
+// kèm `details.max_m` — câu bác đó nói được người dùng phải chọn lại bao nhiêu.
 //
 // Số tiền trong thân bài là CHUỖI chữ số, không phải số JSON — lý do đo được ở khối đầu
-// `buildRequest.ts`, nơi đọc thân bài của sáu đường dựng (dùng chung với `/tx/quote`).
+// `buildRequest.ts`, nơi đọc thân bài của bảy đường dựng (dùng chung với `/tx/quote`).
 
 import {
   BadRequestError, TxApiError, UnauthorizedError, newReferenceCode,

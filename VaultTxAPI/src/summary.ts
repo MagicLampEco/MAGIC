@@ -23,10 +23,11 @@ import { TxSummaryUndecodableError } from "./errors.js";
 import { decodeVaultDatumOrThrow, type DecodedVaultDatum } from "./vaultDatumShape.js";
 import { ownerRefFromPlutusData, type OwnerRef } from "@magiclamp/protocol-utils";
 import { lovelaceToAda, nanogicToMagic, oildropToLamp, raw } from "./units.js";
+import { usageFactorQ, type InstantGenLimits } from "@magiclamp/instantgen-sdk";
 
 /** Nhãn của đường HTTP đã gọi. Đây là thứ DUY NHẤT trong `summary` không suy từ CBOR,
  *  nên nó mang tên nói rõ điều đó. Mọi con số đều suy từ CBOR. */
-export type RequestedIntent = "instant_gen" | "schedule_commit" | "schedule_fire" | "consume";
+export type RequestedIntent = "instant_gen" | "refresh_checkpoint" | "schedule_commit" | "schedule_fire" | "consume";
 
 export interface SummaryContext {
   /** Địa chỉ vault — dùng để nhận ra output tiếp-nối trong danh sách output. */
@@ -148,6 +149,58 @@ export interface TxSummary {
    * `inputVaultDatumHex`, vì CBOR chỉ mang tham chiếu, không mang nội dung reference input.
    */
   wakeme?: import("./wakeme.js").WakemeSummary;
+  /**
+   * Ô sinh Gen v2.0, đọc từ datum ĐẦU RA giải mã lại từ CBOR. Ba ô `cap_*`/`wakeme_link`
+   * chỉ có ở két Instant — két Schedule in `null` (ô đó ở Schedule mang nghĩa khác).
+   * `usage_factor_q` = `usageFactorQ(usage_window)` (Q = 10⁹), công thức của instantgen-sdk.
+   */
+  gen: {
+    cap_epoch: string | null;
+    cap_nanogic: string | null;
+    wakeme_link: string | null;
+    usage_window_epoch: string;
+    usage_factor_q: string;
+  };
+  /**
+   * Chỉ ở `/tx/instant-gen`: trần của lượt này. Đây là dữ kiện CHUỖI tính TRƯỚC lúc dựng
+   * (`instantGenLimits` trên đúng các UTxO beacon/shard đã giao xuống bộ dựng) — cùng loại
+   * với `inputVaultDatumHex`. `remaining_after_nanogic = max_m − minted` với `minted` suy từ CBOR.
+   */
+  gen_limits?: GenLimitsSummary;
+}
+
+export interface GenLimitsSummary {
+  max_m_nanogic: string;
+  remaining_after_nanogic: string;
+  l_lent_oildrop: string;
+  gen_so_far_nanogic: string;
+  cap_nanogic: string;
+  cap_lamp_nanogic: string;
+  gb_available_nanogic: string;
+  checkpoint_refreshed: boolean;
+}
+
+/** Trần của lượt instant-gen, đối chiếu với lượng ĐÃ ĐÚC đọc từ CBOR. Âm ⟹ ném: bộ dựng
+ *  đúc quá trần đã tính thì bản tóm tắt tự mâu thuẫn, không phát ra. */
+export function genLimitsSummary(limits: InstantGenLimits, summary: TxSummary): GenLimitsSummary {
+  const minted = BigInt(summary.magic.minted_nanogic);
+  const remaining = limits.maxM - minted;
+  if (remaining < 0n) {
+    throw new TxSummaryUndecodableError(
+      `giao dịch đúc ${minted} nanogic, vượt trần ${limits.maxM} đã tính trước lúc dựng`,
+      { max_m_nanogic: limits.maxM.toString(), minted_nanogic: minted.toString() },
+    );
+  }
+  return {
+    max_m_nanogic: raw(limits.maxM),
+    remaining_after_nanogic: raw(remaining),
+    l_lent_oildrop: raw(limits.lent),
+    gen_so_far_nanogic: raw(limits.genSoFar),
+    cap_nanogic: raw(limits.capNanogic),
+    cap_lamp_nanogic: raw(limits.capLamp),
+    gb_available_nanogic: raw(limits.gbAvailable),
+    checkpoint_refreshed: limits.refreshed,
+  };
 }
 
 /**
@@ -174,9 +227,9 @@ export function summarizeTx(txCborHex: string, ctx: SummaryContext): TxSummary {
 
   // ── Ý ĐỊNH phải khớp HÌNH DẠNG datum ──────────────────────────────────────────
   //
-  // Hai hình dạng `VaultDatum` phân biệt bằng SỐ TRƯỜNG (17 Schedule / 18 Instant),
+  // Hai hình dạng `VaultDatum` phân biệt bằng SỐ TRƯỜNG (19 Schedule / 20 Instant — Gen v2.0),
   // và `decodeVaultDatumEitherShape` nhận cả hai ở MỌI địa chỉ. Nên trước cổng này
-  // một lượt `instant_gen` dựng nhầm datum 17 trường đi trọn đường: dịch vụ trả 200,
+  // một lượt `instant_gen` dựng nhầm datum Schedule đi trọn đường: dịch vụ trả 200,
   // ghi vào sổ phát-hành, và bản tóm tắt nói `instant_unlock_ms: null`.
   //
   // `null` thì lại được khai nghĩa ngay trên kia là *"két Schedule — trường KHÔNG
@@ -186,10 +239,11 @@ export function summarizeTx(txCborHex: string, ctx: SummaryContext): TxSummary {
   // — nhưng cái hỏng đi qua đúng con đường không ai nhìn.
   //
   // Ném ở đây chứ không đệm: một bản tóm tắt tự mâu thuẫn là thứ không ai nên ký.
-  if (ctx.requestedIntent === "instant_gen" && after.instant_unlock_ms === null) {
+  if ((ctx.requestedIntent === "instant_gen" || ctx.requestedIntent === "refresh_checkpoint")
+      && after.vault_datum_kind !== "Instant") {
     throw new TxSummaryUndecodableError(
-      "datum đầu ra của một lượt `instant_gen` mang hình dạng két Schedule " +
-      "(17 trường, không có `instant_unlock_ms`). Giao dịch này sẽ bị validator " +
+      `datum đầu ra của một lượt \`${ctx.requestedIntent}\` mang hình dạng két Schedule ` +
+      "(19 trường, không có `instant_unlock_ms`). Giao dịch này sẽ bị validator " +
       "InstantGen từ chối, nên dịch vụ không phát nó ra kèm một bản tóm tắt " +
       "trông bình thường.",
       { requested_intent: ctx.requestedIntent, vault_datum_kind: after.vault_datum_kind },
@@ -240,6 +294,13 @@ export function summarizeTx(txCborHex: string, ctx: SummaryContext): TxSummary {
       batch_count_after: after.magic_batches.length,
       gen_schedule_count_before: before.gen_schedules.length,
       gen_schedule_count_after: after.gen_schedules.length,
+    },
+    gen: {
+      cap_epoch: after.cap_epoch === null ? null : raw(after.cap_epoch),
+      cap_nanogic: after.cap_nanogic === null ? null : raw(after.cap_nanogic),
+      wakeme_link: after.wakeme_link,
+      usage_window_epoch: raw(after.usage_window_epoch),
+      usage_factor_q: raw(usageFactorQ(after.usage_window)),
     },
     outputs: outputs.map(o => o.view),
   };

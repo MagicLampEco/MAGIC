@@ -29,6 +29,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor, type TxOutputSpec } from "./fixtures/tx.js";
+import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
 const REGISTRY_TTL = TTL * 4;
@@ -71,7 +72,9 @@ function deploymentObj(over: Record<string, unknown> = {}): Record<string, unkno
     shard_address: SHARD_ADDRESS,
     ref_script_utxos: {
       vault: `${"11".repeat(32)}#0`, shard: `${"22".repeat(32)}#1`, consume: `${"33".repeat(32)}#2`,
+      ...GEN_V2_REF_SCRIPTS,
     },
+    gen_v2: genV2Json("Preview"),
     consume: {
       engage_address: ENGAGE_ADDRESS,
       price_beacon_address: VAULT_ADDRESS,
@@ -198,7 +201,7 @@ function fakeFeecover(r: { utxo?: Reply; sign?: Reply | ((b: Record<string, unkn
 function harness(opts: { feecover?: ReturnType<typeof fakeFeecover>; proxy?: boolean } = {}) {
   const clock = { t: NOW };
   const chain = new RecordedChainReader(
-    { [VAULT_ADDRESS]: [VAULT_UTXO], [ENGAGE_ADDRESS]: [threadUtxo(KEY_OWNER, "7e".repeat(32))], [DP_ADDRESS]: [DP1, DP2] },
+    { [VAULT_ADDRESS]: [VAULT_UTXO], [ENGAGE_ADDRESS]: [threadUtxo(KEY_OWNER, "7e".repeat(32))], [DP_ADDRESS]: [DP1, DP2], ...genV2Chain("Preview", { epoch: 20_707n }) },
     TIP,
     [VAULT_UTXO, FEE_UTXO, ANCHOR],
   );

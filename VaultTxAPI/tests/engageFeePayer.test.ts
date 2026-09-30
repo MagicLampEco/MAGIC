@@ -23,6 +23,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor, type TxOutputSpec } from "./fixtures/tx.js";
+import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
@@ -52,7 +53,9 @@ const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
   shard_address: SHARD_ADDRESS,
   ref_script_utxos: {
     vault: `${"11".repeat(32)}#0`, shard: `${"22".repeat(32)}#1`, consume: `${"33".repeat(32)}#2`,
+    ...GEN_V2_REF_SCRIPTS,
   },
+  gen_v2: genV2Json("Preview"),
   consume: {
     engage_address: ENGAGE_ADDRESS,
     price_beacon_address: VAULT_ADDRESS,
@@ -118,7 +121,7 @@ function openTx(o: OpenTxOpts = {}): string {
 
 function harness(opts: { threads?: UTxO[]; cbor?: string; openCbor?: string; declaredUnit?: string } = {}) {
   const chain = new RecordedChainReader(
-    { [VAULT_ADDRESS]: [VAULT_UTXO], [ENGAGE_ADDRESS]: opts.threads ?? [threadUtxo(KEY_OWNER, "7e".repeat(32))] },
+    { [VAULT_ADDRESS]: [VAULT_UTXO], [ENGAGE_ADDRESS]: opts.threads ?? [threadUtxo(KEY_OWNER, "7e".repeat(32))], ...genV2Chain("Preview", { epoch: 20_707n }) },
     TIP,
     [VAULT_UTXO, FEE_UTXO, FEE_UTXO_2],
   );
@@ -423,14 +426,12 @@ describe("/tx/open-thread", () => {
 
 // ── /tx/instant-gen — fee_payer, harness RIÊNG ───────────────────────────────────────────
 //
-// InstantGen đòi `deployment.instant` (bốn giá trị) VÀ vault_type "Instant"; `summarizeTx`
-// còn ép datum ĐẦU RA phải Instant-shaped (18 trường, `instant_unlock_ms` khác null) — khác
-// hẳn `DEPLOYMENT`/`VAULT_UTXO` dùng ở trên (Schedule-shaped, 17 trường). Nên đường này cần
+// InstantGen Gen v2.0 đòi khối `gen_v2` + ref `gb_shard`, vault_type "Instant", và một mạng CÓ
+// két Wakeme (Preprod — apply-param #8); `summarizeTx` còn ép datum ĐẦU RA phải Instant-shaped
+// (20 trường) — khác hẳn `DEPLOYMENT`/`VAULT_UTXO` dùng ở trên (Schedule-shaped, 19 trường). Nên đường này cần
 // một harness riêng, không tái dùng `harness()` phía trên; phần còn lại (`FEE_PAYER`,
 // `FEE_UTXO`, `FEE_ADDRESS`, `CHANGE_ADDRESS`) vẫn dùng chung.
 
-const UM_NFT_UNIT = `${"66".repeat(28)}554d`;
-const BACKING_NFT_UNIT = `${"77".repeat(28)}6242`;
 
 const INSTANT_DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
   source: "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
@@ -439,23 +440,20 @@ const INSTANT_DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
   shard_address: SHARD_ADDRESS,
   ref_script_utxos: {
     vault: `${"11".repeat(32)}#0`, shard: `${"22".repeat(32)}#1`, consume: `${"33".repeat(32)}#2`,
+    ...GEN_V2_REF_SCRIPTS,
   },
+  gen_v2: genV2Json("Preprod"),
   consume: {
     engage_address: ENGAGE_ADDRESS,
     price_beacon_address: VAULT_ADDRESS,
     price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
   },
-  instant: {
-    um_datum_address: VAULT_ADDRESS,
-    um_nft_unit: UM_NFT_UNIT,
-    backing_beacon_address: VAULT_ADDRESS,
-    backing_beacon_nft_unit: BACKING_NFT_UNIT,
-  },
-}), "Preview");
+}), "Preprod");
+const INSTANT_EPOCH = 4_141n; // posixMsToEpoch(NOW, "Preprod")
 
 const INSTANT_VAULT_UTXO = utxo(INPUT_TX_HASH, 0, VAULT_ADDRESS,
   { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
-  datumHex({ lampLockedOildrop: 0n, batches: [], instantUnlockMs: 0n }));
+  datumHex({ lampLockedOildrop: 0n, batches: [], instantUnlockMs: 0n, lastUpdatedEpoch: INSTANT_EPOCH - 1n }));
 
 /** Tx đi qua vault Instant, phí do FEE_UTXO (10 ADA) trả — cùng số với `feeTx()` ở trên. */
 function instantGenFeeTx(): string {
@@ -470,8 +468,9 @@ function instantGenFeeTx(): string {
         // cho ý-định `instant_gen` (xem khối chú thích đầu mục này).
         inlineDatumHex: datumHex({
           lampLockedOildrop: 0n,
-          batches: [{ id: "c0".repeat(16), createdEpoch: 20_700n, amountNanogic: 4_000_000n }],
+          batches: [{ id: "c0".repeat(16), createdEpoch: INSTANT_EPOCH, amountNanogic: 4_000_000n }],
           instantUnlockMs: 1_789_000_000_000n,
+          lastUpdatedEpoch: INSTANT_EPOCH, capEpoch: INSTANT_EPOCH, capNanogic: 1_000_000_000n, usageWindowEpoch: INSTANT_EPOCH,
         }),
       },
       { address: FEE_ADDRESS, assets: { lovelace: 10_000_000n - FEE } },
@@ -479,13 +478,13 @@ function instantGenFeeTx(): string {
     requiredSigners: [OWNER_PKH],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
-    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 1_800_000)),
+    ttlSlot: BigInt(unixTimeToSlot("Preprod", NOW + 1_800_000)),
   });
 }
 
 function instantHarness() {
   const chain = new RecordedChainReader(
-    { [VAULT_ADDRESS]: [INSTANT_VAULT_UTXO] },
+    { [VAULT_ADDRESS]: [INSTANT_VAULT_UTXO], ...genV2Chain("Preprod", { epoch: INSTANT_EPOCH }) },
     TIP,
     [INSTANT_VAULT_UTXO, FEE_UTXO],
   );
@@ -493,17 +492,17 @@ function instantHarness() {
   const issued = new IssuedTxRegistry(TTL * 4);
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
-    network: "Preview", deployment: INSTANT_DEPLOYMENT, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
+    network: "Preprod", deployment: INSTANT_DEPLOYMENT, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
   });
   const router: RouterDeps = {
-    service, deploymentSource: INSTANT_DEPLOYMENT.source, vaultScopes: INSTANT_DEPLOYMENT.vaults, network: "Preview",
+    service, deploymentSource: INSTANT_DEPLOYMENT.source, vaultScopes: INSTANT_DEPLOYMENT.vaults, network: "Preprod",
     chainLabel: "recorded", changeAddressStrategy: "enterprise_from_owner_pkh", token: "", logInternal: () => {},
   };
   return { builder, router };
 }
 
 const instantGen = (over: Record<string, unknown> = {}) =>
-  post("/tx/instant-gen", { owner_pkh: OWNER_PKH, ...over });
+  post("/tx/instant-gen", { owner_pkh: OWNER_PKH, m: "1", ...over });
 
 describe("fee_payer — instant-gen", () => {
   it("instant-gen: 200, summary.fee_payer đọc TỪ CBOR; bộ dựng nhận đúng UTxO trả phí + thế chấp 3 ADA", async () => {

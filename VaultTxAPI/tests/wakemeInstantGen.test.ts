@@ -23,6 +23,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, VAULT_SCRIPT_HASH, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor } from "./fixtures/tx.js";
+import { GB_SHARD_REF, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 type Net = "Preprod" | "Preview";
 
@@ -44,7 +45,7 @@ const VAULT_NAME = VAULT_ID_UNIT.slice(56);
 const CONDITIONAL = 300_000_000n;
 const OWNED = 200_000_000n;
 
-function deploymentJson(): string {
+function deploymentJson(net: Net): string {
   return JSON.stringify({
     source: "bản dựng thử của phép kiểm — không phải một lần deploy thật",
     lamp: { policy_id: LAMP_POLICY_ID, asset_name_hex: LAMP_ASSET_NAME_HEX },
@@ -52,18 +53,14 @@ function deploymentJson(): string {
     shard_address: SHARD_ADDRESS,
     ref_script_utxos: {
       vault: `${"11".repeat(32)}#0`, shard: `${"22".repeat(32)}#1`, consume: `${"33".repeat(32)}#2`,
+      gb_shard: GB_SHARD_REF,
     },
     consume: {
       engage_address: VAULT_ADDRESS,
       price_beacon_address: VAULT_ADDRESS,
       price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
     },
-    instant: {
-      um_datum_address: VAULT_ADDRESS,
-      um_nft_unit: `${"66".repeat(28)}554d`,
-      backing_beacon_address: VAULT_ADDRESS,
-      backing_beacon_nft_unit: `${"77".repeat(28)}6242`,
-    },
+    gen_v2: genV2Json(net),
   });
 }
 
@@ -71,7 +68,8 @@ function vaultUtxo(): UTxO {
   return {
     txHash: INPUT_TX_HASH, outputIndex: 0, address: VAULT_ADDRESS,
     assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
-    datum: datumHex({ lampLockedOildrop: 0n, batches: [], instantUnlockMs: 0n }),
+    // Gen v2.0: cap_epoch 0 < EPOCH ⟹ lượt sinh làm mới checkpoint và ghim két Wakeme đưa vào.
+    datum: datumHex({ lampLockedOildrop: 0n, batches: [], instantUnlockMs: 0n, lastUpdatedEpoch: EPOCH - 1n }),
   };
 }
 
@@ -92,8 +90,9 @@ function instantTxCbor(where: Where): string {
       assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
       inlineDatumHex: datumHex({
         lampLockedOildrop: 0n,
-        batches: [{ id: "c0".repeat(16), createdEpoch: 20_700n, amountNanogic: 4_000_000n }],
+        batches: [{ id: "c0".repeat(16), createdEpoch: EPOCH, amountNanogic: 4_000_000n }],
         instantUnlockMs: 1_789_000_000_000n,
+        lastUpdatedEpoch: EPOCH, capEpoch: EPOCH, capNanogic: 1_000_000_000n, usageWindowEpoch: EPOCH,
       }),
     }],
   });
@@ -121,8 +120,8 @@ function wakemeUtxo(s: WakemeSpec = {}): UTxO {
 /** Bộ đọc chuỗi đếm lượt `utxosByOutRef`; `missing` ⟹ ném như bộ đọc HTTP thật (400 UTXO_NOT_FOUND). */
 class CountingChain extends RecordedChainReader {
   byRefCalls = 0;
-  constructor(refUtxos: UTxO[], private readonly missing = false) {
-    super({ [VAULT_ADDRESS]: [vaultUtxo()] }, TIP, refUtxos);
+  constructor(net: Net, refUtxos: UTxO[], private readonly missing = false) {
+    super({ [VAULT_ADDRESS]: [vaultUtxo()], ...genV2Chain(net, { epoch: EPOCH }) }, TIP, refUtxos);
   }
   override async utxosByOutRef(refs: OutRef[]): Promise<UTxO[]> {
     this.byRefCalls++;
@@ -135,8 +134,8 @@ class CountingChain extends RecordedChainReader {
 
 function harness(opts: { net?: Net; wakeme?: UTxO; missing?: boolean; where?: Where } = {}) {
   const net = opts.net ?? "Preprod";
-  const deployment = parseDeployment(deploymentJson(), net);
-  const chain = new CountingChain(opts.wakeme === undefined ? [] : [opts.wakeme], opts.missing);
+  const deployment = parseDeployment(deploymentJson(net), net);
+  const chain = new CountingChain(net, opts.wakeme === undefined ? [] : [opts.wakeme], opts.missing);
   const builder = new RecordedTxBuilder({ instant_gen: instantTxCbor(opts.where ?? "reference") });
   const service = new VaultTxService({
     network: net, deployment, chain, builder,
@@ -150,7 +149,8 @@ function harness(opts: { net?: Net; wakeme?: UTxO; missing?: boolean; where?: Wh
   return { chain, builder, router };
 }
 
-const post = (body: unknown) => ({ method: "POST", url: "/tx/instant-gen", headers: {}, body });
+/** `m = 1` nanogic: đủ nhỏ để dưới mọi trần của fixture — tệp này kiểm két Wakeme, không kiểm trần. */
+const post = (body: unknown) => ({ method: "POST", url: "/tx/instant-gen", headers: {}, body: { m: "1", ...(body as object) } });
 const codeOf = (r: { body: unknown }) => (r.body as { error: { code: string } }).error.code;
 const detailsOf = (r: { body: unknown }) => (r.body as { error: { details: Record<string, unknown> } }).error.details;
 const summaryOf = (r: { body: unknown }) => (r.body as { summary: Record<string, unknown> }).summary;
@@ -162,7 +162,7 @@ describe("POST /tx/instant-gen — wakeme_vault_ref", () => {
     expect(r.status).toBe(200);
     expect(summaryOf(r).wakeme).toBeUndefined();
     expect(h.chain.byRefCalls).toBe(0);
-    expect(h.builder.lastCall).toEqual({ route: "instant_gen", params: {} });
+    expect(h.builder.lastCall).toMatchObject({ route: "instant_gen", params: { m: 1n } });
     expect(h.builder.lastCall!.wakeme).toBeUndefined();
   });
 

@@ -14,7 +14,7 @@
 // MagicSDK, nên lược đồ đổi hình là mẫu đổi theo và phép kiểm nói cho biết. Một chuỗi CBOR
 // gõ tay sẽ đóng băng ở hình dạng cũ và vẫn xanh sau khi datum thật đã trôi.
 
-import { Data } from "@lucid-evolution/lucid";
+import { Constr, Data } from "@lucid-evolution/lucid";
 import {
   InstantVaultDatumSchema, VaultDatumSchema, buildInitialVaultDatum,
 } from "@magiclamp/sdk";
@@ -69,10 +69,17 @@ export interface DatumSpec {
   consumedCreditNanogic?: bigint;
   lastUpdatedEpoch?: bigint;
   genScheduleCount?: number;
+  /** Ô checkpoint Gen v2.0 của két Instant (bỏ qua ở két Schedule). */
+  capEpoch?: bigint;
+  capNanogic?: bigint;
+  wakemeLink?: string;
+  /** Có ở cả hai loại két. */
+  usageWindowEpoch?: bigint;
+  usageWindow?: { generated: bigint; consumed: bigint }[];
   /**
-   * Đặt giá trị ⟹ dựng datum hình dạng **Instant** (18 trường) với
+   * Đặt giá trị ⟹ dựng datum hình dạng **Instant** (20 trường, Gen v2.0) với
    * `instant_unlock_ms` bằng đúng giá trị đó. Bỏ trống ⟹ hình dạng **Schedule**
-   * (17 trường), nơi trường này KHÔNG TỒN TẠI.
+   * (19 trường), nơi trường này KHÔNG TỒN TẠI.
    *
    * Hai hình dạng phải dựng bằng HAI lược đồ khác nhau chứ không phải một lược đồ
    * cộng một trường tuỳ chọn: giải mã Plutus Data của Aiken nghiêm ngặt về SỐ
@@ -109,6 +116,8 @@ function genSchedule(i: number): Record<string, unknown> {
     multiplier_at_commit_q: 1_000_000_000n,
     fired_count: 0n,
     auto_burn_target: null,
+    m_per_epoch: 1_000_000_000n,
+    usage_factor_locked_q: 1_000_000_000n,
   };
 }
 
@@ -119,6 +128,7 @@ export function datumHex(spec: DatumSpec = {}): string {
     lampBalanceOildrop: spec.lampBalanceOildrop ?? 1_001_000_000n,
     profile: "Flame",
     currentEpoch: 20_700n,
+    vaultType: spec.instantUnlockMs === undefined ? "Schedule" : "Instant",
   }) as unknown as Record<string, unknown>;
 
   const full = {
@@ -131,13 +141,31 @@ export function datumHex(spec: DatumSpec = {}): string {
       ...(base.activity_state as Record<string, unknown>),
       consumed_credit: spec.consumedCreditNanogic ?? 0n,
     },
+    ...(spec.usageWindow === undefined ? {} : { usage_window: spec.usageWindow }),
+    usage_window_epoch: spec.usageWindowEpoch ?? 0n,
   };
 
   if (spec.instantUnlockMs === undefined) {
     return Data.to(full as never, VaultDatumSchema);
   }
   return Data.to(
-    { ...full, instant_unlock_ms: spec.instantUnlockMs } as never,
+    {
+      ...full,
+      instant_unlock_ms: spec.instantUnlockMs,
+      cap_epoch: spec.capEpoch ?? 0n,
+      cap_nanogic: spec.capNanogic ?? 0n,
+      wakeme_link: spec.wakemeLink ?? "",
+    } as never,
     InstantVaultDatumSchema,
   );
+}
+
+/**
+ * Datum hình dạng **v1** (18/17 trường): cắt hai trường nối cuối của v2.0
+ * (`usage_window`, `usage_window_epoch`). Chỉ dùng cho ca "datum v1 ⟹ NÉM" — giải mã
+ * Aiken nghiêm về SỐ TRƯỜNG, nên chỉ cần đếm trường là đủ phân biệt đời.
+ */
+export function datumV1Hex(spec: DatumSpec = {}): string {
+  const c = Data.from(datumHex(spec)) as Constr<Data>;
+  return Data.to(new Constr(c.index, c.fields.slice(0, -2)));
 }

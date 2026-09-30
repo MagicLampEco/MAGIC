@@ -71,27 +71,45 @@ export interface ConsumeDeployment {
 }
 
 /**
- * Hai reference input mà `InstantGen` ĐỌC lúc chạy. Cả hai là dữ kiện của dịch vụ,
- * không suy được từ yêu cầu HTTP — nên cấu hình phải KHAI, giống `consume` ở trên.
+ * Beacon + shard Gen v2.0 mà đường sinh (InstantGen, ScheduleGen commit), đường làm mới
+ * checkpoint và đường tiêu (két Instant sang epoch mới) ĐỌC lúc chạy. Dữ kiện của lần deploy
+ * `GenBeacons`, không suy được từ yêu cầu — nên cấu hình phải KHAI.
  *
- * 🔴 Vì sao beacon backing phải là một mục cấu hình chứ không phải một mặc định:
- * `validate_instant_gen` fail-closed quanh nó — thiếu beacon, beacon quá hạn, hoặc
- * cờ `depeg` bật thì giao dịch sinh BỊ TỪ CHỐI. Một mặc định all-zero ở đây cho ra
- * một dịch vụ luôn dựng tx và tx nào cũng chết trên chuỗi, với một thông điệp không
- * trỏ về cấu hình. Không có giá trị nào thay được một địa chỉ thật.
+ * Tên NFT KHÔNG khai ở đây: "RHO" / "GBB" / "VRG" / "GBS"‖id là hằng của giao thức
+ * (`@magiclamp/instantgen-sdk` ▸ `RATE_NFT_NAME` …). Hash script của sổ két và của shard GB
+ * cũng là policy của NFT tương ứng (mint gộp trong validator) ⟹ suy từ địa chỉ, không khai
+ * hai trường cho một sự thật.
  *
- * Người ghi beacon backing là keeper tầng GreenBack của kho này (chốt 2026-09-19) —
- * không phải engine CarpetMint. Ai đi tìm chủ của giá trị này thì tìm ở đó.
+ * 🔴 Không có mặc định nào ở đây. Một beacon thiếu thì validator fail-closed; một mặc định
+ * cho ra dịch vụ luôn dựng tx và tx nào cũng chết trên chuỗi, với câu không trỏ về cấu hình.
+ *
+ * 🪦 Mục `instant` cũ (datum UM + beacon backing) đã bỏ cùng Gen v2.0 — UM không còn trong
+ * công thức sinh, beacon backing thay bằng beacon GreenBack + shard. Khoá `instant` còn nằm
+ * trong tệp deploy ⟹ `parseDeployment` từ chối khởi động (xem đó).
  */
-export interface InstantDeployment {
-  /** Địa chỉ chứa datum UM (hệ số cầu mạng, keeper cập nhật mỗi epoch). */
-  umDatumAddress: string;
-  /** NFT của datum UM — `policyId + assetNameHex`. */
-  umNftUnit: string;
-  /** Địa chỉ chứa beacon backing (`B` là một DANH MỤC token, chốt 2026-09-18). */
-  backingBeaconAddress: string;
-  /** NFT của beacon backing. */
-  backingBeaconNftUnit: string;
+export interface GenV2Deployment {
+  /** Địa chỉ beacon ρ = `Script(rate_script_hash)`. */
+  rateBeaconAddress: string;
+  /** Apply-param #6 két Instant — suy từ `rateBeaconAddress`. */
+  rateScriptHash: string;
+  /** Apply-param #5 két Instant — policy NFT "RHO". */
+  rateNftPolicy: string;
+  /** Địa chỉ beacon GreenBack = `Script(gb_beacon_script_hash)`. */
+  gbBeaconAddress: string;
+  /** Apply-param #3 — suy từ `gbBeaconAddress`. */
+  gbBeaconScriptHash: string;
+  /** Apply-param #2 — policy NFT "GBB". */
+  gbBeaconNftPolicy: string;
+  /** Địa chỉ 16 shard GB = `Script(gb_shard_policy_id)`. */
+  gbShardAddress: string;
+  /** Apply-param #4 — hash script `gb_shard` = policy NFT "GBS"‖id, suy từ `gbShardAddress`. */
+  gbShardPolicyId: string;
+  /** Apply-param `gb_shard_cap_nanogic` của shard đã deploy. Lệch ⟹ shard bác tx. */
+  gbShardCapNanogic: bigint;
+  /** Địa chỉ sổ két (`vault_registry`, NFT "VRG"). */
+  vaultRegistryAddress: string;
+  /** Hash script sổ = policy NFT "VRG" — suy từ `vaultRegistryAddress`. */
+  vaultRegistryPolicy: string;
 }
 
 export interface Deployment {
@@ -112,12 +130,21 @@ export interface Deployment {
   /** UTxO mang script tham chiếu CIP-33. KHÔNG phải tối ưu: đính kèm cả hai validator
    *  vào một tx cho 17 303 byte trên Preview, vượt trần 16 384 — không có chúng thì
    *  ScheduleCommit và Consume KHÔNG dựng nổi tx nào. */
-  refScriptUtxos: { vault: OutRefConfig; shard: OutRefConfig; consume: OutRefConfig };
+  refScriptUtxos: {
+    vault: OutRefConfig; shard: OutRefConfig; consume: OutRefConfig;
+    /** ScheduleGen Gen v2.0: validator withdraw-zero `commit` (khoá `ref_script_utxos.commit`).
+     *  Vắng ⟹ `/tx/schedule-commit` trả 501 `CONFIG_MISSING`. */
+    commit?: OutRefConfig;
+    /** Validator `gb_shard` (khoá `ref_script_utxos.gb_shard`) — nhánh sinh tiêu shard GB.
+     *  Vắng ⟹ `/tx/instant-gen` và `/tx/schedule-commit` trả 501 `CONFIG_MISSING`. */
+    gbShard?: OutRefConfig;
+  };
   consume: ConsumeDeployment;
-  /** Tuỳ chọn: thiếu mục này thì đường `/tx/instant-gen` ĐÓNG (404), các đường khác
-   *  chạy bình thường. Đóng một cửa vì thiếu dữ kiện thì tốt hơn mở nó ra để mọi tx
-   *  chết trên chuỗi. */
-  instant?: InstantDeployment;
+  /** Tuỳ chọn: thiếu mục này thì các đường cần beacon Gen v2.0 (`/tx/instant-gen`,
+   *  `/tx/refresh-checkpoint`, `/tx/schedule-commit`, và `/tx/consume` trên két Instant sang
+   *  epoch mới) trả 501 `CONFIG_MISSING`; các đường khác chạy bình thường. Đóng một cửa vì
+   *  thiếu dữ kiện thì tốt hơn mở nó ra để mọi tx chết trên chuỗi. */
+  genV2?: GenV2Deployment;
   /** Tuỳ chọn: tham số theo mạng cho nhân chứng chủ `Script(h)` = `did_stake` (PhoenixKey).
    *  Vắng ⟹ mọi yêu cầu có chủ script trả 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ khoá
    *  không bị ảnh hưởng. */
@@ -387,6 +414,8 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
     vault: outRef(str(refs.vault, "ref_script_utxos.vault"), "ref_script_utxos.vault"),
     shard: outRef(str(refs.shard, "ref_script_utxos.shard"), "ref_script_utxos.shard"),
     consume: outRef(str(refs.consume, "ref_script_utxos.consume"), "ref_script_utxos.consume"),
+    ...(refs.commit === undefined ? {} : { commit: outRef(str(refs.commit, "ref_script_utxos.commit"), "ref_script_utxos.commit") }),
+    ...(refs.gb_shard === undefined ? {} : { gbShard: outRef(str(refs.gb_shard, "ref_script_utxos.gb_shard"), "ref_script_utxos.gb_shard") }),
   };
 
   const c = obj(o.consume, "consume");
@@ -411,21 +440,46 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
       : { maxPriceStale: nonNegativeInt(c.max_price_stale, "consume.max_price_stale") }),
   };
 
-  // Mục `instant` là TUỲ CHỌN. Vắng ⟹ `/tx/instant-gen` đóng; CÓ ⟹ mọi trường bắt
-  // buộc, phân tích bằng đúng bộ hàm NÉM như `consume`. Không có nửa vời: một mục
-  // khai thiếu một trường là một cửa mở ra rồi chết trên chuỗi.
-  let instant: InstantDeployment | undefined;
+  // 🪦 Mục `instant` (UM + beacon backing) đã chết cùng Gen v2.0. Còn nằm đó ⟹ người vận hành
+  // tin rằng đường sinh đọc hai địa chỉ đó; lặng lẽ bỏ qua thì niềm tin ấy sai mà không gì báo.
   if (o.instant !== undefined) {
-    const i = obj(o.instant, "instant");
-    instant = {
-      umDatumAddress: scriptAddress(str(i.um_datum_address, "instant.um_datum_address"), prefix, network, "instant.um_datum_address").address,
-      umNftUnit: unit(str(i.um_nft_unit, "instant.um_nft_unit"), "instant.um_nft_unit"),
-      backingBeaconAddress: scriptAddress(str(i.backing_beacon_address, "instant.backing_beacon_address"), prefix, network, "instant.backing_beacon_address").address,
-      backingBeaconNftUnit: unit(str(i.backing_beacon_nft_unit, "instant.backing_beacon_nft_unit"), "instant.backing_beacon_nft_unit"),
+    throw new Error(
+      "[config] VAULT_TX_API_DEPLOYMENT.instant (um_datum_address · um_nft_unit · backing_beacon_*) " +
+      "đã bỏ ở Gen v2.0: UM không còn trong công thức sinh, beacon backing thay bằng beacon " +
+      "GreenBack + shard GB. Khai khối `gen_v2` (rate_beacon_address · rate_nft_policy · " +
+      "greenback_beacon_address · greenback_beacon_nft_policy · gb_shard_address · " +
+      "gb_shard_cap_nanogic · vault_registry_address) và bỏ khoá `instant`.",
+    );
+  }
+
+  // Mục `gen_v2` TUỲ CHỌN. Vắng ⟹ các đường cần beacon trả 501; CÓ ⟹ mọi trường bắt buộc,
+  // phân tích bằng đúng bộ hàm NÉM như `consume`. Không nửa vời.
+  let genV2: GenV2Deployment | undefined;
+  if (o.gen_v2 !== undefined) {
+    const g = obj(o.gen_v2, "gen_v2");
+    const rate = scriptAddress(str(g.rate_beacon_address, "gen_v2.rate_beacon_address"), prefix, network, "gen_v2.rate_beacon_address");
+    const gbb = scriptAddress(str(g.greenback_beacon_address, "gen_v2.greenback_beacon_address"), prefix, network, "gen_v2.greenback_beacon_address");
+    const shard = scriptAddress(str(g.gb_shard_address, "gen_v2.gb_shard_address"), prefix, network, "gen_v2.gb_shard_address");
+    const reg = scriptAddress(str(g.vault_registry_address, "gen_v2.vault_registry_address"), prefix, network, "gen_v2.vault_registry_address");
+    const cap = g.gb_shard_cap_nanogic;
+    if (typeof cap !== "string" || !/^[1-9][0-9]*$/.test(cap)) {
+      throw new Error(
+        "[config] VAULT_TX_API_DEPLOYMENT.gen_v2.gb_shard_cap_nanogic phải là CHUỖI chữ số > 0 — " +
+        "đúng giá trị đã apply vào validator gb_shard; lệch là shard bác mọi lượt rút.",
+      );
+    }
+    genV2 = {
+      rateBeaconAddress: rate.address, rateScriptHash: rate.scriptHash,
+      rateNftPolicy: hex(str(g.rate_nft_policy, "gen_v2.rate_nft_policy"), 56, "gen_v2.rate_nft_policy"),
+      gbBeaconAddress: gbb.address, gbBeaconScriptHash: gbb.scriptHash,
+      gbBeaconNftPolicy: hex(str(g.greenback_beacon_nft_policy, "gen_v2.greenback_beacon_nft_policy"), 56, "gen_v2.greenback_beacon_nft_policy"),
+      gbShardAddress: shard.address, gbShardPolicyId: shard.scriptHash,
+      gbShardCapNanogic: BigInt(cap),
+      vaultRegistryAddress: reg.address, vaultRegistryPolicy: reg.scriptHash,
     };
   }
 
-  // Mục `did_stake` TUỲ CHỌN, cùng luật với `instant`: có thì đủ trường và đúng hình dạng.
+  // Mục `did_stake` TUỲ CHỌN, cùng luật với `gen_v2`: có thì đủ trường và đúng hình dạng.
   let didStake: { anchorNftPolicy: string } | undefined;
   if (o.did_stake !== undefined) {
     const d = obj(o.did_stake, "did_stake");
@@ -453,7 +507,7 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
 
   return {
     source, lampPolicyId, ...(lampRehearsalAck === undefined ? {} : { lampRehearsalAck }),
-    lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, instant, didStake,
+    lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, ...(genV2 === undefined ? {} : { genV2 }), didStake,
     feePayerCollateralLovelace, ...(feecover === undefined ? {} : { feecover }),
   };
 }

@@ -12,7 +12,8 @@
 // Bước 4 là lý do gói này tồn tại ở dạng hiện tại. Xem `summary.ts`.
 
 import { CML, type UTxO } from "@lucid-evolution/lucid";
-import { FundingError, OwnerAuthError, sameOwner, type Network, type OwnerRef } from "@magiclamp/protocol-utils";
+import { FundingError, OwnerAuthError, posixMsToEpoch, sameOwner, type Network, type OwnerRef } from "@magiclamp/protocol-utils";
+import type { InstantGenLimits } from "@magiclamp/instantgen-sdk";
 import type { Profile } from "@magiclamp/sdk";
 import {
   assertFundingAddresses, checkFundingTx, checkSelfFundedTx, fundingApiErrorOf, fundingWitnessOf,
@@ -44,6 +45,13 @@ import {
 } from "./txBuilder.js";
 import { findVaultsAtScope, pickSingleVault, type FoundVault, type IgnoredUtxo } from "./vaultLookup.js";
 import { checkWakemeRefInTx, resolveWakemeVault, wakemeScriptHashOrThrow, type ResolvedWakeme } from "./wakeme.js";
+import {
+  assertMWithinMax, instantCheckpointNeed, instantLimitsOf, instantVaultDatumOf, instantVaultParamsOf,
+  readGbBeaconUtxo, readGbShardUtxos, readInstantGenRefs, readRateBeaconUtxo, readVaultRegistryUtxo,
+  requireGenV2, requireRefScript, scheduleGenBeaconParamsOf,
+} from "./genV2.js";
+import { genLimitsSummary } from "./summary.js";
+import type { ConsumeBuildParams } from "./txBuilder.js";
 
 const PKH_HEX = /^[0-9a-f]{56}$/;
 const HEX = /^[0-9a-f]+$/;
@@ -181,9 +189,27 @@ export class VaultTxService {
     return this.deps.builder.coinsPerUtxoByte();
   }
 
+  /**
+   * ScheduleCommit Gen v2.0 — nhánh ký đọc beacon ρ + beacon GreenBack + sổ két và TIÊU shard
+   * GB của két; luật ký uỷ cho validator withdraw-zero `commit`. Cổng cấu hình (khối `gen_v2`,
+   * ref-script `commit` + `gb_shard`) chạy TRƯỚC khi giữ khoá chủ ⟹ 501 `CONFIG_MISSING`.
+   */
   async scheduleCommit(req: OwnerRequest & { scheduleLength: bigint; lampPerEpoch: bigint }, quote?: QuoteMode): Promise<BuildResponse> {
-    return this.buildOne("Schedule", "schedule_commit", req, (ctx, b) =>
-      b.scheduleCommit(ctx, { scheduleLength: req.scheduleLength, lampPerEpoch: req.lampPerEpoch }), quote);
+    const d = this.deps.deployment;
+    const route = "/tx/schedule-commit";
+    const g = requireGenV2(d, route);
+    requireRefScript(d, "commit", route);
+    requireRefScript(d, "gbShard", route);
+    return this.buildOne("Schedule", "schedule_commit", req, async (ctx, b) => {
+      const [rateBeaconUtxo, gbBeaconUtxo, vaultRegistryUtxo, gbShardUtxos] = await Promise.all([
+        readRateBeaconUtxo(this.deps.chain, g), readGbBeaconUtxo(this.deps.chain, g),
+        readVaultRegistryUtxo(this.deps.chain, g), readGbShardUtxos(this.deps.chain, g),
+      ]);
+      return b.scheduleCommit(ctx, {
+        scheduleLength: req.scheduleLength, lampPerEpoch: req.lampPerEpoch,
+        gen: { params: scheduleGenBeaconParamsOf(g), rateBeaconUtxo, gbBeaconUtxo, vaultRegistryUtxo, gbShardUtxos },
+      });
+    }, quote);
   }
 
   async scheduleFire(req: OwnerRequest & { scheduleId: string }, quote?: QuoteMode): Promise<BuildResponse> {
@@ -199,51 +225,113 @@ export class VaultTxService {
    * lý do không chọn đại.
    */
   /**
-   * InstantGen — vault loại `Instant`. Không tham số: lượng cấp do validator quyết.
+   * InstantGen Gen v2.0 — vault loại `Instant`, `m` (nanogic) do CHỦ chọn.
    *
-   * 🔴 Cổng cấu hình nằm Ở ĐÂY, không ở tầng dựng. Đây là một quyết định, không phải
-   * chỗ tiện tay: đặt nó trong `SdkTxBuilder` thì nó biến mất cùng lúc với `SdkTxBuilder`
-   * — bất kỳ bản dựng nào khác được nối vào cũng làm đường này báo "mở" trong khi bốn
-   * giá trị cấu hình vẫn vắng. Một cổng chỉ sống trong MỘT hiện thực của một cổng cắm
-   * thì nó gác hiện thực đó, không gác khái niệm.
+   * 🔴 Cổng cấu hình nằm Ở ĐÂY, không ở tầng dựng: một cổng chỉ sống trong MỘT hiện thực
+   * của `TxBuilderPort` thì nó gác hiện thực đó, không gác khái niệm. Cùng lý do, trần `m`
+   * (`instantGenLimits(..).maxM`) được so ở đây trên đúng các UTxO beacon/shard sẽ giao
+   * xuống bộ dựng — vượt trần ⟹ 422 `INSTANT_GEN_M_ABOVE_MAX`, bộ dựng KHÔNG được gọi.
    */
-  async instantGen(req: OwnerRequest & { wakemeVaultRef?: OutRefLike }, quote?: QuoteMode): Promise<BuildResponse> {
-    if (this.deps.deployment.instant === undefined) {
-      throw new ConfigMissingError(
-        `Đường InstantGen chưa được cấu hình: bản deploy thiếu mục \`instant\` ` +
-        `(\`um_datum_address\` · \`um_nft_unit\` · \`backing_beacon_address\` · ` +
-        `\`backing_beacon_nft_unit\`).\n` +
-        `  · InstantGen ĐỌC hai reference input lúc chạy, và \`validate_instant_gen\` ` +
-        `fail-closed quanh chúng: thiếu beacon, beacon quá hạn, hoặc cờ \`depeg\` bật ` +
-        `thì giao dịch bị TỪ CHỐI.\n` +
-        `  · Nên mở đường này khi chưa có đủ bốn giá trị là dựng tx nào cũng chết trên ` +
-        `chuỗi, với một câu không trỏ về cấu hình. Đóng là trạng thái đúng.`,
-        { missing: "deployment.instant" },
-      );
-    }
-    // Két Wakeme (`wakeme.ts`): mạng chưa có két ⟹ 501 NGAY, trước khi giữ khoá chủ.
+  async instantGen(req: OwnerRequest & { m: bigint; wakemeVaultRef?: OutRefLike }, quote?: QuoteMode): Promise<BuildResponse> {
+    const d = this.deps.deployment;
+    const route = "/tx/instant-gen";
+    const g = requireGenV2(d, route);
+    requireRefScript(d, "gbShard", route);
+    // Mạng chưa có két Wakeme ⟹ 501 NGAY (apply-param #8 không có giá trị), trước khi giữ khoá.
+    const vaultParams = instantVaultParamsOf(d, g, this.deps.network);
     const wakemeRef = req.wakemeVaultRef;
-    if (wakemeRef !== undefined) wakemeScriptHashOrThrow(this.deps.network);
     let wakeme: ResolvedWakeme | undefined;
+    let limits: InstantGenLimits | undefined;
     return this.buildOne("Instant", "instant_gen", req, async (ctx, b) => {
-      if (wakemeRef === undefined) return b.instantGen(ctx, {});
-      const d = this.deps.deployment;
-      wakeme = await resolveWakemeVault(this.deps.chain, wakemeRef, {
-        vaultUtxo: ctx.vault.utxo,
-        vaultScriptHash: ctx.vault.scope.scriptHash,
-        network: this.deps.network,
-        tipPosixMs: ctx.tip.blockTimePosixMs,
-        lampPolicyId: d.lampPolicyId,
-        lampAssetNameHex: d.lampAssetNameHex,
+      if (wakemeRef !== undefined) wakeme = await this.resolveWakeme(ctx, wakemeRef);
+      const vaultDatum = instantVaultDatumOf(ctx.vault.utxo);
+      const refs = await readInstantGenRefs(this.deps.chain, g, vaultDatum.owner);
+      const epoch = posixMsToEpoch(ctx.tip.blockTimePosixMs, this.deps.network);
+      limits = instantLimitsOf({
+        vaultUtxo: ctx.vault.utxo, vaultDatum, epoch, refs, wakeme: wakeme?.read ?? null, g,
       });
-      return b.instantGen(ctx, { wakeme: { utxo: wakeme.utxo, scriptHash: wakeme.scriptHash } });
+      assertMWithinMax(req.m, limits);
+      return b.instantGen(ctx, {
+        m: req.m, vaultParams, refs, includeRateBeacon: limits.refreshed,
+        vaultRegistryPolicy: g.vaultRegistryPolicy, gbShardCapNanogic: g.gbShardCapNanogic,
+        ...(wakeme === undefined ? {} : { wakeme: { utxo: wakeme.utxo, scriptHash: wakeme.scriptHash } }),
+      });
     }, quote, (txCbor, summary) => {
-      if (wakemeRef === undefined) return;
-      // Đọc lại CBOR: két phải là reference input, không phải input bị tiêu.
-      checkWakemeRefInTx(txCbor, wakemeRef);
-      if (wakeme === undefined) throw new Error("[bất biến nội bộ] có wakeme_vault_ref mà chưa đọc két.");
-      summary.wakeme = wakeme.summary;
+      if (limits === undefined) throw new Error("[bất biến nội bộ] instant_gen dựng xong mà chưa tính trần.");
+      summary.gen_limits = genLimitsSummary(limits, summary);
+      this.wakemeAfterSummary(txCbor, summary, wakemeRef, wakeme);
     });
+  }
+
+  /**
+   * RefreshCheckpoint — chủ ký, làm mới năm ô checkpoint (`cap_epoch`, `cap_nanogic`,
+   * `usage_window`, `usage_window_epoch`, `wakeme_link`) mà không sinh/tiêu gì. Luôn cần
+   * beacon ρ; `wakeme_vault_ref` có ⟹ ghim/giữ két Wakeme, vắng ⟹ gỡ ghim (`wakeme_link := ""`).
+   */
+  async refreshCheckpoint(req: OwnerRequest & { wakemeVaultRef?: OutRefLike }, quote?: QuoteMode): Promise<BuildResponse> {
+    const d = this.deps.deployment;
+    const g = requireGenV2(d, "/tx/refresh-checkpoint");
+    const vaultParams = instantVaultParamsOf(d, g, this.deps.network);
+    const wakemeRef = req.wakemeVaultRef;
+    let wakeme: ResolvedWakeme | undefined;
+    return this.buildOne("Instant", "refresh_checkpoint", req, async (ctx, b) => {
+      if (wakemeRef !== undefined) wakeme = await this.resolveWakeme(ctx, wakemeRef);
+      const rateBeaconUtxo = await readRateBeaconUtxo(this.deps.chain, g);
+      return b.refreshCheckpoint(ctx, {
+        vaultParams, rateBeaconUtxo, ...(wakeme === undefined ? {} : { wakemeVaultUtxo: wakeme.utxo }),
+      });
+    }, quote, (txCbor, summary) => this.wakemeAfterSummary(txCbor, summary, wakemeRef, wakeme));
+  }
+
+  private resolveWakeme(ctx: BuildContext, ref: OutRefLike): Promise<ResolvedWakeme> {
+    const d = this.deps.deployment;
+    return resolveWakemeVault(this.deps.chain, ref, {
+      vaultUtxo: ctx.vault.utxo,
+      vaultScriptHash: ctx.vault.scope.scriptHash,
+      network: this.deps.network,
+      tipPosixMs: ctx.tip.blockTimePosixMs,
+      lampPolicyId: d.lampPolicyId,
+      lampAssetNameHex: d.lampAssetNameHex,
+    });
+  }
+
+  /** Đọc lại CBOR: két Wakeme đã giao xuống phải là reference input, không phải input bị tiêu. */
+  private wakemeAfterSummary(
+    txCbor: string, summary: TxSummary, ref: OutRefLike | undefined, wakeme: ResolvedWakeme | undefined,
+  ): void {
+    if (wakeme === undefined) return;
+    if (ref === undefined) throw new Error("[bất biến nội bộ] có két Wakeme mà không có wakeme_vault_ref.");
+    checkWakemeRefInTx(txCbor, ref);
+    summary.wakeme = wakeme.summary;
+  }
+
+  /**
+   * Két Instant v2.0 tiêu lần đầu trong epoch mới (`cap_epoch < e`) ⟹ nhánh BurnBatch làm mới
+   * checkpoint ⟹ cần beacon ρ, và két Wakeme đang ghim nếu `wakeme_link` khác "".
+   * Két Schedule, hoặc cùng epoch ⟹ `undefined` (không đọc gì — ScheduleGen không đọc két Wakeme).
+   */
+  private async consumeCheckpointFor(
+    ctx: BuildContext, wakemeRef: OutRefLike | undefined,
+  ): Promise<{ params: ConsumeBuildParams["checkpoint"]; wakeme?: ResolvedWakeme }> {
+    if (ctx.vault.scope.vaultType !== "Instant") return { params: undefined };
+    const datum = instantVaultDatumOf(ctx.vault.utxo);
+    const need = instantCheckpointNeed(datum, posixMsToEpoch(ctx.tip.blockTimePosixMs, this.deps.network));
+    if (!need.refresh) return { params: undefined };
+    const d = this.deps.deployment;
+    const g = requireGenV2(d, "/tx/consume (két Instant tiêu lần đầu trong epoch mới)");
+    const vaultParams = instantVaultParamsOf(d, g, this.deps.network);
+    if (need.wakemeLink !== "" && wakemeRef === undefined) {
+      throw new CodedApiError(400, "WAKEME_VAULT_REF_REQUIRED",
+        `Két này đang ghim két Wakeme (${need.wakemeLink.slice(0, 16)}…) và lượt tiêu này làm mới ` +
+        `checkpoint — validator đòi két Wakeme ở reference input. Gửi "wakeme_vault_ref".`,
+        { wakeme_link: need.wakemeLink });
+    }
+    const wakeme = wakemeRef === undefined ? undefined : await this.resolveWakeme(ctx, wakemeRef);
+    const rateBeaconUtxo = await readRateBeaconUtxo(this.deps.chain, g);
+    return {
+      params: { vaultParams, rateBeaconUtxo, ...(wakeme === undefined ? {} : { wakemeVaultUtxo: wakeme.utxo }) },
+      ...(wakeme === undefined ? {} : { wakeme }),
+    };
   }
 
   /**
@@ -251,12 +339,21 @@ export class VaultTxService {
    * chủ — không còn một NFT thread cố định trong cấu hình. `engageRef` chỉ đích danh khi chủ
    * có nhiều thread.
    */
-  async consume(req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike }, quote?: QuoteMode): Promise<BuildResponse> {
+  async consume(
+    req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike; wakemeVaultRef?: OutRefLike },
+    quote?: QuoteMode,
+  ): Promise<BuildResponse> {
     const d = this.deps.deployment.consume;
+    let wakeme: ResolvedWakeme | undefined;
     return this.buildOne(undefined, "consume", req, async (ctx, b) => {
       const thread = await pickEngageThread(this.deps.chain, d.engageAddress, d.engageScriptHash, ctx.owner, req.engageRef);
-      return b.consume(ctx, { opType: req.opType, opCount: req.opCount, engageUtxo: thread.utxo });
-    }, quote);
+      const cp = await this.consumeCheckpointFor(ctx, req.wakemeVaultRef);
+      wakeme = cp.wakeme;
+      return b.consume(ctx, {
+        opType: req.opType, opCount: req.opCount, engageUtxo: thread.utxo,
+        ...(cp.params === undefined ? {} : { checkpoint: cp.params }),
+      });
+    }, quote, (txCbor, summary) => this.wakemeAfterSummary(txCbor, summary, req.wakemeVaultRef, wakeme));
   }
 
   /**
@@ -943,6 +1040,7 @@ const ROUTE_OF_INTENT: Record<string, IssuedRoute> = {
   schedule_commit: "schedule-commit",
   schedule_fire: "schedule-fire",
   instant_gen: "instant-gen",
+  refresh_checkpoint: "refresh-checkpoint",
   consume: "consume",
 };
 

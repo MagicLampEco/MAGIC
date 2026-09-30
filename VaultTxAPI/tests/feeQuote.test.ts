@@ -30,6 +30,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor } from "./fixtures/tx.js";
+import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
@@ -94,6 +95,7 @@ class FeeModelBuilder implements TxBuilderPort {
   async scheduleFire(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async consume(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async instantGen(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
+  async refreshCheckpoint(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async createVault(): Promise<BuiltCreateVault> { throw new Error("[FeeModelBuilder] createVault không dựng ở đây."); }
   async openThread(): Promise<BuiltOpenThread> { throw new Error("[FeeModelBuilder] openThread không dựng ở đây."); }
   async coinsPerUtxoByte(): Promise<bigint> { return this.coinsPerUtxoByteValue; }
@@ -106,7 +108,9 @@ const BASE_DEPLOYMENT = {
   shard_address: SHARD_ADDRESS,
   ref_script_utxos: {
     vault: `${"11".repeat(32)}#0`, shard: `${"22".repeat(32)}#1`, consume: `${"33".repeat(32)}#2`,
+    ...GEN_V2_REF_SCRIPTS,
   },
+  gen_v2: genV2Json("Preview"),
   consume: {
     engage_address: ENGAGE_ADDRESS,
     price_beacon_address: VAULT_ADDRESS,
@@ -155,6 +159,7 @@ function harness(o: HarnessOpts = {}) {
   }), "Preview");
   const chain = new RecordedChainReader(
     {
+      ...genV2Chain("Preview", { epoch: 20_707n }),
       [VAULT_ADDRESS]: [VAULT_UTXO],
       [ENGAGE_ADDRESS]: [threadUtxo(KEY_OWNER, "7e".repeat(32))],
       [OWNER_FEE_ADDRESS]: o.ownerUtxos ?? [],

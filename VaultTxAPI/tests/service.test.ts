@@ -25,6 +25,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor, emptyWitnessSetCbor, fakeWitnessSetCbor } from "./fixtures/tx.js";
+import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 import { ENGAGE_ADDRESS, threadUtxo } from "./fixtures/engage.js";
 
 const LAMBDA = 7_000_000n;
@@ -49,7 +50,9 @@ const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
   shard_address: SHARD_ADDRESS,
   ref_script_utxos: {
     vault: `${"11".repeat(32)}#0`, shard: `${"22".repeat(32)}#1`, consume: `${"33".repeat(32)}#2`,
+    ...GEN_V2_REF_SCRIPTS,
   },
+  gen_v2: genV2Json("Preview"),
   consume: {
     engage_address: ENGAGE_ADDRESS,
     price_beacon_address: VAULT_ADDRESS,
@@ -112,7 +115,7 @@ function harness(opts: {
 } = {}): Harness {
   const chain = new (opts.chainClass ?? RecordedChainReader)(
     // Thread Engage của chủ: `/tx/consume` chọn thread theo chủ lúc chạy (`engage.ts`).
-    { [VAULT_ADDRESS]: opts.utxos ?? [vaultUtxo()], [ENGAGE_ADDRESS]: [threadUtxo({ type: "key", hash: OWNER_PKH }, "7e".repeat(32))] },
+    { [VAULT_ADDRESS]: opts.utxos ?? [vaultUtxo()], [ENGAGE_ADDRESS]: [threadUtxo({ type: "key", hash: OWNER_PKH }, "7e".repeat(32))], ...genV2Chain("Preview", { epoch: 20_707n }) },
     TIP,
     [],
     opts.failWith,
@@ -163,7 +166,8 @@ describe("🔴 summary KHÔNG phải tiếng vọng của yêu cầu", () => {
     });
 
     // Tham số yêu cầu ĐÃ tới tầng dựng — nên bài này không xanh vì tham số bị mất đường.
-    expect(h.builder.lastCall).toEqual({
+    // `toMatchObject`: từ Gen v2.0 bộ dựng còn ghi thêm `buildParams` (UTxO beacon/shard).
+    expect(h.builder.lastCall).toMatchObject({
       route: "schedule_commit",
       params: { scheduleLength: 17n, lampPerEpoch: LAMBDA },
     });

@@ -125,3 +125,40 @@ describe("Gen v2.0 — vector TV-GEN-* bản chép trùng bản InstantGen (P8)"
     });
   }
 });
+
+// Ánh xạ két → shard GreenBack phải TRÙNG giữa hai cửa sinh: cùng một chủ rút từ cùng một
+// shard, dù sinh qua InstantGen hay ký qua ScheduleGen. Lệch ánh xạ thì một chủ có hai shard,
+// trần `gb_vault_share` mỗi két bị nhân đôi. Hai hàm khác TÊN và tên hằng (IG `vault_shard_id`
+// + `gb_shard_count`, SG `compute_shard_id` + `shard_count`) nên so thân sau khi bỏ chú thích và
+// đồng nhất hai tên đó, rồi so riêng giá trị hai hằng.
+describe("Gen v2.0 — ánh xạ két → shard GreenBack trùng giữa InstantGen và ScheduleGen", () => {
+  const fnBody = (src: string, name: string): string => {
+    const start = src.indexOf(`pub fn ${name}(`);
+    expect(start, `không thấy pub fn ${name}`).toBeGreaterThanOrEqual(0);
+    const end = src.indexOf("\n}\n", start);
+    return src
+      .slice(src.indexOf("{", start), end)
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, "").trim())
+      .filter((l) => l.length > 0)
+      .join("\n");
+  };
+  const constValue = (src: string, name: string): string => {
+    const m = src.match(new RegExp(`pub const ${name}\\s*:\\s*Int\\s*=\\s*([0-9_]+)`));
+    expect(m, `không thấy pub const ${name}`).not.toBeNull();
+    return m![1]!.replace(/_/g, "");
+  };
+
+  it("thân `vault_shard_id` (IG) trùng `compute_shard_id` (SG)", () => {
+    const ig = fnBody(theirs("onchain/lib/magiclamp/protocol/greenback.ak"), "vault_shard_id")
+      .replace(/\bgb_shard_count\b/g, "shard_count");
+    const sg = fnBody(mine("onchain/lib/magiclamp/protocol/math.ak"), "compute_shard_id");
+    expect(ig).toBe(sg);
+  });
+
+  it("`gb_shard_count` (IG) = `shard_count` (SG)", () => {
+    expect(constValue(theirs("onchain/lib/magiclamp/protocol/constants.ak"), "gb_shard_count")).toBe(
+      constValue(mine("onchain/lib/magiclamp/protocol/constants.ak"), "shard_count"),
+    );
+  });
+});

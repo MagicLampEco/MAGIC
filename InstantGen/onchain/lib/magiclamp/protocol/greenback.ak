@@ -47,7 +47,8 @@ pub fn vault_shard_id(owner: Credential) -> Int {
       VerificationKey(pkh) -> pkh
       Script(h) -> h
     }
-  bytearray.at(crypto.blake2b_256(inner), 0) % gb_shard_count
+  let hash = crypto.blake2b_256(inner)
+  bytearray.at(hash, 0) % gb_shard_count
 }
 
 /// Beacon GreenBack THẬT trong reference input và ĐANG MỞ, fail-closed (SPEC §6.1.3):

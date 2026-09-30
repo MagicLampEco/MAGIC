@@ -8,6 +8,8 @@
 //   (A) hash dựng từ `deployParams.ts` TRÙNG hash của gói nền cho cùng đầu vào; cặp đối: đảo hai
 //       ô cùng kiểu ⟹ hash khác (ca xanh ở cả hai cực thì nó không kiểm gì).
 //   (B) `genV2BeaconRefsFromBook`: thiếu khoá ⟹ ném nêu ĐỦ tên; hex hỏng ⟹ ném.
+//   (E) hash shard mà 03 dựng TRÙNG hash shard mà 06 công bố cho cùng sổ; cặp: đổi một khoá
+//       GenBeacons trong sổ ⟹ hash shard khác.
 //   (C) datum genesis của 05/07 trùng CBOR bản của MagicSDK (`buildInitialVaultDatum`), 20/19 trường.
 //   (D) Emulator: genesis két SG + IG qua validator thật (cặp: một ô datum lệch ⟹ bị bác) ·
 //       công bố ba ref-script ScheduleGen, mỗi cái một tx < 16 384 B (cặp: gộp két + commit ⟹
@@ -34,6 +36,7 @@ import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "./vaultId.j
 import { buildScheduleVaultCreateTx, scheduleGenesisDatum } from "./deploy/07_create_schedule_vault.js";
 import { buildInstantVaultCreateTx, instantGenesisDatum } from "./deploy/05_create_instant_vault.js";
 import { scheduleRefScriptPlan, REF_COMMIT_KEY } from "./deploy/06_publish_ref_scripts.js";
+import { scheduleShardScript } from "./deploy/03_deploy_shards.js";
 import { registerCommitStake } from "./deploy/08_register_commit_stake.js";
 import { SCHEDULE_ONLY_STATE_KEYS } from "./gen_vault_tx_api_deployment.js";
 import { applyInstantVaultParams } from "../InstantGen/offchain/src/vaultScript.js";
@@ -106,6 +109,26 @@ async function main() {
     /GREENBACK_BEACON_HASH, GB_SHARD_HASH/);
   await throwsWith("hex hỏng ⟹ ném nêu khoá", () => genV2BeaconRefsFromBook({ ...book, GB_SHARD_HASH: "FILL_ME" }), /GB_SHARD_HASH="FILL_ME"/);
   check("REF_COMMIT_KEY là khoá của bảng bộ sinh", REF_COMMIT_KEY in SCHEDULE_ONLY_STATE_KEYS, REF_COMMIT_KEY);
+
+  // ── (E) 03 ↔ 06: hash shard dựng từ CÙNG sổ ────────────────────────────────
+  // 03 ghi `SHARD_HASH`, 06 công bố ref-script shard; lệch nhau ⟹ bước 07/keeper tiêu một
+  // shard không có ref-script. Cặp: đổi MỘT khoá GenBeacons trong sổ ⟹ hash 03 phải đổi
+  // (khoá đó thật sự đi vào shard qua két → commit), không thì phép so trùng ở trên xanh rỗng.
+  console.log("── (E) 03 ↔ 06 cùng sổ");
+  const sgFromBook = (b: Record<string, string>): ScheduleScriptParamInputs => ({
+    lampPolicyId: LAMP_POLICY, lampAssetName: LAMP_NAME, shardPolicyId: h("5a"), msPerEpoch: MS,
+    ...genV2BeaconRefsFromBook(b),
+  });
+  const s03 = scheduleShardScript(sgBp, sgFromBook(book));
+  const plan06 = scheduleRefScriptPlan(sgBp, sgFromBook(book));
+  check("03 shard hash == 06 shard ref hash (cùng sổ giả)", s03.shardHash === plan06[1]!.hash, s03.shardHash);
+  check("03 két nền == 06 két ref (vault_script_hash của shard)", s03.vaultHash === plan06[0]!.hash);
+  check("03 shard == shard dựng từ cặp gói nền (applyScheduleScripts)",
+    s03.vaultHash === applyScheduleScripts(sgBpRaw, sgFromBook(book)).vaultScriptHash);
+  for (const k of ["RATE_PARAM_HASH", "GREENBACK_BEACON_HASH", "GB_SHARD_HASH"] as const) {
+    const s03x = scheduleShardScript(sgBp, sgFromBook({ ...book, [k]: h("e7") }));
+    check(`03 CỰC ĐỐI: đổi ${k} trong sổ ⟹ hash shard khác`, s03x.shardHash !== s03.shardHash);
+  }
 
   // ── (C) datum genesis ↔ MagicSDK ───────────────────────────────────────────
   console.log("── (C) datum genesis ↔ MagicSDK");

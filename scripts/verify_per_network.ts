@@ -14,7 +14,10 @@
 // Optional env (chỉ cần khi verify một deploy THẬT — nếu thiếu thì dùng giá trị
 // giữ chỗ và hash chỉ có ý nghĩa kiểm HÌNH DẠNG):
 //   LAMP_POLICY_ID  UM_NFT_POLICY_ID  SHARD_NFT_POLICY_ID
-//   UM_DATUM_HASH   BACKING_NFT_POLICY_ID   BACKING_SCRIPT_HASH
+//   RATE_PARAM_HASH  GREENBACK_BEACON_HASH  GB_SHARD_HASH   (GenBeacons — Gen v2.0)
+// Gen v2.0: vault Instant 9 tham số, két ScheduleGen 6 tham số + `commit` 9 tham số. Hai
+// hàng ScheduleGen dựng qua `scheduleScriptPair` — cùng hàm với deploy 03/06/07 — vì két
+// nhận hash `commit` ĐÃ apply, không phải một giá trị tự khai.
 // Két Wakeme (apply-param #8 của Instant) KHÔNG đọc env: lấy theo mạng từ
 // `@magiclamp/protocol-utils` ▸ `wakemeVaultHash`; mạng chưa có két ⟹ giữ chỗ + báo.
 
@@ -22,10 +25,11 @@ import { validatorToScriptHash } from "@lucid-evolution/lucid";
 import { lampAssetName, msPerEpoch, wakemeVaultHash, type Network } from "@magiclamp/protocol-utils";
 import {
   loadBlueprint, findValidator, paramTitles, appliedValidator,
-  type ParamMap,
+  type Blueprint, type ParamMap,
 } from "./applyParams.js";
 import {
-  instantVaultParams, scheduleVaultParams, umDatumParams,
+  instantVaultParams, scheduleCommitParams, scheduleVaultParams, scheduleScriptPair, umDatumParams,
+  type GenV2BeaconRefs, type ScheduleScriptParamInputs,
 } from "./deployParams.js";
 
 // ── Mạng cần đối chiếu ───────────────────────────────────────────
@@ -49,9 +53,22 @@ function fromEnv(name: string): string {
 const LAMP_POLICY   = fromEnv("LAMP_POLICY_ID");
 const UM_NFT_POLICY = fromEnv("UM_NFT_POLICY_ID");
 const SHARD_POLICY  = fromEnv("SHARD_NFT_POLICY_ID");
-const UM_SCRIPT_HASH      = fromEnv("UM_DATUM_HASH");
-const BACKING_POLICY      = fromEnv("BACKING_NFT_POLICY_ID");
-const BACKING_SCRIPT_HASH = fromEnv("BACKING_SCRIPT_HASH");
+// Ba hash GenBeacons — cùng tên khoá sổ mà `genV2BeaconRefsFromBook` đọc. NFT beacon có
+// policy = script hash của chính beacon, nên mỗi khoá điền hai ô.
+const RATE_PARAM_HASH       = fromEnv("RATE_PARAM_HASH");
+const GREENBACK_BEACON_HASH = fromEnv("GREENBACK_BEACON_HASH");
+const GB_SHARD_HASH         = fromEnv("GB_SHARD_HASH");
+const BEACONS: GenV2BeaconRefs = {
+  gbBeaconNftPolicy: GREENBACK_BEACON_HASH, gbBeaconScriptHash: GREENBACK_BEACON_HASH,
+  gbShardPolicyId:   GB_SHARD_HASH,
+  rateNftPolicy:     RATE_PARAM_HASH,       rateScriptHash:     RATE_PARAM_HASH,
+};
+function scheduleInputs(net: Network): ScheduleScriptParamInputs {
+  return {
+    lampPolicyId: LAMP_POLICY, lampAssetName: lampAssetName(net), shardPolicyId: SHARD_POLICY,
+    msPerEpoch: msPerEpoch(net), ...BEACONS,
+  };
+}
 /** Két Wakeme (apply-param #8 của vault Instant) THEO MẠNG, từ nguồn duy nhất
  *  `@magiclamp/protocol-utils` ▸ `wakemeVaultHash`. Mạng chưa có két thì công cụ này vẫn
  *  chạy tiếp bằng giá trị giữ chỗ và GHI TÊN vào danh sách giữ chỗ — hash Instant của mạng
@@ -82,8 +99,9 @@ interface ModuleSpec {
   module: string;
   /** Title đầy đủ của validator trong plutus.json. */
   title: string;
-  /** Bản đồ tên → giá trị, dùng CHUNG với script deploy. */
-  build: (network: Network) => ParamMap;
+  /** Bản đồ tên → giá trị, dùng CHUNG với script deploy. Nhận blueprint của chính module
+   *  vì két ScheduleGen v2.0 cần hash `commit` ĐÃ apply từ cùng blueprint đó. */
+  build: (network: Network, bp: Blueprint) => ParamMap;
 }
 
 const MODULES: ModuleSpec[] = [
@@ -91,25 +109,29 @@ const MODULES: ModuleSpec[] = [
     module: "InstantGen",
     title:  "vault.vault.spend",
     build:  (net) => instantVaultParams({
-      lampPolicyId:      LAMP_POLICY,
-      lampAssetName:     lampAssetName(net),
-      umNftPolicy:       UM_NFT_POLICY,
-      umScriptHash:      UM_SCRIPT_HASH,
-      backingNftPolicy:  BACKING_POLICY,
-      backingScriptHash: BACKING_SCRIPT_HASH,
-      msPerEpoch:        msPerEpoch(net),
-      wakemeVaultHash:   WAKEME_BY_NET[net],
+      lampPolicyId:    LAMP_POLICY,
+      lampAssetName:   lampAssetName(net),
+      msPerEpoch:      msPerEpoch(net),
+      wakemeVaultHash: WAKEME_BY_NET[net],
+      ...BEACONS,
     }),
   },
   {
     module: "ScheduleGen",
+    title:  "vault.commit.withdraw",
+    build:  (net) => scheduleCommitParams(scheduleInputs(net)),
+  },
+  {
+    module: "ScheduleGen",
     title:  "vault.vault.spend",
-    build:  (net) => scheduleVaultParams({
-      lampPolicyId:  LAMP_POLICY,
-      lampAssetName: lampAssetName(net),
-      shardPolicyId: SHARD_POLICY,
-      msPerEpoch:    msPerEpoch(net),
-    }),
+    build:  (net, bp) => {
+      const i = scheduleInputs(net);
+      return scheduleVaultParams({
+        lampPolicyId: i.lampPolicyId, lampAssetName: i.lampAssetName, shardPolicyId: i.shardPolicyId,
+        msPerEpoch: i.msPerEpoch, gbShardPolicyId: i.gbShardPolicyId,
+        commitScriptHash: scheduleScriptPair(bp, i).commitHash,
+      });
+    },
   },
   {
     module: "UMKeeper",
@@ -155,9 +177,9 @@ async function main() {
   for (const mod of MODULES) {
     console.log(`── ${mod.module} / ${mod.title} ─────────────────────────`);
 
-    let unapplied;
+    let unapplied, bp: Blueprint;
     try {
-      const bp = await loadBlueprint(mod.module);
+      bp = await loadBlueprint(mod.module);
       unapplied = findValidator(bp, mod.title);
     } catch (e: unknown) {
       console.log(`  ❌ ${(e as Error).message}\n`);
@@ -169,7 +191,7 @@ async function main() {
 
     // Đối chiếu TÊN + THỨ TỰ trước khi nói tới hash.
     const expected = paramTitles(unapplied);
-    const given    = Object.keys(mod.build("Preview"));
+    const given    = Object.keys(mod.build("Preview", bp));
     console.log(`  blueprint params (${expected.length}): ${expected.join(", ")}`);
     console.log(`  script provides  (${given.length}): ${given.join(", ")}`);
     if (expected.join(" ") !== given.join(" ")) {
@@ -182,7 +204,7 @@ async function main() {
     const hashes = new Map<string, string>();
     for (const net of NETWORKS) {
       try {
-        const hash = validatorToScriptHash(appliedValidator(unapplied, mod.build(net)));
+        const hash = validatorToScriptHash(appliedValidator(unapplied, mod.build(net, bp)));
         hashes.set(net, hash);
         console.log(`  ${net.padEnd(8)} → ${hash}`);
       } catch (e: unknown) {
@@ -205,7 +227,7 @@ async function main() {
     // nhận `ms_per_epoch` thì Preprod và Mainnet dựng ra bộ tham số giống nhau và
     // hash trùng nhau là ĐÚNG; validator nhận thêm `lamp_asset_name` thì chúng khác.
     const paramKey = (net: Network) =>
-      JSON.stringify(mod.build(net), (_k, v) =>
+      JSON.stringify(mod.build(net, bp), (_k, v) =>
         typeof v === "bigint" ? `${v}n` : v);
 
     for (let i = 0; i < NETWORKS.length; i++) {

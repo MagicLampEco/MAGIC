@@ -47,10 +47,11 @@ import { readFile } from "node:fs/promises";
 import { validatorToScriptHash } from "@lucid-evolution/lucid";
 import { lampAssetName, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
 import {
-  loadBlueprint, findValidator, appliedValidator, type ParamMap,
+  loadBlueprint, findValidator, appliedValidator, type Blueprint, type ParamMap,
 } from "./applyParams.js";
 import {
-  instantVaultParams, scheduleVaultParams, umDatumParams,
+  instantVaultParams, scheduleVaultParams, scheduleScriptPair, umDatumParams,
+  genV2BeaconRefsFromBook, type GenV2BeaconRefs,
 } from "./deployParams.js";
 
 const NETWORKS: readonly Network[] = ["Preview", "Preprod", "Mainnet"];
@@ -99,8 +100,16 @@ interface ModuleSpec {
   module:      string;
   title:       string;
   liveHashKey: string;
-  /** Trả mảng tên khoá THIẾU (thay vì ParamMap) ⟹ KHÔNG ĐO ĐƯỢC. */
-  params: (ledger: Ledger, net: Network, msPerEpochValue: bigint) => ParamMap | string[];
+  /** Trả mảng tên khoá THIẾU (thay vì ParamMap) ⟹ KHÔNG ĐO ĐƯỢC. Nhận blueprint của chính
+   *  module: két ScheduleGen v2.0 nhận hash `commit` ĐÃ apply từ cùng blueprint đó. */
+  params: (ledger: Ledger, net: Network, msPerEpochValue: bigint, bp: Blueprint) => ParamMap | string[];
+}
+
+// Ba hash GenBeacons mà két Gen v2.0 nướng vào apply-param (IG trực tiếp, SG qua `commit`).
+// Đọc qua CÙNG hàm với deploy (`genV2BeaconRefsFromBook`) — tên khoá ghim ở một nơi.
+const GEN_V2_BEACON_KEYS = ["RATE_PARAM_HASH", "GREENBACK_BEACON_HASH", "GB_SHARD_HASH"] as const;
+function beaconsFromLedger(ledger: Ledger): GenV2BeaconRefs {
+  return genV2BeaconRefsFromBook(Object.fromEntries(ledger));
 }
 
 /** Trả danh sách khoá THIẾU trong sổ (rỗng = đủ). */
@@ -117,21 +126,19 @@ const MODULES: readonly ModuleSpec[] = [
     title:  "vault.vault.spend",
     liveHashKey: "VAULT_INSTANT_HASH",
     params: (ledger, net, mspe) => {
-      const absent = missingKeys(ledger, "LAMP_POLICY_ID", "UM_NFT_POLICY_ID",
-        "UM_DATUM_HASH", "BACKING_NFT_POLICY_ID", "BACKING_SCRIPT_HASH",
+      // Gen v2.0: 9 tham số. Sổ thiếu một khoá GenBeacons ⟹ cụm dựng trước đời v2.0 (hoặc
+      // chưa chạy bước 11) ⟹ KHÔNG ĐO ĐƯỢC, không đệm.
+      const absent = missingKeys(ledger, "LAMP_POLICY_ID", ...GEN_V2_BEACON_KEYS,
         // Lấy từ SỔ, không từ bảng theo mạng: sổ thiếu khoá ⟹ cụm dựng trước apply-param #8
         // ⟹ KHÔNG ĐO ĐƯỢC, không đệm.
         "WAKEME_VAULT_HASH");
       if (absent.length > 0) return absent;
       return instantVaultParams({
-        lampPolicyId:      ledger.get("LAMP_POLICY_ID")!,
-        lampAssetName:     lampAssetName(net),
-        umNftPolicy:       ledger.get("UM_NFT_POLICY_ID")!,
-        umScriptHash:      ledger.get("UM_DATUM_HASH")!,
-        backingNftPolicy:  ledger.get("BACKING_NFT_POLICY_ID")!,
-        backingScriptHash: ledger.get("BACKING_SCRIPT_HASH")!,
-        msPerEpoch:        mspe,
-        wakemeVaultHash:   ledger.get("WAKEME_VAULT_HASH")!,
+        lampPolicyId:    ledger.get("LAMP_POLICY_ID")!,
+        lampAssetName:   lampAssetName(net),
+        msPerEpoch:      mspe,
+        wakemeVaultHash: ledger.get("WAKEME_VAULT_HASH")!,
+        ...beaconsFromLedger(ledger),
       });
     },
   },
@@ -139,14 +146,24 @@ const MODULES: readonly ModuleSpec[] = [
     module: "ScheduleGen",
     title:  "vault.vault.spend",
     liveHashKey: "VAULT_SCHEDULE_HASH",
-    params: (ledger, net, mspe) => {
-      const absent = missingKeys(ledger, "LAMP_POLICY_ID", "SHARD_NFT_POLICY_ID");
+    // Gen v2.0: két 6 tham số, #6 là hash `commit` (9 tham số) ĐÃ apply — dựng qua
+    // `scheduleScriptPair`, cùng hàm với deploy 03/06/07. Nên hash két đang sống cũng phủ luôn
+    // `commit`: lệch một tham số của `commit` là lệch hash két. Sổ không ghi hash `commit`
+    // riêng (chỉ `REF_COMMIT_SCHEDULE_UTXO`), nên không có hàng riêng cho nó.
+    params: (ledger, net, mspe, bp) => {
+      const absent = missingKeys(ledger, "LAMP_POLICY_ID", "SHARD_NFT_POLICY_ID", ...GEN_V2_BEACON_KEYS);
       if (absent.length > 0) return absent;
-      return scheduleVaultParams({
+      const i = {
         lampPolicyId:  ledger.get("LAMP_POLICY_ID")!,
         lampAssetName: lampAssetName(net),
         shardPolicyId: ledger.get("SHARD_NFT_POLICY_ID")!,
         msPerEpoch:    mspe,
+        ...beaconsFromLedger(ledger),
+      };
+      return scheduleVaultParams({
+        lampPolicyId: i.lampPolicyId, lampAssetName: i.lampAssetName, shardPolicyId: i.shardPolicyId,
+        msPerEpoch: i.msPerEpoch, gbShardPolicyId: i.gbShardPolicyId,
+        commitScriptHash: scheduleScriptPair(bp, i).commitHash,
       });
     },
   },
@@ -189,8 +206,18 @@ async function checkModule(
     return;
   }
 
+  let blueprint: Blueprint;
+  try {
+    blueprint = await loadBlueprint(spec.module);
+  } catch (e) {
+    tally.unmeasurable++;
+    console.log(`  ⚠️  KHÔNG ĐO ĐƯỢC — không đọc được \`${spec.module}/onchain/plutus.json\`.`);
+    console.log(`     Chạy \`aiken build\` trong module đó trước. (${(e as Error).message})\n`);
+    return;
+  }
+
   const mspe = msPerEpoch(net);
-  const built = spec.params(ledger, net, mspe);
+  const built = spec.params(ledger, net, mspe, blueprint);
   if (Array.isArray(built)) {
     tally.unmeasurable++;
     console.log(`  ⚠️  KHÔNG ĐO ĐƯỢC — sổ thiếu ${built.length} tham số: ${built.join(", ")}`);
@@ -199,16 +226,6 @@ async function checkModule(
     console.log(`     PHẢI LÀM: xin bản chép đủ của sổ từ người chạy lượt deploy. Đừng điền tay —`);
     console.log(`               một tham số đoán ra sẽ cho một hash sai, và cổng sẽ nói LỆCH cho`);
     console.log(`               một cụm có thể đang đúng đời.\n`);
-    return;
-  }
-
-  let blueprint;
-  try {
-    blueprint = await loadBlueprint(spec.module);
-  } catch (e) {
-    tally.unmeasurable++;
-    console.log(`  ⚠️  KHÔNG ĐO ĐƯỢC — không đọc được \`${spec.module}/onchain/plutus.json\`.`);
-    console.log(`     Chạy \`aiken build\` trong module đó trước. (${(e as Error).message})\n`);
     return;
   }
 
@@ -232,7 +249,7 @@ async function checkModule(
   const explainedBy: string[] = [];
   for (const [label, cadence] of KNOWN_EPOCH_CADENCES) {
     if (cadence === mspe) continue;
-    const alt = spec.params(ledger, net, cadence);
+    const alt = spec.params(ledger, net, cadence, blueprint);
     if (Array.isArray(alt)) continue;
     if (validatorToScriptHash(appliedValidator(validator, alt)) === liveHash) {
       explainedBy.push(label);

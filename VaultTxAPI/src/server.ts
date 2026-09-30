@@ -10,6 +10,8 @@
 // là khoá dự án Blockfrost, dưới dạng GIÁ TRỊ, qua biến môi trường.
 
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createServer, type IncomingMessage } from "node:http";
 
 import type { PlutusJson } from "@magiclamp/sdk";
@@ -23,8 +25,12 @@ import { SdkTxBuilder } from "./txBuilder.js";
 import { DidStakeWitnessProvider } from "./owner.js";
 import { ChainDidPaymentAnchorReader } from "./funding.js";
 import { FeeProxy } from "./feeProxy.js";
+import { readBuildInfo } from "./buildInfo.js";
 
 const cfg = loadConfig();
+// Đo MỘT lần lúc khởi động, ở chính cây mã đang chạy: `git pull` sau đó mà không khởi động
+// lại thì mã đang chạy vẫn là mã cũ, và commit in ra phải là commit cũ.
+const build = readBuildInfo(dirname(fileURLToPath(import.meta.url)));
 const vaultPlutusJson = JSON.parse(readFileSync(cfg.vaultPlutusJsonPath, "utf8")) as PlutusJson;
 
 const chain = new BlockfrostChainReader({
@@ -105,6 +111,7 @@ const server = createServer((rq, rs) => {
           chainLabel: chain.label,
           changeAddressStrategy: cfg.changeAddressStrategy,
           token: cfg.token,
+          build,
           ...(feeProxy === undefined ? {} : { feeProxy }),
           logInternal: (ref, cause) => {
             console.error(`[vault-tx-api] ${ref} ←`, cause instanceof Error ? cause.stack : cause);

@@ -153,7 +153,9 @@ function main(): void {
     consumeKey(name, vaultKind === "Instant" ? "instant" : "schedule");
 
   const deployment: Record<string, unknown> = {
-    source: `${network} · ${vaultKind} · sinh từ ${path.replace(/^.*\/MAGIC\//, "")} (sửa lần cuối ${mtime}) tại commit ${gitSha()}`,
+    // Cụm TẬP DƯỢT phải tự khai ở chỗ `/health` in ra: định danh của nó chỉ được chia sẻ
+    // kèm nhãn đó, và bên gọi không đọc `lamp.rehearsal_ack` trong khối triển khai.
+    source: `${process.env.LAMP_REHEARSAL_ACK === undefined ? "" : `TẬP DƯỢT (LAMP ${process.env.LAMP_REHEARSAL_ACK.slice(0, 8)}…, bỏ khi có policy LAMP cuối) · `}${network} · ${vaultKind} · sinh từ ${path.replace(/^.*\/MAGIC\//, "")} (sửa lần cuối ${mtime}) tại commit ${gitSha()}`,
     lamp: {
       policy_id: need(book, "LAMP_POLICY_ID", "định danh LAMP, vế policy"),
       // Tên tài sản KHÔNG lấy từ sổ: nó là apply-param #2 suy theo MẠNG, và

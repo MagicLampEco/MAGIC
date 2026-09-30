@@ -167,6 +167,10 @@ Thân bài luôn kèm `chain_tip` để bên gọi tự đối chiếu được.
 Không cần thẻ bài, không chạm chuỗi. In lại **nhãn nguồn** của từng địa chỉ vault đang
 phục vụ — thứ duy nhất trả lời được câu *"địa chỉ này chép từ đâu, bao giờ"*.
 
+Kèm `commit` / `commit_dirty` / `commit_source` của mã đang chạy, đo bằng git lúc khởi
+động (cùng hình dạng với `/health` của VaultTxAPI). Không đo được thì `commit` là `null`,
+`commit_source` là `"unavailable"` và có thêm `commit_unavailable_reason` — không đoán.
+
 ### Chỉ mục DID ⟹ thread: `GET /threads/*`
 
 Thread = UTxO ở địa chỉ script `consume` (ConsumeMAGIC) mang **đúng một** NFT dưới policy
@@ -340,7 +344,7 @@ thật là hai trường sẽ lệch nhau.
 ### Lệnh
 
 ```bash
-npm install
+npm ci            # đủ từ checkout sạch; không cần cài tay trong gói anh em nào
 npm test          # không cần mạng, không cần khoá (số bài: đọc dòng `Tests` của chính lệnh này)
 npm run typecheck
 npm start                     # sidecar

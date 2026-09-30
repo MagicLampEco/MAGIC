@@ -13,6 +13,7 @@ import { VaultReadService, toJsonBody } from "./service.js";
 import type { VaultScope } from "./config.js";
 import { freshnessToJson, threadToJson, type ThreadIndex } from "./threadIndex.js";
 import { stripBasePath } from "./basePath.js";
+import type { BuildInfo } from "./buildInfo.js";
 
 export interface HttpRequest {
   method: string;
@@ -37,6 +38,9 @@ export interface RouterDeps {
   threads?: ThreadIndex;
   /** Tiền tố đường khi đứng sau proxy định tuyến theo đường (`basePath.ts`). Vắng/`""` ⟹ không có. */
   basePath?: string;
+  /** Commit của mã đang chạy, đo lúc khởi động (`buildInfo.ts`). Vắng ⟹ `/health` khai
+   *  `commit_source: "not_measured"` thay vì im lặng. */
+  build?: BuildInfo;
 }
 
 const BY_OWNER = /^\/vault\/by-owner\/([^/?#]+)$/;
@@ -97,7 +101,12 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
           script_hash: s.scriptHash,
           source: s.source,
         })),
+        // Bên gọi so commit này với commit họ dựa vào, khỏi phải hỏi người vận hành.
+        commit: deps.build?.commit ?? null,
+        commit_dirty: deps.build?.dirty ?? null,
+        commit_source: deps.build?.source ?? "not_measured",
         base_path: deps.basePath ?? "",
+        ...(deps.build?.reason === undefined ? {} : { commit_unavailable_reason: deps.build.reason }),
       },
     };
   }

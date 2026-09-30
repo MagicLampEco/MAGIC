@@ -9,8 +9,10 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
-    "types": ["node"]
+    "types": ["node"],
+    "preserveSymlinks": true
   },
+  "//preserveSymlinks": "BẮT BUỘC, cùng lý do với VaultTxAPI/tsconfig.json. `@magiclamp/sdk` là dependency `file:` nên npm dựng liên kết mềm ra ngoài gốc gói; mặc định tsc đi theo đường THẬT rồi tra `MagicSDK/node_modules` — thư mục không tồn tại trong checkout sạch ⟹ TS2307 `@lucid-evolution/lucid` từ bên trong MagicSDK. Lúc chạy cũng vậy, nên script `start`/`probe` gọi `tsx --preserve-symlinks`.",
   "//exclude": "KHÔNG liệt `tests` vào exclude. MagicSDK phải dựng tsconfig.test.json riêng vì tsconfig gốc của nó exclude `tests` và `extends` kế thừa exclude — thiếu bản ghi đè thì tsc lặng lẽ kiểm 0 tệp test. Gói này không emit nên gộp được một tệp, và gộp chính là cách không tái tạo cái bẫy đó.",
   "include": ["src/**/*", "tests/**/*"],
   "exclude": ["node_modules"]

@@ -311,6 +311,7 @@ in khoá; `/health` không lộ URL đầy đủ của nút chuỗi, chỉ lộ 
 | `VAULT_READ_API_VAULTS` | có | — JSON, xem dưới |
 | `VAULT_READ_API_HOST` | không | `127.0.0.1` |
 | `VAULT_READ_API_PORT` | không | `8787` |
+| `VAULT_READ_API_BASE_PATH` | không | rỗng — tiền tố đường khi đứng sau proxy định tuyến theo đường, ví dụ `/vaultread/preprod`; dịch vụ tự cắt nó (`src/basePath.ts`) |
 | `VAULT_READ_API_TOKEN` | ngoài loopback thì **có** | rỗng |
 | `VAULT_READ_API_BLOCKFROST_URL` | không | dẫn theo `NETWORK` |
 | `VAULT_READ_API_TIMEOUT_MS` | không | `15000` |

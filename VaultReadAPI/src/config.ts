@@ -19,6 +19,7 @@
 
 import { getAddressDetails } from "@lucid-evolution/lucid";
 import type { Network } from "@magiclamp/protocol-utils";
+import { parseBasePath } from "./basePath.js";
 
 /**
  * Tập ĐÓNG các loại vault dịch vụ này đọc được. Đây là một **hợp đồng với bên gọi**, không
@@ -68,6 +69,8 @@ export interface AppConfig {
   scopes: VaultScope[];
   host: string;
   port: number;
+  /** Tiền tố đường khi đứng sau proxy định tuyến theo đường (`basePath.ts`). `""` ⟹ không có. */
+  basePath: string;
   /** Thẻ bài chia sẻ. Rỗng CHỈ được phép khi `host` là loopback. */
   token: string;
   requestTimeoutMs: number;
@@ -149,6 +152,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
 
+  const basePath = parseBasePath(env.VAULT_READ_API_BASE_PATH, "VAULT_READ_API_BASE_PATH");
+
   const requestTimeoutMs = Number(env.VAULT_READ_API_TIMEOUT_MS || "15000");
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 100) {
     throw new Error(`[config] VAULT_READ_API_TIMEOUT_MS="${env.VAULT_READ_API_TIMEOUT_MS}" không hợp lệ.`);
@@ -165,7 +170,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   };
 
   return {
-    network, blockfrostUrl, blockfrostProjectId, scopes, host, port, token, requestTimeoutMs,
+    network, blockfrostUrl, blockfrostProjectId, scopes, host, port, basePath, token, requestTimeoutMs,
     consumeScopes, threadIndex,
   };
 }

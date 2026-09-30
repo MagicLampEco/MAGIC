@@ -112,6 +112,7 @@ const server = createServer((rq, rs) => {
           changeAddressStrategy: cfg.changeAddressStrategy,
           token: cfg.token,
           build,
+          basePath: cfg.basePath,
           ...(feeProxy === undefined ? {} : { feeProxy }),
           logInternal: (ref, cause) => {
             console.error(`[vault-tx-api] ${ref} ←`, cause instanceof Error ? cause.stack : cause);
@@ -140,7 +141,7 @@ server.listen(cfg.port, cfg.host, () => {
   console.error(
     `[vault-tx-api] nghe ${cfg.host}:${cfg.port} · mạng ${cfg.network} · nút ${chain.label} · ` +
     `${cfg.deployment.vaults.length} địa chỉ vault · thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"} · ` +
-    `khoá mềm ${cfg.lockTtlMs}ms`,
+    `khoá mềm ${cfg.lockTtlMs}ms · tiền tố ${cfg.basePath === "" ? "không" : cfg.basePath}`,
   );
   console.error("[vault-tx-api] dịch vụ này KHÔNG giữ khoá riêng — chỉ trả giao dịch CHƯA KÝ.");
   if (cfg.token === "" && isLoopback(cfg.host)) {

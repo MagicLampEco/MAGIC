@@ -288,3 +288,11 @@ describe("createVaultProtocol — ack đi từ tệp deploy tới createVault c�
     await expect(run(khongAck)).rejects.toThrow(/\[createVault\].*ĐÃ BỊ THAY/);
   });
 });
+
+describe("VAULT_TX_API_BASE_PATH — tiền tố đường sau proxy", () => {
+  it("vắng ⟹ basePath rỗng. CẶP: đặt ⟹ đọc đúng; sai dạng ⟹ từ chối khởi động", () => {
+    expect(loadConfig(env()).basePath).toBe("");
+    expect(loadConfig(env({ VAULT_TX_API_BASE_PATH: "/vaulttx/preprod" })).basePath).toBe("/vaulttx/preprod");
+    expect(() => loadConfig(env({ VAULT_TX_API_BASE_PATH: "/vaulttx/preprod/" }))).toThrow(/VAULT_TX_API_BASE_PATH/);
+  });
+});

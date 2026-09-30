@@ -138,6 +138,7 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
       "VAULT_TX_API_BLOCKFROST_URL",
       "VAULT_TX_API_HOST",
       "VAULT_TX_API_PORT",
+      "VAULT_TX_API_BASE_PATH",
       "VAULT_TX_API_TOKEN",
       "VAULT_TX_API_TIMEOUT_MS",
       "VAULT_TX_API_LOCK_TTL_MS",

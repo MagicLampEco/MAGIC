@@ -141,6 +141,13 @@ export interface TxSummary {
   outputs: OutputView[];
   /** Chỉ khi yêu cầu có `fee_payer`: đọc lại TỪ CBOR bởi `feePayer.ts` ▸ `checkFeePayerTx`. */
   fee_payer?: import("./feePayer.js").FeePayerSummary;
+  /**
+   * Chỉ khi `/tx/instant-gen` kèm `wakeme_vault_ref`. Tham chiếu đã được ĐỌC LẠI từ CBOR
+   * (`wakeme.ts` ▸ `checkWakemeRefInTx`: nằm trong `reference_inputs`, không trong `inputs`).
+   * `lent_lamp`/`counted` là dữ kiện CHUỖI đọc trước lúc dựng — cùng loại với
+   * `inputVaultDatumHex`, vì CBOR chỉ mang tham chiếu, không mang nội dung reference input.
+   */
+  wakeme?: import("./wakeme.js").WakemeSummary;
 }
 
 /**

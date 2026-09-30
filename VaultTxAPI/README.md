@@ -68,7 +68,7 @@ kiểm. Hoàn nguyên thì 56/56 xanh.
 ## 3. Bề mặt HTTP
 
 ```
-POST /tx/instant-gen       { owner, [owner_witness], change_address | fee_payer }
+POST /tx/instant-gen       { owner, [owner_witness], change_address | fee_payer, [wakeme_vault_ref] }
 POST /tx/schedule-commit   { owner, [owner_witness], change_address | fee_payer, schedule_length, lamp_per_epoch }
 POST /tx/schedule-fire     { owner, [owner_witness], change_address | fee_payer, schedule_id }
 POST /tx/consume           { owner, [owner_witness], change_address | fee_payer, op_type, op_count, [engage_ref] }
@@ -104,6 +104,44 @@ Bốn đường dựng trên vault có sẵn trả:
   "witness_notes": ["…"]     // việc phải làm ngoài chữ ký (chủ script: mục rút did_stake…)
 }
 ```
+
+### `POST /tx/instant-gen`: két Wakeme cho mượn LAMP, `wakeme_vault_ref`
+
+Nhánh sinh của vault InstantGen cộng `L_lent` từ **đúng một** két Wakeme nằm trong
+**reference inputs** của giao dịch — két có `gen_vault` (datum trường 11) ghim chính vault
+này. Không két ⟹ `L_lent = 0`, hợp lệ; hai két trở lên ⟹ chuỗi từ chối. Mã đọc:
+`@magiclamp/instantgen-sdk` ▸ `readLentLamp` (gương `wakeme_lent.ak` ▸ `lent_lamp`).
+
+- **Vắng `wakeme_vault_ref`** ⟹ y như trước: không két nào, `L_lent = 0`, `summary` không có
+  mục `wakeme`.
+- **Có** `"wakeme_vault_ref": "<tx_hash 64 hex>#<i>"` ⟹ dịch vụ đọc UTxO đó, kiểm trước khi dựng:
+  mạng có két Wakeme (`@magiclamp/protocol-utils` ▸ `wakemeVaultHash`), UTxO còn sống, nằm ở
+  script két, datum đọc được, và ghim đúng vault này. Vế nào hỏng thì trả lỗi có mã (bảng
+  dưới), không dựng một tx mà chuỗi sẽ từ chối.
+
+Dịch vụ **không tự dò** két ghim vault: ghim nằm trong datum từng két, mọi két của mọi người
+chung một script, không có chỉ mục nào — quét trọn địa chỉ đó mỗi lượt dựng tăng theo số két
+của cả hệ. App biết két của chính người dùng nên gửi tham chiếu.
+
+Hai ca chuỗi **cho qua với `L_lent = 0`** thì dịch vụ cũng cho qua, nhưng nói ra:
+
+```jsonc
+"summary": {
+  …,
+  "wakeme": {
+    "ref": "<tx_hash>#<i>",
+    "lent_lamp": "500000000",   // oildrop, chuỗi — đúng con số validator tính
+    "counted": true
+    // counted: false ⟹ lent_lamp: "0" và "reason":
+    //   "pinned_in_current_period"  ghim trong chính kỳ đang sinh (gen_pin_period >= epoch)
+    //   "lamp_short_of_datum"       value két giữ ít LAMP hơn conditional + owned của datum
+  }
+}
+```
+
+Dịch vụ đọc lại `tx_cbor`: két phải nằm trong `reference_inputs` và không nằm trong `inputs`
+(lệch ⟹ `422 WAKEME_VAULT_TX_MISMATCH`). `lent_lamp`/`counted` là dữ kiện chuỗi đọc trước lúc
+dựng — CBOR chỉ mang tham chiếu, không mang nội dung reference input.
 
 ### Chủ vault: `owner`, và bí danh `owner_pkh`
 
@@ -602,6 +640,13 @@ Nên:
 | tx vừa dựng lệch luật ví trả phí | `422 FEE_PAYER_TX_MISMATCH` |
 | `/tx/open-thread` chỉ có `fee_payer` (không ai trả min-ADA thread) | `422 FEE_PAYER_DEPOSIT_UNSOURCED` |
 | `engage_ref` sai khuôn / không phải thread của chủ | `400 ENGAGE_REF_SHAPE` / `400 ENGAGE_REF_MISMATCH` |
+| `wakeme_vault_ref` sai khuôn | `400 WAKEME_VAULT_REF_SHAPE` |
+| `wakeme_vault_ref` trên mạng chưa có két Wakeme | `501 WAKEME_VAULT_UNAVAILABLE` |
+| `wakeme_vault_ref` không có trên chuỗi / đã bị tiêu | `404 WAKEME_VAULT_NOT_FOUND` / `409 WAKEME_VAULT_SPENT` |
+| `wakeme_vault_ref` không nằm ở script két Wakeme | `409 WAKEME_VAULT_SCRIPT_MISMATCH` |
+| két không ghim vault này (`details.seen_pin`: ghim thấy được, `null` = chưa ghim) | `409 WAKEME_VAULT_PIN_MISMATCH` |
+| datum / NFT két không đạt luật đọc `L_lent` | `422 WAKEME_VAULT_UNREADABLE` |
+| tx vừa dựng tiêu két, hoặc thiếu két trong `reference_inputs` | `422 WAKEME_VAULT_TX_MISMATCH` |
 | chủ chưa có thread Engage | `404 ENGAGE_THREAD_NOT_FOUND` |
 | chủ có nhiều thread, không kèm `engage_ref` | `409 ENGAGE_THREAD_AMBIGUOUS` |
 | `/tx/open-thread` khi chủ đã có thread | `409 ENGAGE_THREAD_EXISTS` |

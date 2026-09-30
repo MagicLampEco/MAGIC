@@ -43,6 +43,7 @@ import {
   assertChangeAddress, enterpriseAddressOf, type BuildContext, type CreateVaultContext, type TxBuilderPort,
 } from "./txBuilder.js";
 import { findVaultsAtScope, pickSingleVault, type FoundVault, type IgnoredUtxo } from "./vaultLookup.js";
+import { checkWakemeRefInTx, resolveWakemeVault, wakemeScriptHashOrThrow, type ResolvedWakeme } from "./wakeme.js";
 
 const PKH_HEX = /^[0-9a-f]{56}$/;
 const HEX = /^[0-9a-f]+$/;
@@ -206,7 +207,7 @@ export class VaultTxService {
    * giá trị cấu hình vẫn vắng. Một cổng chỉ sống trong MỘT hiện thực của một cổng cắm
    * thì nó gác hiện thực đó, không gác khái niệm.
    */
-  async instantGen(req: OwnerRequest, quote?: QuoteMode): Promise<BuildResponse> {
+  async instantGen(req: OwnerRequest & { wakemeVaultRef?: OutRefLike }, quote?: QuoteMode): Promise<BuildResponse> {
     if (this.deps.deployment.instant === undefined) {
       throw new ConfigMissingError(
         `Đường InstantGen chưa được cấu hình: bản deploy thiếu mục \`instant\` ` +
@@ -220,8 +221,29 @@ export class VaultTxService {
         { missing: "deployment.instant" },
       );
     }
-    return this.buildOne("Instant", "instant_gen", req, (ctx, b) =>
-      b.instantGen(ctx, {}), quote);
+    // Két Wakeme (`wakeme.ts`): mạng chưa có két ⟹ 501 NGAY, trước khi giữ khoá chủ.
+    const wakemeRef = req.wakemeVaultRef;
+    if (wakemeRef !== undefined) wakemeScriptHashOrThrow(this.deps.network);
+    let wakeme: ResolvedWakeme | undefined;
+    return this.buildOne("Instant", "instant_gen", req, async (ctx, b) => {
+      if (wakemeRef === undefined) return b.instantGen(ctx, {});
+      const d = this.deps.deployment;
+      wakeme = await resolveWakemeVault(this.deps.chain, wakemeRef, {
+        vaultUtxo: ctx.vault.utxo,
+        vaultScriptHash: ctx.vault.scope.scriptHash,
+        network: this.deps.network,
+        tipPosixMs: ctx.tip.blockTimePosixMs,
+        lampPolicyId: d.lampPolicyId,
+        lampAssetNameHex: d.lampAssetNameHex,
+      });
+      return b.instantGen(ctx, { wakeme: { utxo: wakeme.utxo, scriptHash: wakeme.scriptHash } });
+    }, quote, (txCbor, summary) => {
+      if (wakemeRef === undefined) return;
+      // Đọc lại CBOR: két phải là reference input, không phải input bị tiêu.
+      checkWakemeRefInTx(txCbor, wakemeRef);
+      if (wakeme === undefined) throw new Error("[bất biến nội bộ] có wakeme_vault_ref mà chưa đọc két.");
+      summary.wakeme = wakeme.summary;
+    });
   }
 
   /**
@@ -315,6 +337,8 @@ export class VaultTxService {
     req: OwnerRequest,
     build: (ctx: BuildContext, b: TxBuilderPort) => Promise<{ txCbor: string }>,
     quote?: QuoteMode,
+    /** Phép đọc lại CBOR riêng của một đường, chạy SAU `summarizeTx` và TRƯỚC khi ghi sổ phát-hành. */
+    afterSummary?: (txCbor: string, summary: TxSummary) => void,
   ): Promise<BuildResponse> {
     const owner = assertOwnerRef(req.owner);
     const ownerKey = ownerLockKey(owner);
@@ -377,6 +401,7 @@ export class VaultTxService {
       if (feePayer !== undefined) {
         summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, feePayerUtxo!, tip);
       }
+      afterSummary?.(built.txCbor, summary);
       const txHash = txBodyHash(built.txCbor);
       if (quote === undefined) {
         this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);

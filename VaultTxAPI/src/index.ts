@@ -46,6 +46,8 @@ export { SdkTxBuilder, RecordedTxBuilder, enterpriseAddressOf, vaultModuleOf } f
 export type { TxBuilderPort, BuildContext, BuiltTx, SdkTxBuilderDeps, OpenThreadContext, BuiltOpenThread } from "./txBuilder.js";
 export { pickEngageThread, threadsOf, checkOpenThreadTx, parseEngageRef } from "./engage.js";
 export type { EngageThread, OpenThreadSummary } from "./engage.js";
+export { parseWakemeVaultRef, resolveWakemeVault, checkWakemeRefInTx, referenceInputRefsOf } from "./wakeme.js";
+export type { WakemeSummary, WakemeNotCountedReason, ResolvedWakeme } from "./wakeme.js";
 export { checkFeePayerTx, parseFeePayer } from "./feePayer.js";
 export type { FeePayerRequest, FeePayerSummary } from "./feePayer.js";
 

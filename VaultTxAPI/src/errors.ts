@@ -22,6 +22,12 @@
 //   409 ENGAGE_THREAD_EXISTS     `/tx/open-thread` khi chủ đã có thread
 //   422 ENGAGE_THREAD_DATUM_UNDECODABLE  `engage_ref` mang NFT nhưng datum không giải được
 //   422 OPEN_THREAD_TX_MISMATCH  giao dịch mở thread vừa dựng lệch (NFT/output/datum genesis)
+//   400 WAKEME_VAULT_REF_SHAPE   `wakeme_vault_ref` sai hình dạng
+//   501 WAKEME_VAULT_UNAVAILABLE mạng chưa có script hash két Wakeme
+//   404 WAKEME_VAULT_NOT_FOUND / 409 WAKEME_VAULT_SPENT  UTxO két không có / đã bị tiêu
+//   409 WAKEME_VAULT_SCRIPT_MISMATCH / WAKEME_VAULT_PIN_MISMATCH  két sai script / không ghim vault này
+//   422 WAKEME_VAULT_UNREADABLE  datum/NFT két không đạt luật đọc L_lent
+//   422 WAKEME_VAULT_TX_MISMATCH tx vừa dựng tiêu két hoặc thiếu két trong reference_inputs
 //   501 OPEN_THREAD_FUNDING_UNSUPPORTED  `/tx/open-thread` kèm `funding` — chưa hỗ trợ
 //   401 FEE_PROXY_APP_UNKNOWN    `X-Feecover-Token` không khớp ứng dụng nào (hoặc không có ứng dụng mặc định)
 //   400 FEE_PROXY_PURPOSE_UNMAPPED  ứng dụng chưa có mục đích Feecover cho route đó

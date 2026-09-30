@@ -3,7 +3,7 @@
 // Tách khỏi `server.ts` để phép kiểm gọi thẳng vào đây, không phải mở cổng mạng.
 //
 // ── ĐÚNG NĂM ĐƯỜNG DỰNG, KHÔNG THÊM ────────────────────────────────────────────
-//   POST /tx/instant-gen       { owner, [owner_witness], [change_address | fee_payer] }
+//   POST /tx/instant-gen       { owner, [owner_witness], [change_address | fee_payer], [wakeme_vault_ref] }
 //   POST /tx/schedule-commit   { owner, …, schedule_length, lamp_per_epoch }
 //   POST /tx/schedule-fire     { owner, …, schedule_id }
 //   POST /tx/consume           { owner, …, op_type, op_count, [engage_ref] }

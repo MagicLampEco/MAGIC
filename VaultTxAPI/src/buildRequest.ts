@@ -15,6 +15,7 @@
 import type { Profile } from "@magiclamp/sdk";
 
 import { parseEngageRef } from "./engage.js";
+import { parseWakemeVaultRef } from "./wakeme.js";
 import { BadRequestError } from "./errors.js";
 import { parseFeePayer, type OutRefLike } from "./feePayer.js";
 import { parseFunding } from "./funding.js";
@@ -37,7 +38,7 @@ export const BUILD_ROUTE_OF_PATH: Readonly<Record<string, IssuedRoute>> = {
 };
 
 export type ParsedBuild =
-  | { route: "instant-gen"; req: OwnerRequest }
+  | { route: "instant-gen"; req: OwnerRequest & { wakemeVaultRef?: OutRefLike } }
   | { route: "schedule-commit"; req: OwnerRequest & { scheduleLength: bigint; lampPerEpoch: bigint } }
   | { route: "schedule-fire"; req: OwnerRequest & { scheduleId: string } }
   | { route: "consume"; req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike } }
@@ -52,8 +53,11 @@ export type BuildResult =
 /** Đọc thân bài của một đường dựng. Sai ⟹ 400 có mã, như đường dựng trả. */
 export function parseBuildRequest(route: IssuedRoute, body: Record<string, unknown>): ParsedBuild {
   switch (route) {
-    case "instant-gen":
-      return { route, req: ownerReq(body) };
+    case "instant-gen": {
+      // `wakeme_vault_ref` TUỲ CHỌN (`wakeme.ts`): vắng ⟹ không két nào, L_lent = 0 như cũ.
+      const wakemeVaultRef = parseWakemeVaultRef(body.wakeme_vault_ref);
+      return { route, req: { ...ownerReq(body), ...(wakemeVaultRef === undefined ? {} : { wakemeVaultRef }) } };
+    }
     case "schedule-commit":
       return {
         route,

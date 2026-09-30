@@ -70,12 +70,17 @@ export interface BuiltTx {
   txCbor: string;
 }
 
+export interface InstantGenBuildParams {
+  wakeme?: { utxo: UTxO; scriptHash: string };
+}
+
 export interface TxBuilderPort {
   scheduleCommit(ctx: BuildContext, p: { scheduleLength: bigint; lampPerEpoch: bigint }): Promise<BuiltTx>;
   scheduleFire(ctx: BuildContext, p: { scheduleId: string }): Promise<BuiltTx>;
   /** `engageUtxo`: thread của CHÍNH chủ, đã chọn bởi `engage.ts` ▸ `pickEngageThread`. */
   consume(ctx: BuildContext, p: { opType: number; opCount: bigint; engageUtxo: UTxO }): Promise<BuiltTx>;
-  instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx>;
+  /** `wakeme`: két đã kiểm bởi `wakeme.ts` ▸ `resolveWakemeVault`; vắng ⟹ không két, L_lent = 0. */
+  instantGen(ctx: BuildContext, p: InstantGenBuildParams): Promise<BuiltTx>;
   createVault(ctx: CreateVaultContext, p: { lampAmount: bigint; profile?: Profile }): Promise<BuiltCreateVault>;
   openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread>;
   /** Tham số giao thức `coinsPerUtxoByte` của CÙNG ảnh chụp bộ dựng dùng — báo giá tính min-ADA
@@ -273,7 +278,7 @@ export class SdkTxBuilder implements TxBuilderPort {
    * `validate_instant_gen` từ chối. Dịch vụ không đoán hộ — nó chỉ dựng, và để câu
    * từ chối của chuỗi đi thẳng về người gọi qua `rejectAsProtocol`.
    */
-  async instantGen(ctx: BuildContext, _p: Record<string, never>): Promise<BuiltTx> {
+  async instantGen(ctx: BuildContext, p: InstantGenBuildParams): Promise<BuiltTx> {
     const d = this.deps.deployment;
     // KHÔNG phải bản sao thứ hai của cổng cấu hình — cổng đó ở `VaultTxService.instantGen`
     // và nó là bản quyết định. Đây là một BẤT BIẾN NỘI BỘ để thu hẹp kiểu: tới được đây
@@ -314,6 +319,9 @@ export class SdkTxBuilder implements TxBuilderPort {
       tipPosixMs: ctx.tip.blockTimePosixMs,
       ownerAuth: ctx.ownerAuth,
       collateralLovelace: ctx.collateralLovelace,
+      // Két Wakeme vào REFERENCE INPUTS (`readFrom`); SDK gọi lại `readLentLamp` trên chính UTxO
+      // này, cùng đỉnh chuỗi, nên `claimed_amount` khớp con số ở `summary.wakeme`.
+      ...(p.wakeme === undefined ? {} : { wakemeVaultUtxo: p.wakeme.utxo, wakemeVaultHash: p.wakeme.scriptHash }),
     }));
     return { txCbor: r.tx.toCBOR() };
   }
@@ -641,6 +649,7 @@ export class RecordedTxBuilder implements TxBuilderPort {
   lastCall: {
     route: string; params: unknown; ownerAuthKind?: "key" | "script"; changeAddress?: string;
     funding?: CreateVaultContext["funding"]; feePayerUtxo?: UTxO; collateralLovelace?: bigint; engageUtxo?: UTxO;
+    wakeme?: InstantGenBuildParams["wakeme"];
   } | null = null;
   constructor(
     private readonly txCborByRoute: Record<string, string>,
@@ -676,8 +685,11 @@ export class RecordedTxBuilder implements TxBuilderPort {
     if (this.openThreadNftUnit === undefined) throw new Error("[RecordedTxBuilder] không khai NFT cho open_thread.");
     return { ...b, engageNftUnit: this.openThreadNftUnit };
   }
-  instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx> {
-    return this.serve("instant_gen", p, ctx);
+  async instantGen(ctx: BuildContext, p: InstantGenBuildParams): Promise<BuiltTx> {
+    // `params` giữ `{}`: bài "KHÔNG nhận tham số lượng" ghim đúng hình dạng đó. Két đi riêng.
+    const b = await this.serve("instant_gen", {}, ctx);
+    if (p.wakeme !== undefined) this.lastCall!.wakeme = p.wakeme;
+    return b;
   }
   /** Tham số giao thức của bản ghi. Không khai ⟹ NÉM: một báo giá không được tính min-ADA
    *  trên một con số bộ dựng giả tự đoán. */

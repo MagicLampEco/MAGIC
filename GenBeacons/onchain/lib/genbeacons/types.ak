@@ -7,6 +7,8 @@
 //// (giải mã Aiken nghiêm ngặt số trường CẢ HAI chiều — BOUNDARIES.md §2). Sửa ở đây thì
 //// sửa bản chép bên két trong CÙNG commit.
 
+use aiken/crypto.{ScriptHash}
+
 /// Beacon suất sinh ρ (Q-format, `Q = 10⁹`).
 ///
 /// `rho_q` có hiệu lực từ `effective_epoch`; trước mốc đó giá trị hiệu lực là
@@ -37,6 +39,14 @@ pub type GbShard {
   seq: Int,
   reset_amount: Int,
   remaining: Int,
+}
+
+/// Sổ script két được phép đồng tiêu với shard GB (InstantGen, ScheduleGen, …).
+/// Một UTxO duy nhất mang NFT `(hash script vault_registry, "VRG")`, bất biến sau genesis
+/// (spend luôn từ chối). Genesis ép: không rỗng, không trùng, mỗi phần tử đúng 28 byte.
+/// Đổi danh sách = dựng sổ MỚI (seed mới ⟹ policy mới) + shard MỚI.
+pub type VaultRegistry {
+  vault_script_hashes: List<ScriptHash>,
 }
 
 /// Redeemer của shard: lượng két khai rút. Két đọc redeemer này (purpose `Spend(shard_ref)`)

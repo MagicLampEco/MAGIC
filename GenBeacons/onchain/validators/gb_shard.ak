@@ -10,8 +10,10 @@
 //     (a) có đúng một beacon GreenBack THẬT trong reference input (NFT + địa chỉ script
 //         beacon) và `depeg == False`;
 //     (b) đặt lại lười `beacon.seq > shard.seq` ⟹ `remaining = min(⌊GB/16⌋, cap)`;
-//     (c) giao dịch tiêu ĐÚNG MỘT két tại một script trong `vault_script_hashes`, két đó
-//         mang NFT vault-id dưới policy = hash script của chính nó (INV-VAULT-IDENTITY);
+//     (c) giao dịch tiêu ĐÚNG MỘT két tại một script có trong sổ `VaultRegistry` (đọc từ
+//         đúng MỘT reference input mang NFT `(vault_registry_policy, "VRG")` tại chính
+//         script sổ), két đó mang NFT vault-id dưới policy = hash script của chính nó
+//         (INV-VAULT-IDENTITY);
 //     (d) output tiếp nối: cùng địa chỉ, cùng value non-ADA (NFT ở lại), cùng `shard_id`,
 //         `remaining_out = remaining_eff − amount ≥ 0`, `amount ≥ 0`.
 //   Két PHẢI ép (shard KHÔNG ép, và không thể ép):
@@ -25,6 +27,12 @@
 //       (vd `WithdrawLamp`) + `Draw { amount: remaining }` = rút cạn shard mà không sinh
 //       gì ⟹ chặn sinh của mọi két khác cùng shard tới lượt ghi beacon sau.
 //   Thiếu một vế bên két ⟹ một két rút được shard của két khác hoặc rút mà không sinh.
+//
+// VÌ SAO danh sách két nằm ở SỔ chứ không ở apply-param: két bake hash script này
+// (`gb_shard_policy_id`), nên shard bake hash két là vòng hash — không deploy được. Thứ tự
+// deploy: `vault_registry` (tính hash, CHƯA đúc) → `gb_shard` → két IG/SG → đúc sổ với
+// datum = hash két. Chi tiết + ràng buộc giữ `seed` của sổ: đầu tệp
+// `validators/vault_registry.ak`.
 
 use aiken/collection/dict
 use aiken/collection/list
@@ -37,22 +45,28 @@ use cardano/transaction.{
 }
 use genbeacons/constants
 use genbeacons/greenback
+use genbeacons/registry
 use genbeacons/shard
-use genbeacons/types.{Draw, GbShard, GbShardRedeemer, GreenBackBeacon}
+use genbeacons/types.{
+  Draw, GbShard, GbShardRedeemer, GreenBackBeacon, VaultRegistry,
+}
 use genbeacons/util
 
 /// Apply-param (theo thứ tự):
 ///   gb_beacon_nft_policy  : policy NFT beacon GreenBack (= hash script `greenback_beacon`
 ///                           theo hình dạng mint-trong-validator của module này).
 ///   gb_beacon_script_hash : hash script `greenback_beacon`.
-///   vault_script_hashes   : hash script két được phép rút (InstantGen + ScheduleGen).
+///   vault_registry_policy : policy NFT "VRG" của sổ két được phép (`vault_registry`).
+///                           Cũng là hash script sổ (mint gộp vào cùng validator) nên
+///                           KHÔNG có apply-param hash script riêng: hai tham số buộc phải
+///                           bằng nhau là một bản sao có thể lệch im lặng lúc apply.
 ///   gb_shard_cap_nanogic  : trần mỗi shard mỗi lần đặt lại. TẠM 1_800_000_000_000_000
 ///                           (`CC-GEN-SURPLUS-SHARD`, SPEC §6.1.3 dẫn xuất ở suất tạm).
 ///   seed                  : OutputReference neo policy NFT one-shot của 16 shard.
 validator gb_shard(
   gb_beacon_nft_policy: PolicyId,
   gb_beacon_script_hash: ScriptHash,
-  vault_script_hashes: List<ScriptHash>,
+  vault_registry_policy: PolicyId,
   gb_shard_cap_nanogic: Int,
   seed: OutputReference,
 ) {
@@ -97,6 +111,8 @@ validator gb_shard(
         gb_beacon_script_hash,
       )
     expect !beacon.depeg // MUT-DEPEG
+    let vault_script_hashes =
+      registry.read_vault_registry(tx.reference_inputs, vault_registry_policy)
     expect exactly_one_vault(tx.inputs, vault_script_hashes) // MUT-COSPEND
     let eff = shard.lazy_reset(s_in, beacon, gb_shard_cap_nanogic)
     expect InlineDatum(d) = next.datum
@@ -177,6 +193,10 @@ const sh_vault_b: ByteArray = #"7a0002"
 
 const sh_vaults: List<ByteArray> = [sh_vault_a, sh_vault_b]
 
+// Policy NFT sổ = hash script sổ (mint gộp). Khác mọi hằng khác để bài "sổ sai policy" và
+// "sổ ở script khác" không trùng nhau.
+const sh_reg_policy: ByteArray = #"8d8d8d"
+
 const sh_cap: Int = 1_800_000_000_000_000
 
 const sh_seed: OutputReference = OutputReference {
@@ -205,6 +225,40 @@ fn sh_beacon(gb: Int, seq: Int, depeg: Bool) -> Input {
     util.script_address(sh_gb_script),
     GreenBackBeacon { gb_nanogic: gb, seq: seq, epoch: 7, depeg: depeg },
   )
+}
+
+fn sh_registry_at(
+  addr: Address,
+  policy: ByteArray,
+  hashes: List<ByteArray>,
+  ix: Int,
+) -> Input {
+  util.mk_input(
+    util.mk_ref(#"4e", ix),
+    util.mk_output(
+      addr,
+      assets.add(
+        assets.from_lovelace(2_000_000),
+        policy,
+        constants.vault_registry_nft_name,
+        1,
+      ),
+      VaultRegistry { vault_script_hashes: hashes },
+    ),
+  )
+}
+
+fn sh_registry(hashes: List<ByteArray>) -> Input {
+  sh_registry_at(util.script_address(sh_reg_policy), sh_reg_policy, hashes, 0)
+}
+
+fn sh_registry_ok() -> Input {
+  sh_registry(sh_vaults)
+}
+
+/// Beacon cho trước + sổ đúng.
+fn sh_refs(beacon: Input) -> List<Input> {
+  [beacon, sh_registry_ok()]
 }
 
 fn sh_vault(h: ByteArray, with_nft: Bool, ix: Int) -> Input {
@@ -255,7 +309,7 @@ fn sh_spend(s_in: GbShard, amount: Int, tx: Transaction) -> Bool {
   gb_shard.spend(
     sh_gb_policy,
     sh_gb_script,
-    sh_vaults,
+    sh_reg_policy,
     sh_cap,
     sh_seed,
     Some(s_in),
@@ -274,7 +328,7 @@ const sh_out_ok: GbShard =
   GbShard { shard_id: 3, seq: 5, reset_amount: 1_000, remaining: 600 }
 
 fn sh_ok_refs() -> List<Input> {
-  [sh_beacon(48_000, 5, False)]
+  sh_refs(sh_beacon(48_000, 5, False))
 }
 
 fn sh_ok_vaults() -> List<Input> {
@@ -351,14 +405,18 @@ test shard_remaining_mismatch_amount_fail() fail {
 // ── (a) beacon ────────────────────────────────────────────────────────────────
 
 test shard_no_beacon_fail() fail {
-  sh_spend(sh_in, 400, sh_tx([], sh_ok_vaults(), sh_in, sh_out_ok))
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx([sh_registry_ok()], sh_ok_vaults(), sh_in, sh_out_ok),
+  )
 }
 
 test shard_beacon_depeg_fail() fail {
   sh_spend(
     sh_in,
     400,
-    sh_tx([sh_beacon(48_000, 5, True)], sh_ok_vaults(), sh_in, sh_out_ok),
+    sh_tx(sh_refs(sh_beacon(48_000, 5, True)), sh_ok_vaults(), sh_in, sh_out_ok),
   )
 }
 
@@ -369,7 +427,7 @@ test shard_beacon_other_script_fail() fail {
       util.script_address(#"dddddd"),
       GreenBackBeacon { gb_nanogic: 48_000, seq: 5, epoch: 7, depeg: False },
     )
-  sh_spend(sh_in, 400, sh_tx([b], sh_ok_vaults(), sh_in, sh_out_ok))
+  sh_spend(sh_in, 400, sh_tx(sh_refs(b), sh_ok_vaults(), sh_in, sh_out_ok))
 }
 
 test shard_beacon_at_wallet_fail() fail {
@@ -378,7 +436,7 @@ test shard_beacon_at_wallet_fail() fail {
       util.vk_address(#"e1e1e1"),
       GreenBackBeacon { gb_nanogic: 48_000, seq: 5, epoch: 7, depeg: False },
     )
-  sh_spend(sh_in, 400, sh_tx([b], sh_ok_vaults(), sh_in, sh_out_ok))
+  sh_spend(sh_in, 400, sh_tx(sh_refs(b), sh_ok_vaults(), sh_in, sh_out_ok))
 }
 
 test shard_two_beacons_valid_first_fail() fail {
@@ -392,7 +450,12 @@ test shard_two_beacons_valid_first_fail() fail {
   sh_spend(
     sh_in,
     400,
-    sh_tx([sh_beacon(48_000, 5, False), fake], sh_ok_vaults(), sh_in, sh_out_ok),
+    sh_tx(
+      [sh_beacon(48_000, 5, False), fake, sh_registry_ok()],
+      sh_ok_vaults(),
+      sh_in,
+      sh_out_ok,
+    ),
   )
 }
 
@@ -421,7 +484,7 @@ test shard_lazy_reset_capped_happy() {
     sh_in_stale,
     400,
     sh_tx(
-      [sh_beacon(gb, 5, False)],
+      sh_refs(sh_beacon(gb, 5, False)),
       sh_ok_vaults(),
       sh_in_stale,
       GbShard { shard_id: 3, seq: 5, reset_amount: sh_cap, remaining: sh_cap - 400 },
@@ -506,6 +569,112 @@ test shard_vault_not_allowed_script_fail() fail {
   )
 }
 
+// ── (c') sổ két được phép — mỗi bài đỏ là bài xanh chỉ đổi đúng một thứ ─────────
+
+test shard_vault_listed_in_registry_happy() {
+  // Hàng xóm của `shard_vault_not_allowed_script_fail`: CÙNG két 7a0003, chỉ khác sổ có
+  // liệt kê nó ⟹ danh sách đến từ datum sổ, không từ hằng biên dịch.
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx(
+      [sh_beacon(48_000, 5, False), sh_registry([sh_vault_a, #"7a0003"])],
+      [sh_vault(#"7a0003", True, 1)],
+      sh_in,
+      sh_out_ok,
+    ),
+  )
+}
+
+test shard_vault_dropped_from_registry_fail() fail {
+  // Két B hợp lệ (`shard_draw_schedule_vault_happy`) nhưng sổ chỉ liệt kê A.
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx(
+      [sh_beacon(48_000, 5, False), sh_registry([sh_vault_a])],
+      [sh_vault(sh_vault_b, True, 1)],
+      sh_in,
+      sh_out_ok,
+    ),
+  )
+}
+
+test shard_no_registry_fail() fail {
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx([sh_beacon(48_000, 5, False)], sh_ok_vaults(), sh_in, sh_out_ok),
+  )
+}
+
+test shard_two_registries_fail() fail {
+  // Hai sổ đều hợp lệ, cùng danh sách, khác ref — chỉ vế "đúng MỘT sổ" chặn.
+  let second =
+    sh_registry_at(
+      util.script_address(sh_reg_policy),
+      sh_reg_policy,
+      sh_vaults,
+      1,
+    )
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx(
+      [sh_beacon(48_000, 5, False), sh_registry_ok(), second],
+      sh_ok_vaults(),
+      sh_in,
+      sh_out_ok,
+    ),
+  )
+}
+
+test shard_registry_wrong_policy_fail() fail {
+  // Đúng địa chỉ script sổ, đúng tên "VRG", datum liệt kê két — NFT dưới policy KHÁC.
+  let fake =
+    sh_registry_at(util.script_address(sh_reg_policy), #"8e8e8e", sh_vaults, 0)
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx([sh_beacon(48_000, 5, False), fake], sh_ok_vaults(), sh_in, sh_out_ok),
+  )
+}
+
+test shard_registry_other_script_fail() fail {
+  // NFT thật, datum hợp lệ, nhưng nằm ở script KHÁC script sổ.
+  let fake =
+    sh_registry_at(util.script_address(#"dddddd"), sh_reg_policy, sh_vaults, 0)
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx([sh_beacon(48_000, 5, False), fake], sh_ok_vaults(), sh_in, sh_out_ok),
+  )
+}
+
+test shard_registry_at_wallet_fail() fail {
+  let fake =
+    sh_registry_at(util.vk_address(#"e1e1e1"), sh_reg_policy, sh_vaults, 0)
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx([sh_beacon(48_000, 5, False), fake], sh_ok_vaults(), sh_in, sh_out_ok),
+  )
+}
+
+test shard_registry_as_spent_input_fail() fail {
+  // Sổ nằm ở INPUT (không phải reference input) ⟹ không được đọc.
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx(
+      [sh_beacon(48_000, 5, False)],
+      [sh_registry_ok(), ..sh_ok_vaults()],
+      sh_in,
+      sh_out_ok,
+    ),
+  )
+}
+
 // ── (d) output tiếp nối ───────────────────────────────────────────────────────
 
 test shard_id_changed_fail() fail {
@@ -575,7 +744,16 @@ fn sh_genesis_outs() -> List<Output> {
 }
 
 fn sh_mint(tx: Transaction) -> Bool {
-  gb_shard.mint(sh_gb_policy, sh_gb_script, sh_vaults, sh_cap, sh_seed, Void, sh_sh, tx)
+  gb_shard.mint(
+    sh_gb_policy,
+    sh_gb_script,
+    sh_reg_policy,
+    sh_cap,
+    sh_seed,
+    Void,
+    sh_sh,
+    tx,
+  )
 }
 
 test shard_genesis_happy() {

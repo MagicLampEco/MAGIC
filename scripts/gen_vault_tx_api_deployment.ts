@@ -44,11 +44,12 @@
  */
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { credentialToAddress, scriptHashToCredential } from "@lucid-evolution/lucid";
 import { lampAssetName, type Network } from "@magiclamp/protocol-utils";
 import { consumeKey, type ConsumeKeyName } from "./consumeBook.js";
+import { stateBookPath } from "./stateBookPath.js";
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -90,7 +91,8 @@ export const SCHEDULE_ONLY_STATE_KEYS = {
  *  thứ được ghi bởi nhiều bước deploy khác nhau. Đọc bằng regex thì tệp chỉ là dữ
  *  liệu, và hỏng thì hỏng ở đây chứ không hỏng ở một chỗ nào đó về sau. */
 function readStateBook(network: Network): { book: StateBook; path: string; mtime: string } {
-  const path = join(SCRIPTS_DIR, `state.${network}.sh`);
+  // Mặc định `scripts/state.<NET>.sh`; `STATE_BOOK_PATH` đổi sổ cho một tiến trình (`stateBookPath.ts`).
+  const path = stateBookPath(network);
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");

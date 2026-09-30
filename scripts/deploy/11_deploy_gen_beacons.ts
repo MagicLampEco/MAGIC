@@ -37,6 +37,9 @@
 //   DRY_RUN=1            — chạy trọn luồng trên một Emulator soi gương số dư ví: dựng, ký CỤC
 //                          BỘ, đo kích thước, in hash — KHÔNG gửi gì lên mạng, KHÔNG ghi sổ.
 //   WRITE_STATE_BOOK     — "1"/"0"; vắng thì quyết theo ví ký (`runResult.ts ▸ decideStateBook`).
+//   STATE_BOOK_PATH      — đường TUYỆT ĐỐI tới sổ (tên tệp phải là `state.<NET>.sh`); vắng thì
+//                          `scripts/state.<NET>.sh`. Cả phép ĐỌC (cổng `GB_SHARD_HASH`, đầu vào
+//                          pha registry) lẫn phép GHI đều theo đường này (`stateBookPath.ts`).
 //
 // Tham số KHÔNG qua env, và vì sao:
 //   · `gb_shard_cap_nanogic` = hằng biên dịch `gb_shard_cap_nanogic` mà HAI két bake
@@ -57,7 +60,6 @@
 // được gọi trực tiếp, và chỉ `main` mới nạp `config.ts` (nạp nó là đòi khoá mạng + ví).
 
 import { appendFileSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   Blockfrost,
@@ -99,6 +101,7 @@ import { vaultHashKey } from "../consumeBook.js";
 import { parkAddressFor } from "../refScripts.js";
 import { minAdaForRefScriptWithMargin } from "../minAda.js";
 import { decideStateBook, parseFlag, parseOutRef, type OutRef } from "../runResult.js";
+import { stateBookPath } from "../stateBookPath.js";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Tên khoá sổ
@@ -575,7 +578,9 @@ async function main(): Promise<void> {
     throw new Error("GenBeacons chỉ chạy testnet: CC-GEN-SURPLUS-SHARD và CC-GEN-BEACON-ROTATION còn TẠM (SPEC v2.0 §13).");
   }
   const book = decideStateBook({ dryRun, flag: process.env.WRITE_STATE_BOOK, signsWithPrivateKey: PRIVATE_KEY !== "" });
-  const bookPath = join(dirname(fileURLToPath(import.meta.url)), "..", `state.${NETWORK}.sh`);
+  // `STATE_BOOK_PATH` (đường tuyệt đối) đổi sổ; vắng thì `scripts/state.<NET>.sh`. Pha này GHI sổ
+  // bằng `appendFileSync`, và đường mặc định có thể là symlink tới sổ của cụm đang phục vụ.
+  const bookPath = stateBookPath(NETWORK);
   const entries = readBookEntries(bookPath);
 
   console.log(`=== Step 11: GenBeacons · pha ${phase}${dryRun ? " · DRY RUN" : ""} ===\n`);

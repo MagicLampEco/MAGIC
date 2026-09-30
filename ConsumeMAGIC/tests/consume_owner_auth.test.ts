@@ -10,10 +10,11 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  Constr, Data, validatorToScriptHash,
+  validatorToScriptHash,
   type LucidEvolution, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
+import { sgDatum, zeroWindow, burnRedeemer } from "./genV2Fixtures.js";
 import {
   buildConsumeTx, buildBindDidTx, buildMintEngageTx, ENGAGE_MIN_LOVELACE, type ConsumeParams,
 } from "../offchain/src/consume.js";
@@ -49,13 +50,6 @@ const engageDatum = (owner: Owner, did = ""): string =>
     consumed_nanogic: 0n,
   });
 
-/** Vault datum: Constr(_, [owner Credential, ..]) — đúng phần `all_vault_owners_are` đọc. */
-const vaultDatum = (owner: Owner): string =>
-  Data.to(new Constr(0, [
-    "VerificationKey" in owner ? new Constr(0, [owner.VerificationKey[0]]) : new Constr(1, [owner.Script[0]]),
-    0n,
-  ]));
-
 const mkUtxo = (over: Partial<UTxO>): UTxO => ({
   txHash: "00".repeat(32),
   outputIndex: 0,
@@ -77,20 +71,33 @@ function scriptAuth(hash = SCRIPT_H) {
 
 // ── buildConsumeTx ────────────────────────────────────────────────────────────
 
+/** required của bảng giá trên với op_count 1: 10_000_000 × 1e9 × 1 / 1e9. */
+const REQUIRED = 10_000_000n;
+
+/**
+ * Két ScheduleGen v2.0 (19 trường) ở ĐÚNG epoch của tip — cửa sổ không dịch, BurnBatch chỉ
+ * cộng Σburns vào `consumed` ô 0, không cần reference input nào. Chọn loại két này để bài
+ * kiểm quyền chủ không phụ thuộc beacon ρ / két Wakeme (đo ở `consume_gen_v2.test.ts`).
+ * Trường 0 là `owner` — đúng phần `all_vault_owners_are` đọc.
+ */
 function consumeParams(owner: Owner, lucid: unknown, over: Partial<ConsumeParams> = {}): ConsumeParams {
+  const tip = over.tipPosixMs ?? 1_700_000_000_000n;
+  const e = tip / msPerEpoch("Preview");
+  const outWin = zeroWindow();
+  outWin[0] = [0n, REQUIRED];
   return {
     lucid: lucid as LucidEvolution,
     engageUtxo: mkUtxo({ datum: engageDatum(owner), assets: { lovelace: 2_000_000n, [NFT]: 1n } }),
-    vaultUtxo: mkUtxo({ outputIndex: 1, datum: vaultDatum(owner) }),
+    vaultUtxo: mkUtxo({ outputIndex: 1, datum: sgDatum(owner, zeroWindow(), e) }),
     priceBeaconUtxo: mkUtxo({ outputIndex: 2, datum: priceDatum }),
     consumeScript,
     vaultScript,
     opType: 1,
     opCount: 1n,
-    vaultBurnRedeemerCbor: "d87980",
-    vaultOutDatumCbor: "d87980",
+    vaultBurnRedeemerCbor: burnRedeemer([REQUIRED]),
+    vaultOutDatumCbor: sgDatum(owner, outWin, e),
     network: "Preview",
-    tipPosixMs: 1_700_000_000_000n,
+    tipPosixMs: tip,
     ...over,
   } as ConsumeParams;
 }

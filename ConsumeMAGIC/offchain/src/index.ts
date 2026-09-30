@@ -7,6 +7,8 @@
 export * from "./types.js";
 export * from "./engageId.js";
 export * from "./consume.js";
+// Gen v2.0 (#128): kiểm phía két + chọn ref input (beacon ρ, két Wakeme) cho BurnBatch.
+export * from "./genV2Checkpoint.js";
 
 // Nợ #7 — đường post bảng giá mới KHÔNG phải redeploy. Thiếu nó thì beacon hết hạn
 // là hạ tầng phải dựng lại từ đầu và mọi thread Engage thành mồ côi. Xem postPrice.ts.

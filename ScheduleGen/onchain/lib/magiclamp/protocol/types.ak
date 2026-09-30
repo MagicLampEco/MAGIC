@@ -65,6 +65,13 @@ pub type GenSchedule {
   multiplier_at_commit_q   : Natural,    // S_Q(L) (audit)
   fired_count              : Natural,    // 0..L
   auto_burn_target         : Option<AutoBurnConfig>,
+  // ── Gen v2.0 (SPEC §6.1.4, `CC-GEN-SCHEDULE-FIXED`) — NỐI CUỐI, không dời trường cũ ──
+  // Lượng MAGIC mỗi epoch `M_i`, tính MỘT lần lúc ký, CỐ ĐỊNH suốt `schedule_length`
+  // epoch. Fire chỉ đọc trường này — không đọc beacon, không tính lại.
+  m_per_epoch              : Natural,
+  // `usage_factor_q` của két lúc ký (cửa sổ đã dịch tới epoch ký). Lưu để kiểm toán;
+  // fire KHÔNG đọc lại.
+  usage_factor_locked_q    : Natural,
 }
 
 // ── §5.5 ScheduleAggregateShardDatum ─────────────────────────
@@ -76,6 +83,10 @@ pub type ScheduleAggregateShardDatum {
   shard_cumulative_fired     : Natural,
   last_updated_epoch         : Natural,
   shard_cap                  : Natural,   // 4.5×10^14 oildrop
+  // Gen v2.0 — cổng κ TẠM (SPEC §6.4): tổng nghĩa-vụ-còn-lại (nanogic) của mọi hợp
+  // đồng hash vào shard này = Σ m_per_epoch × (schedule_length − fired_count).
+  // Ký cộng `m × N`, fire trừ `m × số lượt bắn`. NỐI CUỐI.
+  shard_obligation_nanogic   : Natural,
 }
 
 pub type AppAllocation { app_id: ByteArray, weight_bps: Natural }
@@ -174,6 +185,43 @@ pub type VaultDatum {
   // hỏng ồn ào — trừ bên đọc thô, bên đó lấy nhầm trường và im.
   personal_delegate     : Option<ByteArray>,
   attribution           : VaultAttribution,
+  // ── Gen v2.0 (SPEC §6.1.2) — NỐI CUỐI: trường 17, 18 ⟹ 19 trường ──────────
+  // InstantGen đặt hai trường này ở 18–19 (IG có thêm `instant_unlock_ms`), nên mã
+  // chung phải gom theo TÊN trường, không theo chỉ số.
+  // Đúng `usage_window_len` (7) ô: ô 0 = epoch `usage_window_epoch` (đang mở), ô 1..6
+  // = 6 epoch liền trước. Mọi nhánh spend dịch cửa sổ tới epoch hiện tại.
+  usage_window          : List<EpochUsage>,
+  usage_window_epoch    : Natural,
+}
+
+// ── Beacon Gen v2.0 — BẢN CHÉP CÓ NHÃN của GenBeacons/onchain/lib/genbeacons/types.ak
+// (MAGIC@9c4a282b, 2026-09-30). Hai project Aiken không import chéo. HỢP ĐỒNG NHỊ PHÂN:
+// thứ tự trường + chỉ số constructor phải khớp bản gốc; sửa bản gốc thì sửa ở đây cùng
+// commit. Két ScheduleGen chỉ đọc các kiểu này ở nhánh KÝ (`ScheduleCommit`).
+pub type RateParam {
+  rho_q: Int,
+  prev_rho_q: Int,
+  effective_epoch: Int,
+}
+
+pub type GreenBackBeacon {
+  gb_nanogic: Int,
+  seq: Int,
+  epoch: Int,
+  depeg: Bool,
+}
+
+pub type GbShard {
+  shard_id: Int,
+  seq: Int,
+  reset_amount: Int,
+  remaining: Int,
+}
+
+// Redeemer của shard GB: két đọc nó (purpose `Spend(shard_ref)`) để ép lượng rút khớp
+// lượng ký. Constructor 0 là hợp đồng nhị phân.
+pub type GbShardRedeemer {
+  Draw { amount: Int }
 }
 
 // ── Vault Redeemer (ScheduleGen operations) ───────────────────

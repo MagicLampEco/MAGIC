@@ -68,7 +68,8 @@ use cardano/transaction.{
 
 use magiclamp/protocol/owner_auth.{owner_authorized}
 use magiclamp/protocol/types.{
-  ActivityState, BurnBatch, DelegationCertificate, Flame, GenSchedule,
+  ActivityState, BurnBatch, DelegationCertificate, Draw, EpochUsage, Flame,
+  GbShard, GenSchedule, GreenBackBeacon, RateParam,
   LoyaltyHolding, MagicBatch, PruneExpired, Schedule,
   ScheduleAggregateShardDatum,
   ScheduleCommit, ScheduleFire, SetDelegate, ShardRedeemer,
@@ -80,11 +81,21 @@ use magiclamp/protocol/constants.{
   min_lamp_per_fire, schedule_delay, schedule_decay_window,
   max_fires_per_tx_catchup, max_gen_schedules, max_batches_per_vault,
   max_loyalty_holdings, shard_cap, shard_count,
+  buffer_ep, schedule_obligation_cap_per_shard, schedule_scale_horizon_cap,
+  rate_nft_name, greenback_nft_name,
+}
+use magiclamp/protocol/gen_formula.{
+  amount_by_lamp, gb_vault_share, shift_window, usage_factor_coldstart_q,
+  usage_factor_q, window_add,
+}
+use magiclamp/protocol/gen_gate.{
+  GenParams, drawn_in_epoch, gb_draw_checked, gb_shard_nft_name,
+  read_greenback_fresh, read_rho, window_add_at,
 }
 use magiclamp/protocol/math.{
   compute_s_q, compute_rate_locked_q, compute_m_i,
   check_sch_rate, compute_shard_id,
-  compute_schedule_id, compute_batch_id, shard_asset_name,
+  compute_schedule_id, compute_batch_id, shard_asset_name, min2,
 }
 use magiclamp/protocol/lock.{
   select_lamp_for_lock, unlock_locked_amount, remove_newest_first,
@@ -154,6 +165,20 @@ validator vault(
   lamp_asset_name   : ByteArray,  // per-network PARAM (tLAMP testnet / LAMP mainnet)
   shard_policy_id   : PolicyId,   // identifies shard UTxOs by NFT
   ms_per_epoch      : Int,
+  // ── Gen v2.0 gói (c) — NỐI CUỐI (#4..#8), chỉ nhánh KÝ đọc ────────────────
+  // #4 gb_beacon_nft_policy  : policy NFT beacon GreenBack ("GBB")
+  // #5 gb_beacon_script_hash : script beacon GreenBack — neo hai lớp cùng #4
+  // #6 gb_shard_policy_id    : policy = script hash shard GB. MỌI nhánh KHÁC
+  //                            `ScheduleCommit` từ chối tx có input tại `Script(#6)`.
+  // #7 rate_nft_policy       : policy NFT beacon ρ ("RHO")
+  // #8 rate_script_hash      : script beacon ρ — neo hai lớp cùng #7
+  // 🔴 CHƯA GIẢI (ngoài gói c): `gb_shard` nhận `vault_script_hashes` làm apply-param,
+  // két nhận #6 = hash của `gb_shard` ⟹ vòng apply-param, như InstantGen #5.
+  gb_beacon_nft_policy  : PolicyId,
+  gb_beacon_script_hash : ByteArray,
+  gb_shard_policy_id    : PolicyId,
+  rate_nft_policy       : PolicyId,
+  rate_script_hash      : ByteArray,
 ) {
   // ── mint: vault-identity NFT policy (policy_id == this script hash) ──────
   mint(redeemer: VaultIdRedeemer, policy_id: PolicyId, tx: Transaction) {
@@ -179,11 +204,30 @@ validator vault(
     // See `same_script` for why comparing the full address is a hole.
     expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
 
+    // ── Shard GB chỉ đi cùng nhánh KÝ (Gen v2.0) ────────────────────────
+    // `gb_shard.spend` chỉ đòi "có một két thật đi kèm", không đọc được két đi nhánh
+    // nào. Nhánh khác (fire/burn/withdraw/…) mà cho đồng tiêu shard là cho người
+    // giữ két kèm `Draw { amount: remaining }` rút cạn shard mà không ký gì.
+    let is_commit =
+      when redeemer is {
+        ScheduleCommit { .. } -> True
+        _ -> False
+      }
+    expect is_commit || no_input_at(tx.inputs, gb_shard_policy_id)
+
     when redeemer is {
       ScheduleCommit { schedule_length, lamp_per_epoch } ->
         validate_commit(datum, schedule_length, lamp_per_epoch,
                         current_epoch, own_ref, vault_addr,
-                        lamp_policy_id, lamp_asset_name, shard_policy_id, tx)
+                        lamp_policy_id, lamp_asset_name, shard_policy_id,
+                        GenParams {
+                          gb_beacon_nft_policy,
+                          gb_beacon_script_hash,
+                          gb_shard_policy_id,
+                          rate_nft_policy,
+                          rate_script_hash,
+                        },
+                        tx)
 
       ScheduleFire { schedule_id } ->
         validate_fire(datum, schedule_id, current_epoch, own_ref, vault_addr,
@@ -303,6 +347,7 @@ fn validate_commit(
   lamp_policy_id  : PolicyId,
   lamp_asset_name : ByteArray,
   shard_policy_id : PolicyId,
+  gp              : GenParams,
   tx              : Transaction,
 ) -> Bool {
 
@@ -338,6 +383,35 @@ fn validate_commit(
   // C-SCH-5 / C-SCH-RATE: λ × rate_locked_q ≥ Q → M_i ≥ 1 (T19)
   expect check_sch_rate(lambda, rate_locked_q)
 
+  // ── Gen v2.0: đầu vào CHỐT LÚC KÝ (SPEC §6.1.4, `CC-GEN-SCHEDULE-FIXED`) ────
+  // Cửa sổ dịch tới epoch ký TRƯỚC khi đọc hệ số (ô 1..6 = 6 epoch đã qua).
+  let window = shift_window(datum.usage_window, datum.usage_window_epoch, current_epoch)
+  // ρ và GB: fail-closed. Chỉ NHÁNH NÀY đọc beacon; fire không đọc.
+  let rho = read_rho(tx.reference_inputs, gp.rate_nft_policy, gp.rate_script_hash, current_epoch)
+  let beacon =
+    read_greenback_fresh(
+      tx.reference_inputs, gp.gb_beacon_nft_policy, gp.gb_beacon_script_hash,
+      current_epoch,
+    )
+  // M_i = amount_by_lamp(λ, 0, cửa sổ, min(rate_locked, ρ_e), horizon min(N, 6)).
+  // `⌊λ·min(r, ρ)/Q⌋ = min(⌊λ·r/Q⌋, ⌊λ·ρ/Q⌋)` (sàn đơn điệu) nên đây đúng là vế `min`
+  // của SPEC §6.1.4, rồi áp `usage_factor` + `scale_limit` theo §6.1.1 (hai vế sàn
+  // riêng). LAMP-mượn KHÔNG tính (L_lent = 0): két ScheduleGen không đọc két Wakeme
+  // (§6.4, chủ dự án chốt 2026-09-30).
+  let horizon = min2(l, schedule_scale_horizon_cap)
+  let m_per_epoch = amount_by_lamp(lambda, 0, window, min2(rate_locked_q, rho), horizon)
+  // Không có hợp đồng cấp 0.
+  expect m_per_epoch > 0
+  let uf_locked = usage_factor_q(window)
+  // Shard GB của két bị TRỪ `pp × min(N, buffer_ep)` (không chỉ đọc) — SPEC §6.1.3.
+  let gb_draw = m_per_epoch * min2(l, buffer_ep)
+  let gb_reset_amount =
+    gb_draw_checked(tx, gp.gb_shard_policy_id, compute_shard_id(datum.owner), gb_draw, beacon)
+  // Trần mỗi-két-mỗi-epoch (SPEC §6.1.3, `gb_vault_share_q`); lượng đã rút SUY RA.
+  expect drawn_in_epoch(datum.gen_schedules, current_epoch) + gb_draw
+    <= gb_vault_share(gb_reset_amount)
+  let obligation = m_per_epoch * l
+
   // ── SHARD BIND (option c): vault is the authority ───────────
   // Find shard INPUT and OUTPUT (both carry the NFT, matched by shard_id), then
   // assert the FULL delta against the real lock amount. C-SCH-CAP enforced here.
@@ -369,6 +443,12 @@ fn validate_commit(
   expect shard_out.shard_id  == shard_in.shard_id
   expect shard_out.shard_cap == shard_in.shard_cap
   expect shard_out.last_updated_epoch == current_epoch
+  // 🔴 CỔNG κ — TẠM, fail-closed (SPEC §6.4). Trần biên dịch trên tổng nghĩa-vụ-còn-
+  // lại của shard, KHÔNG phải `κ × Sức-tải` (chưa có nguồn quỹ cứu trên chuỗi) — xem
+  // `constants.ak` ▸ `schedule_obligation_cap_per_shard`.
+  expect shard_out.shard_obligation_nanogic
+    == shard_in.shard_obligation_nanogic + obligation
+  expect shard_out.shard_obligation_nanogic <= schedule_obligation_cap_per_shard
 
   // Build new schedule
   let schedule_id = compute_schedule_id_from_ref(own_ref, list.length(datum.gen_schedules))
@@ -384,6 +464,8 @@ fn validate_commit(
     multiplier_at_commit_q: s_q,                     // C-SCH-11 audit
     fired_count:            0,
     auto_burn_target:       None,
+    m_per_epoch,            // CC-GEN-SCHEDULE-FIXED: cố định từ đây
+    usage_factor_locked_q:  uf_locked,
   }
 
   // Lock youngest-first (C-SCH-8, T5)
@@ -440,6 +522,9 @@ fn validate_commit(
   expect output.personal_delegate     == datum.personal_delegate
   expect output.attribution           == datum.attribution
   expect output.last_updated_epoch    == current_epoch
+  // Ký không sinh batch ⟹ không cộng `generated`; chỉ dịch cửa sổ.
+  expect output.usage_window          == window
+  expect output.usage_window_epoch    == current_epoch
   expect sum_holdings(output.loyalty_holdings) == output.lamp_balance  // C-VAULT-10
 
   // VALUE PRESERVATION: vault LAMP value == lamp_balance (commit moves no LAMP).
@@ -495,19 +580,32 @@ fn validate_fire(
   let fires_in_tx = count_eligible_fires(sched, current_epoch, live_batches)
   expect fires_in_tx > 0   // at least one fire must occur
 
-  // M_i for each fire (T-DET: all identical)
-  let m_i = compute_m_i(sched.lamp_per_epoch, sched.rate_locked_q)
+  // M_i for each fire (T-DET: all identical). Gen v2.0 (`CC-GEN-SCHEDULE-FIXED`):
+  // đọc ĐÚNG lượng đã chốt lúc ký — KHÔNG đọc beacon ρ/GB, KHÔNG đọc `usage_ratio`
+  // hiện hành, nên fire chạy cả khi beacon vắng hoặc `depeg`.
+  let m_i = sched.m_per_epoch
 
   // C-FIRE-3 (PHA 2): LAMP to RELEASE — fires_in_tx × λ leaves the locked pool
   // but stays in the vault. NOTHING is transferred anywhere (I-ACT-7).
   let lamp_released = fires_in_tx * sched.lamp_per_epoch
 
   // Create new batches (one per fire), then collect the dead ones (§4.2).
-  // A catch-up fire of k orders stamps ALL k batches with the CURRENT epoch, so
-  // they live for exactly this epoch — the catch-up cannot resurrect MAGIC the
-  // owner failed to consume in earlier epochs.
+  // Gen v2.0 — BẮN BÙ theo SPEC §6.1.2: lượt thứ j mang epoch DANH NGHĨA
+  // `e_j = start_fire_epoch + fired_count + j` và sinh batch `created_epoch = e_j`.
+  // `e_j < current_epoch` ⟹ batch đã hết hạn lúc sinh (không tiêu được): bắn muộn
+  // không biến quyền-tiêu của epoch đã qua thành quyền-tiêu của epoch này. Bản trước
+  // đóng dấu MỌI lượt bằng epoch hiện tại ⟹ k lượt bù = k×M_i SỐNG trong một epoch.
+  let first_nominal = sched.start_fire_epoch + sched.fired_count
   let new_batches = create_fire_batches(own_ref, datum.next_batch_index,
-                                         fires_in_tx, m_i, schedule_id, current_epoch)
+                                         fires_in_tx, m_i, schedule_id, first_nominal)
+  // Cửa sổ: `generated` của lượt j ghi vào ô `current_epoch − e_j` (bỏ nếu ≥ 7).
+  let window_out =
+    add_fires_to_window(
+      shift_window(datum.usage_window, datum.usage_window_epoch, current_epoch),
+      current_epoch - first_nominal,
+      fires_in_tx,
+      m_i,
+    )
   let updated_batches = list.concat(live_batches, new_batches)
   expect list.length(updated_batches) <= max_batches_per_vault
 
@@ -560,6 +658,10 @@ fn validate_fire(
   expect shard_out.shard_cumulative_committed == shard_in.shard_cumulative_committed
   expect shard_out.shard_cap == shard_in.shard_cap
   expect shard_out.last_updated_epoch == current_epoch
+  // Cổng κ TẠM: nghĩa vụ đã bắn (kể cả lượt bù chết) rời tổng nghĩa-vụ-còn-lại.
+  expect shard_out.shard_obligation_nanogic
+    == shard_in.shard_obligation_nanogic - m_i * fires_in_tx
+  expect shard_out.shard_obligation_nanogic >= 0
 
   // A02: output datum
   let output = get_vault_output(tx.outputs, vault_addr)
@@ -582,6 +684,8 @@ fn validate_fire(
   expect output.personal_delegate  == datum.personal_delegate
   expect output.attribution        == datum.attribution
   expect output.last_updated_epoch == current_epoch
+  expect output.usage_window       == window_out
+  expect output.usage_window_epoch == current_epoch
   expect sum_holdings(output.loyalty_holdings) == output.lamp_balance
 
   // VALUE PRESERVATION: vault LAMP value == new lamp_balance.
@@ -674,6 +778,14 @@ fn validate_burn_batch(
   expect output_datum.attribution.attribution_root == input_datum.attribution.attribution_root
   expect output_datum.attribution.total_events     == input_datum.attribution.total_events + 1
   expect output_datum.attribution.last_event_epoch == current_epoch
+  // Gen v2.0 (SPEC §6.1.2): dịch cửa sổ rồi cộng Σburns vào vế `consumed` của ô 0.
+  expect output_datum.usage_window ==
+    window_add(
+      shift_window(input_datum.usage_window, input_datum.usage_window_epoch, current_epoch),
+      0,
+      total_burned,
+    )
+  expect output_datum.usage_window_epoch == current_epoch
 
   // ── VALUE PRESERVATION (anti value-leak) ─────────────────────
   expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id, lamp_asset_name) == output_datum.lamp_balance
@@ -802,6 +914,11 @@ fn validate_prune_expired(
   expect output_datum.personal_delegate     == input_datum.personal_delegate
   expect output_datum.attribution           == input_datum.attribution
   expect output_datum.last_updated_epoch    == input_datum.last_updated_epoch
+  // Gen v2.0: cửa sổ chỉ DỊCH theo thời gian (hàm tất định của epoch, không giá trị
+  // nào đổi) — người lạ dịch hộ không mở được đòn bẩy nào.
+  expect output_datum.usage_window ==
+    shift_window(input_datum.usage_window, input_datum.usage_window_epoch, current_epoch)
+  expect output_datum.usage_window_epoch == current_epoch
 
   // VALUE PRESERVATION: LAMP trong value khớp `lamp_balance` (không đụng gì).
   expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id, lamp_asset_name)
@@ -874,6 +991,9 @@ fn validate_set_delegate(
   expect output_datum.personal_delegate     == new_delegate              // ← the change
   expect output_datum.attribution           == input_datum.attribution
   expect output_datum.last_updated_epoch    == current_epoch
+  expect output_datum.usage_window ==
+    shift_window(input_datum.usage_window, input_datum.usage_window_epoch, current_epoch)
+  expect output_datum.usage_window_epoch    == current_epoch
 
   // VALUE PRESERVATION: LAMP untouched.
   expect vault_output_lamp_with(tx.outputs, vault_addr, lamp_policy_id, lamp_asset_name) == input_datum.lamp_balance
@@ -942,9 +1062,29 @@ fn create_batches_rec(
       contract_id:         Some(schedule_id),       // track which contract
       halved:              False,
     }
-    create_batches_rec(own_ref, idx + 1, remaining - 1, m_i, schedule_id, epoch,
+    // Gen v2.0: lượt kế mang epoch danh nghĩa kế (SPEC §6.1.2 bắn bù).
+    create_batches_rec(own_ref, idx + 1, remaining - 1, m_i, schedule_id, epoch + 1,
                        list.concat(acc, [batch]))
   }
+}
+
+/// Gen v2.0 (SPEC §6.1.2): `fires` lượt, lượt j có ô `first_idx − j` (= current −
+/// e_j); cộng `m_i` vào `generated` của ô đó, bỏ nếu ô ≥ 7 (đã ra khỏi cửa sổ).
+fn add_fires_to_window(
+  window    : List<EpochUsage>,
+  first_idx : Int,
+  fires     : Int,
+  m_i       : Int,
+) -> List<EpochUsage> {
+  if fires <= 0 {
+    window
+  } else {
+    add_fires_to_window(window_add_at(window, first_idx, m_i), first_idx - 1, fires - 1, m_i)
+  }
+}
+
+fn no_input_at(inputs: List<Input>, h: ByteArray) -> Bool {
+  !list.any(inputs, fn(i) { i.output.address.payment_credential == Script(h) })
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -1165,6 +1305,12 @@ fn validate_mint_vault_id(
     last_event_epoch: 0,
     total_events: 0,
   }
+  // Gen v2.0 (SPEC §6.1.2): cửa sổ genesis = 7 cặp 0, `usage_window_epoch = 0` (như
+  // InstantGen b1). Ghim về 0 chứ không nhận epoch tuỳ ý: mint không chạy `get_epoch`,
+  // và 0 là giá trị duy nhất luôn ≤ epoch của mọi lượt spend sau (dịch ≥ 7 ô ⟹ vẫn
+  // toàn 0). Cửa sổ bịa lịch sử ở genesis là nâng `usage_factor` miễn phí.
+  expect vd.usage_window == list.repeat(EpochUsage { generated: 0, consumed: 0 }, 7)
+  expect vd.usage_window_epoch == 0
 
   // ── No dust / shard NFT bundled into genesis: at most {ADA, LAMP, vault_id} ─
   expect list.length(assets.policies(vault_out.value)) <= 3
@@ -1191,7 +1337,7 @@ fn validate_burn_vault_id(policy_id: PolicyId, tx: Transaction) -> Bool {
 fn validate_withdraw_lamp(
   input_datum     : VaultDatum,
   amount          : Int,
-  _current_epoch  : Int,
+  current_epoch   : Int,
   vault_addr      : Address,
   lamp_policy_id  : PolicyId,
   lamp_asset_name : ByteArray,
@@ -1236,6 +1382,11 @@ fn validate_withdraw_lamp(
   expect output_datum.attribution == input_datum.attribution
   // last_updated_epoch PRESERVED (PR #11 review pt4)
   expect output_datum.last_updated_epoch == input_datum.last_updated_epoch
+  // Gen v2.0: chỉ dịch cửa sổ (không đọc beacon — SPEC §6.1.5: rút LAMP không phụ
+  // thuộc beacon).
+  expect output_datum.usage_window ==
+    shift_window(input_datum.usage_window, input_datum.usage_window_epoch, current_epoch)
+  expect output_datum.usage_window_epoch == current_epoch
 
   // W-6: vault output LAMP value
   let vault_output = find_vault_output_raw(tx.outputs, vault_addr)
@@ -1517,7 +1668,7 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
     personal_delegate: None,
     attribution: VaultAttribution {
       attribution_root: #"", last_event_epoch: 0, total_events: 0,
-    },
+    }, usage_window: t_zw(), usage_window_epoch: 0, 
   }
 }
 
@@ -1551,6 +1702,107 @@ fn t_vault_input_nonft(datum: VaultDatum, balance: Int) -> Input {
 
 fn t_tx(ins: List<Input>, outs: List<Output>, signers: List<ByteArray>) -> Transaction {
   Transaction { ..placeholder, inputs: ins, outputs: outs, extra_signatories: signers }
+}
+
+// ── Gen v2.0 fixture: cửa sổ, beacon ρ, beacon GB, shard GB ─────────────────
+fn t_zw() -> List<EpochUsage> {
+  list.repeat(EpochUsage { generated: 0, consumed: 0 }, 7)
+}
+
+const t_gbs_policy: ByteArray =
+  #"66666666666666666666666666666666666666666666666666666666"
+const t_gbb_policy: ByteArray =
+  #"67676767676767676767676767676767676767676767676767676767"
+const t_gbb_hash: ByteArray =
+  #"68686868686868686868686868686868686868686868686868686868"
+const t_rate_policy: ByteArray =
+  #"69696969696969696969696969696969696969696969696969696969"
+const t_rate_hash: ByteArray =
+  #"6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a"
+const t_rho: Int = 4_000_000_000
+const t_gb_reset: Int = 1_000_000_000_000
+
+fn t_gp() -> GenParams {
+  GenParams {
+    gb_beacon_nft_policy: t_gbb_policy,
+    gb_beacon_script_hash: t_gbb_hash,
+    gb_shard_policy_id: t_gbs_policy,
+    rate_nft_policy: t_rate_policy,
+    rate_script_hash: t_rate_hash,
+  }
+}
+
+fn t_rate_ref(rho: Int) -> Input {
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 20 },
+    output: Output {
+      address: address.from_script(t_rate_hash),
+      value: assets.from_asset(t_rate_policy, rate_nft_name, 1),
+      datum: InlineDatum(RateParam { rho_q: rho, prev_rho_q: rho, effective_epoch: 0 }),
+      reference_script: None,
+    },
+  }
+}
+
+fn t_gbb(epoch: Int) -> GreenBackBeacon {
+  GreenBackBeacon { gb_nanogic: 16 * t_gb_reset, seq: 1, epoch, depeg: False }
+}
+
+fn t_gbb_ref_with(b: GreenBackBeacon) -> Input {
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 21 },
+    output: Output {
+      address: address.from_script(t_gbb_hash),
+      value: assets.from_asset(t_gbb_policy, greenback_nft_name, 1),
+      datum: InlineDatum(b),
+      reference_script: None,
+    },
+  }
+}
+
+fn t_gbs_ref() -> OutputReference {
+  OutputReference { transaction_id: t_tx_id, output_index: 22 }
+}
+
+fn t_gbs_output(remaining: Int) -> Output {
+  let sid = compute_shard_id(t_owner)
+  Output {
+    address: address.from_script(t_gbs_policy),
+    value: assets.from_asset(t_gbs_policy, gb_shard_nft_name(sid), 1),
+    datum: InlineDatum(
+      GbShard { shard_id: sid, seq: 1, reset_amount: t_gb_reset, remaining },
+    ),
+    reference_script: None,
+  }
+}
+
+/// Gắn các chân Gen v2.0 vào một tx ký: shard GB (vào `start`, ra `start − real`,
+/// redeemer `Draw { amount: rd }`), beacon ρ + beacon GB làm reference input.
+fn t_with_gen_custom(
+  tx: Transaction,
+  rd: Int,
+  real: Int,
+  refs: List<Input>,
+  start: Int,
+) -> Transaction {
+  let draw_data: Data = Draw { amount: rd }
+  Transaction {
+    ..tx,
+    inputs: list.concat(tx.inputs, [Input { output_reference: t_gbs_ref(), output: t_gbs_output(start) }]),
+    outputs: list.concat(tx.outputs, [t_gbs_output(start - real)]),
+    reference_inputs: refs,
+    redeemers: [Pair(Spend(t_gbs_ref()), draw_data)],
+  }
+}
+
+fn t_with_gen(tx: Transaction, draw: Int, epoch: Int) -> Transaction {
+  t_with_gen_custom(tx, draw, draw, [t_rate_ref(t_rho), t_gbb_ref_with(t_gbb(epoch))], t_gb_reset)
+}
+
+/// M_i mong đợi cho két cửa sổ trống (khởi động lạnh), ρ = `t_rho`.
+fn t_m(lambda: Int, l: Int) -> Int {
+  amount_by_lamp(lambda, 0, t_zw(),
+    min2(compute_rate_locked_q(snapshot_base_rate_q, l), t_rho), min2(l, 6))
 }
 
 // ── WithdrawLamp tests ────────────────────────────────────────
@@ -1654,6 +1906,8 @@ fn t_out_b(
   VaultDatum {
     ..base,
     last_updated_epoch: epoch,
+    usage_window:       window_add(t_zw(), 0, burned),
+    usage_window_epoch: epoch,
     activity_state: ActivityState {
       ..base.activity_state,
       consumed_credit: base.activity_state.consumed_credit + burned,
@@ -1894,7 +2148,7 @@ fn t_sched() -> GenSchedule {
     baseline_at_commit_q:   t_rate_q,
     multiplier_at_commit_q: 1_000_000_000,
     fired_count:            0,
-    auto_burn_target:       None,
+    auto_burn_target:       None, m_per_epoch: compute_m_i(t_lambda, t_rate_q), usage_factor_locked_q: 0, 
   }
 }
 
@@ -1920,6 +2174,7 @@ fn t_fire_shard_datum(locked: Int, fired: Int) -> ScheduleAggregateShardDatum {
     shard_cumulative_fired:     fired,
     last_updated_epoch:         5,
     shard_cap:                  shard_cap,
+    shard_obligation_nanogic:   locked / t_lambda * compute_m_i(t_lambda, t_rate_q),
   }
 }
 
@@ -1964,6 +2219,8 @@ fn t_fire_out_datum(lamp_balance: Int) -> VaultDatum {
     next_batch_index:   1,
     gen_schedules:      [GenSchedule { ..t_sched(), fired_count: 1 }],
     last_updated_epoch: 5,
+    usage_window:       window_add_at(t_zw(), 0, m_i),
+    usage_window_epoch: 5,
   }
 }
 
@@ -2174,7 +2431,7 @@ test pe_drops_dead_keeps_live() {
   let dead_b = t_batch_at(2, t_epoch_dead)
   let live   = t_batch_at(3, t_epoch_live)
   let din  = t_prune_datum([dead_a, dead_b, live])
-  let dout = t_prune_datum([live])
+  let dout = VaultDatum { ..t_prune_datum([live]), usage_window_epoch: 5 }
   t_run_prune(din, dout, t_lambda)
 }
 
@@ -2253,7 +2510,7 @@ fn t_commit_shard(locked: Int, committed: Int, active: Int) -> ScheduleAggregate
     shard_cumulative_committed: committed,
     shard_cumulative_fired:     0,
     last_updated_epoch:         t_commit_epoch,
-    shard_cap:                  shard_cap,
+    shard_cap:                  shard_cap, shard_obligation_nanogic: 0, 
   }
 }
 
@@ -2270,7 +2527,10 @@ fn t_commit_shard_in() -> Input {
 fn t_commit_shard_out(total_lock: Int) -> Output {
   Output {
     address: t_shard_addr(), value: t_fire_shard_value(),
-    datum: InlineDatum(t_commit_shard(total_lock, total_lock, 1)), reference_script: None,
+    datum: InlineDatum(ScheduleAggregateShardDatum {
+      ..t_commit_shard(total_lock, total_lock, 1),
+      shard_obligation_nanogic: t_m(t_commit_lambda, t_commit_l) * t_commit_l,
+    }), reference_script: None,
   }
 }
 
@@ -2282,6 +2542,13 @@ fn t_commit_shard_out(total_lock: Int) -> Output {
 /// tự gọi `select_lamp_for_lock`, tức đúng hàm mà validator gọi lại bên trong.
 /// Không trừ nó ra thì mọi con số đọc được đều cộng thêm một lần chạy thừa.
 fn t_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
+  let (din, base) = t_commit_parts(n)
+  (din, t_with_gen(base, 2 * t_m(t_commit_lambda, t_commit_l), t_commit_epoch))
+}
+
+/// Như `t_commit_fixture` nhưng CHƯA gắn chân Gen v2.0 (shard GB, beacon) — để các
+/// bài gói (c) tự gắn biến thể.
+fn t_commit_parts(n: Int) -> (VaultDatum, Transaction) {
   let holdings   = t_holdings_rec(n, [])
   let balance    = n * t_commit_unit
   let din        = t_datum(balance, 0, holdings)
@@ -2298,7 +2565,7 @@ fn t_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
       baseline_at_commit_q:   snapshot_base_rate_q,
       multiplier_at_commit_q: compute_s_q(t_commit_l),
       fired_count:            0,
-      auto_burn_target:       None,
+      auto_burn_target:       None, m_per_epoch: t_m(t_commit_lambda, t_commit_l), usage_factor_locked_q: usage_factor_coldstart_q(), 
     }
   let dout =
     VaultDatum {
@@ -2307,6 +2574,7 @@ fn t_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
       loyalty_holdings:   select_lamp_for_lock(holdings, total_lock),
       gen_schedules:      [new_sched],
       last_updated_epoch: t_commit_epoch,
+      usage_window_epoch: t_commit_epoch,
     }
   let tx =
     t_tx(
@@ -2320,7 +2588,7 @@ fn t_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
 fn t_run_commit(n: Int) -> Bool {
   let (din, tx) = t_commit_fixture(n)
   validate_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref(),
-                  t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+                  t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, t_gp(), tx)
 }
 
 // PASS — (trần − 2) holding vào, tách một cái ⟹ trần − 1, còn đúng một suất
@@ -2399,7 +2667,7 @@ fn hc_sched() -> GenSchedule {
     baseline_at_commit_q:   snapshot_base_rate_q,
     multiplier_at_commit_q: compute_s_q(hc_l),
     fired_count:            0,
-    auto_burn_target:       None,
+    auto_burn_target:       None, m_per_epoch: t_m(hc_lambda, hc_l), usage_factor_locked_q: usage_factor_coldstart_q(), 
   }
 }
 
@@ -2412,7 +2680,7 @@ fn hc_shard(locked: Int, committed: Int, fired: Int, active: Int, ep: Int)
     shard_cumulative_committed: committed,
     shard_cumulative_fired:     fired,
     last_updated_epoch:         ep,
-    shard_cap:                  shard_cap,
+    shard_cap:                  shard_cap, shard_obligation_nanogic: 0, 
   }
 }
 
@@ -2436,6 +2704,7 @@ fn hc_datum_after_commit(n: Int) -> VaultDatum {
               select_lamp_for_lock(hc_holdings(n), hc_l * hc_lambda)),
     gen_schedules:      [hc_sched()],
     last_updated_epoch: hc_epoch,
+    usage_window_epoch: hc_epoch,
   }
 }
 
@@ -2451,22 +2720,26 @@ fn hc_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
     t_tx(
       [t_vault_input(din, hc_balance), hc_shard_in(hc_shard(0, 0, 0, 0, hc_epoch))],
       [t_vault_output(dout, hc_balance),
-       hc_shard_out(hc_shard(hc_balance, hc_balance, 0, 1, hc_epoch))],
+       hc_shard_out(ScheduleAggregateShardDatum {
+         ..hc_shard(hc_balance, hc_balance, 0, 1, hc_epoch),
+         shard_obligation_nanogic: t_m(hc_lambda, hc_l) * hc_l,
+       })],
       [t_owner_pkh])
+    |> t_with_gen(2 * t_m(hc_lambda, hc_l), hc_epoch)
   (din, tx)
 }
 
 fn hc_run_commit(n: Int) -> Bool {
   let (din, tx) = hc_commit_fixture(n)
   validate_commit(din, hc_l, hc_lambda, hc_epoch, t_own_ref(), t_vault_addr(),
-                  t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+                  t_lamp_policy, t_lamp_name, t_shard_policy, t_gp(), tx)
 }
 
 /// Một lượt fire thật trên datum do `hc_run_commit(n)` sinh ra.
 fn hc_run_fire(n: Int) -> Bool {
   let din      = hc_datum_after_commit(n)
   let fire_ep  = hc_epoch + schedule_delay
-  let m_i      = compute_m_i(hc_lambda, compute_rate_locked_q(snapshot_base_rate_q, hc_l))
+  let m_i      = hc_sched().m_per_epoch
   let dout =
     VaultDatum {
       ..din,
@@ -2477,13 +2750,21 @@ fn hc_run_fire(n: Int) -> Bool {
       next_batch_index:   1,
       gen_schedules:      [GenSchedule { ..hc_sched(), fired_count: 1 }],
       last_updated_epoch: fire_ep,
+      usage_window:       window_add_at(t_zw(), 0, m_i),
+      usage_window_epoch: fire_ep,
     }
   let tx =
     t_tx(
       [t_vault_input(din, hc_balance),
-       hc_shard_in(hc_shard(hc_balance, hc_balance, 0, 1, hc_epoch))],
+       hc_shard_in(ScheduleAggregateShardDatum {
+         ..hc_shard(hc_balance, hc_balance, 0, 1, hc_epoch),
+         shard_obligation_nanogic: m_i * hc_l,
+       })],
       [t_vault_output(dout, hc_balance),
-       hc_shard_out(hc_shard(hc_balance - hc_lambda, hc_balance, hc_lambda, 1, fire_ep))],
+       hc_shard_out(ScheduleAggregateShardDatum {
+         ..hc_shard(hc_balance - hc_lambda, hc_balance, hc_lambda, 1, fire_ep),
+         shard_obligation_nanogic: m_i * (hc_l - 1),
+       })],
       [])
   validate_fire(din, hc_sched().schedule_id, fire_ep, t_own_ref(), t_vault_addr(),
                 t_lamp_policy, t_lamp_name, t_shard_policy, tx)
@@ -2561,10 +2842,21 @@ test cf_commit_at_cap_then_fire_ok() {
 // (1,7 %) và KHÔNG duyệt holding, nên coi là hằng số ⟹ phần còn cho `vault` là
 // 16 227 311, và đó mới là ngưỡng để nói "lọt" hay "vượt".
 //
-//   nhánh (n)                  |       mem | % của 16,5 M | % phần `vault`
-//   commit khoá TRỌN    (39)   | 9 336 270 |    56,6 %    |    57,5 %
-//   commit khoá 1 PHẦN  (38)   | 8 621 399 |    52,3 %    |    53,1 %
-//   fire                (40)   | 8 437 447 |    51,1 %    |    52,0 %
+// ĐO LẠI 2026-09-30 sau Gen v2.0 gói (c) — datum 19 trường; nhánh ký nay đọc beacon
+// ρ + beacon GB, tính `amount_by_lamp` trên cửa sổ 7 ô và kiểm shard GB; fire ghi cửa
+// sổ. Fixture commit có thêm ba chân (shard GB vào/ra + hai reference input + một
+// redeemer), fixture fire thì không. Cùng phép trừ theo cặp như trên.
+//
+//   nhánh (n)                  |        mem |          cpu | % của 16,5 M | % phần `vault`
+//   commit khoá TRỌN    (39)   | 10 381 042 | 3 985 547 332 |    62,9 %    |    64,0 %
+//   commit khoá 1 PHẦN  (38)   |  9 635 171 | 3 718 970 510 |    58,4 %    |    59,4 %
+//   fire                (40)   |  8 771 892 | 2 841 708 677 |    53,2 %    |    54,1 %
+//
+// Bản 2026-09-16 (17 trường, trước Gen v2.0) để so: 9 336 270 · 8 621 399 · 8 437 447.
+// Phần tăng của commit (~+1,0 M) là chi phí CỐ ĐỊNH của đầu vào Gen v2.0 (không duyệt
+// holding); cột "% phần `vault`" vẫn trừ 272 689 của validator `shard` LAMP, CHƯA trừ
+// validator `gb_shard` chạy thêm trong giao dịch ký (chưa đo — GenBeacons là project
+// khác). Bảng ĐIỂM CHẾT bên dưới là số 2026-09-16, CHƯA đo lại sau gói (c).
 //
 // Phép trừ TRỪ DÔI một chút: ba chân dựng-fixture kèm thêm một `list.length`
 // O(n) mà ba chân chạy-trọn không có, nên con số trên THẤP HƠN chi phí validator
@@ -2672,6 +2964,8 @@ fn t_fire_fixture(n: Int) -> (VaultDatum, Transaction) {
       next_batch_index:   1,
       gen_schedules:      [GenSchedule { ..t_sched(), fired_count: 1 }],
       last_updated_epoch: 5,
+      usage_window:       window_add_at(t_zw(), 0, m_i),
+      usage_window_epoch: 5,
     }
   let tx =
     t_tx(
@@ -2736,7 +3030,7 @@ test probe_commit_fixture_cap() {
   let (din, tx) = t_commit_fixture(commit_scale_n)
   list.length(din.loyalty_holdings) == commit_scale_n && list.length(
     tx.inputs,
-  ) == 2
+  ) == 3
 }
 
 // CẶP 2 — commit khoá TRỌN, cấu hình NẶNG NHẤT còn được chấp nhận. Trước lượt
@@ -2751,7 +3045,7 @@ test probe_commit_full_lock_fixture() {
   let (din, tx) = hc_commit_fixture(commit_full_scale_n)
   list.length(din.loyalty_holdings) == commit_full_scale_n && list.length(
     tx.inputs,
-  ) == 2
+  ) == 3
 }
 
 // CẶP 3 — fire.
@@ -2787,7 +3081,7 @@ test sd_clear() {
       personal_delegate: Some(t_delegate),
     }
   let dout =
-    VaultDatum { ..din, personal_delegate: None, last_updated_epoch: 9 }
+    VaultDatum { ..din, personal_delegate: None, last_updated_epoch: 9, usage_window_epoch: 9 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
   validate_set_delegate(din, None, 9, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
 }
@@ -3009,7 +3303,7 @@ fn t_shard_datum(shard_id: Int, locked: Int) -> ScheduleAggregateShardDatum {
   ScheduleAggregateShardDatum {
     shard_id, shard_locked_lamp: locked,
     shard_active_count: 1, shard_cumulative_committed: locked,
-    shard_cumulative_fired: 0, last_updated_epoch: 5, shard_cap,
+    shard_cumulative_fired: 0, last_updated_epoch: 5, shard_cap, shard_obligation_nanogic: 0, 
   }
 }
 
@@ -3119,6 +3413,7 @@ fn t_mint_tx(seed: OutputReference, out: Output, mint_v: Value, signers: List<By
 fn t_mint_call(seed: OutputReference, policy_id: PolicyId, tx: Transaction) -> Bool {
   vault.mint(
     t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
+    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash,
     MintVaultId { seed }, policy_id, tx,
   )
 }
@@ -3510,4 +3805,467 @@ test owner_vk_shard_id_matches_raw_pkh_formula() {
     compute_shard_id(t_owner) == raw,
     compute_shard_id(Script(t_owner_pkh)) == raw,
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Gen v2.0 gói (c) — CẶP PHÂN BIỆT (SPEC §6.1.2–§6.1.4, §6.4, CC-GEN-SCHEDULE-FIXED)
+// Mỗi bài âm có một hàng xóm dương chỉ khác đúng một đại lượng.
+// ════════════════════════════════════════════════════════════════════════════
+
+const g_n: Int = 12   // 12 holding × 1 LAMP ≥ 10 × 1,05 LAMP khoá
+
+fn g_m() -> Int {
+  t_m(t_commit_lambda, t_commit_l)
+}
+
+fn g_draw() -> Int {
+  2 * g_m()
+}
+
+fn g_refs() -> List<Input> {
+  [t_rate_ref(t_rho), t_gbb_ref_with(t_gbb(t_commit_epoch))]
+}
+
+fn g_run_commit_tx(tx: Transaction) -> Bool {
+  let (din, _) = t_commit_parts(g_n)
+  validate_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref(),
+                  t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, t_gp(), tx)
+}
+
+fn g_commit_with(refs: List<Input>, rd: Int, real: Int, start: Int) -> Bool {
+  let (_, base) = t_commit_parts(g_n)
+  g_run_commit_tx(t_with_gen_custom(base, rd, real, refs, start))
+}
+
+test g_commit_ok() {
+  g_commit_with(g_refs(), g_draw(), g_draw(), t_gb_reset)
+}
+
+// M_i dùng vế `min(rate_locked, ρ)`: ở L = 10 suất khoá (8·10⁹) > ρ (4·10⁹) nên ρ thắng.
+test g_commit_m_uses_min_rate_rho() {
+  let rate = compute_rate_locked_q(snapshot_base_rate_q, t_commit_l)
+  rate > t_rho && g_m() == amount_by_lamp(t_commit_lambda, 0, t_zw(), t_rho, 6) && g_m() < amount_by_lamp(
+    t_commit_lambda,
+    0,
+    t_zw(),
+    rate,
+    6,
+  )
+}
+
+// GB vừa ĐỦ đúng lượng rút ⟹ xanh; thiếu 1 nanogic ⟹ đỏ.
+test g_commit_gb_exactly_enough_ok() {
+  g_commit_with(g_refs(), g_draw(), g_draw(), g_draw())
+}
+
+test g_commit_gb_short_by_one_rejected() fail {
+  g_commit_with(g_refs(), g_draw(), g_draw(), g_draw() - 1)
+}
+
+// Shard trừ thiếu 1 ⟹ đỏ; redeemer khai thiếu 1 ⟹ đỏ.
+test g_commit_shard_underdrawn_rejected() fail {
+  g_commit_with(g_refs(), g_draw(), g_draw() - 1, t_gb_reset)
+}
+
+test g_commit_draw_redeemer_off_by_one_rejected() fail {
+  g_commit_with(g_refs(), g_draw() - 1, g_draw() - 1, t_gb_reset)
+}
+
+test g_commit_without_gb_shard_rejected() fail {
+  let (_, base) = t_commit_parts(g_n)
+  g_run_commit_tx(Transaction { ..base, reference_inputs: g_refs() })
+}
+
+// Beacon: thiếu ρ · thiếu GB · depeg · cũ một epoch · hai beacon GB ⟹ đỏ.
+test g_commit_no_rate_beacon_rejected() fail {
+  g_commit_with([t_gbb_ref_with(t_gbb(t_commit_epoch))], g_draw(), g_draw(), t_gb_reset)
+}
+
+test g_commit_no_gb_beacon_rejected() fail {
+  g_commit_with([t_rate_ref(t_rho)], g_draw(), g_draw(), t_gb_reset)
+}
+
+test g_commit_depeg_rejected() fail {
+  g_commit_with(
+    [t_rate_ref(t_rho), t_gbb_ref_with(GreenBackBeacon { ..t_gbb(t_commit_epoch), depeg: True })],
+    g_draw(), g_draw(), t_gb_reset,
+  )
+}
+
+test g_commit_stale_gb_beacon_rejected() fail {
+  g_commit_with(
+    [t_rate_ref(t_rho), t_gbb_ref_with(t_gbb(t_commit_epoch - 1))],
+    g_draw(), g_draw(), t_gb_reset,
+  )
+}
+
+test g_commit_two_gb_beacons_rejected() fail {
+  g_commit_with(
+    [t_rate_ref(t_rho), t_gbb_ref_with(t_gbb(t_commit_epoch)), t_gbb_ref_with(t_gbb(t_commit_epoch))],
+    g_draw(), g_draw(), t_gb_reset,
+  )
+}
+
+// ── Cổng κ TẠM: nghĩa vụ vào shard LAMP ─────────────────────────────────────
+fn g_commit_kappa(obl_in: Int, add: Int) -> Bool {
+  let (din, base) = t_commit_parts(g_n)
+  let total_lock = t_commit_l * t_commit_lambda
+  let fix_in =
+    fn(i: Input) {
+      if i.output_reference.output_index == 9 {
+        Input {
+          ..i,
+          output: Output {
+            ..i.output,
+            datum: InlineDatum(
+              ScheduleAggregateShardDatum { ..t_commit_shard(0, 0, 0), shard_obligation_nanogic: obl_in },
+            ),
+          },
+        }
+      } else {
+        i
+      }
+    }
+  let fix_out =
+    fn(o: Output) {
+      if o.address == t_shard_addr() {
+        Output {
+          ..o,
+          datum: InlineDatum(
+            ScheduleAggregateShardDatum {
+              ..t_commit_shard(total_lock, total_lock, 1),
+              shard_obligation_nanogic: obl_in + add,
+            },
+          ),
+        }
+      } else {
+        o
+      }
+    }
+  let tx =
+    Transaction {
+      ..base,
+      inputs: list.map(base.inputs, fix_in),
+      outputs: list.map(base.outputs, fix_out),
+    }
+      |> t_with_gen(g_draw(), t_commit_epoch)
+  validate_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref(),
+                  t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, t_gp(), tx)
+}
+
+test g_kappa_at_cap_ok() {
+  g_commit_kappa(schedule_obligation_cap_per_shard - g_m() * t_commit_l, g_m() * t_commit_l)
+}
+
+test g_kappa_over_cap_rejected() fail {
+  g_commit_kappa(schedule_obligation_cap_per_shard - g_m() * t_commit_l + 1, g_m() * t_commit_l)
+}
+
+test g_kappa_obligation_not_added_rejected() fail {
+  g_commit_kappa(0, 0)
+}
+
+// ── Fire: KHÔNG đọc beacon (CC-GEN-SCHEDULE-FIXED) ───────────────────────────
+fn g_fire_refs(refs: List<Input>, dout: VaultDatum) -> Bool {
+  let din = t_fire_datum()
+  let tx =
+    Transaction {
+      ..t_tx(
+        [t_vault_input(din, t_lambda), t_fire_shard_in()],
+        [t_vault_output(dout, t_lambda), t_fire_shard_out()],
+        [],
+      ),
+      reference_inputs: refs,
+    }
+  validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+test g_fire_no_beacon_ok() {
+  g_fire_refs([], t_fire_out_datum(t_lambda))
+}
+
+test g_fire_depeg_and_gb_zero_ok() {
+  g_fire_refs(
+    [t_gbb_ref_with(GreenBackBeacon { ..t_gbb(5), gb_nanogic: 0, depeg: True })],
+    t_fire_out_datum(t_lambda),
+  )
+}
+
+// ρ đổi sau khi ký (beacon nay mang ρ = 2·10⁹): fire vẫn trả `m_per_epoch` đã chốt…
+test g_fire_after_rho_change_pays_locked_amount() {
+  g_fire_refs([t_rate_ref(2_000_000_000)], t_fire_out_datum(t_lambda))
+}
+
+// …và một output tính theo ρ MỚI thì bị từ chối.
+test g_fire_after_rho_change_new_amount_rejected() fail {
+  let m_new = compute_m_i(t_lambda, 2_000_000_000)
+  let d =
+    VaultDatum {
+      ..t_fire_out_datum(t_lambda),
+      magic_batches: create_fire_batches(t_own_ref(), 0, 1, m_new, t_sched_id, 5),
+      usage_window: window_add_at(t_zw(), 0, m_new),
+    }
+  g_fire_refs([t_rate_ref(2_000_000_000)], d)
+}
+
+// Fire không cộng `generated` ⟹ đỏ.
+test g_fire_generated_not_added_rejected() fail {
+  g_fire_refs([], VaultDatum { ..t_fire_out_datum(t_lambda), usage_window: t_zw() })
+}
+
+// ── Bắn bù k = 3 (SPEC §6.1.2): lịch bắt đầu epoch 5, bắn ở epoch 7 ─────────
+fn g_cu_sched() -> GenSchedule {
+  GenSchedule { ..t_sched(), schedule_length: 5, end_fire_epoch: 9 }
+}
+
+fn g_cu_run(batches: List<MagicBatch>, window: List<EpochUsage>) -> Bool {
+  let lam5 = 5 * t_lambda
+  let din =
+    VaultDatum {
+      ..t_datum(lam5, lam5, [t_holding(lam5, 5, True)]),
+      gen_schedules: [g_cu_sched()],
+    }
+  let dout =
+    VaultDatum {
+      ..din,
+      lamp_locked: 2 * t_lambda,
+      loyalty_holdings: unlock_locked_amount(din.loyalty_holdings, 3 * t_lambda),
+      magic_batches: batches,
+      next_batch_index: 3,
+      gen_schedules: [GenSchedule { ..g_cu_sched(), fired_count: 3 }],
+      last_updated_epoch: 7,
+      usage_window: window,
+      usage_window_epoch: 7,
+    }
+  let sh_in =
+    Input {
+      output_reference: OutputReference { transaction_id: t_tx_id, output_index: 9 },
+      output: Output {
+        address: t_shard_addr(),
+        value: t_fire_shard_value(),
+        datum: InlineDatum(t_fire_shard_datum(lam5, 0)),
+        reference_script: None,
+      },
+    }
+  let sh_out =
+    Output {
+      address: t_shard_addr(),
+      value: t_fire_shard_value(),
+      datum: InlineDatum(
+        ScheduleAggregateShardDatum {
+          ..t_fire_shard_datum(2 * t_lambda, 3 * t_lambda),
+          last_updated_epoch: 7,
+        },
+      ),
+      reference_script: None,
+    }
+  let tx =
+    t_tx([t_vault_input(din, lam5), sh_in], [t_vault_output(dout, lam5), sh_out], [])
+  validate_fire(din, t_sched_id, 7, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+fn g_cu_m() -> Int {
+  compute_m_i(t_lambda, t_rate_q)
+}
+
+fn g_cu_window() -> List<EpochUsage> {
+  window_add_at(window_add_at(window_add_at(t_zw(), 0, g_cu_m()), 1, g_cu_m()), 2, g_cu_m())
+}
+
+test g_catchup_k3_ok() {
+  let bs = create_fire_batches(t_own_ref(), 0, 3, g_cu_m(), t_sched_id, 5)
+  // Epoch danh nghĩa 5, 6, 7: hai batch đầu chết lúc sinh, chỉ batch epoch 7 sống.
+  expect list.map(bs, fn(b) { b.created_epoch }) == [5, 6, 7]
+  expect list.length(prune_expired(bs, 7)) == 1
+  // Ô 2, 1, 0 mỗi ô `generated = m`.
+  expect list.map(g_cu_window(), fn(u) { u.generated }) == [g_cu_m(), g_cu_m(), g_cu_m(), 0, 0, 0, 0]
+  g_cu_run(bs, g_cu_window())
+}
+
+// Hành vi cũ (mọi lượt bù đóng dấu epoch hiện tại ⟹ 3 batch SỐNG) ⟹ đỏ.
+test g_catchup_k3_all_live_rejected() fail {
+  let bs =
+    list.map(
+      create_fire_batches(t_own_ref(), 0, 3, g_cu_m(), t_sched_id, 5),
+      fn(b) { MagicBatch { ..b, created_epoch: 7 } },
+    )
+  g_cu_run(bs, g_cu_window())
+}
+
+// Dồn cả 3 lượt vào ô 0 ⟹ đỏ.
+test g_catchup_k3_window_all_in_open_cell_rejected() fail {
+  g_cu_run(
+    create_fire_batches(t_own_ref(), 0, 3, g_cu_m(), t_sched_id, 5),
+    window_add_at(t_zw(), 0, 3 * g_cu_m()),
+  )
+}
+
+// ── BurnBatch cộng vế `consumed` ─────────────────────────────────────────────
+test g_burn_consumed_not_added_rejected() fail {
+  let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
+  let dout =
+    VaultDatum {
+      ..t_out_b([t_batch_reduced(#"aa", 100, 60), t_batch(#"bb", 50)], 1, 40, 7),
+      usage_window: t_zw(),
+    }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// Dịch cửa sổ: vào ở epoch 6 với ô0 = (10, 0), burn ở epoch 7 ⟹ ô1 = (10, 0), ô0 = (0, 40).
+test g_burn_shifts_window_ok() {
+  let w_in = window_add_at(t_zw(), 0, 10)
+  let din =
+    VaultDatum {
+      ..t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)]),
+      usage_window: w_in,
+      usage_window_epoch: 6,
+    }
+  let dout =
+    VaultDatum {
+      ..t_out_b([t_batch_reduced(#"aa", 100, 60), t_batch(#"bb", 50)], 1, 40, 7),
+      usage_window: window_add(window_add_at(t_zw(), 1, 10), 0, 40),
+    }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+test g_burn_window_not_shifted_rejected() fail {
+  let w_in = window_add_at(t_zw(), 0, 10)
+  let din =
+    VaultDatum {
+      ..t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)]),
+      usage_window: w_in,
+      usage_window_epoch: 6,
+    }
+  let dout =
+    VaultDatum {
+      ..t_out_b([t_batch_reduced(#"aa", 100, 60), t_batch(#"bb", 50)], 1, 40, 7),
+      usage_window: window_add(w_in, 0, 40),
+    }
+  let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
+  validate_burn_batch(din, [(#"aa", 40)], 7, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+// ── Shard GB chỉ đi cùng nhánh KÝ (cổng ở tầng `vault.spend`) ─────────────────
+fn g_spend(epoch: Int, rd: VaultRedeemer, din: VaultDatum, tx: Transaction) -> Bool {
+  let lo = epoch * 86_400_000
+  vault.spend(
+    t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
+    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash,
+    Some(din), rd, t_own_ref(),
+    Transaction { ..tx, validity_range: interval.between(lo, lo + 1000) },
+  )
+}
+
+fn g_add_gb_shard(tx: Transaction) -> Transaction {
+  let d: Data = Draw { amount: t_gb_reset }
+  Transaction {
+    ..tx,
+    inputs: list.concat(tx.inputs, [Input { output_reference: t_gbs_ref(), output: t_gbs_output(t_gb_reset) }]),
+    outputs: list.concat(tx.outputs, [t_gbs_output(0)]),
+    redeemers: [Pair(Spend(t_gbs_ref()), d)],
+  }
+}
+
+fn g_fire_tx() -> Transaction {
+  t_tx(
+    [t_vault_input(t_fire_datum(), t_lambda), t_fire_shard_in()],
+    [t_vault_output(t_fire_out_datum(t_lambda), t_lambda), t_fire_shard_out()],
+    [],
+  )
+}
+
+fn g_burn_parts() -> (VaultDatum, Transaction) {
+  let din = t_datum_b([t_batch(#"aa", 100), t_batch(#"bb", 50)])
+  let dout = t_out_b([t_batch_reduced(#"aa", 100, 60), t_batch(#"bb", 50)], 1, 40, 7)
+  (din, t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh]))
+}
+
+fn g_withdraw_parts() -> (VaultDatum, Transaction) {
+  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  (din, t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh]))
+}
+
+test g_spend_commit_with_gb_shard_ok() {
+  let (din, tx) = t_commit_fixture(g_n)
+  g_spend(t_commit_epoch, ScheduleCommit { schedule_length: t_commit_l, lamp_per_epoch: t_commit_lambda }, din, tx)
+}
+
+test g_spend_fire_ok() {
+  g_spend(5, ScheduleFire { schedule_id: t_sched_id }, t_fire_datum(), g_fire_tx())
+}
+
+test g_spend_fire_with_gb_shard_rejected() fail {
+  g_spend(5, ScheduleFire { schedule_id: t_sched_id }, t_fire_datum(), g_add_gb_shard(g_fire_tx()))
+}
+
+test g_spend_burn_ok() {
+  let (din, tx) = g_burn_parts()
+  g_spend(7, BurnBatch { burns: [(#"aa", 40)] }, din, tx)
+}
+
+test g_spend_burn_with_gb_shard_rejected() fail {
+  let (din, tx) = g_burn_parts()
+  g_spend(7, BurnBatch { burns: [(#"aa", 40)] }, din, g_add_gb_shard(tx))
+}
+
+test g_spend_withdraw_ok() {
+  let (din, tx) = g_withdraw_parts()
+  g_spend(0, WithdrawLamp { amount: 5 }, din, tx)
+}
+
+test g_spend_withdraw_with_gb_shard_rejected() fail {
+  let (din, tx) = g_withdraw_parts()
+  g_spend(0, WithdrawLamp { amount: 5 }, din, g_add_gb_shard(tx))
+}
+
+// ── Genesis ghim cửa sổ ─────────────────────────────────────────────────────
+test g_mint_dirty_window_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let vd =
+    VaultDatum { ..t_clean_genesis(100), usage_window: window_add_at(t_zw(), 1, 1_000_000_000) }
+  let out = t_genesis_output(vd, 100, t_vault_hash, name)
+  let tx = t_mint_tx(seed, out, assets.from_asset(t_vault_hash, name, 1), [t_owner_pkh])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+test g_mint_window_epoch_nonzero_rejected() fail {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let vd = VaultDatum { ..t_clean_genesis(100), usage_window_epoch: 3 }
+  let out = t_genesis_output(vd, 100, t_vault_hash, name)
+  let tx = t_mint_tx(seed, out, assets.from_asset(t_vault_hash, name, 1), [t_owner_pkh])
+  t_mint_call(seed, t_vault_hash, tx)
+}
+
+// ── Kích thước datum lớn nhất có 20 hợp đồng (đo, không khẳng định ngưỡng) ────
+test g_measure_datum_20_schedules() {
+  let big = 1_000_000_000_000_000
+  let sched =
+    GenSchedule {
+      ..hc_sched(),
+      schedule_id: #"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      lamp_per_epoch: big,
+      m_per_epoch: big,
+      rate_locked_q: big,
+      baseline_at_commit_q: big,
+      multiplier_at_commit_q: big,
+      usage_factor_locked_q: big,
+    }
+  let full = EpochUsage { generated: big, consumed: big }
+  let d =
+    VaultDatum {
+      ..t_datum(big, big, t_holdings_rec(max_loyalty_holdings, [])),
+      gen_schedules: list.repeat(sched, max_gen_schedules),
+      usage_window: list.repeat(full, 7),
+      usage_window_epoch: big,
+    }
+  let n = bytearray.length(cbor.serialise(d))
+  trace @"datum_bytes": n
+  n > 0
 }

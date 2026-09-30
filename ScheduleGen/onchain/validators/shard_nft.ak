@@ -121,6 +121,9 @@ fn all_shards_start_clean(
       sd.shard_cumulative_committed == 0,
       sd.shard_cumulative_fired == 0,
       sd.shard_cap == shard_cap,
+      // Gen v2.0 cổng κ TẠM: nghĩa vụ khởi đầu ÂM là nới trần κ vĩnh viễn cho cả
+      // shard; DƯƠNG là chặn mọi lượt ký của 1/16 người dùng. Ghim về 0.
+      sd.shard_obligation_nanogic == 0,
       all_shards_start_clean(outputs, policy_id, id + 1),
     }
   }
@@ -180,7 +183,7 @@ fn sn_clean_datum(id: Int) -> ScheduleAggregateShardDatum {
   ScheduleAggregateShardDatum {
     shard_id: id, shard_locked_lamp: 0, shard_active_count: 0,
     shard_cumulative_committed: 0, shard_cumulative_fired: 0,
-    last_updated_epoch: 0, shard_cap,
+    last_updated_epoch: 0, shard_cap, shard_obligation_nanogic: 0, 
   }
 }
 
@@ -291,4 +294,10 @@ test shard_nft_double_qty() fail {
 test shard_nft_extra_name() fail {
   let m = assets.add(full_shard_mint(), sn_policy, #"6666", 1)
   shard_nft.mint(sn_genesis_ref(), Void, sn_policy, sn_tx(m, sn_clean_outputs()))
+}
+
+// Gen v2.0 — cổng κ TẠM: shard mở màn với nghĩa vụ ÂM (nới trần κ) ⟹ đỏ.
+test shard_nft_negative_obligation_fail() fail {
+  let bad = ScheduleAggregateShardDatum { ..sn_clean_datum(3), shard_obligation_nanogic: -1_000_000_000_000_000 }
+  shard_nft.mint(sn_genesis_ref(), Void, sn_policy, sn_tx(full_shard_mint(), sn_outputs_with(3, bad)))
 }

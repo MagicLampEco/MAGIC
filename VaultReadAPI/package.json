@@ -15,10 +15,15 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
+  "//dependencies": "Bốn gói `@magiclamp/*` dưới `sdk` là dependency CỦA MagicSDK, khai lại ở đây có chủ đích — cùng lý do và cùng danh sách với VaultTxAPI/package.json: không có workspace ở gốc kho, nên npm KHÔNG cài dependency của một liên kết `file:` vào cây của gói tiêu thụ. Thiếu bốn dòng này thì `npm ci` từ checkout sạch chạy xanh rồi `tsc` báo TS2307 `@lucid-evolution/lucid` từ bên trong MagicSDK (đo trên máy chủ 2026-09-30).",
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.30",
     "@magiclamp/protocol-utils": "file:../ProtocolUtils",
-    "@magiclamp/sdk": "file:../MagicSDK"
+    "@magiclamp/sdk": "file:../MagicSDK",
+    "@magiclamp/consumemagic": "file:../ConsumeMAGIC/offchain",
+    "@magiclamp/consumemagic-pricing": "file:../ConsumeMAGIC/pricing",
+    "@magiclamp/instantgen-sdk": "file:../InstantGen/offchain",
+    "@magiclamp/schedulegen-sdk": "file:../ScheduleGen/offchain"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

@@ -7,14 +7,19 @@
 // mở socket, và ghi một dòng nhật ký mỗi lượt.
 
 import { createServer } from "node:http";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { BlockfrostChainReader } from "./chain.js";
 import { loadConfig, isLoopback } from "./config.js";
 import { handle } from "./http.js";
 import { VaultReadService } from "./service.js";
 import { ThreadIndex } from "./threadIndex.js";
+import { readBuildInfo } from "./buildInfo.js";
 
 const cfg = loadConfig();
+// Đo MỘT lần lúc khởi động: đổi mã trên đĩa mà không khởi động lại thì tiến trình vẫn chạy mã cũ.
+const build = readBuildInfo(dirname(fileURLToPath(import.meta.url)));
 
 const chain = new BlockfrostChainReader({
   baseUrl: cfg.blockfrostUrl,
@@ -35,7 +40,7 @@ const server = createServer((rq, rs) => {
   const started = Date.now();
   handle(
     { method: rq.method ?? "GET", url: rq.url ?? "/", headers: rq.headers as Record<string, string | undefined> },
-    { service, scopes: cfg.scopes, network: cfg.network, chainLabel: chain.label, token: cfg.token, threads, basePath: cfg.basePath },
+    { service, scopes: cfg.scopes, network: cfg.network, chainLabel: chain.label, token: cfg.token, threads, basePath: cfg.basePath, build },
   )
     .then(out => {
       const payload = JSON.stringify(out.body);
@@ -60,7 +65,7 @@ server.listen(cfg.port, cfg.host, () => {
   console.error(
     `[vault-read-api] nghe ${cfg.host}:${cfg.port} · mạng ${cfg.network} · nút ${chain.label} · ` +
     `${cfg.scopes.length} địa chỉ vault · ${cfg.consumeScopes.length} địa chỉ consume · thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"} · ` +
-    `tiền tố ${cfg.basePath === "" ? "không" : cfg.basePath}`,
+    `tiền tố ${cfg.basePath === "" ? "không" : cfg.basePath} · commit ${build.commit ?? `? (${build.source})`}${build.dirty ? " (bẩn)" : ""}`,
   );
   if (cfg.token === "" && isLoopback(cfg.host)) {
     console.error(

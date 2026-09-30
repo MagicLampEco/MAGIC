@@ -1,5 +1,7 @@
-// VaultTxAPI/src/buildInfo.ts — commit của mã đang chạy, ĐO lúc khởi động.
-// NGUỒN. Bản chép có nhãn: `VaultReadAPI/src/buildInfo.ts` — sửa ở đây thì sửa cả bên đó.
+// VaultReadAPI/src/buildInfo.ts — BẢN CHÉP có nhãn của `VaultTxAPI/src/buildInfo.ts` (nguồn), chép
+// 2026-09-30. Hai gói không có workspace chung ở gốc (BOUNDARIES §4); sửa một bên thì sửa cả hai.
+//
+// Commit của mã đang chạy, ĐO lúc khởi động.
 //
 // Bên gọi cần biết máy chủ chạy bản nào để tự đối chiếu route và mã lỗi, khỏi phải
 // hỏi người vận hành. Commit lấy bằng cách HỎI git ở chính cây mã đang chạy, không

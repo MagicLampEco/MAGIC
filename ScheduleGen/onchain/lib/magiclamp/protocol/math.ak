@@ -245,3 +245,13 @@ pub fn compute_batch_id(
   let idx_bytes = bytearray.from_int_big_endian(batch_index, 8)
   crypto.blake2b_256(bytearray.concat(ref_bytes, idx_bytes))
 }
+
+// Chép nguyên văn từ InstantGen/onchain/lib/magiclamp/protocol/math.ak ▸ `min2` @ 1e9a72d9.
+// `gen_formula.ak` nhập đúng tên này; giữ trùng để thân tệp đó trùng bản InstantGen.
+pub fn min2(a: Int, b: Int) -> Int {
+  if a < b {
+    a
+  } else {
+    b
+  }
+}

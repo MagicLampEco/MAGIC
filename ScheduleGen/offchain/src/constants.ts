@@ -46,3 +46,23 @@ export const TESTNET_CONFIG = {
   shardNftPolicyId: "REPLACE_WITH_SHARD_NFT_POLICY_ID",
   shardNftAssetName:"5348415244",  // "SHARD"
 };
+
+// ══ BẢN CHÉP CÓ NHÃN từ InstantGen/offchain/src/constants.ts @ 1e9a72d9 ══
+// Sửa một bên phải sửa bên kia cùng commit (BOUNDARIES P8); bài so giá trị:
+// ScheduleGen/tests/genFormulaMirror.test.ts. Khối Aiken tương ứng: onchain/.../constants.ak.
+
+// TẠM (`LENT_PP_CAP`, Spec §12) — trần phần sinh từ LAMP-mượn, nanogic/epoch.
+export const LENT_PP_CAP = 1_000_000_000n;   // nanogic = 1 MAGIC/epoch
+
+// ── Gen v2.0 — công thức sinh chung F(L, usage_ratio, GB) (SPEC §6.1.1–§6.1.3, §11) ──
+// PHẢI trùng BIT với khối cùng tên trong
+// `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` (P8) — lý do + dẫn xuất ở đó.
+// Hàm dùng các hằng này: `genFormula.ts`.
+export const USAGE_FACTOR_FLOOR_Q  = 500_000_000n;               // TẠM, CC-GEN-USAGE-FLOOR
+export const SCALE_COVERAGE_Q      = 1_000_000_000n;             // TẠM, CC-GEN-SCALE-COVERAGE
+export const USAGE_WINDOW_LEN      = 7;                          // ô 0 = epoch mở, 1..6 = đã đóng
+export const INSTANT_SCALE_HORIZON = 6n;                         // SPEC §6.1.4
+export const GB_VAULT_SHARE_Q      = 50_000_000n;                // TẠM, CC-GEN-GB-VAULT-SHARE
+export const GB_SHARD_CAP_NANOGIC  = 1_800_000_000_000_000n;     // TẠM, CC-GEN-SURPLUS-SHARD
+export const BUFFER_EP             = 2n;                         // TẠM, SPEC §6.4 · §11 (ScheduleGen)
+export const RHO_MAX_Q             = 4_000_000_000n;             // TẠM, chép từ apply-param GenBeacons rate_param

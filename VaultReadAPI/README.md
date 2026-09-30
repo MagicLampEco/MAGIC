@@ -81,6 +81,7 @@ cổng fail-closed ở §5.
 | chủ **chưa có** vault | `200` | `{ vaults: [], totals: { vault_count: 0, … } }` ← **không phải 404** |
 | **không đọc được chuỗi** | `502` | `{ error: { code: "CHAIN_UNAVAILABLE", … } }` |
 | datum của một vault **không giải mã được** | `502` | `{ error: { code: "VAULT_DATUM_UNDECODABLE", … } }` |
+| datum của một vault là **két đời trước Gen v2.0** (Instant 18 / Schedule 17 trường) — scope trỏ vào địa chỉ két cũ | `502` | `{ error: { code: "VAULT_DATUM_V1", … } }` |
 | hai UTxO cùng một NFT danh-tính | `409` | `{ error: { code: "VAULT_IDENTITY_DUPLICATE", … } }` |
 | `owner` / `at_epoch` sai định dạng (tag lạ, hex sai, chữ hoa) | `400` | `BAD_REQUEST` |
 | `owner` và bí danh `ownerPkh` (gọi trong tiến trình) chỉ hai chủ khác nhau | `400` | `OWNER_ALIAS_MISMATCH` |
@@ -107,6 +108,7 @@ cổng fail-closed ở §5.
     {
       "utxo_ref": "e5fd34b1…#0",
       "vault_kind": "Schedule",
+      "datum_kind": "Schedule",
       "vault_address": "addr_test1w…",
       "vault_id_unit": "76a5aaa6…f181a6",
       "owner_pkh": "2e5e1418…",
@@ -119,11 +121,18 @@ cổng fail-closed ở §5.
       "profile": "Flame",
       "last_updated_epoch": 20700,
       "rate_locked_q": "8000000000",
+      "wakeme_link": null,
+      "cap_epoch": null,
+      "cap_nanogic": null,
+      "instant_unlock_ms": null,
+      "usage_window_epoch": 20700,
+      "usage_window": [ { "generated_nanogic": "64000000", "consumed_nanogic": "0" }, "… đủ 7 ô …" ],
       "batches": [ { "batch_id": "21f46e33…", "source": "Schedule", "created_epoch": 20700,
                      "decay_window": 1, "expires_at_epoch": 20701,
                      "initial_amount_nanogic": "8000000", "current_amount_nanogic": "8000000",
                      "live": true, "contract_id": "88ab4f79…" } ],
-      "gen_schedules": [ { "schedule_id": "88ab4f79…", "rate_locked_q": "8000000000", "fired_count": 8, "…": "…" } ]
+      "gen_schedules": [ { "schedule_id": "88ab4f79…", "rate_locked_q": "8000000000", "fired_count": 8,
+                           "m_per_epoch_nanogic": "8000000", "usage_factor_locked_q": "1000000000", "…": "…" } ]
     }
   ],
   "totals": { "available_nanogic": "64000000", "accrued_nanogic": "64000000",
@@ -131,6 +140,15 @@ cổng fail-closed ở §5.
   "ignored": []
 }
 ```
+
+> **Ô Gen v2.0.** `usage_window` (7 ô, ô 0 = epoch `usage_window_epoch`) có ở CẢ HAI loại két.
+> `wakeme_link` · `cap_epoch` · `cap_nanogic` · `instant_unlock_ms` CHỈ có ở két Instant — két
+> Schedule trả `null` (ô không tồn tại), KHÔNG trả `0`: `cap_nanogic: "0"` là trần 0 thật của
+> một két Instant. `m_per_epoch_nanogic` · `usage_factor_locked_q` trong `gen_schedules` thì
+> ngược lại: chỉ lịch của két Schedule có, két Instant trả `null`. Nullability đi theo
+> `datum_kind` (suy từ số trường datum), không theo `vault_kind` (suy từ scope). Số liệu mẫu
+> ở khối JSON trên minh hoạ hình dạng; giá trị Gen v2.0 của nó là giá trị bài kiểm, không
+> phải số đọc từ chuỗi.
 
 ### 🔴 BA thứ bên Java PHẢI đọc đúng
 

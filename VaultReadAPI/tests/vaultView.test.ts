@@ -3,11 +3,12 @@
 import { describe, expect, it } from "vitest";
 
 import { readVaultsFromUtxos } from "../src/vaultView.js";
-import { VaultDatumUndecodableError, VaultIdentityDuplicateError } from "../src/errors.js";
+import { VaultDatumUndecodableError, VaultDatumV1Error, VaultIdentityDuplicateError } from "../src/errors.js";
 import {
   BATCH_EPOCH, EXPECTED_NANOGIC, PREVIEW_OWNER_PKH, PREVIEW_VAULT_ADDRESS,
   PREVIEW_VAULT_ID_UNIT, PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_UTXO,
   TIP_EPOCH_AT_RECORD, PREVIEW_VAULT_DATUM_HEX_RECORDED,
+  PREVIEW_V2_M_PER_EPOCH, PREVIEW_V2_USAGE_FACTOR_LOCKED_Q, PREVIEW_V2_USAGE_WINDOW_EPOCH,
 } from "./fixtures/preview-e5fd34b1.js";
 import {
   PIN_ACCRUED, PIN_AVAILABLE, PIN_BATCHES, PIN_EPOCH, PIN_EXPIRED,
@@ -28,15 +29,16 @@ describe("`vaultKind` — BẮT BUỘC có mặt, và đi theo SCOPE chứ khôn
   });
 
   it("CÙNG một UTxO đọc dưới scope Instant ⇒ `vaultKind` = Instant", () => {
-    // Đây là bài phân biệt được HAI CỰC, và nó là lý do trường này tồn tại: datum của
-    // Instant và của Schedule giải mã GIỐNG HỆT nhau, nên không phép đọc datum nào suy
-    // ra được loại. Nếu ai đó sau này "cải tiến" bằng cách đoán loại từ datum, bài này
-    // đỏ — vì cùng một byte datum phải cho hai kết quả khác nhau ở hai scope.
+    // Ghim quyết định HIỆN HÀNH: `vaultKind` đi theo scope. Từ Gen v2.0 số trường datum
+    // phân biệt được hai loại (Instant 20 / Schedule 19) và giá trị suy từ datum nay đi ra
+    // ở `datumKind` — hai nguồn đứng cạnh nhau, hàm CHƯA đối chiếu (docblock `vaultKind`).
+    // Bài này đỏ nếu ai đó lặng lẽ thay nguồn của `vaultKind` bằng datum.
     const r = readVaultsFromUtxos(
       [PREVIEW_VAULT_UTXO], PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_ADDRESS,
       PREVIEW_OWNER_PKH, BATCH_EPOCH, "Instant",
     );
     expect(r.vaults[0]!.vaultKind).toBe("Instant");
+    expect(r.vaults[0]!.datumKind).toBe("Schedule");
   });
 
   it("không vault nào thiếu trường — vắng LỖ CHỖ là ca bên gọi không xử được", () => {
@@ -114,6 +116,13 @@ describe("vault Preview thật — tx e5fd34b1…, 8 lần fire ScheduleGen", ()
     expect(v.consumedCreditNanogic).toBe(0n);
     expect(v.profile).toBe("Flame");
     expect(v.lastUpdatedEpoch).toBe(20_700n);
+    // Bốn ô Gen v2.0 nối thêm trong fixture (giá trị bài kiểm, không phải từ chuỗi).
+    expect(v.datumKind).toBe("Schedule");
+    expect(v.genSchedules[0]!.mPerEpochNanogic).toBe(PREVIEW_V2_M_PER_EPOCH);
+    expect(v.genSchedules[0]!.usageFactorLockedQ).toBe(PREVIEW_V2_USAGE_FACTOR_LOCKED_Q);
+    expect(v.usageWindowEpoch).toBe(PREVIEW_V2_USAGE_WINDOW_EPOCH);
+    expect(v.usageWindow[0]).toEqual({ generatedNanogic: 64_000_000n, consumedNanogic: 0n });
+    expect(v.capNanogic).toBeNull();
   });
 
   it("8 × 8 000 000 = 64 000 000 — tổng bằng phép nhân, không bằng niềm tin", () => {
@@ -242,12 +251,14 @@ describe("hai ca phải KÊU TO, không được nuốt", () => {
 });
 
 describe("owner là Credential — datum lược đồ cũ không được đọc như két lành", () => {
-  it("ÂM — datum ghi nguyên văn (owner = pkh trần) ⟹ VaultDatumUndecodableError, không lọc im", () => {
+  it("ÂM — datum ghi nguyên văn (owner = pkh trần, 17 trường) ⟹ NÉM, không lọc im", () => {
+    // Từ Gen v2.0 bản ghi này bị chặn SỚM HƠN, ở cổng đời: 17 trường là Schedule v1 ⟹
+    // `VAULT_DATUM_V1`. Ca "owner trần" vì thế không còn đường tới bộ giải mã lược đồ.
     const legacy = { ...PREVIEW_VAULT_UTXO, inlineDatumHex: PREVIEW_VAULT_DATUM_HEX_RECORDED };
     expect(() => readVaultsFromUtxos(
       [legacy], PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_ADDRESS,
       PREVIEW_OWNER_PKH, BATCH_EPOCH, "Schedule",
-    )).toThrow(VaultDatumUndecodableError);
+    )).toThrow(VaultDatumV1Error);
   });
 
   it("CỰC ĐỐI — cùng 28 byte nhưng chủ là Script(h) ⟹ OWNER_MISMATCH, không trả về", () => {

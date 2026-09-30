@@ -4,7 +4,7 @@
 
 export { readVaultsFromUtxos } from "./vaultView.js";
 export type {
-  VaultView, BatchView, GenScheduleView, IgnoredUtxo, ReadVaultsResult,
+  VaultView, BatchView, GenScheduleView, EpochUsageView, IgnoredUtxo, ReadVaultsResult,
 } from "./vaultView.js";
 
 export { VaultReadService, toJsonBody } from "./service.js";
@@ -31,6 +31,7 @@ export {
   VaultReadError,
   ChainUnavailableError,
   VaultDatumUndecodableError,
+  VaultDatumV1Error,
   VaultIdentityDuplicateError,
   BadRequestError,
   UnauthorizedError,

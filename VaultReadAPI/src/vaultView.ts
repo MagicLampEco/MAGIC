@@ -5,8 +5,9 @@
 // ── HAI THỨ TỆP NÀY CỐ Ý KHÔNG TỰ LÀM ───────────────────────────────────────────
 // 1. Giải mã datum. Dùng `decodeVaultDatumEitherShape` của MagicSDK, không khai lại
 //    lược đồ và cũng không tự thử hai hình dạng. Chép lược đồ sang đây là dựng bản thứ
-//    hai sẽ lệch ngay lượt đổi datum đầu tiên. (Có HAI hình dạng: két Instant 18
-//    trường, Schedule 17 — xem `MagicSDK/src/schemas.ts` đầu tệp.)
+//    hai sẽ lệch ngay lượt đổi datum đầu tiên. (Gen v2.0 có HAI hình dạng: két Instant
+//    20 trường, Schedule 19 — xem `MagicSDK/src/schemas.ts` đầu tệp. Datum đời trước
+//    (18/17 trường) ⟹ NÉM `VAULT_DATUM_V1`, không đệm ô thiếu.)
 // 2. Luật hết hạn. Dùng `isBatchExpired` của MagicSDK (`MagicSDK/src/burnBatch.ts`),
 //    vốn là gương của `is_expired` ở `ScheduleGen/onchain/validators/vault.ak:630-632`.
 //    Viết lại `current_epoch - created >= decay_window` ở đây là tạo bản thứ ba của
@@ -26,12 +27,16 @@
 // hạn và một màn hình hiện 0 vì đường đọc gãy trông giống hệt nhau — đó đúng là thứ
 // gói này sinh ra để tách.
 
-import { decodeVaultDatumEitherShape, isBatchExpired, type VaultDatum } from "@magiclamp/sdk";
+import { Constr, Data } from "@lucid-evolution/lucid";
+import {
+  VAULT_DATUM_FIELD_COUNTS, decodeVaultDatumEitherShape, isBatchExpired,
+  type VaultDatumEitherShape, type VaultDatumShapeKind,
+} from "@magiclamp/sdk";
 import { ownerRefOf, sameOwner, type OwnerRef } from "@magiclamp/protocol-utils";
 
 import type { ChainUtxo } from "./chain.js";
 import type { VaultKind } from "./config.js";
-import { VaultDatumUndecodableError, VaultIdentityDuplicateError } from "./errors.js";
+import { VaultDatumUndecodableError, VaultDatumV1Error, VaultIdentityDuplicateError } from "./errors.js";
 
 /** Độ dài hex của một policy id / script hash (28 byte). */
 const POLICY_HEX_LEN = 56;
@@ -58,6 +63,19 @@ export interface GenScheduleView {
   lampPerEpochOildrop: bigint;
   rateLockedQ: bigint;
   firedCount: bigint;
+  /** Gen v2.0, CHỈ két Schedule: `M_i` (nanogic mỗi epoch) chốt MỘT lần lúc ký, fire chỉ
+   *  đọc trường này. `null` ở két Instant — `GenSchedule` của InstantGen KHÔNG có trường
+   *  này, và `0n` ở đây sẽ đọc thành "lịch sinh 0 MAGIC mỗi epoch". */
+  mPerEpochNanogic: bigint | null;
+  /** Gen v2.0, CHỈ két Schedule: `usage_factor_q` lúc ký (Q = 10⁹), để kiểm toán. `null` ở
+   *  két Instant, cùng lý do. */
+  usageFactorLockedQ: bigint | null;
+}
+
+/** Một ô của `usage_window` (Gen v2.0, SPEC §6.1.2) — nanogic đã sinh / đã tiêu trong epoch. */
+export interface EpochUsageView {
+  generatedNanogic: bigint;
+  consumedNanogic: bigint;
 }
 
 export interface VaultView {
@@ -70,8 +88,8 @@ export interface VaultView {
    *
    *  🔴 Bản trước của dòng này viết *"nó không suy được từ datum: `VaultDatumSchema` của
    *  Instant và của Schedule giải mã giống hệt nhau"*. Câu đó **nay SAI**: két Instant
-   *  mang 18 trường, Schedule 17 (`MagicSDK/src/schemas.ts` đầu tệp), nên SỐ TRƯỜNG
-   *  phân biệt được hai loại.
+   *  mang 20 trường, Schedule 19 (Gen v2.0, `MagicSDK/src/schemas.ts` đầu tệp), nên SỐ
+   *  TRƯỜNG phân biệt được hai loại — và giá trị suy ra đó nay được trả ở `datumKind`.
    *
    *  Hệ quả phải khai, vì nó là một lỗ ĐÃ BIẾT chứ không phải chỗ chưa nghĩ tới: hai
    *  nguồn (scope và số trường) nay đối chiếu được, và hàm này **CHƯA đối chiếu**. Một
@@ -85,6 +103,11 @@ export interface VaultView {
    *  bên gọi không phân biệt được *"vault loại lạ"* với *"máy chủ bản cũ"* — hai thứ cần
    *  hai cách xử. Vắng hẳn ở mọi vault thì ít ra nó nhất quán; vắng lỗ chỗ thì không. */
   vaultKind: VaultKind;
+  /** Hình dạng datum ĐÃ ĐỌC ĐƯỢC — suy từ SỐ TRƯỜNG (Instant 20, Schedule 19), không từ
+   *  scope. Đặt cạnh `vaultKind` để bên gọi đối chiếu được hai nguồn; hàm này CHƯA tự đối
+   *  chiếu (xem docblock `vaultKind`). Các ô chỉ-Instant bên dưới lấy nullability theo
+   *  trường NÀY, không theo `vaultKind`: ô vắng mặt trong datum thì không có gì để hiện. */
+  datumKind: VaultDatumShapeKind;
   vaultAddress: string;
   /** `policyId + assetNameHex` của NFT danh-tính vault. Policy == script hash của vault. */
   vaultIdUnit: string;
@@ -127,6 +150,24 @@ export interface VaultView {
   lampLockedOildrop: bigint;
   profile: string;
   lastUpdatedEpoch: bigint;
+  // ── Ô Gen v2.0 ──────────────────────────────────────────────────────────────────
+  // Ba ô chỉ có ở két Instant (tái dụng ô 6/12/14 của datum): `null` ở két Schedule,
+  // nơi ô đó KHÔNG TỒN TẠI (ở Schedule, ô 6/12/14 vẫn là `vacuum_orders`/
+  // `delegation_cert`/`streak_state`). Không đệm `0n`/`""`: `0n` là giá trị hợp lệ của
+  // một két Instant chưa làm mới checkpoint lần nào, `""` là "chưa nối két Wakeme".
+  /** Ô 6 két Instant: `""` (chưa nối) hoặc owner_commit 32 byte hex. */
+  wakemeLink: string | null;
+  /** Ô 12 két Instant: epoch của lượt làm mới trần gần nhất. */
+  capEpoch: bigint | null;
+  /** Ô 14 két Instant: trần sinh của epoch `capEpoch`, nanogic. */
+  capNanogic: bigint | null;
+  /** Ô 17 két Instant: mốc POSIX ms LAMP dùng để sinh được rời két. */
+  instantUnlockMs: bigint | null;
+  /** Cửa sổ dùng — có ở CẢ HAI loại két từ v2.0. Ô 0 = epoch `usageWindowEpoch` (đang
+   *  mở), ô 1..6 = 6 epoch liền trước. Trả NGUYÊN danh sách datum mang, không cắt không
+   *  đệm: độ dài do validator ép, mặt tiền này chỉ hiện. */
+  usageWindow: EpochUsageView[];
+  usageWindowEpoch: bigint;
   batches: BatchView[];
   genSchedules: GenScheduleView[];
   /** `rate_locked_q` ở mức vault CHỈ có nghĩa khi vault có đúng MỘT lịch. Nhiều lịch
@@ -203,32 +244,52 @@ export function readVaultsFromUtxos(
       continue;
     }
 
-    let datum: VaultDatum;
-    try {
-      // Thử CẢ HAI hình dạng: két Instant 18 trường, Schedule 17. Mặt tiền này phục vụ
-      // cả hai scope, nên ghim một hình dạng là biến mọi két của loại kia thành
-      // `VAULT_DATUM_UNDECODABLE` — một 502 cho một két hoàn toàn lành.
-      datum = decodeVaultDatumEitherShape(u.inlineDatumHex).datum as VaultDatum;
-    } catch (e) {
-      // NÉM, không `continue`. UTxO này mang NFT danh-tính vault ⇒ nó LÀ vault ⇒
-      // không giải mã được nghĩa là lược đồ của kho đã trôi khỏi chuỗi.
-      throw new VaultDatumUndecodableError(utxoRef, (e as Error).message);
-    }
+    // NÉM, không `continue`. UTxO này mang NFT danh-tính vault ⇒ nó LÀ vault ⇒ không
+    // giải mã được nghĩa là lược đồ của kho đã trôi khỏi chuỗi (hoặc scope trỏ két v1).
+    const decoded = decodeVaultDatumV2(u.inlineDatumHex, utxoRef);
 
     // Chủ là `Credential`: so CẢ tag lẫn hash — két chủ-script cùng 28 byte với một pkh là
     // chủ KHÁC, không lọt sang truy vấn nhánh khoá và ngược lại.
-    if (!sameOwner(ownerRefOf(datum.owner), wanted)) {
+    if (!sameOwner(ownerRefOf(decoded.datum.owner), wanted)) {
       ignored.push({ utxoRef, reason: "OWNER_MISMATCH" });
       continue;
     }
 
-    vaults.push(toVaultView(u, datum, utxoRef, vaultAddress, vaultIdUnit, atEpoch, vaultKind));
+    vaults.push(toVaultView(u, decoded, utxoRef, vaultAddress, vaultIdUnit, atEpoch, vaultKind));
   }
 
   // Thứ tự tất định — bên gọi so kết quả giữa hai lượt được.
   vaults.sort((a, b) => (a.utxoRef < b.utxoRef ? -1 : a.utxoRef > b.utxoRef ? 1 : 0));
   ignored.sort((a, b) => (a.utxoRef < b.utxoRef ? -1 : a.utxoRef > b.utxoRef ? 1 : 0));
   return { vaults, ignored };
+}
+
+/**
+ * Giải mã datum két Gen v2.0, CẢ HAI hình dạng (Instant 20, Schedule 19) — mặt tiền này
+ * phục vụ cả hai scope, nên ghim một hình dạng là biến mọi két loại kia thành 502.
+ *
+ * Phân loại ĐỜI trước khi giải mã, bằng số trường của `Constr` ngoài cùng so với
+ * `VAULT_DATUM_FIELD_COUNTS` của SDK (không gõ tay 18/17): datum v1 ⟹ `VaultDatumV1Error`
+ * (mã riêng — lỗi cấu hình scope, không phải lược đồ trôi). Mọi hỏng khác ⟹
+ * `VaultDatumUndecodableError`. Không nhánh nào trả `null` hay đệm ô thiếu.
+ */
+function decodeVaultDatumV2(hex: string, utxoRef: string): VaultDatumEitherShape {
+  let raw: unknown;
+  try {
+    raw = Data.from(hex);
+  } catch (e) {
+    throw new VaultDatumUndecodableError(utxoRef, (e as Error).message);
+  }
+  if (raw instanceof Constr && raw.index === 0) {
+    const n = raw.fields.length;
+    if (n === VAULT_DATUM_FIELD_COUNTS.Instant.v1) throw new VaultDatumV1Error(utxoRef, n, "Instant");
+    if (n === VAULT_DATUM_FIELD_COUNTS.Schedule.v1) throw new VaultDatumV1Error(utxoRef, n, "Schedule");
+  }
+  try {
+    return decodeVaultDatumEitherShape(hex);
+  } catch (e) {
+    throw new VaultDatumUndecodableError(utxoRef, (e as Error).message);
+  }
 }
 
 /** Đúng một asset dưới `policy`, số lượng đúng 1 ⇒ trả unit của nó. Ngược lại null. */
@@ -246,14 +307,17 @@ function findVaultIdUnit(assets: Record<string, bigint>, policy: string): string
 
 function toVaultView(
   u: ChainUtxo,
-  datum: VaultDatum,
+  decoded: VaultDatumEitherShape,
   utxoRef: string,
   vaultAddress: string,
   vaultIdUnit: string,
   atEpoch: bigint,
   vaultKind: VaultKind,
 ): VaultView {
-  const rawBatches = datum.magic_batches as unknown as RawBatch[];
+  // Gom trường theo TÊN, không theo chỉ số: hai hình dạng khác nhau cả ở giữa.
+  const datum = decoded.datum as unknown as RawCommonDatum;
+  const isSchedule = decoded.kind === "Schedule";
+  const rawBatches = datum.magic_batches;
 
   const batches: BatchView[] = rawBatches.map(b => ({
     batchId: b.batch_id,
@@ -280,7 +344,7 @@ function toVaultView(
   const accruedNanogic = batches
     .reduce((sum, b) => sum + b.currentAmountNanogic, 0n);
 
-  const genSchedules: GenScheduleView[] = (datum.gen_schedules as unknown as RawSchedule[])
+  const genSchedules: GenScheduleView[] = datum.gen_schedules
     .map(s => ({
       scheduleId: s.schedule_id,
       commitEpoch: s.commit_epoch,
@@ -290,11 +354,18 @@ function toVaultView(
       lampPerEpochOildrop: s.lamp_per_epoch,
       rateLockedQ: s.rate_locked_q,
       firedCount: s.fired_count,
+      mPerEpochNanogic: isSchedule ? requireInt(s.m_per_epoch, "gen_schedules[].m_per_epoch", utxoRef) : null,
+      usageFactorLockedQ: isSchedule
+        ? requireInt(s.usage_factor_locked_q, "gen_schedules[].usage_factor_locked_q", utxoRef)
+        : null,
     }));
+
+  const instant = decoded.kind === "Instant" ? decoded.datum : null;
 
   return {
     utxoRef,
     vaultKind,
+    datumKind: decoded.kind,
     vaultAddress,
     vaultIdUnit,
     owner: ownerRefOf(datum.owner),
@@ -302,15 +373,32 @@ function toVaultView(
     availableNanogic,
     accruedNanogic,
     expiredNanogic: accruedNanogic - availableNanogic,
-    consumedCreditNanogic: (datum.activity_state as unknown as { consumed_credit: bigint }).consumed_credit,
+    consumedCreditNanogic: datum.activity_state.consumed_credit,
     lampBalanceOildrop: datum.lamp_balance,
     lampLockedOildrop: datum.lamp_locked,
     profile: String(datum.profile),
     lastUpdatedEpoch: datum.last_updated_epoch,
+    wakemeLink: instant === null ? null : instant.wakeme_link,
+    capEpoch: instant === null ? null : instant.cap_epoch,
+    capNanogic: instant === null ? null : instant.cap_nanogic,
+    instantUnlockMs: decoded.instantUnlockMs,
+    usageWindow: datum.usage_window.map(w => ({
+      generatedNanogic: w.generated,
+      consumedNanogic: w.consumed,
+    })),
+    usageWindowEpoch: datum.usage_window_epoch,
     batches,
     genSchedules,
     rateLockedQ: genSchedules.length === 1 ? genSchedules[0]!.rateLockedQ : null,
   };
+}
+
+/** Trường mà hình dạng đã đọc BẮT BUỘC có. Vắng ⟹ NÉM, không đệm `0n`. */
+function requireInt(v: bigint | undefined, field: string, utxoRef: string): bigint {
+  if (typeof v !== "bigint") {
+    throw new VaultDatumUndecodableError(utxoRef, `${field} vắng hoặc không phải số nguyên`);
+  }
+  return v;
 }
 
 interface RawBatch {
@@ -332,4 +420,22 @@ interface RawSchedule {
   lamp_per_epoch: bigint;
   rate_locked_q: bigint;
   fired_count: bigint;
+  /** Chỉ `GenSchedule` của ScheduleGen v2.0 có hai trường này. */
+  m_per_epoch?: bigint;
+  usage_factor_locked_q?: bigint;
+}
+
+/** Các trường CÙNG TÊN ở cả hai hình dạng — đọc theo tên. Ép kiểu vì `Data.from` khai
+ *  kiểu lược đồ chứ không khai kiểu dữ liệu (xem `VaultTxAPI/src/vaultDatumShape.ts`). */
+interface RawCommonDatum {
+  owner: unknown;
+  lamp_balance: bigint;
+  lamp_locked: bigint;
+  magic_batches: RawBatch[];
+  gen_schedules: RawSchedule[];
+  profile: unknown;
+  last_updated_epoch: bigint;
+  activity_state: { consumed_credit: bigint };
+  usage_window: { generated: bigint; consumed: bigint }[];
+  usage_window_epoch: bigint;
 }

@@ -39,6 +39,7 @@
 //   VAULT_KIND=schedule: LAMP_POLICY_ID, SHARD_NFT_POLICY_ID, VAULT_SCHEDULE_HASH
 //   VAULT_KIND=instant : LAMP_POLICY_ID, UM_NFT_POLICY_ID, UM_DATUM_HASH,
 //                        BACKING_NFT_POLICY_ID, BACKING_SCRIPT_HASH, VAULT_INSTANT_HASH
+//                        (+ két Wakeme của NETWORK, apply-param #8 — từ config, không env)
 //   Bộ khoá consume, hậu tố theo VAULT_KIND (`_SCHEDULE` / `_INSTANT`, 09 in ra):
 //     CONSUME_SCRIPT_HASH, PRICE_NFT_POLICY, PRICE_PARAM_HASH, MAX_PRICE_STALE — dựng lại hash.
 //     PRICE_NFT_UNIT, ENGAGE_NFT_UNIT — dò beacon + Engage SỐNG theo NFT. Con trỏ
@@ -248,7 +249,7 @@ async function main() {
   }
 
   // ── Dựng lại vault — CÙNG bản đồ tham số với bước deploy tương ứng ──────────
-  //   ScheduleGen: 4 tham số (deploy/07) · InstantGen: 7 tham số (deploy/05).
+  //   ScheduleGen: 4 tham số (deploy/07) · InstantGen: 8 tham số (deploy/05).
   //   Thiếu hay lệch thứ tự MỘT tham số là ra hash khác, địa chỉ khác, và không
   //   lệnh nào báo lỗi — chỉ có tx chết ở phase-1. Nên đối chiếu hash ngay dưới.
   const vaultBlueprint = await loadBlueprint(isSchedule ? "ScheduleGen" : "InstantGen");
@@ -270,6 +271,7 @@ async function main() {
           backingNftPolicy:  POLICY_IDS.backing,
           backingScriptHash: SCRIPT_HASHES.backing_beacon,
           msPerEpoch:        PROTOCOL.MS_PER_EPOCH,
+          wakemeVaultHash:   SCRIPT_HASHES.wakeme_vault,   // #8 — chỉ đọc ở nhánh instant
         }),
   );
   if (engageNftPolicy !== consumeHash) {
@@ -294,7 +296,7 @@ async function main() {
       `  Loại vault đang chọn: ${vaultKind}. Kiểm bộ apply-param của ${vaultDeployStep}:\n` +
       (isSchedule
         ? "  LAMP_POLICY_ID · ASSET_NAMES.lamp (tLAMP/LAMP theo mạng) · SHARD_NFT_POLICY_ID · MS_PER_EPOCH"
-        : "  LAMP_POLICY_ID · ASSET_NAMES.lamp · UM_NFT_POLICY_ID · UM_DATUM_HASH · BACKING_NFT_POLICY_ID · BACKING_SCRIPT_HASH · MS_PER_EPOCH"),
+        : "  LAMP_POLICY_ID · ASSET_NAMES.lamp · UM_NFT_POLICY_ID · UM_DATUM_HASH · BACKING_NFT_POLICY_ID · BACKING_SCRIPT_HASH · MS_PER_EPOCH · wakeme_vault_hash (két Wakeme theo mạng)"),
     );
   }
 

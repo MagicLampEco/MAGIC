@@ -3,6 +3,8 @@
 //   - 01_mint_lamp + 02_deploy_um + 05_create_instant_vault all run
 //   - .env: VAULT_INSTANT_HASH, UM_DATUM_HASH, UM_NFT_POLICY_ID, LAMP_POLICY_ID,
 //           BACKING_NFT_POLICY_ID, BACKING_SCRIPT_HASH  (§6.3 — no beacon ⟹ Gen shut)
+//   - két Wakeme của NETWORK (apply-param #8) lấy từ `SCRIPT_HASHES.wakeme_vault`, không env.
+//     Bài này KHÔNG đưa két Wakeme vào reference input ⟹ L_lent = 0 (đường cũ).
 //
 //   NETWORK=Preview npm run test:instant
 //
@@ -64,6 +66,7 @@ async function main() {
       backingNftPolicy:  POLICY_IDS.backing,            // pins the BackingBeacon NFT (§6.3)
       backingScriptHash: SCRIPT_HASHES.backing_beacon,  // pins the BackingBeacon address (§6.3)
       msPerEpoch:        PROTOCOL.MS_PER_EPOCH,
+      wakemeVaultHash:   SCRIPT_HASHES.wakeme_vault,    // #8 — két Wakeme; mạng chưa có két ⟹ ném
     }),
   );
   const vaultScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(vaultScriptHash));

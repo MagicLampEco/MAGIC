@@ -49,7 +49,7 @@ const CASES: Case[] = [
     params: instantVaultParams({
       lampPolicyId: P28, lampAssetName: "744c414d50", umNftPolicy: P28,
       umScriptHash: P28, backingNftPolicy: P28, backingScriptHash: P28,
-      msPerEpoch: MS,
+      msPerEpoch: MS, wakemeVaultHash: P28,
     }),
   },
   {
@@ -59,7 +59,7 @@ const CASES: Case[] = [
     params: instantVaultParams({
       lampPolicyId: P28, lampAssetName: "744c414d50", umNftPolicy: P28,
       umScriptHash: P28, backingNftPolicy: P28, backingScriptHash: P28,
-      msPerEpoch: MS,
+      msPerEpoch: MS, wakemeVaultHash: P28,
     }),
   },
   {

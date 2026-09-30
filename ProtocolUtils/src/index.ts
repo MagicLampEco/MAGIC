@@ -213,6 +213,46 @@ export function lampAssetName(network: Network): string {
   return LAMP_ASSET_NAME_BY_NETWORK[network];
 }
 
+// ── Két Wakeme — apply-param #8 `wakeme_vault_hash` của vault InstantGen ─────────
+//
+// Script hash két Wakeme theo MẠNG. Giá trị do nhà Wakeme (PhoenixKey) SỞ HỮU; ở đây
+// là bản CHÉP CÓ NHÃN: nguồn = thư Wakeme `wk0930mg-c` (2026-09-30, "Wakeme v3 trên
+// Preprod"), cùng giá trị với vector `InstantGen/onchain/lib/magiclamp/protocol/wakeme_lent.ak`.
+// Nó đổi theo LOẠI script (một giá trị mỗi mạng), không theo từng két — nên hợp lệ làm
+// apply-param. Két Wakeme redeploy ⟹ hash đổi ⟹ bên Wakeme phải báo, và mọi vault
+// InstantGen dựng lại với giá trị mới (đổi bytes ⟹ đổi địa chỉ).
+//
+// Mạng CHƯA có két Wakeme thì KHÔNG có dòng — cố ý không điền giá trị giữ chỗ. Một hash
+// giả nướng vào apply-param vẫn cho ra một vault hợp lệ, chỉ là vault đó không bao giờ đọc
+// được két thật, và không gì kêu lên. Vắng ⟹ `wakemeVaultHash` NÉM.
+export const WAKEME_VAULT_HASH_BY_NETWORK: Readonly<Partial<Record<Network, string>>> = {
+  Preprod: "cc62732565af6be1e0874975ad3b3e2afdb0abafb3f5bc4b3008f4e1",   // Wakeme v3
+};
+
+/** Script hash két Wakeme của `network`. Mạng chưa có két ⟹ NÉM, không trả giá trị đệm. */
+export function wakemeVaultHash(network: Network): string {
+  const h = WAKEME_VAULT_HASH_BY_NETWORK[network];
+  if (h === undefined) {
+    throw new Error(
+      `wakeme_vault_hash: chưa có két Wakeme trên ${network} — kho này không có giá trị nào ` +
+      `để nướng vào apply-param #8 của vault InstantGen. Không dựng vault Instant trên ` +
+      `${network} cho tới khi nhà Wakeme công bố script hash két ở mạng đó.`,
+    );
+  }
+  return assertWakemeVaultHash(h, `WAKEME_VAULT_HASH_BY_NETWORK.${network}`);
+}
+
+/** Kiểm dạng script hash két Wakeme: đúng 56 ký tự hex THƯỜNG (28 byte). Sai ⟹ NÉM. */
+export function assertWakemeVaultHash(value: unknown, where: string): string {
+  if (typeof value !== "string" || !/^[0-9a-f]{56}$/.test(value)) {
+    throw new Error(
+      `${where}: wakeme_vault_hash phải là script hash 28 byte, 56 ký tự hex thường — nhận ` +
+      `${typeof value === "string" ? `"${value}" (${value.length} ký tự)` : typeof value}.`,
+    );
+  }
+  return value;
+}
+
 // OAC [GenMAGIC §6.4, Constitutional]
 export const DRM_LOOKBACK        = 12n;   // epochs
 export const MIN_BURN_FOR_OAC    = 1_000_000_000n;  // 1 MAGIC

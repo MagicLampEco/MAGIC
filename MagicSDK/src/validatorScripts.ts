@@ -4,7 +4,8 @@
 // parameters. SOURCE OF TRUTH = the `validator vault(...)` header in each module;
 // this table must be read off those files, never from memory:
 //   Instant:  vault(lamp_policy_id, lamp_asset_name, um_nft_policy, um_script_hash,
-//                   backing_nft_policy, backing_script_hash, ms_per_epoch)
+//                   backing_nft_policy, backing_script_hash, ms_per_epoch,
+//                   wakeme_vault_hash)
 //              ← InstantGen/onchain/validators/vault.ak
 //   Schedule: vault(lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch)
 //              ← ScheduleGen/onchain/validators/vault.ak
@@ -26,6 +27,12 @@
 // address (MAINNET-BLOCK fix, defense-in-depth layer b); `backing_script_hash`
 // does the same for the BackingBeacon (§6.3).
 //
+// `wakeme_vault_hash` (Instant only, #8, nối CUỐI) là script hash két Wakeme mà nhánh
+// sinh đọc làm reference input để tính L_lent (CC-GEN-LENT-READ). Nó đổi theo MẠNG,
+// không theo từng két. SDK không suy nó theo mạng: người gọi truyền `wakemeVaultHash`
+// (nguồn gợi ý `@magiclamp/protocol-utils` ▸ `wakemeVaultHash(network)`), thiếu hoặc sai
+// dạng ⟹ ném trước khi apply.
+//
 // `applyParamsToScript` bakes them into the CBOR → produces a network-specific
 // validator hash. The hash defines the on-chain address, so every consumer
 // (vault creation, instant gen, schedule commit/fire) MUST use the same applied
@@ -37,7 +44,7 @@ import {
   Data,
   type Validator,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, lampAssetName } from "@magiclamp/protocol-utils";
+import { msPerEpoch, lampAssetName, assertWakemeVaultHash } from "@magiclamp/protocol-utils";
 import { assertLampPolicyId } from "./lampPolicy.js";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
@@ -79,7 +86,7 @@ export function applyVaultValidator(
  * blueprint và tham số để tự tính. Thêm một trường cấu hình cho nó là dựng nguồn
  * thứ hai cho một giá trị suy ra được — và nguồn thứ hai đó lệch được với vault
  * thật mà không gì kêu lên, đúng lớp hỏng im lặng mà chính hàm này từng dính.
- * Khác với `umScriptHash`/`backingScriptHash`: những cái đó là hash của validator
+ * Khác với `umScriptHash`/`backingScriptHash`/`wakemeVaultHash`: những cái đó là hash của validator
  * thuộc MODULE KHÁC, SDK không tính được nên buộc phải nhận qua cấu hình.
  *
  * Hệ quả: `validators.vaultUnappliedCbor` phải là vault **Schedule**, và `protocol`
@@ -131,11 +138,15 @@ export function buildParamsList(
   switch (vaultType) {
     case "Instant": {
       // vault(lamp_policy_id, lamp_asset_name, um_nft_policy, um_script_hash,
-      //       backing_nft_policy, backing_script_hash, ms_per_epoch)
+      //       backing_nft_policy, backing_script_hash, ms_per_epoch, wakeme_vault_hash)
       requireField(protocol.umNftPolicyId, "umNftPolicyId", vaultType);
       requireField(protocol.umScriptHash, "umScriptHash", vaultType);
       requireField(protocol.backingNftPolicyId, "backingNftPolicyId", vaultType);
       requireField(protocol.backingScriptHash, "backingScriptHash", vaultType);
+      requireField(protocol.wakemeVaultHash, "wakemeVaultHash", vaultType);
+      const wakemeVaultHash = assertWakemeVaultHash(
+        protocol.wakemeVaultHash, `buildParamsList(vaultType="${vaultType}").wakemeVaultHash`,
+      );
       return [
         lampPolicyId,
         assetName,
@@ -144,6 +155,7 @@ export function buildParamsList(
         protocol.backingNftPolicyId!,  // pins the BackingBeacon ref input (§6.3)
         protocol.backingScriptHash!,
         msPer,
+        wakemeVaultHash,               // #8 — két Wakeme cho L_lent (CC-GEN-LENT-READ)
       ];
     }
 

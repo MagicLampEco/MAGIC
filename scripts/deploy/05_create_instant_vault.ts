@@ -3,6 +3,8 @@
 // Prereq: 01 (LAMP), 02 (UM datum + UM NFT) done; .env has LAMP_POLICY_ID, UM_NFT_POLICY_ID.
 // Optional (§6.3): BACKING_NFT_POLICY_ID + BACKING_SCRIPT_HASH — omit them and the
 // vault deploys with an unsatisfiable beacon pin, i.e. InstantGen stays SHUT.
+// Bắt buộc: két Wakeme của NETWORK (apply-param #8) — lấy từ `config.ts` ▸
+// `SCRIPT_HASHES.wakeme_vault`, không qua env. Mạng chưa có két ⟹ ném trước mọi tx.
 //
 // Tham số apply-param KHÔNG còn khai tay ở đây: danh sách tên + thứ tự đọc
 // thẳng từ InstantGen/onchain/plutus.json qua scripts/applyParams.ts, giá trị
@@ -188,6 +190,10 @@ async function main() {
   // LAMP: cổng nằm ở `config.ts` ▸ `requireLampPolicyId`, tự ném khi thiếu.
   if (POLICY_IDS.um_nft === "FILL_AFTER_DEPLOY_UM") throw new Error("Run step 02 first; missing UM_NFT_POLICY_ID.");
   if (SCRIPT_HASHES.um_datum === "FILL_AFTER_AIKEN_BUILD") throw new Error("Run step 02 first; missing UM_DATUM_HASH (= um_script_hash).");
+  // Apply-param #8 (két Wakeme). Đọc TRƯỚC mọi lượt gọi mạng: mạng chưa có két ⟹ ném
+  // ở đây, không giao dịch nào được dựng. Không có lối "bỏ qua" bằng hash giả — một hash
+  // giả vẫn cho ra một vault hợp lệ, chỉ là vault đó không bao giờ đọc được két thật.
+  const wakemeVault = SCRIPT_HASHES.wakeme_vault;
   for (const k of LEGACY_ENV) {
     if (process.env[k] !== undefined) {
       throw new Error(
@@ -230,11 +236,13 @@ async function main() {
       backingNftPolicy:  POLICY_IDS.backing,          // pins the BackingBeacon NFT (§6.3)
       backingScriptHash: SCRIPT_HASHES.backing_beacon, // pins the BackingBeacon address (§6.3)
       msPerEpoch:        PROTOCOL.MS_PER_EPOCH,
+      wakemeVaultHash:   wakemeVault,                  // #8 — két Wakeme (CC-GEN-LENT-READ)
     }),
   );
   const vaultScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(vaultScriptHash));
 
   console.log(`Network:            ${NETWORK}`);
+  console.log(`Wakeme vault hash:  ${wakemeVault}`);
   console.log(`ms_per_epoch:       ${PROTOCOL.MS_PER_EPOCH}`);
   console.log(`LAMP policy:        ${POLICY_IDS.lamp}`);
   console.log(`LAMP asset name:    ${ASSET_NAMES.lamp}`);
@@ -409,6 +417,7 @@ async function main() {
 
   console.log(`\n📋 Copy to .env:`);
   console.log(`   VAULT_INSTANT_HASH=${vaultScriptHash}   # applied for NETWORK=${NETWORK}`);
+  console.log(`   WAKEME_VAULT_HASH=${wakemeVault}    # apply-param #8 đã nướng vào VAULT_INSTANT_HASH`);
   console.log(`   VAULT_INSTANT_ID_UNIT=${vaultIdUnit}    # NFT danh-tính vault (policy = vault hash)`);
   console.log(`   REF_VAULT_INSTANT_UTXO=${vaultRef}      # chân vault của tx consume`);
   console.log(result);   // PHẢI là dòng cuối stdout

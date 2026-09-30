@@ -13,6 +13,7 @@
 // Nhờ vậy check_param_names.ts chạy được mà không cần .env hay ví.
 
 import { Constr, type Data } from "@lucid-evolution/lucid";
+import { assertWakemeVaultHash } from "@magiclamp/protocol-utils";
 import type { ParamMap } from "./applyParams.js";
 
 /** OutputReference của PlutusV3 = Constr 0 [transaction_id: Bytes, output_index: Int]. */
@@ -44,8 +45,11 @@ export function addressData(
   ]);
 }
 
-// ── InstantGen — vault.vault.{mint,spend} (7 tham số) ────────────
+// ── InstantGen — vault.vault.{mint,spend} (8 tham số) ────────────
 // Neo: InstantGen/onchain/validators/vault.ak — `validator vault(...)`.
+// #8 `wakeme_vault_hash` (nối cuối, CC-GEN-LENT-READ) = script hash két Wakeme theo
+// mạng. Hàm này THUẦN nên không tự suy giá trị: nơi gọi truyền vào (deploy/test lấy
+// qua `config.ts` ▸ `SCRIPT_HASHES.wakeme_vault`, cổng đối chiếu lấy từ sổ).
 export interface InstantVaultParamInputs {
   lampPolicyId:      string;
   lampAssetName:     string;  // PARAM theo mạng (tLAMP testnet / LAMP mainnet)
@@ -54,6 +58,7 @@ export interface InstantVaultParamInputs {
   backingNftPolicy:  string;
   backingScriptHash: string;
   msPerEpoch:        bigint;
+  wakemeVaultHash:   string;  // PARAM theo mạng — két Wakeme
 }
 
 export function instantVaultParams(i: InstantVaultParamInputs): ParamMap {
@@ -65,6 +70,9 @@ export function instantVaultParams(i: InstantVaultParamInputs): ParamMap {
     backing_nft_policy:  i.backingNftPolicy,
     backing_script_hash: i.backingScriptHash,
     ms_per_epoch:        i.msPerEpoch,
+    // Dạng 56 hex thường, sai ⟹ ném. Kiểm ở đây vì mọi đường apply (deploy, test,
+    // cổng đối chiếu) đều đi qua hàm này.
+    wakeme_vault_hash:   assertWakemeVaultHash(i.wakemeVaultHash, "instantVaultParams"),
   };
 }
 

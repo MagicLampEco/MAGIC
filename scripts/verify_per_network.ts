@@ -15,9 +15,11 @@
 // giữ chỗ và hash chỉ có ý nghĩa kiểm HÌNH DẠNG):
 //   LAMP_POLICY_ID  UM_NFT_POLICY_ID  SHARD_NFT_POLICY_ID
 //   UM_DATUM_HASH   BACKING_NFT_POLICY_ID   BACKING_SCRIPT_HASH
+// Két Wakeme (apply-param #8 của Instant) KHÔNG đọc env: lấy theo mạng từ
+// `@magiclamp/protocol-utils` ▸ `wakemeVaultHash`; mạng chưa có két ⟹ giữ chỗ + báo.
 
 import { validatorToScriptHash } from "@lucid-evolution/lucid";
-import { lampAssetName, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { lampAssetName, msPerEpoch, wakemeVaultHash, type Network } from "@magiclamp/protocol-utils";
 import {
   loadBlueprint, findValidator, paramTitles, appliedValidator,
   type ParamMap,
@@ -50,6 +52,26 @@ const SHARD_POLICY  = fromEnv("SHARD_NFT_POLICY_ID");
 const UM_SCRIPT_HASH      = fromEnv("UM_DATUM_HASH");
 const BACKING_POLICY      = fromEnv("BACKING_NFT_POLICY_ID");
 const BACKING_SCRIPT_HASH = fromEnv("BACKING_SCRIPT_HASH");
+/** Két Wakeme (apply-param #8 của vault Instant) THEO MẠNG, từ nguồn duy nhất
+ *  `@magiclamp/protocol-utils` ▸ `wakemeVaultHash`. Mạng chưa có két thì công cụ này vẫn
+ *  chạy tiếp bằng giá trị giữ chỗ và GHI TÊN vào danh sách giữ chỗ — hash Instant của mạng
+ *  đó chỉ kiểm HÌNH DẠNG, và không vault Instant thật nào dựng được ở đó (deploy/05 ném). */
+function wakemeFor(net: Network): string {
+  try {
+    return wakemeVaultHash(net);
+  } catch {
+    usingPlaceholder.push(`wakeme_vault_hash(${net}) — chưa có két Wakeme trên mạng này`);
+    return PLACEHOLDER_POLICY;
+  }
+}
+// Tính NGAY lúc nạp (không lười trong `build`) để khối cảnh báo giữ chỗ ở `main` — in
+// TRƯỚC vòng dựng hash — đã thấy đủ tên.
+const WAKEME_BY_NET: Record<Network, string> = {
+  Preview: wakemeFor("Preview"),
+  Preprod: wakemeFor("Preprod"),
+  Mainnet: wakemeFor("Mainnet"),
+};
+
 // um_name / shard asset names là hằng giao thức, không phải env.
 const UM_NFT_NAME = "554d44"; // "UMD" — khớp ASSET_NAMES.um_nft trong config.ts
 
@@ -76,6 +98,7 @@ const MODULES: ModuleSpec[] = [
       backingNftPolicy:  BACKING_POLICY,
       backingScriptHash: BACKING_SCRIPT_HASH,
       msPerEpoch:        msPerEpoch(net),
+      wakemeVaultHash:   WAKEME_BY_NET[net],
     }),
   },
   {

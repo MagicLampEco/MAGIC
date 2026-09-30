@@ -61,6 +61,9 @@ function buildProtocol(): ProtocolParams {
     // §6.3 BackingBeacon pins (Instant). All-zero default ⟹ Gen shut.
     backingNftPolicyId: POLICY_IDS.backing,
     backingScriptHash: SCRIPT_HASHES.backing_beacon,
+    // Apply-param #8 của vault Instant (két Wakeme). Getter: chỉ đọc khi MODULE=Instant,
+    // nên MODULE=Schedule không chết theo trên mạng chưa có két.
+    get wakemeVaultHash(): string { return SCRIPT_HASHES.wakeme_vault; },
   };
 }
 

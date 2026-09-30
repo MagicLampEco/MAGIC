@@ -160,7 +160,9 @@ const protocolPreview = {
   shardPolicyId: SHARD_NFT_POLICY_ID,
 
   // Chỉ Instant:
-  // umNftPolicyId, umScriptHash, backingNftPolicyId, backingScriptHash
+  // umNftPolicyId, umScriptHash, backingNftPolicyId, backingScriptHash,
+  // wakemeVaultHash — lấy từ `wakemeVaultHash(network)` của @magiclamp/protocol-utils;
+  //                   mạng chưa có két Wakeme ⟹ hàm đó ném, không dựng vault Instant được.
 };
 ```
 
@@ -172,6 +174,10 @@ Ba điều đáng nhớ:
   trị testnet là dựng ra một vault mainnet không bao giờ nhìn thấy LAMP của chính nó.
 - **`umScriptHash` / `backingScriptHash`** ghim reference input về đúng địa chỉ script chuẩn.
   NFT không phải singleton toàn cục nên chỉ kiểm NFT thôi là giả mạo được.
+- **`wakemeVaultHash`** (chỉ Instant) là apply-param #8: script hash két Wakeme mà nhánh sinh
+  đọc làm reference input để tính L_lent. Một giá trị mỗi mạng, không phải mỗi người dùng.
+  SDK không tự suy: truyền giá trị từ `wakemeVaultHash(network)`. Thiếu hoặc không đúng 56
+  hex thường ⟹ `buildParamsList` ném. Két Wakeme đổi hash ⟹ vault Instant đổi địa chỉ.
 
 `ms_per_epoch` khác nhau theo mạng (Preview 1 ngày; Preprod và Mainnet 5 ngày — `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`). SDK tự apply qua `network` ⇒ hash validator
 khác theo mạng ⇒ địa chỉ vault khác theo mạng.
@@ -260,7 +266,8 @@ sau được qua `updateProfile()` ([§8](#8-đổi-profile)) — nhưng batch �
 - Ví có ≥ `vaultLovelace` ADA (mặc định 2 ADA) **cộng** phí mạng, **cộng** min-ADA cho chính
   output NFT.
 - Ví có ít nhất một UTxO để làm seed. Ví rỗng ⇒ không có seed ⇒ không mint được NFT.
-- `Instant`: đủ `umNftPolicyId`, `umScriptHash`, `backingNftPolicyId`, `backingScriptHash`.
+- `Instant`: đủ `umNftPolicyId`, `umScriptHash`, `backingNftPolicyId`, `backingScriptHash`,
+  `wakemeVaultHash`.
 - `Schedule`: đủ `shardPolicyId`.
 
 ---

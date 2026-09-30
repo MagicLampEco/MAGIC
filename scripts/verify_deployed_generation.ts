@@ -118,7 +118,10 @@ const MODULES: readonly ModuleSpec[] = [
     liveHashKey: "VAULT_INSTANT_HASH",
     params: (ledger, net, mspe) => {
       const absent = missingKeys(ledger, "LAMP_POLICY_ID", "UM_NFT_POLICY_ID",
-        "UM_DATUM_HASH", "BACKING_NFT_POLICY_ID", "BACKING_SCRIPT_HASH");
+        "UM_DATUM_HASH", "BACKING_NFT_POLICY_ID", "BACKING_SCRIPT_HASH",
+        // Lấy từ SỔ, không từ bảng theo mạng: sổ thiếu khoá ⟹ cụm dựng trước apply-param #8
+        // ⟹ KHÔNG ĐO ĐƯỢC, không đệm.
+        "WAKEME_VAULT_HASH");
       if (absent.length > 0) return absent;
       return instantVaultParams({
         lampPolicyId:      ledger.get("LAMP_POLICY_ID")!,
@@ -128,6 +131,7 @@ const MODULES: readonly ModuleSpec[] = [
         backingNftPolicy:  ledger.get("BACKING_NFT_POLICY_ID")!,
         backingScriptHash: ledger.get("BACKING_SCRIPT_HASH")!,
         msPerEpoch:        mspe,
+        wakemeVaultHash:   ledger.get("WAKEME_VAULT_HASH")!,
       });
     },
   },

@@ -95,6 +95,12 @@ export interface ProtocolParams {
   backingNftPolicyId?: string;
   /** BackingBeacon script hash. Required for Instant (§6.3). */
   backingScriptHash?: string;
+  /** Script hash két Wakeme — apply-param #8 `wakeme_vault_hash` của vault Instant
+   *  (CC-GEN-LENT-READ). Required for Instant; phải là 56 ký tự hex thường, sai ⟹ ném.
+   *  Không suy theo mạng ở đây: giá trị thuộc nhà Wakeme, người gọi lấy từ
+   *  `@magiclamp/protocol-utils` ▸ `wakemeVaultHash(network)` (mạng chưa có két ⟹ hàm đó
+   *  ném) hoặc từ sổ deploy của mình. Không áp cho Schedule. */
+  wakemeVaultHash?: string;
   /** Override ms_per_epoch (advanced). Derived from `network` otherwise. */
   msPerEpoch?: bigint;
 }

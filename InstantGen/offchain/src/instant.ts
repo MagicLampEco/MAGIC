@@ -574,14 +574,14 @@ export interface RefreshCheckpointParams extends VaultSpendCommon {
 }
 
 /**
- * RefreshCheckpoint ghim value két NGUYÊN KHỐI (`vault_output.value == own_input.output.value`,
- * kể cả lovelace), trong khi datum ra có thể DÀI hơn datum vào (vd `cap_nanogic` 0 → số 9
- * byte) ⟹ min-ADA của output tăng. Két đang giữ đúng sát min-ADA thì Lucid tự nâng lovelace
- * và validator từ chối với một câu không trỏ về đâu (đo trên Emulator 2026-09-30: két
- * 1 978 290 lovelace ⟹ `failed script execution Spend[0]`). NÉM trước với con số cụ thể.
- * Lối thoát: lượt InstantGen cũng làm mới checkpoint và IG-14 cho lovelace ra ≥ vào.
+ * Lovelace của két ra sau RefreshCheckpoint. Validator ghim mọi token KHÁC lovelace nguyên
+ * khối và cho lovelace ra ≥ vào (`validate_refresh_checkpoint` ▸ `lovelace_not_decreased`).
+ * Datum ra có thể DÀI hơn datum vào (vd `cap_nanogic` 0 → số 9 byte) ⟹ min-ADA tăng; két
+ * đang giữ sát min-ADA (đo trên Emulator 2026-09-30: 1 978 290 lovelace) phải được nạp thêm
+ * đúng phần thiếu, không hơn. Đặt con số TƯỜNG MINH ở đây thay vì để Lucid tự nâng, để phép
+ * nạp đi qua đúng một chỗ đọc được.
  */
-function assertRefreshKeepsMinAda(params: RefreshCheckpointParams, outDatumCbor: string): void {
+function refreshOutputLovelace(params: RefreshCheckpointParams, outDatumCbor: string): bigint {
   let perByte = params.coinsPerUtxoByte;
   if (perByte === undefined) {
     const pp = params.lucid.config().protocolParameters;
@@ -595,13 +595,7 @@ function assertRefreshKeepsMinAda(params: RefreshCheckpointParams, outDatumCbor:
   const need = BigInt(calculateMinLovelaceFromUTxO(perByte, {
     ...params.vaultUtxo, datum: outDatumCbor, datumHash: null, scriptRef: null,
   }));
-  if (have < need) {
-    throw new Error(
-      `GEN-INST-017: két giữ ${have} lovelace, datum sau RefreshCheckpoint cần tối thiểu ${need}. ` +
-      `Validator ghim value nguyên khối nên không nạp thêm được — dùng một lượt InstantGen ` +
-      `(cũng làm mới checkpoint, cho phép ADA ra ≥ vào) thay cho RefreshCheckpoint.`,
-    );
-  }
+  return have >= need ? have : need;
 }
 
 export interface RefreshCheckpointResult {
@@ -612,8 +606,8 @@ export interface RefreshCheckpointResult {
 }
 
 /**
- * Dựng RefreshCheckpoint: chủ ký, làm mới năm ô checkpoint, value két ghim NGUYÊN KHỐI
- * (`vault_output.value == own_input.output.value` — kể cả lovelace, không được nạp thêm).
+ * Dựng RefreshCheckpoint: chủ ký, làm mới năm ô checkpoint, mọi token ngoài lovelace ghim
+ * NGUYÊN KHỐI; lovelace ra = max(vào, min-ADA của datum ra) (`refreshOutputLovelace`).
  * Có két Wakeme ghim két này ⟹ `wakeme_link := owner_commit`; không có ⟹ `""` (gỡ ghim).
  */
 export async function buildRefreshCheckpointTx(params: RefreshCheckpointParams): Promise<RefreshCheckpointResult> {
@@ -624,7 +618,7 @@ export async function buildRefreshCheckpointTx(params: RefreshCheckpointParams):
   const wakeme = readWakeme(params, ownHash, ownName, w.epoch);
   const { outputDatum, checkpoint } = computeRefreshCheckpointOutput(datum, w.epoch, wakeme, rate);
   const outDatumCbor = Data.to(outputDatum, VaultDatum);
-  assertRefreshKeepsMinAda(params, outDatumCbor);
+  const outLovelace = refreshOutputLovelace(params, outDatumCbor);
 
   const vaultRef = params.vaultRefScriptUtxo;
   if (vaultRef !== undefined) assertRefScript(vaultRef, params.vaultScript, "két");
@@ -636,7 +630,7 @@ export async function buildRefreshCheckpointTx(params: RefreshCheckpointParams):
     .readFrom(vaultRef !== undefined ? [vaultRef, ...refs] : refs);
   if (vaultRef === undefined) tx = tx.attach.SpendingValidator(params.vaultScript);
   tx = tx
-    .pay.ToAddressWithData(params.vaultUtxo.address, { kind: "inline", value: outDatumCbor }, { ...params.vaultUtxo.assets })
+    .pay.ToAddressWithData(params.vaultUtxo.address, { kind: "inline", value: outDatumCbor }, { ...params.vaultUtxo.assets, lovelace: outLovelace })
     .validFrom(Number(w.fromMs))
     .validTo(Number(w.toMs));
   tx = withOwner(tx, params, datum);

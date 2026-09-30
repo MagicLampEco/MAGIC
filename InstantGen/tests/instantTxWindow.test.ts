@@ -362,15 +362,20 @@ describe("buildRefreshCheckpointTx", () => {
     await expect(dungRefresh(TIP_DAU, {}, { vaultUtxo: lech })).rejects.toThrow(/GEN-INST-009/);
   });
 
-  // Cặp min-ADA: value ghim nguyên khối ⟹ két sát min-ADA không làm mới được (e2e Emulator
-  // đo validator từ chối). Hai ca chỉ khác lovelace của két.
-  it("két 5 ADA ⟹ dựng được", async () => {
+  // Cặp min-ADA: lovelace ra = max(vào, min-ADA của datum ra). Hai ca chỉ khác lovelace két:
+  // két dư ADA ⟹ giữ nguyên; két dưới min-ADA của datum ra ⟹ nạp thêm, token khác không đổi.
+  it("két 5 ADA ⟹ lovelace ra = vào", async () => {
     const { tx } = await dungRefresh(TIP_DAU);
     expect(tx.completed).toBe(true);
+    expect(tx.outputs[0]!.assets.lovelace).toBe(vaultUtxo().assets.lovelace);
   });
-  it("CỰC ĐỐI: két 1 ADA (dưới min-ADA của datum ra) ⟹ GEN-INST-017, không tới complete", async () => {
+  it("CỰC ĐỐI: két 1 ADA (dưới min-ADA của datum ra) ⟹ lovelace ra > vào, token khác nguyên khối", async () => {
     const thap = { ...vaultUtxo(), assets: { ...vaultUtxo().assets, lovelace: 1_000_000n } };
-    await expect(dungRefresh(TIP_DAU, {}, { vaultUtxo: thap })).rejects.toThrow(/GEN-INST-017/);
+    const { tx } = await dungRefresh(TIP_DAU, {}, { vaultUtxo: thap });
+    const { lovelace: ra, ...khacRa } = tx.outputs[0]!.assets;
+    const { lovelace: _vao, ...khacVao } = thap.assets;
+    expect(ra! > 1_000_000n).toBe(true);
+    expect(khacRa).toEqual(khacVao);
   });
   it("CỰC ĐỐI: không truyền coinsPerUtxoByte mà provider không có config ⟹ NÉM (bộ giả không đệm)", async () => {
     await expect(dungRefresh(TIP_DAU, {}, { coinsPerUtxoByte: undefined })).rejects.toThrow(/config/);

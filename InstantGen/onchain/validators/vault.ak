@@ -750,9 +750,22 @@ fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
   let nft_name = single_nft_name(vault_input.output.value, vault_id_policy)
   expect assets.quantity_of(vault_output.value, vault_id_policy, nft_name) == 1
 
-  expect assets.lovelace_of(vault_output.value) >= assets.lovelace_of(vault_input.output.value)
+  expect lovelace_not_decreased(vault_input, vault_output)
   expect list.length(assets.policies(vault_output.value)) <= 3
   True
+}
+
+/// lovelace(out) >= lovelace(in) — the ONE ADA rule shared by every spend branch.
+///
+/// Why `>=` and never `==`: a branch that rewrites the datum can make the
+/// continuing output LONGER than the input (checkpoint fields, a 32-byte
+/// `wakeme_link`, larger CBOR ints), and the ledger's min-ADA grows with output
+/// size. An exact-lovelace pin then leaves a vault opened at bare min-ADA with no
+/// valid transition at all — measured on the Lucid emulator 2026-09-30:
+/// a vault at 1_978_290 lovelace could not `RefreshCheckpoint`. `>=` lets the
+/// caller top up ADA; the vault's ADA still never shrinks.
+fn lovelace_not_decreased(vault_input: Input, vault_output: Output) -> Bool {
+  assets.lovelace_of(vault_output.value) >= assets.lovelace_of(vault_input.output.value)
 }
 
 /// The single asset name held under `policy` in `value` (qty must be 1).
@@ -1273,8 +1286,8 @@ fn validate_update_profile(
 // validate_refresh_checkpoint — Gen v2.0 (constr 6), chủ ký
 //
 // CHỈ ghi năm ô checkpoint (`FollowVaultOrUnlink`, luôn làm mới kể cả cùng
-// epoch). Mọi trường khác ghim bằng một phép so NGUYÊN datum, value ghim
-// nguyên khối. Có két Wakeme ghim két này ⟹ `link := owner_commit`; không có ⟹
+// epoch). Mọi trường khác ghim bằng một phép so NGUYÊN datum; value ghim
+// nguyên khối TRỪ lovelace (chỉ được tăng — xem `lovelace_not_decreased`). Có két Wakeme ghim két này ⟹ `link := owner_commit`; không có ⟹
 // `link := ""` (cửa thoát khi két Wakeme đã ghim sang két khác hoặc đã đóng).
 // ═══════════════════════════════════════════════════════════════
 fn validate_refresh_checkpoint(
@@ -1307,8 +1320,17 @@ fn validate_refresh_checkpoint(
       usage_window: cp.usage_window,
       usage_window_epoch: cp.usage_window_epoch,
     }
-  // Value ghim NGUYÊN KHỐI (ADA, LAMP, NFT vault-id, không thêm không bớt).
-  expect vault_output.value == own_input.output.value
+  // Value: mọi thứ NGOÀI lovelace ghim NGUYÊN KHỐI (LAMP, NFT vault-id, không thêm
+  // không bớt tên nào — kể cả tên lạ dưới policy LAMP hay policy vault-id, thứ mà
+  // phép đếm `≤ 3 policy` của `validate_vault_value` không bắt). Lovelace chỉ được
+  // TĂNG (`lovelace_not_decreased`): datum ra dài hơn datum vào ⟹ min-ADA tăng, ghim
+  // lovelace bằng tuyệt đối thì két mở sát min-ADA không làm mới được checkpoint.
+  // Không dùng `validate_vault_value` ở đây vì nó LỎNG hơn phép so dưới về tập token.
+  expect
+    assets.without_lovelace(vault_output.value) == assets.without_lovelace(
+      own_input.output.value,
+    )
+  expect lovelace_not_decreased(own_input, vault_output)
   True
 }
 
@@ -3123,19 +3145,88 @@ test rc_neg_no_owner_sig() fail {
   )
 }
 
-test rc_neg_value_changed() fail {
+// ── Value của RefreshCheckpoint: lovelace chỉ được TĂNG, mọi token khác ghim ─────
+//
+// Bản trước ghim value bằng TUYỆT ĐỐI (kể cả lovelace) và có bài
+// `rc_neg_value_changed` coi "thêm 1 ADA" là phải từ chối. Chính sách đó đã LẬT
+// (2026-09-30): datum ra dài hơn datum vào ⟹ min-ADA tăng ⟹ két mở sát min-ADA
+// (đo trên Lucid Emulator: 1_978_290 lovelace) kẹt ở checkpoint cũ. Bài cũ bị bỏ,
+// dấu kỳ vọng của nó đảo thành `rc_pos_ada_plus_one`.
+//
+// Mỗi bài âm chỉ khác bài `rc_pos_ada_plus_one` đúng MỘT chỗ (ADA vẫn +1), nên nó
+// đỏ vì đúng chốt nó mang tên, không vì ADA.
+
+const rc_min_ada: Int = 1_978_290
+
+/// Datum làm mới hợp lệ; input mang `rc_min_ada` + LAMP `cp_bal` + NFT két.
+fn t_rc_value(out_of: fn(VaultDatum) -> Output) -> Bool {
   let din = t_cp_din(#"")
   let dout = t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0)
   let tx =
     Transaction {
       ..t_tx(
-        [t_vault_input(din, cp_bal)],
-        [t_vault_output_ada(dout, 1_000_000, cp_bal)],
+        [t_vault_input_ada(din, rc_min_ada, cp_bal)],
+        [out_of(dout)],
         [t_owner_pkh],
       ),
       reference_inputs: [t_rate_ok(), t_lent_ok()],
     }
   validate_refresh_checkpoint(din, 10, t_own_ref(), t_params(), tx)
+}
+
+test rc_pos_ada_plus_one() {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada + 1, cp_bal) })
+}
+
+test rc_pos_ada_unchanged() {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada, cp_bal) })
+}
+
+test rc_neg_ada_minus_one() fail {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada - 1, cp_bal) })
+}
+
+// Token dưới một policy THỨ TƯ.
+test rc_neg_foreign_token_new_policy() fail {
+  t_rc_value(fn(d) { t_vault_output_dust(d, rc_min_ada + 1, cp_bal) })
+}
+
+// Tên lạ dưới policy LAMP — vẫn chỉ 3 policy, nên `validate_vault_value` (≤ 3
+// policy) sẽ CHO QUA. Bài này là bài phân biệt phép so nguyên khối với khuôn IG-14.
+test rc_neg_foreign_name_under_lamp_policy() fail {
+  t_rc_value(
+    fn(d) {
+      let o = t_vault_output_ada(d, rc_min_ada + 1, cp_bal)
+      Output { ..o, value: assets.add(o.value, t_lamp_policy, #"6475737400", 1) }
+    },
+  )
+}
+
+// Tên lạ thứ hai dưới policy vault-id — cùng lý do như trên.
+test rc_neg_foreign_name_under_vault_policy() fail {
+  t_rc_value(
+    fn(d) {
+      let o = t_vault_output_ada(d, rc_min_ada + 1, cp_bal)
+      Output { ..o, value: assets.add(o.value, t_vault_hash, #"6475737400", 1) }
+    },
+  )
+}
+
+test rc_neg_lamp_plus_one() fail {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada + 1, cp_bal + 1) })
+}
+
+test rc_neg_lamp_minus_one() fail {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada + 1, cp_bal - 1) })
+}
+
+test rc_neg_nft_dropped() fail {
+  t_rc_value(
+    fn(d) {
+      let o = t_vault_output_ada(d, rc_min_ada + 1, cp_bal)
+      Output { ..o, value: assets.add(o.value, t_vault_hash, t_vault_id_name, -1) }
+    },
+  )
 }
 
 // ═══ BurnBatch ═════════════════════════════════════════════════════════════

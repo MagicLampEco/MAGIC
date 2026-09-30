@@ -278,15 +278,22 @@ describe("e2e Emulator — InstantGen v2.0 trên script đã apply", () => {
   });
 
   // Két mở ở ĐÚNG min-ADA (Lucid tự đặt lovelace), datum ra dài hơn datum vào ⟹ min-ADA
-  // tăng, mà RefreshCheckpoint ghim value nguyên khối. Cặp: bộ dựng NÉM GEN-INST-017 với
-  // tham số giao thức thật; vô hiệu hoá phép soát (coinsPerUtxoByte = 0) thì Lucid nâng
-  // lovelace và VALIDATOR từ chối — tức phép soát chặn một lần từ chối có thật.
-  it("min-ADA: két sát min-ADA ⟹ GEN-INST-017; bỏ phép soát ⟹ validator từ chối", async () => {
+  // tăng. Validator cho lovelace ra ≥ vào, mọi token khác nguyên khối (ca "ra = vào − 1 bị
+  // từ chối" canh ở tầng validator: `vault.ak ▸ rc_neg_ada_minus_one`). Ở đây: bộ dựng nạp
+  // thêm đúng phần thiếu ⟹ UPLC thật chấp nhận, lovelace ra > vào, token khác không đổi.
+  // Trước bản vá validator 2026-09-30, cùng két này bị từ chối `failed script execution`.
+  it("min-ADA: két sát min-ADA ⟹ bộ dựng nạp thêm ADA, validator chấp nhận", async () => {
     const seed = (await lucid.wallet().getUtxos()).find(u => u.assets.lovelace === 20_000_000n && Object.keys(u.assets).length === 1);
     if (!seed) throw new Error("không còn UTxO seed 20 ADA");
-    const v = await only(await openVault(seed, null));
+    const unit = await openVault(seed, null);
+    const v = await only(unit);
     const base = { ...commonParams(v), rateBeaconUtxo: await only(s.rate.nftUnit) };
-    await expect(buildRefreshCheckpointTx(base)).rejects.toThrow(/GEN-INST-017/);
-    await expect(buildRefreshCheckpointTx({ ...base, coinsPerUtxoByte: 0n })).rejects.toThrow(SCRIPT_FAILURE);
+    const res = await buildRefreshCheckpointTx(base);
+    await submitBuilt(res.tx);
+    const after = await only(unit);
+    expect(after.assets.lovelace! > v.assets.lovelace!).toBe(true);
+    const { lovelace: _a, ...restAfter } = after.assets;
+    const { lovelace: _b, ...restBefore } = v.assets;
+    expect(restAfter).toEqual(restBefore);
   });
 });

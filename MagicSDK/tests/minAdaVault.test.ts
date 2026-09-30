@@ -16,12 +16,14 @@ import {
   vaultUtxoSizeBytes,
 } from "../src/minAdaVault.js";
 
-/** 17 trường chung, dựng từ CHÍNH hàm mã sản xuất dùng — không gõ tay. */
-const common = () => buildInitialVaultDatum({
+/** Datum genesis Gen v2.0 (Instant 20 trường / Schedule 19), dựng từ CHÍNH hàm mã sản
+ *  xuất dùng — không gõ tay. */
+const genesis = (vaultType: "Instant" | "Schedule") => buildInitialVaultDatum({
   ownerPkh:           "5b889dfd8fabd0234233dbb2e26b9b8e96ceffe77b0c55aa2e8efc21",
   lampBalanceOildrop: 1_000_000_000n,
   profile:            "Flame",
   currentEpoch:       100n,
+  vaultType,
 });
 
 function batch(i: number) {
@@ -41,15 +43,17 @@ function batch(i: number) {
 const holding = (i: number) =>
   ({ amount: 1_000_000n * BigInt(i + 1), acquired_epoch: 90n + BigInt(i), is_locked: false });
 
-function instantDatum(nBatches: number, nHoldings: number) {
+function sized(vaultType: "Instant" | "Schedule", nBatches: number, nHoldings: number) {
   return {
-    ...common(),
+    ...genesis(vaultType),
     loyalty_holdings: Array.from({ length: nHoldings }, (_, i) => holding(i)),
     magic_batches:    Array.from({ length: nBatches }, (_, i) => batch(i)),
     next_batch_index: BigInt(nBatches),
-    instant_unlock_ms: 0n,
   };
 }
+
+const instantDatum  = (nb: number, nh: number) => sized("Instant", nb, nh);
+const scheduleDatum = (nb: number, nh: number) => sized("Schedule", nb, nh);
 
 /** Mã hoá thật; ném nếu lược đồ đã trôi khỏi fixture này. */
 function cborOf(d: unknown, schema: unknown): string {
@@ -90,9 +94,8 @@ describe("min-ADA của UTxO két", () => {
     expect(tran).toBeGreaterThan(rong * 4n);
   });
 
-  it("két Schedule (17 trường) cũng đo được, và ở trần thì vượt xa 2 ADA", () => {
-    const { instant_unlock_ms: _bo, ...schedule } = instantDatum(32, 40);
-    const hex = cborOf(schedule, VaultDatumSchema);
+  it("két Schedule (19 trường) cũng đo được, và ở trần thì vượt xa 2 ADA", () => {
+    const hex = cborOf(scheduleDatum(32, 40), VaultDatumSchema);
     expect(minAdaForVault(hex)).toBeGreaterThan(9_000_000n);
   });
 

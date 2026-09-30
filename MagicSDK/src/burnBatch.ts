@@ -5,9 +5,18 @@
 // trong tầm ConsumeMAGIC:
 //
 //     vaultBurnRedeemerCbor   — redeemer `BurnBatch { burns }`
-//     vaultOutDatumCbor       — datum output tiếp-nối (A02); 17 trường với ScheduleGen,
-//                               18 với InstantGen (thêm `instant_unlock_ms`, xem
-//                               `schemas.ts` đầu tệp). Lược đồ chọn theo `vaultModule`.
+//     vaultOutDatumCbor       — datum output tiếp-nối (A02); Gen v2.0: 19 trường với
+//                               ScheduleGen, 20 với InstantGen (`schemas.ts` đầu tệp).
+//                               Lược đồ chọn theo `vaultModule`.
+//
+// ── Gen v2.0: checkpoint ─────────────────────────────────────────────────────────
+// Datum ra còn mang cửa sổ `usage_window` (Σburns cộng vào vế `consumed` của ô 0 SAU khi
+// dịch tới epoch hiện tại). Két InstantGen tiêu LẦN ĐẦU trong epoch (`cap_epoch < e`) còn
+// phải làm mới `wakeme_link`/`cap_epoch`/`cap_nanogic` — đọc beacon ρ (và két Wakeme nếu
+// đã ghim) ở reference input. SDK tính các ô đó bằng `@magiclamp/instantgen-sdk` ▸
+// `expectedCheckpoint` (gương `checkpoint.ak`), rồi trả lại đúng UTxO ref cần để truyền
+// thẳng vào `buildConsumeTx({ rateBeaconUtxo, wakemeVaultUtxo, vaultKind })` — bộ dựng đó
+// đối chiếu datum ra rồi NÉM `CONSUME-012/013/016` khi lệch.
 //
 // Trước tệp này, chỗ DUY NHẤT trong kho biết dựng hai thứ đó là một kịch bản test
 // (`scripts/test/consume_only.ts`). Nghĩa là mọi app muốn tiêu MAGIC phải tự đọc
@@ -34,9 +43,21 @@
 import { Constr, Data, type TxBuilder, type UTxO } from "@lucid-evolution/lucid";
 import { ownerRefOf, resolveOwnerAuth, type OwnerAuth } from "@magiclamp/protocol-utils";
 
-import { InstantVaultDatumSchema, VaultDatumSchema, type VaultDatum } from "./schemas.js";
+import {
+  InstantVaultDatumSchema, VaultDatumSchema, decodeVaultDatumOfKind,
+  type InstantVaultDatum, type VaultDatum,
+} from "./schemas.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
-import { applyPendingProfile as applyPendingProfileInstant } from "@magiclamp/instantgen-sdk";
+import {
+  applyPendingProfile as applyPendingProfileInstant,
+  expectedCheckpoint,
+  windowAdd as windowAddInstant,
+} from "@magiclamp/instantgen-sdk";
+import {
+  shiftWindow as shiftWindowSchedule,
+  windowAdd as windowAddSchedule,
+} from "@magiclamp/schedulegen-sdk";
+import { readCheckpointRefs, type CheckpointRefsRead, type InstantRefParams } from "./genV2Refs.js";
 
 /** Nhãn biến thể trong `pub type VaultRedeemer`. */
 const BURN_BATCH_TAG = "BurnBatch";
@@ -65,8 +86,11 @@ export type BurnEntry = [batchId: string, amount: bigint];
 export interface BurnBatchPlan {
   /** Các dòng burn, Σ == `required`. Mỗi `batch_id` xuất hiện NHIỀU NHẤT một lần. */
   burns:      BurnEntry[];
-  /** Datum output tiếp-nối, đã áp burn + prune + kế toán. */
-  newDatum:   VaultDatum;
+  /** Datum output tiếp-nối, đã áp burn + prune + kế toán + checkpoint Gen v2.0.
+   *  InstantGen: `InstantVaultDatum` (20 trường); ScheduleGen: `VaultDatum` (19). */
+  newDatum:   VaultDatum | InstantVaultDatum;
+  /** Két InstantGen làm mới checkpoint ở lượt này (`cap_epoch < e`). ScheduleGen luôn `false`. */
+  checkpointRefreshed: boolean;
   /** Các batch bị bỏ vì đã chết ở epoch này — chúng mất trắng dù có tiêu hay không
    *  (§4.2 dùng-hết-hoặc-mất). Trả ra để app cảnh báo được người dùng. */
   expiredDropped: MagicBatchLike[];
@@ -84,7 +108,7 @@ export type VaultModule = "InstantGen" | "ScheduleGen";
  * InstantGen — ScheduleGen kiểm A02 so với `input_datum` thô, nên một datum đã áp
  * pending sẽ vỡ `expect output_datum.pending_profile == input_datum.pending_profile`.
  */
-export function applyPendingProfile<T extends VaultDatum>(datum: T, currentEpoch: bigint): T {
+export function applyPendingProfile<T extends VaultDatum | InstantVaultDatum>(datum: T, currentEpoch: bigint): T {
   // Một nguồn: bộ dựng sinh MAGIC (`buildInstantGenTx`) dùng cùng hàm này.
   return applyPendingProfileInstant(datum as never, currentEpoch) as T;
 }
@@ -118,12 +142,16 @@ export function isBatchExpired(b: MagicBatchLike, currentEpoch: bigint): boolean
  * @param currentEpoch Epoch của tx (phải trùng epoch mà validity range phủ).
  * @param vaultModule  Module của vault. BẮT BUỘC — hai module kiểm A02 khác nhau ở
  *                     `pending_profile`; xem khối ⚠ đầu tệp.
+ * @param refs         (InstantGen) beacon ρ + két Wakeme ĐÃ giải mã (`genV2Refs.ts`).
+ *                     Chỉ đọc khi `cap_epoch < currentEpoch`; thiếu ρ lúc đó ⟹
+ *                     `expectedCheckpoint` NÉM `GEN-INST-011`. ScheduleGen bỏ qua.
  */
 export function planBurnBatch(
-  datum:        VaultDatum,
+  datum:        VaultDatum | InstantVaultDatum,
   required:     bigint,
   currentEpoch: bigint,
   vaultModule:  VaultModule,
+  refs:         CheckpointRefsRead = { rate: null, wakeme: null },
 ): BurnBatchPlan {
   if (required <= 0n) {
     throw new Error(`[burnBatch] required=${required} — phải > 0 (vault.ak:552 expect total_burned > 0).`);
@@ -222,7 +250,7 @@ export function planBurnBatch(
   // vault.ak:556-578 kiểm TỪNG trường. Mọi trường không nêu ở đây đi qua nguyên vẹn TỪ
   // `applied` — với ScheduleGen `applied === datum`; với InstantGen `applied` đã nuốt
   // `pending_profile` tới hạn, đúng như `:913` làm trước khi kiểm `:940-942`.
-  const newDatum = {
+  const base = {
     ...applied,
     magic_batches:  expectedBatches,
     activity_state: {
@@ -235,9 +263,37 @@ export function planBurnBatch(
       total_events:     applied.attribution.total_events + 1n,            // :577 — +1 mỗi TX,
       last_event_epoch: currentEpoch,                                     //       không theo op_count
     },
-  } as unknown as VaultDatum;
+  };
 
-  return { burns, newDatum, expiredDropped: expired };
+  // ── Gen v2.0 checkpoint ─────────────────────────────────────────────────────────
+  if (vaultModule === "InstantGen") {
+    // Gương `validate_burn_batch` (InstantGen): `expected_checkpoint(applied, …, FollowVault,
+    // False, …)` TRƯỚC, rồi `window_add(cp.usage_window, 0, total_burned)`. Làm mới hay không
+    // do `cap_epoch` quyết, không do người gọi.
+    const a = applied as InstantVaultDatum;
+    const cp = expectedCheckpoint(a, currentEpoch, "FollowVault", false, refs.wakeme, refs.rate);
+    const newDatum: InstantVaultDatum = {
+      ...(base as InstantVaultDatum),
+      wakeme_link:        cp.wakeme_link,
+      cap_epoch:          cp.cap_epoch,
+      cap_nanogic:        cp.cap_nanogic,
+      usage_window:       windowAddInstant(cp.usage_window, 0n, required),
+      usage_window_epoch: cp.usage_window_epoch,
+    };
+    return { burns, newDatum, expiredDropped: expired, checkpointRefreshed: a.cap_epoch < currentEpoch };
+  }
+
+  // ScheduleGen: `window_add(shift_window(w, w_epoch, e), 0, total_burned)`, epoch := e.
+  // Không đọc beacon, không đọc két Wakeme.
+  const s = applied as VaultDatum;
+  const newDatum: VaultDatum = {
+    ...(base as VaultDatum),
+    usage_window: windowAddSchedule(
+      shiftWindowSchedule(s.usage_window, s.usage_window_epoch, currentEpoch), 0n, required,
+    ),
+    usage_window_epoch: currentEpoch,
+  };
+  return { burns, newDatum, expiredDropped: expired, checkpointRefreshed: false };
 }
 
 export interface BuildVaultBurnBatchParams {
@@ -259,6 +315,14 @@ export interface BuildVaultBurnBatchParams {
    *  `buildConsumeTx({ ownerAuth })`. Bỏ trống: chủ khoá ⟹ nhánh key từ datum; chủ script
    *  ⟹ NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE` — ném ở đây rẻ hơn ném sau khi đã tra giá. */
   ownerAuth?:      OwnerAuth<TxBuilder>;
+  // ── Gen v2.0, CHỈ InstantGen — lượt tiêu đầu tiên trong epoch làm mới checkpoint ──
+  /** Beacon ρ (NFT "RHO"). BẮT BUỘC khi `cap_epoch < currentEpoch`; thiếu ⟹ NÉM `GEN-INST-011`. */
+  rateBeaconUtxo?:  UTxO;
+  /** Két Wakeme đang ghim két này (chỉ ĐỌC). BẮT BUỘC khi làm mới mà `wakeme_link != ""`. */
+  wakemeVaultUtxo?: UTxO;
+  /** Apply-param của két Instant để soát hai UTxO trên (truyền trọn `InstantVaultParams`
+   *  cũng được — `instantVaultParamsFromProtocol`). Bắt buộc khi có một trong hai UTxO. */
+  instantVaultParams?: InstantRefParams;
 }
 
 export interface BuildVaultBurnBatchResult {
@@ -267,7 +331,15 @@ export interface BuildVaultBurnBatchResult {
   /** Truyền thẳng vào `buildConsumeTx({ vaultOutDatumCbor })`. */
   vaultOutDatumCbor:     string;
   burns:                 BurnEntry[];
-  newDatum:              VaultDatum;
+  newDatum:              VaultDatum | InstantVaultDatum;
+  /** Truyền thẳng vào `buildConsumeTx({ vaultKind })`. */
+  vaultKind:             "instant" | "schedule";
+  /** Két InstantGen làm mới checkpoint ở lượt này. */
+  checkpointRefreshed:   boolean;
+  /** Chỉ có khi `checkpointRefreshed` — truyền thẳng vào `buildConsumeTx({ rateBeaconUtxo })`. */
+  rateBeaconUtxo?:       UTxO;
+  /** Chỉ có khi `checkpointRefreshed` và có két Wakeme — `buildConsumeTx({ wakemeVaultUtxo })`. */
+  wakemeVaultUtxo?:      UTxO;
   /** Batch đã chết và bị bỏ trong lần này — MAGIC trong đó mất trắng (§4.2). App nên
    *  hiện cho người dùng thấy, vì đây là mất mát thật và không hoàn được. */
   expiredDropped:        MagicBatchLike[];
@@ -301,12 +373,19 @@ export function buildVaultBurnBatch(
     );
   }
 
-  // Lược đồ đi theo `vaultModule`, tham số đã BẮT BUỘC từ trước: InstantGen 18 trường,
-  // ScheduleGen 17 (`schemas.ts` đầu tệp). Không dùng `decodeVaultDatumEitherShape` ở
-  // đây vì loại két đã biết — thử-hai-hình-dạng sẽ nhận một datum ScheduleGen ở đường
-  // InstantGen rồi dựng tiếp trên đó, và đó đúng là lượt truyền nhầm cần kêu.
-  const datumSchema = p.vaultModule === "InstantGen" ? InstantVaultDatumSchema : VaultDatumSchema;
-  const datum = Data.from(p.vaultUtxo.datum, datumSchema) as VaultDatum;
+  // Lược đồ đi theo `vaultModule`, tham số đã BẮT BUỘC từ trước: InstantGen 20 trường,
+  // ScheduleGen 19 (`schemas.ts`). Không thử-hai-hình-dạng vì loại két đã biết: một datum
+  // ScheduleGen ở đường InstantGen là lượt truyền nhầm cần kêu. Datum v1 ⟹ NÉM.
+  const isInstant = p.vaultModule === "InstantGen";
+  const datumSchema = isInstant ? InstantVaultDatumSchema : VaultDatumSchema;
+  const datum = decodeVaultDatumOfKind(isInstant ? "Instant" : "Schedule", p.vaultUtxo.datum);
+
+  if (!isInstant && (p.rateBeaconUtxo || p.wakemeVaultUtxo || p.instantVaultParams)) {
+    throw new Error(
+      `[burnBatch] vaultModule="ScheduleGen" không đọc beacon ρ hay két Wakeme ở nhánh BurnBatch — ` +
+      `truyền chúng vào đây là nhầm két. Bỏ rateBeaconUtxo / wakemeVaultUtxo / instantVaultParams.`,
+    );
+  }
 
   if (datum.last_updated_epoch > p.currentEpoch) {
     throw new Error(
@@ -317,7 +396,11 @@ export function buildVaultBurnBatch(
 
   const ownerAuth = resolveOwnerAuth(ownerRefOf(datum.owner), p.ownerAuth);
 
-  const plan = planBurnBatch(datum, p.required, p.currentEpoch, p.vaultModule);
+  const refs = readCheckpointRefs({
+    vaultUtxo: p.vaultUtxo, e: p.currentEpoch, params: p.instantVaultParams,
+    rateBeaconUtxo: p.rateBeaconUtxo, wakemeVaultUtxo: p.wakemeVaultUtxo,
+  });
+  const plan = planBurnBatch(datum, p.required, p.currentEpoch, p.vaultModule, refs);
 
   const burnIx = resolveConstrIndex(p.vaultPlutusJson, VAULT_VALIDATOR_TITLE, BURN_BATCH_TAG);
 
@@ -337,6 +420,12 @@ export function buildVaultBurnBatch(
     vaultOutDatumCbor:     Data.to(plan.newDatum as never, datumSchema),
     burns:                 plan.burns,
     newDatum:              plan.newDatum,
+    vaultKind:             isInstant ? "instant" : "schedule",
+    checkpointRefreshed:   plan.checkpointRefreshed,
+    // Chỉ trả ref khi validator sẽ ĐỌC chúng: cùng epoch thì `current_checkpoint` không
+    // nhìn reference input nào, và `buildConsumeTx` cũng không đưa chúng vào tx.
+    ...(plan.checkpointRefreshed && p.rateBeaconUtxo ? { rateBeaconUtxo: p.rateBeaconUtxo } : {}),
+    ...(plan.checkpointRefreshed && p.wakemeVaultUtxo ? { wakemeVaultUtxo: p.wakemeVaultUtxo } : {}),
     expiredDropped:        plan.expiredDropped,
     ownerAuth,
   };

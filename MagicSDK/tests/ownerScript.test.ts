@@ -10,6 +10,8 @@
 import { Data, validatorToScriptHash, type LucidEvolution, type UTxO, type Validator } from "@lucid-evolution/lucid";
 import { msPerEpoch, posixMsToEpoch, OwnerAuthError } from "@magiclamp/protocol-utils";
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { withdrawLamp } from "../src/withdrawLamp.js";
 import { updateProfile } from "../src/updateProfile.js";
@@ -69,11 +71,14 @@ function scriptAuth(script = DID_SCRIPT) {
 
 type Owner = { type: "key" | "script"; hash: string };
 
-function vaultUtxo(kind: "Instant" | "Schedule", owner: Owner, ix = 0): UTxO {
-  const d = buildInitialVaultDatum({
-    owner, lampBalanceOildrop: 1_000_000_000n, profile: "Flame",
-    currentEpoch: CUR_EPOCH - 10n, vaultType: kind,
-  });
+function vaultUtxo(kind: "Instant" | "Schedule", owner: Owner, ix = 0, over: Record<string, unknown> = {}): UTxO {
+  const d = {
+    ...buildInitialVaultDatum({
+      owner, lampBalanceOildrop: 1_000_000_000n, profile: "Flame",
+      currentEpoch: CUR_EPOCH - 10n, vaultType: kind,
+    }),
+    ...over,
+  };
   return {
     txHash: "bb".repeat(32), outputIndex: ix,
     address: "addr_test1wqvrwknagm22rwnrus2v0nagyknauff3jztknm3x2d9nahga0t3ee",
@@ -170,15 +175,19 @@ describe("updateProfile — nhánh chủ", () => {
     vaultPlutusJson: PLUTUS_JSON, network: "Preview" as const,
     vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING, tipPosixMs: TIP_MS,
   };
+  // Gen v2.0: két đã làm mới checkpoint TRONG epoch này (`cap_epoch == e`) ⟹ không đọc beacon ρ.
+  // Khối này kiểm nhánh CHỦ, không kiểm làm mới checkpoint — để genesis `cap_epoch = 0` thì
+  // bài vấp `GEN-INST-011` trước cổng chủ và cặp cực đối dưới đây mất nghĩa.
+  const FRESH = { cap_epoch: CUR_EPOCH, usage_window_epoch: CUR_EPOCH };
   it("chủ script + nhân chứng ⟹ mục rút, không ký h", async () => {
     const r = recordingLucid();
-    await updateProfile({ ...base, lucid: r.lucid, vaultUtxo: vaultUtxo("Instant", { type: "script", hash: DID_H }), ownerAuth: await scriptAuth() } as never);
+    await updateProfile({ ...base, lucid: r.lucid, vaultUtxo: vaultUtxo("Instant", { type: "script", hash: DID_H }, 0, FRESH), ownerAuth: await scriptAuth() } as never);
     expect(r.names()).toContain("withdraw");
     expect(r.argsOf("addSignerKey").flat()).not.toContain(DID_H);
   });
   it("CỰC ĐỐI: chủ script, không nhân chứng ⟹ OWNER_SCRIPT_WITNESS_UNAVAILABLE", async () => {
     const r = recordingLucid();
-    expect(await codeOf(updateProfile({ ...base, lucid: r.lucid, vaultUtxo: vaultUtxo("Instant", { type: "script", hash: DID_H }) } as never)))
+    expect(await codeOf(updateProfile({ ...base, lucid: r.lucid, vaultUtxo: vaultUtxo("Instant", { type: "script", hash: DID_H }, 0, FRESH) } as never)))
       .toBe("OWNER_SCRIPT_WITNESS_UNAVAILABLE");
   });
 });
@@ -246,11 +255,21 @@ describe("createVault — chủ Credential ở genesis", () => {
 });
 
 describe("listVaultsForOwner — lọc theo owner {type, hash}", () => {
-  // Blueprint tối thiểu đã dùng ở createVault.test.ts; chỉ để applyParamsToScript ra một địa chỉ.
-  const STUB_CBOR =
-    "5907f5010100332323232323223225333004323232323253323300a3001300b375400226464a666018600260206ea8004540041860226024002601e6ea8c038c03cc03cc03c004526163006375a0024464a66601a600260120022a66601e60106ea800854008458595900cc8c8c8c8c008894ccc008cdc78010008a99980d99baf300c30093754a66601800a266ebcc02ccc00c0040088c8c008008c8c004004008894ccc008cdc78018008a4d2c601866646002446e1ccdc424014002a66601866ebcc01cc004c01cc024c01400454ccc02ccdd79817980180319810800a51005301230080021300700113001001001";
-  const protocol = { network: "Preview" as const, lampPolicyId: LAMP_POLICY, shardPolicyId: "11".repeat(28) };
-  const validators = { vaultUnappliedCbor: STUB_CBOR };
+  // Gen v2.0: két Schedule nướng hash `commit` nên `applyVaultValidator` đòi blueprint TRỌN
+  // (`vault.commit.withdraw` + `vault.vault.spend`) — stub một validator không còn dựng
+  // được địa chỉ. Dùng blueprint ScheduleGen đã build; chỉ để ra một địa chỉ két.
+  const bp = JSON.parse(readFileSync(
+    fileURLToPath(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url)), "utf8",
+  )) as { validators: { title: string; compiledCode: string }[] };
+  const protocol = {
+    network: "Preview" as const, lampPolicyId: LAMP_POLICY, shardPolicyId: "11".repeat(28),
+    gbBeaconNftPolicy: "12".repeat(28), gbBeaconScriptHash: "13".repeat(28), gbShardPolicyId: "14".repeat(28),
+    rateNftPolicy: "15".repeat(28), rateScriptHash: "16".repeat(28),
+  };
+  const validators = {
+    vaultUnappliedCbor: bp.validators.find(v => v.title === "vault.vault.spend")!.compiledCode,
+    vaultPlutusJson:    bp as never,
+  };
   const utxos = [vaultUtxo("Schedule", { type: "key", hash: PKH }, 0), vaultUtxo("Schedule", { type: "script", hash: DID_H }, 1)];
   const lucid = { utxosAt: async () => utxos } as unknown as LucidEvolution;
 

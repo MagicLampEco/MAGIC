@@ -15,7 +15,7 @@ import {
   REHEARSAL_LAMP_POLICIES,
   SUPERSEDED_LAMP_POLICIES,
 } from "../src/lampPolicy.js";
-import { buildParamsList } from "../src/validatorScripts.js";
+import { buildParamsList, buildCommitParamsList } from "../src/validatorScripts.js";
 import { createVault } from "../src/createVault.js";
 import { withdrawLamp } from "../src/withdrawLamp.js";
 import { buildInitialVaultDatum } from "../src/vaultDatum.js";
@@ -30,7 +30,27 @@ const SHAPE_OK  = "a".repeat(56);
 
 const MS_PER = 86_400_000n;
 
+/** Năm tham số GenBeacons Gen v2.0 — cả hai loại két đều đòi (`validatorScripts.ts`). */
+const V2_BEACONS = {
+  gbBeaconNftPolicy:  "c".repeat(56),
+  gbBeaconScriptHash: "d".repeat(56),
+  gbShardPolicyId:    "e".repeat(56),
+  rateNftPolicy:      "f".repeat(56),
+  rateScriptHash:     "1".repeat(56),
+} as const;
+/** Hash `commit` giả — tham số #6 của két Schedule; bài ở đây chỉ đọc slot 0. */
+const COMMIT_HASH = "2".repeat(56);
+
+/** Đủ mọi thứ két Schedule đòi, để phép đo rơi ĐÚNG vào cổng policy chứ không vào `requireField`. */
 const proto = (lampPolicyId: string): ProtocolParams => ({
+  network: "Preview",
+  lampPolicyId,
+  shardPolicyId: "b".repeat(56),
+  ...V2_BEACONS,
+});
+
+/** CHỈ trường chung, KHÔNG có trường két Instant đòi (beacon, wakeme) — dùng cho ca thứ tự cổng. */
+const protoBare = (lampPolicyId: string): ProtocolParams => ({
   network: "Preview",
   lampPolicyId,
   shardPolicyId: "b".repeat(56),
@@ -89,7 +109,7 @@ describe("assertLampPolicyId — đời LAMP đã bị thay", () => {
   it("cổng đứng ở buildParamsList cũng chặn đời đã bị thay", () => {
     // Đường mà bên tích hợp thật sự đi. Cổng chỉ nằm trong `assertLampPolicyId`
     // mà không với tới đây thì apply-param vẫn nhận đời chết.
-    expect(() => buildParamsList("Schedule", proto(SUPERSEDED), MS_PER))
+    expect(() => buildParamsList("Schedule", proto(SUPERSEDED), MS_PER, COMMIT_HASH))
       .toThrow(/ĐÃ BỊ THAY/);
   });
 });
@@ -124,26 +144,34 @@ describe("cổng đứng ở buildParamsList — chỗ policy id nướng vào s
   // Đây là khối phân biệt được hai bên đột biến. Nếu cổng bị dời ra khỏi
   // `buildParamsList` về riêng chỗ gọi, khối này đỏ còn phần trên vẫn xanh.
   it("Schedule: apply-param từ chối policy nhái", () => {
-    expect(() => buildParamsList("Schedule", proto(LOOKALIKE), MS_PER))
+    expect(() => buildParamsList("Schedule", proto(LOOKALIKE), MS_PER, COMMIT_HASH))
       .toThrow(/KHÔNG PHẢI LAMP/);
   });
 
   it("Schedule: apply-param từ chối chuỗi sai hình dạng", () => {
-    expect(() => buildParamsList("Schedule", proto(""), MS_PER))
+    expect(() => buildParamsList("Schedule", proto(""), MS_PER, COMMIT_HASH))
       .toThrow(/sai hình dạng/);
   });
 
   it("Schedule: policy hợp lệ đi qua, và nằm ở SLOT 0 của apply-param", () => {
     // Thứ tự apply-param là hợp đồng nhị phân: đổi chỗ là đổi script hash, đổi địa
     // chỉ vault. Ca này ghim slot 0 chứ không chỉ ghim "không ném".
-    const params = buildParamsList("Schedule", proto(SHAPE_OK), MS_PER);
+    const params = buildParamsList("Schedule", proto(SHAPE_OK), MS_PER, COMMIT_HASH);
     expect(params[0]).toBe(SHAPE_OK);
+  });
+
+  it("Schedule commit: policy cũng nướng vào `commit`, cổng chặn ở đó và nằm ở SLOT 0", () => {
+    // Gen v2.0: két Schedule nướng hash `commit`, nên policy nhái lọt vào `commit` là
+    // lọt vào két qua đường vòng. Ghim cả hai chiều trên cùng một đường gọi.
+    expect(() => buildCommitParamsList(proto(LOOKALIKE), MS_PER)).toThrow(/KHÔNG PHẢI LAMP/);
+    expect(buildCommitParamsList(proto(SHAPE_OK), MS_PER)[0]).toBe(SHAPE_OK);
   });
 
   it("Instant: cổng chạy TRƯỚC các trường riêng của Instant", () => {
     // Nếu cổng đứng sau `requireField`, người đưa policy nhái sẽ nhận câu lỗi về
-    // `umNftPolicyId` và đi sửa nhầm thứ.
-    expect(() => buildParamsList("Instant", proto(LOOKALIKE), MS_PER))
+    // trường riêng của két (Gen v2.0: beacon GB/ρ, `wakemeVaultHash`) và đi sửa nhầm thứ.
+    // `protoBare` cố ý THIẾU các trường đó: câu lỗi phải nói về policy trước.
+    expect(() => buildParamsList("Instant", protoBare(LOOKALIKE), MS_PER))
       .toThrow(/KHÔNG PHẢI LAMP/);
   });
 });
@@ -217,15 +245,16 @@ describe("lối mở tập dượt đi tới ĐỦ ba chỗ gọi của SDK", ()
     network: "Preprod",
     lampPolicyId: REHEARSAL,
     shardPolicyId: "b".repeat(56),
+    ...V2_BEACONS,
     ...(ack === undefined ? {} : { lampRehearsalAck: ack }),
   });
 
   it("buildParamsList: có ack ⟹ qua, policy nằm ở slot 0", () => {
-    expect(buildParamsList("Schedule", protoPreprod(REHEARSAL), MS_PER)[0]).toBe(REHEARSAL);
+    expect(buildParamsList("Schedule", protoPreprod(REHEARSAL), MS_PER, COMMIT_HASH)[0]).toBe(REHEARSAL);
   });
 
   it("buildParamsList: không ack ⟹ ném", () => {
-    expect(() => buildParamsList("Schedule", protoPreprod(), MS_PER)).toThrow(/ĐÃ BỊ THAY/);
+    expect(() => buildParamsList("Schedule", protoPreprod(), MS_PER, COMMIT_HASH)).toThrow(/ĐÃ BỊ THAY/);
   });
 
   // `createVault` gọi cổng TRƯỚC phép kiểm `lampDeposit`. Ca dương đưa `lampDeposit = 0`

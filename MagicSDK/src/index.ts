@@ -52,16 +52,38 @@ export { VaultIdRedeemerSchema } from "./schemas.js";
 // phá: không cái tên nào đổi nghĩa.
 export type { VaultDatum } from "./schemas.js";
 
-// ── Hình dạng THỨ HAI của datum két ──────────────────────────────────────────
-// `VaultDatumSchema` tả 17 trường (Schedule/Prepaid). `InstantVaultDatumSchema`
-// tả 18 — 17 trường đó cộng `instant_unlock_ms`. Bên tích hợp nào đọc két
-// InstantGen bắt buộc dùng lược đồ 18 trường: lệch số trường thì Lucid NÉM, nên
-// dùng nhầm là một ngoại lệ có tên chứ không phải một trường im lặng biến mất.
-// Chưa biết loại két ⟹ `decodeVaultDatumEitherShape`.
+// ── Hai hình dạng datum két (Gen v2.0) ───────────────────────────────────────
+// `VaultDatumSchema` tả 19 trường (ScheduleGen), `InstantVaultDatumSchema` 20 trường
+// (InstantGen) — cả hai TÁI XUẤT từ gói nền, không chép. Datum đời v1 (18/17 trường)
+// ⟹ NÉM `VAULT_DATUM_V1`: v2.0 là hash mới, không di trú. Đã biết loại két ⟹
+// `decodeVaultDatumOfKind`; chưa biết ⟹ `decodeVaultDatumEitherShape`.
 export {
   InstantVaultDatumSchema,
+  OwnerCredentialSchema,
+  VAULT_DATUM_FIELD_COUNTS,
   decodeVaultDatumEitherShape,
+  decodeVaultDatumOfKind,
 } from "./schemas.js";
+
+// Apply-param theo loại két, dựng từ `ProtocolParams` — bộ dựng InstantGen/ScheduleGen
+// đòi đúng các giá trị đã apply vào két. Thứ tự tham số do gói nền giữ.
+export {
+  instantVaultParamsFromProtocol,
+  scheduleScriptParamsFromProtocol,
+  buildParamsList,
+  buildCommitParamsList,
+  type AppliedVault,
+} from "./validatorScripts.js";
+
+// Hai reference input của lượt làm mới checkpoint két InstantGen (beacon ρ, két Wakeme).
+export {
+  readRateBeacon,
+  readWakemeForVault,
+  readCheckpointRefs,
+  vaultIdentityOf,
+  type InstantRefParams,
+  type CheckpointRefsRead,
+} from "./genV2Refs.js";
 export type {
   InstantVaultDatum,
   VaultDatumShapeKind,
@@ -95,24 +117,54 @@ export {
 } from "./redeemerIndex.js";
 
 // MAGIC generation — the only supported way for an app to trigger a gen tx.
-// Chỉ có InstantGen + ScheduleGen: VacuumGen/SnapshotGen đã ở
-// `Legacy/` (xem generate.ts). Cũng xem generate.ts cho điều kiện
-// fail-closed của BackingBeacon trên InstantGen.
+// Chỉ có InstantGen + ScheduleGen: VacuumGen/SnapshotGen đã ở `Legacy/`.
+// Gen v2.0: `diagnoseCeilings` đã BỎ ⟹ `instantGenLimits(ctx).maxM`. Xem generate.ts.
 export {
   buildInstantGenTx,
-  diagnoseCeilings,
+  buildRefreshCheckpointTx,
+  instantGenLimits,
+  computeInstantGenOutputs,
+  computeRefreshCheckpointOutput,
+  applyInstantVaultParams,
+  vaultShardId,
+  shardNftName,
+  readWakemeVault,
+  expectedCheckpoint,
+  expectedCheckpointForGen,
+  currentCheckpoint,
+  INSTANT_VAULT_PARAM_TITLES,
   buildScheduleCommitTx,
   buildScheduleFireTx,
+  buildRegisterCommitStakeTx,
+  applyScheduleScripts,
+  SCHEDULE_COMMIT_PARAM_NAMES,
+  SCHEDULE_VAULT_PARAM_NAMES,
   NANOGIC_DECIMALS,
   NANOGIC_PER_MAGIC,
   OILDROP_DECIMALS,
   OILDROP_PER_LAMP,
   type InstantGenParams,
   type InstantGenResult,
+  type InstantGenContext,
+  type InstantGenLimits,
+  type InstantGenOutputs,
+  type RefreshCheckpointParams,
+  type RefreshCheckpointResult,
+  type InstantVaultParams,
+  type Checkpoint,
+  type WakemeRead,
+  type LentReadContext,
+  type RateParam,
+  type GreenBackBeacon,
+  type GbShard,
   type CommitParams,
   type CommitResult,
   type FireParams,
   type FireResult,
+  type GenBeaconParams,
+  type RegisterCommitStakeParams,
+  type ScheduleScriptParams,
+  type ScheduleScripts,
 } from "./generate.js";
 
 export type {

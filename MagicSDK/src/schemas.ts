@@ -1,276 +1,121 @@
-// MagicSDK/src/schemas.ts — Plutus Data schemas (must mirror Aiken types exactly)
-// Field order = constructor index. Renaming a field is OK; reordering BREAKS the contract.
+// MagicSDK/src/schemas.ts — Plutus Data schemas của két (Gen v2.0)
 //
-// P8 invariant: this schema must produce the same CBOR as Aiken's
-// `pub type VaultDatum { ... }` definition in
-// `<Module>/onchain/lib/magiclamp/protocol/types.ak`.
+// ══ Gen v2.0: HAI HÌNH DẠNG VaultDatum, và SDK KHÔNG còn giữ bản chép nào ══════
 //
-// ══ HAI HÌNH DẠNG VaultDatum, KHÔNG CÒN MỘT ════════════════════════════════
-// Bản trước của dòng này khai *"Mọi loại vault dùng CHUNG một VaultDatum"*. Câu
-// đó **nay SAI**, và nó sai từ lúc `InstantGen` thêm trường 17.
+//   `VaultDatumSchema`        — 19 trường. ScheduleGen v2.0.
+//   `InstantVaultDatumSchema` — 20 trường. InstantGen v2.0.
 //
-//   `VaultDatumSchema`        — 17 trường. ScheduleGen · PrepaidGen, và là hình
-//                               dạng mà mọi bên đọc chung đã nhập từ trước.
-//   `InstantVaultDatumSchema` — 17 trường ĐÓ cộng `instant_unlock_ms` ở CUỐI
-//                               (chỉ số 17) ⟹ 18 trường. Chỉ InstantGen.
+// Nguồn: `ScheduleGen/offchain/src/types.ts` ▸ `VaultDatumSchema` và
+// `InstantGen/offchain/src/types.ts` ▸ `VaultDatumSchema` — mỗi cái là gương `types.ak`
+// của module đó, có vector CBOR ghim hai phía (`InstantGen/tests/vectors.ts` ▸
+// `TV_DATUM_V2_*`, `ScheduleGen/onchain/lib/magiclamp/protocol/datum_cbor_vectors.ak`).
+// Tệp này TÁI XUẤT, không chép: bản chép 17/18 trường đời trước đã trôi khỏi nguồn ngay
+// khi Gen v2.0 đổi datum, và không gì kêu cho tới khi bài `vaultParams` đỏ.
 //
-// VÌ SAO KHÁC NHAU, chứ không phải "chưa kịp đồng bộ". `instant_unlock_ms` là
-// mốc khoá LAMP sau một lượt sinh Instant (`CC-GEN-L-TIMING`). Két ScheduleGen
-// **không có nhánh sinh Instant**, nên ở đó trường này sẽ là một ô KHÔNG CÓ
-// NGƯỜI GHI — và một ô như thế phải trả bằng một cổng đông-cứng ở mỗi nhánh
-// spend, hai trong số đó permissionless. Lý lẽ đầy đủ nằm ở nguồn, đừng chép
-// xuống đây: `InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸ khối chú
-// thích của `instant_unlock_ms`.
+// Hai hình dạng nay KHÁC NHAU cả ở giữa, không chỉ ở đuôi: InstantGen tái dụng ô 6
+// (`vacuum_orders` → `wakeme_link`), 12 (`delegation_cert` → `cap_epoch`), 14
+// (`streak_state` → `cap_nanogic`) và nối 18–19; ScheduleGen giữ 17 trường cũ và nối
+// 17–18. Mã dùng chung hai loại phải gom trường theo TÊN, không theo chỉ số.
 //
-// 🔴 LỆCH SỐ TRƯỜNG LÀM DECODE HỎNG ỒN ÀO — ĐÓ LÀ TÍNH CHẤT MUỐN CÓ.
-// Đo 2026-09-21 trên `@lucid-evolution/lucid` 0.4.30, cả HAI chiều:
+// 🔴 v2.0 là hash két MỚI, KHÔNG di trú UTxO đời trước (chủ dự án chốt). Datum 18 trường
+// (InstantGen v1) hay 17 trường (ScheduleGen v1) phải NÉM có tên, không đệm ô thiếu —
+// các bộ giải mã dưới đây đi qua bộ giải mã của gói nền, chúng làm đúng việc đó
+// (`VAULT_DATUM_V1` / `GEN-SCH-V1-DATUM`).
 //
-//     Data.from(<CBOR 18 trường>, <lược đồ 17 trường>)
-//       → ném: "Could not type cast to object. Fields do not match."
-//     Data.from(<CBOR 17 trường>, <lược đồ 18 trường>)
-//       → ném: "Could not type cast to object. Fields do not match."
-//
-// Cùng chiều với Aiken (`expect n: NewD = d` nghiêm ngặt về số trường, cả hai
-// chiều — xem `BOUNDARIES.md` §2). Nên đọc nhầm hình dạng là một ngoại lệ có
-// tên, không phải một trường `undefined` đi tiếp vào phép tính ở nơi khác. Ai
-// cần đọc két mà CHƯA biết loại thì gọi `decodeVaultDatumEitherShape` bên dưới;
-// **đừng** bọc `Data.from` trong một `catch` trả `null` — đó đúng là cái vỏ im
-// lặng mà kho này cấm.
-//
-// Hai lược đồ dựng từ MỘT danh sách trường chung (`VAULT_DATUM_COMMON_FIELDS`),
-// không chép hai lần: một bản chép sẽ trôi khỏi bản gốc mà không gì báo.
-//
-// ══ BIA MỘ — ĐỪNG XOÁ `Snapshot` / `Vacuum` Ở TỆP NÀY ══════════════════════
-// `VaultType` (types.ts) đã thu về "Instant" | "Schedule" vì SnapshotGen và
-// VacuumGen dời sang `Legacy/`. Tệp NÀY thì KHÔNG được thu theo:
-//   - `BatchSource` (variant Snapshot=0, Instant=1, Vacuum=2, Schedule=3), và
-//   - trường `vacuum_orders` trong `VaultDatum`
-// là CHỈ SỐ CONSTRUCTOR / ARITY của Plutus Data ĐÃ LÊN CHAIN. Bỏ một variant
-// làm dịch chỉ số của các variant sau nó; bỏ một trường làm lệch arity — cả hai
-// đều vỡ decode MỌI vault đã tạo, và LAMP trong đó thành không tiêu được.
-// Muốn bỏ thật thì phải migrate on-chain, không phải sửa tệp này.
+// Bia mộ `BatchSource` (Snapshot/Vacuum) và `vacuum_orders` của két Schedule vẫn nằm
+// trong lược đồ nguồn — chỉ số constructor và arity là hợp đồng nhị phân.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { Data } from "@lucid-evolution/lucid";
+import { Constr, Data } from "@lucid-evolution/lucid";
+import {
+  VaultDatumSchema as ScheduleVaultDatumSchema,
+  decodeVaultDatum as decodeScheduleVaultDatum,
+  VAULT_DATUM_FIELDS_V1 as SCHEDULE_FIELDS_V1,
+  VAULT_DATUM_FIELDS_V2 as SCHEDULE_FIELDS_V2,
+  type VaultDatum as ScheduleVaultDatum,
+} from "@magiclamp/schedulegen-sdk";
+import {
+  VaultDatumSchema as InstantVaultDatumSchemaSource,
+  OwnerCredentialSchema as OwnerCredentialSchemaSource,
+  VaultIdRedeemerSchema as VaultIdRedeemerSchemaSource,
+  decodeVaultDatum as decodeInstantVaultDatum,
+  VAULT_DATUM_FIELDS_V1 as INSTANT_FIELDS_V1,
+  VAULT_DATUM_FIELDS_V2 as INSTANT_FIELDS_V2,
+  type VaultDatum as InstantVaultDatumSource,
+} from "@magiclamp/instantgen-sdk";
 
-const LoyaltyHoldingSchema = Data.Object({
-  amount:         Data.Integer(),
-  acquired_epoch: Data.Integer(),
-  is_locked:      Data.Boolean(),
-});
+/** Credential chủ két — `VerificationKey(h)` = Constr 0, `Script(h)` = Constr 1. */
+export const OwnerCredentialSchema = OwnerCredentialSchemaSource;
 
-const MagicBatchSchema = Data.Object({
-  batch_id:            Data.Bytes(),
-  source:              Data.Enum([
-    Data.Literal("Snapshot"),
-    Data.Literal("Instant"),
-    Data.Literal("Vacuum"),
-    Data.Literal("Schedule"),
-  ]),
-  created_epoch:       Data.Integer(),
-  initial_amount:      Data.Integer(),
-  current_amount:      Data.Integer(),
-  decay_window:        Data.Integer(),
-  profile_at_creation: Data.Nullable(Data.Enum([
-    Data.Literal("Ember"), Data.Literal("Flame"), Data.Literal("Lantern"),
-  ])),
-  contract_id:         Data.Nullable(Data.Bytes()),
-  halved:              Data.Boolean(),
-});
+/** VaultDatum 19 trường — ScheduleGen v2.0. Tên giữ nguyên vì đã xuất ra ngoài. */
+export const VaultDatumSchema = ScheduleVaultDatumSchema;
 
-const VacuumOrderSchema = Data.Object({
-  order_id:     Data.Bytes(),
-  commit_epoch: Data.Integer(),
-  fire_epoch:   Data.Integer(),
-  lamp_amount:  Data.Integer(),
-});
+/** VaultDatum 20 trường — InstantGen v2.0. */
+export const InstantVaultDatumSchema = InstantVaultDatumSchemaSource;
 
-const GenScheduleSchema = Data.Object({
-  schedule_id:              Data.Bytes(),
-  commit_epoch:             Data.Integer(),
-  start_fire_epoch:         Data.Integer(),
-  end_fire_epoch:           Data.Integer(),
-  schedule_length:          Data.Integer(),
-  lamp_per_epoch:           Data.Integer(),
-  rate_locked_q:            Data.Integer(),
-  baseline_at_commit_q:     Data.Integer(),
-  multiplier_at_commit_q:   Data.Integer(),
-  fired_count:              Data.Integer(),
-  auto_burn_target:         Data.Nullable(Data.Object({
-    delegate:          Data.Bytes(),
-    target_app_id:     Data.Nullable(Data.Bytes()),
-    max_burn_per_fire: Data.Integer(),
-  })),
-});
+export type VaultDatum = ScheduleVaultDatum;
+export type InstantVaultDatum = InstantVaultDatumSource;
 
-const ActivityProfileSchema = Data.Enum([
-  Data.Literal("Ember"), Data.Literal("Flame"), Data.Literal("Lantern"),
-]);
-
-const PendingProfileSchema = Data.Object({
-  new_profile:     ActivityProfileSchema,
-  effective_epoch: Data.Integer(),
-});
-
-const DelegationCertificateSchema = Data.Object({
-  current: Data.Array(Data.Object({
-    app_id:     Data.Bytes(),
-    weight_bps: Data.Integer(),
-  })),
-  pending: Data.Nullable(Data.Object({
-    allocations:     Data.Array(Data.Object({
-      app_id:     Data.Bytes(),
-      weight_bps: Data.Integer(),
-    })),
-    effective_epoch: Data.Integer(),
-  })),
-  current_effective_epoch: Data.Integer(),
-  last_changed_epoch:      Data.Integer(),
-});
-
-// Trường thứ hai là TỔNG LƯỢNG nanogic đã tiêu qua BurnBatch và chưa quy thành thưởng
-// InstantGen (§6.3) — KHÔNG phải số lượt. Nhãn cũ `total_burns_count` nói sai đơn vị và
-// đã bỏ khỏi mọi module còn sống (Nợ #39, chốt 2026-08-28).
-//
-// Đổi tên KHÔNG đụng hợp đồng nhị phân: `Data.Object` mã hoã theo THỨ TỰ KHAI, tên khoá
-// JS chỉ là hình dạng đối tượng. Cùng vị trí, cùng `Data.Integer()` ⇒ cùng byte trên
-// chuỗi, mọi UTxO đã tạo vẫn đọc được.
-//
-// 🔴 CÁI VỠ LÀ API CỦA SDK, KHÔNG PHẢI CHUỖI. Mã ngoài đọc `.total_burns_count` nay nhận
-// `undefined` — im lặng, không lỗi biên dịch nếu bên đó viết bằng JS. Đây là thay đổi
-// BREAKING của SDK; xem `MagicSDK/INTEGRATOR_GUIDE_V1.md`.
-const ActivityStateSchema = Data.Object({
-  recent_burn_epochs: Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
-  consumed_credit:    Data.Integer(),
-});
-
-const StreakStateSchema = Data.Object({
-  current_streak:    Data.Integer(),
-  last_active_epoch: Data.Integer(),
-});
-
-// ── Credential (chủ vault) ── gương `cardano/address/Credential` (blueprint 2026-09-26):
-//   VerificationKey(h) = Constr 0 [bytes 28]   Script(h) = Constr 1 [bytes 28]
-// `Data.Static` trùng kiểu `OwnerCredential` ở `@magiclamp/protocol-utils`.
-export const OwnerCredentialSchema = Data.Enum([
-  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
-  Data.Object({ Script: Data.Tuple([Data.Bytes({ minLength: 28, maxLength: 28 })]) }),
-]);
-
-const VaultAttributionSchema = Data.Object({
-  attribution_root: Data.Bytes(),
-  last_event_epoch: Data.Integer(),
-  total_events:     Data.Integer(),
-});
-
-/** 17 trường chung của MỌI loại két, theo ĐÚNG thứ tự khai = chỉ số trường Plutus.
- *  Đây là NGUỒN: hai lược đồ bên dưới trải danh sách này vào, không chép lại nó. */
-const VAULT_DATUM_COMMON_FIELDS = {
-  owner:                 OwnerCredentialSchema,
-  lamp_balance:          Data.Integer(),
-  lamp_locked:           Data.Integer(),
-  loyalty_holdings:      Data.Array(LoyaltyHoldingSchema),
-  magic_batches:         Data.Array(MagicBatchSchema),
-  next_batch_index:      Data.Integer(),
-  vacuum_orders:         Data.Array(VacuumOrderSchema),
-  gen_schedules:         Data.Array(GenScheduleSchema),
-  profile:               ActivityProfileSchema,
-  profile_changed_epoch: Data.Integer(),
-  pending_profile:       Data.Nullable(PendingProfileSchema),
-  last_updated_epoch:    Data.Integer(),
-  delegation_cert:       DelegationCertificateSchema,
-  activity_state:        ActivityStateSchema,
-  streak_state:          StreakStateSchema,
-  personal_delegate:     Data.Nullable(Data.Bytes()),
-  attribution:           VaultAttributionSchema,
-};
-
-/** VaultDatum 17 trường — ScheduleGen, PrepaidGen, và mọi bên đọc chung.
- *
- *  Tên này KHÔNG đổi dù nay nó chỉ tả một trong hai hình dạng: nó đã xuất ra ngoài
- *  và nhiều nhà đang nhập. Đổi tên là một breaking change của SDK để đổi lấy đúng
- *  một chữ. */
-export const VaultDatumSchema = Data.Object({ ...VAULT_DATUM_COMMON_FIELDS });
-
-/** VaultDatum 18 trường — CHỈ InstantGen. 17 trường chung + `instant_unlock_ms`
- *  ở chỉ số 17. Thêm ở CUỐI nên chỉ số 0..16 giữ nguyên, và các bên đọc theo VỊ TRÍ
- *  (`Paymaster` ▸ `vault_delegate_is` đọc trường 15, `ConsumeMAGIC` ▸ `consume.ak`
- *  đọc trường 0) không phải đụng gì. */
-export const InstantVaultDatumSchema = Data.Object({
-  ...VAULT_DATUM_COMMON_FIELDS,
-  instant_unlock_ms:     Data.Integer(),
-});
-
-export type VaultDatum = ReturnType<typeof Data.from<typeof VaultDatumSchema>>;
-export type InstantVaultDatum = ReturnType<typeof Data.from<typeof InstantVaultDatumSchema>>;
+/** Số trường theo loại két và đời — đọc từ gói nền, không gõ tay. */
+export const VAULT_DATUM_FIELD_COUNTS = {
+  Instant:  { v2: INSTANT_FIELDS_V2,  v1: INSTANT_FIELDS_V1 },
+  Schedule: { v2: SCHEDULE_FIELDS_V2, v1: SCHEDULE_FIELDS_V1 },
+} as const;
 
 /** Loại két suy ra từ SỐ TRƯỜNG của datum. Tập ĐÓNG, khớp `VaultType` của `types.ts`. */
 export type VaultDatumShapeKind = "Instant" | "Schedule";
 
-export interface VaultDatumEitherShape {
-  /** `"Instant"` khi datum có 18 trường, `"Schedule"` khi có 17. */
-  kind: VaultDatumShapeKind;
-  datum: VaultDatum | InstantVaultDatum;
-  /** Trường 17 khi `kind === "Instant"`; `null` khi `"Schedule"` — ở đó trường
-   *  KHÔNG TỒN TẠI, và `null` nói đúng điều đó. Đừng đệm `0n`: `0n` là một giá
-   *  trị hợp lệ của một két Instant chưa từng sinh, nên đệm nó là xoá mất chỗ
-   *  phân biệt "không có trường" với "có trường, bằng 0". */
-  instantUnlockMs: bigint | null;
+export type VaultDatumEitherShape =
+  | { kind: "Instant";  datum: InstantVaultDatum; instantUnlockMs: bigint }
+  | { kind: "Schedule"; datum: VaultDatum;        instantUnlockMs: null };
+
+/** Giải mã datum két khi ĐÃ biết loại. Đời trước v2.0 hay sai loại ⟹ NÉM (lỗi gói nền). */
+export function decodeVaultDatumOfKind(kind: "Instant", hex: string): InstantVaultDatum;
+export function decodeVaultDatumOfKind(kind: "Schedule", hex: string): VaultDatum;
+export function decodeVaultDatumOfKind(kind: VaultDatumShapeKind, hex: string): VaultDatum | InstantVaultDatum;
+export function decodeVaultDatumOfKind(kind: VaultDatumShapeKind, hex: string): VaultDatum | InstantVaultDatum {
+  return kind === "Instant" ? decodeInstantVaultDatum(hex) : decodeScheduleVaultDatum(hex);
 }
 
 /**
- * Giải mã một datum két khi CHƯA biết nó thuộc loại nào — thử hình dạng 18 trường
- * trước, rồi 17.
+ * Giải mã một datum két khi CHƯA biết loại — rẽ theo SỐ TRƯỜNG rồi giao cho bộ giải mã
+ * của đúng gói nền: 20 ⟹ InstantGen, 19 ⟹ ScheduleGen.
  *
- * Thử Instant trước là có chủ ý: hai lược đồ loại trừ nhau (Lucid ném ở cả hai
- * chiều lệch số trường — xem đầu tệp), nên thứ tự không đổi KẾT QUẢ, chỉ đổi số
- * lần thử ở đường đi phổ biến hơn.
- *
- * 🔴 KHÔNG NUỐT LỖI. Cả hai hình dạng đều không khớp ⟹ NÉM, và câu lỗi nêu đích
- * danh hai hình dạng đã thử cùng câu lỗi gốc của từng lần. Trả `null` hay `{}` ở
- * đây là dựng một cái vỏ im lặng: một két không đọc được và một két rỗng sẽ ra
+ * 18 hoặc 17 trường là két đời trước Gen v2.0 ⟹ NÉM `VAULT_DATUM_V1`. Số khác ⟹ NÉM.
+ * 🔴 KHÔNG NUỐT LỖI: trả `null` ở đây là để một két không đọc được và một két rỗng ra
  * cùng một màn hình.
  */
 export function decodeVaultDatumEitherShape(hex: string): VaultDatumEitherShape {
-  let instantError: string;
-  try {
-    const datum = Data.from(hex, InstantVaultDatumSchema);
-    return {
-      kind: "Instant",
-      datum,
-      instantUnlockMs: (datum as unknown as { instant_unlock_ms: bigint }).instant_unlock_ms,
-    };
-  } catch (e) {
-    instantError = (e as Error).message;
+  const raw = Data.from(hex);
+  if (!(raw instanceof Constr) || raw.index !== 0) {
+    throw new Error(`VAULT_DATUM_SHAPE: datum két không phải Constr 0 — không phải VaultDatum.`);
   }
-
-  try {
-    return { kind: "Schedule", datum: Data.from(hex, VaultDatumSchema), instantUnlockMs: null };
-  } catch (e) {
+  const n = raw.fields.length;
+  if (n === INSTANT_FIELDS_V2) {
+    const datum = decodeInstantVaultDatum(hex);
+    return { kind: "Instant", datum, instantUnlockMs: datum.instant_unlock_ms };
+  }
+  if (n === SCHEDULE_FIELDS_V2) {
+    return { kind: "Schedule", datum: decodeScheduleVaultDatum(hex), instantUnlockMs: null };
+  }
+  if (n === INSTANT_FIELDS_V1 || n === SCHEDULE_FIELDS_V1) {
     throw new Error(
-      `Datum két không khớp hình dạng nào trong hai hình dạng đang sống. ` +
-      `InstantVaultDatumSchema (18 trường): ${instantError} — ` +
-      `VaultDatumSchema (17 trường): ${(e as Error).message}`,
+      `VAULT_DATUM_V1: datum ${n} trường là két đời TRƯỚC Gen v2.0 ` +
+      `(${n === INSTANT_FIELDS_V1 ? "InstantGen" : "ScheduleGen"} v1, hash cũ). Gen v2.0 là ` +
+      `script mới và KHÔNG di trú UTxO v1 — két này không đi được qua SDK v2.0.`,
     );
   }
+  throw new Error(
+    `VAULT_DATUM_SHAPE: datum ${n} trường, không khớp hình dạng nào đang sống ` +
+    `(InstantGen ${INSTANT_FIELDS_V2} · ScheduleGen ${SCHEDULE_FIELDS_V2}).`,
+  );
 }
 
 // ── VaultIdRedeemer — redeemer của handler `mint` trên chính validator vault ──
 //
-// Nguồn (ĐỌC, đừng nhớ): `pub type VaultIdRedeemer` trong
-//   InstantGen/onchain/validators/vault.ak  (và bản song sinh ở ScheduleGen)
-//     MintVaultId { seed: OutputReference }   → constructor 0
-//     BurnVaultId                             → constructor 1
-// Thứ tự khai báo = chỉ số constructor. Đảo một biến thể bên Aiken mà không đảo
-// ở đây ⇒ tx mint bị validator đọc thành BurnVaultId và fail.
-const OutputReferenceSchema = Data.Object({
-  transaction_id: Data.Bytes(),   // 32 byte
-  output_index:   Data.Integer(),
-});
-
-export const VaultIdRedeemerSchema = Data.Enum([
-  Data.Object({ MintVaultId: Data.Object({ seed: OutputReferenceSchema }) }),
-  Data.Literal("BurnVaultId"),
-]);
+// Nguồn: `pub type VaultIdRedeemer` trong InstantGen/onchain/validators/vault.ak (và bản
+// song sinh ở ScheduleGen): MintVaultId { seed } = Constr 0, BurnVaultId = Constr 1.
+// Tái xuất từ `@magiclamp/instantgen-sdk` ▸ `VaultIdRedeemerSchema`, không chép.
+export const VaultIdRedeemerSchema = VaultIdRedeemerSchemaSource;
 
 export type VaultIdRedeemer = ReturnType<typeof Data.from<typeof VaultIdRedeemerSchema>>;

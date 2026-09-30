@@ -34,7 +34,9 @@ import {
   resolveRefScript,
   type AcceptInlineScriptCeiling,
 } from "./refScript.js";
-import { InstantVaultDatumSchema, type VaultDatum } from "./schemas.js";
+import { InstantVaultDatumSchema, decodeVaultDatumOfKind, type InstantVaultDatum } from "./schemas.js";
+import { expectedCheckpoint } from "@magiclamp/instantgen-sdk";
+import { readCheckpointRefs, type InstantRefParams } from "./genV2Refs.js";
 import type { Profile, VaultType } from "./types.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
 
@@ -63,6 +65,14 @@ export interface UpdateProfileParams {
   /** UTxO CIP-33 mang script tham chiếu của vault — xem `refScript.ts`. Vắng thì
    *  script vẫn được nhét inline như trước. */
   vaultRefScriptUtxo: UTxO | AcceptInlineScriptCeiling;
+  // ── Gen v2.0 — nhánh UpdateProfile làm mới checkpoint (`FollowVault`) khi `cap_epoch < e` ──
+  /** Beacon ρ (NFT "RHO"). BẮT BUỘC khi két chưa làm mới trong epoch này; thiếu ⟹ NÉM
+   *  `GEN-INST-011` trước khi dựng. Cùng epoch ⟹ không đọc, không đưa vào tx. */
+  rateBeaconUtxo?:  UTxO;
+  /** Két Wakeme ghim két này — chỉ ĐỌC. BẮT BUỘC khi làm mới mà `wakeme_link != ""`. */
+  wakemeVaultUtxo?: UTxO;
+  /** Apply-param của két Instant để soát hai UTxO trên (`instantVaultParamsFromProtocol`). */
+  instantVaultParams?: InstantRefParams;
 }
 
 export interface UpdateProfileResult {
@@ -70,7 +80,9 @@ export interface UpdateProfileResult {
   oldProfile:       Profile;
   newProfile:       Profile;
   effectiveEpoch:   bigint;
-  newVaultDatum:    VaultDatum;
+  newVaultDatum:    InstantVaultDatum;
+  /** Lượt này làm mới checkpoint (`cap_epoch < e`) — khi đó tx đọc beacon ρ (+ két Wakeme). */
+  checkpointRefreshed: boolean;
   summary:          string;
 }
 
@@ -100,11 +112,9 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
   }
 
   // Cổng ngay trên đã loại `"Schedule"`, và `VaultType` là tập ĐÓNG hai phần tử ⟹
-  // tới dòng này chỉ còn két Instant, tức hình dạng 18 trường. Dùng thẳng lược đồ
-  // Instant chứ không đi qua `decodeVaultDatumEitherShape`: ở đây loại két đã BIẾT,
-  // nên một phép thử-hai-hình-dạng sẽ nhận cả datum 17 trường — mà một datum 17
-  // trường ở đường này nghĩa là ai đó đưa nhầm két, và đó là thứ phải kêu.
-  const vaultDatum = Data.from(vaultUtxo.datum!, InstantVaultDatumSchema) as VaultDatum;
+  // tới dòng này chỉ còn két Instant, tức hình dạng 20 trường (Gen v2.0). Giải mã thẳng
+  // theo loại: datum 19 trường (két Schedule) hay 18 trường (két Instant v1) ⟹ NÉM.
+  const vaultDatum = decodeVaultDatumOfKind("Instant", vaultUtxo.datum!);
 
   // C-PC-V3
   if (newProfile === vaultDatum.profile) {
@@ -130,8 +140,18 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
 
   const effectiveEpoch = currentEpoch + 1n;
 
+  // Gen v2.0: `validate_update_profile` ▸ `expected_checkpoint(input_datum, …, FollowVault,
+  // False, …)` — trên datum VÀO (không áp pending). `cap_epoch == e` ⟹ năm ô ghim nguyên,
+  // không đọc ref; `cap_epoch < e` ⟹ làm mới, cần beacon ρ (+ két Wakeme nếu đã ghim).
+  const refs = readCheckpointRefs({
+    vaultUtxo, e: currentEpoch, params: params.instantVaultParams,
+    rateBeaconUtxo: params.rateBeaconUtxo, wakemeVaultUtxo: params.wakemeVaultUtxo,
+  });
+  const cp = expectedCheckpoint(vaultDatum, currentEpoch, "FollowVault", false, refs.wakeme, refs.rate);
+  const checkpointRefreshed = vaultDatum.cap_epoch < currentEpoch;
+
   // Build new datum (A02 — lazy: profile unchanged, pending set)
-  const newVaultDatum: VaultDatum = {
+  const newVaultDatum: InstantVaultDatum = {
     ...vaultDatum,
     pending_profile:       { new_profile: newProfile, effective_epoch: effectiveEpoch },
     profile_changed_epoch: currentEpoch,
@@ -139,7 +159,18 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
     // profile, magic_batches, lamp_*, etc.: unchanged (C-PC-V4)
     // `instant_unlock_ms` đi theo phép trải và ĐỨNG YÊN — `validate_update_profile`
     // ép `output_datum.instant_unlock_ms == input_datum.instant_unlock_ms`.
+    wakeme_link:           cp.wakeme_link,
+    cap_epoch:             cp.cap_epoch,
+    cap_nanogic:           cp.cap_nanogic,
+    usage_window:          cp.usage_window,
+    usage_window_epoch:    cp.usage_window_epoch,
   };
+  // Ref input CHỈ khi validator đọc chúng (lượt làm mới).
+  const checkpointRefs: UTxO[] = [];
+  if (checkpointRefreshed) {
+    if (params.rateBeaconUtxo) checkpointRefs.push(params.rateBeaconUtxo);
+    if (params.wakemeVaultUtxo) checkpointRefs.push(params.wakemeVaultUtxo);
+  }
 
   const vaultAddress = credentialToAddress(
     network,
@@ -156,7 +187,8 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
   );
   const txWithScript = refUtxo === null
     ? lucid.newTx().collectFrom([vaultUtxo], redeemer).attach.SpendingValidator(vaultScript)
-    : lucid.newTx().collectFrom([vaultUtxo], redeemer).readFrom([refUtxo]);
+        .readFrom(checkpointRefs)
+    : lucid.newTx().collectFrom([vaultUtxo], redeemer).readFrom([refUtxo, ...checkpointRefs]);
 
   const txBody = txWithScript
     .pay.ToAddressWithData(
@@ -189,6 +221,7 @@ export async function updateProfile(params: UpdateProfileParams): Promise<Update
     newProfile,
     effectiveEpoch,
     newVaultDatum,
+    checkpointRefreshed,
     summary,
   };
 }

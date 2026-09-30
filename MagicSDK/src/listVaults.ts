@@ -8,11 +8,13 @@
 // tuổi loyalty độc lập → tiêu LAMP của vault ngắn hạn KHÔNG ảnh hưởng tới LF
 // của vault dài hạn. Đây là feature có sẵn — không cần thay đổi onchain.
 
-import { Data, type LucidEvolution, type UTxO } from "@lucid-evolution/lucid";
+import { type LucidEvolution, type UTxO } from "@lucid-evolution/lucid";
 import { applyVaultValidator } from "./validatorScripts.js";
 import { ownerRefOf, sameOwner, type OwnerRef } from "@magiclamp/protocol-utils";
 import { resolveOwnerInput } from "./ownerInput.js";
-import { InstantVaultDatumSchema, VaultDatumSchema, type VaultDatum } from "./schemas.js";
+import {
+  VAULT_DATUM_FIELD_COUNTS, decodeVaultDatumOfKind, type InstantVaultDatum, type VaultDatum,
+} from "./schemas.js";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
 export interface VaultRecord {
@@ -21,7 +23,8 @@ export interface VaultRecord {
   /** The raw UTxO (for downstream tx builders). */
   utxo:           UTxO;
   /** Decoded datum. */
-  datum:          VaultDatum;
+  /** Két Schedule: `VaultDatum` (19 trường); két Instant: `InstantVaultDatum` (20). */
+  datum:          VaultDatum | InstantVaultDatum;
   /** Network-derived vault address (same for all vaults of this type). */
   vaultAddress:   string;
   /** LAMP balance in oildrop (lamp_balance from datum). */
@@ -61,9 +64,9 @@ export async function listVaultsForOwner(params: ListVaultsParams): Promise<Vaul
   const allUtxos = await lucid.utxosAt(vaultAddress);
 
   // Mỗi địa chỉ vault phục vụ ĐÚNG MỘT loại két, nên hình dạng datum suy ra từ
-  // `vaultType` chứ không phải thử hai lần: Instant 18 trường, Schedule 17
-  // (`schemas.ts` đầu tệp).
-  const datumSchema = vaultType === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
+  // `vaultType` chứ không phải thử hai lần: Instant 20 trường, Schedule 19 (Gen v2.0,
+  // `schemas.ts` đầu tệp). Bộ giải mã của gói nền NÉM có tên với datum đời v1.
+  const fieldCount = VAULT_DATUM_FIELD_COUNTS[vaultType].v2;
 
   const records: VaultRecord[] = [];
   // 🔴 Một UTxO mang datum ở ĐỊA CHỈ KÉT mà không giải mã nổi là tín hiệu lược
@@ -73,9 +76,9 @@ export async function listVaultsForOwner(params: ListVaultsParams): Promise<Vaul
   const khongGiaiMaDuoc: string[] = [];
   for (const u of allUtxos) {
     if (!u.datum) continue;   // skip UTxOs without inline datum (not our vault)
-    let datum: VaultDatum;
+    let datum: VaultDatum | InstantVaultDatum;
     try {
-      datum = Data.from(u.datum, datumSchema) as VaultDatum;
+      datum = decodeVaultDatumOfKind(vaultType, u.datum);
     } catch (e) {
       khongGiaiMaDuoc.push(
         `${u.txHash}#${u.outputIndex}: ${e instanceof Error ? e.message : String(e)}`,
@@ -109,7 +112,7 @@ export async function listVaultsForOwner(params: ListVaultsParams): Promise<Vaul
   if (khongGiaiMaDuoc.length > 0) {
     const chiTiet =
       `${khongGiaiMaDuoc.length} UTxO ở địa chỉ két ${vaultAddress} không giải mã được bằng ` +
-      `lược đồ của loại "${vaultType}" (${vaultType === "Instant" ? "18" : "17"} trường):\n  ` +
+      `lược đồ của loại "${vaultType}" (${fieldCount} trường, Gen v2.0):\n  ` +
       khongGiaiMaDuoc.join("\n  ");
     if (records.length === 0) {
       throw new Error(

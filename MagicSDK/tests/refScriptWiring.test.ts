@@ -61,20 +61,28 @@ const PLUTUS_JSON = {
 /**
  * UTxO vault mẫu. `kind` BẮT BUỘC, không có mặc định — và đó là điểm chính.
  *
- * Hai hình dạng datum khác số trường (Instant 18 · Schedule 17), mà giải mã Plutus
- * Data nghiêm ngặt về số trường ở cả hai chiều. Một fixture đoán hộ hình dạng sẽ làm
- * bài kiểm đỏ vì FIXTURE chứ không vì mã, và người đọc bảng đỏ đi sửa nhầm chỗ. Bắt
+ * Hai hình dạng datum khác số trường (Gen v2.0: Instant 20 · Schedule 19), mà giải mã
+ * Plutus Data nghiêm ngặt về số trường ở cả hai chiều. Một fixture đoán hộ hình dạng sẽ
+ * làm bài kiểm đỏ vì FIXTURE chứ không vì mã, và người đọc bảng đỏ đi sửa nhầm chỗ. Bắt
  * khai ra thì người viết bài phải trả lời "đường này chạm loại vault nào" — câu mà
  * chính `updateProfile` (chỉ Instant) và `withdrawLamp` (cả hai) trả lời khác nhau.
+ *
+ * Két Instant đặt `cap_epoch = usage_window_epoch = CUR_EPOCH` (đã làm mới checkpoint
+ * trong epoch này) ⟹ `updateProfile` không đọc beacon ρ. Tệp này kiểm dây nối CIP-33;
+ * để genesis `cap_epoch = 0` thì bài vấp `GEN-INST-011` trước khi chạm `readFrom`, và
+ * vế `readInputs` có đúng 1 phần tử mất nghĩa.
  */
 function vaultUtxo(kind: "Instant" | "Schedule"): UTxO {
-  const common = buildInitialVaultDatum({
+  const genesis = buildInitialVaultDatum({
     ownerPkh:           OWNER_PKH,
     lampBalanceOildrop: 1_000_000_000n,
     profile:            "Flame",
     currentEpoch:       CUR_EPOCH > 10n ? CUR_EPOCH - 10n : 0n,
+    vaultType:          kind,
   });
-  const datum = kind === "Instant" ? { ...common, instant_unlock_ms: 0n } : common;
+  const datum = kind === "Instant"
+    ? { ...genesis, cap_epoch: CUR_EPOCH, usage_window_epoch: CUR_EPOCH }
+    : genesis;
   const schema = kind === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
   return {
     txHash: "bb".repeat(32), outputIndex: 0,

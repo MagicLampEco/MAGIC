@@ -46,7 +46,9 @@ import {
   liveMagic,
   maxClaimable,
   pruneExpired,
-  settleDelta,
+  settleLine,
+  settleLineDebt,
+  settleLineDelta,
 } from "../offchain/src/prepaid.js";
 import {
   AddressSchema,
@@ -88,7 +90,7 @@ const OWN_REF = { txHash: "33".repeat(32), outputIndex: 0n };
 const EPOCH = 100n;
 
 function vault(
-  credits: { fund_id: string; remaining: bigint }[] = [],
+  credits: { fund_id: string; remaining: bigint; consumed?: bigint }[] = [],
   batches: MagicBatch[] = [],
 ): PrepaidVaultDatum {
   return {
@@ -102,6 +104,7 @@ function vault(
       remaining: c.remaining,
       issued_epoch: 99n,
       last_draw_epoch: 99n,
+      consumed_unsettled: c.consumed ?? 0n,
     })),
     magic_batches: batches,
     next_batch_index: 0n,
@@ -276,14 +279,17 @@ describe("TV-PP-02 — vòng đời lock → draw → burn → settle → claim"
       TV_PP_02.lock_carpdrop - TV_PP_02.draw_carpdrop,
     );
 
-    // 3. Tiêu 6 MAGIC
+    // 3. Tiêu 6 MAGIC — đốt GHI NỢ vào dòng hạn-mức, chưa chạm quỹ
     const bid = v1.magic_batches[0]!.batch_id;
     const v2 = burnBatches(v1, [[bid, TV_PP_02.burn_nanogic]], EPOCH);
     expect(v2.magic_batches[0]!.current_amount).toBe(TV_PP_02.batch_left_nanogic);
     expect(v2.attribution.total_events).toBe(1n);
+    expect(v2.prepaid_credits[0]!.consumed_unsettled).toBe(TV_PP_02.burn_nanogic);
 
-    // 4. Quỹ quyết toán đúng phần đã tiêu thật
-    const delta = settleDelta(v1, v2, FUND_ID, EPOCH);
+    // 4. Quyết toán — lượt RIÊNG (`SettleLine`), có thể ở giao dịch sau
+    const v3 = settleLine(v2, FUND_ID, EPOCH);
+    expect(v3.prepaid_credits[0]!.consumed_unsettled).toBe(0n);
+    const delta = settleLineDelta(v2, v3, FUND_ID);
     expect(delta).toBe(TV_PP_02.settle_delta_nanogic);
     const f2 = fundAfterSettle(f1, delta, EPOCH);
     expect(parCarpFromMagic(f2.magic_settled)).toBe(TV_PP_02.settled_par_carpdrop);
@@ -318,10 +324,27 @@ describe("TV-PP-EXPIRE — hết hạn trả lại hạn-mức, không trả l�
       batch("b1", 4_000_000_000n, EPOCH - 1n),
     ]);
     const v2 = pruneExpired(v1, EPOCH);
-    expect(settleDelta(v1, v2, FUND_ID, EPOCH)).toBe(0n);
+    // Dọn rác KHÔNG chạm sổ nợ quyết toán — đây là chỗ bất biến này sống sau khi
+    // quỹ thôi đo delta batch: chỉ `burnBatches` cộng vào `consumed_unsettled`.
+    expect(v2.prepaid_credits[0]!.consumed_unsettled).toBe(0n);
+    expect(settleLineDelta(v1, v2, FUND_ID)).toBe(0n);
+    expect(() => settleLine(v2, FUND_ID, EPOCH)).toThrow(/C-PP-7/);
     expect(() => fundAfterSettle(fund(1_000_000n, 1_000_000n), 0n, EPOCH)).toThrow(
       /C-PP-7/,
     );
+  });
+
+  it("nợ quyết toán ĐÃ ghi vẫn đòi được sau khi batch chết", () => {
+    // Đây là cái mà bản trước 2026-09-28 mất: đốt rồi mà không kèm quỹ thì phần
+    // MAGIC ấy không còn dấu vết nào, CARP đối ứng kẹt trong quỹ vĩnh viễn.
+    const v1 = vault([{ fund_id: FUND_ID, remaining: 0n }], [
+      batch("b1", 4_000_000_000n, EPOCH),
+    ]);
+    const v2 = burnBatches(v1, [["b1", 1_000_000_000n]], EPOCH);
+    const v3 = pruneExpired(v2, EPOCH + 1n);
+    expect(v3.prepaid_credits[0]!.consumed_unsettled).toBe(1_000_000_000n);
+    const v4 = settleLine(v3, FUND_ID, EPOCH + 1n);
+    expect(settleLineDelta(v3, v4, FUND_ID)).toBe(1_000_000_000n);
   });
 });
 
@@ -387,7 +410,10 @@ describe("TẤN CÔNG — tiêu batch của epoch đã chết (C-PP-5)", () => {
   });
 
   it("batch epoch hiện tại thì tiêu được", () => {
-    const v = vault([], [batch("b1", 10n ** 9n, EPOCH)]);
+    // Dòng hạn-mức phải có mặt: từ 2026-09-28 mỗi lượt đốt GHI NỢ vào nó.
+    const v = vault([{ fund_id: FUND_ID, remaining: 0n }], [
+      batch("b1", 10n ** 9n, EPOCH),
+    ]);
     expect(burnBatches(v, [["b1", 1n]], EPOCH).magic_batches[0]!.current_amount).toBe(
       10n ** 9n - 1n,
     );
@@ -448,27 +474,87 @@ describe("TẤN CÔNG — rút CARP ra khỏi quỹ (C-PP-3, C-PP-6)", () => {
 });
 
 describe("TẤN CÔNG — quyết toán sai (C-PP-7)", () => {
-  it("chỉ tính batch của ĐÚNG quỹ này", () => {
-    const vin = vault([], [batch("b1", 10n ** 9n, EPOCH, OTHER_FUND)]);
-    const vout = vault([], [batch("b1", 0n, EPOCH, OTHER_FUND)]);
-    expect(settleDelta(vin, vout, FUND_ID, EPOCH)).toBe(0n);
+  it("chỉ tính nợ của ĐÚNG dòng quỹ này", () => {
+    const vin = vault([
+      { fund_id: FUND_ID, remaining: 0n, consumed: 0n },
+      { fund_id: OTHER_FUND, remaining: 0n, consumed: 10n ** 9n },
+    ]);
+    const vout = vault([
+      { fund_id: FUND_ID, remaining: 0n, consumed: 0n },
+      { fund_id: OTHER_FUND, remaining: 0n, consumed: 0n },
+    ]);
+    expect(settleLineDelta(vin, vout, FUND_ID)).toBe(0n);
+    expect(settleLineDelta(vin, vout, OTHER_FUND)).toBe(10n ** 9n);
   });
 
-  it("không tính batch đã chết dù nó biến mất khỏi output", () => {
-    const vin = vault([], [batch("b1", 10n ** 9n, EPOCH - 1n)]);
-    const vout = vault([], []);
-    expect(settleDelta(vin, vout, FUND_ID, EPOCH)).toBe(0n);
+  it("dòng hạn-mức không tồn tại → NÉM, không trả 0", () => {
+    const v = vault([{ fund_id: OTHER_FUND, remaining: 0n }]);
+    expect(() => settleLineDebt(v, FUND_ID)).toThrow(/C-PP-2/);
+    expect(() => settleLine(v, FUND_ID, EPOCH)).toThrow(/C-PP-2/);
   });
 
-  it("batch tăng số dư khi 'tiêu' → từ chối", () => {
-    const vin = vault([], [batch("b1", 10n, EPOCH)]);
-    const vout = vault([], [batch("b1", 20n, EPOCH)]);
-    expect(() => settleDelta(vin, vout, FUND_ID, EPOCH)).toThrow(/C-PP-7/);
+  it("dòng không nợ gì → từ chối (reject-noop)", () => {
+    const v = vault([{ fund_id: FUND_ID, remaining: 0n, consumed: 0n }]);
+    expect(() => settleLine(v, FUND_ID, EPOCH)).toThrow(/C-PP-7/);
+  });
+
+  it("nợ TĂNG ở output ⟹ delta âm ⟹ quỹ từ chối", () => {
+    const vin = vault([{ fund_id: FUND_ID, remaining: 0n, consumed: 10n }]);
+    const vout = vault([{ fund_id: FUND_ID, remaining: 0n, consumed: 20n }]);
+    expect(settleLineDelta(vin, vout, FUND_ID)).toBe(-10n);
+    expect(() => fundAfterSettle(fund(1_000_000n, 1_000_000n), -10n, EPOCH)).toThrow(
+      /C-PP-7/,
+    );
   });
 
   it("quyết toán vượt tổng hạn-mức đã cấp → từ chối", () => {
     const f = fund(1_000_000n, 1_000_000n);
     expect(() => fundAfterSettle(f, 2_000_000_000n, EPOCH)).toThrow(/C-PP-7/);
+  });
+});
+
+describe("BurnBatch ghi nợ quyết toán (vá 2026-09-28)", () => {
+  it("cộng ĐÚNG lượng đốt vào dòng của quỹ mà batch thuộc về", () => {
+    const v = vault([{ fund_id: FUND_ID, remaining: 0n }], [
+      batch("b1", 10n ** 9n, EPOCH),
+    ]);
+    const after = burnBatches(v, [["b1", 600_000_000n]], EPOCH);
+    expect(after.prepaid_credits[0]!.consumed_unsettled).toBe(600_000_000n);
+    expect(after.magic_batches[0]!.current_amount).toBe(400_000_000n);
+  });
+
+  it("một lượt đốt chạm HAI quỹ ⟹ cả hai dòng cùng tăng", () => {
+    const v = vault(
+      [
+        { fund_id: FUND_ID, remaining: 0n },
+        { fund_id: OTHER_FUND, remaining: 0n },
+      ],
+      [
+        batch("b1", 10n ** 9n, EPOCH, FUND_ID),
+        batch("b2", 10n ** 9n, EPOCH, OTHER_FUND),
+      ],
+    );
+    const after = burnBatches(
+      v,
+      [
+        ["b1", 600_000_000n],
+        ["b2", 300_000_000n],
+      ],
+      EPOCH,
+    );
+    expect(after.prepaid_credits[0]!.consumed_unsettled).toBe(600_000_000n);
+    expect(after.prepaid_credits[1]!.consumed_unsettled).toBe(300_000_000n);
+    // Và quyết toán chúng bằng HAI lượt riêng, mỗi lượt một quỹ — đây là ca mà
+    // bản trước không làm được (quỹ chỉ tiêu được một UTxO mỗi giao dịch).
+    const s1 = settleLine(after, FUND_ID, EPOCH);
+    expect(s1.prepaid_credits[1]!.consumed_unsettled).toBe(300_000_000n);
+    const s2 = settleLine(s1, OTHER_FUND, EPOCH);
+    expect(s2.prepaid_credits.map((c) => c.consumed_unsettled)).toEqual([0n, 0n]);
+  });
+
+  it("đốt batch của quỹ KHÔNG có dòng hạn-mức → NÉM", () => {
+    const v = vault([], [batch("b1", 10n ** 9n, EPOCH)]);
+    expect(() => burnBatches(v, [["b1", 1n]], EPOCH)).toThrow(/C-PP-2/);
   });
 });
 
@@ -523,13 +609,13 @@ describe("cấu hình mạng đã verify", () => {
   // Ba bài dưới thay bài cũ "giữ đúng policy tCARP đã đúc thật trên hai
   // testnet" — bài đó ghim ba con số KHÔNG khớp nguồn nào (xem khối chú thích
   // ở `constants.ts`), nên nó xanh trong lúc nó sai.
-  it("Preprod mang đúng số của nhà CarpetMint (đo 2026-09-11)", () => {
+  it("Preprod mang đúng số của nhà CarpetMint (đời cập nhật 2026-09-28)", () => {
     const { policyId, assetName } = carpAssetClass("Preprod");
     expect(policyId).toBe(
-      "4967df00c7e038fc7ce2abdc1e6d4c946342ffa905e059ab861dffc2",
+      "86ea67178d3739965449535eb1f875b37ba2eede4ee5781f89bc310b",
     );
     expect(assetName).toBe(
-      "30cb6a6b6a1c9746bf9eb081d914d96ede4c4c13e661404678a933a6",
+      "110d0c97df39bcee5ca6875485c493e7cd7608cac38c84b281d18c4f",
     );
   });
 

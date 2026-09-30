@@ -26,8 +26,15 @@ Lý do thiết kế, bất biến `C-PP-1..15`, bảng quyền, và danh sách `
   là PHÉP ĐỒNG NHẤT — không phí, không làm tròn, ở cả hai chiều.
 - **MAGIC hết hạn trả lại HẠN-MỨC, không trả lại CARP.** `PrunePrepaid` cộng
   `⌊current_amount / PAR_SCALE⌋` về dòng hạn-mức tương ứng. Không đồng CARP nào rời quỹ (F2).
-- **Chỉ MAGIC tiêu THẬT mới vào `magic_settled`.** Quyết toán bỏ qua mọi batch đã chết —
-  đây là `INV-MAGIC-CITIZEN`, và là thứ quyết định provider được đòi bao nhiêu.
+- **Chỉ MAGIC tiêu THẬT mới vào `magic_settled`.** `PrunePrepaid` không chạm sổ nợ quyết
+  toán, nên MAGIC hết hạn không có đường nào vào đó — đây là `INV-MAGIC-CITIZEN`, và là thứ
+  quyết định provider được đòi bao nhiêu.
+- **Đốt và quyết toán là HAI giao dịch** (đổi 2026-09-28). `BurnBatch` ghi nợ vào
+  `PrepaidCredit.consumed_unsettled` của đúng dòng quỹ; `SettleLine` (constr 6,
+  permissionless) chuyển khoản nợ đó sang `magic_settled` của quỹ, mỗi lượt một quỹ. Ghép
+  hai việc vào một giao dịch như bản trước thì một lượt đốt không kèm quỹ là mất dấu MAGIC
+  vĩnh viễn — người dựng giao dịch đốt là CHỦ VAULT, không phải provider — và một lượt đốt
+  chạm hai quỹ chỉ quyết toán được một (quỹ chỉ tiêu được một UTxO mỗi giao dịch).
 - **`BurnBatch` phải ở constructor index 2.** ConsumeMAGIC ghim `burn_batch_constr = 2` cho
   vault này (§7.3). Chèn nhánh redeemer vào giữa là hỏng giải mã bên kia.
 

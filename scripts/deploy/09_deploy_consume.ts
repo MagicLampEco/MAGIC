@@ -18,10 +18,11 @@
 // HAI đã đỗ vì đính kèm cả hai validator cho 17.310 byte, vượt trần 16.384.
 //
 // PREREQ (đã deploy trước, nạp qua env — xem config.ts):
-//   VAULT_KIND           — schedule | instant. BẮT BUỘC, không mặc định.
-//   VAULT_SCHEDULE_HASH (bước 07) hoặc VAULT_INSTANT_HASH (bước 05), theo VAULT_KIND.
-// RA: bộ khoá có hậu tố `_SCHEDULE` / `_INSTANT` (scripts/consumeBook.ts). Hai lượt, mỗi
-//   loại vault một lượt, cho hai bộ khoá nằm cạnh nhau trong sổ, không đè nhau.
+//   VAULT_KIND           — schedule | instant | prepaid. BẮT BUỘC, không mặc định.
+//   VAULT_SCHEDULE_HASH (bước 07), VAULT_INSTANT_HASH (bước 05) hoặc VAULT_PREPAID_HASH
+//   (bước 10), theo VAULT_KIND.
+// RA: bộ khoá có hậu tố `_SCHEDULE` / `_INSTANT` / `_PREPAID` (scripts/consumeBook.ts). Mỗi
+//   loại vault một lượt, các bộ khoá nằm cạnh nhau trong sổ, không đè nhau.
 //   NETWORK, BLOCKFROST_KEY, WALLET_SEED/PRIVATE_KEY.
 //
 // KNOB (env, có default):

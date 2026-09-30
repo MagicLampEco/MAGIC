@@ -118,6 +118,10 @@ const PrepaidVaultDatumSchema = Data.Object({
     remaining:       Data.Integer(),
     issued_epoch:    Data.Integer(),
     last_draw_epoch: Data.Integer(),
+    // Thêm Ở CUỐI 2026-09-28: nợ quyết toán (nanogic đã đốt, quỹ chưa ghi nhận).
+    // Vault 4-trường-mỗi-dòng đời trước KHÔNG đọc được bằng lược đồ này, và
+    // ngược lại — Aiken nghiêm về số trường cả hai chiều.
+    consumed_unsettled: Data.Integer(),
   })),
   // 🔴 `MagicBatch` CỦA PREPAIDGEN KHÔNG CÙNG HÌNH DẠNG với ScheduleGen/InstantGen.
   // Đừng chép lược đồ từ `07_create_schedule_vault.ts` sang — đo 2026-09-19 trên

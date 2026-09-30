@@ -73,14 +73,17 @@ export type CarpNetwork = "Mainnet" | "Preview" | "Preprod";
 export const CARP_POLICY_ID: Record<CarpNetwork, string | null> = {
   Mainnet: null, // chưa deploy (2026-09-11)
   Preview: null, // KHÔNG CÓ CARP trên Preview (2026-09-11)
-  Preprod: "4967df00c7e038fc7ce2abdc1e6d4c946342ffa905e059ab861dffc2",
+  // Đời hiện hành, cập nhật 2026-09-28. Nguồn: nhà CarpetMint ▸
+  // `offchain/state/web-export/instance.Preprod.json` ▸ `anchor` (tệp local
+  // 23/09). Đối chiếu Koios cùng ngày: tài sản tồn tại, supply 650000000.
+  Preprod: "86ea67178d3739965449535eb1f875b37ba2eede4ee5781f89bc310b",
 };
 
 /** Băm 28 byte do nhà CarpetMint phát. KHÔNG phải hex của "CARP"/"tCARP". */
 export const CARP_ASSET_NAME: Record<CarpNetwork, string | null> = {
   Mainnet: null,
   Preview: null,
-  Preprod: "30cb6a6b6a1c9746bf9eb081d914d96ede4c4c13e661404678a933a6",
+  Preprod: "110d0c97df39bcee5ca6875485c493e7cd7608cac38c84b281d18c4f",
 };
 
 /** 28 byte = 56 ký tự hex — độ dài của cả policy id lẫn asset name CARP. */
@@ -157,6 +160,12 @@ export const CARP_SUPERSEDED_GENERATIONS: ReadonlyArray<{
   /** `false` = chỉ có tiền tố; so bằng `startsWith`, KHÔNG so toàn chuỗi. */
   isFullLength: boolean;
 }> = [
+  // Đời thay ngày 2026-09-28. Bytes cũ VẪN SỐNG trên Preprod (Koios cùng ngày:
+  // tồn tại, supply 250000000) — đúng lý do danh sách này tồn tại: một policy
+  // đã được thay vẫn là 56 ký tự hex hợp lệ và `quantity_of` trên nó vẫn trả 0
+  // một cách bình thản.
+  { value: "4967df00c7e038fc7ce2abdc1e6d4c946342ffa905e059ab861dffc2", kind: "policy",     network: "Preprod", supersededOn: "2026-09-28", isFullLength: true  },
+  { value: "30cb6a6b6a1c9746bf9eb081d914d96ede4c4c13e661404678a933a6", kind: "asset_name", network: "Preprod", supersededOn: "2026-09-28", isFullLength: true  },
   { value: "527ae83ffb0c3512b672a2b9f291b631edf41f20146494e5268ab61a", kind: "policy",     network: "Preprod", supersededOn: "2026-09-11", isFullLength: true  },
   { value: "2a40c5f3af044bdc3a41acaa864e9089123156c06cea5c7cab631e4f", kind: "policy",     network: "Preview", supersededOn: "2026-09-11", isFullLength: true  },
   { value: "aa93b3b44d6079f4fbf4c73d23fe382cb80f05d421b749d966aa8fcc", kind: "asset_name", network: "both",    supersededOn: "2026-09-11", isFullLength: true  },

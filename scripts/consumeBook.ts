@@ -2,7 +2,7 @@
 //
 // ── VÌ SAO TỆP NÀY TỒN TẠI ──────────────────────────────────────────────────
 // `consume` được apply-param bằng hash của MỘT loại vault (BOUNDARIES.md ▸ "Apply-param
-// được phép thay đổi theo LOẠI script"). Hai loại vault sinh MAGIC ⟹ hai bản `consume`,
+// được phép thay đổi theo LOẠI script"). Ba loại vault giữ MAGIC ⟹ ba bản `consume`,
 // mỗi bản một price NFT, một beacon, một luồng Engage, một ref-script.
 //
 // Sổ trạng thái từng giữ MỘT bộ khoá không hậu tố (`CONSUME_SCRIPT_HASH`, `PRICE_*`,
@@ -19,7 +19,9 @@
 // `CONSUME_SCRIPT_HASH_INSTANT`, … Bộ khoá không hậu tố KHÔNG được đọc nữa ở đây —
 // nó không tự khai nó thuộc loại nào, nên đọc nó là đoán.
 
-export type VaultKind = "schedule" | "instant";
+// "prepaid" thêm 2026-09-28: PrepaidGen cũng tiêu MAGIC qua `BurnBatch` constr 2, nên nó
+// cần một bản `consume` riêng apply-param bằng `VAULT_PREPAID_HASH` (bước 10).
+export type VaultKind = "schedule" | "instant" | "prepaid";
 
 /** Các khoá bước 09 in ra cho MỘT bản `consume`. Thứ tự = thứ tự in. */
 export const CONSUME_KEY_NAMES = [
@@ -40,9 +42,9 @@ export type ConsumeKeyName = (typeof CONSUME_KEY_NAMES)[number];
 /** Không có mặc định: loại vault chọn SAI thì mọi giá trị sau đó đều có thật và đều sai. */
 export function parseVaultKind(raw: string | undefined, source = "VAULT_KIND"): VaultKind {
   const v = (raw ?? "").trim().toLowerCase();
-  if (v === "schedule" || v === "instant") return v;
+  if (v === "schedule" || v === "instant" || v === "prepaid") return v;
   throw new Error(
-    `${source} phải là "schedule" hoặc "instant" (nhận: "${raw ?? ""}"). ` +
+    `${source} phải là "schedule", "instant" hoặc "prepaid" (nhận: "${raw ?? ""}"). ` +
       `Không có mặc định: mỗi loại vault có bản consume riêng, đoán sai thì tx chết ở phase-1.`,
   );
 }
@@ -53,7 +55,11 @@ export function consumeKey(name: ConsumeKeyName, kind: VaultKind): string {
 
 /** Hash vault mà bản consume của `kind` được apply-param bằng — đọc từ sổ. */
 export function vaultHashKey(kind: VaultKind): string {
-  return kind === "schedule" ? "VAULT_SCHEDULE_HASH" : "VAULT_INSTANT_HASH";
+  switch (kind) {
+    case "schedule": return "VAULT_SCHEDULE_HASH";
+    case "instant":  return "VAULT_INSTANT_HASH";
+    case "prepaid":  return "VAULT_PREPAID_HASH";
+  }
 }
 
 /**

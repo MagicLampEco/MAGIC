@@ -194,6 +194,15 @@ async function main() {
   ]);
   const priceNftPolicy  = req("PRICE_NFT_POLICY");
   const maxPriceStale   = BigInt(req("MAX_PRICE_STALE"));
+  // Két Prepaid có lược đồ datum KHÁC hẳn (8 trường, `PrepaidVaultDatum`) và đường tiêu
+  // riêng. Rẽ nó vào nhánh `isSchedule ? … : Instant` bên dưới là giải mã bằng lược đồ
+  // InstantGen — lỗi chỉ lộ ra ở ledger. Chưa dựng đường Prepaid ở tệp này ⟹ NÉM.
+  if (vaultKind === "prepaid") {
+    throw new Error(
+      "consume_only.ts chưa dựng đường tiêu cho két Prepaid (lược đồ PrepaidVaultDatum). " +
+        "Dùng VAULT_KIND=instant hoặc schedule.",
+    );
+  }
   const isSchedule = vaultKind === "schedule";
   // Lược đồ datum theo LOẠI vault — xem khối nhập ở đầu tệp. Dùng CÙNG một biến cho
   // cả `Data.from` lẫn `Data.to`: đọc bằng hình dạng này rồi ghi bằng hình dạng kia

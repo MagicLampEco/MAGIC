@@ -20,6 +20,7 @@ import {
   type PrepaidVaultRedeemer,
   PrepaidVaultRedeemerSchema,
   SET_DID_COMMIT_CONSTR,
+  SETTLE_LINE_CONSTR,
   VAULT_ATTRIBUTION_FIELDS,
   VAULT_ID_REDEEMER_ORDER,
   VAULT_REDEEMER_ORDER,
@@ -142,19 +143,45 @@ describe("constructor index redeemer khớp Aiken", () => {
     expect(VAULT_REDEEMER_ORDER.indexOf("SetDidCommit")).toBe(SET_DID_COMMIT_CONSTR);
   });
 
-  it("năm chỉ số cũ KHÔNG dịch khi thêm nhánh mới", () => {
+  it("sáu chỉ số cũ KHÔNG dịch khi thêm nhánh mới", () => {
     const ak = enumVariants("PrepaidVaultRedeemer");
-    expect(ak.slice(0, 5)).toEqual([
+    expect(ak.slice(0, 6)).toEqual([
       "PrepaidLock",
       "PrepaidDraw",
       "BurnBatch",
       "PrunePrepaid",
       "SetDelegate",
+      "SetDidCommit",
     ]);
-    // Nhánh mới phải là nhánh CUỐI — thêm ở cuối thì năm chỉ số trên đứng yên
+    // Nhánh mới phải là nhánh CUỐI — thêm ở cuối thì sáu chỉ số trên đứng yên
     // theo cấu trúc, không theo kỷ luật của người thêm.
-    expect(ak).toHaveLength(SET_DID_COMMIT_CONSTR + 1);
-    expect(ak[SET_DID_COMMIT_CONSTR]).toBe("SetDidCommit");
+    expect(ak).toHaveLength(SETTLE_LINE_CONSTR + 1);
+    expect(ak[SETTLE_LINE_CONSTR]).toBe("SettleLine");
+  });
+
+  // ── SettleLine: thêm 2026-09-28, CHỈ THÊM Ở CUỐI ────────────────────────
+  it("SettleLine nằm ĐÚNG constr 6 ở cả Aiken lẫn bảng thứ tự TypeScript", () => {
+    expect(enumVariants("PrepaidVaultRedeemer").indexOf("SettleLine")).toBe(
+      SETTLE_LINE_CONSTR,
+    );
+    expect(VAULT_REDEEMER_ORDER.indexOf("SettleLine")).toBe(SETTLE_LINE_CONSTR);
+  });
+
+  // Byte THẬT: constr 6 ⟹ thẻ CBOR 121+6 = 127 ⟹ tiền tố `d87f`. Đây là chỉ số
+  // CUỐI CÙNG còn mã hoá được bằng một thẻ đơn — nhánh thứ tám sẽ nhảy sang
+  // dạng `d8 7f 9f …` (constr ≥ 7 dùng thẻ 1280+i hoặc dạng chung 102), nên
+  // người thêm nhánh tiếp theo phải đo lại tiền tố chứ đừng suy tiếp dãy.
+  it("Data.to(SettleLine) mã hoá ra thẻ constr 6 (`d87f`)", () => {
+    const schema = PrepaidVaultRedeemerSchema as unknown as PrepaidVaultRedeemer;
+    const hex = Data.to({ SettleLine: { fund_id: "ab".repeat(28) } }, schema);
+    expect(hex.startsWith("d87f")).toBe(true);
+    // Đối chứng ở hàng xóm: SetDidCommit vẫn constr 5 ⟹ `d87e`. Thiếu vế này
+    // thì bài vẫn xanh khi CẢ HAI nhánh cùng dịch một bậc.
+    const sd = Data.to(
+      { SetDidCommit: { did_commit: "ab".repeat(DID_COMMIT_BYTES) } },
+      schema,
+    );
+    expect(sd.startsWith("d87e")).toBe(true);
   });
 
   // Byte THẬT, không phải bảng chữ. Plutus Data mã hoá constructor i ∈ [0,6] bằng
@@ -189,7 +216,7 @@ describe("constructor index redeemer khớp Aiken", () => {
 });
 
 describe("hình dạng batch bám §4.1 canonical", () => {
-  it("đúng 7 trường, không có initial_amount/halved kiểu bản cũ", () => {
+  it("MagicBatch đúng 7 trường, không có initial_amount/halved kiểu bản cũ", () => {
     const f = recordFields("MagicBatch");
     expect(f).toHaveLength(7);
     expect(f).not.toContain("initial_amount");

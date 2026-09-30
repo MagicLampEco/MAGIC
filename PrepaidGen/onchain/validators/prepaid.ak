@@ -7,10 +7,27 @@
 //   PrepaidLock  → VAULT có thẩm quyền trên cả delta quỹ lẫn delta hạn-mức;
 //                  quỹ chỉ chứng minh "có vault thật cùng tiêu bằng constr 0".
 //   PrepaidDraw  → VAULT (quỹ không tham gia giao dịch → không tranh chấp UTxO).
-//   BurnBatch    → VAULT (ConsumeMAGIC ép Σburns == required ở tầng trên).
+//   BurnBatch    → VAULT (ConsumeMAGIC ép Σburns == required ở tầng trên). KHÔNG
+//                  chạm quỹ: phần đã đốt được GHI NỢ vào
+//                  `PrepaidCredit.consumed_unsettled` của dòng tương ứng.
 //   PrunePrepaid → VAULT, permissionless.
-//   FundSettle   → QUỸ có thẩm quyền: đọc thẳng cặp datum vault vào/ra.
+//   SettleLine   → VAULT có thẩm quyền trên cả delta quỹ lẫn delta sổ nợ; quỹ
+//                  đối chiếu lại bằng chính cặp datum vault vào/ra.
+//                  Permissionless — xem `types.ak` ▸ `SettleLine`.
+//   FundSettle   → QUỸ: đọc thẳng cặp datum vault vào/ra, đòi vault cùng tiêu
+//                  bằng constr 6.
 //   FundClaim    → QUỸ.
+//
+// VÌ SAO TÁCH ĐỐT KHỎI QUYẾT TOÁN (2026-09-28). Bản trước ghép `FundSettle` vào
+// chính giao dịch `BurnBatch` và đo delta bằng phần `current_amount` giảm TRONG
+// giao dịch đó. Hai chỗ hỏng, cả hai im lặng: (1) `BurnBatch` không kèm quỹ vẫn
+// được nhận, và phần MAGIC đã đốt ấy mất dấu vĩnh viễn — CARP đối ứng kẹt trong
+// quỹ, provider không đòi được (F2), người dùng không lấy lại được, `outstanding`
+// phình mãi nên đường "tiêu hết rồi rút hết" của §6.1 không bao giờ tới đích;
+// (2) `paid_fund.spend` ép ĐÚNG MỘT quỹ input mỗi giao dịch, nên một lượt đốt
+// chạm batch của hai quỹ chỉ quyết toán được một. Nay `BurnBatch` ghi nợ vào
+// datum vault và `SettleLine` trả nợ từng quỹ một, mỗi quỹ một giao dịch, lúc
+// nào cũng được.
 //
 // PHÁ VÒNG THAM CHIẾU: prepaid_vault nhận `paid_fund_hash` làm tham số; chiều
 // ngược KHÔNG đi qua tham số biên dịch (sẽ thành vòng) mà qua
@@ -58,7 +75,7 @@ use magiclamp/protocol/types.{
   BurnBatch, FundClaim, FundLock, FundSettle, MagicBatch, MintVaultId,
   PaidFundDatum, PaidFundRedeemer, PrepaidCredit, PrepaidDraw, PrepaidLock,
   PrepaidVaultDatum, PrepaidVaultIdRedeemer, PrepaidVaultRedeemer, PrunePrepaid,
-  SetDelegate, SetDidCommit, VaultAttribution,
+  SetDelegate, SetDidCommit, SettleLine, VaultAttribution,
 }
 use magiclamp/protocol/constants.{
   batch_source_prepaid, max_batches_per_vault, max_prepaid_credits,
@@ -73,7 +90,7 @@ use magiclamp/protocol/math.{
 // Constructor index của các nhánh redeemer — dùng khi đọc redeemer của script
 // KHÁC qua builtin.un_constr_data (không ghép kiểu chéo validator).
 const rd_prepaid_lock: Int = 0
-const rd_burn_batch: Int = 2   // §7.3/§11 — ConsumeMAGIC ghim burn_batch_constr = 2
+const rd_settle_line: Int = 6  // quyết toán một dòng hạn-mức (thêm 2026-09-28)
 
 // ══════════════════════════════════════════════════════════════
 // prepaid_vault
@@ -127,7 +144,7 @@ validator prepaid_vault(
     // C-PP-10: đúng một vault input tại địa chỉ này
     expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
 
-    // INV-VAULT-IDENTITY — ĐIỂM NGHẼN DUY NHẤT, ép cho CẢ SÁU nhánh redeemer.
+    // INV-VAULT-IDENTITY — ĐIỂM NGHẼN DUY NHẤT, ép cho CẢ BẢY nhánh redeemer.
     // Cố ý đặt ở thân handler chứ không chép vào từng `validate_*`: chép sáu bản
     // là sáu chỗ có thể sót một, mà sót thì không gì đỏ. Một bản ở đây thì gỡ nó
     // ra là cả nhóm bài `pp_spend_*_forged_vault`/`_nft_escapes` cùng chuyển sang
@@ -174,6 +191,12 @@ validator prepaid_vault(
         validate_set_did_commit(
           datum, did_commit, current_epoch, vault_addr, carp_policy_id,
           carp_asset_name, tx,
+        )
+
+      SettleLine { fund_id } ->
+        validate_settle_line(
+          datum, fund_id, current_epoch, vault_addr, carp_policy_id,
+          carp_asset_name, paid_fund_hash, tx,
         )
     }
   }
@@ -253,6 +276,30 @@ fn fund_common_checks(
   expect fund_out_utxo.address == fund_addr
   let fund_out = decode_fund(fund_out_utxo)
 
+  // ── UTxO quỹ tiếp nối phải giữ đúng HÌNH DẠNG của quỹ ────────────────────
+  // Genesis (`validate_mint_fund_nft`) đã ép đủ bốn vế này, nhưng nhánh spend
+  // thì chưa — nên một lượt vận hành hợp lệ vẫn đẻ ra được một quỹ méo, và mọi
+  // lượt sau kế thừa nó. Bốn vế, mỗi vế đóng một đường khác nhau:
+  //
+  //   · `reference_script == None` — ref-script đội min-ADA của UTxO lên, mà
+  //     `carp_locked` không đổi theo ADA nên phần ADA ấy khoá vĩnh viễn: không
+  //     nhánh nào rút ADA khỏi quỹ. Khoá-vốn im lặng, không phải lỗi giao dịch.
+  //   · `lovelace(out) >= lovelace(in)` — không ai rút bớt ADA tối thiểu của
+  //     quỹ. Nạp thêm thì được.
+  //   · `single_nft_name(out) == fund_id` — `find_fund_output_utxo` dùng
+  //     `quantity_of`, nó trả lời "có đúng NFT đó", KHÔNG trả lời "chỉ có NFT
+  //     đó"; chênh lệch giữa hai câu là một tên thứ hai dưới chính policy quỹ,
+  //     mà cổng đếm policy ngay dưới đếm POLICY nên không thấy.
+  //   · `|policies(out)| <= 3` — nhiều nhất {ADA, CARP, NFT quỹ}. Policy thứ
+  //     tư chỉ có thể là bụi token nhét vào cho phình value.
+  expect fund_out_utxo.reference_script == None
+  expect
+    assets.lovelace_of(fund_out_utxo.value) >= assets.lovelace_of(
+      own_in.output.value,
+    )
+  expect single_nft_name(fund_out_utxo.value, fund_nft_policy) == fund_in.fund_id
+  expect list.length(assets.policies(fund_out_utxo.value)) <= 3
+
   // C-PP-3: sổ khớp value, hai đầu.
   expect
     assets.quantity_of(own_in.output.value, carp_policy_id, carp_asset_name) == fund_in.carp_locked
@@ -276,7 +323,7 @@ fn fund_common_checks(
 
   when redeemer is {
     FundLock -> validate_fund_lock(fund_in, fund_out, tx)
-    FundSettle -> validate_fund_settle(fund_in, fund_out, current_epoch, tx)
+    FundSettle -> validate_fund_settle(fund_in, fund_out, tx)
     FundClaim { amount_carpdrop } ->
       validate_fund_claim(
         fund_in, fund_out, amount_carpdrop, carp_policy_id, carp_asset_name, tx,
@@ -414,6 +461,8 @@ fn add_credit(
           remaining: amount,
           issued_epoch: epoch,
           last_draw_epoch: epoch,
+          // Dòng mới chưa đốt gì ⟹ chưa nợ quỹ đồng nào.
+          consumed_unsettled: 0,
         },
       ],
     )
@@ -453,6 +502,7 @@ fn validate_draw(
             ..c,
             remaining: c.remaining - amount,
             last_draw_epoch: current_epoch,
+            consumed_unsettled: 0,
           }
         } else {
           c
@@ -512,12 +562,18 @@ fn validate_burn_batch(
   expect authed_owner(datum, tx)
   expect list.length(burns) > 0
 
-  let expected_batches = apply_burns(datum.magic_batches, burns, current_epoch)
+  // Đốt và GHI NỢ trong cùng một lượt duyệt: mỗi `amt` vừa trừ khỏi batch vừa
+  // cộng vào `consumed_unsettled` của dòng hạn-mức mà batch ấy thuộc về. Hai
+  // việc phải đi cùng một hàm, không tách ra hai lượt duyệt — tách là mở đúng
+  // khe mà bản trước để hở: một bên đo trên danh sách đã rút gọn, bên kia đo
+  // trên danh sách gốc, và hai bên lệch nhau đúng ở ca đốt trọn một batch.
+  let (expected_batches, expected_credits) =
+    apply_burns(datum.magic_batches, datum.prepaid_credits, burns, current_epoch)
 
   let out = get_vault_output(tx.outputs, vault_addr)
   expect out.owner == datum.owner
   expect out.did_commit == datum.did_commit         // C-PP-8
-  expect out.prepaid_credits == datum.prepaid_credits
+  expect out.prepaid_credits == expected_credits
   expect out.magic_batches == expected_batches
   expect out.next_batch_index == datum.next_batch_index
   expect out.personal_delegate == datum.personal_delegate
@@ -532,25 +588,32 @@ fn validate_burn_batch(
 
 // Mỗi (batch_id, amt): đúng một batch khớp id, batch phải CÒN SỐNG
 // (created_epoch == current_epoch — C-PP-5), amt ∈ (0, current_amount];
-// giảm current_amount, bỏ batch khi về 0; mọi trường khác bất biến.
+// giảm current_amount, bỏ batch khi về 0; mọi trường khác bất biến. Song song
+// đó, cộng `amt` vào `consumed_unsettled` của dòng hạn-mức có `fund_id ==
+// batch.contract_id` — dòng đó PHẢI tồn tại đúng một (batch chỉ sinh ra từ
+// `PrepaidDraw`, nhánh đòi đúng một dòng, và dòng không bao giờ bị xoá). Thiếu
+// dòng ⟹ `expect` vỡ, KHÔNG âm thầm bỏ qua: bỏ qua là đốt MAGIC mà không ai nợ
+// ai, tức đúng lỗ vừa vá.
 fn apply_burns(
   batches       : List<MagicBatch>,
+  credits       : List<PrepaidCredit>,
   burns         : List<(ByteArray, Int)>,
   current_epoch : Int,
-) -> List<MagicBatch> {
+) -> (List<MagicBatch>, List<PrepaidCredit>) {
   when burns is {
-    [] -> batches
+    [] -> (batches, credits)
     [(bid, amt), ..rest] -> {
       expect amt > 0
       expect list.count(batches, fn(b) { b.batch_id == bid }) == 1
+      expect Some(target) = list.find(batches, fn(b) { b.batch_id == bid })
+      // C-PP-5: batch của epoch đã chết KHÔNG tiêu được.
+      expect target.created_epoch == current_epoch
+      expect amt <= target.current_amount
       let reduced =
         list.filter_map(
           batches,
           fn(b) {
             if b.batch_id == bid {
-              // C-PP-5: batch của epoch đã chết KHÔNG tiêu được.
-              expect b.created_epoch == current_epoch
-              expect amt <= b.current_amount
               let na = b.current_amount - amt
               if na == 0 {
                 None
@@ -562,9 +625,31 @@ fn apply_burns(
             }
           },
         )
-      apply_burns(reduced, rest, current_epoch)
+      let credited = add_consumed(credits, target.contract_id, amt)
+      apply_burns(reduced, credited, rest, current_epoch)
     }
   }
+}
+
+// Ghi nợ `amt` nanogic vào dòng hạn-mức của `fund_id`. Đúng MỘT dòng, không hơn
+// không kém — `list.count(...) == 1` là chỗ duy nhất trong nhánh đốt biết được
+// rằng số vừa đốt có một chỗ để đi về.
+fn add_consumed(
+  credits : List<PrepaidCredit>,
+  fund_id : ByteArray,
+  amt     : Int,
+) -> List<PrepaidCredit> {
+  expect list.count(credits, fn(c) { c.fund_id == fund_id }) == 1
+  list.map(
+    credits,
+    fn(c) {
+      if c.fund_id == fund_id {
+        PrepaidCredit { ..c, consumed_unsettled: c.consumed_unsettled + amt }
+      } else {
+        c
+      }
+    },
+  )
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -769,6 +854,91 @@ fn did_len_ok(did: ByteArray) -> Bool {
 }
 
 // ══════════════════════════════════════════════════════════════
+// VAULT — SettleLine (C-PP-7, INV-MAGIC-CITIZEN) — TRẢ NỢ QUYẾT TOÁN
+// ══════════════════════════════════════════════════════════════
+// Đưa `consumed_unsettled` của MỘT dòng hạn-mức về 0 và cộng đúng bằng ấy vào
+// `magic_settled` của quỹ tương ứng, trong cùng giao dịch.
+//
+// KHÔNG CẦN CHỮ KÝ, cùng lý lẽ với `PrunePrepaid`: nhánh này không lấy gì của
+// ai — không đồng CARP nào rời quỹ, không hạn-mức nào sinh ra, không batch nào
+// đổi — nó chỉ chuyển một con số ĐÃ nằm trong datum vault sang sổ quỹ. Người
+// hưởng lợi là provider, không phải chủ vault; đòi chữ ký chủ vault là đặt
+// doanh thu của provider dưới thiện chí của con nợ, và đó chính là chỗ hỏng mà
+// bản trước mắc (người dựng giao dịch đốt là chủ vault, không phải provider).
+//
+// VAULT CÓ THẨM QUYỀN trên cả hai đầu — cùng khuôn `validate_lock`. Quỹ cũng
+// kiểm lại bằng `validate_fund_settle`; hai bên kiểm cùng một delta từ hai phía
+// khác nhau, không bên nào tin bên nào.
+fn validate_settle_line(
+  datum           : PrepaidVaultDatum,
+  fund_id         : ByteArray,
+  current_epoch   : Int,
+  vault_addr      : Address,
+  carp_policy_id  : PolicyId,
+  carp_asset_name : ByteArray,
+  paid_fund_hash  : ByteArray,
+  tx              : Transaction,
+) -> Bool {
+  // ── Dòng hạn-mức: đúng MỘT, và phải có nợ thật ──────────────────────────
+  expect list.count(datum.prepaid_credits, fn(c) { c.fund_id == fund_id }) == 1
+  expect Some(line) = list.find(datum.prepaid_credits, fn(c) { c.fund_id == fund_id })
+  let delta = line.consumed_unsettled
+
+  // reject-noop: `delta == 0` thì giao dịch không chuyển gì cả, nhưng nó VẪN
+  // tiêu UTxO vault — nghĩa là một người lạ chặn cửa vault vô hạn lần mà không
+  // trả giá gì ngoài phí. Cùng hình dạng reject-noop với `PrunePrepaid`.
+  expect delta > 0
+
+  let new_credits =
+    list.map(
+      datum.prepaid_credits,
+      fn(c) {
+        if c.fund_id == fund_id {
+          PrepaidCredit { ..c, consumed_unsettled: 0 }
+        } else {
+          c
+        }
+      },
+    )
+
+  // ── Vault output: CHỈ dòng đó đổi ────────────────────────────────────────
+  let out = get_vault_output(tx.outputs, vault_addr)
+  expect out.owner == datum.owner
+  expect out.did_commit == datum.did_commit         // C-PP-8
+  expect out.prepaid_credits == new_credits
+  expect out.magic_batches == datum.magic_batches
+  expect out.next_batch_index == datum.next_batch_index
+  expect out.personal_delegate == datum.personal_delegate
+  expect out.attribution == datum.attribution
+  expect out.last_updated_epoch == current_epoch
+  expect vault_output_carp(tx.outputs, vault_addr, carp_policy_id, carp_asset_name) == 0
+
+  // ── Quỹ cùng tx: đúng địa chỉ paid_fund, mang NFT one-shot tên fund_id ───
+  // Cùng khuôn `validate_lock`: `find_fund_utxo_at` ép cả địa chỉ lẫn NFT, nên
+  // một "quỹ" do kẻ tấn công dựng không lọt được vào chỗ này.
+  let fund_in_utxo =
+    find_fund_utxo_at(
+      list.map(tx.inputs, fn(i) { i.output }), paid_fund_hash, fund_id,
+    )
+  let fund_out_utxo = find_fund_utxo_at(tx.outputs, paid_fund_hash, fund_id)
+  let fund_in = decode_fund(fund_in_utxo)
+  let fund_out = decode_fund(fund_out_utxo)
+
+  // Quỹ này phải trỏ về ĐÚNG script vault đang chạy.
+  expect fund_in.vault_hash == script_hash_of(vault_addr)
+
+  // C-PP-13
+  expect no_fund_mint(tx, paid_fund_hash)
+
+  // Delta đi vào sổ quỹ đúng bằng nợ đã xoá; ba đại lượng tiền đứng yên.
+  expect fund_out.magic_settled == fund_in.magic_settled + delta
+  expect fund_out.carp_locked == fund_in.carp_locked
+  expect fund_out.credit_issued == fund_in.credit_issued
+  expect fund_out.provider_claimed == fund_in.provider_claimed
+  True
+}
+
+// ══════════════════════════════════════════════════════════════
 // FUND — FundLock
 // ══════════════════════════════════════════════════════════════
 // Vault đã kiểm toàn bộ delta; quỹ chỉ chứng minh có VAULT THẬT (đúng
@@ -790,18 +960,24 @@ fn validate_fund_lock(
 // ══════════════════════════════════════════════════════════════
 // FUND — FundSettle (C-PP-7, INV-MAGIC-CITIZEN)
 // ══════════════════════════════════════════════════════════════
+// `current_epoch` KHÔNG còn là tham số ở đây (bỏ 2026-09-28): delta nay đọc từ
+// `consumed_unsettled`, một con số đã được `validate_burn_batch` kiểm thời điểm
+// lúc ghi (C-PP-5 — batch chết không đốt được). Cổng `last_updated_epoch ==
+// current_epoch` vẫn nằm ở `fund_common_checks`, phủ cả ba nhánh.
 fn validate_fund_settle(
-  fund_in       : PaidFundDatum,
-  fund_out      : PaidFundDatum,
-  current_epoch : Int,
-  tx            : Transaction,
+  fund_in  : PaidFundDatum,
+  fund_out : PaidFundDatum,
+  tx       : Transaction,
 ) -> Bool {
-  // Vault thật, tiêu bằng ĐÚNG BurnBatch (constr 2). Không nhận constr khác:
-  // PrunePrepaid cũng làm current_amount biến mất nhưng đó là HẾT HẠN, không
-  // phải tiêu thật — tính vào magic_settled là phá INV-MAGIC-CITIZEN.
-  expect vault_cospend(tx, fund_in.vault_hash, rd_burn_batch)
+  // Vault thật, tiêu bằng ĐÚNG SettleLine (constr 6). Không nhận constr khác —
+  // và đặc biệt KHÔNG nhận `PrunePrepaid`: nó cũng làm `current_amount` biến
+  // mất, nhưng đó là HẾT HẠN chứ không phải tiêu thật, tính vào `magic_settled`
+  // là phá INV-MAGIC-CITIZEN. Từ 2026-09-28 vế đó còn được giữ bằng cấu trúc:
+  // chỉ `BurnBatch` cộng vào `consumed_unsettled`, còn `validate_prune` không
+  // chạm trường ấy, nên MAGIC hết hạn KHÔNG có đường nào vào sổ nợ.
+  expect vault_cospend(tx, fund_in.vault_hash, rd_settle_line)
 
-  let delta = settle_delta(tx, fund_in.vault_hash, fund_in.fund_id, current_epoch)
+  let delta = settle_line_delta(tx, fund_in.vault_hash, fund_in.fund_id)
   expect delta > 0
 
   expect fund_out.magic_settled == fund_in.magic_settled + delta
@@ -832,45 +1008,40 @@ fn validate_fund_settle(
   True
 }
 
-// Σ phần current_amount GIẢM trên các batch: contract_id == fund_id,
-// source == 3, created_epoch == epoch hiện tại (CÒN SỐNG).
-fn settle_delta(
-  tx            : Transaction,
-  vault_hash    : ByteArray,
-  fund_id       : ByteArray,
-  current_epoch : Int,
+// Nợ quyết toán vừa được xoá khỏi dòng `fund_id`: `in.consumed_unsettled −
+// out.consumed_unsettled`, đọc từ cặp datum vault vào/ra.
+//
+// Ép ĐÚNG MỘT input và ĐÚNG MỘT output tại `vault_hash`. Cả hai vế đều cần:
+// nhiều input thì `list.find` lấy cái đầu tiên và phần nợ của các vault còn lại
+// đi lọt; nhiều output thì trạng thái vault bị tách làm hai và chọn được cái có
+// lợi. Bản trước chỉ ép vế output.
+//
+// Dòng phải tồn tại ở CẢ HAI đầu, đúng một. Thiếu ở đầu vào là quỹ đang đọc một
+// vault không nợ nó gì; thiếu ở đầu ra là dòng vừa bị xoá — mà dòng hạn-mức
+// không bao giờ được xoá (`types.ak` ▸ `PrepaidCredit`), nên đó là hình dạng lạ
+// và phải chết, không được quy về 0.
+fn settle_line_delta(
+  tx         : Transaction,
+  vault_hash : ByteArray,
+  fund_id    : ByteArray,
 ) -> Int {
-  expect Some(vin) = list.find(tx.inputs, fn(i) { is_at_script(i.output.address, vault_hash) })
+  expect
+    list.count(tx.inputs, fn(i) { is_at_script(i.output.address, vault_hash) }) == 1
+  expect Some(vin) =
+    list.find(tx.inputs, fn(i) { is_at_script(i.output.address, vault_hash) })
   expect
     list.count(tx.outputs, fn(o) { is_at_script(o.address, vault_hash) }) == 1
-  expect Some(vout) = list.find(tx.outputs, fn(o) { is_at_script(o.address, vault_hash) })
+  expect Some(vout) =
+    list.find(tx.outputs, fn(o) { is_at_script(o.address, vault_hash) })
   let din = decode_vault(vin.output)
   let dout = decode_vault(vout)
-  sum_settled(din.magic_batches, dout.magic_batches, fund_id, current_epoch, 0)
-}
 
-fn sum_settled(
-  ins           : List<MagicBatch>,
-  outs          : List<MagicBatch>,
-  fund_id       : ByteArray,
-  current_epoch : Int,
-  acc           : Int,
-) -> Int {
-  when ins is {
-    [] -> acc
-    [b, ..rest] ->
-      if b.contract_id == fund_id && b.source == batch_source_prepaid && b.created_epoch == current_epoch {
-        let after =
-          when list.find(outs, fn(o) { o.batch_id == b.batch_id }) is {
-            Some(o) -> o.current_amount
-            None -> 0
-          }
-        expect after <= b.current_amount
-        sum_settled(rest, outs, fund_id, current_epoch, acc + b.current_amount - after)
-      } else {
-        sum_settled(rest, outs, fund_id, current_epoch, acc)
-      }
-  }
+  expect list.count(din.prepaid_credits, fn(c) { c.fund_id == fund_id }) == 1
+  expect Some(cin) = list.find(din.prepaid_credits, fn(c) { c.fund_id == fund_id })
+  expect list.count(dout.prepaid_credits, fn(c) { c.fund_id == fund_id }) == 1
+  expect Some(cout) = list.find(dout.prepaid_credits, fn(c) { c.fund_id == fund_id })
+
+  cin.consumed_unsettled - cout.consumed_unsettled
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -985,6 +1156,12 @@ fn vault_identity_preserved(vault_input: Input, vault_output: Output) -> Bool {
       vault_input.output.value,
     )
   expect list.length(assets.policies(vault_output.value)) <= 2
+  //   - reference_script == None: cổng đúc đã ghim vế này cho UTxO genesis, mà
+  //     nhánh spend thì chưa — nên một lượt vận hành hợp lệ vẫn gắn được
+  //     ref-script vào vault tiếp nối. Hại: min-ADA đội lên, và dòng ngay trên
+  //     chỉ cho lovelace ĐI LÊN trong khi không nhánh nào rút ADA khỏi vault ⟹
+  //     phần ADA ấy khoá vĩnh viễn.
+  expect vault_output.reference_script == None
   True
 }
 
@@ -1467,7 +1644,18 @@ fn t_ben_datum() -> Data {
 // ── Vault fixtures ────────────────────────────────────────────
 
 fn t_credit(fund_id: ByteArray, remaining: Int) -> PrepaidCredit {
-  PrepaidCredit { fund_id, remaining, issued_epoch: 5, last_draw_epoch: 5 }
+  t_credit_u(fund_id, remaining, 0)
+}
+
+// Dòng hạn-mức mang sẵn một khoản nợ quyết toán `consumed_unsettled`.
+fn t_credit_u(fund_id: ByteArray, remaining: Int, consumed: Int) -> PrepaidCredit {
+  PrepaidCredit {
+    fund_id,
+    remaining,
+    issued_epoch: 5,
+    last_draw_epoch: 5,
+    consumed_unsettled: consumed,
+  }
 }
 
 fn t_batch(id: ByteArray, amount: Int, epoch: Int, fund_id: ByteArray) -> MagicBatch {
@@ -1665,6 +1853,7 @@ test pp_lock_ok() {
           remaining: lock_amt,
           issued_epoch: t_epoch,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1686,6 +1875,7 @@ test pp_lock_topup_ok() {
           remaining: 500 + lock_amt,
           issued_epoch: 5,
           last_draw_epoch: 5,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1707,6 +1897,7 @@ test pp_lock_credit_without_carp() fail {
           remaining: lock_amt,
           issued_epoch: t_epoch,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1729,6 +1920,7 @@ test pp_lock_credit_gt_carp() fail {
           remaining: lock_amt,
           issued_epoch: t_epoch,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1750,6 +1942,7 @@ test pp_lock_fake_fund_address() fail {
           remaining: lock_amt,
           issued_epoch: t_epoch,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1784,6 +1977,7 @@ test pp_lock_wrong_vault_hash() fail {
           remaining: lock_amt,
           issued_epoch: t_epoch,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1806,6 +2000,7 @@ test pp_lock_no_auth() fail {
           remaining: lock_amt,
           issued_epoch: t_epoch,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1827,6 +2022,7 @@ test pp_lock_below_min() fail {
           remaining: 1,
           issued_epoch: t_epoch,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1853,6 +2049,7 @@ test pp_lock_did_forged() fail {
           remaining: lock_amt,
           issued_epoch: t_epoch,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1880,6 +2077,7 @@ fn new_line_dout(din: PrepaidVaultDatum) -> PrepaidVaultDatum {
           remaining: lock_amt,
           issued_epoch: t_epoch,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
     ),
@@ -1948,6 +2146,7 @@ test pp_lock_topup_platform_only_ok() {
           remaining: 500 + lock_amt,
           issued_epoch: 5,
           last_draw_epoch: 5,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -1969,6 +2168,7 @@ test pp_lock_topup_no_auth() fail {
           remaining: 500 + lock_amt,
           issued_epoch: 5,
           last_draw_epoch: 5,
+          consumed_unsettled: 0,
         },
       ],
       last_updated_epoch: t_epoch,
@@ -2047,6 +2247,7 @@ test pp_draw_ok() {
           remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [drawn_batch(0)],
@@ -2074,6 +2275,7 @@ test pp_draw_by_delegate_rejected() fail {
           remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [drawn_batch(0)],
@@ -2098,6 +2300,7 @@ test pp_draw_owner_signs_with_stale_delegate_ok() {
           remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [drawn_batch(0)],
@@ -2132,6 +2335,7 @@ test pp_draw_over_credit() fail {
           remaining: 0,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [drawn_batch(0)],
@@ -2155,6 +2359,7 @@ test pp_draw_inflated_magic() fail {
           remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [inflated],
@@ -2177,6 +2382,7 @@ test pp_draw_future_epoch() fail {
           remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [future],
@@ -2199,6 +2405,7 @@ test pp_draw_decay_window_forged() fail {
           remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [forged],
@@ -2220,6 +2427,7 @@ test pp_draw_no_auth() fail {
           remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [drawn_batch(0)],
@@ -2242,6 +2450,7 @@ test pp_draw_below_min() fail {
           remaining: 5_000_000 - 999,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [tiny],
@@ -2263,6 +2472,7 @@ test pp_draw_vault_holds_carp() fail {
           remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [drawn_batch(0)],
@@ -2306,8 +2516,65 @@ fn run_burn(
   )
 }
 
-// happy: tiêu một phần batch còn sống.
+// Vault vào một lượt đốt: dòng hạn-mức của quỹ chính CÓ MẶT và chưa nợ gì. Mọi
+// batch trong nhóm bài này thuộc `t_fund_id`, mà `add_consumed` đòi đúng MỘT
+// dòng cho quỹ của batch — đó là chỗ số vừa đốt có nơi đi về.
+fn burn_din(batches: List<MagicBatch>) -> PrepaidVaultDatum {
+  t_vd([t_credit(t_fund_id, 0)], batches)
+}
+
+// Vault ra sau khi đốt `consumed` nanogic từ batch của `t_fund_id`.
+fn burn_dout(
+  batches  : List<MagicBatch>,
+  consumed : Int,
+  events   : Int,
+) -> PrepaidVaultDatum {
+  t_out_burn(batches, [t_credit_u(t_fund_id, 0, consumed)], events)
+}
+
+// happy: tiêu một phần batch còn sống; sổ nợ quyết toán tăng ĐÚNG bằng lượng đốt.
 test pp_burn_ok() {
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let dout =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 600_000_000, 1)
+  run_burn(
+    din,
+    [(#"b1", 600_000_000)],
+    t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]),
+  )
+}
+
+// TẤN CÔNG: ghi nợ THIẾU so với lượng thật sự đốt. Phần chênh là MAGIC đã tiêu
+// mà quỹ không bao giờ đòi được — đúng lớp hại mà bản vá này sinh ra để đóng,
+// chỉ khác chỗ vào. Cực đối của `pp_burn_ok`: cùng giao dịch, khác một con số.
+test pp_burn_counter_short() fail {
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let dout =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 500_000_000, 1)
+  run_burn(
+    din,
+    [(#"b1", 600_000_000)],
+    t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]),
+  )
+}
+
+// TẤN CÔNG chiều ngược: ghi nợ THỪA. `SettleLine` sẽ bơm `magic_settled` lên
+// quá phần MAGIC tiêu thật, và provider rút CARP theo F2 trên một con số bịa.
+test pp_burn_counter_inflated() fail {
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let dout =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 700_000_000, 1)
+  run_burn(
+    din,
+    [(#"b1", 600_000_000)],
+    t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]),
+  )
+}
+
+// TẤN CÔNG: đốt trong khi vault KHÔNG có dòng hạn-mức nào cho quỹ của batch.
+// Hình dạng lạ (dòng hạn-mức không bao giờ bị xoá) ⟹ phải CHẾT. Cho qua là đốt
+// MAGIC mà không ai nợ ai — đúng cái vỏ im lặng.
+test pp_burn_no_credit_line() fail {
   let din = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
   let dout = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 1)
   run_burn(
@@ -2317,10 +2584,68 @@ test pp_burn_ok() {
   )
 }
 
-// happy: tiêu hết → batch bị bỏ khỏi danh sách.
+// happy: MỘT lượt đốt chạm batch của HAI quỹ ⟹ cả hai dòng cùng được ghi nợ.
+// Đây là ca mà bản trước không làm được: `paid_fund.spend` ép đúng một quỹ input
+// mỗi giao dịch, nên quyết toán tại chỗ chỉ với tới được một quỹ và phần của quỹ
+// kia mất dấu vĩnh viễn.
+test pp_burn_two_funds_both_lines_credited() {
+  let din =
+    t_vd(
+      [t_credit(t_fund_id, 0), t_credit(t_other_fund, 0)],
+      [
+        t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id),
+        t_batch(#"b2", 1_000_000_000, t_epoch, t_other_fund),
+      ],
+    )
+  let dout =
+    t_out_burn(
+      [
+        t_batch(#"b1", 400_000_000, t_epoch, t_fund_id),
+        t_batch(#"b2", 700_000_000, t_epoch, t_other_fund),
+      ],
+      [
+        t_credit_u(t_fund_id, 0, 600_000_000),
+        t_credit_u(t_other_fund, 0, 300_000_000),
+      ],
+      1,
+    )
+  run_burn(
+    din,
+    [(#"b1", 600_000_000), (#"b2", 300_000_000)],
+    t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]),
+  )
+}
+
+// CỰC ĐỐI của bài ngay trên: đốt batch của hai quỹ nhưng chỉ ghi nợ cho quỹ A.
+test pp_burn_two_funds_only_one_line_credited() fail {
+  let din =
+    t_vd(
+      [t_credit(t_fund_id, 0), t_credit(t_other_fund, 0)],
+      [
+        t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id),
+        t_batch(#"b2", 1_000_000_000, t_epoch, t_other_fund),
+      ],
+    )
+  let dout =
+    t_out_burn(
+      [
+        t_batch(#"b1", 400_000_000, t_epoch, t_fund_id),
+        t_batch(#"b2", 700_000_000, t_epoch, t_other_fund),
+      ],
+      [t_credit_u(t_fund_id, 0, 600_000_000), t_credit(t_other_fund, 0)],
+      1,
+    )
+  run_burn(
+    din,
+    [(#"b1", 600_000_000), (#"b2", 300_000_000)],
+    t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]),
+  )
+}
+
+// happy: tiêu hết → batch bị bỏ khỏi danh sách, nợ vẫn được ghi trọn.
 test pp_burn_full_ok() {
-  let din = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
-  let dout = t_out_burn([], [], 1)
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let dout = burn_dout([], 1_000_000_000, 1)
   run_burn(
     din,
     [(#"b1", 1_000_000_000)],
@@ -2330,8 +2655,9 @@ test pp_burn_full_ok() {
 
 // TẤN CÔNG cốt lõi: tiêu batch của epoch ĐÃ CHẾT (C-PP-5).
 test pp_burn_dead_batch() fail {
-  let din = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch - 1, t_fund_id)])
-  let dout = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch - 1, t_fund_id)], [], 1)
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch - 1, t_fund_id)])
+  let dout =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch - 1, t_fund_id)], 600_000_000, 1)
   run_burn(
     din,
     [(#"b1", 600_000_000)],
@@ -2341,8 +2667,8 @@ test pp_burn_dead_batch() fail {
 
 // TẤN CÔNG: tiêu quá số dư batch.
 test pp_burn_over() fail {
-  let din = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
-  let dout = t_out_burn([], [], 1)
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let dout = burn_dout([], 2_000_000_000, 1)
   run_burn(
     din,
     [(#"b1", 2_000_000_000)],
@@ -2352,8 +2678,9 @@ test pp_burn_over() fail {
 
 // TẤN CÔNG: không ký.
 test pp_burn_no_auth() fail {
-  let din = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
-  let dout = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 1)
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let dout =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 600_000_000, 1)
   run_burn(
     din,
     [(#"b1", 600_000_000)],
@@ -2366,9 +2693,10 @@ test pp_burn_no_auth() fail {
 // nào ở hình dạng này: `pp_burn_no_auth` dùng `t_stranger`, mà người lạ thì bị
 // chặn ở cả bản cũ lẫn bản mới ⟹ nó không phân biệt được hai bên đột biến.
 test pp_burn_by_delegate_rejected() fail {
-  let base = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let base = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
   let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
-  let doutb = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 1)
+  let doutb =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 600_000_000, 1)
   let dout = PrepaidVaultDatum { ..doutb, personal_delegate: Some(t_delegate) }
   run_burn(
     din,
@@ -2379,9 +2707,10 @@ test pp_burn_by_delegate_rejected() fail {
 
 // ĐỐI CHỨNG DƯƠNG cho bài ngay trên: cùng datum mang delegate cũ, chủ ký ⟹ qua.
 test pp_burn_owner_signs_with_stale_delegate_ok() {
-  let base = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let base = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
   let din = PrepaidVaultDatum { ..base, personal_delegate: Some(t_delegate) }
-  let doutb = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 1)
+  let doutb =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 600_000_000, 1)
   let dout = PrepaidVaultDatum { ..doutb, personal_delegate: Some(t_delegate) }
   run_burn(
     din,
@@ -2392,8 +2721,9 @@ test pp_burn_owner_signs_with_stale_delegate_ok() {
 
 // TẤN CÔNG: giả mạo did_commit khi tiêu (phá attribution DID).
 test pp_burn_did_forged() fail {
-  let din = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
-  let base = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 1)
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let base =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 600_000_000, 1)
   let dout = PrepaidVaultDatum { ..base, did_commit: #"cafe" }
   run_burn(
     din,
@@ -2404,8 +2734,9 @@ test pp_burn_did_forged() fail {
 
 // TẤN CÔNG: tiêu mà không ghi sự kiện attribution.
 test pp_burn_no_attribution() fail {
-  let din = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
-  let dout = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 0)
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let dout =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 600_000_000, 0)
   run_burn(
     din,
     [(#"b1", 600_000_000)],
@@ -2419,7 +2750,7 @@ test pp_burn_mints_credit() fail {
   let dout =
     t_out_burn(
       [t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)],
-      [t_credit(t_fund_id, 999_999_999)],
+      [t_credit_u(t_fund_id, 999_999_999, 600_000_000)],
       1,
     )
   run_burn(
@@ -2431,8 +2762,9 @@ test pp_burn_mints_credit() fail {
 
 // TẤN CÔNG: hai output vault (tách trạng thái).
 test pp_burn_two_vault_outputs() fail {
-  let din = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
-  let dout = t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 1)
+  let din = burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  let dout =
+    burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 600_000_000, 1)
   run_burn(
     din,
     [(#"b1", 600_000_000)],
@@ -2503,6 +2835,337 @@ test pp_prune_overpay_credit() fail {
     PrepaidVaultDatum {
       ..din,
       prepaid_credits: [t_credit(t_fund_id, 999_000_000)],
+      magic_batches: [],
+      last_updated_epoch: t_epoch,
+    }
+  run_prune(din, t_tx([t_vault_in(din)], [t_vault_out(dout)], []))
+}
+
+// ══════════════════════════════════════════════════════════════
+// SettleLine (constr 6) — quyết toán một dòng hạn-mức
+// ══════════════════════════════════════════════════════════════
+
+fn run_settle_line(
+  datum   : PrepaidVaultDatum,
+  fund_id : ByteArray,
+  tx      : Transaction,
+) -> Bool {
+  validate_settle_line(
+    datum, fund_id, t_epoch, t_vault_addr(), t_carp_policy, t_carp_name,
+    t_fund_hash, tx,
+  )
+}
+
+// Quỹ mang `fund_id` bất kỳ — `t_fd` ghim cứng `t_fund_id`, mà bài hai-quỹ cần
+// một quỹ thứ hai (NFT của quỹ lấy tên từ chính `datum.fund_id`).
+fn t_fd_of(
+  fund_id       : ByteArray,
+  carp_locked   : Int,
+  credit_issued : Int,
+  magic_settled : Int,
+) -> PaidFundDatum {
+  PaidFundDatum {
+    ..t_fd(carp_locked, credit_issued, magic_settled, 0, 1_500),
+    fund_id,
+  }
+}
+
+fn sl_din(debt: Int) -> PrepaidVaultDatum {
+  t_vd([t_credit_u(t_fund_id, 0, debt)], [])
+}
+
+fn sl_dout(debt: Int) -> PrepaidVaultDatum {
+  PrepaidVaultDatum {
+    ..t_vd([t_credit_u(t_fund_id, 0, debt)], []),
+    last_updated_epoch: t_epoch,
+  }
+}
+
+fn sl_tx(
+  din  : PrepaidVaultDatum,
+  dout : PrepaidVaultDatum,
+  fin  : PaidFundDatum,
+  fout : PaidFundDatum,
+) -> Transaction {
+  // KHÔNG chữ ký nào: nhánh này permissionless (xem `types.ak` ▸ `SettleLine`).
+  t_tx(
+    [t_vault_in(din), t_fund_in(fin, lock_amt)],
+    [t_vault_out(dout), t_fund_out(fout, lock_amt)],
+    [],
+  )
+}
+
+// happy: nợ 0.6 MAGIC chuyển sang sổ quỹ, KHÔNG ai phải ký.
+test pp_settle_line_ok() {
+  run_settle_line(
+    sl_din(600_000_000),
+    t_fund_id,
+    sl_tx(
+      sl_din(600_000_000),
+      sl_dout(0),
+      t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500),
+    ),
+  )
+}
+
+// TẤN CÔNG: xoá nợ mà KHÔNG kèm quỹ. Đây là hình dạng mà bản trước NHẬN ở nhánh
+// `BurnBatch` — và nhận nó là làm mất dấu phần MAGIC đã tiêu vĩnh viễn.
+test pp_settle_line_no_fund() fail {
+  let din = sl_din(600_000_000)
+  run_settle_line(
+    din,
+    t_fund_id,
+    t_tx([t_vault_in(din)], [t_vault_out(sl_dout(0))], []),
+  )
+}
+
+// TẤN CÔNG: quỹ cộng ÍT hơn phần nợ được xoá — phần chênh biến mất.
+test pp_settle_line_fund_short() fail {
+  run_settle_line(
+    sl_din(600_000_000),
+    t_fund_id,
+    sl_tx(
+      sl_din(600_000_000),
+      sl_dout(0),
+      t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      t_fd(lock_amt, lock_amt, 500_000_000, 0, 1_500),
+    ),
+  )
+}
+
+// TẤN CÔNG: quỹ cộng NHIỀU hơn — bơm `magic_settled` để rút CARP qua F2.
+test pp_settle_line_fund_inflated() fail {
+  run_settle_line(
+    sl_din(600_000_000),
+    t_fund_id,
+    sl_tx(
+      sl_din(600_000_000),
+      sl_dout(0),
+      t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      t_fd(lock_amt, lock_amt, 900_000_000, 0, 1_500),
+    ),
+  )
+}
+
+// TẤN CÔNG: xoá nợ MỘT PHẦN nhưng quỹ nhận trọn — `delta` luôn là toàn bộ nợ
+// của dòng, nên output vault phải về đúng 0.
+test pp_settle_line_partial_zero() fail {
+  run_settle_line(
+    sl_din(600_000_000),
+    t_fund_id,
+    sl_tx(
+      sl_din(600_000_000),
+      sl_dout(100_000_000),
+      t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500),
+    ),
+  )
+}
+
+// TẤN CÔNG (reject-noop): dòng không nợ gì mà vẫn tiêu UTxO vault — người lạ
+// chặn cửa vault vô hạn lần, giá chỉ bằng phí.
+test pp_settle_line_zero_delta() fail {
+  run_settle_line(
+    sl_din(0),
+    t_fund_id,
+    sl_tx(
+      sl_din(0),
+      sl_dout(0),
+      t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+    ),
+  )
+}
+
+// TẤN CÔNG: nhân lượt quyết toán quỹ A thì xoá luôn nợ của quỹ B — B mất doanh
+// thu mà không giao dịch nào của B tham gia.
+test pp_settle_line_zeroes_other_line() fail {
+  let din =
+    t_vd(
+      [t_credit_u(t_fund_id, 0, 600_000_000), t_credit_u(t_other_fund, 0, 300_000_000)],
+      [],
+    )
+  let dout =
+    PrepaidVaultDatum {
+      ..t_vd([t_credit_u(t_fund_id, 0, 0), t_credit_u(t_other_fund, 0, 0)], []),
+      last_updated_epoch: t_epoch,
+    }
+  run_settle_line(
+    din,
+    t_fund_id,
+    sl_tx(
+      din, dout,
+      t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500),
+    ),
+  )
+}
+
+// TẤN CÔNG: quyết toán một dòng KHÔNG TỒN TẠI.
+test pp_settle_line_no_credit_line() fail {
+  let din = t_vd([], [])
+  let dout = PrepaidVaultDatum { ..t_vd([], []), last_updated_epoch: t_epoch }
+  run_settle_line(
+    din,
+    t_fund_id,
+    sl_tx(
+      din, dout,
+      t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500),
+    ),
+  )
+}
+
+// TẤN CÔNG: quỹ trỏ về một script vault KHÁC — nó không phải quỹ của vault này.
+test pp_settle_line_fund_wrong_vault_hash() fail {
+  let fin =
+    PaidFundDatum { ..t_fd(lock_amt, lock_amt, 0, 0, 1_500), vault_hash: t_evil_hash }
+  let fout =
+    PaidFundDatum {
+      ..t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500),
+      vault_hash: t_evil_hash,
+    }
+  run_settle_line(
+    sl_din(600_000_000),
+    t_fund_id,
+    sl_tx(sl_din(600_000_000), sl_dout(0), fin, fout),
+  )
+}
+
+// TẤN CÔNG: mượn lượt quyết toán để rút CARP khỏi quỹ.
+test pp_settle_line_drains_carp() fail {
+  run_settle_line(
+    sl_din(600_000_000),
+    t_fund_id,
+    t_tx(
+      [t_vault_in(sl_din(600_000_000)), t_fund_in(t_fd(lock_amt, lock_amt, 0, 0, 1_500), lock_amt)],
+      [
+        t_vault_out(sl_dout(0)),
+        t_fund_out(t_fd(0, lock_amt, 600_000_000, 0, 1_500), 0),
+      ],
+      [],
+    ),
+  )
+}
+
+// TẤN CÔNG: mượn lượt quyết toán để cấp thêm hạn-mức cho chính mình.
+test pp_settle_line_mints_credit() fail {
+  let din = sl_din(600_000_000)
+  let dout =
+    PrepaidVaultDatum {
+      ..t_vd([t_credit_u(t_fund_id, 999_000_000, 0)], []),
+      last_updated_epoch: t_epoch,
+    }
+  run_settle_line(
+    din,
+    t_fund_id,
+    sl_tx(
+      din, dout,
+      t_fd(lock_amt, lock_amt, 0, 0, 1_500),
+      t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500),
+    ),
+  )
+}
+
+// TẤN CÔNG: giữ CARP lại trong vault (C-PP-14 — vault PrepaidGen không bao giờ
+// giữ CARP).
+test pp_settle_line_vault_holds_carp() fail {
+  let din = sl_din(600_000_000)
+  run_settle_line(
+    din,
+    t_fund_id,
+    t_tx(
+      [t_vault_in(din), t_fund_in(t_fd(lock_amt, lock_amt, 0, 0, 1_500), lock_amt)],
+      [
+        t_vault_out_v(sl_dout(0), 1),
+        t_fund_out(t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500), lock_amt),
+      ],
+      [],
+    ),
+  )
+}
+
+// Tái dựng PoC `poc_two_funds_burned_only_A_settles` — nhưng thành ĐƯỜNG DƯƠNG.
+// Một lượt đốt chạm batch của hai quỹ thì quyết toán bằng HAI giao dịch riêng,
+// mỗi giao dịch một quỹ; cả hai đều qua và không đồng MAGIC nào mất dấu. Bản
+// trước chỉ với tới được quỹ A (vì `paid_fund.spend` ép đúng một quỹ input mỗi
+// giao dịch, mà `settle_delta` chỉ đo được trong chính giao dịch đốt), nên phần
+// của B chết vĩnh viễn trong quỹ B.
+test pp_two_funds_settle_in_two_txs_ok() {
+  let d0 =
+    t_vd(
+      [t_credit_u(t_fund_id, 0, 600_000_000), t_credit_u(t_other_fund, 0, 300_000_000)],
+      [],
+    )
+  // Giao dịch 1 — quỹ A. Nợ của B đứng nguyên.
+  let d1 =
+    PrepaidVaultDatum {
+      ..t_vd(
+        [t_credit_u(t_fund_id, 0, 0), t_credit_u(t_other_fund, 0, 300_000_000)],
+        [],
+      ),
+      last_updated_epoch: t_epoch,
+    }
+  let a_ok =
+    run_settle_line(
+      d0,
+      t_fund_id,
+      sl_tx(
+        d0, d1,
+        t_fd_of(t_fund_id, lock_amt, lock_amt, 0),
+        t_fd_of(t_fund_id, lock_amt, lock_amt, 600_000_000),
+      ),
+    )
+
+  // Giao dịch 2 — quỹ B, trên chính vault vừa đi ra khỏi giao dịch 1.
+  let d2 =
+    PrepaidVaultDatum {
+      ..t_vd([t_credit_u(t_fund_id, 0, 0), t_credit_u(t_other_fund, 0, 0)], []),
+      last_updated_epoch: t_epoch,
+    }
+  let b_ok =
+    run_settle_line(
+      d1,
+      t_other_fund,
+      sl_tx(
+        d1, d2,
+        t_fd_of(t_other_fund, lock_amt, lock_amt, 0),
+        t_fd_of(t_other_fund, lock_amt, lock_amt, 300_000_000),
+      ),
+    )
+  a_ok && b_ok
+}
+
+// INV-MAGIC-CITIZEN, vế cấu trúc: `PrunePrepaid` KHÔNG được biến MAGIC HẾT HẠN
+// thành nợ quyết toán. Đây là chỗ bất biến ấy sống sau khi quỹ thôi đo delta
+// batch — nếu prune cộng được vào `consumed_unsettled` thì `SettleLine` sau đó
+// hợp thức hoá nó mà không ai thấy.
+test pp_prune_inflates_consumed_unsettled() fail {
+  let din =
+    t_vd([t_credit_u(t_fund_id, 0, 0)], [t_batch(#"b1", 1_000_000_000, t_epoch - 1, t_fund_id)])
+  let dout =
+    PrepaidVaultDatum {
+      ..din,
+      prepaid_credits: [t_credit_u(t_fund_id, 1_000_000_000, 1_000_000_000)],
+      magic_batches: [],
+      last_updated_epoch: t_epoch,
+    }
+  run_prune(din, t_tx([t_vault_in(din)], [t_vault_out(dout)], []))
+}
+
+// ĐỐI CHỨNG DƯƠNG: cùng lượt dọn, nợ quyết toán đã có từ trước ĐỨNG YÊN qua
+// prune — nó không bị xoá (phần đã tiêu thật vẫn đòi được sau khi batch chết).
+test pp_prune_keeps_consumed_unsettled() {
+  let din =
+    t_vd(
+      [t_credit_u(t_fund_id, 0, 400_000_000)],
+      [t_batch(#"b1", 600_000_000, t_epoch - 1, t_fund_id)],
+    )
+  let dout =
+    PrepaidVaultDatum {
+      ..din,
+      prepaid_credits: [t_credit_u(t_fund_id, 600_000_000, 400_000_000)],
       magic_batches: [],
       last_updated_epoch: t_epoch,
     }
@@ -2749,18 +3412,29 @@ test pp_fund_lock_drains_carp() fail {
 }
 
 // ── FundSettle ────────────────────────────────────────────────
+//
+// Từ 2026-09-28 quỹ KHÔNG còn đo delta bằng phần `current_amount` giảm trong
+// chính giao dịch đốt. Nó đọc `PrepaidCredit.consumed_unsettled` của dòng mang
+// `fund_id` của mình, ở cặp datum vault vào/ra, và đòi vault cùng tiêu bằng
+// `SettleLine` (constr 6).
 
+// Giao dịch quyết toán: vault đưa nợ của dòng `t_fund_id` từ `debt_in` xuống
+// `debt_out`; quỹ đi từ `fin` sang `fout`.
 fn settle_tx(
-  vin_batches  : List<MagicBatch>,
-  vout_batches : List<MagicBatch>,
-  fin          : PaidFundDatum,
-  fin_carp     : Int,
-  fout         : PaidFundDatum,
-  fout_carp    : Int,
-  vault_r      : PrepaidVaultRedeemer,
+  debt_in   : Int,
+  debt_out  : Int,
+  fin       : PaidFundDatum,
+  fin_carp  : Int,
+  fout      : PaidFundDatum,
+  fout_carp : Int,
+  vault_r   : PrepaidVaultRedeemer,
 ) -> Transaction {
-  let vin_d = t_vd([], vin_batches)
-  let vout_d = t_vd([], vout_batches)
+  let vin_d = t_vd([t_credit_u(t_fund_id, 0, debt_in)], [])
+  let vout_d =
+    PrepaidVaultDatum {
+      ..t_vd([t_credit_u(t_fund_id, 0, debt_out)], []),
+      last_updated_epoch: t_epoch,
+    }
   t_tx_rd(
     [t_vault_in(vin_d), t_fund_in(fin, fin_carp)],
     [t_vault_out(vout_d), t_fund_out(fout, fout_carp)],
@@ -2769,86 +3443,145 @@ fn settle_tx(
   )
 }
 
-// happy: 0.6 MAGIC bị tiêu thật → magic_settled += 600_000_000.
+// happy: nợ 0.6 MAGIC được xoá khỏi dòng → magic_settled += 600_000_000.
 test pp_fund_settle_ok() {
   let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
   let fout = t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500)
   let tx =
     settle_tx(
-      [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)],
-      [t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)],
-      fin, lock_amt, fout, lock_amt,
-      BurnBatch { burns: [(#"b1", 600_000_000)] },
+      600_000_000, 0, fin, lock_amt, fout, lock_amt,
+      SettleLine { fund_id: t_fund_id },
     )
   run_fund(fin, lock_amt, tx, FundSettle)
 }
 
-// TẤN CÔNG cốt lõi: tính MAGIC HẾT HẠN thành "đã tiêu" (phá INV-MAGIC-CITIZEN).
-// Batch của epoch trước biến mất khỏi output nhưng KHÔNG được tính.
-test pp_fund_settle_counts_expired() fail {
-  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
-  let fout = t_fd(lock_amt, lock_amt, 1_000_000_000, 0, 1_500)
-  let tx =
-    settle_tx(
-      [t_batch(#"b1", 1_000_000_000, t_epoch - 1, t_fund_id)],
-      [],
-      fin, lock_amt, fout, lock_amt,
-      BurnBatch { burns: [] },
-    )
-  run_fund(fin, lock_amt, tx, FundSettle)
-}
-
-// TẤN CÔNG: quyết toán MAGIC của quỹ KHÁC.
-test pp_fund_settle_other_fund_batch() fail {
+// TẤN CÔNG — hình dạng này TỪNG LÀ ĐƯỜNG DƯƠNG (trước 2026-09-28): quỹ bị tiêu
+// bằng FundSettle trong khi vault chạy `BurnBatch` (constr 2). Nay `BurnBatch`
+// chỉ GHI NỢ, nó không xoá nợ, nên cho qua ở đây là cộng `magic_settled` hai
+// lần cho cùng một lượt tiêu.
+test pp_fund_settle_cospend_burn_batch() fail {
   let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
   let fout = t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500)
   let tx =
     settle_tx(
-      [t_batch(#"b1", 1_000_000_000, t_epoch, t_other_fund)],
-      [t_batch(#"b1", 400_000_000, t_epoch, t_other_fund)],
-      fin, lock_amt, fout, lock_amt,
-      BurnBatch { burns: [(#"b1", 600_000_000)] },
-    )
-  run_fund(fin, lock_amt, tx, FundSettle)
-}
-
-// TẤN CÔNG: khai settled cao hơn lượng thật sự giảm.
-test pp_fund_settle_inflated() fail {
-  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
-  let fout = t_fd(lock_amt, lock_amt, 900_000_000, 0, 1_500)
-  let tx =
-    settle_tx(
-      [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)],
-      [t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)],
-      fin, lock_amt, fout, lock_amt,
+      600_000_000, 0, fin, lock_amt, fout, lock_amt,
       BurnBatch { burns: [(#"b1", 600_000_000)] },
     )
   run_fund(fin, lock_amt, tx, FundSettle)
 }
 
 // TẤN CÔNG: quyết toán trong khi vault chạy PrunePrepaid (constr 3) —
-// hết hạn KHÔNG phải tiêu thật.
+// hết hạn KHÔNG phải tiêu thật (INV-MAGIC-CITIZEN).
 test pp_fund_settle_under_prune() fail {
   let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
   let fout = t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500)
   let tx =
+    settle_tx(600_000_000, 0, fin, lock_amt, fout, lock_amt, PrunePrepaid)
+  run_fund(fin, lock_amt, tx, FundSettle)
+}
+
+// TẤN CÔNG: khai settled cao hơn phần nợ thật sự được xoá.
+test pp_fund_settle_inflated() fail {
+  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  let fout = t_fd(lock_amt, lock_amt, 900_000_000, 0, 1_500)
+  let tx =
     settle_tx(
-      [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)],
-      [t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)],
-      fin, lock_amt, fout, lock_amt,
-      PrunePrepaid,
+      600_000_000, 0, fin, lock_amt, fout, lock_amt,
+      SettleLine { fund_id: t_fund_id },
+    )
+  run_fund(fin, lock_amt, tx, FundSettle)
+}
+
+// TẤN CÔNG: nợ đứng yên mà quỹ vẫn cộng — quyết toán từ hư không.
+test pp_fund_settle_zero_delta() fail {
+  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  let fout = t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500)
+  let tx =
+    settle_tx(
+      600_000_000, 600_000_000, fin, lock_amt, fout, lock_amt,
+      SettleLine { fund_id: t_fund_id },
+    )
+  run_fund(fin, lock_amt, tx, FundSettle)
+}
+
+// TẤN CÔNG: quyết toán bằng nợ của quỹ KHÁC. Dòng của quỹ này đứng yên ở 0, chỉ
+// dòng `t_other_fund` được xoá — quỹ này không có quyền gì trên con số đó.
+test pp_fund_settle_other_fund_line() fail {
+  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  let fout = t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500)
+  let vin_d =
+    t_vd([t_credit_u(t_fund_id, 0, 0), t_credit_u(t_other_fund, 0, 600_000_000)], [])
+  let vout_d =
+    PrepaidVaultDatum {
+      ..t_vd([t_credit_u(t_fund_id, 0, 0), t_credit_u(t_other_fund, 0, 0)], []),
+      last_updated_epoch: t_epoch,
+    }
+  let tx =
+    t_tx_rd(
+      [t_vault_in(vin_d), t_fund_in(fin, lock_amt)],
+      [t_vault_out(vout_d), t_fund_out(fout, lock_amt)],
+      [t_platform],
+      SettleLine { fund_id: t_other_fund },
+    )
+  run_fund(fin, lock_amt, tx, FundSettle)
+}
+
+// TẤN CÔNG: datum vault khai HAI dòng cho cùng một quỹ. Quỹ đọc delta từ datum
+// mà nó không tự dựng, nên nó phải tự kiểm tính duy nhất — `list.find` một mình
+// lấy dòng ĐẦU TIÊN và bỏ qua dòng thứ hai, tức chọn được con số có lợi.
+//
+// Hai bài, hai đầu, vì `settle_line_delta` có hai phép đếm riêng biệt: một cho
+// datum vào, một cho datum ra. Thiếu bài nào thì phép đếm bên đó không có ai canh.
+test pp_fund_settle_duplicate_line_in() fail {
+  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  let fout = t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500)
+  let vin_d =
+    t_vd(
+      [t_credit_u(t_fund_id, 0, 600_000_000), t_credit_u(t_fund_id, 0, 100_000_000)],
+      [],
+    )
+  let vout_d =
+    PrepaidVaultDatum {
+      ..t_vd([t_credit_u(t_fund_id, 0, 0)], []),
+      last_updated_epoch: t_epoch,
+    }
+  let tx =
+    t_tx_rd(
+      [t_vault_in(vin_d), t_fund_in(fin, lock_amt)],
+      [t_vault_out(vout_d), t_fund_out(fout, lock_amt)],
+      [t_platform],
+      SettleLine { fund_id: t_fund_id },
+    )
+  run_fund(fin, lock_amt, tx, FundSettle)
+}
+
+test pp_fund_settle_duplicate_line_out() fail {
+  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  let fout = t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500)
+  let vin_d = t_vd([t_credit_u(t_fund_id, 0, 600_000_000)], [])
+  let vout_d =
+    PrepaidVaultDatum {
+      ..t_vd([t_credit_u(t_fund_id, 0, 0), t_credit_u(t_fund_id, 0, 500_000_000)], []),
+      last_updated_epoch: t_epoch,
+    }
+  let tx =
+    t_tx_rd(
+      [t_vault_in(vin_d), t_fund_in(fin, lock_amt)],
+      [t_vault_out(vout_d), t_fund_out(fout, lock_amt)],
+      [t_platform],
+      SettleLine { fund_id: t_fund_id },
     )
   run_fund(fin, lock_amt, tx, FundSettle)
 }
 
 // TẤN CÔNG: "vault" giả ở script khác (đúng cái mà khuôn shard.ak để hở).
 test pp_fund_settle_fake_vault() fail {
-  let vin_d = t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
-  let vout_d = t_vd([], [t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)])
+  let vin_d = t_vd([t_credit_u(t_fund_id, 0, 600_000_000)], [])
+  let vout_d = t_vd([t_credit_u(t_fund_id, 0, 0)], [])
   let evil = address.from_script(t_evil_hash)
   let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
   let fout = t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500)
-  let rd: Data = BurnBatch { burns: [(#"b1", 600_000_000)] }
+  let rd: Data = SettleLine { fund_id: t_fund_id }
   let tx =
     Transaction {
       ..placeholder,
@@ -2885,12 +3618,98 @@ test pp_fund_settle_drains_carp() fail {
   let fout = t_fd(0, lock_amt, 600_000_000, 0, 1_500)
   let tx =
     settle_tx(
-      [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)],
-      [t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)],
-      fin, lock_amt, fout, 0,
-      BurnBatch { burns: [(#"b1", 600_000_000)] },
+      600_000_000, 0, fin, lock_amt, fout, 0,
+      SettleLine { fund_id: t_fund_id },
     )
   run_fund(fin, lock_amt, tx, FundSettle)
+}
+
+// ── Hình dạng UTxO quỹ tiếp nối (vá 2026-09-28) ───────────────
+//
+// Bốn vế dưới đây genesis đã ép từ lâu, nhánh spend thì chưa — nên một lượt vận
+// hành hợp lệ vẫn đẻ ra được một quỹ méo mà mọi lượt sau kế thừa. Dùng chính
+// giao dịch quyết toán hợp lệ rồi bóp méo ĐÚNG MỘT vế của output quỹ.
+
+fn settle_ok_tx_with_fund_out(fout_utxo: Output) -> Transaction {
+  let vin_d = t_vd([t_credit_u(t_fund_id, 0, 600_000_000)], [])
+  let vout_d =
+    PrepaidVaultDatum {
+      ..t_vd([t_credit_u(t_fund_id, 0, 0)], []),
+      last_updated_epoch: t_epoch,
+    }
+  let fin = t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+  t_tx_rd(
+    [t_vault_in(vin_d), t_fund_in(fin, lock_amt)],
+    [t_vault_out(vout_d), fout_utxo],
+    [t_platform],
+    SettleLine { fund_id: t_fund_id },
+  )
+}
+
+fn settle_fin() -> PaidFundDatum {
+  t_fd(lock_amt, lock_amt, 0, 0, 1_500)
+}
+
+fn settle_fout() -> PaidFundDatum {
+  t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500)
+}
+
+// ĐỐI CHỨNG DƯƠNG cho bốn bài dưới: cùng đường chạy, output quỹ không méo.
+test pp_fund_out_shape_ok() {
+  run_fund(
+    settle_fin(),
+    lock_amt,
+    settle_ok_tx_with_fund_out(t_fund_out(settle_fout(), lock_amt)),
+    FundSettle,
+  )
+}
+
+// TẤN CÔNG: gắn reference script vào UTxO quỹ tiếp nối. Không giao dịch nào
+// lỗi, nhưng min-ADA đội lên và không nhánh nào rút ADA khỏi quỹ ⟹ khoá vốn
+// vĩnh viễn, im lặng.
+test pp_fund_out_reference_script() fail {
+  let fout_utxo =
+    Output { ..t_fund_out(settle_fout(), lock_amt), reference_script: Some(t_evil_hash) }
+  run_fund(settle_fin(), lock_amt, settle_ok_tx_with_fund_out(fout_utxo), FundSettle)
+}
+
+// TẤN CÔNG: rút bớt ADA tối thiểu của quỹ.
+test pp_fund_out_lovelace_siphoned() fail {
+  let fd = settle_fout()
+  let fout_utxo =
+    Output {
+      ..t_fund_out(fd, lock_amt),
+      value: assets.from_lovelace(1_000_000)
+        |> assets.add(t_carp_policy, t_carp_name, lock_amt)
+        |> assets.add(t_fund_hash, fd.fund_id, 1),
+    }
+  run_fund(settle_fin(), lock_amt, settle_ok_tx_with_fund_out(fout_utxo), FundSettle)
+}
+
+// TẤN CÔNG: tên tài sản THỨ HAI dưới chính policy quỹ. `find_fund_output_utxo`
+// dùng `quantity_of` nên nó trả lời "có đúng NFT đó", KHÔNG trả lời "chỉ có NFT
+// đó"; cổng đếm policy thì đếm POLICY nên cũng không thấy.
+test pp_fund_out_second_name_under_fund_policy() fail {
+  let fd = settle_fout()
+  let fout_utxo =
+    Output {
+      ..t_fund_out(fd, lock_amt),
+      value: t_fund_value(lock_amt, fd.fund_id)
+        |> assets.add(t_fund_hash, #"a1a1", 1),
+    }
+  run_fund(settle_fin(), lock_amt, settle_ok_tx_with_fund_out(fout_utxo), FundSettle)
+}
+
+// TẤN CÔNG: nhét bụi token (policy thứ tư) cho phình value của quỹ.
+test pp_fund_out_dust_stuffed() fail {
+  let fd = settle_fout()
+  let fout_utxo =
+    Output {
+      ..t_fund_out(fd, lock_amt),
+      value: t_fund_value(lock_amt, fd.fund_id)
+        |> assets.add(t_evil_hash, #"dd", 1),
+    }
+  run_fund(settle_fin(), lock_amt, settle_ok_tx_with_fund_out(fout_utxo), FundSettle)
 }
 
 // ── FundClaim ─────────────────────────────────────────────────
@@ -3239,10 +4058,8 @@ test pp_fund_settle_over_issued() fail {
   let fout = t_fd(lock_amt, lock_amt, 1_500_000_000, 0, 1_500)
   let tx =
     settle_tx(
-      [t_batch(#"b1", 1_500_000_000, t_epoch, t_fund_id)],
-      [],
-      fin, lock_amt, fout, lock_amt,
-      BurnBatch { burns: [(#"b1", 1_500_000_000)] },
+      1_500_000_000, 0, fin, lock_amt, fout, lock_amt,
+      SettleLine { fund_id: t_fund_id },
     )
   run_fund(fin, lock_amt, tx, FundSettle)
 }
@@ -3625,6 +4442,7 @@ fn sp_lock_dout() -> PrepaidVaultDatum {
         remaining: lock_amt,
         issued_epoch: t_epoch,
         last_draw_epoch: t_epoch,
+        consumed_unsettled: 0,
       },
     ],
     last_updated_epoch: t_epoch,
@@ -3677,6 +4495,7 @@ fn sp_draw_dout() -> PrepaidVaultDatum {
         remaining: 4_000_000_000,
         issued_epoch: 5,
         last_draw_epoch: t_epoch,
+        consumed_unsettled: 0,
       },
     ],
     magic_batches: [drawn_batch(0)],
@@ -3711,11 +4530,11 @@ test pp_spend_draw_nft_escapes() fail {
 // ── Nhánh 3/5 — BurnBatch ─────────────────────────────────────
 
 fn sp_burn_din() -> PrepaidVaultDatum {
-  t_vd([], [t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
+  burn_din([t_batch(#"b1", 1_000_000_000, t_epoch, t_fund_id)])
 }
 
 fn sp_burn_dout() -> PrepaidVaultDatum {
-  t_out_burn([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], [], 1)
+  burn_dout([t_batch(#"b1", 400_000_000, t_epoch, t_fund_id)], 600_000_000, 1)
 }
 
 fn sp_burn_run(vin: Input, vout: Output) -> Bool {
@@ -3775,6 +4594,41 @@ test pp_spend_prune_forged_vault() fail {
 
 test pp_spend_prune_nft_escapes() fail {
   sp_prune_run(t_vault_in(sp_prune_din()), t_vault_out_no_nft(sp_prune_dout()))
+}
+
+// TẤN CÔNG (C-PP-10 · thoả-mãn-kép): tiêu HAI vault trong một giao dịch, mà chỉ
+// trả về MỘT output vault — vault thứ hai bốc hơi cùng toàn bộ hạn mức của nó.
+//
+// Bài này CỐ Ý trùng hình dạng với `pp_spend_settle_line_two_vault_inputs` ở
+// nhánh khác, và trùng là ĐÚNG chứ không phải thừa. `C-PP-10` là chốt dùng chung
+// cho cả bảy nhánh, đặt ở thân `spend`; nếu nó chỉ có một bài canh và bài đó đi
+// qua nhánh `SettleLine`, thì ngày nào đó nhánh ấy bị gỡ là chốt chống
+// thoả-mãn-kép của SÁU nhánh còn lại mất người canh mà không gì đỏ. Nhánh
+// `PrunePrepaid` được chọn làm bản thứ hai vì nó permissionless (không cần chữ
+// ký) và không cần fixture quỹ — rẻ nhất trong bảy nhánh.
+//
+// Đi QUA handler là bắt buộc: phép đếm nằm ở thân `spend`, gọi thẳng
+// `validate_prune` thì không chạm tới nó.
+test pp_spend_prune_two_vault_inputs() fail {
+  let vin2 =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: t_tx_id,
+        output_index: 9,
+      },
+      output: t_vault_out(sp_prune_din()),
+    }
+  run_spend(
+    sp_prune_din(),
+    PrunePrepaid,
+    branch_tx(
+      t_vault_in(sp_prune_din()),
+      t_vault_out(sp_prune_dout()),
+      [vin2],
+      [],
+      [],
+    ),
+  )
 }
 
 // ── Nhánh 5/5 — SetDelegate ───────────────────────────────────
@@ -3854,7 +4708,115 @@ test pp_spend_setdidcommit_nft_escapes() fail {
   sp_setdid_run(t_vault_in(sp_setdid_din()), t_vault_out_no_nft(sp_setdid_dout()))
 }
 
-// ── Hai cổng còn lại của `vault_identity_preserved` ────────────
+// ── Nhánh 7/7 — SettleLine (permissionless: KHÔNG chữ ký) ──────
+//
+// Nhánh này là nhánh DUY NHẤT vừa permissionless vừa đụng tới một script KHÁC
+// (sổ quỹ), nên nếu cổng định danh vault ở thân handler có chỗ hở thì đây là
+// chỗ khai thác rẻ nhất — không cần khoá của ai. Chú thích ở thân `spend` khai
+// rằng cổng đó phủ "CẢ BẢY nhánh"; các bài dưới đây là phép ĐO câu đó cho nhánh
+// thứ bảy, không phải một lời khai về nó.
+
+fn sp_settle_din() -> PrepaidVaultDatum {
+  sl_din(600_000_000)
+}
+
+fn sp_settle_dout() -> PrepaidVaultDatum {
+  sl_dout(0)
+}
+
+// Dựng bằng `branch_tx` chứ không phải `sl_tx`: handler suy epoch từ
+// `validity_range`, mà `t_tx` (nền của `sl_tx`) không đặt trường đó.
+fn sp_settle_tx(vin: Input, vout: Output, more_ins: List<Input>) -> Transaction {
+  branch_tx(
+    vin,
+    vout,
+    list.concat(
+      [t_fund_in(t_fd(lock_amt, lock_amt, 0, 0, 1_500), lock_amt)],
+      more_ins,
+    ),
+    [t_fund_out(t_fd(lock_amt, lock_amt, 600_000_000, 0, 1_500), lock_amt)],
+    [],
+  )
+}
+
+fn sp_settle_run(vin: Input, vout: Output) -> Bool {
+  run_spend(
+    sp_settle_din(),
+    SettleLine { fund_id: t_fund_id },
+    sp_settle_tx(vin, vout, []),
+  )
+}
+
+test pp_spend_settle_line_ok() {
+  sp_settle_run(t_vault_in(sp_settle_din()), t_vault_out(sp_settle_dout()))
+}
+
+test pp_spend_settle_line_forged_vault() fail {
+  sp_settle_run(
+    t_vault_in_no_nft(sp_settle_din()), t_vault_out_no_nft(sp_settle_dout()),
+  )
+}
+
+test pp_spend_settle_line_nft_escapes() fail {
+  sp_settle_run(t_vault_in(sp_settle_din()), t_vault_out_no_nft(sp_settle_dout()))
+}
+
+// TẤN CÔNG: gắn reference script vào output vault ở đúng nhánh permissionless.
+// Bài `pp_spend_reference_script_attached` đã canh cổng này qua nhánh `Prune`;
+// bài này KHÔNG lặp lại nó mà đo một thứ khác: người dựng giao dịch ở đây không
+// cần là chủ vault, nên chi phí tấn công bằng đúng phí mạng.
+test pp_spend_settle_line_reference_script() fail {
+  let vout =
+    Output {
+      ..t_vault_out(sp_settle_dout()),
+      reference_script: Some(t_evil_hash),
+    }
+  sp_settle_run(t_vault_in(sp_settle_din()), vout)
+}
+
+// TẤN CÔNG (C-PP-10 · thoả-mãn-kép): tiêu HAI vault trong một giao dịch, mỗi
+// vault nợ 0.6 MAGIC, mà chỉ kèm MỘT quỹ cộng 0.6 — nợ của vault thứ hai bị xoá
+// không công. `validate_settle_line` một mình KHÔNG bắt được: nó chỉ nhìn datum
+// vào/ra của một vault và không biết có vault thứ hai trong cùng giao dịch.
+//
+// Nên bài phải đi QUA handler: phép đếm mang nhãn `C-PP-10` nằm ở thân `spend`,
+// gọi thẳng `validate_settle_line` thì không chạm tới nó. Trước bài này không
+// bài nào canh dòng đó (đo đột biến 2026-09-28: gỡ nó ra, 0 bài đỏ).
+test pp_spend_settle_line_two_vault_inputs() fail {
+  let vin2 =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: t_tx_id,
+        output_index: 9,
+      },
+      output: t_vault_out(sp_settle_din()),
+    }
+  run_spend(
+    sp_settle_din(),
+    SettleLine { fund_id: t_fund_id },
+    sp_settle_tx(
+      t_vault_in(sp_settle_din()),
+      t_vault_out(sp_settle_dout()),
+      [vin2],
+    ),
+  )
+}
+
+// ── Ba cổng còn lại của `vault_identity_preserved` ─────────────
+
+// TẤN CÔNG: gắn reference script vào output vault tiếp nối (vá 2026-09-28).
+// Cổng đúc đã ghim vế này cho UTxO genesis, nhánh spend thì chưa — nên một lượt
+// dọn rác hợp lệ vẫn đội min-ADA của vault lên, mà dòng `lovelace(out) >=
+// lovelace(in)` chỉ cho ADA đi lên và không nhánh nào rút ADA ra ⟹ khoá vốn
+// vĩnh viễn, không giao dịch nào lỗi.
+test pp_spend_reference_script_attached() fail {
+  let vout =
+    Output {
+      ..t_vault_out(sp_prune_dout()),
+      reference_script: Some(t_evil_hash),
+    }
+  sp_prune_run(t_vault_in(sp_prune_din()), vout)
+}
 
 // TẤN CÔNG: rút bớt ADA tối thiểu của vault ra ví mình mỗi lần dọn rác.
 test pp_spend_lovelace_siphoned() fail {
@@ -4466,6 +5428,7 @@ fn oc_draw_tx(owner: Credential, signers: List<ByteArray>) -> Transaction {
           remaining: 4_000_000_000,
           issued_epoch: 5,
           last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
         },
       ],
       magic_batches: [drawn_batch(0)],

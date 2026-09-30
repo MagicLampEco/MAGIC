@@ -29,6 +29,25 @@ pub type PrepaidCredit {
   remaining       : Natural,   // carpdrop
   issued_epoch    : Natural,
   last_draw_epoch : Natural,
+  // ── Sổ nợ quyết toán, thêm 2026-09-28 (THÊM Ở CUỐI) ─────────────────────
+  // nanogic đã đốt (`BurnBatch`) từ batch của CHÍNH dòng này mà quỹ CHƯA ghi
+  // nhận. `BurnBatch` cộng vào đây; `SettleLine` (constr 6) đưa về 0 và cộng
+  // đúng bằng ấy vào `PaidFundDatum.magic_settled` trong cùng giao dịch.
+  //
+  // Vì sao cần một trường datum thay vì đọc delta batch tại chỗ như bản trước:
+  // `settle_delta` cũ chỉ đo phần giảm TRONG CHÍNH giao dịch đốt, nên một
+  // `BurnBatch` không kèm quỹ là mất dấu vĩnh viễn — CARP đối ứng nằm lại quỹ
+  // mà provider không đòi được (F2 chỉ cho đòi phần đã quyết toán) và người
+  // dùng cũng không lấy lại được. Và vì `paid_fund.spend` ép đúng MỘT quỹ input
+  // mỗi giao dịch, một lượt đốt chạm batch của hai quỹ chỉ quyết toán được một.
+  // Ghi nợ vào datum tách hai việc ra: đốt lúc nào cũng được, quyết toán lúc
+  // nào cũng được, mỗi quỹ một giao dịch riêng.
+  //
+  // THÊM Ở CUỐI giữ chỉ số các trường cũ, KHÔNG giữ khả năng đọc UTxO vault đã
+  // tạo bằng lược đồ 4 trường (BOUNDARIES.md §2 — Aiken nghiêm về số trường cả
+  // hai chiều). Chấp nhận được vì `prepaid_credits` rỗng lúc genesis và cụm
+  // Preprod đời trước đã mồ côi.
+  consumed_unsettled : Natural,   // nanogic
 }
 
 pub type VaultAttribution {
@@ -116,12 +135,25 @@ pub type PrepaidVaultRedeemer {
   // mọi redeemer đã mã hoá ngoài chuỗi cho một nhánh ≥ 3 sẽ chạy NHẦM NHÁNH mà
   // không lỗi cú pháp nào. Thứ tự khai báo ≠ thứ tự vòng đời.
   SetDidCommit { did_commit: ByteArray }
+
+  // constr 6 — quyết toán MỘT dòng hạn-mức: đưa `consumed_unsettled` của dòng
+  // `fund_id` về 0 và cộng đúng bằng ấy vào `magic_settled` của quỹ đó trong
+  // CÙNG giao dịch. Permissionless như `PrunePrepaid`: nó không lấy gì của ai
+  // (không CARP nào rời quỹ, không hạn-mức nào sinh ra), nó chỉ chuyển một con
+  // số đã ghi trong datum vault sang sổ quỹ — mà người hưởng lợi là provider,
+  // không phải chủ vault, nên đòi chữ ký chủ vault là để provider phụ thuộc
+  // thiện chí của con nợ.
+  //
+  // THÊM Ở CUỐI: `BurnBatch` phải đứng yên ở constr 2 (ConsumeMAGIC ghim), và
+  // mọi redeemer đã mã hoá cho một nhánh ≥ 3 sẽ chạy nhầm nhánh nếu chèn vào
+  // giữa — không lỗi cú pháp nào, chỉ sai lúc chạy trên chuỗi.
+  SettleLine { fund_id: ByteArray }
 }
 
 // ── Paid fund redeemer ────────────────────────────────────────
 pub type PaidFundRedeemer {
   FundLock                                 // constr 0 — co-spend với PrepaidLock
-  FundSettle                               // constr 1 — co-spend với BurnBatch
+  FundSettle                               // constr 1 — co-spend với SettleLine (constr 6)
   FundClaim { amount_carpdrop: Natural }   // constr 2 — provider rút, trần F2
 }
 

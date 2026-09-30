@@ -19,11 +19,16 @@ export const MagicBatchSchema = Data.Object({
 export type MagicBatch = Data.Static<typeof MagicBatchSchema>;
 
 // ── PrepaidCredit ────────────────────────────────────────────
+// Trường cuối thêm 2026-09-28: sổ nợ quyết toán. `BurnBatch` cộng vào,
+// `SettleLine` (constr 6) đưa về 0 và chuyển đúng bằng ấy sang
+// `PaidFundDatum.magic_settled`. THÊM Ở CUỐI giữ chỉ số trường cũ nhưng KHÔNG
+// giữ khả năng đọc UTxO vault 4 trường đời trước (BOUNDARIES.md §2).
 export const PrepaidCreditSchema = Data.Object({
   fund_id: Data.Bytes(),
   remaining: Data.Integer(), // carpdrop
   issued_epoch: Data.Integer(),
   last_draw_epoch: Data.Integer(),
+  consumed_unsettled: Data.Integer(), // nanogic đã đốt, quỹ chưa ghi nhận
 });
 export type PrepaidCredit = Data.Static<typeof PrepaidCreditSchema>;
 
@@ -147,6 +152,14 @@ export const PrepaidVaultRedeemerSchema = Data.Enum([
       did_commit: Data.Bytes(),
     }),
   }),
+  Data.Object({
+    // constr 6 — quyết toán MỘT dòng hạn-mức (thêm 2026-09-28). Permissionless.
+    // Giao dịch phải kèm UTxO quỹ mang `fund_id` này, và quỹ đó tiêu bằng
+    // `FundSettle`; on-chain đòi `consumed_unsettled > 0` (reject-noop).
+    SettleLine: Data.Object({
+      fund_id: Data.Bytes(),
+    }),
+  }),
 ]);
 export type PrepaidVaultRedeemer = Data.Static<typeof PrepaidVaultRedeemerSchema>;
 
@@ -205,6 +218,7 @@ export const VAULT_REDEEMER_ORDER = [
   "PrunePrepaid",
   "SetDelegate",
   "SetDidCommit", // constr 5 — thêm 2026-09-15, CHỈ THÊM Ở CUỐI
+  "SettleLine", // constr 6 — thêm 2026-09-28, CHỈ THÊM Ở CUỐI
 ] as const;
 
 /// Chỉ số constructor của `SetDidCommit`. Viết ra thành hằng để bài kiểm codec ép
@@ -212,6 +226,11 @@ export const VAULT_REDEEMER_ORDER = [
 /// không làm hỏng suy luận kiểu, và chỉ lộ ra khi giao dịch chạy nhầm nhánh trên
 /// chuỗi — đúng lớp hỏng im lặng mà bảng thứ tự này sinh ra để chặn.
 export const SET_DID_COMMIT_CONSTR = 5;
+
+/// Chỉ số constructor của `SettleLine` — cùng lý lẽ với hằng ngay trên. Nhánh
+/// này PHẢI đứng sau `SetDidCommit`: mọi thứ từ constr 3 trở đi dịch một bậc
+/// nếu ai đó chèn vào giữa, và `BurnBatch` ở constr 2 thì ConsumeMAGIC ghim.
+export const SETTLE_LINE_CONSTR = 6;
 
 /// Độ dài hợp lệ của `did_commit` khi GHI (blake2b-256). Gương của
 /// `did_len_ok` bên Aiken: rỗng là "chưa gắn", còn nhánh ghi đòi đúng 32 byte.
@@ -238,6 +257,7 @@ export const PREPAID_CREDIT_FIELDS = [
   "remaining",
   "issued_epoch",
   "last_draw_epoch",
+  "consumed_unsettled", // thêm 2026-09-28, CHỈ THÊM Ở CUỐI
 ] as const;
 
 export const VAULT_ATTRIBUTION_FIELDS = [

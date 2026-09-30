@@ -16,7 +16,7 @@ import {
   type Blueprint, type ParamMap,
 } from "./applyParams.js";
 import {
-  instantVaultParams, scheduleVaultParams, umDatumParams, shardSpendParams,
+  instantVaultParams, scheduleVaultParams, scheduleCommitParams, umDatumParams, shardSpendParams,
   oneShotGenesisParams, priceParamParams, consumeParams, paymasterParams,
   addressData,
   paidFundParams, prepaidVaultParams,
@@ -33,6 +33,11 @@ const P28 = "00".repeat(28);
 const CARP_NAME_28 = "11".repeat(28);
 const SEED = { txHash: "11".repeat(32), outputIndex: 0 };
 const MS = 86_400_000n;
+// Năm hash GenBeacons của Gen v2.0 (`deployParams.ts` ▸ `GenV2BeaconRefs`) — giữ chỗ như P28.
+const BEACONS = {
+  gbBeaconNftPolicy: P28, gbBeaconScriptHash: P28, gbShardPolicyId: P28,
+  rateNftPolicy: P28, rateScriptHash: P28,
+};
 
 interface Case {
   module: string;
@@ -47,9 +52,8 @@ const CASES: Case[] = [
     module: "InstantGen", title: "vault.vault.spend",
     usedBy: "deploy/05_create_instant_vault.ts + verify_per_network.ts",
     params: instantVaultParams({
-      lampPolicyId: P28, lampAssetName: "744c414d50", umNftPolicy: P28,
-      umScriptHash: P28, backingNftPolicy: P28, backingScriptHash: P28,
-      msPerEpoch: MS, wakemeVaultHash: P28,
+      lampPolicyId: P28, lampAssetName: "744c414d50", ...BEACONS,
+      wakemeVaultHash: P28, msPerEpoch: MS,
     }),
   },
   {
@@ -57,9 +61,8 @@ const CASES: Case[] = [
     module: "InstantGen", title: "vault.vault.mint",
     usedBy: "deploy/05 (mint NFT danh-tính vault)",
     params: instantVaultParams({
-      lampPolicyId: P28, lampAssetName: "744c414d50", umNftPolicy: P28,
-      umScriptHash: P28, backingNftPolicy: P28, backingScriptHash: P28,
-      msPerEpoch: MS, wakemeVaultHash: P28,
+      lampPolicyId: P28, lampAssetName: "744c414d50", ...BEACONS,
+      wakemeVaultHash: P28, msPerEpoch: MS,
     }),
   },
   {
@@ -67,7 +70,7 @@ const CASES: Case[] = [
     usedBy: "deploy/07_create_schedule_vault.ts + verify_per_network.ts",
     params: scheduleVaultParams({
       lampPolicyId: P28, lampAssetName: "744c414d50", shardPolicyId: P28,
-      msPerEpoch: MS,
+      msPerEpoch: MS, gbShardPolicyId: P28, commitScriptHash: P28,
     }),
   },
   {
@@ -75,7 +78,17 @@ const CASES: Case[] = [
     usedBy: "deploy/07 (mint NFT danh-tính vault)",
     params: scheduleVaultParams({
       lampPolicyId: P28, lampAssetName: "744c414d50", shardPolicyId: P28,
-      msPerEpoch: MS,
+      msPerEpoch: MS, gbShardPolicyId: P28, commitScriptHash: P28,
+    }),
+  },
+  {
+    // Gen v2.0: validator withdraw-zero mà nhánh ký của két uỷ cho; hash của nó là tham số #6
+    // của két (`deployParams.ts` ▸ `scheduleScriptPair`).
+    module: "ScheduleGen", title: "vault.commit.withdraw",
+    usedBy: "deploy/06 (ref commit) + deploy/07 + deploy/08 (đăng ký stake)",
+    params: scheduleCommitParams({
+      lampPolicyId: P28, lampAssetName: "744c414d50", shardPolicyId: P28,
+      msPerEpoch: MS, ...BEACONS,
     }),
   },
   {

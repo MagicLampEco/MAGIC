@@ -52,6 +52,66 @@ export interface ChainReader {
   tip(): Promise<ChainTip>;
 }
 
+// ── LỊCH SỬ — phần mở rộng cho chỉ mục thread (`threadIndex.ts`) ─────────────────
+// Tách thành một giao diện CON thay vì thêm thẳng vào `ChainReader`: đường đọc vault
+// (`VaultReadService`) chỉ cần ảnh chụp, và mọi bản giả lập đang có của nó không phải
+// mang thêm ba phương thức nó không dùng.
+
+/** Một điểm trên chuỗi: khối nào, slot nào. `slot` là đồng hồ mà hợp đồng API in ra. */
+export interface ChainPoint {
+  height: number;
+  hash: string;
+  slot: number;
+}
+
+/** Một giao dịch có chạm một địa chỉ (ở đầu vào hoặc đầu ra), theo thứ tự chuỗi. */
+export interface AddressTx {
+  txHash: string;
+  blockHeight: number;
+  /** Vị trí trong khối — cùng với `blockHeight` cho thứ tự áp tất định. */
+  txIndex: number;
+}
+
+/** Tham chiếu tới một đầu ra. */
+export interface OutRef {
+  txHash: string;
+  outputIndex: number;
+}
+
+/** Một đầu ra kèm địa chỉ của nó — để bên áp lọc đúng địa chỉ mình theo dõi. */
+export interface AddressedUtxo extends ChainUtxo {
+  address: string;
+}
+
+/**
+ * Tác động THẬT của một giao dịch lên tập UTxO — đã chuẩn hoá theo luật sổ cái, để bên áp
+ * (chỉ mục) không phải biết ngữ nghĩa riêng của nhà cung cấp dữ liệu.
+ *
+ * Hai luật phải giữ, vì làm sai là một thread BIẾN MẤT khỏi chỉ mục trong khi vẫn sống:
+ *   · Reference input KHÔNG bị tiêu. Wakeme dùng đúng UTxO thread làm reference input cho
+ *     genesis ⟹ coi nó là đầu vào bị tiêu là tự xoá thread mỗi lần có người dùng nó.
+ *   · Giao dịch trượt pha 2 (`valid_contract = false`) chỉ tiêu COLLATERAL và chỉ tạo đầu
+ *     ra collateral-return. Đầu vào thường của nó KHÔNG bị tiêu.
+ */
+export interface ChainTxEffect {
+  txHash: string;
+  spent: OutRef[];
+  created: AddressedUtxo[];
+}
+
+export interface ChainHistoryReader extends ChainReader {
+  /** Đỉnh chuỗi dạng điểm (chiều cao + slot). */
+  tipPoint(): Promise<ChainPoint>;
+  /**
+   * Mọi giao dịch chạm `address` trong các khối `fromHeight..toHeight` (HAI ĐẦU ĐỀU TÍNH),
+   * theo thứ tự chuỗi tăng dần. Cùng hợp đồng nghiêm như `utxosAt`: rỗng CHỈ khi chuỗi trả
+   * lời là không có; không đọc được ⟹ ném `ChainUnavailableError`.
+   */
+  txsAt(address: string, fromHeight: number, toHeight: number): Promise<AddressTx[]>;
+  /** Tác động đã chuẩn hoá của một giao dịch — xem `ChainTxEffect`. */
+  txEffect(txHash: string): Promise<ChainTxEffect>;
+}
+
 /** Mốc tỉnh táo: 2020-01-01T00:00:00Z tính bằng giây. Thời gian khối nhỏ hơn mốc này
  *  gần như chắc chắn là ta đang đọc nhầm trường (slot, chiều cao khối, ms-đọc-thành-giây). */
 const SANE_MIN_BLOCK_TIME_SECONDS = 1_577_836_800n;
@@ -66,7 +126,7 @@ export interface BlockfrostReaderOptions {
   timeoutMs?: number;
 }
 
-export class BlockfrostChainReader implements ChainReader {
+export class BlockfrostChainReader implements ChainHistoryReader {
   readonly label: string;
   private readonly baseUrl: string;
   private readonly projectId: string;
@@ -182,6 +242,137 @@ export class BlockfrostChainReader implements ChainReader {
       blockTimePosixMs: seconds * 1000n,   // GIÂY → MILI-GIÂY. Đúng một chỗ trong gói này.
     };
   }
+
+  async tipPoint(): Promise<ChainPoint> {
+    const { status, body } = await this.getJson("/blocks/latest");
+    if (status !== 200 || body === null || typeof body !== "object") {
+      throw new ChainUnavailableError(
+        `Nút chuỗi trả HTTP ${status} khi đọc đỉnh chuỗi.`,
+        { transport: "http", node_http_status: status, node: this.label },
+      );
+    }
+    const b = body as { height?: unknown; hash?: unknown; slot?: unknown };
+    if (typeof b.height !== "number" || typeof b.hash !== "string" || typeof b.slot !== "number") {
+      // Không đệm `-1`: một chiều cao giả đi thẳng vào phép tính độ trễ và biến chỉ mục
+      // cũ thành "tươi".
+      throw new ChainUnavailableError(
+        "Đỉnh chuỗi thiếu `height`/`hash`/`slot` — không đo được độ trễ của chỉ mục.",
+        { transport: "http", node_http_status: status, node: this.label },
+      );
+    }
+    return { height: b.height, hash: b.hash, slot: b.slot };
+  }
+
+  async txsAt(address: string, fromHeight: number, toHeight: number): Promise<AddressTx[]> {
+    const out: AddressTx[] = [];
+    if (toHeight < fromHeight) return out;
+    const pageSize = 100;
+    for (let page = 1; ; page++) {
+      const { status, body } = await this.getJson(
+        `/addresses/${address}/transactions?order=asc&count=${pageSize}&page=${page}` +
+        `&from=${fromHeight}&to=${toHeight}`,
+      );
+      // 404 = địa chỉ chưa từng xuất hiện — câu trả lời thật "không có gì", như ở `utxosAt`.
+      if (status === 404) return out;
+      if (status !== 200 || !Array.isArray(body)) {
+        throw new ChainUnavailableError(
+          `Nút chuỗi trả HTTP ${status} (hoặc hình dạng lạ) khi đọc giao dịch của địa chỉ.`,
+          { transport: "http", node_http_status: status, node: this.label },
+        );
+      }
+      for (const raw of body) {
+        const t = raw as { tx_hash?: unknown; block_height?: unknown; tx_index?: unknown };
+        if (typeof t.tx_hash !== "string" || typeof t.block_height !== "number" || typeof t.tx_index !== "number") {
+          throw new ChainUnavailableError(
+            "Mục giao dịch của nút chuỗi thiếu `tx_hash`/`block_height`/`tx_index`.",
+            { transport: "http", node: this.label },
+          );
+        }
+        out.push({ txHash: t.tx_hash, blockHeight: t.block_height, txIndex: t.tx_index });
+      }
+      if (body.length < pageSize) return out;
+    }
+  }
+
+  async txEffect(txHash: string): Promise<ChainTxEffect> {
+    const meta = await this.getJson(`/txs/${txHash}`);
+    if (meta.status !== 200 || meta.body === null || typeof meta.body !== "object") {
+      throw new ChainUnavailableError(
+        `Nút chuỗi trả HTTP ${meta.status} khi đọc giao dịch.`,
+        { transport: "http", node_http_status: meta.status, node: this.label },
+      );
+    }
+    const valid = (meta.body as { valid_contract?: unknown }).valid_contract;
+    if (typeof valid !== "boolean") {
+      throw new ChainUnavailableError(
+        "Giao dịch thiếu `valid_contract` — không biết đầu vào thường hay collateral bị tiêu.",
+        { transport: "http", node: this.label },
+      );
+    }
+
+    const io = await this.getJson(`/txs/${txHash}/utxos`);
+    if (io.status !== 200 || io.body === null || typeof io.body !== "object") {
+      throw new ChainUnavailableError(
+        `Nút chuỗi trả HTTP ${io.status} khi đọc đầu vào/đầu ra của giao dịch.`,
+        { transport: "http", node_http_status: io.status, node: this.label },
+      );
+    }
+    const b = io.body as { inputs?: unknown; outputs?: unknown };
+    if (!Array.isArray(b.inputs) || !Array.isArray(b.outputs)) {
+      throw new ChainUnavailableError(
+        "Đầu vào/đầu ra của giao dịch không phải mảng.",
+        { transport: "http", node: this.label },
+      );
+    }
+    return normalizeTxEffect(txHash, valid, b.inputs, b.outputs);
+  }
+}
+
+/**
+ * Hình dạng `/txs/{hash}/utxos` của Blockfrost → `ChainTxEffect`. Xuất ra để bài kiểm ghim
+ * được hai luật (reference input, trượt pha 2) mà không cần mạng.
+ *
+ * Cờ `reference`/`collateral` THIẾU ⟹ NÉM, không coi là `false`: coi thiếu là `false` thì
+ * reference input bị tính là đã tiêu, và thread đang được Wakeme đọc biến khỏi chỉ mục.
+ */
+export function normalizeTxEffect(
+  txHash: string, validContract: boolean, inputs: unknown[], outputs: unknown[],
+): ChainTxEffect {
+  const flag = (o: Record<string, unknown>, k: string): boolean => {
+    const v = o[k];
+    if (typeof v !== "boolean") {
+      throw new ChainUnavailableError(
+        `Mục đầu vào/đầu ra thiếu cờ \`${k}\` — không phân loại được nó.`,
+        { transport: "http", tx_hash: txHash },
+      );
+    }
+    return v;
+  };
+
+  const spent: OutRef[] = [];
+  for (const raw of inputs) {
+    const i = raw as Record<string, unknown>;
+    if (typeof i.tx_hash !== "string" || typeof i.output_index !== "number") {
+      throw new ChainUnavailableError("Đầu vào thiếu `tx_hash`/`output_index`.", { transport: "http", tx_hash: txHash });
+    }
+    if (flag(i, "reference")) continue;                 // đọc, không tiêu
+    const isCollateral = flag(i, "collateral");
+    if (validContract ? isCollateral : !isCollateral) continue;
+    spent.push({ txHash: i.tx_hash, outputIndex: i.output_index });
+  }
+
+  const created: AddressedUtxo[] = [];
+  for (const raw of outputs) {
+    const o = raw as Record<string, unknown>;
+    if (typeof o.address !== "string") {
+      throw new ChainUnavailableError("Đầu ra thiếu `address`.", { transport: "http", tx_hash: txHash });
+    }
+    const isCollateral = flag(o, "collateral");
+    if (validContract ? isCollateral : !isCollateral) continue;
+    const u = toChainUtxo({ ...o, tx_hash: txHash });
+    created.push({ ...u, address: o.address });
+  }
+  return { txHash, spent, created };
 }
 
 /** Chuyển một mục UTxO của Blockfrost sang hình dạng hẹp của gói này. */

@@ -71,6 +71,35 @@ export interface AppConfig {
   /** Thẻ bài chia sẻ. Rỗng CHỈ được phép khi `host` là loopback. */
   token: string;
   requestTimeoutMs: number;
+  /** Địa chỉ script `consume` cần theo dõi cho chỉ mục DID ⟹ thread. Rỗng ⟹ chỉ mục TẮT
+   *  (đường `/threads/*` trả 503 `THREAD_INDEX_DISABLED`, không trả rỗng). */
+  consumeScopes: ConsumeScope[];
+  threadIndex: ThreadIndexConfig;
+}
+
+/**
+ * Một địa chỉ `consume` (ConsumeMAGIC) mà chỉ mục thread theo dõi.
+ *
+ * Cùng khuôn với `VaultScope`: script hash SUY từ địa chỉ và cũng là policy id của NFT thread
+ * (`ConsumeMAGIC/onchain/validators/consume.ak` ▸ `validate_mint_engage_id` — handler `mint`
+ * chạy dưới chính script hash đó). Mỗi loại vault có một bản `consume` riêng (apply-param
+ * `vault_script_hash`), nên một mạng có thể có NHIỀU mục ở đây.
+ */
+export interface ConsumeScope {
+  address: string;
+  /** = policy id của NFT thread. */
+  scriptHash: string;
+  /** Bản chép phải mang nhãn: chép từ đâu, ngày nào. */
+  source: string;
+}
+
+export interface ThreadIndexConfig {
+  /** Chỉ mục trễ HƠN số khối này ⟹ 503 `INDEX_STALE`. */
+  staleBlocks: number;
+  /** Nhịp vòng đồng bộ nền. */
+  syncIntervalMs: number;
+  /** Thời gian khối trung bình — để ngoại suy độ trễ khi vòng đồng bộ không chạy được. */
+  blockTimeMs: number;
 }
 
 const BLOCKFROST_URL_BY_NETWORK: Record<Network, string> = {
@@ -125,7 +154,79 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`[config] VAULT_READ_API_TIMEOUT_MS="${env.VAULT_READ_API_TIMEOUT_MS}" không hợp lệ.`);
   }
 
-  return { network, blockfrostUrl, blockfrostProjectId, scopes, host, port, token, requestTimeoutMs };
+  const consumeScopes = env.VAULT_READ_API_CONSUME_SCOPES
+    ? parseConsumeScopes(env.VAULT_READ_API_CONSUME_SCOPES, network)
+    : [];
+
+  const threadIndex: ThreadIndexConfig = {
+    staleBlocks: intEnv(env, "VAULT_READ_API_THREAD_STALE_BLOCKS", 3, 0),
+    syncIntervalMs: intEnv(env, "VAULT_READ_API_THREAD_SYNC_INTERVAL_MS", 20_000, 1_000),
+    blockTimeMs: intEnv(env, "VAULT_READ_API_BLOCK_TIME_MS", 20_000, 1_000),
+  };
+
+  return {
+    network, blockfrostUrl, blockfrostProjectId, scopes, host, port, token, requestTimeoutMs,
+    consumeScopes, threadIndex,
+  };
+}
+
+function intEnv(env: NodeJS.ProcessEnv, name: string, dflt: number, min: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return dflt;
+  const v = Number(raw);
+  if (!Number.isInteger(v) || v < min) {
+    throw new Error(`[config] ${name}="${raw}" không hợp lệ (số nguyên ≥ ${min}).`);
+  }
+  return v;
+}
+
+/**
+ * `VAULT_READ_API_CONSUME_SCOPES` = JSON `[{ "address": "addr…", "source": "…" }]`.
+ * Cùng các cổng fail-closed như `parseScopes`: đúng tiền tố mạng, là địa chỉ script, có nhãn
+ * nguồn, không trùng.
+ */
+export function parseConsumeScopes(raw: string, network: Network): ConsumeScope[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`[config] VAULT_READ_API_CONSUME_SCOPES không phải JSON hợp lệ: ${(e as Error).message}`);
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(
+      "[config] VAULT_READ_API_CONSUME_SCOPES phải là một MẢNG không rỗng (bỏ hẳn biến nếu muốn tắt chỉ mục).",
+    );
+  }
+  const prefix = expectedAddressPrefix(network);
+  const seen = new Set<string>();
+  return parsed.map((item, i) => {
+    const o = item as { address?: unknown; source?: unknown };
+    const where = `VAULT_READ_API_CONSUME_SCOPES[${i}]`;
+    if (typeof o.address !== "string" || o.address === "") {
+      throw new Error(`[config] ${where}.address thiếu.`);
+    }
+    if (typeof o.source !== "string" || o.source.trim() === "") {
+      throw new Error(
+        `[config] ${where}.source thiếu. Địa chỉ consume là BẢN CHÉP của một lần deploy; ` +
+        `bản chép không mang nhãn thì không ai biết lúc nào nó hết đúng.`,
+      );
+    }
+    if (!o.address.startsWith(prefix)) {
+      throw new Error(
+        `[config] ${where}.address bắt đầu bằng "${o.address.slice(0, 10)}…" nhưng mạng là ` +
+        `${network} (chờ tiền tố "${prefix}").`,
+      );
+    }
+    const cred = credentialOfOrThrow(o.address, where);
+    if (cred.type !== "Script") {
+      throw new Error(`[config] ${where}.address không phải địa chỉ script — thread luôn ở địa chỉ consume.`);
+    }
+    if (seen.has(cred.hash)) {
+      throw new Error(`[config] ${where} trùng script hash với một mục trước — bỏ bớt.`);
+    }
+    seen.add(cred.hash);
+    return { address: o.address, scriptHash: cred.hash, source: o.source };
+  });
 }
 
 export function parseScopes(raw: string, network: Network): VaultScope[] {

@@ -167,6 +167,91 @@ Thân bài luôn kèm `chain_tip` để bên gọi tự đối chiếu được.
 Không cần thẻ bài, không chạm chuỗi. In lại **nhãn nguồn** của từng địa chỉ vault đang
 phục vụ — thứ duy nhất trả lời được câu *"địa chỉ này chép từ đâu, bao giờ"*.
 
+### Chỉ mục DID ⟹ thread: `GET /threads/*`
+
+Thread = UTxO ở địa chỉ script `consume` (ConsumeMAGIC) mang **đúng một** NFT dưới policy
+= script hash `consume` (tên 32 byte, `validate_mint_engage_id`), datum `EngageDatum` 5 trường.
+Mỗi lần consume thread bị tiêu và tạo lại: UTxO đổi, NFT giữ nguyên. Bên dùng chính là
+Wakeme, lấy UTxO thread làm reference input cho genesis. Nên **dữ liệu cũ phải lộ ra**, không
+được trả như dữ liệu mới.
+
+Cách chạy: một vòng đồng bộ **nền** (`src/threadIndex.ts` ▸ `ThreadIndex`) giữ bảng trong bộ
+nhớ. Vòng đầu dựng từ ảnh chụp UTxO; các vòng sau **gia tăng** — đọc giao dịch mới ở từng địa
+chỉ consume, gỡ đầu vào bị tiêu, thêm đầu ra mới. Reference input **không** tính là bị tiêu;
+giao dịch trượt pha 2 chỉ tiêu collateral (`src/chain.ts` ▸ `normalizeTxEffect`). Lượt tra
+chỉ đọc bảng, **không gọi chuỗi**.
+
+**Độ trễ** = (đỉnh quan sát lần cuối − điểm đã đồng bộ) + ⌊thời gian trôi từ lần quan sát đó
+/ `VAULT_READ_API_BLOCK_TIME_MS`⌋. Vế thứ hai bắt ca vòng đồng bộ đã chết: không có nó, một
+chỉ mục ngừng từ hôm qua vẫn tự khai trễ 0. `tip_slot` cũng ngoại suy theo cùng đồng hồ.
+
+Mọi đường `/threads/*` đòi thẻ bài như `/vault/by-owner`. Mọi số nguyên trong `datum` đi ra
+dạng **chuỗi** thập phân (cùng lý do ở §3); slot và `lag_blocks` là số JSON.
+
+#### `GET /threads/by-did/{did_commit}` — `did_commit` đúng 64 hex **thường**
+
+Một DID có thể có nhiều thread, trên nhiều hash `consume`; sắp theo `consume_hash` rồi `utxo`.
+
+```json
+{
+  "synced_slot": 20020, "tip_slot": 20020, "lag_blocks": 0,
+  "threads": [{
+    "consume_hash": "c1c1…c1", "policy": "c1c1…c1",
+    "name": "d11bcc087038d0995a136690fe2ecf91259119db8e8d963df5fc86b745408d19",
+    "utxo": "<txhash>#0",
+    "datum": {
+      "owner": { "type": "key", "hash": "1111…11" },
+      "consumed_count": "12", "last_epoch": "20751",
+      "did_commit": "9f9f…9f", "consumed_nanogic": "36000000"
+    }
+  }],
+  "skipped_count": 0
+}
+```
+
+`skipped_count` là số UTxO **mang NFT thread** trên **toàn chỉ mục** mà datum không đọc được —
+chúng không gán được cho DID nào, nên khác 0 nghĩa là danh sách trên **có thể thiếu**. Chi
+tiết từng cái ở `/threads/status`. DID không có thread (chỉ mục tươi) ⟹ `200` + `threads: []`.
+
+#### `GET /threads/by-asset/{policy}.{name}` — policy 56 hex, tên 64 hex, chữ thường
+
+```json
+{ "synced_slot": 20020, "tip_slot": 20020, "lag_blocks": 0,
+  "thread": { "consume_hash": "…", "policy": "…", "name": "…", "utxo": "<txhash>#0", "datum": { … } } }
+```
+
+#### `GET /threads/status` — chẩn đoán, không bao giờ 503 vì cũ
+
+Điểm đồng bộ, `fresh`, số vòng, lỗi vòng gần nhất, và theo từng địa chỉ consume: số thread,
+số `skipped`, số `ignored_no_nft` (UTxO ở địa chỉ consume **không** mang NFT đúng policy — ai
+cũng đỗ được thứ đó, nên nó **không** vào chỉ mục). Liệt kê từng UTxO bị `skipped` kèm lý do
+(`NO_INLINE_DATUM` · `DATUM_UNDECODABLE` · `OWNER_SHAPE` · `DID_COMMIT_LENGTH`).
+
+#### Mã lỗi của `/threads/*`
+
+| mã | HTTP | nghĩa |
+|---|---|---|
+| `INDEX_STALE` | 503 | trễ > `VAULT_READ_API_THREAD_STALE_BLOCKS`, hoặc **chưa đồng bộ lần nào**. KHÔNG kèm danh sách. `details`: `synced_slot`, `tip_slot`, `lag_blocks` (`null` khi chưa đồng bộ), `stale_threshold_blocks`, `reason` (`NEVER_SYNCED` \| `LAG_EXCEEDED`), `last_sync_error` |
+| `THREAD_INDEX_DISABLED` | 503 | tiến trình không cấu hình địa chỉ consume nào |
+| `THREAD_NOT_FOUND` | 404 | **chỉ khi tươi**: không UTxO nào đang mang NFT này |
+| `UNKNOWN_CONSUME_SCOPE` | 404 | policy không nằm trong tập đang theo dõi — **không biết**, khác "không có" |
+| `THREAD_DATUM_UNDECODABLE` | 502 | UTxO mang đúng NFT nhưng datum không đọc được |
+| `THREAD_IDENTITY_DUPLICATE` | 409 | hai UTxO cùng mang một NFT — chỉ mục không nhất quán, không chọn hộ |
+| `BAD_REQUEST` | 400 | DID / tài sản sai khuôn |
+
+Ví dụ `503`:
+
+```json
+{ "error": { "code": "INDEX_STALE",
+  "message": "Chỉ mục thread trễ 5 khối, quá ngưỡng 3. Danh sách có thể chứa UTxO đã bị tiêu — không trả.",
+  "details": { "synced_slot": 20020, "tip_slot": 20120, "lag_blocks": 5, "stale_threshold_blocks": 3,
+               "reason": "LAG_EXCEEDED", "last_sync_error": "CHAIN_UNAVAILABLE: …" } } }
+```
+
+Giới hạn đã biết của độ tươi: trong **một nhịp đồng bộ** (mặc định 20 giây) chỉ mục có thể
+chưa thấy một lần tiêu vừa xảy ra mà vẫn tự khai tươi. Ngưỡng `lag_blocks` chặn phần trễ dài
+hơn thế, không chặn phần này.
+
 ## 4. Vault nào được tính — và vault nào KHÔNG
 
 Một UTxO ở địa chỉ vault chỉ được tính khi **mang NFT danh-tính vault**: đúng một token
@@ -229,6 +314,10 @@ in khoá; `/health` không lộ URL đầy đủ của nút chuỗi, chỉ lộ 
 | `VAULT_READ_API_TOKEN` | ngoài loopback thì **có** | rỗng |
 | `VAULT_READ_API_BLOCKFROST_URL` | không | dẫn theo `NETWORK` |
 | `VAULT_READ_API_TIMEOUT_MS` | không | `15000` |
+| `VAULT_READ_API_CONSUME_SCOPES` | không (vắng ⟹ `/threads/*` trả 503 `THREAD_INDEX_DISABLED`) | — JSON `[{ "address", "source" }]`, cùng các cổng như `VAULT_READ_API_VAULTS` |
+| `VAULT_READ_API_THREAD_STALE_BLOCKS` | không | `3` |
+| `VAULT_READ_API_THREAD_SYNC_INTERVAL_MS` | không | `20000` |
+| `VAULT_READ_API_BLOCK_TIME_MS` | không | `20000` (chỉ để ngoại suy độ trễ) |
 
 `VAULT_READ_API_VAULTS` — mỗi mục **bắt buộc** có `source`:
 
@@ -251,7 +340,7 @@ thật là hai trường sẽ lệch nhau.
 
 ```bash
 npm install
-npm test          # 44 bài, không cần mạng, không cần khoá
+npm test          # không cần mạng, không cần khoá (số bài: đọc dòng `Tests` của chính lệnh này)
 npm run typecheck
 npm start                     # sidecar
 npm run probe -- <owner_pkh> [at_epoch]    # hỏi một lần, in JSON, không mở cổng
@@ -270,5 +359,11 @@ hai đường ra hai số khác nhau thì một trong hai sai.
   tại; không đủ cho một màn hình tự làm mới.
 - **Chỉ Blockfrost.** `ChainReader` là giao diện, thêm Kupo/Ogmios là thêm một lớp hiện
   thực, không phải sửa lõi.
+- **Chỉ mục thread mới kiểm trên chuỗi GIẢ.** Ba luật chuẩn hoá của Blockfrost (cờ
+  `reference`, cờ `collateral`, `valid_contract`) đã ghim bằng bài kiểm trên hình dạng tự
+  dựng, **chưa** đối chiếu với phản hồi thật; thiếu cờ thì ném, không đoán.
+- **Chỉ mục thread chưa tự chữa cuộn lại (rollback).** Đỉnh lùi dưới điểm đã đồng bộ thì dựng
+  lại từ ảnh chụp; một cuộn lại ngắn không làm đỉnh lùi thì chưa bị phát hiện. Chưa có vòng
+  dựng lại định kỳ.
 - **Mới đo trên Preview + ScheduleGen.** Vault InstantGen dùng **cùng** `VaultDatum` nên
   đường đọc không đổi, nhưng chưa có lượt đo thật nào trên vault Instant.

@@ -16,7 +16,11 @@ import {
 import {
   slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp,
 } from "@magiclamp/protocol-utils";
-import type { UMDatum, GenSchedule } from "./types.js";
+import type { GenSchedule } from "./types.js";
+
+/** Hình dạng UM mà `getUmForInstant` đọc. Gen v2.0 bỏ UM khỏi két InstantGen (không
+ *  còn lược đồ `UMDatum` trong `types.ts`); hàm đời v1 giữ lại cho bài kiểm C-UM-6. */
+export interface UmReading { smoothed_q: bigint; last_updated_epoch: bigint }
 
 // Re-export shared primitives to preserve module's public API
 export { slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp };
@@ -220,7 +224,7 @@ export function computeInstantGrantWithLent(
 // TV-UM-SPLIT: smoothed=2B, last_updated=98, current=100
 //   → staleness=2 > 1 → result = 500_000_000 ✓
 
-export function getUmForInstant(um: UMDatum, currentEpoch: bigint): bigint {
+export function getUmForInstant(um: UmReading, currentEpoch: bigint): bigint {
   const staleness = currentEpoch - um.last_updated_epoch;
   if (staleness <= UM_MAX_STALENESS) {
     return um.smoothed_q;

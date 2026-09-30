@@ -1,98 +1,31 @@
-// tests/instantTxWindow.test.ts — Nợ #79: ghim CHỖ GỌI, không ghim công thức.
+// tests/instantTxWindow.test.ts — Nợ #79: ghim CHỖ GỌI của bộ dựng két InstantGen Gen v2.0.
 //
-// `ProtocolUtils/tests/utils.test.ts` đã ghim `epochValidityWindow` như một hàm.
-// Tệp này ghim thứ hàm đó KHÔNG nói được: rằng `buildInstantGenTx` thật sự gọi nó,
-// với `reserveTrailingSlots = 1`, và rằng mốc `instant_unlock_ms` ghi vào datum vì
-// thế KHÔNG rơi vào slot cuối của epoch sau.
+// `ProtocolUtils/tests/utils.test.ts` đã ghim `epochValidityWindow` như một hàm. Tệp này
+// ghim thứ hàm đó KHÔNG nói được: rằng `buildInstantGenTx` thật sự gọi nó với
+// `reserveTrailingSlots = 1` (còn `buildRefreshCheckpointTx` với 0), rằng mốc
+// `instant_unlock_ms` ghi vào datum vì thế KHÔNG rơi vào slot cuối của epoch sau, và
+// hình dạng giao dịch Gen v2.0 (két + shard GB, tham chiếu beacon GB + sổ két [+ ρ, két
+// Wakeme]). Cổng số học của lượt sinh nằm ở `instantGates.test.ts` (hàm thuần).
 //
-// Bài kiểm ở đây đi qua bộ dựng THẬT, với `LucidEvolution` giả (TestSupport/lucidFake.ts).
-// Trước tệp này, bộ kiểm InstantGen xanh trong khi `instant.ts` chưa từng được nạp.
+// Bài kiểm đi qua bộ dựng THẬT, với `LucidEvolution` giả (TestSupport/lucidFake.ts).
 
 import { describe, it, expect } from "vitest";
-import { Data } from "@lucid-evolution/lucid";
-import { msPerEpoch, EmptyValidityWindowError, VALIDITY_MAX_AHEAD_MS } from "@magiclamp/protocol-utils";
+import { Data, Constr } from "@lucid-evolution/lucid";
+import { VALIDITY_MAX_AHEAD_MS } from "@magiclamp/protocol-utils";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
-import { buildInstantGenTx } from "../offchain/src/instant.js";
+import { buildInstantGenTx, buildRefreshCheckpointTx } from "../offchain/src/instant.js";
 import {
-  VaultDatum, UMDatum, BackingBeaconDatum, OwnerCredentialSchema,
+  VaultDatum, VaultRedeemer, GbShard, OwnerCredentialSchema,
   type VaultDatum as TVaultDatum,
-  type UMDatum as TUMDatum,
-  type BackingBeaconDatum as TBackingBeaconDatum,
-  type GenSchedule,
-  type MagicBatch,
 } from "../offchain/src/types.js";
+import { computeCapLent, computeCapPp } from "../offchain/src/math.js";
+import {
+  NETWORK, P, E, SLOT, OWNER_PKH, VAULT_SCRIPT, SHARD_SCRIPT, VP, REGISTRY_POLICY,
+  LAMP_BALANCE, SHARD_ID, GB_SEQ, SHARD_RESET, WAKEME_COMMIT,
+  makeVault, makeShard, makeRate, vaultUtxo, greenbackUtxo, shardUtxo, registryUtxo, rateUtxo, wakemeUtxo,
+} from "./instantFixtures.js";
 
-// ── Bối cảnh: Preprod, epoch 100 ──────────────────────────────
-const NETWORK = "Preprod" as const;
-const P       = msPerEpoch(NETWORK);          // 432_000_000 ms
-const E       = 100n;
-const SLOT    = 1_000n;
-
-const LAMP_POLICY = "aa".repeat(28);
-const LAMP_NAME   = "744c414d50";             // "tLAMP" ở dạng hex
-const LAMP_UNIT   = LAMP_POLICY + LAMP_NAME;
-const VAULT_ID_UNIT = "bb".repeat(28) + "cc".repeat(8);
-const OWNER_PKH   = "0a".repeat(28);
-
-// Script tối giản hợp lệ — chỉ dùng để suy ra địa chỉ, không bao giờ được chạy.
-const VAULT_SCRIPT = { type: "PlutusV3" as const, script: "49480100002221200101" };
-
-function makeSchedule(overrides: Partial<GenSchedule> = {}): GenSchedule {
-  return {
-    schedule_id:            "5c4ed0",
-    commit_epoch:           90n,
-    start_fire_epoch:       200n,
-    end_fire_epoch:         209n,
-    schedule_length:        10n,
-    lamp_per_epoch:         1_000_000_000n,
-    rate_locked_q:          1_000_000_000n,
-    baseline_at_commit_q:   1_000_000_000n,
-    multiplier_at_commit_q: 1_000_000_000n,
-    fired_count:            0n,
-    auto_burn_target:       null,
-    ...overrides,
-  } as GenSchedule;
-}
-
-function makeVault(overrides: Partial<TVaultDatum> = {}): TVaultDatum {
-  return {
-    owner:                 { VerificationKey: [OWNER_PKH] },
-    lamp_balance:          100_000_000_000n,
-    lamp_locked:           0n,
-    loyalty_holdings:      [{ amount: 100_000_000_000n, acquired_epoch: 50n, is_locked: false }],
-    magic_batches:         [],
-    next_batch_index:      0n,
-    vacuum_orders:         [],
-    gen_schedules:         [makeSchedule()],
-    profile:               "Flame",
-    profile_changed_epoch: 0n,
-    pending_profile:       null,
-    last_updated_epoch:    99n,
-    delegation_cert:       { current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n },
-    activity_state:        { recent_burn_epochs: [], consumed_credit: 1_000_000_000n },
-    streak_state:          { current_streak: 0n, last_active_epoch: 0n },
-    personal_delegate:     null,
-    attribution:           { attribution_root: "00".repeat(32), last_event_epoch: 0n, total_events: 0n },
-    // 🔴 Trường 17. Bản `makeVault` trong `instant.test.ts` KHÔNG có trường này, và
-    // không gì báo: bộ kiểm đó không bao giờ mã hoá datum, nên số trường không bị
-    // đối chiếu. `Data.to` với một type 18 trường thì đòi đủ 18.
-    instant_unlock_ms:     0n,
-    ...overrides,
-  } as TVaultDatum;
-}
-
-const UM: TUMDatum = { smoothed_q: 1_000_000_000n, last_updated_epoch: 99n, history: [] };
-const BEACON: TBackingBeaconDatum = {
-  br_q: 2_000_000_000n, magic_supply: 1_000_000_000_000n, depeg: false, last_updated_epoch: 100n,
-};
-
-function utxo(datumHex: string, assets: Record<string, bigint>, ix = 0) {
-  return {
-    txHash: "ab".repeat(32), outputIndex: ix,
-    address: "addr_test1wq" + "q".repeat(50),
-    assets, datum: datumHex, datumHash: null, scriptRef: null,
-  } as any;
-}
+const M = 1_000_000n;
 
 async function dung(
   tipPosixMs: bigint,
@@ -102,326 +35,344 @@ async function dung(
   const fake = makeLucidFake();
   const res = await buildInstantGenTx({
     lucid: fake.lucid as any,
-    vaultUtxo: utxo(
-      Data.to(makeVault(vaultOverrides), VaultDatum),
-      { lovelace: 5_000_000n, [LAMP_UNIT]: 100_000_000_000n, [VAULT_ID_UNIT]: 1n },
-    ),
-    umDatumUtxo:       utxo(Data.to(UM, UMDatum), { lovelace: 2_000_000n }, 1),
-    backingBeaconUtxo: utxo(Data.to(BEACON, BackingBeaconDatum), { lovelace: 2_000_000n }, 2),
-    userAddress:  "addr_test1vq" + "q".repeat(50),
-    vaultScript:  VAULT_SCRIPT,
-    lampPolicyId: LAMP_POLICY,
-    lampAssetName: LAMP_NAME,
-    network:      NETWORK,
+    network: NETWORK,
     tipPosixMs,
+    vaultUtxo: vaultUtxo(makeVault(vaultOverrides)),
+    vaultScript: VAULT_SCRIPT,
+    vaultParams: VP,
+    greenbackBeaconUtxo: greenbackUtxo(),
+    gbShardUtxo: shardUtxo(),
+    gbShardScript: SHARD_SCRIPT,
+    vaultRegistryUtxo: registryUtxo(),
+    vaultRegistryPolicy: REGISTRY_POLICY,
+    m: M,
+    ...builderOverrides,
+  } as any);
+  return { res, tx: fake.onlyTx() };
+}
+
+async function dungRefresh(tipPosixMs: bigint, vaultOverrides: Partial<TVaultDatum> = {}, builderOverrides: Record<string, unknown> = {}) {
+  const fake = makeLucidFake();
+  const res = await buildRefreshCheckpointTx({
+    lucid: fake.lucid as any,
+    network: NETWORK,
+    tipPosixMs,
+    vaultUtxo: vaultUtxo(makeVault(vaultOverrides)),
+    vaultScript: VAULT_SCRIPT,
+    vaultParams: VP,
+    rateBeaconUtxo: rateUtxo(),
+    coinsPerUtxoByte: 4_310n,
     ...builderOverrides,
   } as any);
   return { res, tx: fake.onlyTx() };
 }
 
 /**
- * Dựng và chờ NÉM, trả về hai trường dữ liệu của lỗi.
+ * Dựng và chờ NÉM `EmptyValidityWindowError`, trả hai trường dữ liệu của lỗi.
  *
- * 🔴 KHÔNG dùng `rejects.toThrow(EmptyValidityWindowError)` ở tệp này. Bài kiểm nằm ở
- * `InstantGen/tests/`, bộ dựng nằm ở `InstantGen/offchain/src/` — hai chỗ phân giải
- * `@magiclamp/protocol-utils` qua hai cây `node_modules` khác nhau, nên có HAI đối
- * tượng lớp cùng tên và `instanceof` trả `false` trong khi lỗi hoàn toàn đúng. Đo
- * được: vitest in ra `Received: [EmptyValidityWindowError: …]` ngay dưới dòng
- * `expected error to be instance of EmptyValidityWindowError`.
- *
- * Khẳng định theo `name` + hai trường dữ liệu vì thế KHÔNG phải một bản hạ cấp: nó
- * ghim con số mà người gọi thật sự dùng (chờ bao lâu), thứ `instanceof` không chạm.
+ * 🔴 KHÔNG dùng `rejects.toThrow(EmptyValidityWindowError)`: bài kiểm và bộ dựng phân giải
+ * `@magiclamp/protocol-utils` qua hai cây `node_modules` khác nhau ⟹ hai đối tượng lớp
+ * cùng tên, `instanceof` trả `false` trong khi lỗi đúng. Khẳng định theo `name` + hai
+ * trường ghim con số người gọi thật sự dùng (chờ bao lâu).
  */
 async function nemVoiChoDoi(tipPosixMs: bigint) {
   try {
     await dung(tipPosixMs);
   } catch (e) {
     const err = e as Error & { waitMs?: bigint; retryAfterMs?: bigint };
-    if (err.name !== "EmptyValidityWindowError") throw err;   // lỗi khác thì để nó nổi lên
+    if (err.name !== "EmptyValidityWindowError") throw err;
     return { waitMs: err.waitMs, retryAfterMs: err.retryAfterMs };
   }
   throw new Error(`Chờ NÉM ở tip ${tipPosixMs} nhưng bộ dựng chạy xong bình thường.`);
 }
 
-function unlockMsTrongDatum(tx: ReturnType<ReturnType<typeof makeLucidFake>["onlyTx"]>): bigint {
+type Recorded = ReturnType<ReturnType<typeof makeLucidFake>["onlyTx"]>;
+
+function datumRa(tx: Recorded): TVaultDatum {
   const out = tx.outputs[0];
   if (out === undefined) throw new Error("Bộ dựng không phát output nào — bài kiểm đọc nhầm chỗ.");
-  const hex = (out.datum as { kind: string; value: string }).value;
-  return Data.from(hex, VaultDatum).instant_unlock_ms;
+  return Data.from((out.datum as { value: string }).value, VaultDatum);
 }
 
+const TIP_DAU = E * P + 1_000n;
+const TIP_GIO_CUOI = (E + 1n) * P - 1_800_000n;
+
 describe("buildInstantGenTx — cửa sổ hiệu lực và mốc khoá", () => {
-
-  // ── Cặp 1: chỗ gọi CÓ chừa một slot, và chừa ĐÚNG một ────────
-  //
-  // Đây là cặp ghim `reserveTrailingSlots: 1n`. Đổi nó về `0n` thì ca A đỏ ở
-  // `validTo` và ca B đỏ ở mốc trong datum. Trước tệp này, đổi `1n`→`0n` để lại
-  // 338 bài xanh.
-  //
-  // Tip nằm trong GIỜ CUỐI epoch: ở đầu epoch trần `VALIDITY_MAX_AHEAD_MS` thắng và
-  // cận trên không chạm vùng chừa, nên cặp này sẽ xanh ở cả `1n` lẫn `0n`.
-
-  const TIP_GIO_CUOI = (E + 1n) * P - 1_800_000n;
+  // Cặp ghim `reserveTrailingSlots: 1n`: đổi về `0n` thì A đỏ ở `validTo`, B đỏ ở mốc
+  // trong datum. Tip nằm trong GIỜ CUỐI epoch — ở đầu epoch trần VALIDITY_MAX_AHEAD_MS
+  // thắng và cận trên không chạm vùng chừa.
 
   it("A. `validTo` là slot ÁP CHÓT của epoch, không phải slot cuối", async () => {
-    const tip = TIP_GIO_CUOI;
-    const { tx } = await dung(tip);
-
-    expect(tx.validFrom).toBe(Number(tip));
-    // slot cuối của epoch E bắt đầu ở (E+1)P − 1000; chừa một slot ⟹ lùi thêm 1000.
+    const { tx } = await dung(TIP_GIO_CUOI);
+    expect(tx.validFrom).toBe(Number(TIP_GIO_CUOI));
     expect(tx.validTo).toBe(Number((E + 1n) * P - 2n * SLOT));
   });
 
-  it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch (chân trời node)", async () => {
-    const tip = E * P + 1_000n;
-    const { tx } = await dung(tip);
-
-    expect(tx.validTo).toBe(Number(tip + VALIDITY_MAX_AHEAD_MS));
-    // mốc khoá vẫn là cận-trên + P: khoá không ngắn đi, chỉ mở sớm hơn đúng phần cắt.
-    expect(unlockMsTrongDatum(tx) - BigInt(tx.validTo!)).toBe(P);
+  it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch", async () => {
+    const { tx } = await dung(TIP_DAU);
+    expect(tx.validTo).toBe(Number(TIP_DAU + VALIDITY_MAX_AHEAD_MS));
+    expect(datumRa(tx).instant_unlock_ms - BigInt(tx.validTo!)).toBe(P);
   });
 
   it("B. mốc trong datum KHÔNG rơi vào slot cuối của epoch sau", async () => {
-    const tip = TIP_GIO_CUOI;
-    const { tx } = await dung(tip);
-
-    const slotCuoiEpochSau = (E + 2n) * P - SLOT;   // ô chết: rút tại đây là khoảng rỗng
-    const mocGhiRa = unlockMsTrongDatum(tx);
-
-    expect(mocGhiRa).toBe((E + 2n) * P - 2n * SLOT);
-    expect(mocGhiRa).not.toBe(slotCuoiEpochSau);
-    // Và mốc vẫn phải nằm trong [P, 2P) tính từ cận trên — hợp đồng của I-ACT-7.
-    const khoangKhoa = mocGhiRa - BigInt(tx.validTo!);
-    expect(khoangKhoa).toBe(P);
+    const { tx } = await dung(TIP_GIO_CUOI);
+    const moc = datumRa(tx).instant_unlock_ms;
+    expect(moc).toBe((E + 2n) * P - 2n * SLOT);
+    expect(moc).not.toBe((E + 2n) * P - SLOT);
+    expect(moc - BigInt(tx.validTo!)).toBe(P);
   });
 
-  // ── Cặp 2: hai cực của cổng khoảng-rỗng ──────────────────────
-  //
-  // Với một slot được chừa, hai slot CUỐI của epoch đều không dựng được: cận trên
-  // lùi về đúng (hoặc dưới) cận dưới. Ca đối là slot thứ ba từ cuối.
+  it("B-bis. mốc cũ xa hơn ⟹ bộ dựng GIỮ mốc cũ (max), không ghi đè bằng cận trên + P", async () => {
+    const xa = (E + 5n) * P;
+    const { tx } = await dung(TIP_GIO_CUOI, { instant_unlock_ms: xa });
+    expect(datumRa(tx).instant_unlock_ms).toBe(xa);
+  });
 
   it("C. tip ở slot CUỐI epoch ⟹ NÉM, kèm đúng số mili-giây phải chờ", async () => {
-    await expect(nemVoiChoDoi((E + 1n) * P - SLOT)).resolves.toEqual({
-      waitMs: 1_000n, retryAfterMs: (E + 1n) * P,
-    });
+    await expect(nemVoiChoDoi((E + 1n) * P - SLOT)).resolves.toEqual({ waitMs: 1_000n, retryAfterMs: (E + 1n) * P });
   });
 
   it("C-bis. tip ở slot ÁP CHÓT ⟹ vẫn NÉM, vì một slot đã bị chừa", async () => {
-    await expect(nemVoiChoDoi((E + 1n) * P - 2n * SLOT)).resolves.toEqual({
-      waitMs: 2_000n, retryAfterMs: (E + 1n) * P,
-    });
+    await expect(nemVoiChoDoi((E + 1n) * P - 2n * SLOT)).resolves.toEqual({ waitMs: 2_000n, retryAfterMs: (E + 1n) * P });
   });
 
-  it("D. cực đối — tip ở slot thứ BA từ cuối thì dựng được", async () => {
+  it("D. cực đối — tip ở slot thứ BA từ cuối thì dựng được, khoảng đúng một slot", async () => {
     const tip = (E + 1n) * P - 3n * SLOT;
     const { tx } = await dung(tip);
-
     expect(tx.completed).toBe(true);
-    expect(tx.validFrom).toBe(Number(tip));
-    expect(tx.validTo).toBe(Number((E + 1n) * P - 2n * SLOT));
-    // Khoảng phải THẬT SỰ không rỗng — đúng một slot.
     expect(tx.validTo! - tx.validFrom!).toBe(Number(SLOT));
-  });
-
-  // ── Chỗ gọi có đi qua bộ dựng thật không ─────────────────────
-  //
-  // Ca này không kiểm cửa sổ; nó kiểm rằng bốn ca trên chạy qua `instant.ts` chứ
-  // không qua một bản mô phỏng. Nếu bộ dựng ngừng gọi `.validTo()`, `validTo` sẽ là
-  // `undefined` và cả bốn ca trên đỏ — chứ không âm thầm xanh.
-  it("E. giao dịch dựng ra mang đúng hình dạng InstantGen (vault→vault, 2 tham chiếu)", async () => {
-    const { tx, res } = await dung(E * P + 1_000n);
-
-    expect(tx.collectFrom).toHaveLength(1);
-    expect(tx.readFrom[0]).toHaveLength(2);      // UM + BackingBeacon
-    expect(tx.outputs).toHaveLength(1);          // chỉ trả về chính két
-    expect(tx.signerKeys).toEqual([OWNER_PKH]); // chủ két phải ký
-    expect(tx.withdrawals).toEqual([]);          // chủ khoá: không mục rút nào
-    expect(res.currentEpoch).toBe(E);
-    expect(res.newLampBalance).toBe(100_000_000_000n);  // I-ACT-7: LAMP đứng yên
   });
 });
 
-// ── Chủ két là `Credential` (on-chain 856804fa) ───────────────────────────────
-//
-// Bytes kỳ vọng dựng tay từ blueprint `cardano/address/Credential` (đối chiếu
-// `InstantGen/onchain/plutus.json` 2026-09-26): VerificationKey = Constr 0 [bytes 28],
-// Script = Constr 1 [bytes 28]. Lucid 0.4.30 mã hoá Constr có trường bằng danh sách
-// độ dài bất định (`9f … ff`) — cả hai dạng validator đều giải mã như nhau.
+describe("buildInstantGenTx — hình dạng giao dịch Gen v2.0", () => {
+  it("E. tiêu két + shard, trả cả hai về đúng địa chỉ, tham chiếu GB + sổ két", async () => {
+    const { tx, res } = await dung(TIP_DAU);
+    const v = vaultUtxo(makeVault());
+    const s = shardUtxo();
+
+    expect(tx.collectFrom).toHaveLength(2);
+    expect(tx.collectFrom[0]!.redeemer).toBe(Data.to({ InstantGen: { claimed_amount: M } }, VaultRedeemer));
+    // Draw { amount: 1e6 } = Constr 0 [1e6] — literal, không suy từ chính lược đồ đang kiểm.
+    expect(tx.collectFrom[1]!.redeemer).toBe("d8799f1a000f4240ff");
+    expect(tx.readFrom).toHaveLength(1);
+    expect(tx.readFrom[0]).toEqual([greenbackUtxo(), registryUtxo()]);   // không ρ: két đã làm mới trong E
+    expect(tx.attached).toEqual([VAULT_SCRIPT, SHARD_SCRIPT]);
+
+    expect(tx.outputs).toHaveLength(2);
+    expect(tx.outputs[0]!.address).toBe(v.address);
+    expect(tx.outputs[0]!.assets).toEqual(v.assets);                     // IG-14: value nguyên
+    expect(tx.outputs[1]!.address).toBe(s.address);
+    expect(tx.outputs[1]!.assets).toEqual(s.assets);
+    const shardOut = Data.from((tx.outputs[1]!.datum as { value: string }).value, GbShard);
+    expect(shardOut).toEqual({ shard_id: SHARD_ID, seq: GB_SEQ, reset_amount: SHARD_RESET, remaining: SHARD_RESET - M });
+
+    const d = datumRa(tx);
+    expect(d.lamp_balance).toBe(LAMP_BALANCE);                            // I-ACT-7
+    expect(d.usage_window[0]!.generated).toBe(M);
+    expect(d.magic_batches.map(b => b.initial_amount)).toEqual([M]);
+    expect(tx.signerKeys).toEqual([OWNER_PKH]);
+    expect(tx.withdrawals).toEqual([]);
+    expect(res.currentEpoch).toBe(E);
+    expect(res.m).toBe(M);
+  });
+
+  it("làm mới checkpoint ⟹ ρ đứng ĐẦU danh sách tham chiếu; thiếu ρ ⟹ GEN-INST-011", async () => {
+    const lui = { cap_epoch: E - 1n, usage_window_epoch: E - 1n };
+    const { tx } = await dung(TIP_DAU, lui, { rateBeaconUtxo: rateUtxo() });
+    expect(tx.readFrom[0]).toEqual([rateUtxo(), greenbackUtxo(), registryUtxo()]);
+    expect(datumRa(tx).cap_epoch).toBe(E);
+    await expect(dung(TIP_DAU, lui)).rejects.toThrow(/GEN-INST-011/);
+  });
+
+  it("két Wakeme ghim két này ⟹ tham chiếu cuối danh sách, link := owner_commit, L_lent vào trần", async () => {
+    const lui = { cap_epoch: E - 1n, usage_window_epoch: E - 1n };
+    const w = wakemeUtxo();
+    const { tx, res } = await dung(TIP_DAU, lui, { rateBeaconUtxo: rateUtxo(), wakemeVaultUtxo: w });
+    expect(tx.readFrom[0]).toEqual([rateUtxo(), greenbackUtxo(), registryUtxo(), w]);
+    expect(datumRa(tx).wakeme_link).toBe(WAKEME_COMMIT);
+    expect(res.outputs.lent).toBe(1_000_000_000n);
+    expect(res.outputs.capLamp).toBe(computeCapPp(LAMP_BALANCE) + computeCapLent(1_000_000_000n));
+  });
+
+  it("CỰC ĐỐI: m vượt maxM ⟹ NÉM trước khi dựng (không có giao dịch nào tới complete)", async () => {
+    const fake = makeLucidFake();
+    await expect(buildInstantGenTx({
+      lucid: fake.lucid as any, network: NETWORK, tipPosixMs: TIP_DAU,
+      vaultUtxo: vaultUtxo(), vaultScript: VAULT_SCRIPT, vaultParams: VP,
+      greenbackBeaconUtxo: greenbackUtxo(), gbShardUtxo: shardUtxo(), gbShardScript: SHARD_SCRIPT,
+      vaultRegistryUtxo: registryUtxo(), vaultRegistryPolicy: REGISTRY_POLICY,
+      m: computeCapPp(LAMP_BALANCE) + 1n,
+    } as any)).rejects.toThrow(/GEN-INST-008/);
+    expect(fake.txs).toEqual([]);
+  });
+
+  it("CỰC ĐỐI: sổ két không liệt kê script két ⟹ GEN-INST-016", async () => {
+    await expect(dung(TIP_DAU, {}, { vaultRegistryUtxo: registryUtxo(["dd".repeat(28)]) })).rejects.toThrow(/GEN-INST-016.*sổ két/);
+  });
+
+  it("CỰC ĐỐI: UTxO shard mang NFT của shard KHÁC ⟹ GEN-INST-016", async () => {
+    const other = (SHARD_ID + 1n) % 16n;
+    await expect(dung(TIP_DAU, {}, { gbShardUtxo: shardUtxo(makeShard({ shard_id: other }), other) })).rejects.toThrow(/GEN-INST-016/);
+  });
+
+  it("CỰC ĐỐI: két mang datum 18 trường (Gen v1) ⟹ VAULT_DATUM_V1", async () => {
+    const f = (Data.from(Data.to(makeVault(), VaultDatum)) as Constr<Data>).fields.slice(0, 18);
+    await expect(dung(TIP_DAU, {}, { vaultUtxo: vaultUtxo(Data.to(new Constr(0, f))) })).rejects.toThrow(/VAULT_DATUM_V1/);
+  });
+
+  it("CỰC ĐỐI: gbShardScript có hash khác gb_shard_policy_id ⟹ GEN-INST-009", async () => {
+    await expect(dung(TIP_DAU, {}, { gbShardScript: VAULT_SCRIPT })).rejects.toThrow(/GEN-INST-009/);
+  });
+});
+
+// ── Chủ két là `Credential` ──────────────────────────────────────────────────
+// Bytes kỳ vọng dựng tay từ blueprint `cardano/address/Credential`: VerificationKey =
+// Constr 0 [bytes 28], Script = Constr 1 [bytes 28].
 const SCRIPT_H = "5c".repeat(28);
 const CBOR_VK  = `d8799f581c${OWNER_PKH}ff`;
 const CBOR_SC  = `d87a9f581c${SCRIPT_H}ff`;
+const OwnerCredential = OwnerCredentialSchema as unknown as TVaultDatum["owner"];
 
 describe("VaultDatum.owner — mã hoá Credential khớp blueprint", () => {
   it("VerificationKey ⟹ Constr 0, Script ⟹ Constr 1, cùng 28 byte", () => {
-    expect(Data.to({ VerificationKey: [OWNER_PKH] }, OwnerCredentialSchema as never)).toBe(CBOR_VK);
-    expect(Data.to({ Script: [SCRIPT_H] }, OwnerCredentialSchema as never)).toBe(CBOR_SC);
+    expect(Data.to({ VerificationKey: [OWNER_PKH] }, OwnerCredential)).toBe(CBOR_VK);
+    expect(Data.to({ Script: [SCRIPT_H] }, OwnerCredential)).toBe(CBOR_SC);
   });
 
-  it("trường 0 của datum 18 trường mang ĐÚNG bytes Credential", () => {
+  it("trường 0 của datum 20 trường mang ĐÚNG bytes Credential", () => {
     const hex = Data.to(makeVault({ owner: { Script: [SCRIPT_H] } }), VaultDatum);
-    // Constr 0 của VaultDatum mở bằng `d8799f`, rồi ngay sau là trường 0.
     expect(hex.startsWith(`d8799f${CBOR_SC}`)).toBe(true);
     expect(Data.from(hex, VaultDatum).owner).toEqual({ Script: [SCRIPT_H] });
   });
 
-  it("CỰC ĐỐI: datum dựng theo lược đồ cũ (owner = pkh trần) KHÔNG giải mã được", () => {
+  it("CỰC ĐỐI: owner = pkh trần (lược đồ trước Credential) KHÔNG giải mã được", () => {
     const moi = Data.to(makeVault(), VaultDatum);
-    // Thay trường 0 bằng bytes trần — đúng hình dạng mà validator trước 856804fa ghi ra.
     const cu = `d8799f581c${OWNER_PKH}` + moi.slice(`d8799f${CBOR_VK}`.length);
     expect(() => Data.from(cu, VaultDatum)).toThrow();
   });
 
   it("CỰC ĐỐI: hash 27 byte ⟹ lược đồ từ chối mã hoá", () => {
-    expect(() => Data.to({ VerificationKey: ["0a".repeat(27)] }, OwnerCredentialSchema as never)).toThrow();
+    expect(() => Data.to({ VerificationKey: ["0a".repeat(27)] }, OwnerCredential)).toThrow();
   });
 });
 
 describe("buildInstantGenTx — chứng minh quyền chủ theo nhánh", () => {
-  const TIP = E * P + 1_000n;
+  // Két chủ script: shard GB theo hash trong owner ⟹ phải đưa đúng shard của hash đó.
+  const shardOf = async (owner: TVaultDatum["owner"]) => {
+    const { vaultShardId } = await import("../offchain/src/greenback.js");
+    const id = vaultShardId(owner);
+    return shardUtxo(makeShard({ shard_id: id }), id);
+  };
 
   it("chủ khoá ⟹ addSignerKey(pkh), KHÔNG mục rút", async () => {
-    const { tx } = await dung(TIP);
+    const { tx } = await dung(TIP_DAU);
     expect(tx.signerKeys).toEqual([OWNER_PKH]);
     expect(tx.withdrawals).toEqual([]);
   });
 
   it("chủ script ⟹ attachWithdraw ĐÚNG MỘT LẦN, KHÔNG ký bằng h", async () => {
     let goi = 0;
-    const { tx } = await dung(TIP, { owner: { Script: [SCRIPT_H] } }, {
+    const owner = { Script: [SCRIPT_H] } as TVaultDatum["owner"];
+    const { tx } = await dung(TIP_DAU, { owner }, {
+      gbShardUtxo: await shardOf(owner),
       ownerAuth: {
-        kind: "script",
-        hash: SCRIPT_H,
+        kind: "script", hash: SCRIPT_H,
         attachWithdraw: (t: any) => { goi++; return t.withdraw("stake_test1_gia", 0n, "d87980"); },
       },
     });
     expect(goi).toBe(1);
-    expect(tx.signerKeys).not.toContain(SCRIPT_H);
     expect(tx.signerKeys).toEqual([]);
     expect(tx.withdrawals).toEqual([{ rewardAddress: "stake_test1_gia", amount: 0n, redeemer: "d87980" }]);
   });
 
   it("CỰC ĐỐI: chủ script mà không có ownerAuth ⟹ NÉM OWNER_SCRIPT_WITNESS_UNAVAILABLE", async () => {
-    await expect(dung(TIP, { owner: { Script: [SCRIPT_H] } })).rejects.toThrow(
-      /OWNER_SCRIPT_WITNESS_UNAVAILABLE/,
-    );
+    const owner = { Script: [SCRIPT_H] } as TVaultDatum["owner"];
+    await expect(dung(TIP_DAU, { owner }, { gbShardUtxo: await shardOf(owner) })).rejects.toThrow(/OWNER_SCRIPT_WITNESS_UNAVAILABLE/);
   });
 
   it("CỰC ĐỐI: ownerAuth khoá cho két chủ script cùng 28 byte ⟹ OWNER_AUTH_MISMATCH", async () => {
+    const owner = { Script: [OWNER_PKH] } as TVaultDatum["owner"];
     await expect(
-      dung(TIP, { owner: { Script: [OWNER_PKH] } }, { ownerAuth: { kind: "key", pkh: OWNER_PKH } }),
+      dung(TIP_DAU, { owner }, { gbShardUtxo: await shardOf(owner), ownerAuth: { kind: "key", pkh: OWNER_PKH } }),
     ).rejects.toThrow(/OWNER_AUTH_MISMATCH/);
   });
 });
 
-// ── C-INST-8: trần theo EPOCH ở bộ dựng ───────────────────────
-//
-// Validator ép `instant_gen_in_epoch(live) + grant <= compute_cap_pp(avail)`. Bộ dựng
-// thiếu cổng này thì lượt sinh thứ hai trong cùng epoch chết ở pha đánh giá script với
-// một câu mù (Preprod 2026-09-27). Cặp ca đứng ĐÚNG ở biên: đã sinh `cap − grant` thì
-// dựng được; thêm 1 nanogic thì NÉM `GEN-INST-008`. Một hiện thực dùng `<` thay `<=`,
-// hoặc đếm `current_amount` thay `initial_amount`, đỏ ở một trong hai vế.
-describe("buildInstantGenTx — trần theo epoch (C-INST-8)", () => {
-  const TIP_DAU = E * P + 1_000n;
-
-  function loDaSinh(initial: bigint, current: bigint, epoch = E, decayWindow = 1n): MagicBatch {
-    return {
-      batch_id: "e1".repeat(32), source: "Instant", created_epoch: epoch,
-      initial_amount: initial, current_amount: current, decay_window: decayWindow,
-      profile_at_creation: null, contract_id: null, halved: false,
-    } as MagicBatch;
-  }
-
-  async function grantVaCap() {
-    const { res } = await dung(TIP_DAU);
-    return { grant: res.grantNanogic, cap: res.ceilings.capPp };
-  }
-
-  it("đã sinh ĐÚNG cap − grant trong epoch ⟹ vẫn dựng được (biên bằng)", async () => {
-    const { grant, cap } = await grantVaCap();
-    expect(cap).toBeGreaterThan(grant);   // tiền đề: còn chỗ cho một lượt đầu
-    const { res } = await dung(TIP_DAU, { magic_batches: [loDaSinh(cap - grant, 0n)], next_batch_index: 1n });
-    expect(res.grantNanogic).toBe(grant);
-  });
-
-  it("CỰC ĐỐI: đã sinh cap − grant + 1 ⟹ NÉM GEN-INST-008 (đọc initial_amount, không current_amount)", async () => {
-    const { grant, cap } = await grantVaCap();
-    // current_amount = 0: đã tiêu sạch vẫn tính là ĐÃ SINH.
-    await expect(
-      dung(TIP_DAU, { magic_batches: [loDaSinh(cap - grant + 1n, 0n)], next_batch_index: 1n }),
-    ).rejects.toThrow(/GEN-INST-008/);
-  });
-
-  it("lô epoch TRƯỚC còn SỐNG vẫn không tính vào trần epoch này", async () => {
-    const { grant, cap } = await grantVaCap();
-    // Lô E−1 phải còn sống (decay_window 5) thì mới tới được bộ đếm: lô hết hạn bị dọn
-    // trước đó, và một ca dựng trên lô đã dọn xanh cả khi bộ đếm bỏ lọc epoch.
-    // Cùng lượng `cap` mà đặt ở epoch E thì ca trên đã NÉM — hai ca chỉ khác `created_epoch`.
-    const { res } = await dung(TIP_DAU, { magic_batches: [loDaSinh(cap, cap, E - 1n, 5n)], next_batch_index: 1n });
-    expect(res.grantNanogic).toBe(grant);
-  });
-});
-
-// ── apply_pending_profile ở bộ dựng ────────────────────────────
-//
-// `validate_instant_gen` tính trên `apply_pending_profile(input, current_epoch)`: hệ số PM
-// lấy từ hồ sơ ĐÃ ÁP, và datum ra phải mang profile/pending đã áp. Cặp ca chỉ khác
-// `effective_epoch` (tới hạn ở E / chưa tới ở E+1) — một hiện thực bỏ bước áp đỏ ở ca đầu,
-// một hiện thực áp bất kể hạn đỏ ở ca sau.
-describe("buildInstantGenTx — hồ sơ chờ (apply_pending_profile)", () => {
-  const TIP_E = E * P + 1_000n;
-  const datumRa = (tx: any) => Data.from((tx.outputs[0].datum as any).value, VaultDatum) as any;
-
-  it("pending tới hạn ⟹ tính theo hồ sơ MỚI, datum ra đã áp và pending rỗng", async () => {
-    const flame = (await dung(TIP_E, { profile: "Flame" })).res.grantNanogic;
-    const ember = (await dung(TIP_E, { profile: "Ember" })).res.grantNanogic;
-    expect(ember).not.toBe(flame);   // tiền đề: hai hồ sơ cho hai con số khác nhau
-    const { res, tx } = await dung(TIP_E, {
-      profile: "Flame", pending_profile: { new_profile: "Ember", effective_epoch: E },
-    });
-    expect(res.grantNanogic).toBe(ember);
-    const out = datumRa(tx);
-    expect(out.profile).toBe("Ember");
-    expect(out.pending_profile).toBeNull();
-  });
-
-  it("CỰC ĐỐI: pending CHƯA tới hạn ⟹ giữ hồ sơ cũ và giữ nguyên pending", async () => {
-    const flame = (await dung(TIP_E, { profile: "Flame" })).res.grantNanogic;
-    const { res, tx } = await dung(TIP_E, {
-      profile: "Flame", pending_profile: { new_profile: "Ember", effective_epoch: E + 1n },
-    });
-    expect(res.grantNanogic).toBe(flame);
-    const out = datumRa(tx);
-    expect(out.profile).toBe("Flame");
-    expect(out.pending_profile).toEqual({ new_profile: "Ember", effective_epoch: E + 1n });
-  });
-});
-
-// ── Script vault: ĐỌC từ ref-script CIP-33 thay vì đính kèm ─────────────
-// Đo Preprod 27/09 (tx 66185661…): đính kèm chiếm 11.599 / 12.634 byte. Cặp ca: có UTxO
-// ref đúng script ⟹ readFrom, 0 đính kèm; vắng ⟹ đính kèm như cũ; UTxO sai/không mang
-// script ⟹ NÉM trước khi dựng.
 describe("vault script: readFrom ref-script khi có", () => {
-  const tip = E * P + 1_000n;
-  const refUtxo = (scriptRef: unknown) => ({ ...utxo("", { lovelace: 20_000_000n }, 7), scriptRef });
+  const refUtxo = (scriptRef: unknown) => ({ ...vaultUtxo(), outputIndex: 7, datum: undefined, scriptRef });
 
-  it("có ref đúng script ⟹ đọc, không đính kèm", async () => {
+  it("có ref đúng script ⟹ đọc, chỉ đính kèm shard", async () => {
     const ref = refUtxo(VAULT_SCRIPT);
-    const { tx } = await dung(tip, {}, { vaultRefScriptUtxo: ref });
-    expect(tx.attached).toEqual([]);
+    const { tx } = await dung(TIP_DAU, {}, { vaultRefScriptUtxo: ref });
+    expect(tx.attached).toEqual([SHARD_SCRIPT]);
     expect(tx.readFrom.flat()).toContain(ref);
   });
 
-  it("CỰC ĐỐI — vắng ref ⟹ đính kèm script vault", async () => {
-    const { tx } = await dung(tip);
-    expect(tx.attached).toEqual([VAULT_SCRIPT]);
+  it("CỰC ĐỐI — vắng ref ⟹ đính kèm script két", async () => {
+    const { tx } = await dung(TIP_DAU);
+    expect(tx.attached).toContain(VAULT_SCRIPT);
   });
 
   it("ref mang script KHÁC ⟹ GEN-INST-009", async () => {
-    const other = { type: "PlutusV3" as const, script: "49480100002221200102" };
-    await expect(dung(tip, {}, { vaultRefScriptUtxo: refUtxo(other) })).rejects.toThrow(/GEN-INST-009/);
+    await expect(dung(TIP_DAU, {}, { vaultRefScriptUtxo: refUtxo(SHARD_SCRIPT) })).rejects.toThrow(/GEN-INST-009/);
   });
 
   it("ref không mang script ⟹ GEN-INST-009", async () => {
-    await expect(dung(tip, {}, { vaultRefScriptUtxo: refUtxo(null) })).rejects.toThrow(/GEN-INST-009/);
+    await expect(dung(TIP_DAU, {}, { vaultRefScriptUtxo: refUtxo(null) })).rejects.toThrow(/GEN-INST-009/);
+  });
+});
+
+describe("buildRefreshCheckpointTx", () => {
+  it("redeemer Constr 6, value két ra == value vào NGUYÊN KHỐI, chỉ tham chiếu ρ", async () => {
+    const { tx, res } = await dungRefresh(TIP_DAU);
+    expect(tx.collectFrom).toHaveLength(1);
+    expect(tx.collectFrom[0]!.redeemer).toBe(Data.to("RefreshCheckpoint", VaultRedeemer));
+    expect(tx.collectFrom[0]!.redeemer).toBe("d87f80");                    // Constr 6 []
+    expect(tx.readFrom[0]).toEqual([rateUtxo()]);
+    expect(tx.outputs).toHaveLength(1);
+    expect(tx.outputs[0]!.assets).toEqual(vaultUtxo().assets);
+    expect(datumRa(tx)).toEqual(res.outputDatum);
+    expect(res.currentEpoch).toBe(E);
+    expect(tx.signerKeys).toEqual([OWNER_PKH]);
+  });
+
+  it("KHÔNG chừa slot cuối (reserve 0): cặp với lượt sinh ở cùng tip", async () => {
+    const { tx } = await dungRefresh(TIP_GIO_CUOI);
+    expect(tx.validTo).toBe(Number((E + 1n) * P - SLOT));
+    const gen = await dung(TIP_GIO_CUOI);
+    expect(gen.tx.validTo).toBe(Number((E + 1n) * P - 2n * SLOT));
+  });
+
+  it("link đã ghim, vắng két Wakeme ⟹ gỡ ghim; có két ⟹ link := owner_commit", async () => {
+    const go = await dungRefresh(TIP_DAU, { wakeme_link: WAKEME_COMMIT });
+    expect(datumRa(go.tx).wakeme_link).toBe("");
+    const w = wakemeUtxo();
+    const noi = await dungRefresh(TIP_DAU, {}, { wakemeVaultUtxo: w });
+    expect(datumRa(noi.tx).wakeme_link).toBe(WAKEME_COMMIT);
+    expect(noi.tx.readFrom[0]).toEqual([rateUtxo(), w]);
+  });
+
+  it("CỰC ĐỐI: beacon ρ đặt sai địa chỉ ⟹ GEN-INST-016", async () => {
+    const sai = { ...rateUtxo(makeRate()), address: greenbackUtxo().address };
+    await expect(dungRefresh(TIP_DAU, {}, { rateBeaconUtxo: sai })).rejects.toThrow(/GEN-INST-016/);
+  });
+
+  it("két không nằm ở script két ⟹ GEN-INST-009", async () => {
+    const lech = { ...vaultUtxo(), address: shardUtxo().address };
+    await expect(dungRefresh(TIP_DAU, {}, { vaultUtxo: lech })).rejects.toThrow(/GEN-INST-009/);
+  });
+
+  // Cặp min-ADA: value ghim nguyên khối ⟹ két sát min-ADA không làm mới được (e2e Emulator
+  // đo validator từ chối). Hai ca chỉ khác lovelace của két.
+  it("két 5 ADA ⟹ dựng được", async () => {
+    const { tx } = await dungRefresh(TIP_DAU);
+    expect(tx.completed).toBe(true);
+  });
+  it("CỰC ĐỐI: két 1 ADA (dưới min-ADA của datum ra) ⟹ GEN-INST-017, không tới complete", async () => {
+    const thap = { ...vaultUtxo(), assets: { ...vaultUtxo().assets, lovelace: 1_000_000n } };
+    await expect(dungRefresh(TIP_DAU, {}, { vaultUtxo: thap })).rejects.toThrow(/GEN-INST-017/);
+  });
+  it("CỰC ĐỐI: không truyền coinsPerUtxoByte mà provider không có config ⟹ NÉM (bộ giả không đệm)", async () => {
+    await expect(dungRefresh(TIP_DAU, {}, { coinsPerUtxoByte: undefined })).rejects.toThrow(/config/);
   });
 });

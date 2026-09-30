@@ -603,3 +603,116 @@ export const TV_GEN_ADD_01 = {
   id: "TV-GEN-ADD-01", generated: 10n, consumed: 3n,
   expected: [[11n, 4n], [2n, 2n], [3n, 3n], [4n, 4n], [5n, 5n], [6n, 6n], [7n, 7n]],
 } as const;
+
+// ══════════════════════════════════════════════════════════════
+// TV-DATUM-V2-* — CBOR của VaultDatum Gen v2.0 (20 trường)
+// ══════════════════════════════════════════════════════════════
+//
+// Hợp đồng nhị phân của datum két InstantGen v2.0, cho bên ngoài kho (bộ đọc của két
+// Wakeme, SDK) đối chiếu byte-đối-byte. Hai phía cùng ghim MỘT chuỗi:
+//   • TS  — `tests/datumV2.test.ts`: `Data.to(value, VaultDatum) == cbor` và giải mã ngược.
+//   • Aiken — `onchain/lib/magiclamp/protocol/datum_vectors_test.ak`: `cbor.serialise`
+//     của cùng giá trị == cùng chuỗi hex, và `cbor.deserialise` ngược lại.
+// Đổi một ô ở đây mà không đổi bài Aiken ⟹ một trong hai đỏ.
+//
+// GENESIS: đúng hình dạng mà nhánh mint `MintVaultId` ép (mọi ô về 0/rỗng, hạt giống
+// Wakeme, cửa sổ 7 ô 0). FULL: mọi Option là Some, mọi danh sách khác rỗng, mọi
+// constructor enum khác 0 ít nhất một lần — để một lệch thứ tự trường không trốn được
+// sau một ô trùng giá trị.
+
+const ZERO_WINDOW_V2 = Array.from({ length: 7 }, () => ({ generated: 0n, consumed: 0n }));
+
+export const TV_DATUM_V2_GENESIS = {
+  id: "TV-DATUM-V2-GENESIS",
+  value: {
+    owner                 : { VerificationKey: ["11".repeat(28)] as [string] },
+    lamp_balance          : 100_000_000n,
+    lamp_locked           : 0n,
+    loyalty_holdings      : [{ amount: 100_000_000n, acquired_epoch: 0n, is_locked: false }],
+    magic_batches         : [],
+    next_batch_index      : 0n,
+    wakeme_link           : "",
+    gen_schedules         : [],
+    profile               : "Flame" as const,
+    profile_changed_epoch : 0n,
+    pending_profile       : null,
+    last_updated_epoch    : 0n,
+    cap_epoch             : 0n,
+    activity_state        : { recent_burn_epochs: [], consumed_credit: 1_001_000_000_000n },
+    cap_nanogic           : 0n,
+    personal_delegate     : null,
+    attribution           : { attribution_root: "", last_event_epoch: 0n, total_events: 0n },
+    instant_unlock_ms     : 0n,
+    usage_window          : ZERO_WINDOW_V2,
+    usage_window_epoch    : 0n,
+  },
+  cbor:
+    "d8799fd8799f581c11111111111111111111111111111111111111111111111111111111ff1a05f5e1" +
+    "00009fd8799f1a05f5e10000d87980ffff80004080d87a8000d87a800000d8799f801b000000e910" +
+    "3fda00ff00d87a80d8799f400000ff009fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000" +
+    "ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff",
+};
+
+export const TV_DATUM_V2_FULL = {
+  id: "TV-DATUM-V2-FULL",
+  value: {
+    owner                 : { Script: ["22".repeat(28)] as [string] },
+    lamp_balance          : 5_000_000_000n,
+    lamp_locked           : 1_000_000_000n,
+    loyalty_holdings      : [
+      { amount: 4_000_000_000n, acquired_epoch: 10n, is_locked: false },
+      { amount: 1_000_000_000n, acquired_epoch: 12n, is_locked: true },
+    ],
+    magic_batches         : [
+      {
+        batch_id: "ab".repeat(32), source: "Instant" as const, created_epoch: 20n,
+        initial_amount: 7_000_000_000n, current_amount: 3_000_000_000n, decay_window: 1n,
+        profile_at_creation: null, contract_id: null, halved: false,
+      },
+      {
+        batch_id: "cd".repeat(32), source: "Schedule" as const, created_epoch: 20n,
+        initial_amount: 2n, current_amount: 1n, decay_window: 1n,
+        profile_at_creation: "Lantern" as const, contract_id: "cd".repeat(4), halved: true,
+      },
+    ],
+    next_batch_index      : 2n,
+    wakeme_link           : "ef".repeat(32),
+    gen_schedules         : [{
+      schedule_id: "99".repeat(8), commit_epoch: 3n, start_fire_epoch: 5n, end_fire_epoch: 9n,
+      schedule_length: 5n, lamp_per_epoch: 1_000_000n, rate_locked_q: 1_050_000_000n,
+      baseline_at_commit_q: 1_000_000_000n, multiplier_at_commit_q: 1_200_000_000n, fired_count: 2n,
+      auto_burn_target: { delegate: "33".repeat(28), target_app_id: "44".repeat(4), max_burn_per_fire: 5n },
+    }],
+    profile               : "Lantern" as const,
+    profile_changed_epoch : 15n,
+    pending_profile       : { new_profile: "Ember" as const, effective_epoch: 22n },
+    last_updated_epoch    : 20n,
+    cap_epoch             : 20n,
+    activity_state        : { recent_burn_epochs: [["55".repeat(4), 19n]] as [string, bigint][], consumed_credit: 1_001_000_000_000n },
+    cap_nanogic           : 123_456_789_012n,
+    personal_delegate     : "66".repeat(28),
+    attribution           : { attribution_root: "77".repeat(32), last_event_epoch: 20n, total_events: 9n },
+    instant_unlock_ms     : 1_730_000_000_000n,
+    usage_window          : [
+      { generated: 7_000_000_000n, consumed: 3_000_000_000n },
+      { generated: 1n, consumed: 2n }, { generated: 3n, consumed: 4n }, { generated: 0n, consumed: 0n },
+      { generated: 5n, consumed: 0n }, { generated: 0n, consumed: 6n }, { generated: 8n, consumed: 9n },
+    ],
+    usage_window_epoch    : 20n,
+  },
+  cbor:
+    "d8799fd87a9f581c22222222222222222222222222222222222222222222222222222222ff1b0000" +
+    "00012a05f2001a3b9aca009fd8799f1aee6b28000ad87980ffd8799f1a3b9aca000cd87a80ffff9f" +
+    "d8799f5820ababababababababababababababababababababababababababababababababd87a80" +
+    "141b00000001a13b86001ab2d05e0001d87a80d87a80d87980ffd8799f5820cdcdcdcdcdcdcdcdcd" +
+    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdd87c8014020101d8799fd87b80ffd8799f" +
+    "44cdcdcdcdffd87a80ffff025820efefefefefefefefefefefefefefefefefefefefefefefefefef" +
+    "efefefefefef9fd8799f489999999999999999030509051a000f42401a3e95ba801a3b9aca001a47" +
+    "868c0002d8799fd8799f581c33333333333333333333333333333333333333333333333333333333" +
+    "d8799f4444444444ff05ffffffffd87b800fd8799fd8799fd8798016ffff1414d8799f9f9f445555" +
+    "555513ffff1b000000e9103fda00ff1b0000001cbe991a14d8799f581c6666666666666666666666" +
+    "6666666666666666666666666666666666ffd8799f58207777777777777777777777777777777777" +
+    "7777777777777777777777777777771409ff1b00000192cc0914009fd8799f1b00000001a13b8600" +
+    "1ab2d05e00ffd8799f0102ffd8799f0304ffd8799f0000ffd8799f0500ffd8799f0006ffd8799f08" +
+    "09ffff14ff",
+};

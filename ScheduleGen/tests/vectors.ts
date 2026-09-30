@@ -18,11 +18,16 @@ export const TV_SCH_01 = {
 };
 
 // ══════════════════════════════════════════════════════════════
-// TV-SCH-02: L=100, λ=4000 LAMP, R=5.0 → 45 MAGIC/fire (§11.11 Bob)
+// TV-SCH-02: L=100, λ=4000 LAMP, R=5.0 (§11.11 Bob)
+//
+// Gen v2.0: `M_i` ở đây là ⌊λ·rate_locked/Q⌋ — gương `math.ak` ▸ `compute_m_i` /
+// `unit_anchor_tv_sch_02`, KHÔNG còn là lượng mỗi lượt bắn. Lượng bắn v2.0 là
+// `m_per_epoch` chốt lúc ký = amount_by_lamp(λ, 0, cửa sổ, min(rate_locked, ρ), min(N, 6))
+// — xem `m_per_epoch_v2` bên dưới.
 // ══════════════════════════════════════════════════════════════
 export const TV_SCH_02 = {
-  id: "TV-SCH-02", spec_ref: "App B §B.5, §11.11",
-  description: "L=100, λ=4000 LAMP → 45 MAGIC/fire; total 4500 MAGIC",
+  id: "TV-SCH-02", spec_ref: "App B §B.5, §11.11; SPEC v2.0 §6.1.2",
+  description: "L=100, λ=4000 LAMP → rate_locked 11,25; ⌊λ·rate/Q⌋ = 45 MAGIC; v2.0 khởi động lạnh ρ=4 ⟹ 12 MAGIC/lượt",
   L:            100n,
   lambda_lamp:  4_000n,
   lambda_oildrop:   4_000_000_000n,         // 4000 × 10^6
@@ -32,25 +37,29 @@ export const TV_SCH_02 = {
   // rate_locked_q = ⌊5B × 2.25B / Q⌋ = 11_250_000_000
   rate_locked_q: 11_250_000_000n,
   // M_i = ⌊4×10⁹ × 11_250_000_000 / Q⌋ = 45_000_000_000
-  M_i:          45_000_000_000n,        // 45 MAGIC ✓
-  total_magic:  4_500_000_000_000n,     // 100 × 45 = 4500 MAGIC ✓
+  M_i:          45_000_000_000n,        // ⌊λ·rate_locked/Q⌋ (compute_m_i) — KHÔNG phải lượng bắn v2.0
+  // v2.0, cửa sổ rỗng (khởi động lạnh, hệ số 0,75), ρ = 4·10⁹ < rate_locked:
+  //   base = ⌊4·10⁹ × 4·10⁹ / Q⌋ = 16·10⁹ ; M = ⌊base·0,5⌋ + ⌊base·0,25⌋ = 12·10⁹
+  rho_q_v2:       4_000_000_000n,
+  m_per_epoch_v2: 12_000_000_000n,      // 12 MAGIC mỗi lượt, chốt lúc ký
   total_lock:   400_000_000_000_000n,   // 100 × 4000 × 10^6 = 400,000 LAMP (oildrop)
   // C-SCH-RATE: 4×10⁹ × 11_250_000_000 = 4.5×10¹⁹ ≥ Q ✓
   sch_rate_check: 45_000_000_000_000_000_000n >= 1_000_000_000n,
 };
 
 // ══════════════════════════════════════════════════════════════
-// TV-SCH-03: Rate immutability (T8)
+// TV-SCH-03: Lượng bắn bất biến sau khi ký (T8 → Gen v2.0 CC-GEN-SCHEDULE-FIXED)
 // ══════════════════════════════════════════════════════════════
 export const TV_SCH_03 = {
-  id: "TV-SCH-03", spec_ref: "App B §B.5, T8",
-  description: "DAO raises R at epoch 70; fire at ep80 still uses committed rate",
+  id: "TV-SCH-03", spec_ref: "App B §B.5, T8; SPEC v2.0 CC-GEN-SCHEDULE-FIXED",
+  description: "ρ hạ sau khi ký; lượt bắn vẫn cấp đúng m_per_epoch đã chốt, không đọc beacon",
   commit_epoch:     50n,
-  rate_at_commit:   11_250_000_000n,      // locked at epoch 50
-  dao_update_epoch: 70n,
+  rho_at_commit:    4_000_000_000n,
+  M_at_commit:      12_000_000_000n,      // chốt vào GenSchedule.m_per_epoch
+  rho_later:        2_000_000_000n,       // ký MỚI ở ρ này cho 6 MAGIC
+  M_new_commit:     6_000_000_000n,
   fire_epoch:       80n,
-  M_at_fire:        45_000_000_000n,      // UNCHANGED — uses stored rate ✓
-  // Validator reads GenSchedule.rate_locked_q, NOT global R_snap
+  M_at_fire:        12_000_000_000n,      // KHÔNG đổi — validate_fire đọc sched.m_per_epoch
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -103,13 +112,15 @@ export const TV_SCH_06 = {
   start_fire_epoch: 52n,      // commit_epoch=50, delay=2
   fired_count:       0n,      // nothing fired yet
   current_epoch:    55n,
-  M_i:              45_000_000_000n,
+  M_i:              45_000_000_000n,     // = GenSchedule.m_per_epoch của hợp đồng này
   // Eligible: e_0=52≤55, e_1=53≤55, e_2=54≤55, e_3=55≤55 → 4 fires (< 8 limit)
   fires_in_tx:       4,
-  total_magic_fired: 180_000_000_000n,  // 4 × 45 MAGIC = 180 MAGIC
-  lamp_transferred:  16_000_000_000n,   // 4 × 4000 LAMP oildrop
+  total_magic_fired: 180_000_000_000n,  // 4 × 45 MAGIC ghi vào batch (3 batch bù chết lúc sinh)
+  lamp_transferred:  16_000_000_000n,   // 4 × 4000 LAMP oildrop GIẢI KHOÁ (không chuyển đi)
   output_fired_count: 4n,               // C-FIRE-3 atomic ✓
-  // Wallet: "4/100 orders. ALL expire end of epoch 55."
+  // Gen v2.0 (SPEC §6.1.2): batch mang epoch danh nghĩa 52, 53, 54, 55 — chỉ batch 55
+  // còn sống ở epoch 55; 45 MAGIC tiêu được, không phải 180.
+  live_magic_at_current: 45_000_000_000n,
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -166,13 +177,11 @@ export const TV_SCH_SHARD_CRED = [
 // T-DET: All M_i in the same contract are identical
 // ══════════════════════════════════════════════════════════════
 export const TV_SCH_T_DET = {
-  id: "TV-SCH-T-DET", spec_ref: "§11.4 T-DET",
-  description: "Every fire in the same contract produces identical M_i",
-  rate_locked_q: 11_250_000_000n,   // immutable
-  lambda_oildrop:    4_000_000_000n,
-  // M_i at fire #1   = ⌊4B × 11.25B / Q⌋ = 45B
-  // M_i at fire #100 = ⌊4B × 11.25B / Q⌋ = 45B  ← IDENTICAL
-  M_i_all_fires: 45_000_000_000n,
+  id: "TV-SCH-T-DET", spec_ref: "§11.4 T-DET; SPEC v2.0 §6.1.2",
+  description: "Mọi lượt bắn của một hợp đồng cấp ĐÚNG m_per_epoch đã chốt lúc ký",
+  schedule_length: 10n,
+  lambda_oildrop:  4_000_000_000n,
+  m_per_epoch:     45_000_000_000n,   // chốt lúc ký; lượt 1 … lượt 10 đều cấp đúng số này
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -227,9 +236,10 @@ export const TV_SCH_ACT7 = {
 export const TV_SCH_CLIFF = {
   id: "TV-SCH-CLIFF", spec_ref: "§4.2, §6.4",
   description:
-    "A fired batch is live ONLY in the epoch it was fired. A catch-up of k " +
-    "orders stamps all k batches with the CURRENT epoch, so it cannot " +
-    "resurrect MAGIC missed in earlier epochs.",
+    "A fired batch is live ONLY in its created_epoch. Gen v2.0 (SPEC §6.1.2): a " +
+    "catch-up of k orders stamps batch j with its NOMINAL epoch start+fired+j, so " +
+    "every catch-up batch but the current one is dead at birth — a late fire cannot " +
+    "turn missed epochs into spendable MAGIC now.",
   decay_window: 1n,
   cases: [
     { created_epoch: 60n, current_epoch: 60n, expired: false },

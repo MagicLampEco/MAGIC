@@ -2,13 +2,15 @@
 //
 // Tách khỏi `server.ts` để phép kiểm gọi thẳng vào đây, không phải mở cổng mạng.
 //
-// ── ĐÚNG NĂM ĐƯỜNG DỰNG, KHÔNG THÊM ────────────────────────────────────────────
+// ── ĐÚNG BẢY ĐƯỜNG DỰNG (`buildRequest.ts` ▸ `BUILD_ROUTE_OF_PATH`), KHÔNG THÊM ──────
 //   POST /tx/instant-gen       { owner, [owner_witness], [change_address | fee_payer] }
 //   POST /tx/schedule-commit   { owner, …, schedule_length, lamp_per_epoch }
 //   POST /tx/schedule-fire     { owner, …, schedule_id }
 //   POST /tx/consume           { owner, …, op_type, op_count, [engage_ref] }
 //   POST /tx/open-thread       { owner, [owner_witness], [change_address] }
 //                              (`fee_payer` một mình ⟹ 422; `funding` ⟹ 501 — xem `service.ts`)
+//   POST /tx/bind-did          { owner, [owner_witness], [change_address], did_commit, [engage_ref] }
+//                              (`fee_payer` ⟹ 501; thread đã gắn DID ⟹ 409 `DID_ALREADY_BOUND`)
 //   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 //   POST /tx/submit            { tx_cbor, witness_cbor }
 //   POST /tx/quote             { route, params, [owner_fee_addresses] } (báo giá phí — `feeQuote.ts`;
@@ -26,7 +28,7 @@
 // quyết được, rồi để chuỗi bác — người dùng đọc câu bác đó không ra được việc phải làm.
 //
 // Số tiền trong thân bài là CHUỖI chữ số, không phải số JSON — lý do đo được ở khối đầu
-// `buildRequest.ts`, nơi đọc thân bài của sáu đường dựng (dùng chung với `/tx/quote`).
+// `buildRequest.ts`, nơi đọc thân bài của bảy đường dựng (dùng chung với `/tx/quote`).
 
 import {
   BadRequestError, TxApiError, UnauthorizedError, newReferenceCode,

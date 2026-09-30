@@ -104,7 +104,8 @@ const FEE_SOURCES_FAILURE_OF_CODE: Readonly<Record<string, FeeSourcesFailure>> =
   FEE_PROXY_APP_PURPOSE: "purpose_foreign",
 };
 
-/** Route mà mã ghi sổ Feecover là tên NFT, không phải hash thân tx. */
+/** Route mà mã ghi sổ Feecover là tên NFT, không phải hash thân tx. `bind-did` cố ý VẮNG: nó không
+ *  đúc NFT nào (mã ghi sổ = hash thân tx), và hiện không nhận ví trả phí (501) nên không tới `/fee/sign`. */
 const NFT_REF_ROUTES: ReadonlySet<IssuedRoute> = new Set<IssuedRoute>(["create-vault", "open-thread"]);
 
 interface ResolvedApp { name: string; app: FeecoverAppSettings; token: string }

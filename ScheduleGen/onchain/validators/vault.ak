@@ -45,9 +45,12 @@
 //   (= hash `shard_nft.ak`, param `genesis_ref` — không nhận hash nào), shard
 //   nhận *script hash của vault*. Thứ tự biên dịch một chiều:
 //       shard_nft(genesis_ref) → shard_policy_id
-//         → vault(lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch)
-//           → vault_script_hash
+//         → commit(9 tham số) → commit_script_hash               (2026-09-30)
+//           → vault(#0..#4, commit_script_hash) → vault_script_hash
 //             → shard(shard_policy_id, vault_script_hash)
+//   (#0..#4 của két = lamp_policy_id, lamp_asset_name, shard_policy_id,
+//   ms_per_epoch, gb_shard_policy_id — chữ ký `validator vault` là nguồn thứ tự;
+//   `commit` nhận năm giá trị đó cộng bốn tham số beacon mà két không đọc.)
 //   Và D12: `vault_script_hash` đổi theo LOẠI vault (ba cửa gen ⟹ ba bản), không
 //   theo từng người dùng / từng UTxO / từng lần tạo.
 
@@ -55,15 +58,16 @@ use aiken/builtin
 use aiken/cbor
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/collection/pairs
 use aiken/crypto
 use aiken/interval.{Finite, IntervalBoundType}
 use aiken/primitive/bytearray
 use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value}
-use cardano/certificate.{Certificate, UnregisterCredential}
+use cardano/certificate.{Certificate, RegisterCredential, UnregisterCredential}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Spend, Transaction,
-  placeholder,
+  Withdraw, placeholder,
 }
 
 use magiclamp/protocol/owner_auth.{owner_authorized}
@@ -165,20 +169,26 @@ validator vault(
   lamp_asset_name   : ByteArray,  // per-network PARAM (tLAMP testnet / LAMP mainnet)
   shard_policy_id   : PolicyId,   // identifies shard UTxOs by NFT
   ms_per_epoch      : Int,
-  // ── Gen v2.0 gói (c) — NỐI CUỐI (#4..#8), chỉ nhánh KÝ đọc ────────────────
-  // #4 gb_beacon_nft_policy  : policy NFT beacon GreenBack ("GBB")
-  // #5 gb_beacon_script_hash : script beacon GreenBack — neo hai lớp cùng #4
-  // #6 gb_shard_policy_id    : policy = script hash shard GB. MỌI nhánh KHÁC
-  //                            `ScheduleCommit` từ chối tx có input tại `Script(#6)`.
-  // #7 rate_nft_policy       : policy NFT beacon ρ ("RHO")
-  // #8 rate_script_hash      : script beacon ρ — neo hai lớp cùng #7
+  // ── Gen v2.0 ──────────────────────────────────────────────────────────────
+  // #4 gb_shard_policy_id : policy = script hash shard GB. MỌI nhánh KHÁC
+  //                         `ScheduleCommit` từ chối tx có input tại `Script(#4)`.
   // 🔴 CHƯA GIẢI (ngoài gói c): `gb_shard` nhận `vault_script_hashes` làm apply-param,
-  // két nhận #6 = hash của `gb_shard` ⟹ vòng apply-param, như InstantGen #5.
-  gb_beacon_nft_policy  : PolicyId,
-  gb_beacon_script_hash : ByteArray,
-  gb_shard_policy_id    : PolicyId,
-  rate_nft_policy       : PolicyId,
-  rate_script_hash      : ByteArray,
+  // két nhận #4 = hash của `gb_shard` ⟹ vòng apply-param, như InstantGen #5.
+  //
+  // Bốn tham số beacon (policy NFT + script hash của beacon GreenBack "GBB" và beacon
+  // ρ "RHO") KHÔNG nằm ở két: từ lượt tách nhánh ký (2026-09-30) chỉ validator `commit`
+  // bên dưới đọc chúng, nên chúng là apply-param của `commit`. Để chúng ở két là một
+  // lời hứa không gì cưỡng chế, và buộc hash két đổi theo cấu hình beacon mà két
+  // không dùng. Két vẫn bị buộc gián tiếp vào chúng qua #5 (hash `commit` nướng sẵn).
+  //
+  // #5 commit_script_hash — NỐI CUỐI: hash của validator `commit` (withdraw-zero) SAU
+  //   khi apply 9 tham số của nó. Đổi theo LOẠI script (mỗi bản két một bản commit),
+  //   không theo từng két ⟹ hợp lệ theo phép thử apply-param của BOUNDARIES §2.
+  //   Không vòng: `commit` KHÔNG nhận hash két; nó biết két qua redeemer. Thứ tự:
+  //       commit(9 tham số) → commit_script_hash → vault(…, commit_script_hash)
+  //         → vault_script_hash → shard(shard_policy_id, vault_script_hash)
+  gb_shard_policy_id : PolicyId,
+  commit_script_hash : ByteArray,
 ) {
   // ── mint: vault-identity NFT policy (policy_id == this script hash) ──────
   mint(redeemer: VaultIdRedeemer, policy_id: PolicyId, tx: Transaction) {
@@ -216,18 +226,11 @@ validator vault(
     expect is_commit || no_input_at(tx.inputs, gb_shard_policy_id)
 
     when redeemer is {
-      ScheduleCommit { schedule_length, lamp_per_epoch } ->
-        validate_commit(datum, schedule_length, lamp_per_epoch,
-                        current_epoch, own_ref, vault_addr,
-                        lamp_policy_id, lamp_asset_name, shard_policy_id,
-                        GenParams {
-                          gb_beacon_nft_policy,
-                          gb_beacon_script_hash,
-                          gb_shard_policy_id,
-                          rate_nft_policy,
-                          rate_script_hash,
-                        },
-                        tx)
+      // Toàn bộ luật ký nằm ở validator `commit` (withdraw-zero). Két chỉ ép rằng
+      // validator đó CHẠY trong tx này và chạy TRÊN CHÍNH két này — xem
+      // `commit_delegated_to` cho lập luận vì sao hai vế đó là đủ.
+      ScheduleCommit { .. } ->
+        commit_delegated_to(tx, own_ref, commit_script_hash)
 
       ScheduleFire { schedule_id } ->
         validate_fire(datum, schedule_id, current_epoch, own_ref, vault_addr,
@@ -261,6 +264,119 @@ validator vault(
   else(_) {
     fail
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Commit validator — nhánh KÝ tách ra thành withdraw-zero (2026-09-30)
+// ══════════════════════════════════════════════════════════════
+// VÌ SAO TÁCH: script két gộp (spend + mint) biên dịch ra 15.905 byte ở trace
+// silent; tx công bố nó làm ref-script CIP-33 đo được 16.442 byte > trần 16.384.
+// Phần nặng nhất là nhánh ký (beacon ρ + beacon GB + shard GB + gen_formula + κ).
+// Chuyển nguyên văn `validate_commit` sang một script riêng, gọi bằng một mục rút
+// thưởng từ `Script(commit_script_hash)` trong CÙNG tx.
+//
+// Redeemer của mục rút: `CommitRedeemer { vault_ref }` — OutputReference của két
+// đang ký. Hai tham số ký (L, λ) KHÔNG nằm ở đây: validator này đọc chúng từ
+// redeemer Spend của chính `vault_ref` (phải là `ScheduleCommit`), nên chỉ có MỘT
+// nguồn cho L, λ và nguồn đó là thứ ledger đưa vào lượt chạy của két.
+pub type CommitRedeemer {
+  vault_ref: OutputReference,
+}
+
+// LẬP LUẬN AN TOÀN — vì sao kẻ tấn công không lừa được két bằng một két giả:
+//
+//  (1) Bên ĐÒI là két, không phải `commit`. `commit` là hàm ai cũng gọi được với
+//      redeemer tuỳ ý — nó chạy luật ký trên input mà redeemer nêu, và nếu kẻ tấn
+//      công nêu một UTxO giả (script của hắn, datum bịa) thì `commit` có thể xanh.
+//      Nhưng cái xanh đó không ai dùng: két thật chỉ chấp nhận nhánh ký khi redeemer
+//      của mục rút nêu ĐÚNG `own_ref` của nó (`commit_delegated_to`).
+//  (2) Một tx chỉ có MỘT redeemer cho purpose `Withdraw(Script(commit_script_hash))`
+//      (khoá của map rút là duy nhất) ⟹ redeemer đó không nêu được đồng thời két
+//      thật và két giả. Nêu két thật ⟹ luật ký chạy trên két thật.
+//  (3) `own_ref` là tham chiếu input mà ledger đưa cho CHÍNH lượt chạy của két —
+//      không ai bịa được; nó cũng buộc luôn script hash (input ở `own_ref` nằm ở
+//      địa chỉ của chính két), nên không cần mang thêm hash két trong redeemer.
+//      `commit` suy địa chỉ két, NFT danh tính, datum từ input ở `vault_ref`, y như
+//      nhánh ký cũ suy từ `own_ref`.
+//  (4) Két đòi mục rút CÓ MẶT trong `tx.withdrawals`, không chỉ có redeemer: chính
+//      mục rút mới buộc ledger chạy `commit`. (Ledger cũng từ chối redeemer thừa,
+//      nhưng két không dựa vào luật nằm ngoài tệp này.)
+//  (5) Không có double satisfaction: két đã ép ĐÚNG MỘT input ở script két
+//      (C-VAULT-DS-1), và (2) ⟹ một lượt `commit` phục vụ đúng một két.
+//
+// `commit` KHÔNG nhận hash két làm apply-param (tránh vòng: két nhận hash `commit`).
+// Bốn tham số đầu + `gb_shard_policy_id` trùng giá trị két nhận ở #0..#4 — off-chain
+// phải apply cùng giá trị; bốn tham số beacon chỉ `commit` nhận;
+// lệch thì luật ký đọc sai họ shard/beacon (lỗi triển khai, không phải lỗ giao thức:
+// hash `commit` đã bị nướng vào hash két nên không ai đổi được sau khi dựng).
+//
+// Chủ két là `Script(commit_script_hash)`: không xảy ra được. `owner` chỉ đặt ở
+// genesis (mọi nhánh spend ghim `owner`), mà genesis đòi `owner_authorized` ⟹ mục
+// rút của `commit` ⟹ `commit` phải chạy ⟹ nó `expect` tìm input két ở `vault_ref`,
+// một tx genesis không tiêu két nào ⟹ chết.
+validator commit(
+  lamp_policy_id        : PolicyId,
+  lamp_asset_name       : ByteArray,
+  shard_policy_id       : PolicyId,
+  ms_per_epoch          : Int,
+  gb_beacon_nft_policy  : PolicyId,
+  gb_beacon_script_hash : ByteArray,
+  gb_shard_policy_id    : PolicyId,
+  rate_nft_policy       : PolicyId,
+  rate_script_hash      : ByteArray,
+) {
+  withdraw(redeemer: CommitRedeemer, _account: Credential, tx: Transaction) {
+    let vault_ref = redeemer.vault_ref
+    let vault_in  = own_input(vault_ref, tx.inputs)
+    // Nhánh ký cũ nhận datum từ ledger; ở đây đọc từ input. Chỉ nhận inline datum
+    // (két genesis luôn inline) — datum băm thì chết, tức chặt hơn, không lỏng hơn.
+    expect InlineDatum(raw) = vault_in.output.datum
+    expect datum: VaultDatum = raw
+    // L, λ lấy từ redeemer Spend của CHÍNH két ⟹ két phải đang đi nhánh ký.
+    expect Some(spend_raw) = pairs.get_first(tx.redeemers, Spend(vault_ref))
+    expect spend_rd: VaultRedeemer = spend_raw
+    expect ScheduleCommit { schedule_length, lamp_per_epoch } = spend_rd
+    validate_commit(datum, schedule_length, lamp_per_epoch,
+                    get_epoch(tx, ms_per_epoch), vault_ref, vault_in.output.address,
+                    lamp_policy_id, lamp_asset_name, shard_policy_id,
+                    GenParams {
+                      gb_beacon_nft_policy,
+                      gb_beacon_script_hash,
+                      gb_shard_policy_id,
+                      rate_nft_policy,
+                      rate_script_hash,
+                    },
+                    tx)
+  }
+
+  // Chỉ cho ĐĂNG KÝ stake credential (việc vô hại, cần có để rút-0 được). Huỷ đăng
+  // ký, uỷ quyền pool/DRep đều chết: huỷ đăng ký = chặn mọi lượt ký của mọi két;
+  // uỷ quyền pool = số dư thưởng > 0 ⟹ mục rút phải rút đúng số dư đó.
+  publish(_redeemer: Data, certificate: Certificate, _tx: Transaction) {
+    when certificate is {
+      RegisterCredential { .. } -> True
+      _ -> False
+    }
+  }
+
+  else(_) {
+    fail
+  }
+}
+
+// Két uỷ nhánh ký cho `commit`: (a) mục rút `Script(commit_script_hash)` có mặt ⟹
+// ledger chạy `commit` trong tx này; (b) redeemer của mục rút nêu đúng `own_ref`
+// ⟹ `commit` chạy trên CHÍNH két này. Lập luận đầy đủ: khối trên `validator commit`.
+fn commit_delegated_to(
+  tx                 : Transaction,
+  own_ref            : OutputReference,
+  commit_script_hash : ByteArray,
+) -> Bool {
+  let cred = Script(commit_script_hash)
+  expect pairs.has_key(tx.withdrawals, cred)
+  expect Some(raw) = pairs.get_first(tx.redeemers, Withdraw(cred))
+  expect cr: CommitRedeemer = raw
+  cr.vault_ref == own_ref
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1433,17 +1549,6 @@ fn shard_datum_of(o: Output, shard_id: Int) -> ScheduleAggregateShardDatum {
   sd
 }
 
-fn find_shard_input(
-  inputs          : List<Input>,
-  shard_policy_id : PolicyId,
-  shard_id        : Int,
-) -> ScheduleAggregateShardDatum {
-  shard_datum_of(
-    find_shard_input_raw(inputs, shard_policy_id, shard_id).output,
-    shard_id,
-  )
-}
-
 // No token of the shard NFT policy is minted or burned in this tx. With the
 // one-shot policy, minting is already impossible after genesis; this guard makes
 // the vault/shard validators independent of that assumption and blocks any
@@ -1719,18 +1824,78 @@ const t_rate_policy: ByteArray =
   #"69696969696969696969696969696969696969696969696969696969"
 const t_rate_hash: ByteArray =
   #"6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a"
-const t_rho: Int = 4_000_000_000
-const t_gb_reset: Int = 1_000_000_000_000
+// Hash của validator `commit` (withdraw-zero) mà két apply ở #5.
+const t_commit_hash: ByteArray =
+  #"c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
 
-fn t_gp() -> GenParams {
-  GenParams {
-    gb_beacon_nft_policy: t_gbb_policy,
-    gb_beacon_script_hash: t_gbb_hash,
-    gb_shard_policy_id: t_gbs_policy,
-    rate_nft_policy: t_rate_policy,
-    rate_script_hash: t_rate_hash,
+fn t_commit_cred() -> Credential {
+  Script(t_commit_hash)
+}
+
+/// Gắn chân nhánh ký kiểu withdraw-zero vào một tx: mục rút 0 từ `commit`,
+/// redeemer Spend `ScheduleCommit { L, λ }` cho két ở `t_own_ref()`, redeemer
+/// rút nêu `named_ref`, và validity range nằm trọn trong `epoch`. Redeemer có sẵn
+/// (shard GB) được GIỮ, không thay.
+fn t_with_commit_leg(
+  tx: Transaction,
+  l: Int,
+  lambda: Int,
+  epoch: Int,
+  named_ref: OutputReference,
+) -> Transaction {
+  let lo = epoch * 86_400_000
+  let spend_rd: Data = ScheduleCommit { schedule_length: l, lamp_per_epoch: lambda }
+  let w_rd: Data = CommitRedeemer { vault_ref: named_ref }
+  Transaction {
+    ..tx,
+    withdrawals: [Pair(t_commit_cred(), 0)],
+    redeemers: list.concat(
+      tx.redeemers,
+      [Pair(Spend(t_own_ref()), spend_rd), Pair(Withdraw(t_commit_cred()), w_rd)],
+    ),
+    validity_range: interval.between(lo, lo + 1000),
   }
 }
+
+/// Lượt chạy của KÉT (nhánh ký) trên một tx đã gắn chân ký. Datum lấy từ input ở
+/// `t_own_ref()` — đúng thứ ledger đưa cho két.
+fn t_vault_commit_leg(tx: Transaction, l: Int, lambda: Int) -> Bool {
+  let vin = own_input(t_own_ref(), tx.inputs)
+  expect InlineDatum(raw) = vin.output.datum
+  expect din: VaultDatum = raw
+  vault.spend(
+    t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
+    t_gbs_policy, t_commit_hash,
+    Some(din), ScheduleCommit { schedule_length: l, lamp_per_epoch: lambda },
+    t_own_ref(), tx,
+  )
+}
+
+/// Lượt chạy của `commit` (withdraw) trên một tx đã gắn chân ký, với redeemer
+/// đúng như tx mang.
+fn t_commit_withdraw_leg(tx: Transaction) -> Bool {
+  expect Some(raw) = pairs.get_first(tx.redeemers, Withdraw(t_commit_cred()))
+  expect cr: CommitRedeemer = raw
+  commit.withdraw(
+    t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
+    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash,
+    cr, t_commit_cred(), tx,
+  )
+}
+
+/// CẶP (két + commit) cho một lượt ký — thay cho lời gọi thẳng `validate_commit`
+/// trước khi tách. `din` phải trùng datum của input két trong `tx` (bài cũ truyền
+/// hai thứ đó rời nhau); lệch thì bài chết ở đây, không lặng lẽ đo trên datum khác.
+fn t_pair_commit(din: VaultDatum, l: Int, lambda: Int, epoch: Int, tx: Transaction) -> Bool {
+  let full = t_with_commit_leg(tx, l, lambda, epoch, t_own_ref())
+  let vin = own_input(t_own_ref(), full.inputs)
+  expect InlineDatum(raw) = vin.output.datum
+  expect on_chain: VaultDatum = raw
+  expect on_chain == din
+  t_vault_commit_leg(full, l, lambda) && t_commit_withdraw_leg(full)
+}
+const t_rho: Int = 4_000_000_000
+const t_gb_reset: Int = 1_000_000_000_000
 
 fn t_rate_ref(rho: Int) -> Input {
   Input {
@@ -2587,8 +2752,7 @@ fn t_commit_parts(n: Int) -> (VaultDatum, Transaction) {
 
 fn t_run_commit(n: Int) -> Bool {
   let (din, tx) = t_commit_fixture(n)
-  validate_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref(),
-                  t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, t_gp(), tx)
+  t_pair_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, tx)
 }
 
 // PASS — (trần − 2) holding vào, tách một cái ⟹ trần − 1, còn đúng một suất
@@ -2731,8 +2895,7 @@ fn hc_commit_fixture(n: Int) -> (VaultDatum, Transaction) {
 
 fn hc_run_commit(n: Int) -> Bool {
   let (din, tx) = hc_commit_fixture(n)
-  validate_commit(din, hc_l, hc_lambda, hc_epoch, t_own_ref(), t_vault_addr(),
-                  t_lamp_policy, t_lamp_name, t_shard_policy, t_gp(), tx)
+  t_pair_commit(din, hc_l, hc_lambda, hc_epoch, tx)
 }
 
 /// Một lượt fire thật trên datum do `hc_run_commit(n)` sinh ra.
@@ -3413,7 +3576,7 @@ fn t_mint_tx(seed: OutputReference, out: Output, mint_v: Value, signers: List<By
 fn t_mint_call(seed: OutputReference, policy_id: PolicyId, tx: Transaction) -> Bool {
   vault.mint(
     t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
-    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash,
+    t_gbs_policy, t_commit_hash,
     MintVaultId { seed }, policy_id, tx,
   )
 }
@@ -3828,8 +3991,7 @@ fn g_refs() -> List<Input> {
 
 fn g_run_commit_tx(tx: Transaction) -> Bool {
   let (din, _) = t_commit_parts(g_n)
-  validate_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref(),
-                  t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, t_gp(), tx)
+  t_pair_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, tx)
 }
 
 fn g_commit_with(refs: List<Input>, rd: Int, real: Int, start: Int) -> Bool {
@@ -3949,8 +4111,7 @@ fn g_commit_kappa(obl_in: Int, add: Int) -> Bool {
       outputs: list.map(base.outputs, fix_out),
     }
       |> t_with_gen(g_draw(), t_commit_epoch)
-  validate_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref(),
-                  t_vault_addr(), t_lamp_policy, t_lamp_name, t_shard_policy, t_gp(), tx)
+  t_pair_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, tx)
 }
 
 test g_kappa_at_cap_ok() {
@@ -4154,7 +4315,7 @@ fn g_spend(epoch: Int, rd: VaultRedeemer, din: VaultDatum, tx: Transaction) -> B
   let lo = epoch * 86_400_000
   vault.spend(
     t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
-    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash,
+    t_gbs_policy, t_commit_hash,
     Some(din), rd, t_own_ref(),
     Transaction { ..tx, validity_range: interval.between(lo, lo + 1000) },
   )
@@ -4192,7 +4353,133 @@ fn g_withdraw_parts() -> (VaultDatum, Transaction) {
 
 test g_spend_commit_with_gb_shard_ok() {
   let (din, tx) = t_commit_fixture(g_n)
+  let tx = t_with_commit_leg(tx, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref())
   g_spend(t_commit_epoch, ScheduleCommit { schedule_length: t_commit_l, lamp_per_epoch: t_commit_lambda }, din, tx)
+}
+
+// ── Nhánh ký uỷ cho `commit` (withdraw-zero, 2026-09-30) ─────────────────────
+// Cặp dương + từng vế âm của `commit_delegated_to` (phía két) và của phần đầu
+// `commit.withdraw` (phía commit). Luật ký cũ vẫn được mọi bài `c_*`/`g_*`/`hc_*`
+// gác — chúng nay chạy qua `t_pair_commit`, tức qua CẢ HAI script.
+fn w_tx() -> Transaction {
+  let (_, tx) = t_commit_fixture(g_n)
+  t_with_commit_leg(tx, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref())
+}
+
+fn w_vault(tx: Transaction) -> Bool {
+  t_vault_commit_leg(tx, t_commit_l, t_commit_lambda)
+}
+
+fn w_drop_redeemer(tx: Transaction, purpose: transaction.ScriptPurpose) -> Transaction {
+  Transaction { ..tx, redeemers: list.filter(tx.redeemers, fn(p) { p.1st != purpose }) }
+}
+
+test w_pair_ok() {
+  let tx = w_tx()
+  w_vault(tx) && t_commit_withdraw_leg(tx)
+}
+
+// Két: không mục rút, không redeemer rút ⟹ `commit` không chạy ⟹ két phải từ chối.
+test w_vault_no_withdrawal_rejected() fail {
+  let tx = w_tx()
+  w_vault(w_drop_redeemer(Transaction { ..tx, withdrawals: [] }, Withdraw(t_commit_cred())))
+}
+
+// Két: redeemer rút CÓ nhưng mục rút KHÔNG — ledger sẽ không chạy `commit`.
+test w_vault_redeemer_without_withdrawal_rejected() fail {
+  let tx = w_tx()
+  w_vault(Transaction { ..tx, withdrawals: [] })
+}
+
+// Két: mục rút của một script KHÁC (kẻ tấn công tự dựng withdraw always-true).
+test w_vault_other_script_withdrawal_rejected() fail {
+  let tx = w_tx()
+  let other = Script(t_rate_hash)
+  let rd: Data = CommitRedeemer { vault_ref: t_own_ref() }
+  w_vault(
+    Transaction {
+      ..w_drop_redeemer(tx, Withdraw(t_commit_cred())),
+      withdrawals: [Pair(other, 0)],
+      redeemers: list.concat(
+        w_drop_redeemer(tx, Withdraw(t_commit_cred())).redeemers,
+        [Pair(Withdraw(other), rd)],
+      ),
+    },
+  )
+}
+
+// Két: redeemer rút nêu một két KHÁC (UTxO giả của kẻ tấn công) ⟹ `commit` chạy
+// trên két giả, két thật phải từ chối. Cực đối của `w_pair_ok`: cùng tx, chỉ khác
+// `vault_ref` trong redeemer rút.
+test w_vault_names_other_vault_rejected() fail {
+  let (_, tx) = t_commit_fixture(g_n)
+  let fake = OutputReference { transaction_id: t_tx_id, output_index: 9 }
+  w_vault(t_with_commit_leg(tx, t_commit_l, t_commit_lambda, t_commit_epoch, fake))
+}
+
+// Commit: két ở `vault_ref` đi nhánh KHÁC ký ⟹ không có L, λ ⟹ từ chối.
+test w_commit_vault_not_committing_rejected() fail {
+  let tx = w_drop_redeemer(w_tx(), Spend(t_own_ref()))
+  let fire: Data = ScheduleFire { schedule_id: t_sched_id }
+  t_commit_withdraw_leg(
+    Transaction { ..tx, redeemers: list.concat(tx.redeemers, [Pair(Spend(t_own_ref()), fire)]) },
+  )
+}
+
+// Commit: không có redeemer Spend cho `vault_ref` (input không bị script tiêu).
+test w_commit_no_spend_redeemer_rejected() fail {
+  t_commit_withdraw_leg(w_drop_redeemer(w_tx(), Spend(t_own_ref())))
+}
+
+// Commit: `vault_ref` không phải input của tx.
+test w_commit_vault_ref_not_input_rejected() fail {
+  let (_, tx) = t_commit_fixture(g_n)
+  let fake = OutputReference { transaction_id: t_tx_id, output_index: 9 }
+  t_commit_withdraw_leg(t_with_commit_leg(tx, t_commit_l, t_commit_lambda, t_commit_epoch, fake))
+}
+
+fn w_publish(cert: Certificate) -> Bool {
+  let rd: Data = 0
+  commit.publish(
+    t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
+    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash,
+    rd, cert, placeholder,
+  )
+}
+
+test w_publish_register_ok() {
+  w_publish(RegisterCredential { credential: t_commit_cred(), deposit: Never })
+}
+
+test w_publish_unregister_rejected() {
+  !w_publish(UnregisterCredential { credential: t_commit_cred(), refund: Never })
+}
+
+// ── THANG ĐO của cặp ký: chân KÉT, chân COMMIT, chân DỰNG-FIXTURE (cùng n) ──
+// validator(két)    = measure_commit_vault_leg   − probe_commit_leg_fixture
+// validator(commit) = measure_commit_withdraw_leg − probe_commit_leg_fixture
+// Trần ExUnit là của CẢ tx: cộng hai số trên (và lượt của shard + shard GB).
+fn w_scale_tx() -> Transaction {
+  let (_, tx) = t_commit_fixture(commit_scale_n)
+  t_with_commit_leg(tx, t_commit_l, t_commit_lambda, t_commit_epoch, t_own_ref())
+}
+
+test probe_commit_leg_fixture() {
+  let tx = w_scale_tx()
+  let vin = own_input(t_own_ref(), tx.inputs)
+  expect InlineDatum(raw) = vin.output.datum
+  expect din: VaultDatum = raw
+  expect Some(w) = pairs.get_first(tx.redeemers, Withdraw(t_commit_cred()))
+  expect _cr: CommitRedeemer = w
+  list.length(din.loyalty_holdings) == commit_scale_n
+}
+
+test measure_commit_vault_leg() {
+  t_vault_commit_leg(w_scale_tx(), t_commit_l, t_commit_lambda)
+}
+
+test measure_commit_withdraw_leg() {
+  t_commit_withdraw_leg(w_scale_tx())
 }
 
 test g_spend_fire_ok() {

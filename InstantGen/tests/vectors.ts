@@ -497,3 +497,109 @@ export const TV_IG_LENT_KNEE = {
     { l_lent_oildrop: 249_999_999n, expected_cap_lent:   999_999_996n },
   ],
 };
+
+// ══════════════════════════════════════════════════════════════
+// Gen v2.0 §6.1.1–§6.1.3 — công thức sinh chung F(L, usage_ratio, GB)
+// ══════════════════════════════════════════════════════════════
+// P8: literal GIỐNG HỆT khối "Vector chuẩn TV-GEN-*" trong
+// `onchain/lib/magiclamp/protocol/gen_formula.ak`. Sửa một bên thì sửa bên kia.
+// Chung: Q = 10⁹, sàn = 5×10⁸, coldstart = 7.5×10⁸, ρ = 4×10⁹ (suất tạm), LENT_PP_CAP = 10⁹.
+// Cửa sổ: [ô0 (epoch mở), ô1 … ô6 (đã đóng)], mỗi ô là [generated, consumed].
+
+export type GenCell = readonly [bigint, bigint];
+
+export const TV_GEN_WINDOWS = {
+  cold:        [[0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  cold_open:   [[5_000_000_000n, 5_000_000_000n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  zero_use:    [[0n, 0n], [6_000_000_000n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  full:        [[0n, 0n], [6_000_000_000n, 6_000_000_000n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  partial:     [[0n, 0n], [5_000_000_000n, 3_000_000_000n], [3_000_000_000n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  over:        [[0n, 0n], [2_000_000_000n, 3_000_000_000n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  round:       [[0n, 0n], [3n, 1n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  last_cell:   [[0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [4_000_000_000n, 1_000_000_000n]],
+  full_big:    [[0n, 0n], [30_000_000_000n, 30_000_000_000n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  scale_round: [[0n, 0n], [7n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  seq:         [[1n, 1n], [2n, 2n], [3n, 3n], [4n, 4n], [5n, 5n], [6n, 6n], [7n, 7n]],
+} as const satisfies Record<string, readonly GenCell[]>;
+
+export type GenWindowName = keyof typeof TV_GEN_WINDOWS;
+
+// ── TV-GEN-BASE-*: lamp_base_amount(l_owned, l_lent, rho_q) ──
+export const TV_GEN_BASE = [
+  { id: "TV-GEN-BASE-OWNED",         l_owned: 1_000_000_000n, l_lent: 0n,             rho_q: 4_000_000_000n, expected: 4_000_000_000n },
+  { id: "TV-GEN-BASE-LENT-BELOW",    l_owned: 1_000_000_000n, l_lent: 100_000_000n,   rho_q: 4_000_000_000n, expected: 4_400_000_000n },
+  { id: "TV-GEN-BASE-LENT-KNEE",     l_owned: 1_000_000_000n, l_lent: 250_000_000n,   rho_q: 4_000_000_000n, expected: 5_000_000_000n },
+  { id: "TV-GEN-BASE-LENT-CAP",      l_owned: 1_000_000_000n, l_lent: 1_001_000_000n, rho_q: 4_000_000_000n, expected: 5_000_000_000n },
+  // sàn RIÊNG từng vế: ⌊1.5⌋ + ⌊1.5⌋ = 2 (bản gộp ra 3)
+  { id: "TV-GEN-BASE-FLOOR-PER-TERM", l_owned: 1n,            l_lent: 1n,             rho_q: 1_500_000_000n, expected: 2n },
+  { id: "TV-GEN-BASE-RHO-ZERO",      l_owned: 1_000_000_000n, l_lent: 1_001_000_000n, rho_q: 0n,             expected: 0n },
+] as const;
+
+// ── TV-GEN-USAGE-*: usage_ratio_q(window), usage_factor_q(window) ──
+export const TV_GEN_USAGE = [
+  { id: "TV-GEN-USAGE-COLD",        window: "cold",      ratio_q: 0n,             factor_q: 750_000_000n },
+  { id: "TV-GEN-USAGE-COLD-OPEN",   window: "cold_open", ratio_q: 0n,             factor_q: 750_000_000n },   // ô 0 không đếm
+  { id: "TV-GEN-USAGE-ZERO-USE",    window: "zero_use",  ratio_q: 0n,             factor_q: 500_000_000n },   // ↔ COLD: chỉ khác Σg
+  { id: "TV-GEN-USAGE-FULL",        window: "full",      ratio_q: 1_000_000_000n, factor_q: 1_000_000_000n }, // ↔ ZERO-USE: chỉ khác Σc
+  { id: "TV-GEN-USAGE-PARTIAL",     window: "partial",   ratio_q: 375_000_000n,   factor_q: 687_500_000n },
+  { id: "TV-GEN-USAGE-OVER",        window: "over",      ratio_q: 1_000_000_000n, factor_q: 1_000_000_000n }, // kẹp Q
+  { id: "TV-GEN-USAGE-ROUND",       window: "round",     ratio_q: 333_333_333n,   factor_q: 666_666_666n },
+  { id: "TV-GEN-USAGE-LAST-CELL",   window: "last_cell", ratio_q: 250_000_000n,   factor_q: 625_000_000n },   // ô 6 có đếm
+] as const satisfies readonly { window: GenWindowName }[];
+
+// ── TV-GEN-SCALE-*: scale_limit(window, horizon, base) ──
+export const TV_GEN_SCALE = [
+  { id: "TV-GEN-SCALE-COLD",      window: "cold",        horizon: 6n, base: 4_000_000_000n, expected: 4_000_000_000n },
+  { id: "TV-GEN-SCALE-COLD-OPEN", window: "cold_open",   horizon: 6n, base: 4_000_000_000n, expected: 4_000_000_000n },
+  { id: "TV-GEN-SCALE-IG",        window: "full",        horizon: 6n, base: 4_000_000_000n, expected: 1_000_000_000n },
+  { id: "TV-GEN-SCALE-H3",        window: "full",        horizon: 3n, base: 4_000_000_000n, expected: 2_000_000_000n },
+  { id: "TV-GEN-SCALE-H0",        window: "full",        horizon: 0n, base: 4_000_000_000n, expected: 0n },
+  { id: "TV-GEN-SCALE-ROUND",     window: "scale_round", horizon: 6n, base: 100n,           expected: 1n },
+] as const satisfies readonly { window: GenWindowName }[];
+
+// ── TV-GEN-AMOUNT-*: amount_by_lamp(l_owned, l_lent, window, rho_q, horizon) ──
+export const TV_GEN_AMOUNT = [
+  { id: "TV-GEN-AMOUNT-COLD",               l_owned: 1_000_000_000n,          l_lent: 0n,             window: "cold",     rho_q: 4_000_000_000n, horizon: 6n, expected: 3_000_000_000n },
+  { id: "TV-GEN-AMOUNT-ZERO-USE",           l_owned: 1_000_000_000n,          l_lent: 0n,             window: "zero_use", rho_q: 4_000_000_000n, horizon: 6n, expected: 2_000_000_000n },
+  { id: "TV-GEN-AMOUNT-SCALE-BINDS",        l_owned: 1_000_000_000n,          l_lent: 0n,             window: "full",     rho_q: 4_000_000_000n, horizon: 6n, expected: 2_500_000_000n },
+  { id: "TV-GEN-AMOUNT-SCALE-FREE-SMALL-L", l_owned: 200_000_000n,            l_lent: 0n,             window: "full",     rho_q: 4_000_000_000n, horizon: 6n, expected: 800_000_000n },
+  { id: "TV-GEN-AMOUNT-SCALE-FREE-BIG-HIST",l_owned: 1_000_000_000n,          l_lent: 0n,             window: "full_big", rho_q: 4_000_000_000n, horizon: 6n, expected: 4_000_000_000n },
+  { id: "TV-GEN-AMOUNT-LENT-BELOW",         l_owned: 1_000_000_000n,          l_lent: 100_000_000n,   window: "cold",     rho_q: 4_000_000_000n, horizon: 6n, expected: 3_300_000_000n },
+  { id: "TV-GEN-AMOUNT-LENT-CAP",           l_owned: 1_000_000_000n,          l_lent: 1_001_000_000n, window: "cold",     rho_q: 4_000_000_000n, horizon: 6n, expected: 3_750_000_000n },
+  { id: "TV-GEN-AMOUNT-HORIZON-ZERO",       l_owned: 1_000_000_000n,          l_lent: 0n,             window: "full",     rho_q: 4_000_000_000n, horizon: 0n, expected: 0n },
+  // sàn tuần tự: 1 + 0 = 1 (bản gộp ⌊3×7.5e8/Q⌋ ra 2)
+  { id: "TV-GEN-AMOUNT-ROUND-SEQ",          l_owned: 3n,                      l_lent: 0n,             window: "cold",     rho_q: 1_000_000_000n, horizon: 6n, expected: 1n },
+  // tràn số: trần cung 36×10¹⁵ oildrop × RHO_MAX_Q, tích trung gian 1.44×10²⁶
+  { id: "TV-GEN-AMOUNT-OVERFLOW",           l_owned: 36_000_000_000_000_000n, l_lent: 0n,             window: "cold",     rho_q: 4_000_000_000n, horizon: 6n, expected: 108_000_000_000_000_000n },
+] as const satisfies readonly { window: GenWindowName }[];
+
+// ── TV-GEN-GB-*: generation_amount(amount_by_lamp, gb_available) ──
+export const TV_GEN_GB = [
+  { id: "TV-GEN-GB-BINDS", amount_by_lamp: 3_000_000_000n, gb_available: 1_000_000_000n, expected: 1_000_000_000n },
+  { id: "TV-GEN-GB-FREE",  amount_by_lamp: 3_000_000_000n, gb_available: 5_000_000_000n, expected: 3_000_000_000n },
+  { id: "TV-GEN-GB-EQUAL", amount_by_lamp: 3_000_000_000n, gb_available: 3_000_000_000n, expected: 3_000_000_000n },
+  { id: "TV-GEN-GB-ZERO",  amount_by_lamp: 3_000_000_000n, gb_available: 0n,             expected: 0n },
+] as const;
+
+// ── TV-GEN-VAULT-SHARE-*: gb_vault_share(reset_amount) ──
+export const TV_GEN_VAULT_SHARE = [
+  { id: "TV-GEN-VAULT-SHARE-CAP", reset_amount: 1_800_000_000_000_000n, expected: 90_000_000_000_000n },
+  { id: "TV-GEN-VAULT-SHARE-19",  reset_amount: 19n,                    expected: 0n },
+  { id: "TV-GEN-VAULT-SHARE-20",  reset_amount: 20n,                    expected: 1n },
+  { id: "TV-GEN-VAULT-SHARE-0",   reset_amount: 0n,                     expected: 0n },
+] as const;
+
+// ── TV-GEN-SHIFT-*: shift_window(seq, 100, to_epoch) ──
+export const TV_GEN_SHIFT = [
+  { id: "TV-GEN-SHIFT-K0",   from_epoch: 100n, to_epoch: 100n, expected: TV_GEN_WINDOWS.seq },
+  { id: "TV-GEN-SHIFT-K1",   from_epoch: 100n, to_epoch: 101n, expected: [[0n, 0n], [1n, 1n], [2n, 2n], [3n, 3n], [4n, 4n], [5n, 5n], [6n, 6n]] },
+  { id: "TV-GEN-SHIFT-K6",   from_epoch: 100n, to_epoch: 106n, expected: [[0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [1n, 1n]] },
+  { id: "TV-GEN-SHIFT-K7",   from_epoch: 100n, to_epoch: 107n, expected: TV_GEN_WINDOWS.cold },
+  { id: "TV-GEN-SHIFT-K100", from_epoch: 100n, to_epoch: 200n, expected: TV_GEN_WINDOWS.cold },
+] as const satisfies readonly { expected: readonly GenCell[] }[];
+
+// ── TV-GEN-ADD-01: window_add(seq, 10, 3) ──
+export const TV_GEN_ADD_01 = {
+  id: "TV-GEN-ADD-01", generated: 10n, consumed: 3n,
+  expected: [[11n, 4n], [2n, 2n], [3n, 3n], [4n, 4n], [5n, 5n], [6n, 6n], [7n, 7n]],
+} as const;

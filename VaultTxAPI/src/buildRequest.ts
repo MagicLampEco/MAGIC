@@ -14,7 +14,7 @@
 
 import type { Profile } from "@magiclamp/sdk";
 
-import { parseEngageRef } from "./engage.js";
+import { parseDidCommit, parseEngageRef } from "./engage.js";
 import { parseWakemeVaultRef } from "./wakeme.js";
 import { BadRequestError, CodedApiError } from "./errors.js";
 import { parseFeePayer, type OutRefLike } from "./feePayer.js";
@@ -22,7 +22,8 @@ import { parseFunding } from "./funding.js";
 import type { IssuedRoute } from "./locks.js";
 import { parseOwnerFields, parseOwnerWitness } from "./owner.js";
 import {
-  toBuildBody, toCreateVaultBody, toOpenThreadBody,
+  toBindDidBody, toBuildBody, toCreateVaultBody, toOpenThreadBody,
+  type BindDidRequest, type BindDidResponse,
   type BuildResponse, type CreateVaultRequest, type CreateVaultResponse, type OpenThreadRequest,
   type OpenThreadResponse, type OwnerRequest, type QuoteMode, type VaultTxService,
 } from "./service.js";
@@ -35,6 +36,7 @@ export const BUILD_ROUTE_OF_PATH: Readonly<Record<string, IssuedRoute>> = {
   "/tx/schedule-fire": "schedule-fire",
   "/tx/consume": "consume",
   "/tx/open-thread": "open-thread",
+  "/tx/bind-did": "bind-did",
   "/tx/create-vault": "create-vault",
 };
 
@@ -45,10 +47,12 @@ export type ParsedBuild =
   | { route: "schedule-fire"; req: OwnerRequest & { scheduleId: string } }
   | { route: "consume"; req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike; wakemeVaultRef?: OutRefLike } }
   | { route: "open-thread"; req: OpenThreadRequest }
+  | { route: "bind-did"; req: BindDidRequest }
   | { route: "create-vault"; req: CreateVaultRequest };
 
 export type BuildResult =
   | { route: "open-thread"; out: OpenThreadResponse }
+  | { route: "bind-did"; out: BindDidResponse }
   | { route: "create-vault"; out: CreateVaultResponse }
   | { route: "instant-gen" | "refresh-checkpoint" | "schedule-commit" | "schedule-fire" | "consume"; out: BuildResponse };
 
@@ -92,6 +96,15 @@ export function parseBuildRequest(route: IssuedRoute, body: Record<string, unkno
       };
     case "open-thread":
       return { route, req: { ...ownerReq(body), fundingRequested: body.funding !== undefined } };
+    case "bind-did":
+      return {
+        route,
+        req: {
+          ...ownerReq(body),
+          didCommit: parseDidCommit(body.did_commit),
+          engageRef: parseEngageRef(body.engage_ref),
+        },
+      };
     case "create-vault": {
       const kind = body.kind;
       if (kind !== "instant" && kind !== "schedule") {
@@ -126,6 +139,7 @@ export async function runBuild(service: VaultTxService, p: ParsedBuild, quote?: 
     case "schedule-fire": return { route: p.route, out: await service.scheduleFire(p.req, quote) };
     case "consume": return { route: p.route, out: await service.consume(p.req, quote) };
     case "open-thread": return { route: p.route, out: await service.openThread(p.req, quote) };
+    case "bind-did": return { route: p.route, out: await service.bindDid(p.req, quote) };
     case "create-vault": return { route: p.route, out: await service.createVault(p.req, quote) };
   }
 }
@@ -134,6 +148,7 @@ export async function runBuild(service: VaultTxService, p: ParsedBuild, quote?: 
 export function buildResultBody(r: BuildResult): Record<string, unknown> {
   switch (r.route) {
     case "open-thread": return toOpenThreadBody(r.out);
+    case "bind-did": return toBindDidBody(r.out);
     case "create-vault": return toCreateVaultBody(r.out);
     default: return toBuildBody(r.out);
   }

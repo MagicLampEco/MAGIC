@@ -417,6 +417,10 @@ function feePayerFigures(r: BuildResult): { fee: bigint; collateral: bigint; val
     // `openThread` ném 422 `FEE_PAYER_DEPOSIT_UNSOURCED` khi có ví trả phí; về tới đây là lệch.
     throw new Error("[bất biến nội bộ] báo giá /tx/open-thread trả về một tx.");
   }
+  if (r.route === "bind-did") {
+    // `bindDid` ném 501 `BIND_DID_FEE_PAYER_UNSUPPORTED` khi có ví trả phí; về tới đây là lệch.
+    throw new Error("[bất biến nội bộ] báo giá /tx/bind-did trả về một tx.");
+  }
   if (r.route === "create-vault") {
     const f = r.out.summary.funding;
     if (f === undefined) throw new Error("[bất biến nội bộ] báo giá create-vault: bản tóm tắt thiếu `funding`.");

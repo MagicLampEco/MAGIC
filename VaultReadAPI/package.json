@@ -9,16 +9,22 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "start": "tsx src/server.ts",
-    "probe": "tsx scripts/probe.ts",
+    "start": "tsx --preserve-symlinks src/server.ts",
+    "probe": "tsx --preserve-symlinks scripts/probe.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
+  "//dependencies": "Bốn gói `@magiclamp/*` dưới `sdk` là dependency CỦA MagicSDK, khai lại ở đây có chủ đích — cùng lý do và cùng danh sách với VaultTxAPI/package.json: không có workspace ở gốc kho, nên npm KHÔNG cài dependency của một liên kết `file:` vào cây của gói tiêu thụ. Bốn dòng này là MỘT NỬA; nửa kia là `--preserve-symlinks` (xem `//scripts`). Đo trên clone sạch 2026-09-30, chỉ `npm ci` trong gói này: thiếu cả hai ⟹ `tsc` 47 lỗi TS2307 từ bên trong MagicSDK và `tsx` gãy lúc nạp.",
+  "//scripts": "`--preserve-symlinks` ở `start`/`probe` là BẮT BUỘC: node mặc định phân giải import của MagicSDK từ đường THẬT (`../MagicSDK/node_modules`, không tồn tại trong checkout sạch) chứ không từ `node_modules` của gói này. Cùng lý do với `preserveSymlinks` trong tsconfig.json.",
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.30",
     "@magiclamp/protocol-utils": "file:../ProtocolUtils",
-    "@magiclamp/sdk": "file:../MagicSDK"
+    "@magiclamp/sdk": "file:../MagicSDK",
+    "@magiclamp/consumemagic": "file:../ConsumeMAGIC/offchain",
+    "@magiclamp/consumemagic-pricing": "file:../ConsumeMAGIC/pricing",
+    "@magiclamp/instantgen-sdk": "file:../InstantGen/offchain",
+    "@magiclamp/schedulegen-sdk": "file:../ScheduleGen/offchain"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

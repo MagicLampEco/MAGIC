@@ -9,12 +9,13 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "start": "tsx src/server.ts",
+    "start": "tsx --preserve-symlinks src/server.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "//dependencies": "Bốn gói `@magiclamp/*` dưới `sdk` là dependency CỦA MagicSDK, khai lại ở đây có chủ đích: không có workspace ở gốc kho, nên npm KHÔNG cài dependency của một liên kết `file:` vào cây của gói tiêu thụ. Không khai thì `npm install` từ checkout sạch chạy xanh rồi mọi import của MagicSDK gãy ở lượt chạy đầu tiên — hỏng muộn, và hỏng ở một chỗ không nhắc gì tới cài đặt.",
+  "//scripts": "`--preserve-symlinks` ở `start` là BẮT BUỘC: node mặc định phân giải import của MagicSDK từ đường THẬT (`../MagicSDK/node_modules`, không tồn tại trong checkout sạch) chứ không từ `node_modules` của gói này — đo trên clone sạch 2026-09-30: `Cannot find package '@magiclamp/consumemagic'` lúc nạp. Cùng lý do với `preserveSymlinks` trong tsconfig.json; trước bản này dịch vụ chỉ chạy được trên máy đã cài tay trong các gói anh em.",
   "dependencies": {
     "@lucid-evolution/lucid": "0.4.30",
     "@magiclamp/protocol-utils": "file:../ProtocolUtils",

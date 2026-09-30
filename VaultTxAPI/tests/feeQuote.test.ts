@@ -98,6 +98,7 @@ class FeeModelBuilder implements TxBuilderPort {
   async refreshCheckpoint(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async createVault(): Promise<BuiltCreateVault> { throw new Error("[FeeModelBuilder] createVault không dựng ở đây."); }
   async openThread(): Promise<BuiltOpenThread> { throw new Error("[FeeModelBuilder] openThread không dựng ở đây."); }
+  async bindDid(): Promise<BuiltTx> { throw new Error("[FeeModelBuilder] bindDid không dựng ở đây."); }
   async coinsPerUtxoByte(): Promise<bigint> { return this.coinsPerUtxoByteValue; }
 }
 

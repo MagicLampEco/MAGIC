@@ -74,6 +74,7 @@ POST /tx/schedule-commit   { owner, [owner_witness], change_address | fee_payer,
 POST /tx/schedule-fire     { owner, [owner_witness], change_address | fee_payer, schedule_id }
 POST /tx/consume           { owner, [owner_witness], change_address | fee_payer, op_type, op_count, [engage_ref], [wakeme_vault_ref] }
 POST /tx/open-thread       { owner, [owner_witness], change_address }
+POST /tx/bind-did          { owner, [owner_witness], [change_address], did_commit, [engage_ref] }
 POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 POST /tx/submit            { tx_cbor, witness_cbor }
 POST /tx/quote             { route, params, [owner_fee_addresses] } — báo giá phí, xem dưới
@@ -464,6 +465,8 @@ của cấu hình (§6), và cũng là trần mà phép đọc lại ép lên ph
   thân bài ⟹ `400 FEE_PAYER_UNSUPPORTED`.
 - `/tx/open-thread` khoá min-ADA vào output thread, mà ví trả phí chỉ được mất đúng bằng phí
   ⟹ `fee_payer` một mình trả `422 FEE_PAYER_DEPOSIT_UNSOURCED`; gửi `change_address`.
+- `/tx/bind-did` chưa nhận `fee_payer` ⟹ `501 BIND_DID_FEE_PAYER_UNSUPPORTED` (bộ dựng BindDID
+  chưa đặt hạn dùng mà luật ví trả phí đòi); gửi `change_address` hoặc bỏ trống với chủ khoá.
 
 **Ví trả phí không nhất thiết là Feecover.** Một UTxO thuần ADA trên **địa chỉ khoá của chính
 chủ** dùng được làm `fee_payer` (hoặc `funding.fee_payer`), cùng luật như trên. Khi đó không cần
@@ -476,7 +479,7 @@ UTxO đó (`owner_address.fee_payer`).
 
 ```jsonc
 // vào
-{ "route": "consume",                       // một trong sáu đường dựng
+{ "route": "consume",                       // một trong tám đường dựng
   "params": { "owner_pkh": "…", "op_type": 1, "op_count": "2" },   // đúng thân bài của đường đó,
                                                                    // KHÔNG kèm fee_payer / funding.fee_payer
   "owner_fee_addresses": ["addr_test1v…", "addr_test1q…"] }        // tuỳ chọn: 1..10 địa chỉ khoá của chủ
@@ -566,6 +569,7 @@ tiền, …) mang **đúng mã** mà đường dựng trả. Hai ca đặc biệ
   vắng ⟹ `400 FEE_QUOTE_FUNDING_REQUIRED`.
 - `/tx/open-thread` không nhận ví trả phí (xem trên) ⟹ báo giá trả đúng `422
   FEE_PAYER_DEPOSIT_UNSOURCED` của đường đó.
+- `/tx/bind-did` chưa nhận ví trả phí ⟹ báo giá trả đúng `501 BIND_DID_FEE_PAYER_UNSUPPORTED`.
 
 ### Thread Engage: chọn theo chủ, `engage_ref`, `POST /tx/open-thread`
 
@@ -591,6 +595,55 @@ từ `tx_cbor` (lệch ⟹ `422 OPEN_THREAD_TX_MISMATCH`). Lời đáp:
 ```
 
 `funding` ở đường này chưa hỗ trợ ⟹ `501 OPEN_THREAD_FUNDING_UNSUPPORTED`.
+
+### Gắn DID vào thread: `POST /tx/bind-did`
+
+Dựng giao dịch `BindDID` (redeemer `Constr 1 []` của `consume`) trên thread Engage của chủ, bằng
+`@magiclamp/consumemagic` ▸ `buildBindDidTx`. Script `consume` đọc qua ref CIP-33 ở
+`ref_script_utxos.consume`, như `/tx/consume`. Một chiều, đúng một lần: đã gắn thì không đổi được,
+kể cả ghi lại chính giá trị cũ.
+
+```jsonc
+// vào
+{ "owner": { "type": "key", "hash": "<56 hex>" },   // hoặc "owner_pkh"
+  "did_commit": "<ĐÚNG 64 ký tự hex thường — 32 byte>",
+  "change_address": "addr_test1v…",                 // tuỳ chọn với chủ khoá (§7); chủ script phải gửi
+  "engage_ref": "<tx_hash>#<i>",                    // tuỳ chọn: chỉ khi chủ có nhiều thread
+  "owner_witness": { … } }                          // chỉ chủ script
+// ra
+{
+  "tx_cbor": "…", "tx_hash": "…",
+  "engage_nft": "<policy 56 hex><tên>", "engage_address": "addr_test1w…",
+  "owner": { "type": "key", "hash": "…" },
+  "did_commit": "<64 hex — đọc lại từ datum output trong tx_cbor>",
+  "required_signers": ["…"], "witness_notes": ["…"], "expires_at": "…",
+  "summary": {
+    "requested_intent": "bind_did", "network": "Preview", "fee_lovelace": "…",
+    "engage": { "nft_unit": "…", "address": "…", "input_ref": "<tx_hash>#<i>", "output_index": 0,
+                "lovelace": "…", "owner": { … }, "consumed_count": "…", "last_epoch": "…",
+                "consumed_nanogic": "…", "did_commit_before": "", "did_commit": "…" },
+    "required_signers": ["…"]
+  }
+}
+```
+
+| tình huống | mã |
+|---|---|
+| `did_commit` vắng / rỗng / không đúng 64 ký tự / không phải hex thường | `400 DID_COMMIT_INVALID` |
+| chủ chưa có thread | `404 ENGAGE_THREAD_NOT_FOUND` |
+| chủ có nhiều thread, không kèm `engage_ref` | `409 ENGAGE_THREAD_AMBIGUOUS` |
+| thread đã gắn DID | `409 DID_ALREADY_BOUND` — `details.did_commit` = giá trị đang trên chuỗi, kèm `engage_ref`, `engage_nft` |
+| tx vừa dựng lệch (redeemer · value thread · datum · chữ ký chủ) | `422 BIND_DID_TX_MISMATCH` |
+| kèm `fee_payer` | `501 BIND_DID_FEE_PAYER_UNSUPPORTED` |
+
+Dịch vụ đọc lại `tx_cbor` trước khi trả: thread là input với redeemer đúng `BindDID`; không đúc/đốt
+gì dưới policy consume; đúng một output ở địa chỉ engage, mang NFT thread, value BẰNG tuyệt đối value
+thread đầu vào; datum giữ nguyên chủ + ba trục kế toán, chỉ `did_commit` đổi sang đúng giá trị yêu
+cầu; chủ khoá nằm trong `required_signers`. Validator đòi chữ ký của CHÍNH chủ — không có đường ký
+thay (`personal_delegate`) như `/tx/consume`.
+
+Khoá mềm theo chủ (§4): hai lượt gắn DID — hoặc gắn DID và tiêu MAGIC — cho cùng chủ trước khi nộp ⟹
+lượt sau `409 OWNER_TX_IN_FLIGHT`.
 
 ### Proxy phí Feecover: `POST /fee/utxo`, `POST /fee/sign`
 
@@ -726,6 +779,10 @@ Nên:
 | `engage_ref` mang NFT nhưng datum không giải được | `422 ENGAGE_THREAD_DATUM_UNDECODABLE` |
 | tx mở thread vừa dựng lệch (NFT / output / datum genesis) | `422 OPEN_THREAD_TX_MISMATCH` |
 | `/tx/open-thread` kèm `funding` | `501 OPEN_THREAD_FUNDING_UNSUPPORTED` |
+| `/tx/bind-did`: `did_commit` không đúng 64 ký tự hex thường | `400 DID_COMMIT_INVALID` |
+| `/tx/bind-did`: thread đã gắn DID | `409 DID_ALREADY_BOUND` (`details.did_commit`) |
+| tx gắn DID vừa dựng lệch (redeemer / value / datum / chữ ký chủ) | `422 BIND_DID_TX_MISMATCH` |
+| `/tx/bind-did` kèm `fee_payer` | `501 BIND_DID_FEE_PAYER_UNSUPPORTED` |
 | `/tx/quote`: thân sai hình dạng · `route` lạ | `400 FEE_QUOTE_SHAPE` / `400 FEE_QUOTE_ROUTE_UNKNOWN` |
 | `/tx/quote`: `params` mang `fee_payer` / `funding.fee_payer` | `400 FEE_QUOTE_FEE_PAYER_IN_PARAMS` |
 | `/tx/quote` cho `create-vault` không có `params.funding` | `400 FEE_QUOTE_FUNDING_REQUIRED` |

@@ -43,16 +43,22 @@ export { findVaultsAtScope, pickSingleVault, vaultIdUnitOf } from "./vaultLookup
 export type { FoundVault, IgnoredUtxo } from "./vaultLookup.js";
 
 export { SdkTxBuilder, RecordedTxBuilder, enterpriseAddressOf, vaultModuleOf } from "./txBuilder.js";
-export type { TxBuilderPort, BuildContext, BuiltTx, SdkTxBuilderDeps, OpenThreadContext, BuiltOpenThread } from "./txBuilder.js";
-export { pickEngageThread, threadsOf, checkOpenThreadTx, parseEngageRef } from "./engage.js";
-export type { EngageThread, OpenThreadSummary } from "./engage.js";
+export type {
+  TxBuilderPort, BuildContext, BuiltTx, SdkTxBuilderDeps, OpenThreadContext, BuiltOpenThread, BindDidContext,
+} from "./txBuilder.js";
+export {
+  pickEngageThread, threadsOf, checkOpenThreadTx, parseEngageRef, checkBindDidTx, parseDidCommit, didCommitOf,
+} from "./engage.js";
+export type { EngageThread, OpenThreadSummary, BindDidSummary } from "./engage.js";
 export { parseWakemeVaultRef, resolveWakemeVault, checkWakemeRefInTx, referenceInputRefsOf } from "./wakeme.js";
 export type { WakemeSummary, WakemeNotCountedReason, ResolvedWakeme } from "./wakeme.js";
 export { checkFeePayerTx, parseFeePayer } from "./feePayer.js";
 export type { FeePayerRequest, FeePayerSummary } from "./feePayer.js";
 
-export { VaultTxService, toBuildBody, toOpenThreadBody, toSubmitBody } from "./service.js";
-export type { BuildResponse, OpenThreadResponse, SubmitResponse, VaultTxServiceDeps } from "./service.js";
+export { VaultTxService, toBuildBody, toOpenThreadBody, toBindDidBody, toSubmitBody } from "./service.js";
+export type {
+  BuildResponse, OpenThreadResponse, BindDidRequest, BindDidResponse, SubmitResponse, VaultTxServiceDeps,
+} from "./service.js";
 
 export { handle } from "./http.js";
 export type { HttpRequest, HttpResponse, RouterDeps } from "./http.js";

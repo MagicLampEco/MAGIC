@@ -23,7 +23,10 @@ import {
 
 import type { ChainReader, ChainTip } from "./chain.js";
 import type { Deployment, VaultScope } from "./config.js";
-import { checkOpenThreadTx, pickEngageThread, threadsOf, type OpenThreadSummary } from "./engage.js";
+import {
+  checkBindDidTx, checkOpenThreadTx, didCommitOf, parseDidCommit, pickEngageThread, threadsOf,
+  type BindDidSummary, type OpenThreadSummary,
+} from "./engage.js";
 import {
   FEE_PAYER_CODES, assertFeePayerAddress, checkFeePayerTx, inputRefsOf, readFeePayerUtxo as readFeePayerUtxoShared,
   refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike,
@@ -98,6 +101,27 @@ export interface OpenThreadResponse {
   requiredSigners: string[];
   witnessNotes: string[];
   summary: OpenThreadSummary;
+  expiresAt: string;
+}
+
+export interface BindDidRequest extends OwnerRequest {
+  /** 64 ký tự hex thường (32 byte) — `engage.ts` ▸ `parseDidCommit`. */
+  didCommit: string;
+  /** Chỉ đích danh thread khi chủ có nhiều thread (như `/tx/consume`). */
+  engageRef?: OutRefLike;
+}
+
+export interface BindDidResponse {
+  txCbor: string;
+  txHash: string;
+  engageNft: string;
+  engageAddress: string;
+  owner: OwnerRef;
+  /** Giá trị sẽ nằm trong datum thread — đọc lại TỪ CBOR (`summary.engage.did_commit`). */
+  didCommit: string;
+  requiredSigners: string[];
+  witnessNotes: string[];
+  summary: BindDidSummary;
   expiresAt: string;
 }
 
@@ -428,6 +452,90 @@ export class VaultTxService {
     }
   }
 
+  /**
+   * Gắn PersonDID vào thread Engage của chủ (redeemer `BindDID`, Constr 1). Một chiều, đúng một lần.
+   *
+   * Hình dạng yêu cầu, và vì sao:
+   *   · `did_commit` sai dạng ⟹ 400 `DID_COMMIT_INVALID` (kiểm lại ở đây cho lời gọi thẳng vào dịch vụ);
+   *   · `fee_payer` ⟹ 501 `BIND_DID_FEE_PAYER_UNSUPPORTED`: `buildBindDidTx` không đặt `validTo`,
+   *     mà ví trả phí đòi hạn dùng ≤ 1 giờ (`feePayer.ts`) — dựng tiếp là ra một tx chắc chắn trượt
+   *     phép đọc lại `FEE_PAYER_TX_MISMATCH`. Nói thẳng thay vì giả vờ hỗ trợ. Validator còn đòi chữ
+   *     ký của CHÍNH chủ (không có vế `personal_delegate`), nên dù có ví trả phí thì chủ vẫn phải ký;
+   *   · chủ chưa có thread ⟹ 404 `ENGAGE_THREAD_NOT_FOUND`; nhiều thread ⟹ 409
+   *     `ENGAGE_THREAD_AMBIGUOUS` (gửi `engage_ref`) — cùng `pickEngageThread` với `/tx/consume`;
+   *   · thread đã gắn DID ⟹ 409 `DID_ALREADY_BOUND`, `details.did_commit` = giá trị đang nằm trên chuỗi.
+   *
+   * Khoá mềm theo CHỦ, giữ từ trước lúc đọc thread tới lúc nộp: thread là của đúng một chủ, nên khoá
+   * chủ là khoá thread. Hai lượt gắn DID (hoặc gắn DID + tiêu MAGIC) cho cùng chủ ⟹ lượt sau nhận 409
+   * `OWNER_TX_IN_FLIGHT`, không dựng hai tx cùng tiêu một UTxO thread.
+   */
+  async bindDid(req: BindDidRequest, quote?: QuoteMode): Promise<BindDidResponse> {
+    const owner = assertOwnerRef(req.owner);
+    const didCommit = parseDidCommit(req.didCommit);
+    if (req.feePayer !== undefined) {
+      // Lỗi hình dạng của `fee_payer` (xung đột `change_address`, sai mạng) vẫn là 400 như mọi đường.
+      this.feePayerFor(req);
+      throw new CodedApiError(501, "BIND_DID_FEE_PAYER_UNSUPPORTED",
+        `Gắn DID qua ví trả phí ("fee_payer") chưa được hỗ trợ: bộ dựng BindDID chưa đặt hạn dùng ` +
+        `(validTo) mà ví trả phí đòi. Gửi "change_address" (hoặc bỏ trống với chủ khoá): ví đó trả phí + ` +
+        `thế chấp. Chủ thread vẫn phải tự ký — validator BindDID không nhận người ký thay.`);
+    }
+    if (quote !== undefined) {
+      // Báo giá luôn mang ví trả phí nên đã dừng ở khối trên. Tới được đây là lệch nội bộ.
+      throw new Error("[bất biến nội bộ] báo giá /tx/bind-did không có ví trả phí — chưa hỗ trợ.");
+    }
+    const changeAddress = this.changeAddressFor(req);
+    this.assertWitnessShapeFor(req);
+    const d = this.deps.deployment.consume;
+    const ownerKey = ownerLockKey(owner);
+    const startedAt = this.now();
+    const lockGen = this.deps.locks.acquire(ownerKey, startedAt);
+    try {
+      const tip = await this.deps.chain.tip();
+      const thread = await pickEngageThread(
+        this.deps.chain, d.engageAddress, d.engageScriptHash, owner, req.engageRef, "/tx/bind-did");
+      const existing = didCommitOf(thread);
+      if (existing !== "") {
+        throw new CodedApiError(409, "DID_ALREADY_BOUND",
+          `Thread ${refStr(thread.utxo).slice(0, 16)}… đã gắn DID. BindDID đi một chiều và đúng một lần — ` +
+          `không đổi được sang giá trị khác, kể cả ghi lại chính giá trị cũ.`,
+          { did_commit: existing, engage_ref: refStr(thread.utxo), engage_nft: thread.nftUnit });
+      }
+      this.assertNotPendingSpent(thread.utxo, "thread Engage này");
+      const witness = await this.witnessFor(req);
+      const built = await this.deps.builder.bindDid(
+        { owner, ownerAuth: witness?.auth, tip, changeAddress },
+        { engageUtxo: thread.utxo, didCommit },
+      );
+      const summary = checkBindDidTx(built.txCbor, {
+        engageAddress: d.engageAddress, engageScriptHash: d.engageScriptHash, thread, owner, didCommit,
+        network: this.deps.network,
+      });
+      const txHash = txBodyHash(built.txCbor);
+      this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
+      // Mã ghi sổ Feecover = hash thân tx (không có NFT mới). Không ví trả phí ⟹ `/fee/sign` từ chối.
+      this.deps.issued.record(txHash, this.now(), { route: "bind-did" });
+      return {
+        txCbor: built.txCbor,
+        txHash,
+        engageNft: thread.nftUnit,
+        engageAddress: d.engageAddress,
+        owner,
+        didCommit: summary.engage.did_commit,
+        requiredSigners: summary.required_signers,
+        witnessNotes: [
+          ...this.notesFor(owner, witness, changeAddress),
+          `BindDID đi một chiều: sau khi giao dịch này vào khối, did_commit của thread khoá vĩnh viễn.`,
+        ],
+        summary,
+        expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
+      };
+    } catch (e) {
+      this.deps.locks.release(ownerKey, lockGen);
+      throw asOwnerApiError(e);
+    }
+  }
+
   private async buildOne(
     vaultType: string | undefined,
     intent: RequestedIntent,
@@ -529,11 +637,11 @@ export class VaultTxService {
    * UTxO vault là input của một giao dịch vừa nộp qua dịch vụ này mà nút đọc chưa thấy bị tiêu
    * ⟹ 409. Dựng tiếp trên nó thì người dùng ký xong mới bị chuỗi từ chối vì input không còn.
    */
-  private assertNotPendingSpent(u: UTxO): void {
+  private assertNotPendingSpent(u: UTxO, subject = "vault này"): void {
     const ref = `${u.txHash}#${u.outputIndex}`;
     if (this.deps.pending?.has(ref, this.now())) {
       throw new CodedApiError(409, "PREVIOUS_TX_PENDING",
-        `Giao dịch trước của vault này đã nộp nhưng chưa vào khối — UTxO ${ref} đang bị nó tiêu. ` +
+        `Giao dịch trước của ${subject} đã nộp nhưng chưa vào khối — UTxO ${ref} đang bị nó tiêu. ` +
         `Thử lại sau khi giao dịch đó vào khối (thường dưới một phút).`,
         { utxo_ref: ref });
     }
@@ -1008,6 +1116,21 @@ export function toOpenThreadBody(r: OpenThreadResponse): Record<string, unknown>
     engage_nft: r.engageNft,
     engage_address: r.engageAddress,
     owner: { type: r.owner.type, hash: r.owner.hash },
+    required_signers: r.requiredSigners,
+    witness_notes: r.witnessNotes,
+    summary: r.summary,
+    expires_at: r.expiresAt,
+  };
+}
+
+export function toBindDidBody(r: BindDidResponse): Record<string, unknown> {
+  return {
+    tx_cbor: r.txCbor,
+    tx_hash: r.txHash,
+    engage_nft: r.engageNft,
+    engage_address: r.engageAddress,
+    owner: { type: r.owner.type, hash: r.owner.hash },
+    did_commit: r.didCommit,
     required_signers: r.requiredSigners,
     witness_notes: r.witnessNotes,
     summary: r.summary,

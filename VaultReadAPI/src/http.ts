@@ -12,6 +12,7 @@ import { VaultReadError, BadRequestError, ThreadIndexDisabledError, Unauthorized
 import { VaultReadService, toJsonBody } from "./service.js";
 import type { VaultScope } from "./config.js";
 import { freshnessToJson, threadToJson, type ThreadIndex } from "./threadIndex.js";
+import { stripBasePath } from "./basePath.js";
 
 export interface HttpRequest {
   method: string;
@@ -34,6 +35,8 @@ export interface RouterDeps {
   token: string;
   /** Chỉ mục DID ⟹ thread. Vắng ⟹ `/threads/*` trả 503 `THREAD_INDEX_DISABLED`. */
   threads?: ThreadIndex;
+  /** Tiền tố đường khi đứng sau proxy định tuyến theo đường (`basePath.ts`). Vắng/`""` ⟹ không có. */
+  basePath?: string;
 }
 
 const BY_OWNER = /^\/vault\/by-owner\/([^/?#]+)$/;
@@ -76,7 +79,7 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
   }
 
   const u = new URL(req.url, "http://placeholder.invalid");
-  const path = u.pathname;
+  const path = stripBasePath(u.pathname, deps.basePath ?? "");
 
   if (path === "/health") {
     // `/health` KHÔNG chạm chuỗi và KHÔNG đòi thẻ bài — nó là thứ bộ giám sát gọi.
@@ -94,6 +97,7 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
           script_hash: s.scriptHash,
           source: s.source,
         })),
+        base_path: deps.basePath ?? "",
       },
     };
   }

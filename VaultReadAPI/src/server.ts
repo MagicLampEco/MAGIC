@@ -35,7 +35,7 @@ const server = createServer((rq, rs) => {
   const started = Date.now();
   handle(
     { method: rq.method ?? "GET", url: rq.url ?? "/", headers: rq.headers as Record<string, string | undefined> },
-    { service, scopes: cfg.scopes, network: cfg.network, chainLabel: chain.label, token: cfg.token, threads },
+    { service, scopes: cfg.scopes, network: cfg.network, chainLabel: chain.label, token: cfg.token, threads, basePath: cfg.basePath },
   )
     .then(out => {
       const payload = JSON.stringify(out.body);
@@ -59,7 +59,8 @@ const server = createServer((rq, rs) => {
 server.listen(cfg.port, cfg.host, () => {
   console.error(
     `[vault-read-api] nghe ${cfg.host}:${cfg.port} · mạng ${cfg.network} · nút ${chain.label} · ` +
-    `${cfg.scopes.length} địa chỉ vault · ${cfg.consumeScopes.length} địa chỉ consume · thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"}`,
+    `${cfg.scopes.length} địa chỉ vault · ${cfg.consumeScopes.length} địa chỉ consume · thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"} · ` +
+    `tiền tố ${cfg.basePath === "" ? "không" : cfg.basePath}`,
   );
   if (cfg.token === "" && isLoopback(cfg.host)) {
     console.error(

@@ -132,3 +132,11 @@ describe("ra ngoài loopback thì BẮT BUỘC có thẻ bài", () => {
     expect(loadConfig(mainnetEnv).blockfrostUrl).toBe("https://cardano-mainnet.blockfrost.io/api/v0");
   });
 });
+
+describe("VAULT_READ_API_BASE_PATH — tiền tố đường sau proxy", () => {
+  it("vắng ⟹ basePath rỗng. CẶP: đặt ⟹ đọc đúng; sai dạng ⟹ từ chối khởi động", () => {
+    expect(loadConfig(baseEnv()).basePath).toBe("");
+    expect(loadConfig({ ...baseEnv(), VAULT_READ_API_BASE_PATH: "/vaultread/preprod" }).basePath).toBe("/vaultread/preprod");
+    expect(() => loadConfig({ ...baseEnv(), VAULT_READ_API_BASE_PATH: "vaultread" })).toThrow(/VAULT_READ_API_BASE_PATH/);
+  });
+});

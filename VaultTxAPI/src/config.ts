@@ -28,6 +28,7 @@ import { FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE, type Network } from "@magiclamp/
 import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
 
 import { ISSUED_ROUTES, type IssuedRoute } from "./locks.js";
+import { parseBasePath } from "./basePath.js";
 
 export interface VaultScope {
   /** "Instant" | "Schedule" — khớp `VaultType` của MagicSDK. */
@@ -193,6 +194,8 @@ export interface AppConfig {
   vaultPlutusJsonPath: string;
   host: string;
   port: number;
+  /** Tiền tố đường khi đứng sau proxy định tuyến theo đường (`basePath.ts`). `""` ⟹ không có. */
+  basePath: string;
   /** Thẻ bài chia sẻ. Rỗng CHỈ được phép khi `host` là loopback. */
   token: string;
   requestTimeoutMs: number;
@@ -258,6 +261,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const host = env.VAULT_TX_API_HOST || "127.0.0.1";
   const port = intOrThrow(env.VAULT_TX_API_PORT, "VAULT_TX_API_PORT", 8788, 1, 65535);
+  const basePath = parseBasePath(env.VAULT_TX_API_BASE_PATH, "VAULT_TX_API_BASE_PATH");
 
   const token = env.VAULT_TX_API_TOKEN || "";
   if (token === "" && !LOOPBACK_HOSTS.has(host)) {
@@ -278,7 +282,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     network, blockfrostUrl, blockfrostProjectId, deployment,
     changeAddressStrategy: strategyRaw as ChangeAddressStrategy,
-    vaultPlutusJsonPath, host, port, token, requestTimeoutMs, lockTtlMs,
+    vaultPlutusJsonPath, host, port, basePath, token, requestTimeoutMs, lockTtlMs,
     ...(feecoverAppToken === undefined ? {} : { feecoverAppToken }),
   };
 }

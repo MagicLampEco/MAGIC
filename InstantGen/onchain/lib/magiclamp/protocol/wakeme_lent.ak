@@ -36,7 +36,11 @@
 //        và [0] dài 32 byte;
 //    (c) [11] == Some(GenPin{ own_script_hash, own_vault_name });
 //    (e) [3] ≥ 0 và [7] ≥ 0;
-//    (d) [12] < current_period — sai CHỈ vế này ⟹ trả 0, KHÔNG fail.
+//    (d) [12] < current_period — sai vế này ⟹ trả 0, KHÔNG fail;
+//    (f) lượng LAMP `(lamp_policy, lamp_asset_name)` THẬT trong value của két
+//        ≥ [3] + [7] — sai vế này ⟹ trả 0, KHÔNG fail.
+//    (d) và (f) là hai ngoại lệ trả 0, cả hai đứng SAU mọi vế fail, nên nhánh 0
+//    chỉ đạt được khi mọi vế (a)(b)(c)(e) đã đúng.
 // 4. Trả [3] + [7].
 
 use aiken/builtin
@@ -44,7 +48,7 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use cardano/address.{Address, Script, VerificationKey}
-use cardano/assets.{AssetName}
+use cardano/assets.{AssetName, PolicyId}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference,
 }
@@ -67,12 +71,17 @@ const owner_commit_len: Int = 32
 /// `lower_ms / ms_per_epoch` (`get_current_epoch`), phía Wakeme ghi `period(hi)`; cùng
 /// độ dài kỳ thì hai bên cùng thang, lệch nhau tối đa ở ranh giới kỳ — và chiều lệch đó
 /// chỉ làm vế (d) khó đạt hơn (trả 0), không làm nó dễ hơn.
+///
+/// `lamp_policy`, `lamp_asset_name` là apply-param #1, #2 của validator gọi hàm này
+/// (LAMP của đúng mạng) — dùng cho vế (f), đối chiếu datum với value thật.
 pub fn lent_lamp(
   reference_inputs: List<Input>,
   wakeme_vault_hash: ScriptHash,
   own_script_hash: ScriptHash,
   own_vault_name: AssetName,
   current_period: Int,
+  lamp_policy: PolicyId,
+  lamp_asset_name: AssetName,
 ) -> Int {
   // Luật 1 — lọc theo payment credential. Phần stake của địa chỉ KHÔNG xét: nó không
   // do validator Wakeme giữ, và không đổi được ai tiêu được UTxO.
@@ -92,6 +101,8 @@ pub fn lent_lamp(
         own_script_hash,
         own_vault_name,
         current_period,
+        lamp_policy,
+        lamp_asset_name,
       )
     // Luật 2 — hai két trở lên: fail thay vì chọn một, vì "chọn cái đầu" để người dựng
     // tx quyết két nào được đọc bằng thứ tự input.
@@ -106,6 +117,8 @@ fn read_one_vault(
   own_script_hash: ScriptHash,
   own_vault_name: AssetName,
   current_period: Int,
+  lamp_policy: PolicyId,
+  lamp_asset_name: AssetName,
 ) -> Int {
   // (a) datum inline, Constr 0, ≥ 13 trường. Datum hash / không datum ⟹ fail ở `expect`.
   expect InlineDatum(raw) = vault.datum
@@ -155,11 +168,24 @@ fn read_one_vault(
   // mỗi kỳ, nhưng ghim kỳ e rồi sinh ở kỳ e vẫn cho két IG MỚI ăn trọn kỳ e).
   // Sai vế này thì trả 0, KHÔNG fail: người dùng vừa Repin vẫn phải sinh được phần
   // LAMP riêng của két IG trong kỳ đó. Mọi vế khác đã kiểm ở trên, nên nhánh 0 này
-  // chỉ đạt được khi CHỈ vế (d) sai.
-  if gen_pin_period < current_period {
-    conditional_lamp + owned_lamp
-  } else {
+  // chỉ đạt được khi mọi vế fail đều đúng.
+  let lent = conditional_lamp + owned_lamp
+  if gen_pin_period >= current_period {
     0
+  } else {
+    // (f) datum phải được value THẬT của két đỡ. Bất biến "datum khớp value" là lời
+    // hứa của MỘT hash két Wakeme — validator sau hash đó giữ lời hứa, không ai khác.
+    // Hash két đổi sau một lượt di trú thì hàm đọc này không còn biết bản mới có giữ
+    // lời hứa ấy không; vế này giữ cho con số trả về không bao giờ vượt LAMP đang nằm
+    // THẬT trong két, bất kể bên kia ghi gì vào datum.
+    // Thiếu ⟹ trả 0, KHÔNG fail: két IG vẫn sinh được phần LAMP riêng của nó. Dư ⟹
+    // trả đúng số datum khai, KHÔNG trả phần dư (ai cũng gửi thêm LAMP vào két được).
+    let lamp_held = assets.quantity_of(vault.value, lamp_policy, lamp_asset_name)
+    if lamp_held < lent {
+      0
+    } else {
+      lent
+    }
   }
 }
 
@@ -197,6 +223,12 @@ const t_conditional: Int = 700_000_000
 const t_owned: Int = 301_000_000
 
 const t_current_period: Int = 100
+
+/// LAMP của mạng kiểm thử (apply-param #1, #2 của validator gọi).
+const t_lamp_policy: ByteArray =
+  #"e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+
+const t_lamp_name: ByteArray = #"744c414d50"
 
 fn t_pin(hash: ByteArray, name: ByteArray) -> Data {
   builtin.constr_data(
@@ -279,9 +311,20 @@ fn vault_input(
   }
 }
 
+/// Value két mặc định: NFT + ĐÚNG `t_conditional + t_owned` LAMP (vế f đạt vừa khít).
 fn nft_value(policy: ByteArray, name: ByteArray, quantity: Int) -> assets.Value {
+  lamp_value(policy, name, quantity, t_conditional + t_owned)
+}
+
+fn lamp_value(
+  policy: ByteArray,
+  name: ByteArray,
+  quantity: Int,
+  lamp: Int,
+) -> assets.Value {
   assets.from_lovelace(5_000_000)
     |> assets.add(policy, name, quantity)
+    |> assets.add(t_lamp_policy, t_lamp_name, lamp)
 }
 
 fn inline(tag: Int, fields: List<Data>) -> transaction.Datum {
@@ -298,7 +341,70 @@ fn good_input() -> Input {
 }
 
 fn run(refs: List<Input>) -> Int {
-  lent_lamp(refs, t_wakeme_hash, t_ig_hash, t_ig_name, t_current_period)
+  lent_lamp(
+    refs,
+    t_wakeme_hash,
+    t_ig_hash,
+    t_ig_name,
+    t_current_period,
+    t_lamp_policy,
+    t_lamp_name,
+  )
+}
+
+// ── Vế (f): datum phải được value THẬT đỡ ───────────────────────────────────────
+// Các ca chỉ khác lượng / policy LAMP trong value két; datum giữ nguyên `good_fields()`.
+
+fn lamp_input(lamp: Int) -> Input {
+  vault_input(
+    0,
+    t_wakeme_hash,
+    inline(0, good_fields()),
+    lamp_value(t_wakeme_hash, t_owner_commit, 1, lamp),
+  )
+}
+
+test t_value_equals_sum_counts() {
+  run([lamp_input(t_conditional + t_owned)]) == t_conditional + t_owned
+}
+
+test t_value_short_one_oildrop_is_zero() {
+  run([lamp_input(t_conditional + t_owned - 1)]) == 0
+}
+
+// Dư LAMP ⟹ trả số DATUM khai, không trả số trong value.
+test t_value_excess_counts_datum_only() {
+  run([lamp_input(t_conditional + t_owned + 5_000_000)]) == t_conditional + t_owned
+}
+
+// LAMP dưới policy KHÁC (cùng tên) không được tính: vế (f) so cặp (policy, tên).
+test t_value_lamp_wrong_policy_is_zero() {
+  let v =
+    assets.from_lovelace(5_000_000)
+      |> assets.add(t_wakeme_hash, t_owner_commit, 1)
+      |> assets.add(t_other_hash, t_lamp_name, t_conditional + t_owned)
+  run([vault_input(0, t_wakeme_hash, inline(0, good_fields()), v)]) == 0
+}
+
+// Vế (f) là ngoại lệ trả 0, KHÔNG che vế fail: thiếu LAMP + ghim két khác ⟹ fail.
+test t_value_short_and_wrong_pin_fail() fail {
+  let input =
+    vault_input(
+      0,
+      t_wakeme_hash,
+      inline(
+        0,
+        vault_fields(
+          t_owner_commit,
+          t_conditional,
+          t_owned,
+          t_pin(t_other_hash, t_ig_name),
+          t_current_period - 1,
+        ),
+      ),
+      lamp_value(t_wakeme_hash, t_owner_commit, 1, 0),
+    )
+  run([input]) == 0
 }
 
 /// Input không liên quan (ví thường) — để danh sách reference input không chỉ có két.

@@ -25,6 +25,13 @@ export const INSTANT_DECAY_WINDOW = MAGIC_DECAY_WINDOW;   // alias
 // [Routine] LAMP that must SIT in the vault to open the door. Never moves.
 export const MIN_INSTANT_HOLDING = 10_000_000n;      // 10 LAMP in oildrop
 
+// ── L_lent — trần riêng cho LAMP-mượn từ két Wakeme (CC-GEN-LENT-READ) ──
+// TẠM — giá trị do chủ dự án chốt (`LENT_PP_CAP`, Spec §12 "chốt sau"); đổi = deploy
+// lại. PHẢI bằng `lent_pp_cap` trong
+// `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` (P8).
+// Phần trần từ L_lent = min(computeCapPp(L_lent), LENT_PP_CAP) — nanogic/epoch.
+export const LENT_PP_CAP = 1_000_000_000n;   // nanogic = 1 MAGIC/epoch
+
 // ── Wakeme seed credit (§6.3 — the WAY IN to the InstantGen loop) ─
 // [Constitutional] MUST equal `wakeme_seed_credit` in
 // `InstantGen/onchain/lib/magiclamp/protocol/constants.ak`, where the full

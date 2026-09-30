@@ -443,3 +443,57 @@ export const ALL_VECTORS = [
   TV_OVERFLOW_02,
   TV_INST_VAULT_FULL,
 ] as const;
+
+// ── CC-GEN-LENT-READ — trần LAMP-mượn (P8) ──────────────────
+// CÙNG SỐ với `onchain/lib/magiclamp/protocol/math.ak` ▸ `ig_lent_*_vector`.
+// Aiken không đọc tệp này: ghim phía on-chain là các bài `.ak` đó, sửa số ở đây thì
+// sửa số ở đó trong cùng commit.
+// Chung: consumed = 10 MAGIC, UM = 1.0, Flame ⟹ reward = 2.1 MAGIC; br = 2.0,
+// S = 10^15 nanogic ⟹ cap_surplus = 333_333_333_333 (không ràng buộc);
+// L_avail = 100 LAMP ⟹ cap_pp = 0.4 MAGIC.
+const TV_IG_LENT_COMMON = {
+  consumed:        10_000_000_000n,
+  um_q:            1_000_000_000n,
+  pm_q:            1_050_000_000n,
+  br_q:            2_000_000_000n,
+  magic_supply:    1_000_000_000_000_000n,
+  l_avail_oildrop: 100_000_000n,
+};
+
+export const TV_IG_LENT_ZERO = {
+  id:          "TV-IG-LENT-ZERO",
+  spec_ref:    "CC-GEN-LENT-READ",
+  description: "L_lent = 0 ⟹ cap_lent = 0, grant = bản không-lent",
+  input:       { ...TV_IG_LENT_COMMON, l_lent_oildrop: 0n },
+  expected_cap_lent: 0n,
+  expected_grant:    400_000_000n,
+};
+
+export const TV_IG_LENT_BELOW = {
+  id:          "TV-IG-LENT-BELOW",
+  spec_ref:    "CC-GEN-LENT-READ",
+  description: "L_lent = 12 LAMP ⟹ cap_lent = cap_pp = 0.048 MAGIC (dưới LENT_PP_CAP)",
+  input:       { ...TV_IG_LENT_COMMON, l_lent_oildrop: 12_000_000n },
+  expected_cap_lent: 48_000_000n,
+  expected_grant:    448_000_000n,
+};
+
+export const TV_IG_LENT_ABOVE = {
+  id:          "TV-IG-LENT-ABOVE",
+  spec_ref:    "CC-GEN-LENT-READ",
+  description: "L_lent = 1001 LAMP ⟹ cap_pp 4.004 MAGIC bị kẹp ở LENT_PP_CAP = 1 MAGIC",
+  input:       { ...TV_IG_LENT_COMMON, l_lent_oildrop: 1_001_000_000n },
+  expected_cap_pp_of_lent: 4_004_000_000n,
+  expected_cap_lent:       1_000_000_000n,
+  expected_grant:          1_400_000_000n,
+};
+
+export const TV_IG_LENT_KNEE = {
+  id:          "TV-IG-LENT-KNEE",
+  spec_ref:    "CC-GEN-LENT-READ",
+  description: "cap_pp chạm LENT_PP_CAP đúng ở 250 LAMP",
+  cases: [
+    { l_lent_oildrop: 250_000_000n, expected_cap_lent: 1_000_000_000n },
+    { l_lent_oildrop: 249_999_999n, expected_cap_lent:   999_999_996n },
+  ],
+};

@@ -29,15 +29,21 @@
 //                         then satisfy the reference-input lookup, so InstantGen
 //                         is SHUT (cap = 0). Never invent a default `br`.
 //   ms_per_epoch        : POSIX ms per epoch (per-network)
+//   wakeme_vault_hash   : hash script két Wakeme CHUẨN (apply-param #8, nối cuối
+//                         2026-09-30, CC-GEN-LENT-READ). Nguồn DUY NHẤT của hash két
+//                         được đọc làm L_lent — KHÔNG BAO GIỜ lấy từ redeemer/datum:
+//                         chọn được hash là chọn được két (instance Wakeme tự dựng thì
+//                         NFT, datum, tên đều tự nhất quán). Xem
+//                         `lib/magiclamp/protocol/wakeme_lent.ak ▸ lent_lamp`.
 //
 // Build on testnet:
 //   aiken build
-//   # applies the 6 parameters, producing the script hash
+//   # applies the 8 parameters, producing the script hash
 
 use aiken/cbor
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/crypto
+use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken/interval.{Finite}
 use cardano/address.{Address, Credential, Script, VerificationKey}
@@ -58,11 +64,11 @@ use magiclamp/protocol/types.{
 use magiclamp/protocol/constants.{
   magic_decay_window, max_backing_stale, max_batches_per_vault,
   max_loyalty_holdings, min_instant_holding, pm_q_ember, pm_q_flame,
-  pm_q_lantern, profile_change_cooldown, wakeme_seed_credit,
+  pm_q_lantern, profile_change_cooldown, wakeme_seed_credit, lent_pp_cap,
 }
 use magiclamp/protocol/math.{
-  compute_cap_pp, compute_cap_surplus, compute_instant_grant,
-  compute_reward_from_consumed,
+  compute_cap_lent, compute_cap_pp, compute_cap_surplus, compute_instant_grant,
+  compute_instant_grant_capped, compute_reward_from_consumed,
 }
 use magiclamp/protocol/decay.{
   count_expired, instant_gen_in_epoch, is_expired, prune_expired,
@@ -74,6 +80,7 @@ use magiclamp/protocol/lamp.{
   l_avail, remove_newest_first, sum_holdings, validate_lamp_locked,
 }
 use magiclamp/protocol/profile.{apply_pending_profile}
+use magiclamp/protocol/wakeme_lent.{lent_lamp}
 
 // ══════════════════════════════════════════════════════════════
 // VAULT-IDENTITY STATE-THREAD NFT — genesis-clean anchor (MAINNET-BLOCK)
@@ -141,6 +148,8 @@ validator vault(
   backing_nft_policy  : PolicyId,
   backing_script_hash : ByteArray,
   ms_per_epoch        : Int,
+  // #8 — NỐI CUỐI, không chèn giữa: thứ tự apply-param là hợp đồng với mọi bộ dựng.
+  wakeme_vault_hash   : ScriptHash,
 ) {
   // ── mint: vault-identity NFT policy (policy_id == this script hash) ──────
   mint(redeemer: VaultIdRedeemer, policy_id: PolicyId, tx: Transaction) {
@@ -171,7 +180,7 @@ validator vault(
         validate_instant_gen(
           input_datum, claimed_amount, current_epoch, ms_per_epoch,
           own_ref, lamp_policy_id, lamp_asset_name, um_nft_policy, um_script_hash,
-          backing_nft_policy, backing_script_hash, tx,
+          backing_nft_policy, backing_script_hash, wakeme_vault_hash, tx,
         )
 
       // ── PruneExpired — permissionless dead-batch GC (§7.4) ─
@@ -378,6 +387,7 @@ fn validate_instant_gen(
   um_script_hash      : ByteArray,
   backing_nft_policy  : PolicyId,
   backing_script_hash : ByteArray,
+  wakeme_vault_hash   : ScriptHash,
   tx                  : Transaction,
 ) -> Bool {
 
@@ -387,7 +397,8 @@ fn validate_instant_gen(
   // alone is sufficient because each UTxO has a unique own_ref". That confuses
   // two things: own_ref is unique, but the ADDRESS is not — the stake half is
   // unconstrained, so one script hash presents as N addresses.)
-  let vault_addr = find_own_address(own_ref, tx.inputs)
+  let own_input = find_own_input(own_ref, tx.inputs)
+  let vault_addr = own_input.output.address
   let vault_input_count =
     list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) })
   expect vault_input_count == 1
@@ -406,16 +417,45 @@ fn validate_instant_gen(
   // batch or replay a stale beacon.
   expect current_epoch >= input_datum.last_updated_epoch
 
+  // ── L_lent (CC-GEN-LENT-READ): LAMP-mượn từ ĐÚNG MỘT két Wakeme ──────────────
+  //
+  // Danh tính két IG này = (hash script của own input, tên NFT vault-id DUY NHẤT dưới
+  // policy đó — INV-VAULT-IDENTITY). `single_nft_name` fail nếu không đúng 1 tên số
+  // lượng 1, nên một vault bịa (không NFT) chết ngay đây, trước cả `validate_vault_value`.
+  // Két Wakeme phải GHIM đúng cặp này (`gen_vault`), nên L_lent không đọc hộ được cho
+  // két IG khác, và C-VAULT-DS-1 ở trên giữ mỗi tx đúng một két IG.
+  //
+  // RÀNG BUỘC THANG KỲ: `current_epoch` = `lower_ms / ms_per_epoch` (`get_current_epoch`)
+  // và bên Wakeme ghi `gen_pin_period = period(hi)` với `period(t) = t / ms_per_epoch`.
+  // Hai bên chỉ cùng thang khi CÙNG `ms_per_epoch` của mạng — deploy vault với một
+  // `ms_per_epoch` khác két Wakeme là làm vế "ghim ở kỳ trước" (`wakeme_lent.ak` vế d)
+  // so hai đại lượng khác đơn vị mà không lệnh nào kêu.
+  //
+  // Không két Wakeme trong reference input ⟹ lent = 0 ⟹ mọi cổng dưới đây y như cũ.
+  expect Script(own_script_hash) = own_input.output.address.payment_credential
+  let own_vault_name = single_nft_name(own_input.output.value, own_script_hash)
+  let lent =
+    lent_lamp(
+      tx.reference_inputs, wakeme_vault_hash, own_script_hash, own_vault_name,
+      current_epoch, lamp_policy_id, lamp_asset_name,
+    )
+
   // ── C-INST-1 (ELIGIBILITY): LAMP sits in the vault ───────
   // §6.3 "nắm LAMP chỉ MỞ TƯ CÁCH". Threshold on the BALANCE, not on any
-  // amount paid — nothing is paid.
-  expect applied_input.lamp_balance >= min_instant_holding
+  // amount paid — nothing is paid. `CC-GEN-LENT-THRESHOLD`: ngưỡng 10 LAMP tính
+  // cả L_lent, nên két IG 0 LAMP riêng vẫn mở cửa được bằng LAMP-mượn.
+  expect applied_input.lamp_balance + lent >= min_instant_holding
 
   // ── C-INST-3 (ELIGIBILITY): the LAMP must be unencumbered ─
   // LAMP fully locked into ScheduleGen contracts does not also buy Instant
-  // eligibility.
+  // eligibility. Cùng `CC-GEN-LENT-THRESHOLD`: L_avail + L_lent.
+  // Ghi chú đo được (2026-09-30): ở module này `lamp_locked` bị ghim `== 0` lúc
+  // genesis (`validate_mint_vault_id`) và ghim đứng yên ở mọi nhánh spend, nên trên
+  // két THẬT `avail == lamp_balance` và C-INST-1 trùng C-INST-3 — không bài nào ghim
+  // riêng được C-INST-1. (`validate_lamp_locked` KHÔNG ép `lamp_locked ≥ 0`; phép
+  // "trùng" dựa vào chốt genesis, không dựa vào hàm đó.)
   let avail = l_avail(applied_input.lamp_balance, applied_input.lamp_locked)
-  expect avail >= min_instant_holding
+  expect avail + lent >= min_instant_holding
 
   // ── C-INST-7: |live batches| + 1 ≤ 32 ────────────────────
   let live_batches = prune_expired(applied_input.magic_batches, current_epoch)
@@ -447,11 +487,16 @@ fn validate_instant_gen(
   // `avail` is the same L_avail computed for C-INST-3 above — the third brake
   // is now keyed to the LAMP this vault actually holds free, not to its
   // ScheduleGen contracts. See math.ak `compute_cap_pp` for why that changed.
+  //
+  // Trần theo LAMP = phần LAMP riêng + phần LAMP-mượn đã kẹp ở `lent_pp_cap`
+  // (`math.ak ▸ compute_cap_lent`). MỘT biến `cap_total` cho cả `grant` lẫn C-INST-8:
+  // hai chỗ đọc hai trần khác nhau là mở lại đúng cửa sổ mà C-INST-8 đóng.
+  let cap_total = compute_cap_pp(avail) + compute_cap_lent(lent)  // MUT-LENT
   let grant =
-    compute_instant_grant(
+    compute_instant_grant_capped(
       consumed, um_q, pm_q,
       backing.br_q, backing.magic_supply,
-      avail,
+      cap_total,
     )
   expect grant > 0                       // no-op tx rejected
   expect claimed_amount == grant         // redeemer must state the exact grant
@@ -481,7 +526,7 @@ fn validate_instant_gen(
   // Bộ đếm suy ra từ chính `magic_batches` — không có trường datum nào giữ nó. Bốn
   // điều kiện làm phép suy đứng vững nằm ở `decay.ak ▸ instant_gen_in_epoch`.
   let gen_so_far = instant_gen_in_epoch(live_batches, current_epoch)
-  expect gen_so_far + grant <= compute_cap_pp(avail)
+  expect gen_so_far + grant <= cap_total
 
   // ── New batch for THIS epoch (§4.2 cliff) ────────────────
   let new_batch_id = compute_batch_id(own_ref, applied_input.next_batch_index)
@@ -576,7 +621,7 @@ fn validate_instant_gen(
   expect inst_vault_lamp == output_datum.lamp_balance
 
   // ── ADA / token-set preservation ──────────────────────────
-  expect validate_vault_value(find_own_input(own_ref, tx.inputs), inst_vault_output)
+  expect validate_vault_value(own_input, inst_vault_output)
 
   True
 }
@@ -2234,7 +2279,8 @@ fn t_ig_tx(
 fn t_ig_call(din: VaultDatum, claimed: Int, epoch: Int, tx: Transaction) -> Bool {
   validate_instant_gen(
     din, claimed, epoch, t_ms_per_epoch, t_own_ref(), t_lamp_policy,
-    t_lamp_asset_name, t_um_policy, t_um_hash, t_backing_policy, t_backing_hash, tx,
+    t_lamp_asset_name, t_um_policy, t_um_hash, t_backing_policy, t_backing_hash,
+    t_wakeme_hash, tx,
   )
 }
 
@@ -2261,6 +2307,262 @@ test ig_positive_grant() {
   let dout = t_ig_dout(din, ig_grant, 10)
   let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
   t_ig_call(din, ig_grant, 10, tx)
+}
+
+// ══ CC-GEN-LENT-READ: L_lent từ két Wakeme vào nhánh sinh ══════════════════════
+//
+// Két Wakeme dựng bằng record CÓ KIỂU cùng hình `WakemeVaultDatum` (13 trường,
+// `Option<GenPin>` thật), để ca ở đây đi đúng đường mã hoá mà `lent_lamp` đọc theo
+// vị trí. Mọi ca ở kỳ 10, ghim ở kỳ 9 (vế d đạt). Value két mang ĐÚNG
+// `conditional + owned` LAMP của mạng (vế f đạt vừa khít).
+
+/// Hash script két Wakeme chuẩn (apply-param #8 trong bài kiểm).
+const t_wakeme_hash: ByteArray =
+  #"cc62732565af6be1e0874975ad3b3e2afdb0abafb3f5bc4b3008f4e1"
+
+const t_wakeme_commit: ByteArray =
+  #"c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+
+const t_wakeme_commit_2: ByteArray =
+  #"c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4"
+
+type TGenPin {
+  hash: ByteArray,
+  name: ByteArray,
+}
+
+type TWakemeDatum {
+  owner_commit: ByteArray,
+  usage_thread: ByteArray,
+  vest_start_ms: Int,
+  conditional_lamp: Int,
+  reclaimed_to_pot: Int,
+  epochy_start: Int,
+  last_used_period: Int,
+  owned_lamp: Int,
+  d_unit: Int,
+  seen_nanogic: Int,
+  usage_consume_hash: ByteArray,
+  gen_vault: Option<TGenPin>,
+  gen_pin_period: Int,
+}
+
+fn t_wakeme_ref(
+  index: Int,
+  commit: ByteArray,
+  pin_name: ByteArray,
+  conditional: Int,
+  owned: Int,
+) -> Input {
+  let d: Data =
+    TWakemeDatum {
+      owner_commit: commit,
+      usage_thread: #"e5e5",
+      vest_start_ms: 1_700_000_000_000,
+      conditional_lamp: conditional,
+      reclaimed_to_pot: 0,
+      epochy_start: 5,
+      last_used_period: 4,
+      owned_lamp: owned,
+      d_unit: 1_000_000,
+      seen_nanogic: 0,
+      usage_consume_hash: #"f6f6",
+      gen_vault: Some(TGenPin { hash: t_vault_hash, name: pin_name }),
+      gen_pin_period: 9,
+    }
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 10 + index },
+    output: Output {
+      address: address.from_script(t_wakeme_hash),
+      value: assets.from_lovelace(5_000_000)
+        |> assets.add(t_wakeme_hash, commit, 1)
+        |> assets.add(t_lamp_policy, t_lamp_asset_name, conditional + owned),
+      datum: InlineDatum(d),
+      reference_script: None,
+    },
+  }
+}
+
+/// Két Wakeme hợp lệ ghim đúng két IG của bài kiểm (`t_vault_id_name`).
+fn t_lent_ref(conditional: Int, owned: Int) -> Input {
+  t_wakeme_ref(0, t_wakeme_commit, t_vault_id_name, conditional, owned)
+}
+
+/// Két IG 0 LAMP riêng.
+fn t_ig_din_no_lamp(credit: Int) -> VaultDatum {
+  VaultDatum { ..t_ig_din(credit), lamp_balance: 0, lamp_locked: 0, loyalty_holdings: [] }
+}
+
+/// Két IG 100 LAMP riêng, không khoá ⟹ cap_pp(avail) = 400×10^6.
+fn t_ig_din_100(credit: Int) -> VaultDatum {
+  VaultDatum {
+    ..t_ig_din(credit),
+    lamp_balance: 100_000_000,
+    lamp_locked: 0,
+    loyalty_holdings: [t_holding(100_000_000, 5, False)],
+  }
+}
+
+// ── Két 0 LAMP riêng, L_lent = 12 LAMP ─────────────────────────────────────────
+//   cap_total = 0 + min(cap_pp(12 LAMP) = 48×10^6, 10^9) = 48×10^6
+//   grant     = min(210×10^6, 333_333_333, 48×10^6) = 48×10^6 ≤ lent_pp_cap
+const lent_small_grant: Int = 48_000_000
+
+test ig_lent_no_own_lamp_gen_ok() {
+  let din  = t_ig_din_no_lamp(ig_credit)
+  let dout = t_ig_dout(din, lent_small_grant, 10)
+  let refs = list.concat(t_ig_refs_ok(10), [t_lent_ref(7_000_000, 5_000_000)])
+  let tx   = t_ig_tx(din, dout, 0, refs, [t_owner_pkh])
+  and {
+    lent_small_grant <= lent_pp_cap,
+    t_ig_call(din, lent_small_grant, 10, tx),
+  }
+}
+
+// Cặp âm: CÙNG tx, bỏ két Wakeme ⟹ lent = 0 ⟹ C-INST-1 (0 + 0 < 10 LAMP).
+test ig_lent_no_own_lamp_without_wakeme_rejected() fail {
+  let din  = t_ig_din_no_lamp(ig_credit)
+  let dout = t_ig_dout(din, lent_small_grant, 10)
+  let tx   = t_ig_tx(din, dout, 0, t_ig_refs_ok(10), [t_owner_pkh])
+  t_ig_call(din, lent_small_grant, 10, tx)
+}
+
+// L_lent dưới ngưỡng: 9,999999 LAMP ⟹ C-INST-1 (ngưỡng tính cả lent) chặn. Cặp với
+// ca dương trên: chỉ khác lượng trong két Wakeme. grant khai theo công thức của
+// chính ca này (cap_pp(9_999_999) = 39_999_996), để chỗ chết là ngưỡng chứ không
+// phải phép so `claimed_amount`.
+test ig_lent_below_threshold_rejected() fail {
+  let din  = t_ig_din_no_lamp(ig_credit)
+  let dout = t_ig_dout(din, 39_999_996, 10)
+  let refs = list.concat(t_ig_refs_ok(10), [t_lent_ref(4_999_999, 5_000_000)])
+  let tx   = t_ig_tx(din, dout, 0, refs, [t_owner_pkh])
+  t_ig_call(din, 39_999_996, 10, tx)
+}
+
+// ── C-INST-3 tính cả lent: LAMP riêng khoá TRỌN, L_lent = 12 LAMP ──────────────
+// Trạng thái này KHÔNG đạt được trên két thật của module (genesis ghim
+// `lamp_locked == 0`, mọi nhánh giữ nguyên); cặp này ghim DÒNG MÃ `avail + lent`,
+// không ghim một đường tấn công.
+fn t_ig_din_fully_locked(credit: Int) -> VaultDatum {
+  VaultDatum {
+    ..t_ig_din(credit),
+    lamp_balance: 100_000_000,
+    lamp_locked: 100_000_000,
+    loyalty_holdings: [t_holding(100_000_000, 5, True)],
+  }
+}
+
+test ig_lent_locked_own_lamp_gen_ok() {
+  let din  = t_ig_din_fully_locked(ig_credit)
+  let dout = t_ig_dout(din, lent_small_grant, 10)
+  let refs = list.concat(t_ig_refs_ok(10), [t_lent_ref(7_000_000, 5_000_000)])
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, refs, [t_owner_pkh])
+  t_ig_call(din, lent_small_grant, 10, tx)
+}
+
+test ig_lent_locked_own_lamp_without_wakeme_rejected() fail {
+  let din  = t_ig_din_fully_locked(ig_credit)
+  let dout = t_ig_dout(din, lent_small_grant, 10)
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
+  t_ig_call(din, lent_small_grant, 10, tx)
+}
+
+// ── L_lent lớn (1001 LAMP) bị kẹp ở lent_pp_cap ───────────────────────────────
+//   consumed = 10×10^9 ⟹ reward = 2.1×10^9 (đủ lớn để trần LAMP là vế ràng buộc)
+//   S = 10^15 nanogic, br = 2.0 ⟹ cap_surplus = 333_333_333_333 (không ràng buộc;
+//   `t_ig_refs_ok` dùng S = 10^12 ⟹ cap_surplus = 333_333_333 sẽ chặn trước)
+//   cap_total = cap_pp(100 LAMP) + min(cap_pp(1001 LAMP) = 4.004×10^9, 10^9)
+//             = 400×10^6 + 10^9 = 1.4×10^9
+const lent_big_credit: Int = 10_000_000_000
+
+const lent_big_grant: Int = 1_400_000_000
+
+fn t_big_lent_ref() -> Input {
+  t_lent_ref(700_000_000, 301_000_000)
+}
+
+fn t_big_case(claimed: Int, refs_extra: List<Input>) -> Bool {
+  let din  = t_ig_din_100(lent_big_credit)
+  let dout = t_ig_dout(din, claimed, 10)
+  let refs =
+    list.concat(
+      [
+        t_um_ref(1_000_000_000, 10),
+        t_backing_ref(2_000_000_000, 1_000_000_000_000_000, False, 10),
+      ],
+      refs_extra,
+    )
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, refs, [t_owner_pkh])
+  t_ig_call(din, claimed, 10, tx)
+}
+
+test ig_lent_large_clamped_ok() {
+  and {
+    lent_big_grant == compute_cap_pp(100_000_000) + lent_pp_cap,
+    t_big_case(lent_big_grant, [t_big_lent_ref()]),
+  }
+}
+
+// Khai grant KHÔNG kẹp phần lent: min(2.1×10^9, 333×10^9, 400×10^6 + 4.004×10^9)
+// = 2.1×10^9 ⟹ lệch grant thật ⟹ từ chối.
+test ig_lent_large_unclamped_claim_rejected() fail {
+  t_big_case(2_100_000_000, [t_big_lent_ref()])
+}
+
+// Khai grant KHÔNG tính lent trong khi tx CÓ két: min(2.1×10^9, 333×10^9, 400×10^6)
+// = 400×10^6 ⟹ lệch ⟹ từ chối. Redeemer phải khai đúng grant của CHÍNH tx đó.
+test ig_lent_claim_without_lent_rejected() fail {
+  t_big_case(400_000_000, [t_big_lent_ref()])
+}
+
+// Cặp dương của ca trên: tx KHÔNG két, khai 400×10^6 ⟹ qua.
+test ig_lent_no_wakeme_claim_own_only_ok() {
+  t_big_case(400_000_000, [])
+}
+
+// ── Két Wakeme sai két / nhiều két ──────────────────────────────────────────────
+
+// Két ghim két IG KHÁC (tên NFT khác) ⟹ `lent_lamp` fail (vế c). Cặp dương:
+// `ig_lent_large_clamped_ok` — chỉ khác tên được ghim.
+test ig_lent_wakeme_pins_other_vault_rejected() fail {
+  let other_pin =
+    t_wakeme_ref(0, t_wakeme_commit, #"0101", 700_000_000, 301_000_000)
+  t_big_case(lent_big_grant, [other_pin])
+}
+
+// Hai két Wakeme hợp lệ cùng ghim két này ⟹ fail (luật 2), không cộng hai lần.
+// Két HỢP LỆ đứng TRƯỚC — nếu phép đếm bị gỡ, `list` sẽ lấy cái đầu và ca xanh.
+test ig_lent_two_wakeme_rejected() fail {
+  let second =
+    t_wakeme_ref(1, t_wakeme_commit_2, t_vault_id_name, 700_000_000, 301_000_000)
+  t_big_case(lent_big_grant, [t_big_lent_ref(), second])
+}
+
+// ── C-INST-8 trên cap_total ─────────────────────────────────────────────────────
+// Két 100 LAMP + lent 1001 LAMP ⟹ cap_total = 1.4×10^9; lượt này grant = 210×10^6.
+//   1.3×10^9 + 210×10^6 = 1.51×10^9 > 1.4×10^9 ⟹ TỪ CHỐI
+//   1.1×10^9 + 210×10^6 = 1.31×10^9 ≤ 1.4×10^9 ⟹ CHO QUA
+// Ca "cho qua" cũng là ca ghim `cap_total` ở C-INST-8: nếu cổng còn đọc
+// `compute_cap_pp(avail)` = 400×10^6 thì nó đỏ.
+fn t_lent_epoch_case(already: Int) -> Bool {
+  let din =
+    VaultDatum {
+      ..t_ig_din_100(ig_credit),
+      magic_batches: [t_instant_batch(10, already)],
+      next_batch_index: 1,
+    }
+  let dout = t_ig_dout(din, ig_grant, 10)
+  let refs = list.concat(t_ig_refs_ok(10), [t_big_lent_ref()])
+  let tx   = t_ig_tx(din, dout, din.lamp_balance, refs, [t_owner_pkh])
+  t_ig_call(din, ig_grant, 10, tx)
+}
+
+test ig_lent_epoch_cap_exceeded_rejected() fail {
+  t_lent_epoch_case(1_300_000_000)
+}
+
+test ig_lent_epoch_cap_within_ok() {
+  t_lent_epoch_case(1_100_000_000)
 }
 
 // ── C-INST-8: trần theo EPOCH, không theo lượt ────────────────
@@ -2975,7 +3277,7 @@ fn t_mint_tx(seed: OutputReference, out: Output, mint_v: Value, signers: List<By
 fn t_mint_call(seed: OutputReference, policy_id: PolicyId, tx: Transaction) -> Bool {
   vault.mint(
     t_lamp_policy, t_lamp_asset_name, t_um_policy, t_um_hash, t_backing_policy,
-    t_backing_hash, 86_400_000, MintVaultId { seed }, policy_id, tx,
+    t_backing_hash, 86_400_000, t_wakeme_hash, MintVaultId { seed }, policy_id, tx,
   )
 }
 

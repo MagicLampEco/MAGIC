@@ -32,6 +32,16 @@ pub const instant_decay_window : Int = magic_decay_window
 // The LAMP is never moved (I-ACT-7); it only gates the door.
 pub const min_instant_holding : Int = 10_000_000   // 10 LAMP in oildrop
 
+// ── L_lent — trần riêng cho phần LAMP-mượn từ két Wakeme (CC-GEN-LENT-READ) ──
+// TẠM — giá trị do chủ dự án chốt (`LENT_PP_CAP`, Spec §12 "chốt sau"); đổi = deploy
+// lại (hằng biên dịch ⟹ đổi bytes ⟹ đổi hash ⟹ đổi địa chỉ vault).
+// Đơn vị nanogic/epoch: phần trần sinh ra từ L_lent là
+// `min(compute_cap_pp(L_lent), lent_pp_cap)` (`math.ak ▸ compute_cap_lent`), tức
+// LAMP-mượn chỉ mở tối đa 1 MAGIC/epoch dù két Wakeme lớn bao nhiêu. `cap_pp` chạm
+// mức này ở L_lent = 250 LAMP.
+// PHẢI bằng `LENT_PP_CAP` trong `offchain/src/constants.ts` (P8).
+pub const lent_pp_cap : Int = 1_000_000_000   // nanogic = 1 MAGIC/epoch
+
 // ── Wakeme seed credit (§6.3 — the WAY IN to the InstantGen loop) ─
 // [Constitutional] the `consumed_credit` a vault carries at GENESIS.
 //

@@ -39,19 +39,11 @@ import {
   type ScheduleScriptParamInputs,
 } from "../deployParams.js";
 
-const ShardDatumSchema = Data.Object({
-  shard_id:                    Data.Integer(),
-  shard_locked_lamp:            Data.Integer(),
-  shard_active_count:           Data.Integer(),
-  shard_cumulative_committed:   Data.Integer(),
-  shard_cumulative_fired:       Data.Integer(),
-  last_updated_epoch:           Data.Integer(),
-  shard_cap:                    Data.Integer(),
-});
-type ShardDatum = Data.Static<typeof ShardDatumSchema>;
-// Codec companion — xem chú thích ở ScheduleGen/offchain/src/types.ts.
-// Giá trị thời-chạy y nguyên, chỉ gắn lại nhãn kiểu tĩnh.
-const ShardDatum = ShardDatumSchema as unknown as ShardDatum;
+// Lược đồ datum shard lấy từ gói ScheduleGen, KHÔNG chép tại chỗ. Bản chép cũ ở đây dừng ở 7
+// trường khi Gen v2.0 nối `shard_obligation_nanogic` (8 trường), và nó hỏng ồn ở `shard_nft`
+// (`all_shards_start_clean` giải mã datum ⟹ "unexpected empty list") — đo 2026-09-30 trên Preprod,
+// lúc dựng tx, trước khi gửi.
+import { ScheduleShardDatum as ShardDatum } from "../../ScheduleGen/offchain/src/types.js";
 
 // shard_asset_name(id) = "SHARD" (5348415244) ∥ single byte 0x00..0x0f.
 function shardAssetName(shardId: number): string {
@@ -172,6 +164,7 @@ async function main() {
       shard_cumulative_fired:       0n,
       last_updated_epoch:           currentEpoch,
       shard_cap:                    shardCap,
+      shard_obligation_nanogic:     0n,   // `shard_nft` ▸ `all_shards_start_clean` ghim = 0
     }, ShardDatum);
 
     if (shardCap !== PROTOCOL.SHARD_CAP) throw new Error("cap-pin assertion failed");

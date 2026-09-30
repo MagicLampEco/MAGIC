@@ -231,6 +231,9 @@ export function compiledRhoMaxQ(): bigint {
  *  tiêu seed do bộ chọn UTxO của ví bù. Giá trị do CHÍNH bước này sở hữu. */
 export const SEED_LOVELACE = 2_000_000n;
 
+/** Lùi cận dưới cửa sổ hiệu lực trên chuỗi thật (xem chỗ dùng trong `main`). */
+const VALIDITY_BACKOFF_MS = 120_000;
+
 interface Park {
   walletAddress: string;
   walletPkh: string;
@@ -617,11 +620,22 @@ async function main(): Promise<void> {
     chain = {
       lucid: real,
       network: NETWORK,
-      nowMs: () => Date.now(),
+      // Lùi `validFrom` một khoảng: cận dưới đặt đúng `Date.now()` thì hay đứng TRƯỚC slot của khối
+      // mới nhất (khối ~20 s một lần) và nút từ chối `OutsideValidityIntervalUTxO` — đo 2026-09-30 trên
+      // Preprod: `invalidBefore` 135099710 > tip 135099702. Cửa sổ vẫn nằm trong một epoch vì
+      // `epochValidityWindow` tính cả hai đầu từ cùng mốc đã lùi.
+      nowMs: () => Date.now() - VALIDITY_BACKOFF_MS,
       log: (l) => console.log(l),
       submit: async (signed) => {
         const h = await signed.submit();
         await real.awaitTx(h);
+        // `awaitTx` xong chưa có nghĩa bộ chỉ mục đã cập nhật UTxO của ví: đo 2026-09-30 trên
+        // Preprod, tx kế tiếp chọn lại đầu ra đổi của tx trước (đã bị tiêu) ⟹ `BadInputsUTxO`.
+        // Chờ tới khi ví THẤY đầu ra đổi của chính tx này (mọi tx ở đây trả đổi về ví), tối đa 90 s.
+        for (let i = 0; i < 18; i++) {
+          if ((await real.wallet().getUtxos()).some((u) => u.txHash === h)) break;
+          await new Promise((r) => setTimeout(r, 5_000));
+        }
         return h;
       },
     };

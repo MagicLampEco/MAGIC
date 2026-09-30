@@ -184,6 +184,26 @@ pub type RateParam {
   effective_epoch: Int,
 }
 
+// ── GreenBackBeacon + GbShard — datum beacon GB và shard GB (Gen v2.0 gói b2) ──
+// CHÉP CÓ NHÃN từ `GenBeacons/onchain/lib/genbeacons/types.ak` ▸ `GreenBackBeacon`,
+// `GbShard` (MAGIC@9c4a282b, 2026-09-30). Hợp đồng nhị phân của UTxO bên GenBeacons:
+// nguồn đổi hình thì bản này đổi trong CÙNG commit. Lệch một trường ⟹ két chết ồn
+// ào ở `expect g: GreenBackBeacon` / `expect s: GbShard`, không đọc lệch im.
+// Két chỉ ĐỌC hai kiểu này; ai được ghi chúng là việc của validator GenBeacons.
+pub type GreenBackBeacon {
+  gb_nanogic: Int,
+  seq: Int,
+  epoch: Int,
+  depeg: Bool,
+}
+
+pub type GbShard {
+  shard_id: Int,
+  seq: Int,
+  reset_amount: Int,
+  remaining: Int,
+}
+
 // ── §5.1 VaultDatum (full) — Gen v2.0, 20 trường ───────────────
 // worst-case ~12KB; tx limit 16KB (§5.1 Datum size note)
 //

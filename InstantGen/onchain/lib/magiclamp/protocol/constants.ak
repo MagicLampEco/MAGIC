@@ -256,6 +256,18 @@ pub const gb_vault_share_q : Int = 50_000_000
 // trị, đổi một thì đổi cả hai.
 pub const gb_shard_cap_nanogic : Int = 1_800_000_000_000_000
 
+// Số shard của bộ đếm `GB_available` (SPEC §11 `SHARD_COUNT`, `INV-SURPLUS-RATION`).
+// CHÉP CÓ NHÃN từ `GenBeacons/onchain/lib/genbeacons/constants.ak` ▸ `shard_count`
+// (MAGIC@9c4a282b, 2026-09-30). Két dùng nó cho ánh xạ két → shard
+// (`greenback.vault_shard_id`); lệch với GenBeacons ⟹ két chỉ tới một shard không có.
+pub const gb_shard_count : Int = 16
+
+// TẠM — độ tươi beacon GreenBack, tính bằng epoch (`CC-GEN-BEACON-AGE`, SPEC §6.1.3 ·
+// §11 · §13). SPEC §13 khai TẠM: `0` khi chưa có bộ đếm shard, `1` khi có. Két Gen
+// v2.0 tiêu shard ở mọi lượt sinh (gói b2) ⟹ `1`: beacon cũ không mở thêm được gì
+// ngoài phần shard còn lại.
+pub const greenback_beacon_max_age_epochs : Int = 1
+
 // TẠM — số epoch shard GB ứng trước cho hợp đồng ScheduleGen lúc ký (SPEC §6.4, §11).
 // InstantGen không dùng; khai ở đây để bộ hằng Gen v2.0 đủ một chỗ cho lượt ScheduleGen.
 pub const buffer_ep : Int = 2

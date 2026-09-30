@@ -144,7 +144,6 @@ pub fn expected_checkpoint(
   if !force && d.cap_epoch == e {
     current_checkpoint(d)
   } else {
-    let window = shift_window(d.usage_window, d.usage_window_epoch, e)
     let read =
       wakeme_read(
         reference_inputs,
@@ -155,44 +154,110 @@ pub fn expected_checkpoint(
         params.lamp_policy_id,
         params.lamp_asset_name,
       )
-    let (link, lent) =
+    let (link, lent) = resolve_link(read, mode, d)
+    refreshed(d, reference_inputs, e, link, lent, params)
+  }
+}
+
+/// Bản cho NHÁNH SINH (gói b2): cùng luật làm mới `FollowVault` như
+/// `expected_checkpoint`, và trả thêm `L_lent` của lượt này — nhánh sinh cần nó cho G2
+/// và cho trần `compute_cap_lent`, kể cả khi KHÔNG làm mới.
+///
+///   - `cap_epoch < e`: làm mới đúng như `expected_checkpoint(.., FollowVault, False, ..)`
+///     (một lần đọc két, dùng chung cho link, cap và `L_lent`).
+///   - `cap_epoch == e`: năm ô GHIM nguyên. Két trong reference input (nếu có) phải là
+///     két ĐÃ ghim (`owner_commit == wakeme_link`) — một két chưa ghim không được góp
+///     `L_lent` giữa epoch; muốn nối thì `RefreshCheckpoint` trước. Vắng két ⟹ `L_lent = 0`
+///     (chỉ làm lượt sinh chặt hơn, không nới gì).
+pub fn expected_checkpoint_for_gen(
+  d: VaultDatum,
+  reference_inputs: List<Input>,
+  e: Int,
+  own_script_hash: ScriptHash,
+  own_vault_name: AssetName,
+  params: VaultParams,
+) -> (Checkpoint, Int) {
+  expect e >= d.cap_epoch
+  let read =
+    wakeme_read(
+      reference_inputs,
+      params.wakeme_vault_hash,
+      own_script_hash,
+      own_vault_name,
+      e,
+      params.lamp_policy_id,
+      params.lamp_asset_name,
+    )
+  if d.cap_epoch == e {
+    let lent =
       when read is {
-        Some((owner_commit, lent)) ->
-          when mode is {
-            KeepLink -> {
-              // Nhánh không chữ ký: két đưa vào phải là két ĐÃ ghim.
-              expect owner_commit == d.wakeme_link
-              (owner_commit, lent)
-            }
-            _ -> (owner_commit, lent)
-          }
-        None ->
-          when mode is {
-            FollowVaultOrUnlink -> (#"", 0)
-            _ -> {
-              // Luật 2: đã ghim thì bắt buộc đọc.
-              expect d.wakeme_link == #""
-              (#"", 0)
-            }
-          }
+        Some((owner_commit, l)) -> {
+          expect owner_commit == d.wakeme_link
+          l
+        }
+        None -> 0
       }
-    let rho =
-      read_rho(reference_inputs, params.rate_nft_policy, params.rate_script_hash, e)
-    let cap =
-      amount_by_lamp(
-        l_avail(d.lamp_balance, d.lamp_locked),
-        lent,
-        window,
-        rho,
-        instant_scale_horizon,
-      )
-    Checkpoint {
-      wakeme_link: link,
-      cap_epoch: e,
-      cap_nanogic: cap,
-      usage_window: window,
-      usage_window_epoch: e,
-    }
+    (current_checkpoint(d), lent)
+  } else {
+    let (link, lent) = resolve_link(read, FollowVault, d)
+    (refreshed(d, reference_inputs, e, link, lent, params), lent)
+  }
+}
+
+/// Luật 1 + 2 + 5: link và `L_lent` từ kết quả đọc két, theo quyền của nhánh.
+fn resolve_link(
+  read: Option<(ByteArray, Int)>,
+  mode: LinkMode,
+  d: VaultDatum,
+) -> (ByteArray, Int) {
+  when read is {
+    Some((owner_commit, lent)) ->
+      when mode is {
+        KeepLink -> {
+          // Nhánh không chữ ký: két đưa vào phải là két ĐÃ ghim.
+          expect owner_commit == d.wakeme_link
+          (owner_commit, lent)
+        }
+        _ -> (owner_commit, lent)
+      }
+    None ->
+      when mode is {
+        FollowVaultOrUnlink -> (#"", 0)
+        _ -> {
+          // Luật 2: đã ghim thì bắt buộc đọc.
+          expect d.wakeme_link == #""
+          (#"", 0)
+        }
+      }
+  }
+}
+
+/// Luật 3: năm ô sau khi làm mới ở `e`.
+fn refreshed(
+  d: VaultDatum,
+  reference_inputs: List<Input>,
+  e: Int,
+  link: ByteArray,
+  lent: Int,
+  params: VaultParams,
+) -> Checkpoint {
+  let window = shift_window(d.usage_window, d.usage_window_epoch, e)
+  let rho =
+    read_rho(reference_inputs, params.rate_nft_policy, params.rate_script_hash, e)
+  let cap =
+    amount_by_lamp(
+      l_avail(d.lamp_balance, d.lamp_locked),
+      lent,
+      window,
+      rho,
+      instant_scale_horizon,
+    )
+  Checkpoint {
+    wakeme_link: link,
+    cap_epoch: e,
+    cap_nanogic: cap,
+    usage_window: window,
+    usage_window_epoch: e,
   }
 }
 

@@ -26,7 +26,7 @@ import {
   NETWORK, OWNER_PKH, VAULT_SCRIPT, SHARD_SCRIPT, GB_SHARD_SCRIPT, GEN, GB_RESET, RHO,
   makeVaultV2, makeShardV2, makeBeacon, makeGbShard, makeRate, ZW,
   vaultUtxoV2, shardUtxosV2, gbShardUtxos, rateBeaconUtxo, gbBeaconUtxo, registryUtxo,
-  scriptAddr, GBB_SCRIPT_HASH,
+  scriptAddr, GBB_SCRIPT_HASH, COMMIT_SCRIPT, COMMIT_REWARD, utxo,
 } from "./genV2Fixtures.js";
 
 const E = 100n;
@@ -271,6 +271,7 @@ async function dungCommitV2(over: Record<string, unknown> = {}) {
     scheduleLength: L, lampPerEpoch: LAMBDA,
     userAddress: "addr_test1vq" + "q".repeat(50),
     vaultScript: VAULT_SCRIPT, shardScript: SHARD_SCRIPT, gbShardScript: GB_SHARD_SCRIPT,
+    commitScript: COMMIT_SCRIPT,
     gen: GEN,
     rateBeaconUtxo: rateBeaconUtxo(),
     gbBeaconUtxo: gbBeaconUtxo(makeBeacon(E)),
@@ -291,7 +292,8 @@ describe("buildScheduleCommitTx v2.0 — hình dạng giao dịch", () => {
     expect(tx.collectFrom[2]!.redeemer).toBe(Data.to({ amount: DRAW }, GbShardRedeemer));
     expect((tx.collectFrom[2]!.utxos[0] as { outputIndex: number }).outputIndex).toBe(SHARD);
     expect(tx.readFrom[0]!.map((u: any) => u.outputIndex)).toEqual([20, 21, 22]);
-    expect(tx.attached).toHaveLength(3);
+    expect(tx.attached).toHaveLength(4);
+    expect(tx.attached[3]).toEqual(COMMIT_SCRIPT);
     expect(tx.outputs).toHaveLength(3);
     expect(tx.signerKeys).toEqual([OWNER_PKH]);
     const outs = tx.outputs as any[];
@@ -315,6 +317,37 @@ describe("buildScheduleCommitTx v2.0 — hình dạng giao dịch", () => {
     await expect(dungCommitV2({ gbBeaconUtxo: gbBeaconUtxo(makeBeacon(E), scriptAddr("99".repeat(28))) }))
       .rejects.toThrow(/GEN-SCH-BEACON/);
     expect(scriptAddr(GBB_SCRIPT_HASH)).not.toBe(scriptAddr("99".repeat(28)));
+  });
+
+  // ── Chân uỷ quyền `commit` (withdraw-zero) ──
+  it("mục rút `commit`: ĐÚNG MỘT, 0 lovelace, reward address của commit, redeemer = Constr 0 [OutRef két]", async () => {
+    const { tx } = await dungCommitV2();
+    expect(tx.withdrawals).toHaveLength(1);
+    const w = tx.withdrawals[0]!;
+    expect(w.rewardAddress).toBe(COMMIT_REWARD);
+    expect(w.amount).toBe(0n);
+    // Theo BYTE: CommitRedeemer { vault_ref: OutputReference { "33"×32, 0 } }.
+    expect(w.redeemer).toBe(Data.to(new Constr(0, [new Constr(0, ["33".repeat(32), 0n])]) as never));
+  });
+
+  it("CỰC ĐỐI: redeemer nêu ĐÚNG outRef của két đang tiêu — két ở #7 ⟹ redeemer mang 7", async () => {
+    const v = { ...vaultUtxoV2(makeVaultV2(), VAULT_ASSETS), outputIndex: 7 };
+    const { tx } = await dungCommitV2({ vaultUtxo: v });
+    expect(tx.withdrawals[0]!.redeemer).toBe(Data.to(new Constr(0, [new Constr(0, ["33".repeat(32), 7n])]) as never));
+  });
+
+  it("CỰC ĐỐI: thiếu commitScript ⟹ GEN-SCH-COMMIT, không dựng tx", async () => {
+    await expect(dungCommitV2({ commitScript: undefined })).rejects.toThrow(/GEN-SCH-COMMIT/);
+  });
+
+  it("ref-script `commit`: đúng hash ⟹ readFrom, không attach; sai hash ⟹ NÉM", async () => {
+    const good = { ...utxo(null, { lovelace: 20_000_000n }, 30, "fa".repeat(32)), scriptRef: COMMIT_SCRIPT };
+    const { tx } = await dungCommitV2({ commitRefScriptUtxo: good });
+    expect(tx.attached).toHaveLength(3);
+    expect(tx.attached).not.toContainEqual(COMMIT_SCRIPT);
+    expect(tx.readFrom.flat().map((u: any) => u.outputIndex)).toContain(30);
+    const bad = { ...good, scriptRef: SHARD_SCRIPT };
+    await expect(dungCommitV2({ commitRefScriptUtxo: bad })).rejects.toThrow(/commit \(withdraw-zero\)/);
   });
 
   it("CỰC ĐỐI: gbShardScript không khớp gbShardPolicyId ⟹ NÉM", async () => {

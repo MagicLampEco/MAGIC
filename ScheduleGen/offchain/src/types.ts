@@ -247,6 +247,18 @@ export type GbShard = Data.Static<typeof GbShardSchema>;
 export const GbShardRedeemerSchema = Data.Object({ amount: Data.Integer() });
 export type GbShardRedeemer = Data.Static<typeof GbShardRedeemerSchema>;
 
+// ── CommitRedeemer (validator `commit`, withdraw-zero) ─────────
+// `pub type CommitRedeemer { vault_ref: OutputReference }` ở `validators/vault.ak`.
+// `OutputReference` của stdlib (PlutusV3) = Constr 0 [transaction_id: ByteArray, output_index: Int]
+// — cùng hình dạng mà `MintVaultId { seed }` đã dùng. Két so `vault_ref == own_ref` bằng BYTE,
+// nên sai một ô ở đây là két bác nhánh ký (`commit_delegated_to`).
+export const OutputReferenceSchema = Data.Object({
+  transaction_id : Data.Bytes(),
+  output_index   : Data.Integer(),
+});
+export const CommitRedeemerSchema = Data.Object({ vault_ref: OutputReferenceSchema });
+export type CommitRedeemer = Data.Static<typeof CommitRedeemerSchema>;
+
 // ── UMDatum ──────────────────────────────────────────────────
 export const UMDatumSchema = Data.Object({
   smoothed_q         : Data.Integer(),
@@ -312,6 +324,7 @@ export const RateParam          = RateParamSchema          as unknown as RatePar
 export const GreenBackBeacon    = GreenBackBeaconSchema    as unknown as GreenBackBeacon;
 export const GbShard            = GbShardSchema            as unknown as GbShard;
 export const GbShardRedeemer    = GbShardRedeemerSchema    as unknown as GbShardRedeemer;
+export const CommitRedeemer     = CommitRedeemerSchema     as unknown as CommitRedeemer;
 
 // ── Giải mã có kiểm đời (v1 ⟹ NÉM) ─────────────────────────────
 //

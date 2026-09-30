@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { blake2b } from "@noble/hashes/blake2b";
 import {
-  Emulator, Lucid, Data, Constr, applyParamsToScript, generateEmulatorAccount,
+  Emulator, Lucid, Data, Constr, CML, applyParamsToScript, generateEmulatorAccount,
   generateEmulatorAccountFromPrivateKey, getAddressDetails, PROTOCOL_PARAMETERS_DEFAULT, mintingPolicyToId, scriptFromNative, toUnit, validatorToAddress,
   validatorToScriptHash,
   type EmulatorAccount, type LucidEvolution, type Script, type TxBuilder, type UTxO,
@@ -29,8 +29,10 @@ import {
   mintGbShardsTx, initRateBeaconTx, postGreenBackTx, decodeGbShard,
   type GenBeaconsScripts,
 } from "../../GenBeacons/offchain/src/index.js";
-import { buildScheduleCommitTx, buildScheduleFireTx } from "../offchain/src/schedule.js";
-import { scheduleVaultParamList } from "../offchain/src/params.js";
+import {
+  buildScheduleCommitTx, buildScheduleFireTx, buildRegisterCommitStakeTx,
+} from "../offchain/src/schedule.js";
+import { applyScheduleScripts, type ScheduleBlueprint } from "../offchain/src/params.js";
 import { computeShardId } from "../offchain/src/math.js";
 import { SHARD_CAP, GB_SHARD_CAP_NANOGIC } from "../offchain/src/constants.js";
 import {
@@ -65,6 +67,8 @@ let rateKey: EmulatorAccount;
 let parking: EmulatorAccount;
 let gb: GenBeaconsScripts;
 let vaultScript: Script;
+let commitScript: Script;
+let commitRef: UTxO;
 let shardScript: Script;
 let vaultAddr: string;
 let shardAddr: string;
@@ -116,8 +120,7 @@ function goToEpoch(e: bigint) {
   emulator.awaitSlot(slots);
 }
 
-type Blueprint = { validators: { title: string; compiledCode: string }[] };
-const SG_BP: Blueprint = JSON.parse(readFileSync(
+const SG_BP: ScheduleBlueprint = JSON.parse(readFileSync(
   fileURLToPath(new URL("../onchain/plutus.json", import.meta.url)), "utf8"));
 function sgCode(title: string): string {
   const v = SG_BP.validators.find(x => x.title === title);
@@ -142,12 +145,12 @@ beforeAll(async () => {
   writer   = generateEmulatorAccountFromPrivateKey({ lovelace: 50_000_000n });
   rateKey  = generateEmulatorAccountFromPrivateKey({ lovelace: 50_000_000n });
   parking  = generateEmulatorAccountFromPrivateKey({ lovelace: 50_000_000n });
-  // 🔴 TRẦN KÍCH THƯỚC TX NỚI RIÊNG CHO EMULATOR. Validator két ScheduleGen v2.0 biên dịch ra
-  // 15 905 B; giao dịch Lucid mặc định công bố nó làm script tham chiếu đo được 16 442 B >
-  // 16 384 B (trần Preprod/mainnet). Nới ở đây để đo được PHẦN CÒN LẠI (ký + bắn qua phase-2);
-  // trên mạng thật két này CHƯA công bố được — xem báo cáo gói d2b.
+  // Trần kích thước tx = trần THẬT Preprod/mainnet (16 384 B), ghi tường minh. Bản d2b phải
+  // nới lên 20 000 vì két gộp 15 905 B không công bố nổi làm ref-script (16 442 B); sau khi
+  // tách nhánh ký ra `commit` (b50770db) két còn 12 134 B, nên mọi tx ở đây — kể cả bốn tx
+  // công bố ref-script — phải lọt trần thật. Nới lại trần ở đây là giấu một hồi quy.
   emulator = new Emulator([deployer, writer, rateKey, parking],
-    { ...PROTOCOL_PARAMETERS_DEFAULT, maxTxSize: 20_000 });
+    { ...PROTOCOL_PARAMETERS_DEFAULT, maxTxSize: 16_384 });
   emulator.time = Number(E0 * P + 60_000n);
   lucid = await Lucid(emulator, "Custom");
   lucid.selectWallet.fromSeed(deployer.seedPhrase);
@@ -172,15 +175,15 @@ beforeAll(async () => {
   const shardNft: Script = { type: "PlutusV3", script: SHARD_NFT_CODE };
   const shardPolicy = mintingPolicyToId(shardNft);
 
-  vaultScript = {
-    type: "PlutusV3",
-    script: applyParamsToScript(sgCode("vault.vault.mint"), scheduleVaultParamList({
-      lampPolicyId: lampPolicy, lampAssetName: LAMP_NAME, shardPolicyId: shardPolicy, msPerEpoch: P,
-      gbBeaconNftPolicy: gb.greenback.hash, gbBeaconScriptHash: gb.greenback.hash,
-      gbShardPolicyId: gb.gbShard.hash, rateNftPolicy: gb.rate.hash, rateScriptHash: gb.rate.hash,
-    })),
-  };
-  const vaultHash = validatorToScriptHash(vaultScript);
+  // Cặp script theo đúng thứ tự dựng: `commit` (9) → hash → két (6), qua cổng tên-blueprint.
+  const pair = applyScheduleScripts(SG_BP, {
+    lampPolicyId: lampPolicy, lampAssetName: LAMP_NAME, shardPolicyId: shardPolicy, msPerEpoch: P,
+    gbBeaconNftPolicy: gb.greenback.hash, gbBeaconScriptHash: gb.greenback.hash,
+    gbShardPolicyId: gb.gbShard.hash, rateNftPolicy: gb.rate.hash, rateScriptHash: gb.rate.hash,
+  });
+  vaultScript = pair.vaultScript;
+  commitScript = pair.commitScript;
+  const vaultHash = pair.vaultScriptHash;
   vaultAddr = validatorToAddress("Custom", vaultScript);
   shardScript = {
     type: "PlutusV3",
@@ -217,9 +220,11 @@ beforeAll(async () => {
 
   // Script tham chiếu (CIP-33) — đỗ ở ví khác để ví trả phí không tiêu nhầm. Đi TRƯỚC genesis:
   // đính kèm validator két vào chính giao dịch genesis đã vượt trần 16 384 B (đo: 17 044).
-  for (const sc of [vaultScript, shardScript, gb.gbShard.script]) {
-    const h = await submitBuilder(lucid.newTx().pay.ToAddressWithData(parking.address, undefined,
-      { lovelace: 60_000_000n }, sc));
+  for (const sc of [vaultScript, shardScript, gb.gbShard.script, commitScript]) {
+    const pub = await lucid.newTx().pay.ToAddressWithData(parking.address, undefined,
+      { lovelace: 60_000_000n }, sc).complete();
+    PUBLISH_BYTES.push(pub.toCBOR().length / 2);
+    const h = await submitSign(pub);
     // Tìm theo HASH script mang theo, không theo chỉ số output — thứ tự output không phải
     // hợp đồng của Lucid (đo: chọn `#0` thì có lượt lấy nhầm output tiền thừa).
     const want = validatorToScriptHash(sc);
@@ -228,6 +233,8 @@ beforeAll(async () => {
     if (hits.length !== 1) throw new Error(`script tham chiếu ${want}: thấy ${hits.length} UTxO`);
     refUtxos.push(hits[0]!);
   }
+  // Ref của `commit` đi đường riêng (`commitRefScriptUtxo`), ba ref đầu cho két/shard/gb_shard.
+  commitRef = refUtxos.pop()!;
 
   // Genesis két: NFT = blake2b_256(cbor(seed)), LAMP thật, datum sạch 19 trường.
   const vSeed = await seedU(5);
@@ -266,10 +273,33 @@ beforeAll(async () => {
   }).tx, [writer]);
 }, SLOW);
 
-async function commitTx(tamper?: (d: TVaultDatum) => TVaultDatum) {
+/** Byte của bốn tx công bố ref-script: két · shard · gb_shard · commit. */
+const PUBLISH_BYTES: number[] = [];
+
+/** Tổng ExUnit theo purpose, đọc từ witness set của tx đã `complete()` (Lucid đã điền
+ *  ExUnit đánh giá thật). Hình dạng lạ ⟹ NÉM. */
+function exUnitsOf(cbor: string): { tag: number; index: bigint; mem: bigint; steps: bigint }[] {
+  const rs = CML.Transaction.from_cbor_hex(cbor).witness_set().redeemers();
+  if (!rs) throw new Error("tx không có redeemer nào");
+  const flat = rs.to_flat_format();
+  const out = [];
+  for (let i = 0; i < flat.len(); i++) {
+    const r = flat.get(i);
+    out.push({ tag: r.tag(), index: r.index(), mem: r.ex_units().mem(), steps: r.ex_units().steps() });
+  }
+  return out;
+}
+
+async function commitTx(
+  tamper?: (d: TVaultDatum) => TVaultDatum,
+  over: Record<string, unknown> = {},
+) {
   return buildScheduleCommitTx({
+    commitScript, commitRefScriptUtxo: commitRef,
+    ...over,
     lucid, vaultUtxo: await only(vaultNft), shardUtxos: await lampShardUtxos(),
     scheduleLength: N, lampPerEpoch: LAMBDA, userAddress: deployer.address,
+    // (commitScript/commitRefScriptUtxo đặt ở trên, `over` ghi đè được)
     vaultScript, shardScript, gbShardScript: gb.gbShard.script,
     gen: {
       gbBeaconNftPolicy: gb.greenback.hash, gbBeaconScriptHash: gb.greenback.hash,
@@ -295,26 +325,73 @@ async function fireTx(tamper?: (d: TVaultDatum) => TVaultDatum) {
   } as any);
 }
 
-const SCRIPT_FAILURE = /failed script execution Spend\[\d+\]/;
-async function expectScriptRejected(p: Promise<unknown>) {
+// Purpose trong câu lỗi đánh giá của Lucid: `Spend[i]` = một input script (két / shard / shard GB),
+// `Withdraw[i]` = mục rút (ở đây chỉ `commit`). Ca âm khẳng định ĐÚNG purpose, không chỉ "có bác".
+// (Lucid 0.4.30 in `Withdraw[0]`, đo 2026-09-30 — không phải `Reward[0]`.)
+const SPEND_FAILURE  = /failed script execution Spend\[\d+\]/;
+const REWARD_FAILURE = /failed script execution Withdraw\[\d+\]/;
+async function rejectionOf(p: Promise<unknown>): Promise<string> {
   let msg = "";
   try { await p; } catch (e) { msg = describeError(e); }
-  expect(msg, "giao dịch lẽ ra bị validator từ chối").toMatch(SCRIPT_FAILURE);
+  expect(msg, "giao dịch lẽ ra bị từ chối").not.toBe("");
+  return msg;
+}
+async function expectScriptRejected(p: Promise<unknown>, re: RegExp = SPEND_FAILURE) {
+  expect(await rejectionOf(p), "giao dịch lẽ ra bị validator từ chối").toMatch(re);
 }
 
-describe("ScheduleGen v2.0 e2e — ký rồi bắn trên Emulator", () => {
-  it("CỰC ĐỐI ký: m_per_epoch ghi lệch 1 nanogic ⟹ validator két bác", async () => {
+describe("ScheduleGen v2.0 e2e — đăng ký stake commit → ký → bắn trên Emulator", () => {
+  it("CỰC ĐỐI ký: m_per_epoch ghi lệch 1 nanogic ⟹ `commit` (mục rút) bác", async () => {
     await expectScriptRejected(commitTx(d => ({
       ...d,
       gen_schedules: d.gen_schedules.map(s => ({ ...s, m_per_epoch: s.m_per_epoch + 1n })),
-    })));
+    })), REWARD_FAILURE);
+  }, SLOW);
+
+  // Cặp với ca dương "ký" bên dưới — chỉ khác ĐÚNG việc có mục rút `commit` hay không.
+  // Trong ScheduleGen + GenBeacons, chỗ DUY NHẤT đọc `tx.withdrawals` là `commit_delegated_to`
+  // của két (và `owner_auth` cho chủ script — chủ ở đây là khoá), nên lượt Spend bị bác là két.
+  it("CỰC ĐỐI ký: THIẾU mục rút `commit` ⟹ validator két bác (Spend)", async () => {
+    await expectScriptRejected(commitTx(undefined, { omitCommitWithdrawal: true }), SPEND_FAILURE);
+  }, SLOW);
+
+  it("CỰC ĐỐI ký: stake credential `commit` CHƯA đăng ký ⟹ ledger bác lúc nộp (UPLC đã xanh)", async () => {
+    const res = await commitTx();                         // đánh giá UPLC qua ⟹ tx hợp lệ về script
+    const msg = await rejectionOf(submitSign(res.tx));
+    expect(msg).toMatch(/Withdrawal amount doesn't match actual reward balance/);
+  }, SLOW);
+
+  it("đăng ký stake credential `commit` (một lần) — chứng chỉ đăng ký, không rút gì", async () => {
+    const { tx, rewardAddress, commitScriptHash } = await buildRegisterCommitStakeTx({
+      lucid, commitScript, network: NET,
+    });
+    expect(commitScriptHash).toBe(validatorToScriptHash(commitScript));
+    await submitSign(tx);
+    const del = await lucid.config().provider.getDelegation(rewardAddress);
+    expect(del.rewards).toBe(0n);
+    // Cực đối: đăng ký lần hai ⟹ ledger bác (khẳng định đăng ký ĐÃ ghi, không chỉ tx qua).
+    const again = await buildRegisterCommitStakeTx({ lucid, commitScript, network: NET });
+    expect(await rejectionOf(submitSign(again.tx))).toMatch(/already registered/);
   }, SLOW);
 
   it("ký: đọc ρ + GB, rút shard GB đúng M × 2, chốt m_per_epoch", async () => {
     const gbShardId = BigInt(computeShardId({ VerificationKey: [pkh(deployer)] }));
+    // Đo thêm biến thể ĐÍNH KÈM `commit` (không ref) — dựng, không nộp.
+    const attached = await commitTx(undefined, { commitRefScriptUtxo: undefined });
     const res = await commitTx();
     expect(res.mPerEpoch).toBe(M);
     expect(res.gbDraw).toBe(2n * M);
+    const cbor = res.tx.toCBOR();
+    const ex = exUnitsOf(cbor);
+    const sum = (k: "mem" | "steps") => ex.reduce((a, r) => a + r[k], 0n);
+    console.log(JSON.stringify({
+      publishRefScriptBytes: PUBLISH_BYTES,
+      commitTxBytesRef: cbor.length / 2,
+      commitTxBytesAttached: attached.tx.toCBOR().length / 2,
+      exUnits: ex.map(r => ({ ...r, index: String(r.index), mem: String(r.mem), steps: String(r.steps) })),
+      totalMem: String(sum("mem")), totalSteps: String(sum("steps")),
+    }));
+    expect(cbor.length / 2).toBeLessThanOrEqual(16_384);
     await submitSign(res.tx);
     scheduleId = res.scheduleId;
 

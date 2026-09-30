@@ -7,7 +7,8 @@
 //      đường tính thuần, không chỉ lược đồ.
 //   2. Datum đời trước (17 trường / shard 7 trường) ⟹ NÉM `GEN-SCH-V1-DATUM`, cặp với ca v2 đi qua.
 //   3. Thứ tự trường của từng lược đồ == thứ tự trường trong `.ak` (ScheduleGen + GenBeacons).
-//   4. Apply-param 9 phần tử == chữ ký `validator vault(`; hằng gói (c) == `constants.ak`.
+//   4. Apply-param `commit` (9) + két (6) == hai chữ ký trong `vault.ak`, cổng tên-blueprint của
+//      `applyScheduleScripts`; hằng gói (c) == `constants.ak`.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -17,13 +18,15 @@ import { Data, Constr } from "@lucid-evolution/lucid";
 import {
   VaultDatum, VaultDatumSchema, GenScheduleSchema, EpochUsageSchema,
   ScheduleShardDatum, ScheduleShardDatumSchema, RateParamSchema, GreenBackBeaconSchema,
-  GbShardSchema, GbShardRedeemer, GbShardRedeemerSchema,
+  GbShardSchema, GbShardRedeemer, GbShardRedeemerSchema, CommitRedeemerSchema,
   decodeVaultDatum, decodeScheduleShardDatum, ERR_DATUM_V1,
   type VaultDatum as TVaultDatum,
 } from "../offchain/src/types.js";
 import { planScheduleCommit } from "../offchain/src/genPlan.js";
 import {
   SCHEDULE_VAULT_PARAM_NAMES, scheduleVaultParamMap, scheduleVaultParamList,
+  SCHEDULE_COMMIT_PARAM_NAMES, scheduleCommitParamMap, scheduleCommitParamList,
+  applyScheduleScripts, type ScheduleBlueprint,
 } from "../offchain/src/params.js";
 import * as C from "../offchain/src/constants.js";
 import { makeRate, ZW } from "./genV2Fixtures.js";
@@ -168,6 +171,7 @@ describe("Thứ tự trường lược đồ TS == `.ak` (hợp đồng nhị ph
     ["RateParam", RateParamSchema, [sg, gb]],
     ["GreenBackBeacon", GreenBackBeaconSchema, [sg, gb]],
     ["GbShard", GbShardSchema, [sg, gb]],
+    ["CommitRedeemer", CommitRedeemerSchema, [read("onchain/validators/vault.ak")]],
   ].map(([n, s, srcs]) => [n as string, s, srcs as string[]]);
 
   for (const [name, schema, srcs] of cases) {
@@ -190,42 +194,80 @@ describe("Thứ tự trường lược đồ TS == `.ak` (hợp đồng nhị ph
 });
 
 // ── Apply-param + hằng gói (c) ────────────────────────────────
-function vaultParamNames(src: string): string[] {
-  const start = src.indexOf("validator vault(");
-  expect(start).toBeGreaterThanOrEqual(0);
+function validatorParamNames(src: string, name: string): string[] {
+  const head = `validator ${name}(`;
+  const start = src.indexOf(head);
+  expect(start, `không thấy ${head}`).toBeGreaterThanOrEqual(0);
   const end = src.indexOf(") {", start);
-  return src.slice(start + "validator vault(".length, end)
+  return src.slice(start + head.length, end)
     .split("\n")
     .map(l => l.replace(/\/\/.*$/, "").trim())
     .map(l => l.match(/^([a-z_0-9]+)\s*:/)?.[1])
     .filter((x): x is string => x !== undefined);
 }
 
-describe("Apply-param két ScheduleGen v2.0 — 9 phần tử, đúng thứ tự chữ ký", () => {
+describe("Apply-param ScheduleGen v2.0 — `commit` 9 + két 6, đúng thứ tự chữ ký", () => {
   const P = {
     lampPolicyId: "aa".repeat(28), lampAssetName: "744c414d50", shardPolicyId: "bb".repeat(28),
     msPerEpoch: 432_000_000n, gbBeaconNftPolicy: "67".repeat(28), gbBeaconScriptHash: "68".repeat(28),
     gbShardPolicyId: "66".repeat(28), rateNftPolicy: "69".repeat(28), rateScriptHash: "6a".repeat(28),
   };
+  const CH = "c0".repeat(28);
+  const SRC = () => read("onchain/validators/vault.ak");
 
-  it("tên == chữ ký `validator vault(` trong vault.ak", () => {
-    const names = vaultParamNames(read("onchain/validators/vault.ak"));
-    expect(names).toHaveLength(9);
-    expect([...SCHEDULE_VAULT_PARAM_NAMES]).toEqual(names);
+  it("tên == chữ ký `validator commit(` (9) và `validator vault(` (6) trong vault.ak", () => {
+    const commit = validatorParamNames(SRC(), "commit");
+    const vault  = validatorParamNames(SRC(), "vault");
+    expect(commit).toHaveLength(9);
+    expect(vault).toHaveLength(6);
+    expect([...SCHEDULE_COMMIT_PARAM_NAMES]).toEqual(commit);
+    expect([...SCHEDULE_VAULT_PARAM_NAMES]).toEqual(vault);
   });
 
-  it("bản đồ + danh sách giữ đúng thứ tự và giá trị", () => {
-    expect(Object.keys(scheduleVaultParamMap(P))).toEqual([...SCHEDULE_VAULT_PARAM_NAMES]);
-    expect(scheduleVaultParamList(P)).toEqual([
+  it("bản đồ + danh sách giữ đúng thứ tự và giá trị — `commit`", () => {
+    expect(Object.keys(scheduleCommitParamMap(P))).toEqual([...SCHEDULE_COMMIT_PARAM_NAMES]);
+    expect(scheduleCommitParamList(P)).toEqual([
       P.lampPolicyId, P.lampAssetName, P.shardPolicyId, P.msPerEpoch, P.gbBeaconNftPolicy,
       P.gbBeaconScriptHash, P.gbShardPolicyId, P.rateNftPolicy, P.rateScriptHash,
     ]);
   });
 
-  it("CỰC ĐỐI: policy sai độ dài / không phải hex / ms_per_epoch ≤ 0 ⟹ NÉM", () => {
-    expect(() => scheduleVaultParamMap({ ...P, gbShardPolicyId: "66".repeat(27) })).toThrow(/28 byte/);
-    expect(() => scheduleVaultParamMap({ ...P, rateScriptHash: "zz".repeat(28) })).toThrow(/hex/);
-    expect(() => scheduleVaultParamMap({ ...P, msPerEpoch: 0n })).toThrow(/ms_per_epoch/);
+  it("bản đồ + danh sách giữ đúng thứ tự và giá trị — két (hash commit ở CUỐI)", () => {
+    expect(Object.keys(scheduleVaultParamMap(P, CH))).toEqual([...SCHEDULE_VAULT_PARAM_NAMES]);
+    expect(scheduleVaultParamList(P, CH)).toEqual([
+      P.lampPolicyId, P.lampAssetName, P.shardPolicyId, P.msPerEpoch, P.gbShardPolicyId, CH,
+    ]);
+  });
+
+  it("CỰC ĐỐI: policy sai độ dài / không phải hex / ms_per_epoch ≤ 0 / hash commit 27 byte ⟹ NÉM", () => {
+    expect(() => scheduleCommitParamMap({ ...P, gbShardPolicyId: "66".repeat(27) })).toThrow(/28 byte/);
+    expect(() => scheduleCommitParamMap({ ...P, rateScriptHash: "zz".repeat(28) })).toThrow(/hex/);
+    expect(() => scheduleVaultParamMap({ ...P, msPerEpoch: 0n }, CH)).toThrow(/ms_per_epoch/);
+    expect(() => scheduleVaultParamMap(P, "c0".repeat(27))).toThrow(/commit_script_hash/);
+    expect(() => scheduleVaultParamMap(P, CH)).not.toThrow();
+  });
+
+  // Blueprint THẬT (do `aiken build` sinh) là nơi ĐẾM tham số — chú thích trong `.ak` thì không.
+  const BP = JSON.parse(read("onchain/plutus.json")) as ScheduleBlueprint;
+
+  it("applyScheduleScripts: hash commit đi vào két — đổi một tham số beacon ⟹ hash két ĐỔI", () => {
+    const a = applyScheduleScripts(BP, P);
+    const b = applyScheduleScripts(BP, { ...P, rateScriptHash: "6b".repeat(28) });
+    expect(a.commitScriptHash).not.toBe(b.commitScriptHash);
+    expect(a.vaultScriptHash).not.toBe(b.vaultScriptHash);     // két không nhận beacon, nhưng nướng hash commit
+    // Cực đối: apply lại cùng đầu vào ⟹ cùng hash (tất định).
+    expect(applyScheduleScripts(BP, P).vaultScriptHash).toBe(a.vaultScriptHash);
+  });
+
+  it("CỰC ĐỐI: blueprint lệch tên/số tham số ⟹ GEN-SCH-PARAMS, không apply", () => {
+    const drop = (title: string) => ({
+      validators: BP.validators.map(v => v.title === title
+        ? { ...v, parameters: (v.parameters ?? []).slice(0, -1) } : v),
+    });
+    expect(() => applyScheduleScripts(drop("vault.vault.spend"), P)).toThrow(/GEN-SCH-PARAMS/);
+    expect(() => applyScheduleScripts(drop("vault.commit.withdraw"), P)).toThrow(/GEN-SCH-PARAMS/);
+    expect(() => applyScheduleScripts({ validators: BP.validators.filter(v => v.title !== "vault.commit.withdraw") }, P))
+      .toThrow(/thiếu "vault.commit.withdraw"/);
   });
 });
 

@@ -26,7 +26,8 @@ import {
   type GenSchedule,
 } from "../offchain/src/types.js";
 import {
-  GEN, GB_SHARD_SCRIPT, ZW, makeBeacon, gbShardUtxos, rateBeaconUtxo, gbBeaconUtxo, registryUtxo,
+  GEN, GB_SHARD_SCRIPT, COMMIT_SCRIPT, COMMIT_REWARD, ZW, makeBeacon, gbShardUtxos, rateBeaconUtxo,
+  gbBeaconUtxo, registryUtxo,
 } from "./genV2Fixtures.js";
 
 // ── Bối cảnh: Preprod, epoch 100 ──────────────────────────────
@@ -168,6 +169,7 @@ async function dungCommit(
     // Gen v2.0: beacon ρ + GreenBack (ghi ở epoch E) + sổ két + 16 shard GB.
     gen:               GEN,
     gbShardScript:     GB_SHARD_SCRIPT,
+    commitScript:      COMMIT_SCRIPT,
     rateBeaconUtxo:    rateBeaconUtxo(),
     gbBeaconUtxo:      gbBeaconUtxo(makeBeacon(E)),
     vaultRegistryUtxo: registryUtxo(),
@@ -268,7 +270,7 @@ describe("buildScheduleCommitTx — cửa sổ hiệu lực", () => {
     const { tx, res } = await dungCommit(E * P + 1_000n);
 
     expect(tx.collectFrom).toHaveLength(3);        // vault + shard LAMP + shard GB (Gen v2.0)
-    expect(tx.attached).toHaveLength(3);           // không đưa refScriptUtxos ⟹ đường attach
+    expect(tx.attached).toHaveLength(4);           // không đưa ref ⟹ attach két + shard + gb_shard + commit
     expect(tx.outputs).toHaveLength(3);            // vault, shard LAMP, shard GB — mỗi cái về chỗ cũ
     expect(tx.outputs[0]!.address).not.toBe(tx.outputs[1]!.address);
     expect(tx.readFrom[0]).toHaveLength(3);        // beacon ρ + beacon GB + sổ két
@@ -276,7 +278,8 @@ describe("buildScheduleCommitTx — cửa sổ hiệu lực", () => {
     // `addSignerKey` biến mất khỏi đây thì bất kỳ ai cũng khoá được LAMP của người
     // khác — phải đỏ ngay, không chỉ nằm trong chú thích.
     expect(tx.signerKeys).toEqual([OWNER_PKH]);
-    expect(tx.withdrawals).toEqual([]);            // chủ khoá: không mục rút
+    // Chủ khoá: KHÔNG mục rút quyền chủ — mục rút duy nhất là chân uỷ quyền của `commit`.
+    expect(tx.withdrawals.map((w: any) => [w.rewardAddress, w.amount])).toEqual([[COMMIT_REWARD, 0n]]);
     // Shard tiêu phải là shard của 28 byte BÊN TRONG credential (vector: 10).
     expect((tx.collectFrom[1]!.utxos[0] as { outputIndex: number }).outputIndex).toBe(10);
     // Redeemer theo BYTE: Constr 0 [10, 1_000_000_000] — một lược đồ sai hình dạng
@@ -380,7 +383,8 @@ describe("buildScheduleCommitTx — chứng minh quyền chủ theo nhánh", () 
     });
     expect(goi).toBe(1);
     expect(tx.signerKeys).toEqual([]);
-    expect(tx.withdrawals).toHaveLength(1);
+    // Hai mục rút: chân `commit` + chân quyền chủ script.
+    expect(tx.withdrawals.map((w: any) => w.rewardAddress)).toEqual([COMMIT_REWARD, "stake_test1_gia"]);
     // "5c"×28 rơi shard 9 (TV-SCH-SHARD-CRED).
     expect((tx.collectFrom[1]!.utxos[0] as { outputIndex: number }).outputIndex).toBe(9);
   });

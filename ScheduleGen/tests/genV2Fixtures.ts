@@ -3,7 +3,9 @@
 // Datum két 19 trường, shard LAMP 8 trường, beacon ρ / GreenBack, shard GB, sổ két —
 // kèm địa chỉ THẬT (suy từ script hash) để bộ dựng kiểm được neo hai lớp của beacon.
 
-import { Data, credentialToAddress, scriptHashToCredential, validatorToScriptHash, toUnit } from "@lucid-evolution/lucid";
+import {
+  Data, credentialToAddress, scriptHashToCredential, validatorToScriptHash, validatorToRewardAddress, toUnit,
+} from "@lucid-evolution/lucid";
 import {
   VaultDatum, ScheduleShardDatum, RateParam, GreenBackBeacon, GbShard,
   type VaultDatum as TVaultDatum, type ScheduleShardDatum as TShardDatum,
@@ -21,6 +23,9 @@ export const OWNER = { VerificationKey: [OWNER_PKH] } as TVaultDatum["owner"];
 export const VAULT_SCRIPT    = { type: "PlutusV3" as const, script: "49480100002221200101" };
 export const SHARD_SCRIPT    = { type: "PlutusV3" as const, script: "4746010000222601" };
 export const GB_SHARD_SCRIPT = { type: "PlutusV3" as const, script: "4746010000222602" };
+/** `commit` (withdraw-zero) giả — chỉ để suy hash / reward address. */
+export const COMMIT_SCRIPT   = { type: "PlutusV3" as const, script: "4746010000222603" };
+export const COMMIT_REWARD   = validatorToRewardAddress(NETWORK, COMMIT_SCRIPT);
 
 export const GB_SHARD_POLICY   = validatorToScriptHash(GB_SHARD_SCRIPT);
 export const GBB_POLICY        = "67".repeat(28);

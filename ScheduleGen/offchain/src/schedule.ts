@@ -9,6 +9,7 @@
 import {
   Lucid, Blockfrost, Data, toUnit,
   validatorToScriptHash, credentialToAddress, scriptHashToCredential, paymentCredentialOf,
+  validatorToRewardAddress,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type TxBuilder,
 } from "@lucid-evolution/lucid";
 import { applyOwnerAuth, resolveOwnerAuth, ownerRefOf, type OwnerAuth } from "@magiclamp/protocol-utils";
@@ -27,7 +28,7 @@ import {
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
   VaultDatum, VaultRedeemer, ShardRedeemer, ScheduleShardDatum,
-  RateParam, GreenBackBeacon, GbShard, GbShardRedeemer,
+  RateParam, GreenBackBeacon, GbShard, GbShardRedeemer, CommitRedeemer,
   decodeVaultDatum, decodeScheduleShardDatum,
 } from "./types.js";
 import {
@@ -72,8 +73,9 @@ function fmtDays(epochs: bigint, network: Network): string {
   return days === 1 ? "1 day" : `${days} days`;
 }
 
-/** Apply-param Gen v2.0 của két (#4..#8, cùng tên với `validator vault(`) mà bộ dựng cần để
- *  nhận diện beacon + shard GB, cộng apply-param `gb_shard_cap_nanogic` của `gb_shard`. */
+/** Apply-param Gen v2.0 của `commit` (#4..#8, cùng tên với `validator commit(`) mà bộ dựng cần
+ *  để nhận diện beacon + shard GB, cộng apply-param `gb_shard_cap_nanogic` của `gb_shard`.
+ *  Phải là ĐÚNG giá trị đã apply vào `commitScript` — lệch ⟹ `commit` bác. */
 export interface GenBeaconParams {
   gbBeaconNftPolicy  : string;
   gbBeaconScriptHash : string;
@@ -92,11 +94,21 @@ export interface CommitParams {
   scheduleLength  : bigint;    // L ∈ [10,200]
   lampPerEpoch    : bigint;    // λ in oil
   userAddress     : string;
-  /** Compiled vault validator — 9 apply-params, THEO THỨ TỰ (`params.ts` ▸
-   *  `SCHEDULE_VAULT_PARAM_NAMES`): lamp_policy_id, lamp_asset_name, shard_policy_id,
-   *  ms_per_epoch, gb_beacon_nft_policy, gb_beacon_script_hash, gb_shard_policy_id,
-   *  rate_nft_policy, rate_script_hash. */
+  /** Compiled vault validator — 6 apply-params, THEO THỨ TỰ (`params.ts` ▸
+   *  `SCHEDULE_VAULT_PARAM_NAMES`); #5 là hash của `commitScript`. Dựng cặp bằng
+   *  `params.ts` ▸ `applyScheduleScripts`. */
   vaultScript     : Validator;
+  /** Compiled `commit` (withdraw-zero) — 9 apply-params (`SCHEDULE_COMMIT_PARAM_NAMES`).
+   *  Két uỷ TOÀN BỘ luật ký cho nó: tx ký mang một mục rút 0 từ `Script(hash commit)` với
+   *  redeemer `CommitRedeemer { vault_ref }` (`vault.ak` ▸ `commit_delegated_to`). Script
+   *  này KHÁC bản mà két đã nướng hash vào ⟹ két bác lúc đánh giá (không có mục rút
+   *  mang đúng hash). Stake credential của nó phải ĐĂNG KÝ trước (`buildRegisterCommitStakeTx`). */
+  commitScript    : Validator;
+  /** UTxO mang scriptRef của `commit` (CIP-33). Có ⟹ `readFrom` (kiểm hash); không ⟹ đính
+   *  kèm `WithdrawalValidator` (+9.053 B vào tx). */
+  commitRefScriptUtxo?: UTxO;
+  /** TEST ONLY: bỏ mục rút của `commit` — để chứng minh két bác nhánh ký khi `commit` không chạy. */
+  omitCommitWithdrawal?: boolean;
   /** Compiled shard (LAMP aggregate) validator. */
   shardScript     : Validator;
   // ── Gen v2.0: beacon + shard GB (chỉ nhánh KÝ đọc) ──────────
@@ -266,9 +278,17 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const commitEpoch = posixMsToEpoch(tipPosixMs, network);
 
-  // gb_shard: hash script PHẢI bằng apply-param #6 của két — lệch là shard của deploy khác.
+  // gb_shard: hash script PHẢI bằng apply-param `gb_shard_policy_id` — lệch là shard của deploy khác.
   if (validatorToScriptHash(params.gbShardScript) !== gen.gbShardPolicyId) {
     throw new Error(`GEN-SCH-GB: hash gbShardScript ≠ gen.gbShardPolicyId (${gen.gbShardPolicyId}).`);
+  }
+  // commit: không có nó thì két chắc chắn bác (`commit_delegated_to`) — nói ra ở đây thay vì
+  // để người gọi đọc một lỗi phase-2 không nêu thiếu gì.
+  const commitScript = params.commitScript as Validator | undefined;
+  if (!params.omitCommitWithdrawal && (commitScript == null || typeof commitScript.script !== "string")) {
+    throw new Error(
+      "GEN-SCH-COMMIT: thiếu `commitScript` — nhánh ký uỷ cho validator `commit` (withdraw-zero); " +
+      "dựng cặp bằng `applyScheduleScripts` (params.ts).");
   }
 
   // Beacon: neo hai lớp rồi mới giải mã.
@@ -328,6 +348,20 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
     : txBuilder.attach.SpendingValidator(vaultScript)
         .attach.SpendingValidator(shardScript)
         .attach.SpendingValidator(gbShardScript);
+  // Chân uỷ quyền: rút 0 từ `Script(hash commit)`, redeemer nêu ĐÚNG UTxO két đang tiêu.
+  // Đúng một mục cho purpose này mỗi tx (khoá map rút là duy nhất) ⟹ phục vụ đúng một két.
+  if (!params.omitCommitWithdrawal) {
+    const commit = commitScript!;
+    const commitRed = Data.to({
+      vault_ref: { transaction_id: vaultUtxo.txHash, output_index: BigInt(vaultUtxo.outputIndex) },
+    }, CommitRedeemer);
+    txBuilder = txBuilder.withdraw(validatorToRewardAddress(network, commit), 0n, commitRed);
+    txBuilder = params.commitRefScriptUtxo
+      ? txBuilder.readFrom(assertRefScriptsFor([params.commitRefScriptUtxo], [
+          { script: commit, what: "commit (withdraw-zero)" },
+        ]))
+      : txBuilder.attach.WithdrawalValidator(commit);
+  }
   txBuilder = txBuilder
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) }, vaultUtxo.assets)
     .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(plan.shardOut, ScheduleShardDatum) }, agg.utxo.assets)
@@ -477,6 +511,37 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     totalMagicFired: plan.mPerEpoch * BigInt(plan.firesInTx), lampReleased: plan.lampReleased,
     firstNominalEpoch: plan.firstNominalEpoch, scheduleComplete: plan.scheduleComplete, summary,
   };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Bước 0 (MỘT LẦN mỗi bản `commit`, lúc deploy): đăng ký stake credential của `commit`
+// ══════════════════════════════════════════════════════════════
+// Ledger chỉ nhận mục rút từ một reward address ĐÃ đăng ký. Chưa đăng ký ⟹ mọi tx ký của
+// mọi két đều bị ledger bác (phase-1), trước khi script nào chạy.
+//
+// Lucid 0.4.30 chỉ dựng được chứng chỉ `stake_registration` kiểu CŨ (cert 0, không tiền cọc
+// trong chứng chỉ, `register.Stake(rewardAddress)` không nhận redeemer). Ledger Conway không
+// đòi witness cho chứng chỉ đó ⟹ `publish` của `commit` KHÔNG chạy ở đường này. `publish` chỉ
+// chạy với chứng chỉ Conway `reg_cert` (cert 7, có tiền cọc) — khi đó nó nhận redeemer bất
+// kỳ (`_redeemer: Data`) và chỉ cho `RegisterCredential`. Không chạy `publish` không nới gì:
+// chứng chỉ đăng ký không mang quyền nào ngoài việc mở reward address.
+export interface RegisterCommitStakeParams {
+  lucid        : LucidEvolution;
+  commitScript : Validator;
+  network?     : Network;
+}
+
+export async function buildRegisterCommitStakeTx(
+  params: RegisterCommitStakeParams,
+): Promise<{ tx: TxSignBuilder; rewardAddress: string; commitScriptHash: string }> {
+  const commit = params.commitScript as Validator | undefined;
+  if (commit == null || typeof commit.script !== "string") {
+    throw new Error("GEN-SCH-COMMIT: thiếu `commitScript` để đăng ký stake credential.");
+  }
+  const network = params.network ?? TESTNET_CONFIG.network;
+  const rewardAddress = validatorToRewardAddress(network, commit);
+  const tx = await params.lucid.newTx().register.Stake(rewardAddress).complete();
+  return { tx, rewardAddress, commitScriptHash: validatorToScriptHash(commit) };
 }
 
 // ── Submit ────────────────────────────────────────────────────

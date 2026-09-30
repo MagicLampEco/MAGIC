@@ -20,10 +20,14 @@ import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import { buildScheduleCommitTx, buildScheduleFireTx } from "../offchain/src/schedule.js";
 import { computeShardId } from "../offchain/src/math.js";
 import {
-  VaultDatum, OwnerCredentialSchema,
+  VaultDatum, OwnerCredentialSchema, ScheduleShardDatum,
   type VaultDatum as TVaultDatum,
+  type ScheduleShardDatum as TShardDatum,
   type GenSchedule,
 } from "../offchain/src/types.js";
+import {
+  GEN, GB_SHARD_SCRIPT, ZW, makeBeacon, gbShardUtxos, rateBeaconUtxo, gbBeaconUtxo, registryUtxo,
+} from "./genV2Fixtures.js";
 
 // ── Bối cảnh: Preprod, epoch 100 ──────────────────────────────
 const NETWORK = "Preprod" as const;
@@ -49,23 +53,9 @@ const VAULT_SCRIPT = { type: "PlutusV3" as const, script: "49480100002221200101"
 const SHARD_SCRIPT = { type: "PlutusV3" as const, script: "4746010000222601" };
 
 // ── ShardDatum ────────────────────────────────────────────────
-//
-// `ShardDatumSchema` là nội bộ của `schedule.ts`, không xuất ra, nên fixture phải
-// khai lại hình dạng. Bản sao này CHẾT ỒN ÀO chứ không chết im: bộ dựng giải mã
-// datum bằng lược đồ của CHÍNH NÓ (`Data.from(u.datum!, ShardDatum)`), nên lệch
-// một trường là lỗi giải mã ngay ở dòng đầu, không phải một bài xanh vô nghĩa.
-// Nguồn: `ScheduleGen/offchain/src/schedule.ts` ▸ `ShardDatumSchema`.
-const ShardDatumSchema = Data.Object({
-  shard_id:                   Data.Integer(),
-  shard_locked_lamp:          Data.Integer(),
-  shard_active_count:         Data.Integer(),
-  shard_cumulative_committed: Data.Integer(),
-  shard_cumulative_fired:     Data.Integer(),
-  last_updated_epoch:         Data.Integer(),
-  shard_cap:                  Data.Integer(),
-});
-type TShardDatum = Data.Static<typeof ShardDatumSchema>;
-const ShardDatum = ShardDatumSchema as unknown as TShardDatum;
+// Gen v2.0: lược đồ nay xuất từ `types.ts` ▸ `ScheduleShardDatum` (8 trường, nối
+// `shard_obligation_nanogic`), không khai lại ở đây nữa.
+const ShardDatum = ScheduleShardDatum;
 
 const SHARD_LOCKED = 10_000_000_000n;   // đủ để nhánh fire trừ đi mà không âm
 
@@ -89,6 +79,8 @@ function shardUtxos() {
         shard_cumulative_fired:     0n,
         last_updated_epoch:         99n,
         shard_cap:                  450_000_000_000_000n,
+        // Đủ để nhánh fire trừ `m_per_epoch × 1` mà không âm.
+        shard_obligation_nanogic:   100_000_000_000n,
       } as TShardDatum, ShardDatum),
       { lovelace: 2_000_000n },
       i,
@@ -110,6 +102,8 @@ const SCHED: GenSchedule = {
   multiplier_at_commit_q: 1_600_000_000n,
   fired_count:            0n,
   auto_burn_target:       null,
+  m_per_epoch:            3_000_000_000n,
+  usage_factor_locked_q:  750_000_000n,
 } as GenSchedule;
 
 function makeVault(overrides: Partial<TVaultDatum> = {}): TVaultDatum {
@@ -131,10 +125,12 @@ function makeVault(overrides: Partial<TVaultDatum> = {}): TVaultDatum {
     streak_state:          { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate:     null,
     attribution:           { attribution_root: "00".repeat(32), last_event_epoch: 0n, total_events: 0n },
-    // 🔴 17 trường, DỪNG ở đây. `VaultDatum` của ScheduleGen KHÔNG có
-    // `instant_unlock_ms` — trường đó chỉ tồn tại ở InstantGen (18 trường), và
+    // 🔴 19 trường (Gen v2.0), DỪNG ở đây. `VaultDatum` của ScheduleGen KHÔNG có
+    // `instant_unlock_ms` — trường đó chỉ tồn tại ở InstantGen (20 trường), và
     // `Data.to` nghiêm ngặt về số trường nên chép fixture từ bên kia sang là
     // `Could not type cast to constructor`.
+    usage_window:          ZW(),
+    usage_window_epoch:    99n,
     ...overrides,
   } as TVaultDatum;
 }
@@ -169,6 +165,13 @@ async function dungCommit(
     lampAssetName:  LAMP_NAME,
     network:        NETWORK,
     tipPosixMs,
+    // Gen v2.0: beacon ρ + GreenBack (ghi ở epoch E) + sổ két + 16 shard GB.
+    gen:               GEN,
+    gbShardScript:     GB_SHARD_SCRIPT,
+    rateBeaconUtxo:    rateBeaconUtxo(),
+    gbBeaconUtxo:      gbBeaconUtxo(makeBeacon(E)),
+    vaultRegistryUtxo: registryUtxo(),
+    gbShardUtxos:      gbShardUtxos(),
   } as any);
   return { res, tx: fake.onlyTx() };
 }
@@ -264,10 +267,11 @@ describe("buildScheduleCommitTx — cửa sổ hiệu lực", () => {
   it("C. giao dịch mang đúng hình dạng ScheduleCommit — và CÓ chữ ký chủ két", async () => {
     const { tx, res } = await dungCommit(E * P + 1_000n);
 
-    expect(tx.collectFrom).toHaveLength(2);        // vault + shard
-    expect(tx.attached).toHaveLength(2);           // không đưa refScriptUtxos ⟹ đường attach
-    expect(tx.outputs).toHaveLength(2);            // vault trở lại vault, shard trở lại shard
+    expect(tx.collectFrom).toHaveLength(3);        // vault + shard LAMP + shard GB (Gen v2.0)
+    expect(tx.attached).toHaveLength(3);           // không đưa refScriptUtxos ⟹ đường attach
+    expect(tx.outputs).toHaveLength(3);            // vault, shard LAMP, shard GB — mỗi cái về chỗ cũ
     expect(tx.outputs[0]!.address).not.toBe(tx.outputs[1]!.address);
+    expect(tx.readFrom[0]).toHaveLength(3);        // beacon ρ + beacon GB + sổ két
     // Commit là nhánh của CHỦ KÉT: nó khoá LAMP của người ta. Một ngày nào đó
     // `addSignerKey` biến mất khỏi đây thì bất kỳ ai cũng khoá được LAMP của người
     // khác — phải đỏ ngay, không chỉ nằm trong chú thích.
@@ -350,7 +354,7 @@ describe("VaultDatum.owner (ScheduleGen) — mã hoá Credential khớp blueprin
       .toBe(`d87a9f581c${SCRIPT_H}ff`);
   });
 
-  it("trường 0 của datum 17 trường mang ĐÚNG bytes Credential", () => {
+  it("trường 0 của datum 19 trường mang ĐÚNG bytes Credential", () => {
     const hex = Data.to(makeVault({ owner: { Script: [SCRIPT_H] } }), VaultDatum);
     expect(hex.startsWith(`d8799fd87a9f581c${SCRIPT_H}ff`)).toBe(true);
   });

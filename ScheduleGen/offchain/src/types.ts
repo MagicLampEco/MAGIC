@@ -1,7 +1,7 @@
 // src/types.ts — TypeScript mirror of Aiken types + Lucid Evolution Data schemas
 // Constructor indices must match Aiken type ordering (Plutus Data encoding).
 
-import { Data } from "@lucid-evolution/lucid";
+import { Data, Constr } from "@lucid-evolution/lucid";
 
 // ── Primitive ────────────────────────────────────────────────
 export type Natural = bigint;
@@ -89,6 +89,11 @@ export const GenScheduleSchema = Data.Object({
   multiplier_at_commit_q : Data.Integer(),
   fired_count            : Data.Integer(),
   auto_burn_target       : Data.Nullable(AutoBurnConfigSchema),
+  // ── Gen v2.0 (SPEC §6.1.4, `CC-GEN-SCHEDULE-FIXED`) — NỐI CUỐI, gương `types.ak` ──
+  // `M_i` chốt MỘT lần lúc ký; fire chỉ đọc trường này (không đọc beacon).
+  m_per_epoch            : Data.Integer(),
+  // `usage_factor_q` của két lúc ký — kiểm toán, fire KHÔNG đọc lại.
+  usage_factor_locked_q  : Data.Integer(),
 });
 export type GenSchedule = Data.Static<typeof GenScheduleSchema>;
 
@@ -145,7 +150,17 @@ export const StreakStateSchema = Data.Object({
 });
 export type StreakState = Data.Static<typeof StreakStateSchema>;
 
+// ── EpochUsage — một ô của `usage_window` (SPEC §6.1.2) ─────────────────────
+// Gương `types.ak` ▸ `EpochUsage` (constr 0, hai trường, thứ tự `generated, consumed`).
+// Kiểu TS thuần cùng hình dạng nằm ở `genFormula.ts` ▸ `EpochUsage` (bản chép có nhãn).
+export const EpochUsageSchema = Data.Object({
+  generated : Data.Integer(),
+  consumed  : Data.Integer(),
+});
+
 // ── VaultDatum ───────────────────────────────────────────────
+// Gen v2.0: 19 trường. Két đời trước (17 trường) KHÔNG di trú — v2.0 là hash mới;
+// giải mã bằng `decodeVaultDatum`, nó NÉM rõ khi gặp datum 17 trường.
 export const VaultDatumSchema = Data.Object({
   // Trường 0 — `Credential`. ConsumeMAGIC đọc đúng chỉ số này. Shard: `computeShardId`
   // băm 28 byte BÊN TRONG credential (gương `math.ak` ▸ `compute_shard_id`).
@@ -166,8 +181,71 @@ export const VaultDatumSchema = Data.Object({
   streak_state          : StreakStateSchema,
   personal_delegate     : Data.Nullable(Data.Bytes()),
   attribution           : VaultAttributionSchema,
+  // ── Gen v2.0 (SPEC §6.1.2) — NỐI CUỐI: trường 17, 18 ⟹ 19 trường ──────────
+  // InstantGen đặt hai trường này ở 18–19; mã dùng chung phải gom theo TÊN, không chỉ số.
+  // Đúng 7 ô: ô 0 = epoch `usage_window_epoch` (đang mở), ô 1..6 = 6 epoch liền trước.
+  usage_window          : Data.Array(EpochUsageSchema),
+  usage_window_epoch    : Data.Integer(),
 });
 export type VaultDatum = Data.Static<typeof VaultDatumSchema>;
+
+/** Số trường `VaultDatum` v2.0 (gương `types.ak` ▸ `VaultDatum`). */
+export const VAULT_DATUM_FIELDS_V2 = 19;
+/** Số trường của két đời trước Gen v2.0 — gặp số này thì NÉM, không đệm. */
+export const VAULT_DATUM_FIELDS_V1 = 17;
+
+// ── ScheduleAggregateShardDatum (§5.5) ───────────────────────
+// Gương `types.ak` ▸ `ScheduleAggregateShardDatum`. v2.0 nối `shard_obligation_nanogic`
+// (cổng κ TẠM, SPEC §6.4) ⟹ 8 trường. Trước đây lược đồ này nằm nội bộ `schedule.ts`.
+export const ScheduleShardDatumSchema = Data.Object({
+  shard_id                   : Data.Integer(),
+  shard_locked_lamp          : Data.Integer(),
+  shard_active_count         : Data.Integer(),
+  shard_cumulative_committed : Data.Integer(),
+  shard_cumulative_fired     : Data.Integer(),
+  last_updated_epoch         : Data.Integer(),
+  shard_cap                  : Data.Integer(),
+  // Σ m_per_epoch × (schedule_length − fired_count) của mọi hợp đồng hash vào shard.
+  // Ký cộng `m × N`, fire trừ `m × số lượt bắn`. NỐI CUỐI.
+  shard_obligation_nanogic   : Data.Integer(),
+});
+export type ScheduleShardDatum = Data.Static<typeof ScheduleShardDatumSchema>;
+export const SCHEDULE_SHARD_DATUM_FIELDS_V2 = 8;
+
+// ══ Beacon Gen v2.0 — BẢN CHÉP CÓ NHÃN của GenBeacons/onchain/lib/genbeacons/types.ak
+// (MAGIC@939feb3e, 2026-09-30), qua bản chép Aiken `ScheduleGen/onchain/lib/magiclamp/
+// protocol/types.ak`. HỢP ĐỒNG NHỊ PHÂN: thứ tự trường + chỉ số constructor phải khớp bản
+// gốc; sửa bản gốc thì sửa ở đây cùng commit. Bài ghim thứ tự trường với CẢ HAI tệp `.ak`:
+// `ScheduleGen/tests/datumV2.test.ts`.
+export const RateParamSchema = Data.Object({
+  rho_q           : Data.Integer(),
+  prev_rho_q      : Data.Integer(),
+  effective_epoch : Data.Integer(),
+});
+export type RateParam = Data.Static<typeof RateParamSchema>;
+
+export const GreenBackBeaconSchema = Data.Object({
+  gb_nanogic : Data.Integer(),
+  seq        : Data.Integer(),
+  epoch      : Data.Integer(),
+  depeg      : Data.Boolean(),
+});
+export type GreenBackBeacon = Data.Static<typeof GreenBackBeaconSchema>;
+
+export const GbShardSchema = Data.Object({
+  shard_id     : Data.Integer(),
+  seq          : Data.Integer(),
+  reset_amount : Data.Integer(),
+  remaining    : Data.Integer(),
+});
+export type GbShard = Data.Static<typeof GbShardSchema>;
+
+// Redeemer shard GB `Draw { amount }`: két đọc nó (purpose `Spend(shard_ref)`) — constr 0 là
+// hợp đồng nhị phân. Kiểu Aiken có MỘT biến thể nên mã hoá đúng bằng `Constr 0 [amount]`,
+// tức một `Data.Object` một trường. (`Data.Enum` một phần tử của Lucid 0.4.30 ném
+// "Could not type cast to integer" lúc `Data.to` — đo 2026-09-30.)
+export const GbShardRedeemerSchema = Data.Object({ amount: Data.Integer() });
+export type GbShardRedeemer = Data.Static<typeof GbShardRedeemerSchema>;
 
 // ── UMDatum ──────────────────────────────────────────────────
 export const UMDatumSchema = Data.Object({
@@ -229,3 +307,58 @@ export const VaultDatum    = VaultDatumSchema    as unknown as VaultDatum;
 export const UMDatum       = UMDatumSchema       as unknown as UMDatum;
 export const VaultRedeemer = VaultRedeemerSchema as unknown as VaultRedeemer;
 export const ShardRedeemer = ShardRedeemerSchema as unknown as ShardRedeemer;
+export const ScheduleShardDatum = ScheduleShardDatumSchema as unknown as ScheduleShardDatum;
+export const RateParam          = RateParamSchema          as unknown as RateParam;
+export const GreenBackBeacon    = GreenBackBeaconSchema    as unknown as GreenBackBeacon;
+export const GbShard            = GbShardSchema            as unknown as GbShard;
+export const GbShardRedeemer    = GbShardRedeemerSchema    as unknown as GbShardRedeemer;
+
+// ── Giải mã có kiểm đời (v1 ⟹ NÉM) ─────────────────────────────
+//
+// v2.0 là hash mới, KHÔNG di trú UTxO v1 (chủ dự án chốt). Một datum 17 trường đưa vào
+// `Data.from(…, VaultDatum)` cũng ném, nhưng bằng câu chung chung của Lucid không nói ra
+// đây là két đời trước. Ở đây đếm trường TRƯỚC, nói rõ đời nào, rồi mới giải mã nghiêm.
+// KHÔNG đệm hai trường thiếu bằng giá trị mặc định — cửa sổ bịa là nâng `usage_factor`.
+
+/** Mã lỗi khi gặp datum đời trước Gen v2.0. */
+export const ERR_DATUM_V1 = "GEN-SCH-V1-DATUM";
+
+function constrFieldCount(raw: string, what: string): number {
+  const d = Data.from(raw);
+  if (!(d instanceof Constr)) {
+    throw new Error(`${what}: datum không phải Constr — không giải mã được.`);
+  }
+  if (d.index !== 0) {
+    throw new Error(`${what}: constructor ${d.index}, cần 0.`);
+  }
+  return d.fields.length;
+}
+
+/** Giải mã `VaultDatum` v2.0 (19 trường). 17 trường ⟹ NÉM `GEN-SCH-V1-DATUM`. */
+export function decodeVaultDatum(raw: string): VaultDatum {
+  const n = constrFieldCount(raw, "VaultDatum");
+  if (n === VAULT_DATUM_FIELDS_V1) {
+    throw new Error(
+      `${ERR_DATUM_V1}: VaultDatum có ${n} trường — két ScheduleGen đời trước Gen v2.0. ` +
+      `v2.0 là script mới (hash mới), không di trú UTxO v1; két này không đi được bộ dựng v2.0.`);
+  }
+  if (n !== VAULT_DATUM_FIELDS_V2) {
+    throw new Error(`VaultDatum có ${n} trường, cần đúng ${VAULT_DATUM_FIELDS_V2} (Gen v2.0).`);
+  }
+  return Data.from(raw, VaultDatum);
+}
+
+/** Giải mã datum shard LAMP v2.0 (8 trường). 7 trường (v1) ⟹ NÉM `GEN-SCH-V1-DATUM`. */
+export function decodeScheduleShardDatum(raw: string): ScheduleShardDatum {
+  const n = constrFieldCount(raw, "ScheduleAggregateShardDatum");
+  if (n === SCHEDULE_SHARD_DATUM_FIELDS_V2 - 1) {
+    throw new Error(
+      `${ERR_DATUM_V1}: ScheduleAggregateShardDatum có ${n} trường — shard đời trước ` +
+      "Gen v2.0 (thiếu `shard_obligation_nanogic`). Không di trú.");
+  }
+  if (n !== SCHEDULE_SHARD_DATUM_FIELDS_V2) {
+    throw new Error(
+      `ScheduleAggregateShardDatum có ${n} trường, cần đúng ${SCHEDULE_SHARD_DATUM_FIELDS_V2}.`);
+  }
+  return Data.from(raw, ScheduleShardDatum);
+}

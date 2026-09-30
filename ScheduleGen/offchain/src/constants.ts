@@ -66,3 +66,20 @@ export const GB_VAULT_SHARE_Q      = 50_000_000n;                // TẠM, CC-GE
 export const GB_SHARD_CAP_NANOGIC  = 1_800_000_000_000_000n;     // TẠM, CC-GEN-SURPLUS-SHARD
 export const BUFFER_EP             = 2n;                         // TẠM, SPEC §6.4 · §11 (ScheduleGen)
 export const RHO_MAX_Q             = 4_000_000_000n;             // TẠM, chép từ apply-param GenBeacons rate_param
+
+// ── Gen v2.0 gói (c): beacon + cổng κ TẠM — gương `onchain/.../constants.ak` (P8) ──
+// Khối này là của RIÊNG ScheduleGen (không chép từ InstantGen). Bài so giá trị với
+// `constants.ak`: `ScheduleGen/tests/datumV2.test.ts` ▸ "hằng Gen v2.0 gói (c)".
+export const RATE_NFT_NAME        = "52484f";   // "RHO" — policy = hash script `rate_param`
+export const GREENBACK_NFT_NAME   = "474242";   // "GBB" — policy = hash script `greenback_beacon`
+export const GB_SHARD_NFT_PREFIX  = "474253";   // "GBS" ‖ byte(shard_id)
+// Không có trong `constants.ak` của ScheduleGen (két không đọc sổ); shard GB đọc nó —
+// chép có nhãn từ `GenBeacons/onchain/lib/genbeacons/constants.ak` ▸ `vault_registry_nft_name`.
+export const VAULT_REGISTRY_NFT_NAME = "565247"; // "VRG"
+// Beacon GreenBack phải ghi TRONG epoch hiện tại (SPEC §6.1.3).
+export const GREENBACK_BEACON_MAX_AGE_EPOCHS = 0n;
+// horizon của `scale_limit` cho ScheduleGen = min(N, 6) (SPEC §6.1.4).
+export const SCHEDULE_SCALE_HORIZON_CAP = 6n;
+// 🔴 Cổng κ TẠM, fail-closed (SPEC §6.4): trần trên `shard_obligation_nanogic` mỗi shard =
+// `gb_shard_cap_nanogic`. Trỏ vào hằng, không gõ số — y như bản Aiken.
+export const SCHEDULE_OBLIGATION_CAP_PER_SHARD = GB_SHARD_CAP_NANOGIC;

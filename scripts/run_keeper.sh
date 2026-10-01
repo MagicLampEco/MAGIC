@@ -5,6 +5,10 @@
 #   BLOCKFROST_KEY=… WALLET_SEED='…' bash run_keeper.sh Preprod
 #   KEEPER_STEPS=backing,price,fire,instant BLOCKFROST_KEY=… WALLET_SEED='…' bash run_keeper.sh Preprod
 #   KEEPER_DRY_RUN=1 BLOCKFROST_KEY=… WALLET_SEED='…' bash run_keeper.sh Preprod
+#   STATE_BOOK_PATH=/…/state.Preprod.sh BLOCKFROST_KEY=… WALLET_SEED='…' bash run_keeper.sh Preprod
+#
+# Sổ trạng thái mặc định là `scripts/state.<NET>.sh`; `STATE_BOOK_PATH` đổi nó cho một lượt
+# (cổng: `stateBookPath.ts`).
 #
 # Chạy lại bao nhiêu lần trong ngày cũng được: bước nào đã đúng epoch thì bỏ qua. Nên hẹn giờ mỗi
 # giờ an toàn hơn hẹn đúng một lần sau nửa đêm UTC — một lượt trượt vì mạng thì lượt sau bù.
@@ -48,7 +52,12 @@ npx tsx check_datum_shape.ts || {
   exit "$rc"
 }
 
-STATE_FILE="state.$NET.sh"
+# Sổ: mặc định `scripts/state.$NET.sh`; `STATE_BOOK_PATH` (đường TUYỆT ĐỐI) đổi sổ cho đúng lượt
+# này, để chạy keeper cho một cụm thứ hai mà không đọc sổ của cụm kia qua symlink. Ba cổng của
+# biến nằm ở MỘT chỗ, `stateBookPath.ts` ▸ `stateBookPath`; cổng hỏng thì DỪNG, không lùi về
+# mặc định — lùi về mặc định chính là ca biến này sinh ra để chặn.
+STATE_FILE="$(npx tsx state_book_path_cli.ts "$NET")" || { echo '  KHÔNG giao dịch nào được gửi.'; exit 1; }
+echo "· sổ: $STATE_FILE"
 [ -f "$STATE_FILE" ] || { echo "✗ Không thấy $STATE_FILE — keeper cần hash/ref đã deploy."; exit 1; }
 # Giữ giá trị người gọi đặt: state file nạp SAU sẽ đè im lặng nếu không cất trước.
 CALLER_BEACONS="${KEEPER_PRICE_BEACONS:-}"
@@ -56,7 +65,7 @@ CALLER_BEACONS="${KEEPER_PRICE_BEACONS:-}"
 # bản chung cho nhóm biến mà không phép kiểm nào đứng sau.
 . "./state_book_guard.sh"
 assert_state_books_khong_khai_y_dinh "$STATE_FILE"
-set -a; . "./$STATE_FILE"; set +a
+set -a; . "$STATE_FILE"; set +a
 . "./keeper_beacons.sh"
 derive_keeper_price_beacons "$CALLER_BEACONS"
 export KEEPER_PRICE_BEACONS

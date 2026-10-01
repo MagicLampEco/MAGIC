@@ -13,6 +13,13 @@ Số dưới đây là ảnh chụp — hết hạn ngay khi có commit mới. L
 
 ---
 
+## Nhánh đã đẩy, chưa có PR
+
+- đã push chưa PR (nhánh `feat/gen-v2`) — 2026-10-01. Gen v2.0 (issue #128): toán, validator,
+  offchain, VTA/VRA, kịch bản dựng cụm. Đẩy để máy chủ Preprod dựng VTA v2 ở base path riêng,
+  chạy song song bản v1. Chưa gộp vào `main` vì CD tự triển khai `main` lên Preprod: gộp là
+  thay VTA v1 bằng v2 ở base path đang phục vụ.
+
 ## Đang sống — nằm trong mô hình ba-token
 
 | Module | Vai | vitest | `aiken check` |

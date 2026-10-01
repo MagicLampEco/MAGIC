@@ -30,13 +30,24 @@ trình biên dịch `v1.1.21+42babe5`
 | validator | hash (CHƯA apply-param) |
 |---|---|
 
+### `GenBeacons/onchain`
+
+trình biên dịch `v1.1.21+42babe5`
+
+| validator | hash (CHƯA apply-param) |
+|---|---|
+| `gb_shard.gb_shard` | `78b49a7865e46288fc7dd6a3e967c9cc9bdcd312d72b0a592745121f` |
+| `greenback_beacon.greenback_beacon` | `3937e4f4cdeb96396cc6e963b1a90e9ef8eabccdab01888f3e526c25` |
+| `rate_param.rate_param` | `e9d42b6df5b3142af6e7073248de089ed85706569b524a56fcfa023b` |
+| `vault_registry.vault_registry` | `91d942a007b1e041095e5cbc9fb61d627639e89cb70aa352e780b9e0` |
+
 ### `InstantGen/onchain`
 
 trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `vault.vault` | `4c7321697746ed0cdcb4fa60230c29d4ee44ef1a4530c9e717c7fbbf` |
+| `vault.vault` | `17f0e9faf8de8f2393db8d456b835fd246de72d677987eb15aa8f624` |
 
 ### `Paymaster/onchain`
 
@@ -61,9 +72,10 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `shard_nft.shard_nft` | `b2211b6008397f1b5996f834e0d060bfff48a16a3dd971207c333e71` |
-| `vault.shard` | `f08a20dd8a70ae0e1808963d998c374bca77816157ee86673b4cf491` |
-| `vault.vault` | `0cb3ad86ab77661dfe122cfcebe7b75f26f8ac75af88b1237f244f51` |
+| `shard_nft.shard_nft` | `9553132b54fce178732fdae7f95b9f1833349c087277e939c22a12ef` |
+| `vault.commit` | `cc51dfa727ddee00ae1fe4b77e087cdb80f7d05cd8fca691e50beda7` |
+| `vault.shard` | `a1fef229005973298f91419a8dafb05b225529babda4d0c07ecb7203` |
+| `vault.vault` | `c70927ca5afffa1ae1a06b4b704a73ecda9d79fd71680a38af1f3066` |
 
 ### `UMKeeper/onchain`
 

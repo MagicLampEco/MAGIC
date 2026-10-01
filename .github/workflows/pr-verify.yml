@@ -122,8 +122,13 @@ jobs:
         working-directory: ${{ matrix.package }}
         run: |
           set -euo pipefail
+          # Phần lớn `<Module>/offchain/vitest.config.ts` lấy bài kiểm từ `../tests` — thư mục
+          # anh em, NGOÀI gói. Chỉ dò `.` thì bỏ sót mọi bài đọc blueprint ở đó, và job đỏ
+          # `ENOENT` dù blueprint dựng được (đã gặp ở ScheduleGen/offchain).
+          dirs=(.)
+          [ -d ../tests ] && dirs+=(../tests)
           if grep -rqs --include='*.ts' --include='*.mjs' --include='*.js' \
-               'onchain/plutus[.]json' . --exclude-dir=node_modules --exclude-dir=dist; then
+               'onchain/plutus[.]json' "${dirs[@]}" --exclude-dir=node_modules --exclude-dir=dist; then
             echo "yes=true" >> "$GITHUB_OUTPUT"
             echo "Gói này đọc plutus.json — sẽ dựng blueprint trước khi chạy test."
           else

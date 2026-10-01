@@ -114,6 +114,16 @@ for r in run_*.sh; do
   if ! grep -q 'assert_state_books_khong_khai_y_dinh' "$r"; then
     printf '  ✗ %-52s → nạp sổ bằng `set -a` mà KHÔNG gác\n' "$r"
     ho_day_noi=$((ho_day_noi + 1))
+    continue
+  fi
+  # Có gọi cổng chưa đủ: runner KHÔNG có `set -e` thì cổng trả 1 mà dòng sau vẫn nạp sổ.
+  # Ở runner đó, mọi lời gọi cổng phải tự dừng (`|| exit` / `|| {`). Bỏ chú thích cuối dòng
+  # trước khi so: một chú thích nhắc tới `|| exit` từng làm phép so này xanh trên dòng thiếu nó.
+  if ! grep -Eq '^[[:space:]]*set -[a-z]*e' "$r" \
+     && grep -E '^[[:space:]]*assert_state_books_khong_khai_y_dinh' "$r" | sed 's/[[:space:]]#.*$//' \
+        | grep -Ev '\|\|[[:space:]]*(exit|\{)' | grep -q .; then
+    printf '  ✗ %-52s → không có `set -e` mà lời gọi cổng không `|| exit`\n' "$r"
+    ho_day_noi=$((ho_day_noi + 1))
   fi
 done
 if [ "$ho_day_noi" -eq 0 ]; then

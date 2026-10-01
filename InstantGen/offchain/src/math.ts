@@ -9,14 +9,18 @@
 import {
   Q, INSTANT_REWARD_RATE_Q, BR_SAFE_Q, F_CAP_SURPLUS_Q,
   UM_FALLBACK_Q, UM_MAX_STALENESS,
-  INSTANT_RATE_Q, SNAPSHOT_BASE_RATE_Q, SCHEDULE_MIN_LENGTH,
+  INSTANT_RATE_Q, SNAPSHOT_BASE_RATE_Q, SCHEDULE_MIN_LENGTH, LENT_PP_CAP,
   S_SEG1_INTERCEPT_Q, S_SEG1_SLOPE_Q, S_SEG2_KNEE, S_SEG2_INTERCEPT_Q,
   S_SEG2_SLOPE_Q, S_SEG3_KNEE, S_SEG3_INTERCEPT_Q, S_SEG3_SLOPE_Q,
 } from "./constants.js";
 import {
   slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp,
 } from "@magiclamp/protocol-utils";
-import type { UMDatum, GenSchedule } from "./types.js";
+import type { GenSchedule } from "./types.js";
+
+/** Hình dạng UM mà `getUmForInstant` đọc. Gen v2.0 bỏ UM khỏi két InstantGen (không
+ *  còn lược đồ `UMDatum` trong `types.ts`); hàm đời v1 giữ lại cho bài kiểm C-UM-6. */
+export interface UmReading { smoothed_q: bigint; last_updated_epoch: bigint }
 
 // Re-export shared primitives to preserve module's public API
 export { slotToEpoch, nanogicToMagicStr, qToStr, lampToOildrop, oildropToLamp };
@@ -169,6 +173,49 @@ export function computeInstantGrant(
   );
 }
 
+// ── L_lent — LAMP-mượn từ két Wakeme (CC-GEN-LENT-READ) ──────
+//   capLent  = min(capPp(L_lent), LENT_PP_CAP)
+//   capTotal = capPp(L_avail) + capLent
+//   grant    = min(reward, capSurplus, capTotal)
+
+/** Phần trần từ L_lent (oildrop), nanogic/epoch. Mirrors math.ak: compute_cap_lent. */
+export function computeCapLent(lLentOildrop: bigint): bigint {
+  return min2(computeCapPp(lLentOildrop), LENT_PP_CAP);
+}
+
+/** §6.3 gate với trần theo LAMP tính sẵn. Mirrors math.ak: compute_instant_grant_capped. */
+export function computeInstantGrantCapped(
+  consumed    : bigint,
+  umQ         : bigint,
+  pmQ         : bigint,
+  brQ         : bigint,
+  magicSupply : bigint,
+  capLamp     : bigint,
+): bigint {
+  return min3(
+    computeRewardFromConsumed(consumed, umQ, pmQ),
+    computeCapSurplus(brQ, magicSupply),
+    capLamp,
+  );
+}
+
+/** §6.3 gate đủ hai nguồn LAMP. Mirrors math.ak: compute_instant_grant_with_lent.
+ *  `lLentOildrop = 0n` cho đúng `computeInstantGrant`. */
+export function computeInstantGrantWithLent(
+  consumed      : bigint,
+  umQ           : bigint,
+  pmQ           : bigint,
+  brQ           : bigint,
+  magicSupply   : bigint,
+  lAvailOildrop : bigint,
+  lLentOildrop  : bigint,
+): bigint {
+  return computeInstantGrantCapped(
+    consumed, umQ, pmQ, brQ, magicSupply,
+    computeCapPp(lAvailOildrop) + computeCapLent(lLentOildrop),
+  );
+}
+
 // ── C-UM-6: UM for Instant ───────────────────────────────────
 //
 // staleness = current_epoch − UM_datum.last_updated_epoch
@@ -177,7 +224,7 @@ export function computeInstantGrant(
 // TV-UM-SPLIT: smoothed=2B, last_updated=98, current=100
 //   → staleness=2 > 1 → result = 500_000_000 ✓
 
-export function getUmForInstant(um: UMDatum, currentEpoch: bigint): bigint {
+export function getUmForInstant(um: UmReading, currentEpoch: bigint): bigint {
   const staleness = currentEpoch - um.last_updated_epoch;
   if (staleness <= UM_MAX_STALENESS) {
     return um.smoothed_q;

@@ -22,9 +22,8 @@ export type Profile = "Ember" | "Flame" | "Lantern";
  * A user who wants both mechanisms needs 2 separate vaults (2 UTxOs at 2
  * different addresses).
  *
- * 🔴 Hình dạng datum KHÔNG còn giống nhau giữa hai loại: két `Instant` mang thêm
- * trường 17 `instant_unlock_ms` (18 trường) trong khi `Schedule` giữ 17. Lược đồ
- * và lý do: `schemas.ts` đầu tệp. Bản trước của dòng này khai ngược.
+ * 🔴 Hình dạng datum KHÔNG giống nhau giữa hai loại (Gen v2.0): két `Instant` 20
+ * trường, `Schedule` 19, khác nhau cả ở ô giữa. Lược đồ và lý do: `schemas.ts`.
  */
 export type VaultType = "Instant" | "Schedule";
 
@@ -78,23 +77,40 @@ export interface ProtocolParams {
    *  deploy mainnet, đúng thứ tham số này sinh ra để chặn. Chỉ đặt tay khi LAMP
    *  được mint dưới một tên phi chuẩn. */
   lampAssetName?: string;
-  /** UM datum NFT policy ID. Required for Instant. */
-  umNftPolicyId?: string;
-  /** UM script hash (= applied UMKeeper validator hash). Required for
-   *  Instant. Pins the UM reference input to the canonical UM
-   *  script address (MAINNET-BLOCK fix, defense-in-depth layer b). */
-  umScriptHash?: string;
-  /** Shard NFT policy ID. Required for Schedule. */
+  /** Shard NFT policy ID (shard LAMP gộp của ScheduleGen). Required for Schedule. */
   shardPolicyId?: string;
-  /** BackingBeacon NFT policy ID. Required for Instant (§6.3).
-   *  Người GHI beacon là keeper tầng GreenBack của CHÍNH kho này (khoá
-   *  `greenback_beacon_writer`, SPEC v2.0 §6.3), không phải nhà CARP — xem
-   *  `BOUNDARIES.md` ▸ "`B` là một DANH MỤC token". Lược đồ datum: `DevStatus.md` Nợ #2.
-   *  Pass the all-zero placeholder while the beacon is not deployed: no
-   *  reference input can then match and InstantGen stays SHUT (fail-closed). */
-  backingNftPolicyId?: string;
-  /** BackingBeacon script hash. Required for Instant (§6.3). */
-  backingScriptHash?: string;
+
+  // ── Gen v2.0: bốn tham số GenBeacons + policy shard GB ─────────────────────────
+  // Instant nhận cả năm (apply-param #2..#6 của `validator vault(`); Schedule nhận
+  // `gbShardPolicyId` ở cả két lẫn `commit`, bốn cái còn lại chỉ ở `commit`. Giá trị là
+  // hash của các validator GenBeacons ĐÃ apply — SDK không tính được, phải nhận qua cấu
+  // hình (sổ deploy của mạng). Thiếu ⟹ `buildParamsList` NÉM.
+  /** Policy NFT beacon GreenBack ("GBB") = hash script `greenback_beacon`. */
+  gbBeaconNftPolicy?: string;
+  /** Hash script `greenback_beacon` (nơi beacon GB nằm). */
+  gbBeaconScriptHash?: string;
+  /** Hash script `gb_shard` (= policy NFT "GBS"‖id, mint gộp trong validator). */
+  gbShardPolicyId?: string;
+  /** Policy NFT beacon ρ ("RHO") = hash script `rate_param`. */
+  rateNftPolicy?: string;
+  /** Hash script `rate_param` (nơi beacon ρ nằm). */
+  rateScriptHash?: string;
+
+  /** 🪦 Đã bỏ ở Gen v2.0 (két không còn đọc UM). Truyền ⟹ NÉM. */
+  umNftPolicyId?: never;
+  /** 🪦 Đã bỏ ở Gen v2.0. Truyền ⟹ NÉM. */
+  umScriptHash?: never;
+  /** 🪦 Đã bỏ ở Gen v2.0 (BackingBeacon thay bằng beacon GreenBack + shard GB). Truyền ⟹ NÉM. */
+  backingNftPolicyId?: never;
+  /** 🪦 Đã bỏ ở Gen v2.0. Truyền ⟹ NÉM. */
+  backingScriptHash?: never;
+
+  /** Script hash két Wakeme — apply-param #7 `wakeme_vault_hash` của vault Instant
+   *  (CC-GEN-LENT-READ). Required for Instant; phải là 56 ký tự hex thường, sai ⟹ ném.
+   *  Không suy theo mạng ở đây: giá trị thuộc nhà Wakeme, người gọi lấy từ
+   *  `@magiclamp/protocol-utils` ▸ `wakemeVaultHash(network)` (mạng chưa có két ⟹ hàm đó
+   *  ném) hoặc từ sổ deploy của mình. Không áp cho Schedule. */
+  wakemeVaultHash?: string;
   /** Override ms_per_epoch (advanced). Derived from `network` otherwise. */
   msPerEpoch?: bigint;
 }

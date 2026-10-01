@@ -150,7 +150,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   // every other vault SDK in this repo (instant.ts, schedule.ts).
   //
   // Lược đồ đi theo `vaultType`, không phải một lược đồ chung: két Instant mang
-  // 18 trường, két Schedule 17 (`schemas.ts` đầu tệp). Hai vế phải khớp nhau —
+  // 20 trường, két Schedule 19 (Gen v2.0, `schemas.ts` đầu tệp). Hai vế phải khớp nhau —
   // lệch thì `Data.to` ném ngay tại đây, trước khi có giao dịch nào.
   const datumSchema = vaultType === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
   const vaultDatumCbor = Data.to(initialVault as never, datumSchema);

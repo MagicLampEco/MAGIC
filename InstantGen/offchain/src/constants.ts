@@ -25,6 +25,13 @@ export const INSTANT_DECAY_WINDOW = MAGIC_DECAY_WINDOW;   // alias
 // [Routine] LAMP that must SIT in the vault to open the door. Never moves.
 export const MIN_INSTANT_HOLDING = 10_000_000n;      // 10 LAMP in oildrop
 
+// ── L_lent — trần riêng cho LAMP-mượn từ két Wakeme (CC-GEN-LENT-READ) ──
+// TẠM — giá trị do chủ dự án chốt (`LENT_PP_CAP`, Spec §12 "chốt sau"); đổi = deploy
+// lại. PHẢI bằng `lent_pp_cap` trong
+// `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` (P8).
+// Phần trần từ L_lent = min(computeCapPp(L_lent), LENT_PP_CAP) — nanogic/epoch.
+export const LENT_PP_CAP = 1_000_000_000n;   // nanogic = 1 MAGIC/epoch
+
 // ── Wakeme seed credit (§6.3 — the WAY IN to the InstantGen loop) ─
 // [Constitutional] MUST equal `wakeme_seed_credit` in
 // `InstantGen/onchain/lib/magiclamp/protocol/constants.ak`, where the full
@@ -142,3 +149,27 @@ export const TESTNET_CONFIG = {
   backingScriptHash:  "00".repeat(28),
   backingNftAssetName: "425251",  // "BRQ" in hex
 };
+
+// ── Gen v2.0 — công thức sinh chung F(L, usage_ratio, GB) (SPEC §6.1.1–§6.1.3, §11) ──
+// PHẢI trùng BIT với khối cùng tên trong
+// `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` (P8) — lý do + dẫn xuất ở đó.
+// Hàm dùng các hằng này: `genFormula.ts`.
+export const USAGE_FACTOR_FLOOR_Q  = 500_000_000n;               // TẠM, CC-GEN-USAGE-FLOOR
+export const SCALE_COVERAGE_Q      = 1_000_000_000n;             // TẠM, CC-GEN-SCALE-COVERAGE
+export const USAGE_WINDOW_LEN      = 7;                          // ô 0 = epoch mở, 1..6 = đã đóng
+export const INSTANT_SCALE_HORIZON = 6n;                         // SPEC §6.1.4
+export const GB_VAULT_SHARE_Q      = 50_000_000n;                // TẠM, CC-GEN-GB-VAULT-SHARE
+export const GB_SHARD_CAP_NANOGIC  = 1_800_000_000_000_000n;     // TẠM, CC-GEN-SURPLUS-SHARD
+export const BUFFER_EP             = 2n;                         // TẠM, SPEC §6.4 · §11 (ScheduleGen)
+export const RHO_MAX_Q             = 4_000_000_000n;             // TẠM, chép từ apply-param GenBeacons rate_param
+
+// ── Gen v2.0 — beacon/shard GreenBack + beacon ρ (gói d1) ──────────────────────
+// Gương `InstantGen/onchain/lib/magiclamp/protocol/constants.ak` ▸ `gb_shard_count`,
+// `greenback_beacon_max_age_epochs` (P8). Tên NFT CHÉP CÓ NHÃN từ
+// `GenBeacons/onchain/lib/genbeacons/constants.ak` (MAGIC@939feb3e, 2026-09-30).
+export const GB_SHARD_COUNT                  = 16n;
+export const GREENBACK_BEACON_MAX_AGE_EPOCHS = 1n;
+export const RATE_NFT_NAME                   = "52484f";   // "RHO"
+export const GREENBACK_NFT_NAME              = "474242";   // "GBB"
+export const GB_SHARD_NFT_PREFIX             = "474253";   // "GBS" ‖ một byte shard_id
+export const VAULT_REGISTRY_NFT_NAME         = "565247";   // "VRG"

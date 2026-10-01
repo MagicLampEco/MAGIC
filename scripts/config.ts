@@ -4,7 +4,7 @@
 
 import { STATIC_ASSET_NAMES } from "./assetNames.js";
 import "dotenv/config";
-import { slotsPerEpoch, msPerEpoch, lampAssetName, type Network } from "@magiclamp/protocol-utils";
+import { slotsPerEpoch, msPerEpoch, lampAssetName, wakemeVaultHash, type Network } from "@magiclamp/protocol-utils";
 import type { LucidEvolution } from "@lucid-evolution/lucid";
 // Giới hạn shard là ràng buộc cưỡng chế on-chain — giữ MỘT nguồn duy nhất.
 // Khai lại ở đây từng làm hai nơi có thể trôi khỏi nhau mà không test nào đỏ.
@@ -46,6 +46,12 @@ export const SCRIPT_HASHES = {
   // ghi chú dài ở `POLICY_IDS.backing`.
   // All-zero default = beacon not deployed ⟹ InstantGen SHUT (fail-closed).
   backing_beacon:  process.env.BACKING_SCRIPT_HASH  ?? "00".repeat(28),
+  // Script hash két Wakeme — apply-param #8 của vault InstantGen (CC-GEN-LENT-READ).
+  // KHÔNG đọc env và KHÔNG có mặc định all-zero như beacon ở trên: giá trị thuộc nhà
+  // Wakeme, nguồn duy nhất trong kho là `@magiclamp/protocol-utils` ▸
+  // `WAKEME_VAULT_HASH_BY_NETWORK`. Mạng chưa có két ⟹ NÉM. Getter (lười) để các script
+  // chỉ chạm Schedule không chết theo trên mạng chưa có két.
+  get wakeme_vault(): string { return wakemeVaultHash(NETWORK); },
 };
 
 // ── Token policy IDs (điền sau khi mint) ─────────────────────

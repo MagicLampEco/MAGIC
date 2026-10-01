@@ -15,7 +15,8 @@
 import type { Profile } from "@magiclamp/sdk";
 
 import { parseDidCommit, parseEngageRef } from "./engage.js";
-import { BadRequestError } from "./errors.js";
+import { parseWakemeVaultRef } from "./wakeme.js";
+import { BadRequestError, CodedApiError } from "./errors.js";
 import { parseFeePayer, type OutRefLike } from "./feePayer.js";
 import { parseFunding } from "./funding.js";
 import type { IssuedRoute } from "./locks.js";
@@ -30,6 +31,7 @@ import {
 /** Đường dựng → tên route (cùng tập với sổ phát-hành và bảng mục đích Feecover). */
 export const BUILD_ROUTE_OF_PATH: Readonly<Record<string, IssuedRoute>> = {
   "/tx/instant-gen": "instant-gen",
+  "/tx/refresh-checkpoint": "refresh-checkpoint",
   "/tx/schedule-commit": "schedule-commit",
   "/tx/schedule-fire": "schedule-fire",
   "/tx/consume": "consume",
@@ -39,10 +41,11 @@ export const BUILD_ROUTE_OF_PATH: Readonly<Record<string, IssuedRoute>> = {
 };
 
 export type ParsedBuild =
-  | { route: "instant-gen"; req: OwnerRequest }
+  | { route: "instant-gen"; req: OwnerRequest & { m: bigint; wakemeVaultRef?: OutRefLike } }
+  | { route: "refresh-checkpoint"; req: OwnerRequest & { wakemeVaultRef?: OutRefLike } }
   | { route: "schedule-commit"; req: OwnerRequest & { scheduleLength: bigint; lampPerEpoch: bigint } }
   | { route: "schedule-fire"; req: OwnerRequest & { scheduleId: string } }
-  | { route: "consume"; req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike } }
+  | { route: "consume"; req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike; wakemeVaultRef?: OutRefLike } }
   | { route: "open-thread"; req: OpenThreadRequest }
   | { route: "bind-did"; req: BindDidRequest }
   | { route: "create-vault"; req: CreateVaultRequest };
@@ -51,13 +54,23 @@ export type BuildResult =
   | { route: "open-thread"; out: OpenThreadResponse }
   | { route: "bind-did"; out: BindDidResponse }
   | { route: "create-vault"; out: CreateVaultResponse }
-  | { route: "instant-gen" | "schedule-commit" | "schedule-fire" | "consume"; out: BuildResponse };
+  | { route: "instant-gen" | "refresh-checkpoint" | "schedule-commit" | "schedule-fire" | "consume"; out: BuildResponse };
 
 /** Đọc thân bài của một đường dựng. Sai ⟹ 400 có mã, như đường dựng trả. */
 export function parseBuildRequest(route: IssuedRoute, body: Record<string, unknown>): ParsedBuild {
   switch (route) {
-    case "instant-gen":
-      return { route, req: ownerReq(body) };
+    case "instant-gen": {
+      // `m` (nanogic) do CHỦ chọn — Gen v2.0. Chuỗi chữ số > 0; trần (`max_m`) do dịch vụ so
+      // trên beacon/shard thật ⟹ 422 `INSTANT_GEN_M_ABOVE_MAX`, không phải ở đây.
+      // `wakeme_vault_ref` TUỲ CHỌN (`wakeme.ts`): vắng ⟹ không két nào, L_lent = 0.
+      const m = reqAmountCoded(body, "m", "INSTANT_GEN_M_INVALID");
+      const wakemeVaultRef = parseWakemeVaultRef(body.wakeme_vault_ref);
+      return { route, req: { ...ownerReq(body), m, ...(wakemeVaultRef === undefined ? {} : { wakemeVaultRef }) } };
+    }
+    case "refresh-checkpoint": {
+      const wakemeVaultRef = parseWakemeVaultRef(body.wakeme_vault_ref);
+      return { route, req: { ...ownerReq(body), ...(wakemeVaultRef === undefined ? {} : { wakemeVaultRef }) } };
+    }
     case "schedule-commit":
       return {
         route,
@@ -77,6 +90,8 @@ export function parseBuildRequest(route: IssuedRoute, body: Record<string, unkno
           opType: reqSmallInt(body, "op_type"),
           opCount: reqBigint(body, "op_count"),
           engageRef: parseEngageRef(body.engage_ref),
+          // Két Instant tiêu lần đầu trong epoch mới đang ghim két Wakeme ⟹ dịch vụ đòi trường này.
+          ...optWakeme(body),
         },
       };
     case "open-thread":
@@ -119,6 +134,7 @@ export function parseBuildRequest(route: IssuedRoute, body: Record<string, unkno
 export async function runBuild(service: VaultTxService, p: ParsedBuild, quote?: QuoteMode): Promise<BuildResult> {
   switch (p.route) {
     case "instant-gen": return { route: p.route, out: await service.instantGen(p.req, quote) };
+    case "refresh-checkpoint": return { route: p.route, out: await service.refreshCheckpoint(p.req, quote) };
     case "schedule-commit": return { route: p.route, out: await service.scheduleCommit(p.req, quote) };
     case "schedule-fire": return { route: p.route, out: await service.scheduleFire(p.req, quote) };
     case "consume": return { route: p.route, out: await service.consume(p.req, quote) };
@@ -188,6 +204,28 @@ function reqBigint(body: Record<string, unknown>, name: string): bigint {
   }
   const n = BigInt(v);
   if (n <= 0n) throw new BadRequestError(`"${name}" phải > 0.`);
+  return n;
+}
+
+function optWakeme(body: Record<string, unknown>): { wakemeVaultRef?: OutRefLike } {
+  const wakemeVaultRef = parseWakemeVaultRef(body.wakeme_vault_ref);
+  return wakemeVaultRef === undefined ? {} : { wakemeVaultRef };
+}
+
+/**
+ * Như `reqBigint` nhưng mang MÃ RIÊNG của trường — app phân biệt được "m sai hình dạng" với
+ * mọi lỗi 400 khác mà không phải đọc câu chữ. Cùng luật: chuỗi chữ số, > 0, không nhận số JSON.
+ */
+function reqAmountCoded(body: Record<string, unknown>, name: string, code: string): bigint {
+  const v = body[name];
+  const bad = (why: string): never => {
+    throw new CodedApiError(400, code, `"${name}" ${why}`, { received_type: v === undefined ? "missing" : typeof v });
+  };
+  if (v === undefined) bad("bắt buộc (nanogic, chuỗi chữ số thập phân > 0).");
+  if (typeof v === "number") bad("phải là CHUỖI chữ số, không phải số JSON (số JSON làm tròn quá 2^53).");
+  if (typeof v !== "string" || !/^\d+$/.test(v)) bad("phải là chuỗi chữ số thập phân.");
+  const n = BigInt(v as string);
+  if (n <= 0n) bad("phải > 0.");
   return n;
 }
 

@@ -94,6 +94,17 @@ fi
 export NETWORK="$NET" BLOCKFROST_KEY WALLET_SEED
 echo "▶ NETWORK=$NET · Blockfrost + seed đã nhận từ môi trường (không in)."
 
+# ── Cổng: mạng này có két Wakeme chưa? (apply-param #8 của vault InstantGen) ──────
+# [4] đòi hash két Wakeme của mạng; chưa có thì [4] ném SAU KHI [00]–[3] đã gửi tx
+# thật. Nên cổng đứng đây và DỪNG CẢ CHUỖI — không bỏ qua nửa sau rồi in như chạy xong.
+if ! npx tsx --eval "import { wakemeVaultHash } from '@magiclamp/protocol-utils'; wakemeVaultHash('$NET');" >/dev/null 2>&1; then
+  echo "✗ Chưa có két Wakeme trên $NET (hoặc không nạp được bảng) — vault InstantGen (bước [4]) không dựng được."
+  echo "  Chuỗi DỪNG ở đây. KHÔNG giao dịch nào được gửi."
+  echo "  Mạng có két: ProtocolUtils/src/index.ts ▸ WAKEME_VAULT_HASH_BY_NETWORK."
+  exit 1
+fi
+echo "  ✓ két Wakeme của $NET có trong bảng theo mạng (apply-param #8)."
+
 step() { echo; echo "══════ $* ══════"; }
 
 # ── [00] Ví phải có UTxO thuần ADA, nếu không mọi tx script bị từ chối ──────

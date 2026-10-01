@@ -12,8 +12,10 @@
 // Các hàm ở đây THUẦN: không đọc env, không đọc config.ts, không chạm mạng.
 // Nhờ vậy check_param_names.ts chạy được mà không cần .env hay ví.
 
-import { Constr, type Data } from "@lucid-evolution/lucid";
-import type { ParamMap } from "./applyParams.js";
+import { Constr, type Data, type Validator } from "@lucid-evolution/lucid";
+import { assertWakemeVaultHash } from "@magiclamp/protocol-utils";
+import { appliedScript, findValidator, type Blueprint, type ParamMap } from "./applyParams.js";
+import type { GEN_V2_STATE_KEYS } from "./gen_vault_tx_api_deployment.js";
 
 /** OutputReference của PlutusV3 = Constr 0 [transaction_id: Bytes, output_index: Int]. */
 export function outputReferenceData(txHash: string, outputIndex: number | bigint): Data {
@@ -44,46 +46,156 @@ export function addressData(
   ]);
 }
 
-// ── InstantGen — vault.vault.{mint,spend} (7 tham số) ────────────
-// Neo: InstantGen/onchain/validators/vault.ak — `validator vault(...)`.
-export interface InstantVaultParamInputs {
+// ── Gen v2.0 — tham chiếu cụm GenBeacons đọc từ sổ trạng thái ─────
+//
+// Năm apply-param beacon của két Instant và của `commit` ScheduleGen đều là HASH SCRIPT
+// của cụm GenBeacons mà bước 11 ghi vào sổ. Mỗi beacon là validator đa mục đích (handler
+// `mint` nằm trong chính nó), nên policy NFT = script hash theo định nghĩa: một khoá sổ
+// cho cả hai ô. Nguồn của nghĩa từng khoá: `gen_vault_tx_api_deployment.ts` ▸
+// `GEN_V2_STATE_KEYS` — kiểu của nó ghim tên khoá dưới đây, đổi tên ở nguồn là gãy lúc
+// typecheck, không gãy lúc deploy.
+//
+// Hàm THUẦN: nơi gọi truyền `process.env` (hoặc một sổ đã phân tích) vào. Thiếu khoá ⟹ NÉM,
+// kể ĐỦ mọi khoá thiếu trong một lượt, KHÔNG đệm. Một hash đệm vẫn apply ra một két "hợp
+// lệ" — chỉ là két đó tra một beacon không tồn tại, vĩnh viễn.
+//
+// KHÔNG đọc `VAULT_REGISTRY_HASH`: không két nào bake nó (sổ két được đúc SAU két, với hash
+// các két — `11_deploy_gen_beacons.ts` pha `registry`), và `GB_SHARD_CAP_NANOGIC` thì bước
+// 11 tự đối chiếu với hằng két.
+type GenV2StateKey = keyof typeof GEN_V2_STATE_KEYS;
+const GEN_V2_VAULT_KEYS = ["RATE_PARAM_HASH", "GREENBACK_BEACON_HASH", "GB_SHARD_HASH"] as const satisfies readonly GenV2StateKey[];
+
+export interface GenV2BeaconRefs {
+  gbBeaconNftPolicy:  string;   // = GREENBACK_BEACON_HASH (NFT "GBB")
+  gbBeaconScriptHash: string;   // = GREENBACK_BEACON_HASH (địa chỉ beacon)
+  gbShardPolicyId:    string;   // = GB_SHARD_HASH (NFT "GBS"‖id)
+  rateNftPolicy:      string;   // = RATE_PARAM_HASH (NFT "RHO")
+  rateScriptHash:     string;   // = RATE_PARAM_HASH (địa chỉ beacon ρ)
+}
+
+export function genV2BeaconRefsFromBook(book: Readonly<Record<string, string | undefined>>): GenV2BeaconRefs {
+  const missing = GEN_V2_VAULT_KEYS.filter((k) => !book[k]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Sổ trạng thái thiếu ${missing.join(", ")} — chạy \`deploy/11_deploy_gen_beacons.ts\` ` +
+      `(GEN_BEACONS_PHASE=beacons) rồi nạp lại sổ. Két Gen v2.0 nướng các hash đó vào apply-param.`,
+    );
+  }
+  const bad = GEN_V2_VAULT_KEYS.filter((k) => !/^[0-9a-f]{56}$/.test(book[k]!));
+  if (bad.length > 0) {
+    throw new Error(`Sổ trạng thái: ${bad.map((k) => `${k}="${book[k]}"`).join(", ")} không phải 28 byte hex thường.`);
+  }
+  const rate = book.RATE_PARAM_HASH!, gbb = book.GREENBACK_BEACON_HASH!, gbShard = book.GB_SHARD_HASH!;
+  return {
+    gbBeaconNftPolicy: gbb, gbBeaconScriptHash: gbb, gbShardPolicyId: gbShard,
+    rateNftPolicy: rate, rateScriptHash: rate,
+  };
+}
+
+function hash28(fn: string, name: string, v: string): string {
+  if (!/^[0-9a-f]{56}$/.test(v)) throw new Error(`${fn}: ${name} phải là 28 byte hex thường, nhận "${v}".`);
+  return v;
+}
+
+// ── InstantGen — vault.vault.{mint,spend} (9 tham số, Gen v2.0) ──
+// Neo: InstantGen/onchain/validators/vault.ak — `validator vault(...)`. Gương của gói nền:
+// `InstantGen/offchain/src/vaultScript.ts` ▸ `INSTANT_VAULT_PARAM_TITLES`; bài
+// `test_deploy_gen_v2.ts` so hash của hàm này với `applyInstantVaultParams` cho cùng đầu vào.
+//
+// `lamp_asset_name` (#2) theo MẠNG nằm GIỮA, và `wakeme_vault_hash` (#8) cũng vậy — không ô
+// theo mạng nào nằm cuối, nên bỏ sót một ô là dịch cả dãy chứ không "thiếu tham số cuối".
+// UM + BackingBeacon của đời v1 đã rời két (v2.0 đọc beacon ρ + GreenBack thay thế).
+export interface InstantVaultParamInputs extends GenV2BeaconRefs {
   lampPolicyId:      string;
   lampAssetName:     string;  // PARAM theo mạng (tLAMP testnet / LAMP mainnet)
-  umNftPolicy:       string;
-  umScriptHash:      string;
-  backingNftPolicy:  string;
-  backingScriptHash: string;
+  wakemeVaultHash:   string;  // PARAM theo mạng — két Wakeme
   msPerEpoch:        bigint;
 }
 
 export function instantVaultParams(i: InstantVaultParamInputs): ParamMap {
+  const fn = "instantVaultParams";
   return {
-    lamp_policy_id:      i.lampPolicyId,
-    lamp_asset_name:     i.lampAssetName,
-    um_nft_policy:       i.umNftPolicy,
-    um_script_hash:      i.umScriptHash,
-    backing_nft_policy:  i.backingNftPolicy,
-    backing_script_hash: i.backingScriptHash,
-    ms_per_epoch:        i.msPerEpoch,
+    lamp_policy_id:        hash28(fn, "lampPolicyId", i.lampPolicyId),
+    lamp_asset_name:       i.lampAssetName,
+    gb_beacon_nft_policy:  hash28(fn, "gbBeaconNftPolicy", i.gbBeaconNftPolicy),
+    gb_beacon_script_hash: hash28(fn, "gbBeaconScriptHash", i.gbBeaconScriptHash),
+    gb_shard_policy_id:    hash28(fn, "gbShardPolicyId", i.gbShardPolicyId),
+    rate_nft_policy:       hash28(fn, "rateNftPolicy", i.rateNftPolicy),
+    rate_script_hash:      hash28(fn, "rateScriptHash", i.rateScriptHash),
+    // Dạng 56 hex thường, sai ⟹ ném. Kiểm ở đây vì mọi đường apply (deploy, test,
+    // cổng đối chiếu) đều đi qua hàm này.
+    wakeme_vault_hash:     assertWakemeVaultHash(i.wakemeVaultHash, fn),
+    ms_per_epoch:          i.msPerEpoch,
   };
 }
 
-// ── ScheduleGen — vault.vault.{mint,spend} (4 tham số) ───────────
-// Neo: ScheduleGen/onchain/validators/vault.ak.
-export interface ScheduleVaultParamInputs {
+// ── ScheduleGen — cặp `commit` (withdraw-zero) + két (Gen v2.0) ──
+// Neo: ScheduleGen/onchain/validators/vault.ak — `validator commit(` (9 tham số) và
+// `validator vault(` (6 tham số). Gương gói nền: `ScheduleGen/offchain/src/params.ts` ▸
+// `applyScheduleScripts`.
+//
+// THỨ TỰ APPLY MỘT CHIỀU:
+//   commit(9) → commit_script_hash → vault(…, commit_script_hash) → vault_script_hash → shard(…)
+// `commit` KHÔNG nhận hash két (nó biết két qua redeemer), nên chuỗi không khép. Dùng
+// `scheduleScriptPair` dưới đây thay vì tự apply từng nửa: nửa sau cần ĐÚNG hash của nửa đầu
+// ĐÃ apply, và một hash của bản chưa apply cũng là 28 byte hex hợp lệ.
+export interface ScheduleScriptParamInputs extends GenV2BeaconRefs {
   lampPolicyId:  string;
   lampAssetName: string;
   shardPolicyId: string;
   msPerEpoch:    bigint;
 }
 
-export function scheduleVaultParams(i: ScheduleVaultParamInputs): ParamMap {
+export function scheduleCommitParams(i: ScheduleScriptParamInputs): ParamMap {
+  const fn = "scheduleCommitParams";
   return {
-    lamp_policy_id:  i.lampPolicyId,
-    lamp_asset_name: i.lampAssetName,
-    shard_policy_id: i.shardPolicyId,
-    ms_per_epoch:    i.msPerEpoch,
+    lamp_policy_id:        hash28(fn, "lampPolicyId", i.lampPolicyId),
+    lamp_asset_name:       i.lampAssetName,
+    shard_policy_id:       hash28(fn, "shardPolicyId", i.shardPolicyId),
+    ms_per_epoch:          i.msPerEpoch,
+    gb_beacon_nft_policy:  hash28(fn, "gbBeaconNftPolicy", i.gbBeaconNftPolicy),
+    gb_beacon_script_hash: hash28(fn, "gbBeaconScriptHash", i.gbBeaconScriptHash),
+    gb_shard_policy_id:    hash28(fn, "gbShardPolicyId", i.gbShardPolicyId),
+    rate_nft_policy:       hash28(fn, "rateNftPolicy", i.rateNftPolicy),
+    rate_script_hash:      hash28(fn, "rateScriptHash", i.rateScriptHash),
   };
+}
+
+export interface ScheduleVaultParamInputs {
+  lampPolicyId:     string;
+  lampAssetName:    string;
+  shardPolicyId:    string;
+  msPerEpoch:       bigint;
+  gbShardPolicyId:  string;
+  commitScriptHash: string;   // hash của `commit` ĐÃ apply 9 tham số
+}
+
+export function scheduleVaultParams(i: ScheduleVaultParamInputs): ParamMap {
+  const fn = "scheduleVaultParams";
+  return {
+    lamp_policy_id:     hash28(fn, "lampPolicyId", i.lampPolicyId),
+    lamp_asset_name:    i.lampAssetName,
+    shard_policy_id:    hash28(fn, "shardPolicyId", i.shardPolicyId),
+    ms_per_epoch:       i.msPerEpoch,
+    gb_shard_policy_id: hash28(fn, "gbShardPolicyId", i.gbShardPolicyId),
+    commit_script_hash: hash28(fn, "commitScriptHash", i.commitScriptHash),
+  };
+}
+
+export interface ScheduleScriptPair {
+  commitScript: Validator; commitHash: string;
+  vaultScript:  Validator; vaultHash:  string;
+}
+
+/** Apply cặp `commit` → két theo đúng thứ tự, qua cổng TÊN của `applyParams.ts`. Thuần:
+ *  nhận blueprint đã nạp (`loadBlueprint("ScheduleGen")`), không đọc đĩa hay env. */
+export function scheduleScriptPair(bp: Blueprint, i: ScheduleScriptParamInputs): ScheduleScriptPair {
+  const commit = appliedScript(findValidator(bp, "vault.commit.withdraw"), scheduleCommitParams(i));
+  const vault = appliedScript(findValidator(bp, "vault.vault.spend"), scheduleVaultParams({
+    lampPolicyId: i.lampPolicyId, lampAssetName: i.lampAssetName, shardPolicyId: i.shardPolicyId,
+    msPerEpoch: i.msPerEpoch, gbShardPolicyId: i.gbShardPolicyId, commitScriptHash: commit.hash,
+  }));
+  return { commitScript: commit.script, commitHash: commit.hash, vaultScript: vault.script, vaultHash: vault.hash };
 }
 
 // ── ScheduleGen — vault.shard.spend (2 tham số) ──────────────────

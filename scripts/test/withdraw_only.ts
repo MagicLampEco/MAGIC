@@ -9,7 +9,10 @@
 //   MODULE        Instant | Schedule                              (default: Instant)
 //   AMOUNT_LAMP   amount to withdraw (in LAMP, integer)            (default: 5)
 //   TAMPER        amount_zero | over_avail | tamper_balance |
-//                 tamper_holdings | tamper_batches | tamper_value  (negative cases)
+//                 tamper_holdings | tamper_batches | tamper_value |
+//                 tamper_window                                    (negative cases)
+//                 `tamper_window` (Gen v2.0): cộng 1 vào `usage_window` ô 0 — WithdrawLamp
+//                 ghim nguyên các ô checkpoint, nên phải bị bác.
 //   SKIP_OWNER_SIG=1   omit signer (W-2 negative)
 //   VAULT_TX_HASH      pick specific vault UTxO by tx hash
 //
@@ -18,6 +21,11 @@
 //   🔴 `3` ở đây TRƯỚC 2026-09-21 là `2`. Đổi để một con số mang một nghĩa trong cả
 //   thư mục; xem lý do và phép kiểm an toàn ở nguồn.
 //   DEST_ADDR          destination for withdrawn LAMP (default: caller wallet)
+//
+// Gen v2.0 — sổ trạng thái nạp vào env (thiếu ⟹ NÉM nêu tên): RATE_PARAM_HASH ·
+//   GREENBACK_BEACON_HASH · GB_SHARD_HASH. Két Instant nướng cả năm hash GenBeacons; két
+//   Schedule nướng hash `commit`, mà `commit` nướng các hash đó ⟹ đổi sổ là đổi địa chỉ két.
+//   WithdrawLamp không đọc beacon nào (ghim nguyên checkpoint), nên không cần UTxO beacon.
 
 import {
   Lucid, Blockfrost, Data,
@@ -34,6 +42,7 @@ import {
 
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { genV2BeaconRefsFromBook } from "../deployParams.js";
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
 import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
@@ -53,14 +62,14 @@ function buildProtocol(): ProtocolParams {
     network: NETWORK,
     lampPolicyId: POLICY_IDS.lamp,
     lampAssetName: ASSET_NAMES.lamp,
-    umNftPolicyId: POLICY_IDS.um_nft,
-    umScriptHash: SCRIPT_HASHES.um_datum,
     // Không truyền treasuryAddress: dưới I-ACT-7 không handler nào của vault
     // Instant/Schedule chuyển LAMP, nên không còn tham số Treasury.
     shardPolicyId: POLICY_IDS.shard_nft,
-    // §6.3 BackingBeacon pins (Instant). All-zero default ⟹ Gen shut.
-    backingNftPolicyId: POLICY_IDS.backing,
-    backingScriptHash: SCRIPT_HASHES.backing_beacon,
+    // Gen v2.0: năm hash GenBeacons từ sổ (UM + BackingBeacon đã rời két). Thiếu ⟹ NÉM.
+    ...genV2BeaconRefsFromBook(process.env),
+    // Apply-param #8 của vault Instant (két Wakeme). Getter: chỉ đọc khi MODULE=Instant,
+    // nên MODULE=Schedule không chết theo trên mạng chưa có két.
+    get wakemeVaultHash(): string { return SCRIPT_HASHES.wakeme_vault; },
   };
 }
 
@@ -95,7 +104,8 @@ async function main() {
 
   const { vaultScript, vaultScriptHash, vaultAddress: vaultAddr } = applyVaultValidator(
     moduleName as VaultType,
-    { vaultUnappliedCbor: unapplied.compiledCode },
+    // Schedule cần blueprint trọn: két nướng hash `commit` đã apply (`applyScheduleScripts`).
+    { vaultUnappliedCbor: unapplied.compiledCode, vaultPlutusJson: plutusJson },
     buildProtocol(),
   );
 
@@ -120,8 +130,8 @@ async function main() {
   const utxos = await lucid.utxosAt(vaultAddr);
   const wantedTx = process.env.VAULT_TX_HASH;
 
-  // 🔴 Lược đồ datum KHÔNG còn giống nhau giữa hai module: két Instant mang 18
-  // trường, két Schedule mang 17. Bản trước của khối này dùng `VaultDatumSchema`
+  // 🔴 Lược đồ datum KHÔNG còn giống nhau giữa hai module: két Instant mang 20
+  // trường, két Schedule mang 19 (Gen v2.0; trước đó 18/17). Bản trước của khối này dùng `VaultDatumSchema`
   // (17 trường) cho CẢ HAI, kèm chú thích khẳng định chúng giống nhau — nên trên
   // một két Instant thì `Data.from` NÉM, `catch` nuốt lượt ném, và người chạy đọc
   // được "không tìm thấy két" cho một két đang nằm ngay đó.
@@ -154,7 +164,7 @@ async function main() {
   if (khongGiaiMaDuoc.length > 0) {
     console.warn(
       `⚠ ${khongGiaiMaDuoc.length} UTxO ở địa chỉ két KHÔNG giải mã được bằng lược đồ ` +
-      `${moduleName === "Instant" ? "InstantVaultDatumSchema (18 trường)" : "VaultDatumSchema (17 trường)"}:\n  ` +
+      `${moduleName === "Instant" ? "InstantVaultDatumSchema (20 trường)" : "VaultDatumSchema (19 trường)"}:\n  ` +
       khongGiaiMaDuoc.join("\n  "),
     );
   }
@@ -258,7 +268,7 @@ async function rebuildWithTamper(
   amountOildrop: bigint, ownerPkh: string, tipPosixMs: bigint, plutusJson: any,
   tamper: string, skipOwnerSig: boolean,
   // Lược đồ phải do người GỌI chọn theo module — hàm này không đoán được nó
-  // đang dựng datum cho két 17 hay 18 trường, và đoán sai thì Lucid ném ở
+  // đang dựng datum cho két 19 hay 20 trường, và đoán sai thì Lucid ném ở
   // `Data.to` sau khi mọi thứ khác đã sẵn sàng.
   vaultDatumSchema: unknown,
 ): Promise<any> {
@@ -278,6 +288,12 @@ async function rebuildWithTamper(
     mutatedDatum = { ...mutatedDatum, magic_batches: [] };  // W-5 (magic_batches mutated)
   } else if (tamper === "tamper_value") {
     outputLamp = outputLamp + 1n;  // W-6: vault output value LAMP qty wrong
+  } else if (tamper === "tamper_window") {
+    // Gen v2.0: WithdrawLamp ghim nguyên checkpoint — một ô cửa sổ lệch phải bị bác.
+    const [open, ...rest] = mutatedDatum.usage_window;
+    mutatedDatum = { ...mutatedDatum, usage_window: [{ ...open, generated: open.generated + 1n }, ...rest] };
+  } else if (tamper !== "" && tamper !== "amount_zero" && tamper !== "over_avail") {
+    throw new Error(`Unknown TAMPER: ${tamper}`);
   }
 
   const idx = resolveConstrIndex(plutusJson, "vault.vault.spend", "WithdrawLamp");
@@ -286,7 +302,11 @@ async function rebuildWithTamper(
   const lowerTime = Number(tipPosixMs);
   const upperTime = Number((BigInt(Math.floor(Date.now())) + 600_000n));
 
-  const vaultOutputAssets: Record<string, bigint> = { lovelace: vaultUtxo.assets.lovelace };
+  // Value ra = value vào (ADA + NFT vault-id + mọi token) trừ đúng phần LAMP. Bản trước chỉ
+  // chép lovelace + LAMP ⟹ rơi mất NFT vault-id (INV-VAULT-IDENTITY), nên MỌI ca âm bị bác
+  // vì thiếu NFT chứ không vì chốt đang được thử — ca âm xanh ở cả hai cực, không kiểm gì.
+  const vaultOutputAssets: Record<string, bigint> = { ...vaultUtxo.assets };
+  delete vaultOutputAssets[lampUnit];
   if (outputLamp > 0n) vaultOutputAssets[lampUnit] = outputLamp;
 
   let txBuilder = lucid

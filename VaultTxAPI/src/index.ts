@@ -50,6 +50,8 @@ export {
   pickEngageThread, threadsOf, checkOpenThreadTx, parseEngageRef, checkBindDidTx, parseDidCommit, didCommitOf,
 } from "./engage.js";
 export type { EngageThread, OpenThreadSummary, BindDidSummary } from "./engage.js";
+export { parseWakemeVaultRef, resolveWakemeVault, checkWakemeRefInTx, referenceInputRefsOf } from "./wakeme.js";
+export type { WakemeSummary, WakemeNotCountedReason, ResolvedWakeme } from "./wakeme.js";
 export { checkFeePayerTx, parseFeePayer } from "./feePayer.js";
 export type { FeePayerRequest, FeePayerSummary } from "./feePayer.js";
 

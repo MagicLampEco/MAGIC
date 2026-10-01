@@ -48,6 +48,7 @@ import {
   type OutputReferenceT,
 } from "./types.js";
 import { engageAssetName, type EngageIdSeed } from "./engageId.js";
+import { checkGenV2Burn, type VaultKind } from "./genV2Checkpoint.js";
 
 // ── Params ────────────────────────────────────────────────────────────────────
 
@@ -81,8 +82,27 @@ export interface ConsumeParams {
   /** Datum output tiếp-nối của vault, dạng CBOR hex (caller dựng theo schema vault đó).
    *  validate_burn_batch (vault.ak) BẮT BUỘC 1 vault output mang datum này (InstantGen
    *  A02: magic_batches sau burn+prune, consumed_credit += required, last_updated_epoch,
-   *  attribution +1) + value preserved. THIẾU field này ⟹ vault reject. */
+   *  attribution +1) + value preserved. THIẾU field này ⟹ vault reject.
+   *  Gen v2.0: datum ra còn phải mang checkpoint đúng luật (cửa sổ `usage_window` dịch
+   *  tới epoch hiện tại rồi cộng Σburns vào `consumed` ô 0; két InstantGen làm mới
+   *  `cap_epoch`/`cap_nanogic`/`wakeme_link` nếu `cap_epoch < e`). Bộ dựng KHÔNG tự tính
+   *  ô nào — nó đối chiếu rồi NÉM `CONSUME-016` khi lệch (trừ GIÁ TRỊ `cap_nanogic`, tính
+   *  bằng `InstantGen/offchain/src/genFormula.ts`). Xem `genV2Checkpoint.ts`. */
   vaultOutDatumCbor: string;
+  /** Loại két (Gen v2.0) — TUỲ CHỌN. Bỏ trống ⟹ suy từ số trường datum két vào
+   *  (InstantGen 20 · ScheduleGen 19 · PrepaidGen 8); datum v1 (18/17) ⟹ NÉM `CONSUME-014`.
+   *  Truyền vào ⟹ số trường phải khớp loại đã khai. Xem `genV2Checkpoint.ts`. */
+  vaultKind?: VaultKind;
+  /** Beacon `RateParam` ("RHO") — đọc REFERENCE. BẮT BUỘC khi két InstantGen v2.0 tiêu lần
+   *  đầu trong epoch mới (`cap_epoch < e` ⟹ nhánh BurnBatch làm mới checkpoint, đọc ρ).
+   *  Thiếu đúng lúc đó ⟹ NÉM `CONSUME-012` trước khi dựng. Khi không cần (cùng epoch,
+   *  ScheduleGen, PrepaidGen) ⟹ bộ dựng KHÔNG đưa vào tx. */
+  rateBeaconUtxo?: UTxO;
+  /** Két Wakeme đã ghim két IG này — đọc REFERENCE, KHÔNG BAO GIỜ vào inputs (G1b). BẮT
+   *  BUỘC khi làm mới checkpoint mà `wakeme_link` khác "" (thiếu ⟹ NÉM `CONSUME-013`). Có
+   *  mặt khi làm mới với link "" ⟹ lượt này NỐI két (link := owner_commit). Khi không làm
+   *  mới ⟹ bộ dựng KHÔNG đưa vào tx. ScheduleGen không đọc két Wakeme. */
+  wakemeVaultUtxo?: UTxO;
   /** Value output của vault — mặc định copy y nguyên vaultUtxo.assets (LAMP+ADA preserved;
    *  BurnBatch KHÔNG đụng LAMP, C-BURN-NO-LAMP). Chỉ override khi caller có lý do rõ. */
   vaultOutAssets?: Assets;
@@ -158,6 +178,8 @@ export interface ConsumeResult {
   currentEpoch: bigint;
   /** EngageDatum mới (output). */
   newEngageDatum: EngageDatumT;
+  /** Phía két dưới Gen v2.0: loại két + lượt này có làm mới checkpoint không. */
+  vaultCheckpoint: { kind: VaultKind; refreshed: boolean };
   summary: string;
 }
 
@@ -234,6 +256,7 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     lucid, engageUtxo, vaultUtxo, priceBeaconUtxo,
     consumeScript, vaultScript, opType, opCount,
     vaultBurnRedeemerCbor, vaultOutDatumCbor, vaultOutAssets,
+    vaultKind, rateBeaconUtxo, wakemeVaultUtxo,
     ownerSignerKeyHash, sponsoredNoThreadSignature = false, collateralUtxo, ownerAuth,
     engageNftUnit, consumeRefUtxo, vaultRefUtxo, network, tipPosixMs,
   } = params;
@@ -377,6 +400,25 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   if (consumeRefUtxo) refInputs.push(consumeRefUtxo);
   if (vaultRefUtxo)   refInputs.push(vaultRefUtxo);
 
+  // ── Phía két dưới Gen v2.0 (gói d4, #128) ────────────────────────────────────
+  //    Két đọc epoch từ CẬN DƯỚI validity (`vault.ak ▸ get_current_epoch`), consume từ cận
+  //    trên — cửa sổ nằm trọn một epoch nên hai số trùng nhau; dùng đúng phép của két.
+  //    `checkGenV2Burn` ném trước khi dựng nếu thiếu beacon ρ / két Wakeme mà validator sẽ
+  //    đòi, hoặc datum két ra lệch luật checkpoint; và trả ĐÚNG các ref input két cần.
+  //    Két Wakeme chỉ đi vào `readFrom`, không bao giờ `collectFrom` (G1b).
+  const vaultCheck = checkGenV2Burn({
+    vaultUtxo,
+    vaultScriptHash: validatorToScriptHash(vaultScript),
+    vaultOutDatumCbor,
+    vaultBurnRedeemerCbor,
+    requiredNanogic,
+    vaultEpoch: lowerMs / mspe,
+    vaultKind,
+    rateBeaconUtxo,
+    wakemeVaultUtxo,
+  });
+  refInputs.push(...vaultCheck.refInputs);
+
   let txBuilder = lucid
     .newTx()
     // Engage input (Consume) + vault input (BurnBatch CBOR caller cung cấp)
@@ -458,7 +500,11 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     `count ${oldDatum.consumed_count}→${newEngageDatum.consumed_count} | ` +
     `nanogic ${oldDatum.consumed_nanogic}→${newEngageDatum.consumed_nanogic}`;
 
-  return { tx, requiredNanogic, currentEpoch, newEngageDatum, summary };
+  return {
+    tx, requiredNanogic, currentEpoch, newEngageDatum,
+    vaultCheckpoint: { kind: vaultCheck.kind, refreshed: vaultCheck.refreshed },
+    summary: summary + ` | két ${vaultCheck.kind}${vaultCheck.refreshed ? " (làm mới checkpoint)" : ""}`,
+  };
 }
 
 /**

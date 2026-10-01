@@ -7,10 +7,18 @@
 //   MODULE        Instant                                          (default: Instant)
 //   NEW_PROFILE   Ember | Flame | Lantern                          (default: Ember)
 //   TAMPER        same_profile | bypass_lazy | wrong_effective |
-//                 effective_too_far | tamper_batches | tamper_balance
+//                 effective_too_far | tamper_batches | tamper_balance |
+//                 tamper_checkpoint (Gen v2.0: cap_nanogic +1)
 //   SKIP_OWNER_SIG=1   omit signer (C-PC-V1 negative)
 //   FORCE_COOLDOWN=1   build tx even if cooldown not met (C-PC-V2 negative)
 //   VAULT_TX_HASH      pick specific vault UTxO
+//   WAKEME_VAULT_UTXO  két Wakeme cụ thể (tuỳ chọn) cho lượt làm mới checkpoint. Vắng:
+//                      `wakeme_link` khác "" ⟹ tự tìm két mang NFT owner_commit.
+//
+// Gen v2.0 — sổ trạng thái nạp vào env (thiếu ⟹ NÉM nêu tên): RATE_PARAM_HASH ·
+//   GREENBACK_BEACON_HASH · GB_SHARD_HASH (apply-param két). Lượt đầu trong epoch mới
+//   (`cap_epoch < e`) làm mới checkpoint ⟹ đọc beacon ρ (+ két Wakeme nếu đã ghim) làm
+//   reference input; cùng epoch thì không đọc gì.
 //
 // ## Mã thoát — bảng CHUNG của thư mục này, nguồn ở `scripts/awaitTx.ts` ▸ `## Mã thoát`
 //   0 xong (tx ĐÃ vào khối) · 1 hỏng thật · 2 CHƯA ĐO ĐƯỢC · 3 lượt phá LỌT qua.
@@ -25,11 +33,13 @@ import {
 import { readFile } from "node:fs/promises";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
-  POLICY_IDS, ASSET_NAMES, SCRIPT_HASHES,
+  POLICY_IDS, ASSET_NAMES, SCRIPT_HASHES, PROTOCOL,
 } from "../config.js";
 
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { genV2BeaconRefsFromBook } from "../deployParams.js";
+import { readRateBeaconUtxo, resolveWakemeVaultUtxo } from "./genV2Chain.js";
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
 import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
 import { applyVaultValidator } from "../../MagicSDK/src/validatorScripts.js";
@@ -48,14 +58,12 @@ function buildProtocol(): ProtocolParams {
     network: NETWORK,
     lampPolicyId: POLICY_IDS.lamp,
     lampAssetName: ASSET_NAMES.lamp,
-    umNftPolicyId: POLICY_IDS.um_nft,
-    umScriptHash: SCRIPT_HASHES.um_datum,
     // Không truyền treasuryAddress: dưới I-ACT-7 không handler nào của vault
     // Instant/Schedule chuyển LAMP, nên không còn tham số Treasury.
     shardPolicyId: POLICY_IDS.shard_nft,
-    // §6.3 BackingBeacon pins (Instant). All-zero default ⟹ Gen shut.
-    backingNftPolicyId: POLICY_IDS.backing,
-    backingScriptHash: SCRIPT_HASHES.backing_beacon,
+    // Gen v2.0: năm hash GenBeacons từ sổ (UM + BackingBeacon đã rời két). Thiếu ⟹ NÉM.
+    ...genV2BeaconRefsFromBook(process.env),
+    wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,   // apply-param #7 (két Wakeme)
   };
 }
 
@@ -113,8 +121,8 @@ async function main() {
   const wantedTx = process.env.VAULT_TX_HASH;
 
   // 🔴 `UpdateProfile` là nhánh CHỈ CÓ ở InstantGen (`PLUTUS_PATH` ở trên chỉ
-  // nhận `Instant`), nên két ở đây LUÔN mang 18 trường. Bản trước dùng
-  // `VaultDatumSchema` (17 trường) rồi `catch` nuốt lượt ném ⟹ mọi lượt chạy
+  // nhận `Instant`), nên két ở đây LUÔN mang 20 trường (Gen v2.0). Bản trước dùng
+  // `VaultDatumSchema` (lược đồ Schedule) rồi `catch` nuốt lượt ném ⟹ mọi lượt chạy
   // báo "không tìm thấy két" cho đúng cái két nó vừa tạo.
   const { InstantVaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
 
@@ -135,7 +143,7 @@ async function main() {
   if (khongGiaiMaDuoc.length > 0) {
     console.warn(
       `⚠ ${khongGiaiMaDuoc.length} UTxO ở địa chỉ két KHÔNG giải mã được bằng ` +
-      `InstantVaultDatumSchema (18 trường):\n  ` + khongGiaiMaDuoc.join("\n  "),
+      `InstantVaultDatumSchema (20 trường):\n  ` + khongGiaiMaDuoc.join("\n  "),
     );
   }
   if (!vaultUtxo) {
@@ -151,6 +159,28 @@ async function main() {
   console.log(`Vault UTxO:        ${vaultUtxo.txHash}#${vaultUtxo.outputIndex}\n`);
 
   const tip = await fetchTip();
+  // ── Gen v2.0 checkpoint: lượt đầu trong epoch mới đọc ρ (+ két Wakeme đã ghim) ──
+  const protocol = buildProtocol();
+  const instantRefParams = {
+    lampPolicyId:    protocol.lampPolicyId,
+    lampAssetName:   ASSET_NAMES.lamp,
+    rateNftPolicy:   protocol.rateNftPolicy!,
+    rateScriptHash:  protocol.rateScriptHash!,
+    wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,
+  };
+  const vd = Data.from(vaultUtxo.datum!, InstantVaultDatumSchema as never) as { cap_epoch: bigint; wakeme_link: string };
+  const epoch = tip.posixMs / PROTOCOL.MS_PER_EPOCH;
+  const refresh = vd.cap_epoch < epoch;
+  const rateBeaconUtxo = refresh
+    ? await readRateBeaconUtxo(lucid, { ...genV2BeaconRefsFromBook(process.env) })
+    : undefined;
+  const wakemeVaultUtxo = refresh
+    ? await resolveWakemeVaultUtxo(lucid, SCRIPT_HASHES.wakeme_vault, vd.wakeme_link, process.env.WAKEME_VAULT_UTXO)
+    : undefined;
+  console.log(`Checkpoint:        cap_epoch ${vd.cap_epoch}, epoch ${epoch} ⟹ ${refresh ? "LÀM MỚI" : "giữ nguyên"}`);
+  if (rateBeaconUtxo) console.log(`Beacon ρ:          ${rateBeaconUtxo.txHash}#${rateBeaconUtxo.outputIndex}`);
+  if (wakemeVaultUtxo) console.log(`Két Wakeme:        ${wakemeVaultUtxo.txHash}#${wakemeVaultUtxo.outputIndex}`);
+  const checkpointRefs = [rateBeaconUtxo, wakemeVaultUtxo].filter((u): u is UTxO => u !== undefined);
   try {
     const result = await updateProfile({
       lucid,
@@ -164,6 +194,9 @@ async function main() {
       // Vault vừa dựng, datum còn nhỏ — inline vừa trần. Chưa nối CIP-33 ở đây:
       // nợ có địa chỉ, `DevStatus.md` Nợ #64.
       vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
+      ...(rateBeaconUtxo ? { rateBeaconUtxo } : {}),
+      ...(wakemeVaultUtxo ? { wakemeVaultUtxo } : {}),
+      instantVaultParams: instantRefParams,
     });
 
     let finalTx = result.tx;
@@ -171,7 +204,7 @@ async function main() {
       finalTx = await rebuildWithTamper(
         lucid, vaultUtxo, result.newVaultDatum, vaultScript, vaultAddr,
         newProfile, ownerPkh, tip.posixMs, plutusJson, tamper,
-        process.env.SKIP_OWNER_SIG === "1",
+        process.env.SKIP_OWNER_SIG === "1", checkpointRefs,
       );
       console.log(`⚠  TEST MODE: ${tamper || "skipOwnerSig"} — expecting validator REJECT.\n`);
     }
@@ -218,8 +251,11 @@ async function rebuildWithTamper(
   lucid: any, vaultUtxo: UTxO, newVaultDatum: any, vaultScript: any, vaultAddr: string,
   newProfile: Profile, ownerPkh: string, tipPosixMs: bigint, plutusJson: any,
   tamper: string, skipOwnerSig: boolean,
+  // Ref input checkpoint (ρ, két Wakeme) của lượt làm mới — thiếu thì ca âm bị bác vì
+  // thiếu beacon chứ không vì chốt đang thử, tức ca đó xanh ở cả hai cực.
+  checkpointRefs: UTxO[],
 ): Promise<any> {
-  // UpdateProfile chỉ có ở InstantGen ⟹ 18 trường. Xem chú thích ở vòng tìm két.
+  // UpdateProfile chỉ có ở InstantGen ⟹ 20 trường. Xem chú thích ở vòng tìm két.
   const { InstantVaultDatumSchema } = await import("../../MagicSDK/src/schemas.js");
   const { resolveConstrIndex } = await import("../../MagicSDK/src/redeemerIndex.js");
   const { PROFILE_CONSTR_INDEX } = await import("../../MagicSDK/src/updateProfile.js");
@@ -249,6 +285,9 @@ async function rebuildWithTamper(
   } else if (tamper === "tamper_balance") {
     // A02: mutate lamp_balance
     mutated = { ...mutated, lamp_balance: mutated.lamp_balance + 1n };
+  } else if (tamper === "tamper_checkpoint") {
+    // Gen v2.0: cap_nanogic lệch luật checkpoint phải bị bác.
+    mutated = { ...mutated, cap_nanogic: mutated.cap_nanogic + 1n };
   } else if (tamper === "same_profile") {
     // Will fail SDK pre-check too, but allow the validator to be the one rejecting:
     // user wants C-PC-V3 path — they'd build a tx where new_profile == current.
@@ -267,6 +306,7 @@ async function rebuildWithTamper(
   let txBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
+    .readFrom(checkpointRefs)
     .attach.SpendingValidator(vaultScript)
     .pay.ToAddressWithData(
       vaultAddr,

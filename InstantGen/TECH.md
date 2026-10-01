@@ -129,7 +129,7 @@ trong `onchain/plutus.json` (do `aiken build` sinh từ chính chữ ký `valida
 đối chiếu bằng `cd scripts && npm run check:params`. Ảnh chụp hiện thời, blueprint là
 trọng tài: `lamp_policy_id`, `lamp_asset_name` (PARAM theo mạng — `tLAMP` testnet /
 `LAMP` mainnet), `um_nft_policy`, `um_script_hash`, `backing_nft_policy`,
-`backing_script_hash`, `ms_per_epoch`.
+`backing_script_hash`, `ms_per_epoch`, `wakeme_vault_hash` (két Wakeme, CC-GEN-LENT-READ).
 
 Bản cũ ở đây liệt 4 tham số và có `treasury_addr` — sai cả số lẫn tập. `applyParamsToScript`
 không kiểm arity: apply theo danh sách đó vẫn ra script hash 28 byte trông hợp lệ, vault

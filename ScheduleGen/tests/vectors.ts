@@ -18,11 +18,16 @@ export const TV_SCH_01 = {
 };
 
 // ══════════════════════════════════════════════════════════════
-// TV-SCH-02: L=100, λ=4000 LAMP, R=5.0 → 45 MAGIC/fire (§11.11 Bob)
+// TV-SCH-02: L=100, λ=4000 LAMP, R=5.0 (§11.11 Bob)
+//
+// Gen v2.0: `M_i` ở đây là ⌊λ·rate_locked/Q⌋ — gương `math.ak` ▸ `compute_m_i` /
+// `unit_anchor_tv_sch_02`, KHÔNG còn là lượng mỗi lượt bắn. Lượng bắn v2.0 là
+// `m_per_epoch` chốt lúc ký = amount_by_lamp(λ, 0, cửa sổ, min(rate_locked, ρ), min(N, 6))
+// — xem `m_per_epoch_v2` bên dưới.
 // ══════════════════════════════════════════════════════════════
 export const TV_SCH_02 = {
-  id: "TV-SCH-02", spec_ref: "App B §B.5, §11.11",
-  description: "L=100, λ=4000 LAMP → 45 MAGIC/fire; total 4500 MAGIC",
+  id: "TV-SCH-02", spec_ref: "App B §B.5, §11.11; SPEC v2.0 §6.1.2",
+  description: "L=100, λ=4000 LAMP → rate_locked 11,25; ⌊λ·rate/Q⌋ = 45 MAGIC; v2.0 khởi động lạnh ρ=4 ⟹ 12 MAGIC/lượt",
   L:            100n,
   lambda_lamp:  4_000n,
   lambda_oildrop:   4_000_000_000n,         // 4000 × 10^6
@@ -32,25 +37,29 @@ export const TV_SCH_02 = {
   // rate_locked_q = ⌊5B × 2.25B / Q⌋ = 11_250_000_000
   rate_locked_q: 11_250_000_000n,
   // M_i = ⌊4×10⁹ × 11_250_000_000 / Q⌋ = 45_000_000_000
-  M_i:          45_000_000_000n,        // 45 MAGIC ✓
-  total_magic:  4_500_000_000_000n,     // 100 × 45 = 4500 MAGIC ✓
+  M_i:          45_000_000_000n,        // ⌊λ·rate_locked/Q⌋ (compute_m_i) — KHÔNG phải lượng bắn v2.0
+  // v2.0, cửa sổ rỗng (khởi động lạnh, hệ số 0,75), ρ = 4·10⁹ < rate_locked:
+  //   base = ⌊4·10⁹ × 4·10⁹ / Q⌋ = 16·10⁹ ; M = ⌊base·0,5⌋ + ⌊base·0,25⌋ = 12·10⁹
+  rho_q_v2:       4_000_000_000n,
+  m_per_epoch_v2: 12_000_000_000n,      // 12 MAGIC mỗi lượt, chốt lúc ký
   total_lock:   400_000_000_000_000n,   // 100 × 4000 × 10^6 = 400,000 LAMP (oildrop)
   // C-SCH-RATE: 4×10⁹ × 11_250_000_000 = 4.5×10¹⁹ ≥ Q ✓
   sch_rate_check: 45_000_000_000_000_000_000n >= 1_000_000_000n,
 };
 
 // ══════════════════════════════════════════════════════════════
-// TV-SCH-03: Rate immutability (T8)
+// TV-SCH-03: Lượng bắn bất biến sau khi ký (T8 → Gen v2.0 CC-GEN-SCHEDULE-FIXED)
 // ══════════════════════════════════════════════════════════════
 export const TV_SCH_03 = {
-  id: "TV-SCH-03", spec_ref: "App B §B.5, T8",
-  description: "DAO raises R at epoch 70; fire at ep80 still uses committed rate",
+  id: "TV-SCH-03", spec_ref: "App B §B.5, T8; SPEC v2.0 CC-GEN-SCHEDULE-FIXED",
+  description: "ρ hạ sau khi ký; lượt bắn vẫn cấp đúng m_per_epoch đã chốt, không đọc beacon",
   commit_epoch:     50n,
-  rate_at_commit:   11_250_000_000n,      // locked at epoch 50
-  dao_update_epoch: 70n,
+  rho_at_commit:    4_000_000_000n,
+  M_at_commit:      12_000_000_000n,      // chốt vào GenSchedule.m_per_epoch
+  rho_later:        2_000_000_000n,       // ký MỚI ở ρ này cho 6 MAGIC
+  M_new_commit:     6_000_000_000n,
   fire_epoch:       80n,
-  M_at_fire:        45_000_000_000n,      // UNCHANGED — uses stored rate ✓
-  // Validator reads GenSchedule.rate_locked_q, NOT global R_snap
+  M_at_fire:        12_000_000_000n,      // KHÔNG đổi — validate_fire đọc sched.m_per_epoch
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -103,13 +112,15 @@ export const TV_SCH_06 = {
   start_fire_epoch: 52n,      // commit_epoch=50, delay=2
   fired_count:       0n,      // nothing fired yet
   current_epoch:    55n,
-  M_i:              45_000_000_000n,
+  M_i:              45_000_000_000n,     // = GenSchedule.m_per_epoch của hợp đồng này
   // Eligible: e_0=52≤55, e_1=53≤55, e_2=54≤55, e_3=55≤55 → 4 fires (< 8 limit)
   fires_in_tx:       4,
-  total_magic_fired: 180_000_000_000n,  // 4 × 45 MAGIC = 180 MAGIC
-  lamp_transferred:  16_000_000_000n,   // 4 × 4000 LAMP oildrop
+  total_magic_fired: 180_000_000_000n,  // 4 × 45 MAGIC ghi vào batch (3 batch bù chết lúc sinh)
+  lamp_transferred:  16_000_000_000n,   // 4 × 4000 LAMP oildrop GIẢI KHOÁ (không chuyển đi)
   output_fired_count: 4n,               // C-FIRE-3 atomic ✓
-  // Wallet: "4/100 orders. ALL expire end of epoch 55."
+  // Gen v2.0 (SPEC §6.1.2): batch mang epoch danh nghĩa 52, 53, 54, 55 — chỉ batch 55
+  // còn sống ở epoch 55; 45 MAGIC tiêu được, không phải 180.
+  live_magic_at_current: 45_000_000_000n,
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -166,13 +177,11 @@ export const TV_SCH_SHARD_CRED = [
 // T-DET: All M_i in the same contract are identical
 // ══════════════════════════════════════════════════════════════
 export const TV_SCH_T_DET = {
-  id: "TV-SCH-T-DET", spec_ref: "§11.4 T-DET",
-  description: "Every fire in the same contract produces identical M_i",
-  rate_locked_q: 11_250_000_000n,   // immutable
-  lambda_oildrop:    4_000_000_000n,
-  // M_i at fire #1   = ⌊4B × 11.25B / Q⌋ = 45B
-  // M_i at fire #100 = ⌊4B × 11.25B / Q⌋ = 45B  ← IDENTICAL
-  M_i_all_fires: 45_000_000_000n,
+  id: "TV-SCH-T-DET", spec_ref: "§11.4 T-DET; SPEC v2.0 §6.1.2",
+  description: "Mọi lượt bắn của một hợp đồng cấp ĐÚNG m_per_epoch đã chốt lúc ký",
+  schedule_length: 10n,
+  lambda_oildrop:  4_000_000_000n,
+  m_per_epoch:     45_000_000_000n,   // chốt lúc ký; lượt 1 … lượt 10 đều cấp đúng số này
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -227,9 +236,10 @@ export const TV_SCH_ACT7 = {
 export const TV_SCH_CLIFF = {
   id: "TV-SCH-CLIFF", spec_ref: "§4.2, §6.4",
   description:
-    "A fired batch is live ONLY in the epoch it was fired. A catch-up of k " +
-    "orders stamps all k batches with the CURRENT epoch, so it cannot " +
-    "resurrect MAGIC missed in earlier epochs.",
+    "A fired batch is live ONLY in its created_epoch. Gen v2.0 (SPEC §6.1.2): a " +
+    "catch-up of k orders stamps batch j with its NOMINAL epoch start+fired+j, so " +
+    "every catch-up batch but the current one is dead at birth — a late fire cannot " +
+    "turn missed epochs into spendable MAGIC now.",
   decay_window: 1n,
   cases: [
     { created_epoch: 60n, current_epoch: 60n, expired: false },
@@ -261,3 +271,110 @@ export const ALL_SCHEDULE_VECTORS = [
   TV_SCH_T_DET, TV_SCH_FIRE3, TV_SCH_BOUNDS,
   TV_SCH_ACT7, TV_SCH_CLIFF,
 ] as const;
+
+// BẢN CHÉP CÓ NHÃN của khối TV-GEN-* trong InstantGen/tests/vectors.ts @ 1e9a72d9; bài so: ScheduleGen/tests/genFormulaMirror.test.ts (deep-equal hai bản).
+// ══════════════════════════════════════════════════════════════
+// Gen v2.0 §6.1.1–§6.1.3 — công thức sinh chung F(L, usage_ratio, GB)
+// ══════════════════════════════════════════════════════════════
+// P8: literal GIỐNG HỆT khối "Vector chuẩn TV-GEN-*" trong
+// `onchain/lib/magiclamp/protocol/gen_formula.ak`. Sửa một bên thì sửa bên kia.
+// Chung: Q = 10⁹, sàn = 5×10⁸, coldstart = 7.5×10⁸, ρ = 4×10⁹ (suất tạm), LENT_PP_CAP = 10⁹.
+// Cửa sổ: [ô0 (epoch mở), ô1 … ô6 (đã đóng)], mỗi ô là [generated, consumed].
+
+export type GenCell = readonly [bigint, bigint];
+
+export const TV_GEN_WINDOWS = {
+  cold:        [[0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  cold_open:   [[5_000_000_000n, 5_000_000_000n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  zero_use:    [[0n, 0n], [6_000_000_000n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  full:        [[0n, 0n], [6_000_000_000n, 6_000_000_000n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  partial:     [[0n, 0n], [5_000_000_000n, 3_000_000_000n], [3_000_000_000n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  over:        [[0n, 0n], [2_000_000_000n, 3_000_000_000n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  round:       [[0n, 0n], [3n, 1n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  last_cell:   [[0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [4_000_000_000n, 1_000_000_000n]],
+  full_big:    [[0n, 0n], [30_000_000_000n, 30_000_000_000n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  scale_round: [[0n, 0n], [7n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n]],
+  seq:         [[1n, 1n], [2n, 2n], [3n, 3n], [4n, 4n], [5n, 5n], [6n, 6n], [7n, 7n]],
+} as const satisfies Record<string, readonly GenCell[]>;
+
+export type GenWindowName = keyof typeof TV_GEN_WINDOWS;
+
+// ── TV-GEN-BASE-*: lamp_base_amount(l_owned, l_lent, rho_q) ──
+export const TV_GEN_BASE = [
+  { id: "TV-GEN-BASE-OWNED",         l_owned: 1_000_000_000n, l_lent: 0n,             rho_q: 4_000_000_000n, expected: 4_000_000_000n },
+  { id: "TV-GEN-BASE-LENT-BELOW",    l_owned: 1_000_000_000n, l_lent: 100_000_000n,   rho_q: 4_000_000_000n, expected: 4_400_000_000n },
+  { id: "TV-GEN-BASE-LENT-KNEE",     l_owned: 1_000_000_000n, l_lent: 250_000_000n,   rho_q: 4_000_000_000n, expected: 5_000_000_000n },
+  { id: "TV-GEN-BASE-LENT-CAP",      l_owned: 1_000_000_000n, l_lent: 1_001_000_000n, rho_q: 4_000_000_000n, expected: 5_000_000_000n },
+  // sàn RIÊNG từng vế: ⌊1.5⌋ + ⌊1.5⌋ = 2 (bản gộp ra 3)
+  { id: "TV-GEN-BASE-FLOOR-PER-TERM", l_owned: 1n,            l_lent: 1n,             rho_q: 1_500_000_000n, expected: 2n },
+  { id: "TV-GEN-BASE-RHO-ZERO",      l_owned: 1_000_000_000n, l_lent: 1_001_000_000n, rho_q: 0n,             expected: 0n },
+] as const;
+
+// ── TV-GEN-USAGE-*: usage_ratio_q(window), usage_factor_q(window) ──
+export const TV_GEN_USAGE = [
+  { id: "TV-GEN-USAGE-COLD",        window: "cold",      ratio_q: 0n,             factor_q: 750_000_000n },
+  { id: "TV-GEN-USAGE-COLD-OPEN",   window: "cold_open", ratio_q: 0n,             factor_q: 750_000_000n },   // ô 0 không đếm
+  { id: "TV-GEN-USAGE-ZERO-USE",    window: "zero_use",  ratio_q: 0n,             factor_q: 500_000_000n },   // ↔ COLD: chỉ khác Σg
+  { id: "TV-GEN-USAGE-FULL",        window: "full",      ratio_q: 1_000_000_000n, factor_q: 1_000_000_000n }, // ↔ ZERO-USE: chỉ khác Σc
+  { id: "TV-GEN-USAGE-PARTIAL",     window: "partial",   ratio_q: 375_000_000n,   factor_q: 687_500_000n },
+  { id: "TV-GEN-USAGE-OVER",        window: "over",      ratio_q: 1_000_000_000n, factor_q: 1_000_000_000n }, // kẹp Q
+  { id: "TV-GEN-USAGE-ROUND",       window: "round",     ratio_q: 333_333_333n,   factor_q: 666_666_666n },
+  { id: "TV-GEN-USAGE-LAST-CELL",   window: "last_cell", ratio_q: 250_000_000n,   factor_q: 625_000_000n },   // ô 6 có đếm
+] as const satisfies readonly { window: GenWindowName }[];
+
+// ── TV-GEN-SCALE-*: scale_limit(window, horizon, base) ──
+export const TV_GEN_SCALE = [
+  { id: "TV-GEN-SCALE-COLD",      window: "cold",        horizon: 6n, base: 4_000_000_000n, expected: 4_000_000_000n },
+  { id: "TV-GEN-SCALE-COLD-OPEN", window: "cold_open",   horizon: 6n, base: 4_000_000_000n, expected: 4_000_000_000n },
+  { id: "TV-GEN-SCALE-IG",        window: "full",        horizon: 6n, base: 4_000_000_000n, expected: 1_000_000_000n },
+  { id: "TV-GEN-SCALE-H3",        window: "full",        horizon: 3n, base: 4_000_000_000n, expected: 2_000_000_000n },
+  { id: "TV-GEN-SCALE-H0",        window: "full",        horizon: 0n, base: 4_000_000_000n, expected: 0n },
+  { id: "TV-GEN-SCALE-ROUND",     window: "scale_round", horizon: 6n, base: 100n,           expected: 1n },
+] as const satisfies readonly { window: GenWindowName }[];
+
+// ── TV-GEN-AMOUNT-*: amount_by_lamp(l_owned, l_lent, window, rho_q, horizon) ──
+export const TV_GEN_AMOUNT = [
+  { id: "TV-GEN-AMOUNT-COLD",               l_owned: 1_000_000_000n,          l_lent: 0n,             window: "cold",     rho_q: 4_000_000_000n, horizon: 6n, expected: 3_000_000_000n },
+  { id: "TV-GEN-AMOUNT-ZERO-USE",           l_owned: 1_000_000_000n,          l_lent: 0n,             window: "zero_use", rho_q: 4_000_000_000n, horizon: 6n, expected: 2_000_000_000n },
+  { id: "TV-GEN-AMOUNT-SCALE-BINDS",        l_owned: 1_000_000_000n,          l_lent: 0n,             window: "full",     rho_q: 4_000_000_000n, horizon: 6n, expected: 2_500_000_000n },
+  { id: "TV-GEN-AMOUNT-SCALE-FREE-SMALL-L", l_owned: 200_000_000n,            l_lent: 0n,             window: "full",     rho_q: 4_000_000_000n, horizon: 6n, expected: 800_000_000n },
+  { id: "TV-GEN-AMOUNT-SCALE-FREE-BIG-HIST",l_owned: 1_000_000_000n,          l_lent: 0n,             window: "full_big", rho_q: 4_000_000_000n, horizon: 6n, expected: 4_000_000_000n },
+  { id: "TV-GEN-AMOUNT-LENT-BELOW",         l_owned: 1_000_000_000n,          l_lent: 100_000_000n,   window: "cold",     rho_q: 4_000_000_000n, horizon: 6n, expected: 3_300_000_000n },
+  { id: "TV-GEN-AMOUNT-LENT-CAP",           l_owned: 1_000_000_000n,          l_lent: 1_001_000_000n, window: "cold",     rho_q: 4_000_000_000n, horizon: 6n, expected: 3_750_000_000n },
+  { id: "TV-GEN-AMOUNT-HORIZON-ZERO",       l_owned: 1_000_000_000n,          l_lent: 0n,             window: "full",     rho_q: 4_000_000_000n, horizon: 0n, expected: 0n },
+  // sàn tuần tự: 1 + 0 = 1 (bản gộp ⌊3×7.5e8/Q⌋ ra 2)
+  { id: "TV-GEN-AMOUNT-ROUND-SEQ",          l_owned: 3n,                      l_lent: 0n,             window: "cold",     rho_q: 1_000_000_000n, horizon: 6n, expected: 1n },
+  // tràn số: trần cung 36×10¹⁵ oildrop × RHO_MAX_Q, tích trung gian 1.44×10²⁶
+  { id: "TV-GEN-AMOUNT-OVERFLOW",           l_owned: 36_000_000_000_000_000n, l_lent: 0n,             window: "cold",     rho_q: 4_000_000_000n, horizon: 6n, expected: 108_000_000_000_000_000n },
+] as const satisfies readonly { window: GenWindowName }[];
+
+// ── TV-GEN-GB-*: generation_amount(amount_by_lamp, gb_available) ──
+export const TV_GEN_GB = [
+  { id: "TV-GEN-GB-BINDS", amount_by_lamp: 3_000_000_000n, gb_available: 1_000_000_000n, expected: 1_000_000_000n },
+  { id: "TV-GEN-GB-FREE",  amount_by_lamp: 3_000_000_000n, gb_available: 5_000_000_000n, expected: 3_000_000_000n },
+  { id: "TV-GEN-GB-EQUAL", amount_by_lamp: 3_000_000_000n, gb_available: 3_000_000_000n, expected: 3_000_000_000n },
+  { id: "TV-GEN-GB-ZERO",  amount_by_lamp: 3_000_000_000n, gb_available: 0n,             expected: 0n },
+] as const;
+
+// ── TV-GEN-VAULT-SHARE-*: gb_vault_share(reset_amount) ──
+export const TV_GEN_VAULT_SHARE = [
+  { id: "TV-GEN-VAULT-SHARE-CAP", reset_amount: 1_800_000_000_000_000n, expected: 90_000_000_000_000n },
+  { id: "TV-GEN-VAULT-SHARE-19",  reset_amount: 19n,                    expected: 0n },
+  { id: "TV-GEN-VAULT-SHARE-20",  reset_amount: 20n,                    expected: 1n },
+  { id: "TV-GEN-VAULT-SHARE-0",   reset_amount: 0n,                     expected: 0n },
+] as const;
+
+// ── TV-GEN-SHIFT-*: shift_window(seq, 100, to_epoch) ──
+export const TV_GEN_SHIFT = [
+  { id: "TV-GEN-SHIFT-K0",   from_epoch: 100n, to_epoch: 100n, expected: TV_GEN_WINDOWS.seq },
+  { id: "TV-GEN-SHIFT-K1",   from_epoch: 100n, to_epoch: 101n, expected: [[0n, 0n], [1n, 1n], [2n, 2n], [3n, 3n], [4n, 4n], [5n, 5n], [6n, 6n]] },
+  { id: "TV-GEN-SHIFT-K6",   from_epoch: 100n, to_epoch: 106n, expected: [[0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [1n, 1n]] },
+  { id: "TV-GEN-SHIFT-K7",   from_epoch: 100n, to_epoch: 107n, expected: TV_GEN_WINDOWS.cold },
+  { id: "TV-GEN-SHIFT-K100", from_epoch: 100n, to_epoch: 200n, expected: TV_GEN_WINDOWS.cold },
+] as const satisfies readonly { expected: readonly GenCell[] }[];
+
+// ── TV-GEN-ADD-01: window_add(seq, 10, 3) ──
+export const TV_GEN_ADD_01 = {
+  id: "TV-GEN-ADD-01", generated: 10n, consumed: 3n,
+  expected: [[11n, 4n], [2n, 2n], [3n, 3n], [4n, 4n], [5n, 5n], [6n, 6n], [7n, 7n]],
+} as const;

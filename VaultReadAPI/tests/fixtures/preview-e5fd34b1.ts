@@ -18,6 +18,9 @@
 // ở bất cứ epoch nào sau đó thì `available = 0` còn `accrued = 64 000 000`. Cả hai
 // câu đều ĐÚNG, và đó chính là lý do mặt tiền trả HAI con số chứ không một.
 
+import { Constr, Data } from "@lucid-evolution/lucid";
+import { VAULT_DATUM_FIELD_COUNTS } from "@magiclamp/sdk";
+
 import type { ChainTip, ChainUtxo } from "../../src/chain.js";
 
 export const PREVIEW_VAULT_ADDRESS =
@@ -72,12 +75,60 @@ function wrapOwnerAsKeyCredential(hex: string, pkh: string): string {
   return `d8799fd8799f581c${pkh}ff` + hex.slice(oldHead.length);
 }
 
-/** Datum ở lược đồ HIỆN HÀNH (`owner = VerificationKey(pkh)`), suy từ bản ghi bằng
- *  `wrapOwnerAsKeyCredential` — không gõ tay. */
-export const PREVIEW_VAULT_DATUM_HEX = wrapOwnerAsKeyCredential(
+/** Datum `owner = VerificationKey(pkh)` nhưng VẪN 17 trường — két ScheduleGen ĐỜI v1.
+ *  Suy từ bản ghi bằng `wrapOwnerAsKeyCredential`, không gõ tay. Bài kiểm dùng nó làm ca
+ *  ÂM của cổng `VAULT_DATUM_V1`: chỉ khác bản v2 dưới đây ở số trường. */
+export const PREVIEW_VAULT_DATUM_HEX_V1 = wrapOwnerAsKeyCredential(
   PREVIEW_VAULT_DATUM_HEX_RECORDED,
   "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
 );
+
+// ── Hình dạng Gen v2.0 (19 trường) — DI TRÚ CHO BÀI KIỂM, không phải ảnh chụp ────────
+//
+// 🔴 UTxO này KHÔNG THỂ tồn tại ở Gen v2.0: v2.0 là hash két mới và không di trú UTxO v1.
+// Bản dưới đây giữ nguyên MỌI byte chụp từ chuỗi (8 batch, 64 000 000 nanogic, lịch,
+// LAMP) và chỉ NỐI ĐÚNG các ô mà v2.0 thêm vào, với giá trị bài kiểm:
+//   · mỗi `GenSchedule` nối `m_per_epoch`, `usage_factor_locked_q` (ScheduleGen types.ak);
+//   · datum nối #17 `usage_window` (7 ô), #18 `usage_window_epoch`.
+// Mọi con số nghiệm thu cũ vẫn đến từ chuỗi; bốn ô nối thêm là giá trị bài kiểm.
+
+/** `M_i` nối vào lịch — 8 000 000 nanogic, bằng lượng mỗi lượt fire đã thấy trên chuỗi. */
+export const PREVIEW_V2_M_PER_EPOCH = 8_000_000n;
+/** `usage_factor_locked_q` nối vào lịch — 1,0 (Q = 10⁹). */
+export const PREVIEW_V2_USAGE_FACTOR_LOCKED_Q = 1_000_000_000n;
+/** `usage_window_epoch` nối vào datum — epoch giao thức của 8 batch. */
+export const PREVIEW_V2_USAGE_WINDOW_EPOCH = 20_700n;
+/** Ô 0 của `usage_window`: 64 000 000 đã sinh, 0 đã tiêu; ô 1..6 bằng 0. */
+export const PREVIEW_V2_USAGE_WINDOW: readonly (readonly [bigint, bigint])[] = [
+  [64_000_000n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n], [0n, 0n],
+];
+
+/** Số trường `GenSchedule` ScheduleGen v1 — đếm tại `ScheduleGen/offchain/src/types.ts` ▸
+ *  `GenScheduleSchema` (11 trường trước khối "Gen v2.0"). Lệch ⟹ NÉM dưới đây. */
+const GEN_SCHEDULE_FIELDS_V1 = 11;
+
+function migrateScheduleDatumToV2(hexV1: string): string {
+  const d = Data.from(hexV1);
+  if (!(d instanceof Constr) || d.index !== 0 || d.fields.length !== VAULT_DATUM_FIELD_COUNTS.Schedule.v1) {
+    throw new Error("fixture: datum không phải VaultDatum ScheduleGen v1 — không di trú được");
+  }
+  const schedules = d.fields[7];
+  if (!Array.isArray(schedules)) throw new Error("fixture: trường 7 không phải danh sách lịch");
+  const schedulesV2 = schedules.map((sc) => {
+    if (!(sc instanceof Constr) || sc.fields.length !== GEN_SCHEDULE_FIELDS_V1) {
+      throw new Error("fixture: GenSchedule không đúng 11 trường v1");
+    }
+    return new Constr(0, [...sc.fields, PREVIEW_V2_M_PER_EPOCH, PREVIEW_V2_USAGE_FACTOR_LOCKED_Q]);
+  });
+  const window = PREVIEW_V2_USAGE_WINDOW.map(([g, c]) => new Constr(0, [g, c]));
+  return Data.to(new Constr(0, [
+    ...d.fields.slice(0, 7), schedulesV2, ...d.fields.slice(8), window, PREVIEW_V2_USAGE_WINDOW_EPOCH,
+  ]));
+}
+
+/** Datum ở lược đồ HIỆN HÀNH (Gen v2.0, 19 trường, `owner = VerificationKey(pkh)`), suy từ
+ *  bản ghi — không gõ tay. */
+export const PREVIEW_VAULT_DATUM_HEX = migrateScheduleDatumToV2(PREVIEW_VAULT_DATUM_HEX_V1);
 
 export const PREVIEW_VAULT_UTXO: ChainUtxo = {
   txHash: "e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd76",

@@ -32,6 +32,16 @@ pub const instant_decay_window : Int = magic_decay_window
 // The LAMP is never moved (I-ACT-7); it only gates the door.
 pub const min_instant_holding : Int = 10_000_000   // 10 LAMP in oildrop
 
+// ── L_lent — trần riêng cho phần LAMP-mượn từ két Wakeme (CC-GEN-LENT-READ) ──
+// TẠM — giá trị do chủ dự án chốt (`LENT_PP_CAP`, Spec §12 "chốt sau"); đổi = deploy
+// lại (hằng biên dịch ⟹ đổi bytes ⟹ đổi hash ⟹ đổi địa chỉ vault).
+// Đơn vị nanogic/epoch: phần trần sinh ra từ L_lent là
+// `min(compute_cap_pp(L_lent), lent_pp_cap)` (`math.ak ▸ compute_cap_lent`), tức
+// LAMP-mượn chỉ mở tối đa 1 MAGIC/epoch dù két Wakeme lớn bao nhiêu. `cap_pp` chạm
+// mức này ở L_lent = 250 LAMP.
+// PHẢI bằng `LENT_PP_CAP` trong `offchain/src/constants.ts` (P8).
+pub const lent_pp_cap : Int = 1_000_000_000   // nanogic = 1 MAGIC/epoch
+
 // ── Wakeme seed credit (§6.3 — the WAY IN to the InstantGen loop) ─
 // [Constitutional] the `consumed_credit` a vault carries at GENESIS.
 //
@@ -214,3 +224,56 @@ pub const instant_rate_q : Int = 8_000_000_000
 // ── Profile change cooldown (§12, C-PC-V2) ──────────────────
 // [Routine] Minimum epochs between UpdateProfile calls
 pub const profile_change_cooldown : Int = 2
+
+// ── Gen v2.0 — công thức sinh chung F(L, usage_ratio, GB) (SPEC §6.1.1–§6.1.3, §11) ──
+// Hàm dùng các hằng này: `gen_formula.ak`. Mọi hằng dưới đây là hằng BIÊN DỊCH:
+// đổi = đổi bytes ⟹ đổi hash ⟹ đổi địa chỉ vault ⟹ deploy lại (SPEC §6.1.5).
+// PHẢI trùng BIT với khối cùng tên trong `offchain/src/constants.ts` (P8).
+
+// TẠM — sàn hệ số tiêu thụ, 0.5Q (`CC-GEN-USAGE-FLOOR`, SPEC §13). Mức khởi động lạnh
+// KHÔNG có hằng riêng: nó suy từ sàn (`gen_formula.usage_factor_coldstart_q`).
+pub const usage_factor_floor_q : Int = 500_000_000
+
+// TẠM — độ phủ lịch sử của `scale_limit`, = Q (`CC-GEN-SCALE-COVERAGE`, SPEC §13).
+pub const scale_coverage_q : Int = 1_000_000_000
+
+// Hình dạng cửa sổ `usage_window`: đúng 7 ô — ô 0 là epoch ĐANG MỞ, ô 1..6 là 6 epoch
+// ĐÃ ĐÓNG (SPEC §6.1.2 "6 epoch đã qua" + "một cặp tích luỹ của epoch đang mở").
+pub const usage_window_len : Int = 7
+
+// `horizon` của `scale_limit` cho InstantGen (SPEC §6.1.4 bảng: InstantGen = 6).
+pub const instant_scale_horizon : Int = 6
+
+// TẠM — phần mỗi vault được rút trên một lần đặt lại shard GB, 0.05Q
+// (`CC-GEN-GB-VAULT-SHARE`, SPEC §6.1.3 · §13).
+pub const gb_vault_share_q : Int = 50_000_000
+
+// TẠM — trần mỗi shard GB mỗi lần đặt lại, nanogic (`CC-GEN-SURPLUS-SHARD`).
+// Dẫn xuất SPEC §6.1.3: ⌊ SHARD_CAP × generation_rate_q / Q ⌋ ở suất tạm 4·10⁹
+// = ⌊ 4.5×10¹⁴ × 4×10⁹ / 10⁹ ⌋ = 1.8×10¹⁵. Bài `gen_shard_cap_matches_derivation`
+// (gen_formula.ak) tính lại. Bản ở GenBeacons là APPLY-PARAM `gb_shard_cap_nanogic`
+// của `gb_shard` (`GenBeacons/onchain/validators/gb_shard.ak`) — hai chỗ giữ cùng giá
+// trị, đổi một thì đổi cả hai.
+pub const gb_shard_cap_nanogic : Int = 1_800_000_000_000_000
+
+// Số shard của bộ đếm `GB_available` (SPEC §11 `SHARD_COUNT`, `INV-SURPLUS-RATION`).
+// CHÉP CÓ NHÃN từ `GenBeacons/onchain/lib/genbeacons/constants.ak` ▸ `shard_count`
+// (MAGIC@9c4a282b, 2026-09-30). Két dùng nó cho ánh xạ két → shard
+// (`greenback.vault_shard_id`); lệch với GenBeacons ⟹ két chỉ tới một shard không có.
+pub const gb_shard_count : Int = 16
+
+// TẠM — độ tươi beacon GreenBack, tính bằng epoch (`CC-GEN-BEACON-AGE`, SPEC §6.1.3 ·
+// §11 · §13). SPEC §13 khai TẠM: `0` khi chưa có bộ đếm shard, `1` khi có. Két Gen
+// v2.0 tiêu shard ở mọi lượt sinh (gói b2) ⟹ `1`: beacon cũ không mở thêm được gì
+// ngoài phần shard còn lại.
+pub const greenback_beacon_max_age_epochs : Int = 1
+
+// TẠM — số epoch shard GB ứng trước cho hợp đồng ScheduleGen lúc ký (SPEC §6.4, §11).
+// InstantGen không dùng; khai ở đây để bộ hằng Gen v2.0 đủ một chỗ cho lượt ScheduleGen.
+pub const buffer_ep : Int = 2
+
+// TẠM — trần cứng của ρ (Q-format) (`INV-RATE-GOVERNED`, `CC-GEN-RATE-VALUE`, SPEC §13).
+// Chép có nhãn từ apply-param `rho_max_q` của `GenBeacons/onchain/validators/rate_param.ak`
+// (TẠM 4_000_000_000, chép 2026-09-30 @ 04f8a43d). Ở gói (a) chỉ dùng làm cận trên cho
+// vector tràn số; nối vào validator là việc của gói sau.
+pub const rho_max_q : Int = 4_000_000_000

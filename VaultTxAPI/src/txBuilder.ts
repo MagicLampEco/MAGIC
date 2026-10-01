@@ -22,9 +22,11 @@ import {
   type LucidEvolution, type Script, type TxBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
 import {
-  buildConsumeTx, buildInstantGenTx, buildMintEngageTx, buildScheduleCommitTx, buildScheduleFireTx, buildVaultBurnBatch,
+  buildConsumeTx, buildInstantGenTx, buildMintEngageTx, buildRefreshCheckpointTx, buildScheduleCommitTx,
+  buildScheduleFireTx, buildVaultBurnBatch,
   createVault, decodePriceParam, requiredFromBeacon,
-  type DidPaymentFundingInput, type PlutusJson, type Profile, type VaultModule, type VaultType,
+  type DidPaymentFundingInput, type GenBeaconParams, type InstantVaultParams, type PlutusJson, type Profile,
+  type VaultModule, type VaultType,
 } from "@magiclamp/sdk";
 import { buildBindDidTx } from "@magiclamp/consumemagic";
 import { posixMsToEpoch, OwnerAuthError, type Network, type OwnerAuth, type OwnerRef } from "@magiclamp/protocol-utils";
@@ -33,6 +35,7 @@ import type { ChainReader, ChainTip } from "./chain.js";
 import type { Deployment, VaultScope } from "./config.js";
 import { ChainUnavailableError, CodedApiError, TxBuildRejectedError } from "./errors.js";
 import type { FoundVault } from "./vaultLookup.js";
+import { pickByNft, type InstantGenRefs } from "./genV2.js";
 
 export interface BuildContext {
   /** Chủ vault (`Credential`). */
@@ -80,12 +83,59 @@ export interface BuiltTx {
   txCbor: string;
 }
 
+/**
+ * Gen v2.0 — mọi UTxO beacon/shard đã ĐỌC ở tầng dịch vụ (`genV2.ts`) và giao nguyên xuống
+ * đây, để phép so trần `m` và bộ dựng nhìn CÙNG một ảnh chụp chuỗi.
+ */
+export interface InstantGenBuildParams {
+  /** Lượng sinh (nanogic) chủ két chọn — đã so với `maxM` ở tầng dịch vụ. */
+  m: bigint;
+  /** Chín apply-param của két (`genV2.ts` ▸ `instantVaultParamsOf`). */
+  vaultParams: InstantVaultParams;
+  refs: InstantGenRefs;
+  /** Lượt này làm mới checkpoint ⟹ beacon ρ đi vào tx; không ⟹ không đưa vào. */
+  includeRateBeacon: boolean;
+  vaultRegistryPolicy: string;
+  gbShardCapNanogic: bigint;
+  /** Két đã kiểm bởi `wakeme.ts` ▸ `resolveWakemeVault`; vắng ⟹ không két, L_lent = 0. */
+  wakeme?: { utxo: UTxO; scriptHash: string };
+}
+
+export interface RefreshCheckpointBuildParams {
+  vaultParams: InstantVaultParams;
+  rateBeaconUtxo: UTxO;
+  wakemeVaultUtxo?: UTxO;
+}
+
+export interface ScheduleCommitBuildParams {
+  scheduleLength: bigint;
+  lampPerEpoch: bigint;
+  gen: {
+    params: GenBeaconParams;
+    rateBeaconUtxo: UTxO;
+    gbBeaconUtxo: UTxO;
+    vaultRegistryUtxo: UTxO;
+    gbShardUtxos: UTxO[];
+  };
+}
+
+export interface ConsumeBuildParams {
+  opType: number;
+  opCount: bigint;
+  /** Thread của CHÍNH chủ, đã chọn bởi `engage.ts` ▸ `pickEngageThread`. */
+  engageUtxo: UTxO;
+  /** Chỉ két Instant v2.0 làm mới checkpoint ở lượt này (`cap_epoch < e`). SDK quyết lại
+   *  từ datum và chỉ đưa các UTxO này vào tx khi lượt tiêu thật sự làm mới. */
+  checkpoint?: { vaultParams: InstantVaultParams; rateBeaconUtxo: UTxO; wakemeVaultUtxo?: UTxO };
+}
+
 export interface TxBuilderPort {
-  scheduleCommit(ctx: BuildContext, p: { scheduleLength: bigint; lampPerEpoch: bigint }): Promise<BuiltTx>;
+  scheduleCommit(ctx: BuildContext, p: ScheduleCommitBuildParams): Promise<BuiltTx>;
   scheduleFire(ctx: BuildContext, p: { scheduleId: string }): Promise<BuiltTx>;
-  /** `engageUtxo`: thread của CHÍNH chủ, đã chọn bởi `engage.ts` ▸ `pickEngageThread`. */
-  consume(ctx: BuildContext, p: { opType: number; opCount: bigint; engageUtxo: UTxO }): Promise<BuiltTx>;
-  instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx>;
+  consume(ctx: BuildContext, p: ConsumeBuildParams): Promise<BuiltTx>;
+  instantGen(ctx: BuildContext, p: InstantGenBuildParams): Promise<BuiltTx>;
+  /** RedeemerRefreshCheckpoint — chủ ký, làm mới năm ô checkpoint, không đổi LAMP/MAGIC. */
+  refreshCheckpoint(ctx: BuildContext, p: RefreshCheckpointBuildParams): Promise<BuiltTx>;
   createVault(ctx: CreateVaultContext, p: { lampAmount: bigint; profile?: Profile }): Promise<BuiltCreateVault>;
   openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread>;
   /** Gắn DID vào thread (redeemer `BindDID`). `engageUtxo`: thread của CHÍNH chủ, `did_commit` đang
@@ -224,11 +274,22 @@ export class SdkTxBuilder implements TxBuilderPort {
 
   constructor(private readonly deps: SdkTxBuilderDeps) {}
 
-  async scheduleCommit(ctx: BuildContext, p: { scheduleLength: bigint; lampPerEpoch: bigint }): Promise<BuiltTx> {
+  async scheduleCommit(ctx: BuildContext, p: ScheduleCommitBuildParams): Promise<BuiltTx> {
+    const d = this.deps.deployment;
+    if (d.refScriptUtxos.commit === undefined || d.refScriptUtxos.gbShard === undefined) {
+      throw new Error(
+        "[bất biến nội bộ] SdkTxBuilder.scheduleCommit được gọi khi ref_script_utxos.commit/gb_shard vắng — " +
+        "cổng cấu hình ở VaultTxService.scheduleCommit đã bị đi vòng.",
+      );
+    }
     const lucid = await this.lucidFor(ctx);
     const { vaultScript, shardScript, refScriptUtxos } = await this.scheduleScripts(ctx.vault.scope.scriptHash);
-    const shardUtxos = await this.deps.chain.utxosAt(this.deps.deployment.shardAddress);
-    assertShardsPresent(shardUtxos, this.deps.deployment.shardAddress);
+    const [commitRef, gbShardRef] = await this.deps.chain.utxosByOutRef([d.refScriptUtxos.commit, d.refScriptUtxos.gbShard]);
+    const commitScript = scriptOfRef(commitRef, "commit");
+    const gbShardScript = scriptOfRef(gbShardRef, "gb_shard");
+    assertScriptHash(gbShardScript, p.gen.params.gbShardPolicyId, "gb_shard");
+    const shardUtxos = await this.deps.chain.utxosAt(d.shardAddress);
+    assertShardsPresent(shardUtxos, d.shardAddress);
 
     const r = await rejectAsProtocol(() => buildScheduleCommitTx({
       lucid,
@@ -239,11 +300,21 @@ export class SdkTxBuilder implements TxBuilderPort {
       userAddress: ctx.changeAddress,
       vaultScript,
       shardScript,
-      lampPolicyId: this.deps.deployment.lampPolicyId,
-      lampAssetName: this.deps.deployment.lampAssetNameHex,
+      // Két uỷ luật ký cho validator withdraw-zero `commit`: tx mang mục rút 0 từ reward
+      // address của nó. Stake credential phải ĐĂNG KÝ trước (`buildRegisterCommitStakeTx`).
+      commitScript,
+      commitRefScriptUtxo: commitRef,
+      gen: p.gen.params,
+      rateBeaconUtxo: p.gen.rateBeaconUtxo,
+      gbBeaconUtxo: p.gen.gbBeaconUtxo,
+      vaultRegistryUtxo: p.gen.vaultRegistryUtxo,
+      gbShardUtxos: p.gen.gbShardUtxos,
+      gbShardScript,
+      lampPolicyId: d.lampPolicyId,
+      lampAssetName: d.lampAssetNameHex,
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
-      refScriptUtxos,
+      refScriptUtxos: [...refScriptUtxos, gbShardRef!],
       ownerAuth: ctx.ownerAuth,
       collateralLovelace: ctx.collateralLovelace,
     }));
@@ -274,55 +345,65 @@ export class SdkTxBuilder implements TxBuilderPort {
   }
 
   /**
-   * InstantGen — không nhận tham số nào ngoài chủ vault, và đó là điểm.
-   *
-   * Lượng cấp KHÔNG do người gọi chọn: nó là `min(vế thưởng, cap_surplus, cap_pp)`,
-   * tính từ trạng thái vault cộng hai reference input. Một tham số `amount` ở đây sẽ
-   * là một con số người dùng gõ vào rồi bị validator bác — tức một cái nút hứa một
-   * thứ nó không quyết được.
-   *
-   * Hai reference input là chỗ đường này fail-closed, và nó fail-closed ở TẦNG CHUỖI
-   * chứ không ở tầng dịch vụ: thiếu beacon, beacon quá hạn, hoặc cờ `depeg` bật thì
-   * `validate_instant_gen` từ chối. Dịch vụ không đoán hộ — nó chỉ dựng, và để câu
-   * từ chối của chuỗi đi thẳng về người gọi qua `rejectAsProtocol`.
+   * InstantGen Gen v2.0 — `m` do CHỦ chọn (redeemer `InstantGen { claimed_amount = m }`), đã so
+   * với `maxM` ở tầng dịch vụ trên CÙNG các UTxO giao xuống đây. Két + shard GB bị tiêu; beacon
+   * GreenBack, sổ két (và beacon ρ khi làm mới checkpoint, két Wakeme khi có) là reference input.
+   * Validator vẫn là trọng tài cuối: câu từ chối của gói nền đi thẳng về qua `rejectAsProtocol`.
    */
-  async instantGen(ctx: BuildContext, _p: Record<string, never>): Promise<BuiltTx> {
+  async instantGen(ctx: BuildContext, p: InstantGenBuildParams): Promise<BuiltTx> {
     const d = this.deps.deployment;
-    // KHÔNG phải bản sao thứ hai của cổng cấu hình — cổng đó ở `VaultTxService.instantGen`
-    // và nó là bản quyết định. Đây là một BẤT BIẾN NỘI BỘ để thu hẹp kiểu: tới được đây
-    // với `instant === undefined` nghĩa là ai đó gọi thẳng tầng dựng, bỏ qua tầng dịch vụ.
-    // Nói đúng bản chất thay vì lặp lại câu của cổng kia, vì hai bản sao của một cổng thì
-    // bản lỏng hơn là bản quyết định và không bản nào tự khai mình lỏng hơn.
-    if (d.instant === undefined) {
+    if (d.refScriptUtxos.gbShard === undefined) {
       throw new Error(
-        "[bất biến nội bộ] SdkTxBuilder.instantGen được gọi khi `deployment.instant` vắng. " +
-        "Cổng cấu hình nằm ở VaultTxService.instantGen — lượt gọi này đã đi vòng qua nó.",
+        "[bất biến nội bộ] SdkTxBuilder.instantGen được gọi khi ref_script_utxos.gb_shard vắng — " +
+        "cổng cấu hình ở VaultTxService.instantGen đã bị đi vòng.",
       );
     }
-
     const lucid = await this.lucidFor(ctx);
-    const [vaultRef] = await this.deps.chain.utxosByOutRef([d.refScriptUtxos.vault]);
+    const [vaultRef, gbShardRef] = await this.deps.chain.utxosByOutRef([d.refScriptUtxos.vault, d.refScriptUtxos.gbShard]);
     const vaultScript = scriptOfRef(vaultRef, "vault");
     assertScriptHash(vaultScript, ctx.vault.scope.scriptHash, "vault");
-
-    const umDatumUtxo = pickByNft(
-      await this.deps.chain.utxosAt(d.instant.umDatumAddress), d.instant.umNftUnit, "datum UM",
-    );
-    const backingBeaconUtxo = pickByNft(
-      await this.deps.chain.utxosAt(d.instant.backingBeaconAddress), d.instant.backingBeaconNftUnit,
-      "beacon backing",
-    );
+    assertScriptHash(scriptOfRef(gbShardRef, "gb_shard"), p.vaultParams.gbShardPolicyId, "gb_shard");
 
     const r = await rejectAsProtocol(() => buildInstantGenTx({
       lucid,
       vaultUtxo: ctx.vault.utxo,
-      umDatumUtxo,
-      backingBeaconUtxo,
-      userAddress: ctx.changeAddress,
       vaultScript,
+      vaultParams: p.vaultParams,
       vaultRefScriptUtxo: vaultRef,
-      lampPolicyId: d.lampPolicyId,
-      lampAssetName: d.lampAssetNameHex,
+      m: p.m,
+      ...(p.includeRateBeacon ? { rateBeaconUtxo: p.refs.rateBeaconUtxo } : {}),
+      greenbackBeaconUtxo: p.refs.greenbackBeaconUtxo,
+      gbShardUtxo: p.refs.gbShardUtxo,
+      gbShardRefScriptUtxo: gbShardRef,
+      vaultRegistryUtxo: p.refs.vaultRegistryUtxo,
+      vaultRegistryPolicy: p.vaultRegistryPolicy,
+      gbShardCapNanogic: p.gbShardCapNanogic,
+      network: this.deps.network,
+      tipPosixMs: ctx.tip.blockTimePosixMs,
+      ownerAuth: ctx.ownerAuth,
+      collateralLovelace: ctx.collateralLovelace,
+      // Két Wakeme vào REFERENCE INPUTS; bộ dựng đọc lại bằng `readWakemeVault` trên chính UTxO
+      // này, cùng đỉnh chuỗi, nên L_lent khớp con số ở `summary.wakeme`.
+      ...(p.wakeme === undefined ? {} : { wakemeVaultUtxo: p.wakeme.utxo }),
+    }));
+    return { txCbor: r.tx.toCBOR() };
+  }
+
+  /** RefreshCheckpoint (redeemer #6) — `@magiclamp/sdk` ▸ `buildRefreshCheckpointTx`. */
+  async refreshCheckpoint(ctx: BuildContext, p: RefreshCheckpointBuildParams): Promise<BuiltTx> {
+    const d = this.deps.deployment;
+    const lucid = await this.lucidFor(ctx);
+    const [vaultRef] = await this.deps.chain.utxosByOutRef([d.refScriptUtxos.vault]);
+    const vaultScript = scriptOfRef(vaultRef, "vault");
+    assertScriptHash(vaultScript, ctx.vault.scope.scriptHash, "vault");
+    const r = await rejectAsProtocol(() => buildRefreshCheckpointTx({
+      lucid,
+      vaultUtxo: ctx.vault.utxo,
+      vaultScript,
+      vaultParams: p.vaultParams,
+      vaultRefScriptUtxo: vaultRef,
+      rateBeaconUtxo: p.rateBeaconUtxo,
+      ...(p.wakemeVaultUtxo === undefined ? {} : { wakemeVaultUtxo: p.wakemeVaultUtxo }),
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
       ownerAuth: ctx.ownerAuth,
@@ -331,7 +412,7 @@ export class SdkTxBuilder implements TxBuilderPort {
     return { txCbor: r.tx.toCBOR() };
   }
 
-  async consume(ctx: BuildContext, p: { opType: number; opCount: bigint; engageUtxo: UTxO }): Promise<BuiltTx> {
+  async consume(ctx: BuildContext, p: ConsumeBuildParams): Promise<BuiltTx> {
     const lucid = await this.lucidFor(ctx);
     const d = this.deps.deployment;
 
@@ -368,6 +449,15 @@ export class SdkTxBuilder implements TxBuilderPort {
       currentEpoch,
       vaultModule: vaultModuleOf(ctx.vault.scope.vaultType),
       vaultPlutusJson: this.deps.vaultPlutusJson,
+      ...(ctx.ownerAuth === undefined ? {} : { ownerAuth: ctx.ownerAuth }),
+      // Gen v2.0: két Instant sang epoch mới làm mới checkpoint ⟹ SDK cần beacon ρ (+ két
+      // Wakeme khi `wakeme_link` khác ""). SDK tự quyết lại từ datum, và chỉ trả chúng ra
+      // (`vaultSide.rateBeaconUtxo` …) khi lượt này thật sự làm mới.
+      ...(p.checkpoint === undefined ? {} : {
+        rateBeaconUtxo: p.checkpoint.rateBeaconUtxo,
+        instantVaultParams: p.checkpoint.vaultParams,
+        ...(p.checkpoint.wakemeVaultUtxo === undefined ? {} : { wakemeVaultUtxo: p.checkpoint.wakemeVaultUtxo }),
+      }),
     }));
 
     const r = await rejectAsProtocol(() => buildConsumeTx({
@@ -381,6 +471,9 @@ export class SdkTxBuilder implements TxBuilderPort {
       opCount: p.opCount,
       vaultBurnRedeemerCbor: vaultSide.vaultBurnRedeemerCbor,
       vaultOutDatumCbor: vaultSide.vaultOutDatumCbor,
+      vaultKind: vaultSide.vaultKind,
+      ...(vaultSide.rateBeaconUtxo === undefined ? {} : { rateBeaconUtxo: vaultSide.rateBeaconUtxo }),
+      ...(vaultSide.wakemeVaultUtxo === undefined ? {} : { wakemeVaultUtxo: vaultSide.wakemeVaultUtxo }),
       // Chủ khoá: bí danh cũ vẫn đúng (chính chủ thread). Chủ script: KHÔNG có khoá nào để
       // khai ở đây — quyền chủ đi qua mục rút `Script(h)` của `ownerAuth`.
       ownerSignerKeyHash: ctx.owner.type === "key" ? ctx.owner.hash : undefined,
@@ -581,24 +674,6 @@ function assertScriptHash(script: Script, expectedHash: string, what: string): v
   }
 }
 
-function pickByNft(utxos: UTxO[], nftUnit: string, what: string): UTxO {
-  const hits = utxos.filter(u => (u.assets[nftUnit] ?? 0n) === 1n);
-  if (hits.length === 0) {
-    throw new ChainUnavailableError(
-      `Không tìm thấy UTxO nào mang NFT của ${what} (${nftUnit.slice(0, 20)}…).`,
-      { what, nft_unit: nftUnit },
-    );
-  }
-  if (hits.length > 1) {
-    throw new ChainUnavailableError(
-      `Có ${hits.length} UTxO cùng mang NFT của ${what} — bất khả trên sổ cái đã lắng. ` +
-      `Từ chối chọn đại một cái.`,
-      { what, nft_unit: nftUnit, utxo_refs: hits.map(u => `${u.txHash}#${u.outputIndex}`) },
-    );
-  }
-  return hits[0]!;
-}
-
 function assertShardsPresent(shardUtxos: UTxO[], address: string): void {
   if (shardUtxos.length === 0) {
     throw new ChainUnavailableError(
@@ -682,6 +757,9 @@ export class RecordedTxBuilder implements TxBuilderPort {
   lastCall: {
     route: string; params: unknown; ownerAuthKind?: "key" | "script"; changeAddress?: string;
     funding?: CreateVaultContext["funding"]; feePayerUtxo?: UTxO; collateralLovelace?: bigint; engageUtxo?: UTxO;
+    wakeme?: InstantGenBuildParams["wakeme"];
+    /** Tham số đầy đủ mà tầng dịch vụ giao xuống (Gen v2.0: UTxO beacon/shard, apply-param). */
+    buildParams?: unknown;
   } | null = null;
   constructor(
     private readonly txCborByRoute: Record<string, string>,
@@ -700,15 +778,18 @@ export class RecordedTxBuilder implements TxBuilderPort {
     return { txCbor: cbor };
   }
 
-  scheduleCommit(ctx: BuildContext, p: { scheduleLength: bigint; lampPerEpoch: bigint }): Promise<BuiltTx> {
-    return this.serve("schedule_commit", p, ctx);
+  async scheduleCommit(ctx: BuildContext, p: ScheduleCommitBuildParams): Promise<BuiltTx> {
+    const b = await this.serve("schedule_commit", { scheduleLength: p.scheduleLength, lampPerEpoch: p.lampPerEpoch }, ctx);
+    this.lastCall!.buildParams = p;
+    return b;
   }
   scheduleFire(ctx: BuildContext, p: { scheduleId: string }): Promise<BuiltTx> {
     return this.serve("schedule_fire", p, ctx);
   }
-  async consume(ctx: BuildContext, p: { opType: number; opCount: bigint; engageUtxo: UTxO }): Promise<BuiltTx> {
+  async consume(ctx: BuildContext, p: ConsumeBuildParams): Promise<BuiltTx> {
     const b = await this.serve("consume", { opType: p.opType, opCount: p.opCount }, ctx);
     this.lastCall!.engageUtxo = p.engageUtxo;
+    this.lastCall!.buildParams = p;
     return b;
   }
   async openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread> {
@@ -722,8 +803,17 @@ export class RecordedTxBuilder implements TxBuilderPort {
     this.lastCall = { ...this.lastCall!, changeAddress: ctx.changeAddress, engageUtxo: p.engageUtxo };
     return b;
   }
-  instantGen(ctx: BuildContext, p: Record<string, never>): Promise<BuiltTx> {
-    return this.serve("instant_gen", p, ctx);
+  async instantGen(ctx: BuildContext, p: InstantGenBuildParams): Promise<BuiltTx> {
+    // `params` giữ đúng `{ m }` — lượng DUY NHẤT người gọi chọn. Két + beacon đi riêng.
+    const b = await this.serve("instant_gen", { m: p.m }, ctx);
+    if (p.wakeme !== undefined) this.lastCall!.wakeme = p.wakeme;
+    this.lastCall!.buildParams = p;
+    return b;
+  }
+  async refreshCheckpoint(ctx: BuildContext, p: RefreshCheckpointBuildParams): Promise<BuiltTx> {
+    const b = await this.serve("refresh_checkpoint", {}, ctx);
+    this.lastCall!.buildParams = p;
+    return b;
   }
   /** Tham số giao thức của bản ghi. Không khai ⟹ NÉM: một báo giá không được tính min-ADA
    *  trên một con số bộ dựng giả tự đoán. */

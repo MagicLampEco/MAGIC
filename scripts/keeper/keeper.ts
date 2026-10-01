@@ -55,7 +55,7 @@ import {
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { awaitTxBounded as awaitTxBoundedShared, DEFAULT_AWAIT_TX_MS } from "../awaitTx.js";
-import { priceParamParams, scheduleVaultParams, shardSpendParams } from "../deployParams.js";
+import { priceParamParams, scheduleScriptPair, shardSpendParams, genV2BeaconRefsFromBook } from "../deployParams.js";
 import { beaconEpochState, aheadMessage } from "./beaconEpoch.js";
 import { applyOpPriceSet, describeChanges, parseOpPriceSet, resolvePricePush, type ResolvedPricePush } from "./opPrices.js";
 import { decodePriceParam, encodePriceParam } from "../../ConsumeMAGIC/offchain/src/types.js";
@@ -271,13 +271,18 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
 async function stepFire(lucid: LucidEvolution, nowMs: bigint) {
   const epoch = nowMs / PROTOCOL.MS_PER_EPOCH;
   const blueprint = await loadBlueprint("ScheduleGen");
-  const { script: vaultScript, hash: vaultHash } = appliedScript(
-    findValidator(blueprint, "vault.vault.spend"),
-    scheduleVaultParams({
-      lampPolicyId: POLICY_IDS.lamp, lampAssetName: ASSET_NAMES.lamp,
-      shardPolicyId: POLICY_IDS.shard_nft, msPerEpoch: PROTOCOL.MS_PER_EPOCH,
-    }),
-  );
+  // Két Gen v2.0 nướng hash `commit` đã apply, và `commit` nướng ba hash GenBeacons ⟹ dựng lại
+  // két cần ba khoá đó từ sổ (cùng nguồn với deploy/07). Fire KHÔNG đọc beacon và KHÔNG gọi
+  // `commit` — chỉ cần ĐÚNG hash két để tìm địa chỉ và đính script. Sổ thiếu khoá ⟹ bước này
+  // hỏng, nêu tên khoá; các bước khác vẫn chạy.
+  let beacons;
+  try { beacons = genV2BeaconRefsFromBook(process.env); }
+  catch (e) { return record("fire", "fail", (e as Error).message.slice(0, 400)); }
+  const { vaultScript, vaultHash } = scheduleScriptPair(blueprint, {
+    lampPolicyId: POLICY_IDS.lamp, lampAssetName: ASSET_NAMES.lamp,
+    shardPolicyId: POLICY_IDS.shard_nft, msPerEpoch: PROTOCOL.MS_PER_EPOCH,
+    ...beacons,
+  });
   const expected = process.env.VAULT_SCHEDULE_HASH;
   if (expected && expected !== vaultHash) {
     return record("fire", "fail", `dựng lại vault ra ${vaultHash.slice(0, 8)}… ≠ VAULT_SCHEDULE_HASH ${expected.slice(0, 8)}… — không gửi gì`);

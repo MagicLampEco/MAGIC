@@ -409,3 +409,60 @@ describe("Utility — formatting & conversion", () => {
     expect(nanogicToMagicStr(0n)).toBe("0.0000");
   });
 });
+
+// ── CC-GEN-LENT-READ — vector trùng bit với math.ak ▸ ig_lent_*_vector ──
+import {
+  computeCapLent, computeInstantGrantCapped, computeInstantGrantWithLent,
+  computeInstantGrant as computeInstantGrantBase, computeCapPp as computeCapPpBase,
+} from "../offchain/src/math.js";
+import { LENT_PP_CAP } from "../offchain/src/constants.js";
+import {
+  TV_IG_LENT_ZERO, TV_IG_LENT_BELOW, TV_IG_LENT_ABOVE, TV_IG_LENT_KNEE,
+} from "./vectors.js";
+
+describe("computeCapLent / computeInstantGrantWithLent — CC-GEN-LENT-READ", () => {
+  const grantOf = (i: typeof TV_IG_LENT_ZERO.input) => computeInstantGrantWithLent(
+    i.consumed, i.um_q, i.pm_q, i.br_q, i.magic_supply, i.l_avail_oildrop, i.l_lent_oildrop,
+  );
+
+  it("LENT_PP_CAP = 1 MAGIC (TẠM, khớp constants.ak)", () => {
+    expect(LENT_PP_CAP).toBe(1_000_000_000n);
+  });
+
+  it("TV-IG-LENT-ZERO: lent = 0 ⟹ đúng bản không-lent", () => {
+    const i = TV_IG_LENT_ZERO.input;
+    expect(computeCapLent(i.l_lent_oildrop)).toBe(TV_IG_LENT_ZERO.expected_cap_lent);
+    expect(grantOf(i)).toBe(TV_IG_LENT_ZERO.expected_grant);
+    expect(grantOf(i)).toBe(computeInstantGrantBase(
+      i.consumed, i.um_q, i.pm_q, i.br_q, i.magic_supply, i.l_avail_oildrop,
+    ));
+  });
+
+  it("TV-IG-LENT-BELOW: dưới trần ⟹ cap_lent = cap_pp(lent)", () => {
+    const i = TV_IG_LENT_BELOW.input;
+    expect(computeCapLent(i.l_lent_oildrop)).toBe(TV_IG_LENT_BELOW.expected_cap_lent);
+    expect(computeCapLent(i.l_lent_oildrop)).toBe(computeCapPpBase(i.l_lent_oildrop));
+    expect(grantOf(i)).toBe(TV_IG_LENT_BELOW.expected_grant);
+  });
+
+  it("TV-IG-LENT-ABOVE: trên trần ⟹ kẹp ở LENT_PP_CAP", () => {
+    const v = TV_IG_LENT_ABOVE;
+    expect(computeCapPpBase(v.input.l_lent_oildrop)).toBe(v.expected_cap_pp_of_lent);
+    expect(computeCapLent(v.input.l_lent_oildrop)).toBe(v.expected_cap_lent);
+    expect(grantOf(v.input)).toBe(v.expected_grant);
+    expect(v.expected_grant).toBe(computeCapPpBase(v.input.l_avail_oildrop) + LENT_PP_CAP);
+  });
+
+  it("TV-IG-LENT-KNEE: biên 250 LAMP", () => {
+    for (const c of TV_IG_LENT_KNEE.cases) {
+      expect(computeCapLent(c.l_lent_oildrop)).toBe(c.expected_cap_lent);
+    }
+  });
+
+  it("computeInstantGrantCapped: trần LAMP là vế thứ ba của min3", () => {
+    const i = TV_IG_LENT_ABOVE.input;
+    expect(computeInstantGrantCapped(
+      i.consumed, i.um_q, i.pm_q, i.br_q, i.magic_supply, 7n,
+    )).toBe(7n);
+  });
+});

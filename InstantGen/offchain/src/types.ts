@@ -1,7 +1,12 @@
 // src/types.ts — TypeScript mirror of Aiken types + Lucid Evolution Data schemas
 // Constructor indices must match Aiken type ordering (Plutus Data encoding).
+//
+// Nguồn chân lý hình dạng nhị phân: `InstantGen/onchain/lib/magiclamp/protocol/types.ak`.
+// Lệch THỨ TỰ trường hay CHỈ SỐ constructor là dựng ra datum/redeemer mà validator
+// không giải mã được. Vector CBOR ghim hai bên trùng byte: `tests/vectors.ts` ▸
+// `TV_DATUM_V2_*` ↔ `onchain/lib/magiclamp/protocol/datum_vectors_test.ak`.
 
-import { Data } from "@lucid-evolution/lucid";
+import { Data, Constr } from "@lucid-evolution/lucid";
 
 // ── Primitive ────────────────────────────────────────────────
 export type Natural = bigint;
@@ -60,6 +65,8 @@ export const LoyaltyHoldingSchema = Data.Object({
 export type LoyaltyHolding = Data.Static<typeof LoyaltyHoldingSchema>;
 
 // ── VacuumOrder ──────────────────────────────────────────────
+// Không còn trong VaultDatum từ Gen v2.0 (ô 6 nay là `wakeme_link`). Giữ lược đồ vì
+// `types.ak` vẫn khai kiểu này.
 export const VacuumOrderSchema = Data.Object({
   order_id     : Data.Bytes(),
   commit_epoch : Data.Integer(),
@@ -93,6 +100,8 @@ export const GenScheduleSchema = Data.Object({
 export type GenSchedule = Data.Static<typeof GenScheduleSchema>;
 
 // ── DelegationCertificate ────────────────────────────────────
+// Không còn trong VaultDatum từ Gen v2.0 (ô 12 nay là `cap_epoch`). Giữ lược đồ vì
+// `types.ak` vẫn khai kiểu này.
 export const AppAllocationSchema = Data.Object({
   app_id     : Data.Bytes(),
   weight_bps : Data.Integer(),
@@ -130,8 +139,8 @@ export type VaultAttribution = Data.Static<typeof VaultAttributionSchema>;
 // ── ActivityState ────────────────────────────────────────────
 // `consumed_credit` occupies the slot previously named `total_burns_count`
 // (same position, same Integer type → Plutus Data shape unchanged).
-// SEMANTICS (§6.3): nanogic ALREADY CONSUMED via BurnBatch and not yet turned
-// into an InstantGen reward. BurnBatch adds Σburns; InstantGen zeroes it.
+// Gen v2.0: nhánh sinh KHÔNG còn xoá trường này (datum ra `..applied`); BurnBatch cộng
+// Σburns. Vai của nó dưới mô hình mới là CHƯA CHỐT `CC-GEN-SEED-CREDIT` (SPEC v2.0 §13).
 export const ActivityStateSchema = Data.Object({
   recent_burn_epochs : Data.Array(Data.Tuple([Data.Bytes(), Data.Integer()])),
   consumed_credit    : Data.Integer(),
@@ -139,83 +148,164 @@ export const ActivityStateSchema = Data.Object({
 export type ActivityState = Data.Static<typeof ActivityStateSchema>;
 
 // ── StreakState ──────────────────────────────────────────────
+// Không còn trong VaultDatum từ Gen v2.0 (ô 14 nay là `cap_nanogic`).
 export const StreakStateSchema = Data.Object({
   current_streak    : Data.Integer(),
   last_active_epoch : Data.Integer(),
 });
 export type StreakState = Data.Static<typeof StreakStateSchema>;
 
-// ── VaultDatum — 18 trường, RIÊNG của InstantGen ─────────────
+// ── EpochUsage — một ô của `usage_window` (SPEC §6.1.2) ─────
+// Constr 0 [generated, consumed]. Kiểu TS cùng tên sống ở `genFormula.ts` ▸
+// `EpochUsage` (interface, trùng hình dạng) — ở đây chỉ khai LƯỢC ĐỒ, không khai lại kiểu,
+// để `index.ts` tái xuất cả hai tệp mà không đụng tên.
+export const EpochUsageSchema = Data.Object({
+  generated : Data.Integer(),
+  consumed  : Data.Integer(),
+});
+
+// ── Ba kiểu beacon GenBeacons — CHÉP CÓ NHÃN ─────────────────
+// Nguồn: `GenBeacons/onchain/lib/genbeacons/types.ak` ▸ `RateParam`, `GreenBackBeacon`,
+// `GbShard`, `VaultRegistry`, `GbShardRedeemer` (MAGIC@939feb3e, 2026-09-30); bản chép
+// on-chain phía két: `InstantGen/onchain/lib/magiclamp/protocol/types.ak`. Nguồn đổi
+// hình ⟹ ba nơi đổi trong CÙNG commit. Két chỉ ĐỌC ba beacon; ai được ghi chúng là việc
+// của validator GenBeacons.
+
+/** Beacon suất ρ. ρ hiệu lực ở `e`: `rho_q` nếu `e >= effective_epoch`, ngược lại `prev_rho_q`. */
+export const RateParamSchema = Data.Object({
+  rho_q           : Data.Integer(),
+  prev_rho_q      : Data.Integer(),
+  effective_epoch : Data.Integer(),
+});
+export type RateParam = Data.Static<typeof RateParamSchema>;
+
+/** Beacon thặng dư GreenBack. */
+export const GreenBackBeaconSchema = Data.Object({
+  gb_nanogic : Data.Integer(),
+  seq        : Data.Integer(),
+  epoch      : Data.Integer(),
+  depeg      : Data.Boolean(),
+});
+export type GreenBackBeacon = Data.Static<typeof GreenBackBeaconSchema>;
+
+/** Một shard của bộ đếm `GB_available`. */
+export const GbShardSchema = Data.Object({
+  shard_id     : Data.Integer(),
+  seq          : Data.Integer(),
+  reset_amount : Data.Integer(),
+  remaining    : Data.Integer(),
+});
+export type GbShard = Data.Static<typeof GbShardSchema>;
+
+/**
+ * Redeemer shard: `Draw { amount }` = Constr 0 [amount]. Lượng két rút ở lượt sinh.
+ * Kiểu Aiken có MỘT biến thể nên mã hoá y như bản ghi ⟹ `Data.Object` một trường.
+ * (`Data.Enum` một phần tử của Lucid 0.4.30 ném "Could not type cast to integer" lúc
+ * `Data.to` — bài `instantTxWindow.test.ts` ▸ E bắt được ngày 2026-09-30.)
+ */
+export const GbShardRedeemerSchema = Data.Object({ amount: Data.Integer() });
+export type GbShardRedeemer = Data.Static<typeof GbShardRedeemerSchema>;
+
+/** Sổ script két được phép đồng tiêu với shard GB (NFT "VRG"). */
+export const VaultRegistrySchema = Data.Object({
+  vault_script_hashes : Data.Array(Data.Bytes({ minLength: 28, maxLength: 28 })),
+});
+export type VaultRegistry = Data.Static<typeof VaultRegistrySchema>;
+
+// ── VaultDatum — Gen v2.0, 20 trường, RIÊNG của InstantGen ──
 //
-// Gói này chỉ phục vụ InstantGen, nên lược đồ ở đây mang luôn trường 17
-// `instant_unlock_ms`. Két ScheduleGen/PrepaidGen KHÔNG có trường đó (17 trường)
-// — lý lẽ đầy đủ ở nguồn: `InstantGen/onchain/lib/magiclamp/protocol/types.ak` ▸
-// khối chú thích của `instant_unlock_ms`.
+// Thứ tự trường = `types.ak ▸ VaultDatum`. Ba ô chết ≤ 15 được TÁI DỤNG (két Wakeme đọc
+// theo VỊ TRÍ `[6, 12, 14]`):
+//   6  `vacuum_orders`   → `wakeme_link`   (ByteArray: "" hoặc owner_commit 32 byte)
+//   12 `delegation_cert` → `cap_epoch`     (Int)
+//   14 `streak_state`    → `cap_nanogic`   (Int)
+// Nối cuối: 18 `usage_window` (ĐÚNG 7 ô), 19 `usage_window_epoch`.
 //
-// Lệch số trường thì `Data.from` NÉM ("Could not type cast to object. Fields do
-// not match.", đo trên lucid 0.4.30, cả hai chiều), nên đọc nhầm một datum
-// ScheduleGen bằng lược đồ này là một ngoại lệ có tên, không phải một trường
-// `undefined` đi tiếp vào phép tính ở nơi khác.
+// v2.0 là hash MỚI, không di trú UTxO đời trước. Giải mã một datum 18 trường (v1) bằng
+// lược đồ này phải NÉM — dùng `decodeVaultDatum`, đừng gọi `Data.from` trần: `Data.from`
+// cũng ném khi lệch số trường, nhưng câu của nó ("Fields do not match") không nói người
+// đọc đang cầm một két đời cũ.
 export const VaultDatumSchema = Data.Object({
-  // Trường 0 — `Credential` (VerificationKey(pkh) | Script(h)), không còn pkh trần.
-  // ConsumeMAGIC đọc đúng chỉ số này. Xác thực: `@magiclamp/protocol-utils` ▸ `applyOwnerAuth`.
+  // Trường 0 — `Credential`. ConsumeMAGIC đọc đúng chỉ số này.
   owner                 : OwnerCredentialSchema,
   lamp_balance          : Data.Integer(),
   lamp_locked           : Data.Integer(),
   loyalty_holdings      : Data.Array(LoyaltyHoldingSchema),
   magic_batches         : Data.Array(MagicBatchSchema),
   next_batch_index      : Data.Integer(),
-  vacuum_orders         : Data.Array(VacuumOrderSchema),
+  // Trường 6 — SUY RA từ reference input két Wakeme ở lượt làm mới checkpoint.
+  wakeme_link           : Data.Bytes(),
   gen_schedules         : Data.Array(GenScheduleSchema),
   profile               : ActivityProfileSchema,
   profile_changed_epoch : Data.Integer(),
   pending_profile       : Data.Nullable(PendingProfileSchema),
   last_updated_epoch    : Data.Integer(),
-  delegation_cert       : DelegationCertificateSchema,
+  // Trường 12 — epoch của lượt làm mới cap gần nhất (luôn == usage_window_epoch).
+  cap_epoch             : Data.Integer(),
   activity_state        : ActivityStateSchema,
-  streak_state          : StreakStateSchema,
+  // Trường 14 — `amount_by_lamp` tại `cap_epoch`, nanogic. Validator tự tính.
+  cap_nanogic           : Data.Integer(),
+  // Trường 15 — bia mộ (Nợ #14); Paymaster đọc `list.at(fields, 15)`.
   personal_delegate     : Data.Nullable(Data.Bytes()),
   attribution           : VaultAttributionSchema,
-  // Trường 17 — mốc POSIX mili-giây mà từ đó LAMP được rời két trở lại. `0` = chưa
-  // từng sinh. Genesis GHIM `== 0`; mọi nhánh spend khác `InstantGen` ép nó ĐỨNG YÊN;
-  // riêng `validate_instant_gen` ghi `max(cũ, validity_upper_ms + ms_per_epoch)`.
+  // Trường 17 — mốc POSIX ms LAMP được rời két. Chỉ nhánh sinh ghi nó.
   instant_unlock_ms     : Data.Integer(),
+  // Trường 18 — ô 0 = epoch `usage_window_epoch`, ô 1..6 = 6 epoch đã đóng.
+  usage_window          : Data.Array(EpochUsageSchema),
+  usage_window_epoch    : Data.Integer(),
 });
 export type VaultDatum = Data.Static<typeof VaultDatumSchema>;
 
-// ── UMDatum ──────────────────────────────────────────────────
-export const UMDatumSchema = Data.Object({
-  smoothed_q         : Data.Integer(),
-  last_updated_epoch : Data.Integer(),
-  history            : Data.Array(Data.Integer()),
-});
-export type UMDatum = Data.Static<typeof UMDatumSchema>;
+/** Số trường của VaultDatum InstantGen theo đời. */
+export const VAULT_DATUM_FIELDS_V2 = 20;
+export const VAULT_DATUM_FIELDS_V1 = 18;
 
-// ── BackingBeaconDatum (§6.3)  [CẦN XÁC NHẬN — chờ CARP] ─────
-// Reference-input beacon carrying the backing ratio br = B/S. Field order must
-// match types.ak: BackingBeaconDatum exactly.
-//
-// The deployed CARP `GlobalState` (twap/spot/breaker/nsf/valid_until) is a
-// CDP-pricing datum and does NOT carry br_q — it cannot serve as this beacon.
-export const BackingBeaconDatumSchema = Data.Object({
-  br_q               : Data.Integer(),   // ⌊B/S × Q⌋
-  magic_supply       : Data.Integer(),   // S — effective MAGIC supply (nanogic)
-  depeg              : Data.Boolean(),   // true ⟹ cap = 0
-  last_updated_epoch : Data.Integer(),
-});
-export type BackingBeaconDatum = Data.Static<typeof BackingBeaconDatumSchema>;
+/**
+ * Giải mã datum két InstantGen v2.0, NÉM có tên khi hình dạng không phải v2.0.
+ *
+ *  - 18 trường ⟹ `VAULT_DATUM_V1`: két Gen v1 (hash cũ). v2.0 KHÔNG di trú UTxO v1
+ *    (SPEC v2.0 §6.1.6), nên không có đường đọc tiếp — trả lỗi thay vì đệm ô thiếu.
+ *  - số trường khác ⟹ `VAULT_DATUM_SHAPE` (vd 19 trường = két ScheduleGen v2.0).
+ *  - đúng 20 trường mà lược đồ con sai ⟹ lỗi của `Data.from`, bọc lại cùng mã
+ *    `VAULT_DATUM_SHAPE`.
+ */
+export function decodeVaultDatum(datumCbor: string): VaultDatum {
+  const raw = Data.from(datumCbor);
+  if (!(raw instanceof Constr) || raw.index !== 0) {
+    throw new Error(`VAULT_DATUM_SHAPE: datum két không phải Constr 0 — không phải VaultDatum InstantGen.`);
+  }
+  const n = raw.fields.length;
+  if (n === VAULT_DATUM_FIELDS_V1) {
+    throw new Error(
+      `VAULT_DATUM_V1: datum ${n} trường là két InstantGen Gen v1 (hash cũ). Gen v2.0 cần ` +
+      `${VAULT_DATUM_FIELDS_V2} trường và KHÔNG di trú UTxO v1 — két này không đi được ` +
+      `qua bộ dựng v2.0.`,
+    );
+  }
+  if (n !== VAULT_DATUM_FIELDS_V2) {
+    throw new Error(
+      `VAULT_DATUM_SHAPE: datum ${n} trường, VaultDatum InstantGen v2.0 cần ` +
+      `${VAULT_DATUM_FIELDS_V2} (19 trường là két ScheduleGen v2.0).`,
+    );
+  }
+  try {
+    return Data.from(datumCbor, VaultDatum);
+  } catch (e) {
+    throw new Error(`VAULT_DATUM_SHAPE: datum 20 trường nhưng sai lược đồ con — ${(e as Error).message}`);
+  }
+}
 
 // ── VaultRedeemer ────────────────────────────────────────────
 // Constructor index = Aiken enum order (types.ak). MUST stay in lockstep:
-//   0 InstantGen, 1 PruneExpired, 2 BurnBatch, 3 UpdateProfile,
-//   4 WithdrawLamp, 5 SetDelegate.
+//   0 InstantGen{claimed_amount}, 1 PruneExpired, 2 BurnBatch{burns},
+//   3 UpdateProfile{new_profile}, 4 WithdrawLamp{amount},
+//   5 SetDelegate{new_delegate}, 6 RefreshCheckpoint.
+//
+// constr 0: Gen v2.0 — `claimed_amount` = lượng sinh `m` (nanogic) do CHỦ KÉT CHỌN;
+// validator ép `m` qua các cổng IG-4..IG-12 chứ không tự tính lại một con số.
 //
 // constr 2 = BurnBatch is the LOCKED cross-repo interface (ConsumeMAGIC
 // CONTRACT.md v2, spec §11 `burn_batch_constr` = 2). Do not move it.
-//
-// constr 1 was `ApplyHalving`; halving no longer exists under the §4.2 cliff,
-// so the (nullary, therefore encoding-identical) slot now carries the §7.4
-// permissionless dead-batch collector.
 export const VaultRedeemerSchema = Data.Enum([
   Data.Object({ InstantGen: Data.Object({ claimed_amount: Data.Integer() }) }), // constr 0
   Data.Literal("PruneExpired"),                                                 // constr 1
@@ -231,8 +321,22 @@ export const VaultRedeemerSchema = Data.Enum([
   Data.Object({ SetDelegate: Data.Object({                                    // constr 5
     new_delegate: Data.Nullable(Data.Bytes()),
   })}),
+  Data.Literal("RefreshCheckpoint"),                                            // constr 6
 ]);
 export type VaultRedeemer = Data.Static<typeof VaultRedeemerSchema>;
+
+// ── VaultIdRedeemer — redeemer nhánh MINT của validator vault ─
+// `validators/vault.ak ▸ VaultIdRedeemer`: 0 MintVaultId{seed: OutputReference},
+// 1 BurnVaultId. OutputReference (stdlib v3) = Constr 0 [transaction_id, output_index].
+export const OutputReferenceSchema = Data.Object({
+  transaction_id : Data.Bytes({ minLength: 32, maxLength: 32 }),
+  output_index   : Data.Integer(),
+});
+export const VaultIdRedeemerSchema = Data.Enum([
+  Data.Object({ MintVaultId: Data.Object({ seed: OutputReferenceSchema }) }),  // constr 0
+  Data.Literal("BurnVaultId"),                                                 // constr 1
+]);
+export type VaultIdRedeemer = Data.Static<typeof VaultIdRedeemerSchema>;
 
 // ── Codec companions ─────────────────────────────────────────
 // `Data.to`/`Data.from` infer their result from the SECOND argument, so that
@@ -243,7 +347,11 @@ export type VaultRedeemer = Data.Static<typeof VaultRedeemerSchema>;
 // These aliases are the lucid-evolution idiom: same name as the type, so call
 // sites read `Data.from(utxo.datum!, VaultDatum)`. Runtime value is unchanged —
 // it is the very same schema object, only its static type is re-branded.
-export const VaultDatum          = VaultDatumSchema          as unknown as VaultDatum;
-export const UMDatum             = UMDatumSchema             as unknown as UMDatum;
-export const BackingBeaconDatum  = BackingBeaconDatumSchema  as unknown as BackingBeaconDatum;
-export const VaultRedeemer       = VaultRedeemerSchema       as unknown as VaultRedeemer;
+export const VaultDatum       = VaultDatumSchema       as unknown as VaultDatum;
+export const VaultRedeemer    = VaultRedeemerSchema    as unknown as VaultRedeemer;
+export const VaultIdRedeemer  = VaultIdRedeemerSchema  as unknown as VaultIdRedeemer;
+export const RateParam        = RateParamSchema        as unknown as RateParam;
+export const GreenBackBeacon  = GreenBackBeaconSchema  as unknown as GreenBackBeacon;
+export const GbShard          = GbShardSchema          as unknown as GbShard;
+export const GbShardRedeemer  = GbShardRedeemerSchema  as unknown as GbShardRedeemer;
+export const VaultRegistry    = VaultRegistrySchema    as unknown as VaultRegistry;

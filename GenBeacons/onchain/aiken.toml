@@ -1,0 +1,12 @@
+name    = "magiclamp/genbeacons"
+version = "0.0.1"
+compiler = "v1.1.21"
+plutus  = "v3"
+license = "Apache-2.0"
+
+[[dependencies]]
+name    = "aiken-lang/stdlib"
+# Ghim COMMIT SHA, KHÔNG ghim tag — cùng giá trị với InstantGen/onchain/aiken.toml
+# (commit mà tag v3.1.0 trỏ tới). Lý do ghim commit: xem khối chú thích ở tệp đó.
+version = "7d5cee54b2bb4eea211ae3bd806c7c39e5fd899d"
+source  = "github"

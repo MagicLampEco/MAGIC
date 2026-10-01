@@ -11,6 +11,9 @@
 //   502 CHAIN_UNAVAILABLE       KHÔNG đọc được chuỗi — chưa biết chủ này có gì
 //   502 VAULT_DATUM_UNDECODABLE đọc được, nhưng một UTxO MANG NFT danh-tính vault
 //                               lại không giải mã được bằng lược đồ hiện tại
+//   502 VAULT_DATUM_V1          một UTxO MANG NFT danh-tính vault mang datum ĐỜI TRƯỚC
+//                               Gen v2.0 (Instant 18 / Schedule 17 trường) — scope đang
+//                               trỏ vào két đời cũ; v2.0 là hash mới, không di trú
 //   409 VAULT_IDENTITY_DUPLICATE hai UTxO khác nhau cùng mang một NFT danh-tính
 //   400 BAD_REQUEST             tham số của người gọi sai
 //   401 UNAUTHORIZED            thiếu/sai thẻ bài
@@ -73,6 +76,30 @@ export class VaultDatumUndecodableError extends VaultReadError {
       `VaultDatumSchema hiện tại. Lược đồ datum của kho đã trôi khỏi thứ đang nằm trên ` +
       `chuỗi — mọi con số của lượt đọc này đều đáng ngờ, kể cả vault khác.`,
       { utxo_ref: utxoRef, decode_error: reason },
+    );
+  }
+}
+
+/**
+ * Một UTxO MANG NFT danh-tính vault mà datum là hình dạng ĐỜI TRƯỚC Gen v2.0.
+ *
+ * Mã RIÊNG, không gộp vào `VAULT_DATUM_UNDECODABLE`, vì hai ca cần hai cách xử:
+ * `UNDECODABLE` nói lược đồ của kho đã trôi khỏi chuỗi (lỗi mã); `V1` nói cấu hình đang
+ * trỏ scope vào một địa chỉ két đời cũ (lỗi cấu hình) — hash v2.0 là script MỚI, không
+ * két v2.0 nào mang được datum này, và chủ dự án đã chốt không di trú UTxO v1.
+ *
+ * KHÔNG đệm các ô thiếu (`usage_window`, `cap_*`…) rồi trả tiếp: một két v1 đọc như v2
+ * là đọc sai ô 6/12/14 (Instant tái dụng ba ô đó ở v2.0), và con số ra trông hợp lệ.
+ */
+export class VaultDatumV1Error extends VaultReadError {
+  constructor(utxoRef: string, fieldCount: number, generation: "Instant" | "Schedule") {
+    super(
+      502,
+      "VAULT_DATUM_V1",
+      `UTxO ${utxoRef} mang NFT danh-tính vault nhưng datum ${fieldCount} trường là két ` +
+      `${generation} đời TRƯỚC Gen v2.0. Mặt tiền này chỉ đọc két v2.0 (hash mới, không di ` +
+      `trú) — scope đang trỏ vào một địa chỉ két đời cũ.`,
+      { utxo_ref: utxoRef, field_count: fieldCount, datum_generation: `${generation}-v1` },
     );
   }
 }

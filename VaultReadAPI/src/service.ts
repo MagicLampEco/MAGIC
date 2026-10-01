@@ -158,6 +158,9 @@ export function toJsonBody(o: ReadOutcome): Record<string, unknown> {
       // BẮT BUỘC có mặt trên mọi vault, giá trị từ tập ĐÓNG `VAULT_KINDS`. Bên gọi cần nó
       // để biết `consumed_credit_nanogic` đang mang nghĩa nào — xem docblock ở `vaultView.ts`.
       vault_kind: v.vaultKind,
+      // Hình dạng datum suy từ số trường (Instant 20 / Schedule 19). Đặt cạnh `vault_kind`
+      // (suy từ scope) để bên gọi đối chiếu được — xem docblock `datumKind` ở `vaultView.ts`.
+      datum_kind: v.datumKind,
       vault_address: v.vaultAddress,
       vault_id_unit: v.vaultIdUnit,
       owner: { type: v.owner.type, hash: v.owner.hash },
@@ -171,6 +174,17 @@ export function toJsonBody(o: ReadOutcome): Record<string, unknown> {
       profile: v.profile,
       last_updated_epoch: Number(v.lastUpdatedEpoch),
       rate_locked_q: v.rateLockedQ === null ? null : s(v.rateLockedQ),
+      // ── Ô Gen v2.0. Ba ô chỉ-Instant là `null` ở két Schedule (ô KHÔNG TỒN TẠI), không
+      // phải 0: `cap_nanogic: "0"` là trần 0 thật của một két Instant.
+      wakeme_link: v.wakemeLink,
+      cap_epoch: v.capEpoch === null ? null : Number(v.capEpoch),
+      cap_nanogic: v.capNanogic === null ? null : s(v.capNanogic),
+      instant_unlock_ms: v.instantUnlockMs === null ? null : s(v.instantUnlockMs),
+      usage_window_epoch: Number(v.usageWindowEpoch),
+      usage_window: v.usageWindow.map(w => ({
+        generated_nanogic: s(w.generatedNanogic),
+        consumed_nanogic: s(w.consumedNanogic),
+      })),
       batches: v.batches.map(b => ({
         batch_id: b.batchId,
         source: b.source,
@@ -191,6 +205,9 @@ export function toJsonBody(o: ReadOutcome): Record<string, unknown> {
         lamp_per_epoch_oildrop: s(g.lampPerEpochOildrop),
         rate_locked_q: s(g.rateLockedQ),
         fired_count: Number(g.firedCount),
+        // Chỉ lịch của két Schedule v2.0 có hai trường này; két Instant ⟹ `null`.
+        m_per_epoch_nanogic: g.mPerEpochNanogic === null ? null : s(g.mPerEpochNanogic),
+        usage_factor_locked_q: g.usageFactorLockedQ === null ? null : s(g.usageFactorLockedQ),
       })),
     })),
     // `consumed_credit_nanogic` CỐ Ý không có ở đây, và đây là chỗ khai lý do — trước bản

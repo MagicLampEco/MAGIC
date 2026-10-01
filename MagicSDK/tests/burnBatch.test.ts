@@ -14,6 +14,7 @@ import {
 } from "../src/burnBatch.js";
 import { InstantVaultDatumSchema, VaultDatumSchema } from "../src/schemas.js";
 import type { PlutusJson } from "../src/redeemerIndex.js";
+import { USAGE_WINDOW_LEN } from "@magiclamp/instantgen-sdk";
 
 // Phần lớn ca dưới đây kiểm hành vi CHUNG của hai module vault, nên chạy qua bản
 // ScheduleGen. Những ca RIÊNG của từng module gọi thẳng `planBurnBatch` với module
@@ -30,18 +31,29 @@ const batch = (
   contract_id: null, halved: false,
 });
 
+/** Cửa sổ `usage_window` Gen v2.0 — ĐÚNG 7 ô; độ dài đọc từ gói nền, không gõ tay. */
+const window7 = (consumed0 = 0n) => Array.from({ length: USAGE_WINDOW_LEN }, (_, i) => ({
+  generated: 0n, consumed: i === 0 ? consumed0 : 0n,
+}));
+
+// Fixture cho HÀM THUẦN, chạy qua cả hai module ⟹ là HỢP của hai hình dạng Gen v2.0
+// (trường nào module không đọc thì đi qua bằng phép trải). Ô checkpoint InstantGen đặt
+// `cap_epoch = usage_window_epoch = 5` = epoch mọi ca dưới đây dùng ⟹ KHÔNG làm mới, không
+// cần beacon ρ — các ca này kiểm chọn batch/prune/A02, không kiểm làm mới checkpoint.
 const datumWith = (batches: MagicBatchLike[], over: Record<string, unknown> = {}) => ({
   owner: { VerificationKey: ["aa".repeat(28)] },
   lamp_balance: 1_000_000n, lamp_locked: 0n,
   loyalty_holdings: [], magic_batches: batches, next_batch_index: BigInt(batches.length),
-  vacuum_orders: [], gen_schedules: [],
+  vacuum_orders: [], wakeme_link: "", gen_schedules: [],
   profile: "Ember", profile_changed_epoch: 0n, pending_profile: null,
   last_updated_epoch: 5n,
-  delegation_cert: {},
+  delegation_cert: {}, cap_epoch: 5n,
   activity_state: { recent_burn_epochs: [], consumed_credit: 100n },
-  streak_state: { current_streak: 0n, last_active_epoch: 0n },
+  streak_state: { current_streak: 0n, last_active_epoch: 0n }, cap_nanogic: 0n,
   personal_delegate: null,
   attribution: { attribution_root: "00".repeat(32), last_event_epoch: 4n, total_events: 7n },
+  instant_unlock_ms: 0n,
+  usage_window: window7(40n), usage_window_epoch: 5n,
   ...over,
 }) as never;
 
@@ -153,6 +165,18 @@ describe("planBurnBatch — kế toán A02 (vault.ak:556-578)", () => {
     const d = p.newDatum as never as { attribution: { total_events: bigint; last_event_epoch: bigint } };
     expect(d.attribution.total_events).toBe(8n);
     expect(d.attribution.last_event_epoch).toBe(5n);
+  });
+
+  // Gen v2.0: Σburns vào vế `consumed` của ô 0 cửa sổ (cùng epoch ⟹ không dịch). Cả hai
+  // module làm y như nhau ở ca này; cộng số dòng burn thay vì Σ thì lệch 698.
+  it("usage_window ô 0: consumed += required, ô 1..6 và vế generated đứng yên", () => {
+    for (const m of ["ScheduleGen", "InstantGen"] as const) {
+      const p = planBurnBatch(datumWith([batch("a1", 500n, 5n), batch("a2", 500n, 5n)]), 700n, 5n, m);
+      const d = p.newDatum as never as { usage_window: unknown; usage_window_epoch: bigint };
+      expect(d.usage_window).toEqual(window7(40n + 700n));
+      expect(d.usage_window_epoch).toBe(5n);
+      expect(p.checkpointRefreshed).toBe(false);
+    }
   });
 
   it("last_updated_epoch = currentEpoch", () => {
@@ -267,43 +291,45 @@ describe("buildVaultBurnBatch — CBOR redeemer + datum", () => {
   const loadPlutus = (m: string) =>
     JSON.parse(readFileSync(plutusPath(m), "utf8")) as PlutusJson;
 
-  // `datumWith` ở trên là fixture cho HÀM THUẦN — `delegation_cert: {}` không thoả
-  // `DelegationCertificateSchema` nên không mã hoá được. Khối này cần datum mã hoá
-  // THẬT, nên khai đủ trường theo đúng schema.
-  const encodable = (over: Record<string, unknown> = {}) => ({
+  // `datumWith` ở trên là fixture cho HÀM THUẦN — hợp hai hình dạng, `delegation_cert: {}`
+  // không thoả lược đồ nên không mã hoá được. Khối này cần datum mã hoá THẬT, nên khai đủ
+  // trường theo ĐÚNG lược đồ của module đang thử — InstantGen 20 trường, ScheduleGen 19.
+  // Một fixture dùng chung một lược đồ cho cả hai là dựng một UTxO mà `buildVaultBurnBatch`
+  // không đọc nổi, và bài kiểm đỏ vì FIXTURE sai chứ không vì mã sai.
+  // InstantGen: `cap_epoch = usage_window_epoch = 5` = epoch của tx ⟹ không làm mới
+  // checkpoint, không cần beacon ρ.
+  const common = {
     owner: { VerificationKey: ["aa".repeat(28)] },
     lamp_balance: 1_000_000n, lamp_locked: 0n,
     loyalty_holdings: [], magic_batches: [batch("a1", 500n, 5n)], next_batch_index: 1n,
-    vacuum_orders: [], gen_schedules: [],
+    gen_schedules: [],
     profile: "Ember", profile_changed_epoch: 0n, pending_profile: null,
     last_updated_epoch: 5n,
-    delegation_cert: {
-      current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n,
-    },
     activity_state: { recent_burn_epochs: [], consumed_credit: 100n },
-    streak_state: { current_streak: 0n, last_active_epoch: 0n },
     personal_delegate: null,
     attribution: { attribution_root: "00".repeat(32), last_event_epoch: 4n, total_events: 7n },
-    ...over,
-  });
+    usage_window: window7(), usage_window_epoch: 5n,
+  };
+  const encodable = (m: "InstantGen" | "ScheduleGen", over: Record<string, unknown> = {}) =>
+    m === "InstantGen"
+      ? { ...common, wakeme_link: "", cap_epoch: 5n, cap_nanogic: 0n, instant_unlock_ms: 0n, ...over }
+      : {
+          ...common, vacuum_orders: [],
+          delegation_cert: { current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n },
+          streak_state: { current_streak: 0n, last_active_epoch: 0n },
+          ...over,
+        };
 
-  // Fixture phải mã hoá bằng ĐÚNG lược đồ của module đang thử — InstantGen 18 trường,
-  // ScheduleGen 17. Một fixture dùng chung một lược đồ cho cả hai là dựng một UTxO mà
-  // `buildVaultBurnBatch` không đọc nổi, và bài kiểm đỏ vì FIXTURE sai chứ không vì mã
-  // sai. `instant_unlock_ms` chỉ thêm ở nhánh Instant, và thêm ở CUỐI đúng thứ tự
-  // trường của `InstantVaultDatumSchema`.
   const utxoWith = (d: Record<string, unknown>, m: "InstantGen" | "ScheduleGen") => ({
     txHash: "ab".repeat(32), outputIndex: 0,
     address: "addr_test1xxx", assets: { lovelace: 2_000_000n },
-    datum: m === "InstantGen"
-      ? Data.to({ ...d, instant_unlock_ms: 0n } as never, InstantVaultDatumSchema)
-      : Data.to(d as never, VaultDatumSchema),
+    datum: Data.to(d as never, m === "InstantGen" ? InstantVaultDatumSchema : VaultDatumSchema),
   });
 
   it("ScheduleGen: redeemer là Constr(BurnBatch) bọc List các tuple [bid, amt]", () => {
     const pj  = loadPlutus("ScheduleGen");
     const out = buildVaultBurnBatch({
-      vaultUtxo: utxoWith(encodable(), "ScheduleGen") as never,
+      vaultUtxo: utxoWith(encodable("ScheduleGen"), "ScheduleGen") as never,
       required: 200n, currentEpoch: 5n,
       vaultModule: "ScheduleGen", vaultPlutusJson: pj,
     });
@@ -320,7 +346,7 @@ describe("buildVaultBurnBatch — CBOR redeemer + datum", () => {
 
   it("InstantGen: cùng chỉ số redeemer, nhưng datum ra đã áp pending_profile tới hạn", () => {
     const pj = loadPlutus("InstantGen");
-    const d  = encodable({
+    const d  = encodable("InstantGen", {
       profile: "Lantern",
       pending_profile: { new_profile: "Flame", effective_epoch: 5n },
     });
@@ -337,18 +363,18 @@ describe("buildVaultBurnBatch — CBOR redeemer + datum", () => {
     expect(back.pending_profile).toBeNull();
   });
 
-  // ⚠ Bài này KHÔNG còn được phép so hai chuỗi CBOR. Từ khi InstantGen lên 18 trường,
-  // hai chuỗi khác nhau vì SỐ TRƯỜNG, nên `not.toBe(...)` xanh kể cả khi lazy-apply bị
+  // ⚠ Bài này KHÔNG còn được phép so hai chuỗi CBOR. Hai module khác SỐ TRƯỜNG (20/19),
+  // nên hai chuỗi khác nhau vì arity, nên `not.toBe(...)` xanh kể cả khi lazy-apply bị
   // gỡ sạch — xanh vì arity, không phải xanh vì đúng. Phép đo phải neo vào chính thứ
   // hai module làm khác nhau: `apply_pending_profile`.
   it("hai module xử `pending_profile` tới hạn KHÁC nhau — Instant áp, Schedule giữ", () => {
-    const d = () => encodable({
+    const d = (m: "InstantGen" | "ScheduleGen") => encodable(m, {
       profile: "Lantern",
       pending_profile: { new_profile: "Flame", effective_epoch: 5n },
     });
     const mk = (m: "InstantGen" | "ScheduleGen") => {
       const out = buildVaultBurnBatch({
-        vaultUtxo: utxoWith(d(), m) as never,
+        vaultUtxo: utxoWith(d(m), m) as never,
         required: 200n, currentEpoch: 5n,
         vaultModule: m, vaultPlutusJson: loadPlutus(m),
       });

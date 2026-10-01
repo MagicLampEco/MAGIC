@@ -1,25 +1,23 @@
-// MagicSDK/src/vaultDatum.ts — build the initial VaultDatum at vault creation
+// MagicSDK/src/vaultDatum.ts — build the initial VaultDatum at vault creation (Gen v2.0)
 //
-// Trạng thái khởi sinh gần như toàn bộ là rỗng/0: không batch, không order,
-// không lịch, không hoạt động, không chuỗi ngày. Trường "có nội dung" chỉ có
-// owner, lamp_balance, profile, last_updated_epoch.
+// Trạng thái khởi sinh gần như toàn bộ là rỗng/0. Trường "có nội dung" chỉ có owner,
+// lamp_balance, loyalty_holdings, profile, và (két Instant) hạt giống `consumed_credit`.
 //
 // ── HAI HÌNH DẠNG, CHỌN BẰNG `vaultType` ──────────────────────────────────────
-// Bản trước khai *"All 4 vault types share the same datum shape"*. Nay SAI: két
-// InstantGen có thêm trường 17 `instant_unlock_ms` (xem `schemas.ts` đầu tệp).
-// `vaultType: "Instant"` ⟹ đối tượng trả về có thêm `instant_unlock_ms: 0n`
-// (genesis GHIM `== 0`, `InstantGen/onchain/validators/vault.ak` ▸
-// `validate_mint_vault_id`). Bỏ trống `vaultType` ⟹ hình dạng 17 trường, y hệt
-// hành vi cũ — thêm một tham số TUỲ CHỌN chứ không đổi chữ ký đã hứa.
+//   "Instant"  → 20 trường (`InstantGen/.../types.ak ▸ VaultDatum`).
+//   "Schedule" → 19 trường (`ScheduleGen/.../types.ak ▸ VaultDatum`). Bỏ trống ⟹ Schedule.
+// Lược đồ: `schemas.ts`. Dựng nhầm hình dạng rồi mã hoá bằng lược đồ kia thì Lucid NÉM
+// ngay lúc `Data.to` — hỏng trước khi có giao dịch nào.
 //
-// Dựng datum 17 trường cho một két Instant rồi mã hoá bằng lược đồ 18 trường thì
-// Lucid NÉM ngay lúc `Data.to` — hỏng trước khi có giao dịch nào, không phải một
-// két hỏng trên chuỗi.
+// MỌI hằng số trong tệp này là một điều kiện on-chain, không phải sở thích: đối chiếu
+// với `validate_mint_vault_id` của đúng module trước khi sửa dòng nào. Vector CBOR ghim
+// hai hình dạng genesis ở `tests/genesisDatumV2.test.ts`.
 
-import { ownerCredentialOf, type OwnerCredential, type OwnerRef } from "@magiclamp/protocol-utils";
+import { ownerCredentialOf, type OwnerRef } from "@magiclamp/protocol-utils";
+import { WAKEME_SEED_CREDIT, USAGE_WINDOW_LEN } from "@magiclamp/instantgen-sdk";
 import type { Profile, VaultType } from "./types.js";
+import type { InstantVaultDatum, VaultDatum } from "./schemas.js";
 import { resolveOwnerInput } from "./ownerInput.js";
-import { WAKEME_SEED_CREDIT } from "@magiclamp/instantgen-sdk";
 
 export interface InitialVaultDatumInputs {
   /** Chủ vault — `Credential` dạng JSON. Nhánh `script` hợp lệ: genesis ép
@@ -27,89 +25,44 @@ export interface InitialVaultDatumInputs {
   owner?:             OwnerRef;
   /** Bí danh nhánh khoá của `owner` (= `{ type: "key", hash: ownerPkh }`). */
   ownerPkh?:          string;
-  lampBalanceOildrop:     bigint;
+  lampBalanceOildrop: bigint;
   profile:            Profile;
   currentEpoch:       bigint;
   personalDelegate?:  string | null;
-  /** Loại két. `"Instant"` ⟹ thêm `instant_unlock_ms: 0n` ở cuối. Bỏ trống ⟹
-   *  hình dạng 17 trường (Schedule/Prepaid). */
+  /** Loại két. `"Instant"` ⟹ 20 trường; bỏ trống / `"Schedule"` ⟹ 19 trường. */
   vaultType?:         VaultType;
 }
 
+/** Cửa sổ genesis: ĐÚNG 7 ô `{0, 0}` — cả hai module ép `usage_window == 7 × EpochUsage{0,0}`
+ *  (`empty_window()` / `list.repeat(..., 7)`). Độ dài đọc từ gói nền, không gõ tay. */
+function emptyWindow(): Array<{ generated: bigint; consumed: bigint }> {
+  return Array.from({ length: USAGE_WINDOW_LEN }, () => ({ generated: 0n, consumed: 0n }));
+}
+
 /**
- * Build the canonical initial VaultDatum for a freshly-created vault.
+ * Datum khởi sinh chuẩn cho một két mới.
  *
- * Design choices:
- *   - `loyalty_holdings` starts with a single unlocked holding of size
- *     `lamp_balance` acquired at the current epoch. As LF age (§6.3)
- *     measures from `acquired_epoch`, this gives the user a clean
- *     LF=1.0 baseline. Deposits/withdrawals mutate this list naturally.
- *
- *   - `last_updated_epoch = 0` — KHÔNG phải epoch hiện tại. `validate_mint_vault_id`
- *     (validators/vault.ak) ép `vd.last_updated_epoch == 0` tại lúc mint NFT
- *     danh-tính. Đặt epoch thật vào đây làm tx tạo vault fail. Trường này là
- *     TRẠNG THÁI TÍCH LUỸ ("lần cuối vault đổi trạng thái"), giá trị sạch của
- *     nó là 0; mọi handler đều chỉ so `current_epoch > last_updated_epoch` nên
- *     0 là an toàn (vault dùng được ngay từ epoch kế tiếp).
- *
- *   - `attribution_root = #""` (RỖNG, 0 byte) — không phải 32 byte 0.
- *     `validate_mint_vault_id` ép `attribution == VaultAttribution {
- *     attribution_root: #"", last_event_epoch: 0, total_events: 0 }`.
- *
- *   - `personal_delegate = None` bắt buộc tại lúc sinh, và 🪦 nay KHÔNG CÒN
- *     đường nào đặt nó về khác `None`: nhánh uỷ nhiệm bị bỏ khỏi mô hình ngày
- *     2026-09-16 (Nợ #14). Redeemer `SetDelegate` vẫn tồn tại — chỉ số
- *     constructor là hợp đồng nhị phân — nhưng chỉ XOÁ được.
- *
- *   - `lamp_locked = 0` always at creation. Locks only happen via Schedule
- *     Commit (ScheduleFire chỉ mở khoá, LAMP vẫn ở trong vault — I-ACT-7).
- *
- * MỌI hằng số trong hàm này là một điều kiện on-chain, không phải sở thích:
- * đối chiếu trực tiếp với `validate_mint_vault_id` trước khi sửa bất kỳ dòng nào.
+ *   - `loyalty_holdings` = một holding mở khoá cỡ `lamp_balance` tại epoch hiện tại
+ *     (genesis chỉ ép tổng == lamp_balance, không khoá, ≤ trần).
+ *   - `last_updated_epoch = 0`, `profile_changed_epoch = 0`, `pending_profile = None`,
+ *     `personal_delegate = None`, `attribution = { #"", 0, 0 }` — ghim ở cả hai module.
+ *   - Két Instant: `wakeme_link = #""`, `cap_epoch = 0`, `cap_nanogic = 0`,
+ *     `instant_unlock_ms = 0`, `consumed_credit = wakeme_seed_credit`.
+ *   - Két Schedule: `vacuum_orders = []`, `delegation_cert` rỗng, `streak_state` 0,
+ *     `consumed_credit = 0`.
+ *   - Cả hai: `usage_window` 7 ô 0, `usage_window_epoch = 0` (KHÔNG phải epoch hiện tại —
+ *     genesis ghim 0 để giao dịch tạo không cần validity range hữu hạn).
  */
-export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
-  owner:                 OwnerCredential;
-  lamp_balance:          bigint;
-  lamp_locked:           bigint;
-  loyalty_holdings:      Array<{ amount: bigint; acquired_epoch: bigint; is_locked: boolean }>;
-  magic_batches:         never[];
-  next_batch_index:      bigint;
-  vacuum_orders:         never[];
-  gen_schedules:         never[];
-  profile:               Profile;
-  profile_changed_epoch: bigint;
-  pending_profile:       null;
-  last_updated_epoch:    bigint;
-  delegation_cert: {
-    current: never[];
-    pending: null;
-    current_effective_epoch: bigint;
-    last_changed_epoch:      bigint;
-  };
-  activity_state: {
-    recent_burn_epochs: never[];
-    consumed_credit:    bigint;
-  };
-  streak_state: {
-    current_streak:    bigint;
-    last_active_epoch: bigint;
-  };
-  personal_delegate: string | null;
-  attribution: {
-    attribution_root: string;
-    last_event_epoch: bigint;
-    total_events:     bigint;
-  };
-  /** CHỈ có mặt khi `vaultType === "Instant"`. Vắng mặt = hình dạng 17 trường. */
-  instant_unlock_ms?:    bigint;
-} {
+export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs & { vaultType: "Instant" }): InstantVaultDatum;
+export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs & { vaultType?: "Schedule" }): VaultDatum;
+export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): VaultDatum | InstantVaultDatum;
+export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): VaultDatum | InstantVaultDatum {
   const { lampBalanceOildrop, profile, currentEpoch } = inputs;
 
   if (lampBalanceOildrop <= 0n) {
     throw new Error(`lampDeposit must be > 0 oildrop (got ${lampBalanceOildrop})`);
   }
-  // Ném `OWNER_HASH_INVALID` ("ownerPkh must be 28-byte hex") / `OWNER_AUTH_MISMATCH` /
-  // `OWNER_CREDENTIAL_SHAPE` — quy tắc ở `ownerInput.ts`.
+  // Ném `OWNER_HASH_INVALID` / `OWNER_AUTH_MISMATCH` / `OWNER_CREDENTIAL_SHAPE` — `ownerInput.ts`.
   const owner = resolveOwnerInput(inputs, "buildInitialVaultDatum");
   if (inputs.personalDelegate != null) {
     if (!/^[0-9a-fA-F]{56}$/.test(inputs.personalDelegate)) {
@@ -124,59 +77,59 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): {
     );
   }
 
-  return {
-    // Chủ là `Credential`: `{VerificationKey:[h]}` hoặc `{Script:[h]}`.
-    owner:        ownerCredentialOf(owner),
-    lamp_balance: lampBalanceOildrop,
-    lamp_locked:  0n,
-    loyalty_holdings: [{
-      amount:         lampBalanceOildrop,
-      acquired_epoch: currentEpoch,
-      is_locked:      false,
-    }],
-    magic_batches:    [],
-    next_batch_index: 0n,
-    vacuum_orders:    [],
-    gen_schedules:    [],
+  const ownerCred = ownerCredentialOf(owner) as VaultDatum["owner"];
+  const holdings = [{ amount: lampBalanceOildrop, acquired_epoch: currentEpoch, is_locked: false }];
+  const attribution = { attribution_root: "", last_event_epoch: 0n, total_events: 0n };
+
+  if (inputs.vaultType === "Instant") {
+    // Thứ tự khoá = thứ tự trường (`Data.Object` mã hoá theo LƯỢC ĐỒ, không theo khoá ở đây,
+    // nhưng giữ cùng thứ tự để đọc đối chiếu với `validate_mint_vault_id` được).
+    const d: InstantVaultDatum = {
+      owner:                 ownerCred,
+      lamp_balance:          lampBalanceOildrop,
+      lamp_locked:           0n,
+      loyalty_holdings:      holdings,
+      magic_batches:         [],
+      next_batch_index:      0n,
+      wakeme_link:           "",        // PIN: `expect vd.wakeme_link == #""`
+      gen_schedules:         [],
+      profile,
+      profile_changed_epoch: 0n,
+      pending_profile:       null,
+      last_updated_epoch:    0n,
+      cap_epoch:             0n,        // PIN: `expect vd.cap_epoch == 0`
+      activity_state:        { recent_burn_epochs: [], consumed_credit: WAKEME_SEED_CREDIT },
+      cap_nanogic:           0n,        // PIN: `expect vd.cap_nanogic == 0`
+      personal_delegate:     null,
+      attribution,
+      instant_unlock_ms:     0n,        // PIN: `expect vd.instant_unlock_ms == 0`
+      usage_window:          emptyWindow(),
+      usage_window_epoch:    0n,
+    };
+    return d;
+  }
+
+  const d: VaultDatum = {
+    owner:                 ownerCred,
+    lamp_balance:          lampBalanceOildrop,
+    lamp_locked:           0n,
+    loyalty_holdings:      holdings,
+    magic_batches:         [],
+    next_batch_index:      0n,
+    vacuum_orders:         [],
+    gen_schedules:         [],
     profile,
     profile_changed_epoch: 0n,
-    pending_profile:    null,
-    // PIN on-chain: `expect vd.last_updated_epoch == 0`
-    last_updated_epoch: 0n,
-    delegation_cert: {
-      current: [],
-      pending: null,
-      current_effective_epoch: 0n,
-      last_changed_epoch:      0n,
-    },
-    // Hai cổng đúc ghim HAI giá trị khác nhau, nên đây là một phép rẽ theo loại két chứ
-    // không phải một hằng chung:
-    //   Instant  → `consumed_credit: wakeme_seed_credit`
-    //              (`InstantGen/onchain/validators/vault.ak` ▸ `validate_mint_vault_id`)
-    //   Schedule → `consumed_credit: 0`
-    //              (`ScheduleGen/onchain/validators/vault.ak` ▸ `validate_mint_vault_id`)
-    // Bản cũ đặt 0 cho cả hai; két Instant dựng qua SDK vì thế chết ở Mint[0] trên chuỗi
-    // (Preprod 2026-09-27), trong khi két Schedule vẫn xanh nên bộ kiểm không kêu.
-    activity_state: {
-      recent_burn_epochs: [],
-      consumed_credit:    inputs.vaultType === "Instant" ? WAKEME_SEED_CREDIT : 0n,
-    },
-    streak_state: {
-      current_streak:    0n,
-      last_active_epoch: 0n,
-    },
-    personal_delegate: null,   // PIN on-chain: `expect vd.personal_delegate == None`
-    attribution: {
-      // PIN on-chain: `attribution_root: #""` — chuỗi byte RỖNG, không phải 32 byte 0.
-      attribution_root: "",
-      last_event_epoch: 0n,
-      total_events:     0n,
-    },
-    // Trường 17, CHỈ két Instant. PIN on-chain: `expect vd.instant_unlock_ms == 0`
-    // (`InstantGen/onchain/validators/vault.ak` ▸ `validate_mint_vault_id`).
-    // `...(cond ? {x} : {})` chứ không `x: undefined`: một khoá mang `undefined`
-    // vẫn là một khoá, và `Data.to` đếm khoá — nó sẽ dựng ra 18 trường cho một két
-    // Schedule rồi hỏng ở một chỗ không nhắc gì tới loại két.
-    ...(inputs.vaultType === "Instant" ? { instant_unlock_ms: 0n } : {}),
+    pending_profile:       null,
+    last_updated_epoch:    0n,
+    delegation_cert:       { current: [], pending: null, current_effective_epoch: 0n, last_changed_epoch: 0n },
+    // Schedule ghim 0 (Instant ghim hạt giống) — hai cổng đúc ghim HAI giá trị khác nhau.
+    activity_state:        { recent_burn_epochs: [], consumed_credit: 0n },
+    streak_state:          { current_streak: 0n, last_active_epoch: 0n },
+    personal_delegate:     null,
+    attribution,
+    usage_window:          emptyWindow(),
+    usage_window_epoch:    0n,
   };
+  return d;
 }

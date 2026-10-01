@@ -1,547 +1,760 @@
-// src/instant.ts — InstantGen transaction builder (§6.3)
+// src/instant.ts — bộ dựng giao dịch két InstantGen, Gen v2.0 (gói d1).
 //
-// PHA 2 model:
-//   • LAMP NEVER MOVES (I-ACT-7). There is no Treasury output; `lamp_balance`,
-//     `lamp_locked` and `loyalty_holdings` are byte-identical across the tx.
-//     Holding LAMP only opens eligibility.
-//   • The grant is keyed to MAGIC ALREADY CONSUMED:
-//       grant = min( reward(consumed), cap_surplus(br), 0.5 × pp_schedule )
-//     `consumed` = activity_state.consumed_credit, zeroed by this tx.
-//   • The new batch is a 1-epoch cliff (§4.2) and dead batches are collected.
+// Hai nhánh spend dựng ở đây:
+//   • InstantGen{claimed_amount = m} — lượt SINH. `m` (nanogic) do CHỦ KÉT CHỌN; validator
+//     không tự tính một con số mà ép `m` qua các cổng IG-1..IG-14 (khối chú thích trên
+//     `validate_instant_gen`, `onchain/validators/vault.ak`). Lượt sinh đọc beacon ρ (khi
+//     làm mới checkpoint) + beacon GreenBack + sổ két, TIÊU và TRẢ LẠI đúng shard GB của
+//     két, và KHÔNG động tới LAMP (I-ACT-7).
+//   • RefreshCheckpoint — chủ ký, chỉ làm mới năm ô checkpoint; value ghim nguyên khối.
+//
+// Mọi phép tính nằm trong hàm THUẦN (`instantGenLimits`, `computeInstantGenOutputs`,
+// `computeRefreshCheckpointOutput`) — bài kiểm chạy chúng không cần mạng; bộ dựng chỉ
+// soát UTxO đầu vào rồi lắp giao dịch từ kết quả của chúng.
+//
+// Bỏ hẳn so với v1: UM (`umDatumUtxo`), backing beacon (`backingBeaconUtxo`), phép tính
+// `grant = min(reward, cap_surplus, cap_pp)` và việc xoá `consumed_credit`. Gen v2.0
+// không có apply-param UM/backing (`vaultScript.ts`).
 //
 // Uses Lucid Evolution (https://github.com/Anastasia-Labs/lucid-evolution).
 
 import {
-  Lucid, Blockfrost, Data, toUnit,
-  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  Lucid, Blockfrost, Data, Constr, getAddressDetails, validatorToScriptHash,
+  slotToUnixTime, unixTimeToSlot, calculateMinLovelaceFromUTxO,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type TxBuilder,
 } from "@lucid-evolution/lucid";
 import {
-  TESTNET_CONFIG, MAX_BATCHES_PER_VAULT, MAGIC_DECAY_WINDOW,
-  MIN_INSTANT_HOLDING, MAX_BACKING_STALE, PM_Q,
+  TESTNET_CONFIG, MAX_BATCHES_PER_VAULT, MAGIC_DECAY_WINDOW, MIN_INSTANT_HOLDING,
+  GB_SHARD_CAP_NANOGIC, RATE_NFT_NAME, GREENBACK_NFT_NAME, VAULT_REGISTRY_NFT_NAME,
 } from "./constants.js";
 import {
-  computeInstantGrant, getUmForInstant, isExpired, instantGenInEpoch, applyPendingProfile,
-  nanogicToMagicStr, qToStr,
+  computeCapPp, computeCapLent, isExpired, instantGenInEpoch, applyPendingProfile,
+  nanogicToMagicStr,
 } from "./math.js";
-import { getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow, lampAssetName as lampAssetNameFor, vaultOutValue, assertVaultIdentityKept, collateralCompleteOptions, type Network } from "@magiclamp/protocol-utils";
-import { applyOwnerAuth, resolveOwnerAuth, ownerRefOf, type OwnerAuth } from "@magiclamp/protocol-utils";
-import { slotToUnixTime, unixTimeToSlot } from "@lucid-evolution/lucid";
+import { gbVaultShare, windowAdd } from "./genFormula.js";
 import {
-  VaultDatum, UMDatum, BackingBeaconDatum, VaultRedeemer,
-  type MagicBatch,
+  getTipSlot, msPerEpoch as msPerEpochOf, epochValidityWindow, vaultOutValue,
+  assertVaultIdentityKept, collateralCompleteOptions, type Network,
+} from "@magiclamp/protocol-utils";
+import { applyOwnerAuth, resolveOwnerAuth, ownerRefOf, type OwnerAuth } from "@magiclamp/protocol-utils";
+import {
+  VaultDatum, VaultRedeemer, GbShard, GbShardRedeemer, RateParam, GreenBackBeacon, VaultRegistry,
+  decodeVaultDatum, type MagicBatch,
 } from "./types.js";
+import {
+  expectedCheckpoint, expectedCheckpointForGen, type Checkpoint, type WakemeRead,
+} from "./checkpoint.js";
+import { assertGreenbackOpen, drawShard, shardNftName, vaultShardId } from "./greenback.js";
+import type { InstantVaultParams } from "./vaultScript.js";
 import { blake2b } from "@noble/hashes/blake2b";
 
-// ── Types ─────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// Phần THUẦN — gương `validate_instant_gen` / `validate_refresh_checkpoint`
+// ══════════════════════════════════════════════════════════════════════════════
 
-export interface InstantGenParams {
-  /** Lucid instance connected to Preview testnet */
-  lucid: LucidEvolution;
-  /** The vault UTxO to spend */
-  vaultUtxo: UTxO;
-  /** UM datum UTxO (used as reference input) */
-  umDatumUtxo: UTxO;
+export interface OutRef {
+  txHash: string;
+  outputIndex: number;
+}
+
+/** Đầu vào chung của lượt sinh (trừ `m` và cận trên validity). */
+export interface InstantGenContext {
+  /** Datum vào THÔ (chưa áp hồ sơ chờ) — hàm tự áp như validator. */
+  vaultDatum       : VaultDatum;
+  /** UTxO két đang tiêu — vào `batch_id`. */
+  vaultOutRef      : OutRef;
+  /** Epoch giao thức = cận dưới validity / ms_per_epoch. */
+  currentEpoch     : bigint;
+  /** Beacon ρ; BẮT BUỘC khi `cap_epoch < currentEpoch` (lượt làm mới), vắng thì NÉM. */
+  rate             : RateParam | null;
+  /** Két Wakeme đã đọc (`readWakemeVault`), hoặc null nếu không đưa két vào. */
+  wakeme           : WakemeRead | null;
+  greenback        : GreenBackBeacon;
+  /** Datum shard GB ĐANG nằm trên chuỗi (trước đặt lại lười). */
+  shardIn          : GbShard;
+  /** Apply-param `gb_shard_cap_nanogic` của validator shard đã deploy. */
+  gbShardCapNanogic: bigint;
+}
+
+export interface InstantGenInputs extends InstantGenContext {
+  /** Lượng sinh `m`, nanogic. */
+  m               : bigint;
+  /** Cận TRÊN validity mà script thấy (đầu slot), POSIX ms. */
+  validityUpperMs : bigint;
+  /** Apply-param #8 `ms_per_epoch`. */
+  msPerEpoch      : bigint;
+}
+
+/** Mọi trần của lượt sinh, trước khi chọn `m`. */
+export interface InstantGenLimits {
+  appliedDatum : VaultDatum;
+  checkpoint   : Checkpoint;
+  /** Lượt này có làm mới checkpoint không (cap_epoch < e). */
+  refreshed    : boolean;
+  lent         : bigint;
+  lAvail       : bigint;
+  liveBatches  : MagicBatch[];
+  prunedCount  : number;
+  /** `instant_gen_in_epoch(live, e)` — đã sinh trong epoch này. */
+  genSoFar     : bigint;
+  /** IG-8: `cap_nanogic` của checkpoint. */
+  capNanogic   : bigint;
+  /** IG-9: `compute_cap_pp(avail) + compute_cap_lent(lent)`. */
+  capLamp      : bigint;
+  shardId      : bigint;
+  /** IG-11: `GB_available` sau đặt lại lười. */
+  gbAvailable  : bigint;
+  /** IG-12: `gb_vault_share(reset_amount)`. */
+  vaultShare   : bigint;
+  /** Vế `generated` của ô 0 cửa sổ checkpoint. */
+  openGenerated: bigint;
+  /** `m` lớn nhất qua được IG-8, IG-9, IG-11, IG-12 cùng lúc (≥ 0; 0 ⟹ không sinh được). */
+  maxM         : bigint;
+}
+
+export interface InstantGenOutputs extends InstantGenLimits {
+  m            : bigint;
+  newBatch     : MagicBatch;
+  newUnlockMs  : bigint;
+  outputDatum  : VaultDatum;
+  shardOut     : GbShard;
+}
+
+function min(...xs: bigint[]): bigint {
+  return xs.reduce((a, b) => (b < a ? b : a));
+}
+
+/**
+ * Trần của lượt sinh ở trạng thái đã cho — IG-3, IG-5, IG-6, IG-7, IG-10 và phần tính
+ * của IG-8, IG-9, IG-11, IG-12. Vế nào validator `fail` bất kể `m` thì ở đây NÉM.
+ */
+export function instantGenLimits(ctx: InstantGenContext): InstantGenLimits {
+  const e = ctx.currentEpoch;
+  const d = ctx.vaultDatum;
+  // IG-3
+  if (e < d.last_updated_epoch) {
+    throw new Error(`GEN-INST-002: epoch ${e} < last_updated_epoch ${d.last_updated_epoch} — thời gian lùi.`);
+  }
+  const applied = applyPendingProfile(d, e);
+
+  // IG-5
+  const { checkpoint, lent, refreshed } = expectedCheckpointForGen(applied, e, ctx.wakeme, ctx.rate);
+
+  // IG-6 — G2 tính cả LAMP-mượn, hai vế như validator.
+  if (applied.lamp_balance + lent < MIN_INSTANT_HOLDING) {
+    throw new Error(
+      `GEN-INST-001: lamp_balance ${applied.lamp_balance} + L_lent ${lent} < MIN_INSTANT_HOLDING ` +
+      `${MIN_INSTANT_HOLDING} oildrop (10 LAMP).`,
+    );
+  }
+  const lAvail = applied.lamp_balance - applied.lamp_locked;
+  if (lAvail + lent < MIN_INSTANT_HOLDING) {
+    throw new Error(
+      `GEN-INST-003: L_avail ${lAvail} + L_lent ${lent} < MIN_INSTANT_HOLDING ${MIN_INSTANT_HOLDING} oildrop.`,
+    );
+  }
+
+  // IG-7
+  const liveBatches = applied.magic_batches.filter(b => !isExpired(b.created_epoch, b.decay_window, e));
+  if (liveBatches.length >= MAX_BATCHES_PER_VAULT) {
+    throw new Error(`GEN-VAULT-001: |live batches|=${liveBatches.length} ≥ ${MAX_BATCHES_PER_VAULT}. Tiêu bớt trước.`);
+  }
+
+  // IG-8, IG-9 (phần tính)
+  const genSoFar = instantGenInEpoch(liveBatches, e);
+  const capNanogic = checkpoint.cap_nanogic;
+  const capLamp = computeCapPp(lAvail) + computeCapLent(lent);
+
+  // IG-10
+  assertGreenbackOpen(ctx.greenback, e);
+
+  // IG-11 — shard của két. Validator đọc tên NFT `"GBS" ‖ vault_shard_id(owner)`; datum
+  // shard mang `shard_id` khớp tên NFT từ genesis shard, nên so ở đây là đủ.
+  const shardId = vaultShardId(applied.owner);
+  if (ctx.shardIn.shard_id !== shardId) {
+    throw new Error(`GEN-INST-013: két thuộc shard ${shardId}, UTxO shard đưa vào là shard ${ctx.shardIn.shard_id}.`);
+  }
+  const { effective } = drawShard(ctx.shardIn, ctx.greenback, ctx.gbShardCapNanogic, 0n);
+
+  // IG-12 (phần tính)
+  const open = checkpoint.usage_window[0];
+  if (open === undefined) throw new Error(`GEN-INST-011: usage_window rỗng.`);
+  const vaultShare = gbVaultShare(effective.reset_amount);
+
+  const maxRaw = min(
+    capNanogic - genSoFar,
+    capLamp - genSoFar,
+    effective.remaining,
+    vaultShare - open.generated,
+  );
+
+  return {
+    appliedDatum: applied,
+    checkpoint, refreshed, lent, lAvail, liveBatches,
+    prunedCount: applied.magic_batches.length - liveBatches.length,
+    genSoFar, capNanogic, capLamp, shardId,
+    gbAvailable: effective.remaining, vaultShare, openGenerated: open.generated,
+    maxM: maxRaw > 0n ? maxRaw : 0n,
+  };
+}
+
+/**
+ * Datum két ra + datum shard ra của lượt sinh `m` — gương IG-1..IG-13. NÉM có mã ở mọi
+ * vế validator sẽ từ chối.
+ */
+export function computeInstantGenOutputs(inp: InstantGenInputs): InstantGenOutputs {
+  const lim = instantGenLimits(inp);
+  const e = inp.currentEpoch;
+  const m = inp.m;
+
+  // IG-4
+  if (typeof m !== "bigint" || m <= 0n) {
+    throw new Error(`GEN-INST-004: m phải là bigint > 0 (không có giao dịch cấp 0), nhận ${String(m)}.`);
+  }
+  // IG-8
+  if (lim.genSoFar + m > lim.capNanogic) {
+    throw new Error(
+      `GEN-INST-008: epoch ${e} đã sinh ${lim.genSoFar}, thêm ${m} vượt cap_nanogic ${lim.capNanogic} ` +
+      `(amount_by_lamp của epoch). m tối đa lượt này: ${lim.maxM}.`,
+    );
+  }
+  // IG-9
+  if (lim.genSoFar + m > lim.capLamp) {
+    throw new Error(
+      `GEN-INST-008: epoch ${e} đã sinh ${lim.genSoFar}, thêm ${m} vượt trần LAMP ${lim.capLamp} ` +
+      `(cap_pp(L_avail=${lim.lAvail}) + cap_lent(L_lent=${lim.lent})). m tối đa lượt này: ${lim.maxM}.`,
+    );
+  }
+  // IG-11
+  const { shardOut } = drawShard(inp.shardIn, inp.greenback, inp.gbShardCapNanogic, m);
+  // IG-12
+  if (lim.openGenerated + m > lim.vaultShare) {
+    throw new Error(
+      `GEN-INST-014: két đã sinh ${lim.openGenerated} trong epoch, thêm ${m} vượt phần GB mỗi két ` +
+      `${lim.vaultShare} (gb_vault_share của reset_amount). m tối đa lượt này: ${lim.maxM}.`,
+    );
+  }
+
+  // IG-13
+  const applied = lim.appliedDatum;
+  const newBatch: MagicBatch = {
+    batch_id:            computeBatchId(inp.vaultOutRef, applied.next_batch_index),
+    source:              "Instant",
+    created_epoch:       e,
+    initial_amount:      m,
+    current_amount:      m,
+    decay_window:        MAGIC_DECAY_WINDOW,
+    profile_at_creation: null,
+    contract_id:         null,
+    halved:              false,
+  };
+  const unlockFromNow = inp.validityUpperMs + inp.msPerEpoch;
+  const newUnlockMs = applied.instant_unlock_ms > unlockFromNow ? applied.instant_unlock_ms : unlockFromNow;
+  const cp = lim.checkpoint;
+  const outputDatum: VaultDatum = {
+    ...applied,
+    magic_batches:      [...lim.liveBatches, newBatch],
+    next_batch_index:   applied.next_batch_index + 1n,
+    last_updated_epoch: e,
+    attribution:        updateAttribution(applied.attribution, { type: "BatchCreated", source: "Instant", epoch: e }),
+    instant_unlock_ms:  newUnlockMs,
+    wakeme_link:        cp.wakeme_link,
+    cap_epoch:          cp.cap_epoch,
+    cap_nanogic:        cp.cap_nanogic,
+    usage_window:       windowAdd(cp.usage_window, m, 0n),
+    usage_window_epoch: cp.usage_window_epoch,
+  };
+  return { ...lim, m, newBatch, newUnlockMs, outputDatum, shardOut };
+}
+
+/**
+ * Datum ra của RefreshCheckpoint — gương `validate_refresh_checkpoint`: `..input_datum`
+ * (KHÔNG áp hồ sơ chờ) + năm ô từ `expected_checkpoint(.., FollowVaultOrUnlink, force)`.
+ */
+export function computeRefreshCheckpointOutput(
+  vaultDatum: VaultDatum, currentEpoch: bigint, wakeme: WakemeRead | null, rate: RateParam | null,
+): { outputDatum: VaultDatum; checkpoint: Checkpoint } {
+  const cp = expectedCheckpoint(vaultDatum, currentEpoch, "FollowVaultOrUnlink", true, wakeme, rate);
+  return {
+    checkpoint: cp,
+    outputDatum: {
+      ...vaultDatum,
+      wakeme_link:        cp.wakeme_link,
+      cap_epoch:          cp.cap_epoch,
+      cap_nanogic:        cp.cap_nanogic,
+      usage_window:       cp.usage_window,
+      usage_window_epoch: cp.usage_window_epoch,
+    },
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Bộ dựng giao dịch
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** Cửa sổ hiệu lực + nguồn epoch dùng chung cho hai bộ dựng. */
+interface WindowSource {
+  lucid       : LucidEvolution;
+  /** Mạng — dùng để lấy tip và tính cửa sổ theo `epochValidityWindow`. Bỏ trống ⟹ Preview. */
+  network?    : Network;
+  /** Tip POSIX ms; bỏ trống thì hỏi provider (`getTipSlot`). */
+  tipPosixMs? : bigint;
   /**
-   * BackingBeacon UTxO (reference input, §6.3).  [CẦN XÁC NHẬN — chờ CARP]
-   * REQUIRED: without it the validator cannot evaluate cap_surplus and the tx
-   * is rejected. That is deliberate — the Gen door is shut rather than opened
-   * on an invented `br`.
+   * Cửa sổ TƯỜNG MINH (POSIX ms, đã nằm trên lưới slot của mạng đang chạy) — bỏ qua tip
+   * và `epochValidityWindow`. Dùng cho mạng giả lập (Lucid Emulator, mạng "Custom") nơi
+   * lưới slot không trùng ba mạng thật. Cả hai biên phải cùng một epoch giao thức.
    */
-  backingBeaconUtxo: UTxO;
-  /** User's wallet address (must match vault.owner) */
-  userAddress: string;
-  /** Compiled vault validator with all 6 params already applied per-network
-   *  (lamp_policy_id, um_nft_policy, um_script_hash, backing_nft_policy,
-   *  backing_script_hash, ms_per_epoch). Required to spend the vault UTxO. */
-  vaultScript: Validator;
-  /** UTxO CIP-33 mang script vault đã deploy. Có thì giao dịch ĐỌC script (`readFrom`) thay vì
-   *  đính kèm: đo trên Preprod 27/09 (tx `66185661…`), đính kèm chiếm 11.599 / 12.634 byte và
-   *  ≈0,33 ADA phí mỗi lượt, và datum vault còn lớn dần theo số batch tới trần 16.384 byte.
-   *  Hash script trên UTxO phải trùng hash `vaultScript` — lệch thì NÉM `GEN-INST-009`, vì
-   *  `readFrom` một script khác vẫn dựng xong và chỉ chết ở pha script. Vắng ⟹ đính kèm như cũ. */
+  validity?   : { fromMs: bigint; toMs: bigint };
+}
+
+interface ResolvedWindow { fromMs: bigint; toMs: bigint; epoch: bigint }
+
+async function resolveWindow(src: WindowSource, p: bigint, reserveTrailingSlots: bigint): Promise<ResolvedWindow> {
+  if (src.validity !== undefined) {
+    const { fromMs, toMs } = src.validity;
+    const epoch = fromMs / p;
+    if (toMs <= fromMs || toMs >= (epoch + 1n) * p) {
+      throw new Error(
+        `GEN-INST-015: cửa sổ [${fromMs}, ${toMs}] không nằm gọn trong epoch ${epoch} ` +
+        `(ms_per_epoch ${p}) — validator đòi hai biên cùng epoch.`,
+      );
+    }
+    return { fromMs, toMs, epoch };
+  }
+  const network = src.network ?? TESTNET_CONFIG.network;
+  if (msPerEpochOf(network) !== p) {
+    throw new Error(
+      `GEN-INST-015: ms_per_epoch của két (${p}) ≠ nhịp mạng ${network} (${msPerEpochOf(network)}). ` +
+      `Két dựng cho mạng khác, hoặc truyền \`validity\` tường minh.`,
+    );
+  }
+  const tip = src.tipPosixMs
+    ?? BigInt(slotToUnixTime(network, await getTipSlot(src.lucid as never, network)));
+  const { lowerMs, upperMs } = epochValidityWindow(tip, network, reserveTrailingSlots);
+  // Cận trên script THẤY là đầu slot (Lucid làm tròn xuống). `epochValidityWindow` đã căn
+  // đầu slot nên vòng quy đổi phải là phép đồng nhất — giữ làm phép đối chứng.
+  const upperOnChain = BigInt(slotToUnixTime(network, unixTimeToSlot(network, upperMs)));
+  if (upperOnChain !== BigInt(upperMs)) {
+    throw new Error(
+      `Lưới slot lệch: epochValidityWindow trả ${upperMs} nhưng vòng quy đổi của Lucid cho ` +
+      `${upperOnChain} trên mạng ${network}.`,
+    );
+  }
+  return { fromMs: BigInt(lowerMs), toMs: BigInt(upperMs), epoch: BigInt(lowerMs) / p };
+}
+
+/** Phần chung: két, script két, apply-param, quyền chủ. */
+interface VaultSpendCommon extends WindowSource {
+  vaultUtxo          : UTxO;
+  /** Validator két đã apply 9 tham số (`vaultScript.ts ▸ applyInstantVaultParams`). */
+  vaultScript        : Validator;
+  /** Cùng 9 giá trị đã apply vào `vaultScript` — bộ dựng soát UTxO theo chúng. */
+  vaultParams        : InstantVaultParams;
+  /** UTxO CIP-33 mang script két. Có ⟹ `readFrom` thay vì đính kèm (script két ~14 KB). */
   vaultRefScriptUtxo?: UTxO;
-  /** LAMP policy id (hex) — must match `lamp_policy_id` param applied to validator. */
-  lampPolicyId: string;
-  /** LAMP asset name (hex). Bỏ trống thì DẪN THEO MẠNG qua `lampAssetName(network)`,
-   *  KHÔNG rơi về hằng testnet. Chỉ đặt tay khi LAMP được mint dưới tên phi chuẩn. */
-  lampAssetName?: string;
-  /** Network — picks ms_per_epoch for POSIX-based epoch math (must match validator). */
-  network?: Network;
-  /** Optional tip POSIX ms. If omitted, derived from `getTipSlot(lucid, network)`. */
-  tipPosixMs?: bigint;
-  /** TEST ONLY: mutate output datum (negative tests). */
-  tamperOutputDatum?: (d: any) => any;
-  /** Cách chứng minh quyền chủ vault (`VaultDatum.owner` là `Credential`).
-   *  Bỏ trống: chủ là khoá ⟹ `addSignerKey(pkh)` lấy từ datum; chủ là script ⟹ NÉM
-   *  `OWNER_SCRIPT_WITNESS_UNAVAILABLE` (bộ dựng không bịa redeemer của stake-script chủ).
-   *  Truyền mà khác chủ trong datum ⟹ NÉM `OWNER_AUTH_MISMATCH`. */
-  ownerAuth?: OwnerAuth<TxBuilder>;
-  /** TEST ONLY: bỏ hẳn bước chứng minh quyền chủ (ca âm của cổng owner). */
-  skipOwnerSig?: boolean;
-  /** TEST ONLY: send LAMP out of the vault to prove I-ACT-7 rejects it. */
-  tamperLampOutOil?: bigint;
-  /** Lượng thế chấp TƯỜNG MINH (lovelace) — đặt khi phí + thế chấp do ví trả phí bên thứ ba
-   *  gánh (mô hình Feecover, trần mất thế chấp 3 tADA). Bỏ trống ⟹ lucid tự đặt (5 ADA).
-   *  Hình dạng: `@magiclamp/protocol-utils` ▸ `collateralCompleteOptions`. */
+  /** Két Wakeme ghim két này (reference input, CHỈ đọc — không bao giờ tiêu). */
+  wakemeVaultUtxo?   : UTxO;
+  /** Chứng minh quyền chủ (`VaultDatum.owner` là Credential). */
+  ownerAuth?         : OwnerAuth<TxBuilder>;
+  /** TEST ONLY: bỏ bước chứng minh quyền chủ. */
+  skipOwnerSig?      : boolean;
+  /** Thế chấp tường minh (lovelace). */
   collateralLovelace?: bigint;
 }
 
-export interface InstantGenResult {
-  /** The built but not yet signed/submitted transaction */
-  tx: TxSignBuilder;
-  /** Granted MAGIC in nanogic (= redeemer `claimed_amount`) */
-  grantNanogic: bigint;
-  /** consumed_credit consumed by this tx (zeroed afterwards) */
-  consumedCreditSpent: bigint;
-  /** The three ceilings, for diagnostics */
-  ceilings: { reward: bigint; capSurplus: bigint; capPp: bigint };
-  /** UM value used (after stale check) */
-  umUsedQ: bigint;
-  /** Current epoch at time of building */
-  currentEpoch: bigint;
-  /** Whether UM fallback was applied due to staleness */
-  umFallbackApplied: boolean;
-  /** LAMP balance after tx — ALWAYS equal to the balance before (I-ACT-7). */
-  newLampBalance: bigint;
-  /** Human-readable summary */
-  summary: string;
+export interface InstantGenParams extends VaultSpendCommon {
+  /** Lượng sinh `m` (nanogic) do chủ két chọn. `instantGenLimits(..).maxM` cho trần. */
+  m                    : bigint;
+  /** Beacon ρ — BẮT BUỘC khi lượt này làm mới checkpoint (cap_epoch < e). */
+  rateBeaconUtxo?      : UTxO;
+  greenbackBeaconUtxo  : UTxO;
+  /** UTxO shard GB của ĐÚNG shard két (`vaultShardId(owner)`). */
+  gbShardUtxo          : UTxO;
+  /** Validator shard đã apply — đính kèm khi không có `gbShardRefScriptUtxo`. */
+  gbShardScript?       : Validator;
+  gbShardRefScriptUtxo?: UTxO;
+  /** Sổ két được phép (NFT "VRG") — validator shard đọc nó qua reference input. */
+  vaultRegistryUtxo    : UTxO;
+  /** Policy NFT sổ (= hash script `vault_registry`). */
+  vaultRegistryPolicy  : string;
+  /** Apply-param `gb_shard_cap_nanogic` của shard đã deploy. Bỏ trống ⟹ hằng TẠM
+   *  `GB_SHARD_CAP_NANOGIC` (cấu hình của chính kho này, `constants.ts`). */
+  gbShardCapNanogic?   : bigint;
+  /** TEST ONLY: sửa datum két ra (ca âm). */
+  tamperOutputDatum?   : (d: VaultDatum) => VaultDatum;
 }
 
-// ── Lucid setup ───────────────────────────────────────────────
+export interface InstantGenResult {
+  tx          : TxSignBuilder;
+  m           : bigint;
+  currentEpoch: bigint;
+  validity    : { fromMs: bigint; toMs: bigint };
+  outputs     : InstantGenOutputs;
+  summary     : string;
+}
 
 /** Create a Lucid instance connected to Preview testnet. */
 export async function createLucid(blockfrostApiKey: string): Promise<LucidEvolution> {
-  return Lucid(
-    new Blockfrost(TESTNET_CONFIG.blockfrostUrl, blockfrostApiKey),
-    TESTNET_CONFIG.network,
-  );
+  return Lucid(new Blockfrost(TESTNET_CONFIG.blockfrostUrl, blockfrostApiKey), TESTNET_CONFIG.network);
 }
 
-// ── Main builder ─────────────────────────────────────────────
+function outRefStr(u: UTxO): string {
+  return `${u.txHash}#${u.outputIndex}`;
+}
 
-/**
- * Build an InstantGen transaction.
- *
- * Flow:
- *  1. eligibility — LAMP sits in the vault, unencumbered (C-INST-1 / C-INST-3)
- *  2. read UM datum → C-UM-6 stale check
- *  3. read BackingBeacon → depeg + staleness (fail-closed)
- *  4. grant = min(reward(consumed), cap_surplus, 0.5×pp) (C-INST-5)
- *  5. collect dead batches (§4.2 cliff) and append the new one
- *  6. build tx: vault→vault only, LAMP untouched
- */
-export async function buildInstantGenTx(
-  params: InstantGenParams,
-): Promise<InstantGenResult> {
-  const {
-    lucid, vaultUtxo, umDatumUtxo, backingBeaconUtxo,
-    vaultScript, lampPolicyId,
-  } = params;
-  const network = params.network ?? TESTNET_CONFIG.network;
-  // Suy theo MẠNG, không lấy mặc định testnet. Bản cũ rơi về `TESTNET_CONFIG`
-  // ("tLAMP") kể cả khi network là Mainnet — đúng thứ BOUNDARIES.md §2 gọi là dựng
-  // ra một vault mainnet không bao giờ nhìn thấy LAMP của chính nó. Override tường
-  // minh vẫn được tôn trọng, cho ca mint không chuẩn.
-  //
-  // ScheduleGen đã vá đúng lỗi này và viết lại lý do ở `schedule.ts` ▸ `lampAssetName`;
-  // bản sao ở đây nằm chưa vá cho tới 2026-09-14. Đó là lý do rule đòi quét anh em
-  // TRƯỚC khi đóng một đợt vá: đợt vá lấy phạm vi bằng phạm vi của triệu chứng thì
-  // để lại nguyên nguyên nhân, và bản chưa vá không tự khai là nó chưa được vá.
-  const lampAssetName = params.lampAssetName ?? lampAssetNameFor(network);
+/** UTxO nằm tại `Script(hash)` và mang đúng 1 đơn vị `unit`; trả datum inline. */
+function inlineAtScript(u: UTxO, scriptHash: string, unit: string, what: string): string {
+  const pc = getAddressDetails(u.address).paymentCredential;
+  if (pc?.type !== "Script" || pc.hash !== scriptHash) {
+    throw new Error(`GEN-INST-016: ${what} ${outRefStr(u)} không nằm tại script ${scriptHash}.`);
+  }
+  if (u.assets[unit] !== 1n) {
+    throw new Error(`GEN-INST-016: ${what} ${outRefStr(u)} không mang đúng 1 NFT ${unit}.`);
+  }
+  if (typeof u.datum !== "string" || u.datum.length === 0) {
+    throw new Error(`GEN-INST-016: ${what} ${outRefStr(u)} không có datum inline.`);
+  }
+  return u.datum;
+}
 
-  // A vault UTxO always carries ADA; assert it so the output cannot be built
-  // with an under-stated lovelace amount (Assets is an index signature).
-  const vaultLovelace = vaultUtxo.assets.lovelace;
-  if (vaultLovelace === undefined) {
+function decodeAs<T>(cbor: string, schema: T, what: string, u: UTxO): T {
+  try {
+    return Data.from(cbor, schema as never) as T;
+  } catch (e) {
+    throw new Error(`GEN-INST-016: datum ${what} ${outRefStr(u)} sai hình dạng — ${(e as Error).message}`);
+  }
+}
+
+/** Két: đúng script, datum v2.0, LAMP value khớp datum. Trả (datum, hash, tên NFT). */
+function readVault(p: VaultSpendCommon): { datum: VaultDatum; ownHash: string; ownName: string } {
+  const ownHash = validatorToScriptHash(p.vaultScript);
+  const pc = getAddressDetails(p.vaultUtxo.address).paymentCredential;
+  if (pc?.type !== "Script" || pc.hash !== ownHash) {
+    throw new Error(`GEN-INST-009: vault UTxO ${outRefStr(p.vaultUtxo)} không nằm tại script két ${ownHash}.`);
+  }
+  if (p.vaultUtxo.assets.lovelace === undefined) {
     throw new Error(`GEN-INST-000: vault UTxO carries no lovelace — refusing to build.`);
   }
-
-  // ── Decode datums ────────────────────────────────────────────
-  const rawVaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
-  const umDatum    = Data.from(umDatumUtxo.datum!, UMDatum);
-  const backing    = Data.from(backingBeaconUtxo.datum!, BackingBeaconDatum);
-
-  // ── Get current epoch (POSIX-ms-based, matches Aiken validator) ──
-  const tipPosixMs = params.tipPosixMs
-    ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
-  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
-
-  // `validate_instant_gen` tính trên `apply_pending_profile(input_datum, current_epoch)`:
-  // hệ số PM lấy từ hồ sơ ĐÃ ÁP, và datum ra phải mang `profile`/`pending_profile` đã áp.
-  // Dùng datum thô thì két vừa đổi hồ sơ khai sai `claimed_amount` và giữ `pending_profile`
-  // cũ ⟹ chuỗi từ chối với một câu không trỏ về đâu.
-  const vaultDatum = applyPendingProfile(rawVaultDatum, currentEpoch);
-
-  // ── C-INST-1: LAMP must SIT in the vault (eligibility only) ──
-  if (vaultDatum.lamp_balance < MIN_INSTANT_HOLDING) {
+  if (typeof p.vaultUtxo.datum !== "string") {
+    throw new Error(`GEN-INST-000: vault UTxO ${outRefStr(p.vaultUtxo)} không có datum inline.`);
+  }
+  const datum = decodeVaultDatum(p.vaultUtxo.datum);
+  const lampHeld = p.vaultUtxo.assets[p.vaultParams.lampPolicyId + p.vaultParams.lampAssetName];
+  if ((lampHeld ?? 0n) !== datum.lamp_balance) {
     throw new Error(
-      `GEN-INST-001: lamp_balance ${vaultDatum.lamp_balance} < MIN_INSTANT_HOLDING ` +
-      `${MIN_INSTANT_HOLDING} oildrop (10 LAMP). Holding LAMP opens the door; it is never spent.`,
+      `GEN-INST-000: LAMP trong value két (${lampHeld ?? 0n}) ≠ lamp_balance ${datum.lamp_balance}.`,
     );
   }
+  return { datum, ownHash, ownName: singleVaultIdName(p.vaultUtxo, ownHash) };
+}
 
-  // ── C-INST-3: the eligible LAMP must be unencumbered ────────
-  const lAvail = vaultDatum.lamp_balance - vaultDatum.lamp_locked;
-  if (lAvail < MIN_INSTANT_HOLDING) {
-    throw new Error(
-      `GEN-INST-003: L_avail ${lAvail} < MIN_INSTANT_HOLDING ${MIN_INSTANT_HOLDING} oildrop. ` +
-      `lamp_locked=${vaultDatum.lamp_locked} — locked LAMP does not buy eligibility.`,
-    );
-  }
+function readRate(p: { rateBeaconUtxo?: UTxO; vaultParams: InstantVaultParams }): RateParam | null {
+  const u = p.rateBeaconUtxo;
+  if (u === undefined) return null;
+  const vp = p.vaultParams;
+  return decodeAs(inlineAtScript(u, vp.rateScriptHash, vp.rateNftPolicy + RATE_NFT_NAME, "beacon ρ"), RateParam, "beacon ρ", u);
+}
 
-  // ── §4.2 cliff: keep only LIVE batches ───────────────────────
-  const liveBatches = vaultDatum.magic_batches.filter(
-    (b) => !isExpired(b.created_epoch, b.decay_window, currentEpoch),
-  );
-  const prunedCount = vaultDatum.magic_batches.length - liveBatches.length;
-
-  // ── C-INST-7: batch budget ───────────────────────────────────
-  if (liveBatches.length >= MAX_BATCHES_PER_VAULT) {
-    throw new Error(
-      `GEN-VAULT-001: |live batches|=${liveBatches.length} ≥ ${MAX_BATCHES_PER_VAULT}. Burn some first.`,
-    );
-  }
-
-  // ── C-UM-6: stale check ──────────────────────────────────────
-  const umUsedQ = getUmForInstant(umDatum, currentEpoch);
-  const umFallbackApplied = umUsedQ !== umDatum.smoothed_q;
-
-  // ── §6.3 backing gate — FAIL-CLOSED ─────────────────────────
-  if (backing.depeg) {
-    throw new Error(
-      `GEN-INST-006: BackingBeacon reports depeg → cap_surplus = 0. Gen is shut.`,
-    );
-  }
-  const backingAge = currentEpoch - backing.last_updated_epoch;
-  if (backingAge < 0n || backingAge > MAX_BACKING_STALE) {
-    throw new Error(
-      `GEN-INST-007: BackingBeacon stale (age=${backingAge} > ${MAX_BACKING_STALE}). ` +
-      `A stale beacon counts as ABSENT — no default br is ever substituted.`,
-    );
-  }
-
-  // ── C-INST-5: the §6.3 grant ─────────────────────────────────
-  const pmQ = PM_Q[vaultDatum.profile];
-  if (!pmQ) throw new Error(`Unknown profile: ${vaultDatum.profile}`);
-
-  const consumed = vaultDatum.activity_state.consumed_credit;
-  // `lAvail` đã tính ở cổng C-INST-3 phía trên — dùng lại, đừng khai lần hai:
-  // hai `const` cùng tên trong một scope là lỗi biên dịch TS2451, và vitest KHÔNG
-  // bắt được vì esbuild strip type mà không kiểm kiểu.
-  const grant = computeInstantGrant(
-    consumed, umUsedQ, pmQ, backing.br_q, backing.magic_supply, lAvail,
-  );
-  const ceilings = diagnoseCeilings(vaultDatum, consumed, umUsedQ, pmQ, backing);
-
-  if (grant <= 0n) {
-    throw new Error(
-      `GEN-INST-005: grant = 0 → nothing to mint. ` +
-      `reward=${ceilings.reward} cap_surplus=${ceilings.capSurplus} cap_pp=${ceilings.capPp} ` +
-      `(consumed_credit=${consumed}, L_avail=${lAvail} oildrop). InstantGen only pays out ` +
-      `against MAGIC actually consumed, and never above half the per-epoch rate that the ` +
-      `same LAMP would earn on the shortest ScheduleGen commitment.`,
-    );
-  }
-
-  // ── C-INST-8: trần theo EPOCH, không theo lượt ─────────────
-  // Gương của `validate_instant_gen`: `expect gen_so_far + grant <= compute_cap_pp(avail)`.
-  // `grant` do validator tự tính và redeemer phải khai ĐÚNG nó, nên bộ dựng không được
-  // hạ `grant` cho vừa trần — chỉ được từ chối. Thiếu cổng này thì lượt sinh thứ hai
-  // trong cùng epoch chết ở pha đánh giá script (`Spend[0] … crashed`), một câu không
-  // nói gì với người dùng (đo trên Preprod 2026-09-27).
-  const genSoFar = instantGenInEpoch(liveBatches, currentEpoch);
-  const capPpEpoch = computeCapPp(lAvail);
-  if (genSoFar + grant > capPpEpoch) {
-    throw new Error(
-      `GEN-INST-008: epoch ${currentEpoch} đã sinh ${genSoFar} nanogic qua InstantGen; ` +
-      `lượt này cấp ${grant} sẽ vượt trần epoch ${capPpEpoch} (cap_pp của L_avail=${lAvail} ` +
-      `oildrop). Trần về 0 ở epoch ${currentEpoch + 1n} — sinh lại từ đó.`,
-    );
-  }
-
-  // ── New batch for THIS epoch (§4.2 cliff) ────────────────────
-  const newBatchId = computeBatchId(vaultUtxo, vaultDatum.next_batch_index);
-  const newBatch: MagicBatch = {
-    batch_id:            newBatchId,
-    source:              "Instant",
-    created_epoch:       currentEpoch,
-    initial_amount:      grant,
-    current_amount:      grant,
-    decay_window:        MAGIC_DECAY_WINDOW,   // 1 — dies next epoch
-    profile_at_creation: null,                 // C-DECAY-4: None for Instant
-    contract_id:         null,
-    halved:              false,                // dead field, always false
-  };
-
-  const updatedBatches = [...liveBatches, newBatch];
-
-  // ── Update attribution hash (C-ATT-1, C-ATT-2) ──────────────
-  const newAttribution = updateAttribution(vaultDatum.attribution, {
-    type: "BatchCreated",
-    source: "Instant",
-    epoch: currentEpoch,
+function readWakeme(p: VaultSpendCommon, ownHash: string, ownName: string, e: bigint): WakemeRead | null {
+  if (p.wakemeVaultUtxo === undefined) return null;
+  return readWakemeVault(p.wakemeVaultUtxo, {
+    wakemeVaultHash: p.vaultParams.wakemeVaultHash,
+    ownScriptHash:   ownHash,
+    ownVaultName:    ownName,
+    currentPeriod:   e,
+    lampPolicyId:    p.vaultParams.lampPolicyId,
+    lampAssetName:   p.vaultParams.lampAssetName,
   });
+}
 
-  // ── Validity range (POSIX ms, matches validator's epoch math) ─
-  // Tính TRƯỚC khi dựng datum: `instant_unlock_ms` neo vào cận TRÊN của chính
-  // khoảng này, nên hai thứ không được tính ở hai chỗ rời nhau.
-  //
-  // 🔴 `reserveTrailingSlots: 1` — KHÔNG phải một khoảng đệm cho chắc.
-  // Mốc ghi vào datum là `cận-trên + P`. Cận trên mặc định là slot CUỐI của epoch
-  // này ⟹ mốc rơi đúng slot CUỐI của epoch sau ⟹ lượt rút **tại đúng mốc được
-  // quảng cáo** có `validFrom` và `validTo` cùng một slot ⟹ khoảng rỗng ⟹ sổ cái
-  // từ chối, **mọi lần**. Chừa một slot đẩy mốc ra khỏi ô chết đó.
-  // Giá phải trả: khoá ngắn đi đúng 1000 ms, vẫn nằm trong `[P, 2P)`.
-  const { lowerMs: lowerTime, upperMs: upperTime } =
-    epochValidityWindow(tipPosixMs, network, 1n);
+function withOwner(tx: TxBuilder, p: VaultSpendCommon, datum: VaultDatum): TxBuilder {
+  if (p.skipOwnerSig) return tx;
+  return applyOwnerAuth(tx, resolveOwnerAuth(ownerRefOf(datum.owner), p.ownerAuth));
+}
 
-  // ── C-INST-9: mốc khoá LAMP sau lượt sinh ─────────────────────
-  //
-  // Gương của `validate_instant_gen`:
-  //     unlock_from_now = get_validity_upper_ms(tx) + ms_per_epoch
-  //     new_unlock_ms   = max(input.instant_unlock_ms, unlock_from_now)
-  //
-  // 🔴 `get_validity_upper_ms` đọc cận trên mà SỔ CÁI trình ra, KHÔNG phải con số
-  // mili-giây ta truyền vào `.validTo()`. Lucid quy nó về SLOT trước
-  // (`validTo` → `unixTimeToSlot` → `unixTimeToEnclosingSlot`, tức làm tròn XUỐNG
-  // biên slot), rồi script đọc lại bằng `slotToBeginUnixTime`.
-  // `epochValidityWindow` đã trả về mốc căn ĐẦU slot, nên vòng quy đổi dưới đây
-  // phải là phép ĐỒNG NHẤT. Giữ nó lại làm phép đối chứng chứ không phải làm phép
-  // tính: nó chạy bằng bảng slot thật của Lucid, nên nếu giả định "biên slot trùng
-  // biên 1000 ms" của `slotFloorMs` sai trên một mạng nào đó thì chỗ này kêu —
-  // thay vì để `expect output_datum.instant_unlock_ms == new_unlock_ms` vỡ trên chuỗi.
-  const upperMsOnChain = BigInt(slotToUnixTime(network, unixTimeToSlot(network, upperTime)));
-  if (upperMsOnChain !== BigInt(upperTime)) {
-    throw new Error(
-      `Lưới slot lệch: epochValidityWindow trả ${upperTime} nhưng vòng quy đổi của ` +
-      `Lucid cho ${upperMsOnChain} trên mạng ${network}. ` +
-      `SLOT_LENGTH_MS hoặc giả định zeroTime ≡ 0 (mod 1000) không còn đúng.`,
-    );
-  }
-  const unlockFromNow = upperMsOnChain + msPerEpoch(network);
-  const newUnlockMs = vaultDatum.instant_unlock_ms > unlockFromNow
-    ? vaultDatum.instant_unlock_ms
-    : unlockFromNow;
+/**
+ * Dựng giao dịch InstantGen Gen v2.0.
+ *
+ *  1. soát + giải mã két (datum v2.0), beacon ρ (nếu có), beacon GB, shard, sổ két
+ *  2. cửa sổ hiệu lực (chừa 1 slot cuối epoch — xem `resolveWindow`)
+ *  3. `computeInstantGenOutputs` — mọi cổng IG, NÉM trước khi dựng
+ *  4. tiêu két (InstantGen{m}) + tiêu shard (Draw{m}); trả két và shard về ĐÚNG địa chỉ
+ *     cũ; reference input: ρ?, GB, sổ, Wakeme? (+ ref-script)
+ */
+export async function buildInstantGenTx(params: InstantGenParams): Promise<InstantGenResult> {
+  const vp = params.vaultParams;
+  const { datum: vaultDatum, ownHash, ownName } = readVault(params);
 
-  // ── Build updated VaultDatum (A02: field-by-field) ────────────
-  // I-ACT-7: lamp_balance / lamp_locked / loyalty_holdings are copied verbatim.
-  const newVaultDatum: VaultDatum = {
-    ...vaultDatum,
-    magic_batches:      updatedBatches,
-    next_batch_index:   vaultDatum.next_batch_index + 1n,
-    last_updated_epoch: currentEpoch,
-    // INV-CASHBACK-BOUND: the credit is SPENT, never reusable.
-    activity_state:     { ...vaultDatum.activity_state, consumed_credit: 0n },
-    attribution:        newAttribution,
-    // Trường 17 — đây là nhánh DUY NHẤT ghi nó; mọi nhánh spend khác ép đứng yên.
-    instant_unlock_ms:  newUnlockMs,
-  };
+  // 🔴 `reserveTrailingSlots: 1` — mốc khoá ghi vào datum là `cận-trên + P`; cận trên là
+  // slot CUỐI epoch thì mốc rơi đúng slot cuối epoch sau ⟹ lượt rút tại mốc có khoảng
+  // rỗng ⟹ sổ cái từ chối mọi lần. Chừa một slot đẩy mốc ra khỏi ô chết đó.
+  const w = await resolveWindow(params, vp.msPerEpoch, 1n);
+  const e = w.epoch;
 
-  // ── Build transaction ─────────────────────────────────────────
-  const vaultScriptAddress = credentialToAddress(
-    network,
-    scriptHashToCredential(validatorToScriptHash(vaultScript)),
+  const rate = readRate(params);
+  const greenback = decodeAs(
+    inlineAtScript(params.greenbackBeaconUtxo, vp.gbBeaconScriptHash, vp.gbBeaconNftPolicy + GREENBACK_NFT_NAME, "beacon GreenBack"),
+    GreenBackBeacon, "beacon GreenBack", params.greenbackBeaconUtxo,
   );
-
-  // TEST ONLY: mutate output datum if tamper provided
-  if (params.tamperOutputDatum) {
-    Object.assign(newVaultDatum, params.tamperOutputDatum(newVaultDatum));
-  }
-
-  const redeemer = Data.to(
-    { InstantGen: { claimed_amount: grant } },
-    VaultRedeemer,
+  const shardId = vaultShardId(vaultDatum.owner);
+  const shardIn = decodeAs(
+    inlineAtScript(params.gbShardUtxo, vp.gbShardPolicyId, vp.gbShardPolicyId + shardNftName(shardId), `shard GB ${shardId}`),
+    GbShard, "shard GB", params.gbShardUtxo,
   );
+  const registry = decodeAs(
+    inlineAtScript(params.vaultRegistryUtxo, params.vaultRegistryPolicy, params.vaultRegistryPolicy + VAULT_REGISTRY_NFT_NAME, "sổ két"),
+    VaultRegistry, "sổ két", params.vaultRegistryUtxo,
+  );
+  if (!registry.vault_script_hashes.includes(ownHash)) {
+    throw new Error(`GEN-INST-016: sổ két ${outRefStr(params.vaultRegistryUtxo)} không liệt kê script két ${ownHash} — shard sẽ từ chối.`);
+  }
+  const wakeme = readWakeme(params, ownHash, ownName, e);
 
-  const lampUnit = toUnit(lampPolicyId, lampAssetName);
-
-  // `lowerTime` / `upperTime` đã tính ở trên, cạnh `newUnlockMs` — hai thứ neo vào
-  // cùng một cận nên phải nằm cùng chỗ.
-
-  // I-ACT-7: the vault output carries EXACTLY the LAMP it came in with.
-  const lampOut = vaultDatum.lamp_balance - (params.tamperLampOutOil ?? 0n);
-
-  // Value ra của vault, tách thành CÂU LỆNH RIÊNG để chốt không biến mất cùng lần viết
-  // lại biểu thức value — đó chính là lần viết lại nó sinh ra để bắt.
-  const vaultOutAssets = vaultOutValue(vaultUtxo.assets, {
-    lovelace:  vaultLovelace,                // ADA stays on vault
-    [lampUnit]: lampOut,                     // LAMP stays on vault (I-ACT-7)
+  const outputs = computeInstantGenOutputs({
+    vaultDatum, vaultOutRef: params.vaultUtxo, currentEpoch: e, rate, wakeme, greenback, shardIn,
+    gbShardCapNanogic: params.gbShardCapNanogic ?? GB_SHARD_CAP_NANOGIC,
+    m: params.m, validityUpperMs: w.toMs, msPerEpoch: vp.msPerEpoch,
   });
-  assertVaultIdentityKept(vaultUtxo.assets, vaultOutAssets);
+  const outDatum = params.tamperOutputDatum ? params.tamperOutputDatum(structuredClone(outputs.outputDatum)) : outputs.outputDatum;
+
+  // IG-14: value két ra = value vào (LAMP khớp datum, NFT, ADA, tập token).
+  const vaultOutAssets = vaultOutValue(params.vaultUtxo.assets, {});
+  assertVaultIdentityKept(params.vaultUtxo.assets, vaultOutAssets);
+  // Shard: cùng địa chỉ, non-ADA y hệt (`continuing_pair`), ADA không giảm.
+  const shardOutAssets = { ...params.gbShardUtxo.assets };
 
   const vaultRef = params.vaultRefScriptUtxo;
-  if (vaultRef !== undefined) assertVaultRefScript(vaultRef, vaultScript);
-  const spend = lucid.newTx().collectFrom([vaultUtxo], redeemer);
-  const withScript = vaultRef !== undefined
-    ? spend.readFrom([vaultRef, umDatumUtxo, backingBeaconUtxo])
-    : spend.attach.SpendingValidator(vaultScript).readFrom([umDatumUtxo, backingBeaconUtxo]);
-
-  let txBuilder = withScript
-    .pay.ToAddressWithData(
-      vaultScriptAddress,
-      { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) },
-      // 🔴 `vaultOutValue` bê nguyên value đầu vào rồi mới đè. Dựng lại object từ đầu
-      // là làm rơi vault-id NFT (INV-VAULT-IDENTITY), và mọi nhánh spend đòi NFT còn
-      // nguyên ở output — NFT one-shot nên rơi là vault chết vĩnh viễn, không phải một
-      // tx hỏng. Bản vá gốc `ca5870df` (tuanzoro2k, 11/8) bị lần trộn hội tụ đánh rơi.
-      // Chốt lúc chạy ở ngay trên (`assertVaultIdentityKept`).
-      vaultOutAssets,
-    )
-    .validFrom(lowerTime)
-    .validTo(upperTime);
-
-  if (!params.skipOwnerSig) {
-    txBuilder = applyOwnerAuth(
-      txBuilder,
-      resolveOwnerAuth(ownerRefOf(vaultDatum.owner), params.ownerAuth),
-    );
+  if (vaultRef !== undefined) assertRefScript(vaultRef, params.vaultScript, "két");
+  const shardRef = params.gbShardRefScriptUtxo;
+  if (shardRef !== undefined) {
+    const got = shardRef.scriptRef ? validatorToScriptHash(shardRef.scriptRef) : null;
+    if (got !== vp.gbShardPolicyId) {
+      throw new Error(`GEN-INST-009: UTxO ref-script ${outRefStr(shardRef)} mang ${got ?? "không script"}, không phải shard ${vp.gbShardPolicyId}.`);
+    }
+  } else if (params.gbShardScript === undefined) {
+    throw new Error(`GEN-INST-009: thiếu script shard — truyền gbShardScript hoặc gbShardRefScriptUtxo.`);
+  } else if (validatorToScriptHash(params.gbShardScript) !== vp.gbShardPolicyId) {
+    throw new Error(`GEN-INST-009: gbShardScript có hash ${validatorToScriptHash(params.gbShardScript)} ≠ gb_shard_policy_id ${vp.gbShardPolicyId}.`);
   }
-  const tx = await txBuilder.complete(collateralCompleteOptions(params.collateralLovelace));
 
-  const summary = buildSummary({
-    grant,
-    consumed,
-    ceilings,
-    umUsedQ,
-    umFallbackApplied,
-    currentEpoch,
-    prunedCount,
-    newBatchCount: updatedBatches.length,
-    lampBalance: vaultDatum.lamp_balance,
-  });
+  const oracleRefs: UTxO[] = [];
+  if (params.rateBeaconUtxo !== undefined) oracleRefs.push(params.rateBeaconUtxo);
+  oracleRefs.push(params.greenbackBeaconUtxo, params.vaultRegistryUtxo);
+  if (params.wakemeVaultUtxo !== undefined) oracleRefs.push(params.wakemeVaultUtxo);
+  const scriptRefs = [vaultRef, shardRef].filter((u): u is UTxO => u !== undefined);
+
+  let tx = params.lucid.newTx()
+    .collectFrom([params.vaultUtxo], Data.to({ InstantGen: { claimed_amount: outputs.m } }, VaultRedeemer))
+    .collectFrom([params.gbShardUtxo], Data.to({ amount: outputs.m }, GbShardRedeemer))
+    .readFrom([...scriptRefs, ...oracleRefs]);
+  if (vaultRef === undefined) tx = tx.attach.SpendingValidator(params.vaultScript);
+  if (shardRef === undefined) tx = tx.attach.SpendingValidator(params.gbShardScript!);
+  tx = tx
+    .pay.ToAddressWithData(params.vaultUtxo.address, { kind: "inline", value: Data.to(outDatum, VaultDatum) }, vaultOutAssets)
+    .pay.ToAddressWithData(params.gbShardUtxo.address, { kind: "inline", value: Data.to(outputs.shardOut, GbShard) }, shardOutAssets)
+    .validFrom(Number(w.fromMs))
+    .validTo(Number(w.toMs));
+  tx = withOwner(tx, params, vaultDatum);
+  const built = await tx.complete(collateralCompleteOptions(params.collateralLovelace));
 
   return {
-    tx,
-    grantNanogic: grant,
-    consumedCreditSpent: consumed,
-    ceilings,
-    umUsedQ,
-    currentEpoch,
-    umFallbackApplied,
-    newLampBalance: vaultDatum.lamp_balance,   // unchanged by construction
-    summary,
+    tx: built, m: outputs.m, currentEpoch: e, validity: { fromMs: w.fromMs, toMs: w.toMs }, outputs,
+    summary: buildSummary(outputs, e),
   };
 }
 
-/** UTxO ref-script phải mang ĐÚNG script vault. Kiểm hash trên chính `scriptRef`. */
-function assertVaultRefScript(ref: UTxO, vaultScript: Validator): void {
-  const at = `${ref.txHash}#${ref.outputIndex}`;
+export interface RefreshCheckpointParams extends VaultSpendCommon {
+  /** Beacon ρ — RefreshCheckpoint LUÔN làm mới nên luôn cần. */
+  rateBeaconUtxo: UTxO;
+  /**
+   * Tham số giao thức `coinsPerUtxoByte` để soát min-ADA của két ra. Bỏ trống ⟹ đọc từ
+   * `lucid.config().protocolParameters`; provider không có tham số giao thức ⟹ NÉM.
+   */
+  coinsPerUtxoByte?: bigint;
+}
+
+/**
+ * Lovelace của két ra sau RefreshCheckpoint. Validator ghim mọi token KHÁC lovelace nguyên
+ * khối và cho lovelace ra ≥ vào (`validate_refresh_checkpoint` ▸ `lovelace_not_decreased`).
+ * Datum ra có thể DÀI hơn datum vào (vd `cap_nanogic` 0 → số 9 byte) ⟹ min-ADA tăng; két
+ * đang giữ sát min-ADA (đo trên Emulator 2026-09-30: 1 978 290 lovelace) phải được nạp thêm
+ * đúng phần thiếu, không hơn. Đặt con số TƯỜNG MINH ở đây thay vì để Lucid tự nâng, để phép
+ * nạp đi qua đúng một chỗ đọc được.
+ */
+function refreshOutputLovelace(params: RefreshCheckpointParams, outDatumCbor: string): bigint {
+  let perByte = params.coinsPerUtxoByte;
+  if (perByte === undefined) {
+    const pp = params.lucid.config().protocolParameters;
+    if (pp === undefined) {
+      throw new Error(`GEN-INST-017: provider không trả tham số giao thức — truyền coinsPerUtxoByte tường minh.`);
+    }
+    perByte = BigInt(pp.coinsPerUtxoByte);
+  }
+  const have = params.vaultUtxo.assets.lovelace;
+  if (have === undefined) throw new Error(`GEN-INST-000: vault UTxO carries no lovelace — refusing to build.`);
+  const need = BigInt(calculateMinLovelaceFromUTxO(perByte, {
+    ...params.vaultUtxo, datum: outDatumCbor, datumHash: null, scriptRef: null,
+  }));
+  return have >= need ? have : need;
+}
+
+export interface RefreshCheckpointResult {
+  tx          : TxSignBuilder;
+  currentEpoch: bigint;
+  checkpoint  : Checkpoint;
+  outputDatum : VaultDatum;
+}
+
+/**
+ * Dựng RefreshCheckpoint: chủ ký, làm mới năm ô checkpoint, mọi token ngoài lovelace ghim
+ * NGUYÊN KHỐI; lovelace ra = max(vào, min-ADA của datum ra) (`refreshOutputLovelace`).
+ * Có két Wakeme ghim két này ⟹ `wakeme_link := owner_commit`; không có ⟹ `""` (gỡ ghim).
+ */
+export async function buildRefreshCheckpointTx(params: RefreshCheckpointParams): Promise<RefreshCheckpointResult> {
+  const vp = params.vaultParams;
+  const { datum, ownHash, ownName } = readVault(params);
+  const w = await resolveWindow(params, vp.msPerEpoch, 0n);
+  const rate = readRate(params);
+  const wakeme = readWakeme(params, ownHash, ownName, w.epoch);
+  const { outputDatum, checkpoint } = computeRefreshCheckpointOutput(datum, w.epoch, wakeme, rate);
+  const outDatumCbor = Data.to(outputDatum, VaultDatum);
+  const outLovelace = refreshOutputLovelace(params, outDatumCbor);
+
+  const vaultRef = params.vaultRefScriptUtxo;
+  if (vaultRef !== undefined) assertRefScript(vaultRef, params.vaultScript, "két");
+  const refs: UTxO[] = [params.rateBeaconUtxo];
+  if (params.wakemeVaultUtxo !== undefined) refs.push(params.wakemeVaultUtxo);
+
+  let tx = params.lucid.newTx()
+    .collectFrom([params.vaultUtxo], Data.to("RefreshCheckpoint", VaultRedeemer))
+    .readFrom(vaultRef !== undefined ? [vaultRef, ...refs] : refs);
+  if (vaultRef === undefined) tx = tx.attach.SpendingValidator(params.vaultScript);
+  tx = tx
+    .pay.ToAddressWithData(params.vaultUtxo.address, { kind: "inline", value: outDatumCbor }, { ...params.vaultUtxo.assets, lovelace: outLovelace })
+    .validFrom(Number(w.fromMs))
+    .validTo(Number(w.toMs));
+  tx = withOwner(tx, params, datum);
+  const built = await tx.complete(collateralCompleteOptions(params.collateralLovelace));
+  return { tx: built, currentEpoch: w.epoch, checkpoint, outputDatum };
+}
+
+/** UTxO ref-script phải mang ĐÚNG script. Kiểm hash trên chính `scriptRef`. */
+function assertRefScript(ref: UTxO, script: Validator, what: string): void {
   if (!ref.scriptRef) {
-    throw new Error(`GEN-INST-009: UTxO ref-script ${at} không mang script tham chiếu nào.`);
+    throw new Error(`GEN-INST-009: UTxO ref-script ${outRefStr(ref)} không mang script tham chiếu nào.`);
   }
   const got = validatorToScriptHash(ref.scriptRef);
-  const want = validatorToScriptHash(vaultScript);
+  const want = validatorToScriptHash(script);
   if (got !== want) {
-    throw new Error(`GEN-INST-009: UTxO ref-script ${at} mang script ${got}, không phải vault ${want}.`);
+    throw new Error(`GEN-INST-009: UTxO ref-script ${outRefStr(ref)} mang script ${got}, không phải ${what} ${want}.`);
   }
 }
 
-// ── Submit helper ────────────────────────────────────────────
-
 /** Sign (with user's wallet) and submit the tx. Returns tx hash. */
-export async function signAndSubmit(
-  lucid : LucidEvolution,
-  tx    : TxSignBuilder,
-): Promise<string> {
+export async function signAndSubmit(lucid: LucidEvolution, tx: TxSignBuilder): Promise<string> {
+  void lucid;
   const signedTx = await tx.sign.withWallet().complete();
   return signedTx.submit();
 }
 
-// ── Diagnostics: the three ceilings separately ───────────────
+// ── Két Wakeme: gương `onchain/lib/magiclamp/protocol/wakeme_lent.ak ▸ wakeme_read` ──
+//
+// Luật y hệt bên Aiken, trên MỘT UTxO két đã chọn: vế nào validator FAIL thì ở đây NÉM
+// `GEN-INST-010`; vế (d) ghim trong chính kỳ và vế (f) value thiếu LAMP thì L = 0 như
+// validator (vẫn trả `owner_commit`). Đọc datum theo VỊ TRÍ, ≥ 13 trường.
 
-import { computeRewardFromConsumed, computeCapSurplus, computeCapPp } from "./math.js";
-
-export function diagnoseCeilings(
-  vaultDatum: VaultDatum,
-  consumed  : bigint,
-  umQ       : bigint,
-  pmQ       : bigint,
-  backing   : BackingBeaconDatum,
-): { reward: bigint; capSurplus: bigint; capPp: bigint } {
-  return {
-    reward:     computeRewardFromConsumed(consumed, umQ, pmQ),
-    capSurplus: computeCapSurplus(backing.br_q, backing.magic_supply),
-    capPp:      computeCapPp(vaultDatum.lamp_balance - vaultDatum.lamp_locked),
-  };
+export interface LentReadContext {
+  wakemeVaultHash: string;
+  ownScriptHash:   string;
+  ownVaultName:    string;
+  currentPeriod:   bigint;
+  lampPolicyId:    string;
+  lampAssetName:   string;
 }
 
-// ── Utility: compute batch_id ─────────────────────────────────
-//
-// batch_id = blake2b256(vault_utxo_ref ∥ encode(next_batch_index))
-// MUST match onchain/validators/vault.ak: compute_batch_id
-// (P8: bit-identical across implementations)
+export function readWakemeVault(utxo: UTxO, ctx: LentReadContext): WakemeRead {
+  const fail = (why: string): never => {
+    throw new Error(`GEN-INST-010: két Wakeme ${utxo.txHash}#${utxo.outputIndex} không đạt luật đọc L_lent — ${why}`);
+  };
+  // Luật 1 — payment credential phải là Script(wakemeVaultHash). Validator LỌC (bỏ qua),
+  // nhưng bộ dựng nhận đúng một UTxO do người gọi chọn: sai địa chỉ là lỗi người gọi.
+  const pc = getAddressDetails(utxo.address).paymentCredential;
+  if (pc?.type !== "Script" || pc.hash !== ctx.wakemeVaultHash) fail("không nằm ở script két Wakeme");
+  // (a) inline datum, Constr 0, ≥ 13 trường.
+  if (!utxo.datum || utxo.datumHash) fail("datum không inline");
+  const d = Data.from(utxo.datum!);
+  if (!(d instanceof Constr) || d.index !== 0 || d.fields.length < 13) fail("datum không phải Constr 0 ≥ 13 trường");
+  const f = (d as Constr<Data>).fields;
+  const ownerCommit = f[0], conditional = f[3], owned = f[7], genVault = f[11], pinPeriod = f[12];
+  if (typeof ownerCommit !== "string" || typeof conditional !== "bigint" ||
+      typeof owned !== "bigint" || typeof pinPeriod !== "bigint") fail("sai kiểu trường");
+  // (b) đúng MỘT token dưới policy két, số lượng 1, tên == owner_commit (32 byte).
+  const nfts = Object.entries(utxo.assets).filter(([u]) => u !== "lovelace" && u.slice(0, 56) === ctx.wakemeVaultHash);
+  if (nfts.length !== 1 || nfts[0]![1] !== 1n) fail("không đúng một NFT két số lượng 1");
+  if ((ownerCommit as string).length !== 64 || nfts[0]![0].slice(56) !== ownerCommit) fail("tên NFT ≠ owner_commit 32 byte");
+  // (c) gen_vault == Some(GenPin{ ownScriptHash, ownVaultName }) — so nguyên khối Data.
+  const expectedPin = new Constr(0, [new Constr(0, [ctx.ownScriptHash, ctx.ownVaultName])]);
+  if (Data.to(genVault as Data) !== Data.to(expectedPin)) fail("két không ghim két IG này");
+  // (e) hai lượng không âm.
+  if ((conditional as bigint) < 0n || (owned as bigint) < 0n) fail("lượng âm");
+  const commit = ownerCommit as string;
+  const lent = (conditional as bigint) + (owned as bigint);
+  // (d) ghim trong chính kỳ đang sinh ⟹ 0.
+  if ((pinPeriod as bigint) >= ctx.currentPeriod) return { ownerCommit: commit, lent: 0n };
+  // (f) LAMP thật trong value phải đỡ được datum ⟹ thiếu thì 0.
+  const held = utxo.assets[ctx.lampPolicyId + ctx.lampAssetName] ?? 0n;
+  return { ownerCommit: commit, lent: held < lent ? 0n : lent };
+}
 
-function computeBatchId(vaultUtxo: UTxO, nextBatchIndex: bigint): string {
-  const txHash = Buffer.from(vaultUtxo.txHash, "hex");
+/** Gương `wakeme_lent.ak ▸ lent_lamp`: chỉ phần L_lent. */
+export function readLentLamp(utxo: UTxO, ctx: LentReadContext): bigint {
+  return readWakemeVault(utxo, ctx).lent;
+}
+
+/** Tên NFT vault-id DUY NHẤT dưới policy = hash script vault (INV-VAULT-IDENTITY). */
+function singleVaultIdName(vaultUtxo: UTxO, ownScriptHash: string): string {
+  const ids = Object.entries(vaultUtxo.assets).filter(([u]) => u !== "lovelace" && u.slice(0, 56) === ownScriptHash);
+  if (ids.length !== 1 || ids[0]![1] !== 1n) {
+    throw new Error(`GEN-INST-010: vault UTxO không mang đúng một NFT vault-id dưới ${ownScriptHash}.`);
+  }
+  return ids[0]![0].slice(56);
+}
+
+// ── batch_id = blake2b256(tx_hash ∥ be64(output_index) ∥ be64(next_batch_index)) ──
+// MUST match onchain/validators/vault.ak: compute_batch_id (P8).
+export function computeBatchId(ref: OutRef, nextBatchIndex: bigint): string {
+  const txHash = Buffer.from(ref.txHash, "hex");
   const outputIndex = Buffer.alloc(8);
-  outputIndex.writeBigUInt64BE(BigInt(vaultUtxo.outputIndex));
+  outputIndex.writeBigUInt64BE(BigInt(ref.outputIndex));
   const indexBytes = Buffer.alloc(8);
   indexBytes.writeBigUInt64BE(nextBatchIndex);
-
-  const preimage = Buffer.concat([txHash, outputIndex, indexBytes]);
-  const hash = blake2b(preimage, { dkLen: 32 });
+  const hash = blake2b(Buffer.concat([txHash, outputIndex, indexBytes]), { dkLen: 32 });
   return Buffer.from(hash).toString("hex");
 }
 
-// ── Utility: update attribution hash chain ────────────────────
-//
-// new_root = blake2b256(old_root ∥ encode(event)) — §7.2
-
+// ── attribution: new_root = blake2b256(old_root ∥ encode(event)) — §7.2 ──
+// Validator để `attribution_root` TỰ DO ở nhánh sinh; chỉ ép `last_event_epoch = e` và
+// `total_events + 1`.
 function updateAttribution(
-  attr  : VaultDatum["attribution"],
-  event : { type: string; source: string; epoch: bigint },
+  attr : VaultDatum["attribution"],
+  event: { type: string; source: string; epoch: bigint },
 ): VaultDatum["attribution"] {
   const oldRoot  = Buffer.from(attr.attribution_root, "hex");
   const eventEnc = Buffer.from(JSON.stringify({ ...event, epoch: event.epoch.toString() }));
-  const preimage = Buffer.concat([oldRoot, eventEnc]);
-  const newRoot  = Buffer.from(blake2b(preimage, { dkLen: 32 })).toString("hex");
-
-  return {
-    attribution_root: newRoot,
-    last_event_epoch: event.epoch,
-    total_events:     attr.total_events + 1n,
-  };
+  const newRoot  = Buffer.from(blake2b(Buffer.concat([oldRoot, eventEnc]), { dkLen: 32 })).toString("hex");
+  return { attribution_root: newRoot, last_event_epoch: event.epoch, total_events: attr.total_events + 1n };
 }
 
-// ── Human-readable summary ────────────────────────────────────
-
-function buildSummary(params: {
-  grant            : bigint;
-  consumed         : bigint;
-  ceilings         : { reward: bigint; capSurplus: bigint; capPp: bigint };
-  umUsedQ          : bigint;
-  umFallbackApplied: boolean;
-  currentEpoch     : bigint;
-  prunedCount      : number;
-  newBatchCount    : number;
-  lampBalance      : bigint;
-}): string {
-  const binding =
-    params.grant === params.ceilings.reward ? "reward(consumed)"
-    : params.grant === params.ceilings.capSurplus ? "cap_surplus(br)"
-    : "0.5 × pp_schedule";
-
-  const lines = [
-    `═══ InstantGen Summary ═══`,
-    `Epoch:            ${params.currentEpoch}`,
-    `LAMP in vault:    ${params.lampBalance / 1_000_000n} tLAMP — UNCHANGED (I-ACT-7)`,
-    `MAGIC consumed:   ${nanogicToMagicStr(params.consumed)} MAGIC (credit spent by this tx)`,
-    `UM used:          ${qToStr(params.umUsedQ)}× ${params.umFallbackApplied ? "⚠ FALLBACK (stale UM — keeper not updated)" : "✓"}`,
-    ``,
-    `Ceilings (min wins):`,
-    `  reward(consumed): ${nanogicToMagicStr(params.ceilings.reward)}`,
-    `  cap_surplus(br):  ${nanogicToMagicStr(params.ceilings.capSurplus)}`,
-    `  0.5 × pp_sched:   ${nanogicToMagicStr(params.ceilings.capPp)}`,
-    `  → GRANTED:        ${nanogicToMagicStr(params.grant)} MAGIC (bound by ${binding})`,
-    ``,
-    `Batch lifetime:   1 epoch (§4.2 use-or-lose — spend it this epoch or lose it)`,
-    `  Dead batches collected: ${params.prunedCount}`,
-    `  Live batches after tx:  ${params.newBatchCount} (incl. new)`,
-    ``,
-    params.umFallbackApplied
-      ? `⚠  UM was stale (staleness > 1 epoch). Used UM_FALLBACK=0.5×. Submit after the keeper updates UM for a better rate.`
-      : `✓  UM fresh. Full UM=${qToStr(params.umUsedQ)}× applied.`,
-  ];
-  return lines.join("\n");
+function buildSummary(o: InstantGenOutputs, e: bigint): string {
+  return [
+    `═══ InstantGen v2.0 ═══`,
+    `Epoch:             ${e}${o.refreshed ? " (checkpoint làm mới lượt này)" : ""}`,
+    `LAMP trong két:    ${o.appliedDatum.lamp_balance} oildrop — ĐỨNG YÊN (I-ACT-7); L_lent ${o.lent}`,
+    `Sinh lượt này (m): ${nanogicToMagicStr(o.m)} MAGIC`,
+    `Đã sinh trong epoch trước lượt này: ${nanogicToMagicStr(o.genSoFar)} MAGIC`,
+    `Trần: cap_nanogic ${nanogicToMagicStr(o.capNanogic)} · trần LAMP ${nanogicToMagicStr(o.capLamp)} · ` +
+      `GB shard ${o.shardId} còn ${nanogicToMagicStr(o.gbAvailable)} · phần GB mỗi két ${nanogicToMagicStr(o.vaultShare)}`,
+    `m tối đa lúc dựng: ${nanogicToMagicStr(o.maxM)} MAGIC`,
+    `Batch sống 1 epoch (§4.2). Dọn ${o.prunedCount} batch chết. LAMP khoá tới ${o.newUnlockMs} ms.`,
+  ].join("\n");
 }

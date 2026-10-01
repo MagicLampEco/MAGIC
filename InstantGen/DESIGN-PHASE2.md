@@ -293,7 +293,7 @@ gãy.
 > 6 tham số / ScheduleGen 3 tham số, bỏ sót `lamp_asset_name` ở cả hai — đúng kiểu sai mà
 > bảng chép tay sinh ra.
 
-### InstantGen `vault` — 7 tham số
+### InstantGen `vault` — 8 tham số
 
 | # | Tên | Ghi chú |
 |---|---|---|
@@ -304,6 +304,7 @@ gãy.
 | 5 | `backing_nft_policy` | ghim NFT beacon (§6.3) |
 | 6 | `backing_script_hash` | ghim địa chỉ beacon (§6.3) |
 | 7 | `ms_per_epoch` | không đổi |
+| 8 | `wakeme_vault_hash` | script hash két Wakeme, theo mạng (CC-GEN-LENT-READ, nối cuối 2026-09-30) |
 
 Đây là **một** danh sách dùng chung cho cả hai handler của script đa-mục-đích: nhánh
 `mint` (NFT danh tính vault) và nhánh `spend` phải nhận y hệt tham số, nếu không hai bên ra

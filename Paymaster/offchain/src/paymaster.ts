@@ -336,6 +336,15 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
     .readFrom([policyBeaconUtxo, protocolBeaconUtxo]);
 
   // vault input(s) spend bằng BurnBatch (CBOR caller cung cấp) — DEDUP theo OutRef.
+  //
+  // Gen v2.0 (#128, đo 2026-09-30) — ĐIỀU CÒN THIẾU nếu đường này sống lại sau D16:
+  // `validate_burn_batch` của cả InstantGen lẫn ScheduleGen đòi MỘT output két tiếp-nối
+  // mang datum A02 + checkpoint v2.0, và két InstantGen tiêu lần đầu trong epoch mới còn
+  // đòi reference input beacon ρ (+ két Wakeme nếu `wakeme_link` khác ""). Bộ dựng này
+  // KHÔNG dựng output két nào (thiếu từ trước Gen v2.0) — khuôn đúng nằm ở
+  // `ConsumeMAGIC/offchain/src/genV2Checkpoint.ts` ▸ `checkGenV2Burn`. Phía on-chain
+  // `paymaster.ak ▸ vault_delegate_is` đọc trường 15 theo vị trí: vẫn là
+  // `personal_delegate` ở datum InstantGen v2.0 (20 trường) và ScheduleGen v2.0 (19).
   const spentVault = new Set<string>();
   for (const v of vaultInputs) {
     const k = refKey(v.utxo);

@@ -23,7 +23,9 @@
 // lược đồ đổi hình là mẫu đổi theo và phép kiểm nói cho biết.
 //
 // ── HAI HÌNH DẠNG, VÀ DỊCH VỤ NÀY KHÔNG BIẾT TRƯỚC LOẠI KÉT ────────────────────
-// Két InstantGen mang 18 trường, ScheduleGen 17 (`MagicSDK/src/schemas.ts` đầu tệp).
+// Gen v2.0: két InstantGen mang 20 trường, ScheduleGen 19 (`MagicSDK/src/schemas.ts` đầu tệp).
+// Datum v1 (18/17 trường) KHÔNG giải mã được — SDK ném `VAULT_DATUM_V1`, và tệp này để lỗi đó
+// đi thẳng lên (v2.0 là hash mới, không di trú; đọc một két v1 như v2 là đọc sai ô 6/12/14).
 // `VaultTxAPI` phục vụ cả bốn đường `instant_gen · schedule_commit · schedule_fire ·
 // consume`, và `service.ts` ▸ `scopesFor` chấp nhận `vaultType` BỎ TRỐNG — lúc đó nó
 // quét mọi scope và loại két chỉ biết được SAU khi đọc xong datum. Nên chỗ này phải
@@ -57,6 +59,15 @@ export interface DecodedVaultDatum {
   /** Trường 17 của két Instant. `null` ở két Schedule, nơi trường KHÔNG TỒN TẠI —
    *  không đệm `0n`, vì `0n` là giá trị hợp lệ của một két Instant chưa từng sinh. */
   instant_unlock_ms: bigint | null;
+  /** Ô 12 két Instant (`cap_epoch`). `null` ở két Schedule — ô 12 ở đó vẫn là `delegation_cert`. */
+  cap_epoch: bigint | null;
+  /** Ô 14 két Instant (`cap_nanogic`, nanogic). `null` ở két Schedule. */
+  cap_nanogic: bigint | null;
+  /** Ô 6 két Instant (`wakeme_link`: "" hoặc owner_commit). `null` ở két Schedule. */
+  wakeme_link: string | null;
+  /** Cửa sổ dùng 7 ô — có ở CẢ HAI loại két từ v2.0. */
+  usage_window: { generated: bigint; consumed: bigint }[];
+  usage_window_epoch: bigint;
 }
 
 /** Giải mã bằng lược đồ THẬT của SDK, thử cả hai hình dạng. Ném khi không hình dạng
@@ -69,6 +80,9 @@ export function decodeVaultDatumOrThrow(hex: string): DecodedVaultDatum {
     owner: ownerRefOf((decoded.datum as unknown as { owner: unknown }).owner),
     vault_datum_kind: decoded.kind,
     instant_unlock_ms: decoded.instantUnlockMs,
+    cap_epoch: decoded.kind === "Instant" ? decoded.datum.cap_epoch : null,
+    cap_nanogic: decoded.kind === "Instant" ? decoded.datum.cap_nanogic : null,
+    wakeme_link: decoded.kind === "Instant" ? decoded.datum.wakeme_link : null,
   };
 }
 

@@ -37,6 +37,8 @@ export interface TxSpec {
   spendRedeemers?: { index: number; dataHex: string }[];
   /** Slot hết hạn (validTo). */
   ttlSlot?: bigint;
+  /** `reference_inputs` của thân (ca két Wakeme của `instant_gen`). */
+  referenceInputs?: { txHash: string; outputIndex: number }[];
 }
 
 /** Chuỗi byte (hex) → CBOR bytestring hex; đủ cho tên tài sản ≤ 32 byte. */
@@ -98,6 +100,13 @@ export function buildTxCbor(spec: TxSpec): string {
     ));
   }
   if (spec.ttlSlot !== undefined) body.set_ttl(spec.ttlSlot);
+  if (spec.referenceInputs !== undefined) {
+    const rl = CML.TransactionInputList.new();
+    for (const i of spec.referenceInputs) {
+      rl.add(CML.TransactionInput.new(CML.TransactionHash.from_hex(i.txHash), BigInt(i.outputIndex)));
+    }
+    body.set_reference_inputs(rl);
+  }
   const ws = CML.TransactionWitnessSet.new();
   if (spec.spendRedeemers !== undefined) {
     const list = CML.LegacyRedeemerList.new();

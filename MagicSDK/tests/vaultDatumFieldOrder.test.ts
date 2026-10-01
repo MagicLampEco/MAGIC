@@ -35,11 +35,11 @@ import { VaultDatumSchema, InstantVaultDatumSchema } from "../src/schemas.js";
 // ồn ào**, buộc người sửa phải sửa hai chỗ và nhìn thấy dòng dặn ngay đây.
 //
 // Nguồn chân lý của thứ tự: `InstantGen/onchain/lib/magiclamp/protocol/types.ak`
-// ▸ `pub type VaultDatum` (18 trường) và `ScheduleGen/.../types.ak` ▸ `VaultDatum`
-// (17 trường chung đầu). Đối chiếu bằng mắt lần cuối 2026-09-22.
+// ▸ `pub type VaultDatum` (20 trường, Gen v2.0) và `ScheduleGen/.../types.ak` ▸
+// `VaultDatum` (19 trường, Gen v2.0). Đối chiếu bằng mắt lần cuối 2026-09-30.
 
-/** 17 trường chung, ĐÚNG thứ tự Aiken. Chỉ số trong danh sách = chỉ số Plutus Data. */
-const COMMON_FIELDS_IN_ORDER = [
+/** 19 trường ScheduleGen v2.0, ĐÚNG thứ tự Aiken. Chỉ số trong danh sách = chỉ số Plutus Data. */
+const SCHEDULE_FIELDS_IN_ORDER = [
   "owner",                 //  0
   "lamp_balance",          //  1
   "lamp_locked",           //  2
@@ -57,6 +57,33 @@ const COMMON_FIELDS_IN_ORDER = [
   "streak_state",          // 14
   "personal_delegate",     // 15  🪦 quyền chết, trường ở lại (Paymaster đọc VỊ TRÍ này)
   "attribution",           // 16
+  "usage_window",          // 17  Gen v2.0 — ĐÚNG 7 ô
+  "usage_window_epoch",    // 18  Gen v2.0
+] as const;
+
+/** 20 trường InstantGen v2.0. Tái dụng ô 6/12/14 (CÙNG vị trí, khác tên), mốc khoá ở 17,
+ *  cửa sổ nối ở 18–19 — nên cửa sổ lệch MỘT ô so với két Schedule. */
+const INSTANT_FIELDS_IN_ORDER = [
+  "owner",                 //  0
+  "lamp_balance",          //  1
+  "lamp_locked",           //  2
+  "loyalty_holdings",      //  3
+  "magic_batches",         //  4
+  "next_batch_index",      //  5
+  "wakeme_link",           //  6  (Schedule: vacuum_orders)
+  "gen_schedules",         //  7
+  "profile",               //  8
+  "profile_changed_epoch", //  9
+  "pending_profile",       // 10
+  "last_updated_epoch",    // 11
+  "cap_epoch",             // 12  (Schedule: delegation_cert)
+  "activity_state",        // 13
+  "cap_nanogic",           // 14  (Schedule: streak_state)
+  "personal_delegate",     // 15  Paymaster đọc VỊ TRÍ này ở cả hai loại két
+  "attribution",           // 16
+  "instant_unlock_ms",     // 17
+  "usage_window",          // 18
+  "usage_window_epoch",    // 19
 ] as const;
 
 /** Thứ tự trường mà lược đồ THẬT SỰ mã hoá.
@@ -65,7 +92,7 @@ const COMMON_FIELDS_IN_ORDER = [
  *  `@lucid-evolution`, tức chính thứ đi vào Plutus Data. Cố ý KHÔNG đọc
  *  `Object.keys` của đối tượng TypeScript: bản trước của hàm này làm thế, và nó
  *  trả về `["anyOf"]` — một mảng dài 1, hợp lệ, không ném. Cả ba ca dưới đây khi
- *  ấy đỏ vì lý do RỖNG (so một danh sách 1 phần tử với danh sách 17), chứ không vì
+ *  ấy đỏ vì lý do RỖNG (so một danh sách 1 phần tử với danh sách nhiều trường), chứ không vì
  *  thứ tự sai. Một phép đo đọc nhầm chỗ thì màu của nó không mang thông tin. */
 function fieldOrderOf(schema: unknown): string[] {
   const s = schema as { anyOf?: { fields?: { title?: string }[] }[] };
@@ -86,28 +113,31 @@ function fieldOrderOf(schema: unknown): string[] {
 }
 
 describe("VaultDatum ▸ thứ tự trường là HỢP ĐỒNG NHỊ PHÂN", () => {
-  it("VaultDatumSchema: đúng 17 trường, đúng thứ tự", () => {
-    expect(fieldOrderOf(VaultDatumSchema)).toEqual([...COMMON_FIELDS_IN_ORDER]);
+  it("VaultDatumSchema (ScheduleGen v2.0): đúng 19 trường, đúng thứ tự", () => {
+    expect(fieldOrderOf(VaultDatumSchema)).toEqual([...SCHEDULE_FIELDS_IN_ORDER]);
   });
 
-  it("InstantVaultDatumSchema: 17 trường ĐÓ, cùng thứ tự, cộng mốc khoá ở chỉ số 17", () => {
-    expect(fieldOrderOf(InstantVaultDatumSchema)).toEqual([
-      ...COMMON_FIELDS_IN_ORDER,
-      "instant_unlock_ms",
-    ]);
+  it("InstantVaultDatumSchema (InstantGen v2.0): đúng 20 trường, đúng thứ tự", () => {
+    expect(fieldOrderOf(InstantVaultDatumSchema)).toEqual([...INSTANT_FIELDS_IN_ORDER]);
   });
 
-  it("CỰC ĐỐI — hai lược đồ chỉ khác nhau ĐÚNG một trường, và nó ở CUỐI", () => {
-    // Không có ca này thì hai ca trên còn xanh được khi ai đó chèn `instant_unlock_ms`
-    // vào GIỮA rồi sửa cả hai danh sách cho khớp — lúc đó chỉ số 17..16 dịch hết, mọi
-    // UTxO Instant đang sống đọc sai, và hai ca trên vẫn xanh vì chúng chỉ so với
-    // chính bản đã sửa. Vế "ở cuối" thì không sửa được bằng cách sửa danh sách.
-    const chung = fieldOrderOf(VaultDatumSchema);
-    const instant = fieldOrderOf(InstantVaultDatumSchema);
+  it("CỰC ĐỐI — hai lược đồ lệch nhau ĐÚNG ở ô 6/12/14 và phần đuôi, không ở đâu khác", () => {
+    // Đời v1 ca này ghim "Instant = Schedule + một trường ở CUỐI". Gen v2.0 cố ý phá
+    // hình dạng đó (tái dụng ô giữa, mốc khoá chen trước cửa sổ), nên ý định giữ lại là:
+    // hai ca trên còn xanh được khi ai đó sửa cả lược đồ lẫn danh sách cho khớp nhau;
+    // ca này so HAI LƯỢC ĐỒ với nhau, nên một trường bị dời ở một bên — kể cả
+    // `personal_delegate` mà Paymaster đọc theo vị trí — đỏ mà không sửa danh sách nào cứu.
+    const sched = fieldOrderOf(VaultDatumSchema);
+    const inst  = fieldOrderOf(InstantVaultDatumSchema);
 
-    expect(instant.slice(0, chung.length)).toEqual(chung);
-    expect(instant.length).toBe(chung.length + 1);
-    expect(instant[instant.length - 1]).toBe("instant_unlock_ms");
+    expect(inst.length).toBe(sched.length + 1);
+    const khac = sched.map((f, i) => (f === inst[i] ? -1 : i)).filter(i => i >= 0);
+    expect(khac).toEqual([6, 12, 14, 17, 18]);
+    expect(sched.indexOf("personal_delegate")).toBe(15);
+    expect(inst.indexOf("personal_delegate")).toBe(15);
+    // Đuôi: cửa sổ đứng CUỐI ở cả hai; mốc khoá chỉ Instant có, ngay trước cửa sổ.
+    expect(sched.slice(-2)).toEqual(["usage_window", "usage_window_epoch"]);
+    expect(inst.slice(-3)).toEqual(["instant_unlock_ms", "usage_window", "usage_window_epoch"]);
   });
 
   it("ĐỘT BIẾN tự chạy: hoán vị hai trường ⟹ danh sách KHÁC ⟹ phép so ở trên đỏ", () => {
@@ -115,7 +145,7 @@ describe("VaultDatum ▸ thứ tự trường là HỢP ĐỒNG NHỊ PHÂN", ()
     // phân biệt được. `toEqual` trên mảng so theo THỨ TỰ, không so theo tập hợp; nếu
     // ai đó đổi nó thành một phép so tập hợp thì ba ca trên im lặng mất răng, và ca
     // này là chỗ điều đó lộ ra.
-    const goc = [...COMMON_FIELDS_IN_ORDER];
+    const goc = [...SCHEDULE_FIELDS_IN_ORDER];
     const hoanVi = [...goc];
     [hoanVi[2], hoanVi[3]] = [hoanVi[3], hoanVi[2]];
 

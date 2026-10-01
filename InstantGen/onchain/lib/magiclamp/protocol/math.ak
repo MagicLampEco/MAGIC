@@ -7,7 +7,7 @@
 
 use magiclamp/protocol/constants.{
   br_safe_q, f_cap_surplus_q, instant_rate_q, instant_reward_rate_q,
-  pm_q_ember, q, s_seg1_intercept_q, s_seg1_slope_q, s_seg2_intercept_q,
+  lent_pp_cap, pm_q_ember, q, s_seg1_intercept_q, s_seg1_slope_q, s_seg2_intercept_q,
   s_seg2_knee, s_seg2_slope_q, s_seg3_intercept_q, s_seg3_knee,
   s_seg3_slope_q, schedule_min_length, snapshot_base_rate_q, um_max_q,
 }
@@ -266,6 +266,113 @@ pub fn compute_instant_grant(
     compute_cap_surplus(br_q, magic_supply),
     compute_cap_pp(l_avail_oildrop),
   )
+}
+
+// ── L_lent — LAMP-mượn từ két Wakeme (CC-GEN-LENT-READ) ─────
+//
+//   cap_lent  = min( cap_pp(L_lent), lent_pp_cap )
+//   cap_total = cap_pp(L_avail) + cap_lent
+//   grant     = min( reward, cap_surplus, cap_total )
+//
+// Bản "nhanh" trên công thức hiện hành: LAMP-mượn chỉ nới vế TRẦN theo LAMP, không
+// chạm vế thưởng hay vế thặng dư — nên nó không nâng được lượt sinh quá `reward`
+// (phanh theo MAGIC đã tiêu) và quá `cap_surplus` (phanh GreenBack). Phần mượn còn bị
+// kẹp riêng ở `lent_pp_cap`, để một két Wakeme lớn không mở cả trần của một két IG.
+// P8: gương ở `offchain/src/math.ts` ▸ `computeCapLent`, `computeInstantGrantCapped`,
+// `computeInstantGrantWithLent`.
+
+/// Phần trần sinh ra từ L_lent (oildrop) — nanogic/epoch.
+pub fn compute_cap_lent(l_lent_oildrop: Int) -> Int {
+  min2(compute_cap_pp(l_lent_oildrop), lent_pp_cap)
+}
+
+/// Cổng §6.3 với trần theo LAMP đã tính sẵn (`cap_lamp` = cap_total). Validator dùng
+/// hàm này để lượt sinh (`grant`) và trần epoch (`C-INST-8`) đọc CÙNG một `cap_total`.
+pub fn compute_instant_grant_capped(
+  consumed     : Int,
+  um_q         : Int,
+  pm_q         : Int,
+  br_q         : Int,
+  magic_supply : Int,
+  cap_lamp     : Int,
+) -> Int {
+  min3(
+    compute_reward_from_consumed(consumed, um_q, pm_q),
+    compute_cap_surplus(br_q, magic_supply),
+    cap_lamp,
+  )
+}
+
+/// Cổng §6.3 đủ hai nguồn LAMP. `l_lent_oildrop = 0` cho đúng `compute_instant_grant`.
+pub fn compute_instant_grant_with_lent(
+  consumed        : Int,
+  um_q            : Int,
+  pm_q            : Int,
+  br_q            : Int,
+  magic_supply    : Int,
+  l_avail_oildrop : Int,
+  l_lent_oildrop  : Int,
+) -> Int {
+  compute_instant_grant_capped(
+    consumed, um_q, pm_q, br_q, magic_supply,
+    compute_cap_pp(l_avail_oildrop) + compute_cap_lent(l_lent_oildrop),
+  )
+}
+
+// ── Vector chuẩn TV-IG-LENT-* — CÙNG SỐ với `tests/vectors.ts` (P8) ─────────────
+// Chung đầu vào: consumed = 10×10^9, UM = 1.0, Flame 1.05 ⟹ reward = 2.1×10^9;
+// br = 2.0, S = 10^15 nanogic ⟹ cap_surplus = 333_333_333_333 (không ràng buộc);
+// L_avail = 100 LAMP ⟹ cap_pp = 400×10^6.
+
+// TV-IG-LENT-ZERO: L_lent = 0 ⟹ cap_lent = 0, grant = bản không-lent = 400×10^6.
+test ig_lent_zero_vector() {
+  and {
+    compute_cap_lent(0) == 0,
+    compute_instant_grant_with_lent(
+      10_000_000_000, 1_000_000_000, 1_050_000_000,
+      2_000_000_000, 1_000_000_000_000_000, 100_000_000, 0,
+    ) == 400_000_000,
+    compute_instant_grant_with_lent(
+      10_000_000_000, 1_000_000_000, 1_050_000_000,
+      2_000_000_000, 1_000_000_000_000_000, 100_000_000, 0,
+    ) == compute_instant_grant(
+      10_000_000_000, 1_000_000_000, 1_050_000_000,
+      2_000_000_000, 1_000_000_000_000_000, 100_000_000,
+    ),
+  }
+}
+
+// TV-IG-LENT-BELOW: L_lent = 12 LAMP ⟹ cap_lent = cap_pp = 48×10^6 (dưới trần),
+// grant = 400×10^6 + 48×10^6 = 448×10^6.
+test ig_lent_below_cap_vector() {
+  and {
+    compute_cap_lent(12_000_000) == 48_000_000,
+    compute_instant_grant_with_lent(
+      10_000_000_000, 1_000_000_000, 1_050_000_000,
+      2_000_000_000, 1_000_000_000_000_000, 100_000_000, 12_000_000,
+    ) == 448_000_000,
+  }
+}
+
+// TV-IG-LENT-ABOVE: L_lent = 1001 LAMP ⟹ cap_pp = 4.004×10^9 bị kẹp ở lent_pp_cap =
+// 10^9, grant = 400×10^6 + 10^9 = 1.4×10^9 (< reward 2.1×10^9).
+test ig_lent_above_cap_vector() {
+  and {
+    compute_cap_pp(1_001_000_000) == 4_004_000_000,
+    compute_cap_lent(1_001_000_000) == 1_000_000_000,
+    compute_instant_grant_with_lent(
+      10_000_000_000, 1_000_000_000, 1_050_000_000,
+      2_000_000_000, 1_000_000_000_000_000, 100_000_000, 1_001_000_000,
+    ) == 1_400_000_000,
+  }
+}
+
+// Biên: cap_pp chạm lent_pp_cap đúng ở 250 LAMP — dưới 1 oildrop thì chưa kẹp.
+test ig_lent_cap_knee_vector() {
+  and {
+    compute_cap_lent(250_000_000) == 1_000_000_000,
+    compute_cap_lent(249_999_999) == 999_999_996,
+  }
 }
 
 // ══════════════════════════════════════════════════════════════

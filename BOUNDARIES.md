@@ -232,13 +232,17 @@ nên nêu ở đây thay vì chỉ trỏ:
 
 - **`CC-GEN-L-TIMING` — LAMP dùng để sinh bị chặn RỜI KÉT trọn một epoch THỜI GIAN TRÔI.** Hình
   dạng chốt 2026-09-21 (`CC-GEN-LOCK-FIELD`), đã hiện thực: một trường thời gian
-  `VaultDatum ▸ instant_unlock_ms` (POSIX mili-giây, trường 17 — datum InstantGen **18 trường**,
-  ScheduleGen **17**). Nhánh sinh ghi `max(mốc cũ, cận-trên-validity + ms_per_epoch)`; cổng nằm ở
-  **đúng một** nhánh, `validate_withdraw_lamp` ▸ `expect get_validity_lower_ms(tx) >=
-  input_datum.instant_unlock_ms`; bốn nhánh **spend** còn lại **ghim trường đứng yên**; và nhánh
-  **mint** `MintVaultId` ghim nó **về 0** — chỗ duy nhất ép được giá trị KHỞI ĐẦU, vì Cardano
-  không chạy validator lúc tạo UTxO. Tập đầy đủ là **6 nhánh spend + nhánh mint**, đừng đếm sáu
-  rồi tưởng đã đóng — sót một chỗ ghim
+  `VaultDatum ▸ instant_unlock_ms` (POSIX mili-giây, trường 17, chỉ có ở InstantGen; Gen v2.0
+  nối thêm `usage_window` + `usage_window_epoch` nên datum InstantGen nay **20 trường**,
+  ScheduleGen **19** — kiểm 2026-09-30 trên `feat/gen-v2`). Nhánh sinh ghi `max(mốc cũ,
+  cận-trên-validity + ms_per_epoch)`; cổng nằm ở **đúng một** nhánh, `validate_withdraw_lamp` ▸
+  `expect get_validity_lower_ms(tx) >= input_datum.instant_unlock_ms`; năm nhánh **spend** còn
+  lại **ghim trường đứng yên** (bốn bằng mệnh đề tường minh, `validate_refresh_checkpoint` bằng
+  phép so trọn datum `..input_datum`); và nhánh **mint** `MintVaultId` ghim nó **về 0** — chỗ duy
+  nhất ép được giá trị KHỞI ĐẦU, vì Cardano không chạy validator lúc tạo UTxO. Tập đầy đủ là **7
+  nhánh spend + nhánh mint**, đừng đếm sáu rồi tưởng đã đóng — và đừng đếm bằng cách tìm
+  `output_datum.instant_unlock_ms ==`: nhánh ghim bằng phép so trọn datum không nhắc tên trường,
+  nên phép tìm đó chỉ ra cận dưới. Sót một chỗ ghim
   là một đường rửa khoá, và đây đúng là ca mà `§5` cảnh báo: đổi ràng buộc thì grep TOÀN BỘ nơi gọi.
 
   > 🔴 Bản trước của gạch này mô tả hai trường `instant_locked` + `instant_lock_epoch` và một cổng
@@ -270,13 +274,14 @@ nên nêu ở đây thay vì chỉ trỏ:
   > Nhưng LAMP đi RA khỏi một két thì phải đi VÀO một két khác, và **không két nào nhận LAMP sau
   > genesis** — đó là đầu đường chưa ai đo.
   >
-  > Đo 2026-09-24, cả hai module: `lamp_balance` ghim ĐÚNG MỘT LẦN ở nhánh mint
-  > (`InstantGen/onchain/validators/vault.ak:272`, `ScheduleGen/onchain/validators/vault.ak:1123`
-  > — `expect vd.lamp_balance == lamp_qty`), năm nhánh spend còn lại của InstantGen ghim
-  > `output_datum.lamp_balance == applied_input.lamp_balance` (`:508 :619 :1071 :1219 :1281`),
-  > và đường DUY NHẤT đổi được nó là `WithdrawLamp`, một phép TRỪ (`:949` `let new_lamp_balance =
-  > input_datum.lamp_balance - amount`; bên ScheduleGen là `:1215`). Không `VaultRedeemer` nào có
-  > biến thể nạp: InstantGen 6 biến thể, ScheduleGen 7, không cái nào là `DepositLamp`. Gửi thêm
+  > Đo 2026-09-24, cả hai module (neo lại theo tên hàm 2026-09-30 trên `feat/gen-v2`, vì số dòng
+  > đã trôi): `lamp_balance` ghim ĐÚNG MỘT LẦN ở nhánh mint (`validate_mint_vault_id` ▸ `expect
+  > vd.lamp_balance == lamp_qty`, ở cả hai module), sáu nhánh spend còn lại của InstantGen giữ nó
+  > đứng yên (bốn bằng `expect output_datum.lamp_balance == …`; `validate_instant_gen` và
+  > `validate_refresh_checkpoint` bằng phép so trọn datum), và đường DUY NHẤT đổi được nó là
+  > `WithdrawLamp`, một phép TRỪ (`validate_withdraw_lamp` ▸ `input_datum.lamp_balance - amount`,
+  > ở cả hai module). Không `VaultRedeemer` nào có biến thể nạp: InstantGen 7 biến thể (thêm
+  > `RefreshCheckpoint`), ScheduleGen 7, không cái nào là `DepositLamp`. Gửi thêm
   > LAMP tới địa chỉ két chỉ tạo một UTxO RIÊNG — muốn gộp vào thì phải tiêu két, mà mọi nhánh
   > tiêu đều ghim hoặc trừ.
   >
@@ -321,18 +326,38 @@ Hành vi fail-closed (mặc định all-zero) thì **giữ nguyên** — chỗ s
 
 Hiệu lực: chỉ cho vault **deploy lại**; không hồi tố vault Preprod đang sống (SPEC v2.0 §6.1.6).
 
-**Hiện trạng mã — CHƯA theo mục trên** (kiểm 2026-09-17). Chỗ đang chạy, theo TÊN HÀM:
-- `InstantGen/onchain/lib/magiclamp/protocol/math.ak` ▸ `compute_reward_from_consumed` — vế thưởng,
-  nhận `consumed`, `um_q` (UM) và `pm_q` (enum hồ sơ), không nhận tham số LAMP. Lượng cấp thật là
-  `compute_instant_grant = min(vế thưởng, cap_surplus, compute_cap_pp(L_avail))`: LAMP chỉ vào ở vế
-  TRẦN, và `compute_cap_pp` còn chia đôi suất.
-- Ở vault InstantGen và ScheduleGen (`onchain/validators/vault.ak` của mỗi module),
-  `consumed_credit` chỉ tăng ở `validate_burn_batch`; `validate_prune_expired` không cộng gì vào
-  nó. Không tệp mã nào đếm tỷ lệ consumed/generated.
-- Genesis của InstantGen ghim `consumed_credit == wakeme_seed_credit`. Dưới mô hình mới hạt giống
-  không vào công thức sinh; vai còn lại của nó là CHƯA CHỐT `CC-GEN-SEED-CREDIT` (SPEC v2.0 §13).
-- MAGIC tiêu từ PrepaidGen không ghi vào `consumed_credit` nào (`grep consumed_credit` trong
-  `prepaid.ak` → 0 dòng) — khớp ràng buộc tạm `CC-GEN-PREPAID-IN-RATIO` (SPEC v2.0 §13).
+**Hiện trạng mã** (kiểm 2026-09-30 trên nhánh `feat/gen-v2`, đầu `ed59becb`; chưa đo trên
+`main`; vault đang sống trên Preprod chạy mã đã biên dịch của chúng, SPEC v2.4.2 §6.1.6). Theo
+TÊN HÀM:
+- **Nhánh sinh InstantGen** — `InstantGen/onchain/validators/vault.ak` ▸ `validate_instant_gen`
+  cấp đúng `m` do chủ két xin (redeemer `InstantGen { claimed_amount }`), qua hai cổng cộng dồn
+  trên bộ đếm suy ra `instant_gen_in_epoch`: `gen_so_far + m <= cp.cap_nanogic` và
+  `gen_so_far + m <= compute_cap_pp(avail) + compute_cap_lent(lent)`. Kèm cổng beacon GreenBack
+  (`greenback_open`), rút đúng `m` khỏi shard GB của két (`shard_draw`), trần mỗi-két-mỗi-epoch
+  `gb_vault_share`. Validator không import `compute_instant_grant`; `min3` cũ còn nằm trong
+  `math.ak` nhưng không nhánh nào của validator gọi. Không đọc UM, `br`, `max_backing_stale`.
+- **Checkpoint làm mới** — `InstantGen/onchain/lib/magiclamp/protocol/checkpoint.ak` ▸
+  `expected_checkpoint` / `expected_checkpoint_for_gen`: `cap_nanogic = amount_by_lamp(L_avail,
+  L_lent, cửa sổ, ρ, instant_scale_horizon)`, tính ở lượt spend đầu tiên của epoch (trừ
+  `WithdrawLamp`, nhánh này ghim nguyên) hoặc ở nhánh `RefreshCheckpoint` (làm mới cả khi cùng
+  epoch). ρ đọc từ beacon `RateParam` (`read_rho`, fail-closed ngoài `[0, rho_max_q]`); `L_lent`
+  đọc từ két Wakeme (`wakeme_read`).
+- **`usage_window`** — 7 ô: ô 0 là epoch mở, ô 1..6 là 6 epoch đã qua. Nhánh sinh cộng vế
+  `generated`, `validate_burn_batch` cộng vế `consumed`; hệ số chỉ đọc ô 1..6
+  (`gen_formula.ak` ▸ `closed_window_totals`). Genesis ghim cửa sổ rỗng.
+- **ScheduleGen** — nhánh ký uỷ luật ký cho validator riêng `commit` (purpose withdraw;
+  `ScheduleGen/onchain/validators/vault.ak` ▸ `validator commit` → `validate_commit`): đọc ρ và
+  beacon GB, chốt `m_per_epoch` bằng `amount_by_lamp` với `L_lent = 0`. `validate_fire` không đọc
+  reference input nào, cấp đúng `sched.m_per_epoch`, đóng dấu lượt bắn bù bằng epoch danh nghĩa
+  (`create_fire_batches`).
+- **`consumed_credit`** — vẫn có ở cả hai vault, chỉ tăng ở `validate_burn_batch`;
+  `validate_prune_expired` không cộng gì vào nó. Nhánh sinh InstantGen không đọc nó: tỷ lệ
+  consumed/generated nay lấy từ `usage_window`.
+- **Hạt giống** — genesis InstantGen (`validate_mint_vault_id`) vẫn ghim `consumed_credit ==
+  wakeme_seed_credit`, và ghim `usage_window` rỗng ⟹ hạt giống không vào công thức sinh. Vai còn
+  lại của nó là CHƯA CHỐT `CC-GEN-SEED-CREDIT` (SPEC v2.4.2 §13).
+- **PrepaidGen** — không ghi `consumed_credit` hay `usage_window` nào (`grep` hai tên trong
+  `PrepaidGen/onchain` → 0 dòng) — khớp ràng buộc tạm `CC-GEN-PREPAID-IN-RATIO` (SPEC v2.4.2 §13).
 
 Phép thử một dòng trước khi sửa công thức sinh: *"hệ số tiêu thụ có nâng được suất quá `ρ` không,
 và thặng dư GreenBack có đang NHÂN vào lượng sinh thay vì chặn trên không?"* Một trong hai là có ⟹

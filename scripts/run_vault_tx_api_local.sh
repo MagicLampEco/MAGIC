@@ -11,6 +11,12 @@
 # Mọi giá trị còn lại được SINH, không gõ tay: `gen_vault_tx_api_deployment.ts` đọc
 # `state.<NET>.sh` — chính sổ mà các bước deploy ghi ra. Cụm dựng lại thì chạy lại
 # lệnh này, không phải sửa một tệp cấu hình nào.
+#
+# Gen v2.0: bộ sinh ĐÒI các khoá GenBeacons + ref-script `gb_shard` (và `commit` khi
+# vault=Schedule) trong sổ — danh sách + nghĩa: `gen_vault_tx_api_deployment.ts` ▸
+# `GEN_V2_STATE_KEYS` / `SCHEDULE_ONLY_STATE_KEYS`. Sổ của một cụm v1 (chỉ có `UM_*` /
+# `BACKING_*`) không sinh được khối nào: bộ sinh ném và kể đủ khoá thiếu, dịch vụ KHÔNG
+# khởi động. Đó là chủ đích — `VaultTxAPI` Gen v2.0 không đọc được két v1.
 set -uo pipefail
 
 NET="${1:-Preprod}"
@@ -53,7 +59,8 @@ fi
 # khối triển khai rỗng và chết ở một câu lỗi nói về JSON. Chạy `npx` từ chính thư mục
 # chứa kịch bản, nơi `tsx` phân giải được.
 if ! DEPLOYMENT="$(cd "$HERE" && npx tsx ./gen_vault_tx_api_deployment.ts "$NET" --vault "$VAULT_KIND")"; then
-  echo "✗ Bộ sinh khối triển khai hỏng — đọc dòng ✗ ở trên. Dịch vụ KHÔNG khởi động."
+  echo "✗ Bộ sinh khối triển khai hỏng — đọc dòng ✗ ở trên (thiếu khoá Gen v2.0 thì danh"
+  echo "  sách khoá cần ghi vào state.$NET.sh nằm ngay đó). Dịch vụ KHÔNG khởi động."
   exit 1
 fi
 if [ -z "$DEPLOYMENT" ]; then

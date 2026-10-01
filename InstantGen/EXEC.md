@@ -57,7 +57,7 @@ cd ../../scripts && npm run check:params
 Cổng này so `parameters[].title` của blueprint với danh sách `scripts/deployParams.ts`
 cấp, khẳng định trùng cả tên lẫn thứ tự. Ảnh chụp hiện thời (blueprint mới là trọng tài):
 `lamp_policy_id`, `lamp_asset_name`, `um_nft_policy`, `um_script_hash`,
-`backing_nft_policy`, `backing_script_hash`, `ms_per_epoch`.
+`backing_nft_policy`, `backing_script_hash`, `ms_per_epoch`, `wakeme_vault_hash`.
 
 Dòng cũ ở đây ghi "4 parameters: `lamp_policy_id`, `treasury_addr`, `um_nft_policy`,
 `ms_per_epoch`" — sai cả số lẫn tập, `treasury_addr` không còn tồn tại. Apply theo danh

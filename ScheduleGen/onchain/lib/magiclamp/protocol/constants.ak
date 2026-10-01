@@ -109,3 +109,80 @@ pub const shard_count : Int = 16
 // = TOTAL_LAMP × SCHEDULE_PARTICIPATION_CAP_BPS / (10000 × shard_count)
 // = 36×10^15 × 2000 / 160000 = 4.5×10^14
 pub const shard_cap : Int = 450_000_000_000_000
+
+// ══ BẢN CHÉP CÓ NHÃN từ InstantGen/onchain/lib/magiclamp/protocol/constants.ak @ 1e9a72d9 ══
+// Toán Gen v2.0 (`gen_formula.ak`) cần các hằng dưới đây. Sửa một bên phải sửa bên kia
+// cùng commit (BOUNDARIES P8); bài so giá trị: ScheduleGen/tests/genFormulaMirror.test.ts.
+// Chưa validator ScheduleGen nào đọc các hằng này ⟹ hash vault/shard không đổi.
+// `instant_scale_horizon` chép chỉ vì `gen_formula.ak` và bài của nó dẫn tới; horizon của
+// ScheduleGen là `min(N, 6)` theo từng hợp đồng (SPEC §6.1.4), không phải một hằng.
+
+// TẠM (`LENT_PP_CAP`, Spec §12 "chốt sau") — trần phần sinh từ LAMP-mượn, nanogic/epoch.
+// Dùng ở `gen_formula.lamp_base_amount`.
+pub const lent_pp_cap : Int = 1_000_000_000   // nanogic = 1 MAGIC/epoch
+
+// ── Gen v2.0 — công thức sinh chung F(L, usage_ratio, GB) (SPEC §6.1.1–§6.1.3, §11) ──
+// Hàm dùng các hằng này: `gen_formula.ak`. Mọi hằng dưới đây là hằng BIÊN DỊCH:
+// đổi = đổi bytes ⟹ đổi hash ⟹ đổi địa chỉ vault ⟹ deploy lại (SPEC §6.1.5).
+// PHẢI trùng BIT với khối cùng tên trong `offchain/src/constants.ts` (P8).
+
+// TẠM — sàn hệ số tiêu thụ, 0.5Q (`CC-GEN-USAGE-FLOOR`, SPEC §13). Mức khởi động lạnh
+// KHÔNG có hằng riêng: nó suy từ sàn (`gen_formula.usage_factor_coldstart_q`).
+pub const usage_factor_floor_q : Int = 500_000_000
+
+// TẠM — độ phủ lịch sử của `scale_limit`, = Q (`CC-GEN-SCALE-COVERAGE`, SPEC §13).
+pub const scale_coverage_q : Int = 1_000_000_000
+
+// Hình dạng cửa sổ `usage_window`: đúng 7 ô — ô 0 là epoch ĐANG MỞ, ô 1..6 là 6 epoch
+// ĐÃ ĐÓNG (SPEC §6.1.2 "6 epoch đã qua" + "một cặp tích luỹ của epoch đang mở").
+pub const usage_window_len : Int = 7
+
+// `horizon` của `scale_limit` cho InstantGen (SPEC §6.1.4 bảng: InstantGen = 6).
+pub const instant_scale_horizon : Int = 6
+
+// TẠM — phần mỗi vault được rút trên một lần đặt lại shard GB, 0.05Q
+// (`CC-GEN-GB-VAULT-SHARE`, SPEC §6.1.3 · §13).
+pub const gb_vault_share_q : Int = 50_000_000
+
+// TẠM — trần mỗi shard GB mỗi lần đặt lại, nanogic (`CC-GEN-SURPLUS-SHARD`).
+// Dẫn xuất SPEC §6.1.3: ⌊ SHARD_CAP × generation_rate_q / Q ⌋ ở suất tạm 4·10⁹
+// = ⌊ 4.5×10¹⁴ × 4×10⁹ / 10⁹ ⌋ = 1.8×10¹⁵. Bài `gen_shard_cap_matches_derivation`
+// (gen_formula.ak) tính lại. Bản ở GenBeacons là APPLY-PARAM `gb_shard_cap_nanogic`
+// của `gb_shard` (`GenBeacons/onchain/validators/gb_shard.ak`) — hai chỗ giữ cùng giá
+// trị, đổi một thì đổi cả hai.
+pub const gb_shard_cap_nanogic : Int = 1_800_000_000_000_000
+
+// TẠM — số epoch shard GB ứng trước cho hợp đồng ScheduleGen lúc ký (SPEC §6.4, §11).
+// InstantGen không dùng; khai ở đây để bộ hằng Gen v2.0 đủ một chỗ cho lượt ScheduleGen.
+pub const buffer_ep : Int = 2
+
+// TẠM — trần cứng của ρ (Q-format) (`INV-RATE-GOVERNED`, `CC-GEN-RATE-VALUE`, SPEC §13).
+// Chép có nhãn từ apply-param `rho_max_q` của `GenBeacons/onchain/validators/rate_param.ak`
+// (TẠM 4_000_000_000, chép 2026-09-30 @ 04f8a43d). Ở gói (a) chỉ dùng làm cận trên cho
+// vector tràn số; nối vào validator là việc của gói sau.
+pub const rho_max_q : Int = 4_000_000_000
+
+// ── Gen v2.0 gói (c): beacon + cổng κ TẠM cho ScheduleGen ────────────────────────
+// Tên NFT — CHÉP CÓ NHÃN từ GenBeacons/onchain/lib/genbeacons/constants.ak
+// (`rate_nft_name`, `greenback_nft_name`, `shard_nft_prefix`; MAGIC@9c4a282b).
+pub const rate_nft_name : ByteArray = #"52484f"       // "RHO"
+pub const greenback_nft_name : ByteArray = #"474242"  // "GBB"
+pub const gb_shard_nft_prefix : ByteArray = #"474253" // "GBS" ‖ byte(shard_id)
+
+// Độ tươi beacon GreenBack (SPEC §6.1.3): phải ghi TRONG epoch hiện tại.
+pub const greenback_beacon_max_age_epochs : Int = 0
+
+// Trần horizon của `scale_limit` cho ScheduleGen: horizon = min(N, 6) (SPEC §6.1.4).
+pub const schedule_scale_horizon_cap : Int = 6
+
+// 🔴 CỔNG κ — TẠM, FAIL-CLOSED (SPEC §6.4; chủ dự án chốt 2026-09-30: trần BIÊN DỊCH
+// mỗi shard, vì CHƯA CÓ nguồn "Sức-tải-các-quỹ-cứu" trên chuỗi). Luật đúng của spec là
+// `Σ nghĩa-vụ-còn-lại ≤ κ × Sức-tải`; hằng này KHÔNG phải luật đó, chỉ là trần tạm trên
+// `shard_obligation_nanogic` của từng shard ScheduleGen.
+// TẠM, chủ dự án chốt 2026-09-30: κ tạm = TRẦN BIÊN DỊCH MỖI SHARD, tức đúng
+// `gb_shard_cap_nanogic` (1,8×10¹⁵ nanogic). Trỏ thẳng vào hằng đó chứ không gõ số,
+// để hai giá trị không trôi nhau. Cổng vẫn ràng buộc thật: nó chặn TỔNG nghĩa-vụ-còn-lại
+// (M × số epoch còn lại, cộng trên mọi hợp đồng của shard) — tức nhiều epoch — bằng
+// lượng một shard GB được đặt lại trong MỘT epoch. Chưa có nguồn quỹ cứu nào đứng sau κ.
+// Đổi giá trị = đổi bytes ⟹ đổi script hash ⟹ deploy lại.
+pub const schedule_obligation_cap_per_shard : Int = gb_shard_cap_nanogic

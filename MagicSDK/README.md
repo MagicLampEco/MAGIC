@@ -90,7 +90,7 @@ việc (còn nguyên, neo bằng tag `preserve/prepaidgen-stash-2026-07-30`). Ch
 
 | `vaultType` | Khi nào dùng | LAMP có rời vault? | UM | Cần thêm gì trong `protocol` |
 |---|---|---|---|---|
-| `Instant` | Cấp theo lượng MAGIC **đã tiêu** (`consumed_credit`) | **Không** (I-ACT-7) | Có, kèm kiểm tra cũ (C-UM-6) | `umNftPolicyId`, `umScriptHash`, `backingNftPolicyId`, `backingScriptHash` |
+| `Instant` | Cấp theo lượng MAGIC **đã tiêu** (`consumed_credit`) | **Không** (I-ACT-7) | Có, kèm kiểm tra cũ (C-UM-6) | `umNftPolicyId`, `umScriptHash`, `backingNftPolicyId`, `backingScriptHash`, `wakemeVaultHash` |
 | `Schedule` | Hợp đồng kỳ hạn, khoá suất lúc commit | **Không** — fire chỉ mở khoá | Không (suất đã khoá) | `shardPolicyId` |
 
 `SnapshotGen` và `VacuumGen` **đã dời sang `Legacy/`**: validator của chúng
@@ -147,6 +147,7 @@ người gọi.
 | `umScriptHash` | `string` (hex) | Instant | ghim reference input UM về đúng địa chỉ script UM |
 | `backingNftPolicyId` | `string` (56 hex) | Instant | BackingBeacon (§6.3) — xem cảnh báo fail-closed dưới |
 | `backingScriptHash` | `string` (hex) | Instant | ghim reference input beacon |
+| `wakemeVaultHash` | `string` (56 hex thường) | Instant | apply-param #8 — script hash két Wakeme mà nhánh sinh đọc để tính L_lent. Không suy theo mạng; lấy từ `@magiclamp/protocol-utils` ▸ `wakemeVaultHash(network)` (mạng chưa có két ⟹ hàm đó ném). Thiếu hoặc sai dạng ⟹ SDK ném |
 | `shardPolicyId` | `string` (56 hex) | Schedule | NFT shard |
 | `msPerEpoch` | `bigint` | | ép giá trị (nâng cao); mặc định suy từ `network` |
 

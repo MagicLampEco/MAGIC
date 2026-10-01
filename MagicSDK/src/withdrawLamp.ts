@@ -35,6 +35,7 @@ import {
 } from "./schemas.js";
 import type { VaultType } from "./types.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
+import { shiftWindow as shiftWindowSchedule } from "@magiclamp/schedulegen-sdk";
 
 /** Aiken redeemer variant title. Matches `pub type VaultRedeemer { WithdrawLamp ... }`. */
 const WITHDRAW_LAMP_TAG = "WithdrawLamp";
@@ -122,10 +123,11 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     throw new Error(`WITHDRAW-001: amountOildrop must be > 0 (got ${amountOildrop})`);
   }
 
-  // Két Instant mang 18 trường, két Schedule 17 (`schemas.ts` đầu tệp). Hàm này
+  // Gen v2.0: két Instant 20 trường, két Schedule 19 (`schemas.ts` đầu tệp). Hàm này
   // phục vụ CẢ HAI — `validate_withdraw_lamp` có ở cả hai validator — nên nó không
   // được ghim một hình dạng. `datumSchema` giữ đúng hình dạng đã đọc để lượt mã hoá
   // ở dưới trả về đúng số trường; lệch là validator từ chối sau khi người dùng đã ký.
+  // Datum đời v1 (18/17 trường) ⟹ `decodeVaultDatumEitherShape` NÉM `VAULT_DATUM_V1`.
   const decoded = decodeVaultDatumEitherShape(vaultUtxo.datum!);
   const vaultDatum = decoded.datum as VaultDatum;
   const datumSchema = decoded.kind === "Instant" ? InstantVaultDatumSchema : VaultDatumSchema;
@@ -171,6 +173,20 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
     // tức LAMP đang khoá thì lượt rút bị chuỗi từ chối. Cổng đó KHÔNG được dựng lại ở
     // đây: SDK không nhìn thấy slot thật mà giao dịch sẽ vào, nên một phép kiểm phía
     // này sẽ là một câu trả lời khác câu chuỗi trả lời.
+    //
+    // Gen v2.0 — hai module xử checkpoint NGƯỢC nhau ở nhánh này:
+    //  · Instant: năm ô checkpoint GHIM NGUYÊN (`checkpoint_written(output,
+    //    current_checkpoint(input))`), không đọc ref input ⟹ phép trải là đủ.
+    //  · Schedule: `usage_window` DỊCH tới epoch hiện tại, `usage_window_epoch := e`
+    //    (`ScheduleGen/.../vault.ak` ▸ `validate_withdraw_lamp`) — vế dưới.
+    ...(decoded.kind === "Schedule"
+      ? {
+          usage_window: shiftWindowSchedule(
+            decoded.datum.usage_window, decoded.datum.usage_window_epoch, currentEpoch,
+          ),
+          usage_window_epoch: currentEpoch,
+        }
+      : {}),
   };
 
   // ── Addresses + units ───────────────────────────────────────────

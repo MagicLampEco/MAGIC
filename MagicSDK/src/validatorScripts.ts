@@ -1,90 +1,92 @@
-// MagicSDK/src/validatorScripts.ts — apply ms_per_epoch + other params per vault type
+// MagicSDK/src/validatorScripts.ts — apply-param của két theo loại (Gen v2.0)
 //
-// Each of the 2 live vault validators takes a DIFFERENT set of compile-time
-// parameters. SOURCE OF TRUTH = the `validator vault(...)` header in each module;
-// this table must be read off those files, never from memory:
-//   Instant:  vault(lamp_policy_id, lamp_asset_name, um_nft_policy, um_script_hash,
-//                   backing_nft_policy, backing_script_hash, ms_per_epoch)
-//              ← InstantGen/onchain/validators/vault.ak
-//   Schedule: vault(lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch)
-//              ← ScheduleGen/onchain/validators/vault.ak
+// SDK KHÔNG giữ bảng tham số riêng nữa. Nguồn duy nhất của thứ tự apply-param là hai gói
+// nền, mỗi gói đối chiếu với chữ ký `validator ...(` của module mình:
 //
-// Snapshot và Vacuum không có mặt ở đây vì validator của chúng đã dời sang
-// `Legacy/`. Đừng thêm case cho chúng nếu không kèm validator sống.
+//   Instant:  `@magiclamp/instantgen-sdk` ▸ `vaultScript.ts` ▸ `instantVaultParamList`
+//             9 tham số: lamp_policy_id, lamp_asset_name, gb_beacon_nft_policy,
+//             gb_beacon_script_hash, gb_shard_policy_id, rate_nft_policy,
+//             rate_script_hash, wakeme_vault_hash, ms_per_epoch.
+//   Schedule: `@magiclamp/schedulegen-sdk` ▸ `params.ts` ▸ `applyScheduleScripts`
+//             `commit` (withdraw-zero, 9 tham số) apply TRƯỚC → hash → két (6 tham số,
+//             tham số cuối = hash `commit`). Đối chiếu TÊN tham số với blueprint.
 //
-// `lamp_asset_name` is param #2 on EVERY vault (INV-VAULT-IDENTITY commit): the
-// validator compares the vault's LAMP holding by (policy, asset_name), and the
-// asset name differs per network ("tLAMP" on testnets, "LAMP" on mainnet). It is
-// derived from `protocol.network`, never defaulted to a testnet literal.
+// Bản trước dựng danh sách ở đây và nó trôi ngay khi Gen v2.0 bỏ UM/backing: bài
+// `vaultParams.test.ts` đỏ vì blueprint có năm tham số mà danh sách SDK không biết.
 //
-// PHA 2 removed `treasury_addr` from Instant and Schedule: under I-ACT-7 no
-// handler in those validators moves LAMP, so the parameter had no reader left.
-// The only validator that ever took it (Vacuum) is now legacy — hence no
-// `treasuryAddress` on ProtocolParams and no address→PlutusData encoder here.
+// `lamp_asset_name` suy theo `protocol.network` (tLAMP testnet / LAMP mainnet), không bao
+// giờ mặc định một hằng testnet. `lamp_policy_id` đi qua `assertLampPolicyId` — cổng đặt
+// ở ĐÂY vì mọi đường apply (createVault · listVaults · applyShardValidator) đều qua đây.
 //
-// `um_script_hash` pins the UM reference input to the canonical UM script
-// address (MAINNET-BLOCK fix, defense-in-depth layer b); `backing_script_hash`
-// does the same for the BackingBeacon (§6.3).
-//
-// `applyParamsToScript` bakes them into the CBOR → produces a network-specific
-// validator hash. The hash defines the on-chain address, so every consumer
-// (vault creation, instant gen, schedule commit/fire) MUST use the same applied
-// script.
+// `applyParamsToScript` nướng tham số vào CBOR ⟹ hash ⟹ địa chỉ; mọi bên (tạo két, sinh,
+// tiêu, rút) PHẢI dùng cùng script đã apply.
 
 import {
   applyParamsToScript, validatorToScriptHash,
   credentialToAddress, scriptHashToCredential,
-  Data,
+  type Data,
   type Validator,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, lampAssetName } from "@magiclamp/protocol-utils";
+import { msPerEpoch, lampAssetName, assertWakemeVaultHash } from "@magiclamp/protocol-utils";
+import {
+  applyInstantVaultParams, instantVaultParamList, type InstantVaultParams,
+} from "@magiclamp/instantgen-sdk";
+import {
+  applyScheduleScripts, scheduleCommitParamList, scheduleVaultParamList,
+  SCHEDULE_VAULT_BLUEPRINT_TITLE,
+  type ScheduleBlueprint, type ScheduleScriptParams,
+} from "@magiclamp/schedulegen-sdk";
 import { assertLampPolicyId } from "./lampPolicy.js";
 import type { ProtocolParams, ValidatorBundle, VaultType } from "./types.js";
 
+/** Kết quả apply. Két Schedule có thêm `commit` (withdraw-zero) đã apply — bộ dựng
+ *  `buildScheduleCommitTx` BẮT BUỘC nó, và két đã nướng hash của nó vào tham số #5. */
+export interface AppliedVault {
+  vaultScript:       Validator;
+  vaultScriptHash:   string;
+  vaultAddress:      string;
+  commitScript?:     Validator;
+  commitScriptHash?: string;
+}
+
 /**
  * Build the applied vault Validator for a given vault type + protocol params.
- * Returns the Validator (CBOR + type tag) and its derived address+hash.
+ *
+ * Schedule: đòi `validators.vaultPlutusJson` (blueprint trọn) vì `applyScheduleScripts`
+ * cần cả `vault.commit.withdraw` lẫn `vault.vault.spend` và đối chiếu tên tham số với
+ * blueprint. `vaultUnappliedCbor` phải TRÙNG `compiledCode` của `vault.vault.spend` —
+ * hai nguồn cho cùng một thứ mà lệch nhau thì NÉM, không chọn bên.
  */
 export function applyVaultValidator(
   vaultType : VaultType,
   validators: ValidatorBundle,
   protocol  : ProtocolParams,
-): { vaultScript: Validator; vaultScriptHash: string; vaultAddress: string } {
+): AppliedVault {
   const msPer = protocol.msPerEpoch ?? msPerEpoch(protocol.network);
-  const params = buildParamsList(vaultType, protocol, msPer);
+  const addr = (h: string) => credentialToAddress(protocol.network, scriptHashToCredential(h));
 
-  const appliedCbor = applyParamsToScript(validators.vaultUnappliedCbor, params);
-  const vaultScript: Validator = { type: "PlutusV3", script: appliedCbor };
-  const vaultScriptHash = validatorToScriptHash(vaultScript);
-  const vaultAddress = credentialToAddress(
-    protocol.network,
-    scriptHashToCredential(vaultScriptHash),
-  );
+  if (vaultType === "Instant") {
+    const vaultScript = applyInstantVaultParams(validators.vaultUnappliedCbor, instantVaultParamsFromProtocol(protocol));
+    const vaultScriptHash = validatorToScriptHash(vaultScript);
+    return { vaultScript, vaultScriptHash, vaultAddress: addr(vaultScriptHash) };
+  }
 
-  return { vaultScript, vaultScriptHash, vaultAddress };
+  const bp = scheduleBlueprintOf(validators);
+  const s = applyScheduleScripts(bp, scheduleScriptParamsFromProtocol(protocol, msPer));
+  return {
+    vaultScript: s.vaultScript, vaultScriptHash: s.vaultScriptHash, vaultAddress: addr(s.vaultScriptHash),
+    commitScript: s.commitScript, commitScriptHash: s.commitScriptHash,
+  };
 }
 
 /**
- * Build the applied shard Validator (only meaningful for ScheduleGen).
+ * Build the applied shard Validator (ScheduleGen).
  *
- * `validator shard(shard_policy_id_param: PolicyId, vault_script_hash: ByteArray)`
- * — HAI tham số từ 2026-09-07. Xem `ScheduleGen/onchain/validators/vault.ak`, khai
- * báo `validator shard`. Trước đây hàm này apply `[]`: `applyParamsToScript` không
- * kiểm arity nên vẫn ra một hash trông hợp lệ, chỉ khác hash thật mà
- * `scripts/deploy/03_deploy_shards.ts` đã dùng để đặt 16 shard UTxO ⇒ mọi
- * ScheduleFire dựng qua SDK đính sai địa chỉ shard và không tìm thấy shard input.
- *
- * `vault_script_hash` được SUY RA tại đây, không nhận qua `ProtocolParams`. Đây là
- * lựa chọn có chủ ý: nó là hash của validator vault Schedule, mà SDK đã có đủ
- * blueprint và tham số để tự tính. Thêm một trường cấu hình cho nó là dựng nguồn
- * thứ hai cho một giá trị suy ra được — và nguồn thứ hai đó lệch được với vault
- * thật mà không gì kêu lên, đúng lớp hỏng im lặng mà chính hàm này từng dính.
- * Khác với `umScriptHash`/`backingScriptHash`: những cái đó là hash của validator
- * thuộc MODULE KHÁC, SDK không tính được nên buộc phải nhận qua cấu hình.
- *
- * Hệ quả: `validators.vaultUnappliedCbor` phải là vault **Schedule**, và `protocol`
- * phải đủ tham số vault. Truyền vault Instant vào đây sẽ ra một `vault_script_hash`
- * sai và shard không bao giờ khớp — không có cách nào phát hiện điều đó ở đây.
+ * `validator shard(shard_policy_id_param: PolicyId, vault_script_hash: ByteArray)` — HAI
+ * tham số. `vault_script_hash` được SUY RA từ `applyVaultValidator("Schedule", …)`, không
+ * nhận qua `ProtocolParams`: thêm một trường cấu hình cho giá trị suy ra được là dựng nguồn
+ * thứ hai lệch được với két thật mà không gì kêu. `applyParamsToScript` không kiểm arity —
+ * bản apply `[]` trước đây ra một hash trông hợp lệ nhưng không khớp 16 shard đã đặt.
  */
 export function applyShardValidator(
   validators: ValidatorBundle,
@@ -101,62 +103,130 @@ export function applyShardValidator(
   ]);
   const shardScript: Validator = { type: "PlutusV3", script: appliedCbor };
   const shardScriptHash = validatorToScriptHash(shardScript);
-  const shardAddress = credentialToAddress(
-    protocol.network,
-    scriptHashToCredential(shardScriptHash),
-  );
+  const shardAddress = credentialToAddress(protocol.network, scriptHashToCredential(shardScriptHash));
   return { shardScript, shardScriptHash, shardAddress };
 }
 
-// ── internals ────────────────────────────────────────────────
+// ── Ánh xạ ProtocolParams → tham số của gói nền ──────────────────────────────
 
+/** 9 apply-param của két Instant dựng từ `ProtocolParams`. Thiếu một ô ⟹ NÉM. Xuất ra vì
+ *  mọi bộ dựng InstantGen (`buildInstantGenTx`, `buildRefreshCheckpointTx`, …) đòi đúng
+ *  giá trị đã apply vào két. */
+export function instantVaultParamsFromProtocol(protocol: ProtocolParams): InstantVaultParams {
+  // Cổng policy LAMP chạy TRƯỚC mọi kiểm trường riêng: policy nhái phải nhận đúng câu lỗi
+  // của nó, không phải "thiếu trường X" rồi đi sửa nhầm chỗ.
+  const lampPolicyId = lampPolicyOf(protocol);
+  rejectLegacyFields(protocol);
+  const vt = "Instant";
+  requireField(protocol.gbBeaconNftPolicy, "gbBeaconNftPolicy", vt);
+  requireField(protocol.gbBeaconScriptHash, "gbBeaconScriptHash", vt);
+  requireField(protocol.gbShardPolicyId, "gbShardPolicyId", vt);
+  requireField(protocol.rateNftPolicy, "rateNftPolicy", vt);
+  requireField(protocol.rateScriptHash, "rateScriptHash", vt);
+  requireField(protocol.wakemeVaultHash, "wakemeVaultHash", vt);
+  return {
+    lampPolicyId,
+    lampAssetName:      protocol.lampAssetName ?? lampAssetName(protocol.network),
+    gbBeaconNftPolicy:  protocol.gbBeaconNftPolicy!,
+    gbBeaconScriptHash: protocol.gbBeaconScriptHash!,
+    gbShardPolicyId:    protocol.gbShardPolicyId!,
+    rateNftPolicy:      protocol.rateNftPolicy!,
+    rateScriptHash:     protocol.rateScriptHash!,
+    wakemeVaultHash:    assertWakemeVaultHash(protocol.wakemeVaultHash, `vaultType="Instant".wakemeVaultHash`),
+    msPerEpoch:         protocol.msPerEpoch ?? msPerEpoch(protocol.network),
+  };
+}
+
+/** Tham số cặp script ScheduleGen (`commit` + két) dựng từ `ProtocolParams`. */
+export function scheduleScriptParamsFromProtocol(protocol: ProtocolParams, msPer?: bigint): ScheduleScriptParams {
+  const lampPolicyId = lampPolicyOf(protocol);
+  rejectLegacyFields(protocol);
+  const vt = "Schedule";
+  requireField(protocol.shardPolicyId, "shardPolicyId", vt);
+  requireField(protocol.gbBeaconNftPolicy, "gbBeaconNftPolicy", vt);
+  requireField(protocol.gbBeaconScriptHash, "gbBeaconScriptHash", vt);
+  requireField(protocol.gbShardPolicyId, "gbShardPolicyId", vt);
+  requireField(protocol.rateNftPolicy, "rateNftPolicy", vt);
+  requireField(protocol.rateScriptHash, "rateScriptHash", vt);
+  return {
+    lampPolicyId,
+    lampAssetName:      protocol.lampAssetName ?? lampAssetName(protocol.network),
+    shardPolicyId:      protocol.shardPolicyId!,
+    msPerEpoch:         msPer ?? protocol.msPerEpoch ?? msPerEpoch(protocol.network),
+    gbBeaconNftPolicy:  protocol.gbBeaconNftPolicy!,
+    gbBeaconScriptHash: protocol.gbBeaconScriptHash!,
+    gbShardPolicyId:    protocol.gbShardPolicyId!,
+    rateNftPolicy:      protocol.rateNftPolicy!,
+    rateScriptHash:     protocol.rateScriptHash!,
+  };
+}
+
+/**
+ * Danh sách apply-param THEO THỨ TỰ của két — do gói nền dựng, ở đây chỉ chọn nhánh.
+ *  - Instant: 9 tham số (`instantVaultParamList`).
+ *  - Schedule: 6 tham số (`scheduleVaultParamList`), tham số cuối là hash `commit` ĐÃ apply
+ *    ⟹ BẮT BUỘC `commitScriptHash` (lấy từ `applyVaultValidator(..).commitScriptHash`).
+ */
 export function buildParamsList(
   vaultType: VaultType,
   protocol : ProtocolParams,
   msPer    : bigint,
+  commitScriptHash?: string,
 ): Data[] {
-  // Param #1 on every vault, và là tham số ĐẮT NHẤT khi sai: nó nướng vào bytes
-  // lúc biên dịch ⟹ sai policy là sai script hash, sai địa chỉ vault, và không
-  // sửa được bằng cách đổi cấu hình sau. Nên cổng đứng ở ĐÂY chứ không ở chỗ gọi:
-  // `applyVaultValidator` · `createVault` · `listVaults` đều đi qua hàm này, còn
-  // một cổng đặt ở từng chỗ gọi thì chỗ gọi thứ tư sẽ không có.
-  const lampPolicyId = assertLampPolicyId(
-    protocol.lampPolicyId, "buildParamsList", protocol.lampRehearsalAck, protocol.network,
-  );
+  if (vaultType === "Instant") {
+    return instantVaultParamList({ ...instantVaultParamsFromProtocol(protocol), msPerEpoch: msPer });
+  }
+  const scheduleParams = scheduleScriptParamsFromProtocol(protocol, msPer);
+  if (commitScriptHash === undefined) {
+    throw new Error(`commitScriptHash required for vaultType="Schedule" (tham số #5 của két = hash \`commit\` đã apply).`);
+  }
+  return scheduleVaultParamList(scheduleParams, commitScriptHash);
+}
 
-  // Param #2 on every vault. Network-derived; an explicit override is honoured
-  // so a caller on a custom network can pass its own asset name.
-  const assetName = protocol.lampAssetName ?? lampAssetName(protocol.network);
+/** 9 apply-param của `commit` (ScheduleGen, withdraw-zero). */
+export function buildCommitParamsList(protocol: ProtocolParams, msPer: bigint): Data[] {
+  return scheduleCommitParamList(scheduleScriptParamsFromProtocol(protocol, msPer));
+}
 
-  switch (vaultType) {
-    case "Instant": {
-      // vault(lamp_policy_id, lamp_asset_name, um_nft_policy, um_script_hash,
-      //       backing_nft_policy, backing_script_hash, ms_per_epoch)
-      requireField(protocol.umNftPolicyId, "umNftPolicyId", vaultType);
-      requireField(protocol.umScriptHash, "umScriptHash", vaultType);
-      requireField(protocol.backingNftPolicyId, "backingNftPolicyId", vaultType);
-      requireField(protocol.backingScriptHash, "backingScriptHash", vaultType);
-      return [
-        lampPolicyId,
-        assetName,
-        protocol.umNftPolicyId!,
-        protocol.umScriptHash!,        // pins the UM ref input (layer b)
-        protocol.backingNftPolicyId!,  // pins the BackingBeacon ref input (§6.3)
-        protocol.backingScriptHash!,
-        msPer,
-      ];
-    }
+// ── internals ────────────────────────────────────────────────
 
-    case "Schedule": {
-      // vault(lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch)
-      requireField(protocol.shardPolicyId, "shardPolicyId", "Schedule");
-      return [
-        lampPolicyId,
-        assetName,
-        protocol.shardPolicyId!,
-        msPer,
-      ];
-    }
+function scheduleBlueprintOf(validators: ValidatorBundle): ScheduleBlueprint {
+  const bp = validators.vaultPlutusJson as unknown as ScheduleBlueprint | undefined;
+  if (bp === undefined) {
+    throw new Error(
+      `vaultPlutusJson required for vaultType="Schedule": két Gen v2.0 nướng hash của ` +
+      `validator \`commit\` (vault.commit.withdraw) vào tham số #5, nên SDK cần blueprint trọn ` +
+      `để apply \`commit\` trước.`,
+    );
+  }
+  const spend = bp.validators.find(v => v.title === SCHEDULE_VAULT_BLUEPRINT_TITLE);
+  if (spend !== undefined && spend.compiledCode !== validators.vaultUnappliedCbor) {
+    throw new Error(
+      `vaultUnappliedCbor KHÁC compiledCode của "${SCHEDULE_VAULT_BLUEPRINT_TITLE}" trong ` +
+      `vaultPlutusJson — hai nguồn cho cùng một validator lệch nhau (blueprint cũ?).`,
+    );
+  }
+  return bp;
+}
+
+function lampPolicyOf(protocol: ProtocolParams): string {
+  // Param #1 on every vault, và là tham số ĐẮT NHẤT khi sai: nướng vào bytes ⟹ sai
+  // policy là sai hash, sai địa chỉ, không sửa được bằng cấu hình sau.
+  return assertLampPolicyId(protocol.lampPolicyId, "buildParamsList", protocol.lampRehearsalAck, protocol.network);
+}
+
+const LEGACY_FIELDS = ["umNftPolicyId", "umScriptHash", "backingNftPolicyId", "backingScriptHash"] as const;
+
+/** Mã JS (không qua kiểm kiểu) vẫn truyền được bốn trường đời v1. Im lặng bỏ qua chúng là
+ *  để người gọi tưởng két của mình còn đọc UM/backing — NÉM để họ biết cấu hình đã đổi. */
+function rejectLegacyFields(protocol: ProtocolParams): void {
+  const got = LEGACY_FIELDS.filter(k => (protocol as unknown as Record<string, unknown>)[k] !== undefined);
+  if (got.length > 0) {
+    throw new Error(
+      `ProtocolParams mang trường đời Gen v1 đã bỏ: ${got.join(", ")}. Gen v2.0 không đọc ` +
+      `UM/BackingBeacon; thay bằng gbBeaconNftPolicy, gbBeaconScriptHash, gbShardPolicyId, ` +
+      `rateNftPolicy, rateScriptHash.`,
+    );
   }
 }
 

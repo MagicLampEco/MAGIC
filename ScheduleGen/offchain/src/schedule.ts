@@ -1,26 +1,22 @@
-// src/schedule.ts — ScheduleGen: Commit + Fire transaction builders
-// Forward contract: rate locked at commit; permissionless fire with catch-up.
+// src/schedule.ts — ScheduleGen: Commit + Fire transaction builders (Gen v2.0)
+// Forward contract: `M_i` chốt lúc ký từ ρ + GreenBack; fire permissionless, bắn bù, KHÔNG
+// đọc beacon (CC-GEN-SCHEDULE-FIXED, SPEC §6.1.4).
+//
+// Mọi phép tính datum nằm ở `genPlan.ts` (thuần, không mạng). Tệp này chỉ: tìm đúng UTxO,
+// kiểm neo hai lớp của beacon (NFT + địa chỉ script), gọi `planScheduleCommit` /
+// `planScheduleFire`, rồi dán kết quả vào giao dịch.
 
 import {
   Lucid, Blockfrost, Data, toUnit,
-  validatorToScriptHash, credentialToAddress, scriptHashToCredential,
+  validatorToScriptHash, credentialToAddress, scriptHashToCredential, paymentCredentialOf,
+  validatorToRewardAddress,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type TxBuilder,
 } from "@lucid-evolution/lucid";
-import { blake2b } from "@noble/hashes/blake2b";
 import { applyOwnerAuth, resolveOwnerAuth, ownerRefOf, type OwnerAuth } from "@magiclamp/protocol-utils";
 import {
-  TESTNET_CONFIG, SCHEDULE_DELAY, SCHEDULE_DECAY_WINDOW,
-  MAX_FIRES_PER_TX_CATCHUP, MAX_GEN_SCHEDULES, MAX_BATCHES_PER_VAULT,
-  SCHEDULE_MIN_LENGTH, SCHEDULE_MAX_LENGTH, MIN_LAMP_PER_FIRE, SHARD_CAP,
-  SNAPSHOT_BASE_RATE_Q,
+  TESTNET_CONFIG, SCHEDULE_DELAY, RATE_NFT_NAME, GREENBACK_NFT_NAME, VAULT_REGISTRY_NFT_NAME,
 } from "./constants.js";
-import {
-  computeSQ, computeRateLockedQ, computeMi, checkSchRate,
-  computeShardId, nextFireEpoch, countEligibleFires,
-  selectLampForLock, unlockLockedAmount, isExpired, lAvail,
-  assertHoldingCapAfterCommit,
-  lampToOildrop, nanogicToMagicStr, qToStr,
-} from "./math.js";
+import { computeShardId, nanogicToMagicStr, qToStr } from "./math.js";
 import {
   getTipSlot, posixMsToEpoch, msPerEpoch, epochValidityWindow, lampAssetName as lampAssetNameFor,
   type Network,
@@ -31,9 +27,13 @@ import {
 } from "@magiclamp/protocol-utils";
 import { slotToUnixTime } from "@lucid-evolution/lucid";
 import {
-  VaultDatum, VaultRedeemer, ShardRedeemer,
-  type GenSchedule, type MagicBatch, type LoyaltyHolding,
+  VaultDatum, VaultRedeemer, ShardRedeemer, ScheduleShardDatum,
+  RateParam, GreenBackBeacon, GbShard, GbShardRedeemer, CommitRedeemer,
+  decodeVaultDatum, decodeScheduleShardDatum,
 } from "./types.js";
+import {
+  planScheduleCommit, planScheduleFire, gbShardNftName, type VaultOutRef,
+} from "./genPlan.js";
 
 // ── Cổng CIP-33 ───────────────────────────────────────────────
 //
@@ -62,21 +62,6 @@ function assertRefScriptsFor(
   return refUtxos;
 }
 
-// ── Shard datum schema ────────────────────────────────────────
-import { Data as D } from "@lucid-evolution/lucid";
-const ShardDatumSchema = D.Object({
-  shard_id:                    D.Integer(),
-  shard_locked_lamp:            D.Integer(),
-  shard_active_count:           D.Integer(),
-  shard_cumulative_committed:   D.Integer(),
-  shard_cumulative_fired:       D.Integer(),
-  last_updated_epoch:           D.Integer(),
-  shard_cap:                    D.Integer(),
-});
-type ShardDatum = D.Static<typeof ShardDatumSchema>;
-// Codec companion — see types.ts for why the schema alone cannot be passed.
-const ShardDatum = ShardDatumSchema as unknown as ShardDatum;
-
 // ── Types ─────────────────────────────────────────────────────
 
 // Số ngày mỗi epoch KHÁC NHAU theo mạng: Preview 1 ngày, Preprod và mainnet 5 ngày
@@ -88,22 +73,57 @@ function fmtDays(epochs: bigint, network: Network): string {
   return days === 1 ? "1 day" : `${days} days`;
 }
 
+/** Apply-param Gen v2.0 của `commit` (#4..#8, cùng tên với `validator commit(`) mà bộ dựng cần
+ *  để nhận diện beacon + shard GB, cộng apply-param `gb_shard_cap_nanogic` của `gb_shard`.
+ *  Phải là ĐÚNG giá trị đã apply vào `commitScript` — lệch ⟹ `commit` bác. */
+export interface GenBeaconParams {
+  gbBeaconNftPolicy  : string;
+  gbBeaconScriptHash : string;
+  gbShardPolicyId    : string;
+  rateNftPolicy      : string;
+  rateScriptHash     : string;
+  /** apply-param `gb_shard_cap_nanogic` của `gb_shard`. Bỏ trống ⟹ hằng TẠM
+   *  `GB_SHARD_CAP_NANOGIC`. Lệch với giá trị đã apply ⟹ shard GB bác tx. */
+  gbShardCapNanogic? : bigint;
+}
+
 export interface CommitParams {
   lucid           : LucidEvolution;
   vaultUtxo       : UTxO;
-  shardUtxos      : UTxO[];    // all 16 shard UTxOs (builder finds the right one)
+  shardUtxos      : UTxO[];    // all 16 shard LAMP UTxOs (builder finds the right one)
   scheduleLength  : bigint;    // L ∈ [10,200]
   lampPerEpoch    : bigint;    // λ in oil
   userAddress     : string;
-  /** Compiled vault validator — 4 apply-params, THEO THỨ TỰ:
-   *    1. lamp_policy_id
-   *    2. lamp_asset_name   ← per-network (tLAMP testnet / LAMP mainnet), KHÔNG hardcode
-   *    3. shard_policy_id
-   *    4. ms_per_epoch
-   *  `treasury_addr` was REMOVED in PHA 2 — no handler moves LAMP any more (I-ACT-7). */
+  /** Compiled vault validator — 6 apply-params, THEO THỨ TỰ (`params.ts` ▸
+   *  `SCHEDULE_VAULT_PARAM_NAMES`); #5 là hash của `commitScript`. Dựng cặp bằng
+   *  `params.ts` ▸ `applyScheduleScripts`. */
   vaultScript     : Validator;
-  /** Compiled shard validator (0 params). */
+  /** Compiled `commit` (withdraw-zero) — 9 apply-params (`SCHEDULE_COMMIT_PARAM_NAMES`).
+   *  Két uỷ TOÀN BỘ luật ký cho nó: tx ký mang một mục rút 0 từ `Script(hash commit)` với
+   *  redeemer `CommitRedeemer { vault_ref }` (`vault.ak` ▸ `commit_delegated_to`). Script
+   *  này KHÁC bản mà két đã nướng hash vào ⟹ két bác lúc đánh giá (không có mục rút
+   *  mang đúng hash). Stake credential của nó phải ĐĂNG KÝ trước (`buildRegisterCommitStakeTx`). */
+  commitScript    : Validator;
+  /** UTxO mang scriptRef của `commit` (CIP-33). Có ⟹ `readFrom` (kiểm hash); không ⟹ đính
+   *  kèm `WithdrawalValidator` (+9.053 B vào tx). */
+  commitRefScriptUtxo?: UTxO;
+  /** TEST ONLY: bỏ mục rút của `commit` — để chứng minh két bác nhánh ký khi `commit` không chạy. */
+  omitCommitWithdrawal?: boolean;
+  /** Compiled shard (LAMP aggregate) validator. */
   shardScript     : Validator;
+  // ── Gen v2.0: beacon + shard GB (chỉ nhánh KÝ đọc) ──────────
+  gen             : GenBeaconParams;
+  /** Beacon ρ — NFT (rate_nft_policy, "RHO") tại Script(rate_script_hash). Reference input. */
+  rateBeaconUtxo  : UTxO;
+  /** Beacon GreenBack — NFT (gb_beacon_nft_policy, "GBB") tại Script(gb_beacon_script_hash),
+   *  phải GHI TRONG epoch hiện tại, không `depeg`. Reference input. */
+  gbBeaconUtxo    : UTxO;
+  /** Sổ két `VaultRegistry` (NFT "VRG") — shard GB đọc nó. Reference input. */
+  vaultRegistryUtxo: UTxO;
+  /** 16 UTxO shard GB (builder tìm đúng shard của két theo NFT "GBS" ‖ shard_id). */
+  gbShardUtxos    : UTxO[];
+  /** Compiled `gb_shard` validator — hash PHẢI bằng `gen.gbShardPolicyId`. */
+  gbShardScript   : Validator;
   lampPolicyId    : string;
   lampAssetName?  : string;
   network?        : Network;
@@ -114,8 +134,8 @@ export interface CommitParams {
   ownerAuth?      : OwnerAuth<TxBuilder>;
   /** TEST ONLY: bỏ hẳn bước chứng minh quyền chủ. */
   skipOwnerSig?   : boolean;
-  /** UTxO mang scriptRef của vault + shard (CIP-33). Có thì tx ĐỌC script từ
-   *  chain thay vì đính kèm. ĐÍNH KÈM CẢ HAI VALIDATOR VƯỢT TRẦN 16 KB
+  /** UTxO mang scriptRef của vault + shard + gb_shard (CIP-33). Có thì tx ĐỌC script từ
+   *  chain thay vì đính kèm. ĐÍNH KÈM CẢ HAI VALIDATOR ĐÃ VƯỢT TRẦN 16 KB
    *  (đo thật trên Preview: 17303 > 16384), nên đây không phải tối ưu — không
    *  có nó thì ScheduleCommit không dựng nổi tx nào. */
   refScriptUtxos? : UTxO[];
@@ -129,7 +149,15 @@ export interface CommitResult {
   tx              : TxSignBuilder;
   scheduleId      : string;
   rateLockedQ     : bigint;
+  /** ρ hiệu lực ở epoch ký (Q-format). */
+  rhoEffectiveQ   : bigint;
+  /** `M_i` chốt lúc ký — mỗi lượt bắn cấp đúng lượng này. */
+  mPerEpoch       : bigint;
+  /** = `mPerEpoch` (tên cũ, giữ cho người gọi v1). */
   mPerFire        : bigint;
+  usageFactorLockedQ: bigint;
+  /** Lượng shard GB bị trừ trong tx này: `M × min(N, buffer_ep)`. */
+  gbDraw          : bigint;
   totalMagic      : bigint;
   totalLampLocked : bigint;
   firstFireEpoch  : bigint;
@@ -143,6 +171,7 @@ export interface FireParams {
   shardUtxos      : UTxO[];
   scheduleId      : string;
   // No userAddress — permissionless (C-SCH-FIRE-PERMISSION)
+  // No beacon — fire đọc `m_per_epoch` đã chốt (CC-GEN-SCHEDULE-FIXED).
   vaultScript     : Validator;
   shardScript     : Validator;
   lampPolicyId    : string;
@@ -165,6 +194,8 @@ export interface FireResult {
   totalMagicFired: bigint;
   /** LAMP RELEASED from the locked pool — it stays in the vault (I-ACT-7). */
   lampReleased   : bigint;
+  /** Epoch danh nghĩa của lượt đầu (lượt bù < epoch hiện tại ⟹ batch chết lúc sinh). */
+  firstNominalEpoch: bigint;
   scheduleComplete: boolean;
   summary        : string;
 }
@@ -174,119 +205,168 @@ export async function createLucid(apiKey: string): Promise<LucidEvolution> {
   return Lucid(new Blockfrost(TESTNET_CONFIG.blockfrostUrl, apiKey), TESTNET_CONFIG.network);
 }
 
+// ── Tìm UTxO ──────────────────────────────────────────────────
+
+function datumOf(u: UTxO, what: string): string {
+  if (typeof u.datum !== "string" || u.datum.length === 0) {
+    throw new Error(`${what} ${u.txHash}#${u.outputIndex}: không có inline datum.`);
+  }
+  return u.datum;
+}
+
+function refOf(u: UTxO): VaultOutRef {
+  return { txHash: u.txHash, outputIndex: u.outputIndex };
+}
+
+/** Script hash của payment credential; khoá ⟹ null. */
+function paymentScriptOf(address: string): string | null {
+  const c = paymentCredentialOf(address);
+  return c.type === "Script" ? c.hash : null;
+}
+
+/** Neo hai lớp của beacon (gương `read_rho` / `read_greenback_fresh`): mang đúng 1 NFT
+ *  (policy, name) VÀ nằm tại `Script(scriptHash)`. Thiếu một vế ⟹ NÉM. */
+function assertBeaconAnchor(
+  u: UTxO, policy: string, name: string, scriptHash: string, what: string,
+): void {
+  const qty = u.assets[toUnit(policy, name)];
+  if (qty !== 1n) {
+    throw new Error(`GEN-SCH-BEACON: ${what} ${u.txHash}#${u.outputIndex} không mang đúng 1 NFT ${policy}.${name} (có ${qty ?? 0n}).`);
+  }
+  const at = paymentScriptOf(u.address);
+  if (at !== scriptHash) {
+    throw new Error(`GEN-SCH-BEACON: ${what} nằm tại ${at ?? "địa chỉ khoá"}, cần Script(${scriptHash}).`);
+  }
+}
+
+function findAggregateShard(
+  shardUtxos: UTxO[], shardId: number,
+): { utxo: UTxO; datum: ScheduleShardDatum } {
+  const hits = shardUtxos
+    .map(u => ({ utxo: u, datum: decodeScheduleShardDatum(datumOf(u, "shard LAMP")) }))
+    .filter(x => x.datum.shard_id === BigInt(shardId));
+  if (hits.length !== 1) {
+    throw new Error(`GEN-SCH-008: cần đúng 1 shard LAMP ${shardId}, thấy ${hits.length}.`);
+  }
+  return hits[0]!;
+}
+
+function findGbShard(
+  gbShardUtxos: UTxO[], gbShardPolicyId: string, shardId: number,
+): { utxo: UTxO; datum: GbShard } {
+  const unit = toUnit(gbShardPolicyId, gbShardNftName(shardId));
+  const hits = gbShardUtxos.filter(u => u.assets[unit] === 1n);
+  if (hits.length !== 1) {
+    throw new Error(`GEN-SCH-GB: cần đúng 1 shard GB mang ${unit}, thấy ${hits.length}.`);
+  }
+  const u = hits[0]!;
+  if (paymentScriptOf(u.address) !== gbShardPolicyId) {
+    throw new Error(`GEN-SCH-GB: shard GB ${u.txHash}#${u.outputIndex} không nằm tại Script(${gbShardPolicyId}).`);
+  }
+  return { utxo: u, datum: Data.from(datumOf(u, "shard GB"), GbShard) };
+}
+
 // ══════════════════════════════════════════════════════════════
-// Bước 1: buildScheduleCommitTx
+// Bước 1: buildScheduleCommitTx — Gen v2.0
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleCommitTx(params: CommitParams): Promise<CommitResult> {
-  const { lucid, vaultUtxo, shardUtxos, scheduleLength: L, lampPerEpoch: lambda } = params;
+  const { lucid, vaultUtxo, shardUtxos, scheduleLength: L, lampPerEpoch: lambda, gen } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
 
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
+  const vaultDatum = decodeVaultDatum(datumOf(vaultUtxo, "vault"));
   const tipPosixMs = params.tipPosixMs
     ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const commitEpoch = posixMsToEpoch(tipPosixMs, network);
 
-  // ── Validations ──────────────────────────────────────────
-  if (L < SCHEDULE_MIN_LENGTH || L > SCHEDULE_MAX_LENGTH)
-    throw new Error(`GEN-SCH-001: L=${L} ∉ [10,200]`);
-  if (lambda < MIN_LAMP_PER_FIRE)
-    throw new Error(`GEN-SCH-002: λ=${lambda} < MIN=1 LAMP`);
+  // gb_shard: hash script PHẢI bằng apply-param `gb_shard_policy_id` — lệch là shard của deploy khác.
+  if (validatorToScriptHash(params.gbShardScript) !== gen.gbShardPolicyId) {
+    throw new Error(`GEN-SCH-GB: hash gbShardScript ≠ gen.gbShardPolicyId (${gen.gbShardPolicyId}).`);
+  }
+  // commit: không có nó thì két chắc chắn bác (`commit_delegated_to`) — nói ra ở đây thay vì
+  // để người gọi đọc một lỗi phase-2 không nêu thiếu gì.
+  const commitScript = params.commitScript as Validator | undefined;
+  if (!params.omitCommitWithdrawal && (commitScript == null || typeof commitScript.script !== "string")) {
+    throw new Error(
+      "GEN-SCH-COMMIT: thiếu `commitScript` — nhánh ký uỷ cho validator `commit` (withdraw-zero); " +
+      "dựng cặp bằng `applyScheduleScripts` (params.ts).");
+  }
 
-  const totalLock = L * lambda;
-  const avail = lAvail(vaultDatum.lamp_balance, vaultDatum.lamp_locked);
-  if (totalLock > avail)
-    throw new Error(`GEN-SCH-003: L×λ=${totalLock} > L_avail=${avail}`);
+  // Beacon: neo hai lớp rồi mới giải mã.
+  assertBeaconAnchor(params.rateBeaconUtxo, gen.rateNftPolicy, RATE_NFT_NAME, gen.rateScriptHash, "beacon ρ");
+  assertBeaconAnchor(params.gbBeaconUtxo, gen.gbBeaconNftPolicy, GREENBACK_NFT_NAME, gen.gbBeaconScriptHash, "beacon GreenBack");
+  const rateParam = Data.from(datumOf(params.rateBeaconUtxo, "beacon ρ"), RateParam);
+  const gbBeacon  = Data.from(datumOf(params.gbBeaconUtxo, "beacon GreenBack"), GreenBackBeacon);
+  const reg = params.vaultRegistryUtxo;
+  const hasVrg = Object.entries(reg.assets).some(([unit, q]) => unit.slice(56) === VAULT_REGISTRY_NFT_NAME && q === 1n);
+  if (!hasVrg) {
+    throw new Error(`GEN-SCH-GB: vaultRegistryUtxo ${reg.txHash}#${reg.outputIndex} không mang NFT "VRG".`);
+  }
 
-  if (vaultDatum.gen_schedules.length >= MAX_GEN_SCHEDULES)
-    throw new Error(`GEN-SCH-005: ${vaultDatum.gen_schedules.length} schedules ≥ MAX=20`);
+  const shardId = computeShardId(vaultDatum.owner);
+  const agg = findAggregateShard(shardUtxos, shardId);
+  const gbs = findGbShard(params.gbShardUtxos, gen.gbShardPolicyId, shardId);
 
-  // ── Compute rate_locked_q (T8: immutable from here) ──────
-  const sQ          = computeSQ(L);
-  const rateLockedQ = computeRateLockedQ(SNAPSHOT_BASE_RATE_Q, L);
-  const mPerFire    = computeMi(lambda, rateLockedQ);
-
-  // C-SCH-RATE / T19: M_i ≥ 1
-  if (!checkSchRate(lambda, rateLockedQ))
-    throw new Error(`GEN-SCH-004: C-SCH-RATE fail — M_i would be 0. Increase λ or R_snap.`);
-
-  // ── Shard check (C-SCH-CAP) ───────────────────────────────
-  const shardId  = computeShardId(vaultDatum.owner);
-  const shardUtxo = shardUtxos.find(u => {
-    const d = Data.from(u.datum!, ShardDatum);
-    return Number(d.shard_id) === shardId;
+  const plan = planScheduleCommit({
+    vaultDatum,
+    vaultRef:       refOf(vaultUtxo),
+    scheduleLength: L,
+    lampPerEpoch:   lambda,
+    currentEpoch:   commitEpoch,
+    rateParam,
+    gbBeacon,
+    gbShardIn:      gbs.datum,
+    shardIn:        agg.datum,
+    ...(gen.gbShardCapNanogic !== undefined ? { gbShardCapNanogic: gen.gbShardCapNanogic } : {}),
   });
-  if (!shardUtxo) throw new Error(`Shard UTxO not found for shard_id=${shardId}`);
-  const shardDatum = Data.from(shardUtxo.datum!, ShardDatum);
 
-  if (shardDatum.shard_locked_lamp + totalLock > SHARD_CAP)
-    throw new Error(`GEN-SCH-006: Shard cap exceeded. shard_locked=${shardDatum.shard_locked_lamp}, adding=${totalLock}, cap=${SHARD_CAP}`);
-
-  // ── Build schedule ─────────────────────────────────────────
-  const scheduleId     = computeScheduleId(vaultUtxo, vaultDatum.gen_schedules.length);
-  const startFireEpoch = commitEpoch + SCHEDULE_DELAY;
-  const endFireEpoch   = commitEpoch + L + 1n;
-
-  const newSchedule: GenSchedule = {
-    schedule_id:              scheduleId,
-    commit_epoch:             commitEpoch,
-    start_fire_epoch:         startFireEpoch,
-    end_fire_epoch:           endFireEpoch,
-    schedule_length:          L,
-    lamp_per_epoch:           lambda,
-    rate_locked_q:            rateLockedQ,        // T8: immutable
-    baseline_at_commit_q:     SNAPSHOT_BASE_RATE_Q,
-    multiplier_at_commit_q:   sQ,
-    fired_count:              0n,
-    auto_burn_target:         null,
-  };
-
-  // Lock youngest holdings (C-SCH-8, T5)
-  const newHoldings = selectLampForLock(vaultDatum.loyalty_holdings, totalLock);
-
-  // C-SCH-HOLD — gương của `validate_commit`; lý lẽ ở `math.ts` cạnh hàm này.
-  assertHoldingCapAfterCommit(newHoldings.length, "buildScheduleCommit");
-
-  // Updated vault datum (A02: field-by-field)
-  let newVaultDatum: VaultDatum = {
-    ...vaultDatum,
-    lamp_locked:       vaultDatum.lamp_locked + totalLock,
-    loyalty_holdings:  newHoldings,
-    gen_schedules:     [...vaultDatum.gen_schedules, newSchedule],
-    last_updated_epoch: commitEpoch,
-  };
+  let newVaultDatum: VaultDatum = plan.vaultDatumOut;
   if (params.tamperOutputDatum) newVaultDatum = params.tamperOutputDatum(newVaultDatum);
 
-  // Updated shard datum (C-SCH-AGG)
-  const newShardDatum: ShardDatum = {
-    ...shardDatum,
-    shard_locked_lamp:          shardDatum.shard_locked_lamp + totalLock,
-    shard_active_count:         shardDatum.shard_active_count + 1n,
-    shard_cumulative_committed: shardDatum.shard_cumulative_committed + totalLock,
-    last_updated_epoch:         commitEpoch,
-  };
-
   // Build tx
-  const { vaultScript, shardScript } = params;
+  const { vaultScript, shardScript, gbShardScript } = params;
   const vaultAddr = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
   const redeemer  = Data.to({ ScheduleCommit: { schedule_length: L, lamp_per_epoch: lambda } }, VaultRedeemer);
-  const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: totalLock, delta_committed: totalLock } }, ShardRedeemer);
+  const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: plan.totalLock, delta_committed: plan.totalLock } }, ShardRedeemer);
+  const gbDrawRed = Data.to({ amount: plan.gbDraw }, GbShardRedeemer);
   const { lowerMs: lowerTime, upperMs: upperTime } =
     epochValidityWindow(tipPosixMs, network);
 
   let txBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
-    .collectFrom([shardUtxo], shardRed);
+    .collectFrom([agg.utxo], shardRed)
+    .collectFrom([gbs.utxo], gbDrawRed)
+    // Beacon ρ + beacon GB (két đọc) + sổ két (shard GB đọc): chỉ ĐỌC, không tiêu.
+    .readFrom([params.rateBeaconUtxo, params.gbBeaconUtxo, reg]);
   txBuilder = params.refScriptUtxos?.length
     ? txBuilder.readFrom(assertRefScriptsFor(params.refScriptUtxos, [
-        { script: vaultScript, what: "vault (ScheduleCommit)" },
-        { script: shardScript, what: "shard (ScheduleCommit)" },
+        { script: vaultScript,   what: "vault (ScheduleCommit)" },
+        { script: shardScript,   what: "shard (ScheduleCommit)" },
+        { script: gbShardScript, what: "gb_shard (ScheduleCommit)" },
       ]))
-    : txBuilder.attach.SpendingValidator(vaultScript).attach.SpendingValidator(shardScript);
+    : txBuilder.attach.SpendingValidator(vaultScript)
+        .attach.SpendingValidator(shardScript)
+        .attach.SpendingValidator(gbShardScript);
+  // Chân uỷ quyền: rút 0 từ `Script(hash commit)`, redeemer nêu ĐÚNG UTxO két đang tiêu.
+  // Đúng một mục cho purpose này mỗi tx (khoá map rút là duy nhất) ⟹ phục vụ đúng một két.
+  if (!params.omitCommitWithdrawal) {
+    const commit = commitScript!;
+    const commitRed = Data.to({
+      vault_ref: { transaction_id: vaultUtxo.txHash, output_index: BigInt(vaultUtxo.outputIndex) },
+    }, CommitRedeemer);
+    txBuilder = txBuilder.withdraw(validatorToRewardAddress(network, commit), 0n, commitRed);
+    txBuilder = params.commitRefScriptUtxo
+      ? txBuilder.readFrom(assertRefScriptsFor([params.commitRefScriptUtxo], [
+          { script: commit, what: "commit (withdraw-zero)" },
+        ]))
+      : txBuilder.attach.WithdrawalValidator(commit);
+  }
   txBuilder = txBuilder
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) }, vaultUtxo.assets)
-    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatum) }, shardUtxo.assets)
+    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(plan.shardOut, ScheduleShardDatum) }, agg.utxo.assets)
+    // Shard GB về ĐÚNG địa chỉ nó đi ra, cùng value (NFT ở lại) — `gb_draw_checked`.
+    .pay.ToAddressWithData(gbs.utxo.address, { kind: "inline", value: Data.to(plan.gbShardOut, GbShard) }, gbs.utxo.assets)
     .validFrom(lowerTime)
     .validTo(upperTime);
   if (!params.skipOwnerSig) {
@@ -297,54 +377,47 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   }
   const tx = await txBuilder.complete(collateralCompleteOptions(params.collateralLovelace));
 
-  // MAGIC mỗi LAMP = rate_locked_q × 10⁻¹² × 10⁶ / 10⁶ … viết thẳng cho khỏi suy:
-  //   M_i[nanogic] = λ[oildrop] · r / Q  ⟹  M[MAGIC]/L[LAMP] = r · 10⁶ / (Q · 10⁹) = r/10¹²
-  // Tính bằng BigInt tới 6 chữ số thập phân rồi mới dựng chuỗi — không đi qua Number.
-  const magicPerLampMicro = (rateLockedQ * 1_000_000n) / 1_000_000_000_000n;
-  const magicPerLampStr =
-    `${magicPerLampMicro / 1_000_000n}.` +
-    `${(magicPerLampMicro % 1_000_000n).toString().padStart(6, "0")}`;
-
+  const s = plan.newSchedule;
   const summary = [
-    `═══ ScheduleGen Commit ═══`,
+    `═══ ScheduleGen Commit (Gen v2.0) ═══`,
     `Commit epoch:    ${commitEpoch}`,
     `Schedule length: ${L} orders (~${fmtDays(L, network)})`,
-    `λ per fire:      ${lambda / 1_000_000n} tLAMP (${lambda} oil)`,
-    `Total locked:    ${totalLock / 1_000_000n} tLAMP`,
-    // ĐƠN VỊ PHẢI IN RA, đừng để người đọc tự suy. `rate_locked_q / Q` là
-    // **nanogic trên mỗi oildrop**, KHÔNG phải MAGIC trên mỗi LAMP — hai thang
-    // lệch nhau đúng 10³ (λ ở thang 10⁶, M_i ở thang 10⁹, mã chỉ chia Q một lần).
-    // Bản trước in trần con số `8000000000` và nó đọc thành "8 MAGIC mỗi LAMP",
-    // sai 1000 lần. Nên in luôn cả suất đã quy về đơn vị người dùng.
-    `rate_locked_q:   ${rateLockedQ} = ${qToStr(rateLockedQ)} nanogic/oildrop`,
-    `  ⟹ suất thật:   ${magicPerLampStr} MAGIC mỗi LAMP (immutable forever — T8)`,
-    `M_i per fire:    ${nanogicToMagicStr(mPerFire)} MAGIC`,
-    `Total MAGIC:     ${nanogicToMagicStr(mPerFire * L)} MAGIC (guaranteed)`,
-    `First fire:      epoch ${startFireEpoch} (~${fmtDays(SCHEDULE_DELAY, network)})`,
-    `Last fire:       epoch ${endFireEpoch}`,
-    `S_Q(${L}):       ${qToStr(sQ)}×`,
-    `Schedule ID:     ${scheduleId.slice(0, 16)}...`,
+    `λ per fire:      ${lambda / 1_000_000n} LAMP (${lambda} oil)`,
+    `Total locked:    ${plan.totalLock / 1_000_000n} LAMP`,
+    // ĐƠN VỊ PHẢI IN RA: `rate_locked_q / Q` là nanogic trên mỗi oildrop, KHÔNG phải MAGIC
+    // trên mỗi LAMP — hai thang lệch nhau 10³.
+    `rate_locked_q:   ${plan.rateLockedQ} = ${qToStr(plan.rateLockedQ)} nanogic/oildrop`,
+    `ρ hiệu lực:      ${plan.rhoEffectiveQ} = ${qToStr(plan.rhoEffectiveQ)} nanogic/oildrop`,
+    `usage_factor:    ${qToStr(plan.usageFactorLockedQ)} (chốt lúc ký)`,
+    `M_i per fire:    ${nanogicToMagicStr(plan.mPerEpoch)} MAGIC (chốt lúc ký, không đổi theo beacon)`,
+    `Total MAGIC:     ${nanogicToMagicStr(plan.mPerEpoch * L)} MAGIC`,
+    `GB draw:         ${nanogicToMagicStr(plan.gbDraw)} MAGIC từ shard GB ${shardId}`,
+    `First fire:      epoch ${s.start_fire_epoch} (~${fmtDays(SCHEDULE_DELAY, network)})`,
+    `Last fire:       epoch ${s.end_fire_epoch}`,
+    `S_Q(${L}):       ${qToStr(plan.sQ)}×`,
+    `Schedule ID:     ${s.schedule_id.slice(0, 16)}...`,
     `Shard:           ${shardId} of 16`,
     ``,
-    `✓  Rate locked at current R_snap. DAO changes won't affect this contract.`,
-    `⚠  Cannot cancel (T10). Fire is permissionless from epoch ${startFireEpoch}.`,
+    `⚠  Cannot cancel (T10). Fire is permissionless from epoch ${s.start_fire_epoch}.`,
   ].join("\n");
 
   return {
-    tx, scheduleId, rateLockedQ, mPerFire, totalMagic: mPerFire * L,
-    totalLampLocked: totalLock, firstFireEpoch: startFireEpoch,
-    lastFireEpoch: endFireEpoch, summary,
+    tx, scheduleId: s.schedule_id, rateLockedQ: plan.rateLockedQ,
+    rhoEffectiveQ: plan.rhoEffectiveQ, mPerEpoch: plan.mPerEpoch, mPerFire: plan.mPerEpoch,
+    usageFactorLockedQ: plan.usageFactorLockedQ, gbDraw: plan.gbDraw,
+    totalMagic: plan.mPerEpoch * L, totalLampLocked: plan.totalLock,
+    firstFireEpoch: s.start_fire_epoch, lastFireEpoch: s.end_fire_epoch, summary,
   };
 }
 
 // ══════════════════════════════════════════════════════════════
-// Bước 2: buildScheduleFireTx — PERMISSIONLESS (C-SCH-FIRE-PERMISSION)
+// Bước 2: buildScheduleFireTx — PERMISSIONLESS, KHÔNG đọc beacon
 // ══════════════════════════════════════════════════════════════
 export async function buildScheduleFireTx(params: FireParams): Promise<FireResult> {
   const { lucid, vaultUtxo, shardUtxos, scheduleId } = params;
   const network = params.network ?? TESTNET_CONFIG.network;
 
-  const vaultDatum = Data.from(vaultUtxo.datum!, VaultDatum);
+  const vaultDatum = decodeVaultDatum(datumOf(vaultUtxo, "vault"));
   const tipPosixMs = params.tipPosixMs
     ?? BigInt(slotToUnixTime(network, await getTipSlot(lucid as never, network)));
   const currentEpoch = posixMsToEpoch(tipPosixMs, network);
@@ -357,112 +430,25 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     throw new Error(`GEN-SCH-000: vault UTxO carries no lovelace — refusing to build.`);
   }
 
-  const sched = vaultDatum.gen_schedules.find(s => s.schedule_id === scheduleId);
-  if (!sched) throw new Error(`Schedule ${scheduleId} not found`);
-
-  // §4.2: thu rác TRƯỚC khi đếm — cùng một bản vá với `validate_fire` bên Aiken,
-  // và bản cũ ở đây hỏng y hệt: nó đếm `magic_batches.length` CHƯA prune trong khi
-  // `updatedBatches` bên dưới lại dựng trên danh sách ĐÃ prune. Hai chỗ đọc hai
-  // danh sách khác nhau ⟹ đủ 32 batch đã chết là `batchBudget = 0` ⟹ `firesInTx = 0`
-  // ⟹ ném GEN-SCH-... trong khi giao dịch đó hoàn toàn hợp lệ. P8: đổi cùng commit
-  // với `ScheduleGen/onchain/validators/vault.ak` ▸ `validate_fire`.
-  const liveBatches = vaultDatum.magic_batches.filter(
-    b => !isExpired(b.created_epoch, b.decay_window, currentEpoch),
-  );
-
-  // C-FIRE-1 ≥: count eligible fires (catch-up)
-  const firesInTx = countEligibleFires(
-    sched.start_fire_epoch, sched.fired_count,
-    sched.schedule_length, currentEpoch,
-    liveBatches.length,
-  );
-  if (firesInTx === 0)
-    throw new Error(`No eligible fires: next fire at epoch ${nextFireEpoch(sched.start_fire_epoch, sched.fired_count)}, current=${currentEpoch}`);
-
-  // M_i — reads STORED rate_locked_q (T8: immutable)
-  const mI = computeMi(sched.lamp_per_epoch, sched.rate_locked_q);
-  // PHA 2 / I-ACT-7: LAMP is RELEASED from the locked pool, not transferred.
-  const lampReleased = sched.lamp_per_epoch * BigInt(firesInTx);
-
-  // Create batches (one per fire). Every batch — including catch-up ones — is
-  // stamped with the CURRENT epoch and lives exactly this epoch (§4.2 cliff),
-  // so a catch-up can never resurrect MAGIC missed in earlier epochs.
-  const newBatches: MagicBatch[] = Array.from({ length: firesInTx }, (_, i) => ({
-    batch_id:            computeBatchId(vaultUtxo, vaultDatum.next_batch_index + BigInt(i)),
-    source:              "Schedule" as const,
-    created_epoch:       currentEpoch,
-    initial_amount:      mI,
-    current_amount:      mI,
-    decay_window:        SCHEDULE_DECAY_WINDOW,   // 1 (cliff)
-    profile_at_creation: null,
-    contract_id:         scheduleId,
-    halved:              false,
-  }));
-
-  // §4.2: xác đi ra cùng giao dịch này. `liveBatches` đã tính ở TRÊN, trước khi
-  // đếm fire — cố ý một lần, vì hai lần lọc là hai cơ hội lệch nhau.
-  const updatedBatches = [...liveBatches, ...newBatches];
-  if (updatedBatches.length > MAX_BATCHES_PER_VAULT)
-    throw new Error(`GEN-VAULT-001: would exceed 32 batches`);
-
-  // Update or remove schedule (C-FIRE-5)
-  const newFiredCount  = sched.fired_count + BigInt(firesInTx);
-  const schedComplete  = newFiredCount === sched.schedule_length;
-  const updatedSchedules = schedComplete
-    ? vaultDatum.gen_schedules.filter(s => s.schedule_id !== scheduleId)
-    : vaultDatum.gen_schedules.map(s =>
-        s.schedule_id === scheduleId ? { ...s, fired_count: newFiredCount } : s
-      );
-
-  // C-FIRE-6 (PHA 2): RELEASE the lock. Holdings keep their amount and epoch,
-  // only `is_locked` flips → Σholdings, lamp_balance and the LAMP inside the
-  // UTxO are all invariant (I-ACT-7).
-  const newHoldings    = unlockLockedAmount(vaultDatum.loyalty_holdings, lampReleased);
-  const newLampBalance = vaultDatum.lamp_balance;                    // UNCHANGED
-  const newLampLocked  = vaultDatum.lamp_locked - lampReleased;
-
-  // Updated vault datum (A02)
-  let newVaultDatum: VaultDatum = {
-    ...vaultDatum,
-    lamp_balance:       newLampBalance,
-    lamp_locked:        newLampLocked,
-    loyalty_holdings:   newHoldings,
-    magic_batches:      updatedBatches,
-    next_batch_index:   vaultDatum.next_batch_index + BigInt(firesInTx),
-    gen_schedules:      updatedSchedules,
-    last_updated_epoch: currentEpoch,
-  };
-  if (params.tamperOutputDatum) newVaultDatum = params.tamperOutputDatum(newVaultDatum);
-
-  // C-SCH-FIRE-SHARD: find and update the correct shard (A19)
   const shardId = computeShardId(vaultDatum.owner);
-  const shardUtxo = shardUtxos.find(u => {
-    const d = Data.from(u.datum!, ShardDatum);
-    return Number(d.shard_id) === shardId;
+  const agg = findAggregateShard(shardUtxos, shardId);
+  const plan = planScheduleFire({
+    vaultDatum, vaultRef: refOf(vaultUtxo), scheduleId, currentEpoch, shardIn: agg.datum,
   });
-  if (!shardUtxo) throw new Error(`GEN-SCH-008: Shard ${shardId} not found`);
-  const shardDatum = Data.from(shardUtxo.datum!, ShardDatum);
 
-  const newShardDatum: ShardDatum = {
-    ...shardDatum,
-    shard_locked_lamp:      shardDatum.shard_locked_lamp - lampReleased,
-    shard_cumulative_fired: shardDatum.shard_cumulative_fired + lampReleased,
-    shard_active_count:     schedComplete ? shardDatum.shard_active_count - 1n : shardDatum.shard_active_count,
-    last_updated_epoch:     currentEpoch,
-  };
+  let newVaultDatum: VaultDatum = plan.vaultDatumOut;
+  if (params.tamperOutputDatum) newVaultDatum = params.tamperOutputDatum(newVaultDatum);
+  const sched = vaultDatum.gen_schedules.find(s => s.schedule_id === scheduleId)!;
 
   // Build tx
   const { vaultScript, shardScript, lampPolicyId } = params;
-  // Suy theo MẠNG, không lấy mặc định testnet. Bản cũ rơi về `TESTNET_CONFIG`
-  // ("tLAMP") kể cả khi network là Mainnet — đúng thứ BOUNDARIES.md §2 gọi là dựng
-  // ra một vault mainnet không bao giờ nhìn thấy LAMP của chính nó. Override tường
-  // minh vẫn được tôn trọng, cho ca mint không chuẩn.
+  // Suy theo MẠNG, không lấy mặc định testnet (BOUNDARIES.md §2: `lamp_asset_name`).
   const lampAssetName = params.lampAssetName ?? lampAssetNameFor(network);
   const vaultAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(vaultScript)));
   const shardAddr  = credentialToAddress(network, scriptHashToCredential(validatorToScriptHash(shardScript)));
   const lampUnit   = toUnit(lampPolicyId, lampAssetName);
   const redeemer   = Data.to({ ScheduleFire: { schedule_id: scheduleId } }, VaultRedeemer);
-  const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(firesInTx), lambda: sched.lamp_per_epoch } }, ShardRedeemer);
+  const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(plan.firesInTx), lambda: sched.lamp_per_epoch } }, ShardRedeemer);
   const { lowerMs: lowerTime, upperMs: upperTime } =
     epochValidityWindow(tipPosixMs, network);
 
@@ -470,14 +456,14 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   // lần viết lại biểu thức value — đó chính là lần viết lại nó sinh ra để bắt.
   const vaultOutAssets = vaultOutValue(vaultUtxo.assets, {
     lovelace: vaultLovelaceFire,
-    [lampUnit]: newLampBalance - (params.tamperLampOutOil ?? 0n),
+    [lampUnit]: newVaultDatum.lamp_balance - (params.tamperLampOutOil ?? 0n),
   });
   assertVaultIdentityKept(vaultUtxo.assets, vaultOutAssets);
 
   let fireBuilder = lucid
     .newTx()
     .collectFrom([vaultUtxo], redeemer)
-    .collectFrom([shardUtxo], shardRed);
+    .collectFrom([agg.utxo], shardRed);
   fireBuilder = params.refScriptUtxos?.length
     ? fireBuilder.readFrom(assertRefScriptsFor(params.refScriptUtxos, [
         { script: vaultScript, what: "vault (ScheduleFire)" },
@@ -489,55 +475,78 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
     //
     // 🔴 SPREAD the input value, override ONLY lovelace + LAMP. Rebuilding the value
     // from scratch drops the vault identity NFT (INV-VAULT-IDENTITY) — and
-    // `validate_fire` gates on it at `vault.ak:393` → `validate_vault_value:869`
-    // (`expect quantity_of(vault_output.value, vault_id_policy, nft_name) == 1`).
-    // ScheduleFire is permissionless, so that NFT is the SOLE gate against a forged
-    // vault; dropping it means EVERY Fire tx is rejected, not just some.
-    // Bản vá gốc: `ca5870df` (tuanzoro2k, 11/8) — nó bị lần trộn hội tụ đánh rơi và
-    // đường Fire nằm gãy tới 3/9. Đừng viết lại thành object dựng mới.
+    // `validate_fire` gates on it (`validate_vault_value`). ScheduleFire is
+    // permissionless, so that NFT is the SOLE gate against a forged vault.
+    // Bản vá gốc: `ca5870df` (tuanzoro2k, 11/8). Đừng viết lại thành object dựng mới.
     .pay.ToAddressWithData(vaultAddr, { kind: "inline", value: Data.to(newVaultDatum, VaultDatum) },
       vaultOutAssets)
-    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(newShardDatum, ShardDatum) }, shardUtxo.assets)
+    .pay.ToAddressWithData(shardAddr, { kind: "inline", value: Data.to(plan.shardOut, ScheduleShardDatum) }, agg.utxo.assets)
     // NO Treasury output — a fire moves no LAMP anywhere.
+    // NO beacon reference input, NO shard GB — validator bác tx có input tại Script(gb_shard).
     // C-SCH-FIRE-PERMISSION: NO .addSignerKey() — permissionless
     .validFrom(lowerTime)
     .validTo(upperTime)
     .complete(collateralCompleteOptions(params.collateralLovelace));
 
+  const newFired = sched.fired_count + BigInt(plan.firesInTx);
+  const late = currentEpoch - plan.firstNominalEpoch;
   const summary = [
-    `═══ ScheduleGen Fire ═══`,
+    `═══ ScheduleGen Fire (Gen v2.0) ═══`,
     `Epoch:          ${currentEpoch}`,
-    `Fires in tx:    ${firesInTx} (of ${Number(sched.schedule_length - sched.fired_count)} remaining)`,
-    `M_i per fire:   ${nanogicToMagicStr(mI)} MAGIC (rate_locked at commit — T8)`,
-    `Total MAGIC:    ${nanogicToMagicStr(mI * BigInt(firesInTx))} MAGIC`,
-    `LAMP released:  ${lampReleased / 1_000_000n} tLAMP unlocked — stays in the vault (I-ACT-7)`,
-    `Progress:       ${Number(newFiredCount)}/${Number(sched.schedule_length)} orders`,
-    `Schedule:       ${schedComplete ? "✅ COMPLETE — removed" : `⏳ ${Number(sched.schedule_length - newFiredCount)} orders remaining`}`,
-    `Shard:          ${shardId} (C-SCH-FIRE-SHARD ✓)`,
-    ``,
-    firesInTx > 1 ? `ℹ  Catch-up: ${firesInTx} missed epochs processed in 1 tx (C-FIRE-1 ≥).` : "",
+    `Fires in tx:    ${plan.firesInTx} (of ${Number(sched.schedule_length - sched.fired_count)} remaining)`,
+    `M_i per fire:   ${nanogicToMagicStr(plan.mPerEpoch)} MAGIC (chốt lúc ký)`,
+    `Total MAGIC:    ${nanogicToMagicStr(plan.mPerEpoch * BigInt(plan.firesInTx))} MAGIC`,
+    `LAMP released:  ${plan.lampReleased / 1_000_000n} LAMP unlocked — stays in the vault (I-ACT-7)`,
+    `Progress:       ${Number(newFired)}/${Number(sched.schedule_length)} orders`,
+    `Schedule:       ${plan.scheduleComplete ? "COMPLETE — removed" : `${Number(sched.schedule_length - newFired)} orders remaining`}`,
+    `Shard:          ${shardId} (C-SCH-FIRE-SHARD)`,
+    late > 0n
+      ? `ℹ  Bắn bù: lượt đầu mang epoch danh nghĩa ${plan.firstNominalEpoch}; batch của epoch đã qua chết lúc sinh.`
+      : "",
     `Note: This tx required NO owner signature (C-SCH-FIRE-PERMISSION).`,
   ].filter(Boolean).join("\n");
 
-  return { tx, firesInTx, mPerFire: mI, totalMagicFired: mI * BigInt(firesInTx), lampReleased, scheduleComplete: schedComplete, summary };
+  return {
+    tx, firesInTx: plan.firesInTx, mPerFire: plan.mPerEpoch,
+    totalMagicFired: plan.mPerEpoch * BigInt(plan.firesInTx), lampReleased: plan.lampReleased,
+    firstNominalEpoch: plan.firstNominalEpoch, scheduleComplete: plan.scheduleComplete, summary,
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Bước 0 (MỘT LẦN mỗi bản `commit`, lúc deploy): đăng ký stake credential của `commit`
+// ══════════════════════════════════════════════════════════════
+// Ledger chỉ nhận mục rút từ một reward address ĐÃ đăng ký. Chưa đăng ký ⟹ mọi tx ký của
+// mọi két đều bị ledger bác (phase-1), trước khi script nào chạy.
+//
+// Lucid 0.4.30 chỉ dựng được chứng chỉ `stake_registration` kiểu CŨ (cert 0, không tiền cọc
+// trong chứng chỉ, `register.Stake(rewardAddress)` không nhận redeemer). Ledger Conway không
+// đòi witness cho chứng chỉ đó ⟹ `publish` của `commit` KHÔNG chạy ở đường này. `publish` chỉ
+// chạy với chứng chỉ Conway `reg_cert` (cert 7, có tiền cọc) — khi đó nó nhận redeemer bất
+// kỳ (`_redeemer: Data`) và chỉ cho `RegisterCredential`. Không chạy `publish` không nới gì:
+// chứng chỉ đăng ký không mang quyền nào ngoài việc mở reward address.
+export interface RegisterCommitStakeParams {
+  lucid        : LucidEvolution;
+  commitScript : Validator;
+  network?     : Network;
+}
+
+export async function buildRegisterCommitStakeTx(
+  params: RegisterCommitStakeParams,
+): Promise<{ tx: TxSignBuilder; rewardAddress: string; commitScriptHash: string }> {
+  const commit = params.commitScript as Validator | undefined;
+  if (commit == null || typeof commit.script !== "string") {
+    throw new Error("GEN-SCH-COMMIT: thiếu `commitScript` để đăng ký stake credential.");
+  }
+  const network = params.network ?? TESTNET_CONFIG.network;
+  const rewardAddress = validatorToRewardAddress(network, commit);
+  const tx = await params.lucid.newTx().register.Stake(rewardAddress).complete();
+  return { tx, rewardAddress, commitScriptHash: validatorToScriptHash(commit) };
 }
 
 // ── Submit ────────────────────────────────────────────────────
 export async function signAndSubmit(lucid: LucidEvolution, tx: TxSignBuilder): Promise<string> {
   return (await tx.sign.withWallet().complete()).submit();
 }
-
-// ── Utilities ────────────────────────────────────────────────
-function computeScheduleId(vaultUtxo: UTxO, schedIndex: number): string {
-  return h(vaultUtxo, BigInt(schedIndex));
-}
-function computeBatchId(vaultUtxo: UTxO, idx: bigint): string {
-  return h(vaultUtxo, idx);
-}
-function h(utxo: UTxO, idx: bigint): string {
-  const pre = Buffer.concat([Buffer.from(utxo.txHash, "hex"), u64(BigInt(utxo.outputIndex)), u64(idx)]);
-  return Buffer.from(blake2b(pre, { dkLen: 32 })).toString("hex");
-}
-function u64(n: bigint): Buffer { const b = Buffer.alloc(8); b.writeBigUInt64BE(n); return b; }
 
 // getTipSlot moved to @magiclamp/protocol-utils — network-aware fallback (P8).

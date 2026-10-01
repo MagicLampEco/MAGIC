@@ -9,35 +9,38 @@
 //                There is no Treasury leg any more.
 //   §4.2 cliff   A MAGIC batch is live only inside its own `created_epoch`
 //                (decay_window = 1). No halving, no carry-over.
-//   §6.3 keyed   Grant size = min( reward(consumed), cap_surplus(br),
-//                0.5 × pp_schedule ) — driven by MAGIC ALREADY CONSUMED,
-//                not by any LAMP amount.
+//   §6.1 Gen v2.0  Lượng sinh = min( amount_by_lamp(L, L_lent, usage_window, ρ),
+//                GB_available ), cộng dồn trong epoch (SPEC §6.1.1–§6.1.4). Bản
+//                cũ (thưởng theo MAGIC đã tiêu, UM, `br`) đã bỏ ở gói b1/b2.
 //
-// Parameterized by:
-//   lamp_policy_id      : PolicyId of LAMP native asset
-//   um_nft_policy       : PolicyId of UM datum NFT (identifies the UM UTxO)
-//   um_script_hash      : applied UMKeeper validator hash. Pins the UM reference
-//                         input to the canonical UM script address; the NFT alone
-//                         is not a global singleton, so without this a forged UTxO
-//                         at an attacker address could be used as ref input.
-//   backing_nft_policy  : PolicyId of the BackingBeacon NFT      [CẦN XÁC NHẬN]
-//   backing_script_hash : script hash of the BackingBeacon UTxO  [CẦN XÁC NHẬN]
-//                         Same two-layer pinning as UM. Deploy with an all-zero
-//                         pair while this repo's own GreenBack-tier keeper has not
-//                         yet written the beacon (it is NOT a CARP deliverable —
-//                         see BOUNDARIES.md): no UTxO can
-//                         then satisfy the reference-input lookup, so InstantGen
-//                         is SHUT (cap = 0). Never invent a default `br`.
-//   ms_per_epoch        : POSIX ms per epoch (per-network)
+// Parameterized by (Gen v2.0, gói b1 — thứ tự là hợp đồng với mọi bộ dựng):
+//   #1 lamp_policy_id        : PolicyId of LAMP native asset
+//   #2 lamp_asset_name       : LAMP asset name theo mạng (tLAMP / LAMP)
+//   #3 gb_beacon_nft_policy  : policy NFT beacon GreenBack ("GBB") — nhánh sinh đọc
+//   #4 gb_beacon_script_hash : script beacon GreenBack — neo hai lớp cùng #3
+//   #5 gb_shard_policy_id    : policy = script hash shard GB. b1: mọi nhánh KHÔNG
+//                              sinh từ chối tx có input tại `Script(#5)` (một két
+//                              đi nhánh khác mà đồng tiêu shard là rút cạn shard
+//                              không sinh gì — `gb_shard.spend` không đọc được nhánh
+//                              của két, nên chặn ở phía két).
+//   #6 rate_nft_policy       : policy NFT beacon ρ ("RHO")
+//   #7 rate_script_hash      : script beacon ρ — neo hai lớp cùng #6
+//   #8 wakeme_vault_hash     : hash script két Wakeme CHUẨN. KHÔNG BAO GIỜ lấy từ
+//                              redeemer/datum: chọn được hash là chọn được két.
+//                              G1b: không nhánh spend nào nhận input tại `Script(#8)`.
+//   #9 ms_per_epoch          : POSIX ms per epoch (per-network)
+// Bỏ so với bản trước: `um_nft_policy`, `um_script_hash`, `backing_nft_policy`,
+// `backing_script_hash` (Gen v2.0 không đọc UM, không đọc `br`).
 //
 // Build on testnet:
 //   aiken build
-//   # applies the 6 parameters, producing the script hash
+//   # applies the 9 parameters, producing the script hash
 
+use aiken/builtin
 use aiken/cbor
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/crypto
+use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken/interval.{Finite}
 use cardano/address.{Address, Credential, Script, VerificationKey}
@@ -49,31 +52,32 @@ use cardano/transaction.{
 
 use magiclamp/protocol/owner_auth.{owner_authorized}
 use magiclamp/protocol/types.{
-  ActivityProfile, ActivityState, BackingBeaconDatum, BurnBatch,
-  DelegationCertificate, Ember, Flame, GenSchedule, Instant, InstantGen, Lantern,
-  LoyaltyHolding, MagicBatch, PendingProfile, PruneExpired, SetDelegate,
-  StreakState, UMDatum, UpdateProfile, VaultAttribution, VaultDatum,
-  VaultRedeemer, WithdrawLamp,
+  ActivityProfile, ActivityState, BurnBatch, Ember, EpochUsage, Flame,
+  GbShard, GreenBackBeacon, Instant, InstantGen, Lantern, LoyaltyHolding, MagicBatch,
+  PendingProfile, PruneExpired, RateParam, RefreshCheckpoint, SetDelegate,
+  UpdateProfile, VaultAttribution, VaultDatum, VaultRedeemer, WithdrawLamp,
 }
 use magiclamp/protocol/constants.{
-  magic_decay_window, max_backing_stale, max_batches_per_vault,
-  max_loyalty_holdings, min_instant_holding, pm_q_ember, pm_q_flame,
-  pm_q_lantern, profile_change_cooldown, wakeme_seed_credit,
-}
-use magiclamp/protocol/math.{
-  compute_cap_pp, compute_cap_surplus, compute_instant_grant,
-  compute_reward_from_consumed,
+  magic_decay_window, max_batches_per_vault, max_loyalty_holdings,
+  min_instant_holding, profile_change_cooldown, wakeme_seed_credit,
 }
 use magiclamp/protocol/decay.{
   count_expired, instant_gen_in_epoch, is_expired, prune_expired,
 }
-use magiclamp/protocol/um.{
-  get_um_for_instant, validate_um_history_length, validate_um_range,
+use magiclamp/protocol/greenback.{
+  greenback_open, shard_draw, shard_nft_name, vault_shard_id,
 }
-use magiclamp/protocol/lamp.{
-  l_avail, remove_newest_first, sum_holdings, validate_lamp_locked,
-}
+use magiclamp/protocol/math.{compute_cap_lent, compute_cap_pp}
+use magiclamp/protocol/lamp.{l_avail, remove_newest_first, sum_holdings}
 use magiclamp/protocol/profile.{apply_pending_profile}
+use magiclamp/protocol/checkpoint.{
+  Checkpoint, FollowVault, FollowVaultOrUnlink, KeepLink, VaultParams,
+  checkpoint_written, current_checkpoint, empty_window, expected_checkpoint,
+  expected_checkpoint_for_gen,
+}
+use magiclamp/protocol/gen_formula.{
+  amount_by_lamp, gb_vault_share, shift_window, window_add,
+}
 
 // ══════════════════════════════════════════════════════════════
 // VAULT-IDENTITY STATE-THREAD NFT — genesis-clean anchor (MAINNET-BLOCK)
@@ -134,13 +138,15 @@ pub type VaultIdRedeemer {
 //   Preprod:        432_000_000   (đổi 86_400_000 → 432_000_000 ngày 2026-09-20)
 //   Preview:         86_400_000
 validator vault(
-  lamp_policy_id      : PolicyId,
-  lamp_asset_name     : ByteArray,
-  um_nft_policy       : PolicyId,
-  um_script_hash      : ByteArray,
-  backing_nft_policy  : PolicyId,
-  backing_script_hash : ByteArray,
-  ms_per_epoch        : Int,
+  lamp_policy_id        : PolicyId,
+  lamp_asset_name       : ByteArray,
+  gb_beacon_nft_policy  : PolicyId,
+  gb_beacon_script_hash : ScriptHash,
+  gb_shard_policy_id    : PolicyId,
+  rate_nft_policy       : PolicyId,
+  rate_script_hash      : ScriptHash,
+  wakeme_vault_hash     : ScriptHash,
+  ms_per_epoch          : Int,
 ) {
   // ── mint: vault-identity NFT policy (policy_id == this script hash) ──────
   mint(redeemer: VaultIdRedeemer, policy_id: PolicyId, tx: Transaction) {
@@ -161,53 +167,78 @@ validator vault(
     // Datum must always be present on vault UTxOs
     expect Some(input_datum) = datum_opt
 
+    let params =
+      VaultParams {
+        lamp_policy_id,
+        lamp_asset_name,
+        gb_beacon_nft_policy,
+        gb_beacon_script_hash,
+        gb_shard_policy_id,
+        rate_nft_policy,
+        rate_script_hash,
+        wakeme_vault_hash,
+        ms_per_epoch,
+      }
+
+    // ── G1b: két Wakeme KHÔNG BAO GIỜ bị tiêu cùng két IG ─────────────────
+    // Két Wakeme chỉ được ĐỌC (reference input). Ép ngay ở đây cho MỌI nhánh, không
+    // dựa vào luật tách rời của sổ cái Conway (luật đó áp theo phiên bản giao thức,
+    // chưa kiểm ở kho này).
+    expect no_input_at(tx.inputs, wakeme_vault_hash)
+
+    // ── Shard GB chỉ đi cùng nhánh SINH ──────────────────────────────────
+    // `gb_shard.spend` chỉ đòi "có một két thật đi kèm", không đọc được két đi nhánh
+    // nào. Nhánh không sinh mà cho đồng tiêu shard là cho rút cạn shard.
+    let is_gen =
+      when redeemer is {
+        InstantGen { .. } -> True
+        _ -> False
+      }
+    expect is_gen || no_input_at(tx.inputs, gb_shard_policy_id)
+
     // ── Derive current epoch from tx validity range ──────────
     // Plutus V3 validity_range carries POSIX milliseconds, not slots.
     let current_epoch = get_current_epoch(tx, ms_per_epoch)
 
     when redeemer is {
-      // ── InstantGen redeemer ──────────────────────────────
+      // ── InstantGen — Gen v2.0 (gói b2) ───────────────────────
       InstantGen { claimed_amount } ->
         validate_instant_gen(
-          input_datum, claimed_amount, current_epoch, ms_per_epoch,
-          own_ref, lamp_policy_id, lamp_asset_name, um_nft_policy, um_script_hash,
-          backing_nft_policy, backing_script_hash, tx,
+          input_datum, claimed_amount, current_epoch, own_ref, params, tx,
         )
 
       // ── PruneExpired — permissionless dead-batch GC (§7.4) ─
       PruneExpired ->
-        validate_prune_expired(
-          input_datum, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx,
-        )
+        validate_prune_expired(input_datum, current_epoch, own_ref, params, tx)
 
       // ── BurnBatch — datum-consume (D1, no token, no mint) ──
       // Consuming MAGIC = subtracting from magic_batches[].current_amount in
-      // the vault datum. MAGIC never leaves the vault as a token. Auth is
-      // owner-OR-consume-delegate (paymaster). The price/`required` match
-      // (Σburns == required) is enforced by the ConsumeMAGIC validator in the
-      // co-spend tx; the vault enforces the safe datum mutation + value lock.
+      // the vault datum. MAGIC never leaves the vault as a token. The
+      // price/`required` match (Σburns == required) is enforced by the
+      // ConsumeMAGIC validator in the co-spend tx; the vault enforces the safe
+      // datum mutation + value lock.
       BurnBatch { burns } ->
-        validate_burn_batch(
-          input_datum, burns, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx,
-        )
+        validate_burn_batch(input_datum, burns, current_epoch, own_ref, params, tx)
 
       // ── UpdateProfile (full impl — SPEC_V1 §2/§3) ────────
       UpdateProfile { new_profile } ->
         validate_update_profile(
-          input_datum, new_profile, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx,
+          input_datum, new_profile, current_epoch, own_ref, params, tx,
         )
 
       // ── WithdrawLamp (SPEC_V1 §1) ────────────────────────
       WithdrawLamp { amount } ->
-        validate_withdraw_lamp(
-          input_datum, amount, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx,
-        )
+        validate_withdraw_lamp(input_datum, amount, current_epoch, own_ref, params, tx)
 
-      // ── SetDelegate — set/clear consume-delegate (D1) ────
+      // ── SetDelegate — chỉ xoá (Nợ #14) ───────────────────
       SetDelegate { new_delegate } ->
         validate_set_delegate(
-          input_datum, new_delegate, current_epoch, own_ref, lamp_policy_id, lamp_asset_name, tx,
+          input_datum, new_delegate, current_epoch, own_ref, params, tx,
         )
+
+      // ── RefreshCheckpoint (Gen v2.0) ─────────────────────
+      RefreshCheckpoint ->
+        validate_refresh_checkpoint(input_datum, current_epoch, own_ref, params, tx)
     }
   }
 
@@ -263,7 +294,7 @@ fn validate_mint_vault_id(
   expect InlineDatum(datum_data) = vault_out.datum
   expect vd: VaultDatum = datum_data
 
-  // ── CLEAN genesis — constrain ALL 18 fields ─────────────────────────────
+  // ── CLEAN genesis — constrain ALL 20 fields ─────────────────────────────
   // owner: a Credential the creator controls — VerificationKey(pkh) ký, hoặc
   // Script(h) có mục rút trong tx (owner_auth). No squatting a victim's credential,
   // and the creator can actually spend the result.
@@ -298,21 +329,20 @@ fn validate_mint_vault_id(
   }
 
   // Every other ledger empty/zeroed.
-  expect vd.vacuum_orders == []
+  // Gen v2.0: chưa ghim két Wakeme nào. Link chỉ đặt được ở nhánh chủ ký, SUY RA
+  // từ reference input — một két sinh ra đã mang link bịa sẽ khiến mọi lượt làm
+  // mới đòi một két Wakeme mà nó không có quyền đòi.
+  expect vd.wakeme_link == #""
   expect vd.gen_schedules == []
   expect vd.profile_changed_epoch == 0
   expect vd.pending_profile == None
   expect vd.last_updated_epoch == 0
-  expect vd.delegation_cert == DelegationCertificate {
-    current: [],
-    pending: None,
-    current_effective_epoch: 0,
-    last_changed_epoch: 0,
-  }
-  expect vd.streak_state == StreakState {
-    current_streak: 0,
-    last_active_epoch: 0,
-  }
+  // Gen v2.0: cap chưa tính lần nào. `cap_epoch = 0` < mọi epoch thật ⟹ lượt
+  // spend đầu tiên (trừ WithdrawLamp) BẮT BUỘC làm mới — một `cap_nanogic` bịa
+  // không sống qua được lượt đó, nhưng két Wakeme đọc ô này theo vị trí, nên nó
+  // vẫn phải sạch ngay từ lúc sinh.
+  expect vd.cap_epoch == 0
+  expect vd.cap_nanogic == 0
   expect vd.personal_delegate == None
   expect vd.attribution == VaultAttribution {
     attribution_root: #"",
@@ -326,6 +356,13 @@ fn validate_mint_vault_id(
   // một mốc TƯƠNG LAI chỉ tự khoá mình, nhưng bịa được thì cũng ghim được, và
   // một ô không ai ghim là một ô mở cho hình dạng khác sau này.
   expect vd.instant_unlock_ms == 0
+  // Gen v2.0: cửa sổ 7 ô toàn 0, epoch của ô đầu = 0 (không phải epoch hiện tại):
+  // dịch một cửa sổ toàn 0 sang bất kỳ epoch nào vẫn ra cửa sổ toàn 0, nên hai lựa
+  // chọn cho cùng một trạng thái từ lượt spend đầu tiên — và 0 không bắt giao dịch
+  // genesis mang `validity_range` hữu hạn. Cùng lúc giữ bất biến
+  // `usage_window_epoch == cap_epoch` ngay từ genesis.
+  expect vd.usage_window == empty_window()
+  expect vd.usage_window_epoch == 0
   // profile NOT pinned: it is a user-chosen STRATEGY (Ember/Flame/Lantern), not
   // accumulated state. The type is bounded to 3 valid values and (where
   // UpdateProfile exists) changeable under cooldown, so pinning gives no security
@@ -354,231 +391,158 @@ fn validate_burn_vault_id(policy_id: PolicyId, tx: Transaction) -> Bool {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// validate_instant_gen — §6.3 (LAMP đứng yên, độ lớn theo consumed)
+// validate_instant_gen — Gen v2.0 (gói b2), SPEC §6.1.1–§6.1.4
 //
-// Sequence:
-//   1. structural guards (single vault in/out, owner auth, monotonic epoch)
-//   2. ELIGIBILITY — LAMP must SIT in the vault (min_instant_holding), and it
-//      must be genuinely available (not fully locked). Nothing is transferred.
-//   3. UM reference input (C-UM-6 stale check)
-//   4. BackingBeacon reference input — fail-closed surplus gate
-//   5. grant = min( reward(consumed), cap_surplus(br), 0.5 × pp_schedule )
-//   6. new batch for THIS epoch (decay_window = 1), consumed_credit zeroed
-//   7. A02 field-by-field output datum + LAMP/ADA value lock (I-ACT-7)
+// `claimed_amount` = lượng sinh `m` của lượt này (nanogic). Lượt sinh KHÔNG tiêu LAMP
+// (I-ACT-7): `lamp_*`, `loyalty_holdings` đứng yên. Cổng theo thứ tự trong thân hàm:
+//
+//   IG-1  đúng một input tại script két (C-VAULT-DS-1)
+//   IG-2  chữ ký chủ két
+//   IG-3  thời gian không lùi (`last_updated_epoch`)
+//   IG-4  `m > 0` (không có giao dịch cấp 0)
+//   IG-5  checkpoint làm mới theo `FollowVault` khi `cap_epoch < e` (ρ, két Wakeme,
+//         dịch cửa sổ) + `L_lent` của lượt này (`expected_checkpoint_for_gen`)
+//   IG-6  G2: `lamp_balance + L_lent ≥ min` và `avail + L_lent ≥ min`
+//   IG-7  còn chỗ cho một batch (`live < max_batches_per_vault`)
+//   IG-8  cộng dồn trong epoch ≤ `cap_nanogic` (= `amount_by_lamp` của epoch)
+//   IG-9  cộng dồn trong epoch ≤ `compute_cap_pp(avail) + compute_cap_lent(L_lent)`
+//   IG-10 beacon GreenBack: đúng một, đúng NFT + script, không `depeg`, tươi
+//   IG-11 shard của két (byte 0 tên NFT két mod 16): rút ĐÚNG `m`, còn lại ≥ 0
+//         (⟺ `m ≤ GB_available`)
+//   IG-12 trần mỗi-két-mỗi-epoch: `open.generated + m ≤ gb_vault_share(reset_amount)`
+//   IG-13 datum ra: so NGUYÊN bản ghi (batch mới, chỉ số, epoch, attribution, khoá
+//         Instant, checkpoint + `m` vào vế `generated` ô 0)
+//   IG-14 value: LAMP khớp datum, NFT + ADA + tập token giữ nguyên
+//
+// IG-8 và IG-9 đều CỘNG DỒN (`gen_so_far + m`). SPEC §6.1.4 nói "người dùng xin
+// `m ≤ amount`" và "cộng dồn ≤ compute_cap_pp"; nếu chỉ chặn `m ≤ amount_by_lamp` MỖI
+// LƯỢT thì chia một epoch thành nhiều lượt nhỏ lấy trọn `compute_cap_pp` (≥
+// `amount_by_lamp` vì `ρ ≤ rho_max_q = 4·10⁹` và `usage_factor ≤ Q`), tức `ρ` và
+// `usage_ratio` mất tác dụng. IG-9 KHÔNG thừa: `cap_nanogic` chốt ở lượt làm mới đầu
+// epoch, còn `avail`/`L_lent` có thể hạ sau đó trong cùng epoch (rút LAMP trước lượt
+// sinh đầu tiên, két Wakeme vắng) — IG-9 đọc số HIỆN TẠI.
+//
+// `gen_so_far` = `instant_gen_in_epoch` (SUY RA từ batch, SPEC §6.1.4 "Hình dạng đã
+// hiện thực" (1)). IG-12 đọc vế `generated` của ô 0 như SPEC §6.1.2/§6.1.3 viết; trên
+// két thật hai số bằng nhau (chỉ lượt sinh cộng vào ô 0 `generated`, batch cùng epoch
+// không rời danh sách khi còn sống).
 // ═══════════════════════════════════════════════════════════════
 fn validate_instant_gen(
-  input_datum         : VaultDatum,
-  claimed_amount      : Int,
-  current_epoch       : Int,
-  ms_per_epoch        : Int,
-  own_ref             : OutputReference,
-  lamp_policy_id      : PolicyId,
-  lamp_asset_name     : ByteArray,
-  um_nft_policy       : PolicyId,
-  um_script_hash      : ByteArray,
-  backing_nft_policy  : PolicyId,
-  backing_script_hash : ByteArray,
-  tx                  : Transaction,
+  input_datum    : VaultDatum,
+  claimed_amount : Int,
+  current_epoch  : Int,
+  own_ref        : OutputReference,
+  params         : VaultParams,
+  tx             : Transaction,
 ) -> Bool {
+  let m = claimed_amount
+  let own_input = find_own_input(own_ref, tx.inputs)
+  let vault_addr = own_input.output.address
 
-  // ── C-VAULT-DS-1: exactly one vault input ────────────────
-  // Prevents Double Satisfaction attack (T20, A1). Counted by PAYMENT
-  // CREDENTIAL — see `same_script`. (The old comment here claimed "address match
-  // alone is sufficient because each UTxO has a unique own_ref". That confuses
-  // two things: own_ref is unique, but the ADDRESS is not — the stake half is
-  // unconstrained, so one script hash presents as N addresses.)
-  let vault_addr = find_own_address(own_ref, tx.inputs)
-  let vault_input_count =
-    list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) })
-  expect vault_input_count == 1
-
-  // ── User must sign (C-PC-V1) ─────────────────────────────
+  // IG-1
+  expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
+  // IG-2
   expect owner_authorized(tx, input_datum.owner)
-
-  // ── Lazy profile apply (SPEC_V1 §2/§3) ────────────────────
-  // applied_input drives BOTH the grant computation (PM depends on profile)
-  // AND the A02 output check, so pending clears on the output.
-  let applied_input = apply_pending_profile(input_datum, current_epoch)
-
-  // ── MONOTONIC EPOCH guard (epoch gaming) ──────────────────
-  // Liveness (§4.2 cliff) and the UM/beacon staleness checks all assume time
-  // only moves forward. A backwards epoch would let a caller revive a dead
-  // batch or replay a stale beacon.
+  // IG-3
   expect current_epoch >= input_datum.last_updated_epoch
+  // IG-4 — MUT-GEN-ZERO
+  expect m > 0
 
-  // ── C-INST-1 (ELIGIBILITY): LAMP sits in the vault ───────
-  // §6.3 "nắm LAMP chỉ MỞ TƯ CÁCH". Threshold on the BALANCE, not on any
-  // amount paid — nothing is paid.
-  expect applied_input.lamp_balance >= min_instant_holding
+  let applied = apply_pending_profile(input_datum, current_epoch)
 
-  // ── C-INST-3 (ELIGIBILITY): the LAMP must be unencumbered ─
-  // LAMP fully locked into ScheduleGen contracts does not also buy Instant
-  // eligibility.
-  let avail = l_avail(applied_input.lamp_balance, applied_input.lamp_locked)
-  expect avail >= min_instant_holding
+  // IG-5
+  expect Script(own_hash) = own_input.output.address.payment_credential
+  let own_name = single_nft_name(own_input.output.value, own_hash)
+  let (cp, lent) =
+    expected_checkpoint_for_gen(
+      applied, tx.reference_inputs, current_epoch, own_hash, own_name, params,
+    )
 
-  // ── C-INST-7: |live batches| + 1 ≤ 32 ────────────────────
-  let live_batches = prune_expired(applied_input.magic_batches, current_epoch)
+  // IG-6 — G2 tính cả LAMP-mượn (hai vế; `lamp_locked` ghim 0 ở genesis và đứng yên
+  // mọi nhánh, nên trên két thật hai vế trùng — giữ cả hai như bản trước).
+  expect applied.lamp_balance + lent >= min_instant_holding
+  let avail = l_avail(applied.lamp_balance, applied.lamp_locked)
+  expect avail + lent >= min_instant_holding
+
+  // IG-7
+  let live_batches = prune_expired(applied.magic_batches, current_epoch)
   expect list.length(live_batches) < max_batches_per_vault
 
-  // ── Get UM from reference input (C-UM-6) ─────────────────
-  let um_datum = find_um_datum(tx.reference_inputs, um_nft_policy, um_script_hash)
-  expect validate_um_range(um_datum)
-  expect validate_um_history_length(um_datum)
-  let um_q = get_um_for_instant(um_datum, current_epoch)
-
-  // ── BackingBeacon reference input (§6.3) — FAIL-CLOSED ───
-  // No beacon / wrong address / no NFT ⟹ this lookup fails ⟹ the tx is
-  // invalid ⟹ Gen is shut. There is deliberately NO default `br`.
-  let backing =
-    find_backing_datum(tx.reference_inputs, backing_nft_policy, backing_script_hash)
-
-  // Phanh 1: depeg → cap = 0. Reject outright rather than compute a 0 grant,
-  // so the failure reason is unambiguous on-chain.
-  expect !backing.depeg
-
-  // Phanh 2: stale beacon is treated as ABSENT.
-  let backing_age = current_epoch - backing.last_updated_epoch
-  expect backing_age >= 0 && backing_age <= max_backing_stale
-
-  // ── §6.3 grant = min(reward, cap_surplus, 0.5 × pp) ──────
-  let pm_q = get_pm_q(applied_input.profile)
-  let consumed = applied_input.activity_state.consumed_credit
-  // `avail` is the same L_avail computed for C-INST-3 above — the third brake
-  // is now keyed to the LAMP this vault actually holds free, not to its
-  // ScheduleGen contracts. See math.ak `compute_cap_pp` for why that changed.
-  let grant =
-    compute_instant_grant(
-      consumed, um_q, pm_q,
-      backing.br_q, backing.magic_supply,
-      avail,
-    )
-  expect grant > 0                       // no-op tx rejected
-  expect claimed_amount == grant         // redeemer must state the exact grant
-
-  // ── C-INST-8 (`CC-GEN-LOCK-FIELD`): TRẦN THEO EPOCH, không theo lượt ─────────
-  //
-  // `compute_instant_grant` đã kẹp MỘT lượt sinh dưới `cap_pp(avail)`. Cổng này
-  // kẹp TỔNG của cả epoch dưới cùng cái trần đó. Không có nó, vòng
-  // `InstantGen → BurnBatch → InstantGen` lặp trong cùng một epoch — mỗi vòng lấy
-  // trọn trần một lần nữa trên cùng số LAMP — và trần duy nhất còn lại phía trên
-  // là phần thặng dư GreenBack chia theo két, tức cỡ 120 vòng mỗi epoch: vốn cần
-  // để đạt cùng một lượng MAGIC giảm đi 120 lần.
-  //
-  // 🔴 Cổng này MỘT MÌNH không đủ, và bản trước quy sai thủ phạm. Nó viết rằng
-  // `prune_expired` nhả lại suất; thủ phạm thật là `apply_burns`, hàm trả `None`
-  // khi số dư về 0 ⟹ batch biến mất ⟹ bộ đếm về 0 ngay trong epoch ⟹ cổng này
-  // qua. Đã vá tại `apply_burns` (batch đốt sạch ở lại với `current_amount: 0`).
-  // Hai thứ phải đi cùng nhau: cổng đếm, và bất biến "không nhánh nào xoá một
-  // batch còn sống". Gỡ một trong hai là mở lại vòng lặp.
-  //
-  // 🔴 Và một phanh nữa đang chặn ca đó hôm nay là phanh TÌNH CỜ, không phải cổng
-  // này: nhánh sinh đặt `consumed_credit: 0` ở đầu ra, nên một vòng KHÔNG đốt có
-  // `grant = 0`. Phanh ấy không chặn vòng CÓ đốt (`BurnBatch` cộng lại
-  // `consumed_credit`), và nó biến mất hẳn đúng lúc `INV-MAGIC-CITIZEN` vào mã.
-  // Nên cổng này phải đứng TRƯỚC thay đổi ấy, không phải sau.
-  //
-  // Bộ đếm suy ra từ chính `magic_batches` — không có trường datum nào giữ nó. Bốn
-  // điều kiện làm phép suy đứng vững nằm ở `decay.ak ▸ instant_gen_in_epoch`.
+  // IG-8, IG-9 — MUT-GEN-CUMUL
   let gen_so_far = instant_gen_in_epoch(live_batches, current_epoch)
-  expect gen_so_far + grant <= compute_cap_pp(avail)
+  expect gen_so_far + m <= cp.cap_nanogic
+  expect gen_so_far + m <= compute_cap_pp(avail) + compute_cap_lent(lent)
 
-  // ── New batch for THIS epoch (§4.2 cliff) ────────────────
-  let new_batch_id = compute_batch_id(own_ref, applied_input.next_batch_index)
+  // IG-10
+  expect
+    greenback_open(
+      tx.reference_inputs, params.gb_beacon_nft_policy,
+      params.gb_beacon_script_hash, current_epoch,
+    )
+
+  // IG-11 — MUT-GEN-SHARD
+  let (gb_available, reset_amount, remaining_out) =
+    shard_draw(
+      tx.inputs, tx.outputs, params.gb_shard_policy_id, vault_shard_id(applied.owner),
+    )
+  expect remaining_out == gb_available - m
+  expect remaining_out >= 0
+
+  // IG-12 — MUT-GEN-SHARE
+  expect [open, ..] = cp.usage_window
+  expect open.generated + m <= gb_vault_share(reset_amount)
+
+  // IG-13
   let new_batch =
     MagicBatch {
-      batch_id:            new_batch_id,
-      source:              Instant,
-      created_epoch:       current_epoch,
-      initial_amount:      grant,
-      current_amount:      grant,
-      decay_window:        magic_decay_window,  // 1 — dies next epoch
-      profile_at_creation: None,                // C-DECAY-4: None for Instant
-      contract_id:         None,
-      halved:              False,               // dead field, always False
+      batch_id: compute_batch_id(own_ref, applied.next_batch_index),
+      source: Instant,
+      created_epoch: current_epoch,
+      initial_amount: m,
+      current_amount: m,
+      decay_window: magic_decay_window,
+      profile_at_creation: None,
+      contract_id: None,
+      halved: False,
     }
-
-  let expected_batches = list.concat(live_batches, [new_batch])
-
-  // ── A02: Field-by-field output datum validation ───────────
-  let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
-
-  expect output_datum.owner == applied_input.owner
-
-  // ── I-ACT-7: LAMP DOES NOT MOVE ──────────────────────────
-  // Every LAMP-bearing field is byte-identical to the input. This is the whole
-  // point of PHA 2: generating MAGIC must not displace a single oildrop.
-  expect output_datum.lamp_balance == applied_input.lamp_balance
-  expect output_datum.lamp_locked == applied_input.lamp_locked
-  expect output_datum.loyalty_holdings == applied_input.loyalty_holdings
-
-  // Unchanged bookkeeping
-  expect output_datum.vacuum_orders == applied_input.vacuum_orders
-  expect output_datum.gen_schedules == applied_input.gen_schedules
-  expect output_datum.profile == applied_input.profile
-  expect output_datum.profile_changed_epoch == applied_input.profile_changed_epoch
-  expect output_datum.pending_profile == applied_input.pending_profile
-  expect output_datum.delegation_cert == applied_input.delegation_cert
-  expect output_datum.streak_state == applied_input.streak_state
-  expect output_datum.personal_delegate == applied_input.personal_delegate
-
-  // C-VAULT-10 / C-VAULT-8 still hold on the (unchanged) LAMP fields.
-  expect sum_holdings(output_datum.loyalty_holdings) == output_datum.lamp_balance
-  expect validate_lamp_locked(output_datum.lamp_locked, output_datum.lamp_balance)
-  expect list.length(output_datum.loyalty_holdings) <= max_loyalty_holdings
-
-  // Changed: magic_batches (dead pruned + new batch appended)
-  expect output_datum.magic_batches == expected_batches
-  expect list.length(output_datum.magic_batches) <= max_batches_per_vault
-
-  // Changed: next_batch_index increments by exactly 1 (C-VAULT-3)
-  expect output_datum.next_batch_index == applied_input.next_batch_index + 1
-
-  // Changed: last_updated_epoch = current epoch
-  expect output_datum.last_updated_epoch == current_epoch
-
-  // ── INV-CASHBACK-BOUND: the credit is SPENT, not reused ───
-  // The whole consumed_credit is converted in one shot and zeroed, so the same
-  // consumption can never be claimed twice.
-  expect output_datum.activity_state ==
-    ActivityState { ..applied_input.activity_state, consumed_credit: 0 }
-
-  // Attribution hash-chain updated (C-ATT-1, C-ATT-2)
-  expect output_datum.attribution.total_events == applied_input.attribution.total_events + 1
-  expect output_datum.attribution.last_event_epoch == current_epoch
-
-  // ── C-INST-9: đặt khoá LAMP — đúng MỘT epoch kể từ bây giờ ──────────────────
-  //
-  // Neo vào cận TRÊN của `validity_range` (xem `types.ak` ▸ `instant_unlock_ms`):
-  // người gọi chỉ đẩy nó về phía sau được, nên mốc ngắn nhất họ đạt tới đúng bằng
-  // một epoch kể từ slot thật của giao dịch.
-  //
-  // `max` với mốc cũ: một lượt sinh thứ hai không được phép LÀM NGẮN khoá đang có.
-  // Không có `max` thì hai lượt sinh cách nhau vài giây — lượt sau với `grant` bé
-  // xíu — ghi đè mốc cũ bằng một mốc gần như trùng nó, và ở biên thì ghi đè bằng
-  // một mốc SỚM hơn. Cổng nào cũng qua, và khoá ngắn lại mà không dòng nào sai.
-  let unlock_from_now = get_validity_upper_ms(tx) + ms_per_epoch
+  // Khoá Instant (`CC-GEN-L-TIMING`): `max(mốc cũ, cận-trên-validity + ms_per_epoch)`.
+  let unlock_from_now = get_validity_upper_ms(tx) + params.ms_per_epoch
   let new_unlock_ms =
-    if applied_input.instant_unlock_ms > unlock_from_now {
-      applied_input.instant_unlock_ms
+    if applied.instant_unlock_ms > unlock_from_now {
+      applied.instant_unlock_ms
     } else {
       unlock_from_now
     }
-  expect output_datum.instant_unlock_ms == new_unlock_ms
+  let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
+  expect
+    output_datum == VaultDatum {
+      ..applied,
+      magic_batches: list.concat(live_batches, [new_batch]),
+      next_batch_index: applied.next_batch_index + 1,
+      last_updated_epoch: current_epoch,
+      attribution: VaultAttribution {
+        attribution_root: output_datum.attribution.attribution_root,
+        last_event_epoch: current_epoch,
+        total_events: applied.attribution.total_events + 1,
+      },
+      instant_unlock_ms: new_unlock_ms,
+      wakeme_link: cp.wakeme_link,
+      cap_epoch: cp.cap_epoch,
+      cap_nanogic: cp.cap_nanogic,
+      // MUT-GEN-GENERATED
+      usage_window: window_add(cp.usage_window, m, 0),
+      usage_window_epoch: cp.usage_window_epoch,
+    }
 
-  // ── VALUE PRESERVATION (bind datum to real value) ─────────
-  // The datum claims the LAMP balance is unchanged; bind that claim to the
-  // LAMP actually sitting in the vault output, otherwise LAMP could still be
-  // drained while the datum lies.
-  let inst_vault_output = find_vault_output(tx.outputs, vault_addr)
-  let inst_vault_lamp =
-    assets.quantity_of(inst_vault_output.value, lamp_policy_id, lamp_asset_name)
-  expect inst_vault_lamp == output_datum.lamp_balance
-
-  // ── ADA / token-set preservation ──────────────────────────
-  expect validate_vault_value(find_own_input(own_ref, tx.inputs), inst_vault_output)
-
-  True
+  // IG-14
+  let vault_output = find_vault_output(tx.outputs, vault_addr)
+  expect
+    assets.quantity_of(
+      vault_output.value,
+      params.lamp_policy_id,
+      params.lamp_asset_name,
+    ) == output_datum.lamp_balance
+  validate_vault_value(own_input, vault_output)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -597,10 +561,11 @@ fn validate_prune_expired(
   input_datum    : VaultDatum,
   current_epoch  : Int,
   own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  lamp_asset_name : ByteArray,
+  params         : VaultParams,
   tx             : Transaction,
 ) -> Bool {
+  let lamp_policy_id = params.lamp_policy_id
+  let lamp_asset_name = params.lamp_asset_name
 
   // ── P-1: exactly one vault input (C-VAULT-DS-1) ─────────────
   let vault_addr = find_own_address(own_ref, tx.inputs)
@@ -636,14 +601,11 @@ fn validate_prune_expired(
 
   // Remaining fields UNCHANGED — notably activity_state: a prune must NOT
   // touch consumed_credit (it would otherwise be a free reward/theft lever).
-  expect output_datum.vacuum_orders == applied_input.vacuum_orders
   expect output_datum.gen_schedules == applied_input.gen_schedules
   expect output_datum.profile == applied_input.profile
   expect output_datum.profile_changed_epoch == applied_input.profile_changed_epoch
   expect output_datum.pending_profile == applied_input.pending_profile
-  expect output_datum.delegation_cert == applied_input.delegation_cert
   expect output_datum.activity_state == applied_input.activity_state
-  expect output_datum.streak_state == applied_input.streak_state
   expect output_datum.personal_delegate == applied_input.personal_delegate
   expect output_datum.attribution == applied_input.attribution
 
@@ -668,6 +630,17 @@ fn validate_prune_expired(
   // stuffs dust tokens to brick the UTxO.
   expect validate_vault_value(find_own_input(own_ref, tx.inputs), prune_vault_output)
 
+  // ── Gen v2.0 checkpoint — nhánh KHÔNG chữ ký: `KeepLink` ──────────────────
+  // Làm mới khi `cap_epoch < e` như mọi nhánh; KHÔNG đổi được `wakeme_link`
+  // (luật 1). Link đặt ⟹ bắt buộc có đúng két đó (luật 2).
+  let (own_hash, own_name) = own_vault_identity(own_ref, tx.inputs)
+  let cp =
+    expected_checkpoint(
+      applied_input, tx.reference_inputs, current_epoch, KeepLink, False,
+      own_hash, own_name, params,
+    )
+  expect checkpoint_written(output_datum, cp)
+
   True
 }
 
@@ -681,15 +654,6 @@ fn compute_batch_id(own_ref: OutputReference, index: Int) -> ByteArray {
   let ref_bytes = serialize_output_reference(own_ref)
   let idx_bytes = encode_int(index)
   crypto.blake2b_256(bytearray.concat(ref_bytes, idx_bytes))
-}
-
-/// Get PM_Q for a given profile (§3.4)
-fn get_pm_q(profile: ActivityProfile) -> Int {
-  when profile is {
-    Ember   -> pm_q_ember
-    Flame   -> pm_q_flame
-    Lantern -> pm_q_lantern
-  }
 }
 
 /// Derive current epoch from transaction validity range.
@@ -786,9 +750,22 @@ fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
   let nft_name = single_nft_name(vault_input.output.value, vault_id_policy)
   expect assets.quantity_of(vault_output.value, vault_id_policy, nft_name) == 1
 
-  expect assets.lovelace_of(vault_output.value) >= assets.lovelace_of(vault_input.output.value)
+  expect lovelace_not_decreased(vault_input, vault_output)
   expect list.length(assets.policies(vault_output.value)) <= 3
   True
+}
+
+/// lovelace(out) >= lovelace(in) — the ONE ADA rule shared by every spend branch.
+///
+/// Why `>=` and never `==`: a branch that rewrites the datum can make the
+/// continuing output LONGER than the input (checkpoint fields, a 32-byte
+/// `wakeme_link`, larger CBOR ints), and the ledger's min-ADA grows with output
+/// size. An exact-lovelace pin then leaves a vault opened at bare min-ADA with no
+/// valid transition at all — measured on the Lucid emulator 2026-09-30:
+/// a vault at 1_978_290 lovelace could not `RefreshCheckpoint`. `>=` lets the
+/// caller top up ADA; the vault's ADA still never shrinks.
+fn lovelace_not_decreased(vault_input: Input, vault_output: Output) -> Bool {
+  assets.lovelace_of(vault_output.value) >= assets.lovelace_of(vault_input.output.value)
 }
 
 /// The single asset name held under `policy` in `value` (qty must be 1).
@@ -798,60 +775,6 @@ fn single_nft_name(value: Value, policy: PolicyId) -> ByteArray {
   expect [Pair(name, qty)] = assets.tokens(value, policy) |> dict.to_pairs
   expect qty == 1
   name
-}
-
-/// Find the UM datum from reference inputs.
-///
-/// MAINNET-BLOCK defense-in-depth (b): the ref input must satisfy BOTH
-///   1. carry the UM NFT (um_nft_policy, "UMD"), AND
-///   2. sit at the canonical UM script address (payment credential ==
-///      Script(um_script_hash)).
-/// The UM NFT policy is not a guaranteed global singleton, so condition (1)
-/// alone is forgeable. Pinning the script address rejects any forged UM UTxO
-/// living at an attacker-controlled address even if the NFT is duplicated.
-fn find_um_datum(
-  ref_inputs     : List<Input>,
-  um_nft_policy  : PolicyId,
-  um_script_hash : ByteArray,
-) -> UMDatum {
-  expect Some(um_input) = list.find(ref_inputs, fn(i) {
-    let has_nft =
-      assets.quantity_of(i.output.value, um_nft_policy, #"554d44") > 0  // "UMD"
-    let at_um_script =
-      i.output.address.payment_credential == Script(um_script_hash)
-    has_nft && at_um_script
-  })
-  expect InlineDatum(um_data) = um_input.output.datum
-  expect um: UMDatum = um_data
-  um
-}
-
-/// Find the BackingBeacon datum from reference inputs (§6.3).  [CẦN XÁC NHẬN]
-///
-/// Same two-layer pinning as the UM beacon: the ref input must BOTH carry the
-/// beacon NFT (`backing_nft_policy`, asset name "BRQ") AND sit at the canonical
-/// beacon script address. An NFT policy is not a guaranteed global singleton, so
-/// the address pin is what rejects a forged beacon at an attacker address.
-///
-/// FAIL-CLOSED: no matching reference input ⟹ this `expect` fails ⟹ the whole
-/// InstantGen tx is invalid. That is the intended behaviour while CARP has not
-/// shipped the beacon (deploy the vault with an all-zero policy/hash pair): the
-/// Gen door stays shut instead of running on an invented `br`.
-fn find_backing_datum(
-  ref_inputs          : List<Input>,
-  backing_nft_policy  : PolicyId,
-  backing_script_hash : ByteArray,
-) -> BackingBeaconDatum {
-  expect Some(beacon_input) = list.find(ref_inputs, fn(i) {
-    let has_nft =
-      assets.quantity_of(i.output.value, backing_nft_policy, #"425251") > 0  // "BRQ"
-    let at_beacon_script =
-      i.output.address.payment_credential == Script(backing_script_hash)
-    has_nft && at_beacon_script
-  })
-  expect InlineDatum(beacon_data) = beacon_input.output.datum
-  expect beacon: BackingBeaconDatum = beacon_data
-  beacon
 }
 
 /// Two addresses belong to the same SCRIPT iff their payment credentials match.
@@ -902,10 +825,11 @@ fn validate_withdraw_lamp(
   amount         : Int,
   _current_epoch : Int,
   own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  lamp_asset_name : ByteArray,
+  params         : VaultParams,
   tx             : Transaction,
 ) -> Bool {
+  let lamp_policy_id = params.lamp_policy_id
+  let lamp_asset_name = params.lamp_asset_name
 
   // W-1: amount > 0
   expect amount > 0
@@ -957,14 +881,11 @@ fn validate_withdraw_lamp(
   expect output_datum.loyalty_holdings == new_holdings
   expect output_datum.magic_batches == input_datum.magic_batches
   expect output_datum.next_batch_index == input_datum.next_batch_index
-  expect output_datum.vacuum_orders == input_datum.vacuum_orders
   expect output_datum.gen_schedules == input_datum.gen_schedules
   expect output_datum.profile == input_datum.profile
   expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
   expect output_datum.pending_profile == input_datum.pending_profile
-  expect output_datum.delegation_cert == input_datum.delegation_cert
   expect output_datum.activity_state == input_datum.activity_state
-  expect output_datum.streak_state == input_datum.streak_state
   expect output_datum.personal_delegate == input_datum.personal_delegate
   expect output_datum.attribution == input_datum.attribution
   // Khoá Instant đông cứng — rút KHÔNG được đặt lại mốc (xem `validate_prune_expired`).
@@ -989,6 +910,11 @@ fn validate_withdraw_lamp(
   // Owner-signed (self-harm for ADA), but the policy-set ≤ 2 bound still blocks
   // dust-stuffing that would permanently brick the vault.
   expect validate_vault_value(find_own_input(own_ref, tx.inputs), vault_output)
+
+  // ── Gen v2.0: checkpoint GHIM NGUYÊN, không đọc reference input nào ─────────
+  // (luật 4, SPEC §6.1.5): rút LAMP không được phụ thuộc beacon ρ hay két Wakeme.
+  // Một beacon chết hay một két Wakeme đã đóng KHÔNG được khoá LAMP của chủ.
+  expect checkpoint_written(output_datum, current_checkpoint(input_datum))
 
   True
 }
@@ -1023,10 +949,11 @@ fn validate_burn_batch(
   burns          : List<(ByteArray, Int)>,
   current_epoch  : Int,
   own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  lamp_asset_name : ByteArray,
+  params         : VaultParams,
   tx             : Transaction,
 ) -> Bool {
+  let lamp_policy_id = params.lamp_policy_id
+  let lamp_asset_name = params.lamp_asset_name
 
   // ── DS-1: exactly one vault input (no double-satisfaction) ──
   let vault_addr = find_own_address(own_ref, tx.inputs)
@@ -1076,18 +1003,15 @@ fn validate_burn_batch(
   expect output_datum.loyalty_holdings == applied.loyalty_holdings
   expect output_datum.magic_batches == expected_batches          // the only MAGIC change
   expect output_datum.next_batch_index == applied.next_batch_index
-  expect output_datum.vacuum_orders == applied.vacuum_orders
   expect output_datum.gen_schedules == applied.gen_schedules
   expect output_datum.profile == applied.profile
   expect output_datum.profile_changed_epoch == applied.profile_changed_epoch
   expect output_datum.pending_profile == applied.pending_profile
-  expect output_datum.delegation_cert == applied.delegation_cert
   expect output_datum.activity_state ==
     ActivityState {
       ..applied.activity_state,
       consumed_credit: applied.activity_state.consumed_credit + total_burned,
     }
-  expect output_datum.streak_state == applied.streak_state
   expect output_datum.personal_delegate == applied.personal_delegate  // delegate unchanged here
   expect output_datum.last_updated_epoch == current_epoch
   expect output_datum.attribution.total_events == applied.attribution.total_events + 1
@@ -1109,6 +1033,24 @@ fn validate_burn_batch(
   expect validate_vault_value(find_own_input(own_ref, tx.inputs), vault_output)
 
   expect list.length(output_datum.magic_batches) <= max_batches_per_vault
+  // ── Gen v2.0 checkpoint — chủ ký: `FollowVault` ─────────────────────────
+  // Làm mới (nếu `cap_epoch < e`) TRƯỚC, rồi cộng `total_burned` vào vế
+  // `consumed` của ô 0 — ô 0 là epoch `e` sau khi dịch.
+  let (own_hash, own_name) = own_vault_identity(own_ref, tx.inputs)
+  let cp =
+    expected_checkpoint(
+      applied, tx.reference_inputs, current_epoch, FollowVault, False, own_hash,
+      own_name, params,
+    )
+  expect
+    checkpoint_written(
+      output_datum,
+      Checkpoint {
+        ..cp,
+        usage_window: window_add(cp.usage_window, 0, total_burned),
+      },
+    )
+
   True
 }
 
@@ -1187,10 +1129,11 @@ fn validate_set_delegate(
   new_delegate   : Option<ByteArray>,
   current_epoch  : Int,
   own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  lamp_asset_name : ByteArray,
+  params         : VaultParams,
   tx             : Transaction,
 ) -> Bool {
+  let lamp_policy_id = params.lamp_policy_id
+  let lamp_asset_name = params.lamp_asset_name
 
   let vault_addr = find_own_address(own_ref, tx.inputs)
   expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
@@ -1224,14 +1167,11 @@ fn validate_set_delegate(
   expect output_datum.loyalty_holdings == input_datum.loyalty_holdings
   expect output_datum.magic_batches == input_datum.magic_batches
   expect output_datum.next_batch_index == input_datum.next_batch_index
-  expect output_datum.vacuum_orders == input_datum.vacuum_orders
   expect output_datum.gen_schedules == input_datum.gen_schedules
   expect output_datum.profile == input_datum.profile
   expect output_datum.profile_changed_epoch == input_datum.profile_changed_epoch
   expect output_datum.pending_profile == input_datum.pending_profile
-  expect output_datum.delegation_cert == input_datum.delegation_cert
   expect output_datum.activity_state == input_datum.activity_state
-  expect output_datum.streak_state == input_datum.streak_state
   expect output_datum.attribution == input_datum.attribution
   // Khoá Instant đông cứng ở nhánh uỷ nhiệm (xem `validate_prune_expired`).
   expect output_datum.instant_unlock_ms == input_datum.instant_unlock_ms
@@ -1249,6 +1189,15 @@ fn validate_set_delegate(
   // ── ADA / token-set preservation (MAINNET-BLOCK) ──────────
   expect validate_vault_value(find_own_input(own_ref, tx.inputs), vault_output)
 
+  // ── Gen v2.0 checkpoint — chủ ký: `FollowVault` ─────────────────────────
+  let (own_hash, own_name) = own_vault_identity(own_ref, tx.inputs)
+  let cp =
+    expected_checkpoint(
+      input_datum, tx.reference_inputs, current_epoch, FollowVault, False,
+      own_hash, own_name, params,
+    )
+  expect checkpoint_written(output_datum, cp)
+
   True
 }
 
@@ -1260,10 +1209,11 @@ fn validate_update_profile(
   new_profile    : ActivityProfile,
   current_epoch  : Int,
   own_ref        : OutputReference,
-  lamp_policy_id : PolicyId,
-  lamp_asset_name : ByteArray,
+  params         : VaultParams,
   tx             : Transaction,
 ) -> Bool {
+  let lamp_policy_id = params.lamp_policy_id
+  let lamp_asset_name = params.lamp_asset_name
 
   let vault_addr = find_own_address(own_ref, tx.inputs)
   expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
@@ -1286,11 +1236,8 @@ fn validate_update_profile(
   expect output_datum.loyalty_holdings == input_datum.loyalty_holdings
   expect output_datum.magic_batches == input_datum.magic_batches         // T4 immutable
   expect output_datum.next_batch_index == input_datum.next_batch_index
-  expect output_datum.vacuum_orders == input_datum.vacuum_orders
   expect output_datum.gen_schedules == input_datum.gen_schedules
-  expect output_datum.delegation_cert == input_datum.delegation_cert
   expect output_datum.activity_state == input_datum.activity_state
-  expect output_datum.streak_state == input_datum.streak_state
   expect output_datum.personal_delegate == input_datum.personal_delegate
   expect output_datum.attribution == input_datum.attribution
   // Khoá Instant đông cứng ở nhánh đổi hồ sơ (xem `validate_prune_expired`).
@@ -1319,12 +1266,86 @@ fn validate_update_profile(
   expect vault_lamp_qty == input_datum.lamp_balance
   expect validate_vault_value(find_own_input(own_ref, tx.inputs), vault_output)
 
+  // ── Gen v2.0 checkpoint — chủ ký: `FollowVault` ─────────────────────────
+  let (own_hash, own_name) = own_vault_identity(own_ref, tx.inputs)
+  let cp =
+    expected_checkpoint(
+      input_datum, tx.reference_inputs, current_epoch, FollowVault, False,
+      own_hash, own_name, params,
+    )
+  expect checkpoint_written(output_datum, cp)
+
   True
 }
 
 // NOTE: the former `treasury_receives_lamp` helper is GONE. Under I-ACT-7 no
 // handler moves LAMP out of the vault, so there is no Treasury leg and no
 // `treasury_addr` apply-parameter left in this validator.
+
+// ═══════════════════════════════════════════════════════════════
+// validate_refresh_checkpoint — Gen v2.0 (constr 6), chủ ký
+//
+// CHỈ ghi năm ô checkpoint (`FollowVaultOrUnlink`, luôn làm mới kể cả cùng
+// epoch). Mọi trường khác ghim bằng một phép so NGUYÊN datum; value ghim
+// nguyên khối TRỪ lovelace (chỉ được tăng — xem `lovelace_not_decreased`). Có két Wakeme ghim két này ⟹ `link := owner_commit`; không có ⟹
+// `link := ""` (cửa thoát khi két Wakeme đã ghim sang két khác hoặc đã đóng).
+// ═══════════════════════════════════════════════════════════════
+fn validate_refresh_checkpoint(
+  input_datum   : VaultDatum,
+  current_epoch : Int,
+  own_ref       : OutputReference,
+  params        : VaultParams,
+  tx            : Transaction,
+) -> Bool {
+  let own_input = find_own_input(own_ref, tx.inputs)
+  let vault_addr = own_input.output.address
+  expect list.count(tx.inputs, fn(i) { same_script(i.output.address, vault_addr) }) == 1
+  expect owner_authorized(tx, input_datum.owner)
+
+  let (own_hash, own_name) = own_vault_identity(own_ref, tx.inputs)
+  let cp =
+    expected_checkpoint(
+      input_datum, tx.reference_inputs, current_epoch, FollowVaultOrUnlink, True,
+      own_hash, own_name, params,
+    )
+
+  let vault_output = find_vault_output(tx.outputs, vault_addr)
+  let output_datum = find_vault_output_datum(tx.outputs, vault_addr)
+  expect
+    output_datum == VaultDatum {
+      ..input_datum,
+      wakeme_link: cp.wakeme_link,
+      cap_epoch: cp.cap_epoch,
+      cap_nanogic: cp.cap_nanogic,
+      usage_window: cp.usage_window,
+      usage_window_epoch: cp.usage_window_epoch,
+    }
+  // Value: mọi thứ NGOÀI lovelace ghim NGUYÊN KHỐI (LAMP, NFT vault-id, không thêm
+  // không bớt tên nào — kể cả tên lạ dưới policy LAMP hay policy vault-id, thứ mà
+  // phép đếm `≤ 3 policy` của `validate_vault_value` không bắt). Lovelace chỉ được
+  // TĂNG (`lovelace_not_decreased`): datum ra dài hơn datum vào ⟹ min-ADA tăng, ghim
+  // lovelace bằng tuyệt đối thì két mở sát min-ADA không làm mới được checkpoint.
+  // Không dùng `validate_vault_value` ở đây vì nó LỎNG hơn phép so dưới về tập token.
+  expect
+    assets.without_lovelace(vault_output.value) == assets.without_lovelace(
+      own_input.output.value,
+    )
+  expect lovelace_not_decreased(own_input, vault_output)
+  True
+}
+
+/// Danh tính két đang tiêu: (hash script = policy NFT vault-id, tên NFT duy nhất).
+/// `single_nft_name` fail nếu không đúng 1 tên số lượng 1 (vault bịa chết ở đây).
+fn own_vault_identity(own_ref: OutputReference, inputs: List<Input>) -> (ScriptHash, ByteArray) {
+  let own_input = find_own_input(own_ref, inputs)
+  expect Script(own_hash) = own_input.output.address.payment_credential
+  (own_hash, single_nft_name(own_input.output.value, own_hash))
+}
+
+/// Không input nào có payment credential `Script(h)`.
+fn no_input_at(inputs: List<Input>, h: ScriptHash) -> Bool {
+  !list.any(inputs, fn(i) { i.output.address.payment_credential == Script(h) })
+}
 
 /// Encode an OutputReference to bytes for batch_id computation.
 /// Must match the off-chain SDK encoding (P8: determinism).
@@ -1381,25 +1402,24 @@ fn t_datum(balance: Int, locked: Int, holdings: List<LoyaltyHolding>) -> VaultDa
     loyalty_holdings: holdings,
     magic_batches: [],
     next_batch_index: 0,
-    vacuum_orders: [],
+    wakeme_link: #"",
     gen_schedules: [],
     profile: Flame,
     profile_changed_epoch: 0,
     pending_profile: None,
     last_updated_epoch: 0,
-    delegation_cert: DelegationCertificate {
-      current: [], pending: None,
-      current_effective_epoch: 0, last_changed_epoch: 0,
-    },
+    cap_epoch: 0,
     activity_state: ActivityState {
       recent_burn_epochs: [], consumed_credit: 0,
     },
-    streak_state: StreakState { current_streak: 0, last_active_epoch: 0 },
+    cap_nanogic: 0,
     personal_delegate: None,
     attribution: VaultAttribution {
       attribution_root: #"", last_event_epoch: 0, total_events: 0,
     },
     instant_unlock_ms: 0,
+    usage_window: empty_window(),
+    usage_window_epoch: 0,
   }
 }
 
@@ -1434,8 +1454,6 @@ const t_hi_ms: Int = 10_000_001
 /// Một epoch Preprod/Mainnet tính bằng mili-giây (432.000 slot × 1000).
 const t_ms_per_epoch: Int = 432_000_000
 
-/// Mốc mở khoá mà một lượt sinh trong khung giờ trên phải ghi ra.
-const t_unlock_after_gen: Int = t_hi_ms + t_ms_per_epoch
 
 fn t_tx(ins: List<Input>, outs: List<Output>, signers: List<ByteArray>) -> Transaction {
   Transaction {
@@ -1453,27 +1471,27 @@ test w_positive_partial() {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 test w_amount_zero() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(din, 100)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 0, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 0, 0, t_own_ref(), t_params(), tx)
 }
 
 test w_over_avail() fail {
   let din = t_datum(100, 100, [t_holding(100, 5, True)])
   let dout = t_datum(95, 100, [t_holding(95, 5, True)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 test w_no_owner_sig() fail {
   let din = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 test w_phantom_second_output() fail {
@@ -1485,7 +1503,7 @@ test w_phantom_second_output() fail {
       [t_vault_output(dout, 95), t_vault_output(dout, 95)],
       [t_owner_pkh],
     )
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 // ── Nợ #31: double-satisfaction qua stake credential ──────────
@@ -1510,7 +1528,7 @@ test ds_phantom_output_under_stake_cred_rejected() fail {
       [t_vault_output(dout, 95), t_vault_output_staked(dout, 95)],
       [t_owner_pkh],
     )
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 // Counting loosened to payment credential; IDENTITY did not.
@@ -1518,7 +1536,7 @@ test ds_continuing_output_must_keep_stake_cred() fail {
   let din  = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output_staked(dout, 95)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 // ── Khoá LAMP sau một lượt sinh (`CC-GEN-L-TIMING`, W-3b) ─────
@@ -1540,14 +1558,14 @@ test w_locked_after_gen_rejected() fail {
   let din  = t_locked_datum(100, t_hi_ms + 1)
   let dout = t_locked_datum(95, t_hi_ms + 1)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 test w_after_unlock_ok() {
   let din  = t_locked_datum(100, t_lo_ms - 1)
   let dout = t_locked_datum(95, t_lo_ms - 1)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 // Rút KHÔNG được đặt lại mốc: đầu ra khai `0` trong khi đầu vào mang một mốc
@@ -1558,7 +1576,7 @@ test w_clears_lock_rejected() fail {
   let din  = t_locked_datum(100, t_lo_ms - 1)
   let dout = t_locked_datum(95, 0)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 test w_advance_last_updated_rejected() fail {
@@ -1569,7 +1587,7 @@ test w_advance_last_updated_rejected() fail {
       last_updated_epoch: 5,
     }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 // ── UpdateProfile ─────────────────────────────────────────────
@@ -1584,47 +1602,47 @@ fn up_output(din: VaultDatum, new_profile: ActivityProfile, current: Int) -> Vau
 }
 
 test up_positive() {
-  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let din = t_datum_e10()
   let dout = up_output(din, Ember, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_update_profile(din, Ember, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_update_profile(din, Ember, 10, t_own_ref(), t_params(), tx)
 }
 
 // Đổi hồ sơ KHÔNG mở được khoá LAMP — cửa thứ tư của cùng một đường rửa khoá.
 test up_neg_clears_lock() fail {
   let din =
     VaultDatum {
-      ..t_datum(100, 0, [t_holding(100, 5, False)]),
+      ..t_datum_e10(),
       instant_unlock_ms: 9_000_000,
     }
   let dout = VaultDatum { ..up_output(din, Ember, 10), instant_unlock_ms: 0 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_update_profile(din, Ember, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_update_profile(din, Ember, 10, t_own_ref(), t_params(), tx)
 }
 
 test up_cooldown_not_met() fail {
   let din =
     VaultDatum {
-      ..t_datum(100, 0, [t_holding(100, 5, False)]),
+      ..t_datum_e10(),
       profile_changed_epoch: 10,
     }
   let dout = up_output(din, Ember, 11)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_update_profile(din, Ember, 11, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_update_profile(din, Ember, 11, t_own_ref(), t_params(), tx)
 }
 
 test up_bypass_lazy() fail {
-  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let din = t_datum_e10()
   let dout = VaultDatum { ..up_output(din, Ember, 10), profile: Ember }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_update_profile(din, Ember, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_update_profile(din, Ember, 10, t_own_ref(), t_params(), tx)
 }
 
 test up_same_profile() fail {
-  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let din = t_datum_e10()
   let dout = up_output(din, Flame, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_update_profile(din, Flame, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_update_profile(din, Flame, 10, t_own_ref(), t_params(), tx)
 }
 
 // ── §4.2 CLIFF — batch lifetime ───────────────────────────────
@@ -1649,6 +1667,18 @@ fn t_datum_with_batches(batches: List<MagicBatch>) -> VaultDatum {
   VaultDatum {
     ..t_datum(100, 0, [t_holding(100, 5, False)]),
     magic_batches: batches,
+    // Gen v2.0: checkpoint đã làm mới ở epoch 10 — các bài pe_* đi đường ghim.
+    cap_epoch: 10,
+    usage_window_epoch: 10,
+  }
+}
+
+/// `t_datum` với checkpoint đã làm mới ở epoch 10 (bài up_* chạy ở epoch 10).
+fn t_datum_e10() -> VaultDatum {
+  VaultDatum {
+    ..t_datum(100, 0, [t_holding(100, 5, False)]),
+    cap_epoch: 10,
+    usage_window_epoch: 10,
   }
 }
 
@@ -1675,7 +1705,7 @@ test pe_positive_collects_dead() {
   let din  = t_datum_with_batches([dead])
   let dout = t_datum_with_batches([])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // P-POS-2: permissionless — no signature at all.
@@ -1684,7 +1714,7 @@ test pe_positive_no_signature_needed() {
   let din  = t_datum_with_batches([dead])
   let dout = t_datum_with_batches([])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // P-NEG-1: nothing dead → reject-noop (anti-spam).
@@ -1693,7 +1723,7 @@ test pe_neg_noop_rejected() fail {
   let din  = t_datum_with_batches([live])
   let dout = t_datum_with_batches([live])
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // P-NEG-2: prune must not eat a LIVE batch.
@@ -1703,7 +1733,7 @@ test pe_neg_live_batch_dropped() fail {
   let din  = t_datum_with_batches([dead, live])
   let dout = t_datum_with_batches([])          // dropped the live one too
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // P-NEG-3: lamp_balance mutated during a prune.
@@ -1712,7 +1742,7 @@ test pe_neg_lamp_balance_mutated() fail {
   let din  = t_datum_with_batches([dead])
   let dout = VaultDatum { ..t_datum_with_batches([]), lamp_balance: 90 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // P-NEG-4: GRIEFING — last_updated_epoch advanced on a permissionless path.
@@ -1721,7 +1751,7 @@ test pe_neg_epoch_advanced_griefing() fail {
   let din  = t_datum_with_batches([dead])
   let dout = VaultDatum { ..t_datum_with_batches([]), last_updated_epoch: 10 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // P-NEG-5: prune must not touch consumed_credit (free-reward lever).
@@ -1733,7 +1763,7 @@ test pe_neg_consumed_credit_inflated() fail {
     activity_state: ActivityState { recent_burn_epochs: [], consumed_credit: 10_000_000_000 },
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // P-NEG-7: dọn rác KHÔNG mở được khoá LAMP của nạn nhân.
@@ -1747,7 +1777,7 @@ test pe_neg_lock_cleared_by_stranger() fail {
     VaultDatum { ..t_datum_with_batches([dead]), instant_unlock_ms: 9_000_000 }
   let dout = t_datum_with_batches([])          // instant_unlock_ms = 0
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 test pe_positive_lock_preserved() {
@@ -1757,7 +1787,7 @@ test pe_positive_lock_preserved() {
   let dout =
     VaultDatum { ..t_datum_with_batches([]), instant_unlock_ms: 9_000_000 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // P-NEG-6: phantom second vault output.
@@ -1771,7 +1801,7 @@ test pe_neg_phantom_second_output() fail {
       [t_vault_output(dout, 100), t_vault_output(dout, 100)],
       [],
     )
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // P-POS-3: applies a due pending_profile while collecting.
@@ -1788,7 +1818,7 @@ test pe_positive_applies_pending_profile() {
     pending_profile: None,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // ── BurnBatch — datum-consume (D1) ────────────────────────────
@@ -1817,6 +1847,11 @@ fn t_burn_din(batches: List<MagicBatch>, delegate: Option<ByteArray>) -> VaultDa
     ..t_datum(100, 0, [t_holding(100, 5, False)]),
     magic_batches: batches,
     personal_delegate: delegate,
+    // Gen v2.0: checkpoint đã làm mới ở epoch 10 (epoch mọi bài bb_*/sd_* chạy), nên
+    // các bài này đi đường GHIM checkpoint và giữ nguyên chốt chúng mang tên.
+    // Đường làm mới có bài riêng (`cp_*`).
+    cap_epoch: 10,
+    usage_window_epoch: 10,
   }
 }
 
@@ -1829,6 +1864,8 @@ fn t_burn_dout(
     ..din,
     magic_batches: out_batches,
     last_updated_epoch: current,
+    // Gen v2.0: đốt cộng vào vế `consumed` của ô 0 (epoch đang mở).
+    usage_window: window_add(din.usage_window, 0, burned),
     activity_state: ActivityState {
       ..din.activity_state,
       consumed_credit: din.activity_state.consumed_credit + burned,
@@ -1849,7 +1886,7 @@ test bb_positive_partial() {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 600)], 400, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 400)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 400)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-POS-2: a FULL burn KEEPS the batch, at current_amount 0.
@@ -1861,7 +1898,7 @@ test bb_full_burn_keeps_batch_at_zero() {
   let din = t_burn_din([t_burn_batch(bid_a, 1000), t_burn_batch(bid_b, 500)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 0), t_burn_batch(bid_b, 500)], 1000, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 1000)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 1000)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG: cực đối của bài trên. Đầu ra XOÁ batch đã đốt sạch ⟹ phải TỪ CHỐI.
@@ -1872,7 +1909,7 @@ test bb_full_burn_dropping_batch_rejected() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000), t_burn_batch(bid_b, 500)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_b, 500)], 1000, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 1000)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 1000)], 10, t_own_ref(), t_params(), tx)
 }
 
 // Một batch đã về 0 KHÔNG đốt lại được: `apply_burns` đòi `amt > 0` và
@@ -1882,7 +1919,7 @@ test bb_zero_batch_not_burnable_again() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 0), t_burn_batch(bid_b, 500)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 0), t_burn_batch(bid_b, 500)], 0, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 1)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 1)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-POS-3: multi-batch burn in one tx
@@ -1890,7 +1927,7 @@ test bb_positive_multi() {
   let din = t_burn_din([t_burn_batch(bid_a, 1000), t_burn_batch(bid_b, 500)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700), t_burn_batch(bid_b, 200)], 600, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300), (bid_b, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300), (bid_b, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-DELEGATE: đường tấn công Nợ #14 — delegate ký một mình, chủ KHÔNG ký,
@@ -1901,7 +1938,7 @@ test bb_delegate_signs_rejected() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-POS-4: ĐỐI CHỨNG DƯƠNG của bài ngay trên — CÙNG datum còn mang `Some(d)`
@@ -1912,7 +1949,7 @@ test bb_owner_signs_with_stale_delegate_ok() {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-DEAD: §4.2 — burning a batch OUTSIDE its created_epoch is rejected.
@@ -1921,7 +1958,7 @@ test bb_dead_batch_rejected() fail {
   let din  = t_burn_din([t_burn_batch(bid_a, 1000)], None)
   let dout = t_burn_dout(din, [], 300, 11)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300)], 11, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 11, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-1: nobody authorized (no owner, no delegate signature)
@@ -1929,7 +1966,7 @@ test bb_neg_no_auth() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-2: delegate not set but a stranger signs → reject
@@ -1937,7 +1974,7 @@ test bb_neg_stranger_no_delegate() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-3: over-burn (amount > current_amount) forbidden
@@ -1945,7 +1982,7 @@ test bb_neg_over_burn() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
   let dout = t_burn_dout(din, [], 1001, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 1001)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 1001)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-4: unknown batch_id
@@ -1953,7 +1990,7 @@ test bb_neg_unknown_id() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 1000)], 100, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_b, 100)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_b, 100)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-5: output forges a lower lamp_balance (value-leak) → reject
@@ -1964,7 +2001,7 @@ test bb_neg_lamp_balance_forged() fail {
     lamp_balance: 50,   // datum claims 50 but value carries 100
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-6: value drained below claimed lamp_balance → reject
@@ -1973,7 +2010,7 @@ test bb_neg_value_drained() fail {
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
   // output value carries only 60 LAMP while datum claims 100
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 60)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-7: attribution not incremented → reject
@@ -1984,7 +2021,7 @@ test bb_neg_attribution_not_bumped() fail {
     attribution: din.attribution,   // left untouched
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-8: batch other field mutated (initial_amount tampered) → reject
@@ -1993,7 +2030,7 @@ test bb_neg_other_field_mutated() fail {
   let tampered = MagicBatch { ..t_burn_batch(bid_a, 700), initial_amount: 999 }
   let dout = t_burn_dout(din, [tampered], 300, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-9: consumed_credit NOT advanced by the burned amount → reject.
@@ -2006,7 +2043,7 @@ test bb_neg_consumed_credit_not_advanced() fail {
     activity_state: din.activity_state,   // consumed_credit stayed 0
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // BB-NEG-10: consumed_credit INFLATED beyond what was burned → reject.
@@ -2014,7 +2051,7 @@ test bb_neg_consumed_credit_inflated() fail {
   let din = t_burn_din([t_burn_batch(bid_a, 1000)], None)
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300_000, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // ── SetDelegate (D1) ──────────────────────────────────────────
@@ -2030,7 +2067,7 @@ test sd_set_rejected() fail {
     last_updated_epoch: 10,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, Some(t_delegate), 10, t_own_ref(), t_params(), tx)
 }
 
 // SD-POS-2: owner clears delegate Some → None
@@ -2042,7 +2079,7 @@ test sd_positive_clear() {
     last_updated_epoch: 10,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, None, 10, t_own_ref(), t_params(), tx)
 }
 
 // SD-NEG-1: owner did not sign → reject.
@@ -2060,7 +2097,7 @@ test sd_neg_clears_lock() fail {
   let dout = VaultDatum { ..din, personal_delegate: None, last_updated_epoch: 10,
                           instant_unlock_ms: 0 }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, None, 10, t_own_ref(), t_params(), tx)
 }
 
 test sd_neg_no_owner_sig() fail {
@@ -2071,7 +2108,7 @@ test sd_neg_no_owner_sig() fail {
     last_updated_epoch: 10,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [])
-  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, None, 10, t_own_ref(), t_params(), tx)
 }
 
 // SD-NEG-2: chính delegate cũ tự dọn trường của mình (không có chữ ký chủ) →
@@ -2085,7 +2122,7 @@ test sd_neg_delegate_cannot_clear() fail {
     last_updated_epoch: 10,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_delegate])
-  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, None, 10, t_own_ref(), t_params(), tx)
 }
 
 // SD-NEG-3: output datum mutates MAGIC alongside the delegate change → reject.
@@ -2100,7 +2137,7 @@ test sd_neg_mutates_magic() fail {
     last_updated_epoch: 10,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, None, 10, t_own_ref(), t_params(), tx)
 }
 
 // SD-NEG-4: output delegate != redeemer new_delegate → reject.
@@ -2114,539 +2151,86 @@ test sd_neg_delegate_mismatch() fail {
     last_updated_epoch: 10,
   }
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_set_delegate(din, None, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_set_delegate(din, None, 10, t_own_ref(), t_params(), tx)
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Tests — InstantGen (§6.3): LAMP đứng yên + độ lớn theo consumed
-// ═══════════════════════════════════════════════════════════════
+// ══ Fixture két Wakeme (dùng cho bài checkpoint Gen v2.0) ══════════════════════
+//
+// Két Wakeme dựng bằng record CÓ KIỂU cùng hình `WakemeVaultDatum` (13 trường,
+// `Option<GenPin>` thật), để ca ở đây đi đúng đường mã hoá mà `wakeme_read` đọc theo
+// vị trí. Ghim ở kỳ 9; bài checkpoint chạy ở kỳ 10 (vế d đạt). Value két mang ĐÚNG
+// `conditional + owned` LAMP của mạng (vế f đạt vừa khít).
 
-const t_um_policy: ByteArray =
-  #"66666666666666666666666666666666666666666666666666666666"
-const t_um_hash: ByteArray =
-  #"77777777777777777777777777777777777777777777777777777777"
-const t_backing_policy: ByteArray =
-  #"88888888888888888888888888888888888888888888888888888888"
-const t_backing_hash: ByteArray =
-  #"99999999999999999999999999999999999999999999999999999999"
+/// Hash script két Wakeme chuẩn (apply-param #8 trong bài kiểm).
+const t_wakeme_hash: ByteArray =
+  #"cc62732565af6be1e0874975ad3b3e2afdb0abafb3f5bc4b3008f4e1"
 
-fn t_um_ref(smoothed_q: Int, updated: Int) -> Input {
+const t_wakeme_commit: ByteArray =
+  #"c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+
+const t_wakeme_commit_2: ByteArray =
+  #"c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4"
+
+type TGenPin {
+  hash: ByteArray,
+  name: ByteArray,
+}
+
+type TWakemeDatum {
+  owner_commit: ByteArray,
+  usage_thread: ByteArray,
+  vest_start_ms: Int,
+  conditional_lamp: Int,
+  reclaimed_to_pot: Int,
+  epochy_start: Int,
+  last_used_period: Int,
+  owned_lamp: Int,
+  d_unit: Int,
+  seen_nanogic: Int,
+  usage_consume_hash: ByteArray,
+  gen_vault: Option<TGenPin>,
+  gen_pin_period: Int,
+}
+
+fn t_wakeme_ref(
+  index: Int,
+  commit: ByteArray,
+  pin_name: ByteArray,
+  conditional: Int,
+  owned: Int,
+) -> Input {
+  let d: Data =
+    TWakemeDatum {
+      owner_commit: commit,
+      usage_thread: #"e5e5",
+      vest_start_ms: 1_700_000_000_000,
+      conditional_lamp: conditional,
+      reclaimed_to_pot: 0,
+      epochy_start: 5,
+      last_used_period: 4,
+      owned_lamp: owned,
+      d_unit: 1_000_000,
+      seen_nanogic: 0,
+      usage_consume_hash: #"f6f6",
+      gen_vault: Some(TGenPin { hash: t_vault_hash, name: pin_name }),
+      gen_pin_period: 9,
+    }
   Input {
-    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 1 },
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 10 + index },
     output: Output {
-      address: address.from_script(t_um_hash),
-      value: assets.from_asset(t_um_policy, #"554d44", 1),
-      datum: InlineDatum(UMDatum {
-        smoothed_q, last_updated_epoch: updated, history: [],
-      }),
+      address: address.from_script(t_wakeme_hash),
+      value: assets.from_lovelace(5_000_000)
+        |> assets.add(t_wakeme_hash, commit, 1)
+        |> assets.add(t_lamp_policy, t_lamp_asset_name, conditional + owned),
+      datum: InlineDatum(d),
       reference_script: None,
     },
   }
 }
 
-fn t_backing_ref(br_q: Int, supply: Int, depeg: Bool, updated: Int) -> Input {
-  Input {
-    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 2 },
-    output: Output {
-      address: address.from_script(t_backing_hash),
-      value: assets.from_asset(t_backing_policy, #"425251", 1),
-      datum: InlineDatum(BackingBeaconDatum {
-        br_q, magic_supply: supply, depeg, last_updated_epoch: updated,
-      }),
-      reference_script: None,
-    },
-  }
-}
-
-/// A schedule contributing pp = ⌊λ × rate_locked_q / Q⌋ MAGIC per epoch.
-fn t_sched(lambda: Int, rate_q: Int) -> GenSchedule {
-  GenSchedule {
-    schedule_id:            #"5c4ed0",
-    commit_epoch:           0,
-    start_fire_epoch:       2,
-    end_fire_epoch:         100,
-    schedule_length:        10,
-    lamp_per_epoch:         lambda,
-    rate_locked_q:          rate_q,
-    baseline_at_commit_q:   5_000_000_000,
-    multiplier_at_commit_q: 2_250_000_000,
-    fired_count:            0,
-    auto_burn_target:       None,
-  }
-}
-
-/// Input vault: 1000 LAMP sitting (eligibility), `credit` nanogic consumed,
-/// one ScheduleGen contract so the 0.5×pp ceiling is not zero.
-fn t_ig_din(credit: Int) -> VaultDatum {
-  VaultDatum {
-    ..t_datum(1_000_000_000, 0, [t_holding(1_000_000_000, 5, False)]),
-    gen_schedules: [t_sched(4_000_000_000, 11_250_000_000)],   // pp = 45×10^9
-    activity_state: ActivityState { recent_burn_epochs: [], consumed_credit: credit },
-  }
-}
-
-/// Expected output vault after a grant of `grant` nanogic at `epoch`.
-fn t_ig_dout(din: VaultDatum, grant: Int, epoch: Int) -> VaultDatum {
-  let batch =
-    MagicBatch {
-      batch_id:            compute_batch_id(t_own_ref(), din.next_batch_index),
-      source:              Instant,
-      created_epoch:       epoch,
-      initial_amount:      grant,
-      current_amount:      grant,
-      decay_window:        magic_decay_window,
-      profile_at_creation: None,
-      contract_id:         None,
-      halved:              False,
-    }
-  VaultDatum {
-    ..din,
-    magic_batches:      list.concat(prune_expired(din.magic_batches, epoch), [batch]),
-    next_batch_index:   din.next_batch_index + 1,
-    last_updated_epoch: epoch,
-    activity_state:     ActivityState { ..din.activity_state, consumed_credit: 0 },
-    attribution: VaultAttribution {
-      attribution_root: din.attribution.attribution_root,
-      last_event_epoch: epoch,
-      total_events:     din.attribution.total_events + 1,
-    },
-    instant_unlock_ms: t_unlock_after_gen,
-  }
-}
-
-fn t_ig_tx(
-  din  : VaultDatum,
-  dout : VaultDatum,
-  lamp_out : Int,
-  refs : List<Input>,
-  signers : List<ByteArray>,
-) -> Transaction {
-  Transaction {
-    ..placeholder,
-    inputs: [t_vault_input(din, din.lamp_balance)],
-    reference_inputs: refs,
-    outputs: [t_vault_output(dout, lamp_out)],
-    extra_signatories: signers,
-    validity_range: interval.between(t_lo_ms, t_hi_ms),
-  }
-}
-
-fn t_ig_call(din: VaultDatum, claimed: Int, epoch: Int, tx: Transaction) -> Bool {
-  validate_instant_gen(
-    din, claimed, epoch, t_ms_per_epoch, t_own_ref(), t_lamp_policy,
-    t_lamp_asset_name, t_um_policy, t_um_hash, t_backing_policy, t_backing_hash, tx,
-  )
-}
-
-// Reference grant used across the positive cases.
-//   consumed = 10^9 ; rate 0.20 → 200_000_000
-//   UM = 1.0        → 200_000_000
-//   PM = Flame 1.05 → 210_000_000
-//   cap_surplus: S=10^12, br=2.0 ⟹ f·S = 10^11 ; ×(0.5) = 5×10^10 ; ÷1.5 = 33_333_333_333
-//   cap_pp     : pp = ⌊4×10^9 × 11_250_000_000 / Q⌋ = 45×10^9 → ⌊/2⌋ = 22_500_000_000
-//   grant = min(210_000_000, 33_333_333_333, 22_500_000_000) = 210_000_000
-const ig_credit : Int = 1_000_000_000
-const ig_grant  : Int = 210_000_000
-
-fn t_ig_refs_ok(epoch: Int) -> List<Input> {
-  [
-    t_um_ref(1_000_000_000, epoch),                       // UM = 1.0, fresh
-    t_backing_ref(2_000_000_000, 1_000_000_000_000, False, epoch),  // br = 2.0 > 1.5
-  ]
-}
-
-// IG-POS-1: happy path — grant matches the formula, LAMP untouched.
-test ig_positive_grant() {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// ── C-INST-8: trần theo EPOCH, không theo lượt ────────────────
-//
-// `cap_pp(1000 LAMP) = 4×10^9 nanogic` (xem `math.ak ▸ ig_cap_pp_*`). Hai ca
-// dưới đây đặt sẵn một batch Instant CỦA CHÍNH EPOCH ĐANG XÉT vào két, rồi xin
-// thêm `ig_grant = 210×10^6`. Chúng chỉ khác nhau ở lượng đã sinh sẵn:
-//
-//   3.900×10^6 + 210×10^6 = 4.110×10^6  >  4.000×10^6  ⟹ TỪ CHỐI
-//   3.000×10^6 + 210×10^6 = 3.210×10^6  ≤  4.000×10^6  ⟹ CHO QUA
-//
-// Cặp này phân biệt được hai cực: gỡ cổng thì ca thứ nhất chuyển sang xanh,
-// ca thứ hai đứng yên. Một mình ca thứ nhất không chứng minh được gì — nó đỏ
-// được vì bất kỳ lý do nào khác trong cùng hàm.
-fn t_ig_din_with_gen(credit: Int, epoch: Int, already: Int) -> VaultDatum {
-  VaultDatum {
-    ..t_ig_din(credit),
-    magic_batches: [t_instant_batch(epoch, already)],
-    next_batch_index: 1,
-  }
-}
-
-test ig_epoch_cap_exceeded_rejected() fail {
-  let din  = t_ig_din_with_gen(ig_credit, 10, 3_900_000_000)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-test ig_epoch_cap_within_ok() {
-  let din  = t_ig_din_with_gen(ig_credit, 10, 3_000_000_000)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// ── Bộ đếm phải SỐNG SÓT một lượt đốt trọn ──────────────────────────────────
-//
-// 🔴 Đây là cặp bài mà bản trước của PR này KHÔNG có, và chỗ thiếu ấy là chỗ
-// thủng. Ba bài epoch-cap ở trên đều dựng trạng thái bằng cách ĐẶT SẴN batch vào
-// datum, tức đo một trạng thái mà kẻ tấn công không cần đi qua. Chúng ghim được
-// CỔNG, không ghim được TÍNH CHẤT.
-//
-// Đường tấn công thật đi qua `BurnBatch`, và nó cần HAI bài mới nói đủ:
-//
-//   (a) `bb_full_burn_keeps_batch_at_zero` — sau khi đốt trọn, batch Ở LẠI mang
-//       `initial_amount` nguyên vẹn và `current_amount: 0`. Đây là bước chứng
-//       minh trạng thái dưới đây LÀ TRẠNG THÁI THẬT SAU MỘT LƯỢT ĐỐT, không
-//       phải một datum bịa ra cho vừa bài kiểm.
-//   (b) bài ngay dưới — sinh tiếp trên đúng trạng thái đó thì BỊ TỪ CHỐI.
-//
-// Ghép lại mới ra phát biểu cần: chuỗi `InstantGen → BurnBatch(đốt trọn) →
-// InstantGen` không vượt được trần. Bộ kiểm đơn vị của Aiken gọi validator đúng
-// một lần nên tự nó không hỏi được câu "tổng qua CHUỖI giao dịch"; câu đó phải
-// viết tay, và đây là cách viết tay nó.
-//
-// Bài này còn là ca DUY NHẤT trong bộ kiểm có `initial_amount ≠ current_amount`
-// đi vào `instant_gen_in_epoch`. Mọi fixture khác đặt hai trường bằng nhau, nên
-// đột biến `initial_amount → current_amount` trong `decay.ak` sống sót toàn bộ
-// bộ kiểm trước khi có bài này.
-fn t_ig_din_after_full_burn(credit: Int, epoch: Int, generated: Int) -> VaultDatum {
-  VaultDatum {
-    ..t_ig_din(credit),
-    magic_batches: [
-      MagicBatch {
-        batch_id:            #"aabbcc",
-        source:              Instant,
-        created_epoch:       epoch,
-        initial_amount:      generated,   // đã sinh ngần này trong epoch
-        current_amount:      0,           // và đã đốt sạch
-        decay_window:        magic_decay_window,
-        profile_at_creation: None,
-        contract_id:         None,
-        halved:              False,
-      },
-    ],
-    next_batch_index: 1,
-  }
-}
-
-test ig_epoch_cap_survives_full_burn_rejected() fail {
-  let din  = t_ig_din_after_full_burn(ig_credit, 10, 3_900_000_000)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// Cực đối của bài trên: cùng trạng thái đã-đốt-sạch, chỉ khác lượng đã sinh nằm
-// dưới trần ⟹ CHO QUA. Không có ca này thì bài trên đỏ được vì bất kỳ lý do nào
-// khác của việc batch mang số dư 0 (ví dụ một cổng nào đó cấm batch rỗng).
-test ig_epoch_cap_after_full_burn_within_ok() {
-  let din  = t_ig_din_after_full_burn(ig_credit, 10, 3_000_000_000)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// Bộ đếm phải tự về 0 khi sang epoch mới. Cùng lượng đã sinh của ca bị từ chối
-// ở trên, chỉ khác là nó thuộc epoch TRƯỚC ⟹ `prune_expired` dọn nó đi ⟹ cho
-// qua. Đây là ca chứng minh bộ đếm đo ĐÚNG CỬA SỔ chứ không đếm tất tần tật.
-test ig_epoch_cap_resets_next_epoch_ok() {
-  let din  = t_ig_din_with_gen(ig_credit, 9, 3_900_000_000)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// ── C-INST-9: lượt sinh phải GHI mốc khoá, và không được ghi ngắn ────────────
-
-test ig_lock_not_written_rejected() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = VaultDatum { ..t_ig_dout(din, ig_grant, 10), instant_unlock_ms: 0 }
-  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// Lượt sinh thứ hai KHÔNG được rút ngắn khoá đang có. Két vào mang một mốc xa
-// hơn `t_unlock_after_gen`; đầu ra ghi mốc gần hơn ⟹ từ chối.
-test ig_lock_shortened_by_second_gen_rejected() fail {
-  let din =
-    VaultDatum {
-      ..t_ig_din(ig_credit),
-      instant_unlock_ms: t_unlock_after_gen + 1_000,
-    }
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx   = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// Ca đối xứng: giữ nguyên mốc xa hơn thì cho qua.
-test ig_lock_kept_by_second_gen_ok() {
-  let din =
-    VaultDatum {
-      ..t_ig_din(ig_credit),
-      instant_unlock_ms: t_unlock_after_gen + 1_000,
-    }
-  let dout =
-    VaultDatum {
-      ..t_ig_dout(din, ig_grant, 10),
-      instant_unlock_ms: t_unlock_after_gen + 1_000,
-    }
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-LAMP-MOVED: I-ACT-7 — any LAMP leaving the vault is rejected, even if
-// the datum is "consistent" with the reduced value. This is the exact behaviour
-// PHA 2 removed (the old validator REQUIRED this transfer).
-test ig_neg_lamp_moved() fail {
-  let din  = t_ig_din(ig_credit)
-  let moved = din.lamp_balance - 10_000_000
-  let dout = VaultDatum {
-    ..t_ig_dout(din, ig_grant, 10),
-    lamp_balance: moved,
-    loyalty_holdings: [t_holding(moved, 5, False)],
-  }
-  let tx = t_ig_tx(din, dout, moved, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-VALUE-DRAINED: datum says LAMP is unchanged but the output value is
-// short → reject (datum↔value binding).
-test ig_neg_value_drained() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance - 1, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-NO-CREDIT: consumed = 0 ⟹ reward = 0 ⟹ grant = 0 → reject.
-// Holding LAMP alone buys NOTHING (§6.3: LAMP chỉ mở tư cách).
-test ig_neg_no_consumed_credit() fail {
-  let din  = t_ig_din(0)
-  let dout = t_ig_dout(din, 0, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, 0, 10, tx)
-}
-
-// IG-NEG-CLAIM-MISMATCH: redeemer claims more than the formula allows.
-test ig_neg_claim_mismatch() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant + 1, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant + 1, 10, tx)
-}
-
-// IG-NEG-CREDIT-NOT-SPENT: consumed_credit must be zeroed by the grant,
-// otherwise the same consumption is rewarded every epoch (INV-CASHBACK-BOUND).
-test ig_neg_credit_not_spent() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = VaultDatum {
-    ..t_ig_dout(din, ig_grant, 10),
-    activity_state: din.activity_state,   // credit left intact
-  }
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-RED-BR: br ≤ br_safe (đỏ) ⟹ cap_surplus = 0 ⟹ grant = 0 → reject.
-test ig_neg_red_backing() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let refs = [
-    t_um_ref(1_000_000_000, 10),
-    t_backing_ref(1_400_000_000, 1_000_000_000_000, False, 10),   // br = 1.4 < 1.5
-  ]
-  let tx = t_ig_tx(din, dout, din.lamp_balance, refs, [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-DEPEG: depeg flag shuts the door regardless of br.
-test ig_neg_depeg() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let refs = [
-    t_um_ref(1_000_000_000, 10),
-    t_backing_ref(2_000_000_000, 1_000_000_000_000, True, 10),
-  ]
-  let tx = t_ig_tx(din, dout, din.lamp_balance, refs, [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-STALE-BEACON: beacon older than max_backing_stale = absent → closed.
-test ig_neg_stale_beacon() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let refs = [
-    t_um_ref(1_000_000_000, 10),
-    t_backing_ref(2_000_000_000, 1_000_000_000_000, False, 8),   // 2 epochs old
-  ]
-  let tx = t_ig_tx(din, dout, din.lamp_balance, refs, [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-NO-BEACON: no beacon reference input at all → fail-closed.
-test ig_neg_missing_beacon() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance, [t_um_ref(1_000_000_000, 10)], [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-FORGED-BEACON: right NFT, WRONG address → rejected by the address pin.
-test ig_neg_forged_beacon_address() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let forged =
-    Input {
-      output_reference: OutputReference { transaction_id: t_tx_id, output_index: 2 },
-      output: Output {
-        address: address.from_script(t_vault_hash),   // attacker-controlled
-        value: assets.from_asset(t_backing_policy, #"425251", 1),
-        datum: InlineDatum(BackingBeaconDatum {
-          br_q: 9_000_000_000, magic_supply: 1_000_000_000_000,
-          depeg: False, last_updated_epoch: 10,
-        }),
-        reference_script: None,
-      },
-    }
-  let tx = t_ig_tx(din, dout, din.lamp_balance, [t_um_ref(1_000_000_000, 10), forged], [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-POS-NO-SCHEDULE: a vault with NO ScheduleGen contract can still gen.
-//
-// This test used to assert the opposite, and the flip is the whole point of
-// D2. The old third brake was `0.5 × Σ gen_schedules`, so an empty list read
-// as cap = 0 and InstantGen was shut on every network — filed as Nợ #19. It
-// was written up as fail-closed behaviour, but a brake that reads 0 in the
-// ordinary case is not a brake, it is an off switch.
-//
-// ⚠ WHAT THIS TEST NO LONGER PROVES: it no longer pins any relationship
-// between InstantGen and the vault's committed Schedule flow, because there
-// is no longer one. The ceiling that replaced it is keyed to L_avail and is
-// pinned by `ig_cap_pp_*` in math.ak instead. Do not read a green here as
-// evidence that the dual ceiling still holds — it does not exist.
-test ig_pos_no_schedule_still_gens() {
-  let base = t_ig_din(ig_credit)
-  let din  = VaultDatum { ..base, gen_schedules: [] }
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// NỢ #19 — HAI BÀI GHIM CHÍNH CÁI KHOÁ, không ghim một trường
-// ══════════════════════════════════════════════════════════════════════════
-//
-// Mọi bài `ig_*` phía trên xuất phát từ `t_ig_din(credit)`, tức **tự cấp cho
-// mình `consumed_credit` khác 0**. Đó là một trạng thái chỉ tới được qua chính
-// vòng đang bị khoá, nên `ig_positive_grant` xanh trên một đầu vào **không tồn
-// tại được trên chuỗi**. Nó không sai — nó chỉ không nói gì về việc cửa có mở
-// được không.
-//
-// Vòng khoá, đo 2026-09-12 trên cây này:
-//   genesis ép `consumed_credit == 0` (`:276`) và `magic_batches == []` (`:272`)
-//   → `InstantGen` lấy `consumed` từ `consumed_credit` (`:417`) rồi ép
-//     `grant > 0` (`:427`)      ⟹ cần `consumed_credit > 0`
-//   → `consumed_credit` chỉ TĂNG ở đúng một chỗ, trong `BurnBatch` (`:950`)
-//   → `BurnBatch` ép `total_burned > 0` (`:930`) ⟹ cần `magic_batches` khác rỗng
-//   → `magic_batches` chỉ được THÊM ở chính nhánh `InstantGen` (`:474-475`;
-//     `:552` và `:939` chỉ bớt đi)
-//   ⟹ vault InstantGen mở từ genesis KHÔNG có đường nào đi hết một vòng.
-//
-// Hai bài dưới là bài ĐỐI NGẪU: ca "InstantGen sinh được MAGIC từ vault sạch"
-// không dựng được vì nó **không có đầu vào**, không phải vì chưa ai đo. Thứ đo
-// được là chiều ngược lại — cả hai cửa đều đóng — và đó là thứ ghim ở đây.
-//
-// 🔴 KHI AI ĐÓ MỞ VÒNG NÀY, HAI BÀI NÀY SẼ ĐỎ. Đỏ ở đây nghĩa là *"khoá đã mở"*,
-// không phải *"vừa làm hỏng cái gì"*. Lúc đó xoá chúng, và thay bằng bài dương
-// đi từ đúng trạng thái genesis — đừng sửa chúng cho xanh lại.
-//
-// Đo đột biến 2026-09-12, nói đúng mức từng bài đóng góp gì:
-//   · gỡ `expect grant > 0` (`:427`)        → 2 đỏ: `ig_neg_no_consumed_credit`
-//     và `ig_neg_genesis_state_cannot_gen`. Chốt này ĐÃ có bài canh từ trước;
-//     bài mới KHÔNG thêm độ phủ chốt — nó thêm một nhân chứng rằng đầu vào bị
-//     từ chối là một trạng thái **tới được trên chuỗi**, trong khi bài cũ dựng
-//     `gen_schedules` mà đường mint cấm.
-//   · gỡ `expect total_burned > 0` (`:930`) → 1 đỏ: `bb_neg_empty_batches_cannot_burn`.
-//     Trước bài này chốt đó **không bài nào canh** — gỡ ra thì cả 100 bài vẫn xanh.
-
-// IG-NEG-ZERO-CREDIT: tín dụng tiêu bằng 0 thì không gen được.
-//
-// Bài này TỪNG mang tên `ig_neg_genesis_state_cannot_gen` và tên đó nay sai:
-// genesis không còn mang `consumed_credit = 0` mà mang `wakeme_seed_credit`.
-// Thân bài thì không đổi một dòng — nó vẫn dựng `t_ig_din(0)` — nên nếu chỉ
-// chạy lại bộ kiểm thì nó vẫn xanh và cái tên vẫn nói dối. Đổi tên là phần
-// việc thật, không phải phần dọn dẹp: mệnh đề "trạng thái genesis không gen
-// được" đã bị chính bản vá này lật, còn mệnh đề "credit 0 không gen được" thì
-// vẫn đúng và vẫn đáng canh.
-test ig_neg_zero_credit_cannot_gen() fail {
-  let base = t_ig_din(0)
-  let din =
-    VaultDatum { ..base, gen_schedules: [], magic_batches: [] }
-  let dout = t_ig_dout(din, 0, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, 0, 10, tx)
-}
-
-// IG-POS-WAKEME: đối ngẫu của bài trên — vault ở ĐÚNG trạng thái genesis nay
-// đi hết được một vòng InstantGen và cấp MAGIC thật.
-//
-// Đây là bài chứng minh Nợ #19 đã mở ở vế còn sống của nó. Nó cố ý dựng đúng
-// hình dạng mà đường mint cho phép — `gen_schedules: []` và `magic_batches: []`
-// — chứ không dựng một datum tiện tay: bài cũ `ig_pos_*` xanh trên một trạng
-// thái mà genesis cấm, và đó là lý do bộ kiểm xanh trong khi trên chuỗi không
-// vault nào cấp nổi một nanogic.
-//
-// 333_333_333 là số đo, không phải số chọn: xem `ig_prop_seed_is_not_the_binding_brake`
-// ngay dưới, nơi ba vế được tính riêng rồi so.
-test ig_pos_wakeme_seed_can_gen() {
-  let base = t_ig_din(wakeme_seed_credit)
-  let din =
-    VaultDatum { ..base, gen_schedules: [], magic_batches: [] }
-  let grant = 333_333_333
-  let dout = t_ig_dout(din, grant, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, grant, 10, tx)
-}
-
-// IG-PROP-SEED-NOT-BINDING: hạt giống MỞ KHOÁ, nó không TRẢ.
-//
-// Chốt an toàn của cả bản vá nằm ở đây, không ở hai bài trên: cấp thực là
-// `min(reward, cap_surplus, cap_pp)`, nên hạt giống chỉ định được số tiền khi
-// nó là vế NHỎ NHẤT. Bài này ghim rằng ở cỡ Wakeme nó là vế LỚN NHẤT — tức
-// nới hạt giống lên không nới được đồng MAGIC nào, và vòi vẫn do hai phanh
-// kinh tế giữ.
-//
-// Cố ý KHÔNG ghim "phanh nào đang bó" — `cap_surplus` trôi theo beacon và
-// `f_cap_surplus_q` còn là hàng rào tạm (Nợ #49), nên một bài ghim tên phanh
-// sẽ đỏ ở đúng ca hợp lệ rồi bị sửa cho xanh.
-test ig_prop_seed_is_not_the_binding_brake() {
-  let reward = compute_reward_from_consumed(wakeme_seed_credit, 1_000_000_000, pm_q_flame)
-  let surplus = compute_cap_surplus(2_000_000_000, 1_000_000_000_000)
-  let pp = compute_cap_pp(1_000_000_000)
-  let grant =
-    compute_instant_grant(
-      wakeme_seed_credit, 1_000_000_000, pm_q_flame,
-      2_000_000_000, 1_000_000_000_000, 1_000_000_000,
-    )
-  // hạt giống không phải vế bó
-  expect reward > surplus
-  expect reward > pp
-  // và cấp thực bằng đúng vế nhỏ nhất trong hai phanh kinh tế
-  expect grant == 333_333_333
-  grant < reward
+/// Két Wakeme hợp lệ ghim đúng két IG của bài kiểm (`t_vault_id_name`).
+fn t_lent_ref(conditional: Int, owned: Int) -> Input {
+  t_wakeme_ref(0, t_wakeme_commit, t_vault_id_name, conditional, owned)
 }
 
 // BB-NEG-EMPTY: cửa 2 — không có batch nào thì không đốt được, nên
@@ -2665,79 +2249,9 @@ test bb_neg_empty_batches_cannot_burn() fail {
     [],
     10,
     t_own_ref(),
-    t_lamp_policy,
-    t_lamp_asset_name,
+    t_params(),
     tx,
   )
-}
-
-// IG-NEG-NOT-ELIGIBLE: LAMP below min_instant_holding → door closed.
-test ig_neg_below_min_holding() fail {
-  let base = t_ig_din(ig_credit)
-  let din = VaultDatum {
-    ..base,
-    lamp_balance: min_instant_holding - 1,
-    loyalty_holdings: [t_holding(min_instant_holding - 1, 5, False)],
-  }
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-ALL-LOCKED: LAMP present but fully locked → not eligible.
-test ig_neg_all_locked() fail {
-  let base = t_ig_din(ig_credit)
-  let din = VaultDatum {
-    ..base,
-    lamp_locked: base.lamp_balance,
-    loyalty_holdings: [t_holding(base.lamp_balance, 5, True)],
-  }
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-NO-SIG: owner must sign.
-test ig_neg_no_owner_sig() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-NEG-STALE-UM: stale UM falls back to 0.5× ⟹ grant 105M ≠ claimed 210M.
-// (The tx is not rejected outright — C-UM-6 is a rate penalty, not a hard stop.)
-test ig_neg_stale_um_changes_grant() fail {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let refs = [
-    t_um_ref(1_000_000_000, 8),                                    // 2 epochs stale
-    t_backing_ref(2_000_000_000, 1_000_000_000_000, False, 10),
-  ]
-  let tx = t_ig_tx(din, dout, din.lamp_balance, refs, [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
-// IG-POS-STALE-UM: the SAME tx with the fallback-derived grant is accepted.
-//   210_000_000 × 0.5 → step2 = 100_000_000 ; × PM 1.05 = 105_000_000
-test ig_positive_stale_um_fallback_grant() {
-  let din  = t_ig_din(ig_credit)
-  let dout = t_ig_dout(din, 105_000_000, 10)
-  let refs = [
-    t_um_ref(1_000_000_000, 8),
-    t_backing_ref(2_000_000_000, 1_000_000_000_000, False, 10),
-  ]
-  let tx = t_ig_tx(din, dout, din.lamp_balance, refs, [t_owner_pkh])
-  t_ig_call(din, 105_000_000, 10, tx)
-}
-
-// IG-POS-CLIFF: a dead batch from a previous epoch is dropped by the same tx.
-test ig_positive_drops_dead_batch() {
-  let base = t_ig_din(ig_credit)
-  let din  = VaultDatum { ..base, magic_batches: [t_instant_batch(9, 5_000)] }
-  let dout = t_ig_dout(din, ig_grant, 10)   // t_ig_dout prunes at `epoch`
-  let tx = t_ig_tx(din, dout, din.lamp_balance, t_ig_refs_ok(10), [t_owner_pkh])
-  t_ig_call(din, ig_grant, 10, tx)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2793,7 +2307,7 @@ test val_pos_pe_ada_preserved() {
       [t_vault_output_ada(dout, 2_000_000, 100)],
       [],
     )
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // VAL-NEG-1: PruneExpired (permissionless) drains ADA → reject.
@@ -2807,7 +2321,7 @@ test val_neg_pe_ada_drained() fail {
       [t_vault_output_ada(dout, 2_000_000, 100)], // attacker pockets 3 ADA
       [],
     )
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // VAL-NEG-2: PruneExpired stuffs a 3rd-policy dust token (UTxO bloat) → reject.
@@ -2821,7 +2335,7 @@ test val_neg_pe_dust_stuffed() fail {
       [t_vault_output_dust(dout, 2_000_000, 100)],  // 3 policies: ADA+LAMP+dust
       [],
     )
-  validate_prune_expired(din, 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
 }
 
 // VAL-NEG-3: BurnBatch rút ADA ra khỏi vault → từ chối.
@@ -2837,7 +2351,7 @@ test val_neg_burn_ada_drained() fail {
       [t_vault_output_ada(dout, 2_000_000, 100)],
       [t_owner_pkh],
     )
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // VAL-POS-2: ADA top-up (out > in) is allowed (honest min-ADA bump).
@@ -2850,7 +2364,7 @@ test val_pos_ada_topup_ok() {
       [t_vault_output_ada(dout, 3_000_000, 100)],  // owner adds ADA — fine
       [t_owner_pkh],
     )
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // EPOCH-NEG-1: BurnBatch với current_epoch < last_updated_epoch (thời gian lùi)
@@ -2865,7 +2379,7 @@ test epoch_neg_burn_backwards() fail {
   let din = VaultDatum { ..din_base, last_updated_epoch: 20 }
   let dout = t_burn_dout(din, [t_burn_batch(bid_a, 700)], 300, 10)
   let tx = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 300)], 10, t_own_ref(), t_params(), tx)
 }
 
 // EPOCH-POS-1: get_current_epoch accepts a range inside ONE epoch and
@@ -2974,8 +2488,9 @@ fn t_mint_tx(seed: OutputReference, out: Output, mint_v: Value, signers: List<By
 
 fn t_mint_call(seed: OutputReference, policy_id: PolicyId, tx: Transaction) -> Bool {
   vault.mint(
-    t_lamp_policy, t_lamp_asset_name, t_um_policy, t_um_hash, t_backing_policy,
-    t_backing_hash, 86_400_000, MintVaultId { seed }, policy_id, tx,
+    t_lamp_policy, t_lamp_asset_name, t_gb_beacon_policy, t_gb_beacon_hash,
+    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, 86_400_000,
+    MintVaultId { seed }, policy_id, tx,
   )
 }
 
@@ -2994,25 +2509,6 @@ fn t_clean_genesis(balance: Int) -> VaultDatum {
   }
 }
 
-// ── POC: fabricated vault spent via InstantGen now FAILS ──────────────────
-// Pre-fix this extracted REAL MAGIC from a 100%-fabricated consumed_credit. The
-// tx is well-formed (valid UM + backing refs, correct claimed grant) and passes
-// every economic check; it now dies at validate_vault_value → single_nft_name
-// because the fabricated input carries no vault_id NFT.
-test poc_fabricated_magic_instant_gen_fails() fail {
-  let din  = t_ig_din(ig_credit)                 // attacker-authored consumed_credit
-  let dout = t_ig_dout(din, ig_grant, 10)
-  let tx =
-    Transaction {
-      ..placeholder,
-      inputs: [t_vault_input_nonft(din, din.lamp_balance)],
-      reference_inputs: t_ig_refs_ok(10),
-      outputs: [t_vault_output_nonft(dout, din.lamp_balance)],
-      extra_signatories: [t_owner_pkh],
-    }
-  t_ig_call(din, ig_grant, 10, tx)
-}
-
 // ── POC: fabricated MAGIC batch burned via BurnBatch now FAILS ─────────────
 // Pre-fix, a fabricated 10^18 batch could be consumed to pay a ConsumeMAGIC
 // co-spend. Now the no-NFT input is rejected at validate_vault_value.
@@ -3027,7 +2523,7 @@ test poc_fabricated_magic_burn_batch_fails() fail {
     )
   let tx =
     t_tx([t_vault_input_nonft(din, 100)], [t_vault_output_nonft(dout, 100)], [t_owner_pkh])
-  validate_burn_batch(din, [(bid_a, 500)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 500)], 10, t_own_ref(), t_params(), tx)
 }
 
 // ── mint_clean_genesis_ok: a correct clean mint passes ────────────────────
@@ -3238,7 +2734,7 @@ test spend_preserves_nft_ok() {
   let din  = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output(dout, 95)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 // ── spend_drops_nft_fail: input has NFT, output drops it → rejected ────────
@@ -3246,7 +2742,7 @@ test spend_drops_nft_fail() fail {
   let din  = t_datum(100, 0, [t_holding(100, 5, False)])
   let dout = t_datum(95, 0, [t_holding(95, 5, False)])
   let tx   = t_tx([t_vault_input(din, 100)], [t_vault_output_nonft(dout, 95)], [t_owner_pkh])
-  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3281,7 +2777,7 @@ fn t_bb_owner_case_c(
       withdrawals: ws,
       certificates: cs,
     }
-  validate_burn_batch(din, [(bid_a, 400)], 10, t_own_ref(), t_lamp_policy, t_lamp_asset_name, tx)
+  validate_burn_batch(din, [(bid_a, 400)], 10, t_own_ref(), t_params(), tx)
 }
 
 fn t_mint_owner_case(
@@ -3397,4 +2893,1358 @@ test owner_vk_script_withdrawal_unsigned_burn_batch_rejected() fail {
 
 test owner_vk_script_withdrawal_unsigned_mint_rejected() fail {
   t_mint_owner_case(t_owner, [], [Pair(Script(t_owner_pkh), 0)])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tests — Gen v2.0 checkpoint (gói b1): wakeme_link / cap_* / usage_window
+//
+// Mọi ca âm dựng từ ĐÚNG ca dương cùng nhóm và đổi MỘT vế. Nền chung:
+//   két 100 LAMP (100_000_000 oildrop), checkpoint ở epoch 8, chạy ở epoch 10
+//   ⟹ làm mới BẮT BUỘC (cap_epoch 8 < 10), dịch cửa sổ k = 2.
+//   ρ beacon {rho 2e9, prev 1e9, hiệu lực từ 5} ⟹ ρ(10) = 2e9.
+//   Cửa sổ ở epoch 8: [(1e8,5e7),(1e8,5e7),(0,0),(1e8,5e7),(0,0),(7,7),(9,9)].
+//   Sau dịch: ô 1..6 = (0,0),(1e8,5e7),(1e8,5e7),(0,0),(1e8,5e7),(0,0)
+//   ⟹ Σg = 3e8, Σc = 1.5e8, ratio = 0.5Q, uf = 0.75Q, scale_limit = 5e7.
+//   Không lent: base 2e8  ⟹ cap = 1e8 + ⌊5e7 × 0.25⌋ = 112_500_000.
+//   L_lent 12 LAMP: base 2e8 + min(2.4e7, 1e9) ⟹ cap = 124_500_000.
+//   Hai ô (7,7),(9,9) rơi khỏi cửa sổ khi dịch: bản KHÔNG dịch cho Σ khác.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const t_gb_beacon_policy: ByteArray =
+  #"7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
+
+const t_gb_beacon_hash: ByteArray =
+  #"7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b"
+
+const t_shard_hash: ByteArray =
+  #"7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c"
+
+// Policy NFT ρ và script ρ KHÁC nhau trong bài kiểm (ngoài đời bằng nhau), để ca
+// "sai địa chỉ" và ca "sai NFT" đo hai lớp riêng.
+const t_rate_policy: ByteArray =
+  #"7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d"
+
+const t_rate_hash: ByteArray =
+  #"7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e"
+
+fn t_params() -> VaultParams {
+  VaultParams {
+    lamp_policy_id: t_lamp_policy,
+    lamp_asset_name: t_lamp_asset_name,
+    gb_beacon_nft_policy: t_gb_beacon_policy,
+    gb_beacon_script_hash: t_gb_beacon_hash,
+    gb_shard_policy_id: t_shard_hash,
+    rate_nft_policy: t_rate_policy,
+    rate_script_hash: t_rate_hash,
+    wakeme_vault_hash: t_wakeme_hash,
+    ms_per_epoch: t_ms_per_epoch,
+  }
+}
+
+fn t_rate_ref(index: Int, at_hash: ByteArray, nft_policy: ByteArray) -> Input {
+  let d: Data =
+    RateParam { rho_q: 2_000_000_000, prev_rho_q: 1_000_000_000, effective_epoch: 5 }
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 40 + index },
+    output: Output {
+      address: address.from_script(at_hash),
+      value: assets.from_lovelace(2_000_000)
+        |> assets.add(nft_policy, #"52484f", 1),
+      datum: InlineDatum(d),
+      reference_script: None,
+    },
+  }
+}
+
+fn t_rate_ok() -> Input {
+  t_rate_ref(0, t_rate_hash, t_rate_policy)
+}
+
+fn t_cell(g: Int, c: Int) -> EpochUsage {
+  EpochUsage { generated: g, consumed: c }
+}
+
+fn t_win_a() -> List<EpochUsage> {
+  [
+    t_cell(100_000_000, 50_000_000), t_cell(100_000_000, 50_000_000), t_cell(0, 0),
+    t_cell(100_000_000, 50_000_000), t_cell(0, 0), t_cell(7, 7), t_cell(9, 9),
+  ]
+}
+
+const cp_bal: Int = 100_000_000
+
+const cp_lent_c: Int = 7_000_000
+
+const cp_lent_o: Int = 5_000_000
+
+const cp_cap_no_lent: Int = 112_500_000
+
+const cp_cap_lent: Int = 124_500_000
+
+/// Két nền: checkpoint ở epoch 8, `last_updated_epoch` 8.
+fn t_cp_din(link: ByteArray) -> VaultDatum {
+  VaultDatum {
+    ..t_datum(cp_bal, 0, [t_holding(cp_bal, 5, False)]),
+    wakeme_link: link,
+    cap_epoch: 8,
+    cap_nanogic: 77,
+    usage_window: t_win_a(),
+    usage_window_epoch: 8,
+    last_updated_epoch: 8,
+  }
+}
+
+/// `d` mang checkpoint làm mới ở `e` (cửa sổ dịch rồi cộng `burned` vào ô 0).
+fn t_cp_apply(
+  d: VaultDatum,
+  din: VaultDatum,
+  link: ByteArray,
+  cap: Int,
+  e: Int,
+  burned: Int,
+) -> VaultDatum {
+  VaultDatum {
+    ..d,
+    wakeme_link: link,
+    cap_epoch: e,
+    cap_nanogic: cap,
+    usage_window: window_add(
+      shift_window(din.usage_window, din.usage_window_epoch, e),
+      0,
+      burned,
+    ),
+    usage_window_epoch: e,
+  }
+}
+
+fn t_cp_tx(
+  din: VaultDatum,
+  dout: VaultDatum,
+  refs: List<Input>,
+  signers: List<ByteArray>,
+) -> Transaction {
+  Transaction {
+    ..t_tx([t_vault_input(din, cp_bal)], [t_vault_output(dout, cp_bal)], signers),
+    reference_inputs: refs,
+  }
+}
+
+fn t_lent_ok() -> Input {
+  t_lent_ref(cp_lent_c, cp_lent_o)
+}
+
+// ── Neo số: hai cap trên đúng bằng hàm thật với cửa sổ ĐÃ dịch ──────────────
+test cp_cap_literals_match_formula() {
+  let w = shift_window(t_win_a(), 8, 10)
+  and {
+    amount_by_lamp(cp_bal, 0, w, 2_000_000_000, 6) == cp_cap_no_lent,
+    amount_by_lamp(cp_bal, cp_lent_c + cp_lent_o, w, 2_000_000_000, 6) == cp_cap_lent,
+    // Cửa sổ KHÔNG dịch cho cap khác ⟹ ca "không dịch" phân biệt được.
+    amount_by_lamp(cp_bal, 0, t_win_a(), 2_000_000_000, 6) != cp_cap_no_lent,
+  }
+}
+
+// ═══ RefreshCheckpoint ═════════════════════════════════════════════════════
+
+fn t_rc(dout: VaultDatum, din: VaultDatum, refs: List<Input>) -> Bool {
+  validate_refresh_checkpoint(
+    din, 10, t_own_ref(), t_params(), t_cp_tx(din, dout, refs, [t_owner_pkh]),
+  )
+}
+
+test rc_pos_link_from_wakeme() {
+  let din = t_cp_din(#"")
+  t_rc(t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0), din, [t_rate_ok(), t_lent_ok()])
+}
+
+test rc_pos_unlink_without_wakeme() {
+  let din = t_cp_din(t_wakeme_commit)
+  t_rc(t_cp_apply(din, din, #"", cp_cap_no_lent, 10, 0), din, [t_rate_ok()])
+}
+
+// Luôn làm mới, kể cả cùng epoch (cap_epoch == e).
+test rc_pos_same_epoch_recomputes() {
+  let base = t_cp_din(#"")
+  let din = VaultDatum { ..base, cap_epoch: 10, usage_window_epoch: 10 }
+  let w = t_win_a()
+  let cap = amount_by_lamp(cp_bal, 0, w, 2_000_000_000, 6)
+  t_rc(VaultDatum { ..din, cap_nanogic: cap }, din, [t_rate_ok()])
+}
+
+test rc_neg_other_field_changed() fail {
+  let din = t_cp_din(#"")
+  let good = t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0)
+  t_rc(VaultDatum { ..good, last_updated_epoch: 10 }, din, [t_rate_ok(), t_lent_ok()])
+}
+
+test rc_neg_cap_off_by_one() fail {
+  let din = t_cp_din(#"")
+  t_rc(t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent + 1, 10, 0), din, [t_rate_ok(), t_lent_ok()])
+}
+
+test rc_neg_cap_without_lent_while_wakeme_present() fail {
+  let din = t_cp_din(#"")
+  t_rc(t_cp_apply(din, din, t_wakeme_commit, cp_cap_no_lent, 10, 0), din, [t_rate_ok(), t_lent_ok()])
+}
+
+test rc_neg_window_not_shifted() fail {
+  let din = t_cp_din(#"")
+  let good = t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0)
+  t_rc(VaultDatum { ..good, usage_window: t_win_a() }, din, [t_rate_ok(), t_lent_ok()])
+}
+
+test rc_neg_link_chosen_not_derived() fail {
+  let din = t_cp_din(#"")
+  t_rc(t_cp_apply(din, din, t_wakeme_commit_2, cp_cap_lent, 10, 0), din, [t_rate_ok(), t_lent_ok()])
+}
+
+// Hai két hợp lệ đều ghim két này; cái đúng đứng TRƯỚC (list.filter không chọn).
+test rc_neg_two_wakeme_vaults() fail {
+  let din = t_cp_din(#"")
+  let second = t_wakeme_ref(1, t_wakeme_commit_2, t_vault_id_name, cp_lent_c, cp_lent_o)
+  t_rc(t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0), din, [t_rate_ok(), t_lent_ok(), second])
+}
+
+test rc_neg_no_rate_beacon() fail {
+  let din = t_cp_din(#"")
+  t_rc(t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0), din, [t_lent_ok()])
+}
+
+test rc_neg_two_rate_beacons() fail {
+  let din = t_cp_din(#"")
+  t_rc(
+    t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0),
+    din,
+    [t_rate_ok(), t_rate_ref(1, t_rate_hash, t_rate_policy), t_lent_ok()],
+  )
+}
+
+test rc_neg_rate_wrong_script() fail {
+  let din = t_cp_din(#"")
+  t_rc(
+    t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0),
+    din,
+    [t_rate_ref(0, t_gb_beacon_hash, t_rate_policy), t_lent_ok()],
+  )
+}
+
+test rc_neg_rate_wrong_nft() fail {
+  let din = t_cp_din(#"")
+  t_rc(
+    t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0),
+    din,
+    [t_rate_ref(0, t_rate_hash, t_gb_beacon_policy), t_lent_ok()],
+  )
+}
+
+test rc_neg_no_owner_sig() fail {
+  let din = t_cp_din(#"")
+  let dout = t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0)
+  validate_refresh_checkpoint(
+    din, 10, t_own_ref(), t_params(), t_cp_tx(din, dout, [t_rate_ok(), t_lent_ok()], []),
+  )
+}
+
+// ── Value của RefreshCheckpoint: lovelace chỉ được TĂNG, mọi token khác ghim ─────
+//
+// Bản trước ghim value bằng TUYỆT ĐỐI (kể cả lovelace) và có bài
+// `rc_neg_value_changed` coi "thêm 1 ADA" là phải từ chối. Chính sách đó đã LẬT
+// (2026-09-30): datum ra dài hơn datum vào ⟹ min-ADA tăng ⟹ két mở sát min-ADA
+// (đo trên Lucid Emulator: 1_978_290 lovelace) kẹt ở checkpoint cũ. Bài cũ bị bỏ,
+// dấu kỳ vọng của nó đảo thành `rc_pos_ada_plus_one`.
+//
+// Mỗi bài âm chỉ khác bài `rc_pos_ada_plus_one` đúng MỘT chỗ (ADA vẫn +1), nên nó
+// đỏ vì đúng chốt nó mang tên, không vì ADA.
+
+const rc_min_ada: Int = 1_978_290
+
+/// Datum làm mới hợp lệ; input mang `rc_min_ada` + LAMP `cp_bal` + NFT két.
+fn t_rc_value(out_of: fn(VaultDatum) -> Output) -> Bool {
+  let din = t_cp_din(#"")
+  let dout = t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0)
+  let tx =
+    Transaction {
+      ..t_tx(
+        [t_vault_input_ada(din, rc_min_ada, cp_bal)],
+        [out_of(dout)],
+        [t_owner_pkh],
+      ),
+      reference_inputs: [t_rate_ok(), t_lent_ok()],
+    }
+  validate_refresh_checkpoint(din, 10, t_own_ref(), t_params(), tx)
+}
+
+test rc_pos_ada_plus_one() {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada + 1, cp_bal) })
+}
+
+test rc_pos_ada_unchanged() {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada, cp_bal) })
+}
+
+test rc_neg_ada_minus_one() fail {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada - 1, cp_bal) })
+}
+
+// Token dưới một policy THỨ TƯ.
+test rc_neg_foreign_token_new_policy() fail {
+  t_rc_value(fn(d) { t_vault_output_dust(d, rc_min_ada + 1, cp_bal) })
+}
+
+// Tên lạ dưới policy LAMP — vẫn chỉ 3 policy, nên `validate_vault_value` (≤ 3
+// policy) sẽ CHO QUA. Bài này là bài phân biệt phép so nguyên khối với khuôn IG-14.
+test rc_neg_foreign_name_under_lamp_policy() fail {
+  t_rc_value(
+    fn(d) {
+      let o = t_vault_output_ada(d, rc_min_ada + 1, cp_bal)
+      Output { ..o, value: assets.add(o.value, t_lamp_policy, #"6475737400", 1) }
+    },
+  )
+}
+
+// Tên lạ thứ hai dưới policy vault-id — cùng lý do như trên.
+test rc_neg_foreign_name_under_vault_policy() fail {
+  t_rc_value(
+    fn(d) {
+      let o = t_vault_output_ada(d, rc_min_ada + 1, cp_bal)
+      Output { ..o, value: assets.add(o.value, t_vault_hash, #"6475737400", 1) }
+    },
+  )
+}
+
+test rc_neg_lamp_plus_one() fail {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada + 1, cp_bal + 1) })
+}
+
+test rc_neg_lamp_minus_one() fail {
+  t_rc_value(fn(d) { t_vault_output_ada(d, rc_min_ada + 1, cp_bal - 1) })
+}
+
+test rc_neg_nft_dropped() fail {
+  t_rc_value(
+    fn(d) {
+      let o = t_vault_output_ada(d, rc_min_ada + 1, cp_bal)
+      Output { ..o, value: assets.add(o.value, t_vault_hash, t_vault_id_name, -1) }
+    },
+  )
+}
+
+// ═══ BurnBatch ═════════════════════════════════════════════════════════════
+
+fn t_cp_burn_din(link: ByteArray) -> VaultDatum {
+  VaultDatum { ..t_cp_din(link), magic_batches: [t_burn_batch(bid_a, 500)] }
+}
+
+fn t_bb(dout: VaultDatum, din: VaultDatum, refs: List<Input>) -> Bool {
+  validate_burn_batch(
+    din, [(bid_a, 200)], 10, t_own_ref(), t_params(),
+    t_cp_tx(din, dout, refs, [t_owner_pkh]),
+  )
+}
+
+fn t_bb_base_out(din: VaultDatum) -> VaultDatum {
+  t_burn_dout(din, [t_burn_batch(bid_a, 300)], 200, 10)
+}
+
+test cp_bb_pos_refresh_and_add_consumed() {
+  let din = t_cp_burn_din(#"")
+  t_bb(t_cp_apply(t_bb_base_out(din), din, #"", cp_cap_no_lent, 10, 200), din, [t_rate_ok()])
+}
+
+test cp_bb_neg_not_refreshed() fail {
+  let din = t_cp_burn_din(#"")
+  // Ghim nguyên checkpoint cũ, chỉ cộng consumed vào ô 0 cũ.
+  t_bb(t_bb_base_out(din), din, [t_rate_ok()])
+}
+
+test cp_bb_neg_consumed_not_added() fail {
+  let din = t_cp_burn_din(#"")
+  t_bb(t_cp_apply(t_bb_base_out(din), din, #"", cp_cap_no_lent, 10, 0), din, [t_rate_ok()])
+}
+
+test cp_bb_pos_link_set_with_wakeme() {
+  let din = t_cp_burn_din(t_wakeme_commit)
+  t_bb(
+    t_cp_apply(t_bb_base_out(din), din, t_wakeme_commit, cp_cap_lent, 10, 200),
+    din,
+    [t_rate_ok(), t_lent_ok()],
+  )
+}
+
+// Luật 2: link đặt mà thiếu két khi làm mới ⟹ fail (đòn "bỏ ref để hạ cap").
+test cp_bb_neg_link_set_without_wakeme() fail {
+  let din = t_cp_burn_din(t_wakeme_commit)
+  t_bb(t_cp_apply(t_bb_base_out(din), din, #"", cp_cap_no_lent, 10, 200), din, [t_rate_ok()])
+}
+
+// Ở cùng epoch (cap_epoch == e): ghim nguyên, KHÔNG cần beacon.
+test cp_bb_pos_same_epoch_pinned_no_refs() {
+  let base = t_cp_burn_din(t_wakeme_commit)
+  let din = VaultDatum { ..base, cap_epoch: 10, usage_window_epoch: 10 }
+  t_bb(t_bb_base_out(din), din, [])
+}
+
+// ═══ PruneExpired (không chữ ký, KeepLink) ═════════════════════════════════
+
+fn t_cp_prune_din(link: ByteArray) -> VaultDatum {
+  VaultDatum { ..t_cp_din(link), magic_batches: [t_instant_batch(9, 5_000)] }
+}
+
+fn t_pe(dout: VaultDatum, din: VaultDatum, refs: List<Input>) -> Bool {
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), t_cp_tx(din, dout, refs, []))
+}
+
+test cp_pe_pos_refresh_keep_link() {
+  let din = t_cp_prune_din(t_wakeme_commit)
+  let out = VaultDatum { ..din, magic_batches: [] }
+  t_pe(t_cp_apply(out, din, t_wakeme_commit, cp_cap_lent, 10, 0), din, [t_rate_ok(), t_lent_ok()])
+}
+
+test cp_pe_neg_not_refreshed() fail {
+  let din = t_cp_prune_din(t_wakeme_commit)
+  t_pe(VaultDatum { ..din, magic_batches: [] }, din, [t_rate_ok(), t_lent_ok()])
+}
+
+test cp_pe_neg_clears_link() fail {
+  let din = t_cp_prune_din(t_wakeme_commit)
+  let out = VaultDatum { ..din, magic_batches: [] }
+  t_pe(t_cp_apply(out, din, #"", cp_cap_lent, 10, 0), din, [t_rate_ok(), t_lent_ok()])
+}
+
+test cp_pe_pos_no_link_no_wakeme() {
+  let din = t_cp_prune_din(#"")
+  let out = VaultDatum { ..din, magic_batches: [] }
+  t_pe(t_cp_apply(out, din, #"", cp_cap_no_lent, 10, 0), din, [t_rate_ok()])
+}
+
+// Người lạ đưa két Wakeme vào để ĐẶT link ⟹ fail (chỉ chủ ký đổi được link).
+test cp_pe_neg_sets_link() fail {
+  let din = t_cp_prune_din(#"")
+  let out = VaultDatum { ..din, magic_batches: [] }
+  t_pe(t_cp_apply(out, din, t_wakeme_commit, cp_cap_lent, 10, 0), din, [t_rate_ok(), t_lent_ok()])
+}
+
+test cp_pe_neg_link_set_without_wakeme() fail {
+  let din = t_cp_prune_din(t_wakeme_commit)
+  let out = VaultDatum { ..din, magic_batches: [] }
+  t_pe(t_cp_apply(out, din, t_wakeme_commit, cp_cap_no_lent, 10, 0), din, [t_rate_ok()])
+}
+
+// ═══ UpdateProfile ═════════════════════════════════════════════════════════
+
+fn t_up(dout: VaultDatum, din: VaultDatum, refs: List<Input>) -> Bool {
+  validate_update_profile(
+    din, Ember, 10, t_own_ref(), t_params(), t_cp_tx(din, dout, refs, [t_owner_pkh]),
+  )
+}
+
+test cp_up_pos_refresh() {
+  let din = t_cp_din(#"")
+  t_up(t_cp_apply(up_output(din, Ember, 10), din, #"", cp_cap_no_lent, 10, 0), din, [t_rate_ok()])
+}
+
+test cp_up_neg_not_refreshed() fail {
+  let din = t_cp_din(#"")
+  t_up(up_output(din, Ember, 10), din, [t_rate_ok()])
+}
+
+// ═══ SetDelegate ═══════════════════════════════════════════════════════════
+
+fn t_sd(dout: VaultDatum, din: VaultDatum, refs: List<Input>) -> Bool {
+  validate_set_delegate(
+    din, None, 10, t_own_ref(), t_params(), t_cp_tx(din, dout, refs, [t_owner_pkh]),
+  )
+}
+
+fn t_cp_sd_din() -> VaultDatum {
+  VaultDatum { ..t_cp_din(#""), personal_delegate: Some(t_delegate) }
+}
+
+fn t_cp_sd_out(din: VaultDatum) -> VaultDatum {
+  VaultDatum { ..din, personal_delegate: None, last_updated_epoch: 10 }
+}
+
+test cp_sd_pos_refresh() {
+  let din = t_cp_sd_din()
+  t_sd(t_cp_apply(t_cp_sd_out(din), din, #"", cp_cap_no_lent, 10, 0), din, [t_rate_ok()])
+}
+
+test cp_sd_neg_not_refreshed() fail {
+  let din = t_cp_sd_din()
+  t_sd(t_cp_sd_out(din), din, [t_rate_ok()])
+}
+
+// ═══ WithdrawLamp — ghim nguyên, không đọc gì ══════════════════════════════
+
+fn t_wd(dout: VaultDatum, din: VaultDatum) -> Bool {
+  let tx =
+    t_tx(
+      [t_vault_input(din, cp_bal)],
+      [t_vault_output(dout, cp_bal - 5_000_000)],
+      [t_owner_pkh],
+    )
+  // reference_inputs RỖNG: không beacon, không két Wakeme.
+  validate_withdraw_lamp(din, 5_000_000, 10, t_own_ref(), t_params(), tx)
+}
+
+fn t_wd_out(din: VaultDatum) -> VaultDatum {
+  VaultDatum {
+    ..din,
+    lamp_balance: cp_bal - 5_000_000,
+    loyalty_holdings: [t_holding(cp_bal - 5_000_000, 5, False)],
+  }
+}
+
+// Link đặt, cap cũ (epoch 8 < 10), không két, không beacon ⟹ XANH.
+test cp_wd_pos_link_set_no_refs() {
+  let din = t_cp_din(t_wakeme_commit)
+  t_wd(t_wd_out(din), din)
+}
+
+test cp_wd_neg_cap_changed() fail {
+  let din = t_cp_din(t_wakeme_commit)
+  t_wd(VaultDatum { ..t_wd_out(din), cap_nanogic: din.cap_nanogic + 1 }, din)
+}
+
+test cp_wd_neg_link_cleared() fail {
+  let din = t_cp_din(t_wakeme_commit)
+  t_wd(VaultDatum { ..t_wd_out(din), wakeme_link: #"" }, din)
+}
+
+test cp_wd_neg_window_shifted() fail {
+  let din = t_cp_din(t_wakeme_commit)
+  t_wd(
+    VaultDatum {
+      ..t_wd_out(din),
+      usage_window: shift_window(din.usage_window, 8, 10),
+      usage_window_epoch: 10,
+    },
+    din,
+  )
+}
+
+// ═══ Qua handler `spend`: G1b, shard, InstantGen đóng ══════════════════════
+
+const t_e10_lo: Int = 10 * 432_000_000 + 1_000
+
+fn t_spend(redeemer: VaultRedeemer, din: VaultDatum, extra_inputs: List<Input>) -> Bool {
+  let dout = t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0)
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: [t_vault_input(din, cp_bal), ..extra_inputs],
+      reference_inputs: [t_rate_ok(), t_lent_ok()],
+      outputs: [t_vault_output(dout, cp_bal)],
+      extra_signatories: [t_owner_pkh],
+      validity_range: interval.between(t_e10_lo, t_e10_lo + 1_000),
+    }
+  vault.spend(
+    t_lamp_policy, t_lamp_asset_name, t_gb_beacon_policy, t_gb_beacon_hash,
+    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, t_ms_per_epoch,
+    Some(din), redeemer, t_own_ref(), tx,
+  )
+}
+
+fn t_foreign_input(index: Int, at_hash: ByteArray) -> Input {
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 60 + index },
+    output: Output {
+      address: address.from_script(at_hash),
+      value: assets.from_lovelace(2_000_000),
+      datum: NoDatum,
+      reference_script: None,
+    },
+  }
+}
+
+test sp_pos_refresh_via_handler() {
+  t_spend(RefreshCheckpoint, t_cp_din(#""), [])
+}
+
+// G1b: két Wakeme bị TIÊU (nằm trong tx.inputs) ⟹ fail.
+test sp_neg_wakeme_vault_spent() fail {
+  t_spend(RefreshCheckpoint, t_cp_din(#""), [t_wakeme_ref(2, t_wakeme_commit, t_vault_id_name, cp_lent_c, cp_lent_o)])
+}
+
+// Input tại script KHÁC (không phải Wakeme, không phải shard) không bị G1b chặn.
+test sp_pos_other_script_input_ok() {
+  t_spend(RefreshCheckpoint, t_cp_din(#""), [t_foreign_input(0, t_gb_beacon_hash)])
+}
+
+test sp_neg_shard_spent_on_non_gen_branch() fail {
+  t_spend(RefreshCheckpoint, t_cp_din(#""), [t_foreign_input(1, t_shard_hash)])
+}
+
+
+// ═══ Genesis: năm ô mới phải sạch ══════════════════════════════════════════
+
+fn t_genesis_with(vd: VaultDatum) -> Bool {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let out = t_genesis_output(vd, 100, t_vault_hash, name)
+  let m = assets.from_asset(t_vault_hash, name, 1)
+  t_mint_call(seed, t_vault_hash, t_mint_tx(seed, out, m, [t_owner_pkh]))
+}
+
+test mint_genesis_v2_clean_ok() {
+  t_genesis_with(t_clean_genesis(100))
+}
+
+test mint_genesis_link_prefilled_rejected() fail {
+  t_genesis_with(VaultDatum { ..t_clean_genesis(100), wakeme_link: t_wakeme_commit })
+}
+
+test mint_genesis_cap_epoch_prefilled_rejected() fail {
+  t_genesis_with(VaultDatum { ..t_clean_genesis(100), cap_epoch: 1 })
+}
+
+test mint_genesis_cap_nanogic_prefilled_rejected() fail {
+  t_genesis_with(VaultDatum { ..t_clean_genesis(100), cap_nanogic: 1 })
+}
+
+test mint_genesis_window_prefilled_rejected() fail {
+  t_genesis_with(
+    VaultDatum {
+      ..t_clean_genesis(100),
+      usage_window: [t_cell(0, 1), ..list.drop(empty_window(), 1)],
+    },
+  )
+}
+
+test mint_genesis_window_short_rejected() fail {
+  t_genesis_with(
+    VaultDatum { ..t_clean_genesis(100), usage_window: list.drop(empty_window(), 1) },
+  )
+}
+
+test mint_genesis_window_epoch_prefilled_rejected() fail {
+  t_genesis_with(VaultDatum { ..t_clean_genesis(100), usage_window_epoch: 1 })
+}
+
+// ═══ Vị trí trường — két Wakeme đọc ô 6/12/14 THEO VỊ TRÍ ═════════════════
+// Mọi giá trị cùng kiểu trong mẫu KHÁC nhau (cap_epoch 8 ≠ cap_nanogic 77 ≠
+// usage_window_epoch 9), để một phép hoán vị hai ô Int không xanh nhờ may.
+test layout_v2_field_positions() {
+  let d: Data =
+    VaultDatum { ..t_cp_din(t_wakeme_commit), usage_window_epoch: 9 }
+  let Pair(tag, fields) = builtin.un_constr_data(d)
+  and {
+    tag == 0,
+    list.length(fields) == 20,
+    list.at(fields, 6) == Some(builtin.b_data(t_wakeme_commit)),
+    list.at(fields, 12) == Some(builtin.i_data(8)),
+    list.at(fields, 14) == Some(builtin.i_data(77)),
+    list.at(fields, 19) == Some(builtin.i_data(9)),
+    list.length(builtin.un_list_data(builtin.head_list(list.drop(fields, 18)))) == 7,
+  }
+}
+
+// Luật 2 ở nhánh KHÔNG chữ ký: người lạ dọn rác mà bỏ két Wakeme ra ngoài để XOÁ
+// link. Ca `cp_pe_neg_link_set_without_wakeme` ở trên KHÔNG ghim được luật này —
+// đầu ra của nó giữ link nên nó đỏ ở phép so checkpoint; đo đột biến gỡ
+// `expect d.wakeme_link == #""` (2026-09-30) thì nó vẫn xanh. Ca này thì đỏ.
+test cp_pe_neg_clears_link_without_wakeme() fail {
+  let din = t_cp_prune_din(t_wakeme_commit)
+  let out = VaultDatum { ..din, magic_batches: [] }
+  t_pe(t_cp_apply(out, din, #"", cp_cap_no_lent, 10, 0), din, [t_rate_ok()])
+}
+
+// ═══ InstantGen — Gen v2.0 gói b2 ══════════════════════════════════════════
+//
+// Nền (dùng lại nền checkpoint ở trên): két `t_cp_din` 100 LAMP, checkpoint ở epoch
+// 8, chạy ở epoch 10 ⟹ lượt sinh BẮT BUỘC làm mới. ρ(10) = 2e9.
+//   cap không két = `cp_cap_no_lent` 112_500_000; có két (L_lent 12 LAMP) =
+//   `cp_cap_lent` 124_500_000 (bài `cp_cap_literals_match_formula` neo hai số).
+//   compute_cap_pp(1e8) = 4e8; compute_cap_lent(12e6) = 4.8e7.
+// Shard của két: `vault_shard_id(t_owner)` (ánh xạ theo owner, chung với ScheduleGen).
+// Shard nền: seq 3, reset 1e10 ⟹ gb_vault_share = 5e8; remaining 1e9.
+// Beacon GB nền: seq 3, epoch 10, depeg False.
+// Mỗi ca âm dựng từ ĐÚNG ca dương cùng nhóm, đổi MỘT vế; ca âm nào có "hàng xóm"
+// xanh thì hàng xóm nằm ngay cạnh.
+
+/// Shard GB của két trong bài kiểm = ánh xạ theo `owner` (`t_owner`).
+fn ig_shard_id() -> Int {
+  vault_shard_id(t_owner)
+}
+
+/// Một shard KHÁC shard của két.
+fn ig_wrong_shard_id() -> Int {
+  ( ig_shard_id() + 1 ) % 16
+}
+
+const ig_reset: Int = 10_000_000_000
+
+const ig_remaining: Int = 1_000_000_000
+
+const ig_lo: Int = 10 * 432_000_000 + 1_000
+
+const ig_hi: Int = 10 * 432_000_000 + 2_000
+
+fn t_gb_ref(
+  index: Int,
+  at_hash: ByteArray,
+  nft_policy: ByteArray,
+  epoch: Int,
+  depeg: Bool,
+) -> Input {
+  let d: Data = GreenBackBeacon { gb_nanogic: 160_000_000_000, seq: 3, epoch, depeg }
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 50 + index },
+    output: Output {
+      address: address.from_script(at_hash),
+      value: assets.from_lovelace(2_000_000)
+        |> assets.add(nft_policy, #"474242", 1),
+      datum: InlineDatum(d),
+      reference_script: None,
+    },
+  }
+}
+
+fn t_gb_ok() -> Input {
+  t_gb_ref(0, t_gb_beacon_hash, t_gb_beacon_policy, 10, False)
+}
+
+fn t_s(seq: Int, reset: Int, remaining: Int) -> GbShard {
+  GbShard { shard_id: ig_shard_id(), seq, reset_amount: reset, remaining }
+}
+
+fn t_shard_out(id: Int, s: GbShard) -> Output {
+  let d: Data = GbShard { ..s, shard_id: id }
+  Output {
+    address: address.from_script(t_shard_hash),
+    value: assets.from_lovelace(2_000_000)
+      |> assets.add(t_shard_hash, shard_nft_name(id), 1),
+    datum: InlineDatum(d),
+    reference_script: None,
+  }
+}
+
+fn t_shard_in(index: Int, id: Int, s: GbShard) -> Input {
+  Input {
+    output_reference: OutputReference { transaction_id: t_tx_id, output_index: 30 + index },
+    output: t_shard_out(id, s),
+  }
+}
+
+/// Datum ra ĐÚNG của lượt sinh `m` từ `din` ở epoch 10, checkpoint (link, cap).
+fn t_ig_out(din: VaultDatum, link: ByteArray, cap: Int, m: Int) -> VaultDatum {
+  let live = prune_expired(din.magic_batches, 10)
+  let window = shift_window(din.usage_window, din.usage_window_epoch, 10)
+  VaultDatum {
+    ..din,
+    magic_batches: list.concat(
+      live,
+      [
+        MagicBatch {
+          batch_id: compute_batch_id(t_own_ref(), din.next_batch_index),
+          source: Instant,
+          created_epoch: 10,
+          initial_amount: m,
+          current_amount: m,
+          decay_window: magic_decay_window,
+          profile_at_creation: None,
+          contract_id: None,
+          halved: False,
+        },
+      ],
+    ),
+    next_batch_index: din.next_batch_index + 1,
+    last_updated_epoch: 10,
+    attribution: VaultAttribution {
+      ..din.attribution,
+      last_event_epoch: 10,
+      total_events: din.attribution.total_events + 1,
+    },
+    instant_unlock_ms: ig_hi + t_ms_per_epoch,
+    wakeme_link: link,
+    cap_epoch: 10,
+    cap_nanogic: cap,
+    usage_window: window_add(window, m, 0),
+    usage_window_epoch: 10,
+  }
+}
+
+fn t_ig_tx(
+  din: VaultDatum,
+  dout: VaultDatum,
+  bal: Int,
+  refs: List<Input>,
+  shard_in: Input,
+  shard_out: Output,
+) -> Transaction {
+  Transaction {
+    ..placeholder,
+    inputs: [t_vault_input(din, bal), shard_in],
+    reference_inputs: refs,
+    outputs: [t_vault_output(dout, bal), shard_out],
+    extra_signatories: [t_owner_pkh],
+    validity_range: interval.between(ig_lo, ig_hi),
+  }
+}
+
+/// Chạy nhánh sinh với shard `ig_shard_id()`, vào `s_in`, ra `s_out`.
+fn t_ig(
+  din: VaultDatum,
+  dout: VaultDatum,
+  bal: Int,
+  m: Int,
+  refs: List<Input>,
+  s_in: GbShard,
+  s_out: GbShard,
+) -> Bool {
+  validate_instant_gen(
+    din, m, 10, t_own_ref(), t_params(),
+    t_ig_tx(
+      din, dout, bal, refs, t_shard_in(0, ig_shard_id(), s_in),
+      t_shard_out(ig_shard_id(), s_out),
+    ),
+  )
+}
+
+/// Ca nền: không két, rút `m` từ shard nền.
+fn t_ig_base(m: Int, refs: List<Input>) -> Bool {
+  let din = t_cp_din(#"")
+  t_ig(
+    din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, m, refs,
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+fn t_refs_base() -> List<Input> {
+  [t_rate_ok(), t_gb_ok()]
+}
+
+test ig_wrong_shard_differs() {
+  ig_wrong_shard_id() != ig_shard_id()
+}
+
+// ── dương nền + m ────────────────────────────────────────────────────────────
+test ig_pos_full_cap() {
+  t_ig_base(cp_cap_no_lent, t_refs_base())
+}
+
+test ig_pos_partial() {
+  t_ig_base(1, t_refs_base())
+}
+
+test ig_neg_m_zero() fail {
+  t_ig_base(0, t_refs_base())
+}
+
+// m vượt amount_by_lamp đúng 1 (hàng xóm bằng = `ig_pos_full_cap`).
+test ig_neg_over_amount_by_lamp_by_one() fail {
+  t_ig_base(cp_cap_no_lent + 1, t_refs_base())
+}
+
+test ig_neg_no_owner_sig() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000
+  let tx =
+    t_ig_tx(
+      din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, t_refs_base(),
+      t_shard_in(0, ig_shard_id(), t_s(3, ig_reset, ig_remaining)),
+      t_shard_out(ig_shard_id(), t_s(3, ig_reset, ig_remaining - m)),
+    )
+  validate_instant_gen(
+    din, m, 10, t_own_ref(), t_params(), Transaction { ..tx, extra_signatories: [] },
+  )
+}
+
+// ── GB_available (shard) ─────────────────────────────────────────────────────
+fn t_ig_avail(m: Int, available: Int) -> Bool {
+  let din = t_cp_din(#"")
+  t_ig(
+    din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, m, t_refs_base(),
+    t_s(3, ig_reset, available), t_s(3, ig_reset, available - m),
+  )
+}
+
+test ig_pos_gb_available_exact() {
+  t_ig_avail(1_000_000, 1_000_000)
+}
+
+test ig_neg_over_gb_available_by_one() fail {
+  t_ig_avail(1_000_001, 1_000_000)
+}
+
+// Shard đặt lại lười trong chính lượt này (seq 2 → 3): GB_available = reset mới,
+// KHÔNG phải `remaining` cũ (ở đây 0).
+test ig_pos_shard_lazy_reset() {
+  let din = t_cp_din(#"")
+  let m = 1_000_000
+  t_ig(
+    din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, m, t_refs_base(),
+    t_s(2, 5, 0), t_s(3, ig_reset, ig_reset - m),
+  )
+}
+
+// Cùng lượt đặt lại, nhưng két đòi `m` vượt reset mới 1.
+test ig_neg_shard_lazy_reset_over() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000_000
+  t_ig(
+    din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, m, t_refs_base(),
+    t_s(2, 5, 0), t_s(3, m - 1, -1),
+  )
+}
+
+fn t_ig_shard_out_remaining(remaining_out: Int) -> Bool {
+  let din = t_cp_din(#"")
+  let m = 1_000_000
+  t_ig(
+    din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, m, t_refs_base(),
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, remaining_out),
+  )
+}
+
+test ig_neg_shard_under_drawn_by_one() fail {
+  t_ig_shard_out_remaining(ig_remaining - 1_000_000 + 1)
+}
+
+test ig_neg_shard_over_drawn_by_one() fail {
+  t_ig_shard_out_remaining(ig_remaining - 1_000_000 - 1)
+}
+
+// Sai shard: shard kế bên (NFT + datum khớp nhau, chỉ không phải của két).
+test ig_neg_wrong_shard() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000_000
+  validate_instant_gen(
+    din, m, 10, t_own_ref(), t_params(),
+    t_ig_tx(
+      din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, t_refs_base(),
+      t_shard_in(0, ig_wrong_shard_id(), t_s(3, ig_reset, ig_remaining)),
+      t_shard_out(ig_wrong_shard_id(), t_s(3, ig_reset, ig_remaining - m)),
+    ),
+  )
+}
+
+// Hai input shard, shard ĐÚNG đứng trước: chỉ phép đếm `[shard_in]` chặn được.
+test ig_neg_two_shard_inputs() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000_000
+  let tx =
+    t_ig_tx(
+      din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, t_refs_base(),
+      t_shard_in(0, ig_shard_id(), t_s(3, ig_reset, ig_remaining)),
+      t_shard_out(ig_shard_id(), t_s(3, ig_reset, ig_remaining - m)),
+    )
+  validate_instant_gen(
+    din, m, 10, t_own_ref(), t_params(),
+    Transaction {
+      ..tx,
+      inputs: list.concat(tx.inputs, [t_shard_in(1, ig_wrong_shard_id(), t_s(3, ig_reset, ig_remaining))]),
+    },
+  )
+}
+
+// ── Trần mỗi-két-mỗi-epoch: reset 1e9 ⟹ share 5e7 ─────────────────────────────
+fn t_ig_share(m: Int) -> Bool {
+  let din = t_cp_din(#"")
+  t_ig(
+    din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, m, t_refs_base(),
+    t_s(3, 1_000_000_000, 1_000_000_000), t_s(3, 1_000_000_000, 1_000_000_000 - m),
+  )
+}
+
+test ig_pos_share_exact() {
+  gb_vault_share(1_000_000_000) == 50_000_000 && t_ig_share(50_000_000)
+}
+
+test ig_neg_over_share_by_one() fail {
+  t_ig_share(50_000_001)
+}
+
+// ── Beacon GB ────────────────────────────────────────────────────────────────
+test ig_neg_beacon_depeg() fail {
+  t_ig_base(1_000, [t_rate_ok(), t_gb_ref(0, t_gb_beacon_hash, t_gb_beacon_policy, 10, True)])
+}
+
+// Tuổi 1 epoch = ngưỡng ⟹ xanh; tuổi 2 ⟹ đỏ.
+test ig_pos_beacon_age_one() {
+  t_ig_base(1_000, [t_rate_ok(), t_gb_ref(0, t_gb_beacon_hash, t_gb_beacon_policy, 9, False)])
+}
+
+test ig_neg_beacon_stale() fail {
+  t_ig_base(1_000, [t_rate_ok(), t_gb_ref(0, t_gb_beacon_hash, t_gb_beacon_policy, 8, False)])
+}
+
+test ig_neg_beacon_from_future() fail {
+  t_ig_base(1_000, [t_rate_ok(), t_gb_ref(0, t_gb_beacon_hash, t_gb_beacon_policy, 11, False)])
+}
+
+test ig_neg_no_beacon() fail {
+  t_ig_base(1_000, [t_rate_ok()])
+}
+
+// Hai beacon, cái HỢP LỆ đứng TRƯỚC (ca "0 cái" không ghim được phép đếm).
+test ig_neg_two_beacons() fail {
+  t_ig_base(
+    1_000,
+    [t_rate_ok(), t_gb_ok(), t_gb_ref(1, t_gb_beacon_hash, t_gb_beacon_policy, 10, False)],
+  )
+}
+
+test ig_neg_beacon_wrong_script() fail {
+  t_ig_base(1_000, [t_rate_ok(), t_gb_ref(0, t_rate_hash, t_gb_beacon_policy, 10, False)])
+}
+
+test ig_neg_beacon_wrong_nft() fail {
+  t_ig_base(1_000, [t_rate_ok(), t_gb_ref(0, t_gb_beacon_hash, t_rate_policy, 10, False)])
+}
+
+// ── Cộng dồn trong epoch (checkpoint ĐÃ làm mới ở epoch 10) ──────────────────
+// Két đã sinh 3e8 trong epoch 10 (một batch + ô 0 `generated`). Không đọc ρ.
+fn t_same_din(link: ByteArray, cap: Int) -> VaultDatum {
+  VaultDatum {
+    ..t_datum(cp_bal, 0, [t_holding(cp_bal, 5, False)]),
+    magic_batches: [t_instant_batch(10, 300_000_000)],
+    next_batch_index: 1,
+    wakeme_link: link,
+    cap_epoch: 10,
+    cap_nanogic: cap,
+    usage_window: [t_cell(300_000_000, 0), ..list.repeat(t_cell(0, 0), 6)],
+    usage_window_epoch: 10,
+    last_updated_epoch: 10,
+  }
+}
+
+fn t_ig_same(din: VaultDatum, m: Int, refs: List<Input>) -> Bool {
+  t_ig(
+    din, t_ig_out(din, din.wakeme_link, din.cap_nanogic, m), cp_bal, m, refs,
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+// IG-9: cap_nanogic cũ (1e12) không chặn; compute_cap_pp(1e8) = 4e8 chặn.
+test ig_pos_cumul_cap_pp_exact() {
+  t_ig_same(t_same_din(#"", 1_000_000_000_000), 100_000_000, [t_gb_ok()])
+}
+
+test ig_neg_cumul_over_cap_pp_by_one() fail {
+  t_ig_same(t_same_din(#"", 1_000_000_000_000), 100_000_001, [t_gb_ok()])
+}
+
+// IG-8 CỘNG DỒN chứ không mỗi lượt: m = 5e7+1 < cap 3.5e8, nhưng 3e8 + m > 3.5e8.
+test ig_pos_cumul_cap_nanogic_exact() {
+  t_ig_same(t_same_din(#"", 350_000_000), 50_000_000, [t_gb_ok()])
+}
+
+test ig_neg_cumul_over_cap_nanogic_by_one() fail {
+  t_ig_same(t_same_din(#"", 350_000_000), 50_000_001, [t_gb_ok()])
+}
+
+// IG-9 với LAMP-mượn: 3e8 + m ≤ 4e8 + 4.8e7 chỉ khi có két đã ghim.
+test ig_pos_same_epoch_linked_lent() {
+  t_ig_same(t_same_din(t_wakeme_commit, 1_000_000_000_000), 148_000_000, [t_lent_ok(), t_gb_ok()])
+}
+
+test ig_neg_same_epoch_linked_absent() fail {
+  t_ig_same(t_same_din(t_wakeme_commit, 1_000_000_000_000), 148_000_000, [t_gb_ok()])
+}
+
+// Giữa epoch, két CHƯA ghim (link "") không được góp L_lent.
+test ig_neg_same_epoch_unlinked_wakeme() fail {
+  t_ig_same(t_same_din(#"", 1_000_000_000_000), 1_000, [t_lent_ok(), t_gb_ok()])
+}
+
+// ── Két Wakeme ở lượt làm mới: link := owner_commit, L_lent vào công thức ─────
+fn t_ig_wakeme(m: Int, link_out: ByteArray, cap_out: Int, refs: List<Input>) -> Bool {
+  let din = t_cp_din(#"")
+  t_ig(
+    din, t_ig_out(din, link_out, cap_out, m), cp_bal, m, refs,
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+test ig_pos_wakeme_link_and_lent() {
+  t_ig_wakeme(cp_cap_lent, t_wakeme_commit, cp_cap_lent, [t_rate_ok(), t_lent_ok(), t_gb_ok()])
+}
+
+// Cùng m, không két: cap = cp_cap_no_lent < m ⟹ đỏ (lượng cho phép khác nhau).
+test ig_neg_same_m_without_wakeme() fail {
+  t_ig_wakeme(cp_cap_lent, #"", cp_cap_no_lent, [t_rate_ok(), t_gb_ok()])
+}
+
+test ig_neg_wakeme_link_not_written() fail {
+  t_ig_wakeme(1_000, #"", cp_cap_lent, [t_rate_ok(), t_lent_ok(), t_gb_ok()])
+}
+
+test ig_neg_wakeme_cap_without_lent() fail {
+  t_ig_wakeme(1_000, t_wakeme_commit, cp_cap_no_lent, [t_rate_ok(), t_lent_ok(), t_gb_ok()])
+}
+
+// Link đã ghim, lượt sinh làm mới mà bỏ két ra ⟹ đỏ (luật 2) — đầu ra là đúng thứ hàm
+// sẽ tính nếu luật vắng (link "", cap không lent).
+test ig_neg_linked_refresh_without_wakeme() fail {
+  let din = t_cp_din(t_wakeme_commit)
+  let m = 1_000
+  t_ig(
+    din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, m, t_refs_base(),
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+// ── G2 với L_lent: 5 LAMP sở hữu < 10, cộng 12 LAMP mượn ⟹ đạt ──────────────
+const g2_bal: Int = 5_000_000
+
+fn t_g2_din() -> VaultDatum {
+  VaultDatum { ..t_cp_din(#""), lamp_balance: g2_bal, loyalty_holdings: [t_holding(g2_bal, 5, False)] }
+}
+
+fn t_g2(lent: Int, link: ByteArray, refs: List<Input>) -> Bool {
+  let din = t_g2_din()
+  let cap =
+    amount_by_lamp(g2_bal, lent, shift_window(din.usage_window, 8, 10), 2_000_000_000, 6)
+  let m = 1_000_000
+  t_ig(
+    din, t_ig_out(din, link, cap, m), g2_bal, m, refs,
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+test ig_pos_g2_with_lent() {
+  t_g2(cp_lent_c + cp_lent_o, t_wakeme_commit, [t_rate_ok(), t_lent_ok(), t_gb_ok()])
+}
+
+test ig_neg_g2_without_lent() fail {
+  t_g2(0, #"", t_refs_base())
+}
+
+// G2 vế `avail + L_lent`: chỉ tách được khỏi vế `lamp_balance + L_lent` khi
+// `lamp_locked > 0`. Két InstantGen thật luôn có `lamp_locked = 0` (genesis ghim, mọi
+// nhánh giữ) nên ca này dựng trạng thái không tới được — nó chỉ để gỡ vế avail ra là
+// có bài đỏ. Vế `lamp_balance + L_lent` thì BẤT KHẢ GHIM: `avail ≤ lamp_balance` khi
+// `lamp_locked ≥ 0`, nên nó luôn bị vế avail che; giữ làm phòng thủ, không có bài canh.
+fn t_g2_locked(bal: Int, locked: Int) -> Bool {
+  let din =
+    VaultDatum {
+      ..t_cp_din(#""),
+      lamp_balance: bal,
+      lamp_locked: locked,
+      loyalty_holdings: [t_holding(bal, 5, False)],
+    }
+  let cap =
+    amount_by_lamp(bal - locked, 0, shift_window(din.usage_window, 8, 10), 2_000_000_000, 6)
+  let m = 1_000
+  t_ig(
+    din, t_ig_out(din, #"", cap, m), bal, m, t_refs_base(),
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+test ig_pos_g2_avail_exact() {
+  t_g2_locked(20_000_000, 10_000_000)
+}
+
+test ig_neg_g2_avail_below_min() fail {
+  t_g2_locked(20_000_000, 10_000_001)
+}
+
+// Shard vào là shard KHÁC, shard ra đúng shard của két: chỉ phép soát NFT của INPUT
+// chặn được (validator shard cũng chặn — `continuing_pair` đòi cùng tập token — nhưng
+// két không dựa vào đó để đọc `GB_available` từ datum input).
+test ig_neg_shard_input_foreign() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000_000
+  validate_instant_gen(
+    din, m, 10, t_own_ref(), t_params(),
+    t_ig_tx(
+      din, t_ig_out(din, #"", cp_cap_no_lent, m), cp_bal, t_refs_base(),
+      t_shard_in(0, ig_wrong_shard_id(), t_s(3, ig_reset, ig_remaining)),
+      t_shard_out(ig_shard_id(), t_s(3, ig_reset, ig_remaining - m)),
+    ),
+  )
+}
+
+// ── Datum ra ─────────────────────────────────────────────────────────────────
+test ig_neg_generated_not_added() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000
+  let good = t_ig_out(din, #"", cp_cap_no_lent, m)
+  t_ig(
+    din, VaultDatum { ..good, usage_window: shift_window(din.usage_window, 8, 10) },
+    cp_bal, m, t_refs_base(),
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+test ig_neg_consumed_side_bumped() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000
+  let good = t_ig_out(din, #"", cp_cap_no_lent, m)
+  t_ig(
+    din,
+    VaultDatum {
+      ..good,
+      usage_window: window_add(shift_window(din.usage_window, 8, 10), m, m),
+    },
+    cp_bal, m, t_refs_base(),
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+test ig_neg_unlock_not_written() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000
+  t_ig(
+    din, VaultDatum { ..t_ig_out(din, #"", cp_cap_no_lent, m), instant_unlock_ms: 0 },
+    cp_bal, m, t_refs_base(),
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+test ig_neg_batch_amount_mismatch() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000
+  let good = t_ig_out(din, #"", cp_cap_no_lent, m)
+  t_ig(
+    din, VaultDatum { ..good, magic_batches: [t_instant_batch(10, m + 1)] },
+    cp_bal, m, t_refs_base(),
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+test ig_neg_lamp_moved() fail {
+  let din = t_cp_din(#"")
+  let m = 1_000
+  let good = t_ig_out(din, #"", cp_cap_no_lent, m)
+  t_ig(
+    din, VaultDatum { ..good, lamp_balance: cp_bal - 1 },
+    cp_bal, m, t_refs_base(),
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - m),
+  )
+}
+
+// ── Qua handler `spend` (G1b + shard được phép ở nhánh sinh) ─────────────────
+fn t_spend_gen(m: Int, extra_inputs: List<Input>) -> Bool {
+  let din = t_cp_din(#"")
+  let dout = t_ig_out(din, #"", cp_cap_no_lent, m)
+  let tx =
+    t_ig_tx(
+      din, dout, cp_bal, t_refs_base(),
+      t_shard_in(0, ig_shard_id(), t_s(3, ig_reset, ig_remaining)),
+      t_shard_out(ig_shard_id(), t_s(3, ig_reset, ig_remaining - m)),
+    )
+  vault.spend(
+    t_lamp_policy, t_lamp_asset_name, t_gb_beacon_policy, t_gb_beacon_hash,
+    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, t_ms_per_epoch,
+    Some(din), InstantGen { claimed_amount: m }, t_own_ref(),
+    Transaction { ..tx, inputs: list.concat(tx.inputs, extra_inputs) },
+  )
+}
+
+test sp_pos_instant_gen_via_handler() {
+  t_spend_gen(1_000, [])
+}
+
+test sp_neg_instant_gen_wakeme_spent() fail {
+  t_spend_gen(1_000, [t_wakeme_ref(2, t_wakeme_commit, t_vault_id_name, cp_lent_c, cp_lent_o)])
+}
+
+// ── THANG ĐO ExUnit nhánh sinh ───────────────────────────────────────────────
+//
+// Không bài nào ở đây khẳng định hiệu năng. `aiken check` in mem/cpu từng bài:
+//
+//     validator ≈ measure_ig_*  −  probe_ig_*_fixture   ← CÙNG một fixture
+//
+// Luật (khuôn `ScheduleGen/onchain/validators/vault.ak` ▸ mục "THANG ĐO"):
+//  (1) hai chân của một cặp gọi CÙNG một hàm fixture, không ai gõ lại số;
+//  (2) chân CHẠY-TRỌN là `test` thường (phải PASS) — một bài `fail` xanh cả khi chết
+//      ở cổng đầu tiên;
+//  (3) chân chạy-trọn đi qua handler `vault.spend` VÀ ép giải mã `VaultDatum` từ
+//      `Data` (`expect d: VaultDatum = raw`) — handler thật nhận datum dạng `Data`,
+//      nên bỏ bước đó là đo thiếu đúng phần lớn nhất theo trục batch/holding.
+//
+// Hai cấu hình NẶNG NHẤT, vì làm mới và có batch sống loại trừ nhau trên két thật
+// (batch sinh ở epoch `e` chỉ có sau một lượt làm mới ở `e`):
+//   A — làm mới: 32 batch CHẾT (dọn hết), 40 holding, ref = ρ + két Wakeme + beacon GB,
+//       shard input. Dịch cửa sổ + đọc ρ + đọc két.
+//   B — cùng epoch: 31 batch SỐNG (đạt trần `live < 32`), 40 holding, ref = két Wakeme
+//       đã ghim + beacon GB, shard input.
+
+const ig_scale_holdings: Int = max_loyalty_holdings
+
+fn t_ig_heavy_holdings() -> List<LoyaltyHolding> {
+  list.map(list.range(1, ig_scale_holdings), fn(i) { t_holding(2_500_000, i, False) })
+}
+
+fn t_ig_fixture_a() -> (VaultDatum, Transaction, Int) {
+  let din =
+    VaultDatum {
+      ..t_cp_din(#""),
+      loyalty_holdings: t_ig_heavy_holdings(),
+      magic_batches: list.repeat(t_instant_batch(9, 1), max_batches_per_vault),
+      next_batch_index: max_batches_per_vault,
+    }
+  let m = cp_cap_lent
+  let tx =
+    t_ig_tx(
+      din, t_ig_out(din, t_wakeme_commit, cp_cap_lent, m), cp_bal,
+      [t_rate_ok(), t_lent_ok(), t_gb_ok()],
+      t_shard_in(0, ig_shard_id(), t_s(2, 1, 0)),
+      t_shard_out(ig_shard_id(), t_s(3, ig_reset, ig_reset - m)),
+    )
+  (din, tx, m)
+}
+
+fn t_ig_fixture_b() -> (VaultDatum, Transaction, Int) {
+  let live = max_batches_per_vault - 1
+  let din =
+    VaultDatum {
+      ..t_same_din(t_wakeme_commit, cp_cap_lent),
+      loyalty_holdings: t_ig_heavy_holdings(),
+      magic_batches: list.repeat(t_instant_batch(10, 1_000_000), live),
+      next_batch_index: live,
+      usage_window: [t_cell(live * 1_000_000, 0), ..list.repeat(t_cell(0, 0), 6)],
+    }
+  let m = 1_000_000
+  let tx =
+    t_ig_tx(
+      din, t_ig_out(din, t_wakeme_commit, cp_cap_lent, m), cp_bal,
+      [t_lent_ok(), t_gb_ok()],
+      t_shard_in(0, ig_shard_id(), t_s(3, ig_reset, ig_remaining)),
+      t_shard_out(ig_shard_id(), t_s(3, ig_reset, ig_remaining - m)),
+    )
+  (din, tx, m)
+}
+
+fn t_ig_measure(fx: (VaultDatum, Transaction, Int)) -> Bool {
+  let (din, tx, m) = fx
+  let raw: Data = din
+  expect d: VaultDatum = raw
+  vault.spend(
+    t_lamp_policy, t_lamp_asset_name, t_gb_beacon_policy, t_gb_beacon_hash,
+    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, t_ms_per_epoch,
+    Some(d), InstantGen { claimed_amount: m }, t_own_ref(), tx,
+  )
+}
+
+fn t_ig_probe(fx: (VaultDatum, Transaction, Int), n_batches: Int, n_refs: Int) -> Bool {
+  let (din, tx, m) = fx
+  let raw: Data = din
+  and {
+    m > 0,
+    list.length(din.magic_batches) == n_batches,
+    list.length(din.loyalty_holdings) == ig_scale_holdings,
+    list.length(tx.reference_inputs) == n_refs,
+    list.length(tx.inputs) == 2,
+    raw != builtin.i_data(0),
+  }
+}
+
+test measure_ig_refresh_run() {
+  t_ig_measure(t_ig_fixture_a())
+}
+
+test probe_ig_refresh_fixture() {
+  t_ig_probe(t_ig_fixture_a(), max_batches_per_vault, 3)
+}
+
+test measure_ig_same_epoch_run() {
+  t_ig_measure(t_ig_fixture_b())
+}
+
+test probe_ig_same_epoch_fixture() {
+  t_ig_probe(t_ig_fixture_b(), max_batches_per_vault - 1, 2)
 }

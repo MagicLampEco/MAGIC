@@ -35,10 +35,17 @@
 //      consume PHẢI cùng epoch. Beacon epoch cũng nên = epoch hiện tại (stale 0).
 //
 // ENV (từ deploy trước):
-//   LAMP_POLICY_ID, UM_NFT_POLICY_ID, UM_DATUM_HASH, BACKING_NFT_POLICY_ID,
+//   Gen v2.0, cả hai loại: RATE_PARAM_HASH · GREENBACK_BEACON_HASH · GB_SHARD_HASH — ba hash
+//     GenBeacons dựng lại hash két (thiếu ⟹ NÉM nêu tên, `deployParams.ts` ▸
+//     `genV2BeaconRefsFromBook`). UM + BackingBeacon đã rời két.
 //   VAULT_KIND=schedule: LAMP_POLICY_ID, SHARD_NFT_POLICY_ID, VAULT_SCHEDULE_HASH
-//   VAULT_KIND=instant : LAMP_POLICY_ID, UM_NFT_POLICY_ID, UM_DATUM_HASH,
-//                        BACKING_NFT_POLICY_ID, BACKING_SCRIPT_HASH, VAULT_INSTANT_HASH
+//                        (két nướng hash `commit` — cặp dựng bằng `scheduleScriptPair`)
+//   VAULT_KIND=instant : LAMP_POLICY_ID, VAULT_INSTANT_HASH
+//                        (+ két Wakeme của NETWORK, apply-param #7 — từ config, không env)
+//   WAKEME_VAULT_UTXO — "txHash#idx" két Wakeme (tuỳ chọn, chỉ két instant). Lượt đầu
+//     trong epoch mới (`cap_epoch < e`) làm mới checkpoint: đọc beacon ρ, và nếu
+//     `wakeme_link` khác "" thì đọc cả két Wakeme đó (vắng biến ⟹ tự tìm theo NFT
+//     owner_commit). Cùng epoch thì không ref input checkpoint nào.
 //   Bộ khoá consume, hậu tố theo VAULT_KIND (`_SCHEDULE` / `_INSTANT`, 09 in ra):
 //     CONSUME_SCRIPT_HASH, PRICE_NFT_POLICY, PRICE_PARAM_HASH, MAX_PRICE_STALE — dựng lại hash.
 //     PRICE_NFT_UNIT, ENGAGE_NFT_UNIT — dò beacon + Engage SỐNG theo NFT. Con trỏ
@@ -102,7 +109,19 @@ import {
   epochValidityWindow, ownerRefFromPlutusData, ownerRefOf, ownerRefToString, sameOwner,
   type OwnerRef,
 } from "@magiclamp/protocol-utils";
-import { consumeParams, instantVaultParams, scheduleVaultParams } from "../deployParams.js";
+import {
+  consumeParams, genV2BeaconRefsFromBook, instantVaultParams, scheduleScriptPair,
+} from "../deployParams.js";
+import { checkGenV2Burn } from "../../ConsumeMAGIC/offchain/src/genV2Checkpoint.js";
+import { expectedCheckpoint } from "../../InstantGen/offchain/src/checkpoint.js";
+import { readWakemeVault } from "../../InstantGen/offchain/src/instant.js";
+import { RateParam } from "../../InstantGen/offchain/src/types.js";
+// InstantGen dịch cửa sổ bên trong `expectedCheckpoint`; ở đây chỉ cần phép cộng ô 0.
+import { windowAdd as windowAddInstant } from "../../InstantGen/offchain/src/genFormula.js";
+import {
+  shiftWindow as shiftWindowSchedule, windowAdd as windowAddSchedule,
+} from "../../ScheduleGen/offchain/src/genFormula.js";
+import { readRateBeaconUtxo, resolveWakemeVaultUtxo } from "./genV2Chain.js";
 import {
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
   ConsumeRedeemerSchema,
@@ -248,30 +267,29 @@ async function main() {
   }
 
   // ── Dựng lại vault — CÙNG bản đồ tham số với bước deploy tương ứng ──────────
-  //   ScheduleGen: 4 tham số (deploy/07) · InstantGen: 7 tham số (deploy/05).
+  //   ScheduleGen: cặp commit(9) → két(6) (deploy/07) · InstantGen: 9 tham số (deploy/05).
   //   Thiếu hay lệch thứ tự MỘT tham số là ra hash khác, địa chỉ khác, và không
   //   lệnh nào báo lỗi — chỉ có tx chết ở phase-1. Nên đối chiếu hash ngay dưới.
+  const beacons = genV2BeaconRefsFromBook(process.env);   // thiếu ⟹ ném nêu tên khoá
   const vaultBlueprint = await loadBlueprint(isSchedule ? "ScheduleGen" : "InstantGen");
-  const vaultV = findValidator(vaultBlueprint, "vault.vault.spend");
-  const { hash: vaultHash } = appliedScript(
-    vaultV,
-    isSchedule
-      ? scheduleVaultParams({
-          lampPolicyId:  POLICY_IDS.lamp,
-          lampAssetName: ASSET_NAMES.lamp,
-          shardPolicyId: POLICY_IDS.shard_nft,
-          msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
-        })
-      : instantVaultParams({
-          lampPolicyId:      POLICY_IDS.lamp,
-          lampAssetName:     ASSET_NAMES.lamp,
-          umNftPolicy:       POLICY_IDS.um_nft,
-          umScriptHash:      SCRIPT_HASHES.um_datum,
-          backingNftPolicy:  POLICY_IDS.backing,
-          backingScriptHash: SCRIPT_HASHES.backing_beacon,
-          msPerEpoch:        PROTOCOL.MS_PER_EPOCH,
+  const vaultHash = isSchedule
+    ? scheduleScriptPair(vaultBlueprint, {
+        lampPolicyId:  POLICY_IDS.lamp,
+        lampAssetName: ASSET_NAMES.lamp,
+        shardPolicyId: POLICY_IDS.shard_nft,
+        msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+        ...beacons,
+      }).vaultHash
+    : appliedScript(
+        findValidator(vaultBlueprint, "vault.vault.spend"),
+        instantVaultParams({
+          lampPolicyId:    POLICY_IDS.lamp,
+          lampAssetName:   ASSET_NAMES.lamp,
+          ...beacons,
+          msPerEpoch:      PROTOCOL.MS_PER_EPOCH,
+          wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,   // #7 — chỉ ở nhánh instant
         }),
-  );
+      ).hash;
   if (engageNftPolicy !== consumeHash) {
     throw new Error(
       `ENGAGE_NFT_UNIT policy (${engageNftPolicy}) ≠ consume hash (${consumeHash}). ` +
@@ -293,8 +311,8 @@ async function main() {
       `Hash vault dựng lại (${vaultHash}) ≠ ${vaultHashEnv} (${expectedVaultHash}).\n` +
       `  Loại vault đang chọn: ${vaultKind}. Kiểm bộ apply-param của ${vaultDeployStep}:\n` +
       (isSchedule
-        ? "  LAMP_POLICY_ID · ASSET_NAMES.lamp (tLAMP/LAMP theo mạng) · SHARD_NFT_POLICY_ID · MS_PER_EPOCH"
-        : "  LAMP_POLICY_ID · ASSET_NAMES.lamp · UM_NFT_POLICY_ID · UM_DATUM_HASH · BACKING_NFT_POLICY_ID · BACKING_SCRIPT_HASH · MS_PER_EPOCH"),
+        ? "  LAMP_POLICY_ID · ASSET_NAMES.lamp (tLAMP/LAMP theo mạng) · SHARD_NFT_POLICY_ID · MS_PER_EPOCH · RATE_PARAM_HASH · GREENBACK_BEACON_HASH · GB_SHARD_HASH (qua hash `commit`)"
+        : "  LAMP_POLICY_ID · ASSET_NAMES.lamp · RATE_PARAM_HASH · GREENBACK_BEACON_HASH · GB_SHARD_HASH · MS_PER_EPOCH · wakeme_vault_hash (két Wakeme theo mạng)"),
     );
   }
 
@@ -544,13 +562,73 @@ async function main() {
 
   // ── Vault output datum (A02 — vault.ak 684-708): magic_batches sau burn+prune,
   //    consumed_credit += required, last_updated_epoch=current, attribution +1 ────
+  //    ⚠ Batch đốt trọn về 0: HAI MODULE XỬ NGƯỢC NHAU. ScheduleGen ▸ `apply_burns` BỎ
+  //    batch 0; InstantGen ▸ `apply_burns` GIỮ nó (bộ đếm trần `instant_gen_in_epoch` cộng
+  //    `initial_amount` của batch còn trong danh sách). Bản trước lọc 0 cho cả hai ⟹ mọi
+  //    lượt đốt trọn một batch InstantGen bị validator từ chối (so `magic_batches` tuyệt đối).
   const burned = batches
     .map((b) => {
       const take = burnByBatch.get(b.batch_id);
       return take === undefined ? b : { ...b, current_amount: b.current_amount - take };
     })
-    .filter((b) => b.current_amount > 0n);             // apply_burns: prune batch về 0
+    .filter((b) => !isSchedule || b.current_amount > 0n);
   const expectedBatches = burned.filter((b) => !isExpired(b, currentEpoch)); // prune_expired
+
+  // ── Gen v2.0 checkpoint — epoch của KÉT = cận dưới validity / ms_per_epoch ──────
+  //    InstantGen: `expected_checkpoint(input, e, FollowVault, False, wakeme, ρ)` rồi
+  //      `window_add(cp.usage_window, 0, Σburns)`. `cap_epoch < e` ⟹ làm mới: đọc beacon ρ
+  //      (+ két Wakeme nếu `wakeme_link` khác "" hoặc WAKEME_VAULT_UTXO chỉ định).
+  //    ScheduleGen: `window_add(shift_window(w, w_epoch, e), 0, Σburns)`, epoch := e; không
+  //      đọc beacon, không đọc két Wakeme.
+  //    Công thức lấy từ gói nền (`checkpoint.ts`, `genFormula.ts` của từng module), không
+  //    viết lại. `checkGenV2Burn` của ConsumeMAGIC (bản chép có nhãn, độc lập) đối chiếu
+  //    lại datum ra ngay dưới trước khi dựng — hai đường lệch nhau thì NÉM ở đây.
+  const vaultEpoch = lowerMs / mspe;
+  let rateBeaconUtxo: UTxO | undefined;
+  let wakemeVaultUtxo: UTxO | undefined;
+  let checkpointCells: Record<string, unknown>;
+  if (isSchedule) {
+    checkpointCells = {
+      usage_window: windowAddSchedule(
+        shiftWindowSchedule(vaultDatum.usage_window, vaultDatum.usage_window_epoch, vaultEpoch), 0n, required,
+      ),
+      usage_window_epoch: vaultEpoch,
+    };
+  } else {
+    const refresh = vaultDatum.cap_epoch < vaultEpoch;
+    let rate = null;
+    let wakeme = null;
+    if (refresh) {
+      rateBeaconUtxo = await readRateBeaconUtxo(lucid, beacons);
+      rate = Data.from(rateBeaconUtxo.datum!, RateParam);
+      wakemeVaultUtxo = await resolveWakemeVaultUtxo(
+        lucid, SCRIPT_HASHES.wakeme_vault, vaultDatum.wakeme_link, process.env.WAKEME_VAULT_UTXO,
+      );
+      if (wakemeVaultUtxo) {
+        const ids = Object.entries(vaultUtxo.assets).filter(([k]) => k !== "lovelace" && k.slice(0, 56) === vaultHash);
+        if (ids.length !== 1 || ids[0]![1] !== 1n) {
+          throw new Error(`Két ${vaultUtxo.txHash}#${vaultUtxo.outputIndex} không mang đúng một NFT vault-id dưới ${vaultHash}.`);
+        }
+        wakeme = readWakemeVault(wakemeVaultUtxo, {
+          wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,
+          ownScriptHash:   vaultHash,
+          ownVaultName:    ids[0]![0].slice(56),
+          currentPeriod:   vaultEpoch,
+          lampPolicyId:    POLICY_IDS.lamp,
+          lampAssetName:   ASSET_NAMES.lamp,
+        });
+      }
+    }
+    const cp = expectedCheckpoint(vaultDatum, vaultEpoch, "FollowVault", false, wakeme, rate);
+    checkpointCells = {
+      wakeme_link:        cp.wakeme_link,
+      cap_epoch:          cp.cap_epoch,
+      cap_nanogic:        cp.cap_nanogic,
+      usage_window:       windowAddInstant(cp.usage_window, 0n, required),
+      usage_window_epoch: cp.usage_window_epoch,
+    };
+    console.log(`Checkpoint két:     cap_epoch ${vaultDatum.cap_epoch}, epoch ${vaultEpoch} ⟹ ${refresh ? "LÀM MỚI" : "giữ nguyên"}`);
+  }
   const newVaultDatum = {
     ...vaultDatum,
     magic_batches: expectedBatches,
@@ -564,6 +642,7 @@ async function main() {
       total_events: vaultDatum.attribution.total_events + 1n,
       last_event_epoch: currentEpoch,
     },
+    ...checkpointCells,
   };
   const newVaultDatumCbor = Data.to(newVaultDatum, vaultDatumSchema as any);
 
@@ -615,6 +694,20 @@ async function main() {
   const consumeRedeemer = Data.to(consumeRedeemerVal, ConsumeRedeemerSchema as unknown as ConsumeRedeemerT);
   const vaultBurnRedeemer = Data.to({ BurnBatch: { burns } }, VaultRedeemerSchema as any);
 
+  // Đối chiếu độc lập phía két (ConsumeMAGIC ▸ `checkGenV2Burn`): số trường datum đúng loại,
+  // Σburns == required, ô checkpoint đúng luật; trả ĐÚNG ref input két cần (ρ, két Wakeme).
+  const vaultCheck = checkGenV2Burn({
+    vaultUtxo,
+    vaultScriptHash: vaultHash,
+    vaultOutDatumCbor: newVaultDatumCbor,
+    vaultBurnRedeemerCbor: vaultBurnRedeemer,
+    requiredNanogic: required,
+    vaultEpoch,
+    vaultKind,
+    ...(rateBeaconUtxo ? { rateBeaconUtxo } : {}),
+    ...(wakemeVaultUtxo ? { wakemeVaultUtxo } : {}),
+  });
+
   // ── Collateral thuần ADA (tránh CollateralContainsNonADA) ────────────────────
   const walletUtxos = await lucid.wallet().getUtxos();
   const collateral = walletUtxos.find((u) => isPureAda(u) && (u.assets.lovelace ?? 0n) >= 5_000_000n);
@@ -642,7 +735,7 @@ async function main() {
     .collectFrom([engageUtxo], consumeRedeemer)
     .collectFrom([vaultUtxo], vaultBurnRedeemer)
     // Beacon giá + HAI ref-script, tất cả là reference input (KHÔNG tiêu).
-    .readFrom([priceBeaconUtxo, consumeRefUtxo, vaultRefUtxo])
+    .readFrom([priceBeaconUtxo, consumeRefUtxo, vaultRefUtxo, ...vaultCheck.refInputs])
     .pay.ToAddressWithData(
       engageUtxo.address,
       { kind: "inline", value: encodeEngageDatum(newEngage) },

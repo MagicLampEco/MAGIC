@@ -1,57 +1,86 @@
-// MagicSDK/src/generate.ts — the MAGIC generation surface for integrators.
+// MagicSDK/src/generate.ts — the MAGIC generation surface for integrators (Gen v2.0).
 //
 // WHY THIS FILE EXISTS
 // -------------------
-// Until now the gen builders lived only inside the per-module offchain packages
+// The gen builders live inside the per-module offchain packages
 // (`InstantGen/offchain/src/instant.ts`, `ScheduleGen/offchain/src/schedule.ts`).
-// An integrating app cannot import a repo path, so there was no way for any app
-// to trigger InstantGen / ScheduleGen — a contract gap, not missing code.
-// This module re-exports those builders by NAME through `@magiclamp/sdk`, which
-// is the single entry point every integrator is allowed to depend on.
+// An integrating app cannot import a repo path, so this module re-exports those
+// builders by NAME through `@magiclamp/sdk`, the single entry point every
+// integrator is allowed to depend on. SDK không bọc lại logic nào ở đây.
 //
 // WHAT IS DELIBERATELY NOT HERE
 // -----------------------------
-// * VacuumGen và SnapshotGen — cả hai đã dời sang `Legacy/`.
-//   Vacuum vi phạm I-ACT-7 (validator của nó chuyển LAMP ra treasury); Snapshot
-//   chưa bao giờ hội tụ về vault datum DESIGN-2. Không còn validator trong cây làm
-//   việc, nên `VaultType` cũng đã thu về "Instant" | "Schedule" (types.ts).
+// * VacuumGen và SnapshotGen — đã dời sang `Legacy/`.
+// * `diagnoseCeilings` — đã BỎ ở InstantGen Gen v2.0. Thay bằng `instantGenLimits(ctx)`:
+//   trả `maxM` (m lớn nhất qua được cả bốn trần IG-8/9/11/12) cùng từng trần riêng.
 //
 // Named re-exports only (no `export *`): the module packages each ship their own
-// `createLucid`, `Q`, `TESTNET_CONFIG`, … and a wildcard would collide.
+// `createLucid`, `Q`, `TESTNET_CONFIG`, `VaultDatum`, … and a wildcard would collide.
 
 // ── InstantGen ────────────────────────────────────────────────
 //
-// I-ACT-7: LAMP does NOT leave the vault. There is no `lampPaid` and no
-// treasury leg — the grant is keyed to `consumed_credit`, and
-// `InstantGenResult.newLampBalance` always equals the balance before the tx.
+// Gen v2.0: chủ két CHỌN lượng sinh `m` (nanogic); validator ép `m` qua cổng IG-1..IG-14
+// chứ không tự tính. Lượt sinh TIÊU shard GreenBack của két (`vaultShardId(owner)`) và trả
+// shard với `remaining` giảm đúng `m`; đọc beacon GB + sổ két (+ beacon ρ và két Wakeme khi
+// lượt này làm mới checkpoint). LAMP không rời két (I-ACT-7).
 //
-// FAIL-CLOSED: `backingBeaconUtxo` is REQUIRED. While CARP has not shipped the
-// beacon, no reference input can satisfy the lookup, `cap_surplus` cannot be
-// evaluated, and the gen door stays SHUT by design. Building the tx will fail —
-// that is the intended state, not a bug to route around.
+// `buildRefreshCheckpointTx` — làm mới năm ô checkpoint (đầu epoch, hoặc nối/gỡ két Wakeme)
+// mà không làm gì khác. Chủ ký; luôn cần beacon ρ.
 export {
   buildInstantGenTx,
-  diagnoseCeilings,
+  buildRefreshCheckpointTx,
+  instantGenLimits,
+  computeInstantGenOutputs,
+  computeRefreshCheckpointOutput,
+  applyInstantVaultParams,
+  vaultShardId,
+  shardNftName,
+  readWakemeVault,
+  expectedCheckpoint,
+  expectedCheckpointForGen,
+  currentCheckpoint,
+  INSTANT_VAULT_PARAM_TITLES,
   type InstantGenParams,
   type InstantGenResult,
+  type InstantGenContext,
+  type InstantGenLimits,
+  type InstantGenOutputs,
+  type RefreshCheckpointParams,
+  type RefreshCheckpointResult,
+  type InstantVaultParams,
+  type Checkpoint,
+  type WakemeRead,
+  type LentReadContext,
+  type RateParam,
+  type GreenBackBeacon,
+  type GbShard,
 } from "@magiclamp/instantgen-sdk";
 
 // ── ScheduleGen ───────────────────────────────────────────────
 //
 // Two phases. Commit locks the rate and the LAMP; Fire releases the lock and
-// mints the batch. I-ACT-7 holds on both: `FireResult.lampReleased` leaves the
-// LOCKED pool but stays in the vault. Fire is permissionless (no owner sig), so
-// an app, a keeper, or anyone else may drive it.
+// mints the batch. I-ACT-7 holds on both. Fire is permissionless and Gen v2.0
+// Fire đọc `m_per_epoch` đã chốt, KHÔNG đọc beacon.
 //
-// ScheduleGen needs no BackingBeacon, so this is the generation path that is
-// reachable today.
+// Gen v2.0: két uỷ TOÀN BỘ luật ký cho validator withdraw-zero `commit`. Commit đòi
+// `commitScript` (từ `applyVaultValidator("Schedule", …).commitScript`), hai beacon (ρ, GB),
+// sổ két và 16 shard GB. Stake credential của `commit` phải ĐĂNG KÝ một lần trước
+// (`buildRegisterCommitStakeTx`), nếu không ledger bác mọi lượt ký.
 export {
   buildScheduleCommitTx,
   buildScheduleFireTx,
+  buildRegisterCommitStakeTx,
+  applyScheduleScripts,
+  SCHEDULE_COMMIT_PARAM_NAMES,
+  SCHEDULE_VAULT_PARAM_NAMES,
   type CommitParams,
   type CommitResult,
   type FireParams,
   type FireResult,
+  type GenBeaconParams,
+  type RegisterCommitStakeParams,
+  type ScheduleScriptParams,
+  type ScheduleScripts,
 } from "@magiclamp/schedulegen-sdk";
 
 // ── Units ─────────────────────────────────────────────────────

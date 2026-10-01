@@ -162,8 +162,60 @@ pub type StreakState {
   last_active_epoch : Natural,
 }
 
-// ── §5.1 VaultDatum (full) ───────────────────────────────────
+// ── EpochUsage — một ô của cửa sổ `usage_window` (SPEC §6.1.2) ──────────────
+// nanogic SINH và nanogic ĐỐT (BurnBatch) của két trong MỘT epoch. Thứ tự trường
+// `generated, consumed` là hợp đồng nhị phân (constr 0, hai trường) — nó nằm trong
+// datum két từ Gen v2.0. Định nghĩa DUY NHẤT ở đây; `gen_formula.ak` import lại.
+pub type EpochUsage {
+  generated: Int,
+  consumed: Int,
+}
+
+// ── RateParam — datum beacon suất ρ (Gen v2.0, `INV-RATE-GOVERNED`) ─────────
+// CHÉP CÓ NHÃN từ `GenBeacons/onchain/lib/genbeacons/types.ak` ▸ `RateParam`
+// (MAGIC@1e9a72d9, 2026-09-30). Hợp đồng nhị phân của UTxO beacon: nguồn đổi hình
+// thì bản này phải đổi trong CÙNG commit — giải mã Aiken nghiêm ngặt số trường nên
+// lệch một trường là két chết ồn ào ở `expect rp: RateParam`, không đọc lệch im.
+// Giá trị hiệu lực ở epoch `e`: `rho_q` nếu `e >= effective_epoch`, ngược lại
+// `prev_rho_q` (gương `genbeacons/rate.rho_at`, xem `checkpoint.ak ▸ read_rho`).
+pub type RateParam {
+  rho_q: Int,
+  prev_rho_q: Int,
+  effective_epoch: Int,
+}
+
+// ── GreenBackBeacon + GbShard — datum beacon GB và shard GB (Gen v2.0 gói b2) ──
+// CHÉP CÓ NHÃN từ `GenBeacons/onchain/lib/genbeacons/types.ak` ▸ `GreenBackBeacon`,
+// `GbShard` (MAGIC@9c4a282b, 2026-09-30). Hợp đồng nhị phân của UTxO bên GenBeacons:
+// nguồn đổi hình thì bản này đổi trong CÙNG commit. Lệch một trường ⟹ két chết ồn
+// ào ở `expect g: GreenBackBeacon` / `expect s: GbShard`, không đọc lệch im.
+// Két chỉ ĐỌC hai kiểu này; ai được ghi chúng là việc của validator GenBeacons.
+pub type GreenBackBeacon {
+  gb_nanogic: Int,
+  seq: Int,
+  epoch: Int,
+  depeg: Bool,
+}
+
+pub type GbShard {
+  shard_id: Int,
+  seq: Int,
+  reset_amount: Int,
+  remaining: Int,
+}
+
+// ── §5.1 VaultDatum (full) — Gen v2.0, 20 trường ───────────────
 // worst-case ~12KB; tx limit 16KB (§5.1 Datum size note)
+//
+// Gen v2.0 (chủ dự án chốt 2026-09-30): hash MỚI, KHÔNG di trú UTxO đời trước
+// (SPEC v2.0 §6.1.6). Ba ô chết ≤ 15 được TÁI DỤNG thay vì nối cuối, vì két Wakeme
+// đọc ngược ba ô này theo VỊ TRÍ và chỉ nhận chỉ số ≤ 15 (layout gửi Wakeme
+// `[6, 12, 14]`):
+//   6  `vacuum_orders`   → `wakeme_link`
+//   12 `delegation_cert` → `cap_epoch`
+//   14 `streak_state`    → `cap_nanogic`
+// Ba vị trí đó từ nay KHÔNG BAO GIỜ dời. Trường mới về sau vẫn nối cuối.
+// Ngoại lệ cho bảng "Không được xoá": `DevStatus.md` ▸ `## Không được xoá`.
 pub type VaultDatum {
   // Trường 0 — ConsumeMAGIC đọc đúng chỉ số này bằng `un_constr_data`, đừng dời.
   // `Credential`: VerificationKey(pkh) ⟹ chủ ký; Script(h) ⟹ tx rút (lượng bất kỳ,
@@ -174,15 +226,22 @@ pub type VaultDatum {
   loyalty_holdings      : List<LoyaltyHolding>,
   magic_batches         : List<MagicBatch>,
   next_batch_index      : Natural,
-  vacuum_orders         : List<VacuumOrder>,
+  // Trường 6 — `owner_commit` (32 byte) của két Wakeme đang ghim két IG này, hoặc
+  // `#""` nếu chưa ghim. SUY RA từ reference input ở lượt làm mới, không ai tự chọn
+  // (`checkpoint.ak ▸ expected_checkpoint`). Két Wakeme đọc ô này theo vị trí.
+  wakeme_link           : ByteArray,
   gen_schedules         : List<GenSchedule>,
   profile               : ActivityProfile,
   profile_changed_epoch : Natural,
   pending_profile       : Option<PendingProfile>,
   last_updated_epoch    : Natural,
-  delegation_cert       : DelegationCertificate,
+  // Trường 12 — epoch của lượt làm mới cap gần nhất. Luôn bằng `usage_window_epoch`
+  // (hai ô được ghi CÙNG lượt ở mọi nhánh, genesis ghim cả hai về 0).
+  cap_epoch             : Natural,
   activity_state        : ActivityState,
-  streak_state          : StreakState,
+  // Trường 14 — `amount_by_lamp` (KHÔNG có `GB`) tính tại `cap_epoch`, nanogic.
+  // Validator tự tính, không nhận từ redeemer. Két Wakeme đọc ô này theo vị trí.
+  cap_nanogic           : Natural,
   // 🪦 BIA MỘ trường 15 — quyền chết 2026-09-16 (Nợ #14), trường ở lại. Lý do
   // KHÔNG phải "gỡ ra thì vỡ decode mọi UTxO đã tạo": hash đã đổi nên UTxO đời
   // trước nằm ở địa chỉ khác, ngoài tầm với của validator này dù có gỡ hay không.
@@ -273,6 +332,12 @@ pub type VaultDatum {
   // mỗi nhánh spend, hai trong số đó không cần chữ ký. Hai lược đồ khác nhau là
   // cái giá rẻ hơn, và nó hỏng ỒN ÀO (decode sai số trường) thay vì im.
   instant_unlock_ms     : Natural,
+  // ── Trường 18–19 (Gen v2.0, nối cuối) ──────────────────────────────────────
+  // Cửa sổ ĐÚNG 7 ô: ô 0 = epoch đang mở (`usage_window_epoch`), ô 1..6 = 6 epoch
+  // đã đóng. Dùng một trường epoch RIÊNG, không mượn `last_updated_epoch`, vì
+  // `PruneExpired` cố ý ghim trường đó để chống quấy.
+  usage_window          : List<EpochUsage>,
+  usage_window_epoch    : Natural,
 }
 
 // ── UM Datum ─────────────────────────────────────────────────
@@ -312,6 +377,8 @@ pub type VaultRedeemer {
   //           `claimed_amount` is the caller's assertion of the grant; the
   //           validator recomputes it and requires exact equality, so the
   //           granted amount is visible in the redeemer for auditing.
+  //           Gen v2.0: hình dạng GIỮ NGUYÊN; nghĩa đổi thành lượng sinh `m`
+  //           ở gói (b2) — hiện nhánh này `fail` (xem `validate_instant_gen`).
   InstantGen    { claimed_amount: Natural }
 
   // constr 1  PruneExpired (§7.4): permissionless garbage collection of DEAD
@@ -337,4 +404,11 @@ pub type VaultRedeemer {
   // (app paymaster)" — đường đó CHẾT 2026-09-16 (Nợ #14). Variant ở lại nguyên
   // chỗ làm bia mộ nhị phân; xem `validate_set_delegate`.
   SetDelegate   { new_delegate: Option<ByteArray> }
+
+  // constr 6  RefreshCheckpoint (Gen v2.0): chủ ký. CHỈ ghi `wakeme_link`,
+  //           `cap_epoch`, `cap_nanogic`, `usage_window`, `usage_window_epoch`;
+  //           mọi trường khác và value ghim. Có két Wakeme ghim két này trong
+  //           reference input ⟹ `wakeme_link := owner_commit`; không có ⟹ `#""`
+  //           — cửa thoát khi két Wakeme đã ghim sang két IG khác hoặc đã đóng.
+  RefreshCheckpoint
 }

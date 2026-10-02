@@ -227,3 +227,22 @@ test registry_spend_always_fail() fail {
     }
   vault_registry.spend(vr_seed, Some(d), Void, util.mk_ref(#"00", 0), tx)
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Cổng `reference_script == None` (rà 2026-10-02) — cặp dương/âm
+// ══════════════════════════════════════════════════════════════════════════════
+// Ca dương: đầu ra script giữ `None`, ref-script nằm ở một output VÍ khác ⟹ qua (cổng
+// chỉ soi đầu ra của chính script). Ca âm: CÙNG giao dịch, ref-script gắn vào đầu ra
+// script ⟹ từ chối. Hai ca chỉ khác đúng một trường, nên ca âm đỏ được vì cổng này chứ
+// không vì chốt nào khác.
+
+const woc_ref_script: ByteArray =
+  #"5c0000000000000000000000000000000000000000000000000000ff"
+
+test registry_mint_ref_script_elsewhere_ok() {
+  vr_mint(util.with_wallet_ref_script_output(vr_tx([vr_h1, vr_h2]), woc_ref_script))
+}
+
+test registry_mint_ref_script_fail() fail {
+  vr_mint(util.with_ref_script_at(vr_tx([vr_h1, vr_h2]), vr_sh, woc_ref_script))
+}

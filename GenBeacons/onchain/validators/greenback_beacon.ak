@@ -281,3 +281,60 @@ test greenback_update_origin_forgotten_fail() fail {
   let out = GreenBackBeacon { gb_nanogic: 2_000, seq: 5, epoch: 7, depeg: False }
   gb_spend_at(0, gb_in, window_origin_fixtures.shift_tx(gb_tx(gb_in, out, [gb_writer], 7), o))
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Cổng `reference_script == None` (rà 2026-10-02) — cặp dương/âm
+// ══════════════════════════════════════════════════════════════════════════════
+// Ca dương: đầu ra script giữ `None`, ref-script nằm ở một output VÍ khác ⟹ qua (cổng
+// chỉ soi đầu ra của chính script). Ca âm: CÙNG giao dịch, ref-script gắn vào đầu ra
+// script ⟹ từ chối. Hai ca chỉ khác đúng một trường, nên ca âm đỏ được vì cổng này chứ
+// không vì chốt nào khác.
+
+const woc_ref_script: ByteArray =
+  #"5c0000000000000000000000000000000000000000000000000000ff"
+
+const woc_gb_out: GreenBackBeacon =
+  GreenBackBeacon { gb_nanogic: 2_000, seq: 5, epoch: 7, depeg: False }
+
+test greenback_update_ref_script_elsewhere_ok() {
+  gb_spend(
+    gb_in,
+    util.with_wallet_ref_script_output(
+      gb_tx(gb_in, woc_gb_out, [gb_writer], 7),
+      woc_ref_script,
+    ),
+  )
+}
+
+test greenback_update_continuing_ref_script_fail() fail {
+  gb_spend(
+    gb_in,
+    util.with_ref_script_at(
+      gb_tx(gb_in, woc_gb_out, [gb_writer], 7),
+      gb_sh,
+      woc_ref_script,
+    ),
+  )
+}
+
+const woc_gb_genesis: GreenBackBeacon =
+  GreenBackBeacon { gb_nanogic: 0, seq: 0, epoch: 7, depeg: False }
+
+test greenback_genesis_ref_script_elsewhere_ok() {
+  gb_mint(
+    util.with_wallet_ref_script_output(
+      gb_genesis_tx(woc_gb_genesis, [gb_writer]),
+      woc_ref_script,
+    ),
+  )
+}
+
+test greenback_genesis_ref_script_fail() fail {
+  gb_mint(
+    util.with_ref_script_at(
+      gb_genesis_tx(woc_gb_genesis, [gb_writer]),
+      gb_sh,
+      woc_ref_script,
+    ),
+  )
+}

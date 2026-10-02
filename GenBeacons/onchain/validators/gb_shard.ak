@@ -167,6 +167,7 @@ fn genesis_shard_ok(o: Output, policy_id: PolicyId) -> Bool {
     s.seq == 0,
     s.reset_amount == 0,
     s.remaining == 0,
+    o.reference_script == None,
     assets.without_lovelace(o.value) == assets.from_asset(
       policy_id,
       constants.shard_nft_name(s.shard_id),
@@ -809,6 +810,67 @@ test shard_genesis_id_name_mismatch_fail() fail {
           )
         } else {
           sh_genesis_out(i, 0)
+        }
+      },
+    )
+  sh_mint(sh_genesis_tx(outs, True))
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Cổng `reference_script == None` (rà 2026-10-02) — cặp dương/âm
+// ══════════════════════════════════════════════════════════════════════════════
+// Ca dương: đầu ra script giữ `None`, ref-script nằm ở một output VÍ khác ⟹ qua (cổng
+// chỉ soi đầu ra của chính script). Ca âm: CÙNG giao dịch, ref-script gắn vào đầu ra
+// script ⟹ từ chối. Hai ca chỉ khác đúng một trường, nên ca âm đỏ được vì cổng này chứ
+// không vì chốt nào khác.
+
+const woc_ref_script: ByteArray =
+  #"5c0000000000000000000000000000000000000000000000000000ff"
+
+test shard_draw_ref_script_elsewhere_ok() {
+  sh_spend(
+    sh_in,
+    400,
+    util.with_wallet_ref_script_output(
+      sh_tx(sh_ok_refs(), sh_ok_vaults(), sh_in, sh_out_ok),
+      woc_ref_script,
+    ),
+  )
+}
+
+test shard_draw_continuing_ref_script_fail() fail {
+  sh_spend(
+    sh_in,
+    400,
+    util.with_ref_script_at(
+      sh_tx(sh_ok_refs(), sh_ok_vaults(), sh_in, sh_out_ok),
+      sh_sh,
+      woc_ref_script,
+    ),
+  )
+}
+
+test shard_genesis_ref_script_elsewhere_ok() {
+  sh_mint(
+    util.with_wallet_ref_script_output(
+      sh_genesis_tx(sh_genesis_outs(), True),
+      woc_ref_script,
+    ),
+  )
+}
+
+// Chỉ MỘT trong 16 shard (shard 15, phần tử cuối) mang ref-script — phân biệt
+// `list.all` với một cổng chỉ soi phần tử đầu.
+test shard_genesis_one_ref_script_fail() fail {
+  let outs =
+    list.map(
+      list.range(0, 15),
+      fn(i) {
+        let o = sh_genesis_out(i, 0)
+        if i == 15 {
+          Output { ..o, reference_script: Some(woc_ref_script) }
+        } else {
+          o
         }
       },
     )

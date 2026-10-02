@@ -73,13 +73,16 @@ const rateBeacon = (over: Partial<UTxO> = {}): UTxO => mkUtxo({
   ...over,
 });
 
-const wakemeVault = (pinnedName = VAULT_NAME): UTxO => mkUtxo({
+const wakemeVault = (
+  pinnedName = VAULT_NAME,
+  over: { pinned?: boolean; vestStart?: unknown; ownerCommit?: string } = {},
+): UTxO => mkUtxo({
   txHash: "cd".repeat(32),
   address: credentialToAddress("Preprod", { type: "Script", hash: WAKEME_H }),
-  assets: { lovelace: 2_000_000n, [WAKEME_H + OWNER_COMMIT]: 1n },
+  assets: { lovelace: 2_000_000n, [WAKEME_H + (over.ownerCommit ?? OWNER_COMMIT)]: 1n },
   datum: wakemeDatum({
     ownerCommit: OWNER_COMMIT, pinnedVaultHash: VAULT_H, pinnedVaultName: pinnedName,
-    conditional: 700_000_000n, owned: 301_000_000n,
+    conditional: 700_000_000n, owned: 301_000_000n, ...over,
   }),
 });
 
@@ -223,14 +226,14 @@ describe("InstantGen v2.0 — két đã nối Wakeme, lượt làm mới", () =>
     );
   });
 
-  it("CỰC ĐỐI — két Wakeme ghim két IG KHÁC ⟹ CONSUME-013", async () => {
-    await buildRejects(
-      params(
-        igDatum(OWNER, IG_IN_STALE(OWNER_COMMIT)), igDatum(OWNER, IG_OUT_REFRESHED(OWNER_COMMIT)),
-        { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault("bb".repeat(32)) },
-      ),
-      /CONSUME-013.*KHÔNG ghim/s,
-    );
+  // Đảo 2026-10-02: `wakeme_lent.ak` vế (c) lệch ⟹ `(owner_commit, 0)`, KHÔNG fail (gỡ khoá
+  // lẫn nhau với Wakeme). Két đã nối link vẫn làm mới được, link giữ nguyên, L_lent = 0.
+  it("két Wakeme ghim két IG KHÁC ⟹ vẫn dựng được (vế (c) trả 0, không fail)", async () => {
+    const { tx } = await build(params(
+      igDatum(OWNER, IG_IN_STALE(OWNER_COMMIT)), igDatum(OWNER, IG_OUT_REFRESHED(OWNER_COMMIT)),
+      { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault("bb".repeat(32)) },
+    ));
+    expect(tx.completed).toBe(true);
   });
 
   it("link rỗng + két Wakeme ghim két này ⟹ lượt này NỐI: link ra phải = owner_commit", async () => {
@@ -241,6 +244,37 @@ describe("InstantGen v2.0 — két đã nối Wakeme, lượt làm mới", () =>
     expect(tx.completed).toBe(true);
   });
 
+  // Gương `vault.ak ▸ np_rc_unpinned_links_without_lent` cho nhánh có chữ ký (BurnBatch,
+  // FollowVault): két Wakeme CHƯA ghim két IG nào (None) vẫn cho `owner_commit` ⟹ link nối.
+  it("link rỗng + két Wakeme CHƯA ghim (None) ⟹ vẫn NỐI: link ra = owner_commit", async () => {
+    const { tx } = await build(params(
+      igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED(OWNER_COMMIT)),
+      { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault(VAULT_NAME, { pinned: false }) },
+    ));
+    expect(tx.completed).toBe(true);
+  });
+
+  it("CỰC ĐỐI — cùng ca, link ra để rỗng ⟹ CONSUME-016 wakeme_link (két chưa ghim KHÔNG gỡ link)", async () => {
+    await buildRejects(
+      params(
+        igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED("")),
+        { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault(VAULT_NAME, { pinned: false }) },
+      ),
+      /CONSUME-016.*wakeme_link/s,
+    );
+  });
+
+  // `read_one_vault` vế (a) đọc [2] bằng `un_i_data` TRƯỚC mọi vế trả 0 ⟹ sai kiểu là fail.
+  it("CỰC ĐỐI — ô [2] vest_start_ms không phải số nguyên ⟹ CONSUME-013", async () => {
+    await buildRejects(
+      params(
+        igDatum(OWNER, IG_IN_STALE(OWNER_COMMIT)), igDatum(OWNER, IG_OUT_REFRESHED(OWNER_COMMIT)),
+        { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault(VAULT_NAME, { vestStart: "00" }) },
+      ),
+      /CONSUME-013.*\[2\]/s,
+    );
+  });
+
   it("CỰC ĐỐI — cùng đầu vào, link ra để rỗng ⟹ CONSUME-016 wakeme_link", async () => {
     await buildRejects(
       params(
@@ -249,6 +283,43 @@ describe("InstantGen v2.0 — két đã nối Wakeme, lượt làm mới", () =>
       ),
       /CONSUME-016.*wakeme_link/s,
     );
+  });
+});
+
+// ── InstantGen: luật 6 — BurnBatch không đổi link sang két Wakeme lạ ──────────
+// Gương `vault.ak ▸ f1_bb_relink_to_foreign_wakeme_rejected`. Bộ kiểm consume không tính
+// L_lent nên CHẶT HƠN validator: cả ca validator nhận (`f1_bb_relink_to_wakeme_pinning_this_ok`,
+// Y ghim két này với L_lent > 0) cũng bị ném — đường đúng là RefreshCheckpoint trước.
+
+describe("InstantGen v2.0 — luật 6, BurnBatch không đổi link", () => {
+  const OTHER_COMMIT = "c4".repeat(32);
+
+  it("f1_bb_relink_to_foreign_wakeme_rejected: link X + két Y ghim két khác ⟹ CONSUME-013 luật 6", async () => {
+    await buildRejects(
+      params(
+        igDatum(OWNER, IG_IN_STALE(OWNER_COMMIT)), igDatum(OWNER, IG_OUT_REFRESHED(OTHER_COMMIT)),
+        { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault("bb".repeat(32), { ownerCommit: OTHER_COMMIT }) },
+      ),
+      /CONSUME-013.*luật 6/s,
+    );
+  });
+
+  it("CHẶT HƠN validator: link X + két Y ghim CHÍNH két này ⟹ vẫn CONSUME-013 (dùng RefreshCheckpoint)", async () => {
+    await buildRejects(
+      params(
+        igDatum(OWNER, IG_IN_STALE(OWNER_COMMIT)), igDatum(OWNER, IG_OUT_REFRESHED(OTHER_COMMIT)),
+        { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault(VAULT_NAME, { ownerCommit: OTHER_COMMIT }) },
+      ),
+      /CONSUME-013.*luật 6/s,
+    );
+  });
+
+  it("cực đối: link rỗng + két Y ghim két khác ⟹ nối được, link ra = Y", async () => {
+    const { tx } = await build(params(
+      igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED(OTHER_COMMIT)),
+      { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault("bb".repeat(32), { ownerCommit: OTHER_COMMIT }) },
+    ));
+    expect(tx.completed).toBe(true);
   });
 });
 

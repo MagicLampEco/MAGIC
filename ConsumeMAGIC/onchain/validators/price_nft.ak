@@ -67,6 +67,15 @@ validator price_nft(genesis_ref: OutputReference) {
     //    Hiệu lực: chỉ cho beacon đúc MỚI. Beacon cũ không bị (và không thể) hồi tố —
     //    nhưng lược đồ `PriceParam` vừa đổi (`OpPrice` 3 trường) nên mọi beacon đang
     //    sống đằng nào cũng phải đúc lại, và hash `price_nft` đổi theo không tốn thêm.
+    //
+    //    KHÔNG ép `pp.epoch <= epoch hiện tại` ở đây (rà 2026-10-02, PoC: genesis nhận
+    //    epoch 1e15). Hai lý do: (1) ép cần `ms_per_epoch` + `window_origin_ms` làm
+    //    apply-param — đổi hợp đồng nhị phân chỉ để bắt một lỗi cấu hình của chính bên
+    //    giữ `genesis_ref`; (2) đường vòng hai-tx ở trên đặt được epoch tuỳ ý tại địa
+    //    chỉ `price_param` bất kể cổng này. Phía đọc đã chặn: `consume.ak` ▸
+    //    `expect current_epoch >= pp.epoch`. Hệ quả của beacon epoch-tương-lai là nhánh
+    //    cập nhật `price_param.spend` không bao giờ thoả (`out.epoch > datum.epoch` và
+    //    `out.epoch <= hiện tại`) ⟹ phải đúc lại — lộ ra ở lượt cập nhật giá đầu tiên.
     expect [beacon_out] =
       list.filter(
         tx.outputs,

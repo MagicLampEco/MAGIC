@@ -268,15 +268,17 @@ export function readRhoFromBeacon(beacon: UTxO, e: bigint): bigint {
  * `owner_commit` của két Wakeme đưa vào reference input — gương các vế HỎNG-THÌ-FAIL của
  * `wakeme_lent.ak ▸ read_one_vault`: (a) datum inline Constr 0, ≥ 13 trường; (b) đúng một
  * token dưới policy = hash script của két, số lượng 1, tên == owner_commit (32 byte);
- * (c) trường 11 ghim ĐÚNG két đang tiêu: `Constr0[Constr0[vaultHash, vaultName]]`;
- * (e) trường 3 và 7 không âm. Vế (d)(f) chỉ làm `L_lent = 0`, không làm fail — không kiểm.
+ * (e) trường 3 và 7 không âm; các ô đọc đúng kiểu (trường 2, 12 là số nguyên). Vế (c)(d)(f)
+ * chỉ làm `L_lent = 0`, không làm fail — không kiểm. (c) — trường 11 ghim két đang tiêu —
+ * từng là vế FAIL; từ 2026-10-02 két chưa ghim vẫn cho `owner_commit` (gỡ khoá lẫn nhau với
+ * Wakeme: Wakeme chỉ ghim két IG đã khai link tới nó), nên `vaultName` không còn được đọc.
  *
  * Hash két Wakeme là apply-param `wakeme_vault_hash` của két IG; ở đây lấy từ địa chỉ UTxO.
  * Sai hash ⟹ on-chain không thấy két nào ⟹ nhánh `FollowVault` bác vì link đã đặt.
  *
  * @throws CONSUME-013 ở mọi hình dạng lạ.
  */
-export function readWakemeOwnerCommit(wakeme: UTxO, vaultHash: string, vaultName: string): string {
+export function readWakemeOwnerCommit(wakeme: UTxO, vaultHash: string, _vaultName: string): string {
   const at = `${wakeme.txHash}#${wakeme.outputIndex}`;
   const cred = paymentCredentialOf(wakeme.address);
   if (cred.type !== "Script") {
@@ -318,20 +320,8 @@ export function readWakemeOwnerCommit(wakeme: UTxO, vaultHash: string, vaultName
   if (conditional < 0n || owned < 0n) {
     throw new Error(`CONSUME-013: két Wakeme ${at} khai lượng LAMP âm (${conditional}, ${owned}).`);
   }
+  asInt(d.fields[2], "CONSUME-013: WakemeDatum[2] vest_start_ms");
   asInt(d.fields[12], "CONSUME-013: WakemeDatum[12] gen_pin_period");
-  const pin = d.fields[11];
-  const inner = pin instanceof Constr && pin.index === 0 && pin.fields.length === 1 ? pin.fields[0] : undefined;
-  const pinOk =
-    inner instanceof Constr && inner.index === 0 && inner.fields.length === 2 &&
-    typeof inner.fields[0] === "string" && typeof inner.fields[1] === "string" &&
-    inner.fields[0].toLowerCase() === vaultHash.toLowerCase() &&
-    inner.fields[1].toLowerCase() === vaultName.toLowerCase();
-  if (!pinOk) {
-    throw new Error(
-      `CONSUME-013: két Wakeme ${at} KHÔNG ghim két IG đang tiêu (trường 11 phải là ` +
-        `GenPin(Some(${vaultHash}, ${vaultName}))). Két IG chỉ đọc được két Wakeme đã ghim nó.`,
-    );
-  }
   return ownerCommit;
 }
 
@@ -495,6 +485,21 @@ export function checkGenV2Burn(args: GenV2BurnCheckArgs): GenV2BurnCheck {
   if (args.wakemeVaultUtxo) {
     const vaultName = vaultIdName(vaultUtxo, vaultScriptHash);
     wantLink = readWakemeOwnerCommit(args.wakemeVaultUtxo, vaultScriptHash, vaultName);
+    // Luật 6 (`checkpoint.ak ▸ resolve_link`, nhánh `FollowVault`, 2026-10-02): link đã đặt
+    // thì BurnBatch chỉ đổi được nó khi két Wakeme đọc được đang ghim chính két IG này với
+    // `L_lent > 0`. Bộ kiểm này KHÔNG tính `L_lent` (cần kỳ ghim, gốc lưới, LAMP thật của
+    // két Wakeme), nên CHẶT HƠN validator: mọi lượt đổi link ở BurnBatch đều bị ném. Ca
+    // validator vẫn nhận (két mới ghim két này, `L_lent > 0`) đi đường RefreshCheckpoint
+    // trước rồi mới consume.
+    if (inLink !== "" && wantLink !== inLink) {
+      throw new Error(
+        `CONSUME-013: két InstantGen ${at} đã nối két Wakeme ${inLink}, nhưng két Wakeme đưa vào ` +
+          `(${args.wakemeVaultUtxo.txHash}#${args.wakemeVaultUtxo.outputIndex}) có owner_commit ${wantLink}. BurnBatch không đổi ` +
+          `được link sang một két Wakeme khác trừ khi két đó ghim két IG này với L_lent > 0 ` +
+          `(luật 6) — bộ dựng không xác nhận được điều đó. Truyền đúng két Wakeme đã nối, hoặc ` +
+          `đổi link bằng RefreshCheckpoint trước.`,
+      );
+    }
     refInputs.push(args.wakemeVaultUtxo);
   } else if (inLink !== "") {
     throw new Error(

@@ -674,17 +674,9 @@ export async function buildMintEngageTx(
     didCommit = "", lovelace = 2_000_000n, network,
   } = params;
 
-  // `enforce_engagement` ép `out.value == inp.output.value` TUYỆT ĐỐI ở mọi lượt tiêu thread,
-  // còn Lucid tự NÂNG lovelace đầu ra lên min-ADA khi datum phình (DID + số đếm lớn). Thread
-  // đúc sát min-ADA của datum genesis vì thế chết ở lượt Consume/BindDID đầu tiên đẩy datum
-  // qua ngưỡng — và không có builder đóng thread. Đo bằng CML của Lucid 0.4.30 (2026-09-27):
-  // datum đầy (có DID, số đếm 9 byte) cần 1.555.910 lovelace. Sàn là mức mặc định 2 ADA.
-  if (lovelace < ENGAGE_MIN_LOVELACE) {
-    throw new Error(
-      `MINT-ENGAGE-004: lovelace ${lovelace} < sàn ${ENGAGE_MIN_LOVELACE} của thread Engage — ` +
-      `thread đúc dưới sàn sẽ không tiêu được khi datum lớn lên.`,
-    );
-  }
+  // Sàn lovelace kiểm TRƯỚC cổng chủ — giữ đúng thứ tự lỗi của bản trước khi tách mảnh
+  // (`addMintEngage` kiểm lại lần nữa cho người gọi mảnh trực tiếp).
+  assertEngageLovelace(lovelace);
 
   if ((ownerAuthIn === undefined) === (ownerPkh === undefined)) {
     throw new Error(
@@ -699,8 +691,147 @@ export async function buildMintEngageTx(
     ownerAuthIn ?? { kind: "key", pkh: ownerPkh!.toLowerCase() };
   // Hình dạng sai (hash không 28 byte, kind lạ) ném ở đây, trước khi chạm Lucid.
   const ownerCred = ownerCredentialOf(ownerAuth);
+
+  // Một tx một mảnh: mảnh tự gắn chứng minh quyền chủ (`attach`) bằng đúng `ownerAuth` đã dựng
+  // datum — `resolveOwnerAuth` bên trong không bao giờ ném MISMATCH ở đường này.
+  // Mọi cổng hình dạng (did, ref-script, chủ) chạy TRƯỚC `lucid.newTx()` — giữ hợp đồng cũ
+  // "ném trước khi chạm Lucid".
+  const prepared = prepareMintEngage({
+    consumeScript, seedUtxo, collectSeed: true,
+    owner: ownerRefOf(ownerCred),
+    ownerProof: { mode: "attach", auth: ownerAuth },
+    didCommit, lovelace, network,
+    consumeRefUtxo: params.consumeRefUtxo,
+  });
+  let base = lucid.newTx();
+  if (params.validToMs !== undefined) base = base.validTo(Number(params.validToMs));
+  const piece = attachMintEngage(base, prepared);
+  const tx = await piece.tx.complete(collateralCompleteOptions(params.collateralLovelace));
+
+  const summary =
+    `mint engage thread ${piece.engageNftUnit} | seed=${seedUtxo.txHash}#${seedUtxo.outputIndex} | ` +
+    `addr=${piece.engageAddress} | genesis count=0 nanogic=0 last_epoch=0`;
+
+  return {
+    tx, engageNftUnit: piece.engageNftUnit, engageAddress: piece.engageAddress,
+    genesisDatum: piece.genesisDatum, summary,
+  };
+}
+
+// ── Mảnh ghép MintEngage (gộp với mảnh của module khác trong MỘT tx) ──────────
+
+/**
+ * Cách chứng minh quyền chủ thread cho MẢNH `addMintEngage` — cùng hình dạng với
+ * `OwnerProof` của PrepaidGen (`PrepaidGen/offchain/src/tx/plan.ts`), để hai mảnh ghép chung
+ * một tx mà không cần lớp chuyển đổi.
+ *   · `attach`   — mảnh tự gắn: chủ khoá ⟹ `addSignerKey`; chủ script ⟹ `auth.attachWithdraw`
+ *                  (bắt buộc truyền `auth`, bộ dựng không bịa nhân chứng stake-script).
+ *   · `deferred` — mảnh KHÔNG gắn gì; người gọi gắn ĐÚNG MỘT LẦN cho cả tx. Ca T1: một mục rút
+ *                  `Script(did_stake)` phủ cùng lúc cổng `owner_authorized` của thread (consume
+ *                  ▸ `validate_mint_engage_id`) và của két (PrepaidGen ▸ `validate_mint_vault_id`).
+ *                  Ledger giữ `withdrawals` là MAP theo credential ⟹ hai mục cho cùng một
+ *                  credential không tồn tại được; mảnh nào cũng tự gắn là dựng hỏng.
+ */
+export type EngageOwnerProof =
+  | { mode: "attach"; auth?: OwnerAuth<TxBuilder> }
+  | { mode: "deferred" };
+
+export interface AddMintEngageParams {
+  /** Compiled consume validator (ĐÃ apply 8 param) — vừa là policy, vừa là địa chỉ. */
+  consumeScript: Validator;
+  /** UTxO seed one-shot: PHẢI bị TIÊU trong tx (`list.any(tx.inputs, ...)`). */
+  seedUtxo: UTxO;
+  /**
+   * `false` khi mảnh khác trong cùng tx đã `collectFrom` chính seed này (vd mảnh két dùng chung
+   * seed) — tiêu một UTxO hai lần là lỗi dựng tx. Vắng ⟹ `true`.
+   */
+  collectSeed?: boolean;
+  /** Chủ thread — ghi vào `EngageDatum.owner` (Credential). */
+  owner: OwnerRef;
+  ownerProof: EngageOwnerProof;
+  /** `did_commit` lúc genesis: rỗng, hoặc ĐÚNG 32 byte hex (`blake2b_256(utf8(did))`). */
+  didCommit?: string;
+  /** Lovelace của thread UTxO; vắng ⟹ 2 ADA; dưới `ENGAGE_MIN_LOVELACE` ⟹ NÉM. */
+  lovelace?: bigint;
+  network: Network;
+  /** UTxO ref-script CIP-33 của `consume`; có ⟹ `readFrom`, vắng ⟹ đính `consumeScript`. */
+  consumeRefUtxo?: UTxO;
+}
+
+export interface AddMintEngageResult {
+  tx: TxBuilder;
+  /** policyId + nameHex của thread NFT. */
+  engageNftUnit: string;
+  /** Địa chỉ enterprise của `consume` — nơi thread genesis nằm. */
+  engageAddress: string;
+  genesisDatum: EngageDatumT;
+  /** Chủ phải chứng minh quyền. Chế độ `deferred`: người gọi gắn đúng một lần cho cả tx. */
+  owner: OwnerRef;
+}
+
+function assertEngageLovelace(lovelace: bigint): void {
+  // `enforce_engagement` ép `out.value == inp.output.value` TUYỆT ĐỐI ở mọi lượt tiêu thread,
+  // còn Lucid tự NÂNG lovelace đầu ra lên min-ADA khi datum phình (DID + số đếm lớn). Thread
+  // đúc sát min-ADA của datum genesis vì thế chết ở lượt Consume/BindDID đầu tiên đẩy datum
+  // qua ngưỡng — và không có builder đóng thread. Đo bằng CML của Lucid 0.4.30 (2026-09-27):
+  // datum đầy (có DID, số đếm 9 byte) cần 1.555.910 lovelace. Sàn là mức mặc định 2 ADA.
+  if (lovelace < ENGAGE_MIN_LOVELACE) {
+    throw new Error(
+      `MINT-ENGAGE-004: lovelace ${lovelace} < sàn ${ENGAGE_MIN_LOVELACE} của thread Engage — ` +
+      `thread đúc dưới sàn sẽ không tiêu được khi datum lớn lên.`,
+    );
+  }
+}
+
+/**
+ * Mảnh MintEngage: gắn vào `tx` có sẵn phần đúc thread (seed · mint · script · output genesis)
+ * và — chỉ ở chế độ `attach` — phần chứng minh quyền chủ. KHÔNG `complete()`, KHÔNG đặt
+ * validity: hai thứ đó là của cả tx, người gọi quyết.
+ *
+ * Ràng buộc `validate_mint_engage_id` (consume.ak) mà mảnh bám: xem docstring của
+ * `buildMintEngageTx`. Validator mint KHÔNG ép gì về policy khác trong `tx.mint`
+ * (`assets.tokens(tx.mint, policy_id)` chỉ đếm dưới chính nó) ⟹ ghép được với mảnh đúc két.
+ *
+ * @throws MINT-ENGAGE-002 did_commit không phải hex · MINT-ENGAGE-005 did_commit khác 0/32 byte
+ *         (gương `did_len_ok`) · MINT-ENGAGE-004 lovelace dưới sàn hoặc ref-script sai ·
+ *         OWNER_SCRIPT_WITNESS_UNAVAILABLE / OWNER_AUTH_MISMATCH ở chế độ `attach`.
+ */
+export function addMintEngage(tx: TxBuilder, p: AddMintEngageParams): AddMintEngageResult {
+  return attachMintEngage(tx, prepareMintEngage(p));
+}
+
+/** Phần THUẦN của mảnh: mọi cổng hình dạng + mọi giá trị cần gắn, chưa chạm `TxBuilder`. */
+interface PreparedMintEngage {
+  p: AddMintEngageParams;
+  unit: string;
+  engageAddress: string;
+  genesisDatum: EngageDatumT;
+  mintRedeemer: string;
+  lovelace: bigint;
+  owner: OwnerRef;
+  /** `null` ⟹ chế độ `deferred`, mảnh không gắn chứng minh chủ. */
+  auth: OwnerAuth<TxBuilder> | null;
+}
+
+function prepareMintEngage(p: AddMintEngageParams): PreparedMintEngage {
+  const { consumeScript, seedUtxo, network } = p;
+  const didCommit = p.didCommit ?? "";
+  const lovelace = p.lovelace ?? 2_000_000n;
+  assertEngageLovelace(lovelace);
+
+  // Hình dạng chủ sai (hash không 28 byte, kind lạ) ném ở đây, trước khi chạm Lucid.
+  const ownerCred = ownerCredentialOf(p.owner);
+  const owner = ownerRefOf(ownerCred);
+
   if (didCommit !== "" && !/^([0-9a-fA-F]{2})+$/.test(didCommit)) {
     throw new Error(`MINT-ENGAGE-002: did_commit phải là hex (hoặc rỗng), nhận "${didCommit}"`);
+  }
+  if (didCommit !== "" && didCommit.length !== DID_COMMIT_BYTES * 2) {
+    throw new Error(
+      `MINT-ENGAGE-005: did_commit dài ${didCommit.length / 2} byte; chỗ GHI chỉ nhận rỗng hoặc ` +
+        `ĐÚNG ${DID_COMMIT_BYTES} byte (\`did_len_ok\` ở \`validate_mint_engage_id\`). Dựng tiếp là ` +
+        `một tx mà validator từ chối.`,
+    );
   }
 
   const policyId = validatorToScriptHash(consumeScript);
@@ -727,36 +858,39 @@ export async function buildMintEngageTx(
     seed: { transaction_id: seed.txHash, output_index: BigInt(seedUtxo.outputIndex) },
   });
 
-  if (params.consumeRefUtxo !== undefined) {
-    const refScript = params.consumeRefUtxo.scriptRef;
+  if (p.consumeRefUtxo !== undefined) {
+    const refScript = p.consumeRefUtxo.scriptRef;
     if (refScript == null || validatorToScriptHash(refScript) !== policyId) {
       throw new Error(
         `MINT-ENGAGE-004: consumeRefUtxo không mang script consume (policy ${policyId}).`,
       );
     }
   }
-  let base = lucid
-    .newTx()
-    .collectFrom([seedUtxo]) // one-shot: seed PHẢI nằm trong inputs
-    .mintAssets({ [unit]: 1n }, mintRedeemer);
-  base = params.consumeRefUtxo !== undefined
-    ? base.readFrom([params.consumeRefUtxo])
-    : base.attach.MintingPolicy(consumeScript);
-  if (params.validToMs !== undefined) base = base.validTo(Number(params.validToMs));
-  const txBuilder = base
-    .pay.ToAddressWithData(
-      engageAddress,
-      { kind: "inline", value: encodeEngageDatum(genesisDatum) },
-      { lovelace, [unit]: 1n }, // ≤ 2 policy: ADA + thread NFT
-    );
-  const tx = await applyOwnerAuth(txBuilder, ownerAuth)
-    .complete(collateralCompleteOptions(params.collateralLovelace));
 
-  const summary =
-    `mint engage thread ${unit} | seed=${seed.txHash}#${seedUtxo.outputIndex} | ` +
-    `addr=${engageAddress} | genesis count=0 nanogic=0 last_epoch=0`;
+  // Ở chế độ `attach`, chủ script mà không có `auth` ⟹ NÉM trước khi gắn gì vào `tx`.
+  const auth = p.ownerProof.mode === "attach"
+    ? resolveOwnerAuth(owner, p.ownerProof.auth)
+    : null;
 
-  return { tx, engageNftUnit: unit, engageAddress, genesisDatum, summary };
+  return { p, unit, engageAddress, genesisDatum, mintRedeemer, lovelace, owner, auth };
+}
+
+function attachMintEngage(tx: TxBuilder, m: PreparedMintEngage): AddMintEngageResult {
+  const { p, unit, engageAddress, genesisDatum, mintRedeemer, lovelace, owner, auth } = m;
+  let t = tx;
+  if (p.collectSeed ?? true) t = t.collectFrom([p.seedUtxo]); // one-shot: seed PHẢI nằm trong inputs
+  t = t.mintAssets({ [unit]: 1n }, mintRedeemer);
+  t = p.consumeRefUtxo !== undefined
+    ? t.readFrom([p.consumeRefUtxo])
+    : t.attach.MintingPolicy(p.consumeScript);
+  t = t.pay.ToAddressWithData(
+    engageAddress,
+    { kind: "inline", value: encodeEngageDatum(genesisDatum) },
+    { lovelace, [unit]: 1n }, // ≤ 2 policy: ADA + thread NFT
+  );
+  if (auth !== null) t = applyOwnerAuth(t, auth);
+
+  return { tx: t, engageNftUnit: unit, engageAddress, genesisDatum, owner };
 }
 
 // ── BindDID: gắn PersonDID vào thread (redeemer constr 1) ─────────────────────

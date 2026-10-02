@@ -139,6 +139,14 @@ export const NON_LAMP_LOOKALIKE_POLICIES: Record<string, string> = {
  * `d5db3b6`. Nguồn chân lý là chuỗi; kho LAMP khai mọi policy Preprod trước đó là cụm
  * CŨ — không đúc thêm, không phát thêm.
  *
+ * Đời `53bc12ad…` cũng đã bị thay, cùng với `7ecbffe2…9ea2` (tính ra rồi huỷ 2026-10-02,
+ * thư `lam1002mg-z`: thiếu nhãn marker đọc ra nghĩa). Policy tLAMP Preprod CUỐI là
+ * `493002cc…cfac`, asset `744c414d50`, mã LAMP `main` = `17934d8` (thư `lam1003mg-a`,
+ * 2026-10-03). Genesis của nó CHƯA gửi: policy id chắc chắn (script genesis bên LAMP
+ * dừng trước khi gửi nếu id lệch), nhưng chưa có tLAMP nào dưới nó trên chuỗi. Policy
+ * cuối KHÔNG được gõ cứng ở đây — tệp này chỉ giữ danh sách TỪ CHỐI (xem đầu
+ * `NON_LAMP_LOOKALIKE_POLICIES` về vì sao); giá trị đi vào qua `LAMP_POLICY_ID`.
+ *
  * Hệ quả cho kho này: mọi bước đọc `POLICY_IDS.lamp` apply-param hoặc lọc tài sản theo
  * `lampPid` — đừng kê tay, đếm bằng `git grep -n 'POLICY_IDS.lamp' -- scripts/` (gồm cả
  * bước công bố ref-script 06, bước đắt nhất nếu sai). `consume` apply-param theo hash vault
@@ -161,15 +169,25 @@ export const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
     "đang cầm — nên nó là đời DỄ dùng nhầm nhất, không phải đời khó gặp nhất.",
   "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
     "đời `preprod-oneshot-14param` (đúc 2026-09-14), đã bị thay bởi `53bc12ad…8743` " +
-    "(genesis tx `21f39c9b…a716`, thư `lam0926mg-lp` 2026-09-26). Cụm vault Preprod " +
-    "23–24/09 apply-param bằng đời này, nên sổ trạng thái của cụm đó mang nó.",
+    "(genesis tx `21f39c9b…a716`, thư `lam0926mg-lp` 2026-09-26) — đời đó cũng đã bỏ; " +
+    "đời Preprod CUỐI là `493002cc…cfac`. Cụm vault Preprod 23–24/09 apply-param bằng " +
+    "đời này, nên sổ trạng thái của cụm đó mang nó.",
+  "53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743":
+    "đời Preprod đúc 2026-09-26 (genesis tx `21f39c9b…a716`, thư `lam0926mg-lp`), đã bị " +
+    "thay bởi `493002cc…cfac` (policy tLAMP Preprod CUỐI, thư `lam1003mg-a` 2026-10-03). " +
+    "Kho LAMP đã dừng mọi job rót trên cụm này tối 2026-10-02.",
+  "7ecbffe2b41f68c917035f52a1053efbd2323dfd85a81cf840089ea2":
+    "policy LAMP tính ra 2026-10-02 rồi HUỶ cùng ngày (thư `lam1002mg-z`): thiếu nhãn " +
+    "marker đọc ra nghĩa. Đã bị thay bởi `493002cc…cfac` (policy tLAMP Preprod CUỐI, " +
+    "thư `lam1003mg-a` 2026-10-03). Chưa từng được nướng vào kho này.",
 };
 
 /** Đời đã bị thay mà được CHO QUA khi người chạy xác nhận THEO GIÁ TRỊ. Danh sách ĐÓNG.
  *
  * Chủ dự án quyết 2026-09-27: dựng một cụm TẬP DƯỢT dùng một lần trên Preprod bằng
  * `8169b76c…` — ví deploy chỉ giữ tLAMP của đời đó, và kho LAMP sẽ đổi policy thêm lần
- * nữa sau 04/10. Cụm phục vụ người dùng dựng MỘT lần trên policy cuối.
+ * nữa. Lần đổi đó đã tới (`493002cc…cfac`, 2026-10-03; genesis chưa gửi). Cụm phục vụ
+ * người dùng dựng MỘT lần trên policy cuối, và CHƯA dựng.
  *
  * `8169b76c…` VẪN nằm trong `SUPERSEDED_LAMP_POLICIES` ngay trên — sự thật "đã bị thay"
  * không đổi. Bảng này chỉ nói "được cho qua khi có xác nhận", và cho qua khi ĐỦ BA điều:
@@ -188,13 +206,15 @@ export const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
  * `MagicSDK/src/lampPolicy.ts` ▸ `REHEARSAL_LAMP_POLICIES`; hai bảng phải trùng tập
  * khoá — đo bằng `npx tsx test_lamp_policy_gate.ts`.
  *
- * ĐIỀU KIỆN GỠ: gỡ khoá `8169b76c…` khi kho LAMP gửi policy Preprod cuối (sau 04/10).
- * Gỡ xong thì bảng rỗng và lối mở tự đóng.
+ * ĐIỀU KIỆN GỠ: policy Preprod cuối đã tới (2026-10-03), nhưng khoá `8169b76c…` CHƯA
+ * gỡ vì cụm tập dượt còn một runner đang chạy. Gỡ khi runner đó dừng hẳn. Gỡ xong thì
+ * bảng rỗng và lối mở tự đóng.
  */
 export const REHEARSAL_LAMP_POLICIES: Record<string, string> = {
   "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
     "cụm TẬP DƯỢT dùng một lần trên Preprod (chủ dự án quyết 2026-09-27): ví deploy chỉ " +
-    "giữ tLAMP của đời này. Gỡ khi kho LAMP gửi policy Preprod cuối (sau 04/10).",
+    "giữ tLAMP của đời này. Gỡ khi runner của cụm tập dượt dừng hẳn (policy Preprod " +
+    "cuối `493002cc…cfac` đã tới 2026-10-03, genesis chưa gửi).",
 };
 
 /** Mạng được phép chạy lối mở tập dượt. Danh sách ĐÓNG. */

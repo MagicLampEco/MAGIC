@@ -234,9 +234,25 @@ Hệ quả cho D1: phương án (a) "hợp nhất `InstantGen` và `ScheduleGen`
 dựng được** — 11 619 + 5 364 đã là 16 983 B trước khi cộng thêm bất cứ dòng nào của InstantGen.
 Chủ dự án chốt giữ hai validator (2026-09-05); số đo này đứng về phía quyết định đó.
 
+### Policy tLAMP Preprod — đời CUỐI đã chốt, genesis CHƯA gửi (2026-10-03)
+
+- Policy tLAMP Preprod CUỐI: `493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac`,
+  asset `744c414d50` (thư kho LAMP `lam1003mg-a`; ghi đủ ở `scripts/DEPLOYED.md` ▸ *"Preprod —
+  policy tLAMP CUỐI, 2026-10-03"*). Không gõ cứng vào mã: cổng chỉ giữ danh sách TỪ CHỐI.
+- `53bc12ad…8743` và `7ecbffe2…9ea2` đã vào `SUPERSEDED_LAMP_POLICIES` ở cả hai bảng
+  (`scripts/config.ts`, `MagicSDK/src/lampPolicy.ts`). Sổ trạng thái còn ghi `53bc12ad…` bị
+  chặn ở lần đọc `POLICY_IDS.lamp` đầu tiên.
+- Cụm tập dượt `8169b76c…` vẫn đi qua lối mở tập dượt; khoá gỡ khi runner của nó dừng hẳn.
+- Không ghi địa chỉ kho LAMP nào: hash Distribution (`treasury`, `claim_account`) chưa cuối.
+- [!] Dựng cụm Preprod phục vụ người dùng trên `493002cc…` — chờ genesis LAMP gửi — đo bằng:
+  `curl -s -X POST https://preprod.koios.rest/api/v1/policy_asset_info -H 'content-type: application/json' -d '{"_asset_policy":"493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac"}'`
+  · đọc ở: độ dài mảng trả về (rỗng = chưa có tài sản nào dưới policy, tức genesis chưa lên
+  chuỗi; một lỗi HTTP KHÔNG phải "rỗng") · 2026-10-03: chưa đo trên chuỗi; thư LAMP nói
+  genesis chưa gửi.
+
 ### Vault ScheduleGen đời-một trên Preview — nghỉ CÙNG ĐỢT với đời-hai, không nghỉ trước
 
-- [!] Rút 5 vault đời-một về và công bố script tham chiếu CIP-33 của đời-hai — **một đợt, không tách**. Chặn ở policy id LAMP thật theo mạng: hai sổ trạng thái cố ý không giữ giá trị nào và `assertLampPolicyId` ném đúng giá trị duy nhất kho này đang có; giá trị canonical thuộc kho LAMP (Genesis ▸ lampPolicies), bên đó chưa đúc. — đo bằng: `grep -c '^LAMP_POLICY_ID=' scripts/state.Preview.sh scripts/state.Preprod.sh` · đọc ở: số đếm của **cả hai** tệp, hết chặn khi cả hai ra `1` (một tệp ra 1 là mới xong nửa đường, và nửa còn lại không tự kêu) · 2026-09-14: cả hai ra `0` · 2026-09-26: kho LAMP đã đúc đời Preprod `53bc12ad…8743` (Preview vẫn chưa đúc) — việc này (Preview) còn treo; sổ Preprod ghi giá trị mới sau lượt dựng lại cụm.
+- [!] Rút 5 vault đời-một về và công bố script tham chiếu CIP-33 của đời-hai — **một đợt, không tách**. Chặn ở policy id LAMP thật theo mạng: hai sổ trạng thái cố ý không giữ giá trị nào và `assertLampPolicyId` ném đúng giá trị duy nhất kho này đang có; giá trị canonical thuộc kho LAMP (Genesis ▸ lampPolicies), bên đó chưa đúc. — đo bằng: `grep -c '^LAMP_POLICY_ID=' scripts/state.Preview.sh scripts/state.Preprod.sh` · đọc ở: số đếm của **cả hai** tệp, hết chặn khi cả hai ra `1` (một tệp ra 1 là mới xong nửa đường, và nửa còn lại không tự kêu) · 2026-09-14: cả hai ra `0` · 2026-09-26: kho LAMP đã đúc đời Preprod `53bc12ad…8743` (Preview vẫn chưa đúc) — việc này (Preview) còn treo; sổ Preprod ghi giá trị mới sau lượt dựng lại cụm. · 2026-10-03: đời `53bc12ad…` đã bỏ (vào `SUPERSEDED_LAMP_POLICIES`); policy Preprod CUỐI là `493002cc…cfac` nhưng genesis chưa gửi, nên sổ Preprod chưa có giá trị để ghi — mục ngay trên
 
 Kiểm kê, đường ra, và lý do KHÔNG rút trước: `scripts/DEPLOYED.md` ▸ *"Cho việc rút đời-một
 về"*. Tóm tắt một dòng cho người chỉ cần biết mức độ: 5005 tLAMP ở đó là **token nhái**, rác

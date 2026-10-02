@@ -5,6 +5,28 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-03 — Cổng policy LAMP: chặn `53bc12ad…` và `7ecbffe2…`, policy tLAMP Preprod CUỐI là `493002cc…`
+
+**Đổi gì.** `53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743` và
+`7ecbffe2b41f68c917035f52a1053efbd2323dfd85a81cf840089ea2` vào `SUPERSEDED_LAMP_POLICIES` ở cả
+hai bảng (`scripts/config.ts`, `MagicSDK/src/lampPolicy.ts`), lý do nêu policy thay thế
+`493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac` (asset `744c414d50`). Ba bộ kiểm cổng
+(`scripts/test_lamp_policy_gate.ts`, `MagicSDK/tests/lampPolicy.test.ts`,
+`VaultTxAPI/tests/config.test.ts`) lấy `493002cc…` làm cực dương. Lối mở tập dượt cho
+`8169b76c…` giữ nguyên; điều kiện gỡ đổi từ "khi có policy cuối" sang "khi runner tập dượt dừng
+hẳn". Không đổi mã Aiken, không đổi hash nào.
+
+**Vì sao.** Thư kho LAMP `lam1003mg-a` (2026-10-03): policy tLAMP Preprod CUỐI là `493002cc…`
+(mã LAMP `main` = `17934d8`); `53bc12ad…` và `7ecbffe2…` bỏ — cái sau tính ra rồi huỷ 2026-10-02
+vì thiếu nhãn marker đọc ra nghĩa. Genesis của policy cuối CHƯA gửi: id chắc chắn (script genesis
+bên LAMP có cổng `EXPECTED_LAMP_PID`), nhưng chưa có tLAMP nào trên chuỗi. Cụm Preprod phục vụ
+người dùng chưa dựng. Policy cuối cố ý KHÔNG gõ cứng vào mã: cổng là danh sách TỪ CHỐI.
+
+**Cái gì gãy nếu ai đó đang bám bản cũ.** Sổ trạng thái hay tệp deploy nào ghi `53bc12ad…` (hay
+`7ecbffe2…`) nay bị chặn lúc nạp — `POLICY_IDS.lamp` ở `scripts/`, `parseDeployment` ở
+`VaultTxAPI`, `createVault`/`buildParamsList`/`withdrawLamp` ở SDK. `lamp_rehearsal_ack` không mở
+được cho hai policy này: chúng không nằm trong bảng tập dượt.
+
 ## 2026-10-02 — Cửa sổ epoch tính từ gốc epoch Cardano: apply-param `window_origin_ms`
 
 **Đổi gì.** Mọi validator nhận `ms_per_epoch` nhận thêm `window_origin_ms` làm apply-param CUỐI:

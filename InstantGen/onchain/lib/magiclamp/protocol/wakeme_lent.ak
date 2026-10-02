@@ -1,10 +1,9 @@
 // lib/magiclamp/protocol/wakeme_lent.ak — đọc L_lent (LAMP-mượn) từ ĐÚNG MỘT két Wakeme
 //
-// Hàm thuần, CHƯA nối vào validator. Két InstantGen đang sinh đọc két Wakeme của
-// chính chủ qua reference input để biết phần LAMP đang nằm ở két Wakeme mà két IG
-// được tính như của mình. API chỉ nhận thứ validator đã có trong tay (danh sách
-// reference input + apply-param + tên NFT của chính nó + kỳ hiện tại), nên nối vào
-// `validators/vault.ak` không phải đổi gì thêm.
+// Hàm thuần, gọi từ `checkpoint.ak` (checkpoint của két InstantGen). Két InstantGen đang
+// sinh đọc két Wakeme của chính chủ qua reference input để biết phần LAMP đang nằm ở két
+// Wakeme mà két IG được tính như của mình. API chỉ nhận thứ validator đã có trong tay
+// (danh sách reference input + apply-param + tên NFT của chính nó + kỳ hiện tại).
 //
 // ═══ HỢP ĐỒNG NHỊ PHÂN CỦA NHÀ KHÁC — chỉ ĐỌC ═════════════════════════════════
 // Nguồn: PhoenixKeyDID/Wakeme ▸ `onchain/lib/phoenixkey/wakeme_logic.ak` ▸

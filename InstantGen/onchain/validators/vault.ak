@@ -334,10 +334,32 @@ fn validate_mint_vault_id(
   }
 
   // Every other ledger empty/zeroed.
-  // Gen v2.0: chưa ghim két Wakeme nào. Link chỉ đặt được ở nhánh chủ ký, SUY RA
-  // từ reference input — một két sinh ra đã mang link bịa sẽ khiến mọi lượt làm
-  // mới đòi một két Wakeme mà nó không có quyền đòi.
-  expect vd.wakeme_link == #""
+  // Gen v2.0: link khai sẵn lúc genesis (2026-10-02). Rỗng, hoặc đúng 32 byte — khuôn
+  // `owner_commit` = blake2b_256(DID) = tên NFT két Wakeme (`wakeme_lent.ak` ▸
+  // `owner_commit_len`, vế (b) `nft_name == owner_commit`).
+  //
+  // Vì sao phải cho khai sẵn: Wakeme chỉ cho ghim két IG khi két IG đã mang
+  // `link == owner_commit` (`genesis_gen_pin_ok`, `repin_gen_period` @ Wakeme 4512fe6),
+  // mà các nhánh spend chỉ ghi được link khi đọc thấy một két Wakeme ĐÃ có trên chuỗi.
+  // Bắt link rỗng ở đây thì genesis két Wakeme không bao giờ ghim được két IG ⟹ lượt
+  // sinh đầu của người mới không tính được LAMP ở két Wakeme.
+  //
+  // Vì sao an toàn:
+  //   - nhánh này đã đòi chữ ký chủ két (`owner_authorized` ở trên) ⟹ link là lời khai
+  //     của chính chủ két IG;
+  //   - link một mình không cho gì: phần mượn chỉ được tính khi két Wakeme của DID đó
+  //     ghim CHÍNH két IG này (`wakeme_lent.ak` vế (c)), mà ghim cần chủ DID ký 2-of-2
+  //     bên Wakeme;
+  //   - link sai/lạ (két Wakeme chưa có, hoặc của DID khác): chủ két gỡ bằng
+  //     RefreshCheckpoint (`FollowVaultOrUnlink`: không có két ⟹ link := ""). Cho tới
+  //     lúc đó, mọi nhánh làm mới khác (sinh, BurnBatch, UpdateProfile, SetDelegate,
+  //     và PruneExpired KHÔNG chữ ký) fail vì luật 2 "đã ghim thì bắt buộc đọc" — tức
+  //     người ngoài không dọn hộ được két đó; két chỉ tự làm khó chính chủ, không
+  //     chạm ai khác. WithdrawLamp không đọc két Wakeme nên không bị kẹt.
+  expect or {
+      vd.wakeme_link == #"",
+      builtin.length_of_bytearray(vd.wakeme_link) == 32, // MUT-B3-link
+    }
   expect vd.gen_schedules == []
   expect vd.profile_changed_epoch == 0
   expect vd.pending_profile == None
@@ -2207,11 +2229,42 @@ fn t_wakeme_ref(
   conditional: Int,
   owned: Int,
 ) -> Input {
+  // vest_start 1_700_000_000_000 ở gốc 0 rơi vào kỳ 3935 ≠ 9 ⟹ vế genesis của
+  // `wakeme_read` sai; két được tính nhờ `9 < 10` như trước.
+  t_wakeme_ref_at(index, commit, pin_name, conditional, owned, 1_700_000_000_000, 9)
+}
+
+/// Như `t_wakeme_ref`, chọn được `vest_start_ms` ([2]) và `gen_pin_period` ([12]).
+fn t_wakeme_ref_at(
+  index: Int,
+  commit: ByteArray,
+  pin_name: ByteArray,
+  conditional: Int,
+  owned: Int,
+  vest_start_ms: Int,
+  gen_pin_period: Int,
+) -> Input {
+  t_wakeme_ref_gen(
+    index, commit, Some(TGenPin { hash: t_vault_hash, name: pin_name }),
+    conditional, owned, vest_start_ms, gen_pin_period,
+  )
+}
+
+/// Như `t_wakeme_ref_at`, chọn được cả ô `gen_vault` ([11]) — kể cả `None`.
+fn t_wakeme_ref_gen(
+  index: Int,
+  commit: ByteArray,
+  gen_vault: Option<TGenPin>,
+  conditional: Int,
+  owned: Int,
+  vest_start_ms: Int,
+  gen_pin_period: Int,
+) -> Input {
   let d: Data =
     TWakemeDatum {
       owner_commit: commit,
       usage_thread: #"e5e5",
-      vest_start_ms: 1_700_000_000_000,
+      vest_start_ms,
       conditional_lamp: conditional,
       reclaimed_to_pot: 0,
       epochy_start: 5,
@@ -2220,8 +2273,8 @@ fn t_wakeme_ref(
       d_unit: 1_000_000,
       seen_nanogic: 0,
       usage_consume_hash: #"f6f6",
-      gen_vault: Some(TGenPin { hash: t_vault_hash, name: pin_name }),
-      gen_pin_period: 9,
+      gen_vault,
+      gen_pin_period,
     }
   Input {
     output_reference: OutputReference { transaction_id: t_tx_id, output_index: 10 + index },
@@ -3607,8 +3660,21 @@ test mint_genesis_v2_clean_ok() {
   t_genesis_with(t_clean_genesis(100))
 }
 
-test mint_genesis_link_prefilled_rejected() fail {
+// Link khai sẵn lúc genesis: rỗng hoặc đúng 32 byte (khuôn owner_commit).
+test mint_genesis_link_prefilled_32_ok() {
   t_genesis_with(VaultDatum { ..t_clean_genesis(100), wakeme_link: t_wakeme_commit })
+}
+
+test mint_genesis_link_31_bytes_rejected() fail {
+  t_genesis_with(
+    VaultDatum { ..t_clean_genesis(100), wakeme_link: bytearray.drop(t_wakeme_commit, 1) },
+  )
+}
+
+test mint_genesis_link_33_bytes_rejected() fail {
+  t_genesis_with(
+    VaultDatum { ..t_clean_genesis(100), wakeme_link: bytearray.push(t_wakeme_commit, 0) },
+  )
 }
 
 test mint_genesis_cap_epoch_prefilled_rejected() fail {
@@ -4364,4 +4430,290 @@ test measure_ig_same_epoch_run() {
 
 test probe_ig_same_epoch_fixture() {
   t_ig_probe(t_ig_fixture_b(), max_batches_per_vault - 1, 2)
+}
+
+// ═══ Người dùng mới: két Wakeme chưa ghim / ghim từ genesis (2026-10-02) ═════════
+//
+// Hai thay đổi ở `wakeme_lent.ak` ▸ `read_one_vault`: (c) két Wakeme chưa ghim két IG
+// này ⟹ `(owner_commit, 0)` thay vì fail; (d) ghim từ genesis và chưa đổi ghim ⟹ tính
+// ngay trong kỳ genesis. Các ca dưới đi qua handler/nhánh thật.
+
+/// Két Wakeme hợp lệ nhưng ghim két IG KHÁC (cùng hash, khác tên NFT).
+fn t_unpinned_ok() -> Input {
+  t_wakeme_ref(0, t_wakeme_commit, t_wakeme_commit_2, cp_lent_c, cp_lent_o)
+}
+
+// ── Nhánh CÓ chữ ký: link := owner_commit, L_lent = 0 ────────────────────────────
+test np_rc_unpinned_links_without_lent() {
+  let din = t_cp_din(#"")
+  t_rc(t_cp_apply(din, din, t_wakeme_commit, cp_cap_no_lent, 10, 0), din, [t_rate_ok(), t_unpinned_ok()])
+}
+
+// Cùng tx, cap tính CÓ L_lent ⟹ đỏ: két chưa ghim không góp phần mượn.
+test np_rc_unpinned_cap_with_lent_fail() fail {
+  let din = t_cp_din(#"")
+  t_rc(t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0), din, [t_rate_ok(), t_unpinned_ok()])
+}
+
+test np_ig_unpinned_links_without_lent() {
+  t_ig_wakeme(1_000, t_wakeme_commit, cp_cap_no_lent, [t_rate_ok(), t_unpinned_ok(), t_gb_ok()])
+}
+
+test np_ig_unpinned_cap_with_lent_fail() fail {
+  t_ig_wakeme(1_000, t_wakeme_commit, cp_cap_lent, [t_rate_ok(), t_unpinned_ok(), t_gb_ok()])
+}
+
+// ── Nhánh KHÔNG chữ ký (KeepLink): link rỗng + két Wakeme đưa vào ⟹ fail ─────────
+// Đầu ra là đúng thứ hàm tính nếu chốt KeepLink vắng (link := owner_commit, không
+// lent) — ca này ghim chốt KeepLink, không ghim phép so đầu ra.
+test np_pe_unlinked_unpinned_sets_link_fail() fail {
+  let din = t_cp_prune_din(#"")
+  let out = VaultDatum { ..din, magic_batches: [] }
+  t_pe(t_cp_apply(out, din, t_wakeme_commit, cp_cap_no_lent, 10, 0), din, [t_rate_ok(), t_unpinned_ok()])
+}
+
+// Link rỗng giữ nguyên ở đầu ra, nhưng vẫn đưa két vào ⟹ fail (KeepLink đòi két
+// đưa vào phải là két ĐÃ ghim theo link).
+test np_pe_unlinked_unpinned_keeps_empty_fail() fail {
+  let din = t_cp_prune_din(#"")
+  let out = VaultDatum { ..din, magic_batches: [] }
+  t_pe(t_cp_apply(out, din, #"", cp_cap_no_lent, 10, 0), din, [t_rate_ok(), t_unpinned_ok()])
+}
+
+// Link đã đặt, két Wakeme nay ghim két IG khác ⟹ prune (không chữ ký) vẫn chạy được,
+// giữ link, L_lent = 0. Bản trước fail ở đây ⟹ không ai dọn được két đó.
+test np_pe_linked_wakeme_repinned_elsewhere_ok() {
+  let din = t_cp_prune_din(t_wakeme_commit)
+  let out = VaultDatum { ..din, magic_batches: [] }
+  t_pe(t_cp_apply(out, din, t_wakeme_commit, cp_cap_no_lent, 10, 0), din, [t_rate_ok(), t_unpinned_ok()])
+}
+
+// ── Genesis két IG với 0 LAMP ──────────────────────────────────────────────────
+fn t_zero_lamp_genesis() -> VaultDatum {
+  VaultDatum { ..t_clean_genesis(0), loyalty_holdings: [] }
+}
+
+test np_mint_genesis_zero_lamp_ok() {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let out = t_genesis_output(t_zero_lamp_genesis(), 0, t_vault_hash, name)
+  let m = assets.from_asset(t_vault_hash, name, 1)
+  t_mint_call(seed, t_vault_hash, t_mint_tx(seed, out, m, [t_owner_pkh]))
+}
+
+// ── Lượt sinh ĐẦU của két 0 LAMP, gốc lưới Mainnet ─────────────────────────────
+// Kỳ IG = 10. Két Wakeme cho mượn 12 LAMP (cp_lent_c + cp_lent_o) ≥ min_instant_holding.
+
+fn t_mn_params() -> VaultParams {
+  VaultParams { ..t_params(), window_origin_ms: window_origin_fixtures.mainnet_origin_ms }
+}
+
+/// `t` trong kỳ `k` của lưới gốc Mainnet (cách đầu kỳ 5 giây).
+fn t_mn_in_period(k: Int) -> Int {
+  window_origin_fixtures.mainnet_origin_ms + k * t_ms_per_epoch + 5_000
+}
+
+/// Két Wakeme ghim két IG của bài kiểm, genesis ở `vest_start_ms`, mốc ghim `gpp`.
+fn t_wakeme_pinned_at(vest_start_ms: Int, gpp: Int) -> Input {
+  t_wakeme_ref_at(0, t_wakeme_commit, t_vault_id_name, cp_lent_c, cp_lent_o, vest_start_ms, gpp)
+}
+
+fn t_first_gen_zero_lamp(params: VaultParams, wakeme: Input) -> Bool {
+  t_first_gen_zero_lamp_from(t_zero_lamp_genesis(), params, wakeme)
+}
+
+fn t_first_gen_zero_lamp_from(din: VaultDatum, params: VaultParams, wakeme: Input) -> Bool {
+  let lent = cp_lent_c + cp_lent_o
+  let cap =
+    amount_by_lamp(0, lent, shift_window(din.usage_window, din.usage_window_epoch, 10), 2_000_000_000, 6)
+  let m = 1_000
+  validate_instant_gen(
+    din, m, 10, t_own_ref(), params,
+    t_ig_tx(
+      din, t_ig_out(din, t_wakeme_commit, cap, m), 0, [t_rate_ok(), wakeme, t_gb_ok()],
+      t_shard_in(0, ig_shard_id(), t_s(3, ig_reset, ig_remaining)),
+      t_shard_out(ig_shard_id(), t_s(3, ig_reset, ig_remaining - m)),
+    ),
+  )
+}
+
+// Két Wakeme ghim két IG này ngay lúc genesis, cùng kỳ 10 ⟹ L_lent được tính ⟹ qua
+// IG-6 dù két IG không có LAMP riêng.
+test np_first_gen_zero_lamp_genesis_pin_ok() {
+  t_first_gen_zero_lamp(t_mn_params(), t_wakeme_pinned_at(t_mn_in_period(10), 10))
+}
+
+// Cùng tx, nhưng két Wakeme đã ĐỔI ghim sang két này ở kỳ 10 (genesis kỳ 9) ⟹
+// L_lent = 0 ⟹ 0 + 0 < min_instant_holding ⟹ IG-6 từ chối.
+test np_first_gen_zero_lamp_repinned_same_period_fail() fail {
+  t_first_gen_zero_lamp(t_mn_params(), t_wakeme_pinned_at(t_mn_in_period(9), 10))
+}
+
+// Cùng ca dương, nhưng validator nhận gốc 0 (bản quên gốc ở apply-param) ⟹ vế genesis
+// thấy kỳ 3496 ≠ 10 ⟹ L_lent = 0 ⟹ đỏ.
+test np_first_gen_zero_lamp_forgotten_origin_fail() fail {
+  t_first_gen_zero_lamp(t_params(), t_wakeme_pinned_at(t_mn_in_period(10), 10))
+}
+
+// ── Hành trình người mới (gốc Mainnet, P = 432M) ────────────────────────────────
+// (1) genesis két IG 0 LAMP, link khai sẵn = owner_commit của DID;
+// (2) [giả lập] genesis két Wakeme ghim két IG này: `vest_start_ms = hi`,
+//     `gen_pin_period = period(hi)` — điều kiện `gen_view(IG).link == owner_commit`
+//     bên Wakeme nay thoả nhờ (1);
+// (3) lượt sinh đầu cùng kỳ tính L_lent và qua IG-6.
+
+fn t_journey_genesis_linked() -> VaultDatum {
+  VaultDatum { ..t_zero_lamp_genesis(), wakeme_link: t_wakeme_commit }
+}
+
+test np_journey_mint_zero_lamp_linked_ok() {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let out = t_genesis_output(t_journey_genesis_linked(), 0, t_vault_hash, name)
+  let m = assets.from_asset(t_vault_hash, name, 1)
+  t_mint_call(seed, t_vault_hash, t_mint_tx(seed, out, m, [t_owner_pkh]))
+}
+
+test np_journey_first_gen_linked_genesis_pin_ok() {
+  t_first_gen_zero_lamp_from(
+    t_journey_genesis_linked(), t_mn_params(), t_wakeme_pinned_at(t_mn_in_period(10), 10),
+  )
+}
+
+// ── Ca đối: genesis két IG link RỖNG ⟹ két Wakeme không ghim được nó lúc genesis
+// (gen_vault = None). Lượt có ký đặt được link, nhưng L_lent = 0.
+
+fn t_wakeme_genesis_unpinned() -> Input {
+  t_wakeme_ref_gen(0, t_wakeme_commit, None, cp_lent_c, cp_lent_o, t_mn_in_period(10), 10)
+}
+
+test np_journey_unlinked_rc_sets_link_without_lent() {
+  let din = t_zero_lamp_genesis()
+  let cap = amount_by_lamp(0, 0, shift_window(din.usage_window, din.usage_window_epoch, 10), 2_000_000_000, 6)
+  let dout = t_cp_apply(din, din, t_wakeme_commit, cap, 10, 0)
+  validate_refresh_checkpoint(
+    din, 10, t_own_ref(), t_mn_params(),
+    Transaction {
+      ..t_tx([t_vault_input(din, 0)], [t_vault_output(dout, 0)], [t_owner_pkh]),
+      reference_inputs: [t_rate_ok(), t_wakeme_genesis_unpinned()],
+    },
+  )
+}
+
+// Cùng kịch bản, lượt sinh đầu của két 0 LAMP ⟹ 0 + 0 < min_instant_holding ⟹ IG-6.
+test np_journey_unlinked_first_gen_zero_lamp_fail() fail {
+  t_first_gen_zero_lamp_from(t_zero_lamp_genesis(), t_mn_params(), t_wakeme_genesis_unpinned())
+}
+
+// ═══ Luật 6 — `FollowVault` không đổi link sang két Wakeme lạ (2026-10-02) ═══════
+//
+// Đòn: két IG đã link X. Người dựng tx (chủ ký cho việc khác) thay két Wakeme thật X
+// bằng két Wakeme thật Y đang ghim két IG KHÁC ⟹ vế (c) trả `(Y, 0)`. Trước bản vá:
+// link := Y, cap chốt không phần mượn trọn epoch, X không chốt OwnEpoch được nữa.
+// Mỗi ca âm có đầu ra ĐÚNG bằng thứ hàm tính khi luật 6 vắng (link := Y, cap không
+// lent) — nên chỉ luật 6 chặn được nó, phép so đầu ra thì không. Cực đối dương nằm
+// ngay cạnh: cùng tx, két Y ghim CHÍNH két IG này (lent > 0) ⟹ đổi được.
+
+/// Két Wakeme thật Y (owner_commit c4…) ghim két IG KHÁC (tên NFT c4…).
+fn t_foreign_wakeme() -> Input {
+  t_wakeme_ref(0, t_wakeme_commit_2, t_wakeme_commit_2, cp_lent_c, cp_lent_o)
+}
+
+/// Két Wakeme thật Y ghim CHÍNH két IG của bài kiểm (`t_vault_id_name`).
+fn t_other_wakeme_pinning_this() -> Input {
+  t_wakeme_ref(0, t_wakeme_commit_2, t_vault_id_name, cp_lent_c, cp_lent_o)
+}
+
+fn t_ig_linked(link_in: ByteArray, link_out: ByteArray, cap_out: Int, refs: List<Input>) -> Bool {
+  let din = t_cp_din(link_in)
+  t_ig(
+    din, t_ig_out(din, link_out, cap_out, 1_000), cp_bal, 1_000, refs,
+    t_s(3, ig_reset, ig_remaining), t_s(3, ig_reset, ig_remaining - 1_000),
+  )
+}
+
+// ── Nhánh sinh ───────────────────────────────────────────────────────────────────
+// Bản PoC `poc_relink_to_foreign_wakeme_accepted` (vòng soát đối kháng) — nay phải đỏ.
+test f1_ig_relink_to_foreign_wakeme_rejected() fail {
+  t_ig_linked(t_wakeme_commit, t_wakeme_commit_2, cp_cap_no_lent, [t_rate_ok(), t_foreign_wakeme(), t_gb_ok()])
+}
+
+// Cực đối: cùng tx, Y ghim chính két này ⟹ đổi link được, cap có phần mượn.
+test f1_ig_relink_to_wakeme_pinning_this_ok() {
+  t_ig_linked(t_wakeme_commit, t_wakeme_commit_2, cp_cap_lent, [t_rate_ok(), t_other_wakeme_pinning_this(), t_gb_ok()])
+}
+
+// Vế (a): link rỗng + két ghim két khác ⟹ nối được, lent 0.
+test f1_ig_unlinked_foreign_wakeme_links_ok() {
+  t_ig_linked(#"", t_wakeme_commit_2, cp_cap_no_lent, [t_rate_ok(), t_foreign_wakeme(), t_gb_ok()])
+}
+
+// Vế (b): link X + két X (chưa ghim két này, lent 0) ⟹ giữ link. Chỉ vế (b) cho qua:
+// link khác rỗng và lent = 0.
+test f1_ig_linked_same_wakeme_unpinned_keeps_ok() {
+  t_ig_linked(t_wakeme_commit, t_wakeme_commit, cp_cap_no_lent, [t_rate_ok(), t_unpinned_ok(), t_gb_ok()])
+}
+
+// Đối chứng PoC: bỏ hẳn két ⟹ luật 2 chặn.
+test f1_ig_linked_omit_wakeme_rejected() fail {
+  t_ig_linked(t_wakeme_commit, #"", cp_cap_no_lent, [t_rate_ok(), t_gb_ok()])
+}
+
+// ── Ba nhánh chủ ký còn lại (mỗi chỗ gọi `FollowVault` một ca âm + cực đối) ─────────
+test f1_bb_relink_to_foreign_wakeme_rejected() fail {
+  let din = t_cp_burn_din(t_wakeme_commit)
+  t_bb(
+    t_cp_apply(t_bb_base_out(din), din, t_wakeme_commit_2, cp_cap_no_lent, 10, 200),
+    din, [t_rate_ok(), t_foreign_wakeme()],
+  )
+}
+
+test f1_bb_relink_to_wakeme_pinning_this_ok() {
+  let din = t_cp_burn_din(t_wakeme_commit)
+  t_bb(
+    t_cp_apply(t_bb_base_out(din), din, t_wakeme_commit_2, cp_cap_lent, 10, 200),
+    din, [t_rate_ok(), t_other_wakeme_pinning_this()],
+  )
+}
+
+test f1_up_relink_to_foreign_wakeme_rejected() fail {
+  let din = t_cp_din(t_wakeme_commit)
+  t_up(
+    t_cp_apply(up_output(din, Ember, 10), din, t_wakeme_commit_2, cp_cap_no_lent, 10, 0),
+    din, [t_rate_ok(), t_foreign_wakeme()],
+  )
+}
+
+test f1_up_relink_to_wakeme_pinning_this_ok() {
+  let din = t_cp_din(t_wakeme_commit)
+  t_up(
+    t_cp_apply(up_output(din, Ember, 10), din, t_wakeme_commit_2, cp_cap_lent, 10, 0),
+    din, [t_rate_ok(), t_other_wakeme_pinning_this()],
+  )
+}
+
+fn t_f1_sd_din() -> VaultDatum {
+  VaultDatum { ..t_cp_sd_din(), wakeme_link: t_wakeme_commit }
+}
+
+test f1_sd_relink_to_foreign_wakeme_rejected() fail {
+  let din = t_f1_sd_din()
+  t_sd(
+    t_cp_apply(t_cp_sd_out(din), din, t_wakeme_commit_2, cp_cap_no_lent, 10, 0),
+    din, [t_rate_ok(), t_foreign_wakeme()],
+  )
+}
+
+test f1_sd_relink_to_wakeme_pinning_this_ok() {
+  let din = t_f1_sd_din()
+  t_sd(
+    t_cp_apply(t_cp_sd_out(din), din, t_wakeme_commit_2, cp_cap_lent, 10, 0),
+    din, [t_rate_ok(), t_other_wakeme_pinning_this()],
+  )
+}
+
+// ── RefreshCheckpoint (`FollowVaultOrUnlink`) GIỮ luật cũ: đổi được sang Y chưa ghim ──
+test f1_rc_relink_to_foreign_wakeme_ok() {
+  let din = t_cp_din(t_wakeme_commit)
+  t_rc(t_cp_apply(din, din, t_wakeme_commit_2, cp_cap_no_lent, 10, 0), din, [t_rate_ok(), t_foreign_wakeme()])
 }

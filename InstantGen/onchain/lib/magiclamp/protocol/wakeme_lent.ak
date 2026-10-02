@@ -11,11 +11,18 @@
 // `pub type WakemeVaultDatum` (13 trường) và `wakeme_src_types.ak` ▸ `pub type GenPin`
 // — đối chiếu tại PhoenixKeyDID/Wakeme@4512fe6 (main).
 //   [0]  owner_commit      ByteArray 32 byte = tên NFT định danh két
+//   [2]  vest_start_ms     Int, POSIX ms = cận trên validity của tx genesis, bất biến
 //   [3]  conditional_lamp  Int, oildrop — phần CHƯA chốt, chỉ giảm
 //   [7]  owned_lamp        Int, oildrop — phần ĐÃ chốt, chỉ tăng
 //   [11] gen_vault         Option<GenPin>: Some = Constr 0 [pin], None = Constr 1 []
 //                          GenPin = Constr 0 [hash, name]
-//   [12] gen_pin_period    Int — `period(hi)` của lượt Repin/genesis gần nhất
+//   [12] gen_pin_period    Int — `period(hi)` của lượt genesis, hoặc của lượt Repin
+//                          ĐỔI ghim gần nhất (Repin đổi ghim ép `period(lo) >` mốc
+//                          cũ ⟹ mốc tăng ngặt; Repin chỉ đổi thread giữ nguyên mốc)
+//
+// Hai ô [2] và [12] đọc được là nhờ `WakemeVaultDatum` ở `wakeme_logic.ak` (KHÔNG ở
+// `types.ak` của Wakeme) — đối chiếu lại tại PhoenixKeyDID/Wakeme@4512fe6, 2026-10-02:
+// genesis ép `d.vest_start_ms == hi` và `d.gen_pin_period == period(hi)`.
 //
 // Đọc THEO VỊ TRÍ bằng `un_constr_data`, KHÔNG giải mã bằng một record Aiken: giải mã
 // record của Aiken nghiêm ngặt về số trường (BOUNDARIES §2 "Thêm trường ở cuối"),
@@ -30,18 +37,28 @@
 // 1. Lọc reference input có payment credential == Script(wakeme_vault_hash).
 //    Không có ⟹ 0: két IG không ghim Wakeme vẫn sinh, chỉ không có phần mượn.
 // 2. ≥ 2 cái ⟹ FAIL: đọc nhiều két là cộng N lần trần.
-// 3. Đúng 1 cái ⟹ phải thoả HẾT (a)(b)(c)(e), sai ⟹ FAIL; vế (d) là ngoại lệ:
+// 3. Đúng 1 cái ⟹ phải thoả HẾT (a)(b)(e), sai ⟹ FAIL; (c)(d)(f) là ba ngoại lệ
+//    trả 0 (kèm `owner_commit`), KHÔNG fail:
 //    (a) InlineDatum, Constr tag 0, ≥ 13 trường;
 //    (b) đúng 1 token dưới policy `wakeme_vault_hash`, số lượng 1, tên == [0],
 //        và [0] dài 32 byte;
-//    (c) [11] == Some(GenPin{ own_script_hash, own_vault_name });
 //    (e) [3] ≥ 0 và [7] ≥ 0;
-//    (d) [12] < current_period — sai vế này ⟹ trả 0, KHÔNG fail;
+//    (c) [11] == Some(GenPin{ own_script_hash, own_vault_name }) — két Wakeme ghim
+//        đúng két IG này;
+//    (d) kỳ ghim được tính:
+//          [12] < current_period
+//          ∨ ([2] − window_origin_ms) / ms_per_epoch == [12]   (ghim từ genesis,
+//                                                              chưa từng đổi ghim);
 //    (f) lượng LAMP `(lamp_policy, lamp_asset_name)` THẬT trong value của két
-//        ≥ [3] + [7] — sai vế này ⟹ trả 0, KHÔNG fail.
-//    (d) và (f) là hai ngoại lệ trả 0, cả hai đứng SAU mọi vế fail, nên nhánh 0
-//    chỉ đạt được khi mọi vế (a)(b)(c)(e) đã đúng.
+//        ≥ [3] + [7].
+//    Ba ngoại lệ đứng SAU mọi vế fail, nên nhánh 0 chỉ đạt được khi (a)(b)(e) đã
+//    đúng.
 // 4. Trả [3] + [7].
+//
+// Phép chia trong (d) là chia SÀN của Aiken (`/` làm tròn về −∞). Bản TypeScript
+// mirror phải chia sàn trên BigInt — `/` của BigInt cắt về 0, chỉ khớp khi số bị chia
+// không âm; ở đây `[2] − window_origin_ms ≥ 0` với mọi két tạo sau gốc lưới, nhưng
+// mirror vẫn nên dùng một hàm chia sàn tường minh cho khỏi phụ thuộc điều đó.
 
 use aiken/builtin
 use aiken/collection/dict
@@ -66,15 +83,21 @@ const owner_commit_len: Int = 32
 /// dựng thì NFT, datum, tên đều tự nhất quán theo tham số của nó — chỉ hash CHUẨN mới
 /// phân biệt được két thật).
 ///
-/// `current_period` phải cùng thang với `gen_pin_period` bên Wakeme. Phía IG nay tính
+/// `current_period`, `ms_per_epoch`, `window_origin_ms`: phía IG tính kỳ bằng
 /// `(lower_ms − window_origin_ms) / ms_per_epoch` (`get_current_epoch`, gốc lưới cửa sổ
-/// theo LAMP `Specs/Window/CONTRACT.md` v1.0). Phía Wakeme ghi `period(hi)`, mà
-/// `PhoenixKeyDID/Wakeme` ▸ `wakeme_logic.ak` ▸ `period` hiện là `t / ms_per_epoch`
-/// (gốc Unix, đo 2026-10-02 @ Wakeme 4512fe6). 🔴 HAI THANG KHÁC NHAU: với gốc khác 0
-/// `gen_pin_period` (≈ t/P) luôn lớn hơn nhiều `current_period` (≈ (t−O)/P) ⟹ vế (d)
-/// luôn rơi vào nhánh 0 — chiều lệch fail-closed (`L_lent = 0`, không nới gì), nhưng
-/// phần mượn từ Wakeme không bao giờ được tính cho tới khi hai bên cùng thang. Hàm này
-/// KHÔNG tự đổi nghĩa trường của Wakeme.
+/// theo LAMP `Specs/Window/CONTRACT.md` v1.0). Vế (d) GIẢ ĐỊNH két Wakeme đếm kỳ trên
+/// CÙNG lưới đó: `period(t) = (t − window_origin_ms) / ms_per_epoch`. Hàm này KHÔNG tự
+/// đổi nghĩa trường của Wakeme.
+///
+/// An toàn chỉ khi Wakeme cùng lưới. Đo 2026-10-02 @ Wakeme 4512fe6: `wakeme_logic.ak` ▸
+/// `period` vẫn là `t / ms_per_epoch` (gốc Unix). Ở trạng thái đó, với gốc khác 0:
+///   - `gen_pin_period` (≈ t/P, ~4144 ngày 2026-10-02) lớn hơn mọi `current_period`
+///     (≈ (t−O)/P: ~316 trên Preprod; ~659 trên Mainnet với O = 1_506_203_091_000,
+///     P = 432_000_000) ⟹ vế `[12] < current_period` sai;
+///   - `([2] − O)/P` (~316 Preprod / ~659 Mainnet) khác `[12]` (~4144) ⟹ vế genesis
+///     cũng sai;
+/// ⟹ (d) rơi vào nhánh 0: `L_lent = 0`, không nới gì (fail-safe), nhưng phần mượn
+/// không bao giờ được tính cho tới khi Wakeme về cùng lưới.
 ///
 /// `lamp_policy`, `lamp_asset_name` là apply-param #1, #2 của validator gọi hàm này
 /// (LAMP của đúng mạng) — dùng cho vế (f), đối chiếu datum với value thật.
@@ -84,6 +107,8 @@ pub fn lent_lamp(
   own_script_hash: ScriptHash,
   own_vault_name: AssetName,
   current_period: Int,
+  ms_per_epoch: Int,
+  window_origin_ms: Int,
   lamp_policy: PolicyId,
   lamp_asset_name: AssetName,
 ) -> Int {
@@ -94,6 +119,8 @@ pub fn lent_lamp(
       own_script_hash,
       own_vault_name,
       current_period,
+      ms_per_epoch,
+      window_origin_ms,
       lamp_policy,
       lamp_asset_name,
     )
@@ -105,19 +132,28 @@ pub fn lent_lamp(
 
 /// Cùng luật với `lent_lamp`, nhưng trả cả DANH TÍNH két đã đọc (Gen v2.0, gói b1):
 ///   `None`                     — không có két Wakeme nào trong reference input;
-///   `Some((owner_commit, L))`  — đúng một két thoả (a)(b)(c)(e); `L` có thể là 0
-///                                 theo hai ngoại lệ (d)(f).
+///   `Some((owner_commit, L))`  — đúng một két thoả (a)(b)(e); `L` là 0 theo ba
+///                                 ngoại lệ (c)(d)(f).
 /// Hai két trở lên, hoặc một két sai vế fail ⟹ FAIL (không bao giờ `None`).
 ///
-/// `owner_commit` là nguồn DUY NHẤT của `VaultDatum.wakeme_link`: link SUY RA từ két
-/// hợp lệ, không ai tự chọn. Vế (d)(f) trả `L = 0` nhưng vẫn trả `owner_commit`,
-/// vì két đó vẫn ghim đúng két IG này — chỉ phần mượn kỳ này không được tính.
+/// `owner_commit` là nguồn DUY NHẤT của `VaultDatum.wakeme_link`: link SUY RA từ một két
+/// Wakeme thật (NFT dưới hash chuẩn), không ai gõ tay. Ngoại lệ (c)(d)(f) trả `L = 0`
+/// nhưng vẫn trả `owner_commit`. Riêng (c): két chưa ghim két IG này vẫn trả
+/// `owner_commit`, để chủ két IG (nhánh có chữ ký) đặt được link TRƯỚC khi két Wakeme
+/// ghim — xem chú thích vế (c) trong `read_one_vault`.
+///
+/// Chữ ký (để bản TS mirror theo, 2026-10-02):
+///   wakeme_read(reference_inputs, wakeme_vault_hash, own_script_hash, own_vault_name,
+///               current_period, ms_per_epoch, window_origin_ms,
+///               lamp_policy, lamp_asset_name) -> Option<(ByteArray, Int)>
 pub fn wakeme_read(
   reference_inputs: List<Input>,
   wakeme_vault_hash: ScriptHash,
   own_script_hash: ScriptHash,
   own_vault_name: AssetName,
   current_period: Int,
+  ms_per_epoch: Int,
+  window_origin_ms: Int,
   lamp_policy: PolicyId,
   lamp_asset_name: AssetName,
 ) -> Option<(ByteArray, Int)> {
@@ -140,6 +176,8 @@ pub fn wakeme_read(
         own_script_hash,
         own_vault_name,
         current_period,
+        ms_per_epoch,
+        window_origin_ms,
         lamp_policy,
         lamp_asset_name,
       ),
@@ -157,6 +195,8 @@ fn read_one_vault(
   own_script_hash: ScriptHash,
   own_vault_name: AssetName,
   current_period: Int,
+  ms_per_epoch: Int,
+  window_origin_ms: Int,
   lamp_policy: PolicyId,
   lamp_asset_name: AssetName,
 ) -> (ByteArray, Int) {
@@ -166,11 +206,13 @@ fn read_one_vault(
   expect tag == 0
   expect list.length(fields) >= wakeme_min_fields
   expect Some(owner_commit_data) = list.at(fields, 0)
+  expect Some(vest_start_data) = list.at(fields, 2)
   expect Some(conditional_data) = list.at(fields, 3)
   expect Some(owned_data) = list.at(fields, 7)
   expect Some(gen_vault_data) = list.at(fields, 11)
   expect Some(gen_pin_period_data) = list.at(fields, 12)
   let owner_commit = builtin.un_b_data(owner_commit_data)
+  let vest_start_ms = builtin.un_i_data(vest_start_data)
   let conditional_lamp = builtin.un_i_data(conditional_data)
   let owned_lamp = builtin.un_i_data(owned_data)
   let gen_pin_period = builtin.un_i_data(gen_pin_period_data)
@@ -184,9 +226,29 @@ fn read_one_vault(
   expect builtin.length_of_bytearray(owner_commit) == owner_commit_len
   expect nft_name == owner_commit
 
+  // (e) hai lượng không âm. Đứng TRƯỚC ba ngoại lệ trả 0 để nhánh 0 không che vế fail.
+  expect conditional_lamp >= 0
+  expect owned_lamp >= 0
+
   // (c) két Wakeme ghim ĐÚNG két IG này. Chỉ chính chủ DID đổi được ghim (Repin ký
   // 2-of-2 qua anchor), nên đây là chỗ chủ két Wakeme đồng ý cho két IG này mượn.
-  // So nguyên khối Data: GenPin mà đổi hình (thêm trường) thì fail thay vì đọc lệch.
+  // So nguyên khối Data: GenPin mà đổi hình (thêm trường) thì rơi vào nhánh 0 thay vì
+  // đọc lệch.
+  //
+  // Lệch ⟹ trả `(owner_commit, 0)`, KHÔNG fail (2026-10-02). Bản trước `expect` ở đây,
+  // và nó khoá lẫn nhau với phía Wakeme: Wakeme chỉ cho ghim két IG khi
+  // `gen_view(IG).link == owner_commit` (`wakeme_logic.ak` ▸ `repin_gen_period`,
+  // `genesis_gen_pin_ok`), còn két IG chỉ ghi được link qua `checkpoint.ak` ▸
+  // `resolve_link` khi hàm này trả `Some` — tức khi két Wakeme ĐÃ ghim nó. Không két IG
+  // nào ghim được. Vì sao trả 0 mà không nới gì:
+  //   - nhánh KHÔNG chữ ký (`KeepLink`) vẫn `expect owner_commit == d.wakeme_link` ⟹
+  //     người lạ không đặt/đổi được link bằng cách đưa một két Wakeme vào;
+  //   - nhánh CÓ chữ ký chủ két IG: đặt link := owner_commit là chủ két IG tự khai, có
+  //     chữ ký của chính họ;
+  //   - phần mượn = 0 khi chưa ghim ⟹ không ai được thêm MAGIC nhờ két chưa đồng ý.
+  // Hệ quả về NGHĨA phải biết: `link == owner_commit` bên Wakeme nay chứng minh "chủ
+  // két IG đã ký khai két Wakeme này", không còn là "két IG đó được két Wakeme ghim
+  // trước" (một điều kiện vốn không tới được).
   let expected_pin: Data =
     builtin.constr_data(
       0,
@@ -197,41 +259,57 @@ fn read_one_vault(
         ),
       ],
     )
-  expect builtin.equals_data(gen_vault_data, expected_pin)
-
-  // (e) hai lượng không âm.
-  expect conditional_lamp >= 0
-  expect owned_lamp >= 0
-
-  // (d) ghim trong CHÍNH kỳ đang sinh thì kỳ đó không được tính — chặn Repin xoay
-  // vòng một két Wakeme qua nhiều két IG trong một kỳ (Wakeme giới hạn Repin một lần
-  // mỗi kỳ, nhưng ghim kỳ e rồi sinh ở kỳ e vẫn cho két IG MỚI ăn trọn kỳ e).
-  // Sai vế này thì trả 0, KHÔNG fail: người dùng vừa Repin vẫn phải sinh được phần
-  // LAMP riêng của két IG trong kỳ đó. Mọi vế khác đã kiểm ở trên, nên nhánh 0 này
-  // chỉ đạt được khi mọi vế fail đều đúng.
   let lent = conditional_lamp + owned_lamp
-  if gen_pin_period >= current_period {
-    (owner_commit, 0)
+  if !builtin.equals_data(gen_vault_data, expected_pin) {
+    (owner_commit, 0) // MUT-B3-c
   } else {
-    // (f) datum phải được value THẬT của két đỡ. Bất biến "datum khớp value" là lời
-    // hứa của MỘT hash két Wakeme — validator sau hash đó giữ lời hứa, không ai khác.
-    // Hash két đổi sau một lượt di trú thì hàm đọc này không còn biết bản mới có giữ
-    // lời hứa ấy không; vế này giữ cho con số trả về không bao giờ vượt LAMP đang nằm
-    // THẬT trong két, bất kể bên kia ghi gì vào datum.
-    // Thiếu ⟹ trả 0, KHÔNG fail: két IG vẫn sinh được phần LAMP riêng của nó. Dư ⟹
-    // trả đúng số datum khai, KHÔNG trả phần dư (ai cũng gửi thêm LAMP vào két được).
-    let lamp_held = assets.quantity_of(vault.value, lamp_policy, lamp_asset_name)
-    if lamp_held < lent {
+    // (d) kỳ ghim. Ghim trong CHÍNH kỳ đang sinh thì kỳ đó không được tính — chặn
+    // Repin xoay vòng một két Wakeme qua nhiều két IG trong một kỳ (Wakeme giới hạn
+    // đổi ghim một lần mỗi kỳ, nhưng ghim kỳ e rồi sinh ở kỳ e vẫn cho két IG MỚI ăn
+    // trọn kỳ e).
+    //
+    // Ngoại lệ GENESIS: `([2] − O) / P == [12]` ⟺ ghim từ lượt genesis và chưa từng đổi
+    // ghim (genesis ép `[2] = hi`, `[12] = period(hi)`; mọi Repin đổi ghim đẩy `[12]`
+    // lên ngặt ⟹ đẳng thức chỉ còn đúng khi chưa đổi lần nào). Két IG được ghim ngay
+    // lúc genesis là két IG DUY NHẤT két Wakeme này từng ghim, nên tính nó ngay trong
+    // kỳ genesis không mở đường xoay vòng: muốn ghim két IG khác phải chờ
+    // `period(lo) > [12]`, và két mới chỉ được tính từ kỳ sau kỳ đó. Đây là đường để
+    // lượt sinh ĐẦU TIÊN của người dùng mới tính được LAMP ở két Wakeme.
+    //
+    // Sai cả hai vế ⟹ trả 0, KHÔNG fail: người dùng vừa Repin vẫn phải sinh được phần
+    // LAMP riêng của két IG trong kỳ đó.
+    let pinned_at_genesis =
+      ( vest_start_ms - window_origin_ms ) / ms_per_epoch == gen_pin_period // MUT-B3-a MUT-B3-b
+    let counted = gen_pin_period < current_period || pinned_at_genesis // MUT-B3-d
+    if !counted {
       (owner_commit, 0)
     } else {
-      (owner_commit, lent)
+      // (f) datum phải được value THẬT của két đỡ. Bất biến "datum khớp value" là lời
+      // hứa của MỘT hash két Wakeme — validator sau hash đó giữ lời hứa, không ai
+      // khác. Hash két đổi sau một lượt di trú thì hàm đọc này không còn biết bản mới
+      // có giữ lời hứa ấy không; vế này giữ cho con số trả về không bao giờ vượt LAMP
+      // đang nằm THẬT trong két, bất kể bên kia ghi gì vào datum.
+      // Thiếu ⟹ trả 0, KHÔNG fail: két IG vẫn sinh được phần LAMP riêng của nó. Dư ⟹
+      // trả đúng số datum khai, KHÔNG trả phần dư (ai cũng gửi thêm LAMP vào két được).
+      let lamp_held =
+        assets.quantity_of(vault.value, lamp_policy, lamp_asset_name)
+      if lamp_held < lent {
+        (owner_commit, 0)
+      } else {
+        (owner_commit, lent)
+      }
     }
   }
 }
 
 // ═══ BÀI KIỂM ═════════════════════════════════════════════════════════════════
 // Mọi ca dựng từ `vault_input(vault_fields(..), ..)` và đổi ĐÚNG MỘT vế so với ca
-// dương `t_one_valid_vault`. Hai lượng dùng số khác nhau (700_000_000 và
+// dương `t_one_valid_vault`.
+//
+// Thân bài `fail` phải ĐÚNG với mọi giá trị hàm trả về mà không nổ (`run(..) >= 0`,
+// `read_full(..) != Some((#"", -1))`), để bài chỉ đạt khi hàm NỔ. Dạng cũ `run(..) > 0`
+// / `!= 0` cũng đạt khi hàm trả 0 mà không nổ — tức đạt cả khi vế `expect` bị đổi
+// thành một ngoại lệ trả 0 (2026-10-02). Hai lượng dùng số khác nhau (700_000_000 và
 // 301_000_000) để ca "chỉ đọc một trường" không trùng kết quả với ca đúng.
 
 /// Hash thật của két Wakeme trên Preprod.
@@ -289,12 +367,31 @@ fn vault_fields(
   gen_vault: Data,
   gen_pin_period: Int,
 ) -> List<Data> {
+  vault_fields_vs(
+    owner_commit,
+    conditional_lamp,
+    owned_lamp,
+    gen_vault,
+    1_700_000_000_000,
+    gen_pin_period,
+  )
+}
+
+/// Như `vault_fields`, chọn được `vest_start_ms` ([2]).
+fn vault_fields_vs(
+  owner_commit: ByteArray,
+  conditional_lamp: Int,
+  owned_lamp: Int,
+  gen_vault: Data,
+  vest_start_ms: Int,
+  gen_pin_period: Int,
+) -> List<Data> {
   [
     builtin.b_data(owner_commit),
     // [1] usage_thread
     builtin.b_data(#"e5e5"),
     // [2] vest_start_ms
-    builtin.i_data(1_700_000_000_000),
+    builtin.i_data(vest_start_ms),
     // [3] conditional_lamp
     builtin.i_data(conditional_lamp),
     // [4] reclaimed_to_pot
@@ -381,12 +478,42 @@ fn good_input() -> Input {
 }
 
 fn run(refs: List<Input>) -> Int {
+  run_at(0, t_current_period, refs)
+}
+
+/// Độ dài kỳ của bài kiểm (Mainnet/Preprod: 5 ngày).
+const t_ms_per_epoch: Int = 432_000_000
+
+/// Gốc lưới cửa sổ Mainnet. Dùng gốc này (không dùng gốc Preprod) cho các ca vế
+/// genesis: nó KHÔNG chia hết cho độ dài kỳ, nên bản quên trừ gốc cho kết quả khác.
+const t_mainnet_origin: Int = 1_506_203_091_000
+
+/// Ở gốc 0, `vest_start_ms` mặc định của fixture (1_700_000_000_000) rơi vào kỳ 3935,
+/// khác mọi `gen_pin_period` mà các ca cũ dùng ⟹ vế genesis sai ở mọi ca cũ, và các ca
+/// cũ đo đúng vế `[12] < current_period` như trước.
+fn run_at(origin: Int, current_period: Int, refs: List<Input>) -> Int {
   lent_lamp(
     refs,
     t_wakeme_hash,
     t_ig_hash,
     t_ig_name,
+    current_period,
+    t_ms_per_epoch,
+    origin,
+    t_lamp_policy,
+    t_lamp_name,
+  )
+}
+
+fn read_at(origin: Int, refs: List<Input>) -> Option<(ByteArray, Int)> {
+  wakeme_read(
+    refs,
+    t_wakeme_hash,
+    t_ig_hash,
+    t_ig_name,
     t_current_period,
+    t_ms_per_epoch,
+    origin,
     t_lamp_policy,
     t_lamp_name,
   )
@@ -426,8 +553,10 @@ test t_value_lamp_wrong_policy_is_zero() {
   run([vault_input(0, t_wakeme_hash, inline(0, good_fields()), v)]) == 0
 }
 
-// Vế (f) là ngoại lệ trả 0, KHÔNG che vế fail: thiếu LAMP + ghim két khác ⟹ fail.
-test t_value_short_and_wrong_pin_fail() fail {
+// Vế (f) là ngoại lệ trả 0, KHÔNG che vế fail: thiếu LAMP + lượng âm ⟹ fail.
+// (Bản trước ghép thiếu LAMP với ghim két khác; vế (c) nay cũng là ngoại lệ trả 0, nên
+// cặp đó không còn phân biệt được thứ tự.)
+test t_value_short_and_negative_fail() fail {
   let input =
     vault_input(
       0,
@@ -437,8 +566,8 @@ test t_value_short_and_wrong_pin_fail() fail {
         vault_fields(
           t_owner_commit,
           t_conditional,
-          t_owned,
-          t_pin(t_other_hash, t_ig_name),
+          -1,
+          t_pin(t_ig_hash, t_ig_name),
           t_current_period - 1,
         ),
       ),
@@ -527,7 +656,7 @@ test t_two_valid_vaults_fail() fail {
       ),
       nft_value(t_wakeme_hash, t_owner_commit_2, 1),
     )
-  run([good_input(), second]) > 0
+  run([good_input(), second]) >= 0
 }
 
 // ── Vế (b): NFT ────────────────────────────────────────────────────────────────
@@ -540,7 +669,7 @@ test t_nft_wrong_policy_fail() fail {
       inline(0, good_fields()),
       nft_value(t_other_hash, t_owner_commit, 1),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
 test t_nft_name_not_owner_commit_fail() fail {
@@ -551,7 +680,7 @@ test t_nft_name_not_owner_commit_fail() fail {
       inline(0, good_fields()),
       nft_value(t_wakeme_hash, t_owner_commit_2, 1),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
 test t_nft_quantity_two_fail() fail {
@@ -562,7 +691,7 @@ test t_nft_quantity_two_fail() fail {
       inline(0, good_fields()),
       nft_value(t_wakeme_hash, t_owner_commit, 2),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
 test t_nft_missing_fail() fail {
@@ -573,7 +702,7 @@ test t_nft_missing_fail() fail {
       inline(0, good_fields()),
       assets.from_lovelace(5_000_000),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
 // Tên hợp lệ ĐỨNG TRƯỚC (c3.. < c4..) rồi thêm một tên thứ hai dưới cùng policy: ca
@@ -587,7 +716,7 @@ test t_nft_second_name_same_policy_fail() fail {
       nft_value(t_wakeme_hash, t_owner_commit, 1)
         |> assets.add(t_wakeme_hash, t_owner_commit_2, 1),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
 // owner_commit 31 byte, NFT cùng tên 31 byte: chỉ vế độ dài chặn.
@@ -609,12 +738,91 @@ test t_owner_commit_not_32_bytes_fail() fail {
       ),
       nft_value(t_wakeme_hash, short, 1),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
 // ── Vế (c): ghim két IG ────────────────────────────────────────────────────────
+// Két chưa ghim két IG này ⟹ `Some((owner_commit, 0))`, KHÔNG fail (gỡ khoá lẫn nhau
+// với Wakeme, 2026-10-02). Mọi ca đặt kỳ ghim ở kỳ TRƯỚC và value đủ LAMP, nên nếu
+// vế (c) bị gỡ thì cả ba trả đúng `t_conditional + t_owned` thay vì 0.
 
-test t_gen_vault_none_fail() fail {
+fn unpinned_input(gen_vault: Data) -> Input {
+  vault_input(
+    0,
+    t_wakeme_hash,
+    inline(
+      0,
+      vault_fields(
+        t_owner_commit,
+        t_conditional,
+        t_owned,
+        gen_vault,
+        t_current_period - 1,
+      ),
+    ),
+    nft_value(t_wakeme_hash, t_owner_commit, 1),
+  )
+}
+
+test t_gen_vault_none_links_without_lent() {
+  read_at(0, [unpinned_input(t_none())]) == Some((t_owner_commit, 0))
+}
+
+test t_gen_vault_other_hash_links_without_lent() {
+  read_at(0, [unpinned_input(t_pin(t_other_hash, t_ig_name))]) == Some(
+    (t_owner_commit, 0),
+  )
+}
+
+test t_gen_vault_other_name_links_without_lent() {
+  read_at(0, [unpinned_input(t_pin(t_ig_hash, t_owner_commit_2))]) == Some(
+    (t_owner_commit, 0),
+  )
+}
+
+// GenPin đổi hình (thêm trường) ⟹ không khớp nguyên khối ⟹ 0, không đọc lệch.
+test t_gen_vault_reshaped_pin_is_zero() {
+  let reshaped =
+    builtin.constr_data(
+      0,
+      [
+        builtin.constr_data(
+          0,
+          [
+            builtin.b_data(t_ig_hash),
+            builtin.b_data(t_ig_name),
+            builtin.i_data(0),
+          ],
+        ),
+      ],
+    )
+  run([unpinned_input(reshaped)]) == 0
+}
+
+// Ngoại lệ (c) đứng SAU vế fail: chưa ghim + lượng âm ⟹ fail (không 0). Thiếu ca này
+// thì bản đặt `if` vế (c) lên trước (e) vẫn xanh.
+test t_unpinned_and_negative_fail() fail {
+  let input =
+    vault_input(
+      0,
+      t_wakeme_hash,
+      inline(
+        0,
+        vault_fields(
+          t_owner_commit,
+          -1,
+          t_owned,
+          t_none(),
+          t_current_period - 1,
+        ),
+      ),
+      nft_value(t_wakeme_hash, t_owner_commit, 1),
+    )
+  run([input]) >= 0
+}
+
+// Chưa ghim + NFT sai tên ⟹ fail ở (b).
+test t_unpinned_and_nft_wrong_fail() fail {
   let input =
     vault_input(
       0,
@@ -629,49 +837,87 @@ test t_gen_vault_none_fail() fail {
           t_current_period - 1,
         ),
       ),
-      nft_value(t_wakeme_hash, t_owner_commit, 1),
+      nft_value(t_wakeme_hash, t_owner_commit_2, 1),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
-test t_gen_vault_other_hash_fail() fail {
+// ── Vế (d) ngoại lệ GENESIS — gốc lưới Mainnet ─────────────────────────────────
+// Kỳ IG hiện tại = 10. `p(t) = (t − O) / P`.
+
+/// `t` nằm trong kỳ `k` của lưới gốc `O` Mainnet (cách đầu kỳ 5 giây).
+fn t_in_period(k: Int) -> Int {
+  t_mainnet_origin + k * t_ms_per_epoch + 5_000
+}
+
+fn genesis_input(vest_start_ms: Int, gen_pin_period: Int) -> Input {
+  vault_input(
+    0,
+    t_wakeme_hash,
+    inline(
+      0,
+      vault_fields_vs(
+        t_owner_commit,
+        t_conditional,
+        t_owned,
+        t_pin(t_ig_hash, t_ig_name),
+        vest_start_ms,
+        gen_pin_period,
+      ),
+    ),
+    nft_value(t_wakeme_hash, t_owner_commit, 1),
+  )
+}
+
+// Ghim từ genesis ở CHÍNH kỳ đang sinh ⟹ tính. Bản quên trừ gốc tính
+// `vs / P` = 3486 + 10 ≠ 10 ⟹ 0 ⟹ đỏ.
+test t_genesis_pin_same_period_counts() {
+  run_at(t_mainnet_origin, 10, [genesis_input(t_in_period(10), 10)]) == t_conditional + t_owned
+}
+
+// Genesis có `hi` ở kỳ SAU kỳ của lượt sinh (cửa hiệu lực vắt ngang biên): `[12]` = 11 >
+// kỳ hiện tại, nhưng vẫn là két IG duy nhất két Wakeme từng ghim ⟹ tính.
+test t_genesis_pin_next_period_counts() {
+  run_at(t_mainnet_origin, 10, [genesis_input(t_in_period(11), 11)]) == t_conditional + t_owned
+}
+
+// Đã đổi ghim một lần (genesis kỳ 9, Repin ghim két này ở kỳ 10), sinh ở kỳ 10 ⟹ 0.
+test t_repinned_same_period_is_zero() {
+  run_at(t_mainnet_origin, 10, [genesis_input(t_in_period(9), 10)]) == 0
+}
+
+// Cùng két đã đổi ghim, sinh ở kỳ SAU ⟹ tính (vế `[12] < current_period`).
+test t_repinned_next_period_counts() {
+  run_at(t_mainnet_origin, 11, [genesis_input(t_in_period(9), 10)]) == t_conditional + t_owned
+}
+
+// Két Wakeme còn lưới Unix: `[2] = t`, `[12] = t / P` (≈ 3496), kỳ IG 10 ⟹ cả hai vế
+// sai ⟹ 0 (fail-safe). Bản quên trừ gốc trong vế genesis thấy `t / P == [12]` ⟹ đỏ.
+test t_unix_grid_wakeme_is_zero() {
+  let t = t_in_period(10)
+  run_at(t_mainnet_origin, 10, [genesis_input(t, t / t_ms_per_epoch)]) == 0
+}
+
+// Ngoại lệ genesis không che vế (f): ghim genesis cùng kỳ nhưng value thiếu LAMP ⟹ 0.
+test t_genesis_pin_value_short_is_zero() {
   let input =
     vault_input(
       0,
       t_wakeme_hash,
       inline(
         0,
-        vault_fields(
+        vault_fields_vs(
           t_owner_commit,
           t_conditional,
           t_owned,
-          t_pin(t_other_hash, t_ig_name),
-          t_current_period - 1,
+          t_pin(t_ig_hash, t_ig_name),
+          t_in_period(10),
+          10,
         ),
       ),
-      nft_value(t_wakeme_hash, t_owner_commit, 1),
+      lamp_value(t_wakeme_hash, t_owner_commit, 1, t_conditional + t_owned - 1),
     )
-  run([input]) > 0
-}
-
-test t_gen_vault_other_name_fail() fail {
-  let input =
-    vault_input(
-      0,
-      t_wakeme_hash,
-      inline(
-        0,
-        vault_fields(
-          t_owner_commit,
-          t_conditional,
-          t_owned,
-          t_pin(t_ig_hash, t_owner_commit_2),
-          t_current_period - 1,
-        ),
-      ),
-      nft_value(t_wakeme_hash, t_owner_commit, 1),
-    )
-  run([input]) > 0
+  run_at(t_mainnet_origin, 10, [input]) == 0
 }
 
 // ── Vế (d): kỳ ghim ────────────────────────────────────────────────────────────
@@ -716,8 +962,9 @@ test t_pinned_previous_period_counts() {
   run([input]) == t_conditional + t_owned
 }
 
-// Ngoại lệ (d) chỉ áp khi CHỈ vế (d) sai: (d) sai cộng (c) sai ⟹ vẫn fail, không 0.
-test t_pinned_this_period_and_wrong_pin_fail() fail {
+// Ngoại lệ (d) đứng SAU vế fail: (d) sai cộng (e) sai ⟹ vẫn fail, không 0. (Bản trước
+// ghép (d) với (c); vế (c) nay cũng là ngoại lệ trả 0.)
+test t_pinned_this_period_and_negative_fail() fail {
   let input =
     vault_input(
       0,
@@ -727,8 +974,8 @@ test t_pinned_this_period_and_wrong_pin_fail() fail {
         vault_fields(
           t_owner_commit,
           t_conditional,
-          t_owned,
-          t_pin(t_other_hash, t_ig_name),
+          -1,
+          t_pin(t_ig_hash, t_ig_name),
           t_current_period,
         ),
       ),
@@ -749,7 +996,7 @@ test t_datum_not_inline_fail() fail {
       ),
       nft_value(t_wakeme_hash, t_owner_commit, 1),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
 test t_datum_constr_tag_1_fail() fail {
@@ -760,7 +1007,7 @@ test t_datum_constr_tag_1_fail() fail {
       inline(1, good_fields()),
       nft_value(t_wakeme_hash, t_owner_commit, 1),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
 test t_datum_12_fields_fail() fail {
@@ -771,7 +1018,7 @@ test t_datum_12_fields_fail() fail {
       inline(0, list.take(good_fields(), 12)),
       nft_value(t_wakeme_hash, t_owner_commit, 1),
     )
-  run([input]) > 0
+  run([input]) >= 0
 }
 
 // Wakeme nối thêm trường cuối ⟹ vẫn đọc đúng.
@@ -808,7 +1055,7 @@ test t_conditional_negative_fail() fail {
       ),
       nft_value(t_wakeme_hash, t_owner_commit, 1),
     )
-  run([input]) != 0
+  run([input]) >= 0
 }
 
 test t_owned_negative_fail() fail {
@@ -828,7 +1075,7 @@ test t_owned_negative_fail() fail {
       ),
       nft_value(t_wakeme_hash, t_owner_commit, 1),
     )
-  run([input]) != 0
+  run([input]) >= 0
 }
 
 // Hai lượng bằng 0 là hợp lệ (biên của vế e): cặp dương của hai ca âm trên.
@@ -906,6 +1153,126 @@ test t_typed_record_encoding_ok() {
   run([mirror_input(Some(MirrorGenPin { hash: t_ig_hash, name: t_ig_name }))]) == t_conditional + t_owned
 }
 
-test t_typed_record_none_fail() fail {
-  run([mirror_input(None)]) > 0
+// `None` thật (Constr 1 []) ⟹ chưa ghim ⟹ `(owner_commit, 0)`, không fail.
+test t_typed_record_none_links_without_lent() {
+  read_at(0, [mirror_input(None)]) == Some((t_owner_commit, 0))
+}
+
+// ── Ca đối ứng vector TS + kiểu ô datum (W-IG2, 2026-10-02) ──────────────────────
+// Các ca `fail` dưới đây viết thân LUÔN ĐÚNG nếu chạy tới nơi (`!= Some((#"", -1))`):
+// `test … fail` coi thân trả `False` là đạt, nên thân dạng `run(..) > 0` sẽ xanh cả khi
+// hàm trả 0 thay vì nổ. Chỉ một lần nổ thật mới làm các bài này xanh.
+
+/// Thay ô thứ `i` của danh sách trường datum.
+fn with_field(fields: List<Data>, i: Int, d: Data) -> List<Data> {
+  list.concat(list.take(fields, i), [d, ..list.drop(fields, i + 1)])
+}
+
+fn read_full(origin: Int, current_period: Int, refs: List<Input>) {
+  wakeme_read(
+    refs,
+    t_wakeme_hash,
+    t_ig_hash,
+    t_ig_name,
+    current_period,
+    t_ms_per_epoch,
+    origin,
+    t_lamp_policy,
+    t_lamp_name,
+  )
+}
+
+fn fields_input(fields: List<Data>) -> Input {
+  vault_input(
+    0,
+    t_wakeme_hash,
+    inline(0, fields),
+    nft_value(t_wakeme_hash, t_owner_commit, 1),
+  )
+}
+
+/// Fixture chưa ghim (`[11] = None`), các ô khác như `good_fields()`.
+fn unpinned_fields() -> List<Data> {
+  with_field(good_fields(), 11, t_none())
+}
+
+// Trùng số với vector TS `TV_WAKEME_PIN ▸ not_pinned` (InstantGen/tests/vectors.ts): gốc
+// Mainnet, vest kỳ 10, `[12]` = 10, kỳ hiện tại 10, `[11]` = None ⟹ `(owner_commit, 0)`.
+// Cực đối dương (chỉ khác `[11]` = ghim két này): `t_genesis_pin_same_period_counts`
+// ⟹ L = [3] + [7]. Nên bản gỡ vế (c) đi qua ngoại lệ genesis và trả số khác 0 ⟹ đỏ.
+test t_not_pinned_vector_links_without_lent() {
+  let input =
+    vault_input(
+      0,
+      t_wakeme_hash,
+      inline(
+        0,
+        vault_fields_vs(
+          t_owner_commit,
+          t_conditional,
+          t_owned,
+          t_none(),
+          t_in_period(10),
+          10,
+        ),
+      ),
+      nft_value(t_wakeme_hash, t_owner_commit, 1),
+    )
+  read_full(t_mainnet_origin, 10, [input]) == Some((t_owner_commit, 0))
+}
+
+// Cực đối của ca trên ở cùng hàm đọc `wakeme_read` (không qua `lent_lamp`).
+test t_not_pinned_vector_pole_pinned_counts() {
+  read_full(t_mainnet_origin, 10, [genesis_input(t_in_period(10), 10)]) == Some(
+    (t_owner_commit, t_conditional + t_owned),
+  )
+}
+
+// (a) `[2]` không phải số nguyên ⟹ fail. Fixture ghim + `[12]` < kỳ hiện tại: vế (d)
+// đúng bằng vế đầu, nên `[2]` không cần cho kết quả — bản đọc `[2]` LƯỜI sẽ trả L ⟹ đỏ.
+// Cực đối dương: `t_pinned_previous_period_counts` (cùng `good_fields()`, `[2]` là Int).
+test t_vest_start_not_int_fail() fail {
+  let fs = with_field(good_fields(), 2, builtin.b_data(#"00"))
+  read_full(0, t_current_period, [fields_input(fs)]) != Some((#"", -1))
+}
+
+// Như trên, két chưa ghim: nhánh (c) trả 0 trước khi (d) dùng `[2]`.
+// Cực đối dương: `t_unpinned_fields_pole_links_without_lent`.
+test t_vest_start_not_int_unpinned_fail() fail {
+  let fs = with_field(unpinned_fields(), 2, builtin.b_data(#"00"))
+  read_full(0, t_current_period, [fields_input(fs)]) != Some((#"", -1))
+}
+
+// (a) `[12]` không phải số nguyên ⟹ fail. Cực đối dương: `t_pinned_previous_period_counts`.
+test t_gen_pin_period_not_int_fail() fail {
+  let fs = with_field(good_fields(), 12, builtin.b_data(#"63"))
+  read_full(0, t_current_period, [fields_input(fs)]) != Some((#"", -1))
+}
+
+// Như trên, két chưa ghim: nhánh (c) trả 0 trước khi (d) dùng `[12]`.
+test t_gen_pin_period_not_int_unpinned_fail() fail {
+  let fs = with_field(unpinned_fields(), 12, builtin.b_data(#"63"))
+  read_full(0, t_current_period, [fields_input(fs)]) != Some((#"", -1))
+}
+
+// (a) `[0]` không phải bytes ⟹ fail. NFT vẫn mang tên `t_owner_commit` để (b) không là
+// chỗ nổ thay. Cực đối dương: `t_one_valid_vault`.
+test t_owner_commit_not_bytes_fail() fail {
+  let fs = with_field(good_fields(), 0, builtin.i_data(0))
+  read_full(0, t_current_period, [fields_input(fs)]) != Some((#"", -1))
+}
+
+// Cực đối dương chung của các ca chưa ghim ở trên: cùng `unpinned_fields()`, mọi ô đúng
+// kiểu ⟹ `(owner_commit, 0)`. Ca `fields_input(good_fields())` ⟹ L đủ cũng nằm ở đây để
+// chứng minh `with_field` không làm hỏng fixture.
+test t_unpinned_fields_pole_links_without_lent() {
+  and {
+    read_full(0, t_current_period, [fields_input(unpinned_fields())]) == Some(
+      (t_owner_commit, 0),
+    ),
+    read_full(0, t_current_period, [fields_input(good_fields())]) == Some(
+      (t_owner_commit, t_conditional + t_owned),
+    ),
+    with_field(good_fields(), 2, builtin.i_data(1_700_000_000_000)) == good_fields(),
+  }
 }

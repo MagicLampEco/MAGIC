@@ -739,3 +739,31 @@ export const TV_WINDOW_ORIGIN = {
   ],
   forgot_origin: { t_ms: 1_790_553_600_000n, window: 4_144n },
 } as const;
+
+// ══════════════════════════════════════════════════════════════
+// TV-WAKEME-PIN — vế (c)(d) của `wakeme_read` (bản 2026-10-02)
+// ══════════════════════════════════════════════════════════════
+// P8: GIỐNG HỆT các ca `t_genesis_pin_*`, `t_repinned_*`, `t_unix_grid_wakeme_is_zero`,
+// `t_gen_vault_*_links_without_lent` trong `onchain/lib/magiclamp/protocol/wakeme_lent.ak`.
+// Gốc lưới Mainnet 1_506_203_091_000 KHÔNG chia hết cho P ⟹ bản quên trừ gốc cho kết quả khác.
+// `t_in_period(k) = O + k·P + 5_000`. Kỳ IG hiện tại = `current_period`.
+// `counted` = true ⟹ L = [3] + [7]; false ⟹ L = 0 với `reason`. Không ca nào ném.
+export const TV_WAKEME_PIN = {
+  ms_per_epoch: 432_000_000n,
+  window_origin_ms: 1_506_203_091_000n,
+  in_period: (k: bigint): bigint => 1_506_203_091_000n + k * 432_000_000n + 5_000n,
+  cases: [
+    // ghim từ genesis ở CHÍNH kỳ đang sinh ⟹ tính (đường của lượt sinh đầu tiên)
+    { id: "genesis_same_period",  pinned: true,  vest_period: 10n, gen_pin_period: 10n, current_period: 10n, counted: true },
+    // genesis có hi ở kỳ SAU (validity vắt biên) ⟹ vẫn là két IG duy nhất từng ghim ⟹ tính
+    { id: "genesis_next_period",  pinned: true,  vest_period: 11n, gen_pin_period: 11n, current_period: 10n, counted: true },
+    // genesis kỳ 9, đổi ghim ở kỳ 10, sinh kỳ 10 ⟹ 0
+    { id: "repinned_same_period", pinned: true,  vest_period: 9n,  gen_pin_period: 10n, current_period: 10n, counted: false, reason: "pinned_in_current_period" },
+    // cùng két, sinh kỳ 11 ⟹ tính (vế [12] < current_period)
+    { id: "repinned_next_period", pinned: true,  vest_period: 9n,  gen_pin_period: 10n, current_period: 11n, counted: true },
+    // két Wakeme còn lưới Unix: [12] = t / P ⟹ 0 (fail-safe)
+    { id: "unix_grid",            pinned: true,  vest_period: 10n, gen_pin_period: "unix", current_period: 10n, counted: false, reason: "pinned_in_current_period" },
+    // két chưa ghim két IG này ⟹ 0, KHÔNG ném (link vẫn nối được ở nhánh chủ ký)
+    { id: "not_pinned",           pinned: false, vest_period: 10n, gen_pin_period: 10n, current_period: 10n, counted: false, reason: "not_pinned_to_this_vault" },
+  ],
+} as const;

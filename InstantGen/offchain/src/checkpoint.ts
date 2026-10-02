@@ -3,7 +3,7 @@
 //
 // P8: gương của `onchain/lib/magiclamp/protocol/checkpoint.ak` (`current_checkpoint`,
 // `read_rho` vế datum, `expected_checkpoint`, `expected_checkpoint_for_gen`,
-// `resolve_link`, `refreshed`). Luật 1–5 ghi ở đầu tệp Aiken; ở đây chỉ gương.
+// `resolve_link`, `refreshed`). Luật 1–6 ghi ở đầu tệp Aiken; ở đây chỉ gương.
 // Công thức cap dùng lại `genFormula.ts ▸ amountByLamp` (đã trùng bit với
 // `gen_formula.ak`) — KHÔNG viết lại công thức.
 //
@@ -57,6 +57,22 @@ function resolveLink(read: WakemeRead | null, mode: LinkMode, d: VaultDatum): [s
       throw new Error(
         `GEN-INST-011: nhánh không chữ ký chỉ đọc được két Wakeme ĐÃ ghim ` +
         `(${d.wakeme_link || "<rỗng>"}), két đưa vào là ${read.ownerCommit}.`,
+      );
+    }
+    // Luật 6 (gương `resolve_link` nhánh `FollowVault`, 2026-10-02): nhánh chủ ký thường
+    // chỉ ĐỔI link khi link cũ rỗng, hoặc két đọc được đang ghim chính két IG này
+    // (`lent > 0`). RefreshCheckpoint (`FollowVaultOrUnlink`) giữ luật cũ.
+    if (
+      mode === "FollowVault" &&
+      d.wakeme_link !== "" &&
+      read.ownerCommit !== d.wakeme_link &&
+      read.lent <= 0n
+    ) {
+      throw new Error(
+        `GEN-INST-011: két đã nối két Wakeme ${d.wakeme_link}; két đưa vào là ` +
+        `${read.ownerCommit} và KHÔNG ghim két IG này (L_lent = 0) ⟹ nhánh chủ ký thường ` +
+        `không đổi link được (luật 6). Đưa đúng két đã nối vào, hoặc đổi link qua ` +
+        `RefreshCheckpoint.`,
       );
     }
     return [read.ownerCommit, read.lent];

@@ -8,10 +8,12 @@
 // redeemer.
 //
 // ═══ LUẬT (kế hoạch v2 §2 "Luật cho wakeme_link / cap_*", 1–6) ═══════════════
-// 1. `link` SUY RA: đúng một két Wakeme thoả (a)(b)(c)(e) của `wakeme_lent` trong
-//    reference input ⟹ link := `owner_commit` của két đó. Chỉ nhánh CHỦ KÝ đổi được
-//    link (`FollowVault`, `FollowVaultOrUnlink`); nhánh không chữ ký (`KeepLink`,
-//    PruneExpired) không đổi được.
+// 1. `link` SUY RA: đúng một két Wakeme thoả (a)(b)(e) của `wakeme_lent` trong
+//    reference input ⟹ link := `owner_commit` của két đó — kể cả khi két đó CHƯA ghim
+//    két IG này (vế (c) lệch ⟹ `L_lent = 0`, không fail; 2026-10-02, gỡ khoá lẫn nhau
+//    với Wakeme). Chỉ nhánh CHỦ KÝ đổi được link (`FollowVault`,
+//    `FollowVaultOrUnlink`); nhánh không chữ ký (`KeepLink`, PruneExpired) không đổi
+//    được.
 // 2. Link đã đặt mà lượt này làm mới cap ⟹ BẮT BUỘC có két trong reference input.
 //    Chặn đòn "bỏ reference input để L_lent = 0, hạ cap". Ngoại lệ duy nhất là
 //    RefreshCheckpoint (`FollowVaultOrUnlink`): thiếu két ⟹ link := "".
@@ -21,6 +23,9 @@
 //    năm ô GHIM nguyên, không đọc gì bên ngoài.
 // 4. WithdrawLamp KHÔNG gọi `expected_checkpoint`: ghim nguyên (`current_checkpoint`),
 //    không đọc reference input (SPEC §6.1.5: rút LAMP không phụ thuộc beacon).
+// 6. (2026-10-02) `FollowVault` chỉ ĐỔI được link khi link cũ rỗng, hoặc két đọc được
+//    đang ghim chính két IG này (`L_lent > 0`). Đổi sang két Wakeme khác mà không thoả
+//    ⟹ FAIL; muốn đổi tự do thì RefreshCheckpoint. Chi tiết ở `resolve_link`.
 // ρ đọc từ beacon `RateParam` qua reference input, hai lớp neo: địa chỉ
 // `Script(rate_script_hash)` + NFT `(rate_nft_policy, "RHO")`. Thiếu / hai cái /
 // datum sai hình / ρ ngoài `[0, rho_max_q]` ⟹ FAIL, không có ρ mặc định.
@@ -152,6 +157,8 @@ pub fn expected_checkpoint(
         own_script_hash,
         own_vault_name,
         e,
+        params.ms_per_epoch,
+        params.window_origin_ms,
         params.lamp_policy_id,
         params.lamp_asset_name,
       )
@@ -186,6 +193,8 @@ pub fn expected_checkpoint_for_gen(
       own_script_hash,
       own_vault_name,
       e,
+      params.ms_per_epoch,
+      params.window_origin_ms,
       params.lamp_policy_id,
       params.lamp_asset_name,
     )
@@ -219,7 +228,27 @@ fn resolve_link(
           expect owner_commit == d.wakeme_link
           (owner_commit, lent)
         }
-        _ -> (owner_commit, lent)
+        FollowVault -> {
+          // Luật 6 (2026-10-02): nhánh chủ ký thường KHÔNG đổi được link sang một két
+          // Wakeme bất kỳ. Chữ ký của chủ là cho việc khác (sinh, đốt, đổi hồ sơ, uỷ
+          // quyền) mà tx lại do người khác dựng; nếu đổi link tự do thì người dựng thay
+          // két Wakeme thật X bằng một két Wakeme thật Y (ghim két IG khác — vế (c) trả
+          // `(Y, 0)`) ⟹ link := Y, cap chốt không phần mượn trọn epoch, và luật 2 bị
+          // lách. Chỉ cho một trong ba:
+          //   (a) link cũ rỗng — lượt nối đầu tiên (két Wakeme chưa ghim vẫn nối được);
+          //   (b) owner_commit == link cũ — không đổi;
+          //   (c) `lent > 0` — két đọc được ĐANG ghim chính két IG này: `lent > 0` chỉ ra
+          //       từ nhánh cuối của `read_one_vault`, nơi (c)(d)(f) đều đã thoả.
+          // Két ghim đúng mà (d)/(f) trả 0 thì không đổi link được ở đây; chủ đổi qua
+          // RefreshCheckpoint (`FollowVaultOrUnlink`, giữ nguyên luật cũ).
+          expect or {
+              d.wakeme_link == #"",
+              owner_commit == d.wakeme_link,
+              lent > 0,
+            }
+          (owner_commit, lent)
+        }
+        FollowVaultOrUnlink -> (owner_commit, lent)
       }
     None ->
       when mode is {

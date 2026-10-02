@@ -1429,3 +1429,65 @@ test pm_origin_mainnet_happy() {
 test pm_origin_forgotten_fail() fail {
   pm_happy_at(0, window_origin_fixtures.mainnet_origin_ms)
 }
+
+// ══════════════════════════════════════════════════════════════
+// CỬA SỔ VẮT BIÊN KỲ (vá `util.get_epoch` 2026-10-02 — ép lo_epoch == hi_epoch)
+//   Fixture: kỳ 6 đã CẠN trần (did 5M / global 5M, policy max 5M/5M), gốc Mainnet.
+//   `run_to_at` dựng validity [cur·P, cur·P + 1] rồi dời `origin + delta` ms, tức
+//   [O + 7P + delta, O + 7P + 1 + delta]:
+//     delta = −1 ⟹ [O+7P−1, O+7P]   lo kỳ 6, hi kỳ 7  (VẮT BIÊN)
+//     delta =  0 ⟹ [O+7P,   O+7P+1] trọn kỳ 7
+//     delta = −2 ⟹ [O+7P−2, O+7P−1] trọn kỳ 6
+//   Meter output ghi trạng thái SAU reset (0 + 5M), tức đúng thứ một tx kỳ 7 hợp lệ ghi.
+//   Nguồn ca: PoC `poc_pm_straddle_rolls_meter_early` (audit2), chuyển thành bài canh.
+// ══════════════════════════════════════════════════════════════
+
+fn pm_capped_epoch6_then(delta: Int, out_epoch: Int) -> Bool {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  let pol = ct_policy(500_000_000, 0, 5_000_000, 5_000_000, 6)
+  let proto = ct_protocol(500_000_000, True, 6)
+  let vref = util.mk_ref_id(#"a1", 0)
+  let vault = ct_vault_input(0, Some(ct_app_auth))
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let m_in =
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 10_000_000,
+    }
+  let m_out =
+    SponsorMeter {
+      app_id: ct_app_id, epoch: out_epoch,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 10_000_000,
+    }
+  let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
+  run_to_at(
+    o, o + delta,
+    pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000,
+    [vault], 7, rd, [ct_app_auth],
+    [Pair(Spend(vref), burn_rd)],
+    5_000_000, ct_treasury_addr(), ct_lamp_policy, ct_lamp_asset_name,
+  )
+}
+
+// ÂM: cửa sổ vắt biên kỳ 6→7, meter ghi kỳ 7 (đòi reset). Ledger nhận được tx ở
+// O+7P−1 (kỳ 6) ⟹ bản thiếu vế cùng-kỳ cho thêm trọn một trần. Bản vá NỔ ở
+// `expect lo_epoch == hi_epoch`. `paymaster.spend` chỉ trả `True` hoặc nổ ⟹ bài này
+// đạt CHỈ khi validator nổ (bản cũ trả True ⟹ bài đỏ — PoC đã đo).
+test pm_neg_straddle_epoch_boundary() fail {
+  pm_capped_epoch6_then(-1, 7)
+}
+
+// DƯƠNG cực đối: cùng fixture, cửa sổ nằm TRỌN kỳ 7 ⟹ nhận, meter reset rồi cộng op.
+// Ghim rằng vế cùng-kỳ không chặn oan lượt reset hợp lệ ngay đầu kỳ mới.
+test pm_window_inside_epoch7_resets_ok() {
+  pm_capped_epoch6_then(0, 7)
+}
+
+// Bối cảnh (KHÔNG phân biệt bản cũ/bản vá — đỏ ở cả hai): cùng thời điểm thật kỳ 6
+// mà cửa sổ trọn kỳ 6 thì trần đã cạn ⟹ từ chối. Cho thấy cửa sổ vắt biên ở trên là
+// đường vòng duy nhất qua trần, không phải fixture tự cho qua.
+test pm_neg_window_inside_epoch6_cap_exhausted() fail {
+  pm_capped_epoch6_then(-2, 6)
+}

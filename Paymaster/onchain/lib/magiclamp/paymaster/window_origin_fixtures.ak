@@ -94,3 +94,24 @@ test get_epoch_preprod_forgotten_origin() fail {
   expect util.get_epoch(tx_between(preprod_t_316, preprod_t_316 + 1_000), ms_per_window, 0) == 316
   True
 }
+
+// ── Vế cùng-epoch của util.get_epoch (vá 2026-10-02, mirror consume.util) ──
+// Thân bài âm dùng `e == e`: đúng mọi khi hàm TRẢ về một giá trị ⟹ bài `fail` chỉ đạt
+// khi hàm NỔ, không đạt nhờ một giá trị sai.
+
+/// Âm: [t − 1, t] — lo ở epoch 657, hi ở 658, rộng 1 ms (qua vế độ rộng).
+test get_epoch_mainnet_straddle_1ms_fail() fail {
+  let e = util.get_epoch(tx_between(mainnet_t_658 - 1, mainnet_t_658), ms_per_window, mainnet_origin_ms)
+  e == e
+}
+
+/// Âm: [t, t + P] — rộng ĐÚNG P (vế độ rộng `≤ P` cho qua), hi rơi sang epoch 659.
+test get_epoch_mainnet_full_width_straddle_fail() fail {
+  let e = util.get_epoch(tx_between(mainnet_t_658, mainnet_t_658 + ms_per_window), ms_per_window, mainnet_origin_ms)
+  e == e
+}
+
+/// Dương: [t, t + P − 1] — cửa sổ rộng nhất nằm trọn epoch 658.
+test get_epoch_mainnet_widest_window_ok() {
+  util.get_epoch(tx_between(mainnet_t_658, mainnet_t_658 + ms_per_window - 1), ms_per_window, mainnet_origin_ms) == 658
+}

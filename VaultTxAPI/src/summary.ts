@@ -486,6 +486,9 @@ export interface CreateVaultSummary {
     lamp_deposit_lamp: string;
     lovelace: string;
     ada: string;
+    /** Ô `wakeme_link` của datum genesis, đọc lại từ CBOR: két Instant ⟹ "" hoặc owner_commit
+     *  (64 hex) đã khai qua `did_commit`; két Schedule ⟹ `null` (ô không tồn tại). */
+    wakeme_link: string | null;
   };
   /** Khoá băm phải ký (trường `required_signers` của thân tx), theo thứ tự trong tx. */
   required_signers: string[];
@@ -536,8 +539,18 @@ export function summarizeCreateVaultTx(txCborHex: string, ctx: CreateVaultSummar
   } catch (e) {
     throw new TxSummaryUndecodableError(`datum vault vừa dựng không đọc được: ${(e as Error).message}`);
   }
+  // `wakeme_link` đọc bằng lược đồ THẬT của SDK (`decodeVaultDatumOrThrow`, ô 6 két Instant), không
+  // bằng chỉ số gõ tay: két Instant ⟹ "" hoặc owner_commit; két Schedule ⟹ `null` (ô không tồn tại).
+  let wakemeLink: string | null;
+  try {
+    wakemeLink = decodeVaultDatumOrThrow(out.inlineDatumHex).wakeme_link;
+  } catch (e) {
+    throw new TxSummaryUndecodableError(`datum vault vừa dựng không khớp lược đồ két nào: ${(e as Error).message}`);
+  }
   const lampInOutput = BigInt(out.view.assets.find(a => a.unit === ctx.lampUnit)?.quantity ?? "0");
-  if (lampInOutput !== lampBalance || lampBalance <= 0n) {
+  // `0` hợp lệ (két instant của người mới — chỉ LAMP mượn ở két Wakeme); cổng "> 0 với két
+  // schedule" nằm ở `service.ts` ▸ `createVault`, phía yêu cầu. Ở đây chỉ đòi datum ↔ value khớp.
+  if (lampInOutput !== lampBalance || lampBalance < 0n) {
     throw new TxSummaryUndecodableError(
       `datum khai lamp_balance = ${lampBalance} nhưng output vault mang ${lampInOutput} oildrop LAMP`,
     );
@@ -559,6 +572,7 @@ export function summarizeCreateVaultTx(txCborHex: string, ctx: CreateVaultSummar
       lamp_deposit_lamp: oildropToLamp(lampBalance),
       lovelace: out.view.lovelace,
       ada: out.view.ada,
+      wakeme_link: wakemeLink,
     },
     required_signers: requiredSigners,
     outputs: outputs.map(o => o.view),

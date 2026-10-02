@@ -31,7 +31,8 @@ import { ISSUED_ROUTES, type IssuedRoute } from "./locks.js";
 import { parseBasePath } from "./basePath.js";
 
 export interface VaultScope {
-  /** "Instant" | "Schedule" — khớp `VaultType` của MagicSDK. */
+  /** "Instant" | "Schedule" — khớp `VaultType` của MagicSDK — hoặc `PREPAID_VAULT_TYPE`
+   *  (két PrepaidGen, KHÔNG có trong `VaultType` của SDK; xem `PrepaidDeployment`). */
   vaultType: string;
   address: string;
   /** Script hash suy TỪ địa chỉ, cũng là policy id của NFT danh-tính. Không cấu hình
@@ -112,6 +113,37 @@ export interface GenV2Deployment {
   vaultRegistryPolicy: string;
 }
 
+/**
+ * Chữ `vault_type` của két PrepaidGen (đường tài trợ). Két này KHÁC hai loại kia ở ba chỗ mà
+ * khuôn cấu hình phải biết:
+ *   · KHÔNG có shard — `shard_address` / `ref_script_utxos.shard` không có nghĩa với nó, nên
+ *     khối Prepaid KHÔNG được mang hai khoá đó (mang ⟹ ném: đó là dấu một khối chép nhầm từ
+ *     khối Instant/Schedule).
+ *   · `PrepaidLock` / `FundLock` co-spend QUỸ `paid_fund` ⟹ khối phải khai địa chỉ quỹ
+ *     (`paid_fund.address`) và ref-script quỹ (`ref_script_utxos.paid_fund`).
+ *   · Một khối một loại két: `ref_script_utxos.vault` chỉ có một ô và bản `consume` được
+ *     apply-param bằng hash của ĐÚNG loại két nó phục vụ (BOUNDARIES §2) ⟹ Prepaid không
+ *     đứng chung khối với Instant/Schedule.
+ * Két Prepaid chỉ đi qua các route tài trợ `/tx/sponsor/*` (`sponsor.ts`). Mọi route KHÁC đụng tới
+ * scope Prepaid trả 501 `VAULT_KIND_UNSUPPORTED` (`service.ts` ▸ `assertScopesSupported`).
+ */
+export const PREPAID_VAULT_TYPE = "Prepaid";
+
+/** Khối `paid_fund` của két Prepaid — chỉ có mặt khi `vaults` là đúng một loại `Prepaid`. */
+export interface PrepaidDeployment {
+  /** Địa chỉ quỹ = `Script(paid_fund_hash)` (bước 10 của chuỗi deploy). */
+  fundAddress: string;
+  /** Hash script `paid_fund`, SUY từ `fundAddress` — cũng là policy NFT quỹ. */
+  fundScriptHash: string;
+  /**
+   * `policy ‖ tên` của CARP (khoá `paid_fund.carp_unit`) — apply-param #1, #2 của cả `paid_fund` lẫn
+   * `prepaid_vault`. TUỲ CHỌN để khối cũ vẫn nạp được; vắng ⟹ mọi route `/tx/sponsor/t*` trả 501
+   * `CONFIG_MISSING`. Không tin lời khai: `sponsor.ts` apply nó vào blueprint rồi đòi hai script hash
+   * trùng hai địa chỉ đã cấu hình, lệch ⟹ 501 `SPONSOR_PREPAID_SCRIPTS_MISMATCH`.
+   */
+  carpUnit?: string;
+}
+
 export interface Deployment {
   /** Bản chép chép từ đâu, ngày nào. BẮT BUỘC. */
   source: string;
@@ -126,12 +158,18 @@ export interface Deployment {
    *  mainnet không bao giờ nhìn thấy LAMP của chính nó (BOUNDARIES §2). */
   lampAssetNameHex: string;
   vaults: VaultScope[];
-  shardAddress: string;
+  /** BẮT BUỘC khi `vaults` có két Instant/Schedule (mọi loại khác Prepaid); VẮNG với khối
+   *  Prepaid. Nơi đọc phải qua `requireShard` (`txBuilder.ts`), không đọc thẳng. */
+  shardAddress?: string;
   /** UTxO mang script tham chiếu CIP-33. KHÔNG phải tối ưu: đính kèm cả hai validator
    *  vào một tx cho 17 303 byte trên Preview, vượt trần 16 384 — không có chúng thì
    *  ScheduleCommit và Consume KHÔNG dựng nổi tx nào. */
   refScriptUtxos: {
-    vault: OutRefConfig; shard: OutRefConfig; consume: OutRefConfig;
+    vault: OutRefConfig; consume: OutRefConfig;
+    /** Cùng luật với `shardAddress`: bắt buộc với Instant/Schedule, vắng với Prepaid. */
+    shard?: OutRefConfig;
+    /** Chỉ két Prepaid, và BẮT BUỘC với nó: ref-script `paid_fund` (khoá `ref_script_utxos.paid_fund`). */
+    paidFund?: OutRefConfig;
     /** ScheduleGen Gen v2.0: validator withdraw-zero `commit` (khoá `ref_script_utxos.commit`).
      *  Vắng ⟹ `/tx/schedule-commit` trả 501 `CONFIG_MISSING`. */
     commit?: OutRefConfig;
@@ -145,6 +183,8 @@ export interface Deployment {
    *  epoch mới) trả 501 `CONFIG_MISSING`; các đường khác chạy bình thường. Đóng một cửa vì
    *  thiếu dữ kiện thì tốt hơn mở nó ra để mọi tx chết trên chuỗi. */
   genV2?: GenV2Deployment;
+  /** Có mặt ⟺ `vaults` là két Prepaid (`PREPAID_VAULT_TYPE`). */
+  prepaid?: PrepaidDeployment;
   /** Tuỳ chọn: tham số theo mạng cho nhân chứng chủ `Script(h)` = `did_stake` (PhoenixKey).
    *  Vắng ⟹ mọi yêu cầu có chủ script trả 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ khoá
    *  không bị ảnh hưởng. */
@@ -407,12 +447,75 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
     return { vaultType, address: address.address, scriptHash: address.scriptHash };
   });
 
-  const shardAddress = scriptAddress(str(o.shard_address, "shard_address"), prefix, network, "shard_address").address;
-
+  // ── Két Prepaid: khuôn RIÊNG, quyết theo `vault_type`, không theo khoá nào có mặt ─────
+  // Quyết theo khoá có mặt (vd "vắng shard ⟹ coi là Prepaid") là nới shard cho Instant/Schedule:
+  // một khối Instant quên `shard_address` sẽ nạp được rồi chết ở route đầu tiên. Nên luật là:
+  // MỌI loại khác Prepaid vẫn đòi shard đúng như trước, kể cả loại lạ.
+  const prepaidCount = vaults.filter(v => v.vaultType === PREPAID_VAULT_TYPE).length;
+  const isPrepaid = prepaidCount > 0;
+  if (isPrepaid && prepaidCount !== vaults.length) {
+    throw new Error(
+      `[config] VAULT_TX_API_DEPLOYMENT.vaults trộn két "${PREPAID_VAULT_TYPE}" với loại khác ` +
+      `(${vaults.map(v => v.vaultType).join(", ")}). Một khối một loại két: ref_script_utxos.vault ` +
+      `chỉ có một ô và bản consume được apply-param bằng hash của đúng loại két nó phục vụ. ` +
+      `Tách thành hai khối deploy, mỗi khối một dịch vụ.`,
+    );
+  }
   const refs = obj(o.ref_script_utxos, "ref_script_utxos");
+
+  let shardAddress: string | undefined;
+  let shardRef: OutRefConfig | undefined;
+  let paidFundRef: OutRefConfig | undefined;
+  let prepaid: PrepaidDeployment | undefined;
+  if (isPrepaid) {
+    for (const [present, key] of [
+      [o.shard_address !== undefined, "shard_address"],
+      [refs.shard !== undefined, "ref_script_utxos.shard"],
+    ] as const) {
+      if (present) {
+        throw new Error(
+          `[config] VAULT_TX_API_DEPLOYMENT.${key} có mặt trong khối két Prepaid — két Prepaid ` +
+          `KHÔNG có shard. Khoá này thường là dấu khối bị chép từ khối Instant/Schedule; bỏ nó đi.`,
+        );
+      }
+    }
+    const pf = obj(o.paid_fund, "paid_fund");
+    const fund = scriptAddress(str(pf.address, "paid_fund.address"), prefix, network, "paid_fund.address");
+    if (vaults.some(v => v.scriptHash === fund.scriptHash)) {
+      throw new Error(
+        "[config] VAULT_TX_API_DEPLOYMENT.paid_fund.address trùng script với địa chỉ két Prepaid — " +
+        "quỹ và két là hai validator khác nhau (`paid_fund` ≠ `prepaid_vault`).",
+      );
+    }
+    prepaid = {
+      fundAddress: fund.address, fundScriptHash: fund.scriptHash,
+      ...(pf.carp_unit === undefined
+        ? {}
+        : { carpUnit: unit(str(pf.carp_unit, "paid_fund.carp_unit"), "paid_fund.carp_unit") }),
+    };
+    paidFundRef = outRef(str(refs.paid_fund, "ref_script_utxos.paid_fund"), "ref_script_utxos.paid_fund");
+  } else {
+    // Không phải Prepaid ⟹ khoá Prepaid có mặt là cấu hình lạc chỗ: người vận hành tin dịch vụ
+    // đang phục vụ quỹ đó. Lặng lẽ bỏ qua thì niềm tin ấy sai mà không gì báo.
+    for (const [present, key] of [
+      [o.paid_fund !== undefined, "paid_fund"],
+      [refs.paid_fund !== undefined, "ref_script_utxos.paid_fund"],
+    ] as const) {
+      if (present) {
+        throw new Error(
+          `[config] VAULT_TX_API_DEPLOYMENT.${key} chỉ dùng cho két "${PREPAID_VAULT_TYPE}", mà khối này ` +
+          `khai ${vaults.map(v => v.vaultType).join(", ")}. Bỏ khoá đó, hoặc sửa vaults[].vault_type.`,
+        );
+      }
+    }
+    shardAddress = scriptAddress(str(o.shard_address, "shard_address"), prefix, network, "shard_address").address;
+    shardRef = outRef(str(refs.shard, "ref_script_utxos.shard"), "ref_script_utxos.shard");
+  }
+
   const refScriptUtxos = {
     vault: outRef(str(refs.vault, "ref_script_utxos.vault"), "ref_script_utxos.vault"),
-    shard: outRef(str(refs.shard, "ref_script_utxos.shard"), "ref_script_utxos.shard"),
+    ...(shardRef === undefined ? {} : { shard: shardRef }),
+    ...(paidFundRef === undefined ? {} : { paidFund: paidFundRef }),
     consume: outRef(str(refs.consume, "ref_script_utxos.consume"), "ref_script_utxos.consume"),
     ...(refs.commit === undefined ? {} : { commit: outRef(str(refs.commit, "ref_script_utxos.commit"), "ref_script_utxos.commit") }),
     ...(refs.gb_shard === undefined ? {} : { gbShard: outRef(str(refs.gb_shard, "ref_script_utxos.gb_shard"), "ref_script_utxos.gb_shard") }),
@@ -507,7 +610,8 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
 
   return {
     source, lampPolicyId, ...(lampRehearsalAck === undefined ? {} : { lampRehearsalAck }),
-    lampAssetNameHex, vaults, shardAddress, refScriptUtxos, consume, ...(genV2 === undefined ? {} : { genV2 }), didStake,
+    lampAssetNameHex, vaults, ...(shardAddress === undefined ? {} : { shardAddress }), refScriptUtxos, consume,
+    ...(genV2 === undefined ? {} : { genV2 }), ...(prepaid === undefined ? {} : { prepaid }), didStake,
     feePayerCollateralLovelace, ...(feecover === undefined ? {} : { feecover }),
   };
 }

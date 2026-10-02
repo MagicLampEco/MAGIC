@@ -41,8 +41,11 @@ import { CodedApiError } from "./errors.js";
 import type { BuildInfo } from "./buildInfo.js";
 import { stripBasePath } from "./basePath.js";
 import type { FeeProxy } from "./feeProxy.js";
+import { sponsorRoute, type SponsorTxService } from "./sponsor.js";
 import { quoteFee } from "./feeQuote.js";
-import { OwnerAuthError, WindowOriginError } from "@magiclamp/protocol-utils";
+import {
+  OwnerAuthError, WindowOriginError, msPerEpoch, windowOf, windowOriginMs, windowStartMs, type Network,
+} from "@magiclamp/protocol-utils";
 import { ownerApiErrorOf } from "./errors.js";
 
 export interface HttpRequest {
@@ -79,6 +82,47 @@ export interface RouterDeps {
   build?: BuildInfo;
   /** Tiền tố đường khi đứng sau proxy định tuyến theo đường (`basePath.ts`). Vắng/`""` ⟹ không có. */
   basePath?: string;
+  /** Đồng hồ máy chủ (POSIX ms) cho khối `epoch` của `/health`. Vắng ⟹ `Date.now`. Chỉ để phép kiểm
+   *  cố định mốc; dịch vụ thật không truyền. */
+  now?: () => number;
+  /** Hành trình tài trợ consume đầu (`/tx/sponsor/t1-open` … `t4-first-consume`). Vắng ⟹ 501
+   *  `SPONSOR_UNAVAILABLE` (trừ `/tx/sponsor/plan` — thuần, không cần cấu hình). */
+  sponsor?: SponsorTxService;
+}
+
+/**
+ * Khối `epoch` của `/health`: GỐC KỲ giao thức mà app đọc, khỏi gõ cứng hằng theo mạng.
+ *
+ * Cùng nguồn với bộ dựng tx: `windowOriginMs`/`msPerEpoch` của `@magiclamp/protocol-utils` — chính
+ * hai hàm mà `genV2.ts` ▸ `instantVaultParamsOf` và `wakeme.ts` dùng để apply-param validator.
+ * Kỳ = `⌊(t − O) / P⌋`, KHÔNG phải lưới Unix `⌊t / P⌋` (lệch ~3.800 kỳ trên Preprod).
+ *
+ * Mạng chưa có gốc (Preview, `WIN-PREVIEW`) ⟹ `epoch: null` + lý do tường minh, KHÔNG đệm 0:
+ * `/health` vẫn 200 vì đây là trạng thái cấu hình của mạng, không phải sự cố.
+ * Số lớn là CHUỖI chữ số (như mọi số tiền của API); `current` là chỉ số kỳ nhỏ nên là số JSON.
+ * `end_ms` là mốc kết thúc ĐỘC QUYỀN = `start_ms` của kỳ kế.
+ */
+export function epochHealthFields(network: string, nowMs: number): Record<string, unknown> {
+  try {
+    const o = windowOriginMs(network as Network);
+    const p = msPerEpoch(network as Network);
+    const t = BigInt(Math.trunc(nowMs));
+    const current = windowOf(t, p, o);
+    return {
+      epoch: {
+        origin_ms: o.toString(),
+        ms_per_epoch: p.toString(),
+        current: Number(current),
+        start_ms: windowStartMs(current, p, o).toString(),
+        end_ms: windowStartMs(current + 1n, p, o).toString(),
+      },
+    };
+  } catch (e) {
+    if (e instanceof WindowOriginError) {
+      return { epoch: null, epoch_unavailable_reason: "WINDOW_ORIGIN_UNAVAILABLE" };
+    }
+    throw e;
+  }
 }
 
 export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpResponse> {
@@ -96,7 +140,12 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         ok: true,
         network: deps.network,
         chain: deps.chainLabel,
+        // Nhãn chữ GIỮ NGUYÊN văn (app cũ còn dò mẫu `LAMP <hex>` trong nó). Trường máy đọc là `lamp`.
         deployment_source: deps.deploymentSource,
+        // Tài sản LAMP mà bản deploy này nướng vào mọi két — cùng nguồn với bộ dựng
+        // (`deployment.lampPolicyId`/`lampAssetNameHex`), không gõ tay. App so `policy_id` với
+        // policy LAMP mà Wakeme phát trước khi mở Sinh MAGIC.
+        lamp: { policy_id: deps.service.lampAsset.policyId, asset_name_hex: deps.service.lampAsset.assetNameHex },
         change_address_strategy: deps.changeAddressStrategy,
         vault_scopes: deps.vaultScopes.map(s => ({
           vault_type: s.vaultType, address: s.address, script_hash: s.scriptHash,
@@ -111,6 +160,8 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         commit_source: deps.build?.source ?? "not_measured",
         // Bên gọi qua proxy đối chiếu được tiền tố mình dùng với tiền tố dịch vụ đang cắt.
         base_path: deps.basePath ?? "",
+        // Gốc kỳ giao thức — app tính kỳ từ đây, không từ lưới Unix `t/P`.
+        ...epochHealthFields(deps.network, (deps.now ?? Date.now)()),
         ...(deps.build?.reason === undefined ? {} : { commit_unavailable_reason: deps.build.reason }),
       },
     };
@@ -150,6 +201,9 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
     if (path === "/tx/quote") {
       const out = await quoteFee(body, { service: deps.service, feeProxy: deps.feeProxy });
       return { status: 200, body: out as unknown as Record<string, unknown> };
+    }
+    if (path.startsWith("/tx/sponsor/")) {
+      return { status: 200, body: await sponsorRoute(path, body, deps.sponsor) };
     }
     const route = BUILD_ROUTE_OF_PATH[path];
     if (route === undefined) {

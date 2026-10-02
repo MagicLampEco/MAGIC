@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer } from "node:http";
 
 import type { PlutusJson } from "@magiclamp/sdk";
 
@@ -25,7 +25,11 @@ import { SdkTxBuilder } from "./txBuilder.js";
 import { DidStakeWitnessProvider } from "./owner.js";
 import { ChainDidPaymentAnchorReader } from "./funding.js";
 import { FeeProxy } from "./feeProxy.js";
+import { SponsorTxService } from "./sponsor.js";
+import { PREPAID_VAULT_TYPE } from "./config.js";
+import type { PrepaidBlueprint } from "@magiclamp/prepaidgen-sdk";
 import { readBuildInfo } from "./buildInfo.js";
+import { readJsonBody, shellErrorResponse } from "./shell.js";
 
 const cfg = loadConfig();
 // Đo MỘT lần lúc khởi động, ở chính cây mã đang chạy: `git pull` sau đó mà không khởi động
@@ -50,13 +54,23 @@ const pending = new PendingSpends(cfg.lockTtlMs);
 // dịch vụ đọc bản gốc rồi trả 409 PREVIOUS_TX_PENDING có tên.
 const builderChain = new PendingSpendsFilteredChain(chain, pending);
 
+// Nhân chứng chủ script: chỉ khi bản deploy khai `did_stake`. Vắng ⟹ chủ script nhận 501.
+const ownerWitness = cfg.deployment.didStake === undefined ? undefined : new DidStakeWitnessProvider({
+  network: cfg.network,
+  chain,
+  anchorNftPolicy: cfg.deployment.didStake.anchorNftPolicy,
+});
+const sdkBuilder = new SdkTxBuilder({
+  network: cfg.network,
+  blockfrostUrl: cfg.blockfrostUrl,
+  blockfrostProjectId: cfg.blockfrostProjectId,
+  deployment: cfg.deployment,
+  chain: builderChain,
+  vaultPlutusJson,
+});
+
 const service = new VaultTxService({
-  // Nhân chứng chủ script: chỉ khi bản deploy khai `did_stake`. Vắng ⟹ chủ script nhận 501.
-  ownerWitness: cfg.deployment.didStake === undefined ? undefined : new DidStakeWitnessProvider({
-    network: cfg.network,
-    chain,
-    anchorNftPolicy: cfg.deployment.didStake.anchorNftPolicy,
-  }),
+  ownerWitness,
   // `funding` did_payment đọc anchor DID dưới CÙNG tham số theo mạng. Vắng ⟹ 501 FUNDING_UNAVAILABLE.
   didPaymentAnchor: cfg.deployment.didStake === undefined ? undefined : new ChainDidPaymentAnchorReader({
     chain,
@@ -65,19 +79,31 @@ const service = new VaultTxService({
   network: cfg.network,
   deployment: cfg.deployment,
   chain,
-  builder: new SdkTxBuilder({
-    network: cfg.network,
-    blockfrostUrl: cfg.blockfrostUrl,
-    blockfrostProjectId: cfg.blockfrostProjectId,
-    deployment: cfg.deployment,
-    chain: builderChain,
-    vaultPlutusJson,
-  }),
+  builder: sdkBuilder,
   locks,
   issued,
   pending,
   lockTtlMs: cfg.lockTtlMs,
 });
+
+
+// Hành trình tài trợ: chỉ khi bản deploy phục vụ két Prepaid — khi đó `vaultPlutusJson` CHÍNH LÀ blueprint
+// PrepaidGen. Bản deploy khác ⟹ `/tx/sponsor/t*` trả 501 `SPONSOR_UNAVAILABLE`.
+const sponsor = cfg.deployment.vaults.some(v => v.vaultType === PREPAID_VAULT_TYPE)
+  ? new SponsorTxService({
+      network: cfg.network,
+      deployment: cfg.deployment,
+      chain,
+      walletChain: builderChain,
+      locks,
+      issued,
+      pending,
+      lockTtlMs: cfg.lockTtlMs,
+      ...(ownerWitness === undefined ? {} : { ownerWitness }),
+      prepaidBlueprint: vaultPlutusJson as unknown as PrepaidBlueprint,
+      lucidForWallet: (a, u) => sdkBuilder.lucidForWallet(a, u),
+    })
+  : undefined;
 
 // Proxy Feecover: chỉ khi bản deploy khai `feecover`. Token vào từ cấu hình dưới dạng GIÁ TRỊ;
 // không dòng nhật ký nào dưới đây in nó.
@@ -92,9 +118,14 @@ const feeProxy = cfg.deployment.feecover === undefined ? undefined : new FeeProx
  *  không phải yêu cầu hợp lệ, và đọc tiếp chỉ để tốn bộ nhớ. */
 const MAX_BODY_BYTES = 512 * 1024;
 
+/** Ghi mã tham chiếu + nguyên nhân gốc — chung cho nhánh 500 của `handle` và nhánh lỗi của vỏ. */
+const logInternal = (ref: string, cause: unknown): void => {
+  console.error(`[vault-tx-api] ${ref} ←`, cause instanceof Error ? cause.stack : cause);
+};
+
 const server = createServer((rq, rs) => {
   const started = Date.now();
-  readBody(rq)
+  readJsonBody(rq, MAX_BODY_BYTES)
     .then(body =>
       handle(
         {
@@ -114,9 +145,8 @@ const server = createServer((rq, rs) => {
           build,
           basePath: cfg.basePath,
           ...(feeProxy === undefined ? {} : { feeProxy }),
-          logInternal: (ref, cause) => {
-            console.error(`[vault-tx-api] ${ref} ←`, cause instanceof Error ? cause.stack : cause);
-          },
+          ...(sponsor === undefined ? {} : { sponsor }),
+          logInternal,
         },
       ))
     .then(out => {
@@ -130,10 +160,14 @@ const server = createServer((rq, rs) => {
       console.error(`[vault-tx-api] ${rq.method} ${rq.url} → ${out.status} (${Date.now() - started}ms)`);
     })
     .catch(e => {
-      // Tới được đây là lỗi của VỎ (`handle` đã bắt hết). Vẫn không in traceback ra ngoài.
-      rs.writeHead(400, { "content-type": "application/json; charset=utf-8" });
-      rs.end(JSON.stringify({ error: { code: "BAD_REQUEST", message: (e as Error).message, details: {} } }));
-      console.error(`[vault-tx-api] vỏ: ${(e as Error).message}`);
+      // Tới được đây là lỗi của VỎ (`handle` đã bắt hết): thân bài hỏng/quá lớn (lỗi người gửi,
+      // 400 giữ câu) hoặc lỗi hệ thống (luồng đứt, tuần tự hoá ném) ⟹ 500 + mã tham chiếu.
+      // Luật nằm ở `shell.ts` ▸ `shellErrorResponse`, có bài kiểm ở `tests/shell.test.ts`.
+      const out = shellErrorResponse(e, logInternal);
+      console.error(`[vault-tx-api] vỏ: ${rq.method} ${rq.url} → ${out.status}`);
+      if (rs.headersSent) { rs.destroy(); return; }
+      rs.writeHead(out.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      rs.end(JSON.stringify(out.body));
     });
 });
 
@@ -157,31 +191,4 @@ sweeper.unref();
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => { clearInterval(sweeper); server.close(() => process.exit(0)); });
-}
-
-/** Đọc thân bài JSON. Thân rỗng ⇒ `undefined` (hợp lệ với GET); thân hỏng ⇒ NÉM. */
-function readBody(rq: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    rq.on("data", (c: Buffer) => {
-      size += c.length;
-      if (size > MAX_BODY_BYTES) {
-        reject(new Error(`Thân bài vượt ${MAX_BODY_BYTES} byte.`));
-        rq.destroy();
-        return;
-      }
-      chunks.push(c);
-    });
-    rq.on("end", () => {
-      const text = Buffer.concat(chunks).toString("utf8");
-      if (text.trim() === "") { resolve(undefined); return; }
-      try {
-        resolve(JSON.parse(text));
-      } catch (e) {
-        reject(new Error(`Thân bài không phải JSON hợp lệ: ${(e as Error).message}`));
-      }
-    });
-    rq.on("error", reject);
-  });
 }

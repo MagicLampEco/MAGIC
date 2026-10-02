@@ -6,34 +6,50 @@
 // INPUTS (apply-param #8 `wakeme_vault_hash`) ở hai chỗ: lượt làm mới checkpoint
 // (`checkpoint.ak` ▸ `expected_checkpoint`) và nhánh sinh (`expected_checkpoint_for_gen`), cả
 // hai qua Aiken `wakeme_lent.ak` ▸ `wakeme_read`. Gương TS là `@magiclamp/instantgen-sdk` ▸
-// `readWakemeVault` — tệp này gọi đúng hàm đó. 0 két ⟹ `L_lent = 0`, hợp lệ; ≥ 2 két ⟹ tx
-// thất bại. Nên trường này TUỲ CHỌN — trừ ca két đã ghim (`wakeme_link` khác "") mà lượt này
-// làm mới checkpoint: khi đó validator đòi két, và `/tx/consume` trả 400
-// `WAKEME_VAULT_REF_REQUIRED` thay vì dựng một tx chắc chắn chết (`service.ts` ▸
-// `consumeCheckpointFor`).
+// `explainWakemeVault` / `readWakemeVault` — tệp này gọi đúng hàm đó. 0 két ⟹ `L_lent = 0`,
+// hợp lệ; ≥ 2 két ⟹ tx thất bại. Két đã nối link (`wakeme_link` khác "") mà lượt này làm mới
+// checkpoint thì validator ĐÒI két (trừ RefreshCheckpoint, nơi thiếu két ⟹ gỡ link).
 //
-// ── VÌ SAO KHÔNG TỰ QUÉT ĐỊA CHỈ KÉT ────────────────────────────────────────────
-// Không có chỉ mục "két nào ghim vault này": ghim nằm ở datum[11] của từng két, và mọi két
-// của mọi người đứng chung một script. Quét trọn địa chỉ đó mỗi lượt dựng là chi phí tăng
-// theo số két của CẢ HỆ, trả cho một câu hỏi của MỘT chủ — không mở rộng được. App biết két
-// của chính người dùng (nó vừa ghim), nên nó gửi tham chiếu; dịch vụ kiểm chứ không đi tìm.
+// ── NGUỒN CỦA KÉT: APP GỬI, HOẶC DỊCH VỤ TỰ ĐỊNH VỊ ──────────────────────────────
+// App gửi `wakeme_vault_ref` ⟹ dùng đúng tham chiếu đó (ưu tiên). Vắng ⟹ nếu két IG đã nối
+// link, dịch vụ tìm két bằng NFT định danh: két Wakeme của một DID mang đúng một NFT
+// `(policy = wakeme_vault_hash, name = owner_commit)` (`wakeme_lent.ak` vế (b)), và
+// `owner_commit` chính là `wakeme_link` của két IG. Tra theo ĐƠN VỊ TÀI SẢN (`ChainReader` ▸
+// `utxosByUnit`) chứ không quét địa chỉ script: chi phí theo MỘT két, không theo số két của
+// cả hệ. Chỉ giữ UTxO có payment credential = Script(wakeme_vault_hash) — validator LỌC
+// reference input theo đúng điều đó (vế 1), nên NFT nằm ở chỗ khác không phải két.
+//   0 két   ⟹ chạy như không có két (`L_lent = 0`), `summary.wakeme.reason =
+//              "wakeme_vault_not_found"` — trừ khi validator đòi két (người gọi quyết, xem
+//              `service.ts`);
+//   ≥ 2 két ⟹ 409 `WAKEME_VAULT_AMBIGUOUS` (validator fail khi có hai két, và dịch vụ không
+//              chọn hộ).
+// Két IG chưa nối link (`wakeme_link` rỗng) thì không có `owner_commit` để tra ⟹ không định vị,
+// `summary.wakeme.reason = "vault_not_linked"` (`L_lent = 0`). Nguồn + luật "khi nào bắt buộc":
+// `service.ts` ▸ `wakemeSource`.
 //
 // ── KIỂM FAIL-CLOSED TRƯỚC KHI DỰNG ─────────────────────────────────────────────
 //   mạng chưa có két Wakeme      ⟹ 501 `WAKEME_VAULT_UNAVAILABLE` (không đệm một hash giả)
 //   UTxO không có / đã bị tiêu   ⟹ 404 `WAKEME_VAULT_NOT_FOUND` / 409 `WAKEME_VAULT_SPENT`
 //   không nằm ở script két        ⟹ 409 `WAKEME_VAULT_SCRIPT_MISMATCH`
 //   datum/NFT không đọc được      ⟹ 422 `WAKEME_VAULT_UNREADABLE`
-//   ghim vault khác / không ghim  ⟹ 409 `WAKEME_VAULT_PIN_MISMATCH` (kèm ghim thấy được)
-// Ba ca trên mà dựng tiếp thì validator từ chối cả tx (vế FAIL của `wakeme_read`).
+// Các ca trên mà dựng tiếp thì validator từ chối cả tx (vế FAIL của `wakeme_read`).
 //
-// Hai ca validator CHO QUA với `L_lent = 0` — ghim trong chính kỳ đang sinh
-// (`gen_pin_period >= epoch`), hoặc value thiếu LAMP so với datum — thì KHÔNG từ chối: tx
-// vẫn hợp lệ. Nhưng phản hồi NÓI RA `counted: false` + `reason`, để app không hiện "đã tính
-// LAMP cho mượn" cho một lượt mà chuỗi tính bằng 0.
+// Ba ca validator CHO QUA với `L_lent = 0` thì KHÔNG từ chối — tx vẫn hợp lệ — nhưng phản hồi
+// NÓI RA `counted: false` + `reason`, để app không hiện "đã tính LAMP cho mượn" cho một lượt
+// mà chuỗi tính bằng 0 (thứ tự đúng thứ tự vế của validator):
+//   `not_pinned_to_this_vault` — két chưa ghim vault này (kèm `seen_pin`). Từ 2026-10-02 đây
+//        KHÔNG còn là lỗi: chủ két IG nối link trước, két Wakeme ghim sau (gỡ khoá lẫn nhau);
+//   `pinned_in_current_period` — két đã ĐỔI ghim sang vault này trong chính kỳ đang sinh
+//        (ghim từ genesis, chưa đổi lần nào, thì tính ngay — vế (d) ngoại lệ genesis);
+//   `lamp_short_of_datum`      — value thiếu LAMP so với datum.
 
 import { CML, Constr, Data, getAddressDetails, type UTxO } from "@lucid-evolution/lucid";
-import { readWakemeVault, type WakemeRead } from "@magiclamp/instantgen-sdk";
-import { posixMsToEpoch, wakemeVaultHash, type Network } from "@magiclamp/protocol-utils";
+import {
+  explainWakemeVault, type WakemeNotCountedReason as ReadReason, type WakemeRead,
+} from "@magiclamp/instantgen-sdk";
+import {
+  msPerEpoch, posixMsToEpoch, wakemeVaultHash, windowOriginMs, type Network,
+} from "@magiclamp/protocol-utils";
 
 import type { ChainReader } from "./chain.js";
 import { CodedApiError, TxApiError } from "./errors.js";
@@ -61,17 +77,25 @@ export function wakemeScriptHashOrThrow(network: Network): string {
   }
 }
 
-/** Lý do `counted: false`. Cả hai là nhánh validator trả `L_lent = 0` mà KHÔNG từ chối tx. */
-export type WakemeNotCountedReason = "pinned_in_current_period" | "lamp_short_of_datum";
+/**
+ * Lý do `counted: false`. Ba lý do đầu là nhánh validator trả `L_lent = 0` mà KHÔNG từ chối
+ * tx (gương `explainWakemeVault`); lý do cuối là dịch vụ không tìm thấy két để đưa vào.
+ */
+export type WakemeNotCountedReason = ReadReason | "wakeme_vault_not_found" | "vault_not_linked";
 
-/** Mục `summary.wakeme` — chỉ có khi yêu cầu kèm `wakeme_vault_ref`. */
+/** Mục `summary.wakeme`. */
 export interface WakemeSummary {
-  ref: string;
+  /** Tham chiếu két đã đưa vào tx. Vắng khi `reason = "wakeme_vault_not_found"`. */
+  ref?: string;
+  /** `"located"` khi dịch vụ tự định vị két (app không gửi `wakeme_vault_ref`). */
+  source?: "located";
   /** `L_lent` validator sẽ tính, oildrop, chuỗi chữ số. `"0"` khi `counted` là false. */
   lent_lamp: string;
-  /** Két có được tính vào lượng sinh lượt này không (ghim đã qua kỳ, value đỡ được datum). */
+  /** Két có được tính vào lượng sinh lượt này không. */
   counted: boolean;
   reason?: WakemeNotCountedReason;
+  /** Chỉ khi `reason = "not_pinned_to_this_vault"`: ghim thấy được (`null` = chưa ghim). */
+  seen_pin?: SeenPin;
 }
 
 export interface ResolvedWakeme {
@@ -94,16 +118,15 @@ export interface WakemeOwnVault {
   lampAssetNameHex: string;
 }
 
-/** Ghim `gen_vault` đọc từ datum[11], dạng người đọc được — để câu 409 nói ra ghim THẤY. */
+/** Ghim `gen_vault` đọc từ datum[11], dạng người đọc được. */
 type SeenPin = { hash: string; name: string } | null | "undecodable";
 
 /**
- * Đọc + kiểm két Wakeme do app chỉ đích danh. NÉM có mã ở mọi vế validator sẽ từ chối;
- * trả `counted: false` + `reason` ở hai vế validator cho qua với `L_lent = 0`.
- * `L_lent` lấy từ `readWakemeVault` — CÙNG hàm bộ dựng SDK gọi (`instant.ts` ▸ `readWakeme`,
- * `MagicSDK` ▸ `readWakemeForVault`), nên con số ở đây trùng bit với thứ đi vào trần
- * `cap_nanogic` / `max_m` của lượt làm mới. (`claimed_amount` từ v2.0 là `m` do chủ chọn,
- * không suy từ `L_lent`.)
+ * Đọc + kiểm két Wakeme do app chỉ đích danh (hoặc dịch vụ vừa định vị). NÉM có mã ở mọi vế
+ * validator sẽ từ chối; trả `counted: false` + `reason` ở ba vế validator cho qua với
+ * `L_lent = 0`. `L_lent` và lý do lấy từ `explainWakemeVault` — CÙNG hàm bộ dựng SDK gọi
+ * (`instant.ts` ▸ `readWakeme`, `MagicSDK` ▸ `readWakemeForVault`), nên con số ở đây trùng bit
+ * với thứ đi vào trần `cap_nanogic` / `max_m` của lượt làm mới.
  */
 export async function resolveWakemeVault(
   chain: ChainReader, ref: OutRefLike, own: WakemeOwnVault,
@@ -122,57 +145,72 @@ export async function resolveWakemeVault(
 
   const fields = datumFields(utxo, key);
   const vaultName = singleVaultIdName(own.vaultUtxo, own.vaultScriptHash);
-  const expectedPin = new Constr(0, [new Constr(0, [own.vaultScriptHash, vaultName])]);
-  if (Data.to(fields[11]!) !== Data.to(expectedPin)) {
-    throw new CodedApiError(409, "WAKEME_VAULT_PIN_MISMATCH",
-      `két Wakeme ${key.slice(0, 16)}… không ghim vault này.`,
-      { wakeme_vault_ref: key,
-        expected_pin: { hash: own.vaultScriptHash, name: vaultName },
-        seen_pin: seenPin(fields[11]!) });
-  }
-
   const epoch = posixMsToEpoch(own.tipPosixMs, own.network);
-  let read: WakemeRead;
+  let explained: ReturnType<typeof explainWakemeVault>;
   try {
-    read = readWakemeVault(utxo, {
+    explained = explainWakemeVault(utxo, {
       wakemeVaultHash: scriptHash, ownScriptHash: own.vaultScriptHash, ownVaultName: vaultName,
-      currentPeriod: epoch, lampPolicyId: own.lampPolicyId, lampAssetName: own.lampAssetNameHex,
+      currentPeriod: epoch, msPerEpoch: msPerEpoch(own.network), windowOriginMs: windowOriginMs(own.network),
+      lampPolicyId: own.lampPolicyId, lampAssetName: own.lampAssetNameHex,
     });
   } catch (e) {
-    // Script và ghim đã kiểm ở trên; vế còn lại của `readWakemeVault` là hình dạng datum/NFT.
+    // Script đã kiểm ở trên; vế còn lại của `explainWakemeVault` là hình dạng datum/NFT.
     throw new CodedApiError(422, "WAKEME_VAULT_UNREADABLE",
       `két Wakeme ${key.slice(0, 16)}… không đạt luật đọc L_lent: ${e instanceof Error ? e.message : String(e)}`,
       { wakeme_vault_ref: key });
   }
 
-  const lent = read.lent;
-  // Suy LÝ DO từ cùng các trường `readWakemeVault` đọc, rồi đối chiếu với con số của nó: hai
-  // đường lệch nhau là lỗi của gói này, không phải của két — NÉM, không chọn một bên.
-  const conditional = fields[3] as bigint;
-  const owned = fields[7] as bigint;
-  const pinPeriod = fields[12] as bigint;
-  const held = utxo.assets[own.lampPolicyId + own.lampAssetNameHex] ?? 0n;
-  const reason: WakemeNotCountedReason | undefined =
-    pinPeriod >= epoch ? "pinned_in_current_period"
-    : held < conditional + owned ? "lamp_short_of_datum"
-    : undefined;
-  const expected = reason === undefined ? conditional + owned : 0n;
-  if (expected !== lent) {
-    throw new Error(
-      `[bất biến nội bộ] L_lent của readWakemeVault (${lent}) lệch phép suy lý do (${expected}) ở két ${key}.`);
-  }
-
+  const { read, reason } = explained;
   return {
     utxo,
     scriptHash,
     read,
     summary: {
       ref: key,
-      lent_lamp: lent.toString(),
+      lent_lamp: read.lent.toString(),
       counted: reason === undefined,
       ...(reason === undefined ? {} : { reason }),
+      ...(reason === "not_pinned_to_this_vault" ? { seen_pin: seenPin(fields[11]!) } : {}),
     },
   };
+}
+
+/**
+ * Định vị két Wakeme của `ownerCommit` (= `wakeme_link` của két IG) bằng NFT định danh.
+ * `undefined` ⟹ không có két nào; ≥ 2 két ⟹ 409 `WAKEME_VAULT_AMBIGUOUS`. Chỉ ĐỊNH VỊ — đọc +
+ * kiểm vẫn đi qua `resolveWakemeVault` với tham chiếu trả về.
+ */
+export async function locateWakemeVault(
+  chain: ChainReader, ownerCommit: string, network: Network,
+): Promise<OutRefLike | undefined> {
+  if (!/^[0-9a-f]{64}$/.test(ownerCommit)) {
+    throw new Error(`[bất biến nội bộ] wakeme_link "${ownerCommit}" không phải 32 byte hex.`);
+  }
+  const scriptHash = wakemeScriptHashOrThrow(network);
+  const unit = scriptHash + ownerCommit;
+  const hits = (await chain.utxosByUnit(unit)).filter(u => {
+    const pc = getAddressDetails(u.address).paymentCredential;
+    return pc?.type === "Script" && pc.hash === scriptHash;
+  });
+  if (hits.length === 0) return undefined;
+  if (hits.length > 1) {
+    throw new CodedApiError(409, "WAKEME_VAULT_AMBIGUOUS",
+      `Có ${hits.length} UTxO ở script két Wakeme mang NFT ${ownerCommit.slice(0, 16)}… — validator từ ` +
+        `chối khi có hai két; gửi "wakeme_vault_ref" để chỉ đích danh.`,
+      { wakeme_link: ownerCommit, candidates: hits.map(refStr) });
+  }
+  return { txHash: hits[0]!.txHash, outputIndex: hits[0]!.outputIndex };
+}
+
+/** Mục `summary.wakeme` khi dịch vụ tìm mà không thấy két nào. */
+export function wakemeNotFoundSummary(): WakemeSummary {
+  return { lent_lamp: "0", counted: false, reason: "wakeme_vault_not_found" };
+}
+
+/** Mục `summary.wakeme` khi két IG chưa nối link (`wakeme_link` rỗng) và app không gửi tham
+ *  chiếu: không có `owner_commit` để định vị ⟹ không két nào vào tx ⟹ `L_lent = 0`. */
+export function wakemeNotLinkedSummary(): WakemeSummary {
+  return { lent_lamp: "0", counted: false, reason: "vault_not_linked" };
 }
 
 /**
@@ -237,8 +275,8 @@ function datumFields(utxo: UTxO, key: string): Data[] {
   try { d = Data.from(utxo.datum!); } catch (e) { return bad(e instanceof Error ? e.message : String(e)); }
   if (!(d instanceof Constr) || d.index !== 0 || d.fields.length < 13) bad("không phải Constr 0 ≥ 13 trường");
   const f = (d as Constr<Data>).fields;
-  if (typeof f[3] !== "bigint" || typeof f[7] !== "bigint" || typeof f[12] !== "bigint") {
-    bad("trường 3/7/12 không phải số nguyên");
+  if (typeof f[2] !== "bigint" || typeof f[3] !== "bigint" || typeof f[7] !== "bigint" || typeof f[12] !== "bigint") {
+    bad("trường 2/3/7/12 không phải số nguyên");
   }
   return f;
 }

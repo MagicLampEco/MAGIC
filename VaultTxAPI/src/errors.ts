@@ -49,6 +49,21 @@
 //   501 CONFIG_MISSING           đường có mã nhưng bản deploy thiếu mục cấu hình nó cần
 //                                (`gen_v2`, `ref_script_utxos.commit|gb_shard`…) — `details.missing`
 //                                nêu đúng khoá, `details.route` nêu đường
+//   501 VAULT_KIND_UNSUPPORTED   bản deploy là khối két Prepaid mà route chưa có bộ dựng cho loại
+//                                két đó (`service.ts` ▸ `assertScopesSupported`) — `details.route`
+//                                (két Prepaid đi qua `/tx/sponsor/*`; `vaultModuleOf` cũng trả mã này)
+//   ── hành trình tài trợ `/tx/sponsor/*` (`sponsor.ts`) ──
+//   400 SPONSOR_REQUEST_SHAPE    thân bài sai hình dạng (`details.field`)
+//   400 SPONSOR_DID_COMMIT_LENGTH · SPONSOR_VAULT_REF_MISMATCH · SPONSOR_CHANGE_ADDRESS_INVALID ·
+//       SPONSOR_UTXO_NOT_KEY · DID_COMMIT_INVALID
+//   404 SPONSOR_ANCHOR_NOT_FOUND · SPONSOR_FUND_NOT_FOUND · VAULT_NOT_FOUND · ENGAGE_THREAD_NOT_FOUND
+//   409 SPONSOR_ANCHOR_AMBIGUOUS · SPONSOR_FUND_AMBIGUOUS · SPONSOR_EPOCH_MISMATCH · VAULT_ALREADY_EXISTS
+//   422 SPONSOR_VALIDITY_SPANS_EPOCHS · SPONSOR_ANCHOR_REF_WRONG · SPONSOR_FUND_NOT_PINNED ·
+//       SPONSOR_CARP_INSUFFICIENT · SPONSOR_CARP_OUTPUT_UNPINNED · SPONSOR_WITHDRAW_COUNT ·
+//       SPONSOR_BUILD_FAILED · SPONSOR_TX_MISMATCH · SPONSOR_THREAD_DID_INVALID
+//   501 SPONSOR_NETWORK_UNSUPPORTED (mạng không có gốc kỳ — Preview) · SPONSOR_PREPAID_UNAVAILABLE ·
+//       SPONSOR_PREPAID_SCRIPTS_MISMATCH · SPONSOR_FEE_PAYER_UNSUPPORTED · SPONSOR_UNAVAILABLE
+//   500 INTERNAL ⟸ SPONSOR_GRID_MISMATCH · SPONSOR_ANCHOR_REF_MISSING (lỗi dựng của chính dịch vụ)
 //   400 UTXO_NOT_FOUND / 409 UTXO_SPENT  out-ref do bên gọi đưa không có / đã bị tiêu (`chain.ts`)
 //   409 PREVIOUS_TX_PENDING      tx trước của vault đã nộp nhưng chưa vào khối — UTxO vault đang bị nó tiêu
 //   400 CHANGE_ADDRESS_REQUIRED / CHANGE_ADDRESS_INVALID  thiếu / sai `change_address`

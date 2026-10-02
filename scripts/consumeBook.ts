@@ -62,6 +62,76 @@ export function vaultHashKey(kind: VaultKind): string {
   }
 }
 
+/** Bước deploy dựng ra vault của `kind` (ghi `vaultHashKey(kind)` vào sổ). */
+export function vaultDeployStep(kind: VaultKind): string {
+  switch (kind) {
+    case "schedule": return "bước 07";
+    case "instant":  return "bước 05";
+    case "prepaid":  return "bước 10";
+  }
+}
+
+/** Khoá sổ của ref-script vault mà tx consume trên `kind` đọc làm chân thứ hai, kèm bước ghi nó. */
+export function vaultRefKey(kind: VaultKind): { key: string; step: string } {
+  switch (kind) {
+    case "schedule": return { key: "REF_VAULT_SCHEDULE_UTXO", step: "bước 06" };
+    case "instant":  return { key: "REF_VAULT_INSTANT_UTXO",  step: "bước 05" };
+    case "prepaid":  return { key: "REF_VAULT_PREPAID_UTXO",  step: "bước 10" };
+  }
+}
+
+/**
+ * Hash vault mà bản `consume` của `kind` sẽ được apply-param bằng — đọc từ sổ, fail-closed.
+ *
+ * Ném khi: khoá vắng / còn giá trị giữ chỗ · không phải 56 hex thường · `VAULT_HASH` đặt mà
+ * khác (không còn là đường ghi đè) · với `prepaid`: hash trong sổ ≠ hash dựng lại từ đời
+ * CARP hiện hành (`derivedPrepaidVaultHash`).
+ *
+ * Vì sao `prepaid` đòi thêm phép đối chiếu: hash `prepaid_vault` phụ thuộc ĐỜI CARP
+ * (apply-param `carp_policy_id`/`carp_asset_name`). Đúc lại CARP mà sổ còn hash đời cũ thì
+ * bản `consume` dựng ra vẫn hợp lệ, vẫn deploy êm, và phục vụ một két không ai mở được nữa.
+ * Không truyền `derivedPrepaidVaultHash` cho `prepaid` ⟹ NÉM: phép đối chiếu là bắt buộc,
+ * không phải tuỳ chọn người gọi quên được.
+ */
+export function requireConsumeVaultHash(
+  env: Record<string, string | undefined>,
+  kind: VaultKind,
+  derivedPrepaidVaultHash?: string,
+): string {
+  const key = vaultHashKey(kind);
+  const v = env[key];
+  if (!v || v === "FILL_AFTER_AIKEN_BUILD") {
+    throw new Error(
+      `Thiếu ${key} — hash vault ${kind} mà bản consume này phục vụ (${vaultDeployStep(kind)} in ra).`,
+    );
+  }
+  if (!/^[0-9a-f]{56}$/.test(v)) {
+    throw new Error(`${key}="${v}" không phải script hash 28 byte dạng hex thường.`);
+  }
+  if (env.VAULT_HASH && env.VAULT_HASH !== v) {
+    throw new Error(
+      `VAULT_HASH (${env.VAULT_HASH}) ≠ ${key} (${v}). ` +
+      `VAULT_HASH không còn là đường ghi đè: bỏ nó đi, hoặc chọn đúng VAULT_KIND.`,
+    );
+  }
+  if (kind === "prepaid") {
+    if (derivedPrepaidVaultHash === undefined) {
+      throw new Error(
+        `VAULT_KIND=prepaid đòi đối chiếu ${key} với hash dựng lại từ đời CARP hiện hành — ` +
+        `người gọi chưa truyền hash dựng lại.`,
+      );
+    }
+    if (derivedPrepaidVaultHash !== v) {
+      throw new Error(
+        `${key}=${v} ≠ hash prepaid_vault dựng lại từ đời CARP hiện hành (${derivedPrepaidVaultHash}).\n` +
+        `  Sổ ghi két của một đời CARP khác (hoặc blueprint PrepaidGen đã đổi). Bản consume dựng ` +
+        `bằng hash cũ phục vụ một két không ai mở được nữa — chạy lại bước 10 trước.`,
+      );
+    }
+  }
+  return v;
+}
+
 /**
  * Chép bộ khoá có hậu tố của `kind` vào tên không hậu tố trong `env`, để mã đọc tên cũ
  * chạy tiếp mà không đọc nhầm loại. Khoá không hậu tố có sẵn bị XOÁ trước khi chép:

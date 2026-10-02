@@ -4,6 +4,7 @@
  *
  *   npx tsx scripts/gen_vault_tx_api_deployment.ts Preprod
  *   npx tsx scripts/gen_vault_tx_api_deployment.ts Preprod --vault Schedule
+ *   npx tsx scripts/gen_vault_tx_api_deployment.ts Preprod --vault Prepaid
  *
  * ── Vì sao tệp này tồn tại ──────────────────────────────────────────────────────
  * `VaultTxAPI/README.md` cảnh báo rằng mọi địa chỉ trong khối ấy là **bản chép** của
@@ -85,12 +86,115 @@ export const SCHEDULE_ONLY_STATE_KEYS = {
     "UTxO `<tx>#<ix>` mang script tham chiếu của validator withdraw-zero `commit` (ScheduleGen v2.0)",
 } as const;
 
+/**
+ * Két PrepaidGen (đường tài trợ: bên tài trợ trả CARP, người mới nhận một lượt consume).
+ * Khoá sổ mà khối triển khai cho két Prepaid đòi — bước 10 ghi các khoá két/quỹ/ref, bước 09
+ * (`VAULT_KIND=prepaid`) ghi bộ khoá consume hậu tố `_PREPAID`. Câu lỗi khi thiếu in lại
+ * đúng bảng này, nên nó là nguồn duy nhất của danh sách.
+ *
+ * Khuôn phía dịch vụ: `VaultTxAPI/src/config.ts` ▸ `PREPAID_VAULT_TYPE` — khối Prepaid khai
+ * `paid_fund.address` + `ref_script_utxos.paid_fund`, và KHÔNG mang `shard_address` /
+ * `ref_script_utxos.shard` (két Prepaid không có shard; dịch vụ từ chối khối mang chúng).
+ * `ref_script_utxos.vault` chỉ một ô ⟹ một khối một loại két, như Instant/Schedule.
+ */
+export const PREPAID_STATE_KEYS = {
+  VAULT_PREPAID_HASH:  "script hash `prepaid_vault` đã apply (bước 10) — cũng là policy NFT định danh két",
+  VAULT_PREPAID_ADDR:  "địa chỉ két Prepaid (bước 10)",
+  PAID_FUND_HASH:      "script hash `paid_fund` đã apply (bước 10) — cũng là policy NFT quỹ",
+  PAID_FUND_ADDR:      "địa chỉ quỹ Paid (bước 10)",
+  REF_VAULT_PREPAID_UTXO: "UTxO `<tx>#<ix>` mang ref-script `prepaid_vault` (bước 10)",
+  REF_PAID_FUND_UTXO:  "UTxO `<tx>#<ix>` mang ref-script `paid_fund` (bước 10)",
+  CONSUME_ADDRESS_PREPAID:   "địa chỉ luồng Engage của bản `consume` apply bằng hash két Prepaid (bước 09)",
+  REF_CONSUME_UTXO_PREPAID:  "UTxO ref-script của bản `consume` đó (bước 09)",
+  PRICE_PARAM_HASH_PREPAID:  "beacon PriceParam của bản `consume` đó (bước 09)",
+  PRICE_NFT_UNIT_PREPAID:    "NFT định danh beacon PriceParam đó (bước 09)",
+  MAX_PRICE_STALE_PREPAID:   "apply-param #5 của bản `consume` đó (bước 09)",
+} as const;
+
+/**
+ * Hàm thuần: sổ trạng thái ⟹ khối `VAULT_TX_API_DEPLOYMENT` cho két Prepaid. Cùng luật với
+ * `buildDeployment`: kiểm TRỌN `PREPAID_STATE_KEYS` trước, ném MỘT lần kể đủ mọi khoá thiếu,
+ * không phát một khối khai thiếu, không đệm.
+ *
+ * Sổ giữ cả hash lẫn địa chỉ của két và quỹ (bước 10 in cả hai). Phát địa chỉ, và ĐỐI CHIẾU
+ * nó với `Script(hash)`: hai khoá cho một sự thật là hai chỗ để lệch, và lệch ở đây là dịch vụ
+ * tìm két ở một địa chỉ mà bản `consume` (apply-param bằng HASH) không phục vụ.
+ */
+export function buildPrepaidDeployment(
+  book: StateBook,
+  network: Network,
+  meta: GenMeta,
+): { deployment: Record<string, unknown>; warnings: string[] } {
+  const warnings: string[] = [];
+  const missing = Object.entries(PREPAID_STATE_KEYS).filter(([k]) => !book[k]);
+  if (missing.length > 0) {
+    throw new Error(
+      `✗ Sổ trạng thái thiếu ${missing.length}/${Object.keys(PREPAID_STATE_KEYS).length} khoá Prepaid — KHÔNG phát khối nào:\n` +
+      missing.map(([k, nghia]) => `    · ${k} — ${nghia}\n`).join("") +
+      `  Chạy bước 10 (két + quỹ + ref-script) và bước 09 với VAULT_KIND=prepaid rồi chạy lại.`,
+    );
+  }
+  for (const [hashKey, addrKey] of [
+    ["VAULT_PREPAID_HASH", "VAULT_PREPAID_ADDR"],
+    ["PAID_FUND_HASH", "PAID_FUND_ADDR"],
+  ] as const) {
+    const fromHash = hashToAddress(book[hashKey]!, network, hashKey);
+    if (fromHash !== book[addrKey]) {
+      throw new Error(
+        `✗ ${addrKey} = ${book[addrKey]} nhưng Script(${hashKey}) trên ${network} = ${fromHash}.\n` +
+        `  Sổ đang giữ hai đời khác nhau của cùng một validator — chạy lại bước 10, đừng sửa tay một khoá.`,
+      );
+    }
+  }
+  const ck = (name: ConsumeKeyName) => consumeKey(name, "prepaid");
+  const deployment: Record<string, unknown> = {
+    source: sourceLine(network, "Prepaid", meta),
+    lamp: lampBlock(book, network, meta.rehearsalAck),
+    vaults: [{ vault_type: "Prepaid", address: book.VAULT_PREPAID_ADDR }],
+    // Tên khoá theo `VaultTxAPI/src/config.ts` ▸ `parseDeployment` (nhánh `PREPAID_VAULT_TYPE`).
+    // KHÔNG phát `shard_address` / `ref_script_utxos.shard`, kể cả khi sổ có `SHARD_HASH` của
+    // két khác: dịch vụ từ chối khối Prepaid mang chúng.
+    paid_fund: { address: book.PAID_FUND_ADDR },
+    ref_script_utxos: {
+      vault: book.REF_VAULT_PREPAID_UTXO,
+      paid_fund: book.REF_PAID_FUND_UTXO,
+      consume: book[ck("REF_CONSUME_UTXO")],
+    },
+    consume: {
+      engage_address: book[ck("CONSUME_ADDRESS")],
+      price_beacon_address: hashToAddress(book[ck("PRICE_PARAM_HASH")]!, network, ck("PRICE_PARAM_HASH")),
+      price_beacon_nft_unit: book[ck("PRICE_NFT_UNIT")],
+      max_price_stale: book[ck("MAX_PRICE_STALE")],
+    },
+  };
+  addDidStake(deployment, book, warnings);
+  return { deployment, warnings };
+}
+
+/** `source` của khối — chung cho mọi loại két (đầu tệp, mục 3). */
+export function sourceLine(network: Network, kind: VaultKind | "Prepaid", meta: GenMeta): string {
+  const ack = meta.rehearsalAck;
+  // Cụm TẬP DƯỢT phải tự khai ở chỗ `/health` in ra: định danh của nó chỉ được chia sẻ
+  // kèm nhãn đó, và bên gọi không đọc `lamp.rehearsal_ack` trong khối triển khai.
+  return `${ack === undefined ? "" : `TẬP DƯỢT (LAMP ${ack.slice(0, 8)}…, bỏ khi có policy LAMP cuối) · `}` +
+    `${network} · ${kind} · ${kind === "Prepaid" ? "PrepaidGen" : "Gen v2.0"} · sinh từ ${meta.sourcePath} ` +
+    `(sửa lần cuối ${meta.mtime}) tại commit ${meta.sha}`;
+}
+
+/** `--vault <x>` ⟹ loại két. Không mặc định ngầm cho giá trị lạ. `Prepaid` đi bộ sinh riêng
+ *  (`buildPrepaidDeployment`), vì khuôn của nó khác: có quỹ, không shard, không Gen v2.0. */
+export function parseVaultArg(raw: string | undefined): VaultKind | "Prepaid" {
+  if (raw === undefined) return "Instant";
+  if (raw === "Instant" || raw === "Schedule" || raw === "Prepaid") return raw;
+  throw new Error(`✗ --vault phải là Instant, Schedule hoặc Prepaid (nhận: "${raw}").`);
+}
+
 /** Đọc sổ trạng thái bằng PHÂN TÍCH, không bằng `source`.
  *
  *  Cố ý không nhờ shell: `source` chạy mọi thứ trong tệp, và một sổ trạng thái là
  *  thứ được ghi bởi nhiều bước deploy khác nhau. Đọc bằng regex thì tệp chỉ là dữ
  *  liệu, và hỏng thì hỏng ở đây chứ không hỏng ở một chỗ nào đó về sau. */
-function readStateBook(network: Network): { book: StateBook; path: string; mtime: string } {
+export function readStateBook(network: Network): { book: StateBook; path: string; mtime: string } {
   // Mặc định `scripts/state.<NET>.sh`; `STATE_BOOK_PATH` đổi sổ cho một tiến trình (`stateBookPath.ts`).
   const path = stateBookPath(network);
   let raw: string;
@@ -151,14 +255,14 @@ function assertHex(v: string, ten: string, cho?: string): string {
 
 /** Script hash (28 byte hex) ⟹ địa chỉ `Script(h)` không stake credential. `ten` là tên khoá
  *  sổ, để câu lỗi trỏ được về đúng dòng cần sửa. */
-function hashToAddress(scriptHash: string, network: Network, ten: string): string {
+export function hashToAddress(scriptHash: string, network: Network, ten: string): string {
   if (!/^[0-9a-f]{56}$/.test(scriptHash)) {
     throw new Error(`✗ ${ten} = "${scriptHash}" không phải script hash 28 byte dạng hex thường.`);
   }
   return credentialToAddress(network, scriptHashToCredential(scriptHash));
 }
 
-function gitSha(): string {
+export function gitSha(): string {
   try {
     return execFileSync("git", ["-C", SCRIPTS_DIR, "rev-parse", "--short", "HEAD"], {
       encoding: "utf8",
@@ -217,30 +321,9 @@ export function buildDeployment(
   const ck = (name: ConsumeKeyName) =>
     consumeKey(name, vaultKind === "Instant" ? "instant" : "schedule");
 
-  const rehearsalAck = meta.rehearsalAck;
   const deployment: Record<string, unknown> = {
-    // Cụm TẬP DƯỢT phải tự khai ở chỗ `/health` in ra: định danh của nó chỉ được chia sẻ
-    // kèm nhãn đó, và bên gọi không đọc `lamp.rehearsal_ack` trong khối triển khai.
-    source: `${rehearsalAck === undefined ? "" : `TẬP DƯỢT (LAMP ${rehearsalAck.slice(0, 8)}…, bỏ khi có policy LAMP cuối) · `}${network} · ${vaultKind} · Gen v2.0 · sinh từ ${meta.sourcePath} (sửa lần cuối ${meta.mtime}) tại commit ${meta.sha}`,
-    lamp: {
-      policy_id: need(book, "LAMP_POLICY_ID", "định danh LAMP, vế policy"),
-      // Tên tài sản KHÔNG lấy từ sổ: nó là apply-param #2 suy theo MẠNG, và
-      // `ProtocolUtils` là nguồn của nó. Lấy từ sổ là mở đường cho một sổ Preprod cũ
-      // mang tên của mạng khác.
-      //
-      // 🔴 `lampAssetName()` trả về **HEX rồi**, không phải chuỗi utf8 — bản đầu của
-      // dòng này bọc thêm một lượt `Buffer.from(…, "utf8").toString("hex")` và cho ra
-      // `37343463343134643530`, tức hex của chuỗi `"744c414d50"`. Cổng tên tài sản của
-      // `VaultTxAPI` sẽ bắt được (nó giải hex rồi so với tên theo mạng), nhưng nó bắt
-      // ở lượt khởi động dịch vụ chứ không ở đây — và câu lỗi lúc đó nói về mạng.
-      asset_name_hex: assertHex(lampAssetName(network), "lamp.asset_name_hex"),
-      // Xác nhận lối mở TẬP DƯỢT (`config.ts` ▸ `REHEARSAL_LAMP_POLICIES`). Lấy từ MÔI
-      // TRƯỜNG của lượt sinh, KHÔNG từ sổ: nó là lời khai ý định, và `state_book_guard.sh`
-      // cấm nó nằm trong sổ. Vắng biến ⟹ không phát trường ⟹ `VaultTxAPI` chặn mọi đời
-      // đã bị thay lúc khởi động. Có biến mà khác policy ⟹ `VaultTxAPI` cũng chặn — tệp
-      // này không kiểm hộ, để chỉ MỘT cổng quyết.
-      ...(rehearsalAck === undefined ? {} : { rehearsal_ack: rehearsalAck }),
-    },
+    source: sourceLine(network, vaultKind, meta),
+    lamp: lampBlock(book, network, meta.rehearsalAck),
     vaults: [
       { vault_type: vaultKind, address: need(book, vaultAddrKey, `địa chỉ vault ${vaultKind}`) },
     ],
@@ -286,6 +369,36 @@ export function buildDeployment(
   // khỏi công thức sinh, beacon backing thay bằng GreenBack + shard GB). Khoá `UM_*` /
   // `BACKING_*` còn trong sổ của một đời cũ thì bị bỏ qua — chúng không mô tả gì của cụm v2.
 
+  addDidStake(deployment, book, warnings);
+
+  return { deployment, warnings };
+}
+
+
+/** Khối `lamp` — chung cho mọi loại két. */
+function lampBlock(book: StateBook, network: Network, rehearsalAck: string | undefined): Record<string, unknown> {
+  return {
+    policy_id: need(book, "LAMP_POLICY_ID", "định danh LAMP, vế policy"),
+    // Tên tài sản KHÔNG lấy từ sổ: nó là apply-param #2 suy theo MẠNG, và
+    // `ProtocolUtils` là nguồn của nó. Lấy từ sổ là mở đường cho một sổ Preprod cũ
+    // mang tên của mạng khác.
+    //
+    // 🔴 `lampAssetName()` trả về **HEX rồi**, không phải chuỗi utf8 — bản đầu của
+    // dòng này bọc thêm một lượt `Buffer.from(…, "utf8").toString("hex")` và cho ra
+    // `37343463343134643530`, tức hex của chuỗi `"744c414d50"`. Cổng tên tài sản của
+    // `VaultTxAPI` sẽ bắt được (nó giải hex rồi so với tên theo mạng), nhưng nó bắt
+    // ở lượt khởi động dịch vụ chứ không ở đây — và câu lỗi lúc đó nói về mạng.
+    asset_name_hex: assertHex(lampAssetName(network), "lamp.asset_name_hex"),
+    // Xác nhận lối mở TẬP DƯỢT (`config.ts` ▸ `REHEARSAL_LAMP_POLICIES`). Lấy từ MÔI
+    // TRƯỜNG của lượt sinh, KHÔNG từ sổ: nó là lời khai ý định, và `state_book_guard.sh`
+    // cấm nó nằm trong sổ. Vắng biến ⟹ không phát trường ⟹ `VaultTxAPI` chặn mọi đời
+    // đã bị thay lúc khởi động. Có biến mà khác policy ⟹ `VaultTxAPI` cũng chặn — tệp
+    // này không kiểm hộ, để chỉ MỘT cổng quyết.
+    ...(rehearsalAck === undefined ? {} : { rehearsal_ack: rehearsalAck }),
+  };
+}
+
+function addDidStake(deployment: Record<string, unknown>, book: StateBook, warnings: string[]): void {
   // ── Mục `did_stake`: tham số theo mạng của nhân chứng chủ `Script(h)` ─────────────
   //
   // `anchor_nft_policy` là policy NFT anchor DID của PhoenixKey trên mạng này — apply-param
@@ -304,8 +417,6 @@ export function buildDeployment(
       `  có chủ script (ví PhoenixKey) nhận 501 OWNER_SCRIPT_WITNESS_UNAVAILABLE. Chủ khoá không bị ảnh hưởng.\n`,
     );
   }
-
-  return { deployment, warnings };
 }
 
 function main(): void {
@@ -314,19 +425,20 @@ function main(): void {
     throw new Error(`✗ Tham số 1 phải là Preview | Preprod | Mainnet (nhận: "${process.argv[2] ?? ""}").`);
   }
   const vaultKindIdx = process.argv.indexOf("--vault");
-  const vaultKind = vaultKindIdx > 0 ? process.argv[vaultKindIdx + 1] : "Instant";
-  if (vaultKind !== "Instant" && vaultKind !== "Schedule") {
-    throw new Error(`✗ --vault phải là Instant hoặc Schedule (nhận: "${vaultKind}").`);
-  }
+  // `--vault` có mặt mà thiếu giá trị ⟹ `""` ⟹ ném ở `parseVaultArg`, không lùi về Instant.
+  const vaultArg = parseVaultArg(vaultKindIdx > 0 ? (process.argv[vaultKindIdx + 1] ?? "") : undefined);
 
   const { book, path, mtime } = readStateBook(network);
   const rehearsalAck = process.env.LAMP_REHEARSAL_ACK;
-  const { deployment, warnings } = buildDeployment(book, network, vaultKind, {
+  const meta: GenMeta = {
     sourcePath: path.replace(/^.*\/MAGIC\//, ""),
     mtime,
     sha: gitSha(),
     ...(rehearsalAck === undefined ? {} : { rehearsalAck }),
-  });
+  };
+  const { deployment, warnings } = vaultArg === "Prepaid"
+    ? buildPrepaidDeployment(book, network, meta)
+    : buildDeployment(book, network, vaultArg, meta);
   for (const w of warnings) process.stderr.write(w);
   process.stdout.write(JSON.stringify(deployment, null, 2) + "\n");
 }

@@ -176,6 +176,17 @@ echo
 echo "── (3) tsc --noEmit · scripts/"
 npx tsc --noEmit -p tsconfig.json && echo "   ✓ 0 lỗi kiểu"
 
+# ── (3b) Bộ ca deploy PrepaidGen trên Emulator ──────────────────────────────
+# Không mạng: hash cặp script ↔ bộ dựng PrepaidGen, khoá sổ ref-script, phép đối chiếu
+# hash của bước 09, kích thước tx công bố ref-script so trần 16.384 byte.
+echo
+echo "── (3b) test_deploy_prepaid.ts (Emulator)"
+# `set -euo pipefail` ở đầu tệp: điều kiện `if` bắt mã thoát của CẢ đường ống, nên bộ ca đỏ
+# mà `sed` vẫn 0 thì vẫn rơi vào nhánh báo đỏ chứ không trôi qua.
+if ! npx tsx test_deploy_prepaid.ts | sed 's/^/   /'; then
+  echo "   ✗ bộ ca deploy PrepaidGen ĐỎ" >&2; exit 1
+fi
+
 if [ "$MODE" != "--deploy" ]; then
   echo
   echo "── DỪNG Ở ĐÂY (không có --deploy)."
@@ -197,6 +208,9 @@ echo
 echo "── CÒN THIẾU sau bước 4, để MAGIC do PrepaidGen SINH RA tiêu được qua ConsumeMAGIC:"
 echo "   · một bản \`consume\` apply-param bằng \`vault_script_hash\` của vault vừa tạo."
 echo "     \`consume\` ghim vault theo LOẠI (BOUNDARIES.md §2) ⟹ mỗi cửa gen một bản."
+echo "     Lệnh: ghi VAULT_PREPAID_HASH vào sổ rồi"
+echo "       VAULT_KIND=prepaid NETWORK=$NETWORK npx tsx deploy/09_deploy_consume.ts"
+echo "     (bước 09 dựng lại hash từ đời CARP và NÉM nếu sổ lệch)."
 echo "   · một beacon giá còn tươi (\`PostPrice\`), và một thread Engage."
 echo "   Đường đã chạy thật cho ScheduleGen: \`run_consume_schedule_e2e.sh\` chặng 2."
 echo

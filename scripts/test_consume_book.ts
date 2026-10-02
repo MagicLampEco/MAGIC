@@ -2,7 +2,9 @@
 // Chạy từ scripts/:  npx tsx test_consume_book.ts
 // Dòng cuối: `=== ĐẠT ===` hoặc `=== HỎNG: n ca sai ===` (mã thoát 1).
 
-import { consumeKey, parseVaultKind, selectConsumeBook, vaultHashKey } from "./consumeBook.js";
+import {
+  consumeKey, parseVaultKind, requireConsumeVaultHash, selectConsumeBook, vaultHashKey, vaultRefKey,
+} from "./consumeBook.js";
 
 let sai = 0;
 function ca(ten: string, fn: () => void) {
@@ -72,6 +74,37 @@ ca("khoá tuỳ chọn vắng ⟹ không ném", () => {
   bang(env.ENGAGE_UTXO, undefined, "ENGAGE_UTXO");
 });
 ca("consumeKey ghép hậu tố HOA", () => bang(consumeKey("ENGAGE_UTXO", "instant"), "ENGAGE_UTXO_INSTANT", "khoá"));
+
+
+console.log("── requireConsumeVaultHash (bước 09 chọn hash vault, fail-closed)");
+const H_P = "7a".repeat(28);
+const H_Q = "7b".repeat(28);
+ca("prepaid: sổ khớp hash dựng lại ⟹ trả hash", () => {
+  bang(requireConsumeVaultHash({ VAULT_PREPAID_HASH: H_P }, "prepaid", H_P), H_P, "hash");
+});
+ca("prepaid CỰC ĐỐI: sổ ≠ hash dựng lại (đời CARP khác) ⟹ ném", () => {
+  phaiNem(() => requireConsumeVaultHash({ VAULT_PREPAID_HASH: H_P }, "prepaid", H_Q), "đời CARP");
+});
+ca("prepaid: không truyền hash dựng lại ⟹ ném (đối chiếu là bắt buộc)", () => {
+  phaiNem(() => requireConsumeVaultHash({ VAULT_PREPAID_HASH: H_P }, "prepaid"), "chưa truyền hash dựng lại");
+});
+ca("prepaid: thiếu VAULT_PREPAID_HASH ⟹ ném, chỉ đúng bước 10", () => {
+  phaiNem(() => requireConsumeVaultHash({ VAULT_INSTANT_HASH: H_P }, "prepaid", H_P), "VAULT_PREPAID_HASH");
+  phaiNem(() => requireConsumeVaultHash({}, "prepaid", H_P), "bước 10");
+});
+ca("giá trị giữ chỗ / sai hình dạng ⟹ ném", () => {
+  phaiNem(() => requireConsumeVaultHash({ VAULT_PREPAID_HASH: "FILL_AFTER_AIKEN_BUILD" }, "prepaid", H_P), "Thiếu");
+  phaiNem(() => requireConsumeVaultHash({ VAULT_PREPAID_HASH: H_P.toUpperCase() }, "prepaid", H_P), "hex thường");
+});
+ca("VAULT_HASH khác ⟹ ném; schedule/instant không đòi hash dựng lại", () => {
+  phaiNem(() => requireConsumeVaultHash({ VAULT_SCHEDULE_HASH: H_P, VAULT_HASH: H_Q }, "schedule"), "VAULT_HASH");
+  bang(requireConsumeVaultHash({ VAULT_INSTANT_HASH: H_Q }, "instant"), H_Q, "instant");
+});
+ca("ref vault chân thứ hai: prepaid ⟹ REF_VAULT_PREPAID_UTXO (bước 10)", () => {
+  bang(vaultRefKey("prepaid").key, "REF_VAULT_PREPAID_UTXO", "key");
+  bang(vaultRefKey("prepaid").step, "bước 10", "step");
+  bang(vaultRefKey("schedule").key, "REF_VAULT_SCHEDULE_UTXO", "schedule");
+});
 
 console.log(sai === 0 ? "\n=== ĐẠT ===" : `\n=== HỎNG: ${sai} ca sai ===`);
 process.exit(sai === 0 ? 0 : 1);

@@ -49,18 +49,43 @@
 //   BENEFICIARY_DATUM — BẮT BUỘC, KHÔNG mặc định: `none` (output không datum) hoặc
 //                       CBOR hex của Plutus Data (output mang inline datum đó).
 //                       Beneficiary là script ⟹ phải là CBOR, không được `none`.
+//   (Hai biến BENEFICIARY_* chỉ bắt buộc khi chạy genesis — xem hai cờ dưới.)
+//   PREPAID_REFS_ONLY=1 — chỉ công bố hai ref-script (bước R), KHÔNG genesis. Dùng khi chạy
+//                       lại sau khi genesis đã xong mà ref-script chưa đỗ: genesis KHÔNG
+//                       idempotent (mỗi lượt đúc một quỹ + một két mới), ref-script thì có.
+//   DRY_RUN=1         — tính hash, đọc bãi đỗ, DỰNG tx công bố cho cái còn thiếu để đo
+//                       kích thước; KHÔNG ký, KHÔNG gửi, KHÔNG genesis, KHÔNG in dòng cho sổ.
+//
+// BA PHA theo thứ tự: (R) ref-script → (A) quỹ → (B) két. (R) đứng đầu vì nó idempotent
+// và không phụ thuộc genesis; hỏng ở (R) thì chưa đúc gì, chạy lại an toàn.
+//
+// (R) — HAI ref-script CIP-33, MỖI CÁI MỘT TX (`refScripts.ts ▸ publishRefScript`), khoá sổ
+// `REF_VAULT_PREPAID_UTXO` + `REF_PAID_FUND_UTXO`. Bước này công bố vì bước này tính ra hash
+// (cùng luật với 05/06/09/11). Hai hash phụ thuộc ĐỜI CARP, không phụ thuộc LAMP.
+//
+// Vì sao TÁCH dù gộp VỪA trần — chép có nhãn, đo 2026-10-02 bằng `scripts/test_deploy_prepaid.ts`
+// (C) trên blueprint PrepaidGen sau vá `validate_draw` (prepaid_vault chưa apply 693e56fa…), đo
+// lại bằng chính lệnh đó: script đã apply 8.069 B + 4.958 B; tx riêng 8.235 B / 5.124 B; GỘP một
+// tx 13.240 B, còn 3.144 B tới trần 16.384. Kích thước không buộc phải tách. Tách vì: (a) bãi đỗ
+// idempotent THEO TỪNG SCRIPT (`publishRefScript`), nên lượt chạy lại sau khi đỗ được một cái chỉ
+// công bố cái còn thiếu — một tx gộp phải tự dựng lại phép lọc đó; (b) biên 3.144 B là biên của
+// MỘT đời validator, và `prepaid_vault` đổi bytes theo mỗi bản vá; (c) chi phí gộp tiết kiệm được
+// chỉ là một lần phí tx mỗi đời CARP, còn min-ADA (khoản lớn) như nhau ở cả hai cách.
 
 import {
   Lucid, Blockfrost, Data, Constr, toUnit,
   credentialToAddress, scriptHashToCredential,
-  getAddressDetails,
+  getAddressDetails, validatorToScriptHash,
 } from "@lucid-evolution/lucid";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet,
   PROTOCOL, requireCarpIdentity,
 } from "../config.js";
-import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
-import { paidFundParams, prepaidVaultParams } from "../deployParams.js";
+import { loadBlueprint } from "../applyParams.js";
+import { prepaidScriptPair, prepaidRefScriptPlan, type PaidFundParamInputs } from "../deployParams.js";
+import { parkAddressFor, publishRefScript } from "../refScripts.js";
+import { minAdaForRefScriptWithMargin } from "../minAda.js";
+import { parseFlag } from "../runResult.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 import { fundIdAssetName } from "../fundId.js";
 import { OwnerCredentialSchema } from "../../PrepaidGen/offchain/src/types.js";
@@ -244,7 +269,10 @@ async function main() {
   // Cổng fail-closed. Ném TRƯỚC khi chạm ví hay mạng: một bước deploy dừng lại vì
   // thiếu dữ kiện thì phải dừng ở chỗ RẺ NHẤT, không phải sau khi đã đốt phí.
   const carp = requireCarpIdentity();
-  const beneficiary = readBeneficiary();
+  const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
+  const refsOnly = dryRun || parseFlag(process.env.PREPAID_REFS_ONLY, "PREPAID_REFS_ONLY");
+  // `null` ⟺ chỉ chạy pha (R): đích nhận CARP không dùng tới, nên không đòi hai biến của nó.
+  const beneficiary = refsOnly ? null : readBeneficiary();
 
   const bufferBps = BigInt(process.env.BUFFER_BPS ?? MIN_BUFFER_BPS.toString());
   if (bufferBps < MIN_BUFFER_BPS) {
@@ -296,28 +324,52 @@ async function main() {
   // ── Apply params THEO TÊN — thứ tự do blueprint quyết định ───────────────
   const bp = await loadBlueprint("PrepaidGen");
 
-  const { script: fundScript, hash: fundHash } = appliedScript(
-    findValidator(bp, "prepaid.paid_fund.spend"),
-    paidFundParams({
-      carpPolicyId:  carp.policyId,
-      carpAssetName: carp.assetName,
-      msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
-      windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
-    }),
-  );
+  // Cặp `paid_fund` → `prepaid_vault` qua MỘT hàm dùng chung với bước 09 và bộ ca
+  // (`deployParams.ts` ▸ `prepaidScriptPair`): `paid_fund_hash` của két là hash bản ĐÃ apply.
+  const carpParams: PaidFundParamInputs = {
+    carpPolicyId:   carp.policyId,
+    carpAssetName:  carp.assetName,
+    msPerEpoch:     PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
+  };
+  const { fundScript, fundHash, vaultScript, vaultHash } = prepaidScriptPair(bp, carpParams);
   const fundAddress = credentialToAddress(NETWORK, scriptHashToCredential(fundHash));
-
-  const { script: vaultScript, hash: vaultHash } = appliedScript(
-    findValidator(bp, "prepaid.prepaid_vault.spend"),
-    prepaidVaultParams({
-      carpPolicyId:  carp.policyId,
-      carpAssetName: carp.assetName,
-      paidFundHash:  fundHash,          // ← hash của bản ĐÃ apply, không phải bản thô
-      msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
-      windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
-    }),
-  );
   const vaultAddress = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));
+
+  // ── (R) Ref-script CIP-33 ────────────────────────────────────────────────
+  const plan = prepaidRefScriptPlan(bp, carpParams);
+  if (plan[0]?.hash !== vaultHash || plan[1]?.hash !== fundHash) {
+    throw new Error("prepaidRefScriptPlan lệch prepaidScriptPair — hai hàm phải dựng cùng một cặp.");
+  }
+  const parkAddr = parkAddressFor(NETWORK, address);
+  console.log(`Bãi đỗ ref-script:  ${parkAddr}`);
+  // Lấy MỘT lần rồi truyền vào từng lượt (cùng lý do với bước 06).
+  const parked = await lucid.utxosAt(parkAddr);
+  const refOut: [string, string][] = [];
+  for (const p of plan) {
+    // min-ADA TÍNH từ chính script đã apply-param, không gõ cứng (`scripts/minAda.ts`).
+    const lovelace = minAdaForRefScriptWithMargin(p.script.script);
+    console.log(`${p.label.padEnd(18)}  ${p.hash} (script ${p.script.script.length / 2} byte, min-ADA ${lovelace / 1_000_000n} ADA)`);
+    if (dryRun) {
+      const have = parked.find((u) => u.scriptRef && validatorToScriptHash(u.scriptRef) === p.hash);
+      if (have) { console.log(`  ✓ đã đỗ: ${have.txHash}#${have.outputIndex}`); continue; }
+      const tx = await lucid.newTx().pay.ToAddressWithData(parkAddr, undefined, { lovelace }, p.script).complete();
+      console.log(`  (dry run) tx công bố dựng được: ${tx.toCBOR().length / 2} byte chưa ký — không gửi`);
+      continue;
+    }
+    refOut.push([p.bookKey, await publishRefScript({
+      lucid, parkAddr, label: p.label, script: p.script, hash: p.hash, lovelace, parked,
+    })]);
+  }
+  if (dryRun) {
+    console.log(`\n✔ DRY RUN: không ký, không gửi, không genesis, không in dòng cho sổ.`);
+    return;
+  }
+  if (beneficiary === null) {
+    console.log(`\n📋 Ghi vào state.${NETWORK}.sh (PREPAID_REFS_ONLY — không genesis):`);
+    for (const [k, v] of refOut) console.log(`   ${k}=${v}`);
+    return;
+  }
 
   // Hai cổng genesis còn lại chỉ đo được sau khi biết hash đã apply.
   if (beneficiary.kind === "Script" && beneficiary.hash === fundHash) {
@@ -462,6 +514,7 @@ async function main() {
   console.log(`✅ (B) Vault trả trước genesis: ${txHashB}`);
 
   console.log(`\n📋 Ghi vào state.${NETWORK}.sh:`);
+  for (const [k, v] of refOut) console.log(`   ${k}=${v}`);
   console.log(`   PAID_FUND_HASH=${fundHash}`);
   console.log(`   PAID_FUND_ADDR=${fundAddress}`);
   console.log(`   PAID_FUND_NFT_UNIT=${fundUnit}`);
@@ -478,7 +531,8 @@ async function main() {
     `\n⚠  CÒN THIẾU để PrepaidGen tiêu được MAGIC: một bản \`consume\` apply-param bằng ` +
     `\`vault_script_hash=${vaultHash}\`.\n` +
     `   \`consume\` ghim vault theo LOẠI (BOUNDARIES.md §2), nên mỗi cửa gen cần một bản ` +
-    `riêng. Chạy \`deploy/09_deploy_consume.ts\` với vault hash trên.`,
+    `riêng. Chạy \`VAULT_KIND=prepaid npx tsx deploy/09_deploy_consume.ts\` với VAULT_PREPAID_HASH ` +
+    `trên — bước 09 dựng lại hash từ đời CARP và NÉM nếu sổ lệch.`,
   );
 }
 

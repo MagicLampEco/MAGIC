@@ -64,6 +64,9 @@ cd <Module>/onchain && aiken build
                               post PriceParam beacon + mint thread Engage +
                               tạo Engage UTxO + apply-param consume validator
                               (cần VAULT_INSTANT_HASH từ bước 05)
+10_deploy_prepaid.ts        → PrepaidGen: ref-script CIP-33 prepaid_vault + paid_fund
+                              (mỗi cái một tx) → genesis quỹ Paid → genesis két
+                              Prepaid. Sau đó chạy lại 09 với VAULT_KIND=prepaid.
 ```
 
 > ⚠️ **Dừng ở 07 là chuỗi CHƯA xong.** Không có bước 09 thì không có beacon giá và không
@@ -122,11 +125,15 @@ Không sửa một dòng Aiken nào, vì `consume` **không giải mã `VaultDat
 trường 0 (`owner`) qua `un_constr_data` (`ConsumeMAGIC/onchain/validators/consume.ak:443-461`),
 cố ý, để một mã nguồn phục vụ được nhiều loại vault, mỗi loại một instance đã apply-param.
 `09_deploy_consume.ts`, `test/consume_only.ts`, `test/mint_engage_only.ts` và
-`resolve_consume_state.ts` đều đòi `VAULT_KIND=schedule|instant`, không có mặc định. Bộ
+`resolve_consume_state.ts` đều đòi `VAULT_KIND=schedule|instant|prepaid`, không có mặc định. Bộ
 khoá consume trong sổ mang hậu tố theo loại vault (`CONSUME_SCRIPT_HASH_SCHEDULE`,
 `CONSUME_SCRIPT_HASH_INSTANT`, …) để hai bản consume nằm cạnh nhau không đè nhau — lý do
-và danh sách khoá ở [`consumeBook.ts`](consumeBook.ts). Keeper tự nhặt beacon giá của cả
-hai bản ([`keeper_beacons.sh`](keeper_beacons.sh)).
+và danh sách khoá ở [`consumeBook.ts`](consumeBook.ts). Keeper tự nhặt beacon giá của mọi
+bản có đủ cặp `_SCHEDULE` / `_INSTANT` / `_PREPAID` ([`keeper_beacons.sh`](keeper_beacons.sh)).
+Với `VAULT_KIND=prepaid`, bước 09 dựng lại hash `prepaid_vault` từ đời CARP hiện hành và
+NÉM nếu `VAULT_PREPAID_HASH` trong sổ lệch (`consumeBook.ts` ▸ `requireConsumeVaultHash`):
+hash két Prepaid phụ thuộc đời CARP, nên sổ của một đời CARP cũ cho ra một bản consume
+hợp lệ mà phục vụ một két không ai mở được nữa.
 
 Vẫn đúng một điều trong đoạn cũ, và nó là điều quan trọng nhất: các giá trị đó đi vào
 **apply-param** — sai một cái là sai script hash, tức sai địa chỉ Engage, và không có gì
@@ -199,7 +206,10 @@ hai validator = 17.310 byte, vượt trần 16.384):
 - `REF_CONSUME_UTXO_INSTANT` — bước `09_deploy_consume.ts` (chạy với `VAULT_KIND=instant`) in ra.
 
 Bước nào tính ra hash thì bước đó công bố ref-script; `06_publish_ref_scripts.ts` chỉ
-lo hai script ScheduleGen. Bãi đỗ dùng chung ở [`refScripts.ts`](refScripts.ts).
+lo các script ScheduleGen. Két Prepaid: `REF_VAULT_PREPAID_UTXO` + `REF_PAID_FUND_UTXO` do
+`10_deploy_prepaid.ts` pha (R) in ra (`DRY_RUN=1` đo kích thước, `PREPAID_REFS_ONLY=1` chạy
+lại riêng pha đó); `REF_CONSUME_UTXO_PREPAID` do bước 09 `VAULT_KIND=prepaid`. Số đo kích
+thước: `npx tsx test_deploy_prepaid.ts`. Bãi đỗ dùng chung ở [`refScripts.ts`](refScripts.ts).
 
 > App xác nhận thanh toán phải đọc **delta `consumed_nanogic`**, KHÔNG đọc
 > `consumed_count` (nó đếm LƯỢT, không mang giá trị — trả 1 op rẻ cũng +1). Lý do đầy đủ:

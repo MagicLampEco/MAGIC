@@ -37,7 +37,7 @@ import {
 } from "../config.js";
 
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
-import { ownerRefOf, sameOwner, windowOf } from "@magiclamp/protocol-utils";
+import { epochValidityWindow, ownerRefOf, sameOwner, windowOf } from "@magiclamp/protocol-utils";
 import { genV2BeaconRefsFromBook } from "../deployParams.js";
 import { readRateBeaconUtxo, resolveWakemeVaultUtxo } from "./genV2Chain.js";
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
@@ -167,6 +167,8 @@ async function main() {
     rateNftPolicy:   protocol.rateNftPolicy!,
     rateScriptHash:  protocol.rateScriptHash!,
     wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,
+    msPerEpoch:      PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs:  PROTOCOL.WINDOW_ORIGIN_MS,
   };
   const vd = Data.from(vaultUtxo.datum!, InstantVaultDatumSchema as never) as { cap_epoch: bigint; wakeme_link: string };
   const epoch = windowOf(tip.posixMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
@@ -300,8 +302,13 @@ async function rebuildWithTamper(
   const upIdx = resolveConstrIndex(plutusJson, "vault.vault.spend", "UpdateProfile");
   const redeemer = Data.to(new Constr(upIdx, [profileConstr]));
 
-  const lowerTime = Number(tipPosixMs);
-  const upperTime = Number(tipPosixMs + 600_000n);
+  // Cửa sổ = `epochValidityWindow` (y như `consume_only.ts`): [tip, min(cuối kỳ, tip +
+  // VALIDITY_MAX_AHEAD_MS)], MỘT đồng hồ duy nhất là tip chuỗi. Bản trước đặt cận trên
+  // = tip + 600 s, nên trong 10 phút cuối kỳ cửa sổ vắt sang kỳ kế và
+  // `get_current_epoch` của vault (đòi hai cận cùng kỳ theo gốc O) từ chối.
+  const win = epochValidityWindow(tipPosixMs, NETWORK);
+  const lowerTime = win.lowerMs;
+  const upperTime = win.upperMs;
 
   let txBuilder = lucid
     .newTx()

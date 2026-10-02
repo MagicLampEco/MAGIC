@@ -36,10 +36,10 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `gb_shard.gb_shard` | `78b49a7865e46288fc7dd6a3e967c9cc9bdcd312d72b0a592745121f` |
-| `greenback_beacon.greenback_beacon` | `53069ea1a6b8a5fcd85b0cd20a6b3e388747c13334d904c5bd6644c9` |
-| `rate_param.rate_param` | `add7ddbaa62275fad920c828e79354f229895412262229c9b839580a` |
-| `vault_registry.vault_registry` | `91d942a007b1e041095e5cbc9fb61d627639e89cb70aa352e780b9e0` |
+| `gb_shard.gb_shard` | `39e1ed54b82ccb8a810c88f245678b5da3dc05a5f79c64bc7a306834` |
+| `greenback_beacon.greenback_beacon` | `cbdf18b3e12135f4d4625f333ad704a53ae28f3516bb41a7ff84e958` |
+| `rate_param.rate_param` | `9b4beb6447b5f997a88b9203f0d32ff2c761b3c135d391b52a8d8c80` |
+| `vault_registry.vault_registry` | `d3c73c8e3210eac51e3f8715c86ea4c520deabf321fcce8791bc2483` |
 
 ### `InstantGen/onchain`
 
@@ -47,7 +47,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `vault.vault` | `53a2b6519a45eeb98faa6a47062d203766898b8722a86e9dadd86617` |
+| `vault.vault` | `4589c2a2bb365b641f788b75ce9e0ad69909989bf39d458100fc57c4` |
 
 ### `Paymaster/onchain`
 
@@ -55,7 +55,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `paymaster.paymaster` | `52155a7a0f96225950b6d09c79978ecbd09576de09ce0788e026284b` |
+| `paymaster.paymaster` | `94fcfa10e0e97859061e84b3279fbec58284b3a0e658bd514ef2d6b2` |
 
 ### `PrepaidGen/onchain`
 
@@ -64,7 +64,7 @@ trình biên dịch `v1.1.21+42babe5`
 | validator | hash (CHƯA apply-param) |
 |---|---|
 | `prepaid.paid_fund` | `6ff7d74e37b4fcd7d32cbd0331c469c445810f4d40ba64a2c49378a2` |
-| `prepaid.prepaid_vault` | `63e3919ef19f350865184e11638f255b50afa3588721b27650c8d898` |
+| `prepaid.prepaid_vault` | `693e56fad4e8d760c45b1bd3a2e57dfce323f37755a4caef5115fff1` |
 
 ### `ScheduleGen/onchain`
 
@@ -73,9 +73,9 @@ trình biên dịch `v1.1.21+42babe5`
 | validator | hash (CHƯA apply-param) |
 |---|---|
 | `shard_nft.shard_nft` | `9553132b54fce178732fdae7f95b9f1833349c087277e939c22a12ef` |
-| `vault.commit` | `50a93fd1094b685486058dfa901d433973d8b68f5b62de3b57919b3c` |
+| `vault.commit` | `b5ad0966e7b7e08093212e989508bfa4e61892f806d4997571fdaeb8` |
 | `vault.shard` | `a1fef229005973298f91419a8dafb05b225529babda4d0c07ecb7203` |
-| `vault.vault` | `1e74f3a66de872f39aafe9583bf1354c1ac4b4d4437d59b1df2d0b09` |
+| `vault.vault` | `d6983af19992d69eed595efc4a14050e839d95b7d55ca15b84190760` |
 
 ### `UMKeeper/onchain`
 

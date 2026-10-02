@@ -79,7 +79,7 @@ export function msPerEpoch(network: Network): bigint {
 //     NGUỒN DUY NHẤT trong kho MAGIC. Mọi mã khác import từ đây, không gõ số.
 //
 //     ⚠ BẢN CHÉP CÓ NHÃN: nguồn là `LAMP/Utils/src/index.ts` ▸ `WINDOW_ORIGIN_MS_BY_NETWORK`
-//     @ LAMP `c454fe2` (2026-10-02). Bên đó SINH hằng này từ `SHELLEY_START_BY_NETWORK`:
+//     @ LAMP `8f306ad` (main, PR #121, 2026-10-02). Bên đó SINH hằng này từ `SHELLEY_START_BY_NETWORK`:
 //         window_origin_ms = shelley.posixMs − shelley.epoch × 432_000_000
 //         Mainnet  1_596_059_091_000 − 208 × 432_000_000 = 1_506_203_091_000
 //         Preprod  1_655_769_600_000 −   4 × 432_000_000 = 1_654_041_600_000
@@ -571,16 +571,25 @@ export function sortAiken<T>(xs: readonly T[], cmp: (a: T, b: T) => number): T[]
 /** §6.8 Youngest-first lock (T5) — maximises LF of free holdings.
  *  Lock youngest holdings first → free = oldest → LF(free) highest.
  *  Pure function: returns new array, does not mutate input.
+ *
+ *  #132 (2026-10-02): chỉ khoá trong holding ĐANG MỞ; holding đang khoá đi qua nguyên
+ *  vẹn và đứng TRƯỚC. Bản trước sắp và duyệt MỌI holding nên commit lần hai "khoá lại"
+ *  holding đã khoá ⟹ `lamp_locked > Σ khoá` ⟹ lượt nhả cuối chết ⟹ LAMP kẹt.
+ *  Trùng bit với `ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak ▸ select_lamp_for_lock` (P8):
+ *    kết quả = [đang khoá, giữ thứ tự vào] ++ lock_youngest(sortAiken(đang mở, desc))
+ *  Đầu vào không có holding khoá thì kết quả trùng bản cũ.
  */
 export function selectLampForLock(
   holdings : LoyaltyHolding[],
   amount   : bigint,
 ): LoyaltyHolding[] {
+  const locked   = holdings.filter(h =>  h.is_locked);
+  const unlocked = holdings.filter(h => !h.is_locked);
   // Sort youngest-first (desc acquired_epoch). `sortAiken`, KHÔNG `Array.sort` —
   // xem chú thích ở `sortAiken`: hai holding cùng `acquired_epoch` ra thứ tự khác nhau.
-  const sorted = sortAiken(holdings, (a, b) => cmpBigIntDesc(a.acquired_epoch, b.acquired_epoch));
+  const sorted = sortAiken(unlocked, (a, b) => cmpBigIntDesc(a.acquired_epoch, b.acquired_epoch));
   let remaining = amount;
-  const result: LoyaltyHolding[] = [];
+  const result: LoyaltyHolding[] = locked.map(h => ({ ...h }));
 
   for (const h of sorted) {
     if (remaining <= 0n) { result.push(h); continue; }

@@ -10,7 +10,7 @@ import {
 
 const P = 432_000_000n;
 
-describe("WINDOW_ORIGIN_MS_BY_NETWORK — bản chép có nhãn của LAMP c454fe2", () => {
+describe("WINDOW_ORIGIN_MS_BY_NETWORK — bản chép có nhãn của LAMP 8f306ad", () => {
   it("ghim giá trị CONTRACT §2, một dòng một mạng", () => {
     expect(WINDOW_ORIGIN_MS_BY_NETWORK.Mainnet).toBe(1_506_203_091_000n);
     expect(WINDOW_ORIGIN_MS_BY_NETWORK.Preprod).toBe(1_654_041_600_000n);

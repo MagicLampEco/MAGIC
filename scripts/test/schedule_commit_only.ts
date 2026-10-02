@@ -34,7 +34,7 @@ import {
 } from "../config.js";
 import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
-import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { ownerRefOf, sameOwner, windowOf } from "@magiclamp/protocol-utils";
 import { scheduleScriptPair, shardSpendParams } from "../deployParams.js";
 import { buildScheduleCommitTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatumSchema } from "../../ScheduleGen/offchain/src/types.js";
@@ -84,6 +84,7 @@ async function main() {
     lampAssetName: ASSET_NAMES.lamp,
     shardPolicyId: POLICY_IDS.shard_nft,
     msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
     ...gen.beacons,
   });
   const vaultScript = pair.vaultScript;
@@ -201,7 +202,7 @@ async function main() {
   }
 
   const tip = await fetchTip();
-  console.log(`Current epoch:  ${tip.posixMs / PROTOCOL.MS_PER_EPOCH}`);
+  console.log(`Current epoch:  ${windowOf(tip.posixMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS)}`);
   console.log(`L = ${L}, λ = ${LAMBDA / 1_000_000n} tLAMP\n`);
 
   const tamper = process.env.TAMPER;

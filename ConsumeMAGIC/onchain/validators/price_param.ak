@@ -11,18 +11,23 @@ use cardano/transaction.{InlineDatum, OutputReference, Transaction, placeholder}
 use magiclamp/consume/pricing
 use magiclamp/consume/types.{OpPrice, PostPrice, PriceParam, PriceParamRedeemer}
 use magiclamp/consume/util
+use magiclamp/consume/window_origin_fixtures
 
 /// Apply-param:
 ///   committee / threshold : M-of-N khoá công (PHẢI phân biệt đôi một — xem dưới)
 ///   price_nft_policy / price_nft_name : authenticity NFT của beacon
 ///   ms_per_epoch : POSIX ms / epoch (network-specific) — dùng để CHẶN TRẦN `epoch`
 ///                  của datum theo thời gian THẬT (VÁ #4).
+///   window_origin_ms : gốc lưới epoch theo mạng (POSIX ms), apply-param CUỐI —
+///                  epoch = (t − window_origin_ms) / ms_per_epoch (WIN-ORIGIN-1,
+///                  LAMP/Specs/Window/CONTRACT.md v1.0).
 validator price_param(
   committee         : List<ByteArray>,
   threshold         : Int,
   price_nft_policy  : ByteArray,
   price_nft_name    : ByteArray,
   ms_per_epoch      : Int,
+  window_origin_ms  : Int,
 ) {
   spend(
     datum_opt : Option<PriceParam>,
@@ -92,7 +97,7 @@ validator price_param(
     //   redeploy đổi price_nft_policy ⇒ đổi hash `consume` ⇒ mọi Engage UTxO cũ
     //   thành rác. `util.get_epoch` đòi CẢ HAI biên Finite + cùng epoch ⇒ committee
     //   không thể tự nới trần bằng validity-range.
-    expect out_datum.epoch <= util.get_epoch(tx, ms_per_epoch)
+    expect out_datum.epoch <= util.get_epoch(tx, ms_per_epoch, window_origin_ms)
 
     // datum mới phải hợp lệ (clamp invariant) — không post giá rác.
     expect pricing.valid_param(out_datum)
@@ -189,8 +194,13 @@ fn pp_tx(in_epoch: Int, out_epoch: Int, out_demand: Int, sigs: List<ByteArray>) 
 }
 
 fn pp_spend(committee: List<ByteArray>, threshold: Int, tx: Transaction) -> Bool {
+  pp_spend_at(0, committee, threshold, tx)
+}
+
+/// Như `pp_spend` nhưng validator nhận gốc `origin`.
+fn pp_spend_at(origin: Int, committee: List<ByteArray>, threshold: Int, tx: Transaction) -> Bool {
   price_param.spend(
-    committee, threshold, pp_nft_policy, pp_nft_name, pp_mspe,
+    committee, threshold, pp_nft_policy, pp_nft_name, pp_mspe, origin,
     Some(mk_pp(5, 1_000_000_000)), PostPrice, util.mk_ref(0), tx,
   )
 }
@@ -423,4 +433,22 @@ test price_param_ada_topup_with_token_happy() {
   // Đường TOP-UP ADA còn nguyên: nạp thêm ADA (2 → 9 tADA) trong khi phần non-ADA
   // giữ y hệt → PASS. Đây là lý do ràng buộc ADA để `>=` chứ không gộp vào phép `==`.
   pp_spend(pp_committee, pp_threshold, pp_tx_tok(7, 7, 9_000_000))
+}
+
+// ── GỐC CỬA SỔ (WIN-ORIGIN-1): trần epoch tính từ gốc mạng ─────────────────────
+//    Thời gian thật = gốc Mainnet + epoch 6. Có trừ gốc ⟹ now = 6 ⟹ post epoch 6 hợp
+//    lệ. Quên trừ gốc thì ngược chiều ca dưới: now ≈ 17_438 ⟹ post epoch 7 lọt trần.
+
+test price_param_origin_mainnet_happy() {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  pp_spend_at(o, pp_committee, pp_threshold,
+    window_origin_fixtures.shift_tx(pp_tx(5, 6, 1_500_000_000, [#"c1", #"c2"]), o))
+}
+
+// Post epoch 7 khi thời gian thật (theo gốc Mainnet) là epoch 6 ⟹ REJECT. Bỏ phép trừ
+// gốc ⟹ now ≈ 17_438 ≥ 7 ⟹ lọt ⟹ bài này đổi màu.
+test price_param_origin_mainnet_one_ahead_fail() fail {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  pp_spend_at(o, pp_committee, pp_threshold,
+    window_origin_fixtures.shift_tx(pp_tx_at(5, 7, 1_500_000_000, [#"c1", #"c2"], 6), o))
 }

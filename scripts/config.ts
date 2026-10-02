@@ -4,7 +4,7 @@
 
 import { STATIC_ASSET_NAMES } from "./assetNames.js";
 import "dotenv/config";
-import { slotsPerEpoch, msPerEpoch, lampAssetName, wakemeVaultHash, type Network } from "@magiclamp/protocol-utils";
+import { slotsPerEpoch, msPerEpoch, lampAssetName, wakemeVaultHash, windowOriginMs, type Network } from "@magiclamp/protocol-utils";
 import type { LucidEvolution } from "@lucid-evolution/lucid";
 // Giới hạn shard là ràng buộc cưỡng chế on-chain — giữ MỘT nguồn duy nhất.
 // Khai lại ở đây từng làm hai nơi có thể trôi khỏi nhau mà không test nào đỏ.
@@ -501,6 +501,11 @@ export const PROTOCOL = {
   SLOTS_PER_EPOCH: slotsPerEpoch(NETWORK), // nhịp chuỗi — hiện KHÔNG call site nào
   MS_PER_EPOCH:    msPerEpoch(NETWORK),    // nhịp giao thức — apply-param, 26 call site
   Q:               1_000_000_000n,
+  // Gốc cửa sổ (LAMP `Specs/Window/CONTRACT.md` v1.0) — apply-param CUỐI của mọi validator
+  // nhận `ms_per_epoch`, và là MỐC của mọi phép đổi thời gian ↔ epoch (`windowOf` /
+  // `windowStartMs`). Getter LƯỜI: Preview chưa có gốc nên `windowOriginMs` NÉM `WIN-PREVIEW`
+  // — ném lúc DÙNG, không lúc nạp config, để các bước không đụng epoch vẫn chạy được.
+  get WINDOW_ORIGIN_MS(): bigint { return windowOriginMs(NETWORK); },
 };
 
 // ── Helpers ───────────────────────────────────────────────────

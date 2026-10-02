@@ -54,8 +54,17 @@ const instantBundle: ValidatorBundle = {
   vaultUnappliedCbor: codeOf(IG_BP, "vault.vault.spend"),
 } as ValidatorBundle;
 
+// Gốc cửa sổ viết TAY theo mạng (vector LAMP `Specs/Window/CONTRACT.md` v1.0). Preview chưa có
+// gốc (`WIN-PREVIEW`) ⟹ bài truyền gốc TƯỜNG MINH của riêng bài, không phải gốc Preview.
+const ORIGIN: Record<ProtocolParams["network"], bigint> = {
+  Preview: 1_000_000_000n,
+  Preprod: 1_654_041_600_000n,
+  Mainnet: 1_506_203_091_000n,
+};
+
 function protocol(network: ProtocolParams["network"], over: Partial<ProtocolParams> = {}): ProtocolParams {
   return {
+    ...(network === "Preview" ? { windowOriginMs: ORIGIN.Preview } : {}),
     network, lampPolicyId: LAMP_POLICY, shardPolicyId: SHARD_POLC,
     gbBeaconNftPolicy: GBB_POLICY, gbBeaconScriptHash: GBB_SCRIPT, gbShardPolicyId: GBS_POLICY,
     rateNftPolicy: RHO_POLICY, rateScriptHash: RHO_SCRIPT, wakemeVaultHash: WAKEME_HASH,
@@ -75,6 +84,7 @@ function byName(network: ProtocolParams["network"]): ScheduleScriptParams {
     gbShardPolicyId:    GBS_POLICY,
     rateNftPolicy:      RHO_POLICY,
     rateScriptHash:     RHO_SCRIPT,
+    windowOriginMs:     ORIGIN[network],
   };
 }
 

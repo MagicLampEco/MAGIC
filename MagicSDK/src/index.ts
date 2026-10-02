@@ -69,6 +69,7 @@ export {
 // đòi đúng các giá trị đã apply vào két. Thứ tự tham số do gói nền giữ.
 export {
   instantVaultParamsFromProtocol,
+  windowOriginOf,
   scheduleScriptParamsFromProtocol,
   buildParamsList,
   buildCommitParamsList,

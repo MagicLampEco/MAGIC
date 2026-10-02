@@ -182,6 +182,12 @@ Ba điều đáng nhớ:
 `ms_per_epoch` khác nhau theo mạng (Preview 1 ngày; Preprod và Mainnet 5 ngày — `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`). SDK tự apply qua `network` ⇒ hash validator
 khác theo mạng ⇒ địa chỉ vault khác theo mạng.
 
+`window_origin_ms` là apply-param CUỐI của mọi két: gốc của phép đổi thời gian → epoch,
+`epoch = (posix_ms − window_origin_ms) / ms_per_epoch` (LAMP `Specs/Window/CONTRACT.md` v1.0).
+SDK lấy từ `ProtocolUtils/src/index.ts` ▸ `windowOriginMs(network)`; Preview chưa có gốc nên
+hàm đó ném `WIN-PREVIEW` — muốn dựng két trên Preview phải truyền `ProtocolParams.windowOriginMs`
+tường minh.
+
 ---
 
 ## 4. Tạo vault

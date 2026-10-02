@@ -16,12 +16,12 @@
 // VALIDITY RANGE: `epochValidityWindow` (protocol-utils) — [tip, min(cuối epoch,
 // tip + VALIDITY_MAX_AHEAD_MS)]. PHẢI chứa `now` (ledger từ chối nếu now > validTo),
 // nằm trọn trong epoch hiện tại cho cả hai validator:
-//   vault.ak get_current_epoch: epoch = lower/mspe.
-//   consume.ak util.get_epoch:  epoch = upper/mspe floor.
+//   vault.ak get_current_epoch: epoch = (lower − O)/mspe   (O = window_origin_ms).
+//   consume.ak util.get_epoch:  epoch = (upper − O)/mspe floor.
 // (Bản [epochStart, epochStart+1ms] → validTo ở QUÁ KHỨ giữa epoch → OutsideValidityInterval.
 //  Bản [epochStart, epochEnd-1] → cận trên quá chân trời node khi epoch giao thức dài
 //  hơn safe zone → TimeTranslationPastHorizon; đo trên Preprod 2026-09-24. Cả hai đã bỏ.)
-// `util.get_epoch` ép THÊM: hai biên đều Finite VÀ ⌊lo/mspe⌋ == ⌊hi/mspe⌋ (trọn MỘT
+// `util.get_epoch` ép THÊM: hai biên đều Finite VÀ ⌊(lo−O)/mspe⌋ == ⌊(hi−O)/mspe⌋ (trọn MỘT
 // epoch) — cửa sổ dưới đây thoả theo dựng, không được nới ra ngoài biên epoch.
 //
 // THREAD NFT: policy == script hash của `consume` sau apply 7 param (tự tham chiếu),
@@ -33,7 +33,7 @@ import {
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type Assets,
   type TxBuilder,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, epochValidityWindow, collateralCompleteOptions, type Network } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch, epochValidityWindow, collateralCompleteOptions, type Network } from "@magiclamp/protocol-utils";
 import {
   applyOwnerAuth, resolveOwnerAuth, ownerRefOf, ownerRefFromPlutusData, sameOwner,
   ownerRefToString, ownerCredentialOf, OwnerAuthError,
@@ -64,9 +64,9 @@ export interface ConsumeParams {
   vaultUtxo: UTxO;
   /** PriceParam beacon UTxO — đọc REFERENCE (không tiêu). Phải mang price NFT. */
   priceBeaconUtxo: UTxO;
-  /** Compiled consume validator — ĐÃ apply ĐÚNG 7 param, theo THỨ TỰ:
+  /** Compiled consume validator — ĐÃ apply ĐÚNG 8 param, theo THỨ TỰ:
    *  price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
-   *  max_price_stale, ms_per_epoch, price_param_script_hash.
+   *  max_price_stale, ms_per_epoch, price_param_script_hash, window_origin_ms.
    *  (`engage_nft_policy` / `engage_nft_name` KHÔNG còn là param — thread NFT dùng
    *   chính script hash này làm policy, biết qua tự tham chiếu.) */
   consumeScript: Validator;
@@ -302,8 +302,9 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   }
 
   // ── epoch tham chiếu = từ UPPER bound (khớp util.get_epoch vá) ───────────────
-  const mspe = msPerEpoch(network);
-  const currentEpoch = tipPosixMs / mspe;
+  // Epoch = (t − window_origin_ms) / ms_per_epoch (LAMP/Specs/Window/CONTRACT.md v1.0) —
+  // gốc theo mạng, Preview ném `WIN-PREVIEW`.
+  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
   // Cửa sổ nằm trọn trong epoch của tip, cận trên có trần (xem khối VALIDITY RANGE đầu tệp).
   const win = epochValidityWindow(tipPosixMs, network);
   const lowerMs = BigInt(win.lowerMs);
@@ -412,7 +413,7 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     vaultOutDatumCbor,
     vaultBurnRedeemerCbor,
     requiredNanogic,
-    vaultEpoch: lowerMs / mspe,
+    vaultEpoch: posixMsToEpoch(lowerMs, network),
     vaultKind,
     rateBeaconUtxo,
     wakemeVaultUtxo,

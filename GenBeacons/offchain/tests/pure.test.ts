@@ -18,6 +18,8 @@ import {
   shardNftName,
   shardResetAmount,
   txEpoch,
+  epochOf,
+  epochStartMs,
 } from "../src/index.js";
 
 const CAP = 1_800_000_000_000_000n;
@@ -114,19 +116,55 @@ describe("assertVaultList ↔ registry.ak ▸ vault_list_ok", () => {
 
 describe("thời gian ↔ util.ak ▸ get_epoch", () => {
   const MS = 3_600_000n;
+  // Gốc cửa sổ KHÁC 0 và KHÔNG chia hết cho MS (Mainnet, CONTRACT Window v1.0 §2) — gốc 0
+  // không phân biệt được bản trừ gốc với bản quên trừ gốc.
+  const O = 1_506_203_091_000n;
+  const at = (e: bigint) => O + e * MS;
   it("cùng epoch: qua; vắt hai epoch: ném", () => {
-    expect(txEpoch(10n * MS, 11n * MS - 1n, MS)).toBe(10n);
-    expect(() => txEpoch(10n * MS, 11n * MS, MS)).toThrow(/hai epoch/);
+    expect(txEpoch(at(10n), at(11n) - 1n, MS, O)).toBe(10n);
+    expect(() => txEpoch(at(10n), at(11n), MS, O)).toThrow(/hai epoch/);
   });
   it("khoảng hiệu lực nằm gọn trong epoch của now", () => {
-    const w = epochValidityWindow(Number(10n * MS + 5_000n), MS);
+    const w = epochValidityWindow(Number(at(10n) + 5_000n), MS, O);
     expect(w.epoch).toBe(10n);
-    expect(txEpoch(BigInt(w.fromMs), BigInt(w.toMs), MS)).toBe(10n);
-    const late = epochValidityWindow(Number(11n * MS - 10_000n), MS);
-    expect(BigInt(late.toMs)).toBe(11n * MS - 1_000n);
+    expect(txEpoch(BigInt(w.fromMs), BigInt(w.toMs), MS, O)).toBe(10n);
+    const late = epochValidityWindow(Number(at(11n) - 10_000n), MS, O);
+    expect(BigInt(late.toMs)).toBe(at(11n) - 1_000n);
   });
   it("sát ranh giới: ném", () => {
-    expect(() => epochValidityWindow(Number(11n * MS - 2_500n), MS)).toThrow(/sát/);
+    expect(() => epochValidityWindow(Number(at(11n) - 2_500n), MS, O)).toThrow(/sát/);
+  });
+  it("cực đối: sát biên của LƯỚI CŨ (k·MS) nhưng giữa epoch thật ⟹ KHÔNG ném", () => {
+    expect(O % MS).not.toBe(0n);
+    const k = at(11n) / MS + 1n;
+    expect(() => epochValidityWindow(Number(k * MS - 2_500n), MS, O)).not.toThrow();
+  });
+});
+
+describe("gốc cửa sổ — vector CONTRACT Window v1.0 §3 (gương ProtocolUtils ▸ windowOf)", () => {
+  const P = 432_000_000n;
+  const MAINNET = 1_506_203_091_000n;
+  const PREPROD = 1_654_041_600_000n;
+  it("bốn vector theo cặp biên", () => {
+    expect(epochOf(1_790_459_091_000n, P, MAINNET)).toBe(658n);
+    expect(epochOf(1_790_459_090_999n, P, MAINNET)).toBe(657n);
+    expect(epochOf(1_790_553_600_000n, P, PREPROD)).toBe(316n);
+    expect(epochOf(1_790_553_599_999n, P, PREPROD)).toBe(315n);
+  });
+  it("quên trừ gốc cho số khác hẳn", () => {
+    expect(epochOf(1_790_553_600_000n, P, 0n)).toBe(4_144n);
+  });
+  it("epochStartMs là biên: start(e) ⟹ e, start(e) − 1 ⟹ e − 1", () => {
+    expect(epochStartMs(316n, P, PREPROD)).toBe(1_790_553_600_000n);
+    expect(epochStartMs(658n, P, MAINNET)).toBe(1_790_459_091_000n);
+  });
+  it("t < gốc: chia SÀN về −∞ như Aiken, không cắt về 0", () => {
+    expect(epochOf(PREPROD - 1n, P, PREPROD)).toBe(-1n);
+    expect(epochOf(PREPROD - P - 1n, P, PREPROD)).toBe(-2n);
+  });
+  it("gốc âm / nhịp ≤ 0 ⟹ ném", () => {
+    expect(() => epochOf(1n, P, -1n)).toThrow(/window_origin_ms/);
+    expect(() => epochOf(1n, 0n, 0n)).toThrow(/ms_per_epoch/);
   });
 });
 
@@ -147,6 +185,7 @@ describe("cổng apply-param theo TÊN", () => {
       greenback_beacon_writer: "e1".repeat(28),
       ms_per_epoch: 3_600_000n,
       seed: outRefData(seed),
+      window_origin_ms: 1_654_041_600_000n,
     });
     expect(ok.type).toBe("PlutusV3");
     expect(() =>
@@ -154,6 +193,7 @@ describe("cổng apply-param theo TÊN", () => {
         ms_per_epoch: 3_600_000n,
         greenback_beacon_writer: "e1".repeat(28),
         seed: outRefData(seed),
+        window_origin_ms: 1_654_041_600_000n,
       }),
     ).toThrow(/APPLY-PARAM LỆCH/);
     expect(() =>
@@ -167,6 +207,7 @@ describe("cổng apply-param theo TÊN", () => {
   it("bốn seed trùng nhau ⟹ ném (hai one-shot chung seed = một cái không bao giờ đúc được)", () => {
     const base = {
       msPerEpoch: 3_600_000n,
+      windowOriginMs: 1_654_041_600_000n,
       vaultRegistrySeed: { txHash: "01".repeat(32), outputIndex: 0 },
       greenbackWriter: "e1".repeat(28),
       greenbackSeed: { txHash: "01".repeat(32), outputIndex: 1 },

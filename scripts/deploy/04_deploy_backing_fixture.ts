@@ -24,6 +24,7 @@
 //
 // In ra: BACKING_NFT_POLICY_ID, BACKING_SCRIPT_HASH — nạp vào env trước bước 05.
 
+import { windowOf } from "@magiclamp/protocol-utils";
 import {
   Lucid, Blockfrost, Data,
   credentialToAddress, scriptHashToCredential,
@@ -78,7 +79,7 @@ async function main() {
   // Epoch theo đúng semantics validator: POSIX ms / ms_per_epoch.
   const tipRes = await fetch(`${BLOCKFROST_URL}/blocks/latest`, { headers: { project_id: BLOCKFROST_KEY } });
   const tip = await tipRes.json() as { time: number };
-  const currentEpoch = (BigInt(tip.time) * 1000n) / PROTOCOL.MS_PER_EPOCH;
+  const currentEpoch = windowOf(BigInt(tip.time) * 1000n, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
 
   console.log(`Network:            ${NETWORK}`);
   console.log(`Backing NFT policy: ${nftPolicyId}`);

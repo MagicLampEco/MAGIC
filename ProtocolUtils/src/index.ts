@@ -34,16 +34,15 @@ export function slotsPerEpoch(network: Network): bigint {
   return SLOTS_PER_EPOCH_BY_NETWORK[network];
 }
 
-// (2) NHỊP ĐỒNG HỒ CỦA GIAO THỨC — apply-param #4 của mọi vault validator.
-//     Validator tính `epoch = posix_ms / ms_per_epoch` từ validity_range (PlutusV3
-//     mang POSIX ms, không mang slot). Phép chia đó KHÔNG trừ genesis, nên số epoch
-//     của giao thức chưa bao giờ là số epoch của Cardano và không thể trở thành nó:
-//     hôm nay Preprod chạy epoch Cardano 311 còn epoch giao thức ≈ 4 139. Cho nên
-//     chỉnh nhịp này cho khớp Preprod cũng KHÔNG làm hai số gặp nhau — nó chỉ đổi
-//     độ dài một epoch giao thức, và đổi apply-param ⟹ đổi script hash ⟹ giết mọi
-//     thứ đã deploy. Hai con số vẫn là hai con số kể cả sau lần chốt 2026-09-20 bên
-//     dưới: nhịp bằng nhau KHÔNG làm gốc toạ độ bằng nhau, vì phép chia không trừ
-//     genesis. Đừng đem epoch giao thức so với số epoch của Blockfrost hay explorer.
+// (2) NHỊP ĐỒNG HỒ CỦA GIAO THỨC — apply-param của mọi validator có cửa sổ epoch.
+//     Từ `LAMP/Specs/Window/CONTRACT.md` v1.0 (2026-10-02) validator tính
+//     `epoch = (posix_ms − window_origin_ms) / ms_per_epoch` từ validity_range — gốc là
+//     tham số (3) ngay dưới. Với nhịp 5 ngày và gốc theo bảng (3), chỉ số cửa sổ BẰNG
+//     ĐÚNG số epoch Cardano trên Preprod và Mainnet, biên cửa sổ trùng biên epoch.
+//
+//     Lưới cũ `posix_ms / ms_per_epoch` (gốc 1970, Preprod ≈ 4 144 khi chuỗi ở 316) đã
+//     bỏ: validator dựng với `window_origin_ms` từ chối mọi datum mang số của lưới cũ,
+//     không kèm lời giải thích. Đừng sinh ra nó nữa.
 //
 //     ✅ ĐÃ CHỐT 2026-09-20 — chủ dự án: Preprod đi theo nhịp mạng thật (5 ngày), bằng
 //     nhịp mainnet. Lý do là vai của mạng, không phải sự gọn của con số: Preprod là nơi
@@ -74,11 +73,84 @@ export function msPerEpoch(network: Network): bigint {
   return MS_PER_EPOCH_BY_NETWORK[network];
 }
 
-/** POSIX ms → epoch GIAO THỨC (khớp `get_current_epoch` của validator).
- *  KHÔNG trừ genesis ⇒ giá trị trả về KHÔNG phải epoch Cardano, đừng đem so với
- *  số epoch của Blockfrost hay của explorer. */
+// (3) GỐC CỬA SỔ — `window_origin_ms`, apply-param CUỐI CÙNG của mọi validator nhận
+//     `ms_per_epoch` (`LAMP/Specs/Window/CONTRACT.md` v1.0 §1–§2, WIN-ORIGIN-1..4).
+//
+//     NGUỒN DUY NHẤT trong kho MAGIC. Mọi mã khác import từ đây, không gõ số.
+//
+//     ⚠ BẢN CHÉP CÓ NHÃN: nguồn là `LAMP/Utils/src/index.ts` ▸ `WINDOW_ORIGIN_MS_BY_NETWORK`
+//     @ LAMP `c454fe2` (2026-10-02). Bên đó SINH hằng này từ `SHELLEY_START_BY_NETWORK`:
+//         window_origin_ms = shelley.posixMs − shelley.epoch × 432_000_000
+//         Mainnet  1_596_059_091_000 − 208 × 432_000_000 = 1_506_203_091_000
+//         Preprod  1_655_769_600_000 −   4 × 432_000_000 = 1_654_041_600_000
+//     (Byron cũng dài 432_000 s trên hai mạng này: 21_600 slot × 20 s.) Gói này cố ý không
+//     phụ thuộc gói LAMP nên CHÉP; bài kiểm `tests/windowOrigin.test.ts` suy lại hai dòng
+//     từ `SHELLEY_START` của chính gói này — bảng mốc Shelley đổi thì bài đó đỏ.
+//
+//     Preview KHÔNG có dòng — mục trạng thái WIN-PREVIEW của CONTRACT §4, ràng buộc tạm
+//     fail-closed: tra Preview qua `windowOriginMs` ⟹ ném `WindowOriginError` mã `WIN-PREVIEW`.
+export const WINDOW_ORIGIN_MS_BY_NETWORK: Readonly<Partial<Record<Network, bigint>>> = Object.freeze({
+  Mainnet: 1_506_203_091_000n,
+  Preprod: 1_654_041_600_000n,
+});
+
+/** Lỗi của phép tính cửa sổ. `code` cố định để bên gọi rẽ nhánh:
+ *  `WIN-PREVIEW` (mạng không có gốc) · `WIN-PARAMS-INVALID` (nhịp ≤ 0). */
+export class WindowOriginError extends Error {
+  readonly code: "WIN-PREVIEW" | "WIN-PARAMS-INVALID";
+  constructor(code: "WIN-PREVIEW" | "WIN-PARAMS-INVALID", message: string) {
+    super(`${code}: ${message}`);
+    this.name = "WindowOriginError";
+    this.code = code;
+  }
+}
+
+/** `window_origin_ms` của `network`. Preview ⟹ NÉM `WIN-PREVIEW` (fail-closed), không đoán. */
+export function windowOriginMs(network: Network): bigint {
+  const o = WINDOW_ORIGIN_MS_BY_NETWORK[network];
+  if (o === undefined) {
+    throw new WindowOriginError(
+      "WIN-PREVIEW",
+      `mạng ${network} không có window_origin_ms (LAMP/Specs/Window/CONTRACT.md v1.0 §4) — ` +
+        `không tính được epoch giao thức, không dựng được apply-param`,
+    );
+  }
+  return o;
+}
+
+function assertMsPerEpoch(msPerEpoch: bigint): void {
+  if (!(msPerEpoch > 0n)) {
+    throw new WindowOriginError("WIN-PARAMS-INVALID", `ms_per_epoch phải > 0, nhận ${msPerEpoch}`);
+  }
+}
+
+/** Chỉ số cửa sổ của mốc `tMs`: `⌊(tMs − originMs) / msPerEpoch⌋` — chia SÀN về −∞, đúng
+ *  phép `/` của Aiken (`divideInteger`), kể cả khi `tMs < originMs`. BigInt `/` của JS cắt về
+ *  0 nên KHÔNG dùng trần được cho số âm. Gốc 0 là đầu vào hợp lệ nhưng không phân biệt được
+ *  bản trừ gốc với bản quên trừ gốc — bài kiểm phải dùng gốc thật (CONTRACT §3). */
+export function windowOf(tMs: bigint, msPerEpoch: bigint, originMs: bigint): bigint {
+  assertMsPerEpoch(msPerEpoch);
+  const d = tMs - originMs;
+  const q = d / msPerEpoch;
+  return d % msPerEpoch !== 0n && d < 0n ? q - 1n : q;
+}
+
+/** Mốc ms ĐẦU của cửa sổ `e`: `originMs + e × msPerEpoch`. */
+export function windowStartMs(e: bigint, msPerEpoch: bigint, originMs: bigint): bigint {
+  assertMsPerEpoch(msPerEpoch);
+  return originMs + e * msPerEpoch;
+}
+
+/** POSIX ms → epoch GIAO THỨC của `network` (khớp `get_current_epoch` của validator).
+ *  = `windowOf(posixMs, msPerEpoch(network), windowOriginMs(network))`. Trên Preprod/Mainnet
+ *  số này BẰNG số epoch Cardano. Preview ⟹ NÉM `WIN-PREVIEW`. */
 export function posixMsToEpoch(posixMs: bigint, network: Network): bigint {
-  return posixMs / msPerEpoch(network);
+  return windowOf(posixMs, msPerEpoch(network), windowOriginMs(network));
+}
+
+/** Mốc ms ĐẦU của epoch giao thức `epoch` trên `network`. Preview ⟹ NÉM `WIN-PREVIEW`. */
+export function epochStartMs(epoch: bigint, network: Network): bigint {
+  return windowStartMs(epoch, msPerEpoch(network), windowOriginMs(network));
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -158,7 +230,8 @@ export interface EpochValidityWindow {
 export const VALIDITY_MAX_AHEAD_MS = 3_600_000n;
 
 /** Cửa sổ hiệu lực cho một giao dịch mà validator đòi **cả hai biên nằm trong cùng
- *  một epoch giao thức** (`epoch = lower_ms / P` và `expect upper_ms < (epoch+1)*P`).
+ *  một epoch giao thức** (`epoch = (lower_ms − O) / P` và `expect upper_ms < O + (epoch+1)*P`,
+ *  O = `window_origin_ms`). Preview ⟹ NÉM `WIN-PREVIEW` (không có O).
  *
  *  Cận trên = cái SỚM hơn trong hai mốc: slot hợp lệ cuối của epoch (trừ phần chừa),
  *  và `tip + VALIDITY_MAX_AHEAD_MS` (xem hằng đó vì sao phải có trần).
@@ -182,17 +255,18 @@ export function epochValidityWindow(
   if (maxAheadMs < SLOT_LENGTH_MS) {
     throw new RangeError(`maxAheadMs=${maxAheadMs} nhỏ hơn một slot (${SLOT_LENGTH_MS} ms)`);
   }
-  const p      = msPerEpoch(network);
   const epoch  = posixMsToEpoch(tipPosixMs, network);
+  const nextStartMs = epochStartMs(epoch + 1n, network);
   const lowerSlotMs = slotFloorMs(tipPosixMs);
-  // Mốc hợp lệ cuối cùng là `(epoch+1)*P - 1`; đầu slot chứa nó là `(epoch+1)*P - 1000`.
-  const epochUpperSlotMs = slotFloorMs((epoch + 1n) * p - 1n)
+  // Mốc hợp lệ cuối cùng là `O+(epoch+1)*P - 1`; đầu slot chứa nó là `O+(epoch+1)*P - 1000`
+  // (O là bội của 1000 trên mọi mạng có gốc, nên biên cửa sổ trùng biên slot).
+  const epochUpperSlotMs = slotFloorMs(nextStartMs - 1n)
                          - reserveTrailingSlots * SLOT_LENGTH_MS;
   const aheadSlotMs = slotFloorMs(tipPosixMs + maxAheadMs);
   const upperSlotMs = aheadSlotMs < epochUpperSlotMs ? aheadSlotMs : epochUpperSlotMs;
 
   if (upperSlotMs <= lowerSlotMs) {
-    const retryAfterMs = (epoch + 1n) * p;
+    const retryAfterMs = nextStartMs;
     throw new EmptyValidityWindowError(retryAfterMs - tipPosixMs, retryAfterMs);
   }
   return { lowerMs: Number(tipPosixMs), upperMs: Number(upperSlotMs) };
@@ -291,9 +365,10 @@ export type Network = "Preview" | "Preprod" | "Mainnet";
 
 /** slot → epoch CARDANO (chia nguyên theo `SLOTS_PER_EPOCH_BY_NETWORK`).
  *
- *  ⚠ KHÔNG dùng hàm này để lấy epoch của GIAO THỨC — đó là `posixMsToEpoch`.
- *  Hai hàm trả hai số khác hẳn nhau (đồng hồ giao thức không trừ genesis), và trộn
- *  chúng vào cùng một datum là dựng một giao dịch validator không bao giờ nhận.
+ *  ⚠ KHÔNG dùng hàm này để lấy epoch của GIAO THỨC — đó là `posixMsToEpoch`. Từ
+ *  `LAMP/Specs/Window/CONTRACT.md` v1.0 hai số TRÙNG nhau trên Preprod/Mainnet, nhưng
+ *  validator tính từ validity range (POSIX ms) chứ không từ slot, và trên Preview hàm
+ *  này vẫn trả số còn `posixMsToEpoch` ném `WIN-PREVIEW` — datum phải đi qua hàm kia.
  *  Chỗ gọi: `getCurrentEpoch` ngay dưới, và tái xuất qua `math.ts` của các module.
  *  (Bản trước của dòng này viết "KHÔNG mã sống nào gọi hàm này" — sai, và cái sai đó
  *   dán cảnh báo lên đúng hàm không ai gọi trong khi để `getCurrentEpoch` trần.)
@@ -353,14 +428,13 @@ export async function getTipSlot(
 
 /** Epoch CARDANO hiện tại, đọc từ provider.
  *
- *  ⚠ ĐÂY KHÔNG PHẢI epoch của GIAO THỨC. Tên hàm nghe như thứ bạn cần, nhưng nó trả số
- *  epoch của CHUỖI (có trừ genesis), còn mọi trường datum trong kho này — `acquired_epoch`,
- *  `last_updated_epoch`, `created_epoch`, `commit_epoch` — mang epoch GIAO THỨC
- *  (`posix_ms / ms_per_epoch`, KHÔNG trừ genesis). Hai số cách nhau rất xa: cùng một lúc
- *  trên Preprod, hàm này trả ~311 còn epoch giao thức là ~20 700.
- *
- *  Nhét số của hàm này vào datum ⟹ validator từ chối, và triệu chứng là một tx fail
- *  không kèm lời giải thích nào. Muốn epoch giao thức thì dùng `posixMsToEpoch(tipMs, network)`.
+ *  ⚠ ĐÂY KHÔNG PHẢI hàm cho datum. Nó trả số epoch của CHUỖI, đọc từ slot; mọi trường
+ *  datum trong kho này — `acquired_epoch`, `last_updated_epoch`, `created_epoch`,
+ *  `commit_epoch` — mang epoch GIAO THỨC `(posix_ms − window_origin_ms) / ms_per_epoch`.
+ *  Từ `LAMP/Specs/Window/CONTRACT.md` v1.0 hai số trùng nhau trên Preprod/Mainnet, nhưng
+ *  validator đo bằng validity range của CHÍNH giao dịch, không bằng tip — và trên Preview
+ *  epoch giao thức không xác định (`WIN-PREVIEW`). Muốn epoch giao thức thì dùng
+ *  `posixMsToEpoch(tipMs, network)`.
  *
  *  Dùng hàm này khi và chỉ khi bạn thật sự cần đối chiếu với epoch mà explorer/Blockfrost
  *  hiển thị.

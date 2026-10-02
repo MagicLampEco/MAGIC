@@ -9,6 +9,7 @@
 // đổi hash script (apply-param là tham số lúc biên dịch).
 
 import { describe, it, expect } from "vitest";
+import { windowOriginMs } from "@magiclamp/protocol-utils";
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -57,6 +58,7 @@ const P0: InstantVaultParams = {
   rateScriptHash    : "07".repeat(28),
   wakemeVaultHash   : "08".repeat(28),
   msPerEpoch        : 432_000_000n,
+  windowOriginMs    : windowOriginMs("Preprod"),
 };
 
 // Tên tham số blueprint → trường TS. Viết tay, độc lập với thứ tự trong `vaultScript.ts`.
@@ -70,6 +72,7 @@ const FIELD_OF: Record<string, keyof InstantVaultParams> = {
   rate_script_hash     : "rateScriptHash",
   wakeme_vault_hash    : "wakemeVaultHash",
   ms_per_epoch         : "msPerEpoch",
+  window_origin_ms     : "windowOriginMs",
 };
 
 describe("apply-param két InstantGen v2.0 ↔ blueprint", () => {
@@ -77,13 +80,13 @@ describe("apply-param két InstantGen v2.0 ↔ blueprint", () => {
   const spend = spendValidator(bp);
   const params = spend.parameters ?? [];
 
-  it("blueprint khai đúng 9 tham số, đúng tên, đúng thứ tự", () => {
+  it("blueprint khai đúng 10 tham số, đúng tên, đúng thứ tự", () => {
     expect(params.map(p => p.title)).toEqual([...INSTANT_VAULT_PARAM_TITLES]);
   });
 
-  it("kiểu dữ liệu: 8 bytes rồi 1 integer (ms_per_epoch)", () => {
+  it("kiểu dữ liệu: 8 bytes rồi 2 integer (ms_per_epoch, window_origin_ms)", () => {
     expect(params.map(p => dataTypeOf(bp, p.schema.$ref))).toEqual([
-      "bytes", "bytes", "bytes", "bytes", "bytes", "bytes", "bytes", "bytes", "integer",
+      "bytes", "bytes", "bytes", "bytes", "bytes", "bytes", "bytes", "bytes", "integer", "integer",
     ]);
   });
 
@@ -109,17 +112,17 @@ describe("apply-param két InstantGen v2.0 ↔ blueprint", () => {
     expect(v.script).toBe(applyParamsToScript(spend.compiledCode, instantVaultParamList(P0)));
   });
 
-  it("đổi MỘT tham số bất kỳ ⟹ hash script đổi (9 cặp)", () => {
+  it("đổi MỘT tham số bất kỳ ⟹ hash script đổi (10 cặp)", () => {
     const h0 = validatorToScriptHash(applyInstantVaultParams(spend.compiledCode, P0));
     const seen = new Set([h0]);
     for (const k of Object.keys(P0) as Array<keyof InstantVaultParams>) {
       const p = { ...P0 } as Record<string, unknown>;
-      p[k] = k === "msPerEpoch" ? 86_400_000n : k === "lampAssetName" ? "4c414d50" : "0f".repeat(28);
+      p[k] = k === "msPerEpoch" ? 86_400_000n : k === "windowOriginMs" ? P0.windowOriginMs + 1_000n : k === "lampAssetName" ? "4c414d50" : "0f".repeat(28);
       const h = validatorToScriptHash(applyInstantVaultParams(spend.compiledCode, p as unknown as InstantVaultParams));
       expect(h).not.toBe(h0);
       seen.add(h);
     }
-    expect(seen.size).toBe(10);
+    expect(seen.size).toBe(11);
   });
 });
 
@@ -129,6 +132,10 @@ describe("instantVaultParamList — sai dạng NÉM trước khi apply", () => {
   });
   it("hex hoa ⟹ INSTANT_VAULT_PARAM", () => {
     expect(() => instantVaultParamList({ ...P0, wakemeVaultHash: "AB".repeat(28) })).toThrow(/INSTANT_VAULT_PARAM/);
+  });
+  it("windowOriginMs = −1 ⟹ INSTANT_VAULT_PARAM; = 0 qua", () => {
+    expect(() => instantVaultParamList({ ...P0, windowOriginMs: -1n })).toThrow(/INSTANT_VAULT_PARAM: windowOriginMs/);
+    expect(() => instantVaultParamList({ ...P0, windowOriginMs: 0n })).not.toThrow();
   });
   it("msPerEpoch = 0 ⟹ INSTANT_VAULT_PARAM; = 1 qua", () => {
     expect(() => instantVaultParamList({ ...P0, msPerEpoch: 0n })).toThrow(/INSTANT_VAULT_PARAM/);

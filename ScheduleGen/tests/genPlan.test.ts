@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import { Data, Constr } from "@lucid-evolution/lucid";
-import { msPerEpoch } from "@magiclamp/protocol-utils";
+import { msPerEpoch, windowOriginMs } from "@magiclamp/protocol-utils";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import {
   planScheduleCommit, planScheduleFire, gbShardAfterDraw, drawnInEpoch, windowAddAt,
@@ -257,7 +257,8 @@ describe("planScheduleFire — Gen v2.0", () => {
 // Bộ dựng (Lucid giả): hình dạng giao dịch
 // ══════════════════════════════════════════════════════════════
 const P_MS = msPerEpoch(NETWORK);
-const TIP = E * P_MS + 1_000n;
+// Biên epoch giao thức E = gốc cửa sổ + E·P (không phải E·P — lưới gốc Unix cũ).
+const TIP = windowOriginMs(NETWORK) + E * P_MS + 1_000n;
 const LAMP_POLICY = "aa".repeat(28);
 const LAMP_NAME = "744c414d50";
 const VAULT_ASSETS = { lovelace: 5_000_000n, [LAMP_POLICY + LAMP_NAME]: 100_000_000_000n, ["bb".repeat(28) + "cc".repeat(8)]: 1n };

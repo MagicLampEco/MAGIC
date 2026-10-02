@@ -9,6 +9,10 @@
 // (tức tên tham số trong `validator foo(...)` của Aiken). Thứ tự khai ở đây
 // cũng phải trùng thứ tự blueprint — applyParams.ts cưỡng chế cả hai.
 //
+// `window_origin_ms` (LAMP/Specs/Window/CONTRACT.md v1.0) là apply-param CUỐI CÙNG của mọi
+// validator nhận `ms_per_epoch`. Người gọi lấy giá trị từ `@magiclamp/protocol-utils` ▸
+// `windowOriginMs(network)` — nguồn duy nhất, Preview ném `WIN-PREVIEW`. Không gõ số ở đây.
+//
 // Các hàm ở đây THUẦN: không đọc env, không đọc config.ts, không chạm mạng.
 // Nhờ vậy check_param_names.ts chạy được mà không cần .env hay ví.
 
@@ -97,7 +101,7 @@ function hash28(fn: string, name: string, v: string): string {
   return v;
 }
 
-// ── InstantGen — vault.vault.{mint,spend} (9 tham số, Gen v2.0) ──
+// ── InstantGen — vault.vault.{mint,spend} (10 tham số, Gen v2.0 + gốc cửa sổ) ──
 // Neo: InstantGen/onchain/validators/vault.ak — `validator vault(...)`. Gương của gói nền:
 // `InstantGen/offchain/src/vaultScript.ts` ▸ `INSTANT_VAULT_PARAM_TITLES`; bài
 // `test_deploy_gen_v2.ts` so hash của hàm này với `applyInstantVaultParams` cho cùng đầu vào.
@@ -110,6 +114,7 @@ export interface InstantVaultParamInputs extends GenV2BeaconRefs {
   lampAssetName:     string;  // PARAM theo mạng (tLAMP testnet / LAMP mainnet)
   wakemeVaultHash:   string;  // PARAM theo mạng — két Wakeme
   msPerEpoch:        bigint;
+  windowOriginMs:    bigint;  // PARAM theo mạng — gốc cửa sổ, tham số CUỐI
 }
 
 export function instantVaultParams(i: InstantVaultParamInputs): ParamMap {
@@ -126,16 +131,17 @@ export function instantVaultParams(i: InstantVaultParamInputs): ParamMap {
     // cổng đối chiếu) đều đi qua hàm này.
     wakeme_vault_hash:     assertWakemeVaultHash(i.wakemeVaultHash, fn),
     ms_per_epoch:          i.msPerEpoch,
+    window_origin_ms:      i.windowOriginMs,
   };
 }
 
 // ── ScheduleGen — cặp `commit` (withdraw-zero) + két (Gen v2.0) ──
-// Neo: ScheduleGen/onchain/validators/vault.ak — `validator commit(` (9 tham số) và
-// `validator vault(` (6 tham số). Gương gói nền: `ScheduleGen/offchain/src/params.ts` ▸
+// Neo: ScheduleGen/onchain/validators/vault.ak — `validator commit(` (10 tham số) và
+// `validator vault(` (7 tham số) — cả hai có `window_origin_ms` ở CUỐI. Gương gói nền: `ScheduleGen/offchain/src/params.ts` ▸
 // `applyScheduleScripts`.
 //
 // THỨ TỰ APPLY MỘT CHIỀU:
-//   commit(9) → commit_script_hash → vault(…, commit_script_hash) → vault_script_hash → shard(…)
+//   commit(10) → commit_script_hash → vault(…, commit_script_hash) → vault_script_hash → shard(…)
 // `commit` KHÔNG nhận hash két (nó biết két qua redeemer), nên chuỗi không khép. Dùng
 // `scheduleScriptPair` dưới đây thay vì tự apply từng nửa: nửa sau cần ĐÚNG hash của nửa đầu
 // ĐÃ apply, và một hash của bản chưa apply cũng là 28 byte hex hợp lệ.
@@ -144,6 +150,7 @@ export interface ScheduleScriptParamInputs extends GenV2BeaconRefs {
   lampAssetName: string;
   shardPolicyId: string;
   msPerEpoch:    bigint;
+  windowOriginMs: bigint;   // PARAM theo mạng — tham số CUỐI của cả `commit` lẫn két
 }
 
 export function scheduleCommitParams(i: ScheduleScriptParamInputs): ParamMap {
@@ -158,6 +165,7 @@ export function scheduleCommitParams(i: ScheduleScriptParamInputs): ParamMap {
     gb_shard_policy_id:    hash28(fn, "gbShardPolicyId", i.gbShardPolicyId),
     rate_nft_policy:       hash28(fn, "rateNftPolicy", i.rateNftPolicy),
     rate_script_hash:      hash28(fn, "rateScriptHash", i.rateScriptHash),
+    window_origin_ms:      i.windowOriginMs,
   };
 }
 
@@ -167,7 +175,8 @@ export interface ScheduleVaultParamInputs {
   shardPolicyId:    string;
   msPerEpoch:       bigint;
   gbShardPolicyId:  string;
-  commitScriptHash: string;   // hash của `commit` ĐÃ apply 9 tham số
+  commitScriptHash: string;   // hash của `commit` ĐÃ apply 10 tham số
+  windowOriginMs:   bigint;
 }
 
 export function scheduleVaultParams(i: ScheduleVaultParamInputs): ParamMap {
@@ -179,6 +188,7 @@ export function scheduleVaultParams(i: ScheduleVaultParamInputs): ParamMap {
     ms_per_epoch:       i.msPerEpoch,
     gb_shard_policy_id: hash28(fn, "gbShardPolicyId", i.gbShardPolicyId),
     commit_script_hash: hash28(fn, "commitScriptHash", i.commitScriptHash),
+    window_origin_ms:   i.windowOriginMs,
   };
 }
 
@@ -194,6 +204,7 @@ export function scheduleScriptPair(bp: Blueprint, i: ScheduleScriptParamInputs):
   const vault = appliedScript(findValidator(bp, "vault.vault.spend"), scheduleVaultParams({
     lampPolicyId: i.lampPolicyId, lampAssetName: i.lampAssetName, shardPolicyId: i.shardPolicyId,
     msPerEpoch: i.msPerEpoch, gbShardPolicyId: i.gbShardPolicyId, commitScriptHash: commit.hash,
+    windowOriginMs: i.windowOriginMs,
   }));
   return { commitScript: commit.script, commitHash: commit.hash, vaultScript: vault.script, vaultHash: vault.hash };
 }
@@ -219,7 +230,7 @@ export function shardSpendParams(
   };
 }
 
-// ── PrepaidGen — prepaid.paid_fund.{mint,spend} (3 tham số) ──────
+// ── PrepaidGen — prepaid.paid_fund.{mint,spend} (4 tham số) ──────
 // Neo: PrepaidGen/onchain/validators/prepaid.ak — `validator paid_fund(...)`.
 //
 // `paid_fund` KHÔNG nhận hash của vault. Đó là điều kiện làm chuỗi apply MỘT
@@ -241,20 +252,22 @@ export interface PaidFundParamInputs {
   carpPolicyId:  string;
   carpAssetName: string;
   msPerEpoch:    bigint;
+  windowOriginMs: bigint;
 }
 
 export function paidFundParams(i: PaidFundParamInputs): ParamMap {
   return {
-    carp_policy_id:  i.carpPolicyId,
-    carp_asset_name: i.carpAssetName,
-    ms_per_epoch:    i.msPerEpoch,
+    carp_policy_id:   i.carpPolicyId,
+    carp_asset_name:  i.carpAssetName,
+    ms_per_epoch:     i.msPerEpoch,
+    window_origin_ms: i.windowOriginMs,
   };
 }
 
-// ── PrepaidGen — prepaid.prepaid_vault.{mint,spend} (4 tham số) ──
+// ── PrepaidGen — prepaid.prepaid_vault.{mint,spend} (5 tham số) ──
 // Neo: PrepaidGen/onchain/validators/prepaid.ak — `validator prepaid_vault(...)`.
 //
-// `paid_fund_hash` là hash của `paid_fund` ĐÃ apply đúng ba tham số trên. Truyền
+// `paid_fund_hash` là hash của `paid_fund` ĐÃ apply đúng bốn tham số trên. Truyền
 // hash của bản CHƯA apply cũng ra 28 byte hex hợp lệ và cũng deploy êm — và vault
 // sinh ra sẽ từ chối mọi quỹ thật, vĩnh viễn.
 //
@@ -269,23 +282,26 @@ export interface PrepaidVaultParamInputs {
   carpAssetName: string;
   paidFundHash:  string;
   msPerEpoch:    bigint;
+  windowOriginMs: bigint;
 }
 
 export function prepaidVaultParams(i: PrepaidVaultParamInputs): ParamMap {
   return {
     carp_policy_id:  i.carpPolicyId,
     carp_asset_name: i.carpAssetName,
-    paid_fund_hash:  i.paidFundHash,
-    ms_per_epoch:    i.msPerEpoch,
+    paid_fund_hash:   i.paidFundHash,
+    ms_per_epoch:     i.msPerEpoch,
+    window_origin_ms: i.windowOriginMs,
   };
 }
 
-// ── UMKeeper — um_datum.um_datum_validator.spend (3 tham số) ─────
+// ── UMKeeper — um_datum.um_datum_validator.spend (4 tham số) ─────
 // Neo: UMKeeper/onchain/validators/um_datum.ak.
 export interface UmDatumParamInputs {
   msPerEpoch: bigint;
   umPolicy:   string;   // policy id của NFT thẩm quyền UM (one-shot)
   umName:     string;   // asset name hex ("UMD")
+  windowOriginMs: bigint;
 }
 
 export function umDatumParams(i: UmDatumParamInputs): ParamMap {
@@ -293,6 +309,7 @@ export function umDatumParams(i: UmDatumParamInputs): ParamMap {
     ms_per_epoch: i.msPerEpoch,
     um_policy:    i.umPolicy,
     um_name:      i.umName,
+    window_origin_ms: i.windowOriginMs,
   };
 }
 
@@ -304,7 +321,7 @@ export function oneShotGenesisParams(i: {
   return { genesis_ref: outputReferenceData(i.txHash, i.outputIndex) };
 }
 
-// ── ConsumeMAGIC — price_param.price_param.spend (5 tham số) ─────
+// ── ConsumeMAGIC — price_param.price_param.spend (6 tham số) ─────
 // Neo: ConsumeMAGIC/onchain/validators/price_param.ak.
 export interface PriceParamParamInputs {
   committee:      string[];   // List<ByteArray> pkh
@@ -312,6 +329,7 @@ export interface PriceParamParamInputs {
   priceNftPolicy: string;
   priceNftName:   string;
   msPerEpoch:     bigint;
+  windowOriginMs: bigint;
 }
 
 export function priceParamParams(i: PriceParamParamInputs): ParamMap {
@@ -321,13 +339,14 @@ export function priceParamParams(i: PriceParamParamInputs): ParamMap {
     price_nft_policy: i.priceNftPolicy,
     price_nft_name:   i.priceNftName,
     ms_per_epoch:     i.msPerEpoch,
+    window_origin_ms: i.windowOriginMs,
   };
 }
 
-// ── ConsumeMAGIC — consume.consume.{mint,spend} (7 tham số) ──────
+// ── ConsumeMAGIC — consume.consume.{mint,spend} (8 tham số) ──────
 // Neo: ConsumeMAGIC/onchain/validators/consume.ak.
 // Chuỗi bake TUYẾN TÍNH: price_nft → price_param → consume.
-// `price_param_script_hash` là hash của price_param ĐÃ apply 5 tham số trên.
+// `price_param_script_hash` là hash của price_param ĐÃ apply 6 tham số trên.
 //
 // KHÔNG có engage_nft_policy/engage_nft_name: consume nay là validator ĐA MỤC
 // ĐÍCH — handler `mint` của chính nó là policy của thread token Engage, nên
@@ -340,6 +359,7 @@ export interface ConsumeParamInputs {
   maxPriceStale:        bigint;
   msPerEpoch:           bigint;
   priceParamScriptHash: string;
+  windowOriginMs:       bigint;
 }
 
 export function consumeParams(i: ConsumeParamInputs): ParamMap {
@@ -351,10 +371,11 @@ export function consumeParams(i: ConsumeParamInputs): ParamMap {
     max_price_stale:         i.maxPriceStale,
     ms_per_epoch:            i.msPerEpoch,
     price_param_script_hash: i.priceParamScriptHash,
+    window_origin_ms:        i.windowOriginMs,
   };
 }
 
-// ── Paymaster — paymaster.paymaster.{spend,else} (11 tham số) ────
+// ── Paymaster — paymaster.paymaster.{spend,else} (12 tham số) ────
 // Neo: Paymaster/onchain/validators/paymaster.ak — `validator paymaster(...)`.
 //
 // Paymaster CHƯA có script deploy. Khai ở đây trước vì đúng module này từng nằm
@@ -378,6 +399,7 @@ export interface PaymasterParamInputs {
   /** Dựng bằng `addressData()` — đẳng thức CẤU TRÚC, đọc chú thích ở đó. */
   treasuryAddr:      Data;
   lampAssetName:     string;  // PARAM theo mạng (tLAMP testnet / LAMP mainnet)
+  windowOriginMs:    bigint;  // PARAM theo mạng — tham số CUỐI
 }
 
 /** Chốt fail-closed: `treasury_addr` PHẢI mang stake part. Enterprise address bị từ chối.
@@ -456,5 +478,6 @@ export function paymasterParams(i: PaymasterParamInputs): ParamMap {
     ms_per_epoch:        i.msPerEpoch,
     treasury_addr:       i.treasuryAddr,
     lamp_asset_name:     i.lampAssetName,
+    window_origin_ms:    i.windowOriginMs,
   };
 }

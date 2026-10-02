@@ -22,16 +22,21 @@ use cardano/transaction.{InlineDatum, OutputReference, Transaction, placeholder}
 use genbeacons/constants
 use genbeacons/types.{GreenBackBeacon}
 use genbeacons/util
+use genbeacons/window_origin_fixtures
 
 /// Apply-param (theo thứ tự):
 ///   greenback_beacon_writer : khoá ghi beacon, 1-of-1.
 ///   ms_per_epoch            : POSIX ms mỗi epoch theo mạng.
 ///   seed                    : OutputReference neo policy NFT one-shot (policy = hash
 ///                             script này).
+///   window_origin_ms        : gốc lưới epoch theo mạng (POSIX ms), apply-param CUỐI —
+///                             epoch = (t − window_origin_ms) / ms_per_epoch
+///                             (WIN-ORIGIN-1, LAMP/Specs/Window/CONTRACT.md v1.0).
 validator greenback_beacon(
   greenback_beacon_writer: VerificationKeyHash,
   ms_per_epoch: Int,
   seed: OutputReference,
+  window_origin_ms: Int,
 ) {
   // Genesis: `seq == 0`. Shard genesis cũng `seq == 0` ⟹ shard chỉ đặt lại từ lượt ghi
   // THỨ HAI trở đi (seq 1); tới lúc đó shard `remaining == 0` (fail-closed).
@@ -45,7 +50,7 @@ validator greenback_beacon(
     and {
       g.seq == 0,
       g.gb_nanogic >= 0,
-      g.epoch == util.get_epoch(tx, ms_per_epoch),
+      g.epoch == util.get_epoch(tx, ms_per_epoch, window_origin_ms),
     }
   }
 
@@ -63,7 +68,7 @@ validator greenback_beacon(
     expect InlineDatum(d) = next.datum
     expect d_out: GreenBackBeacon = d
     and {
-      d_out.epoch == util.get_epoch(tx, ms_per_epoch),
+      d_out.epoch == util.get_epoch(tx, ms_per_epoch, window_origin_ms),
       d_out.seq == d_in.seq + 1,
       d_out.gb_nanogic >= 0,
     }
@@ -123,10 +128,16 @@ fn gb_tx(d_in, d_out, sigs, now) -> Transaction {
 }
 
 fn gb_spend(d_in: GreenBackBeacon, tx: Transaction) -> Bool {
+  gb_spend_at(0, d_in, tx)
+}
+
+/// Như `gb_spend` nhưng validator nhận gốc `origin`.
+fn gb_spend_at(origin: Int, d_in: GreenBackBeacon, tx: Transaction) -> Bool {
   greenback_beacon.spend(
     gb_writer,
     gb_mspe,
     gb_seed,
+    origin,
     Some(d_in),
     Void,
     util.mk_ref(#"00", 0),
@@ -224,7 +235,7 @@ fn gb_genesis_tx(g: GreenBackBeacon, sigs: List<ByteArray>) -> Transaction {
 }
 
 fn gb_mint(tx: Transaction) -> Bool {
-  greenback_beacon.mint(gb_writer, gb_mspe, gb_seed, Void, gb_sh, tx)
+  greenback_beacon.mint(gb_writer, gb_mspe, gb_seed, 0, Void, gb_sh, tx)
 }
 
 test greenback_genesis_happy() {
@@ -252,4 +263,21 @@ test greenback_genesis_stranger_fail() fail {
       [#"cccccc"],
     ),
   )
+}
+
+// ── GỐC CỬA SỔ (WIN-ORIGIN-1) ───────────────────────────────────────────────────
+//    Gốc Mainnet không chia hết cho gb_mspe ⟹ bỏ phép trừ gốc trong `util.get_epoch`
+//    làm epoch tính ra ≈ 17_439 ≠ 7 ⟹ ca dương đỏ. Gốc Preprod CHIA HẾT cho 86_400_000
+//    nên không phân biệt được ở độ dài này — không dựng ca Preprod.
+
+test greenback_update_origin_mainnet_happy() {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  let out = GreenBackBeacon { gb_nanogic: 2_000, seq: 5, epoch: 7, depeg: False }
+  gb_spend_at(o, gb_in, window_origin_fixtures.shift_tx(gb_tx(gb_in, out, [gb_writer], 7), o))
+}
+
+test greenback_update_origin_forgotten_fail() fail {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  let out = GreenBackBeacon { gb_nanogic: 2_000, seq: 5, epoch: 7, depeg: False }
+  gb_spend_at(0, gb_in, window_origin_fixtures.shift_tx(gb_tx(gb_in, out, [gb_writer], 7), o))
 }

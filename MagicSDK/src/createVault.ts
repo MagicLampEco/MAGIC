@@ -45,7 +45,7 @@ import {
   msPerEpoch, lampAssetName, applyOwnerAuth, resolveOwnerAuth, ownerRefToString,
   assertDidPaymentAddress, planDidPaymentFunding, FundingError,
   DID_PAYMENT_SPEND_REDEEMER, FUNDING_MAX_VALIDITY_MS, collateralCompleteOptions,
-  type Network, type OwnerAuth, type DidPaymentPlan,
+  windowOf, type Network, type OwnerAuth, type DidPaymentPlan,
 } from "@magiclamp/protocol-utils";
 import { resolveOwnerInput } from "./ownerInput.js";
 import {
@@ -54,7 +54,7 @@ import {
 
 import type { CreateVaultParams, CreateVaultResult } from "./types.js";
 import { InstantVaultDatumSchema, VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
-import { applyVaultValidator } from "./validatorScripts.js";
+import { applyVaultValidator, windowOriginOf } from "./validatorScripts.js";
 import { assertLampPolicyId } from "./lampPolicy.js";
 import { buildInitialVaultDatum } from "./vaultDatum.js";
 import { vaultIdAssetName } from "./vaultId.js";
@@ -95,12 +95,13 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   const { vaultScript, vaultScriptHash, vaultAddress } = resolveVaultScript(params);
 
   // ── Current PROTOCOL epoch ────────────────────────────────────
-  // Validator computes epoch = posix_ms / ms_per_epoch. Initial datum's
+  // Validator computes epoch = (posix_ms − window_origin_ms) / ms_per_epoch (chia sàn).
+  // Gốc phải là ĐÚNG gốc đã apply vào két (`windowOriginOf`). Initial datum's
   // `last_updated_epoch` should match the current epoch so that generation
   // can fire from the NEXT epoch boundary.
   const tipPosixMs   = params.tipPosixMs ?? BigInt(Date.now());
   const msPer        = protocol.msPerEpoch ?? msPerEpoch(protocol.network);
-  const currentEpoch = tipPosixMs / msPer;
+  const currentEpoch = windowOf(tipPosixMs, msPer, windowOriginOf(protocol));
 
   // ── Verify caller's wallet has enough LAMP ───────────────────
   const lampUnit = toUnit(protocol.lampPolicyId, assetName);

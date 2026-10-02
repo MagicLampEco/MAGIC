@@ -12,6 +12,7 @@
 // Hash két trong sổ giả là GIẢ (56 hex): bộ này đo bước GenBeacons + chỗ nối với bộ sinh, không
 // đo két v2.0 (tham số két thuộc `deployParams.ts`).
 
+import { windowOriginMs, windowStartMs } from "@magiclamp/protocol-utils";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,14 +86,18 @@ async function phaiNem(fn: () => unknown, chua: string[]): Promise<string> {
 // trong một epoch — cùng cách `GenBeacons/offchain/tests/e2e.test.ts` làm.
 const NET = "Preprod" as const;
 const MS_PER_EPOCH = 3_600_000n;
-const EPOCH0 = 500_000n;
+// Gốc cửa sổ thật của Preprod (khác 0 — gốc 0 không phân biệt bản trừ gốc với bản quên trừ).
+// EPOCH0 đếm TỪ GỐC: `windowStartMs(40_544, 1h, gốc Preprod)` = 1_800_000_000_000 ms, đúng mốc
+// tuyệt đối của bản trước (500_000 × 1h tính từ 0).
+const WO = windowOriginMs(NET);
+const EPOCH0 = 40_544n;
 // ρ khởi đầu: giá trị TẠM của SPEC v2.0 §12 (`generation_rate_q = 4·10⁹`, CC-GEN-RATE-VALUE).
 // Ở bước deploy thật nó là env BẮT BUỘC; ở đây là đầu vào của ca.
 const RHO_Q = 4_000_000_000n;
 
 const deployer = generateEmulatorAccount({ lovelace: 100_000_000_000n });
 const emulator = new Emulator([deployer]);
-emulator.time = Number(EPOCH0 * MS_PER_EPOCH + 60_000n);
+emulator.time = Number(windowStartMs(EPOCH0, MS_PER_EPOCH, WO) + 60_000n);
 const lucid: LucidEvolution = await Lucid(emulator, "Custom");
 lucid.selectWallet.fromSeed(deployer.seedPhrase);
 
@@ -152,6 +157,7 @@ await ca("chạy pha beacons: seed ×4 → mint → ref gb_shard, mọi tx ≤ m
   beacons = await runBeaconsPhase(chain, {
     blueprint,
     msPerEpoch: MS_PER_EPOCH,
+    windowOriginMs: WO,
     rhoQ: RHO_Q,
     rhoMaxQ: compiledRhoMaxQ(),
     gbShardCapNanogic: compiledGbShardCap(),
@@ -297,12 +303,12 @@ await ca("tx gộp vượt trần ⟹ tách ba tx, mỗi tx ≤ trần, đủ RH
   const small = 8_000;
   const acc = generateEmulatorAccount({ lovelace: 100_000_000_000n });
   const emu = new Emulator([acc], { ...PROTOCOL_PARAMETERS_DEFAULT, maxTxSize: small });
-  emu.time = Number(EPOCH0 * MS_PER_EPOCH + 60_000n);
+  emu.time = Number(windowStartMs(EPOCH0, MS_PER_EPOCH, WO) + 60_000n);
   const l = await Lucid(emu, "Custom");
   l.selectWallet.fromSeed(acc.seedPhrase);
   const r = await runBeaconsPhase(
     { lucid: l, network: NET, nowMs: () => emu.now(), log: () => {}, submit: async (s) => { const x = await s.submit(); emu.awaitBlock(1); return x; } },
-    { blueprint, msPerEpoch: MS_PER_EPOCH, rhoQ: RHO_Q, rhoMaxQ: compiledRhoMaxQ(), gbShardCapNanogic: compiledGbShardCap() },
+    { blueprint, msPerEpoch: MS_PER_EPOCH, windowOriginMs: WO, rhoQ: RHO_Q, rhoMaxQ: compiledRhoMaxQ(), gbShardCapNanogic: compiledGbShardCap() },
   );
   bang(r.combinedMint, false, "combinedMint");
   bang(r.txs.length, 5, "số tx (seed + 3 mint + ref)");

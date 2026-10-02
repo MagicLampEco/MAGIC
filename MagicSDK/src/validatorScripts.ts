@@ -4,12 +4,15 @@
 // nền, mỗi gói đối chiếu với chữ ký `validator ...(` của module mình:
 //
 //   Instant:  `@magiclamp/instantgen-sdk` ▸ `vaultScript.ts` ▸ `instantVaultParamList`
-//             9 tham số: lamp_policy_id, lamp_asset_name, gb_beacon_nft_policy,
+//             10 tham số: lamp_policy_id, lamp_asset_name, gb_beacon_nft_policy,
 //             gb_beacon_script_hash, gb_shard_policy_id, rate_nft_policy,
-//             rate_script_hash, wakeme_vault_hash, ms_per_epoch.
+//             rate_script_hash, wakeme_vault_hash, ms_per_epoch, window_origin_ms.
 //   Schedule: `@magiclamp/schedulegen-sdk` ▸ `params.ts` ▸ `applyScheduleScripts`
-//             `commit` (withdraw-zero, 9 tham số) apply TRƯỚC → hash → két (6 tham số,
-//             tham số cuối = hash `commit`). Đối chiếu TÊN tham số với blueprint.
+//             `commit` (withdraw-zero, 10 tham số) apply TRƯỚC → hash → két (7 tham số:
+//             hash `commit` ở #6, `window_origin_ms` CUỐI). Đối chiếu TÊN tham số với blueprint.
+//
+// `window_origin_ms` lấy từ `protocol.windowOriginMs` hoặc `windowOriginMs(protocol.network)`
+// (Preview ⟹ NÉM `WIN-PREVIEW`, fail-closed — `LAMP/Specs/Window/CONTRACT.md` v1.0 §4).
 //
 // Bản trước dựng danh sách ở đây và nó trôi ngay khi Gen v2.0 bỏ UM/backing: bài
 // `vaultParams.test.ts` đỏ vì blueprint có năm tham số mà danh sách SDK không biết.
@@ -27,7 +30,7 @@ import {
   type Data,
   type Validator,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, lampAssetName, assertWakemeVaultHash } from "@magiclamp/protocol-utils";
+import { msPerEpoch, lampAssetName, assertWakemeVaultHash, windowOriginMs } from "@magiclamp/protocol-utils";
 import {
   applyInstantVaultParams, instantVaultParamList, type InstantVaultParams,
 } from "@magiclamp/instantgen-sdk";
@@ -109,7 +112,13 @@ export function applyShardValidator(
 
 // ── Ánh xạ ProtocolParams → tham số của gói nền ──────────────────────────────
 
-/** 9 apply-param của két Instant dựng từ `ProtocolParams`. Thiếu một ô ⟹ NÉM. Xuất ra vì
+/** Gốc cửa sổ của `protocol`: ô override, hoặc bảng theo mạng (Preview ⟹ NÉM `WIN-PREVIEW`).
+ *  Xuất ra để mọi phép đổi thời gian → epoch trong SDK dùng ĐÚNG gốc đã apply vào két. */
+export function windowOriginOf(protocol: ProtocolParams): bigint {
+  return protocol.windowOriginMs ?? windowOriginMs(protocol.network);
+}
+
+/** 10 apply-param của két Instant dựng từ `ProtocolParams`. Thiếu một ô ⟹ NÉM. Xuất ra vì
  *  mọi bộ dựng InstantGen (`buildInstantGenTx`, `buildRefreshCheckpointTx`, …) đòi đúng
  *  giá trị đã apply vào két. */
 export function instantVaultParamsFromProtocol(protocol: ProtocolParams): InstantVaultParams {
@@ -134,6 +143,7 @@ export function instantVaultParamsFromProtocol(protocol: ProtocolParams): Instan
     rateScriptHash:     protocol.rateScriptHash!,
     wakemeVaultHash:    assertWakemeVaultHash(protocol.wakemeVaultHash, `vaultType="Instant".wakemeVaultHash`),
     msPerEpoch:         protocol.msPerEpoch ?? msPerEpoch(protocol.network),
+    windowOriginMs:     windowOriginOf(protocol),
   };
 }
 
@@ -158,13 +168,14 @@ export function scheduleScriptParamsFromProtocol(protocol: ProtocolParams, msPer
     gbShardPolicyId:    protocol.gbShardPolicyId!,
     rateNftPolicy:      protocol.rateNftPolicy!,
     rateScriptHash:     protocol.rateScriptHash!,
+    windowOriginMs:     windowOriginOf(protocol),
   };
 }
 
 /**
  * Danh sách apply-param THEO THỨ TỰ của két — do gói nền dựng, ở đây chỉ chọn nhánh.
- *  - Instant: 9 tham số (`instantVaultParamList`).
- *  - Schedule: 6 tham số (`scheduleVaultParamList`), tham số cuối là hash `commit` ĐÃ apply
+ *  - Instant: 10 tham số (`instantVaultParamList`).
+ *  - Schedule: 7 tham số (`scheduleVaultParamList`), tham số #6 là hash `commit` ĐÃ apply
  *    ⟹ BẮT BUỘC `commitScriptHash` (lấy từ `applyVaultValidator(..).commitScriptHash`).
  */
 export function buildParamsList(
@@ -183,7 +194,7 @@ export function buildParamsList(
   return scheduleVaultParamList(scheduleParams, commitScriptHash);
 }
 
-/** 9 apply-param của `commit` (ScheduleGen, withdraw-zero). */
+/** 10 apply-param của `commit` (ScheduleGen, withdraw-zero). */
 export function buildCommitParamsList(protocol: ProtocolParams, msPer: bigint): Data[] {
   return scheduleCommitParamList(scheduleScriptParamsFromProtocol(protocol, msPer));
 }

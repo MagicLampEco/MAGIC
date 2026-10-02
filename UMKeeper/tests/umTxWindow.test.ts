@@ -6,7 +6,7 @@
 // chưa từng được chạy một lần nào.
 
 import { describe, it, expect } from "vitest";
-import { msPerEpoch, VALIDITY_MAX_AHEAD_MS } from "@magiclamp/protocol-utils";
+import { epochStartMs, VALIDITY_MAX_AHEAD_MS } from "@magiclamp/protocol-utils";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import {
   buildUMUpdateTx,
@@ -14,7 +14,9 @@ import {
 } from "../offchain/src/keeper.js";
 
 const NETWORK = "Preprod" as const;
-const P    = msPerEpoch(NETWORK);
+// Mốc ĐẦU epoch giao thức `e` = window_origin_ms + e × ms_per_epoch (LAMP/Specs/Window/
+// CONTRACT.md v1.0). Biên epoch theo GỐC của mạng, không theo lưới Unix `e × P`.
+const start = (e: bigint): bigint => epochStartMs(e, NETWORK);
 const E    = 100n;
 const SLOT = 1_000n;
 
@@ -68,31 +70,31 @@ async function nemVoiChoDoi(tipPosixMs: bigint) {
 describe("buildUMUpdateTx — cửa sổ hiệu lực", () => {
 
   it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch (chân trời node)", async () => {
-    const tip = E * P + 1_000n;
+    const tip = start(E) + 1_000n;
     const { tx } = await dung(tip);
 
     expect(tx.validTo).toBe(Number(tip + VALIDITY_MAX_AHEAD_MS));
   });
 
   it("A. giờ cuối epoch, không chừa slot nào ⟹ `validTo` là slot CUỐI của epoch", async () => {
-    const tip = (E + 1n) * P - 1_800_000n;
+    const tip = start(E + 1n) - 1_800_000n;
     const { tx } = await dung(tip);
 
     expect(tx.validFrom).toBe(Number(tip));
     // UMKeeper gọi `epochValidityWindow` KHÔNG kèm tham số chừa — khác InstantGen,
     // và đúng như thế: mốc khoá LAMP không sinh ra từ nhánh này nên không có ô chết
     // nào để né. Cận trên vì vậy là slot cuối.
-    expect(tx.validTo).toBe(Number((E + 1n) * P - SLOT));
+    expect(tx.validTo).toBe(Number(start(E + 1n) - SLOT));
   });
 
   it("B. tip ở slot CUỐI ⟹ NÉM, kèm đúng số mili-giây phải chờ", async () => {
-    await expect(nemVoiChoDoi((E + 1n) * P - SLOT)).resolves.toEqual({
-      waitMs: 1_000n, retryAfterMs: (E + 1n) * P,
+    await expect(nemVoiChoDoi(start(E + 1n) - SLOT)).resolves.toEqual({
+      waitMs: 1_000n, retryAfterMs: start(E + 1n),
     });
   });
 
   it("B-bis. cực đối — tip ở slot ÁP CHÓT thì dựng được, khoảng đúng một slot", async () => {
-    const tip = (E + 1n) * P - 2n * SLOT;
+    const tip = start(E + 1n) - 2n * SLOT;
     const { tx } = await dung(tip);
 
     expect(tx.completed).toBe(true);
@@ -100,7 +102,7 @@ describe("buildUMUpdateTx — cửa sổ hiệu lực", () => {
   });
 
   it("B-ter. redeemer mã hoá ra ĐÚNG byte của Constr(0,[new_raw])", async () => {
-    const { tx } = await dung(E * P + 1_000n);
+    const { tx } = await dung(start(E) + 1_000n);
 
     // 🔴 Bài này ghim một bẫy đã ăn một lần: `Data.Enum` có ĐÚNG MỘT biến thể không
     // mã hoá được trên lucid 0.4.30, và `buildUMUpdateTx` vì thế NÉM ở mọi lần gọi.
@@ -115,7 +117,7 @@ describe("buildUMUpdateTx — cửa sổ hiệu lực", () => {
   });
 
   it("C. giao dịch mang đúng hình dạng UM update — và KHÔNG có chữ ký nào", async () => {
-    const { tx, res } = await dung(E * P + 1_000n);
+    const { tx, res } = await dung(start(E) + 1_000n);
 
     expect(tx.collectFrom).toHaveLength(1);
     expect(tx.outputs).toHaveLength(1);

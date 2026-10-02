@@ -16,7 +16,9 @@ import {
 const SCOPES: VaultScope[] = [{
   vaultType: "Schedule", address: SYNTH_ADDRESS, scriptHash: SYNTH_SCRIPT_HASH, source: "tổng hợp",
 }];
-const TIP = { blockHeight: 1, blockHash: "00".repeat(32), blockTimePosixMs: 0n };
+// Mốc = gốc cửa sổ Preprod (epoch 0): Preview chưa có gốc (`WIN-PREVIEW`), và một mốc TRƯỚC gốc
+// cho epoch âm ⟹ dịch vụ báo đỉnh chuỗi vô lý. Bài này ép `at_epoch` nên mốc chỉ cần hợp lệ.
+const TIP = { blockHeight: 1, blockHash: "00".repeat(32), blockTimePosixMs: 1_654_041_600_000n };
 
 const keyVault = synthUtxo({ txHash: "a1".repeat(32), datumHex: synthDatumHex(SYNTH_OWNER, []), vaultIdAssetNameSeed: "c1" });
 const scriptVault = synthUtxo({
@@ -27,8 +29,8 @@ const scriptVault = synthUtxo({
 
 function deps() {
   const reader = new RecordedChainReader({ [SYNTH_ADDRESS]: [keyVault, scriptVault] }, TIP);
-  const service = new VaultReadService("Preview", SCOPES, reader);
-  return { service, scopes: SCOPES, network: "Preview", chainLabel: reader.label, token: "" };
+  const service = new VaultReadService("Preprod", SCOPES, reader);
+  return { service, scopes: SCOPES, network: "Preprod", chainLabel: reader.label, token: "" };
 }
 const get = (seg: string) => handle({ method: "GET", url: `/vault/by-owner/${seg}?at_epoch=${PIN_EPOCH}`, headers: {} }, deps());
 

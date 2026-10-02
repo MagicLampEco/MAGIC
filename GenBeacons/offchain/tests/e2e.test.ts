@@ -56,6 +56,9 @@ import {
 
 const MS_PER_EPOCH = 3_600_000n; // 1 giờ — đủ ngắn để sang epoch bằng `awaitSlot`.
 const EPOCH0 = 500_000n;
+// Gốc cửa sổ (apply-param cuối, CONTRACT Window v1.0) — gốc Preprod. Khác 0 nên datum ghi
+// `EPOCH0` chỉ khi validator VÀ bộ dựng cùng trừ gốc; quên ở một bên thì epoch lệch 459_456.
+const WINDOW_ORIGIN = 1_654_041_600_000n;
 const CAP = 1_800_000_000_000_000n; // gb_shard_cap_nanogic TẠM (CC-GEN-SURPLUS-SHARD)
 const RHO_MAX = 4_000_000_000n; // rho_max_q TẠM (CC-GEN-RATE-VALUE)
 
@@ -135,7 +138,7 @@ beforeAll(async () => {
   emulator = new Emulator([deployer, rateKey, writer, stranger]);
   // Ghim đồng hồ: đầu epoch EPOCH0 + 60 s. Gốc slot (= now lúc dựng Lucid) tròn giây ⟹ ranh
   // giới epoch trùng ranh giới slot, đúng giả định của `epochValidityWindow`.
-  emulator.time = Number(EPOCH0 * MS_PER_EPOCH + 60_000n);
+  emulator.time = Number(WINDOW_ORIGIN + EPOCH0 * MS_PER_EPOCH + 60_000n);
   lucid = await Lucid(emulator, "Custom");
   lucid.selectWallet.fromSeed(deployer.seedPhrase);
 
@@ -148,6 +151,7 @@ beforeAll(async () => {
   // 1–3: hash sổ → beacon GB → gb_shard (bake hash sổ + hash beacon); ρ độc lập.
   s = deriveGenBeaconsScripts(loadBlueprint(), "Custom", {
     msPerEpoch: MS_PER_EPOCH,
+    windowOriginMs: WINDOW_ORIGIN,
     vaultRegistrySeed: seed(0),
     greenbackWriter: pkh(writer),
     greenbackSeed: seed(1),
@@ -240,7 +244,7 @@ describe("deploy đủ thứ tự trên Emulator", () => {
 describe("beacon ρ — đăng ρ mới", () => {
   it("khoá lạ bị từ chối; khoá đăng với CÙNG datum thì qua", async () => {
     const beacon = await only(s.rate.nftUnit);
-    const w = epochValidityWindow(now(), MS_PER_EPOCH);
+    const w = epochValidityWindow(now(), MS_PER_EPOCH, WINDOW_ORIGIN);
     const next = { rho_q: 2_000_000_000n, prev_rho_q: 0n, effective_epoch: w.epoch + 1n };
     const bad = spendRateBeaconRaw(lucid, { rate: s.rate, beaconUtxo: beacon, next, signer: pkh(stranger), window: w });
     await expectRejected(bad);
@@ -251,7 +255,7 @@ describe("beacon ρ — đăng ρ mới", () => {
 
   it("trên rho_max_q 1 bị từ chối; ĐÚNG rho_max_q thì qua", async () => {
     const beacon = await only(s.rate.nftUnit);
-    const w = epochValidityWindow(now(), MS_PER_EPOCH);
+    const w = epochValidityWindow(now(), MS_PER_EPOCH, WINDOW_ORIGIN);
     const cur = decodeRateParam(beacon.datum);
     // Cùng epoch với lượt đăng trước ⟹ ρ hiệu lực vẫn là prev (0), không phải 2·10⁹ chưa hiệu lực.
     const prev = cur.prev_rho_q;
@@ -305,7 +309,7 @@ describe("beacon GB + shard: ghi rồi rút, shard đặt lại lười", () => 
 
   it("ghi GB: người ký lạ bị từ chối; bên ghi với CÙNG datum thì qua (seq 0 → 1)", async () => {
     const beacon = await only(s.greenback.nftUnit);
-    const w = epochValidityWindow(now(), MS_PER_EPOCH);
+    const w = epochValidityWindow(now(), MS_PER_EPOCH, WINDOW_ORIGIN);
     const next = { gb_nanogic: 16n * 1_000n + 15n, seq: 1n, epoch: w.epoch, depeg: false };
     const bad = spendGreenBackBeaconRaw(lucid, { greenback: s.greenback, beaconUtxo: beacon, next, signer: pkh(stranger), window: w });
     await expectRejected(bad);
@@ -316,7 +320,7 @@ describe("beacon GB + shard: ghi rồi rút, shard đặt lại lười", () => 
 
   it("seq lùi (1 → 0) và seq đứng (1 → 1) bị từ chối; seq tiến (1 → 2) thì qua", async () => {
     const beacon = await only(s.greenback.nftUnit);
-    const w = epochValidityWindow(now(), MS_PER_EPOCH);
+    const w = epochValidityWindow(now(), MS_PER_EPOCH, WINDOW_ORIGIN);
     const base = { gb_nanogic: 16n * 1_000n + 15n, epoch: w.epoch, depeg: false };
     for (const seq of [0n, 1n]) {
       await expectRejected(spendGreenBackBeaconRaw(lucid, {

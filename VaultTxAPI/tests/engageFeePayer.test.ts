@@ -449,7 +449,9 @@ const INSTANT_DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
     price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
   },
 }), "Preprod");
-const INSTANT_EPOCH = 4_141n; // posixMsToEpoch(NOW, "Preprod")
+// Epoch giao thức của NOW trên Preprod, tính TỪ GỐC cửa sổ (LAMP `Specs/Window/CONTRACT.md` v1.0):
+// ⌊(1 789 100 703 000 − 1 654 041 600 000) / 432 000 000⌋ = 312. Bản trước ghi 4_141 (chia từ 0).
+const INSTANT_EPOCH = 312n;
 
 const INSTANT_VAULT_UTXO = utxo(INPUT_TX_HASH, 0, VAULT_ADDRESS,
   { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },

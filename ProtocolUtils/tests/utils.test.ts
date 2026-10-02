@@ -11,7 +11,7 @@ import {
   msPerEpoch, slotsPerEpoch, posixMsToEpoch,
   vaultOutValue, droppedUnits, assertVaultIdentityKept, sortAiken,
   SLOT_LENGTH_MS, slotFloorMs, epochValidityWindow, EmptyValidityWindowError,
-  VALIDITY_MAX_AHEAD_MS,
+  VALIDITY_MAX_AHEAD_MS, windowOriginMs, WindowOriginError,
 } from "../src/index.js";
 
 const MAGIC = Q;
@@ -81,14 +81,15 @@ describe("Epoch utilities", () => {
     expect(slotsPerEpoch("Preprod")).toBe(432_000n);
     expect(slotsPerEpoch("Mainnet")).toBe(432_000n);
   });
-  it("epoch giao thức KHÔNG phải epoch Cardano — nhịp trùng nhau KHÔNG làm gốc trùng nhau", () => {
-    // Đây mới là chốt còn nguyên sức sau lần chốt trên, và là chốt dễ hiểu sai nhất:
-    // hai nhịp bằng nhau rồi thì rất dễ tưởng hai số epoch gặp nhau. Không — phép chia
-    // `posix_ms / ms_per_epoch` KHÔNG trừ genesis, nên gốc toạ độ vẫn lệch.
-    // 2026-09-04, Preprod: epoch Cardano = 311; epoch giao thức cùng lúc = 4 139.
+  it("epoch giao thức BẰNG epoch Cardano trên Preprod — gốc cửa sổ (CONTRACT Window v1.0)", () => {
+    // CHỐT ĐÃ ĐẢO DẤU 2026-10-02. Bản trước ghim `posixMsToEpoch = 4_139 ≠ 311` vì phép
+    // chia không trừ gốc. Từ `LAMP/Specs/Window/CONTRACT.md` v1.0 validator trừ
+    // `window_origin_ms` trước khi chia, nên cùng mốc đó nay ra đúng epoch Cardano.
+    // 2026-09-04, Preprod: mốc đầu epoch Cardano 311.
     const tipMs = 1_788_393_600_000n;                          // start epoch 311
-    expect(posixMsToEpoch(tipMs, "Preprod")).toBe(4_139n);
-    expect(posixMsToEpoch(tipMs, "Preprod")).not.toBe(311n);
+    expect(posixMsToEpoch(tipMs, "Preprod")).toBe(311n);
+    expect(posixMsToEpoch(tipMs, "Preprod")).not.toBe(4_139n); // số của lưới cũ, gốc 1970
+    expect(posixMsToEpoch(tipMs - 1n, "Preprod")).toBe(310n);  // cực đối: 1 ms trước biên
   });
   it("lampToOildrop: 1 LAMP = 10^6 oildrop", () => {
     expect(lampToOildrop(1n)).toBe(1_000_000n);
@@ -456,8 +457,10 @@ describe("vaultOutValue — INV-VAULT-IDENTITY", () => {
 // ══════════════════════════════════════════════════════════════
 describe("epochValidityWindow", () => {
   const P = msPerEpoch("Preprod");            // 432_000_000n
-  const e = 4143n;                            // một epoch bất kỳ
-  const bienTren = (e + 1n) * P;              // mốc ĐẦU của epoch kế
+  const O = windowOriginMs("Preprod");        // gốc cửa sổ — biên epoch là O + k·P, không phải k·P
+  const e = 316n;                             // một epoch bất kỳ
+  const at = (k: bigint) => O + k * P;        // mốc ĐẦU của epoch k
+  const bienTren = at(e + 1n);                // mốc ĐẦU của epoch kế
   const slotCuoi = bienTren - SLOT_LENGTH_MS; // đầu slot CUỐI của epoch e
 
   it("slotFloorMs căn đúng về đầu slot", () => {
@@ -471,7 +474,7 @@ describe("epochValidityWindow", () => {
   // Bản trước ghim "giữa epoch ⟹ cận trên là slot cuối" — chính hành vi mà node từ
   // chối (`TimeTranslationPastHorizon`) khi epoch giao thức dài hơn chân trời.
   it("đầu epoch: TRẦN thắng — cận trên là tip + trần, không phải cuối epoch", () => {
-    const tip = e * P + 12_345n;
+    const tip = at(e) + 12_345n;
     const w = epochValidityWindow(tip, "Preprod");
     expect(BigInt(w.upperMs)).toBe(slotFloorMs(tip + VALIDITY_MAX_AHEAD_MS));
     expect(BigInt(w.upperMs) < slotCuoi).toBe(true);
@@ -484,7 +487,7 @@ describe("epochValidityWindow", () => {
   });
 
   it("cận trên không bao giờ quá tip + trần, ở mọi vị trí trong epoch", () => {
-    for (const tip of [e * P, e * P + P / 2n, bienTren - VALIDITY_MAX_AHEAD_MS - 1n]) {
+    for (const tip of [at(e), at(e) + P / 2n, bienTren - VALIDITY_MAX_AHEAD_MS - 1n]) {
       const w = epochValidityWindow(tip, "Preprod");
       expect(BigInt(w.upperMs) - tip <= VALIDITY_MAX_AHEAD_MS).toBe(true);
     }
@@ -496,12 +499,12 @@ describe("epochValidityWindow", () => {
   });
 
   it("trần dưới một slot ⟹ RangeError, không phải EmptyValidityWindowError", () => {
-    expect(() => epochValidityWindow(e * P, "Preprod", 0n, SLOT_LENGTH_MS - 1n)).toThrow(RangeError);
-    expect(() => epochValidityWindow(e * P, "Preprod", 0n, SLOT_LENGTH_MS)).not.toThrow();
+    expect(() => epochValidityWindow(at(e), "Preprod", 0n, SLOT_LENGTH_MS - 1n)).toThrow(RangeError);
+    expect(() => epochValidityWindow(at(e), "Preprod", 0n, SLOT_LENGTH_MS)).not.toThrow();
   });
 
   it("cận trên luôn < (epoch+1)*P — điều validator expect", () => {
-    const w = epochValidityWindow(e * P + 7n, "Preprod");
+    const w = epochValidityWindow(at(e) + 7n, "Preprod");
     expect(BigInt(w.upperMs) < bienTren).toBe(true);
     expect(posixMsToEpoch(slotFloorMs(BigInt(w.lowerMs)), "Preprod")).toBe(e);
   });
@@ -544,7 +547,7 @@ describe("epochValidityWindow", () => {
   });
 
   it("khoá vẫn nằm trong [P, 2P) với reserve=1, ở cả hai cực của epoch", () => {
-    for (const tip of [e * P, e * P + P - 2n * SLOT_LENGTH_MS - 1n]) {
+    for (const tip of [at(e), at(e) + P - 2n * SLOT_LENGTH_MS - 1n]) {
       const w = epochValidityWindow(tip, "Preprod", 1n);
       const doDai = BigInt(w.upperMs) + P - slotFloorMs(BigInt(w.lowerMs));
       expect(doDai >= P).toBe(true);
@@ -552,11 +555,19 @@ describe("epochValidityWindow", () => {
     }
   });
 
-  it("Preview (P=1 ngày) cùng hành vi — hằng slot không phụ thuộc nhịp epoch", () => {
-    const Pv = msPerEpoch("Preview");
-    const cuoiPv = 900n * Pv - SLOT_LENGTH_MS;
-    expect(() => epochValidityWindow(cuoiPv, "Preview")).toThrow(EmptyValidityWindowError);
-    expect(() => epochValidityWindow(cuoiPv - SLOT_LENGTH_MS, "Preview")).not.toThrow();
+  it("Preview ⟹ NÉM WIN-PREVIEW — không có gốc cửa sổ thì không dựng khoảng hiệu lực", () => {
+    // Bản trước ghim Preview cùng hành vi với gốc 0. CONTRACT Window v1.0 §4: Preview không
+    // có `window_origin_ms`, nên mọi phép đổi thời gian → epoch trên Preview phải ném.
+    expect(() => epochValidityWindow(1_790_000_000_000n, "Preview")).toThrow(WindowOriginError);
+    expect(() => epochValidityWindow(1_790_000_000_000n, "Preview")).toThrow(/WIN-PREVIEW/);
+  });
+
+  it("biên lấy theo GỐC — ở mốc k·P (biên của lưới cũ) KHÔNG ném", () => {
+    // Phân biệt bản trừ gốc với bản quên trừ gốc: Preprod O mod P = 345_600_000 ≠ 0, nên
+    // slot cuối trước k·P nằm GIỮA một epoch thật ⟹ không suy biến.
+    const k = (bienTren / P) + 1n;
+    expect(O % P).not.toBe(0n);
+    expect(() => epochValidityWindow(k * P - SLOT_LENGTH_MS, "Preprod")).not.toThrow();
   });
 });
 

@@ -14,7 +14,7 @@ import {
   SCHEDULE_V2_EXPECT, SCHEDULE_V2_ONE_SCHEDULE_HEX, TV_DATUM_V2_FULL, TV_DATUM_V2_GENESIS,
   dropTrailingFields, epochUsage, withField,
 } from "./fixtures/genV2.js";
-import { PREVIEW_TIP_AT_BATCH_EPOCH, PREVIEW_VAULT_DATUM_HEX_V1 } from "./fixtures/preview-e5fd34b1.js";
+import { PREPROD_TIP_AT_BATCH_EPOCH, PREVIEW_VAULT_DATUM_HEX_V1 } from "./fixtures/preview-e5fd34b1.js";
 import { SYNTH_ADDRESS, SYNTH_OWNER, SYNTH_SCRIPT_HASH, synthUtxo } from "./fixtures/synthetic.js";
 
 const FULL_OWNER = { type: "script" as const, hash: "22".repeat(28) };
@@ -184,8 +184,9 @@ describe("datum ĐỜI v1 ⟹ NÉM VAULT_DATUM_V1 (mã riêng), không đệm ô
 describe("thân bài JSON — ô Gen v2.0 đi ra đúng khuôn", () => {
   async function body(hex: string, owner: { type: "key" | "script"; hash: string }, kind: "Instant" | "Schedule") {
     const scopes: VaultScope[] = [{ vaultType: kind, address: SYNTH_ADDRESS, scriptHash: SYNTH_SCRIPT_HASH, source: "vector" }];
-    const svc = new VaultReadService("Preview", scopes, new RecordedChainReader(
-      { [SYNTH_ADDRESS]: [synthUtxo({ txHash: "6b".repeat(32), datumHex: hex })] }, PREVIEW_TIP_AT_BATCH_EPOCH,
+    // Preprod: Preview chưa có gốc cửa sổ (`WIN-PREVIEW`) nên dịch vụ trên Preview ném.
+    const svc = new VaultReadService("Preprod", scopes, new RecordedChainReader(
+      { [SYNTH_ADDRESS]: [synthUtxo({ txHash: "6b".repeat(32), datumHex: hex })] }, PREPROD_TIP_AT_BATCH_EPOCH,
     ));
     const out = await svc.read({ owner, atEpoch: 20n });
     const b = JSON.parse(JSON.stringify(toJsonBody(out))) as { vaults: Record<string, unknown>[] };

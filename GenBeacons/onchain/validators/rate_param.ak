@@ -20,6 +20,7 @@ use genbeacons/constants
 use genbeacons/rate
 use genbeacons/types.{RateParam}
 use genbeacons/util
+use genbeacons/window_origin_fixtures
 
 /// Apply-param (theo thứ tự):
 ///   rate_key     : khoá đăng ρ, 1-of-1 (`INV-RATE-KEY-SINGLE`).
@@ -27,11 +28,15 @@ use genbeacons/util
 ///                  trị ở `CC-GEN-RATE-VALUE` (SPEC §13).
 ///   ms_per_epoch : POSIX ms mỗi epoch theo mạng.
 ///   seed         : OutputReference neo policy NFT one-shot (policy = hash script này).
+///   window_origin_ms : gốc lưới epoch theo mạng (POSIX ms), apply-param CUỐI —
+///                  epoch = (t − window_origin_ms) / ms_per_epoch (WIN-ORIGIN-1,
+///                  LAMP/Specs/Window/CONTRACT.md v1.0).
 validator rate_param(
   rate_key: VerificationKeyHash,
   rho_max_q: Int,
   ms_per_epoch: Int,
   seed: OutputReference,
+  window_origin_ms: Int,
 ) {
   // Genesis: đúc NFT + tạo UTxO beacon đầu tiên. `prev_rho_q == 0` ⟹ epoch đăng đầu
   // tiên có ρ hiệu lực = 0 (fail-closed: không két nào sinh trước epoch hiệu lực).
@@ -45,7 +50,7 @@ validator rate_param(
     and {
       rate.rho_in_range(g.rho_q, rho_max_q),
       g.prev_rho_q == 0,
-      g.effective_epoch == util.get_epoch(tx, ms_per_epoch) + 1,
+      g.effective_epoch == util.get_epoch(tx, ms_per_epoch, window_origin_ms) + 1,
     }
   }
 
@@ -61,7 +66,7 @@ validator rate_param(
     let (_, next) = util.continuing_pair(own_ref, tx, constants.rate_nft_name)
     expect InlineDatum(d) = next.datum
     expect d_out: RateParam = d
-    let now = util.get_epoch(tx, ms_per_epoch)
+    let now = util.get_epoch(tx, ms_per_epoch, window_origin_ms)
     and {
       rate.rho_in_range(d_out.rho_q, rho_max_q),
       // ρ đang hiệu lực NGAY LÚC đăng — không phải `d_in.rho_q`. Đăng lần hai trong cùng
@@ -139,11 +144,17 @@ fn rp_tx(d_in: RateParam, d_out: RateParam, sigs, now: Int) -> Transaction {
 }
 
 fn rp_spend(d_in: RateParam, tx: Transaction) -> Bool {
+  rp_spend_at(0, d_in, tx)
+}
+
+/// Như `rp_spend` nhưng validator nhận gốc `origin`.
+fn rp_spend_at(origin: Int, d_in: RateParam, tx: Transaction) -> Bool {
   rate_param.spend(
     rp_key,
     rp_max,
     rp_mspe,
     rp_seed,
+    origin,
     Some(d_in),
     Void,
     util.mk_ref(#"00", 0),
@@ -286,7 +297,7 @@ fn rp_genesis_tx(
 }
 
 fn rp_mint(tx: Transaction) -> Bool {
-  rate_param.mint(rp_key, rp_max, rp_mspe, rp_seed, Void, rp_sh, tx)
+  rate_param.mint(rp_key, rp_max, rp_mspe, rp_seed, 0, Void, rp_sh, tx)
 }
 
 const rp_genesis: RateParam =
@@ -335,4 +346,22 @@ test rate_genesis_effective_same_epoch_fail() fail {
       7,
     ),
   )
+}
+
+// ── GỐC CỬA SỔ (WIN-ORIGIN-1) ───────────────────────────────────────────────────
+//    Thời gian thật = gốc Mainnet + epoch 7 ⟹ now = 7 ⟹ effective_epoch 8. Bỏ phép trừ
+//    gốc ⟹ now ≈ 17_439 ⟹ ca dương đỏ.
+
+test rate_update_origin_mainnet_happy() {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  let out =
+    RateParam { rho_q: 3_500_000_000, prev_rho_q: 3_000_000_000, effective_epoch: 8 }
+  rp_spend_at(o, rp_in, window_origin_fixtures.shift_tx(rp_tx(rp_in, out, [rp_key], 7), o))
+}
+
+test rate_update_origin_forgotten_fail() fail {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  let out =
+    RateParam { rho_q: 3_500_000_000, prev_rho_q: 3_000_000_000, effective_epoch: 8 }
+  rp_spend_at(0, rp_in, window_origin_fixtures.shift_tx(rp_tx(rp_in, out, [rp_key], 7), o))
 }

@@ -11,6 +11,7 @@
 //      `applyScheduleScripts`; hằng gói (c) == `constants.ak`.
 
 import { describe, it, expect } from "vitest";
+import { windowOriginMs } from "@magiclamp/protocol-utils";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -206,20 +207,21 @@ function validatorParamNames(src: string, name: string): string[] {
     .filter((x): x is string => x !== undefined);
 }
 
-describe("Apply-param ScheduleGen v2.0 — `commit` 9 + két 6, đúng thứ tự chữ ký", () => {
+describe("Apply-param ScheduleGen v2.0 — `commit` 10 + két 7, đúng thứ tự chữ ký", () => {
   const P = {
     lampPolicyId: "aa".repeat(28), lampAssetName: "744c414d50", shardPolicyId: "bb".repeat(28),
     msPerEpoch: 432_000_000n, gbBeaconNftPolicy: "67".repeat(28), gbBeaconScriptHash: "68".repeat(28),
     gbShardPolicyId: "66".repeat(28), rateNftPolicy: "69".repeat(28), rateScriptHash: "6a".repeat(28),
+    windowOriginMs: windowOriginMs("Preprod"),
   };
   const CH = "c0".repeat(28);
   const SRC = () => read("onchain/validators/vault.ak");
 
-  it("tên == chữ ký `validator commit(` (9) và `validator vault(` (6) trong vault.ak", () => {
+  it("tên == chữ ký `validator commit(` (10) và `validator vault(` (7) trong vault.ak", () => {
     const commit = validatorParamNames(SRC(), "commit");
     const vault  = validatorParamNames(SRC(), "vault");
-    expect(commit).toHaveLength(9);
-    expect(vault).toHaveLength(6);
+    expect(commit).toHaveLength(10);
+    expect(vault).toHaveLength(7);
     expect([...SCHEDULE_COMMIT_PARAM_NAMES]).toEqual(commit);
     expect([...SCHEDULE_VAULT_PARAM_NAMES]).toEqual(vault);
   });
@@ -228,14 +230,14 @@ describe("Apply-param ScheduleGen v2.0 — `commit` 9 + két 6, đúng thứ t�
     expect(Object.keys(scheduleCommitParamMap(P))).toEqual([...SCHEDULE_COMMIT_PARAM_NAMES]);
     expect(scheduleCommitParamList(P)).toEqual([
       P.lampPolicyId, P.lampAssetName, P.shardPolicyId, P.msPerEpoch, P.gbBeaconNftPolicy,
-      P.gbBeaconScriptHash, P.gbShardPolicyId, P.rateNftPolicy, P.rateScriptHash,
+      P.gbBeaconScriptHash, P.gbShardPolicyId, P.rateNftPolicy, P.rateScriptHash, P.windowOriginMs,
     ]);
   });
 
-  it("bản đồ + danh sách giữ đúng thứ tự và giá trị — két (hash commit ở CUỐI)", () => {
+  it("bản đồ + danh sách giữ đúng thứ tự và giá trị — két (hash commit rồi gốc cửa sổ ở CUỐI)", () => {
     expect(Object.keys(scheduleVaultParamMap(P, CH))).toEqual([...SCHEDULE_VAULT_PARAM_NAMES]);
     expect(scheduleVaultParamList(P, CH)).toEqual([
-      P.lampPolicyId, P.lampAssetName, P.shardPolicyId, P.msPerEpoch, P.gbShardPolicyId, CH,
+      P.lampPolicyId, P.lampAssetName, P.shardPolicyId, P.msPerEpoch, P.gbShardPolicyId, CH, P.windowOriginMs,
     ]);
   });
 
@@ -244,6 +246,7 @@ describe("Apply-param ScheduleGen v2.0 — `commit` 9 + két 6, đúng thứ t�
     expect(() => scheduleCommitParamMap({ ...P, rateScriptHash: "zz".repeat(28) })).toThrow(/hex/);
     expect(() => scheduleVaultParamMap({ ...P, msPerEpoch: 0n }, CH)).toThrow(/ms_per_epoch/);
     expect(() => scheduleVaultParamMap(P, "c0".repeat(27))).toThrow(/commit_script_hash/);
+    expect(() => scheduleVaultParamMap({ ...P, windowOriginMs: -1n }, CH)).toThrow(/window_origin_ms/);
     expect(() => scheduleVaultParamMap(P, CH)).not.toThrow();
   });
 

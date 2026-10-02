@@ -70,6 +70,7 @@ async function main(): Promise<void> {
   const greenback = greenbackBeaconScript(loadBlueprint(), NETWORK, {
     writer: cred.hash,
     msPerEpoch: PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs:  PROTOCOL.WINDOW_ORIGIN_MS,
     seed: parseOutRef(seedRaw, GREENBACK_SEED_KEY),
   });
   if (greenback.hash !== bookHash) {

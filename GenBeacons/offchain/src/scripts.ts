@@ -11,7 +11,7 @@
 //
 // THỨ TỰ DEPLOY (đầu tệp `validators/vault_registry.ak`), không có vòng hash:
 //   1. `vault_registry(seed)`                      ⟹ hash sổ (= policy "VRG"). CHƯA đúc.
-//   2. `greenback_beacon(writer, ms, seed)`        ⟹ hash beacon GB (= policy "GBB").
+//   2. `greenback_beacon(writer, ms, seed, origin)` ⟹ hash beacon GB (= policy "GBB").
 //   3. `gb_shard(gbPolicy, gbHash, hash sổ, cap, seed)` ⟹ hash shard (= policy "GBS"‖id).
 //   4. két InstantGen / ScheduleGen apply hash shard ⟹ hash két (gói khác).
 //   5. đúc sổ: tiêu seed sổ, datum `VaultRegistry { [hash két] }` (build.ts ▸ `mintVaultRegistryTx`).
@@ -106,7 +106,7 @@ export function blueprintFromJson(parsed: unknown, path = "GenBeacons/onchain/pl
  */
 export const VALIDATOR_PARAMS = {
   vault_registry: ["seed"],
-  greenback_beacon: ["greenback_beacon_writer", "ms_per_epoch", "seed"],
+  greenback_beacon: ["greenback_beacon_writer", "ms_per_epoch", "seed", "window_origin_ms"],
   gb_shard: [
     "gb_beacon_nft_policy",
     "gb_beacon_script_hash",
@@ -114,7 +114,7 @@ export const VALIDATOR_PARAMS = {
     "gb_shard_cap_nanogic",
     "seed",
   ],
-  rate_param: ["rate_key", "rho_max_q", "ms_per_epoch", "seed"],
+  rate_param: ["rate_key", "rho_max_q", "ms_per_epoch", "seed", "window_origin_ms"],
 } as const;
 
 export type ValidatorName = keyof typeof VALIDATOR_PARAMS;
@@ -240,6 +240,8 @@ export interface GreenBackBeaconScript extends AppliedScript {
   writer: string;
   msPerEpoch: bigint;
   seed: OutRef;
+  /** Gốc cửa sổ (apply-param CUỐI) — `@magiclamp/protocol-utils` ▸ `windowOriginMs(network)`. */
+  windowOriginMs: bigint;
   /** Unit NFT "GBB". */
   nftUnit: string;
 }
@@ -259,6 +261,8 @@ export interface RateParamScript extends AppliedScript {
   rhoMaxQ: bigint;
   msPerEpoch: bigint;
   seed: OutRef;
+  /** Gốc cửa sổ (apply-param CUỐI) — `@magiclamp/protocol-utils` ▸ `windowOriginMs(network)`. */
+  windowOriginMs: bigint;
   /** Unit NFT "RHO". */
   nftUnit: string;
 }
@@ -269,11 +273,11 @@ export function vaultRegistryScript(bp: Blueprint, network: Network, seed: OutRe
   return { ...a, seed, nftUnit: toUnit(a.hash, VAULT_REGISTRY_NFT_NAME) };
 }
 
-/** Bước 2: `greenback_beacon(greenback_beacon_writer, ms_per_epoch, seed)`. */
+/** Bước 2: `greenback_beacon(greenback_beacon_writer, ms_per_epoch, seed, window_origin_ms)`. */
 export function greenbackBeaconScript(
   bp: Blueprint,
   network: Network,
-  p: { writer: string; msPerEpoch: bigint; seed: OutRef },
+  p: { writer: string; msPerEpoch: bigint; seed: OutRef; windowOriginMs: bigint },
 ): GreenBackBeaconScript {
   const a = applied(
     network,
@@ -281,6 +285,7 @@ export function greenbackBeaconScript(
       greenback_beacon_writer: hash28("greenback_beacon_writer", p.writer),
       ms_per_epoch: positive("ms_per_epoch", p.msPerEpoch),
       seed: outRefData(p.seed),
+      window_origin_ms: nonNegative("window_origin_ms", p.windowOriginMs),
     }),
   );
   return { ...a, ...p, nftUnit: toUnit(a.hash, GREENBACK_NFT_NAME) };
@@ -325,11 +330,11 @@ export function gbShardScript(
   };
 }
 
-/** `rate_param(rate_key, rho_max_q, ms_per_epoch, seed)`. */
+/** `rate_param(rate_key, rho_max_q, ms_per_epoch, seed, window_origin_ms)`. */
 export function rateParamScript(
   bp: Blueprint,
   network: Network,
-  p: { rateKey: string; rhoMaxQ: bigint; msPerEpoch: bigint; seed: OutRef },
+  p: { rateKey: string; rhoMaxQ: bigint; msPerEpoch: bigint; seed: OutRef; windowOriginMs: bigint },
 ): RateParamScript {
   const a = applied(
     network,
@@ -338,6 +343,7 @@ export function rateParamScript(
       rho_max_q: nonNegative("rho_max_q", p.rhoMaxQ),
       ms_per_epoch: positive("ms_per_epoch", p.msPerEpoch),
       seed: outRefData(p.seed),
+      window_origin_ms: nonNegative("window_origin_ms", p.windowOriginMs),
     }),
   );
   return { ...a, ...p, nftUnit: toUnit(a.hash, RATE_NFT_NAME) };
@@ -353,6 +359,8 @@ export interface GenBeaconsScripts {
 
 export interface GenBeaconsParams {
   msPerEpoch: bigint;
+  /** Gốc cửa sổ của mạng — `@magiclamp/protocol-utils` ▸ `windowOriginMs(network)`. */
+  windowOriginMs: bigint;
   vaultRegistrySeed: OutRef;
   greenbackWriter: string;
   greenbackSeed: OutRef;
@@ -380,6 +388,7 @@ export function deriveGenBeaconsScripts(
     writer: p.greenbackWriter,
     msPerEpoch: p.msPerEpoch,
     seed: p.greenbackSeed,
+    windowOriginMs: p.windowOriginMs,
   });
   const gbShard = gbShardScript(bp, network, {
     greenback,
@@ -392,6 +401,7 @@ export function deriveGenBeaconsScripts(
     rhoMaxQ: p.rhoMaxQ,
     msPerEpoch: p.msPerEpoch,
     seed: p.rateSeed,
+    windowOriginMs: p.windowOriginMs,
   });
   return { vaultRegistry, greenback, gbShard, rate };
 }

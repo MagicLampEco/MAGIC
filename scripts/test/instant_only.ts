@@ -49,7 +49,7 @@ import {
 } from "../../InstantGen/offchain/src/types.js";
 import { shardNftName, vaultShardId } from "../../InstantGen/offchain/src/greenback.js";
 import type { InstantVaultParams } from "../../InstantGen/offchain/src/vaultScript.js";
-import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { ownerRefOf, sameOwner, windowOf } from "@magiclamp/protocol-utils";
 import {
   fetchRefScript, parseInstantM, pickByNft, readGenV2ChainRefs, readGenV2E2eBook,
   requireOutRefKey, resolveInstantM, resolveWakemeVaultUtxo,
@@ -103,6 +103,7 @@ async function main() {
     ...gen.beacons,
     wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,    // #7 — két Wakeme; mạng chưa có két ⟹ ném
     msPerEpoch:      PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs:      PROTOCOL.WINDOW_ORIGIN_MS,
   };
   const blueprint = await loadBlueprint("InstantGen");
   const { script: vaultScript, hash: vaultScriptHash } = appliedScript(
@@ -160,7 +161,7 @@ async function main() {
 
   // Tip POSIX ms.
   const tip = await fetchTip();
-  const epoch = tip.posixMs / PROTOCOL.MS_PER_EPOCH;
+  const epoch = windowOf(tip.posixMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
   console.log(`Tip POSIX ms:       ${tip.posixMs}`);
   console.log(`Current epoch:      ${epoch}`);
   const refresh = vaultDatum.cap_epoch < epoch;

@@ -685,7 +685,8 @@ function assertShardsPresent(shardUtxos: UTxO[], address: string): void {
 }
 
 /**
- * Epoch GIAO THỨC (`posix_ms / ms_per_epoch`, KHÔNG trừ genesis).
+ * Epoch GIAO THỨC (`(posix_ms − window_origin_ms) / ms_per_epoch`, chia sàn — LAMP
+ * `Specs/Window/CONTRACT.md` v1.0). Preview chưa có gốc ⟹ NÉM `WIN-PREVIEW`.
  *
  * 🪦 Bản trước hiện thực hàm này bằng một hằng chép cứng `86_400_000n` cho MỌI mạng,
  * kèm chú thích khai rằng "Preview/Preprod và Mainnet dùng chung hằng này". Câu đó

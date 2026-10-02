@@ -24,6 +24,7 @@
 //   shard_nft(genesis_ref) → shard_policy_id → vault(…) → vault_script_hash → shard(…)
 // Câu cũ ở đây ("the shard validator does NOT take the vault hash") nay SAI.
 
+import { windowOf } from "@magiclamp/protocol-utils";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -121,6 +122,7 @@ async function main() {
     lampAssetName: ASSET_NAMES.lamp,
     shardPolicyId: shardNftPolicyId,
     msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
     ...beacons,
   });
   const shardScriptAddress = credentialToAddress(NETWORK, scriptHashToCredential(shardScriptHash));
@@ -138,7 +140,7 @@ async function main() {
   });
   const tip = await tipRes.json() as { slot: number; time: number };
   const tipPosixMs   = BigInt(tip.time) * 1000n;
-  const currentEpoch = tipPosixMs / PROTOCOL.MS_PER_EPOCH;
+  const currentEpoch = windowOf(tipPosixMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
 
   console.log(`Current epoch:        ${currentEpoch}`);
   console.log(`Deploying shards 0-15...\n`);

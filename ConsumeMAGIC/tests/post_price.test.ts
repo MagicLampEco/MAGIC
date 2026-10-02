@@ -11,6 +11,7 @@ import { buildPostPriceTx, postPriceRedeemerCbor } from "../offchain/src/postPri
 import { PriceParamRedeemerSchema, encodePriceParam } from "../offchain/src/types.js";
 import type { PriceParamT } from "../offchain/src/types.js";
 import { M_MIN_Q, M_MAX_Q, Q } from "@magiclamp/consumemagic-pricing";
+import { epochStartMs } from "@magiclamp/protocol-utils";
 
 // ── 1. Hợp đồng nhị phân của redeemer ────────────────────────────────────────
 
@@ -34,7 +35,9 @@ describe("PostPrice redeemer", () => {
 // ── 2. Cổng fail-closed ──────────────────────────────────────────────────────
 
 const NFT = "aa".repeat(28) + "5052494345"; // policy(28B) + "PRICE"
-const MSPE_PREPROD = 432_000_000n;  // 5 ngày — nhịp Preprod, chốt 2026-09-20
+// Mốc ĐẦU epoch giao thức `e` trên Preprod = window_origin_ms + e × ms_per_epoch
+// (LAMP/Specs/Window/CONTRACT.md v1.0) — lấy từ protocol-utils, không gõ số.
+const startPreprod = (e: bigint): bigint => epochStartMs(e, "Preprod");
 
 // CC-LOAD-COUNT-UNIT (2026-09-25): `demand_mult` nay là trường THỨ BA của MỖI DÒNG.
 const oldDatum: PriceParamT = {
@@ -68,7 +71,7 @@ function params(over: Record<string, unknown> = {}) {
     committeeSignerKeyHashes: ["c1".repeat(14), "c2".repeat(14)],
     threshold: 2,
     network: "Preprod",
-    tipPosixMs: 101n * MSPE_PREPROD + 1_000n, // epoch hiện tại 101 > epoch cũ 100
+    tipPosixMs: startPreprod(101n) + 1_000n, // epoch hiện tại 101 > epoch cũ 100
     ...over,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -100,7 +103,7 @@ describe("cổng buildPostPriceTx", () => {
 
   it("POSTPRICE-005 epoch không tăng (post lại trong cùng epoch)", async () => {
     await expect(
-      buildPostPriceTx(params({ tipPosixMs: 100n * MSPE_PREPROD + 1_000n })),
+      buildPostPriceTx(params({ tipPosixMs: startPreprod(100n) + 1_000n })),
     ).rejects.toThrow(/POSTPRICE-005/);
   });
 

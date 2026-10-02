@@ -302,6 +302,7 @@ async function main() {
       carpPolicyId:  carp.policyId,
       carpAssetName: carp.assetName,
       msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+      windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
     }),
   );
   const fundAddress = credentialToAddress(NETWORK, scriptHashToCredential(fundHash));
@@ -313,6 +314,7 @@ async function main() {
       carpAssetName: carp.assetName,
       paidFundHash:  fundHash,          // ← hash của bản ĐÃ apply, không phải bản thô
       msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+      windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
     }),
   );
   const vaultAddress = credentialToAddress(NETWORK, scriptHashToCredential(vaultHash));

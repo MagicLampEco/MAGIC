@@ -18,7 +18,8 @@ import { VaultReadService, toJsonBody } from "../src/service.js";
 import type { VaultScope } from "../src/config.js";
 
 import {
-  BATCH_EPOCH, PREVIEW_OWNER_PKH, PREVIEW_TIP_AT_BATCH_EPOCH, PREVIEW_TIP_AT_RECORD,
+  BATCH_EPOCH, PREVIEW_OWNER_PKH, PREVIEW_TIP_AT_BATCH_EPOCH,
+  PREPROD_TIP_AT_BATCH_EPOCH, PREPROD_TIP_AT_RECORD_EPOCH,
   PREVIEW_VAULT_ADDRESS, PREVIEW_VAULT_SCRIPT_HASH, PREVIEW_VAULT_UTXO,
   TIP_EPOCH_AT_RECORD,
 } from "./fixtures/preview-e5fd34b1.js";
@@ -33,17 +34,21 @@ const SCOPES: VaultScope[] = [{
 
 const TOKEN = "thebai-chi-de-kiem-thu-khong-phai-bi-mat";
 
-function depsWith(reader: ConstructorParameters<typeof VaultReadService>[2], token = TOKEN) {
-  const service = new VaultReadService("Preview", SCOPES, reader);
-  return { service, scopes: SCOPES, network: "Preview", chainLabel: reader.label, token };
+// Preview chưa có gốc cửa sổ (`WIN-PREVIEW`) ⟹ dữ liệu ghi từ Preview được hỏi trên Preprod,
+// đỉnh chuỗi đặt vào CÙNG chỉ số epoch tính từ gốc Preprod (xem cuối `preview-e5fd34b1.ts`).
+const NET = "Preprod" as const;
+
+function depsWith(reader: ConstructorParameters<typeof VaultReadService>[2], token = TOKEN, net: "Preview" | "Preprod" = NET) {
+  const service = new VaultReadService(net, SCOPES, reader);
+  return { service, scopes: SCOPES, network: net, chainLabel: reader.label, token };
 }
 
-const okReader = (tipAt = PREVIEW_TIP_AT_BATCH_EPOCH) => new RecordedChainReader(
+const okReader = (tipAt = PREPROD_TIP_AT_BATCH_EPOCH) => new RecordedChainReader(
   { [PREVIEW_VAULT_ADDRESS]: [PREVIEW_VAULT_UTXO] }, tipAt,
 );
 
 /** Không có UTxO nào ở địa chỉ vault — chuỗi TRẢ LỜI ĐƯỢC, và câu trả lời là "không có". */
-const emptyReader = () => new RecordedChainReader({}, PREVIEW_TIP_AT_BATCH_EPOCH);
+const emptyReader = () => new RecordedChainReader({}, PREPROD_TIP_AT_BATCH_EPOCH);
 
 const auth = { authorization: `Bearer ${TOKEN}` };
 const get = (path: string, deps: ReturnType<typeof depsWith>, headers: Record<string, string> = auth) =>
@@ -113,7 +118,7 @@ describe("BA CA, BA MÃ — phân biệt được, không gộp", () => {
 
 describe("epoch — hai đồng hồ, và mặt tiền luôn khai nó đọc đồng hồ nào", () => {
   it("đỉnh chuỗi thật (2026-09-11) ⇒ epoch giao thức 20707, available 0, accrued 64 000 000", async () => {
-    const res = await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`, depsWith(okReader(PREVIEW_TIP_AT_RECORD)));
+    const res = await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`, depsWith(okReader(PREPROD_TIP_AT_RECORD_EPOCH)));
     expect(res.status).toBe(200);
     expect(res.body.at_epoch).toBe(Number(TIP_EPOCH_AT_RECORD));
     expect(res.body.at_epoch).toBe(20707);
@@ -124,21 +129,32 @@ describe("epoch — hai đồng hồ, và mặt tiền luôn khai nó đọc đ�
     expect(t.expired_nanogic).toBe("64000000");
   });
 
-  it("epoch giao thức (20707) KHÔNG phải epoch Cardano (1417 lúc đo) — số khác nhau một trời một vực", async () => {
-    // Đo 2026-09-11 bằng Blockfrost `/epochs/latest` trên Preview: epoch Cardano = 1417.
-    // Cùng đỉnh chuỗi đó, epoch GIAO THỨC = 20707. Gộp hai đồng hồ là lỗi lớp biên,
-    // và `ProtocolUtils/src/index.ts` §"HAI ĐỒNG HỒ" đã trả giá một lần cho nó rồi.
-    const res = await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`, depsWith(okReader(PREVIEW_TIP_AT_RECORD)));
-    expect(res.body.at_epoch).toBe(20707);
-    expect(res.body.at_epoch).not.toBe(1417);
+  it("Preprod: epoch giao thức tính TỪ GỐC cửa sổ ⟹ BẰNG epoch Cardano (vector CONTRACT v1.0: 1 790 553 600 000 → 316)", async () => {
+    // Bản trước của bài này ghim điều ngược lại — "epoch giao thức 20707 ≠ epoch Cardano 1417"
+    // trên Preview — vì phép chia khi đó KHÔNG trừ gốc. Gốc cửa sổ của Preprod là đầu epoch
+    // Cardano, nên hai đồng hồ nay trùng nhau; cặp biên ±1 ms ghim phép chia sàn sau khi trừ gốc.
+    const at = (ms: bigint) => okReader({ blockHeight: 1, blockHash: "00", blockTimePosixMs: ms });
+    const hit  = await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`, depsWith(at(1_790_553_600_000n)));
+    const edge = await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`, depsWith(at(1_790_553_599_999n)));
+    expect(hit.body.at_epoch).toBe(316);
+    expect(edge.body.at_epoch).toBe(315);
     // Thân bài in cả đỉnh chuỗi để bên gọi tự đối chiếu được, không phải tin lời.
-    expect((res.body.chain_tip as Record<string, unknown>).block_time_posix_ms).toBe("1789100703000");
+    expect((hit.body.chain_tip as Record<string, unknown>).block_time_posix_ms).toBe("1790553600000");
+  });
+
+  it("Preview: chưa có gốc cửa sổ ⟹ 501 WINDOW_ORIGIN_UNAVAILABLE (WIN-PREVIEW), KHÔNG đoán một epoch", async () => {
+    const res = await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`,
+      depsWith(okReader(PREVIEW_TIP_AT_BATCH_EPOCH), TOKEN, "Preview"));
+    expect(res.status).toBe(501);
+    const e = res.body.error as Record<string, unknown>;
+    expect(e.code).toBe("WINDOW_ORIGIN_UNAVAILABLE");
+    expect((e.details as Record<string, unknown>).cause_code).toBe("WIN-PREVIEW");
   });
 
   it("?at_epoch= ép được, và mặt tiền khai rõ nguồn là người gọi", async () => {
     const res = await get(
       `/vault/by-owner/${PREVIEW_OWNER_PKH}?at_epoch=${BATCH_EPOCH}`,
-      depsWith(okReader(PREVIEW_TIP_AT_RECORD)),
+      depsWith(okReader(PREPROD_TIP_AT_RECORD_EPOCH)),
     );
     expect(res.body.at_epoch).toBe(20700);
     expect(res.body.at_epoch_source).toBe("caller");
@@ -152,11 +168,11 @@ describe("epoch — hai đồng hồ, và mặt tiền luôn khai nó đọc đ�
       { blockHeight: 1, blockHash: "00", blockTimePosixMs: 1_789_100_703n },   // GIÂY, quên ×1000
     );
     const res = await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`, depsWith(badTip));
-    // Ở tầng RecordedChainReader không có cổng tỉnh táo, nên đây kiểm hệ quả: epoch sai
-    // bét nhè chứ không phải 20706 — bằng chứng rằng nhân nhầm hệ số KHÔNG im lặng.
-    expect(res.status).toBe(200);
-    expect(res.body.at_epoch).toBe(20);
-    expect(res.body.at_epoch).not.toBe(20706);
+    // Ở tầng RecordedChainReader không có cổng tỉnh táo. Từ gốc cửa sổ, mốc tính nhầm bằng
+    // GIÂY rơi TRƯỚC gốc ⟹ epoch âm ⟹ dịch vụ báo đúng chỗ hỏng là đỉnh chuỗi (502), không
+    // trả 200 với một epoch sai, cũng không đổ thành lỗi `at_epoch` của người gọi.
+    expect(res.status).toBe(502);
+    expect((res.body.error as Record<string, unknown>).code).toBe("CHAIN_UNAVAILABLE");
   });
 });
 
@@ -184,8 +200,8 @@ describe("số nguyên đi ra dưới dạng CHUỖI, không phải số JSON", 
       datumHex: synthDatumHex(SYNTH_OWNER, [{ id: "f0".repeat(16), createdEpoch: PIN_EPOCH, amountNanogic: big }]),
     });
     const scopes: VaultScope[] = [{ vaultType: "Schedule", address: "addr_test1_synth", scriptHash: SYNTH_SCRIPT_HASH, source: "mẫu" }];
-    const svc = new VaultReadService("Preview", scopes,
-      new RecordedChainReader({ addr_test1_synth: [utxo] }, PREVIEW_TIP_AT_BATCH_EPOCH));
+    const svc = new VaultReadService(NET, scopes,
+      new RecordedChainReader({ addr_test1_synth: [utxo] }, PREPROD_TIP_AT_BATCH_EPOCH));
     const out = await svc.read({ ownerPkh: SYNTH_OWNER, atEpoch: PIN_EPOCH });
     const body = toJsonBody(out);
     const roundTripped = JSON.parse(JSON.stringify(body)) as Record<string, Record<string, string>>;
@@ -253,11 +269,11 @@ describe("mặt tiền ĐỌC-THÔI + ranh giới uỷ quyền", () => {
       vaultIdAssetNameSeed: "9e",
     });
     const scopes: VaultScope[] = [{ vaultType: "Schedule", address: "addr_test1_synth", scriptHash: SYNTH_SCRIPT_HASH, source: "mẫu" }];
-    const svc = new VaultReadService("Preview", scopes,
-      new RecordedChainReader({ addr_test1_synth: [before, after] }, PREVIEW_TIP_AT_BATCH_EPOCH));
+    const svc = new VaultReadService(NET, scopes,
+      new RecordedChainReader({ addr_test1_synth: [before, after] }, PREPROD_TIP_AT_BATCH_EPOCH));
     const res = await handle(
       { method: "GET", url: `/vault/by-owner/${SYNTH_OWNER}?at_epoch=${PIN_EPOCH}`, headers: auth },
-      { service: svc, scopes, network: "Preview", chainLabel: "recorded", token: TOKEN },
+      { service: svc, scopes, network: NET, chainLabel: "recorded", token: TOKEN },
     );
     expect(res.status).toBe(409);
     expect((res.body.error as Record<string, unknown>).code).toBe("VAULT_IDENTITY_DUPLICATE");

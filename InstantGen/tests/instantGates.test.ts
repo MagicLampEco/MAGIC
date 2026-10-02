@@ -15,11 +15,11 @@ import { amountByLamp } from "../offchain/src/genFormula.js";
 import { computeCapPp, computeCapLent } from "../offchain/src/math.js";
 import { INSTANT_SCALE_HORIZON, RHO_MAX_Q, MAX_BATCHES_PER_VAULT } from "../offchain/src/constants.js";
 import {
-  E, P, CAP_NANOGIC, GB_SEQ, SHARD_ID, WAKEME_COMMIT, LAMP_BALANCE,
+  E, P, at, CAP_NANOGIC, GB_SEQ, SHARD_ID, WAKEME_COMMIT, LAMP_BALANCE,
   makeCtx, makeVault, makeRate, instantBatch, zeroWindow,
 } from "./instantFixtures.js";
 
-const U = E * P + 1_000n;   // cận trên validity mà script thấy
+const U = at(E) + 1_000n;   // cận trên validity mà script thấy
 
 function gen(ctx: InstantGenContext, m: bigint, upper = U) {
   return computeInstantGenOutputs({ ...ctx, m, validityUpperMs: upper, msPerEpoch: P });

@@ -71,6 +71,7 @@ use cardano/transaction.{
 }
 
 use magiclamp/protocol/owner_auth.{owner_authorized}
+use magiclamp/protocol/window_origin_fixtures
 use magiclamp/protocol/types.{
   BurnBatch, FundClaim, FundLock, FundSettle, MagicBatch, MintVaultId,
   PaidFundDatum, PaidFundRedeemer, PrepaidCredit, PrepaidDraw, PrepaidLock,
@@ -97,6 +98,8 @@ const rd_settle_line: Int = 6  // quyết toán một dòng hạn-mức (thêm 2
 // ══════════════════════════════════════════════════════════════
 // `ms_per_epoch`: Mainnet 432_000_000 · Preprod 432_000_000 · Preview 86_400_000.
 // (Preprod đổi 86_400_000 → 432_000_000 ngày 2026-09-20 để trùng nhịp mạng thật.)
+// `window_origin_ms` (apply-param CUỐI của cả `prepaid_vault` lẫn `paid_fund`): gốc lưới
+// cửa sổ theo mạng, LAMP `Specs/Window/CONTRACT.md` v1.0. Epoch = (t − gốc) / ms_per_epoch.
 //
 // INV-VAULT-IDENTITY (BOUNDARIES.md §2) — vì sao validator này vừa là policy đúc
 // vừa là script tiêu:
@@ -124,6 +127,7 @@ validator prepaid_vault(
   carp_asset_name : ByteArray,
   paid_fund_hash  : ByteArray,
   ms_per_epoch    : Int,
+  window_origin_ms : Int,
 ) {
   // ── mint: policy NFT định danh vault (policy_id == script hash này) ──────
   mint(redeemer: PrepaidVaultIdRedeemer, policy_id: PolicyId, tx: Transaction) {
@@ -138,7 +142,7 @@ validator prepaid_vault(
     tx        : Transaction,
   ) {
     expect Some(datum) = datum_opt
-    let current_epoch = get_epoch(tx, ms_per_epoch)
+    let current_epoch = get_epoch(tx, ms_per_epoch, window_origin_ms)
     let vault_addr = own_addr(own_ref, tx.inputs)
 
     // C-PP-10: đúng một vault input tại địa chỉ này
@@ -217,6 +221,7 @@ validator paid_fund(
   carp_policy_id  : PolicyId,
   carp_asset_name : ByteArray,
   ms_per_epoch    : Int,
+  window_origin_ms : Int,
 ) {
   // ── mint: policy NFT định danh quỹ (policy_id == script hash này) ────────
   mint(_redeemer: Data, policy_id: PolicyId, tx: Transaction) {
@@ -230,7 +235,7 @@ validator paid_fund(
     tx        : Transaction,
   ) {
     expect Some(fund_in) = datum_opt
-    let current_epoch = get_epoch(tx, ms_per_epoch)
+    let current_epoch = get_epoch(tx, ms_per_epoch, window_origin_ms)
     let fund_addr = own_addr(own_ref, tx.inputs)
 
     // Policy NFT quỹ == script hash của chính validator này. KHÔNG còn là
@@ -1398,11 +1403,13 @@ fn validate_mint_fund_nft(policy_id: PolicyId, tx: Transaction) -> Bool {
 // SEC-02: đọc mỗi lower_bound cho phép kẻ tấn công đặt lower = đầu epoch E với
 // upper mở, được đưa vào chuỗi ở epoch E+k, mà validator vẫn tin current_epoch
 // == E. Ép CẢ HAI biên Finite và cùng một epoch → current_epoch không nhập nhằng.
-fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+// Gốc lưới cửa sổ (LAMP `Specs/Window/CONTRACT.md` v1.0, WIN-ORIGIN-1): cả hai biên trừ
+// `window_origin_ms` trước khi chia.
+fn get_epoch(tx: Transaction, ms_per_epoch: Int, window_origin_ms: Int) -> Int {
   expect Some(lower_ms) = tx.validity_range.lower_bound.bound_type |> get_finite
   expect Some(upper_ms) = tx.validity_range.upper_bound.bound_type |> get_finite
-  let e_lo = lower_ms / ms_per_epoch
-  let e_hi = upper_ms / ms_per_epoch
+  let e_lo = ( lower_ms - window_origin_ms ) / ms_per_epoch
+  let e_hi = ( upper_ms - window_origin_ms ) / ms_per_epoch
   expect e_lo == e_hi
   e_lo
 }
@@ -4075,19 +4082,19 @@ fn tx_range(lo: Int, hi: Int) -> Transaction {
 }
 
 test pp_epoch_ok() {
-  get_epoch(tx_range(7 * ms_ep + 10, 7 * ms_ep + 20), ms_ep) == 7
+  get_epoch(tx_range(7 * ms_ep + 10, 7 * ms_ep + 20), ms_ep, 0) == 7
 }
 
 // TẤN CÔNG: khoảng hiệu lực trải qua hai epoch → current_epoch nhập nhằng.
 test pp_epoch_straddle() fail {
-  get_epoch(tx_range(7 * ms_ep - 5, 7 * ms_ep + 5), ms_ep) == 7
+  get_epoch(tx_range(7 * ms_ep - 5, 7 * ms_ep + 5), ms_ep, 0) == 7
 }
 
 // TẤN CÔNG: biên trên vô hạn (mẫu tấn công cổ điển của SEC-02).
 test pp_epoch_open_upper() fail {
   let tx =
     Transaction { ..placeholder, validity_range: interval.after(7 * ms_ep) }
-  get_epoch(tx, ms_ep) == 7
+  get_epoch(tx, ms_ep, 0) == 7
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -4178,7 +4185,7 @@ fn t_mint_tx(
 
 fn run_mint(seed: OutputReference, tx: Transaction) -> Bool {
   prepaid_vault.mint(
-    t_carp_policy, t_carp_name, t_fund_hash, ms_ep,
+    t_carp_policy, t_carp_name, t_fund_hash, ms_ep, 0,
     MintVaultId { seed }, t_vault_hash, tx,
   )
 }
@@ -4421,9 +4428,20 @@ fn run_spend(
   redeemer : PrepaidVaultRedeemer,
   tx       : Transaction,
 ) -> Bool {
+  run_spend_at(0, 0, datum, redeemer, tx)
+}
+
+/// `run_spend` với gốc lưới `origin` (apply-param cuối) và validity range dời `shift` ms.
+fn run_spend_at(
+  origin   : Int,
+  shift    : Int,
+  datum    : PrepaidVaultDatum,
+  redeemer : PrepaidVaultRedeemer,
+  tx       : Transaction,
+) -> Bool {
   prepaid_vault.spend(
-    t_carp_policy, t_carp_name, t_fund_hash, ms_ep,
-    Some(datum), redeemer, t_own_ref(), tx,
+    t_carp_policy, t_carp_name, t_fund_hash, ms_ep, origin,
+    Some(datum), redeemer, t_own_ref(), window_origin_fixtures.shift_tx(tx, shift),
   )
 }
 
@@ -4468,6 +4486,118 @@ fn sp_lock_run(vin: Input, vout: Output) -> Bool {
 
 test pp_spend_lock_ok() {
   sp_lock_run(t_vault_in(sp_lock_din()), t_vault_out(sp_lock_dout()))
+}
+
+// ═══ Gốc lưới cửa sổ (LAMP Specs/Window/CONTRACT.md v1.0) ═════════════════
+// Cùng ca `pp_spend_lock_ok`, tx dời đúng bằng gốc và validator nhận gốc đó ⟹ trừ gốc
+// thì vẫn epoch `t_epoch`, khớp `last_updated_epoch` của két và quỹ. Quên trừ ⟹ đỏ.
+fn wo_lock_run(origin: Int, shift: Int) -> Bool {
+  run_spend_at(
+    origin, shift, sp_lock_din(),
+    PrepaidLock { fund_id: t_fund_id, amount_carpdrop: lock_amt },
+    sp_lock_tx(t_vault_in(sp_lock_din()), t_vault_out(sp_lock_dout())),
+  )
+}
+
+test wo_prepaid_lock_mainnet_origin() {
+  wo_lock_run(window_origin_fixtures.mainnet_origin_ms, window_origin_fixtures.mainnet_origin_ms)
+}
+
+test wo_prepaid_lock_preprod_origin() {
+  wo_lock_run(window_origin_fixtures.preprod_origin_ms, window_origin_fixtures.preprod_origin_ms)
+}
+
+test wo_prepaid_lock_forgotten_origin() fail {
+  wo_lock_run(0, window_origin_fixtures.mainnet_origin_ms)
+}
+
+// `paid_fund.spend` qua HANDLER (các bài `run_fund` gọi thẳng `fund_common_checks` với
+// epoch cho sẵn, không đi qua `get_epoch`). Cùng tx với `pp_fund_claim_full_ok`.
+fn wo_fund_claim_run(origin: Int, shift: Int) -> Bool {
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 1_500)
+  let fout = t_fd(0, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_500)
+  let lo = shift + t_epoch * ms_ep + 10
+  paid_fund.spend(
+    t_carp_policy, t_carp_name, ms_ep, origin,
+    Some(fin), FundClaim { amount_carpdrop: 1_000_000_000 }, t_fund_ref(),
+    Transaction {
+      ..claim_tx(fin, 1_000_000_000, fout, 0, [t_platform]),
+      validity_range: interval.between(lo, lo + 10),
+    },
+  )
+}
+
+test wo_fund_claim_handler_zero_origin() {
+  wo_fund_claim_run(0, 0)
+}
+
+test wo_fund_claim_handler_mainnet_origin() {
+  wo_fund_claim_run(window_origin_fixtures.mainnet_origin_ms, window_origin_fixtures.mainnet_origin_ms)
+}
+
+test wo_fund_claim_handler_preprod_origin() {
+  wo_fund_claim_run(window_origin_fixtures.preprod_origin_ms, window_origin_fixtures.preprod_origin_ms)
+}
+
+test wo_fund_claim_handler_forgotten_origin() fail {
+  wo_fund_claim_run(0, window_origin_fixtures.mainnet_origin_ms)
+}
+
+// Vector CONTRACT §3 trên `get_epoch` (hai biên cùng epoch).
+test wo_get_epoch_mainnet_at_boundary() {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_epoch(
+    window_origin_fixtures.tx_between(t, t + 1_000),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.mainnet_origin_ms,
+  ) == 658
+}
+
+test wo_get_epoch_mainnet_one_ms_before() {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_epoch(
+    window_origin_fixtures.tx_between(t - 1_000, t - 1),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.mainnet_origin_ms,
+  ) == 657
+}
+
+test wo_get_epoch_preprod_at_boundary() {
+  let t = window_origin_fixtures.preprod_t_316
+  get_epoch(
+    window_origin_fixtures.tx_between(t, t + 1_000),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.preprod_origin_ms,
+  ) == 316
+}
+
+test wo_get_epoch_preprod_one_ms_before() {
+  let t = window_origin_fixtures.preprod_t_316
+  get_epoch(
+    window_origin_fixtures.tx_between(t - 1_000, t - 1),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.preprod_origin_ms,
+  ) == 315
+}
+
+test wo_get_epoch_preprod_straddle() fail {
+  let t = window_origin_fixtures.preprod_t_316
+  get_epoch(
+    window_origin_fixtures.tx_between(t - 1, t + 1_000),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.preprod_origin_ms,
+  ) == 315
+}
+
+test wo_get_epoch_mainnet_forgotten_origin() fail {
+  let t = window_origin_fixtures.mainnet_t_658
+  expect
+    get_epoch(
+      window_origin_fixtures.tx_between(t, t + 1_000),
+      window_origin_fixtures.ms_per_window,
+      0,
+    ) == 658
+  True
 }
 
 test pp_spend_lock_forged_vault() fail {
@@ -5032,7 +5162,7 @@ fn run_fund_mint_signed(
   signers : List<ByteArray>,
 ) -> Bool {
   paid_fund.mint(
-    t_carp_policy, t_carp_name, ms_ep,
+    t_carp_policy, t_carp_name, ms_ep, 0,
     Void, t_fund_hash,
     Transaction {
       ..placeholder,

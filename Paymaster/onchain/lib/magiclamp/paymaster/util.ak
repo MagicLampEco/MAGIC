@@ -15,12 +15,16 @@ use cardano/transaction.{
 /// Epoch tham chiếu AN TOÀN trước thao túng validity-range (mirror consume.util).
 /// Dùng UPPER bound (trần thời gian ledger từ chối nếu now>upper → không under-state),
 /// buộc cả hai biên hữu hạn + cửa sổ ≤ 1 epoch (không bịa khoảng cách epoch).
-pub fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+///
+/// Gốc lưới (WIN-ORIGIN-1, `LAMP/Specs/Window/CONTRACT.md` v1.0): chỉ số epoch =
+/// `(t − window_origin_ms) / ms_per_epoch`; `window_origin_ms` là apply-param cuối của
+/// validator. Phép `hi − lo ≤ ms_per_epoch` dùng `ms_per_epoch` như ĐỘ DÀI nên không trừ gốc.
+pub fn get_epoch(tx: Transaction, ms_per_epoch: Int, window_origin_ms: Int) -> Int {
   expect Some(lo) = tx.validity_range.lower_bound.bound_type |> get_finite
   expect Some(hi) = tx.validity_range.upper_bound.bound_type |> get_finite
   expect hi >= lo
   expect hi - lo <= ms_per_epoch
-  hi / ms_per_epoch
+  ( hi - window_origin_ms ) / ms_per_epoch
 }
 
 pub fn get_finite(bt: IntervalBoundType) -> Option<Int> {

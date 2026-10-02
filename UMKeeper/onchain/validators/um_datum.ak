@@ -31,6 +31,7 @@ use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{PolicyId}
 use cardano/assets
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction, placeholder}
+use umkeeper/window_origin_fixtures
 
 // ── Constants ────────────────────────────────────────────────
 const q : Int = 1_000_000_000
@@ -96,10 +97,16 @@ pub type UMRedeemer {
 //
 // `um_policy` / `um_name` : NFT thẩm quyền của UM datum — phải còn ở output
 //   (value preservation → chống chuyển UM authority sang UTxO của attacker).
+//
+// `window_origin_ms` : gốc lưới epoch theo mạng (POSIX ms), apply-param CUỐI —
+//   epoch = (t − window_origin_ms) / ms_per_epoch (WIN-ORIGIN-1,
+//   LAMP/Specs/Window/CONTRACT.md v1.0). Mainnet 1_506_203_091_000; Preprod
+//   1_654_041_600_000; Preview không có gốc (WIN-PREVIEW).
 validator um_datum_validator(
   ms_per_epoch : Int,
   um_policy    : PolicyId,
   um_name      : ByteArray,
+  window_origin_ms : Int,
 ) {
   spend(
     datum_opt : Option<UMDatum>,
@@ -108,7 +115,7 @@ validator um_datum_validator(
     tx        : Transaction,
   ) {
     expect Some(datum) = datum_opt
-    let current_epoch = get_epoch(tx, ms_per_epoch)
+    let current_epoch = get_epoch(tx, ms_per_epoch, window_origin_ms)
     let own_addr      = get_own_addr(own_ref, tx.inputs)
     let own_hash      = own_script_hash(own_addr)
 
@@ -230,13 +237,15 @@ fn step_within(new_value: Int, old_value: Int, max_step: Int) -> Bool {
 // duy nhất. Nếu chỉ đọc lower_bound, attacker có thể set lower=start_of(E)
 // với upper=∞, tx được include ở epoch E+k, nhưng validator ghi
 // last_updated_epoch = E → sai epoch. Mirrors VacuumGen get_current_epoch.
-fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+//
+// Gốc lưới (WIN-ORIGIN-1): chỉ số epoch = (t − window_origin_ms) / ms_per_epoch.
+fn get_epoch(tx: Transaction, ms_per_epoch: Int, window_origin_ms: Int) -> Int {
   expect Some(lower_ms) =
     tx.validity_range.lower_bound.bound_type |> get_finite_slot
   expect Some(upper_ms) =
     tx.validity_range.upper_bound.bound_type |> get_finite_slot
-  let e_lo = lower_ms / ms_per_epoch
-  let e_hi = upper_ms / ms_per_epoch
+  let e_lo = ( lower_ms - window_origin_ms ) / ms_per_epoch
+  let e_hi = ( upper_ms - window_origin_ms ) / ms_per_epoch
   expect e_lo == e_hi
   e_lo
 }
@@ -368,7 +377,7 @@ test um_happy_path() {
   // không có chữ ký nào — permissionless vẫn pass.
   let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
@@ -399,7 +408,7 @@ test um_double_satisfaction_stake_cred() fail {
     validity_range: between(5 * t_mspe, 6 * t_mspe - 1),
   }
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
@@ -418,7 +427,7 @@ test um_authority_nft_stripped() fail {
   let bad_out = assets.from_lovelace(2_000_000)
   let tx = um_tx(in_d, out_d, [], 5, v, bad_out)
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
@@ -435,7 +444,7 @@ test um_same_epoch() fail {
   let v = um_value()
   let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
@@ -465,7 +474,7 @@ test um_output_stake_cred_hijack() fail {
     validity_range: between(5 * t_mspe, 6 * t_mspe - 1),
   }
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
@@ -486,7 +495,7 @@ test um_forged_smoothed() fail {
   let v = um_value()
   let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
@@ -513,7 +522,7 @@ test um_step_up_exactly_at_cap() {
   let v = um_value()
   let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
@@ -533,7 +542,7 @@ test um_step_down_exactly_at_cap() {
   let v = um_value()
   let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
@@ -552,7 +561,7 @@ test um_step_one_over_cap_rejected() fail {
   let v = um_value()
   let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
 }
@@ -576,7 +585,66 @@ test um_poc_jump_to_max_rejected() fail {
   let v = um_value()
   let tx = um_tx(in_d, out_d, [], 5, v, v)
   um_datum_validator.spend(
-    t_mspe, t_um_policy, t_um_name,
+    t_mspe, t_um_policy, t_um_name, 0,
     Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
   )
+}
+
+// ══════════════════════════════════════════════════════════════
+// GỐC CỬA SỔ (WIN-ORIGIN-1, LAMP/Specs/Window/CONTRACT.md v1.0)
+// ══════════════════════════════════════════════════════════════
+
+// ── get_epoch trên vector §3 (432_000_000 ms/epoch). Ca "t − 1" dùng cửa sổ
+//    [t − 1000, t − 1] vì get_epoch đòi hai biên cùng epoch.
+
+test get_epoch_mainnet_at_boundary() {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_epoch(window_origin_fixtures.tx_between(t, t + 1_000), window_origin_fixtures.ms_per_window, window_origin_fixtures.mainnet_origin_ms) == 658
+}
+
+test get_epoch_mainnet_one_ms_before() {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_epoch(window_origin_fixtures.tx_between(t - 1_000, t - 1), window_origin_fixtures.ms_per_window, window_origin_fixtures.mainnet_origin_ms) == 657
+}
+
+test get_epoch_preprod_at_boundary() {
+  let t = window_origin_fixtures.preprod_t_316
+  get_epoch(window_origin_fixtures.tx_between(t, t + 1_000), window_origin_fixtures.ms_per_window, window_origin_fixtures.preprod_origin_ms) == 316
+}
+
+test get_epoch_preprod_one_ms_before() {
+  let t = window_origin_fixtures.preprod_t_316
+  get_epoch(window_origin_fixtures.tx_between(t - 1_000, t - 1), window_origin_fixtures.ms_per_window, window_origin_fixtures.preprod_origin_ms) == 315
+}
+
+/// Ca âm: gốc 0 (quên gốc) không ra vector ⇒ bài phải đỏ.
+test get_epoch_mainnet_forgotten_origin() fail {
+  let t = window_origin_fixtures.mainnet_t_658
+  expect get_epoch(window_origin_fixtures.tx_between(t, t + 1_000), window_origin_fixtures.ms_per_window, 0) == 658
+  True
+}
+
+// ── Validator: fixture của `um_happy_path`, thời gian thật = gốc Mainnet + epoch 5.
+//    Gốc Mainnet không chia hết cho t_mspe ⟹ bỏ phép trừ gốc làm current_epoch
+//    ≈ 17_437 ≠ 5 ⟹ ca dương đỏ. Gốc Preprod CHIA HẾT cho 86_400_000 ⟹ không phân
+//    biệt được ở độ dài này, không dựng ca Preprod.
+fn um_happy_at(origin: Int, shift: Int) -> Bool {
+  let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
+  let raw = 1_050_000_000
+  let out_d =
+    UMDatum { smoothed_q: 1_025_000_000, last_updated_epoch: 5, history: [q, raw] }
+  let v = um_value()
+  let tx = window_origin_fixtures.shift_tx(um_tx(in_d, out_d, [], 5, v, v), shift)
+  um_datum_validator.spend(
+    t_mspe, t_um_policy, t_um_name, origin,
+    Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0), tx,
+  )
+}
+
+test um_origin_mainnet_happy() {
+  um_happy_at(window_origin_fixtures.mainnet_origin_ms, window_origin_fixtures.mainnet_origin_ms)
+}
+
+test um_origin_forgotten_fail() fail {
+  um_happy_at(0, window_origin_fixtures.mainnet_origin_ms)
 }

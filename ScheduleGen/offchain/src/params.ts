@@ -1,5 +1,6 @@
 // src/params.ts — apply-param của HAI validator ScheduleGen Gen v2.0: `commit` (withdraw-zero,
-// 9 tham số) và `vault` (6 tham số, tham số cuối là hash của `commit` ĐÃ apply).
+// 10 tham số) và `vault` (7 tham số). Cả hai nhận `window_origin_ms` làm tham số CUỐI CÙNG
+// (`LAMP/Specs/Window/CONTRACT.md` v1.0); ở két nó đứng SAU hash của `commit` ĐÃ apply.
 //
 // Thứ tự là hợp đồng: nó quyết định bytes ⟹ script hash ⟹ địa chỉ két. Nguồn duy nhất
 // của thứ tự là hai chữ ký `validator commit(` và `validator vault(` trong
@@ -7,7 +8,7 @@
 // "apply-param" đọc hai chữ ký đó và so với hai danh sách tên bên dưới.
 //
 // Thứ tự DỰNG (khối chú thích trên `validator vault(`):
-//     commit(9 tham số) → commit_script_hash → vault(…, commit_script_hash) → vault_script_hash
+//     commit(10 tham số) → commit_script_hash → vault(…, commit_script_hash) → vault_script_hash
 // `commit` KHÔNG nhận hash két (tránh vòng) — nó biết két qua redeemer `CommitRedeemer`.
 //
 // `applyParamsToScript` của Lucid KHÔNG kiểm số lượng hay thứ tự tham số: sai một ô vẫn ra
@@ -17,7 +18,7 @@
 
 import { applyParamsToScript, validatorToScriptHash, type Data, type Validator } from "@lucid-evolution/lucid";
 
-/** Chữ ký `validator commit(` — 9 tham số. */
+/** Chữ ký `validator commit(` — 10 tham số. */
 export const SCHEDULE_COMMIT_PARAM_NAMES = [
   "lamp_policy_id",
   "lamp_asset_name",
@@ -28,9 +29,10 @@ export const SCHEDULE_COMMIT_PARAM_NAMES = [
   "gb_shard_policy_id",
   "rate_nft_policy",
   "rate_script_hash",
+  "window_origin_ms",
 ] as const;
 
-/** Chữ ký `validator vault(` — 6 tham số; #5 là hash `commit` đã apply. */
+/** Chữ ký `validator vault(` — 7 tham số; #5 là hash `commit` đã apply, #6 gốc cửa sổ. */
 export const SCHEDULE_VAULT_PARAM_NAMES = [
   "lamp_policy_id",
   "lamp_asset_name",
@@ -38,6 +40,7 @@ export const SCHEDULE_VAULT_PARAM_NAMES = [
   "ms_per_epoch",
   "gb_shard_policy_id",
   "commit_script_hash",
+  "window_origin_ms",
 ] as const;
 
 /** Title blueprint dùng để đối chiếu tên tham số (mọi purpose của một validator cùng tham số). */
@@ -56,6 +59,7 @@ export interface ScheduleScriptParams {
   gbShardPolicyId    : string;   // = script hash `gb_shard`
   rateNftPolicy      : string;   // policy NFT "RHO"
   rateScriptHash     : string;   // script beacon ρ
+  windowOriginMs     : bigint;   // gốc cửa sổ — `@magiclamp/protocol-utils` ▸ `windowOriginMs(network)`
 }
 
 function hex(name: string, v: string, bytes?: number): string {
@@ -74,12 +78,16 @@ function ordered<N extends string>(names: readonly N[], values: Record<N, Data>)
 
 function sharedValues(p: ScheduleScriptParams) {
   if (p.msPerEpoch <= 0n) throw new Error(`apply-param ms_per_epoch phải > 0, nhận ${p.msPerEpoch}`);
+  if (typeof p.windowOriginMs !== "bigint" || p.windowOriginMs < 0n) {
+    throw new Error(`apply-param window_origin_ms phải là bigint ≥ 0, nhận ${String(p.windowOriginMs)}`);
+  }
   return {
     lamp_policy_id:     hex("lamp_policy_id", p.lampPolicyId, 28),
     lamp_asset_name:    hex("lamp_asset_name", p.lampAssetName),
     shard_policy_id:    hex("shard_policy_id", p.shardPolicyId, 28),
     ms_per_epoch:       p.msPerEpoch,
     gb_shard_policy_id: hex("gb_shard_policy_id", p.gbShardPolicyId, 28),
+    window_origin_ms:   p.windowOriginMs,
   };
 }
 

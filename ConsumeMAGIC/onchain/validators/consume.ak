@@ -43,6 +43,9 @@
 //                             BAKE MỘT CHIỀU: price_param KHÔNG tham chiếu ngược
 //                             consume ⇒ chuỗi apply-param tuyến tính, KHÔNG vòng
 //                             (price_nft → price_param → consume).
+//   window_origin_ms : gốc lưới epoch theo mạng (POSIX ms), apply-param CUỐI —
+//                      epoch = (t − window_origin_ms) / ms_per_epoch
+//                      (WIN-ORIGIN-1, LAMP/Specs/Window/CONTRACT.md v1.0).
 //
 // DOUBLE-SATISFACTION (engage side): validator chạy 1 lần / Engage input. Các bất biến
 // AGGREGATE (idempotent qua mọi invocation): #out@engage == #in@engage; Σ engage NFT
@@ -75,6 +78,7 @@ use magiclamp/consume/types.{
   EngageMintRedeemer, MintEngage, OpPrice, PriceParam,
 }
 use magiclamp/consume/util
+use magiclamp/consume/window_origin_fixtures
 
 validator consume(
   price_nft_policy  : PolicyId,
@@ -84,6 +88,7 @@ validator consume(
   max_price_stale   : Int,
   ms_per_epoch      : Int,
   price_param_script_hash : ByteArray,
+  window_origin_ms  : Int,
 ) {
   /// Handler MINT — policy của thread token Engage (policy_id == script hash này).
   /// Đây là KHOẢNH KHẮC DUY NHẤT ép được "thread này khởi đầu SẠCH": Cardano KHÔNG
@@ -115,7 +120,7 @@ validator consume(
         validate_consume(
           tx, own_hash, in_datum, op_type, op_count, price_ref,
           price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
-          max_price_stale, ms_per_epoch, price_param_script_hash,
+          max_price_stale, ms_per_epoch, price_param_script_hash, window_origin_ms,
         )
       // Gắn PersonDID vào thread. Đường RIÊNG, không đụng giá / vault / epoch.
       BindDID -> validate_bind_did(tx, own_hash, in_datum)
@@ -132,7 +137,7 @@ validator consume(
 // ═══════════════════════════════════════════════════════════════
 // validate_consume — nhánh TIÊU MAGIC (redeemer constr 0)
 //
-// Nguyên văn thân `spend` cũ. Tách thành hàm (nhận lại 7 apply-param) thay vì lồng
+// Nguyên văn thân `spend` cũ. Tách thành hàm (nhận lại 8 apply-param) thay vì lồng
 // vào một nhánh `when` để bộ ràng buộc đã có không bị đẩy thêm một tầng thụt lề —
 // mỗi lần re-indent trọn khối là một lần diff phủ kín thứ không đổi và giấu thứ đổi.
 // ═══════════════════════════════════════════════════════════════
@@ -150,6 +155,7 @@ fn validate_consume(
   max_price_stale   : Int,
   ms_per_epoch      : Int,
   price_param_script_hash : ByteArray,
+  window_origin_ms  : Int,
 ) -> Bool {
     expect op_count >= 1
 
@@ -182,7 +188,7 @@ fn validate_consume(
         },
       )
 
-    let current_epoch = util.get_epoch(tx, ms_per_epoch)
+    let current_epoch = util.get_epoch(tx, ms_per_epoch, window_origin_ms)
 
     // ── giá có thẩm quyền: PriceParam beacon (reference input, NFT-auth) ────────
     let pp =
@@ -1022,6 +1028,8 @@ fn ct_bytes(n: Int) -> ByteArray {
 }
 const ct_max_stale: Int = 5
 const ct_mspe: Int = 86_400_000                      // Preview
+/// Gốc 0 cho mọi ca cũ (lưới Unix). Ca gốc khác 0: `consume_origin_*` ở cuối tệp.
+const ct_origin: Int = 0
 const ct_burn_constr: Int = 2                        // InstantGen BurnBatch constr
 const ct_price_ref_ix: Int = 9
 
@@ -1235,7 +1243,32 @@ fn run_sigs(
 }
 
 /// Như `run_sigs` + danh sách mục rút (chủ `Script(h)` gật qua withdraw-zero).
+/// Gốc 0, không dời thời gian — lưới cũ, giữ nguyên mọi ca đã có.
 fn run_sigs_w(
+  beacon        : Input,
+  cur_epoch     : Int,
+  engage_inputs : List<Input>,
+  vault_inputs  : List<Input>,
+  outputs       : List<Output>,
+  redeemers     : Pairs<ScriptPurpose, Data>,
+  rd            : ConsumeRedeemer,
+  own_ref       : OutputReference,
+  in_datum      : EngageDatum,
+  sigs          : List<ByteArray>,
+  wds           : Pairs<Credential, Int>,
+) -> Bool {
+  run_sigs_w_at(
+    0, 0, beacon, cur_epoch, engage_inputs, vault_inputs, outputs, redeemers, rd,
+    own_ref, in_datum, sigs, wds,
+  )
+}
+
+/// Bản đầy đủ của `run_sigs_w`: validator nhận gốc `origin`, validity range của tx
+/// dời đi `shift` ms (`window_origin_fixtures.shift_tx`). `origin == shift` ⟹ cùng
+/// epoch như lưới gốc 0; `origin == 0, shift ≠ 0` ⟹ mô phỏng bản QUÊN trừ gốc.
+fn run_sigs_w_at(
+  origin        : Int,
+  shift         : Int,
   beacon        : Input,
   cur_epoch     : Int,
   engage_inputs : List<Input>,
@@ -1267,8 +1300,8 @@ fn run_sigs_w(
     }
   consume.spend(
     ct_price_policy, ct_price_name,
-    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe, ct_price_param_sh,
-    Some(in_datum), rd, own_ref, tx,
+    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe, ct_price_param_sh, origin,
+    Some(in_datum), rd, own_ref, window_origin_fixtures.shift_tx(tx, shift),
   )
 }
 
@@ -1758,7 +1791,7 @@ fn run_vr(
     }
   consume.spend(
     ct_price_policy, ct_price_name,
-    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe, ct_price_param_sh,
+    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe, ct_price_param_sh, ct_origin,
     Some(in_datum), rd, own_ref, tx,
   )
 }
@@ -2029,7 +2062,7 @@ fn run_mint_w(
     }
   consume.mint(
     ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
-    ct_mspe, ct_price_param_sh, MintEngage { seed: ct_seed() }, ct_eng_sh, tx,
+    ct_mspe, ct_price_param_sh, ct_origin, MintEngage { seed: ct_seed() }, ct_eng_sh, tx,
   )
 }
 
@@ -2426,12 +2459,12 @@ test probe_two_invocations_full_table_two_engage() {
   let ok0 =
     consume.spend(
       ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
-      ct_mspe, ct_price_param_sh, Some(ct_in_datum), rd, er0, tx,
+      ct_mspe, ct_price_param_sh, ct_origin, Some(ct_in_datum), rd, er0, tx,
     )
   let ok1 =
     consume.spend(
       ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
-      ct_mspe, ct_price_param_sh, Some(ct_in_datum), rd, er1, tx,
+      ct_mspe, ct_price_param_sh, ct_origin, Some(ct_in_datum), rd, er1, tx,
     )
   ok0 && ok1
 }
@@ -2564,7 +2597,7 @@ fn run_bind_w(
     }
   consume.spend(
     ct_price_policy, ct_price_name,
-    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe, ct_price_param_sh,
+    ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe, ct_price_param_sh, ct_origin,
     Some(in_datum), BindDID, own_ref, tx,
   )
 }
@@ -3592,7 +3625,7 @@ fn run_close_w(
     }
   consume.spend(
     ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
-    ct_mspe, ct_price_param_sh, Some(in_datum), CloseThread, own_ref, tx,
+    ct_mspe, ct_price_param_sh, ct_origin, Some(in_datum), CloseThread, own_ref, tx,
   )
 }
 
@@ -3601,7 +3634,7 @@ fn run_burn(mint_v: Value) -> Bool {
   let tx = Transaction { ..placeholder, mint: mint_v }
   consume.mint(
     ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
-    ct_mspe, ct_price_param_sh, BurnEngage, ct_eng_sh, tx,
+    ct_mspe, ct_price_param_sh, ct_origin, BurnEngage, ct_eng_sh, tx,
   )
 }
 
@@ -3807,7 +3840,7 @@ test close_mixed_with_consume_consume_side_fail() fail {
   let vault_ref = util.mk_ref_id(#"a1", 0)
   consume.spend(
     ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
-    ct_mspe, ct_price_param_sh, Some(ct_in_datum),
+    ct_mspe, ct_price_param_sh, ct_origin, Some(ct_in_datum),
     ct_consume_redeemer(1, 1, vault_ref), util.mk_ref_id(#"e1", 1),
     ct_mixed_close_consume_tx(),
   )
@@ -3820,7 +3853,7 @@ test close_mixed_with_consume_consume_side_fail() fail {
 test close_mixed_with_consume_close_side_fail() fail {
   consume.spend(
     ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale,
-    ct_mspe, ct_price_param_sh, Some(ct_in_datum), CloseThread,
+    ct_mspe, ct_price_param_sh, ct_origin, Some(ct_in_datum), CloseThread,
     util.mk_ref_id(#"e1", 0), ct_mixed_close_consume_tx(),
   )
 }
@@ -4022,4 +4055,39 @@ test consume_owner_script_extra_input_at_owner_script_fail() fail {
       ),
     )
   oc_consume(Script(ct_owner_script), Script(ct_owner_script), [at_owner_script])
+}
+
+// ══════════════════════════════════════════════════════════════
+// GỐC CỬA SỔ (WIN-ORIGIN-1, LAMP/Specs/Window/CONTRACT.md v1.0)
+//   Gốc Mainnet KHÔNG chia hết cho ct_mspe (86_400_000) ⟹ bản trừ gốc và bản quên trừ
+//   gốc cho hai epoch khác nhau. Gốc Preprod (1_654_041_600_000) CHIA HẾT cho 86_400_000
+//   nên KHÔNG phân biệt được ở ct_mspe — cố ý không dựng ca Preprod ở đây; vector Preprod
+//   (432_000_000) nằm ở `window_origin_fixtures`.
+// ══════════════════════════════════════════════════════════════
+
+/// Đúng fixture của `consume_happy`, chạy với gốc `origin` và tx dời `shift` ms.
+fn ct_happy_at(origin: Int, shift: Int) -> Bool {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run_sigs_w_at(
+    origin, shift, ct_beacon_ref(pp, 1), 6, [eng], [vault], [ct_cont_output(11, 6, 1)],
+    reds, rd, eng_ref, ct_in_datum, ct_sigs_of(ct_in_datum.owner), [],
+  )
+}
+
+// DƯƠNG: gốc Mainnet, thời gian thật = gốc + 6 epoch ⟹ epoch 6, khớp beacon epoch 6.
+// Bỏ phép trừ gốc trong `util.get_epoch` ⟹ epoch ≈ 17_438 ⟹ stale-check đỏ.
+test consume_origin_mainnet_happy() {
+  ct_happy_at(window_origin_fixtures.mainnet_origin_ms, window_origin_fixtures.mainnet_origin_ms)
+}
+
+// ÂM: cùng thời điểm, validator nhận gốc 0 (quên gốc) ⟹ epoch lệch ⟹ REJECT.
+test consume_origin_forgotten_fail() fail {
+  ct_happy_at(0, window_origin_fixtures.mainnet_origin_ms)
 }

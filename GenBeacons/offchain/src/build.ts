@@ -54,19 +54,32 @@ import {
 // Thời gian
 // ══════════════════════════════════════════════════════════════════════════════
 
-/** Epoch của một mốc POSIX ms — phép chia sàn trần `ms / ms_per_epoch`, KHÔNG có gốc theo
- *  mạng (khác `ProtocolUtils.posixMsToEpoch`): đúng phép mà validator dùng. */
-export function epochOf(ms: bigint, msPerEpoch: bigint): bigint {
+/** Epoch của một mốc POSIX ms — `⌊(ms − window_origin_ms) / ms_per_epoch⌋`, chia SÀN về −∞
+ *  như `/` của Aiken: đúng phép mà validator dùng (`LAMP/Specs/Window/CONTRACT.md` v1.0).
+ *
+ *  Gói này cố ý không phụ thuộc `@magiclamp/protocol-utils`, nên phép tính là GƯƠNG của
+ *  `ProtocolUtils` ▸ `windowOf` (cùng thứ tự đối số); bài `tests/pure.test.ts` chạy cùng vector
+ *  CONTRACT §3. Gốc KHÔNG gõ ở đây — người gọi đưa vào từ `windowOriginMs(network)`. */
+export function epochOf(ms: bigint, msPerEpoch: bigint, windowOriginMs: bigint): bigint {
   if (msPerEpoch <= 0n) throw new Error(`ms_per_epoch phải > 0, nhận ${msPerEpoch}.`);
+  if (windowOriginMs < 0n) throw new Error(`window_origin_ms phải ≥ 0, nhận ${windowOriginMs}.`);
   if (ms < 0n) throw new Error(`mốc thời gian âm: ${ms}.`);
-  return ms / msPerEpoch;
+  const d = ms - windowOriginMs;
+  const q = d / msPerEpoch;
+  return d % msPerEpoch !== 0n && d < 0n ? q - 1n : q;
+}
+
+/** Mốc ms ĐẦU của epoch `e`: `window_origin_ms + e × ms_per_epoch` (gương `windowStartMs`). */
+export function epochStartMs(e: bigint, msPerEpoch: bigint, windowOriginMs: bigint): bigint {
+  if (msPerEpoch <= 0n) throw new Error(`ms_per_epoch phải > 0, nhận ${msPerEpoch}.`);
+  return windowOriginMs + e * msPerEpoch;
 }
 
 /** `get_epoch`: hai biên hữu hạn, `hi ≥ lo`, cùng epoch ⟹ epoch đó; khác ⟹ ném. */
-export function txEpoch(loMs: bigint, hiMs: bigint, msPerEpoch: bigint): bigint {
+export function txEpoch(loMs: bigint, hiMs: bigint, msPerEpoch: bigint, windowOriginMs: bigint): bigint {
   if (hiMs < loMs) throw new Error(`khoảng hiệu lực ngược: ${loMs} > ${hiMs}.`);
-  const lo = epochOf(loMs, msPerEpoch);
-  const hi = epochOf(hiMs, msPerEpoch);
+  const lo = epochOf(loMs, msPerEpoch, windowOriginMs);
+  const hi = epochOf(hiMs, msPerEpoch, windowOriginMs);
   if (lo !== hi) throw new Error(`khoảng hiệu lực vắt qua hai epoch (${lo} → ${hi}).`);
   return hi;
 }
@@ -83,15 +96,17 @@ const MIN_WINDOW_MS = 2_000;
 /**
  * Khoảng hiệu lực `[now, min(now + maxWidth, cuối epoch − 1 s)]` nằm gọn trong epoch của
  * `now` — đúng điều `get_epoch` đòi. Giả định: ranh giới epoch trùng ranh giới slot (đúng
- * khi `ms_per_epoch` là bội của 1000 và gốc slot của mạng tròn giây), nên việc Lucid làm
+ * khi `ms_per_epoch` và `window_origin_ms` là bội của 1000 và gốc slot của mạng tròn giây), nên việc Lucid làm
  * tròn xuống về đầu slot không kéo biên dưới sang epoch trước.
  * Còn dưới `MIN_WINDOW_MS` trước ranh giới ⟹ ném: đợi sang epoch sau rồi dựng lại.
  */
-export function epochValidityWindow(nowMs: number, msPerEpoch: bigint, maxWidthMs = 600_000): EpochWindow {
+export function epochValidityWindow(
+  nowMs: number, msPerEpoch: bigint, windowOriginMs: bigint, maxWidthMs = 600_000,
+): EpochWindow {
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error(`nowMs không hợp lệ: ${nowMs}.`);
   const now = BigInt(nowMs);
-  const epoch = epochOf(now, msPerEpoch);
-  const lastSafe = (epoch + 1n) * msPerEpoch - 1_000n;
+  const epoch = epochOf(now, msPerEpoch, windowOriginMs);
+  const lastSafe = epochStartMs(epoch + 1n, msPerEpoch, windowOriginMs) - 1_000n;
   const to = now + BigInt(maxWidthMs) < lastSafe ? now + BigInt(maxWidthMs) : lastSafe;
   if (to - now < BigInt(MIN_WINDOW_MS)) {
     throw new Error(
@@ -299,7 +314,7 @@ export function initRateBeaconTx(
   p: { rate: RateParamScript; seedUtxo: UTxO; rhoQ: bigint; nowMs: number },
 ): Built<RateParam> {
   assertIsSeed(p.seedUtxo, p.rate.seed, "rate_param");
-  const w = epochValidityWindow(p.nowMs, p.rate.msPerEpoch);
+  const w = epochValidityWindow(p.nowMs, p.rate.msPerEpoch, p.rate.windowOriginMs);
   const datum = genesisRateParam(p.rhoQ, w.epoch, p.rate.rhoMaxQ);
   const tx = withWindow(
     lucid
@@ -320,7 +335,7 @@ export function postRateTx(
   p: { rate: RateParamScript; beaconUtxo: UTxO; newRhoQ: bigint; nowMs: number },
 ): Built<RateParam> {
   const current = decodeRateParam(p.beaconUtxo.datum);
-  const w = epochValidityWindow(p.nowMs, p.rate.msPerEpoch);
+  const w = epochValidityWindow(p.nowMs, p.rate.msPerEpoch, p.rate.windowOriginMs);
   const datum = nextRateParam(current, p.newRhoQ, w.epoch, p.rate.rhoMaxQ);
   return { tx: spendRateBeaconRaw(lucid, { ...p, next: datum, signer: p.rate.rateKey, window: w }), datum };
 }
@@ -353,7 +368,7 @@ export function initGreenBackBeaconTx(
   p: { greenback: GreenBackBeaconScript; seedUtxo: UTxO; gbNanogic: bigint; depeg?: boolean; nowMs: number },
 ): Built<GreenBackBeacon> {
   assertIsSeed(p.seedUtxo, p.greenback.seed, "greenback_beacon");
-  const w = epochValidityWindow(p.nowMs, p.greenback.msPerEpoch);
+  const w = epochValidityWindow(p.nowMs, p.greenback.msPerEpoch, p.greenback.windowOriginMs);
   const datum = genesisGreenBackBeacon(p.gbNanogic, w.epoch, p.depeg ?? false);
   const tx = withWindow(
     lucid
@@ -376,7 +391,7 @@ export function postGreenBackTx(
   p: { greenback: GreenBackBeaconScript; beaconUtxo: UTxO; gbNanogic: bigint; depeg: boolean; nowMs: number },
 ): Built<GreenBackBeacon> {
   const current = decodeGreenBackBeacon(p.beaconUtxo.datum);
-  const w = epochValidityWindow(p.nowMs, p.greenback.msPerEpoch);
+  const w = epochValidityWindow(p.nowMs, p.greenback.msPerEpoch, p.greenback.windowOriginMs);
   const datum = nextGreenBackBeacon(current, p.gbNanogic, w.epoch, p.depeg);
   return {
     tx: spendGreenBackBeaconRaw(lucid, { ...p, next: datum, signer: p.greenback.writer, window: w }),

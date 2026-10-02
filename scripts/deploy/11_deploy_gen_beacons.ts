@@ -338,6 +338,8 @@ function bodyOutputs(signed: TxSignBuilder): UTxO[] {
 export interface BeaconsPhaseInput {
   blueprint: Blueprint;
   msPerEpoch: bigint;
+  /** Gốc cửa sổ — apply-param CUỐI của `greenback_beacon` và `rate_param`. */
+  windowOriginMs: bigint;
   rhoQ: bigint;
   rhoMaxQ: bigint;
   gbShardCapNanogic: bigint;
@@ -378,6 +380,7 @@ export async function runBeaconsPhase(chain: Chain, p: BeaconsPhaseInput): Promi
   // (2) Apply theo thứ tự: sổ → beacon GB → gb_shard; ρ độc lập (GenBeacons ▸ scripts.ts).
   const scripts = deriveGenBeaconsScripts(p.blueprint, network, {
     msPerEpoch: p.msPerEpoch,
+    windowOriginMs: p.windowOriginMs,
     vaultRegistrySeed: ref(registrySeedUtxo),
     greenbackWriter: park.walletPkh,
     greenbackSeed: ref(gbSeedUtxo),
@@ -654,6 +657,7 @@ async function main(): Promise<void> {
     const r = await runBeaconsPhase(chain, {
       blueprint,
       msPerEpoch: PROTOCOL.MS_PER_EPOCH,
+      windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
       rhoQ: rhoQ!,
       rhoMaxQ: compiledRhoMaxQ(),
       gbShardCapNanogic: compiledGbShardCap(),

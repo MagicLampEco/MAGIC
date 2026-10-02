@@ -20,6 +20,9 @@
 //   max_policy_stale    : số epoch tối đa policy beacon được dùng
 //   max_did_entries     : hard-cap did_lamp_map (fail-closed, DoS guard §11)
 //   ms_per_epoch        : POSIX ms / epoch (network-specific)
+//   window_origin_ms    : gốc lưới epoch theo mạng (POSIX ms) — apply-param CUỐI
+//                         (sau lamp_asset_name); epoch = (t − window_origin_ms) /
+//                         ms_per_epoch (WIN-ORIGIN-1, LAMP/Specs/Window/CONTRACT.md v1.0).
 //
 // DOUBLE-SATISFACTION (PM-12): validator chạy 1 lần / meter input. PM-7 ép đúng 1
 // meter input + 1 output → trong 1 tx chỉ 1 claim. magic_consumed_total = Σ burns
@@ -39,6 +42,7 @@ use magiclamp/paymaster/types.{
   PaymasterRedeemer, ProtocolFeeParams, Sponsor, SponsorMeter, SponsorPolicy,
 }
 use magiclamp/paymaster/util
+use magiclamp/paymaster/window_origin_fixtures
 
 const meter_nft_name: ByteArray = #"4d4554"   // "MET"
 const policy_nft_name: ByteArray = #"504f4c"  // "POL"
@@ -56,6 +60,7 @@ validator paymaster(
   ms_per_epoch        : Int,
   treasury_addr       : Address,    // SEC-01 fix: ép LAMP đến đúng Treasury
   lamp_asset_name     : AssetName,  // SEC-01 fix: thay #"744c414d50" hardcode
+  window_origin_ms    : Int,
 ) {
   spend(
     datum_opt : Option<SponsorMeter>,
@@ -69,7 +74,7 @@ validator paymaster(
 
     let own_addr = util.own_address(own_ref, tx.inputs)
     let own_hash = util.own_script_hash(own_addr)
-    let current_epoch = util.get_epoch(tx, ms_per_epoch)
+    let current_epoch = util.get_epoch(tx, ms_per_epoch, window_origin_ms)
 
     // ── PM-7: đúng 1 meter input + 1 meter output @paymaster_script, mỗi cái mang
     //         đúng 1 Meter NFT (thread token, chống double-meter). ────────────────
@@ -600,6 +605,43 @@ fn run_to(
   tsy_policy    : PolicyId,
   tsy_name      : AssetName,
 ) -> Bool {
+  run_to_at(
+    0, 0, policy, policy_nft_q, protocol, protocol_nft_q, meter_in, meter_nft_in, meter_in_lvl, meter_out, meter_nft_out, meter_out_lvl, vault_inputs, cur_epoch, rd, signers, extra_reds, lamp_to_tsy, tsy_out_addr, tsy_policy, tsy_name,
+  )
+}
+
+/// Bản đầy đủ của `run_to`: validator nhận gốc `origin`, validity range dời `shift` ms
+/// (`window_origin_fixtures.shift_tx`). `origin == shift` ⟹ cùng epoch như lưới gốc 0;
+/// `origin == 0, shift ≠ 0` ⟹ mô phỏng bản QUÊN trừ gốc.
+fn run_to_at(
+  origin        : Int,
+  shift         : Int,
+  policy        : SponsorPolicy,
+  policy_nft_q  : Int,
+  protocol      : ProtocolFeeParams,
+  protocol_nft_q: Int,
+  meter_in      : SponsorMeter,
+  meter_nft_in  : Int,
+  meter_in_lvl  : Int,
+  meter_out     : SponsorMeter,
+  meter_nft_out : Int,
+  meter_out_lvl : Int,
+  vault_inputs  : List<Input>,
+  cur_epoch     : Int,
+  rd            : PaymasterRedeemer,
+  signers       : List<ByteArray>,
+  extra_reds    : Pairs<ScriptPurpose, Data>,
+  lamp_to_tsy   : Int,
+  tsy_out_addr  : Address,
+  // Định danh tài sản rót vào kho, tách khỏi apply-param `lamp_policy_id`.
+  // Cùng lý do với `tsy_out_addr`: một mock dùng cho cả hai vế làm phép so khớp
+  // tầm thường. Cổng đích có HAI nửa — AI nhận (`o.address == treasury_addr`) và
+  // NHẬN CÁI GÌ (`quantity_of(o.value, lamp_policy_id, lamp_asset_name)`) — và
+  // bản cũ chỉ tách được nửa thứ nhất: gỡ HẲN vế policy id, hoặc gỡ HẲN vế asset
+  // name, bộ kiểm vẫn xanh toàn phần (đo bằng ablation 2026-09-16).
+  tsy_policy    : PolicyId,
+  tsy_name      : AssetName,
+) -> Bool {
   let meter_i = ct_meter_input(meter_in, meter_nft_in, meter_in_lvl)
   let meter_o = ct_meter_output(meter_out, meter_nft_out, meter_out_lvl)
   // SEC-01 fix: tạo treasury output nếu lamp_to_tsy > 0
@@ -655,8 +697,8 @@ fn run_to(
   paymaster.spend(
     ct_vault_sh, ct_burn_constr, ct_lamp_policy, ct_policy_nft, ct_meter_nft,
     ct_protocol_nft, ct_max_stale, ct_max_did, ct_mspe,
-    ct_treasury_addr(), ct_lamp_asset_name,
-    Some(meter_in), rd, ct_meter_ref(), tx,
+    ct_treasury_addr(), ct_lamp_asset_name, origin,
+    Some(meter_in), rd, ct_meter_ref(), window_origin_fixtures.shift_tx(tx, shift),
   )
 }
 
@@ -1067,7 +1109,7 @@ test pm_neg_double_meter() fail {
   paymaster.spend(
     ct_vault_sh, ct_burn_constr, ct_lamp_policy, ct_policy_nft, ct_meter_nft,
     ct_protocol_nft, ct_max_stale, ct_max_did, ct_mspe,
-    ct_treasury_addr(), ct_lamp_asset_name,
+    ct_treasury_addr(), ct_lamp_asset_name, 0,
     Some(m_in), rd, ct_meter_ref(), tx,
   )
 }
@@ -1180,7 +1222,7 @@ test pm_neg_unbounded() fail {
   paymaster.spend(
     ct_vault_sh, ct_burn_constr, ct_lamp_policy, ct_policy_nft, ct_meter_nft,
     ct_protocol_nft, ct_max_stale, ct_max_did, ct_mspe,
-    ct_treasury_addr(), ct_lamp_asset_name,
+    ct_treasury_addr(), ct_lamp_asset_name, 0,
     Some(m_in), rd, ct_meter_ref(), tx,
   )
 }
@@ -1235,7 +1277,7 @@ test pm_neg_did_cap_overflow() fail {
   paymaster.spend(
     ct_vault_sh, ct_burn_constr, ct_lamp_policy, ct_policy_nft, ct_meter_nft,
     ct_protocol_nft, ct_max_stale, 1, ct_mspe,
-    ct_treasury_addr(), ct_lamp_asset_name,
+    ct_treasury_addr(), ct_lamp_asset_name, 0,
     Some(m_in), rd, ct_meter_ref(), tx,
   )
 }
@@ -1346,4 +1388,44 @@ test pm_neg_treasury_lookalike_policy() fail {
 
 test pm_neg_treasury_wrong_asset_name() fail {
   tsy_case_pair(5_000_000, ct_treasury_addr(), ct_lamp_policy, #"6c616d70")
+}
+
+// ══════════════════════════════════════════════════════════════
+// GỐC CỬA SỔ (WIN-ORIGIN-1, LAMP/Specs/Window/CONTRACT.md v1.0)
+//   Gốc Mainnet không chia hết cho ct_mspe ⟹ bỏ phép trừ gốc trong `util.get_epoch`
+//   làm current_epoch ≈ 17_438 ≠ meter epoch 6 ⟹ ca dương đỏ. Gốc Preprod CHIA HẾT cho
+//   86_400_000 nên không phân biệt được ở độ dài này — không dựng ca Preprod.
+// ══════════════════════════════════════════════════════════════
+
+/// Đúng fixture của `pm_happy`, chạy với gốc `origin` và tx dời `shift` ms.
+fn pm_happy_at(origin: Int, shift: Int) -> Bool {
+  let pol = ct_policy(500_000_000, 0, 10_000_000_000, 100_000_000_000, 6)
+  let proto = ct_protocol(500_000_000, True, 6)
+  let vref = util.mk_ref_id(#"a1", 0)
+  let vault = ct_vault_input(0, Some(ct_app_auth))
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let m_in = empty_meter(6)
+  let m_out =
+    SponsorMeter {
+      app_id: ct_app_id, epoch: 6,
+      did_lamp_map: [(ct_owner, 5_000_000)], global_lamp_epoch: 5_000_000,
+      global_magic_epoch: 10_000_000,
+    }
+  let rd = ct_sponsor_rd([vref], ct_owner, 5_000_000, 0)
+  run_to_at(
+    origin, shift,
+    pol, 1, proto, 1, m_in, 1, 2_000_000, m_out, 1, 2_000_000,
+    [vault], 6, rd, [ct_app_auth],
+    [Pair(Spend(vref), burn_rd)],
+    5_000_000,  // lamp_to_tsy = lamp_this (SEC-01)
+    ct_treasury_addr(), ct_lamp_policy, ct_lamp_asset_name,
+  )
+}
+
+test pm_origin_mainnet_happy() {
+  pm_happy_at(window_origin_fixtures.mainnet_origin_ms, window_origin_fixtures.mainnet_origin_ms)
+}
+
+test pm_origin_forgotten_fail() fail {
+  pm_happy_at(0, window_origin_fixtures.mainnet_origin_ms)
 }

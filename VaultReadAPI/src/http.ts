@@ -14,6 +14,7 @@ import type { VaultScope } from "./config.js";
 import { freshnessToJson, threadToJson, type ThreadIndex } from "./threadIndex.js";
 import { stripBasePath } from "./basePath.js";
 import type { BuildInfo } from "./buildInfo.js";
+import { WindowOriginError } from "@magiclamp/protocol-utils";
 
 export interface HttpRequest {
   method: string;
@@ -144,6 +145,18 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
   } catch (e) {
     if (e instanceof VaultReadError) {
       return { status: e.httpStatus, body: e.toBody() };
+    }
+    // Mạng chưa có gốc cửa sổ (`WIN-PREVIEW`): không tính được `at_epoch` — trạng thái cấu
+    // hình của mạng, không phải lỗi nội bộ. Giữ nguyên mã gốc ở `details`.
+    if (e instanceof WindowOriginError) {
+      return {
+        status: 501,
+        body: { error: {
+          code: "WINDOW_ORIGIN_UNAVAILABLE",
+          message: "Mạng này chưa có gốc cửa sổ epoch (window_origin_ms); không tính được epoch giao thức.",
+          details: { cause_code: e.code },
+        } },
+      };
     }
     // Lỗi ngoài dự kiến: KHÔNG in traceback, KHÔNG in đường dẫn nội bộ, KHÔNG in tên
     // biến môi trường. Người gọi nhận một câu trung tính; nguyên nhân đi vào nhật ký

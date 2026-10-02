@@ -39,6 +39,7 @@
 //          → price_param (committee, threshold, price_nft_policy, price_nft_name, ms_per_epoch)
 //            → consume (…, price_param_script_hash)
 
+import { windowOf } from "@magiclamp/protocol-utils";
 import {
   Lucid, Blockfrost, Data,
   credentialToAddress, scriptHashToCredential,
@@ -140,7 +141,7 @@ async function main() {
   // Current epoch từ tip (khớp semantics validator: POSIX ms / ms_per_epoch).
   const tipRes = await fetch(`${BLOCKFROST_URL}/blocks/latest`, { headers: { project_id: BLOCKFROST_KEY } });
   const tip = await tipRes.json() as { time: number };
-  const currentEpoch = (BigInt(tip.time) * 1000n) / PROTOCOL.MS_PER_EPOCH;
+  const currentEpoch = windowOf(BigInt(tip.time) * 1000n, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
 
   // ── Chọn 2 genesis UTxO pure-ADA phân biệt (2 one-shot policy) ────────────────
   const walletUtxos = await lucid.wallet().getUtxos();
@@ -171,6 +172,7 @@ async function main() {
       priceNftPolicy,
       priceNftName:   PRICE_NFT_NAME,
       msPerEpoch:     PROTOCOL.MS_PER_EPOCH,
+      windowOriginMs:     PROTOCOL.WINDOW_ORIGIN_MS,
     }),
   );
   const priceParamAddr = credentialToAddress(NETWORK, scriptHashToCredential(priceParamHash));
@@ -185,6 +187,7 @@ async function main() {
       burnBatchConstr:      BURN_BATCH_CONSTR,
       maxPriceStale,
       msPerEpoch:           PROTOCOL.MS_PER_EPOCH,
+      windowOriginMs:           PROTOCOL.WINDOW_ORIGIN_MS,
       priceParamScriptHash: priceParamHash,   // neo beacon giá vào đúng script
     }),
   );

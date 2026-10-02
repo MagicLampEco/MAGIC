@@ -35,6 +35,15 @@ const RHO_POLICY  = "bb".repeat(28);   // rate_nft_policy
 const RHO_SCRIPT  = "cc".repeat(28);   // rate_script_hash
 const COMMIT_HASH = "dd".repeat(28);   // commit_script_hash (Schedule, giá trị giả cho bài danh sách)
 
+// Gốc cửa sổ (apply-param CUỐI của mọi két). Preview KHÔNG có gốc (`WIN-PREVIEW`), nên bài
+// nào dựng két Preview thì truyền gốc TƯỜNG MINH qua `ProtocolParams.windowOriginMs` — giá trị
+// dưới đây là của BÀI KIỂM, không phải gốc Preview. Khác 0 để phân biệt bản có/không gốc.
+const EXPLICIT_ORIGIN = 1_000_000_000n;
+// Hai gốc thật, gõ LẠI từ vector của LAMP `Specs/Window/CONTRACT.md` v1.0 (không lấy từ hàm
+// đang bị kiểm — lấy từ hàm thì bài kiểm thành lặp lại chính nó).
+const PREPROD_ORIGIN = 1_654_041_600_000n;
+const MAINNET_ORIGIN = 1_506_203_091_000n;
+
 const TLAMP = "744c414d50";  // "tLAMP" — testnets
 const LAMP  = "4c414d50";    // "LAMP"  — mainnet
 
@@ -49,6 +58,7 @@ function protocolFor(network: ProtocolParams["network"]): ProtocolParams {
     rateNftPolicy:      RHO_POLICY,
     rateScriptHash:     RHO_SCRIPT,
     wakemeVaultHash:    WAKEME_HASH,
+    ...(network === "Preview" ? { windowOriginMs: EXPLICIT_ORIGIN } : {}),
   };
 }
 
@@ -58,10 +68,34 @@ const params = (t: Parameters<typeof buildParamsList>[0], n: ProtocolParams["net
 describe("buildParamsList: param order matches the Aiken validator signature", () => {
   const MS_PREVIEW = 86_400_000n;
 
-  it("Instant: (lamp_policy_id, lamp_asset_name, gb_beacon_nft_policy, gb_beacon_script_hash, gb_shard_policy_id, rate_nft_policy, rate_script_hash, wakeme_vault_hash, ms_per_epoch)", () => {
+  it("Instant: (lamp_policy_id, lamp_asset_name, gb_beacon_nft_policy, gb_beacon_script_hash, gb_shard_policy_id, rate_nft_policy, rate_script_hash, wakeme_vault_hash, ms_per_epoch, window_origin_ms)", () => {
     expect(params("Instant", "Preview")).toEqual([
       LAMP_POLICY, TLAMP, GBB_POLICY, GBB_SCRIPT, GBS_POLICY, RHO_POLICY, RHO_SCRIPT, WAKEME_HASH, MS_PREVIEW,
+      EXPLICIT_ORIGIN,
     ]);
+  });
+
+  // Gốc mặc định theo mạng — tham số CUỐI của cả ba danh sách.
+  for (const [net, origin] of [["Preprod", PREPROD_ORIGIN], ["Mainnet", MAINNET_ORIGIN]] as const) {
+    it(`${net}: window_origin_ms mặc định = gốc của mạng, đứng CUỐI cả ba danh sách`, () => {
+      expect(params("Instant", net).at(-1)).toBe(origin);
+      expect(params("Schedule", net).at(-1)).toBe(origin);
+      expect(buildCommitParamsList(protocolFor(net), msPerEpoch(net)).at(-1)).toBe(origin);
+    });
+  }
+
+  it("Preview không truyền gốc ⟹ NÉM WIN-PREVIEW (fail-closed), không đệm gốc 0", () => {
+    const p = { ...protocolFor("Preview") };
+    delete (p as { windowOriginMs?: bigint }).windowOriginMs;
+    for (const vt of ["Instant", "Schedule"] as const) {
+      expect(() => buildParamsList(vt, p, msPerEpoch("Preview"), COMMIT_HASH)).toThrow(/WIN-PREVIEW/);
+    }
+    expect(() => buildCommitParamsList(p, msPerEpoch("Preview"))).toThrow(/WIN-PREVIEW/);
+  });
+
+  it("protocol.windowOriginMs ghi đè gốc theo mạng", () => {
+    const p = { ...protocolFor("Preprod"), windowOriginMs: EXPLICIT_ORIGIN };
+    expect(buildParamsList("Instant", p, msPerEpoch("Preprod")).at(-1)).toBe(EXPLICIT_ORIGIN);
   });
 
   it("Instant: thiếu wakemeVaultHash ⟹ ném, không apply 8 tham số", () => {
@@ -110,7 +144,7 @@ describe("buildParamsList: param order matches the Aiken validator signature", (
   it("Schedule: không đòi wakemeVaultHash (tham số wakeme chỉ có ở Instant)", () => {
     const p = { ...protocolFor("Preview") };
     delete (p as { wakemeVaultHash?: string }).wakemeVaultHash;
-    expect(buildParamsList("Schedule", p, msPerEpoch("Preview"), COMMIT_HASH)).toHaveLength(6);
+    expect(buildParamsList("Schedule", p, msPerEpoch("Preview"), COMMIT_HASH)).toHaveLength(7);
   });
 
   it("Schedule: thiếu commitScriptHash ⟹ ném, không apply 5 tham số", () => {
@@ -118,15 +152,16 @@ describe("buildParamsList: param order matches the Aiken validator signature", (
       .toThrow(/commitScriptHash required for vaultType="Schedule"/);
   });
 
-  it("Schedule vault: (lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch, gb_shard_policy_id, commit_script_hash)", () => {
+  it("Schedule vault: (lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch, gb_shard_policy_id, commit_script_hash, window_origin_ms)", () => {
     expect(params("Schedule", "Preview")).toEqual([
-      LAMP_POLICY, TLAMP, SHARD_POLC, MS_PREVIEW, GBS_POLICY, COMMIT_HASH,
+      LAMP_POLICY, TLAMP, SHARD_POLC, MS_PREVIEW, GBS_POLICY, COMMIT_HASH, EXPLICIT_ORIGIN,
     ]);
   });
 
-  it("Schedule commit: (lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch, gb_beacon_nft_policy, gb_beacon_script_hash, gb_shard_policy_id, rate_nft_policy, rate_script_hash)", () => {
+  it("Schedule commit: (lamp_policy_id, lamp_asset_name, shard_policy_id, ms_per_epoch, gb_beacon_nft_policy, gb_beacon_script_hash, gb_shard_policy_id, rate_nft_policy, rate_script_hash, window_origin_ms)", () => {
     expect(buildCommitParamsList(protocolFor("Preview"), msPerEpoch("Preview"))).toEqual([
       LAMP_POLICY, TLAMP, SHARD_POLC, MS_PREVIEW, GBB_POLICY, GBB_SCRIPT, GBS_POLICY, RHO_POLICY, RHO_SCRIPT,
+      EXPLICIT_ORIGIN,
     ]);
   });
 });
@@ -215,6 +250,7 @@ describe("arity gate: SDK param list matches the built blueprint", () => {
     ms_per_epoch:          86_400_000n,
     wakeme_vault_hash:     WAKEME_HASH,
     commit_script_hash:    COMMIT_HASH,
+    window_origin_ms:      EXPLICIT_ORIGIN,   // các bài dưới dựng trên Preview + gốc tường minh
   };
 
   const against = (titles: string[], got: unknown[]) => {
@@ -238,9 +274,9 @@ describe("arity gate: SDK param list matches the built blueprint", () => {
     );
   });
 
-  it("Instant: bytes SDK apply ĐÚNG BẰNG bytes apply tay 9 tham số — và KHÁC bản 8 tham số", async () => {
+  it("Instant: bytes SDK apply ĐÚNG BẰNG bytes apply tay 10 tham số — và KHÁC bản 9 tham số (thiếu gốc)", async () => {
     // Bảng BY_NAME ở trên chỉ so DANH SÁCH; bài này so BYTES script cuối cùng, tức thứ
-    // quyết định địa chỉ vault. Danh sách 9 phần tử viết TAY theo chữ ký `validator vault(...)`,
+    // quyết định địa chỉ vault. Danh sách 10 phần tử viết TAY theo chữ ký `validator vault(...)`,
     // không đi qua `buildParamsList`, để hai phía không cùng sai theo một hiểu lầm.
     const bp = await loadBlueprint("InstantGen");
     const code = codeOf(bp, "vault.vault.spend");
@@ -248,16 +284,17 @@ describe("arity gate: SDK param list matches the built blueprint", () => {
     const mspe = msPerEpoch("Preprod");
 
     const sdk = applyVaultValidator("Instant", { vaultUnappliedCbor: code }, proto);
+    const manual10 = applyParamsToScript(code, [
+      LAMP_POLICY, TLAMP, GBB_POLICY, GBB_SCRIPT, GBS_POLICY, RHO_POLICY, RHO_SCRIPT, WAKEME_HASH, mspe,
+      PREPROD_ORIGIN,
+    ]);
     const manual9 = applyParamsToScript(code, [
       LAMP_POLICY, TLAMP, GBB_POLICY, GBB_SCRIPT, GBS_POLICY, RHO_POLICY, RHO_SCRIPT, WAKEME_HASH, mspe,
     ]);
-    const manual8 = applyParamsToScript(code, [
-      LAMP_POLICY, TLAMP, GBB_POLICY, GBB_SCRIPT, GBS_POLICY, RHO_POLICY, RHO_SCRIPT, WAKEME_HASH,
-    ]);
 
-    expect(sdk.vaultScript.script).toBe(manual9);
-    expect(sdk.vaultScriptHash).toBe(validatorToScriptHash({ type: "PlutusV3", script: manual9 }));
-    expect(sdk.vaultScriptHash).not.toBe(validatorToScriptHash({ type: "PlutusV3", script: manual8 }));
+    expect(sdk.vaultScript.script).toBe(manual10);
+    expect(sdk.vaultScriptHash).toBe(validatorToScriptHash({ type: "PlutusV3", script: manual10 }));
+    expect(sdk.vaultScriptHash).not.toBe(validatorToScriptHash({ type: "PlutusV3", script: manual9 }));
     expect(sdk.commitScriptHash).toBeUndefined();   // `commit` chỉ có ở két Schedule
 
     // Tham số wakeme thật sự vào bytes: đổi riêng nó là đổi hash.
@@ -274,26 +311,27 @@ describe("arity gate: SDK param list matches the built blueprint", () => {
       .toThrow(/wakemeVaultHash required/);
   });
 
-  it("Schedule: bytes SDK = apply tay `commit` 9 tham số → hash → két 6 tham số, hash `commit` ở #6", async () => {
+  it("Schedule: bytes SDK = apply tay `commit` 10 tham số → hash → két 7 tham số, hash `commit` ở #6, gốc ở #7", async () => {
     // Cùng tinh thần bài Instant: danh sách viết TAY theo chữ ký hai validator. Ghim luôn
     // chuỗi phụ thuộc — két nướng hash của CHÍNH `commit` vừa apply, không phải một hash bất kỳ.
     const bp = await loadBlueprint("ScheduleGen");
     const proto = protocolFor("Preview");
     const mspe = msPerEpoch("Preview");
 
-    const commit9 = applyParamsToScript(codeOf(bp, "vault.commit.withdraw"), [
+    const commit10 = applyParamsToScript(codeOf(bp, "vault.commit.withdraw"), [
       LAMP_POLICY, TLAMP, SHARD_POLC, mspe, GBB_POLICY, GBB_SCRIPT, GBS_POLICY, RHO_POLICY, RHO_SCRIPT,
+      EXPLICIT_ORIGIN,
     ]);
-    const commitHash = validatorToScriptHash({ type: "PlutusV3", script: commit9 });
-    const vault6 = applyParamsToScript(codeOf(bp, "vault.vault.spend"), [
-      LAMP_POLICY, TLAMP, SHARD_POLC, mspe, GBS_POLICY, commitHash,
+    const commitHash = validatorToScriptHash({ type: "PlutusV3", script: commit10 });
+    const vault7 = applyParamsToScript(codeOf(bp, "vault.vault.spend"), [
+      LAMP_POLICY, TLAMP, SHARD_POLC, mspe, GBS_POLICY, commitHash, EXPLICIT_ORIGIN,
     ]);
 
     const sdk = applyVaultValidator("Schedule", scheduleBundle(bp), proto);
-    expect(sdk.commitScript?.script).toBe(commit9);
+    expect(sdk.commitScript?.script).toBe(commit10);
     expect(sdk.commitScriptHash).toBe(commitHash);
-    expect(sdk.vaultScript.script).toBe(vault6);
-    expect(sdk.vaultScriptHash).toBe(validatorToScriptHash({ type: "PlutusV3", script: vault6 }));
+    expect(sdk.vaultScript.script).toBe(vault7);
+    expect(sdk.vaultScriptHash).toBe(validatorToScriptHash({ type: "PlutusV3", script: vault7 }));
 
     // Tham số chỉ `commit` nhận (ρ) vẫn đổi được hash két — qua hash `commit` ở #6.
     const other = applyVaultValidator("Schedule", scheduleBundle(bp), { ...proto, rateScriptHash: "ee".repeat(28) });

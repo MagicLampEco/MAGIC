@@ -37,7 +37,7 @@ import {
 } from "../config.js";
 
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
-import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { ownerRefOf, sameOwner, windowOf } from "@magiclamp/protocol-utils";
 import { genV2BeaconRefsFromBook } from "../deployParams.js";
 import { readRateBeaconUtxo, resolveWakemeVaultUtxo } from "./genV2Chain.js";
 import { updateProfile } from "../../MagicSDK/src/updateProfile.js";
@@ -169,7 +169,7 @@ async function main() {
     wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,
   };
   const vd = Data.from(vaultUtxo.datum!, InstantVaultDatumSchema as never) as { cap_epoch: bigint; wakeme_link: string };
-  const epoch = tip.posixMs / PROTOCOL.MS_PER_EPOCH;
+  const epoch = windowOf(tip.posixMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
   const refresh = vd.cap_epoch < epoch;
   const rateBeaconUtxo = refresh
     ? await readRateBeaconUtxo(lucid, { ...genV2BeaconRefsFromBook(process.env) })

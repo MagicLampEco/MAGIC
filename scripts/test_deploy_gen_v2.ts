@@ -24,7 +24,7 @@ import {
   toUnit, validatorToScriptHash,
   type LucidEvolution, type Validator,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch } from "@magiclamp/protocol-utils";
+import { msPerEpoch, windowOriginMs } from "@magiclamp/protocol-utils";
 import { loadBlueprint, findValidator, appliedScript } from "./applyParams.js";
 import {
   instantVaultParams, scheduleScriptPair, genV2BeaconRefsFromBook,
@@ -59,6 +59,7 @@ const h = (b: string) => b.repeat(28);
 const MAX_TX = 16_384;
 const NET = "Preprod" as const;
 const MS = msPerEpoch(NET);
+const WO = windowOriginMs(NET);   // gốc cửa sổ Preprod — apply-param CUỐI của két + `commit`
 const LAMP_POLICY = h("4c");
 const LAMP_NAME = "744c414d50";
 
@@ -68,7 +69,7 @@ const BEACONS: GenV2BeaconRefs = {
   rateNftPolicy: h("a5"), rateScriptHash: h("a5"),
 };
 const SG_IN: ScheduleScriptParamInputs = {
-  lampPolicyId: LAMP_POLICY, lampAssetName: LAMP_NAME, shardPolicyId: h("5a"), msPerEpoch: MS, ...BEACONS,
+  lampPolicyId: LAMP_POLICY, lampAssetName: LAMP_NAME, shardPolicyId: h("5a"), msPerEpoch: MS, windowOriginMs: WO, ...BEACONS,
 };
 
 async function main() {
@@ -78,18 +79,24 @@ async function main() {
 
   // ── (A) hash trùng gói nền ──────────────────────────────────────────────────
   console.log("── (A) hash deployParams ↔ gói nền");
-  const igIn = { lampPolicyId: LAMP_POLICY, lampAssetName: LAMP_NAME, ...BEACONS, wakemeVaultHash: h("77"), msPerEpoch: MS };
+  const igIn = { lampPolicyId: LAMP_POLICY, lampAssetName: LAMP_NAME, ...BEACONS, wakemeVaultHash: h("77"), msPerEpoch: MS, windowOriginMs: WO };
   const igOurs = appliedScript(findValidator(igBp, "vault.vault.spend"), instantVaultParams(igIn)).hash;
   const igBase = validatorToScriptHash(applyInstantVaultParams(findValidator(igBp, "vault.vault.spend").compiledCode, igIn));
   check("IG két: deployParams == applyInstantVaultParams", igOurs === igBase, igOurs);
   const igSwap = appliedScript(findValidator(igBp, "vault.vault.spend"),
     instantVaultParams({ ...igIn, gbBeaconNftPolicy: igIn.rateNftPolicy, rateNftPolicy: igIn.gbBeaconNftPolicy })).hash;
   check("IG két CỰC ĐỐI: đảo gb_beacon_nft_policy ↔ rate_nft_policy ⟹ hash khác", igSwap !== igOurs);
+  // Gốc cửa sổ thật sự đi vào bytes: đổi MỘT ms ⟹ hash khác (không thì tham số cuối bị bỏ rơi im lặng).
+  const igOrigin = appliedScript(findValidator(igBp, "vault.vault.spend"), instantVaultParams({ ...igIn, windowOriginMs: WO + 1n })).hash;
+  check("IG két CỰC ĐỐI: window_origin_ms +1 ⟹ hash khác", igOrigin !== igOurs);
 
   const pair = scheduleScriptPair(sgBp, SG_IN);
   const base = applyScheduleScripts(sgBpRaw, SG_IN);
   check("SG commit: deployParams == applyScheduleScripts", pair.commitHash === base.commitScriptHash, pair.commitHash);
   check("SG két: deployParams == applyScheduleScripts", pair.vaultHash === base.vaultScriptHash, pair.vaultHash);
+  const sgOrigin = scheduleScriptPair(sgBp, { ...SG_IN, windowOriginMs: WO + 1n });
+  check("SG CỰC ĐỐI: window_origin_ms +1 ⟹ commit + két đều khác",
+    sgOrigin.commitHash !== pair.commitHash && sgOrigin.vaultHash !== pair.vaultHash);
   const sgSwap = scheduleScriptPair(sgBp, { ...SG_IN, shardPolicyId: SG_IN.gbShardPolicyId, gbShardPolicyId: SG_IN.shardPolicyId });
   check("SG CỰC ĐỐI: đảo shard_policy_id ↔ gb_shard_policy_id ⟹ commit + két đều khác",
     sgSwap.commitHash !== pair.commitHash && sgSwap.vaultHash !== pair.vaultHash);
@@ -116,7 +123,7 @@ async function main() {
   // (khoá đó thật sự đi vào shard qua két → commit), không thì phép so trùng ở trên xanh rỗng.
   console.log("── (E) 03 ↔ 06 cùng sổ");
   const sgFromBook = (b: Record<string, string>): ScheduleScriptParamInputs => ({
-    lampPolicyId: LAMP_POLICY, lampAssetName: LAMP_NAME, shardPolicyId: h("5a"), msPerEpoch: MS,
+    lampPolicyId: LAMP_POLICY, lampAssetName: LAMP_NAME, shardPolicyId: h("5a"), msPerEpoch: MS, windowOriginMs: WO,
     ...genV2BeaconRefsFromBook(b),
   });
   const s03 = scheduleShardScript(sgBp, sgFromBook(book));

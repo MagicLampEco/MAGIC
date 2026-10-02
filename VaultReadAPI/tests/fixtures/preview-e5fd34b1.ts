@@ -20,6 +20,7 @@
 
 import { Constr, Data } from "@lucid-evolution/lucid";
 import { VAULT_DATUM_FIELD_COUNTS } from "@magiclamp/sdk";
+import { epochStartMs } from "@magiclamp/protocol-utils";
 
 import type { ChainTip, ChainUtxo } from "../../src/chain.js";
 
@@ -159,4 +160,23 @@ export const PREVIEW_TIP_AT_BATCH_EPOCH: ChainTip = {
   blockHeight: 4_651_976,
   blockHash: "14ae149dd07cd25ce37a6a4336f3939446bd68d9ad4a2e820201a474cc3ad72f",
   blockTimePosixMs: 1_788_480_000_000n,
+};
+
+// ── Mốc PREPROD tương đương — SUY RA, không phải dữ liệu ghi từ chuỗi (2026-10-02) ─────────
+// Từ gốc cửa sổ (LAMP `Specs/Window/CONTRACT.md` v1.0) Preview KHÔNG có `window_origin_ms`, nên
+// dịch vụ chạy trên Preview NÉM `WIN-PREVIEW` (fail-closed) — bài kiểm canh đúng điều đó. Datum
+// ghi ở trên do validator đời CHƯA có gốc sinh ra (≡ gốc 0, nhịp 1 ngày). Để hỏi CÙNG câu ở
+// CÙNG chỉ số epoch, bài chạy dịch vụ trên Preprod và đặt đỉnh chuỗi vào đúng chỉ số đó tính
+// TỪ GỐC Preprod (`epochStartMs`). Hai mốc dưới đây là phép suy, không phải lượt đo.
+
+/** Đầu epoch giao thức `BATCH_EPOCH` (20700) trên Preprod. */
+export const PREPROD_TIP_AT_BATCH_EPOCH: ChainTip = {
+  ...PREVIEW_TIP_AT_BATCH_EPOCH,
+  blockTimePosixMs: epochStartMs(BATCH_EPOCH, "Preprod"),
+};
+
+/** Epoch `TIP_EPOCH_AT_RECORD` (20707) trên Preprod, cùng phần dư 15 903 000 ms như lượt ghi. */
+export const PREPROD_TIP_AT_RECORD_EPOCH: ChainTip = {
+  ...PREVIEW_TIP_AT_RECORD,
+  blockTimePosixMs: epochStartMs(TIP_EPOCH_AT_RECORD, "Preprod") + 15_903_000n,
 };

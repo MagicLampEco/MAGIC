@@ -13,7 +13,7 @@ import {
   credentialToAddress, validatorToAddress, validatorToScriptHash,
   type LucidEvolution, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch } from "@magiclamp/protocol-utils";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import { buildConsumeTx, type ConsumeParams } from "../offchain/src/consume.js";
 import { encodeEngageDatum, encodePriceParam } from "../offchain/src/types.js";
@@ -28,12 +28,14 @@ const CONSUME_POLICY = validatorToScriptHash(consumeScript);
 const THREAD_NFT = CONSUME_POLICY + "ee".repeat(32);
 const VAULT_H = validatorToScriptHash(vaultScript);
 const VAULT_NAME = "aa".repeat(32);
-const VAULT_ADDR = validatorToAddress("Preview", vaultScript);
+const VAULT_ADDR = validatorToAddress("Preprod", vaultScript);
 
 const OWNER: OwnerCred = { VerificationKey: ["0b".repeat(28)] };
 const REQUIRED = 10_000_000n;                     // 10_000_000 × 1e9 × 1 / 1e9
 const TIP = 1_700_000_000_000n;
-const E = TIP / msPerEpoch("Preview");            // epoch két thấy (cận dưới = tip)
+// Epoch két thấy (cận dưới = tip) = (tip − window_origin_ms) / ms_per_epoch, gốc Preprod.
+// Preview không có gốc cửa sổ ⟹ bộ dựng NÉM `WIN-PREVIEW` (CONTRACT Window v1.0 §4).
+const E = posixMsToEpoch(TIP, "Preprod");
 
 const RATE_POLICY = "7a".repeat(28);
 const RATE_SH = "7b".repeat(28);
@@ -65,7 +67,7 @@ const mkUtxo = (over: Partial<UTxO>): UTxO => ({
 
 const rateBeacon = (over: Partial<UTxO> = {}): UTxO => mkUtxo({
   txHash: "7c".repeat(32),
-  address: credentialToAddress("Preview", { type: "Script", hash: RATE_SH }),
+  address: credentialToAddress("Preprod", { type: "Script", hash: RATE_SH }),
   assets: { lovelace: 2_000_000n, [RATE_POLICY + "52484f"]: 1n },
   datum: rateDatum(1_000_000_000n, 1_000_000_000n, 0n),
   ...over,
@@ -73,7 +75,7 @@ const rateBeacon = (over: Partial<UTxO> = {}): UTxO => mkUtxo({
 
 const wakemeVault = (pinnedName = VAULT_NAME): UTxO => mkUtxo({
   txHash: "cd".repeat(32),
-  address: credentialToAddress("Preview", { type: "Script", hash: WAKEME_H }),
+  address: credentialToAddress("Preprod", { type: "Script", hash: WAKEME_H }),
   assets: { lovelace: 2_000_000n, [WAKEME_H + OWNER_COMMIT]: 1n },
   datum: wakemeDatum({
     ownerCommit: OWNER_COMMIT, pinnedVaultHash: VAULT_H, pinnedVaultName: pinnedName,
@@ -110,7 +112,7 @@ function params(vaultIn: string, vaultOut: string, over: Partial<ConsumeParams> 
     opCount: 1n,
     vaultBurnRedeemerCbor: burnRedeemer([REQUIRED]),
     vaultOutDatumCbor: vaultOut,
-    network: "Preview",
+    network: "Preprod",
     tipPosixMs: TIP,
     ...over,
   } as ConsumeParams;

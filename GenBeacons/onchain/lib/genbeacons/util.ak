@@ -13,12 +13,18 @@ use cardano/transaction.{
 /// epoch ⟹ bên ký không chọn được epoch khác epoch mà ledger chạy giao dịch (ledger chỉ
 /// nhận giao dịch khi slot hiện tại nằm trong khoảng hiệu lực). Cùng ngữ nghĩa với
 /// `ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak` ▸ `get_epoch`.
-pub fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+///
+/// Gốc lưới (WIN-ORIGIN-1, `LAMP/Specs/Window/CONTRACT.md` v1.0): chỉ số epoch =
+/// `(t − window_origin_ms) / ms_per_epoch`; `window_origin_ms` là apply-param cuối của
+/// validator gọi hàm này.
+pub fn get_epoch(tx: Transaction, ms_per_epoch: Int, window_origin_ms: Int) -> Int {
   expect Finite(lo) = tx.validity_range.lower_bound.bound_type
   expect Finite(hi) = tx.validity_range.upper_bound.bound_type
   expect hi >= lo
-  expect lo / ms_per_epoch == hi / ms_per_epoch
-  hi / ms_per_epoch
+  let lo_epoch = ( lo - window_origin_ms ) / ms_per_epoch
+  let hi_epoch = ( hi - window_origin_ms ) / ms_per_epoch
+  expect lo_epoch == hi_epoch
+  hi_epoch
 }
 
 pub fn is_at_script(addr: Address, script_hash: ByteArray) -> Bool {

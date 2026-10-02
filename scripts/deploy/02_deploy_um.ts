@@ -8,6 +8,7 @@
 // Output: UM datum UTxO at applied UMKeeper validator address, with 1 UM NFT.
 // Prints: UM_DATUM_HASH (applied), UM_NFT_POLICY_ID — copy both into .env.
 
+import { windowOf } from "@magiclamp/protocol-utils";
 import {
   Lucid, Blockfrost, Data,
   credentialToAddress, scriptHashToCredential,
@@ -76,6 +77,7 @@ async function main() {
     unapplied,
     umDatumParams({
       msPerEpoch: PROTOCOL.MS_PER_EPOCH,
+      windowOriginMs:  PROTOCOL.WINDOW_ORIGIN_MS,
       umPolicy:   umNftPolicyId,
       umName:     ASSET_NAMES.um_nft,
     }),
@@ -94,7 +96,7 @@ async function main() {
   });
   const tip = await tipRes.json() as { slot: number; time: number };
   const tipPosixMs   = BigInt(tip.time) * 1000n;
-  const currentEpoch = tipPosixMs / PROTOCOL.MS_PER_EPOCH;
+  const currentEpoch = windowOf(tipPosixMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
 
   // Initial UM datum (neutral 1.0 = Q).
   // UM_AGE env: how many epochs ago last_updated_epoch was. Default 0 = fresh.

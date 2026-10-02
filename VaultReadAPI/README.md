@@ -174,11 +174,13 @@ số là buộc người dùng đoán nó là con số nào.
 Gợi ý hiển thị: số lớn là `available` (tiêu được **bây giờ**); `accrued`/`expired` là
 dòng phụ ("đã sinh trong kỳ" / "đã hết hạn"). Đừng cộng `available` với `expired`.
 
-**(c) `at_epoch` là epoch GIAO THỨC, không phải epoch Cardano.**
-Validator tính `epoch = posix_ms / ms_per_epoch` và **không trừ genesis**, nên hai số
-không bao giờ gặp nhau. Đo thật trên Preview 2026-09-11: epoch Cardano = **1417**, epoch
-giao thức = **20707**. Đem `at_epoch` so với số epoch của explorer là đọc nhầm đồng hồ.
-Thân bài luôn kèm `chain_tip` để bên gọi tự đối chiếu được.
+**(c) `at_epoch` là epoch GIAO THỨC, tính từ gốc cửa sổ của mạng.**
+Validator tính `epoch = (posix_ms − window_origin_ms) / ms_per_epoch` (chia sàn; gốc theo
+LAMP `Specs/Window/CONTRACT.md` v1.0, nguồn số: `ProtocolUtils/src/index.ts` ▸
+`WINDOW_ORIGIN_MS_BY_NETWORK`). Trên Preprod và Mainnet gốc là mốc đầu epoch Cardano nên
+`at_epoch` **bằng** số epoch của explorer. Preview chưa có gốc: dịch vụ trả 501
+`WINDOW_ORIGIN_UNAVAILABLE` thay vì đoán. Thân bài vẫn luôn kèm `chain_tip` để bên gọi tự
+đối chiếu được.
 
 ### `GET /health`
 

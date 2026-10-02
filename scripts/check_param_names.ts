@@ -21,6 +21,7 @@ import {
   addressData,
   paidFundParams, prepaidVaultParams,
 } from "./deployParams.js";
+import { windowOriginMs } from "@magiclamp/protocol-utils";
 
 // Giá trị giữ chỗ — chỉ TÊN và THỨ TỰ mới được kiểm ở đây.
 const P28 = "00".repeat(28);
@@ -33,6 +34,8 @@ const P28 = "00".repeat(28);
 const CARP_NAME_28 = "11".repeat(28);
 const SEED = { txHash: "11".repeat(32), outputIndex: 0 };
 const MS = 86_400_000n;
+// Gốc cửa sổ thật (Preprod) — chỉ TÊN + THỨ TỰ được kiểm, nhưng giá trị đi qua đúng nguồn duy nhất.
+const ORIGIN = windowOriginMs("Preprod");
 // Năm hash GenBeacons của Gen v2.0 (`deployParams.ts` ▸ `GenV2BeaconRefs`) — giữ chỗ như P28.
 const BEACONS = {
   gbBeaconNftPolicy: P28, gbBeaconScriptHash: P28, gbShardPolicyId: P28,
@@ -53,7 +56,7 @@ const CASES: Case[] = [
     usedBy: "deploy/05_create_instant_vault.ts + verify_per_network.ts",
     params: instantVaultParams({
       lampPolicyId: P28, lampAssetName: "744c414d50", ...BEACONS,
-      wakemeVaultHash: P28, msPerEpoch: MS,
+      wakemeVaultHash: P28, msPerEpoch: MS, windowOriginMs: ORIGIN,
     }),
   },
   {
@@ -62,7 +65,7 @@ const CASES: Case[] = [
     usedBy: "deploy/05 (mint NFT danh-tính vault)",
     params: instantVaultParams({
       lampPolicyId: P28, lampAssetName: "744c414d50", ...BEACONS,
-      wakemeVaultHash: P28, msPerEpoch: MS,
+      wakemeVaultHash: P28, msPerEpoch: MS, windowOriginMs: ORIGIN,
     }),
   },
   {
@@ -70,7 +73,7 @@ const CASES: Case[] = [
     usedBy: "deploy/07_create_schedule_vault.ts + verify_per_network.ts",
     params: scheduleVaultParams({
       lampPolicyId: P28, lampAssetName: "744c414d50", shardPolicyId: P28,
-      msPerEpoch: MS, gbShardPolicyId: P28, commitScriptHash: P28,
+      msPerEpoch: MS, windowOriginMs: ORIGIN, gbShardPolicyId: P28, commitScriptHash: P28,
     }),
   },
   {
@@ -78,7 +81,7 @@ const CASES: Case[] = [
     usedBy: "deploy/07 (mint NFT danh-tính vault)",
     params: scheduleVaultParams({
       lampPolicyId: P28, lampAssetName: "744c414d50", shardPolicyId: P28,
-      msPerEpoch: MS, gbShardPolicyId: P28, commitScriptHash: P28,
+      msPerEpoch: MS, windowOriginMs: ORIGIN, gbShardPolicyId: P28, commitScriptHash: P28,
     }),
   },
   {
@@ -88,7 +91,7 @@ const CASES: Case[] = [
     usedBy: "deploy/06 (ref commit) + deploy/07 + deploy/08 (đăng ký stake)",
     params: scheduleCommitParams({
       lampPolicyId: P28, lampAssetName: "744c414d50", shardPolicyId: P28,
-      msPerEpoch: MS, ...BEACONS,
+      msPerEpoch: MS, windowOriginMs: ORIGIN, ...BEACONS,
     }),
   },
   {
@@ -104,7 +107,7 @@ const CASES: Case[] = [
   {
     module: "UMKeeper", title: "um_datum.um_datum_validator.spend",
     usedBy: "deploy/02_deploy_um.ts + verify_per_network.ts",
-    params: umDatumParams({ msPerEpoch: MS, umPolicy: P28, umName: "554d44" }),
+    params: umDatumParams({ msPerEpoch: MS, windowOriginMs: ORIGIN, umPolicy: P28, umName: "554d44" }),
   },
   {
     module: "UMKeeper", title: "um_nft.um_nft.mint",
@@ -121,7 +124,7 @@ const CASES: Case[] = [
     usedBy: "deploy/09_deploy_consume.ts",
     params: priceParamParams({
       committee: [P28], threshold: 1n, priceNftPolicy: P28,
-      priceNftName: "5052494345", msPerEpoch: MS,
+      priceNftName: "5052494345", msPerEpoch: MS, windowOriginMs: ORIGIN,
     }),
   },
   {
@@ -130,7 +133,7 @@ const CASES: Case[] = [
     params: consumeParams({
       priceNftPolicy: P28, priceNftName: "5052494345",
       vaultScriptHash: P28, burnBatchConstr: 2n,
-      maxPriceStale: 1n, msPerEpoch: MS, priceParamScriptHash: P28,
+      maxPriceStale: 1n, msPerEpoch: MS, windowOriginMs: ORIGIN, priceParamScriptHash: P28,
     }),
   },
   {
@@ -140,7 +143,7 @@ const CASES: Case[] = [
     params: consumeParams({
       priceNftPolicy: P28, priceNftName: "5052494345",
       vaultScriptHash: P28, burnBatchConstr: 2n,
-      maxPriceStale: 1n, msPerEpoch: MS, priceParamScriptHash: P28,
+      maxPriceStale: 1n, msPerEpoch: MS, windowOriginMs: ORIGIN, priceParamScriptHash: P28,
     }),
   },
   {
@@ -154,7 +157,7 @@ const CASES: Case[] = [
     params: paymasterParams({
       vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
       policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
-      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
+      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS, windowOriginMs: ORIGIN,
       // Địa chỉ giữ chỗ phải mang stake part: chốt 2026-09-06 là kho Treasury CÓ
       // uỷ quyền stake, và `assertTreasuryStakeDecided` nay từ chối enterprise
       // address không có cửa bỏ qua. Ca enterprise được đo riêng ở cuối tệp.
@@ -185,14 +188,14 @@ const CASES: Case[] = [
     module: "PrepaidGen", title: "prepaid.paid_fund.mint",
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: paidFundParams({
-      carpPolicyId: P28, carpAssetName: CARP_NAME_28, msPerEpoch: MS,
+      carpPolicyId: P28, carpAssetName: CARP_NAME_28, msPerEpoch: MS, windowOriginMs: ORIGIN,
     }),
   },
   {
     module: "PrepaidGen", title: "prepaid.paid_fund.spend",
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: paidFundParams({
-      carpPolicyId: P28, carpAssetName: CARP_NAME_28, msPerEpoch: MS,
+      carpPolicyId: P28, carpAssetName: CARP_NAME_28, msPerEpoch: MS, windowOriginMs: ORIGIN,
     }),
   },
   {
@@ -200,7 +203,7 @@ const CASES: Case[] = [
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: prepaidVaultParams({
       carpPolicyId: P28, carpAssetName: CARP_NAME_28,
-      paidFundHash: P28, msPerEpoch: MS,
+      paidFundHash: P28, msPerEpoch: MS, windowOriginMs: ORIGIN,
     }),
   },
   {
@@ -208,7 +211,7 @@ const CASES: Case[] = [
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: prepaidVaultParams({
       carpPolicyId: P28, carpAssetName: CARP_NAME_28,
-      paidFundHash: P28, msPerEpoch: MS,
+      paidFundHash: P28, msPerEpoch: MS, windowOriginMs: ORIGIN,
     }),
   },
 ];
@@ -216,7 +219,7 @@ const CASES: Case[] = [
 async function main() {
   console.log("=== Đối chiếu tên apply-param: blueprint ↔ script deploy ===\n");
   console.log(`(giữ chỗ 28-byte ${P28.slice(0, 8)}…, seed ${SEED.txHash.slice(0, 8)}…, ` +
-              `ms_per_epoch=${MS}; chỉ TÊN + THỨ TỰ được kiểm)\n`);
+              `ms_per_epoch=${MS}, window_origin_ms=${ORIGIN}; chỉ TÊN + THỨ TỰ được kiểm)\n`);
 
   const cache = new Map<string, Blueprint | Error>();
   let ok = 0, mismatch = 0, unbuilt = 0;
@@ -268,7 +271,7 @@ async function main() {
     paymasterParams({
       vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
       policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
-      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
+      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS, windowOriginMs: ORIGIN,
       treasuryAddr: addressData({ hash: P28, isScript: true }),   // stake part None
       lampAssetName: "744c414d50",
       // Không còn cờ nào để đặt — cổng phải ném ở đây, không có đường vòng.
@@ -285,7 +288,7 @@ async function main() {
     paymasterParams({
       vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
       policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
-      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS,
+      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS, windowOriginMs: ORIGIN,
       treasuryAddr: addressData({ hash: P28, isScript: true }, { hash: P28, isScript: false }),
       lampAssetName: "744c414d50",
       // Địa chỉ có stake part — đây là hình dạng duy nhất cổng chấp nhận.

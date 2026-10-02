@@ -45,12 +45,13 @@
 //   (= hash `shard_nft.ak`, param `genesis_ref` — không nhận hash nào), shard
 //   nhận *script hash của vault*. Thứ tự biên dịch một chiều:
 //       shard_nft(genesis_ref) → shard_policy_id
-//         → commit(9 tham số) → commit_script_hash               (2026-09-30)
-//           → vault(#0..#4, commit_script_hash) → vault_script_hash
+//         → commit(10 tham số) → commit_script_hash              (2026-09-30)
+//           → vault(#0..#4, commit_script_hash, window_origin_ms) → vault_script_hash
 //             → shard(shard_policy_id, vault_script_hash)
 //   (#0..#4 của két = lamp_policy_id, lamp_asset_name, shard_policy_id,
 //   ms_per_epoch, gb_shard_policy_id — chữ ký `validator vault` là nguồn thứ tự;
-//   `commit` nhận năm giá trị đó cộng bốn tham số beacon mà két không đọc.)
+//   `commit` nhận năm giá trị đó cộng bốn tham số beacon mà két không đọc, cộng
+//   `window_origin_ms` ở cuối — 2026-10-02, cùng giá trị với tham số cuối của két.)
 //   Và D12: `vault_script_hash` đổi theo LOẠI vault (ba cửa gen ⟹ ba bản), không
 //   theo từng người dùng / từng UTxO / từng lần tạo.
 
@@ -71,6 +72,7 @@ use cardano/transaction.{
 }
 
 use magiclamp/protocol/owner_auth.{owner_authorized}
+use magiclamp/protocol/window_origin_fixtures
 use magiclamp/protocol/types.{
   ActivityState, BurnBatch, DelegationCertificate, Draw, EpochUsage, Flame,
   GbShard, GenSchedule, GreenBackBeacon, RateParam,
@@ -182,13 +184,17 @@ validator vault(
   // không dùng. Két vẫn bị buộc gián tiếp vào chúng qua #5 (hash `commit` nướng sẵn).
   //
   // #5 commit_script_hash — NỐI CUỐI: hash của validator `commit` (withdraw-zero) SAU
-  //   khi apply 9 tham số của nó. Đổi theo LOẠI script (mỗi bản két một bản commit),
+  //   khi apply 10 tham số của nó. Đổi theo LOẠI script (mỗi bản két một bản commit),
   //   không theo từng két ⟹ hợp lệ theo phép thử apply-param của BOUNDARIES §2.
   //   Không vòng: `commit` KHÔNG nhận hash két; nó biết két qua redeemer. Thứ tự:
-  //       commit(9 tham số) → commit_script_hash → vault(…, commit_script_hash)
+  //       commit(10 tham số) → commit_script_hash → vault(…, commit_script_hash, window_origin_ms)
   //         → vault_script_hash → shard(shard_policy_id, vault_script_hash)
   gb_shard_policy_id : PolicyId,
   commit_script_hash : ByteArray,
+  // #6 window_origin_ms — NỐI CUỐI: gốc lưới cửa sổ (POSIX ms, theo mạng), LAMP
+  //   `Specs/Window/CONTRACT.md` v1.0. Epoch = (t − #6) / #3. Đổi theo MẠNG (loại
+  //   script), không theo từng két.
+  window_origin_ms   : Int,
 ) {
   // ── mint: vault-identity NFT policy (policy_id == this script hash) ──────
   mint(redeemer: VaultIdRedeemer, policy_id: PolicyId, tx: Transaction) {
@@ -207,7 +213,7 @@ validator vault(
     tx        : Transaction,
   ) {
     expect Some(datum) = datum_opt
-    let current_epoch = get_epoch(tx, ms_per_epoch)
+    let current_epoch = get_epoch(tx, ms_per_epoch, window_origin_ms)
     let vault_addr    = own_addr(own_ref, tx.inputs)
 
     // C-VAULT-DS-1 — counted by PAYMENT CREDENTIAL, not by full address.
@@ -324,6 +330,8 @@ validator commit(
   gb_shard_policy_id    : PolicyId,
   rate_nft_policy       : PolicyId,
   rate_script_hash      : ByteArray,
+  // NỐI CUỐI: gốc lưới cửa sổ, cùng giá trị với apply-param #6 của két.
+  window_origin_ms      : Int,
 ) {
   withdraw(redeemer: CommitRedeemer, _account: Credential, tx: Transaction) {
     let vault_ref = redeemer.vault_ref
@@ -337,7 +345,7 @@ validator commit(
     expect spend_rd: VaultRedeemer = spend_raw
     expect ScheduleCommit { schedule_length, lamp_per_epoch } = spend_rd
     validate_commit(datum, schedule_length, lamp_per_epoch,
-                    get_epoch(tx, ms_per_epoch), vault_ref, vault_in.output.address,
+                    get_epoch(tx, ms_per_epoch, window_origin_ms), vault_ref, vault_in.output.address,
                     lamp_policy_id, lamp_asset_name, shard_policy_id,
                     GenParams {
                       gb_beacon_nft_policy,
@@ -392,7 +400,7 @@ fn commit_delegated_to(
 // hint; correctness is bound by the vault, not by trusting this redeemer.
 //
 // `vault_script_hash` (apply-param #2) là hash của validator `vault` ở CHÍNH tệp
-// này sau khi đã apply 4 tham số của nó. Xem khối COSPEND-IDENTITY ở đầu tệp:
+// này sau khi đã apply 7 tham số của nó. Xem khối COSPEND-IDENTITY ở đầu tệp:
 // thứ tự biên dịch một chiều, không vòng.
 validator shard(shard_policy_id_param: PolicyId, vault_script_hash: ByteArray) {
   spend(
@@ -1212,13 +1220,16 @@ fn no_input_at(inputs: List<Input>, h: ByteArray) -> Bool {
 // count up to k extra fires and claim k× MAGIC in a single tx.
 // Fix: require BOTH bounds Finite AND the tx to sit inside ONE epoch
 // (e_lo == e_hi), so `current_epoch` is unambiguous. Mirrors VacuumGen.
-fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+//
+// Gốc lưới cửa sổ (LAMP `Specs/Window/CONTRACT.md` v1.0, WIN-ORIGIN-1): CẢ HAI biên trừ
+// `window_origin_ms` trước khi chia. Hàm này dùng chung cho `vault` và `commit`.
+fn get_epoch(tx: Transaction, ms_per_epoch: Int, window_origin_ms: Int) -> Int {
   expect Some(lower_ms) =
     tx.validity_range.lower_bound.bound_type |> get_finite
   expect Some(upper_ms) =
     tx.validity_range.upper_bound.bound_type |> get_finite
-  let e_lo = lower_ms / ms_per_epoch
-  let e_hi = upper_ms / ms_per_epoch
+  let e_lo = ( lower_ms - window_origin_ms ) / ms_per_epoch
+  let e_hi = ( upper_ms - window_origin_ms ) / ms_per_epoch
   expect e_lo == e_hi
   e_lo
 }
@@ -1860,12 +1871,17 @@ fn t_with_commit_leg(
 /// Lượt chạy của KÉT (nhánh ký) trên một tx đã gắn chân ký. Datum lấy từ input ở
 /// `t_own_ref()` — đúng thứ ledger đưa cho két.
 fn t_vault_commit_leg(tx: Transaction, l: Int, lambda: Int) -> Bool {
+  t_vault_commit_leg_at(0, tx, l, lambda)
+}
+
+/// `t_vault_commit_leg` với gốc lưới `origin` (apply-param #6 của két).
+fn t_vault_commit_leg_at(origin: Int, tx: Transaction, l: Int, lambda: Int) -> Bool {
   let vin = own_input(t_own_ref(), tx.inputs)
   expect InlineDatum(raw) = vin.output.datum
   expect din: VaultDatum = raw
   vault.spend(
     t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
-    t_gbs_policy, t_commit_hash,
+    t_gbs_policy, t_commit_hash, origin,
     Some(din), ScheduleCommit { schedule_length: l, lamp_per_epoch: lambda },
     t_own_ref(), tx,
   )
@@ -1874,11 +1890,16 @@ fn t_vault_commit_leg(tx: Transaction, l: Int, lambda: Int) -> Bool {
 /// Lượt chạy của `commit` (withdraw) trên một tx đã gắn chân ký, với redeemer
 /// đúng như tx mang.
 fn t_commit_withdraw_leg(tx: Transaction) -> Bool {
+  t_commit_withdraw_leg_at(0, tx)
+}
+
+/// `t_commit_withdraw_leg` với gốc lưới `origin` (apply-param cuối của `commit`).
+fn t_commit_withdraw_leg_at(origin: Int, tx: Transaction) -> Bool {
   expect Some(raw) = pairs.get_first(tx.redeemers, Withdraw(t_commit_cred()))
   expect cr: CommitRedeemer = raw
   commit.withdraw(
     t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
-    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash,
+    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash, origin,
     cr, t_commit_cred(), tx,
   )
 }
@@ -1887,12 +1908,28 @@ fn t_commit_withdraw_leg(tx: Transaction) -> Bool {
 /// trước khi tách. `din` phải trùng datum của input két trong `tx` (bài cũ truyền
 /// hai thứ đó rời nhau); lệch thì bài chết ở đây, không lặng lẽ đo trên datum khác.
 fn t_pair_commit(din: VaultDatum, l: Int, lambda: Int, epoch: Int, tx: Transaction) -> Bool {
-  let full = t_with_commit_leg(tx, l, lambda, epoch, t_own_ref())
+  t_pair_commit_at(0, 0, 0, din, l, lambda, epoch, tx)
+}
+
+/// `t_pair_commit` với gốc lưới riêng cho từng chân (`vault_origin`, `commit_origin`) và
+/// validity range dời `shift` ms. Hai gốc tách nhau để ca âm chỉ ra ĐÚNG chân quên gốc.
+fn t_pair_commit_at(
+  vault_origin: Int,
+  commit_origin: Int,
+  shift: Int,
+  din: VaultDatum,
+  l: Int,
+  lambda: Int,
+  epoch: Int,
+  tx: Transaction,
+) -> Bool {
+  let full =
+    window_origin_fixtures.shift_tx(t_with_commit_leg(tx, l, lambda, epoch, t_own_ref()), shift)
   let vin = own_input(t_own_ref(), full.inputs)
   expect InlineDatum(raw) = vin.output.datum
   expect on_chain: VaultDatum = raw
   expect on_chain == din
-  t_vault_commit_leg(full, l, lambda) && t_commit_withdraw_leg(full)
+  t_vault_commit_leg_at(vault_origin, full, l, lambda) && t_commit_withdraw_leg_at(commit_origin, full)
 }
 const t_rho: Int = 4_000_000_000
 const t_gb_reset: Int = 1_000_000_000_000
@@ -3576,7 +3613,7 @@ fn t_mint_tx(seed: OutputReference, out: Output, mint_v: Value, signers: List<By
 fn t_mint_call(seed: OutputReference, policy_id: PolicyId, tx: Transaction) -> Bool {
   vault.mint(
     t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
-    t_gbs_policy, t_commit_hash,
+    t_gbs_policy, t_commit_hash, 0,
     MintVaultId { seed }, policy_id, tx,
   )
 }
@@ -4312,10 +4349,22 @@ test g_burn_window_not_shifted_rejected() fail {
 
 // ── Shard GB chỉ đi cùng nhánh KÝ (cổng ở tầng `vault.spend`) ─────────────────
 fn g_spend(epoch: Int, rd: VaultRedeemer, din: VaultDatum, tx: Transaction) -> Bool {
-  let lo = epoch * 86_400_000
+  g_spend_at(0, 0, epoch, rd, din, tx)
+}
+
+/// `g_spend` với gốc lưới `origin` (apply-param #6) và validity range dời `shift` ms.
+fn g_spend_at(
+  origin: Int,
+  shift: Int,
+  epoch: Int,
+  rd: VaultRedeemer,
+  din: VaultDatum,
+  tx: Transaction,
+) -> Bool {
+  let lo = shift + epoch * 86_400_000
   vault.spend(
     t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
-    t_gbs_policy, t_commit_hash,
+    t_gbs_policy, t_commit_hash, origin,
     Some(din), rd, t_own_ref(),
     Transaction { ..tx, validity_range: interval.between(lo, lo + 1000) },
   )
@@ -4442,7 +4491,7 @@ fn w_publish(cert: Certificate) -> Bool {
   let rd: Data = 0
   commit.publish(
     t_lamp_policy, t_lamp_name, t_shard_policy, 86_400_000,
-    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash,
+    t_gbb_policy, t_gbb_hash, t_gbs_policy, t_rate_policy, t_rate_hash, 0,
     rd, cert, placeholder,
   )
 }
@@ -4488,6 +4537,109 @@ test g_spend_fire_ok() {
 
 test g_spend_fire_with_gb_shard_rejected() fail {
   g_spend(5, ScheduleFire { schedule_id: t_sched_id }, t_fire_datum(), g_add_gb_shard(g_fire_tx()))
+}
+
+// ═══ Gốc lưới cửa sổ (LAMP Specs/Window/CONTRACT.md v1.0) ═════════════════
+// Tx dời đúng bằng gốc và validator nhận gốc đó ⟹ trừ gốc thì vẫn epoch cũ, khớp mọi
+// trường epoch của datum/fixture. Quên trừ gốc ⟹ epoch ≈ cũ + gốc/P ⟹ đỏ.
+
+// Két, nhánh Fire.
+test wo_vault_fire_mainnet_origin() {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  g_spend_at(o, o, 5, ScheduleFire { schedule_id: t_sched_id }, t_fire_datum(), g_fire_tx())
+}
+
+test wo_vault_fire_preprod_origin() {
+  let o = window_origin_fixtures.preprod_origin_ms
+  g_spend_at(o, o, 5, ScheduleFire { schedule_id: t_sched_id }, t_fire_datum(), g_fire_tx())
+}
+
+test wo_vault_fire_forgotten_origin() fail {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  g_spend_at(0, o, 5, ScheduleFire { schedule_id: t_sched_id }, t_fire_datum(), g_fire_tx())
+}
+
+// Cặp két + `commit` (nhánh ký), cùng tx với `g_commit_ok`.
+fn wo_commit_run(vault_origin: Int, commit_origin: Int, shift: Int) -> Bool {
+  let (din, base) = t_commit_parts(g_n)
+  t_pair_commit_at(
+    vault_origin, commit_origin, shift, din, t_commit_l, t_commit_lambda, t_commit_epoch,
+    t_with_gen_custom(base, g_draw(), g_draw(), g_refs(), t_gb_reset),
+  )
+}
+
+test wo_commit_pair_mainnet_origin() {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  wo_commit_run(o, o, o)
+}
+
+test wo_commit_pair_preprod_origin() {
+  let o = window_origin_fixtures.preprod_origin_ms
+  wo_commit_run(o, o, o)
+}
+
+// Chỉ `commit` quên gốc (két nhận đúng gốc) ⟹ đỏ ở chân `commit`.
+test wo_commit_leg_forgotten_origin() fail {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  wo_commit_run(o, 0, o)
+}
+
+// Vector CONTRACT §3 trên `get_epoch` (hai biên cùng epoch).
+test wo_get_epoch_mainnet_at_boundary() {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_epoch(
+    window_origin_fixtures.tx_between(t, t + 1_000),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.mainnet_origin_ms,
+  ) == 658
+}
+
+test wo_get_epoch_mainnet_one_ms_before() {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_epoch(
+    window_origin_fixtures.tx_between(t - 1_000, t - 1),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.mainnet_origin_ms,
+  ) == 657
+}
+
+test wo_get_epoch_preprod_at_boundary() {
+  let t = window_origin_fixtures.preprod_t_316
+  get_epoch(
+    window_origin_fixtures.tx_between(t, t + 1_000),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.preprod_origin_ms,
+  ) == 316
+}
+
+test wo_get_epoch_preprod_one_ms_before() {
+  let t = window_origin_fixtures.preprod_t_316
+  get_epoch(
+    window_origin_fixtures.tx_between(t - 1_000, t - 1),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.preprod_origin_ms,
+  ) == 315
+}
+
+// Hai biên vắt qua biên epoch 658 theo gốc ⟹ đỏ (e_lo ≠ e_hi).
+test wo_get_epoch_mainnet_straddle() fail {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_epoch(
+    window_origin_fixtures.tx_between(t - 1, t + 1_000),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.mainnet_origin_ms,
+  ) == 657
+}
+
+test wo_get_epoch_mainnet_forgotten_origin() fail {
+  let t = window_origin_fixtures.mainnet_t_658
+  expect
+    get_epoch(
+      window_origin_fixtures.tx_between(t, t + 1_000),
+      window_origin_fixtures.ms_per_window,
+      0,
+    ) == 658
+  True
 }
 
 test g_spend_burn_ok() {

@@ -10,7 +10,7 @@
 import {
   Data, Constr, credentialToAddress, validatorToScriptHash, type UTxO,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch } from "@magiclamp/protocol-utils";
+import { msPerEpoch, windowOriginMs } from "@magiclamp/protocol-utils";
 import {
   VaultDatum, GbShard, GreenBackBeacon, RateParam, VaultRegistry,
   type VaultDatum as TVaultDatum,
@@ -30,6 +30,11 @@ export const NETWORK = "Preprod" as const;
 export const P       = msPerEpoch(NETWORK);          // 432_000_000 ms
 export const E       = 100n;
 export const SLOT    = 1_000n;
+// Gốc cửa sổ của mạng fixture (`window_origin_ms`, apply-param CUỐI của két). Biên epoch giao
+// thức `e` là `O + e·P` — dùng `at(e)`, đừng viết `e * P` (đó là lưới gốc Unix cũ). Gốc khác 0
+// nên bản quên trừ gốc ra epoch khác hẳn và bài kiểm đỏ.
+export const O       = windowOriginMs(NETWORK);
+export const at      = (e: bigint): bigint => O + e * P;
 
 export const LAMP_POLICY = "aa".repeat(28);
 export const LAMP_NAME   = "744c414d50";             // "tLAMP"
@@ -55,6 +60,7 @@ export const VP: InstantVaultParams = {
   rateScriptHash    : "b4".repeat(28),
   wakemeVaultHash   : "b5".repeat(28),
   msPerEpoch        : P,
+  windowOriginMs    : O,
 };
 export const REGISTRY_POLICY = "b6".repeat(28);
 

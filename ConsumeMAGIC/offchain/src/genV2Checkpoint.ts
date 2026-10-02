@@ -345,7 +345,7 @@ export interface GenV2BurnCheckArgs {
   vaultBurnRedeemerCbor: string;
   /** `required` mà `consume.ak` ép `Σburns ==`. */
   requiredNanogic: bigint;
-  /** Epoch mà KÉT thấy: `cận dưới validity / ms_per_epoch` (`get_current_epoch`). */
+  /** Epoch mà KÉT thấy: `(cận dưới validity − window_origin_ms) / ms_per_epoch` (`get_current_epoch`). */
   vaultEpoch: bigint;
   vaultKind?: VaultKind;
   rateBeaconUtxo?: UTxO;

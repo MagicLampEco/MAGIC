@@ -66,7 +66,7 @@ const baseParams = (over: Partial<ConsumeParams>): ConsumeParams =>
     opCount: 1n,
     vaultBurnRedeemerCbor: "d87980",
     vaultOutDatumCbor: "d87980",
-    network: "Preview",
+    network: "Preprod",
     tipPosixMs: 1_700_000_000_000n,
     ...over,
   }) as ConsumeParams;

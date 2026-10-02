@@ -8,7 +8,7 @@
 // KHÔNG mục rút. Một ca đơn lẻ xanh được ở cả hai cực đột biến "luôn đi nhánh X".
 
 import { Data, validatorToScriptHash, type LucidEvolution, type UTxO, type Validator } from "@lucid-evolution/lucid";
-import { msPerEpoch, posixMsToEpoch, OwnerAuthError } from "@magiclamp/protocol-utils";
+import { epochStartMs, posixMsToEpoch, OwnerAuthError } from "@magiclamp/protocol-utils";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -26,8 +26,10 @@ import { applyVaultValidator } from "../src/validatorScripts.js";
 
 const LAMP_POLICY = "4942de4a226f43c524c1273d752712366511d5fd7ae28bc1a1576077";
 const LAMP_UNIT = `${LAMP_POLICY}744c414d50`;
-const TIP_MS = 60n * msPerEpoch("Preview");
-const CUR_EPOCH = posixMsToEpoch(TIP_MS, "Preview");
+// Preview chưa có gốc cửa sổ (`WIN-PREVIEW`, LAMP `Specs/Window/CONTRACT.md` v1.0 §4) và các bộ
+// dựng tính epoch theo mạng ⟹ fixture chạy trên Preprod, mốc tip tính TỪ GỐC (`epochStartMs`).
+const TIP_MS = epochStartMs(60n, "Preprod");
+const CUR_EPOCH = posixMsToEpoch(TIP_MS, "Preprod");
 
 // Hai "script did_stake" giả: chỉ cần băm được, không cần chạy.
 const DID_SCRIPT = "4746010000222220";
@@ -65,7 +67,7 @@ function scriptAuth(script = DID_SCRIPT) {
     anchorRefUtxo: ANCHOR,
     controllerPkh: CTRL,
     deviceKeyHash: DEV,
-    network: "Preview",
+    network: "Preprod",
   }, REWARD);
 }
 
@@ -123,7 +125,7 @@ async function codeOf(p: Promise<unknown>): Promise<string> {
 
 const baseWithdraw = {
   amountOildrop: 1_000_000n, vaultScript: VAULT_SCRIPT, vaultType: "Schedule" as const,
-  vaultPlutusJson: PLUTUS_JSON, network: "Preview" as const, lampPolicyId: LAMP_POLICY,
+  vaultPlutusJson: PLUTUS_JSON, network: "Preprod" as const, lampPolicyId: LAMP_POLICY,
   destinationAddress: "addr_test1vqvrwknagm22rwnrus2v0nagyknauff3jztknm3x2d9nahgwq9x0u",
   vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING, tipPosixMs: TIP_MS,
 };
@@ -172,7 +174,7 @@ describe("withdrawLamp — nhánh chủ", () => {
 describe("updateProfile — nhánh chủ", () => {
   const base = {
     newProfile: "Ember" as const, vaultScript: VAULT_SCRIPT, vaultType: "Instant" as const,
-    vaultPlutusJson: PLUTUS_JSON, network: "Preview" as const,
+    vaultPlutusJson: PLUTUS_JSON, network: "Preprod" as const,
     vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING, tipPosixMs: TIP_MS,
   };
   // Gen v2.0: két đã làm mới checkpoint TRONG epoch này (`cap_epoch == e`) ⟹ không đọc beacon ρ.
@@ -202,7 +204,7 @@ describe("createVault — chủ Credential ở genesis", () => {
   const vaultHash = validatorToScriptHash(VAULT_SCRIPT);
   const base = {
     vaultType: "Schedule" as const,
-    protocol: { network: "Preview" as const, lampPolicyId: LAMP_POLICY },
+    protocol: { network: "Preprod" as const, lampPolicyId: LAMP_POLICY },
     appliedVault: { script: VAULT_SCRIPT, expectedScriptHash: vaultHash },
     tipPosixMs: TIP_MS,
   };
@@ -262,7 +264,7 @@ describe("listVaultsForOwner — lọc theo owner {type, hash}", () => {
     fileURLToPath(new URL("../../ScheduleGen/onchain/plutus.json", import.meta.url)), "utf8",
   )) as { validators: { title: string; compiledCode: string }[] };
   const protocol = {
-    network: "Preview" as const, lampPolicyId: LAMP_POLICY, shardPolicyId: "11".repeat(28),
+    network: "Preprod" as const, lampPolicyId: LAMP_POLICY, shardPolicyId: "11".repeat(28),
     gbBeaconNftPolicy: "12".repeat(28), gbBeaconScriptHash: "13".repeat(28), gbShardPolicyId: "14".repeat(28),
     rateNftPolicy: "15".repeat(28), rateScriptHash: "16".repeat(28),
   };

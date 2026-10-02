@@ -13,8 +13,9 @@
 //
 // ── HAI ĐỒNG HỒ ────────────────────────────────────────────────────────────────
 // `/blocks/latest` trả `time` theo GIÂY POSIX; epoch giao thức tính từ MILI-giây
-// (`posixMsToEpoch` của ProtocolUtils, và nó KHÔNG trừ genesis nên epoch giao thức
-// không bao giờ bằng epoch Cardano). Phép nhân 1000 nằm ở ĐÚNG MỘT dòng, có tên, và
+// (`posixMsToEpoch` của ProtocolUtils, trừ gốc cửa sổ `window_origin_ms` theo mạng — trên
+// Preprod/Mainnet số đó BẰNG epoch Cardano; Preview chưa có gốc ⟹ NÉM `WIN-PREVIEW`).
+// Phép nhân 1000 nằm ở ĐÚNG MỘT dòng, có tên, và
 // có một phép kiểm tỉnh táo ngay dưới nó.
 
 import { applyDoubleCborEncoding, scriptFromNative, type Script, type UTxO } from "@lucid-evolution/lucid";

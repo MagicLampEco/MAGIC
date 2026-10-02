@@ -107,7 +107,7 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { requiredForOp } from "@magiclamp/consumemagic-pricing";
 import {
   epochValidityWindow, ownerRefFromPlutusData, ownerRefOf, ownerRefToString, sameOwner,
-  type OwnerRef,
+  type OwnerRef, windowOf,
 } from "@magiclamp/protocol-utils";
 import {
   consumeParams, genV2BeaconRefsFromBook, instantVaultParams, scheduleScriptPair,
@@ -248,6 +248,7 @@ async function main() {
       burnBatchConstr:      BURN_BATCH_CONSTR,
       maxPriceStale,
       msPerEpoch:           PROTOCOL.MS_PER_EPOCH,
+      windowOriginMs:           PROTOCOL.WINDOW_ORIGIN_MS,
       priceParamScriptHash: priceParamHash,
     }),
   );
@@ -278,6 +279,7 @@ async function main() {
         lampAssetName: ASSET_NAMES.lamp,
         shardPolicyId: POLICY_IDS.shard_nft,
         msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+        windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
         ...beacons,
       }).vaultHash
     : appliedScript(
@@ -287,6 +289,7 @@ async function main() {
           lampAssetName:   ASSET_NAMES.lamp,
           ...beacons,
           msPerEpoch:      PROTOCOL.MS_PER_EPOCH,
+          windowOriginMs:      PROTOCOL.WINDOW_ORIGIN_MS,
           wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,   // #7 — chỉ ở nhánh instant
         }),
       ).hash;
@@ -480,12 +483,13 @@ async function main() {
   const tip = await tipRes.json() as { time: number };
   const tipPosixMs = BigInt(tip.time) * 1000n;
   const mspe = PROTOCOL.MS_PER_EPOCH;
-  const currentEpoch = tipPosixMs / mspe;
+  const currentEpoch = windowOf(tipPosixMs, mspe, PROTOCOL.WINDOW_ORIGIN_MS);
   // Cửa sổ = `epochValidityWindow`: [tip, min(cuối epoch, tip + VALIDITY_MAX_AHEAD_MS)].
   // PHẢI chứa `now` (ledger từ chối nếu now > validTo) và nằm trọn trong epoch cho cả 2
   // validator:
-  //   vault.ak get_current_epoch: epoch = lower/mspe; ép upper < (epoch+1)*mspe.
-  //   consume.ak util.get_epoch:  epoch = upper/mspe (floor); ép upper-lower ≤ mspe.
+  //   vault.ak get_current_epoch: epoch = (lower−O)/mspe; ép upper < O+(epoch+1)*mspe.
+  //   consume.ak util.get_epoch:  epoch = (upper−O)/mspe (floor); ép upper-lower ≤ mspe.
+  //   (O = window_origin_ms, apply-param cuối của cả hai — `PROTOCOL.WINDOW_ORIGIN_MS`.)
   // Bản trước lấy TRỌN epoch [epochStart, epochEnd-1]: với epoch 5 ngày, cận trên vượt
   // chân trời node ⟹ TimeTranslationPastHorizon lúc GỬI. `DRY_RUN` không bắt được ca đó
   // (validator chạy cục bộ, không qua node).
@@ -583,7 +587,7 @@ async function main() {
   //    Công thức lấy từ gói nền (`checkpoint.ts`, `genFormula.ts` của từng module), không
   //    viết lại. `checkGenV2Burn` của ConsumeMAGIC (bản chép có nhãn, độc lập) đối chiếu
   //    lại datum ra ngay dưới trước khi dựng — hai đường lệch nhau thì NÉM ở đây.
-  const vaultEpoch = lowerMs / mspe;
+  const vaultEpoch = windowOf(lowerMs, mspe, PROTOCOL.WINDOW_ORIGIN_MS);
   let rateBeaconUtxo: UTxO | undefined;
   let wakemeVaultUtxo: UTxO | undefined;
   let checkpointCells: Record<string, unknown>;

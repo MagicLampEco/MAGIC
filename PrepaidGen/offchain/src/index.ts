@@ -3,3 +3,4 @@ export * from "./math.js";
 export * from "./types.js";
 export * from "./prepaid.js";
 export * from "./ownerAuth.js";
+export * from "./tx/index.js";

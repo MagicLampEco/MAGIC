@@ -558,6 +558,49 @@ describe("BurnBatch ghi nợ quyết toán (vá 2026-09-28)", () => {
   });
 });
 
+// Đối ứng P8 của khối `pp_draw_*_unsettled_debt_*` trong
+// `PrepaidGen/onchain/validators/prepaid.ak` (vá 2026-10-02): cùng con số —
+// hạn-mức 5 CARP, nợ 600_000_000 nanogic, rút 1 CARP. Bản Aiken trước đó đặt
+// cứng `consumed_unsettled: 0` ở nhánh rút, còn `drawMagic` GIỮ nợ; các ca rút cũ
+// đều chạy trên dòng nợ 0 nên không ca nào thấy hai bên lệch.
+describe("Draw trên dòng đang nợ quyết toán (P8, vá 2026-10-02)", () => {
+  const DEBT = 600_000_000n;
+
+  it("rút GIỮ nguyên nợ, chỉ đổi remaining + last_draw_epoch", () => {
+    const v = vault([{ fund_id: FUND_ID, remaining: 5_000_000_000n, consumed: DEBT }]);
+    const after = drawMagic(v, FUND_ID, 1_000_000_000n, EPOCH, OWN_REF);
+    expect(after.prepaid_credits).toEqual([
+      {
+        fund_id: FUND_ID,
+        remaining: 4_000_000_000n,
+        issued_epoch: 99n,
+        last_draw_epoch: EPOCH,
+        consumed_unsettled: DEBT,
+      },
+    ]);
+  });
+
+  it("rút ở dòng A không chạm nợ của dòng B", () => {
+    const v = vault([
+      { fund_id: FUND_ID, remaining: 5_000_000_000n },
+      { fund_id: OTHER_FUND, remaining: 0n, consumed: DEBT },
+    ]);
+    const after = drawMagic(v, FUND_ID, 1_000_000_000n, EPOCH, OWN_REF);
+    expect(after.prepaid_credits[1]).toEqual(v.prepaid_credits[1]);
+  });
+
+  it("đốt → rút → quyết toán: quỹ nhận ĐÚNG lượng đã đốt, không mất vì lượt rút", () => {
+    const v0 = vault([{ fund_id: FUND_ID, remaining: 5_000_000_000n }], [
+      batch("b1", 10n ** 9n, EPOCH),
+    ]);
+    const v1 = burnBatches(v0, [["b1", DEBT]], EPOCH);
+    const v2 = drawMagic(v1, FUND_ID, 1_000_000_000n, EPOCH, OWN_REF);
+    expect(settleLineDebt(v2, FUND_ID)).toBe(DEBT);
+    const v3 = settleLine(v2, FUND_ID, EPOCH);
+    expect(settleLineDelta(v2, v3, FUND_ID)).toBe(DEBT);
+  });
+});
+
 describe("TẤN CÔNG — dọn rác sai (PrunePrepaid)", () => {
   it("dọn khi không có gì chết → từ chối (reject-noop)", () => {
     const v = vault([{ fund_id: FUND_ID, remaining: 0n }], [batch("b1", 10n, EPOCH)]);

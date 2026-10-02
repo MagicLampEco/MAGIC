@@ -5,6 +5,10 @@
 #   BLOCKFROST_KEY=… WALLET_SEED='…' bash run_keeper.sh Preprod
 #   KEEPER_STEPS=backing,price,fire,instant BLOCKFROST_KEY=… WALLET_SEED='…' bash run_keeper.sh Preprod
 #   KEEPER_DRY_RUN=1 BLOCKFROST_KEY=… WALLET_SEED='…' bash run_keeper.sh Preprod
+#   STATE_BOOK_PATH=/…/state.Preprod.sh BLOCKFROST_KEY=… WALLET_SEED='…' bash run_keeper.sh Preprod
+#
+# Sổ trạng thái mặc định là `scripts/state.<NET>.sh`; `STATE_BOOK_PATH` đổi nó cho một lượt
+# (cổng: `stateBookPath.ts`).
 #
 # Chạy lại bao nhiêu lần trong ngày cũng được: bước nào đã đúng epoch thì bỏ qua. Nên hẹn giờ mỗi
 # giờ an toàn hơn hẹn đúng một lần sau nửa đêm UTC — một lượt trượt vì mạng thì lượt sau bù.
@@ -48,15 +52,22 @@ npx tsx check_datum_shape.ts || {
   exit "$rc"
 }
 
-STATE_FILE="state.$NET.sh"
+# Sổ: mặc định `scripts/state.$NET.sh`; `STATE_BOOK_PATH` (đường TUYỆT ĐỐI) đổi sổ cho đúng lượt
+# này, để chạy keeper cho một cụm thứ hai mà không đọc sổ của cụm kia qua symlink. Ba cổng của
+# biến nằm ở MỘT chỗ, `stateBookPath.ts` ▸ `stateBookPath`; cổng hỏng thì DỪNG, không lùi về
+# mặc định — lùi về mặc định chính là ca biến này sinh ra để chặn.
+STATE_FILE="$(npx tsx state_book_path_cli.ts "$NET")" || { echo '  KHÔNG giao dịch nào được gửi.'; exit 1; }
+echo "· sổ: $STATE_FILE"
 [ -f "$STATE_FILE" ] || { echo "✗ Không thấy $STATE_FILE — keeper cần hash/ref đã deploy."; exit 1; }
 # Giữ giá trị người gọi đặt: state file nạp SAU sẽ đè im lặng nếu không cất trước.
 CALLER_BEACONS="${KEEPER_PRICE_BEACONS:-}"
 # Thế phòng thủ ngay trên đây là bản làm tay cho ĐÚNG MỘT biến. Cổng dưới đây là
 # bản chung cho nhóm biến mà không phép kiểm nào đứng sau.
 . "./state_book_guard.sh"
-assert_state_books_khong_khai_y_dinh "$STATE_FILE"
-set -a; . "./$STATE_FILE"; set +a
+# `|| exit 1` là bắt buộc: kịch bản không có `set -e`, nên cổng trả 1 mà không dừng thì dòng
+# sau vẫn nạp sổ, và giá trị sổ khai đè giá trị người gọi truyền vào.
+assert_state_books_khong_khai_y_dinh "$STATE_FILE" || { echo '  KHÔNG giao dịch nào được gửi.'; exit 1; }
+set -a; . "$STATE_FILE"; set +a
 . "./keeper_beacons.sh"
 derive_keeper_price_beacons "$CALLER_BEACONS"
 export KEEPER_PRICE_BEACONS
@@ -69,11 +80,18 @@ echo "· price beacon: $(printf '%s' "$KEEPER_PRICE_BEACONS" | tr ',' '\n' | gre
 # thư mục hiện tại như trước. `STATE_DIRECTORY` có thể mang nhiều đường nối bằng `:`; lấy đường đầu.
 KEEPER_DATA_DIR="${STATE_DIRECTORY:-.}"
 KEEPER_DATA_DIR="${KEEPER_DATA_DIR%%:*}"
-KEEPER_STATE_FILE="${KEEPER_STATE_FILE:-$KEEPER_DATA_DIR/keeper-state.$NET.json}"
+# Sổ instant đi theo SỔ CỤM khi người gọi đổi sổ bằng `STATE_BOOK_PATH`: hai cụm chung một sổ
+# instant thì lượt "đã thử cấp ở epoch E" của cụm này làm cụm kia bỏ qua cả epoch. Khoá thì
+# KHÔNG tách theo cụm: hai cụm chạy cùng một ví, chạy chồng là tranh UTxO của ví.
+if [ -n "${STATE_BOOK_PATH:-}" ]; then
+  KEEPER_STATE_FILE="${KEEPER_STATE_FILE:-$(dirname "$STATE_FILE")/keeper-state.$NET.json}"
+else
+  KEEPER_STATE_FILE="${KEEPER_STATE_FILE:-$KEEPER_DATA_DIR/keeper-state.$NET.json}"
+fi
 
 export NETWORK="$NET" BLOCKFROST_KEY WALLET_SEED KEEPER_PRICE_BEACONS KEEPER_STATE_FILE
 echo "▶ keeper · NETWORK=$NET · $(date -u +%FT%TZ) · secret đã nhận từ môi trường (không in)."
-echo "· ghi vào: $KEEPER_DATA_DIR"
+echo "· ghi vào: $KEEPER_DATA_DIR · sổ instant: $KEEPER_STATE_FILE"
 
 # Ba trạng thái của khoá — lấy được · lượt khác đang giữ · không tạo được — tả ở `keeper_lock.sh`.
 . "./keeper_lock.sh"

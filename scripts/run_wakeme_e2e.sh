@@ -87,7 +87,8 @@ if [ -f "$STATE_FILE" ]; then
   # `05_create_instant_vault.ts`, `07_create_schedule_vault.ts`. Sai ở đó là sai
   # script hash ⟹ sai địa chỉ, không sửa được bằng cấu hình về sau.
   . "./state_book_guard.sh"
-  assert_state_books_khong_khai_y_dinh "$STATE_FILE"
+  # Kịch bản không có `set -e`: cổng trả 1 mà không tự dừng thì dòng sau vẫn nạp sổ.
+  assert_state_books_khong_khai_y_dinh "$STATE_FILE" || exit 1
   set -a; . "./$STATE_FILE"; set +a
 fi
 

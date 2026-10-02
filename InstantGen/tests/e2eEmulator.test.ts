@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { windowOriginMs } from "@magiclamp/protocol-utils";
 import {
   deriveGenBeaconsScripts, loadBlueprint, mintVaultRegistryTx, initGreenBackBeaconTx,
   mintGbShardsTx, initRateBeaconTx, postGreenBackTx, epochValidityWindow, decodeGbShard,
@@ -33,6 +34,9 @@ import { WAKEME_SEED_CREDIT } from "../offchain/src/constants.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const P = 3_600_000n;              // 1 giờ / epoch — sang epoch bằng `awaitSlot`
 const EPOCH0 = 500_000n;
+// Gốc cửa sổ (apply-param CUỐI của két + beacon). Lấy gốc Preprod: khác 0 nên bản quên trừ
+// gốc thấy một epoch khác hẳn. Biên epoch `e` = O + e·P; `P` vẫn là ĐỘ DÀI (awaitSlot).
+const O = windowOriginMs("Preprod");
 const CAP = 1_800_000_000_000_000n;
 const RHO_MAX = 4_000_000_000n;
 const LAMP_NAME = "744c414d50";
@@ -88,7 +92,7 @@ async function only(unit: string): Promise<UTxO> {
 }
 
 const now = () => emulator.now();
-const win = () => { const w = epochValidityWindow(now(), P); return { fromMs: BigInt(w.fromMs), toMs: BigInt(w.toMs) }; };
+const win = () => { const w = epochValidityWindow(now(), P, O); return { fromMs: BigInt(w.fromMs), toMs: BigInt(w.toMs) }; };
 
 function genesisDatum(owner: string): TVaultDatum {
   return {
@@ -127,7 +131,7 @@ beforeAll(async () => {
   rateKey = generateEmulatorAccountFromPrivateKey({ lovelace: 50_000_000n });
   writer = generateEmulatorAccountFromPrivateKey({ lovelace: 50_000_000n });
   emulator = new Emulator([deployer, rateKey, writer]);
-  emulator.time = Number(EPOCH0 * P + 60_000n);
+  emulator.time = Number(O + EPOCH0 * P + 60_000n);
   lucid = await Lucid(emulator, "Custom");
   lucid.selectWallet.fromSeed(deployer.seedPhrase);
 
@@ -137,7 +141,7 @@ beforeAll(async () => {
   const seed = (i: number) => ({ txHash: splitHash, outputIndex: i });
 
   s = deriveGenBeaconsScripts(loadBlueprint(), "Custom", {
-    msPerEpoch: P, vaultRegistrySeed: seed(0), greenbackWriter: pkh(writer), greenbackSeed: seed(1),
+    msPerEpoch: P, windowOriginMs: O, vaultRegistrySeed: seed(0), greenbackWriter: pkh(writer), greenbackSeed: seed(1),
     gbShardCapNanogic: CAP, gbShardSeed: seed(2), rateKey: pkh(rateKey), rhoMaxQ: RHO_MAX, rateSeed: seed(3),
   });
 
@@ -155,7 +159,7 @@ beforeAll(async () => {
     gbBeaconNftPolicy: s.greenback.nftUnit.slice(0, 56), gbBeaconScriptHash: s.greenback.hash,
     gbShardPolicyId: s.gbShard.hash,
     rateNftPolicy: s.rate.nftUnit.slice(0, 56), rateScriptHash: s.rate.hash,
-    wakemeVaultHash: "b5".repeat(28), msPerEpoch: P,
+    wakemeVaultHash: "b5".repeat(28), msPerEpoch: P, windowOriginMs: O,
   };
   vaultScript = applyInstantVaultParams(code, vp);
   vaultHash = mintingPolicyToId(vaultScript);

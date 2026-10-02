@@ -45,7 +45,7 @@
 
 import { readFile } from "node:fs/promises";
 import { validatorToScriptHash } from "@lucid-evolution/lucid";
-import { lampAssetName, msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { lampAssetName, msPerEpoch, windowOriginMs, WindowOriginError, type Network } from "@magiclamp/protocol-utils";
 import {
   loadBlueprint, findValidator, appliedValidator, type Blueprint, type ParamMap,
 } from "./applyParams.js";
@@ -112,6 +112,17 @@ function beaconsFromLedger(ledger: Ledger): GenV2BeaconRefs {
   return genV2BeaconRefsFromBook(Object.fromEntries(ledger));
 }
 
+/** Gốc cửa sổ của `net` (apply-param CUỐI). Mạng chưa có gốc (Preview, `WIN-PREVIEW`) ⟹
+ *  trả tên tham số thiếu để hàng đó thành KHÔNG ĐO ĐƯỢC — không đệm một gốc giả. */
+function windowOriginOrMissing(net: Network): bigint | string[] {
+  try {
+    return windowOriginMs(net);
+  } catch (e) {
+    if (e instanceof WindowOriginError) return [`window_origin_ms (${e.code})`];
+    throw e;
+  }
+}
+
 /** Trả danh sách khoá THIẾU trong sổ (rỗng = đủ). */
 function missingKeys(ledger: Ledger, ...keys: string[]): string[] {
   return keys.filter((k) => {
@@ -126,17 +137,20 @@ const MODULES: readonly ModuleSpec[] = [
     title:  "vault.vault.spend",
     liveHashKey: "VAULT_INSTANT_HASH",
     params: (ledger, net, mspe) => {
-      // Gen v2.0: 9 tham số. Sổ thiếu một khoá GenBeacons ⟹ cụm dựng trước đời v2.0 (hoặc
+      // Gen v2.0: 10 tham số (gốc cửa sổ cuối). Sổ thiếu một khoá GenBeacons ⟹ cụm dựng trước đời v2.0 (hoặc
       // chưa chạy bước 11) ⟹ KHÔNG ĐO ĐƯỢC, không đệm.
       const absent = missingKeys(ledger, "LAMP_POLICY_ID", ...GEN_V2_BEACON_KEYS,
         // Lấy từ SỔ, không từ bảng theo mạng: sổ thiếu khoá ⟹ cụm dựng trước apply-param #8
         // ⟹ KHÔNG ĐO ĐƯỢC, không đệm.
         "WAKEME_VAULT_HASH");
       if (absent.length > 0) return absent;
+      const wo = windowOriginOrMissing(net);
+      if (Array.isArray(wo)) return wo;
       return instantVaultParams({
         lampPolicyId:    ledger.get("LAMP_POLICY_ID")!,
         lampAssetName:   lampAssetName(net),
         msPerEpoch:      mspe,
+        windowOriginMs:  wo,
         wakemeVaultHash: ledger.get("WAKEME_VAULT_HASH")!,
         ...beaconsFromLedger(ledger),
       });
@@ -146,24 +160,28 @@ const MODULES: readonly ModuleSpec[] = [
     module: "ScheduleGen",
     title:  "vault.vault.spend",
     liveHashKey: "VAULT_SCHEDULE_HASH",
-    // Gen v2.0: két 6 tham số, #6 là hash `commit` (9 tham số) ĐÃ apply — dựng qua
+    // Gen v2.0: két 7 tham số, #6 là hash `commit` (10 tham số) ĐÃ apply, #7 gốc cửa sổ — dựng qua
     // `scheduleScriptPair`, cùng hàm với deploy 03/06/07. Nên hash két đang sống cũng phủ luôn
     // `commit`: lệch một tham số của `commit` là lệch hash két. Sổ không ghi hash `commit`
     // riêng (chỉ `REF_COMMIT_SCHEDULE_UTXO`), nên không có hàng riêng cho nó.
     params: (ledger, net, mspe, bp) => {
       const absent = missingKeys(ledger, "LAMP_POLICY_ID", "SHARD_NFT_POLICY_ID", ...GEN_V2_BEACON_KEYS);
       if (absent.length > 0) return absent;
+      const wo = windowOriginOrMissing(net);
+      if (Array.isArray(wo)) return wo;
       const i = {
         lampPolicyId:  ledger.get("LAMP_POLICY_ID")!,
         lampAssetName: lampAssetName(net),
         shardPolicyId: ledger.get("SHARD_NFT_POLICY_ID")!,
         msPerEpoch:    mspe,
+        windowOriginMs: wo,
         ...beaconsFromLedger(ledger),
       };
       return scheduleVaultParams({
         lampPolicyId: i.lampPolicyId, lampAssetName: i.lampAssetName, shardPolicyId: i.shardPolicyId,
         msPerEpoch: i.msPerEpoch, gbShardPolicyId: i.gbShardPolicyId,
         commitScriptHash: scheduleScriptPair(bp, i).commitHash,
+        windowOriginMs: i.windowOriginMs,
       });
     },
   },
@@ -171,11 +189,14 @@ const MODULES: readonly ModuleSpec[] = [
     module: "UMKeeper",
     title:  "um_datum.um_datum_validator.spend",
     liveHashKey: "UM_DATUM_HASH",
-    params: (ledger, _net, mspe) => {
+    params: (ledger, net, mspe) => {
       const absent = missingKeys(ledger, "UM_NFT_POLICY_ID");
       if (absent.length > 0) return absent;
+      const wo = windowOriginOrMissing(net);
+      if (Array.isArray(wo)) return wo;
       return umDatumParams({
         msPerEpoch: mspe,
+        windowOriginMs: wo,
         umPolicy:   ledger.get("UM_NFT_POLICY_ID")!,
         umName:     "554d44", // "UMD" — hằng giao thức, không phải env
       });

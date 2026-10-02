@@ -33,16 +33,23 @@ use cardano/transaction.{
 ///       ledger chọn slot nào trong cửa sổ.
 ///
 /// ms_per_epoch network-specific (Preview 86_400_000; Mainnet 432_000_000).
-pub fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+///
+/// Gốc lưới (WIN-ORIGIN-1, `LAMP/Specs/Window/CONTRACT.md` v1.0): chỉ số epoch =
+/// `(t − window_origin_ms) / ms_per_epoch`. `window_origin_ms` là apply-param của
+/// validator gọi hàm này, không gõ cứng ở đây. Phép `hi − lo ≤ ms_per_epoch` dùng
+/// `ms_per_epoch` như một ĐỘ DÀI nên không trừ gốc.
+pub fn get_epoch(tx: Transaction, ms_per_epoch: Int, window_origin_ms: Int) -> Int {
   expect Some(lo) = tx.validity_range.lower_bound.bound_type |> get_finite
   expect Some(hi) = tx.validity_range.upper_bound.bound_type |> get_finite
   // Cửa sổ hợp lệ + ≤ 1 epoch (không bịa khoảng cách epoch giữa 2 biên).
   expect hi >= lo
   expect hi - lo <= ms_per_epoch
+  let lo_epoch = ( lo - window_origin_ms ) / ms_per_epoch
+  let hi_epoch = ( hi - window_origin_ms ) / ms_per_epoch
   // CÙNG epoch cả 2 biên → epoch tham chiếu không phụ thuộc slot ledger chọn.
-  expect lo / ms_per_epoch == hi / ms_per_epoch
+  expect lo_epoch == hi_epoch
   // Epoch tham chiếu = từ TRẦN thời gian (upper) → không under-state được.
-  hi / ms_per_epoch
+  hi_epoch
 }
 
 pub fn get_finite(bt: IntervalBoundType) -> Option<Int> {
@@ -179,22 +186,22 @@ fn ut_tx(lo: Int, hi: Int) -> Transaction {
 
 test get_epoch_same_epoch_ok() {
   // Cửa sổ nằm TRỌN trong epoch 6 → epoch tham chiếu = 6.
-  get_epoch(ut_tx(6 * ut_mspe, 6 * ut_mspe + 1), ut_mspe) == 6
+  get_epoch(ut_tx(6 * ut_mspe, 6 * ut_mspe + 1), ut_mspe, 0) == 6
 }
 
 test get_epoch_whole_epoch_window_ok() {
   // Biên rộng nhất còn hợp lệ: đầu epoch 6 → sát cuối epoch 6.
-  get_epoch(ut_tx(6 * ut_mspe, 7 * ut_mspe - 1), ut_mspe) == 6
+  get_epoch(ut_tx(6 * ut_mspe, 7 * ut_mspe - 1), ut_mspe, 0) == 6
 }
 
 test get_epoch_cross_epoch_boundary_fail() fail {
   // lo ở CUỐI epoch 5, hi ở ĐẦU epoch 6: `hi − lo = 1 ≤ ms_per_epoch` nên bản CŨ
   // chấp nhận và trả 6, trong khi tx có thể thực sự chạy ở epoch 5 → epoch bị thổi
   // phồng +1 (nới stale-check). Sau vá: lo/mspe(5) != hi/mspe(6) → REJECT.
-  get_epoch(ut_tx(6 * ut_mspe - 1, 6 * ut_mspe), ut_mspe) == 6
+  get_epoch(ut_tx(6 * ut_mspe - 1, 6 * ut_mspe), ut_mspe, 0) == 6
 }
 
 test get_epoch_unbounded_upper_fail() fail {
   let tx = Transaction { ..placeholder, validity_range: interval.after(6 * ut_mspe) }
-  get_epoch(tx, ut_mspe) == 6
+  get_epoch(tx, ut_mspe, 0) == 6
 }

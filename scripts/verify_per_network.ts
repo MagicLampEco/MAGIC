@@ -22,7 +22,7 @@
 // `@magiclamp/protocol-utils` ▸ `wakemeVaultHash`; mạng chưa có két ⟹ giữ chỗ + báo.
 
 import { validatorToScriptHash } from "@lucid-evolution/lucid";
-import { lampAssetName, msPerEpoch, wakemeVaultHash, type Network } from "@magiclamp/protocol-utils";
+import { lampAssetName, msPerEpoch, wakemeVaultHash, windowOriginMs, WindowOriginError, type Network } from "@magiclamp/protocol-utils";
 import {
   loadBlueprint, findValidator, paramTitles, appliedValidator,
   type Blueprint, type ParamMap,
@@ -66,7 +66,7 @@ const BEACONS: GenV2BeaconRefs = {
 function scheduleInputs(net: Network): ScheduleScriptParamInputs {
   return {
     lampPolicyId: LAMP_POLICY, lampAssetName: lampAssetName(net), shardPolicyId: SHARD_POLICY,
-    msPerEpoch: msPerEpoch(net), ...BEACONS,
+    msPerEpoch: msPerEpoch(net), windowOriginMs: ORIGIN_BY_NET[net], ...BEACONS,
   };
 }
 /** Két Wakeme (apply-param #8 của vault Instant) THEO MẠNG, từ nguồn duy nhất
@@ -87,6 +87,24 @@ const WAKEME_BY_NET: Record<Network, string> = {
   Preview: wakemeFor("Preview"),
   Preprod: wakemeFor("Preprod"),
   Mainnet: wakemeFor("Mainnet"),
+};
+
+/** Gốc cửa sổ (apply-param CUỐI) THEO MẠNG, từ `@magiclamp/protocol-utils` ▸ `windowOriginMs`.
+ *  Mạng chưa có gốc (Preview, `WIN-PREVIEW`) thì cùng cách với két Wakeme: giá trị giữ chỗ
+ *  `0n` + GHI TÊN vào danh sách giữ chỗ — hash của mạng đó chỉ kiểm HÌNH DẠNG; deploy thật ném. */
+function originFor(net: Network): bigint {
+  try {
+    return windowOriginMs(net);
+  } catch (e) {
+    if (!(e instanceof WindowOriginError)) throw e;
+    usingPlaceholder.push(`window_origin_ms(${net}) — ${e.code}, mạng chưa có gốc cửa sổ`);
+    return 0n;
+  }
+}
+const ORIGIN_BY_NET: Record<Network, bigint> = {
+  Preview: originFor("Preview"),
+  Preprod: originFor("Preprod"),
+  Mainnet: originFor("Mainnet"),
 };
 
 // um_name / shard asset names là hằng giao thức, không phải env.
@@ -112,6 +130,7 @@ const MODULES: ModuleSpec[] = [
       lampPolicyId:    LAMP_POLICY,
       lampAssetName:   lampAssetName(net),
       msPerEpoch:      msPerEpoch(net),
+      windowOriginMs:  ORIGIN_BY_NET[net],
       wakemeVaultHash: WAKEME_BY_NET[net],
       ...BEACONS,
     }),
@@ -130,6 +149,7 @@ const MODULES: ModuleSpec[] = [
         lampPolicyId: i.lampPolicyId, lampAssetName: i.lampAssetName, shardPolicyId: i.shardPolicyId,
         msPerEpoch: i.msPerEpoch, gbShardPolicyId: i.gbShardPolicyId,
         commitScriptHash: scheduleScriptPair(bp, i).commitHash,
+        windowOriginMs: i.windowOriginMs,
       });
     },
   },
@@ -138,6 +158,7 @@ const MODULES: ModuleSpec[] = [
     title:  "um_datum.um_datum_validator.spend",
     build:  (net) => umDatumParams({
       msPerEpoch: msPerEpoch(net),
+      windowOriginMs: ORIGIN_BY_NET[net],
       umPolicy:   UM_NFT_POLICY,
       umName:     UM_NFT_NAME,
     }),

@@ -23,7 +23,7 @@ import {
   Data,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type OutRef,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch, epochStartMs, type Network } from "@magiclamp/protocol-utils";
 import { lampCap, adaCap, sumBurns, lookupDid, addDid, updateGlobalMagic, type Burn } from "./math.js";
 import {
   PaymasterRedeemerSchema,
@@ -57,7 +57,7 @@ export interface SponsorParams {
   /** ProtocolFeeParams beacon UTxO — đọc REFERENCE (sàn DAO). Mang protocol NFT. */
   protocolBeaconUtxo: UTxO;
   /**
-   * Compiled paymaster validator — đã apply **11** tham số.
+   * Compiled paymaster validator — đã apply **12** tham số (cuối cùng: `window_origin_ms`).
    *
    * Dựng qua `scripts/deployParams.ts::paymasterParams()`, KHÔNG tự khai danh
    * sách tay: `applyParamsToScript` không kiểm arity, nên truyền sót vẫn ra một
@@ -72,7 +72,7 @@ export interface SponsorParams {
   didKey: string;
   /** Meter thread NFT unit (policyId+nameHex) — bảo toàn trên output Meter. */
   meterNftUnit: string;
-  /** Network (chọn ms_per_epoch cho validity-range — PHẢI khớp validator param). */
+  /** Network (chọn ms_per_epoch + window_origin_ms cho validity-range — PHẢI khớp validator param). */
   network: Network;
   /** Tip POSIX ms hiện tại (đầu vào tính epoch + validity-range). */
   tipPosixMs: bigint;
@@ -231,9 +231,10 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
   }
 
   // ── epoch tham chiếu = từ UPPER bound (khớp util.get_epoch) ──────────────────
-  const mspe = msPerEpoch(network);
-  const currentEpoch = tipPosixMs / mspe;
-  const lowerMs = currentEpoch * mspe;
+  // Epoch = (t − window_origin_ms) / ms_per_epoch; biên epoch = gốc + e × ms_per_epoch
+  // (LAMP/Specs/Window/CONTRACT.md v1.0). Preview ⟹ NÉM `WIN-PREVIEW`.
+  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
+  const lowerMs = epochStartMs(currentEpoch, network);
   const upperMs = lowerMs + 1n;
 
   // ── PM-10: policy freshness (fail sớm) ──────────────────────────────────────

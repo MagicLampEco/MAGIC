@@ -10,18 +10,20 @@
 // `new BigInteger(s)`.
 //
 // ── EPOCH ─────────────────────────────────────────────────────────────────────
-// `at_epoch` là epoch GIAO THỨC (`posix_ms / ms_per_epoch`), KHÔNG phải epoch Cardano.
-// Hai số này không bao giờ gặp nhau — phép chia không trừ genesis
-// (`ProtocolUtils/src/index.ts`, hàm `posixMsToEpoch`). Đo 2026-09-11 trên Preview:
-// epoch Cardano 1417, epoch giao thức ≈ 20706. Đem so hai số đó là đọc nhầm đồng hồ.
-// Nên thân bài LUÔN in cả `at_epoch` lẫn `chain_tip`, và in cả nguồn của `at_epoch`.
+// `at_epoch` là epoch GIAO THỨC `(posix_ms − window_origin_ms) / ms_per_epoch`
+// (`ProtocolUtils/src/index.ts`, hàm `posixMsToEpoch`; gốc theo LAMP
+// `Specs/Window/CONTRACT.md` v1.0). Trên Preprod/Mainnet số này BẰNG epoch Cardano;
+// Preview chưa có gốc ⟹ hàm NÉM `WIN-PREVIEW` (fail-closed), tầng HTTP trả 501
+// `WINDOW_ORIGIN_UNAVAILABLE`. Bản trước không trừ gốc nên hai số không bao giờ gặp nhau
+// (đo 2026-09-11 trên Preview: epoch Cardano 1417, epoch giao thức ≈ 20706).
+// Thân bài vẫn LUÔN in cả `at_epoch` lẫn `chain_tip`, và in cả nguồn của `at_epoch`.
 
 import { posixMsToEpoch, type Network } from "@magiclamp/protocol-utils";
 
 import type { ChainReader } from "./chain.js";
 import type { VaultScope } from "./config.js";
 import { sameOwner, type OwnerRef } from "@magiclamp/protocol-utils";
-import { OwnerAliasMismatchError, BadRequestError, UnknownVaultScopeError } from "./errors.js";
+import { OwnerAliasMismatchError, BadRequestError, ChainUnavailableError, UnknownVaultScopeError } from "./errors.js";
 import { readVaultsFromUtxos, type IgnoredUtxo, type VaultView } from "./vaultView.js";
 
 const PKH_HEX = /^[0-9a-f]{56}$/;
@@ -108,6 +110,15 @@ export class VaultReadService {
     // danh sách rỗng trông như "chủ này chưa có vault".
     const tip = await this.chain.tip();
     const tipEpoch = posixMsToEpoch(tip.blockTimePosixMs, this.network);
+    // Đỉnh chuỗi TRƯỚC gốc cửa sổ ⟹ thời gian khối vô lý (ca hay gặp: GIÂY đọc thành
+    // mili-giây). Epoch âm không phải câu hỏi của người gọi, nên đừng để nó rơi xuống cổng
+    // `at_epoch ≥ 0` và hiện thành lỗi của người gọi — chỗ hỏng là dữ liệu đỉnh chuỗi.
+    if (tipEpoch < 0n) {
+      throw new ChainUnavailableError(
+        "Thời gian khối ở đỉnh chuỗi nằm trước gốc cửa sổ epoch — dữ liệu đỉnh chuỗi vô lý.",
+        { block_time_posix_ms: tip.blockTimePosixMs.toString() },
+      );
+    }
     const atEpoch = req.atEpoch ?? tipEpoch;
     if (atEpoch < 0n) throw new BadRequestError("at_epoch phải ≥ 0.");
 

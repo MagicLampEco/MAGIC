@@ -139,7 +139,7 @@ export async function buildUMUpdateTx(
   lucid          : LucidEvolution,
   umUtxo         : UTxO,
   epochStats     : EpochStats,
-  umScript       : Validator,         // applied script (ms_per_epoch baked in)
+  umScript       : Validator,         // applied script (ms_per_epoch + window_origin_ms baked in)
   network        : Network = "Preview",
   tipPosixMs?    : bigint,
 ): Promise<UMUpdateResult> {
@@ -170,7 +170,7 @@ export async function buildUMUpdateTx(
   // `new_raw` gửi lên là con số ĐÃ KẸP BƯỚC, không phải tỉ lệ đo được: validator
   // từ chối (không kẹp hộ) mọi bước vượt `um_max_step_q`.
   const redeemer = Data.to({ new_raw: submittedRaw }, UMRedeemerPlutus);
-  // POSIX-ms validity range. Validator computes epoch = posix_ms / ms_per_epoch.
+  // POSIX-ms validity range. Validator computes epoch = (posix_ms − window_origin_ms) / ms_per_epoch.
   const tipMs    = tipPosixMs ?? BigInt(Date.now());
   const { lowerMs: lowerTime, upperMs: upperTime } =
     epochValidityWindow(tipMs, network);
@@ -224,7 +224,7 @@ export async function buildUMUpdateTx(
 export interface KeeperConfig {
   lucid          : LucidEvolution;
   umUtxoUnit     : string;     // NFT unit to identify UM UTxO
-  umScript       : Validator;  // applied script (ms_per_epoch baked in)
+  umScript       : Validator;  // applied script (ms_per_epoch + window_origin_ms baked in)
   shardAddresses : string[];   // for epoch stats query
   intervalMs     : number;     // polling interval (e.g. 60_000 = 1 min)
   network?       : Network;    // for POSIX-based epoch math

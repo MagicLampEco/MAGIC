@@ -27,6 +27,7 @@
 //   hash `commit` mà `commit` nướng các hash đó). MV-4 (UpdateProfile) lượt đầu trong
 //   epoch mới đọc beacon ρ (+ két Wakeme đã ghim; `WAKEME_VAULT_UTXO` để chỉ định).
 
+import { windowOf } from "@magiclamp/protocol-utils";
 import {
   Lucid, Blockfrost, Data,
   applyParamsToScript, validatorToScriptHash,
@@ -272,7 +273,7 @@ async function runMv4(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
 
   const { vaultScript } = applyVaultValidator("Instant", bundle, protocol);
   // Gen v2.0: lượt đầu trong epoch mới làm mới checkpoint ⟹ đọc ρ (+ két Wakeme đã ghim).
-  const epoch = tip.posixMs / PROTOCOL.MS_PER_EPOCH;
+  const epoch = windowOf(tip.posixMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
   // `listVaultsForOwner` trả datum theo kiểu chung; đọc hai ô checkpoint bằng lược đồ két
   // Instant v2.0 của gói nền (datum khác hình dạng ⟹ NÉM, không đoán).
   const v1Datum = decodeInstantVaultDatum(v1.utxo.datum!);

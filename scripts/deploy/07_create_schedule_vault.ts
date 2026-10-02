@@ -39,7 +39,7 @@ import {
   credentialToAddress, scriptHashToCredential, getAddressDetails,
   type LucidEvolution, type Network, type TxSignBuilder, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
-import { ownerRefOf } from "@magiclamp/protocol-utils";
+import { ownerRefOf, windowOf } from "@magiclamp/protocol-utils";
 import {
   parsePositiveInteger, parseFlag, decideStateBook, resultLine, assertTxHash,
 } from "../runResult.js";
@@ -188,6 +188,7 @@ async function main() {
     lampAssetName: ASSET_NAMES.lamp,   // PARAM theo mạng, không hardcode
     shardPolicyId: POLICY_IDS.shard_nft,
     msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
     ...beacons,
   });
 
@@ -208,7 +209,7 @@ async function main() {
     headers: { project_id: BLOCKFROST_KEY },
   });
   const tip = await tipRes.json() as { slot: number; time: number };
-  const currentEpoch = (BigInt(tip.time) * 1000n) / PROTOCOL.MS_PER_EPOCH;
+  const currentEpoch = windowOf(BigInt(tip.time) * 1000n, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
 
   const lampUnit = toUnit(POLICY_IDS.lamp, ASSET_NAMES.lamp);
   const utxos    = await lucid.wallet().getUtxos();

@@ -716,3 +716,26 @@ export const TV_DATUM_V2_FULL = {
     "1ab2d05e00ffd8799f0102ffd8799f0304ffd8799f0000ffd8799f0500ffd8799f0006ffd8799f08" +
     "09ffff14ff",
 };
+
+// ══════════════════════════════════════════════════════════════
+// TV-WINDOW-ORIGIN — gốc cửa sổ theo epoch Cardano
+// Nguồn: LAMP/Specs/Window/CONTRACT.md v1.0 §3 (trọng tài chung của mọi bên tích hợp; cùng
+// bốn ca nằm ở module fixture `window_origin_fixtures` phía Aiken).
+//   window(t) = ⌊(t − window_origin_ms) / ms_per_epoch⌋
+// Gốc theo mạng KHÔNG chép vào đây — bài kiểm đọc nó từ `@magiclamp/protocol-utils` ▸
+// `windowOriginMs(network)`. Mỗi ca đi theo cặp biên (t ⟹ e, t − 1 ⟹ e − 1). Ca
+// `forgot_origin` là đáp số của bản QUÊN trừ gốc — phải KHÁC đáp số thật.
+// ══════════════════════════════════════════════════════════════
+export const TV_WINDOW_ORIGIN = {
+  id:           "TV-WINDOW-ORIGIN",
+  spec_ref:     "LAMP/Specs/Window/CONTRACT.md v1.0 §3",
+  description:  "window(t) = (t − window_origin_ms) / ms_per_epoch, chia sàn; = số epoch Cardano",
+  ms_per_epoch: 432_000_000n,
+  cases: [
+    { network: "Mainnet", t_ms: 1_790_459_091_000n, window: 658n },
+    { network: "Mainnet", t_ms: 1_790_459_090_999n, window: 657n },
+    { network: "Preprod", t_ms: 1_790_553_600_000n, window: 316n },
+    { network: "Preprod", t_ms: 1_790_553_599_999n, window: 315n },
+  ],
+  forgot_origin: { t_ms: 1_790_553_600_000n, window: 4_144n },
+} as const;

@@ -63,7 +63,7 @@ import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js"
 import { VaultDatum as ScheduleVaultDatum } from "../../ScheduleGen/offchain/src/types.js";
 import { countEligibleFires, isExpired, nextFireEpoch } from "../../ScheduleGen/offchain/src/math.js";
 import { VaultDatumSchema as InstantVaultDatumSchema } from "../../InstantGen/offchain/src/types.js";
-import { ownerInnerHash, ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { ownerInnerHash, ownerRefOf, sameOwner, windowOf, windowStartMs } from "@magiclamp/protocol-utils";
 
 const PRICE_NFT_NAME = "5052494345"; // "PRICE" — ConsumeMAGIC/onchain/validators/price_nft.ak
 
@@ -174,15 +174,18 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
   if (pairs.length === 0) return record("price", "skip", "KEEPER_PRICE_BEACONS trống");
 
   const mspe  = PROTOCOL.MS_PER_EPOCH;
-  const epoch = nowMs / mspe;
+  const wo    = PROTOCOL.WINDOW_ORIGIN_MS;
+  const epoch = windowOf(nowMs, mspe, wo);
   // Cửa sổ hiệu lực phải nằm TRỌN trong một epoch (`util.get_epoch`), và `out.epoch` không
-  // được vượt epoch đó. Sát nửa đêm UTC thì slot làm tròn có thể đẩy biên trên sang ngày
-  // sau ⟹ tx bị từ chối. Để lượt chạy sau lo.
-  const epochEnd = (epoch + 1n) * mspe;
+  // được vượt epoch đó. Sát biên epoch (MỐC `window_origin_ms + k·ms_per_epoch`, không còn
+  // là nửa đêm UTC) thì slot làm tròn có thể đẩy biên trên sang epoch sau ⟹ tx bị từ chối.
+  // Để lượt chạy sau lo.
+  const epochStart = windowStartMs(epoch, mspe, wo);
+  const epochEnd   = windowStartMs(epoch + 1n, mspe, wo);
   if (epochEnd - nowMs < 15n * 60_000n) {
-    return record("price", "skip", "còn < 15 phút tới nửa đêm UTC — để lượt sau");
+    return record("price", "skip", "còn < 15 phút tới biên epoch — để lượt sau");
   }
-  const lowerMs = nowMs - 60_000n > epoch * mspe ? nowMs - 60_000n : epoch * mspe;
+  const lowerMs = nowMs - 60_000n > epochStart ? nowMs - 60_000n : epochStart;
   const upperMs = nowMs + 10n * 60_000n;
 
   const blueprint   = await loadBlueprint("ConsumeMAGIC");
@@ -201,7 +204,7 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
     // Dựng lại script từ tham số rồi ĐỐI CHIẾU hash. Lệch ⟹ committee/threshold khác lúc
     // deploy, tức ví này không ký được beacon đó. Dừng ở đây, đừng gửi một tx chắc chắn trượt.
     const { script, hash } = appliedScript(priceParamV, priceParamParams({
-      committee, threshold, priceNftPolicy: policy, priceNftName: PRICE_NFT_NAME, msPerEpoch: mspe,
+      committee, threshold, priceNftPolicy: policy, priceNftName: PRICE_NFT_NAME, msPerEpoch: mspe, windowOriginMs: wo,
     }));
     if (hash !== expectedHash) {
       record(tag, "fail", `dựng lại ra ${hash.slice(0, 8)}… ≠ ${expectedHash.slice(0, 8)}… — committee/threshold khác lúc deploy, không gửi gì`);
@@ -269,7 +272,7 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
 
 // ── 3. Fire ScheduleGen ───────────────────────────────────────────────────────
 async function stepFire(lucid: LucidEvolution, nowMs: bigint) {
-  const epoch = nowMs / PROTOCOL.MS_PER_EPOCH;
+  const epoch = windowOf(nowMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
   const blueprint = await loadBlueprint("ScheduleGen");
   // Két Gen v2.0 nướng hash `commit` đã apply, và `commit` nướng ba hash GenBeacons ⟹ dựng lại
   // két cần ba khoá đó từ sổ (cùng nguồn với deploy/07). Fire KHÔNG đọc beacon và KHÔNG gọi
@@ -280,7 +283,7 @@ async function stepFire(lucid: LucidEvolution, nowMs: bigint) {
   catch (e) { return record("fire", "fail", (e as Error).message.slice(0, 400)); }
   const { vaultScript, vaultHash } = scheduleScriptPair(blueprint, {
     lampPolicyId: POLICY_IDS.lamp, lampAssetName: ASSET_NAMES.lamp,
-    shardPolicyId: POLICY_IDS.shard_nft, msPerEpoch: PROTOCOL.MS_PER_EPOCH,
+    shardPolicyId: POLICY_IDS.shard_nft, msPerEpoch: PROTOCOL.MS_PER_EPOCH, windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
     ...beacons,
   });
   const expected = process.env.VAULT_SCHEDULE_HASH;
@@ -492,7 +495,7 @@ async function main() {
   if (!ownerPkh) throw new Error("Không lấy được payment credential của ví keeper");
 
   const nowMs = await tipMs();
-  const epoch = nowMs / PROTOCOL.MS_PER_EPOCH;
+  const epoch = windowOf(nowMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
   console.log(`ví keeper pkh ${ownerPkh} · epoch ${epoch} · tip ${new Date(Number(nowMs)).toISOString()}\n`);
 
   const guard = async (name: StepName, fn: () => Promise<unknown>) => {
@@ -508,7 +511,7 @@ async function main() {
   // PostPrice (tới +10 phút) dựng trên mốc cũ thì đã nằm trong quá khứ.
   await guard("price",   async () => stepPrice(lucid, ownerPkh, await tipMs()));
   await guard("fire",    async () => stepFire(lucid, await tipMs()));
-  await guard("instant", async () => stepInstant(lucid, ownerPkh, (await tipMs()) / PROTOCOL.MS_PER_EPOCH));
+  await guard("instant", async () => stepInstant(lucid, ownerPkh, windowOf(await tipMs(), PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS)));
 
   const fails = report.filter((r) => r.outcome === "fail").length;
   const unverified = report.filter((r) => r.outcome === "unverified").length;

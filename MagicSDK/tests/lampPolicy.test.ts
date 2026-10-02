@@ -42,8 +42,11 @@ const V2_BEACONS = {
 const COMMIT_HASH = "2".repeat(56);
 
 /** Đủ mọi thứ két Schedule đòi, để phép đo rơi ĐÚNG vào cổng policy chứ không vào `requireField`. */
+// Preview chưa có gốc cửa sổ (`WIN-PREVIEW`) — bài chỉ đo slot 0, truyền gốc tường minh của bài.
+const TEST_ORIGIN = 1_000_000_000n;
 const proto = (lampPolicyId: string): ProtocolParams => ({
   network: "Preview",
+  windowOriginMs: TEST_ORIGIN,
   lampPolicyId,
   shardPolicyId: "b".repeat(56),
   ...V2_BEACONS,
@@ -52,6 +55,7 @@ const proto = (lampPolicyId: string): ProtocolParams => ({
 /** CHỈ trường chung, KHÔNG có trường két Instant đòi (beacon, wakeme) — dùng cho ca thứ tự cổng. */
 const protoBare = (lampPolicyId: string): ProtocolParams => ({
   network: "Preview",
+  windowOriginMs: TEST_ORIGIN,
   lampPolicyId,
   shardPolicyId: "b".repeat(56),
 });
@@ -297,7 +301,7 @@ describe("lối mở tập dượt đi tới ĐỦ ba chỗ gọi của SDK", ()
       network: "Preprod",
       lampPolicyId: REHEARSAL,
       destinationAddress: "addr_test1vpd9crk9ckgj8vrwxs2azwk3fvxz3gd0x3qfryq6tnmz3wgxxhgsf",
-      tipPosixMs: 1_000n,
+      tipPosixMs: 1_654_041_600_000n + 1_000n,   // gốc cửa sổ Preprod + 1 s — epoch 0, như bản trước tính từ 0
       ...(ack === undefined ? {} : { lampRehearsalAck: ack }),
     });
   };

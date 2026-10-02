@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from "vitest";
 import { Data } from "@lucid-evolution/lucid";
-import { msPerEpoch, VALIDITY_MAX_AHEAD_MS } from "@magiclamp/protocol-utils";
+import { msPerEpoch, windowOriginMs, VALIDITY_MAX_AHEAD_MS } from "@magiclamp/protocol-utils";
 import { makeLucidFake } from "../../TestSupport/lucidFake.js";
 import { buildScheduleCommitTx, buildScheduleFireTx } from "../offchain/src/schedule.js";
 import { computeShardId } from "../offchain/src/math.js";
@@ -34,6 +34,9 @@ import {
 const NETWORK = "Preprod" as const;
 const P       = msPerEpoch(NETWORK);          // 432_000_000 ms
 const E       = 100n;
+// Gốc cửa sổ Preprod: biên epoch giao thức `e` là `O + e·P` (`at(e)`), không phải `e·P`.
+const O       = windowOriginMs(NETWORK);
+const at      = (e: bigint): bigint => O + e * P;
 const SLOT    = 1_000n;
 
 // Chủ là `Credential`. "0a"×28 rơi shard 10 (TV-SCH-SHARD-CRED, `vectors.ts`).
@@ -231,35 +234,35 @@ async function nemVoiChoDoi(
 describe("buildScheduleCommitTx — cửa sổ hiệu lực", () => {
 
   it("A. giờ cuối epoch, không chừa slot nào ⟹ `validTo` là slot CUỐI của epoch", async () => {
-    const tip = (E + 1n) * P - 1_800_000n;
+    const tip = at(E + 1n) - 1_800_000n;
     const { tx } = await dungCommit(tip);
 
     expect(tx.validFrom).toBe(Number(tip));
     // Mốc hợp lệ cuối là (E+1)P − 1; đầu slot chứa nó là (E+1)P − 1000. KHÔNG lùi
     // thêm: chỗ gọi này không truyền `reserveTrailingSlots`.
-    expect(tx.validTo).toBe(Number((E + 1n) * P - SLOT));
+    expect(tx.validTo).toBe(Number(at(E + 1n) - SLOT));
   });
 
   it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch (chân trời node)", async () => {
-    const tip = E * P + 1_000n;
+    const tip = at(E) + 1_000n;
     const { tx } = await dungCommit(tip);
 
     expect(tx.validTo).toBe(Number(tip + VALIDITY_MAX_AHEAD_MS));
   });
 
   it("B. tip ở slot CUỐI ⟹ NÉM, kèm đúng số mili-giây phải chờ", async () => {
-    await expect(nemVoiChoDoi(dungCommit, (E + 1n) * P - SLOT)).resolves.toEqual({
-      waitMs: 1_000n, retryAfterMs: (E + 1n) * P,
+    await expect(nemVoiChoDoi(dungCommit, at(E + 1n) - SLOT)).resolves.toEqual({
+      waitMs: 1_000n, retryAfterMs: at(E + 1n),
     });
   });
 
   it("B-bis. cực đối — tip ở slot ÁP CHÓT thì dựng được, khoảng đúng một slot", async () => {
-    const tip = (E + 1n) * P - 2n * SLOT;
+    const tip = at(E + 1n) - 2n * SLOT;
     const { tx } = await dungCommit(tip);
 
     expect(tx.completed).toBe(true);
     expect(tx.validFrom).toBe(Number(tip));
-    expect(tx.validTo).toBe(Number((E + 1n) * P - SLOT));
+    expect(tx.validTo).toBe(Number(at(E + 1n) - SLOT));
     expect(tx.validTo! - tx.validFrom!).toBe(Number(SLOT));
   });
 
@@ -267,7 +270,7 @@ describe("buildScheduleCommitTx — cửa sổ hiệu lực", () => {
   // chứ không qua một bản mô phỏng. Bộ dựng ngừng gọi `.validTo()` thì `validTo` là
   // `undefined` và cả ba ca trên đỏ, chứ không âm thầm xanh.
   it("C. giao dịch mang đúng hình dạng ScheduleCommit — và CÓ chữ ký chủ két", async () => {
-    const { tx, res } = await dungCommit(E * P + 1_000n);
+    const { tx, res } = await dungCommit(at(E) + 1_000n);
 
     expect(tx.collectFrom).toHaveLength(3);        // vault + shard LAMP + shard GB (Gen v2.0)
     expect(tx.attached).toHaveLength(4);           // không đưa ref ⟹ attach két + shard + gb_shard + commit
@@ -293,38 +296,38 @@ describe("buildScheduleCommitTx — cửa sổ hiệu lực", () => {
 describe("buildScheduleFireTx — cửa sổ hiệu lực", () => {
 
   it("A. giờ cuối epoch, không chừa slot nào ⟹ `validTo` là slot CUỐI của epoch", async () => {
-    const tip = (E + 1n) * P - 1_800_000n;
+    const tip = at(E + 1n) - 1_800_000n;
     const { tx } = await dungFire(tip);
 
     expect(tx.validFrom).toBe(Number(tip));
-    expect(tx.validTo).toBe(Number((E + 1n) * P - SLOT));
+    expect(tx.validTo).toBe(Number(at(E + 1n) - SLOT));
   });
 
   it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch (chân trời node)", async () => {
-    const tip = E * P + 1_000n;
+    const tip = at(E) + 1_000n;
     const { tx } = await dungFire(tip);
 
     expect(tx.validTo).toBe(Number(tip + VALIDITY_MAX_AHEAD_MS));
   });
 
   it("B. tip ở slot CUỐI ⟹ NÉM, kèm đúng số mili-giây phải chờ", async () => {
-    await expect(nemVoiChoDoi(dungFire, (E + 1n) * P - SLOT)).resolves.toEqual({
-      waitMs: 1_000n, retryAfterMs: (E + 1n) * P,
+    await expect(nemVoiChoDoi(dungFire, at(E + 1n) - SLOT)).resolves.toEqual({
+      waitMs: 1_000n, retryAfterMs: at(E + 1n),
     });
   });
 
   it("B-bis. cực đối — tip ở slot ÁP CHÓT thì dựng được, khoảng đúng một slot", async () => {
-    const tip = (E + 1n) * P - 2n * SLOT;
+    const tip = at(E + 1n) - 2n * SLOT;
     const { tx } = await dungFire(tip);
 
     expect(tx.completed).toBe(true);
     expect(tx.validFrom).toBe(Number(tip));
-    expect(tx.validTo).toBe(Number((E + 1n) * P - SLOT));
+    expect(tx.validTo).toBe(Number(at(E + 1n) - SLOT));
     expect(tx.validTo! - tx.validFrom!).toBe(Number(SLOT));
   });
 
   it("C. giao dịch mang đúng hình dạng ScheduleFire — và KHÔNG có chữ ký nào", async () => {
-    const { tx, res } = await dungFire(E * P + 1_000n);
+    const { tx, res } = await dungFire(at(E) + 1_000n);
 
     expect(tx.collectFrom).toHaveLength(2);
     expect(tx.attached).toHaveLength(2);
@@ -370,7 +373,7 @@ describe("VaultDatum.owner (ScheduleGen) — mã hoá Credential khớp blueprin
 });
 
 describe("buildScheduleCommitTx — chứng minh quyền chủ theo nhánh", () => {
-  const TIP = E * P + 1_000n;
+  const TIP = at(E) + 1_000n;
 
   it("chủ script ⟹ attachWithdraw ĐÚNG MỘT LẦN, KHÔNG ký bằng h, shard theo h", async () => {
     let goi = 0;

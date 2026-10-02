@@ -1,7 +1,8 @@
 // src/vaultScript.ts — apply-param của validator két InstantGen Gen v2.0.
 //
 // Thứ tự apply-param = chữ ký `validator vault(...)` trong
-// `InstantGen/onchain/validators/vault.ak` (9 tham số). Blueprint do `aiken build` sinh ở
+// `InstantGen/onchain/validators/vault.ak` (10 tham số; `window_origin_ms` CUỐI CÙNG theo
+// `LAMP/Specs/Window/CONTRACT.md` v1.0). Blueprint do `aiken build` sinh ở
 // `InstantGen/onchain/plutus.json` (artifact, gitignore) khai cùng danh sách trong
 // `validators[].parameters[]` — bài kiểm `tests/vaultParams.test.ts` đối chiếu THEO TÊN.
 //
@@ -34,8 +35,10 @@ export interface InstantVaultParams {
   rateScriptHash     : string;
   /** #7 hash script két Wakeme (chỉ đọc qua reference input). */
   wakemeVaultHash    : string;
-  /** #8 POSIX ms mỗi epoch giao thức. */
+  /** #8 POSIX ms mỗi epoch giao thức (độ dài). */
   msPerEpoch         : bigint;
+  /** #9 gốc cửa sổ POSIX ms — `@magiclamp/protocol-utils` ▸ `windowOriginMs(network)`. */
+  windowOriginMs     : bigint;
 }
 
 /** Tên tham số theo đúng thứ tự blueprint — bài kiểm so với `parameters[].title`. */
@@ -49,6 +52,7 @@ export const INSTANT_VAULT_PARAM_TITLES = [
   "rate_script_hash",
   "wakeme_vault_hash",
   "ms_per_epoch",
+  "window_origin_ms",
 ] as const;
 
 function hash28(name: string, v: string): string {
@@ -56,13 +60,16 @@ function hash28(name: string, v: string): string {
   return v;
 }
 
-/** Danh sách 9 apply-param theo thứ tự validator. Sai dạng ⟹ NÉM trước khi apply. */
-export function instantVaultParamList(p: InstantVaultParams): [string, string, string, string, string, string, string, string, bigint] {
+/** Danh sách 10 apply-param theo thứ tự validator. Sai dạng ⟹ NÉM trước khi apply. */
+export function instantVaultParamList(p: InstantVaultParams): [string, string, string, string, string, string, string, string, bigint, bigint] {
   if (!/^([0-9a-f]{2}){0,32}$/.test(p.lampAssetName)) {
     throw new Error(`INSTANT_VAULT_PARAM: lampAssetName phải là hex ≤ 32 byte, nhận "${p.lampAssetName}".`);
   }
   if (typeof p.msPerEpoch !== "bigint" || p.msPerEpoch <= 0n) {
     throw new Error(`INSTANT_VAULT_PARAM: msPerEpoch phải là bigint > 0.`);
+  }
+  if (typeof p.windowOriginMs !== "bigint" || p.windowOriginMs < 0n) {
+    throw new Error(`INSTANT_VAULT_PARAM: windowOriginMs phải là bigint ≥ 0.`);
   }
   return [
     hash28("lampPolicyId", p.lampPolicyId),
@@ -74,10 +81,11 @@ export function instantVaultParamList(p: InstantVaultParams): [string, string, s
     hash28("rateScriptHash", p.rateScriptHash),
     hash28("wakemeVaultHash", p.wakemeVaultHash),
     p.msPerEpoch,
+    p.windowOriginMs,
   ];
 }
 
-/** Validator két InstantGen đã apply 9 tham số, từ `compiledCode` chưa apply của blueprint. */
+/** Validator két InstantGen đã apply 10 tham số, từ `compiledCode` chưa apply của blueprint. */
 export function applyInstantVaultParams(unappliedCompiledCode: string, p: InstantVaultParams): Validator {
   return { type: "PlutusV3", script: applyParamsToScript(unappliedCompiledCode, instantVaultParamList(p)) };
 }

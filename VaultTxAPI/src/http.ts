@@ -42,7 +42,7 @@ import type { BuildInfo } from "./buildInfo.js";
 import { stripBasePath } from "./basePath.js";
 import type { FeeProxy } from "./feeProxy.js";
 import { quoteFee } from "./feeQuote.js";
-import { OwnerAuthError } from "@magiclamp/protocol-utils";
+import { OwnerAuthError, WindowOriginError } from "@magiclamp/protocol-utils";
 import { ownerApiErrorOf } from "./errors.js";
 
 export interface HttpRequest {
@@ -163,6 +163,16 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
     if (e instanceof OwnerAuthError) {
       const a = ownerApiErrorOf(e);
       return { status: a.httpStatus, body: a.toBody() };
+    }
+    // Mạng chưa có gốc cửa sổ (`WIN-PREVIEW`): giao thức không tính được epoch ở đây — đó là
+    // trạng thái cấu hình của mạng, không phải lỗi nội bộ. Giữ nguyên mã gốc ở `details`.
+    if (e instanceof WindowOriginError) {
+      return {
+        status: 501,
+        body: err("WINDOW_ORIGIN_UNAVAILABLE",
+          "Mạng này chưa có gốc cửa sổ epoch (window_origin_ms); dịch vụ không tính được epoch giao thức.",
+          { cause_code: e.code }),
+      };
     }
     // Ngoài dự kiến: KHÔNG traceback, KHÔNG đường dẫn nội bộ, KHÔNG tên biến môi trường.
     // Người gọi nhận một MÃ THAM CHIẾU tra ngược được ở nhật ký của chính dịch vụ.

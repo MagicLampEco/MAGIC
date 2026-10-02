@@ -94,7 +94,7 @@ async function main() {
   }
   const pair = scheduleScriptPair(await loadBlueprint("ScheduleGen"), {
     lampPolicyId: POLICY_IDS.lamp, lampAssetName: ASSET_NAMES.lamp,
-    shardPolicyId: POLICY_IDS.shard_nft, msPerEpoch: PROTOCOL.MS_PER_EPOCH, ...beacons,
+    shardPolicyId: POLICY_IDS.shard_nft, msPerEpoch: PROTOCOL.MS_PER_EPOCH, windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS, ...beacons,
   });
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);

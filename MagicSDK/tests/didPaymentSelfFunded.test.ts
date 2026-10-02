@@ -70,7 +70,8 @@ async function build(fundingOver: Record<string, unknown> = {}, extra: Record<st
   const lucid = await realLucid([COLL, W_EXTRA], walletAddr);
   return createVault({
     lucid, vaultType: "Schedule",
-    protocol: { network: "Preview", lampPolicyId: LAMP_POLICY },
+    // Preview chưa có gốc cửa sổ (`WIN-PREVIEW`) ⟹ truyền gốc TƯỜNG MINH của bài.
+    protocol: { network: "Preview", lampPolicyId: LAMP_POLICY, windowOriginMs: 1_000_000_000n },
     appliedVault: { script: VAULT, expectedScriptHash: VAULT_HASH },
     vault: { ownerPkh: PKH, lampDeposit: 800_000_000n },
     tipPosixMs: TIP_MS, collateralLovelace: 3_000_000n,

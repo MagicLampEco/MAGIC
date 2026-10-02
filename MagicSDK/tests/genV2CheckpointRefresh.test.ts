@@ -22,7 +22,7 @@ import {
   Constr, Data, credentialToAddress, scriptHashToCredential,
   type Data as TData, type LucidEvolution, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, posixMsToEpoch } from "@magiclamp/protocol-utils";
+import { epochStartMs, posixMsToEpoch } from "@magiclamp/protocol-utils";
 import { RATE_NFT_NAME, RateParam } from "@magiclamp/instantgen-sdk";
 
 import { buildVaultBurnBatch } from "../src/burnBatch.js";
@@ -34,7 +34,9 @@ import type { InstantRefParams } from "../src/genV2Refs.js";
 import type { PlutusJson } from "../src/redeemerIndex.js";
 
 // ── Tham số két Instant (giá trị giả, đúng hình dạng) ─────────────────────────────
-const NET = "Preview" as const;
+// Preview chưa có gốc cửa sổ (`WIN-PREVIEW`, LAMP `Specs/Window/CONTRACT.md` v1.0 §4) và các bộ
+// dựng tính epoch theo mạng ⟹ fixture chạy trên Preprod, mốc tip tính TỪ GỐC (`epochStartMs`).
+const NET = "Preprod" as const;
 const LAMP_POLICY = "4942de4a226f43c524c1273d752712366511d5fd7ae28bc1a1576077";
 const TLAMP       = "744c414d50";
 const RHO_POLICY  = "bb".repeat(28);
@@ -51,7 +53,7 @@ const REF_PARAMS: InstantRefParams = {
 };
 
 // Epoch SUY RA từ mốc thời gian (gốc epoch theo mạng) — `updateProfile` tự tính epoch từ tip.
-const TIP_MS = 60n * msPerEpoch(NET);
+const TIP_MS = epochStartMs(60n, NET);
 const E = posixMsToEpoch(TIP_MS, NET);
 
 const scriptAddr = (h: string) => credentialToAddress(NET, scriptHashToCredential(h));

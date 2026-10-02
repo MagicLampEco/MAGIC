@@ -19,7 +19,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import { Data, type LucidEvolution, type UTxO, type Validator } from "@lucid-evolution/lucid";
-import { msPerEpoch, posixMsToEpoch } from "@magiclamp/protocol-utils";
+import { epochStartMs, posixMsToEpoch } from "@magiclamp/protocol-utils";
 import { describe, expect, it } from "vitest";
 
 import { withdrawLamp } from "../src/withdrawLamp.js";
@@ -34,8 +34,10 @@ const LAMP_POLICY = "4942de4a226f43c524c1273d752712366511d5fd7ae28bc1a1576077";
 // Mốc thời gian ghim cứng, và epoch của vault SUY RA từ nó — đừng gõ hai con số
 // rồi hy vọng chúng khớp: `posixMsToEpoch` có gốc riêng theo mạng, nên một cặp
 // gõ tay sẽ lệch và bài kiểm chết ở cổng cooldown chứ không ở chỗ đang đo.
-const TIP_MS = 60n * msPerEpoch("Preview");
-const CUR_EPOCH = posixMsToEpoch(TIP_MS, "Preview");
+// Preview chưa có gốc cửa sổ (`WIN-PREVIEW`, LAMP `Specs/Window/CONTRACT.md` v1.0 §4) và các bộ
+// dựng tính epoch theo mạng ⟹ fixture chạy trên Preprod, mốc tip tính TỪ GỐC (`epochStartMs`).
+const TIP_MS = epochStartMs(60n, "Preprod");
+const CUR_EPOCH = posixMsToEpoch(TIP_MS, "Preprod");
 
 const VAULT_SCRIPT: Validator = { type: "PlutusV3", script: "4746010000222220" };
 const OTHER_SCRIPT: Validator = { type: "PlutusV3", script: "49480100002221200101" };
@@ -140,7 +142,7 @@ const baseWithdraw = {
   vaultScript:     VAULT_SCRIPT,
   vaultType:       "Instant" as const,
   vaultPlutusJson: PLUTUS_JSON,
-  network:         "Preview" as const,
+  network:         "Preprod" as const,
   lampPolicyId:    LAMP_POLICY,
   destinationAddress: "addr_test1vqvrwknagm22rwnrus2v0nagyknauff3jztknm3x2d9nahgwq9x0u",
 };
@@ -191,7 +193,7 @@ describe("dây nối CIP-33 — updateProfile", () => {
     vaultScript:     VAULT_SCRIPT,
     vaultType:       "Instant" as const,
     vaultPlutusJson: PLUTUS_JSON,
-    network:         "Preview" as const,
+    network:         "Preprod" as const,
   };
 
   it("🔴 có ref UTxO ⟹ ĐỌC nó và KHÔNG nhét script inline", async () => {

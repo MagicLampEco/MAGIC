@@ -269,6 +269,12 @@ LAMP riêng:
 
 Nguồn: `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK` — bảng này chép lại, lệch thì mã thắng.
 
+Thêm `window_origin_ms` (apply-param CUỐI của mọi két): epoch giao thức =
+`(posix_ms − window_origin_ms) / ms_per_epoch`. Nguồn: `ProtocolUtils/src/index.ts` ▸
+`WINDOW_ORIGIN_MS_BY_NETWORK` (Mainnet, Preprod — trùng biên epoch Cardano). Preview chưa có
+gốc ⟹ `windowOriginMs("Preview")` ném `WIN-PREVIEW`; truyền `ProtocolParams.windowOriginMs`
+nếu thật sự cần dựng trên Preview.
+
 Cả hai đều là apply-param, nên hash validator khác theo mạng ⇒ **địa chỉ vault khác theo
 mạng**. Vault tạo trên Preview không dùng được trên Mainnet. Hardcode tên asset testnet vào
 mã là dựng ra một vault mainnet không bao giờ nhìn thấy LAMP của chính nó.

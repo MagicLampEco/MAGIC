@@ -70,6 +70,7 @@ async function main() {
     lampAssetName: ASSET_NAMES.lamp,
     shardPolicyId: POLICY_IDS.shard_nft,
     msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
     ...beacons,
   });
 

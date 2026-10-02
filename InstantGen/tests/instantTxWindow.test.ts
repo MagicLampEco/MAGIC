@@ -20,7 +20,7 @@ import {
 } from "../offchain/src/types.js";
 import { computeCapLent, computeCapPp } from "../offchain/src/math.js";
 import {
-  NETWORK, P, E, SLOT, OWNER_PKH, VAULT_SCRIPT, SHARD_SCRIPT, VP, REGISTRY_POLICY,
+  NETWORK, P, E, SLOT, at, OWNER_PKH, VAULT_SCRIPT, SHARD_SCRIPT, VP, REGISTRY_POLICY,
   LAMP_BALANCE, SHARD_ID, GB_SEQ, SHARD_RESET, WAKEME_COMMIT,
   makeVault, makeShard, makeRate, vaultUtxo, greenbackUtxo, shardUtxo, registryUtxo, rateUtxo, wakemeUtxo,
 } from "./instantFixtures.js";
@@ -94,8 +94,8 @@ function datumRa(tx: Recorded): TVaultDatum {
   return Data.from((out.datum as { value: string }).value, VaultDatum);
 }
 
-const TIP_DAU = E * P + 1_000n;
-const TIP_GIO_CUOI = (E + 1n) * P - 1_800_000n;
+const TIP_DAU = at(E) + 1_000n;
+const TIP_GIO_CUOI = at(E + 1n) - 1_800_000n;
 
 describe("buildInstantGenTx — cửa sổ hiệu lực và mốc khoá", () => {
   // Cặp ghim `reserveTrailingSlots: 1n`: đổi về `0n` thì A đỏ ở `validTo`, B đỏ ở mốc
@@ -105,7 +105,7 @@ describe("buildInstantGenTx — cửa sổ hiệu lực và mốc khoá", () => 
   it("A. `validTo` là slot ÁP CHÓT của epoch, không phải slot cuối", async () => {
     const { tx } = await dung(TIP_GIO_CUOI);
     expect(tx.validFrom).toBe(Number(TIP_GIO_CUOI));
-    expect(tx.validTo).toBe(Number((E + 1n) * P - 2n * SLOT));
+    expect(tx.validTo).toBe(Number(at(E + 1n) - 2n * SLOT));
   });
 
   it("A-bis. đầu epoch ⟹ `validTo` = tip + trần, KHÔNG phải cuối epoch", async () => {
@@ -117,27 +117,27 @@ describe("buildInstantGenTx — cửa sổ hiệu lực và mốc khoá", () => 
   it("B. mốc trong datum KHÔNG rơi vào slot cuối của epoch sau", async () => {
     const { tx } = await dung(TIP_GIO_CUOI);
     const moc = datumRa(tx).instant_unlock_ms;
-    expect(moc).toBe((E + 2n) * P - 2n * SLOT);
-    expect(moc).not.toBe((E + 2n) * P - SLOT);
+    expect(moc).toBe(at(E + 2n) - 2n * SLOT);
+    expect(moc).not.toBe(at(E + 2n) - SLOT);
     expect(moc - BigInt(tx.validTo!)).toBe(P);
   });
 
   it("B-bis. mốc cũ xa hơn ⟹ bộ dựng GIỮ mốc cũ (max), không ghi đè bằng cận trên + P", async () => {
-    const xa = (E + 5n) * P;
+    const xa = at(E + 5n);
     const { tx } = await dung(TIP_GIO_CUOI, { instant_unlock_ms: xa });
     expect(datumRa(tx).instant_unlock_ms).toBe(xa);
   });
 
   it("C. tip ở slot CUỐI epoch ⟹ NÉM, kèm đúng số mili-giây phải chờ", async () => {
-    await expect(nemVoiChoDoi((E + 1n) * P - SLOT)).resolves.toEqual({ waitMs: 1_000n, retryAfterMs: (E + 1n) * P });
+    await expect(nemVoiChoDoi(at(E + 1n) - SLOT)).resolves.toEqual({ waitMs: 1_000n, retryAfterMs: at(E + 1n) });
   });
 
   it("C-bis. tip ở slot ÁP CHÓT ⟹ vẫn NÉM, vì một slot đã bị chừa", async () => {
-    await expect(nemVoiChoDoi((E + 1n) * P - 2n * SLOT)).resolves.toEqual({ waitMs: 2_000n, retryAfterMs: (E + 1n) * P });
+    await expect(nemVoiChoDoi(at(E + 1n) - 2n * SLOT)).resolves.toEqual({ waitMs: 2_000n, retryAfterMs: at(E + 1n) });
   });
 
   it("D. cực đối — tip ở slot thứ BA từ cuối thì dựng được, khoảng đúng một slot", async () => {
-    const tip = (E + 1n) * P - 3n * SLOT;
+    const tip = at(E + 1n) - 3n * SLOT;
     const { tx } = await dung(tip);
     expect(tx.completed).toBe(true);
     expect(tx.validTo! - tx.validFrom!).toBe(Number(SLOT));
@@ -338,9 +338,9 @@ describe("buildRefreshCheckpointTx", () => {
 
   it("KHÔNG chừa slot cuối (reserve 0): cặp với lượt sinh ở cùng tip", async () => {
     const { tx } = await dungRefresh(TIP_GIO_CUOI);
-    expect(tx.validTo).toBe(Number((E + 1n) * P - SLOT));
+    expect(tx.validTo).toBe(Number(at(E + 1n) - SLOT));
     const gen = await dung(TIP_GIO_CUOI);
-    expect(gen.tx.validTo).toBe(Number((E + 1n) * P - 2n * SLOT));
+    expect(gen.tx.validTo).toBe(Number(at(E + 1n) - 2n * SLOT));
   });
 
   it("link đã ghim, vắng két Wakeme ⟹ gỡ ghim; có két ⟹ link := owner_commit", async () => {

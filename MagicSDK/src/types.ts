@@ -113,6 +113,11 @@ export interface ProtocolParams {
   wakemeVaultHash?: string;
   /** Override ms_per_epoch (advanced). Derived from `network` otherwise. */
   msPerEpoch?: bigint;
+  /** Override window_origin_ms (advanced) — apply-param CUỐI của mọi két, và là gốc của phép
+   *  đổi thời gian → epoch (`LAMP/Specs/Window/CONTRACT.md` v1.0). Bỏ trống ⟹
+   *  `@magiclamp/protocol-utils` ▸ `windowOriginMs(network)`; Preview không có gốc nên hàm đó
+   *  NÉM `WIN-PREVIEW` — truyền tường minh ở đây là cách duy nhất dựng két trên Preview. */
+  windowOriginMs?: bigint;
 }
 
 /**

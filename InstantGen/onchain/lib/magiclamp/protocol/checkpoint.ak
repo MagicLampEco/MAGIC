@@ -54,6 +54,7 @@ pub type VaultParams {
   rate_script_hash: ScriptHash,
   wakeme_vault_hash: ScriptHash,
   ms_per_epoch: Int,
+  window_origin_ms: Int,
 }
 
 /// Nhánh đang ghi có quyền gì với `wakeme_link`.

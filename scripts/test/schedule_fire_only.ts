@@ -25,7 +25,7 @@ import { genV2BeaconRefsFromBook, scheduleScriptPair, shardSpendParams } from ".
 import { fetchRefScript, requireOutRefKey } from "./genV2Chain.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
 import { VaultDatum } from "../../ScheduleGen/offchain/src/types.js";
-import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { ownerRefOf, sameOwner, windowOf } from "@magiclamp/protocol-utils";
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { parseFlag } from "../runResult.js";
 
@@ -62,6 +62,7 @@ async function main() {
     lampAssetName: ASSET_NAMES.lamp,
     shardPolicyId: POLICY_IDS.shard_nft,
     msPerEpoch:    PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs:    PROTOCOL.WINDOW_ORIGIN_MS,
     ...beacons,
   });
   const vaultScript = pair.vaultScript;
@@ -144,7 +145,7 @@ async function main() {
   console.log(`Shards (total/active): ${allShards.length}/${shardUtxos.length}\n`);
 
   const tip = await fetchTip();
-  console.log(`Current epoch:     ${tip.posixMs / PROTOCOL.MS_PER_EPOCH}\n`);
+  console.log(`Current epoch:     ${windowOf(tip.posixMs, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS)}\n`);
 
   const tamper = process.env.TAMPER;
   const tamperOutputDatum = tamper ? ((d: any) => {

@@ -66,6 +66,7 @@ async function main() {
       burnBatchConstr:      BURN_BATCH_CONSTR,
       maxPriceStale:        BigInt(req("MAX_PRICE_STALE")),
       msPerEpoch:           PROTOCOL.MS_PER_EPOCH,
+      windowOriginMs:           PROTOCOL.WINDOW_ORIGIN_MS,
       priceParamScriptHash: req("PRICE_PARAM_HASH"),
     }),
   );

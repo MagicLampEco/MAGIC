@@ -34,6 +34,7 @@ import {
 import { gbVaultShare, windowAdd } from "./genFormula.js";
 import {
   getTipSlot, msPerEpoch as msPerEpochOf, epochValidityWindow, vaultOutValue,
+  windowOf, windowStartMs, windowOriginMs as windowOriginOf,
   assertVaultIdentityKept, collateralCompleteOptions, type Network,
 } from "@magiclamp/protocol-utils";
 import { applyOwnerAuth, resolveOwnerAuth, ownerRefOf, type OwnerAuth } from "@magiclamp/protocol-utils";
@@ -63,7 +64,7 @@ export interface InstantGenContext {
   vaultDatum       : VaultDatum;
   /** UTxO két đang tiêu — vào `batch_id`. */
   vaultOutRef      : OutRef;
-  /** Epoch giao thức = cận dưới validity / ms_per_epoch. */
+  /** Epoch giao thức = (cận dưới validity − window_origin_ms) / ms_per_epoch. */
   currentEpoch     : bigint;
   /** Beacon ρ; BẮT BUỘC khi `cap_epoch < currentEpoch` (lượt làm mới), vắng thì NÉM. */
   rate             : RateParam | null;
@@ -309,14 +310,16 @@ interface WindowSource {
 
 interface ResolvedWindow { fromMs: bigint; toMs: bigint; epoch: bigint }
 
-async function resolveWindow(src: WindowSource, p: bigint, reserveTrailingSlots: bigint): Promise<ResolvedWindow> {
+async function resolveWindow(
+  src: WindowSource, p: bigint, origin: bigint, reserveTrailingSlots: bigint,
+): Promise<ResolvedWindow> {
   if (src.validity !== undefined) {
     const { fromMs, toMs } = src.validity;
-    const epoch = fromMs / p;
-    if (toMs <= fromMs || toMs >= (epoch + 1n) * p) {
+    const epoch = windowOf(fromMs, p, origin);
+    if (toMs <= fromMs || toMs >= windowStartMs(epoch + 1n, p, origin)) {
       throw new Error(
         `GEN-INST-015: cửa sổ [${fromMs}, ${toMs}] không nằm gọn trong epoch ${epoch} ` +
-        `(ms_per_epoch ${p}) — validator đòi hai biên cùng epoch.`,
+        `(ms_per_epoch ${p}, window_origin_ms ${origin}) — validator đòi hai biên cùng epoch.`,
       );
     }
     return { fromMs, toMs, epoch };
@@ -326,6 +329,13 @@ async function resolveWindow(src: WindowSource, p: bigint, reserveTrailingSlots:
     throw new Error(
       `GEN-INST-015: ms_per_epoch của két (${p}) ≠ nhịp mạng ${network} (${msPerEpochOf(network)}). ` +
       `Két dựng cho mạng khác, hoặc truyền \`validity\` tường minh.`,
+    );
+  }
+  // Ném `WIN-PREVIEW` trên Preview — đúng ý: không có gốc thì không có epoch giao thức.
+  if (windowOriginOf(network) !== origin) {
+    throw new Error(
+      `GEN-INST-015: window_origin_ms của két (${origin}) ≠ gốc mạng ${network} ` +
+      `(${windowOriginOf(network)}). Két dựng cho mạng khác, hoặc truyền \`validity\` tường minh.`,
     );
   }
   const tip = src.tipPosixMs
@@ -340,7 +350,7 @@ async function resolveWindow(src: WindowSource, p: bigint, reserveTrailingSlots:
       `${upperOnChain} trên mạng ${network}.`,
     );
   }
-  return { fromMs: BigInt(lowerMs), toMs: BigInt(upperMs), epoch: BigInt(lowerMs) / p };
+  return { fromMs: BigInt(lowerMs), toMs: BigInt(upperMs), epoch: windowOf(BigInt(lowerMs), p, origin) };
 }
 
 /** Phần chung: két, script két, apply-param, quyền chủ. */
@@ -488,7 +498,7 @@ export async function buildInstantGenTx(params: InstantGenParams): Promise<Insta
   // 🔴 `reserveTrailingSlots: 1` — mốc khoá ghi vào datum là `cận-trên + P`; cận trên là
   // slot CUỐI epoch thì mốc rơi đúng slot cuối epoch sau ⟹ lượt rút tại mốc có khoảng
   // rỗng ⟹ sổ cái từ chối mọi lần. Chừa một slot đẩy mốc ra khỏi ô chết đó.
-  const w = await resolveWindow(params, vp.msPerEpoch, 1n);
+  const w = await resolveWindow(params, vp.msPerEpoch, vp.windowOriginMs, 1n);
   const e = w.epoch;
 
   const rate = readRate(params);
@@ -613,7 +623,7 @@ export interface RefreshCheckpointResult {
 export async function buildRefreshCheckpointTx(params: RefreshCheckpointParams): Promise<RefreshCheckpointResult> {
   const vp = params.vaultParams;
   const { datum, ownHash, ownName } = readVault(params);
-  const w = await resolveWindow(params, vp.msPerEpoch, 0n);
+  const w = await resolveWindow(params, vp.msPerEpoch, vp.windowOriginMs, 0n);
   const rate = readRate(params);
   const wakeme = readWakeme(params, ownHash, ownName, w.epoch);
   const { outputDatum, checkpoint } = computeRefreshCheckpointOutput(datum, w.epoch, wakeme, rate);

@@ -22,7 +22,7 @@ import {
   validatorToScriptHash,
   type EmulatorAccount, type LucidEvolution, type Script, type TxBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch } from "@magiclamp/protocol-utils";
+import { msPerEpoch, windowOf, windowOriginMs } from "@magiclamp/protocol-utils";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   deriveGenBeaconsScripts, loadBlueprint, mintVaultRegistryTx, initGreenBackBeaconTx,
@@ -43,6 +43,7 @@ import { makeVaultV2, makeShardV2 } from "./genV2Fixtures.js";
 
 const NET = "Preprod" as const;
 const P = msPerEpoch(NET);                     // két + beacon cùng một ms_per_epoch
+const O = windowOriginMs(NET);                 // két + beacon cùng một window_origin_ms (gốc khác 0)
 const E0 = 4_000n;
 const RHO = 4_000_000_000n;                    // = rho_max_q TẠM
 const LAMP_NAME = "744c414d50";                // "tLAMP"
@@ -110,11 +111,11 @@ async function only(unit: string): Promise<UTxO> {
 }
 
 const nowMs = () => emulator.now();
-const epochNow = () => BigInt(emulator.now()) / P;
+const epochNow = () => windowOf(BigInt(emulator.now()), P, O);
 
 /** Sang đầu epoch `e` + 60 s. */
 function goToEpoch(e: bigint) {
-  const target = e * P + 60_000n;
+  const target = O + e * P + 60_000n;
   const slots = Number((target - BigInt(emulator.now())) / 1000n);
   if (slots <= 0) throw new Error(`đã ở sau epoch ${e}`);
   emulator.awaitSlot(slots);
@@ -151,7 +152,7 @@ beforeAll(async () => {
   // công bố ref-script — phải lọt trần thật. Nới lại trần ở đây là giấu một hồi quy.
   emulator = new Emulator([deployer, writer, rateKey, parking],
     { ...PROTOCOL_PARAMETERS_DEFAULT, maxTxSize: 16_384 });
-  emulator.time = Number(E0 * P + 60_000n);
+  emulator.time = Number(O + E0 * P + 60_000n);
   lucid = await Lucid(emulator, "Custom");
   lucid.selectWallet.fromSeed(deployer.seedPhrase);
 
@@ -163,7 +164,7 @@ beforeAll(async () => {
   const seedU = async (i: number) => (await emulator.getUtxosByOutRef([seed(i)]))[0]!;
 
   gb = deriveGenBeaconsScripts(loadBlueprint(), "Custom", {
-    msPerEpoch: P, vaultRegistrySeed: seed(0), greenbackWriter: pkh(writer), greenbackSeed: seed(1),
+    msPerEpoch: P, windowOriginMs: O, vaultRegistrySeed: seed(0), greenbackWriter: pkh(writer), greenbackSeed: seed(1),
     gbShardCapNanogic: GB_SHARD_CAP_NANOGIC, gbShardSeed: seed(2), rateKey: pkh(rateKey),
     rhoMaxQ: RHO, rateSeed: seed(3),
   });
@@ -175,9 +176,9 @@ beforeAll(async () => {
   const shardNft: Script = { type: "PlutusV3", script: SHARD_NFT_CODE };
   const shardPolicy = mintingPolicyToId(shardNft);
 
-  // Cặp script theo đúng thứ tự dựng: `commit` (9) → hash → két (6), qua cổng tên-blueprint.
+  // Cặp script theo đúng thứ tự dựng: `commit` (10) → hash → két (7), qua cổng tên-blueprint.
   const pair = applyScheduleScripts(SG_BP, {
-    lampPolicyId: lampPolicy, lampAssetName: LAMP_NAME, shardPolicyId: shardPolicy, msPerEpoch: P,
+    lampPolicyId: lampPolicy, lampAssetName: LAMP_NAME, shardPolicyId: shardPolicy, msPerEpoch: P, windowOriginMs: O,
     gbBeaconNftPolicy: gb.greenback.hash, gbBeaconScriptHash: gb.greenback.hash,
     gbShardPolicyId: gb.gbShard.hash, rateNftPolicy: gb.rate.hash, rateScriptHash: gb.rate.hash,
   });

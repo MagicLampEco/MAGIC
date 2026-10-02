@@ -62,7 +62,8 @@ const funding = (over: Record<string, unknown> = {}) => ({
 });
 const base = {
   vaultType: "Schedule" as const,
-  protocol: { network: "Preview" as const, lampPolicyId: LAMP_POLICY },
+  // Preview chưa có gốc cửa sổ (`WIN-PREVIEW`) ⟹ truyền gốc TƯỜNG MINH của bài.
+  protocol: { network: "Preview" as const, lampPolicyId: LAMP_POLICY, windowOriginMs: 1_000_000_000n },
   appliedVault: { script: VAULT_SCRIPT, expectedScriptHash: validatorToScriptHash(VAULT_SCRIPT) },
   tipPosixMs: TIP_MS,
 };
@@ -158,6 +159,18 @@ describe("planDidPaymentFunding — bộ chọn", () => {
 });
 
 // Chặn chép nhầm: datum vault vẫn là của chủ, không phải của ví Phoenix.
+it("holding khởi đầu mang epoch tính TỪ GỐC cửa sổ đã apply (`protocol.windowOriginMs`), không từ 0", async () => {
+  // TIP_MS = 60 × 86 400 000; gốc tường minh 1 000 000 000 ⟹ ⌊(5 184 000 000 − 1 000 000 000) / 86 400 000⌋ = 48.
+  // Cặp: quên trừ gốc thì ra 60 — đầu vào này phân biệt được hai bên đột biến.
+  const r = recordingLucid([FEE_UTXO]);
+  await createVault({ ...base, lucid: r.lucid, vault: { ownerPkh: PKH, lampDeposit: 800_000_000n }, funding: funding() } as never);
+  const out = r.argsOf("pay.ToAddressWithData")[0]!;
+  const d = Data.from((out[1] as { value: string }).value, VaultDatumSchema) as unknown as
+    { loyalty_holdings: { acquired_epoch: bigint }[] };
+  expect(d.loyalty_holdings[0]!.acquired_epoch).toBe(48n);
+  expect(d.loyalty_holdings[0]!.acquired_epoch).not.toBe(TIP_MS / msPerEpoch("Preview"));
+});
+
 it("datum vault giữ chủ yêu cầu khi có funding", async () => {
   const r = recordingLucid([FEE_UTXO]);
   await createVault({ ...base, lucid: r.lucid, vault: { ownerPkh: PKH, lampDeposit: 800_000_000n }, funding: funding() } as never);

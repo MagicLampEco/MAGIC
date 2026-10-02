@@ -19,7 +19,7 @@ import {
   type InstantGenLimits, type InstantVaultParams, type OwnerCredentialData,
   type VaultDatum as InstantVaultDatum, type WakemeRead,
 } from "@magiclamp/instantgen-sdk";
-import { msPerEpoch, type Network } from "@magiclamp/protocol-utils";
+import { msPerEpoch, windowOriginMs, type Network } from "@magiclamp/protocol-utils";
 import { decodeVaultDatumOfKind } from "@magiclamp/sdk";
 import type { GenBeaconParams } from "@magiclamp/schedulegen-sdk";
 
@@ -57,9 +57,11 @@ export function requireRefScript(d: Deployment, key: "commit" | "gbShard", route
 }
 
 /**
- * Chín apply-param của két InstantGen v2.0, theo đúng tên của gói nền. `wakeme_vault_hash`
- * và `ms_per_epoch` là tham số THEO MẠNG của `@magiclamp/protocol-utils` — cùng nguồn mà bộ
- * dựng genesis dùng; mạng chưa có két Wakeme ⟹ 501 `WAKEME_VAULT_UNAVAILABLE`.
+ * Mười apply-param của két InstantGen v2.0, theo đúng tên của gói nền. `wakeme_vault_hash`,
+ * `ms_per_epoch` và `window_origin_ms` (CUỐI) là tham số THEO MẠNG của
+ * `@magiclamp/protocol-utils` — cùng nguồn mà bộ dựng genesis dùng; mạng chưa có két Wakeme
+ * ⟹ 501 `WAKEME_VAULT_UNAVAILABLE`; mạng chưa có gốc cửa sổ (Preview) ⟹ `WindowOriginError`
+ * `WIN-PREVIEW`, tầng HTTP đổi thành 501 `WINDOW_ORIGIN_UNAVAILABLE`.
  */
 export function instantVaultParamsOf(d: Deployment, g: GenV2Deployment, network: Network): InstantVaultParams {
   return {
@@ -72,6 +74,7 @@ export function instantVaultParamsOf(d: Deployment, g: GenV2Deployment, network:
     rateScriptHash: g.rateScriptHash,
     wakemeVaultHash: wakemeScriptHashOrThrow(network),
     msPerEpoch: msPerEpoch(network),
+    windowOriginMs: windowOriginMs(network),
   };
 }
 

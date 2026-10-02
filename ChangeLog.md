@@ -5,6 +5,28 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-02 — Cửa sổ epoch tính từ gốc epoch Cardano: apply-param `window_origin_ms`
+
+**Đổi gì.** Mọi validator nhận `ms_per_epoch` nhận thêm `window_origin_ms` làm apply-param CUỐI:
+`consume`, `price_param`, `greenback_beacon`, `rate_param`, `um_datum_validator`, `paymaster`,
+két InstantGen, két + `commit` ScheduleGen, `prepaid_vault` + `paid_fund`. Thời gian → epoch là
+`(t − window_origin_ms) / ms_per_epoch`; epoch → biên là `window_origin_ms + e × ms_per_epoch`.
+Chỗ cộng `ms_per_epoch` như một độ dài (`instant_unlock_ms`) không đổi. Off-chain lấy gốc từ một
+nguồn: `ProtocolUtils/src/index.ts` ▸ `WINDOW_ORIGIN_MS_BY_NETWORK` (Mainnet `1_506_203_091_000`,
+Preprod `1_654_041_600_000`; Preview chưa có gốc ⟹ `windowOriginMs` ném `WIN-PREVIEW`).
+`scripts/deployParams.ts` đặt tham số mới cuối danh sách.
+
+**Vì sao.** Đặc tả LAMP `Specs/Window/CONTRACT.md` v1.0: chỉ số cửa sổ phải bằng số epoch Cardano
+và biên cửa sổ trùng biên epoch (mốc snapshot stake). Lưới cũ chia từ gốc Unix nên lệch biên epoch
+Cardano 345.600.000 ms trên Preprod.
+
+**Cái gì gãy nếu ai đó đang bám bản cũ.** Hash mọi validator kể trên đổi ⟹ cụm Preprod đang sống
+không dùng được với mã này; phải đúc lại. Chỉ số epoch trên Preprod rơi từ khoảng 4.146 xuống
+khoảng 316. Mã off-chain nào tự chia `t / ms_per_epoch` sẽ lệch một chỉ số với validator. Két
+Wakeme còn ghi `gen_pin_period` theo gốc Unix ⟹ InstantGen đọc `L_lent = 0` cho tới khi Wakeme
+chuyển cùng gốc (hướng lỗi an toàn: không nới gì). Preview không dựng được két cho tới khi chốt
+gốc Preview, trừ khi truyền `ProtocolParams.windowOriginMs` tường minh.
+
 ## 2026-09-29 — PrepaidGen tách đốt và quyết toán: `consumed_unsettled` + `SettleLine`
 
 **Đổi gì.** `PrepaidCredit` thêm trường thứ 5 `consumed_unsettled`; `BurnBatch` ghi nợ vào đó;

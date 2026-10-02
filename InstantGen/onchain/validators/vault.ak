@@ -29,12 +29,14 @@
 //                              redeemer/datum: chọn được hash là chọn được két.
 //                              G1b: không nhánh spend nào nhận input tại `Script(#8)`.
 //   #9 ms_per_epoch          : POSIX ms per epoch (per-network)
+//   #10 window_origin_ms     : gốc lưới cửa sổ (POSIX ms, theo mạng) — LAMP
+//                              `Specs/Window/CONTRACT.md` v1.0. Epoch = (t − #10) / #9.
 // Bỏ so với bản trước: `um_nft_policy`, `um_script_hash`, `backing_nft_policy`,
 // `backing_script_hash` (Gen v2.0 không đọc UM, không đọc `br`).
 //
 // Build on testnet:
 //   aiken build
-//   # applies the 9 parameters, producing the script hash
+//   # applies the 10 parameters, producing the script hash
 
 use aiken/builtin
 use aiken/cbor
@@ -51,6 +53,7 @@ use cardano/transaction.{
 }
 
 use magiclamp/protocol/owner_auth.{owner_authorized}
+use magiclamp/protocol/window_origin_fixtures
 use magiclamp/protocol/types.{
   ActivityProfile, ActivityState, BurnBatch, Ember, EpochUsage, Flame,
   GbShard, GreenBackBeacon, Instant, InstantGen, Lantern, LoyaltyHolding, MagicBatch,
@@ -147,6 +150,7 @@ validator vault(
   rate_script_hash      : ScriptHash,
   wakeme_vault_hash     : ScriptHash,
   ms_per_epoch          : Int,
+  window_origin_ms      : Int,
 ) {
   // ── mint: vault-identity NFT policy (policy_id == this script hash) ──────
   mint(redeemer: VaultIdRedeemer, policy_id: PolicyId, tx: Transaction) {
@@ -178,6 +182,7 @@ validator vault(
         rate_script_hash,
         wakeme_vault_hash,
         ms_per_epoch,
+        window_origin_ms,
       }
 
     // ── G1b: két Wakeme KHÔNG BAO GIỜ bị tiêu cùng két IG ─────────────────
@@ -198,7 +203,7 @@ validator vault(
 
     // ── Derive current epoch from tx validity range ──────────
     // Plutus V3 validity_range carries POSIX milliseconds, not slots.
-    let current_epoch = get_current_epoch(tx, ms_per_epoch)
+    let current_epoch = get_current_epoch(tx, ms_per_epoch, window_origin_ms)
 
     when redeemer is {
       // ── InstantGen — Gen v2.0 (gói b2) ───────────────────────
@@ -668,17 +673,20 @@ fn compute_batch_id(own_ref: OutputReference, index: Int) -> ByteArray {
 ///   (c) burn at an old `current_amount` by claiming a past epoch.
 ///
 /// Fix: require the WHOLE validity range to sit inside ONE epoch:
-///   epoch*P ≤ lower_ms   AND   upper_ms < (epoch+1)*P
-/// so `lower_ms / P == upper_ms / P == epoch`. The on-chain clock then forces
-/// `current_epoch` to be the real epoch of the slot the tx lands in — the
-/// caller can no longer choose it. The `lower_ms / ms_per_epoch` definition of
-/// `epoch` already gives `epoch*P ≤ lower_ms`; we only need the upper bound.
-fn get_current_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
+///   O + epoch*P ≤ lower_ms   AND   upper_ms < O + (epoch+1)*P
+/// so `(lower_ms − O) / P == (upper_ms − O) / P == epoch`. The on-chain clock then
+/// forces `current_epoch` to be the real epoch of the slot the tx lands in — the
+/// caller can no longer choose it. The `(lower_ms − O) / ms_per_epoch` definition
+/// of `epoch` already gives `O + epoch*P ≤ lower_ms`; we only need the upper bound.
+///
+/// `O = window_origin_ms` (LAMP `Specs/Window/CONTRACT.md` v1.0): thời gian → epoch
+/// TRỪ gốc trước khi chia (WIN-ORIGIN-1); epoch → mốc biên CỘNG gốc (WIN-ORIGIN-2).
+fn get_current_epoch(tx: Transaction, ms_per_epoch: Int, window_origin_ms: Int) -> Int {
   expect Some(lower_ms) = tx.validity_range.lower_bound.bound_type |> get_finite_slot
-  let epoch = lower_ms / ms_per_epoch
+  let epoch = ( lower_ms - window_origin_ms ) / ms_per_epoch
   // upper_bound must be finite AND in the same epoch as lower_bound.
   expect Some(upper_ms) = tx.validity_range.upper_bound.bound_type |> get_finite_slot
-  expect upper_ms < ( epoch + 1 ) * ms_per_epoch
+  expect upper_ms < window_origin_ms + ( epoch + 1 ) * ms_per_epoch
   epoch
 }
 
@@ -2392,7 +2400,7 @@ test epoch_pos_range_in_one_epoch() {
       ..placeholder,
       validity_range: interval.between(10 * p, 11 * p - 1),
     }
-  get_current_epoch(tx, p) == 10
+  get_current_epoch(tx, p, 0) == 10
 }
 
 // EPOCH-NEG-2: upper_bound spills into the next epoch → reject (cannot pin
@@ -2404,7 +2412,7 @@ test epoch_neg_range_spans_two_epochs() fail {
       ..placeholder,
       validity_range: interval.between(10 * p, 11 * p),  // upper == 11*p → epoch 11
     }
-  get_current_epoch(tx, p) == 10
+  get_current_epoch(tx, p, 0) == 10
 }
 
 // EPOCH-NEG-3: unbounded upper (no finite upper_bound) → reject.
@@ -2415,7 +2423,7 @@ test epoch_neg_unbounded_upper() fail {
       ..placeholder,
       validity_range: interval.after(10 * p),  // upper = +inf
     }
-  get_current_epoch(tx, p) == 10
+  get_current_epoch(tx, p, 0) == 10
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2489,7 +2497,7 @@ fn t_mint_tx(seed: OutputReference, out: Output, mint_v: Value, signers: List<By
 fn t_mint_call(seed: OutputReference, policy_id: PolicyId, tx: Transaction) -> Bool {
   vault.mint(
     t_lamp_policy, t_lamp_asset_name, t_gb_beacon_policy, t_gb_beacon_hash,
-    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, 86_400_000,
+    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, 86_400_000, 0,
     MintVaultId { seed }, policy_id, tx,
   )
 }
@@ -2938,6 +2946,7 @@ fn t_params() -> VaultParams {
     rate_script_hash: t_rate_hash,
     wakeme_vault_hash: t_wakeme_hash,
     ms_per_epoch: t_ms_per_epoch,
+    window_origin_ms: 0,
   }
 }
 
@@ -3428,6 +3437,18 @@ test cp_wd_neg_window_shifted() fail {
 const t_e10_lo: Int = 10 * 432_000_000 + 1_000
 
 fn t_spend(redeemer: VaultRedeemer, din: VaultDatum, extra_inputs: List<Input>) -> Bool {
+  t_spend_at(0, 0, redeemer, din, extra_inputs)
+}
+
+/// `t_spend` với gốc lưới `origin` (apply-param #10) và validity range dời `shift` ms.
+/// `origin == shift` ⟹ cùng epoch 10 như `t_spend` NẾU validator trừ gốc.
+fn t_spend_at(
+  origin: Int,
+  shift: Int,
+  redeemer: VaultRedeemer,
+  din: VaultDatum,
+  extra_inputs: List<Input>,
+) -> Bool {
   let dout = t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0)
   let tx =
     Transaction {
@@ -3440,8 +3461,8 @@ fn t_spend(redeemer: VaultRedeemer, din: VaultDatum, extra_inputs: List<Input>) 
     }
   vault.spend(
     t_lamp_policy, t_lamp_asset_name, t_gb_beacon_policy, t_gb_beacon_hash,
-    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, t_ms_per_epoch,
-    Some(din), redeemer, t_own_ref(), tx,
+    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, t_ms_per_epoch, origin,
+    Some(din), redeemer, t_own_ref(), window_origin_fixtures.shift_tx(tx, shift),
   )
 }
 
@@ -3473,6 +3494,102 @@ test sp_pos_other_script_input_ok() {
 
 test sp_neg_shard_spent_on_non_gen_branch() fail {
   t_spend(RefreshCheckpoint, t_cp_din(#""), [t_foreign_input(1, t_shard_hash)])
+}
+
+// ═══ Gốc lưới cửa sổ (LAMP Specs/Window/CONTRACT.md v1.0) ═════════════════
+// Cùng ca `sp_pos_refresh_via_handler`, tx dời đúng bằng gốc và validator nhận gốc đó:
+// trừ gốc ⟹ vẫn epoch 10, khớp datum ra (cap_epoch/usage_window_epoch = 10). Quên trừ
+// gốc ⟹ epoch ≈ 10 + gốc/P ⟹ datum ra lệch ⟹ đỏ (ca `…_forgotten_origin`).
+
+test wo_refresh_via_handler_mainnet_origin() {
+  t_spend_at(
+    window_origin_fixtures.mainnet_origin_ms,
+    window_origin_fixtures.mainnet_origin_ms,
+    RefreshCheckpoint, t_cp_din(#""), [],
+  )
+}
+
+test wo_refresh_via_handler_preprod_origin() {
+  t_spend_at(
+    window_origin_fixtures.preprod_origin_ms,
+    window_origin_fixtures.preprod_origin_ms,
+    RefreshCheckpoint, t_cp_din(#""), [],
+  )
+}
+
+// Tx dời theo gốc Mainnet nhưng validator nhận gốc 0 (= bản quên trừ gốc) ⟹ đỏ.
+test wo_refresh_via_handler_forgotten_origin() fail {
+  t_spend_at(0, window_origin_fixtures.mainnet_origin_ms, RefreshCheckpoint, t_cp_din(#""), [])
+}
+
+// Vector CONTRACT §3 trên `get_current_epoch` (lower ở biên, upper cùng epoch).
+test wo_get_epoch_mainnet_at_boundary() {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_current_epoch(
+    window_origin_fixtures.tx_between(t, t + 1_000),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.mainnet_origin_ms,
+  ) == 658
+}
+
+test wo_get_epoch_mainnet_one_ms_before() {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_current_epoch(
+    window_origin_fixtures.tx_between(t - 1_000, t - 1),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.mainnet_origin_ms,
+  ) == 657
+}
+
+test wo_get_epoch_preprod_at_boundary() {
+  let t = window_origin_fixtures.preprod_t_316
+  get_current_epoch(
+    window_origin_fixtures.tx_between(t, t + 1_000),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.preprod_origin_ms,
+  ) == 316
+}
+
+test wo_get_epoch_preprod_one_ms_before() {
+  let t = window_origin_fixtures.preprod_t_316
+  get_current_epoch(
+    window_origin_fixtures.tx_between(t - 1_000, t - 1),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.preprod_origin_ms,
+  ) == 315
+}
+
+// Biên trên tính theo gốc: upper chạm đúng `O + 659·P` (= biên epoch 659) ⟹ trải hai epoch ⟹ đỏ.
+test wo_get_epoch_mainnet_upper_spills() fail {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_current_epoch(
+    window_origin_fixtures.tx_between(t, t + window_origin_fixtures.ms_per_window),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.mainnet_origin_ms,
+  ) == 658
+}
+
+// Upper vừa dưới biên epoch 659 theo gốc ⟹ xanh. Bản quên cộng gốc ở biên trên
+// (`upper < (e+1)·P`) chặn nhầm ca này.
+test wo_get_epoch_mainnet_upper_last_ms_ok() {
+  let t = window_origin_fixtures.mainnet_t_658
+  get_current_epoch(
+    window_origin_fixtures.tx_between(t, t + window_origin_fixtures.ms_per_window - 1),
+    window_origin_fixtures.ms_per_window,
+    window_origin_fixtures.mainnet_origin_ms,
+  ) == 658
+}
+
+// Quên gốc (truyền 0) ⟹ không ra vector.
+test wo_get_epoch_mainnet_forgotten_origin() fail {
+  let t = window_origin_fixtures.mainnet_t_658
+  expect
+    get_current_epoch(
+      window_origin_fixtures.tx_between(t, t + 1_000),
+      window_origin_fixtures.ms_per_window,
+      0,
+    ) == 658
+  True
 }
 
 
@@ -4128,7 +4245,7 @@ fn t_spend_gen(m: Int, extra_inputs: List<Input>) -> Bool {
     )
   vault.spend(
     t_lamp_policy, t_lamp_asset_name, t_gb_beacon_policy, t_gb_beacon_hash,
-    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, t_ms_per_epoch,
+    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, t_ms_per_epoch, 0,
     Some(din), InstantGen { claimed_amount: m }, t_own_ref(),
     Transaction { ..tx, inputs: list.concat(tx.inputs, extra_inputs) },
   )
@@ -4215,7 +4332,7 @@ fn t_ig_measure(fx: (VaultDatum, Transaction, Int)) -> Bool {
   expect d: VaultDatum = raw
   vault.spend(
     t_lamp_policy, t_lamp_asset_name, t_gb_beacon_policy, t_gb_beacon_hash,
-    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, t_ms_per_epoch,
+    t_shard_hash, t_rate_policy, t_rate_hash, t_wakeme_hash, t_ms_per_epoch, 0,
     Some(d), InstantGen { claimed_amount: m }, t_own_ref(), tx,
   )
 }

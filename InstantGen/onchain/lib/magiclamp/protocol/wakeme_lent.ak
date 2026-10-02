@@ -65,11 +65,15 @@ const owner_commit_len: Int = 32
 /// dựng thì NFT, datum, tên đều tự nhất quán theo tham số của nó — chỉ hash CHUẨN mới
 /// phân biệt được két thật).
 ///
-/// `current_period` phải cùng thang với `gen_pin_period` bên Wakeme, tức
-/// `t / ms_per_epoch` với cùng `ms_per_epoch` của mạng. Phía IG hiện tính
-/// `lower_ms / ms_per_epoch` (`get_current_epoch`), phía Wakeme ghi `period(hi)`; cùng
-/// độ dài kỳ thì hai bên cùng thang, lệch nhau tối đa ở ranh giới kỳ — và chiều lệch đó
-/// chỉ làm vế (d) khó đạt hơn (trả 0), không làm nó dễ hơn.
+/// `current_period` phải cùng thang với `gen_pin_period` bên Wakeme. Phía IG nay tính
+/// `(lower_ms − window_origin_ms) / ms_per_epoch` (`get_current_epoch`, gốc lưới cửa sổ
+/// theo LAMP `Specs/Window/CONTRACT.md` v1.0). Phía Wakeme ghi `period(hi)`, mà
+/// `PhoenixKeyDID/Wakeme` ▸ `wakeme_logic.ak` ▸ `period` hiện là `t / ms_per_epoch`
+/// (gốc Unix, đo 2026-10-02 @ Wakeme 4512fe6). 🔴 HAI THANG KHÁC NHAU: với gốc khác 0
+/// `gen_pin_period` (≈ t/P) luôn lớn hơn nhiều `current_period` (≈ (t−O)/P) ⟹ vế (d)
+/// luôn rơi vào nhánh 0 — chiều lệch fail-closed (`L_lent = 0`, không nới gì), nhưng
+/// phần mượn từ Wakeme không bao giờ được tính cho tới khi hai bên cùng thang. Hàm này
+/// KHÔNG tự đổi nghĩa trường của Wakeme.
 ///
 /// `lamp_policy`, `lamp_asset_name` là apply-param #1, #2 của validator gọi hàm này
 /// (LAMP của đúng mạng) — dùng cho vế (f), đối chiếu datum với value thật.

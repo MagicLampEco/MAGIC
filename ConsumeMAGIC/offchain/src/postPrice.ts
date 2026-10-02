@@ -24,7 +24,7 @@ import {
   type Validator,
   type Assets,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, epochValidityWindow, type Network } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch, epochValidityWindow, type Network } from "@magiclamp/protocol-utils";
 import { assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
 import {
   encodePriceParam,
@@ -39,8 +39,8 @@ export interface PostPriceParams {
   lucid: LucidEvolution;
   /** Beacon UTxO đang sống — SPEND (không phải reference input như ở buildConsumeTx). */
   priceBeaconUtxo: UTxO;
-  /** `price_param` đã apply đủ 5 param: committee, threshold, price_nft_policy,
-   *  price_nft_name, ms_per_epoch. */
+  /** `price_param` đã apply đủ 6 param: committee, threshold, price_nft_policy,
+   *  price_nft_name, ms_per_epoch, window_origin_ms. */
   priceParamScript: Validator;
   /** Ref-script CIP-33 của `price_param` nếu đã công bố; có thì KHÔNG attach CBOR. */
   priceParamRefUtxo?: UTxO;
@@ -156,8 +156,8 @@ export async function buildPostPriceTx(
   const oldDatum = decodePriceParam(priceBeaconUtxo.datum);
 
   // ── Epoch: đơn điệu tăng VÀ ≤ epoch thời-gian-thật ──────────────────────────
-  const mspe = msPerEpoch(network);
-  const currentEpoch = tipPosixMs / mspe;
+  // Epoch = (t − window_origin_ms) / ms_per_epoch — gốc theo mạng (CONTRACT Window v1.0).
+  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
   const newEpoch = overrideEpoch ?? currentEpoch;
 
   if (newEpoch <= oldDatum.epoch) {
@@ -222,7 +222,8 @@ export async function buildPostPriceTx(
   }
 
   // ── Validity range: trong epoch hiện tại, hai biên Finite, cận trên có trần ──
-  // `util.get_epoch` đòi cả hai biên Finite, hi - lo ≤ mspe, và ⌊lo/mspe⌋ == ⌊hi/mspe⌋.
+  // `util.get_epoch` đòi cả hai biên Finite, hi - lo ≤ mspe, và ⌊(lo−O)/mspe⌋ == ⌊(hi−O)/mspe⌋
+  // (O = window_origin_ms).
   // Bản cũ lấy TRỌN epoch; cận trên ở cuối epoch 5 ngày vượt chân trời node
   // (TimeTranslationPastHorizon) — xem `VALIDITY_MAX_AHEAD_MS` ở protocol-utils.
   const win = epochValidityWindow(tipPosixMs, network);

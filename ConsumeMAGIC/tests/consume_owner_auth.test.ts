@@ -18,7 +18,7 @@ import { sgDatum, zeroWindow, burnRedeemer } from "./genV2Fixtures.js";
 import {
   buildConsumeTx, buildBindDidTx, buildMintEngageTx, ENGAGE_MIN_LOVELACE, type ConsumeParams,
 } from "../offchain/src/consume.js";
-import { msPerEpoch } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch } from "@magiclamp/protocol-utils";
 import {
   encodeEngageDatum, decodeEngageDatum, encodePriceParam, type EngageDatumT,
 } from "../offchain/src/types.js";
@@ -82,7 +82,7 @@ const REQUIRED = 10_000_000n;
  */
 function consumeParams(owner: Owner, lucid: unknown, over: Partial<ConsumeParams> = {}): ConsumeParams {
   const tip = over.tipPosixMs ?? 1_700_000_000_000n;
-  const e = tip / msPerEpoch("Preview");
+  const e = posixMsToEpoch(tip, "Preprod");
   const outWin = zeroWindow();
   outWin[0] = [0n, REQUIRED];
   return {
@@ -96,7 +96,7 @@ function consumeParams(owner: Owner, lucid: unknown, over: Partial<ConsumeParams
     opCount: 1n,
     vaultBurnRedeemerCbor: burnRedeemer([REQUIRED]),
     vaultOutDatumCbor: sgDatum(owner, outWin, e),
-    network: "Preview",
+    network: "Preprod",
     tipPosixMs: tip,
     ...over,
   } as ConsumeParams;
@@ -301,7 +301,7 @@ describe("buildConsumeTx — beacon giá cũ quá `maxPriceStale` (CONSUME-011)"
   // Validator ép `current_epoch − pp.epoch <= max_price_stale` (apply-param #5 của consume).
   // Bộ dựng không kiểm thì lượt dựng thành công và chết ở pha script với câu không đọc được.
   const tip = 1_700_000_000_000n;
-  const lag = tip / msPerEpoch("Preview");   // priceDatum.epoch = 0 ⟹ trễ đúng `lag` epoch
+  const lag = posixMsToEpoch(tip, "Preprod");   // priceDatum.epoch = 0 ⟹ trễ đúng `lag` epoch
 
   it("trễ đúng bằng mức cho phép ⟹ dựng được", async () => {
     const fake = makeLucidFake();

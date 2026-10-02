@@ -12,8 +12,10 @@ Nó **không** nhận khoá riêng, **không** dựng giao dịch, **không** gh
 
 Định nghĩa `VaultDatum` — thứ tự trường là hợp đồng nhị phân — sống ở
 `MagicSDK/src/schemas.ts`. Từ 2026-09-21 nó là **hai** hình dạng chứ không một:
-`VaultDatumSchema` (ScheduleGen · PrepaidGen) và `InstantVaultDatumSchema` (InstantGen,
+`VaultDatumSchema` (ScheduleGen) và `InstantVaultDatumSchema` (InstantGen,
 thêm `instant_unlock_ms` ở cuối). Số trường không chép xuống đây — đếm ở chính tệp đó.
+Két PrepaidGen có lược đồ RIÊNG (`PrepaidVaultDatumSchema`, `PrepaidGen/offchain/src/types.ts`)
+và được giải bằng `decodeVaultDatum` của `@magiclamp/prepaidgen-sdk`, không bằng hai lược đồ trên.
 Bảo backend Java tự đọc datum là dựng **bản thứ hai** của
 định nghĩa ấy, và bản thứ hai sẽ lệch ngay lượt đổi datum đầu tiên. Lệch kiểu đó không
 kêu: nó ra một con số trông hợp lý.
@@ -56,7 +58,7 @@ cổng fail-closed ở §5.
 >
 > Gọi trong tiến trình (`resolveReadOwner` ở `src/service.ts`) nhận cả `owner` lẫn bí danh
 > `ownerPkh`; hai trường cùng có mà chỉ hai chủ khác nhau ⟹ `400 OWNER_ALIAS_MISMATCH`.
-| `vault_type` (truy vấn) | không | `Schedule` \| `Instant`. Bỏ trống = đọc mọi loại đã cấu hình |
+| `vault_type` (truy vấn) | không | `Schedule` \| `Instant` \| `Prepaid`. Bỏ trống = đọc mọi loại đã cấu hình |
 
 > 🔴 **`vault_kind` trong thân bài là BẮT BUỘC, và nó không thừa so với `scopes_read`.**
 > `scopes_read` nói *"lượt này đã soi những địa chỉ nào"*; `vault_kind` nói *"vault NÀY
@@ -68,9 +70,10 @@ cổng fail-closed ở §5.
 > một **bộ đếm luỹ kế** ở vault `Schedule` (không nhánh nào đưa về 0). Chi tiết vòng đời:
 > docblock trên `consumedCreditNanogic` ở `src/vaultView.ts`.
 >
-> Giá trị thuộc **tập ĐÓNG** `Instant | Schedule` (`src/config.ts` ▸ `VAULT_KINDS`), ép ở
-> cổng khởi động. Bên gọi nên fail-closed: gặp giá trị ngoài tập đã biết thì **đừng vẽ con
-> số**, vì một loại vault mới có thể mang nghĩa mới cho đúng trường đó.
+> Giá trị thuộc **tập ĐÓNG** `Instant | Schedule | Prepaid` (`src/config.ts` ▸ `VAULT_KINDS`),
+> ép ở cổng khởi động. Bên gọi nên fail-closed: gặp giá trị ngoài tập đã biết thì **đừng vẽ con
+> số**, vì một loại vault mới có thể mang nghĩa mới cho đúng trường đó. `Prepaid` thêm
+> 2026-10-03, ở CUỐI tập; hai giá trị cũ giữ nguyên nghĩa.
 | `at_epoch` (truy vấn) | không | ép epoch **giao thức**. Bỏ trống = lấy từ đỉnh chuỗi |
 
 **Mã trả về — BA CA, BA MÃ. Đây là toàn bộ giá trị của mặt tiền này.**
@@ -149,6 +152,79 @@ cổng fail-closed ở §5.
 > `datum_kind` (suy từ số trường datum), không theo `vault_kind` (suy từ scope). Số liệu mẫu
 > ở khối JSON trên minh hoạ hình dạng; giá trị Gen v2.0 của nó là giá trị bài kiểm, không
 > phải số đọc từ chuỗi.
+
+### Ba loại két
+
+| `vault_kind` | lược đồ datum | giải bằng | batch "sống" khi |
+|---|---|---|---|
+| `Instant` | `InstantVaultDatumSchema` (MagicSDK) | `src/vaultView.ts` ▸ `readVaultsFromUtxos` | `isBatchExpired` của MagicSDK sai |
+| `Schedule` | `VaultDatumSchema` (MagicSDK) | `src/vaultView.ts` ▸ `readVaultsFromUtxos` | `isBatchExpired` của MagicSDK sai |
+| `Prepaid` | `PrepaidVaultDatumSchema` (PrepaidGen) | `src/prepaidView.ts` ▸ `readPrepaidVaultsFromUtxos` | `created_epoch == at_epoch` (C-PP-5, `liveMagic` của PrepaidGen) |
+
+Datum không khớp lược đồ của scope — ví dụ datum két Instant đỗ ở địa chỉ khai `Prepaid`, hay
+ngược lại — ⟹ `502 VAULT_DATUM_UNDECODABLE`, không bỏ qua.
+
+Hai luật "sống" trùng nhau khi `at_epoch ≥ created_epoch`, nhưng **lệch** khi bên gọi ép một
+`at_epoch` nhỏ hơn: `isBatchExpired` cho lô epoch 20 là sống ở epoch 19, còn két Prepaid
+không cho đốt lô đó. Nên két Prepaid theo luật của chính nó.
+
+**Thân bài một két Prepaid** — mẫu lấy nguyên từ bài kiểm `tests/prepaidView.test.ts` ▸
+*"két Prepaid: thân bài đúng từng ô"* (giá trị là của bài kiểm, không phải số đọc từ chuỗi;
+hex dài cắt bớt):
+
+```json
+{
+  "utxo_ref": "6b6b…6b#0",
+  "vault_kind": "Prepaid",
+  "datum_kind": "Prepaid",
+  "vault_address": "addr_test1_synthetic_vault",
+  "vault_id_unit": "aaaa…aacdcd…cd",
+  "owner": { "type": "key", "hash": "1111…11" },
+  "owner_pkh": "1111…11",
+  "available_nanogic": "1750000000",
+  "accrued_nanogic": "2050000000",
+  "expired_nanogic": "300000000",
+  "consumed_credit_nanogic": null,
+  "lamp_balance_oildrop": null,
+  "lamp_locked_oildrop": null,
+  "profile": null,
+  "last_updated_epoch": 20,
+  "rate_locked_q": null,
+  "wakeme_link": null,
+  "cap_epoch": null,
+  "cap_nanogic": null,
+  "instant_unlock_ms": null,
+  "usage_window_epoch": null,
+  "usage_window": null,
+  "batches": [
+    { "batch_id": "b0b0…", "source": "Prepaid", "created_epoch": 19, "decay_window": 1, "expires_at_epoch": 20,
+      "initial_amount_nanogic": null, "current_amount_nanogic": "300000000", "live": false, "contract_id": "f0f0…" },
+    { "batch_id": "b1b1…", "source": "Prepaid", "created_epoch": 20, "decay_window": 1, "expires_at_epoch": 21,
+      "initial_amount_nanogic": null, "current_amount_nanogic": "1750000000", "live": true, "contract_id": "f0f0…" }
+  ],
+  "gen_schedules": null,
+  "prepaid_credits": [
+    { "fund_id": "f0f0…", "remaining_carpdrop": "7000000000", "issued_epoch": 18, "last_draw_epoch": 20,
+      "consumed_unsettled_nanogic": "250000000" }
+  ]
+}
+```
+
+Két Prepaid mang **cùng bộ khoá** với két Gen (bài kiểm so hai bộ khoá); két Gen nay có thêm
+`prepaid_credits: null` ở cuối. Ô không tồn tại trong datum Prepaid đi ra `null`, không `"0"`
+hay `[]`:
+
+| ô `null` ở két Prepaid | vì sao |
+|---|---|
+| `consumed_credit_nanogic` | datum Prepaid không có `activity_state`; MAGIC đã đốt nằm ở `prepaid_credits[].consumed_unsettled_nanogic` |
+| `lamp_balance_oildrop`, `lamp_locked_oildrop` | két Prepaid không giữ LAMP (nguồn là CARP của quỹ); `"0"` đọc thành một khẳng định datum không nói |
+| `profile` | PrepaidGen không dùng tư-cách |
+| `rate_locked_q`, `gen_schedules` | không có lịch sinh; `[]` đọc thành "chưa ký lịch nào" |
+| `wakeme_link`, `cap_epoch`, `cap_nanogic`, `instant_unlock_ms`, `usage_window_epoch`, `usage_window` | ô của két Gen v2.0 |
+| `batches[].initial_amount_nanogic` | `MagicBatch` của PrepaidGen không có `initial_amount` |
+
+Ngược lại `prepaid_credits` là `null` ở két Instant/Schedule. Datum Prepaid còn `did_commit`,
+`next_batch_index`, `personal_delegate`, `attribution` — chưa đưa ra vì chưa màn hình nào cần.
 
 ### 🔴 BA thứ bên Java PHẢI đọc đúng
 
@@ -361,6 +437,29 @@ thật là hai trường sẽ lệch nhau.
 > câu "địa chỉ này còn đúng không" — và một địa chỉ hết đúng thì mặt tiền trả
 > `{vaults: []}` mãi mãi, im lặng, giống hệt "chủ này chưa có vault".
 
+### Sinh cấu hình từ sổ trạng thái — đừng chép tay
+
+`VAULT_READ_API_VAULTS` và `VAULT_READ_API_CONSUME_SCOPES` **sinh** từ sổ trạng thái của lần
+deploy (`scripts/state.<NET>.sh`, hoặc `STATE_BOOK_PATH`), không gõ tay. Cụm đúc lại thì chạy
+lại lệnh, không sửa địa chỉ:
+
+```bash
+cd ../scripts
+npx tsx gen_vault_read_api_config.ts Preprod > /tmp/vra.env           # mọi loại két có khoá trong sổ
+npx tsx gen_vault_read_api_config.ts Preprod --vaults instant,schedule  # chọn tập loại két
+set -a; . /tmp/vra.env; set +a                                          # rồi chạy `npm start` ở đây
+```
+
+stdout là đúng hai dòng `TÊN='<json>'`; stderr kể loại két nào bị bỏ và vì sao. Mỗi mục mang
+`source` = mạng · loại két · đường sổ · mốc sửa sổ · commit. Bộ sinh **ném** (mã thoát 1, nêu
+tên khoá) khi sổ thiếu khoá của một loại đã chọn, khi một loại chỉ có một phần khoá, và khi
+địa chỉ trong sổ lệch `Script(hash)` của chính sổ đó. Hai mảng được kiểm bằng chính
+`parseScopes` / `parseConsumeScopes` của tệp `src/config.ts` trước khi in.
+
+Két Prepaid vào CẢ `VAULT_READ_API_VAULTS` lẫn `VAULT_READ_API_CONSUME_SCOPES` (từ 2026-10-03,
+khi `VAULT_KINDS` có `Prepaid`). Bộ sinh đọc thẳng hằng đó chứ không chép tập loại. Bộ ca:
+`npx tsx test_gen_vault_read_api_config.ts` (trong `scripts/`).
+
 ### Lệnh
 
 ```bash
@@ -376,7 +475,8 @@ hai đường ra hai số khác nhau thì một trong hai sai.
 
 ## 7. Còn thiếu — nói thẳng, không để người sau tự phát hiện
 
-- **Địa chỉ vault vẫn là bản chép có nhãn, chưa phải bản sinh.** Mức đúng hơn là suy địa
+- **Địa chỉ vault sinh từ SỔ TRẠNG THÁI, chưa sinh từ mã.** Bộ sinh ở mục 6 bỏ được bước
+  chép tay, nhưng sổ vẫn là bản ghi của một lần deploy. Mức đúng hơn là suy địa
   chỉ từ `plutus.json` + apply-param bằng `applyVaultValidator` của MagicSDK. Chưa làm vì
   `plutus.json` là hiện vật `aiken build` (đã gitignore), nên sidecar sẽ đòi một bước dựng
   Aiken trước khi chạy. Đánh đổi đã chọn: nhãn bắt buộc + `/health` in nhãn.
@@ -390,5 +490,7 @@ hai đường ra hai số khác nhau thì một trong hai sai.
 - **Chỉ mục thread chưa tự chữa cuộn lại (rollback).** Đỉnh lùi dưới điểm đã đồng bộ thì dựng
   lại từ ảnh chụp; một cuộn lại ngắn không làm đỉnh lùi thì chưa bị phát hiện. Chưa có vòng
   dựng lại định kỳ.
+- **Két Prepaid mới kiểm trên datum mã hoá bằng codec PrepaidGen**, chưa đọc lượt nào trên
+  chuỗi thật.
 - **Mới đo trên Preview + ScheduleGen.** Vault InstantGen dùng **cùng** `VaultDatum` nên
   đường đọc không đổi, nhưng chưa có lượt đo thật nào trên vault Instant.

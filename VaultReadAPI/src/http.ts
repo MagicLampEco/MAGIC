@@ -8,7 +8,7 @@
 // Chỉ `GET`. Không nhận khoá riêng, không dựng giao dịch, không ghi gì. Mọi method
 // khác trả 405 ngay ở đây, trước khi chạm tới bất cứ đường đọc nào.
 
-import { VaultReadError, BadRequestError, ThreadIndexDisabledError, UnauthorizedError } from "./errors.js";
+import { VaultReadError, BadRequestError, ThreadIndexDisabledError, UnauthorizedError, newReferenceCode } from "./errors.js";
 import { VaultReadService, toJsonBody } from "./service.js";
 import type { VaultScope } from "./config.js";
 import { freshnessToJson, threadToJson, type ThreadIndex } from "./threadIndex.js";
@@ -42,6 +42,14 @@ export interface RouterDeps {
   /** Commit của mã đang chạy, đo lúc khởi động (`buildInfo.ts`). Vắng ⟹ `/health` khai
    *  `commit_source: "not_measured"` thay vì im lặng. */
   build?: BuildInfo;
+  /** Nơi ghi nguyên nhân của một lỗi 500 kèm mã tham chiếu đã trả cho người gọi. Vắng ⟹
+   *  `console.error` (nhật ký của sidecar). Phép kiểm truyền vào để đối chiếu mã. */
+  logInternal?: (referenceCode: string, cause: unknown) => void;
+}
+
+/** Ghi mặc định: mã + tên lỗi + câu lỗi + stack vào nhật ký sidecar — KHÔNG vào phản hồi. */
+export function defaultLogInternal(referenceCode: string, cause: unknown): void {
+  console.error(`[vault-read-api] ${referenceCode} ←`, cause instanceof Error ? (cause.stack ?? `${cause.name}: ${cause.message}`) : cause);
 }
 
 const BY_OWNER = /^\/vault\/by-owner\/([^/?#]+)$/;
@@ -159,11 +167,14 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
       };
     }
     // Lỗi ngoài dự kiến: KHÔNG in traceback, KHÔNG in đường dẫn nội bộ, KHÔNG in tên
-    // biến môi trường. Người gọi nhận một câu trung tính; nguyên nhân đi vào nhật ký
-    // của chính sidecar, nơi người vận hành tra được.
+    // biến môi trường. Người gọi nhận một câu trung tính + MÃ THAM CHIẾU; nguyên nhân (kèm
+    // đúng mã đó) đi vào nhật ký của chính sidecar, nơi người vận hành tra được. Bản trước
+    // khai câu này mà không ghi gì — lỗi 500 không để lại dấu nào để tra.
+    const ref = newReferenceCode();
+    (deps.logInternal ?? defaultLogInternal)(ref, e);
     return {
       status: 500,
-      body: { error: { code: "INTERNAL", message: "Lỗi nội bộ của mặt tiền đọc vault.", details: {} } },
+      body: { error: { code: "INTERNAL", message: "Lỗi nội bộ của mặt tiền đọc vault.", details: { reference_code: ref } } },
     };
   }
 }

@@ -6,9 +6,13 @@ export { readVaultsFromUtxos } from "./vaultView.js";
 export type {
   VaultView, BatchView, GenScheduleView, EpochUsageView, IgnoredUtxo, ReadVaultsResult,
 } from "./vaultView.js";
+export { readPrepaidVaultsFromUtxos } from "./prepaidView.js";
+export type {
+  PrepaidVaultView, PrepaidBatchView, PrepaidCreditView, ReadPrepaidVaultsResult,
+} from "./prepaidView.js";
 
 export { VaultReadService, toJsonBody } from "./service.js";
-export type { ReadRequest, ReadOutcome } from "./service.js";
+export type { ReadRequest, ReadOutcome, AnyVaultView } from "./service.js";
 
 export { BlockfrostChainReader, RecordedChainReader, normalizeTxEffect } from "./chain.js";
 export type {

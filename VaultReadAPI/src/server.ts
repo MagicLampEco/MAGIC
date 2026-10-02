@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 
 import { BlockfrostChainReader } from "./chain.js";
 import { loadConfig, isLoopback } from "./config.js";
-import { handle } from "./http.js";
+import { defaultLogInternal, handle } from "./http.js";
+import { newReferenceCode } from "./errors.js";
 import { VaultReadService } from "./service.js";
 import { ThreadIndex } from "./threadIndex.js";
 import { readBuildInfo } from "./buildInfo.js";
@@ -55,9 +56,12 @@ const server = createServer((rq, rs) => {
     .catch(e => {
       // Đường này chỉ tới được khi chính `handle` ném — nó đã bắt hết, nên tới đây là
       // lỗi của vỏ. Vẫn không in traceback ra ngoài.
+      // Cùng luật với nhánh 500 của `handle`: người gọi nhận MÃ THAM CHIẾU, nhật ký nhận mã +
+      // nguyên nhân. Ghi `(e as Error).message` không thôi thì mất stack và mất đường tra ngược.
+      const ref = newReferenceCode();
+      defaultLogInternal(`${ref} (vỏ)`, e);
       rs.writeHead(500, { "content-type": "application/json; charset=utf-8" });
-      rs.end(JSON.stringify({ error: { code: "INTERNAL", message: "Lỗi nội bộ.", details: {} } }));
-      console.error("[vault-read-api] lỗi vỏ:", (e as Error).message);
+      rs.end(JSON.stringify({ error: { code: "INTERNAL", message: "Lỗi nội bộ.", details: { reference_code: ref } } }));
     });
 });
 

@@ -36,15 +36,17 @@ import { parseBasePath } from "./basePath.js";
  *     và không gì báo. Tập đóng biến ca đó thành một lỗi khởi động ồn ào ở ĐÂY, nơi người
  *     vận hành đang đứng, thay vì một con số sai ở màn hình người dùng.
  *
- * Tập này chỉ có hai phần tử vì `readVaultsFromUtxos` chỉ giải mã được HAI hình dạng
- * datum: 18 trường (Instant) và 17 trường (Schedule) — xem `vaultView.ts` chỗ thử cả hai.
- * (Bản trước của dòng này neo vào `VaultDatumSchema` và gọi nó là "lược đồ của
- * Instant/Schedule"; từ lúc hai hình dạng tách ra, lược đồ ấy chỉ còn là của Schedule.)
- * Vault PrepaidGen có lược đồ KHÁC (nó mang `did_commit`),
- * nên nó không đọc được bằng đường này và **không được kê sẵn ở đây**: kê một tên cho thứ
- * dịch vụ chưa đọc được là đặt tên cho một artifact chưa tồn tại.
+ * Mỗi phần tử phải có một đường giải mã THẬT phía sau: `Instant`/`Schedule` qua
+ * `vaultView.ts` ▸ `readVaultsFromUtxos` (hai hình dạng Gen v2.0, phân theo số trường);
+ * `Prepaid` qua `prepaidView.ts` ▸ `readPrepaidVaultsFromUtxos` (lược đồ KHÁC hẳn — mang
+ * `did_commit` và dòng hạn mức — giải bằng `decodeVaultDatum` của `@magiclamp/prepaidgen-sdk`).
+ * Kê một tên mà chưa có đường giải mã là đặt tên cho một artifact chưa tồn tại.
+ *
+ * Thứ tự là một phần của hợp đồng: CHỈ THÊM Ở CUỐI. `Prepaid` thêm 2026-10-03 — giá trị
+ * cũ giữ nguyên nghĩa; bên tiêu thụ đang dựng cổng fail-closed trên tập cũ sẽ gặp
+ * `vault_kind: "Prepaid"` như một giá trị lạ và không vẽ con số, đúng chiều hỏng an toàn.
  */
-export const VAULT_KINDS = ["Instant", "Schedule"] as const;
+export const VAULT_KINDS = ["Instant", "Schedule", "Prepaid"] as const;
 export type VaultKind = (typeof VAULT_KINDS)[number];
 
 export function isVaultKind(s: string): s is VaultKind {
@@ -52,7 +54,8 @@ export function isVaultKind(s: string): s is VaultKind {
 }
 
 export interface VaultScope {
-  /** Loại vault — tập ĐÓNG `VAULT_KINDS`, khớp `VaultType` của MagicSDK. */
+  /** Loại vault — tập ĐÓNG `VAULT_KINDS`. Hai giá trị đầu khớp `VaultType` của MagicSDK;
+   *  `Prepaid` không có trong `VaultType` (SDK dựng két Prepaid qua `sponsorJourney.ts`). */
   vaultType: VaultKind;
   address: string;
   /** Script hash suy TỪ địa chỉ, cũng là policy id của NFT danh-tính. Không cấu hình

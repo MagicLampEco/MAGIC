@@ -17,6 +17,11 @@ import {
 import { blake2b } from "@noble/hashes/blake2b";
 
 export { slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr };
+/**
+ * `selectLampForLock` — MỘT nguồn, ở `@magiclamp/protocol-utils`. Từ #132 (2026-10-02)
+ * bản dùng chung tự lọc holding đang khoá (trùng bit `lock.ak ▸ select_lamp_for_lock`),
+ * nên lớp bọc lọc từng đặt ở đây đã gỡ: giữ nó là hai bản của cùng một luật.
+ */
 export { selectLampForLock, removeLockedAmount };
 
 // ══════════════════════════════════════════════════════════════

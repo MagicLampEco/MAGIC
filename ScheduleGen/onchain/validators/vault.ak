@@ -105,7 +105,7 @@ use magiclamp/protocol/math.{
 }
 use magiclamp/protocol/lock.{
   select_lamp_for_lock, unlock_locked_amount, remove_newest_first,
-  sum_holdings, l_avail,
+  sum_holdings, sum_locked, l_avail,
 }
 
 // LAMP native-asset name is now a VALIDATOR PARAMETER (`lamp_asset_name`), NOT a
@@ -601,6 +601,18 @@ fn validate_commit(
   expect output.lamp_balance          == datum.lamp_balance         // no transfer yet
   expect output.lamp_locked           == datum.lamp_locked + total_lock  // C-SCH-9
   expect output.loyalty_holdings      == new_holdings
+  // C-SCH-LOCKSUM (#132): `lamp_locked` == tổng LAMP các holding đang khoá, ép
+  // TUYỆT ĐỐI trên output thay vì trông vào quy nạp genesis → commit → fire. Đặt ở
+  // cả ba nhánh đổi `lamp_locked`/`loyalty_holdings` (commit, fire, withdraw).
+  // Ở nhánh này nó là lớp THỨ HAI sau bản vá `select_lamp_for_lock` (2026-10-02): bản
+  // cũ duyệt cả holding ĐÃ khoá, nên commit lần hai trên két có holding trẻ nhất đang
+  // khoá cộng đủ `total_lock` vào `lamp_locked` mà khoá thêm ít hơn ⟹ lượt nhả cuối
+  // chết ở `unlock_oldest` ⟹ phần lệch kẹt vĩnh viễn. Nếu hàm chọn lại sai theo kiểu
+  // đó, cổng này đổi hậu quả từ "LAMP kẹt" thành "commit bị từ chối". Khi hàm chọn
+  // đúng, `== new_holdings` + C-SCH-9 đã suy ra đẳng thức — nên gỡ riêng cổng này thì
+  // không bài nào đỏ; xem `c132_commit_on_locked_youngest_ok` và các chú thích kề nó.
+  // Chi phí: mục "Chi phí ExUnit theo TRỤC `loyalty_holdings`" ▸ "ĐO LẠI 2026-10-02".
+  expect sum_locked(output.loyalty_holdings) == output.lamp_locked
   // C-SCH-HOLD (2026-09-14): cổng đếm holding, TRƯỚC ĐÂY THIẾU Ở ĐÚNG NHÁNH NÀY.
   // `validate_fire` ép nó, genesis ép nó, `validate_withdraw_lamp` ép nó — chỉ
   // commit thì không. Mà commit là nhánh LÀM DANH SÁCH DÀI RA: `select_lamp_for_lock`
@@ -794,6 +806,8 @@ fn validate_fire(
   expect output.lamp_balance       == datum.lamp_balance
   expect output.lamp_locked        == datum.lamp_locked - lamp_released
   expect output.loyalty_holdings   == new_holdings
+  // C-SCH-LOCKSUM (#132) — xem chú thích cùng tên ở `validate_commit`.
+  expect sum_locked(output.loyalty_holdings) == output.lamp_locked
   expect list.length(output.loyalty_holdings) <= max_loyalty_holdings
   expect output.magic_batches      == updated_batches
   expect output.next_batch_index   == datum.next_batch_index + fires_in_tx
@@ -1495,6 +1509,8 @@ fn validate_withdraw_lamp(
   expect output_datum.lamp_balance == new_lamp_balance
   expect output_datum.lamp_locked == input_datum.lamp_locked
   expect output_datum.loyalty_holdings == new_holdings
+  // C-SCH-LOCKSUM (#132) — xem chú thích cùng tên ở `validate_commit`.
+  expect sum_locked(output_datum.loyalty_holdings) == output_datum.lamp_locked
   expect output_datum.magic_batches == input_datum.magic_batches
   expect output_datum.next_batch_index == input_datum.next_batch_index
   expect output_datum.vacuum_orders == input_datum.vacuum_orders
@@ -2792,6 +2808,166 @@ fn t_run_commit(n: Int) -> Bool {
   t_pair_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, tx)
 }
 
+// ── #132 — commit lần hai trên két có holding TRẺ NHẤT đang khoá ──
+//
+// Trạng thái vào hợp lệ, dựng được từ genesis: két mở với [(A, e9, mở), (B, e1, mở)]
+// (genesis không ghim `acquired_epoch`), commit 1 khoá ĐÚNG A = L×λ ⟹ holding e9 khoá
+// trọn. Commit 2 cùng L, λ.
+// Đơn giản hoá: lịch của commit 1 không có trong `gen_schedules` vào — không cổng
+// nào của nhánh commit đọc lịch cũ ngoài phép đếm `< max_gen_schedules`.
+//
+// Trước bản vá 2026-10-02, `select_lamp_for_lock` gặp e9 (đã khoá) trước nên "khoá lại"
+// nó: holding ra GIỐNG HỆT holding vào trong khi `lamp_locked` tăng thêm L×λ, và
+// validator NHẬN giao dịch đó (đo trên c43ad8bd); lượt nhả cuối của lịch thứ hai chết ở
+// `unlock_oldest` ⟹ L×λ LAMP kẹt vĩnh viễn. Nay hàm chỉ khoá trong holding đang mở.
+// `relock_output = True` dựng lại ĐÚNG output mà bộ dựng cũ sinh ra — nó phải bị từ chối.
+// `input_drift` cộng vào `lamp_locked` của két VÀO (0 = két hợp lệ); output vẫn dựng đúng
+// như validator tính (`lamp_locked` vào + L×λ), nên độ lệch đi nguyên từ vào sang ra.
+fn c132_commit_fixture(
+  relock_output: Bool,
+  input_drift: Int,
+) -> (VaultDatum, VaultDatum, Transaction) {
+  let total_lock = t_commit_l * t_commit_lambda
+  let old_amount = 2 * total_lock
+  let genesis    = [t_holding(total_lock, 9, False), t_holding(old_amount, 1, False)]
+  let holdings   = select_lamp_for_lock(genesis, total_lock)
+  let balance    = total_lock + old_amount
+  let din        = t_datum(balance, total_lock + input_drift, holdings)
+  let new_sched =
+    GenSchedule {
+      schedule_id:            compute_schedule_id_from_ref(t_own_ref(), 0),
+      commit_epoch:           t_commit_epoch,
+      start_fire_epoch:       t_commit_epoch + schedule_delay,
+      end_fire_epoch:         t_commit_epoch + t_commit_l + 1,
+      schedule_length:        t_commit_l,
+      lamp_per_epoch:         t_commit_lambda,
+      rate_locked_q:          compute_rate_locked_q(snapshot_base_rate_q, t_commit_l),
+      baseline_at_commit_q:   snapshot_base_rate_q,
+      multiplier_at_commit_q: compute_s_q(t_commit_l),
+      fired_count:            0,
+      auto_burn_target:       None, m_per_epoch: t_m(t_commit_lambda, t_commit_l), usage_factor_locked_q: usage_factor_coldstart_q(),
+    }
+  let dout =
+    VaultDatum {
+      ..din,
+      lamp_locked:        din.lamp_locked + total_lock,
+      loyalty_holdings:
+        if relock_output { holdings } else { select_lamp_for_lock(holdings, total_lock) },
+      gen_schedules:      [new_sched],
+      last_updated_epoch: t_commit_epoch,
+      usage_window_epoch: t_commit_epoch,
+    }
+  let base =
+    t_tx(
+      [t_vault_input(din, balance), t_commit_shard_in()],
+      [t_vault_output(dout, balance), t_commit_shard_out(total_lock)],
+      [t_owner_pkh],
+    )
+  (din, dout, t_with_gen(base, 2 * t_m(t_commit_lambda, t_commit_l), t_commit_epoch))
+}
+
+// Lỗi ĐÃ HẾT: commit 2 được NHẬN, khoá đúng L×λ từ holding e1 (đang mở), két ra không
+// lệch, holding e9 đi qua nguyên vẹn ở đầu danh sách.
+test c132_commit_on_locked_youngest_ok() {
+  let total_lock = t_commit_l * t_commit_lambda
+  let (din, dout, tx) = c132_commit_fixture(False, 0)
+  and {
+    sum_locked(din.loyalty_holdings) == din.lamp_locked,
+    t_pair_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, tx),
+    sum_locked(dout.loyalty_holdings) == dout.lamp_locked,
+    dout.loyalty_holdings == [
+      t_holding(total_lock, 9, True),
+      t_holding(total_lock, 1, True),
+      t_holding(total_lock, 1, False),
+    ],
+  }
+}
+
+// Output của bộ dựng CŨ (khoá lại holding đã khoá) chỉ khác bài trên ở MỘT trường
+// (`loyalty_holdings`). Nó chết ở hai chốt: `== new_holdings` và C-SCH-LOCKSUM.
+test c132_commit_relock_output_rejected() fail {
+  let (din, _, tx) = c132_commit_fixture(True, 0)
+  t_pair_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, tx)
+}
+
+// Phạm vi canh của C-SCH-LOCKSUM ở nhánh commit. Output đã bị ghim bởi `== new_holdings`
+// và C-SCH-9, nên với két vào HỢP LỆ và hàm chọn đúng thì cổng thừa. Nó chỉ còn tác dụng
+// ở két vào ĐÃ LỆCH: hàm chọn cộng đúng L×λ vào Σ khoá, C-SCH-9 cộng đúng L×λ vào
+// `lamp_locked`, nên độ lệch đi nguyên sang output và chỉ cổng này bắt được. Bản trước
+// của chú thích này viết "không giao dịch nào tới được cổng này" — chỉ đúng với két vào
+// hợp lệ; gỡ cổng thì bộ kiểm khi đó vẫn xanh (MUT-132c1 của B2, đo lại bằng đột biến B của W-SG
+// 2026-10-02: 297/297). Cặp dưới khác nhau đúng MỘT trường (`lamp_locked` của két vào);
+// gỡ cổng thì bài `fail` ĐỎ.
+//
+// Két lệch theo chiều Σ khoá > `lamp_locked` (holding e9 khoá trọn, `lamp_locked` = 0):
+// `l_avail` lớn hơn thật nên C-SCH-1 không chặn trước, phép chọn chỉ đụng holding mở.
+test c132_commit_on_drifted_vault_rejected() fail {
+  let total_lock = t_commit_l * t_commit_lambda
+  let (din, _, tx) = c132_commit_fixture(False, -total_lock)
+  t_pair_commit(din, t_commit_l, t_commit_lambda, t_commit_epoch, tx)
+}
+
+// ── #132 — C-SCH-LOCKSUM ở fire và withdraw: phòng thủ chiều sâu ──
+//
+// Với cổng ở commit, két lệch KHÔNG dựng được bằng nhánh nào (genesis ghim
+// `lamp_locked = 0` + mọi holding mở; fire và withdraw giữ đẳng thức — bài tính chất ở
+// `lock.ak` mục "#132"). Hai cặp dưới đây vì thế nạp thẳng một két vào đã lệch, theo
+// chiều NGƯỢC với lỗi ở commit (holding khoá NHIỀU hơn `lamp_locked`) — chiều duy nhất
+// mà hàm chọn holding không tự chết trước khi tới cổng. Mỗi cặp chỉ khác MỘT trường
+// (`lamp_locked`).
+fn t132_fire_fixture(lamp_locked: Int) -> (VaultDatum, Transaction) {
+  let hs   = [t_holding(t_commit_unit, 1, True), t_holding(t_lambda, 99, True)]
+  let din  =
+    VaultDatum {
+      ..t_datum(t_commit_unit + t_lambda, lamp_locked, hs),
+      gen_schedules: [t_sched()],
+    }
+  let m_i  = compute_m_i(t_lambda, t_rate_q)
+  let dout =
+    VaultDatum {
+      ..din,
+      lamp_locked:        lamp_locked - t_lambda,
+      loyalty_holdings:   unlock_locked_amount(hs, t_lambda),
+      magic_batches:      create_fire_batches(t_own_ref(), 0, 1, m_i, t_sched_id, 5),
+      next_batch_index:   1,
+      gen_schedules:      [GenSchedule { ..t_sched(), fired_count: 1 }],
+      last_updated_epoch: 5,
+      usage_window:       window_add_at(t_zw(), 0, m_i),
+      usage_window_epoch: 5,
+    }
+  let tx =
+    t_tx(
+      [t_vault_input(din, din.lamp_balance), t_fire_shard_in()],
+      [t_vault_output(dout, din.lamp_balance), t_fire_shard_out()],
+      [],
+    )
+  (din, tx)
+}
+
+fn t132_run_fire(lamp_locked: Int) -> Bool {
+  let (din, tx) = t132_fire_fixture(lamp_locked)
+  validate_fire(din, t_sched_id, 5, t_own_ref(), t_vault_addr(),
+                t_lamp_policy, t_lamp_name, t_shard_policy, tx)
+}
+
+test f132_fire_consistent_ok() { t132_run_fire(t_commit_unit + t_lambda) }
+
+// Gỡ C-SCH-LOCKSUM ở `validate_fire` thì bài này ĐỎ (MUT-132c2).
+test f132_fire_on_drifted_vault_rejected() fail { t132_run_fire(t_lambda) }
+
+fn t132_run_withdraw(lamp_locked: Int) -> Bool {
+  let hs   = [t_holding(100, 5, True), t_holding(100, 3, False)]
+  let din  = t_datum(200, lamp_locked, hs)
+  let dout = t_datum(150, lamp_locked, remove_newest_first(hs, 50))
+  let tx   = t_tx([t_vault_input(din, 200)], [t_vault_output(dout, 150)], [t_owner_pkh])
+  validate_withdraw_lamp(din, 50, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+test w132_withdraw_consistent_ok() { t132_run_withdraw(100) }
+
+// Gỡ C-SCH-LOCKSUM ở `validate_withdraw_lamp` thì bài này ĐỎ (MUT-132c3).
+test w132_withdraw_on_drifted_vault_rejected() fail { t132_run_withdraw(0) }
+
 // PASS — (trần − 2) holding vào, tách một cái ⟹ trần − 1, còn đúng một suất
 // cho lượt fire đầu tiên tách tiếp. Đó là trạng thái LỚN NHẤT còn ra được.
 //
@@ -3057,6 +3233,42 @@ test cf_commit_at_cap_then_fire_ok() {
 // holding); cột "% phần `vault`" vẫn trừ 272 689 của validator `shard` LAMP, CHƯA trừ
 // validator `gb_shard` chạy thêm trong giao dịch ký (chưa đo — GenBeacons là project
 // khác). Bảng ĐIỂM CHẾT bên dưới là số 2026-09-16, CHƯA đo lại sau gói (c).
+//
+// ĐO LẠI 2026-10-02 (#132, nhánh feat/window-origin-epoch @ c43ad8bd + C-SCH-LOCKSUM).
+// 🔴 CẶP 1/CẶP 2 (`… − probe_commit_*`) nay TRỪ THIẾU: chân chạy-trọn đi qua
+// `t_pair_commit`, tự dựng thêm chân `commit` (`t_with_commit_leg`) + giải mã datum +
+// so `on_chain == din`, còn chân dựng-fixture thì không ⟹ số đọc ra THỪA ~3,7 M (cặp
+// thô cho commit TRỌN 39 = 14 607 975 trước cổng, tức "vượt 14 M" — SAI). Số đúng lấy
+// theo cách của mục "THANG ĐO của cặp ký" (chân két + chân commit − chung một fixture
+// đã gắn chân commit); họ khoá TRỌN đo trên bản chép bằng cùng phép đó ở n = 39.
+//
+//   nhánh (n)                    | trước cổng (mem / cpu)     | sau cổng (mem / cpu)
+//   commit TRỌN  (39) két+commit | 10 911 722 / 4 096 655 849 | 11 182 800 / 4 192 070 667
+//   commit 1 PHẦN (38) két+commit| 10 131 517 / 3 824 890 892 | 10 365 355 / 3 904 522 614
+//   fire          (40)           |  8 771 892 / 2 841 708 677 |  9 021 122 / 2 920 897 625
+//   withdraw      (40, cặp tạm)  |  9 132 236 / 3 583 425 822 |  9 376 774 / 3 661 260 724
+//
+// Cổng tốn ~+0,23–0,27 M mem mỗi nhánh (một `foldl` trên `loyalty_holdings`). Chưa cộng
+// `shard` (272 689) và `gb_shard` (chưa đo). Cặp withdraw chỉ dựng trên bản chép
+// (n − 1 holding mở + 1 khoá, rút 1,5 LAMP), chưa đưa vào tệp.
+//
+// ĐO LẠI LẦN HAI 2026-10-02 — sau bản vá `select_lamp_for_lock` (lọc holding đang khoá:
+// hai `list.filter` + một `list.concat`, đều O(n)). Bảng trên đo TRƯỚC bản vá đó. Đo trên
+// bản chép, hai cây chỉ khác đúng thân hàm chọn (cũ: sắp MỌI holding · mới: chỉ phần mở),
+// cùng phép trừ của mục "THANG ĐO của cặp ký"; chân TRỌN dựng bằng `hc_commit_fixture(39)`
+// + `t_with_commit_leg` (chưa đưa vào tệp).
+//
+//   nhánh (n)                    | chọn cũ (mem / cpu)        | chọn mới (mem / cpu)
+//   commit TRỌN  (39) két+commit | 11 185 032 / 4 192 555 661 | 11 656 099 / 4 348 192 462
+//   commit 1 PHẦN (38) két+commit| 10 367 587 / 3 905 007 608 | 10 826 977 / 4 056 724 542
+//   fire          (40)           |  9 021 122 / 2 920 897 625 |  9 021 122 / 2 920 897 625
+//   withdraw      (40)           |  9 320 010 / 3 639 459 854 |  9 320 010 / 3 639 459 854
+//
+// Bản vá tốn ~+0,46–0,47 M mem ở nhánh commit (fire/withdraw không gọi hàm chọn). Commit
+// TRỌN 39 + `shard` 272 689 = 11 928 788 mem: 85,2 % của 14 M, 72,3 % của 16,5 M — vẫn
+// CHƯA cộng `gb_shard` (chưa đo); nếu `gb_shard` ≥ 2,07 M thì ca này vượt 14 M. Cặp thô
+// CẶP 2 nay đọc 15 336 552 — vẫn là số THỪA đã khai ở trên, không phải số của validator.
+// Withdraw đo bằng fixture khác bảng trên (1 khoá + 39 mở, rút 1,5 LAMP) nên lệch số đó.
 //
 // Phép trừ TRỪ DÔI một chút: ba chân dựng-fixture kèm thêm một `list.length`
 // O(n) mà ba chân chạy-trọn không có, nên con số trên THẤP HƠN chi phí validator

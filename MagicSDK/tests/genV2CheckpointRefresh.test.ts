@@ -22,7 +22,7 @@ import {
   Constr, Data, credentialToAddress, scriptHashToCredential,
   type Data as TData, type LucidEvolution, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
-import { epochStartMs, posixMsToEpoch } from "@magiclamp/protocol-utils";
+import { epochStartMs, msPerEpoch, posixMsToEpoch, windowOriginMs } from "@magiclamp/protocol-utils";
 import { RATE_NFT_NAME, RateParam } from "@magiclamp/instantgen-sdk";
 
 import { buildVaultBurnBatch } from "../src/burnBatch.js";
@@ -50,6 +50,8 @@ const COMMIT      = "c3".repeat(32);
 const REF_PARAMS: InstantRefParams = {
   lampPolicyId: LAMP_POLICY, lampAssetName: TLAMP,
   rateNftPolicy: RHO_POLICY, rateScriptHash: RHO_SCRIPT, wakemeVaultHash: WAKEME_HASH,
+  // Apply-param #8 #9 của két — vế (d) ngoại lệ genesis của `wakeme_read` (2026-10-02).
+  msPerEpoch: msPerEpoch(NET), windowOriginMs: windowOriginMs(NET),
 };
 
 // Epoch SUY RA từ mốc thời gian (gốc epoch theo mạng) — `updateProfile` tự tính epoch từ tip.

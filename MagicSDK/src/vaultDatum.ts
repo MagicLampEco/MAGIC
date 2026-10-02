@@ -31,6 +31,28 @@ export interface InitialVaultDatumInputs {
   personalDelegate?:  string | null;
   /** Loại két. `"Instant"` ⟹ 20 trường; bỏ trống / `"Schedule"` ⟹ 19 trường. */
   vaultType?:         VaultType;
+  /** CHỈ két Instant: `wakeme_link` khai sẵn lúc genesis — `owner_commit` của DID chủ két
+   *  (= blake2b_256(UTF8(did)) = tên NFT két Wakeme), 64 hex. Bỏ trống / `""` ⟹ chưa nối.
+   *  Genesis IG nhận rỗng HOẶC đúng 32 byte (`validate_mint_vault_id`, 2026-10-02). */
+  wakemeLink?:        string;
+}
+
+/** Khuôn `owner_commit` / `wakeme_link`: 32 byte, hex thường. */
+export const WAKEME_LINK_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Chuẩn hoá `wakemeLink` cho datum genesis: `undefined`/`""` ⟹ `""`; 64 hex (mọi hoa/thường)
+ * ⟹ hex thường; còn lại NÉM. Không cắt, không đệm — một link sai độ dài là genesis bị từ chối.
+ */
+export function normalizeWakemeLink(link: string | undefined, where: string): string {
+  if (link === undefined || link === "") return "";
+  if (typeof link !== "string" || !/^[0-9a-fA-F]{64}$/.test(link)) {
+    throw new Error(
+      `${where}: wakemeLink phải rỗng hoặc đúng 32 byte hex (owner_commit của DID); nhận ` +
+      `${typeof link === "string" ? `${link.length} ký tự` : typeof link}.`,
+    );
+  }
+  return link.toLowerCase();
 }
 
 /** Cửa sổ genesis: ĐÚNG 7 ô `{0, 0}` — cả hai module ép `usage_window == 7 × EpochUsage{0,0}`
@@ -46,7 +68,7 @@ function emptyWindow(): Array<{ generated: bigint; consumed: bigint }> {
  *     (genesis chỉ ép tổng == lamp_balance, không khoá, ≤ trần).
  *   - `last_updated_epoch = 0`, `profile_changed_epoch = 0`, `pending_profile = None`,
  *     `personal_delegate = None`, `attribution = { #"", 0, 0 }` — ghim ở cả hai module.
- *   - Két Instant: `wakeme_link = #""`, `cap_epoch = 0`, `cap_nanogic = 0`,
+ *   - Két Instant: `wakeme_link = #""` hoặc `owner_commit` 32 byte, `cap_epoch = 0`, `cap_nanogic = 0`,
  *     `instant_unlock_ms = 0`, `consumed_credit = wakeme_seed_credit`.
  *   - Két Schedule: `vacuum_orders = []`, `delegation_cert` rỗng, `streak_state` 0,
  *     `consumed_credit = 0`.
@@ -59,8 +81,19 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): VaultDa
 export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): VaultDatum | InstantVaultDatum {
   const { lampBalanceOildrop, profile, currentEpoch } = inputs;
 
-  if (lampBalanceOildrop <= 0n) {
-    throw new Error(`lampDeposit must be > 0 oildrop (got ${lampBalanceOildrop})`);
+  // Két Instant được mở với 0 LAMP (2026-10-02): người mới chỉ có LAMP mượn ở két Wakeme,
+  // và genesis IG chỉ ép `lamp_balance == LAMP thật trong output` (không ép > 0). Két Schedule
+  // giữ > 0: genesis SG cũng cho 0 về mặt validator, nhưng không `VaultRedeemer` nào nạp thêm
+  // LAMP sau genesis (BOUNDARIES §2 CC-GEN-L-TIMING), và ScheduleGen không đọc két Wakeme ⟹ một
+  // két Schedule 0 LAMP không sinh được gì, chỉ khoá min-ADA.
+  if (typeof lampBalanceOildrop !== "bigint" || lampBalanceOildrop < 0n
+      || (lampBalanceOildrop === 0n && inputs.vaultType !== "Instant")) {
+    throw new Error(
+      `lampDeposit must be > 0 oildrop for Schedule vaults, >= 0 for Instant (got ${lampBalanceOildrop})`);
+  }
+  const wakemeLink = normalizeWakemeLink(inputs.wakemeLink, "buildInitialVaultDatum");
+  if (wakemeLink !== "" && inputs.vaultType !== "Instant") {
+    throw new Error(`buildInitialVaultDatum: wakemeLink chỉ có ở két Instant (két Schedule không có trường này).`);
   }
   // Ném `OWNER_HASH_INVALID` / `OWNER_AUTH_MISMATCH` / `OWNER_CREDENTIAL_SHAPE` — `ownerInput.ts`.
   const owner = resolveOwnerInput(inputs, "buildInitialVaultDatum");
@@ -78,7 +111,12 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): VaultDa
   }
 
   const ownerCred = ownerCredentialOf(owner) as VaultDatum["owner"];
-  const holdings = [{ amount: lampBalanceOildrop, acquired_epoch: currentEpoch, is_locked: false }];
+  // 0 LAMP ⟹ KHÔNG holding nào (genesis ép tổng holding == lamp_balance; một holding 0 qua
+  // được phép tổng nhưng là một ô chết chiếm trần `max_loyalty_holdings`). Cùng hình dạng bài
+  // Aiken `np_mint_genesis_zero_lamp_ok` (`loyalty_holdings: []`).
+  const holdings = lampBalanceOildrop === 0n
+    ? []
+    : [{ amount: lampBalanceOildrop, acquired_epoch: currentEpoch, is_locked: false }];
   const attribution = { attribution_root: "", last_event_epoch: 0n, total_events: 0n };
 
   if (inputs.vaultType === "Instant") {
@@ -91,7 +129,7 @@ export function buildInitialVaultDatum(inputs: InitialVaultDatumInputs): VaultDa
       loyalty_holdings:      holdings,
       magic_batches:         [],
       next_batch_index:      0n,
-      wakeme_link:           "",        // PIN: `expect vd.wakeme_link == #""`
+      wakeme_link:           wakemeLink, // PIN: rỗng HOẶC đúng 32 byte
       gen_schedules:         [],
       profile,
       profile_changed_epoch: 0n,

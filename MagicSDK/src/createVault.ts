@@ -56,7 +56,7 @@ import type { CreateVaultParams, CreateVaultResult } from "./types.js";
 import { InstantVaultDatumSchema, VaultDatumSchema, VaultIdRedeemerSchema } from "./schemas.js";
 import { applyVaultValidator, windowOriginOf } from "./validatorScripts.js";
 import { assertLampPolicyId } from "./lampPolicy.js";
-import { buildInitialVaultDatum } from "./vaultDatum.js";
+import { buildInitialVaultDatum, normalizeWakemeLink } from "./vaultDatum.js";
 import { vaultIdAssetName } from "./vaultId.js";
 import { minAdaForVaultWithMargin } from "./minAdaVault.js";
 
@@ -82,8 +82,17 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   assertLampPolicyId(
     protocol.lampPolicyId, "createVault", protocol.lampRehearsalAck, protocol.network,
   );
-  if (typeof vault.lampDeposit !== "bigint" || vault.lampDeposit <= 0n) {
-    throw new Error(`vault.lampDeposit must be > 0 oildrop (got ${vault.lampDeposit})`);
+  // Két Instant mở được với 0 LAMP (người mới chỉ có LAMP mượn ở két Wakeme — genesis IG không
+  // ép > 0); két Schedule vẫn > 0 (lý do: `vaultDatum.ts` ▸ `buildInitialVaultDatum`).
+  if (typeof vault.lampDeposit !== "bigint" || vault.lampDeposit < 0n
+      || (vault.lampDeposit === 0n && vaultType !== "Instant")) {
+    throw new Error(
+      `vault.lampDeposit must be > 0 oildrop for Schedule vaults, >= 0 for Instant (got ${vault.lampDeposit})`);
+  }
+  // `wakeme_link` khai sẵn lúc genesis — chỉ két Instant. Kiểm sớm, trước khi chạm ví.
+  const wakemeLink = normalizeWakemeLink(vault.wakemeLink, "createVault");
+  if (wakemeLink !== "" && vaultType !== "Instant") {
+    throw new Error(`createVault: vault.wakemeLink chỉ có ở két Instant.`);
   }
   // Chủ + cách chứng minh quyền chủ — kiểm TRƯỚC khi chạm ví hay chuỗi. Genesis ép
   // `owner_authorized(tx, vd.owner)`, nên chủ script mà thiếu nhân chứng thì không có
@@ -142,6 +151,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     profile,
     currentEpoch,
     vaultType,
+    ...(wakemeLink === "" ? {} : { wakemeLink }),
   });
 
   // Lucid Evolution's Data.to expects a TObject-typed value; the
@@ -181,7 +191,10 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   //
   // Ví Phoenix tự trả phí ⟹ giữ chỗ thêm `headroom` lovelace lúc CHỌN, để tập đã chọn đủ cả phí
   // + min-ADA phần thối. Phí thật đo sau khi dựng (`completeSelfFunded`).
-  const vaultNeed: Record<string, bigint> = { lovelace: vaultLovelace, [lampUnit]: vault.lampDeposit };
+  // 0 LAMP ⟹ KHÔNG ghi mục LAMP: một mục số lượng 0 trong value không phải "0 LAMP" mà là một
+  // multiasset hỏng hình dạng, và `planDidPaymentFunding` đòi mọi mục `need` > 0.
+  const lampPart: Record<string, bigint> = vault.lampDeposit === 0n ? {} : { [lampUnit]: vault.lampDeposit };
+  const vaultNeed: Record<string, bigint> = { lovelace: vaultLovelace, ...lampPart };
   const extraLovelace = funding === undefined ? 0n : withdrawLovelaceOf(ownerAuth);
   let fundingPlan: DidPaymentPlan<UTxO> | undefined;
   if (funding !== undefined) {
@@ -262,7 +275,7 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
         { kind: "inline", value: vaultDatumCbor },
         {
           lovelace:      vaultLovelace,
-          [lampUnit]:    vault.lampDeposit,
+          ...lampPart,
           [vaultIdUnit]: 1n,
         },
       );

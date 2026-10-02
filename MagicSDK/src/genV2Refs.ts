@@ -20,7 +20,9 @@ import {
 /** Phần apply-param két Instant mà hai phép đọc cần. Truyền trọn `InstantVaultParams` cũng được. */
 export type InstantRefParams = Pick<
   InstantVaultParams,
-  "lampPolicyId" | "lampAssetName" | "rateNftPolicy" | "rateScriptHash" | "wakemeVaultHash"
+  | "lampPolicyId" | "lampAssetName" | "rateNftPolicy" | "rateScriptHash" | "wakemeVaultHash"
+  // vế (d) ngoại lệ genesis của `wakeme_read` (2026-10-02)
+  | "msPerEpoch" | "windowOriginMs"
 >;
 
 function at(u: UTxO): string {
@@ -76,6 +78,8 @@ export function readWakemeForVault(
     ownScriptHash:   id.scriptHash,
     ownVaultName:    id.name,
     currentPeriod:   e,
+    msPerEpoch:      p.msPerEpoch,
+    windowOriginMs:  p.windowOriginMs,
     lampPolicyId:    p.lampPolicyId,
     lampAssetName:   p.lampAssetName,
   });

@@ -134,8 +134,13 @@ export interface InitialVaultConfig {
   /** Bí danh nhánh khoá: `ownerPkh: h` ≡ `owner: { type: "key", hash: h }`. */
   ownerPkh?: string;
   /** Initial LAMP locked into the vault, in oildrop (1 LAMP = 10^6 oildrop).
-   *  Caller's wallet MUST hold ≥ this amount of LAMP. */
+   *  Caller's wallet MUST hold ≥ this amount of LAMP. Két Schedule: > 0. Két Instant: ≥ 0 —
+   *  `0n` là đường của người mới chỉ có LAMP mượn ở két Wakeme (2026-10-02). */
   lampDeposit: bigint;
+  /** CHỈ két Instant: `wakeme_link` khai sẵn lúc genesis = `owner_commit` của DID chủ két
+   *  (32 byte hex, = tên NFT két Wakeme). Bỏ trống ⟹ chưa nối. Cần khi két Wakeme của DID
+   *  sẽ ghim két này từ genesis bên đó (Wakeme `genesis_gen_pin_ok` đòi link sẵn). */
+  wakemeLink?: string;
   /** Profile at creation. Default "Flame". */
   profile?: Profile;
   /** Lovelace gắn vào UTxO két. **Bỏ trống là đường ĐÚNG** — SDK tính min-ADA

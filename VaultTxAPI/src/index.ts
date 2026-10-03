@@ -12,16 +12,21 @@ export type {
 export {
   TxApiError, BadRequestError, UnauthorizedError, VaultNotFoundError, VaultAmbiguousError,
   VaultIdentityDuplicateError, OwnerTxInFlightError, TxBuildRejectedError, ChainUnavailableError,
-  VaultDatumUndecodableError, TxSummaryUndecodableError, SubmitRejectedError, newReferenceCode,
+  VaultDatumUndecodableError, TxSummaryUndecodableError, SubmitRejectedError, TxSupersededError, newReferenceCode,
   CodedApiError, ownerApiErrorOf,
 } from "./errors.js";
 
 export {
-  parseOwnerFields, parseOwnerWitness, ownerLockKey, DidStakeWitnessProvider,
+  parseOwnerFields, parseOwnerWitness, ownerLockKey, isDidOwner, DidStakeWitnessProvider,
 } from "./owner.js";
 export type {
   ScriptOwnerWitness, ResolvedOwnerWitness, OwnerWitnessProvider, DidStakeProviderDeps,
+  DidOwnerInput, OwnerInput,
 } from "./owner.js";
+export { DidOwnerResolver, resolveOwnerInput, taadFieldsOf, TAAD_DATUM_FIELD_COUNT } from "./didOwner.js";
+export type {
+  DidOwnerResolverDeps, DidOwnerResolverPort, ResolvedDidOwner, WithResolvedOwner,
+} from "./didOwner.js";
 
 export { BlockfrostChainReader, RecordedChainReader } from "./chain.js";
 export type { ChainReader, ChainTip, OutRef } from "./chain.js";

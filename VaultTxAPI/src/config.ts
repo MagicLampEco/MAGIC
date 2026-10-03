@@ -23,7 +23,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { getAddressDetails } from "@lucid-evolution/lucid";
+import { getAddressDetails, validatorToScriptHash } from "@lucid-evolution/lucid";
 import { FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE, type Network } from "@magiclamp/protocol-utils";
 import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
 
@@ -163,6 +163,16 @@ export interface SponsorPins {
   maxCarpAmount: bigint;
 }
 
+/** Mục `did_stake` của cấu hình triển khai. */
+export interface DidStakeDeployment {
+  /** `anchor_nft_policy` — tham số theo mạng, apply-param #1 của `did_stake`. */
+  anchorNftPolicy: string;
+  /** Script `did_stake` CHƯA apply + hash của nó (đã băm lại và so lúc khởi động). Vắng ⟹ chủ
+   *  `{type:"did"}` nhận 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ script gửi `owner_witness`
+   *  tường minh vẫn chạy. */
+  unappliedScript?: { cbor: string; hash: string };
+}
+
 export interface Deployment {
   /** Bản chép chép từ đâu, ngày nào. BẮT BUỘC. */
   source: string;
@@ -207,7 +217,7 @@ export interface Deployment {
   /** Tuỳ chọn: tham số theo mạng cho nhân chứng chủ `Script(h)` = `did_stake` (PhoenixKey).
    *  Vắng ⟹ mọi yêu cầu có chủ script trả 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ khoá
    *  không bị ảnh hưởng. */
-  didStake?: { anchorNftPolicy: string };
+  didStake?: DidStakeDeployment;
   /**
    * Lượng thế chấp (lovelace) đặt TƯỜNG MINH khi giao dịch có ví trả phí bên thứ ba
    * (`fee_payer` / `funding.fee_payer`, mô hình Feecover). Khoá JSON
@@ -618,14 +628,53 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
   }
 
   // Mục `did_stake` TUỲ CHỌN, cùng luật với `gen_v2`: có thì đủ trường và đúng hình dạng.
-  let didStake: { anchorNftPolicy: string } | undefined;
+  let didStake: DidStakeDeployment | undefined;
   if (o.did_stake !== undefined) {
     const d = obj(o.did_stake, "did_stake");
     const p = str(d.anchor_nft_policy, "did_stake.anchor_nft_policy");
     if (!/^[0-9a-f]{56}$/.test(p)) {
       throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.anchor_nft_policy phải là 56 hex thường.");
     }
-    didStake = { anchorNftPolicy: p };
+    // `unapplied_script` (tuỳ chọn): script `did_stake` CHƯA apply, để dịch vụ tự suy chủ
+    // `Script(h)` từ chuỗi DID (`owner: {type:"did"}`, `didOwner.ts`). Hash do PhoenixKey công
+    // bố theo từng đời validator ⟹ ghim ở cấu hình theo mạng, không đúc vào mã. Hai trường đi
+    // CẶP: thiếu một là cấu hình hỏng. Băm lại `cbor` mà lệch `hash` ⟹ TỪ CHỐI KHỞI ĐỘNG — mọi
+    // chủ DID sẽ được suy ra một script hash không phải của họ, và không gì báo cho tới khi
+    // giao dịch chết trên chuỗi (hoặc tệ hơn: dựng cho vault của người khác).
+    let unappliedScript: { cbor: string; hash: string } | undefined;
+    if (d.unapplied_script !== undefined) {
+      const u = obj(d.unapplied_script, "did_stake.unapplied_script");
+      const hasCbor = u.cbor !== undefined;
+      const hasHash = u.hash !== undefined;
+      if (hasCbor !== hasHash) {
+        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script phải có CẢ HAI trường " +
+          `"cbor" và "hash" (đang thiếu "${hasCbor ? "hash" : "cbor"}").`);
+      }
+      const cbor = str(u.cbor, "did_stake.unapplied_script.cbor");
+      const hash = str(u.hash, "did_stake.unapplied_script.hash");
+      if (!/^(?:[0-9a-f]{2})+$/.test(cbor)) {
+        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script.cbor phải là hex thường, số ký tự chẵn.");
+      }
+      if (!/^[0-9a-f]{56}$/.test(hash)) {
+        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script.hash phải là 56 hex thường.");
+      }
+      let actual: string;
+      try {
+        actual = validatorToScriptHash({ type: "PlutusV3", script: cbor });
+      } catch (e) {
+        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script.cbor không băm được thành " +
+          `script PlutusV3: ${(e as Error).message}`);
+      }
+      if (actual !== hash) {
+        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script: băm lại cbor ra " +
+          `${actual}, khác hash khai ${hash}. Từ chối khởi động — cbor và hash phải lấy từ CÙNG một bản ` +
+          "deploy did_stake của PhoenixKey.");
+      }
+      unappliedScript = { cbor, hash };
+    } else if (Object.keys(d).some(k => k === "unapplied_cbor" || k === "unapplied_hash")) {
+      throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake: dùng khối \"unapplied_script\": { \"cbor\", \"hash\" }.");
+    }
+    didStake = { anchorNftPolicy: p, ...(unappliedScript === undefined ? {} : { unappliedScript }) };
   }
 
   // Chuỗi chữ số, không nhận số JSON — cùng luật với mọi số tiền ở `http.ts`.

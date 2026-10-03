@@ -80,7 +80,8 @@ import {
 } from "./feePayer.js";
 import { pickByNft } from "./genV2.js";
 import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type SponsorRoute } from "./locks.js";
-import { ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness } from "./owner.js";
+import { isDidOwner, ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness } from "./owner.js";
+import { resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
 import type { OwnerRequest } from "./service.js";
 import { txBodyHash } from "./summary.js";
 import { assertChangeAddress, enterpriseAddressOf } from "./txBuilder.js";
@@ -339,8 +340,16 @@ function outputsJson(outs: SponsorTxOutput[]): Array<Record<string, unknown>> {
 // ── Kế hoạch (thuần) ──────────────────────────────────────────────────────────
 
 /** `POST /tx/sponsor/plan` — ai ký tx nào, đường của từng bước. Không chạm chuỗi, không cấu hình. */
-export function sponsorPlanBody(body: Record<string, unknown>): Record<string, unknown> {
-  const owner = ownerReq(body).owner;
+export function sponsorPlanBody(
+  body: Record<string, unknown>,
+  /** Chủ đã suy (chủ `{type:"did"}` — `sponsorRoute` suy qua dịch vụ trước khi gọi). */
+  resolved?: { owner: OwnerRef; ownerDid?: string },
+): Record<string, unknown> {
+  const parsed = ownerReq(body).owner;
+  if (isDidOwner(parsed) && resolved === undefined) {
+    throw new Error("[bất biến nội bộ] sponsorPlanBody nhận chủ DID chưa suy.");
+  }
+  const owner: OwnerRef = resolved?.owner ?? (parsed as OwnerRef);
   const sponsorPkh = body.sponsor_pkh;
   if (typeof sponsorPkh !== "string" || !HEX28.test(sponsorPkh)) {
     throw shape(`"sponsor_pkh" phải là 56 ký tự hex thường (khoá băm của bên tài trợ ký T2).`, { field: "sponsor_pkh" });
@@ -353,6 +362,7 @@ export function sponsorPlanBody(body: Record<string, unknown>): Record<string, u
       signers: s.signers.map(x => ({ role: x.role, how: x.how })), requires: s.requires,
     })),
     same_epoch: plan.sameEpoch,
+    ...(resolved?.ownerDid === undefined ? {} : { owner_did: resolved.ownerDid }),
   };
 }
 
@@ -375,6 +385,8 @@ export interface SponsorTxServiceDeps {
   now?: () => number;
   /** Nhân chứng chủ script (`did_stake`). Vắng ⟹ chủ script nhận 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. */
   ownerWitness?: OwnerWitnessProvider;
+  /** Suy chủ `{type:"did"}` từ anchor. Vắng ⟹ chủ DID nhận 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. */
+  didOwner?: DidOwnerResolverPort;
   /** Blueprint PrepaidGen (`aiken build PrepaidGen/onchain`) — ở khối Prepaid đó là tệp
    *  `VAULT_TX_API_VAULT_PLUTUS_JSON`. Dịch vụ apply tham số rồi đối chiếu hash với cấu hình. */
   prepaidBlueprint: PrepaidBlueprint;
@@ -433,6 +445,11 @@ export class SponsorTxService {
 
   constructor(private readonly deps: SponsorTxServiceDeps) {
     this.now = deps.now ?? (() => Date.now());
+  }
+
+  /** Chủ `{type:"did"}` ⟹ `Script(did_stake)` + nhân chứng (`didOwner.ts`); chủ khác trả nguyên. */
+  resolveOwner<R extends OwnerRequest>(req: R): Promise<WithResolvedOwner<R>> {
+    return resolveOwnerInput(req, this.deps.didOwner);
   }
 
   /** T1 — đúc két Prepaid + thread consume trong MỘT tx. */
@@ -648,13 +665,15 @@ export class SponsorTxService {
    */
   private async run(
     step: SponsorStep,
-    req: OwnerRequest,
+    reqIn: OwnerRequest,
     extraLockKeys: string[],
     build: (p: Prepared, ctx: StepCtx) => Promise<{
       txCbor: string; summary: Record<string, unknown>; sponsorSigners?: string[]; sponsorChangeAddress?: string;
       notes?: string[]; feeFlow: FeeFlow;
     }>,
   ): Promise<SponsorBuildResponse> {
+    // Suy chủ DID TRƯỚC mọi khoá: khoá chủ là `script:<hash>` như chủ script tường minh.
+    const req = await this.resolveOwner(reqIn);
     const owner = assertOwner(req.owner);
     if ((step === "T1" || step === "T2") && owner.type === "key" && this.deps.allowKeyOwner !== true) {
       // 422 chứ không 409: không có trạng thái nào để chờ đổi — yêu cầu sai loại chủ từ gốc.
@@ -701,6 +720,7 @@ export class SponsorTxService {
         ...(feePayer === undefined ? {} : { feePayer }),
       };
       const out = await build(p, ctx);
+      if (req.ownerDid !== undefined) out.summary.owner_did = req.ownerDid;
       const txHash = txBodyHash(out.txCbor);
       if (feePayer !== undefined) {
         // Đọc lại CBOR — input khác UTxO trả phí tra từ CHUỖI, không từ bộ dựng.
@@ -714,7 +734,7 @@ export class SponsorTxService {
       }
       for (const [k, g] of gens) this.deps.locks.bindTxHash(k, txHash, g);
       this.deps.issued.record(txHash, this.now(), {
-        route: ISSUED_ROUTE_OF_STEP[step], ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.req.utxoRef) }),
+        route: ISSUED_ROUTE_OF_STEP[step], lockKeys: keys, ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.req.utxoRef) }),
       });
       return {
         step,
@@ -831,7 +851,7 @@ export class SponsorTxService {
     return { scope, scripts, consumeScript: consumeScript as Validator, consumeRef: consumeRef!, P, O };
   }
 
-  private feeAddressFor(req: OwnerRequest): string {
+  private feeAddressFor(req: WithResolvedOwner<OwnerRequest>): string {
     if (req.changeAddress !== undefined) return assertChangeAddress(this.deps.network, req.changeAddress);
     if (req.owner.type === "key") return enterpriseAddressOf(this.deps.network, req.owner.hash);
     throw new CodedApiError(400, "CHANGE_ADDRESS_REQUIRED",
@@ -840,7 +860,7 @@ export class SponsorTxService {
   }
 
   /** Cùng luật với `service.ts` ▸ `assertWitnessShapeFor` — kiểm TRƯỚC khi giữ khoá. */
-  private assertWitnessShape(req: OwnerRequest): void {
+  private assertWitnessShape(req: WithResolvedOwner<OwnerRequest>): void {
     if (req.owner.type === "key" && req.ownerWitness !== undefined) {
       throw new CodedApiError(400, "OWNER_WITNESS_UNEXPECTED",
         `"owner_witness" chỉ dành cho chủ script; chủ khoá chứng minh quyền bằng chữ ký.`);
@@ -1279,7 +1299,17 @@ function signersFor(step: SponsorStep, ctx: StepCtx, sponsorSigners: string[]): 
 export async function sponsorRoute(
   path: string, body: Record<string, unknown>, svc: SponsorTxService | undefined,
 ): Promise<Record<string, unknown>> {
-  if (path === "/tx/sponsor/plan") return sponsorPlanBody(body);
+  if (path === "/tx/sponsor/plan") {
+    const parsed = ownerReq(body);
+    if (!isDidOwner(parsed.owner)) return sponsorPlanBody(body);
+    if (svc === undefined) {
+      throw new CodedApiError(501, "OWNER_SCRIPT_WITNESS_UNAVAILABLE",
+        `Chủ "did" cần dịch vụ tài trợ để suy Script(did_stake) từ anchor; dịch vụ này chưa bật hành trình ` +
+        `tài trợ. Gửi chủ script tường minh.`);
+    }
+    const r = await svc.resolveOwner(parsed);
+    return sponsorPlanBody(body, { owner: r.owner, ...(r.ownerDid === undefined ? {} : { ownerDid: r.ownerDid }) });
+  }
   const step = SPONSOR_STEP_OF_PATH[path];
   if (step === undefined) {
     throw new CodedApiError(404, "NOT_FOUND", `Không có đường "${path}".`,

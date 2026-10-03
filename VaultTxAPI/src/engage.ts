@@ -144,6 +144,9 @@ export async function pickEngageThread(
 
 export interface OpenThreadSummary {
   requested_intent: "open_thread";
+  /** DID mà bên gọi khai ở `owner: {type:"did"}` — vắng khi chủ khai bằng credential. `owner`
+   *  của thân trả về là `Script(did_stake)` suy từ DID này. */
+  owner_did?: string;
   network: string;
   fee_lovelace: string;
   engage: {
@@ -289,6 +292,9 @@ export function didCommitOf(thread: EngageThread): string {
 
 export interface BindDidSummary {
   requested_intent: "bind_did";
+  /** DID mà bên gọi khai ở `owner: {type:"did"}` — vắng khi chủ khai bằng credential. `owner`
+   *  của thân trả về là `Script(did_stake)` suy từ DID này. */
+  owner_did?: string;
   network: string;
   fee_lovelace: string;
   engage: {

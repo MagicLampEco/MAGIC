@@ -8,7 +8,10 @@
 //   404 NOT_FOUND                không có đường đó
 //   404 VAULT_NOT_FOUND          chủ này chưa có vault ở phạm vi đã cấu hình
 //   405 METHOD_NOT_ALLOWED       method sai
-//   409 OWNER_TX_IN_FLIGHT       chủ này đã có một tx chưa nộp — xem `locks.ts`
+//   409 TX_SUPERSEDED            `/tx/submit` · `/fee/sign`: tx đã bị thay — một tx chung khoá chủ đã
+//                                nộp sau khi nó được dựng, hoặc input của nó đã bị tx khác vừa nộp tiêu
+//   🪦  OWNER_TX_IN_FLIGHT       ĐÃ NGHỈ 2026-10-03 — không còn ném (lượt dựng mới thay lượt cũ,
+//                                `locks.ts`); giữ tên vì app đời cũ ánh xạ, không dùng lại
 //   409 VAULT_AMBIGUOUS         chủ có nhiều vault, yêu cầu không nói cái nào
 //   409 VAULT_IDENTITY_DUPLICATE hai UTxO cùng mang một NFT danh-tính vault
 //   400 FEE_PAYER_SHAPE / FEE_PAYER_INVALID   `fee_payer` sai hình dạng / sai mạng / UTxO lạ
@@ -80,6 +83,12 @@
 //       OWNER_WITNESS_UNEXPECTED · OWNER_ANCHOR_INVALID   chủ / nhân chứng chủ sai (`owner.ts`)
 //   501|400 OWNER_SCRIPT_WITNESS_UNAVAILABLE  chủ script: dịch vụ chưa cấu hình (501) / bên gọi
 //                                thiếu nhân chứng (400). Mã từ `OwnerAuthError`: `ownerApiErrorOf`
+//   400 OWNER_DID_SHAPE · OWNER_DID_CONFLICT · OWNER_DEVICE_NOT_LISTED   chủ `{type:"did"}` sai
+//                                hình dạng / đi kèm `owner_witness`|`owner_pkh` / khoá thiết bị
+//                                không có trong anchor (`owner.ts`, `didOwner.ts`)
+//   422 OWNER_ANCHOR_NOT_FOUND · OWNER_ANCHOR_AMBIGUOUS · OWNER_ANCHOR_SCHEMA · OWNER_ANCHOR_NOT_ACTIVE
+//                                anchor của DID trên chuỗi: không có / nhiều hơn một / datum không
+//                                phải TAADDatum 18 trường / không Active (`didOwner.ts`)
 //   400 FUNDING_SHAPE · FUNDING_WITNESS_MISMATCH · FUNDING_ANCHOR_INVALID ·
 //       FUNDING_FEE_PAYER_INVALID · FUNDING_COLLATERAL_INVALID · FUNDING_CHANGE_ADDRESS_CONFLICT
 //                                khối `funding` của `/tx/create-vault` sai (`funding.ts`)
@@ -185,7 +194,11 @@ export class VaultAmbiguousError extends TxApiError {
   }
 }
 
-/** Chủ này đã có một giao dịch dựng xong mà chưa nộp. Xem `locks.ts` cho lý do. */
+/**
+ * 🪦 ĐÃ NGHỈ (2026-10-03) — dịch vụ KHÔNG còn ném mã `OWNER_TX_IN_FLIGHT`. Lượt dựng mới nay THAY
+ * lượt cũ (`locks.ts`), xung đột bắt ở lúc nộp bằng `TX_SUPERSEDED`. Lớp và mã giữ lại vì app đời
+ * cũ còn ánh xạ chuỗi này; đừng dùng lại tên cho một nghĩa khác.
+ */
 export class OwnerTxInFlightError extends TxApiError {
   constructor(ownerPkh: string, heldTxHash: string, expiresAtIso: string) {
     super(
@@ -196,6 +209,26 @@ export class OwnerTxInFlightError extends TxApiError {
       `và chỉ một trong hai lên được chuỗi — cái kia chết SAU khi người dùng đã ký. ` +
       `Hãy nộp hoặc bỏ giao dịch kia; khoá mềm tự hết hạn lúc ${expiresAtIso}.`,
       { owner_pkh: ownerPkh, held_tx_hash: heldTxHash, lock_expires_at: expiresAtIso },
+    );
+  }
+}
+
+/**
+ * Tx này đã bị THAY: một tx khác (chung khoá chủ / chung input) đã được nộp trước nó. Nộp tiếp
+ * thì chuỗi từ chối vì input không còn — nên chặn ở đây, nói rõ, trước khi gọi nút chuỗi.
+ * `details.superseded_by` (hash tx đã nộp) và/hoặc `details.conflicting_inputs`.
+ */
+export class TxSupersededError extends TxApiError {
+  constructor(txHash: string, details: { superseded_by?: string; conflicting_inputs?: string[] }) {
+    super(
+      409,
+      "TX_SUPERSEDED",
+      `Giao dịch ${txHash.slice(0, 16)}… đã bị thay: ` +
+      (details.superseded_by !== undefined
+        ? `giao dịch ${details.superseded_by.slice(0, 16)}… của cùng chủ đã được nộp sau khi giao dịch này được dựng`
+        : `input ${(details.conflicting_inputs ?? []).join(", ")} đã bị một giao dịch khác vừa nộp tiêu`) +
+      `. Không nộp — chuỗi sẽ từ chối. Đợi giao dịch kia vào khối rồi dựng lại nếu còn cần.`,
+      { tx_hash: txHash, ...details },
     );
   }
 }

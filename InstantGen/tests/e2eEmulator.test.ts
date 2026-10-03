@@ -2,8 +2,8 @@
 // thật (blueprint `onchain/plutus.json` do `aiken build` sinh), beacon ρ / GreenBack / 16
 // shard / sổ két dựng bằng gói `GenBeacons/offchain` theo đúng thứ tự deploy:
 //   hash sổ → apply beacon GB → apply gb_shard → apply két (9 tham số) → đúc sổ [hash két]
-//   → khởi tạo beacon GB + 16 shard + beacon ρ → sang epoch sau (ρ genesis hiệu lực từ
-//   epoch+1) → ghi GB seq 1 → genesis két (MintVaultId).
+//   → khởi tạo beacon GB + 16 shard + beacon ρ (ρ genesis hiệu lực NGAY epoch dựng) →
+//   sang epoch sau → ghi GB seq 1 → genesis két (MintVaultId).
 //
 // Emulator không chạy script lúc nộp; Lucid đánh giá UPLC cục bộ trong `complete()`. Ca âm
 // là `complete()` bị từ chối VÌ SCRIPT (khớp `failed script execution`), và mỗi ca âm đi
@@ -190,7 +190,7 @@ beforeAll(async () => {
   await submit(mintGbShardsTx(lucid, { gbShard: s.gbShard, seedUtxo: await seedU(2) }).tx);
   await submit(initRateBeaconTx(lucid, { rate: s.rate, seedUtxo: await seedU(3), rhoQ: 1_000_000_000n, nowMs: now() }).tx, [rateKey]);
 
-  // Sang epoch EPOCH0+1: ρ genesis hiệu lực; ghi GB seq 1 để shard đặt lại lười có lượng.
+  // Sang epoch EPOCH0+1 (ρ genesis đã hiệu lực từ EPOCH0); ghi GB seq 1 để shard đặt lại lười có lượng.
   // Ref-script CIP-33: két + shard đính kèm cùng lúc = 18 346 byte > trần 16 384 (đo lần đầu
   // chạy tệp này, 2026-09-30) ⟹ lượt sinh BẮT BUỘC đọc script qua reference input. Đỗ ở một
   // địa chỉ native script `any []` (luôn sai) để không ai tiêu được.
@@ -261,7 +261,7 @@ describe("e2e Emulator — InstantGen v2.0 trên script đã apply", () => {
     // m lớn nhất theo hàm thuần, chặn ở 1e6 cho gọn.
     const lim = instantGenLimits({
       vaultDatum: decodeVaultDatum(v.datum!), vaultOutRef: v, currentEpoch: EPOCH0 + 1n,
-      rate: { rho_q: 1_000_000_000n, prev_rho_q: 0n, effective_epoch: EPOCH0 + 1n },
+      rate: { rho_q: 1_000_000_000n, prev_rho_q: 0n, effective_epoch: EPOCH0 },
       wakeme: null,
       greenback: { gb_nanogic: GB, seq: 1n, epoch: EPOCH0 + 1n, depeg: false },
       shardIn: decodeGbShard(p.gbShardUtxo.datum), gbShardCapNanogic: CAP,

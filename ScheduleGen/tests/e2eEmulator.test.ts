@@ -266,7 +266,7 @@ beforeAll(async () => {
       { lovelace: 5_000_000n, [lampUnit]: LAMP_Q, [vaultNft]: 1n })
     .addSigner(deployer.address));
 
-  // Sang epoch mà ρ có hiệu lực, ghi GreenBack trong CHÍNH epoch đó.
+  // Sang epoch kế (ρ genesis đã hiệu lực từ E0), ghi GreenBack trong CHÍNH epoch đó.
   goToEpoch(E0 + 1n);
   E1 = epochNow();
   await submitBuilder(postGreenBackTx(lucid, {

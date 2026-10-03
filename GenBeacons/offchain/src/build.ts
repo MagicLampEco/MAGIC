@@ -132,10 +132,11 @@ function assertRhoInRange(rho: bigint, rhoMaxQ: bigint): void {
   }
 }
 
-/** Datum genesis beacon ρ: `prev_rho_q = 0`, hiệu lực từ epoch SAU (rate_param.ak ▸ mint). */
+/** Datum genesis beacon ρ: `prev_rho_q = 0`, hiệu lực NGAY epoch đăng (rate_param.ak ▸ mint:
+ *  `effective_epoch == now`) — két sinh được ngay trong epoch dựng, không chờ epoch sau. */
 export function genesisRateParam(rhoQ: bigint, nowEpoch: bigint, rhoMaxQ: bigint): RateParam {
   assertRhoInRange(rhoQ, rhoMaxQ);
-  return { rho_q: rhoQ, prev_rho_q: 0n, effective_epoch: nowEpoch + 1n };
+  return { rho_q: rhoQ, prev_rho_q: 0n, effective_epoch: nowEpoch };
 }
 
 /** Datum đăng ρ mới (rate_param.ak ▸ spend): `prev_rho_q` = ρ đang hiệu lực NGAY LÚC đăng. */

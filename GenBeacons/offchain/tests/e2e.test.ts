@@ -228,7 +228,7 @@ describe("deploy đủ thứ tự trên Emulator", () => {
     }
   });
 
-  it("khởi tạo beacon ρ: hiệu lực epoch sau, prev = 0", async () => {
+  it("khởi tạo beacon ρ: hiệu lực NGAY epoch dựng, prev = 0", async () => {
     const { tx, datum } = initRateBeaconTx(lucid, {
       rate: s.rate,
       seedUtxo: await seedUtxo(3),
@@ -236,7 +236,7 @@ describe("deploy đủ thứ tự trên Emulator", () => {
       nowMs: now(),
     });
     await submit(tx, [rateKey]);
-    expect(datum).toEqual({ rho_q: 1_000_000_000n, prev_rho_q: 0n, effective_epoch: EPOCH0 + 1n });
+    expect(datum).toEqual({ rho_q: 1_000_000_000n, prev_rho_q: 0n, effective_epoch: EPOCH0 });
     expect(decodeRateParam((await only(s.rate.nftUnit)).datum)).toEqual(datum);
   });
 });
@@ -245,7 +245,8 @@ describe("beacon ρ — đăng ρ mới", () => {
   it("khoá lạ bị từ chối; khoá đăng với CÙNG datum thì qua", async () => {
     const beacon = await only(s.rate.nftUnit);
     const w = epochValidityWindow(now(), MS_PER_EPOCH, WINDOW_ORIGIN);
-    const next = { rho_q: 2_000_000_000n, prev_rho_q: 0n, effective_epoch: w.epoch + 1n };
+    // Cùng epoch với genesis ⟹ ρ hiệu lực đã là 10⁹ (genesis hiệu lực ngay) ⟹ prev = 10⁹.
+    const next = { rho_q: 2_000_000_000n, prev_rho_q: 1_000_000_000n, effective_epoch: w.epoch + 1n };
     const bad = spendRateBeaconRaw(lucid, { rate: s.rate, beaconUtxo: beacon, next, signer: pkh(stranger), window: w });
     await expectRejected(bad);
     const good = spendRateBeaconRaw(lucid, { rate: s.rate, beaconUtxo: beacon, next, signer: pkh(rateKey), window: w });
@@ -257,12 +258,12 @@ describe("beacon ρ — đăng ρ mới", () => {
     const beacon = await only(s.rate.nftUnit);
     const w = epochValidityWindow(now(), MS_PER_EPOCH, WINDOW_ORIGIN);
     const cur = decodeRateParam(beacon.datum);
-    // Cùng epoch với lượt đăng trước ⟹ ρ hiệu lực vẫn là prev (0), không phải 2·10⁹ chưa hiệu lực.
+    // Cùng epoch với lượt đăng trước ⟹ ρ hiệu lực vẫn là prev (10⁹), không phải 2·10⁹ chưa hiệu lực.
     const prev = cur.prev_rho_q;
     const over = { rho_q: RHO_MAX + 1n, prev_rho_q: prev, effective_epoch: w.epoch + 1n };
     await expectRejected(spendRateBeaconRaw(lucid, { rate: s.rate, beaconUtxo: beacon, next: over, signer: pkh(rateKey), window: w }));
     const { tx, datum } = postRateTx(lucid, { rate: s.rate, beaconUtxo: beacon, newRhoQ: RHO_MAX, nowMs: now() });
-    expect(datum).toEqual({ rho_q: RHO_MAX, prev_rho_q: 0n, effective_epoch: EPOCH0 + 1n });
+    expect(datum).toEqual({ rho_q: RHO_MAX, prev_rho_q: 1_000_000_000n, effective_epoch: EPOCH0 + 1n });
     await submit(tx, [rateKey]);
   });
 

@@ -493,17 +493,20 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     await submitStep(b, [fee, owner2]);
   }, SLOW);
 
-  it("T2 ĐỎ (e): hai chủ, hai quỹ ghim, CHUNG utxo_refs ⟹ lượt sau 409 OWNER_TX_IN_FLIGHT; CẶP: đổi bộ ref ⟹ qua khoá", async () => {
+  it("T2 (e): hai chủ, hai quỹ ghim, CHUNG utxo_refs ⟹ lượt sau THAY lượt trước, không 409 (đổi từ OWNER_TX_IN_FLIGHT, 2026-10-03); CẶP: đổi bộ ref ⟹ dựng được", async () => {
     const [refA, refB] = await carpRefs(sponsor);
     expect(refA).toBeDefined();
     expect(refB).toBeDefined();
     // Lượt 1 dựng xong, KHÔNG nộp — giữ khoá owner · fund:<quỹ 1> · utxo:<refA>.
     const b1 = await step("/tx/sponsor/t2-fund", await t2Body({ refs: [refA!] }));
     try {
-      // Khác chủ, khác quỹ ⟹ chỉ khoá `utxo:` trùng.
+      // Khác chủ, khác quỹ ⟹ chỉ khoá `utxo:` trùng. Lượt sau giành khoá `utxo:<refA>`, khoá phụ của
+      // b1 nhả; b1 KHÔNG bị đánh dấu thay ở sổ — chỉ một lượt NỘP mới thay được nó (`locks.ts`).
       const r2 = await post("/tx/sponsor/t2-fund", await t2Body({ refs: [refA!], fund: fundId2, who: owner2 }));
-      expect(r2.status).toBe(409);
-      expect(errCode(r2)).toBe("OWNER_TX_IN_FLIGHT");
+      expect(r2.status, JSON.stringify(r2.body)).toBe(200);
+      expect(locks.peek(`utxo:${refA!}`, emulator.now())?.txHash).toBe(r2.body.tx_hash);
+      expect(locks.peek(owner.pkh, emulator.now())).toBeNull();
+      locks.releaseByTxHash(r2.body.tx_hash as string);
       // CẶP: cùng chủ thứ hai + quỹ 2, bộ ref KHÁC ⟹ qua khoá và dựng được.
       const r3 = await post("/tx/sponsor/t2-fund", await t2Body({ refs: [refB!], fund: fundId2, who: owner2 }));
       expect(r3.status).toBe(200);
@@ -749,11 +752,14 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
       // T2 không mở output script mới: két + quỹ đã có min-ADA ⟹ Feecover ứng ≥ 0, đúng bằng phần tăng.
       expect(BigInt(fs.fronted_lovelace as string)).toBeGreaterThanOrEqual(0n);
 
-      // Khoá `utxo:<fee_payer>`: chủ KHÁC, cùng UTxO trả phí, khi tx kia chưa nộp ⟹ 409.
+      // Khoá `utxo:<fee_payer>`: chủ KHÁC, cùng UTxO trả phí, khi tx kia chưa nộp ⟹ KHÔNG còn 409
+      // (đổi từ OWNER_TX_IN_FLIGHT, 2026-10-03): lượt sau giành khoá; tx kia vẫn nộp được (bên dưới)
+      // vì lượt sau không được nộp — chỉ lượt NỘP mới thay được một tx (`locks.ts`).
       const r2 = await post("/tx/sponsor/t3-draw",
         { owner: { type: "key", hash: owner2.pkh }, fee_payer: fp, fund_id: fundId2, carp_amount: CARP.toString() });
-      expect(r2.status).toBe(409);
-      expect(errCode(r2)).toBe("OWNER_TX_IN_FLIGHT");
+      expect(errCode(r2)).not.toBe("OWNER_TX_IN_FLIGHT");
+      expect(r2.status).not.toBe(409);
+      if (typeof r2.body.tx_hash === "string") locks.releaseByTxHash(r2.body.tx_hash);
 
       // Đọc lại trên CBOR thật: bỏ bên tài trợ khỏi tập luồng ⟹ input của họ thành input lạ.
       const ins = await inputsOf(b.tx_cbor as string);

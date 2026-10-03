@@ -1,22 +1,40 @@
-// VaultTxAPI/src/locks.ts — khoá mềm theo `owner_pkh`, chống hai giao dịch giành một UTxO.
+// VaultTxAPI/src/locks.ts — khoá mềm theo chủ: lượt dựng MỚI NHẤT thay lượt cũ; xung đột bắt
+// ở lúc NỘP, không ở lúc dựng.
 //
 // ── VẤN ĐỀ THẬT, KHÔNG PHẢI PHÒNG XA ────────────────────────────────────────────
 // Mỗi chủ có một UTxO vault. Dựng một giao dịch nghĩa là CHỌN đúng UTxO đó làm input.
-// Hai yêu cầu tới gần nhau cho cùng `owner_pkh` sẽ chọn TRÙNG input, và eUTXO chỉ cho
-// một trong hai lên chuỗi. Cái thua không hỏng lúc dựng — nó hỏng SAU KHI người dùng
-// đã ký, và thông báo của chuỗi lúc đó không nhắc gì tới chuyện có hai giao dịch.
+// Hai giao dịch dựng gần nhau cho cùng chủ sẽ chọn TRÙNG input, và eUTXO chỉ cho một trong
+// hai lên chuỗi. Cái thua hỏng SAU KHI người dùng đã ký.
 //
-// ── VÌ SAO KHOÁ GIỮ TỚI LÚC NỘP, KHÔNG NHẢ NGAY SAU KHI DỰNG ───────────────────
-// Nhả ngay sau khi dựng thì không chặn được gì: UTxO vault vẫn chưa bị tiêu, nên yêu
-// cầu thứ hai vẫn chọn đúng nó. Khoá phải sống từ lúc dựng tới lúc `/tx/submit` nhận
-// đúng giao dịch ấy — hoặc tới lúc hết hạn, cho ca người dùng đóng app giữa chừng.
+// ── VÌ SAO KHÔNG CÒN 409 Ở LÚC DỰNG (đổi 2026-10-03, thư OriLife `ol1003mg-d`) ──
+// Bản cũ chặn lượt dựng thứ hai bằng `409 OWNER_TX_IN_FLIGHT` suốt 180 giây. Ba dữ kiện làm
+// nó thành một cổng từ chối dịch vụ:
+//   · chủ (`owner` pkh / script hash) là CÔNG KHAI trên chuỗi;
+//   · dựng giao dịch KHÔNG cần chữ ký của chủ;
+//   · cả dịch vụ có MỘT thẻ Bearer dùng chung (`VAULT_TX_API_TOKEN`) — "khoá theo người gọi"
+//     không có người gọi nào để phân biệt.
+// ⟹ ai có thẻ (mọi bản app) gọi lặp là khoá két của người khác vô thời hạn.
+//
+// Luật mới: lượt dựng mới cho một khoá KHÔNG BAO GIỜ nhận 409 vì một lượt dựng khác. Nó lấy
+// khoá; lượt cũ bị THAY, và mọi khoá phụ mà lượt cũ còn giữ (khoá UTxO quỹ / UTxO phí ở
+// `sponsor.ts`) nhả ngay. Xung đột thật được bắt ở `/tx/submit`:
+//   · tx có input đã bị một tx KHÁC vừa nộp tiêu (`PendingSpends.conflicts`) ⟹ 409 `TX_SUPERSEDED`;
+//   · tx phát ra TRƯỚC khi một tx khác chung khoá được nộp (`IssuedTxRegistry.markSubmitted`)
+//     ⟹ 409 `TX_SUPERSEDED` — bắt cả hai tx không chung input (hai lượt tạo két từ hai ví).
+//
+// Vì sao an toàn: người lạ KHÔNG ký được cho chủ, nên tx họ dựng không bao giờ lên chuỗi và
+// không bao giờ "được nộp" — nó không thay được tx nào của chủ ở lúc nộp. Lượt dựng của chủ
+// luôn đi tiếp. Hai thiết bị của CÙNG chủ dựng song song thì cái nộp TRƯỚC thắng, cái kia nhận
+// `TX_SUPERSEDED` ở lúc nộp thay vì ở lúc dựng.
+//
+// 🔴 Cố ý KHÔNG từ chối nộp chỉ vì tx đã bị một lượt DỰNG sau thay: làm thế thì người lạ dựng
+// lặp sau mỗi lượt dựng của chủ là tx của chủ luôn bị từ chối lúc nộp — đúng cổng từ chối dịch
+// vụ vừa gỡ, chỉ dời từ lúc dựng sang lúc nộp. Mốc "bị thay" phải là một lượt NỘP (cần chữ ký
+// chủ), không phải một lượt DỰNG (không cần gì).
 //
 // ── VÌ SAO KHOÁ TRONG BỘ NHỚ LÀ ĐỦ, VÀ NÓ KHÔNG ĐỦ Ở ĐÂU ──────────────────────
-// Một tiến trình ⟹ một bảng khoá. Chạy hai bản sao sau một bộ cân tải thì hai bảng
-// không thấy nhau và khoá không còn nghĩa. Đó là giới hạn ĐÃ BIẾT, ghi ở README §"Còn
-// thiếu" — không phải thứ tệp này giả vờ giải quyết.
-
-import { OwnerTxInFlightError } from "./errors.js";
+// Một tiến trình ⟹ một bảng khoá + một sổ. Chạy hai bản sao sau một bộ cân tải thì chúng
+// không thấy nhau. Đó là giới hạn ĐÃ BIẾT, ghi ở README §"Còn thiếu".
 
 export interface LockRecord {
   ownerPkh: string;
@@ -34,18 +52,20 @@ export class OwnerLockTable {
   constructor(private readonly ttlMs: number) {}
 
   /**
-   * Giành quyền dựng cho một chủ.
-   *
-   * KHÔNG trả `false` và KHÔNG trả `null`: một giá trị đệm ở đây sẽ đi tiếp vào đường
-   * dựng và ra một giao dịch thứ hai. Bận thì NÉM, và ném đúng mã 409.
+   * Giành khoá cho một lượt dựng. KHÔNG BAO GIỜ ném vì một lượt dựng khác (xem đầu tệp): khoá
+   * đang sống của lượt cũ bị THAY. Lượt cũ đã dựng xong (mang hash thật) thì mọi khoá KHÁC nó
+   * còn giữ nhả luôn — chúng là chỗ giữ của một tx đã bị thay, giữ tiếp chỉ để chặn suông.
+   * Lượt cũ còn đang dựng thì thẻ `gen` của nó không còn khớp ⟹ `bindTxHash`/`release` của nó
+   * không đụng được khoá của lượt mới.
    */
   acquire(ownerPkh: string, nowMs: number): number {
     const cur = this.held.get(ownerPkh);
-    if (cur !== undefined && cur.expiresAtMs > nowMs) {
-      throw new OwnerTxInFlightError(ownerPkh, cur.txHash, new Date(cur.expiresAtMs).toISOString());
+    if (cur !== undefined && cur.expiresAtMs > nowMs && cur.txHash !== PENDING_TX_HASH) {
+      for (const [k, rec] of this.held) {
+        if (k !== ownerPkh && rec.txHash === cur.txHash) this.held.delete(k);
+      }
     }
-    // Chỗ giữ chỗ: hash thật chỉ biết sau khi dựng xong. Giữ chỗ TRƯỚC là thứ đóng khe
-    // đua giữa hai yêu cầu vào cùng lúc — đăng ký sau khi dựng thì cả hai đã dựng rồi.
+    // Chỗ giữ chỗ: hash thật chỉ biết sau khi dựng xong.
     const gen = this.nextGen++;
     this.held.set(ownerPkh, { ownerPkh, txHash: PENDING_TX_HASH, expiresAtMs: nowMs + this.ttlMs, gen });
     return gen;
@@ -134,26 +154,36 @@ export class OwnerLockTable {
  * đúng, vì nó thật sự chưa bị tiêu.
  */
 export class PendingSpends {
-  private readonly spent = new Map<string, number>();
+  /** input → hạn + hash thân của tx đã tiêu nó (vắng khi bên ghi không khai). */
+  private readonly spent = new Map<string, { until: number; txHash?: string }>();
 
   constructor(private readonly ttlMs: number) {}
 
-  /** Ghi các input (`txhash#idx`) của một giao dịch vừa nộp thành công. */
-  note(refs: readonly string[], nowMs: number): void {
-    for (const r of refs) this.spent.set(r, nowMs + this.ttlMs);
+  /** Ghi các input (`txhash#idx`) của một giao dịch vừa nộp thành công. `txHash` = hash thân
+   *  của chính tx đó — để lần NỘP LẠI cùng tx (rớt mạng) không bị coi là xung đột với chính nó. */
+  note(refs: readonly string[], nowMs: number, txHash?: string): void {
+    for (const r of refs) this.spent.set(r, { until: nowMs + this.ttlMs, ...(txHash === undefined ? {} : { txHash }) });
   }
 
   has(ref: string, nowMs: number): boolean {
-    const until = this.spent.get(ref);
-    if (until === undefined) return false;
-    if (until <= nowMs) { this.spent.delete(ref); return false; }
+    const e = this.spent.get(ref);
+    if (e === undefined) return false;
+    if (e.until <= nowMs) { this.spent.delete(ref); return false; }
     return true;
+  }
+
+  /**
+   * Những input trong `refs` đang bị một tx KHÁC `txHash` vừa nộp tiêu. Dòng ghi không kèm hash
+   * (bên ghi không khai) tính là KHÁC — không biết thì coi là xung đột, đừng đoán là chính nó.
+   */
+  conflicts(refs: readonly string[], nowMs: number, txHash: string): string[] {
+    return refs.filter(r => this.has(r, nowMs) && this.spent.get(r)!.txHash !== txHash);
   }
 
   sweep(nowMs: number): number {
     let n = 0;
-    for (const [r, until] of this.spent) {
-      if (until <= nowMs) { this.spent.delete(r); n++; }
+    for (const [r, e] of this.spent) {
+      if (e.until <= nowMs) { this.spent.delete(r); n++; }
     }
     return n;
   }
@@ -220,6 +250,10 @@ export interface IssuedTxMeta {
   feeRef?: string;
   /** UTxO ví trả phí (`txhash#idx`) mà tx tiêu. Vắng ⟹ tx không có ví trả phí bên thứ ba. */
   feePayerUtxo?: string;
+  /** Khoá mềm mà lượt dựng đã giữ (`ownerLockKey(owner)`, khoá UTxO quỹ/phí của `sponsor.ts`).
+   *  Một tx chung khoá với tx vừa NỘP thì bị thay (`markSubmitted`). Vắng ⟹ không bị thay theo
+   *  khoá, chỉ còn phép xung đột input (`PendingSpends.conflicts`). */
+  lockKeys?: readonly string[];
 }
 
 export interface IssuedTxEntry extends IssuedTxMeta {
@@ -227,6 +261,9 @@ export interface IssuedTxEntry extends IssuedTxMeta {
   expiresAtMs: number;
   /** Hết mốc này thì `/fee/sign` không xin chữ ký nữa: UTxO phí đã hết giờ giữ chỗ ở Feecover. */
   signableUntilMs: number;
+  /** Hash thân của tx chung khoá đã được NỘP sau khi tx này phát ra ⟹ `/tx/submit` và
+   *  `/fee/sign` trả 409 `TX_SUPERSEDED`. Vắng ⟹ chưa bị thay. */
+  supersededBy?: string;
 }
 
 export class IssuedTxRegistry {
@@ -266,6 +303,29 @@ export class IssuedTxRegistry {
   }
 
   /** Dòng của giao dịch, hoặc `null` khi không có / đã hết hạn nộp. */
+  /**
+   * Tx `txHash` vừa được NỘP thành công: mọi tx khác còn sống trong sổ, chưa bị thay, chung ít
+   * nhất một khoá với nó, thì bị THAY bởi nó — và giờ giữ chỗ UTxO phí của chúng bỏ khỏi sổ,
+   * để `/fee/sign` không xin ký một tx chắc chắn không lên chuỗi. Trả số tx vừa bị thay.
+   *
+   * Chỉ tx phát ra TRƯỚC lượt nộp này bị thay (chúng đang có trong sổ lúc gọi). Tx dựng SAU — lượt
+   * kế tiếp hợp lệ của chủ — không bị đụng.
+   */
+  markSubmitted(txHash: string, nowMs: number): number {
+    const me = this.lookup(txHash, nowMs);
+    const keys = new Set(me?.lockKeys ?? []);
+    if (keys.size === 0) return 0;
+    let n = 0;
+    for (const [h, e] of this.issued) {
+      if (h === txHash || e.supersededBy !== undefined || e.expiresAtMs <= nowMs) continue;
+      if (!(e.lockKeys ?? []).some(k => keys.has(k))) continue;
+      this.issued.set(h, { ...e, supersededBy: txHash });
+      if (e.feePayerUtxo !== undefined) this.feeReservations.delete(e.feePayerUtxo);
+      n++;
+    }
+    return n;
+  }
+
   lookup(txHash: string, nowMs: number): IssuedTxEntry | null {
     const e = this.issued.get(txHash);
     if (e === undefined) return null;

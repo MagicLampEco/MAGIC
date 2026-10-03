@@ -52,6 +52,9 @@ export interface OutputView {
 
 export interface TxSummary {
   requested_intent: RequestedIntent;
+  /** DID mà bên gọi khai ở `owner: {type:"did"}` — vắng khi chủ khai bằng credential. `owner`
+   *  của thân trả về là `Script(did_stake)` suy từ DID này. */
+  owner_did?: string;
   network: string;
   fee_lovelace: string;
   fee_ada: string;
@@ -480,6 +483,9 @@ export interface CreateVaultSummaryContext {
 
 export interface CreateVaultSummary {
   requested_intent: "create_vault";
+  /** DID mà bên gọi khai ở `owner: {type:"did"}` — vắng khi chủ khai bằng credential. `owner`
+   *  của thân trả về là `Script(did_stake)` suy từ DID này. */
+  owner_did?: string;
   network: string;
   fee_lovelace: string;
   fee_ada: string;

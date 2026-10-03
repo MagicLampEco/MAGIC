@@ -114,6 +114,12 @@ export function isPureAdaFeeUtxo(utxo: UTxO): boolean {
 /** UTxO trả phí: phải ở ĐÚNG `fee_payer.address`, thuần ADA, không script tham chiếu. */
 export async function readFeePayerUtxo(chain: ChainReader, fp: FeePayerRequest, c: FeePayerCodes): Promise<UTxO> {
   const [u] = await chain.utxosByOutRef([fp.utxoRef]);
+  // Tham chiếu không còn là UTxO chưa tiêu ⟹ 400 có mã. Bản trước đọc `.address` trên `undefined` ⟹ 500.
+  if (u === undefined) {
+    throw new CodedApiError(400, c.invalid,
+      `UTxO trả phí ${refStr(fp.utxoRef).slice(0, 12)}… không phải UTxO chưa tiêu.`,
+      { fee_payer_utxo: refStr(fp.utxoRef) });
+  }
   const utxo = u as UTxO;
   if (utxo.address !== fp.address) {
     throw new CodedApiError(400, c.invalid,

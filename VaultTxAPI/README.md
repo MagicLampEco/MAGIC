@@ -828,9 +828,46 @@ vì tx chi UTxO khoá của họ — chúng **không** nằm trong `required_sig
 — phải vào khối **trước** `epoch_end_ms`. T4 gửi `draw_epoch` = đúng `summary.epoch` của T3;
 lệch kỳ hiện tại ⟹ `409 SPONSOR_EPOCH_MISMATCH`, không dựng gì.
 
-**Thân yêu cầu.** Mọi bước nhận `owner` (+ `owner_witness` nếu chủ là script) và
-`change_address` = địa chỉ KHOÁ của ví trả phí (chủ script bắt buộc gửi). `fee_payer` chưa hỗ
-trợ ⟹ `501 SPONSOR_FEE_PAYER_UNSUPPORTED`. Tiền là chuỗi chữ số.
+**Thân yêu cầu.** Mọi bước nhận `owner` (+ `owner_witness` nếu chủ là script) và ĐÚNG MỘT trong
+hai cách trả phí — gửi cả hai ⟹ `400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT`. Tiền là chuỗi chữ số.
+
+- `change_address` = địa chỉ KHOÁ của ví trả phí; bộ dựng chọn UTxO tự do trong ví đó (chủ
+  script bắt buộc gửi một trong hai cách).
+- `fee_payer` (Feecover) — cùng hình dạng với mục "Ví trả phí bên thứ ba" ở trên, đặt ở **gốc**
+  thân bài; `funding` ở route này ⟹ `400 SPONSOR_REQUEST_SHAPE`:
+
+  ```jsonc
+  "fee_payer": { "utxo": "<tx_hash>#<i>", "address": "addr_test1v…" }
+  ```
+
+  Dịch vụ chi ĐÚNG UTxO đó (thuần ADA), dùng nó làm tài sản thế chấp DUY NHẤT với lượng
+  `fee_payer_collateral_lovelace` của cấu hình, đặt hạn dùng ≤ 1 giờ (T2/T3 vẫn theo cửa sổ
+  10 phút của kỳ), và trả mọi tiền thối ADA về `fee_payer.address`. Chủ **không** góp lovelace
+  nào: người mới 0 ADA đi trọn T1→T4 (bài `tests/sponsorEmulator.test.ts` ▸ hành trình
+  `fee_payer`, ví chủ còn 0 UTxO sau T4). Khác các route ở trên, **ở đây ví trả phí ỨNG
+  min-ADA** cho output két + thread ở T1 — vì người mới không có ADA, không ai khác trả được;
+  T2–T4 ứng phần min-ADA tăng thêm ở output của luồng (datum két lớn lên, output quỹ ở T2) —
+  `fronted_lovelace` = Σ lovelace output địa chỉ luồng − Σ lovelace input địa chỉ luồng.
+
+  Phép đọc lại CBOR (`src/sponsor.ts` ▸ `checkSponsorFeePayerTx`) chạy sau mỗi lượt dựng, lệch ⟹
+  `422 FEE_PAYER_TX_MISMATCH`, không trả tx:
+  1. input = UTxO trả phí + UTxO ở các địa chỉ của luồng (T1: két, thread · T2: két, quỹ, bên
+     tài trợ · T3: két · T4: két, thread). Không input nào khác của khoá ví trả phí.
+  2. thế chấp đúng UTxO đó, phần có thể mất ≤ lượng cấu hình (luật chung `checkCollateral`).
+  3. output về ví trả phí chỉ mang ADA; không output nào ra ngoài ví trả phí + địa chỉ luồng.
+  4. bên tài trợ (T2) nhận lại ĐÚNG số lovelace nó góp (phần CARP do các ghim T2 kiểm) — ví trả
+     phí không chảy ADA sang đó, bên tài trợ không trả phí; `fee_in = phí + thối + phần ứng`, và
+     phần ứng ≥ 0.
+  5. hạn dùng ≤ 1 giờ (luật chung `checkValidTo`).
+
+  `summary.fee_payer` trả: `address`, `utxo`, `input_lovelace`, `fee_lovelace`,
+  `change_lovelace`, `fronted_lovelace` (min-ADA đã ứng), `collateral_at_risk_lovelace`,
+  `collateral_return_lovelace`, `valid_to_posix_ms`. UTxO trả phí bị giữ khoá `utxo:<ref>` tới khi
+  tx hết hạn: một lượt khác dùng lại cùng UTxO ⟹ `409 OWNER_TX_IN_FLIGHT`.
+
+**Vai ký không đổi theo cách trả phí.** Mảng `signers` vẫn mang vai `fee-wallet` (khoá thanh toán
+của `fee_payer.address`, hoặc của `change_address`), rồi `sponsor` (chỉ T2), rồi `owner`. Ví trả
+phí ký vì tx chi UTxO của nó; nó không vào `required_signers`.
 
 | bước | trường riêng |
 |---|---|
@@ -950,7 +987,11 @@ của dịch vụ: khối chú thích đầu `src/errors.ts`. Phần người g�
 | `SPONSOR_UTXO_NOT_ALLOWED` · `SPONSOR_UTXO_NO_CARP` | 422 | `utxo_refs` không chung một địa chỉ đã ghim / có UTxO không mang CARP |
 | `SPONSOR_UTXO_NOT_KEY` | 400 | UTxO bên tài trợ không do khoá giữ |
 | `SPONSOR_UTXO_NOT_FOUND` | 404 | có `utxo_refs` không phải UTxO chưa tiêu |
-| `SPONSOR_FEE_WALLET_IS_SPONSOR` | 422 | `change_address` (ví trả phí) trùng địa chỉ bên tài trợ — dùng ví trả phí khác |
+| `SPONSOR_FEE_WALLET_IS_SPONSOR` | 422 | ví trả phí (`change_address` hoặc `fee_payer.address`) trùng địa chỉ bên tài trợ, HOẶC cùng khoá thanh toán với nó (khác phần stake vẫn bị chặn) — dùng ví trả phí khác |
+| `FEE_PAYER_CHANGE_ADDRESS_CONFLICT` | 400 | gửi cả `fee_payer` lẫn `change_address` — chọn một |
+| `FEE_PAYER_SHAPE` · `FEE_PAYER_INVALID` | 400 | `fee_payer` sai khuôn / sai mạng / không phải khoá; UTxO trả phí không phải UTxO chưa tiêu, không ở `fee_payer.address`, hoặc không thuần ADA |
+| `FEE_PAYER_TX_MISMATCH` | 422 | tx vừa dựng lệch một trong năm luật đọc lại ở trên — lỗi phía dịch vụ, báo vận hành |
+| `SPONSOR_BUILD_FAILED` | 422 | bộ dựng không cân được tx — thường là UTxO trả phí không đủ ADA cho phí + thế chấp + min-ADA phải ứng; nạp UTxO lớn hơn |
 | `SPONSOR_OWNER_NOT_DID` · `SPONSOR_OWNER_DID_MISMATCH` | 422 | T1/T2 với chủ khoá / anchor của nhân chứng không mang tên `did_commit` |
 | `SPONSOR_ROLE_REQUIRED` | 403 | T2 gọi bằng thẻ thường — cần thẻ vai sponsor |
 | `OWNER_TX_IN_FLIGHT` | 409 | chủ, quỹ hoặc một UTxO bên tài trợ đang bị một tx dựng xong mà chưa nộp giữ khoá |

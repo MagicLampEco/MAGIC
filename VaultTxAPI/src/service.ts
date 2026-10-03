@@ -33,11 +33,12 @@ import {
 } from "./feePayer.js";
 import {
   BadRequestError, CodedApiError, ConfigMissingError, SubmitRejectedError, TxSummaryUndecodableError,
-  ownerApiErrorOf,
+  TxSupersededError, ownerApiErrorOf,
 } from "./errors.js";
 import {
-  ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
+  ownerLockKey, type OwnerInput, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
 } from "./owner.js";
+import { resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
 import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type IssuedRoute } from "./locks.js";
 import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
@@ -105,7 +106,9 @@ export interface BuildResponse {
 
 /** Phần chung của mọi yêu cầu có chủ. */
 export interface OwnerRequest {
-  owner: OwnerRef;
+  /** Chủ như bên gọi khai. `{type:"did"}` được suy thành `Script(did_stake)` + nhân chứng ở
+   *  ĐẦU mỗi đường dựng, trước khi giữ khoá (`didOwner.ts` ▸ `resolveOwnerInput`). */
+  owner: OwnerInput;
   /** Chỉ cho chủ script; chủ khoá mà gửi kèm ⟹ 400. */
   ownerWitness?: ScriptOwnerWitness;
   /** Địa chỉ đổi tiền thừa + nguồn UTxO trả phí. Vắng: chủ khoá ⟹ suy theo chiến lược cấu
@@ -201,6 +204,9 @@ export interface VaultTxServiceDeps {
   /** Nhân chứng chủ script (did_stake). Vắng ⟹ chủ script nhận 501
    *  `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ khoá không bị ảnh hưởng. */
   ownerWitness?: OwnerWitnessProvider;
+  /** Suy chủ `{type:"did"}` từ anchor trên chuỗi. Vắng (bản deploy thiếu
+   *  `did_stake.unapplied_script`) ⟹ chủ DID nhận 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. */
+  didOwner?: DidOwnerResolverPort;
   /** Input của giao dịch vừa nộp (`PendingSpends`). Vắng ⟹ không chặn dựng lại trên UTxO vừa
    *  tiêu — hành vi cũ, chỉ để phép kiểm cũ khỏi phải khai. */
   pending?: PendingSpends;
@@ -493,7 +499,8 @@ export class VaultTxService {
    * Chủ đã có thread ⟹ 409 `ENGAGE_THREAD_EXISTS` (mở thêm là khoá thêm min-ADA vô ích và làm
    * `/tx/consume` rơi vào `ENGAGE_THREAD_AMBIGUOUS`).
    */
-  async openThread(req: OpenThreadRequest, quote?: QuoteMode): Promise<OpenThreadResponse> {
+  async openThread(reqIn: OpenThreadRequest, quote?: QuoteMode): Promise<OpenThreadResponse> {
+    const req = await this.resolveOwner(reqIn);
     const owner = assertOwnerRef(req.owner);
     if (req.fundingRequested === true) {
       throw new CodedApiError(501, "OPEN_THREAD_FUNDING_UNSUPPORTED",
@@ -531,11 +538,12 @@ export class VaultTxService {
         engageAddress: d.engageAddress, engageScriptHash: d.engageScriptHash,
         declaredUnit: built.engageNftUnit, owner, network: this.deps.network,
       });
+      if (req.ownerDid !== undefined) summary.owner_did = req.ownerDid;
       const txHash = txBodyHash(built.txCbor);
       this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
       // Mã ghi sổ Feecover của tx mở thread = tên NFT thread, khi nó đúng khuôn hash 64 hex.
       this.deps.issued.record(txHash, this.now(), {
-        route: "open-thread", feeRef: hash64NameOf(summary.engage.nft_unit),
+        route: "open-thread", feeRef: hash64NameOf(summary.engage.nft_unit), lockKeys: [ownerKey],
       });
       return {
         txCbor: built.txCbor,
@@ -568,10 +576,11 @@ export class VaultTxService {
    *   · thread đã gắn DID ⟹ 409 `DID_ALREADY_BOUND`, `details.did_commit` = giá trị đang nằm trên chuỗi.
    *
    * Khoá mềm theo CHỦ, giữ từ trước lúc đọc thread tới lúc nộp: thread là của đúng một chủ, nên khoá
-   * chủ là khoá thread. Hai lượt gắn DID (hoặc gắn DID + tiêu MAGIC) cho cùng chủ ⟹ lượt sau nhận 409
-   * `OWNER_TX_IN_FLIGHT`, không dựng hai tx cùng tiêu một UTxO thread.
+   * chủ là khoá thread. Hai lượt gắn DID (hoặc gắn DID + tiêu MAGIC) cho cùng chủ: lượt sau THAY lượt
+   * trước; tx nào nộp trước thắng, tx kia nhận 409 `TX_SUPERSEDED` lúc nộp (`locks.ts`).
    */
-  async bindDid(req: BindDidRequest, quote?: QuoteMode): Promise<BindDidResponse> {
+  async bindDid(reqIn: BindDidRequest, quote?: QuoteMode): Promise<BindDidResponse> {
+    const req = await this.resolveOwner(reqIn);
     const owner = assertOwnerRef(req.owner);
     const didCommit = parseDidCommit(req.didCommit);
     if (req.feePayer !== undefined) {
@@ -613,10 +622,11 @@ export class VaultTxService {
         engageAddress: d.engageAddress, engageScriptHash: d.engageScriptHash, thread, owner, didCommit,
         network: this.deps.network,
       });
+      if (req.ownerDid !== undefined) summary.owner_did = req.ownerDid;
       const txHash = txBodyHash(built.txCbor);
       this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
       // Mã ghi sổ Feecover = hash thân tx (không có NFT mới). Không ví trả phí ⟹ `/fee/sign` từ chối.
-      this.deps.issued.record(txHash, this.now(), { route: "bind-did" });
+      this.deps.issued.record(txHash, this.now(), { route: "bind-did", lockKeys: [ownerKey] });
       return {
         txCbor: built.txCbor,
         txHash,
@@ -641,12 +651,13 @@ export class VaultTxService {
   private async buildOne(
     vaultType: string | undefined,
     intent: RequestedIntent,
-    req: OwnerRequest,
+    reqIn: OwnerRequest,
     build: (ctx: BuildContext, b: TxBuilderPort) => Promise<{ txCbor: string }>,
     quote?: QuoteMode,
     /** Phép đọc lại CBOR riêng của một đường, chạy SAU `summarizeTx` và TRƯỚC khi ghi sổ phát-hành. */
     afterSummary?: (txCbor: string, summary: TxSummary) => void,
   ): Promise<BuildResponse> {
+    const req = await this.resolveOwner(reqIn);
     const owner = assertOwnerRef(req.owner);
     const ownerKey = ownerLockKey(owner);
     const scopes = this.scopesFor(vaultType);
@@ -706,6 +717,7 @@ export class VaultTxService {
         network: this.deps.network,
         requestedIntent: intent,
       });
+      if (req.ownerDid !== undefined) summary.owner_did = req.ownerDid;
       if (feePayer !== undefined) {
         summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, feePayerUtxo!, tip);
       }
@@ -716,7 +728,7 @@ export class VaultTxService {
         // Ghi vào sổ phát-hành TRƯỚC khi trả về: `/tx/submit` chỉ nộp thứ có trong sổ, và
         // `/fee/sign` đọc route + UTxO ví trả phí từ đây chứ không nhận từ app.
         this.deps.issued.record(txHash, this.now(), {
-          route: routeOfIntent(intent),
+          route: routeOfIntent(intent), lockKeys: [ownerKey],
           ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
         });
       }
@@ -751,7 +763,16 @@ export class VaultTxService {
   }
 
   /** `fee_payer`: loại trừ với `change_address`, địa chỉ đúng mạng + khoá. Kiểm TRƯỚC khi giữ khoá. */
-  private feePayerFor(req: OwnerRequest): FeePayerRequest | undefined {
+  /**
+   * Chủ `{type:"did"}` ⟹ `Script(did_stake)` + nhân chứng, suy TRƯỚC mọi khoá: khoá mềm vì thế
+   * mang đúng khoá `script:<hash>` như chủ script khai tường minh, và hai cách khai cùng một chủ
+   * tranh CÙNG một khoá. Chủ khác ⟹ trả nguyên.
+   */
+  private resolveOwner<R extends OwnerRequest>(req: R): Promise<WithResolvedOwner<R>> {
+    return resolveOwnerInput(req, this.deps.didOwner);
+  }
+
+  private feePayerFor(req: WithResolvedOwner<OwnerRequest>): FeePayerRequest | undefined {
     const fp = req.feePayer;
     if (fp === undefined) return undefined;
     if (req.changeAddress !== undefined) {
@@ -791,7 +812,8 @@ export class VaultTxService {
    *   · Không đọc vault đầu vào (chưa có), nên bản tóm tắt ĐỌC THẲNG output vault trong CBOR
    *     (`summarizeCreateVaultTx`) và đối chiếu chủ trong datum với chủ yêu cầu.
    */
-  async createVault(req: CreateVaultRequest, quote?: QuoteMode): Promise<CreateVaultResponse> {
+  async createVault(reqIn: CreateVaultRequest, quote?: QuoteMode): Promise<CreateVaultResponse> {
+    const req = await this.resolveOwner(reqIn);
     const owner = assertOwnerRef(req.owner);
     if (req.kind !== "instant" && req.kind !== "schedule") {
       throw new BadRequestError(`"kind" phải là "instant" hoặc "schedule".`);
@@ -888,6 +910,7 @@ export class VaultTxService {
         lampUnit,
         network: this.deps.network,
       });
+      if (req.ownerDid !== undefined) summary.owner_did = req.ownerDid;
       if (funding !== undefined && fundingCtx !== undefined && selfFunded) {
         summary.funding = checkSelfFundedTx(built.txCbor, {
           network: this.deps.network,
@@ -944,7 +967,7 @@ export class VaultTxService {
       if (quote === undefined) {
         this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
         this.deps.issued.record(txHash, this.now(), {
-          route: "create-vault", feeRef: vaultNftName,
+          route: "create-vault", feeRef: vaultNftName, lockKeys: [ownerKey],
           ...(funding?.feePayer === undefined ? {} : { feePayerUtxo: refStr(funding.feePayer.utxoRef) }),
         });
       }
@@ -968,7 +991,7 @@ export class VaultTxService {
   }
 
   /** Địa chỉ đổi tiền thừa: app gửi thì kiểm; chủ khoá không gửi thì suy theo chiến lược. */
-  private changeAddressFor(req: OwnerRequest): string {
+  private changeAddressFor(req: WithResolvedOwner<OwnerRequest>): string {
     if (req.changeAddress !== undefined) return assertChangeAddress(this.deps.network, req.changeAddress);
     if (req.owner.type === "key") return enterpriseAddressOf(this.deps.network, req.owner.hash);
     throw new CodedApiError(400, "CHANGE_ADDRESS_REQUIRED",
@@ -977,7 +1000,7 @@ export class VaultTxService {
   }
 
   /** Lỗi hình dạng của nhân chứng — kiểm TRƯỚC khi giữ khoá. */
-  private assertWitnessShapeFor(req: OwnerRequest): void {
+  private assertWitnessShapeFor(req: WithResolvedOwner<OwnerRequest>): void {
     if (req.owner.type === "key" && req.ownerWitness !== undefined) {
       throw new CodedApiError(400, "OWNER_WITNESS_UNEXPECTED",
         `"owner_witness" chỉ dành cho chủ script; chủ khoá chứng minh quyền bằng chữ ký.`);
@@ -998,7 +1021,7 @@ export class VaultTxService {
     }
   }
 
-  private async witnessFor(req: OwnerRequest): Promise<ResolvedOwnerWitness | undefined> {
+  private async witnessFor(req: WithResolvedOwner<OwnerRequest>): Promise<ResolvedOwnerWitness | undefined> {
     if (req.owner.type === "key") return undefined;
     return this.deps.ownerWitness!.resolve(req.owner, req.ownerWitness!);
   }
@@ -1075,13 +1098,26 @@ export class VaultTxService {
     //
     // Nó KHÔNG phải cổng uỷ quyền: nó không nói người gọi có quyền với `owner_pkh`
     // nào (Nợ #78). Nó chỉ chặn việc mượn đường nộp.
-    if (!this.deps.issued.wasIssued(bodyHashBefore, this.now())) {
+    const issuedEntry = this.deps.issued.lookup(bodyHashBefore, this.now());
+    if (issuedEntry === null) {
       throw new SubmitRejectedError(
         "Giao dịch này không do dịch vụ dựng ra, hoặc đã quá hạn nộp. Dịch vụ chỉ nộp " +
         "giao dịch chính nó vừa phát hành — hãy gọi lại một trong các đường /tx/* để " +
         "dựng bản mới rồi ký bản đó.",
         { body_hash: bodyHashBefore },
       );
+    }
+
+    // ── BỊ THAY: xung đột giữa hai lượt dựng bắt Ở ĐÂY, không ở lúc dựng (`locks.ts`) ──────
+    // Mốc "bị thay" là một lượt NỘP (cần chữ ký chủ), không phải một lượt DỰNG (ai cũng gọi
+    // được) — nên tx người lạ dựng không bao giờ làm tx của chủ rơi vào nhánh này.
+    if (issuedEntry.supersededBy !== undefined) {
+      throw new TxSupersededError(bodyHashBefore, { superseded_by: issuedEntry.supersededBy });
+    }
+    const inputRefs = inputRefsOf(req.txCbor).map(refStr);
+    const conflicting = this.deps.pending?.conflicts(inputRefs, this.now(), bodyHashBefore) ?? [];
+    if (conflicting.length > 0) {
+      throw new TxSupersededError(bodyHashBefore, { conflicting_inputs: conflicting });
     }
 
     const builder = CML.TransactionWitnessSetBuilder.new();
@@ -1114,7 +1150,8 @@ export class VaultTxService {
         { submitted_hash: bodyHashBefore, node_hash: chainHash },
       );
     }
-    this.deps.pending?.note(inputRefsOf(req.txCbor).map(refStr), this.now());
+    this.deps.pending?.note(inputRefs, this.now(), bodyHashBefore);
+    this.deps.issued.markSubmitted(bodyHashBefore, this.now());
     const lockReleasedFor = this.deps.locks.releaseByTxHash(bodyHashBefore);
     return { txHash: bodyHashBefore, lockReleasedFor };
   }

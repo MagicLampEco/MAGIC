@@ -603,14 +603,16 @@ describe("/tx/quote — không ghi sổ phát-hành, không giành khoá, không
     expect(h.fetchCalls).toHaveLength(1);
   });
 
-  it("CẶP đối chứng: đường dựng thật ghi sổ + giành khoá; lượt thứ hai cùng chủ ⟹ 409", async () => {
+  it("CẶP đối chứng: đường dựng thật ghi sổ + giành khoá ở MỖI lượt (lượt sau thay lượt trước, không 409)", async () => {
     const h = harness({ refUtxos: [OWNER_FEE_UTXO] });
     const first = await handle(post("/tx/consume", { ...CONSUME, fee_payer: FP }), h.router);
     expect(first.status, JSON.stringify(first.body)).toBe(200);
     expect(h.record).toHaveBeenCalledTimes(1);
     expect(h.acquire).toHaveBeenCalledTimes(1);
     const again = await handle(post("/tx/consume", { ...CONSUME, fee_payer: FP }), h.router);
-    expect(again.status).toBe(409);
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(h.record).toHaveBeenCalledTimes(2);
+    expect(h.acquire).toHaveBeenCalledTimes(2);
   });
 });
 

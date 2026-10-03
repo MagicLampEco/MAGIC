@@ -23,6 +23,7 @@ import { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "./locks.js";
 import { VaultTxService } from "./service.js";
 import { SdkTxBuilder } from "./txBuilder.js";
 import { DidStakeWitnessProvider } from "./owner.js";
+import { DidOwnerResolver } from "./didOwner.js";
 import { ChainDidPaymentAnchorReader } from "./funding.js";
 import { FeeProxy } from "./feeProxy.js";
 import { SponsorTxService } from "./sponsor.js";
@@ -60,6 +61,14 @@ const ownerWitness = cfg.deployment.didStake === undefined ? undefined : new Did
   chain,
   anchorNftPolicy: cfg.deployment.didStake.anchorNftPolicy,
 });
+// Chủ `{type:"did"}`: chỉ khi `did_stake` khai `unapplied_script` (hash đã so lúc nạp cấu hình).
+// Vắng ⟹ chủ DID nhận 501; chủ script tường minh vẫn chạy qua `ownerWitness`.
+const didStakeCfg = cfg.deployment.didStake;
+const didOwner = didStakeCfg?.unappliedScript === undefined ? undefined : new DidOwnerResolver({
+  chain,
+  anchorNftPolicy: didStakeCfg.anchorNftPolicy,
+  unappliedScript: didStakeCfg.unappliedScript,
+});
 const sdkBuilder = new SdkTxBuilder({
   network: cfg.network,
   blockfrostUrl: cfg.blockfrostUrl,
@@ -71,6 +80,7 @@ const sdkBuilder = new SdkTxBuilder({
 
 const service = new VaultTxService({
   ownerWitness,
+  ...(didOwner === undefined ? {} : { didOwner }),
   // `funding` did_payment đọc anchor DID dưới CÙNG tham số theo mạng. Vắng ⟹ 501 FUNDING_UNAVAILABLE.
   didPaymentAnchor: cfg.deployment.didStake === undefined ? undefined : new ChainDidPaymentAnchorReader({
     chain,
@@ -100,6 +110,7 @@ const sponsor = cfg.deployment.vaults.some(v => v.vaultType === PREPAID_VAULT_TY
       pending,
       lockTtlMs: cfg.lockTtlMs,
       ...(ownerWitness === undefined ? {} : { ownerWitness }),
+      ...(didOwner === undefined ? {} : { didOwner }),
       prepaidBlueprint: vaultPlutusJson as unknown as PrepaidBlueprint,
       lucidForWallet: (a, u) => sdkBuilder.lucidForWallet(a, u),
     })

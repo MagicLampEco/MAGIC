@@ -12,6 +12,7 @@ import {
   lazyReset,
   loadBlueprint,
   nextGreenBackBeacon,
+  genesisRateParam,
   nextRateParam,
   rhoAt,
   shardAfterDraw,
@@ -72,6 +73,19 @@ describe("shardAfterDraw", () => {
     expect(shardAfterDraw(s, { ...b, seq: 6n }, CAP, 400n)).toEqual({
       shard_id: 3n, seq: 6n, reset_amount: 3_000n, remaining: 2_600n,
     });
+  });
+});
+
+describe("genesisRateParam ↔ rate_param.ak ▸ mint", () => {
+  it("ρ hiệu lực NGAY epoch genesis (effective_epoch == now), prev = 0", () => {
+    // rate_param.ak ▸ rate_genesis_happy / rate_genesis_effective_next_epoch_fail
+    const g = genesisRateParam(5n, 42n, 100n);
+    expect(g).toEqual({ rho_q: 5n, prev_rho_q: 0n, effective_epoch: 42n });
+    expect(rhoAt(g, 42n)).toBe(5n);
+    expect(rhoAt(g, 41n)).toBe(0n);
+  });
+  it("trên trần 1: ném", () => {
+    expect(() => genesisRateParam(101n, 42n, 100n)).toThrow(/rho_max_q/);
   });
 });
 

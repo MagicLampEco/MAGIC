@@ -290,8 +290,12 @@ export function lampAssetName(network: Network): string {
 // ── Két Wakeme — apply-param #8 `wakeme_vault_hash` của vault InstantGen ─────────
 //
 // Script hash két Wakeme theo MẠNG. Giá trị do nhà Wakeme (PhoenixKey) SỞ HỮU; ở đây
-// là bản CHÉP CÓ NHÃN: nguồn = thư Wakeme `wk0930mg-c` (2026-09-30, "Wakeme v3 trên
-// Preprod"), cùng giá trị với vector `InstantGen/onchain/lib/magiclamp/protocol/wakeme_lent.ak`.
+// là bản CHÉP CÓ NHÃN: nguồn = thư Wakeme `wk1003mg-c` (2026-10-03, "Wakeme v4 lưới O trên
+// Preprod", Wakeme `main` dbaf9ba; két + beacon lên chuỗi ở tx
+// 4afe7221eb2fea41cb8e59f6f066b159a277ead212124befff88252e0bc8a802). Bản v3 (`cc627325…`, thư
+// `wk0930mg-c`) đã bỏ. Hằng test ở `InstantGen/onchain/lib/magiclamp/protocol/wakeme_lent.ak` và
+// `InstantGen/onchain/validators/vault.ak` vẫn mang hash v3: ở đó nó chỉ là 28 byte để dựng ca
+// kiểm, không phải giá trị nướng vào vault — đừng đọc chúng làm nguồn.
 // Nó đổi theo LOẠI script (một giá trị mỗi mạng), không theo từng két — nên hợp lệ làm
 // apply-param. Két Wakeme redeploy ⟹ hash đổi ⟹ bên Wakeme phải báo, và mọi vault
 // InstantGen dựng lại với giá trị mới (đổi bytes ⟹ đổi địa chỉ).
@@ -300,7 +304,7 @@ export function lampAssetName(network: Network): string {
 // giả nướng vào apply-param vẫn cho ra một vault hợp lệ, chỉ là vault đó không bao giờ đọc
 // được két thật, và không gì kêu lên. Vắng ⟹ `wakemeVaultHash` NÉM.
 export const WAKEME_VAULT_HASH_BY_NETWORK: Readonly<Partial<Record<Network, string>>> = {
-  Preprod: "cc62732565af6be1e0874975ad3b3e2afdb0abafb3f5bc4b3008f4e1",   // Wakeme v3
+  Preprod: "4da780c4e990bd49ab4fa3f8340f7bb6869c244823996d39b4393cab",   // Wakeme v4 (lưới O), 2026-10-03
 };
 
 /** Script hash két Wakeme của `network`. Mạng chưa có két ⟹ NÉM, không trả giá trị đệm. */

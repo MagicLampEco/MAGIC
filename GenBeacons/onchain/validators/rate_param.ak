@@ -7,9 +7,19 @@
 //   - chỉ khoá đăng (1-of-1) đổi được ρ;
 //   - `0 ≤ rho_q ≤ rho_max_q` — trần cứng biên dịch là ĐIỀU KIỆN ĐỦ để mở đường đăng
 //     (`INV-RATE-GOVERNED`); trần chặn BIÊN ĐỘ, không chặn TẦN SUẤT (`INV-RATE-KEY-SINGLE`);
-//   - giá trị mới hiệu lực từ epoch SAU epoch đăng, và `prev_rho_q` = ρ đang hiệu lực
-//     trước lượt này ⟹ ρ hằng trong MỌI epoch, kể cả khi đăng nhiều lần trong một epoch;
+//   - GENESIS (mint): ρ đầu tiên hiệu lực NGAY trong epoch đăng (`effective_epoch == now`,
+//     `prev_rho_q == 0`) — người dùng có LAMP và GreenBack có thặng dư thì sinh được ngay,
+//     không phải chờ epoch sau (chủ dự án chốt 2026-10-03);
+//   - CẬP NHẬT (spend): giá trị mới hiệu lực từ epoch SAU epoch đăng, và `prev_rho_q` = ρ
+//     đang hiệu lực trước lượt này ⟹ ρ hằng trong MỌI epoch theo góc nhìn của két, kể cả
+//     khi đăng nhiều lần trong một epoch;
 //   - NFT ở lại đúng địa chỉ, datum inline.
+//
+// Vì sao genesis được hiệu lực ngay mà bất biến "ρ hằng trong mỗi epoch" vẫn giữ: trước
+// genesis chưa có beacon, mà két đọc ρ bằng `expect [beacon]` (thiếu beacon ⟹ giao dịch
+// két hỏng), nên KHÔNG két nào đọc được một ρ nào trong epoch đó trước lượt genesis. Từ
+// lượt genesis trở đi, mọi lượt đọc trong epoch đăng đều thấy cùng `rho_q`. Luật "epoch
+// sau" chỉ cần ở nhánh cập nhật — chỗ đã có két đọc ρ cũ trong epoch hiện tại.
 
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
@@ -38,8 +48,11 @@ validator rate_param(
   seed: OutputReference,
   window_origin_ms: Int,
 ) {
-  // Genesis: đúc NFT + tạo UTxO beacon đầu tiên. `prev_rho_q == 0` ⟹ epoch đăng đầu
-  // tiên có ρ hiệu lực = 0 (fail-closed: không két nào sinh trước epoch hiệu lực).
+  // Genesis: đúc NFT + tạo UTxO beacon đầu tiên. ρ hiệu lực NGAY trong epoch đăng
+  // (`effective_epoch == now`): trước lượt này không có beacon nên không két nào đã đọc
+  // ρ trong epoch `now` ⟹ hiệu lực ngay không đổi ρ giữa epoch theo góc nhìn của két.
+  // `prev_rho_q == 0` vẫn giữ: mọi epoch trước genesis có ρ = 0 (két đọc epoch cũ hơn
+  // `now`, nếu có, thấy 0 — fail-closed).
   mint(_redeemer: Data, policy_id: PolicyId, tx: Transaction) {
     expect ms_per_epoch > 0
     expect rho_max_q >= 0
@@ -50,7 +63,7 @@ validator rate_param(
     and {
       rate.rho_in_range(g.rho_q, rho_max_q),
       g.prev_rho_q == 0,
-      g.effective_epoch == util.get_epoch(tx, ms_per_epoch, window_origin_ms) + 1,
+      g.effective_epoch == util.get_epoch(tx, ms_per_epoch, window_origin_ms),
     }
   }
 
@@ -297,14 +310,32 @@ fn rp_genesis_tx(
 }
 
 fn rp_mint(tx: Transaction) -> Bool {
-  rate_param.mint(rp_key, rp_max, rp_mspe, rp_seed, 0, Void, rp_sh, tx)
+  rp_mint_at(0, tx)
 }
 
+/// Như `rp_mint` nhưng validator nhận gốc `origin`.
+fn rp_mint_at(origin: Int, tx: Transaction) -> Bool {
+  rate_param.mint(rp_key, rp_max, rp_mspe, rp_seed, origin, Void, rp_sh, tx)
+}
+
+/// Genesis ở epoch 7: ρ = 3e9 hiệu lực NGAY epoch 7 (`effective_epoch == now`).
 const rp_genesis: RateParam =
-  RateParam { rho_q: 3_000_000_000, prev_rho_q: 0, effective_epoch: 8 }
+  RateParam { rho_q: 3_000_000_000, prev_rho_q: 0, effective_epoch: 7 }
+
+// Cặp phân biệt luật cũ (`now + 1`) với luật mới (`now`): ca dương `eff = now` đỏ dưới
+// luật cũ; ca âm `eff = now + 1` xanh-thân (qua) dưới luật cũ ⟹ bài `fail` đỏ. Ca âm
+// `eff = now − 1` chặn đột biến nới thành `<=`.
 
 test rate_genesis_happy() {
   rp_mint(rp_genesis_tx(rp_genesis, [rp_key], True, 7))
+}
+
+test rate_genesis_rho_in_force_same_epoch() {
+  // Mục tiêu của luật: ngay epoch genesis két đọc được ρ = rho_q, không phải 0.
+  and {
+    rp_mint(rp_genesis_tx(rp_genesis, [rp_key], True, 7)),
+    rate.rho_at(rp_genesis, 7) == 3_000_000_000,
+  }
 }
 
 test rate_genesis_no_seed_fail() fail {
@@ -318,7 +349,7 @@ test rate_genesis_not_key_fail() fail {
 test rate_genesis_over_max_fail() fail {
   rp_mint(
     rp_genesis_tx(
-      RateParam { rho_q: rp_max + 1, prev_rho_q: 0, effective_epoch: 8 },
+      RateParam { rho_q: rp_max + 1, prev_rho_q: 0, effective_epoch: 7 },
       [rp_key],
       True,
       7,
@@ -327,9 +358,10 @@ test rate_genesis_over_max_fail() fail {
 }
 
 test rate_genesis_prev_nonzero_fail() fail {
+  // `effective_epoch == now` hợp lệ ⟹ chỉ vế `prev_rho_q == 0` chặn được ca này.
   rp_mint(
     rp_genesis_tx(
-      RateParam { rho_q: 3_000_000_000, prev_rho_q: 1, effective_epoch: 8 },
+      RateParam { rho_q: 3_000_000_000, prev_rho_q: 1, effective_epoch: 7 },
       [rp_key],
       True,
       7,
@@ -337,15 +369,43 @@ test rate_genesis_prev_nonzero_fail() fail {
   )
 }
 
-test rate_genesis_effective_same_epoch_fail() fail {
+test rate_genesis_effective_next_epoch_fail() fail {
+  // Luật cũ (hiệu lực từ epoch sau) — nay bị từ chối: két phải chờ trọn epoch dựng.
   rp_mint(
     rp_genesis_tx(
-      RateParam { rho_q: 3_000_000_000, prev_rho_q: 0, effective_epoch: 7 },
+      RateParam { rho_q: 3_000_000_000, prev_rho_q: 0, effective_epoch: 8 },
       [rp_key],
       True,
       7,
     ),
   )
+}
+
+test rate_genesis_effective_prev_epoch_fail() fail {
+  // Hiệu lực lùi về epoch trước genesis ⟹ từ chối (chặn đột biến `==` → `<=`).
+  rp_mint(
+    rp_genesis_tx(
+      RateParam { rho_q: 3_000_000_000, prev_rho_q: 0, effective_epoch: 6 },
+      [rp_key],
+      True,
+      7,
+    ),
+  )
+}
+
+// ── Genesis rồi cập nhật trong CÙNG epoch ─────────────────────────────────────────
+//    Sau genesis {3e9, 0, 7}, ρ epoch 7 đã là 3e9 ⟹ lượt cập nhật cùng epoch phải ghi
+//    prev = 3e9. Ghi prev = 0 là kéo ρ epoch 7 từ 3e9 về 0 giữa epoch.
+
+test rate_update_after_genesis_same_epoch_happy() {
+  let out =
+    RateParam { rho_q: 1_000_000_000, prev_rho_q: 3_000_000_000, effective_epoch: 8 }
+  rp_spend(rp_genesis, rp_tx(rp_genesis, out, [rp_key], 7))
+}
+
+test rate_update_after_genesis_same_epoch_prev_zero_fail() fail {
+  let out = RateParam { rho_q: 1_000_000_000, prev_rho_q: 0, effective_epoch: 8 }
+  rp_spend(rp_genesis, rp_tx(rp_genesis, out, [rp_key], 7))
 }
 
 // ── GỐC CỬA SỔ (WIN-ORIGIN-1) ───────────────────────────────────────────────────
@@ -364,6 +424,23 @@ test rate_update_origin_forgotten_fail() fail {
   let out =
     RateParam { rho_q: 3_500_000_000, prev_rho_q: 3_000_000_000, effective_epoch: 8 }
   rp_spend_at(0, rp_in, window_origin_fixtures.shift_tx(rp_tx(rp_in, out, [rp_key], 7), o))
+}
+
+test rate_genesis_origin_mainnet_happy() {
+  // Thời gian thật = gốc Mainnet + epoch 7 ⟹ now = 7 ⟹ effective_epoch 7.
+  let o = window_origin_fixtures.mainnet_origin_ms
+  rp_mint_at(
+    o,
+    window_origin_fixtures.shift_tx(rp_genesis_tx(rp_genesis, [rp_key], True, 7), o),
+  )
+}
+
+test rate_genesis_origin_forgotten_fail() fail {
+  let o = window_origin_fixtures.mainnet_origin_ms
+  rp_mint_at(
+    0,
+    window_origin_fixtures.shift_tx(rp_genesis_tx(rp_genesis, [rp_key], True, 7), o),
+  )
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

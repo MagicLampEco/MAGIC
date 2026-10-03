@@ -57,8 +57,64 @@ export interface OwnerWitnessProvider {
 
 // ── đọc thân bài ─────────────────────────────────────────────────────────────
 
-/** `owner` + bí danh `owner_pkh` → một `OwnerRef`, hoặc ném 400 có mã. */
-export function parseOwnerFields(body: Record<string, unknown>): OwnerRef {
+/**
+ * Chủ khai bằng DID: `owner: { "type": "did", "did": "did:…", "device_key_hash"?: <56 hex> }`.
+ * Dịch vụ tự suy `Script(did_stake)` + nhân chứng từ anchor trên chuỗi (`didOwner.ts`), nên app
+ * chỉ gửi DID — và tuỳ chọn khoá thiết bị sẽ ký (vắng ⟹ `device_pkh` chính của anchor).
+ */
+export interface DidOwnerInput {
+  type: "did";
+  did: string;
+  deviceKeyHash?: string;
+}
+
+/** Chủ như bên gọi khai: credential tường minh, hoặc DID chờ suy. */
+export type OwnerInput = OwnerRef | DidOwnerInput;
+
+export function isDidOwner(o: OwnerInput): o is DidOwnerInput {
+  return o.type === "did";
+}
+
+// `did:` + ký tự ASCII in được không khoảng trắng (0x21..0x7e), tổng 5..256 byte. Không đoán
+// phương thức DID: luật hình dạng chỉ để chặn rác trước khi băm, tính đúng do anchor trên chuỗi
+// quyết (DID không có anchor ⟹ 422 `OWNER_ANCHOR_NOT_FOUND`).
+const DID_SHAPE = /^did:[\x21-\x7e]{1,252}$/;
+
+function parseDidOwner(o: Record<string, unknown>, body: Record<string, unknown>): DidOwnerInput {
+  const extra = Object.keys(o).filter(k => k !== "type" && k !== "did" && k !== "device_key_hash");
+  if (extra.length > 0) {
+    throw new CodedApiError(400, "OWNER_CREDENTIAL_SHAPE",
+      `"owner" kiểu "did" chỉ có các trường type/did/device_key_hash.`, { extra_fields: extra });
+  }
+  const did = o.did;
+  if (typeof did !== "string" || !DID_SHAPE.test(did)) {
+    throw new CodedApiError(400, "OWNER_DID_SHAPE",
+      `"owner.did" phải là chuỗi bắt đầu bằng "did:", chỉ gồm ký tự ASCII in được không khoảng trắng, ` +
+      `dài 5..256 byte.`,
+      { did_length: typeof did === "string" ? did.length : typeof did });
+  }
+  const dk = o.device_key_hash;
+  if (dk !== undefined && (typeof dk !== "string" || !HASH28.test(dk))) {
+    throw new CodedApiError(400, "OWNER_HASH_INVALID",
+      `"owner.device_key_hash" phải là 56 ký tự hex thường (28 byte).`);
+  }
+  // Chủ DID mà kèm nhân chứng / bí danh: hai nguồn cho cùng một dữ kiện, chọn một bên là đoán.
+  const conflicting = ["owner_witness", "owner_pkh"].filter(k => body[k] !== undefined);
+  if (conflicting.length > 0) {
+    throw new CodedApiError(400, "OWNER_DID_CONFLICT",
+      `"owner" kiểu "did" không đi cùng ${conflicting.map(k => `"${k}"`).join(" / ")}: dịch vụ tự suy ` +
+      `script và nhân chứng từ anchor của DID. Bỏ các trường đó, hoặc gửi chủ script tường minh.`,
+      { conflicting_fields: conflicting });
+  }
+  return { type: "did", did, ...(dk === undefined ? {} : { deviceKeyHash: dk as string }) };
+}
+
+/** `owner` + bí danh `owner_pkh` → một `OwnerInput`, hoặc ném 400 có mã. */
+export function parseOwnerFields(body: Record<string, unknown>): OwnerInput {
+  const raw = body.owner;
+  if (raw !== null && typeof raw === "object" && !Array.isArray(raw) && (raw as Record<string, unknown>).type === "did") {
+    return parseDidOwner(raw as Record<string, unknown>, body);
+  }
   let alias: OwnerRef | undefined;
   if (body.owner_pkh !== undefined) {
     const v = body.owner_pkh;
@@ -80,7 +136,7 @@ export function parseOwnerFields(body: Record<string, unknown>): OwnerRef {
     const extra = Object.keys(o).filter(k => k !== "type" && k !== "hash");
     if ((type !== "key" && type !== "script") || extra.length > 0) {
       throw new CodedApiError(400, "OWNER_CREDENTIAL_SHAPE",
-        `"owner.type" phải là "key" hoặc "script", và "owner" chỉ có hai trường type/hash.`,
+        `"owner.type" phải là "key", "script" hoặc "did"; chủ key/script chỉ có hai trường type/hash.`,
         { owner_type: typeof type === "string" ? type : typeof type, extra_fields: extra });
     }
     if (typeof hash !== "string" || !HASH28.test(hash)) {

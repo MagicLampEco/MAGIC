@@ -38,7 +38,7 @@ trình biên dịch `v1.1.21+42babe5`
 |---|---|
 | `gb_shard.gb_shard` | `39e1ed54b82ccb8a810c88f245678b5da3dc05a5f79c64bc7a306834` |
 | `greenback_beacon.greenback_beacon` | `cbdf18b3e12135f4d4625f333ad704a53ae28f3516bb41a7ff84e958` |
-| `rate_param.rate_param` | `9b4beb6447b5f997a88b9203f0d32ff2c761b3c135d391b52a8d8c80` |
+| `rate_param.rate_param` | `680b59a65f117e3e63628c300a0853c79af7845f79731adbe2d519ee` |
 | `vault_registry.vault_registry` | `d3c73c8e3210eac51e3f8715c86ea4c520deabf321fcce8791bc2483` |
 
 ### `InstantGen/onchain`

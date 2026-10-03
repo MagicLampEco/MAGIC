@@ -268,13 +268,13 @@ describe("/tx/bind-did — fee_payer", () => {
 // ── khoá + UTxO đang chờ ─────────────────────────────────────────────────────
 
 describe("/tx/bind-did — tranh chấp thread", () => {
-  it("hai lượt gắn liền nhau, lượt đầu chưa nộp ⟹ lượt sau 409 OWNER_TX_IN_FLIGHT", async () => {
+  it("hai lượt gắn liền nhau, lượt đầu chưa nộp ⟹ lượt sau THAY lượt đầu, không 409 (đổi từ OWNER_TX_IN_FLIGHT, 2026-10-03)", async () => {
     const h = harness();
     const a = await handle(bind(), h.router);
     expect(a.status, JSON.stringify(a.body)).toBe(200);
     const b = await handle(bind(), h.router);
-    expect(b.status).toBe(409);
-    expect(codeOf(b)).toBe("OWNER_TX_IN_FLIGHT");
+    expect(b.status, JSON.stringify(b.body)).toBe(200);
+    expect((b.body as { tx_hash?: unknown }).tx_hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("thread là input của tx vừa nộp mà chưa vào khối ⟹ 409 PREVIOUS_TX_PENDING", async () => {

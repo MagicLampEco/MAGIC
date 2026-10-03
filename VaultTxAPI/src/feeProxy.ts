@@ -34,7 +34,7 @@ import { createHash } from "node:crypto";
 
 import type { FeecoverAppSettings, FeecoverSettings } from "./config.js";
 import { FEECOVER_DEFAULT_APP } from "./config.js";
-import { BadRequestError, CodedApiError } from "./errors.js";
+import { BadRequestError, CodedApiError, TxSupersededError } from "./errors.js";
 import type { IssuedRoute, IssuedTxRegistry } from "./locks.js";
 import { ISSUED_ROUTES } from "./locks.js";
 import { txBodyHash } from "./summary.js";
@@ -171,6 +171,9 @@ export class FeeProxy {
         `Giao dịch ${hash} không do dịch vụ này phát, hoặc đã quá hạn xin ký (hết giờ giữ UTxO phí ` +
         `hoặc hết hạn sổ). Dựng lại giao dịch.`, { tx_hash: hash });
     }
+    // Tx đã bị thay (một tx chung khoá đã NỘP sau khi nó được dựng — `locks.ts`): xin ký nó là giữ
+    // thêm một UTxO phí cho một tx chắc chắn không lên chuỗi.
+    if (entry.supersededBy !== undefined) throw new TxSupersededError(hash, { superseded_by: entry.supersededBy });
     if (entry.feePayerUtxo === undefined) {
       throw new CodedApiError(400, "FEE_PROXY_NO_FEE_PAYER",
         `Giao dịch ${hash} không dùng ví trả phí ("fee_payer" / "funding.fee_payer") — không có gì để ` +

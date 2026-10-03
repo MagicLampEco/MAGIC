@@ -317,6 +317,7 @@ Chủ là một `Credential`, hai dạng:
 ```jsonc
 "owner": { "type": "key",    "hash": "<56 hex thường>" }   // khoá thanh toán
 "owner": { "type": "script", "hash": "<56 hex thường>" }   // script — hiện là did_stake của PhoenixKey
+"owner": { "type": "did",    "did": "did:…" }              // DID — dịch vụ tự suy Script(did_stake), xem dưới
 ```
 
 `owner_pkh: "<56 hex>"` vẫn nhận, và nghĩa là đúng `{ "type": "key", "hash": owner_pkh }`.
@@ -352,6 +353,57 @@ thái Active của anchor **không** kiểm ở đây: lược đồ datum ancho
 danh tính, và `did_stake` từ chối trên chuỗi nếu anchor không Active.
 
 Chủ khoá mà gửi `owner_witness` ⟹ `400 OWNER_WITNESS_UNEXPECTED`.
+
+#### Chủ khai bằng DID: `owner: { "type": "did" }` — app chỉ gửi DID
+
+Mọi hành động MAGIC ký bằng khoá DID PhoenixKey; chủ vault trên chuỗi là `Script(did_stake)`
+(`InstantGen/onchain/lib/magiclamp/protocol/owner_auth.ak` ▸ `owner_authorized`). App không phải
+tự dựng `owner_witness`:
+
+```jsonc
+"owner": { "type": "did", "did": "did:…", "device_key_hash": "<56 hex>" }   // device_key_hash tuỳ chọn
+```
+
+Dịch vụ suy, ở ĐẦU mỗi đường dựng và TRƯỚC khi giữ khoá mềm (`src/didOwner.ts` ▸ `DidOwnerResolver`):
+tên NFT anchor = `blake2b_256(utf8(did))` · đọc UTxO đang giữ `anchor_nft_policy ‖ tên` · đọc datum
+inline như `TAADDatum` 18 trường (PhoenixKey-Validator ▸ `lib/phoenixkey/types.ak` @ `c9050b9`:
+`controller_pkh` #2, `status` #5 với Active = constructor 0, `device_pkh` #14, `aux_device_pkhs` #15)
+· script = `did_stake` chưa apply (cấu hình, §6) apply `(anchor_nft_policy, tên)`. Kết quả giao cho
+CÙNG đường nhân chứng với chủ script tường minh ở trên — mọi phép kiểm sau đó (NFT anchor, tài khoản
+thưởng đã đăng ký, `required_signers`) là một đường mã. Một yêu cầu `{type:"did"}` và cùng yêu cầu viết
+tường minh ra **cùng `tx_cbor` từng byte** và cùng khoá mềm `script:<hash>` (bài
+`tests/didOwner.test.ts` ▸ *TƯƠNG ĐƯƠNG*). Thân trả về: `owner` là `Script(hash)` đã suy,
+`summary.owner_did` là DID đã khai, `required_signers` là controller + khoá thiết bị đã chọn.
+
+- `device_key_hash` vắng ⟹ `device_pkh` chính của anchor; có thì phải là `device_pkh` hoặc nằm trong
+  `aux_device_pkhs`, không ⟹ `400 OWNER_DEVICE_NOT_LISTED`.
+- `did` phải bắt đầu bằng `did:`, chỉ ký tự ASCII in được không khoảng trắng, 5..256 byte ⟹ không thì
+  `400 OWNER_DID_SHAPE`. Kèm `owner_witness` hoặc `owner_pkh` ⟹ `400 OWNER_DID_CONFLICT` (hai nguồn cho
+  một chủ, chọn một bên là đoán).
+- Anchor: không có ⟹ `422 OWNER_ANCHOR_NOT_FOUND`; nhiều hơn một UTxO giữ NFT ⟹ `422
+  OWNER_ANCHOR_AMBIGUOUS`; datum không phải Constr đúng 18 trường đúng kiểu ⟹ `422 OWNER_ANCHOR_SCHEMA`
+  (lược đồ bên PhoenixKey đổi thì lỗi kêu ở đây, không dựng trên trường đọc nhầm chỗ); không Active ⟹
+  `422 OWNER_ANCHOR_NOT_ACTIVE`. Với chủ DID, trạng thái Active **được** kiểm lúc dựng — khác chủ script
+  tường minh ở trên.
+- Bản deploy không khai `did_stake.unapplied_script` ⟹ `501 OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ script
+  tường minh vẫn chạy.
+- Mọi đường nhận `owner` đều nhận dạng DID: bảy đường `/tx/*`, `/tx/quote` (qua `params`),
+  `/tx/create-vault`, và `/tx/sponsor/*` (kể cả `plan`, cần dịch vụ tài trợ bật để suy).
+
+**Điều kiện TRƯỚC khi tạo vault: `did_stake` phải ĐÃ ĐĂNG KÝ làm stake credential.** Genesis cũng gọi
+`owner_authorized` (`InstantGen/onchain/validators/vault.ak` ▸ nhánh mint `MintVaultId`, dòng `expect owner_authorized(tx, vd.owner)` của genesis), nên tx tạo
+vault đã cần mục rút `Script(h)`, và mục rút chỉ hợp lệ trên tài khoản đã đăng ký. Đăng ký **không gộp
+được** vào tx của vault: `owner_auth` từ chối tx mang chứng chỉ vòng đời stake cho chính `Script(h)`,
+và ledger xử lý mục rút TRƯỚC chứng chỉ nên một tx "đăng ký + rút" vẫn rút trên tài khoản chưa có.
+Đăng ký là một tx riêng do máy chủ PhoenixKey dựng ngay sau genesis DID (cọc do PhoenixKey trả);
+chưa đăng ký ⟹ dịch vụ này trả `422 OWNER_STAKE_NOT_REGISTERED` như trước.
+
+**Ai ký.** Dịch vụ không ký gì. App đưa `tx_cbor` cho PhoenixKey ký bằng controller + khoá thiết bị đã
+chọn — đúng hai khoá trong `required_signers` của thân trả về.
+
+**Đối chiếu phép suy.** Máy chủ PhoenixKey có `GET /api/v1/identity/{did}/stake-script-hash`, trả hash
+`did_stake` ĐÃ apply cho từng DID; nó phải bằng `owner.hash` mà dịch vụ này trả cho cùng DID. Lệch ⟹
+`did_stake.unapplied_script` của bản deploy không cùng đời với bên PhoenixKey.
 
 **`change_address`**: chủ khoá bỏ trống thì dịch vụ suy theo chiến lược ở §7 như trước. Chủ
 script **bắt buộc** gửi (`400 CHANGE_ADDRESS_REQUIRED`) — một script hash không suy ra được ví
@@ -412,7 +464,8 @@ Trước khi dựng két instant, dịch vụ đọc địa chỉ két: chủ đ
 `details.existing: [{ vault_ref, vault_nft, matched_by: "owner" | "did_commit" }]`, bộ dựng
 không được gọi. Đây là lưới an toàn của DỊCH VỤ (chống bấm hai lần), **không** phải cổng chống
 Sybil — `INV-ONE-PERSON-ONE-VAULT` chưa được ép on-chain; tx tạo két vừa nộp mà chưa vào khối thì
-phép đọc này không thấy (khoá mềm theo chủ, §4, chặn ca đó trong hạn TTL).
+phép đọc này không thấy (khoá mềm theo chủ, §4, chặn ca đó ở lúc NỘP: tx tạo két thứ hai, dựng trước
+khi tx thứ nhất được nộp, nhận `409 TX_SUPERSEDED`).
 
 #### Nguồn LAMP: `change_address` (đường cũ) hoặc `funding` (ví Phoenix)
 
@@ -771,8 +824,8 @@ thread đầu vào; datum giữ nguyên chủ + ba trục kế toán, chỉ `did
 cầu; chủ khoá nằm trong `required_signers`. Validator đòi chữ ký của CHÍNH chủ — không có đường ký
 thay (`personal_delegate`) như `/tx/consume`.
 
-Khoá mềm theo chủ (§4): hai lượt gắn DID — hoặc gắn DID và tiêu MAGIC — cho cùng chủ trước khi nộp ⟹
-lượt sau `409 OWNER_TX_IN_FLIGHT`.
+Khoá mềm theo chủ (§4): hai lượt gắn DID — hoặc gắn DID và tiêu MAGIC — cho cùng chủ trước khi nộp
+đều dựng được; lượt NỘP sau của tx dựng trước ⟹ `409 TX_SUPERSEDED`.
 
 ### Proxy phí Feecover: `POST /fee/utxo`, `POST /fee/sign`
 
@@ -906,8 +959,8 @@ hai cách trả phí — gửi cả hai ⟹ `400 FEE_PAYER_CHANGE_ADDRESS_CONFLI
 
   `summary.fee_payer` trả: `address`, `utxo`, `input_lovelace`, `fee_lovelace`,
   `change_lovelace`, `fronted_lovelace` (min-ADA đã ứng), `collateral_at_risk_lovelace`,
-  `collateral_return_lovelace`, `valid_to_posix_ms`. UTxO trả phí bị giữ khoá `utxo:<ref>` tới khi
-  tx hết hạn: một lượt khác dùng lại cùng UTxO ⟹ `409 OWNER_TX_IN_FLIGHT`.
+  `collateral_return_lovelace`, `valid_to_posix_ms`. UTxO trả phí mang khoá `utxo:<ref>`: một lượt khác dựng lại trên cùng UTxO
+  vẫn dựng được và THAY lượt cũ; nộp tx cũ sau khi tx mới đã nộp ⟹ `409 TX_SUPERSEDED` (§4).
 
 **Vai ký không đổi theo cách trả phí.** Mảng `signers` vẫn mang vai `fee-wallet` (khoá thanh toán
 của `fee_payer.address`, hoặc của `change_address`), rồi `sponsor` (chỉ T2), rồi `owner`. Ví trả
@@ -937,7 +990,7 @@ phí ký vì tx chi UTxO của nó; nó không vào `required_signers`.
   loopback. Thẻ vai dùng ở route khác ⟹ `401`. Nguồn: `src/http.ts` ▸ `SPONSOR_ROLE_PATHS`,
   `requireRole`. T1/T3/T4 giữ thẻ thường.
 - **Khoá theo UTxO.** Mỗi T2 giữ khoá `utxo:<ref>` cho từng UTxO bên tài trợ (cùng TTL với khoá
-  chủ): hai T2 chưa nộp không dựng được trên cùng một UTxO ⟹ lượt sau `409 OWNER_TX_IN_FLIGHT`.
+  chủ): hai T2 cùng một UTxO đều dựng được, lượt sau THAY lượt trước; tx nộp sau ⟹ `409 TX_SUPERSEDED` (§4).
 - **Chủ phải là DID.** T1/T2 chỉ nhận chủ `Script(did_stake)` kèm `owner_witness` (chủ khoá ⟹
   `422 SPONSOR_OWNER_NOT_DID`), và tên anchor trong nhân chứng phải bằng `did_commit` của hành
   trình (T1: của thân bài; T2: của thread) — lệch ⟹ `422 SPONSOR_OWNER_DID_MISMATCH`. Nguồn:
@@ -1038,7 +1091,8 @@ của dịch vụ: khối chú thích đầu `src/errors.ts`. Phần người g�
 | `SPONSOR_BUILD_FAILED` | 422 | bộ dựng không cân được tx — thường là UTxO trả phí không đủ ADA cho phí + thế chấp + min-ADA phải ứng; nạp UTxO lớn hơn |
 | `SPONSOR_OWNER_NOT_DID` · `SPONSOR_OWNER_DID_MISMATCH` | 422 | T1/T2 với chủ khoá / anchor của nhân chứng không mang tên `did_commit` |
 | `SPONSOR_ROLE_REQUIRED` | 403 | T2 gọi bằng thẻ thường — cần thẻ vai sponsor |
-| `OWNER_TX_IN_FLIGHT` | 409 | chủ, quỹ hoặc một UTxO bên tài trợ đang bị một tx dựng xong mà chưa nộp giữ khoá |
+| `TX_SUPERSEDED` | 409 | lúc NỘP: tx đã bị thay — một tx khác chung khoá (chủ, quỹ, UTxO bên tài trợ / ví trả phí) đã được nộp, hoặc input của nó vừa bị tx khác tiêu (§4) |
+| `OWNER_TX_IN_FLIGHT` | 409 | **đã nghỉ** — bản cũ trả ở lúc DỰNG; nay không đường nào trả (§4) |
 | `SPONSOR_THREAD_DID_INVALID` | 422 | thread của chủ không mang `did_commit` 32 byte — két không mở bằng T1 |
 | `SPONSOR_TX_MISMATCH` | 422 | tx vừa dựng không có đúng output két/thread ở địa chỉ đã cấu hình — lệch cấu hình, báo vận hành |
 | `SPONSOR_PREPAID_UNAVAILABLE` · `SPONSOR_PREPAID_SCRIPTS_MISMATCH` · `CONFIG_MISSING` · `SPONSOR_UNAVAILABLE` | 501 | bản deploy không phục vụ được hành trình này |
@@ -1075,6 +1129,9 @@ Nên:
 | chủ script, thiếu `owner_witness` | `400 OWNER_SCRIPT_WITNESS_UNAVAILABLE` |
 | script gửi lên không băm ra `owner.hash` | `400 OWNER_AUTH_MISMATCH` |
 | UTxO anchor không mang tài sản dưới `anchor_nft_policy` | `400 OWNER_ANCHOR_INVALID` |
+| chủ `did`: `did` sai khuôn / kèm `owner_witness` hay `owner_pkh` / thiết bị không có trong anchor | `400 OWNER_DID_SHAPE` / `400 OWNER_DID_CONFLICT` / `400 OWNER_DEVICE_NOT_LISTED` |
+| chủ `did`: anchor không có / nhiều hơn một / datum không phải `TAADDatum` 18 trường / không Active | `422 OWNER_ANCHOR_NOT_FOUND` / `422 OWNER_ANCHOR_AMBIGUOUS` / `422 OWNER_ANCHOR_SCHEMA` / `422 OWNER_ANCHOR_NOT_ACTIVE` |
+| chủ `did`, bản deploy thiếu `did_stake.unapplied_script` | `501 OWNER_SCRIPT_WITNESS_UNAVAILABLE` |
 | thiếu / sai `change_address` | `400 CHANGE_ADDRESS_REQUIRED` / `400 CHANGE_ADDRESS_INVALID` |
 | `funding` sai hình dạng / trường lạ / chủ khoá thiếu anchor·controller·thiết bị | `400 FUNDING_SHAPE` |
 | `did_payment_script_cbor` không băm ra payment credential `Script(h)` của `funding.address` | `400 FUNDING_SCRIPT_MISMATCH` |
@@ -1153,7 +1210,8 @@ Nên:
 | thiếu/sai thẻ bài | `401 UNAUTHORIZED` |
 | chủ **chưa có** vault | `404 VAULT_NOT_FOUND` ← **không phải** `200` với tx rỗng |
 | method sai | `405 METHOD_NOT_ALLOWED` |
-| chủ đã có một tx dựng xong chưa nộp | `409 OWNER_TX_IN_FLIGHT` |
+| nộp một tx đã bị tx khác chung khoá (đã NỘP) thay, hoặc input đã bị tx vừa nộp tiêu | `409 TX_SUPERSEDED` (`details.superseded_by` / `details.conflicting_inputs`) |
+| chủ đã có một tx dựng xong chưa nộp | **không còn lỗi** — lượt dựng mới thay lượt cũ; `OWNER_TX_IN_FLIGHT` đã nghỉ (§4) |
 | hai UTxO cùng một NFT danh-tính | `409 VAULT_IDENTITY_DUPLICATE` |
 | chủ có nhiều vault, yêu cầu không nói cái nào | `409 VAULT_AMBIGUOUS` |
 | giao thức từ chối (L×λ > L_avail, MAGIC sống < required, shard hết chỗ) | `422 TX_BUILD_REJECTED` |
@@ -1181,8 +1239,22 @@ yêu cầu tới gần nhau cho cùng `owner_pkh` chọn **trùng** input, và e
 hai lên chuỗi. Cái thua **không hỏng lúc dựng** — nó hỏng *sau khi người dùng đã ký*, và
 câu của chuỗi lúc đó không nhắc gì tới chuyện có hai giao dịch.
 
-Nên `409 OWNER_TX_IN_FLIGHT`, và khoá **giữ tới lúc nộp**, không nhả ngay sau khi dựng:
-nhả sớm thì không chặn được gì, vì UTxO vault vẫn chưa bị tiêu. Ba đường mở khoá:
+**Xung đột bắt ở lúc NỘP, không ở lúc dựng** (đổi 2026-10-03, `src/locks.ts` đầu tệp). Bản cũ
+trả `409 OWNER_TX_IN_FLIGHT` cho lượt DỰNG thứ hai suốt TTL; nhưng chủ là công khai, dựng tx không
+cần chữ ký chủ, và dịch vụ có một thẻ Bearer dùng chung ⟹ ai có thẻ gọi lặp là khoá két người khác
+vô thời hạn. Luật hiện hành:
+
+- lượt dựng mới cho một khoá **không bao giờ** nhận 409 vì một lượt dựng khác: nó lấy khoá, lượt cũ bị
+  THAY, mọi khoá phụ lượt cũ còn giữ (UTxO quỹ / UTxO ví trả phí ở `/tx/sponsor/*`) nhả ngay, và chỗ
+  giữ phí của tx bị thay được trả lại;
+- một tx chỉ bị coi là đã thay khi một tx KHÁC chung khoá với nó được **NỘP** (cần chữ ký chủ), không
+  phải khi được dựng — nên người lạ dựng lặp không làm tx của chủ bị từ chối;
+- `/tx/submit` (và `/fee/sign`) với tx đã bị thay, hoặc tx có input đã bị một tx vừa nộp (chưa vào khối)
+  tiêu ⟹ `409 TX_SUPERSEDED` với `details.superseded_by` (hash tx đã nộp) và/hoặc
+  `details.conflicting_inputs`. App dựng lại từ đầu.
+
+Mã `OWNER_TX_IN_FLIGHT` đã nghỉ: không đường nào trả nữa, giữ lại trong tài liệu để app đời cũ còn
+nhận ra. Khoá vẫn **giữ tới lúc nộp** để `/tx/submit` biết tx nào chung khoá. Ba đường mở khoá:
 `/tx/submit` đúng giao dịch đó · hết hạn (`VAULT_TX_API_LOCK_TTL_MS`, mặc định 180 s, cũng
 là `expires_at`) · dựng hỏng thì nhả ngay · nút chuỗi TỪ CHỐI giao dịch lúc nộp (mất kết nối
 lúc nộp thì KHÔNG nhả — không biết giao dịch đã vào mempool chưa). Khoá mang thẻ thế hệ: một
@@ -1272,7 +1344,7 @@ dùng.
     "max_price_stale": "1"                  // tuỳ chọn — apply-param #5 của consume; có ⟹ từ chối sớm CONSUME-011
   },
   "fee_payer_collateral_lovelace": "3000000",      // tuỳ chọn, CHUỖI; thế chấp khi có ví trả phí
-  "did_stake": { "anchor_nft_policy": "<56 hex>" }, // tuỳ chọn — chủ script + funding did_payment
+  "did_stake": { "anchor_nft_policy": "<56 hex>", "unapplied_script": { "cbor": "<hex>", "hash": "<56 hex>" } }, // tuỳ chọn — chủ script + funding did_payment; unapplied_script bật chủ {type:"did"}
   "feecover": {                                     // tuỳ chọn — proxy phí, xem §3
     "url": "https://feecover.example",              // https://, hoặc http:// tới loopback
     "timeout_ms": 15000,                            // tuỳ chọn, mặc định 15000
@@ -1385,10 +1457,17 @@ chỉ còn áp cho chủ khoá không gửi trường đó; chủ script và `/t
 Mục `did_stake` tuỳ chọn của `VAULT_TX_API_DEPLOYMENT`:
 
 ```jsonc
-"did_stake": { "anchor_nft_policy": "<56 hex thường>" }   // tham số theo mạng của did_stake
+"did_stake": {
+  "anchor_nft_policy": "<56 hex thường>",                    // tham số theo mạng của did_stake
+  "unapplied_script": { "cbor": "<hex>", "hash": "<56 hex>" } // tuỳ chọn — bật chủ {type:"did"}
+}
 ```
 
-Có thì đủ trường và đúng hình dạng, không thì cổng khởi động ném. `scripts/gen_vault_tx_api_deployment.ts`
+Có thì đủ trường và đúng hình dạng, không thì cổng khởi động ném. `unapplied_script` là `did_stake`
+CHƯA apply tham số, lấy từ sổ deploy của PhoenixKey-Validator cho đúng mạng; hai trường đi cặp (thiếu
+một ⟹ lỗi cấu hình), và lúc khởi động dịch vụ băm lại `cbor` — lệch `hash` ⟹ **từ chối khởi động**
+(mọi chủ DID sẽ được suy ra một script không phải của họ). Hash này đổi theo đời validator bên
+PhoenixKey, nên nó chỉ sống ở cấu hình theo mạng, không ở mã. `scripts/gen_vault_tx_api_deployment.ts`
 **chưa** sinh mục này — xem §8.
 
 ---

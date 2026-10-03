@@ -12,8 +12,9 @@
 - (a) `PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_draw` không còn đặt
   `consumed_unsettled` về 0 trên dòng được rút; chỉ `remaining` và `last_draw_epoch` đổi.
 - (b) `InstantGen/onchain/lib/magiclamp/protocol/checkpoint.ak` ▸ `resolve_link`, luật 6: nhánh
-  `FollowVault` chỉ đổi được `wakeme_link` khi link cũ rỗng, khi `owner_commit` trùng link cũ, hoặc
-  khi két đọc được đang ghim chính két này (`L_lent > 0`); đổi sang két Wakeme khác thì bị từ chối.
+  `FollowVault` chỉ đổi được `wakeme_link` khi `owner_commit` trùng link cũ, hoặc khi két đọc được
+  đang ghim chính két này (`L_lent > 0`); đổi sang két Wakeme khác thì bị từ chối. Link cũ RỖNG
+  không còn là ngoại lệ: lượt nối đầu chỉ qua genesis (link khai sẵn) hoặc RefreshCheckpoint.
 - (c) `ScheduleGen/onchain/validators/vault.ak` ▸ `C-SCH-LOCKSUM` (issue #132): ở commit, fire và
   rút LAMP, `sum_locked(output.loyalty_holdings) == output.lamp_locked`; kèm `lock.ak ▸
   select_lamp_for_lock` chỉ chọn trong holding đang mở. Bộ dựng TS kiểm trước đẳng thức này bằng
@@ -22,11 +23,21 @@
   `validators/gb_shard.ak` ▸ `genesis_shard_ok` đòi `reference_script == None` ở đầu ra tiếp nối
   và đầu ra genesis.
 - (e) `Paymaster/onchain/lib/magiclamp/paymaster/util.ak` ▸ `get_epoch` đòi `lo_epoch == hi_epoch`.
+- (f) `reference_script == None` ở output két InstantGen/ScheduleGen (`validate_vault_value`,
+  genesis, RefreshCheckpoint), shard ScheduleGen (`find_shard_output_by_policy`) và `UMUpdate`
+  (`UMKeeper/onchain/validators/um_datum.ak`).
+- (g) `ConsumeMAGIC/onchain/validators/consume.ak`: `reference_script == None` ở mọi output thread
+  Engage — `enforce_engagement` (Consume, ConsumeMany), `validate_bind_did`,
+  `validate_mint_engage_id`; cùng cổng ở beacon giá `price_param.ak` (spend) và `price_nft.ak`
+  (genesis).
 
 Phần off-chain: luồng tài trợ T1–T4 (`MagicSDK/src/sponsorJourney.ts`; route
 `POST /tx/sponsor/*` ở `VaultTxAPI/src/sponsor.ts`), `vault_kind: "Prepaid"` ở `VaultReadAPI`
 (`prepaidView.ts`, `VAULT_KINDS`), và `scripts/gen_vault_read_api_config.ts` sinh cấu hình
-`VaultReadAPI` từ sổ trạng thái.
+`VaultReadAPI` từ sổ trạng thái. Bộ dựng khớp (b): `ConsumeMAGIC/offchain/src/genV2Checkpoint.ts`
+▸ `checkGenV2Burn` ném `CONSUME-013` khi két link rỗng mà có két Wakeme; `VaultTxAPI` ném
+`422 WAKEME_LINK_CHANGE_REJECTED` (`wakeme.ts` ▸ `assertWakemeLinkAllowed`) với câu chỉ đường
+RefreshCheckpoint, trước khi gọi bộ dựng.
 
 **Vì sao.**
 - (a) Rút một CARP đang xoá nợ quyết toán của quỹ, CARP đối ứng phần đã tiêu kẹt lại trong quỹ.
@@ -38,12 +49,20 @@ Phần off-chain: luồng tài trợ T1–T4 (`MagicSDK/src/sponsorJourney.ts`; 
   vào đó là đánh phí lên giao dịch của người khác.
 - (e) Cửa sổ validity bắc ngang biên epoch trả epoch kế tiếp, nên bộ đếm trần của Paymaster reset
   sớm một kỳ.
+- (b, vế link rỗng) Người dựng tx nối một két chưa link sang két Wakeme lạ; sau đó két Wakeme thật
+  của chủ không ghim được két này nữa, chủ mất phần mượn tới khi tự RefreshCheckpoint.
+- (f, g) Nhánh không chữ ký (PruneExpired, ScheduleFire, UMUpdate) hoặc bên thứ ba có quyền tiêu
+  (`personal_delegate` của thread) gắn được script lớn vào output, làm mọi giao dịch sau đắt thêm
+  theo byte.
 
 **Cái gì gãy nếu ai đó đang bám bản cũ.** Hash validator đổi, ghi ở `scripts/BUILD-RECORD.md`
-(`git -C <kho> diff origin/main -- scripts/BUILD-RECORD.md` đếm được 9 hash đổi: bốn validator
-GenBeacons, `vault.vault` InstantGen, `paymaster.paymaster`, `prepaid.prepaid_vault`, và
-`vault.commit` + `vault.vault` ScheduleGen) ⟹ cụm đang chạy phải đúc lại. Datum ra lệch
-`C-SCH-LOCKSUM` bị bộ dựng ném trước khi ký. Mới chỉ nằm trên nhánh, **chưa deploy**.
+— đếm lại bằng `git -C <kho> diff origin/main -- scripts/BUILD-RECORD.md` (2026-10-03, nhánh
+`feat/prepaid-sponsor-first-consume`: bốn validator GenBeacons, `vault.vault` InstantGen,
+`paymaster.paymaster`, `prepaid.prepaid_vault`, `vault.commit` + `vault.vault` + `vault.shard`
+ScheduleGen, `um_datum.um_datum_validator`, `consume.consume`, `price_nft.price_nft`,
+`price_param.price_param`) ⟹ cụm đang chạy phải đúc lại. Datum ra lệch `C-SCH-LOCKSUM` bị bộ dựng
+ném trước khi ký. Két IG cũ link rỗng muốn nối két Wakeme thì chạy RefreshCheckpoint trước; lượt
+sinh/tiêu kèm két Wakeme lạ nay bị từ chối. Mới chỉ nằm trên nhánh, **chưa deploy**.
 
 ## 2026-10-03 — Cổng policy LAMP: chặn `53bc12ad…` và `7ecbffe2…`, policy tLAMP Preprod CUỐI là `493002cc…`
 

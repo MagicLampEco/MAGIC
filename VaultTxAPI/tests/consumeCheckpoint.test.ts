@@ -202,6 +202,25 @@ describe("POST /tx/consume — `wakeme_vault_ref` khi két đang ghim két Wakem
       .toMatchObject({ source: "located", ref: WAKEME_REF });
   });
 
+  // Luật 6 siết 2026-10-03: BurnBatch không NỐI link. Bộ dựng consume (`checkGenV2Burn`) không
+  // tính L_lent nên ném cả ca validator còn nhận (két ghim két này) — dịch vụ ném trước, có mã.
+  it("CẶP (c): link RỖNG + CÓ wakeme_vault_ref (két ghim két này) ⟹ 422 WAKEME_LINK_CHANGE_REJECTED, bộ dựng KHÔNG gọi", async () => {
+    const h = harness({ capEpoch: EPOCH - 1n, withWakeme: true });
+    const r = await handle(post({ wakeme_vault_ref: WAKEME_REF }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(codeOf(r)).toBe("WAKEME_LINK_CHANGE_REJECTED");
+    expect(detailsOf(r)).toMatchObject({ wakeme_link: "", owner_commit: OWNER_COMMIT, next_route: "/tx/refresh-checkpoint" });
+    expect((r.body as { error: { message: string } }).error.message).toContain("RefreshCheckpoint");
+    expect(h.builder.lastCall).toBeNull();
+  });
+
+  it("CẶP (c'): link RỖNG + KHÔNG wakeme_vault_ref ⟹ 200, không két Wakeme nào xuống bộ dựng", async () => {
+    const h = harness({ capEpoch: EPOCH - 1n, withWakeme: false });
+    const r = await handle(post({}), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(checkpointOf(h.builder)!.wakemeVaultUtxo).toBeUndefined();
+  });
+
   it("CẶP (b): cùng két, CÓ wakeme_vault_ref ⟹ 200, két Wakeme + beacon ρ đi xuống bộ dựng", async () => {
     const h = harness({ capEpoch: EPOCH - 1n, wakemeLink: OWNER_COMMIT, withWakeme: true });
     const r = await handle(post({ wakeme_vault_ref: WAKEME_REF }), h.router);

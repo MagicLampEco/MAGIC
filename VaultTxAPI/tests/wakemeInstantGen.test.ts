@@ -48,6 +48,8 @@ const OWNER_COMMIT = "c1".repeat(32);
 const VAULT_NAME = VAULT_ID_UNIT.slice(56);
 const CONDITIONAL = 300_000_000n;
 const OWNED = 200_000_000n;
+/** Két IG đã nối link tới két Wakeme của fixture (genesis `did_commit` hoặc RefreshCheckpoint). */
+const LINKED = { link: OWNER_COMMIT } as const;
 
 function deploymentJson(net: Net): string {
   return JSON.stringify({
@@ -223,9 +225,12 @@ describe("POST /tx/instant-gen — wakeme_vault_ref", () => {
 
   // Từ 2026-10-02: két chưa ghim vault này KHÔNG còn là lỗi (validator cho qua với L_lent = 0 —
   // chủ két IG nối link trước, két Wakeme ghim sau). Phản hồi 200 NÓI RA counted:false + ghim thấy.
+  // Từ 2026-10-03 (luật 6 siết) ca đó chỉ còn hợp lệ khi két IG ĐÃ nối link tới chính két Wakeme
+  // này (genesis `did_commit` hoặc RefreshCheckpoint) — nên các ca `counted: false` dưới đây
+  // dựng két IG đã nối (`LINKED`). Két link rỗng: xem khối "luật 6" cuối tệp.
   it("két ghim vault KHÁC ⟹ 200, counted false, reason not_pinned_to_this_vault, kèm ghim thấy được", async () => {
     const other = "de".repeat(32);
-    const h = harness({ wakeme: wakemeUtxo({ pin: new Constr(0, [new Constr(0, [VAULT_SCRIPT_HASH, other])]) }) });
+    const h = harness({ vault: LINKED, wakeme: wakemeUtxo({ pin: new Constr(0, [new Constr(0, [VAULT_SCRIPT_HASH, other])]) }) });
     const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(summaryOf(r).wakeme).toEqual({
@@ -235,7 +240,7 @@ describe("POST /tx/instant-gen — wakeme_vault_ref", () => {
   });
 
   it("két KHÔNG ghim (None) ⟹ 200, counted false, seen_pin = null", async () => {
-    const h = harness({ wakeme: wakemeUtxo({ pin: new Constr(1, []) }) });
+    const h = harness({ vault: LINKED, wakeme: wakemeUtxo({ pin: new Constr(1, []) }) });
     const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(summaryOf(r).wakeme).toMatchObject({ counted: false, reason: "not_pinned_to_this_vault", seen_pin: null });
@@ -252,7 +257,7 @@ describe("POST /tx/instant-gen — wakeme_vault_ref", () => {
     });
 
     it("gen_pin_period == epoch ⟹ counted false, lent 0, reason — vẫn 200 (validator cho qua)", async () => {
-      const h = harness({ wakeme: wakemeUtxo({ pinPeriod: EPOCH }) });
+      const h = harness({ vault: LINKED, wakeme: wakemeUtxo({ pinPeriod: EPOCH }) });
       const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
       expect(r.status).toBe(200);
       expect(summaryOf(r).wakeme).toEqual({
@@ -262,7 +267,7 @@ describe("POST /tx/instant-gen — wakeme_vault_ref", () => {
   });
 
   it("value thiếu LAMP so với datum ⟹ counted false, reason lamp_short_of_datum", async () => {
-    const h = harness({ wakeme: wakemeUtxo({ lampHeld: CONDITIONAL + OWNED - 1n }) });
+    const h = harness({ vault: LINKED, wakeme: wakemeUtxo({ lampHeld: CONDITIONAL + OWNED - 1n }) });
     const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
     expect(r.status).toBe(200);
     expect(summaryOf(r).wakeme).toEqual({ ref: WAKEME_REF, lent_lamp: "0", counted: false, reason: "lamp_short_of_datum" });
@@ -363,6 +368,57 @@ describe("POST /tx/instant-gen — vắng wakeme_vault_ref, két IG ĐÃ nối l
     const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(summaryOf(r).wakeme).toEqual({ ref: WAKEME_REF, lent_lamp: (CONDITIONAL + OWNED).toString(), counted: true });
+  });
+});
+
+// ── Luật 6 siết 2026-10-03 (`checkpoint.ak ▸ resolve_link`): link rỗng KHÔNG còn là ngoại lệ ──
+// Két IG link rỗng + két Wakeme `L_lent = 0` ⟹ validator FAIL ⟹ dịch vụ ném 422 có mã TRƯỚC khi
+// dựng, câu lỗi chỉ đường RefreshCheckpoint. Mỗi ca âm có cặp chỉ khác đúng một vế.
+
+describe("POST /tx/instant-gen — luật 6: két link rỗng không nối được ở lượt sinh", () => {
+  it("link rỗng + két KHÔNG ghim (None) ⟹ 422 WAKEME_LINK_CHANGE_REJECTED, chỉ đường refresh-checkpoint, bộ dựng KHÔNG gọi", async () => {
+    const h = harness({ wakeme: wakemeUtxo({ pin: new Constr(1, []) }) });
+    const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(codeOf(r)).toBe("WAKEME_LINK_CHANGE_REJECTED");
+    expect((r.body as { error: { message: string } }).error.message).toMatch(/RefreshCheckpoint[\s\S]*\/tx\/refresh-checkpoint/);
+    expect(detailsOf(r)).toMatchObject({
+      wakeme_link: "", owner_commit: OWNER_COMMIT, lent_lamp: "0", checkpoint_refresh: true,
+      next_route: "/tx/refresh-checkpoint",
+    });
+    expect(h.builder.lastCall).toBeNull();
+  });
+
+  it("CẶP: cùng két Wakeme, két IG ĐÃ nối link tới nó ⟹ 200 (vế b: owner_commit == link)", async () => {
+    const h = harness({ vault: LINKED, wakeme: wakemeUtxo({ pin: new Constr(1, []) }) });
+    const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+  });
+
+  it("CẶP: link rỗng + két ĐANG ghim két này (L_lent > 0), lượt làm mới ⟹ 200 (vế c)", async () => {
+    const h = harness({ wakeme: wakemeUtxo() });
+    const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(summaryOf(r).wakeme).toMatchObject({ counted: true });
+    expect(h.builder.lastCall!.wakeme?.utxo.txHash).toBe(WAKEME_TX);
+  });
+
+  it("link rỗng + két ghim két này nhưng CÙNG epoch (không làm mới) ⟹ 422, checkpoint_refresh false", async () => {
+    const h = harness({ vault: { sameEpoch: true }, wakeme: wakemeUtxo() });
+    const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(codeOf(r)).toBe("WAKEME_LINK_CHANGE_REJECTED");
+    expect(detailsOf(r)).toMatchObject({ wakeme_link: "", checkpoint_refresh: false });
+    expect(h.builder.lastCall).toBeNull();
+  });
+
+  it("link X + két Wakeme Y (KHÔNG ghim két này) ⟹ 422 (đổi link ở lượt sinh)", async () => {
+    const h = harness({ vault: { link: "d0".repeat(32) }, wakeme: wakemeUtxo({ pin: new Constr(1, []) }) });
+    const r = await handle(post({ owner_pkh: OWNER_PKH, wakeme_vault_ref: WAKEME_REF }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(codeOf(r)).toBe("WAKEME_LINK_CHANGE_REJECTED");
+    expect(detailsOf(r)).toMatchObject({ wakeme_link: "d0".repeat(32), owner_commit: OWNER_COMMIT });
+    expect(h.builder.lastCall).toBeNull();
   });
 });
 

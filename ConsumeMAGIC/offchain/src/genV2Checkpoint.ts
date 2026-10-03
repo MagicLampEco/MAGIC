@@ -380,7 +380,8 @@ function expectEq(ok: boolean, what: string, want: string, got: string): void {
  * Kiểm phía két của giao dịch consume dưới Gen v2.0 và trả danh sách reference input cần.
  *
  * - InstantGen: `cap_epoch < e` ⟹ làm mới (`FollowVault`): cần beacon ρ (CONSUME-012); link
- *   đã đặt mà thiếu két Wakeme ⟹ CONSUME-013; có két Wakeme ⟹ link ra = `owner_commit` của nó.
+ *   đã đặt mà thiếu két Wakeme ⟹ CONSUME-013; có két Wakeme ⟹ `owner_commit` của nó phải BẰNG
+ *   link vào (luật 6 — kể cả link rỗng, từ 2026-10-03), link ra = link vào.
  *   Datum ra: `cap_epoch = e`, `usage_window_epoch = e`, cửa sổ = dịch rồi cộng Σburns vào
  *   `consumed` ô 0. `cap_epoch == e` ⟹ năm ô ghim nguyên, chỉ cộng Σburns; không cần ref nào.
  * - ScheduleGen: không đọc beacon, không đọc két Wakeme; cửa sổ = dịch rồi cộng Σburns.
@@ -485,13 +486,24 @@ export function checkGenV2Burn(args: GenV2BurnCheckArgs): GenV2BurnCheck {
   if (args.wakemeVaultUtxo) {
     const vaultName = vaultIdName(vaultUtxo, vaultScriptHash);
     wantLink = readWakemeOwnerCommit(args.wakemeVaultUtxo, vaultScriptHash, vaultName);
-    // Luật 6 (`checkpoint.ak ▸ resolve_link`, nhánh `FollowVault`, 2026-10-02): link đã đặt
-    // thì BurnBatch chỉ đổi được nó khi két Wakeme đọc được đang ghim chính két IG này với
-    // `L_lent > 0`. Bộ kiểm này KHÔNG tính `L_lent` (cần kỳ ghim, gốc lưới, LAMP thật của
-    // két Wakeme), nên CHẶT HƠN validator: mọi lượt đổi link ở BurnBatch đều bị ném. Ca
-    // validator vẫn nhận (két mới ghim két này, `L_lent > 0`) đi đường RefreshCheckpoint
+    // Luật 6 (`checkpoint.ak ▸ resolve_link`, nhánh `FollowVault`, 2026-10-02, siết
+    // 2026-10-03): BurnBatch chỉ đổi được link — KỂ CẢ từ rỗng sang một két — khi két Wakeme
+    // đọc được đang ghim chính két IG này với `L_lent > 0`. Vế cũ "link rỗng thì nối tự do"
+    // đã bỏ ở validator. Bộ kiểm này KHÔNG tính `L_lent` (cần kỳ ghim, gốc lưới, LAMP thật
+    // của két Wakeme), nên CHẶT HƠN validator: mọi lượt đổi/nối link ở BurnBatch đều bị ném.
+    // Ca validator vẫn nhận (két ghim két này, `L_lent > 0`) đi đường RefreshCheckpoint
     // trước rồi mới consume.
-    if (inLink !== "" && wantLink !== inLink) {
+    if (inLink === "" && wantLink !== inLink) {
+      throw new Error(
+        `CONSUME-013: két InstantGen ${at} chưa nối két Wakeme nào (wakeme_link rỗng), nhưng két ` +
+          `Wakeme đưa vào (${args.wakemeVaultUtxo.txHash}#${args.wakemeVaultUtxo.outputIndex}) có ` +
+          `owner_commit ${wantLink}. BurnBatch không NỐI được link (luật 6, siết 2026-10-03): ` +
+          `validator chỉ nhận khi két đó ghim két IG này với L_lent > 0, và bộ dựng không xác ` +
+          `nhận được điều đó. Chạy RefreshCheckpoint trước để nối link rồi mới consume, hoặc ` +
+          `bỏ \`wakemeVaultUtxo\` (link giữ rỗng, L_lent = 0).`,
+      );
+    }
+    if (wantLink !== inLink) {
       throw new Error(
         `CONSUME-013: két InstantGen ${at} đã nối két Wakeme ${inLink}, nhưng két Wakeme đưa vào ` +
           `(${args.wakemeVaultUtxo.txHash}#${args.wakemeVaultUtxo.outputIndex}) có owner_commit ${wantLink}. BurnBatch không đổi ` +

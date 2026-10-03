@@ -236,32 +236,36 @@ describe("InstantGen v2.0 — két đã nối Wakeme, lượt làm mới", () =>
     expect(tx.completed).toBe(true);
   });
 
-  it("link rỗng + két Wakeme ghim két này ⟹ lượt này NỐI: link ra phải = owner_commit", async () => {
-    const { tx } = await build(params(
-      igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED(OWNER_COMMIT)),
-      { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault() },
-    ));
-    expect(tx.completed).toBe(true);
-  });
-
-  // Gương `vault.ak ▸ np_rc_unpinned_links_without_lent` cho nhánh có chữ ký (BurnBatch,
-  // FollowVault): két Wakeme CHƯA ghim két IG nào (None) vẫn cho `owner_commit` ⟹ link nối.
-  it("link rỗng + két Wakeme CHƯA ghim (None) ⟹ vẫn NỐI: link ra = owner_commit", async () => {
-    const { tx } = await build(params(
-      igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED(OWNER_COMMIT)),
-      { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault(VAULT_NAME, { pinned: false }) },
-    ));
-    expect(tx.completed).toBe(true);
-  });
-
-  it("CỰC ĐỐI — cùng ca, link ra để rỗng ⟹ CONSUME-016 wakeme_link (két chưa ghim KHÔNG gỡ link)", async () => {
+  // Luật 6 siết 2026-10-03 (`checkpoint.ak ▸ resolve_link`, vế "link rỗng" đã bỏ): BurnBatch
+  // không NỐI link. Validator còn nhận ca két ghim chính két này (`L_lent > 0`); bộ kiểm không
+  // tính L_lent nên CHẶT HƠN — cả hai ca dưới đều NÉM, đường đúng là RefreshCheckpoint trước.
+  it("link rỗng + két Wakeme ghim két này ⟹ CONSUME-013 (không nối ở BurnBatch; RefreshCheckpoint trước)", async () => {
     await buildRejects(
       params(
-        igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED("")),
+        igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED(OWNER_COMMIT)),
+        { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault() },
+      ),
+      /CONSUME-013.*wakeme_link rỗng.*RefreshCheckpoint/s,
+    );
+  });
+
+  // Gương `vault.ak` ▸ ca link rỗng + két `L_lent = 0` ở nhánh có chữ ký: validator FAIL.
+  it("link rỗng + két Wakeme CHƯA ghim (None) ⟹ CONSUME-013", async () => {
+    await buildRejects(
+      params(
+        igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED(OWNER_COMMIT)),
         { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault(VAULT_NAME, { pinned: false }) },
       ),
-      /CONSUME-016.*wakeme_link/s,
+      /CONSUME-013.*wakeme_link rỗng/s,
     );
+  });
+
+  it("CẶP — link rỗng, KHÔNG két Wakeme, link ra rỗng ⟹ dựng được (bỏ két thì lượt vẫn chạy)", async () => {
+    const { tx } = await build(params(
+      igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED("")),
+      { rateBeaconUtxo: rateBeacon() },
+    ));
+    expect(tx.completed).toBe(true);
   });
 
   // `read_one_vault` vế (a) đọc [2] bằng `un_i_data` TRƯỚC mọi vế trả 0 ⟹ sai kiểu là fail.
@@ -275,11 +279,11 @@ describe("InstantGen v2.0 — két đã nối Wakeme, lượt làm mới", () =>
     );
   });
 
-  it("CỰC ĐỐI — cùng đầu vào, link ra để rỗng ⟹ CONSUME-016 wakeme_link", async () => {
+  it("CỰC ĐỐI — link rỗng, KHÔNG két Wakeme, link ra = owner_commit ⟹ CONSUME-016 wakeme_link", async () => {
     await buildRejects(
       params(
-        igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED("")),
-        { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault() },
+        igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED(OWNER_COMMIT)),
+        { rateBeaconUtxo: rateBeacon() },
       ),
       /CONSUME-016.*wakeme_link/s,
     );
@@ -314,12 +318,15 @@ describe("InstantGen v2.0 — luật 6, BurnBatch không đổi link", () => {
     );
   });
 
-  it("cực đối: link rỗng + két Y ghim két khác ⟹ nối được, link ra = Y", async () => {
-    const { tx } = await build(params(
-      igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED(OTHER_COMMIT)),
-      { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault("bb".repeat(32), { ownerCommit: OTHER_COMMIT }) },
-    ));
-    expect(tx.completed).toBe(true);
+  // Đảo 2026-10-03: bản trước để ca này nối được (vế "link rỗng" của luật 6). Vế đó đã bỏ.
+  it("link rỗng + két Y ghim két khác ⟹ CONSUME-013 (không nối sang két Wakeme lạ)", async () => {
+    await buildRejects(
+      params(
+        igDatum(OWNER, IG_IN_STALE("")), igDatum(OWNER, IG_OUT_REFRESHED(OTHER_COMMIT)),
+        { rateBeaconUtxo: rateBeacon(), wakemeVaultUtxo: wakemeVault("bb".repeat(32), { ownerCommit: OTHER_COMMIT }) },
+      ),
+      /CONSUME-013.*luật 6/s,
+    );
   });
 });
 

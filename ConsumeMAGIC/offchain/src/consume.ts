@@ -101,9 +101,10 @@ export interface ConsumeParams {
    *  ScheduleGen, PrepaidGen) ⟹ bộ dựng KHÔNG đưa vào tx. */
   rateBeaconUtxo?: UTxO;
   /** Két Wakeme đã ghim két IG này — đọc REFERENCE, KHÔNG BAO GIỜ vào inputs (G1b). BẮT
-   *  BUỘC khi làm mới checkpoint mà `wakeme_link` khác "" (thiếu ⟹ NÉM `CONSUME-013`). Có
-   *  mặt khi làm mới với link "" ⟹ lượt này NỐI két (link := owner_commit). Khi không làm
-   *  mới ⟹ bộ dựng KHÔNG đưa vào tx. ScheduleGen không đọc két Wakeme. */
+   *  BUỘC khi làm mới checkpoint mà `wakeme_link` khác "" (thiếu ⟹ NÉM `CONSUME-013`), và
+   *  `owner_commit` của nó phải BẰNG `wakeme_link`. Link rỗng mà truyền vào ⟹ NÉM
+   *  `CONSUME-013` (từ 2026-10-03 BurnBatch không nối link; nối bằng RefreshCheckpoint
+   *  trước). Khi không làm mới ⟹ bộ dựng KHÔNG đưa vào tx. ScheduleGen không đọc két Wakeme. */
   wakemeVaultUtxo?: UTxO;
   /** Value output của vault — mặc định copy y nguyên vaultUtxo.assets (LAMP+ADA preserved;
    *  BurnBatch KHÔNG đụng LAMP, C-BURN-NO-LAMP). Chỉ override khi caller có lý do rõ. */

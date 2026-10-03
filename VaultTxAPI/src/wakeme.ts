@@ -176,6 +176,45 @@ export async function resolveWakemeVault(
 }
 
 /**
+ * Luật 6 (`checkpoint.ak ▸ resolve_link`, nhánh `FollowVault`, siết 2026-10-03): nhánh chủ ký
+ * thường (sinh, BurnBatch) chỉ nhận một két Wakeme có `owner_commit` KHÁC `wakeme_link` của két
+ * IG khi lượt này làm mới checkpoint VÀ két đó đang ghim chính két IG này (`L_lent > 0`). Link
+ * RỖNG không còn là ngoại lệ: lượt nối đầu chỉ qua genesis (`did_commit`) hoặc
+ * `/tx/refresh-checkpoint`. Cùng epoch thì chỉ két ĐÃ nối được đọc.
+ *
+ * `relinkByLent = false` cho bộ dựng không tự tính `L_lent` (`/tx/consume` — ConsumeMAGIC
+ * `checkGenV2Burn` CHẶT HƠN validator, ném `CONSUME-013` mọi lượt đổi link): dịch vụ ném ở đây
+ * trước, với mã và câu chỉ đường, thay vì để bộ dựng ném một lỗi chung.
+ *
+ * @throws 422 `WAKEME_LINK_CHANGE_REJECTED` ở mọi ca validator (hoặc bộ dựng) sẽ từ chối.
+ */
+export function assertWakemeLinkAllowed(
+  resolved: ResolvedWakeme, link: string, opts: { refresh: boolean; relinkByLent: boolean },
+): void {
+  const { ownerCommit, lent } = resolved.read;
+  if (ownerCommit === link) return;
+  if (opts.refresh && opts.relinkByLent && lent > 0n) return;
+  const ref = resolved.summary.ref ?? "<không rõ>";
+  const why = !opts.refresh
+    ? `lượt này KHÔNG làm mới checkpoint (cùng epoch) nên chỉ két Wakeme đã nối mới được đọc`
+    : opts.relinkByLent
+      ? `két đó KHÔNG ghim két IG này (L_lent = 0), nên nhánh chủ ký thường không nối/đổi link được`
+      : `route này không nối/đổi link (bộ dựng consume không xác nhận được L_lent)`;
+  const head = link === ""
+    ? `Két IG này chưa nối két Wakeme nào (wakeme_link rỗng), và "wakeme_vault_ref" ${ref.slice(0, 16)}… ` +
+      `trỏ tới két của owner_commit ${ownerCommit.slice(0, 16)}…: ${why} (luật 6).`
+    : `Két IG này đã nối két Wakeme ${link.slice(0, 16)}…, nhưng "wakeme_vault_ref" ${ref.slice(0, 16)}… ` +
+      `là két của owner_commit ${ownerCommit.slice(0, 16)}…: ${why} (luật 6).`;
+  throw new CodedApiError(422, "WAKEME_LINK_CHANGE_REJECTED",
+    `${head} Chạy RefreshCheckpoint trước — POST /tx/refresh-checkpoint với "wakeme_vault_ref" này — ` +
+      `rồi gọi lại; hoặc bỏ "wakeme_vault_ref" (lượt chạy với L_lent = 0, link giữ nguyên).`,
+    {
+      wakeme_vault_ref: ref, wakeme_link: link, owner_commit: ownerCommit,
+      lent_lamp: lent.toString(), checkpoint_refresh: opts.refresh, next_route: "/tx/refresh-checkpoint",
+    });
+}
+
+/**
  * Định vị két Wakeme của `ownerCommit` (= `wakeme_link` của két IG) bằng NFT định danh.
  * `undefined` ⟹ không có két nào; ≥ 2 két ⟹ 409 `WAKEME_VAULT_AMBIGUOUS`. Chỉ ĐỊNH VỊ — đọc +
  * kiểm vẫn đi qua `resolveWakemeVault` với tham chiếu trả về.

@@ -19,9 +19,9 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `consume.consume` | `12bda3036f9ad9f6b1ea657f6688ed4126cdb303e11aa8e15ae7476b` |
-| `price_nft.price_nft` | `16e849f1952237ccc3baf57c7e35bcff9c0756e97e11671c3dee6287` |
-| `price_param.price_param` | `afd75ea36b11aecb0854949f5dd14b4fd206f41739817b0ba18af755` |
+| `consume.consume` | `b15c2a0e05e29a4ec3aafb1791e548a49e648fc1129e770f3de670de` |
+| `price_nft.price_nft` | `8e75ac1dc3abcca85cbe62d8745ad939f3dbd78fe6423dda8d99ed96` |
+| `price_param.price_param` | `b424138c1a82968eb3fcce0731034b0938031f8ff4705ec91dbb3f93` |
 
 ### `Eligibility/onchain`
 

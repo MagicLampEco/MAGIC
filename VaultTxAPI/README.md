@@ -181,6 +181,16 @@ Cần khối `gen_v2` và `ref_script_utxos.gb_shard` trong bản deploy (§6); 
 `501 CONFIG_MISSING` với `details.missing` nêu đúng khoá. Mạng chưa có két Wakeme ⟹
 `501 WAKEME_VAULT_UNAVAILABLE` (apply-param #8 của két không có giá trị).
 
+**Két cũ chưa nối két Wakeme (`wakeme_link` rỗng): chạy RefreshCheckpoint trước.** Từ
+2026-10-03 lượt sinh (và lượt tiêu) **không nối link** được nữa (`checkpoint.ak` ▸
+`resolve_link`, luật 6): két IG link rỗng mà kèm `wakeme_vault_ref` trỏ tới một két Wakeme
+không ghim két này ⟹ `422 WAKEME_LINK_CHANGE_REJECTED`, bộ dựng không được gọi. Lượt nối đầu
+chỉ qua genesis (`did_commit` ở `/tx/create-vault`) hoặc `POST /tx/refresh-checkpoint` kèm
+`wakeme_vault_ref`; xong thì gọi lại `instant-gen`. Bỏ `wakeme_vault_ref` thì lượt sinh vẫn
+chạy với `L_lent = 0`. Ngoại lệ duy nhất: lượt sinh làm mới checkpoint mà két Wakeme đưa vào
+đang ghim chính két này (`L_lent > 0`) — validator nhận, dịch vụ cũng nhận. `/tx/consume` thì
+không có ngoại lệ đó (bộ dựng consume không tính `L_lent`), nên ở đó luôn RefreshCheckpoint trước.
+
 ### `POST /tx/refresh-checkpoint`
 
 Chủ ký, két Instant làm mới năm ô checkpoint (`cap_epoch`, `cap_nanogic`, `usage_window`,
@@ -1017,6 +1027,7 @@ Nên:
 | `wakeme_vault_ref` không nằm ở script két Wakeme | `409 WAKEME_VAULT_SCRIPT_MISMATCH` |
 | datum / NFT két không đạt luật đọc `L_lent` | `422 WAKEME_VAULT_UNREADABLE` |
 | tx vừa dựng tiêu két, hoặc thiếu két trong `reference_inputs` | `422 WAKEME_VAULT_TX_MISMATCH` |
+| `wakeme_vault_ref` không phải két đã nối (`wakeme_link` rỗng hoặc khác) và lượt này không nối/đổi link được, luật 6 (`details.wakeme_link`, `details.owner_commit`, `details.next_route`) — chạy `/tx/refresh-checkpoint` trước | `422 WAKEME_LINK_CHANGE_REJECTED` |
 | chủ chưa có thread Engage | `404 ENGAGE_THREAD_NOT_FOUND` |
 | chủ có nhiều thread, không kèm `engage_ref` | `409 ENGAGE_THREAD_AMBIGUOUS` |
 | `/tx/open-thread` khi chủ đã có thread | `409 ENGAGE_THREAD_EXISTS` |

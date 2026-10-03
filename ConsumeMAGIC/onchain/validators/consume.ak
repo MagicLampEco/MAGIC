@@ -455,6 +455,10 @@ fn validate_bind_did(
   //    (`lucid.utxosAt(consumeAddr)` trả rỗng). Neo vào địa chỉ của chính input đang
   //    tiêu — (3) đã ép đúng 1 input tại engage nên `input_at_script` là xác định.
   expect out.address == util.input_at_script(tx.inputs, own_hash).address
+  // ── (4-ter) KHÔNG reference script trên output thread (2026-10-03) ──────────
+  //    Cùng lý do với vế (A) của `enforce_engagement`: tx do bên khác dựng hộ chủ
+  //    mà gắn script vào thread là đẩy phí byte lên mọi tx sau của chủ.
+  expect out.reference_script == None
   expect InlineDatum(d) = out.datum
   expect od: EngageDatum = d
   // ── (5) đúng 1 thread NFT trên output ────────────────────────────────────────
@@ -646,6 +650,10 @@ fn validate_mint_engage_id(
       },
     )
   expect [engage_out] = carriers
+  // ── KHÔNG reference script trên output genesis (2026-10-03) ───────────────
+  //    Cardano không chạy validator lúc tạo UTxO ⟹ đây là chỗ DUY NHẤT ép được giá
+  //    trị khởi đầu; hai nhánh spend chỉ ép trên output chúng tạo lại.
+  expect engage_out.reference_script == None
 
   // ── Datum genesis phải INLINE + decode được EngageDatum ───────────────────
   expect InlineDatum(datum_data) = engage_out.datum
@@ -958,6 +966,12 @@ fn enforce_engagement(
             od.did_commit == did_commit,
             // ĐÚNG 1 thread NFT dưới own_hash (không rút, không gộp 2 thread).
             single_thread_nft(o.value, own_hash),
+            // KHÔNG reference script trên thread (2026-10-03). Người tiêu được thread
+            // gồm cả `personal_delegate` — bên thứ ba. Gắn một script lớn vào output
+            // thread làm mọi tx sau của chủ đắt thêm theo byte (phí reference script
+            // tính cả input lẫn reference input), và chủ không gỡ được nếu không tự tiêu.
+            // Cùng khuôn GenBeacons `continuing_pair`, PrepaidGen `vault_identity_preserved`.
+            o.reference_script == None,
           }
         } else {
           True
@@ -4391,4 +4405,90 @@ test consume_many_redeemer_cbor_pinned() {
       vault_ref: util.mk_ref_id(#"a1", 0),
     }
   cbor.serialise(rd_as_data(rd)) == #"d87c9f9fd8799f0101ffd8799f0203ffffd8799f41bb09ffd8799f41a100ffff"
+}
+
+// ══════════════════════════════════════════════════════════════
+// G17 (2026-10-03) — output thread KHÔNG mang reference script.
+// Mỗi cặp: cùng fixture với bài DƯƠNG đã có, chỉ khác `reference_script`.
+// ══════════════════════════════════════════════════════════════
+
+const g17_ref_hash: ByteArray =
+  #"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+
+fn g17_with_ref(o: Output) -> Output {
+  Output { ..o, reference_script: Some(g17_ref_hash) }
+}
+
+fn g17_consume(out: Output) -> Bool {
+  let pp = ct_pp(6)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_consume_redeemer(1, 1, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(pp, 1, 6, [eng], [vault], [out], reds, rd, eng_ref, ct_in_datum)
+}
+
+// Consume — DƯƠNG: output thread không reference script.
+test g17_consume_no_ref_script_happy() {
+  g17_consume(ct_cont_output(11, 6, 1))
+}
+
+// Consume — ÂM: cùng tx, output thread mang reference script.
+test g17_consume_ref_script_fail() fail {
+  g17_consume(g17_with_ref(ct_cont_output(11, 6, 1)))
+}
+
+fn g17_consume_many(out: Output) -> Bool {
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_many_redeemer([ct_pair(1, 1), ct_pair(2, 1)], vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", 12_300_009)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(ct_pp_frac(6), 1, 6, [eng], [vault], [out], reds, rd, eng_ref, ct_in_datum)
+}
+
+// ConsumeMany — DƯƠNG / ÂM cùng fixture `consume_many_happy`.
+test g17_consume_many_no_ref_script_happy() {
+  g17_consume_many(ct_cont_output_ng(12, 6, 1, 12_300_009))
+}
+
+test g17_consume_many_ref_script_fail() fail {
+  g17_consume_many(g17_with_ref(ct_cont_output_ng(12, 6, 1, 12_300_009)))
+}
+
+fn g17_bind(out: Output) -> Bool {
+  let eng = ct_engage_input_did(0, 7, 70_000_000, #"")
+  let er = util.mk_ref_id(#"e1", 0)
+  run_bind([eng], [out], [ct_owner], er, ct_bind_in)
+}
+
+// BindDID — DƯƠNG / ÂM cùng fixture `bind_did_happy`.
+test g17_bind_did_no_ref_script_happy() {
+  g17_bind(ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 2_000_000, 1))
+}
+
+test g17_bind_did_ref_script_fail() fail {
+  g17_bind(g17_with_ref(ct_bind_output(ct_owner, 7, 3, ct_did32, 70_000_000, 2_000_000, 1)))
+}
+
+fn g17_mint(out: Output) -> Bool {
+  run_mint([ct_seed_input()], assets.from_asset(ct_eng_sh, ct_seed_name(), 1), [out], [ct_owner])
+}
+
+// MintEngage — DƯƠNG / ÂM cùng fixture `engage_mint_clean_happy`.
+test g17_engage_mint_no_ref_script_happy() {
+  g17_mint(ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_clean_genesis(), 0))
+}
+
+test g17_engage_mint_ref_script_fail() fail {
+  g17_mint(
+    g17_with_ref(
+      ct_gen_out(util.script_address(ct_eng_sh), ct_seed_name(), ct_clean_genesis(), 0),
+    ),
+  )
 }

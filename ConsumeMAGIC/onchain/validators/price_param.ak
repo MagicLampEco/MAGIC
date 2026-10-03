@@ -7,7 +7,7 @@ use aiken/collection/list
 use aiken/interval
 use cardano/address.{Address}
 use cardano/assets
-use cardano/transaction.{InlineDatum, OutputReference, Transaction, placeholder}
+use cardano/transaction.{InlineDatum, Output, OutputReference, Transaction, placeholder}
 use magiclamp/consume/pricing
 use magiclamp/consume/types.{OpPrice, PostPrice, PriceParam, PriceParamRedeemer}
 use magiclamp/consume/util
@@ -73,6 +73,10 @@ validator price_param(
     //   + lovelace không giảm ⇒ beacon đứng yên đúng chỗ, không bị bào mòn.
     expect beacon_out.address == beacon_in.address
     expect assets.lovelace_of(beacon_out.value) >= assets.lovelace_of(beacon_in.value)
+    // KHÔNG reference script trên beacon (2026-10-03). Beacon là reference input của
+    // MỌI lượt consume; phí reference script tính theo byte cả ở reference input, nên
+    // một script gắn vào đây làm đắt mọi tx tiêu của mọi người dùng.
+    expect beacon_out.reference_script == None
 
     // ── VÁ #B 2026-08-09: PIN TOÀN BỘ PHẦN NON-ADA CỦA VALUE ──────────────────
     //   Trước vá chỉ ghim ADA ≥ và NFT == 1 — hai mệnh đề đó KHÔNG nói gì về phần
@@ -451,4 +455,35 @@ test price_param_origin_mainnet_one_ahead_fail() fail {
   let o = window_origin_fixtures.mainnet_origin_ms
   pp_spend_at(o, pp_committee, pp_threshold,
     window_origin_fixtures.shift_tx(pp_tx_at(5, 7, 1_500_000_000, [#"c1", #"c2"], 6), o))
+}
+
+// ── G17 (2026-10-03): beacon ra KHÔNG mang reference script ──────────────────
+fn g17_pp_tx(with_ref: Bool) -> Transaction {
+  let tx = pp_tx(5, 6, 1_500_000_000, [#"c1", #"c2"])
+  if with_ref {
+    Transaction {
+      ..tx,
+      outputs: list.map(
+        tx.outputs,
+        fn(o) {
+          Output {
+            ..o,
+            reference_script: Some(
+              #"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+            ),
+          }
+        },
+      ),
+    }
+  } else {
+    tx
+  }
+}
+
+test g17_price_param_no_ref_script_happy() {
+  pp_spend(pp_committee, pp_threshold, g17_pp_tx(False))
+}
+
+test g17_price_param_ref_script_fail() fail {
+  pp_spend(pp_committee, pp_threshold, g17_pp_tx(True))
 }

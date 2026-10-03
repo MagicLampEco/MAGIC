@@ -49,7 +49,8 @@ import {
 import { findVaultsAtScope, pickSingleVault, vaultIdUnitOf, type FoundVault, type IgnoredUtxo } from "./vaultLookup.js";
 import { decodeVaultDatumOrThrow } from "./vaultDatumShape.js";
 import {
-  checkWakemeRefInTx, locateWakemeVault, resolveWakemeVault, wakemeNotFoundSummary, wakemeNotLinkedSummary,
+  assertWakemeLinkAllowed, checkWakemeRefInTx, locateWakemeVault, resolveWakemeVault, wakemeNotFoundSummary,
+  wakemeNotLinkedSummary,
   type ResolvedWakeme, type WakemeSummary,
 } from "./wakeme.js";
 import {
@@ -302,7 +303,8 @@ export class VaultTxService {
       // `resolve_link`, luật 2). Cùng epoch ⟹ két tuỳ chọn (có thì phải là két đã ghim — két
       // định vị theo `wakeme_link` luôn đúng vế đó).
       const need = instantCheckpointNeed(vaultDatum, epoch);
-      src = await this.wakemeSource(ctx, req.wakemeVaultRef, need.wakemeLink, need.refresh && need.wakemeLink !== "");
+      // `relinkByLent = true`: bộ dựng InstantGen tự tính L_lent (gương `checkpoint.ts ▸ resolveLink`).
+      src = await this.wakemeSource(ctx, req.wakemeVaultRef, need.wakemeLink, need.refresh, true);
       const wakeme = src.resolved;
       const refs = await readInstantGenRefs(this.deps.chain, g, vaultDatum.owner);
       limits = instantLimitsOf({
@@ -354,12 +356,17 @@ export class VaultTxService {
    *      (`locateWakemeVault`): thấy 1 ⟹ đọc + kiểm như vế 1, `source: "located"`; ≥ 2 ⟹ 409
    *      `WAKEME_VAULT_AMBIGUOUS`; 0 ⟹ `required` ? 400 `WAKEME_VAULT_REF_REQUIRED` (validator
    *      sẽ từ chối tx thiếu két) : `reason: "wakeme_vault_not_found"`, tx vẫn dựng.
+   * Mọi két đọc được đi qua `assertWakemeLinkAllowed` (luật 6, siết 2026-10-03): két IG link
+   * rỗng mà app gửi két Wakeme không ghim két này ⟹ 422 `WAKEME_LINK_CHANGE_REJECTED` kèm câu
+   * chỉ đường RefreshCheckpoint, bộ dựng KHÔNG được gọi.
    */
   private async wakemeSource(
-    ctx: BuildContext, ref: OutRefLike | undefined, link: string, required: boolean,
+    ctx: BuildContext, ref: OutRefLike | undefined, link: string, refresh: boolean, relinkByLent: boolean,
   ): Promise<WakemeSource> {
+    const required = refresh && link !== "";
     if (ref !== undefined) {
       const resolved = await this.resolveWakeme(ctx, ref);
+      assertWakemeLinkAllowed(resolved, link, { refresh, relinkByLent });
       return { resolved, ref, summary: resolved.summary };
     }
     if (link === "") return { summary: wakemeNotLinkedSummary() };
@@ -375,6 +382,8 @@ export class VaultTxService {
       return { summary: wakemeNotFoundSummary() };
     }
     const resolved = await this.resolveWakeme(ctx, located);
+    // Định vị theo NFT tên = link ⟹ owner_commit == link luôn; gọi để một luật duy nhất gác cả hai đường.
+    assertWakemeLinkAllowed(resolved, link, { refresh, relinkByLent });
     return { resolved, ref: located, summary: { ...resolved.summary, source: "located" } };
   }
 
@@ -415,7 +424,8 @@ export class VaultTxService {
     const g = requireGenV2(d, "/tx/consume (két Instant tiêu lần đầu trong epoch mới)");
     const vaultParams = instantVaultParamsOf(d, g, this.deps.network);
     // Đã nối link ⟹ bắt buộc có két (luật 2); app không gửi thì dịch vụ tự định vị.
-    const src = await this.wakemeSource(ctx, wakemeRef, need.wakemeLink, need.wakemeLink !== "");
+    // `relinkByLent = false`: `checkGenV2Burn` không tính L_lent nên ném mọi lượt đổi/nối link.
+    const src = await this.wakemeSource(ctx, wakemeRef, need.wakemeLink, true, false);
     const rateBeaconUtxo = await readRateBeaconUtxo(this.deps.chain, g);
     return {
       params: { vaultParams, rateBeaconUtxo, ...(src.resolved === undefined ? {} : { wakemeVaultUtxo: src.resolved.utxo }) },

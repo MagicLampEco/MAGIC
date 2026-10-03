@@ -8,11 +8,15 @@ import {
   wakemeVaultHash, assertWakemeVaultHash, WAKEME_VAULT_HASH_BY_NETWORK,
 } from "../src/index.js";
 
-const PREPROD_V3 = "cc62732565af6be1e0874975ad3b3e2afdb0abafb3f5bc4b3008f4e1";
+// Nguồn: thư Wakeme `wk1003mg-c` (2026-10-03) — két v4 lưới O trên Preprod.
+const PREPROD_V4 = "4da780c4e990bd49ab4fa3f8340f7bb6869c244823996d39b4393cab";
+// Bản v3 đã bỏ — ghim rằng bảng KHÔNG còn trả nó (một lần hoà nhánh kéo dòng cũ về thì đỏ ở đây).
+const PREPROD_V3_RETIRED = "cc62732565af6be1e0874975ad3b3e2afdb0abafb3f5bc4b3008f4e1";
 
 describe("wakemeVaultHash — theo mạng, fail-closed", () => {
-  it("Preprod ⟹ két Wakeme v3", () => {
-    expect(wakemeVaultHash("Preprod")).toBe(PREPROD_V3);
+  it("Preprod ⟹ két Wakeme v4 (lưới O), không còn v3", () => {
+    expect(wakemeVaultHash("Preprod")).toBe(PREPROD_V4);
+    expect(wakemeVaultHash("Preprod")).not.toBe(PREPROD_V3_RETIRED);
   });
 
   it("Preview và Mainnet chưa có két ⟹ NÉM, nêu tên mạng", () => {
@@ -30,14 +34,14 @@ describe("wakemeVaultHash — theo mạng, fail-closed", () => {
 
 describe("assertWakemeVaultHash — 56 hex thường", () => {
   it("nhận đúng dạng", () => {
-    expect(assertWakemeVaultHash(PREPROD_V3, "t")).toBe(PREPROD_V3);
+    expect(assertWakemeVaultHash(PREPROD_V4, "t")).toBe(PREPROD_V4);
   });
 
   it.each([
-    ["hoa", PREPROD_V3.toUpperCase()],
-    ["thiếu một ký tự", PREPROD_V3.slice(1)],
-    ["thừa một byte", PREPROD_V3 + "00"],
-    ["không phải hex", "zz" + PREPROD_V3.slice(2)],
+    ["hoa", PREPROD_V4.toUpperCase()],
+    ["thiếu một ký tự", PREPROD_V4.slice(1)],
+    ["thừa một byte", PREPROD_V4 + "00"],
+    ["không phải hex", "zz" + PREPROD_V4.slice(2)],
     ["rỗng", ""],
   ])("NÉM: %s", (_name, v) => {
     expect(() => assertWakemeVaultHash(v, "t")).toThrow(/wakeme_vault_hash/);

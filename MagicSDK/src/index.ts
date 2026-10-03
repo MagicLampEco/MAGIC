@@ -196,6 +196,11 @@ export type { Network } from "@magiclamp/protocol-utils";
 // những cái tên mà đổi đi là breaking change, dù không ai định hứa.
 export {
   buildConsumeTx,
+  // ConsumeMany (redeemer constr 3, 2026-10-03): nhiều loại nghiệp vụ trong MỘT tx. `required`
+  // của nó = Σ sàn TỪNG cặp (`requiredFromBeaconPairs`), KHÁC quy tắc gộp-rồi-sàn của Consume đơn.
+  buildConsumeManyTx,
+  requiredFromBeaconPairs,
+  decodeConsumeLineRedeemer,
   buildMintEngageTx,
   buildPostPriceTx,
   postPriceRedeemerCbor,
@@ -209,6 +214,8 @@ export {
   encodePriceParam,
   decodePriceParam,
   type ConsumeParams,
+  type ConsumeManyParams,
+  type ConsumeLineRedeemerT,
   type ConsumeResult,
   type MintEngageParams,
   type MintEngageResult,
@@ -232,6 +239,14 @@ export {
   FIXED_PRICE_OP_TYPES,
   OP_IMAGE,
   OP_CID,
+  OP_RECOGNITION_STORAGE,
+  OP_RECOGNITION_COMPUTE,
+  // Hình dạng + giá của `pairs` (ConsumeMany) — gương `pricing.valid_pairs` / `required_for_pairs`.
+  assertValidPairs,
+  requiredForPairs,
+  sumPairCounts,
+  MAX_CONSUME_PAIRS,
+  type OpPairLike,
   M_MIN_Q,
   M_MAX_Q,
   Q as PRICING_Q,

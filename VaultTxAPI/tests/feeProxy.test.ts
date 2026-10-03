@@ -29,6 +29,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor, type TxOutputSpec } from "./fixtures/tx.js";
+import { withConsumeLeg } from "./fixtures/consume.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
@@ -89,20 +90,29 @@ const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify(deploymentObj()), 
 // ── tx tiêu MAGIC có ví trả phí (khuôn `engageFeePayer.test.ts`) ─────────────
 
 const CONSUME_FEE = 178_000n;
+// Lô MAGIC sống của két: tx tiêu đốt `CONSUME_BURN` từ lô này (`consumed_credit` tăng đúng bấy
+// nhiêu) — `/tx/consume` đọc lại Σburns == required từ CBOR (`fixtures/consume.ts`). Các route
+// khác giữ nguyên lô ⟹ kế toán MAGIC của chúng không đổi.
+const FEE_BATCH = { id: "fb".repeat(16), createdEpoch: 20_707n, amountNanogic: 5_000_000_000n };
+const CONSUME_BURN = 1_000_000_000n;
+const vaultOutMagic = (consume: boolean) => consume
+  ? { batches: [{ ...FEE_BATCH, amountNanogic: FEE_BATCH.amountNanogic - CONSUME_BURN }], consumedCreditNanogic: CONSUME_BURN }
+  : { batches: [FEE_BATCH] };
 const VAULT_UTXO = utxo(INPUT_TX_HASH, 0, VAULT_ADDRESS,
-  { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n }, datumHex({ lampLockedOildrop: 2_000_000n }));
+  { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n }, datumHex({ lampLockedOildrop: 2_000_000n, batches: [FEE_BATCH] }));
 const FEE_UTXO = utxo("fa".repeat(32), 0, FEE_ADDRESS, { lovelace: 10_000_000n });
 
-function consumeTx(): string {
+/** `consume` ⟹ tx tiêu MAGIC thật (két đốt + vế thread); không ⟹ cùng khung cho schedule-commit. */
+function consumeTx(consume = false): string {
   const outputs: TxOutputSpec[] = [
     {
       address: VAULT_ADDRESS,
       assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
-      inlineDatumHex: datumHex({ lampLockedOildrop: 23_000_000n, genScheduleCount: 1 }),
+      inlineDatumHex: datumHex({ lampLockedOildrop: 23_000_000n, genScheduleCount: 1, ...vaultOutMagic(consume) }),
     },
     { address: FEE_ADDRESS, assets: { lovelace: 10_000_000n - CONSUME_FEE } },
   ];
-  return buildTxCbor({
+  const spec = {
     inputs: [ref(VAULT_UTXO), ref(FEE_UTXO)],
     feeLovelace: CONSUME_FEE,
     outputs,
@@ -110,7 +120,11 @@ function consumeTx(): string {
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
     ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 1_800_000)),
-  });
+  };
+  return buildTxCbor(!consume ? spec : withConsumeLeg(spec, {
+    thread: threadUtxo(KEY_OWNER, "7e".repeat(32)), vaultRef: ref(VAULT_UTXO),
+    pairs: [{ opType: 1, opCount: 2n }], requiredNanogic: CONSUME_BURN,
+  }));
 }
 
 // ── tx tạo vault nạp từ ví Phoenix (khuôn `funding.test.ts`) ─────────────────
@@ -203,10 +217,10 @@ function harness(opts: { feecover?: ReturnType<typeof fakeFeecover>; proxy?: boo
   const chain = new RecordedChainReader(
     { [VAULT_ADDRESS]: [VAULT_UTXO], [ENGAGE_ADDRESS]: [threadUtxo(KEY_OWNER, "7e".repeat(32))], [DP_ADDRESS]: [DP1, DP2], ...genV2Chain("Preview", { epoch: 20_707n }) },
     TIP,
-    [VAULT_UTXO, FEE_UTXO, ANCHOR],
+    // Thread của lượt tiêu là INPUT của tx ⟹ phép đọc lại ví trả phí tra nó theo tham chiếu.
+    [VAULT_UTXO, FEE_UTXO, ANCHOR, threadUtxo(KEY_OWNER, "7e".repeat(32))],
   );
-  const cbor = consumeTx();
-  const builder = new RecordedTxBuilder({ consume: cbor, schedule_commit: cbor, create_vault: fundedTx() }, VAULT_ID_UNIT);
+  const builder = new RecordedTxBuilder({ consume: consumeTx(true), schedule_commit: consumeTx(), create_vault: fundedTx() }, VAULT_ID_UNIT);
   const issued = new IssuedTxRegistry(REGISTRY_TTL);
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks: new OwnerLockTable(TTL), issued,

@@ -60,6 +60,21 @@ import {
 } from "./genV2.js";
 import { genLimitsSummary } from "./summary.js";
 import type { ConsumeBuildParams } from "./txBuilder.js";
+import { checkConsumeTx, consumeLineOf, type ConsumePair } from "./consumeLine.js";
+import type { EngageThread } from "./engage.js";
+
+/**
+ * Thân bài `/tx/consume`: MỘT trong hai dạng — `opType` + `opCount`, HOẶC `pairs` (`consumeLine.ts`).
+ * Dịch vụ kiểm lại sự loại trừ ở `consumeLineOf`, không chỉ tin bộ đọc HTTP.
+ */
+export interface ConsumeRequest extends OwnerRequest {
+  opType?: number;
+  opCount?: bigint;
+  /** ConsumeMany: op_type TĂNG NGẶT, 1..8 cặp, op_count ≥ 1. Một cặp ⟹ dựng `Consume` đơn. */
+  pairs?: ReadonlyArray<ConsumePair>;
+  engageRef?: OutRefLike;
+  wakemeVaultRef?: OutRefLike;
+}
 
 const PKH_HEX = /^[0-9a-f]{56}$/;
 const HEX = /^[0-9a-f]+$/;
@@ -438,21 +453,33 @@ export class VaultTxService {
    * chủ — không còn một NFT thread cố định trong cấu hình. `engageRef` chỉ đích danh khi chủ
    * có nhiều thread.
    */
-  async consume(
-    req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike; wakemeVaultRef?: OutRefLike },
-    quote?: QuoteMode,
-  ): Promise<BuildResponse> {
+  async consume(req: ConsumeRequest, quote?: QuoteMode): Promise<BuildResponse> {
     const d = this.deps.deployment.consume;
+    // Hình dạng lượt tiêu kiểm TRƯỚC khi giữ khoá chủ (`consumeLine.ts`): `pairs` sai là 400, và
+    // một yêu cầu hỏng hình dạng không được chiếm chỗ của chủ.
+    const line = consumeLineOf(req);
     let wakeme: WakemeSource = {};
+    let readback: { thread: EngageThread; vaultInputRef: OutRefLike } | undefined;
     return this.buildOne(undefined, "consume", req, async (ctx, b) => {
       const thread = await pickEngageThread(this.deps.chain, d.engageAddress, d.engageScriptHash, ctx.owner, req.engageRef);
       const cp = await this.consumeCheckpointFor(ctx, req.wakemeVaultRef);
       wakeme = cp.wakeme;
+      readback = { thread, vaultInputRef: ctx.vault.utxo };
       return b.consume(ctx, {
-        opType: req.opType, opCount: req.opCount, engageUtxo: thread.utxo,
+        ...(line.kind === "single" ? { opType: line.opType, opCount: line.opCount } : { pairs: line.pairs }),
+        engageUtxo: thread.utxo,
         ...(cp.params === undefined ? {} : { checkpoint: cp.params }),
       });
-    }, quote, (txCbor, summary) => this.wakemeAfterSummary(txCbor, summary, wakeme));
+    }, quote, (txCbor, summary) => {
+      this.wakemeAfterSummary(txCbor, summary, wakeme);
+      if (readback === undefined) throw new Error("[bất biến nội bộ] /tx/consume đọc lại khi chưa chọn thread.");
+      // Đọc lại redeemer + datum thread từ CBOR; `burned_nanogic` là lượng két đốt, đã suy từ
+      // CÙNG CBOR ở `summarizeTx`.
+      summary.consume = checkConsumeTx(txCbor, {
+        engageAddress: d.engageAddress, thread: readback.thread, vaultInputRef: readback.vaultInputRef,
+        line, burnedNanogic: BigInt(summary.magic.burned_nanogic),
+      });
+    });
   }
 
   /**

@@ -19,6 +19,13 @@
 //   400 ENGAGE_REF_SHAPE / ENGAGE_REF_MISMATCH  `engage_ref` sai hình dạng / không phải thread của chủ
 //   404 ENGAGE_THREAD_NOT_FOUND  chủ chưa có thread Engage — mở bằng `POST /tx/open-thread`
 //   409 ENGAGE_THREAD_AMBIGUOUS  chủ có nhiều thread, yêu cầu không kèm `engage_ref`
+//   400 CONSUME_PAIRS_CONFLICT   `/tx/consume`: `pairs` đi cùng `op_type`/`op_count` (gửi MỘT dạng)
+//   400 CONSUME_PAIRS_SHAPE      `pairs` không phải mảng / phần tử không phải `{ op_type, op_count }`
+//   400 CONSUME_PAIRS_EMPTY / CONSUME_PAIRS_TOO_MANY  `pairs` rỗng / quá 8 cặp (`MAX_CONSUME_PAIRS`)
+//   400 CONSUME_PAIRS_NOT_INCREASING  `op_type` không tăng ngặt (kể cả trùng)
+//   400 CONSUME_PAIR_COUNT_INVALID / CONSUME_PAIR_TYPE_INVALID  `op_count` không phải chuỗi chữ số ≥ 1
+//                                (≤ 20 chữ số) / `op_type` không phải số nguyên trong [0, 1000000]
+//   422 CONSUME_TX_MISMATCH      tx tiêu vừa dựng lệch lượt tiêu đã yêu cầu (`consumeLine.ts` ▸ `checkConsumeTx`)
 //   409 ENGAGE_THREAD_EXISTS     `/tx/open-thread` khi chủ đã có thread
 //   422 ENGAGE_THREAD_DATUM_UNDECODABLE  `engage_ref` mang NFT nhưng datum không giải được
 //   422 OPEN_THREAD_TX_MISMATCH  giao dịch mở thread vừa dựng lệch (NFT/output/datum genesis)

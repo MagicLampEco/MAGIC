@@ -5,6 +5,27 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-03 — `/tx/consume` nhận `pairs` (ConsumeMany); mọi lượt tiêu được đọc lại từ CBOR
+
+**Đổi gì.** `POST /tx/consume` nhận thêm `pairs: [{ op_type, op_count }, …]` (1..8 cặp, `op_type`
+tăng ngặt, `op_count` ≥ 1), loại trừ với cặp đơn; dịch vụ dựng redeemer `ConsumeMany` (constr 3)
+qua `buildConsumeManyTx`, `required` = `requiredFromBeaconPairs` (sàn TỪNG cặp rồi cộng). `pairs`
+một phần tử quy về `Consume` đơn — số đo ở README VaultTxAPI §`pairs`. Phép đọc lại mới
+`VaultTxAPI/src/consumeLine.ts` ▸ `checkConsumeTx` chạy cho MỌI lượt tiêu, ghi `summary.consume`.
+Mã mới: `CONSUME_PAIRS_CONFLICT` · `_SHAPE` · `_EMPTY` · `_TOO_MANY` · `_NOT_INCREASING` ·
+`CONSUME_PAIR_COUNT_INVALID` · `CONSUME_PAIR_TYPE_INVALID` (400) · `CONSUME_TX_MISMATCH` (422).
+SDK xuất thêm `buildConsumeManyTx`, `requiredFromBeaconPairs`, `decodeConsumeLineRedeemer`,
+`assertValidPairs`, `requiredForPairs`, `sumPairCounts`, `MAX_CONSUME_PAIRS`.
+
+**Vì sao.** OriLife cần một tác vụ trả cho tối đa bốn loại nghiệp vụ trong một giao dịch. Phép đọc
+lại áp cho cả cặp đơn vì `summary` phải suy TỪ `tx_cbor` (README §2): đường không được đọc lại là
+đường mà bộ dựng nói gì cũng qua.
+
+**Cái gì gãy nếu đang bám bản cũ.** Bộ dựng thay thế (`TxBuilderPort`) mà trả CBOR tiêu không có
+thread Engage làm input, hoặc không mang redeemer Consume trên thread ⟹ nay `422
+CONSUME_TX_MISMATCH` thay vì `200`. Bản ghi CBOR trong năm tệp kiểm cũ đã được dựng lại đủ vế
+thread (`VaultTxAPI/tests/fixtures/consume.ts`), không kỳ vọng nào bị nới. Không đổi tệp `.ak` nào.
+
 ## 2026-10-03 — Tài trợ consume đầu; năm bản vá on-chain
 
 **Đổi gì.** Năm bản vá validator, cộng phần off-chain dựng luồng tài trợ consume đầu:

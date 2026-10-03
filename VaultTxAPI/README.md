@@ -72,7 +72,7 @@ POST /tx/instant-gen       { owner, [owner_witness], change_address | fee_payer,
 POST /tx/refresh-checkpoint { owner, [owner_witness], change_address | fee_payer, [wakeme_vault_ref] }
 POST /tx/schedule-commit   { owner, [owner_witness], change_address | fee_payer, schedule_length, lamp_per_epoch }
 POST /tx/schedule-fire     { owner, [owner_witness], change_address | fee_payer, schedule_id }
-POST /tx/consume           { owner, [owner_witness], change_address | fee_payer, op_type, op_count, [engage_ref], [wakeme_vault_ref] }
+POST /tx/consume           { owner, [owner_witness], change_address | fee_payer, op_type, op_count | pairs, [engage_ref], [wakeme_vault_ref] }
 POST /tx/open-thread       { owner, [owner_witness], change_address }
 POST /tx/bind-did          { owner, [owner_witness], [change_address], did_commit, [engage_ref] }
 POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile], [did_commit] }
@@ -207,6 +207,50 @@ dịch vụ tự định vị két (mục `wakeme_vault_ref` dưới); không t�
 `400 WAKEME_VAULT_REF_REQUIRED` (`details.wakeme_link`, `details.located_count`), không dựng một
 tx chắc chắn chết. Cùng
 epoch, hoặc két Schedule ⟹ không đọc gì thêm (ScheduleGen không đọc két Wakeme).
+
+### `POST /tx/consume` nhiều loại nghiệp vụ trong MỘT tx: `pairs`
+
+Thân bài nhận **một trong hai** dạng: cặp đơn `"op_type": 1, "op_count": "2"`, hoặc `pairs`. Ví dụ
+một tác vụ OriLife dùng bốn mã nghiệp vụ:
+
+```json
+{ "owner": { "type": "key", "hash": "<56 hex>" }, "fee_payer": { … },
+  "pairs": [ { "op_type": 1, "op_count": "1" }, { "op_type": 2, "op_count": "1" },
+             { "op_type": 3, "op_count": "1" }, { "op_type": 4, "op_count": "3" } ] }
+```
+
+Luật (nguồn duy nhất: `assertValidPairs`, gương `pricing.valid_pairs` on-chain; ánh xạ mã ở
+`src/consumeLine.ts`): 1..8 cặp (`MAX_CONSUME_PAIRS`); `op_type` là số nguyên JSON trong
+[0, 1000000], **tăng ngặt** — trùng loại thì gộp `op_count` lại; `op_count` là **chuỗi** chữ số ≥ 1.
+Gửi `pairs` cùng `op_type`/`op_count` ⟹ `400 CONSUME_PAIRS_CONFLICT`: dịch vụ không chọn hộ bên
+nào thắng. Mọi lỗi hình dạng ra 400 TRƯỚC khi giữ khoá chủ và trước khi đọc chuỗi.
+
+**`required` của ConsumeMany = Σ sàn TỪNG cặp** (`requiredFromBeaconPairs`, gương
+`required_for_pairs`) — KHÁC quy tắc gộp-rồi-sàn của Consume đơn. Hai quy tắc lệch tới (n−1)
+nanogic, và validator đòi `Σburns == required` (dấu bằng). Bài Emulator
+(`MagicSDK/tests/sponsorJourney.test.ts`, khối ConsumeMany) chọn giá lẻ để hai quy tắc lệch đúng
+1 nanogic: két đốt theo gộp-rồi-sàn ⟹ validator từ chối; đốt theo sàn-từng-cặp ⟹ qua.
+
+**`pairs` đúng MỘT phần tử ⟹ dựng `Consume` đơn (constr 0)**, không dựng ConsumeMany một cặp: kế
+toán giống hệt (một cặp sàn một lần ở cả hai quy tắc), còn chi phí thì không. Đo 2026-10-03 trên
+Emulator (script `consume` + vault Prepaid chạy thật, cùng op 2 × 1, tổng mọi redeemer của tx):
+
+| redeemer | byte tx | mem | steps |
+|---|---|---|---|
+| `Consume` (constr 0) | 1.193 | 1.698.217 | 608.679.596 |
+| `ConsumeMany` 1 cặp (constr 3) | 1.199 | 1.795.933 | 638.418.101 |
+| `ConsumeMany` 4 cặp (op 1–4) | 1.217 | 2.152.109 | 755.134.607 |
+
+Bài đo khẳng định ConsumeMany một cặp đắt hơn ở cả ba trục; số đo lật chiều thì bài đỏ và quyết định
+này phải xét lại. Bên gọi không phải rẽ nhánh: `summary.consume` luôn in `pairs` dạng danh sách.
+
+**`summary.consume`** đọc lại TỪ CBOR (`checkConsumeTx`), cho MỌI lượt tiêu — cả cặp đơn:
+`redeemer` (`Consume` | `ConsumeMany`), `pairs`, `required_nanogic`/`required_magic`,
+`engage_input_ref`. Phép đọc lại ép: thread là input và mang đúng một redeemer Spend; redeemer
+đúng dạng + đúng các cặp đã yêu cầu, `vault_ref` = két đang tiêu, `price_ref` trong
+`reference_inputs`; đúng một output ở địa chỉ engage, mang NFT thread, value bảo toàn tuyệt đối;
+datum thread giữ chủ, `consumed_count` tăng Σ `op_count`, `consumed_nanogic` tăng `required` > 0
+và bằng `magic.burned_nanogic` của két. Lệch ⟹ `422 CONSUME_TX_MISMATCH`, không có tx nào để ký.
 
 ### `POST /tx/schedule-commit`: validator `commit`
 
@@ -1071,6 +1115,12 @@ Nên:
 | `wakeme_vault_ref` không phải két đã nối (`wakeme_link` rỗng hoặc khác) và lượt này không nối/đổi link được, luật 6 (`details.wakeme_link`, `details.owner_commit`, `details.next_route`) — chạy `/tx/refresh-checkpoint` trước | `422 WAKEME_LINK_CHANGE_REJECTED` |
 | chủ chưa có thread Engage | `404 ENGAGE_THREAD_NOT_FOUND` |
 | chủ có nhiều thread, không kèm `engage_ref` | `409 ENGAGE_THREAD_AMBIGUOUS` |
+| `/tx/consume`: `pairs` đi cùng `op_type`/`op_count` | `400 CONSUME_PAIRS_CONFLICT` |
+| `pairs` không phải mảng / phần tử sai hình (null, mảng, khoá lạ) | `400 CONSUME_PAIRS_SHAPE` |
+| `pairs` rỗng / quá 8 cặp | `400 CONSUME_PAIRS_EMPTY` / `400 CONSUME_PAIRS_TOO_MANY` |
+| `op_type` không tăng ngặt (kể cả trùng) | `400 CONSUME_PAIRS_NOT_INCREASING` |
+| `op_count` không phải chuỗi chữ số ≥ 1, ≤ 20 chữ số / `op_type` ngoài số nguyên [0, 1000000] | `400 CONSUME_PAIR_COUNT_INVALID` / `400 CONSUME_PAIR_TYPE_INVALID` |
+| tx tiêu vừa dựng lệch lượt tiêu đã yêu cầu (thread, redeemer, output, datum, Σburns) | `422 CONSUME_TX_MISMATCH` |
 | `/tx/open-thread` khi chủ đã có thread | `409 ENGAGE_THREAD_EXISTS` |
 | `engage_ref` mang NFT nhưng datum không giải được | `422 ENGAGE_THREAD_DATUM_UNDECODABLE` |
 | tx mở thread vừa dựng lệch (NFT / output / datum genesis) | `422 OPEN_THREAD_TX_MISMATCH` |

@@ -310,8 +310,9 @@ export interface BindDidSummary {
   required_signers: string[];
 }
 
-/** Redeemer Spend của các input, theo chỉ số trong danh sách input ĐÃ SẮP của ledger. */
-function spendRedeemersOf(tx: CML.Transaction): { index: number; data: string }[] {
+/** Redeemer Spend của các input, theo chỉ số trong danh sách input ĐÃ SẮP của ledger.
+ *  Dùng chung với phép đọc lại tx tiêu (`consumeLine.ts` ▸ `checkConsumeTx`). */
+export function spendRedeemersOf(tx: CML.Transaction): { index: number; data: string }[] {
   const out: { index: number; data: string }[] = [];
   const rd = tx.witness_set().redeemers();
   const legacy = rd?.as_arr_legacy_redeemer();

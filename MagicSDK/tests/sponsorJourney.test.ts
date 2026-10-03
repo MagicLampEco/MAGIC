@@ -38,12 +38,16 @@ import {
   type Validator,
 } from "@lucid-evolution/lucid";
 import { msPerEpoch, windowOriginMs, type OwnerAuth } from "@magiclamp/protocol-utils";
-import { encodePriceParam } from "@magiclamp/consumemagic";
+import {
+  buildConsumeManyTx, buildConsumeTx, decodePriceParam, encodePriceParam, requiredFromBeacon, requiredFromBeaconPairs,
+} from "@magiclamp/consumemagic";
 import {
   addMintPaidFund,
   decodeVaultDatum,
   derivePrepaidScripts,
   parMagicFromCarp,
+  planPrepaidBurns,
+  prepaidBurnFor,
   withRefScripts,
   type PrepaidBlueprint,
   type PrepaidScripts,
@@ -258,7 +262,14 @@ beforeAll(async () => {
       .pay.ToContract(lockAddr, {
         kind: "inline",
         value: encodePriceParam({
-          op_prices: [{ op_type: 1n, base_price: 10_000_000n, demand_mult: 1_000_000_000n }],
+          // op 1 giữ nguyên cho T4. op 2–4 (ConsumeMany, khối cuối tệp): giá lẻ chọn để
+          // sàn-TỪNG-cặp KHÁC gộp-rồi-sàn — 4.999.999,5 + 10.000.000,5 ⟹ lệch đúng 1 nanogic.
+          op_prices: [
+            { op_type: 1n, base_price: 10_000_000n, demand_mult: 1_000_000_000n },
+            { op_type: 2n, base_price: 3_333_333n, demand_mult: 1_500_000_000n },
+            { op_type: 3n, base_price: 6_666_667n, demand_mult: 1_500_000_000n },
+            { op_type: 4n, base_price: 1_111_111n, demand_mult: 1_700_000_000n },
+          ],
           m_min: 500_000_000n, m_max: 2_000_000_000n, epoch: E0,
         }),
       }, { lovelace: 3_000_000n, [beaconUnit]: 1n }),
@@ -479,6 +490,122 @@ describe("hành trình tài trợ qua API SDK — script thật trên Emulator",
     expect(raw.fields[4]).toBe(r.summary.requiredNanogic);
     const vd = decodeVaultDatum((await only(vaultUnit)).datum!);
     expect(vd.magic_batches[0]!.current_amount).toBe(parMagicFromCarp(CARP) - r.summary.requiredNanogic);
+  }, SLOW);
+
+  // ── ConsumeMany (redeemer constr 3) — validator `consume` + vault Prepaid chạy THẬT ─────────
+  // Cùng kỳ T3 (lô Prepaid chỉ sống kỳ rút), trên thread đã qua T4. `required` của ConsumeMany
+  // = Σ sàn TỪNG cặp (`requiredFromBeaconPairs`); ca ĐỎ dựng y hệt ca XANH, chỉ đổi lượng két đốt
+  // sang gộp-rồi-sàn (lớn hơn đúng 1 nanogic) ⟹ `Σburns == required` vỡ ⟹ validator từ chối.
+
+  type Line = { opType: number; opCount: bigint } | { pairs: { opType: number; opCount: bigint }[] };
+  const Q = 1_000_000_000n;
+
+  /** Gộp-rồi-sàn: ⌊Σ base·dm·count / Q⌋ — quy tắc của Consume ĐƠN, SAI cho ConsumeMany. */
+  async function foldOnce(pairs: { opType: number; opCount: bigint }[]): Promise<bigint> {
+    const pp = decodePriceParam((await only(beaconUnit)).datum!);
+    const num = pairs.reduce((t, p) => {
+      const op = pp.op_prices.find(o => o.op_type === BigInt(p.opType))!;
+      return t + op.base_price * op.demand_mult * p.opCount;
+    }, 0n);
+    return num / Q;
+  }
+
+  async function consumeLine(line: Line, burnOverride?: bigint) {
+    const vaultUtxo = await only(vaultUnit);
+    const beacon = await only(beaconUnit);
+    const pp = decodePriceParam(beacon.datum!);
+    const required = "pairs" in line
+      ? requiredFromBeaconPairs(pp, line.pairs) : requiredFromBeacon(pp, line.opType, line.opCount);
+    const burns = planPrepaidBurns(decodeVaultDatum(vaultUtxo.datum!), burnOverride ?? required, drawEpoch);
+    const pb = prepaidBurnFor(scripts, vaultUtxo, burns, drawEpoch);
+    const common = {
+      lucid, engageUtxo: await only(threadUnit), vaultUtxo, priceBeaconUtxo: beacon, consumeScript,
+      vaultScript: scripts.vault.script as Validator,
+      vaultBurnRedeemerCbor: pb.vaultBurnRedeemerCbor, vaultOutDatumCbor: pb.vaultOutDatumCbor,
+      vaultOutAssets: pb.vaultOutAssets, vaultKind: "prepaid" as const, ownerAuth: didAuth(),
+      consumeRefUtxo: consumeRef, vaultRefUtxo: scripts.vault.refUtxo, network: NET, tipPosixMs: nowMs(),
+      maxPriceStale: MAX_PRICE_STALE,
+    };
+    const r = "pairs" in line
+      ? await buildConsumeManyTx({ ...common, pairs: line.pairs })
+      : await buildConsumeTx({ ...common, opType: line.opType, opCount: line.opCount });
+    return { r, required };
+  }
+
+  /** Kích thước + ExUnit tổng (mọi redeemer) của tx đã dựng — Lucid đã đánh giá script thật. */
+  function measure(cbor: string): { bytes: number; mem: bigint; steps: bigint } {
+    const rd = CML.Transaction.from_cbor_hex(cbor).witness_set().redeemers();
+    let mem = 0n, steps = 0n;
+    const add = (eu: CML.ExUnits) => { mem += eu.mem(); steps += eu.steps(); };
+    const legacy = rd?.as_arr_legacy_redeemer();
+    if (legacy !== undefined) for (let i = 0; i < legacy.len(); i++) add(legacy.get(i).ex_units());
+    const map = rd?.as_map_redeemer_key_to_redeemer_val();
+    if (map !== undefined) {
+      const ks = map.keys();
+      for (let i = 0; i < ks.len(); i++) add(map.get(ks.get(i))!.ex_units());
+    }
+    if (mem === 0n) throw new Error("tx không có redeemer nào — phép đo vô nghĩa");
+    return { bytes: cbor.length / 2, mem, steps };
+  }
+
+  async function threadAndLot() {
+    const raw = rawEngage(await only(threadUnit));
+    const vd = decodeVaultDatum((await only(vaultUnit)).datum!);
+    return { count: raw.fields[1] as bigint, nanogic: raw.fields[4] as bigint, lot: vd.magic_batches[0]!.current_amount };
+  }
+
+  it("ĐO: Consume đơn vs ConsumeMany MỘT cặp (cùng op 2 × 1) — byte + ExUnit, script chạy thật", async () => {
+    const single = await consumeLine({ opType: 2, opCount: 1n });
+    const many1 = await consumeLine({ pairs: [{ opType: 2, opCount: 1n }] });
+    expect(many1.r.requiredNanogic).toBe(single.r.requiredNanogic);
+    const a = measure(single.r.tx.toCBOR());
+    const b = measure(many1.r.tx.toCBOR());
+    // Số đo đi vào README VaultTxAPI §`/tx/consume` (quyết định `pairs` một phần tử ⟹ Consume đơn).
+    console.log(`[đo ConsumeMany] Consume đơn: ${a.bytes} byte, mem ${a.mem}, steps ${a.steps} · ` +
+      `ConsumeMany 1 cặp: ${b.bytes} byte, mem ${b.mem}, steps ${b.steps}`);
+    expect(b.bytes).toBeGreaterThan(a.bytes);
+    expect(b.mem).toBeGreaterThan(a.mem);
+    expect(b.steps).toBeGreaterThan(a.steps);
+  }, SLOW);
+
+  it("ConsumeMany ĐỎ (cực đối của ca XANH dưới): két đốt gộp-rồi-sàn (+1 nanogic) ⟹ validator từ chối", async () => {
+    const pairs = [{ opType: 2, opCount: 1n }, { opType: 3, opCount: 1n }];
+    const perPair = requiredFromBeaconPairs(decodePriceParam((await only(beaconUnit)).datum!), pairs);
+    const folded = await foldOnce(pairs);
+    expect(folded - perPair).toBe(1n); // đầu vào PHÂN BIỆT được hai quy tắc
+    const before = await threadAndLot();
+    await expect(consumeLine({ pairs }, folded)).rejects.toThrow();
+    expect(await threadAndLot()).toEqual(before);
+  }, SLOW);
+
+  it("ConsumeMany XANH 2 cặp (op 2, 3): thread + két giảm đúng Σ sàn TỪNG cặp; consumed_count += 2", async () => {
+    const pairs = [{ opType: 2, opCount: 1n }, { opType: 3, opCount: 1n }];
+    const before = await threadAndLot();
+    const { r, required } = await consumeLine({ pairs });
+    expect(r.requiredNanogic).toBe(required);
+    expect(required).toBe(14_999_999n);
+    await submitSigned(r.tx, [didKey]);
+    const after = await threadAndLot();
+    expect(after.nanogic - before.nanogic).toBe(14_999_999n);
+    expect(after.count - before.count).toBe(2n);
+    expect(before.lot - after.lot).toBe(14_999_999n);
+  }, SLOW);
+
+  it("ConsumeMany XANH 4 cặp OriLife (mã 1–4): Σ sàn từng cặp, khác gộp-rồi-sàn", async () => {
+    const pairs = [
+      { opType: 1, opCount: 1n }, { opType: 2, opCount: 1n }, { opType: 3, opCount: 1n }, { opType: 4, opCount: 3n },
+    ];
+    const folded = await foldOnce(pairs);
+    const before = await threadAndLot();
+    const { r, required } = await consumeLine({ pairs });
+    expect(required).toBe(30_666_665n);
+    expect(folded).toBe(30_666_666n);
+    console.log(`[đo ConsumeMany] 4 cặp: ${JSON.stringify(measure(r.tx.toCBOR()), (_, v) => typeof v === "bigint" ? v.toString() : v)}`);
+    await submitSigned(r.tx, [didKey]);
+    const after = await threadAndLot();
+    expect(after.nanogic - before.nanogic).toBe(required);
+    expect(after.count - before.count).toBe(6n);
+    expect(before.lot - after.lot).toBe(required);
   }, SLOW);
 
   it("T4 ĐỎ: sang kỳ e+1 với lô của kỳ e ⟹ NÉM SPONSOR_EPOCH_MISMATCH trước khi dựng", async () => {

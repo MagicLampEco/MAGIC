@@ -7,7 +7,9 @@
 //   POST /tx/refresh-checkpoint { owner, [owner_witness], [change_address | fee_payer], [wakeme_vault_ref] }
 //   POST /tx/schedule-commit   { owner, …, schedule_length, lamp_per_epoch }
 //   POST /tx/schedule-fire     { owner, …, schedule_id }
-//   POST /tx/consume           { owner, …, op_type, op_count, [engage_ref], [wakeme_vault_ref] }
+//   POST /tx/consume           { owner, …, op_type, op_count | pairs, [engage_ref], [wakeme_vault_ref] }
+//                              (`pairs` = [{ op_type, op_count }, …] ⟹ ConsumeMany, 1..8 cặp, op_type
+//                              tăng ngặt; loại trừ với cặp đơn ⟹ 400 `CONSUME_PAIRS_CONFLICT` — `consumeLine.ts`)
 //   POST /tx/open-thread       { owner, [owner_witness], [change_address] }
 //                              (`fee_payer` một mình ⟹ 422; `funding` ⟹ 501 — xem `service.ts`)
 //   POST /tx/bind-did          { owner, [owner_witness], [change_address], did_commit, [engage_ref] }

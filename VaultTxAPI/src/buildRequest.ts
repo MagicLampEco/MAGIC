@@ -14,6 +14,7 @@
 
 import type { Profile } from "@magiclamp/sdk";
 
+import { assertConsumePairs, pairsConflict, type ConsumePair } from "./consumeLine.js";
 import { parseDidCommit, parseEngageRef } from "./engage.js";
 import { parseWakemeVaultRef } from "./wakeme.js";
 import { BadRequestError, CodedApiError } from "./errors.js";
@@ -24,7 +25,7 @@ import { parseOwnerFields, parseOwnerWitness } from "./owner.js";
 import {
   toBindDidBody, toBuildBody, toCreateVaultBody, toOpenThreadBody,
   type BindDidRequest, type BindDidResponse,
-  type BuildResponse, type CreateVaultRequest, type CreateVaultResponse, type OpenThreadRequest,
+  type BuildResponse, type ConsumeRequest, type CreateVaultRequest, type CreateVaultResponse, type OpenThreadRequest,
   type OpenThreadResponse, type OwnerRequest, type QuoteMode, type VaultTxService,
 } from "./service.js";
 
@@ -46,7 +47,7 @@ export type ParsedBuild =
   | { route: "refresh-checkpoint"; req: OwnerRequest & { wakemeVaultRef?: OutRefLike } }
   | { route: "schedule-commit"; req: OwnerRequest & { scheduleLength: bigint; lampPerEpoch: bigint } }
   | { route: "schedule-fire"; req: OwnerRequest & { scheduleId: string } }
-  | { route: "consume"; req: OwnerRequest & { opType: number; opCount: bigint; engageRef?: OutRefLike; wakemeVaultRef?: OutRefLike } }
+  | { route: "consume"; req: ConsumeRequest }
   | { route: "open-thread"; req: OpenThreadRequest }
   | { route: "bind-did"; req: BindDidRequest }
   | { route: "create-vault"; req: CreateVaultRequest };
@@ -97,12 +98,15 @@ export function parseBuildRequest(route: IssuedRoute, body: Record<string, unkno
     case "schedule-fire":
       return { route, req: { ...ownerReq(body), scheduleId: reqHex(body, "schedule_id") } };
     case "consume":
+      // Hai dạng loại trừ nhau (`consumeLine.ts`): `{op_type, op_count}` HOẶC `pairs`. Có `pairs`
+      // thì KHÔNG đọc `op_type`/`op_count` — gửi kèm là 400 có mã, không phải "bỏ qua cái thừa".
       return {
         route,
         req: {
           ...ownerReq(body),
-          opType: reqSmallInt(body, "op_type"),
-          opCount: reqBigint(body, "op_count"),
+          ...(body.pairs === undefined
+            ? { opType: reqSmallInt(body, "op_type"), opCount: reqBigint(body, "op_count") }
+            : consumePairsReq(body)),
           engageRef: parseEngageRef(body.engage_ref),
           // Két Instant tiêu lần đầu trong epoch mới đang ghim két Wakeme ⟹ dịch vụ đòi trường này.
           ...optWakeme(body),
@@ -240,6 +244,58 @@ function tooManyDigits<E>(name: string, digits: number, mk: (m: string, d: Recor
 /** Như `reqBigint` nhưng nhận `"0"` — CHỈ cho `lamp_amount` của két instant. */
 function reqBigintAllowZero(body: Record<string, unknown>, name: string): bigint {
   return body[name] === "0" ? 0n : reqBigint(body, name);
+}
+
+/**
+ * `pairs` của `/tx/consume`: `[{ "op_type": <số nguyên JSON>, "op_count": "<chuỗi chữ số>" }, …]`.
+ * Ở đây chỉ đọc HÌNH DẠNG từng phần tử (cùng luật kiểu với dạng một cặp: `op_type` là nhãn nhỏ,
+ * `op_count` là chuỗi chữ số vì nó là đại lượng đếm). Luật của CẢ danh sách — rỗng, quá trần,
+ * tăng ngặt, `op_count ≥ 1`, số nguyên an toàn — là của `assertValidPairs`, qua `consumeLine.ts`
+ * ▸ `assertConsumePairs` để mỗi luật ra đúng một mã. Có `op_type`/`op_count` đi kèm ⟹ 400
+ * `CONSUME_PAIRS_CONFLICT`.
+ */
+function consumePairsReq(body: Record<string, unknown>): { pairs: ConsumePair[] } {
+  if (body.op_type !== undefined || body.op_count !== undefined) throw pairsConflict();
+  const v = body.pairs;
+  if (!Array.isArray(v)) {
+    throw new CodedApiError(400, "CONSUME_PAIRS_SHAPE", `"pairs" phải là mảng [{ "op_type": …, "op_count": "…" }, …].`);
+  }
+  const pairs = v.map((e, i): ConsumePair => {
+    if (e === null || typeof e !== "object" || Array.isArray(e)) {
+      throw new CodedApiError(400, "CONSUME_PAIRS_SHAPE", `"pairs[${i}]" phải là object { op_type, op_count }.`, { pair_index: i });
+    }
+    const o = e as Record<string, unknown>;
+    const extra = Object.keys(o).filter(k => k !== "op_type" && k !== "op_count");
+    if (extra.length > 0) {
+      throw new CodedApiError(400, "CONSUME_PAIRS_SHAPE", `"pairs[${i}]" chỉ nhận "op_type" và "op_count".`,
+        { pair_index: i, unexpected: extra });
+    }
+    const t = o.op_type;
+    if (typeof t !== "number") {
+      throw new CodedApiError(400, "CONSUME_PAIR_TYPE_INVALID", `"pairs[${i}].op_type" phải là số nguyên JSON.`,
+        { pair_index: i, received_type: t === undefined ? "missing" : typeof t });
+    }
+    const c = o.op_count;
+    const badCount = (why: string, d: Record<string, unknown> = {}): never => {
+      throw new CodedApiError(400, "CONSUME_PAIR_COUNT_INVALID", `"pairs[${i}].op_count" ${why}`,
+        { pair_index: i, received_type: c === undefined ? "missing" : typeof c, ...d });
+    };
+    if (typeof c === "number") badCount("phải là CHUỖI chữ số, không phải số JSON (số JSON làm tròn quá 2^53).");
+    if (typeof c !== "string" || !/^\d+$/.test(c)) badCount("phải là chuỗi chữ số thập phân.");
+    if ((c as string).length > MAX_AMOUNT_DIGITS) {
+      badCount(`dài quá ${MAX_AMOUNT_DIGITS} chữ số.`, { max_digits: MAX_AMOUNT_DIGITS, received_digits: (c as string).length });
+    }
+    return { opType: t, opCount: BigInt(c as string) };
+  });
+  // Luật danh sách (gồm `op_count ≥ 1` và `op_type` là số nguyên an toàn) — MỘT nguồn.
+  assertConsumePairs(pairs);
+  // Cùng miền nhãn với dạng một cặp (`reqSmallInt`): op_type trong [0, 1000000].
+  pairs.forEach((p, i) => {
+    if (p.opType < 0 || p.opType > 1_000_000) {
+      throw new CodedApiError(400, "CONSUME_PAIR_TYPE_INVALID", `"pairs[${i}].op_type" phải trong [0, 1000000].`, { pair_index: i });
+    }
+  });
+  return { pairs };
 }
 
 function optWakeme(body: Record<string, unknown>): { wakemeVaultRef?: OutRefLike } {

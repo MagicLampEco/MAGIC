@@ -23,6 +23,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor, type TxOutputSpec } from "./fixtures/tx.js";
+import { withConsumeLeg } from "./fixtures/consume.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
@@ -40,7 +41,15 @@ const utxo = (txHash: string, outputIndex: number, address: string, assets: Reco
   ({ txHash, outputIndex, address, assets, datum });
 const ref = (u: { txHash: string; outputIndex: number }) => ({ txHash: u.txHash, outputIndex: u.outputIndex });
 
-const VAULT_DATUM = datumHex({ lampLockedOildrop: 2_000_000n });
+// Lô MAGIC sống của két: tx tiêu đốt `CONSUME_BURN` từ lô này (`consumed_credit` tăng đúng bấy
+// nhiêu) — `/tx/consume` đọc lại Σburns == required từ CBOR (`fixtures/consume.ts`). Các route
+// khác giữ nguyên lô ⟹ kế toán MAGIC của chúng không đổi.
+const FEE_BATCH = { id: "fb".repeat(16), createdEpoch: 20_707n, amountNanogic: 5_000_000_000n };
+const CONSUME_BURN = 1_000_000_000n;
+const vaultOutMagic = (consume: boolean) => consume
+  ? { batches: [{ ...FEE_BATCH, amountNanogic: FEE_BATCH.amountNanogic - CONSUME_BURN }], consumedCreditNanogic: CONSUME_BURN }
+  : { batches: [FEE_BATCH] };
+const VAULT_DATUM = datumHex({ lampLockedOildrop: 2_000_000n, batches: [FEE_BATCH] });
 const VAULT_UTXO = utxo(INPUT_TX_HASH, 0, VAULT_ADDRESS,
   { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n }, VAULT_DATUM);
 const FEE_UTXO = utxo("fa".repeat(32), 0, FEE_ADDRESS, { lovelace: 10_000_000n });
@@ -71,6 +80,8 @@ interface FeeTxOpts {
   extraInput?: { txHash: string; outputIndex: number };
   /** Lấy lovelace từ VAULT trả sang một địa chỉ cùng khoá ví trả phí: phần ví trả phí vẫn cân. */
   stakedOutput?: bigint;
+  /** Có ⟹ tx TIÊU MAGIC: két đốt `CONSUME_BURN`, ghép vế thread này (op 1 × 2). */
+  consumeThread?: UTxO;
 }
 
 /** Tx đi qua vault, phí do FEE_UTXO (10 ADA) trả: phí 0,178 + thối 9,822; thế chấp mất ≤ 3 ADA. */
@@ -79,12 +90,12 @@ function feeTx(o: FeeTxOpts = {}): string {
     {
       address: VAULT_ADDRESS,
       assets: { lovelace: 5_659_030n - (o.stakedOutput ?? 0n), [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
-      inlineDatumHex: datumHex({ lampLockedOildrop: 23_000_000n, genScheduleCount: 1 }),
+      inlineDatumHex: datumHex({ lampLockedOildrop: 23_000_000n, genScheduleCount: 1, ...vaultOutMagic(o.consumeThread !== undefined) }),
     },
     { address: o.changeTo ?? FEE_ADDRESS, assets: { lovelace: o.feeChange ?? 10_000_000n - FEE } },
   ];
   if (o.stakedOutput !== undefined) outputs.push({ address: FEE_ADDRESS_STAKED, assets: { lovelace: o.stakedOutput } });
-  return buildTxCbor({
+  const spec = {
     inputs: [ref(VAULT_UTXO), ref(FEE_UTXO), ...(o.extraInput ? [o.extraInput] : [])],
     feeLovelace: FEE,
     outputs,
@@ -92,7 +103,10 @@ function feeTx(o: FeeTxOpts = {}): string {
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: o.collateralReturn ?? 7_000_000n } },
     ttlSlot: o.ttlMs === null ? undefined : BigInt(unixTimeToSlot("Preview", NOW + (o.ttlMs ?? 1_800_000))),
-  });
+  };
+  return buildTxCbor(o.consumeThread === undefined ? spec : withConsumeLeg(spec, {
+    thread: o.consumeThread, vaultRef: ref(VAULT_UTXO), pairs: [{ opType: 1, opCount: 2n }], requiredNanogic: CONSUME_BURN,
+  }));
 }
 
 const THREAD_UNIT = ENGAGE_SCRIPT_HASH + "c0ffee";
@@ -119,15 +133,20 @@ function openTx(o: OpenTxOpts = {}): string {
   });
 }
 
-function harness(opts: { threads?: UTxO[]; cbor?: string; openCbor?: string; declaredUnit?: string } = {}) {
+function harness(opts: { threads?: UTxO[]; cbor?: string; openCbor?: string; declaredUnit?: string; consumeThread?: UTxO } = {}) {
   const chain = new RecordedChainReader(
     { [VAULT_ADDRESS]: [VAULT_UTXO], [ENGAGE_ADDRESS]: opts.threads ?? [threadUtxo(KEY_OWNER, "7e".repeat(32))], ...genV2Chain("Preview", { epoch: 20_707n }) },
     TIP,
-    [VAULT_UTXO, FEE_UTXO, FEE_UTXO_2],
+    // Thread của lượt tiêu là INPUT của tx ⟹ phép đọc lại ví trả phí tra nó theo tham chiếu.
+    [VAULT_UTXO, FEE_UTXO, FEE_UTXO_2, opts.consumeThread ?? threadUtxo(KEY_OWNER, "7e".repeat(32))],
   );
   const cbor = opts.cbor ?? feeTx();
   const builder = new RecordedTxBuilder(
-    { schedule_commit: cbor, schedule_fire: cbor, consume: cbor, open_thread: opts.openCbor ?? openTx() },
+    {
+      schedule_commit: cbor, schedule_fire: cbor, open_thread: opts.openCbor ?? openTx(),
+      // Thread mà lượt tiêu sẽ chọn — mặc định thread duy nhất của chủ ở chuỗi ghi sẵn.
+      consume: feeTx({ consumeThread: opts.consumeThread ?? threadUtxo(KEY_OWNER, "7e".repeat(32)) }),
+    },
     undefined,
     opts.declaredUnit ?? THREAD_UNIT,
   );
@@ -278,7 +297,7 @@ const PLAIN_AT_ENGAGE = utxo("9b".repeat(32), 0, ENGAGE_ADDRESS, { lovelace: 3_0
 describe("/tx/consume — thread Engage theo chủ", () => {
   it("hai thread của hai chủ (+ một UTxO rác mang NFT) ⟹ 200, chọn đúng thread của chủ yêu cầu", async () => {
     const mine = threadUtxo(KEY_OWNER, "a2".repeat(32), 0, "01");
-    const h = harness({ threads: [threadUtxo(OTHER_OWNER, "a1".repeat(32), 0, "02"), GARBAGE, mine] });
+    const h = harness({ threads: [threadUtxo(OTHER_OWNER, "a1".repeat(32), 0, "02"), GARBAGE, mine], consumeThread: mine });
     const r = await handle(consume(), h.router);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(h.builder.lastCall?.engageUtxo).toBe(mine);
@@ -296,7 +315,7 @@ describe("/tx/consume — thread Engage theo chủ", () => {
   it("hai thread cùng chủ ⟹ 409 ENGAGE_THREAD_AMBIGUOUS; CẶP: kèm engage_ref ⟹ 200 đúng thread đó", async () => {
     const t1 = threadUtxo(KEY_OWNER, "b1".repeat(32), 0, "01");
     const t2 = threadUtxo(KEY_OWNER, "b2".repeat(32), 1, "02");
-    const h = harness({ threads: [t1, t2] });
+    const h = harness({ threads: [t1, t2], consumeThread: t2 });
     const a = await handle(consume(), h.router);
     expect(a.status).toBe(409);
     expect(codeOf(a)).toBe("ENGAGE_THREAD_AMBIGUOUS");

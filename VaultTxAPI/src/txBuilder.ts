@@ -22,9 +22,9 @@ import {
   type LucidEvolution, type Script, type TxBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
 import {
-  buildConsumeTx, buildInstantGenTx, buildMintEngageTx, buildRefreshCheckpointTx, buildScheduleCommitTx,
+  buildConsumeTx, buildConsumeManyTx, buildInstantGenTx, buildMintEngageTx, buildRefreshCheckpointTx, buildScheduleCommitTx,
   buildScheduleFireTx, buildVaultBurnBatch,
-  createVault, decodePriceParam, requiredFromBeacon,
+  createVault, decodePriceParam, requiredFromBeacon, requiredFromBeaconPairs,
   type DidPaymentFundingInput, type GenBeaconParams, type InstantVaultParams, type PlutusJson, type Profile,
   type VaultModule, type VaultType,
 } from "@magiclamp/sdk";
@@ -119,9 +119,14 @@ export interface ScheduleCommitBuildParams {
   };
 }
 
-export interface ConsumeBuildParams {
-  opType: number;
-  opCount: bigint;
+/** Lượt tiêu giao cho bộ dựng: MỘT cặp (`Consume`) hoặc `pairs` ≥ 2 cặp (`ConsumeMany`) —
+ *  `consumeLine.ts` ▸ `consumeLineOf` đã quyết và đã kiểm luật danh sách. */
+export type ConsumeBuildParams = (
+  | { opType: number; opCount: bigint; pairs?: undefined }
+  | { pairs: ReadonlyArray<{ opType: number; opCount: bigint }>; opType?: undefined; opCount?: undefined }
+) & ConsumeBuildCommon;
+
+interface ConsumeBuildCommon {
   /** Thread của CHÍNH chủ, đã chọn bởi `engage.ts` ▸ `pickEngageThread`. */
   engageUtxo: UTxO;
   /** Chỉ két Instant v2.0 làm mới checkpoint ở lượt này (`cap_epoch < e`). SDK quyết lại
@@ -462,8 +467,13 @@ export class SdkTxBuilder implements TxBuilderPort {
     // `required` LUÔN đến từ beacon, không bao giờ từ bảng giá dựng sẵn: `consume.ak`
     // đòi `Σburns == required` — DẤU BẰNG — nên một con số tính bằng đường khác chỉ
     // đúng chừng nào hai đường chưa lệch.
+    // `pairs` (ConsumeMany) sàn TỪNG cặp rồi cộng (`requiredFromBeaconPairs`, gương on-chain
+    // `required_for_pairs`) — KHÔNG gộp rồi sàn một lần như `Consume` đơn: cách đó lệch tới
+    // (n−1) nanogic và validator đòi dấu bằng.
     const priceParam = decodePriceParam(priceBeaconUtxo.datum);
-    const required = rejectSyncAsProtocol(() => requiredFromBeacon(priceParam, p.opType, p.opCount));
+    const required = rejectSyncAsProtocol(() => p.pairs === undefined
+      ? requiredFromBeacon(priceParam, p.opType, p.opCount)
+      : requiredFromBeaconPairs(priceParam, p.pairs));
 
     const currentEpoch = protocolEpoch(ctx.tip.blockTimePosixMs, this.deps.network);
     const vaultSide = rejectSyncAsProtocol(() => buildVaultBurnBatch({
@@ -483,15 +493,13 @@ export class SdkTxBuilder implements TxBuilderPort {
       }),
     }));
 
-    const r = await rejectAsProtocol(() => buildConsumeTx({
+    const common = {
       lucid,
       engageUtxo,
       vaultUtxo: ctx.vault.utxo,
       priceBeaconUtxo,
       consumeScript,
       vaultScript,
-      opType: p.opType,
-      opCount: p.opCount,
       vaultBurnRedeemerCbor: vaultSide.vaultBurnRedeemerCbor,
       vaultOutDatumCbor: vaultSide.vaultOutDatumCbor,
       vaultKind: vaultSide.vaultKind,
@@ -508,7 +516,10 @@ export class SdkTxBuilder implements TxBuilderPort {
       collateralLovelace: ctx.collateralLovelace,
       // Vắng trong cấu hình ⟹ undefined ⟹ bộ dựng không kiểm, validator vẫn ép.
       maxPriceStale: d.consume.maxPriceStale,
-    }));
+    };
+    const r = await rejectAsProtocol(() => p.pairs === undefined
+      ? buildConsumeTx({ ...common, opType: p.opType, opCount: p.opCount })
+      : buildConsumeManyTx({ ...common, pairs: p.pairs }));
     return { txCbor: r.tx.toCBOR() };
   }
 
@@ -842,7 +853,7 @@ export class RecordedTxBuilder implements TxBuilderPort {
     return this.serve("schedule_fire", p, ctx);
   }
   async consume(ctx: BuildContext, p: ConsumeBuildParams): Promise<BuiltTx> {
-    const b = await this.serve("consume", { opType: p.opType, opCount: p.opCount }, ctx);
+    const b = await this.serve("consume", p.pairs === undefined ? { opType: p.opType, opCount: p.opCount } : { pairs: p.pairs }, ctx);
     this.lastCall!.engageUtxo = p.engageUtxo;
     this.lastCall!.buildParams = p;
     return b;

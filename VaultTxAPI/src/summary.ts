@@ -150,6 +150,12 @@ export interface TxSummary {
    */
   wakeme?: import("./wakeme.js").WakemeSummary;
   /**
+   * Chỉ ở `/tx/consume`: redeemer trên thread Engage (`Consume` | `ConsumeMany`), các cặp
+   * (op_type, op_count) và `required` TỔNG — đọc lại TỪ CBOR bởi `consumeLine.ts` ▸
+   * `checkConsumeTx`, đã đối chiếu `required_nanogic == magic.burned_nanogic`.
+   */
+  consume?: import("./consumeLine.js").ConsumeSummary;
+  /**
    * Ô sinh Gen v2.0, đọc từ datum ĐẦU RA giải mã lại từ CBOR. Ba ô `cap_*`/`wakeme_link`
    * chỉ có ở két Instant — két Schedule in `null` (ô đó ở Schedule mang nghĩa khác).
    * `usage_factor_q` = `usageFactorQ(usage_window)` (Q = 10⁹), công thức của instantgen-sdk.

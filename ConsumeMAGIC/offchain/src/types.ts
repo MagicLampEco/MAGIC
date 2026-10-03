@@ -248,3 +248,41 @@ export function decodeConsumeManyRedeemer(cbor: string): ConsumeManyRedeemerT {
   });
   return { pairs, price_ref: ref(priceD!, "price_ref"), vault_ref: ref(vaultD!, "vault_ref") };
 }
+
+// ── Giải mã redeemer của MỘT lượt tiêu: `Consume` (constr 0) hoặc `ConsumeMany` (constr 3) ──
+// Bên ĐỌC LẠI một tx vừa dựng (VaultTxAPI ▸ `consumeLine.ts` ▸ `checkConsumeTx`) cần biết redeemer trên thread
+// Engage nói gì — không tin lời khai của bộ dựng. Hai biến thể khác hình dạng nên trả về một kiểu
+// có nhãn; constr khác (BindDID, CloseThread, lạ) ⟹ NÉM, không đoán.
+
+/** Một lượt tiêu đọc từ redeemer: `single` = `Consume`, `many` = `ConsumeMany`. */
+export type ConsumeLineRedeemerT =
+  | { kind: "single"; op_type: bigint; op_count: bigint; price_ref: OutputReferenceT; vault_ref: OutputReferenceT }
+  | ({ kind: "many" } & ConsumeManyRedeemerT);
+
+/**
+ * Giải mã redeemer Spend của thread Engage thành một lượt tiêu. Ném `CONSUME-018` ở mọi
+ * hình dạng khác `Consume` / `ConsumeMany` — kể cả `BindDID`, `CloseThread`.
+ */
+export function decodeConsumeLineRedeemer(cbor: string): ConsumeLineRedeemerT {
+  const d = Data.from(cbor);
+  const bad = (why: string): never => {
+    throw new Error(`CONSUME-018: redeemer không phải Consume (constr 0) hay ConsumeMany (constr 3): ${why}`);
+  };
+  if (!(d instanceof Constr)) return bad("không phải Constr");
+  const c = d as Constr<Data>;
+  if (c.index === CONSUME_MANY_REDEEMER_CONSTR) return { kind: "many", ...decodeConsumeManyRedeemer(cbor) };
+  if (c.index !== CONSUME_REDEEMER_CONSTR) return bad(`constr ${c.index}`);
+  if (c.fields.length !== 4) return bad(`Consume cần 4 trường, có ${c.fields.length}`);
+  const [t, n, priceD, vaultD] = c.fields;
+  if (typeof t !== "bigint" || typeof n !== "bigint") return bad("op_type/op_count không phải số nguyên");
+  const ref = (x: Data, name: string): OutputReferenceT => {
+    if (!(x instanceof Constr) || x.index !== 0 || x.fields.length !== 2) return bad(`${name} sai hình dạng`);
+    const [id, ix] = (x as Constr<Data>).fields;
+    if (typeof id !== "string" || typeof ix !== "bigint") return bad(`${name} sai kiểu trường`);
+    return { transaction_id: id as string, output_index: ix as bigint };
+  };
+  return {
+    kind: "single", op_type: t as bigint, op_count: n as bigint,
+    price_ref: ref(priceD!, "price_ref"), vault_ref: ref(vaultD!, "vault_ref"),
+  };
+}

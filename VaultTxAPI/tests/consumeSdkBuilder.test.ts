@@ -28,7 +28,9 @@ import {
   Constr, Data, credentialToAddress, validatorToScriptHash, type Script, type UTxO,
 } from "@lucid-evolution/lucid";
 import { posixMsToEpoch, wakemeVaultHash } from "@magiclamp/protocol-utils";
-import { buildConsumeTx, buildVaultBurnBatch, type PlutusJson } from "@magiclamp/sdk";
+import {
+  buildConsumeManyTx, buildConsumeTx, buildVaultBurnBatch, requiredFromBeacon, requiredFromBeaconPairs, type PlutusJson,
+} from "@magiclamp/sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
@@ -43,16 +45,20 @@ import {
 import { engageDatumHex } from "./fixtures/engage.js";
 import { GB_SHARD_REF, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 import { buildTxCbor } from "./fixtures/tx.js";
+import { withConsumeLeg } from "./fixtures/consume.js";
 
 vi.mock("@magiclamp/sdk", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@magiclamp/sdk")>();
   return {
     ...orig,
     buildConsumeTx: vi.fn(),
+    buildConsumeManyTx: vi.fn(),
     buildVaultBurnBatch: vi.fn(orig.buildVaultBurnBatch),
     decodePriceParam: vi.fn(() => ({})),
     // 1 MAGIC — dưới lô sống 5 MAGIC của két.
     requiredFromBeacon: vi.fn(() => 1_000_000_000n),
+    // `pairs` đi đường RIÊNG (sàn từng cặp) — cùng 1 MAGIC để CBOR ghi sẵn dùng chung vế két.
+    requiredFromBeaconPairs: vi.fn(() => 1_000_000_000n),
   };
 });
 
@@ -113,8 +119,8 @@ function wakemeUtxo(): UTxO {
   };
 }
 
-function consumeTxCbor(withWakeme: boolean): string {
-  return buildTxCbor({
+function consumeTxCbor(withWakeme: boolean, thread: UTxO, pairs = [{ opType: 1, opCount: 1n }]): string {
+  return buildTxCbor(withConsumeLeg({
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
     ...(withWakeme ? { referenceInputs: [{ txHash: WAKEME_TX, outputIndex: 1 }] } : {}),
     feeLovelace: 178_000n,
@@ -126,7 +132,11 @@ function consumeTxCbor(withWakeme: boolean): string {
         lastUpdatedEpoch: EPOCH, capEpoch: EPOCH, usageWindowEpoch: EPOCH, consumedCreditNanogic: 1_000_000_000n,
       }),
     }],
-  });
+  }, {
+    // `requiredFromBeacon` giả = 1 MAGIC (khối `vi.mock` đầu tệp) — cùng lượng két đốt ở trên.
+    thread, vaultRef: { txHash: INPUT_TX_HASH, outputIndex: 0 }, pairs,
+    requiredNanogic: 1_000_000_000n,
+  }));
 }
 
 const outRef = (s: string) => { const [txHash, i] = s.split("#"); return { txHash: txHash!, outputIndex: Number(i) }; };
@@ -172,7 +182,7 @@ function harness(o: { capEpoch: bigint; wakemeLink?: string }) {
   // Không gọi Blockfrost: Lucid chỉ đi vào `buildConsumeTx` đã giả.
   (builder as unknown as { lucidFor: () => Promise<unknown> }).lucidFor = async () => ({});
   vi.mocked(buildConsumeTx).mockResolvedValue(
-    { tx: { toCBOR: () => consumeTxCbor(withWakeme) } } as unknown as Awaited<ReturnType<typeof buildConsumeTx>>);
+    { tx: { toCBOR: () => consumeTxCbor(withWakeme, thread) } } as unknown as Awaited<ReturnType<typeof buildConsumeTx>>);
 
   const service = new VaultTxService({
     network: NET, deployment, chain, builder,
@@ -183,7 +193,7 @@ function harness(o: { capEpoch: bigint; wakemeLink?: string }) {
     service, deploymentSource: deployment.source, vaultScopes: deployment.vaults, network: NET,
     chainLabel: "recorded", changeAddressStrategy: "enterprise_from_owner_pkh", token: "", logInternal: () => {},
   };
-  return { router };
+  return { router, thread };
 }
 
 const post = (body: Record<string, unknown> = {}) => ({
@@ -197,6 +207,9 @@ const burnArgs = () => vi.mocked(buildVaultBurnBatch).mock.calls[0]![0] as unkno
 
 beforeEach(() => {
   vi.mocked(buildConsumeTx).mockReset();
+  vi.mocked(buildConsumeManyTx).mockReset();
+  vi.mocked(requiredFromBeacon).mockClear();
+  vi.mocked(requiredFromBeaconPairs).mockClear();
   vi.mocked(buildVaultBurnBatch).mockClear();
 });
 
@@ -236,5 +249,32 @@ describe("SdkTxBuilder.consume — beacon ρ tới `buildConsumeTx`", () => {
     const a = consumeArgs();
     expect(refOf(a.rateBeaconUtxo)).toBe(RATE_REF);
     expect(refOf(a.wakemeVaultUtxo)).toBe(WAKEME_REF);
+  });
+});
+
+describe("SdkTxBuilder.consume — `pairs` đi `requiredFromBeaconPairs` + `buildConsumeManyTx`", () => {
+  const TWO = [{ opType: 1, opCount: 2n }, { opType: 3, opCount: 1n }];
+
+  it("2 cặp ⟹ required từ `requiredFromBeaconPairs(pp, pairs)`, dựng bằng `buildConsumeManyTx({pairs})`, KHÔNG gọi bản đơn", async () => {
+    const h = harness({ capEpoch: EPOCH });
+    vi.mocked(buildConsumeManyTx).mockResolvedValue(
+      { tx: { toCBOR: () => consumeTxCbor(false, h.thread, TWO) } } as unknown as Awaited<ReturnType<typeof buildConsumeManyTx>>);
+    const r = await handle(post({ op_type: undefined, op_count: undefined, pairs: [{ op_type: 1, op_count: "2" }, { op_type: 3, op_count: "1" }] }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(vi.mocked(requiredFromBeaconPairs)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(requiredFromBeaconPairs).mock.calls[0]![1]).toEqual(TWO);
+    expect(vi.mocked(requiredFromBeacon)).not.toHaveBeenCalled();
+    expect(vi.mocked(buildConsumeTx)).not.toHaveBeenCalled();
+    expect((vi.mocked(buildConsumeManyTx).mock.calls[0]![0] as unknown as { pairs: unknown }).pairs).toEqual(TWO);
+    expect((r.body as { summary: { consume: { redeemer: string } } }).summary.consume.redeemer).toBe("ConsumeMany");
+  });
+
+  it("CẶP: một cặp ⟹ `requiredFromBeacon` + `buildConsumeTx`, KHÔNG gọi bản nhiều cặp", async () => {
+    const h = harness({ capEpoch: EPOCH });
+    const r = await handle(post(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(vi.mocked(requiredFromBeacon)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(requiredFromBeaconPairs)).not.toHaveBeenCalled();
+    expect(vi.mocked(buildConsumeManyTx)).not.toHaveBeenCalled();
   });
 });

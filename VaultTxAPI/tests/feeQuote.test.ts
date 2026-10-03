@@ -30,6 +30,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor } from "./fixtures/tx.js";
+import { withConsumeLeg } from "./fixtures/consume.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
@@ -44,8 +45,16 @@ const VALID_TO_MS = NOW + 1_800_000;
 const utxo = (txHash: string, outputIndex: number, address: string, assets: Record<string, bigint>, datum?: string): UTxO =>
   ({ txHash, outputIndex, address, assets, datum });
 
+// Lô MAGIC sống của két: tx tiêu đốt `CONSUME_BURN` từ lô này (`consumed_credit` tăng đúng bấy
+// nhiêu) — `/tx/consume` đọc lại Σburns == required từ CBOR (`fixtures/consume.ts`). Các route
+// khác giữ nguyên lô ⟹ kế toán MAGIC của chúng không đổi.
+const FEE_BATCH = { id: "fb".repeat(16), createdEpoch: 20_707n, amountNanogic: 5_000_000_000n };
+const CONSUME_BURN = 1_000_000_000n;
+const vaultOutMagic = (consume: boolean) => consume
+  ? { batches: [{ ...FEE_BATCH, amountNanogic: FEE_BATCH.amountNanogic - CONSUME_BURN }], consumedCreditNanogic: CONSUME_BURN }
+  : { batches: [FEE_BATCH] };
 const VAULT_UTXO = utxo(INPUT_TX_HASH, 0, VAULT_ADDRESS,
-  { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n }, datumHex({ lampLockedOildrop: 2_000_000n }));
+  { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n }, datumHex({ lampLockedOildrop: 2_000_000n, batches: [FEE_BATCH] }));
 
 /** Phí của mô hình: 170 000 + 44 × (byte địa chỉ ví trả phí) × 2 (thối + collateral_return).
  *  Enterprise 29 byte ⟹ 172 552; base 57 byte ⟹ 175 016. Chỉ để phân biệt hai lượt dựng. */
@@ -63,7 +72,7 @@ class FeeModelBuilder implements TxBuilderPort {
   extraFee = new Map<string, bigint>();
   coinsPerUtxoByteValue = PROTOCOL_PARAMETERS_DEFAULT.coinsPerUtxoByte;
 
-  private feeTx(ctx: BuildContext): BuiltTx {
+  private feeTx(ctx: BuildContext, consume = false): BuiltTx {
     const fp = ctx.feePayerUtxo;
     if (fp === undefined || ctx.collateralLovelace === undefined) {
       throw new Error("[FeeModelBuilder] chỉ dựng đường có ví trả phí.");
@@ -71,15 +80,14 @@ class FeeModelBuilder implements TxBuilderPort {
     this.seen.push(fp);
     const u = fp.assets.lovelace!;
     const fee = modelFee(fp.address) + (this.extraFee.get(`${fp.txHash}#${fp.outputIndex}`) ?? 0n);
-    return {
-      txCbor: buildTxCbor({
+    const spec = {
         inputs: [{ txHash: VAULT_UTXO.txHash, outputIndex: 0 }, { txHash: fp.txHash, outputIndex: fp.outputIndex }],
         feeLovelace: fee,
         outputs: [
           {
             address: VAULT_ADDRESS,
             assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
-            inlineDatumHex: datumHex({ lampLockedOildrop: 23_000_000n, genScheduleCount: 1 }),
+            inlineDatumHex: datumHex({ lampLockedOildrop: 23_000_000n, genScheduleCount: 1, ...vaultOutMagic(consume) }),
           },
           { address: fp.address, assets: { lovelace: u - fee } },
         ],
@@ -87,13 +95,19 @@ class FeeModelBuilder implements TxBuilderPort {
         collateralInputs: [{ txHash: fp.txHash, outputIndex: fp.outputIndex }],
         collateralReturn: { address: fp.address, assets: { lovelace: u - ctx.collateralLovelace } },
         ttlSlot: BigInt(unixTimeToSlot("Preview", VALID_TO_MS)),
-      }),
+    };
+    // Lượt tiêu: ghép vế thread (`fixtures/consume.ts`) — `/tx/consume` đọc lại nó từ CBOR.
+    return {
+      txCbor: buildTxCbor(!consume ? spec : withConsumeLeg(spec, {
+        thread: threadUtxo(KEY_OWNER, "7e".repeat(32)), vaultRef: { txHash: VAULT_UTXO.txHash, outputIndex: 0 },
+        pairs: [{ opType: 1, opCount: 2n }], requiredNanogic: CONSUME_BURN,
+      })),
     };
   }
 
   async scheduleCommit(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async scheduleFire(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
-  async consume(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
+  async consume(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx, true); }
   async instantGen(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async refreshCheckpoint(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async createVault(): Promise<BuiltCreateVault> { throw new Error("[FeeModelBuilder] createVault không dựng ở đây."); }
@@ -167,7 +181,8 @@ function harness(o: HarnessOpts = {}) {
       ...(o.addressUtxos ?? {}),
     },
     TIP,
-    [VAULT_UTXO, ...(o.refUtxos ?? [])],
+    // Thread của lượt tiêu là INPUT của tx ⟹ phép đọc lại ví trả phí tra nó theo tham chiếu.
+    [VAULT_UTXO, threadUtxo(KEY_OWNER, "7e".repeat(32)), ...(o.refUtxos ?? [])],
   );
   const builder = new FeeModelBuilder();
   const issued = new IssuedTxRegistry(TTL * 4);

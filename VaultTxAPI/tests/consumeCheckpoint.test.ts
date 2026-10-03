@@ -28,6 +28,7 @@ import {
 import { ENGAGE_ADDRESS, threadUtxo } from "./fixtures/engage.js";
 import { GB_SHARD_REF, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 import { buildTxCbor } from "./fixtures/tx.js";
+import { withConsumeLeg } from "./fixtures/consume.js";
 
 const NET = "Preprod" as const;
 const TTL = 180_000;
@@ -96,9 +97,10 @@ function wakemeUtxo(): UTxO {
   };
 }
 
-/** CBOR ghi sẵn của lượt tiêu: két đốt 1 MAGIC; két Wakeme (nếu có) ở reference input. */
+/** CBOR ghi sẵn của lượt tiêu: két đốt 0,001 MAGIC; két Wakeme (nếu có) ở reference input; vế thread
+ *  (`fixtures/consume.ts`) tăng `consumed_nanogic` đúng lượng két đốt. */
 function consumeTxCbor(withWakeme: boolean): string {
-  return buildTxCbor({
+  return buildTxCbor(withConsumeLeg({
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
     ...(withWakeme ? { referenceInputs: [{ txHash: WAKEME_TX, outputIndex: 1 }] } : {}),
     feeLovelace: 178_000n,
@@ -111,7 +113,10 @@ function consumeTxCbor(withWakeme: boolean): string {
         consumedCreditNanogic: 1_000_000n,
       }),
     }],
-  });
+  }, {
+    thread: threadUtxo({ type: "key", hash: OWNER_PKH }, "7e".repeat(32)),
+    vaultRef: { txHash: INPUT_TX_HASH, outputIndex: 0 }, pairs: [{ opType: 1, opCount: 1n }], requiredNanogic: 1_000_000n,
+  }));
 }
 
 interface HarnessOpts extends VaultSpec { noRate?: boolean; withWakeme?: boolean }

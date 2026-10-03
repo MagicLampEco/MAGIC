@@ -2,9 +2,11 @@
 
 use genbeacons/types.{RateParam}
 
-/// ρ hiệu lực ở epoch `e`. `rho_q` chỉ có hiệu lực từ `effective_epoch` (epoch SAU epoch
-/// đăng, `INV-RATE-GOVERNED`), trước đó là `prev_rho_q` — nên ρ hằng trong mọi epoch, kể
-/// cả epoch có lượt đăng (SPEC §6.1.4 cần điều này cho cận lượng sinh).
+/// ρ hiệu lực ở epoch `e`. `rho_q` chỉ có hiệu lực từ `effective_epoch`, trước đó là
+/// `prev_rho_q`. Lượt CẬP NHẬT đặt `effective_epoch` = epoch SAU epoch đăng
+/// (`INV-RATE-GOVERNED`); lượt GENESIS đặt = CHÍNH epoch đăng (trước genesis chưa két nào
+/// đọc được ρ) — nên ρ hằng trong mọi epoch theo góc nhìn của két, kể cả epoch có lượt
+/// đăng (SPEC §6.1.4 cần điều này cho cận lượng sinh). Luật ghi: `rate_param.ak`.
 pub fn rho_at(datum: RateParam, e: Int) -> Int {
   if e >= datum.effective_epoch {
     datum.rho_q

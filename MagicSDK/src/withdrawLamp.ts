@@ -35,7 +35,7 @@ import {
 } from "./schemas.js";
 import type { VaultType } from "./types.js";
 import { resolveConstrIndex, type PlutusJson } from "./redeemerIndex.js";
-import { shiftWindow as shiftWindowSchedule } from "@magiclamp/schedulegen-sdk";
+import { shiftWindow as shiftWindowSchedule, assertLockSumMatches } from "@magiclamp/schedulegen-sdk";
 
 /** Aiken redeemer variant title. Matches `pub type VaultRedeemer { WithdrawLamp ... }`. */
 const WITHDRAW_LAMP_TAG = "WithdrawLamp";
@@ -188,6 +188,18 @@ export async function withdrawLamp(params: WithdrawLampParams): Promise<Withdraw
         }
       : {}),
   };
+
+  // C-SCH-LOCKSUM (#132): chỉ két Schedule — `ScheduleGen/onchain/validators/vault.ak` ▸
+  // `validate_withdraw_lamp` ép `sum_locked(output.loyalty_holdings) == output.lamp_locked`.
+  // Két Instant không có đẳng thức này nên không kiểm. Rút chỉ gỡ holding đã mở, nên đẳng
+  // thức chỉ vỡ khi datum VÀO đã lệch — ném trước khi người dùng ký.
+  if (decoded.kind === "Schedule") {
+    assertLockSumMatches(
+      newVaultDatum.loyalty_holdings as { amount: bigint; acquired_epoch: bigint; is_locked: boolean }[],
+      newVaultDatum.lamp_locked,
+      "withdrawLamp",
+    );
+  }
 
   // ── Addresses + units ───────────────────────────────────────────
   const vaultAddress = credentialToAddress(

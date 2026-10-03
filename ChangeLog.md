@@ -5,6 +5,46 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-03 — Tài trợ consume đầu; năm bản vá on-chain
+
+**Đổi gì.** Năm bản vá validator, cộng phần off-chain dựng luồng tài trợ consume đầu:
+
+- (a) `PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_draw` không còn đặt
+  `consumed_unsettled` về 0 trên dòng được rút; chỉ `remaining` và `last_draw_epoch` đổi.
+- (b) `InstantGen/onchain/lib/magiclamp/protocol/checkpoint.ak` ▸ `resolve_link`, luật 6: nhánh
+  `FollowVault` chỉ đổi được `wakeme_link` khi link cũ rỗng, khi `owner_commit` trùng link cũ, hoặc
+  khi két đọc được đang ghim chính két này (`L_lent > 0`); đổi sang két Wakeme khác thì bị từ chối.
+- (c) `ScheduleGen/onchain/validators/vault.ak` ▸ `C-SCH-LOCKSUM` (issue #132): ở commit, fire và
+  rút LAMP, `sum_locked(output.loyalty_holdings) == output.lamp_locked`; kèm `lock.ak ▸
+  select_lamp_for_lock` chỉ chọn trong holding đang mở. Bộ dựng TS kiểm trước đẳng thức này bằng
+  `ScheduleGen/offchain/src/math.ts ▸ assertLockSumMatches` (mã lỗi `GEN-LOCK-SUM`).
+- (d) `GenBeacons/onchain/lib/genbeacons/util.ak` ▸ `continuing_pair`, `genesis_single` và
+  `validators/gb_shard.ak` ▸ `genesis_shard_ok` đòi `reference_script == None` ở đầu ra tiếp nối
+  và đầu ra genesis.
+- (e) `Paymaster/onchain/lib/magiclamp/paymaster/util.ak` ▸ `get_epoch` đòi `lo_epoch == hi_epoch`.
+
+Phần off-chain: luồng tài trợ T1–T4 (`MagicSDK/src/sponsorJourney.ts`; route
+`POST /tx/sponsor/*` ở `VaultTxAPI/src/sponsor.ts`), `vault_kind: "Prepaid"` ở `VaultReadAPI`
+(`prepaidView.ts`, `VAULT_KINDS`), và `scripts/gen_vault_read_api_config.ts` sinh cấu hình
+`VaultReadAPI` từ sổ trạng thái.
+
+**Vì sao.**
+- (a) Rút một CARP đang xoá nợ quyết toán của quỹ, CARP đối ứng phần đã tiêu kẹt lại trong quỹ.
+- (b) Người dựng giao dịch thay két Wakeme thật X bằng két Wakeme thật Y mà chủ ký cho việc khác,
+  nên link và cap bị đổi mà luật 2 bị lách.
+- (c) Commit lần hai trên két có holding trẻ nhất đang khoá làm `lamp_locked` tăng nhiều hơn tổng
+  khoá thật, lượt nhả cuối chết và phần lệch kẹt vĩnh viễn.
+- (d) Output tiếp nối của beacon/shard là thứ mọi giao dịch sau đều chạm; gắn script tham chiếu
+  vào đó là đánh phí lên giao dịch của người khác.
+- (e) Cửa sổ validity bắc ngang biên epoch trả epoch kế tiếp, nên bộ đếm trần của Paymaster reset
+  sớm một kỳ.
+
+**Cái gì gãy nếu ai đó đang bám bản cũ.** Hash validator đổi, ghi ở `scripts/BUILD-RECORD.md`
+(`git -C <kho> diff origin/main -- scripts/BUILD-RECORD.md` đếm được 9 hash đổi: bốn validator
+GenBeacons, `vault.vault` InstantGen, `paymaster.paymaster`, `prepaid.prepaid_vault`, và
+`vault.commit` + `vault.vault` ScheduleGen) ⟹ cụm đang chạy phải đúc lại. Datum ra lệch
+`C-SCH-LOCKSUM` bị bộ dựng ném trước khi ký. Mới chỉ nằm trên nhánh, **chưa deploy**.
+
 ## 2026-10-03 — Cổng policy LAMP: chặn `53bc12ad…` và `7ecbffe2…`, policy tLAMP Preprod CUỐI là `493002cc…`
 
 **Đổi gì.** `53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743` và

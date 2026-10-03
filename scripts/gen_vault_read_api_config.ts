@@ -25,11 +25,11 @@
  * Tệp này KHÔNG gọi mạng và KHÔNG đọc bí mật nào.
  *
  * ── Ba chỗ dễ hiểu sai ──────────────────────────────────────────────────────────
- * 1. **Két Prepaid chỉ vào `VAULT_READ_API_CONSUME_SCOPES`, KHÔNG vào `VAULT_READ_API_VAULTS`.**
- *    `VaultReadAPI` chỉ giải mã được datum Instant/Schedule và từ chối khởi động khi gặp
- *    loại khác (`config.ts` ▸ `VAULT_KINDS`). Tập loại két đọc được lấy THẲNG từ hằng đó, không
- *    chép: ngày dịch vụ đọc được Prepaid, bộ sinh tự phát mục vault Prepaid mà không sửa gì ở
- *    đây. Bỏ mục vault của một loại đã chọn thì in ra stderr, không bỏ im lặng.
+ * 1. **Két Prepaid vào CẢ `VAULT_READ_API_VAULTS` lẫn `VAULT_READ_API_CONSUME_SCOPES`** (từ
+ *    2026-10-03). Tập loại két lấy thẳng từ `VAULT_KINDS` (`VaultReadAPI/src/config.ts`), không
+ *    chép. Sổ thiếu khoá của một loại thì loại đó bị bỏ, kèm dòng ghi trên stderr. (Chính xác:
+ *    loại vắng HẲN mọi khoá thì bị bỏ kèm dòng stderr; loại có MỘT PHẦN khoá, hoặc loại đã chọn
+ *    bằng `--vaults` mà thiếu khoá, thì NÉM — xem `buildReadApiConfig`.)
  * 2. **Cổng cuối là CHÍNH bộ nạp của dịch vụ.** Hai mảng sinh ra được đi qua `parseScopes` /
  *    `parseConsumeScopes` của `VaultReadAPI` trước khi in — không phải một bản chép lại luật
  *    của chúng. Dịch vụ từ chối thì bộ sinh từ chối, cùng câu lỗi.

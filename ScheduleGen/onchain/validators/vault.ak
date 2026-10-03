@@ -1398,7 +1398,7 @@ fn validate_mint_vault_id(
   expect InlineDatum(datum_data) = vault_out.datum
   expect vd: VaultDatum = datum_data
 
-  // ── CLEAN genesis — constrain ALL 17 fields ─────────────────────────────
+  // ── CLEAN genesis — constrain MỌI trường của `VaultDatum` (types.ak) ─────
   // owner: a Credential the creator controls — VerificationKey(pkh) ký, hoặc
   // Script(h) có mục rút trong tx (owner_auth). Chống chiếm chỗ credential người khác.
   expect owner_authorized(tx, vd.owner)

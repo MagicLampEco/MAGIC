@@ -5,6 +5,87 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-03 — Tài trợ consume đầu; năm bản vá on-chain
+
+**Đổi gì.** Năm bản vá validator, cộng phần off-chain dựng luồng tài trợ consume đầu:
+
+- (a) `PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_draw` không còn đặt
+  `consumed_unsettled` về 0 trên dòng được rút; chỉ `remaining` và `last_draw_epoch` đổi.
+- (b) `InstantGen/onchain/lib/magiclamp/protocol/checkpoint.ak` ▸ `resolve_link`, luật 6: nhánh
+  `FollowVault` chỉ đổi được `wakeme_link` khi `owner_commit` trùng link cũ, hoặc khi két đọc được
+  đang ghim chính két này (`L_lent > 0`); đổi sang két Wakeme khác thì bị từ chối. Link cũ RỖNG
+  không còn là ngoại lệ: lượt nối đầu chỉ qua genesis (link khai sẵn) hoặc RefreshCheckpoint.
+- (c) `ScheduleGen/onchain/validators/vault.ak` ▸ `C-SCH-LOCKSUM` (issue #132): ở commit, fire và
+  rút LAMP, `sum_locked(output.loyalty_holdings) == output.lamp_locked`; kèm `lock.ak ▸
+  select_lamp_for_lock` chỉ chọn trong holding đang mở. Bộ dựng TS kiểm trước đẳng thức này bằng
+  `ScheduleGen/offchain/src/math.ts ▸ assertLockSumMatches` (mã lỗi `GEN-LOCK-SUM`).
+- (d) `GenBeacons/onchain/lib/genbeacons/util.ak` ▸ `continuing_pair`, `genesis_single` và
+  `validators/gb_shard.ak` ▸ `genesis_shard_ok` đòi `reference_script == None` ở đầu ra tiếp nối
+  và đầu ra genesis.
+- (e) `Paymaster/onchain/lib/magiclamp/paymaster/util.ak` ▸ `get_epoch` đòi `lo_epoch == hi_epoch`.
+- (f) `reference_script == None` ở output két InstantGen/ScheduleGen (`validate_vault_value`,
+  genesis, RefreshCheckpoint), shard ScheduleGen (`find_shard_output_by_policy`) và `UMUpdate`
+  (`UMKeeper/onchain/validators/um_datum.ak`).
+- (g) `ConsumeMAGIC/onchain/validators/consume.ak`: `reference_script == None` ở mọi output thread
+  Engage — `enforce_engagement` (Consume, ConsumeMany), `validate_bind_did`,
+  `validate_mint_engage_id`; cùng cổng ở beacon giá `price_param.ak` (spend) và `price_nft.ak`
+  (genesis).
+
+Phần off-chain: luồng tài trợ T1–T4 (`MagicSDK/src/sponsorJourney.ts`; route
+`POST /tx/sponsor/*` ở `VaultTxAPI/src/sponsor.ts`), `vault_kind: "Prepaid"` ở `VaultReadAPI`
+(`prepaidView.ts`, `VAULT_KINDS`), và `scripts/gen_vault_read_api_config.ts` sinh cấu hình
+`VaultReadAPI` từ sổ trạng thái. Bộ dựng khớp (b): `ConsumeMAGIC/offchain/src/genV2Checkpoint.ts`
+▸ `checkGenV2Burn` ném `CONSUME-013` khi két link rỗng mà có két Wakeme; `VaultTxAPI` ném
+`422 WAKEME_LINK_CHANGE_REJECTED` (`wakeme.ts` ▸ `assertWakemeLinkAllowed`) với câu chỉ đường
+RefreshCheckpoint, trước khi gọi bộ dựng.
+
+**Vì sao.**
+- (a) Rút một CARP đang xoá nợ quyết toán của quỹ, CARP đối ứng phần đã tiêu kẹt lại trong quỹ.
+- (b) Người dựng giao dịch thay két Wakeme thật X bằng két Wakeme thật Y mà chủ ký cho việc khác,
+  nên link và cap bị đổi mà luật 2 bị lách.
+- (c) Commit lần hai trên két có holding trẻ nhất đang khoá làm `lamp_locked` tăng nhiều hơn tổng
+  khoá thật, lượt nhả cuối chết và phần lệch kẹt vĩnh viễn.
+- (d) Output tiếp nối của beacon/shard là thứ mọi giao dịch sau đều chạm; gắn script tham chiếu
+  vào đó là đánh phí lên giao dịch của người khác.
+- (e) Cửa sổ validity bắc ngang biên epoch trả epoch kế tiếp, nên bộ đếm trần của Paymaster reset
+  sớm một kỳ.
+- (b, vế link rỗng) Người dựng tx nối một két chưa link sang két Wakeme lạ; sau đó két Wakeme thật
+  của chủ không ghim được két này nữa, chủ mất phần mượn tới khi tự RefreshCheckpoint.
+- (f, g) Nhánh không chữ ký (PruneExpired, ScheduleFire, UMUpdate) hoặc bên thứ ba có quyền tiêu
+  (`personal_delegate` của thread) gắn được script lớn vào output, làm mọi giao dịch sau đắt thêm
+  theo byte.
+
+**Cái gì gãy nếu ai đó đang bám bản cũ.** Hash validator đổi, ghi ở `scripts/BUILD-RECORD.md`
+— đếm lại bằng `git -C <kho> diff origin/main -- scripts/BUILD-RECORD.md` (2026-10-03, nhánh
+`feat/prepaid-sponsor-first-consume`: bốn validator GenBeacons, `vault.vault` InstantGen,
+`paymaster.paymaster`, `prepaid.prepaid_vault`, `vault.commit` + `vault.vault` + `vault.shard`
+ScheduleGen, `um_datum.um_datum_validator`, `consume.consume`, `price_nft.price_nft`,
+`price_param.price_param`) ⟹ cụm đang chạy phải đúc lại. Datum ra lệch `C-SCH-LOCKSUM` bị bộ dựng
+ném trước khi ký. Két IG cũ link rỗng muốn nối két Wakeme thì chạy RefreshCheckpoint trước; lượt
+sinh/tiêu kèm két Wakeme lạ nay bị từ chối. Mới chỉ nằm trên nhánh, **chưa deploy**.
+
+## 2026-10-03 — Cổng policy LAMP: chặn `53bc12ad…` và `7ecbffe2…`, policy tLAMP Preprod CUỐI là `493002cc…`
+
+**Đổi gì.** `53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743` và
+`7ecbffe2b41f68c917035f52a1053efbd2323dfd85a81cf840089ea2` vào `SUPERSEDED_LAMP_POLICIES` ở cả
+hai bảng (`scripts/config.ts`, `MagicSDK/src/lampPolicy.ts`), lý do nêu policy thay thế
+`493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac` (asset `744c414d50`). Ba bộ kiểm cổng
+(`scripts/test_lamp_policy_gate.ts`, `MagicSDK/tests/lampPolicy.test.ts`,
+`VaultTxAPI/tests/config.test.ts`) lấy `493002cc…` làm cực dương. Lối mở tập dượt cho
+`8169b76c…` giữ nguyên; điều kiện gỡ đổi từ "khi có policy cuối" sang "khi runner tập dượt dừng
+hẳn". Không đổi mã Aiken, không đổi hash nào.
+
+**Vì sao.** Thư kho LAMP `lam1003mg-a` (2026-10-03): policy tLAMP Preprod CUỐI là `493002cc…`
+(mã LAMP `main` = `17934d8`); `53bc12ad…` và `7ecbffe2…` bỏ — cái sau tính ra rồi huỷ 2026-10-02
+vì thiếu nhãn marker đọc ra nghĩa. Genesis của policy cuối CHƯA gửi: id chắc chắn (script genesis
+bên LAMP có cổng `EXPECTED_LAMP_PID`), nhưng chưa có tLAMP nào trên chuỗi. Cụm Preprod phục vụ
+người dùng chưa dựng. Policy cuối cố ý KHÔNG gõ cứng vào mã: cổng là danh sách TỪ CHỐI.
+
+**Cái gì gãy nếu ai đó đang bám bản cũ.** Sổ trạng thái hay tệp deploy nào ghi `53bc12ad…` (hay
+`7ecbffe2…`) nay bị chặn lúc nạp — `POLICY_IDS.lamp` ở `scripts/`, `parseDeployment` ở
+`VaultTxAPI`, `createVault`/`buildParamsList`/`withdrawLamp` ở SDK. `lamp_rehearsal_ack` không mở
+được cho hai policy này: chúng không nằm trong bảng tập dượt.
+
 ## 2026-10-02 — Cửa sổ epoch tính từ gốc epoch Cardano: apply-param `window_origin_ms`
 
 **Đổi gì.** Mọi validator nhận `ms_per_epoch` nhận thêm `window_origin_ms` làm apply-param CUỐI:

@@ -10,8 +10,10 @@
 import { credentialToAddress, scriptHashToCredential } from "@lucid-evolution/lucid";
 import {
   buildDeployment, GEN_V2_STATE_KEYS, SCHEDULE_ONLY_STATE_KEYS,
+  PREPAID_STATE_KEYS, buildPrepaidDeployment, parseVaultArg,
   type StateBook, type VaultKind,
 } from "./gen_vault_tx_api_deployment.js";
+import { REF_PAID_FUND_KEY, REF_VAULT_PREPAID_KEY } from "./deployParams.js";
 import { consumeKey } from "./consumeBook.js";
 import { parseDeployment } from "../VaultTxAPI/src/config.js";
 
@@ -153,6 +155,113 @@ ca("hash sai hình dạng ⟹ ném, nêu tên khoá", () => {
 ca("cap sai hình dạng ⟹ bộ sinh cho qua, DỊCH VỤ chặn (một cổng quyết)", () => {
   const json = genJson({ ...fullBook("Instant"), GB_SHARD_CAP_NANOGIC: "0" }, "Instant");
   phaiNem(() => parseDeployment(json, NET), ["gb_shard_cap_nanogic"]);
+});
+
+console.log("── Két Prepaid: bộ sinh phát khối theo khuôn PREPAID_VAULT_TYPE của VaultTxAPI");
+// Hash/địa chỉ giả riêng cho Prepaid; cặp HASH↔ADDR phải khớp `Script(hash)` (bộ sinh đối chiếu).
+function prepaidBook(): StateBook {
+  return {
+    ...fullBook("Instant"),           // sổ thật mang cả khoá của két khác — bộ sinh phải bỏ qua chúng
+    VAULT_PREPAID_HASH: h("d1"),
+    VAULT_PREPAID_ADDR: addr(h("d1")),
+    PAID_FUND_HASH: h("d2"),
+    PAID_FUND_ADDR: addr(h("d2")),
+    REF_VAULT_PREPAID_UTXO: ref("d3", 0),
+    REF_PAID_FUND_UTXO: ref("d4", 1),
+    CONSUME_ADDRESS_PREPAID: addr(h("d5")),
+    REF_CONSUME_UTXO_PREPAID: ref("d6", 2),
+    PRICE_PARAM_HASH_PREPAID: h("d7"),
+    PRICE_NFT_UNIT_PREPAID: h("d8") + "5052494345",
+    MAX_PRICE_STALE_PREPAID: "2",
+  };
+}
+const prepaidOut = (b: StateBook) =>
+  buildPrepaidDeployment(b, NET, META).deployment as Record<string, unknown> & {
+    ref_script_utxos: Record<string, unknown>;
+  };
+ca("--vault: vắng ⟹ Instant; Instant/Schedule/Prepaid nhận đúng chữ", () => {
+  bang(parseVaultArg(undefined), "Instant", "vắng");
+  bang(parseVaultArg("Schedule"), "Schedule", "Schedule");
+  bang(parseVaultArg("Prepaid"), "Prepaid", "Prepaid");
+});
+ca("--vault giá trị lạ / rỗng / sai hoa thường ⟹ ném, không lùi về Instant", () => {
+  phaiNem(() => parseVaultArg(""), ["--vault"]);
+  phaiNem(() => parseVaultArg("prepaid"), ["--vault", "Prepaid"]);
+});
+ca("sổ đủ ⟹ khối đúng từng ô, và parseDeployment của VaultTxAPI nạp được", () => {
+  const out = prepaidOut(prepaidBook());
+  const d = parseDeployment(JSON.stringify(out), NET);
+  bang(d.vaults.length, 1, "số vault");
+  bang(d.vaults[0].vaultType, "Prepaid", "vault_type");
+  bang(d.vaults[0].scriptHash, h("d1"), "hash két suy từ địa chỉ");
+  bang(d.prepaid?.fundAddress, addr(h("d2")), "địa chỉ quỹ");
+  bang(d.prepaid?.fundScriptHash, h("d2"), "hash quỹ suy từ địa chỉ");
+  bang(d.refScriptUtxos.vault.txHash, "d3".repeat(32), "ref két");
+  bang(d.refScriptUtxos.paidFund?.txHash, "d4".repeat(32), "ref quỹ");
+  bang(d.refScriptUtxos.paidFund?.outputIndex, 1, "ref quỹ ix");
+  bang(d.refScriptUtxos.consume.txHash, "d6".repeat(32), "ref consume = bản _PREPAID");
+  bang(d.consume.engageAddress, addr(h("d5")), "engage = CONSUME_ADDRESS_PREPAID");
+  bang(d.consume.priceBeaconAddress, addr(h("d7")), "beacon giá = PRICE_PARAM_HASH_PREPAID");
+  bang(d.consume.maxPriceStale, 2n, "max_price_stale = bản _PREPAID");
+  bang(d.shardAddress, undefined, "shardAddress");
+  bang(d.refScriptUtxos.shard, undefined, "ref shard");
+  bang(d.genV2, undefined, "genV2");
+  bang(d.didStake?.anchorNftPolicy, h("ac"), "did_stake");
+});
+ca("sổ có SHARD_HASH/REF_SHARD_UTXO/gen_v2 của két khác ⟹ khối Prepaid KHÔNG mang chúng", () => {
+  const out = prepaidOut(prepaidBook());
+  bang("shard_address" in out, false, "shard_address có mặt");
+  bang("shard" in out.ref_script_utxos, false, "ref_script_utxos.shard có mặt");
+  bang("gen_v2" in out, false, "gen_v2 có mặt");
+  bang("instant" in out, false, "instant có mặt");
+});
+for (const key of Object.keys(PREPAID_STATE_KEYS)) {
+  ca(`thiếu ${key} ⟹ ném, nêu đúng khoá`, () => {
+    const m = phaiNem(() => buildPrepaidDeployment(without(prepaidBook(), key), NET, META),
+      [key, "thiếu 1/11 khoá Prepaid", "KHÔNG phát"]);
+    const other = Object.keys(PREPAID_STATE_KEYS).find((k) => k !== key)!;
+    if (m.includes(`· ${other} `)) throw new Error(`câu lỗi kể cả khoá không thiếu ${other}`);
+  });
+}
+ca("sổ rỗng ⟹ ném một lần, kể đủ 11/11 khoá Prepaid", () => {
+  phaiNem(() => buildPrepaidDeployment({}, NET, META), ["KHÔNG phát", "thiếu 11/11", ...Object.keys(PREPAID_STATE_KEYS)]);
+});
+ca("giá trị rỗng tính là thiếu (không đệm chuỗi rỗng)", () => {
+  phaiNem(() => buildPrepaidDeployment({ ...prepaidBook(), REF_PAID_FUND_UTXO: "" }, NET, META), ["REF_PAID_FUND_UTXO"]);
+});
+ca("địa chỉ két / quỹ lệch Script(hash) ⟹ ném (sổ giữ hai đời)", () => {
+  phaiNem(() => buildPrepaidDeployment({ ...prepaidBook(), VAULT_PREPAID_ADDR: addr(h("e1")) }, NET, META),
+    ["VAULT_PREPAID_ADDR", "VAULT_PREPAID_HASH"]);
+  phaiNem(() => buildPrepaidDeployment({ ...prepaidBook(), PAID_FUND_ADDR: addr(h("e2")) }, NET, META),
+    ["PAID_FUND_ADDR", "PAID_FUND_HASH"]);
+});
+ca("ref-script quỹ sai khuôn out-ref ⟹ bộ sinh cho qua, DỊCH VỤ chặn (một cổng quyết)", () => {
+  const json = JSON.stringify(prepaidOut({ ...prepaidBook(), REF_PAID_FUND_UTXO: "không-phải-outref" }));
+  phaiNem(() => parseDeployment(json, NET), ["ref_script_utxos.paid_fund"]);
+});
+ca("khoá ref-script của bước 10 nằm trong bảng Prepaid của bộ sinh", () => {
+  bang(REF_VAULT_PREPAID_KEY in PREPAID_STATE_KEYS, true, REF_VAULT_PREPAID_KEY);
+  bang(REF_PAID_FUND_KEY in PREPAID_STATE_KEYS, true, REF_PAID_FUND_KEY);
+});
+ca("khoá consume `_PREPAID` của bước 09 nằm trong bảng Prepaid", () => {
+  for (const n of ["CONSUME_ADDRESS", "REF_CONSUME_UTXO", "PRICE_PARAM_HASH", "PRICE_NFT_UNIT", "MAX_PRICE_STALE"] as const) {
+    bang(consumeKey(n, "prepaid") in PREPAID_STATE_KEYS, true, consumeKey(n, "prepaid"));
+  }
+});
+// Ca CANH, LẬT DẤU so với bản trước (bản trước canh "dịch vụ vẫn đòi shard ⟹ bộ sinh phải ném").
+// Nay khuôn Prepaid đã có, nên hai vế phải cùng đúng:
+//   (a) khối Instant bỏ `shard_address` ⟹ dịch vụ VẪN từ chối — việc mở khuôn Prepaid không
+//       được nới shard cho Instant/Schedule;
+//   (b) khối Prepaid KHÔNG có shard ⟹ dịch vụ nạp được, và thêm `shard_address` vào ⟹ từ chối.
+ca("canh (a): khối Instant bỏ shard_address ⟹ VaultTxAPI VẪN từ chối", () => {
+  const out = JSON.parse(genJson(fullBook("Instant"), "Instant")) as Record<string, unknown>;
+  delete out.shard_address;
+  phaiNem(() => parseDeployment(JSON.stringify(out), NET), ["shard_address"]);
+});
+ca("canh (b): khối Prepaid không shard ⟹ nạp được; cộng shard_address ⟹ từ chối", () => {
+  const out = prepaidOut(prepaidBook());
+  parseDeployment(JSON.stringify(out), NET);
+  phaiNem(() => parseDeployment(JSON.stringify({ ...out, shard_address: addr(h("a2")) }), NET), ["shard_address", "KHÔNG có shard"]);
 });
 
 console.log(sai === 0 ? "=== ĐẠT ===" : `=== HỎNG: ${sai} ca sai ===`);

@@ -28,7 +28,8 @@ describe("basePath: cắt tiền tố do proxy định tuyến theo đường đ
 
 describe("/health + định tuyến qua tiền tố", () => {
   const base = {
-    service: {} as never, deploymentSource: "src", vaultScopes: [], network: "Preprod",
+    // `/health` đọc `lampAsset` (cấu hình bản deploy, không chạm chuỗi) — vỏ dịch vụ chỉ cần đúng getter đó.
+    service: { lampAsset: { policyId: "00".repeat(28), assetNameHex: "4c414d50" } } as never, deploymentSource: "src", vaultScopes: [], network: "Preprod",
     chainLabel: "c", changeAddressStrategy: "s", token: "", logInternal: () => {},
   };
   const get = (url: string, deps: object) =>

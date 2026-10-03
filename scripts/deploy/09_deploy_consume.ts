@@ -47,13 +47,13 @@ import {
   type UTxO,
 } from "@lucid-evolution/lucid";
 import {
-  NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet, PROTOCOL,
+  NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet, PROTOCOL, requireCarpIdentity,
 } from "../config.js";
 import {
   loadBlueprint, findValidator, appliedScript, appliedValidator,
 } from "../applyParams.js";
 import {
-  oneShotGenesisParams, priceParamParams, consumeParams,
+  oneShotGenesisParams, priceParamParams, consumeParams, prepaidScriptPair,
 } from "../deployParams.js";
 import {
   encodePriceParam, EngageDatumSchema, type PriceParamT,
@@ -61,7 +61,9 @@ import {
 import { vaultIdAssetName, mintVaultIdRedeemer } from "../vaultId.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
 import { assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
-import { consumeKey, parseVaultKind, vaultHashKey, type ConsumeKeyName } from "../consumeBook.js";
+import {
+  consumeKey, parseVaultKind, requireConsumeVaultHash, vaultRefKey, type ConsumeKeyName,
+} from "../consumeBook.js";
 
 // EngageDatum lấy thẳng từ codec của module (5 trường, khớp `pub type EngageDatum`
 // trong ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak). Từng có một bản khai
@@ -97,19 +99,17 @@ async function main() {
   // (Bản trước còn nói InstantGen "chưa cấp nổi 1 nanogic" — Nợ #19 đã đóng 2026-09-16,
   // `DevStatus.md` bảng module ▸ InstantGen.)
   const vaultKind = parseVaultKind(process.env.VAULT_KIND);
-  const vaultScriptHash = process.env[vaultHashKey(vaultKind)];
-  if (!vaultScriptHash || vaultScriptHash === "FILL_AFTER_AIKEN_BUILD") {
-    throw new Error(
-      `Thiếu ${vaultHashKey(vaultKind)} — hash vault ${vaultKind} mà bản consume này phục vụ ` +
-      `(${vaultKind === "schedule" ? "bước 07" : "bước 05"} in ra).`,
-    );
+  // Két Prepaid: dựng lại hash từ ĐỜI CARP hiện hành rồi đối chiếu với sổ, TRƯỚC khi chạm
+  // ví hay mạng (`consumeBook.ts` ▸ `requireConsumeVaultHash` nói vì sao bắt buộc).
+  let derivedPrepaidVaultHash: string | undefined;
+  if (vaultKind === "prepaid") {
+    const carp = requireCarpIdentity();
+    derivedPrepaidVaultHash = prepaidScriptPair(await loadBlueprint("PrepaidGen"), {
+      carpPolicyId: carp.policyId, carpAssetName: carp.assetName,
+      msPerEpoch: PROTOCOL.MS_PER_EPOCH, windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
+    }).vaultHash;
   }
-  if (process.env.VAULT_HASH && process.env.VAULT_HASH !== vaultScriptHash) {
-    throw new Error(
-      `VAULT_HASH (${process.env.VAULT_HASH}) ≠ ${vaultHashKey(vaultKind)} (${vaultScriptHash}). ` +
-      `VAULT_HASH không còn là đường ghi đè: bỏ nó đi, hoặc chọn đúng VAULT_KIND.`,
-    );
-  }
+  const vaultScriptHash = requireConsumeVaultHash(process.env, vaultKind, derivedPrepaidVaultHash);
   console.log(`Loại vault:           ${vaultKind}`);
   const maxPriceStale = BigInt(process.env.MAX_PRICE_STALE ?? "1");
   const priceThreshold = BigInt(process.env.PRICE_THRESHOLD ?? "1");
@@ -348,11 +348,8 @@ async function main() {
   out("ENGAGE_UTXO", `${engageUtxo.txHash}#${engageUtxo.outputIndex}`);
   out("MAX_PRICE_STALE", String(maxPriceStale), "PHẢI khớp lúc reconstruct consume hash");
   out("REF_CONSUME_UTXO", consumeRef, "chân consume của tx consume");
-  console.log(
-    `#  chân còn lại: ${vaultKind === "schedule"
-      ? "REF_VAULT_SCHEDULE_UTXO — lấy từ bước 06"
-      : "REF_VAULT_INSTANT_UTXO — lấy từ bước 05"}`,
-  );
+  const vRef = vaultRefKey(vaultKind);
+  console.log(`#  chân còn lại: ${vRef.key} — lấy từ ${vRef.step}`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

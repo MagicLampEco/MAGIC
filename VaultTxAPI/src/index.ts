@@ -3,9 +3,10 @@
 // Gói này KHÔNG xuất bất cứ thứ gì liên quan tới ký. Nó dựng giao dịch CHƯA KÝ; việc ký
 // xảy ra trong Secure Enclave của máy người dùng, ngoài tầm tiến trình này.
 
-export { loadConfig, parseDeployment, isLoopback } from "./config.js";
+export { loadConfig, parseDeployment, isLoopback, PREPAID_VAULT_TYPE } from "./config.js";
 export type {
   AppConfig, Deployment, VaultScope, ConsumeDeployment, OutRefConfig, ChangeAddressStrategy,
+  PrepaidDeployment,
 } from "./config.js";
 
 export {
@@ -59,6 +60,16 @@ export { VaultTxService, toBuildBody, toOpenThreadBody, toBindDidBody, toSubmitB
 export type {
   BuildResponse, OpenThreadResponse, BindDidRequest, BindDidResponse, SubmitResponse, VaultTxServiceDeps,
 } from "./service.js";
+
+export {
+  SponsorTxService, sponsorRoute, sponsorPlanBody, sponsorApiErrorOf, parseSponsorRequest, toSponsorBody,
+  SPONSOR_ERROR_STATUS, SPONSOR_STEP_OF_PATH,
+} from "./sponsor.js";
+export type {
+  SponsorTxServiceDeps, SponsorBuildResponse, SponsorSigner, SponsorStep, LucidForWallet,
+  SponsorT1Request, SponsorT2Request, SponsorT3Request, SponsorT4Request,
+} from "./sponsor.js";
+export type { SponsorRoute } from "./locks.js";
 
 export { handle } from "./http.js";
 export type { HttpRequest, HttpResponse, RouterDeps } from "./http.js";

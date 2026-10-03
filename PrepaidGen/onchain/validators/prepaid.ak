@@ -503,11 +503,14 @@ fn validate_draw(
       fn(c) {
         if c.fund_id == fund_id {
           expect amount <= c.remaining
+          // Chỉ hai trường này đổi. `consumed_unsettled` là sổ nợ của QUỸ — chỉ
+          // `BurnBatch` cộng, chỉ `SettleLine` đưa về 0 (C-PP-7). Bản trước đặt
+          // cứng về 0 ở đây ⟹ rút 1 CARP là xoá nợ, CARP đối ứng kẹt trong quỹ.
+          // Gương: `offchain/src/prepaid.ts` ▸ `drawMagic`.
           PrepaidCredit {
             ..c,
             remaining: c.remaining - amount,
             last_draw_epoch: current_epoch,
-            consumed_unsettled: 0,
           }
         } else {
           c
@@ -2309,6 +2312,88 @@ test pp_draw_owner_signs_with_stale_delegate_ok() {
           last_draw_epoch: t_epoch,
           consumed_unsettled: 0,
         },
+      ],
+      magic_batches: [drawn_batch(0)],
+      next_batch_index: 1,
+      last_updated_epoch: t_epoch,
+    }
+  run_draw(din, draw_amt, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
+}
+
+// ── Draw trên dòng ĐANG NỢ quyết toán (vá 2026-10-02) ─────────────────────────
+// `PrepaidDraw` chỉ đổi `remaining` và `last_draw_epoch` của dòng (DESIGN.md
+// §5.3). `consumed_unsettled` là sổ nợ của quỹ: chỉ `BurnBatch` cộng, chỉ
+// `SettleLine` đưa về 0. Bản trước đặt cứng `consumed_unsettled: 0` ở nhánh rút
+// ⟹ chủ vault rút 1 CARP là xoá sạch nợ, CARP đối ứng phần đã tiêu kẹt trong quỹ
+// (provider không đòi được); và chiều ngược lại: bộ dựng off-chain `drawMagic`
+// GIỮ nợ nên mọi lượt rút trung thực trên dòng đang nợ bị từ chối. Mọi fixture
+// rút trước đó dùng `t_credit` (nợ 0), nên không ca nào phân biệt được hai bản.
+//
+// Đối ứng TS cùng con số: `tests/prepaid.test.ts` ▸ "Draw trên dòng đang nợ".
+const draw_debt: Int = 600_000_000
+
+fn draw_on_debt_dout(din: PrepaidVaultDatum, debt_out: Int) -> PrepaidVaultDatum {
+  PrepaidVaultDatum {
+    ..din,
+    prepaid_credits: [
+      PrepaidCredit {
+        fund_id: t_fund_id,
+        remaining: 4_000_000_000,
+        issued_epoch: 5,
+        last_draw_epoch: t_epoch,
+        consumed_unsettled: debt_out,
+      },
+    ],
+    magic_batches: [drawn_batch(0)],
+    next_batch_index: 1,
+    last_updated_epoch: t_epoch,
+  }
+}
+
+// happy: nợ đi nguyên qua lượt rút.
+test pp_draw_keeps_unsettled_debt_ok() {
+  let din = t_vd([t_credit_u(t_fund_id, 5_000_000_000, draw_debt)], [])
+  let dout = draw_on_debt_dout(din, draw_debt)
+  run_draw(din, draw_amt, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
+}
+
+// TẤN CÔNG: rút để xoá nợ quyết toán của quỹ.
+test pp_draw_wipes_unsettled_debt_rejected() fail {
+  let din = t_vd([t_credit_u(t_fund_id, 5_000_000_000, draw_debt)], [])
+  let dout = draw_on_debt_dout(din, 0)
+  run_draw(din, draw_amt, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
+}
+
+// TẤN CÔNG chiều kia: rút mà ghi THÊM nợ (đếm lượng rút như đã tiêu) ⟹ quỹ
+// quyết toán MAGIC chưa ai tiêu.
+test pp_draw_inflates_unsettled_debt_rejected() fail {
+  let din = t_vd([t_credit_u(t_fund_id, 5_000_000_000, draw_debt)], [])
+  let dout = draw_on_debt_dout(din, draw_debt + draw_nanogic)
+  run_draw(din, draw_amt, t_tx([t_vault_in(din)], [t_vault_out(dout)], [t_owner]))
+}
+
+// TẤN CÔNG: rút ở dòng A mà xoá nợ của dòng B (nhánh `else` của map).
+test pp_draw_wipes_other_line_debt_rejected() fail {
+  let din =
+    t_vd(
+      [
+        t_credit(t_fund_id, 5_000_000_000),
+        t_credit_u(t_other_fund, 0, draw_debt),
+      ],
+      [],
+    )
+  let dout =
+    PrepaidVaultDatum {
+      ..din,
+      prepaid_credits: [
+        PrepaidCredit {
+          fund_id: t_fund_id,
+          remaining: 4_000_000_000,
+          issued_epoch: 5,
+          last_draw_epoch: t_epoch,
+          consumed_unsettled: 0,
+        },
+        t_credit(t_other_fund, 0),
       ],
       magic_batches: [drawn_batch(0)],
       next_batch_index: 1,

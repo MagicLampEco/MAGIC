@@ -85,13 +85,17 @@ export class OwnerLockTable {
    * dùng nó để ghi nhật ký, không dùng nó để quyết định có nộp hay không.
    */
   releaseByTxHash(txHash: string): string | null {
+    // Nhả MỌI khoá mang hash đó: một tx có thể giữ hơn một khoá (T2 tài trợ giữ khoá chủ + khoá
+    // UTxO quỹ dùng chung — `sponsor.ts`). Trả khoá giành TRƯỚC (thứ tự chèn của Map) — với tx một
+    // khoá thì y như cũ.
+    let first: string | null = null;
     for (const [owner, rec] of this.held) {
       if (rec.txHash === txHash) {
         this.held.delete(owner);
-        return owner;
+        if (first === null) first = owner;
       }
     }
-    return null;
+    return first;
   }
 
   /** Khoá đang giữ của một chủ, hoặc `null`. Dùng cho `/health` và phép kiểm. */
@@ -201,8 +205,16 @@ export const ISSUED_ROUTES: readonly IssuedRoute[] = [
  * nên nó không giả được mục đích (xin ký một tx tạo vault dưới mục đích tiêu MAGIC) cũng không
  * giả được mã ghi sổ của Feecover.
  */
+/**
+ * Route tài trợ (`sponsor.ts`). Tách khỏi `IssuedRoute` có chủ đích: `IssuedRoute`/`ISSUED_ROUTES`
+ * là tập đường dựng của `/tx/quote` và của bảng mục đích Feecover, còn bốn route này không báo giá
+ * và không đi qua ví trả phí (501 `SPONSOR_FEE_PAYER_UNSUPPORTED`). Sổ phát-hành vẫn phải ghi chúng
+ * — không ghi thì `/tx/submit` từ chối nộp tx mà chính dịch vụ vừa dựng.
+ */
+export type SponsorRoute = "sponsor-t1-open" | "sponsor-t2-fund" | "sponsor-t3-draw" | "sponsor-t4-first-consume";
+
 export interface IssuedTxMeta {
-  route: IssuedRoute;
+  route: IssuedRoute | SponsorRoute;
   /** Mã ghi sổ Feecover khi nó KHÔNG phải hash thân tx: create-vault ⟹ tên NFT vault (64 hex),
    *  open-thread ⟹ tên NFT thread (64 hex). Vắng ⟹ hash thân tx. */
   feeRef?: string;

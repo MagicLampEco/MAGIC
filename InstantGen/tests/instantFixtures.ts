@@ -189,12 +189,19 @@ export function rateUtxo(r: TRateParam = makeRate()): UTxO {
 export const WAKEME_COMMIT = "c3".repeat(32);
 
 /** Két Wakeme ghim két IG này, ≥ 13 trường (gương `lentRead.test.ts`). */
-export function wakemeUtxo(o: { commit?: string; conditional?: bigint; owned?: bigint; pinPeriod?: bigint } = {}): UTxO {
+/// `vestStartMs` ([2]) mặc định 0: với gốc Preprod, `floorDiv(0 − O, P)` âm ≠ mọi `pinPeriod`
+/// ⟹ vế genesis của (d) sai, các ca cũ đo đúng vế `[12] < current_period`. `pinned: false` ⟹
+/// [11] = None (két Wakeme chưa ghim két IG nào).
+export function wakemeUtxo(o: {
+  commit?: string; conditional?: bigint; owned?: bigint; pinPeriod?: bigint; vestStartMs?: bigint; pinned?: boolean;
+} = {}): UTxO {
   const commit = o.commit ?? WAKEME_COMMIT;
   const cond = o.conditional ?? 700_000_000n;
   const owned = o.owned ?? 300_000_000n;
-  const pin = new Constr(0, [new Constr(0, [VAULT_HASH, VAULT_ID_NAME])]);
-  const fs: Data[] = [commit, "e5e5", 0n, cond, 0n, 50n, 49n, owned, 0n, 0n, "f6f6", pin, o.pinPeriod ?? E - 1n];
+  const pin = o.pinned === false
+    ? new Constr(1, [])
+    : new Constr(0, [new Constr(0, [VAULT_HASH, VAULT_ID_NAME])]);
+  const fs: Data[] = [commit, "e5e5", o.vestStartMs ?? 0n, cond, 0n, 50n, 49n, owned, 0n, 0n, "f6f6", pin, o.pinPeriod ?? E - 1n];
   return mk(scriptAddr(VP.wakemeVaultHash),
     { lovelace: 2_000_000n, [VP.wakemeVaultHash + commit]: 1n, [LAMP_UNIT]: cond + owned },
     Data.to(new Constr(0, fs)), 5);

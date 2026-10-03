@@ -25,6 +25,7 @@ import {
 import {
   computeSQ, computeRateLockedQ, checkSchRate, computeShardId, countEligibleFires,
   selectLampForLock, unlockLockedAmount, isExpired, lAvail, assertHoldingCapAfterCommit,
+  assertLockSumMatches,
 } from "./math.js";
 import {
   amountByLamp, usageFactorQ, gbVaultShare, shiftWindow, windowWellFormed,
@@ -298,6 +299,8 @@ export function planScheduleCommit(inp: CommitPlanInput): CommitPlan {
     usage_window:       window,
     usage_window_epoch: e,
   };
+  // C-SCH-LOCKSUM (#132): gương `validate_commit` ▸ `sum_locked(output.loyalty_holdings)`.
+  assertLockSumMatches(vaultDatumOut.loyalty_holdings, vaultDatumOut.lamp_locked, "planScheduleCommit");
 
   return {
     shardId, totalLock, sQ, rateLockedQ, rhoEffectiveQ: rho, mPerEpoch, usageFactorLockedQ,
@@ -412,6 +415,8 @@ export function planScheduleFire(inp: FirePlanInput): FirePlan {
     usage_window:       windowOut,
     usage_window_epoch: e,
   };
+  // C-SCH-LOCKSUM (#132): gương `validate_fire` ▸ `sum_locked(output.loyalty_holdings)`.
+  assertLockSumMatches(vaultDatumOut.loyalty_holdings, vaultDatumOut.lamp_locked, "planScheduleFire");
 
   return {
     shardId, firesInTx, mPerEpoch, lampReleased, firstNominalEpoch, newBatches,

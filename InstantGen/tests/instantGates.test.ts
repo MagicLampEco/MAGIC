@@ -280,6 +280,48 @@ describe("luật link két Wakeme (checkpoint.ak luật 1–2)", () => {
   });
 });
 
+// Luật 6 (`checkpoint.ak ▸ resolve_link` nhánh `FollowVault`, 2026-10-02). Tên ca = tên bài
+// Aiken đối ứng ở `validators/vault.ak` (khối "Luật 6").
+describe("luật 6 — FollowVault không đổi link sang két Wakeme lạ", () => {
+  const refresh = { cap_epoch: E - 1n, usage_window_epoch: E - 1n };
+  const rate = makeRate();
+  const OTHER = "c4".repeat(32);
+  it("f1_ig_relink_to_foreign_wakeme_rejected: link X + két Y (L_lent 0) ⟹ GEN-INST-011", () => {
+    expect(() => gen(makeCtx({
+      datum: { ...refresh, wakeme_link: WAKEME_COMMIT }, rate, wakeme: { ownerCommit: OTHER, lent: 0n },
+    }), 1n)).toThrow(/GEN-INST-011.*luật 6/s);
+  });
+  it("f1_ig_relink_to_wakeme_pinning_this_ok: cùng ca, Y ghim két này (L_lent > 0) ⟹ link := Y", () => {
+    const o = gen(makeCtx({
+      datum: { ...refresh, wakeme_link: WAKEME_COMMIT }, rate, wakeme: { ownerCommit: OTHER, lent: 1n },
+    }), 1n);
+    expect(o.outputDatum.wakeme_link).toBe(OTHER);
+    expect(o.lent).toBe(1n);
+  });
+  // Vế (a) "link cũ rỗng" đã bỏ 2026-10-03 — bản trước là ca dương `…_links_ok`.
+  it("f1_ig_unlinked_foreign_wakeme_rejected: link rỗng + két Y (L_lent 0) ⟹ GEN-INST-011 luật 6", () => {
+    expect(() => gen(makeCtx({ datum: refresh, rate, wakeme: { ownerCommit: OTHER, lent: 0n } }), 1n))
+      .toThrow(/GEN-INST-011.*luật 6/s);
+  });
+  it("f1_ig_unlinked_wakeme_pinning_this_ok: link rỗng + Y ghim két này (L_lent > 0) ⟹ link := Y", () => {
+    const o = gen(makeCtx({ datum: refresh, rate, wakeme: { ownerCommit: OTHER, lent: 1n } }), 1n);
+    expect(o.outputDatum.wakeme_link).toBe(OTHER);
+    expect(o.lent).toBe(1n);
+  });
+  it("f1_ig_linked_same_wakeme_unpinned_keeps_ok: link X + két X (L_lent 0) ⟹ giữ link", () => {
+    const o = gen(makeCtx({
+      datum: { ...refresh, wakeme_link: WAKEME_COMMIT }, rate, wakeme: { ownerCommit: WAKEME_COMMIT, lent: 0n },
+    }), 1n);
+    expect(o.outputDatum.wakeme_link).toBe(WAKEME_COMMIT);
+  });
+  it("f1_rc_relink_to_foreign_wakeme_ok: RefreshCheckpoint đổi được sang Y chưa ghim", () => {
+    const { outputDatum } = computeRefreshCheckpointOutput(
+      makeVault({ wakeme_link: WAKEME_COMMIT }), E, { ownerCommit: OTHER, lent: 0n }, rate,
+    );
+    expect(outputDatum.wakeme_link).toBe(OTHER);
+  });
+});
+
 describe("IG-13 — instant_unlock_ms = max(mốc cũ, cận trên + ms_per_epoch)", () => {
   const moc = (old: bigint) => gen(makeCtx({ datum: { instant_unlock_ms: old } }), 1n).outputDatum.instant_unlock_ms;
   it("mốc cũ 0 ⟹ cận trên + P", () => expect(moc(0n)).toBe(U + P));

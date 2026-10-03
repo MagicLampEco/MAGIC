@@ -181,6 +181,9 @@ async function main() {
     currentPeriod:   epoch,
     lampPolicyId:    vaultParams.lampPolicyId,
     lampAssetName:   vaultParams.lampAssetName,
+    // Apply-param #8/#9 của két IG (vế genesis của `LentReadContext`) — cùng nguồn với vault.
+    msPerEpoch:      PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs:  PROTOCOL.WINDOW_ORIGIN_MS,
   });
   console.log(`Két Wakeme:         ${wakemeVaultUtxo ? `${wakemeVaultUtxo.txHash}#${wakemeVaultUtxo.outputIndex} (L_lent ${wakeme!.lent})` : "(không đưa vào)"}`);
 

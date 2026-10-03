@@ -69,12 +69,19 @@ export function wakemeDatum(opts: {
   conditional?: bigint;
   owned?: bigint;
   pinPeriod?: bigint;
+  /** `false` ⟹ [11] = None (két Wakeme chưa ghim két IG nào). */
+  pinned?: boolean;
+  /** Ghi đè ô [2] `vest_start_ms` — để dựng ca sai kiểu. */
+  vestStart?: unknown;
 }): string {
   const f: unknown[] = Array.from({ length: 13 }, () => 0n);
   f[0] = opts.ownerCommit;
+  if (opts.vestStart !== undefined) f[2] = opts.vestStart;
   f[3] = opts.conditional ?? 0n;
   f[7] = opts.owned ?? 0n;
-  f[11] = new Constr(0, [new Constr(0, [opts.pinnedVaultHash, opts.pinnedVaultName])]);
+  f[11] = opts.pinned === false
+    ? new Constr(1, [])
+    : new Constr(0, [new Constr(0, [opts.pinnedVaultHash, opts.pinnedVaultName])]);
   f[12] = opts.pinPeriod ?? 0n;
   return Data.to(new Constr(0, f as never[]));
 }

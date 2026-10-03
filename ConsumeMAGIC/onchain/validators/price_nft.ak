@@ -67,11 +67,23 @@ validator price_nft(genesis_ref: OutputReference) {
     //    Hiệu lực: chỉ cho beacon đúc MỚI. Beacon cũ không bị (và không thể) hồi tố —
     //    nhưng lược đồ `PriceParam` vừa đổi (`OpPrice` 3 trường) nên mọi beacon đang
     //    sống đằng nào cũng phải đúc lại, và hash `price_nft` đổi theo không tốn thêm.
+    //
+    //    KHÔNG ép `pp.epoch <= epoch hiện tại` ở đây (rà 2026-10-02, PoC: genesis nhận
+    //    epoch 1e15). Hai lý do: (1) ép cần `ms_per_epoch` + `window_origin_ms` làm
+    //    apply-param — đổi hợp đồng nhị phân chỉ để bắt một lỗi cấu hình của chính bên
+    //    giữ `genesis_ref`; (2) đường vòng hai-tx ở trên đặt được epoch tuỳ ý tại địa
+    //    chỉ `price_param` bất kể cổng này. Phía đọc đã chặn: `consume.ak` ▸
+    //    `expect current_epoch >= pp.epoch`. Hệ quả của beacon epoch-tương-lai là nhánh
+    //    cập nhật `price_param.spend` không bao giờ thoả (`out.epoch > datum.epoch` và
+    //    `out.epoch <= hiện tại`) ⟹ phải đúc lại — lộ ra ở lượt cập nhật giá đầu tiên.
     expect [beacon_out] =
       list.filter(
         tx.outputs,
         fn(o) { assets.quantity_of(o.value, policy_id, price_nft_name) == 1 },
       )
+    // KHÔNG reference script trên beacon genesis (2026-10-03): chỗ DUY NHẤT ép được
+    // giá trị khởi đầu — Cardano không chạy validator lúc tạo UTxO.
+    expect beacon_out.reference_script == None
     expect InlineDatum(beacon_data) = beacon_out.datum
     expect pp: PriceParam = beacon_data
     pricing.valid_param(pp)
@@ -226,6 +238,30 @@ test price_nft_no_inline_datum_fail() fail {
         util.script_address(#"feed"),
         assets.add(assets.from_lovelace(2_000_000), pn_policy, price_nft_name, 1),
       ),
+    ],
+  )
+}
+
+// ── G17 (2026-10-03): beacon genesis KHÔNG mang reference script ─────────────
+test g17_price_nft_no_ref_script_happy() {
+  pn_run(
+    [pn_genesis_input()],
+    assets.from_asset(pn_policy, price_nft_name, 1),
+    [pn_beacon_out(pn_pp_ok())],
+  )
+}
+
+test g17_price_nft_ref_script_fail() fail {
+  pn_run(
+    [pn_genesis_input()],
+    assets.from_asset(pn_policy, price_nft_name, 1),
+    [
+      Output {
+        ..pn_beacon_out(pn_pp_ok()),
+        reference_script: Some(
+          #"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+        ),
+      },
     ],
   )
 }

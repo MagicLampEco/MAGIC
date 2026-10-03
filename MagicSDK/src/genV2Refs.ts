@@ -9,7 +9,8 @@
 // Luật khi nào cần gì (gương `checkpoint.ak` ▸ `expected_checkpoint`, mode `FollowVault`):
 //   `cap_epoch == e`  ⟹ không làm mới, KHÔNG đọc ref nào.
 //   `cap_epoch <  e`  ⟹ làm mới: BẮT BUỘC beacon ρ; `wakeme_link != ""` ⟹ BẮT BUỘC két Wakeme
-//                       đang ghim két; link "" mà có két Wakeme ⟹ lượt này NỐI két.
+//                       đang ghim két; link "" mà có két Wakeme ⟹ chỉ hợp lệ khi két đó ghim két này
+//                       (`L_lent > 0`, luật 6 siết 2026-10-03), không thì NÉM GEN-INST-011.
 
 import { Data, getAddressDetails, type UTxO } from "@lucid-evolution/lucid";
 import {
@@ -20,7 +21,9 @@ import {
 /** Phần apply-param két Instant mà hai phép đọc cần. Truyền trọn `InstantVaultParams` cũng được. */
 export type InstantRefParams = Pick<
   InstantVaultParams,
-  "lampPolicyId" | "lampAssetName" | "rateNftPolicy" | "rateScriptHash" | "wakemeVaultHash"
+  | "lampPolicyId" | "lampAssetName" | "rateNftPolicy" | "rateScriptHash" | "wakemeVaultHash"
+  // vế (d) ngoại lệ genesis của `wakeme_read` (2026-10-02)
+  | "msPerEpoch" | "windowOriginMs"
 >;
 
 function at(u: UTxO): string {
@@ -76,6 +79,8 @@ export function readWakemeForVault(
     ownScriptHash:   id.scriptHash,
     ownVaultName:    id.name,
     currentPeriod:   e,
+    msPerEpoch:      p.msPerEpoch,
+    windowOriginMs:  p.windowOriginMs,
     lampPolicyId:    p.lampPolicyId,
     lampAssetName:   p.lampAssetName,
   });

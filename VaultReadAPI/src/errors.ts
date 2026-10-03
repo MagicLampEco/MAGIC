@@ -19,10 +19,21 @@
 //   401 UNAUTHORIZED            thiếu/sai thẻ bài
 //   404 UNKNOWN_VAULT_SCOPE     xin một (mạng, loại vault) không có trong cấu hình
 //
+import { randomBytes } from "node:crypto";
+
 // ⚠ `VAULT_DATUM_UNDECODABLE` cố ý là 5xx chứ không phải 2xx-với-danh-sách-rỗng.
 // Nó có nghĩa là lược đồ datum của kho đã trôi khỏi thứ đang nằm trên chuỗi — tức
 // là BẤT CỨ con số nào ta trả về lúc đó đều đáng ngờ, kể cả con số của các vault
 // khác đọc lọt. Trả rỗng ở đây là đúng định nghĩa "cái vỏ im lặng".
+
+/**
+ * Mã tham chiếu cho một lỗi 500: người gọi nhận MÃ (không traceback, không đường dẫn nội bộ),
+ * nhật ký của sidecar nhận mã + nguyên nhân gốc — tra ngược được từ câu báo của người dùng.
+ * Cùng khuôn với `VaultTxAPI/src/errors.ts` ▸ `newReferenceCode`.
+ */
+export function newReferenceCode(): string {
+  return `ref_${randomBytes(6).toString("hex")}`;
+}
 
 /** Lớp cha cho mọi lỗi mà mặt tiền tự khai được thành mã HTTP. */
 export class VaultReadError extends Error {

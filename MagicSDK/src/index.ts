@@ -13,6 +13,10 @@ export {
   VaultDatumSchema,
 } from "./createVault.js";
 
+// Khuôn `wakeme_link` của két Instant (rỗng hoặc 32 byte = `owner_commit` của DID). Lớp dịch vụ
+// kiểm đầu vào bằng đúng hàm SDK dùng để dựng datum genesis.
+export { normalizeWakemeLink, WAKEME_LINK_RE } from "./vaultDatum.js";
+
 // Cổng `lampPolicyId`. Xuất ra vì lớp ứng dụng thường nhận policy id từ cấu hình của
 // CHÍNH NÓ (biến môi trường, tệp JSON) rồi mới gọi SDK — kiểm được ở đó thì lỗi lộ ra
 // lúc nạp cấu hình, không phải lúc dựng giao dịch. Xem đầu `lampPolicy.ts` về thứ
@@ -275,3 +279,36 @@ export {
   DID_PAYMENT_SPEND_REDEEMER, FUNDING_MAX_VALIDITY_MS,
   type FundingErrorCode, type DidPaymentPorts, type DidPaymentPlan, type FundingUtxoLike,
 } from "@magiclamp/protocol-utils";
+
+// ── Hành trình tài trợ consume đầu của người mới (két PrepaidGen) ───────────
+// T1 mở két + thread · T2 CARP bên tài trợ vào quỹ đã ghim (mang anchor DID) · T3 Draw · T4 consume
+// đầu, T3/T4 cùng kỳ. SDK ép hình dạng; chính sách tài trợ (mỗi DID một lần) là của bên tài trợ.
+export {
+  buildSponsorT1OpenPrepaid,
+  buildSponsorT2Fund,
+  buildSponsorT3Draw,
+  buildSponsorT4FirstConsume,
+  planSponsorJourney,
+  assertSponsorDidCommit,
+  assertSponsorCarpOutputs,
+  txOutputsOf as sponsorTxOutputsOf,
+  txReferenceInputsOf as sponsorTxReferenceInputsOf,
+  txWithdrawalCountOf as sponsorTxWithdrawalCountOf,
+  SponsorJourneyError,
+  type SponsorJourneyErrorCode,
+  type SponsorTxOutput,
+  type SponsorTxResult,
+  type NewcomerAnchorRef,
+  type SponsorCarpExpect,
+  type SponsorT1Params,
+  type SponsorT1Summary,
+  type SponsorT2Params,
+  type SponsorT2Summary,
+  type SponsorT3Params,
+  type SponsorT3Summary,
+  type SponsorT4Params,
+  type SponsorT4Summary,
+  type SponsorJourneyPlanInput,
+  type SponsorJourneyStep,
+  type SponsorJourneyPlan,
+} from "./sponsorJourney.js";

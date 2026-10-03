@@ -20,7 +20,8 @@
     "@magiclamp/consumemagic": "file:../ConsumeMAGIC/offchain",
     "@magiclamp/consumemagic-pricing": "file:../ConsumeMAGIC/pricing",
     "@magiclamp/instantgen-sdk": "file:../InstantGen/offchain",
-    "@magiclamp/schedulegen-sdk": "file:../ScheduleGen/offchain"
+    "@magiclamp/schedulegen-sdk": "file:../ScheduleGen/offchain",
+    "@magiclamp/prepaidgen-sdk": "file:../PrepaidGen/offchain"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

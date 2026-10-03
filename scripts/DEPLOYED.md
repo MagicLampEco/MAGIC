@@ -605,11 +605,59 @@ Mốc để sửa bảng trong `scripts/config.ts` và `MagicSDK/src/lampPolicy.
 policy id mới + tx hash**, không phải ngày quyết định của bên kia. Hai bảng đó là bản chép
 tay không có đường nhập khẩu, nên **không cơ chế nào trong kho này tự khởi động việc sửa**.
 Mốc đó tới 2026-09-26: cả hai bảng đã thêm `8169b76c…` vào `SUPERSEDED_LAMP_POLICIES`, và
-dòng treo từng nằm cạnh bảng trong `scripts/config.ts` đã đóng.
+dòng treo từng nằm cạnh bảng trong `scripts/config.ts` đã đóng. **Cập nhật 2026-10-03:**
+`53bc12ad…` cũng đã bị thay — xem mục *"Preprod — policy tLAMP CUỐI, 2026-10-03"* ngay dưới.
 
 **Đọc HẸP, đừng đọc rộng:** câu trên nói về **Preprod**. Policy mạng chính là một giá trị
 KHÁC và **chưa tồn tại** — kho LAMP không khai nó là "sẽ giống". Nghĩa vụ báo trước khi giá
 trị đổi vẫn nguyên hiệu lực; quyết định "không đổi" không huỷ nó, chỉ làm nó chưa tới lúc dùng.
+
+---
+
+## Preprod — policy tLAMP CUỐI, 2026-10-03 · genesis CHƯA gửi
+
+Nguồn: thư kho LAMP `lam1003mg-a` (2026-10-03). **Bản sao có nhãn**, chép 2026-10-03 —
+không phải nguồn; nguồn chân lý là chuỗi, và **trên chuỗi chưa có gì** dưới policy này.
+
+| | |
+|---|---|
+| policyId | `493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac` |
+| assetName (hex) | `744c414d50` (tLAMP) |
+| mã LAMP | `main` = `17934d8` |
+| trạng thái chuỗi | genesis **CHƯA gửi** — chưa có tLAMP nào dưới policy này |
+
+Policy id chắc chắn dù genesis chưa gửi: script genesis bên LAMP mang cổng
+`EXPECTED_LAMP_PID` bằng đúng id trên, lệch thì dừng trước khi gửi. Cái CHƯA chắc là lúc
+nào có tLAMP để dùng.
+
+**Hai policy bị bỏ cùng thư này**, cả hai nay nằm trong `SUPERSEDED_LAMP_POLICIES` ở
+`scripts/config.ts` và `MagicSDK/src/lampPolicy.ts` (hai bảng phải trùng tập khoá — đo bằng
+`npx tsx test_lamp_policy_gate.ts` trong `scripts/`):
+
+| policy | đời | vì sao bỏ |
+|---|---|---|
+| `53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743` | đúc 2026-09-26 (genesis tx `21f39c9b…a716`) | bị thay bởi `493002cc…cfac`; kho LAMP dừng mọi job rót trên cụm này tối 2026-10-02 |
+| `7ecbffe2b41f68c917035f52a1053efbd2323dfd85a81cf840089ea2` | tính ra 2026-10-02, huỷ cùng ngày (thư `lam1002mg-z`) | thiếu nhãn marker đọc ra nghĩa; bị thay bởi `493002cc…cfac`. Chưa từng được nướng vào kho này |
+
+Sổ trạng thái nào còn ghi `53bc12ad…` sẽ bị chặn ở lần đọc `POLICY_IDS.lamp` đầu tiên — chủ
+ý, như lần chặn `8169b76c…`.
+
+Những gì mục này **KHÔNG** khai:
+- **Không có địa chỉ kho LAMP nào.** Hash Distribution (`treasury`, `claim_account`) chưa
+  cuối — nhánh FundPot bên LAMP sẽ đổi chúng. Đừng nướng địa chỉ kho LAMP vào cấu hình.
+- **Cụm Preprod phục vụ người dùng CHƯA dựng.** Nó dựng MỘT lần trên policy này, sau genesis.
+- **Policy cuối không được gõ cứng vào mã.** Cổng `assertLampPolicyId` / `checkLampPolicyId`
+  là danh sách TỪ CHỐI: nó chặn các đời đã biết là sai, và một hex 56 ký tự lạ vẫn đi qua.
+  Giá trị đúng đi vào qua cấu hình (`LAMP_POLICY_ID`, `lamp.policy_id`).
+
+Cụm tập dượt `8169b76c…` vẫn chạy qua lối mở tập dượt (`REHEARSAL_LAMP_POLICIES` +
+`LAMP_REHEARSAL_ACK` bằng đúng chuỗi policy, chỉ trên mạng thử). Khoá đó gỡ khi runner của
+cụm tập dượt dừng hẳn, không gỡ theo ngày.
+
+Thư LAMP còn nhắc nướng policy vào `lamp_policy_id` của `vault_consolidate.ak` và "consume
+nhiều cặp": **không có trong kho MAGIC** (đo 2026-10-03: `find . -name 'vault_consolidate*'`
+ngoài `node_modules` rỗng; `ConsumeMAGIC/onchain/validators/consume.ak` không nhận
+`lamp_policy_id`).
 
 ---
 
@@ -1086,7 +1134,7 @@ hai với bảng trên. Vế này chỉ chứng minh script trên chuỗi là sc
    beacon mới (NFT one-shot mới), deploy lại `consume`, công bố lại ref-script CIP-33, cập
    nhật cấu hình mọi bên tiêu thụ (gồm `KEEPER_PRICE_BEACONS`). Đừng ghim hash
    `d52c4aa9…`/`2885109f…` của mục này vào cấu hình dài hạn.
-2. **tLAMP policy `8169b76c…` ĐÃ ĐỔI (2026-09-26 → `53bc12ad…8743`), không phải đời cuối** — xem mục "Preprod — đời tLAMP
+2. **tLAMP policy `8169b76c…` ĐÃ ĐỔI (2026-09-26 → `53bc12ad…8743`; 2026-10-03 → policy CUỐI `493002cc…cfac`, genesis chưa gửi — mục "Preprod — policy tLAMP CUỐI, 2026-10-03")** — xem mục "Preprod — đời tLAMP
    THẬT, 2026-09-16" phía trên, khối ⚠ cập nhật 2026-09-22: kho LAMP đã đóng băng ba
    validator Distribution để đúc genesis mới, `lampPid` sẽ đổi theo. Toàn bộ cụm ở mục này
    (vault, consume, beacon) apply-param bằng policy `8169b76c…`. Hai lần đổi này có lịch

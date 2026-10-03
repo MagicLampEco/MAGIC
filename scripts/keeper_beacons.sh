@@ -6,7 +6,8 @@
 #   1. giá trị người gọi đặt trước khi nạp sổ;
 #   2. KEEPER_PRICE_BEACONS trong sổ;
 #   3. mọi cặp có hậu tố loại vault — `PRICE_NFT_POLICY_SCHEDULE:PRICE_PARAM_HASH_SCHEDULE`,
-#      rồi `_INSTANT` — mỗi cặp chỉ lấy khi CẢ HAI vế có mặt (scripts/consumeBook.ts);
+#      rồi `_INSTANT`, rồi `_PREPAID` — mỗi cặp chỉ lấy khi CẢ HAI vế có mặt
+#      (scripts/consumeBook.ts ▸ `VaultKind`; danh sách hậu tố ở đây phải khớp danh sách đó);
 #   4. cặp không hậu tố `PRICE_NFT_POLICY:PRICE_PARAM_HASH` (sổ viết trước khi tách).
 #
 # Vì sao bước 3 tồn tại: mỗi loại vault có bản consume riêng ⟹ beacon giá riêng. Bản trước
@@ -25,14 +26,17 @@ derive_keeper_price_beacons() {
   if [ -n "${KEEPER_PRICE_BEACONS:-}" ]; then
     KEEPER_PRICE_BEACONS_SOURCE="KEEPER_PRICE_BEACONS trong sổ"; return 0
   fi
-  for kind in SCHEDULE INSTANT; do
+  # PREPAID thêm 2026-10-02: bản `consume` của két Prepaid (đường tài trợ) có beacon giá riêng.
+  # Thiếu nó trong vòng này thì beacon đó trễ quá `max_price_stale` và mọi lượt tiêu trên két
+  # Prepaid bị từ chối, còn keeper vẫn in "hỏng 0" — đúng ca đầu tệp kể.
+  for kind in SCHEDULE INSTANT PREPAID; do
     eval "pol=\${PRICE_NFT_POLICY_${kind}:-}; hash=\${PRICE_PARAM_HASH_${kind}:-}"
     if [ -n "$pol" ] && [ -n "$hash" ]; then
       pairs="${pairs:+$pairs,}$pol:$hash"
     fi
   done
   if [ -n "$pairs" ]; then
-    KEEPER_PRICE_BEACONS="$pairs"; KEEPER_PRICE_BEACONS_SOURCE="cặp theo loại vault (_SCHEDULE/_INSTANT)"; return 0
+    KEEPER_PRICE_BEACONS="$pairs"; KEEPER_PRICE_BEACONS_SOURCE="cặp theo loại vault (_SCHEDULE/_INSTANT/_PREPAID)"; return 0
   fi
   if [ -n "${PRICE_NFT_POLICY:-}" ] && [ -n "${PRICE_PARAM_HASH:-}" ]; then
     KEEPER_PRICE_BEACONS="$PRICE_NFT_POLICY:$PRICE_PARAM_HASH"

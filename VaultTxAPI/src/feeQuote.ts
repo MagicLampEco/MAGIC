@@ -91,6 +91,9 @@ export interface FeeQuoteResponse {
     reason?: FeeQuoteReason;
   };
   valid_until: string;
+  /** CHỈ route `instant-gen`, lấy từ lượt dựng ĐẦU (ví tổng hợp) — mọi lượt dựng của cùng báo
+   *  giá dùng cùng `params` nên cùng `m`; ví trả phí không vào trần. */
+  summary?: QuoteGenSummary;
 }
 
 /** Trần số địa chỉ ví chủ một lần hỏi. Nguồn: hợp đồng `/tx/quote` bên gọi chốt 2026-09-27.
@@ -185,6 +188,16 @@ interface Measured {
   needed: bigint;
   /** min(hạn dùng của tx trong CBOR, `expires_at` đường dựng trả). */
   horizonMs: number;
+  /** CHỈ route `instant-gen`: lượng sinh của lượt dựng báo giá + trần của nó. */
+  gen?: QuoteGenSummary;
+}
+
+/** `summary` của báo giá route `instant-gen`. `m_source = "max_m"` ⟹ người gọi không gửi `m`
+ *  (hoặc gửi `"0"`) và báo giá dựng tại `m = gen_limits.max_m_nanogic`. */
+export interface QuoteGenSummary {
+  m_nanogic: string;
+  m_source: "request" | "max_m";
+  gen_limits: import("./summary.js").GenLimitsSummary;
 }
 
 /** Mã lỗi địa chỉ thứ `i` của `owner_fee_addresses` — cùng phép kiểm `assertFeePayerAddress`
@@ -270,7 +283,10 @@ export async function quoteFee(body: Record<string, unknown>, deps: FeeQuoteDeps
   // Hạn báo giá = hạn NGẮN NHẤT trong các lượt dựng vừa chạy: sau hạn dùng (`validTo`) của tx thì
   // tx được mô tả không còn nộp được, và sau `expires_at` đường dựng trả thì app phải dựng lại
   // (thân mới, phí mới) — báo giá không được sống lâu hơn thứ nó mô tả.
-  return { feecover, owner_address: owner, valid_until: new Date(Math.min(...horizons)).toISOString() };
+  return {
+    feecover, owner_address: owner, valid_until: new Date(Math.min(...horizons)).toISOString(),
+    ...(generic.gen === undefined ? {} : { summary: generic.gen }),
+  };
 }
 
 // ── chọn UTxO cho nguồn chủ ──────────────────────────────────────────────────────
@@ -402,13 +418,28 @@ async function measureOnce(
   service: VaultTxService, route: IssuedRoute, params: Record<string, unknown>, utxo: UTxO, coinsPerUtxoByte: bigint,
 ): Promise<Measured> {
   const body = withFeePayer(route, params, { utxo: refStr(utxo), address: utxo.address });
-  const r = await runBuild(service, parseBuildRequest(route, body), { feePayerUtxo: utxo });
+  const parsed = parseBuildRequest(route, body, { quote: true });
+  const r = await runBuild(service, parsed, { feePayerUtxo: utxo });
   const fp = feePayerFigures(r);
   const minAda = [pureAdaMinCoin(utxo.address, coinsPerUtxoByte),
     pureAdaMinCoin(baseShapeOf(utxo.address, service.network), coinsPerUtxoByte)]
     .reduce((a, b) => (a > b ? a : b));
   const needed = (fp.fee > fp.collateral ? fp.fee : fp.collateral) + minAda;
-  return { fee: fp.fee, needed, horizonMs: Math.min(Number(fp.validToMs), Date.parse(fp.expiresAt)) };
+  let gen: QuoteGenSummary | undefined;
+  if (parsed.route === "instant-gen" && r.route === "instant-gen") {
+    const limits = r.out.summary.gen_limits;
+    if (limits === undefined) throw new Error("[bất biến nội bộ] báo giá instant-gen: bản tóm tắt thiếu `gen_limits`.");
+    gen = {
+      // Lượng ĐÃ ĐÚC đọc lại TỪ CBOR của lượt dựng báo giá, không phải tham số yêu cầu.
+      m_nanogic: r.out.summary.magic.minted_nanogic,
+      m_source: parsed.req.m === undefined ? "max_m" : "request",
+      gen_limits: limits,
+    };
+  }
+  return {
+    fee: fp.fee, needed, horizonMs: Math.min(Number(fp.validToMs), Date.parse(fp.expiresAt)),
+    ...(gen === undefined ? {} : { gen }),
+  };
 }
 
 /** Phí + thế chấp + hạn dùng của ví trả phí, đọc từ bản tóm tắt ĐÃ đọc lại CBOR. */

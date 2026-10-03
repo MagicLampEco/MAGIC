@@ -12,7 +12,7 @@ import type { UTxO } from "@lucid-evolution/lucid";
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { ChainDidPaymentAnchorReader } from "../src/funding.js";
 import { ownerApiErrorOf } from "../src/errors.js";
-import { DidStakeWitnessProvider, carriesAnchorNft } from "../src/owner.js";
+import { DidStakeWitnessProvider, anchorNftNamesOf, carriesAnchorNft } from "../src/owner.js";
 
 const POLICY = "a0".repeat(28);
 const ANCHOR_UNIT = `${POLICY}${"5e".repeat(32)}`;          // tên 32 byte
@@ -85,5 +85,14 @@ describe("ownerApiErrorOf — câu trả app không lặp mã", () => {
   it("CỰC ĐỐI: câu không mang tiền tố thì giữ nguyên, kể cả khi nó nhắc mã ở giữa câu", () => {
     const msg = "lý do: OWNER_STAKE_NOT_REGISTERED: không cắt chỗ này.";
     expect(ownerApiErrorOf({ code: "OWNER_STAKE_NOT_REGISTERED", message: msg }).message).toBe(msg);
+  });
+});
+
+describe("anchorNftNamesOf — tên anchor mà assertOwnerDid so với did_commit", () => {
+  it("trả đúng tên 32 byte của anchor, bỏ shard cùng policy", () => {
+    expect(anchorNftNamesOf({ ...ANCHOR.assets, [SHARD_UNIT]: 1n }, POLICY)).toEqual(["5e".repeat(32)]);
+  });
+  it("CỰC ĐỐI: hai tên ⟹ hai mục (nhân chứng khi đó KHÔNG báo tên — fail-closed ở nơi so)", () => {
+    expect(anchorNftNamesOf({ [ANCHOR_UNIT]: 1n, [`${POLICY}${"6f".repeat(32)}`]: 1n }, POLICY)).toHaveLength(2);
   });
 });

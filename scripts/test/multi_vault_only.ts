@@ -291,6 +291,8 @@ async function runMv4(lucid: any, ownerPkh: string, protocol: ProtocolParams, ti
       rateNftPolicy:   protocol.rateNftPolicy!,
       rateScriptHash:  protocol.rateScriptHash!,
       wakemeVaultHash: SCRIPT_HASHES.wakeme_vault,
+      msPerEpoch:      PROTOCOL.MS_PER_EPOCH,
+      windowOriginMs:  PROTOCOL.WINDOW_ORIGIN_MS,
     },
     lucid,
     vaultUtxo: v1.utxo,

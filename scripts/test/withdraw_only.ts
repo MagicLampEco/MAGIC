@@ -41,7 +41,7 @@ import {
 } from "../config.js";
 
 import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
-import { ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
+import { epochValidityWindow, ownerRefOf, sameOwner } from "@magiclamp/protocol-utils";
 import { genV2BeaconRefsFromBook } from "../deployParams.js";
 import { withdrawLamp } from "../../MagicSDK/src/withdrawLamp.js";
 import { ACCEPT_INLINE_SCRIPT_CEILING } from "../../MagicSDK/src/refScript.js";
@@ -299,8 +299,14 @@ async function rebuildWithTamper(
   const idx = resolveConstrIndex(plutusJson, "vault.vault.spend", "WithdrawLamp");
   const redeemer = Data.to(new Constr(idx, [amountOildrop]));
 
-  const lowerTime = Number(tipPosixMs);
-  const upperTime = Number((BigInt(Math.floor(Date.now())) + 600_000n));
+  // Cửa sổ = `epochValidityWindow` (y như `consume_only.ts`): [tip, min(cuối kỳ, tip +
+  // VALIDITY_MAX_AHEAD_MS)], MỘT đồng hồ duy nhất là tip chuỗi. Bản trước đặt cận trên
+  // = `Date.now()` (đồng hồ máy, khác đồng hồ của cận dưới) + 600 s, nên trong 10 phút
+  // cuối kỳ cửa sổ vắt sang kỳ kế và `get_current_epoch` của vault (đòi hai cận cùng kỳ
+  // theo gốc O) từ chối.
+  const win = epochValidityWindow(tipPosixMs, NETWORK);
+  const lowerTime = win.lowerMs;
+  const upperTime = win.upperMs;
 
   // Value ra = value vào (ADA + NFT vault-id + mọi token) trừ đúng phần LAMP. Bản trước chỉ
   // chép lovelace + LAMP ⟹ rơi mất NFT vault-id (INV-VAULT-IDENTITY), nên MỌI ca âm bị bác

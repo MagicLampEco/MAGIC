@@ -365,3 +365,57 @@ test rate_update_origin_forgotten_fail() fail {
     RateParam { rho_q: 3_500_000_000, prev_rho_q: 3_000_000_000, effective_epoch: 8 }
   rp_spend_at(0, rp_in, window_origin_fixtures.shift_tx(rp_tx(rp_in, out, [rp_key], 7), o))
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Cổng `reference_script == None` (rà 2026-10-02) — cặp dương/âm
+// ══════════════════════════════════════════════════════════════════════════════
+// Ca dương: đầu ra script giữ `None`, ref-script nằm ở một output VÍ khác ⟹ qua (cổng
+// chỉ soi đầu ra của chính script). Ca âm: CÙNG giao dịch, ref-script gắn vào đầu ra
+// script ⟹ từ chối. Hai ca chỉ khác đúng một trường, nên ca âm đỏ được vì cổng này chứ
+// không vì chốt nào khác.
+
+const woc_ref_script: ByteArray =
+  #"5c0000000000000000000000000000000000000000000000000000ff"
+
+const woc_rp_out: RateParam =
+  RateParam { rho_q: 3_500_000_000, prev_rho_q: 3_000_000_000, effective_epoch: 8 }
+
+test rate_update_ref_script_elsewhere_ok() {
+  rp_spend(
+    rp_in,
+    util.with_wallet_ref_script_output(
+      rp_tx(rp_in, woc_rp_out, [rp_key], 7),
+      woc_ref_script,
+    ),
+  )
+}
+
+test rate_update_continuing_ref_script_fail() fail {
+  rp_spend(
+    rp_in,
+    util.with_ref_script_at(
+      rp_tx(rp_in, woc_rp_out, [rp_key], 7),
+      rp_sh,
+      woc_ref_script,
+    ),
+  )
+}
+
+test rate_genesis_ref_script_elsewhere_ok() {
+  rp_mint(
+    util.with_wallet_ref_script_output(
+      rp_genesis_tx(rp_genesis, [rp_key], True, 7),
+      woc_ref_script,
+    ),
+  )
+}
+
+test rate_genesis_ref_script_fail() fail {
+  rp_mint(
+    util.with_ref_script_at(
+      rp_genesis_tx(rp_genesis, [rp_key], True, 7),
+      rp_sh,
+      woc_ref_script,
+    ),
+  )
+}

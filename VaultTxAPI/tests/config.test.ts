@@ -206,8 +206,11 @@ describe("parseDeployment — cổng policy LAMP (assertLampPolicyId) và lối 
   const REHEARSAL = "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd";
   /** Đã bị thay, NGOÀI bảng tập dượt. */
   const SUPERSEDED_ONLY = "d9c09230079b810ab5ed92e8db4c190d42efc42db6aac028656f7e07";
-  /** Đời ACTIVE Preprod — `scripts/config.ts` (thư `lam0926mg-lp`, 2026-09-26). */
-  const ACTIVE = "53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743";
+  /** Policy tLAMP Preprod CUỐI (thư LAMP `lam1003mg-a`, 2026-10-03). */
+  const ACTIVE = "493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac";
+  /** Hai đời bỏ 2026-10-03, cả hai bị thay bởi ACTIVE. */
+  const DROPPED_53BC = "53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743";
+  const DROPPED_7ECB = "7ecbffe2b41f68c917035f52a1053efbd2323dfd85a81cf840089ea2";
   const LOOKALIKE = "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4";
 
   const dep = (policy: string, ack?: string) => deploymentJson({
@@ -249,8 +252,17 @@ describe("parseDeployment — cổng policy LAMP (assertLampPolicyId) và lối 
     expect(() => parseDeployment(dep(SUPERSEDED_ONLY, REHEARSAL), "Preprod")).toThrow(/ĐÃ BỊ THAY/);
   });
 
-  it("ACTIVE 53bc12ad không ack ⟹ qua", () => {
+  it("ACTIVE 493002cc không ack ⟹ qua", () => {
     expect(parseDeployment(dep(ACTIVE), "Preprod").lampPolicyId).toBe(ACTIVE);
+  });
+
+  it("53bc12ad / 7ecbffe2 ⟹ từ chối khởi động, câu lỗi nêu policy thay thế 493002cc", () => {
+    expect(() => parseDeployment(dep(DROPPED_53BC), "Preprod")).toThrow(/ĐÃ BỊ THAY[\s\S]*493002cc/);
+    expect(() => parseDeployment(dep(DROPPED_7ECB), "Preprod")).toThrow(/ĐÃ BỊ THAY[\s\S]*493002cc/);
+  });
+
+  it("53bc12ad ack = chính nó ⟹ vẫn từ chối (ngoài bảng tập dượt)", () => {
+    expect(() => parseDeployment(dep(DROPPED_53BC, DROPPED_53BC), "Preprod")).toThrow(/ĐÃ BỊ THAY/);
   });
 
   it("rehearsal_ack không phải chuỗi ⟹ từ chối, không lặng lẽ bỏ qua", () => {

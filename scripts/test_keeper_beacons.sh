@@ -15,10 +15,24 @@ ca() { # ca <tên> <chờ KEEPER_PRICE_BEACONS> — môi trường đã dựng s
   fi
 }
 xoa() { unset KEEPER_PRICE_BEACONS PRICE_NFT_POLICY PRICE_PARAM_HASH \
-  PRICE_NFT_POLICY_SCHEDULE PRICE_PARAM_HASH_SCHEDULE PRICE_NFT_POLICY_INSTANT PRICE_PARAM_HASH_INSTANT; }
+  PRICE_NFT_POLICY_SCHEDULE PRICE_PARAM_HASH_SCHEDULE PRICE_NFT_POLICY_INSTANT PRICE_PARAM_HASH_INSTANT \
+  PRICE_NFT_POLICY_PREPAID PRICE_PARAM_HASH_PREPAID; }
 
 ( xoa; PRICE_NFT_POLICY_SCHEDULE=s1; PRICE_PARAM_HASH_SCHEDULE=s2; PRICE_NFT_POLICY_INSTANT=i1; PRICE_PARAM_HASH_INSTANT=i2
   derive_keeper_price_beacons ""; ca "hai bản consume ⟹ hai cặp" "s1:s2,i1:i2" ) || sai=$((sai+1))
+
+( xoa; PRICE_NFT_POLICY_SCHEDULE=s1; PRICE_PARAM_HASH_SCHEDULE=s2; PRICE_NFT_POLICY_INSTANT=i1; PRICE_PARAM_HASH_INSTANT=i2
+  PRICE_NFT_POLICY_PREPAID=p1; PRICE_PARAM_HASH_PREPAID=p2
+  derive_keeper_price_beacons ""; ca "ba bản consume (có Prepaid) ⟹ ba cặp, Prepaid cuối" "s1:s2,i1:i2,p1:p2" ) || sai=$((sai+1))
+
+( xoa; PRICE_NFT_POLICY_PREPAID=p1; PRICE_PARAM_HASH_PREPAID=p2
+  derive_keeper_price_beacons ""; ca "chỉ có bản consume Prepaid ⟹ đúng một cặp" "p1:p2" ) || sai=$((sai+1))
+
+( xoa; PRICE_NFT_POLICY_INSTANT=i1; PRICE_PARAM_HASH_INSTANT=i2; PRICE_NFT_POLICY_PREPAID=p1
+  derive_keeper_price_beacons ""; ca "Prepaid thiếu vế hash ⟹ BỊ BỎ, không ghép nửa cặp" "i1:i2" ) || sai=$((sai+1))
+
+( xoa; PRICE_PARAM_HASH_PREPAID=p2; PRICE_NFT_POLICY=c1; PRICE_PARAM_HASH=c2
+  derive_keeper_price_beacons ""; ca "Prepaid thiếu vế policy, không cặp nào khác ⟹ lùi về không hậu tố" "c1:c2" ) || sai=$((sai+1))
 
 ( xoa; PRICE_NFT_POLICY_INSTANT=i1; PRICE_PARAM_HASH_INSTANT=i2; PRICE_NFT_POLICY=c1; PRICE_PARAM_HASH=c2
   derive_keeper_price_beacons ""; ca "có cặp theo loại ⟹ KHÔNG trộn cặp không hậu tố" "i1:i2" ) || sai=$((sai+1))

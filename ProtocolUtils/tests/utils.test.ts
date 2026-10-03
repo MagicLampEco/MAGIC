@@ -152,6 +152,44 @@ describe("selectLampForLock — §6.8, T5, TV-LOCK-01", () => {
   });
 });
 
+// #132 — holding đang khoá đi qua nguyên vẹn, đứng trước; chỉ khoá trong phần đang mở.
+// Cùng đầu vào/đầu ra với `ScheduleGen/onchain/lib/magiclamp/protocol/lock.ak` ▸
+// `tv_lock_132_0x_*` và `ScheduleGen/tests/lockSelect132.test.ts` (P8).
+describe("selectLampForLock — #132, TV-LOCK-132", () => {
+  const lh = (amount: bigint, epoch: bigint, locked: boolean) =>
+    ({ amount, acquired_epoch: epoch, is_locked: locked });
+
+  it("TV-LOCK-132-01: holding đang khoá là holding TRẺ NHẤT", () => {
+    expect(selectLampForLock([lh(100n, 9n, true), lh(100n, 1n, false)], 100n))
+      .toEqual([lh(100n, 9n, true), lh(100n, 1n, true)]);
+    expect(selectLampForLock([lh(100n, 9n, true), lh(100n, 1n, false)], 50n))
+      .toEqual([lh(100n, 9n, true), lh(50n, 1n, true), lh(50n, 1n, false)]);
+  });
+
+  it("TV-LOCK-132-02: HOÀ acquired_epoch giữa holding khoá và holding mở", () => {
+    expect(selectLampForLock([lh(30n, 10n, true), lh(100n, 10n, false), lh(50n, 10n, false)], 120n))
+      .toEqual([lh(30n, 10n, true), lh(50n, 10n, true), lh(70n, 10n, true), lh(30n, 10n, false)]);
+  });
+
+  it("TV-LOCK-132-03: khoá xen giữa, nhiều epoch", () => {
+    expect(selectLampForLock(
+      [lh(10n, 3n, false), lh(20n, 7n, true), lh(30n, 5n, false), lh(40n, 9n, false)], 50n))
+      .toEqual([lh(20n, 7n, true), lh(40n, 9n, true), lh(10n, 5n, true), lh(20n, 5n, false), lh(10n, 3n, false)]);
+  });
+
+  it("lượng vượt phần đang mở thì ném, kể cả khi tổng khoá + mở đủ", () => {
+    expect(() => selectLampForLock([lh(100n, 9n, true), lh(100n, 1n, false)], 101n))
+      .toThrow("GEN-LOCK-001");
+  });
+
+  it("không đột biến mảng vào", () => {
+    const hs = [lh(100n, 9n, true), lh(100n, 1n, false)];
+    const out = selectLampForLock(hs, 50n);
+    out[0].amount = 1n;
+    expect(hs).toEqual([lh(100n, 9n, true), lh(100n, 1n, false)]);
+  });
+});
+
 describe("removeLockedAmount — §A.9", () => {
   it("Removes oldest-locked-first", () => {
     const h = [

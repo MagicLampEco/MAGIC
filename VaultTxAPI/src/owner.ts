@@ -45,6 +45,10 @@ export interface ResolvedOwnerWitness {
   auth: OwnerAuth<TxBuilder>;
   requiredSigners: string[];
   notes: string[];
+  /** Tên (64 hex) của ĐÚNG MỘT NFT anchor dưới `anchor_nft_policy` trên UTxO anchor của nhân chứng =
+   *  `blake2b_256(utf8(did))`. Vắng khi UTxO đó mang nhiều hơn một tên — nơi so (`sponsor.ts` ▸
+   *  `assertOwnerDid`) coi vắng là lệch. */
+  anchorNftName?: string;
 }
 
 export interface OwnerWitnessProvider {
@@ -146,8 +150,14 @@ export function ownerLockKey(owner: OwnerRef): string {
  * dùng đọc được đúng lỗi, không phải cổng an ninh.
  */
 export function carriesAnchorNft(assets: Record<string, bigint>, policy: string): boolean {
-  return Object.entries(assets).some(([unit, q]) =>
-    unit.length === 56 + 64 && unit.startsWith(policy) && q === 1n);
+  return anchorNftNamesOf(assets, policy).length > 0;
+}
+
+/** Tên (64 hex) của mọi NFT anchor dưới `policy` trên một UTxO — cùng luật với `carriesAnchorNft`. */
+export function anchorNftNamesOf(assets: Record<string, bigint>, policy: string): string[] {
+  return Object.entries(assets)
+    .filter(([unit, q]) => unit.length === 56 + 64 && unit.startsWith(policy) && q === 1n)
+    .map(([unit]) => unit.slice(56));
 }
 
 // ── hiện thực: did_stake ───────────────────────────────────────────────────────
@@ -188,7 +198,9 @@ export class DidStakeWitnessProvider implements OwnerWitnessProvider {
       deviceKeyHash: w.deviceKeyHash,
       network: this.deps.network,
     }, (addr: string): Promise<RewardAccountState> => chain.rewardAccount(addr));
+    const names = anchorNftNamesOf(anchorUtxo.assets, this.deps.anchorNftPolicy);
     return {
+      ...(names.length === 1 ? { anchorNftName: names[0]! } : {}),
       auth,
       requiredSigners: [...auth.details.requiredSigners],
       notes: [

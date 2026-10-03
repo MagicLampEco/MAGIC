@@ -38,6 +38,10 @@ import type { ChainUtxo } from "./chain.js";
 import type { VaultKind } from "./config.js";
 import { VaultDatumUndecodableError, VaultDatumV1Error, VaultIdentityDuplicateError } from "./errors.js";
 
+/** Hai loại két Gen (Instant, Schedule) — đọc bằng tệp này. Két Prepaid có lược đồ datum
+ *  KHÁC hẳn (8 trường, mang `did_commit` và dòng hạn mức) nên đi qua `prepaidView.ts`. */
+export type GenVaultKind = Exclude<VaultKind, "Prepaid">;
+
 /** Độ dài hex của một policy id / script hash (28 byte). */
 const POLICY_HEX_LEN = 56;
 
@@ -102,7 +106,7 @@ export interface VaultView {
    *  Vì sao bắt buộc chứ không tuỳ chọn: một trường có ở vault này và vắng ở vault kia thì
    *  bên gọi không phân biệt được *"vault loại lạ"* với *"máy chủ bản cũ"* — hai thứ cần
    *  hai cách xử. Vắng hẳn ở mọi vault thì ít ra nó nhất quán; vắng lỗ chỗ thì không. */
-  vaultKind: VaultKind;
+  vaultKind: GenVaultKind;
   /** Hình dạng datum ĐÃ ĐỌC ĐƯỢC — suy từ SỐ TRƯỜNG (Instant 20, Schedule 19), không từ
    *  scope. Đặt cạnh `vaultKind` để bên gọi đối chiếu được hai nguồn; hàm này CHƯA tự đối
    *  chiếu (xem docblock `vaultKind`). Các ô chỉ-Instant bên dưới lấy nullability theo
@@ -207,9 +211,35 @@ export function readVaultsFromUtxos(
   vaultAddress: string,
   owner: OwnerRef | string,
   atEpoch: bigint,
-  vaultKind: VaultKind,
+  vaultKind: GenVaultKind,
 ): ReadVaultsResult {
-  const vaults: VaultView[] = [];
+  return readGatedVaults(
+    utxos, vaultScriptHash, owner,
+    decodeVaultDatumV2,
+    decoded => decoded.datum.owner,
+    (decoded, utxoRef, vaultIdUnit, u) =>
+      toVaultView(u, decoded, utxoRef, vaultAddress, vaultIdUnit, atEpoch, vaultKind),
+  );
+}
+
+/**
+ * Bốn cổng dùng chung cho MỌI loại két — NFT danh-tính, NFT không thấy hai lần, datum
+ * inline, chủ khớp — cộng phép giải mã NÉM khi hỏng. Loại két chỉ khác nhau ở `decode`
+ * (lược đồ nào) và `build` (dựng view nào). Xuất cho `prepaidView.ts`: két Prepaid đi qua
+ * ĐÚNG bản cổng này, không qua một bản chép thứ hai.
+ *
+ * @param decode  NÉM khi datum không đúng lược đồ — không trả `null`, không đệm.
+ * @param ownerOf Trường `owner` THÔ (dạng `Credential` của Lucid) trong datum đã giải mã.
+ */
+export function readGatedVaults<D, V extends { utxoRef: string }>(
+  utxos: ChainUtxo[],
+  vaultScriptHash: string,
+  owner: OwnerRef | string,
+  decode: (hex: string, utxoRef: string) => D,
+  ownerOf: (decoded: D) => unknown,
+  build: (decoded: D, utxoRef: string, vaultIdUnit: string, u: ChainUtxo) => V,
+): { vaults: V[]; ignored: IgnoredUtxo[] } {
+  const vaults: V[] = [];
   const ignored: IgnoredUtxo[] = [];
   const seenVaultId = new Map<string, string>();   // vaultIdUnit → utxoRef đã thấy
   const wanted: OwnerRef = typeof owner === "string" ? { type: "key", hash: owner } : owner;
@@ -246,16 +276,16 @@ export function readVaultsFromUtxos(
 
     // NÉM, không `continue`. UTxO này mang NFT danh-tính vault ⇒ nó LÀ vault ⇒ không
     // giải mã được nghĩa là lược đồ của kho đã trôi khỏi chuỗi (hoặc scope trỏ két v1).
-    const decoded = decodeVaultDatumV2(u.inlineDatumHex, utxoRef);
+    const decoded = decode(u.inlineDatumHex, utxoRef);
 
     // Chủ là `Credential`: so CẢ tag lẫn hash — két chủ-script cùng 28 byte với một pkh là
     // chủ KHÁC, không lọt sang truy vấn nhánh khoá và ngược lại.
-    if (!sameOwner(ownerRefOf(decoded.datum.owner), wanted)) {
+    if (!sameOwner(ownerRefOf(ownerOf(decoded)), wanted)) {
       ignored.push({ utxoRef, reason: "OWNER_MISMATCH" });
       continue;
     }
 
-    vaults.push(toVaultView(u, decoded, utxoRef, vaultAddress, vaultIdUnit, atEpoch, vaultKind));
+    vaults.push(build(decoded, utxoRef, vaultIdUnit, u));
   }
 
   // Thứ tự tất định — bên gọi so kết quả giữa hai lượt được.
@@ -312,7 +342,7 @@ function toVaultView(
   vaultAddress: string,
   vaultIdUnit: string,
   atEpoch: bigint,
-  vaultKind: VaultKind,
+  vaultKind: GenVaultKind,
 ): VaultView {
   // Gom trường theo TÊN, không theo chỉ số: hai hình dạng khác nhau cả ở giữa.
   const datum = decoded.datum as unknown as RawCommonDatum;

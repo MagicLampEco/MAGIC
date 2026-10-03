@@ -7,12 +7,12 @@
 // Giải mã + cộng dồn đi qua VaultReadAPI ▸ readVaultsFromUtxos (cùng hàm dịch vụ đọc dùng),
 // không tự giải datum ở đây. Số tiền là BigInt, ghi ra dạng chuỗi thập phân (nanoMAGIC).
 
-import { readVaultsFromUtxos, type IgnoredUtxo } from "../../../VaultReadAPI/src/vaultView.ts";
+import { readVaultsFromUtxos, type GenVaultKind, type IgnoredUtxo } from "../../../VaultReadAPI/src/vaultView.ts";
 import type { ChainUtxo } from "../../../VaultReadAPI/src/chain.ts";
 import type { VaultKind } from "../../../VaultReadAPI/src/config.ts";
 
 export interface VaultTarget {
-  kind: VaultKind;
+  kind: GenVaultKind;
   scriptHash: string;
   address: string;
 }

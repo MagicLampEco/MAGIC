@@ -22,7 +22,7 @@ import {
 } from "./funding.js";
 
 import type { ChainReader, ChainTip } from "./chain.js";
-import type { Deployment, VaultScope } from "./config.js";
+import { PREPAID_VAULT_TYPE, type Deployment, type VaultScope } from "./config.js";
 import {
   checkBindDidTx, checkOpenThreadTx, didCommitOf, parseDidCommit, pickEngageThread, threadsOf,
   type BindDidSummary, type OpenThreadSummary,
@@ -46,10 +46,15 @@ import {
 import {
   assertChangeAddress, enterpriseAddressOf, type BuildContext, type CreateVaultContext, type TxBuilderPort,
 } from "./txBuilder.js";
-import { findVaultsAtScope, pickSingleVault, type FoundVault, type IgnoredUtxo } from "./vaultLookup.js";
-import { checkWakemeRefInTx, resolveWakemeVault, wakemeScriptHashOrThrow, type ResolvedWakeme } from "./wakeme.js";
+import { findVaultsAtScope, pickSingleVault, vaultIdUnitOf, type FoundVault, type IgnoredUtxo } from "./vaultLookup.js";
+import { decodeVaultDatumOrThrow } from "./vaultDatumShape.js";
 import {
-  assertMWithinMax, instantCheckpointNeed, instantLimitsOf, instantVaultDatumOf, instantVaultParamsOf,
+  assertWakemeLinkAllowed, checkWakemeRefInTx, locateWakemeVault, resolveWakemeVault, wakemeNotFoundSummary,
+  wakemeNotLinkedSummary,
+  type ResolvedWakeme, type WakemeSummary,
+} from "./wakeme.js";
+import {
+  mForBuild, instantCheckpointNeed, instantLimitsOf, instantVaultDatumOf, instantVaultParamsOf,
   readGbBeaconUtxo, readGbShardUtxos, readInstantGenRefs, readRateBeaconUtxo, readVaultRegistryUtxo,
   requireGenV2, requireRefScript, scheduleGenBeaconParamsOf,
 } from "./genV2.js";
@@ -58,6 +63,15 @@ import type { ConsumeBuildParams } from "./txBuilder.js";
 
 const PKH_HEX = /^[0-9a-f]{56}$/;
 const HEX = /^[0-9a-f]+$/;
+
+/** Két Wakeme của một lượt (`VaultTxService` ▸ `wakemeSource`): két đã đọc + tham chiếu thật đã
+ *  đưa vào tx (app gửi hoặc dịch vụ định vị), và mục `summary.wakeme` sẽ trả. Rỗng ⟹ lượt này
+ *  không đọc két Wakeme nào và không nói gì về nó. */
+interface WakemeSource {
+  resolved?: ResolvedWakeme;
+  ref?: OutRefLike;
+  summary?: WakemeSummary;
+}
 
 export interface BuildResponse {
   /** Giao dịch CHƯA KÝ. */
@@ -127,8 +141,12 @@ export interface BindDidResponse {
 
 export interface CreateVaultRequest extends OwnerRequest {
   kind: "instant" | "schedule";
-  /** oildrop, > 0. */
+  /** oildrop. Két schedule: > 0. Két instant: ≥ 0 — `0` là đường của người mới chỉ có LAMP mượn
+   *  ở két Wakeme (genesis IG không ép > 0). */
   lampAmount: bigint;
+  /** CHỈ két instant: `owner_commit` của DID chủ két (64 hex thường) ⟹ ghi vào `wakeme_link` của
+   *  datum genesis, để két Wakeme của DID đó ghim được két này ngay từ genesis bên Wakeme. */
+  didCommit?: string;
   /** Đường cũ: nguồn LAMP + phí + đích tiền thối. Có `funding` thì CẤM (xem `funding.ts`). */
   changeAddress?: string;
   profile?: Profile;
@@ -203,6 +221,14 @@ export class VaultTxService {
     return this.deps.chain.utxosAt(address);
   }
 
+  /**
+   * Tài sản LAMP mà bản deploy đang phục vụ nướng vào mọi két (apply-param #1, #2) — `/health` ▸
+   * `lamp`. Đọc thẳng từ khối cấu hình đã nạp (`config.ts` ▸ `lamp`), không có bản thứ hai.
+   */
+  get lampAsset(): { policyId: string; assetNameHex: string } {
+    return { policyId: this.deps.deployment.lampPolicyId, assetNameHex: this.deps.deployment.lampAssetNameHex };
+  }
+
   /** Trần thế chấp của ví trả phí do bản deploy đặt (`deployment.feePayerCollateralLovelace`). */
   get feePayerCollateralLovelace(): bigint {
     return this.deps.deployment.feePayerCollateralLovelace;
@@ -256,34 +282,44 @@ export class VaultTxService {
    * (`instantGenLimits(..).maxM`) được so ở đây trên đúng các UTxO beacon/shard sẽ giao
    * xuống bộ dựng — vượt trần ⟹ 422 `INSTANT_GEN_M_ABOVE_MAX`, bộ dựng KHÔNG được gọi.
    */
-  async instantGen(req: OwnerRequest & { m: bigint; wakemeVaultRef?: OutRefLike }, quote?: QuoteMode): Promise<BuildResponse> {
+  async instantGen(req: OwnerRequest & { m?: bigint; wakemeVaultRef?: OutRefLike }, quote?: QuoteMode): Promise<BuildResponse> {
     const d = this.deps.deployment;
     const route = "/tx/instant-gen";
+    // `m` vắng CHỈ hợp lệ ở chế độ báo giá (`/tx/quote` ▸ trần `max_m` làm `m`); đường dựng thật
+    // đã đòi `m` ở `buildRequest.ts`, nên tới đây mà vắng là lệch.
+    if (req.m === undefined && quote === undefined) {
+      throw new CodedApiError(400, "INSTANT_GEN_M_INVALID", `"m" bắt buộc ở /tx/instant-gen.`, { received_type: "missing" });
+    }
     const g = requireGenV2(d, route);
     requireRefScript(d, "gbShard", route);
     // Mạng chưa có két Wakeme ⟹ 501 NGAY (apply-param #8 không có giá trị), trước khi giữ khoá.
     const vaultParams = instantVaultParamsOf(d, g, this.deps.network);
-    const wakemeRef = req.wakemeVaultRef;
-    let wakeme: ResolvedWakeme | undefined;
+    let src: WakemeSource = {};
     let limits: InstantGenLimits | undefined;
     return this.buildOne("Instant", "instant_gen", req, async (ctx, b) => {
-      if (wakemeRef !== undefined) wakeme = await this.resolveWakeme(ctx, wakemeRef);
       const vaultDatum = instantVaultDatumOf(ctx.vault.utxo);
-      const refs = await readInstantGenRefs(this.deps.chain, g, vaultDatum.owner);
       const epoch = posixMsToEpoch(ctx.tip.blockTimePosixMs, this.deps.network);
+      // Làm mới checkpoint + két đã nối link ⟹ validator ĐÒI két Wakeme (`checkpoint.ak` ▸
+      // `resolve_link`, luật 2). Cùng epoch ⟹ két tuỳ chọn (có thì phải là két đã ghim — két
+      // định vị theo `wakeme_link` luôn đúng vế đó).
+      const need = instantCheckpointNeed(vaultDatum, epoch);
+      // `relinkByLent = true`: bộ dựng InstantGen tự tính L_lent (gương `checkpoint.ts ▸ resolveLink`).
+      src = await this.wakemeSource(ctx, req.wakemeVaultRef, need.wakemeLink, need.refresh, true);
+      const wakeme = src.resolved;
+      const refs = await readInstantGenRefs(this.deps.chain, g, vaultDatum.owner);
       limits = instantLimitsOf({
         vaultUtxo: ctx.vault.utxo, vaultDatum, epoch, refs, wakeme: wakeme?.read ?? null, g,
       });
-      assertMWithinMax(req.m, limits);
+      const m = mForBuild(req.m, limits);
       return b.instantGen(ctx, {
-        m: req.m, vaultParams, refs, includeRateBeacon: limits.refreshed,
+        m, vaultParams, refs, includeRateBeacon: limits.refreshed,
         vaultRegistryPolicy: g.vaultRegistryPolicy, gbShardCapNanogic: g.gbShardCapNanogic,
         ...(wakeme === undefined ? {} : { wakeme: { utxo: wakeme.utxo, scriptHash: wakeme.scriptHash } }),
       });
     }, quote, (txCbor, summary) => {
       if (limits === undefined) throw new Error("[bất biến nội bộ] instant_gen dựng xong mà chưa tính trần.");
       summary.gen_limits = genLimitsSummary(limits, summary);
-      this.wakemeAfterSummary(txCbor, summary, wakemeRef, wakeme);
+      this.wakemeAfterSummary(txCbor, summary, src);
     });
   }
 
@@ -296,15 +332,59 @@ export class VaultTxService {
     const d = this.deps.deployment;
     const g = requireGenV2(d, "/tx/refresh-checkpoint");
     const vaultParams = instantVaultParamsOf(d, g, this.deps.network);
+    // KHÔNG tự định vị ở đường này: vắng `wakeme_vault_ref` MANG NGHĨA "gỡ ghim"
+    // (`FollowVaultOrUnlink` ⟹ `wakeme_link := ""`). Tự tìm két rồi đưa vào là đảo ý người gọi.
     const wakemeRef = req.wakemeVaultRef;
-    let wakeme: ResolvedWakeme | undefined;
+    let src: WakemeSource = {};
     return this.buildOne("Instant", "refresh_checkpoint", req, async (ctx, b) => {
-      if (wakemeRef !== undefined) wakeme = await this.resolveWakeme(ctx, wakemeRef);
+      if (wakemeRef !== undefined) {
+        const resolved = await this.resolveWakeme(ctx, wakemeRef);
+        src = { resolved, ref: wakemeRef, summary: resolved.summary };
+      }
       const rateBeaconUtxo = await readRateBeaconUtxo(this.deps.chain, g);
       return b.refreshCheckpoint(ctx, {
-        vaultParams, rateBeaconUtxo, ...(wakeme === undefined ? {} : { wakemeVaultUtxo: wakeme.utxo }),
+        vaultParams, rateBeaconUtxo, ...(src.resolved === undefined ? {} : { wakemeVaultUtxo: src.resolved.utxo }),
       });
-    }, quote, (txCbor, summary) => this.wakemeAfterSummary(txCbor, summary, wakemeRef, wakeme));
+    }, quote, (txCbor, summary) => this.wakemeAfterSummary(txCbor, summary, src));
+  }
+
+  /**
+   * Két Wakeme cho một lượt đọc nó — MỘT luật cho `/tx/instant-gen` và `/tx/consume`:
+   *   1. app gửi `wakeme_vault_ref` ⟹ dùng đúng tham chiếu đó (đọc + kiểm ở `resolveWakemeVault`);
+   *   2. vắng, két IG chưa nối link ⟹ không két nào, `reason: "vault_not_linked"`;
+   *   3. vắng, đã nối link ⟹ định vị theo NFT `(wakeme_vault_hash, wakeme_link)`
+   *      (`locateWakemeVault`): thấy 1 ⟹ đọc + kiểm như vế 1, `source: "located"`; ≥ 2 ⟹ 409
+   *      `WAKEME_VAULT_AMBIGUOUS`; 0 ⟹ `required` ? 400 `WAKEME_VAULT_REF_REQUIRED` (validator
+   *      sẽ từ chối tx thiếu két) : `reason: "wakeme_vault_not_found"`, tx vẫn dựng.
+   * Mọi két đọc được đi qua `assertWakemeLinkAllowed` (luật 6, siết 2026-10-03): két IG link
+   * rỗng mà app gửi két Wakeme không ghim két này ⟹ 422 `WAKEME_LINK_CHANGE_REJECTED` kèm câu
+   * chỉ đường RefreshCheckpoint, bộ dựng KHÔNG được gọi.
+   */
+  private async wakemeSource(
+    ctx: BuildContext, ref: OutRefLike | undefined, link: string, refresh: boolean, relinkByLent: boolean,
+  ): Promise<WakemeSource> {
+    const required = refresh && link !== "";
+    if (ref !== undefined) {
+      const resolved = await this.resolveWakeme(ctx, ref);
+      assertWakemeLinkAllowed(resolved, link, { refresh, relinkByLent });
+      return { resolved, ref, summary: resolved.summary };
+    }
+    if (link === "") return { summary: wakemeNotLinkedSummary() };
+    const located = await locateWakemeVault(this.deps.chain, link, this.deps.network);
+    if (located === undefined) {
+      if (required) {
+        throw new CodedApiError(400, "WAKEME_VAULT_REF_REQUIRED",
+          `Két này đã nối két Wakeme (${link.slice(0, 16)}…) và lượt này làm mới checkpoint — validator ` +
+          `đòi két Wakeme ở reference input, nhưng dịch vụ không tìm thấy két nào mang NFT đó trên chuỗi. ` +
+          `Gửi "wakeme_vault_ref" nếu két vừa tạo (chưa vào khối), hoặc gỡ link bằng /tx/refresh-checkpoint.`,
+          { wakeme_link: link, located_count: 0 });
+      }
+      return { summary: wakemeNotFoundSummary() };
+    }
+    const resolved = await this.resolveWakeme(ctx, located);
+    // Định vị theo NFT tên = link ⟹ owner_commit == link luôn; gọi để một luật duy nhất gác cả hai đường.
+    assertWakemeLinkAllowed(resolved, link, { refresh, relinkByLent });
+    return { resolved, ref: located, summary: { ...resolved.summary, source: "located" } };
   }
 
   private resolveWakeme(ctx: BuildContext, ref: OutRefLike): Promise<ResolvedWakeme> {
@@ -320,13 +400,12 @@ export class VaultTxService {
   }
 
   /** Đọc lại CBOR: két Wakeme đã giao xuống phải là reference input, không phải input bị tiêu. */
-  private wakemeAfterSummary(
-    txCbor: string, summary: TxSummary, ref: OutRefLike | undefined, wakeme: ResolvedWakeme | undefined,
-  ): void {
-    if (wakeme === undefined) return;
-    if (ref === undefined) throw new Error("[bất biến nội bộ] có két Wakeme mà không có wakeme_vault_ref.");
-    checkWakemeRefInTx(txCbor, ref);
-    summary.wakeme = wakeme.summary;
+  private wakemeAfterSummary(txCbor: string, summary: TxSummary, src: WakemeSource): void {
+    if (src.resolved !== undefined) {
+      if (src.ref === undefined) throw new Error("[bất biến nội bộ] có két Wakeme mà không có tham chiếu.");
+      checkWakemeRefInTx(txCbor, src.ref);
+    }
+    if (src.summary !== undefined) summary.wakeme = src.summary;
   }
 
   /**
@@ -336,25 +415,21 @@ export class VaultTxService {
    */
   private async consumeCheckpointFor(
     ctx: BuildContext, wakemeRef: OutRefLike | undefined,
-  ): Promise<{ params: ConsumeBuildParams["checkpoint"]; wakeme?: ResolvedWakeme }> {
-    if (ctx.vault.scope.vaultType !== "Instant") return { params: undefined };
+  ): Promise<{ params: ConsumeBuildParams["checkpoint"]; wakeme: WakemeSource }> {
+    if (ctx.vault.scope.vaultType !== "Instant") return { params: undefined, wakeme: {} };
     const datum = instantVaultDatumOf(ctx.vault.utxo);
     const need = instantCheckpointNeed(datum, posixMsToEpoch(ctx.tip.blockTimePosixMs, this.deps.network));
-    if (!need.refresh) return { params: undefined };
+    if (!need.refresh) return { params: undefined, wakeme: {} };
     const d = this.deps.deployment;
     const g = requireGenV2(d, "/tx/consume (két Instant tiêu lần đầu trong epoch mới)");
     const vaultParams = instantVaultParamsOf(d, g, this.deps.network);
-    if (need.wakemeLink !== "" && wakemeRef === undefined) {
-      throw new CodedApiError(400, "WAKEME_VAULT_REF_REQUIRED",
-        `Két này đang ghim két Wakeme (${need.wakemeLink.slice(0, 16)}…) và lượt tiêu này làm mới ` +
-        `checkpoint — validator đòi két Wakeme ở reference input. Gửi "wakeme_vault_ref".`,
-        { wakeme_link: need.wakemeLink });
-    }
-    const wakeme = wakemeRef === undefined ? undefined : await this.resolveWakeme(ctx, wakemeRef);
+    // Đã nối link ⟹ bắt buộc có két (luật 2); app không gửi thì dịch vụ tự định vị.
+    // `relinkByLent = false`: `checkGenV2Burn` không tính L_lent nên ném mọi lượt đổi/nối link.
+    const src = await this.wakemeSource(ctx, wakemeRef, need.wakemeLink, true, false);
     const rateBeaconUtxo = await readRateBeaconUtxo(this.deps.chain, g);
     return {
-      params: { vaultParams, rateBeaconUtxo, ...(wakeme === undefined ? {} : { wakemeVaultUtxo: wakeme.utxo }) },
-      ...(wakeme === undefined ? {} : { wakeme }),
+      params: { vaultParams, rateBeaconUtxo, ...(src.resolved === undefined ? {} : { wakemeVaultUtxo: src.resolved.utxo }) },
+      wakeme: src,
     };
   }
 
@@ -368,7 +443,7 @@ export class VaultTxService {
     quote?: QuoteMode,
   ): Promise<BuildResponse> {
     const d = this.deps.deployment.consume;
-    let wakeme: ResolvedWakeme | undefined;
+    let wakeme: WakemeSource = {};
     return this.buildOne(undefined, "consume", req, async (ctx, b) => {
       const thread = await pickEngageThread(this.deps.chain, d.engageAddress, d.engageScriptHash, ctx.owner, req.engageRef);
       const cp = await this.consumeCheckpointFor(ctx, req.wakemeVaultRef);
@@ -377,7 +452,7 @@ export class VaultTxService {
         opType: req.opType, opCount: req.opCount, engageUtxo: thread.utxo,
         ...(cp.params === undefined ? {} : { checkpoint: cp.params }),
       });
-    }, quote, (txCbor, summary) => this.wakemeAfterSummary(txCbor, summary, req.wakemeVaultRef, wakeme));
+    }, quote, (txCbor, summary) => this.wakemeAfterSummary(txCbor, summary, wakeme));
   }
 
   /**
@@ -548,6 +623,7 @@ export class VaultTxService {
     const owner = assertOwnerRef(req.owner);
     const ownerKey = ownerLockKey(owner);
     const scopes = this.scopesFor(vaultType);
+    assertScopesSupported(scopes, intent);
     // 400 trước khi giữ khoá: một yêu cầu hỏng hình dạng không được chiếm chỗ của chủ.
     const feePayer = this.feePayerFor(req);
     const changeAddress = feePayer?.address ?? this.changeAddressFor(req);
@@ -693,10 +769,20 @@ export class VaultTxService {
     if (req.kind !== "instant" && req.kind !== "schedule") {
       throw new BadRequestError(`"kind" phải là "instant" hoặc "schedule".`);
     }
-    if (typeof req.lampAmount !== "bigint" || req.lampAmount <= 0n) {
-      throw new BadRequestError(`"lamp_amount" phải là số nguyên oildrop > 0.`);
+    if (typeof req.lampAmount !== "bigint" || req.lampAmount < 0n || (req.lampAmount === 0n && req.kind !== "instant")) {
+      throw new CodedApiError(400, "LAMP_AMOUNT_INVALID",
+        `"lamp_amount" phải là số nguyên oildrop: > 0 với két schedule, ≥ 0 với két instant.`,
+        { kind: req.kind, received: typeof req.lampAmount === "bigint" ? req.lampAmount.toString() : typeof req.lampAmount });
+    }
+    if (req.didCommit !== undefined) {
+      parseDidCommit(req.didCommit);
+      if (req.kind !== "instant") {
+        throw new CodedApiError(400, "DID_COMMIT_UNEXPECTED",
+          `"did_commit" chỉ dùng cho két instant (ghi vào wakeme_link); két schedule không có trường đó.`);
+      }
     }
     const scopes = this.scopesFor(req.kind === "instant" ? "Instant" : "Schedule");
+    assertScopesSupported(scopes, "create_vault");
     if (scopes.length !== 1) {
       throw new BadRequestError(
         `Cấu hình có ${scopes.length} địa chỉ vault loại ${req.kind}; không chọn đại một cái để tạo vault.`,
@@ -743,6 +829,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
+      if (req.kind === "instant") await this.assertNoInstantVaultYet(scope, owner, req.didCommit);
       const witness = await this.witnessFor(req);
       let fundingCtx: CreateVaultContext["funding"];
       if (funding !== undefined) {
@@ -765,7 +852,7 @@ export class VaultTxService {
           owner, ownerAuth: witness?.auth, scope, tip, changeAddress, funding: fundingCtx,
           ...(fundingCtx === undefined ? {} : { collateralLovelace: this.deps.deployment.feePayerCollateralLovelace }),
         },
-        { lampAmount: req.lampAmount, profile: req.profile },
+        { lampAmount: req.lampAmount, profile: req.profile, ...(req.didCommit === undefined ? {} : { wakemeLink: req.didCommit }) },
       );
       const lampUnit = this.deps.deployment.lampPolicyId + this.deps.deployment.lampAssetNameHex;
       const summary = summarizeCreateVaultTx(built.txCbor, {
@@ -812,6 +899,13 @@ export class VaultTxService {
       if (summary.vault.lamp_deposit_oildrop !== req.lampAmount.toString()) {
         throw new TxSummaryUndecodableError(
           `vault vừa dựng mang ${summary.vault.lamp_deposit_oildrop} oildrop, yêu cầu ${req.lampAmount}`,
+        );
+      }
+      // `wakeme_link` đọc lại TỪ CBOR phải đúng thứ yêu cầu khai (két instant), hoặc vắng (schedule).
+      const wantLink = req.kind === "instant" ? (req.didCommit ?? "") : null;
+      if (summary.vault.wakeme_link !== wantLink) {
+        throw new TxSummaryUndecodableError(
+          `vault vừa dựng mang wakeme_link ${JSON.stringify(summary.vault.wakeme_link)}, yêu cầu ${JSON.stringify(wantLink)}`,
         );
       }
       const txHash = txBodyHash(built.txCbor);
@@ -998,6 +1092,42 @@ export class VaultTxService {
     return { txHash: bodyHashBefore, lockReleasedFor };
   }
 
+  /**
+   * Chủ đã có két instant ở địa chỉ được cấu hình, hoặc (khi yêu cầu khai `did_commit`) một két
+   * instant đã nối đúng DID đó ⟹ 409 `VAULT_ALREADY_EXISTS`, kèm tham chiếu két đang có. Không dựng
+   * két thứ hai: két thứ hai cùng chủ làm mọi đường dựng sau rơi vào 409 `VAULT_AMBIGUOUS`, và két
+   * thứ hai cùng DID là đúng thứ `INV-ONE-PERSON-ONE-VAULT` cấm.
+   *
+   * MỨC ĐÚNG của cổng này: lưới an toàn của DỊCH VỤ (chống bấm hai lần, app gửi lại), KHÔNG phải
+   * cổng chống Sybil — bất biến chưa được ép on-chain (BOUNDARIES §2), ai cũng dựng được tx genesis
+   * không qua dịch vụ. Tx tạo két vừa nộp mà chưa vào khối thì phép đọc này không thấy; chỗ chặn ca
+   * đó là khoá mềm theo chủ (`OwnerLockTable`) trong hạn TTL.
+   */
+  private async assertNoInstantVaultYet(scope: VaultScope, owner: OwnerRef, didCommit: string | undefined): Promise<void> {
+    const utxos = await this.deps.chain.utxosAt(scope.address);
+    // Đọc theo đúng luật của đường tra két (`findVaultsAtScope`): UTxO không mang NFT danh-tính
+    // không phải két; mang NFT mà datum hỏng ⟹ NÉM (lược đồ đã trôi), không bỏ qua im lặng.
+    const { vaults } = findVaultsAtScope(utxos, scope, owner);
+    const existing: { vault_ref: string; vault_nft: string; matched_by: "owner" | "did_commit" }[] =
+      vaults.map(v => ({ vault_ref: refStr(v.utxo), vault_nft: v.vaultIdUnit, matched_by: "owner" }));
+    if (didCommit !== undefined) {
+      for (const u of utxos) {
+        const unit = vaultIdUnitOf(u, scope.scriptHash);
+        if (unit === null || typeof u.datum !== "string" || u.datum === "") continue;
+        if (existing.some(e => e.vault_ref === refStr(u))) continue;
+        if (decodeVaultDatumOrThrow(u.datum).wakeme_link === didCommit) {
+          existing.push({ vault_ref: refStr(u), vault_nft: unit, matched_by: "did_commit" });
+        }
+      }
+    }
+    if (existing.length > 0) {
+      throw new CodedApiError(409, "VAULT_ALREADY_EXISTS",
+        `Đã có ${existing.length} két instant cho ${existing[0]!.matched_by === "owner" ? "chủ này" : "DID này"} — ` +
+        `không dựng két thứ hai. Dùng két đang có (vault_ref).`,
+        { vault_type: "Instant", existing });
+    }
+  }
+
   scopesFor(vaultType: string | undefined): VaultScope[] {
     if (vaultType === undefined) return this.deps.deployment.vaults;
     const hit = this.deps.deployment.vaults.filter(s => s.vaultType === vaultType);
@@ -1178,4 +1308,21 @@ function routeOfIntent(intent: string): IssuedRoute {
 function hash64NameOf(unit: string): string | undefined {
   const name = unit.slice(56);
   return /^[0-9a-f]{64}$/.test(name) ? name : undefined;
+}
+
+/**
+ * Két Prepaid đã có khuôn cấu hình (`config.ts` ▸ `PREPAID_VAULT_TYPE`) nhưng CHƯA route nào
+ * dựng tx cho nó: bộ tìm két, bộ giải datum và bộ dựng của mọi route hiện có là của
+ * Instant/Schedule. Để scope Prepaid lọt vào đó thì nó chết ở một chỗ không nói gì về loại két
+ * (datum "không giải được" 502, `vaultModuleOf` 422, `requireShard` 501). Chặn ở ĐÂY, trước
+ * khi đọc chuỗi, bằng một mã đọc được.
+ */
+function assertScopesSupported(scopes: VaultScope[], route: string): void {
+  const prepaid = scopes.filter(s => s.vaultType === PREPAID_VAULT_TYPE);
+  if (prepaid.length > 0) {
+    throw new CodedApiError(501, "VAULT_KIND_UNSUPPORTED",
+      `Loại két ${PREPAID_VAULT_TYPE} không đi qua route ${route} — két Prepaid chỉ được dựng qua ` +
+      `hành trình tài trợ "/tx/sponsor/*" (t1-open · t2-fund · t3-draw · t4-first-consume).`,
+      { vault_type: PREPAID_VAULT_TYPE, route, addresses: prepaid.map(s => s.address), use_instead: "/tx/sponsor/*" });
+  }
 }

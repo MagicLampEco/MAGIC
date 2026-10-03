@@ -472,6 +472,8 @@ function readWakeme(p: VaultSpendCommon, ownHash: string, ownName: string, e: bi
     ownScriptHash:   ownHash,
     ownVaultName:    ownName,
     currentPeriod:   e,
+    msPerEpoch:      p.vaultParams.msPerEpoch,
+    windowOriginMs:  p.vaultParams.windowOriginMs,
     lampPolicyId:    p.vaultParams.lampPolicyId,
     lampAssetName:   p.vaultParams.lampAssetName,
   });
@@ -669,20 +671,68 @@ export async function signAndSubmit(lucid: LucidEvolution, tx: TxSignBuilder): P
 
 // ── Két Wakeme: gương `onchain/lib/magiclamp/protocol/wakeme_lent.ak ▸ wakeme_read` ──
 //
-// Luật y hệt bên Aiken, trên MỘT UTxO két đã chọn: vế nào validator FAIL thì ở đây NÉM
-// `GEN-INST-010`; vế (d) ghim trong chính kỳ và vế (f) value thiếu LAMP thì L = 0 như
-// validator (vẫn trả `owner_commit`). Đọc datum theo VỊ TRÍ, ≥ 13 trường.
+// Luật y hệt bên Aiken (bản 2026-10-02), trên MỘT UTxO két đã chọn: vế nào validator FAIL
+// thì ở đây NÉM `GEN-INST-010` — (a) datum, (b) NFT, (e) lượng không âm, cộng kiểu các ô
+// đọc ([0] bytes; [2] [3] [7] [12] số nguyên). Ba vế trả `L = 0` mà vẫn trả `owner_commit`,
+// đúng thứ tự validator: (c) két chưa ghim két IG này ⟹ (d) kỳ ghim chưa được tính ⟹ (f)
+// value thiếu LAMP. Đọc datum theo VỊ TRÍ, ≥ 13 trường.
 
 export interface LentReadContext {
   wakemeVaultHash: string;
   ownScriptHash:   string;
   ownVaultName:    string;
   currentPeriod:   bigint;
+  /** Apply-param #8 `ms_per_epoch` của két IG — vế (d) ngoại lệ genesis. */
+  msPerEpoch:      bigint;
+  /** Apply-param #9 `window_origin_ms` của két IG — vế (d) ngoại lệ genesis. */
+  windowOriginMs:  bigint;
   lampPolicyId:    string;
   lampAssetName:   string;
 }
 
+/**
+ * Lý do validator tính `L_lent = 0` cho một két Wakeme HỢP LỆ (không fail), theo đúng thứ tự
+ * vế của `read_one_vault`:
+ *   `not_pinned_to_this_vault` — (c) `gen_vault` không ghim két IG này (link vẫn nối được ở
+ *                                nhánh chủ ký; phần mượn = 0 tới khi két Wakeme ghim);
+ *   `pinned_in_current_period` — (d) két đã ĐỔI ghim sang két IG này trong chính kỳ đang sinh;
+ *   `lamp_short_of_datum`      — (f) LAMP thật trong value < [3] + [7].
+ */
+export type WakemeNotCountedReason =
+  | "not_pinned_to_this_vault" | "pinned_in_current_period" | "lamp_short_of_datum";
+
+export interface WakemeReadExplained {
+  read: WakemeRead;
+  /** Vắng ⟹ két được tính (`read.lent = [3] + [7]`). */
+  reason?: WakemeNotCountedReason;
+}
+
+/** Chia SÀN trên BigInt (`/` của BigInt cắt về 0; `/` của Aiken làm tròn về −∞). `b > 0`. */
+export function floorDiv(a: bigint, b: bigint): bigint {
+  if (b <= 0n) throw new Error(`floorDiv: số chia phải > 0, nhận ${b}.`);
+  const q = a / b;
+  return a % b !== 0n && a < 0n ? q - 1n : q;
+}
+
+/**
+ * Vế (d) của `read_one_vault`: kỳ ghim được tính khi
+ *   `gen_pin_period < current_period` ∨ `floorDiv(vest_start_ms − O, P) == gen_pin_period`.
+ * Vế sau là ngoại lệ GENESIS (ghim từ genesis, chưa từng đổi ghim). Két Wakeme còn đếm kỳ
+ * trên lưới Unix thì cả hai vế sai ⟹ không tính (fail-safe).
+ */
+export function wakemePinCounted(
+  genPinPeriod: bigint, vestStartMs: bigint, currentPeriod: bigint, msPerEpoch: bigint, windowOriginMs: bigint,
+): boolean {
+  return genPinPeriod < currentPeriod ||
+    floorDiv(vestStartMs - windowOriginMs, msPerEpoch) === genPinPeriod;
+}
+
 export function readWakemeVault(utxo: UTxO, ctx: LentReadContext): WakemeRead {
+  return explainWakemeVault(utxo, ctx).read;
+}
+
+/** Như `readWakemeVault`, kèm LÝ DO khi `L = 0` (để app không hiện "đã tính" cho một lượt 0). */
+export function explainWakemeVault(utxo: UTxO, ctx: LentReadContext): WakemeReadExplained {
   const fail = (why: string): never => {
     throw new Error(`GEN-INST-010: két Wakeme ${utxo.txHash}#${utxo.outputIndex} không đạt luật đọc L_lent — ${why}`);
   };
@@ -690,30 +740,36 @@ export function readWakemeVault(utxo: UTxO, ctx: LentReadContext): WakemeRead {
   // nhưng bộ dựng nhận đúng một UTxO do người gọi chọn: sai địa chỉ là lỗi người gọi.
   const pc = getAddressDetails(utxo.address).paymentCredential;
   if (pc?.type !== "Script" || pc.hash !== ctx.wakemeVaultHash) fail("không nằm ở script két Wakeme");
-  // (a) inline datum, Constr 0, ≥ 13 trường.
+  // (a) inline datum, Constr 0, ≥ 13 trường; các ô đọc đúng kiểu (`un_b_data`/`un_i_data`).
   if (!utxo.datum || utxo.datumHash) fail("datum không inline");
   const d = Data.from(utxo.datum!);
   if (!(d instanceof Constr) || d.index !== 0 || d.fields.length < 13) fail("datum không phải Constr 0 ≥ 13 trường");
   const f = (d as Constr<Data>).fields;
-  const ownerCommit = f[0], conditional = f[3], owned = f[7], genVault = f[11], pinPeriod = f[12];
-  if (typeof ownerCommit !== "string" || typeof conditional !== "bigint" ||
+  const ownerCommit = f[0], vestStart = f[2], conditional = f[3], owned = f[7], genVault = f[11], pinPeriod = f[12];
+  if (typeof ownerCommit !== "string" || typeof vestStart !== "bigint" || typeof conditional !== "bigint" ||
       typeof owned !== "bigint" || typeof pinPeriod !== "bigint") fail("sai kiểu trường");
   // (b) đúng MỘT token dưới policy két, số lượng 1, tên == owner_commit (32 byte).
   const nfts = Object.entries(utxo.assets).filter(([u]) => u !== "lovelace" && u.slice(0, 56) === ctx.wakemeVaultHash);
   if (nfts.length !== 1 || nfts[0]![1] !== 1n) fail("không đúng một NFT két số lượng 1");
   if ((ownerCommit as string).length !== 64 || nfts[0]![0].slice(56) !== ownerCommit) fail("tên NFT ≠ owner_commit 32 byte");
-  // (c) gen_vault == Some(GenPin{ ownScriptHash, ownVaultName }) — so nguyên khối Data.
-  const expectedPin = new Constr(0, [new Constr(0, [ctx.ownScriptHash, ctx.ownVaultName])]);
-  if (Data.to(genVault as Data) !== Data.to(expectedPin)) fail("két không ghim két IG này");
-  // (e) hai lượng không âm.
+  // (e) hai lượng không âm — đứng TRƯỚC ba vế trả 0 để nhánh 0 không che vế fail.
   if ((conditional as bigint) < 0n || (owned as bigint) < 0n) fail("lượng âm");
   const commit = ownerCommit as string;
+  const zero = (reason: WakemeNotCountedReason): WakemeReadExplained =>
+    ({ read: { ownerCommit: commit, lent: 0n }, reason });
+  // (c) gen_vault == Some(GenPin{ ownScriptHash, ownVaultName }) — so nguyên khối Data.
+  // Lệch ⟹ 0, KHÔNG ném (2026-10-02: gỡ khoá lẫn nhau với Wakeme, xem `wakeme_lent.ak`).
+  const expectedPin = new Constr(0, [new Constr(0, [ctx.ownScriptHash, ctx.ownVaultName])]);
+  if (Data.to(genVault as Data) !== Data.to(expectedPin)) return zero("not_pinned_to_this_vault");
+  // (d) kỳ ghim: đã qua kỳ, hoặc ghim từ genesis và chưa từng đổi ghim.
+  if (!wakemePinCounted(pinPeriod as bigint, vestStart as bigint, ctx.currentPeriod, ctx.msPerEpoch, ctx.windowOriginMs)) {
+    return zero("pinned_in_current_period");
+  }
+  // (f) LAMP thật trong value phải đỡ được datum ⟹ thiếu thì 0; dư thì chỉ số datum.
   const lent = (conditional as bigint) + (owned as bigint);
-  // (d) ghim trong chính kỳ đang sinh ⟹ 0.
-  if ((pinPeriod as bigint) >= ctx.currentPeriod) return { ownerCommit: commit, lent: 0n };
-  // (f) LAMP thật trong value phải đỡ được datum ⟹ thiếu thì 0.
   const held = utxo.assets[ctx.lampPolicyId + ctx.lampAssetName] ?? 0n;
-  return { ownerCommit: commit, lent: held < lent ? 0n : lent };
+  if (held < lent) return zero("lamp_short_of_datum");
+  return { read: { ownerCommit: commit, lent } };
 }
 
 /** Gương `wakeme_lent.ak ▸ lent_lamp`: chỉ phần L_lent. */

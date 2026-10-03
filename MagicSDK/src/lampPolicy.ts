@@ -79,7 +79,9 @@ export const NON_LAMP_LOOKALIKE_POLICIES: Readonly<Record<string, string>> = Obj
 
 /** LAMP THẬT của một đời đã bị thay. Không phải hàng nhái — mọi phép so hình
  *  dạng đều cho chúng đi qua, và một lượt chạy bằng chúng vẫn XANH. Danh sách
- *  ĐÓNG, chép tay 2026-09-16; thêm `8169b76c…` 2026-09-26. */
+ *  ĐÓNG, chép tay 2026-09-16; thêm `8169b76c…` 2026-09-26; thêm `53bc12ad…` và
+ *  `7ecbffe2…` 2026-10-03 (thư LAMP `lam1003mg-a`). Phải trùng tập khoá với
+ *  `scripts/config.ts` ▸ bảng cùng tên. */
 export const SUPERSEDED_LAMP_POLICIES: Readonly<Record<string, string>> = Object.freeze({
   "7a1a7aed5ec47acc37b6fa82695c1219bf76895b505b01161367adf9":
     "Bản diễn tập đời trước, đã bị thay.",
@@ -89,15 +91,26 @@ export const SUPERSEDED_LAMP_POLICIES: Readonly<Record<string, string>> = Object
     "đang cầm, nên nó là đời DỄ dùng nhầm nhất, không phải đời khó gặp nhất.",
   "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
     "Đời `preprod-oneshot-14param` (đúc 2026-09-14), đã bị thay bởi `53bc12ad…8743` " +
-    "(genesis tx `21f39c9b…a716`, 2026-09-26). Cụm vault Preprod 23–24/09 dùng đời này.",
+    "(genesis tx `21f39c9b…a716`, 2026-09-26) — đời đó cũng đã bỏ; đời Preprod CUỐI là " +
+    "`493002cc…cfac`. Cụm vault Preprod 23–24/09 dùng đời này.",
+  "53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743":
+    "Đời Preprod đúc 2026-09-26 (genesis tx `21f39c9b…a716`), đã bị thay bởi " +
+    "`493002cc…cfac` (policy tLAMP Preprod CUỐI, thư LAMP `lam1003mg-a`, 2026-10-03). " +
+    "Kho LAMP đã dừng mọi job rót trên cụm này tối 2026-10-02.",
+  "7ecbffe2b41f68c917035f52a1053efbd2323dfd85a81cf840089ea2":
+    "Policy LAMP tính ra 2026-10-02 rồi HUỶ cùng ngày (thư LAMP `lam1002mg-z`): thiếu " +
+    "nhãn marker đọc ra nghĩa. Đã bị thay bởi `493002cc…cfac` (policy tLAMP Preprod " +
+    "CUỐI, thư `lam1003mg-a`, 2026-10-03). Chưa từng được nướng vào kho này.",
 });
 
 // LỐI MỞ TẬP DƯỢT — một ngoại lệ CÓ XÁC NHẬN THEO GIÁ TRỊ, không phải một cờ bật/tắt
 //
 // Chủ dự án quyết 2026-09-27: dựng một cụm TẬP DƯỢT dùng một lần trên Preprod bằng
 // `8169b76c…`, vì ví deploy chỉ giữ tLAMP của đời đó, và kho LAMP sẽ đổi policy thêm
-// lần nữa sau 04/10. Cụm phục vụ người dùng sẽ dựng MỘT lần trên policy cuối — dựng nó
-// trên `53bc12ad…` bây giờ là dựng hai lần.
+// lần nữa. Lần đổi đó đã tới: policy tLAMP Preprod CUỐI là `493002cc…cfac` (thư LAMP
+// `lam1003mg-a`, 2026-10-03), nhưng genesis của nó CHƯA gửi — chưa có tLAMP nào dưới
+// policy đó trên chuỗi. Cụm phục vụ người dùng dựng MỘT lần trên policy cuối, và CHƯA
+// dựng.
 //
 // Sự thật "`8169b76c…` đã bị thay" KHÔNG đổi: khoá đó vẫn nằm trong
 // `SUPERSEDED_LAMP_POLICIES`. Bảng dưới chỉ nói "được CHO QUA khi người chạy xác nhận".
@@ -122,12 +135,14 @@ export const SUPERSEDED_LAMP_POLICIES: Readonly<Record<string, string>> = Object
 /** Đời đã bị thay mà được CHO QUA khi có xác nhận theo giá trị. Danh sách ĐÓNG, chép
  *  tay 2026-09-27; phải trùng tập khoá với `scripts/config.ts` ▸ bảng cùng tên.
  *
- *  ĐIỀU KIỆN GỠ: gỡ khoá `8169b76c…` khi kho LAMP gửi policy Preprod cuối (sau 04/10).
- *  Gỡ xong thì bảng rỗng, và lối mở tự đóng — không cần sửa hàm cổng. */
+ *  ĐIỀU KIỆN GỠ: policy Preprod cuối đã tới (2026-10-03), nhưng khoá `8169b76c…` CHƯA
+ *  gỡ vì cụm tập dượt còn một runner đang chạy. Gỡ khi runner đó dừng hẳn. Gỡ xong thì
+ *  bảng rỗng, và lối mở tự đóng — không cần sửa hàm cổng. */
 export const REHEARSAL_LAMP_POLICIES: Readonly<Record<string, string>> = Object.freeze({
   "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
     "Cụm TẬP DƯỢT dùng một lần trên Preprod (chủ dự án quyết 2026-09-27): ví deploy chỉ " +
-    "giữ tLAMP của đời này. Gỡ khi kho LAMP gửi policy Preprod cuối (sau 04/10).",
+    "giữ tLAMP của đời này. Gỡ khi runner của cụm tập dượt dừng hẳn (policy Preprod " +
+    "cuối `493002cc…cfac` đã tới 2026-10-03, genesis chưa gửi).",
 });
 
 /** Mạng được phép chạy lối mở tập dượt. Danh sách ĐÓNG: mạng không nằm đây — kể cả

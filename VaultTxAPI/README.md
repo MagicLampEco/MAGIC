@@ -75,7 +75,7 @@ POST /tx/schedule-fire     { owner, [owner_witness], change_address | fee_payer,
 POST /tx/consume           { owner, [owner_witness], change_address | fee_payer, op_type, op_count, [engage_ref], [wakeme_vault_ref] }
 POST /tx/open-thread       { owner, [owner_witness], change_address }
 POST /tx/bind-did          { owner, [owner_witness], [change_address], did_commit, [engage_ref] }
-POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
+POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile], [did_commit] }
 POST /tx/submit            { tx_cbor, witness_cbor }
 POST /tx/quote             { route, params, [owner_fee_addresses] } — báo giá phí, xem dưới
 POST /fee/utxo             { route }        [X-Feecover-Token]   — proxy ví trả phí, xem dưới
@@ -91,6 +91,35 @@ script thì phải gửi một trong hai trường.
 chạy), `commit_source`. Commit ĐO bằng `git rev-parse HEAD` ở cây mã lúc khởi động, không nhận
 qua biến môi trường (`src/buildInfo.ts`). Không đo được thì `commit: null`,
 `commit_source: "unavailable"` kèm `commit_unavailable_reason` — không đoán.
+
+`/health` còn khai tài sản LAMP mà bản deploy nướng vào mọi két, dạng máy đọc:
+`"lamp": { "policy_id": "<56 hex>", "asset_name_hex": "<hex>" }` — cùng nguồn với bộ dựng
+(khối `lamp` của tệp deploy), không gõ tay. App so `policy_id` này với policy LAMP mà két Wakeme
+phát trước khi mở luồng Sinh MAGIC. `deployment_source` (nhãn chữ) giữ nguyên văn như cũ.
+
+`/health` còn khai GỐC KỲ giao thức, để app tính kỳ mà khỏi gõ cứng hằng theo mạng. Kỳ trên
+chuỗi là `⌊(t − O) / P⌋` với `O = window_origin_ms`, `P = ms_per_epoch` — KHÔNG phải lưới Unix
+`⌊t / P⌋` (lệch ~3.800 kỳ trên Preprod: t=1_790_553_600_000 là kỳ **316**, lưới Unix cho 4144).
+`O` và `P` lấy từ `windowOriginMs` / `msPerEpoch` của `@magiclamp/protocol-utils` — CÙNG hàm mà
+bộ dựng tx dùng để apply-param validator (`genV2.ts` ▸ `instantVaultParamsOf`), không có bản chép
+thứ hai (`src/http.ts` ▸ `epochHealthFields`):
+
+```jsonc
+"epoch": {
+  "origin_ms": "1654041600000",   // O — chuỗi số
+  "ms_per_epoch": "432000000",    // P — chuỗi số
+  "current": 316,                 // kỳ hiện tại theo GIỜ MÁY CHỦ (chỉ số kỳ nhỏ ⟹ số JSON)
+  "start_ms": "1790553600000",    // O + current·P, ĐẦU kỳ (gồm mốc này)
+  "end_ms": "1790985600000"       // O + (current+1)·P: kết thúc ĐỘC QUYỀN = start_ms của kỳ kế
+}
+```
+
+Khoảng của kỳ là nửa mở `[start_ms, end_ms)`: `t = end_ms` đã thuộc kỳ kế. App tính kỳ cho một
+mốc bất kỳ `t` bằng `⌊(t − origin_ms) / ms_per_epoch⌋` (chia sàn; `t < O` cho số âm) từ chính
+hai trường này. Mạng không có gốc (**Preview**, `WIN-PREVIEW` — LAMP `Specs/Window/CONTRACT.md`
+v1.0 §4) thì `/health` VẪN trả 200 nhưng khai tường minh, không đệm 0:
+`"epoch": null, "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"`. Các đường dựng tx trên
+mạng đó vẫn trả 501 cùng mã như trước.
 
 Năm đường dựng trên vault có sẵn (`instant-gen`, `refresh-checkpoint`, `schedule-commit`,
 `schedule-fire`, `consume`) trả:
@@ -130,7 +159,10 @@ Từ Gen v2.0 lượng sinh `m` (nanogic) là **bắt buộc** và do chủ ch�
 `400 INSTANT_GEN_M_INVALID`. Dịch vụ đọc beacon ρ, beacon GreenBack, sổ két và shard GB của
 két MỘT lần, tính `max_m` bằng `@magiclamp/instantgen-sdk` ▸ `instantGenLimits` trên đúng các
 UTxO đó rồi giao chúng xuống bộ dựng (`genV2.ts`). `m > max_m` ⟹ `422 INSTANT_GEN_M_ABOVE_MAX`
-kèm `details.max_m` và `details.m` — bộ dựng không được gọi. Dựng xong, `summary.gen_limits`:
+kèm `details.max_m` và `details.m` — bộ dựng không được gọi. App chưa biết `max_m` thì hỏi
+`POST /tx/quote` route `instant-gen` KHÔNG gửi `m` (hoặc `"0"`): báo giá dựng tại `m = max_m` và
+trả trần trong `summary.gen_limits` (xem §Báo giá). Đường dựng thật vẫn đòi `m`. Dựng xong,
+`summary.gen_limits`:
 
 ```jsonc
 "gen_limits": {
@@ -149,6 +181,16 @@ Cần khối `gen_v2` và `ref_script_utxos.gb_shard` trong bản deploy (§6); 
 `501 CONFIG_MISSING` với `details.missing` nêu đúng khoá. Mạng chưa có két Wakeme ⟹
 `501 WAKEME_VAULT_UNAVAILABLE` (apply-param #8 của két không có giá trị).
 
+**Két cũ chưa nối két Wakeme (`wakeme_link` rỗng): chạy RefreshCheckpoint trước.** Từ
+2026-10-03 lượt sinh (và lượt tiêu) **không nối link** được nữa (`checkpoint.ak` ▸
+`resolve_link`, luật 6): két IG link rỗng mà kèm `wakeme_vault_ref` trỏ tới một két Wakeme
+không ghim két này ⟹ `422 WAKEME_LINK_CHANGE_REJECTED`, bộ dựng không được gọi. Lượt nối đầu
+chỉ qua genesis (`did_commit` ở `/tx/create-vault`) hoặc `POST /tx/refresh-checkpoint` kèm
+`wakeme_vault_ref`; xong thì gọi lại `instant-gen`. Bỏ `wakeme_vault_ref` thì lượt sinh vẫn
+chạy với `L_lent = 0`. Ngoại lệ duy nhất: lượt sinh làm mới checkpoint mà két Wakeme đưa vào
+đang ghim chính két này (`L_lent > 0`) — validator nhận, dịch vụ cũng nhận. `/tx/consume` thì
+không có ngoại lệ đó (bộ dựng consume không tính `L_lent`), nên ở đó luôn RefreshCheckpoint trước.
+
 ### `POST /tx/refresh-checkpoint`
 
 Chủ ký, két Instant làm mới năm ô checkpoint (`cap_epoch`, `cap_nanogic`, `usage_window`,
@@ -160,8 +202,10 @@ vắng ⟹ gỡ ghim (`wakeme_link := ""`). Cần khối `gen_v2` (thiếu ⟹ `
 
 Lượt tiêu đầu tiên trong epoch mới (`cap_epoch < e`) của két Instant làm mới checkpoint ở nhánh
 BurnBatch ⟹ tx cần beacon ρ ở reference input (vắng ⟹ `502 CHAIN_UNAVAILABLE`), và két Wakeme
-nếu két đang ghim (`wakeme_link` khác ""). Ca đó mà thân bài không kèm `wakeme_vault_ref` ⟹
-`400 WAKEME_VAULT_REF_REQUIRED` (`details.wakeme_link`), không dựng một tx chắc chắn chết. Cùng
+nếu két đã nối link (`wakeme_link` khác ""). Ca đó mà thân bài không kèm `wakeme_vault_ref` thì
+dịch vụ tự định vị két (mục `wakeme_vault_ref` dưới); không tìm thấy két nào ⟹
+`400 WAKEME_VAULT_REF_REQUIRED` (`details.wakeme_link`, `details.located_count`), không dựng một
+tx chắc chắn chết. Cùng
 epoch, hoặc két Schedule ⟹ không đọc gì thêm (ScheduleGen không đọc két Wakeme).
 
 ### `POST /tx/schedule-commit`: validator `commit`
@@ -177,22 +221,27 @@ với `details.missing` nêu đúng khoá đó. Stake credential của `commit` 
 Két InstantGen v2.0 đọc `(owner_commit, L_lent)` từ **đúng một** két Wakeme nằm trong
 **reference inputs** của giao dịch — két có `gen_vault` (datum trường 11) ghim chính vault
 này — ở lượt làm mới checkpoint và ở nhánh sinh. Không két ⟹ `L_lent = 0`, hợp lệ; hai két
-trở lên ⟹ chuỗi từ chối. Mã đọc: `@magiclamp/instantgen-sdk` ▸ `readWakemeVault` (gương
+trở lên ⟹ chuỗi từ chối. Mã đọc: `@magiclamp/instantgen-sdk` ▸ `explainWakemeVault` (gương
 `checkpoint.ak` ▸ `wakeme_lent.ak` ▸ `wakeme_read`). Trường này nhận ở `instant-gen`,
 `refresh-checkpoint` và `consume`.
 
-- **Vắng `wakeme_vault_ref`** ⟹ y như trước: không két nào, `L_lent = 0`, `summary` không có
-  mục `wakeme`.
-- **Có** `"wakeme_vault_ref": "<tx_hash 64 hex>#<i>"` ⟹ dịch vụ đọc UTxO đó, kiểm trước khi dựng:
-  mạng có két Wakeme (`@magiclamp/protocol-utils` ▸ `wakemeVaultHash`), UTxO còn sống, nằm ở
-  script két, datum đọc được, và ghim đúng vault này. Vế nào hỏng thì trả lỗi có mã (bảng
-  dưới), không dựng một tx mà chuỗi sẽ từ chối.
+- **Có** `"wakeme_vault_ref": "<tx_hash 64 hex>#<i>"` ⟹ dịch vụ dùng đúng UTxO đó (ưu tiên), kiểm
+  trước khi dựng: mạng có két Wakeme (`@magiclamp/protocol-utils` ▸ `wakemeVaultHash`), UTxO còn
+  sống, nằm ở script két, datum đọc được. Vế nào hỏng thì trả lỗi có mã (bảng dưới), không dựng
+  một tx mà chuỗi sẽ từ chối.
+- **Vắng**, két IG **đã nối link** (`wakeme_link` = `owner_commit` của DID chủ két) ⟹ dịch vụ
+  **tự định vị** két Wakeme bằng NFT định danh `(policy = wakeme_vault_hash, name = wakeme_link)`
+  — tra theo đơn vị tài sản, chi phí theo MỘT két, không quét địa chỉ script dùng chung. Chỉ giữ
+  UTxO có payment credential = script két Wakeme (validator lọc reference input đúng như thế).
+  Tìm thấy 1 ⟹ đọc + kiểm như trên, `summary.wakeme.source = "located"`; 2 trở lên ⟹
+  `409 WAKEME_VAULT_AMBIGUOUS` (`details.candidates`); 0 ⟹ `reason: "wakeme_vault_not_found"`,
+  trừ khi lượt này làm mới checkpoint (validator đòi két) ⟹ `400 WAKEME_VAULT_REF_REQUIRED`.
+- **Vắng**, két IG chưa nối link ⟹ không két nào, `L_lent = 0`,
+  `summary.wakeme = { lent_lamp: "0", counted: false, reason: "vault_not_linked" }`.
+- `refresh-checkpoint` cố ý **không** tự định vị: ở đường đó vắng `wakeme_vault_ref` mang nghĩa
+  "gỡ ghim" (`wakeme_link := ""`).
 
-Dịch vụ **không tự dò** két ghim vault: ghim nằm trong datum từng két, mọi két của mọi người
-chung một script, không có chỉ mục nào — quét trọn địa chỉ đó mỗi lượt dựng tăng theo số két
-của cả hệ. App biết két của chính người dùng nên gửi tham chiếu.
-
-Hai ca chuỗi **cho qua với `L_lent = 0`** thì dịch vụ cũng cho qua, nhưng nói ra:
+Ba ca chuỗi **cho qua với `L_lent = 0`** thì dịch vụ cũng cho qua, nhưng nói ra:
 
 ```jsonc
 "summary": {
@@ -201,9 +250,14 @@ Hai ca chuỗi **cho qua với `L_lent = 0`** thì dịch vụ cũng cho qua, nh
     "ref": "<tx_hash>#<i>",
     "lent_lamp": "500000000",   // oildrop, chuỗi — đúng con số validator tính
     "counted": true
+    // "source": "located"         chỉ khi dịch vụ tự định vị (app không gửi ref)
     // counted: false ⟹ lent_lamp: "0" và "reason":
-    //   "pinned_in_current_period"  ghim trong chính kỳ đang sinh (gen_pin_period >= epoch)
+    //   "not_pinned_to_this_vault"  két chưa ghim vault này (kèm "seen_pin", null = chưa ghim) —
+    //                               KHÔNG còn là lỗi 409: chủ két IG nối link trước, két Wakeme ghim sau
+    //   "pinned_in_current_period"  két ĐỔI ghim sang vault này trong chính kỳ đang sinh
     //   "lamp_short_of_datum"       value két giữ ít LAMP hơn conditional + owned của datum
+    //   "wakeme_vault_not_found"    tự định vị không thấy két nào (không có "ref")
+    //   "vault_not_linked"          két IG chưa nối link, app không gửi ref (không có "ref")
   }
 }
 ```
@@ -268,7 +322,8 @@ CHANGE_ADDRESS_INVALID`): UTxO trả phí + tài sản thế chấp lấy từ �
   "kind": "instant" | "schedule",
   "owner": { "type": "key" | "script", "hash": "…" },   // hoặc bí danh owner_pkh
   "owner_witness": { … },                               // chỉ chủ script
-  "lamp_amount": "1001000000",                          // CHUỖI oildrop, > 0
+  "lamp_amount": "1001000000",                          // CHUỖI oildrop: > 0 két schedule, ≥ 0 két instant
+  "did_commit": "<64 hex thường>",                      // chỉ két instant, tuỳ chọn ⟹ wakeme_link của datum genesis
   "change_address": "addr_test1…",                      // ĐÚNG MỘT trong change_address / funding
   "funding": { … },                                     // nạp từ ví Phoenix — xem dưới
   "profile": "Ember" | "Flame" | "Lantern"              // bỏ trống = Flame
@@ -285,7 +340,8 @@ CHANGE_ADDRESS_INVALID`): UTxO trả phí + tài sản thế chấp lấy từ �
     "requested_intent": "create_vault", "network": "Preview",
     "fee_lovelace": "…", "fee_ada": "…",
     "vault": { "address": "…", "output_index": 0, "nft_unit": "…", "owner": { … },
-               "lamp_deposit_oildrop": "…", "lamp_deposit_lamp": "…", "lovelace": "…", "ada": "…" },
+               "lamp_deposit_oildrop": "…", "lamp_deposit_lamp": "…", "lovelace": "…", "ada": "…",
+               "wakeme_link": "" },                // két instant: "" hoặc did_commit đọc lại từ CBOR; két schedule ⟹ null
     "required_signers": ["…"], "outputs": [ … ]
   },
   "expires_at": "…"
@@ -299,6 +355,20 @@ trong chính tx, trường 0 của datum là `Credential`, `lamp_balance` bằng
 đó dịch vụ đối chiếu chủ trong datum với `owner` yêu cầu và lượng LAMP với `lamp_amount`; lệch
 ⟹ `422 TX_SUMMARY_UNDECODABLE`, không phát tx. `kind` không có vault tương ứng trong cấu hình
 ⟹ lỗi cấu hình, không chọn đại một địa chỉ.
+
+**Két instant của người mới** (chỉ có PersonDID + LAMP mượn ở két Wakeme): `lamp_amount: "0"`
+hợp lệ với `kind: "instant"` (két schedule vẫn đòi `> 0`, sai ⟹ `400 LAMP_AMOUNT_INVALID`);
+output két khi đó không mang LAMP. `did_commit` (64 hex thường, tuỳ chọn, CHỈ két instant —
+gửi cho schedule ⟹ `400 DID_COMMIT_UNEXPECTED`) được ghi vào ô `wakeme_link` của datum genesis,
+để két Wakeme của DID đó ghim được két này. `summary.vault.wakeme_link` đọc lại TỪ CBOR (két
+schedule ⟹ `null`); lệch `did_commit` ⟹ `422 TX_SUMMARY_UNDECODABLE`.
+
+Trước khi dựng két instant, dịch vụ đọc địa chỉ két: chủ đã có két instant, hoặc (khi gửi
+`did_commit`) đã có két nối đúng DID đó ⟹ `409 VAULT_ALREADY_EXISTS` với
+`details.existing: [{ vault_ref, vault_nft, matched_by: "owner" | "did_commit" }]`, bộ dựng
+không được gọi. Đây là lưới an toàn của DỊCH VỤ (chống bấm hai lần), **không** phải cổng chống
+Sybil — `INV-ONE-PERSON-ONE-VAULT` chưa được ép on-chain; tx tạo két vừa nộp mà chưa vào khối thì
+phép đọc này không thấy (khoá mềm theo chủ, §4, chặn ca đó trong hạn TTL).
 
 #### Nguồn LAMP: `change_address` (đường cũ) hoặc `funding` (ví Phoenix)
 
@@ -490,6 +560,21 @@ UTxO đó (`owner_address.fee_payer`).
                      "fee_payer": { "utxo": "0e0e…0e#2", "address": "addr_test1v…" } },
   "valid_until": "2026-09-27T10:03:00.000Z" }
 ```
+
+**Route `instant-gen`: báo giá được khi chưa biết `m`.** `params.m` vắng hoặc `"0"` ⟹ báo giá
+dựng tại `m = max_m` (trần còn lại của epoch, tính như đường dựng thật). Phản hồi của route này
+có thêm khối `summary`, lấy từ lượt dựng đầu:
+
+```jsonc
+"summary": {
+  "m_nanogic": "4000000",        // lượng đúc đọc lại TỪ CBOR của lượt dựng báo giá
+  "m_source": "max_m",           // "max_m" = người gọi không gửi m; "request" = m người gọi gửi
+  "gen_limits": { "max_m_nanogic": "…", "remaining_after_nanogic": "…", … }   // y khối gen_limits ở trên
+}
+```
+
+`max_m = 0` mà không gửi `m` ⟹ `422 INSTANT_GEN_MAX_M_ZERO` (kèm trần trong `details`): không có
+`m > 0` nào dựng được, và báo giá trên một `m` bịa là con số phí cho một giao dịch không tồn tại.
 
 Dịch vụ chạy **đúng đường dựng** của `route` với `params` cộng một `fee_payer` do nó chèn, rồi
 đọc phí lại **từ CBOR** như `summary`. Báo giá **không** giữ khoá của chủ, **không** giữ chỗ
@@ -714,6 +799,170 @@ lỗi cấu hình phía dịch vụ, chuyển nguyên thì app đọc `401` thà
 Không bước nào được đổi thân giao dịch: đổi một byte là đổi `tx_hash`, và mọi chữ ký đã có
 mất hiệu lực — dựng lại, không vá.
 
+### Route tài trợ consume đầu: `POST /tx/sponsor/*`
+
+Người mới chưa có CARP vẫn làm được lượt consume đầu: bên tài trợ góp CARP vào một quỹ
+`paid_fund` đã ghim, két Prepaid của người mới rút MAGIC từ hạn mức đó rồi tiêu ngay trong cùng
+kỳ. Chỉ chạy trên bản deploy có khối két Prepaid (§6, khối `paid_fund` kèm `carp_unit`) và trên
+mạng có gốc kỳ (Preprod, Mainnet); Preview ⟹ `501 SPONSOR_NETWORK_UNSUPPORTED`.
+
+**Ai được tài trợ, bao nhiêu lần, KHÔNG do dịch vụ này quyết.** Feecover vận hành chính sách
+tài trợ và đếm **một lần mỗi DID**, theo anchor DID mà T2 mang ở `reference_inputs`. Dịch vụ chỉ
+dựng hình dạng giao dịch; nó không giữ sổ đếm nào. (Chặn két thứ hai ở T1 —
+`409 VAULT_ALREADY_EXISTS` — là lưới an toàn cho thao tác bấm lặp, không phải chính sách.)
+
+| đường | bước | dựng gì | ai ký (theo thứ tự) |
+|---|---|---|---|
+| `/tx/sponsor/plan` | — | kế hoạch thuần: ai ký bước nào, đường của bước; không chạm chuỗi | — |
+| `/tx/sponsor/t1-open` | T1 | đúc két Prepaid + thread consume trong MỘT tx; `did_commit` ghi vào **thread** (két genesis giữ `did_commit` rỗng) | ví trả phí · chủ |
+| `/tx/sponsor/t2-fund` | T2 | `PrepaidLock` + `FundLock`: CARP từ UTxO bên tài trợ vào quỹ đã ghim, thối về bên tài trợ; anchor DID ở `reference_inputs` | ví trả phí · **bên tài trợ** · chủ |
+| `/tx/sponsor/t3-draw` | T3 | `PrepaidDraw` ⟹ một lô MAGIC sống đúng kỳ hiện tại | ví trả phí · chủ |
+| `/tx/sponsor/t4-first-consume` | T4 | consume đầu + `BurnBatch` trên két Prepaid | ví trả phí · chủ |
+
+Nguồn bảng đường → bước: `src/sponsor.ts` ▸ `SPONSOR_STEP_OF_PATH`. Vai ký đọc ở mảng `signers`
+của từng đáp ứng; `required_signers` đọc từ chính CBOR vừa dựng. Ví trả phí và bên tài trợ ký
+vì tx chi UTxO khoá của họ — chúng **không** nằm trong `required_signers`; chủ khoá thì có.
+
+**Ràng buộc cùng kỳ.** Lô MAGIC Prepaid chỉ sống đúng kỳ rút. T3 trả `summary.epoch` và
+`summary.epoch_end_ms` (biên kỳ sau, POSIX mili-giây). T4 — và genesis Wakeme nếu app làm tiếp
+— phải vào khối **trước** `epoch_end_ms`. T4 gửi `draw_epoch` = đúng `summary.epoch` của T3;
+lệch kỳ hiện tại ⟹ `409 SPONSOR_EPOCH_MISMATCH`, không dựng gì.
+
+**Thân yêu cầu.** Mọi bước nhận `owner` (+ `owner_witness` nếu chủ là script) và
+`change_address` = địa chỉ KHOÁ của ví trả phí (chủ script bắt buộc gửi). `fee_payer` chưa hỗ
+trợ ⟹ `501 SPONSOR_FEE_PAYER_UNSUPPORTED`. Tiền là chuỗi chữ số.
+
+| bước | trường riêng |
+|---|---|
+| T1 | `did_commit` (64 hex thường), `thread_lovelace` (tuỳ chọn) |
+| T2 | `fund_id`, `carp_amount`, `sponsor: { utxo_refs: ["<tx>#<i>", …] (1–20) }`, `vault_ref` (tuỳ chọn) — **không** có `sponsor.change_address` (gửi ⟹ `400 SPONSOR_REQUEST_SHAPE`) |
+| T3 | `fund_id`, `carp_amount`, `vault_ref` (tuỳ chọn) |
+| T4 | `op_type`, `op_count`, `draw_epoch` (số nguyên), `vault_ref` / `engage_ref` (tuỳ chọn) |
+
+**T2 chi tiền bên tài trợ ⟹ mọi thứ quyết tiền lấy từ CẤU HÌNH, không từ thân bài.**
+
+- **Đích thối không do người gọi viết.** Phần thối của bên tài trợ về lại ĐÚNG địa chỉ chung của
+  các UTxO trong `sponsor.utxo_refs`; `summary.sponsor_change_address` trả địa chỉ đó. Bản trước
+  nhận `sponsor.change_address` từ thân bài, nên người gọi lái được toàn bộ phần thối về ví mình.
+- **Ghim ở bản deploy** — khối `paid_fund.sponsor` (§6): `fund_units` (tập quỹ được nạp),
+  `addresses` (địa chỉ khoá bên tài trợ, dạng bech32 chính tắc), `max_carp_amount` (trần một lượt,
+  chuỗi chữ số carpdrop). Vắng khối ⟹ T2 trả `501 CONFIG_MISSING`. Cổng: `src/sponsor.ts` ▸
+  `assertT2PinnedInputs` (quỹ + trần, trước khi giữ khoá), `assertSponsorUtxosPinned` (UTxO chung
+  một địa chỉ đã ghim, cái nào cũng mang CARP), `assertT2PinnedOutputs` (đọc lại CBOR: đúng một
+  output quỹ nhận đúng `carp_amount`; đúng một output thối có giá trị trọn = Σ vào − `carp_amount`;
+  không output nào khác mang CARP).
+- **Thẻ vai.** `/tx/sponsor/t2-fund` chỉ mở bằng thẻ `VAULT_TX_API_SPONSOR_TOKEN` (§6) — thẻ
+  thường ⟹ `403 SPONSOR_ROLE_REQUIRED`; dịch vụ chưa đặt thẻ vai ⟹ `501 CONFIG_MISSING`, kể cả trên
+  loopback. Thẻ vai dùng ở route khác ⟹ `401`. Nguồn: `src/http.ts` ▸ `SPONSOR_ROLE_PATHS`,
+  `requireRole`. T1/T3/T4 giữ thẻ thường.
+- **Khoá theo UTxO.** Mỗi T2 giữ khoá `utxo:<ref>` cho từng UTxO bên tài trợ (cùng TTL với khoá
+  chủ): hai T2 chưa nộp không dựng được trên cùng một UTxO ⟹ lượt sau `409 OWNER_TX_IN_FLIGHT`.
+- **Chủ phải là DID.** T1/T2 chỉ nhận chủ `Script(did_stake)` kèm `owner_witness` (chủ khoá ⟹
+  `422 SPONSOR_OWNER_NOT_DID`), và tên anchor trong nhân chứng phải bằng `did_commit` của hành
+  trình (T1: của thân bài; T2: của thread) — lệch ⟹ `422 SPONSOR_OWNER_DID_MISMATCH`. Nguồn:
+  `src/sponsor.ts` ▸ `assertOwnerDid`. Lối chủ khoá chỉ mở qua tham số hàm dựng `allowKeyOwner`
+  của `SponsorTxService`, thứ `server.ts` không truyền — nó chỉ để bài kiểm dùng.
+
+Đáp ứng mọi bước: `{ step, tx_cbor, tx_hash, required_signers, signers, witness_notes, summary,
+expires_at }`. Mẫu dưới là một lượt T2 THẬT trong `tests/sponsorEmulator.test.ts` (Emulator,
+UPLC thật; khoá thử sinh trong bộ nhớ nên các hash đổi mỗi lần chạy; `tx_cbor` cắt ngắn, mảng
+`outputs` lược còn ba phần tử đầu). Mẫu chụp TRƯỚC bản vá ghim T2 và đã chỉnh tay đúng hai chỗ cho
+khớp hình dạng mới: bỏ `sponsor.change_address` khỏi yêu cầu, thêm `summary.sponsor_change_address`
+(giá trị lấy từ output thối `#0` của chính mẫu):
+
+```json
+{
+  "owner": { "type": "key", "hash": "73736f1884b5adf25b7245235e9bbb864673b417edf00bb1e6926377" },
+  "change_address": "addr_test1vzfsrm9aycqfxyhx75wh6s25mt35ky6ys8vdqdcrd3lm62szqa8j4",
+  "fund_id": "2ce668504a204db3f693f7ed11a024cc5525b76c5222d4e740976267d0a49d37",
+  "carp_amount": "1000000000",
+  "sponsor": {
+    "utxo_refs": ["390b7bd625f93ad3386141661e99602aa9184e359895ce135ae9e31b8f8b2425#1"]
+  }
+}
+```
+
+```json
+{
+  "step": "T2",
+  "tx_cbor": "84ab00d90102848258200000…",
+  "tx_hash": "fdae3dba48890d544a38c0bfa7cbf329279123585270aee54a9c58bf4bd8f2ca",
+  "required_signers": ["73736f1884b5adf25b7245235e9bbb864673b417edf00bb1e6926377"],
+  "signers": [
+    { "role": "fee-wallet", "key_hashes": ["9301ecbd26009312e6f51d7d4154dae34b134481d8d037036c7fbd2a"],
+      "how": "ví khoá addr_test1vzfsrm9aycqfxyhx75wh6s25mt35ky6ys8vdqdcrd3lm62szqa8j4: phí + thế chấp + tiền thừa" },
+    { "role": "sponsor", "key_hashes": ["23ae09893e7ec45cf59a76bd8e490de3eeec054769779613678629b8"],
+      "how": "chi các UTxO CARP đã đưa trong sponsor.utxo_refs" },
+    { "role": "owner", "key_hashes": ["73736f1884b5adf25b7245235e9bbb864673b417edf00bb1e6926377"],
+      "how": "chữ ký khoá 73736f1884b5adf25b7245235e9bbb864673b417edf00bb1e6926377" }
+  ],
+  "witness_notes": [
+    "Chủ khoá: ký bằng khoá 73736f1884b5adf25b7245235e9bbb864673b417edf00bb1e6926377.",
+    "Ví trả phí: input phí + tài sản thế chấp lấy từ addr_test1vzfsrm9aycqfxyhx75wh6s25mt35ky6ys8vdqdcrd3lm62szqa8j4; khoá thanh toán 9301ecbd26009312e6f51d7d4154dae34b134481d8d037036c7fbd2a phải ký.",
+    "Bên tài trợ ký bằng 23ae09893e7ec45cf59a76bd8e490de3eeec054769779613678629b8 (chi các UTxO CARP đã đưa); phần thối về addr_test1vq36uzvf8elvgh84nfmtmrjfph37amq9ga5h09snv7rznwqqj7lal.",
+    "Thứ tự: thân giao dịch này là bản CHỐT — mọi bên ký trên đúng tx_hash trả về; đổi bất kỳ byte nào của thân thì mọi chữ ký đã có mất hiệu lực."
+  ],
+  "summary": {
+    "step": "T2",
+    "epoch": 330,
+    "epoch_end_ms": "1797033600000",
+    "vault_out_ref": "fdae3dba48890d544a38c0bfa7cbf329279123585270aee54a9c58bf4bd8f2ca#1",
+    "fund_id": "2ce668504a204db3f693f7ed11a024cc5525b76c5222d4e740976267d0a49d37",
+    "fund_unit": "e73e5fe0b2707e119482c6405d6c528233071dafa82d5323b15278f52ce668504a204db3f693f7ed11a024cc5525b76c5222d4e740976267d0a49d37",
+    "carp_amount": "1000000000",
+    "opens_new_line": true,
+    "anchor_ref": "2498905883e5ec227bcb4d6947a381ecfebede4943bfb9eb74b8fa43cbab2d30#0",
+    "owner_commit": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+    "sponsor_signers": ["23ae09893e7ec45cf59a76bd8e490de3eeec054769779613678629b8"],
+    "sponsor_change_address": "addr_test1vq36uzvf8elvgh84nfmtmrjfph37amq9ga5h09snv7rznwqqj7lal",
+    "withdrawals": 0,
+    "outputs": [
+      { "index": 0, "address": "addr_test1vq36uzvf8elvgh84nfmtmrjfph37amq9ga5h09snv7rznwqqj7lal",
+        "assets": { "lovelace": "4872111902", "2222…5a5a": "99000000000" } },
+      { "index": 1, "address": "addr_test1wpxkdmuftxelrq3c9rpnvpf83ysfq4lg8xxq3d62s7x26fg2jakda",
+        "assets": { "lovelace": "1637800", "4d66ef89…12392a": "1" } },
+      { "index": 2, "address": "addr_test1wrnnuhlqkfc8uyv5stryqhtv22prxpca475z65erk9f83agwr5fw5",
+        "assets": { "lovelace": "2155000", "e73e5fe0…a49d37": "1", "2222…5a5a": "1000000000" } }
+    ]
+  },
+  "expires_at": "2026-12-07T00:04:40.000Z"
+}
+```
+
+`summary.owner_commit` đọc từ `did_commit` của **thread** của chủ, rồi dịch vụ tìm đúng một UTxO
+mang NFT `did_stake.anchor_nft_policy ‖ owner_commit`. Bản deploy không khai
+`did_stake.anchor_nft_policy` ⟹ T2 trả `501 CONFIG_MISSING` — dịch vụ không bao giờ đoán policy
+anchor.
+
+**Mã lỗi.** Nguồn mức HTTP của mọi mã do SDK ném: `src/sponsor.ts` ▸ `SPONSOR_ERROR_STATUS`
+(bảng kín theo kiểu: thêm mã ở SDK mà không thêm ở đây thì không biên dịch được); danh sách mã
+của dịch vụ: khối chú thích đầu `src/errors.ts`. Phần người gọi thường gặp:
+
+| mã | HTTP | nghĩa / sửa thế nào |
+|---|---|---|
+| `SPONSOR_REQUEST_SHAPE` · `DID_COMMIT_INVALID` · `SPONSOR_CHANGE_ADDRESS_INVALID` | 400 | thân bài sai hình dạng; `details.field` chỉ trường |
+| `VAULT_ALREADY_EXISTS` | 409 | chủ đã có két Prepaid — đi tiếp từ T2 với két đang có |
+| `SPONSOR_ANCHOR_NOT_FOUND` · `SPONSOR_FUND_NOT_FOUND` | 404 | chưa có anchor DID / quỹ `fund_id` trên chuỗi |
+| `SPONSOR_EPOCH_MISMATCH` | 409 | `draw_epoch` không phải kỳ hiện tại — lô đã hết hạn, rút lại ở T3 |
+| `SPONSOR_VALIDITY_SPANS_EPOCHS` | 422 | đang sát biên kỳ; thử lại sau biên |
+| `SPONSOR_CARP_INSUFFICIENT` · `SPONSOR_FUND_NOT_PINNED` | 422 | UTxO bên tài trợ không đủ CARP / quỹ không đúng quỹ đã ghim |
+| `SPONSOR_FUND_NOT_ALLOWED` · `SPONSOR_CARP_ABOVE_CAP` | 422 | `fund_id` ngoài `paid_fund.sponsor.fund_units` / `carp_amount` vượt `max_carp_amount` |
+| `SPONSOR_UTXO_NOT_ALLOWED` · `SPONSOR_UTXO_NO_CARP` | 422 | `utxo_refs` không chung một địa chỉ đã ghim / có UTxO không mang CARP |
+| `SPONSOR_UTXO_NOT_KEY` | 400 | UTxO bên tài trợ không do khoá giữ |
+| `SPONSOR_UTXO_NOT_FOUND` | 404 | có `utxo_refs` không phải UTxO chưa tiêu |
+| `SPONSOR_FEE_WALLET_IS_SPONSOR` | 422 | `change_address` (ví trả phí) trùng địa chỉ bên tài trợ — dùng ví trả phí khác |
+| `SPONSOR_OWNER_NOT_DID` · `SPONSOR_OWNER_DID_MISMATCH` | 422 | T1/T2 với chủ khoá / anchor của nhân chứng không mang tên `did_commit` |
+| `SPONSOR_ROLE_REQUIRED` | 403 | T2 gọi bằng thẻ thường — cần thẻ vai sponsor |
+| `OWNER_TX_IN_FLIGHT` | 409 | chủ, quỹ hoặc một UTxO bên tài trợ đang bị một tx dựng xong mà chưa nộp giữ khoá |
+| `SPONSOR_THREAD_DID_INVALID` | 422 | thread của chủ không mang `did_commit` 32 byte — két không mở bằng T1 |
+| `SPONSOR_TX_MISMATCH` | 422 | tx vừa dựng không có đúng output két/thread ở địa chỉ đã cấu hình — lệch cấu hình, báo vận hành |
+| `SPONSOR_PREPAID_UNAVAILABLE` · `SPONSOR_PREPAID_SCRIPTS_MISMATCH` · `CONFIG_MISSING` · `SPONSOR_UNAVAILABLE` | 501 | bản deploy không phục vụ được hành trình này |
+
+Lỗi của bộ dựng đi qua `src/sponsor.ts` ▸ `asSponsorApiError`, một danh sách ĐÓNG: chỉ
+`PrepaidTxError` và `PrepaidRuleError` (lỗi luật của PrepaidGen, mang `code`) thành `422`; mọi
+`Error` thường khác ra `500` kèm `reference_code` — bản trước đổi mọi lỗi thành `422`, nên một
+lỗi nội bộ đọc thành "yêu cầu sai" và người gọi đi sửa thân bài.
+
 ### 🔴 Số tiền là CHUỖI chữ số, cả vào lẫn ra
 
 Trần LAMP là `36×10^15` oildrop; `2^53 ≈ 9,007×10^15`. Một trường oildrop **có thật** vượt
@@ -763,16 +1012,22 @@ Nên:
 | `engage_ref` sai khuôn / không phải thread của chủ | `400 ENGAGE_REF_SHAPE` / `400 ENGAGE_REF_MISMATCH` |
 | `/tx/instant-gen`: `m` vắng / số JSON / không phải chữ số / `"0"` | `400 INSTANT_GEN_M_INVALID` |
 | `/tx/instant-gen`: `m > max_m` (`details.max_m`, `details.m`) | `422 INSTANT_GEN_M_ABOVE_MAX` |
+| `/tx/quote` route `instant-gen` không gửi `m`, trần còn lại = 0 | `422 INSTANT_GEN_MAX_M_ZERO` |
+| `/tx/create-vault`: `lamp_amount` sai (schedule cần > 0, instant cần ≥ 0) | `400 LAMP_AMOUNT_INVALID` |
+| `/tx/create-vault`: `did_commit` không đúng 64 hex thường / gửi cho két schedule | `400 DID_COMMIT_INVALID` / `400 DID_COMMIT_UNEXPECTED` |
+| `/tx/create-vault` instant: chủ (hoặc `did_commit`) đã có két (`details.existing`) | `409 VAULT_ALREADY_EXISTS` |
 | bản deploy thiếu `gen_v2` / `ref_script_utxos.commit` / `ref_script_utxos.gb_shard` mà đường cần (`details.missing`, `details.route`) | `501 CONFIG_MISSING` |
+| bản deploy là khối két Prepaid mà route chưa có bộ dựng cho loại két đó (`details.route`) | `501 VAULT_KIND_UNSUPPORTED` |
 | beacon ρ / GreenBack / sổ két vắng trên chuỗi, hoặc hai UTxO cùng NFT (`details.what`) | `502 CHAIN_UNAVAILABLE` |
-| `/tx/consume` làm mới checkpoint của két đang ghim két Wakeme, thiếu `wakeme_vault_ref` | `400 WAKEME_VAULT_REF_REQUIRED` |
+| `/tx/instant-gen` · `/tx/consume` làm mới checkpoint của két đã nối link, không gửi `wakeme_vault_ref` và dịch vụ không tìm thấy két (`details.located_count`) | `400 WAKEME_VAULT_REF_REQUIRED` |
+| tự định vị thấy ≥ 2 UTxO mang NFT két Wakeme của `wakeme_link` (`details.candidates`) | `409 WAKEME_VAULT_AMBIGUOUS` |
 | `wakeme_vault_ref` sai khuôn | `400 WAKEME_VAULT_REF_SHAPE` |
 | `wakeme_vault_ref` trên mạng chưa có két Wakeme | `501 WAKEME_VAULT_UNAVAILABLE` |
 | `wakeme_vault_ref` không có trên chuỗi / đã bị tiêu | `404 WAKEME_VAULT_NOT_FOUND` / `409 WAKEME_VAULT_SPENT` |
 | `wakeme_vault_ref` không nằm ở script két Wakeme | `409 WAKEME_VAULT_SCRIPT_MISMATCH` |
-| két không ghim vault này (`details.seen_pin`: ghim thấy được, `null` = chưa ghim) | `409 WAKEME_VAULT_PIN_MISMATCH` |
 | datum / NFT két không đạt luật đọc `L_lent` | `422 WAKEME_VAULT_UNREADABLE` |
 | tx vừa dựng tiêu két, hoặc thiếu két trong `reference_inputs` | `422 WAKEME_VAULT_TX_MISMATCH` |
+| `wakeme_vault_ref` không phải két đã nối (`wakeme_link` rỗng hoặc khác) và lượt này không nối/đổi link được, luật 6 (`details.wakeme_link`, `details.owner_commit`, `details.next_route`) — chạy `/tx/refresh-checkpoint` trước | `422 WAKEME_LINK_CHANGE_REJECTED` |
 | chủ chưa có thread Engage | `404 ENGAGE_THREAD_NOT_FOUND` |
 | chủ có nhiều thread, không kèm `engage_ref` | `409 ENGAGE_THREAD_AMBIGUOUS` |
 | `/tx/open-thread` khi chủ đã có thread | `409 ENGAGE_THREAD_EXISTS` |
@@ -883,6 +1138,7 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `VAULT_TX_API_PORT` | không | `8788` |
 | `VAULT_TX_API_BASE_PATH` | không | rỗng — tiền tố đường khi đứng sau proxy định tuyến theo đường, ví dụ `/vaulttx/preprod`; dịch vụ tự cắt nó (`src/basePath.ts`), vẫn nhận đường không tiền tố từ loopback |
 | `VAULT_TX_API_TOKEN` | ngoài loopback thì **có** | rỗng |
+| `VAULT_TX_API_SPONSOR_TOKEN` | khi phục vụ T2 | rỗng ⟹ `/tx/sponsor/t2-fund` trả `501 CONFIG_MISSING`. **GIÁ TRỊ** thẻ vai sponsor, đưa cho bên vận hành tài trợ; trùng `VAULT_TX_API_TOKEN` ⟹ từ chối khởi động |
 | `VAULT_TX_API_BLOCKFROST_URL` | không | dẫn theo `NETWORK` |
 | `VAULT_TX_API_TIMEOUT_MS` | không | `20000` |
 | `VAULT_TX_API_LOCK_TTL_MS` | không | `180000` |
@@ -958,12 +1214,44 @@ tác dụng khi policy nằm trong `MagicSDK/src/lampPolicy.ts` ▸ `REHEARSAL_L
 giá trị bằng **ĐÚNG** `lamp.policy_id`, và `VAULT_TX_API_NETWORK` là `Preview`/`Preprod`.
 Thiếu một điều thì dịch vụ vẫn từ chối khởi động với câu lỗi đời-đã-bị-thay. Khi được cho
 qua, dịch vụ in một dòng `⚠ [config] TẬP DƯỢT` ra stderr, và ack đi tiếp tới `createVault`
-của SDK (cổng chạy lại ở đó). Bảng tập dượt hiện chỉ có `8169b76c…`, và sẽ gỡ khi kho LAMP
-gửi policy Preprod cuối (sau 04/10). `scripts/gen_vault_tx_api_deployment.ts` phát trường
+của SDK (cổng chạy lại ở đó). Bảng tập dượt hiện chỉ có `8169b76c…`. Policy tLAMP Preprod
+cuối đã tới (`493002cc…cfac`, 2026-10-03; genesis chưa gửi, nên chưa có tLAMP nào dưới nó),
+và hai đời `53bc12ad…` · `7ecbffe2…` đã vào bảng đã-bị-thay của SDK; khoá `8169b76c…` gỡ khi
+runner của cụm tập dượt dừng hẳn. Policy cuối KHÔNG gõ cứng trong dịch vụ hay SDK — nó đi vào
+qua `lamp.policy_id`. `scripts/gen_vault_tx_api_deployment.ts` phát trường
 này khi lượt sinh chạy với `LAMP_REHEARSAL_ACK` trong môi trường — không lấy từ sổ trạng thái.
 
 `script_hash` **không** cấu hình riêng — nó suy từ chính địa chỉ. Hai trường cho một sự
 thật là hai trường sẽ lệch nhau.
+
+**Khối két Prepaid** (`vault_type: "Prepaid"`, đường tài trợ PrepaidGen) có khuôn riêng,
+quyết theo `vault_type` chứ không theo khoá nào có mặt:
+
+```jsonc
+{
+  "vaults": [{ "vault_type": "Prepaid", "address": "addr_test1w…" }],   // Script(prepaid_vault)
+  "paid_fund": { "address": "addr_test1w…",                            // BẮT BUỘC — Script(paid_fund)
+                 "carp_unit": "<policy‖tên CARP>",                     // route /tx/sponsor/* cần; vắng ⟹ 501 CONFIG_MISSING
+                 "sponsor": {                                          // ghim của T2; vắng ⟹ T2 trả 501 CONFIG_MISSING
+                   "fund_units": ["<policy paid_fund‖fund_id>"],       // quỹ được nạp; policy phải là script paid_fund
+                   "addresses": ["addr_test1v…"],                      // địa chỉ KHOÁ bên tài trợ, bech32 chính tắc, đúng mạng
+                   "max_carp_amount": "1000000000" } },                // trần một lượt, CHUỖI 1–20 chữ số carpdrop, > 0
+  "did_stake": { "anchor_nft_policy": "<56 hex>" },                    // T2 cần để định vị anchor DID
+  "ref_script_utxos": {
+    "vault": "…#0",       // ref-script prepaid_vault
+    "paid_fund": "…#0",   // BẮT BUỘC — ref-script paid_fund
+    "consume": "…#2"      // bản consume apply-param bằng hash két Prepaid
+  }
+  // KHÔNG có "shard_address" / "ref_script_utxos.shard": két Prepaid không có shard — khai ⟹ từ chối khởi động
+}
+```
+
+Ba luật, mỗi luật từ chối khởi động khi vi phạm: két Prepaid không đứng chung khối với
+loại khác (một ô `ref_script_utxos.vault`, một bản `consume` cho một loại két); khối không
+phải Prepaid mà mang `paid_fund` là cấu hình lạc chỗ; khối Instant/Schedule vẫn **bắt buộc**
+`shard_address` + `ref_script_utxos.shard` như cũ. Hiện chưa route nào dựng tx cho két
+Prepaid ngoài `/tx/sponsor/*`: mọi route khác đụng tới nó trả `501 VAULT_KIND_UNSUPPORTED`. Bộ sinh:
+`scripts/gen_vault_tx_api_deployment.ts --vault Prepaid`.
 
 > Mọi địa chỉ và UTxO ở đây là **bản chép**: nguồn thật là lần deploy (`aiken build` +
 > apply-param). Nên `source` là bắt buộc và `/health` in lại nguyên văn. Không có nhãn thì
@@ -1059,9 +1347,9 @@ Có thì đủ trường và đúng hình dạng, không thì cổng khởi đ�
   *"cổng policy LAMP"*). Nó KHÔNG chứng minh policy là chính danh: một policy nhái mới, chưa
   vào bảng, vẫn qua. Mẫu của bộ kiểm dùng một policy id **tổng hợp**
   (`tests/fixtures/preview.ts`), cố ý không phải giá trị có thật trên mạng nào, để không ai
-  chép nhầm từ đó ra. Lối tập dượt (`lamp.rehearsal_ack`) là ngoại lệ **tạm**: gỡ khi kho
-  LAMP gửi policy Preprod cuối (sau 04/10) — gỡ khoá khỏi bảng của SDK là đủ, không phải sửa
-  dịch vụ.
+  chép nhầm từ đó ra. Lối tập dượt (`lamp.rehearsal_ack`) là ngoại lệ **tạm**: policy Preprod
+  cuối đã tới 2026-10-03, nhưng khoá `8169b76c…` còn giữ tới khi runner của cụm tập dượt dừng
+  hẳn — gỡ khoá khỏi bảng của SDK là đủ, không phải sửa dịch vụ.
 - **Thẻ bài là MỘT bí mật dùng chung, không gắn với `owner_pkh` nào.** Đường `/tx/submit`
   đã chặn việc mượn dịch vụ để nộp giao dịch lạ (chỉ nộp thứ chính nó vừa dựng), nhưng
   người cầm thẻ bài vẫn dựng được giao dịch mang `owner_pkh` của người khác và qua đó giữ

@@ -23,6 +23,7 @@
     "@magiclamp/consumemagic": "file:../ConsumeMAGIC/offchain",
     "@magiclamp/consumemagic-pricing": "file:../ConsumeMAGIC/pricing",
     "@magiclamp/instantgen-sdk": "file:../InstantGen/offchain",
+    "@magiclamp/prepaidgen-sdk": "file:../PrepaidGen/offchain",
     "@magiclamp/schedulegen-sdk": "file:../ScheduleGen/offchain"
   },
   "devDependencies": {

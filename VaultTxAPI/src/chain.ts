@@ -44,6 +44,11 @@ export interface ChainReader {
    *  mang script thì trả UTxO không có `scriptRef`, đừng ném: hàm này còn đọc UTxO trả phí,
    *  UTxO vault, UTxO anchor. Việc đòi script thuộc về `txBuilder.ts` ▸ `scriptOfRef`. */
   utxosByOutRef(refs: OutRef[]): Promise<UTxO[]>;
+  /** UTxO CHƯA TIÊU đang mang tài sản `unit` (`policy + tên hex`), ở MỌI địa chỉ. Tài sản chưa
+   *  từng tồn tại ⟹ `[]` (câu trả lời thật). Dùng để định vị một UTxO theo NFT định danh của nó
+   *  (két Wakeme theo `owner_commit`) mà không quét trọn một địa chỉ script dùng chung. Người
+   *  gọi tự lọc theo địa chỉ/credential — hàm này không đoán UTxO nào là "đúng". */
+  utxosByUnit(unit: string): Promise<UTxO[]>;
   tip(): Promise<ChainTip>;
   /** Nộp một giao dịch ĐÃ KÝ (CBOR hex). Trả tx hash của chuỗi. */
   submitTx(signedCborHex: string): Promise<string>;
@@ -235,6 +240,53 @@ export class BlockfrostChainReader implements ChainReader {
     return out;
   }
 
+  /**
+   * Blockfrost `/assets/{unit}/addresses` (ai đang giữ) rồi `/addresses/{addr}/utxos/{unit}`
+   * (UTxO cụ thể). 404 ở bước một ⟹ tài sản chưa từng tồn tại ⟹ `[]`; 404 ở bước hai ⟹ địa
+   * chỉ vừa hết giữ giữa hai lượt gọi ⟹ không có UTxO ở đó. Hình dạng lạ ⟹ `CHAIN_UNAVAILABLE`.
+   * Chi phí theo số NGƯỜI GIỮ tài sản này (một NFT ⟹ một), không theo số UTxO ở địa chỉ.
+   */
+  async utxosByUnit(unit: string): Promise<UTxO[]> {
+    if (!/^[0-9a-f]{56,120}$/.test(unit)) {
+      throw new Error(`[bất biến nội bộ] unit "${unit.slice(0, 20)}…" không phải policy+tên hex.`);
+    }
+    const pageSize = 100;
+    const holders: string[] = [];
+    for (let page = 1; ; page++) {
+      const { status, body } = await this.getJson(`/assets/${unit}/addresses?page=${page}&count=${pageSize}`);
+      if (status === 404) break;
+      if (status !== 200 || !Array.isArray(body)) {
+        throw new ChainUnavailableError(
+          `Nút chuỗi trả HTTP ${status} / hình dạng lạ khi đọc người giữ một tài sản.`,
+          { transport: "http", node_http_status: status, node: this.label },
+        );
+      }
+      for (const h of body as { address?: unknown }[]) {
+        if (typeof h.address !== "string") {
+          throw new ChainUnavailableError("Mục người giữ tài sản thiếu `address`.", { transport: "http", node: this.label });
+        }
+        holders.push(h.address);
+      }
+      if (body.length < pageSize) break;
+    }
+    const out: UTxO[] = [];
+    for (const address of holders) {
+      for (let page = 1; ; page++) {
+        const { status, body } = await this.getJson(`/addresses/${address}/utxos/${unit}?page=${page}&count=${pageSize}`);
+        if (status === 404) break;
+        if (status !== 200 || !Array.isArray(body)) {
+          throw new ChainUnavailableError(
+            `Nút chuỗi trả HTTP ${status} / hình dạng lạ khi đọc UTxO mang một tài sản.`,
+            { transport: "http", node_http_status: status, node: this.label },
+          );
+        }
+        for (const raw of body) out.push(await this.toUtxo(raw, address));
+        if (body.length < pageSize) break;
+      }
+    }
+    return out;
+  }
+
   async tip(): Promise<ChainTip> {
     const { status, body } = await this.getJson("/blocks/latest");
     if (status !== 200 || body === null || typeof body !== "object") {
@@ -421,6 +473,7 @@ export class PendingSpendsFilteredChain implements ChainReader {
     return (await this.inner.utxosAt(address)).filter(u => !this.pending.has(`${u.txHash}#${u.outputIndex}`, t));
   }
   utxosByOutRef(refs: OutRef[]): Promise<UTxO[]> { return this.inner.utxosByOutRef(refs); }
+  utxosByUnit(unit: string): Promise<UTxO[]> { return this.inner.utxosByUnit(unit); }
   tip(): Promise<ChainTip> { return this.inner.tip(); }
   submitTx(signedCborHex: string): Promise<string> { return this.inner.submitTx(signedCborHex); }
   rewardAccount(rewardAddress: string): Promise<RewardAccountState> { return this.inner.rewardAccount(rewardAddress); }
@@ -467,6 +520,16 @@ export class RecordedChainReader implements ChainReader {
       }
       return hit;
     });
+  }
+
+  /** Mọi UTxO ghi sẵn (theo địa chỉ + theo tham chiếu) mang `unit`, khử trùng theo tham chiếu. */
+  async utxosByUnit(unit: string): Promise<UTxO[]> {
+    if (this.failWith) throw this.failWith;
+    const seen = new Map<string, UTxO>();
+    for (const u of [...Object.values(this.utxosByAddress).flat(), ...this.refUtxos]) {
+      if ((u.assets[unit] ?? 0n) > 0n) seen.set(`${u.txHash}#${u.outputIndex}`, u);
+    }
+    return [...seen.values()];
   }
 
   async tip(): Promise<ChainTip> {

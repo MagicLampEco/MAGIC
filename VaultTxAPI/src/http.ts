@@ -33,7 +33,7 @@
 // `buildRequest.ts`, nơi đọc thân bài của tám đường dựng (dùng chung với `/tx/quote`).
 
 import {
-  BadRequestError, TxApiError, UnauthorizedError, newReferenceCode,
+  BadRequestError, ConfigMissingError, TxApiError, UnauthorizedError, newReferenceCode,
 } from "./errors.js";
 import { toSubmitBody, type VaultTxService } from "./service.js";
 import { BUILD_ROUTE_OF_PATH, buildResultBody, parseBuildRequest, reqString, runBuild } from "./buildRequest.js";
@@ -41,8 +41,11 @@ import { CodedApiError } from "./errors.js";
 import type { BuildInfo } from "./buildInfo.js";
 import { stripBasePath } from "./basePath.js";
 import type { FeeProxy } from "./feeProxy.js";
+import { sponsorRoute, type SponsorTxService } from "./sponsor.js";
 import { quoteFee } from "./feeQuote.js";
-import { OwnerAuthError, WindowOriginError } from "@magiclamp/protocol-utils";
+import {
+  OwnerAuthError, WindowOriginError, msPerEpoch, windowOf, windowOriginMs, windowStartMs, type Network,
+} from "@magiclamp/protocol-utils";
 import { ownerApiErrorOf } from "./errors.js";
 
 export interface HttpRequest {
@@ -69,6 +72,9 @@ export interface RouterDeps {
   changeAddressStrategy: string;
   /** Thẻ bài chia sẻ. Chuỗi rỗng ⇒ không kiểm (chỉ hợp lệ khi bind loopback — `config.ts` ép). */
   token: string;
+  /** Thẻ bài VAI `sponsor` — thẻ DUY NHẤT mở `SPONSOR_ROLE_PATHS`, và KHÔNG mở route nào khác.
+   *  Vắng/rỗng ⟹ các đường đó trả 501 `CONFIG_MISSING`, kể cả trên loopback (`requireRole`). */
+  sponsorToken?: string;
   /** Nơi ghi nguyên nhân gốc của lỗi ngoài dự kiến, kèm mã tham chiếu đã trả ra ngoài.
    *  Không có nó thì "mã tham chiếu" chỉ là một câu chung chung mặc đồng phục. */
   logInternal: (referenceCode: string, cause: unknown) => void;
@@ -79,6 +85,47 @@ export interface RouterDeps {
   build?: BuildInfo;
   /** Tiền tố đường khi đứng sau proxy định tuyến theo đường (`basePath.ts`). Vắng/`""` ⟹ không có. */
   basePath?: string;
+  /** Đồng hồ máy chủ (POSIX ms) cho khối `epoch` của `/health`. Vắng ⟹ `Date.now`. Chỉ để phép kiểm
+   *  cố định mốc; dịch vụ thật không truyền. */
+  now?: () => number;
+  /** Hành trình tài trợ consume đầu (`/tx/sponsor/t1-open` … `t4-first-consume`). Vắng ⟹ 501
+   *  `SPONSOR_UNAVAILABLE` (trừ `/tx/sponsor/plan` — thuần, không cần cấu hình). */
+  sponsor?: SponsorTxService;
+}
+
+/**
+ * Khối `epoch` của `/health`: GỐC KỲ giao thức mà app đọc, khỏi gõ cứng hằng theo mạng.
+ *
+ * Cùng nguồn với bộ dựng tx: `windowOriginMs`/`msPerEpoch` của `@magiclamp/protocol-utils` — chính
+ * hai hàm mà `genV2.ts` ▸ `instantVaultParamsOf` và `wakeme.ts` dùng để apply-param validator.
+ * Kỳ = `⌊(t − O) / P⌋`, KHÔNG phải lưới Unix `⌊t / P⌋` (lệch ~3.800 kỳ trên Preprod).
+ *
+ * Mạng chưa có gốc (Preview, `WIN-PREVIEW`) ⟹ `epoch: null` + lý do tường minh, KHÔNG đệm 0:
+ * `/health` vẫn 200 vì đây là trạng thái cấu hình của mạng, không phải sự cố.
+ * Số lớn là CHUỖI chữ số (như mọi số tiền của API); `current` là chỉ số kỳ nhỏ nên là số JSON.
+ * `end_ms` là mốc kết thúc ĐỘC QUYỀN = `start_ms` của kỳ kế.
+ */
+export function epochHealthFields(network: string, nowMs: number): Record<string, unknown> {
+  try {
+    const o = windowOriginMs(network as Network);
+    const p = msPerEpoch(network as Network);
+    const t = BigInt(Math.trunc(nowMs));
+    const current = windowOf(t, p, o);
+    return {
+      epoch: {
+        origin_ms: o.toString(),
+        ms_per_epoch: p.toString(),
+        current: Number(current),
+        start_ms: windowStartMs(current, p, o).toString(),
+        end_ms: windowStartMs(current + 1n, p, o).toString(),
+      },
+    };
+  } catch (e) {
+    if (e instanceof WindowOriginError) {
+      return { epoch: null, epoch_unavailable_reason: "WINDOW_ORIGIN_UNAVAILABLE" };
+    }
+    throw e;
+  }
 }
 
 export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpResponse> {
@@ -96,7 +143,12 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         ok: true,
         network: deps.network,
         chain: deps.chainLabel,
+        // Nhãn chữ GIỮ NGUYÊN văn (app cũ còn dò mẫu `LAMP <hex>` trong nó). Trường máy đọc là `lamp`.
         deployment_source: deps.deploymentSource,
+        // Tài sản LAMP mà bản deploy này nướng vào mọi két — cùng nguồn với bộ dựng
+        // (`deployment.lampPolicyId`/`lampAssetNameHex`), không gõ tay. App so `policy_id` với
+        // policy LAMP mà Wakeme phát trước khi mở Sinh MAGIC.
+        lamp: { policy_id: deps.service.lampAsset.policyId, asset_name_hex: deps.service.lampAsset.assetNameHex },
         change_address_strategy: deps.changeAddressStrategy,
         vault_scopes: deps.vaultScopes.map(s => ({
           vault_type: s.vaultType, address: s.address, script_hash: s.scriptHash,
@@ -111,13 +163,15 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         commit_source: deps.build?.source ?? "not_measured",
         // Bên gọi qua proxy đối chiếu được tiền tố mình dùng với tiền tố dịch vụ đang cắt.
         base_path: deps.basePath ?? "",
+        // Gốc kỳ giao thức — app tính kỳ từ đây, không từ lưới Unix `t/P`.
+        ...epochHealthFields(deps.network, (deps.now ?? Date.now)()),
         ...(deps.build?.reason === undefined ? {} : { commit_unavailable_reason: deps.build.reason }),
       },
     };
   }
 
   try {
-    requireToken(req, deps.token);
+    requireRole(req, deps, path);
 
     if (path === "/fee/utxo" || path === "/fee/sign") {
       if (req.method !== "POST") return methodNotAllowed("POST");
@@ -150,6 +204,9 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
     if (path === "/tx/quote") {
       const out = await quoteFee(body, { service: deps.service, feeProxy: deps.feeProxy });
       return { status: 200, body: out as unknown as Record<string, unknown> };
+    }
+    if (path.startsWith("/tx/sponsor/")) {
+      return { status: 200, body: await sponsorRoute(path, body, deps.sponsor) };
     }
     const route = BUILD_ROUTE_OF_PATH[path];
     if (route === undefined) {
@@ -193,6 +250,46 @@ function methodNotAllowed(expected: string): HttpResponse {
 
 function err(code: string, message: string, details: Record<string, unknown> = {}): Record<string, unknown> {
   return { error: { code, message, details } };
+}
+
+/**
+ * Đường đòi vai `sponsor`. Chỉ T2: nó là bước chi CARP của bên tài trợ, và khoá mềm `fund:<unit>` mà
+ * nó giữ chặn được mọi T2 khác trên cùng quỹ — để thẻ thường gọi được nó là để bất kỳ ai cầm thẻ app
+ * giữ quỹ của bên tài trợ (mỗi lượt dựng giữ khoá tới hết TTL, lặp vô hạn). Route tài trợ khác giữ thẻ thường.
+ */
+export const SPONSOR_ROLE_PATHS: ReadonlySet<string> = new Set(["/tx/sponsor/t2-fund"]);
+
+/**
+ * Vai của người gọi theo đường.
+ *   · đường vai `sponsor`: thẻ vai sponsor ⟹ qua · thẻ thường (hoặc không thẻ khi dịch vụ chạy không thẻ
+ *     trên loopback) ⟹ 403 `SPONSOR_ROLE_REQUIRED` — đã nhận ra người gọi, vai không đủ · thẻ lạ ⟹ 401.
+ *     Dịch vụ chưa có thẻ vai sponsor ⟹ 501 `CONFIG_MISSING`: không có "chế độ không thẻ" cho bước chi tiền.
+ *   · đường khác: thẻ thường như cũ. Thẻ vai sponsor ở đó KHÔNG được nhận (401) — vai hẹp, không phải vai trên.
+ */
+function requireRole(req: HttpRequest, deps: RouterDeps, path: string): void {
+  if (!SPONSOR_ROLE_PATHS.has(path)) {
+    requireToken(req, deps.token);
+    return;
+  }
+  const sponsorToken = deps.sponsorToken ?? "";
+  if (sponsorToken === "") {
+    throw new ConfigMissingError(
+      `Đường "${path}" chỉ mở bằng thẻ bài vai sponsor, mà dịch vụ chưa được cấu hình thẻ đó.`,
+      { missing: ["sponsor_role_token"], route: path });
+  }
+  const presented = bearerOf(req);
+  if (presented !== undefined && timingSafeEqual(presented, sponsorToken)) return;
+  if (deps.token === "" || (presented !== undefined && timingSafeEqual(presented, deps.token))) {
+    throw new CodedApiError(403, "SPONSOR_ROLE_REQUIRED",
+      `Đường "${path}" chỉ nhận thẻ bài vai sponsor (bên vận hành tài trợ); thẻ bài thường không mở được nó.`,
+      { route: path });
+  }
+  throw new UnauthorizedError();
+}
+
+function bearerOf(req: HttpRequest): string | undefined {
+  const auth = req.headers["authorization"] ?? req.headers["Authorization"];
+  return typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : undefined;
 }
 
 function requireToken(req: HttpRequest, token: string): void {

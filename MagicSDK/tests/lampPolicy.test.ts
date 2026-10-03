@@ -190,8 +190,12 @@ describe("assertLampPolicyId — lối mở tập dượt", () => {
   const REHEARSAL = "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd";
   /** Đã bị thay, NGOÀI bảng tập dượt. */
   const SUPERSEDED_ONLY = "d9c09230079b810ab5ed92e8db4c190d42efc42db6aac028656f7e07";
-  /** Đời ACTIVE Preprod (thư `lam0926mg-lp`, 2026-09-26) — chép từ `scripts/config.ts`. */
-  const ACTIVE = "53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743";
+  /** Policy tLAMP Preprod CUỐI (thư LAMP `lam1003mg-a`, 2026-10-03). Không nằm trong mã
+   *  của gói — cổng là danh sách TỪ CHỐI; giá trị chép ở đây chỉ để làm cực dương. */
+  const ACTIVE = "493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac";
+  /** Hai đời bỏ 2026-10-03, cả hai bị thay bởi ACTIVE. */
+  const DROPPED_53BC = "53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743";
+  const DROPPED_7ECB = "7ecbffe2b41f68c917035f52a1053efbd2323dfd85a81cf840089ea2";
 
   it("bảng tập dượt là TẬP CON của bảng đã-bị-thay — sự thật 'đã bị thay' không đổi", () => {
     const keys = Object.keys(REHEARSAL_LAMP_POLICIES);
@@ -233,9 +237,31 @@ describe("assertLampPolicyId — lối mở tập dượt", () => {
     expect(() => assertLampPolicyId(REHEARSAL, "t", "1", "Preprod")).toThrow(/ĐÃ BỊ THAY/);
   });
 
-  it("policy ACTIVE 53bc12ad không ack ⟹ qua", () => {
+  it("policy ACTIVE 493002cc không ack ⟹ qua", () => {
     expect(assertLampPolicyId(ACTIVE, "t", undefined, "Preprod")).toBe(ACTIVE);
     expect(assertLampPolicyId(ACTIVE, "t")).toBe(ACTIVE);
+  });
+
+  it("53bc12ad (bỏ 2026-10-03) ⟹ ném, câu lỗi nêu policy thay thế 493002cc", () => {
+    expect(() => assertLampPolicyId(DROPPED_53BC, "t", undefined, "Preprod"))
+      .toThrow(/ĐÃ BỊ THAY[\s\S]*493002cc/);
+  });
+
+  it("7ecbffe2 (huỷ 2026-10-02) ⟹ ném, câu lỗi nêu policy thay thế 493002cc", () => {
+    expect(() => assertLampPolicyId(DROPPED_7ECB, "t", undefined, "Preprod"))
+      .toThrow(/ĐÃ BỊ THAY[\s\S]*493002cc/);
+  });
+
+  it("53bc12ad / 7ecbffe2 ack = chính nó, Preprod ⟹ VẪN ném (ngoài bảng tập dượt)", () => {
+    expect(() => assertLampPolicyId(DROPPED_53BC, "t", DROPPED_53BC, "Preprod")).toThrow(/ĐÃ BỊ THAY/);
+    expect(() => assertLampPolicyId(DROPPED_7ECB, "t", DROPPED_7ECB, "Preprod")).toThrow(/ĐÃ BỊ THAY/);
+  });
+
+  // Giới hạn ĐÃ KHAI ở đầu `lampPolicy.ts`, ghim lại để ai đổi sang danh sách CHO PHÉP
+  // phải đảo ca này có chủ ý.
+  it("hex lạ ngoài mọi bảng ⟹ QUA (cổng là danh sách từ chối, không phải cho phép)", () => {
+    const UNKNOWN = "ab".repeat(28);
+    expect(assertLampPolicyId(UNKNOWN, "t", undefined, "Preprod")).toBe(UNKNOWN);
   });
 
   it("ack KHÔNG mở được cửa cho policy nhái", () => {

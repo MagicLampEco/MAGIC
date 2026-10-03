@@ -13,6 +13,8 @@
 //   ConsumeRedeemer     = Consume     { op_type, op_count, price_ref, vault_ref } constr 0
 //                       | BindDID                                                 constr 1
 //                       | CloseThread                                             constr 2
+//                       | ConsumeMany { pairs: List<OpPair>, price_ref, vault_ref } constr 3
+//   OpPair          { op_type, op_count }                              constr 0
 //   EngageMintRedeemer  = MintEngage  { seed: OutputReference }                   constr 0
 //                       | BurnEngage                                              constr 1
 
@@ -101,6 +103,8 @@ export type EngageDatumT = Data.Static<typeof EngageDatumSchema>;
 export const CONSUME_REDEEMER_CONSTR = 0;
 export const BIND_DID_REDEEMER_CONSTR = 1;
 export const CLOSE_THREAD_REDEEMER_CONSTR = 2;
+export const CONSUME_MANY_REDEEMER_CONSTR = 3;
+export const OP_PAIR_CONSTR = 0;
 
 // Variant `Consume` giữ nguyên lược đồ cũ: Data.Object cho RA ĐÚNG bytes Constr 0.
 // KHÔNG chuyển sang Data.Enum để "cho giống enum Aiken" — Lucid 0.4.x cast lỗi
@@ -188,3 +192,59 @@ export const encodeEngageMintRedeemer = (r: EngageMintRedeemerT): string =>
   Data.to(r, EngageMintRedeemerSchema as unknown as EngageMintRedeemerT);
 export const decodeEngageMintRedeemer = (cbor: string): EngageMintRedeemerT =>
   Data.from(cbor, EngageMintRedeemerSchema as unknown as EngageMintRedeemerT);
+
+// ── ConsumeMany { pairs, price_ref, vault_ref } — Constr 3 (THÊM 2026-10-03) ─────
+//   pairs = List<OpPair>, OpPair = Constr 0 [op_type, op_count].
+// Dựng bằng `new Constr` từ hằng chỉ số (cùng khuôn `encodeBindDidRedeemer`), KHÔNG
+// thêm biến thể vào `ConsumeRedeemerSchema`: lược đồ đó là `Data.Object` cho RA bytes
+// Constr 0 của redeemer ĐÃ LÊN CHUỖI, và Lucid 0.4.x cast lỗi với `Data.Enum` nhiều field.
+// Bytes ghim chéo với Aiken: `tests/consume_many.test.ts` ↔ `consume_many_redeemer_cbor_pinned`.
+
+export interface OpPairT {
+  op_type: bigint;
+  op_count: bigint;
+}
+
+export interface ConsumeManyRedeemerT {
+  pairs: OpPairT[];
+  price_ref: OutputReferenceT;
+  vault_ref: OutputReferenceT;
+}
+
+const refToConstr = (r: OutputReferenceT): Constr<Data> =>
+  new Constr(0, [r.transaction_id, r.output_index]);
+
+export const encodeConsumeManyRedeemer = (r: ConsumeManyRedeemerT): string =>
+  Data.to(
+    new Constr(CONSUME_MANY_REDEEMER_CONSTR, [
+      r.pairs.map((p) => new Constr(OP_PAIR_CONSTR, [p.op_type, p.op_count])),
+      refToConstr(r.price_ref),
+      refToConstr(r.vault_ref),
+    ]),
+  );
+
+/** Giải mã CBOR redeemer constr 3. Ném ở mọi hình dạng lạ — không trả giá trị đệm. */
+export function decodeConsumeManyRedeemer(cbor: string): ConsumeManyRedeemerT {
+  const d = Data.from(cbor);
+  const bad = (why: string): never => {
+    throw new Error(`CONSUME-017: redeemer không phải ConsumeMany (constr 3): ${why}`);
+  };
+  if (!(d instanceof Constr) || d.index !== CONSUME_MANY_REDEEMER_CONSTR) bad("sai constr");
+  const c = d as Constr<Data>;
+  if (c.fields.length !== 3) bad(`cần 3 trường, có ${c.fields.length}`);
+  const [pairsD, priceD, vaultD] = c.fields;
+  if (!Array.isArray(pairsD)) bad("pairs không phải danh sách");
+  const ref = (x: Data, name: string): OutputReferenceT => {
+    if (!(x instanceof Constr) || x.index !== 0 || x.fields.length !== 2) bad(`${name} sai hình dạng`);
+    const [id, ix] = (x as Constr<Data>).fields;
+    if (typeof id !== "string" || typeof ix !== "bigint") bad(`${name} sai kiểu trường`);
+    return { transaction_id: id as string, output_index: ix as bigint };
+  };
+  const pairs = (pairsD as Data[]).map((x, i) => {
+    if (!(x instanceof Constr) || x.index !== OP_PAIR_CONSTR || x.fields.length !== 2) bad(`cặp #${i} sai hình dạng`);
+    const [t, n] = (x as Constr<Data>).fields;
+    if (typeof t !== "bigint" || typeof n !== "bigint") bad(`cặp #${i} sai kiểu trường`);
+    return { op_type: t as bigint, op_count: n as bigint };
+  });
+  return { pairs, price_ref: ref(priceD!, "price_ref"), vault_ref: ref(vaultD!, "vault_ref") };
+}

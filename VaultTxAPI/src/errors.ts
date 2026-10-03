@@ -28,6 +28,8 @@
 //   409 WAKEME_VAULT_SCRIPT_MISMATCH / WAKEME_VAULT_PIN_MISMATCH  két sai script / không ghim vault này
 //   422 WAKEME_VAULT_UNREADABLE  datum/NFT két không đạt luật đọc L_lent
 //   422 WAKEME_VAULT_TX_MISMATCH tx vừa dựng tiêu két hoặc thiếu két trong reference_inputs
+//   422 WAKEME_LINK_CHANGE_REJECTED  `wakeme_vault_ref` không phải két đã nối và lượt này không nối/đổi
+//                                link được (luật 6) — chạy `/tx/refresh-checkpoint` trước
 //   501 OPEN_THREAD_FUNDING_UNSUPPORTED  `/tx/open-thread` kèm `funding` — chưa hỗ trợ
 //   400 DID_COMMIT_INVALID       `/tx/bind-did`: `did_commit` không phải đúng 64 ký tự hex thường (32 byte)
 //   409 DID_ALREADY_BOUND        `/tx/bind-did`: thread đã gắn DID (một chiều, một lần) — `details.did_commit` = giá trị hiện có
@@ -49,6 +51,21 @@
 //   501 CONFIG_MISSING           đường có mã nhưng bản deploy thiếu mục cấu hình nó cần
 //                                (`gen_v2`, `ref_script_utxos.commit|gb_shard`…) — `details.missing`
 //                                nêu đúng khoá, `details.route` nêu đường
+//   501 VAULT_KIND_UNSUPPORTED   bản deploy là khối két Prepaid mà route chưa có bộ dựng cho loại
+//                                két đó (`service.ts` ▸ `assertScopesSupported`) — `details.route`
+//                                (két Prepaid đi qua `/tx/sponsor/*`; `vaultModuleOf` cũng trả mã này)
+//   ── hành trình tài trợ `/tx/sponsor/*` (`sponsor.ts`) ──
+//   400 SPONSOR_REQUEST_SHAPE    thân bài sai hình dạng (`details.field`)
+//   400 SPONSOR_DID_COMMIT_LENGTH · SPONSOR_VAULT_REF_MISMATCH · SPONSOR_CHANGE_ADDRESS_INVALID ·
+//       SPONSOR_UTXO_NOT_KEY · DID_COMMIT_INVALID
+//   404 SPONSOR_ANCHOR_NOT_FOUND · SPONSOR_FUND_NOT_FOUND · VAULT_NOT_FOUND · ENGAGE_THREAD_NOT_FOUND
+//   409 SPONSOR_ANCHOR_AMBIGUOUS · SPONSOR_FUND_AMBIGUOUS · SPONSOR_EPOCH_MISMATCH · VAULT_ALREADY_EXISTS
+//   422 SPONSOR_VALIDITY_SPANS_EPOCHS · SPONSOR_ANCHOR_REF_WRONG · SPONSOR_FUND_NOT_PINNED ·
+//       SPONSOR_CARP_INSUFFICIENT · SPONSOR_CARP_OUTPUT_UNPINNED · SPONSOR_WITHDRAW_COUNT ·
+//       SPONSOR_BUILD_FAILED · SPONSOR_TX_MISMATCH · SPONSOR_THREAD_DID_INVALID
+//   501 SPONSOR_NETWORK_UNSUPPORTED (mạng không có gốc kỳ — Preview) · SPONSOR_PREPAID_UNAVAILABLE ·
+//       SPONSOR_PREPAID_SCRIPTS_MISMATCH · SPONSOR_FEE_PAYER_UNSUPPORTED · SPONSOR_UNAVAILABLE
+//   500 INTERNAL ⟸ SPONSOR_GRID_MISMATCH · SPONSOR_ANCHOR_REF_MISSING (lỗi dựng của chính dịch vụ)
 //   400 UTXO_NOT_FOUND / 409 UTXO_SPENT  out-ref do bên gọi đưa không có / đã bị tiêu (`chain.ts`)
 //   409 PREVIOUS_TX_PENDING      tx trước của vault đã nộp nhưng chưa vào khối — UTxO vault đang bị nó tiêu
 //   400 CHANGE_ADDRESS_REQUIRED / CHANGE_ADDRESS_INVALID  thiếu / sai `change_address`

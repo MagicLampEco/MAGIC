@@ -16,14 +16,15 @@
 // validator đọc lại từ redeemer thật). Builder TÍNH lamp_this ≤ lamp_cap, ada_this ≤
 // ada_cap, áp epoch reset, dựng meter_out KHỚP validator để tx không bị từ chối on-chain.
 //
-// VALIDITY RANGE: cửa sổ CHẶT ≤ 1 epoch (lower=đầu epoch, upper=+1ms) khớp util.get_epoch
-// (epoch ref on-chain lấy từ UPPER bound). app_authority PHẢI ký (addSigner).
+// VALIDITY RANGE: `sponsorValidityWindow` (bọc ProtocolUtils `epochValidityWindow`) —
+// [tip, min(slot cuối kỳ, tip+1h)], hai cận cùng kỳ khớp util.get_epoch (epoch ref on-chain
+// lấy từ UPPER bound). app_authority PHẢI ký (addSigner).
 
 import {
   Data,
   type LucidEvolution, type UTxO, type TxSignBuilder, type Validator, type OutRef,
 } from "@lucid-evolution/lucid";
-import { posixMsToEpoch, epochStartMs, type Network } from "@magiclamp/protocol-utils";
+import { posixMsToEpoch, epochValidityWindow, type Network } from "@magiclamp/protocol-utils";
 import { lampCap, adaCap, sumBurns, lookupDid, addDid, updateGlobalMagic, type Burn } from "./math.js";
 import {
   PaymasterRedeemerSchema,
@@ -233,9 +234,7 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
   // ── epoch tham chiếu = từ UPPER bound (khớp util.get_epoch) ──────────────────
   // Epoch = (t − window_origin_ms) / ms_per_epoch; biên epoch = gốc + e × ms_per_epoch
   // (LAMP/Specs/Window/CONTRACT.md v1.0). Preview ⟹ NÉM `WIN-PREVIEW`.
-  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
-  const lowerMs = epochStartMs(currentEpoch, network);
-  const upperMs = lowerMs + 1n;
+  const { currentEpoch, lowerMs, upperMs } = sponsorValidityWindow(tipPosixMs, network);
 
   // ── PM-10: policy freshness (fail sớm) ──────────────────────────────────────
   if (currentEpoch < policy.epoch) {
@@ -388,6 +387,39 @@ export async function buildSponsorTx(params: SponsorParams): Promise<SponsorResu
     `global ${baseGlobal}→${newMeter.global_lamp_epoch}`;
 
   return { tx, magicConsumed, lampThis, adaThis, currentEpoch, newMeter, summary };
+}
+
+export interface SponsorValidityWindow {
+  /** Epoch giao thức của tip — cũng là epoch `util.get_epoch` đọc lại từ cận trên. */
+  currentEpoch: bigint;
+  /** truyền vào `.validFrom()` */
+  lowerMs: bigint;
+  /** truyền vào `.validTo()` — đã căn về đầu slot */
+  upperMs: bigint;
+}
+
+/**
+ * Cửa sổ hiệu lực của giao dịch app-sponsor, cho `tipPosixMs`.
+ *
+ * Validator (`util.ak ▸ get_epoch`) đòi `hi ≥ lo`, `hi − lo ≤ P`, và hai cận CÙNG kỳ theo
+ * lưới gốc O (`⌊(lo−O)/P⌋ == ⌊(hi−O)/P⌋`); sổ cái đòi `invalid_before ≤ slot(tip) < ttl`.
+ * `epochValidityWindow` thoả cả hai: cận dưới = tip, cận trên = cái sớm hơn của
+ * "slot cuối kỳ" (`O+(k+1)P−1000`, tức ≤ `O+(k+1)P−1`) và `tip + VALIDITY_MAX_AHEAD_MS`.
+ *
+ * 🔴 Bản trước đặt `[epochStartMs(k), epochStartMs(k)+1]`. Lucid làm tròn cả hai cận XUỐNG
+ * theo slot 1.000 ms, nên hai cận rơi vào CÙNG một slot ⟹ khoảng `[s, s)` rỗng ⟹ sổ cái
+ * từ chối ở MỌI tip — kể cả tip đúng đầu kỳ; còn khi tip đã qua đầu kỳ thì cận trên nằm
+ * hẳn ở quá khứ. Kiểm trên số ms thô thì bản đó xanh (`hi ≥ lo`, cùng kỳ) — lỗi chỉ lộ
+ * sau làm tròn slot. Bài canh: `Paymaster/tests/sponsorValidity.test.ts`.
+ *
+ * @throws {EmptyValidityWindowError} tip ở slot CUỐI kỳ: không dựng được giao dịch nào,
+ *   lỗi mang `retryAfterMs` = đầu kỳ kế.
+ * @throws {WindowOriginError} `WIN-PREVIEW` — Preview không có gốc O.
+ */
+export function sponsorValidityWindow(tipPosixMs: bigint, network: Network): SponsorValidityWindow {
+  const currentEpoch = posixMsToEpoch(tipPosixMs, network);
+  const { lowerMs, upperMs } = epochValidityWindow(tipPosixMs, network);
+  return { currentEpoch, lowerMs: BigInt(lowerMs), upperMs: BigInt(upperMs) };
 }
 
 // ── Submit helper ─────────────────────────────────────────────────────────────

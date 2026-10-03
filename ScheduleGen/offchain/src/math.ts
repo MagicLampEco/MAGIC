@@ -10,13 +10,17 @@ import {
 import {
   slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr,
   selectLampForLock, removeLockedAmount, cmpBigIntAsc,
-  unlockLockedAmount, coalesceHoldings,
+  unlockLockedAmount, coalesceHoldings, sumLocked,
   ownerInnerHash,
   type LoyaltyHolding, type OwnerCredential,
 } from "@magiclamp/protocol-utils";
 import { blake2b } from "@noble/hashes/blake2b";
 
 export { slotToEpoch, lampToOildrop, lAvail, nanogicToMagicStr, qToStr };
+/**
+ * `selectLampForLock` có MỘT nguồn ở `@magiclamp/protocol-utils`; từ #132 nó tự lọc
+ * holding đang khoá (trùng bit `lock.ak ▸ select_lamp_for_lock`). Đừng thêm lớp lọc ở đây.
+ */
 export { selectLampForLock, removeLockedAmount };
 
 // ══════════════════════════════════════════════════════════════
@@ -202,6 +206,24 @@ export function assertHoldingCapAfterCommit(
       `GEN-SCH-007 (${where}): commit would leave ${holdingsAfterCommit} loyalty ` +
       `holdings, but the vault must stay below ${MAX_LOYALTY_HOLDINGS} so one slot ` +
       `is left for the split that every fire performs. Consolidate holdings first.`);
+}
+
+/// C-SCH-LOCKSUM (#132) — gương của `onchain/validators/vault.ak` ▸ `validate_commit`,
+/// `validate_fire`, `validate_withdraw_lamp`: trên datum RA, tổng `amount` của các
+/// holding đang khoá phải bằng `lamp_locked` (`lock.ak ▸ sum_locked`). Lệch dù một
+/// oildrop thì validator từ chối sau khi người dùng đã ký — nên bộ dựng ném trước.
+/// Ném chứ không kẹp: một `lamp_locked` bị sửa cho khớp sẽ đi tiếp vào datum và KHÔNG
+/// còn tự khai được là đã lệch.
+export function assertLockSumMatches(
+  holdingsOut : LoyaltyHolding[],
+  lampLocked  : bigint,
+  where       : string,
+): void {
+  const sum = sumLocked(holdingsOut);
+  if (sum !== lampLocked)
+    throw new Error(
+      `GEN-LOCK-SUM (${where}): Σ holding đang khoá = ${sum} ≠ lamp_locked = ${lampLocked} ` +
+      `(C-SCH-LOCKSUM) — validator sẽ từ chối datum ra này.`);
 }
 
 import {

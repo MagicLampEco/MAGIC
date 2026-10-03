@@ -235,10 +235,35 @@ export function assertMWithinMax(m: bigint, limits: InstantGenLimits): void {
   if (m > limits.maxM) {
     throw new CodedApiError(422, "INSTANT_GEN_M_ABOVE_MAX",
       `"m" = ${m} nanogic vượt lượng còn sinh được trong epoch này (${limits.maxM} nanogic).`,
-      {
-        m: m.toString(), max_m: limits.maxM.toString(),
-        gen_so_far: limits.genSoFar.toString(), cap_nanogic: limits.capNanogic.toString(),
-        cap_lamp: limits.capLamp.toString(), gb_available: limits.gbAvailable.toString(),
-      });
+      { m: m.toString(), ...limitsDetails(limits) });
   }
+}
+
+/**
+ * `m` của lượt dựng: `requested` khi người gọi gửi; vắng ⟹ CHỈ ở chế độ báo giá, lấy đúng
+ * `limits.maxM` (cùng con số `assertMWithinMax` so). `maxM = 0` mà người gọi không gửi `m` ⟹
+ * 422 `INSTANT_GEN_MAX_M_ZERO` — không có `m > 0` nào dựng được, và một báo giá trên `m` bịa
+ * là một con số phí cho một giao dịch không tồn tại.
+ */
+export function mForBuild(requested: bigint | undefined, limits: InstantGenLimits): bigint {
+  if (requested !== undefined) {
+    assertMWithinMax(requested, limits);
+    return requested;
+  }
+  if (limits.maxM <= 0n) {
+    throw new CodedApiError(422, "INSTANT_GEN_MAX_M_ZERO",
+      `Epoch này két không sinh thêm được MAGIC (trần còn lại 0 nanogic) — không có lượng "m" nào để báo giá.`,
+      limitsDetails(limits));
+  }
+  return limits.maxM;
+}
+
+/** Chi tiết trần dùng chung cho hai mã 422 của lượt sinh — một chỗ đặt tên trường. */
+function limitsDetails(limits: InstantGenLimits): Record<string, string> {
+  return {
+    max_m: limits.maxM.toString(),
+    gen_so_far: limits.genSoFar.toString(), cap_nanogic: limits.capNanogic.toString(),
+    cap_lamp: limits.capLamp.toString(), gb_available: limits.gbAvailable.toString(),
+    l_lent: limits.lent.toString(),
+  };
 }

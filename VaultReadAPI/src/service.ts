@@ -24,7 +24,11 @@ import type { ChainReader } from "./chain.js";
 import type { VaultScope } from "./config.js";
 import { sameOwner, type OwnerRef } from "@magiclamp/protocol-utils";
 import { OwnerAliasMismatchError, BadRequestError, ChainUnavailableError, UnknownVaultScopeError } from "./errors.js";
+import { readPrepaidVaultsFromUtxos, type PrepaidVaultView } from "./prepaidView.js";
 import { readVaultsFromUtxos, type IgnoredUtxo, type VaultView } from "./vaultView.js";
+
+/** Mọi loại két, phân biệt bằng `vaultKind` (`"Prepaid"` ⟹ `PrepaidVaultView`). */
+export type AnyVaultView = VaultView | PrepaidVaultView;
 
 const PKH_HEX = /^[0-9a-f]{56}$/;
 
@@ -79,7 +83,7 @@ export interface ReadOutcome {
   atEpoch: bigint;
   atEpochSource: "chain_tip" | "caller";
   chainTip: { blockHeight: number; blockHash: string; blockTimePosixMs: bigint };
-  vaults: VaultView[];
+  vaults: AnyVaultView[];
   ignored: IgnoredUtxo[];
   scopesRead: { vaultType: string; address: string }[];
 }
@@ -122,15 +126,15 @@ export class VaultReadService {
     const atEpoch = req.atEpoch ?? tipEpoch;
     if (atEpoch < 0n) throw new BadRequestError("at_epoch phải ≥ 0.");
 
-    const vaults: VaultView[] = [];
+    const vaults: AnyVaultView[] = [];
     const ignored: IgnoredUtxo[] = [];
     for (const scope of scopes) {
       const utxos = await this.chain.utxosAt(scope.address);
-      // `scope.vaultType` là nguồn DUY NHẤT của loại vault: nó không suy được từ datum
-      // (lược đồ Instant và Schedule giải mã giống hệt nhau), nó đi theo ĐỊA CHỈ.
-      const r = readVaultsFromUtxos(
-        utxos, scope.scriptHash, scope.address, owner, atEpoch, scope.vaultType,
-      );
+      // `scope.vaultType` quyết định LƯỢC ĐỒ nào dùng để giải datum — nó đi theo ĐỊA CHỈ.
+      // Datum sai lược đồ của scope (vd datum Instant ở địa chỉ khai Prepaid) ⟹ NÉM 502.
+      const r = scope.vaultType === "Prepaid"
+        ? readPrepaidVaultsFromUtxos(utxos, scope.scriptHash, scope.address, owner, atEpoch)
+        : readVaultsFromUtxos(utxos, scope.scriptHash, scope.address, owner, atEpoch, scope.vaultType);
       vaults.push(...r.vaults);
       ignored.push(...r.ignored);
     }
@@ -164,63 +168,7 @@ export function toJsonBody(o: ReadOutcome): Record<string, unknown> {
       block_time_posix_ms: s(o.chainTip.blockTimePosixMs),
     },
     scopes_read: o.scopesRead.map(x => ({ vault_type: x.vaultType, address: x.address })),
-    vaults: o.vaults.map(v => ({
-      utxo_ref: v.utxoRef,
-      // BẮT BUỘC có mặt trên mọi vault, giá trị từ tập ĐÓNG `VAULT_KINDS`. Bên gọi cần nó
-      // để biết `consumed_credit_nanogic` đang mang nghĩa nào — xem docblock ở `vaultView.ts`.
-      vault_kind: v.vaultKind,
-      // Hình dạng datum suy từ số trường (Instant 20 / Schedule 19). Đặt cạnh `vault_kind`
-      // (suy từ scope) để bên gọi đối chiếu được — xem docblock `datumKind` ở `vaultView.ts`.
-      datum_kind: v.datumKind,
-      vault_address: v.vaultAddress,
-      vault_id_unit: v.vaultIdUnit,
-      owner: { type: v.owner.type, hash: v.owner.hash },
-      owner_pkh: v.ownerPkh,
-      available_nanogic: s(v.availableNanogic),
-      accrued_nanogic: s(v.accruedNanogic),
-      expired_nanogic: s(v.expiredNanogic),
-      consumed_credit_nanogic: s(v.consumedCreditNanogic),
-      lamp_balance_oildrop: s(v.lampBalanceOildrop),
-      lamp_locked_oildrop: s(v.lampLockedOildrop),
-      profile: v.profile,
-      last_updated_epoch: Number(v.lastUpdatedEpoch),
-      rate_locked_q: v.rateLockedQ === null ? null : s(v.rateLockedQ),
-      // ── Ô Gen v2.0. Ba ô chỉ-Instant là `null` ở két Schedule (ô KHÔNG TỒN TẠI), không
-      // phải 0: `cap_nanogic: "0"` là trần 0 thật của một két Instant.
-      wakeme_link: v.wakemeLink,
-      cap_epoch: v.capEpoch === null ? null : Number(v.capEpoch),
-      cap_nanogic: v.capNanogic === null ? null : s(v.capNanogic),
-      instant_unlock_ms: v.instantUnlockMs === null ? null : s(v.instantUnlockMs),
-      usage_window_epoch: Number(v.usageWindowEpoch),
-      usage_window: v.usageWindow.map(w => ({
-        generated_nanogic: s(w.generatedNanogic),
-        consumed_nanogic: s(w.consumedNanogic),
-      })),
-      batches: v.batches.map(b => ({
-        batch_id: b.batchId,
-        source: b.source,
-        created_epoch: Number(b.createdEpoch),
-        decay_window: Number(b.decayWindow),
-        expires_at_epoch: Number(b.expiresAtEpoch),
-        initial_amount_nanogic: s(b.initialAmountNanogic),
-        current_amount_nanogic: s(b.currentAmountNanogic),
-        live: b.live,
-        contract_id: b.contractId,
-      })),
-      gen_schedules: v.genSchedules.map(g => ({
-        schedule_id: g.scheduleId,
-        commit_epoch: Number(g.commitEpoch),
-        start_fire_epoch: Number(g.startFireEpoch),
-        end_fire_epoch: Number(g.endFireEpoch),
-        schedule_length: Number(g.scheduleLength),
-        lamp_per_epoch_oildrop: s(g.lampPerEpochOildrop),
-        rate_locked_q: s(g.rateLockedQ),
-        fired_count: Number(g.firedCount),
-        // Chỉ lịch của két Schedule v2.0 có hai trường này; két Instant ⟹ `null`.
-        m_per_epoch_nanogic: g.mPerEpochNanogic === null ? null : s(g.mPerEpochNanogic),
-        usage_factor_locked_q: g.usageFactorLockedQ === null ? null : s(g.usageFactorLockedQ),
-      })),
-    })),
+    vaults: o.vaults.map(vaultJson),
     // `consumed_credit_nanogic` CỐ Ý không có ở đây, và đây là chỗ khai lý do — trước bản
     // này chỗ này im lặng, nên người đọc không phân biệt được "cố ý bỏ" với "chưa ai cần".
     // Ba lý do độc lập, mỗi lý do một mình đã đủ:
@@ -242,6 +190,132 @@ export function toJsonBody(o: ReadOutcome): Record<string, unknown> {
     // Rỗng là bình thường; khác rỗng là thứ người vận hành nên nhìn.
     ignored: o.ignored.map(x => ({ utxo_ref: x.utxoRef, reason: x.reason })),
   };
+}
+
+/** Két Instant/Schedule. Khoá giữ ĐÚNG thứ tự cũ; `prepaid_credits: null` thêm ở cuối
+ *  (khoá có mặt trên MỌI vault — xem docblock `vaultKind` ở `vaultView.ts`). */
+function genVaultJson(v: VaultView): Record<string, unknown> {
+  return {
+    utxo_ref: v.utxoRef,
+    // BẮT BUỘC có mặt trên mọi vault, giá trị từ tập ĐÓNG `VAULT_KINDS`. Bên gọi cần nó
+    // để biết `consumed_credit_nanogic` đang mang nghĩa nào — xem docblock ở `vaultView.ts`.
+    vault_kind: v.vaultKind,
+    // Hình dạng datum suy từ số trường (Instant 20 / Schedule 19). Đặt cạnh `vault_kind`
+    // (suy từ scope) để bên gọi đối chiếu được — xem docblock `datumKind` ở `vaultView.ts`.
+    datum_kind: v.datumKind,
+    vault_address: v.vaultAddress,
+    vault_id_unit: v.vaultIdUnit,
+    owner: { type: v.owner.type, hash: v.owner.hash },
+    owner_pkh: v.ownerPkh,
+    available_nanogic: s(v.availableNanogic),
+    accrued_nanogic: s(v.accruedNanogic),
+    expired_nanogic: s(v.expiredNanogic),
+    consumed_credit_nanogic: s(v.consumedCreditNanogic),
+    lamp_balance_oildrop: s(v.lampBalanceOildrop),
+    lamp_locked_oildrop: s(v.lampLockedOildrop),
+    profile: v.profile,
+    last_updated_epoch: Number(v.lastUpdatedEpoch),
+    rate_locked_q: v.rateLockedQ === null ? null : s(v.rateLockedQ),
+    // ── Ô Gen v2.0. Ba ô chỉ-Instant là `null` ở két Schedule (ô KHÔNG TỒN TẠI), không
+    // phải 0: `cap_nanogic: "0"` là trần 0 thật của một két Instant.
+    wakeme_link: v.wakemeLink,
+    cap_epoch: v.capEpoch === null ? null : Number(v.capEpoch),
+    cap_nanogic: v.capNanogic === null ? null : s(v.capNanogic),
+    instant_unlock_ms: v.instantUnlockMs === null ? null : s(v.instantUnlockMs),
+    usage_window_epoch: Number(v.usageWindowEpoch),
+    usage_window: v.usageWindow.map(w => ({
+      generated_nanogic: s(w.generatedNanogic),
+      consumed_nanogic: s(w.consumedNanogic),
+    })),
+    batches: v.batches.map(b => ({
+      batch_id: b.batchId,
+      source: b.source,
+      created_epoch: Number(b.createdEpoch),
+      decay_window: Number(b.decayWindow),
+      expires_at_epoch: Number(b.expiresAtEpoch),
+      initial_amount_nanogic: s(b.initialAmountNanogic),
+      current_amount_nanogic: s(b.currentAmountNanogic),
+      live: b.live,
+      contract_id: b.contractId,
+    })),
+    gen_schedules: v.genSchedules.map(g => ({
+      schedule_id: g.scheduleId,
+      commit_epoch: Number(g.commitEpoch),
+      start_fire_epoch: Number(g.startFireEpoch),
+      end_fire_epoch: Number(g.endFireEpoch),
+      schedule_length: Number(g.scheduleLength),
+      lamp_per_epoch_oildrop: s(g.lampPerEpochOildrop),
+      rate_locked_q: s(g.rateLockedQ),
+      fired_count: Number(g.firedCount),
+      // Chỉ lịch của két Schedule v2.0 có hai trường này; két Instant ⟹ `null`.
+      m_per_epoch_nanogic: g.mPerEpochNanogic === null ? null : s(g.mPerEpochNanogic),
+      usage_factor_locked_q: g.usageFactorLockedQ === null ? null : s(g.usageFactorLockedQ),
+    })),
+    // Chỉ két Prepaid có dòng hạn mức; két Gen KHÔNG có trường này trong datum.
+    prepaid_credits: null,
+  };
+}
+
+/**
+ * Két Prepaid. CÙNG bộ khoá với `genVaultJson` (bài kiểm `prepaidView.test.ts` so hai bộ
+ * khoá). Ô không tồn tại trong datum Prepaid ⟹ `null`, KHÔNG `"0"`/`[]` — lý do từng ô:
+ *   consumed_credit_nanogic  datum Prepaid không có `activity_state`; MAGIC đã đốt từ két
+ *                            nằm ở `prepaid_credits[].consumed_unsettled_nanogic`.
+ *   lamp_balance/locked      két Prepaid không giữ LAMP (nguồn là CARP của quỹ); `"0"` đọc
+ *                            thành "chủ có 0 LAMP trong két" — một khẳng định datum không nói.
+ *   profile                  PrepaidGen không dùng tư-cách (`PREPAID_PROFILE` = 0 ghim cứng).
+ *   rate_locked_q, gen_schedules  không có lịch sinh — `[]` đọc thành "chưa ký lịch nào".
+ *   wakeme_link, cap_*, instant_unlock_ms, usage_window*  ô của két Gen v2.0, không có ở đây.
+ *   batches[].initial_amount_nanogic  `MagicBatch` Prepaid 7 trường, không có `initial_amount`.
+ */
+function prepaidVaultJson(v: PrepaidVaultView): Record<string, unknown> {
+  return {
+    utxo_ref: v.utxoRef,
+    vault_kind: v.vaultKind,
+    datum_kind: v.datumKind,
+    vault_address: v.vaultAddress,
+    vault_id_unit: v.vaultIdUnit,
+    owner: { type: v.owner.type, hash: v.owner.hash },
+    owner_pkh: v.ownerPkh,
+    available_nanogic: s(v.availableNanogic),
+    accrued_nanogic: s(v.accruedNanogic),
+    expired_nanogic: s(v.expiredNanogic),
+    consumed_credit_nanogic: null,
+    lamp_balance_oildrop: null,
+    lamp_locked_oildrop: null,
+    profile: null,
+    last_updated_epoch: Number(v.lastUpdatedEpoch),
+    rate_locked_q: null,
+    wakeme_link: null,
+    cap_epoch: null,
+    cap_nanogic: null,
+    instant_unlock_ms: null,
+    usage_window_epoch: null,
+    usage_window: null,
+    batches: v.batches.map(b => ({
+      batch_id: b.batchId,
+      source: b.source,
+      created_epoch: Number(b.createdEpoch),
+      decay_window: Number(b.decayWindow),
+      expires_at_epoch: Number(b.expiresAtEpoch),
+      initial_amount_nanogic: null,
+      current_amount_nanogic: s(b.currentAmountNanogic),
+      live: b.live,
+      contract_id: b.contractId,
+    })),
+    gen_schedules: null,
+    prepaid_credits: v.prepaidCredits.map(c => ({
+      fund_id: c.fundId,
+      remaining_carpdrop: s(c.remainingCarpdrop),
+      issued_epoch: Number(c.issuedEpoch),
+      last_draw_epoch: Number(c.lastDrawEpoch),
+      consumed_unsettled_nanogic: s(c.consumedUnsettledNanogic),
+    })),
+  };
+}
+
+function vaultJson(v: AnyVaultView): Record<string, unknown> {
+  return v.vaultKind === "Prepaid" ? prepaidVaultJson(v) : genVaultJson(v);
 }
 
 /** BigInt → chuỗi thập phân. Đơn vị nằm ở TÊN TRƯỜNG, không nằm ở giá trị. */

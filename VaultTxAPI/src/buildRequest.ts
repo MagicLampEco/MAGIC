@@ -41,7 +41,8 @@ export const BUILD_ROUTE_OF_PATH: Readonly<Record<string, IssuedRoute>> = {
 };
 
 export type ParsedBuild =
-  | { route: "instant-gen"; req: OwnerRequest & { m: bigint; wakemeVaultRef?: OutRefLike } }
+  // `m` vắng CHỈ ở chế độ báo giá (`ParseOptions.quote`); đường dựng thật luôn có `m > 0`.
+  | { route: "instant-gen"; req: OwnerRequest & { m?: bigint; wakemeVaultRef?: OutRefLike } }
   | { route: "refresh-checkpoint"; req: OwnerRequest & { wakemeVaultRef?: OutRefLike } }
   | { route: "schedule-commit"; req: OwnerRequest & { scheduleLength: bigint; lampPerEpoch: bigint } }
   | { route: "schedule-fire"; req: OwnerRequest & { scheduleId: string } }
@@ -57,15 +58,28 @@ export type BuildResult =
   | { route: "instant-gen" | "refresh-checkpoint" | "schedule-commit" | "schedule-fire" | "consume"; out: BuildResponse };
 
 /** Đọc thân bài của một đường dựng. Sai ⟹ 400 có mã, như đường dựng trả. */
-export function parseBuildRequest(route: IssuedRoute, body: Record<string, unknown>): ParsedBuild {
+export interface ParseOptions {
+  /** Chế độ báo giá (`/tx/quote`): instant-gen cho phép vắng `m` hoặc `m = "0"` ⟹ dịch vụ lấy
+   *  trần `max_m` làm `m` (`genV2.ts` ▸ `mForBuild`). Đường dựng thật vẫn đòi `m > 0`. */
+  quote?: boolean;
+}
+
+export function parseBuildRequest(route: IssuedRoute, body: Record<string, unknown>, opts: ParseOptions = {}): ParsedBuild {
   switch (route) {
     case "instant-gen": {
       // `m` (nanogic) do CHỦ chọn — Gen v2.0. Chuỗi chữ số > 0; trần (`max_m`) do dịch vụ so
       // trên beacon/shard thật ⟹ 422 `INSTANT_GEN_M_ABOVE_MAX`, không phải ở đây.
-      // `wakeme_vault_ref` TUỲ CHỌN (`wakeme.ts`): vắng ⟹ không két nào, L_lent = 0.
-      const m = reqAmountCoded(body, "m", "INSTANT_GEN_M_INVALID");
+      // `wakeme_vault_ref` TUỲ CHỌN (`wakeme.ts`): vắng ⟹ dịch vụ tự định vị theo `wakeme_link`.
+      const quoteAtMax = opts.quote === true && (body.m === undefined || body.m === "0");
+      const m = quoteAtMax ? undefined : reqAmountCoded(body, "m", "INSTANT_GEN_M_INVALID");
       const wakemeVaultRef = parseWakemeVaultRef(body.wakeme_vault_ref);
-      return { route, req: { ...ownerReq(body), m, ...(wakemeVaultRef === undefined ? {} : { wakemeVaultRef }) } };
+      return {
+        route,
+        req: {
+          ...ownerReq(body), ...(m === undefined ? {} : { m }),
+          ...(wakemeVaultRef === undefined ? {} : { wakemeVaultRef }),
+        },
+      };
     }
     case "refresh-checkpoint": {
       const wakemeVaultRef = parseWakemeVaultRef(body.wakeme_vault_ref);
@@ -116,14 +130,17 @@ export function parseBuildRequest(route: IssuedRoute, body: Record<string, unkno
       }
       // `change_address` và `funding` loại trừ nhau — tầng dịch vụ quyết (400 có mã), không
       // phải ở đây, để lời gọi thẳng vào dịch vụ cũng bị kiểm.
+      // `lamp_amount`: két instant nhận "0" (người mới chỉ có LAMP mượn ở két Wakeme); két
+      // schedule vẫn > 0. `did_commit` (tuỳ chọn, chỉ instant) ⟹ `wakeme_link` của datum genesis.
       return {
         route,
         req: {
           ...ownerReq(body),
           kind,
-          lampAmount: reqBigint(body, "lamp_amount"),
+          lampAmount: kind === "instant" ? reqBigintAllowZero(body, "lamp_amount") : reqBigint(body, "lamp_amount"),
           profile: profile as Profile | undefined,
           funding: parseFunding(body),
+          ...(body.did_commit === undefined ? {} : { didCommit: parseDidCommit(body.did_commit) }),
         },
       };
     }
@@ -157,7 +174,7 @@ export function buildResultBody(r: BuildResult): Record<string, unknown> {
 // ── trường chung ───────────────────────────────────────────────────────────────
 
 /** Chủ + nhân chứng + địa chỉ đổi tiền thừa (tuỳ chọn) — phần chung của mọi đường có chủ. */
-function ownerReq(body: Record<string, unknown>): OwnerRequest {
+export function ownerReq(body: Record<string, unknown>): OwnerRequest {
   const changeAddress = body.change_address;
   if (changeAddress !== undefined && (typeof changeAddress !== "string" || changeAddress === "")) {
     throw new BadRequestError(`"change_address" phải là chuỗi địa chỉ bech32 khác rỗng.`);
@@ -190,7 +207,7 @@ function reqHex(body: Record<string, unknown>, name: string): string {
  * Số JSON bị từ chối có chủ đích: xem khối đầu tệp. Thông báo lỗi nói lý do, vì người
  * gặp nó sẽ nghĩ dịch vụ đang khó tính vô cớ.
  */
-function reqBigint(body: Record<string, unknown>, name: string): bigint {
+export function reqBigint(body: Record<string, unknown>, name: string): bigint {
   const v = body[name];
   if (typeof v === "number") {
     throw new BadRequestError(
@@ -202,9 +219,27 @@ function reqBigint(body: Record<string, unknown>, name: string): bigint {
   if (typeof v !== "string" || !/^\d+$/.test(v)) {
     throw new BadRequestError(`"${name}" phải là chuỗi chữ số thập phân không âm.`);
   }
+  if (v.length > MAX_AMOUNT_DIGITS) throw tooManyDigits(name, v.length, (m, d) => new BadRequestError(m, d));
   const n = BigInt(v);
   if (n <= 0n) throw new BadRequestError(`"${name}" phải > 0.`);
   return n;
+}
+
+/**
+ * Trần số chữ số của mọi lượng đọc từ thân bài, áp TRƯỚC `BigInt()`. 20 chữ số (< 10²⁰) phủ dư mọi
+ * lượng thật: trần LAMP 36×10¹⁵ oildrop là 17 chữ số. Không có trần thì một chuỗi một triệu chữ số đi
+ * thẳng vào `BigInt()` và vào mọi phép tính sau nó — tốn CPU của dịch vụ, không vì việc gì.
+ */
+export const MAX_AMOUNT_DIGITS = 20;
+
+/** Câu lỗi KHÔNG lặp lại con số — chỉ nói nó dài bao nhiêu chữ số. */
+function tooManyDigits<E>(name: string, digits: number, mk: (m: string, d: Record<string, unknown>) => E): E {
+  return mk(`"${name}" dài quá ${MAX_AMOUNT_DIGITS} chữ số.`, { max_digits: MAX_AMOUNT_DIGITS, received_digits: digits });
+}
+
+/** Như `reqBigint` nhưng nhận `"0"` — CHỈ cho `lamp_amount` của két instant. */
+function reqBigintAllowZero(body: Record<string, unknown>, name: string): bigint {
+  return body[name] === "0" ? 0n : reqBigint(body, name);
 }
 
 function optWakeme(body: Record<string, unknown>): { wakemeVaultRef?: OutRefLike } {
@@ -224,13 +259,16 @@ function reqAmountCoded(body: Record<string, unknown>, name: string, code: strin
   if (v === undefined) bad("bắt buộc (nanogic, chuỗi chữ số thập phân > 0).");
   if (typeof v === "number") bad("phải là CHUỖI chữ số, không phải số JSON (số JSON làm tròn quá 2^53).");
   if (typeof v !== "string" || !/^\d+$/.test(v)) bad("phải là chuỗi chữ số thập phân.");
+  if ((v as string).length > MAX_AMOUNT_DIGITS) {
+    throw tooManyDigits(name, (v as string).length, (m, d) => new CodedApiError(400, code, m, d));
+  }
   const n = BigInt(v as string);
   if (n <= 0n) bad("phải > 0.");
   return n;
 }
 
 /** Nhãn nhỏ (ví dụ `op_type`): số nguyên JSON là đúng kiểu ở đây. */
-function reqSmallInt(body: Record<string, unknown>, name: string): number {
+export function reqSmallInt(body: Record<string, unknown>, name: string): number {
   const v = body[name];
   if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 1_000_000) {
     throw new BadRequestError(`"${name}" phải là số nguyên trong [0, 1000000].`);

@@ -12,9 +12,18 @@ use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Spend, Transaction,
 }
 
-/// Epoch tham chiếu AN TOÀN trước thao túng validity-range (mirror consume.util).
+/// Epoch tham chiếu AN TOÀN trước thao túng validity-range — cùng ngữ nghĩa, cùng thứ tự
+/// phép kiểm với `ConsumeMAGIC/onchain/lib/magiclamp/consume/util.ak` ▸ `get_epoch`.
 /// Dùng UPPER bound (trần thời gian ledger từ chối nếu now>upper → không under-state),
-/// buộc cả hai biên hữu hạn + cửa sổ ≤ 1 epoch (không bịa khoảng cách epoch).
+/// buộc cả hai biên hữu hạn + cửa sổ ≤ 1 epoch (không bịa khoảng cách epoch), và hai
+/// biên phải CÙNG epoch theo lưới gốc O.
+///
+/// Vế cùng-epoch (vá 2026-10-02): bản trước chỉ có vế độ rộng và tự khai "mirror
+/// consume.util" trong khi bản consume còn ép `lo_epoch == hi_epoch`. Thiếu vế đó thì
+/// cửa sổ `[O+(e+1)P−1, O+(e+1)P]` (lo ở kỳ e, hi ở kỳ e+1, rộng 1 ms) trả e+1 trong khi
+/// ledger có thể nhận tx ở thời điểm thật thuộc kỳ e ⟹ nhánh `meter_in.epoch <
+/// current_epoch` của `paymaster.spend` reset trần sớm một kỳ (thêm trọn một trần
+/// per-DID + global). Bài canh: `pm_neg_straddle_epoch_boundary` (validators/paymaster.ak).
 ///
 /// Gốc lưới (WIN-ORIGIN-1, `LAMP/Specs/Window/CONTRACT.md` v1.0): chỉ số epoch =
 /// `(t − window_origin_ms) / ms_per_epoch`; `window_origin_ms` là apply-param cuối của
@@ -24,7 +33,11 @@ pub fn get_epoch(tx: Transaction, ms_per_epoch: Int, window_origin_ms: Int) -> I
   expect Some(hi) = tx.validity_range.upper_bound.bound_type |> get_finite
   expect hi >= lo
   expect hi - lo <= ms_per_epoch
-  ( hi - window_origin_ms ) / ms_per_epoch
+  let lo_epoch = ( lo - window_origin_ms ) / ms_per_epoch
+  let hi_epoch = ( hi - window_origin_ms ) / ms_per_epoch
+  // CÙNG epoch cả 2 biên → epoch tham chiếu không phụ thuộc slot ledger chọn.
+  expect lo_epoch == hi_epoch
+  hi_epoch
 }
 
 pub fn get_finite(bt: IntervalBoundType) -> Option<Int> {

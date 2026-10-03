@@ -21,7 +21,7 @@ import {
 import { computeCapLent, computeCapPp } from "../offchain/src/math.js";
 import {
   NETWORK, P, E, SLOT, at, OWNER_PKH, VAULT_SCRIPT, SHARD_SCRIPT, VP, REGISTRY_POLICY,
-  LAMP_BALANCE, SHARD_ID, GB_SEQ, SHARD_RESET, WAKEME_COMMIT,
+  LAMP_BALANCE, LAMP_UNIT, SHARD_ID, GB_SEQ, SHARD_RESET, WAKEME_COMMIT,
   makeVault, makeShard, makeRate, vaultUtxo, greenbackUtxo, shardUtxo, registryUtxo, rateUtxo, wakemeUtxo,
 } from "./instantFixtures.js";
 
@@ -222,6 +222,54 @@ describe("buildInstantGenTx — hình dạng giao dịch Gen v2.0", () => {
 
   it("CỰC ĐỐI: gbShardScript có hash khác gb_shard_policy_id ⟹ GEN-INST-009", async () => {
     await expect(dung(TIP_DAU, {}, { gbShardScript: VAULT_SCRIPT })).rejects.toThrow(/GEN-INST-009/);
+  });
+});
+
+// ── Người dùng mới: két IG 0 LAMP, lượt sinh ĐẦU cùng kỳ genesis két Wakeme ──────────
+// Gương `vault.ak ▸ np_first_gen_zero_lamp_genesis_pin_ok` / `…_repinned_same_period_fail` /
+// `np_journey_unlinked_first_gen_zero_lamp_fail`: két vừa genesis (cap_epoch 0 ⟹ lượt sinh
+// làm mới, cần ρ), không LAMP riêng, link khai sẵn = owner_commit. Ba ca chỉ khác ô [2]/[11]
+// của két Wakeme; ca dương qua IG-6 NHỜ L_lent, hai ca đối trượt ở đúng IG-6 (GEN-INST-001).
+describe("buildInstantGenTx — két 0 LAMP, phần mượn từ két Wakeme ghim lúc genesis", () => {
+  const ZERO_LAMP: Partial<TVaultDatum> = {
+    lamp_balance: 0n, lamp_locked: 0n, loyalty_holdings: [], wakeme_link: WAKEME_COMMIT,
+    cap_epoch: 0n, cap_nanogic: 0n, usage_window_epoch: 0n, last_updated_epoch: 0n,
+  };
+  const LENT = 1_000_000_000n;  // 700_000_000 + 300_000_000 của `wakemeUtxo`
+  /** Két IG không mang LAMP: bỏ hẳn mục LAMP khỏi value (không để mục số lượng 0). */
+  function zeroLampVault(over: Partial<TVaultDatum> = {}) {
+    const u = vaultUtxo(makeVault({ ...ZERO_LAMP, ...over }));
+    const { [LAMP_UNIT]: _drop, ...assets } = u.assets;
+    void _drop;
+    return { ...u, assets };
+  }
+  const dungZero = (w: ReturnType<typeof wakemeUtxo>, over: Partial<TVaultDatum> = {}) =>
+    dung(TIP_DAU, {}, { vaultUtxo: zeroLampVault(over), rateBeaconUtxo: rateUtxo(), wakemeVaultUtxo: w });
+
+  it("ghim từ genesis CÙNG kỳ (vest_start ∈ kỳ E, [12] = E) ⟹ dựng được, trần = cap_pp(0) + cap_lent(L_lent)", async () => {
+    const { tx, res } = await dungZero(wakemeUtxo({ vestStartMs: at(E) + 5_000n, pinPeriod: E }));
+    expect(tx.completed).toBe(true);
+    expect(res.outputs.lent).toBe(LENT);
+    expect(res.outputs.lAvail).toBe(0n);
+    expect(res.outputs.capLamp).toBe(computeCapPp(0n) + computeCapLent(LENT));
+    const d = datumRa(tx);
+    expect(d.lamp_balance).toBe(0n);                // I-ACT-7: không LAMP nào vào/ra két
+    expect(d.wakeme_link).toBe(WAKEME_COMMIT);
+    expect(d.cap_epoch).toBe(E);
+    expect(d.usage_window[0]!.generated).toBe(M);
+    expect(tx.readFrom[0]).toContainEqual(wakemeUtxo({ vestStartMs: at(E) + 5_000n, pinPeriod: E }));
+  });
+
+  it("CỰC ĐỐI: genesis kỳ E−1, ĐỔI ghim ở kỳ E ⟹ L_lent = 0 ⟹ GEN-INST-001 (IG-6)", async () => {
+    await expect(dungZero(wakemeUtxo({ vestStartMs: at(E - 1n) + 5_000n, pinPeriod: E })))
+      .rejects.toThrow(/GEN-INST-001.*L_lent 0/);
+  });
+
+  // Từ 2026-10-03 (luật 6 bỏ vế (a)) ca này chết SỚM HƠN: link rỗng + két chưa ghim ⟹
+  // không nối được (GEN-INST-011), trước khi tới IG-6. Gương `np_journey_unlinked_first_gen_zero_lamp_fail`.
+  it("CỰC ĐỐI: link rỗng, két Wakeme genesis CHƯA ghim két IG ⟹ không nối được (luật 6) ⟹ GEN-INST-011", async () => {
+    await expect(dungZero(wakemeUtxo({ vestStartMs: at(E) + 5_000n, pinPeriod: E, pinned: false }), { wakeme_link: "" }))
+      .rejects.toThrow(/GEN-INST-011.*luật 6/s);
   });
 });
 

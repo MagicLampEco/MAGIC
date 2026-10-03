@@ -19,7 +19,7 @@
 import { Constr, type Data, type Validator } from "@lucid-evolution/lucid";
 import { assertWakemeVaultHash } from "@magiclamp/protocol-utils";
 import { appliedScript, findValidator, type Blueprint, type ParamMap } from "./applyParams.js";
-import type { GEN_V2_STATE_KEYS } from "./gen_vault_tx_api_deployment.js";
+import type { GEN_V2_STATE_KEYS, PREPAID_STATE_KEYS } from "./gen_vault_tx_api_deployment.js";
 
 /** OutputReference của PlutusV3 = Constr 0 [transaction_id: Bytes, output_index: Int]. */
 export function outputReferenceData(txHash: string, outputIndex: number | bigint): Data {
@@ -293,6 +293,48 @@ export function prepaidVaultParams(i: PrepaidVaultParamInputs): ParamMap {
     ms_per_epoch:     i.msPerEpoch,
     window_origin_ms: i.windowOriginMs,
   };
+}
+
+export interface PrepaidScriptPair {
+  fundScript:  Validator; fundHash:  string;
+  vaultScript: Validator; vaultHash: string;
+}
+
+/** Apply cặp `paid_fund` → `prepaid_vault` theo đúng chiều một chiều ở trên, qua cổng TÊN
+ *  của `applyParams.ts`. Thuần: nhận blueprint đã nạp (`loadBlueprint("PrepaidGen")`).
+ *
+ *  MỘT hàm cho cả ba nơi cần hai hash này — bước 10 (genesis + ref-script), bước 09
+ *  (`VAULT_KIND=prepaid` đối chiếu hash trong sổ) và bộ ca. Ba nơi tự apply thì chỉ cần
+ *  một nơi quên `paid_fund_hash` là ra một hash vault hợp lệ khác hai nơi kia.
+ *
+ *  Hai hash phụ thuộc ĐỜI CARP (`carp_policy_id`, `carp_asset_name`), không phụ thuộc
+ *  LAMP: đúc lại CARP ⟹ cả hai hash đổi ⟹ mọi ref-script và bản `consume` của loại két
+ *  này phải dựng lại. */
+export function prepaidScriptPair(bp: Blueprint, i: PaidFundParamInputs): PrepaidScriptPair {
+  const fund = appliedScript(findValidator(bp, "prepaid.paid_fund.spend"), paidFundParams(i));
+  const vault = appliedScript(findValidator(bp, "prepaid.prepaid_vault.spend"), prepaidVaultParams({
+    carpPolicyId: i.carpPolicyId, carpAssetName: i.carpAssetName, paidFundHash: fund.hash,
+    msPerEpoch: i.msPerEpoch, windowOriginMs: i.windowOriginMs,
+  }));
+  return { fundScript: fund.script, fundHash: fund.hash, vaultScript: vault.script, vaultHash: vault.hash };
+}
+
+/** Khoá sổ của hai ref-script PrepaidGen. Ghim bằng KIỂU vào bảng khoá Prepaid của bộ
+ *  sinh deployment (`gen_vault_tx_api_deployment.ts` ▸ `PREPAID_STATE_KEYS`): đổi tên ở một
+ *  phía ⟹ gãy lúc typecheck, không trôi im lặng. */
+export const REF_VAULT_PREPAID_KEY = "REF_VAULT_PREPAID_UTXO" as const satisfies keyof typeof PREPAID_STATE_KEYS;
+export const REF_PAID_FUND_KEY = "REF_PAID_FUND_UTXO" as const satisfies keyof typeof PREPAID_STATE_KEYS;
+
+export interface PrepaidRefScriptPlanItem { label: string; bookKey: string; script: Validator; hash: string }
+
+/** Hai ref-script PrepaidGen theo thứ tự công bố — MỖI CÁI MỘT TX (`refScripts.ts ▸
+ *  publishRefScript`). Số đo vì sao tách, không gộp: `scripts/test_deploy_prepaid.ts` (C). */
+export function prepaidRefScriptPlan(bp: Blueprint, i: PaidFundParamInputs): PrepaidRefScriptPlanItem[] {
+  const p = prepaidScriptPair(bp, i);
+  return [
+    { label: "prepaid_vault ref", bookKey: REF_VAULT_PREPAID_KEY, script: p.vaultScript, hash: p.vaultHash },
+    { label: "paid_fund ref",     bookKey: REF_PAID_FUND_KEY,     script: p.fundScript,  hash: p.fundHash },
+  ];
 }
 
 // ── UMKeeper — um_datum.um_datum_validator.spend (4 tham số) ─────

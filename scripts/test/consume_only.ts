@@ -620,6 +620,9 @@ async function main() {
           currentPeriod:   vaultEpoch,
           lampPolicyId:    POLICY_IDS.lamp,
           lampAssetName:   ASSET_NAMES.lamp,
+          // Apply-param #8/#9 của két IG (vế genesis của `LentReadContext`).
+          msPerEpoch:      PROTOCOL.MS_PER_EPOCH,
+          windowOriginMs:  PROTOCOL.WINDOW_ORIGIN_MS,
         });
       }
     }

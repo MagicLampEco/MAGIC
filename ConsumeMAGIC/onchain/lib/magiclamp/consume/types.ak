@@ -130,6 +130,7 @@ pub type EngageDatum {
 ///      Consume     → constr 0
 ///      BindDID     → constr 1
 ///      CloseThread → constr 2   (THÊM 2026-09-25 — Ở CUỐI, không chèn giữa)
+///      ConsumeMany → constr 3   (THÊM 2026-10-03 — Ở CUỐI, không chèn giữa)
 ///    Ghim bằng test `redeemer_constr_index_pinned` (consume.ak) ↔
 ///    `tests/codec.test.ts` phía off-chain.
 ///
@@ -167,6 +168,25 @@ pub type EngageDatum {
 ///   KHÔNG mở đường gian lận: xoá chỉ HẠ tư-cách của chính người ký, không nâng của ai.
 ///   Ai dựng lớp tư-cách phía trên phải đọc dòng này — hồ sơ trên chuỗi KHÔNG bền vĩnh
 ///   viễn, nó bền tới khi chủ nó đóng thread.
+///
+/// `ConsumeMany` — tiêu MAGIC cho NHIỀU loại nghiệp vụ trong MỘT lượt (THÊM 2026-10-03).
+///   pairs     : danh sách `OpPair { op_type, op_count }`. Ràng buộc HÌNH DẠNG
+///               (`pricing.valid_pairs`): không rỗng · ≤ `pricing.max_consume_pairs` ·
+///               `op_type` TĂNG NGẶT (không trùng, không lộn thứ tự) · mỗi `op_count` ≥ 1.
+///   price_ref / vault_ref : y hệt `Consume`.
+///   Giá: `required = Σ_i ⌊base_price_i × demand_mult_i × op_count_i / Q⌋` — SÀN TỪNG
+///   CẶP rồi cộng (`pricing.required_for_pairs`), KHÔNG cộng rồi sàn một lần. Mỗi cặp
+///   tính đúng bằng `required_for` của một `Consume` đơn ⇒ một `ConsumeMany` trả ĐÚNG
+///   bằng tổng các `Consume` đơn tương ứng, không rẻ hơn, không đắt hơn.
+///   Kế toán thread: `consumed_count += Σ op_count_i`, `consumed_nanogic += required`.
+///   Mọi ràng buộc khác của nhánh `Consume` áp NGUYÊN — hai biến thể đi qua CÙNG một
+///   thân `validate_consume` (consume.ak ▸ `consume_refs` / `consume_charge`).
+///
+///   VÌ SAO TĂNG NGẶT chứ không chỉ "phân biệt": một tập cặp chỉ có ĐÚNG MỘT cách viết
+///   hợp lệ (dạng chuẩn tắc), cùng lý do `sorted_strict_op_types` của bảng giá; và tăng
+///   ngặt bao hàm "không trùng" với chi phí O(n) thay vì O(n²).
+///
+///   `EngageDatum` KHÔNG đổi — biến thể này chỉ đổi CÁCH cộng vào hai trường đã có.
 pub type ConsumeRedeemer {
   Consume {
     op_type   : Int,
@@ -176,6 +196,20 @@ pub type ConsumeRedeemer {
   }
   BindDID
   CloseThread
+  ConsumeMany {
+    pairs     : List<OpPair>,
+    price_ref : OutputReference,
+    vault_ref : OutputReference,
+  }
+}
+
+/// Một cặp (loại nghiệp vụ, số lượng) trong redeemer `ConsumeMany`. Constr 0, 2 trường.
+/// Kiểu có TÊN thay vì tuple: tuple của Aiken mã hoá thành một danh sách Plutus Data
+/// không mang chỉ số constructor, và phía off-chain phải tự nhớ thứ tự hai số. Ở đây
+/// tên trường đọc thẳng từ lược đồ.
+pub type OpPair {
+  op_type  : Int,
+  op_count : Int,
 }
 
 /// Redeemer cho beacon PriceParam (committee/keeper post giá mới).

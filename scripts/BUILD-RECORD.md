@@ -19,7 +19,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `consume.consume` | `83cb86d3ed48c5301d7cbab42a09105facf7322db4d223357b9d3d1a` |
+| `consume.consume` | `12bda3036f9ad9f6b1ea657f6688ed4126cdb303e11aa8e15ae7476b` |
 | `price_nft.price_nft` | `16e849f1952237ccc3baf57c7e35bcff9c0756e97e11671c3dee6287` |
 | `price_param.price_param` | `afd75ea36b11aecb0854949f5dd14b4fd206f41739817b0ba18af755` |
 

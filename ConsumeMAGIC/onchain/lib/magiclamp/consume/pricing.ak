@@ -17,7 +17,7 @@
 // lại bất biến đó on-chain (defense-in-depth) trước khi dùng — không tin mù datum.
 
 use aiken/collection/list
-use magiclamp/consume/types.{OpPrice, PriceParam}
+use magiclamp/consume/types.{OpPair, OpPrice, PriceParam}
 
 /// Scale factor Q (1 MAGIC = 1e9 nanogic), khớp ProtocolUtils.Q.
 pub const q: Int = 1_000_000_000
@@ -352,6 +352,86 @@ pub fn required_for(pp: PriceParam, op_type: Int, op_count: Int) -> Option<Int> 
     Some(op) -> Some(op.base_price * op.demand_mult * op_count / q)
     None -> None
   }
+}
+
+/// Trần độ dài `pairs` của redeemer `ConsumeMany`. Gương off-chain: `MAX_CONSUME_PAIRS`
+/// (pricing/src/price.ts).
+///
+/// Số đo (aiken v1.1.21, 2026-10-03, bảng giá ĐẦY 16 dòng, op_type dồn về cuối bảng =
+/// xấu nhất cho `lookup_row`; MỘT invocation = `consume_many_at_cap_happy` trừ
+/// `probe_fixture_only_many_at_cap`):
+///   8 cặp  ≈ 3,41M mem / 1,10B cpu  (21% / 11% trần tx 16,5M / 10B)
+///   16 cặp ≈ 4,50M mem / 1,45B cpu  (27% / 15%)   — đo với trần tạm 16
+/// Mỗi cặp thêm ≈ 136k mem; phần lớn chi phí là `valid_param` trên bảng 16 dòng, KHÔNG
+/// phụ thuộc số cặp. Nên trần KHÔNG bị ExUnit của riêng `consume` ép.
+///
+/// VÌ SAO 8 chứ không 16 (= `max_op_prices`, cận tự nhiên vì op_type tăng ngặt):
+///   (1) phía vault co-spend trong CÙNG tx có ca xấu nhất (32 batch, Gen v2 checkpoint)
+///       CHƯA đo ở đây — giữ ~1,1M mem cho nó là chiều fail-closed;
+///   (2) 8 phủ mọi op_type đang định nghĩa (1–4 và 7) — không bên dùng nào phải tách tx;
+///   (3) ở 16 cổng độ dài là đột biến TƯƠNG ĐƯƠNG (tăng ngặt + bảng ≤ 16 dòng đã chặn),
+///       không bài nào canh được nó. Ở 8 nó có tải (`consume_many_over_cap_fail`).
+/// Nâng trần = đổi hash `consume` (deploy lại), cùng giá với mọi đổi apply khác.
+pub const max_consume_pairs: Int = 8
+
+/// HÌNH DẠNG hợp lệ của `pairs` (`ConsumeMany`): không rỗng · ≤ `max_consume_pairs` ·
+/// `op_type` TĂNG NGẶT · mỗi `op_count` ≥ 1. Không đọc bảng giá — phép tra giá nằm ở
+/// `required_for_pairs`; tách ra để mỗi cổng có một cái tên đột biến được.
+pub fn valid_pairs(pairs: List<OpPair>) -> Bool {
+  when pairs is {
+    // Rỗng ⇒ một lượt "tiêu 0" chỉ để làm mới `last_epoch` — không có nghiệp vụ nào.
+    [] -> False
+    [p, ..rest] ->
+      and {
+        list.length(pairs) <= max_consume_pairs,
+        p.op_count >= 1,
+        pairs_increasing_after(p.op_type, rest),
+      }
+  }
+}
+
+fn pairs_increasing_after(prev: Int, rest: List<OpPair>) -> Bool {
+  when rest is {
+    [] -> True
+    [x, ..tail] ->
+      and {
+        x.op_type > prev,
+        x.op_count >= 1,
+        pairs_increasing_after(x.op_type, tail),
+      }
+  }
+}
+
+/// required = Σ_i ⌊ base_price_i × demand_mult_i × op_count_i / Q ⌋ — SÀN TỪNG CẶP RỒI
+/// CỘNG. None nếu một `op_type` vắng trong bảng. Không kiểm hình dạng (`valid_pairs`).
+///
+/// VÌ SAO SÀN TỪNG CẶP (chốt 2026-10-03, phía MAGIC): mỗi cặp đúng bằng `required_for`
+/// của một `Consume` đơn ⇒ gộp N lượt vào một tx KHÔNG đổi giá. Cộng rồi sàn một lần
+/// cho ra số LỚN HƠN tới (n−1) nanogic, nên người gom lượt bị thu thêm so với người
+/// tiêu từng lượt — và hai đường tính cho cùng một tập nghiệp vụ hai con số khác nhau.
+/// Vector phân biệt hai quy tắc: `TV-PAIRS-001` (tests/vectors.ts) ↔
+/// `required_for_pairs_floor_per_pair_vector` dưới đây.
+/// P8: off-chain `requiredForPairs` (pricing/src/price.ts) và `requiredFromBeaconPairs`
+/// (offchain/src/consume.ts) dùng CÙNG phép này.
+pub fn required_for_pairs(pp: PriceParam, pairs: List<OpPair>) -> Option<Int> {
+  // SÀN TỪNG CẶP: mỗi cặp qua `required_for` rồi mới cộng.
+  when pairs is {
+    [] -> Some(0)
+    [p, ..rest] ->
+      when required_for(pp, p.op_type, p.op_count) is {
+        None -> None
+        Some(r) ->
+          when required_for_pairs(pp, rest) is {
+            None -> None
+            Some(s) -> Some(r + s)
+          }
+      }
+  }
+}
+
+/// Σ op_count của `pairs` — mức tăng `consumed_count` của một lượt `ConsumeMany`.
+pub fn sum_pair_counts(pairs: List<OpPair>) -> Int {
+  list.foldl(pairs, 0, fn(p, acc) { acc + p.op_count })
 }
 
 // ── Tests thuần (số học giá) ──────────────────────────────────
@@ -848,4 +928,88 @@ test fixed_price_op_types_contains_rotate() {
   // Ghim NỘI DUNG của hằng, không chỉ ghim hành vi: đổi danh sách mà quên đổi luật
   // (hoặc ngược lại) thì bài này đỏ trước khi một beacon sai lên chuỗi.
   list.has(fixed_price_op_types, 7) && !list.has(fixed_price_op_types, 8)
+}
+
+// ── ConsumeMany: required_for_pairs / valid_pairs (THÊM 2026-10-03) ──────────
+// Bảng có PHẦN DƯ ở cả hai dòng: 11_000_007,7 và 1_300_002,6 nanogic một op. Tổng phần
+// dư 1,3 ≥ 1 ⇒ cộng-rồi-sàn cho KẾT QUẢ KHÁC sàn-từng-cặp. Bảng chia hết thì hai quy
+// tắc trùng nhau và bài không phân biệt được gì.
+fn pp_frac() -> PriceParam {
+  PriceParam {
+    op_prices: [
+      OpPrice { op_type: 1, base_price: 10_000_007, demand_mult: 1_100_000_000 },
+      OpPrice { op_type: 2, base_price: 1_000_002, demand_mult: 1_300_000_000 },
+    ],
+    m_min: 500_000_000,
+    m_max: 2_000_000_000,
+    epoch: 100,
+  }
+}
+
+// TV-PAIRS-001 (tests/vectors.ts): sàn-từng-cặp = 12_300_009; cộng-rồi-sàn = 12_300_010.
+test required_for_pairs_floor_per_pair_vector() {
+  let pairs = [OpPair { op_type: 1, op_count: 1 }, OpPair { op_type: 2, op_count: 1 }]
+  and {
+    valid_param(pp_frac()),
+    required_for_pairs(pp_frac(), pairs) == Some(12_300_009),
+    required_for_pairs(pp_frac(), pairs) != Some(12_300_010),
+  }
+}
+
+// TV-PAIRS-002: sàn-từng-cặp = 25_900_022 (22_000_015 + 3_900_007); cộng-rồi-sàn = 25_900_023.
+test required_for_pairs_floor_per_pair_vector_counts() {
+  let pairs = [OpPair { op_type: 1, op_count: 2 }, OpPair { op_type: 2, op_count: 3 }]
+  and {
+    required_for_pairs(pp_frac(), pairs) == Some(25_900_022),
+    sum_pair_counts(pairs) == 5,
+  }
+}
+
+// Một cặp ⟹ đúng bằng `required_for` của `Consume` đơn (hai nhánh không lệch giá).
+test required_for_pairs_single_equals_required_for() {
+  required_for_pairs(pp_frac(), [OpPair { op_type: 1, op_count: 3 }]) == required_for(
+    pp_frac(),
+    1,
+    3,
+  )
+}
+
+test required_for_pairs_unknown_op_none() {
+  required_for_pairs(
+    pp_frac(),
+    [OpPair { op_type: 1, op_count: 1 }, OpPair { op_type: 9, op_count: 1 }],
+  ) == None
+}
+
+test valid_pairs_shapes() {
+  and {
+    valid_pairs([OpPair { op_type: 1, op_count: 1 }]),
+    valid_pairs([OpPair { op_type: 1, op_count: 1 }, OpPair { op_type: 2, op_count: 4 }]),
+    // rỗng
+    !valid_pairs([]),
+    // trùng
+    !valid_pairs([OpPair { op_type: 1, op_count: 1 }, OpPair { op_type: 1, op_count: 1 }]),
+    // giảm
+    !valid_pairs([OpPair { op_type: 2, op_count: 1 }, OpPair { op_type: 1, op_count: 1 }]),
+    // op_count 0 ở cặp ĐẦU và ở cặp SAU (hai chỗ kiểm khác nhau)
+    !valid_pairs([OpPair { op_type: 1, op_count: 0 }]),
+    !valid_pairs([OpPair { op_type: 1, op_count: 1 }, OpPair { op_type: 2, op_count: 0 }]),
+    !valid_pairs([OpPair { op_type: 1, op_count: -1 }]),
+  }
+}
+
+fn pairs_run(from: Int, n: Int) -> List<OpPair> {
+  if n <= 0 {
+    []
+  } else {
+    [OpPair { op_type: from, op_count: 1 }, ..pairs_run(from + 1, n - 1)]
+  }
+}
+
+// Đúng trần thì qua, quá trần một cặp thì không — đo trên HÌNH DẠNG, không cần bảng giá.
+test valid_pairs_cap() {
+  and {
+    valid_pairs(pairs_run(1, max_consume_pairs)),
+    !valid_pairs(pairs_run(1, max_consume_pairs + 1)),
+  }
 }

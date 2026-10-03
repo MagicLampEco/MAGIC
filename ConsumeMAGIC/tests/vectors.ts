@@ -416,3 +416,40 @@ export const TV_WINDOW_ORIGIN = {
   ],
   forgot_origin: { t_ms: 1_790_553_600_000n, window: 4_144n },
 } as const;
+
+// ══════════════════════════════════════════════════════════════
+// ConsumeMany — required SÀN TỪNG CẶP rồi cộng (TV-PAIRS-*), THÊM 2026-10-03
+// Nguồn on-chain: ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak ▸
+//   `required_for_pairs` (bài `required_for_pairs_floor_per_pair_vector[_counts]`) và
+//   validators/consume.ak ▸ `consume_many_happy` / `consume_many_sum_then_floor_tx_fail`.
+//   required = Σ_i ⌊ base_price_i × demand_mult_i × op_count_i / Q ⌋
+// Bảng có PHẦN DƯ ở cả hai dòng (11_000_007,7 và 1_300_002,6 ng/op) nên tổng phần dư
+// ≥ 1 ⇒ `sum_then_floor` (cộng rồi sàn một lần) KHÁC `required`. Bảng chia hết thì hai
+// quy tắc trùng nhau và vector không phân biệt được gì.
+// ══════════════════════════════════════════════════════════════
+export const TV_PAIRS_TABLE = {
+  1: { base_price: 10_000_007n, demand_mult: 1_100_000_000n },
+  2: { base_price: 1_000_002n, demand_mult: 1_300_000_000n },
+} as const;
+
+export const TV_PAIRS_001 = {
+  id:             "TV-PAIRS-001",
+  spec_ref:       "ConsumeMAGIC pricing.ak ▸ required_for_pairs",
+  description:    "[(1,1),(2,1)]: sàn từng cặp 11_000_007 + 1_300_002; cộng-rồi-sàn cho +1",
+  pairs:          [{ opType: 1, opCount: 1n }, { opType: 2, opCount: 1n }],
+  per_pair:       [11_000_007n, 1_300_002n],
+  required:       12_300_009n,
+  sum_then_floor: 12_300_010n,
+  count_delta:    2n,
+} as const;
+
+export const TV_PAIRS_002 = {
+  id:             "TV-PAIRS-002",
+  spec_ref:       "ConsumeMAGIC pricing.ak ▸ required_for_pairs",
+  description:    "[(1,2),(2,3)]: sàn từng cặp 22_000_015 + 3_900_007; cộng-rồi-sàn cho +1",
+  pairs:          [{ opType: 1, opCount: 2n }, { opType: 2, opCount: 3n }],
+  per_pair:       [22_000_015n, 3_900_007n],
+  required:       25_900_022n,
+  sum_then_floor: 25_900_023n,
+  count_delta:    5n,
+} as const;

@@ -39,11 +39,13 @@ import {
   ownerRefToString, ownerCredentialOf, OwnerAuthError,
   type OwnerAuth, type OwnerRef,
 } from "@magiclamp/protocol-utils";
-import { Q, assertValidPriceParam } from "@magiclamp/consumemagic-pricing";
+import {
+  Q, assertValidPriceParam, assertValidPairs, sumPairCounts, type OpPairLike,
+} from "@magiclamp/consumemagic-pricing";
 import {
   ConsumeRedeemerSchema,
   encodeEngageDatum, decodeEngageDatum, decodePriceParam,
-  encodeEngageMintRedeemer, encodeBindDidRedeemer,
+  encodeEngageMintRedeemer, encodeBindDidRedeemer, encodeConsumeManyRedeemer,
   type EngageDatumT, type PriceParamT, type ConsumeRedeemerT,
   type OutputReferenceT,
 } from "./types.js";
@@ -252,16 +254,60 @@ export function requiredFromBeacon(
  * KHÔNG mint ở đây: mint thread Engage là tx RIÊNG (`buildMintEngageTx`).
  */
 export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResult> {
+  return buildConsumeCore(params, { kind: "single", opType: params.opType, opCount: params.opCount });
+}
+
+// ── ConsumeMany (redeemer constr 3, THÊM 2026-10-03) ──────────────────────────
+
+/** Tham số của `buildConsumeManyTx`: y hệt `ConsumeParams`, thay `opType`/`opCount` bằng `pairs`. */
+export type ConsumeManyParams = Omit<ConsumeParams, "opType" | "opCount"> & {
+  /** Cặp (op_type, op_count), op_type TĂNG NGẶT, 1..MAX_CONSUME_PAIRS cặp, op_count ≥ 1. */
+  pairs: ReadonlyArray<OpPairLike>;
+};
+
+/**
+ * required của `ConsumeMany` từ beacon = Σ_i `requiredFromBeacon(pp, op_type_i, op_count_i)`
+ * — SÀN TỪNG CẶP rồi cộng, gương on-chain `pricing.required_for_pairs`.
+ * @throws PRICE-020..024 (hình dạng `pairs`), CONSUME-007 (op_type vắng), CONSUME-008.
+ */
+export function requiredFromBeaconPairs(
+  pp: PriceParamT,
+  pairs: ReadonlyArray<OpPairLike>,
+): bigint {
+  assertValidPairs(pairs);
+  return pairs.reduce((acc, p) => acc + requiredFromBeacon(pp, p.opType, p.opCount), 0n);
+}
+
+/**
+ * Dựng tx tiêu MAGIC cho NHIỀU loại nghiệp vụ trong một lượt (redeemer `ConsumeMany`).
+ * Cùng thân với `buildConsumeTx` — mọi cổng (beacon, stale, CONSUME-010, Gen v2
+ * `checkGenV2Burn`, cửa sổ kỳ, ref-script) áp nguyên; khác ở redeemer và ở cách ra
+ * `requiredNanogic` (sàn từng cặp) cùng mức tăng `consumed_count` (Σ op_count).
+ */
+export async function buildConsumeManyTx(params: ConsumeManyParams): Promise<ConsumeResult> {
+  return buildConsumeCore(params, { kind: "many", pairs: params.pairs });
+}
+
+/** Một lượt tiêu: một cặp (`Consume`, constr 0) hoặc nhiều cặp (`ConsumeMany`, constr 3). */
+type ConsumeLine =
+  | { kind: "single"; opType: number; opCount: bigint }
+  | { kind: "many"; pairs: ReadonlyArray<OpPairLike> };
+
+async function buildConsumeCore(
+  params: Omit<ConsumeParams, "opType" | "opCount">,
+  line: ConsumeLine,
+): Promise<ConsumeResult> {
   const {
     lucid, engageUtxo, vaultUtxo, priceBeaconUtxo,
-    consumeScript, vaultScript, opType, opCount,
+    consumeScript, vaultScript,
     vaultBurnRedeemerCbor, vaultOutDatumCbor, vaultOutAssets,
     vaultKind, rateBeaconUtxo, wakemeVaultUtxo,
     ownerSignerKeyHash, sponsoredNoThreadSignature = false, collateralUtxo, ownerAuth,
     engageNftUnit, consumeRefUtxo, vaultRefUtxo, network, tipPosixMs,
   } = params;
 
-  if (opCount < 1n) throw new Error("CONSUME-001: op_count phải ≥ 1");
+  if (line.kind === "single" && line.opCount < 1n) throw new Error("CONSUME-001: op_count phải ≥ 1");
+  if (line.kind === "many") assertValidPairs(line.pairs);
 
   // ── ref-script phải ĐÚNG script, không chỉ "một UTxO có scriptRef" ───────────
   //    Đưa nhầm UTxO ref-script làm tx chết ở phase-1 với "MissingScriptWitness" —
@@ -296,7 +342,12 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
   assertValidPriceParam(pp);
 
   // ── required (giá có thẩm quyền từ beacon, fold-floor-once — P8) ─────────────
-  const requiredNanogic = requiredFromBeacon(pp, opType, opCount);
+  const requiredNanogic =
+    line.kind === "single"
+      ? requiredFromBeacon(pp, line.opType, line.opCount)
+      : requiredFromBeaconPairs(pp, line.pairs);
+  // Mức tăng `consumed_count`: op_count (Consume) hoặc Σ op_count (ConsumeMany).
+  const countDelta = line.kind === "single" ? line.opCount : sumPairCounts(line.pairs);
   if (requiredNanogic <= 0n) {
     throw new Error(`CONSUME-003: required=${requiredNanogic} (op_count<1 hoặc base_price 0)`);
   }
@@ -361,23 +412,32 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
 
   const newEngageDatum: EngageDatumT = {
     owner: oldDatum.owner,
-    consumed_count: oldDatum.consumed_count + opCount,
+    consumed_count: oldDatum.consumed_count + countDelta,
     last_epoch: currentEpoch,
     did_commit: oldDatum.did_commit,                            // IMMUTABLE
     consumed_nanogic: oldDatum.consumed_nanogic + requiredNanogic, // bất biến (b)
   };
 
   // ── Consume redeemer (Engage input) ─────────────────────────────────────────
-  const consumeRedeemerVal: ConsumeRedeemerT = {
-    op_type: BigInt(opType),
-    op_count: opCount,
-    price_ref: utxoToRef(priceBeaconUtxo),
-    vault_ref: utxoToRef(vaultUtxo),
-  };
-  const consumeRedeemer = Data.to(
-    consumeRedeemerVal,
-    ConsumeRedeemerSchema as unknown as ConsumeRedeemerT,
-  );
+  let consumeRedeemer: string;
+  if (line.kind === "single") {
+    const consumeRedeemerVal: ConsumeRedeemerT = {
+      op_type: BigInt(line.opType),
+      op_count: line.opCount,
+      price_ref: utxoToRef(priceBeaconUtxo),
+      vault_ref: utxoToRef(vaultUtxo),
+    };
+    consumeRedeemer = Data.to(
+      consumeRedeemerVal,
+      ConsumeRedeemerSchema as unknown as ConsumeRedeemerT,
+    );
+  } else {
+    consumeRedeemer = encodeConsumeManyRedeemer({
+      pairs: line.pairs.map((p) => ({ op_type: BigInt(p.opType), op_count: p.opCount })),
+      price_ref: utxoToRef(priceBeaconUtxo),
+      vault_ref: utxoToRef(vaultUtxo),
+    });
+  }
 
   // ── Engage output: VALUE BẢO TOÀN tuyệt đối (copy y nguyên assets input) ─────
   // Cổng định danh mirror `single_thread_nft`: policy của thread NFT PHẢI == script
@@ -496,7 +556,10 @@ export async function buildConsumeTx(params: ConsumeParams): Promise<ConsumeResu
     : await txBuilder.complete(collateralOpts);
 
   const summary =
-    `consume op_type=${opType} ×${opCount} | required=${requiredNanogic} ng | ` +
+    (line.kind === "single"
+      ? `consume op_type=${line.opType} ×${line.opCount}`
+      : `consume-many ${line.pairs.map((p) => `${p.opType}×${p.opCount}`).join(",")}`) +
+    ` | required=${requiredNanogic} ng | ` +
     `epoch=${currentEpoch} | thread=${resolvedNftUnit} | ` +
     `count ${oldDatum.consumed_count}→${newEngageDatum.consumed_count} | ` +
     `nanogic ${oldDatum.consumed_nanogic}→${newEngageDatum.consumed_nanogic}`;

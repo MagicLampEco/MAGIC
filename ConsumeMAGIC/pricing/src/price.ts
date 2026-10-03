@@ -237,6 +237,80 @@ export function requiredBurn(
   return total;
 }
 
+// ── ConsumeMany (redeemer constr 3, THÊM 2026-10-03) ──────────────────────────
+//
+// Gương của on-chain `pricing.max_consume_pairs` / `valid_pairs` / `required_for_pairs`
+// (ConsumeMAGIC/onchain/lib/magiclamp/consume/pricing.ak). Đổi một bên thì đổi bên kia
+// trong cùng commit (P8).
+
+/** Trần độ dài `pairs` của `ConsumeMany` — gương `pricing.max_consume_pairs`. */
+export const MAX_CONSUME_PAIRS = 8;
+
+/** Một cặp (loại nghiệp vụ, số lượng) — gương `OpPair` (types.ak). */
+export interface OpPairLike {
+  readonly opType: number;
+  readonly opCount: bigint;
+}
+
+/**
+ * Hình dạng hợp lệ của `pairs` — gương `pricing.valid_pairs`: không rỗng ·
+ * ≤ MAX_CONSUME_PAIRS · opType TĂNG NGẶT (không trùng, không lộn thứ tự) · opCount ≥ 1.
+ * Ném trước khi dựng tx: on-chain mỗi vế là một `expect`, sai ở đây là tx chết ở phase-2.
+ *
+ * @throws PRICE-020 rỗng · PRICE-021 quá trần · PRICE-022 opCount < 1 ·
+ *         PRICE-023 opType không tăng ngặt · PRICE-024 opType không phải số nguyên an toàn.
+ */
+export function assertValidPairs(pairs: ReadonlyArray<OpPairLike>): void {
+  if (pairs.length === 0) {
+    throw new Error(
+      "PRICE-020: ConsumeMany cần ít nhất một cặp (on-chain `valid_pairs` từ chối danh sách rỗng).",
+    );
+  }
+  if (pairs.length > MAX_CONSUME_PAIRS) {
+    throw new Error(
+      `PRICE-021: ConsumeMany nhận tối đa ${MAX_CONSUME_PAIRS} cặp, nhận ${pairs.length}. ` +
+        `Tách thành nhiều giao dịch.`,
+    );
+  }
+  let prev: number | undefined;
+  pairs.forEach((p, i) => {
+    if (!Number.isSafeInteger(p.opType)) {
+      throw new Error(`PRICE-024: cặp #${i} có op_type ${p.opType} không phải số nguyên an toàn.`);
+    }
+    if (p.opCount < 1n) {
+      throw new Error(`PRICE-022: cặp #${i} (op_type ${p.opType}) có op_count ${p.opCount} < 1.`);
+    }
+    if (prev !== undefined && p.opType <= prev) {
+      throw new Error(
+        `PRICE-023: op_type phải TĂNG NGẶT; cặp #${i} có ${p.opType} sau ${prev}. ` +
+          `Gộp các cặp trùng loại và sắp tăng dần.`,
+      );
+    }
+    prev = p.opType;
+  });
+}
+
+/**
+ * required của `ConsumeMany` = Σ_i ⌊ base_i × demand_i × count_i / Q ⌋ — SÀN TỪNG CẶP
+ * rồi cộng (gương `pricing.required_for_pairs`). KHÔNG cộng rồi sàn một lần: cách đó
+ * cho số lớn hơn tới (n−1) nanogic, và validator đòi Σburns == required (dấu bằng).
+ * Bằng đúng tổng `requiredForOp` của từng cặp ⇒ cùng giá với N lượt `Consume` đơn.
+ *
+ * @throws PRICE-020..024 (hình dạng), PRICE-001 (op_type vắng), PRICE-002.
+ */
+export function requiredForPairs(
+  pairs: ReadonlyArray<OpPairLike>,
+  priceTable: PriceTable = MVP_PRICE_TABLE,
+): bigint {
+  assertValidPairs(pairs);
+  return requiredBurn(pairs, priceTable);
+}
+
+/** Σ opCount — mức tăng `consumed_count` của một lượt `ConsumeMany` (gương `sum_pair_counts`). */
+export function sumPairCounts(pairs: ReadonlyArray<OpPairLike>): bigint {
+  return pairs.reduce((acc, p) => acc + p.opCount, 0n);
+}
+
 // ── valid_param off-chain — CỔNG TRƯỚC KHI POST BEACON ────────────────────────
 //
 // VÌ SAO CẦN: on-chain `pricing.valid_param` chạy ở lúc TIÊU, tức bảng giá sai chỉ lộ

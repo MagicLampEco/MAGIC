@@ -74,8 +74,8 @@ use cardano/transaction.{
 use magiclamp/consume/owner_auth.{owner_authorized}
 use magiclamp/consume/pricing
 use magiclamp/consume/types.{
-  BindDID, BurnEngage, CloseThread, Consume, ConsumeRedeemer, EngageDatum,
-  EngageMintRedeemer, MintEngage, OpPrice, PriceParam,
+  BindDID, BurnEngage, CloseThread, Consume, ConsumeMany, ConsumeRedeemer,
+  EngageDatum, EngageMintRedeemer, MintEngage, OpPair, OpPrice, PriceParam,
 }
 use magiclamp/consume/util
 use magiclamp/consume/window_origin_fixtures
@@ -116,9 +116,17 @@ validator consume(
     when redeemer is {
       // vault_ref của invocation này được dùng qua distinct_vault_refs (aggregate);
       // không cần tham chiếu trực tiếp ở đây.
-      Consume { op_type, op_count, price_ref, vault_ref: _ } ->
+      Consume { price_ref, .. } ->
         validate_consume(
-          tx, own_hash, in_datum, op_type, op_count, price_ref,
+          tx, own_hash, in_datum, redeemer, price_ref,
+          price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
+          max_price_stale, ms_per_epoch, price_param_script_hash, window_origin_ms,
+        )
+      // Nhiều loại nghiệp vụ trong một lượt (constr 3). CÙNG thân `validate_consume`:
+      // khác biệt duy nhất nằm ở `consume_charge` (cách ra Σ op_count và Σ required).
+      ConsumeMany { price_ref, .. } ->
+        validate_consume(
+          tx, own_hash, in_datum, redeemer, price_ref,
           price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
           max_price_stale, ms_per_epoch, price_param_script_hash, window_origin_ms,
         )
@@ -145,8 +153,7 @@ fn validate_consume(
   tx        : Transaction,
   own_hash  : ByteArray,
   in_datum  : EngageDatum,
-  op_type   : Int,
-  op_count  : Int,
+  own_rd    : ConsumeRedeemer,
   price_ref : OutputReference,
   price_nft_policy  : PolicyId,
   price_nft_name    : AssetName,
@@ -157,7 +164,8 @@ fn validate_consume(
   price_param_script_hash : ByteArray,
   window_origin_ms  : Int,
 ) -> Bool {
-    expect op_count >= 1
+    // `expect op_count >= 1` của bản cũ nay nằm trong `consume_charge` (gọi ở dưới,
+    // cùng chỗ tính `required`) — một nguồn cho cả `Consume` lẫn `ConsumeMany`.
 
     // ── VÁ #1 (NGHIÊM TRỌNG) — DOUBLE-SATISFACTION XUYÊN-INSTANCE ──────────────
     //    Đặt SỚM (fail-fast, trước mọi tính toán giá): mọi input do SCRIPT khoá phải
@@ -206,7 +214,10 @@ fn validate_consume(
     //    Chỉ để ép op_type CÓ trong beacon + required > 0 cho input đang spend; KHÔNG
     //    dùng làm mục tiêu khớp burn (xem (4) bên dưới — chống under-charge khi nhiều
     //    Engage co-spend chung 1 vault).
-    expect Some(required) = pricing.required_for(pp, op_type, op_count)
+    //    `consume_charge` ép op_count ≥ 1 (Consume) / `valid_pairs` (ConsumeMany) và
+    //    op_type có trong beacon. `required > 0` là thắt lưng: GATE của `valid_param`
+    //    (base×m_min ≥ q, demand ≥ m_min) đã bảo đảm mọi cặp hợp lệ có giá ≥ 1.
+    let (_, required) = consume_charge(own_rd, pp)
     expect required > 0
 
     // ── ENGAGE state: ghép 1-1 input↔output, KHÔNG so tổng ─────────────────────
@@ -375,7 +386,7 @@ fn did_len_ok(did: ByteArray) -> Bool {
 // DOUBLE-SATISFACTION: mọi bất biến dưới đây cục bộ theo `own_hash` và bị kẹp bởi
 // `#in == #out == 1`, nên một tx phục vụ đúng MỘT thread. Trộn một input BindDID với
 // một input Consume cùng script cũng chết: nhánh BindDID thấy `n_in == 2`, còn nhánh
-// Consume thấy redeemer không phải `Consume` ở `expect Consume {..}`.
+// Consume thấy redeemer không phải `Consume`/`ConsumeMany` ở `consume_refs`.
 // ═══════════════════════════════════════════════════════════════
 /// 🔴 GIỚI HẠN PHẢI ĐỌC TRƯỚC KHI DÙNG `did_commit` LÀM ĐẦU VÀO CHO BẤT CỨ THỨ GÌ
 ///
@@ -739,8 +750,8 @@ fn distinct_vault_refs_over_engage_inputs(
     [],
     fn(inp, acc) {
       if util.is_at_script(inp.output.address, own_hash) {
-        expect Consume { vault_ref, .. } =
-          find_consume_redeemer(tx, inp.output_reference)
+        let (_, vault_ref) =
+          consume_refs(find_consume_redeemer(tx, inp.output_reference))
         if list.has(acc, vault_ref) {
           acc
         } else {
@@ -841,6 +852,37 @@ fn engage_value_preserved(tx: Transaction, own_hash: ByteArray) -> Bool {
   let v_out = sum_value_outputs(tx.outputs, own_hash)
   let diff = assets.merge(v_in, assets.negate(v_out))
   assets.is_zero(diff)
+}
+
+/// (price_ref, vault_ref) của một redeemer TIÊU MAGIC. FAIL ở `BindDID`/`CloseThread`
+/// — trộn chúng vào một tx tiêu vẫn chết như bản `expect Consume {..}` cũ.
+fn consume_refs(rd: ConsumeRedeemer) -> (OutputReference, OutputReference) {
+  when rd is {
+    Consume { price_ref, vault_ref, .. } -> (price_ref, vault_ref)
+    ConsumeMany { price_ref, vault_ref, .. } -> (price_ref, vault_ref)
+    _ -> fail
+  }
+}
+
+/// (Σ op_count, Σ required) của một redeemer TIÊU MAGIC — NGUỒN DUY NHẤT cho cả cổng
+/// của invocation (`validate_consume`) lẫn kế toán theo cặp (`enforce_engagement`).
+/// Hai biến thể không có hai bản logic: `Consume` là đúng thân cũ (op_count ≥ 1 +
+/// `required_for`); `ConsumeMany` là `valid_pairs` + `required_for_pairs` (sàn TỪNG cặp
+/// rồi cộng) + `sum_pair_counts`.
+fn consume_charge(rd: ConsumeRedeemer, pp: PriceParam) -> (Int, Int) {
+  when rd is {
+    Consume { op_type, op_count, .. } -> {
+      expect op_count >= 1
+      expect Some(required) = pricing.required_for(pp, op_type, op_count)
+      (op_count, required)
+    }
+    ConsumeMany { pairs, .. } -> {
+      expect pricing.valid_pairs(pairs)
+      expect Some(required) = pricing.required_for_pairs(pp, pairs)
+      (pricing.sum_pair_counts(pairs), required)
+    }
+    _ -> fail
+  }
 }
 
 /// Redeemer Consume gắn với 1 Engage input (purpose Spend ref).
@@ -956,16 +998,17 @@ fn enforce_engagement(
         // `expect`, không `let`: redeemer của một Engage input khác có thể là
         // `BindDID`. Trộn BindDID vào một tx Consume ⇒ CHẾT ở đây (fail-closed) —
         // BindDID không mang op_type/op_count nên không có gì để tính giá.
-        expect Consume { op_type, op_count, price_ref: pr_i, .. } =
-          find_consume_redeemer(tx, inp.output_reference)
-        expect op_count >= 1
+        //   `consume_refs` / `consume_charge` FAIL ở mọi redeemer không phải
+        //   `Consume`/`ConsumeMany` — cùng hiệu lực với `expect Consume {..}` của bản cũ.
+        let rd_i = find_consume_redeemer(tx, inp.output_reference)
+        let (pr_i, _) = consume_refs(rd_i)
         // Mọi Engage input PHẢI cùng beacon — không trộn nhiều bảng giá trong 1 tx.
         expect pr_i == price_ref
-        expect Some(req_i) = pricing.required_for(pp, op_type, op_count)
+        let (count_i, req_i) = consume_charge(rd_i, pp)
         // Kế toán THEO CẶP. Hai trục song song, giữ nguyên lý do cũ: `count` không
         // phân biệt op rẻ / op đắt, nên một mình nó cho phép trả giá op rẻ mà app
         // đọc "+1 lượt" rồi cấp dịch vụ op đắt.
-        expect ed_out.consumed_count == ed_in.consumed_count + op_count
+        expect ed_out.consumed_count == ed_in.consumed_count + count_i
         expect ed_out.consumed_nanogic == ed_in.consumed_nanogic + req_i
         acc + req_i
       } else {
@@ -2858,6 +2901,17 @@ test redeemer_constr_index_pinned() {
   let Pair(ix_bind, fields_bind) = builtin.un_constr_data(bind_d)
   let close_d: Data = rd_as_data(CloseThread)
   let Pair(ix_close, fields_close) = builtin.un_constr_data(close_d)
+  let many_d: Data =
+    rd_as_data(
+      ConsumeMany {
+        pairs: [OpPair { op_type: 1, op_count: 1 }],
+        price_ref: ct_price_ref(),
+        vault_ref: util.mk_ref(0),
+      },
+    )
+  let Pair(ix_many, fields_many) = builtin.un_constr_data(many_d)
+  let pair_d: Data = OpPair { op_type: 1, op_count: 1 }
+  let Pair(ix_pair, fields_pair) = builtin.un_constr_data(pair_d)
   and {
     ix_consume == 0,
     list.length(fields_consume) == 4,
@@ -2865,6 +2919,10 @@ test redeemer_constr_index_pinned() {
     list.length(fields_bind) == 0,
     ix_close == 2,
     list.length(fields_close) == 0,
+    ix_many == 3,
+    list.length(fields_many) == 3,
+    ix_pair == 0,
+    list.length(fields_pair) == 2,
   }
 }
 
@@ -4090,4 +4148,247 @@ test consume_origin_mainnet_happy() {
 // ÂM: cùng thời điểm, validator nhận gốc 0 (quên gốc) ⟹ epoch lệch ⟹ REJECT.
 test consume_origin_forgotten_fail() fail {
   ct_happy_at(0, window_origin_fixtures.mainnet_origin_ms)
+}
+
+// ══════════════════════════════════════════════════════════════
+// ConsumeMany (redeemer constr 3, THÊM 2026-10-03) — tiêu nhiều loại nghiệp vụ
+// trong MỘT lượt. Cặp dương/âm cho từng cổng của `pricing.valid_pairs`, cho quy tắc
+// sàn-TỪNG-cặp, cho đẳng thức Σburns == required, và cho trần độ dài.
+// ══════════════════════════════════════════════════════════════
+
+/// Bảng giá có PHẦN DƯ: op 1 = 11_000_007,7 ng/op, op 2 = 1_300_002,6 ng/op. Cùng
+/// bảng với `pricing.pp_frac` (TV-PAIRS-001/002, tests/vectors.ts). Tổng phần dư của
+/// cặp [(1,1),(2,1)] là 1,3 ⇒ sàn-từng-cặp (12_300_009) ≠ cộng-rồi-sàn (12_300_010).
+fn ct_pp_frac(epoch: Int) -> PriceParam {
+  PriceParam {
+    op_prices: [
+      OpPrice { op_type: 1, base_price: 10_000_007, demand_mult: 1_100_000_000 },
+      OpPrice { op_type: 2, base_price: 1_000_002, demand_mult: 1_300_000_000 },
+    ],
+    m_min: 500_000_000,
+    m_max: 2_000_000_000,
+    epoch: epoch,
+  }
+}
+
+fn ct_many_redeemer(pairs: List<OpPair>, vault_ref: OutputReference) -> ConsumeRedeemer {
+  ConsumeMany { pairs, price_ref: ct_price_ref(), vault_ref }
+}
+
+/// Một thread (consumed_count 10, consumed_nanogic 0) + một vault. Người gọi khai
+/// lượng đốt và mức tăng hai trục kế toán ⇒ dựng được cả tx NHẤT QUÁN theo một quy
+/// tắc sai (đốt và ghi cùng theo cộng-rồi-sàn), là ca duy nhất phân biệt hai quy tắc.
+fn run_many(
+  pp        : PriceParam,
+  pairs     : List<OpPair>,
+  burned    : Int,
+  add_count : Int,
+  add_ng    : Int,
+) -> Bool {
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_many_redeemer(pairs, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", burned)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(
+    pp, 1, 6, [eng], [vault], [ct_cont_output_ng(10 + add_count, 6, 1, add_ng)], reds,
+    rd, eng_ref, ct_in_datum,
+  )
+}
+
+fn ct_pair(op_type: Int, op_count: Int) -> OpPair {
+  OpPair { op_type, op_count }
+}
+
+// ── DƯƠNG: hai cặp hợp lệ, đốt đúng sàn-từng-cặp ────────────────────────────
+test consume_many_happy() {
+  run_many(ct_pp_frac(6), [ct_pair(1, 1), ct_pair(2, 1)], 12_300_009, 2, 12_300_009)
+}
+
+// DƯƠNG: số lượng > 1 ở cả hai cặp (TV-PAIRS-002).
+test consume_many_counts_happy() {
+  run_many(ct_pp_frac(6), [ct_pair(1, 2), ct_pair(2, 3)], 25_900_022, 5, 25_900_022)
+}
+
+// DƯƠNG: một cặp duy nhất ⟹ cùng giá với `Consume` đơn (bảng ct_pp: ảnh 10M).
+test consume_many_single_pair_happy() {
+  run_many(ct_pp(6), [ct_pair(1, 1)], 10_000_000, 1, 10_000_000)
+}
+
+// ── ÂM: tx NHẤT QUÁN theo quy tắc CỘNG-RỒI-SÀN (đốt 12_300_010, ghi 12_300_010) ──
+//    Đây là ca phân biệt hai quy tắc: bản đúng đòi 12_300_009 ⇒ từ chối; một bản tính
+//    cộng-rồi-sàn sẽ chấp nhận nó và từ chối `consume_many_happy`.
+test consume_many_sum_then_floor_tx_fail() fail {
+  run_many(ct_pp_frac(6), [ct_pair(1, 1), ct_pair(2, 1)], 12_300_010, 2, 12_300_010)
+}
+
+// ÂM: Σburns lệch +1 / −1 nanogic (kế toán thread đúng) ⇒ đẳng thức == chặn.
+test consume_many_overburn_one_fail() fail {
+  run_many(ct_pp_frac(6), [ct_pair(1, 1), ct_pair(2, 1)], 12_300_010, 2, 12_300_009)
+}
+
+test consume_many_underburn_one_fail() fail {
+  run_many(ct_pp_frac(6), [ct_pair(1, 1), ct_pair(2, 1)], 12_300_008, 2, 12_300_009)
+}
+
+// ÂM: ghi consumed_count sai (chỉ +1 thay vì Σ op_count = 2).
+test consume_many_count_not_summed_fail() fail {
+  run_many(ct_pp_frac(6), [ct_pair(1, 1), ct_pair(2, 1)], 12_300_009, 1, 12_300_009)
+}
+
+// ── ÂM: op_type TRÙNG — tx nhất quán (đốt + ghi đúng 2× giá op 1) ────────────
+test consume_many_duplicate_op_type_fail() fail {
+  run_many(ct_pp_frac(6), [ct_pair(1, 1), ct_pair(1, 1)], 22_000_014, 2, 22_000_014)
+}
+
+// ÂM: op_type GIẢM — tx nhất quán.
+test consume_many_decreasing_op_type_fail() fail {
+  run_many(ct_pp_frac(6), [ct_pair(2, 1), ct_pair(1, 1)], 12_300_009, 2, 12_300_009)
+}
+
+// ── ÂM: danh sách RỖNG — tx nhất quán (đốt 0, ghi +0) ────────────────────────
+//    Hai hàng rào độc lập canh ca này: `valid_pairs` (nhánh `[] -> False`) và
+//    `expect required > 0` ở `validate_consume`. Gỡ MỘT trong hai, bài vẫn đỏ.
+test consume_many_empty_fail() fail {
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_many_redeemer([], vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  run(
+    ct_pp(6), 1, 6, [eng], [vault], [ct_cont_output_ng(10, 6, 1, 0)], reds, rd,
+    eng_ref, ct_in_datum,
+  )
+}
+
+// ── ÂM: op_count 0 ở cặp SAU — tx nhất quán (chỉ trả op 1) ───────────────────
+test consume_many_zero_count_fail() fail {
+  run_many(ct_pp_frac(6), [ct_pair(1, 1), ct_pair(2, 0)], 11_000_007, 1, 11_000_007)
+}
+
+// ÂM: op_type không có trong beacon.
+test consume_many_unknown_op_fail() fail {
+  run_many(ct_pp_frac(6), [ct_pair(1, 1), ct_pair(9, 1)], 11_000_007, 2, 11_000_007)
+}
+
+// ── TRẦN ĐỘ DÀI ──────────────────────────────────────────────────────────────
+/// `n` cặp, op_type liên tiếp kết thúc ở dòng CUỐI bảng đầy (16 dòng) ⇒ mọi lần tra
+/// `lookup_row` rơi vào phần sau của bảng — hình dạng XẤU NHẤT về số bước duyệt.
+fn ct_pairs_tail(n: Int) -> List<OpPair> {
+  ct_pairs_from(pricing.max_op_prices - n + 1, n)
+}
+
+fn ct_pairs_from(from: Int, n: Int) -> List<OpPair> {
+  if n <= 0 {
+    []
+  } else {
+    [OpPair { op_type: from, op_count: 1 }, ..ct_pairs_from(from + 1, n - 1)]
+  }
+}
+
+// DƯƠNG + SỐ ĐO: đúng trần, bảng đầy 16 dòng (mỗi op 10M ở 1,0×).
+test consume_many_at_cap_happy() {
+  let n = pricing.max_consume_pairs
+  run_many(ct_pp_full(6), ct_pairs_tail(n), n * 10_000_000, n, n * 10_000_000)
+}
+
+// Chỉ dựng fixture của bài trên, KHÔNG gọi validator — trừ đi để ra chi phí của MỘT
+// invocation `consume.spend` (cùng khuôn `probe_fixture_only_full_table_two_engage`).
+test probe_fixture_only_many_at_cap() {
+  let n = pricing.max_consume_pairs
+  let pp = ct_pp_full(6)
+  let pairs = ct_pairs_tail(n)
+  let eng = ct_engage_input(0, 10)
+  let vault = ct_vault_input(0)
+  let eng_ref = util.mk_ref_id(#"e1", 0)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd = ct_many_redeemer(pairs, vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", n * 10_000_000)])
+  let reds = [Pair(Spend(eng_ref), rd_as_data(rd)), Pair(Spend(vault_ref), burn_rd)]
+  let beacon = ct_beacon_ref(pp, 1)
+  let out = ct_cont_output_ng(10 + n, 6, 1, n * 10_000_000)
+  and {
+    list.length(reds) == 2,
+    list.length(pairs) == n,
+    beacon.output_reference == ct_price_ref(),
+    out.address == eng.output.address,
+    vault.output_reference == vault_ref,
+  }
+}
+
+// ÂM: quá trần MỘT cặp, tx nhất quán. Bảng giá phải có đủ dòng cho mọi op_type của
+// danh sách — không thì bài đỏ ở `lookup_row` chứ không ở cổng độ dài.
+test consume_many_over_cap_fail() fail {
+  let n = pricing.max_consume_pairs + 1
+  expect n <= pricing.max_op_prices
+  run_many(ct_pp_full(6), ct_pairs_tail(n), n * 10_000_000, n, n * 10_000_000)
+}
+
+// ── TRỘN Consume + ConsumeMany trên HAI thread trong một tx, chung một vault ─────
+//    Hai biến thể là hai cách khai một lượt tiêu; mọi bất biến gộp (Σburns == Σrequired,
+//    ghép cặp theo tên thread, một beacon) đi qua `consume_charge` cho cả hai.
+fn ct_mixed_fixture(burned: Int) -> (Transaction, OutputReference, OutputReference, ConsumeRedeemer, ConsumeRedeemer) {
+  let e0 = ct_engage_input(0, 10)
+  let e1 = ct_engage_input_b(1, 10)
+  let vault = ct_vault_input(0)
+  let er0 = util.mk_ref_id(#"e1", 0)
+  let er1 = util.mk_ref_id(#"e1", 1)
+  let vault_ref = util.mk_ref_id(#"a1", 0)
+  let rd0 = ct_consume_redeemer(1, 1, vault_ref)
+  let rd1 = ct_many_redeemer([ct_pair(1, 1), ct_pair(2, 1)], vault_ref)
+  let burn_rd = ct_burn_redeemer(ct_burn_constr, [(#"ba01", burned)])
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: [e0, e1, vault],
+      reference_inputs: [ct_beacon_ref(ct_pp_frac(6), 1)],
+      outputs: [
+        ct_cont_output_ng(11, 6, 1, 11_000_007),
+        ct_cont_output_named(ct_thread_name_b, 12, 6, 1, 12_300_009),
+      ],
+      redeemers: [
+        Pair(Spend(er0), rd_as_data(rd0)), Pair(Spend(er1), rd_as_data(rd1)),
+        Pair(Spend(vault_ref), burn_rd),
+      ],
+      extra_signatories: ct_sigs_of(VerificationKey(ct_owner)),
+      validity_range: interval.between(6 * ct_mspe, 6 * ct_mspe + 1),
+    }
+  (tx, er0, er1, rd0, rd1)
+}
+
+fn ct_spend(tx: Transaction, own_ref: OutputReference, rd: ConsumeRedeemer) -> Bool {
+  consume.spend(
+    ct_price_policy, ct_price_name, ct_vault_sh, ct_burn_constr, ct_max_stale, ct_mspe,
+    ct_price_param_sh, 0, Some(ct_in_datum), rd, own_ref, tx,
+  )
+}
+
+// DƯƠNG: đốt 11_000_007 + 12_300_009 = 23_300_016; CẢ HAI invocation qua.
+test consume_mixed_consume_and_many_happy() {
+  let (tx, er0, er1, rd0, rd1) = ct_mixed_fixture(23_300_016)
+  ct_spend(tx, er0, rd0) && ct_spend(tx, er1, rd1)
+}
+
+// ÂM: đốt chỉ đủ cho MỘT thread (12_300_009) — thread kia "mượn" burn ⇒ từ chối
+// ở invocation của thread Consume (aggregate, không phải per-invocation).
+test consume_mixed_consume_and_many_borrow_fail() fail {
+  let (tx, er0, _er1, rd0, _rd1) = ct_mixed_fixture(12_300_009)
+  ct_spend(tx, er0, rd0)
+}
+
+// ── BYTES của redeemer ConsumeMany ghim chéo với off-chain ───────────────────
+//    Cùng hằng hex ở `tests/consume_many.test.ts` ▸ `AIKEN_CONSUME_MANY_CBOR`
+//    (`encodeConsumeManyRedeemer`). Chép có nhãn, 2026-10-03 — đổi một bên thì đổi bên kia.
+test consume_many_redeemer_cbor_pinned() {
+  let rd =
+    ConsumeMany {
+      pairs: [OpPair { op_type: 1, op_count: 1 }, OpPair { op_type: 2, op_count: 3 }],
+      price_ref: util.mk_ref_id(#"bb", 9),
+      vault_ref: util.mk_ref_id(#"a1", 0),
+    }
+  cbor.serialise(rd_as_data(rd)) == #"d87c9f9fd8799f0101ffd8799f0203ffffd8799f41bb09ffd8799f41a100ffff"
 }

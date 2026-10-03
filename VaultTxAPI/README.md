@@ -825,14 +825,40 @@ trợ ⟹ `501 SPONSOR_FEE_PAYER_UNSUPPORTED`. Tiền là chuỗi chữ số.
 | bước | trường riêng |
 |---|---|
 | T1 | `did_commit` (64 hex thường), `thread_lovelace` (tuỳ chọn) |
-| T2 | `fund_id`, `carp_amount`, `sponsor: { utxo_refs: ["<tx>#<i>", …] (1–20), change_address }`, `vault_ref` (tuỳ chọn) |
+| T2 | `fund_id`, `carp_amount`, `sponsor: { utxo_refs: ["<tx>#<i>", …] (1–20) }`, `vault_ref` (tuỳ chọn) — **không** có `sponsor.change_address` (gửi ⟹ `400 SPONSOR_REQUEST_SHAPE`) |
 | T3 | `fund_id`, `carp_amount`, `vault_ref` (tuỳ chọn) |
 | T4 | `op_type`, `op_count`, `draw_epoch` (số nguyên), `vault_ref` / `engage_ref` (tuỳ chọn) |
+
+**T2 chi tiền bên tài trợ ⟹ mọi thứ quyết tiền lấy từ CẤU HÌNH, không từ thân bài.**
+
+- **Đích thối không do người gọi viết.** Phần thối của bên tài trợ về lại ĐÚNG địa chỉ chung của
+  các UTxO trong `sponsor.utxo_refs`; `summary.sponsor_change_address` trả địa chỉ đó. Bản trước
+  nhận `sponsor.change_address` từ thân bài, nên người gọi lái được toàn bộ phần thối về ví mình.
+- **Ghim ở bản deploy** — khối `paid_fund.sponsor` (§6): `fund_units` (tập quỹ được nạp),
+  `addresses` (địa chỉ khoá bên tài trợ, dạng bech32 chính tắc), `max_carp_amount` (trần một lượt,
+  chuỗi chữ số carpdrop). Vắng khối ⟹ T2 trả `501 CONFIG_MISSING`. Cổng: `src/sponsor.ts` ▸
+  `assertT2PinnedInputs` (quỹ + trần, trước khi giữ khoá), `assertSponsorUtxosPinned` (UTxO chung
+  một địa chỉ đã ghim, cái nào cũng mang CARP), `assertT2PinnedOutputs` (đọc lại CBOR: đúng một
+  output quỹ nhận đúng `carp_amount`; đúng một output thối có giá trị trọn = Σ vào − `carp_amount`;
+  không output nào khác mang CARP).
+- **Thẻ vai.** `/tx/sponsor/t2-fund` chỉ mở bằng thẻ `VAULT_TX_API_SPONSOR_TOKEN` (§6) — thẻ
+  thường ⟹ `403 SPONSOR_ROLE_REQUIRED`; dịch vụ chưa đặt thẻ vai ⟹ `501 CONFIG_MISSING`, kể cả trên
+  loopback. Thẻ vai dùng ở route khác ⟹ `401`. Nguồn: `src/http.ts` ▸ `SPONSOR_ROLE_PATHS`,
+  `requireRole`. T1/T3/T4 giữ thẻ thường.
+- **Khoá theo UTxO.** Mỗi T2 giữ khoá `utxo:<ref>` cho từng UTxO bên tài trợ (cùng TTL với khoá
+  chủ): hai T2 chưa nộp không dựng được trên cùng một UTxO ⟹ lượt sau `409 OWNER_TX_IN_FLIGHT`.
+- **Chủ phải là DID.** T1/T2 chỉ nhận chủ `Script(did_stake)` kèm `owner_witness` (chủ khoá ⟹
+  `422 SPONSOR_OWNER_NOT_DID`), và tên anchor trong nhân chứng phải bằng `did_commit` của hành
+  trình (T1: của thân bài; T2: của thread) — lệch ⟹ `422 SPONSOR_OWNER_DID_MISMATCH`. Nguồn:
+  `src/sponsor.ts` ▸ `assertOwnerDid`. Lối chủ khoá chỉ mở qua tham số hàm dựng `allowKeyOwner`
+  của `SponsorTxService`, thứ `server.ts` không truyền — nó chỉ để bài kiểm dùng.
 
 Đáp ứng mọi bước: `{ step, tx_cbor, tx_hash, required_signers, signers, witness_notes, summary,
 expires_at }`. Mẫu dưới là một lượt T2 THẬT trong `tests/sponsorEmulator.test.ts` (Emulator,
 UPLC thật; khoá thử sinh trong bộ nhớ nên các hash đổi mỗi lần chạy; `tx_cbor` cắt ngắn, mảng
-`outputs` lược còn ba phần tử đầu):
+`outputs` lược còn ba phần tử đầu). Mẫu chụp TRƯỚC bản vá ghim T2 và đã chỉnh tay đúng hai chỗ cho
+khớp hình dạng mới: bỏ `sponsor.change_address` khỏi yêu cầu, thêm `summary.sponsor_change_address`
+(giá trị lấy từ output thối `#0` của chính mẫu):
 
 ```json
 {
@@ -841,8 +867,7 @@ UPLC thật; khoá thử sinh trong bộ nhớ nên các hash đổi mỗi lần
   "fund_id": "2ce668504a204db3f693f7ed11a024cc5525b76c5222d4e740976267d0a49d37",
   "carp_amount": "1000000000",
   "sponsor": {
-    "utxo_refs": ["390b7bd625f93ad3386141661e99602aa9184e359895ce135ae9e31b8f8b2425#1"],
-    "change_address": "addr_test1vq36uzvf8elvgh84nfmtmrjfph37amq9ga5h09snv7rznwqqj7lal"
+    "utxo_refs": ["390b7bd625f93ad3386141661e99602aa9184e359895ce135ae9e31b8f8b2425#1"]
   }
 }
 ```
@@ -879,6 +904,7 @@ UPLC thật; khoá thử sinh trong bộ nhớ nên các hash đổi mỗi lần
     "anchor_ref": "2498905883e5ec227bcb4d6947a381ecfebede4943bfb9eb74b8fa43cbab2d30#0",
     "owner_commit": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
     "sponsor_signers": ["23ae09893e7ec45cf59a76bd8e490de3eeec054769779613678629b8"],
+    "sponsor_change_address": "addr_test1vq36uzvf8elvgh84nfmtmrjfph37amq9ga5h09snv7rznwqqj7lal",
     "withdrawals": 0,
     "outputs": [
       { "index": 0, "address": "addr_test1vq36uzvf8elvgh84nfmtmrjfph37amq9ga5h09snv7rznwqqj7lal",
@@ -910,9 +936,22 @@ của dịch vụ: khối chú thích đầu `src/errors.ts`. Phần người g�
 | `SPONSOR_EPOCH_MISMATCH` | 409 | `draw_epoch` không phải kỳ hiện tại — lô đã hết hạn, rút lại ở T3 |
 | `SPONSOR_VALIDITY_SPANS_EPOCHS` | 422 | đang sát biên kỳ; thử lại sau biên |
 | `SPONSOR_CARP_INSUFFICIENT` · `SPONSOR_FUND_NOT_PINNED` | 422 | UTxO bên tài trợ không đủ CARP / quỹ không đúng quỹ đã ghim |
+| `SPONSOR_FUND_NOT_ALLOWED` · `SPONSOR_CARP_ABOVE_CAP` | 422 | `fund_id` ngoài `paid_fund.sponsor.fund_units` / `carp_amount` vượt `max_carp_amount` |
+| `SPONSOR_UTXO_NOT_ALLOWED` · `SPONSOR_UTXO_NO_CARP` | 422 | `utxo_refs` không chung một địa chỉ đã ghim / có UTxO không mang CARP |
+| `SPONSOR_UTXO_NOT_KEY` | 400 | UTxO bên tài trợ không do khoá giữ |
+| `SPONSOR_UTXO_NOT_FOUND` | 404 | có `utxo_refs` không phải UTxO chưa tiêu |
+| `SPONSOR_FEE_WALLET_IS_SPONSOR` | 422 | `change_address` (ví trả phí) trùng địa chỉ bên tài trợ — dùng ví trả phí khác |
+| `SPONSOR_OWNER_NOT_DID` · `SPONSOR_OWNER_DID_MISMATCH` | 422 | T1/T2 với chủ khoá / anchor của nhân chứng không mang tên `did_commit` |
+| `SPONSOR_ROLE_REQUIRED` | 403 | T2 gọi bằng thẻ thường — cần thẻ vai sponsor |
+| `OWNER_TX_IN_FLIGHT` | 409 | chủ, quỹ hoặc một UTxO bên tài trợ đang bị một tx dựng xong mà chưa nộp giữ khoá |
 | `SPONSOR_THREAD_DID_INVALID` | 422 | thread của chủ không mang `did_commit` 32 byte — két không mở bằng T1 |
 | `SPONSOR_TX_MISMATCH` | 422 | tx vừa dựng không có đúng output két/thread ở địa chỉ đã cấu hình — lệch cấu hình, báo vận hành |
 | `SPONSOR_PREPAID_UNAVAILABLE` · `SPONSOR_PREPAID_SCRIPTS_MISMATCH` · `CONFIG_MISSING` · `SPONSOR_UNAVAILABLE` | 501 | bản deploy không phục vụ được hành trình này |
+
+Lỗi của bộ dựng đi qua `src/sponsor.ts` ▸ `asSponsorApiError`, một danh sách ĐÓNG: chỉ
+`PrepaidTxError` và `PrepaidRuleError` (lỗi luật của PrepaidGen, mang `code`) thành `422`; mọi
+`Error` thường khác ra `500` kèm `reference_code` — bản trước đổi mọi lỗi thành `422`, nên một
+lỗi nội bộ đọc thành "yêu cầu sai" và người gọi đi sửa thân bài.
 
 ### 🔴 Số tiền là CHUỖI chữ số, cả vào lẫn ra
 
@@ -1088,6 +1127,7 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `VAULT_TX_API_PORT` | không | `8788` |
 | `VAULT_TX_API_BASE_PATH` | không | rỗng — tiền tố đường khi đứng sau proxy định tuyến theo đường, ví dụ `/vaulttx/preprod`; dịch vụ tự cắt nó (`src/basePath.ts`), vẫn nhận đường không tiền tố từ loopback |
 | `VAULT_TX_API_TOKEN` | ngoài loopback thì **có** | rỗng |
+| `VAULT_TX_API_SPONSOR_TOKEN` | khi phục vụ T2 | rỗng ⟹ `/tx/sponsor/t2-fund` trả `501 CONFIG_MISSING`. **GIÁ TRỊ** thẻ vai sponsor, đưa cho bên vận hành tài trợ; trùng `VAULT_TX_API_TOKEN` ⟹ từ chối khởi động |
 | `VAULT_TX_API_BLOCKFROST_URL` | không | dẫn theo `NETWORK` |
 | `VAULT_TX_API_TIMEOUT_MS` | không | `20000` |
 | `VAULT_TX_API_LOCK_TTL_MS` | không | `180000` |
@@ -1180,7 +1220,11 @@ quyết theo `vault_type` chứ không theo khoá nào có mặt:
 {
   "vaults": [{ "vault_type": "Prepaid", "address": "addr_test1w…" }],   // Script(prepaid_vault)
   "paid_fund": { "address": "addr_test1w…",                            // BẮT BUỘC — Script(paid_fund)
-                 "carp_unit": "<policy‖tên CARP>" },                   // route /tx/sponsor/* cần; vắng ⟹ 501 CONFIG_MISSING
+                 "carp_unit": "<policy‖tên CARP>",                     // route /tx/sponsor/* cần; vắng ⟹ 501 CONFIG_MISSING
+                 "sponsor": {                                          // ghim của T2; vắng ⟹ T2 trả 501 CONFIG_MISSING
+                   "fund_units": ["<policy paid_fund‖fund_id>"],       // quỹ được nạp; policy phải là script paid_fund
+                   "addresses": ["addr_test1v…"],                      // địa chỉ KHOÁ bên tài trợ, bech32 chính tắc, đúng mạng
+                   "max_carp_amount": "1000000000" } },                // trần một lượt, CHUỖI 1–20 chữ số carpdrop, > 0
   "did_stake": { "anchor_nft_policy": "<56 hex>" },                    // T2 cần để định vị anchor DID
   "ref_script_utxos": {
     "vault": "…#0",       // ref-script prepaid_vault
@@ -1195,7 +1239,7 @@ Ba luật, mỗi luật từ chối khởi động khi vi phạm: két Prepaid k
 loại khác (một ô `ref_script_utxos.vault`, một bản `consume` cho một loại két); khối không
 phải Prepaid mà mang `paid_fund` là cấu hình lạc chỗ; khối Instant/Schedule vẫn **bắt buộc**
 `shard_address` + `ref_script_utxos.shard` như cũ. Hiện chưa route nào dựng tx cho két
-Prepaid: mọi route đụng tới nó trả `501 VAULT_KIND_UNSUPPORTED`. Bộ sinh:
+Prepaid ngoài `/tx/sponsor/*`: mọi route khác đụng tới nó trả `501 VAULT_KIND_UNSUPPORTED`. Bộ sinh:
 `scripts/gen_vault_tx_api_deployment.ts --vault Prepaid`.
 
 > Mọi địa chỉ và UTxO ở đây là **bản chép**: nguồn thật là lần deploy (`aiken build` +

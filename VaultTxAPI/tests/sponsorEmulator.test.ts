@@ -112,6 +112,8 @@ let lucid: LucidEvolution;
 let fee: TestKey;     // ví khoá của người mới: phí + thế chấp + tiền thừa
 let owner: TestKey;   // chủ két (chủ khoá)
 let sponsor: TestKey; // bên tài trợ: giữ CARP, platform của quỹ
+let owner2: TestKey;  // chủ thứ hai — chỉ để đo khoá `utxo:` (hai chủ, hai quỹ, chung UTxO bên tài trợ)
+let attacker: TestKey; // kẻ gọi: có ADA + CARP riêng, tự đúc một quỹ KHÔNG ghim
 let deploymentNoDid = "";
 let svc: SponsorTxService;
 let svcNoDid: SponsorTxService;
@@ -120,6 +122,8 @@ let locks: OwnerLockTable;
 let fundAddress = "";
 let fundUnit = "";
 let fundId = "";
+let fundId2 = "";       // quỹ thứ hai, ĐÃ ghim (bên tài trợ đúc)
+let attackerFundId = ""; // quỹ do kẻ gọi đúc bằng `addMintPaidFund` — KHÔNG ghim
 let vaultUnit = "";
 let threadUnit = "";
 let anchorRef = "";
@@ -145,13 +149,14 @@ async function signAndSubmit(txCbor: string, keys: TestKey[]): Promise<string> {
   return h;
 }
 
-/** Dựng nền do bên tài trợ trả: ví chỉ-đọc mang UTxO hiện tại của bên tài trợ. */
-async function asSponsor(build: (l: LucidEvolution) => TxBuilder): Promise<string> {
-  lucid.selectWallet.fromAddress(sponsor.address, await emulator.getUtxos(sponsor.address));
+/** Dựng nền do ví `k` trả: ví chỉ-đọc mang UTxO hiện tại của `k`. */
+async function asWallet(k: TestKey, build: (l: LucidEvolution) => TxBuilder): Promise<string> {
+  lucid.selectWallet.fromAddress(k.address, await emulator.getUtxos(k.address));
   const c = await build(lucid).completeSafe();
   if (c._tag === "Left") throw new Error(describeError(c.left));
-  return signAndSubmit(c.right.toCBOR(), [sponsor]);
+  return signAndSubmit(c.right.toCBOR(), [k]);
 }
+const asSponsor = (build: (l: LucidEvolution) => TxBuilder) => asWallet(sponsor, build);
 
 async function only(unit: string): Promise<UTxO> {
   const u = (await emulator.getUtxoByUnit(unit)) as UTxO | undefined;
@@ -187,12 +192,16 @@ function routerDeps(s: SponsorTxService): RouterDeps {
     token: "",
     logInternal: (ref, cause) => { throw new Error(`lỗi nội bộ ${ref}: ${describeError(cause)}`); },
     sponsor: s,
+    sponsorToken: SPONSOR_ROLE_TOKEN,
   };
 }
 
 type Body = Record<string, unknown>;
+/** T2 chỉ mở bằng thẻ vai sponsor (`http.ts` ▸ `requireRole`); các route khác giữ thẻ thường (rỗng ở đây). */
+const SPONSOR_ROLE_TOKEN = "vai-sponsor-emu";
 async function post(path: string, body: Body, s: SponsorTxService = svc): Promise<{ status: number; body: Body }> {
-  return handle({ method: "POST", url: path, headers: {}, body }, routerDeps(s));
+  const headers = path === "/tx/sponsor/t2-fund" ? { authorization: `Bearer ${SPONSOR_ROLE_TOKEN}` } : {};
+  return handle({ method: "POST", url: path, headers, body }, routerDeps(s));
 }
 const errCode = (r: { body: Body }) => (r.body.error as { code: string } | undefined)?.code;
 const ownerBody = () => ({ owner: { type: "key", hash: owner.pkh }, change_address: fee.address });
@@ -248,12 +257,17 @@ beforeAll(async () => {
   fee = newKey();
   owner = newKey();
   sponsor = newKey();
+  owner2 = newKey();
+  attacker = newKey();
   const acct = (address: string, assets: Record<string, bigint>) => ({ address, assets }) as unknown as EmulatorAccount;
   emulator = new Emulator([
     acct(sponsor.address, { lovelace: 5_000_000_000n, [CARP_UNIT]: 100n * CARP }),
     acct(fee.address, { lovelace: 1_000_000_000n }),
     acct(fee.address, { lovelace: 1_000_000_000n }),
     acct(owner.address, { lovelace: 20_000_000n }),
+    acct(owner2.address, { lovelace: 20_000_000n }),
+    // Kẻ gọi có CARP THẬT (cùng unit): ca "UTxO CARP của kẻ gọi" phải chết ở ghim địa chỉ, không ở "không có CARP".
+    acct(attacker.address, { lovelace: 1_000_000_000n, [CARP_UNIT]: 5n * CARP }),
   ], { ...PROTOCOL_PARAMETERS_DEFAULT, maxTxSize: 16_384, maxTxExMem: 16_500_000n, maxTxExSteps: 10_000_000_000n });
   // Lucid đặt lưới slot "Custom" theo `emulator.now()` LÚC KHỞI TẠO ⟹ đặt giờ trước. Đỉnh cách biên kỳ 60 s.
   emulator.time = Number(O + E0 * P + 60_000n);
@@ -298,22 +312,33 @@ beforeAll(async () => {
   const [vaultRef, fundRef] = await emulator.getUtxosByOutRef([{ txHash: vh, outputIndex: 0 }, { txHash: fh, outputIndex: 0 }]);
   const scripts = withRefScripts(base, { vault: vaultRef!, paidFund: fundRef! });
 
-  // Quỹ tài trợ đã ghim: platform = bên tài trợ, bên hưởng = chủ (không quan trọng cho hành trình).
-  const seedH = await asSponsor(l => l.newTx().pay.ToAddress(sponsor.address, { lovelace: 10_000_000n }));
-  const seedUtxo = (await emulator.getUtxosByOutRef([{ txHash: seedH, outputIndex: 0 }]))[0]!;
-  let minted: { nftUnit: string; fundId: string } | undefined;
-  await asSponsor(l => {
-    const f = addMintPaidFund(l.newTx(), {
-      scripts, seedUtxo, platformPkh: sponsor.pkh,
-      beneficiary: { payment_credential: { VerificationKey: [owner.pkh] }, stake_credential: null },
-      beneficiaryDatum: null, bufferBps: 1_500n, collectSeed: true,
+  // Quỹ do ví `k` đúc (platform = `k`, bên hưởng = chủ — không quan trọng cho hành trình).
+  const mintFund = async (k: TestKey): Promise<{ nftUnit: string; fundId: string }> => {
+    const seedH = await asWallet(k, l => l.newTx().pay.ToAddress(k.address, { lovelace: 10_000_000n }));
+    const seedUtxo = (await emulator.getUtxosByOutRef([{ txHash: seedH, outputIndex: 0 }]))[0]!;
+    let minted: { nftUnit: string; fundId: string } | undefined;
+    await asWallet(k, l => {
+      const f = addMintPaidFund(l.newTx(), {
+        scripts, seedUtxo, platformPkh: k.pkh,
+        beneficiary: { payment_credential: { VerificationKey: [owner.pkh] }, stake_credential: null },
+        beneficiaryDatum: null, bufferBps: 1_500n, collectSeed: true,
+      });
+      minted = f;
+      return f.tx;
     });
-    minted = f;
-    return f.tx;
-  });
-  fundUnit = minted!.nftUnit;
-  fundId = minted!.fundId;
+    return minted!;
+  };
+  // Hai quỹ ĐÃ ghim (bên tài trợ đúc) + một quỹ kẻ gọi tự đúc — cùng script quỹ, cùng địa chỉ quỹ.
+  const f1 = await mintFund(sponsor);
+  fundUnit = f1.nftUnit;
+  fundId = f1.fundId;
+  const f2 = await mintFund(sponsor);
+  fundId2 = f2.fundId;
+  attackerFundId = (await mintFund(attacker)).fundId;
   fundAddress = base.paidFund.address;
+  // Tách CARP bên tài trợ thành HAI UTxO (ca khoá `utxo:` cần hai bộ ref khác nhau). Lượt CUỐI của bên
+  // tài trợ trong dựng nền: lượt sau có thể gộp lại hai UTxO này qua chọn-coin.
+  await asSponsor(l => l.newTx().pay.ToAddress(sponsor.address, { lovelace: 2_000_000n, [CARP_UNIT]: 10n * CARP }));
 
   const deployment = (withDid: boolean, engageAddress = validatorToAddress(NET, consumeScript)) => JSON.stringify({
     source: "Emulator của phép kiểm — không phải một lần deploy thật",
@@ -326,7 +351,11 @@ beforeAll(async () => {
     },
     ...(withDid ? { did_stake: { anchor_nft_policy: anchorPolicy } } : {}),
     vaults: [{ vault_type: PREPAID_VAULT_TYPE, address: validatorToAddress(NET, base.vault.script) }],
-    paid_fund: { address: base.paidFund.address, carp_unit: CARP_UNIT },
+    paid_fund: {
+      address: base.paidFund.address, carp_unit: CARP_UNIT,
+      // Ghim của T2: chỉ hai quỹ bên tài trợ đúc, chỉ ví bên tài trợ, trần một lượt = CARP.
+      sponsor: { fund_units: [fundUnit, f2.nftUnit], addresses: [sponsor.address], max_carp_amount: CARP.toString() },
+    },
     ref_script_utxos: { vault: `${vh}#0`, paid_fund: `${fh}#0`, consume: `${ch}#0` },
   });
   deploymentNoDid = deployment(false);
@@ -341,6 +370,8 @@ beforeAll(async () => {
     now: () => emulator.now(),
     prepaidBlueprint: pgBp,
     lucidForWallet: async (address, utxos) => { lucid.selectWallet.fromAddress(address, utxos); return lucid; },
+    // Chủ KHOÁ cho bài này (nhánh chủ Script cần nhân chứng PhoenixKey thật); `server.ts` không truyền cờ này.
+    allowKeyOwner: true,
   });
   locks = new OwnerLockTable(60_000);
   svc = mk(deployment(true), locks);
@@ -393,12 +424,16 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     expect(JSON.stringify(r.body)).toContain("thread");
   }, SLOW);
 
-  const t2Body = async (): Promise<Body> => ({
-    ...ownerBody(), fund_id: fundId, carp_amount: CARP.toString(),
-    sponsor: {
-      utxo_refs: (await emulator.getUtxos(sponsor.address)).filter(u => (u.assets[CARP_UNIT] ?? 0n) > 0n).map(refStr),
-      change_address: sponsor.address,
-    },
+  /** UTxO mang CARP của ví `k`, xếp theo lượng CARP tăng dần (UTxO tách 10·CARP đứng đầu). */
+  const carpRefs = async (k: TestKey): Promise<string[]> => (await emulator.getUtxos(k.address))
+    .filter(u => (u.assets[CARP_UNIT] ?? 0n) > 0n)
+    .sort((a, b) => (a.assets[CARP_UNIT]! < b.assets[CARP_UNIT]! ? -1 : 1))
+    .map(refStr);
+  // Thân T2 KHÔNG có `sponsor.change_address`: phần thối suy từ địa chỉ chung của `utxo_refs`.
+  const t2Body = async (o: { refs?: string[]; fund?: string; carp?: bigint; who?: TestKey } = {}): Promise<Body> => ({
+    owner: { type: "key", hash: (o.who ?? owner).pkh }, change_address: fee.address,
+    fund_id: o.fund ?? fundId, carp_amount: (o.carp ?? CARP).toString(),
+    sponsor: { utxo_refs: o.refs ?? await carpRefs(sponsor) },
   });
 
   it("T2 ĐỎ: bản deploy khớp script mà thiếu did_stake ⟹ 501 CONFIG_MISSING nêu did_stake.anchor_nft_policy", async () => {
@@ -406,6 +441,64 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     expect(r.status).toBe(501);
     expect(errCode(r)).toBe("CONFIG_MISSING");
     expect(JSON.stringify(r.body)).toContain("did_stake.anchor_nft_policy");
+  }, SLOW);
+
+  // Ca âm của các ghim T2. Cặp xanh của (a)–(d) là "T2 XANH" ngay dưới: cùng thân bài, khác ĐÚNG một khoá.
+  it("T2 ĐỎ (a): thân bài gửi sponsor.change_address (đích thối của kẻ gọi) ⟹ 400 SPONSOR_REQUEST_SHAPE", async () => {
+    const b = await t2Body();
+    const r = await post("/tx/sponsor/t2-fund",
+      { ...b, sponsor: { ...(b.sponsor as Body), change_address: attacker.address } });
+    expect(r.status).toBe(400);
+    expect(errCode(r)).toBe("SPONSOR_REQUEST_SHAPE");
+    expect(JSON.stringify(r.body)).toContain("sponsor.change_address");
+  }, SLOW);
+
+  it("T2 ĐỎ (b): quỹ do kẻ gọi tự đúc bằng addMintPaidFund (cùng script quỹ) ⟹ 422 SPONSOR_FUND_NOT_ALLOWED", async () => {
+    expect(await only(`${fundUnit.slice(0, 56)}${attackerFundId}`)).toBeDefined(); // quỹ đó CÓ THẬT trên chuỗi
+    const r = await post("/tx/sponsor/t2-fund", await t2Body({ fund: attackerFundId }));
+    expect(r.status).toBe(422);
+    expect(errCode(r)).toBe("SPONSOR_FUND_NOT_ALLOWED");
+  }, SLOW);
+
+  it("T2 ĐỎ (c): utxo_refs là UTxO CARP của ví kẻ gọi ⟹ 422 SPONSOR_UTXO_NOT_ALLOWED", async () => {
+    const refs = await carpRefs(attacker);
+    expect(refs.length).toBeGreaterThan(0);
+    const r = await post("/tx/sponsor/t2-fund", await t2Body({ refs }));
+    expect(r.status).toBe(422);
+    expect(errCode(r)).toBe("SPONSOR_UTXO_NOT_ALLOWED");
+  }, SLOW);
+
+  it("T2 ĐỎ (d): carp_amount = trần + 1 ⟹ 422 SPONSOR_CARP_ABOVE_CAP", async () => {
+    const r = await post("/tx/sponsor/t2-fund", await t2Body({ carp: CARP + 1n }));
+    expect(r.status).toBe(422);
+    expect(errCode(r)).toBe("SPONSOR_CARP_ABOVE_CAP");
+  }, SLOW);
+
+  it("T1 XANH (chủ thứ hai): mở két cho owner2 — nền cho ca khoá utxo:", async () => {
+    const b = await step("/tx/sponsor/t1-open",
+      { owner: { type: "key", hash: owner2.pkh }, change_address: fee.address, did_commit: DID_COMMIT });
+    await submitStep(b, [fee, owner2]);
+  }, SLOW);
+
+  it("T2 ĐỎ (e): hai chủ, hai quỹ ghim, CHUNG utxo_refs ⟹ lượt sau 409 OWNER_TX_IN_FLIGHT; CẶP: đổi bộ ref ⟹ qua khoá", async () => {
+    const [refA, refB] = await carpRefs(sponsor);
+    expect(refA).toBeDefined();
+    expect(refB).toBeDefined();
+    // Lượt 1 dựng xong, KHÔNG nộp — giữ khoá owner · fund:<quỹ 1> · utxo:<refA>.
+    const b1 = await step("/tx/sponsor/t2-fund", await t2Body({ refs: [refA!] }));
+    try {
+      // Khác chủ, khác quỹ ⟹ chỉ khoá `utxo:` trùng.
+      const r2 = await post("/tx/sponsor/t2-fund", await t2Body({ refs: [refA!], fund: fundId2, who: owner2 }));
+      expect(r2.status).toBe(409);
+      expect(errCode(r2)).toBe("OWNER_TX_IN_FLIGHT");
+      // CẶP: cùng chủ thứ hai + quỹ 2, bộ ref KHÁC ⟹ qua khoá và dựng được.
+      const r3 = await post("/tx/sponsor/t2-fund", await t2Body({ refs: [refB!], fund: fundId2, who: owner2 }));
+      expect(r3.status).toBe(200);
+      expect((r3.body.summary as Body).sponsor_change_address).toBe(sponsor.address);
+      locks.releaseByTxHash(r3.body.tx_hash as string);
+    } finally {
+      locks.releaseByTxHash(b1.tx_hash as string);
+    }
   }, SLOW);
 
   it("T2 XANH: CARP chỉ tới quỹ đã ghim + thối bên tài trợ; anchor ở reference_inputs; thiếu chữ ký bên tài trợ ⟹ chuỗi từ chối", async () => {
@@ -420,6 +513,9 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     expect(s.owner_commit).toBe(DID_COMMIT);
     expect(s.fund_unit).toBe(fundUnit);
     expect(s.sponsor_signers).toEqual([sponsor.pkh]);
+    // Đích thối do dịch vụ SUY từ địa chỉ chung của utxo_refs, không do thân bài viết.
+    expect(s.sponsor_change_address).toBe(sponsor.address);
+    expect((req2.sponsor as Body).change_address).toBeUndefined();
 
     // Đo độc lập với phép kiểm của dịch vụ/SDK: đọc thẳng thân tx bằng CML.
     const refs = CML.Transaction.from_cbor_hex(b.tx_cbor as string).body().reference_inputs();
@@ -432,7 +528,9 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     await submitStep(b, [fee, sponsor, owner]);
 
     expect((await only(fundUnit)).assets[CARP_UNIT]).toBe(fundCarpBefore + CARP);
-    const carpAt = new Set(unspent().filter(u => (u.assets[CARP_UNIT] ?? 0n) > 0n).map(u => u.address));
+    // CARP của kẻ gọi (dựng nền) nằm yên ở ví kẻ gọi — đo riêng, rồi loại khỏi tập địa chỉ.
+    expect(unspent().filter(u => u.address === attacker.address).reduce((a, u) => a + (u.assets[CARP_UNIT] ?? 0n), 0n)).toBe(5n * CARP);
+    const carpAt = new Set(unspent().filter(u => (u.assets[CARP_UNIT] ?? 0n) > 0n && u.address !== attacker.address).map(u => u.address));
     expect([...carpAt].sort()).toEqual([fundAddress, sponsor.address].sort());
     expect(unspent().reduce((a, u) => a + (u.assets[CARP_UNIT] ?? 0n), 0n)).toBe(carpTotal);
     expect((await only(fundUnit)).address).toBe(fundAddress);

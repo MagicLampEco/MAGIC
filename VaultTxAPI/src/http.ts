@@ -33,7 +33,7 @@
 // `buildRequest.ts`, nơi đọc thân bài của tám đường dựng (dùng chung với `/tx/quote`).
 
 import {
-  BadRequestError, TxApiError, UnauthorizedError, newReferenceCode,
+  BadRequestError, ConfigMissingError, TxApiError, UnauthorizedError, newReferenceCode,
 } from "./errors.js";
 import { toSubmitBody, type VaultTxService } from "./service.js";
 import { BUILD_ROUTE_OF_PATH, buildResultBody, parseBuildRequest, reqString, runBuild } from "./buildRequest.js";
@@ -72,6 +72,9 @@ export interface RouterDeps {
   changeAddressStrategy: string;
   /** Thẻ bài chia sẻ. Chuỗi rỗng ⇒ không kiểm (chỉ hợp lệ khi bind loopback — `config.ts` ép). */
   token: string;
+  /** Thẻ bài VAI `sponsor` — thẻ DUY NHẤT mở `SPONSOR_ROLE_PATHS`, và KHÔNG mở route nào khác.
+   *  Vắng/rỗng ⟹ các đường đó trả 501 `CONFIG_MISSING`, kể cả trên loopback (`requireRole`). */
+  sponsorToken?: string;
   /** Nơi ghi nguyên nhân gốc của lỗi ngoài dự kiến, kèm mã tham chiếu đã trả ra ngoài.
    *  Không có nó thì "mã tham chiếu" chỉ là một câu chung chung mặc đồng phục. */
   logInternal: (referenceCode: string, cause: unknown) => void;
@@ -168,7 +171,7 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
   }
 
   try {
-    requireToken(req, deps.token);
+    requireRole(req, deps, path);
 
     if (path === "/fee/utxo" || path === "/fee/sign") {
       if (req.method !== "POST") return methodNotAllowed("POST");
@@ -247,6 +250,46 @@ function methodNotAllowed(expected: string): HttpResponse {
 
 function err(code: string, message: string, details: Record<string, unknown> = {}): Record<string, unknown> {
   return { error: { code, message, details } };
+}
+
+/**
+ * Đường đòi vai `sponsor`. Chỉ T2: nó là bước chi CARP của bên tài trợ, và khoá mềm `fund:<unit>` mà
+ * nó giữ chặn được mọi T2 khác trên cùng quỹ — để thẻ thường gọi được nó là để bất kỳ ai cầm thẻ app
+ * giữ quỹ của bên tài trợ (mỗi lượt dựng giữ khoá tới hết TTL, lặp vô hạn). Route tài trợ khác giữ thẻ thường.
+ */
+export const SPONSOR_ROLE_PATHS: ReadonlySet<string> = new Set(["/tx/sponsor/t2-fund"]);
+
+/**
+ * Vai của người gọi theo đường.
+ *   · đường vai `sponsor`: thẻ vai sponsor ⟹ qua · thẻ thường (hoặc không thẻ khi dịch vụ chạy không thẻ
+ *     trên loopback) ⟹ 403 `SPONSOR_ROLE_REQUIRED` — đã nhận ra người gọi, vai không đủ · thẻ lạ ⟹ 401.
+ *     Dịch vụ chưa có thẻ vai sponsor ⟹ 501 `CONFIG_MISSING`: không có "chế độ không thẻ" cho bước chi tiền.
+ *   · đường khác: thẻ thường như cũ. Thẻ vai sponsor ở đó KHÔNG được nhận (401) — vai hẹp, không phải vai trên.
+ */
+function requireRole(req: HttpRequest, deps: RouterDeps, path: string): void {
+  if (!SPONSOR_ROLE_PATHS.has(path)) {
+    requireToken(req, deps.token);
+    return;
+  }
+  const sponsorToken = deps.sponsorToken ?? "";
+  if (sponsorToken === "") {
+    throw new ConfigMissingError(
+      `Đường "${path}" chỉ mở bằng thẻ bài vai sponsor, mà dịch vụ chưa được cấu hình thẻ đó.`,
+      { missing: ["sponsor_role_token"], route: path });
+  }
+  const presented = bearerOf(req);
+  if (presented !== undefined && timingSafeEqual(presented, sponsorToken)) return;
+  if (deps.token === "" || (presented !== undefined && timingSafeEqual(presented, deps.token))) {
+    throw new CodedApiError(403, "SPONSOR_ROLE_REQUIRED",
+      `Đường "${path}" chỉ nhận thẻ bài vai sponsor (bên vận hành tài trợ); thẻ bài thường không mở được nó.`,
+      { route: path });
+  }
+  throw new UnauthorizedError();
+}
+
+function bearerOf(req: HttpRequest): string | undefined {
+  const auth = req.headers["authorization"] ?? req.headers["Authorization"];
+  return typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : undefined;
 }
 
 function requireToken(req: HttpRequest, token: string): void {

@@ -2,7 +2,7 @@
 //
 //   POST /tx/sponsor/plan              { owner, sponsor_pkh }                         — thuần, không chạm chuỗi
 //   POST /tx/sponsor/t1-open           { owner, [owner_witness], [change_address], did_commit, [thread_lovelace] }
-//   POST /tx/sponsor/t2-fund           { owner, …, fund_id, carp_amount, sponsor: { utxo_refs, change_address }, [vault_ref] }
+//   POST /tx/sponsor/t2-fund           { owner, …, fund_id, carp_amount, sponsor: { utxo_refs }, [vault_ref] }   [thẻ vai sponsor]
 //   POST /tx/sponsor/t3-draw           { owner, …, fund_id, carp_amount, [vault_ref] }
 //   POST /tx/sponsor/t4-first-consume  { owner, …, op_type, op_count, draw_epoch, [vault_ref], [engage_ref] }
 //
@@ -15,6 +15,20 @@
 // Một-lần-mỗi-DID, hạn mức: việc của Feecover (bên vận hành tài trợ), đếm theo `owner_commit` qua
 // anchor DID ở reference input của T2. Dịch vụ này chỉ dựng HÌNH DẠNG tx; bộ dựng là
 // `@magiclamp/sdk` ▸ `buildSponsorT*`, không phải một bản thứ hai.
+//
+// ── THÂN BÀI KHÔNG QUYẾT TIỀN CỦA BÊN TÀI TRỢ ĐI ĐÂU ─────────────────────────────
+// Ba thứ của T2 ghim ở cấu hình (`paid_fund.sponsor`), không lấy từ thân bài: tập quỹ được nạp, tập
+// địa chỉ ví bên tài trợ (UTxO vào + thối ra, NGUYÊN VĂN cả phần stake), trần CARP. Đối chiếu hai lần:
+// trước khi dựng (`assertT2PinnedInputs`, `assertSponsorUtxosPinned`) và trên CBOR vừa dựng
+// (`assertT2PinnedOutputs`), cả hai lần so với giá trị ĐÃ GHIM, không với thân bài. T2 chỉ mở bằng thẻ
+// vai sponsor (`http.ts` ▸ `requireRole`).
+//
+// ── CHỦ T1/T2 PHẢI LÀ DID ───────────────────────────────────────────────────────
+// Feecover đếm một-lần-mỗi-DID theo `did_commit`. Chủ khoá tự khai `did_commit` bất kỳ được ⟹ giành
+// được suất của DID người khác. Nên T1/T2 chỉ nhận chủ `Script(did_stake)`, và tên NFT anchor trong
+// nhân chứng phải bằng `did_commit` của thread (`assertOwnerDid`) — `did_stake` ép trên chuỗi rằng
+// anchor đó là của chính DID ký. Lối chủ khoá chỉ mở qua `allowKeyOwner` của hàm dựng, thứ mà
+// `server.ts` không truyền và không cấu hình nào đặt được.
 //
 // ── KHÔNG GIỮ KHOÁ ─────────────────────────────────────────────────────────────
 // T2 nhận UTxO của bên tài trợ dưới dạng THAM CHIẾU (`sponsor.utxo_refs`), đọc lại từ chuỗi, và trả
@@ -35,16 +49,17 @@ import {
 } from "@magiclamp/protocol-utils";
 import {
   SponsorJourneyError, buildSponsorT1OpenPrepaid, buildSponsorT2Fund, buildSponsorT3Draw,
-  buildSponsorT4FirstConsume, planSponsorJourney, type SponsorJourneyErrorCode, type SponsorTxOutput,
+  buildSponsorT4FirstConsume, planSponsorJourney, sponsorTxOutputsOf,
+  type SponsorJourneyErrorCode, type SponsorTxOutput,
 } from "@magiclamp/sdk";
 import {
-  derivePrepaidScripts, readVaultUtxo, withRefScripts,
+  PrepaidRuleError, PrepaidTxError, derivePrepaidScripts, readVaultUtxo, withRefScripts,
   type PrepaidBlueprint, type PrepaidScripts,
 } from "@magiclamp/prepaidgen-sdk";
 
 import { ownerReq, reqBigint, reqSmallInt } from "./buildRequest.js";
 import type { ChainReader, ChainTip } from "./chain.js";
-import { PREPAID_VAULT_TYPE, type Deployment, type VaultScope } from "./config.js";
+import { PREPAID_VAULT_TYPE, type Deployment, type SponsorPins, type VaultScope } from "./config.js";
 import { didCommitOf, parseDidCommit, parseEngageRef, pickEngageThread } from "./engage.js";
 import {
   ChainUnavailableError, CodedApiError, ConfigMissingError, TxApiError, TxBuildRejectedError,
@@ -93,8 +108,14 @@ export function sponsorApiErrorOf(e: SponsorJourneyError): TxApiError | SponsorJ
 }
 
 /**
- * Lỗi bộ dựng (SDK, PrepaidGen, ConsumeMAGIC) → lỗi API. Lỗi lập trình (`TypeError`…) đi NGUYÊN để
- * thành 500 + mã tham chiếu: gộp nó vào 422 là bảo người dùng "giao thức từ chối" khi thật ra mã hỏng.
+ * Lỗi bộ dựng (SDK, PrepaidGen, ConsumeMAGIC) → lỗi API, theo DANH SÁCH ĐÓNG các lớp có mã.
+ *
+ * Mọi lỗi KHÁC — `Error` thường, lỗi lập trình (`TypeError`…), lỗi của thư viện ngoài — đi NGUYÊN để
+ * `http.ts` biến thành 500 + `reference_code` (nguyên nhân chỉ vào nhật ký). Bản trước gộp mọi `Error`
+ * vào 422 `TX_BUILD_REJECTED` kèm `e.message` thô: vừa bảo người dùng "giao thức từ chối" khi thật ra mã
+ * hỏng, vừa đưa ra ngoài câu chữ mà không ai duyệt là thông điệp cho người dùng (đường dẫn, tên biến,
+ * CBOR). Hệ quả biết trước: `Error` thường của ConsumeMAGIC/PrepaidGen nay ra 500 — muốn nó là 422 thì
+ * bộ dựng phải ném lớp có mã, không phải dịch vụ đoán.
  */
 export function asSponsorApiError(e: unknown): unknown {
   if (e instanceof TxApiError) return e;
@@ -104,10 +125,8 @@ export function asSponsorApiError(e: unknown): unknown {
   if (e instanceof OwnerAuthError || (e instanceof Error && e.name === "OwnerAuthError" && typeof (e as { code?: unknown }).code === "string")) {
     return ownerApiErrorOf(e as unknown as { code: string; message: string });
   }
-  if (e instanceof TypeError || e instanceof RangeError || e instanceof ReferenceError || e instanceof SyntaxError) return e;
-  if (e instanceof Error) {
-    const code = (e as { code?: unknown }).code;
-    return new TxBuildRejectedError(e.message, { thrown_by: e.name, ...(typeof code === "string" ? { rule_code: code } : {}) });
+  if ((e instanceof PrepaidTxError || e instanceof PrepaidRuleError) && typeof e.code === "string") {
+    return new TxBuildRejectedError(e.message, { thrown_by: e.name, rule_code: e.code });
   }
   return e;
 }
@@ -140,7 +159,6 @@ export interface SponsorT2Request extends OwnerRequest {
   fundId: string;
   carpAmount: bigint;
   sponsorUtxoRefs: OutRefLike[];
-  sponsorChangeAddress: string;
 }
 export interface SponsorT3Request extends OwnerRequest { vaultRef?: OutRefLike; fundId: string; carpAmount: bigint }
 export interface SponsorT4Request extends OwnerRequest {
@@ -211,8 +229,14 @@ export function parseSponsorRequest(
       if (new Set(refs.map(refStr)).size !== refs.length) {
         throw shape(`"sponsor.utxo_refs" có tham chiếu trùng.`, { field: "sponsor.utxo_refs" });
       }
-      if (typeof s.change_address !== "string" || s.change_address === "") {
-        throw shape(`"sponsor.change_address" phải là địa chỉ bech32 nhận phần CARP/ADA thối của bên tài trợ.`,
+      // Đích thối KHÔNG do người gọi viết: bản trước nhận `sponsor.change_address` từ thân bài và chỉ
+      // kiểm phần thanh toán là khoá ⟹ kẻ gọi đặt ví mình vào đó, và TOÀN BỘ phần dư của các UTxO bên
+      // tài trợ (ADA + mọi token + CARP thừa) đi sang ví kẻ gọi với status 200. Nay đích thối = địa chỉ
+      // chung của `utxo_refs`, đã ghim ở cấu hình (`assertSponsorUtxosPinned`). Gửi trường này ⟹ 400,
+      // không lặng lẽ bỏ qua: bên gọi cũ cần biết trường của họ không còn tác dụng.
+      if (s.change_address !== undefined) {
+        throw shape(`"sponsor.change_address" không còn nhận: phần thối về lại ĐÚNG địa chỉ của các UTxO trong ` +
+          `"sponsor.utxo_refs" (địa chỉ bên tài trợ đã ghim ở cấu hình dịch vụ). Bỏ trường này.`,
           { field: "sponsor.change_address" });
       }
       return {
@@ -221,7 +245,6 @@ export function parseSponsorRequest(
         fundId: fundIdOf(body),
         carpAmount: reqBigint(body, "carp_amount"),
         sponsorUtxoRefs: refs,
-        sponsorChangeAddress: s.change_address,
       } satisfies SponsorT2Request;
     }
     case "T3":
@@ -337,6 +360,14 @@ export interface SponsorTxServiceDeps {
    *  `VAULT_TX_API_VAULT_PLUTUS_JSON`. Dịch vụ apply tham số rồi đối chiếu hash với cấu hình. */
   prepaidBlueprint: PrepaidBlueprint;
   lucidForWallet: LucidForWallet;
+  /**
+   * CHỈ cho bài kiểm: nhận chủ KHOÁ ở T1/T2. Mặc định `false` ⟹ chủ khoá nhận 422
+   * `SPONSOR_OWNER_NOT_DID`. Cố ý là tham số HÀM DỰNG, không phải khoá cấu hình hay biến môi trường:
+   * `server.ts` không truyền nó, nên không người vận hành nào bật được nó trên dịch vụ thật — một khoá
+   * cấu hình "chỉ bài kiểm bật" vẫn là một khoá mà tệp deploy chép nhầm bật được. Bài Emulator cần nó
+   * vì nhánh chủ script đòi nhân chứng PhoenixKey thật (`did_stake` + anchor Active), thứ Emulator không có.
+   */
+  allowKeyOwner?: boolean;
 }
 
 interface Prepared {
@@ -368,6 +399,8 @@ export class SponsorTxService {
   /** T1 — đúc két Prepaid + thread consume trong MỘT tx. */
   async t1Open(req: SponsorT1Request): Promise<SponsorBuildResponse> {
     return this.run("T1", req, [], async (p, ctx) => {
+      // TRƯỚC mọi lượt đọc két: `did_commit` của thread mới phải là DID của chính chủ ký.
+      assertOwnerDid("T1", ctx.owner, ctx.witness, req.didCommit);
       const scope = p.scope;
       // Lưới an toàn của DỊCH VỤ (bấm hai lần, app gửi lại) — KHÔNG phải chính sách một-lần-mỗi-DID:
       // việc đó Feecover đếm. Két thứ hai cùng chủ làm mọi bước sau rơi vào 409 `VAULT_AMBIGUOUS`.
@@ -410,10 +443,14 @@ export class SponsorTxService {
 
   /** T2 — PrepaidLock + FundLock: CARP từ UTxO bên tài trợ vào quỹ đã ghim; anchor DID ở reference input. */
   async t2Fund(req: SponsorT2Request): Promise<SponsorBuildResponse> {
-    const sponsorChange = sponsorChangeAddressOf(this.deps.network, req.sponsorChangeAddress);
     const prepaid = this.requirePrepaid("T2");
     const fundUnit = prepaid.fundScriptHash + req.fundId;
-    return this.run("T2", req, [`fund:${fundUnit}`], async (p, ctx) => {
+    // Ghim của cấu hình, TRƯỚC khi giữ khoá: yêu cầu ngoài ghim không được chiếm khoá của quỹ.
+    const pins = assertT2PinnedInputs(prepaid.sponsor, fundUnit, req.carpAmount);
+    // `utxo:<ref>` cho từng UTxO bên tài trợ: hai T2 đang chờ ký không được dựng trên cùng một bộ UTxO
+    // (cái nộp sau chết trên chuỗi sau khi bên tài trợ đã ký).
+    const lockKeys = [`fund:${fundUnit}`, ...req.sponsorUtxoRefs.map(r => `utxo:${refStr(r)}`)];
+    return this.run("T2", req, lockKeys, async (p, ctx) => {
       const anchorPolicy = this.deps.deployment.didStake?.anchorNftPolicy;
       if (anchorPolicy === undefined) {
         throw new ConfigMissingError(
@@ -433,17 +470,27 @@ export class SponsorTxService {
           `Thread ${refStr(thread.utxo)} mang did_commit dài ${didCommit.length / 2} byte; T2 cần đúng 32 byte để định ` +
           `vị anchor DID của người mới. Thread này không mở bằng T1.`, { engage_ref: refStr(thread.utxo) });
       }
+      // Suất tài trợ đếm theo `did_commit` này ⟹ nó phải là DID của chính chủ ký, không phải của ai khác.
+      assertOwnerDid("T2", ctx.owner, ctx.witness, didCommit);
       const anchor = await this.uniqueByUnit(anchorPolicy + didCommit, undefined, "SPONSOR_ANCHOR",
         `anchor DID của người mới (owner_commit ${didCommit.slice(0, 16)}…)`);
       const fund = await this.uniqueByUnit(fundUnit, prepaid.fundAddress, "SPONSOR_FUND", `quỹ tài trợ ${req.fundId}`);
       this.assertNotPendingSpent(fund, "quỹ tài trợ này");
       const sponsorUtxos = await this.deps.chain.utxosByOutRef(req.sponsorUtxoRefs);
-      for (const u of sponsorUtxos) {
-        this.assertNotPendingSpent(u, "UTxO bên tài trợ này");
-        if (getAddressDetails(u.address).paymentCredential?.type !== "Key") {
-          throw new CodedApiError(400, "SPONSOR_UTXO_NOT_KEY",
-            `UTxO bên tài trợ ${refStr(u)} không do khoá giữ — bên tài trợ phải ký được để chi nó.`, { utxo_ref: refStr(u) });
-        }
+      if (sponsorUtxos.length !== req.sponsorUtxoRefs.length) {
+        const got = new Set(sponsorUtxos.map(refStr));
+        throw new CodedApiError(404, "SPONSOR_UTXO_NOT_FOUND",
+          `Có tham chiếu trong "sponsor.utxo_refs" không phải UTxO chưa tiêu.`,
+          { missing: req.sponsorUtxoRefs.map(refStr).filter(r => !got.has(r)) });
+      }
+      for (const u of sponsorUtxos) this.assertNotPendingSpent(u, "UTxO bên tài trợ này");
+      const sponsorAddress = assertSponsorUtxosPinned(sponsorUtxos, pins, p.scripts.carpUnit);
+      if (ctx.feeAddress === sponsorAddress) {
+        // Ví trả phí trùng ví bên tài trợ ⟹ tiền thừa của phí cũng về địa chỉ đó, và phép ghim "thối
+        // = vào − carp_amount" phải trừ thêm phí. Không mở đường đó: ví trả phí là một địa chỉ khác.
+        throw new CodedApiError(422, "SPONSOR_FEE_WALLET_IS_SPONSOR",
+          `"change_address" (ví trả phí) trùng địa chỉ bên tài trợ; dùng một địa chỉ khoá khác để trả phí T2.`,
+          { change_address: ctx.feeAddress });
       }
       // Ví trả phí KHÔNG được góp CARP: chọn-coin kéo CARP của ví đó vào thì nó thành output CARP
       // ngoài quỹ (SDK ném `SPONSOR_CARP_OUTPUT_UNPINNED`). Chỉ đưa cho Lucid các UTxO không CARP.
@@ -452,9 +499,14 @@ export class SponsorTxService {
       const lucid = await this.deps.lucidForWallet(ctx.feeAddress, wallet);
       const r = await buildSponsorT2Fund({
         lucid, prepaidScripts: p.scripts, vaultUtxo: vault.utxo, fundUtxo: fund, pinnedFundUnit: fundUnit,
-        carpAmount: req.carpAmount, sponsorCarpUtxos: sponsorUtxos, sponsorChangeAddress: sponsorChange,
+        carpAmount: req.carpAmount, sponsorCarpUtxos: sponsorUtxos, sponsorChangeAddress: sponsorAddress,
         newcomerAnchor: { utxo: anchor, anchorNftPolicyId: anchorPolicy, ownerCommit: didCommit },
         ownerAuth: ctx.ownerAuth, network: this.deps.network, nowMs: ctx.tip.blockTimePosixMs,
+      });
+      // Đọc lại CBOR (không qua summary của SDK) và so với giá trị ĐÃ GHIM + UTxO đọc từ chuỗi.
+      assertT2PinnedOutputs(sponsorTxOutputsOf(r.txCbor), {
+        pins, carpUnit: p.scripts.carpUnit, fundScriptHash: prepaid.fundScriptHash, fundAddress: prepaid.fundAddress,
+        fundIn: fund, sponsorIn: sponsorUtxos, sponsorAddress, carpAmount: req.carpAmount,
       });
       const s = r.summary;
       const txHash = txBodyHash(r.txCbor);
@@ -462,11 +514,13 @@ export class SponsorTxService {
       return {
         txCbor: r.txCbor,
         sponsorSigners: s.sponsorSigners,
+        sponsorChangeAddress: sponsorAddress,
         summary: {
           step: "T2", epoch: Number(s.epoch), epoch_end_ms: windowStartMs(s.epoch + 1n, p.P, p.O).toString(),
           vault_out_ref: `${txHash}#${vaultOut}`, fund_id: s.fundId, fund_unit: s.fundUnit,
           carp_amount: s.carpAmount.toString(), opens_new_line: s.opensNewLine,
           anchor_ref: refStr(s.anchorRef), owner_commit: didCommit, sponsor_signers: s.sponsorSigners,
+          sponsor_change_address: sponsorAddress,
           withdrawals: s.withdrawals, outputs: outputsJson(s.outputs),
         },
       };
@@ -543,10 +597,17 @@ export class SponsorTxService {
     req: OwnerRequest,
     extraLockKeys: string[],
     build: (p: Prepared, ctx: StepCtx) => Promise<{
-      txCbor: string; summary: Record<string, unknown>; sponsorSigners?: string[]; notes?: string[];
+      txCbor: string; summary: Record<string, unknown>; sponsorSigners?: string[]; sponsorChangeAddress?: string;
+      notes?: string[];
     }>,
   ): Promise<SponsorBuildResponse> {
     const owner = assertOwner(req.owner);
+    if ((step === "T1" || step === "T2") && owner.type === "key" && this.deps.allowKeyOwner !== true) {
+      // 422 chứ không 409: không có trạng thái nào để chờ đổi — yêu cầu sai loại chủ từ gốc.
+      throw new CodedApiError(422, "SPONSOR_OWNER_NOT_DID",
+        `${step} của hành trình tài trợ chỉ nhận chủ Script(did_stake) kèm "owner_witness": suất tài trợ đếm theo ` +
+        `DID, và chủ khoá khai được did_commit của bất kỳ ai.`, { step, owner_type: owner.type });
+    }
     this.requireNetworkGrid();
     this.requirePrepaid(step);
     if (req.feePayer !== undefined) {
@@ -584,7 +645,7 @@ export class SponsorTxService {
           ...(owner.type === "key" ? [`Chủ khoá: ký bằng khoá ${owner.hash}.`] : (witness?.notes ?? [])),
           `Ví trả phí: input phí + tài sản thế chấp lấy từ ${feeAddress}; khoá thanh toán ${ctx.feeKeyHash} phải ký.`,
           ...(step === "T2"
-            ? [`Bên tài trợ ký bằng ${(out.sponsorSigners ?? []).join(", ")} (chi các UTxO CARP đã đưa); phần thối về ${sponsorChangeOf(req)}.`]
+            ? [`Bên tài trợ ký bằng ${(out.sponsorSigners ?? []).join(", ")} (chi các UTxO CARP đã đưa); phần thối về ${out.sponsorChangeAddress ?? "?"} — đúng địa chỉ của các UTxO đó.`]
             : []),
           ...(out.notes ?? []),
           `Thứ tự: thân giao dịch này là bản CHỐT — mọi bên ký trên đúng tx_hash trả về; đổi bất kỳ byte nào ` +
@@ -813,15 +874,135 @@ function assertOwner(o: OwnerRef): OwnerRef {
   return { type: o.type, hash: o.hash };
 }
 
-function sponsorChangeAddressOf(network: Network, address: string): string {
-  try {
-    return assertChangeAddress(network, address);
-  } catch (e) {
-    if (e instanceof CodedApiError && e.code === "CHANGE_ADDRESS_INVALID") {
-      throw new CodedApiError(400, "SPONSOR_CHANGE_ADDRESS_INVALID",
-        `"sponsor.change_address" phải là địa chỉ bech32 của mạng ${network} với phần thanh toán là KHOÁ.`, e.details);
+// ── ghim của chủ (lỗ: giành suất DID) ───────────────────────────────────────────
+
+/**
+ * Chủ script: tên NFT anchor mà nhân chứng `did_stake` dùng phải bằng `didCommit` của thread.
+ * `did_stake` được apply `blake2b_256(utf8(did))` và ép trên chuỗi rằng anchor mang đúng tên đó, nên
+ * phép so này buộc `did_commit` của hành trình vào DID của CHÍNH người ký. Nhân chứng không báo tên
+ * anchor ⟹ coi là lệch (fail-closed), không coi là khớp.
+ * Chủ khoá chỉ tới được đây khi `allowKeyOwner` (bài kiểm) — khi đó không có anchor nào để so.
+ */
+export function assertOwnerDid(
+  step: SponsorStep, owner: OwnerRef, witness: ResolvedOwnerWitness | undefined, didCommit: string,
+): void {
+  if (owner.type === "key") return;
+  const name = witness?.anchorNftName;
+  if (name === undefined || name !== didCommit) {
+    throw new CodedApiError(422, "SPONSOR_OWNER_DID_MISMATCH",
+      `${step}: anchor DID trong "owner_witness" không mang tên bằng did_commit ${didCommit.slice(0, 16)}… của ` +
+      `hành trình — chủ này không phải DID đó.`,
+      { step, did_commit: didCommit, ...(name === undefined ? { anchor_nft_name: null } : { anchor_nft_name: name }) });
+  }
+}
+
+// ── ghim của T2 (lỗ: thân bài quyết tiền bên tài trợ) ─────────────────────────────
+
+/** Quỹ + trần CARP, TRƯỚC khi giữ khoá. Thiếu khối ghim ⟹ 501 `CONFIG_MISSING`, không cho qua. */
+export function assertT2PinnedInputs(pins: SponsorPins | undefined, fundUnit: string, carpAmount: bigint): SponsorPins {
+  if (pins === undefined) {
+    throw new ConfigMissingError(
+      `T2 chi CARP của bên tài trợ, mà bản deploy không ghim quỹ / địa chỉ / trần của bên tài trợ.`,
+      { missing: ["paid_fund.sponsor"], route: "/tx/sponsor/t2-fund" });
+  }
+  if (!pins.fundUnits.includes(fundUnit)) {
+    throw new CodedApiError(422, "SPONSOR_FUND_NOT_ALLOWED",
+      `"fund_id" không thuộc tập quỹ bên tài trợ đã ghim ở cấu hình dịch vụ.`, { fund_unit: fundUnit });
+  }
+  if (carpAmount > pins.maxCarpAmount) {
+    throw new CodedApiError(422, "SPONSOR_CARP_ABOVE_CAP",
+      `"carp_amount" vượt trần một lượt T2 đã ghim.`, { max_carp_amount: pins.maxCarpAmount.toString() });
+  }
+  return pins;
+}
+
+/**
+ * UTxO bên tài trợ: mỗi cái mang CARP, tất cả ở CHUNG MỘT địa chỉ khoá, và địa chỉ đó (nguyên văn, cả
+ * phần stake) nằm trong tập đã ghim. Trả địa chỉ đó — nó là đích thối duy nhất.
+ */
+export function assertSponsorUtxosPinned(utxos: UTxO[], pins: SponsorPins, carpUnit: string): string {
+  if (utxos.length === 0) throw shape(`"sponsor.utxo_refs" rỗng.`, { field: "sponsor.utxo_refs" });
+  const addrs = [...new Set(utxos.map(u => u.address))];
+  if (addrs.length !== 1) {
+    throw new CodedApiError(422, "SPONSOR_UTXO_NOT_ALLOWED",
+      `Các UTxO trong "sponsor.utxo_refs" nằm ở ${addrs.length} địa chỉ; T2 cần chúng chung MỘT địa chỉ bên tài trợ.`,
+      { addresses: addrs.length });
+  }
+  const address = addrs[0]!;
+  if (getAddressDetails(address).paymentCredential?.type !== "Key") {
+    throw new CodedApiError(400, "SPONSOR_UTXO_NOT_KEY",
+      `UTxO bên tài trợ không do khoá giữ — bên tài trợ phải ký được để chi nó.`, { utxo_ref: refStr(utxos[0]!) });
+  }
+  if (!pins.addresses.includes(address)) {
+    throw new CodedApiError(422, "SPONSOR_UTXO_NOT_ALLOWED",
+      `UTxO trong "sponsor.utxo_refs" không ở địa chỉ bên tài trợ đã ghim ở cấu hình dịch vụ.`,
+      { utxo_ref: refStr(utxos[0]!) });
+  }
+  for (const u of utxos) {
+    if ((u.assets[carpUnit] ?? 0n) <= 0n) {
+      throw new CodedApiError(422, "SPONSOR_UTXO_NO_CARP",
+        `UTxO bên tài trợ ${refStr(u)} không mang CARP — "sponsor.utxo_refs" chỉ nhận UTxO chứa CARP.`,
+        { utxo_ref: refStr(u) });
     }
-    throw e;
+  }
+  return address;
+}
+
+export interface T2PinnedOutputsExpect {
+  pins: SponsorPins;
+  carpUnit: string;
+  fundScriptHash: string;
+  fundAddress: string;
+  /** UTxO quỹ đọc từ chuỗi (lượng CARP trước nạp). */
+  fundIn: UTxO;
+  /** UTxO bên tài trợ đọc từ chuỗi. */
+  sponsorIn: UTxO[];
+  /** Địa chỉ chung của `sponsorIn` (đã qua `assertSponsorUtxosPinned`). */
+  sponsorAddress: string;
+  carpAmount: bigint;
+}
+
+/**
+ * Đọc lại output của T2 vừa dựng, so với GIÁ TRỊ ĐÃ GHIM + UTxO đọc từ chuỗi — không với thân bài:
+ *   · ĐÚNG MỘT output mang tài sản dưới policy quỹ; nó ở địa chỉ quỹ, NFT của nó thuộc tập đã ghim, và
+ *     CARP của nó tăng ĐÚNG `carp_amount` (≤ trần) so với UTxO quỹ vào;
+ *   · ĐÚNG MỘT output ở địa chỉ bên tài trợ, giá trị TRỌN bằng `Σ sponsorIn − carp_amount` (ADA + mọi
+ *     token, không chỉ CARP) — ví trả phí là địa chỉ khác nên không có phí nào để trừ;
+ *   · không output nào khác mang CARP.
+ * Lệch ⟹ 422 `SPONSOR_TX_MISMATCH`.
+ */
+export function assertT2PinnedOutputs(outs: SponsorTxOutput[], e: T2PinnedOutputsExpect): void {
+  const bad = (reason: string, details: Record<string, unknown> = {}): never => { throw txMismatch("T2", reason, details); };
+  const fundOuts = outs.filter(o => Object.keys(o.assets).some(k => k !== "lovelace" && k.startsWith(e.fundScriptHash)));
+  if (fundOuts.length !== 1) bad(`tx có ${fundOuts.length} output mang NFT quỹ, cần ĐÚNG 1.`);
+  const fo = fundOuts[0]!;
+  const fundNfts = Object.keys(fo.assets).filter(k => k !== "lovelace" && k.startsWith(e.fundScriptHash));
+  if (fo.address !== e.fundAddress) bad(`output quỹ #${fo.index} không ở địa chỉ quỹ đã cấu hình.`, { index: fo.index });
+  if (fundNfts.length !== 1 || !e.pins.fundUnits.includes(fundNfts[0]!) || fo.assets[fundNfts[0]!] !== 1n) {
+    bad(`output quỹ #${fo.index} không mang đúng một NFT quỹ thuộc tập đã ghim.`, { index: fo.index });
+  }
+  const added = (fo.assets[e.carpUnit] ?? 0n) - (e.fundIn.assets[e.carpUnit] ?? 0n);
+  if (added !== e.carpAmount || added <= 0n || added > e.pins.maxCarpAmount) {
+    bad(`quỹ nhận ${added} CARP, cần đúng ${e.carpAmount} (trần ${e.pins.maxCarpAmount}).`, { index: fo.index });
+  }
+
+  const want: Assets = {};
+  for (const u of e.sponsorIn) for (const [k, q] of Object.entries(u.assets)) want[k] = (want[k] ?? 0n) + q;
+  want[e.carpUnit] = (want[e.carpUnit] ?? 0n) - e.carpAmount;
+  if (want[e.carpUnit] === 0n) delete want[e.carpUnit];
+  const changeOuts = outs.filter(o => o.address === e.sponsorAddress);
+  if (changeOuts.length !== 1) bad(`tx có ${changeOuts.length} output về địa chỉ bên tài trợ, cần ĐÚNG 1.`);
+  const co = changeOuts[0]!;
+  const keys = new Set([...Object.keys(want), ...Object.keys(co.assets)]);
+  for (const k of keys) {
+    if ((co.assets[k] ?? 0n) !== (want[k] ?? 0n)) {
+      bad(`phần thối bên tài trợ (#${co.index}) lệch giá trị vào − carp_amount ở tài sản ${k.slice(0, 20)}….`,
+        { index: co.index, unit: k });
+    }
+  }
+  for (const o of outs) {
+    if (o.index === fo.index || o.index === co.index) continue;
+    if ((o.assets[e.carpUnit] ?? 0n) !== 0n) bad(`output #${o.index} mang CARP — ngoài quỹ và phần thối bên tài trợ.`, { index: o.index });
   }
 }
 
@@ -867,12 +1048,6 @@ function signersFor(step: SponsorStep, ctx: StepCtx, sponsorSigners: string[]): 
       };
   if (step !== "T2") return [fee, owner];
   return [fee, { role: "sponsor", keyHashes: sponsorSigners, how: "chi các UTxO CARP đã đưa trong sponsor.utxo_refs" }, owner];
-}
-
-
-function sponsorChangeOf(req: OwnerRequest): string {
-  const a = (req as Partial<SponsorT2Request>).sponsorChangeAddress;
-  return a === undefined ? "sponsor.change_address" : a;
 }
 
 /**

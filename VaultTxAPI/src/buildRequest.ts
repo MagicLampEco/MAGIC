@@ -219,9 +219,22 @@ export function reqBigint(body: Record<string, unknown>, name: string): bigint {
   if (typeof v !== "string" || !/^\d+$/.test(v)) {
     throw new BadRequestError(`"${name}" phải là chuỗi chữ số thập phân không âm.`);
   }
+  if (v.length > MAX_AMOUNT_DIGITS) throw tooManyDigits(name, v.length, (m, d) => new BadRequestError(m, d));
   const n = BigInt(v);
   if (n <= 0n) throw new BadRequestError(`"${name}" phải > 0.`);
   return n;
+}
+
+/**
+ * Trần số chữ số của mọi lượng đọc từ thân bài, áp TRƯỚC `BigInt()`. 20 chữ số (< 10²⁰) phủ dư mọi
+ * lượng thật: trần LAMP 36×10¹⁵ oildrop là 17 chữ số. Không có trần thì một chuỗi một triệu chữ số đi
+ * thẳng vào `BigInt()` và vào mọi phép tính sau nó — tốn CPU của dịch vụ, không vì việc gì.
+ */
+export const MAX_AMOUNT_DIGITS = 20;
+
+/** Câu lỗi KHÔNG lặp lại con số — chỉ nói nó dài bao nhiêu chữ số. */
+function tooManyDigits<E>(name: string, digits: number, mk: (m: string, d: Record<string, unknown>) => E): E {
+  return mk(`"${name}" dài quá ${MAX_AMOUNT_DIGITS} chữ số.`, { max_digits: MAX_AMOUNT_DIGITS, received_digits: digits });
 }
 
 /** Như `reqBigint` nhưng nhận `"0"` — CHỈ cho `lamp_amount` của két instant. */
@@ -246,6 +259,9 @@ function reqAmountCoded(body: Record<string, unknown>, name: string, code: strin
   if (v === undefined) bad("bắt buộc (nanogic, chuỗi chữ số thập phân > 0).");
   if (typeof v === "number") bad("phải là CHUỖI chữ số, không phải số JSON (số JSON làm tròn quá 2^53).");
   if (typeof v !== "string" || !/^\d+$/.test(v)) bad("phải là chuỗi chữ số thập phân.");
+  if ((v as string).length > MAX_AMOUNT_DIGITS) {
+    throw tooManyDigits(name, (v as string).length, (m, d) => new CodedApiError(400, code, m, d));
+  }
   const n = BigInt(v as string);
   if (n <= 0n) bad("phải > 0.");
   return n;

@@ -142,6 +142,25 @@ export interface PrepaidDeployment {
    * trùng hai địa chỉ đã cấu hình, lệch ⟹ 501 `SPONSOR_PREPAID_SCRIPTS_MISMATCH`.
    */
   carpUnit?: string;
+  /**
+   * Ghim bên tài trợ cho T2 (khoá `paid_fund.sponsor`). TUỲ CHỌN để khối cũ vẫn nạp được; vắng ⟹
+   * `/tx/sponsor/t2-fund` trả 501 `CONFIG_MISSING`, KHÔNG mặc định cho qua. Lý do có nó: thân bài T2
+   * do người gọi viết, nên mọi thứ quyết TIỀN của bên tài trợ đi đâu phải đối chiếu với một giá trị
+   * mà người gọi không viết được — `sponsor.ts` ▸ `assertT2PinnedInputs` (trước khi dựng) và
+   * `assertT2PinnedOutputs` (đọc lại CBOR sau khi dựng).
+   */
+  sponsor?: SponsorPins;
+}
+
+/** Khối `paid_fund.sponsor`: `{ fund_units: [...], addresses: [...], max_carp_amount: "<chữ số>" }`. */
+export interface SponsorPins {
+  /** Unit NFT quỹ được phép nạp (`paid_fund hash ‖ fund_id`). Quỹ ngoài tập ⟹ 422. */
+  fundUnits: readonly string[];
+  /** Địa chỉ bech32 (NGUYÊN VĂN, cả phần stake) của ví bên tài trợ: mọi UTxO trong
+   *  `sponsor.utxo_refs` phải nằm ở đúng một địa chỉ trong tập này, và phần thối về lại đúng nó. */
+  addresses: readonly string[];
+  /** Trần carpdrop một lượt T2. */
+  maxCarpAmount: bigint;
 }
 
 export interface Deployment {
@@ -265,6 +284,13 @@ export interface AppConfig {
   basePath: string;
   /** Thẻ bài chia sẻ. Rỗng CHỈ được phép khi `host` là loopback. */
   token: string;
+  /**
+   * Thẻ bài VAI `sponsor` (biến `VAULT_TX_API_SPONSOR_TOKEN`) — thẻ DUY NHẤT mở được
+   * `/tx/sponsor/t2-fund`, và nó KHÔNG mở route nào khác (`http.ts` ▸ `requireRole`). Rỗng ⟹ T2 trả
+   * 501 `CONFIG_MISSING` kể cả trên loopback: T2 là bước chi tiền của bên tài trợ, không có "chế độ
+   * không thẻ" cho nó.
+   */
+  sponsorToken: string;
   requestTimeoutMs: number;
   /** Khoá mềm theo `owner_pkh` sống bao lâu, cũng là `expires_at` của tx trả về. */
   lockTtlMs: number;
@@ -341,6 +367,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
 
+  const sponsorToken = env.VAULT_TX_API_SPONSOR_TOKEN || "";
+  if (sponsorToken !== "" && sponsorToken === token) {
+    // Hai vai một thẻ là không có vai: ai cầm thẻ thường cũng mở được T2.
+    throw new Error(
+      "[config] VAULT_TX_API_SPONSOR_TOKEN trùng VAULT_TX_API_TOKEN — thẻ vai sponsor phải là thẻ RIÊNG.",
+    );
+  }
+
   const requestTimeoutMs = intOrThrow(env.VAULT_TX_API_TIMEOUT_MS, "VAULT_TX_API_TIMEOUT_MS", 20_000, 100, 600_000);
   const lockTtlMs = intOrThrow(env.VAULT_TX_API_LOCK_TTL_MS, "VAULT_TX_API_LOCK_TTL_MS", 180_000, 1_000, 3_600_000);
 
@@ -349,7 +383,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     network, blockfrostUrl, blockfrostProjectId, deployment,
     changeAddressStrategy: strategyRaw as ChangeAddressStrategy,
-    vaultPlutusJsonPath, host, port, basePath, token, requestTimeoutMs, lockTtlMs,
+    vaultPlutusJsonPath, host, port, basePath, token, sponsorToken, requestTimeoutMs, lockTtlMs,
     ...(feecoverAppToken === undefined ? {} : { feecoverAppToken }),
   };
 }
@@ -492,6 +526,7 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
       ...(pf.carp_unit === undefined
         ? {}
         : { carpUnit: unit(str(pf.carp_unit, "paid_fund.carp_unit"), "paid_fund.carp_unit") }),
+      ...(pf.sponsor === undefined ? {} : { sponsor: parseSponsorPins(pf.sponsor, prefix, network, fund.scriptHash) }),
     };
     paidFundRef = outRef(str(refs.paid_fund, "ref_script_utxos.paid_fund"), "ref_script_utxos.paid_fund");
   } else {
@@ -783,6 +818,70 @@ function scriptAddress(address: string, prefix: string, network: Network, where:
     );
   }
   return { address, scriptHash: cred.hash };
+}
+
+/** Trần số chữ số của một lượng tiền đọc từ cấu hình — cùng trần với thân bài (`buildRequest.ts`). */
+const MAX_AMOUNT_DIGITS = 20;
+
+/**
+ * Khối `paid_fund.sponsor` → `SponsorPins`. Mọi sai hình dạng ⟹ NÉM lúc khởi động: một ghim nạp hỏng
+ * mà lặng lẽ thành "không ghim" là mở lại đúng lỗ nó sinh ra để bịt.
+ */
+function parseSponsorPins(v: unknown, prefix: string, network: Network, fundScriptHash: string): SponsorPins {
+  const o = obj(v, "paid_fund.sponsor");
+  const list = (x: unknown, where: string): string[] => {
+    if (!Array.isArray(x) || x.length === 0) {
+      throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where} phải là mảng KHÔNG rỗng.`);
+    }
+    const out = x.map((s, i) => str(s, `${where}[${i}]`));
+    if (new Set(out).size !== out.length) throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where} có mục trùng.`);
+    return out;
+  };
+  const fundUnits = list(o.fund_units, "paid_fund.sponsor.fund_units").map((u, i) => {
+    const where = `paid_fund.sponsor.fund_units[${i}]`;
+    unit(u, where);
+    const nameLen = (u.length - 56) / 2;
+    if (!u.startsWith(fundScriptHash) || nameLen < 1 || nameLen > 32) {
+      throw new Error(
+        `[config] ${where} phải là NFT quỹ dưới policy paid_fund (${fundScriptHash.slice(0, 16)}…) với tên 1–32 byte.`,
+      );
+    }
+    return u;
+  });
+  const addresses = list(o.addresses, "paid_fund.sponsor.addresses").map((a, i) => {
+    const where = `paid_fund.sponsor.addresses[${i}]`;
+    // Thứ tự có chủ ý: giải mã + chính tắc TRƯỚC tiền tố. Bech32 cấm chữ hoa-thường lẫn lộn, nên dạng
+    // không chính tắc DUY NHẤT giải mã được là viết HOA toàn bộ — mà dạng đó cũng hỏng tiền tố. Kiểm tiền
+    // tố trước thì phép so chính tắc không bao giờ được chạy tới, và không ca nào đo được nó.
+    let details;
+    try {
+      details = getAddressDetails(a);
+    } catch (e) {
+      throw new Error(`[config] ${where} không giải mã được: ${(e as Error).message}`);
+    }
+    if (details.paymentCredential?.type !== "Key") {
+      throw new Error(`[config] ${where} phải có phần thanh toán là KHOÁ — bên tài trợ ký để chi UTxO của mình.`);
+    }
+    // So NGUYÊN VĂN ở cổng ⟹ dạng ghim phải là dạng chính tắc, nếu không nó không bao giờ khớp.
+    if (details.address.bech32 !== a) {
+      throw new Error(`[config] ${where} không ở dạng bech32 chính tắc (chữ thường).`);
+    }
+    if (!a.startsWith(prefix)) {
+      throw new Error(`[config] ${where} không mang tiền tố "${prefix}" của mạng ${network}.`);
+    }
+    return a;
+  });
+  const raw = o.max_carp_amount;
+  if (typeof raw !== "string" || !new RegExp(`^[0-9]{1,${MAX_AMOUNT_DIGITS}}$`).test(raw)) {
+    throw new Error(
+      `[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.max_carp_amount phải là CHUỖI 1–${MAX_AMOUNT_DIGITS} chữ số (carpdrop).`,
+    );
+  }
+  const maxCarpAmount = BigInt(raw);
+  if (maxCarpAmount <= 0n) {
+    throw new Error("[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.max_carp_amount phải > 0.");
+  }
+  return { fundUnits, addresses, maxCarpAmount };
 }
 
 /**

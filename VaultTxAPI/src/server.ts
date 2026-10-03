@@ -142,6 +142,7 @@ const server = createServer((rq, rs) => {
           chainLabel: chain.label,
           changeAddressStrategy: cfg.changeAddressStrategy,
           token: cfg.token,
+          sponsorToken: cfg.sponsorToken,
           build,
           basePath: cfg.basePath,
           ...(feeProxy === undefined ? {} : { feeProxy }),

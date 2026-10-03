@@ -8,7 +8,10 @@
 //                        anchor DID của người mới (tên NFT = owner_commit) để bên tài trợ đối chiếu.
 //   T3  người mới ký   — PrepaidDraw ⟹ một lô MAGIC sống đúng kỳ e.
 //   T4  người mới ký   — Consume + BurnBatch trên két Prepaid, CÙNG kỳ e với T3.
-// Mọi tx: ví đang chọn trong `lucid` (ví khoá) trả phí và thế chấp.
+// Mọi tx: ví đang chọn trong `lucid` (ví khoá) trả phí và thế chấp. Ví trả phí bên thứ ba (Feecover)
+// đòi hai thứ mà bộ dựng phải nhận từ người gọi, không tự đoán: lượng thế chấp TƯỜNG MINH
+// (`collateralLovelace`, cả bốn bước) và hạn dùng ≤ 1 giờ (`validToMs` ở T1 — T2/T3 đã có cửa sổ
+// `validityInEpoch` 10 phút, T4 có `epochValidityWindow` ≤ 1 giờ).
 //
 // SDK KHÔNG làm chính sách tài trợ (mỗi DID một lần, hạn mức): đó là việc của bên tài trợ. SDK chỉ
 // ép HÌNH DẠNG giao dịch mà bên tài trợ đòi, và ném tường minh khi hình dạng đó không dựng được.
@@ -31,6 +34,7 @@ import {
 } from "@lucid-evolution/lucid";
 import {
   applyOwnerAuth,
+  collateralCompleteOptions,
   epochValidityWindow,
   msPerEpoch as networkMsPerEpoch,
   resolveOwnerAuth,
@@ -170,8 +174,12 @@ function validityFor(nowMs: bigint, validity: TxValidity | undefined, P: bigint,
   return { validity: v, epoch: epochOrThrow(v, P, O) };
 }
 
-async function completeOrThrow(tx: TxBuilder, step: string): Promise<{ tx: TxSignBuilder; txCbor: string }> {
-  const c = await tx.completeSafe();
+async function completeOrThrow(
+  tx: TxBuilder, step: string, collateralLovelace?: bigint,
+): Promise<{ tx: TxSignBuilder; txCbor: string }> {
+  // Vắng `collateralLovelace` ⟹ mặc định của Lucid (hành vi cũ). Có ⟹ đúng lượng đó (luật hình dạng ở
+  // `collateralCompleteOptions`, ném khi ≤ 0).
+  const c = await tx.completeSafe(collateralCompleteOptions(collateralLovelace));
   if (c._tag === "Left") {
     const err = c.left as { message?: unknown; cause?: unknown };
     const cause = err?.cause === undefined ? "" : ` | cause: ${typeof err.cause === "string" ? err.cause : JSON.stringify(err.cause)}`;
@@ -179,6 +187,20 @@ async function completeOrThrow(tx: TxBuilder, step: string): Promise<{ tx: TxSig
   }
   const signBuilder = (c as { right: TxSignBuilder }).right;
   return { tx: signBuilder, txCbor: signBuilder.toCBOR() };
+}
+
+/**
+ * Lỗi `complete()` của Lucid ném ra từ bộ dựng module gốc (`buildConsumeTx` gọi `complete()`, không
+ * `completeSafe()`) ⟹ `SPONSOR_BUILD_FAILED`, cùng mã với nhánh `Left` của `completeOrThrow` (T1–T3).
+ * Lucid bọc lỗi trong `FiberFailure` nên không so được bằng `instanceof`; nhận diện theo TÊN lớp
+ * `TxBuilderError` trong `name`/`message`. Lỗi có `code` (CONSUME-0xx, OWNER_*) và mọi lỗi khác (lỗi
+ * lập trình) đi NGUYÊN — tên lớp Lucid đổi thì ca này rơi về 500 có `reference_code`, ồn chứ không im.
+ */
+function lucidBuildFailure(e: unknown, step: string): unknown {
+  if (!(e instanceof Error)) return e;
+  if (typeof (e as { code?: unknown }).code === "string") return e;
+  if (!/TxBuilderError/.test(`${e.name} ${e.message}`)) return e;
+  return new SponsorJourneyError("SPONSOR_BUILD_FAILED", `${step}: Lucid không dựng được tx — ${e.message}`);
 }
 
 // ── Đọc thân tx (CBOR) ────────────────────────────────────────────────────────
@@ -245,6 +267,10 @@ export interface SponsorT1Params {
   network: Network;
   /** Lovelace của thread; vắng ⟹ mặc định của ConsumeMAGIC (2 ADA). */
   threadLovelace?: bigint;
+  /** Cận trên hạn dùng (POSIX ms). Vắng ⟹ không đặt (hành vi cũ). Ví trả phí bên thứ ba đòi ≤ 1 giờ. */
+  validToMs?: bigint;
+  /** Lượng thế chấp tường minh (lovelace). Vắng ⟹ mặc định của Lucid. */
+  collateralLovelace?: bigint;
 }
 
 export interface SponsorT1Summary {
@@ -274,7 +300,9 @@ export async function buildSponsorT1OpenPrepaid(p: SponsorT1Params): Promise<Spo
     ownerProof: { mode: "deferred" }, didCommit, network: p.network, consumeRefUtxo: p.consumeRefUtxo,
     ...(p.threadLovelace === undefined ? {} : { lovelace: p.threadLovelace }),
   });
-  const built = await completeOrThrow(applyOwnerAuth(th.tx, auth), "T1");
+  let t1 = applyOwnerAuth(th.tx, auth);
+  if (p.validToMs !== undefined) t1 = t1.validTo(Number(p.validToMs));
+  const built = await completeOrThrow(t1, "T1", p.collateralLovelace);
   const withdrawals = assertWithdrawals(built.txCbor, p.owner, "T1");
   return {
     ...built,
@@ -316,6 +344,8 @@ export interface SponsorT2Params {
   nowMs: bigint;
   /** Cặp cận tự chọn; vắng ⟹ `validityInEpoch(nowMs)`. Vắt hai kỳ ⟹ NÉM. */
   validity?: TxValidity;
+  /** Lượng thế chấp tường minh (lovelace). Vắng ⟹ mặc định của Lucid. */
+  collateralLovelace?: bigint;
 }
 
 export interface SponsorT2Summary {
@@ -448,7 +478,7 @@ export async function buildSponsorT2Fund(p: SponsorT2Params): Promise<SponsorTxR
   // Anchor DID của người mới: reference input bên tài trợ đòi. Lucid khử trùng `readFrom` theo
   // outref, nên nhân chứng `did_stake` đã gắn cùng anchor thì tx vẫn có đúng một mục.
   const tx = applyOwnerAuth(r.tx.readFrom([anchor.utxo]), auth);
-  const built = await completeOrThrow(tx, "T2");
+  const built = await completeOrThrow(tx, "T2", p.collateralLovelace);
 
   const refs = txReferenceInputsOf(built.txCbor);
   if (!refs.some((x) => x.txHash === anchor.utxo.txHash && x.outputIndex === anchor.utxo.outputIndex)) {
@@ -496,6 +526,8 @@ export interface SponsorT3Params {
   network: Network;
   nowMs: bigint;
   validity?: TxValidity;
+  /** Lượng thế chấp tường minh (lovelace). Vắng ⟹ mặc định của Lucid. */
+  collateralLovelace?: bigint;
 }
 
 export interface SponsorT3Summary {
@@ -516,7 +548,7 @@ export async function buildSponsorT3Draw(p: SponsorT3Params): Promise<SponsorTxR
     ownerProof: { mode: "deferred" },
   });
   const owner = r.plan.owner as OwnerRef;
-  const built = await completeOrThrow(applyOwnerAuth(r.tx, resolveOwnerAuth(owner, p.ownerAuth)), "T3");
+  const built = await completeOrThrow(applyOwnerAuth(r.tx, resolveOwnerAuth(owner, p.ownerAuth)), "T3", p.collateralLovelace);
   const withdrawals = assertWithdrawals(built.txCbor, owner, "T3");
   return {
     ...built,
@@ -604,7 +636,7 @@ export async function buildSponsorT4FirstConsume(p: SponsorT4Params): Promise<Sp
       tipPosixMs: p.tipPosixMs,
       ...(p.maxPriceStale === undefined ? {} : { maxPriceStale: p.maxPriceStale }),
       ...(p.collateralLovelace === undefined ? {} : { collateralLovelace: p.collateralLovelace }),
-  });
+  }).catch((e: unknown) => { throw lucidBuildFailure(e, "T4"); });
   if (r.currentEpoch !== p.drawEpoch) {
     fail("SPONSOR_EPOCH_MISMATCH", `buildConsumeTx ghi kỳ ${r.currentEpoch}, T3 ở kỳ ${p.drawEpoch}.`);
   }

@@ -217,14 +217,39 @@ describe("cổng khối deploy Prepaid", () => {
 });
 
 describe("fee_payer và nhân chứng", () => {
-  it("fee_payer ⟹ 501 SPONSOR_FEE_PAYER_UNSUPPORTED, trước khi đọc chuỗi", async () => {
+  // Hành trình fee_payer đi trọn T1→T4 trên script thật: `sponsorEmulator.test.ts`. Ở đây chỉ các cổng
+  // hình dạng chạy TRƯỚC mọi lượt đọc chuỗi (cặp xanh: các bài Emulator, cùng hình dạng thân).
+  const FP = { utxo: `${"fe".repeat(32)}#0`, address: credentialToAddress("Preprod", { type: "Key", hash: "fe".repeat(28) }) };
+  it("fee_payer + change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT, trước khi đọc chuỗi", async () => {
     const { svc, reads } = service("Preprod", deploymentJson("Preprod"));
-    const r = await post("/tx/sponsor/t1-open", {
-      ...T1_BODY, fee_payer: { utxo: `${"fe".repeat(32)}#0`, address: credentialToAddress("Preprod", { type: "Key", hash: "fe".repeat(28) }) },
-    }, svc);
-    expect(r.status).toBe(501);
-    expect(errCode(r)).toBe("SPONSOR_FEE_PAYER_UNSUPPORTED");
+    const r = await post("/tx/sponsor/t1-open", { ...T1_BODY, fee_payer: FP, change_address: FP.address }, svc);
+    expect(r.status).toBe(400);
+    expect(errCode(r)).toBe("FEE_PAYER_CHANGE_ADDRESS_CONFLICT");
     expect(reads()).toBe(0);
+  });
+
+  it("fee_payer.address sai mạng / là script ⟹ 400 FEE_PAYER_INVALID, trước khi đọc chuỗi", async () => {
+    const { svc, reads } = service("Preprod", deploymentJson("Preprod"));
+    for (const address of [
+      credentialToAddress("Mainnet", { type: "Key", hash: "fe".repeat(28) }),
+      credentialToAddress("Preprod", { type: "Script", hash: "fe".repeat(28) }),
+    ]) {
+      const r = await post("/tx/sponsor/t3-draw", { ...KEY_OWNER, fund_id: "f0", carp_amount: "5", fee_payer: { ...FP, address } }, svc);
+      expect(r.status).toBe(400);
+      expect(errCode(r)).toBe("FEE_PAYER_INVALID");
+    }
+    expect(reads()).toBe(0);
+  });
+
+  it("thân bài có funding (kể cả chỉ mang funding.fee_payer) ⟹ 400 SPONSOR_REQUEST_SHAPE; cặp: fee_payer ở gốc qua cổng hình dạng", async () => {
+    const { svc, reads } = service("Preprod", deploymentJson("Preprod"));
+    const r = await post("/tx/sponsor/t1-open", { ...T1_BODY, funding: { fee_payer: FP } }, svc);
+    expect(r.status).toBe(400);
+    expect(errCode(r)).toBe("SPONSOR_REQUEST_SHAPE");
+    expect(reads()).toBe(0);
+    const ok = await post("/tx/sponsor/t1-open", { ...T1_BODY, fee_payer: FP }, svc);
+    expect(errCode(ok)).not.toBe("SPONSOR_REQUEST_SHAPE");
+    expect(ok.status).not.toBe(400);
   });
 
   it("chủ script, dịch vụ không có nhân chứng ⟹ 501 OWNER_SCRIPT_WITNESS_UNAVAILABLE; chủ khoá kèm owner_witness ⟹ 400 OWNER_WITNESS_UNEXPECTED", async () => {

@@ -107,6 +107,9 @@ describe("createVault + funding did_payment", () => {
     expect(r.argsOf("collectFrom")).toHaveLength(1);
     expect(r.names()).not.toContain("attach.SpendingValidator");
     expect(r.names()).not.toContain("validTo");
+    // Cặp của `readFrom([[ANCHOR]])` ở ca chủ khoá + funding: anchor chỉ vào reference_inputs khi có
+    // did_payment để chi — nó là thứ `did_payment` đòi, không phải thứ két đòi.
+    expect(r.names()).not.toContain("readFrom");
   });
 
   it("chủ script: bộ ký did_payment trùng nhân chứng ⟹ KHÔNG ký/đọc anchor lần hai; mục rút thối về ví Phoenix", async () => {

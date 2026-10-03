@@ -1,7 +1,7 @@
 // VaultTxAPI/src/sponsor.ts — hành trình tài trợ consume đầu (T1–T4) trên két PrepaidGen, ở dạng route.
 //
 //   POST /tx/sponsor/plan              { owner, sponsor_pkh }                         — thuần, không chạm chuỗi
-//   POST /tx/sponsor/t1-open           { owner, [owner_witness], [change_address], did_commit, [thread_lovelace] }
+//   POST /tx/sponsor/t1-open           { owner, [owner_witness], [change_address | fee_payer], did_commit, [thread_lovelace] }
 //   POST /tx/sponsor/t2-fund           { owner, …, fund_id, carp_amount, sponsor: { utxo_refs }, [vault_ref] }   [thẻ vai sponsor]
 //   POST /tx/sponsor/t3-draw           { owner, …, fund_id, carp_amount, [vault_ref] }
 //   POST /tx/sponsor/t4-first-consume  { owner, …, op_type, op_count, draw_epoch, [vault_ref], [engage_ref] }
@@ -34,17 +34,26 @@
 // T2 nhận UTxO của bên tài trợ dưới dạng THAM CHIẾU (`sponsor.utxo_refs`), đọc lại từ chuỗi, và trả
 // tx CHƯA KÝ. Bên tài trợ ký bằng khoá của chính họ, ngoài dịch vụ.
 //
-// ── `fee_payer` KHÔNG HỖ TRỢ (501) ──────────────────────────────────────────────
-// Ví trả phí bên thứ ba đòi hạn dùng ≤ 1 giờ và thế chấp tường minh (`feePayer.ts`). T1 không đặt
-// validity nào; T2/T3 của SDK không nhận lượng thế chấp. Ví trả phí của hành trình là ví KHOÁ ở
-// `change_address` — Feecover muốn trả phí thì đưa địa chỉ khoá của chính họ vào đó và ký như ví trả phí.
+// ── HAI CÁCH TRẢ PHÍ: `change_address` HOẶC `fee_payer` ─────────────────────────
+// `change_address`: ví KHOÁ của bên trả phí; dịch vụ đưa MỌI UTxO của ví đó cho chọn-coin.
+// `fee_payer` `{ utxo, address }` (mô hình Feecover, cùng hình dạng + cùng mã lỗi `FEE_PAYER_*` như
+// mọi đường dựng khác — `feePayer.ts`): tx tiêu ĐÚNG UTxO đó, nó vừa là tài sản thế chấp DUY NHẤT
+// (lượng tường minh `fee_payer_collateral_lovelace`), hạn dùng ≤ 1 giờ, tiền thối ADA về lại đúng
+// `fee_payer.address`. Hai trường loại trừ nhau (400 `FEE_PAYER_CHANGE_ADDRESS_CONFLICT`).
+//
+// Khác các đường dựng khác ở MỘT chỗ có chủ đích: ví trả phí ở đây được phép mất THÊM khoản min-ADA
+// ứng cho output két/thread/quỹ (T1: két Prepaid + thread mới; các bước sau: phần min-ADA tăng nếu
+// datum lớn lên) — người mới có 0 ADA, nên không ai khác ứng được. Bù lại, phép đọc lại CBOR
+// (`checkSponsorFeePayerTx`) ép tập địa chỉ ĐÓNG: input chỉ gồm UTxO trả phí + đúng các UTxO script
+// của luồng (+ UTxO bên tài trợ ở T2); output chỉ tới ví trả phí, các script của luồng, và bên tài trợ
+// ở T2; khoản ứng = đúng phần lovelace tăng ở output script, bên tài trợ không được nhận thêm ADA.
 
 import {
-  CML, getAddressDetails, validatorToAddress, validatorToScriptHash,
+  CML, getAddressDetails, validatorToAddress, validatorToScriptHash, valueToAssets,
   type Assets, type LucidEvolution, type Script, type TxBuilder, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
 import {
-  OwnerAuthError, WindowOriginError, msPerEpoch, sameOwner, windowOriginMs, windowStartMs,
+  FUNDING_MAX_VALIDITY_MS, OwnerAuthError, WindowOriginError, msPerEpoch, sameOwner, windowOriginMs, windowStartMs,
   type Network, type OwnerAuth, type OwnerRef,
 } from "@magiclamp/protocol-utils";
 import {
@@ -65,13 +74,17 @@ import {
   ChainUnavailableError, CodedApiError, ConfigMissingError, TxApiError, TxBuildRejectedError,
   VaultAmbiguousError, VaultDatumUndecodableError, VaultNotFoundError, ownerApiErrorOf,
 } from "./errors.js";
-import { refStr, type OutRefLike } from "./feePayer.js";
+import {
+  FEE_PAYER_CODES, assertFeePayerAddress, checkCollateral, checkValidTo, inputRefsOf, readFeePayerUtxo, refStr,
+  type FeePayerRequest, type OutRefLike,
+} from "./feePayer.js";
 import { pickByNft } from "./genV2.js";
 import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type SponsorRoute } from "./locks.js";
 import { ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness } from "./owner.js";
 import type { OwnerRequest } from "./service.js";
 import { txBodyHash } from "./summary.js";
 import { assertChangeAddress, enterpriseAddressOf } from "./txBuilder.js";
+import { raw } from "./units.js";
 
 // ── Bảng mã lỗi SDK → HTTP ─────────────────────────────────────────────────────
 
@@ -205,6 +218,12 @@ export function parseSponsorRequest(step: "T4", body: Record<string, unknown>): 
 export function parseSponsorRequest(
   step: SponsorStep, body: Record<string, unknown>,
 ): SponsorT1Request | SponsorT2Request | SponsorT3Request | SponsorT4Request {
+  // `funding` là khối nạp LAMP từ ví Phoenix của `/tx/create-vault`; ở đây không có gì để nạp. Gửi nó
+  // (kể cả chỉ để mang `funding.fee_payer`) ⟹ 400, không lặng lẽ bỏ qua rồi dựng bằng ví khác.
+  if (body.funding !== undefined) {
+    throw shape(`"funding" không dùng ở hành trình tài trợ. Ví trả phí bên thứ ba đi qua "fee_payer" ` +
+      `{ "utxo", "address" } ở gốc thân bài.`, { field: "funding" });
+  }
   const base = ownerReq(body);
   const vaultRef = optOutRef(body, "vault_ref");
   const withVaultRef = vaultRef === undefined ? {} : { vaultRef };
@@ -386,6 +405,26 @@ interface StepCtx {
   feeAddress: string;
   feeKeyHash: string;
   tip: ChainTip;
+  /** Có ⟹ ví trả phí bên thứ ba: ví của Lucid mang ĐÚNG `utxo`, thế chấp + hạn dùng tường minh. */
+  feePayer?: { req: FeePayerRequest; utxo: UTxO; collateralLovelace: bigint; validToMs: bigint };
+}
+
+/** Địa chỉ mà một bước được chạm, cho phép đọc lại CBOR của đường `fee_payer`. */
+interface FeeFlow {
+  /** Script của luồng (két, thread, quỹ): input được tiêu; output nhận được khoản min-ADA ví trả phí ứng. */
+  scriptAddresses: string[];
+  /** Bên tài trợ (T2): input được tiêu, output nhận lại — nhưng KHÔNG được nhận thêm ADA nào. */
+  passAddresses: string[];
+}
+
+/** Ví của Lucid: đường `fee_payer` ⟹ đúng UTxO trả phí; đường `change_address` ⟹ mọi UTxO ở đó. */
+function feeWallet(ctx: StepCtx, all: () => Promise<UTxO[]>): Promise<UTxO[]> {
+  return ctx.feePayer === undefined ? all() : Promise.resolve([ctx.feePayer.utxo]);
+}
+
+/** Lượng thế chấp tường minh — chỉ khi có `fee_payer`. */
+function collateralOf(ctx: StepCtx): { collateralLovelace: bigint } | Record<string, never> {
+  return ctx.feePayer === undefined ? {} : { collateralLovelace: ctx.feePayer.collateralLovelace };
 }
 
 export class SponsorTxService {
@@ -411,7 +450,7 @@ export class SponsorTxService {
           `Đi tiếp từ T2 với két đang có.`,
           { vault_type: PREPAID_VAULT_TYPE, existing: existing.map(v => ({ vault_ref: refStr(v.utxo), vault_nft: v.nftUnit })) });
       }
-      const wallet = await this.walletUtxos(ctx.feeAddress);
+      const wallet = await feeWallet(ctx, () => this.walletUtxos(ctx.feeAddress));
       const sorted = [...wallet].sort((a, b) =>
         a.txHash === b.txHash ? a.outputIndex - b.outputIndex : a.txHash < b.txHash ? -1 : 1);
       const seedUtxo = sorted.find(u => Object.keys(u.assets).every(k => k === "lovelace")) ?? sorted[0]!;
@@ -420,6 +459,9 @@ export class SponsorTxService {
         lucid, prepaidScripts: p.scripts, consumeScript: p.consumeScript, consumeRefUtxo: p.consumeRef,
         seedUtxo, owner: ctx.owner, ownerAuth: ctx.ownerAuth, didCommit: req.didCommit, network: this.deps.network,
         ...(req.threadLovelace === undefined ? {} : { threadLovelace: req.threadLovelace }),
+        // T1 không có cửa sổ kỳ; ví trả phí bên thứ ba đòi hạn dùng ≤ 1 giờ ⟹ chỉ khi đó mới đặt.
+        ...(ctx.feePayer === undefined ? {} : { validToMs: ctx.feePayer.validToMs }),
+        ...collateralOf(ctx),
       });
       const s = r.summary;
       const vaultOut = this.nftOutput(s.outputs, s.vaultUnit, scope.address, "két Prepaid", "T1");
@@ -430,6 +472,7 @@ export class SponsorTxService {
       const txHash = txBodyHash(r.txCbor);
       return {
         txCbor: r.txCbor,
+        feeFlow: { scriptAddresses: [scope.address, this.deps.deployment.consume.engageAddress], passAddresses: [] },
         summary: {
           step: "T1",
           vault_unit: s.vaultUnit, vault_address: s.vaultAddress, vault_out_ref: `${txHash}#${vaultOut}`,
@@ -485,16 +528,21 @@ export class SponsorTxService {
       }
       for (const u of sponsorUtxos) this.assertNotPendingSpent(u, "UTxO bên tài trợ này");
       const sponsorAddress = assertSponsorUtxosPinned(sponsorUtxos, pins, p.scripts.carpUnit);
-      if (ctx.feeAddress === sponsorAddress) {
+      if (ctx.feeAddress === sponsorAddress || ctx.feeKeyHash === getAddressDetails(sponsorAddress).paymentCredential!.hash) {
         // Ví trả phí trùng ví bên tài trợ ⟹ tiền thừa của phí cũng về địa chỉ đó, và phép ghim "thối
-        // = vào − carp_amount" phải trừ thêm phí. Không mở đường đó: ví trả phí là một địa chỉ khác.
+        // = vào − carp_amount" phải trừ thêm phí. Không mở đường đó: ví trả phí là một ví khác. So cả
+        // KHOÁ, không chỉ chuỗi địa chỉ: cùng khoá khác phần stake thì một chữ ký chi được cả hai, và
+        // luật `fee_payer` coi output cùng khoá khác địa chỉ là thối nhầm.
+        const field = ctx.feePayer === undefined ? "change_address" : "fee_payer.address";
         throw new CodedApiError(422, "SPONSOR_FEE_WALLET_IS_SPONSOR",
-          `"change_address" (ví trả phí) trùng địa chỉ bên tài trợ; dùng một địa chỉ khoá khác để trả phí T2.`,
-          { change_address: ctx.feeAddress });
+          `"${field}" (ví trả phí) trùng ví bên tài trợ (cùng địa chỉ hoặc cùng khoá thanh toán); dùng một ví khoá ` +
+          `khác để trả phí T2.`,
+          { [field]: ctx.feeAddress });
       }
       // Ví trả phí KHÔNG được góp CARP: chọn-coin kéo CARP của ví đó vào thì nó thành output CARP
       // ngoài quỹ (SDK ném `SPONSOR_CARP_OUTPUT_UNPINNED`). Chỉ đưa cho Lucid các UTxO không CARP.
-      const wallet = (await this.walletUtxos(ctx.feeAddress)).filter(u => (u.assets[p.scripts.carpUnit] ?? 0n) === 0n);
+      const wallet = (await feeWallet(ctx, () => this.walletUtxos(ctx.feeAddress)))
+        .filter(u => (u.assets[p.scripts.carpUnit] ?? 0n) === 0n);
       if (wallet.length === 0) throw noWalletUtxo(ctx.feeAddress, "không giữ CARP");
       const lucid = await this.deps.lucidForWallet(ctx.feeAddress, wallet);
       const r = await buildSponsorT2Fund({
@@ -502,6 +550,7 @@ export class SponsorTxService {
         carpAmount: req.carpAmount, sponsorCarpUtxos: sponsorUtxos, sponsorChangeAddress: sponsorAddress,
         newcomerAnchor: { utxo: anchor, anchorNftPolicyId: anchorPolicy, ownerCommit: didCommit },
         ownerAuth: ctx.ownerAuth, network: this.deps.network, nowMs: ctx.tip.blockTimePosixMs,
+        ...collateralOf(ctx),
       });
       // Đọc lại CBOR (không qua summary của SDK) và so với giá trị ĐÃ GHIM + UTxO đọc từ chuỗi.
       assertT2PinnedOutputs(sponsorTxOutputsOf(r.txCbor), {
@@ -515,6 +564,7 @@ export class SponsorTxService {
         txCbor: r.txCbor,
         sponsorSigners: s.sponsorSigners,
         sponsorChangeAddress: sponsorAddress,
+        feeFlow: { scriptAddresses: [p.scope.address, prepaid.fundAddress], passAddresses: [sponsorAddress] },
         summary: {
           step: "T2", epoch: Number(s.epoch), epoch_end_ms: windowStartMs(s.epoch + 1n, p.P, p.O).toString(),
           vault_out_ref: `${txHash}#${vaultOut}`, fund_id: s.fundId, fund_unit: s.fundUnit,
@@ -531,17 +581,19 @@ export class SponsorTxService {
   async t3Draw(req: SponsorT3Request): Promise<SponsorBuildResponse> {
     return this.run("T3", req, [], async (p, ctx) => {
       const vault = await this.pickVault(p, ctx.owner, req.vaultRef);
-      const wallet = await this.walletUtxos(ctx.feeAddress);
+      const wallet = await feeWallet(ctx, () => this.walletUtxos(ctx.feeAddress));
       const lucid = await this.deps.lucidForWallet(ctx.feeAddress, wallet);
       const r = await buildSponsorT3Draw({
         lucid, prepaidScripts: p.scripts, vaultUtxo: vault.utxo, fundId: req.fundId, carpAmount: req.carpAmount,
         ownerAuth: ctx.ownerAuth, network: this.deps.network, nowMs: ctx.tip.blockTimePosixMs,
+        ...collateralOf(ctx),
       });
       const s = r.summary;
       const txHash = txBodyHash(r.txCbor);
       const vaultOut = this.nftOutput(s.outputs, vault.nftUnit, p.scope.address, "két Prepaid", "T3");
       return {
         txCbor: r.txCbor,
+        feeFlow: { scriptAddresses: [p.scope.address], passAddresses: [] },
         notes: [`T4 (và T5 genesis Wakeme) PHẢI chạy trong kỳ ${s.epoch}, trước mốc ${windowStartMs(s.epoch + 1n, p.P, p.O)} ms — ` +
           `lô MAGIC Prepaid chỉ sống đúng kỳ rút.`],
         summary: {
@@ -562,7 +614,7 @@ export class SponsorTxService {
         req.engageRef, "/tx/sponsor/t4-first-consume");
       this.assertNotPendingSpent(thread.utxo, "thread này");
       const beacon = pickByNft(await this.deps.chain.utxosAt(d.priceBeaconAddress), d.priceBeaconNftUnit, "beacon PriceParam");
-      const wallet = await this.walletUtxos(ctx.feeAddress);
+      const wallet = await feeWallet(ctx, () => this.walletUtxos(ctx.feeAddress));
       const lucid = await this.deps.lucidForWallet(ctx.feeAddress, wallet);
       const r = await buildSponsorT4FirstConsume({
         lucid, prepaidScripts: p.scripts, consumeScript: p.consumeScript, consumeRefUtxo: p.consumeRef,
@@ -570,12 +622,14 @@ export class SponsorTxService {
         opType: req.opType, opCount: req.opCount, ownerAuth: ctx.ownerAuth, network: this.deps.network,
         tipPosixMs: ctx.tip.blockTimePosixMs, drawEpoch: req.drawEpoch,
         ...(d.maxPriceStale === undefined ? {} : { maxPriceStale: d.maxPriceStale }),
+        ...collateralOf(ctx),
       });
       const s = r.summary;
       this.nftOutput(s.outputs, vault.nftUnit, p.scope.address, "két Prepaid", "T4");
       this.nftOutput(s.outputs, s.threadUnit, d.engageAddress, "thread", "T4");
       return {
         txCbor: r.txCbor,
+        feeFlow: { scriptAddresses: [p.scope.address, d.engageAddress], passAddresses: [] },
         summary: {
           step: "T4", epoch: Number(s.epoch), required_nanogic: s.requiredNanogic.toString(),
           burns: s.burns.map(([batchId, n]) => ({ batch_id: batchId, nanogic: n.toString() })),
@@ -598,7 +652,7 @@ export class SponsorTxService {
     extraLockKeys: string[],
     build: (p: Prepared, ctx: StepCtx) => Promise<{
       txCbor: string; summary: Record<string, unknown>; sponsorSigners?: string[]; sponsorChangeAddress?: string;
-      notes?: string[];
+      notes?: string[]; feeFlow: FeeFlow;
     }>,
   ): Promise<SponsorBuildResponse> {
     const owner = assertOwner(req.owner);
@@ -610,16 +664,21 @@ export class SponsorTxService {
     }
     this.requireNetworkGrid();
     this.requirePrepaid(step);
-    if (req.feePayer !== undefined) {
-      throw new CodedApiError(501, "SPONSOR_FEE_PAYER_UNSUPPORTED",
-        `"fee_payer" chưa hỗ trợ ở hành trình tài trợ: T1 không đặt hạn dùng, T2/T3 không nhận lượng thế ` +
-        `chấp tường minh — hai thứ ví trả phí bên thứ ba đòi. Gửi "change_address" là địa chỉ KHOÁ của ví trả ` +
-        `phí (ví đó ký như ví trả phí).`, { step });
+    // Cùng luật với `service.ts` ▸ `feePayerFor`: loại trừ `change_address`, địa chỉ đúng mạng + khoá.
+    const fpReq = req.feePayer;
+    if (fpReq !== undefined) {
+      if (req.changeAddress !== undefined) {
+        throw new CodedApiError(400, "FEE_PAYER_CHANGE_ADDRESS_CONFLICT",
+          `"change_address" và "fee_payer" không đi cùng nhau: có "fee_payer" thì phí, thế chấp, min-ADA ứng ` +
+          `trước và tiền thối ADA đều đi qua "fee_payer.address". Bỏ "change_address".`);
+      }
+      assertFeePayerAddress(this.deps.network, fpReq, FEE_PAYER_CODES);
     }
-    const feeAddress = this.feeAddressFor(req);
+    const feeAddress = fpReq?.address ?? this.feeAddressFor(req);
     this.assertWitnessShape(req);
     const startedAt = this.now();
-    const keys = [ownerLockKey(owner), ...extraLockKeys];
+    // `utxo:<UTxO trả phí>`: hai tx đang chờ ký không được tiêu cùng một UTxO của ví trả phí.
+    const keys = [ownerLockKey(owner), ...extraLockKeys, ...(fpReq === undefined ? [] : [`utxo:${refStr(fpReq.utxoRef)}`])];
     const gens: Array<[string, number]> = [];
     try {
       for (const k of keys) gens.push([k, this.deps.locks.acquire(k, startedAt)]);
@@ -627,14 +686,36 @@ export class SponsorTxService {
       const tip = await this.deps.chain.tip();
       const witness = owner.type === "key" ? undefined : await this.deps.ownerWitness!.resolve(owner, req.ownerWitness!);
       const ownerAuth: OwnerAuth<TxBuilder> = witness?.auth ?? { kind: "key", pkh: owner.hash };
+      let feePayer: StepCtx["feePayer"];
+      if (fpReq !== undefined) {
+        const utxo = await readFeePayerUtxo(this.deps.chain, fpReq, FEE_PAYER_CODES);
+        this.assertNotPendingSpent(utxo, "ví trả phí");
+        feePayer = {
+          req: fpReq, utxo, collateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
+          validToMs: tip.blockTimePosixMs + FUNDING_MAX_VALIDITY_MS,
+        };
+      }
       const ctx: StepCtx = {
         owner, ownerAuth, ...(witness === undefined ? {} : { witness }),
         feeAddress, feeKeyHash: getAddressDetails(feeAddress).paymentCredential!.hash, tip,
+        ...(feePayer === undefined ? {} : { feePayer }),
       };
       const out = await build(p, ctx);
       const txHash = txBodyHash(out.txCbor);
+      if (feePayer !== undefined) {
+        // Đọc lại CBOR — input khác UTxO trả phí tra từ CHUỖI, không từ bộ dựng.
+        const feeKey = refStr(feePayer.req.utxoRef);
+        const others = inputRefsOf(out.txCbor).filter(r => refStr(r) !== feeKey);
+        const otherInputs = others.length === 0 ? [] : await this.deps.chain.utxosByOutRef(others);
+        out.summary.fee_payer = checkSponsorFeePayerTx(out.txCbor, {
+          network: this.deps.network, tipPosixMs: tip.blockTimePosixMs, feePayer: feePayer.req,
+          feePayerUtxo: feePayer.utxo, maxCollateralLovelace: feePayer.collateralLovelace, otherInputs, ...out.feeFlow,
+        });
+      }
       for (const [k, g] of gens) this.deps.locks.bindTxHash(k, txHash, g);
-      this.deps.issued.record(txHash, this.now(), { route: ISSUED_ROUTE_OF_STEP[step] });
+      this.deps.issued.record(txHash, this.now(), {
+        route: ISSUED_ROUTE_OF_STEP[step], ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.req.utxoRef) }),
+      });
       return {
         step,
         txCbor: out.txCbor,
@@ -643,7 +724,11 @@ export class SponsorTxService {
         signers: signersFor(step, ctx, out.sponsorSigners ?? []),
         witnessNotes: [
           ...(owner.type === "key" ? [`Chủ khoá: ký bằng khoá ${owner.hash}.`] : (witness?.notes ?? [])),
-          `Ví trả phí: input phí + tài sản thế chấp lấy từ ${feeAddress}; khoá thanh toán ${ctx.feeKeyHash} phải ký.`,
+          ctx.feePayer === undefined
+            ? `Ví trả phí: input phí + tài sản thế chấp lấy từ ${feeAddress}; khoá thanh toán ${ctx.feeKeyHash} phải ký.`
+            : `Ví trả phí (fee_payer): tx tiêu ĐÚNG UTxO ${refStr(ctx.feePayer.req.utxoRef)} ở ${feeAddress} — phí, ` +
+              `thế chấp${step === "T1" ? ", min-ADA của két và thread" : ""}; tiền thối ADA về lại địa chỉ đó; khoá ` +
+              `thanh toán ${ctx.feeKeyHash} phải ký. Chủ két không góp UTxO nào cho phí.`,
           ...(step === "T2"
             ? [`Bên tài trợ ký bằng ${(out.sponsorSigners ?? []).join(", ")} (chi các UTxO CARP đã đưa); phần thối về ${out.sponsorChangeAddress ?? "?"} — đúng địa chỉ của các UTxO đó.`]
             : []),
@@ -1006,6 +1091,139 @@ export function assertT2PinnedOutputs(outs: SponsorTxOutput[], e: T2PinnedOutput
   }
 }
 
+// ── đọc lại CBOR: đường `fee_payer` của hành trình tài trợ ──────────────────────
+
+export interface SponsorFeePayerCheckContext extends FeeFlow {
+  network: Network;
+  tipPosixMs: bigint;
+  feePayer: FeePayerRequest;
+  feePayerUtxo: UTxO;
+  maxCollateralLovelace: bigint;
+  /** Mọi input KHÁC UTxO trả phí, đọc từ chuỗi theo tham chiếu trong CBOR. */
+  otherInputs: UTxO[];
+}
+
+export interface SponsorFeePayerSummary {
+  address: string;
+  utxo: string;
+  input_lovelace: string;
+  fee_lovelace: string;
+  change_lovelace: string;
+  /** Min-ADA ví trả phí ứng cho output script của luồng (T1: két + thread). */
+  fronted_lovelace: string;
+  collateral_at_risk_lovelace: string;
+  collateral_return_lovelace: string | null;
+  valid_to_posix_ms: string;
+}
+
+/**
+ * Luật ví trả phí của `feePayer.ts` ▸ `checkFeePayerTx`, với MỘT vế nới và hai vế siết (khối đầu tệp):
+ *   (1) input = UTxO trả phí + các UTxO ở `scriptAddresses ∪ passAddresses`, không gì khác — chủ két
+ *       không góp UTxO nào, ví trả phí không góp UTxO thứ hai;
+ *   (2) thế chấp: chỉ UTxO trả phí, có thể mất ≤ trần (`checkCollateral`, dùng chung);
+ *   (3) output chỉ tới `fee_payer.address` (CHỈ ADA), `scriptAddresses`, `passAddresses`; cùng khoá
+ *       ví trả phí mà khác địa chỉ ⟹ thối nhầm;
+ *   (4) `passAddresses` nhận lại ĐÚNG lượng lovelace đã góp; ví trả phí góp = phí + thối + khoản ứng,
+ *       với khoản ứng = Σ lovelace output script − Σ lovelace input script, ≥ 0;
+ *   (5) hạn dùng ≤ 1 giờ (`checkValidTo`, dùng chung).
+ * Lệch ⟹ 422 `FEE_PAYER_TX_MISMATCH` (cùng mã với mọi đường dựng).
+ */
+export function checkSponsorFeePayerTx(txCbor: string, ctx: SponsorFeePayerCheckContext): SponsorFeePayerSummary {
+  const fail = (m: string, d: Record<string, unknown> = {}) =>
+    new CodedApiError(422, "FEE_PAYER_TX_MISMATCH", `giao dịch vừa dựng lệch luật ví trả phí: ${m}`, d);
+  let body: CML.TransactionBody;
+  try {
+    body = CML.Transaction.from_cbor_hex(txCbor).body();
+  } catch (e) {
+    throw fail(`CBOR không giải mã được: ${(e as Error).message}`);
+  }
+  const keyOf = (a: string): string | null => {
+    try {
+      const c = getAddressDetails(a).paymentCredential;
+      return c?.type === "Key" ? c.hash : null;
+    } catch { return null; }
+  };
+  const feeKey = refStr(ctx.feePayer.utxoRef);
+  const feeHash = keyOf(ctx.feePayer.address);
+  if (feeHash === null) throw fail(`fee_payer.address không có phần thanh toán là khoá`);
+  const scripts = new Set(ctx.scriptAddresses);
+  const pass = new Set(ctx.passAddresses);
+
+  // (1) input.
+  const inputs = inputRefsOf(txCbor).map(refStr);
+  if (!inputs.includes(feeKey)) throw fail(`UTxO trả phí ${feeKey} không phải input của giao dịch`);
+  const resolved = new Map(ctx.otherInputs.map(u => [refStr(u), u]));
+  let scriptIn = 0n;
+  let passIn = 0n;
+  for (const k of inputs) {
+    if (k === feeKey) continue;
+    const u = resolved.get(k);
+    if (u === undefined) throw fail(`input ${k} không đối chiếu được với chuỗi`, { input: k });
+    if (keyOf(u.address) === feeHash) {
+      throw fail(`input ${k} cũng thuộc ví trả phí — bên trả phí chỉ cho tiêu ĐÚNG MỘT UTxO`, { input: k });
+    }
+    if (scripts.has(u.address)) scriptIn += u.assets.lovelace ?? 0n;
+    else if (pass.has(u.address)) passIn += u.assets.lovelace ?? 0n;
+    else throw fail(`input ${k} ở ${u.address} — ngoài UTxO trả phí và các UTxO của luồng (chủ két không góp UTxO cho phí)`, { input: k });
+  }
+
+  // (2) thế chấp.
+  const { atRisk, collateralReturn } = checkCollateral(
+    body, feeKey, ctx.feePayerUtxo, ctx.feePayer.address, ctx.maxCollateralLovelace, fail);
+
+  // (3) output.
+  const ol = body.outputs();
+  let change = 0n;
+  let scriptOut = 0n;
+  let passOut = 0n;
+  for (let i = 0; i < ol.len(); i++) {
+    const o = ol.get(i);
+    const addr = o.address().to_bech32(undefined);
+    const a = valueToAssets(o.amount());
+    if (addr === ctx.feePayer.address) {
+      if (Object.keys(a).some(u => u !== "lovelace" && a[u] !== 0n)) {
+        throw fail(`output #${i} về ví trả phí mang token — tài sản của chủ két hay bên tài trợ không được thối sang đó`, { output_index: i });
+      }
+      change += a.lovelace ?? 0n;
+    } else if (keyOf(addr) === feeHash) {
+      throw fail(`output #${i} về ${addr}: cùng khoá với ví trả phí nhưng KHÔNG phải fee_payer.address`, { output_index: i });
+    } else if (scripts.has(addr)) {
+      scriptOut += a.lovelace ?? 0n;
+    } else if (pass.has(addr)) {
+      passOut += a.lovelace ?? 0n;
+    } else {
+      throw fail(`output #${i} tới ${addr} — ngoài ví trả phí và các địa chỉ của luồng`, { output_index: i });
+    }
+  }
+
+  // (4) ADA.
+  if (passOut !== passIn) {
+    throw fail(`bên tài trợ góp ${passIn} lovelace nhưng nhận lại ${passOut} — ADA của ví trả phí không được chảy sang đó`);
+  }
+  const fronted = scriptOut - scriptIn;
+  const fee = body.fee();
+  const feeIn = ctx.feePayerUtxo.assets.lovelace ?? 0n;
+  if (fronted < 0n || feeIn !== fee + change + fronted) {
+    throw fail(`ví trả phí góp ${feeIn} lovelace nhưng phí ${fee} + thối ${change} + ứng min-ADA ${fronted} ` +
+      `(Σ output script ${scriptOut} − Σ input script ${scriptIn}) không khớp — có lượng ADA đi chỗ khác hoặc từ chỗ khác tới`);
+  }
+
+  // (5) hạn dùng.
+  const validTo = checkValidTo(body, ctx.network, ctx.tipPosixMs, fail);
+
+  return {
+    address: ctx.feePayer.address,
+    utxo: feeKey,
+    input_lovelace: raw(feeIn),
+    fee_lovelace: raw(fee),
+    change_lovelace: raw(change),
+    fronted_lovelace: raw(fronted),
+    collateral_at_risk_lovelace: raw(atRisk),
+    collateral_return_lovelace: collateralReturn === null ? null : raw(collateralReturn),
+    valid_to_posix_ms: raw(validTo),
+  };
+}
+
 function scriptsMismatch(reason: string, details: Record<string, unknown>): CodedApiError {
   return new CodedApiError(501, "SPONSOR_PREPAID_SCRIPTS_MISMATCH",
     `Bộ script Prepaid của dịch vụ lệch cấu hình: ${reason}`, details);
@@ -1037,9 +1255,13 @@ function requiredSignersOf(txCbor: string): string[] {
 
 /** Vai ký theo thứ tự `planSponsorJourney`: T2 = ví trả phí · bên tài trợ · chủ; còn lại = ví trả phí · chủ. */
 function signersFor(step: SponsorStep, ctx: StepCtx, sponsorSigners: string[]): SponsorSigner[] {
-  const fee: SponsorSigner = {
-    role: "fee-wallet", keyHashes: [ctx.feeKeyHash], how: `ví khoá ${ctx.feeAddress}: phí + thế chấp + tiền thừa`,
-  };
+  const fee: SponsorSigner = ctx.feePayer === undefined
+    ? { role: "fee-wallet", keyHashes: [ctx.feeKeyHash], how: `ví khoá ${ctx.feeAddress}: phí + thế chấp + tiền thừa` }
+    : {
+        role: "fee-wallet", keyHashes: [ctx.feeKeyHash],
+        how: `fee_payer ${ctx.feeAddress}: chi đúng UTxO ${refStr(ctx.feePayer.req.utxoRef)} — phí + thế chấp` +
+          `${step === "T1" ? " + min-ADA két và thread" : ""}; tiền thối ADA về lại địa chỉ đó`,
+      };
   const owner: SponsorSigner = ctx.owner.type === "key"
     ? { role: "owner", keyHashes: [ctx.owner.hash], how: `chữ ký khoá ${ctx.owner.hash}` }
     : {

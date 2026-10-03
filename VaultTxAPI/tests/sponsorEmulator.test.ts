@@ -52,7 +52,7 @@ import { parseDeployment, PREPAID_VAULT_TYPE } from "../src/config.js";
 import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import type { VaultTxService } from "../src/service.js";
-import { SponsorTxService } from "../src/sponsor.js";
+import { SponsorTxService, checkSponsorFeePayerTx, type SponsorFeePayerCheckContext } from "../src/sponsor.js";
 import { LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID } from "./fixtures/preview.js";
 
 // ── Lưới + hằng ───────────────────────────────────────────────────────────────
@@ -114,6 +114,10 @@ let owner: TestKey;   // chủ két (chủ khoá)
 let sponsor: TestKey; // bên tài trợ: giữ CARP, platform của quỹ
 let owner2: TestKey;  // chủ thứ hai — chỉ để đo khoá `utxo:` (hai chủ, hai quỹ, chung UTxO bên tài trợ)
 let attacker: TestKey; // kẻ gọi: có ADA + CARP riêng, tự đúc một quỹ KHÔNG ghim
+let feecover: TestKey; // ví trả phí bên thứ ba (Feecover) của hành trình `fee_payer`: chỉ có ADA
+let poorFp: TestKey;   // ví trả phí chỉ có MỘT UTxO 4 ADA — không đủ ứng min-ADA két + thread
+let newcomer: TestKey; // người mới của hành trình `fee_payer`: KHÔNG có UTxO nào (0 ADA) suốt hành trình
+let sponsorBaseAddr = ""; // cùng KHOÁ bên tài trợ, khác phần stake — ví trả phí "giả khác"
 let deploymentNoDid = "";
 let svc: SponsorTxService;
 let svcNoDid: SponsorTxService;
@@ -259,6 +263,10 @@ beforeAll(async () => {
   sponsor = newKey();
   owner2 = newKey();
   attacker = newKey();
+  feecover = newKey();
+  poorFp = newKey();
+  newcomer = newKey();
+  sponsorBaseAddr = credentialToAddress(NET, { type: "Key", hash: sponsor.pkh }, { type: "Key", hash: attacker.pkh });
   const acct = (address: string, assets: Record<string, bigint>) => ({ address, assets }) as unknown as EmulatorAccount;
   emulator = new Emulator([
     acct(sponsor.address, { lovelace: 5_000_000_000n, [CARP_UNIT]: 100n * CARP }),
@@ -268,6 +276,11 @@ beforeAll(async () => {
     acct(owner2.address, { lovelace: 20_000_000n }),
     // Kẻ gọi có CARP THẬT (cùng unit): ca "UTxO CARP của kẻ gọi" phải chết ở ghim địa chỉ, không ở "không có CARP".
     acct(attacker.address, { lovelace: 1_000_000_000n, [CARP_UNIT]: 5n * CARP }),
+    // Hành trình `fee_payer`: người mới KHÔNG có tài khoản nào ở đây — 0 ADA.
+    acct(feecover.address, { lovelace: 200_000_000n }),
+    acct(poorFp.address, { lovelace: 4_000_000n }),
+    acct(poorFp.address, { lovelace: 1_500_000n }), // T4: dưới lượng thế chấp tường minh (3 ADA)
+    acct(sponsorBaseAddr, { lovelace: 50_000_000n }),
   ], { ...PROTOCOL_PARAMETERS_DEFAULT, maxTxSize: 16_384, maxTxExMem: 16_500_000n, maxTxExSteps: 10_000_000_000n });
   // Lucid đặt lưới slot "Custom" theo `emulator.now()` LÚC KHỞI TẠO ⟹ đặt giờ trước. Đỉnh cách biên kỳ 60 s.
   emulator.time = Number(O + E0 * P + 60_000n);
@@ -577,6 +590,248 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     expect(d.fields[4]).toBe(10_000_000n);
     const vd = decodeVaultDatum((await only(vaultUnit)).datum!);
     expect(vd.magic_batches[0]!.current_amount).toBe(parMagicFromCarp(CARP) - 10_000_000n);
+  }, SLOW);
+});
+
+// ── Hành trình `fee_payer`: người mới 0 ADA, Feecover trả hết ─────────────────
+
+describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên thứ ba trả phí + min-ADA", () => {
+  type Fp = { utxo: string; address: string };
+  /** UTxO thuần ADA LỚN NHẤT ở `address` — hình dạng `fee_payer` của thân bài. */
+  const fpAt = async (address: string): Promise<Fp> => {
+    const us = (await emulator.getUtxos(address)).filter(u => Object.keys(u.assets).every(x => x === "lovelace"));
+    us.sort((a, b) => (a.assets.lovelace! > b.assets.lovelace! ? -1 : 1));
+    if (us.length === 0) throw new Error(`${address.slice(0, 20)}… không có UTxO thuần ADA`);
+    return { utxo: refStr(us[0]!), address };
+  };
+  const outRef = (r: string) => ({ txHash: r.split("#")[0]!, outputIndex: Number(r.split("#")[1]!) });
+  const utxoOf = async (r: string): Promise<UTxO> => (await emulator.getUtxosByOutRef([outRef(r)]))[0]!;
+  const nb = (extra: Body, fp: Fp): Body => ({ owner: { type: "key", hash: newcomer.pkh }, fee_payer: fp, ...extra });
+  /** Đo ĐỘC LẬP với dịch vụ: input tx đọc thẳng bằng CML, tra từ Emulator (gọi TRƯỚC khi nộp). */
+  const inputsOf = async (txCbor: string): Promise<UTxO[]> => {
+    const ins = CML.Transaction.from_cbor_hex(txCbor).body().inputs();
+    const refs: Array<{ txHash: string; outputIndex: number }> = [];
+    for (let i = 0; i < ins.len(); i++) refs.push({ txHash: ins.get(i).transaction_id().to_hex(), outputIndex: Number(ins.get(i).index()) });
+    const got = await emulator.getUtxosByOutRef(refs);
+    expect(got.length).toBe(refs.length);
+    return got;
+  };
+  /** Vai ký: ví trả phí = Feecover, chủ = người mới; chủ có trong `required_signers`. */
+  const expectFpSigners = (b: Body, roles: string[]) => {
+    const signers = b.signers as Array<{ role: string; key_hashes: string[]; how: string }>;
+    expect(signers.map(x => x.role)).toEqual(roles);
+    expect(signers[0]!.key_hashes).toEqual([feecover.pkh]);
+    expect(signers[0]!.how).toContain("fee_payer");
+    expect(signers.at(-1)!.key_hashes).toEqual([newcomer.pkh]);
+    expect(b.required_signers).toContain(newcomer.pkh);
+  };
+  /** Input của Feecover = ĐÚNG UTxO đã khai; người mới không góp input nào; tóm tắt fee_payer khớp. */
+  const expectFeeFromFeecoverOnly = async (b: Body, fp: Fp): Promise<Body> => {
+    const ins = await inputsOf(b.tx_cbor as string);
+    expect(ins.filter(u => u.address === feecover.address).map(refStr)).toEqual([fp.utxo]);
+    expect(ins.some(u => u.address === newcomer.address)).toBe(false);
+    const s = (b.summary as Body).fee_payer as Body;
+    expect(s.utxo).toBe(fp.utxo);
+    expect(s.address).toBe(feecover.address);
+    // Thối về Feecover chỉ ADA (đọc thẳng CBOR).
+    const outs = CML.Transaction.from_cbor_hex(b.tx_cbor as string).body().outputs();
+    for (let i = 0; i < outs.len(); i++) {
+      const o = outs.get(i);
+      if (o.address().to_bech32(undefined) === feecover.address) expect(o.amount().multi_asset().policy_count()).toBe(0);
+    }
+    return s;
+  };
+  let nVault = "";
+  let nThread = "";
+  let nDrawEpoch = 0;
+
+  it("T1 ĐỎ: fee_payer + change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT; funding ⟹ 400 SPONSOR_REQUEST_SHAPE", async () => {
+    const fp = await fpAt(feecover.address);
+    const a = await post("/tx/sponsor/t1-open", nb({ did_commit: DID_COMMIT, change_address: feecover.address }, fp));
+    expect(a.status).toBe(400);
+    expect(errCode(a)).toBe("FEE_PAYER_CHANGE_ADDRESS_CONFLICT");
+    const f = await post("/tx/sponsor/t1-open",
+      { owner: { type: "key", hash: newcomer.pkh }, did_commit: DID_COMMIT, funding: { fee_payer: fp } });
+    expect(f.status).toBe(400);
+    expect(errCode(f)).toBe("SPONSOR_REQUEST_SHAPE");
+    expect(JSON.stringify(f.body)).toContain("funding");
+  }, SLOW);
+
+  it("T1 ĐỎ: fee_payer.utxo không phải UTxO chưa tiêu ⟹ 400 FEE_PAYER_INVALID (không 500)", async () => {
+    const r = await post("/tx/sponsor/t1-open", nb({ did_commit: DID_COMMIT }, { utxo: `${"ee".repeat(32)}#0`, address: feecover.address }));
+    expect(r.status).toBe(400);
+    expect(errCode(r)).toBe("FEE_PAYER_INVALID");
+  }, SLOW);
+
+  it("T1 ĐỎ: ví trả phí chỉ có 4 ADA (không đủ ứng min-ADA két + thread + thế chấp) ⟹ 422 có mã, không 500", async () => {
+    const other = newKey();
+    const r = await post("/tx/sponsor/t1-open",
+      { owner: { type: "key", hash: other.pkh }, fee_payer: await fpAt(poorFp.address), did_commit: DID_COMMIT });
+    expect(r.status).toBe(422);
+    expect(errCode(r)).toBe("SPONSOR_BUILD_FAILED");
+    expect(locks.peek(other.pkh, emulator.now())).toBeNull();
+  }, SLOW);
+
+  it("T1 XANH: người mới 0 ADA; tx tiêu ĐÚNG UTxO Feecover; két + thread do Feecover ứng; thối ADA về Feecover", async () => {
+    expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
+    const fp = await fpAt(feecover.address);
+    const b = await step("/tx/sponsor/t1-open", nb({ did_commit: DID_COMMIT }, fp));
+    expectFpSigners(b, ["fee-wallet", "owner"]);
+    const fs = await expectFeeFromFeecoverOnly(b, fp);
+    const s = b.summary as Body;
+    nVault = s.vault_unit as string;
+    nThread = s.thread_unit as string;
+    // Khoản ứng = Σ lovelace output không về Feecover (két + thread), đọc thẳng CBOR.
+    const outs = CML.Transaction.from_cbor_hex(b.tx_cbor as string).body().outputs();
+    let scriptLovelace = 0n;
+    const scriptAddrs = new Set<string>();
+    for (let i = 0; i < outs.len(); i++) {
+      const addr = outs.get(i).address().to_bech32(undefined);
+      if (addr !== feecover.address) { scriptLovelace += outs.get(i).amount().coin(); scriptAddrs.add(addr); }
+    }
+    expect([...scriptAddrs].sort()).toEqual([s.vault_address as string, s.thread_address as string].sort());
+    expect(fs.fronted_lovelace).toBe(scriptLovelace.toString());
+    expect(BigInt(fs.fronted_lovelace as string)).toBeGreaterThan(0n);
+    expect(BigInt(fs.valid_to_posix_ms as string)).toBeLessThanOrEqual(nowMs() + 3_600_000n);
+
+    // Đọc lại (cực đối của tập output ĐÓNG): bỏ một địa chỉ luồng ⟹ FEE_PAYER_TX_MISMATCH.
+    const ctx: SponsorFeePayerCheckContext = {
+      network: NET, tipPosixMs: nowMs(), feePayer: { utxoRef: outRef(fp.utxo), address: feecover.address },
+      feePayerUtxo: await utxoOf(fp.utxo), maxCollateralLovelace: 3_000_000n, otherInputs: [],
+      scriptAddresses: [...scriptAddrs], passAddresses: [],
+    };
+    expect(checkSponsorFeePayerTx(b.tx_cbor as string, ctx).fronted_lovelace).toBe(fs.fronted_lovelace);
+    for (const drop of scriptAddrs) {
+      expect(() => checkSponsorFeePayerTx(b.tx_cbor as string, { ...ctx, scriptAddresses: [...scriptAddrs].filter(a => a !== drop) }))
+        .toThrow(/ngoài ví trả phí và các địa chỉ của luồng/);
+    }
+
+    await submitStep(b, [feecover, newcomer]);
+    expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
+    expect((Data.from((await only(nThread)).datum!) as Constr<Data>).fields[3]).toBe(DID_COMMIT);
+  }, SLOW);
+
+  const t2Nb = async (fp: Fp, extra: Body = {}): Promise<Body> => ({
+    ...nb({ fund_id: fundId, carp_amount: CARP.toString(), sponsor: { utxo_refs: await carpRefs(sponsor) } }, fp), ...extra,
+  });
+  /** UTxO mang CARP của ví `k`, xếp theo lượng CARP tăng dần. */
+  const carpRefs = async (k: TestKey): Promise<string[]> => (await emulator.getUtxos(k.address))
+    .filter(u => (u.assets[CARP_UNIT] ?? 0n) > 0n)
+    .sort((a, b) => (a.assets[CARP_UNIT]! < b.assets[CARP_UNIT]! ? -1 : 1))
+    .map(refStr);
+
+  it("T2 ĐỎ: ví trả phí CÙNG KHOÁ bên tài trợ (khác phần stake) ⟹ 422 SPONSOR_FEE_WALLET_IS_SPONSOR", async () => {
+    const r = await post("/tx/sponsor/t2-fund", await t2Nb(await fpAt(sponsorBaseAddr)));
+    expect(r.status).toBe(422);
+    expect(errCode(r)).toBe("SPONSOR_FEE_WALLET_IS_SPONSOR");
+    expect(JSON.stringify(r.body)).toContain("fee_payer.address");
+  }, SLOW);
+
+  it("T2 ĐỎ: change_address = ĐÚNG địa chỉ bên tài trợ ⟹ 422 SPONSOR_FEE_WALLET_IS_SPONSOR", async () => {
+    const b = await t2Nb(await fpAt(feecover.address));
+    delete b.fee_payer;
+    const r = await post("/tx/sponsor/t2-fund", { ...b, change_address: sponsor.address });
+    expect(r.status).toBe(422);
+    expect(errCode(r)).toBe("SPONSOR_FEE_WALLET_IS_SPONSOR");
+  }, SLOW);
+
+  it("T2 XANH: ghim cũ giữ nguyên; Feecover chỉ trả phí; khoá utxo:<fee_payer>; đọc lại chặn ADA chảy sang bên tài trợ", async () => {
+    const fp = await fpAt(feecover.address);
+    const fundCarpBefore = (await only(fundUnit)).assets[CARP_UNIT] ?? 0n;
+    const b = await step("/tx/sponsor/t2-fund", await t2Nb(fp));
+    try {
+      expectFpSigners(b, ["fee-wallet", "sponsor", "owner"]);
+      expect((b.signers as Array<{ key_hashes: string[] }>)[1]!.key_hashes).toEqual([sponsor.pkh]);
+      const fs = await expectFeeFromFeecoverOnly(b, fp);
+      const s = b.summary as Body;
+      expect(s.sponsor_change_address).toBe(sponsor.address);
+      expect(s.anchor_ref).toBe(anchorRef);
+      // T2 không mở output script mới: két + quỹ đã có min-ADA ⟹ Feecover ứng ≥ 0, đúng bằng phần tăng.
+      expect(BigInt(fs.fronted_lovelace as string)).toBeGreaterThanOrEqual(0n);
+
+      // Khoá `utxo:<fee_payer>`: chủ KHÁC, cùng UTxO trả phí, khi tx kia chưa nộp ⟹ 409.
+      const r2 = await post("/tx/sponsor/t3-draw",
+        { owner: { type: "key", hash: owner2.pkh }, fee_payer: fp, fund_id: fundId2, carp_amount: CARP.toString() });
+      expect(r2.status).toBe(409);
+      expect(errCode(r2)).toBe("OWNER_TX_IN_FLIGHT");
+
+      // Đọc lại trên CBOR thật: bỏ bên tài trợ khỏi tập luồng ⟹ input của họ thành input lạ.
+      const ins = await inputsOf(b.tx_cbor as string);
+      const ctx: SponsorFeePayerCheckContext = {
+        network: NET, tipPosixMs: nowMs(), feePayer: { utxoRef: outRef(fp.utxo), address: feecover.address },
+        feePayerUtxo: await utxoOf(fp.utxo), maxCollateralLovelace: 3_000_000n,
+        otherInputs: ins.filter(u => refStr(u) !== fp.utxo),
+        scriptAddresses: [(await only(vaultUnit)).address, fundAddress], passAddresses: [sponsor.address],
+      };
+      expect(() => checkSponsorFeePayerTx(b.tx_cbor as string, ctx)).not.toThrow();
+      expect(() => checkSponsorFeePayerTx(b.tx_cbor as string, { ...ctx, passAddresses: [] }))
+        .toThrow(/ngoài UTxO trả phí và các UTxO của luồng/);
+
+      // Tx tổng hợp (KHÔNG nộp) trên cùng UTxO Feecover + một UTxO CARP bên tài trợ: ba cách rò.
+      const sp = (await emulator.getUtxos(sponsor.address)).filter(u => (u.assets[CARP_UNIT] ?? 0n) > 0n)
+        .sort((x, y) => (x.assets.lovelace! > y.assets.lovelace! ? -1 : 1))[0]!;
+      const synth = async (build: (t: TxBuilder) => TxBuilder): Promise<string> => {
+        lucid.selectWallet.fromAddress(feecover.address, [ctx.feePayerUtxo]);
+        // Thu UTxO Feecover TƯỜNG MINH: không thì Lucid trả phí bằng ADA của `sp` và tx không có nó.
+        const c = await build(lucid.newTx().collectFrom([ctx.feePayerUtxo, sp])).completeSafe();
+        if (c._tag === "Left") throw new Error(describeError(c.left));
+        return c.right.toCBOR();
+      };
+      const sctx = { ...ctx, otherInputs: [sp], scriptAddresses: [] as string[] };
+      const carp = sp.assets[CARP_UNIT]!;
+      // (a) token của bên tài trợ thối sang Feecover.
+      const leakToken = await synth(t => t
+        .pay.ToAddress(sponsor.address, { ...sp.assets, [CARP_UNIT]: carp - 1n })
+        .pay.ToAddress(feecover.address, { lovelace: 2_000_000n, [CARP_UNIT]: 1n }));
+      expect(() => checkSponsorFeePayerTx(leakToken, sctx)).toThrow(/về ví trả phí mang token/);
+      // (b) ADA của Feecover chảy sang bên tài trợ.
+      const leakAda = await synth(t => t.pay.ToAddress(sponsor.address, { ...sp.assets, lovelace: sp.assets.lovelace! + 1_000_000n }));
+      expect(() => checkSponsorFeePayerTx(leakAda, sctx)).toThrow(/bên tài trợ góp/);
+      // (c) ADA của một UTxO "luồng" chảy VỀ Feecover (khoản ứng âm): coi địa chỉ bên tài trợ là script luồng.
+      const drain = await synth(t => t.pay.ToAddress(sponsor.address, { lovelace: 3_000_000n, [CARP_UNIT]: carp }));
+      expect(() => checkSponsorFeePayerTx(drain, { ...sctx, scriptAddresses: [sponsor.address], passAddresses: [] }))
+        .toThrow(/không khớp/);
+    } catch (e) {
+      locks.releaseByTxHash(b.tx_hash as string);
+      throw e;
+    }
+    await submitStep(b, [feecover, sponsor, newcomer]);
+    expect((await only(fundUnit)).assets[CARP_UNIT]).toBe(fundCarpBefore + CARP);
+    expect(decodeVaultDatum((await only(nVault)).datum!).prepaid_credits.length).toBe(1);
+    expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
+  }, SLOW);
+
+  it("T3 XANH: PrepaidDraw qua fee_payer; Feecover chỉ trả phí", async () => {
+    const fp = await fpAt(feecover.address);
+    const b = await step("/tx/sponsor/t3-draw", nb({ fund_id: fundId, carp_amount: CARP.toString() }, fp));
+    expectFpSigners(b, ["fee-wallet", "owner"]);
+    await expectFeeFromFeecoverOnly(b, fp);
+    nDrawEpoch = (b.summary as Body).epoch as number;
+    await submitStep(b, [feecover, newcomer]);
+    expect(decodeVaultDatum((await only(nVault)).datum!).magic_batches.at(-1)!.created_epoch).toBe(BigInt(nDrawEpoch));
+    expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
+  }, SLOW);
+
+  it("T4 ĐỎ: UTxO trả phí 1,5 ADA (dưới thế chấp tường minh) ⟹ 422 SPONSOR_BUILD_FAILED, không 500; khoá được nhả", async () => {
+    const small = (await emulator.getUtxos(poorFp.address)).find(u => u.assets.lovelace === 1_500_000n)!;
+    const r = await post("/tx/sponsor/t4-first-consume",
+      nb({ op_type: 1, op_count: "1", draw_epoch: nDrawEpoch }, { utxo: refStr(small), address: poorFp.address }));
+    expect(r.status).toBe(422);
+    expect(errCode(r)).toBe("SPONSOR_BUILD_FAILED");
+    expect(locks.peek(newcomer.pkh, emulator.now())).toBeNull();
+  }, SLOW);
+
+  it("T4 XANH: consume đầu qua fee_payer; người mới vẫn 0 ADA sau trọn hành trình", async () => {
+    const fp = await fpAt(feecover.address);
+    const b = await step("/tx/sponsor/t4-first-consume", nb({ op_type: 1, op_count: "1", draw_epoch: nDrawEpoch }, fp));
+    expectFpSigners(b, ["fee-wallet", "owner"]);
+    await expectFeeFromFeecoverOnly(b, fp);
+    await submitStep(b, [feecover, newcomer]);
+    const d = Data.from((await only(nThread)).datum!) as Constr<Data>;
+    expect(d.fields[2]).toBe(BigInt(nDrawEpoch));
+    expect(d.fields[4]).toBe(10_000_000n);
+    expect(decodeVaultDatum((await only(nVault)).datum!).magic_batches[0]!.current_amount).toBe(parMagicFromCarp(CARP) - 10_000_000n);
+    expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
   }, SLOW);
 });
 

@@ -387,6 +387,22 @@ describe("POST /fee/sign — cổng trước Feecover", () => {
     expect(h.fc.calls).toHaveLength(0);
   });
 
+  it("tx đã bị THAY (một tx chung khoá chủ đã NỘP) ⟹ 409 TX_SUPERSEDED, Feecover KHÔNG bị gọi; CẶP: chưa bị thay ⟹ 200", async () => {
+    const h = harness();
+    const { cbor } = await issueConsume(h);
+    const hash = txBodyHash(cbor);
+    // Một tx khác cùng khoá chủ được ghi sổ rồi NỘP (mô phỏng `/tx/submit` ▸ `markSubmitted`).
+    expect((await h.call("POST", "/fee/sign", { tx_cbor: cbor })).status).toBe(200);
+    const callsBefore = h.fc.calls.length;
+    const other = "5e".repeat(32);
+    h.issued.record(other, NOW, { route: "consume", lockKeys: h.issued.lookup(hash, NOW)!.lockKeys });
+    expect(h.issued.markSubmitted(other, NOW)).toBe(1);
+    const r = await h.call("POST", "/fee/sign", { tx_cbor: cbor });
+    expect(r.status).toBe(409);
+    expect(codeOf(r)).toBe("TX_SUPERSEDED");
+    expect(h.fc.calls).toHaveLength(callsBefore);
+  });
+
   it("tx đã phát KHÔNG dùng ví trả phí ⟹ 400 FEE_PROXY_NO_FEE_PAYER, Feecover KHÔNG bị gọi", async () => {
     const h = harness();
     const { cbor } = await issueConsume(h, { fee_payer: undefined, change_address: CHANGE_ADDRESS });

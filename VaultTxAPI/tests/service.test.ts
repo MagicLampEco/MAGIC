@@ -258,13 +258,60 @@ describe("VaultTxService — đường dựng", () => {
   });
 });
 
-describe("Khoá mềm theo chủ vault — đua UTxO", () => {
-  it("lượt dựng thứ hai cho cùng chủ ⟹ 409 OWNER_TX_IN_FLIGHT", async () => {
+/** Đổi CBOR ghi sẵn của bộ dựng giữa hai lượt — để hai lượt dựng ra hai tx KHÁC hash. */
+function setCommitCbor(h: Harness, cbor: string): void {
+  (h.builder as unknown as { txCborByRoute: Record<string, string> }).txCborByRoute.schedule_commit = cbor;
+}
+const KEY_OWNER_REQ = { owner: { type: "key" as const, hash: OWNER_PKH }, lampPerEpoch: LAMBDA };
+
+describe("Khoá mềm theo chủ vault — lượt dựng mới THAY lượt cũ, xung đột bắt lúc NỘP", () => {
+  it("lượt dựng thứ hai cho cùng chủ KHÔNG 409 — nó thay lượt đầu (đổi từ 409 OWNER_TX_IN_FLIGHT, 2026-10-03)", async () => {
     const h = harness();
-    await h.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
-    await expect(h.service.scheduleCommit({
-      owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA,
-    })).rejects.toMatchObject({ httpStatus: 409, code: "OWNER_TX_IN_FLIGHT" });
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    const second = await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    expect(second.txHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(h.locks.peek(OWNER_PKH, NOW)?.txHash).toBe(second.txHash);
+  });
+
+  it("NGƯỜI LẠ dựng sau chủ (không ký được) ⟹ tx của chủ vẫn NỘP được — lượt dựng không thay được ở lúc nộp", async () => {
+    const ownerCbor = commitTxCbor(3n);
+    const h = harness({ submitResult: txBodyHash(ownerCbor), pending: new PendingSpends(TTL) });
+    const mine = await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    setCommitCbor(h, commitTxCbor(4n));
+    const stranger = await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 4n });
+    expect(stranger.txHash).not.toBe(mine.txHash);
+    const out = await h.service.submit({ txCbor: ownerCbor, witnessCbor: fakeWitnessSetCbor() });
+    expect(out.txHash).toBe(mine.txHash);
+    expect(h.chain.submitted).toHaveLength(1);
+  });
+
+  it("hai thiết bị: T2 thay T1, T2 NỘP trước ⟹ nộp T1 ⟹ 409 TX_SUPERSEDED, không gọi nút chuỗi", async () => {
+    const t1 = commitTxCbor(3n);
+    const t2 = commitTxCbor(4n);
+    const h = harness({ submitResult: txBodyHash(t2), pending: new PendingSpends(TTL) });
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    setCommitCbor(h, t2);
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 4n });
+    await h.service.submit({ txCbor: t2, witnessCbor: fakeWitnessSetCbor() });
+    expect(h.chain.submitted).toHaveLength(1);
+    await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toMatchObject({ httpStatus: 409, code: "TX_SUPERSEDED", details: { superseded_by: txBodyHash(t2) } });
+    expect(h.chain.submitted).toHaveLength(1);
+    // CẶP: nộp LẠI chính T2 (rớt mạng) KHÔNG bị coi là xung đột với chính nó.
+    await expect(h.service.submit({ txCbor: t2, witnessCbor: fakeWitnessSetCbor() })).resolves.toMatchObject({ txHash: txBodyHash(t2) });
+  });
+
+  it("input đã bị tx KHÁC vừa nộp tiêu (tx không chung khoá trong sổ) ⟹ 409 TX_SUPERSEDED kèm input xung đột", async () => {
+    const cbor = commitTxCbor(3n);
+    const pending = new PendingSpends(TTL);
+    const h = harness({ submitResult: txBodyHash(cbor), pending });
+    // Dựng TRƯỚC khi tx kia được nộp (đường dựng chưa thấy gì để chặn) …
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    // … rồi một tx KHÁC (không có trong sổ của tiến trình này) tiêu đúng UTxO vault.
+    pending.note([`${INPUT_TX_HASH}#0`], NOW, "99".repeat(32));
+    await expect(h.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toMatchObject({ httpStatus: 409, code: "TX_SUPERSEDED", details: { conflicting_inputs: [`${INPUT_TX_HASH}#0`] } });
+    expect(h.chain.submitted).toHaveLength(0);
   });
 
   it("dựng HỎNG thì nhả khoá — một lần lỗi không khoá chủ đó suốt thời hạn", async () => {

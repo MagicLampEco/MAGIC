@@ -5,6 +5,35 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-03 — ρ hiệu lực ngay kỳ dựng beacon; chủ két khai bằng DID; lượt dựng không còn khoá két
+
+**Đổi gì.**
+- `GenBeacons/onchain/validators/rate_param.ak` ▸ `mint`: beacon ρ đầu tiên hiệu lực NGAY epoch
+  đăng (`effective_epoch == now`, vẫn `prev_rho_q == 0`). Nhánh cập nhật giữ nguyên (giá trị mới
+  từ epoch sau). `GenBeacons/offchain/src/build.ts` ▸ `genesisRateParam` dựng theo luật mới. Hash
+  `rate_param` đổi ⟹ đổi apply-param của mọi vault đọc ρ.
+- VaultTxAPI nhận `owner: {"type":"did","did":"did:…","device_key_hash"?}`. Dịch vụ tự suy
+  `Script(did_stake)`, tìm anchor theo `anchor_nft_policy ++ blake2b_256(utf8(did))`, đọc datum
+  anchor 18 trường rồi đi đúng đường nhân chứng `did_stake` sẵn có (`VaultTxAPI/src/didOwner.ts` ▸
+  `DidOwnerResolver`). Cấu hình mới `did_stake.unapplied_script {cbor, hash}`, kiểm lúc khởi động.
+  SDK xuất `didAnchorNftName`, `didStakeScriptForDid`. Mã mới: `OWNER_DID_SHAPE`,
+  `OWNER_DID_CONFLICT`, `OWNER_DEVICE_NOT_LISTED` (400) · `OWNER_ANCHOR_NOT_FOUND`,
+  `OWNER_ANCHOR_AMBIGUOUS`, `OWNER_ANCHOR_SCHEMA`, `OWNER_ANCHOR_NOT_ACTIVE` (422).
+- Khoá mềm (`VaultTxAPI/src/locks.ts`): lượt dựng không còn trả `409 OWNER_TX_IN_FLIGHT`. Một tx bị
+  thay khi một tx KHÁC cùng khoá chủ được NỘP; nộp tx đã bị thay, hoặc tx có input mà một tx đang
+  chờ đã tiêu ⟹ `409 TX_SUPERSEDED`. Giữ chỗ UTxO phí của tx bị thay được nhả.
+- `ProtocolUtils` ▸ `WAKEME_VAULT_HASH_BY_NETWORK.Preprod` = `4da780c4…cab` (két Wakeme v4, lưới O).
+
+**Vì sao.** Beacon cũ ép ρ đầu tiên hiệu lực từ kỳ sau, nên suốt kỳ dựng mọi két Sinh được 0
+MAGIC dù có LAMP và GreenBack thặng dư. Chủ két phải là khoá DID của người dùng để mọi app dùng
+chung một đường ký (PhoenixKey ký controller + thiết bị), thay vì mỗi app tự dựng khoá. Khoá mềm
+cũ cho bất kỳ ai biết hash chủ (công khai trên chuỗi) khoá két người khác 180 giây mỗi lượt.
+
+**Cái gì gãy nếu đang bám bản cũ.** Kịch bản dựng beacon theo `effective_epoch = now + 1` ⟹ bị
+từ chối. App rẽ nhánh theo `409 OWNER_TX_IN_FLIGHT` ở bước dựng sẽ không còn gặp mã đó; xung đột
+nay ra ở `/tx/submit` với `TX_SUPERSEDED`. Chủ DID cần `did_stake` đã đăng ký làm stake credential
+trước khi tạo két, vì genesis cũng gọi `owner_authorized`; chưa đăng ký ⟹ `OWNER_STAKE_NOT_REGISTERED`.
+
 ## 2026-10-03 — `/tx/consume` nhận `pairs` (ConsumeMany); mọi lượt tiêu được đọc lại từ CBOR
 
 **Đổi gì.** `POST /tx/consume` nhận thêm `pairs: [{ op_type, op_count }, …]` (1..8 cặp, `op_type`

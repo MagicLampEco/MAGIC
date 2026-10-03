@@ -11,7 +11,7 @@
 // 1. `link` SUY RA: đúng một két Wakeme thoả (a)(b)(e) của `wakeme_lent` trong
 //    reference input ⟹ link := `owner_commit` của két đó — kể cả khi két đó CHƯA ghim
 //    két IG này (vế (c) lệch ⟹ `L_lent = 0`, không fail; 2026-10-02, gỡ khoá lẫn nhau
-//    với Wakeme). Chỉ nhánh CHỦ KÝ đổi được link (`FollowVault`,
+//    với Wakeme) — trong giới hạn của luật 6. Chỉ nhánh CHỦ KÝ đổi được link (`FollowVault`,
 //    `FollowVaultOrUnlink`); nhánh không chữ ký (`KeepLink`, PruneExpired) không đổi
 //    được.
 // 2. Link đã đặt mà lượt này làm mới cap ⟹ BẮT BUỘC có két trong reference input.
@@ -23,9 +23,11 @@
 //    năm ô GHIM nguyên, không đọc gì bên ngoài.
 // 4. WithdrawLamp KHÔNG gọi `expected_checkpoint`: ghim nguyên (`current_checkpoint`),
 //    không đọc reference input (SPEC §6.1.5: rút LAMP không phụ thuộc beacon).
-// 6. (2026-10-02) `FollowVault` chỉ ĐỔI được link khi link cũ rỗng, hoặc két đọc được
-//    đang ghim chính két IG này (`L_lent > 0`). Đổi sang két Wakeme khác mà không thoả
-//    ⟹ FAIL; muốn đổi tự do thì RefreshCheckpoint. Chi tiết ở `resolve_link`.
+// 6. (2026-10-02, siết 2026-10-03) `FollowVault` chỉ ĐỔI được link khi két đọc được
+//    đang ghim chính két IG này (`L_lent > 0`). Link cũ RỖNG không còn là ngoại lệ: link
+//    rỗng + két Wakeme `L_lent = 0` ⟹ FAIL (bỏ két khỏi reference input thì lượt vẫn
+//    chạy, link giữ rỗng). Lượt nối ĐẦU chỉ qua genesis (link khai sẵn) hoặc
+//    RefreshCheckpoint; muốn đổi tự do cũng qua RefreshCheckpoint. Chi tiết ở `resolve_link`.
 // ρ đọc từ beacon `RateParam` qua reference input, hai lớp neo: địa chỉ
 // `Script(rate_script_hash)` + NFT `(rate_nft_policy, "RHO")`. Thiếu / hai cái /
 // datum sai hình / ρ ngoài `[0, rho_max_q]` ⟹ FAIL, không có ρ mặc định.
@@ -229,20 +231,28 @@ fn resolve_link(
           (owner_commit, lent)
         }
         FollowVault -> {
-          // Luật 6 (2026-10-02): nhánh chủ ký thường KHÔNG đổi được link sang một két
-          // Wakeme bất kỳ. Chữ ký của chủ là cho việc khác (sinh, đốt, đổi hồ sơ, uỷ
-          // quyền) mà tx lại do người khác dựng; nếu đổi link tự do thì người dựng thay
-          // két Wakeme thật X bằng một két Wakeme thật Y (ghim két IG khác — vế (c) trả
+          // Luật 6 (2026-10-02, siết 2026-10-03): nhánh chủ ký thường KHÔNG đổi được link
+          // sang một két Wakeme bất kỳ. Chữ ký của chủ là cho việc khác (sinh, đốt, đổi hồ
+          // sơ, uỷ quyền) mà tx lại do người khác dựng; nếu đổi link tự do thì người dựng
+          // thay két Wakeme thật X bằng một két Wakeme thật Y (ghim két IG khác — vế (c) trả
           // `(Y, 0)`) ⟹ link := Y, cap chốt không phần mượn trọn epoch, và luật 2 bị
-          // lách. Chỉ cho một trong ba:
-          //   (a) link cũ rỗng — lượt nối đầu tiên (két Wakeme chưa ghim vẫn nối được);
+          // lách. Chỉ cho một trong hai:
           //   (b) owner_commit == link cũ — không đổi;
           //   (c) `lent > 0` — két đọc được ĐANG ghim chính két IG này: `lent > 0` chỉ ra
           //       từ nhánh cuối của `read_one_vault`, nơi (c)(d)(f) đều đã thoả.
+          // Vế (a) cũ "link cũ rỗng" ĐÃ BỎ (2026-10-03): nó cho người dựng nối một két chưa
+          // link sang một két Wakeme LẠ (`lent = 0`); sau đó két Wakeme thật của chủ không
+          // ghim được két này nữa (Wakeme đòi `link == owner_commit`), và chủ mất phần mượn
+          // cho tới khi tự chạy RefreshCheckpoint. Lượt nối đầu nay chỉ qua genesis (link
+          // khai sẵn, chủ ký) hoặc RefreshCheckpoint.
+          // Link rỗng + két `lent = 0` ⟹ FAIL, KHÔNG lặng lẽ giữ link rỗng: cùng khuôn với
+          // `KeepLink` và với đường cùng-epoch của `expected_checkpoint_for_gen` (cả hai fail
+          // khi két đưa vào không phải két đã nối), và không có reference input nào bị bỏ
+          // qua trong im lặng. Không chủ nào kẹt: bỏ két khỏi reference input thì nhánh
+          // `None` + link rỗng trả `(#"", 0)`, đúng kết quả của phương án "giữ rỗng".
           // Két ghim đúng mà (d)/(f) trả 0 thì không đổi link được ở đây; chủ đổi qua
           // RefreshCheckpoint (`FollowVaultOrUnlink`, giữ nguyên luật cũ).
           expect or {
-              d.wakeme_link == #"",
               owner_commit == d.wakeme_link,
               lent > 0,
             }

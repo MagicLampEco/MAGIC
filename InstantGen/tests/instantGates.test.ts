@@ -298,10 +298,15 @@ describe("luật 6 — FollowVault không đổi link sang két Wakeme lạ", ()
     expect(o.outputDatum.wakeme_link).toBe(OTHER);
     expect(o.lent).toBe(1n);
   });
-  it("f1_ig_unlinked_foreign_wakeme_links_ok: link rỗng + két Y (L_lent 0) ⟹ nối, link := Y", () => {
-    const o = gen(makeCtx({ datum: refresh, rate, wakeme: { ownerCommit: OTHER, lent: 0n } }), 1n);
+  // Vế (a) "link cũ rỗng" đã bỏ 2026-10-03 — bản trước là ca dương `…_links_ok`.
+  it("f1_ig_unlinked_foreign_wakeme_rejected: link rỗng + két Y (L_lent 0) ⟹ GEN-INST-011 luật 6", () => {
+    expect(() => gen(makeCtx({ datum: refresh, rate, wakeme: { ownerCommit: OTHER, lent: 0n } }), 1n))
+      .toThrow(/GEN-INST-011.*luật 6/s);
+  });
+  it("f1_ig_unlinked_wakeme_pinning_this_ok: link rỗng + Y ghim két này (L_lent > 0) ⟹ link := Y", () => {
+    const o = gen(makeCtx({ datum: refresh, rate, wakeme: { ownerCommit: OTHER, lent: 1n } }), 1n);
     expect(o.outputDatum.wakeme_link).toBe(OTHER);
-    expect(o.lent).toBe(0n);
+    expect(o.lent).toBe(1n);
   });
   it("f1_ig_linked_same_wakeme_unpinned_keeps_ok: link X + két X (L_lent 0) ⟹ giữ link", () => {
     const o = gen(makeCtx({

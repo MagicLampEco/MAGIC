@@ -30,7 +30,9 @@ use aiken/interval.{Finite, IntervalBoundType, between}
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{PolicyId}
 use cardano/assets
-use cardano/transaction.{InlineDatum, Input, Output, OutputReference, Transaction, placeholder}
+use cardano/transaction.{
+  InlineDatum, Input, NoDatum, Output, OutputReference, Transaction, placeholder,
+}
 use umkeeper/window_origin_fixtures
 
 // ── Constants ────────────────────────────────────────────────
@@ -151,6 +153,11 @@ validator um_datum_validator(
         expect assets.quantity_of(um_out.value, um_policy, um_name) == 1
         // Toàn bộ value bảo toàn (không rút min-ADA / token lạ chèn vào).
         expect um_out.value == um_in.value
+        // G16 (2026-10-03): nhánh KHÔNG chữ ký, và UM là reference input của MỌI lượt
+        // sinh InstantGen ⟹ người lạ không được gắn ref-script vào output UM (phí
+        // ref-script tính theo byte cả ở reference input). `value ==` không bắt được vì
+        // ref-script không nằm trong value. Khuôn PrepaidGen `vault_identity_preserved`.
+        expect um_out.reference_script == None
 
         // ── C-UM-4: Update at epoch boundary ────────────────
         expect current_epoch > datum.last_updated_epoch
@@ -647,4 +654,37 @@ test um_origin_mainnet_happy() {
 
 test um_origin_forgotten_fail() fail {
   um_happy_at(0, window_origin_fixtures.mainnet_origin_ms)
+}
+
+// ═══ G16 — reference script trên output UM (2026-10-03) ═════════════════════════
+const g16_ref_hash: ByteArray =
+  #"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+
+/// `um_happy_path` với output UM sửa bởi `edit` và thêm `extra` output.
+fn g16_um_run(edit: fn(Output) -> Output, extra: List<Output>) -> Bool {
+  let in_d = UMDatum { smoothed_q: q, last_updated_epoch: 0, history: [q] }
+  let raw = 1_050_000_000
+  let out_d = UMDatum { smoothed_q: 1_025_000_000, last_updated_epoch: 5, history: [q, raw] }
+  let v = um_value()
+  let tx = um_tx(in_d, out_d, [], 5, v, v)
+  um_datum_validator.spend(
+    t_mspe, t_um_policy, t_um_name, 0,
+    Some(in_d), UMUpdate { new_raw: raw }, mk_ref(0),
+    Transaction { ..tx, outputs: list.concat(list.map(tx.outputs, edit), extra) },
+  )
+}
+
+test g16_um_stranger_ref_script_rejected() fail {
+  g16_um_run(fn(o) { Output { ..o, reference_script: Some(g16_ref_hash) } }, [])
+}
+
+test g16_um_wallet_ref_script_ok() {
+  let wallet =
+    Output {
+      address: Address { payment_credential: VerificationKey(#"00000000000000000000000000000000000000000000000000000000"), stake_credential: None },
+      value: assets.from_lovelace(20_000_000),
+      datum: NoDatum,
+      reference_script: Some(g16_ref_hash),
+    }
+  g16_um_run(fn(o) { o }, [wallet])
 }

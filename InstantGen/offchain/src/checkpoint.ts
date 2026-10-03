@@ -59,20 +59,20 @@ function resolveLink(read: WakemeRead | null, mode: LinkMode, d: VaultDatum): [s
         `(${d.wakeme_link || "<rỗng>"}), két đưa vào là ${read.ownerCommit}.`,
       );
     }
-    // Luật 6 (gương `resolve_link` nhánh `FollowVault`, 2026-10-02): nhánh chủ ký thường
-    // chỉ ĐỔI link khi link cũ rỗng, hoặc két đọc được đang ghim chính két IG này
-    // (`lent > 0`). RefreshCheckpoint (`FollowVaultOrUnlink`) giữ luật cũ.
+    // Luật 6 (gương `resolve_link` nhánh `FollowVault`, 2026-10-02, siết 2026-10-03): nhánh
+    // chủ ký thường chỉ ĐỔI link khi két đọc được đang ghim chính két IG này (`lent > 0`).
+    // Link cũ rỗng KHÔNG còn là ngoại lệ (vế (a) đã bỏ): lượt nối đầu chỉ qua genesis hoặc
+    // RefreshCheckpoint (`FollowVaultOrUnlink`, giữ luật cũ).
     if (
       mode === "FollowVault" &&
-      d.wakeme_link !== "" &&
       read.ownerCommit !== d.wakeme_link &&
       read.lent <= 0n
     ) {
       throw new Error(
-        `GEN-INST-011: két đã nối két Wakeme ${d.wakeme_link}; két đưa vào là ` +
+        `GEN-INST-011: link hiện tại ${d.wakeme_link || "<rỗng>"}; két Wakeme đưa vào là ` +
         `${read.ownerCommit} và KHÔNG ghim két IG này (L_lent = 0) ⟹ nhánh chủ ký thường ` +
-        `không đổi link được (luật 6). Đưa đúng két đã nối vào, hoặc đổi link qua ` +
-        `RefreshCheckpoint.`,
+        `không nối/đổi link được (luật 6). Bỏ két Wakeme khỏi reference input, đưa đúng két ` +
+        `đã nối, hoặc nối/đổi link qua RefreshCheckpoint.`,
       );
     }
     return [read.ownerCommit, read.lent];

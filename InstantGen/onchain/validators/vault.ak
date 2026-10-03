@@ -400,6 +400,13 @@ fn validate_mint_vault_id(
   // At most {ADA, LAMP, vault_id NFT}.
   expect list.length(assets.policies(vault_out.value)) <= 3
 
+  // ── G16: không reference script trên output genesis ─────────────────────
+  // Mọi nhánh spend ép `None` (`validate_vault_value`, RefreshCheckpoint); genesis
+  // phải ép cùng điều kiện — Cardano không chạy validator spend lúc tạo UTxO, nên đây
+  // là chỗ DUY NHẤT chặn được một két sinh ra đã mang sẵn ref-script (đội min-ADA, và
+  // lượt chi đầu của chủ phải trả phí ref-script theo byte của nó).
+  expect vault_out.reference_script == None
+
   True
 }
 
@@ -773,6 +780,9 @@ fn find_own_input(own_ref: OutputReference, inputs: List<Input>) -> Input {
 ///     honest caller top up ADA, never let it shrink).
 ///   - |policies(out)| <= 3                  → at most {ADA, LAMP, vault_id NFT};
 ///     rejects any extra policy so dust stuffing cannot bloat the UTxO.
+///   - reference_script(out) == None         → a permissionless branch (PruneExpired)
+///     cannot park a ~15 KB reference script on the vault, which would make every
+///     later owner tx pay the per-byte ref-script fee (G16, 2026-10-03).
 /// The per-handler LAMP-quantity check still pins the LAMP amount itself.
 fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
   // vault_id policy = own script hash, read from the input being spent.
@@ -782,6 +792,9 @@ fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
 
   expect lovelace_not_decreased(vault_input, vault_output)
   expect list.length(assets.policies(vault_output.value)) <= 3
+  // G16: không gắn reference script vào output két (khuôn PrepaidGen
+  // `vault_identity_preserved`, GenBeacons `continuing_pair`).
+  expect vault_output.reference_script == None
   True
 }
 
@@ -1361,6 +1374,8 @@ fn validate_refresh_checkpoint(
       own_input.output.value,
     )
   expect lovelace_not_decreased(own_input, vault_output)
+  // G16: nhánh này không đi qua `validate_vault_value` ⟹ ép riêng cổng ref-script.
+  expect vault_output.reference_script == None
   True
 }
 
@@ -4455,8 +4470,17 @@ test np_rc_unpinned_cap_with_lent_fail() fail {
   t_rc(t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0), din, [t_rate_ok(), t_unpinned_ok()])
 }
 
-test np_ig_unpinned_links_without_lent() {
+// Luật 6 siết 2026-10-03 (bỏ vế (a) "link cũ rỗng"): nhánh sinh, link rỗng, két Wakeme
+// chưa ghim két này (`L_lent = 0`) ⟹ KHÔNG nối được nữa, tx bị từ chối. Bản trước của bài
+// này là ca DƯƠNG `np_ig_unpinned_links_without_lent` (link := owner_commit, lent 0).
+test np_ig_unpinned_links_without_lent_rejected() fail {
   t_ig_wakeme(1_000, t_wakeme_commit, cp_cap_no_lent, [t_rate_ok(), t_unpinned_ok(), t_gb_ok()])
+}
+
+// Cực đối: cùng lượt sinh, bỏ két Wakeme khỏi reference input ⟹ link giữ rỗng, lent 0, qua.
+// Đây là lối thoát của chủ két: luật 6 không làm kẹt két chưa link.
+test np_ig_unlinked_without_wakeme_keeps_empty_ok() {
+  t_ig_wakeme(1_000, #"", cp_cap_no_lent, [t_rate_ok(), t_gb_ok()])
 }
 
 test np_ig_unpinned_cap_with_lent_fail() fail {
@@ -4601,6 +4625,9 @@ test np_journey_unlinked_rc_sets_link_without_lent() {
 }
 
 // Cùng kịch bản, lượt sinh đầu của két 0 LAMP ⟹ 0 + 0 < min_instant_holding ⟹ IG-6.
+// Từ 2026-10-03 (luật 6 bỏ vế (a)) bài này chết SỚM HƠN, ở `resolve_link` (link rỗng +
+// két chưa ghim ⟹ fail), trước khi tới IG-6 — vẫn đỏ đúng chiều, nhưng nó không còn
+// ghim IG-6.
 test np_journey_unlinked_first_gen_zero_lamp_fail() fail {
   t_first_gen_zero_lamp_from(t_zero_lamp_genesis(), t_mn_params(), t_wakeme_genesis_unpinned())
 }
@@ -4643,9 +4670,24 @@ test f1_ig_relink_to_wakeme_pinning_this_ok() {
   t_ig_linked(t_wakeme_commit, t_wakeme_commit_2, cp_cap_lent, [t_rate_ok(), t_other_wakeme_pinning_this(), t_gb_ok()])
 }
 
-// Vế (a): link rỗng + két ghim két khác ⟹ nối được, lent 0.
-test f1_ig_unlinked_foreign_wakeme_links_ok() {
+// Vế (a) cũ ĐÃ BỎ (2026-10-03): link rỗng + két Y ghim két khác (lent 0) ⟹ KHÔNG nối
+// được nữa. Bản trước của bài này là ca dương `f1_ig_unlinked_foreign_wakeme_links_ok`.
+test f1_ig_unlinked_foreign_wakeme_rejected() fail {
   t_ig_linked(#"", t_wakeme_commit_2, cp_cap_no_lent, [t_rate_ok(), t_foreign_wakeme(), t_gb_ok()])
+}
+
+// Cực đối: link rỗng + Y ghim CHÍNH két này (lent > 0) ⟹ vế (c) vẫn nối được, cap có phần mượn.
+test f1_ig_unlinked_wakeme_pinning_this_ok() {
+  t_ig_linked(#"", t_wakeme_commit_2, cp_cap_lent, [t_rate_ok(), t_other_wakeme_pinning_this(), t_gb_ok()])
+}
+
+// Cùng luật ở nhánh BurnBatch (chủ ký, tx do người khác dựng): link rỗng + két lạ ⟹ fail.
+test f1_bb_unlinked_foreign_wakeme_rejected() fail {
+  let din = t_cp_burn_din(#"")
+  t_bb(
+    t_cp_apply(t_bb_base_out(din), din, t_wakeme_commit_2, cp_cap_no_lent, 10, 200),
+    din, [t_rate_ok(), t_foreign_wakeme()],
+  )
 }
 
 // Vế (b): link X + két X (chưa ghim két này, lent 0) ⟹ giữ link. Chỉ vế (b) cho qua:
@@ -4716,4 +4758,85 @@ test f1_sd_relink_to_wakeme_pinning_this_ok() {
 test f1_rc_relink_to_foreign_wakeme_ok() {
   let din = t_cp_din(t_wakeme_commit)
   t_rc(t_cp_apply(din, din, t_wakeme_commit_2, cp_cap_no_lent, 10, 0), din, [t_rate_ok(), t_foreign_wakeme()])
+}
+
+// ═══ G16 — reference script trên output két (2026-10-03) ═════════════════════════
+// Cặp bài theo khuôn `aiken-patterns` 2026-10-02: ca dương gắn ref-script vào output VÍ
+// (phân biệt cổng soi-đúng-output-két với cổng soi-mọi-output), ca âm gắn vào output két.
+const t_g16_ref_hash: ByteArray =
+  #"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+
+fn t_g16_with_ref_script(o: Output) -> Output {
+  Output { ..o, reference_script: Some(t_g16_ref_hash) }
+}
+
+fn t_g16_keep(o: Output) -> Output {
+  o
+}
+
+fn t_g16_wallet_ref_output() -> Output {
+  Output {
+    address: Address { payment_credential: VerificationKey(t_owner_pkh), stake_credential: None },
+    value: assets.from_lovelace(20_000_000),
+    datum: NoDatum,
+    reference_script: Some(t_g16_ref_hash),
+  }
+}
+
+/// PruneExpired KHÔNG chữ ký, một batch chết; `edit` sửa output két, `extra` thêm output.
+fn t_g16_prune(edit: fn(Output) -> Output, extra: List<Output>) -> Bool {
+  let din = t_datum_with_batches([t_instant_batch(9, 1000)])
+  let dout = t_datum_with_batches([])
+  let tx = t_tx([t_vault_input(din, 100)], [edit(t_vault_output(dout, 100)), ..extra], [])
+  validate_prune_expired(din, 10, t_own_ref(), t_params(), tx)
+}
+
+test g16_ig_pe_stranger_ref_script_rejected() fail {
+  t_g16_prune(t_g16_with_ref_script, [])
+}
+
+test g16_ig_pe_wallet_ref_script_ok() {
+  t_g16_prune(t_g16_keep, [t_g16_wallet_ref_output()])
+}
+
+test g16_ig_pe_no_ref_script_ok() {
+  t_g16_prune(t_g16_keep, [])
+}
+
+/// Genesis két 0 LAMP (fixture của `np_mint_genesis_zero_lamp_ok`).
+fn t_g16_mint(edit: fn(Output) -> Output, extra: List<Output>) -> Bool {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let out = t_genesis_output(t_zero_lamp_genesis(), 0, t_vault_hash, name)
+  let m = assets.from_asset(t_vault_hash, name, 1)
+  let tx = t_mint_tx(seed, edit(out), m, [t_owner_pkh])
+  t_mint_call(seed, t_vault_hash, Transaction { ..tx, outputs: list.concat(tx.outputs, extra) })
+}
+
+test g16_ig_genesis_ref_script_rejected() fail {
+  t_g16_mint(t_g16_with_ref_script, [])
+}
+
+test g16_ig_genesis_wallet_ref_script_ok() {
+  t_g16_mint(t_g16_keep, [t_g16_wallet_ref_output()])
+}
+
+/// RefreshCheckpoint (fixture của `rc_pos_link_from_wakeme`) — nhánh không qua
+/// `validate_vault_value`, cổng ref-script đặt riêng.
+fn t_g16_rc(edit: fn(Output) -> Output, extra: List<Output>) -> Bool {
+  let din = t_cp_din(#"")
+  let dout = t_cp_apply(din, din, t_wakeme_commit, cp_cap_lent, 10, 0)
+  let tx = t_cp_tx(din, dout, [t_rate_ok(), t_lent_ok()], [t_owner_pkh])
+  validate_refresh_checkpoint(
+    din, 10, t_own_ref(), t_params(),
+    Transaction { ..tx, outputs: list.concat(list.map(tx.outputs, edit), extra) },
+  )
+}
+
+test g16_ig_rc_ref_script_rejected() fail {
+  t_g16_rc(t_g16_with_ref_script, [])
+}
+
+test g16_ig_rc_wallet_ref_script_ok() {
+  t_g16_rc(t_g16_keep, [t_g16_wallet_ref_output()])
 }

@@ -47,7 +47,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `vault.vault` | `4589c2a2bb365b641f788b75ce9e0ad69909989bf39d458100fc57c4` |
+| `vault.vault` | `7bc836c50d365440b3c76c036e4eda2a42b231eb4f2be50dd5f386ef` |
 
 ### `Paymaster/onchain`
 
@@ -73,9 +73,9 @@ trình biên dịch `v1.1.21+42babe5`
 | validator | hash (CHƯA apply-param) |
 |---|---|
 | `shard_nft.shard_nft` | `9553132b54fce178732fdae7f95b9f1833349c087277e939c22a12ef` |
-| `vault.commit` | `b5ad0966e7b7e08093212e989508bfa4e61892f806d4997571fdaeb8` |
-| `vault.shard` | `a1fef229005973298f91419a8dafb05b225529babda4d0c07ecb7203` |
-| `vault.vault` | `d6983af19992d69eed595efc4a14050e839d95b7d55ca15b84190760` |
+| `vault.commit` | `0baf478f7f997a3f2f1c61a2912dbc5cb5eed2d54d026ec7e39a6b17` |
+| `vault.shard` | `409e4f4b614a3dab7de5cd97d15f5c18820e2c335092e9e9d6e82d7c` |
+| `vault.vault` | `65536efc8e57076c583c2648a24051866498883308e665510ddff4cb` |
 
 ### `UMKeeper/onchain`
 
@@ -83,7 +83,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `um_datum.um_datum_validator` | `c9d4203b09ce4ce298fa540d9b8989b2406588c744a2e6fb49b0a31a` |
+| `um_datum.um_datum_validator` | `789d0294b61f3abeeac7bedfa9c0a8121662adceaceb66a1a9bba276` |
 | `um_nft.um_nft` | `f38ed1b66fadd5f1da408519bf9a8966a409ae24e31e1cec7dbe09d3` |
 
 <!-- MÁY SINH — HẾT -->

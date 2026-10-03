@@ -1342,12 +1342,17 @@ fn vault_output_lamp_with(
 ///   - |policies(out)| <= 3           → at most {ADA, LAMP, vault_id NFT}; the
 ///     vault NEVER carries a shard NFT, so any extra policy = dust-stuffing bloat,
 ///     rejected.
+///   - reference_script(out) == None  → không ai (kể cả người lạ ở PruneExpired) gắn
+///     được ref-script ~15 KB vào két để mọi tx sau của chủ trả phí theo byte (G16).
 fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
   expect Script(vault_id_policy) = vault_input.output.address.payment_credential
   let nft_name = single_nft_name(vault_input.output.value, vault_id_policy)
   expect assets.quantity_of(vault_output.value, vault_id_policy, nft_name) == 1
   expect assets.lovelace_of(vault_output.value) >= assets.lovelace_of(vault_input.output.value)
   expect list.length(assets.policies(vault_output.value)) <= 3
+  // G16: không gắn reference script vào output két — nhánh PruneExpired không chữ ký
+  // đi qua đây (khuôn PrepaidGen `vault_identity_preserved`, GenBeacons `continuing_pair`).
+  expect vault_output.reference_script == None
   True
 }
 
@@ -1455,6 +1460,13 @@ fn validate_mint_vault_id(
 
   // ── No dust / shard NFT bundled into genesis: at most {ADA, LAMP, vault_id} ─
   expect list.length(assets.policies(vault_out.value)) <= 3
+
+  // ── G16: không reference script trên output genesis ─────────────────────
+  // Mọi nhánh spend ép `None` (`validate_vault_value`); genesis
+  // phải ép cùng điều kiện — Cardano không chạy validator spend lúc tạo UTxO, nên đây
+  // là chỗ DUY NHẤT chặn được một két sinh ra đã mang sẵn ref-script (đội min-ADA, và
+  // lượt chi đầu của chủ phải trả phí ref-script theo byte của nó).
+  expect vault_out.reference_script == None
 
   True
 }
@@ -1614,6 +1626,11 @@ fn find_shard_output_by_policy(
     assets.quantity_of(x.value, shard_policy_id, name) == 1
   })
   expect o.address == expect_addr
+  // G16 (2026-10-03): shard là UTxO DÙNG CHUNG (mọi két băm vào shard này) và được
+  // tiêu trong ScheduleFire KHÔNG chữ ký ⟹ người lạ fire hộ không được gắn ref-script
+  // vào shard để mọi lượt commit/fire sau trên shard trả phí ref-script theo byte.
+  // Ba nơi gọi (shard spend, commit, fire) cùng nhận cổng này.
+  expect o.reference_script == None
   shard_datum_of(o, shard_id)
 }
 
@@ -4919,4 +4936,76 @@ test g_measure_datum_20_schedules() {
   let n = bytearray.length(cbor.serialise(d))
   trace @"datum_bytes": n
   n > 0
+}
+
+// ═══ G16 — reference script trên output két (2026-10-03) ═════════════════════════
+const t_g16_ref_hash: ByteArray =
+  #"5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c"
+
+fn t_g16_with_ref_script(o: Output) -> Output {
+  Output { ..o, reference_script: Some(t_g16_ref_hash) }
+}
+
+fn t_g16_keep(o: Output) -> Output {
+  o
+}
+
+fn t_g16_wallet_ref_output() -> Output {
+  Output {
+    address: Address { payment_credential: VerificationKey(t_owner_pkh), stake_credential: None },
+    value: assets.from_lovelace(20_000_000),
+    datum: NoDatum,
+    reference_script: Some(t_g16_ref_hash),
+  }
+}
+
+/// PruneExpired KHÔNG chữ ký (fixture của `pe_drops_dead_keeps_live`).
+fn t_g16_prune(edit: fn(Output) -> Output, extra: List<Output>) -> Bool {
+  let live = t_batch_at(3, t_epoch_live)
+  let din = t_prune_datum([t_batch_at(1, t_epoch_dead), t_batch_at(2, t_epoch_dead), live])
+  let dout = VaultDatum { ..t_prune_datum([live]), usage_window_epoch: 5 }
+  let tx = t_tx([t_vault_input(din, t_lambda)], [edit(t_vault_output(dout, t_lambda)), ..extra], [])
+  validate_prune_expired(din, 5, t_vault_addr(), t_lamp_policy, t_lamp_name, tx)
+}
+
+test g16_sg_pe_stranger_ref_script_rejected() fail {
+  t_g16_prune(t_g16_with_ref_script, [])
+}
+
+test g16_sg_pe_wallet_ref_script_ok() {
+  t_g16_prune(t_g16_keep, [t_g16_wallet_ref_output()])
+}
+
+test g16_sg_pe_no_ref_script_ok() {
+  t_g16_prune(t_g16_keep, [])
+}
+
+/// Genesis (fixture của `mint_clean_genesis_ok`).
+fn t_g16_mint(edit: fn(Output) -> Output, extra: List<Output>) -> Bool {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let out = t_genesis_output(t_clean_genesis(100), 100, t_vault_hash, name)
+  let m = assets.from_asset(t_vault_hash, name, 1)
+  let tx = t_mint_tx(seed, edit(out), m, [t_owner_pkh])
+  t_mint_call(seed, t_vault_hash, Transaction { ..tx, outputs: list.concat(tx.outputs, extra) })
+}
+
+test g16_sg_genesis_ref_script_rejected() fail {
+  t_g16_mint(t_g16_with_ref_script, [])
+}
+
+test g16_sg_genesis_wallet_ref_script_ok() {
+  t_g16_mint(t_g16_keep, [t_g16_wallet_ref_output()])
+}
+
+// G16 — shard: cổng ref-script nằm trong `find_shard_output_by_policy` (dùng chung cho
+// shard spend + commit + fire).
+test g16_sg_shard_out_ref_script_rejected() fail {
+  let out = t_g16_with_ref_script(t_shard_out_at(t_shard_addr(), 6, 1000))
+  find_shard_output_by_policy([out], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
+}
+
+test g16_sg_shard_out_wallet_ref_script_ok() {
+  let out = t_shard_out_at(t_shard_addr(), 6, 1000)
+  find_shard_output_by_policy([out, t_g16_wallet_ref_output()], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
 }

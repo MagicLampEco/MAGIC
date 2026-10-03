@@ -265,9 +265,11 @@ describe("buildInstantGenTx — két 0 LAMP, phần mượn từ két Wakeme ghi
       .rejects.toThrow(/GEN-INST-001.*L_lent 0/);
   });
 
-  it("CỰC ĐỐI: link rỗng, két Wakeme genesis CHƯA ghim két IG ⟹ link nối được nhưng L_lent = 0 ⟹ GEN-INST-001", async () => {
+  // Từ 2026-10-03 (luật 6 bỏ vế (a)) ca này chết SỚM HƠN: link rỗng + két chưa ghim ⟹
+  // không nối được (GEN-INST-011), trước khi tới IG-6. Gương `np_journey_unlinked_first_gen_zero_lamp_fail`.
+  it("CỰC ĐỐI: link rỗng, két Wakeme genesis CHƯA ghim két IG ⟹ không nối được (luật 6) ⟹ GEN-INST-011", async () => {
     await expect(dungZero(wakemeUtxo({ vestStartMs: at(E) + 5_000n, pinPeriod: E, pinned: false }), { wakeme_link: "" }))
-      .rejects.toThrow(/GEN-INST-001.*L_lent 0/);
+      .rejects.toThrow(/GEN-INST-011.*luật 6/s);
   });
 });
 

@@ -5,6 +5,32 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-04 — VaultTxAPI: một tiến trình phục vụ nhiều loại két (khối chính + khối phụ)
+
+**Đổi gì.**
+- Biến mới `VAULT_TX_API_EXTRA_DEPLOYMENT_FILES` + `VAULT_TX_API_EXTRA_VAULT_PLUTUS_JSONS`: danh sách
+  đường dẫn khối triển khai phụ và blueprint tương ứng, ghép theo vị trí. Vắng ⟹ một khối, y như trước.
+  Nạp NÉM khi: khác LAMP, khác mạng, trùng `vault_type`, có khối Prepaid, khác `did_stake`, khối phụ
+  khai `feecover` (`config.ts` ▸ `loadExtraBlocks`, `assertCompatibleBlocks`).
+- Mỗi khối một `VaultTxService` + bộ dựng riêng; dùng CHUNG chuỗi, khoá mềm theo chủ, sổ phát-hành và sổ
+  chi-đang-chờ (`blocks.ts` ▸ `makeBlockServices`).
+- `blockRouter.ts` ▸ `VaultBlockRouter`: `create-vault` theo `kind`; `instant-gen`/`refresh-checkpoint`
+  → Instant; `schedule-commit`/`schedule-fire` → Schedule; `consume`/`open-thread`/`bind-did` (và
+  `/tx/quote` cho các đường đó) nhận `vault_type` tuỳ chọn, vắng thì tra két của chủ ở từng khối.
+  Mã mới: 409 `VAULT_TYPE_AMBIGUOUS`, 400 `VAULT_TYPE_INVALID`, `VAULT_TYPE_NOT_SERVED`,
+  `VAULT_TYPE_ROUTE_CONFLICT`.
+- `/health`: `vault_scopes` là hợp mọi khối (khối chính trước); `deployment_source` giữ nhãn khối chính;
+  thêm `deployment_sources`.
+
+**Vì sao.** App đọc MỘT URL VaultTxAPI và chỉ mở lối ScheduleGen khi `/health` của URL đó khai scope
+`Schedule`. Một khối chỉ phục vụ được một loại két (`ref_script_utxos.vault` một ô, `consume`
+apply-param theo loại két), nên chạy dịch vụ thứ hai thì app không thấy.
+
+**Cái gì gãy nếu bám bản cũ.** Không gì gãy khi chỉ một khối. Có nhiều khối: người gọi `consume`/
+`open-thread`/`bind-did` không gửi `vault_type` mà chủ có két ở hai loại sẽ nhận 409
+`VAULT_TYPE_AMBIGUOUS` thay vì được dựng trên khối đầu tiên. Thread mở khi chủ chưa có két đi khối
+chính.
+
 ## 2026-10-04 — Cụm Preprod đời 2 theo két Wakeme v5; ví trả phí ứng min-ADA cho shard `gb_shard`
 
 **Đổi gì.**

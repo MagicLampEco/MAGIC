@@ -321,6 +321,8 @@ export interface AppConfig {
   lockTtlMs: number;
   /** Token ứng dụng `magic` ở Feecover. Chỉ có khi bản deploy khai `feecover.apps.magic`. */
   feecoverAppToken?: string;
+  /** Khối PHỤ (`loadExtraBlocks`), đã qua `assertCompatibleBlocks`. Rỗng ⟹ một khối, như trước. */
+  extraBlocks: ExtraBlockConfig[];
 }
 
 const BLOCKFROST_URL_BY_NETWORK: Record<Network, string> = {
@@ -405,12 +407,168 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const feecoverAppToken = resolveFeecoverAppToken(deployment.feecover, env);
 
+  const extraBlocks = loadExtraBlocks(
+    env.VAULT_TX_API_EXTRA_DEPLOYMENT_FILES, env.VAULT_TX_API_EXTRA_VAULT_PLUTUS_JSONS, network);
+  assertCompatibleBlocks(deployment, extraBlocks, network);
+
   return {
     network, blockfrostUrl, blockfrostProjectId, deployment,
     changeAddressStrategy: strategyRaw as ChangeAddressStrategy,
     vaultPlutusJsonPath, host, port, basePath, token, sponsorToken, requestTimeoutMs, lockTtlMs,
+    extraBlocks,
     ...(feecoverAppToken === undefined ? {} : { feecoverAppToken }),
   };
+}
+
+// ── KHỐI PHỤ: một tiến trình phục vụ nhiều loại két ─────────────────────────────
+//
+// Một khối triển khai chỉ phục vụ MỘT loại két: `ref_script_utxos.vault` có một ô, và bản `consume`
+// (kéo theo địa chỉ thread Engage + beacon giá) được apply-param bằng hash của đúng loại két đó.
+// Muốn một tiến trình phục vụ cả Instant lẫn Schedule thì nạp thêm khối, KHÔNG gộp khối.
+//
+// Khối CHÍNH vẫn là `VAULT_TX_API_DEPLOYMENT` (+ `VAULT_TX_API_VAULT_PLUTUS_JSON`) như trước. Khối
+// PHỤ là hai danh sách ngăn bằng dấu phẩy, ghép theo VỊ TRÍ:
+//   VAULT_TX_API_EXTRA_DEPLOYMENT_FILES    — đường dẫn tới TỆP JSON khối triển khai (không phải JSON
+//                                            thô như khối chính: JSON có dấu phẩy, không xếp thành
+//                                            danh sách ngăn bằng dấu phẩy được)
+//   VAULT_TX_API_EXTRA_VAULT_PLUTUS_JSONS  — đường dẫn blueprint của module vault tương ứng
+// Vắng cả hai ⟹ không khối phụ nào, hành vi y hệt một khối.
+//
+// Các khối DÙNG CHUNG nhân chứng chủ / bộ suy DID / proxy phí / sổ phát-hành / khoá mềm (`blocks.ts`),
+// nên mọi thứ chúng dùng chung phải TRÙNG — kiểm ở `assertCompatibleBlocks`, ném lúc khởi động.
+
+/** Một khối phụ đã nạp. `file` là nhãn cho câu lỗi và nhật ký, không phải dữ kiện của chuỗi. */
+export interface ExtraBlockConfig {
+  file: string;
+  deployment: Deployment;
+  vaultPlutusJsonPath: string;
+}
+
+/** Đọc hai danh sách khối phụ. Sai hình dạng ⟹ NÉM (fail-closed), không bỏ qua mục nào. */
+export function loadExtraBlocks(
+  filesRaw: string | undefined, blueprintsRaw: string | undefined, network: Network,
+): ExtraBlockConfig[] {
+  const files = splitPathList(filesRaw, "VAULT_TX_API_EXTRA_DEPLOYMENT_FILES");
+  const blueprints = splitPathList(blueprintsRaw, "VAULT_TX_API_EXTRA_VAULT_PLUTUS_JSONS");
+  if (files.length !== blueprints.length) {
+    throw new Error(
+      `[config] VAULT_TX_API_EXTRA_DEPLOYMENT_FILES có ${files.length} mục nhưng ` +
+      `VAULT_TX_API_EXTRA_VAULT_PLUTUS_JSONS có ${blueprints.length} — hai danh sách ghép theo VỊ TRÍ, ` +
+      `mỗi khối phụ đúng một blueprint của module vault của nó.`,
+    );
+  }
+  return files.map((file, i) => {
+    const where = `VAULT_TX_API_EXTRA_DEPLOYMENT_FILES[${i}]`;
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch (e) {
+      throw new Error(`[config] ${where} (${file}) không đọc được: ${(e as Error).message}`);
+    }
+    let deployment: Deployment;
+    try {
+      deployment = parseDeployment(text, network);
+    } catch (e) {
+      // Câu của `parseDeployment` nói "VAULT_TX_API_DEPLOYMENT.<khoá>" — gắn thêm khối nào để
+      // người vận hành không đi sửa khối CHÍNH.
+      throw new Error(`[config] ${where} (${file}): ${(e as Error).message}`);
+    }
+    const blueprint = blueprints[i]!;
+    assertReadableBlueprint(blueprint, `VAULT_TX_API_EXTRA_VAULT_PLUTUS_JSONS[${i}]`);
+    return { file, deployment, vaultPlutusJsonPath: blueprint };
+  });
+}
+
+function splitPathList(raw: string | undefined, name: string): string[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  const items = raw.split(",").map(x => x.trim());
+  const empty = items.findIndex(x => x === "");
+  if (empty >= 0) {
+    throw new Error(`[config] ${name} có mục RỖNG ở vị trí ${empty} (dấu phẩy thừa?) — bỏ nó đi.`);
+  }
+  return items;
+}
+
+/** Nhãn `source` do `scripts/gen_vault_tx_api_deployment.ts` ▸ `sourceLine` sinh mở đầu bằng tên mạng. */
+const SOURCE_NETWORK_RE = /^(Preview|Preprod|Mainnet)\b/;
+
+/**
+ * Các khối nạp cùng một tiến trình phải ăn khớp. Ném khi:
+ *   · có khối phụ mà khối chính là Prepaid, hoặc khối phụ là Prepaid — hành trình tài trợ chỉ chạy
+ *     trên tiến trình một khối Prepaid (`server.ts` ▸ `sponsor`);
+ *   · khác tài sản LAMP (policy + asset name) — `/health` khai MỘT `lamp`, và app so nó với LAMP
+ *     của Wakeme trước khi mở Sinh MAGIC;
+ *   · nhãn `source` của khối phụ khai một mạng khác `VAULT_TX_API_NETWORK`. Tiền tố địa chỉ (đã kiểm
+ *     trong `parseDeployment`) chỉ tách được mainnet khỏi testnet; Preview và Preprod cùng `addr_test`
+ *     và cùng `tLAMP`, nên nhãn là dấu DUY NHẤT trong khối nói nó sinh cho mạng nào. Nhãn không mở
+ *     đầu bằng tên mạng ⟹ phần Preview/Preprod KHÔNG đo được ở đây;
+ *   · hai khối cùng một `vault_type` — bộ định tuyến chọn khối theo loại két;
+ *   · khác `did_stake` — nhân chứng chủ script và bộ suy DID là MỘT, dựng từ khối chính;
+ *   · khối phụ khai `feecover` — proxy phí là MỘT, đọc từ khối chính; lặng lẽ bỏ khối feecover của
+ *     khối phụ là để người vận hành tin một cấu hình không chạy.
+ */
+export function assertCompatibleBlocks(
+  primary: Deployment, extras: readonly ExtraBlockConfig[], network: Network,
+): void {
+  if (extras.length === 0) return;
+  const isPrepaid = (d: Deployment) => d.vaults.some(v => v.vaultType === PREPAID_VAULT_TYPE);
+  if (isPrepaid(primary)) {
+    throw new Error(
+      `[config] khối chính phục vụ két "${PREPAID_VAULT_TYPE}" mà có khối phụ — hành trình tài trợ chỉ ` +
+      `chạy trên tiến trình MỘT khối Prepaid. Bỏ VAULT_TX_API_EXTRA_DEPLOYMENT_FILES, hoặc chạy khối ` +
+      `Prepaid ở tiến trình riêng.`,
+    );
+  }
+  const seenTypes = new Map<string, string>(primary.vaults.map(v => [v.vaultType, "khối chính"]));
+  extras.forEach((x, i) => {
+    const where = `VAULT_TX_API_EXTRA_DEPLOYMENT_FILES[${i}] (${x.file})`;
+    const d = x.deployment;
+    if (isPrepaid(d)) {
+      throw new Error(
+        `[config] ${where} phục vụ két "${PREPAID_VAULT_TYPE}" — két Prepaid chỉ chạy ở tiến trình một ` +
+        `khối (hành trình tài trợ dựng từ khối chính).`,
+      );
+    }
+    if (d.lampPolicyId !== primary.lampPolicyId || d.lampAssetNameHex !== primary.lampAssetNameHex) {
+      throw new Error(
+        `[config] ${where} khai LAMP ${d.lampPolicyId}.${d.lampAssetNameHex}, khối chính khai ` +
+        `${primary.lampPolicyId}.${primary.lampAssetNameHex} — một tiến trình phục vụ MỘT tài sản LAMP.`,
+      );
+    }
+    const labelNet = SOURCE_NETWORK_RE.exec(d.source)?.[1];
+    if (labelNet !== undefined && labelNet !== network) {
+      throw new Error(
+        `[config] ${where} có nhãn source mở đầu bằng "${labelNet}" mà VAULT_TX_API_NETWORK=${network} — ` +
+        `khối này sinh cho mạng khác.`,
+      );
+    }
+    for (const v of d.vaults) {
+      const prev = seenTypes.get(v.vaultType);
+      if (prev !== undefined) {
+        throw new Error(
+          `[config] ${where} phục vụ két "${v.vaultType}" mà ${prev} cũng phục vụ loại đó — mỗi loại két ` +
+          `đúng MỘT khối, vì yêu cầu được định tuyến theo loại két.`,
+        );
+      }
+      seenTypes.set(v.vaultType, `VAULT_TX_API_EXTRA_DEPLOYMENT_FILES[${i}]`);
+    }
+    if (didStakeKey(d.didStake) !== didStakeKey(primary.didStake)) {
+      throw new Error(
+        `[config] ${where} khai did_stake khác khối chính — nhân chứng chủ script và bộ suy chủ DID ` +
+        `là MỘT cho mọi khối, dựng từ khối chính.`,
+      );
+    }
+    if (d.feecover !== undefined) {
+      throw new Error(
+        `[config] ${where} khai feecover — proxy phí là MỘT cho cả tiến trình và đọc từ khối chính. ` +
+        `Bỏ khối feecover khỏi khối phụ (đặt nó ở khối chính).`,
+      );
+    }
+  });
+}
+
+function didStakeKey(d: DidStakeDeployment | undefined): string {
+  return d === undefined ? "" : `${d.anchorNftPolicy}|${d.unappliedScript?.hash ?? ""}`;
 }
 
 /**
@@ -517,7 +675,8 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
       `[config] VAULT_TX_API_DEPLOYMENT.vaults trộn két "${PREPAID_VAULT_TYPE}" với loại khác ` +
       `(${vaults.map(v => v.vaultType).join(", ")}). Một khối một loại két: ref_script_utxos.vault ` +
       `chỉ có một ô và bản consume được apply-param bằng hash của đúng loại két nó phục vụ. ` +
-      `Tách thành hai khối deploy, mỗi khối một dịch vụ.`,
+      `Tách thành hai khối deploy: một khối chính (VAULT_TX_API_DEPLOYMENT) + khối phụ qua ` +
+      `VAULT_TX_API_EXTRA_DEPLOYMENT_FILES (khối Prepaid thì vẫn phải chạy một dịch vụ riêng).`,
     );
   }
   const refs = obj(o.ref_script_utxos, "ref_script_utxos");
@@ -966,13 +1125,13 @@ function parseSponsorPins(v: unknown, prefix: string, network: Network, fundScri
  * Hoãn tới lúc chạy là dựng ra một dịch vụ khởi động xanh rồi hỏng ở đúng đường tiêu
  * MAGIC — và hỏng ở đó thì người đang bị chặn là người dùng, không phải người vận hành.
  */
-function assertReadableBlueprint(path: string): void {
+function assertReadableBlueprint(path: string, label = "VAULT_TX_API_VAULT_PLUTUS_JSON"): void {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
   } catch (e) {
     throw new Error(
-      `[config] VAULT_TX_API_VAULT_PLUTUS_JSON không đọc được: ${(e as Error).message}. ` +
+      `[config] ${label} không đọc được: ${(e as Error).message}. ` +
       `Đây là hiện vật \`aiken build\` (đã gitignore) — dựng lại module vault rồi trỏ vào nó.`,
     );
   }
@@ -980,10 +1139,10 @@ function assertReadableBlueprint(path: string): void {
   try {
     parsed = JSON.parse(text);
   } catch (e) {
-    throw new Error(`[config] VAULT_TX_API_VAULT_PLUTUS_JSON không phải JSON hợp lệ: ${(e as Error).message}`);
+    throw new Error(`[config] ${label} không phải JSON hợp lệ: ${(e as Error).message}`);
   }
   const validators = (parsed as { validators?: unknown }).validators;
   if (!Array.isArray(validators) || validators.length === 0) {
-    throw new Error("[config] VAULT_TX_API_VAULT_PLUTUS_JSON thiếu mảng `validators` — không phải blueprint Aiken.");
+    throw new Error(`[config] ${label} thiếu mảng \`validators\` — không phải blueprint Aiken.`);
   }
 }

@@ -263,6 +263,37 @@ export class VaultTxService {
     return this.deps.builder.coinsPerUtxoByte();
   }
 
+  /** Loại két khối này phục vụ — cấu hình, không chạm chuỗi. Bộ định tuyến nhiều khối đọc nó. */
+  get vaultTypes(): string[] {
+    return this.deps.deployment.vaults.map(v => v.vaultType);
+  }
+
+  /** Địa chỉ két của khối này — `/health` ▸ `vault_scopes` lấy HỢP của mọi khối (`blocks.ts`). */
+  get vaultScopes(): VaultScope[] {
+    return this.deps.deployment.vaults;
+  }
+
+  /** Nhãn nguồn của khối triển khai mà dịch vụ này phục vụ (`/health` ▸ `deployment_sources`). */
+  get deploymentSource(): string {
+    return this.deps.deployment.source;
+  }
+
+  /**
+   * Chủ có két ở các địa chỉ vault của khối này không — CHỈ ĐỌC, không giữ khoá, không ghi sổ.
+   * Cùng luật nhận két với đường dựng (`vaultLookup.ts` ▸ `findVaultsAtScope`: NFT danh-tính +
+   * chủ trong datum), nên "có két" ở đây đúng là thứ đường dựng sẽ tìm thấy. Bộ định tuyến nhiều
+   * khối (`blockRouter.ts`) gọi nó khi yêu cầu không khai `vault_type`.
+   */
+  async hasVaultOf(ownerIn: OwnerInput): Promise<boolean> {
+    const req = await this.resolveOwner({ owner: ownerIn });
+    const owner = assertOwnerRef(req.owner);
+    for (const scope of this.deps.deployment.vaults) {
+      const utxos = await this.deps.chain.utxosAt(scope.address);
+      if (findVaultsAtScope(utxos, scope, owner).vaults.length > 0) return true;
+    }
+    return false;
+  }
+
   /**
    * ScheduleCommit Gen v2.0 — nhánh ký đọc beacon ρ + beacon GreenBack + sổ két và TIÊU shard
    * GB của két; luật ký uỷ cho validator withdraw-zero `commit`. Cổng cấu hình (khối `gen_v2`,

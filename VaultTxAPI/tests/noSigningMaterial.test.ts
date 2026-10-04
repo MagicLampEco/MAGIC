@@ -133,6 +133,10 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
     const allowed = new Set([
       "VAULT_TX_API_NETWORK",
       "VAULT_TX_API_DEPLOYMENT",
+      // Khối phụ (`config.ts` ▸ `loadExtraBlocks`): đường dẫn tệp khối triển khai + blueprint —
+      // cùng loại với VAULT_TX_API_DEPLOYMENT / VAULT_TX_API_VAULT_PLUTUS_JSON, không phải bí mật.
+      "VAULT_TX_API_EXTRA_DEPLOYMENT_FILES",
+      "VAULT_TX_API_EXTRA_VAULT_PLUTUS_JSONS",
       "VAULT_TX_API_CHANGE_ADDRESS_STRATEGY",
       "VAULT_TX_API_VAULT_PLUTUS_JSON",
       "VAULT_TX_API_BLOCKFROST_URL",

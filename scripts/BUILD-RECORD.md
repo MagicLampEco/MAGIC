@@ -63,8 +63,8 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `prepaid.paid_fund` | `6ff7d74e37b4fcd7d32cbd0331c469c445810f4d40ba64a2c49378a2` |
-| `prepaid.prepaid_vault` | `693e56fad4e8d760c45b1bd3a2e57dfce323f37755a4caef5115fff1` |
+| `prepaid.paid_fund` | `e271081eb4f9494c2fdbc8217b6cc54ae3015f1dd522c08e4d8f6dc3` |
+| `prepaid.prepaid_vault` | `a0e6b588896f7d5c914b442e681e5cc21d818d0b1433e8fb1cf96115` |
 
 ### `ScheduleGen/onchain`
 

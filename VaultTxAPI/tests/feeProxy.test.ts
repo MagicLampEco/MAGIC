@@ -58,6 +58,7 @@ const FEECOVER_BLOCK = {
       "create-vault": "create_vault", consume: "consume_magic",
       // Cố ý SAI: mục đích của ứng dụng khác — ca 403 FEE_PROXY_APP_PURPOSE.
       "schedule-commit": "orilife_consume_magic",
+      "sponsor-t1-open": "sponsor_open",
     } },
     orilife: { token_sha256: sha(ORILIFE_TOKEN), purposes: { consume: "orilife_consume_magic" } },
     // Cố ý SAI: ứng dụng khác `magic` mà mục đích không mang tiền tố tên mình.
@@ -283,6 +284,19 @@ describe("POST /fee/utxo", () => {
     expect(c.status, JSON.stringify(c.body)).toBe(200);
   });
 
+  it("route tài trợ có khai mục đích ⟹ 200, Feecover nhận đúng mục đích; route tài trợ chưa khai ⟹ 400 UNMAPPED", async () => {
+    // Cặp đối xứng: cùng harness, cùng app, chỉ khác route. Bảng mục đích chỉ có `sponsor-t1-open`.
+    const h = harness();
+    const r = await h.call("POST", "/fee/utxo", { route: "sponsor-t1-open" });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((r.body as { purpose: string }).purpose).toBe("sponsor_open");
+    expect(h.fc.calls[0]!.url).toBe("https://feecover.example/v1/utxo?purpose=sponsor_open");
+    const u = await h.call("POST", "/fee/utxo", { route: "sponsor-t3-draw" });
+    expect(u.status).toBe(400);
+    expect(codeOf(u)).toBe("FEE_PROXY_PURPOSE_UNMAPPED");
+    expect(h.fc.calls).toHaveLength(1);
+  });
+
   it("route không có trong bảng của app ⟹ 400 FEE_PROXY_PURPOSE_UNMAPPED, Feecover KHÔNG bị gọi; route lạ cũng vậy", async () => {
     const h = harness();
     const r = await h.call("POST", "/fee/utxo", { route: "schedule-fire" });
@@ -372,6 +386,13 @@ describe("cấu hình feecover", () => {
     expect(withFc({ url: "https://u:p@feecover.example" })).toThrow(/chứng danh/);
     expect(withFc({ url: "http://127.0.0.1:8790" })).not.toThrow();
     expect(withFc({ apps: { magic: { purposes: { "consume-magic": "consume_magic" } } } })).toThrow(/route/);
+    // Bốn route tài trợ là khoá hợp lệ; tên gần đúng thì vẫn NÉM.
+    const sponsorPurposes = {
+      "sponsor-t1-open": "sponsor_open", "sponsor-t2-fund": "sponsor_fund",
+      "sponsor-t3-draw": "sponsor_draw", "sponsor-t4-first-consume": "sponsor_first_consume",
+    };
+    expect(withFc({ apps: { magic: { purposes: sponsorPurposes } } })).not.toThrow();
+    expect(withFc({ apps: { magic: { purposes: { "sponsor-t2": "sponsor_fund" } } } })).toThrow(/route/);
     expect(withFc({ apps: { magic: { token_sha256: "ab".repeat(32), purposes: {} } } })).toThrow(/token_sha256/);
   });
 });

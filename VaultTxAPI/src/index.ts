@@ -74,7 +74,8 @@ export type {
   SponsorTxServiceDeps, SponsorBuildResponse, SponsorSigner, SponsorStep, LucidForWallet,
   SponsorT1Request, SponsorT2Request, SponsorT3Request, SponsorT4Request,
 } from "./sponsor.js";
-export type { SponsorRoute } from "./locks.js";
+export type { SponsorRoute, FeePurposeRoute } from "./locks.js";
+export { SPONSOR_ROUTES, FEE_PURPOSE_ROUTES } from "./locks.js";
 
 export { handle } from "./http.js";
 export type { HttpRequest, HttpResponse, RouterDeps } from "./http.js";

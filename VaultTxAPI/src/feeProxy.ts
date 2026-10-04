@@ -36,7 +36,7 @@ import type { FeecoverAppSettings, FeecoverSettings } from "./config.js";
 import { FEECOVER_DEFAULT_APP } from "./config.js";
 import { BadRequestError, CodedApiError, TxSupersededError } from "./errors.js";
 import type { IssuedRoute, IssuedTxRegistry } from "./locks.js";
-import { ISSUED_ROUTES } from "./locks.js";
+import { FEE_PURPOSE_ROUTES, type FeePurposeRoute } from "./locks.js";
 import { txBodyHash } from "./summary.js";
 
 /** Tập con của `fetch` mà proxy dùng — tiêm được để phép kiểm chạy bộ giả, không gọi mạng. */
@@ -105,7 +105,8 @@ const FEE_SOURCES_FAILURE_OF_CODE: Readonly<Record<string, FeeSourcesFailure>> =
 };
 
 /** Route mà mã ghi sổ Feecover là tên NFT, không phải hash thân tx. `bind-did` cố ý VẮNG: nó không
- *  đúc NFT nào (mã ghi sổ = hash thân tx), và hiện không nhận ví trả phí (501) nên không tới `/fee/sign`. */
+ *  đúc NFT nào, nên mã ghi sổ của nó là hash thân tx (nó nhận ví trả phí từ 2026-10-04). Bốn route
+ *  tài trợ cũng vắng vì cùng lý do: sổ ghi `feePayerUtxo`, không ghi `feeRef`. */
 // Khoá là `string` vì sổ phát-hành còn ghi route tài trợ (`locks.ts` ▸ `SponsorRoute`), không chỉ `IssuedRoute`.
 const NFT_REF_ROUTES: ReadonlySet<string> = new Set<IssuedRoute>(["create-vault", "open-thread"]);
 
@@ -298,8 +299,8 @@ export class FeeProxy {
   }
 
   private purposeFor(caller: ResolvedApp, route: string): string {
-    const purpose = (ISSUED_ROUTES as readonly string[]).includes(route)
-      ? caller.app.purposes.get(route as IssuedRoute)
+    const purpose = (FEE_PURPOSE_ROUTES as readonly string[]).includes(route)
+      ? caller.app.purposes.get(route as FeePurposeRoute)
       : undefined;
     if (purpose === undefined) {
       throw new CodedApiError(400, "FEE_PROXY_PURPOSE_UNMAPPED",

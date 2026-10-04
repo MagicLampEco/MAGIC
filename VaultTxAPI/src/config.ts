@@ -27,7 +27,7 @@ import { getAddressDetails, validatorToScriptHash } from "@lucid-evolution/lucid
 import { FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE, type Network } from "@magiclamp/protocol-utils";
 import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
 
-import { ISSUED_ROUTES, type IssuedRoute } from "./locks.js";
+import { FEE_PURPOSE_ROUTES, type FeePurposeRoute } from "./locks.js";
 import { parseBasePath } from "./basePath.js";
 
 /**
@@ -261,7 +261,7 @@ export interface FeecoverAppSettings {
   /** SHA-256 (64 hex thường) của token ứng dụng. App `magic` KHÔNG có trường này. */
   tokenSha256?: string;
   /** Route dựng tx → mục đích Feecover. Route vắng ⟹ proxy từ chối tx của route đó. */
-  purposes: Map<IssuedRoute, string>;
+  purposes: Map<FeePurposeRoute, string>;
 }
 
 export interface FeecoverSettings {
@@ -785,17 +785,17 @@ function parseFeecover(raw: unknown): FeecoverSettings {
       hashes.add(tokenSha256);
     }
     const pRaw = obj(a.purposes, `feecover.apps.${name}.purposes`);
-    const purposes = new Map<IssuedRoute, string>();
+    const purposes = new Map<FeePurposeRoute, string>();
     for (const [route, purpose] of Object.entries(pRaw)) {
-      if (!(ISSUED_ROUTES as readonly string[]).includes(route)) {
+      if (!(FEE_PURPOSE_ROUTES as readonly string[]).includes(route)) {
         throw new Error(
-          `[config] feecover.apps.${name}.purposes: route "${route}" không có. Nhận: ${ISSUED_ROUTES.join(" | ")}.`,
+          `[config] feecover.apps.${name}.purposes: route "${route}" không có. Nhận: ${FEE_PURPOSE_ROUTES.join(" | ")}.`,
         );
       }
       if (typeof purpose !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(purpose)) {
         throw new Error(`[config] feecover.apps.${name}.purposes.${route} phải là tên mục đích chữ thường.`);
       }
-      purposes.set(route as IssuedRoute, purpose);
+      purposes.set(route as FeePurposeRoute, purpose);
     }
     apps.set(name, tokenSha256 === undefined ? { purposes } : { tokenSha256, purposes });
   }

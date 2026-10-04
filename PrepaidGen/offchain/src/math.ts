@@ -62,6 +62,21 @@ export function outstandingEffective(
   return outstandingOf(creditIssued - sponsorReclaimed, magicSettled);
 }
 
+/**
+ * Lượng `FundReclaim` trả bên tài trợ = outstanding HIỆU LỰC sau khi ghi nhận
+ * `consumed_unsettled` (u) của dòng hạn-mức bị gỡ ở vault (DESIGN-reclaim §10.11).
+ * Twin của `math.ak` ▸ `reclaim_outstanding` (vector V5). `u = 0` ⟹ trùng bit
+ * `outstandingEffective`.
+ */
+export function reclaimOutstanding(
+  creditIssued: bigint,
+  sponsorReclaimed: bigint,
+  magicSettled: bigint,
+  unsettled: bigint,
+): bigint {
+  return outstandingEffective(creditIssued, sponsorReclaimed, magicSettled + unsettled);
+}
+
 /** buffer_floor = outstanding + ⌊ outstanding × buffer_bps / 10000 ⌋ */
 export function bufferFloor(outstanding: bigint, bufferBps: bigint): bigint {
   requireNonNegative("outstanding", outstanding);

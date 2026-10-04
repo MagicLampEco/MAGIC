@@ -5,6 +5,36 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-04 — PrepaidGen: `FundReclaim` gỡ dòng hạn-mức ở vault, quỹ tài trợ đóng được; CARP Preprod đời 6
+
+**Đổi gì.**
+- `PrepaidVaultRedeemer` thêm `CloseSponsoredLine { fund_id }` (**constr 7**, nối cuối; thẻ CBOR
+  1280 `d90500`). Quỹ tài trợ đã cấp (`credit_issued > 0`) chỉ `FundReclaim` được khi cùng giao dịch
+  tiêu vault mang dòng của nó bằng redeemer này: dòng + mọi batch của quỹ bị gỡ, và
+  `consumed_unsettled` (u) của dòng vào `magic_settled` trước khi tính R. Hàm P8 mới:
+  `math.ak` ▸ `reclaim_outstanding` ↔ `math.ts` ▸ `reclaimOutstanding`, vector V5.
+- `PrepaidLock` vào quỹ tài trợ đòi vault đã gắn đúng DID được tài trợ, và quỹ chỉ mở dòng khi
+  `credit_issued == 0` (một dòng trọn đời). Quỹ chưa cấp đồng nào thu hồi không kèm vault (R = 0, đóng).
+- `FundClaim` rút trọn `carp_locked` của quỹ đã thu hồi ⟹ đóng quỹ: đốt NFT, min-ADA về bên tài trợ
+  (output datum `fund_id`). Handler `mint` của `paid_fund` nhận đốt từ `FundReclaim` hoặc `FundClaim`.
+- Ngoài chuỗi: `prepaid.ts` (`reclaimUnsettled`, `vaultAfterCloseLine`, `fundAfterReclaim(…, u)`,
+  `assertSponsoredLock`, `fundClaimClose`), `builders.ts` (`planFundReclaim` nhận `vaultUtxo`,
+  `planFundClaim` có nhánh đóng). Bài emulator đọc hai script qua ref-script CIP-33.
+- CARP Preprod trỏ sang đời 6 `71968a8d…/59d0bc48…` (nguồn: instance công khai của CarpetMint);
+  đời 5 `86ea6717…/110d0c97…` vào danh sách đã thay. `PrepaidGen/offchain/src/carpInstance.ts` đọc
+  instance; bước deploy 10 đối chiếu cặp CARP với instance lúc chạy, lệch ⟹ dừng.
+
+**Vì sao.** Bản `FundReclaim` trước không đụng vault: phần MAGIC đã tiêu mà chưa `SettleLine` bị trả
+cho bên tài trợ, và người dùng quay lại được phục vụ không công. Quỹ `E = 0` hoặc rút cạn sau thu hồi
+giữ min-ADA vĩnh viễn. Đời CARP 5 đã bị thay trên Preprod nên apply-param ghim nó là dựng quỹ không
+thấy CARP thật.
+
+**Cái gì gãy nếu đang bám bản cũ.** Bytes `paid_fund` + `prepaid_vault` đổi ⟹ hash + địa chỉ đổi.
+Hai validator đính kèm cùng một giao dịch nay vượt trần 16.384 byte ⟹ mọi giao dịch tiêu cả vault
+lẫn quỹ phải dùng ref-script. `fundAfterReclaim`/`reclaimAmount` nhận thêm `u`; `planFundClaim` trả
+`fundDatumOut: null` ở nhánh đóng; `fundAfterClaim` ném khi lượt rút phải đi nhánh đóng. Bên dựng T2
+phải mở quỹ tài trợ cho vault đã `SetDidCommit` đúng DID.
+
 ## 2026-10-04 — PrepaidGen: quỹ tài trợ thu hồi phần CARP chưa giao về ví bên tài trợ (`FundReclaim`)
 
 **Đổi gì.**

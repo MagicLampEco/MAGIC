@@ -10,6 +10,7 @@
 use aiken/collection/list
 use magiclamp/protocol/math.{
   buffer_floor, outstanding_effective, par_carp_from_magic, par_magic_from_carp,
+  reclaim_outstanding,
 }
 
 // ── V1: par_magic_from_carp(carpdrop) -> nanogic ──────────────
@@ -79,6 +80,27 @@ pub const v4_eff_settled: List<Int> =
 pub const v4_eff_out: List<Int> =
   [0, 6_000_000_000, 0, 1, 36_000_000_000_000_000_000, 1]
 
+// ── V5: reclaim_outstanding(credit_issued, sponsor_reclaimed, magic_settled, unsettled) ─
+// Lượng `FundReclaim` trả bên tài trợ khi dòng hạn-mức ở vault còn nợ
+// `consumed_unsettled` (DESIGN-reclaim §10.11). Hàng 2: u = 0 ⟹ trùng V4 hàng 2.
+// Hàng 3: số của bài `rc_u_*` (u = 1e9). Hàng 4: u nuốt trọn phần chưa giao.
+// Hàng 6: > 2^53 (C-OVERFLOW).
+pub const v5_rc_credit: List<Int> =
+  [0, 10_000_000_000, 10_000_000_000, 10_000_000_000, 1,
+    36_000_000_000_000_000_001]
+
+pub const v5_rc_reclaimed: List<Int> =
+  [0, 0, 0, 0, 0, 0]
+
+pub const v5_rc_settled: List<Int> =
+  [0, 4_000_000_000, 4_000_000_000, 4_000_000_000, 0, 1]
+
+pub const v5_rc_unsettled: List<Int> =
+  [0, 0, 1_000_000_000, 6_000_000_000, 1, 2]
+
+pub const v5_rc_out: List<Int> =
+  [0, 6_000_000_000, 5_000_000_000, 0, 0, 35_999_999_999_999_999_998]
+
 // ══════════════════════════════════════════════════════════════
 // Tests — vế Aiken của cổng P8
 // ══════════════════════════════════════════════════════════════
@@ -120,4 +142,19 @@ test p8_v4_outstanding_effective() {
       outstanding_effective(c, r, m)
     },
   ) == v4_eff_out
+}
+
+test p8_v5_reclaim_outstanding() {
+  let rows =
+    list.zip(
+      list.zip(list.zip(v5_rc_credit, v5_rc_reclaimed), v5_rc_settled),
+      v5_rc_unsettled,
+    )
+  list.length(rows) == list.length(v5_rc_out) && list.map(
+    rows,
+    fn(row) {
+      let (((c, r), m), u) = row
+      reclaim_outstanding(c, r, m, u)
+    },
+  ) == v5_rc_out
 }

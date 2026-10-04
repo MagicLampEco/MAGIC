@@ -73,17 +73,20 @@ export type CarpNetwork = "Mainnet" | "Preview" | "Preprod";
 export const CARP_POLICY_ID: Record<CarpNetwork, string | null> = {
   Mainnet: null, // chưa deploy (2026-09-11)
   Preview: null, // KHÔNG CÓ CARP trên Preview (2026-09-11)
-  // Đời hiện hành, cập nhật 2026-09-28. Nguồn: nhà CarpetMint ▸
-  // `offchain/state/web-export/instance.Preprod.json` ▸ `anchor` (tệp local
-  // 23/09). Đối chiếu Koios cùng ngày: tài sản tồn tại, supply 650000000.
-  Preprod: "86ea67178d3739965449535eb1f875b37ba2eede4ee5781f89bc310b",
+  // Đời 6, cập nhật 2026-10-04. Nguồn: GET
+  // https://api.magiclamp.eco/carpetmint/v1/instance/Preprod ▸ `instance.anchor`
+  // (đo 2026-10-04; instance "CARP@bootstrap-tlamp", deployedAt
+  // 2026-10-03T23:17:17Z, sha256 khai 610a02c9…). SOFT-PIN: đây là giá trị MẶC
+  // ĐỊNH; bộ deploy đọc instance khi chạy và NÉM nếu lệch
+  // (`carpInstance.ts` ▸ `assertCarpMatchesInstance`).
+  Preprod: "71968a8df882a4dd24688b7904473a5d5f7e35332cba063e6ad7d379",
 };
 
 /** Băm 28 byte do nhà CarpetMint phát. KHÔNG phải hex của "CARP"/"tCARP". */
 export const CARP_ASSET_NAME: Record<CarpNetwork, string | null> = {
   Mainnet: null,
   Preview: null,
-  Preprod: "110d0c97df39bcee5ca6875485c493e7cd7608cac38c84b281d18c4f",
+  Preprod: "59d0bc483cd12816c029130722b4288c41d7423475a54b512027fd24", // cùng nguồn, đời 6
 };
 
 /** 28 byte = 56 ký tự hex — độ dài của cả policy id lẫn asset name CARP. */
@@ -160,6 +163,9 @@ export const CARP_SUPERSEDED_GENERATIONS: ReadonlyArray<{
   /** `false` = chỉ có tiền tố; so bằng `startsWith`, KHÔNG so toàn chuỗi. */
   isFullLength: boolean;
 }> = [
+  // Đời 5, thay ngày 2026-10-04 bằng đời 6 (instance công khai, xem `CARP_POLICY_ID`).
+  { value: "86ea67178d3739965449535eb1f875b37ba2eede4ee5781f89bc310b", kind: "policy",     network: "Preprod", supersededOn: "2026-10-04", isFullLength: true  },
+  { value: "110d0c97df39bcee5ca6875485c493e7cd7608cac38c84b281d18c4f", kind: "asset_name", network: "Preprod", supersededOn: "2026-10-04", isFullLength: true  },
   // Đời thay ngày 2026-09-28. Bytes cũ VẪN SỐNG trên Preprod (Koios cùng ngày:
   // tồn tại, supply 250000000) — đúng lý do danh sách này tồn tại: một policy
   // đã được thay vẫn là 56 ký tự hex hợp lệ và `quantity_of` trên nó vẫn trả 0

@@ -9,9 +9,11 @@
 //   Lock        ▸ validate_lock + validate_fund_lock (qua fund_common_checks)
 //   Draw        ▸ validate_draw              BurnBatch ▸ validate_burn_batch
 //   SettleLine  ▸ validate_settle_line + validate_fund_settle
-//   FundClaim   ▸ validate_fund_claim
+//   FundClaim   ▸ validate_fund_claim (tiếp nối) / validate_fund_claim_close +
+//                 validate_burn_fund_nft (rút cuối quỹ đã thu hồi ⟹ đóng)
 //   FundReclaim ▸ validate_fund_reclaim (tiếp nối) / validate_fund_close +
-//                 validate_burn_fund_nft (đóng) — phần quỹ; phần két Wakeme do bên Wakeme ghép
+//                 validate_burn_fund_nft (đóng) + validate_close_sponsored_line (vault,
+//                 khi quỹ đã cấp) — phần quỹ + vault; phần két Wakeme do bên Wakeme ghép
 //   mọi spend vault ▸ vault_identity_preserved (NFT còn nguyên, ADA không giảm,
 //                     ≤ 2 policy, không ref-script)
 
@@ -22,6 +24,7 @@ import { computeFundId } from "../math.js";
 import { ownerCredential, ownerRefOf, type OwnerRef } from "../ownerAuth.js";
 import {
   assertFundGenesis,
+  assertSponsoredLock,
   burnBatches,
   claimBeneficiaryOutput,
   creditsAfterLock,
@@ -30,9 +33,13 @@ import {
   fundAfterLock,
   fundAfterReclaim,
   fundAfterSettle,
+  fundClaimClose,
+  fundClaimCloses,
   lockRequiredSigner,
+  reclaimUnsettled,
   settleLine,
   settleLineDebt,
+  vaultAfterCloseLine,
 } from "../prepaid.js";
 import type { MagicBatch, PaidFundDatum, PlutusAddress, PrepaidVaultDatum } from "../types.js";
 import type { Credential as LucidCredential } from "@lucid-evolution/lucid";
@@ -41,6 +48,7 @@ import {
   FUND_MINT_REDEEMER,
   PrepaidTxError,
   burnBatchRedeemer,
+  closeSponsoredLineRedeemer,
   drawRedeemer,
   encodeFundDatum,
   encodeVaultDatum,
@@ -239,6 +247,8 @@ export function planPrepaidLock(p: PrepaidLockParams): PrepaidLockResult {
   const f = readFundUtxo(p.scripts, p.fundUtxo);
   const epoch = epochOf(p.scripts, p.validity);
   const signer = lockRequiredSigner(v.datum, f.datum, f.fundId, p.by);
+  // Quỹ tài trợ: đúng DID + một dòng trọn đời (DESIGN-reclaim §10.11).
+  assertSponsoredLock(v.datum, f.datum, f.fundId);
   const opensNewLine = !v.datum.prepaid_credits.some((c) => c.fund_id === f.fundId);
 
   const vaultDatumOut: PrepaidVaultDatum = {
@@ -463,26 +473,63 @@ export interface FundClaimParams {
  * không được là địa chỉ enterprise của bên hưởng — bộ dựng không kiểm được điều đó
  * trước `complete()` vì chọn-coin xảy ra ở đó.
  */
-export function planFundClaim(p: FundClaimParams) {
+export interface FundClaimResult {
+  plan: TxPlan;
+  epoch: bigint;
+  /** `true` ⟹ rút cuối quỹ đã thu hồi: đốt NFT quỹ, không quỹ tiếp nối, min-ADA về bên tài trợ. */
+  closing: boolean;
+  /** Datum quỹ tiếp nối; `null` khi đóng. */
+  fundDatumOut: PaidFundDatum | null;
+  beneficiaryAddress: string;
+  /** Địa chỉ bech32 ĐẦY ĐỦ của bên tài trợ (nhận min-ADA); `null` khi không đóng. */
+  sponsorAddress: string | null;
+}
+
+/**
+ * Hai hình dạng, rẽ theo DATUM + lượng (gương phép rẽ ở handler spend `paid_fund`):
+ *   · tiếp nối: quỹ ở lại với `carp_locked − amount`;
+ *   · ĐÓNG (`sponsor_reclaimed > 0 ∧ amount == carp_locked`, `validate_fund_claim_close`):
+ *     không output quỹ, đốt NFT quỹ (−1), toàn bộ ADA của UTxO quỹ về địa chỉ ĐẦY ĐỦ
+ *     bên tài trợ kèm inline datum `fund_id` (cùng hình dạng `sponsor_payout`).
+ * CARP luôn về bên hưởng đã ghim; platform ký ở cả hai hình dạng.
+ */
+export function planFundClaim(p: FundClaimParams): FundClaimResult {
   const f = readFundUtxo(p.scripts, p.fundUtxo);
   const epoch = epochOf(p.scripts, p.validity);
-  const fundDatumOut = fundAfterClaim(f.datum, p.amount, epoch);
+  const closing = fundClaimCloses(f.datum, p.amount);
   const payout = claimBeneficiaryOutput(f.datum, p.amount);
   const pc = payout.paymentCredential;
   const benAddress = credentialToAddress(p.scripts.network, { type: pc.kind, hash: pc.hash });
   const plan = emptyPlan();
   plan.spends.push({ utxo: p.fundUtxo, redeemerCbor: fundClaimRedeemer(p.amount), script: p.scripts.paidFund });
-  plan.outputs.push(
-    {
-      address: p.fundUtxo.address,
-      datumCbor: encodeFundDatum(fundDatumOut),
-      assets: addCarp(sameAssets(p.fundUtxo), p.scripts.carpUnit, -p.amount),
-    },
-    { address: benAddress, datumCbor: payout.inlineDatumCbor, assets: { [p.scripts.carpUnit]: p.amount } },
-  );
+  let fundDatumOut: PaidFundDatum | null = null;
+  let sponsorAddress: string | null = null;
+  if (closing) {
+    const { sponsorship } = fundClaimClose(f.datum, p.amount);
+    sponsorAddress = plutusAddressToBech32(p.scripts.network, sponsorship.sponsor);
+    const lovelace = p.fundUtxo.assets.lovelace ?? 0n;
+    if (lovelace <= 0n) {
+      fail("C-PP-SHAPE", `UTxO quỹ ${p.fundUtxo.txHash}#${p.fundUtxo.outputIndex} không có lovelace`);
+    }
+    plan.mints.push({ script: p.scripts.paidFund, assets: { [f.nftUnit]: -1n }, redeemerCbor: FUND_BURN_REDEEMER });
+    plan.outputs.push(
+      { address: benAddress, datumCbor: payout.inlineDatumCbor, assets: { [p.scripts.carpUnit]: p.amount } },
+      { address: sponsorAddress, datumCbor: reclaimPayoutDatumCbor(f.fundId), assets: { lovelace } },
+    );
+  } else {
+    fundDatumOut = fundAfterClaim(f.datum, p.amount, epoch);
+    plan.outputs.push(
+      {
+        address: p.fundUtxo.address,
+        datumCbor: encodeFundDatum(fundDatumOut),
+        assets: addCarp(sameAssets(p.fundUtxo), p.scripts.carpUnit, -p.amount),
+      },
+      { address: benAddress, datumCbor: payout.inlineDatumCbor, assets: { [p.scripts.carpUnit]: p.amount } },
+    );
+  }
   plan.signers.push(f.datum.platform);
   plan.validity = p.validity;
-  return { plan, epoch, fundDatumOut, beneficiaryAddress: benAddress };
+  return { plan, epoch, closing, fundDatumOut, beneficiaryAddress: benAddress, sponsorAddress };
 }
 
 export function addFundClaim(tx: TxBuilder, p: FundClaimParams) {
@@ -527,6 +574,12 @@ export function reclaimPayoutDatumCbor(fundId: string): string {
 export interface FundReclaimParams {
   scripts: PrepaidScripts;
   fundUtxo: UTxO;
+  /**
+   * UTxO vault mang dòng hạn-mức của quỹ (DESIGN-reclaim §10.11). BẮT BUỘC khi quỹ
+   * đã cấp (`credit_issued > 0`) — bộ dựng tiêu nó bằng `CloseSponsoredLine` và đọc
+   * `u` từ đúng dòng đó. PHẢI vắng khi `credit_issued == 0` (không có dòng nào).
+   */
+  vaultUtxo?: UTxO | null;
   /** Validity của CẢ giao dịch ghép; kỳ của nó ghi vào `last_updated_epoch` (nhánh tiếp nối). */
   validity: TxValidity;
 }
@@ -542,6 +595,10 @@ export interface FundReclaimResult {
   fundDatumOut: PaidFundDatum | null;
   /** Địa chỉ bech32 ĐẦY ĐỦ của bên tài trợ (output trả). */
   sponsorAddress: string;
+  /** `u` = `consumed_unsettled` của dòng bị gỡ (0 khi không kèm vault). */
+  unsettled: bigint;
+  /** Datum vault sau `CloseSponsoredLine`; `null` khi không kèm vault. */
+  vaultDatumOut: PrepaidVaultDatum | null;
   /**
    * Phần bên Wakeme PHẢI ghép vào cùng giao dịch (mảnh này KHÔNG dựng nó): tiêu đúng
    * MỘT UTxO ở script `scriptHash` mang NFT `vaultNftUnit`, redeemer `ReclaimEpoch`
@@ -564,23 +621,38 @@ export interface FundReclaimResult {
 export function planFundReclaim(p: FundReclaimParams): FundReclaimResult {
   const f = readFundUtxo(p.scripts, p.fundUtxo);
   const epoch = epochOf(p.scripts, p.validity);
-  const o = fundAfterReclaim(f.datum, epoch);
+  const v = p.vaultUtxo ? readVaultUtxo(p.scripts, p.vaultUtxo) : null;
+  const unsettled = reclaimUnsettled(f.datum, v === null ? null : v.datum);
+  const o = fundAfterReclaim(f.datum, epoch, unsettled);
   const sponsorAddress = plutusAddressToBech32(p.scripts.network, o.sponsorship.sponsor);
   const payoutDatum = reclaimPayoutDatumCbor(f.fundId);
 
   const plan = emptyPlan();
   plan.spends.push({ utxo: p.fundUtxo, redeemerCbor: fundReclaimRedeemer(), script: p.scripts.paidFund });
+  let vaultDatumOut: PrepaidVaultDatum | null = null;
+  if (v !== null) {
+    vaultDatumOut = vaultAfterCloseLine(v.datum, f.fundId, epoch);
+    plan.spends.push({
+      utxo: v.utxo,
+      redeemerCbor: closeSponsoredLineRedeemer(f.fundId),
+      script: p.scripts.vault,
+    });
+    plan.outputs.push({
+      address: v.utxo.address,
+      datumCbor: encodeVaultDatum(vaultDatumOut),
+      assets: sameAssets(v.utxo),
+    });
+  }
   if (o.closing) {
     plan.mints.push({ script: p.scripts.paidFund, assets: { [f.nftUnit]: -1n }, redeemerCbor: FUND_BURN_REDEEMER });
     const lovelace = p.fundUtxo.assets.lovelace ?? 0n;
     if (lovelace <= 0n) {
       fail("C-PP-SHAPE", `UTxO quỹ ${p.fundUtxo.txHash}#${p.fundUtxo.outputIndex} không có lovelace`);
     }
-    plan.outputs.push({
-      address: sponsorAddress,
-      datumCbor: payoutDatum,
-      assets: { lovelace, [p.scripts.carpUnit]: o.reclaimed },
-    });
+    // R = 0 chỉ xảy ra ở quỹ chưa cấp đồng nào: output trả chỉ mang min-ADA.
+    const payAssets: Assets = { lovelace };
+    if (o.reclaimed > 0n) payAssets[p.scripts.carpUnit] = o.reclaimed;
+    plan.outputs.push({ address: sponsorAddress, datumCbor: payoutDatum, assets: payAssets });
   } else {
     if (o.fundOut === null) fail("C-PP-RECLAIM", "nhánh tiếp nối thiếu datum quỹ đầu ra");
     plan.outputs.push(
@@ -600,6 +672,8 @@ export function planFundReclaim(p: FundReclaimParams): FundReclaimResult {
     closing: o.closing,
     fundDatumOut: o.fundOut,
     sponsorAddress,
+    unsettled,
+    vaultDatumOut,
     wakeme: {
       scriptHash: p.scripts.params.wakemeVaultHash,
       vaultNftUnit: p.scripts.params.wakemeVaultHash + o.sponsorship.owner_commit,

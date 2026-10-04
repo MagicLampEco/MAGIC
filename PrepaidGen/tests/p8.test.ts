@@ -15,6 +15,7 @@ import {
   outstandingEffective,
   parCarpFromMagic,
   parMagicFromCarp,
+  reclaimOutstanding,
 } from "../offchain/src/math.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,11 @@ describe("P8 — bảng vector đọc từ chính mã nguồn Aiken", () => {
       "v4_eff_reclaimed",
       "v4_eff_settled",
       "v4_eff_out",
+      "v5_rc_credit",
+      "v5_rc_reclaimed",
+      "v5_rc_settled",
+      "v5_rc_unsettled",
+      "v5_rc_out",
     ];
     for (const n of names) {
       const col = akIntList(n);
@@ -93,6 +99,18 @@ describe("P8 — bảng vector đọc từ chính mã nguồn Aiken", () => {
     // Cực đối: bỏ vế sponsor_reclaimed (dùng outstanding cũ) thì hàng 3 lệch —
     // bảng có hàng phân biệt được hai công thức.
     expect(c.some((ci, i) => ci - m[i]! !== expected[i])).toBe(true);
+  });
+
+  it("V5 — reclaimOutstanding khớp từng phần tử với vế Aiken", () => {
+    const c = akIntList("v5_rc_credit");
+    const r = akIntList("v5_rc_reclaimed");
+    const m = akIntList("v5_rc_settled");
+    const u = akIntList("v5_rc_unsettled");
+    const expected = akIntList("v5_rc_out");
+    expect(new Set([c.length, r.length, m.length, u.length, expected.length]).size).toBe(1);
+    expect(c.map((ci, i) => reclaimOutstanding(ci, r[i]!, m[i]!, u[i]!))).toEqual(expected);
+    // Cực đối: bỏ vế `unsettled` (công thức trước bản vá) thì ít nhất một hàng lệch.
+    expect(c.some((ci, i) => outstandingEffective(ci, r[i]!, m[i]!) !== expected[i])).toBe(true);
   });
 
   it("vòng tròn par chính xác trên toàn bảng (C-PP-1)", () => {

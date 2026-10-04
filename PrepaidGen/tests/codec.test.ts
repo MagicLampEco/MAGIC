@@ -17,6 +17,7 @@ import {
   PAID_FUND_DATUM_FIELDS,
   PREPAID_CREDIT_FIELDS,
   PREPAID_VAULT_DATUM_FIELDS,
+  CLOSE_SPONSORED_LINE_CONSTR,
   type PrepaidVaultRedeemer,
   PrepaidVaultRedeemerSchema,
   SET_DID_COMMIT_CONSTR,
@@ -155,8 +156,9 @@ describe("constructor index redeemer khớp Aiken", () => {
     ]);
     // Nhánh mới phải là nhánh CUỐI — thêm ở cuối thì sáu chỉ số trên đứng yên
     // theo cấu trúc, không theo kỷ luật của người thêm.
-    expect(ak).toHaveLength(SETTLE_LINE_CONSTR + 1);
     expect(ak[SETTLE_LINE_CONSTR]).toBe("SettleLine");
+    expect(ak).toHaveLength(CLOSE_SPONSORED_LINE_CONSTR + 1);
+    expect(ak[CLOSE_SPONSORED_LINE_CONSTR]).toBe("CloseSponsoredLine");
   });
 
   // ── SettleLine: thêm 2026-09-28, CHỈ THÊM Ở CUỐI ────────────────────────
@@ -168,9 +170,9 @@ describe("constructor index redeemer khớp Aiken", () => {
   });
 
   // Byte THẬT: constr 6 ⟹ thẻ CBOR 121+6 = 127 ⟹ tiền tố `d87f`. Đây là chỉ số
-  // CUỐI CÙNG còn mã hoá được bằng một thẻ đơn — nhánh thứ tám sẽ nhảy sang
-  // dạng `d8 7f 9f …` (constr ≥ 7 dùng thẻ 1280+i hoặc dạng chung 102), nên
-  // người thêm nhánh tiếp theo phải đo lại tiền tố chứ đừng suy tiếp dãy.
+  // CUỐI CÙNG trong họ thẻ 121..127 — nhánh thứ tám (constr 7) dùng thẻ
+  // 1280+(i−7) = 1280 ⟹ `d9 05 00` (bài `CloseSponsoredLine` ngay dưới đo byte đó).
+  // Constr 7..127 là họ 1280..1400; từ 128 là dạng chung thẻ 102.
   it("Data.to(SettleLine) mã hoá ra thẻ constr 6 (`d87f`)", () => {
     const schema = PrepaidVaultRedeemerSchema as unknown as PrepaidVaultRedeemer;
     const hex = Data.to({ SettleLine: { fund_id: "ab".repeat(28) } }, schema);
@@ -182,6 +184,47 @@ describe("constructor index redeemer khớp Aiken", () => {
       schema,
     );
     expect(sd.startsWith("d87e")).toBe(true);
+  });
+
+  // ── CloseSponsoredLine: thêm 2026-10-04, CHỈ THÊM Ở CUỐI ────────────────
+  it("CloseSponsoredLine nằm ĐÚNG constr 7 ở cả Aiken lẫn bảng thứ tự TypeScript", () => {
+    expect(enumVariants("PrepaidVaultRedeemer").indexOf("CloseSponsoredLine")).toBe(
+      CLOSE_SPONSORED_LINE_CONSTR,
+    );
+    expect(VAULT_REDEEMER_ORDER.indexOf("CloseSponsoredLine")).toBe(CLOSE_SPONSORED_LINE_CONSTR);
+  });
+
+  // Byte THẬT, đối chiếu với chính bảng thẻ Plutus Data (không suy tiếp dãy d87x):
+  //   constr i ∈ [0,6]   ⟹ thẻ 121+i      (`d879`..`d87f`)
+  //   constr i ∈ [7,127] ⟹ thẻ 1280+(i−7) (`d90500`..)
+  // Bảng được dựng TỪ công thức rồi so với byte Lucid sinh ra cho từng nhánh của lược
+  // đồ — nên một nhánh dịch chỗ, hoặc Lucid đổi cách mã hoá constr ≥ 7, đều đỏ.
+  it("Data.to(CloseSponsoredLine) mã hoá ra thẻ 1280 (`d90500`) · cực đối: nhánh cũ giữ thẻ cũ", () => {
+    const schema = PrepaidVaultRedeemerSchema as unknown as PrepaidVaultRedeemer;
+    const tagHex = (i: number): string => {
+      const tag = i <= 6 ? 121 + i : 1280 + (i - 7);
+      return tag < 256 ? "d8" + tag.toString(16).padStart(2, "0") : "d9" + tag.toString(16).padStart(4, "0");
+    };
+    expect(tagHex(CLOSE_SPONSORED_LINE_CONSTR)).toBe("d90500");
+    const fid = "ab".repeat(32);
+    const samples: Record<string, PrepaidVaultRedeemer> = {
+      PrepaidLock: { PrepaidLock: { fund_id: fid, amount_carpdrop: 1n } },
+      PrepaidDraw: { PrepaidDraw: { fund_id: fid, amount_carpdrop: 1n } },
+      BurnBatch: { BurnBatch: { burns: [] } },
+      PrunePrepaid: "PrunePrepaid",
+      SetDelegate: { SetDelegate: { new_delegate: null } },
+      SetDidCommit: { SetDidCommit: { did_commit: fid } },
+      SettleLine: { SettleLine: { fund_id: fid } },
+      CloseSponsoredLine: { CloseSponsoredLine: { fund_id: fid } },
+    };
+    expect(Object.keys(samples)).toEqual([...VAULT_REDEEMER_ORDER]);
+    VAULT_REDEEMER_ORDER.forEach((name, i) => {
+      expect(Data.to(samples[name]!, schema).startsWith(tagHex(i)), name).toBe(true);
+    });
+    // Byte trọn của nhánh mới: thẻ 1280 · mảng vô hạn 1 phần tử · ByteArray 32.
+    expect(Data.to(samples.CloseSponsoredLine!, schema)).toBe("d905009f5820" + fid + "ff");
+    // Cực đối: SettleLine KHÔNG ra thẻ 1280 — bài không xanh khi hai nhánh trùng thẻ.
+    expect(Data.to(samples.SettleLine!, schema).startsWith("d90500")).toBe(false);
   });
 
   // Byte THẬT, không phải bảng chữ. Plutus Data mã hoá constructor i ∈ [0,6] bằng

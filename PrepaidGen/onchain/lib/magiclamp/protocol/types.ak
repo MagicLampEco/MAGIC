@@ -23,7 +23,9 @@ pub type MagicBatch {
 // ── PrepaidCredit — hạn-mức CARP đã khoá, chưa rút thành MAGIC ─
 // Khoá theo fund_id: mỗi vault có TỐI ĐA 1 dòng cho mỗi quỹ, và dòng KHÔNG BAO
 // GIỜ bị xoá (kể cả remaining == 0) — nếu xoá thì batch chết sau đó không còn
-// chỗ để trả hạn-mức về (PrunePrepaid).
+// chỗ để trả hạn-mức về (PrunePrepaid). NGOẠI LỆ DUY NHẤT (2026-10-04):
+// `CloseSponsoredLine` gỡ dòng của quỹ tài trợ CÙNG mọi batch của nó, nên không
+// batch nào còn trỏ về dòng đã gỡ.
 pub type PrepaidCredit {
   fund_id         : ByteArray,
   remaining       : Natural,   // carpdrop
@@ -169,6 +171,19 @@ pub type PrepaidVaultRedeemer {
   // mọi redeemer đã mã hoá cho một nhánh ≥ 3 sẽ chạy nhầm nhánh nếu chèn vào
   // giữa — không lỗi cú pháp nào, chỉ sai lúc chạy trên chuỗi.
   SettleLine { fund_id: ByteArray }
+
+  // constr 7 — GỠ dòng hạn-mức của một quỹ TÀI TRỢ khỏi vault, cùng mọi
+  // `MagicBatch` có `contract_id == fund_id`, trong CÙNG giao dịch mà quỹ đó bị
+  // tiêu bằng `FundReclaim` (DESIGN-reclaim §10.11, `CC-RECLAIM-VAULT-LINE`).
+  // Không cần chữ ký chủ vault: người dùng đã bỏ đi (điều kiện thời gian do
+  // validator két Wakeme ép, quỹ đòi két đó `ReclaimEpoch` cùng giao dịch).
+  //
+  // Phần nợ quyết toán `consumed_unsettled` của dòng bị gỡ KHÔNG mất: quỹ đọc nó
+  // từ datum vault đầu vào và cộng vào `magic_settled` trước khi tính lượng trả
+  // bên tài trợ. MAGIC chưa tiêu (batch bị gỡ) là phần chưa giao ⟹ về bên tài trợ.
+  //
+  // NỐI CUỐI vì cùng lý do với `SettleLine` ngay trên.
+  CloseSponsoredLine { fund_id: ByteArray }
 }
 
 // ── Paid fund redeemer ────────────────────────────────────────

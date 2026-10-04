@@ -127,7 +127,7 @@ export type PaidFundDatum = Data.Static<typeof PaidFundDatumSchema>;
 
 // ── PrepaidVaultRedeemer ─────────────────────────────────────
 // Constr 0 Lock · 1 Draw · 2 BurnBatch · 3 PrunePrepaid · 4 SetDelegate ·
-// 5 SetDidCommit.
+// 5 SetDidCommit · 6 SettleLine · 7 CloseSponsoredLine.
 // BurnBatch PHẢI ở 2 — ConsumeMAGIC ghim burn_batch_constr = 2 (§7.3).
 //
 // `SetDidCommit` nằm CUỐI, không nằm cạnh `SetDelegate` dù hai nhánh nghe giống
@@ -170,6 +170,15 @@ export const PrepaidVaultRedeemerSchema = Data.Enum([
     // Giao dịch phải kèm UTxO quỹ mang `fund_id` này, và quỹ đó tiêu bằng
     // `FundSettle`; on-chain đòi `consumed_unsettled > 0` (reject-noop).
     SettleLine: Data.Object({
+      fund_id: Data.Bytes(),
+    }),
+  }),
+  Data.Object({
+    // constr 7 — gỡ dòng hạn-mức của một quỹ TÀI TRỢ (+ mọi batch `contract_id ==
+    // fund_id`) trong CÙNG giao dịch mà quỹ đó tiêu bằng `FundReclaim` (thêm
+    // 2026-10-04, DESIGN-reclaim §10.11). Không cần quyền chủ vault. Plutus Data mã
+    // hoá constr 7 bằng thẻ CBOR 1280 (`d90500`), KHÔNG còn họ thẻ 121..127.
+    CloseSponsoredLine: Data.Object({
       fund_id: Data.Bytes(),
     }),
   }),
@@ -233,6 +242,7 @@ export const VAULT_REDEEMER_ORDER = [
   "SetDelegate",
   "SetDidCommit", // constr 5 — thêm 2026-09-15, CHỈ THÊM Ở CUỐI
   "SettleLine", // constr 6 — thêm 2026-09-28, CHỈ THÊM Ở CUỐI
+  "CloseSponsoredLine", // constr 7 — thêm 2026-10-04, CHỈ THÊM Ở CUỐI
 ] as const;
 
 /// Chỉ số constructor của `SetDidCommit`. Viết ra thành hằng để bài kiểm codec ép
@@ -245,6 +255,10 @@ export const SET_DID_COMMIT_CONSTR = 5;
 /// này PHẢI đứng sau `SetDidCommit`: mọi thứ từ constr 3 trở đi dịch một bậc
 /// nếu ai đó chèn vào giữa, và `BurnBatch` ở constr 2 thì ConsumeMAGIC ghim.
 export const SETTLE_LINE_CONSTR = 6;
+
+/// Chỉ số constructor của `CloseSponsoredLine` — cùng lý lẽ. Đây là nhánh ĐẦU
+/// TIÊN vượt khỏi họ thẻ CBOR 121..127: constr 7 mã hoá bằng thẻ 1280 (`d90500`).
+export const CLOSE_SPONSORED_LINE_CONSTR = 7;
 
 /// Độ dài hợp lệ của `did_commit` khi GHI (blake2b-256). Gương của
 /// `did_len_ok` bên Aiken: rỗng là "chưa gắn", còn nhánh ghi đòi đúng 32 byte.

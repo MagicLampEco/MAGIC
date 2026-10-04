@@ -94,6 +94,8 @@ import {
   type PaidFundDatum as PaidFundDatumT,
   type PlutusAddress,
 } from "../../PrepaidGen/offchain/src/types.js";
+import { assertCarpMatchesInstance, fetchCarpInstance } from "../../PrepaidGen/offchain/src/carpInstance.js";
+import type { CarpNetwork } from "../../PrepaidGen/offchain/src/constants.js";
 import { wakemeVaultHash } from "@magiclamp/protocol-utils";
 
 // ── Lược đồ datum ────────────────────────────────────────────────
@@ -242,6 +244,12 @@ async function main() {
   // Cổng fail-closed. Ném TRƯỚC khi chạm ví hay mạng: một bước deploy dừng lại vì
   // thiếu dữ kiện thì phải dừng ở chỗ RẺ NHẤT, không phải sau khi đã đốt phí.
   const carp = requireCarpIdentity();
+  // SOFT-PIN: cặp CARP (mặc định hoặc đè bằng biến môi trường) phải trùng instance
+  // công khai của nhà CarpetMint ngay lúc chạy. Lệch ⟹ NÉM trước khi biên dịch
+  // apply-param — đời CARP đổi mà bản chép trong kho chưa theo là ca đã xảy ra.
+  const carpInstance = await fetchCarpInstance(NETWORK as CarpNetwork);
+  assertCarpMatchesInstance(carp, carpInstance);
+  console.log(`CARP khớp instance ${carpInstance.network} (deployedAt ${carpInstance.deployedAt ?? "?"})`);
   const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
   const refsOnly = dryRun || parseFlag(process.env.PREPAID_REFS_ONLY, "PREPAID_REFS_ONLY");
   // `null` ⟺ chỉ chạy pha (R): đích nhận CARP không dùng tới, nên không đòi hai biến của nó.

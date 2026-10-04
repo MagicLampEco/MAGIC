@@ -13,6 +13,17 @@
 # Chạy lại bao nhiêu lần trong ngày cũng được: bước nào đã đúng epoch thì bỏ qua. Nên hẹn giờ mỗi
 # giờ an toàn hơn hẹn đúng một lần sau nửa đêm UTC — một lượt trượt vì mạng thì lượt sau bù.
 #
+# Cụm Gen v2.0 (beacon GreenBack + giá consume theo loại vault), ví dụ cụm phục vụ Preprod wk5:
+#
+#   STATE_BOOK_PATH=<đường TUYỆT ĐỐI tới state.Preprod.sh của cụm trên máy chủ> \
+#   KEEPER_STEPS=greenback,price BLOCKFROST_KEY=… WALLET_SEED='…' bash run_keeper.sh Preprod
+#
+# `greenback` ghi lại beacon GBB mỗi epoch (ScheduleGen `commit` đòi GB tuổi 0 — trễ một epoch là
+# mọi lượt commit bị từ chối); `price` đẩy epoch cho mọi beacon giá suy từ sổ. `backing` (BackingBeacon
+# đời cũ) KHÔNG thuộc cụm này. WALLET_SEED phải là ví đã apply làm ví ghi GBB và nằm trong committee
+# giá — lệch thì bước tương ứng báo ✗ và không gửi gì. Hẹn giờ MỖI GIỜ: bước đã đúng epoch thì bỏ
+# qua, và cả hai bước tự bỏ qua 15 phút cuối epoch (greenback còn bỏ 5 phút đầu) — lượt kế bù.
+#
 # Danh sách price beacon lấy từ KEEPER_PRICE_BEACONS (`<price_nft_policy>:<price_param_hash>`,
 # phẩy). Không đặt thì suy từ state file — thứ tự và lý do ở `keeper_beacons.sh`.
 #

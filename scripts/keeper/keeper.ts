@@ -8,6 +8,11 @@
 //   3. Lịch ScheduleGen — mỗi epoch được bắn một lần; không ai bắn thì ô đó chờ (bắn bù tối
 //      đa MAX_FIRES_PER_TX_CATCHUP), nhưng MAGIC của batch chỉ sống đúng epoch nó sinh ra.
 // Bước 4 (tuỳ chọn) cấp một lượt InstantGen mới cho ví keeper, để có số dư thử trong ngày.
+// Bước `greenback` (tuỳ chọn) làm mới beacon GreenBack (GBB) của cụm Gen v2.0 — KHÁC BackingBeacon
+// ở bước 1: ScheduleGen `commit` đòi GB tuổi 0 ⟹ phải có một lượt ghi trong MỖI epoch. Ghi lại
+// đúng `gb_nanogic` + `depeg` đang trên chuỗi, qua `deploy/12_post_greenback.ts`
+// (`keeper/greenback.ts` nói vì sao không đổi con số). Ví keeper phải là ví ghi đã apply vào
+// script beacon; sổ phải có `GREENBACK_BEACON_HASH` + `GEN_BEACONS_GREENBACK_SEED_UTXO`.
 //
 // MỖI BƯỚC TỰ ĐO TRƯỚC RỒI MỚI GỬI: beacon đã ở epoch hiện tại thì bỏ qua, lịch chưa tới
 // hạn thì bỏ qua, ví đã có batch InstantGen trong epoch này thì bỏ qua. Nên hẹn giờ chạy
@@ -25,7 +30,8 @@
 // ENV (ngoài NETWORK/BLOCKFROST_KEY/WALLET_SEED và các biến chuẩn của state.<net>.sh):
 //   KEEPER_PRICE_BEACONS  danh sách `<price_nft_policy>:<price_param_hash>`, phân cách dấu
 //                         phẩy. Mỗi cặp là một instance `consume`. Bỏ trống ⟹ bỏ bước 2.
-//   KEEPER_STEPS          tập bước chạy, mặc định `backing,price,fire`. Thêm `instant` để cấp.
+//   KEEPER_STEPS          tập bước chạy, mặc định `backing,price,fire`. Thêm `instant` để cấp,
+//                         `greenback` để làm mới beacon GBB (cụm Gen v2.0: `greenback,price`).
 //                         Tên lạ ⟹ DỪNG với mã 1 và kê ra tập hợp lệ (xem `ALL_STEPS`).
 //   KEEPER_INSTANT_LAMP   lượng LAMP khoá vào vault InstantGen mới ở bước 4 (mặc định 1001).
 //   KEEPER_FIRE_OWNERS    hash 28 byte BÊN TRONG credential chủ vault (pkh hoặc script hash)
@@ -57,6 +63,14 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { awaitTxBounded as awaitTxBoundedShared, DEFAULT_AWAIT_TX_MS } from "../awaitTx.js";
 import { priceParamParams, scheduleScriptPair, shardSpendParams, genV2BeaconRefsFromBook } from "../deployParams.js";
 import { beaconEpochState, aheadMessage } from "./beaconEpoch.js";
+import { decideGreenBack, greenbackPostEnv, parseGreenBackPostOutput } from "./greenback.js";
+import { stateBookPath } from "../stateBookPath.js";
+import { bookToRecord, readBookEntries } from "../deploy/11_deploy_gen_beacons.js";
+import { GREENBACK_SEED_KEY } from "../deploy/12_post_greenback.js";
+import { parseOutRef } from "../runResult.js";
+import {
+  decodeGreenBackBeacon, greenbackBeaconScript, loadBlueprint as loadGenBeaconsBlueprint,
+} from "../../GenBeacons/offchain/src/index.js";
 import { applyOpPriceSet, describeChanges, parseOpPriceSet, resolvePricePush, type ResolvedPricePush } from "./opPrices.js";
 import { decodePriceParam, encodePriceParam } from "../../ConsumeMAGIC/offchain/src/types.js";
 import { buildScheduleFireTx } from "../../ScheduleGen/offchain/src/schedule.js";
@@ -81,7 +95,7 @@ const DRY = process.env.KEEPER_DRY_RUN === "1";
 // Tập ĐÓNG các bước tồn tại. `guard` ở `main` chỉ chạy đúng những tên này, nên đây là
 // danh sách mà `KEEPER_STEPS` được đối chiếu vào. Thêm một bước là thêm tên vào đây —
 // quên thì bước đó bị loại VĨNH VIỄN và bản tổng kết vẫn nói "0 hỏng".
-const ALL_STEPS = ["backing", "price", "fire", "instant"] as const;
+const ALL_STEPS = ["backing", "greenback", "price", "fire", "instant"] as const;
 type StepName = (typeof ALL_STEPS)[number];
 
 const STEPS = new Set((process.env.KEEPER_STEPS ?? "backing,price,fire").split(",").map((s) => s.trim()).filter((s) => s !== ""));
@@ -166,6 +180,54 @@ async function stepBacking(lucid: LucidEvolution, ownerPkh: string, epoch: bigin
   const tx = r.out.match(/BACKING_BEACON_TX=([0-9a-f]{64})/)?.[1];
   if (r.code !== 0 || !tx) return record("backing", "fail", `bước 04 thoát ${r.code}, không đọc được tx`);
   record("backing", "done", `epoch ${d.last_updated_epoch} → ${epoch} · tx ${tx}`);
+}
+
+// ── 1b. GreenBack beacon (Gen v2.0) ─────────────────────────────────────────────
+async function stepGreenBack(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint) {
+  const mspe = PROTOCOL.MS_PER_EPOCH;
+  const wo   = PROTOCOL.WINDOW_ORIGIN_MS;
+  const epoch = windowOf(nowMs, mspe, wo);
+
+  // Địa chỉ suy từ SỔ, cùng nguồn với bước 12 (không đọc biến môi trường đã nạp, để keeper và
+  // bước 12 không bao giờ nhìn hai sổ khác nhau trong cùng một lượt).
+  const bookPath = stateBookPath(NETWORK);
+  const book = bookToRecord(readBookEntries(bookPath));
+  const bookHash = book.GREENBACK_BEACON_HASH;
+  const seedRaw = book[GREENBACK_SEED_KEY];
+  if (!bookHash || !seedRaw) {
+    return record("greenback", "fail", `sổ ${bookPath} thiếu ${!bookHash ? "GREENBACK_BEACON_HASH" : GREENBACK_SEED_KEY} — không gửi gì`);
+  }
+  // Script beacon nướng ví ghi (apply-param) ⟹ dựng lại bằng ví keeper rồi ĐỐI CHIẾU hash sổ.
+  // Lệch ⟹ ví keeper không phải ví ghi (hoặc blueprint/seed khác): dừng, đừng gửi tx chắc trượt.
+  const greenback = greenbackBeaconScript(loadGenBeaconsBlueprint(), NETWORK, {
+    writer: ownerPkh, msPerEpoch: mspe, windowOriginMs: wo, seed: parseOutRef(seedRaw, GREENBACK_SEED_KEY),
+  });
+  if (greenback.hash !== bookHash) {
+    return record("greenback", "fail",
+      `dựng lại bằng ví keeper ra ${greenback.hash.slice(0, 8)}… ≠ sổ ${bookHash.slice(0, 8)}… — ví keeper không phải ví ghi GBB, hoặc blueprint GenBeacons đã đổi; không gửi gì`);
+  }
+  const found = (await lucid.utxosAt(greenback.address)).filter((u) => (u.assets[greenback.nftUnit] ?? 0n) === 1n);
+  if (found.length !== 1) {
+    return record("greenback", "fail", `thấy ${found.length} beacon GBB ở ${greenback.address} (cần đúng 1) — không gửi gì`);
+  }
+  const d = decodeGreenBackBeacon(found[0]!.datum);
+  const decision = decideGreenBack({
+    beaconEpoch: d.epoch, currentEpoch: epoch, nowMs,
+    epochStartMs: windowStartMs(epoch, mspe, wo), epochEndMs: windowStartMs(epoch + 1n, mspe, wo),
+  });
+  if (decision.action !== "post") return record("greenback", decision.action, decision.note);
+  const values = `gb=${d.gb_nanogic} depeg=${d.depeg}`;
+  if (DRY) return record("greenback", "skip", `DRY: ${decision.note} · giữ ${values}`);
+
+  const r = runScript("deploy/12_post_greenback.ts", greenbackPostEnv(d, epoch));
+  let res;
+  try { res = parseGreenBackPostOutput(r.out); }
+  catch (e) { return record("greenback", "unverified", `${(e as Error).message} — soi explorer trước khi chạy lại`); }
+  if (!res.tx) return record("greenback", "fail", `bước 12 thoát ${r.code}, không in GREENBACK_BEACON_TX — không có tx nào được gửi`);
+  if (!res.confirmed) {
+    return record("greenback", "unverified", `tx ${res.tx} đã gửi, chưa thấy vào khối (bước 12 thoát ${r.code}) — soi explorer trước khi chạy lại`);
+  }
+  record("greenback", "done", `epoch ${d.epoch} → ${epoch} · giữ ${values} · tx ${res.tx}`);
 }
 
 // ── 2. PostPrice ──────────────────────────────────────────────────────────────
@@ -507,6 +569,7 @@ async function main() {
     try { await fn(); } catch (e) { record(name, "fail", String((e as Error)?.message ?? e).slice(0, 400)); }
   };
   await guard("backing", () => stepBacking(lucid, ownerPkh, epoch));
+  await guard("greenback", async () => stepGreenBack(lucid, ownerPkh, await tipMs()));
   // Lấy lại tip trước mỗi bước: bước trước có thể chạy nhiều phút, và cửa sổ hiệu lực của
   // PostPrice (tới +10 phút) dựng trên mốc cũ thì đã nằm trong quá khứ.
   await guard("price",   async () => stepPrice(lucid, ownerPkh, await tipMs()));

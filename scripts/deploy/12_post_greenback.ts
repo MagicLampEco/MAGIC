@@ -13,6 +13,13 @@
 //   DEPEG       — "1" ⟹ ghi cờ depeg. Mặc định 0.
 //   DRY_RUN     — "1" ⟹ dựng + chạy validator khi dựng, không ký, không gửi.
 //   STATE_BOOK_PATH — xem `scripts/stateBookPath.ts`.
+//   GB_EXPECT_EPOCH — tuỳ chọn, số nguyên ≥ 0. Đặt thì tx ghi epoch KHÁC số này ⟹ NÉM trước khi
+//                 gửi. Keeper đặt nó: keeper tính epoch theo tip Blockfrost, bước này tính theo
+//                 `Date.now() − 120 s` — hai đồng hồ, và ở đầu epoch chúng ra hai epoch khác nhau.
+//
+// Dòng khoá cho máy đọc (keeper ▸ `keeper/greenback.ts` ▸ `parseGreenBackPostOutput`):
+//   GREENBACK_BEACON_TX=<hash>        in NGAY sau khi gửi, trước khi chờ vào khối.
+//   GREENBACK_BEACON_CONFIRMED=<hash> in sau khi tx vào khối. Hết trần chờ ⟹ không in, thoát 2.
 //
 // Sổ phải có `GREENBACK_BEACON_HASH` (bước 11) và `GEN_BEACONS_GREENBACK_SEED_UTXO` — seed one-shot
 // của beacon, cần để dựng lại đúng script (apply-param). Bước dựng lại phải ra ĐÚNG hash trong sổ,
@@ -28,6 +35,7 @@ import {
   loadBlueprint,
   postGreenBackTx,
 } from "../../GenBeacons/offchain/src/index.js";
+import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { parseFlag, parseOutRef } from "../runResult.js";
 import { stateBookPath } from "../stateBookPath.js";
 import { bookToRecord, readBookEntries } from "./11_deploy_gen_beacons.js";
@@ -44,8 +52,16 @@ export function parseGbNanogic(raw: string | undefined): bigint {
   return BigInt(raw);
 }
 
+/** `GB_EXPECT_EPOCH`: vắng/rỗng ⟹ không ràng buộc; có mặt thì phải là số nguyên ≥ 0. */
+export function parseExpectEpoch(raw: string | undefined): bigint | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) throw new Error(`GB_EXPECT_EPOCH phải là số nguyên ≥ 0, nhận "${raw}".`);
+  return BigInt(raw);
+}
+
 async function main(): Promise<void> {
   const gbNanogic = parseGbNanogic(process.env.GB_NANOGIC);
+  const expectEpoch = parseExpectEpoch(process.env.GB_EXPECT_EPOCH);
   const depeg = parseFlag(process.env.DEPEG, "DEPEG");
   const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
 
@@ -87,6 +103,12 @@ async function main(): Promise<void> {
     greenback, beaconUtxo, gbNanogic, depeg, nowMs: Date.now() - VALIDITY_BACKOFF_MS,
   });
   console.log(`  mới: gb=${datum.gb_nanogic} seq=${datum.seq} epoch=${datum.epoch} depeg=${datum.depeg}`);
+  if (expectEpoch !== undefined && datum.epoch !== expectEpoch) {
+    throw new Error(
+      `tx sẽ ghi epoch ${datum.epoch} ≠ GB_EXPECT_EPOCH ${expectEpoch} — đồng hồ máy chạy lệch tip, ` +
+        `hoặc đang sát biên epoch. Không gửi gì.`,
+    );
+  }
 
   const built = await tx.complete();
   if (dryRun) {
@@ -94,7 +116,12 @@ async function main(): Promise<void> {
     return;
   }
   const h = await (await built.sign.withWallet().complete()).submit();
-  await lucid.awaitTx(h);
+  console.log(`GREENBACK_BEACON_TX=${h}`);
+  if (!(await awaitTxBounded(lucid, h))) {
+    console.log(chuaDoDuocMessage(h));
+    process.exit(2);
+  }
+  console.log(`GREENBACK_BEACON_CONFIRMED=${h}`);
   console.log(`\n✅ Đã ghi GreenBack. TX hash: ${h}`);
   console.log(`   Beacon mở (depeg=${datum.depeg}) ở epoch ${datum.epoch}..${datum.epoch + 1n} — sau đó phải ghi lại.`);
 }

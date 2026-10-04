@@ -244,7 +244,7 @@ Chủ dự án chốt giữ hai validator (2026-09-05); số đo này đứng v�
 - `53bc12ad…8743` và `7ecbffe2…9ea2` đã vào `SUPERSEDED_LAMP_POLICIES` ở cả hai bảng
   (`scripts/config.ts`, `MagicSDK/src/lampPolicy.ts`). Sổ trạng thái còn ghi `53bc12ad…` bị
   chặn ở lần đọc `POLICY_IDS.lamp` đầu tiên.
-- Cụm tập dượt `8169b76c…` vẫn đi qua lối mở tập dượt; khoá gỡ khi runner của nó dừng hẳn.
+- Lối mở tập dượt ĐÃ ĐÓNG 2026-10-04: cụm tập dượt `8169b76c…` dừng, bảng `REHEARSAL_LAMP_POLICIES` rỗng ở cả hai bên, và `8169b76c…` (kèm `LAMP_REHEARSAL_ACK` đúng, mạng thử) nay bị chặn như mọi đời đã bị thay — đo bằng: `npx tsx scripts/test_lamp_policy_gate.ts` · đọc ở: dòng cuối `=== ĐẠT ===` và ca *"8169b76c ack = chính nó, Preprod ⟹ NÉM"*.
 - Không ghi địa chỉ kho LAMP nào: hash Distribution (`treasury`, `claim_account`) chưa cuối.
 - [x] Dựng cụm Preprod phục vụ người dùng trên `493002cc…` — xong 2026-10-04, bản ghi ở `scripts/DEPLOYED.md` ▸ *"Preprod — 2026-10-04 · cụm phục vụ người dùng"* — đo bằng:
   `curl -s -X POST https://preprod.koios.rest/api/v1/policy_asset_info -H 'content-type: application/json' -d '{"_asset_policy":"493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac"}'`

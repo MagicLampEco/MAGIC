@@ -983,6 +983,10 @@ export interface BindDidParams {
    *  từ datum; chủ là script ⟹ NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. Khác chủ ⟹ NÉM
    *  `OWNER_AUTH_MISMATCH`. */
   ownerAuth?: OwnerAuth<TxBuilder>;
+  /** Cận trên hiệu lực (POSIX ms). Đặt khi phí do ví trả phí bên thứ ba gánh (hạn ≤ 1 giờ);
+   *  vắng ⟹ không đặt `validTo` (hành vi cũ). Nhánh `BindDID` không đọc validity-range, nên hạn
+   *  dùng chỉ là luật của bên trả phí — không đổi gì ở phía validator. */
+  validToMs?: bigint;
 }
 
 export interface BindDidResult {
@@ -1064,6 +1068,7 @@ export async function buildBindDidTx(params: BindDidParams): Promise<BindDidResu
   let txBuilder = lucid
     .newTx()
     .collectFrom([engageUtxo], encodeBindDidRedeemer());
+  if (params.validToMs !== undefined) txBuilder = txBuilder.validTo(Number(params.validToMs));
 
   if (consumeRefUtxo) txBuilder = txBuilder.readFrom([consumeRefUtxo]);
   else txBuilder = txBuilder.attach.SpendingValidator(consumeScript);

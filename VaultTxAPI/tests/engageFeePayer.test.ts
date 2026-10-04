@@ -419,11 +419,10 @@ describe("/tx/open-thread", () => {
     expect(h.builder.lastCall).toBeNull();
   });
 
-  it("chỉ fee_payer ⟹ 422 FEE_PAYER_DEPOSIT_UNSOURCED; funding ⟹ 501 OPEN_THREAD_FUNDING_UNSUPPORTED", async () => {
+  // `fee_payer` mở được thread từ 2026-10-04 (ví trả phí ứng min-ADA thread): các ca dương/âm ở
+  // `tests/feePayerNewcomer.test.ts`. Mã `FEE_PAYER_DEPOSIT_UNSOURCED` đã bỏ.
+  it("funding ⟹ 501 OPEN_THREAD_FUNDING_UNSUPPORTED", async () => {
     const h = harness({ threads: [] });
-    const a = await handle(open({ change_address: undefined, fee_payer: FEE_PAYER }), h.router);
-    expect(a.status).toBe(422);
-    expect(codeOf(a)).toBe("FEE_PAYER_DEPOSIT_UNSOURCED");
     const b = await handle(open({ funding: { type: "did_payment" } }), h.router);
     expect(b.status).toBe(501);
     expect(codeOf(b)).toBe("OPEN_THREAD_FUNDING_UNSUPPORTED");

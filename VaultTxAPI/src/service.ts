@@ -1172,12 +1172,16 @@ export class VaultTxService {
     // Mốc "bị thay" là một lượt NỘP (cần chữ ký chủ), không phải một lượt DỰNG (ai cũng gọi
     // được) — nên tx người lạ dựng không bao giờ làm tx của chủ rơi vào nhánh này.
     if (issuedEntry.supersededBy !== undefined) {
-      throw new TxSupersededError(bodyHashBefore, { superseded_by: issuedEntry.supersededBy });
+      throw new TxSupersededError(bodyHashBefore, {
+        superseded_by: issuedEntry.supersededBy, previously_submitted: issuedEntry.submittedAtMs !== undefined,
+      });
     }
     const inputRefs = inputRefsOf(req.txCbor).map(refStr);
     const conflicting = this.deps.pending?.conflicts(inputRefs, this.now(), bodyHashBefore) ?? [];
     if (conflicting.length > 0) {
-      throw new TxSupersededError(bodyHashBefore, { conflicting_inputs: conflicting });
+      throw new TxSupersededError(bodyHashBefore, {
+        conflicting_inputs: conflicting, previously_submitted: issuedEntry.submittedAtMs !== undefined,
+      });
     }
 
     const builder = CML.TransactionWitnessSetBuilder.new();

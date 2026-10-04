@@ -295,10 +295,31 @@ describe("Khoá mềm theo chủ vault — lượt dựng mới THAY lượt cũ
     await h.service.submit({ txCbor: t2, witnessCbor: fakeWitnessSetCbor() });
     expect(h.chain.submitted).toHaveLength(1);
     await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() }))
-      .rejects.toMatchObject({ httpStatus: 409, code: "TX_SUPERSEDED", details: { superseded_by: txBodyHash(t2) } });
+      .rejects.toMatchObject({
+        httpStatus: 409, code: "TX_SUPERSEDED", details: { superseded_by: txBodyHash(t2), previously_submitted: false },
+      });
     expect(h.chain.submitted).toHaveLength(1);
     // CẶP: nộp LẠI chính T2 (rớt mạng) KHÔNG bị coi là xung đột với chính nó.
     await expect(h.service.submit({ txCbor: t2, witnessCbor: fakeWitnessSetCbor() })).resolves.toMatchObject({ txHash: txBodyHash(t2) });
+  });
+
+  it("T1 NỘP trước, T2 chung khoá dựng rồi NỘP sau ⟹ nộp lại T1 KHÔNG 409 (T1 có thể đã vào khối)", async () => {
+    const t1 = commitTxCbor(3n);
+    const t2 = commitTxCbor(4n);
+    // Không gắn `PendingSpends`: hai bản ghi dựng trên cùng UTxO vault, còn ngoài đời T2 tiêu đầu ra
+    // của T1 — ca này kiểm sổ phát hành, không kiểm xung đột input.
+    const h = harness({ submitResult: txBodyHash(t1) });
+    const setResult = (cbor: string): void => { (h.chain as unknown as { submitResult: string }).submitResult = txBodyHash(cbor); };
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    await h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() });
+    setCommitCbor(h, t2);
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 4n });
+    setResult(t2);
+    await h.service.submit({ txCbor: t2, witnessCbor: fakeWitnessSetCbor() });
+    expect(h.issued.lookup(txBodyHash(t1), NOW)?.supersededBy).toBeUndefined();
+    setResult(t1);
+    await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() })).resolves.toMatchObject({ txHash: txBodyHash(t1) });
+    expect(h.chain.submitted).toHaveLength(3);
   });
 
   it("input đã bị tx KHÁC vừa nộp tiêu (tx không chung khoá trong sổ) ⟹ 409 TX_SUPERSEDED kèm input xung đột", async () => {
@@ -310,7 +331,9 @@ describe("Khoá mềm theo chủ vault — lượt dựng mới THAY lượt cũ
     // … rồi một tx KHÁC (không có trong sổ của tiến trình này) tiêu đúng UTxO vault.
     pending.note([`${INPUT_TX_HASH}#0`], NOW, "99".repeat(32));
     await expect(h.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
-      .rejects.toMatchObject({ httpStatus: 409, code: "TX_SUPERSEDED", details: { conflicting_inputs: [`${INPUT_TX_HASH}#0`] } });
+      .rejects.toMatchObject({
+        httpStatus: 409, code: "TX_SUPERSEDED", details: { conflicting_inputs: [`${INPUT_TX_HASH}#0`], previously_submitted: false },
+      });
     expect(h.chain.submitted).toHaveLength(0);
   });
 

@@ -276,6 +276,10 @@ export interface IssuedTxEntry extends IssuedTxMeta {
   /** Hash thân của tx chung khoá đã được NỘP sau khi tx này phát ra ⟹ `/tx/submit` và
    *  `/fee/sign` trả 409 `TX_SUPERSEDED`. Vắng ⟹ chưa bị thay. */
   supersededBy?: string;
+  /** Mốc dịch vụ này NỘP tx thành công (`markSubmitted`). Có mốc ⟹ tx đã rời tay dịch vụ và có thể
+   *  đã lên chuỗi, nên không lượt nộp nào sau đó được gán `supersededBy` cho nó: một tx đã nộp không
+   *  "bị thay" — hoặc nó vào khối, hoặc chuỗi từ chối nó, và cả hai đều không do sổ này quyết. */
+  submittedAtMs?: number;
 }
 
 export class IssuedTxRegistry {
@@ -322,14 +326,22 @@ export class IssuedTxRegistry {
    *
    * Chỉ tx phát ra TRƯỚC lượt nộp này bị thay (chúng đang có trong sổ lúc gọi). Tx dựng SAU — lượt
    * kế tiếp hợp lệ của chủ — không bị đụng.
+   *
+   * Hai ngoại lệ, cùng một lý do — tx đã NỘP thì sổ này không còn quyền nói nó "bị thay":
+   *   · tx chung khoá đã từng được nộp (có `submittedAtMs`) KHÔNG bị gán `supersededBy`. Nếu bị gán,
+   *     lượt nộp lại hay `/fee/sign` của nó trả 409 `TX_SUPERSEDED` trong khi nó có thể đã vào khối.
+   *   · NỘP LẠI chính `txHash` (rớt mạng, thử lại) không thay gì: lượt nộp đầu đã thay những gì cần
+   *     thay, còn tx dựng sau lượt đó là lượt kế tiếp hợp lệ của chủ.
    */
   markSubmitted(txHash: string, nowMs: number): number {
     const me = this.lookup(txHash, nowMs);
-    const keys = new Set(me?.lockKeys ?? []);
+    if (me === null || me.submittedAtMs !== undefined) return 0;
+    this.issued.set(txHash, { ...me, submittedAtMs: nowMs });
+    const keys = new Set(me.lockKeys ?? []);
     if (keys.size === 0) return 0;
     let n = 0;
     for (const [h, e] of this.issued) {
-      if (h === txHash || e.supersededBy !== undefined || e.expiresAtMs <= nowMs) continue;
+      if (h === txHash || e.supersededBy !== undefined || e.submittedAtMs !== undefined || e.expiresAtMs <= nowMs) continue;
       if (!(e.lockKeys ?? []).some(k => keys.has(k))) continue;
       this.issued.set(h, { ...e, supersededBy: txHash });
       if (e.feePayerUtxo !== undefined) this.feeReservations.delete(e.feePayerUtxo);

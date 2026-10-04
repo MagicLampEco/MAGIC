@@ -219,7 +219,10 @@ export class OwnerTxInFlightError extends TxApiError {
  * `details.superseded_by` (hash tx đã nộp) và/hoặc `details.conflicting_inputs`.
  */
 export class TxSupersededError extends TxApiError {
-  constructor(txHash: string, details: { superseded_by?: string; conflicting_inputs?: string[] }) {
+  /** `previously_submitted`: dịch vụ này đã từng nộp thành công chính tx đó chưa. Bên gọi đọc nó
+   *  thay cho việc suy "bị thay ⟹ chưa lên chuỗi" — suy luận đó KHÔNG đúng: 409 này nói tx kia
+   *  không nên nộp nữa, không nói gì về trạng thái chuỗi của tx này. */
+  constructor(txHash: string, details: { superseded_by?: string; conflicting_inputs?: string[]; previously_submitted: boolean }) {
     super(
       409,
       "TX_SUPERSEDED",

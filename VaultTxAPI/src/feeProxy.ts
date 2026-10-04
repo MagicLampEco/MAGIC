@@ -174,7 +174,9 @@ export class FeeProxy {
     }
     // Tx đã bị thay (một tx chung khoá đã NỘP sau khi nó được dựng — `locks.ts`): xin ký nó là giữ
     // thêm một UTxO phí cho một tx chắc chắn không lên chuỗi.
-    if (entry.supersededBy !== undefined) throw new TxSupersededError(hash, { superseded_by: entry.supersededBy });
+    if (entry.supersededBy !== undefined) {
+      throw new TxSupersededError(hash, { superseded_by: entry.supersededBy, previously_submitted: entry.submittedAtMs !== undefined });
+    }
     if (entry.feePayerUtxo === undefined) {
       throw new CodedApiError(400, "FEE_PROXY_NO_FEE_PAYER",
         `Giao dịch ${hash} không dùng ví trả phí ("fee_payer" / "funding.fee_payer") — không có gì để ` +

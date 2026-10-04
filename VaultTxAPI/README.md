@@ -1255,7 +1255,7 @@ Nên:
 | thiếu/sai thẻ bài | `401 UNAUTHORIZED` |
 | chủ **chưa có** vault | `404 VAULT_NOT_FOUND` ← **không phải** `200` với tx rỗng |
 | method sai | `405 METHOD_NOT_ALLOWED` |
-| nộp một tx đã bị tx khác chung khoá (đã NỘP) thay, hoặc input đã bị tx vừa nộp tiêu | `409 TX_SUPERSEDED` (`details.superseded_by` / `details.conflicting_inputs`) |
+| nộp một tx đã bị tx khác chung khoá (đã NỘP) thay, hoặc input đã bị tx vừa nộp tiêu | `409 TX_SUPERSEDED` (`details.superseded_by` / `details.conflicting_inputs`, kèm `details.previously_submitted`) |
 | chủ đã có một tx dựng xong chưa nộp | **không còn lỗi** — lượt dựng mới thay lượt cũ; `OWNER_TX_IN_FLIGHT` đã nghỉ (§4) |
 | hai UTxO cùng một NFT danh-tính | `409 VAULT_IDENTITY_DUPLICATE` |
 | chủ có nhiều vault, yêu cầu không nói cái nào | `409 VAULT_AMBIGUOUS` |
@@ -1296,7 +1296,12 @@ vô thời hạn. Luật hiện hành:
   phải khi được dựng — nên người lạ dựng lặp không làm tx của chủ bị từ chối;
 - `/tx/submit` (và `/fee/sign`) với tx đã bị thay, hoặc tx có input đã bị một tx vừa nộp (chưa vào khối)
   tiêu ⟹ `409 TX_SUPERSEDED` với `details.superseded_by` (hash tx đã nộp) và/hoặc
-  `details.conflicting_inputs`. App dựng lại từ đầu.
+  `details.conflicting_inputs`. App dựng lại từ đầu;
+- tx **đã được nộp** qua dịch vụ này thì không bao giờ bị thay: tx chung khoá nộp sau không gắn
+  `superseded_by` cho nó, và nộp lại chính nó (rớt mạng) không thay tx đã dựng sau lượt nộp đầu.
+  Lỗi 409 luôn kèm `details.previously_submitted` (dịch vụ này đã từng nộp thành công tx đó chưa).
+  **409 này KHÔNG chứng minh tx chưa lên chuỗi** — nó chỉ nói đừng nộp nữa. Muốn biết tx cũ đã vào
+  khối chưa thì tra chuỗi theo `tx_hash`, đừng suy từ mã lỗi.
 
 Mã `OWNER_TX_IN_FLIGHT` đã nghỉ: không đường nào trả nữa, giữ lại trong tài liệu để app đời cũ còn
 nhận ra. Khoá vẫn **giữ tới lúc nộp** để `/tx/submit` biết tx nào chung khoá. Ba đường mở khoá:

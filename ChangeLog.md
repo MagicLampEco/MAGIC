@@ -5,6 +5,19 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-04 — Tx đã nộp không còn bị đánh `TX_SUPERSEDED`
+
+**Đổi gì.** `VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry.markSubmitted` ghi mốc `submittedAtMs` cho
+tx vừa nộp, và không gán `supersededBy` cho dòng nào đã có mốc đó. Nộp lại một tx đã nộp không thay gì.
+`TxSupersededError` thêm `details.previously_submitted`.
+
+**Vì sao.** Bản cũ gán `supersededBy` cho MỌI tx chung khoá còn sống, kể cả tx đã nộp: A nộp, B chung
+khoá nộp sau ⟹ lượt nộp lại A hoặc `/fee/sign` của A trả 409, trong khi A có thể đã vào khối. Nộp lại A
+còn thay luôn tx dựng sau lượt nộp đầu của A — lượt kế tiếp hợp lệ của chủ.
+
+**Cái gì gãy nếu bám bản cũ.** Không đường nào đổi hình dạng thành công. Bên gọi đang suy "409
+`TX_SUPERSEDED` ⟹ tx chưa lên chuỗi" thì suy sai ở cả bản cũ lẫn bản mới — tra chuỗi theo `tx_hash`.
+
 ## 2026-10-04 — Người dùng 0 ADA đi trọn đường bằng ví trả phí: ứng min-ADA có trần, mở thread, gắn DID, tạo két instant 0 LAMP
 
 **Đổi gì.**

@@ -237,11 +237,23 @@ export const ISSUED_ROUTES: readonly IssuedRoute[] = [
  */
 /**
  * Route tài trợ (`sponsor.ts`). Tách khỏi `IssuedRoute` có chủ đích: `IssuedRoute`/`ISSUED_ROUTES`
- * là tập đường dựng của `/tx/quote` và của bảng mục đích Feecover, còn bốn route này không báo giá
- * và chưa có trong bảng mục đích Feecover (đi qua `fee_payer` thì sổ ghi `feePayerUtxo`). Sổ phát-hành vẫn phải ghi chúng
- * — không ghi thì `/tx/submit` từ chối nộp tx mà chính dịch vụ vừa dựng.
+ * là tập đường dựng của `/tx/quote`, còn bốn route này không báo giá. Sổ phát-hành vẫn phải ghi
+ * chúng — không ghi thì `/tx/submit` từ chối nộp tx mà chính dịch vụ vừa dựng.
  */
 export type SponsorRoute = "sponsor-t1-open" | "sponsor-t2-fund" | "sponsor-t3-draw" | "sponsor-t4-first-consume";
+
+export const SPONSOR_ROUTES: readonly SponsorRoute[] = [
+  "sponsor-t1-open", "sponsor-t2-fund", "sponsor-t3-draw", "sponsor-t4-first-consume",
+];
+
+/**
+ * Khoá của bảng mục đích Feecover (`feecover.apps.*.purposes`, `feeProxy.ts ▸ purposeFor`): mọi
+ * đường dựng nhận `fee_payer`, gồm cả bốn bước tài trợ. Rộng hơn `ISSUED_ROUTES` vì bảng mục đích
+ * hỏi "Feecover trả phí cho đường nào", còn `ISSUED_ROUTES` hỏi "`/tx/quote` báo giá được đường
+ * nào". Route có trong tập này mà app chưa khai mục đích ⟹ vẫn 400 `FEE_PROXY_PURPOSE_UNMAPPED`.
+ */
+export type FeePurposeRoute = IssuedRoute | SponsorRoute;
+export const FEE_PURPOSE_ROUTES: readonly FeePurposeRoute[] = [...ISSUED_ROUTES, ...SPONSOR_ROUTES];
 
 export interface IssuedTxMeta {
   route: IssuedRoute | SponsorRoute;

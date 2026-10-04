@@ -24,7 +24,8 @@ import {
   enterpriseAddressOf,
   type BuildContext, type BuiltCreateVault, type BuiltOpenThread, type BuiltTx, type TxBuilderPort,
 } from "../src/txBuilder.js";
-import { ENGAGE_ADDRESS, threadUtxo } from "./fixtures/engage.js";
+import type { OpenThreadContext } from "../src/txBuilder.js";
+import { ENGAGE_ADDRESS, ENGAGE_SCRIPT_HASH, engageDatumHex, threadUtxo } from "./fixtures/engage.js";
 import {
   INPUT_TX_HASH, LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OTHER_OWNER_PKH, OWNER_PKH,
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
@@ -64,6 +65,9 @@ function modelFee(address: string): bigint {
 }
 const FEE_ENTERPRISE = 172_552n;
 const FEE_BASE = 175_016n;
+
+/** Lovelace output thread mới (`ENGAGE_MIN_LOVELACE`) — toàn bộ là khoản ví trả phí ứng. */
+const THREAD_LOVELACE = 2_000_000n;
 
 /** Bộ dựng dựng CBOR theo UTxO trả phí trong `ctx`, đếm lượt gọi, ghi UTxO đã thấy. */
 class FeeModelBuilder implements TxBuilderPort {
@@ -111,7 +115,33 @@ class FeeModelBuilder implements TxBuilderPort {
   async instantGen(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async refreshCheckpoint(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async createVault(): Promise<BuiltCreateVault> { throw new Error("[FeeModelBuilder] createVault không dựng ở đây."); }
-  async openThread(): Promise<BuiltOpenThread> { throw new Error("[FeeModelBuilder] openThread không dựng ở đây."); }
+  /** Mở thread qua ví trả phí: UTxO trả phí là input duy nhất, ví ứng trọn `THREAD_LOVELACE`. */
+  async openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread> {
+    const fp = ctx.feePayerUtxo;
+    if (fp === undefined || ctx.collateralLovelace === undefined) {
+      throw new Error("[FeeModelBuilder] chỉ dựng đường có ví trả phí.");
+    }
+    this.seen.push(fp);
+    const u = fp.assets.lovelace!;
+    const fee = modelFee(fp.address);
+    const unit = ENGAGE_SCRIPT_HASH + "c0ffee";
+    return {
+      engageNftUnit: unit,
+      txCbor: buildTxCbor({
+        inputs: [{ txHash: fp.txHash, outputIndex: fp.outputIndex }],
+        feeLovelace: fee,
+        mint: { [unit]: 1n },
+        outputs: [
+          { address: ENGAGE_ADDRESS, assets: { lovelace: THREAD_LOVELACE, [unit]: 1n }, inlineDatumHex: engageDatumHex(ctx.owner) },
+          { address: fp.address, assets: { lovelace: u - fee - THREAD_LOVELACE } },
+        ],
+        requiredSigners: [ctx.owner.hash],
+        collateralInputs: [{ txHash: fp.txHash, outputIndex: fp.outputIndex }],
+        collateralReturn: { address: fp.address, assets: { lovelace: u - ctx.collateralLovelace } },
+        ttlSlot: BigInt(unixTimeToSlot("Preview", VALID_TO_MS)),
+      }),
+    };
+  }
   async bindDid(): Promise<BuiltTx> { throw new Error("[FeeModelBuilder] bindDid không dựng ở đây."); }
   async coinsPerUtxoByte(): Promise<bigint> { return this.coinsPerUtxoByteValue; }
 }
@@ -157,6 +187,8 @@ const FEECOVER_OPEN: FeecoverReply = async (url) => new URL(url).pathname === "/
 
 interface HarnessOpts {
   feecover?: Record<string, unknown>;
+  /** Trường cấu hình deploy thêm/đè lên `BASE_DEPLOYMENT` (ví dụ trần thế chấp). */
+  deploymentExtra?: Record<string, unknown>;
   /** Câu trả lời của Feecover giả. Vắng ⟹ `FEECOVER_OPEN`. */
   feecoverReply?: FeecoverReply;
   /** `null` ⟹ proxy KHÔNG cầm token ứng dụng mặc định. */
@@ -170,7 +202,7 @@ interface HarnessOpts {
 
 function harness(o: HarnessOpts = {}) {
   const deployment: Deployment = parseDeployment(JSON.stringify({
-    ...BASE_DEPLOYMENT, ...(o.feecover === undefined ? {} : { feecover: o.feecover }),
+    ...BASE_DEPLOYMENT, ...(o.deploymentExtra ?? {}), ...(o.feecover === undefined ? {} : { feecover: o.feecover }),
   }), "Preview");
   const chain = new RecordedChainReader(
     {
@@ -343,13 +375,26 @@ describe("/tx/quote — lỗi của params mang mã của đường dựng", () 
     expect(await same("schedule-commit", p, { ...p, fee_payer: fp })).toBe("FEE_PAYER_CHANGE_ADDRESS_CONFLICT");
   });
 
-  it("open-thread ⟹ 422 FEE_PAYER_DEPOSIT_UNSOURCED, như /tx/open-thread với fee_payer; không giành khoá", async () => {
+  it("open-thread: chủ đã có thread ⟹ 409 ENGAGE_THREAD_EXISTS, như /tx/open-thread với fee_payer; không giành khoá", async () => {
     const fp = { utxo: `${"fa".repeat(32)}#0`, address: OWNER_FEE_ADDRESS };
     const p = { owner_pkh: OWNER_PKH };
     const h = harness();
-    expect(await same("open-thread", p, { ...p, fee_payer: fp })).toBe("FEE_PAYER_DEPOSIT_UNSOURCED");
+    expect(await same("open-thread", p, { ...p, fee_payer: fp })).toBe("ENGAGE_THREAD_EXISTS");
     const r = await handle(quote({ route: "open-thread", params: p }), h.router);
-    expect(codeOf(r)).toBe("FEE_PAYER_DEPOSIT_UNSOURCED");
+    expect(codeOf(r)).toBe("ENGAGE_THREAD_EXISTS");
+    expect(h.acquire).not.toHaveBeenCalled();
+  });
+
+  it("open-thread: ngưỡng phủ phí + khoản ứng 2 ADA (needed = max(phí + ứng, thế chấp) + min-ADA); không giành khoá", async () => {
+    // Thế chấp 1 ADA < phí + 2 ADA ⟹ vế phí + ứng thắng. Bỏ khoản ứng khỏi công thức thì ngưỡng
+    // rơi về 1 ADA + min-ADA, thấp hơn thứ lucid cần để dựng.
+    const h = harness({ deploymentExtra: { fee_payer_collateral_lovelace: "1000000" } });
+    const b = bodyOf(await handle(quote({
+      route: "open-thread", params: { owner_pkh: OTHER_OWNER_PKH }, owner_fee_addresses: [OWNER_FEE_ADDRESS],
+    }), h.router));
+    const owner = b.owner_address as { needed_lovelace: string; available: boolean };
+    expect(owner.available).toBe(false);
+    expect(owner.needed_lovelace).toBe(String(FEE_ENTERPRISE + THREAD_LOVELACE + (OWNER_NEEDED - COLLATERAL)));
     expect(h.acquire).not.toHaveBeenCalled();
   });
 

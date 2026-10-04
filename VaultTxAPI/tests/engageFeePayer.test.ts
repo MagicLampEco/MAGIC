@@ -185,6 +185,8 @@ describe("fee_payer — dương", () => {
     expect(b.summary.fee_payer).toEqual({
       address: FEE_ADDRESS, utxo: `${FEE_UTXO.txHash}#0`, input_lovelace: "10000000",
       fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
+      // Két không đổi lovelace ⟹ không ứng gì; output két là output được chỉ định (#0).
+      fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
       valid_to_posix_ms: String(NOW + 1_800_000),
     });
@@ -263,6 +265,8 @@ describe("fee_payer — schedule-fire", () => {
     expect(b.summary.fee_payer).toEqual({
       address: FEE_ADDRESS, utxo: `${FEE_UTXO.txHash}#0`, input_lovelace: "10000000",
       fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
+      // Két không đổi lovelace ⟹ không ứng gì; output két là output được chỉ định (#0).
+      fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
       valid_to_posix_ms: String(NOW + 1_800_000),
     });
@@ -360,6 +364,8 @@ describe("fee_payer — consume", () => {
     expect(b.summary.fee_payer).toEqual({
       address: FEE_ADDRESS, utxo: `${FEE_UTXO.txHash}#0`, input_lovelace: "10000000",
       fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
+      // Két không đổi lovelace ⟹ không ứng gì; output két là output được chỉ định (#0).
+      fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
       valid_to_posix_ms: String(NOW + 1_800_000),
     });
@@ -413,11 +419,10 @@ describe("/tx/open-thread", () => {
     expect(h.builder.lastCall).toBeNull();
   });
 
-  it("chỉ fee_payer ⟹ 422 FEE_PAYER_DEPOSIT_UNSOURCED; funding ⟹ 501 OPEN_THREAD_FUNDING_UNSUPPORTED", async () => {
+  // `fee_payer` mở được thread từ 2026-10-04 (ví trả phí ứng min-ADA thread): các ca dương/âm ở
+  // `tests/feePayerNewcomer.test.ts`. Mã `FEE_PAYER_DEPOSIT_UNSOURCED` đã bỏ.
+  it("funding ⟹ 501 OPEN_THREAD_FUNDING_UNSUPPORTED", async () => {
     const h = harness({ threads: [] });
-    const a = await handle(open({ change_address: undefined, fee_payer: FEE_PAYER }), h.router);
-    expect(a.status).toBe(422);
-    expect(codeOf(a)).toBe("FEE_PAYER_DEPOSIT_UNSOURCED");
     const b = await handle(open({ funding: { type: "did_payment" } }), h.router);
     expect(b.status).toBe(501);
     expect(codeOf(b)).toBe("OPEN_THREAD_FUNDING_UNSUPPORTED");
@@ -534,6 +539,8 @@ describe("fee_payer — instant-gen", () => {
     expect(b.summary.fee_payer).toEqual({
       address: FEE_ADDRESS, utxo: `${FEE_UTXO.txHash}#0`, input_lovelace: "10000000",
       fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
+      // Két không đổi lovelace ⟹ không ứng gì; output két là output được chỉ định (#0).
+      fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
       valid_to_posix_ms: String(NOW + 1_800_000),
     });

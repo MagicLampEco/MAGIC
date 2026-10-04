@@ -49,6 +49,10 @@ export interface ResolvedOwnerWitness {
    *  `blake2b_256(utf8(did))`. Vắng khi UTxO đó mang nhiều hơn một tên — nơi so (`sponsor.ts` ▸
    *  `assertOwnerDid`) coi vắng là lệch. */
   anchorNftName?: string;
+  /** Chủ `Script(did_stake)`: mục rút mà nhân chứng gắn — TRỌN số dư thưởng lúc dựng. Đường ví trả
+   *  phí đọc nó để dừng trước khi thưởng của chủ thối sang ví trả phí (`feePayer.ts` ▸
+   *  `assertNoOwnerRewardToFeePayer`). */
+  ownerReward?: { rewardAddress: string; withdrawLovelace: bigint };
 }
 
 export interface OwnerWitnessProvider {
@@ -258,6 +262,7 @@ export class DidStakeWitnessProvider implements OwnerWitnessProvider {
     return {
       ...(names.length === 1 ? { anchorNftName: names[0]! } : {}),
       auth,
+      ownerReward: { rewardAddress: auth.details.rewardAddress, withdrawLovelace: auth.details.withdrawLovelace },
       requiredSigners: [...auth.details.requiredSigners],
       notes: [
         `Chủ script ${owner.hash}: giao dịch rút ${auth.details.withdrawLovelace} lovelace từ ` +

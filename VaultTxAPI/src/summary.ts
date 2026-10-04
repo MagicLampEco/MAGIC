@@ -507,6 +507,9 @@ export interface CreateVaultSummary {
   outputs: OutputView[];
   /** Chỉ khi yêu cầu có `funding`: đọc lại TỪ CBOR bởi `funding.ts` ▸ `checkFundingTx`. */
   funding?: import("./funding.js").FundingSummary;
+  /** Chỉ khi yêu cầu có `fee_payer` ở gốc (két Instant 0 LAMP): đọc lại TỪ CBOR bởi `feePayer.ts` ▸
+   *  `checkFeePayerTx`; `fronted_lovelace` = trọn lovelace output két mới (NFT đúc trong tx). */
+  fee_payer?: import("./feePayer.js").FeePayerSummary;
 }
 
 export function summarizeCreateVaultTx(txCborHex: string, ctx: CreateVaultSummaryContext): CreateVaultSummary {

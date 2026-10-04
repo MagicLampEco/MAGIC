@@ -117,6 +117,12 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   const walletAddress = await lucid.wallet().address();
   const walletUtxos   = await lucid.wallet().getUtxos();
   const funding       = params.funding;
+  if (funding !== undefined && params.validToMs !== undefined) {
+    throw new Error(
+      "CREATE-VAULT-VALIDITY: `validToMs` chỉ dùng khi không có `funding` — đường nạp từ did_payment " +
+      "tự đặt hạn dùng ≤ 1 giờ.",
+    );
+  }
   // Có `funding` ⟹ LAMP đến từ ví Phoenix, ví đang chọn chỉ trả phí: kiểm hash và nhân
   // chứng của chủ ngay đây, TRƯỚC khi dựng gì. Số dư LAMP của ví Phoenix kiểm ở bước chọn
   // UTxO bên dưới (cần min-ADA của vault, mà min-ADA cần datum).
@@ -296,6 +302,8 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
       }
       body = body.validTo(Number(tipPosixMs + FUNDING_MAX_VALIDITY_MS));
     }
+    // (6) không `funding` mà có ví trả phí bên thứ ba: hạn dùng do người gọi đặt (≤ 1 giờ).
+    if (funding === undefined && params.validToMs !== undefined) body = body.validTo(Number(params.validToMs));
     return applyOwnerAuth(body, ownerAuth);                    // (4)
   };
 

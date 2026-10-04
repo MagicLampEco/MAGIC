@@ -5,6 +5,37 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-04 — Người dùng 0 ADA đi trọn đường bằng ví trả phí: ứng min-ADA có trần, mở thread, gắn DID, tạo két instant 0 LAMP
+
+**Đổi gì.**
+- `VaultTxAPI/src/feePayer.ts` ▸ `checkFeePayerTx`: ví trả phí được ỨNG min-ADA cho đúng một
+  output mang NFT két/thread của chủ, tới trần cấu hình mới `fee_payer_fronting_max_lovelace`
+  (vắng ⟹ 5 ADA, `"0"` tắt). Tập địa chỉ được phép làm input khác ngoài UTxO trả phí là danh sách
+  đóng theo từng đường. Mã mới: `422 FEE_PAYER_FRONTING_ABOVE_MAX`, `422
+  FEE_PAYER_OWNER_REWARD_NONZERO` (chủ `did_stake` có thưởng > 0 thì không dựng qua ví trả phí).
+- `/tx/open-thread` và `/tx/bind-did` nhận `fee_payer`; `/tx/create-vault` nhận `fee_payer` ở gốc
+  thân bài cho két `instant` `"lamp_amount": "0"` không kèm `funding`. `BindDidParams`
+  (ConsumeMAGIC) và `CreateVaultParams` (MagicSDK) thêm `validToMs` tuỳ chọn để đặt hạn dùng mà
+  luật ví trả phí đòi.
+- `/tx/quote`: `needed_lovelace = max(phí + khoản ứng, thế chấp) + min-ADA`.
+- Bảng mục đích Feecover (`feecover.apps.*.purposes`) nhận thêm bốn route tài trợ
+  `sponsor-t1-open` … `sponsor-t4-first-consume` (`locks.ts` ▸ `FEE_PURPOSE_ROUTES`). `/tx/quote`
+  vẫn chỉ báo giá tám đường dựng.
+- `scripts/gen_vault_tx_api_deployment.ts`: cờ `--did-stake-blueprint <tệp>` phát
+  `did_stake.unapplied_script`, sau khi so hash băm lại với khoá sổ `DID_STAKE_UNAPPLIED_HASH`.
+
+**Vì sao.** Người dùng mới của SuperApp ký bằng DID PhoenixKey và không có ADA. Luật cũ cho ví trả
+phí mất đúng bằng phí, nên mọi output phải giữ min-ADA (thread, két mới) đều cần ví của chủ, và
+ba đường đầu tiên của người dùng mới bị chặn. Ứng có trần giữ được giới hạn thiệt hại của bên trả
+phí mà không khoá sẵn một sàn lovelace lớn vào mỗi két. Số đo min-ADA dùng để chọn trần ở
+README VaultTxAPI ▸ mục khoản ứng min-ADA.
+
+**Cái gì gãy nếu đang bám bản cũ.** Hai mã đã bỏ: `422 FEE_PAYER_DEPOSIT_UNSOURCED` (open-thread
+chỉ có `fee_payer` nay dựng được) và `501 BIND_DID_FEE_PAYER_UNSUPPORTED` (bind-did nay nhận
+`fee_payer`). `400 FEE_PAYER_UNSUPPORTED` hẹp lại, không còn trả cho két instant 0 LAMP. App rẽ
+nhánh theo ba mã đó cần đổi. Bên trả phí đọc `summary.fee_payer.fronted_lovelace` để biết khoản đã
+ứng; bên nào ký mà chỉ chấp nhận "mất đúng bằng phí" sẽ từ chối tx có khoản ứng.
+
 ## 2026-10-03 — ρ hiệu lực ngay kỳ dựng beacon; chủ két khai bằng DID; lượt dựng không còn khoá két
 
 **Đổi gì.**

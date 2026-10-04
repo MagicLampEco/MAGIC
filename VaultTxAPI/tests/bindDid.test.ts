@@ -237,30 +237,17 @@ describe("/tx/bind-did — chọn thread theo chủ", () => {
 
 // ── fee_payer ────────────────────────────────────────────────────────────────
 
+// `fee_payer` gắn được DID từ 2026-10-04 (`buildBindDidTx` ▸ `validToMs`): ca dương/âm ở
+// `tests/feePayerNewcomer.test.ts`. Mã `BIND_DID_FEE_PAYER_UNSUPPORTED` đã bỏ.
 describe("/tx/bind-did — fee_payer", () => {
-  it("fee_payer ⟹ 501 BIND_DID_FEE_PAYER_UNSUPPORTED, bộ dựng không bị gọi", async () => {
-    const h = harness();
-    const r = await handle(bind({ fee_payer: { utxo: `${"fa".repeat(32)}#0`, address: FEE_ADDRESS } }), h.router);
-    expect(r.status).toBe(501);
-    expect(codeOf(r)).toBe("BIND_DID_FEE_PAYER_UNSUPPORTED");
-    expect(h.builder.lastCall).toBeNull();
-    expect(h.locks.size()).toBe(0);
-  });
-
-  it("fee_payer cùng change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT (lỗi hình dạng đứng trước 501)", async () => {
+  it("fee_payer cùng change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT, trước mọi bước đọc chuỗi", async () => {
     const h = harness();
     const r = await handle(bind({
       fee_payer: { utxo: `${"fa".repeat(32)}#0`, address: FEE_ADDRESS }, change_address: CHANGE_ADDRESS,
     }), h.router);
     expect(r.status).toBe(400);
     expect(codeOf(r)).toBe("FEE_PAYER_CHANGE_ADDRESS_CONFLICT");
-  });
-
-  it("/tx/quote route bind-did ⟹ đúng 501 của đường dựng, không giành khoá", async () => {
-    const h = harness();
-    const r = await handle(post("/tx/quote", { route: "bind-did", params: { owner: KEY_OWNER, did_commit: DID } }), h.router);
-    expect(r.status, JSON.stringify(r.body)).toBe(501);
-    expect(codeOf(r)).toBe("BIND_DID_FEE_PAYER_UNSUPPORTED");
+    expect(h.builder.lastCall).toBeNull();
     expect(h.locks.size()).toBe(0);
   });
 });

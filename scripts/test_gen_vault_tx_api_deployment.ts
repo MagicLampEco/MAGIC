@@ -7,8 +7,9 @@
 // không phải một bản chép lại hình dạng của nó: khối sinh ra phải đi qua đúng hàm mà
 // `VaultTxAPI` gọi lúc khởi động.
 
-import { credentialToAddress, scriptHashToCredential } from "@lucid-evolution/lucid";
+import { credentialToAddress, scriptHashToCredential, validatorToScriptHash } from "@lucid-evolution/lucid";
 import {
+  DID_STAKE_BLUEPRINT_TITLE, DID_STAKE_UNAPPLIED_HASH_KEY, didStakeScriptFromBlueprint,
   buildDeployment, GEN_V2_STATE_KEYS, SCHEDULE_ONLY_STATE_KEYS,
   PREPAID_STATE_KEYS, buildPrepaidDeployment, parseVaultArg,
   type StateBook, type VaultKind,
@@ -262,6 +263,49 @@ ca("canh (b): khối Prepaid không shard ⟹ nạp được; cộng shard_addre
   const out = prepaidOut(prepaidBook());
   parseDeployment(JSON.stringify(out), NET);
   phaiNem(() => parseDeployment(JSON.stringify({ ...out, shard_address: addr(h("a2")) }), NET), ["shard_address", "KHÔNG có shard"]);
+});
+
+// ── did_stake.unapplied_script từ --did-stake-blueprint ─────────────────────────
+// Script PlutusV3 nhỏ nhất băm được (không phải did_stake thật): ca kiểm phép ĐỐI CHIẾU, không kiểm
+// nội dung script.
+const DS_CBOR = "4e4d01000033222220051200120011";
+const DS_HASH = validatorToScriptHash({ type: "PlutusV3", script: DS_CBOR });
+const blueprint = (title = DID_STAKE_BLUEPRINT_TITLE, cbor = DS_CBOR) =>
+  JSON.stringify({ validators: [{ title: "khac.khac.spend", compiledCode: "00" }, { title, compiledCode: cbor }] });
+const dsBook = (over: StateBook = {}): StateBook => ({ ...fullBook("Instant"), [DID_STAKE_UNAPPLIED_HASH_KEY]: DS_HASH, ...over });
+
+ca("blueprint khớp khoá sổ ⟹ phát did_stake.unapplied_script; VaultTxAPI nạp được, hash khớp", () => {
+  const book = dsBook();
+  const s = didStakeScriptFromBlueprint(blueprint(), book);
+  bang(s.hash, DS_HASH, "hash");
+  const out = buildDeployment(book, NET, "Instant", { ...META, didStakeScript: s });
+  const d = parseDeployment(JSON.stringify(out.deployment), NET);
+  bang(d.didStake?.unappliedScript?.hash, DS_HASH, "unapplied_script.hash");
+  bang(d.didStake?.unappliedScript?.cbor, DS_CBOR, "unapplied_script.cbor");
+  bang(out.warnings.some(w => w.includes("unapplied_script")), false, "không cảnh báo khi đã phát");
+});
+ca("CỰC ĐỐI: có cờ mà sổ thiếu DID_STAKE_UNAPPLIED_HASH ⟹ ném, nêu khoá", () => {
+  phaiNem(() => didStakeScriptFromBlueprint(blueprint(), dsBook({ [DID_STAKE_UNAPPLIED_HASH_KEY]: "" })),
+    [DID_STAKE_UNAPPLIED_HASH_KEY, "thiếu"]);
+});
+ca("CỰC ĐỐI: khoá sổ khác hash băm lại ⟹ ném, nêu cả hai hash", () => {
+  phaiNem(() => didStakeScriptFromBlueprint(blueprint(), dsBook({ [DID_STAKE_UNAPPLIED_HASH_KEY]: h("ee") })),
+    [DS_HASH, h("ee"), "khác đời"]);
+});
+ca("CỰC ĐỐI: blueprint không có validator did_stake.did_stake.withdraw ⟹ ném, nêu tên", () => {
+  phaiNem(() => didStakeScriptFromBlueprint(blueprint("did_stake.did_stake.publish"), dsBook()), [DID_STAKE_BLUEPRINT_TITLE]);
+});
+ca("CỰC ĐỐI: có script mà sổ thiếu ANCHOR_NFT_POLICY ⟹ ném", () => {
+  const s = didStakeScriptFromBlueprint(blueprint(), dsBook());
+  phaiNem(() => buildDeployment(without(dsBook(), "ANCHOR_NFT_POLICY"), NET, "Instant", { ...META, didStakeScript: s }),
+    ["ANCHOR_NFT_POLICY", "--did-stake-blueprint"]);
+});
+ca("không cờ ⟹ hành vi cũ (chỉ anchor_nft_policy) + cảnh báo unapplied_script", () => {
+  const out = buildDeployment(dsBook(), NET, "Instant", META);
+  const ds = (out.deployment as { did_stake?: Record<string, unknown> }).did_stake;
+  bang(ds?.anchor_nft_policy, h("ac"), "anchor");
+  bang(ds !== undefined && "unapplied_script" in ds, false, "unapplied_script có mặt");
+  bang(out.warnings.some(w => w.includes("unapplied_script")), true, "cảnh báo");
 });
 
 console.log(sai === 0 ? "=== ĐẠT ===" : `=== HỎNG: ${sai} ca sai ===`);

@@ -348,10 +348,13 @@ function parseQuoteBody(body: Record<string, unknown>): {
   if (p.fee_payer !== undefined) throw feePayerInParams("params.fee_payer");
   if (route === "create-vault") {
     const f = p.funding;
-    if (f === undefined) {
+    // Két instant 0 LAMP không `funding`: ví trả phí đi ở gốc thân bài (`withFeePayer`).
+    const rootFeePayerShape = p.kind === "instant" && p.lamp_amount === "0";
+    if (f === undefined && !rootFeePayerShape) {
       throw new CodedApiError(400, "FEE_QUOTE_FUNDING_REQUIRED",
-        `Báo giá /tx/create-vault cần "params.funding": chỉ đường nạp từ ví Phoenix có ví trả phí ` +
-        `("funding.fee_payer"). Đường "change_address" trả phí bằng chính ví đó, không có gì để báo giá.`);
+        `Báo giá /tx/create-vault cần "params.funding" (đường nạp từ ví Phoenix, ví trả phí ở ` +
+        `"funding.fee_payer"), hoặc két "kind": "instant" với "lamp_amount": "0" (ví trả phí ở gốc). ` +
+        `Đường "change_address" trả phí bằng chính ví đó, không có gì để báo giá.`);
     }
     if (f !== null && typeof f === "object" && !Array.isArray(f) && (f as Record<string, unknown>).fee_payer !== undefined) {
       throw feePayerInParams("params.funding.fee_payer");
@@ -409,6 +412,8 @@ function feePayerInParams(field: string): CodedApiError {
 function withFeePayer(route: IssuedRoute, params: Record<string, unknown>, fp: { utxo: string; address: string }): Record<string, unknown> {
   if (route !== "create-vault") return { ...params, fee_payer: fp };
   const f = params.funding;
+  // Không `funding` ⟹ két instant 0 LAMP (`parseQuoteBody` đã chặn ca khác): ví trả phí ở gốc.
+  if (f === undefined) return { ...params, fee_payer: fp };
   // `funding` sai hình dạng thì để nguyên: `parseFunding` trả đúng `FUNDING_SHAPE` của đường dựng.
   if (f === null || typeof f !== "object" || Array.isArray(f)) return params;
   return { ...params, funding: { ...(f as Record<string, unknown>), fee_payer: fp } };
@@ -424,7 +429,10 @@ async function measureOnce(
   const minAda = [pureAdaMinCoin(utxo.address, coinsPerUtxoByte),
     pureAdaMinCoin(baseShapeOf(utxo.address, service.network), coinsPerUtxoByte)]
     .reduce((a, b) => (a > b ? a : b));
-  const needed = (fp.fee > fp.collateral ? fp.fee : fp.collateral) + minAda;
+  // Khoản ứng min-ADA (`fronted`) cũng ra từ UTxO trả phí, cùng vế với phí: input phải phủ
+  // phí + ứng + phần thối ≥ min-ADA. Thế chấp là phép chọn RIÊNG trên cùng UTxO (khối trên).
+  const spend = fp.fee + fp.fronted;
+  const needed = (spend > fp.collateral ? spend : fp.collateral) + minAda;
   let gen: QuoteGenSummary | undefined;
   if (parsed.route === "instant-gen" && r.route === "instant-gen") {
     const limits = r.out.summary.gen_limits;
@@ -443,29 +451,22 @@ async function measureOnce(
 }
 
 /** Phí + thế chấp + hạn dùng của ví trả phí, đọc từ bản tóm tắt ĐÃ đọc lại CBOR. */
-function feePayerFigures(r: BuildResult): { fee: bigint; collateral: bigint; validToMs: bigint; expiresAt: string } {
-  if (r.route === "open-thread") {
-    // `openThread` ném 422 `FEE_PAYER_DEPOSIT_UNSOURCED` khi có ví trả phí; về tới đây là lệch.
-    throw new Error("[bất biến nội bộ] báo giá /tx/open-thread trả về một tx.");
-  }
-  if (r.route === "bind-did") {
-    // `bindDid` ném 501 `BIND_DID_FEE_PAYER_UNSUPPORTED` khi có ví trả phí; về tới đây là lệch.
-    throw new Error("[bất biến nội bộ] báo giá /tx/bind-did trả về một tx.");
-  }
-  if (r.route === "create-vault") {
+function feePayerFigures(r: BuildResult): { fee: bigint; fronted: bigint; collateral: bigint; validToMs: bigint; expiresAt: string } {
+  // create-vault qua `funding`: phí đọc ở `summary.funding.fee_payer` (min-ADA két do ví Phoenix trả,
+  // không có khoản ứng). create-vault két instant 0 LAMP (ví trả phí ở gốc) đi chung đường dưới.
+  if (r.route === "create-vault" && r.out.summary.funding !== undefined) {
     const f = r.out.summary.funding;
-    if (f === undefined) throw new Error("[bất biến nội bộ] báo giá create-vault: bản tóm tắt thiếu `funding`.");
     // `parseQuoteBody` chặn chế độ tự trả phí (`FEE_QUOTE_SELF_FUNDED`), nên thiếu `fee_payer` là lệch.
     if (f.fee_payer === undefined) throw new Error("[bất biến nội bộ] báo giá create-vault: bản tóm tắt thiếu `funding.fee_payer`.");
     return {
-      fee: BigInt(f.fee_payer.fee_lovelace), collateral: BigInt(f.fee_payer.collateral_at_risk_lovelace),
+      fee: BigInt(f.fee_payer.fee_lovelace), fronted: 0n, collateral: BigInt(f.fee_payer.collateral_at_risk_lovelace),
       validToMs: BigInt(f.valid_to_posix_ms), expiresAt: r.out.expiresAt,
     };
   }
   const f = r.out.summary.fee_payer;
   if (f === undefined) throw new Error(`[bất biến nội bộ] báo giá ${r.route}: bản tóm tắt thiếu \`fee_payer\`.`);
   return {
-    fee: BigInt(f.fee_lovelace), collateral: BigInt(f.collateral_at_risk_lovelace),
+    fee: BigInt(f.fee_lovelace), fronted: BigInt(f.fronted_lovelace), collateral: BigInt(f.collateral_at_risk_lovelace),
     validToMs: BigInt(f.valid_to_posix_ms), expiresAt: r.out.expiresAt,
   };
 }

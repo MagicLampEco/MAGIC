@@ -28,7 +28,8 @@ import {
   type BindDidSummary, type OpenThreadSummary,
 } from "./engage.js";
 import {
-  FEE_PAYER_CODES, assertFeePayerAddress, checkFeePayerTx, inputRefsOf, readFeePayerUtxo as readFeePayerUtxoShared,
+  FEE_PAYER_CODES, assertFeePayerAddress, assertNoOwnerRewardToFeePayer, checkFeePayerTx, inputRefsOf,
+  readFeePayerUtxo as readFeePayerUtxoShared, type FeePayerFronting,
   refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike,
 } from "./feePayer.js";
 import {
@@ -675,6 +676,7 @@ export class VaultTxService {
         ? undefined
         : quote?.feePayerUtxo ?? await readFeePayerUtxoShared(this.deps.chain, feePayer, FEE_PAYER_CODES);
       const witness = await this.witnessFor(req);
+      if (feePayer !== undefined) assertNoOwnerRewardToFeePayer(witness?.ownerReward);
 
       const found: FoundVault[] = [];
       const ignored: IgnoredUtxo[] = [];
@@ -719,7 +721,10 @@ export class VaultTxService {
       });
       if (req.ownerDid !== undefined) summary.owner_did = req.ownerDid;
       if (feePayer !== undefined) {
-        summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, feePayerUtxo!, tip);
+        // Két của CHÍNH chủ là output duy nhất được nhận khoản ứng: phần min-ADA tăng khi datum dài ra.
+        summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, feePayerUtxo!, tip, {
+          fronting: { address: vault.scope.address, nftUnit: vault.vaultIdUnit, inputRef: vault.utxo },
+        });
       }
       afterSummary?.(built.txCbor, summary);
       const txHash = txBodyHash(built.txCbor);
@@ -787,6 +792,7 @@ export class VaultTxService {
   /** Đọc lại CBOR theo luật ví trả phí. Input khác UTxO trả phí được tra từ CHUỖI, không từ bộ dựng. */
   private async checkFeePayer(
     txCbor: string, fp: FeePayerRequest, fpUtxo: UTxO, tip: ChainTip,
+    opts: { fronting?: Omit<FeePayerFronting, "maxLovelace">; otherInputAddresses?: readonly string[] } = {},
   ): Promise<FeePayerSummary> {
     const feeKey = refStr(fp.utxoRef);
     const others = inputRefsOf(txCbor).filter(r => refStr(r) !== feeKey);
@@ -798,6 +804,10 @@ export class VaultTxService {
       feePayerUtxo: fpUtxo,
       maxCollateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
       otherInputs,
+      ...(opts.fronting === undefined ? {} : {
+        fronting: { ...opts.fronting, maxLovelace: this.deps.deployment.feePayerFrontingMaxLovelace },
+      }),
+      ...(opts.otherInputAddresses === undefined ? {} : { otherInputAddresses: opts.otherInputAddresses }),
     });
   }
 

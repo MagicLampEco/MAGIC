@@ -24,7 +24,7 @@ import { sameOwner, type OwnerRef } from "@magiclamp/protocol-utils";
 
 import type { ChainReader } from "./chain.js";
 import { CodedApiError } from "./errors.js";
-import { OUTREF, refStr, type OutRefLike } from "./feePayer.js";
+import { OUTREF, refStr, type FeePayerSummary, type OutRefLike } from "./feePayer.js";
 import { vaultIdUnitOf } from "./vaultLookup.js";
 
 export interface EngageThread {
@@ -161,6 +161,9 @@ export interface OpenThreadSummary {
     did_commit: string;
   };
   required_signers: string[];
+  /** Chỉ khi yêu cầu có `fee_payer`: đọc lại TỪ CBOR bởi `feePayer.ts` ▸ `checkFeePayerTx`;
+   *  `fronted_lovelace` = min-ADA ví trả phí ứng cho output thread. */
+  fee_payer?: FeePayerSummary;
 }
 
 /**
@@ -314,6 +317,9 @@ export interface BindDidSummary {
     did_commit: string;
   };
   required_signers: string[];
+  /** Chỉ khi yêu cầu có `fee_payer`: đọc lại TỪ CBOR bởi `feePayer.ts` ▸ `checkFeePayerTx`.
+   *  Value thread bảo toàn tuyệt đối ⟹ không output nào được ứng (`fronted_lovelace` = "0"). */
+  fee_payer?: FeePayerSummary;
 }
 
 /** Redeemer Spend của các input, theo chỉ số trong danh sách input ĐÃ SẮP của ledger.

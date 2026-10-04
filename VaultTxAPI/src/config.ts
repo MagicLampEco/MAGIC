@@ -30,6 +30,14 @@ import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
 import { ISSUED_ROUTES, type IssuedRoute } from "./locks.js";
 import { parseBasePath } from "./basePath.js";
 
+/**
+ * Trần mặc định của khoản min-ADA ví trả phí ứng (`Deployment.feePayerFrontingMaxLovelace`).
+ * 5 tADA phủ ba ca của `feePayer.ts`: thread mới 2 ADA (`ENGAGE_MIN_LOVELACE`), két Instant 0 LAMP
+ * mới (min-ADA genesis cộng biên của `MagicSDK/src/minAdaVault.ts`, làm tròn lên ADA chẵn), và phần
+ * nâng một lượt Sinh/làm mới checkpoint (đo trên Preprod 2026-10-04: 672 360 lovelace).
+ */
+export const FEE_PAYER_DEFAULT_FRONTING_MAX_LOVELACE = 5_000_000n;
+
 export interface VaultScope {
   /** "Instant" | "Schedule" — khớp `VaultType` của MagicSDK — hoặc `PREPAID_VAULT_TYPE`
    *  (két PrepaidGen, KHÔNG có trong `VaultType` của SDK; xem `PrepaidDeployment`). */
@@ -229,6 +237,13 @@ export interface Deployment {
    * của họ — đặt số này lớn hơn trần đó là dựng giao dịch họ từ chối ký.
    */
   feePayerCollateralLovelace: bigint;
+  /**
+   * Trần khoản min-ADA ví trả phí được ỨNG cho output két/thread của chủ (`feePayer.ts`, khối
+   * "KHOẢN ỨNG MIN-ADA"). Khoá JSON `fee_payer_fronting_max_lovelace`, chuỗi chữ số ≥ 0; `"0"`
+   * tắt hẳn việc ứng; vắng ⟹ `FEE_PAYER_DEFAULT_FRONTING_MAX_LOVELACE`. Đặt lớn hơn trần của bên
+   * trả phí là dựng giao dịch họ từ chối ký.
+   */
+  feePayerFrontingMaxLovelace: bigint;
   /** Tuỳ chọn: proxy tới dịch vụ ký trả phí Feecover (`feeProxy.ts`). Vắng ⟹ `/fee/utxo` và
    *  `/fee/sign` trả 501 `FEE_PROXY_UNAVAILABLE`. Không mang token — token vào qua biến môi trường. */
   feecover?: FeecoverSettings;
@@ -690,13 +705,25 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
     feePayerCollateralLovelace = BigInt(v);
   }
 
+  let feePayerFrontingMaxLovelace = FEE_PAYER_DEFAULT_FRONTING_MAX_LOVELACE;
+  if (o.fee_payer_fronting_max_lovelace !== undefined) {
+    const v = o.fee_payer_fronting_max_lovelace;
+    if (typeof v !== "string" || !/^(0|[1-9][0-9]*)$/.test(v)) {
+      throw new Error(
+        "[config] VAULT_TX_API_DEPLOYMENT.fee_payer_fronting_max_lovelace phải là CHUỖI chữ số " +
+        "lovelace ≥ 0 (ví dụ \"5000000\"; \"0\" tắt việc ứng min-ADA), không phải số JSON.",
+      );
+    }
+    feePayerFrontingMaxLovelace = BigInt(v);
+  }
+
   const feecover = o.feecover === undefined ? undefined : parseFeecover(o.feecover);
 
   return {
     source, lampPolicyId, ...(lampRehearsalAck === undefined ? {} : { lampRehearsalAck }),
     lampAssetNameHex, vaults, ...(shardAddress === undefined ? {} : { shardAddress }), refScriptUtxos, consume,
     ...(genV2 === undefined ? {} : { genV2 }), ...(prepaid === undefined ? {} : { prepaid }), didStake,
-    feePayerCollateralLovelace, ...(feecover === undefined ? {} : { feecover }),
+    feePayerCollateralLovelace, feePayerFrontingMaxLovelace, ...(feecover === undefined ? {} : { feecover }),
   };
 }
 

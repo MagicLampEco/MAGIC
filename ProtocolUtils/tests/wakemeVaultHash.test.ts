@@ -8,14 +8,16 @@ import {
   wakemeVaultHash, assertWakemeVaultHash, WAKEME_VAULT_HASH_BY_NETWORK,
 } from "../src/index.js";
 
-// Nguồn: thư Wakeme `wk1003mg-c` (2026-10-03) — két v4 lưới O trên Preprod.
-const PREPROD_V4 = "4da780c4e990bd49ab4fa3f8340f7bb6869c244823996d39b4393cab";
-// Bản v3 đã bỏ — ghim rằng bảng KHÔNG còn trả nó (một lần hoà nhánh kéo dòng cũ về thì đỏ ở đây).
+// Nguồn: thư Wakeme `wk1004mg-c` (2026-10-04) — két v5 trên Preprod (W = 0).
+const PREPROD_V5 = "118d53524fe2cc2e5c01fcbbf002e0c631478b879b1b4690db04154f";
+// Các bản đã bỏ — ghim rằng bảng KHÔNG còn trả chúng (một lần hoà nhánh kéo dòng cũ về thì đỏ ở đây).
+const PREPROD_V4_RETIRED = "4da780c4e990bd49ab4fa3f8340f7bb6869c244823996d39b4393cab";
 const PREPROD_V3_RETIRED = "cc62732565af6be1e0874975ad3b3e2afdb0abafb3f5bc4b3008f4e1";
 
 describe("wakemeVaultHash — theo mạng, fail-closed", () => {
-  it("Preprod ⟹ két Wakeme v4 (lưới O), không còn v3", () => {
-    expect(wakemeVaultHash("Preprod")).toBe(PREPROD_V4);
+  it("Preprod ⟹ két Wakeme v5, không còn v4 hay v3", () => {
+    expect(wakemeVaultHash("Preprod")).toBe(PREPROD_V5);
+    expect(wakemeVaultHash("Preprod")).not.toBe(PREPROD_V4_RETIRED);
     expect(wakemeVaultHash("Preprod")).not.toBe(PREPROD_V3_RETIRED);
   });
 
@@ -34,14 +36,14 @@ describe("wakemeVaultHash — theo mạng, fail-closed", () => {
 
 describe("assertWakemeVaultHash — 56 hex thường", () => {
   it("nhận đúng dạng", () => {
-    expect(assertWakemeVaultHash(PREPROD_V4, "t")).toBe(PREPROD_V4);
+    expect(assertWakemeVaultHash(PREPROD_V5, "t")).toBe(PREPROD_V5);
   });
 
   it.each([
-    ["hoa", PREPROD_V4.toUpperCase()],
-    ["thiếu một ký tự", PREPROD_V4.slice(1)],
-    ["thừa một byte", PREPROD_V4 + "00"],
-    ["không phải hex", "zz" + PREPROD_V4.slice(2)],
+    ["hoa", PREPROD_V5.toUpperCase()],
+    ["thiếu một ký tự", PREPROD_V5.slice(1)],
+    ["thừa một byte", PREPROD_V5 + "00"],
+    ["không phải hex", "zz" + PREPROD_V5.slice(2)],
     ["rỗng", ""],
   ])("NÉM: %s", (_name, v) => {
     expect(() => assertWakemeVaultHash(v, "t")).toThrow(/wakeme_vault_hash/);

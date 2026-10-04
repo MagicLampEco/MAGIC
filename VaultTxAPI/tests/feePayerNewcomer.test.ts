@@ -28,7 +28,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor, type TxOutputSpec } from "./fixtures/tx.js";
-import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
+import { GB_SHARD_POLICY, GEN_V2_REF_SCRIPTS, addrOf, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
@@ -113,6 +113,41 @@ function commitTx(o: { raise?: bigint; stray?: bigint } = {}): string {
       },
       { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee - raise - stray } },
       ...(stray > 0n ? [{ address: STRANGER, assets: { lovelace: stray } }] : []),
+    ],
+    requiredSigners: [OWNER_PKH],
+  });
+}
+
+/** Shard GreenBack id 3 của bản ghi Gen v2.0 — UTxO DÙNG CHUNG mà nhánh sinh tiêu rồi dựng lại. */
+const GB_SHARD_ADDRESS = addrOf("Preview", GB_SHARD_POLICY);
+const SHARD_3 = genV2Chain("Preview", { epoch: 20_707n })[GB_SHARD_ADDRESS]![3]!;
+/** Đo trên Preprod 2026-10-04 (cụm Wakeme v5): lượt sinh đầu trên một shard mới nâng min-ADA shard đúng chừng này. */
+const SHARD_RAISE = 73_270n;
+
+/**
+ * Tx có chân shard: két nâng `raise`, shard nâng `shardRaise`, ví trả phí ứng cả hai.
+ * `shardSpent: false` ⟹ shard KHÔNG bị tiêu — output ở địa chỉ shard là output mới, không phải dựng lại.
+ */
+function shardTx(o: { raise?: bigint; shardRaise: bigint; shardSpent?: boolean }): string {
+  const fee = 178_000n;
+  const raise = o.raise ?? 0n;
+  const spent = o.shardSpent ?? true;
+  const shardUnit = Object.keys(SHARD_3.assets).find(k => k !== "lovelace")!;
+  return buildTxCbor({
+    ...feeLegs([ref(VAULT_UTXO), ref(FEE_UTXO), ...(spent ? [ref(SHARD_3)] : [])]),
+    feeLovelace: fee,
+    outputs: [
+      {
+        address: VAULT_ADDRESS,
+        assets: { lovelace: VAULT_LOVELACE + raise, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
+        inlineDatumHex: datumHex({ lampLockedOildrop: 23_000_000n, genScheduleCount: 1, batches: [FEE_BATCH] }),
+      },
+      {
+        address: GB_SHARD_ADDRESS,
+        assets: { lovelace: (spent ? SHARD_3.assets.lovelace : 0n) + o.shardRaise, [shardUnit]: 1n },
+        inlineDatumHex: SHARD_3.datum!,
+      },
+      { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee - raise - o.shardRaise } },
     ],
     requiredSigners: [OWNER_PKH],
   });
@@ -207,7 +242,7 @@ function harness(o: {
       [OWNER_WALLET]: [],
     },
     TIP,
-    [VAULT_UTXO, FEE_UTXO, OWNER_UTXO, UNBOUND, UNBOUND_SCRIPT],
+    [VAULT_UTXO, FEE_UTXO, OWNER_UTXO, UNBOUND, UNBOUND_SCRIPT, SHARD_3],
   );
   const builder = new RecordedTxBuilder(o.cbor, VAULT_ID_UNIT, THREAD_UNIT);
   const issued = new IssuedTxRegistry(TTL * 4);
@@ -263,6 +298,36 @@ describe("khoản ứng min-ADA — két đang sống (lượt làm datum dài r
     const b = await handle(commit(), exact.router);
     expect(b.status, JSON.stringify(b.body)).toBe(200);
     expect(feePayerOf(b).fronted_max_lovelace).toBe(RAISE.toString());
+  });
+});
+
+describe("khoản ứng min-ADA — shard GreenBack dùng chung (nhánh sinh dựng lại shard với datum dài hơn)", () => {
+  it(`két nâng ${RAISE} + shard nâng ${SHARD_RAISE} ⟹ 200; ví ứng cả hai, phần shard tách riêng trong summary`, async () => {
+    const h = harness({ cbor: { schedule_commit: shardTx({ raise: RAISE, shardRaise: SHARD_RAISE }) } });
+    const r = await handle(commit(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(feePayerOf(r)).toMatchObject({
+      fronted_lovelace: (RAISE + SHARD_RAISE).toString(), fronted_output_index: 0,
+      shared_fronted_lovelace: SHARD_RAISE.toString(), shared_fronted_outputs: [{ output_index: 1, lovelace: SHARD_RAISE.toString() }],
+    });
+  });
+
+  it(`CỰC ĐỐI: cùng ${SHARD_RAISE} vào địa chỉ shard nhưng shard KHÔNG bị tiêu ⟹ 422 FEE_PAYER_TX_MISMATCH`, async () => {
+    const h = harness({ cbor: { schedule_commit: shardTx({ shardRaise: SHARD_RAISE, shardSpent: false }) } });
+    const r = await handle(commit(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(codeOf(r)).toBe("FEE_PAYER_TX_MISMATCH");
+  });
+
+  it(`trần 60000 ⟹ 422 FEE_PAYER_FRONTING_ABOVE_MAX ở output shard; CẶP: trần ${SHARD_RAISE} ⟹ 200`, async () => {
+    const low = harness({ extra: { fee_payer_fronting_max_lovelace: "60000" }, cbor: { schedule_commit: shardTx({ shardRaise: SHARD_RAISE }) } });
+    const a = await handle(commit(), low.router);
+    expect(a.status, JSON.stringify(a.body)).toBe(422);
+    expect(codeOf(a)).toBe("FEE_PAYER_FRONTING_ABOVE_MAX");
+    expect(detailsOf(a)).toMatchObject({ fronted_lovelace: SHARD_RAISE.toString(), output_index: 1 });
+    const exact = harness({ extra: { fee_payer_fronting_max_lovelace: SHARD_RAISE.toString() }, cbor: { schedule_commit: shardTx({ shardRaise: SHARD_RAISE }) } });
+    const b = await handle(commit(), exact.router);
+    expect(b.status, JSON.stringify(b.body)).toBe(200);
   });
 });
 

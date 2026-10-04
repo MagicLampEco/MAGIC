@@ -58,7 +58,15 @@ fi
 # về RỖNG với mã thoát 0 — không một dòng lỗi nào. Dịch vụ khi đó khởi động với một
 # khối triển khai rỗng và chết ở một câu lỗi nói về JSON. Chạy `npx` từ chính thư mục
 # chứa kịch bản, nơi `tsx` phân giải được.
-if ! DEPLOYMENT="$(cd "$HERE" && npx tsx ./gen_vault_tx_api_deployment.ts "$NET" --vault "$VAULT_KIND")"; then
+# `DID_STAKE_BLUEPRINT` (tuỳ chọn): blueprint PhoenixKey ⟹ bộ sinh phát `did_stake.unapplied_script`
+# sau khi so hash với khoá sổ `DID_STAKE_UNAPPLIED_HASH`. Đường tương đối được neo vào thư mục gọi,
+# vì bộ sinh chạy sau `cd "$HERE"`.
+GEN_ARGS=("$NET" --vault "$VAULT_KIND")
+if [ -n "${DID_STAKE_BLUEPRINT:+set}" ]; then
+  case "$DID_STAKE_BLUEPRINT" in /*) ;; *) DID_STAKE_BLUEPRINT="$PWD/$DID_STAKE_BLUEPRINT" ;; esac
+  GEN_ARGS+=(--did-stake-blueprint "$DID_STAKE_BLUEPRINT")
+fi
+if ! DEPLOYMENT="$(cd "$HERE" && npx tsx ./gen_vault_tx_api_deployment.ts "${GEN_ARGS[@]}")"; then
   echo "✗ Bộ sinh khối triển khai hỏng — đọc dòng ✗ ở trên (thiếu khoá Gen v2.0 thì danh"
   echo "  sách khoá cần ghi vào state.$NET.sh nằm ngay đó). Dịch vụ KHÔNG khởi động."
   exit 1

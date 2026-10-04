@@ -47,7 +47,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { credentialToAddress, scriptHashToCredential } from "@lucid-evolution/lucid";
+import { credentialToAddress, scriptHashToCredential, validatorToScriptHash } from "@lucid-evolution/lucid";
 import { lampAssetName, type Network } from "@magiclamp/protocol-utils";
 import { consumeKey, type ConsumeKeyName } from "./consumeBook.js";
 import { stateBookPath } from "./stateBookPath.js";
@@ -167,7 +167,7 @@ export function buildPrepaidDeployment(
       max_price_stale: book[ck("MAX_PRICE_STALE")],
     },
   };
-  addDidStake(deployment, book, warnings);
+  addDidStake(deployment, book, warnings, meta.didStakeScript);
   return { deployment, warnings };
 }
 
@@ -280,6 +280,9 @@ export interface GenMeta {
   sha: string;
   /** `LAMP_REHEARSAL_ACK` của lượt sinh (lời khai ý định, KHÔNG lấy từ sổ). */
   rehearsalAck?: string;
+  /** Script `did_stake` CHƯA apply, đọc từ `--did-stake-blueprint` và đã so với khoá sổ
+   *  `DID_STAKE_UNAPPLIED_HASH` (`didStakeScriptFromBlueprint`). Vắng ⟹ không phát `unapplied_script`. */
+  didStakeScript?: { cbor: string; hash: string };
 }
 
 /**
@@ -369,7 +372,7 @@ export function buildDeployment(
   // khỏi công thức sinh, beacon backing thay bằng GreenBack + shard GB). Khoá `UM_*` /
   // `BACKING_*` còn trong sổ của một đời cũ thì bị bỏ qua — chúng không mô tả gì của cụm v2.
 
-  addDidStake(deployment, book, warnings);
+  addDidStake(deployment, book, warnings, meta.didStakeScript);
 
   return { deployment, warnings };
 }
@@ -398,7 +401,55 @@ function lampBlock(book: StateBook, network: Network, rehearsalAck: string | und
   };
 }
 
-function addDidStake(deployment: Record<string, unknown>, book: StateBook, warnings: string[]): void {
+/** Khoá sổ trạng thái giữ hash của script `did_stake` CHƯA apply mà cụm này tin. */
+export const DID_STAKE_UNAPPLIED_HASH_KEY = "DID_STAKE_UNAPPLIED_HASH";
+/** Tên validator trong blueprint của PhoenixKey mà `--did-stake-blueprint` đọc. */
+export const DID_STAKE_BLUEPRINT_TITLE = "did_stake.did_stake.withdraw";
+
+/**
+ * `--did-stake-blueprint <tệp>` ⟹ script `did_stake` CHƯA apply cho `did_stake.unapplied_script`.
+ *
+ * Blueprint là tệp của repo khác (PhoenixKey) chép sang máy này, nên nó KHÔNG tự chứng minh
+ * được nó đúng đời: hash băm lại từ `compiledCode` phải khớp khoá sổ `DID_STAKE_UNAPPLIED_HASH`,
+ * thứ cụm đã ghi lúc deploy. Thiếu khoá ⟹ NÉM (cờ có mặt là lời khai muốn phát; phát một script
+ * không đối chiếu được là đúng ca "bản sao không có đường về nguồn"). Lệch ⟹ NÉM, nêu cả hai hash.
+ * Bộ nạp của dịch vụ (`parseDeployment`) băm lại lần nữa và so với `hash` phát ra — cổng này
+ * chặn blueprint SAI ĐỜI, cổng kia chặn cbor/hash lệch nhau.
+ */
+export function didStakeScriptFromBlueprint(blueprintJson: string, book: StateBook): { cbor: string; hash: string } {
+  let bp: unknown;
+  try { bp = JSON.parse(blueprintJson); } catch (e) {
+    throw new Error(`✗ --did-stake-blueprint không phải JSON: ${(e as Error).message}`);
+  }
+  const validators = (bp as { validators?: unknown }).validators;
+  if (!Array.isArray(validators)) throw new Error(`✗ --did-stake-blueprint không có mảng "validators".`);
+  const hits = validators.filter(v => (v as { title?: unknown }).title === DID_STAKE_BLUEPRINT_TITLE);
+  if (hits.length !== 1) {
+    throw new Error(`✗ --did-stake-blueprint có ${hits.length} validator "${DID_STAKE_BLUEPRINT_TITLE}" — cần ĐÚNG MỘT.`);
+  }
+  const cbor = (hits[0] as { compiledCode?: unknown }).compiledCode;
+  if (typeof cbor !== "string" || !/^([0-9a-f]{2})+$/.test(cbor)) {
+    throw new Error(`✗ "${DID_STAKE_BLUEPRINT_TITLE}".compiledCode phải là hex thường, số ký tự chẵn.`);
+  }
+  const hash = validatorToScriptHash({ type: "PlutusV3", script: cbor });
+  const pinned = book[DID_STAKE_UNAPPLIED_HASH_KEY];
+  if (pinned === undefined || pinned === "") {
+    throw new Error(
+      `✗ Có --did-stake-blueprint nhưng sổ trạng thái thiếu ${DID_STAKE_UNAPPLIED_HASH_KEY} — không có gì để đối ` +
+      `chiếu blueprint. Ghi hash script did_stake CHƯA apply của đời đang chạy vào sổ, hoặc bỏ cờ.`);
+  }
+  if (pinned !== hash) {
+    throw new Error(
+      `✗ Blueprint did_stake băm ra ${hash}, sổ trạng thái ghi ${DID_STAKE_UNAPPLIED_HASH_KEY}=${pinned} — ` +
+      `blueprint khác đời với cụm. KHÔNG phát.`);
+  }
+  return { cbor, hash };
+}
+
+function addDidStake(
+  deployment: Record<string, unknown>, book: StateBook, warnings: string[],
+  didStakeScript?: { cbor: string; hash: string },
+): void {
   // ── Mục `did_stake`: tham số theo mạng của nhân chứng chủ `Script(h)` ─────────────
   //
   // `anchor_nft_policy` là policy NFT anchor DID của PhoenixKey trên mạng này — apply-param
@@ -410,7 +461,20 @@ function addDidStake(deployment: Record<string, unknown>, book: StateBook, warni
     if (!/^[0-9a-f]{56}$/.test(anchorPolicy)) {
       throw new Error(`✗ ANCHOR_NFT_POLICY trong sổ trạng thái phải là 56 hex thường (nhận ${anchorPolicy.length} ký tự).`);
     }
-    deployment.did_stake = { anchor_nft_policy: anchorPolicy };
+    deployment.did_stake = {
+      anchor_nft_policy: anchorPolicy,
+      ...(didStakeScript === undefined ? {} : { unapplied_script: { cbor: didStakeScript.cbor, hash: didStakeScript.hash } }),
+    };
+    if (didStakeScript === undefined) {
+      warnings.push(
+        `⚠ \`did_stake.unapplied_script\` KHÔNG được phát (không có --did-stake-blueprint) ⟹ chủ khai bằng DID\n` +
+        `  (\`owner: {type:"did"}\`) nhận 501 OWNER_SCRIPT_WITNESS_UNAVAILABLE; chủ script gửi owner_witness vẫn chạy.\n`,
+      );
+    }
+  } else if (didStakeScript !== undefined) {
+    throw new Error(
+      `✗ Có --did-stake-blueprint nhưng sổ trạng thái thiếu ANCHOR_NFT_POLICY — mục \`did_stake\` không phát ` +
+      `được, nên script đã đối chiếu cũng không có chỗ đứng. KHÔNG phát.`);
   } else {
     warnings.push(
       `⚠ Mục \`did_stake\` KHÔNG được phát (sổ trạng thái thiếu ANCHOR_NFT_POLICY) ⟹ mọi yêu cầu\n` +
@@ -430,11 +494,20 @@ function main(): void {
 
   const { book, path, mtime } = readStateBook(network);
   const rehearsalAck = process.env.LAMP_REHEARSAL_ACK;
+  // `--did-stake-blueprint` có mặt mà thiếu đường ⟹ `""` ⟹ ném, không lặng lẽ bỏ cờ.
+  const bpIdx = process.argv.indexOf("--did-stake-blueprint");
+  let didStakeScript: GenMeta["didStakeScript"];
+  if (bpIdx > 0) {
+    const bpPath = process.argv[bpIdx + 1] ?? "";
+    if (bpPath === "" || bpPath.startsWith("--")) throw new Error("✗ --did-stake-blueprint cần đường tới tệp blueprint.");
+    didStakeScript = didStakeScriptFromBlueprint(readFileSync(bpPath, "utf8"), book);
+  }
   const meta: GenMeta = {
     sourcePath: path.replace(/^.*\/MAGIC\//, ""),
     mtime,
     sha: gitSha(),
     ...(rehearsalAck === undefined ? {} : { rehearsalAck }),
+    ...(didStakeScript === undefined ? {} : { didStakeScript }),
   };
   const { deployment, warnings } = vaultArg === "Prepaid"
     ? buildPrepaidDeployment(book, network, meta)

@@ -102,6 +102,27 @@ pub type PaidFundDatum {
   beneficiary        : Address,     // genesis ép: không stake, ≠ script quỹ/vault
   beneficiary_datum  : Option<Data>, // None ⟹ output NoDatum; Some(d) ⟹ InlineDatum(d)
                                      // Script(_) ⟹ BẮT BUỘC Some (genesis ép)
+  // ── Thu hồi CARP tài trợ (thêm 2026-10-04, DESIGN-reclaim §10.3) — NỐI CUỐI ──
+  // Mười một trường trên GIỮ NGUYÊN CHỖ. Thêm hai trường KHÔNG giữ được khả năng
+  // đọc quỹ 11 trường đã tạo (Aiken nghiêm về số trường cả hai chiều) ⟹ chỉ áp
+  // cho quỹ mở bằng bộ script deploy mới.
+  //
+  // `None` = quỹ thường của provider, hành vi y như cũ. `Some(s)` = quỹ tài trợ
+  // cho ĐÚNG MỘT DID (`s.owner_commit`), ghim genesis, bất biến ở mọi nhánh.
+  sponsorship        : Option<Sponsorship>,
+  // carpdrop đã trả về bên tài trợ. 0 ở genesis, ghi MỘT lần ở `FundReclaim`
+  // (> 0 ⟹ quỹ đã khép). `credit_issued` vẫn CHỈ TĂNG; phần hạn-mức hiệu lực là
+  // `credit_issued − sponsor_reclaimed`.
+  sponsor_reclaimed  : Natural,
+}
+
+// Bên tài trợ + người dùng được tài trợ. Gộp trong MỘT `Option` để không có
+// trạng thái nửa vời (có bên tài trợ mà thiếu `owner_commit`).
+pub type Sponsorship {
+  // ĐỊA CHỈ ĐẦY ĐỦ (so cả phần stake). Genesis ép payment = VerificationKey.
+  sponsor      : Address,
+  // 32 byte = `blake2b_256(UTF8(did))` = ô [0] két Wakeme = tên vault-NFT Wakeme.
+  owner_commit : ByteArray,
 }
 
 // ── Vault redeemer ────────────────────────────────────────────
@@ -155,6 +176,11 @@ pub type PaidFundRedeemer {
   FundLock                                 // constr 0 — co-spend với PrepaidLock
   FundSettle                               // constr 1 — co-spend với SettleLine (constr 6)
   FundClaim { amount_carpdrop: Natural }   // constr 2 — provider rút, trần F2
+  // constr 3 — NỐI CUỐI (2026-10-04). Trả phần hạn-mức CHƯA giao của quỹ tài trợ
+  // về `sponsorship.sponsor`, chỉ khi két Wakeme của đúng DID bị `ReclaimEpoch`
+  // trong cùng giao dịch. Không trường: lượng suy từ datum, không do người dựng
+  // giao dịch khai. Permissionless (cùng tính chất với `ReclaimEpoch`).
+  FundReclaim
 }
 
 // ── Vault-identity NFT redeemer (INV-VAULT-IDENTITY) ──────────

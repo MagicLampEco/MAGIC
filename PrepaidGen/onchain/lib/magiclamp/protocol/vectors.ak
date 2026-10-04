@@ -8,7 +8,9 @@
 // KHÔNG sao chép bảng này sang chỗ khác.
 
 use aiken/collection/list
-use magiclamp/protocol/math.{buffer_floor, par_carp_from_magic, par_magic_from_carp}
+use magiclamp/protocol/math.{
+  buffer_floor, outstanding_effective, par_carp_from_magic, par_magic_from_carp,
+}
 
 // ── V1: par_magic_from_carp(carpdrop) -> nanogic ──────────────
 //
@@ -60,6 +62,23 @@ pub const v3_buf_bps: List<Int> =
 pub const v3_buf_out: List<Int> =
   [0, 1, 8, 1_149_998, 1_150_000, 2_000_000, 1_150_000_000_000]
 
+// ── V4: outstanding_effective(credit_issued, sponsor_reclaimed, magic_settled) ─
+// Lượng `FundReclaim` trả bên tài trợ (`prepaid.ak` ▸ `reclaim_amount`) và vế
+// outstanding của sàn đệm `FundClaim`. Hàng 2–3: số của bài `rc_*` (C = 10e9,
+// M = 4e9) trước/sau thu hồi. Hàng 5: > 2^53 (C-OVERFLOW).
+pub const v4_eff_credit: List<Int> =
+  [0, 10_000_000_000, 10_000_000_000, 1, 36_000_000_000_000_000_001,
+    36_000_000_000_000_000_000]
+
+pub const v4_eff_reclaimed: List<Int> =
+  [0, 0, 6_000_000_000, 0, 0, 35_999_999_999_999_999_999]
+
+pub const v4_eff_settled: List<Int> =
+  [0, 4_000_000_000, 4_000_000_000, 0, 1, 0]
+
+pub const v4_eff_out: List<Int> =
+  [0, 6_000_000_000, 0, 1, 36_000_000_000_000_000_000, 1]
+
 // ══════════════════════════════════════════════════════════════
 // Tests — vế Aiken của cổng P8
 // ══════════════════════════════════════════════════════════════
@@ -89,4 +108,16 @@ test p8_par_roundtrip_exact() {
     v1_par_in,
     fn(c) { par_carp_from_magic(par_magic_from_carp(c)) == c },
   )
+}
+
+test p8_v4_outstanding_effective() {
+  let rows =
+    list.zip(list.zip(v4_eff_credit, v4_eff_reclaimed), v4_eff_settled)
+  list.length(rows) == list.length(v4_eff_out) && list.map(
+    rows,
+    fn(row) {
+      let ((c, r), m) = row
+      outstanding_effective(c, r, m)
+    },
+  ) == v4_eff_out
 }

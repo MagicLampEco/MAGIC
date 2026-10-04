@@ -44,6 +44,18 @@ pub fn outstanding_of(credit_issued: Int, magic_settled: Int) -> Int {
   credit_issued - par_carp_from_magic(magic_settled)
 }
 
+// outstanding HIỆU LỰC của một quỹ (DESIGN-reclaim §10.3, 2026-10-04):
+// hạn-mức đã cấp trừ phần đã trả bên tài trợ ở `FundReclaim`, trừ phần đã giao.
+// Quỹ thường và quỹ tài trợ chưa thu hồi có `sponsor_reclaimed = 0` ⟹ trùng bit
+// `outstanding_of`. Twin TS: `math.ts` ▸ `outstandingEffective`; vector V4.
+pub fn outstanding_effective(
+  credit_issued: Int,
+  sponsor_reclaimed: Int,
+  magic_settled: Int,
+) -> Int {
+  outstanding_of(credit_issued - sponsor_reclaimed, magic_settled)
+}
+
 // buffer_floor = outstanding + ⌊ outstanding × buffer_bps / 10000 ⌋
 //
 // Sàn CARP mà quỹ phải giữ lại SAU khi provider rút. buffer_bps ≥ 1500 ⇒ đệm

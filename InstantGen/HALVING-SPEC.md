@@ -1,5 +1,5 @@
 > 🚫 **TÀI LIỆU ĐÃ CHẾT — không dùng để triển khai.**
-> PHA 2 bỏ hoàn toàn cơ chế halving: `decay_window = 1` (§4.2), batch sống đúng
+> DESIGN-2 bỏ hoàn toàn cơ chế halving: `decay_window = 1` (§4.2), batch sống đúng
 > một epoch rồi chết thẳng, không có bước giảm nửa nào. Slot redeemer constr 1
 > (trước là `ApplyHalving`) nay là `PruneExpired` — dọn rác batch chết,
 > permissionless, theo §7.4.

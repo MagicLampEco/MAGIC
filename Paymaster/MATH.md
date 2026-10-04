@@ -17,10 +17,10 @@
 
 P8: Aiken (`math.ak`) ↔ TypeScript (`offchain/src/math.ts`) bit-identical.
 
-**Trạng thái triển khai:** `validator paymaster(...)` nhận **11** apply-param
+**Trạng thái triển khai:** `validator paymaster(...)` nhận **12** apply-param
 (`vault_script_hash, burn_batch_constr, lamp_policy_id, policy_nft_policy, meter_nft_policy,
 protocol_nft_policy, max_policy_stale, max_did_entries, ms_per_epoch, treasury_addr,
-lamp_asset_name`) — `treasury_addr` + `lamp_asset_name` là hai bản vá SEC-01 mới nhất. Module
+lamp_asset_name, window_origin_ms`) — `treasury_addr` + `lamp_asset_name` là hai bản vá SEC-01 mới nhất. Module
 **chưa có script deploy**. Cổng đối chiếu: `cd scripts && npm run check:params`. Đừng chép
 bảng tham số bằng tay: **blueprint (`onchain/plutus.json` sau `aiken build`) mới là trọng tài** —
 sai thứ tự hoặc thiếu một param là ra sai script hash mà không gì báo.

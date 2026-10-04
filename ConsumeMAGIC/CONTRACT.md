@@ -21,7 +21,7 @@ dùng mô hình **token-burn** (`tx.mint` âm MAGIC) — **ĐÃ THAY** ở v2. L
 > `consumed_nanogic` (field THỨ 5, append-only) + bất biến kế toán song song; (8) validator
 > `engage_nft.ak` bị **XOÁ** — handler `mint` gộp vào chính `consume` (multi-purpose), policy thread
 > NFT == script hash `consume` (tự tham chiếu), tên NFT = `blake2b_256(cbor(seed))`; (9) `consume` còn
-> **7 apply-param** (bỏ `engage_nft_policy`, `engage_nft_name`; thêm `price_param_script_hash`);
+> **7 apply-param** lúc đó (bỏ `engage_nft_policy`, `engage_nft_name`; thêm `price_param_script_hash`; nay là 8 vì thêm `window_origin_ms` ở cuối);
 > (10) bảng giá `op_prices` phải **TĂNG NGẶT** theo `op_type` và **≤ 16 dòng**.
 
 ## A. Định giá tiêu thụ (consume-side pricing) — interface `price_per_op`
@@ -306,11 +306,11 @@ hàng loạt — beacon lúc đó chỉ committee sửa được.
 
 ### B2. Redeemer + bất biến validator `consume` (engagement-state, Aiken Plutus V3)
 
-**`consume` là MULTI-PURPOSE — 7 apply-param, ĐÚNG THỨ TỰ (đổi thứ tự = sai hash):**
+**`consume` là MULTI-PURPOSE — 8 apply-param, ĐÚNG THỨ TỰ (đổi thứ tự = sai hash):**
 
 ```
 price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
-max_price_stale, ms_per_epoch, price_param_script_hash
+max_price_stale, ms_per_epoch, price_param_script_hash, window_origin_ms
 ```
 
 `engage_nft_policy` / `engage_nft_name` **KHÔNG còn là param** và `engage_nft.ak` **không còn tồn
@@ -330,6 +330,7 @@ TS ở `tests/codec.test.ts`.
 | `Consume` | 0 | `[op_type: Int, op_count: Int, price_ref: OutRef, vault_ref: OutRef]` | spend Engage UTxO |
 | `BindDID` | 1 | `[]` | spend Engage UTxO, ghi `did_commit` một lần |
 | `CloseThread` | 2 | `[]` | spend Engage UTxO: đóng thread, trả min-ADA |
+| `ConsumeMany` | 3 | `[pairs: List<OpPair>, price_ref: OutRef, vault_ref: OutRef]`, `OpPair` = constr 0 `[op_type: Int, op_count: Int]` | spend Engage UTxO: nhiều loại nghiệp vụ trong một lượt tiêu (`required` = Σ sàn TỪNG cặp) |
 | `MintEngage` | 0 | `[seed: OutRef]` | handler `mint` của chính `consume` (genesis thread) |
 | `BurnEngage` | 1 | `[]` | handler `mint`: chỉ-đốt, đi cùng `CloseThread` |
 | `PostPrice` | 0 | `[]` | spend beacon PriceParam (`price_param.ak`) |
@@ -522,7 +523,7 @@ tích luỹ; pin cứng về `#""` sẽ khoá chết đường liên kết DID s
 ## D. Phải build (bám CONTRACT, có Agent audit phản biện mỗi vòng)
 - **SPEC**: FEAT (luồng consume: app gọi → đọc giá → đốt → verify; bảng op_type) + MATH (chứng minh
   price đơn điệu/bounded/hội tụ FIR; required = Σ; an toàn BigInt).
-- **PRICING (offchain)**: `pricing/price.ts` (`price_per_op`, `demand_mult` FIR,
+- **PRICING (offchain)**: `ConsumeMAGIC/pricing/src/price.ts` (`price_per_op`, `demand_mult` FIR,
   `assertValidPriceParam` = bản gương `valid_param`) + vitest (đơn điệu, clamp biên, hội tụ, test
   vector ảnh 0.01 / CID 0.001, bảng giá không sắp xếp / > 16 dòng / rớt GATE → ném).
 - **ONCHAIN**: `onchain/` Aiken — `types.ak` (PriceParam, OpPrice, Consume, `EngageMintRedeemer`,

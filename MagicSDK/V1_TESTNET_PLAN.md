@@ -48,7 +48,7 @@ v1.0 testnet pass khi:
 
 ## §2. Smoke test script template
 
-Theo pattern ``scripts/test/snapshot_only.ts`` hiện tại — mỗi case là 1 file riêng để dễ tách isolated rerun.
+Theo pattern ``scripts/test/instant_only.ts`` hiện tại — mỗi case là 1 file riêng để dễ tách isolated rerun.
 
 ```ts
 // scripts/test/withdraw_only.ts (NEW)

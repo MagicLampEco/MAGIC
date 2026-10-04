@@ -1,14 +1,16 @@
 # ScheduleGen — Testnet Implementation Guide
 ## GenMAGIC v3.3 · §11 ScheduleGen · Cardano Preview Testnet
 
-> ⚠ **Đã đổi ở PHA 2 (xem `InstantGen/DESIGN-PHASE2.md` §2, §3, §5).**
+> ⚠ **Đã đổi ở DESIGN-2 (xem `InstantGen/DESIGN-PHASE2.md` §2, §3, §5).**
 > `ScheduleFire` KHÔNG chuyển LAMP về Treasury nữa: nó chỉ **giải phóng khoá**
 > (I-ACT-7). `lamp_balance` bất biến; `lamp_locked` giảm `fires × λ`; holdings
 > chỉ lật `is_locked`. Batch sinh ra sống đúng 1 epoch (§4.2 use-or-lose) —
 > catch-up nhiều đơn vẫn đóng dấu epoch HIỆN TẠI, không hồi sinh MAGIC bỏ lỡ.
-> Validator `vault` nhận **4** apply-param, đúng thứ tự: `lamp_policy_id`,
-> `lamp_asset_name`, `shard_policy_id`, `ms_per_epoch` — `treasury_addr` đã xoá,
-> `lamp_asset_name` là tham số theo mạng (`tLAMP` testnet / `LAMP` mainnet).
+> Validator `vault` nhận **7** apply-param, đúng thứ tự: `lamp_policy_id`,
+> `lamp_asset_name`, `shard_policy_id`, `ms_per_epoch`, `gb_shard_policy_id`,
+> `commit_script_hash`, `window_origin_ms` — `treasury_addr` đã xoá, `lamp_asset_name` là
+> tham số theo mạng (`tLAMP` testnet / `LAMP` mainnet), `window_origin_ms` là gốc lưới epoch
+> theo mạng. `commit` nhận 10 tham số (`ScheduleGen/TECH.md` §2.1).
 > **Danh sách này chỉ là ảnh chụp.** Nguồn thật là mảng `parameters[]` trong
 > `onchain/plutus.json` do `aiken build` sinh; cổng đối chiếu tên + thứ tự:
 > `cd scripts && npm run check:params`.
@@ -164,7 +166,7 @@ await signAndSubmit(lucid, fireResult.tx);
 
 **2. C-FIRE-1 ≥ (catch-up).** Khác VacuumGen (exact epoch). Fire eligible khi `current_epoch ≥ e_i`. Nếu bỏ lỡ 5 epoch → 1 tx bắt kịp 5 orders (tối đa 8).
 
-**3. C-FIRE-3 atomic (bản PHA 2).** Toàn bộ kế toán phải được validator kiểm ĐỒNG THỜI: `output.fired_count = input + fires_in_tx`, **`lamp_balance` bất biến**, `lamp_locked -= fires_in_tx × λ`, các holding tương ứng lật `is_locked = False`, `|new_batches| = fires_in_tx`, `∀ initial = M_i`. Không có chân Treasury: một fire không chuyển LAMP đi đâu cả (I-ACT-7). Dựng output Treasury theo bản cũ là tx bị từ chối — value-preservation không khớp.
+**3. C-FIRE-3 atomic (bản DESIGN-2).** Toàn bộ kế toán phải được validator kiểm ĐỒNG THỜI: `output.fired_count = input + fires_in_tx`, **`lamp_balance` bất biến**, `lamp_locked -= fires_in_tx × λ`, các holding tương ứng lật `is_locked = False`, `|new_batches| = fires_in_tx`, `∀ initial = M_i`. Không có chân Treasury: một fire không chuyển LAMP đi đâu cả (I-ACT-7). Dựng output Treasury theo bản cũ là tx bị từ chối — value-preservation không khớp.
 
 **4. C-SCH-FIRE-SHARD (A19).** Keeper phải compute `shard_id = blake2b256(vault.owner)[0] % 16` và update đúng shard UTxO. Sai shard → validator reject.
 

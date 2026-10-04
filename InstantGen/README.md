@@ -1,7 +1,7 @@
 # InstantGen — Testnet Implementation Guide
 ## GenMAGIC v3.3 · §9 InstantGen · Cardano Preview Testnet
 
-> ⚠ **ĐÃ LỖI THỜI ở phần cơ chế.** Từ PHA 2, InstantGen KHÔNG còn là "mua MAGIC
+> ⚠ **ĐÃ LỖI THỜI ở phần cơ chế.** Từ DESIGN-2, InstantGen KHÔNG còn là "mua MAGIC
 > bằng LAMP": LAMP đứng yên trong vault (I-ACT-7), batch sống đúng 1 epoch
 > (§4.2, không có halving), và độ lớn tính theo MAGIC đã tiêu thụ thật (§6.3).
 > Mô tả cơ chế hiện hành ở **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn

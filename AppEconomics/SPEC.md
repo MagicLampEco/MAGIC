@@ -502,7 +502,7 @@ AppEconomics là module offchain-only — không có bước deploy riêng. Ph�
 
 **Cài đặt:**
 ```bash
-cd /Users/ductiger/Projects/MAGIC/AppEconomics/offchain
+cd <gốc kho>/AppEconomics/offchain
 npm install
 ```
 
@@ -541,7 +541,7 @@ npm install
 
 **Chạy tests:**
 ```bash
-cd /Users/ductiger/Projects/MAGIC/AppEconomics/offchain
+cd <gốc kho>/AppEconomics/offchain
 npm test
 # Expected: 54/54 pass
 ```

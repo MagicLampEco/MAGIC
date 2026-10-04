@@ -5,7 +5,7 @@
 Nguồn: `Paymaster/onchain/`, `Paymaster/offchain/`; mẫu `ConsumeMAGIC/EXEC.md`.
 
 > ⚠ **Ba điều phải biết trước khi đụng vào Paymaster** (chi tiết ở §2):
-> 1. `validator paymaster(...)` nhận **11** tham số, không phải 9.
+> 1. `validator paymaster(...)` nhận **12** tham số, không phải 9.
 > 2. Paymaster **chưa có script deploy** trong `scripts/deploy/`.
 > 3. Cổng đối chiếu tham số: `cd scripts && npm run check:params`.
 
@@ -47,8 +47,8 @@ Kiểm thêm (chạy được ngay, không cần credential):
 > ```
 >
 > Cổng này được thêm **trước** cái nó gác, cố ý: `paymaster.ts` từng mô tả "đã apply 9 param"
-> trong khi validator nhận **11**, và hai cái thiếu đúng là hai bản vá SEC-01 mới nhất
-> (`treasury_addr` + `lamp_asset_name`). Người tin mô tả cũ sẽ dựng ra một Paymaster vừa gửi
+> trong khi validator đã nhận nhiều hơn (lúc đó 11, nay 12 vì thêm `window_origin_ms`), và hai
+> cái thiếu lúc đó đúng là hai bản vá SEC-01 mới nhất (`treasury_addr` + `lamp_asset_name`). Người tin mô tả cũ sẽ dựng ra một Paymaster vừa gửi
 > LAMP đi đâu cũng được, vừa không nhìn thấy LAMP của chính nó.
 >
 > **Trọng tài là blueprint, không phải bảng tay.** Danh sách dưới đây chép từ
@@ -70,7 +70,7 @@ cd Paymaster/onchain && aiken build   # → plutus.json (đọc hash)
 # Bước 3: deploy protocol_nft (one-shot — ProtocolFeeParams beacon NFT)
 #   genesis_ref RIÊNG → ghi PROTOCOL_NFT_POLICY_ID; name = 50524f ("PRO")
 
-# Bước 4: apply 11 param vào paymaster validator → PAYMASTER_SCRIPT_HASH
+# Bước 4: apply 12 param vào paymaster validator → PAYMASTER_SCRIPT_HASH
 #   ĐÚNG THỨ TỰ (đổi thứ tự = sai hash). Đối chiếu blueprint, đừng tin bảng này:
 #    1 vault_script_hash    = hash generator vault muốn sponsor (vd InstantGen)
 #    2 burn_batch_constr    = constr BurnBatch của vault đó (Instant=2, Schedule=2)
@@ -81,9 +81,10 @@ cd Paymaster/onchain && aiken build   # → plutus.json (đọc hash)
 #    6 protocol_nft_policy
 #    7 max_policy_stale     (vd 10)
 #    8 max_did_entries      (vd 64)
-#    9 ms_per_epoch         (Preview = 86_400_000)
+#    9 ms_per_epoch         (Preview = 86_400_000; Preprod và Mainnet = 432_000_000)
 #   10 treasury_addr        (SEC-01 — ÉP LAMP đến đúng Treasury; thiếu = LAMP đi đâu cũng được)
 #   11 lamp_asset_name      (SEC-01 — tLAMP testnet / LAMP mainnet; KHÔNG hardcode #"744c414d50")
+#   12 window_origin_ms     (gốc lưới epoch theo mạng — WINDOW_ORIGIN_MS_BY_NETWORK; Preview chưa có gốc)
 
 # Bước 5: DAO post SponsorPolicy beacon (mint 1 policy NFT)
 #   datum: app_id, app_authority=<vkh App>, max_per_did/global, lamp_per_magic_q≥sàn, ada_per_magic_q,

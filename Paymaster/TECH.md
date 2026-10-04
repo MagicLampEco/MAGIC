@@ -5,11 +5,13 @@
 Nguồn: `Paymaster/onchain/validators/paymaster.ak`; `lib/magiclamp/paymaster/{types,util,math}.ak`;
 `offchain/src/{types,math,paymaster}.ts`.
 
-> ⚠ **Apply-param: 11, không phải 9.** `validator paymaster(...)` nhận đúng 11 tham số theo
+> ⚠ **Apply-param: 12, không phải 9.** `validator paymaster(...)` nhận đúng 12 tham số theo
 > thứ tự: `vault_script_hash, burn_batch_constr, lamp_policy_id, policy_nft_policy,
 > meter_nft_policy, protocol_nft_policy, max_policy_stale, max_did_entries, ms_per_epoch,
-> treasury_addr, lamp_asset_name`. Hai cái cuối là bản vá SEC-01: `treasury_addr` ép LAMP về
-> đúng Treasury, `lamp_asset_name` thay hardcode `#"744c414d50"` (tLAMP testnet / LAMP mainnet).
+> treasury_addr, lamp_asset_name, window_origin_ms`. `treasury_addr` và `lamp_asset_name` là bản
+> vá SEC-01: `treasury_addr` ép LAMP về đúng Treasury, `lamp_asset_name` thay hardcode
+> `#"744c414d50"` (tLAMP testnet / LAMP mainnet). `window_origin_ms` là gốc lưới epoch theo
+> mạng, luôn là tham số CUỐI.
 >
 > **Bảng trên đây là ảnh chụp — blueprint mới là trọng tài.** Sau `aiken build`, thứ đúng nằm
 > ở `Paymaster/onchain/plutus.json`. Sai thứ tự hoặc thiếu một param ⇒ **sai script hash** ⇒
@@ -82,13 +84,13 @@ One-shot minting policy cho **policy NFT + meter NFT** (KHÔNG mint MAGIC). `Dat
 
 ---
 
-## 2. Validator logic — paymaster(**11** param)
+## 2. Validator logic — paymaster(**12** param)
 
 Param, ĐÚNG THỨ TỰ (neo: `paymaster.ak`, khối `validator paymaster(...)`):
 `vault_script_hash`, `burn_batch_constr` (Instant=2, Schedule=2 — Snapshot/Vacuum đã ở
 `Legacy/`, đừng dùng lại số của chúng), `lamp_policy_id`, `policy_nft_policy`,
 `meter_nft_policy`, `protocol_nft_policy`, `max_policy_stale`, `max_did_entries`,
-`ms_per_epoch`, **`treasury_addr`**, **`lamp_asset_name`**.
+`ms_per_epoch`, **`treasury_addr`**, **`lamp_asset_name`**, **`window_origin_ms`**.
 
 Hai cái cuối là bản vá SEC-01 và **không được bỏ**: `treasury_addr` ép LAMP đến đúng
 Treasury (thiếu ⇒ LAMP đi đâu cũng được), `lamp_asset_name` thay hardcode `#"744c414d50"`

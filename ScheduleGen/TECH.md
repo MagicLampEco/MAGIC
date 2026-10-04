@@ -1,10 +1,11 @@
 # TECH.md — ScheduleGen Technical Specification
 ## GenMAGIC v3.3 · §11 ScheduleGen · Cardano Preview Testnet
 
-> ⚠ **PHA 2 — I-ACT-7: LAMP ĐỨNG YÊN.** `ScheduleFire` chỉ giải phóng khoá; `lamp_balance`
+> ⚠ **DESIGN-2 — I-ACT-7: LAMP ĐỨNG YÊN.** `ScheduleFire` chỉ giải phóng khoá; `lamp_balance`
 > bất biến, không có chân Treasury, apply-param `treasury_addr` đã xoá. Validator `vault`
-> nhận **4** apply-param: `lamp_policy_id`, `lamp_asset_name`, `shard_policy_id`,
-> `ms_per_epoch`. Mọi bảng trong tệp này là **ảnh chụp**; nguồn thật là
+> nhận **7** apply-param (`lamp_policy_id`, `lamp_asset_name`, `shard_policy_id`,
+> `ms_per_epoch`, `gb_shard_policy_id`, `commit_script_hash`, `window_origin_ms`); validator
+> `commit` nhận 10. Mọi bảng trong tệp này là **ảnh chụp**; nguồn thật là
 > `onchain/plutus.json` (`aiken build`) và mã Aiken — đối chiếu bằng
 > `cd scripts && npm run check:params`.
 
@@ -91,14 +92,22 @@ pub type ScheduleAggregateShardDatum {
 
 Entrypoint: `validators/vault.ak:44-89`.
 
-Tham số validator (applied khi deploy) — **4 tham số, đúng thứ tự này**:
+Tham số validator `vault` (applied khi deploy) — **7 tham số, đúng thứ tự này**:
 
 1. `lamp_policy_id: PolicyId` — policy ID của LAMP token
 2. `lamp_asset_name: ByteArray` — tham số **theo mạng**: `tLAMP` testnet / `LAMP` mainnet
 3. `shard_policy_id: PolicyId` — policy ID của SHARD NFT
 4. `ms_per_epoch: Int` — 86_400_000 (Preview), 432_000_000 (Preprod, Mainnet)
+5. `gb_shard_policy_id: PolicyId` — policy NFT shard bộ đếm thặng dư GreenBack
+6. `commit_script_hash: ByteArray` — hash của validator `commit` SAU khi apply 10 tham số của nó
+7. `window_origin_ms: Int` — gốc lưới epoch theo mạng, luôn là tham số CUỐI
 
-`treasury_addr` **không còn tồn tại** (I-ACT-7, xoá ở PHA 2).
+Validator `commit` (purpose withdraw, đọc beacon ρ và GreenBack) nhận 10 tham số: `lamp_policy_id`,
+`lamp_asset_name`, `shard_policy_id`, `ms_per_epoch`, `gb_beacon_nft_policy`, `gb_beacon_script_hash`,
+`gb_shard_policy_id`, `rate_nft_policy`, `rate_script_hash`, `window_origin_ms`. Thứ tự dựng:
+`commit` → `commit_script_hash` → `vault` → `shard`. Nguồn: `scripts/deployParams.ts` ▸ `scheduleVaultParams` / `scheduleCommitParams` (đối chiếu 2026-10-04 trên `main` @ 288ba4c6).
+
+`treasury_addr` **không còn tồn tại** (I-ACT-7, xoá ở DESIGN-2).
 
 > Bảng trên chỉ là **ảnh chụp cho người đọc**. Nguồn thật là mảng `parameters[]` trong
 > `onchain/plutus.json` do `aiken build` sinh; cổng đối chiếu tên + thứ tự:
@@ -111,7 +120,7 @@ Tham số validator (applied khi deploy) — **4 tham số, đúng thứ tự n�
 
 Invariant chung (áp dụng mọi redeemer):
 - **C-VAULT-DS-1:** `count(inputs, addr==vault_addr) == 1` (`vault.ak:62`)
-- `current_epoch = tx.validity_range.lower_bound / ms_per_epoch`
+- `current_epoch = (t − window_origin_ms) / ms_per_epoch`, với CẢ HAI biên validity phải cùng một epoch (`vault.ak` ▸ `get_epoch`)
 
 ### 2.2 validate_commit — C-SCH-1..12, C-SCH-CAP
 
@@ -137,7 +146,7 @@ Nguồn: `vault.ak:134-207`.
 
 Nguồn: hàm `validate_fire` trong `onchain/validators/vault.ak`.
 
-> Các số dòng `vault.ak:NNN` trong những bảng dưới là **ảnh chụp cũ** và đã trôi sau PHA 2.
+> Các số dòng `vault.ak:NNN` trong những bảng dưới là **ảnh chụp cũ** và đã trôi sau DESIGN-2.
 > Lần theo bằng tên hàm (`grep -n "fn validate_fire" vault.ak`), đừng nhảy theo số dòng.
 
 | Invariant | Code | Mô tả |
@@ -145,10 +154,10 @@ Nguồn: hàm `validate_fire` trong `onchain/validators/vault.ak`.
 | C-SCH-FIRE-PERMISSION | `vault.ak:223-224` | Không yêu cầu chữ ký owner (comment, không check) |
 | C-FIRE-1 ≥ | `vault.ak:232-240` | `count_eligible_fires > 0` |
 | T8 | `vault.ak:236` | `compute_m_i(sched.lamp_per_epoch, sched.rate_locked_q)` |
-| C-FIRE-3 (PHA 2) | `validate_fire` | `lamp_balance` **bất biến**; `lamp_locked -= fires_in_tx × λ`. KHÔNG có chân Treasury |
+| C-FIRE-3 (DESIGN-2) | `validate_fire` | `lamp_balance` **bất biến**; `lamp_locked -= fires_in_tx × λ`. KHÔNG có chân Treasury |
 | MAX_BATCHES | `vault.ak:251` | `|updated_batches| ≤ 32` |
 | C-FIRE-5 | `vault.ak:256-259` | Remove schedule khi `fired_count == L` |
-| C-FIRE-6 (PHA 2) | `validate_fire` | Giải phóng khoá: holding giữ nguyên `amount`, chỉ lật `is_locked = False` |
+| C-FIRE-6 (DESIGN-2) | `validate_fire` | Giải phóng khoá: holding giữ nguyên `amount`, chỉ lật `is_locked = False` |
 | C-SCH-FIRE-SHARD | `validate_fire` | `shard_datum.shard_id == shard_id_val` |
 | A02 (output) | `validate_fire` | `lamp_balance` **giữ nguyên**, `lamp_locked -= fires_in_tx × λ`, batch mới, v.v. |
 | C-VAULT-10 | `validate_fire` | `sum_holdings == lamp_balance` |
@@ -204,7 +213,7 @@ Outputs:
   - Shard UTxO' (updated datum: shard_locked += L×λ, active_count += 1)
 
 Signatories: [owner.pkh]   (required by C-VAC-1 equivalent)
-Validity: [tipPosixMs .. (commit_epoch+1) × ms_per_epoch - 1]
+Validity: [tipPosixMs .. cận trên cùng epoch] (`epochValidityWindow`, `ProtocolUtils/src/index.ts`)
 ```
 
 ### 3.2 Fire Tx
@@ -219,7 +228,7 @@ Outputs:
   - Shard UTxO' (shard_locked -= N×λ, cumulative_fired += N×λ)
 
 Signatories: []   (EMPTY — C-SCH-FIRE-PERMISSION)
-Validity: [tipPosixMs .. (current_epoch+1) × ms_per_epoch - 1]
+Validity: [tipPosixMs .. cận trên cùng epoch] (`epochValidityWindow`, `ProtocolUtils/src/index.ts`)
 ```
 
 `N = fires_in_tx` (1..8).
@@ -245,8 +254,8 @@ tx theo đó là rút LAMP khỏi vault output, validator kiểm value-preservat
 1. Deploy LAMP policy (mint tLAMP) → LAMP_POLICY_ID
 2. Deploy UMKeeper (optional — không dùng trong ScheduleGen)
 3. Deploy Shard validator → SHARD_SCRIPT_HASH
-4. Deploy Vault validator (4 params, đúng thứ tự:
-   LAMP_POLICY_ID, LAMP_ASSET_NAME, SHARD_NFT_POLICY_ID, MS_PER_EPOCH)
+4. Deploy `commit` (10 params) → COMMIT_SCRIPT_HASH, rồi Vault validator (7 params, thứ tự ở §2.1;
+   `scripts/deployParams.ts` ▸ `scheduleScriptPair` dựng cả hai theo đúng thứ tự)
    → VAULT_SCRIPT_HASH
 5. Deploy 16 Shard UTxOs (one per shard_id 0..15)
 6. Update scripts/.env
@@ -265,7 +274,8 @@ VAULT_SCRIPT_HASH=<hash>       # từ aiken build → plutus.json
 SHARD_SCRIPT_HASH=<hash>       # từ aiken build → plutus.json
 SHARD_NFT_POLICY_ID=<hash>     # one-shot minting policy cho SHARD NFTs
 LAMP_ASSET_NAME=tLAMP          # THEO MẠNG: tLAMP testnet / LAMP mainnet — apply-param #2
-MS_PER_EPOCH=86400000          # Preview; 432000000 Preprod và Mainnet (đổi 2026-09-20)
+MS_PER_EPOCH=432000000         # THEO MẠNG: Preview 86400000; Preprod và Mainnet 432000000 (đổi 2026-09-20)
+# window_origin_ms (tham số CUỐI): lấy từ windowOriginMs(network), không gõ tay; Preview chưa có gốc
 BLOCKFROST_KEY=<key>
 PRIVATE_KEY=<hex>
 ```

@@ -12,10 +12,10 @@ Nguồn bám (đọc thẳng ở đó, mã là trọng tài): `Paymaster/onchain
 `InstantGen/onchain/validators/vault.ak` (`validate_burn_batch`, `validate_set_delegate`);
 [`BOUNDARIES.md`](../BOUNDARIES.md) (ràng buộc vĩnh viễn — `CLAUDE.md` chỉ `@import` tệp đó).
 
-**Trạng thái triển khai:** `validator paymaster(...)` nhận **11** apply-param
+**Trạng thái triển khai:** `validator paymaster(...)` nhận **12** apply-param
 (`vault_script_hash, burn_batch_constr, lamp_policy_id, policy_nft_policy, meter_nft_policy,
 protocol_nft_policy, max_policy_stale, max_did_entries, ms_per_epoch, treasury_addr,
-lamp_asset_name`). Module **chưa có script deploy** trong `scripts/deploy/`. Trước khi ai đó
+lamp_asset_name, window_origin_ms`). Module **chưa có script deploy** trong `scripts/deploy/`. Trước khi ai đó
 viết script đầu tiên: `cd scripts && npm run check:params`. Chi tiết + lý do: [`TECH.md`](./TECH.md),
 [`EXEC.md §2`](./EXEC.md).
 
@@ -59,7 +59,7 @@ của vault input co-spend (mirror `consume.ak read_vault_burns`), KHÔNG đọc
 Các bước (theo thứ tự validator thực hiện, `paymaster.ak:63-165`):
 
 1. Spend Meter UTxO bằng redeemer `Sponsor { vault_refs, policy_ref, protocol_ref, did_key, lamp_this, ada_this }` (`types.ak:65-74`).
-2. `current_epoch = upper_bound_ms / ms_per_epoch` (`util.ak:18-24`) — cửa sổ validity ≤ 1 epoch.
+2. `current_epoch = (upper_bound_ms − window_origin_ms) / ms_per_epoch` (`util.ak` ▸ `get_epoch`) — cửa sổ validity ≤ 1 epoch.
 3. PM-7: ép đúng 1 Meter input + 1 Meter output @paymaster, mỗi cái mang đúng 1 Meter NFT (`paymaster.ak:73-78`).
 4. PM-10: đọc SponsorPolicy beacon, ép NFT auth + `current_epoch − policy.epoch ≤ max_policy_stale` + cùng `app_id` (`paymaster.ak:82-88`).
 5. Đọc ProtocolFeeParams beacon (NFT auth) — SÀN tỷ giá (`paymaster.ak:91`).

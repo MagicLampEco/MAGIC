@@ -68,6 +68,12 @@ pub type ConsumeRedeemer {
     vault_ref : OutputReference,
   }
   BindDID
+  CloseThread
+  ConsumeMany {
+    pairs     : List<OpPair>,
+    price_ref : OutputReference,
+    vault_ref : OutputReference,
+  }
 }
 ```
 
@@ -77,6 +83,11 @@ Plutus Data:
 |---|---|
 | `Consume` | `Constr 0 [I op_type, I op_count, Constr 0 [B txId, I ix], Constr 0 [B txId, I ix]]` |
 | `BindDID` | `Constr 1 []` |
+| `CloseThread` | `Constr 2 []` |
+| `ConsumeMany` | `Constr 3 [List<OpPair>, Constr 0 [B txId, I ix], Constr 0 [B txId, I ix]]`, với `OpPair` = `Constr 0 [I op_type, I op_count]` |
+
+Nguồn thứ tự variant: `ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak` ▸ `ConsumeRedeemer`;
+chỉ số được ghim ở `consume.ak` ▸ `redeemer_constr_index_pinned`.
 
 Lưu ý: `OutputReference` = `Constr 0 [B transaction_id, I output_index]` (Plutus V3 stdlib).
 
@@ -125,15 +136,17 @@ Plutus Data: `Constr 0 []`.
 
 File: `onchain/validators/consume.ak`
 
-Parameterized (7 field — đọc `validator consume(...)` để lấy thứ tự chuẩn):
+Parameterized (8 field — đọc `validator consume(...)` để lấy thứ tự chuẩn):
 ```
 price_nft_policy, price_nft_name : authenticity NFT của beacon PriceParam
 vault_script_hash                : payment script hash của vault generator
 burn_batch_constr                : constr index của BurnBatch trong VaultRedeemer
                                    của vault đó (Instant=2, Schedule=2)
 max_price_stale                  : số epoch tối đa giá được dùng
-ms_per_epoch                     : POSIX ms / epoch (Preview = 86_400_000)
+ms_per_epoch                     : POSIX ms / epoch (Preview = 86_400_000; Preprod, Mainnet = 432_000_000)
 price_param_script_hash          : địa chỉ bắt buộc của beacon PriceParam
+window_origin_ms                 : gốc lưới epoch theo mạng (POSIX ms), tham số CUỐI;
+                                   epoch = (t − window_origin_ms) / ms_per_epoch
 ```
 
 > KHÔNG có `magic_policy` / `magic_name` — không có token MAGIC để trỏ tới.

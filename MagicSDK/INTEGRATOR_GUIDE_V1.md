@@ -560,8 +560,10 @@ const paid   = after.consumed_nanogic - before.consumed_nanogic;   // nanogic th
 
 ### 7.5 §4.2 dùng-hết-hoặc-mất — điều app phải nói với người dùng
 
-`decay_window = 1` nghĩa là một batch chỉ tiêu được trong **đúng epoch nó được sinh**. Trên
-testnet 1 epoch = 1 ngày; sinh hôm nay, tiêu ngày mai là mất trắng. MAGIC **không cộng dồn**.
+`decay_window = 1` nghĩa là một batch chỉ tiêu được trong **đúng epoch nó được sinh**. Độ dài
+epoch theo mạng (`ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`): Preview 1 ngày;
+Preprod và Mainnet 5 ngày. Sinh ở epoch này, sang epoch kế mới tiêu là mất trắng. MAGIC **không
+cộng dồn**.
 
 Hệ quả cho giao diện: đừng hiện "số dư MAGIC" như một số dư ngân hàng. Hiện **số tiêu được
 trong epoch này** và **thời điểm nó hết hạn**. `expiredDropped` cho biết lần này đã mất bao

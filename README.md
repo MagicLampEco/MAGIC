@@ -17,7 +17,7 @@ Hợp đồng thông minh Cardano L1 (PlutusV3) cho hệ **ba token** LAMP · MA
 
 | Token | Vai | Bản chất |
 |---|---|---|
-| **LAMP** | tài sản nền / thế chấp | native token, cố định 36 tỷ, không mint thêm, không burn |
+| **LAMP** | tài sản nền / thế chấp | native token, **trần** 36 tỷ (lazy-mint: tổng đã sinh luôn ≤ trần, không phải 36 tỷ đã nằm sẵn trên chuỗi), không burn — `BOUNDARIES.md` §1 |
 | **MAGIC** | quyền-tiêu-dịch-vụ (tín dụng) | **không phải token** — số kế toán trong datum vault, gắn PersonDID, không chuyển nhượng |
 | **CARP** | đồng-thanh-khoản | native token có policy riêng, chuyển nhượng được, giữ giá bằng sàn-tiện-ích |
 
@@ -38,13 +38,19 @@ MAGIC/
 ├── ProtocolUtils/        # Thư viện dùng chung (hằng số, Q-format, BigInt) — P8
 ├── InstantGen/           # Sinh MAGIC theo yêu cầu, vault hợp nhất DESIGN-2
 ├── ScheduleGen/          # Hợp đồng kỳ hạn, rate khoá lúc commit, 16 shard
+├── PrepaidGen/           # Cửa sinh thứ ba — người dùng trả CARP
+├── GenBeacons/           # Beacon ρ (RateParam), beacon GreenBack, shard bộ đếm thặng dư GB
 ├── UMKeeper/             # Cập nhật hệ số cầu mạng UM mỗi epoch (permissionless)
 ├── ConsumeMAGIC/         # Tiêu thụ MAGIC (đốt theo giá nghiệp vụ) + bộ định giá
 │   └── pricing/          # @magiclamp/consumemagic-pricing — gói gọi được (ESM + CJS)
+├── Eligibility/          # Tư cách nhận — cổng vào của vòng gen
 ├── MagicSDK/             # Mặt tiền cho bên tích hợp
+├── VaultReadAPI/         # Mặt tiền ĐỌC vault qua HTTP
+├── VaultTxAPI/           # Mặt tiền DỰNG giao dịch qua HTTP
 ├── Paymaster/            # Trả phí hộ (SponsorMeter)
 ├── FlowRate/             # Điều tiết nhịp
 ├── AppEconomics/         # Lớp thưởng app          (chưa hội tụ ba-token)
+├── TestSupport/          # Bộ giả dùng chung cho test off-chain
 ├── scripts/              # Deploy + kiểm thử testnet
 └── Legacy/               # KHO LƯU TRỮ — không đọc, không build, không deploy
 ```
@@ -78,9 +84,10 @@ for m in InstantGen ScheduleGen UMKeeper ConsumeMAGIC AppEconomics; do
 done
 ```
 
-> `MagicSDK` là ngoại lệ: `npm install` xanh, nhưng `tests/vaultParams.test.ts` đọc
-> `InstantGen/onchain/plutus.json` và `ScheduleGen/onchain/plutus.json` — artifact đã
-> gitignore. Phải `aiken build` hai module đó trước, nếu không 6 test ngã ENOENT.
+> `MagicSDK` là ngoại lệ: `npm install` xanh, nhưng nhiều tệp trong `MagicSDK/tests/` đọc
+> `onchain/plutus.json` của các module — artifact đã gitignore. Phải `aiken build` các module
+> đó trước, nếu không các bài đọc chúng ngã ENOENT. Liệt kê tệp đọc:
+> `grep -rln 'plutus.json' MagicSDK/tests`.
 
 ```bash
 for m in InstantGen ScheduleGen UMKeeper; do
@@ -88,8 +95,8 @@ for m in InstantGen ScheduleGen UMKeeper; do
 done
 ```
 
-> Aiken 1.1.21 không in gì khi bị đưa qua pipe. Muốn giữ output thì
-> `script -q /tmp/out.txt aiken check` rồi đọc `/tmp/out.txt`.
+> Aiken 1.1.21 qua pipe: khi thành công hoặc khi có bài kiểm đỏ, stdout là JSON đầy đủ; khi
+> LỖI BIÊN DỊCH, stdout RỖNG. Cách chạy và đọc đúng: `BOUNDARIES.md` §4.
 
 Validator không được build sẵn trong repo — phải `aiken build` từng module trước khi
 deploy (`onchain/plutus.json` là artifact, đã gitignore).

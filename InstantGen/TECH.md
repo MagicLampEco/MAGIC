@@ -122,14 +122,16 @@ PM_q: Ember=1.15×, Flame=1.05×, Lantern=1.00×. Nguồn: `constants.ak:47`.
 
 ## 2. Validator logic — InstantGen redeemer
 
-File: `validators/vault.ak`, function `validate_instant_gen` (line 115).
+File: `validators/vault.ak`, function `validate_instant_gen`.
 
 Danh sách apply-param **không chép ở đây** — chép tay là thứ đã sai. Đọc `parameters[]`
 trong `onchain/plutus.json` (do `aiken build` sinh từ chính chữ ký `validator vault(...)`),
 đối chiếu bằng `cd scripts && npm run check:params`. Ảnh chụp hiện thời, blueprint là
-trọng tài: `lamp_policy_id`, `lamp_asset_name` (PARAM theo mạng — `tLAMP` testnet /
-`LAMP` mainnet), `um_nft_policy`, `um_script_hash`, `backing_nft_policy`,
-`backing_script_hash`, `ms_per_epoch`, `wakeme_vault_hash` (két Wakeme, CC-GEN-LENT-READ).
+trọng tài (10 tham số, đối chiếu 2026-10-04 trên `main` @ 288ba4c6, nguồn
+`scripts/deployParams.ts` ▸ `instantVaultParams`): `lamp_policy_id`, `lamp_asset_name` (PARAM
+theo mạng — `tLAMP` testnet / `LAMP` mainnet), `gb_beacon_nft_policy`, `gb_beacon_script_hash`,
+`gb_shard_policy_id`, `rate_nft_policy`, `rate_script_hash`, `wakeme_vault_hash` (két Wakeme,
+CC-GEN-LENT-READ), `ms_per_epoch`, `window_origin_ms`.
 
 Bản cũ ở đây liệt 4 tham số và có `treasury_addr` — sai cả số lẫn tập. `applyParamsToScript`
 không kiểm arity: apply theo danh sách đó vẫn ra script hash 28 byte trông hợp lệ, vault

@@ -2,7 +2,7 @@
 ## GenMAGIC v3.3 · Deploy + Test Plan · v1.0
 
 > ⚠ **ĐÃ LỖI THỜI ở phần cơ chế và phần tham số.** Tệp này còn mô tả mô hình trước
-> PHA 2: "mua MAGIC bằng cách trả LAMP vào Treasury", redeemer mang `lamp_paid`,
+> DESIGN-2: "mua MAGIC bằng cách trả LAMP vào Treasury", redeemer mang `lamp_paid`,
 > apply-param có `treasury_addr`, và halving batch ở `k=1`. **Không cái nào còn tồn
 > tại.** Mô tả cơ chế hiện hành ở **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn
 > chân lý là [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](../Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
@@ -33,7 +33,7 @@ UM_NFT_POLICY_ID=
 VAULT_SCRIPT_HASH=
 ```
 
-`TREASURY_ADDRESS` từng nằm ở đây — **bỏ**. Từ PHA 2 không handler nào chuyển LAMP
+`TREASURY_ADDRESS` từng nằm ở đây — **bỏ**. Từ DESIGN-2 không handler nào chuyển LAMP
 (I-ACT-7) nên không có Treasury để trỏ tới. Biến còn thiếu, xem `scripts/config.ts`.
 
 ### Bước 1: Build Aiken validator
@@ -55,9 +55,11 @@ cd ../../scripts && npm run check:params
 ```
 
 Cổng này so `parameters[].title` của blueprint với danh sách `scripts/deployParams.ts`
-cấp, khẳng định trùng cả tên lẫn thứ tự. Ảnh chụp hiện thời (blueprint mới là trọng tài):
-`lamp_policy_id`, `lamp_asset_name`, `um_nft_policy`, `um_script_hash`,
-`backing_nft_policy`, `backing_script_hash`, `ms_per_epoch`, `wakeme_vault_hash`.
+cấp, khẳng định trùng cả tên lẫn thứ tự. Ảnh chụp hiện thời (blueprint mới là trọng tài;
+đối chiếu 2026-10-04 trên `main` @ 288ba4c6, nguồn `scripts/deployParams.ts` ▸
+`instantVaultParams`): `lamp_policy_id`, `lamp_asset_name`, `gb_beacon_nft_policy`,
+`gb_beacon_script_hash`, `gb_shard_policy_id`, `rate_nft_policy`, `rate_script_hash`,
+`wakeme_vault_hash`, `ms_per_epoch`, `window_origin_ms`.
 
 Dòng cũ ở đây ghi "4 parameters: `lamp_policy_id`, `treasury_addr`, `um_nft_policy`,
 `ms_per_epoch`" — sai cả số lẫn tập, `treasury_addr` không còn tồn tại. Apply theo danh
@@ -156,7 +158,7 @@ npm run test:instant        # ⛔ chưa xanh được — trần thứ ba bằng
 - Input: lamp_paid = 1_000_000_000 oildrop (1000 LAMP), Flame profile
 - Expected: batch mới với 3_150_000_000 nanogic (TV-INST-GEN-01)
 - Verify (mô hình cũ, không còn đúng): `lamp_balance = old - 1B`, treasury +1B.
-  Từ PHA 2 phải ngược lại — `lamp_balance` **không đổi một byte** và không có output
+  Từ DESIGN-2 phải ngược lại — `lamp_balance` **không đổi một byte** và không có output
   Treasury nào. Kiểm theo bản cũ thì ca kiểm đúng bị đánh trượt.
 
 **P2: InstantGen boundary — MIN purchase (10 LAMP)**
@@ -275,7 +277,7 @@ Số kiểm giữ ở một nơi duy nhất — [`DevStatus.md`](../DevStatus.md
 **Hậu quả:** Batches sẽ expire sau 2 epochs nếu không có BurnBatch. MAGIC sẽ mất sau k≥2.
 
 ### 4.2 ApplyHalving stub — ĐÃ CHẾT
-`ApplyHalving` không còn tồn tại. PHA 2 bỏ hẳn halving (`decay_window = 1`, batch sống
+`ApplyHalving` không còn tồn tại. DESIGN-2 bỏ hẳn halving (`decay_window = 1`, batch sống
 đúng một epoch rồi chết thẳng). Slot constr 1 nay là `PruneExpired` — dọn rác batch chết,
 permissionless (§7.4). Bám mục này mà dựng tx `ApplyHalving` thì tx bị từ chối: validator
 giải mã constr 1 ra `PruneExpired` và đòi ràng buộc khác hẳn. Xem
@@ -317,7 +319,7 @@ Worst case ~12KB (§5.1). Tx limit 16KB. Vault với 32 batches + 64 holdings + 
 | VAULT_SCRIPT_HASH | Hash của vault validator | Sau aiken build |
 | SHARD_NFT_POLICY_ID | PolicyId shard NFTs (ScheduleGen) | Sau deploy:shards |
 
-`TREASURY_ADDRESS` đã bỏ khỏi bảng này (I-ACT-7). Hai biến PHA 2 thêm vào —
+`TREASURY_ADDRESS` đã bỏ khỏi bảng này (I-ACT-7). Hai biến DESIGN-2 thêm vào —
 `BACKING_NFT_POLICY_ID`, `BACKING_SCRIPT_HASH` — mặc định 28 byte 0 nghĩa là beacon chưa
 có và cửa InstantGen đóng; chi tiết ở [`DESIGN-PHASE2.md`](DESIGN-PHASE2.md) §5.
 

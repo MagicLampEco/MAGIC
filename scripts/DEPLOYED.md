@@ -614,21 +614,23 @@ trị đổi vẫn nguyên hiệu lực; quyết định "không đổi" không 
 
 ---
 
-## Preprod — policy tLAMP CUỐI, 2026-10-03 · genesis CHƯA gửi
+## Preprod — policy tLAMP CUỐI, 2026-10-03 · genesis đã lên chuỗi (đo 2026-10-04)
 
 Nguồn: thư kho LAMP `lam1003mg-a` (2026-10-03). **Bản sao có nhãn**, chép 2026-10-03 —
-không phải nguồn; nguồn chân lý là chuỗi, và **trên chuỗi chưa có gì** dưới policy này.
+không phải nguồn; nguồn chân lý là chuỗi. Trạng thái chuỗi đo lại 2026-10-04 (dòng
+*"trạng thái chuỗi"* dưới).
 
 | | |
 |---|---|
 | policyId | `493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac` |
 | assetName (hex) | `744c414d50` (tLAMP) |
 | mã LAMP | `main` = `17934d8` |
-| trạng thái chuỗi | genesis **CHƯA gửi** — chưa có tLAMP nào dưới policy này |
+| trạng thái chuỗi | genesis **ĐÃ lên chuỗi**. Đo 2026-10-04: `POST https://preprod.koios.rest/api/v1/policy_asset_info` với `_asset_policy` = policyId trên trả đúng một dòng, `asset_name` `744c414d50`, `minting_tx_hash` `efdd32ed839ecb3954d3e2273b4f84635c846cefcd312e71cfbc8326fbb2ddfb`, `creation_time` ứng 2026-10-03 13:45 UTC. Số lượng đã đúc và ví nào đang giữ: KHÔNG đo ở đây |
 
-Policy id chắc chắn dù genesis chưa gửi: script genesis bên LAMP mang cổng
-`EXPECTED_LAMP_PID` bằng đúng id trên, lệch thì dừng trước khi gửi. Cái CHƯA chắc là lúc
-nào có tLAMP để dùng.
+Policy id chắc chắn từ trước khi genesis lên chuỗi: script genesis bên LAMP mang cổng
+`EXPECTED_LAMP_PID` bằng đúng id trên, lệch thì dừng trước khi gửi. Genesis đã lên chuỗi
+(dòng *"trạng thái chuỗi"* trên); cụm Preprod phục vụ người dùng dựng sau đó, ở mục riêng
+ngay dưới.
 
 **Hai policy bị bỏ cùng thư này**, cả hai nay nằm trong `SUPERSEDED_LAMP_POLICIES` ở
 `scripts/config.ts` và `MagicSDK/src/lampPolicy.ts` (hai bảng phải trùng tập khoá — đo bằng
@@ -645,7 +647,8 @@ Sổ trạng thái nào còn ghi `53bc12ad…` sẽ bị chặn ở lần đọc
 Những gì mục này **KHÔNG** khai:
 - **Không có địa chỉ kho LAMP nào.** Hash Distribution (`treasury`, `claim_account`) chưa
   cuối — nhánh FundPot bên LAMP sẽ đổi chúng. Đừng nướng địa chỉ kho LAMP vào cấu hình.
-- **Cụm Preprod phục vụ người dùng CHƯA dựng.** Nó dựng MỘT lần trên policy này, sau genesis.
+- **Cụm Preprod phục vụ người dùng** dựng 2026-10-04, ghi ở mục riêng ngay dưới
+  (*"Preprod — 2026-10-04 · cụm phục vụ người dùng"*).
 - **Policy cuối không được gõ cứng vào mã.** Cổng `assertLampPolicyId` / `checkLampPolicyId`
   là danh sách TỪ CHỐI: nó chặn các đời đã biết là sai, và một hex 56 ký tự lạ vẫn đi qua.
   Giá trị đúng đi vào qua cấu hình (`LAMP_POLICY_ID`, `lamp.policy_id`).
@@ -658,6 +661,53 @@ Thư LAMP còn nhắc nướng policy vào `lamp_policy_id` của `vault_consoli
 nhiều cặp": **không có trong kho MAGIC** (đo 2026-10-03: `find . -name 'vault_consolidate*'`
 ngoài `node_modules` rỗng; `ConsumeMAGIC/onchain/validators/consume.ak` không nhận
 `lamp_policy_id`).
+
+---
+
+## Preprod — 2026-10-04 · cụm phục vụ người dùng trên tLAMP `493002cc…`
+
+Cụm Gen v2.0 dựng MỘT lần trên policy cuối, từ `main` @ `288ba4c6` (PR #138). Thay cho cụm
+tập dượt `8169b76c…`. **Bản sao có nhãn**, chép 2026-10-04; nguồn chân lý là chuỗi.
+
+| thành phần | giá trị |
+|---|---|
+| tLAMP | `493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac` / `744c414d50` |
+| anchor DID (`taad`) | `e97ace3451c5ce54063fdc3f379112c335c39f0379ad6a2766ed6a4c` |
+| két Wakeme (apply-param) | `4da780c4e990bd49ab4fa3f8340f7bb6869c244823996d39b4393cab` |
+| `rate_param` (beacon ρ) | `cee1ddd8a74da56bb9a4808398b703fb6dbf25dcaa63fc294342b4a5` |
+| `greenback_beacon` | `19f06c97ca170143ed4c125e07e3dfe2630018de9f42b8088ab59824` |
+| `gb_shard` | `af87ac2ee4cb62fbb702ff012c3d1e400092307fed298d8c65c2cb74` |
+| shard ScheduleGen | `1b21750f45100d81fb824b789807ad481e012150f75ad2d3b371241a` |
+| két Instant | `ec25a91c849a205bf448f53eaf9e7f892133e8d9bec185f1ea3692ed` · `addr_test1wrkzt2gusjdzqkl5fr6natu707yjzvlgmxlvrp03agmf9mgcckj5d` |
+| két Schedule | `02c0658c3e581008f9774d41cc294443011baa0647df18f312e033f1` · `addr_test1wqpvqevv8evpqz8ewax5rnpfg3pszxa2qera7x8nztsr8ugal4n2x` |
+| stake `commit` | `2278e42d422c70557f47973d7bd466494f2f62f8468d4f9428aac176` |
+| `consume` cho két Instant | `bb26d9d51cf13fef919ce3dcfa241b3de63d5baa16c7ba6dd2f6bf2f` · `addr_test1wzajdkw4rncnlmu3nn3ae73yrv77v02m4gtv0wnd6tmt7tcum0uz0` |
+| `consume` cho két Schedule | `493b40e45bf370c08e133171cc16aa0a1a6141ad804f749b9159e2f6` · `addr_test1wpynks8yt0ehpsywzvchrnqk4g9p5c2p4kqy7aymj9v79asg8vaj5` |
+| `vault_registry` | `d4610ba63340c5058c2e292e9c1e96e6724b2290d2ce002b8fb62c62` |
+
+Ref-script CIP-33: két Instant `e70cc9c416ec1321f0dff960b401ba9d7de56a85ea252924745d479c873d3d37#0` ·
+két Schedule `3d4ff786f5dcdabb4ba30053605dc4a8de6b45a7c1b2bd11ba67488a5ff07390#0` · shard
+`b652f01bb7a50ed872dad73b80ffe545a3046dae021ee2bca4e49b4d705788a4#0` · `commit`
+`139b4921018ec9bb8c49f3ceefccadad514e1867c8c63263e78d6c7aedcba3ba#0` · `gb_shard`
+`daa502ce6bfac4fc8349e8a4b49479fff2aaf08e9cd1ccfd9f7f2ce18022b71f#0` · `consume` Instant
+`c31e466160bd1245f772842b42e59217d31e3256729dc2c3ac63418e3abb6d45#0` · `consume` Schedule
+`0d947b7e82334436d4c2c28ec6d3ae54e6a025ec867da7c2a30272a9fdca38d7#0`.
+
+Tx đáng giữ:
+- beacon ρ + beacon GreenBack + 16 shard `gb_shard`, đăng ở epoch 317: `3a03fc2b96847d385ed9be42a23e80a38e307a0ecb702c2f772cd452482ce99e`.
+- GreenBack `GB` = 10¹⁵ nanogic, seq 1, epoch 317: `54ef819136546901c0a733b033e06cd8599cb48e62dbb165910ea57e544670d0`. Beacon chỉ đọc được tới hết epoch 318 — sau đó mọi lượt Sinh trả `max_m = 0` cho tới lượt ghi mới.
+- **Sinh 30 MAGIC trong CÙNG epoch 317** với lượt đăng beacon ρ (luật khởi tạo hiệu lực ngay, SPEC v2.4.4 §6.1.4): `aff41b434b44a7d607c4bff1d394962d567ce78eb579b2b504350fbb03f2de07`.
+- **Tiêu** op 1 × 1 (đốt 0,01 MAGIC) qua `consume` Instant: `b4d1187d15682b30bff08099cca09a259977d4ebca00b962cf55bc1e4c5a9fca`.
+
+Hai lượt trên dựng qua VaultTxAPI với chủ là KHOÁ ví deploy, không phải chủ DID. Chủ DID
+(`{type:"did"}`) cần khối cấu hình có `did_stake.unapplied_script`; khối của cụm này chưa có.
+
+Những gì mục này **KHÔNG** khai:
+- **Khoá oracle là TẠM.** `rate_key` của beacon ρ và người ghi beacon GreenBack đang là ví
+  deploy (dòng *"Ví deploy"* ở mục Preview). Chỉ hợp lệ trên mạng thử; mainnet phải dùng khoá
+  riêng.
+- **Không deploy UM.** Gen v2.0 không đọc UM.
+- **Chưa có két Prepaid** trên cụm này.
 
 ---
 
@@ -1134,7 +1184,7 @@ hai với bảng trên. Vế này chỉ chứng minh script trên chuỗi là sc
    beacon mới (NFT one-shot mới), deploy lại `consume`, công bố lại ref-script CIP-33, cập
    nhật cấu hình mọi bên tiêu thụ (gồm `KEEPER_PRICE_BEACONS`). Đừng ghim hash
    `d52c4aa9…`/`2885109f…` của mục này vào cấu hình dài hạn.
-2. **tLAMP policy `8169b76c…` ĐÃ ĐỔI (2026-09-26 → `53bc12ad…8743`; 2026-10-03 → policy CUỐI `493002cc…cfac`, genesis chưa gửi — mục "Preprod — policy tLAMP CUỐI, 2026-10-03")** — xem mục "Preprod — đời tLAMP
+2. **tLAMP policy `8169b76c…` ĐÃ ĐỔI (2026-09-26 → `53bc12ad…8743`; 2026-10-03 → policy CUỐI `493002cc…cfac`, genesis đã lên chuỗi, đo 2026-10-04 — mục "Preprod — policy tLAMP CUỐI, 2026-10-03")** — xem mục "Preprod — đời tLAMP
    THẬT, 2026-09-16" phía trên, khối ⚠ cập nhật 2026-09-22: kho LAMP đã đóng băng ba
    validator Distribution để đúc genesis mới, `lampPid` sẽ đổi theo. Toàn bộ cụm ở mục này
    (vault, consume, beacon) apply-param bằng policy `8169b76c…`. Hai lần đổi này có lịch

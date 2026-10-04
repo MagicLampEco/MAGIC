@@ -62,6 +62,8 @@ const RAISE = 672_360n;
 const THREAD_UNIT = ENGAGE_SCRIPT_HASH + "c0ffee";
 const THREAD_TX = "7e".repeat(32);
 const UNBOUND = threadUtxo(KEY_OWNER, THREAD_TX, 0, "01");
+/** Thread chưa gắn DID của chủ SCRIPT (did_stake) — tx hash khác để hai thread cùng phân giải được. */
+const UNBOUND_SCRIPT = threadUtxo(SCRIPT_OWNER, "7f".repeat(32), 0, "01");
 const DID = "d1".repeat(32);
 
 function deploymentJson(vaultType: "Schedule" | "Instant", extra: Record<string, unknown> = {}): string {
@@ -133,13 +135,14 @@ function openTx(o: { ownerInput?: boolean; owner?: OwnerRef } = {}): string {
 }
 
 /** bind-did qua ví trả phí: thread giữ nguyên value, ví chỉ mất phí. */
-function bindTx(o: { ownerInput?: boolean } = {}): string {
+function bindTx(o: { ownerInput?: boolean; owner?: OwnerRef } = {}): string {
   const fee = 190_000n;
+  const thread = o.owner === undefined ? UNBOUND : UNBOUND_SCRIPT;
   return buildTxCbor({
-    ...feeLegs([ref(UNBOUND), ref(FEE_UTXO), ...(o.ownerInput ? [ref(OWNER_UTXO)] : [])]),
+    ...feeLegs([ref(thread), ref(FEE_UTXO), ...(o.ownerInput ? [ref(OWNER_UTXO)] : [])]),
     feeLovelace: fee,
     outputs: [
-      { address: ENGAGE_ADDRESS, assets: { ...UNBOUND.assets }, inlineDatumHex: engageDatumHex(KEY_OWNER, { didCommit: DID }) },
+      { address: ENGAGE_ADDRESS, assets: { ...thread.assets }, inlineDatumHex: engageDatumHex(o.owner ?? KEY_OWNER, { didCommit: DID }) },
       { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee } },
       ...ownerLeg(o.ownerInput === true),
     ],
@@ -151,7 +154,7 @@ function bindTx(o: { ownerInput?: boolean } = {}): string {
 
 const NEW_VAULT_LOVELACE = 2_400_000n;
 /** create-vault két instant 0 LAMP qua ví trả phí: ví ứng trọn lovelace output két mới. */
-function createTx(o: { ownerInput?: boolean } = {}): string {
+function createTx(o: { ownerInput?: boolean; owner?: OwnerRef } = {}): string {
   const fee = 190_000n;
   return buildTxCbor({
     ...feeLegs([ref(FEE_UTXO), ...(o.ownerInput ? [ref(OWNER_UTXO)] : [])]),
@@ -162,7 +165,7 @@ function createTx(o: { ownerInput?: boolean } = {}): string {
         address: VAULT_ADDRESS,
         assets: { lovelace: NEW_VAULT_LOVELACE, [VAULT_ID_UNIT]: 1n },
         inlineDatumHex: datumHex({
-          owner: KEY_OWNER, lampBalanceOildrop: 0n, lampLockedOildrop: 0n, instantUnlockMs: 0n, wakemeLink: DID,
+          owner: o.owner ?? KEY_OWNER, lampBalanceOildrop: 0n, lampLockedOildrop: 0n, instantUnlockMs: 0n, wakemeLink: DID,
         }),
       },
       { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee - NEW_VAULT_LOVELACE } },
@@ -204,7 +207,7 @@ function harness(o: {
       [OWNER_WALLET]: [],
     },
     TIP,
-    [VAULT_UTXO, FEE_UTXO, OWNER_UTXO, UNBOUND],
+    [VAULT_UTXO, FEE_UTXO, OWNER_UTXO, UNBOUND, UNBOUND_SCRIPT],
   );
   const builder = new RecordedTxBuilder(o.cbor, VAULT_ID_UNIT, THREAD_UNIT);
   const issued = new IssuedTxRegistry(TTL * 4);
@@ -303,6 +306,36 @@ describe("mục rút did_stake qua ví trả phí", () => {
     expect(one.locks.size()).toBe(0);
     const zero = harness({ cbor: { open_thread: openTx({ owner: SCRIPT_OWNER }) }, witness: new RewardWitness(0n) });
     const b = await handle(openScript(), zero.router);
+    expect(b.status, JSON.stringify(b.body)).toBe(200);
+  });
+
+  const bindScript = () => post("/tx/bind-did", {
+    owner: SCRIPT_OWNER, owner_witness: WITNESS_BODY, did_commit: DID, fee_payer: FEE_PAYER,
+  });
+  it("bind-did chủ script, rút 1 lovelace ⟹ 422 trước khi dựng; CẶP: rút 0 ⟹ 200", async () => {
+    const one = harness({ cbor: { bind_did: bindTx({ owner: SCRIPT_OWNER }) }, threads: [UNBOUND_SCRIPT], witness: new RewardWitness(1n) });
+    const a = await handle(bindScript(), one.router);
+    expect(a.status, JSON.stringify(a.body)).toBe(422);
+    expect(codeOf(a)).toBe("FEE_PAYER_OWNER_REWARD_NONZERO");
+    expect(one.builder.lastCall).toBeNull();
+    expect(one.locks.size()).toBe(0);
+    const zero = harness({ cbor: { bind_did: bindTx({ owner: SCRIPT_OWNER }) }, threads: [UNBOUND_SCRIPT], witness: new RewardWitness(0n) });
+    const b = await handle(bindScript(), zero.router);
+    expect(b.status, JSON.stringify(b.body)).toBe(200);
+  });
+
+  const createScript = () => post("/tx/create-vault", {
+    kind: "instant", owner: SCRIPT_OWNER, owner_witness: WITNESS_BODY, lamp_amount: "0", did_commit: DID, fee_payer: FEE_PAYER,
+  });
+  it("create-vault chủ script, rút 1 lovelace ⟹ 422 trước khi dựng; CẶP: rút 0 ⟹ 200", async () => {
+    const one = harness({ vaultType: "Instant", vaults: [], cbor: { create_vault: createTx({ owner: SCRIPT_OWNER }) }, witness: new RewardWitness(1n) });
+    const a = await handle(createScript(), one.router);
+    expect(a.status, JSON.stringify(a.body)).toBe(422);
+    expect(codeOf(a)).toBe("FEE_PAYER_OWNER_REWARD_NONZERO");
+    expect(one.builder.lastCall).toBeNull();
+    expect(one.locks.size()).toBe(0);
+    const zero = harness({ vaultType: "Instant", vaults: [], cbor: { create_vault: createTx({ owner: SCRIPT_OWNER }) }, witness: new RewardWitness(0n) });
+    const b = await handle(createScript(), zero.router);
     expect(b.status, JSON.stringify(b.body)).toBe(200);
   });
 });

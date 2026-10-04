@@ -18,6 +18,25 @@ còn thay luôn tx dựng sau lượt nộp đầu của A — lượt kế ti�
 **Cái gì gãy nếu bám bản cũ.** Không đường nào đổi hình dạng thành công. Bên gọi đang suy "409
 `TX_SUPERSEDED` ⟹ tx chưa lên chuỗi" thì suy sai ở cả bản cũ lẫn bản mới — tra chuỗi theo `tx_hash`.
 
+## 2026-10-04 — Cụm Preprod đời 2 theo két Wakeme v5; ví trả phí ứng min-ADA cho shard `gb_shard`
+
+**Đổi gì.**
+- `ProtocolUtils/src/index.ts` ▸ `WAKEME_VAULT_HASH_BY_NETWORK.Preprod` = `118d5352…` (két Wakeme v5),
+  thay `4da780c4…` (v4). Cụm Preprod dựng lại trọn, giá trị ở `scripts/DEPLOYED.md`.
+- `VaultTxAPI/src/feePayer.ts` ▸ `checkFeePayerTx` nhận thêm `sharedFrontings`: ví trả phí được ứng
+  phần min-ADA TĂNG của output shard `gb_shard` được tiêu rồi dựng lại, mỗi output ≤
+  `fee_payer_fronting_max_lovelace`. Summary thêm `shared_fronted_lovelace` + `shared_fronted_outputs`;
+  `fronted_lovelace` nay là TỔNG (két/thread + shard).
+
+**Vì sao.** Két Instant đọc két Wakeme theo apply-param #8, nên người dùng nhận LAMP ở két v5 chỉ sinh
+được trên két Instant nướng hash v5; sổ `vault_registry` một-lần kéo theo cả cụm. Lượt sinh đầu trên một
+shard làm datum shard dài ra, đòi thêm 73.270 lovelace; bản cũ của cổng chỉ cho ứng ở output két/thread
+của chủ, nên mọi lượt sinh qua ví trả phí trên shard mới trả 422 `FEE_PAYER_TX_MISMATCH`.
+
+**Cái gì gãy nếu bám bản cũ.** Mọi hash cụm Preprod đời 1 (két `ec25a91c…`, `consume` `bb26d9d5…`) không
+còn được phục vụ. Bên đối chiếu `fronted_lovelace` với phần tăng của riêng két sẽ thấy lệch đúng bằng
+`shared_fronted_lovelace`.
+
 ## 2026-10-04 — Người dùng 0 ADA đi trọn đường bằng ví trả phí: ứng min-ADA có trần, mở thread, gắn DID, tạo két instant 0 LAMP
 
 **Đổi gì.**

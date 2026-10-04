@@ -237,6 +237,11 @@ export interface FeePayerSummary {
   fronted_max_lovelace: string;
   /** Chỉ số output nhận khoản ứng; `null` khi đường dựng không chỉ định output nào. */
   fronted_output_index: number | null;
+  /** Phần min-ADA ví trả phí ứng cho output DÙNG CHUNG (shard GreenBack) — đã gồm trong
+   *  `fronted_lovelace`. `"0"` khi không có. */
+  shared_fronted_lovelace: string;
+  /** Từng output dùng chung được ứng: chỉ số output + số lovelace ứng. */
+  shared_fronted_outputs: { output_index: number; lovelace: string }[];
   /** `Σ collateral_inputs − collateral_return` — thứ bên trả phí có thể mất nếu script hỏng. */
   collateral_at_risk_lovelace: string;
   collateral_return_lovelace: string | null;
@@ -255,6 +260,19 @@ export interface FeePayerFronting {
   maxLovelace: bigint;
 }
 
+/**
+ * UTxO DÙNG CHUNG của luồng (shard GreenBack) được nhận khoản ứng min-ADA. Nhánh sinh tiêu một
+ * shard rồi dựng lại nó với datum dài hơn, nên min-ADA của shard có thể TĂNG — và trên đường
+ * chủ tự trả, chính chủ trả phần tăng đó. Qua ví trả phí, người dùng 0 ADA không trả được, nên
+ * ví trả phí ứng — nhưng chỉ cho output mang token của `policyId`, ở đúng `address`, mà input
+ * mang CÙNG token đó cũng ở `address` (shard dựng lại, không phải shard mới). Mỗi output ≤ trần.
+ */
+export interface FeePayerSharedFronting {
+  address: string;
+  policyId: string;
+  maxLovelace: bigint;
+}
+
 export interface FeePayerCheckContext {
   network: Network;
   tipPosixMs: bigint;
@@ -265,6 +283,8 @@ export interface FeePayerCheckContext {
   otherInputs: UTxO[];
   /** Output được nhận khoản ứng; vắng ⟹ ví trả phí chỉ được mất đúng bằng phí. */
   fronting?: FeePayerFronting;
+  /** Output dùng chung được nhận khoản ứng (shard GreenBack); vắng ⟹ không ứng cho output nào khác két/thread. */
+  sharedFrontings?: readonly FeePayerSharedFronting[];
   /** Tập ĐÓNG địa chỉ mà input khác UTxO trả phí được phép nằm. Vắng ⟹ không ép (đường dựng
    *  tiêu nhiều UTxO script của luồng). `[]` ⟹ UTxO trả phí là input DUY NHẤT. */
   otherInputAddresses?: readonly string[];
@@ -334,6 +354,50 @@ function frontingOf(
       { fronted_lovelace: raw(fronted), fronted_max_lovelace: raw(f.maxLovelace), output_index: out.index });
   }
   return { fronted, outputIndex: out.index };
+}
+
+/**
+ * Khoản ứng min-ADA cho output dùng chung (`ctx.sharedFrontings`). Với mỗi output ở `address`
+ * mang token của `policyId`: phải có ĐÚNG MỘT input ở cùng địa chỉ mang cùng token (shard được
+ * tiêu rồi dựng lại); khoản ứng = `max(0, lovelace(out) − lovelace(in))`, ≤ `maxLovelace`.
+ */
+function sharedFrontingOf(
+  body: CML.TransactionBody, ctx: FeePayerCheckContext, resolved: Map<string, UTxO>, fail: Fail,
+): { total: bigint; outputs: { output_index: number; lovelace: string }[] } {
+  const list = ctx.sharedFrontings ?? [];
+  if (list.length === 0) return { total: 0n, outputs: [] };
+  const ins = [...resolved.values()];
+  const ol = body.outputs();
+  let total = 0n;
+  const outputs: { output_index: number; lovelace: string }[] = [];
+  for (let i = 0; i < ol.len(); i++) {
+    const o = ol.get(i);
+    const addr = o.address().to_bech32(undefined);
+    const sf = list.find(s => s.address === addr);
+    if (sf === undefined) continue;
+    const a = valueToAssets(o.amount());
+    const units = Object.keys(a).filter(u => u !== "lovelace" && u.startsWith(sf.policyId) && a[u] === 1n);
+    if (units.length !== 1) continue;
+    const unit = units[0]!;
+    const src = ins.filter(u => u.address === addr && (u.assets[unit] ?? 0n) === 1n);
+    if (src.length !== 1) {
+      throw fail(`output #${i} mang ${unit.slice(0, 16)}… ở địa chỉ dùng chung nhưng có ${src.length} input mang cùng token — ` +
+        `chỉ ứng min-ADA cho output dùng chung được tiêu rồi dựng lại`, { output_index: i });
+    }
+    const base = src[0]!.assets.lovelace ?? 0n;
+    const out = a.lovelace ?? 0n;
+    const fronted = out > base ? out - base : 0n;
+    if (fronted === 0n) continue;
+    if (fronted > sf.maxLovelace) {
+      throw new CodedApiError(422, "FEE_PAYER_FRONTING_ABOVE_MAX",
+        `Ví trả phí phải ứng ${fronted} lovelace min-ADA cho output dùng chung #${i}, vượt trần ${sf.maxLovelace} ` +
+        `(fee_payer_fronting_max_lovelace). Bên trả phí chỉ ứng tới trần đó.`,
+        { fronted_lovelace: raw(fronted), fronted_max_lovelace: raw(sf.maxLovelace), output_index: i });
+    }
+    total += fronted;
+    outputs.push({ output_index: i, lovelace: raw(fronted) });
+  }
+  return { total, outputs };
 }
 
 /** Lượng đúc (âm = đốt) của `unit` trong thân giao dịch. */
@@ -408,7 +472,9 @@ export function checkFeePayerTx(txCbor: string, ctx: FeePayerCheckContext): FeeP
       throw fail(`output #${i} về ${addr}: cùng khoá với ví trả phí nhưng KHÔNG phải fee_payer.address`, { output_index: i });
     }
   }
-  const { fronted, outputIndex: frontedIndex } = frontingOf(body, ctx, frontedOuts, resolved, fail);
+  const { fronted: ownFronted, outputIndex: frontedIndex } = frontingOf(body, ctx, frontedOuts, resolved, fail);
+  const shared = sharedFrontingOf(body, ctx, resolved, fail);
+  const fronted = ownFronted + shared.total;
 
   // (4) ví trả phí mất ròng ĐÚNG bằng phí + khoản ứng.
   const fee = body.fee();
@@ -442,6 +508,8 @@ export function checkFeePayerTx(txCbor: string, ctx: FeePayerCheckContext): FeeP
     fronted_lovelace: raw(fronted),
     fronted_max_lovelace: raw(ctx.fronting?.maxLovelace ?? 0n),
     fronted_output_index: frontedIndex,
+    shared_fronted_lovelace: raw(shared.total),
+    shared_fronted_outputs: shared.outputs,
     collateral_at_risk_lovelace: raw(atRisk),
     collateral_return_lovelace: collateralReturn === null ? null : raw(collateralReturn),
     valid_to_posix_ms: raw(validTo),

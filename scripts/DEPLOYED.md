@@ -664,7 +664,48 @@ ngoài `node_modules` rỗng; `ConsumeMAGIC/onchain/validators/consume.ak` khôn
 
 ---
 
-## Preprod — 2026-10-04 · cụm phục vụ người dùng trên tLAMP `493002cc…`
+## Preprod — 2026-10-04 · cụm phục vụ ĐỜI 2 (két Wakeme v5) trên tLAMP `493002cc…`
+
+Dựng lại TRỌN cụm vì két Wakeme lên v5 (`src_add_delay_periods` W = 0 trên Preprod). Hash két
+Wakeme là apply-param #8 của két Instant, và sổ `vault_registry` một-lần chứa hash hai két, nên
+không thay riêng két Instant được: sổ → `gb_shard` → hai két → hai `consume` → GreenBack đều mới.
+Dựng từ `origin/main` @ `200ea694` cộng hằng `WAKEME_VAULT_HASH_BY_NETWORK.Preprod` = v5. Thay
+cho cụm đời 1 ngay dưới (đời 1 vẫn sống trên chuỗi, không còn được phục vụ). **Bản sao có nhãn**,
+chép 2026-10-04; nguồn chân lý là chuỗi.
+
+| thành phần | giá trị |
+|---|---|
+| tLAMP | `493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac` / `744c414d50` |
+| anchor DID (`taad`) | `e97ace3451c5ce54063fdc3f379112c335c39f0379ad6a2766ed6a4c` (không đổi) |
+| két Wakeme (apply-param #8) | `118d53524fe2cc2e5c01fcbbf002e0c631478b879b1b4690db04154f` (v5) |
+| `rate_param` (beacon ρ) | `f21c0dd514486e11a8ce11dffc97a8ac235d801878db9ae4e90276dc` |
+| `greenback_beacon` | `c866b6d017ffe5e9d5877cb0e005601fdc20cf9a79b6655d6c0e1159` |
+| `gb_shard` | `8e4ccc96d5a0c877be4619b9309b24925ac1bf474fc0a72a3014e17c` |
+| shard ScheduleGen | `4bb1000f5e25b7217379237c27f1b175fa9a29e7e370f305750222bb` |
+| két Instant | `cfae730e13360ed817bab7be4318af73c05abeb9cb328d04bcd3fb84` · `addr_test1wr86uucwzvmqakqhh2mmuscc4aeuqk47h89n9rgyhnflhpq4yscze` |
+| két Schedule | `9cc5f674f0f54e237aec5c5bc9e9fe2f1b509d89a98439c04829b681` · `addr_test1wzwvtan57r65ugm6a3w9hj0flch3k5ya3x5cgwwqfq5mdqgrwtt4s` |
+| stake `commit` | `a2298eee4648f3cf7c3852b63a073d24081abe266741d01836fe4666` |
+| `consume` cho két Instant | `9d5ec3883c14da3405c3919a5e5e2704bc61a4588e342b02438c88c1` · `addr_test1wzw4asug8s2d5dq9cwge5hj7yuztccdytz8rg2czgwxg3sgyfdrzf` |
+| `consume` cho két Schedule | `55eaf6724104d7fabcb9ed32146b17f071316152474bbf4db3337fa8` · `addr_test1wp274anjgyzd074uh8kny9rtzlc8zvtp2fr5h06dkvehl2q0d46rs` |
+| `vault_registry` | `0b8a8e2204e1e8617835e8a45086b1f483c5919c947d12652324e2c5` |
+
+Ref-script CIP-33: két Instant `8f4b208971935d144cb8d02adbbe062d63ed003b5f64dd819f72047ea9fd423c#0` ·
+két Schedule `401c5e2219a5611a7e05dc4a500fa04bad62094d8861b4d2b2075258ee8c9a9b#0` · shard
+`db7678389e8660d623b625511f7bfd058ed0fb9d7e3b808103e870822d5eb2ca#0` · `commit`
+`8915ac7433d64bc9f523b997ee1675395c5974cb75acd5f55249b56a9fef7823#0` · `gb_shard`
+`5b7851d2986fd8c008690b9c1cb213283bfb398a5a55b5df8d4bb1bf1d30a3ac#0` · `consume` Instant
+`eb32a3c989e0c3af92be9970e0394c3bb39e33f5603819a291face9a889781f3#0` · `consume` Schedule
+`b11307a12e8c179bfce309e6dade6ddff4c497ea439936941f48d73ddd2fb357#0`.
+
+Tx đáng giữ:
+- beacon ρ + beacon GreenBack + 16 shard `gb_shard`, epoch 317: `1edf5878b26a5a8cf535fa30cc46c1687273f0898ec5f54f9ec3b2de2544cad9`.
+- GreenBack `GB` = 10¹⁵ nanogic, seq 1, epoch 317: `fbbaa27693f435403ed428bec7f056004447e264c7c506107f1e6f1f0602a844`. Đọc được tới hết epoch 318.
+- **Sinh qua ví trả phí** (chủ = ví vận hành, ví trả phí = ví vận hành khác), 0,3 MAGIC; ví trả phí ứng 517.040 lovelace min-ADA cho két và 73.270 cho shard `gb_shard` (datum shard dài ra ở lượt sinh đầu): `cd089778d3263b457c51df984283243c29467c1802f45722b2edfaecf61f112d`.
+- **Tiêu** op 1 × 1 qua ví trả phí: `69e5c923e9f3ba850679aeaff5585958aee3ef9a1e9731a571e781f10e2617ae`.
+
+---
+
+## Preprod — 2026-10-04 · cụm phục vụ ĐỜI 1 trên tLAMP `493002cc…` · ĐÃ BỊ THAY bởi đời 2 ngay trên
 
 Cụm Gen v2.0 dựng MỘT lần trên policy cuối, từ `main` @ `288ba4c6` (PR #138). Thay cho cụm
 tập dượt `8169b76c…`. **Bản sao có nhãn**, chép 2026-10-04; nguồn chân lý là chuỗi.

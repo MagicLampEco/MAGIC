@@ -660,6 +660,14 @@ Khoản ứng vượt trần ⟹ `422 FEE_PAYER_FRONTING_ABOVE_MAX` (`details.fr
 ghi khoản đã ứng. Khoản ứng nằm lại trong output của chủ, không về ví trả phí: thread không có
 nhánh nào nâng value sau khi mở, và két instant không có nhánh đóng.
 
+**Ngoại lệ thứ hai, chỉ ở các đường két: shard `gb_shard` dùng chung.** Nhánh sinh tiêu một shard
+GreenBack rồi dựng lại nó; lượt sinh đầu trên một shard làm datum dài ra và đòi thêm min-ADA (đo
+2026-10-04 trên Preprod: 73.270 lovelace). Trên đường chủ tự trả thì chủ trả phần đó, nên qua ví trả
+phí thì ví trả phí ứng — chỉ cho output ở `gen_v2.gb_shard_address` mang đúng một NFT shard mà input
+mang cùng NFT cũng ở đó (shard dựng lại, không phải output mới), mỗi output ≤ cùng trần trên.
+`summary.fee_payer.shared_fronted_lovelace` + `shared_fronted_outputs` tách riêng phần này;
+`fronted_lovelace` là tổng. Khoản ứng nằm lại trong shard, là chi phí vĩnh viễn của bên trả phí.
+
 Số đo min-ADA (CML `min_ada_required`, `coinsPerUtxoByte` 4310; địa chỉ script không stake /
 có stake), để chọn trần:
 

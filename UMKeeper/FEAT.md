@@ -34,7 +34,7 @@ UMKeeper duy trì giá trị **UM (Network Demand Multiplier)** — tham số Co
 | Actor | Vai trò |
 |---|---|
 | **Keeper** | Tác nhân BẤT KỲ (permissionless), submit UMUpdate tx mỗi epoch. Thường là bot chạy tự động (`keeper.ts`) nhưng không có đặc quyền — user nào cũng trigger được. Không cần chữ ký whitelist. |
-| **Protocol Deployer** | Khởi tạo UM datum UTxO với `smoothed_q = Q = 1.0×`, `history = []`, `last_updated_epoch = genesisEpoch`. Bake `ms_per_epoch`, `um_policy`, `um_name` vào tham số validator (KHÔNG còn keepers/threshold). |
+| **Protocol Deployer** | Khởi tạo UM datum UTxO với `smoothed_q = Q = 1.0×`, `history = []`, `last_updated_epoch = genesisEpoch`. Bake `ms_per_epoch`, `um_policy`, `um_name`, `window_origin_ms` (theo thứ tự này) vào tham số validator (KHÔNG còn keepers/threshold). |
 | **InstantGen user** | Đọc UM datum (reference input hoặc UTxO lookup) trước khi submit Instant purchase — để biết rate hiện tại. Không interact trực tiếp với UMKeeper validator. Cũng có thể tự trigger UMUpdate (permissionless) nếu rate stale. |
 | **IndexerOperator** | Cung cấp `getEpochStats()` (burns/mints epoch trước) cho người trigger. Testnet v1: stub neutral. Production: query từ `MagicSupplyShard` UTxOs hoặc Blockfrost tx history. |
 
@@ -48,7 +48,7 @@ UMKeeper duy trì giá trị **UM (Network Demand Multiplier)** — tham số Co
 Keeper bot (mỗi intervalMs = 60s):
   1. Fetch UM UTxO (by NFT unit `umUtxoUnit`)
   2. Parse UMDatum: smoothed_q, last_updated_epoch, history
-  3. Fetch tip slot → tính currentEpoch = ⌊tipPosixMs / msPerEpoch⌋
+  3. Fetch tip slot → tính currentEpoch = posixMsToEpoch(tipPosixMs, network) = ⌊(tipPosixMs − windowOriginMs) / msPerEpoch⌋
   4. Kiểm tra: currentEpoch > last_updated_epoch? (C-UM-4)
      - Không → bỏ qua, đợi tick tiếp
      - Có → tiếp tục
@@ -59,7 +59,7 @@ Keeper bot (mỗi intervalMs = 60s):
   9. Build tx:
      - Input: UM UTxO (redeemer UMUpdate { new_raw: newRaw })
      - Output: UM UTxO cùng địa chỉ, value giữ nguyên, datum mới
-     - Validity range: [currentEpoch × msPerEpoch, (currentEpoch+1) × msPerEpoch - 1]
+     - Validity range: epochValidityWindow(tipMs, network) — cả hai biên trong cùng một epoch giao thức
      - extra_signatories: KHÔNG cần keeper ký (permissionless; wallet người trigger vẫn ký để chi phí collateral/fee qua balancer)
   10. Sign + Submit → txHash
   11. Emit onUpdate callback

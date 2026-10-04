@@ -125,8 +125,8 @@ redeemer `BurnBatch` qua `un_constr_data` với `burn_batch_constr` per-vault. V
 
 | Script | Vai | Tham số |
 |---|---|---|
-| `paid_fund` (spend **+ mint**) | giữ CARP khoá + sổ quỹ; quyết toán (`FundSettle`) và trả provider (`FundClaim`); đồng thời là policy của NFT định danh quỹ (`asset_name = blake2b_256(tx_id ∥ be8(idx))` của một input bị tiêu → không trùng, không đúc lại được; policy id = chính script hash) | `carp_policy_id`, `carp_asset_name`, `ms_per_epoch` |
-| `prepaid_vault` (spend **+ mint**) | hạn-mức + `magic_batches` của một người dùng; đồng thời là policy của NFT định danh vault (`asset_name = blake2b_256(cbor.serialise(seed))`, policy id = chính script hash — tự tham chiếu, không tham số, không vòng) | `carp_policy_id`, `carp_asset_name`, `paid_fund_hash`, `ms_per_epoch` |
+| `paid_fund` (spend **+ mint**) | giữ CARP khoá + sổ quỹ; quyết toán (`FundSettle`) và trả provider (`FundClaim`); đồng thời là policy của NFT định danh quỹ (`asset_name = blake2b_256(tx_id ∥ be8(idx))` của một input bị tiêu → không trùng, không đúc lại được; policy id = chính script hash) | `carp_policy_id`, `carp_asset_name`, `ms_per_epoch`, `window_origin_ms` |
+| `prepaid_vault` (spend **+ mint**) | hạn-mức + `magic_batches` của một người dùng; đồng thời là policy của NFT định danh vault (`asset_name = blake2b_256(cbor.serialise(seed))`, policy id = chính script hash — tự tham chiếu, không tham số, không vòng) | `carp_policy_id`, `carp_asset_name`, `paid_fund_hash`, `ms_per_epoch`, `window_origin_ms` |
 
 > **`fund_nft` đã bị GỘP vào `paid_fund` ngày 2026-09-15 và tệp `validators/fund_nft.ak` đã
 > xoá.** Đó không phải một lần dọn dẹp — nó là bản vá cho một lỗ rút được sạch quỹ. Một minting
@@ -215,7 +215,7 @@ redeemer `BurnBatch` qua `un_constr_data` với `burn_batch_constr` per-vault. V
 > input sống được là nhờ kết quả của nó được dùng ở phía output; đừng đọc con số 11 thành "chốt
 > này canh 11 bài".
 
-**Thứ tự deploy (không có vòng tham chiếu):** `paid_fund` (chỉ phụ thuộc CARP + `ms_per_epoch`) →
+**Thứ tự deploy (không có vòng tham chiếu):** `paid_fund` (chỉ phụ thuộc CARP + `ms_per_epoch` + `window_origin_ms`) →
 `prepaid_vault` (nhận `paid_fund_hash`).
 
 Chiều ngược (quỹ cần biết vault) **không** đi qua tham số biên dịch — nếu đi thì thành vòng

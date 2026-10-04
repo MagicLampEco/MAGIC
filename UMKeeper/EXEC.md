@@ -8,7 +8,7 @@
 ### Bước 1 — Build Aiken validator
 
 ```bash
-cd /Users/ductiger/Projects/MAGIC/UMKeeper/onchain
+cd <gốc kho>/UMKeeper/onchain
 aiken build
 # Tạo ra: onchain/plutus.json
 # Lấy un-applied CBOR từ: plutus.json → validators[0].compiledCode
@@ -25,13 +25,14 @@ Trong `scripts/` (hoặc script riêng):
 ```typescript
 import { applyParamsToScript, validatorToScriptHash } from "@lucid-evolution/lucid";
 
-const msPerEpoch  = 86_400_000;  // Preview testnet
+const msPerEpoch  = 432_000_000n;          // THEO MẠNG: Preview 86_400_000 · Preprod/Mainnet 432_000_000 (MS_PER_EPOCH_BY_NETWORK)
 const umPolicy    = process.env.UM_NFT_POLICY_ID!;
-const umName      = "554d44";    // "UMD" hex
+const umName      = "554d44";              // "UMD" hex
+const windowOriginMs = 1_654_041_600_000n; // THEO MẠNG, tham số CUỐI (WINDOW_ORIGIN_MS_BY_NETWORK); Preview chưa có gốc
 
 // Permissionless — KHÔNG còn keepers/threshold.
 const appliedScript = applyParamsToScript(UM_VALIDATOR_CBOR, [
-  msPerEpoch, umPolicy, umName
+  msPerEpoch, umPolicy, umName, windowOriginMs
 ]);
 const scriptHash = validatorToScriptHash({ type: "PlutusV3", script: appliedScript });
 ```
@@ -44,7 +45,7 @@ UM_APPLIED_CBOR=<appliedScript>
 
 ### Bước 3 — Mint UM authority NFT
 
-Dùng one-shot minting policy (tham khảo `scripts/deploy/02_deploy_um_nft.ts` khi có). NFT phải là unique — policy ID + asset name `554d44`.
+Dùng one-shot minting policy (tham khảo `scripts/deploy/02_deploy_um.ts` khi có). NFT phải là unique — policy ID + asset name `554d44`.
 
 ```
 UM_NFT_POLICY_ID=<policyId>
@@ -73,7 +74,7 @@ await lucid.newTx()
 ### Bước 5 — Start keeper process
 
 ```bash
-cd /Users/ductiger/Projects/MAGIC/UMKeeper/offchain
+cd <gốc kho>/UMKeeper/offchain
 npm install
 
 # .env trong UMKeeper/offchain:
@@ -115,7 +116,7 @@ UMKeeper deploy PHẢI trước:
 
 **P1 — Aiken test: happy path permissionless (KHÔNG cần chữ ký)**
 ```bash
-cd /Users/ductiger/Projects/MAGIC/UMKeeper/onchain
+cd <gốc kho>/UMKeeper/onchain
 aiken check
 # Test: um_happy_path — extra_signatories = []
 # Expected: PASS
@@ -124,7 +125,7 @@ aiken check
 
 **P2 — TypeScript: neutral epoch giữ smoothed ổn định**
 ```bash
-cd /Users/ductiger/Projects/MAGIC/UMKeeper/offchain
+cd <gốc kho>/UMKeeper/offchain
 npm test -- --reporter=verbose
 # Test: "computeNewUM / Neutral epoch (burns=mints) → smoothed converges"
 # (tests/um.test.ts:86-97)
@@ -198,11 +199,11 @@ Lưu ý: KHÔNG còn test auth (um_unauthorized/um_stranger_signer) vì permissi
 
 ```bash
 # Aiken (on-chain). Số checks: xem DevStatus.md. KHÔNG còn test auth.
-cd /Users/ductiger/Projects/MAGIC/UMKeeper/onchain
+cd <gốc kho>/UMKeeper/onchain
 aiken check
 
 # TypeScript (off-chain). Số ca: xem DevStatus.md.
-cd /Users/ductiger/Projects/MAGIC/UMKeeper/offchain
+cd <gốc kho>/UMKeeper/offchain
 npm install && npm test
 
 # Kỳ vọng cứng: cả hai 0 lỗi. Số ca cụ thể chỉ ghi ở DevStatus.md.

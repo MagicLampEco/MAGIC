@@ -1,7 +1,7 @@
 # FEAT.md — ScheduleGen Feature Specification
 ## GenMAGIC v3.3 · §11 ScheduleGen · Cardano Preview Testnet
 
-> ⚠ **PHA 2 — I-ACT-7: LAMP ĐỨNG YÊN.** `ScheduleFire` chỉ **giải phóng khoá**:
+> ⚠ **DESIGN-2 — I-ACT-7: LAMP ĐỨNG YÊN.** `ScheduleFire` chỉ **giải phóng khoá**:
 > `lamp_balance` và LAMP thật trong vault UTxO bất biến qua một fire; `lamp_locked` giảm
 > `fires × λ`, holding tương ứng lật `is_locked = False`. **Không có Treasury** trong luồng
 > này — apply-param `treasury_addr` đã xoá, không handler nào chuyển LAMP nữa. Off-chain

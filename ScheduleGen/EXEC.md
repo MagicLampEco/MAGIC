@@ -1,10 +1,10 @@
 # EXEC.md — ScheduleGen Execution Guide
 ## GenMAGIC v3.3 · §11 ScheduleGen · Cardano Preview Testnet
 
-> ⚠ **PHA 2 — I-ACT-7: LAMP ĐỨNG YÊN.** `ScheduleFire` chỉ giải phóng khoá; `lamp_balance`
+> ⚠ **DESIGN-2 — I-ACT-7: LAMP ĐỨNG YÊN.** `ScheduleFire` chỉ giải phóng khoá; `lamp_balance`
 > bất biến, không có output Treasury, `TREASURY_ADDRESS` là biến môi trường chết.
-> Validator `vault` nhận **4** apply-param: `lamp_policy_id`, `lamp_asset_name`,
-> `shard_policy_id`, `ms_per_epoch`. Xem [`README.md`](./README.md).
+> Validator `vault` nhận **7** apply-param (thứ tự ở [`TECH.md`](./TECH.md) §2.1). Xem
+> [`README.md`](./README.md).
 
 ---
 
@@ -13,7 +13,7 @@
 ### Bước 1: Build Aiken validator
 
 ```bash
-cd /Users/ductiger/Projects/MAGIC/ScheduleGen/onchain
+cd <gốc kho>/ScheduleGen/onchain
 aiken build
 # → plutus.json với 2 validators: vault, shard
 ```
@@ -36,11 +36,13 @@ VAULT_SCRIPT_HASH=<từ plutus.json — vault validator>
 SHARD_SCRIPT_HASH=<từ plutus.json — shard validator>
 SHARD_NFT_POLICY_ID=<one-shot minting policy cho 16 SHARD NFTs>
 LAMP_ASSET_NAME=tLAMP    # THEO MẠNG: tLAMP testnet / LAMP mainnet
-MS_PER_EPOCH=86400000    # THEO MẠNG: Preview 86400000 / Preprod và Mainnet 432000000
+MS_PER_EPOCH=432000000   # THEO MẠNG: Preview 86400000 / Preprod và Mainnet 432000000
 ```
 
-Validator `vault` nhận **4** apply-param, đúng thứ tự: `lamp_policy_id`,
-`lamp_asset_name`, `shard_policy_id`, `ms_per_epoch`. `treasury_addr` **không còn** —
+Validator `vault` nhận **7** apply-param, đúng thứ tự: `lamp_policy_id`,
+`lamp_asset_name`, `shard_policy_id`, `ms_per_epoch`, `gb_shard_policy_id`,
+`commit_script_hash`, `window_origin_ms` (`commit` nhận 10; `scripts/deployParams.ts` ▸
+`scheduleScriptPair` dựng cả hai theo đúng thứ tự). `treasury_addr` **không còn** —
 một fire không chuyển LAMP đi đâu (I-ACT-7), nên `TREASURY_ADDRESS` là biến môi trường
 chết, đừng khai lại.
 
@@ -48,7 +50,7 @@ chết, đừng khai lại.
 > trong `onchain/plutus.json` do `aiken build` sinh. Trước khi apply, chạy cổng đối chiếu
 > tên + thứ tự:
 > ```bash
-> cd /Users/ductiger/Projects/MAGIC/scripts && npm run check:params
+> cd <gốc kho>/scripts && npm run check:params
 > ```
 > Vì sao bắt buộc: `applyParamsToScript` không kiểm arity. Bản tài liệu cũ ghi 4 tham số
 > với `TREASURY_ADDR` ở vị trí #2 — đếm đúng, nội dung sai, nên mọi kiểm "arity khớp" đều
@@ -88,7 +90,7 @@ curl "https://cardano-preview.blockfrost.io/api/v0/addresses/<shard_addr>/utxos"
 ### Bước 5: Chạy test offchain
 
 ```bash
-cd /Users/ductiger/Projects/MAGIC/ScheduleGen/offchain
+cd <gốc kho>/ScheduleGen/offchain
 npm install
 npm test
 # Expected: tất cả pass (TV-SCH-01..06 + CATCHUP + FIRE_PERM + T-DET + FIRE3 + BOUNDS)
@@ -97,7 +99,7 @@ npm test
 ### Bước 6: Test Commit + Fire flow
 
 ```bash
-cd /Users/ductiger/Projects/MAGIC/scripts
+cd <gốc kho>/scripts
 npm install
 npx tsx test/schedulegen_e2e.ts
 # Hoặc dùng e2e_flow.ts nếu đã tích hợp

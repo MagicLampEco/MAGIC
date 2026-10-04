@@ -63,9 +63,10 @@ const UMRedeemerSchema = Data.Enum([
 
 ```aiken
 validator um_datum_validator(
-  ms_per_epoch : Int,          // 86_400_000 (Preview) hoặc 432_000_000 (Mainnet)
+  ms_per_epoch : Int,          // 86_400_000 (Preview) · 432_000_000 (Preprod, Mainnet)
   um_policy    : PolicyId,     // policy ID của UM authority NFT
   um_name      : ByteArray,    // asset name của UM NFT (e.g. #"554d44" = "UMD")
+  window_origin_ms : Int,      // apply-param CUỐI: gốc lưới epoch theo mạng (POSIX ms)
 )
 ```
 
@@ -122,8 +123,8 @@ Mọi script purpose khác (mint, withdrawal, cert, vote) đều fail — valida
 │                           new_history }                     │
 │        value:   2 ADA + UM NFT  (UNCHANGED)                 │
 │                                                             │
-│  Validity range: [currentEpoch×msPerEpoch,                  │
-│                   (currentEpoch+1)×msPerEpoch - 1]          │
+│  Validity range: [tipMs, upper] — cả hai biên trong cùng    │
+│                   một epoch (epochValidityWindow)           │
 │                                                             │
 │  extra_signatories: (không bắt buộc — permissionless)       │
 │    chỉ wallet người trigger ký cho collateral/fee           │
@@ -139,22 +140,29 @@ Mọi script purpose khác (mint, withdrawal, cert, vote) đều fail — valida
 ## 5. Epoch derivation on-chain
 
 ```aiken
-// um_datum.ak:166-168
-fn get_epoch(tx: Transaction, ms_per_epoch: Int) -> Int {
-  expect Some(s) = tx.validity_range.lower_bound.bound_type |> get_finite
-  s / ms_per_epoch
+// um_datum.ak ▸ get_epoch (đọc hàm trong tệp, đừng tin bản trích này)
+fn get_epoch(tx: Transaction, ms_per_epoch: Int, window_origin_ms: Int) -> Int {
+  // cả lower và upper đều phải hữu hạn
+  let e_lo = (lower_ms - window_origin_ms) / ms_per_epoch
+  let e_hi = (upper_ms - window_origin_ms) / ms_per_epoch
+  expect e_lo == e_hi
+  e_lo
 }
 ```
 
-Keeper phải set `validFrom` = `currentEpoch × ms_per_epoch` để validator tính đúng epoch. Nếu `validFrom` lùi về epoch cũ → tx fail C-UM-4.
+Keeper phải đặt cửa sổ validity nằm trọn trong MỘT epoch giao thức để validator tính đúng epoch
+(dùng `epochValidityWindow`, đoạn TypeScript ngay dưới). Nếu cửa sổ bắc ngang biên epoch thì `expect e_lo == e_hi`
+fail; nếu epoch tính ra không lớn hơn `last_updated_epoch` → tx fail C-UM-4.
 
 Trong TypeScript (`keeper.ts:113-114`):
 ```typescript
-const lowerTime = Number(tipMs);
-const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
+const { lowerMs: lowerTime, upperMs: upperTime } = epochValidityWindow(tipMs, network);
 ```
 
-`tipMs` = POSIX ms của tip hiện tại (từ slot → posix conversion). `msPerEpoch(network)` từ `@magiclamp/protocol-utils`.
+`tipMs` = POSIX ms của tip hiện tại (từ slot → posix conversion). `epochValidityWindow` từ
+`@magiclamp/protocol-utils` (`ProtocolUtils/src/index.ts`): cận dưới là tip, cận trên là cái SỚM
+hơn trong slot cuối của epoch và `tip + VALIDITY_MAX_AHEAD_MS`; tính theo lưới có gốc
+`window_origin_ms`, không phải lưới Unix. Preview ném `WIN-PREVIEW` vì chưa có gốc.
 
 ---
 
@@ -164,7 +172,7 @@ const upperTime = Number((currentEpoch + 1n) * msPerEpoch(network) - 1n);
 Bước 1: aiken build → plutus.json
   Output: validator "um_datum_validator" → cbor bytes (un-applied)
 
-Bước 2: applyParamsToScript(cbor, [ms_per_epoch, um_policy, um_name])
+Bước 2: applyParamsToScript(cbor, [ms_per_epoch, um_policy, um_name, window_origin_ms])
   → applied script hash = UM_SCRIPT_HASH (lưu vào .env)
   (KHÔNG còn keepers/threshold — permissionless)
 

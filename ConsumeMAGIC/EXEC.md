@@ -6,11 +6,11 @@
 
 ## 1. Deploy steps (thứ tự bắt buộc)
 
-`consume.ak` parameterized bởi **7 field, ĐÚNG THỨ TỰ** (đổi thứ tự = sai hash):
+`consume.ak` parameterized bởi **8 field, ĐÚNG THỨ TỰ** (đổi thứ tự = sai hash):
 
 ```
 price_nft_policy, price_nft_name, vault_script_hash, burn_batch_constr,
-max_price_stale, ms_per_epoch, price_param_script_hash
+max_price_stale, ms_per_epoch, price_param_script_hash, window_origin_ms
 ```
 
 `vault_script_hash` + `burn_batch_constr` khác nhau per-vault (Instant=2/Schedule=2;
@@ -18,14 +18,14 @@ Legacy: Snapshot=1/Vacuum=4) → **1 deploy ConsumeMAGIC / 1 loại vault**.
 
 > **KHÔNG còn `engage_nft_policy` / `engage_nft_name`.** Validator `engage_nft.ak` đã bị
 > XOÁ; handler `mint` nằm TRONG chính `consume` (multi-purpose). Policy của thread NFT
-> **chính là script hash của `consume` sau khi apply 7 param** — biết qua tự tham chiếu,
+> **chính là script hash của `consume` sau khi apply 8 param** — biết qua tự tham chiếu,
 > không bake hash lẫn nhau (bake 2 chiều = fixed-point blake2b = không deploy được).
 > Tên NFT = `blake2b_256(cbor.serialise(seed))` với `seed : OutputReference` bị tiêu trong
 > chính tx mint — **KHÔNG phải hằng `454e47`**. Off-chain: `offchain/src/engageId.ts`.
 
 Chuỗi bake TUYẾN TÍNH (không vòng): `price_nft (genesis_ref)` → `price_param (committee,
-threshold, price_nft_policy, price_nft_name, ms_per_epoch)` → `consume (…,
-price_param_script_hash)`.
+threshold, price_nft_policy, price_nft_name, ms_per_epoch, window_origin_ms)` → `consume (…,
+price_param_script_hash, window_origin_ms)`.
 
 Toàn bộ hạ tầng ConsumeMAGIC deploy trong **một script, một tx** (`09_deploy_consume.ts`):
 mint price NFT + post PriceParam beacon + mint thread Engage + tạo Engage UTxO + apply-param
@@ -34,11 +34,11 @@ TÊN thread Engage).
 
 ```bash
 # Bước 0: build Aiken validators
-cd /Users/ductiger/Projects/MagicLampEco/MAGIC/ConsumeMAGIC/onchain
+cd <gốc kho>/ConsumeMAGIC/onchain
 aiken build   # → onchain/plutus.json (3 validator: consume, price_nft, price_param)
 
 # Bước 1: deploy vault InstantGen (prereq — cho VAULT_INSTANT_HASH)
-cd /Users/ductiger/Projects/MagicLampEco/MAGIC/scripts && npm install
+cd <gốc kho>/scripts && npm install
 npx tsx deploy/05_create_instant_vault.ts
 # → cũng in REF_VAULT_INSTANT_UTXO (ref-script CIP-33 của chính vault này)
 
@@ -228,15 +228,15 @@ hoặc chạy thẳng lệnh ở §3.
 
 ```bash
 # Aiken onchain tests (yêu cầu aiken >= 1.1.0)
-cd /Users/ductiger/Projects/MagicLampEco/MAGIC/ConsumeMAGIC/onchain
+cd <gốc kho>/ConsumeMAGIC/onchain
 aiken check   # chạy tất cả test trong validators/ + lib/
 
 # TypeScript pricing tests
-cd /Users/ductiger/Projects/MagicLampEco/MAGIC/ConsumeMAGIC/pricing
+cd <gốc kho>/ConsumeMAGIC/pricing
 npm install && npm test
 
 # TypeScript offchain (codec round-trip + builder typecheck)
-cd /Users/ductiger/Projects/MagicLampEco/MAGIC/ConsumeMAGIC/offchain
+cd <gốc kho>/ConsumeMAGIC/offchain
 npm install && npm test           # số ca: xem DevStatus.md
 npm run typecheck                 # tsc --noEmit: types.ts + engageId.ts + consume.ts + index.ts
 ```
@@ -254,7 +254,7 @@ npm run typecheck                 # tsc --noEmit: types.ts + engageId.ts + consu
 |---|---|---|
 | e2e Preview chưa chạy live | `buildConsumeTx` đã viết + typecheck sạch; codec P8 round-trip pass; chưa submit tx thật lên Preview (cần BLOCKFROST_KEY + ví funded) | Trước mainnet: chạy bước 6 e2e thật, verify `consumed_count` + `magic_batches` on-chain |
 | `consumeBuilder` không tự dựng vault BurnBatch redeemer | constr index khác per-vault → caller truyền `vaultBurnRedeemerCbor` (tránh coupling type cross-module) | Đúng thiết kế; tích hợp app phải dựng redeemer vault đúng module |
-| `ms_per_epoch` network-param | Preview `86_400_000`; MAINNET `432_000_000` (5 ngày) | Apply đúng giá trị khi deploy mainnet (param consume validator + builder network) |
+| `ms_per_epoch` + `window_origin_ms` network-param | `ms_per_epoch`: Preview `86_400_000`; Preprod và Mainnet `432_000_000` (5 ngày). `window_origin_ms`: Preprod `1_654_041_600_000`, Mainnet `1_506_203_091_000`, Preview chưa có gốc (nguồn: `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`, `WINDOW_ORIGIN_MS_BY_NETWORK`) | Apply đúng giá trị theo mạng khi deploy (param consume validator + builder network) |
 | committee = static list | Governance committee thay đổi cần re-deploy `price_param.ak` | v-next: multi-sig dynamic / governance NFT (trước khi khoá mainnet) |
 | `PRICE_THRESHOLD=1` cho phép **chặn dịch vụ nhắm đúng một người** | `price_param.ak` chỉ đòi `count_sigs(committee, extra_signatories) >= threshold`, mặc định ngưỡng 1 (§1 knob). Beacon `PriceParam` là **reference input** của mọi tx Consume ⇒ một khoá committee thấy tx nạn nhân đang tham chiếu beacon hiện tại có thể chèn một `PostPrice` hợp lệ ngay trước: beacon bị chi, reference input biến mất, tx nạn nhân invalid từ gốc. Lặp lại không giới hạn, không cần chạm khoá hay danh tính nạn nhân | Với `op_type` thương mại là phiền. Với `op_type=7 did.rotate` (xoay khoá sau khi nghi lộ) là **chặn quyền tự vệ**. Điều kiện W2 do PhoenixKey đặt: committee phải hơn 1-of-N trước khi `did.rotate` lên mainnet. Phát hiện: Phoenix, thư 2026-08-10 |
 | `max_price_stale` mainnet | 1 epoch mainnet = 5 ngày → stale=1 đã là 5 ngày trễ giá | Đặt ≤ 1-2 epoch + keeper offchain post demand_mult mỗi epoch (v-next) |

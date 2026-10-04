@@ -72,12 +72,20 @@ Double clamp: lần 1 khi append (`clamped_raw`), lần 2 tại smoothed output.
 ### 2.5 Epoch xác định từ tx validity range (§14.3)
 
 ```
-current_epoch = ⌊ lower_bound_posix_ms / ms_per_epoch ⌋
+current_epoch = ⌊ (lower_bound_posix_ms − window_origin_ms) / ms_per_epoch ⌋
 ```
 
-- Preview testnet: `ms_per_epoch = 86_400_000` (1 ngày = 24 × 3600 × 1000 ms)
-- Mainnet: `ms_per_epoch = 432_000_000` (5 ngày)
-- Keeper phải set `validFrom = currentEpoch × msPerEpoch` trong tx
+Validator đòi CẢ HAI biên validity nằm trong cùng một epoch (`um_datum.ak` ▸ `get_epoch`:
+`expect e_lo == e_hi`).
+
+- `ms_per_epoch`: Preview `86_400_000` (1 ngày); Preprod và Mainnet `432_000_000` (5 ngày).
+  Nguồn: `ProtocolUtils/src/index.ts` ▸ `MS_PER_EPOCH_BY_NETWORK`.
+- `window_origin_ms` là apply-param CUỐI của validator: Preprod `1_654_041_600_000`, Mainnet
+  `1_506_203_091_000`, Preview chưa có gốc (mã `WIN-PREVIEW`). Nguồn: `ProtocolUtils/src/index.ts`
+  ▸ `WINDOW_ORIGIN_MS_BY_NETWORK`. Trên Preprod và Mainnet, `current_epoch` BẰNG số epoch Cardano;
+  lưới cũ `⌊t / ms_per_epoch⌋` (gốc 1970) lệch hàng nghìn chỉ số và không còn dùng.
+- Keeper dựng cửa sổ validity bằng `epochValidityWindow(tipMs, network)` (cùng tệp), không tự
+  chia `t / ms_per_epoch`.
 
 ### 2.6 Staleness check tại InstantGen (C-UM-6)
 

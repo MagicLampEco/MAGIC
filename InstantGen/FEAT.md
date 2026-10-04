@@ -1,7 +1,7 @@
 # InstantGen — Feature Specification
 ## GenMAGIC v3.3 · §9 InstantGen · v1.0
 
-> ⚠ **ĐÃ LỖI THỜI ở phần cơ chế.** Tệp này còn mô tả mô hình trước PHA 2: "mua MAGIC
+> ⚠ **ĐÃ LỖI THỜI ở phần cơ chế.** Tệp này còn mô tả mô hình trước DESIGN-2: "mua MAGIC
 > bằng cách trả LAMP vào Treasury", redeemer mang `lamp_paid`, ràng buộc C-INST-1..4
 > tính trên khoản chi, batch sống 2 epoch có halving ở `k=1`. **Không cái nào còn tồn
 > tại.** Mô tả cơ chế hiện hành ở **[`DESIGN-PHASE2.md`](DESIGN-PHASE2.md)**; nguồn
@@ -65,7 +65,7 @@ User tx
 
 **Bước chi tiết** (bước 5, 6, 9 dưới đây theo mô hình cũ — đã sai; xem chú thích cuối
 danh sách)**:**
-1. Validator đọc `current_epoch` từ `tx.validity_range.lower_bound` (POSIX ms / `ms_per_epoch`).
+1. Validator đọc `current_epoch` từ `tx.validity_range` (`(POSIX ms − window_origin_ms) / ms_per_epoch`; xem `InstantGen/onchain/validators/vault.ak` ▸ `get_current_epoch`).
 2. `apply_pending_profile(input_datum, current_epoch)` — nếu `pending_profile.effective_epoch ≤ current_epoch` thì switch profile, clear pending (`profile.ak:19`).
 3. Kiểm tra C-INST-1..7 (xem mục 5).
 4. Đọc UM datum qua reference input (NFT marker `um_nft_policy`, asset name `"UMD"=0x554d44`). Áp dụng C-UM-6 stale check → `um_q`.
@@ -75,7 +75,7 @@ danh sách)**:**
 8. Kiểm tra output datum field-by-field (A02).
 9. Kiểm tra Treasury nhận ≥ lamp_paid LAMP (`vault.ak:454`).
 
-> **Ba bước trên đã sai mô hình.** PHA 2 thay: (5) độ lớn =
+> **Ba bước trên đã sai mô hình.** DESIGN-2 thay: (5) độ lớn =
 > `min( reward(consumed_credit), cap_surplus(br), 0.5 × pp_schedule )`, không đọc
 > `lamp_paid`; (6) không halving — batch chỉ sống trong đúng `created_epoch`
 > (`decay_window = 1`), phần chết bị `prune_expired` dọn; (9) không có chân Treasury —

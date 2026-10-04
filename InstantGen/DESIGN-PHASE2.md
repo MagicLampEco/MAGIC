@@ -1,24 +1,24 @@
-# InstantGen — Thiết kế PHA 2
+# InstantGen — Thiết kế DESIGN-2
 
 **Trạng thái:** đã triển khai. Số kiểm giữ ở một nơi duy nhất —
 [`DevStatus.md`](../DevStatus.md); muốn số tươi thì chạy `aiken check` trong `onchain/`
 và `npm test` trong `offchain/`.
 **Nguồn chân lý:** `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §4.2, §6.1, §6.3, §11, §12.
-**Tài liệu này thay thế:** `HALVING-SPEC.md` (halving không còn tồn tại) và mọi mô tả
+**Tài liệu này thay thế:** `HALVING-SPEC.md` (halving không còn tồn tại; tệp đã xoá 2026-10-04, còn trong lịch sử git) và mọi mô tả
 "InstantGen = mua MAGIC bằng LAMP" trong `README.md` / `FEAT.md` / `MATH.md` / `TECH.md`.
 
 ---
 
 ## 1. Ba thay đổi cốt lõi
 
-| Trước (mô hình cũ) | Sau (PHA 2) | Neo |
+| Trước (mô hình cũ) | Sau (DESIGN-2) | Neo |
 |---|---|---|
 | Mua MAGIC: `lamp_paid` chuyển từ vault → Treasury | LAMP **đứng yên tuyệt đối** trong vault | I-ACT-7 |
 | Batch sống 2 epoch, có halving ở `k=1` | Batch sống **đúng 1 epoch** (`decay_window = 1`, cliff) | §4.2 |
 | Độ lớn ∝ `lamp_paid` | Độ lớn ∝ **MAGIC đã tiêu thụ thật** | §6.3 |
 
-Hệ quả trực tiếp lên tham số triển khai: validator InstantGen bỏ `treasury_addr`
-và nhận thêm hai tham số ghim beacon backing (mục 4).
+Hệ quả trực tiếp lên tham số triển khai: validator InstantGen bỏ `treasury_addr` (danh sách
+tham số hiện hành ở mục 4).
 
 ---
 
@@ -105,8 +105,8 @@ phá interface liên repo.
    bụi), và **thêm** `reject-noop` (không có gì chết thì từ chối, chống spam) +
    cấm chạm `consumed_credit`.
 
-`HALVING-SPEC.md` do đó là tài liệu **đã chết** — giữ để đọc code cũ, không dùng
-để triển khai.
+`HALVING-SPEC.md` do đó là tài liệu **đã chết** và đã xoá khỏi cây (2026-10-04). Cần đọc code
+cũ thì lấy từ lịch sử: `git log --all -- InstantGen/HALVING-SPEC.md`.
 
 ---
 
@@ -124,7 +124,7 @@ không phải một thứ chờ nhà CARP giao.
 ### 4.1 `consumed` lấy từ đâu
 
 `VaultDatum.activity_state` có sẵn hai trường; trường thứ hai
-(`total_burns_count`) chưa có bất kỳ handler nào ghi — nó là trường chết. PHA 2
+(`total_burns_count`) chưa có bất kỳ handler nào ghi — nó là trường chết. DESIGN-2
 đặt lại tên trường đó thành **`consumed_credit`**, **cùng vị trí, cùng kiểu
 `Natural`** → hình dạng Plutus Data không đổi, datum vẫn tương thích byte với
 các module anh em và với các UTxO đã tạo.
@@ -293,18 +293,23 @@ gãy.
 > 6 tham số / ScheduleGen 3 tham số, bỏ sót `lamp_asset_name` ở cả hai — đúng kiểu sai mà
 > bảng chép tay sinh ra.
 
-### InstantGen `vault` — 8 tham số
+### InstantGen `vault` — 10 tham số
+
+Bản chép có nhãn, đối chiếu 2026-10-04 trên `main` @ 288ba4c6; nguồn `scripts/deployParams.ts` ▸
+`instantVaultParams` và chữ ký `validator vault(...)` trong `InstantGen/onchain/validators/vault.ak`.
 
 | # | Tên | Ghi chú |
 |---|---|---|
-| 1 | `lamp_policy_id` | không đổi |
+| 1 | `lamp_policy_id` | |
 | 2 | `lamp_asset_name` | **PARAM theo mạng** — `tLAMP` testnet / `LAMP` mainnet. Hardcode = vault mainnet không nhìn thấy LAMP của chính nó (`BOUNDARIES.md §2`) |
-| 3 | `um_nft_policy` | không đổi |
-| 4 | `um_script_hash` | không đổi |
-| 5 | `backing_nft_policy` | ghim NFT beacon (§6.3) |
-| 6 | `backing_script_hash` | ghim địa chỉ beacon (§6.3) |
-| 7 | `ms_per_epoch` | không đổi |
-| 8 | `wakeme_vault_hash` | script hash két Wakeme, theo mạng (CC-GEN-LENT-READ, nối cuối 2026-09-30) |
+| 3 | `gb_beacon_nft_policy` | ghim NFT beacon GreenBack |
+| 4 | `gb_beacon_script_hash` | ghim địa chỉ beacon GreenBack |
+| 5 | `gb_shard_policy_id` | ghim policy NFT shard bộ đếm thặng dư GreenBack |
+| 6 | `rate_nft_policy` | ghim NFT beacon ρ (`RateParam`) |
+| 7 | `rate_script_hash` | ghim địa chỉ beacon ρ |
+| 8 | `wakeme_vault_hash` | script hash két Wakeme, theo mạng (CC-GEN-LENT-READ) |
+| 9 | `ms_per_epoch` | theo mạng |
+| 10 | `window_origin_ms` | gốc lưới epoch theo mạng, luôn là tham số CUỐI (Preview chưa có gốc) |
 
 Đây là **một** danh sách dùng chung cho cả hai handler của script đa-mục-đích: nhánh
 `mint` (NFT danh tính vault) và nhánh `spend` phải nhận y hệt tham số, nếu không hai bên ra
@@ -314,7 +319,10 @@ hai script hash khác nhau và NFT mint ra không thuộc vault nào.
 bộ 6 handler (`InstantGen`, `PruneExpired`, `BurnBatch`, `UpdateProfile`, `WithdrawLamp`,
 `SetDelegate`) và không handler nào đọc tới nó.
 
-### ScheduleGen `vault` — 4 tham số
+### ScheduleGen `vault` — 7 tham số
+
+Bản chép có nhãn, cùng ngày và cùng nguồn như trên (`scheduleVaultParams`; `commit` nhận 10
+tham số, `scheduleCommitParams`).
 
 | # | Tên |
 |---|---|
@@ -322,6 +330,9 @@ bộ 6 handler (`InstantGen`, `PruneExpired`, `BurnBatch`, `UpdateProfile`, `Wit
 | 2 | `lamp_asset_name` (PARAM theo mạng — như trên) |
 | 3 | `shard_policy_id` |
 | 4 | `ms_per_epoch` |
+| 5 | `gb_shard_policy_id` |
+| 6 | `commit_script_hash` |
+| 7 | `window_origin_ms` |
 
 `treasury_addr` đã xoá; đã rà 5 handler (`ScheduleCommit`, `ScheduleFire`, `BurnBatch`,
 `WithdrawLamp`, `SetDelegate`), không handler nào còn đọc.

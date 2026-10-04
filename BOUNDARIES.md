@@ -106,9 +106,12 @@ KHÔNG phải `PHA-2` của Wakeme. Cùng hình dạng với bẫy `28e916b0…`
 khác đời, không bản nào tự khai. Ai gặp `PHA-1`/`PHA-2` trong kho này thì đó là tài liệu
 chưa được quét: dạng **có gạch nối** đã về **0** ngoài `Legacy/` (`Legacy/` để yên theo §5).
 
-> **Dạng có KHOẢNG TRẮNG thì chưa** — `PHA 1` / `PHA 2` còn **45 dòng / 22 tệp** (đo
-> 2026-09-14, ngoài `Legacy/` và ngoài `.claude/`), gồm cả `ScheduleGen/onchain/validators/vault.ak`,
-> `InstantGen/tests/vectors.ts` và một tệp mang tên `InstantGen/DESIGN-PHASE2.md`.
+> **Dạng có KHOẢNG TRẮNG: tài liệu `.md` đã quét 2026-10-04, mã thì chưa.** Trong `.md`
+> (ngoài `Legacy/`, `ChangeLog.md` và tệp này, nơi chuỗi đó nằm làm ví dụ) `PHA 2` đã đổi
+> thành `DESIGN-2`. Còn lại trong tệp mã (`.ak`, `.ts`) và một TÊN TỆP, `InstantGen/DESIGN-PHASE2.md`
+> (đổi tên là đổi mọi con trỏ tới nó, kể cả con trỏ nằm trong chú thích `.ak`). Đếm bây giờ:
+> `command grep -rIn 'PHA [12]' . --exclude-dir=node_modules --exclude-dir=build --exclude-dir=Legacy --exclude-dir=.claude`
+> (`grep` trần trong phiên agent là hàm bọc tuân `.gitignore`, nên dùng `command grep`).
 >
 > Bản trước của dòng này viết "kho đã về **0**" mà không kèm chữ "có gạch nối". Đợt dọn
 > đo bằng `grep "PHA-[12]"`, thấy 0, rồi phát biểu như thể **khái niệm** đã biến mất —
@@ -326,9 +329,10 @@ Hành vi fail-closed (mặc định all-zero) thì **giữ nguyên** — chỗ s
 
 Hiệu lực: chỉ cho vault **deploy lại**; không hồi tố vault Preprod đang sống (SPEC v2.0 §6.1.6).
 
-**Hiện trạng mã** (kiểm 2026-09-30 trên nhánh `feat/gen-v2`, đầu `ed59becb`; chưa đo trên
-`main`; vault đang sống trên Preprod chạy mã đã biên dịch của chúng, SPEC v2.4.2 §6.1.6). Theo
-TÊN HÀM:
+**Hiện trạng mã** (kiểm 2026-09-30 trên nhánh `feat/gen-v2`, đầu `ed59becb`; nhánh đã vào
+`main` qua PR #130; ngày 2026-10-04 đối chiếu lại bằng `grep` trên `main` @ 288ba4c6: mọi tên hàm
+dưới đây còn tồn tại, và `compute_instant_grant` / `min3` chỉ còn trong `math.ak`; vault đang sống
+trên Preprod chạy mã đã biên dịch của chúng, SPEC v2.4.2 §6.1.6). Theo TÊN HÀM:
 - **Nhánh sinh InstantGen** — `InstantGen/onchain/validators/vault.ak` ▸ `validate_instant_gen`
   cấp đúng `m` do chủ két xin (redeemer `InstantGen { claimed_amount }`), qua hai cổng cộng dồn
   trên bộ đếm suy ra `instant_gen_in_epoch`: `gen_so_far + m <= cp.cap_nanogic` và

@@ -105,15 +105,14 @@ export const SUPERSEDED_LAMP_POLICIES: Readonly<Record<string, string>> = Object
 
 // LỐI MỞ TẬP DƯỢT — một ngoại lệ CÓ XÁC NHẬN THEO GIÁ TRỊ, không phải một cờ bật/tắt
 //
-// Chủ dự án quyết 2026-09-27: dựng một cụm TẬP DƯỢT dùng một lần trên Preprod bằng
-// `8169b76c…`, vì ví deploy chỉ giữ tLAMP của đời đó, và kho LAMP sẽ đổi policy thêm
-// lần nữa. Lần đổi đó đã tới: policy tLAMP Preprod CUỐI là `493002cc…cfac` (thư LAMP
-// `lam1003mg-a`, 2026-10-03), nhưng genesis của nó CHƯA gửi — chưa có tLAMP nào dưới
-// policy đó trên chuỗi. Cụm phục vụ người dùng dựng MỘT lần trên policy cuối, và CHƯA
-// dựng.
+// TRẠNG THÁI: ĐÓNG từ 2026-10-04 (bảng `REHEARSAL_LAMP_POLICIES` rỗng). Chủ dự án quyết
+// 2026-09-27 dựng một cụm TẬP DƯỢT dùng một lần trên Preprod bằng `8169b76c…`; cụm đó đã
+// dừng, và cụm phục vụ chạy trên policy tLAMP Preprod CUỐI `493002cc…cfac`. Phần chú thích
+// dưới giữ lại để người mở lại lối này biết ba điều kiện và vì sao xác nhận theo giá trị.
 //
-// Sự thật "`8169b76c…` đã bị thay" KHÔNG đổi: khoá đó vẫn nằm trong
-// `SUPERSEDED_LAMP_POLICIES`. Bảng dưới chỉ nói "được CHO QUA khi người chạy xác nhận".
+// Sự thật "`8169b76c…` đã bị thay" KHÔNG đổi: khoá đó nằm trong `SUPERSEDED_LAMP_POLICIES`
+// và nay không còn đường nào cho qua. Bảng tập dượt chỉ nói "được CHO QUA khi người chạy
+// xác nhận" — rỗng thì không khoá nào được cho qua.
 //
 // Vì sao xác nhận là CHÍNH CHUỖI policy chứ không phải `=1`: một cờ `=1` mở cửa cho mọi
 // khoá trong bảng, kể cả khoá được thêm về sau mà người bật cờ chưa từng thấy; và một
@@ -135,15 +134,10 @@ export const SUPERSEDED_LAMP_POLICIES: Readonly<Record<string, string>> = Object
 /** Đời đã bị thay mà được CHO QUA khi có xác nhận theo giá trị. Danh sách ĐÓNG, chép
  *  tay 2026-09-27; phải trùng tập khoá với `scripts/config.ts` ▸ bảng cùng tên.
  *
- *  ĐIỀU KIỆN GỠ: policy Preprod cuối đã tới (2026-10-03), nhưng khoá `8169b76c…` CHƯA
- *  gỡ vì cụm tập dượt còn một runner đang chạy. Gỡ khi runner đó dừng hẳn. Gỡ xong thì
- *  bảng rỗng, và lối mở tự đóng — không cần sửa hàm cổng. */
-export const REHEARSAL_LAMP_POLICIES: Readonly<Record<string, string>> = Object.freeze({
-  "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
-    "Cụm TẬP DƯỢT dùng một lần trên Preprod (chủ dự án quyết 2026-09-27): ví deploy chỉ " +
-    "giữ tLAMP của đời này. Gỡ khi runner của cụm tập dượt dừng hẳn (policy Preprod " +
-    "cuối `493002cc…cfac` đã tới 2026-10-03, genesis chưa gửi).",
-});
+ *  ĐÃ GỠ 2026-10-04 (cụm tập dượt dừng; cụm phục vụ chạy policy cuối `493002cc…cfac`).
+ *  Bảng RỖNG nên lối mở tự đóng — không cần sửa hàm cổng. Thêm lại một khoá là mở lại
+ *  lối mở: phải có quyết định mới của chủ dự án và một điều kiện gỡ mới. */
+export const REHEARSAL_LAMP_POLICIES: Readonly<Record<string, string>> = Object.freeze({});
 
 /** Mạng được phép chạy lối mở tập dượt. Danh sách ĐÓNG: mạng không nằm đây — kể cả
  *  một chuỗi lạ — là không được phép. */

@@ -5,6 +5,44 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-04 — PrepaidGen: quỹ tài trợ thu hồi phần CARP chưa giao về ví bên tài trợ (`FundReclaim`)
+
+**Đổi gì.**
+- `PaidFundDatum` từ 11 lên **13 trường**, nối cuối: `sponsorship: Option<Sponsorship { sponsor:
+  Address, owner_commit: ByteArray }>` (ghim ở genesis, bất biến) và `sponsor_reclaimed: Int` (0 ở
+  genesis, ghi một lần). `PaidFundRedeemer` thêm `FundReclaim` (constr 3, không trường).
+- `paid_fund` thêm apply-param thứ năm `wakeme_vault_hash` (cuối). Giá trị theo mạng lấy từ
+  `ProtocolUtils` ▸ `wakemeVaultHash(network)`; `PrepaidScriptParams.wakemeVaultHash` và
+  `scripts/deployParams.ts` ▸ `PaidFundParamInputs.wakemeVaultHash` là bắt buộc.
+- Nhánh `FundReclaim` (`prepaid.ak` ▸ `validate_fund_reclaim`, `validate_fund_close`): quỹ tài trợ,
+  chưa thu hồi, đồng-tiêu đúng một két Wakeme mang vault-NFT `owner_commit` bằng `ReclaimEpoch` ⟹
+  trả `R = outstanding_effective(...)` CARP về địa chỉ đầy đủ của bên tài trợ. Phần provider đã kiếm
+  ở lại quỹ. Khi phần đó bằng 0, quỹ đóng: đốt NFT quỹ (handler `mint` nhận lượng −1), ADA của quỹ
+  về bên tài trợ.
+- Output trả bên tài trợ phải mang **inline datum = `fund_id`** của chính quỹ đó.
+- `FundLock` vào quỹ tài trợ đòi chữ ký bên tài trợ và bị chặn sau thu hồi. `FundSettle`/`FundClaim`
+  dùng hạn-mức hiệu lực `credit_issued − sponsor_reclaimed`. C-PP-3 thành
+  `carp_locked == credit_issued − provider_claimed − sponsor_reclaimed`. Hàm mới cho P8:
+  `math.ak` ▸ `outstanding_effective` ↔ `math.ts` ▸ `outstandingEffective`, vector V4.
+- Ngoài chuỗi: `codec.ts` ▸ `fundReclaimRedeemer`; `builders.ts` ▸ `planFundReclaim` /
+  `addFundReclaim` (phần quỹ; phần két Wakeme bên gọi ghép vào); `planPrepaidLock` thêm chữ ký bên
+  tài trợ khi quỹ có `sponsorship`. `scripts/deploy/10_deploy_prepaid.ts` nạp lược đồ quỹ từ
+  `PrepaidGen/offchain` thay vì giữ bản chép riêng.
+
+**Vì sao.** Bên tài trợ (vai Feecover) nạp CARP cho lượt tiêu đầu của một người dùng mới. Người đó
+bỏ đi thì trước đây phần CARP chưa dùng không có đường ra nào ngoài `FundClaim` của provider. Thu
+hồi được gắn vào đúng sự kiện két Wakeme của DID đó bị `ReclaimEpoch`, nên quỹ không tự tính thời
+gian và không cần oracle. Datum `fund_id` ở output trả chặn thoả-mãn-kép: hai quỹ ở hai bản deploy
+`paid_fund` cùng bên tài trợ, cùng DID, cùng lượng `R` từng cùng ăn được một output trả. Thiết kế
+đầy đủ: tài liệu thiết kế nội bộ §10 (`DESIGN-reclaim`).
+
+**Cái gì gãy nếu đang bám bản cũ.** UTxO quỹ 11 trường không đọc được bằng lược đồ 13 trường và
+ngược lại (Aiken nghiêm số trường cả hai chiều). Bytes của cả `paid_fund` lẫn `prepaid_vault` đổi
+⟹ hash, địa chỉ và ref-script của cặp Prepaid phải deploy lại, kèm bản `consume` apply bằng hash
+két Prepaid mới. Mọi chỗ gọi `derivePrepaidScripts` / `prepaidScriptPair` thiếu `wakemeVaultHash`
+nay gãy lúc typecheck. Đổi bản deploy Wakeme cũng đổi hash quỹ. Bên dựng giao dịch trả bên tài trợ
+mà không gắn datum `fund_id` bị validator từ chối.
+
 ## 2026-10-04 — Người dùng 0 ADA đi trọn đường bằng ví trả phí: ứng min-ADA có trần, mở thread, gắn DID, tạo két instant 0 LAMP
 
 **Đổi gì.**

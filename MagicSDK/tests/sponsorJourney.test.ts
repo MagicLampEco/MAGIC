@@ -235,6 +235,8 @@ beforeAll(async () => {
 
   const base = derivePrepaidScripts(pgBp, "Custom", {
     carpPolicyId: CARP_POLICY, carpAssetName: CARP_NAME, msPerEpoch: P, windowOriginMs: O,
+    // Emulator không có két Wakeme; luồng T1–T4 không đọc tham số này (chỉ `FundReclaim`).
+    wakemeVaultHash: "ab".repeat(28),
   });
 
   const lockNative = scriptFromNative({ type: "sig", keyHash: pkh(holder) });

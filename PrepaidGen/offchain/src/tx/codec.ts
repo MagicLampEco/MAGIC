@@ -74,6 +74,10 @@ export const fundLockRedeemer = (): string => fundRedeemer("FundLock");
 export const fundSettleRedeemer = (): string => fundRedeemer("FundSettle");
 export const fundClaimRedeemer = (amount: bigint): string =>
   fundRedeemer({ FundClaim: { amount_carpdrop: amount } });
+/** `FundReclaim` — constr 3, không trường (lượng suy từ datum). CBOR `d87c80`. */
+export const fundReclaimRedeemer = (): string => fundRedeemer("FundReclaim");
+/** Redeemer `mint` khi đốt NFT quỹ ở nhánh đóng — handler không đọc, dùng `Constr 0 []`. */
+export const FUND_BURN_REDEEMER = Data.to(new Constr(0, []));
 
 /** Redeemer `mint` của `paid_fund` — handler nhận `Data` bất kỳ; dùng `Constr 0 []`. */
 export const FUND_MINT_REDEEMER = Data.to(new Constr(0, []));

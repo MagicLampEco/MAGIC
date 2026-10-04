@@ -44,7 +44,7 @@ import {
   withRefScripts,
   type PrepaidBlueprint,
 } from "@magiclamp/prepaidgen-sdk";
-import { msPerEpoch, windowOriginMs } from "@magiclamp/protocol-utils";
+import { msPerEpoch, wakemeVaultHash, windowOriginMs } from "@magiclamp/protocol-utils";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { ChainReader } from "../src/chain.js";
@@ -286,7 +286,12 @@ beforeAll(async () => {
   emulator.time = Number(O + E0 * P + 60_000n);
   lucid = await Lucid(emulator, "Custom");
 
-  const base = derivePrepaidScripts(pgBp, NET, { carpPolicyId: CARP_POLICY, carpAssetName: CARP_NAME, msPerEpoch: P, windowOriginMs: O });
+  // `wakemeVaultHash(NET)`: cùng nguồn dịch vụ dùng ở `SponsorTxService.prepare` — lệch nguồn
+  // ⟹ hash quỹ lệch cấu hình ⟹ 501 SCRIPTS_MISMATCH.
+  const base = derivePrepaidScripts(pgBp, NET, {
+    carpPolicyId: CARP_POLICY, carpAssetName: CARP_NAME, msPerEpoch: P, windowOriginMs: O,
+    wakemeVaultHash: wakemeVaultHash(NET),
+  });
 
   // Một địa chỉ khoá giữ beacon / anchor / ref-script (native sig của bên tài trợ).
   const lockNative = scriptFromNative({ type: "sig", keyHash: sponsor.pkh });

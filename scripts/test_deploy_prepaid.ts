@@ -16,7 +16,7 @@ import {
   Emulator, Lucid, PROTOCOL_PARAMETERS_DEFAULT, generateEmulatorAccount,
   validatorToScriptHash, type LucidEvolution,
 } from "@lucid-evolution/lucid";
-import { msPerEpoch, windowOriginMs } from "@magiclamp/protocol-utils";
+import { msPerEpoch, wakemeVaultHash, windowOriginMs } from "@magiclamp/protocol-utils";
 import { loadBlueprint, findValidator, appliedScript } from "./applyParams.js";
 import {
   prepaidScriptPair, prepaidRefScriptPlan, prepaidVaultParams,
@@ -50,6 +50,7 @@ const CARP = carpAssetClass(NET);
 const IN: PaidFundParamInputs = {
   carpPolicyId: CARP.policyId, carpAssetName: CARP.assetName,
   msPerEpoch: msPerEpoch(NET), windowOriginMs: windowOriginMs(NET),
+  wakemeVaultHash: wakemeVaultHash(NET),
 };
 const flip = (hex: string) => (hex[0] === "0" ? "1" : "0") + hex.slice(1);
 
@@ -77,6 +78,9 @@ async function main() {
   const otherOrigin = prepaidScriptPair(bp, { ...IN, windowOriginMs: IN.windowOriginMs + 1n });
   check("CỰC ĐỐI: window_origin_ms +1 ⟹ CẢ HAI hash khác",
     otherOrigin.fundHash !== pair.fundHash && otherOrigin.vaultHash !== pair.vaultHash);
+  const otherWakeme = prepaidScriptPair(bp, { ...IN, wakemeVaultHash: flip(IN.wakemeVaultHash) });
+  check("CỰC ĐỐI: đổi wakeme_vault_hash ⟹ CẢ HAI hash khác (quỹ phụ thuộc bản deploy Wakeme)",
+    otherWakeme.fundHash !== pair.fundHash && otherWakeme.vaultHash !== pair.vaultHash);
   // `paid_fund_hash` của két phải là hash quỹ ĐÃ apply: dựng két bằng hash quỹ chưa apply
   // ra một hash hợp lệ KHÁC — phép so này phân biệt được hai cách nối.
   const rawFundHash = validatorToScriptHash({ type: "PlutusV3", script: findValidator(bp, "prepaid.paid_fund.spend").compiledCode });

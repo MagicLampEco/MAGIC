@@ -88,51 +88,24 @@ import { minAdaForRefScriptWithMargin } from "../minAda.js";
 import { parseFlag } from "../runResult.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 import { fundIdAssetName } from "../fundId.js";
-import { OwnerCredentialSchema } from "../../PrepaidGen/offchain/src/types.js";
+import {
+  OwnerCredentialSchema,
+  PaidFundDatumSchema,
+  type PaidFundDatum as PaidFundDatumT,
+  type PlutusAddress,
+} from "../../PrepaidGen/offchain/src/types.js";
+import { wakemeVaultHash } from "@magiclamp/protocol-utils";
 
 // ── Lược đồ datum ────────────────────────────────────────────────
 // Neo: PrepaidGen/onchain/lib/magiclamp/protocol/types.ak ▸ PaidFundDatum,
 // PrepaidVaultDatum. Thứ tự trường là HỢP ĐỒNG NHỊ PHÂN — xê dịch một trường là
 // đổi cách giải mã mọi UTxO đã tạo (BOUNDARIES.md §2).
-
-// `cardano/address.{Address}` — thứ tự nhánh LÀ mã hoá (VerificationKey 0, Script 1).
-// Gương của `PrepaidGen/offchain/src/types.ts` ▸ `AddressSchema`; tệp này giữ bản
-// riêng vì `scripts/` và `PrepaidGen/offchain` là hai gói npm, hai bản lucid.
-const CredentialSchema = Data.Enum([
-  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes()]) }),
-  Data.Object({ Script: Data.Tuple([Data.Bytes()]) }),
-]);
-const AddressSchema = Data.Object({
-  payment_credential: CredentialSchema,
-  // Genesis ép `stake_credential == None`, nên chỉ cần mã hoá được nhánh None;
-  // khai đủ hai nhánh để lược đồ vẫn là gương đúng của Aiken.
-  stake_credential: Data.Nullable(Data.Enum([
-    Data.Object({ Inline: Data.Tuple([CredentialSchema]) }),
-    Data.Object({ Pointer: Data.Object({
-      slot_number: Data.Integer(),
-      transaction_index: Data.Integer(),
-      certificate_index: Data.Integer(),
-    }) }),
-  ])),
-});
-type PlutusAddress = Data.Static<typeof AddressSchema>;
-
-const PaidFundDatumSchema = Data.Object({
-  fund_id:            Data.Bytes(),
-  platform:           Data.Bytes(),
-  vault_hash:         Data.Bytes(),
-  carp_locked:        Data.Integer(),
-  credit_issued:      Data.Integer(),
-  magic_settled:      Data.Integer(),
-  provider_claimed:   Data.Integer(),
-  buffer_bps:         Data.Integer(),
-  last_updated_epoch: Data.Integer(),
-  // Thêm Ở CUỐI 2026-09-26 (L1''). Quỹ 9 trường đời trước KHÔNG đọc được bằng
-  // lược đồ này, và ngược lại — Aiken nghiêm về số trường cả hai chiều.
-  beneficiary:        AddressSchema,
-  beneficiary_datum:  Data.Nullable(Data.Any()),
-});
-type PaidFundDatum = Data.Static<typeof PaidFundDatumSchema>;
+//
+// `PaidFundDatum` (13 trường từ 2026-10-04) + `Address` NẠP từ `PrepaidGen/offchain`
+// — MỘT nguồn lược đồ. Bản chép riêng ở đây (11 trường) đã trôi khỏi validator đúng một
+// lần và bị gỡ. Lược đồ Lucid là dữ liệu thuần (TypeBox), nên dùng chéo hai bản lucid
+// của hai gói được — cùng cách `OwnerCredentialSchema` đã được nạp từ trước.
+type PaidFundDatum = PaidFundDatumT;
 const PaidFundDatum = PaidFundDatumSchema as unknown as PaidFundDatum;
 
 const PrepaidVaultDatumSchema = Data.Object({
@@ -331,6 +304,8 @@ async function main() {
     carpAssetName:  carp.assetName,
     msPerEpoch:     PROTOCOL.MS_PER_EPOCH,
     windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
+    // Két Wakeme của mạng — nguồn duy nhất ProtocolUtils; mạng chưa có két ⟹ NÉM.
+    wakemeVaultHash: wakemeVaultHash(NETWORK),
   };
   const { fundScript, fundHash, vaultScript, vaultHash } = prepaidScriptPair(bp, carpParams);
   const fundAddress = credentialToAddress(NETWORK, scriptHashToCredential(fundHash));
@@ -427,6 +402,10 @@ async function main() {
     last_updated_epoch: 0n,            // PIN
     beneficiary:        beneficiary.address, // PIN trọn đời: không stake, ≠ quỹ/vault
     beneficiary_datum:  beneficiary.datum,   // PIN: Script ⟹ bắt buộc có
+    // Quỹ thường của provider (DESIGN-reclaim §10.3). Quỹ tài trợ cho một DID mở ở
+    // luồng T2 theo DID, không ở bước deploy này.
+    sponsorship:        null,                // PIN: None ⟹ không bao giờ vào FundReclaim
+    sponsor_reclaimed:  0n,                  // PIN: `expect fd.sponsor_reclaimed == 0`
   };
 
   // Handler `mint` của paid_fund bỏ qua redeemer (`_redeemer: Data`); gửi một

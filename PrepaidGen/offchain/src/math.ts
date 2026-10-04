@@ -49,6 +49,19 @@ export function outstandingOf(creditIssued: bigint, magicSettled: bigint): bigin
   return creditIssued - parCarpFromMagic(magicSettled);
 }
 
+/**
+ * outstanding HIỆU LỰC = (credit_issued − sponsor_reclaimed) − ⌊magic_settled / PAR_SCALE⌋.
+ * Twin của `math.ak` ▸ `outstanding_effective` (vector V4). `sponsor_reclaimed = 0`
+ * ⟹ trùng bit `outstandingOf`.
+ */
+export function outstandingEffective(
+  creditIssued: bigint,
+  sponsorReclaimed: bigint,
+  magicSettled: bigint,
+): bigint {
+  return outstandingOf(creditIssued - sponsorReclaimed, magicSettled);
+}
+
 /** buffer_floor = outstanding + ⌊ outstanding × buffer_bps / 10000 ⌋ */
 export function bufferFloor(outstanding: bigint, bufferBps: bigint): bigint {
   requireNonNegative("outstanding", outstanding);

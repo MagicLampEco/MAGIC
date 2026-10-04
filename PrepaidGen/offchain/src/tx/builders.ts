@@ -10,6 +10,8 @@
 //   Draw        ▸ validate_draw              BurnBatch ▸ validate_burn_batch
 //   SettleLine  ▸ validate_settle_line + validate_fund_settle
 //   FundClaim   ▸ validate_fund_claim
+//   FundReclaim ▸ validate_fund_reclaim (tiếp nối) / validate_fund_close +
+//                 validate_burn_fund_nft (đóng) — phần quỹ; phần két Wakeme do bên Wakeme ghép
 //   mọi spend vault ▸ vault_identity_preserved (NFT còn nguyên, ADA không giảm,
 //                     ≤ 2 policy, không ref-script)
 
@@ -26,13 +28,16 @@ import {
   drawMagic,
   fundAfterClaim,
   fundAfterLock,
+  fundAfterReclaim,
   fundAfterSettle,
   lockRequiredSigner,
   settleLine,
   settleLineDebt,
 } from "../prepaid.js";
 import type { MagicBatch, PaidFundDatum, PlutusAddress, PrepaidVaultDatum } from "../types.js";
+import type { Credential as LucidCredential } from "@lucid-evolution/lucid";
 import {
+  FUND_BURN_REDEEMER,
   FUND_MINT_REDEEMER,
   PrepaidTxError,
   burnBatchRedeemer,
@@ -41,6 +46,7 @@ import {
   encodeVaultDatum,
   fundClaimRedeemer,
   fundLockRedeemer,
+  fundReclaimRedeemer,
   fundSettleRedeemer,
   lockRedeemer,
   mintVaultIdRedeemer,
@@ -182,6 +188,10 @@ export function planMintPaidFund(p: MintPaidFundParams): { plan: TxPlan; datum: 
     last_updated_epoch: 0n,
     beneficiary: p.beneficiary,
     beneficiary_datum: p.beneficiaryDatum,
+    // Quỹ thường (không tài trợ). Quỹ tài trợ cho một DID (DESIGN-reclaim §10.3)
+    // cần bộ dựng genesis nhận `sponsorship` — CHƯA có ở đây.
+    sponsorship: null,
+    sponsor_reclaimed: 0n,
   };
   const signers = assertFundGenesis(datum, p.scripts.paidFund.hash);
   const nftUnit = p.scripts.paidFund.hash + fundId;
@@ -254,6 +264,9 @@ export function planPrepaidLock(p: PrepaidLockParams): PrepaidLockResult {
   plan.validity = p.validity;
   if (signer.by === "owner") plan.owner = signer.owner;
   else plan.signers.push(signer.pkh);
+  // `validate_fund_lock`: quỹ tài trợ đòi bên tài trợ KÝ lượt nạp.
+  const sponsorPkh = sponsorLockSigner(f.datum);
+  if (sponsorPkh !== null && !plan.signers.includes(sponsorPkh)) plan.signers.push(sponsorPkh);
   return { plan, epoch, vaultDatumOut, fundDatumOut, opensNewLine };
 }
 
@@ -474,5 +487,129 @@ export function planFundClaim(p: FundClaimParams) {
 
 export function addFundClaim(tx: TxBuilder, p: FundClaimParams) {
   const r = planFundClaim(p);
+  return { ...r, tx: applyPlan(tx, r.plan, { mode: "deferred" }) };
+}
+
+// ══════════════════════════════════════════════════════════════
+// FundReclaim (DESIGN-reclaim §10.6) — trả phần chưa giao về ví bên tài trợ
+// ══════════════════════════════════════════════════════════════
+
+/** pkh bên tài trợ phải ký `FundLock` (quỹ tài trợ); `null` với quỹ thường. */
+export function sponsorLockSigner(fund: PaidFundDatum): string | null {
+  const s = fund.sponsorship;
+  if (s === null) return null;
+  const pc = s.sponsor.payment_credential;
+  if (!("VerificationKey" in pc)) {
+    fail("C-PP-RECLAIM", `quỹ ${fund.fund_id}: bên tài trợ không phải ví khoá — genesis không cho hình dạng này`);
+  }
+  return pc.VerificationKey[0];
+}
+
+function lucidCred(c: PlutusAddress["payment_credential"]): LucidCredential {
+  return "VerificationKey" in c
+    ? { type: "Key", hash: c.VerificationKey[0] }
+    : { type: "Script", hash: c.Script[0] };
+}
+
+/** Địa chỉ ĐẦY ĐỦ (giữ phần stake) — validator so địa chỉ đầy đủ. Pointer ⟹ NÉM. */
+export function plutusAddressToBech32(network: PrepaidScripts["network"], a: PlutusAddress): string {
+  const sc = a.stake_credential;
+  if (sc === null) return credentialToAddress(network, lucidCred(a.payment_credential));
+  if (!("Inline" in sc)) fail("C-PP-RECLAIM", "địa chỉ bên tài trợ dùng stake Pointer — bộ dựng không hỗ trợ");
+  return credentialToAddress(network, lucidCred(a.payment_credential), lucidCred(sc.Inline[0]));
+}
+
+/** Inline datum bắt buộc của output trả bên tài trợ: `fund_id` (ByteArray) — chống thoả-mãn-kép. */
+export function reclaimPayoutDatumCbor(fundId: string): string {
+  return Data.to(fundId);
+}
+
+export interface FundReclaimParams {
+  scripts: PrepaidScripts;
+  fundUtxo: UTxO;
+  /** Validity của CẢ giao dịch ghép; kỳ của nó ghi vào `last_updated_epoch` (nhánh tiếp nối). */
+  validity: TxValidity;
+}
+
+export interface FundReclaimResult {
+  plan: TxPlan;
+  epoch: bigint;
+  /** R — CARP trả bên tài trợ. */
+  reclaimed: bigint;
+  /** `true` ⟹ nhánh ĐÓNG: đốt NFT quỹ, không quỹ tiếp nối, ADA của quỹ về bên tài trợ. */
+  closing: boolean;
+  /** Datum quỹ tiếp nối; `null` khi đóng. */
+  fundDatumOut: PaidFundDatum | null;
+  /** Địa chỉ bech32 ĐẦY ĐỦ của bên tài trợ (output trả). */
+  sponsorAddress: string;
+  /**
+   * Phần bên Wakeme PHẢI ghép vào cùng giao dịch (mảnh này KHÔNG dựng nó): tiêu đúng
+   * MỘT UTxO ở script `scriptHash` mang NFT `vaultNftUnit`, redeemer `ReclaimEpoch`
+   * (constr `reclaimEpochConstr`). Thiếu phần này validator quỹ từ chối.
+   */
+  wakeme: { scriptHash: string; vaultNftUnit: string; reclaimEpochConstr: 1 };
+}
+
+/**
+ * Kế hoạch phần QUỸ của `FundReclaim`, cả hai hình dạng (thuần, không I/O):
+ *   · tiếp nối (E > 0): quỹ ở lại với `carp_locked − R`, `sponsor_reclaimed = R`;
+ *   · đóng (E = 0): không output quỹ, đốt NFT quỹ (−1), toàn bộ ADA quỹ theo phần trả.
+ * Output trả bên tài trợ: địa chỉ đầy đủ, inline datum `fund_id`, đúng `R` CARP.
+ *
+ * KHÔNG dựng phần két Wakeme (`ReclaimEpoch`) — đó là mảnh của bên Wakeme, ghép vào
+ * cùng `TxBuilder` (xem `wakeme` trong kết quả). Lưu ý cho người gọi: validator cấm
+ * MỌI input ở địa chỉ bên tài trợ, nên ví trả phí không được là ví đó; và mỗi giao
+ * dịch chỉ một quỹ cho mỗi bản deploy `paid_fund`.
+ */
+export function planFundReclaim(p: FundReclaimParams): FundReclaimResult {
+  const f = readFundUtxo(p.scripts, p.fundUtxo);
+  const epoch = epochOf(p.scripts, p.validity);
+  const o = fundAfterReclaim(f.datum, epoch);
+  const sponsorAddress = plutusAddressToBech32(p.scripts.network, o.sponsorship.sponsor);
+  const payoutDatum = reclaimPayoutDatumCbor(f.fundId);
+
+  const plan = emptyPlan();
+  plan.spends.push({ utxo: p.fundUtxo, redeemerCbor: fundReclaimRedeemer(), script: p.scripts.paidFund });
+  if (o.closing) {
+    plan.mints.push({ script: p.scripts.paidFund, assets: { [f.nftUnit]: -1n }, redeemerCbor: FUND_BURN_REDEEMER });
+    const lovelace = p.fundUtxo.assets.lovelace ?? 0n;
+    if (lovelace <= 0n) {
+      fail("C-PP-SHAPE", `UTxO quỹ ${p.fundUtxo.txHash}#${p.fundUtxo.outputIndex} không có lovelace`);
+    }
+    plan.outputs.push({
+      address: sponsorAddress,
+      datumCbor: payoutDatum,
+      assets: { lovelace, [p.scripts.carpUnit]: o.reclaimed },
+    });
+  } else {
+    if (o.fundOut === null) fail("C-PP-RECLAIM", "nhánh tiếp nối thiếu datum quỹ đầu ra");
+    plan.outputs.push(
+      {
+        address: p.fundUtxo.address,
+        datumCbor: encodeFundDatum(o.fundOut),
+        assets: addCarp(sameAssets(p.fundUtxo), p.scripts.carpUnit, -o.reclaimed),
+      },
+      { address: sponsorAddress, datumCbor: payoutDatum, assets: { [p.scripts.carpUnit]: o.reclaimed } },
+    );
+  }
+  plan.validity = p.validity;
+  return {
+    plan,
+    epoch,
+    reclaimed: o.reclaimed,
+    closing: o.closing,
+    fundDatumOut: o.fundOut,
+    sponsorAddress,
+    wakeme: {
+      scriptHash: p.scripts.params.wakemeVaultHash,
+      vaultNftUnit: p.scripts.params.wakemeVaultHash + o.sponsorship.owner_commit,
+      reclaimEpochConstr: 1,
+    },
+  };
+}
+
+/** Mảnh quỹ của `FundReclaim` gắn vào `tx`. Phần két Wakeme người gọi ghép riêng. */
+export function addFundReclaim(tx: TxBuilder, p: FundReclaimParams) {
+  const r = planFundReclaim(p);
   return { ...r, tx: applyPlan(tx, r.plan, { mode: "deferred" }) };
 }

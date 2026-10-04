@@ -189,6 +189,7 @@ const CASES: Case[] = [
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: paidFundParams({
       carpPolicyId: P28, carpAssetName: CARP_NAME_28, msPerEpoch: MS, windowOriginMs: ORIGIN,
+      wakemeVaultHash: P28,
     }),
   },
   {
@@ -196,6 +197,7 @@ const CASES: Case[] = [
     usedBy: "deploy/10_deploy_prepaid.ts",
     params: paidFundParams({
       carpPolicyId: P28, carpAssetName: CARP_NAME_28, msPerEpoch: MS, windowOriginMs: ORIGIN,
+      wakemeVaultHash: P28,
     }),
   },
   {

@@ -150,6 +150,8 @@ function fund(
     last_updated_epoch: EPOCH,
     beneficiary: keyAddr(BEN_PKH),
     beneficiary_datum: null,
+    sponsorship: null,
+    sponsor_reclaimed: 0n,
   };
 }
 
@@ -856,12 +858,15 @@ describe("Address — mã hoá khớp `cardano/address.{Address}` của Aiken", 
     expect(Data.to(scriptAddr(BEN_SCRIPT), AddressSchema as unknown as PlutusAddress)).toBe(manual);
   });
 
-  it("PaidFundDatum 11 trường, hai trường đích ở CUỐI", () => {
+  it("PaidFundDatum 13 trường: hai trường đích ở [9..10], hai trường tài trợ NỐI CUỐI", () => {
     const f = fund(0n, 0n);
     const d = Data.from(Data.to(f, PaidFundDatumSchema as unknown as PaidFundDatum)) as Constr<unknown>;
-    expect(d.fields).toHaveLength(11);
+    expect(d.fields).toHaveLength(13);
     // beneficiary_datum = None ⟹ Constr 1 []
     expect((d.fields[10] as Constr<unknown>).index).toBe(1);
+    // sponsorship = None ⟹ Constr 1 []; sponsor_reclaimed = 0
+    expect((d.fields[11] as Constr<unknown>).index).toBe(1);
+    expect(d.fields[12]).toBe(0n);
   });
 });
 

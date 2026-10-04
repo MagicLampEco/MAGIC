@@ -164,6 +164,9 @@ beforeAll(async () => {
     carpAssetName: CARP_NAME,
     msPerEpoch: P,
     windowOriginMs: O,
+    // Bộ emulator không có két Wakeme: giá trị nào cũng đúng hình dạng là đủ cho
+    // các nhánh ở đây (không nhánh nào đọc nó ngoài `FundReclaim`).
+    wakemeVaultHash: "ab".repeat(28),
   });
 
   // Chủ script: native script `sig(didKey)` làm stake credential, đăng ký trước.

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   bufferFloor,
+  outstandingEffective,
   parCarpFromMagic,
   parMagicFromCarp,
 } from "../offchain/src/math.js";
@@ -47,6 +48,10 @@ describe("P8 — bảng vector đọc từ chính mã nguồn Aiken", () => {
       "v3_buf_outstanding",
       "v3_buf_bps",
       "v3_buf_out",
+      "v4_eff_credit",
+      "v4_eff_reclaimed",
+      "v4_eff_settled",
+      "v4_eff_out",
     ];
     for (const n of names) {
       const col = akIntList(n);
@@ -76,6 +81,18 @@ describe("P8 — bảng vector đọc từ chính mã nguồn Aiken", () => {
     expect(outstanding.length).toBe(expected.length);
     const got = outstanding.map((o, i) => bufferFloor(o, bps[i]!));
     expect(got).toEqual(expected);
+  });
+
+  it("V4 — outstandingEffective khớp từng phần tử với vế Aiken", () => {
+    const c = akIntList("v4_eff_credit");
+    const r = akIntList("v4_eff_reclaimed");
+    const m = akIntList("v4_eff_settled");
+    const expected = akIntList("v4_eff_out");
+    expect(new Set([c.length, r.length, m.length, expected.length]).size).toBe(1);
+    expect(c.map((ci, i) => outstandingEffective(ci, r[i]!, m[i]!))).toEqual(expected);
+    // Cực đối: bỏ vế sponsor_reclaimed (dùng outstanding cũ) thì hàng 3 lệch —
+    // bảng có hàng phân biệt được hai công thức.
+    expect(c.some((ci, i) => ci - m[i]! !== expected[i])).toBe(true);
   });
 
   it("vòng tròn par chính xác trên toàn bảng (C-PP-1)", () => {

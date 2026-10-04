@@ -53,7 +53,8 @@ import {
   type Assets, type LucidEvolution, type Script, type TxBuilder, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
 import {
-  FUNDING_MAX_VALIDITY_MS, OwnerAuthError, WindowOriginError, msPerEpoch, sameOwner, windowOriginMs, windowStartMs,
+  FUNDING_MAX_VALIDITY_MS, OwnerAuthError, WindowOriginError, msPerEpoch, sameOwner, wakemeVaultHash, windowOriginMs,
+  windowStartMs,
   type Network, type OwnerAuth, type OwnerRef,
 } from "@magiclamp/protocol-utils";
 import {
@@ -809,10 +810,22 @@ export class SponsorTxService {
     const O = windowOriginMs(this.deps.network);
     if (this.derived === undefined) {
       const carp = prepaid.carpUnit!;
+      // `paid_fund` apply-param #5 (2026-10-04, nhánh FundReclaim): script hash két Wakeme
+      // của mạng — nguồn duy nhất ProtocolUtils. Mạng chưa có két ⟹ không suy được hash quỹ.
+      let wakemeHash: string;
+      try {
+        wakemeHash = wakemeVaultHash(this.deps.network);
+      } catch (e) {
+        throw scriptsMismatch(
+          `kho chưa có script hash két Wakeme cho ${this.deps.network} — thiếu apply-param #5 của paid_fund: ` +
+            (e instanceof Error ? e.message : String(e)),
+          {});
+      }
       let base: PrepaidScripts;
       try {
         base = derivePrepaidScripts(this.deps.prepaidBlueprint, this.deps.network, {
           carpPolicyId: carp.slice(0, 56), carpAssetName: carp.slice(56), msPerEpoch: P, windowOriginMs: O,
+          wakemeVaultHash: wakemeHash,
         });
       } catch (e) {
         throw scriptsMismatch(`không apply được blueprint PrepaidGen: ${e instanceof Error ? e.message : String(e)}`, {});

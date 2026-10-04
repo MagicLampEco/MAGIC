@@ -93,6 +93,15 @@ export const AddressSchema = Data.Object({
 });
 export type PlutusAddress = Data.Static<typeof AddressSchema>;
 
+// ── Sponsorship — bên tài trợ + DID được tài trợ (2026-10-04) ──
+// Twin của `types.ak` ▸ `Sponsorship`. `sponsor` là ĐỊA CHỈ ĐẦY ĐỦ (so cả stake),
+// genesis ép payment = VerificationKey; `owner_commit` 32 byte = tên vault-NFT két Wakeme.
+export const SponsorshipSchema = Data.Object({
+  sponsor: AddressSchema,
+  owner_commit: Data.Bytes(),
+});
+export type Sponsorship = Data.Static<typeof SponsorshipSchema>;
+
 // ── PaidFundDatum ────────────────────────────────────────────
 // Hai trường cuối thêm 2026-09-26 (L1''): đích nhận CARP của FundClaim, ghim
 // genesis, bất biến. THÊM Ở CUỐI giữ chỉ số trường cũ nhưng KHÔNG giữ khả năng
@@ -109,6 +118,10 @@ export const PaidFundDatumSchema = Data.Object({
   last_updated_epoch: Data.Integer(),
   beneficiary: AddressSchema, // genesis ép: không stake, ≠ script quỹ/vault
   beneficiary_datum: Data.Nullable(Data.Any()), // Script(_) ⟹ bắt buộc có
+  // Thêm 2026-10-04 (DESIGN-reclaim §10.3), NỐI CUỐI — quỹ 11 trường đời trước
+  // KHÔNG đọc được bằng lược đồ 13 trường (Aiken nghiêm số trường cả hai chiều).
+  sponsorship: Data.Nullable(SponsorshipSchema), // None = quỹ thường
+  sponsor_reclaimed: Data.Integer(), // carpdrop; 0 ở genesis, ghi MỘT lần ở FundReclaim
 });
 export type PaidFundDatum = Data.Static<typeof PaidFundDatumSchema>;
 
@@ -170,6 +183,7 @@ export const PaidFundRedeemerSchema = Data.Enum([
   Data.Object({
     FundClaim: Data.Object({ amount_carpdrop: Data.Integer() }), // constr 2
   }),
+  Data.Literal("FundReclaim"), // constr 3 — NỐI CUỐI (2026-10-04)
 ]);
 export type PaidFundRedeemer = Data.Static<typeof PaidFundRedeemerSchema>;
 
@@ -236,7 +250,7 @@ export const SETTLE_LINE_CONSTR = 6;
 /// `did_len_ok` bên Aiken: rỗng là "chưa gắn", còn nhánh ghi đòi đúng 32 byte.
 export const DID_COMMIT_BYTES = 32;
 
-export const FUND_REDEEMER_ORDER = ["FundLock", "FundSettle", "FundClaim"] as const;
+export const FUND_REDEEMER_ORDER = ["FundLock", "FundSettle", "FundClaim", "FundReclaim"] as const;
 
 export const VAULT_ID_REDEEMER_ORDER = ["MintVaultId"] as const;
 
@@ -289,4 +303,6 @@ export const PAID_FUND_DATUM_FIELDS = [
   "last_updated_epoch",
   "beneficiary",
   "beneficiary_datum",
+  "sponsorship", // thêm 2026-10-04, CHỈ THÊM Ở CUỐI
+  "sponsor_reclaimed",
 ] as const;

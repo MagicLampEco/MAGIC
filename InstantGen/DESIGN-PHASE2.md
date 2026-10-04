@@ -4,7 +4,7 @@
 [`DevStatus.md`](../DevStatus.md); muốn số tươi thì chạy `aiken check` trong `onchain/`
 và `npm test` trong `offchain/`.
 **Nguồn chân lý:** `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §4.2, §6.1, §6.3, §11, §12.
-**Tài liệu này thay thế:** `HALVING-SPEC.md` (halving không còn tồn tại) và mọi mô tả
+**Tài liệu này thay thế:** `HALVING-SPEC.md` (halving không còn tồn tại; tệp đã xoá 2026-10-04, còn trong lịch sử git) và mọi mô tả
 "InstantGen = mua MAGIC bằng LAMP" trong `README.md` / `FEAT.md` / `MATH.md` / `TECH.md`.
 
 ---
@@ -105,8 +105,8 @@ phá interface liên repo.
    bụi), và **thêm** `reject-noop` (không có gì chết thì từ chối, chống spam) +
    cấm chạm `consumed_credit`.
 
-`HALVING-SPEC.md` do đó là tài liệu **đã chết** — giữ để đọc code cũ, không dùng
-để triển khai.
+`HALVING-SPEC.md` do đó là tài liệu **đã chết** và đã xoá khỏi cây (2026-10-04). Cần đọc code
+cũ thì lấy từ lịch sử: `git log --all -- InstantGen/HALVING-SPEC.md`.
 
 ---
 

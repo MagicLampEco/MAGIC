@@ -3,7 +3,7 @@
 > **Tài liệu:** `MagicLamp-Tripletoken-Feat-(Vi).md` — đặc tả kỹ thuật cho **chuyên gia và lập trình viên**.
 > **Đối tượng:** người triển khai on-chain/off-chain, kiểm toán, tích hợp. Phần diễn giải phổ thông (câu chuyện, pháp lý cho người dùng) nằm ở bản công bố `Launch/Whitepaper-MagicLamp-Tokenomic-(Vi).md` — tài liệu này **tham chiếu tới** bản đó, không lặp lại.
 > **Phạm vi:** hợp nhất đặc tả **GenMAGIC** (§6) và **ConsumeMAGIC** (§7) vào một nơi. Cơ chế ổn định CARP chi tiết ở `CarpetMint-Core-Spec-Vi.md` (tài liệu này chỉ nêu giao diện).
-> **Phiên bản:** v2.4.4 — 2026-10-04. Bump PATCH vì §6.1.4 và bảng quyền đặc quyền (§6.1.5, dòng `Đổi tham số`) còn khai MỌI giá trị `ρ` đăng mới "hiệu lực từ epoch sau", trong khi `GenBeacons/onchain/validators/rate_param.ak` ▸ `mint` đã ép `effective_epoch == now` cho lượt khởi tạo beacon (`prev_rho_q == 0`) và chỉ nhánh `spend` giữ `effective_epoch == now + 1` (PR #138, `main` 288ba4c6; chủ dự án duyệt sửa lời khai 2026-10-04). Đo trên Preprod 2026-10-04: beacon `ρ` đăng ở epoch 317 (tx `3a03fc2b96847d385ed9be42a23e80a38e307a0ecb702c2f772cd452482ce99e`) và một lượt Sinh 30 MAGIC trong cùng epoch 317 (tx `aff41b434b44a7d607c4bff1d394962d567ce78eb579b2b504350fbb03f2de07`). Chỉ sửa lời khai thời điểm hiệu lực của `ρ`; không đổi công thức, bất biến hay con số nào. Không gộp vào v2.4.3 vì v2.4.3 đã vào `main`.
+> **Phiên bản:** v2.4.4 — 2026-10-04. Bump PATCH vì §6.1.4 và bảng quyền đặc quyền (§6.1.5, dòng `Đổi tham số`) còn khai MỌI giá trị `ρ` đăng mới "hiệu lực từ epoch sau", trong khi `GenBeacons/onchain/validators/rate_param.ak` ▸ `mint` đã ép `effective_epoch == now` cho lượt khởi tạo beacon (`prev_rho_q == 0`) và chỉ nhánh `spend` giữ `effective_epoch == now + 1` (PR #138, `main` 288ba4c6; chủ dự án duyệt sửa lời khai 2026-10-04). Đo trên Preprod 2026-10-04: beacon `ρ` đăng ở epoch 317 (tx `3a03fc2b96847d385ed9be42a23e80a38e307a0ecb702c2f772cd452482ce99e`) và một lượt Sinh 30 MAGIC trong cùng epoch 317 (tx `aff41b434b44a7d607c4bff1d394962d567ce78eb579b2b504350fbb03f2de07`). Cùng bản, dòng LAMP ở §1 và dòng `Cung` của bảng LAMP đổi "cố định 36 tỷ, không mint thêm" thành "trần 36 tỷ, lazy-mint" cho khớp `BOUNDARIES.md` §1 — câu cũ đọc thành "36 tỷ đã nằm sẵn trên chuỗi" (chủ dự án duyệt 2026-10-04). Chỉ sửa lời khai thời điểm hiệu lực của `ρ` và cách nói về cung LAMP; không đổi công thức, bất biến hay con số nào. Không gộp vào v2.4.3 vì v2.4.3 đã vào `main`.
 > **Vai:** spec build-fact tokenomics MAGIC, sống trong repo MAGIC (chủ dự án chốt 2026-08-04: tài liệu chính chủ về MAGIC nằm trong repo MAGIC; whitepaper /Launch + tài liệu LAMP chỉ **tham chiếu**, KHÔNG định-nghĩa-lại). Khi lệch với `MagicLamp-3Token-DacTa-Vi.md`, GenMAGIC/ConsumeMAGIC rời hoặc whitepaper /Launch → tệp này thắng. Khi lệch với MÃ đang chạy → mã là dữ kiện về hiện trạng, lệch phải được ghi ra (không im lặng chọn bên).
 >
 > **Changelog 2026-09-19 (v2.1):** chủ dự án chốt bốn điểm treo của mô hình sinh (§13, bảng
@@ -28,7 +28,7 @@
 
 Hệ MagicLamp có **ba token** với ba vai loại trừ nhau:
 
-- **LAMP** — tài sản nền. Cố định **36 tỷ, không mint thêm, không burn** (giảm lưu hành = chuyển Treasury kế toán). Nguồn sinh MAGIC; tài sản tham gia governance (không token-weighted); nguồn backing hợp đồng tín dụng MAGIC.
+- **LAMP** — tài sản nền. **Trần 36 tỷ, không burn** — lazy-mint: token chỉ sinh khi cần, tổng đã sinh luôn ≤ trần, không phải 36 tỷ đã nằm sẵn trên chuỗi (`BOUNDARIES.md` §1; `LAMP/Papers/Whitepaper.md`). Giảm lưu hành = chuyển Treasury kế toán. Nguồn sinh MAGIC; tài sản tham gia governance (không token-weighted); nguồn backing hợp đồng tín dụng MAGIC.
 - **MAGIC** — quyền-tiêu-dịch-vụ. **Không phải token** (không policy-id, không mint): là **số kế toán trong vault datum**, gắn **VÍ** (khoá thanh toán của chủ vault), **không chuyển nhượng**. PersonDID đi kèm để **quy kết**, không để gác quyền — xem `INV-MAGIC-WALLET-BOUND` (§bất biến). Sinh mỗi epoch, **dùng-hết-trong-epoch-hoặc-mất** (§4). Chỉ chuộc-ra-dịch-vụ, không ra tiền.
 - **CARP** — đồng-thanh-khoản ổn định. Native token có policy-id riêng, chuyển nhượng, giữ giá bằng **sàn-tiện-ích** (luôn đổi được sang MAGIC để tiêu). Cổng-vào bằng fiat cho người chưa có LAMP.
 
@@ -112,7 +112,7 @@ Quy luật: **LAMP sinh MAGIC; CARP chở giá trị tới nơi tiêu; MAGIC ti�
 | Hạng mục | Nội dung |
 |---|---|
 | Loại | Native token, policy-id riêng (đã có) |
-| Cung | 36 tỷ cố định, không mint thêm, **không burn** |
+| Cung | trần 36 tỷ (lazy-mint, tổng đã sinh ≤ trần), **không burn** |
 | Vai backing | nắm-giữ đối ứng InstantGen/ScheduleGen (đối ứng GreenBack); nguồn khoá hợp đồng (§9) |
 | Governance | đọc LAMP-nắm cho tư-cách, **KHÔNG nhân số lượng**; VP do PhoenixKey DID |
 | Biến động | có; rủi-ro-giá do hệ gánh (GreenBack carry), không đẩy sang người-tiêu-MAGIC |

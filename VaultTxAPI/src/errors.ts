@@ -16,9 +16,10 @@
 //   409 VAULT_IDENTITY_DUPLICATE hai UTxO cùng mang một NFT danh-tính vault
 //   400 FEE_PAYER_SHAPE / FEE_PAYER_INVALID   `fee_payer` sai hình dạng / sai mạng / UTxO lạ
 //   400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT     `fee_payer` cùng `change_address`
-//   400 FEE_PAYER_UNSUPPORTED    `fee_payer` ở gốc thân bài của `/tx/create-vault` (dùng `funding.fee_payer`)
+//   400 FEE_PAYER_UNSUPPORTED    `fee_payer` ở gốc thân bài của `/tx/create-vault`, trừ két instant 0 LAMP không `funding`
 //   422 FEE_PAYER_TX_MISMATCH    giao dịch vừa dựng lệch luật ví trả phí (`feePayer.ts`)
-//   422 FEE_PAYER_DEPOSIT_UNSOURCED  `/tx/open-thread` chỉ có `fee_payer`: không ai trả min-ADA thread
+//   422 FEE_PAYER_FRONTING_ABOVE_MAX  ví trả phí phải ứng min-ADA vượt `fee_payer_fronting_max_lovelace`
+//   422 FEE_PAYER_OWNER_REWARD_NONZERO  chủ did_stake có thưởng > 0: qua ví trả phí thì thưởng chảy sang bên trả phí
 //   400 ENGAGE_REF_SHAPE / ENGAGE_REF_MISMATCH  `engage_ref` sai hình dạng / không phải thread của chủ
 //   404 ENGAGE_THREAD_NOT_FOUND  chủ chưa có thread Engage — mở bằng `POST /tx/open-thread`
 //   409 ENGAGE_THREAD_AMBIGUOUS  chủ có nhiều thread, yêu cầu không kèm `engage_ref`
@@ -44,7 +45,6 @@
 //   400 DID_COMMIT_INVALID       `/tx/bind-did`: `did_commit` không phải đúng 64 ký tự hex thường (32 byte)
 //   409 DID_ALREADY_BOUND        `/tx/bind-did`: thread đã gắn DID (một chiều, một lần) — `details.did_commit` = giá trị hiện có
 //   422 BIND_DID_TX_MISMATCH     giao dịch gắn DID vừa dựng lệch (redeemer/value/datum/chữ ký chủ)
-//   501 BIND_DID_FEE_PAYER_UNSUPPORTED  `/tx/bind-did` kèm `fee_payer` — bộ dựng chưa đặt hạn dùng mà ví trả phí đòi
 //   401 FEE_PROXY_APP_UNKNOWN    `X-Feecover-Token` không khớp ứng dụng nào (hoặc không có ứng dụng mặc định)
 //   400 FEE_PROXY_PURPOSE_UNMAPPED  ứng dụng chưa có mục đích Feecover cho route đó
 //   403 FEE_PROXY_APP_PURPOSE    mục đích mang tiền tố của ứng dụng khác / thiếu tiền tố của chính ứng dụng

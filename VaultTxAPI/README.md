@@ -612,7 +612,9 @@ FEE_QUOTE_SELF_FUNDED`; phí thật nằm ở `summary.funding.self_funded.fee_l
 ### Ví trả phí bên thứ ba: `fee_payer`
 
 Năm đường dựng trên vault có sẵn (`instant-gen`, `refresh-checkpoint`, `schedule-commit`,
-`schedule-fire`, `consume`) nhận `fee_payer` thay cho `change_address`:
+`schedule-fire`, `consume`), cùng `open-thread`, `bind-did`, `create-vault` két instant
+`"lamp_amount": "0"` và bốn bước tài trợ `/tx/sponsor/*`, nhận `fee_payer` thay cho
+`change_address`. Người dùng mới chưa có ADA nào đi được trọn đường bằng ví trả phí:
 
 ```jsonc
 "fee_payer": {
@@ -625,15 +627,59 @@ UTxO đó trả phí và làm tài sản thế chấp; tiền thối ADA và `co
 `fee_payer.address`. Lượng thế chấp đặt **tường minh** bằng `fee_payer_collateral_lovelace`
 của cấu hình (§6), và cũng là trần mà phép đọc lại ép lên phần thế chấp có thể mất. Dịch vụ
 đọc lại `tx_cbor` (input, output, thế chấp, hạn dùng) và trả `summary.fee_payer`; lệch ⟹
-`422 FEE_PAYER_TX_MISMATCH`, không phát tx. Ví trả phí chỉ được mất đúng bằng phí.
+`422 FEE_PAYER_TX_MISMATCH`, không phát tx. Ví trả phí chỉ được mất đúng **phí cộng khoản ứng
+min-ADA** (mục dưới); input khác ngoài UTxO trả phí chỉ được đến từ địa chỉ của chính luồng đó
+(địa chỉ vault, địa chỉ engage), không từ ví nào khác.
 
 - `fee_payer` cùng `change_address` ⟹ `400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT`.
-- `/tx/create-vault` nhận ví trả phí qua `funding.fee_payer`, không qua `fee_payer` ở gốc
-  thân bài ⟹ `400 FEE_PAYER_UNSUPPORTED`.
-- `/tx/open-thread` khoá min-ADA vào output thread, mà ví trả phí chỉ được mất đúng bằng phí
-  ⟹ `fee_payer` một mình trả `422 FEE_PAYER_DEPOSIT_UNSOURCED`; gửi `change_address`.
-- `/tx/bind-did` chưa nhận `fee_payer` ⟹ `501 BIND_DID_FEE_PAYER_UNSUPPORTED` (bộ dựng BindDID
-  chưa đặt hạn dùng mà luật ví trả phí đòi); gửi `change_address` hoặc bỏ trống với chủ khoá.
+- `/tx/create-vault` nhận `fee_payer` ở gốc thân bài **chỉ** cho két `instant` với
+  `"lamp_amount": "0"` và không kèm `funding` (tx không cần LAMP của ai); mọi ca khác ⟹
+  `400 FEE_PAYER_UNSUPPORTED`. Két có LAMP nạp nhận ví trả phí qua `funding.fee_payer` như cũ.
+- `/tx/open-thread` và `/tx/bind-did` nhận `fee_payer`. Open-thread: UTxO trả phí là input duy
+  nhất, ví trả phí ứng trọn lovelace của output thread. Bind-did: input chỉ là UTxO trả phí và
+  thread của chủ ở địa chỉ engage; value thread giữ nguyên nên không có khoản ứng.
+- Chủ `Script(did_stake)` mà tài khoản thưởng đang có số dư > 0 ⟹ `422
+  FEE_PAYER_OWNER_REWARD_NONZERO`, trước khi dựng. Nhân chứng chủ rút TRỌN số dư đó, và qua ví
+  trả phí thì tiền thối về ví trả phí, nên thưởng của chủ sẽ chảy sang bên trả phí. Rút thưởng
+  về ví của chủ trước, rồi dựng lại.
+
+#### Khoản ứng min-ADA: ví trả phí trả trước tiền ký quỹ của output két/thread
+
+Một output trên Cardano phải giữ đủ min-ADA, tính theo số byte của nó. Người dùng mới không có
+ADA, nên ví trả phí **ứng** khoản đó cho ĐÚNG MỘT output mang NFT két/thread của chính chủ, tới
+trần `fee_payer_fronting_max_lovelace` của cấu hình (§6; vắng ⟹ 5 ADA; `"0"` tắt hẳn). Phép đọc
+lại CBOR đo khoản ứng:
+
+- output mang NFT vừa đúc trong cùng tx (tạo két, mở thread) ⟹ khoản ứng = toàn bộ lovelace của
+  output đó;
+- output tiếp nối một két đã có ⟹ khoản ứng = lovelace output − lovelace input của két đó (datum
+  lớn lên thì min-ADA tăng theo).
+
+Khoản ứng vượt trần ⟹ `422 FEE_PAYER_FRONTING_ABOVE_MAX` (`details.fronted_lovelace`,
+`details.fronted_max_lovelace`, `details.output_index`), không phát tx. `summary.fee_payer.fronted_lovelace`
+ghi khoản đã ứng. Khoản ứng nằm lại trong output của chủ, không về ví trả phí: thread không có
+nhánh nào nâng value sau khi mở, và két instant không có nhánh đóng.
+
+Số đo min-ADA (CML `min_ada_required`, `coinsPerUtxoByte` 4310; địa chỉ script không stake /
+có stake), để chọn trần:
+
+| output | không stake | có stake |
+|---|---|---|
+| két instant genesis (datum 178 B) | 2.129.140 | 2.249.820 |
+| két instant, 1 lô MAGIC | 2.499.800 | 2.620.480 |
+| két instant, 8 lô | 4.430.680 | 4.551.360 |
+| két instant, 16 lô | 6.637.400 | 6.758.080 |
+| két instant, 32 lô (`MAX_BATCHES_PER_VAULT`) | 11.055.150 | 11.175.830 |
+| két instant chạm trần datum (3187 B) | 15.119.480 | 15.240.160 |
+| thread genesis | 1.361.960 | 1.482.640 |
+| thread chạm trần | 1.607.630 | 1.728.310 |
+
+Thread mở với `ENGAGE_MIN_LOVELACE` = 2.000.000, cao hơn min-ADA của nó ở trần, nên mở thread ứng
+đúng 2 ADA và không bao giờ phải ứng thêm. Két instant genesis cần 2,13–2,25 ADA, dưới trần mặc
+định; sau đó mỗi lô MAGIC thêm vào datum nâng min-ADA khoảng 0,37 ADA (1 lô − genesis = 370.660
+lovelace), và lượt dựng chỉ ứng đúng phần chênh đó. Ca vượt trần nhận `422` có số cụ thể.
+Không đặt sàn lovelace lúc tạo két: phủ trần datum ngay từ đầu là khoá ~13 ADA mỗi két mà không
+có nhánh nào trả lại.
 
 **Ví trả phí không nhất thiết là Feecover.** Một UTxO thuần ADA trên **địa chỉ khoá của chính
 chủ** dùng được làm `fee_payer` (hoặc `funding.fee_payer`), cùng luật như trên. Khi đó không cần
@@ -715,7 +761,8 @@ làm cạn kho UTxO của Feecover. Lượt gọi Feecover duy nhất là câu h
   - Phí vẫn có khi `available=false`.
 - **`owner_address`** — nguồn trả phí là **ví khoá của chính chủ**.
   - `needed_lovelace` là lượng tối thiểu một UTxO thuần ADA phải có để tx dựng được với nó làm
-    `fee_payer`: `max(phí, thế chấp) + min-ADA`, suy từ cách lucid chọn input trả phí và thế chấp
+    `fee_payer`: `max(phí + khoản ứng, thế chấp) + min-ADA` (khoản ứng = 0 trừ đường có khoản ứng
+    min-ADA, mục ví trả phí ở trên), suy từ cách lucid chọn input trả phí và thế chấp
     trên cùng một UTxO (không cộng dồn phí với thế chấp: hai khoản không bị thu cùng lúc). Mỗi
     địa chỉ có ngưỡng riêng (phí phụ thuộc độ dài địa chỉ), tính bằng một lượt dựng tổng hợp ở
     đúng địa chỉ đó.
@@ -749,9 +796,8 @@ Lỗi của thân báo giá mang mã `FEE_QUOTE_*`; lỗi của `params` (vault 
 tiền, …) mang **đúng mã** mà đường dựng trả. Hai ca đặc biệt:
 - `/tx/create-vault` chỉ báo giá được khi `params` có `funding` (đường duy nhất có ví trả phí);
   vắng ⟹ `400 FEE_QUOTE_FUNDING_REQUIRED`.
-- `/tx/open-thread` không nhận ví trả phí (xem trên) ⟹ báo giá trả đúng `422
-  FEE_PAYER_DEPOSIT_UNSOURCED` của đường đó.
-- `/tx/bind-did` chưa nhận ví trả phí ⟹ báo giá trả đúng `501 BIND_DID_FEE_PAYER_UNSUPPORTED`.
+- Đường có khoản ứng min-ADA (`open-thread`, `create-vault` két instant 0 LAMP) cộng khoản ứng
+  vào vế phí: `needed_lovelace` = `max(phí + khoản ứng, thế chấp) + min-ADA`.
 
 ### Thread Engage: chọn theo chủ, `engage_ref`, `POST /tx/open-thread`
 
@@ -816,7 +862,6 @@ kể cả ghi lại chính giá trị cũ.
 | chủ có nhiều thread, không kèm `engage_ref` | `409 ENGAGE_THREAD_AMBIGUOUS` |
 | thread đã gắn DID | `409 DID_ALREADY_BOUND` — `details.did_commit` = giá trị đang trên chuỗi, kèm `engage_ref`, `engage_nft` |
 | tx vừa dựng lệch (redeemer · value thread · datum · chữ ký chủ) | `422 BIND_DID_TX_MISMATCH` |
-| kèm `fee_payer` | `501 BIND_DID_FEE_PAYER_UNSUPPORTED` |
 
 Dịch vụ đọc lại `tx_cbor` trước khi trả: thread là input với redeemer đúng `BindDID`; không đúc/đốt
 gì dưới policy consume; đúng một output ở địa chỉ engage, mang NFT thread, value BẰNG tuyệt đối value
@@ -1148,9 +1193,10 @@ Nên:
 | chủ script, dịch vụ chưa cấu hình `did_stake` | `501 OWNER_SCRIPT_WITNESS_UNAVAILABLE` |
 | `fee_payer` sai khuôn / sai mạng · không phải khoá · UTxO không ở đó hoặc không thuần ADA | `400 FEE_PAYER_SHAPE` / `400 FEE_PAYER_INVALID` |
 | `fee_payer` cùng `change_address` | `400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT` |
-| `fee_payer` ở gốc thân bài của `/tx/create-vault` | `400 FEE_PAYER_UNSUPPORTED` |
+| `fee_payer` ở gốc thân bài của `/tx/create-vault`, trừ két `instant` `"lamp_amount": "0"` không kèm `funding` | `400 FEE_PAYER_UNSUPPORTED` |
+| ví trả phí phải ứng min-ADA vượt `fee_payer_fronting_max_lovelace` | `422 FEE_PAYER_FRONTING_ABOVE_MAX` |
+| chủ `Script(did_stake)` có thưởng > 0, dựng qua `fee_payer` | `422 FEE_PAYER_OWNER_REWARD_NONZERO` |
 | tx vừa dựng lệch luật ví trả phí | `422 FEE_PAYER_TX_MISMATCH` |
-| `/tx/open-thread` chỉ có `fee_payer` (không ai trả min-ADA thread) | `422 FEE_PAYER_DEPOSIT_UNSOURCED` |
 | `engage_ref` sai khuôn / không phải thread của chủ | `400 ENGAGE_REF_SHAPE` / `400 ENGAGE_REF_MISMATCH` |
 | `/tx/instant-gen`: `m` vắng / số JSON / không phải chữ số / `"0"` | `400 INSTANT_GEN_M_INVALID` |
 | `/tx/instant-gen`: `m > max_m` (`details.max_m`, `details.m`) | `422 INSTANT_GEN_M_ABOVE_MAX` |
@@ -1185,7 +1231,6 @@ Nên:
 | `/tx/bind-did`: `did_commit` không đúng 64 ký tự hex thường | `400 DID_COMMIT_INVALID` |
 | `/tx/bind-did`: thread đã gắn DID | `409 DID_ALREADY_BOUND` (`details.did_commit`) |
 | tx gắn DID vừa dựng lệch (redeemer / value / datum / chữ ký chủ) | `422 BIND_DID_TX_MISMATCH` |
-| `/tx/bind-did` kèm `fee_payer` | `501 BIND_DID_FEE_PAYER_UNSUPPORTED` |
 | `/tx/quote`: thân sai hình dạng · `route` lạ | `400 FEE_QUOTE_SHAPE` / `400 FEE_QUOTE_ROUTE_UNKNOWN` |
 | `/tx/quote`: `params` mang `fee_payer` / `funding.fee_payer` | `400 FEE_QUOTE_FEE_PAYER_IN_PARAMS` |
 | `/tx/quote` cho `create-vault` không có `params.funding` | `400 FEE_QUOTE_FUNDING_REQUIRED` |
@@ -1344,6 +1389,7 @@ dùng.
     "max_price_stale": "1"                  // tuỳ chọn — apply-param #5 của consume; có ⟹ từ chối sớm CONSUME-011
   },
   "fee_payer_collateral_lovelace": "3000000",      // tuỳ chọn, CHUỖI; thế chấp khi có ví trả phí
+  "fee_payer_fronting_max_lovelace": "5000000",    // tuỳ chọn, CHUỖI; trần khoản ứng min-ADA, "0" tắt
   "did_stake": { "anchor_nft_policy": "<56 hex>", "unapplied_script": { "cbor": "<hex>", "hash": "<56 hex>" } }, // tuỳ chọn — chủ script + funding did_payment; unapplied_script bật chủ {type:"did"}
   "feecover": {                                     // tuỳ chọn — proxy phí, xem §3
     "url": "https://feecover.example",              // https://, hoặc http:// tới loopback
@@ -1363,9 +1409,15 @@ v1) cũng vậy: UM không còn trong công thức sinh, beacon backing thay b�
 shard GB của khối `gen_v2` — khai `instant` thì dịch vụ từ chối khởi động và câu lỗi nêu các
 trường `gen_v2` cần khai. Script hash / policy của `gen_v2` suy từ địa chỉ, như `vaults`. Trong `feecover.apps`, ứng dụng `magic` không có
 `token_sha256` — token của nó vào qua `FEECOVER_APP_TOKEN`; ứng dụng khác khai SHA-256 của
-token của họ, dịch vụ không giữ token đó. Mục đích cho `instant-gen` / `schedule-*` và
-`open-thread` chưa có ở Feecover nên chưa có trong mẫu; route vắng khỏi bảng thì proxy trả
-`400 FEE_PROXY_PURPOSE_UNMAPPED` cho tx của route đó.
+token của họ, dịch vụ không giữ token đó. Khoá của `purposes` là tên route: tám đường dựng
+(`create-vault`, `instant-gen`, `refresh-checkpoint`, `schedule-commit`, `schedule-fire`,
+`consume`, `open-thread`, `bind-did`) và bốn bước tài trợ (`sponsor-t1-open`, `sponsor-t2-fund`,
+`sponsor-t3-draw`, `sponsor-t4-first-consume`); tên lạ ⟹ dịch vụ từ chối khởi động. Giá trị là
+tên mục đích của Feecover và do Feecover đặt (bốn bước tài trợ bên đó dùng `sponsor_open` /
+`sponsor_fund` / `sponsor_draw` / `sponsor_first_consume`). Route vắng khỏi bảng thì proxy trả
+`400 FEE_PROXY_PURPOSE_UNMAPPED` cho tx của route đó. T2 cũng là khoá hợp lệ: `/tx/sponsor/t2-fund`
+nhận `fee_payer` như ba bước kia, nhà tài trợ chỉ ký thêm cho UTxO CARP của mình; Feecover có trả
+phí T2 hay không là việc của bảng mục đích, không phải của dịch vụ này.
 
 `lamp.policy_id` đi qua `@magiclamp/sdk` ▸ `assertLampPolicyId` ngay lúc khởi động
 (`parseDeployment`): policy nhái đã biết và LAMP THẬT của một đời đã bị thay đều bị từ chối,
@@ -1474,9 +1526,12 @@ PhoenixKey, nên nó chỉ sống ở cấu hình theo mạng, không ở mã. `
 
 ## 8. Còn thiếu — nói thẳng, không để người sau tự phát hiện
 
-- **`scripts/gen_vault_tx_api_deployment.ts` chưa sinh mục `did_stake`.** Chưa có nó thì mọi
-  yêu cầu chủ script nhận `501`. Giá trị `anchor_nft_policy` thuộc bản deploy của repo danh
-  tính; bộ sinh cần một nguồn đọc được cho nó trước khi thêm dòng này.
+- **`did_stake.unapplied_script` chỉ được sinh khi có `--did-stake-blueprint <tệp>`.** Bộ sinh
+  (`scripts/gen_vault_tx_api_deployment.ts` ▸ `didStakeScriptFromBlueprint`) đọc validator
+  `did_stake.did_stake.withdraw` trong blueprint của PhoenixKey, băm lại `compiledCode` và so với
+  khoá sổ trạng thái `DID_STAKE_UNAPPLIED_HASH`; sổ không có khoá đó hoặc hash lệch ⟹ bộ sinh ném,
+  không đoán. Không có cờ ⟹ không phát `unapplied_script`, chủ `{type:"did"}` nhận `501
+  OWNER_SCRIPT_WITNESS_UNAVAILABLE`. Chưa sổ cụm nào ghi khoá `DID_STAKE_UNAPPLIED_HASH`.
 - **Trạng thái Active của anchor không kiểm off-chain.** Anchor bị thu hồi thì tx dựng xong
   vẫn bị `did_stake` từ chối lúc nộp, không phải lúc dựng.
 - **Chưa có lượt nộp thật nào của đường chủ script hay `/tx/create-vault`.** Bài kiểm dùng

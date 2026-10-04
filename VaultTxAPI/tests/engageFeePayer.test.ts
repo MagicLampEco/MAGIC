@@ -187,6 +187,7 @@ describe("fee_payer — dương", () => {
       fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
       // Két không đổi lovelace ⟹ không ứng gì; output két là output được chỉ định (#0).
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
+      shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
       valid_to_posix_ms: String(NOW + 1_800_000),
     });
@@ -267,6 +268,7 @@ describe("fee_payer — schedule-fire", () => {
       fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
       // Két không đổi lovelace ⟹ không ứng gì; output két là output được chỉ định (#0).
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
+      shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
       valid_to_posix_ms: String(NOW + 1_800_000),
     });
@@ -366,6 +368,7 @@ describe("fee_payer — consume", () => {
       fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
       // Két không đổi lovelace ⟹ không ứng gì; output két là output được chỉ định (#0).
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
+      shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
       valid_to_posix_ms: String(NOW + 1_800_000),
     });
@@ -541,6 +544,7 @@ describe("fee_payer — instant-gen", () => {
       fee_lovelace: String(FEE), change_lovelace: String(10_000_000n - FEE),
       // Két không đổi lovelace ⟹ không ứng gì; output két là output được chỉ định (#0).
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
+      shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
       valid_to_posix_ms: String(NOW + 1_800_000),
     });

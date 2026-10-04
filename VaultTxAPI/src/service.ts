@@ -31,7 +31,7 @@ import {
 } from "./engage.js";
 import {
   FEE_PAYER_CODES, assertFeePayerAddress, assertNoOwnerRewardToFeePayer, checkFeePayerTx, inputRefsOf,
-  readFeePayerUtxo as readFeePayerUtxoShared, type FeePayerFronting,
+  readFeePayerUtxo as readFeePayerUtxoShared, type FeePayerFronting, type FeePayerSharedFronting,
   refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike,
 } from "./feePayer.js";
 import {
@@ -743,9 +743,12 @@ export class VaultTxService {
       });
       if (req.ownerDid !== undefined) summary.owner_did = req.ownerDid;
       if (feePayer !== undefined) {
-        // Két của CHÍNH chủ là output duy nhất được nhận khoản ứng: phần min-ADA tăng khi datum dài ra.
+        // Két của CHÍNH chủ nhận khoản ứng khi datum dài ra; shard GreenBack (dùng chung) cũng vậy —
+        // nhánh sinh dựng lại shard với datum dài hơn, và trên đường chủ tự trả thì chủ trả phần đó.
+        const g = this.deps.deployment.genV2;
         summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, feePayerUtxo!, tip, {
           fronting: { address: vault.scope.address, nftUnit: vault.vaultIdUnit, inputRef: vault.utxo },
+          ...(g === undefined ? {} : { sharedFrontings: [{ address: g.gbShardAddress, policyId: g.gbShardPolicyId }] }),
         });
       }
       afterSummary?.(built.txCbor, summary);
@@ -824,7 +827,11 @@ export class VaultTxService {
   /** Đọc lại CBOR theo luật ví trả phí. Input khác UTxO trả phí được tra từ CHUỖI, không từ bộ dựng. */
   private async checkFeePayer(
     txCbor: string, fp: FeePayerRequest, fpUtxo: UTxO, tip: ChainTip,
-    opts: { fronting?: Omit<FeePayerFronting, "maxLovelace">; otherInputAddresses?: readonly string[] } = {},
+    opts: {
+      fronting?: Omit<FeePayerFronting, "maxLovelace">;
+      sharedFrontings?: readonly Omit<FeePayerSharedFronting, "maxLovelace">[];
+      otherInputAddresses?: readonly string[];
+    } = {},
   ): Promise<FeePayerSummary> {
     const feeKey = refStr(fp.utxoRef);
     const others = inputRefsOf(txCbor).filter(r => refStr(r) !== feeKey);
@@ -838,6 +845,9 @@ export class VaultTxService {
       otherInputs,
       ...(opts.fronting === undefined ? {} : {
         fronting: { ...opts.fronting, maxLovelace: this.deps.deployment.feePayerFrontingMaxLovelace },
+      }),
+      ...(opts.sharedFrontings === undefined ? {} : {
+        sharedFrontings: opts.sharedFrontings.map(s => ({ ...s, maxLovelace: this.deps.deployment.feePayerFrontingMaxLovelace })),
       }),
       ...(opts.otherInputAddresses === undefined ? {} : { otherInputAddresses: opts.otherInputAddresses }),
     });

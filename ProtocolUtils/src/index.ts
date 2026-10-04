@@ -304,7 +304,9 @@ export function lampAssetName(network: Network): string {
 // giả nướng vào apply-param vẫn cho ra một vault hợp lệ, chỉ là vault đó không bao giờ đọc
 // được két thật, và không gì kêu lên. Vắng ⟹ `wakemeVaultHash` NÉM.
 export const WAKEME_VAULT_HASH_BY_NETWORK: Readonly<Partial<Record<Network, string>>> = {
-  Preprod: "4da780c4e990bd49ab4fa3f8340f7bb6869c244823996d39b4393cab",   // Wakeme v4 (lưới O), 2026-10-03
+  // Wakeme v5 (W = `src_add_delay_periods` = 0 trên Preprod), deploy 2026-10-04, thư `wk1004mg-c`;
+  // thay v4 `4da780c4…`. Sổ deploy bên Wakeme: `preprod-v5-2026-10-04.json`.
+  Preprod: "118d53524fe2cc2e5c01fcbbf002e0c631478b879b1b4690db04154f",
 };
 
 /** Script hash két Wakeme của `network`. Mạng chưa có két ⟹ NÉM, không trả giá trị đệm. */

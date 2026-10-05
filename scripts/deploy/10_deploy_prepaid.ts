@@ -43,7 +43,7 @@
 //   CARP_ASSET_NAME   — BẮT BUỘC, hex chẵn, không rỗng.
 //   PLATFORM_PKH      — pkh provider giữ quỹ (mặc định: pkh của ví đang chạy).
 //                       On-chain ĐÒI chữ ký này ở genesis (từ 2026-09-26).
-//   BUFFER_BPS        — đệm buffer-Paid, mặc định 1500 (= min_buffer_bps)
+//   BUFFER_BPS        — đệm buffer-Paid, mặc định 0 (= min_buffer_bps, từ 2026-10-05)
 //   BENEFICIARY_ADDRESS — BẮT BUỘC, KHÔNG mặc định. Địa chỉ bech32 ENTERPRISE (không
 //                       stake) nhận CARP mỗi lượt `FundClaim`, ghim trọn đời quỹ.
 //   BENEFICIARY_DATUM — BẮT BUỘC, KHÔNG mặc định: `none` (output không datum) hoặc
@@ -88,51 +88,26 @@ import { minAdaForRefScriptWithMargin } from "../minAda.js";
 import { parseFlag } from "../runResult.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 import { fundIdAssetName } from "../fundId.js";
-import { OwnerCredentialSchema } from "../../PrepaidGen/offchain/src/types.js";
+import {
+  OwnerCredentialSchema,
+  PaidFundDatumSchema,
+  type PaidFundDatum as PaidFundDatumT,
+  type PlutusAddress,
+} from "../../PrepaidGen/offchain/src/types.js";
+import { assertCarpMatchesInstance, fetchCarpInstance } from "../../PrepaidGen/offchain/src/carpInstance.js";
+import type { CarpNetwork } from "../../PrepaidGen/offchain/src/constants.js";
+import { wakemeVaultHash } from "@magiclamp/protocol-utils";
 
 // ── Lược đồ datum ────────────────────────────────────────────────
 // Neo: PrepaidGen/onchain/lib/magiclamp/protocol/types.ak ▸ PaidFundDatum,
 // PrepaidVaultDatum. Thứ tự trường là HỢP ĐỒNG NHỊ PHÂN — xê dịch một trường là
 // đổi cách giải mã mọi UTxO đã tạo (BOUNDARIES.md §2).
-
-// `cardano/address.{Address}` — thứ tự nhánh LÀ mã hoá (VerificationKey 0, Script 1).
-// Gương của `PrepaidGen/offchain/src/types.ts` ▸ `AddressSchema`; tệp này giữ bản
-// riêng vì `scripts/` và `PrepaidGen/offchain` là hai gói npm, hai bản lucid.
-const CredentialSchema = Data.Enum([
-  Data.Object({ VerificationKey: Data.Tuple([Data.Bytes()]) }),
-  Data.Object({ Script: Data.Tuple([Data.Bytes()]) }),
-]);
-const AddressSchema = Data.Object({
-  payment_credential: CredentialSchema,
-  // Genesis ép `stake_credential == None`, nên chỉ cần mã hoá được nhánh None;
-  // khai đủ hai nhánh để lược đồ vẫn là gương đúng của Aiken.
-  stake_credential: Data.Nullable(Data.Enum([
-    Data.Object({ Inline: Data.Tuple([CredentialSchema]) }),
-    Data.Object({ Pointer: Data.Object({
-      slot_number: Data.Integer(),
-      transaction_index: Data.Integer(),
-      certificate_index: Data.Integer(),
-    }) }),
-  ])),
-});
-type PlutusAddress = Data.Static<typeof AddressSchema>;
-
-const PaidFundDatumSchema = Data.Object({
-  fund_id:            Data.Bytes(),
-  platform:           Data.Bytes(),
-  vault_hash:         Data.Bytes(),
-  carp_locked:        Data.Integer(),
-  credit_issued:      Data.Integer(),
-  magic_settled:      Data.Integer(),
-  provider_claimed:   Data.Integer(),
-  buffer_bps:         Data.Integer(),
-  last_updated_epoch: Data.Integer(),
-  // Thêm Ở CUỐI 2026-09-26 (L1''). Quỹ 9 trường đời trước KHÔNG đọc được bằng
-  // lược đồ này, và ngược lại — Aiken nghiêm về số trường cả hai chiều.
-  beneficiary:        AddressSchema,
-  beneficiary_datum:  Data.Nullable(Data.Any()),
-});
-type PaidFundDatum = Data.Static<typeof PaidFundDatumSchema>;
+//
+// `PaidFundDatum` (13 trường từ 2026-10-04) + `Address` NẠP từ `PrepaidGen/offchain`
+// — MỘT nguồn lược đồ. Bản chép riêng ở đây (11 trường) đã trôi khỏi validator đúng một
+// lần và bị gỡ. Lược đồ Lucid là dữ liệu thuần (TypeBox), nên dùng chéo hai bản lucid
+// của hai gói được — cùng cách `OwnerCredentialSchema` đã được nạp từ trước.
+type PaidFundDatum = PaidFundDatumT;
 const PaidFundDatum = PaidFundDatumSchema as unknown as PaidFundDatum;
 
 const PrepaidVaultDatumSchema = Data.Object({
@@ -259,8 +234,9 @@ function readBeneficiary(): {
   };
 }
 
-/** `min_buffer_bps` — neo: PrepaidGen/onchain/lib/magiclamp/protocol/constants.ak */
-const MIN_BUFFER_BPS = 1_500n;
+/** `min_buffer_bps` — neo: PrepaidGen/onchain/lib/magiclamp/protocol/constants.ak
+ *  (chép 2026-10-05, sàn hạ 1500 → 0 theo quyết định chủ dự án). */
+const MIN_BUFFER_BPS = 0n;
 const MAX_BUFFER_BPS = 10_000n;
 
 async function main() {
@@ -269,6 +245,12 @@ async function main() {
   // Cổng fail-closed. Ném TRƯỚC khi chạm ví hay mạng: một bước deploy dừng lại vì
   // thiếu dữ kiện thì phải dừng ở chỗ RẺ NHẤT, không phải sau khi đã đốt phí.
   const carp = requireCarpIdentity();
+  // SOFT-PIN: cặp CARP (mặc định hoặc đè bằng biến môi trường) phải trùng instance
+  // công khai của nhà CarpetMint ngay lúc chạy. Lệch ⟹ NÉM trước khi biên dịch
+  // apply-param — đời CARP đổi mà bản chép trong kho chưa theo là ca đã xảy ra.
+  const carpInstance = await fetchCarpInstance(NETWORK as CarpNetwork);
+  assertCarpMatchesInstance(carp, carpInstance);
+  console.log(`CARP khớp instance ${carpInstance.network} (deployedAt ${carpInstance.deployedAt ?? "?"})`);
   const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
   const refsOnly = dryRun || parseFlag(process.env.PREPAID_REFS_ONLY, "PREPAID_REFS_ONLY");
   // `null` ⟺ chỉ chạy pha (R): đích nhận CARP không dùng tới, nên không đòi hai biến của nó.
@@ -277,7 +259,7 @@ async function main() {
   const bufferBps = BigInt(process.env.BUFFER_BPS ?? MIN_BUFFER_BPS.toString());
   if (bufferBps < MIN_BUFFER_BPS) {
     throw new Error(
-      `BUFFER_BPS=${bufferBps} dưới sàn hiến định ${MIN_BUFFER_BPS} (15%).\n` +
+      `BUFFER_BPS=${bufferBps} dưới sàn hiến định ${MIN_BUFFER_BPS}.\n` +
       `  · validate_mint_fund_nft ép \`fd.buffer_bps >= min_buffer_bps\`, nên giao ` +
       `dịch sẽ chết trên chuỗi — cổng này chỉ để nó chết trước khi mất phí.`,
     );
@@ -320,6 +302,17 @@ async function main() {
   // rút được) — dòng `addSignerKey(platformPkh)` bên dưới là để giao dịch đáp ứng
   // cổng ấy, không còn là cổng off-chain thuần.
   const platformIsOwner = platformPkh === ownerPkh;
+  // Chặn TỰ HƯỞNG (2026-10-05): `validate_mint_fund_nft` từ chối bên hưởng mang đúng
+  // khoá `platform` (so payment credential). Mặc định `PLATFORM_PKH` = ví đang chạy,
+  // nên `BENEFICIARY_ADDRESS` là địa chỉ enterprise của chính ví này sẽ chết trên chuỗi.
+  if (beneficiary !== null && beneficiary.kind === "Key" && beneficiary.hash === platformPkh) {
+    throw new Error(
+      `BENEFICIARY_ADDRESS mang đúng khoá PLATFORM_PKH (${platformPkh}).\n` +
+      `  · validate_mint_fund_nft ép payment credential của beneficiary ≠ khoá platform ` +
+      `(platform nạp hộ CARP rồi tự nhận lại qua FundClaim = tự hưởng).\n` +
+      `  · Dùng một ví treasury khác cho BENEFICIARY_ADDRESS.`,
+    );
+  }
 
   // ── Apply params THEO TÊN — thứ tự do blueprint quyết định ───────────────
   const bp = await loadBlueprint("PrepaidGen");
@@ -331,6 +324,8 @@ async function main() {
     carpAssetName:  carp.assetName,
     msPerEpoch:     PROTOCOL.MS_PER_EPOCH,
     windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
+    // Két Wakeme của mạng — nguồn duy nhất ProtocolUtils; mạng chưa có két ⟹ NÉM.
+    wakemeVaultHash: wakemeVaultHash(NETWORK),
   };
   const { fundScript, fundHash, vaultScript, vaultHash } = prepaidScriptPair(bp, carpParams);
   const fundAddress = credentialToAddress(NETWORK, scriptHashToCredential(fundHash));
@@ -427,6 +422,10 @@ async function main() {
     last_updated_epoch: 0n,            // PIN
     beneficiary:        beneficiary.address, // PIN trọn đời: không stake, ≠ quỹ/vault
     beneficiary_datum:  beneficiary.datum,   // PIN: Script ⟹ bắt buộc có
+    // Quỹ thường của provider (DESIGN-reclaim §10.3). Quỹ tài trợ cho một DID mở ở
+    // luồng T2 theo DID, không ở bước deploy này.
+    sponsorship:        null,                // PIN: None ⟹ không bao giờ vào FundReclaim
+    sponsor_reclaimed:  0n,                  // PIN: `expect fd.sponsor_reclaimed == 0`
   };
 
   // Handler `mint` của paid_fund bỏ qua redeemer (`_redeemer: Data`); gửi một

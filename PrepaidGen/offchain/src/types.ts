@@ -93,6 +93,19 @@ export const AddressSchema = Data.Object({
 });
 export type PlutusAddress = Data.Static<typeof AddressSchema>;
 
+// ── Sponsorship — bên tài trợ + DID được tài trợ (2026-10-04) ──
+// Twin của `types.ak` ▸ `Sponsorship`. `sponsor` là ĐỊA CHỈ ĐẦY ĐỦ (so cả stake),
+// genesis ép payment = VerificationKey; `owner_commit` 32 byte = tên vault-NFT két Wakeme.
+export const SponsorshipSchema = Data.Object({
+  sponsor: AddressSchema,
+  owner_commit: Data.Bytes(),
+  // Epoch TUYỆT ĐỐI mở đường thu hồi DỰ PHÒNG (bên tài trợ ký, không cần két Wakeme).
+  // Genesis ép `>= epoch(cận TRÊN validity) + SPONSOR_RECLAIM_DELAY_EPOCHS`. Nối CUỐI
+  // 2026-10-05 (gương `types.ak ▸ Sponsorship`).
+  reclaim_after_epoch: Data.Integer(),
+});
+export type Sponsorship = Data.Static<typeof SponsorshipSchema>;
+
 // ── PaidFundDatum ────────────────────────────────────────────
 // Hai trường cuối thêm 2026-09-26 (L1''): đích nhận CARP của FundClaim, ghim
 // genesis, bất biến. THÊM Ở CUỐI giữ chỉ số trường cũ nhưng KHÔNG giữ khả năng
@@ -109,12 +122,16 @@ export const PaidFundDatumSchema = Data.Object({
   last_updated_epoch: Data.Integer(),
   beneficiary: AddressSchema, // genesis ép: không stake, ≠ script quỹ/vault
   beneficiary_datum: Data.Nullable(Data.Any()), // Script(_) ⟹ bắt buộc có
+  // Thêm 2026-10-04 (DESIGN-reclaim §10.3), NỐI CUỐI — quỹ 11 trường đời trước
+  // KHÔNG đọc được bằng lược đồ 13 trường (Aiken nghiêm số trường cả hai chiều).
+  sponsorship: Data.Nullable(SponsorshipSchema), // None = quỹ thường
+  sponsor_reclaimed: Data.Integer(), // carpdrop; 0 ở genesis, ghi MỘT lần ở FundReclaim
 });
 export type PaidFundDatum = Data.Static<typeof PaidFundDatumSchema>;
 
 // ── PrepaidVaultRedeemer ─────────────────────────────────────
 // Constr 0 Lock · 1 Draw · 2 BurnBatch · 3 PrunePrepaid · 4 SetDelegate ·
-// 5 SetDidCommit.
+// 5 SetDidCommit · 6 SettleLine · 7 CloseSponsoredLine.
 // BurnBatch PHẢI ở 2 — ConsumeMAGIC ghim burn_batch_constr = 2 (§7.3).
 //
 // `SetDidCommit` nằm CUỐI, không nằm cạnh `SetDelegate` dù hai nhánh nghe giống
@@ -160,6 +177,15 @@ export const PrepaidVaultRedeemerSchema = Data.Enum([
       fund_id: Data.Bytes(),
     }),
   }),
+  Data.Object({
+    // constr 7 — gỡ dòng hạn-mức của một quỹ TÀI TRỢ (+ mọi batch `contract_id ==
+    // fund_id`) trong CÙNG giao dịch mà quỹ đó tiêu bằng `FundReclaim` (thêm
+    // 2026-10-04, DESIGN-reclaim §10.11). Không cần quyền chủ vault. Plutus Data mã
+    // hoá constr 7 bằng thẻ CBOR 1280 (`d90500`), KHÔNG còn họ thẻ 121..127.
+    CloseSponsoredLine: Data.Object({
+      fund_id: Data.Bytes(),
+    }),
+  }),
 ]);
 export type PrepaidVaultRedeemer = Data.Static<typeof PrepaidVaultRedeemerSchema>;
 
@@ -170,6 +196,7 @@ export const PaidFundRedeemerSchema = Data.Enum([
   Data.Object({
     FundClaim: Data.Object({ amount_carpdrop: Data.Integer() }), // constr 2
   }),
+  Data.Literal("FundReclaim"), // constr 3 — NỐI CUỐI (2026-10-04)
 ]);
 export type PaidFundRedeemer = Data.Static<typeof PaidFundRedeemerSchema>;
 
@@ -219,6 +246,7 @@ export const VAULT_REDEEMER_ORDER = [
   "SetDelegate",
   "SetDidCommit", // constr 5 — thêm 2026-09-15, CHỈ THÊM Ở CUỐI
   "SettleLine", // constr 6 — thêm 2026-09-28, CHỈ THÊM Ở CUỐI
+  "CloseSponsoredLine", // constr 7 — thêm 2026-10-04, CHỈ THÊM Ở CUỐI
 ] as const;
 
 /// Chỉ số constructor của `SetDidCommit`. Viết ra thành hằng để bài kiểm codec ép
@@ -232,11 +260,15 @@ export const SET_DID_COMMIT_CONSTR = 5;
 /// nếu ai đó chèn vào giữa, và `BurnBatch` ở constr 2 thì ConsumeMAGIC ghim.
 export const SETTLE_LINE_CONSTR = 6;
 
+/// Chỉ số constructor của `CloseSponsoredLine` — cùng lý lẽ. Đây là nhánh ĐẦU
+/// TIÊN vượt khỏi họ thẻ CBOR 121..127: constr 7 mã hoá bằng thẻ 1280 (`d90500`).
+export const CLOSE_SPONSORED_LINE_CONSTR = 7;
+
 /// Độ dài hợp lệ của `did_commit` khi GHI (blake2b-256). Gương của
 /// `did_len_ok` bên Aiken: rỗng là "chưa gắn", còn nhánh ghi đòi đúng 32 byte.
 export const DID_COMMIT_BYTES = 32;
 
-export const FUND_REDEEMER_ORDER = ["FundLock", "FundSettle", "FundClaim"] as const;
+export const FUND_REDEEMER_ORDER = ["FundLock", "FundSettle", "FundClaim", "FundReclaim"] as const;
 
 export const VAULT_ID_REDEEMER_ORDER = ["MintVaultId"] as const;
 
@@ -289,4 +321,6 @@ export const PAID_FUND_DATUM_FIELDS = [
   "last_updated_epoch",
   "beneficiary",
   "beneficiary_datum",
+  "sponsorship", // thêm 2026-10-04, CHỈ THÊM Ở CUỐI
+  "sponsor_reclaimed",
 ] as const;

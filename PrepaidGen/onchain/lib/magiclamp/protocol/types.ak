@@ -23,7 +23,9 @@ pub type MagicBatch {
 // ── PrepaidCredit — hạn-mức CARP đã khoá, chưa rút thành MAGIC ─
 // Khoá theo fund_id: mỗi vault có TỐI ĐA 1 dòng cho mỗi quỹ, và dòng KHÔNG BAO
 // GIỜ bị xoá (kể cả remaining == 0) — nếu xoá thì batch chết sau đó không còn
-// chỗ để trả hạn-mức về (PrunePrepaid).
+// chỗ để trả hạn-mức về (PrunePrepaid). NGOẠI LỆ DUY NHẤT (2026-10-04):
+// `CloseSponsoredLine` gỡ dòng của quỹ tài trợ CÙNG mọi batch của nó, nên không
+// batch nào còn trỏ về dòng đã gỡ.
 pub type PrepaidCredit {
   fund_id         : ByteArray,
   remaining       : Natural,   // carpdrop
@@ -89,7 +91,7 @@ pub type PaidFundDatum {
   credit_issued      : Natural,     // cộng dồn, chỉ tăng ở Lock
   magic_settled      : Natural,     // nanogic cộng dồn đã chứng minh tiêu thật
   provider_claimed   : Natural,     // carpdrop cộng dồn đã trả provider
-  buffer_bps         : Natural,     // ≥ 1500, bất biến
+  buffer_bps         : Natural,     // ≥ min_buffer_bps (= 0), bất biến
   last_updated_epoch : Natural,
   // ── Đích nhận CARP của FundClaim (thêm 2026-09-26, L1'') ────
   // Ghim tại genesis, bất biến trọn đời quỹ. Trước bản này đích do người dựng tx
@@ -102,6 +104,32 @@ pub type PaidFundDatum {
   beneficiary        : Address,     // genesis ép: không stake, ≠ script quỹ/vault
   beneficiary_datum  : Option<Data>, // None ⟹ output NoDatum; Some(d) ⟹ InlineDatum(d)
                                      // Script(_) ⟹ BẮT BUỘC Some (genesis ép)
+  // ── Thu hồi CARP tài trợ (thêm 2026-10-04, DESIGN-reclaim §10.3) — NỐI CUỐI ──
+  // Mười một trường trên GIỮ NGUYÊN CHỖ. Thêm hai trường KHÔNG giữ được khả năng
+  // đọc quỹ 11 trường đã tạo (Aiken nghiêm về số trường cả hai chiều) ⟹ chỉ áp
+  // cho quỹ mở bằng bộ script deploy mới.
+  //
+  // `None` = quỹ thường của provider, hành vi y như cũ. `Some(s)` = quỹ tài trợ
+  // cho ĐÚNG MỘT DID (`s.owner_commit`), ghim genesis, bất biến ở mọi nhánh.
+  sponsorship        : Option<Sponsorship>,
+  // carpdrop đã trả về bên tài trợ. 0 ở genesis, ghi MỘT lần ở `FundReclaim`
+  // (> 0 ⟹ quỹ đã khép). `credit_issued` vẫn CHỈ TĂNG; phần hạn-mức hiệu lực là
+  // `credit_issued − sponsor_reclaimed`.
+  sponsor_reclaimed  : Natural,
+}
+
+// Bên tài trợ + người dùng được tài trợ. Gộp trong MỘT `Option` để không có
+// trạng thái nửa vời (có bên tài trợ mà thiếu `owner_commit`).
+pub type Sponsorship {
+  // ĐỊA CHỈ ĐẦY ĐỦ (so cả phần stake). Genesis ép payment = VerificationKey.
+  sponsor      : Address,
+  // 32 byte = `blake2b_256(UTF8(did))` = ô [0] két Wakeme = tên vault-NFT Wakeme.
+  owner_commit : ByteArray,
+  // Epoch TUYỆT ĐỐI mở đường thu hồi DỰ PHÒNG (bên tài trợ ký, không cần két
+  // Wakeme đồng tiêu). Genesis ép `>= epoch(cận TRÊN validity) +
+  // sponsor_reclaim_delay_epochs`; nhánh spend so với epoch của giao dịch
+  // (`get_epoch`, hai cận cùng epoch). Nối CUỐI 2026-10-05 — chưa quỹ nào lên chuỗi.
+  reclaim_after_epoch : Int,
 }
 
 // ── Vault redeemer ────────────────────────────────────────────
@@ -148,6 +176,19 @@ pub type PrepaidVaultRedeemer {
   // mọi redeemer đã mã hoá cho một nhánh ≥ 3 sẽ chạy nhầm nhánh nếu chèn vào
   // giữa — không lỗi cú pháp nào, chỉ sai lúc chạy trên chuỗi.
   SettleLine { fund_id: ByteArray }
+
+  // constr 7 — GỠ dòng hạn-mức của một quỹ TÀI TRỢ khỏi vault, cùng mọi
+  // `MagicBatch` có `contract_id == fund_id`, trong CÙNG giao dịch mà quỹ đó bị
+  // tiêu bằng `FundReclaim` (DESIGN-reclaim §10.11, `CC-RECLAIM-VAULT-LINE`).
+  // Không cần chữ ký chủ vault: người dùng đã bỏ đi (điều kiện thời gian do
+  // validator két Wakeme ép, quỹ đòi két đó `ReclaimEpoch` cùng giao dịch).
+  //
+  // Phần nợ quyết toán `consumed_unsettled` của dòng bị gỡ KHÔNG mất: quỹ đọc nó
+  // từ datum vault đầu vào và cộng vào `magic_settled` trước khi tính lượng trả
+  // bên tài trợ. MAGIC chưa tiêu (batch bị gỡ) là phần chưa giao ⟹ về bên tài trợ.
+  //
+  // NỐI CUỐI vì cùng lý do với `SettleLine` ngay trên.
+  CloseSponsoredLine { fund_id: ByteArray }
 }
 
 // ── Paid fund redeemer ────────────────────────────────────────
@@ -155,6 +196,11 @@ pub type PaidFundRedeemer {
   FundLock                                 // constr 0 — co-spend với PrepaidLock
   FundSettle                               // constr 1 — co-spend với SettleLine (constr 6)
   FundClaim { amount_carpdrop: Natural }   // constr 2 — provider rút, trần F2
+  // constr 3 — NỐI CUỐI (2026-10-04). Trả phần hạn-mức CHƯA giao của quỹ tài trợ
+  // về `sponsorship.sponsor`, chỉ khi két Wakeme của đúng DID bị `ReclaimEpoch`
+  // trong cùng giao dịch. Không trường: lượng suy từ datum, không do người dựng
+  // giao dịch khai. Permissionless (cùng tính chất với `ReclaimEpoch`).
+  FundReclaim
 }
 
 // ── Vault-identity NFT redeemer (INV-VAULT-IDENTITY) ──────────

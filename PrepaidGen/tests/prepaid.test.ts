@@ -131,12 +131,17 @@ function batch(
   };
 }
 
+// Đệm mặc định của fixture = 1500 (giá trị của vector TV-PP-02 / TV-PP-BUFFER), KHÔNG
+// phải `MIN_BUFFER_BPS`: sàn genesis hạ về 0 ngày 2026-10-05, còn các bài dưới đo công
+// thức sàn đệm ở một quỹ có đệm. Quỹ đệm 0: `fundGenesisSelfDealing.test.ts`.
+const FIXTURE_BUFFER_BPS = 1_500n;
+
 function fund(
   carpLocked: bigint,
   creditIssued: bigint,
   magicSettled = 0n,
   providerClaimed = 0n,
-  bufferBps = MIN_BUFFER_BPS,
+  bufferBps = FIXTURE_BUFFER_BPS,
 ): PaidFundDatum {
   return {
     fund_id: FUND_ID,
@@ -150,6 +155,8 @@ function fund(
     last_updated_epoch: EPOCH,
     beneficiary: keyAddr(BEN_PKH),
     beneficiary_datum: null,
+    sponsorship: null,
+    sponsor_reclaimed: 0n,
   };
 }
 
@@ -652,13 +659,13 @@ describe("cấu hình mạng đã verify", () => {
   // Ba bài dưới thay bài cũ "giữ đúng policy tCARP đã đúc thật trên hai
   // testnet" — bài đó ghim ba con số KHÔNG khớp nguồn nào (xem khối chú thích
   // ở `constants.ts`), nên nó xanh trong lúc nó sai.
-  it("Preprod mang đúng số của nhà CarpetMint (đời cập nhật 2026-09-28)", () => {
+  it("Preprod mang đúng số của nhà CarpetMint (đời 6, đo instance công khai 2026-10-04)", () => {
     const { policyId, assetName } = carpAssetClass("Preprod");
     expect(policyId).toBe(
-      "86ea67178d3739965449535eb1f875b37ba2eede4ee5781f89bc310b",
+      "71968a8df882a4dd24688b7904473a5d5f7e35332cba063e6ad7d379",
     );
     expect(assetName).toBe(
-      "110d0c97df39bcee5ca6875485c493e7cd7608cac38c84b281d18c4f",
+      "59d0bc483cd12816c029130722b4288c41d7423475a54b512027fd24",
     );
   });
 
@@ -856,12 +863,15 @@ describe("Address — mã hoá khớp `cardano/address.{Address}` của Aiken", 
     expect(Data.to(scriptAddr(BEN_SCRIPT), AddressSchema as unknown as PlutusAddress)).toBe(manual);
   });
 
-  it("PaidFundDatum 11 trường, hai trường đích ở CUỐI", () => {
+  it("PaidFundDatum 13 trường: hai trường đích ở [9..10], hai trường tài trợ NỐI CUỐI", () => {
     const f = fund(0n, 0n);
     const d = Data.from(Data.to(f, PaidFundDatumSchema as unknown as PaidFundDatum)) as Constr<unknown>;
-    expect(d.fields).toHaveLength(11);
+    expect(d.fields).toHaveLength(13);
     // beneficiary_datum = None ⟹ Constr 1 []
     expect((d.fields[10] as Constr<unknown>).index).toBe(1);
+    // sponsorship = None ⟹ Constr 1 []; sponsor_reclaimed = 0
+    expect((d.fields[11] as Constr<unknown>).index).toBe(1);
+    expect(d.fields[12]).toBe(0n);
   });
 });
 

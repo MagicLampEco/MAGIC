@@ -20,9 +20,10 @@ import {
   bufferFloor,
   claimCeiling,
   computeBatchId,
-  outstandingOf,
+  outstandingEffective,
   parCarpFromMagic,
   parMagicFromCarp,
+  reclaimOutstanding,
 } from "./math.js";
 import { Data } from "@lucid-evolution/lucid";
 import { AddressSchema } from "./types.js";
@@ -107,6 +108,40 @@ export function lockRequiredSigner(
   return { by: "platform", pkh: fund.platform };
 }
 
+/**
+ * Cổng QUỸ TÀI TRỢ ở `PrepaidLock` (DESIGN-reclaim §10.11) — gương `validate_lock`
+ * ▸ khối `when fund_in.sponsorship is { Some(s) -> … }`:
+ *   (a) dòng của quỹ tài trợ chỉ nằm ở vault đã gắn ĐÚNG DID được tài trợ
+ *       (`did_commit` khác rỗng và == `owner_commit`);
+ *   (b) quỹ tài trợ có TỐI ĐA MỘT dòng trọn đời: chỉ MỞ dòng khi quỹ chưa cấp đồng
+ *       nào (`credit_issued == 0`). Nạp THÊM vào dòng đã có thì không bị chặn.
+ * Quỹ thường (`sponsorship = None`) đi qua không đổi.
+ */
+export function assertSponsoredLock(
+  vault: PrepaidVaultDatum,
+  fund: PaidFundDatum,
+  fundId: string,
+): void {
+  const s = fund.sponsorship;
+  if (s === null) return;
+  if (vault.did_commit === "") {
+    reject("C-PP-SPONSOR", `quỹ tài trợ ${fundId}: vault chưa gắn DID (did_commit rỗng)`);
+  }
+  if (vault.did_commit !== s.owner_commit) {
+    reject(
+      "C-PP-SPONSOR",
+      `quỹ tài trợ ${fundId} cấp cho DID ${s.owner_commit}, vault mang DID ${vault.did_commit}`,
+    );
+  }
+  const opensNewLine = !hasCreditLine(vault.prepaid_credits, fundId);
+  if (opensNewLine && fund.credit_issued !== 0n) {
+    reject(
+      "C-PP-SPONSOR",
+      `quỹ tài trợ ${fundId} đã cấp ${fund.credit_issued} — chỉ một dòng trọn đời, không mở dòng thứ hai`,
+    );
+  }
+}
+
 /** Hạn-mức sau khi khoá thêm `amount` vào quỹ `fundId` (C-PP-12). */
 export function creditsAfterLock(
   credits: readonly PrepaidCredit[],
@@ -148,6 +183,10 @@ export function fundAfterLock(
 ): PaidFundDatum {
   if (amount < MIN_LOCK_CARPDROP) {
     reject("C-PP-12", `khoá ${amount} < sàn ${MIN_LOCK_CARPDROP} carpdrop`);
+  }
+  // `validate_fund_lock`: quỹ đã khép (FundReclaim đã chạy) không nhận nạp.
+  if (fund.sponsor_reclaimed !== 0n) {
+    reject("C-PP-RECLAIM", `quỹ ${fund.fund_id} đã thu hồi (${fund.sponsor_reclaimed}) — không nhận nạp`);
   }
   return {
     ...fund,
@@ -396,8 +435,9 @@ export function fundAfterSettle(
     magic_settled: fund.magic_settled + delta,
     last_updated_epoch: epoch,
   };
-  if (parCarpFromMagic(next.magic_settled) > next.credit_issued) {
-    reject("C-PP-7", "quyết toán vượt tổng hạn-mức đã cấp");
+  // Trần = hạn-mức HIỆU LỰC `credit_issued − sponsor_reclaimed` (validate_fund_settle).
+  if (parCarpFromMagic(next.magic_settled) > next.credit_issued - next.sponsor_reclaimed) {
+    reject("C-PP-7", "quyết toán vượt hạn-mức hiệu lực (đã cấp − đã thu hồi)");
   }
   return next;
 }
@@ -409,7 +449,7 @@ export function fundAfterSettle(
 /** Số CARP tối đa provider rút được ngay bây giờ (0 nếu chưa được gì). */
 export function maxClaimable(fund: PaidFundDatum): bigint {
   const byF2 = claimCeiling(fund.magic_settled, fund.provider_claimed);
-  const outstanding = outstandingOf(fund.credit_issued, fund.magic_settled);
+  const outstanding = outstandingEffective(fund.credit_issued, fund.sponsor_reclaimed, fund.magic_settled);
   const byBuffer = fund.carp_locked - bufferFloor(outstanding, fund.buffer_bps);
   const cap = byF2 < byBuffer ? byF2 : byBuffer;
   return cap > 0n ? cap : 0n;
@@ -421,6 +461,13 @@ export function fundAfterClaim(
   epoch: bigint,
 ): PaidFundDatum {
   if (amount <= 0n) reject("C-PP-6", `lượng rút ${amount} phải > 0`);
+  if (fundClaimCloses(fund, amount)) {
+    reject(
+      "C-PP-6",
+      `quỹ ${fund.fund_id} đã thu hồi và lượt rút này lấy TRỌN carp_locked — validator chỉ nhận ` +
+        `hình dạng ĐÓNG (fundClaimClose / planFundClaim nhánh đóng), không nhận quỹ tiếp nối rỗng`,
+    );
+  }
   const next: PaidFundDatum = {
     ...fund,
     carp_locked: fund.carp_locked - amount,
@@ -430,7 +477,7 @@ export function fundAfterClaim(
   if (next.provider_claimed > parCarpFromMagic(next.magic_settled)) {
     reject("C-PP-6", "rút quá phần MAGIC đã tiêu thật (F2)");
   }
-  const outstanding = outstandingOf(next.credit_issued, next.magic_settled);
+  const outstanding = outstandingEffective(next.credit_issued, next.sponsor_reclaimed, next.magic_settled);
   const floor = bufferFloor(outstanding, next.buffer_bps);
   if (next.carp_locked < floor) {
     reject("C-PP-6", `còn ${next.carp_locked} CARP < sàn đệm buffer-Paid ${floor}`);
@@ -439,15 +486,163 @@ export function fundAfterClaim(
   return next;
 }
 
-/** C-PP-3: carp_locked == credit_issued − provider_claimed, luôn đúng. */
+/**
+ * `FundClaim` rẽ sang nhánh ĐÓNG? Gương phép rẽ ở handler spend `paid_fund`:
+ * `sponsor_reclaimed > 0 ∧ amount == carp_locked`.
+ */
+export function fundClaimCloses(fund: PaidFundDatum, amount: bigint): boolean {
+  return fund.sponsor_reclaimed > 0n && amount === fund.carp_locked;
+}
+
+/**
+ * Phần SỔ của nhánh rút-cuối-đóng-quỹ — gương `validate_fund_claim_close`. Không có
+ * datum đầu ra (NFT quỹ bị đốt). Ném ở đúng những chỗ validator từ chối phần sổ,
+ * cộng một chỗ validator từ chối bằng hình dạng: `beneficiary == sponsor` (hai cổng
+ * đích cùng đòi ĐÚNG MỘT output ở cùng địa chỉ, với hai datum khác nhau ⟹ không tx
+ * nào thoả được cả hai — fail-closed, báo sớm ở đây).
+ */
+export function fundClaimClose(
+  fund: PaidFundDatum,
+  amount: bigint,
+): { sponsorship: NonNullable<PaidFundDatum["sponsorship"]> } {
+  const s = fund.sponsorship;
+  if (s === null) reject("C-PP-6", `quỹ ${fund.fund_id}: nhánh đóng chỉ cho quỹ tài trợ đã thu hồi`);
+  if (fund.sponsor_reclaimed <= 0n) reject("C-PP-6", `quỹ ${fund.fund_id} chưa thu hồi — không đi nhánh đóng`);
+  if (amount !== fund.carp_locked) {
+    reject("C-PP-6", `nhánh đóng phải rút TRỌN carp_locked ${fund.carp_locked}, nhận ${amount}`);
+  }
+  if (amount <= 0n) reject("C-PP-6", `lượng rút ${amount} phải > 0`);
+  assertFundInvariant(fund);
+  if (fund.provider_claimed + amount > parCarpFromMagic(fund.magic_settled)) {
+    reject("C-PP-6", "rút quá phần MAGIC đã tiêu thật (F2)");
+  }
+  if (addressKey(fund.beneficiary) === addressKey(s.sponsor)) {
+    reject(
+      "C-PP-6",
+      `quỹ ${fund.fund_id}: beneficiary trùng địa chỉ sponsor — nhánh rút-cuối không dựng được ` +
+        `(validator đòi một output CARP ở beneficiary VÀ một output datum fund_id ở sponsor, cùng địa chỉ)`,
+    );
+  }
+  return { sponsorship: s };
+}
+
+/** C-PP-3: carp_locked == credit_issued − provider_claimed − sponsor_reclaimed, luôn đúng. */
 export function assertFundInvariant(fund: PaidFundDatum): void {
-  const expected = fund.credit_issued - fund.provider_claimed;
+  const expected = fund.credit_issued - fund.provider_claimed - fund.sponsor_reclaimed;
   if (fund.carp_locked !== expected) {
     reject(
       "C-PP-3",
-      `carp_locked ${fund.carp_locked} ≠ credit_issued − provider_claimed ${expected}`,
+      `carp_locked ${fund.carp_locked} ≠ credit_issued − provider_claimed − sponsor_reclaimed ${expected}`,
     );
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// FundReclaim (DESIGN-reclaim §10.6) — gương `validate_fund_reclaim` /
+// `validate_fund_close` phần SỔ (phần đồng-tiêu két Wakeme do bên Wakeme dựng)
+// ══════════════════════════════════════════════════════════════
+
+/**
+ * `R` = phần hạn-mức đã cấp mà dịch vụ CHƯA giao, sau khi ghi nhận `unsettled` (u)
+ * — `consumed_unsettled` của dòng bị gỡ ở vault cùng giao dịch. Gương `prepaid.ak`
+ * ▸ `reclaim_amount` → `math.ak` ▸ `reclaim_outstanding` (vector V5).
+ */
+export function reclaimAmount(fund: PaidFundDatum, unsettled: bigint): bigint {
+  if (unsettled < 0n) reject("C-PP-RECLAIM", `u = ${unsettled} âm`);
+  return reclaimOutstanding(fund.credit_issued, fund.sponsor_reclaimed, fund.magic_settled, unsettled);
+}
+
+/**
+ * `u` mà quỹ đọc ở `FundReclaim` — gương `reclaim_unsettled` + `sponsored_line_unsettled`:
+ *   · `credit_issued == 0` ⟹ quỹ chưa từng có dòng ⟹ u = 0, KHÔNG kèm vault
+ *     (truyền vault ở ca này là NÉM: vault đó không có dòng nào để gỡ);
+ *   · `credit_issued > 0` ⟹ BẮT BUỘC kèm vault có ĐÚNG MỘT dòng `fund_id` ⟹ u =
+ *     `consumed_unsettled` của dòng đó.
+ */
+export function reclaimUnsettled(fund: PaidFundDatum, vault: PrepaidVaultDatum | null): bigint {
+  if (fund.credit_issued === 0n) {
+    if (vault !== null) {
+      reject("C-PP-RECLAIM", `quỹ ${fund.fund_id} chưa cấp đồng nào — không có dòng vault nào để gỡ`);
+    }
+    return 0n;
+  }
+  if (vault === null) {
+    reject(
+      "C-PP-RECLAIM",
+      `quỹ ${fund.fund_id} đã cấp ${fund.credit_issued} — FundReclaim BẮT BUỘC đồng tiêu vault mang dòng của nó (CloseSponsoredLine)`,
+    );
+  }
+  const hits = vault.prepaid_credits.filter((c) => c.fund_id === fund.fund_id);
+  if (hits.length !== 1) {
+    reject("C-PP-RECLAIM", `vault có ${hits.length} dòng cho quỹ ${fund.fund_id}, cần đúng 1`);
+  }
+  return hits[0]!.consumed_unsettled;
+}
+
+/**
+ * Datum vault sau `CloseSponsoredLine { fund_id }` — gương `validate_close_sponsored_line`:
+ * gỡ dòng `fund_id` (đúng một) cùng MỌI batch `contract_id == fund_id`; mọi trường
+ * khác đứng yên trừ `last_updated_epoch = epoch`.
+ */
+export function vaultAfterCloseLine(
+  vault: PrepaidVaultDatum,
+  fundId: string,
+  epoch: bigint,
+): PrepaidVaultDatum {
+  const n = vault.prepaid_credits.filter((c) => c.fund_id === fundId).length;
+  if (n !== 1) reject("C-PP-RECLAIM", `vault có ${n} dòng cho quỹ ${fundId}, cần đúng 1`);
+  return {
+    ...vault,
+    prepaid_credits: vault.prepaid_credits.filter((c) => c.fund_id !== fundId),
+    magic_batches: vault.magic_batches.filter((b) => b.contract_id !== fundId),
+    last_updated_epoch: epoch,
+  };
+}
+
+export interface FundReclaimOutcome {
+  /** Lượng CARP trả bên tài trợ. */
+  reclaimed: bigint;
+  /** `E = carp_locked − R` = 0 ⟹ ĐÓNG (đốt NFT, không quỹ tiếp nối) — bắt buộc, không tuỳ chọn. */
+  closing: boolean;
+  /** Datum quỹ tiếp nối; `null` khi đóng. */
+  fundOut: PaidFundDatum | null;
+  sponsorship: NonNullable<PaidFundDatum["sponsorship"]>;
+}
+
+/**
+ * Sổ quỹ sau `FundReclaim` với `unsettled` (u, xem `reclaimUnsettled`). Ném ở đúng
+ * những chỗ validator từ chối phần sổ: quỹ không tài trợ · đã thu hồi · `R < 1` khi
+ * quỹ đã cấp (`R = 0` chỉ hợp lệ cho quỹ chưa cấp đồng nào ⟹ nhánh đóng) · sổ đầu
+ * vào lệch C-PP-3. Nhánh tiếp nối ghi `magic_settled + u` (gương `MUT-A-SETTLED`).
+ */
+export function fundAfterReclaim(
+  fund: PaidFundDatum,
+  epoch: bigint,
+  unsettled: bigint,
+): FundReclaimOutcome {
+  const s = fund.sponsorship;
+  if (s === null) reject("C-PP-RECLAIM", `quỹ ${fund.fund_id} không phải quỹ tài trợ (sponsorship = None)`);
+  if (fund.sponsor_reclaimed !== 0n) {
+    reject("C-PP-RECLAIM", `quỹ ${fund.fund_id} đã thu hồi ${fund.sponsor_reclaimed} — chỉ một lần`);
+  }
+  assertFundInvariant(fund);
+  if (fund.credit_issued === 0n && unsettled !== 0n) {
+    reject("C-PP-RECLAIM", `quỹ ${fund.fund_id} chưa cấp đồng nào mà u = ${unsettled}`);
+  }
+  const r = reclaimAmount(fund, unsettled);
+  if (r < 1n && fund.credit_issued !== 0n) {
+    reject("C-PP-RECLAIM", `quỹ ${fund.fund_id}: phần chưa giao ${r} < 1 — không có gì thu hồi`);
+  }
+  if (fund.carp_locked === r) return { reclaimed: r, closing: true, fundOut: null, sponsorship: s };
+  const next: PaidFundDatum = {
+    ...fund,
+    carp_locked: fund.carp_locked - r,
+    sponsor_reclaimed: r,
+    magic_settled: fund.magic_settled + unsettled,
+    last_updated_epoch: epoch,
+  };
+  assertFundInvariant(next);
+  return { reclaimed: r, closing: false, fundOut: next, sponsorship: s };
 }
 
 /** Tổng MAGIC còn sống của một vault ở epoch cho trước (nanogic). */
@@ -509,6 +704,25 @@ export function assertFundGenesis(
       "C-PP-15",
       "beneficiary là script thì BẮT BUỘC ghim beneficiary_datum (rót đúng địa chỉ ≠ rót vào sổ)",
     );
+  }
+  // Chặn TỰ HƯỞNG (chủ dự án chốt 2026-10-05) — so PAYMENT CREDENTIAL, không so địa
+  // chỉ đầy đủ (cùng khoá khác phần stake là lách được). Gương hai vế ở
+  // `validate_mint_fund_nft`: nhánh khoá `h != fd.platform`, và trong khối
+  // `sponsorship` `beneficiary.payment_credential != sponsor.payment_credential`.
+  if (kind === "Key" && hash.toLowerCase() === fund.platform.toLowerCase()) {
+    reject(
+      "C-PP-15",
+      "beneficiary trùng khoá platform — platform nạp hộ CARP rồi tự nhận lại qua FundClaim (tự hưởng)",
+    );
+  }
+  if (fund.sponsorship !== null) {
+    const sp = credentialHash(fund.sponsorship.sponsor);
+    if (sp.kind === kind && sp.hash.toLowerCase() === hash.toLowerCase()) {
+      reject(
+        "C-PP-15",
+        "beneficiary trùng payment credential của bên tài trợ — CARP tài trợ quay về chính bên tài trợ (tự hưởng)",
+      );
+    }
   }
   return [fund.platform];
 }

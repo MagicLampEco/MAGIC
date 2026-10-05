@@ -44,11 +44,38 @@ pub fn outstanding_of(credit_issued: Int, magic_settled: Int) -> Int {
   credit_issued - par_carp_from_magic(magic_settled)
 }
 
+// outstanding HIỆU LỰC của một quỹ (DESIGN-reclaim §10.3, 2026-10-04):
+// hạn-mức đã cấp trừ phần đã trả bên tài trợ ở `FundReclaim`, trừ phần đã giao.
+// Quỹ thường và quỹ tài trợ chưa thu hồi có `sponsor_reclaimed = 0` ⟹ trùng bit
+// `outstanding_of`. Twin TS: `math.ts` ▸ `outstandingEffective`; vector V4.
+pub fn outstanding_effective(
+  credit_issued: Int,
+  sponsor_reclaimed: Int,
+  magic_settled: Int,
+) -> Int {
+  outstanding_of(credit_issued - sponsor_reclaimed, magic_settled)
+}
+
+// Lượng `FundReclaim` trả bên tài trợ (DESIGN-reclaim §10.11, 2026-10-04):
+// outstanding HIỆU LỰC sau khi đã ghi nhận phần MAGIC đã tiêu mà sổ quỹ còn thiếu
+// (`consumed_unsettled` của dòng hạn-mức bị gỡ ở vault). Phần đó là dịch vụ ĐÃ
+// giao ⟹ ở lại quỹ cho provider, không về bên tài trợ. `unsettled = 0` ⟹ trùng
+// bit `outstanding_effective`. Twin TS: `math.ts` ▸ `reclaimOutstanding`; vector V5.
+pub fn reclaim_outstanding(
+  credit_issued: Int,
+  sponsor_reclaimed: Int,
+  magic_settled: Int,
+  unsettled: Int,
+) -> Int {
+  outstanding_effective(credit_issued, sponsor_reclaimed, magic_settled + unsettled)
+}
+
 // buffer_floor = outstanding + ⌊ outstanding × buffer_bps / 10000 ⌋
 //
-// Sàn CARP mà quỹ phải giữ lại SAU khi provider rút. buffer_bps ≥ 1500 ⇒ đệm
-// ≥ 15% trên phần chưa giao (buffer-Paid, F2). Khi quỹ tiêu hết
-// (outstanding = 0) sàn về 0 → provider rút được toàn bộ.
+// Sàn CARP mà quỹ phải giữ lại SAU khi provider rút: phần chưa giao cộng đệm
+// `buffer_bps` (buffer-Paid, F2; sàn genesis `min_buffer_bps`). `buffer_bps = 0`
+// ⟹ sàn đúng bằng `outstanding`. Khi quỹ tiêu hết (outstanding = 0) sàn về 0 →
+// provider rút được toàn bộ.
 pub fn buffer_floor(outstanding: Int, buffer_bps: Int) -> Int {
   outstanding + outstanding * buffer_bps / bps_denom
 }

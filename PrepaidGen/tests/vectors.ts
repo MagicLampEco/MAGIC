@@ -58,7 +58,9 @@ export const TV_PP_02 = {
 // settled_par = 130_434_783 carpdrop (≈ 13.043% quỹ đã được tiêu thật).
 export const TV_PP_BUFFER = {
   id: "TV-PP-BUFFER",
-  spec_ref: "Carpet-CARP-DacTa-Vi.md §5.1 F2 (buffer-Paid ≥ 15%)",
+  // buffer_bps = 1500 vẫn là một giá trị HỢP LỆ (sàn genesis hạ về 0 ngày 2026-10-05);
+  // vector này đo công thức sàn, không đo sàn genesis.
+  spec_ref: "Carpet-CARP-DacTa-Vi.md §5.1 F2 (buffer-Paid)",
   description: "Biên chính xác của sàn đệm buffer-Paid",
   credit_issued: 1_000_000_000n,
   buffer_bps: 1_500n,

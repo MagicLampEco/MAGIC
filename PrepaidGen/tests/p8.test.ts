@@ -12,8 +12,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   bufferFloor,
+  outstandingEffective,
   parCarpFromMagic,
   parMagicFromCarp,
+  reclaimOutstanding,
 } from "../offchain/src/math.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -47,6 +49,15 @@ describe("P8 — bảng vector đọc từ chính mã nguồn Aiken", () => {
       "v3_buf_outstanding",
       "v3_buf_bps",
       "v3_buf_out",
+      "v4_eff_credit",
+      "v4_eff_reclaimed",
+      "v4_eff_settled",
+      "v4_eff_out",
+      "v5_rc_credit",
+      "v5_rc_reclaimed",
+      "v5_rc_settled",
+      "v5_rc_unsettled",
+      "v5_rc_out",
     ];
     for (const n of names) {
       const col = akIntList(n);
@@ -76,6 +87,30 @@ describe("P8 — bảng vector đọc từ chính mã nguồn Aiken", () => {
     expect(outstanding.length).toBe(expected.length);
     const got = outstanding.map((o, i) => bufferFloor(o, bps[i]!));
     expect(got).toEqual(expected);
+  });
+
+  it("V4 — outstandingEffective khớp từng phần tử với vế Aiken", () => {
+    const c = akIntList("v4_eff_credit");
+    const r = akIntList("v4_eff_reclaimed");
+    const m = akIntList("v4_eff_settled");
+    const expected = akIntList("v4_eff_out");
+    expect(new Set([c.length, r.length, m.length, expected.length]).size).toBe(1);
+    expect(c.map((ci, i) => outstandingEffective(ci, r[i]!, m[i]!))).toEqual(expected);
+    // Cực đối: bỏ vế sponsor_reclaimed (dùng outstanding cũ) thì hàng 3 lệch —
+    // bảng có hàng phân biệt được hai công thức.
+    expect(c.some((ci, i) => ci - m[i]! !== expected[i])).toBe(true);
+  });
+
+  it("V5 — reclaimOutstanding khớp từng phần tử với vế Aiken", () => {
+    const c = akIntList("v5_rc_credit");
+    const r = akIntList("v5_rc_reclaimed");
+    const m = akIntList("v5_rc_settled");
+    const u = akIntList("v5_rc_unsettled");
+    const expected = akIntList("v5_rc_out");
+    expect(new Set([c.length, r.length, m.length, u.length, expected.length]).size).toBe(1);
+    expect(c.map((ci, i) => reclaimOutstanding(ci, r[i]!, m[i]!, u[i]!))).toEqual(expected);
+    // Cực đối: bỏ vế `unsettled` (công thức trước bản vá) thì ít nhất một hàng lệch.
+    expect(c.some((ci, i) => outstandingEffective(ci, r[i]!, m[i]!) !== expected[i])).toBe(true);
   });
 
   it("vòng tròn par chính xác trên toàn bảng (C-PP-1)", () => {
@@ -114,6 +149,7 @@ describe("P8 — hằng số chia sẻ khớp giữa constants.ak và constants.
     ["max_prepaid_credits", "MAX_PREPAID_CREDITS"],
     ["bps_denom", "BPS_DENOM"],
     ["min_buffer_bps", "MIN_BUFFER_BPS"],
+    ["sponsor_reclaim_delay_epochs", "SPONSOR_RECLAIM_DELAY_EPOCHS"],
   ])("%s == %s", async (akName, tsName) => {
     const ts = (await import("../offchain/src/constants.js")) as Record<string, unknown>;
     expect(BigInt(ts[tsName] as bigint | number)).toBe(akConst(akName));

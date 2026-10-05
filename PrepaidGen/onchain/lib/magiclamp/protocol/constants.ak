@@ -44,4 +44,13 @@ pub const max_prepaid_credits   : Int = 20      // quỹ / vault    [Routine]
 
 // ── Paid fund (Carpet-CARP-DacTa-Vi.md §5.1 F2) ───────────────
 pub const bps_denom      : Int = 10_000
-pub const min_buffer_bps : Int = 1_500          // buffer-Paid ≥ 15%  [Constitutional]
+// Sàn đệm buffer-Paid = 0 (chủ dự án chốt 2026-10-05): `PrepaidLock` đã ép hạn-mức
+// tăng ĐÚNG bằng CARP nạp (1:1, C-PP-2) nên đệm không thêm an toàn. Cổng genesis
+// vẫn giữ `buffer_bps >= min_buffer_bps` — nó còn chặn `buffer_bps` âm.
+pub const min_buffer_bps : Int = 0              // buffer-Paid ≥ 0%   [Constitutional]
+
+// ── Thu hồi dự phòng của quỹ tài trợ (DESIGN-reclaim §10.12) ───────
+// Khoảng trễ tối thiểu từ genesis quỹ tới mốc `reclaim_after_epoch`. 200 = khớp
+// luật thu hồi 200 kỳ của két Wakeme v6 (chủ dự án chốt 2026-10-05). Gương
+// `SPONSOR_RECLAIM_DELAY_EPOCHS` (constants.ts).                    [Routine]
+pub const sponsor_reclaim_delay_epochs : Int = 200

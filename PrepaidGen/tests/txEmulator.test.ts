@@ -42,6 +42,7 @@ import {
   decodeFundDatum,
   decodeVaultDatum,
   derivePrepaidScripts,
+  withRefScripts,
   drawRedeemer,
   encodeVaultDatum,
   epochAtMs,
@@ -164,6 +165,28 @@ beforeAll(async () => {
     carpAssetName: CARP_NAME,
     msPerEpoch: P,
     windowOriginMs: O,
+    // Bộ emulator không có két Wakeme: giá trị nào cũng đúng hình dạng là đủ cho
+    // các nhánh ở đây (không nhánh nào đọc nó ngoài `FundReclaim`).
+    wakemeVaultHash: "ab".repeat(28),
+  });
+
+  // Ref-script CIP-33 (2026-10-04): sau `CloseSponsoredLine` + nhánh đóng quỹ, hai
+  // validator đã apply cộng lại vượt trần tx 16.384 byte nếu ĐÍNH KÈM cả hai (lượt
+  // PrepaidLock/SettleLine tiêu cả vault lẫn quỹ: đo 17.406–17.583 byte). Đỗ mỗi script
+  // một UTxO ở một ví KHÔNG nằm trong bộ chọn-coin (không ai tiêu nhầm), rồi mọi lượt
+  // dựng đọc chúng bằng `readFrom` — đúng hình dạng sẽ dùng trên mạng thật.
+  const refHolder = generateEmulatorAccountFromPrivateKey({ lovelace: 0n });
+  const publishRef = async (script: typeof scripts.vault.script): Promise<UTxO> => {
+    const h = await submit(
+      lucid.newTx().pay.ToAddressWithData(refHolder.address, undefined, { lovelace: 60_000_000n }, script),
+    );
+    const [u] = await emulator.getUtxosByOutRef([{ txHash: h, outputIndex: 0 }]);
+    if (!u?.scriptRef) throw new Error("UTxO ref-script không mang script");
+    return u;
+  };
+  scripts = withRefScripts(scripts, {
+    vault: await publishRef(scripts.vault.script),
+    paidFund: await publishRef(scripts.paidFund.script),
   });
 
   // Chủ script: native script `sig(didKey)` làm stake credential, đăng ký trước.

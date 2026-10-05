@@ -80,6 +80,14 @@ Ba điều rút ra, và điều thứ ba mới là điều đắt:
 Cặp định danh dùng cho `carpAssetClass(network)` là hàng **đang phục vụ**; đời BASE mới sẽ
 kèm cặp mới trước lượt chuyển đầu tiên.
 
+> Ghi chú 2026-10-04: bảng trên là bản đo 2026-09-24, giữ làm lịch sử. Hàng "đang phục vụ"
+> của nó (`86ea6717…` / `110d0c97…`) **đã bị thay** bằng đời 6: policy
+> `71968a8df882a4dd24688b7904473a5d5f7e35332cba063e6ad7d379`, asset name
+> `59d0bc483cd12816c029130722b4288c41d7423475a54b512027fd24` (nguồn:
+> `https://api.magiclamp.eco/carpetmint/v1/instance/Preprod` ▸ `instance.anchor`). Cặp đang
+> dùng nằm ở `PrepaidGen/offchain/src/constants.ts` ▸ `carpAssetClass`, và bước deploy 10 đối
+> chiếu nó với instance lúc chạy (`carpInstance.ts` ▸ `assertCarpMatchesInstance`).
+
 ### Kiểm kê dưới policy `28e916b0…`
 
 `28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4` là **chính sách chữ-ký-đơn suy từ

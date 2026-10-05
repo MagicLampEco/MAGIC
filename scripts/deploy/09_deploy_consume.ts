@@ -39,7 +39,7 @@
 //          → price_param (committee, threshold, price_nft_policy, price_nft_name, ms_per_epoch)
 //            → consume (…, price_param_script_hash)
 
-import { windowOf } from "@magiclamp/protocol-utils";
+import { wakemeVaultHash, windowOf } from "@magiclamp/protocol-utils";
 import {
   Lucid, Blockfrost, Data,
   credentialToAddress, scriptHashToCredential,
@@ -107,6 +107,7 @@ async function main() {
     derivedPrepaidVaultHash = prepaidScriptPair(await loadBlueprint("PrepaidGen"), {
       carpPolicyId: carp.policyId, carpAssetName: carp.assetName,
       msPerEpoch: PROTOCOL.MS_PER_EPOCH, windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
+      wakemeVaultHash: wakemeVaultHash(NETWORK),
     }).vaultHash;
   }
   const vaultScriptHash = requireConsumeVaultHash(process.env, vaultKind, derivedPrepaidVaultHash);

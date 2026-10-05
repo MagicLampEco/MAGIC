@@ -230,7 +230,7 @@ export function shardSpendParams(
   };
 }
 
-// ── PrepaidGen — prepaid.paid_fund.{mint,spend} (4 tham số) ──────
+// ── PrepaidGen — prepaid.paid_fund.{mint,spend} (5 tham số) ──────
 // Neo: PrepaidGen/onchain/validators/prepaid.ak — `validator paid_fund(...)`.
 //
 // `paid_fund` KHÔNG nhận hash của vault. Đó là điều kiện làm chuỗi apply MỘT
@@ -248,11 +248,17 @@ export function shardSpendParams(
 // policy id của NFT quỹ BẰNG script hash của quỹ theo định nghĩa. Trước
 // 2026-09-15 đó là hai apply-param độc lập, và hai giá trị song song thì lệch
 // được — đúng lớp lỗi mà `BOUNDARIES.md §5` gọi là bài học đắt nhất của kho.
+//
+// `wakeme_vault_hash` (#5, CUỐI — thêm 2026-10-04, nhánh `FundReclaim`): script hash
+// két Wakeme mà quỹ tài trợ đòi đồng-tiêu bằng `ReclaimEpoch`. MỘT hash cho mọi DID ⟹
+// đổi theo bản deploy Wakeme của mạng; nguồn `@magiclamp/protocol-utils` ▸
+// `wakemeVaultHash(network)`. Đổi nó ⟹ đổi hash quỹ ⟹ đổi hash két Prepaid theo.
 export interface PaidFundParamInputs {
   carpPolicyId:  string;
   carpAssetName: string;
   msPerEpoch:    bigint;
   windowOriginMs: bigint;
+  wakemeVaultHash: string;  // PARAM theo mạng — két Wakeme, tham số CUỐI
 }
 
 export function paidFundParams(i: PaidFundParamInputs): ParamMap {
@@ -261,13 +267,14 @@ export function paidFundParams(i: PaidFundParamInputs): ParamMap {
     carp_asset_name:  i.carpAssetName,
     ms_per_epoch:     i.msPerEpoch,
     window_origin_ms: i.windowOriginMs,
+    wakeme_vault_hash: assertWakemeVaultHash(i.wakemeVaultHash, "paidFundParams"),
   };
 }
 
 // ── PrepaidGen — prepaid.prepaid_vault.{mint,spend} (5 tham số) ──
 // Neo: PrepaidGen/onchain/validators/prepaid.ak — `validator prepaid_vault(...)`.
 //
-// `paid_fund_hash` là hash của `paid_fund` ĐÃ apply đúng bốn tham số trên. Truyền
+// `paid_fund_hash` là hash của `paid_fund` ĐÃ apply đúng năm tham số trên. Truyền
 // hash của bản CHƯA apply cũng ra 28 byte hex hợp lệ và cũng deploy êm — và vault
 // sinh ra sẽ từ chối mọi quỹ thật, vĩnh viễn.
 //
@@ -307,9 +314,9 @@ export interface PrepaidScriptPair {
  *  (`VAULT_KIND=prepaid` đối chiếu hash trong sổ) và bộ ca. Ba nơi tự apply thì chỉ cần
  *  một nơi quên `paid_fund_hash` là ra một hash vault hợp lệ khác hai nơi kia.
  *
- *  Hai hash phụ thuộc ĐỜI CARP (`carp_policy_id`, `carp_asset_name`), không phụ thuộc
- *  LAMP: đúc lại CARP ⟹ cả hai hash đổi ⟹ mọi ref-script và bản `consume` của loại két
- *  này phải dựng lại. */
+ *  Hai hash phụ thuộc ĐỜI CARP (`carp_policy_id`, `carp_asset_name`) và BẢN DEPLOY
+ *  WAKEME (`wakeme_vault_hash`), không phụ thuộc LAMP: đổi một trong hai ⟹ cả hai hash
+ *  đổi ⟹ mọi ref-script và bản `consume` của loại két này phải dựng lại. */
 export function prepaidScriptPair(bp: Blueprint, i: PaidFundParamInputs): PrepaidScriptPair {
   const fund = appliedScript(findValidator(bp, "prepaid.paid_fund.spend"), paidFundParams(i));
   const vault = appliedScript(findValidator(bp, "prepaid.prepaid_vault.spend"), prepaidVaultParams({

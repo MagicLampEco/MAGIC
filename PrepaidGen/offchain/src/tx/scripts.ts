@@ -32,8 +32,16 @@ export interface PrepaidScriptParams {
   /** Asset name CARP (hex). Là một băm do nhà CarpetMint phát, KHÔNG phải hex "CARP". */
   carpAssetName: string;
   msPerEpoch: bigint;
-  /** Gốc lưới cửa sổ (`window_origin_ms`), apply-param CUỐI của cả hai validator. */
+  /** Gốc lưới cửa sổ (`window_origin_ms`), apply-param CUỐI của `prepaid_vault`, #4 của `paid_fund`. */
   windowOriginMs: bigint;
+  /**
+   * Script hash két Wakeme (28 byte hex) — apply-param CUỐI (#5) của `paid_fund`
+   * (DESIGN-reclaim §10.5): nhánh `FundReclaim` đòi đồng-tiêu két ở script này.
+   * MỘT hash cho mọi DID, đổi theo bản deploy Wakeme của mạng. Nguồn theo mạng:
+   * `@magiclamp/protocol-utils` ▸ `wakemeVaultHash(network)` — gói này KHÔNG phụ
+   * thuộc ProtocolUtils nên nhận giá trị làm tham số; KHÔNG gõ cứng.
+   */
+  wakemeVaultHash: string;
 }
 
 /** Một script đã apply: CBOR, hash, địa chỉ enterprise; tuỳ chọn UTxO ref-script CIP-33. */
@@ -61,6 +69,7 @@ export const PAID_FUND_PARAM_NAMES = [
   "carp_asset_name",
   "ms_per_epoch",
   "window_origin_ms",
+  "wakeme_vault_hash",
 ] as const;
 
 export const PREPAID_VAULT_PARAM_NAMES = [
@@ -99,6 +108,12 @@ export function derivePrepaidScripts(
 ): PrepaidScripts {
   const carpPolicyId = params.carpPolicyId.toLowerCase();
   const carpAssetName = params.carpAssetName.toLowerCase();
+  const wakemeVaultHash = typeof params.wakemeVaultHash === "string" ? params.wakemeVaultHash : "";
+  if (!HEX28.test(wakemeVaultHash)) {
+    throw new Error(
+      `PrepaidGen: wakemeVaultHash phải là 56 ký tự hex THƯỜNG, nhận "${String(params.wakemeVaultHash)}"`,
+    );
+  }
   if (!HEX28.test(carpPolicyId)) {
     throw new Error(`PrepaidGen: carpPolicyId phải là 56 ký tự hex, nhận "${params.carpPolicyId}"`);
   }
@@ -112,7 +127,7 @@ export function derivePrepaidScripts(
 
   const fundCode = applyParamsToScript(
     pick(blueprint, "prepaid.paid_fund.spend", PAID_FUND_PARAM_NAMES),
-    [carpPolicyId, carpAssetName, params.msPerEpoch, params.windowOriginMs],
+    [carpPolicyId, carpAssetName, params.msPerEpoch, params.windowOriginMs, wakemeVaultHash],
   );
   const fundScript: Script = { type: "PlutusV3", script: fundCode };
   const fundHash = validatorToScriptHash(fundScript);
@@ -126,7 +141,7 @@ export function derivePrepaidScripts(
 
   return {
     network,
-    params: { ...params, carpPolicyId, carpAssetName },
+    params: { ...params, carpPolicyId, carpAssetName, wakemeVaultHash },
     vault: { script: vaultScript, hash: vaultHash, address: validatorToAddress(network, vaultScript) },
     paidFund: { script: fundScript, hash: fundHash, address: validatorToAddress(network, fundScript) },
     carpUnit: carpPolicyId + carpAssetName,

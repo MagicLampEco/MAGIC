@@ -89,8 +89,11 @@ describe("createVault + funding did_payment", () => {
     const vaultOut = r.argsOf("pay.ToAddressWithData")[0]![2] as Record<string, bigint>;
     const [[retAddr, ret]] = r.argsOf("pay.ToAddress") as [[string, Record<string, bigint>]];
     expect(retAddr).toBe(DP_ADDRESS);
+    // Ví trả phí ứng min-ADA két (lovelace két không đi qua bộ chọn did_payment) ⟹ did_payment
+    // nhận lại TRỌN lovelace của UTxO đã chi. Bản cũ trừ `vaultOut.lovelace` ở đây.
+    expect(vaultOut.lovelace! > 0n).toBe(true);
     expect(ret).toEqual({
-      lovelace: DP_BIG.assets.lovelace! - vaultOut.lovelace!,
+      lovelace: DP_BIG.assets.lovelace!,
       [LAMP_UNIT]: 100_000_000n,
       [`${"77".repeat(28)}aa`]: 3n,
     });
@@ -119,7 +122,36 @@ describe("createVault + funding did_payment", () => {
     expect(r.argsOf("readFrom")).toEqual([[[ANCHOR]]]);
     const vaultOut = r.argsOf("pay.ToAddressWithData")[0]![2] as Record<string, bigint>;
     const ret = r.argsOf("pay.ToAddress")[0]![1] as Record<string, bigint>;
-    expect(ret.lovelace).toBe(DP_BIG.assets.lovelace! + 5n - vaultOut.lovelace!);
+    expect(vaultOut.lovelace! > 0n).toBe(true);
+    expect(ret.lovelace).toBe(DP_BIG.assets.lovelace! + 5n);
+  });
+
+  // ── ca biên: két Instant 0 LAMP qua ví trả phí — did_payment không có gì để góp ──
+  const instant = { ...base, vaultType: "Instant" as const };
+
+  it("Instant 0 LAMP, chủ khoá, không mục rút ⟹ KHÔNG chi did_payment: không redeemer/script/anchor/bộ ký did_payment; vẫn ký chủ + validTo ≤ 1 giờ", async () => {
+    const r = recordingLucid([FEE_UTXO]);
+    const res = await createVault({ ...instant, lucid: r.lucid, vault: { ownerPkh: PKH, lampDeposit: 0n }, funding: funding() } as never);
+    expect(r.argsOf("collectFrom")).toEqual([[[FEE_UTXO]]]);           // chỉ seed của ví trả phí
+    expect(r.names()).not.toContain("attach.SpendingValidator");
+    expect(r.names()).not.toContain("readFrom");
+    expect(r.names()).not.toContain("pay.ToAddress");
+    expect(r.argsOf("addSignerKey")).toEqual([[PKH]]);                 // quyền chủ giữ nguyên
+    expect(r.argsOf("validTo")).toEqual([[Number(TIP_MS + 3_600_000n)]]);
+    expect(res.funding).toEqual({ selected: [], spent: {}, returned: null });
+  });
+
+  it("CẶP (chỉ đổi chủ sang script có mục rút 5 lovelace): Instant 0 LAMP ⟹ VẪN chi một UTxO did_payment để thưởng của chủ thối về ví Phoenix", async () => {
+    const r = recordingLucid([FEE_UTXO]);
+    await createVault({ ...instant, lucid: r.lucid, vault: { owner: { type: "script", hash: DID_H }, lampDeposit: 0n }, ownerAuth: await scriptAuth(), funding: funding() } as never);
+    const collects = r.argsOf("collectFrom");
+    expect(collects).toHaveLength(2);
+    const dpSpent = (collects[1]![0] as UTxO[]);
+    expect(dpSpent).toHaveLength(1);
+    expect(collects[1]![1]).toBe("d87980");
+    const [[retAddr, ret]] = r.argsOf("pay.ToAddress") as [[string, Record<string, bigint>]];
+    expect(retAddr).toBe(DP_ADDRESS);
+    expect(ret).toEqual({ ...dpSpent[0]!.assets, lovelace: dpSpent[0]!.assets.lovelace! + 5n });
   });
 
   it("CỰC ĐỐI: chủ script, controller của nhân chứng khác funding ⟹ FUNDING_WITNESS_MISMATCH, không dựng tx", async () => {

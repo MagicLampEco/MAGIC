@@ -1002,6 +1002,9 @@ export class VaultTxService {
           didPaymentUtxos: fundingCtx.input.utxos,
           signers: [fundingSigners!.controllerPkh, fundingSigners!.deviceKeyHash],
           maxCollateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
+          // Ví trả phí ứng min-ADA output vault mới (`funding.ts` khối đầu tệp), cùng trần với đường
+          // `fee_payer` ở gốc.
+          frontingMaxLovelace: this.deps.deployment.feePayerFrontingMaxLovelace,
         });
       }
       if (feePayer !== undefined) {

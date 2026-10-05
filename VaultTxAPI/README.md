@@ -499,9 +499,9 @@ nào ⟹ `422 FUNDING_TX_MISMATCH`, không phát tx):
 | | ví Phoenix (`funding.address`) | ví trả phí (`fee_payer`) |
 |---|---|---|
 | input | UTxO `did_payment`, mỗi cái redeemer `Spend` = `Constr 0 []` (`d87980`), script đính inline | đúng `fee_payer.utxo` |
-| chọn UTxO | tiền tố ngắn nhất của dãy sắp theo LAMP giảm dần đủ LAMP + min-ADA vault + min-ADA phần thối (tối thiểu với riêng vế LAMP; có vế ADA thì là tham lam) | không chọn — chỉ UTxO đã khai |
-| trả cho | LAMP + min-ADA của output vault | phí; là tài sản thế chấp |
-| tiền thối | LAMP / token khác / ADA còn lại, cộng mục rút `did_stake` nếu chủ là script ⟹ **về `funding.address`**, không bao giờ về ví trả phí | ADA thối + `collateral_return` ⟹ về `fee_payer.address`; ví này góp đúng `phí + thối`, không đồng nào vào vault |
+| chọn UTxO | tiền tố ngắn nhất của dãy sắp theo LAMP giảm dần đủ LAMP + min-ADA phần thối của chính nó (tối thiểu với riêng vế LAMP; có vế ADA thì là tham lam) | không chọn — chỉ UTxO đã khai |
+| trả cho | LAMP của output vault — **không lovelace nào** | phí + **ứng** min-ADA output vault mới (trọn lovelace output đó, tới trần `fee_payer_fronting_max_lovelace`); là tài sản thế chấp |
+| tiền thối | LAMP / token khác, **trọn** lovelace của các UTxO đã chi, cộng mục rút `did_stake` nếu chủ là script ⟹ **về `funding.address`**, không bao giờ về ví trả phí | ADA thối + `collateral_return` ⟹ về `fee_payer.address`; ví này góp đúng `phí + khoản ứng + thối` |
 | reference input | anchor DID (Active) | — |
 | ký | controller + khoá thiết bị | khoá thanh toán của `fee_payer.address` |
 

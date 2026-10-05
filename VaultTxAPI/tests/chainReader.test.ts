@@ -139,3 +139,36 @@ describe("BlockfrostChainReader.utxosByOutRef — output ĐÃ TIÊU / không t�
       .rejects.toMatchObject({ httpStatus: 400, code: "UTXO_NOT_FOUND" });
   });
 });
+
+// Cờ đăng ký stake: Blockfrost tách `registered` (đã nộp cọc) khỏi `active` (đang uỷ thác pool).
+// Bản cũ đọc `active` ⟹ DID đã đăng ký mà chưa uỷ thác bị chặn OWNER_STAKE_NOT_REGISTERED (đo
+// Preprod 2026-10-05). Cặp cực đối: chỉ khác hai cờ đó, kết luận phải đảo theo `registered`.
+describe("BlockfrostChainReader.rewardAccount — cờ đăng ký", () => {
+  const STAKE = "stake_test17ramey83zzyderj6uzwl04wx2c73s2xx0sdl89dywap3xxcux6sqp";
+  const route = (b: Record<string, unknown>) => stubBlockfrost({ [`/accounts/${STAKE}`]: { withdrawable_amount: "0", ...b } });
+
+  it("registered=true, active=false (đăng ký, chưa uỷ thác) ⟹ đã đăng ký", async () => {
+    route({ registered: true, active: false });
+    expect((await reader().rewardAccount(STAKE)).registered).toBe(true);
+  });
+
+  it("cực đối: registered=false, active=true ⟹ CHƯA đăng ký", async () => {
+    route({ registered: false, active: true });
+    expect((await reader().rewardAccount(STAKE)).registered).toBe(false);
+  });
+
+  it("API đời trước không có `registered` ⟹ lùi về `active`", async () => {
+    route({ active: true });
+    expect((await reader().rewardAccount(STAKE)).registered).toBe(true);
+  });
+
+  it("`registered` sai kiểu ⟹ NÉM, không đoán", async () => {
+    route({ registered: "yes", active: true });
+    await expect(reader().rewardAccount(STAKE)).rejects.toThrow(/hình dạng lạ/);
+  });
+
+  it("404 ⟹ chưa đăng ký, thưởng 0", async () => {
+    stubBlockfrost({});
+    expect(await reader().rewardAccount(STAKE)).toEqual({ registered: false, withdrawableLovelace: 0n });
+  });
+});

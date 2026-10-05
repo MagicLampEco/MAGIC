@@ -140,10 +140,16 @@ export class BlockfrostChainReader implements ChainReader {
   async rewardAccount(rewardAddress: string): Promise<RewardAccountState> {
     const { status, body } = await this.getJson(`/accounts/${encodeURIComponent(rewardAddress)}`);
     if (status === 404) return { registered: false, withdrawableLovelace: 0n };
-    const b = body as { active?: unknown; withdrawable_amount?: unknown } | null;
+    // Blockfrost hiện tách hai cờ: `registered` = đã nộp cọc đăng ký stake; `active` = đang uỷ
+    // thác cho một pool. Bản cũ đọc `active` làm cờ đăng ký ⟹ mọi DID đã đăng ký mà chưa uỷ thác
+    // (tức gần như mọi DID mới) bị trả OWNER_STAKE_NOT_REGISTERED. Đo trên Preprod 2026-10-05:
+    // `"active":false,"registered":true`. `active` chỉ còn dùng khi phản hồi KHÔNG có trường
+    // `registered` (API đời trước, nơi `active` mang nghĩa đăng ký).
+    const b = body as { active?: unknown; registered?: unknown; withdrawable_amount?: unknown } | null;
     if (
       status !== 200 || b === null || typeof b !== "object" ||
-      typeof b.active !== "boolean" ||
+      (b.registered !== undefined && typeof b.registered !== "boolean") ||
+      (b.registered === undefined && typeof b.active !== "boolean") ||
       typeof b.withdrawable_amount !== "string" || !/^\d+$/.test(b.withdrawable_amount)
     ) {
       throw new ChainUnavailableError(
@@ -151,7 +157,8 @@ export class BlockfrostChainReader implements ChainReader {
         { transport: "http", node_http_status: status, node: this.label },
       );
     }
-    return { registered: b.active, withdrawableLovelace: BigInt(b.withdrawable_amount) };
+    const registered = (b.registered !== undefined ? b.registered : b.active) as boolean;
+    return { registered, withdrawableLovelace: BigInt(b.withdrawable_amount) };
   }
 
   async utxosAt(address: string): Promise<UTxO[]> {

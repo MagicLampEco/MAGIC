@@ -5,6 +5,27 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-05 — `create-vault` nạp từ did_payment: ví trả phí ứng min-ADA của két
+
+**Đổi gì.** Ở chế độ ví trả phí bên thứ ba (`funding.fee_payer`, không đặt `feeSource =
+"did_payment"`), `MagicSDK/src/createVault.ts` chỉ lấy LAMP từ did_payment; min-ADA của output két
+mới do ví trả phí ứng, và trọn lovelace của các UTxO did_payment đã chi về lại did_payment. Két
+Instant 0 LAMP mà chủ không có mục rút thì giao dịch không chi UTxO did_payment nào (quyền chủ vẫn
+ép như cũ). `VaultTxAPI/src/funding.ts` ▸ `checkFundingTx` đổi phương trình bảo toàn theo đúng hình
+dạng đó: ví trả phí góp đúng phí + thối + khoản ứng (= trọn lovelace output két, trần
+`fee_payer_fronting_max_lovelace`, vượt ⟹ `422 FEE_PAYER_FRONTING_ABOVE_MAX`); did_payment không mất
+lovelace. Bản tóm tắt `funding.fee_payer` thêm `fronted_lovelace`, `fronted_max_lovelace`; báo giá
+create-vault tính khoản ứng vào số ví trả phí phải có. Chế độ ví Phoenix tự trả phí không đổi.
+
+**Vì sao.** DID mới thường chỉ có LAMP + khoảng 1,2 ADA ở did_payment, dưới min-ADA của két
+(khoảng 2,1 ADA). Bắt did_payment trả nó thì đúng người dùng cần ví trả phí bị `FUNDING_INSUFFICIENT`
+(đo trên Preprod 2026-10-05 với một DID thật: UTxO 1.000 LAMP + 1.240.954 lovelace).
+
+**Cái gì gãy nếu đang bám bản cũ.** Giao dịch create-vault hình dạng cũ (did_payment trả min-ADA két)
+nay bị `checkFundingTx` từ chối `FUNDING_TX_MISMATCH`, nên bên nào tự dựng giao dịch theo hình dạng
+cũ rồi gửi qua VTA phải dựng lại theo SDK mới. Ví trả phí cần thêm tới
+`fee_payer_fronting_max_lovelace` lovelace cho mỗi két. Mã Aiken và hash validator không đổi.
+
 ## 2026-10-05 — PrepaidGen: quỹ tài trợ có đường thu hồi DỰ PHÒNG (bên tài trợ ký + qua mốc)
 
 **Đổi gì.** `Sponsorship` nối cuối `reclaim_after_epoch : Int` (Aiken `types.ak`, TS `types.ts`).
@@ -45,6 +66,25 @@ trên policy cuối từ 2026-10-04. Để khoá lại là để một lệnh c�
 `VAULT_TX_API_DEPLOYMENT` mang `lamp.policy_id` = `8169b76c…` ⟹ `VaultTxAPI` từ chối khởi động.
 Mã Aiken và hash validator không đổi. Mở lại lối này cần một quyết định mới của chủ dự án và một
 khoá mới trong cả hai bảng (`scripts/test_lamp_policy_gate.ts` bắt hai bảng lệch tập khoá).
+
+## 2026-10-05 — Nộp lại tx đã nộp: trả kết quả cũ, không gửi lại; gửi không xác nhận ghi `unconfirmed`
+
+**Đổi gì.** `VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry.markSubmitted` ghi trạng thái gửi của tx
+(`accepted` khi nút nhận, `unconfirmed` khi đã gửi mà không có xác nhận) và chỉ thay tx chung khoá ở
+lượt gửi ĐẦU TIÊN. `VaultTxAPI/src/service.ts` ▸ `submit`: nộp lại tx nút đã nhận ⟹ trả lại kết quả
+lượt đầu, không gửi lên chuỗi lần nữa; `chain.submitTx` mất kết nối / quá giờ, hoặc nút báo hash khác
+⟹ ghi `unconfirmed` (input vào sổ chờ, tx chung khoá dựng trước bị thay). `TxSupersededError` thêm
+`details.submission` (`accepted` · `unconfirmed` · `none`) và `details.previously_submitted`.
+
+**Vì sao.** Nộp lại một tx đã nộp từng thay luôn tx chủ dựng sau lượt nộp đầu (lượt kế tiếp hợp lệ của
+chủ), và lượt gửi mất kết nối bị coi như chưa từng gửi. Tx đã nộp VẪN bị thay khi một tx chung khoá
+nộp sau nó: không thay thì ví A nộp tạo két T1 (rơi khỏi mempool), ví B nộp T2 (lên chuỗi), nộp lại
+T1 ⟹ két thứ hai cho cùng chủ — validator chưa ép mỗi DID một két.
+
+**Cái gì gãy nếu bám bản cũ.** Bên gọi trông vào việc nộp lại một tx đã được nhận để HỒI SINH nó sau
+khi rơi khỏi mempool: nay lượt nộp lại trả 200 mà không gửi gì — tra chuỗi theo `tx_hash`, không thấy
+thì dựng lại. Bên gọi suy "409 `TX_SUPERSEDED` ⟹ tx chưa lên chuỗi" thì suy sai ở mọi bản — đọc
+`details.submission`, rồi tra chuỗi.
 
 ## 2026-10-04 — PrepaidGen: `FundReclaim` gỡ dòng hạn-mức ở vault, quỹ tài trợ đóng được; CARP Preprod đời 6
 

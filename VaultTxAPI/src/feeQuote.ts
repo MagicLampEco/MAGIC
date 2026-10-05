@@ -452,14 +452,16 @@ async function measureOnce(
 
 /** Phí + thế chấp + hạn dùng của ví trả phí, đọc từ bản tóm tắt ĐÃ đọc lại CBOR. */
 function feePayerFigures(r: BuildResult): { fee: bigint; fronted: bigint; collateral: bigint; validToMs: bigint; expiresAt: string } {
-  // create-vault qua `funding`: phí đọc ở `summary.funding.fee_payer` (min-ADA két do ví Phoenix trả,
-  // không có khoản ứng). create-vault két instant 0 LAMP (ví trả phí ở gốc) đi chung đường dưới.
+  // create-vault qua `funding`: phí + khoản ứng đọc ở `summary.funding.fee_payer` (ví trả phí ứng
+  // min-ADA két mới — `funding.ts` khối đầu tệp). create-vault két instant 0 LAMP (ví trả phí ở gốc)
+  // đi chung đường dưới.
   if (r.route === "create-vault" && r.out.summary.funding !== undefined) {
     const f = r.out.summary.funding;
     // `parseQuoteBody` chặn chế độ tự trả phí (`FEE_QUOTE_SELF_FUNDED`), nên thiếu `fee_payer` là lệch.
     if (f.fee_payer === undefined) throw new Error("[bất biến nội bộ] báo giá create-vault: bản tóm tắt thiếu `funding.fee_payer`.");
     return {
-      fee: BigInt(f.fee_payer.fee_lovelace), fronted: 0n, collateral: BigInt(f.fee_payer.collateral_at_risk_lovelace),
+      fee: BigInt(f.fee_payer.fee_lovelace), fronted: BigInt(f.fee_payer.fronted_lovelace),
+      collateral: BigInt(f.fee_payer.collateral_at_risk_lovelace),
       validToMs: BigInt(f.valid_to_posix_ms), expiresAt: r.out.expiresAt,
     };
   }

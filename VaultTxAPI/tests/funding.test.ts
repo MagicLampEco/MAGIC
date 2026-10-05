@@ -14,7 +14,7 @@ import { didPaymentLucidPorts } from "@magiclamp/sdk";
 
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { parseDeployment, type Deployment } from "../src/config.js";
-import { ChainDidPaymentAnchorReader } from "../src/funding.js";
+import { ChainDidPaymentAnchorReader, checkFundingTx } from "../src/funding.js";
 import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import type { OwnerWitnessProvider, ScriptOwnerWitness } from "../src/owner.js";
@@ -53,7 +53,8 @@ const DP2 = utxo("d2".repeat(32), 1, DP_ADDRESS, { lovelace: 4_000_000n, [LAMP_U
 const DP3 = utxo("d3".repeat(32), 0, DP_ADDRESS, { lovelace: 2_000_000n, [LAMP_UNIT]: 1n });
 const ref = (u: UTxO) => ({ txHash: u.txHash, outputIndex: u.outputIndex });
 
-const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
+const deploymentWith = (extra: Record<string, unknown> = {}): Deployment => parseDeployment(JSON.stringify({
+  ...extra,
   source: "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
   lamp: { policy_id: LAMP_POLICY_ID, asset_name_hex: LAMP_ASSET_NAME_HEX },
   vaults: [{ vault_type: "Schedule", address: VAULT_ADDRESS }],
@@ -67,6 +68,7 @@ const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
     price_beacon_nft_unit: `${"55".repeat(28)}cafe`,
   },
 }), "Preview");
+const DEPLOYMENT: Deployment = deploymentWith();
 
 const KEY_OWNER: OwnerRef = { type: "key", hash: OWNER_PKH };
 const SCRIPT_OWNER: OwnerRef = { type: "script", hash: OWNER_PKH };
@@ -83,18 +85,25 @@ interface FundedOpts {
   collateralReturn?: bigint;
 }
 
-/** Tx tạo vault nạp từ DP1 + DP2: chi 7 ADA + 1 100 LAMP, vault nhận 5 ADA + 1 001 LAMP,
- *  thối 2 ADA + 99 LAMP về ví Phoenix; ví trả phí góp 10 ADA = phí 0,19 + thối 9,81. */
-function fundedTx(o: FundedOpts = {}): string {
+/** Lovelace output vault — ví trả phí ỨNG trọn khoản này (`funding.ts` khối đầu tệp). */
+const VAULT_LOVELACE = 5_000_000n;
+
+/** Tx tạo vault nạp từ DP1 + DP2: chi 7 ADA + 1 100 LAMP, vault nhận 5 ADA (ví trả phí ứng) +
+ *  1 001 LAMP, thối TRỌN 7 ADA + 99 LAMP về ví Phoenix; ví trả phí góp 10 ADA = phí 0,19 + ứng 5 +
+ *  thối 4,81. `oldShape` = hình dạng CŨ: did_payment trả 5 ADA min-ADA vault (thối 2 ADA), ví trả
+ *  phí chỉ trả phí (thối 9,81). */
+function fundedTx(o: FundedOpts & { oldShape?: boolean } = {}): string {
   const owner = o.owner ?? KEY_OWNER;
+  const dpReturn = o.oldShape ? 2_000_000n : 7_000_000n;
+  const feeChange = o.oldShape ? 10_000_000n - FEE : 10_000_000n - FEE - VAULT_LOVELACE;
   const outputs: TxOutputSpec[] = [
     {
       address: VAULT_ADDRESS,
-      assets: { lovelace: 5_000_000n, [LAMP_UNIT]: DEPOSIT, [VAULT_ID_UNIT]: 1n },
+      assets: { lovelace: VAULT_LOVELACE, [LAMP_UNIT]: DEPOSIT, [VAULT_ID_UNIT]: 1n },
       inlineDatumHex: datumHex({ owner, lampBalanceOildrop: DEPOSIT, lampLockedOildrop: 0n }),
     },
-    { address: o.returnTo ?? DP_ADDRESS, assets: { lovelace: 2_000_000n, [LAMP_UNIT]: 99_000_000n } },
-    { address: FEE_ADDRESS, assets: { lovelace: o.feeChange ?? 10_000_000n - FEE } },
+    { address: o.returnTo ?? DP_ADDRESS, assets: { lovelace: dpReturn, [LAMP_UNIT]: 99_000_000n } },
+    { address: FEE_ADDRESS, assets: { lovelace: o.feeChange ?? feeChange } },
   ];
   if (o.extraOutput) outputs.push(o.extraOutput);
   return buildTxCbor({
@@ -129,7 +138,8 @@ class PlanningBuilder extends RecordedTxBuilder {
   override async createVault(ctx: CreateVaultContext, p: { lampAmount: bigint }): Promise<BuiltCreateVault> {
     planDidPaymentFunding({
       utxos: ctx.funding!.input.utxos,
-      need: { lovelace: 5_000_000n, [LAMP_UNIT]: p.lampAmount },
+      // Chế độ ví trả phí: did_payment chỉ góp LAMP (min-ADA vault do ví trả phí ứng).
+      need: { [LAMP_UNIT]: p.lampAmount },
       primaryUnit: LAMP_UNIT,
       returnAddress: ctx.funding!.input.address,
     }, didPaymentLucidPorts(4310n));
@@ -137,14 +147,14 @@ class PlanningBuilder extends RecordedTxBuilder {
   }
 }
 
-function harness(opts: { cbor?: string; anchorReader?: boolean; planning?: boolean } = {}) {
+function harness(opts: { cbor?: string; anchorReader?: boolean; planning?: boolean; deployment?: Deployment } = {}) {
   const chain = new RecordedChainReader({ [DP_ADDRESS]: [DP1, DP2, DP3] }, TIP, [ANCHOR, FEE_UTXO]);
   const Builder = opts.planning ? PlanningBuilder : RecordedTxBuilder;
   const builder = new Builder({ create_vault: opts.cbor ?? fundedTx() }, VAULT_ID_UNIT);
   const locks = new OwnerLockTable(TTL);
   const witness = new FakeWitness();
   const service = new VaultTxService({
-    network: "Preview", deployment: DEPLOYMENT, chain, builder, locks,
+    network: "Preview", deployment: opts.deployment ?? DEPLOYMENT, chain, builder, locks,
     issued: new IssuedTxRegistry(TTL * 4), lockTtlMs: TTL, now: () => NOW, ownerWitness: witness,
     didPaymentAnchor: opts.anchorReader === false ? undefined
       : new ChainDidPaymentAnchorReader({ chain, anchorNftPolicy: ANCHOR_POLICY }),
@@ -190,11 +200,13 @@ describe("POST /tx/create-vault + funding did_payment — dương", () => {
       address: DP_ADDRESS,
       did_payment_inputs: [`${DP1.txHash}#0`, `${DP2.txHash}#1`],
       spent: { lovelace: "7000000", lamp_oildrop: "1100000000", other_assets: [] },
-      returned: { lovelace: "2000000", lamp_oildrop: "99000000", other_assets: [] },
+      // did_payment nhận lại TRỌN 7 ADA đã chi: min-ADA vault do ví trả phí ứng.
+      returned: { lovelace: "7000000", lamp_oildrop: "99000000", other_assets: [] },
       withdrawal_lovelace: "0",
       fee_payer: {
         address: FEE_ADDRESS, utxo: `${FEE_UTXO.txHash}#0`, input_lovelace: "10000000",
-        fee_lovelace: "190000", change_lovelace: "9810000", collateral_return_lovelace: "7000000",
+        fee_lovelace: "190000", change_lovelace: "4810000", collateral_return_lovelace: "7000000",
+        fronted_lovelace: "5000000", fronted_max_lovelace: "5000000",
         collateral_at_risk_lovelace: "3000000",
       },
       valid_to_posix_ms: String(NOW + 1_800_000),
@@ -321,7 +333,7 @@ describe("POST /tx/create-vault + funding — ví did_payment không đủ", () 
     const h = harness({ planning: true });
     expect((await handle(post(body()), h.router)).status).toBe(200);
     expect(() => planDidPaymentFunding({
-      utxos: [DP1], need: { lovelace: 5_000_000n, [LAMP_UNIT]: DEPOSIT }, primaryUnit: LAMP_UNIT, returnAddress: DP_ADDRESS,
+      utxos: [DP1], need: { [LAMP_UNIT]: DEPOSIT }, primaryUnit: LAMP_UNIT, returnAddress: DP_ADDRESS,
     }, didPaymentLucidPorts(4310n))).toThrow(FundingError);
   });
 });
@@ -332,13 +344,16 @@ describe("POST /tx/create-vault + funding — đọc lại CBOR (cực đối, 4
     // kiểm địa chỉ output bắt được ca này (đột biến MUTANT-OUTPUT đo đúng điều đó).
     ["output tới địa chỉ lạ (bảo toàn vẫn đúng)", fundedTx({
       extraOutput: { address: enterpriseAddressOf("Preview", OTHER_OWNER_PKH), assets: { lovelace: 1_500_000n } },
-      feeChange: 10_000_000n - FEE - 1_500_000n,
+      feeChange: 10_000_000n - FEE - VAULT_LOVELACE - 1_500_000n,
     })],
     ["phần thối LAMP về ví trả phí thay vì ví Phoenix", fundedTx({ returnTo: FEE_ADDRESS })],
     ["input lạ ngoài ví trả phí + did_payment", fundedTx({ extraInput: { txHash: "99".repeat(32), outputIndex: 3 } })],
     ["thiếu một redeemer Spend", fundedTx({ redeemers: [{ index: 0, dataHex: SPEND }] })],
     ["redeemer Spend khác Constr 0 []", fundedTx({ redeemers: [{ index: 0, dataHex: SPEND }, { index: 1, dataHex: "d87a80" }] })],
-    ["ví trả phí góp thêm vào vault (thối ít hơn phí cho phép)", fundedTx({ feeChange: 10_000_000n - FEE - 1n })],
+    ["ví trả phí góp thêm (thối ít hơn phí + khoản ứng 1 lovelace)", fundedTx({ feeChange: 10_000_000n - FEE - VAULT_LOVELACE - 1n })],
+    // Hình dạng CŨ: did_payment trả min-ADA vault, ví trả phí chỉ trả phí. Input/output/redeemer/
+    // ký/hạn dùng đều đúng; lệch nằm ở hai phép cân lovelace (ví trả phí, did_payment).
+    ["hình dạng cũ: did_payment trả min-ADA vault (thối 2 ADA), ví trả phí chỉ trả phí", fundedTx({ oldShape: true })],
     ["thiếu chữ ký thiết bị", fundedTx({ signers: [OWNER_PKH, CTRL] })],
     ["không có hạn dùng", fundedTx({ ttlMs: null })],
     ["hạn dùng quá 1 giờ", fundedTx({ ttlMs: 3_700_000 })],
@@ -352,4 +367,64 @@ describe("POST /tx/create-vault + funding — đọc lại CBOR (cực đối, 4
       expect(codeOf(r)).toBe("FUNDING_TX_MISMATCH");
     });
   }
+});
+
+describe("POST /tx/create-vault + funding — khoản ứng min-ADA vault của ví trả phí có TRẦN", () => {
+  it("trần 4 999 999 < lovelace vault 5 000 000 ⟹ 422 FEE_PAYER_FRONTING_ABOVE_MAX, số cụ thể", async () => {
+    const h = harness({ deployment: deploymentWith({ fee_payer_fronting_max_lovelace: "4999999" }) });
+    const r = await handle(post(body()), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(codeOf(r)).toBe("FEE_PAYER_FRONTING_ABOVE_MAX");
+    expect((r.body as { error: { details: Record<string, unknown> } }).error.details)
+      .toEqual({ fronted_lovelace: "5000000", fronted_max_lovelace: "4999999" });
+  });
+
+  it("CẶP (chỉ đổi trần lên đúng 5 000 000): 200, fronted_max_lovelace phản ánh cấu hình", async () => {
+    const h = harness({ deployment: deploymentWith({ fee_payer_fronting_max_lovelace: "5000000" }) });
+    const r = await handle(post(body()), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const fp = (r.body as { summary: { funding: { fee_payer: Record<string, string> } } }).summary.funding.fee_payer;
+    expect([fp.fronted_lovelace, fp.fronted_max_lovelace]).toEqual(["5000000", "5000000"]);
+  });
+});
+
+describe("checkFundingTx — ca biên két 0 LAMP: không chi did_payment", () => {
+  const ctx = {
+    network: "Preview" as const, tipPosixMs: BigInt(NOW), vaultAddress: VAULT_ADDRESS, vaultNftUnit: VAULT_ID_UNIT,
+    lampUnit: LAMP_UNIT, fundingAddress: DP_ADDRESS, feePayerAddress: FEE_ADDRESS, feePayerUtxo: FEE_UTXO,
+    didPaymentUtxos: [DP1, DP2, DP3], signers: [CTRL, DEV] as [string, string],
+    maxCollateralLovelace: 3_000_000n, frontingMaxLovelace: 5_000_000n,
+  };
+  /** Input CHỈ là UTxO trả phí; vault mang `vaultLamp` LAMP; không redeemer Spend, chỉ chữ ký chủ. */
+  const zeroLampTx = (vaultLamp: bigint) => buildTxCbor({
+    inputs: [ref(FEE_UTXO)],
+    feeLovelace: FEE,
+    mint: { [VAULT_ID_UNIT]: 1n },
+    requiredSigners: [OWNER_PKH],
+    outputs: [
+      { address: VAULT_ADDRESS, assets: { lovelace: VAULT_LOVELACE, [VAULT_ID_UNIT]: 1n, ...(vaultLamp === 0n ? {} : { [LAMP_UNIT]: vaultLamp }) } },
+      { address: FEE_ADDRESS, assets: { lovelace: 10_000_000n - FEE - VAULT_LOVELACE } },
+    ],
+    collateralInputs: [ref(FEE_UTXO)],
+    collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
+    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 1_800_000)),
+  });
+
+  it("vault 0 LAMP, 0 input did_payment, không chữ ký controller/thiết bị ⟹ qua; did_payment_inputs rỗng, ví trả phí ứng trọn lovelace vault", () => {
+    const s = checkFundingTx(zeroLampTx(0n), ctx);
+    expect(s.did_payment_inputs).toEqual([]);
+    expect(s.returned.lovelace).toBe("0");
+    expect(s.fee_payer?.fronted_lovelace).toBe("5000000");
+    expect(s.fee_payer?.change_lovelace).toBe(String(10_000_000n - FEE - VAULT_LOVELACE));
+  });
+
+  it("CỰC ĐỐI (chỉ đổi: vault mang 1 LAMP): 0 input did_payment ⟹ FUNDING_TX_MISMATCH ở vế bảo toàn LAMP", () => {
+    let code = "KHÔNG NÉM";
+    let msg = "";
+    try { checkFundingTx(zeroLampTx(1n), ctx); } catch (e) {
+      code = (e as { code?: string }).code ?? "?"; msg = (e as Error).message;
+    }
+    expect(code).toBe("FUNDING_TX_MISMATCH");
+    expect(msg).toContain("bảo toàn");
+  });
 });

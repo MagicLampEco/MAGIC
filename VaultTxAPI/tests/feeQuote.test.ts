@@ -10,13 +10,15 @@
 // hợp không có trong đó, nên một lượt đọc chuỗi cho nó là một bài đỏ, không phải một số lặng lẽ.
 
 import {
-  PROTOCOL_PARAMETERS_DEFAULT, credentialToAddress, getAddressDetails, unixTimeToSlot, type UTxO,
+  PROTOCOL_PARAMETERS_DEFAULT, credentialToAddress, getAddressDetails, scriptHashToCredential, unixTimeToSlot,
+  validatorToScriptHash, type UTxO,
 } from "@lucid-evolution/lucid";
 import { describe, expect, it, vi } from "vitest";
 
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { parseDeployment, type Deployment } from "../src/config.js";
 import { FEE_SOURCES_TIMEOUT_MS, FeeProxy, type FetchLike } from "../src/feeProxy.js";
+import { ChainDidPaymentAnchorReader } from "../src/funding.js";
 import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable, type IssuedRoute } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
@@ -24,7 +26,7 @@ import {
   enterpriseAddressOf,
   type BuildContext, type BuiltCreateVault, type BuiltOpenThread, type BuiltTx, type TxBuilderPort,
 } from "../src/txBuilder.js";
-import type { OpenThreadContext } from "../src/txBuilder.js";
+import type { CreateVaultContext, OpenThreadContext } from "../src/txBuilder.js";
 import { ENGAGE_ADDRESS, ENGAGE_SCRIPT_HASH, engageDatumHex, threadUtxo } from "./fixtures/engage.js";
 import {
   INPUT_TX_HASH, LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OTHER_OWNER_PKH, OWNER_PKH,
@@ -68,6 +70,19 @@ const FEE_BASE = 175_016n;
 
 /** Lovelace output thread mới (`ENGAGE_MIN_LOVELACE`) — toàn bộ là khoản ví trả phí ứng. */
 const THREAD_LOVELACE = 2_000_000n;
+
+// ── create-vault qua `funding` (ví trả phí bên thứ ba): ví trả phí ứng min-ADA két ───────────
+const DP_SCRIPT = "4746010000222220";
+const DP_ADDRESS = credentialToAddress("Preview",
+  scriptHashToCredential(validatorToScriptHash({ type: "PlutusV3", script: DP_SCRIPT })));
+const ANCHOR_POLICY = "a0".repeat(28);
+const DP_CTRL = "c1".repeat(28);
+const DP_DEV = "d1".repeat(28);
+const DP_ANCHOR = utxo("ab".repeat(32), 0, DP_ADDRESS, { lovelace: 2_000_000n, [`${ANCHOR_POLICY}${"01".repeat(32)}`]: 1n });
+/** Hình DID mới: did_payment chỉ có LAMP + ~1,24 ADA — dưới min-ADA của két. */
+const DP_UTXO = utxo("d1".repeat(32), 0, DP_ADDRESS, { lovelace: 1_240_954n, [LAMP_UNIT]: 1_001_000_000n });
+/** Lovelace output két mới — toàn bộ là khoản ví trả phí ứng (> thế chấp − phí ⟹ vế phí + ứng thắng). */
+const CV_VAULT_LOVELACE = 5_000_000n;
 
 /** Bộ dựng dựng CBOR theo UTxO trả phí trong `ctx`, đếm lượt gọi, ghi UTxO đã thấy. */
 class FeeModelBuilder implements TxBuilderPort {
@@ -114,7 +129,43 @@ class FeeModelBuilder implements TxBuilderPort {
   async consume(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx, true); }
   async instantGen(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
   async refreshCheckpoint(ctx: BuildContext): Promise<BuiltTx> { return this.feeTx(ctx); }
-  async createVault(): Promise<BuiltCreateVault> { throw new Error("[FeeModelBuilder] createVault không dựng ở đây."); }
+  /** Tạo két qua `funding` (ví trả phí bên thứ ba), hình dạng mới: did_payment góp LAMP và nhận lại
+   *  trọn lovelace; ví trả phí trả phí + ứng trọn `CV_VAULT_LOVELACE`. */
+  async createVault(ctx: CreateVaultContext, p: { lampAmount: bigint }): Promise<BuiltCreateVault> {
+    const fp = ctx.funding?.feePayerUtxo;
+    if (fp === undefined || ctx.collateralLovelace === undefined) {
+      throw new Error("[FeeModelBuilder] createVault chỉ dựng đường `funding` có ví trả phí.");
+    }
+    this.seen.push(fp);
+    const u = fp.assets.lovelace!;
+    const fee = modelFee(fp.address);
+    const dp = ctx.funding!.input.utxos[0]!;
+    const dpLampLeft = (dp.assets[LAMP_UNIT] ?? 0n) - p.lampAmount;
+    const refs = [fp, dp].map(x => ({ txHash: x.txHash, outputIndex: x.outputIndex }));
+    const sorted = [...refs].sort((a, b) => (a.txHash < b.txHash ? -1 : a.txHash > b.txHash ? 1 : a.outputIndex - b.outputIndex));
+    return {
+      vaultNftUnit: VAULT_ID_UNIT,
+      txCbor: buildTxCbor({
+        inputs: refs,
+        feeLovelace: fee,
+        mint: { [VAULT_ID_UNIT]: 1n },
+        outputs: [
+          {
+            address: VAULT_ADDRESS,
+            assets: { lovelace: CV_VAULT_LOVELACE, [LAMP_UNIT]: p.lampAmount, [VAULT_ID_UNIT]: 1n },
+            inlineDatumHex: datumHex({ owner: KEY_OWNER, lampBalanceOildrop: p.lampAmount, lampLockedOildrop: 0n }),
+          },
+          { address: dp.address, assets: { lovelace: dp.assets.lovelace!, ...(dpLampLeft === 0n ? {} : { [LAMP_UNIT]: dpLampLeft }) } },
+          { address: fp.address, assets: { lovelace: u - fee - CV_VAULT_LOVELACE } },
+        ],
+        requiredSigners: [OWNER_PKH, DP_CTRL, DP_DEV],
+        collateralInputs: [{ txHash: fp.txHash, outputIndex: fp.outputIndex }],
+        collateralReturn: { address: fp.address, assets: { lovelace: u - ctx.collateralLovelace } },
+        spendRedeemers: [{ index: sorted.findIndex(r => r.txHash === dp.txHash && r.outputIndex === dp.outputIndex), dataHex: "d87980" }],
+        ttlSlot: BigInt(unixTimeToSlot("Preview", VALID_TO_MS)),
+      }),
+    };
+  }
   /** Mở thread qua ví trả phí: UTxO trả phí là input duy nhất, ví ứng trọn `THREAD_LOVELACE`. */
   async openThread(ctx: OpenThreadContext): Promise<BuiltOpenThread> {
     const fp = ctx.feePayerUtxo;
@@ -198,6 +249,8 @@ interface HarnessOpts {
   addressUtxos?: Record<string, UTxO[]>;
   /** UTxO chuỗi ghi sẵn trả được THEO THAM CHIẾU — đường dựng thật đọc UTxO trả phí kiểu đó. */
   refUtxos?: UTxO[];
+  /** Bật đường create-vault + `funding`: ví did_payment `DP_UTXO`, anchor `DP_ANCHOR`, bộ đọc anchor. */
+  didPayment?: boolean;
 }
 
 function harness(o: HarnessOpts = {}) {
@@ -210,11 +263,12 @@ function harness(o: HarnessOpts = {}) {
       [VAULT_ADDRESS]: [VAULT_UTXO],
       [ENGAGE_ADDRESS]: [threadUtxo(KEY_OWNER, "7e".repeat(32))],
       [OWNER_FEE_ADDRESS]: o.ownerUtxos ?? [],
+      ...(o.didPayment ? { [DP_ADDRESS]: [DP_UTXO] } : {}),
       ...(o.addressUtxos ?? {}),
     },
     TIP,
     // Thread của lượt tiêu là INPUT của tx ⟹ phép đọc lại ví trả phí tra nó theo tham chiếu.
-    [VAULT_UTXO, threadUtxo(KEY_OWNER, "7e".repeat(32)), ...(o.refUtxos ?? [])],
+    [VAULT_UTXO, threadUtxo(KEY_OWNER, "7e".repeat(32)), ...(o.didPayment ? [DP_ANCHOR] : []), ...(o.refUtxos ?? [])],
   );
   const builder = new FeeModelBuilder();
   const issued = new IssuedTxRegistry(TTL * 4);
@@ -227,6 +281,7 @@ function harness(o: HarnessOpts = {}) {
   const fetch: FetchLike = async (url, init) => { fetchCalls.push(url); fetchLog.push({ url, init }); return answer(url, init); };
   const service = new VaultTxService({
     network: "Preview", deployment, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
+    ...(o.didPayment ? { didPaymentAnchor: new ChainDidPaymentAnchorReader({ chain, anchorNftPolicy: ANCHOR_POLICY }) } : {}),
   });
   const feeProxy = deployment.feecover === undefined ? undefined : new FeeProxy({
     settings: deployment.feecover, issued, fetch, now: () => NOW,
@@ -340,6 +395,24 @@ describe("/tx/quote — params KHÔNG được mang ví trả phí", () => {
     expect(h.builder.seen).toHaveLength(0);
     const b = await handle(quote({ route: "create-vault", params: { ...cv, funding: { ...funding, fee_source: "fee_payer" } } }), h.router);
     expect(codeOf(b)).not.toBe("FEE_QUOTE_SELF_FUNDED");
+  });
+
+  it("create-vault + funding (DID chỉ có LAMP + 1,24 ADA): ngưỡng phủ phí + khoản ứng min-ADA két (needed = max(phí + ứng, thế chấp) + min-ADA)", async () => {
+    // Ví trả phí ứng 5 ADA lovelace két ⟹ phí + ứng > thế chấp 3 ADA ⟹ vế phí + ứng thắng. Đọc
+    // khoản ứng là 0 (hình dạng cũ của `feePayerFigures`) thì ngưỡng rơi về OWNER_NEEDED, thấp hơn
+    // thứ lucid cần để dựng.
+    const h = harness({ didPayment: true });
+    const funding = {
+      type: "did_payment", did_payment_script_cbor: DP_SCRIPT, address: DP_ADDRESS,
+      anchor_ref: `${DP_ANCHOR.txHash}#0`, controller_pkh: DP_CTRL, device_key_hash: DP_DEV,
+    };
+    const b = bodyOf(await handle(quote({
+      route: "create-vault", params: { owner_pkh: OWNER_PKH, kind: "schedule", lamp_amount: "1001000000", funding },
+      owner_fee_addresses: [OWNER_FEE_ADDRESS],
+    }), h.router));
+    const owner = b.owner_address as { needed_lovelace: string; fee_lovelace: string };
+    expect(owner.fee_lovelace).toBe(String(FEE_ENTERPRISE));
+    expect(owner.needed_lovelace).toBe(String(FEE_ENTERPRISE + CV_VAULT_LOVELACE + (OWNER_NEEDED - COLLATERAL)));
   });
 
   it("CẶP: cùng params, bỏ fee_payer ⟹ 200", async () => {

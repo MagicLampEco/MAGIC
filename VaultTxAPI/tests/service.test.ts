@@ -258,6 +258,11 @@ describe("VaultTxService — đường dựng", () => {
   });
 });
 
+/** Đổi hash mà nút chuỗi (bản ghi) trả cho lượt nộp kế tiếp. */
+function setSubmitResult(h: Harness, cbor: string | undefined): void {
+  (h.chain as unknown as { submitResult: string | undefined }).submitResult = cbor === undefined ? undefined : txBodyHash(cbor);
+}
+
 /** Đổi CBOR ghi sẵn của bộ dựng giữa hai lượt — để hai lượt dựng ra hai tx KHÁC hash. */
 function setCommitCbor(h: Harness, cbor: string): void {
   (h.builder as unknown as { txCborByRoute: Record<string, string> }).txCborByRoute.schedule_commit = cbor;
@@ -295,10 +300,49 @@ describe("Khoá mềm theo chủ vault — lượt dựng mới THAY lượt cũ
     await h.service.submit({ txCbor: t2, witnessCbor: fakeWitnessSetCbor() });
     expect(h.chain.submitted).toHaveLength(1);
     await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() }))
-      .rejects.toMatchObject({ httpStatus: 409, code: "TX_SUPERSEDED", details: { superseded_by: txBodyHash(t2) } });
+      .rejects.toMatchObject({
+        httpStatus: 409, code: "TX_SUPERSEDED", details: { superseded_by: txBodyHash(t2), previously_submitted: false, submission: "none" },
+      });
     expect(h.chain.submitted).toHaveLength(1);
     // CẶP: nộp LẠI chính T2 (rớt mạng) KHÔNG bị coi là xung đột với chính nó.
     await expect(h.service.submit({ txCbor: t2, witnessCbor: fakeWitnessSetCbor() })).resolves.toMatchObject({ txHash: txBodyHash(t2) });
+  });
+
+  it("HỒI QUY: T1 NỘP (rồi rơi khỏi mempool), T2 chung khoá NỘP sau ⟹ nộp lại T1 ⟹ 409, KHÔNG gửi lại", async () => {
+    // Ngoài đời: hai lượt tạo két từ hai ví (không chung input). Gửi lại T1 ở đây = két thứ hai cho
+    // cùng chủ, và mọi đường dựng sau đó trả VAULT_AMBIGUOUS.
+    const t1 = commitTxCbor(3n);
+    const t2 = commitTxCbor(4n);
+    const h = harness({ submitResult: txBodyHash(t1) });
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    await h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() });
+    setCommitCbor(h, t2);
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 4n });
+    setSubmitResult(h, t2);
+    await h.service.submit({ txCbor: t2, witnessCbor: fakeWitnessSetCbor() });
+    expect(h.chain.submitted).toHaveLength(2);
+    setSubmitResult(h, t1);
+    await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() })).rejects.toMatchObject({
+      httpStatus: 409, code: "TX_SUPERSEDED",
+      details: { superseded_by: txBodyHash(t2), previously_submitted: true, submission: "accepted" },
+    });
+    expect(h.chain.submitted).toHaveLength(2);
+  });
+
+  it("CỰC ĐỐI: T2 chỉ DỰNG, không nộp ⟹ nộp lại T1 trả lại kết quả cũ, KHÔNG gửi lên chuỗi lần nữa", async () => {
+    const t1 = commitTxCbor(3n);
+    const t2 = commitTxCbor(4n);
+    const h = harness({ submitResult: txBodyHash(t1) });
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    const first = await h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() });
+    expect(first.lockReleasedFor).toBe(OWNER_PKH);
+    setCommitCbor(h, t2);
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 4n });
+    const again = await h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() });
+    expect(again).toEqual(first);
+    expect(h.chain.submitted).toHaveLength(1);
+    // Và lượt nộp lại không thay T2 — lượt kế tiếp hợp lệ của chủ.
+    expect(h.issued.lookup(txBodyHash(t2), NOW)?.supersededBy).toBeUndefined();
   });
 
   it("input đã bị tx KHÁC vừa nộp tiêu (tx không chung khoá trong sổ) ⟹ 409 TX_SUPERSEDED kèm input xung đột", async () => {
@@ -310,7 +354,9 @@ describe("Khoá mềm theo chủ vault — lượt dựng mới THAY lượt cũ
     // … rồi một tx KHÁC (không có trong sổ của tiến trình này) tiêu đúng UTxO vault.
     pending.note([`${INPUT_TX_HASH}#0`], NOW, "99".repeat(32));
     await expect(h.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
-      .rejects.toMatchObject({ httpStatus: 409, code: "TX_SUPERSEDED", details: { conflicting_inputs: [`${INPUT_TX_HASH}#0`] } });
+      .rejects.toMatchObject({
+        httpStatus: 409, code: "TX_SUPERSEDED", details: { conflicting_inputs: [`${INPUT_TX_HASH}#0`], previously_submitted: false, submission: "none" },
+      });
     expect(h.chain.submitted).toHaveLength(0);
   });
 
@@ -511,6 +557,96 @@ describe("/tx/submit — nút từ chối thì nhả khoá, mất kết nối th
     await expect(h.service.submit({ txCbor: commitTxCbor(3n), witnessCbor: fakeWitnessSetCbor() }))
       .rejects.toBeInstanceOf(ChainUnavailableError);
     expect(h.locks.peek(OWNER_PKH, NOW)).not.toBeNull();
+  });
+});
+
+/** Nút chuỗi mất kết nối ở lượt nộp ĐẦU (sau khi nhận bytes — không biết đã vào mempool chưa),
+ *  các lượt sau trả theo bản ghi. */
+class TimeoutOnce extends RecordedChainReader {
+  private dropped = false;
+  override async submitTx(c: string): Promise<string> {
+    if (!this.dropped) {
+      this.dropped = true;
+      this.submitted.push(c);
+      throw new ChainUnavailableError("quá giờ", { transport: "timeout" });
+    }
+    return super.submitTx(c);
+  }
+}
+
+describe("/tx/submit — gửi mà không có xác nhận (mất kết nối, hash nút lệch) ⟹ ghi \"unconfirmed\", không phải \"chưa gửi\"", () => {
+  it("mất kết nối ⟹ unconfirmed; tx chung khoá dựng TRƯỚC bị thay; nộp lại GỬI lại và thành công", async () => {
+    const t0 = commitTxCbor(2n);
+    const t1 = commitTxCbor(3n);
+    const h = harness({ chainClass: TimeoutOnce, submitResult: txBodyHash(t1) });
+    setCommitCbor(h, t0);
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 2n });   // T0 dựng trước
+    setCommitCbor(h, t1);
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() })).rejects.toBeInstanceOf(ChainUnavailableError);
+    expect(h.issued.lookup(txBodyHash(t1), NOW)?.submitUnconfirmedAtMs).toBe(NOW);
+    // T0 dựng trước lượt gửi có-thể-đã-tới của T1 ⟹ bị thay, 409 không gọi nút.
+    setSubmitResult(h, t0);
+    await expect(h.service.submit({ txCbor: t0, witnessCbor: fakeWitnessSetCbor() })).rejects.toMatchObject({
+      httpStatus: 409, code: "TX_SUPERSEDED", details: { superseded_by: txBodyHash(t1), previously_submitted: false, submission: "none" },
+    });
+    expect(h.chain.submitted).toHaveLength(1);
+    // Nộp lại T1: không biết lượt đầu tới chưa ⟹ GỬI lại.
+    setSubmitResult(h, t1);
+    await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() })).resolves.toMatchObject({ txHash: txBodyHash(t1) });
+    expect(h.chain.submitted).toHaveLength(2);
+  });
+
+  it("CỰC ĐỐI: nút TỪ CHỐI (không phải mất kết nối) ⟹ vẫn \"chưa gửi\": T0 dựng trước KHÔNG bị thay, nộp được", async () => {
+    const t0 = commitTxCbor(2n);
+    const t1 = commitTxCbor(3n);
+    const h = harness();   // không khai submitResult ⟹ bản ghi ném SubmitRejectedError
+    setCommitCbor(h, t0);
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 2n });
+    setCommitCbor(h, t1);
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() })).rejects.toMatchObject({ code: "SUBMIT_REJECTED" });
+    expect(h.issued.lookup(txBodyHash(t1), NOW)?.submitUnconfirmedAtMs).toBeUndefined();
+    setSubmitResult(h, t0);
+    await expect(h.service.submit({ txCbor: t0, witnessCbor: fakeWitnessSetCbor() })).resolves.toMatchObject({ txHash: txBodyHash(t0) });
+  });
+
+  it("mất kết nối rồi tx chung khoá khác NỘP ⟹ nộp lại T1 nhận 409 kèm submission \"unconfirmed\" — KHÔNG ngụ ý \"chưa lên chuỗi\"", async () => {
+    const t1 = commitTxCbor(3n);
+    const t2 = commitTxCbor(4n);
+    const h = harness({ chainClass: TimeoutOnce });
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() })).rejects.toBeInstanceOf(ChainUnavailableError);
+    setCommitCbor(h, t2);
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 4n });
+    setSubmitResult(h, t2);
+    await h.service.submit({ txCbor: t2, witnessCbor: fakeWitnessSetCbor() });
+    setSubmitResult(h, t1);
+    await expect(h.service.submit({ txCbor: t1, witnessCbor: fakeWitnessSetCbor() })).rejects.toMatchObject({
+      httpStatus: 409, code: "TX_SUPERSEDED",
+      details: { superseded_by: txBodyHash(t2), previously_submitted: true, submission: "unconfirmed" },
+    });
+    expect(h.chain.submitted).toHaveLength(2);
+  });
+
+  it("nút báo hash KHÁC ⟹ 502 nhưng tx ĐÃ gửi ⟹ unconfirmed + input vào sổ chờ; CỰC ĐỐI: nút báo đúng hash ⟹ accepted", async () => {
+    const cbor = commitTxCbor(3n);
+    const pending = new PendingSpends(TTL);
+    const h = harness({ submitResult: "ff".repeat(32), pending });
+    await COMMIT(h);
+    await expect(h.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() })).rejects.toMatchObject({ code: "SUBMIT_REJECTED" });
+    const e = h.issued.lookup(txBodyHash(cbor), NOW)!;
+    expect(e.submitUnconfirmedAtMs).toBe(NOW);
+    expect(e.submittedAtMs).toBeUndefined();
+    expect(pending.has(`${INPUT_TX_HASH}#0`, NOW)).toBe(true);
+
+    const okPending = new PendingSpends(TTL);
+    const ok = harness({ submitResult: txBodyHash(cbor), pending: okPending });
+    await COMMIT(ok);
+    await ok.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() });
+    const g = ok.issued.lookup(txBodyHash(cbor), NOW)!;
+    expect(g.submittedAtMs).toBe(NOW);
+    expect(g.submitUnconfirmedAtMs).toBeUndefined();
   });
 });
 

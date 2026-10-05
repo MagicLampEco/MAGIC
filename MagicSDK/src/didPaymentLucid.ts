@@ -40,8 +40,9 @@ export function didPaymentLucidPorts(coinsPerUtxoByte: bigint): DidPaymentPorts 
 
 /**
  * Nguồn nạp `did_payment` cho `createVault`. Ví đang chọn trên `lucid` là VÍ TRẢ PHÍ (khoá
- * ký): nó trả phí, làm tài sản thế chấp và nhận tiền thối ADA của CHÍNH nó. LAMP + min-ADA
- * của output vault lấy từ `utxos` ở `address`; phần thối của chúng về lại `address`.
+ * ký): nó trả phí, ỨNG min-ADA của output vault mới, làm tài sản thế chấp và nhận tiền thối ADA
+ * của CHÍNH nó. LAMP của output vault lấy từ `utxos` ở `address`; phần thối (kể cả lovelace của
+ * các UTxO đã chi) về lại `address`, và tự đủ min-ADA của chính nó.
  */
 export interface DidPaymentFundingInput {
   /** CBOR `did_payment` ĐÃ apply `(anchor_nft_policy, blake2b_256(utf8(did)))`. */
@@ -55,8 +56,8 @@ export interface DidPaymentFundingInput {
   controllerPkh: string;
   deviceKeyHash: string;
   /**
-   * Ai trả phí. Vắng hoặc `"wallet"` ⟹ hành vi cũ: ví đang chọn trả phí, làm thế chấp, làm
-   * seed, nhận tiền thối ADA của chính nó.
+   * Ai trả phí. Vắng hoặc `"wallet"` ⟹ ví đang chọn trả phí, ứng min-ADA output vault, làm thế
+   * chấp, làm seed, nhận tiền thối ADA của chính nó; did_payment chỉ góp LAMP.
    *
    * `"did_payment"` (opt-in) ⟹ ví Phoenix trả TẤT CẢ: LAMP, min-ADA vault và PHÍ; tiền thối về
    * `address`. Seed NFT két là một UTxO `did_payment` trong tập đã chọn. Ví đang chọn chỉ làm

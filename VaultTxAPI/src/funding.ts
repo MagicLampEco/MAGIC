@@ -1,12 +1,19 @@
 // VaultTxAPI/src/funding.ts — `funding` của `/tx/create-vault`: nạp LAMP từ ví Phoenix.
 //
 // ── BA VÍ, BA VAI ────────────────────────────────────────────────────────────────
-//   · ví Phoenix (`funding.address`, payment credential = script `did_payment`): trả LAMP +
-//     min-ADA của output vault; phần thối (LAMP, token khác, ADA, cả mục rút `did_stake` nếu
-//     chủ là script) về LẠI chính địa chỉ này.
+//   · ví Phoenix (`funding.address`, payment credential = script `did_payment`): trả LAMP của
+//     output vault, KHÔNG lovelace nào; phần thối (LAMP, token khác, TRỌN lovelace của UTxO đã
+//     chi, cả mục rút `did_stake` nếu chủ là script) về LẠI chính địa chỉ này.
 //   · ví trả phí (`funding.fee_payer`, khoá ký — mô hình Feecover): ĐÚNG MỘT UTxO thuần ADA,
-//     vừa là input trả phí vừa là tài sản thế chấp vừa là seed của NFT danh-tính; tiền thối
-//     ADA và `collateral_return` về đúng `fee_payer.address`.
+//     vừa là input trả phí vừa là tài sản thế chấp vừa là seed của NFT danh-tính; nó trả phí và
+//     ỨNG min-ADA của output vault mới (trọn lovelace output đó — NFT đúc trong tx — có trần
+//     `fee_payer_fronting_max_lovelace`, cùng luật khoản ứng ở `feePayer.ts`); tiền thối ADA và
+//     `collateral_return` về đúng `fee_payer.address`. Lý do: DID mới thường chỉ có LAMP + ~1,2
+//     ADA ở did_payment, dưới min-ADA của két (~2,1 ADA); bắt did_payment trả nó là chặn đúng
+//     người dùng cần ví trả phí.
+//   · Két instant 0 LAMP, chủ không có mục rút: did_payment không góp gì ⟹ giao dịch KHÔNG chi
+//     UTxO did_payment nào (không redeemer, không bộ ký did_payment); quyền chủ vẫn ép như mọi
+//     đường. Bảo toàn ở vế (5) bắt két mang LAMP mà không chi did_payment.
 //   · vault: output đích.
 // Không output nào đi chỗ khác. Tài sản thế chấp KHÔNG được là UTxO script (ledger), nên phí
 // + thế chấp buộc phải từ ví khoá ký — đó là lý do có vai thứ hai.
@@ -247,6 +254,8 @@ export interface FundingCheckContext {
   signers: [controllerPkh: string, deviceKeyHash: string];
   /** Trần `Σ collateral_inputs − collateral_return` (`deployment.feePayerCollateralLovelace`). */
   maxCollateralLovelace: bigint;
+  /** Trần khoản ứng min-ADA output vault (`deployment.feePayerFrontingMaxLovelace`). */
+  frontingMaxLovelace: bigint;
 }
 
 export interface AmountView { lovelace: string; lamp_oildrop: string; other_assets: { unit: string; quantity: string }[] }
@@ -268,6 +277,10 @@ export interface FundingSummary {
     input_lovelace: string;
     fee_lovelace: string;
     change_lovelace: string;
+    /** Min-ADA ví trả phí ỨNG cho output vault mới = trọn lovelace output đó (khối đầu tệp). */
+    fronted_lovelace: string;
+    /** Trần khoản ứng đang có hiệu lực (`fee_payer_fronting_max_lovelace`). */
+    fronted_max_lovelace: string;
     /** `Σ collateral_inputs − collateral_return` — thứ bên trả phí có thể mất nếu script hỏng. */
     collateral_at_risk_lovelace: string;
     collateral_return_lovelace: string | null;
@@ -487,7 +500,9 @@ export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): Fundin
   const feeKey = key(ctx.feePayerUtxo.txHash, ctx.feePayerUtxo.outputIndex);
   const dp = new Map(ctx.didPaymentUtxos.map(u => [key(u.txHash, u.outputIndex), u]));
 
-  // (1) input: đúng một UTxO trả phí + ≥1 UTxO did_payment đã biết; không gì khác.
+  // (1) input: đúng một UTxO trả phí + các UTxO did_payment đã biết; không gì khác. KHÔNG đòi
+  //     ≥1 UTxO did_payment: két instant 0 LAMP không mục rút thì did_payment không góp gì (khối
+  //     đầu tệp). Két mang LAMP mà không chi did_payment thì vế bảo toàn (5) từ chối.
   const inputs: string[] = [];
   const il = body.inputs();
   for (let i = 0; i < il.len(); i++) inputs.push(key(il.get(i).transaction_id().to_hex(), il.get(i).index()));
@@ -495,7 +510,6 @@ export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): Fundin
   if (foreign.length > 0) throw mismatch(`input lạ ${foreign.join(", ")}`, { foreign_inputs: foreign });
   const spentKeys = inputs.filter(k => dp.has(k));
   if (!inputs.includes(feeKey)) throw mismatch(`thiếu UTxO trả phí ${feeKey} trong input`);
-  if (spentKeys.length === 0) throw mismatch(`không có UTxO did_payment nào trong input`);
 
   // (2) redeemer Spend: đúng một cho mỗi input did_payment, data = Constr 0 [].
   checkSpendRedeemers(tx, inputs, spentKeys);
@@ -522,12 +536,23 @@ export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): Fundin
     throw mismatch(`output về ví trả phí mang token — tài sản của ví Phoenix không được thối sang đó`);
   }
 
-  // (5) bảo toàn: ví trả phí trả ĐÚNG phí; did_payment (+ mục rút) = vault (trừ NFT vừa đúc) + phần thối.
+  // (5) bảo toàn: ví trả phí trả ĐÚNG phí + khoản ứng = trọn lovelace output vault (vault MỚI, NFT
+  //     đúc trong tx ⟹ gốc 0); did_payment (+ mục rút) = vault (trừ NFT vừa đúc, TRỪ lovelace) +
+  //     phần thối. Hai phương trình cùng đóng: lovelace của vault chỉ đến từ ví trả phí, lovelace
+  //     của did_payment về lại trọn did_payment.
   const fee = body.fee();
   const feeIn = ctx.feePayerUtxo.assets.lovelace ?? 0n;
   const feeChange = feeOut.lovelace ?? 0n;
-  if (feeIn !== fee + feeChange) {
-    throw mismatch(`ví trả phí góp ${feeIn} lovelace nhưng phí ${fee} + thối ${feeChange} — nó đang trả cho thứ khác ngoài phí`);
+  const fronted = vaultOut.lovelace ?? 0n;
+  if (fronted > ctx.frontingMaxLovelace) {
+    throw new CodedApiError(422, "FEE_PAYER_FRONTING_ABOVE_MAX",
+      `Ví trả phí phải ứng ${fronted} lovelace min-ADA cho output vault, vượt trần ${ctx.frontingMaxLovelace} ` +
+      `(fee_payer_fronting_max_lovelace). Bên trả phí chỉ ứng tới trần đó.`,
+      { fronted_lovelace: raw(fronted), fronted_max_lovelace: raw(ctx.frontingMaxLovelace) });
+  }
+  if (feeIn !== fee + feeChange + fronted) {
+    throw mismatch(`ví trả phí góp ${feeIn} lovelace nhưng phí ${fee} + thối ${feeChange} + ứng min-ADA vault ${fronted} — ` +
+      `nó đang trả cho thứ khác ngoài phí và khoản ứng`);
   }
   let withdrawal = 0n;
   const wd = body.withdrawals();
@@ -537,21 +562,22 @@ export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): Fundin
   }
   const spent: Record<string, bigint> = {};
   for (const k of spentKeys) sum(spent, dp.get(k)!.assets);
-  const vaultNoNft = { ...vaultOut, [ctx.vaultNftUnit]: (vaultOut[ctx.vaultNftUnit] ?? 0n) - 1n };
+  // Lovelace của vault đã tính vào khoản ứng của ví trả phí ở trên ⟹ không thuộc vế did_payment.
+  const vaultNoNft = { ...vaultOut, lovelace: 0n, [ctx.vaultNftUnit]: (vaultOut[ctx.vaultNftUnit] ?? 0n) - 1n };
   const units = new Set([...Object.keys(spent), ...Object.keys(vaultNoNft), ...Object.keys(fundOut), "lovelace"]);
   for (const u of units) {
     const left = (spent[u] ?? 0n) + (u === "lovelace" ? withdrawal : 0n);
     const right = (vaultNoNft[u] ?? 0n) + (fundOut[u] ?? 0n);
     if (left !== right) {
-      throw mismatch(`bảo toàn ${u === "lovelace" ? "lovelace" : u.slice(0, 16) + "…"}: did_payment chi ${left}, vault + thối nhận ${right}`, { unit: u });
+      throw mismatch(`bảo toàn ${u === "lovelace" ? "lovelace" : u.slice(0, 16) + "…"}: did_payment chi ${left}, ${u === "lovelace" ? "thối" : "vault + thối"} nhận ${right}`, { unit: u });
     }
   }
 
-  // (6) bộ ký did_payment + hạn dùng ≤ 1 giờ kể từ đỉnh chuỗi.
+  // (6) bộ ký did_payment (chỉ khi CÓ chi did_payment — script đó mới đòi) + hạn dùng ≤ 1 giờ.
   const rs = body.required_signers();
   const signers: string[] = [];
   for (let i = 0; rs !== undefined && i < rs.len(); i++) signers.push(rs.get(i).to_hex());
-  for (const s of ctx.signers) {
+  for (const s of spentKeys.length > 0 ? ctx.signers : []) {
     if (!signers.includes(s)) throw mismatch(`required_signers thiếu ${s} (did_payment đòi controller + thiết bị)`);
   }
   const validTo = checkValidTo(body, ctx.network, ctx.tipPosixMs, mismatch);
@@ -569,6 +595,8 @@ export function checkFundingTx(txCbor: string, ctx: FundingCheckContext): Fundin
       input_lovelace: raw(feeIn),
       fee_lovelace: raw(fee),
       change_lovelace: raw(feeChange),
+      fronted_lovelace: raw(fronted),
+      fronted_max_lovelace: raw(ctx.frontingMaxLovelace),
       collateral_at_risk_lovelace: raw(atRisk),
       collateral_return_lovelace: collateralReturn === null ? null : raw(collateralReturn),
     },

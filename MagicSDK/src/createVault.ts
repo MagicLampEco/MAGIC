@@ -123,9 +123,10 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
       "tự đặt hạn dùng ≤ 1 giờ.",
     );
   }
-  // Có `funding` ⟹ LAMP đến từ ví Phoenix, ví đang chọn chỉ trả phí: kiểm hash và nhân
-  // chứng của chủ ngay đây, TRƯỚC khi dựng gì. Số dư LAMP của ví Phoenix kiểm ở bước chọn
-  // UTxO bên dưới (cần min-ADA của vault, mà min-ADA cần datum).
+  // Có `funding` ⟹ LAMP đến từ ví Phoenix, ví đang chọn trả phí và ứng min-ADA két (trừ chế độ
+  // tự trả phí): kiểm hash và nhân chứng của chủ ngay đây, TRƯỚC khi dựng gì. Số dư LAMP của ví
+  // Phoenix kiểm ở bước chọn UTxO bên dưới (chế độ tự trả phí cần min-ADA của vault, mà min-ADA
+  // cần datum).
   const fundingPorts = funding === undefined ? undefined : fundingPortsOf(lucid, funding);
   const lampBalance   = funding !== undefined ? vault.lampDeposit : walletUtxos.reduce(
     (s, u) => s + (u.assets[lampUnit] ?? 0n), 0n,
@@ -191,28 +192,49 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   }
   const vaultLovelace = vault.vaultLovelace ?? minVaultLovelace;
 
-  // ── Nạp từ did_payment: chọn tối thiểu đủ LAMP + min-ADA vault + min-ADA phần thối ──
+  // ── Nạp từ did_payment: chọn tối thiểu đủ phần did_payment phải góp + min-ADA phần thối ──
   // Mục rút `did_stake` (chủ script) là tiền của CHỦ DID vào giao dịch: nó thối về ví
   // Phoenix cùng phần thối, không để bộ cân bằng dồn sang ví trả phí.
   //
-  // Ví Phoenix tự trả phí ⟹ giữ chỗ thêm `headroom` lovelace lúc CHỌN, để tập đã chọn đủ cả phí
-  // + min-ADA phần thối. Phí thật đo sau khi dựng (`completeSelfFunded`).
+  // Hai chế độ góp KHÁC NHAU ở vế lovelace của output két:
+  //   · ví trả phí bên thứ ba (`selfFunded === undefined`): did_payment chỉ góp tài sản của CHỦ
+  //     (LAMP). Min-ADA của output két — một output MỚI, NFT đúc trong tx — do ví trả phí ỨNG: bộ
+  //     cân bằng của lucid lấy phần lovelace thiếu từ ví đang chọn, mà ở chế độ này ví đó mang
+  //     đúng UTxO trả phí. DID mới thường chỉ có LAMP + ~1,2 ADA ở did_payment; bắt nó trả cả
+  //     ~2,1 ADA min-ADA két là đẩy người dùng đúng diện cần ví trả phí vào `FUNDING_INSUFFICIENT`.
+  //     did_payment vẫn phải tự đủ min-ADA cho phần thối của CHÍNH nó (`planDidPaymentFunding`).
+  //   · ví Phoenix tự trả phí: did_payment trả mọi thứ (LAMP + min-ADA két + phí) — giữ chỗ thêm
+  //     `headroom` lovelace lúc CHỌN; phí thật đo sau khi dựng (`completeSelfFunded`).
   // 0 LAMP ⟹ KHÔNG ghi mục LAMP: một mục số lượng 0 trong value không phải "0 LAMP" mà là một
   // multiasset hỏng hình dạng, và `planDidPaymentFunding` đòi mọi mục `need` > 0.
   const lampPart: Record<string, bigint> = vault.lampDeposit === 0n ? {} : { [lampUnit]: vault.lampDeposit };
   const vaultNeed: Record<string, bigint> = { lovelace: vaultLovelace, ...lampPart };
   const extraLovelace = funding === undefined ? 0n : withdrawLovelaceOf(ownerAuth);
   let fundingPlan: DidPaymentPlan<UTxO> | undefined;
-  if (funding !== undefined) {
+  if (funding !== undefined && selfFunded !== undefined) {
     fundingPlan = planDidPaymentFunding({
       utxos: funding.utxos,
-      need: selfFunded === undefined
-        ? vaultNeed
-        : { ...vaultNeed, lovelace: vaultLovelace + selfFunded.headroom },
+      need: { ...vaultNeed, lovelace: vaultLovelace + selfFunded.headroom },
       primaryUnit: lampUnit,
       returnAddress: funding.address,
       extraLovelace,
     }, fundingPorts!);
+  } else if (funding !== undefined) {
+    // Ca biên: két Instant 0 LAMP + không mục rút ⟹ did_payment không có gì để góp, cũng không có
+    // tiền của chủ nào phải thối về nó. KHÔNG chi UTxO did_payment nào: chi một UTxO chỉ để trả
+    // nguyên nó về là bắt ví trả phí trả thêm phí chạy script cho một việc rỗng. Quyền chủ
+    // (`applyOwnerAuth`) và hạn dùng ≤ 1 giờ vẫn giữ nguyên ở `assemble`. Có mục rút > 0 ⟹ vẫn
+    // chọn (need rỗng ⟹ ít nhất một UTxO), để tiền thưởng của chủ thối về ví Phoenix chứ không bị
+    // bộ cân bằng dồn sang ví trả phí.
+    fundingPlan = Object.keys(lampPart).length === 0 && extraLovelace === 0n
+      ? { selected: [], spent: {}, returned: null, skipped: [] }
+      : planDidPaymentFunding({
+        utxos: funding.utxos,
+        need: lampPart,
+        primaryUnit: lampUnit,
+        returnAddress: funding.address,
+        extraLovelace,
+      }, fundingPorts!);
   }
 
   // ── Chọn seed UTxO → danh tính vault (INV-VAULT-IDENTITY) ────
@@ -289,16 +311,20 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     //     đính inline; phần thối về CHÍNH ví Phoenix; hạn dùng ≤ 1 giờ (mô hình ví trả phí bên
     //     thứ ba). Anchor + controller + thiết bị: chủ script thì nhân chứng `did_stake` đã gắn
     //     đúng bộ đó (`assertFundingWitness` so), gắn lại là nhân đôi reference input và chữ ký.
+    //     Tập chọn rỗng (ca biên 0 LAMP, không mục rút — khối chọn UTxO ở trên) ⟹ không chi, không
+    //     đính script, không anchor/bộ ký của did_payment; chỉ còn hạn dùng.
     if (funding !== undefined && fundingPlan !== undefined) {
-      body = body
-        .collectFrom(fundingPlan.selected, DID_PAYMENT_SPEND_REDEEMER)
-        .attach.SpendingValidator({ type: "PlutusV3", script: funding.didPaymentScriptCbor.toLowerCase() });
-      if (didPaymentReturn !== null) body = body.pay.ToAddress(funding.address, didPaymentReturn);
-      if (ownerAuth.kind !== "script") {
+      if (fundingPlan.selected.length > 0) {
         body = body
-          .readFrom([funding.anchorRefUtxo])
-          .addSignerKey(funding.controllerPkh)
-          .addSignerKey(funding.deviceKeyHash);
+          .collectFrom(fundingPlan.selected, DID_PAYMENT_SPEND_REDEEMER)
+          .attach.SpendingValidator({ type: "PlutusV3", script: funding.didPaymentScriptCbor.toLowerCase() });
+        if (didPaymentReturn !== null) body = body.pay.ToAddress(funding.address, didPaymentReturn);
+        if (ownerAuth.kind !== "script") {
+          body = body
+            .readFrom([funding.anchorRefUtxo])
+            .addSignerKey(funding.controllerPkh)
+            .addSignerKey(funding.deviceKeyHash);
+        }
       }
       body = body.validTo(Number(tipPosixMs + FUNDING_MAX_VALIDITY_MS));
     }

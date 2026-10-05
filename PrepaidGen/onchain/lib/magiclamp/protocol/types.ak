@@ -125,6 +125,11 @@ pub type Sponsorship {
   sponsor      : Address,
   // 32 byte = `blake2b_256(UTF8(did))` = ô [0] két Wakeme = tên vault-NFT Wakeme.
   owner_commit : ByteArray,
+  // Epoch TUYỆT ĐỐI mở đường thu hồi DỰ PHÒNG (bên tài trợ ký, không cần két
+  // Wakeme đồng tiêu). Genesis ép `>= epoch(cận TRÊN validity) +
+  // sponsor_reclaim_delay_epochs`; nhánh spend so với epoch của giao dịch
+  // (`get_epoch`, hai cận cùng epoch). Nối CUỐI 2026-10-05 — chưa quỹ nào lên chuỗi.
+  reclaim_after_epoch : Int,
 }
 
 // ── Vault redeemer ────────────────────────────────────────────

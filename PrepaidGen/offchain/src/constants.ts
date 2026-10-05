@@ -42,6 +42,11 @@ export const BPS_DENOM = 10_000n;
 // `buffer_bps` âm. Gương `min_buffer_bps` (constants.ak) — p8.test.ts so hai bên.
 export const MIN_BUFFER_BPS = 0n; // buffer-Paid ≥ 0%  [Constitutional]
 
+// ── Thu hồi dự phòng của quỹ tài trợ (DESIGN-reclaim §10.12) ───────
+// Khoảng trễ tối thiểu từ genesis quỹ tới mốc `reclaim_after_epoch`; 200 = luật thu
+// hồi 200 kỳ của két Wakeme v6. Gương `sponsor_reclaim_delay_epochs` (constants.ak).
+export const SPONSOR_RECLAIM_DELAY_EPOCHS = 200n; // [Routine]
+
 // ── Constructor index (§11) ───────────────────────────────────
 // ConsumeMAGIC ghim `burn_batch_constr` cho từng vault. PrepaidGen = 2, đồng
 // nhất với InstantGen/ScheduleGen.  [CẦN XÁC NHẬN — §11 chưa có dòng PrepaidGen]

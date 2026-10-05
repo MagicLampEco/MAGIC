@@ -84,7 +84,7 @@ use magiclamp/protocol/types.{
 use magiclamp/protocol/constants.{
   batch_source_prepaid, max_batches_per_vault, max_prepaid_credits,
   min_buffer_bps, min_draw_carpdrop, min_lock_carpdrop, prepaid_decay_window,
-  prepaid_profile,
+  prepaid_profile, sponsor_reclaim_delay_epochs,
 }
 use magiclamp/protocol/math.{
   buffer_floor, compute_batch_id, compute_fund_id, outstanding_effective,
@@ -261,7 +261,7 @@ validator paid_fund(
     if qty == -1 {
       validate_burn_fund_nft(name, policy_id, tx)
     } else {
-      validate_mint_fund_nft(policy_id, tx)
+      validate_mint_fund_nft(policy_id, ms_per_epoch, window_origin_ms, tx)
     }
   }
 
@@ -308,7 +308,7 @@ validator paid_fund(
         if fund_in.carp_locked == reclaim_amount(fund_in, u) {
           validate_fund_close(
             fund_in, own_in, fund_nft_policy, carp_policy_id, carp_asset_name,
-            wakeme_vault_hash, u, tx,
+            wakeme_vault_hash, current_epoch, u, tx,
           )
         } else {
           // C-PP-13
@@ -432,7 +432,7 @@ fn fund_common_checks(
     FundReclaim ->
       validate_fund_reclaim(
         fund_in, fund_out, wakeme_vault_hash, carp_policy_id, carp_asset_name,
-        reclaim_u, tx,
+        current_epoch, reclaim_u, tx,
       )
   }
 }
@@ -1088,9 +1088,13 @@ fn validate_settle_line(
 //   · sau thu hồi không còn `PrepaidDraw`/`BurnBatch` nào chạy trên hạn-mức mà
 //     CARP đối ứng đã rời quỹ — dòng và batch đã biến mất khỏi vault.
 //
-// KHÔNG cần chữ ký chủ vault: điều kiện "người dùng đã bỏ đi" do validator két
-// Wakeme ép (quỹ đòi két đó `ReclaimEpoch` cùng giao dịch). Đòi chữ ký ở đây là
-// đặt việc thu hồi dưới thiện chí của chính người đã bỏ đi.
+// KHÔNG cần chữ ký chủ vault: điều kiện cho phép thu hồi do validator QUỸ ép
+// (`reclaim_preconditions` bước 3), theo MỘT trong hai đường — két Wakeme của DID
+// `ReclaimEpoch` cùng giao dịch, HOẶC đường dự phòng (bên tài trợ ký + đã qua mốc
+// `reclaim_after_epoch` ghim lúc genesis quỹ). Vault không đọc đường nào: nó chỉ
+// đòi quỹ ĐÚNG `fund_id` tiêu bằng `FundReclaim` (dưới), nên mọi cổng thu hồi nằm
+// trọn ở quỹ. Đòi chữ ký chủ vault là đặt việc thu hồi dưới thiện chí của chính
+// người có thể đã bỏ đi.
 //
 // Hai phía ép lẫn nhau: vault đòi quỹ ĐÚNG `fund_id` (địa chỉ `paid_fund_hash` +
 // NFT) tiêu bằng `FundReclaim`; quỹ đòi vault tiêu bằng redeemer này với ĐÚNG
@@ -1497,6 +1501,9 @@ fn sponsored_line_unsettled(
 fn reclaim_preconditions(
   fund_in           : PaidFundDatum,
   wakeme_vault_hash : ByteArray,
+  // epoch của giao dịch (`get_epoch`: hai cận hữu hạn, CÙNG epoch ⟹ bằng epoch
+  // của cận DƯỚI) — chỉ đường dự phòng đọc.
+  current_epoch     : Int,
   u                 : Int,
   tx                : Transaction,
 ) -> (Sponsorship, Int) {
@@ -1505,8 +1512,33 @@ fn reclaim_preconditions(
   // 2. chưa thu hồi — chốt cục bộ, không dựa vào việc két Wakeme chỉ
   //    `ReclaimEpoch` được một lần.
   expect fund_in.sponsor_reclaimed == 0
-  // 3. két Wakeme của ĐÚNG người này bị `ReclaimEpoch` trong cùng giao dịch
-  expect wakeme_reclaim_cospend(tx, wakeme_vault_hash, s.owner_commit)
+  // 3. MỘT trong hai đường (DESIGN-reclaim §10.12):
+  //   (a) DỰ PHÒNG — bên tài trợ KÝ, VÀ (đã tới mốc tuyệt đối `reclaim_after_epoch`
+  //       ghim lúc genesis, HOẶC quỹ chưa từng cấp đồng nào). Không phụ thuộc két
+  //       Wakeme: ai đó chạy `ReclaimEpoch` riêng, Wakeme deploy lại (đổi
+  //       `wakeme_vault_hash`), hay DID không có két — CARP vẫn về được bên tài trợ.
+  //       `credit_issued == 0` ⟹ chưa DID nào có dòng, không có gì phải chờ.
+  //   (b) Wakeme — két Wakeme của ĐÚNG người này bị `ReclaimEpoch` cùng giao dịch.
+  // Vế (a) đứng TRƯỚC vì `wakeme_reclaim_cospend` dùng `expect`: vắng két Wakeme thì
+  // nó HỎNG chứ không trả False, nên đặt sau thì đường dự phòng không bao giờ tới.
+  // Bước 4 + `reclaim_unsettled` (vault `CloseSponsoredLine` khi `credit_issued > 0`)
+  // áp cho CẢ HAI đường — phần `u` của provider không rơi theo đường nào.
+  expect or {
+      and {
+        // MUT-FB-SIG
+        when s.sponsor.payment_credential is {
+          VerificationKey(h) -> list.has(tx.extra_signatories, h)
+          Script(_) -> False
+        },
+        or {
+          // MUT-FB-AFTER
+          current_epoch >= s.reclaim_after_epoch,
+          // MUT-FB-NEVER
+          fund_in.credit_issued == 0,
+        },
+      },
+      wakeme_reclaim_cospend(tx, wakeme_vault_hash, s.owner_commit),
+    }
   // 4. lượng thu hồi — đã trừ phần `u` đã giao mà sổ quỹ còn thiếu.
   let r = reclaim_amount(fund_in, u)
   // R ≥ 1, trừ ca quỹ chưa từng cấp đồng nào (R = 0, chỉ đi được nhánh đóng —
@@ -1599,10 +1631,11 @@ fn validate_fund_reclaim(
   wakeme_vault_hash : ByteArray,
   carp_policy_id    : PolicyId,
   carp_asset_name   : ByteArray,
+  current_epoch     : Int,
   u                 : Int,
   tx                : Transaction,
 ) -> Bool {
-  let (s, r) = reclaim_preconditions(fund_in, wakeme_vault_hash, u, tx)
+  let (s, r) = reclaim_preconditions(fund_in, wakeme_vault_hash, current_epoch, u, tx)
 
   // 5. sổ quỹ đầu ra
   expect fund_out.carp_locked == fund_in.carp_locked - r
@@ -1639,10 +1672,11 @@ fn validate_fund_close(
   carp_policy_id    : PolicyId,
   carp_asset_name   : ByteArray,
   wakeme_vault_hash : ByteArray,
+  current_epoch     : Int,
   u                 : Int,
   tx                : Transaction,
 ) -> Bool {
-  let (s, r) = reclaim_preconditions(fund_in, wakeme_vault_hash, u, tx)
+  let (s, r) = reclaim_preconditions(fund_in, wakeme_vault_hash, current_epoch, u, tx)
   // E = carp_locked − R = 0. Thân handler đã rẽ theo đúng phép so này; lặp lại ở
   // đây để hàm không phụ thuộc chỗ gọi.
   expect fund_in.carp_locked == r
@@ -1904,7 +1938,12 @@ fn validate_mint_vault_id(
 //      minting policy, giao dịch 2 không mint) — rồi tạo output ở địa chỉ quỹ
 //      với datum bịa `magic_settled` khổng lồ;
 //   3. người dùng khoá CARP vào quỹ đó; `FundClaim` rút sạch.
-fn validate_mint_fund_nft(policy_id: PolicyId, tx: Transaction) -> Bool {
+fn validate_mint_fund_nft(
+  policy_id        : PolicyId,
+  ms_per_epoch     : Int,
+  window_origin_ms : Int,
+  tx               : Transaction,
+) -> Bool {
   // ── Đúng MỘT tên tài sản dưới policy này, số lượng đúng 1 ────────────────
   // Cặp ràng buộc này cũng đóng luôn đường ĐỐT: mọi số lượng âm chết tại đây.
   expect [Pair(name, qty)] = assets.tokens(tx.mint, policy_id) |> dict.to_pairs
@@ -1975,6 +2014,16 @@ fn validate_mint_fund_nft(policy_id: PolicyId, tx: Transaction) -> Bool {
               bytearray.length(h) == 28,
               bytearray.length(s.owner_commit) == 32,
               fd.beneficiary.payment_credential != s.sponsor.payment_credential,
+              // Mốc thu hồi dự phòng (DESIGN-reclaim §10.12) ≥ epoch(cận TRÊN) + trễ.
+              // Cận TRÊN, không cận dưới: cận dưới người dựng đặt lùi vào quá khứ
+              // tuỳ ý (mốc rơi vào quá khứ ⟹ rút được ngay); cận trên ≥ thời điểm
+              // thật, đặt xa chỉ làm bên tài trợ tự chịu chậm. Không cận trên ⟹ hỏng.
+              // MUT-G-AFTER
+              when tx.validity_range.upper_bound.bound_type |> get_finite is {
+                Some(hi) ->
+                  s.reclaim_after_epoch >= ( hi - window_origin_ms ) / ms_per_epoch + sponsor_reclaim_delay_epochs
+                None -> False
+              },
             }
           Script(_) -> False
         }
@@ -5918,6 +5967,9 @@ fn run_fund_mint_signed(
       outputs: outs,
       mint: m,
       extra_signatories: signers,
+      // Cận TRÊN hữu hạn ở epoch `t_epoch`: genesis quỹ tài trợ đòi nó để tính mốc
+      // `reclaim_after_epoch` (quỹ thường không đọc).
+      validity_range: interval.between(t_epoch * ms_ep + 10, t_epoch * ms_ep + 20),
     },
   )
 }
@@ -6452,7 +6504,13 @@ fn rc_sponsor_addr_stranger_stake() -> Address {
 }
 
 fn rc_sp() -> Option<Sponsorship> {
-  Some(Sponsorship { sponsor: rc_sponsor_addr(), owner_commit: rc_owner_commit })
+  Some(
+    Sponsorship {
+      sponsor: rc_sponsor_addr(),
+      owner_commit: rc_owner_commit,
+      reclaim_after_epoch: rc_after(),
+    },
+  )
 }
 
 fn rc_fd(c: Int, m: Int, p: Int, reclaimed: Int) -> PaidFundDatum {
@@ -6912,6 +6970,7 @@ test rc_r16_sponsor_rewritten() fail {
         Sponsorship {
           sponsor: address.from_verification_key(t_stranger),
           owner_commit: rc_owner_commit,
+          reclaim_after_epoch: rc_after(),
         },
       ),
     }
@@ -7219,7 +7278,9 @@ fn rc_g(sponsor: Address, commit: ByteArray) -> Bool {
   fg_mint_with(
     PaidFundDatum {
       ..fg_clean(),
-      sponsorship: Some(Sponsorship { sponsor, owner_commit: commit }),
+      sponsorship: Some(
+        Sponsorship { sponsor, owner_commit: commit, reclaim_after_epoch: rc_after() },
+      ),
     },
   )
 }
@@ -7264,7 +7325,13 @@ fn rc_g_ben(sponsor: Address, ben: Address) -> Bool {
     PaidFundDatum {
       ..fg_clean(),
       beneficiary: ben,
-      sponsorship: Some(Sponsorship { sponsor, owner_commit: rc_owner_commit }),
+      sponsorship: Some(
+        Sponsorship {
+          sponsor,
+          owner_commit: rc_owner_commit,
+          reclaim_after_epoch: rc_after(),
+        },
+      ),
     },
   )
 }
@@ -8038,7 +8105,14 @@ test rc_b_did_empty() fail {
 // vế "bằng nhau" thoả, chỉ vế "khác rỗng" chặn.
 test rc_b_did_empty_matches_empty_commit() fail {
   let din = PrepaidVaultDatum { ..t_vd([], []), did_commit: #"" }
-  let sp = Some(Sponsorship { sponsor: rc_sponsor_addr(), owner_commit: #"" })
+  let sp =
+    Some(
+      Sponsorship {
+        sponsor: rc_sponsor_addr(),
+        owner_commit: #"",
+        reclaim_after_epoch: rc_after(),
+      },
+    )
   let fin = PaidFundDatum { ..rc_lock_fin(), sponsorship: sp }
   let fout = PaidFundDatum { ..rc_lock_fout(), sponsorship: sp }
   run_lock(din, lock_tx(din, new_line_dout(din), fin, 0, fout, lock_amt, [t_owner]))
@@ -8307,4 +8381,240 @@ test rc_cc_not_reclaimed_burn() fail {
       extra_signatories: [t_platform],
     }
   cc_spend(fin, 3 * rc_e9, tx)
+}
+
+// ══════════════════════════════════════════════════════════════
+// FundReclaim — đường DỰ PHÒNG (DESIGN-reclaim §10.12, 2026-10-05)
+// ══════════════════════════════════════════════════════════════
+// Bên tài trợ ký + đã tới mốc `reclaim_after_epoch` (hoặc quỹ chưa cấp đồng nào),
+// KHÔNG có két Wakeme. Mọi fixture quỹ tài trợ ghim mốc `rc_after()` = t_epoch + 200,
+// nên bài Wakeme cũ (ở t_epoch, không chữ ký) vẫn đi đường Wakeme.
+
+fn rc_after() -> Int {
+  t_epoch + sponsor_reclaim_delay_epochs
+}
+
+fn fb_tx(
+  ins     : List<Input>,
+  outs    : List<Output>,
+  vault   : Bool,
+  m       : Value,
+  epoch   : Int,
+  signers : List<ByteArray>,
+) -> Transaction {
+  let lo = epoch * ms_ep + 10
+  let fr: Data = FundReclaim
+  Transaction {
+    ..placeholder,
+    inputs: if vault {
+      list.concat(ins, [rc_pv_in()])
+    } else {
+      ins
+    },
+    outputs: outs,
+    redeemers: if vault {
+      [Pair(Spend(t_fund_ref()), fr), rc_pv_rd(t_fund_id)]
+    } else {
+      [Pair(Spend(t_fund_ref()), fr)]
+    },
+    mint: m,
+    validity_range: interval.between(lo, lo + 10),
+    extra_signatories: signers,
+  }
+}
+
+// Tiếp nối (E = 3e9 > 0), không két Wakeme.
+fn fb_cont(epoch: Int, signers: List<ByteArray>, vault: Bool) -> Bool {
+  let fin = rc_cont_fin()
+  let fout = PaidFundDatum { ..rc_cont_fout(), last_updated_epoch: epoch }
+  rc_spend(
+    fin,
+    fb_tx(
+      [t_fund_in(fin, fin.carp_locked), rc_payer_in()],
+      [t_fund_out(fout, 3 * rc_e9), rc_pay(6 * rc_e9)],
+      vault, assets.zero, epoch, signers,
+    ),
+  )
+}
+
+// Đóng (E = 0), không két Wakeme.
+fn fb_close_tx(epoch: Int, signers: List<ByteArray>, vault: Bool) -> Transaction {
+  let fin = rc_close_fin()
+  fb_tx(
+    [t_fund_in(fin, fin.carp_locked), rc_payer_in()],
+    [rc_pay(6 * rc_e9)],
+    vault, rc_burn(), epoch, signers,
+  )
+}
+
+fn fb_close(epoch: Int, signers: List<ByteArray>, vault: Bool) -> Bool {
+  rc_spend(rc_close_fin(), fb_close_tx(epoch, signers, vault))
+}
+
+// Quỹ chưa cấp đồng nào (credit_issued = 0): đóng, trả min-ADA, không vault.
+fn fb_never(epoch: Int, signers: List<ByteArray>) -> Bool {
+  let fin = rc_never_fin()
+  rc_spend(
+    fin,
+    fb_tx([t_fund_in(fin, 0), rc_payer_in()], [rc_pay(0)], False, rc_burn(), epoch, signers),
+  )
+}
+
+fn fb_s_list() -> List<ByteArray> {
+  [rc_sponsor_pkh]
+}
+
+// ── Tiếp nối ──
+test fb_cont_after_mark_signed_ok() {
+  fb_cont(rc_after() + 5, fb_s_list(), True)
+}
+
+// Đúng biên `==`: phân biệt `>=` với `>`.
+test fb_cont_at_mark_ok() {
+  fb_cont(rc_after(), fb_s_list(), True)
+}
+
+test fb_cont_before_mark() fail {
+  fb_cont(rc_after() - 1, fb_s_list(), True)
+}
+
+test fb_cont_unsigned() fail {
+  fb_cont(rc_after() + 5, [t_stranger], True)
+}
+
+// Ký bằng khoá STAKE của bên tài trợ, không phải khoá payment ⟹ hỏng.
+test fb_cont_stake_key_signed() fail {
+  fb_cont(rc_after() + 5, [rc_sponsor_stake], True)
+}
+
+// credit_issued > 0 mà KHÔNG đồng tiêu vault mang dòng ⟹ hỏng (phần `u` của provider).
+test fb_cont_without_vault() fail {
+  fb_cont(rc_after() + 5, fb_s_list(), False)
+}
+
+// ── Đóng ──
+test fb_close_after_mark_signed_ok() {
+  fb_close(rc_after() + 5, fb_s_list(), True)
+}
+
+test fb_close_at_mark_ok() {
+  fb_close(rc_after(), fb_s_list(), True)
+}
+
+test fb_close_before_mark() fail {
+  fb_close(rc_after() - 1, fb_s_list(), True)
+}
+
+test fb_close_unsigned() fail {
+  fb_close(rc_after() + 5, [t_stranger], True)
+}
+
+test fb_close_without_vault() fail {
+  fb_close(rc_after() + 5, fb_s_list(), False)
+}
+
+// Handler mint (đốt −1) nhận giao dịch đóng dự phòng.
+test fb_close_burn_mint_ok() {
+  rc_mint(fb_close_tx(rc_after(), fb_s_list(), True))
+}
+
+// ── Quỹ chưa từng cấp ──
+// Ký, CHƯA tới mốc ⟹ đạt (vế `credit_issued == 0`).
+test fb_never_signed_before_mark_ok() {
+  fb_never(t_epoch, fb_s_list())
+}
+
+test fb_never_unsigned() fail {
+  fb_never(t_epoch, [])
+}
+
+// ── Đường Wakeme cũ vẫn đạt: chưa tới mốc, KHÔNG chữ ký bên tài trợ ──
+test fb_wakeme_cont_before_mark_unsigned_ok() {
+  rc_spend(rc_cont_fin(), rc_cont_ok_tx())
+}
+
+test fb_wakeme_close_before_mark_unsigned_ok() {
+  rc_spend(rc_close_fin(), rc_close_ok_tx())
+}
+
+// ── Bất biến: mốc ghim ở mọi nhánh tiếp nối (so trọn `sponsorship`) ──
+test fb_cont_mark_rewritten() fail {
+  let fout =
+    PaidFundDatum {
+      ..rc_cont_fout(),
+      sponsorship: Some(
+        Sponsorship {
+          sponsor: rc_sponsor_addr(),
+          owner_commit: rc_owner_commit,
+          reclaim_after_epoch: t_epoch,
+        },
+      ),
+    }
+  rc_spend(rc_cont_fin(), rc_cont_tx(fout, 3 * rc_e9, [rc_pay(6 * rc_e9)]))
+}
+
+// ── Genesis: mốc ≥ epoch(cận TRÊN) + 200 ──
+fn fb_g(after: Int, range: transaction.ValidityRange) -> Bool {
+  let name = fg_name()
+  let d =
+    PaidFundDatum {
+      ..fg_clean(),
+      sponsorship: Some(
+        Sponsorship {
+          sponsor: rc_sponsor_addr(),
+          owner_commit: rc_owner_commit,
+          reclaim_after_epoch: after,
+        },
+      ),
+    }
+  paid_fund.mint(
+    t_carp_policy, t_carp_name, ms_ep, 0, t_wakeme_hash,
+    Void, t_fund_hash,
+    Transaction {
+      ..placeholder,
+      inputs: [fg_seed_input()],
+      outputs: [fg_carrier(name, d)],
+      mint: assets.from_asset(t_fund_hash, name, 1),
+      extra_signatories: [t_platform],
+      validity_range: range,
+    },
+  )
+}
+
+fn fb_range() -> transaction.ValidityRange {
+  interval.between(t_epoch * ms_ep + 10, t_epoch * ms_ep + 20)
+}
+
+test fb_g_plus_200_ok() {
+  fb_g(t_epoch + 200, fb_range())
+}
+
+test fb_g_plus_199() fail {
+  fb_g(t_epoch + 199, fb_range())
+}
+
+test fb_g_no_upper_bound() fail {
+  fb_g(t_epoch + 10_000, interval.after(t_epoch * ms_ep + 10))
+}
+
+// Cận DƯỚI lùi về epoch 0, cận TRÊN ở t_epoch: mốc = 0 + 200 phải HỎNG (tính theo
+// cận dưới thì đạt) — ghim "cận TRÊN, không cận dưới".
+test fb_g_lower_bound_ignored() fail {
+  fb_g(200, interval.between(10, t_epoch * ms_ep + 20))
+}
+
+// Quỹ THƯỜNG không đọc validity: không cận trên vẫn đạt.
+test fb_g_plain_fund_no_bound_ok() {
+  let name = fg_name()
+  paid_fund.mint(
+    t_carp_policy, t_carp_name, ms_ep, 0, t_wakeme_hash,
+    Void, t_fund_hash,
+    Transaction {
+      ..placeholder,
+      inputs: [fg_seed_input()],
+      outputs: [fg_carrier(name, fg_clean())],
+      mint: assets.from_asset(t_fund_hash, name, 1),
+      extra_signatories: [t_platform],
+    },
+  )
 }

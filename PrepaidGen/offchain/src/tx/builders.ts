@@ -19,7 +19,7 @@
 
 import { credentialToAddress, type Assets, type TxBuilder, type UTxO } from "@lucid-evolution/lucid";
 import { Data } from "@lucid-evolution/lucid";
-import { MIN_BUFFER_BPS } from "../constants.js";
+import { MIN_BUFFER_BPS, SPONSOR_RECLAIM_DELAY_EPOCHS } from "../constants.js";
 import { computeFundId } from "../math.js";
 import { ownerCredential, ownerRefOf, type OwnerRef } from "../ownerAuth.js";
 import {
@@ -65,7 +65,7 @@ import {
 } from "./codec.js";
 import { applyPlan, type OwnerProof, type TxPlan } from "./plan.js";
 import type { PrepaidScripts } from "./scripts.js";
-import { epochOfValidity, type TxValidity } from "./window.js";
+import { epochAtMs, epochOfValidity, type TxValidity } from "./window.js";
 
 function fail(code: string, message: string): never {
   throw new PrepaidTxError(code, message);
@@ -179,11 +179,43 @@ export interface MintPaidFundParams {
   beneficiaryDatum: Data | null;
   bufferBps: bigint;
   collectSeed: boolean;
+  /**
+   * Quỹ tài trợ cho một DID (DESIGN-reclaim §10.12): bên tài trợ (ví KHOÁ, địa chỉ đầy đủ)
+   * + `owner_commit` (32 byte). Vắng/`null` ⟹ quỹ thường. Mốc `reclaim_after_epoch`
+   * KHÔNG nhận từ người gọi — suy từ cận TRÊN của `validity` (`sponsorReclaimAfterEpoch`).
+   */
+  sponsorship?: { sponsor: PlutusAddress; owner_commit: string } | null;
+  /** BẮT BUỘC khi có `sponsorship`: validator đòi cận TRÊN hữu hạn để tính mốc. */
+  validity?: TxValidity;
+}
+
+/**
+ * Mốc thu hồi dự phòng ghi vào genesis quỹ tài trợ: `epoch(cận TRÊN) + 200`. Gương vế
+ * `MUT-G-AFTER` ở `validate_mint_fund_nft`. Cận TRÊN vì cận dưới đặt lùi được tuỳ ý;
+ * ledger làm tròn cận trên XUỐNG theo giây nên epoch on-chain ≤ epoch(`toMs`) ⟹ mốc
+ * tính ở đây luôn thoả cổng.
+ */
+export function sponsorReclaimAfterEpoch(s: PrepaidScripts, v: TxValidity): bigint {
+  return epochAtMs(v.toMs, s.params.msPerEpoch, s.params.windowOriginMs) + SPONSOR_RECLAIM_DELAY_EPOCHS;
 }
 
 export function planMintPaidFund(p: MintPaidFundParams): { plan: TxPlan; datum: PaidFundDatum; fundId: string; nftUnit: string } {
   if (p.bufferBps < MIN_BUFFER_BPS) fail("C-PP-15", `buffer_bps ${p.bufferBps} < sàn ${MIN_BUFFER_BPS}`);
   const fundId = computeFundId(p.seedUtxo.txHash, BigInt(p.seedUtxo.outputIndex));
+  let sponsorship: PaidFundDatum["sponsorship"] = null;
+  if (p.sponsorship) {
+    if (!p.validity) {
+      fail("C-PP-RECLAIM", "quỹ tài trợ cần validity có cận TRÊN — validator tính mốc thu hồi dự phòng từ đó");
+    }
+    if (!/^[0-9a-f]{64}$/i.test(p.sponsorship.owner_commit)) {
+      fail("C-PP-RECLAIM", `owner_commit phải 32 byte hex, nhận "${p.sponsorship.owner_commit}"`);
+    }
+    sponsorship = {
+      sponsor: p.sponsorship.sponsor,
+      owner_commit: p.sponsorship.owner_commit.toLowerCase(),
+      reclaim_after_epoch: sponsorReclaimAfterEpoch(p.scripts, p.validity),
+    };
+  }
   const datum: PaidFundDatum = {
     fund_id: fundId,
     platform: p.platformPkh.toLowerCase(),
@@ -196,9 +228,7 @@ export function planMintPaidFund(p: MintPaidFundParams): { plan: TxPlan; datum: 
     last_updated_epoch: 0n,
     beneficiary: p.beneficiary,
     beneficiary_datum: p.beneficiaryDatum,
-    // Quỹ thường (không tài trợ). Quỹ tài trợ cho một DID (DESIGN-reclaim §10.3)
-    // cần bộ dựng genesis nhận `sponsorship` — CHƯA có ở đây.
-    sponsorship: null,
+    sponsorship,
     sponsor_reclaimed: 0n,
   };
   const signers = assertFundGenesis(datum, p.scripts.paidFund.hash);
@@ -208,6 +238,7 @@ export function planMintPaidFund(p: MintPaidFundParams): { plan: TxPlan; datum: 
   plan.mints.push({ script: p.scripts.paidFund, assets: { [nftUnit]: 1n }, redeemerCbor: FUND_MINT_REDEEMER });
   plan.outputs.push({ address: p.scripts.paidFund.address, datumCbor: encodeFundDatum(datum), assets: { [nftUnit]: 1n } });
   plan.signers.push(...signers);
+  if (p.validity) plan.validity = p.validity;
   return { plan, datum, fundId, nftUnit };
 }
 
@@ -582,6 +613,14 @@ export interface FundReclaimParams {
   vaultUtxo?: UTxO | null;
   /** Validity của CẢ giao dịch ghép; kỳ của nó ghi vào `last_updated_epoch` (nhánh tiếp nối). */
   validity: TxValidity;
+  /**
+   * Đường cho phép thu hồi (DESIGN-reclaim §10.12), mặc định `"wakeme"`:
+   *   · `"wakeme"` — két Wakeme của DID `ReclaimEpoch` cùng giao dịch (người gọi ghép mảnh đó);
+   *   · `"sponsor"` — DỰ PHÒNG: bên tài trợ KÝ, không có két Wakeme; chỉ hợp lệ khi epoch
+   *     của `validity` ≥ `reclaim_after_epoch`, hoặc quỹ chưa cấp đồng nào.
+   * Cả hai đường vẫn đòi vault `CloseSponsoredLine` khi `credit_issued > 0`.
+   */
+  path?: "wakeme" | "sponsor";
 }
 
 export interface FundReclaimResult {
@@ -600,11 +639,13 @@ export interface FundReclaimResult {
   /** Datum vault sau `CloseSponsoredLine`; `null` khi không kèm vault. */
   vaultDatumOut: PrepaidVaultDatum | null;
   /**
-   * Phần bên Wakeme PHẢI ghép vào cùng giao dịch (mảnh này KHÔNG dựng nó): tiêu đúng
-   * MỘT UTxO ở script `scriptHash` mang NFT `vaultNftUnit`, redeemer `ReclaimEpoch`
-   * (constr `reclaimEpochConstr`). Thiếu phần này validator quỹ từ chối.
+   * Đường `"wakeme"`: phần bên Wakeme PHẢI ghép vào cùng giao dịch (mảnh này KHÔNG dựng
+   * nó): tiêu đúng MỘT UTxO ở script `scriptHash` mang NFT `vaultNftUnit`, redeemer
+   * `ReclaimEpoch` (constr `reclaimEpochConstr`). Thiếu phần này validator quỹ từ chối.
+   * Đường `"sponsor"`: `null` — không có két Wakeme; chữ ký bên tài trợ đã nằm trong
+   * `plan.signers`.
    */
-  wakeme: { scriptHash: string; vaultNftUnit: string; reclaimEpochConstr: 1 };
+  wakeme: { scriptHash: string; vaultNftUnit: string; reclaimEpochConstr: 1 } | null;
 }
 
 /**
@@ -616,7 +657,8 @@ export interface FundReclaimResult {
  * KHÔNG dựng phần két Wakeme (`ReclaimEpoch`) — đó là mảnh của bên Wakeme, ghép vào
  * cùng `TxBuilder` (xem `wakeme` trong kết quả). Lưu ý cho người gọi: validator cấm
  * MỌI input ở địa chỉ bên tài trợ, nên ví trả phí không được là ví đó; và mỗi giao
- * dịch chỉ một quỹ cho mỗi bản deploy `paid_fund`.
+ * dịch chỉ một quỹ cho mỗi bản deploy `paid_fund`. Đường `"sponsor"` cũng vậy: bên tài
+ * trợ KÝ nhưng ví trả phí không được có input ở đúng địa chỉ bên tài trợ.
  */
 export function planFundReclaim(p: FundReclaimParams): FundReclaimResult {
   const f = readFundUtxo(p.scripts, p.fundUtxo);
@@ -626,8 +668,22 @@ export function planFundReclaim(p: FundReclaimParams): FundReclaimResult {
   const o = fundAfterReclaim(f.datum, epoch, unsettled);
   const sponsorAddress = plutusAddressToBech32(p.scripts.network, o.sponsorship.sponsor);
   const payoutDatum = reclaimPayoutDatumCbor(f.fundId);
+  const path = p.path ?? "wakeme";
 
   const plan = emptyPlan();
+  if (path === "sponsor") {
+    // Gương bước 3(a) của `reclaim_preconditions`: ký + (tới mốc HOẶC chưa cấp).
+    if (epoch < o.sponsorship.reclaim_after_epoch && f.datum.credit_issued !== 0n) {
+      fail(
+        "C-PP-RECLAIM",
+        `đường dự phòng: epoch ${epoch} < mốc ${o.sponsorship.reclaim_after_epoch} và quỹ đã cấp — ` +
+          "chưa tới lượt (cận dưới validity phải ở epoch ≥ mốc)",
+      );
+    }
+    const signer = sponsorLockSigner(f.datum);
+    if (signer === null) fail("C-PP-RECLAIM", "quỹ không có bên tài trợ");
+    plan.signers.push(signer);
+  }
   plan.spends.push({ utxo: p.fundUtxo, redeemerCbor: fundReclaimRedeemer(), script: p.scripts.paidFund });
   let vaultDatumOut: PrepaidVaultDatum | null = null;
   if (v !== null) {
@@ -674,11 +730,13 @@ export function planFundReclaim(p: FundReclaimParams): FundReclaimResult {
     sponsorAddress,
     unsettled,
     vaultDatumOut,
-    wakeme: {
-      scriptHash: p.scripts.params.wakemeVaultHash,
-      vaultNftUnit: p.scripts.params.wakemeVaultHash + o.sponsorship.owner_commit,
-      reclaimEpochConstr: 1,
-    },
+    wakeme: path === "wakeme"
+      ? {
+          scriptHash: p.scripts.params.wakemeVaultHash,
+          vaultNftUnit: p.scripts.params.wakemeVaultHash + o.sponsorship.owner_commit,
+          reclaimEpochConstr: 1,
+        }
+      : null,
   };
 }
 

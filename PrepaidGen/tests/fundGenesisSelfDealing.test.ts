@@ -60,7 +60,7 @@ function clean(over: Partial<PaidFundDatum> = {}): PaidFundDatum {
 }
 
 const sponsored = (beneficiary: PlutusAddress): PaidFundDatum =>
-  clean({ beneficiary, sponsorship: { sponsor: SPONSOR, owner_commit: OWNER_COMMIT } });
+  clean({ beneficiary, sponsorship: { sponsor: SPONSOR, owner_commit: OWNER_COMMIT, reclaim_after_epoch: 207n } });
 
 describe("genesis quỹ — chặn tự hưởng, vế platform (2026-10-05)", () => {
   it("ÂM — beneficiary là chính khoá platform", () => {

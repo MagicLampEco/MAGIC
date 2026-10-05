@@ -149,6 +149,7 @@ describe("P8 — hằng số chia sẻ khớp giữa constants.ak và constants.
     ["max_prepaid_credits", "MAX_PREPAID_CREDITS"],
     ["bps_denom", "BPS_DENOM"],
     ["min_buffer_bps", "MIN_BUFFER_BPS"],
+    ["sponsor_reclaim_delay_epochs", "SPONSOR_RECLAIM_DELAY_EPOCHS"],
   ])("%s == %s", async (akName, tsName) => {
     const ts = (await import("../offchain/src/constants.js")) as Record<string, unknown>;
     expect(BigInt(ts[tsName] as bigint | number)).toBe(akConst(akName));

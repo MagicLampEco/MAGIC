@@ -99,6 +99,10 @@ export type PlutusAddress = Data.Static<typeof AddressSchema>;
 export const SponsorshipSchema = Data.Object({
   sponsor: AddressSchema,
   owner_commit: Data.Bytes(),
+  // Epoch TUYỆT ĐỐI mở đường thu hồi DỰ PHÒNG (bên tài trợ ký, không cần két Wakeme).
+  // Genesis ép `>= epoch(cận TRÊN validity) + SPONSOR_RECLAIM_DELAY_EPOCHS`. Nối CUỐI
+  // 2026-10-05 (gương `types.ak ▸ Sponsorship`).
+  reclaim_after_epoch: Data.Integer(),
 });
 export type Sponsorship = Data.Static<typeof SponsorshipSchema>;
 

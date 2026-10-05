@@ -44,6 +44,7 @@ import {
 import {
   planFundClaim,
   planFundReclaim,
+  planMintPaidFund,
   reclaimPayoutDatumCbor,
   sponsorLockSigner,
 } from "../offchain/src/tx/builders.js";
@@ -70,6 +71,8 @@ const SPONSOR_PKH = "5b".repeat(28);
 const SPONSOR_STAKE = "5d".repeat(28);
 const OWNER_COMMIT = "c0".repeat(32);
 const EPOCH = 7n;
+// Mốc thu hồi dự phòng của fixture: epoch genesis (7) + 200.
+const RECLAIM_AFTER = 207n;
 
 const keyAddr = (h: string): PlutusAddress => ({
   payment_credential: { VerificationKey: [h] },
@@ -94,7 +97,9 @@ function fundD(c: bigint, m: bigint, p: bigint, reclaimed = 0n, sponsored = true
     last_updated_epoch: EPOCH,
     beneficiary: keyAddr("be".repeat(28)),
     beneficiary_datum: null,
-    sponsorship: sponsored ? { sponsor: SPONSOR, owner_commit: OWNER_COMMIT } : null,
+    sponsorship: sponsored
+      ? { sponsor: SPONSOR, owner_commit: OWNER_COMMIT, reclaim_after_epoch: RECLAIM_AFTER }
+      : null,
     sponsor_reclaimed: reclaimed,
   };
 }
@@ -479,7 +484,7 @@ describe("kế hoạch — planFundClaim nhánh ĐÓNG (rút cuối quỹ đã t
 
   it("ÂM — beneficiary trùng sponsor: nhánh rút-cuối bị từ chối sớm (fail-closed)", () => {
     const same: PlutusAddress = keyAddr("be".repeat(28));
-    const f = { ...after(), sponsorship: { sponsor: same, owner_commit: OWNER_COMMIT } };
+    const f = { ...after(), sponsorship: { sponsor: same, owner_commit: OWNER_COMMIT, reclaim_after_epoch: RECLAIM_AFTER } };
     expect(() => planFundClaim({ scripts, fundUtxo: fundUtxo(f), amount: 3n * E9, validity })).toThrow(
       /beneficiary trùng địa chỉ sponsor/,
     );
@@ -522,5 +527,86 @@ describe("FundLock quỹ tài trợ", () => {
 describe("Data ByteArray 32 byte", () => {
   it("tiền tố 5820", () => {
     expect(Data.to(FUND_ID).slice(0, 4)).toBe("5820");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════
+// Đường thu hồi DỰ PHÒNG (DESIGN-reclaim §10.12, 2026-10-05) — gương bước 3(a) của
+// `reclaim_preconditions` và vế `MUT-G-AFTER` của `validate_mint_fund_nft`.
+// ══════════════════════════════════════════════════════════════
+const at = (e: bigint) => ({ fromMs: e * MS + 10n, toMs: e * MS + 20n });
+
+describe("đường dự phòng — planFundReclaim path: \"sponsor\"", () => {
+  it("đúng mốc (==), quỹ đã cấp, có vault: bên tài trợ ký, không phần Wakeme", () => {
+    const r = planFundReclaim({
+      scripts, fundUtxo: fundUtxo(contIn()), vaultUtxo: vaultUtxo(vaultD()),
+      validity: at(RECLAIM_AFTER), path: "sponsor",
+    });
+    expect(r.epoch).toBe(RECLAIM_AFTER);
+    expect(r.plan.signers).toEqual([SPONSOR_PKH]);
+    expect(r.wakeme).toBeNull();
+    expect(r.reclaimed).toBe(5n * E9);
+    expect(r.plan.spends.map((x) => x.redeemerCbor)).toEqual(["d87c80", "d905009f5820" + FUND_ID + "ff"]);
+  });
+
+  it("ÂM — trước mốc một epoch, quỹ đã cấp: ném", () => {
+    expect(() =>
+      planFundReclaim({
+        scripts, fundUtxo: fundUtxo(contIn()), vaultUtxo: vaultUtxo(vaultD()),
+        validity: at(RECLAIM_AFTER - 1n), path: "sponsor",
+      }),
+    ).toThrow(/chưa tới lượt/);
+  });
+
+  it("ÂM — quỹ đã cấp, dự phòng mà không kèm vault: ném (phần u của provider)", () => {
+    expect(() =>
+      planFundReclaim({ scripts, fundUtxo: fundUtxo(contIn()), validity: at(RECLAIM_AFTER), path: "sponsor" }),
+    ).toThrow(/BẮT BUỘC đồng tiêu vault/);
+  });
+
+  it("quỹ chưa cấp: trước mốc vẫn dựng được (đóng, không vault, bên tài trợ ký)", () => {
+    const r = planFundReclaim({
+      scripts, fundUtxo: fundUtxo(fundD(0n, 0n, 0n), 1_800_000n), validity, path: "sponsor",
+    });
+    expect(r.epoch).toBeLessThan(RECLAIM_AFTER);
+    expect(r).toMatchObject({ closing: true, reclaimed: 0n, wakeme: null });
+    expect(r.plan.signers).toEqual([SPONSOR_PKH]);
+  });
+
+  it("đường wakeme (mặc định) không thêm chữ ký bên tài trợ", () => {
+    const r = planFundReclaim({ scripts, fundUtxo: fundUtxo(contIn()), vaultUtxo: vaultUtxo(vaultD()), validity });
+    expect(r.plan.signers).toEqual([]);
+    expect(r.wakeme).not.toBeNull();
+  });
+});
+
+describe("genesis quỹ tài trợ — planMintPaidFund", () => {
+  const seed: UTxO = {
+    txHash: "66".repeat(32),
+    outputIndex: 0,
+    address: credentialToAddress(NET, { type: "Key", hash: "66".repeat(28) }),
+    assets: { lovelace: 5_000_000n },
+  };
+  const base = {
+    scripts, seedUtxo: seed, platformPkh: "77".repeat(28), beneficiary: keyAddr("be".repeat(28)),
+    beneficiaryDatum: null, bufferBps: 0n, collectSeed: true,
+  };
+
+  it("mốc = epoch(cận TRÊN) + 200; cận DƯỚI lùi về epoch 0 không kéo mốc xuống", () => {
+    const v = { fromMs: 0n, toMs: EPOCH * MS + 20n };
+    const r = planMintPaidFund({ ...base, sponsorship: { sponsor: SPONSOR, owner_commit: OWNER_COMMIT }, validity: v });
+    expect(r.datum.sponsorship).toEqual({ sponsor: SPONSOR, owner_commit: OWNER_COMMIT, reclaim_after_epoch: EPOCH + 200n });
+    expect(r.plan.validity).toEqual(v);
+  });
+
+  it("ÂM — quỹ tài trợ thiếu validity: ném", () => {
+    expect(() => planMintPaidFund({ ...base, sponsorship: { sponsor: SPONSOR, owner_commit: OWNER_COMMIT } })).toThrow(
+      /cận TRÊN/,
+    );
+  });
+
+  it("quỹ thường: sponsorship null, không cần validity", () => {
+    const r = planMintPaidFund(base);
+    expect(r.datum.sponsorship).toBeNull();
   });
 });

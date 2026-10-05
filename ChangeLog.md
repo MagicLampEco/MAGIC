@@ -5,6 +5,26 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-05 — PrepaidGen: quỹ tài trợ có đường thu hồi DỰ PHÒNG (bên tài trợ ký + qua mốc)
+
+**Đổi gì.** `Sponsorship` nối cuối `reclaim_after_epoch : Int` (Aiken `types.ak`, TS `types.ts`).
+Hằng `sponsor_reclaim_delay_epochs = 200` (`constants.ak` ↔ `SPONSOR_RECLAIM_DELAY_EPOCHS`,
+`constants.ts`). Genesis quỹ tài trợ (`validate_mint_fund_nft`) đòi cận TRÊN validity hữu hạn và mốc
+`>= epoch(cận trên) + 200`. `reclaim_preconditions` bước 3: cospend `ReclaimEpoch` của két Wakeme
+HOẶC (bên tài trợ ký VÀ (epoch giao dịch ≥ mốc HOẶC `credit_issued == 0`)); phần còn lại (vault
+`CloseSponsoredLine` khi đã cấp, đích trả) không đổi. TS: `planMintPaidFund` nhận `sponsorship` +
+`validity`, `planFundReclaim` có `path: "sponsor"`. Hash chưa apply: `paid_fund` `dce08696…`,
+`prepaid_vault` `6476592e…` (`scripts/BUILD-RECORD.md`).
+
+**Vì sao.** Cửa thu hồi duy nhất trước đây là `ReclaimEpoch` của két Wakeme cùng giao dịch — ai
+cũng chạy được, chỉ chạy một lần; chạy riêng là CARP tài trợ + NFT quỹ kẹt vĩnh viễn. Wakeme deploy
+lại, DID không có két, quỹ chưa nạp cũng chỉ thu hồi được qua cửa đó.
+
+**Cái gì gãy nếu đang bám bản cũ.** Datum `Sponsorship` thêm một trường ⟹ quỹ tài trợ dựng theo
+lược đồ cũ không decode được (chưa quỹ nào lên chuỗi). Hash cả hai validator PrepaidGen đổi ⟹ công
+bố lại cặp ref-script và bản `consume` của loại vault Prepaid. `FundReclaimResult.wakeme` nay có thể
+`null` (đường dự phòng).
+
 ## 2026-10-04 — Đóng lối mở tập dượt: `8169b76c…` kèm xác nhận đúng cũng bị chặn
 
 **Đổi gì.** `REHEARSAL_LAMP_POLICIES` rỗng ở cả hai bản chép tay (`MagicSDK/src/lampPolicy.ts`,

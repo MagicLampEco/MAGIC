@@ -86,6 +86,35 @@ GET  /health
 Chủ khoá được bỏ trống `change_address` (dịch vụ suy địa chỉ enterprise của khoá, §7); chủ
 script thì phải gửi một trong hai trường.
 
+### Một tiến trình, nhiều loại két: `vault_type`
+
+Một khối triển khai chỉ phục vụ MỘT loại két (một ô `ref_script_utxos.vault`; bản `consume` —
+kéo theo địa chỉ thread Engage và beacon giá — apply-param bằng hash của đúng loại két đó). Nạp
+thêm khối phụ (§6, `VAULT_TX_API_EXTRA_DEPLOYMENT_FILES`) thì một tiến trình phục vụ cả Instant
+lẫn Schedule. Yêu cầu được định tuyến tới khối (`src/blockRouter.ts` ▸ `VaultBlockRouter`):
+
+| đường | khối |
+|---|---|
+| `create-vault` | theo `kind` (`instant` → Instant, `schedule` → Schedule) |
+| `instant-gen`, `refresh-checkpoint` | Instant |
+| `schedule-commit`, `schedule-fire` | Schedule |
+| `consume`, `open-thread`, `bind-did` | trường TUỲ CHỌN `vault_type` (`"Instant"` \| `"Schedule"`) |
+| `/tx/submit`, `/fee/*`, `/tx/sponsor/*` | khối chính (sổ phát-hành và khoá mềm dùng CHUNG giữa các khối) |
+
+`consume` / `open-thread` / `bind-did`: có `vault_type` ⟹ đúng khối đó. Vắng ⟹ một khối thì như
+trước; nhiều khối thì dịch vụ tra két của chủ ở từng khối — đúng một khối có két ⟹ khối đó; không
+khối nào ⟹ khối chính (trả đúng lỗi hiện có, ví dụ `VAULT_NOT_FOUND`); nhiều khối ⟹
+`409 VAULT_TYPE_AMBIGUOUS`, `details.vault_types` kê các loại có két, gửi lại kèm `vault_type`.
+`open-thread` và `bind-did` cũng theo loại két vì thread Engage sống ở địa chỉ của bản `consume`
+của loại két đó — mở thread ở khối sai là mở thread mà `/tx/consume` của két kia không thấy. Với
+`/tx/quote`, `vault_type` nằm trong `params`. Chủ chưa có két mà gọi `open-thread` không kèm
+`vault_type` thì thread mở ở khối CHÍNH.
+
+`vault_type` sai giá trị ⟹ `400 VAULT_TYPE_INVALID`; loại không khối nào phục vụ ⟹
+`400 VAULT_TYPE_NOT_SERVED`; gửi kèm đường có loại cố định mà trái loại đó ⟹
+`400 VAULT_TYPE_ROUTE_CONFLICT`. Một khối thì đường có loại cố định trả lỗi như trước
+(`400 BAD_REQUEST`, "không có địa chỉ vault nào được cấu hình cho loại …").
+
 `/health` khai commit của mã đang chạy để bên gọi tự đối chiếu, khỏi hỏi người vận hành:
 `commit` (40 hex), `commit_dirty` (cây có tệp track bị sửa tại chỗ ⟹ commit không đủ mô tả mã
 chạy), `commit_source`. Commit ĐO bằng `git rev-parse HEAD` ở cây mã lúc khởi động, không nhận
@@ -96,6 +125,12 @@ qua biến môi trường (`src/buildInfo.ts`). Không đo được thì `commit
 `"lamp": { "policy_id": "<56 hex>", "asset_name_hex": "<hex>" }` — cùng nguồn với bộ dựng
 (khối `lamp` của tệp deploy), không gõ tay. App so `policy_id` này với policy LAMP mà két Wakeme
 phát trước khi mở luồng Sinh MAGIC. `deployment_source` (nhãn chữ) giữ nguyên văn như cũ.
+
+Nhiều khối: `vault_scopes` là HỢP địa chỉ két của mọi khối, khối chính trước — app mở lối
+ScheduleGen khi thấy mục `vault_type: "Schedule"` ở đây. `deployment_source` vẫn là nhãn của
+khối CHÍNH (app cũ dò mẫu trong chuỗi này); nhãn của mọi khối ở trường mới
+`deployment_sources` (mảng, khối chính trước; một khối ⟹ mảng một phần tử). `lamp` không đổi:
+mọi khối buộc cùng tài sản LAMP lúc khởi động.
 
 `/health` còn khai GỐC KỲ giao thức, để app tính kỳ mà khỏi gõ cứng hằng theo mạng. Kỳ trên
 chuỗi là `⌊(t − O) / P⌋` với `O = window_origin_ms`, `P = ms_per_epoch` — KHÔNG phải lưới Unix
@@ -1178,6 +1213,8 @@ Nên:
 | tham số sai khuôn, số JSON cho trường tiền, bộ chứng ký rỗng | `400 BAD_REQUEST` |
 | `owner` sai hình dạng / hash sai khuôn | `400 OWNER_CREDENTIAL_SHAPE` / `400 OWNER_HASH_INVALID` |
 | `owner` và `owner_pkh` chỉ hai chủ khác nhau | `400 OWNER_ALIAS_MISMATCH` |
+| `vault_type` sai giá trị / không khối nào phục vụ / trái loại cố định của đường | `400 VAULT_TYPE_INVALID` / `400 VAULT_TYPE_NOT_SERVED` / `400 VAULT_TYPE_ROUTE_CONFLICT` |
+| nhiều khối, vắng `vault_type`, chủ có két ở nhiều loại | `409 VAULT_TYPE_AMBIGUOUS` |
 | `owner_witness` sai hình dạng / chủ khoá mà gửi kèm | `400 OWNER_WITNESS_SHAPE` / `400 OWNER_WITNESS_UNEXPECTED` |
 | chủ script, thiếu `owner_witness` | `400 OWNER_SCRIPT_WITNESS_UNAVAILABLE` |
 | script gửi lên không băm ra `owner.hash` | `400 OWNER_AUTH_MISMATCH` |
@@ -1372,6 +1409,8 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `VAULT_TX_API_DEPLOYMENT` | có | — JSON, xem dưới |
 | `VAULT_TX_API_CHANGE_ADDRESS_STRATEGY` | có | — **không có mặc định**, xem §7 |
 | `VAULT_TX_API_VAULT_PLUTUS_JSON` | có | — đường dẫn `plutus.json` của module vault |
+| `VAULT_TX_API_EXTRA_DEPLOYMENT_FILES` | không | rỗng ⟹ một khối. Danh sách ĐƯỜNG DẪN tệp JSON khối triển khai phụ, ngăn bằng dấu phẩy (khác khối chính: khối chính là JSON thô) |
+| `VAULT_TX_API_EXTRA_VAULT_PLUTUS_JSONS` | cùng biến trên | rỗng. Blueprint của module vault cho từng khối phụ, ngăn bằng dấu phẩy, ghép theo VỊ TRÍ |
 | `VAULT_TX_API_HOST` | không | `127.0.0.1` |
 | `VAULT_TX_API_PORT` | không | `8788` |
 | `VAULT_TX_API_BASE_PATH` | không | rỗng — tiền tố đường khi đứng sau proxy định tuyến theo đường, ví dụ `/vaulttx/preprod`; dịch vụ tự cắt nó (`src/basePath.ts`), vẫn nhận đường không tiền tố từ loopback |
@@ -1388,7 +1427,12 @@ tên tài sản LAMP không khớp mạng (`tLAMP` testnet / `LAMP` mainnet — 
 chỉ sai tiền tố mạng · địa chỉ không phải địa chỉ script · hai mục vault trùng địa chỉ ·
 blueprint không đọc được · khối `feecover` có ứng dụng `magic` mà `FEECOVER_APP_TOKEN` rỗng ·
 URL Feecover không phải `https://` (hoặc `http://` loopback) · bảng mục đích nêu route không
-có. Tất cả **từ chối khởi động**, không cảnh báo rồi chạy tiếp — người
+có · khối phụ (`src/config.ts` ▸ `loadExtraBlocks`, `assertCompatibleBlocks`): hai danh sách
+lệch độ dài hoặc có mục rỗng · tệp khối/blueprint không đọc được · khác tài sản LAMP · nhãn
+`source` mở đầu bằng tên mạng khác `VAULT_TX_API_NETWORK` (Preview và Preprod cùng tiền tố
+`addr_test` nên nhãn là dấu duy nhất tách hai mạng đó; nhãn không mở đầu bằng tên mạng ⟹ phần
+đó không đo được) · hai khối cùng `vault_type` · khối phụ là Prepaid, hoặc khối chính Prepaid
+mà có khối phụ · khác `did_stake` · khối phụ khai `feecover`. Tất cả **từ chối khởi động**, không cảnh báo rồi chạy tiếp — người
 bị chặn lúc khởi động là người vận hành, còn hoãn sang lúc chạy thì người bị chặn là người
 dùng.
 

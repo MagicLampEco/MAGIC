@@ -17,10 +17,10 @@ import { createServer } from "node:http";
 import type { PlutusJson } from "@magiclamp/sdk";
 
 import { BlockfrostChainReader, PendingSpendsFilteredChain } from "./chain.js";
-import { loadConfig, isLoopback } from "./config.js";
+import { loadConfig, isLoopback, type Deployment } from "./config.js";
 import { handle } from "./http.js";
 import { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "./locks.js";
-import { VaultTxService } from "./service.js";
+import { blockRoutingOf, makeBlockServices } from "./blocks.js";
 import { SdkTxBuilder } from "./txBuilder.js";
 import { DidStakeWitnessProvider } from "./owner.js";
 import { DidOwnerResolver } from "./didOwner.js";
@@ -69,32 +69,42 @@ const didOwner = didStakeCfg?.unappliedScript === undefined ? undefined : new Di
   anchorNftPolicy: didStakeCfg.anchorNftPolicy,
   unappliedScript: didStakeCfg.unappliedScript,
 });
-const sdkBuilder = new SdkTxBuilder({
+const builderFor = (deployment: Deployment, plutusJson: PlutusJson): SdkTxBuilder => new SdkTxBuilder({
   network: cfg.network,
   blockfrostUrl: cfg.blockfrostUrl,
   blockfrostProjectId: cfg.blockfrostProjectId,
-  deployment: cfg.deployment,
+  deployment,
   chain: builderChain,
-  vaultPlutusJson,
+  vaultPlutusJson: plutusJson,
 });
+const sdkBuilder = builderFor(cfg.deployment, vaultPlutusJson);
 
-const service = new VaultTxService({
-  ownerWitness,
-  ...(didOwner === undefined ? {} : { didOwner }),
-  // `funding` did_payment đọc anchor DID dưới CÙNG tham số theo mạng. Vắng ⟹ 501 FUNDING_UNAVAILABLE.
-  didPaymentAnchor: cfg.deployment.didStake === undefined ? undefined : new ChainDidPaymentAnchorReader({
-    chain,
-    anchorNftPolicy: cfg.deployment.didStake.anchorNftPolicy,
-  }),
+// Khối chính trước, rồi khối phụ (`config.ts` ▸ `loadExtraBlocks`). Mỗi khối một bộ dựng + một dịch
+// vụ; khoá mềm, sổ phát-hành, input vừa nộp, nhân chứng chủ dùng CHUNG (`blocks.ts`). `did_stake` đã
+// được ép trùng giữa các khối lúc nạp, nên nhân chứng dựng từ khối chính đúng cho mọi khối.
+const blockServices = makeBlockServices([
+  { deployment: cfg.deployment, builder: sdkBuilder },
+  ...cfg.extraBlocks.map(x => ({
+    deployment: x.deployment,
+    builder: builderFor(x.deployment, JSON.parse(readFileSync(x.vaultPlutusJsonPath, "utf8")) as PlutusJson),
+  })),
+], {
   network: cfg.network,
-  deployment: cfg.deployment,
   chain,
-  builder: sdkBuilder,
   locks,
   issued,
   pending,
   lockTtlMs: cfg.lockTtlMs,
+  ...(ownerWitness === undefined ? {} : { ownerWitness }),
+  ...(didOwner === undefined ? {} : { didOwner }),
+  // `funding` did_payment đọc anchor DID dưới CÙNG tham số theo mạng. Vắng ⟹ 501 FUNDING_UNAVAILABLE.
+  ...(cfg.deployment.didStake === undefined ? {} : {
+    didPaymentAnchor: new ChainDidPaymentAnchorReader({ chain, anchorNftPolicy: cfg.deployment.didStake.anchorNftPolicy }),
+  }),
 });
+// `service` = khối chính; `/health` lấy HỢP `vault_scopes` + mọi nhãn nguồn từ cùng hàm này.
+const routing = blockRoutingOf(blockServices);
+const { blocks } = routing;
 
 
 // Hành trình tài trợ: chỉ khi bản deploy phục vụ két Prepaid — khi đó `vaultPlutusJson` CHÍNH LÀ blueprint
@@ -146,9 +156,9 @@ const server = createServer((rq, rs) => {
           body,
         },
         {
-          service,
-          deploymentSource: cfg.deployment.source,
-          vaultScopes: cfg.deployment.vaults,
+          // service · blocks · deploymentSource · deploymentSources · vaultScopes (HỢP các khối — app mở
+          // lối ScheduleGen khi thấy mục Schedule ở đây).
+          ...routing,
           network: cfg.network,
           chainLabel: chain.label,
           changeAddressStrategy: cfg.changeAddressStrategy,
@@ -186,7 +196,8 @@ const server = createServer((rq, rs) => {
 server.listen(cfg.port, cfg.host, () => {
   console.error(
     `[vault-tx-api] nghe ${cfg.host}:${cfg.port} · mạng ${cfg.network} · nút ${chain.label} · ` +
-    `${cfg.deployment.vaults.length} địa chỉ vault · thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"} · ` +
+    `${1 + cfg.extraBlocks.length} khối (${blocks.vaultTypes.join(", ")}) · ` +
+    `thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"} · ` +
     `khoá mềm ${cfg.lockTtlMs}ms · tiền tố ${cfg.basePath === "" ? "không" : cfg.basePath}`,
   );
   console.error("[vault-tx-api] dịch vụ này KHÔNG giữ khoá riêng — chỉ trả giao dịch CHƯA KÝ.");

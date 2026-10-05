@@ -21,6 +21,11 @@
 //   POST /fee/utxo             { route }       [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`)
 //   POST /fee/sign             { tx_cbor }     [X-Feecover-Token]
 //
+// Nhiều khối (một tiến trình phục vụ cả Instant lẫn Schedule — `config.ts` ▸ khối phụ): consume /
+// open-thread / bind-did (và `params` của `/tx/quote` cho ba đường đó) nhận thêm `vault_type`
+// TUỲ CHỌN ("Instant" | "Schedule"); vắng mà chủ có két ở nhiều loại ⟹ 409 `VAULT_TYPE_AMBIGUOUS`.
+// Luật đầy đủ: `blockRouter.ts`.
+//
 // `owner = { type: "key" | "script", hash }`; `owner_pkh` còn nhận làm bí danh của
 // `{ type: "key" }` — xem `owner.ts`. Cùng có mà lệch ⟹ 400 `OWNER_ALIAS_MISMATCH`.
 //   GET  /health               (không thẻ bài, không chạm chuỗi)
@@ -45,6 +50,7 @@ import { stripBasePath } from "./basePath.js";
 import type { FeeProxy } from "./feeProxy.js";
 import { sponsorRoute, type SponsorTxService } from "./sponsor.js";
 import { quoteFee } from "./feeQuote.js";
+import type { VaultBlockRouter } from "./blockRouter.js";
 import {
   OwnerAuthError, WindowOriginError, msPerEpoch, windowOf, windowOriginMs, windowStartMs, type Network,
 } from "@magiclamp/protocol-utils";
@@ -93,6 +99,13 @@ export interface RouterDeps {
   /** Hành trình tài trợ consume đầu (`/tx/sponsor/t1-open` … `t4-first-consume`). Vắng ⟹ 501
    *  `SPONSOR_UNAVAILABLE` (trừ `/tx/sponsor/plan` — thuần, không cần cấu hình). */
   sponsor?: SponsorTxService;
+  /** Bộ định tuyến khối (`blockRouter.ts`) khi tiến trình nạp nhiều khối. Vắng ⟹ mọi đường dựng đi
+   *  `service`, như một khối. Có mặt thì khối CHÍNH của nó phải chính là `service`: `/tx/submit` và
+   *  `/fee/*` đi qua `service` (sổ phát-hành dùng chung — `blocks.ts`). */
+  blocks?: VaultBlockRouter<VaultTxService>;
+  /** Nhãn nguồn của MỌI khối, khối chính trước — `/health` ▸ `deployment_sources`. Vắng ⟹ chỉ
+   *  `[deploymentSource]`. */
+  deploymentSources?: string[];
 }
 
 /**
@@ -146,7 +159,9 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         network: deps.network,
         chain: deps.chainLabel,
         // Nhãn chữ GIỮ NGUYÊN văn (app cũ còn dò mẫu `LAMP <hex>` trong nó). Trường máy đọc là `lamp`.
+        // Nhiều khối: đây vẫn là nhãn của khối CHÍNH; nhãn của mọi khối ở `deployment_sources`.
         deployment_source: deps.deploymentSource,
+        deployment_sources: deps.deploymentSources ?? [deps.deploymentSource],
         // Tài sản LAMP mà bản deploy này nướng vào mọi két — cùng nguồn với bộ dựng
         // (`deployment.lampPolicyId`/`lampAssetNameHex`), không gõ tay. App so `policy_id` với
         // policy LAMP mà Wakeme phát trước khi mở Sinh MAGIC.
@@ -204,7 +219,9 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
       return { status: 200, body: toSubmitBody(out) };
     }
     if (path === "/tx/quote") {
-      const out = await quoteFee(body, { service: deps.service, feeProxy: deps.feeProxy });
+      // Báo giá đi ĐÚNG khối mà đường dựng sẽ đi (`vault_type` nằm trong `params`).
+      const service = deps.blocks === undefined ? deps.service : await deps.blocks.serviceForQuote(body);
+      const out = await quoteFee(body, { service, feeProxy: deps.feeProxy });
       return { status: 200, body: out as unknown as Record<string, unknown> };
     }
     if (path.startsWith("/tx/sponsor/")) {
@@ -214,7 +231,10 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
     if (route === undefined) {
       return { status: 404, body: err("NOT_FOUND", `Không có đường "${path}".`) };
     }
-    const built = await runBuild(deps.service, parseBuildRequest(route, body));
+    // Đọc thân bài TRƯỚC khi chọn khối: lỗi hình dạng ra 400 trước mọi lượt tra két trên chuỗi.
+    const parsed = parseBuildRequest(route, body);
+    const service = deps.blocks === undefined ? deps.service : await deps.blocks.serviceFor(route, body);
+    const built = await runBuild(service, parsed);
     return { status: 200, body: buildResultBody(built) };
   } catch (e) {
     if (e instanceof TxApiError) return { status: e.httpStatus, body: e.toBody() };

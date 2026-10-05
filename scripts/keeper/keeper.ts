@@ -63,7 +63,7 @@ import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
 import { awaitTxBounded as awaitTxBoundedShared, DEFAULT_AWAIT_TX_MS } from "../awaitTx.js";
 import { priceParamParams, scheduleScriptPair, shardSpendParams, genV2BeaconRefsFromBook } from "../deployParams.js";
 import { beaconEpochState, aheadMessage } from "./beaconEpoch.js";
-import { decideGreenBack, greenbackPostEnv, parseGreenBackPostOutput } from "./greenback.js";
+import { classifyGreenBackRun, decideGreenBack, greenbackPostEnv, parseGreenBackPostOutput } from "./greenback.js";
 import { stateBookPath } from "../stateBookPath.js";
 import { bookToRecord, readBookEntries } from "../deploy/11_deploy_gen_beacons.js";
 import { GREENBACK_SEED_KEY } from "../deploy/12_post_greenback.js";
@@ -210,7 +210,8 @@ async function stepGreenBack(lucid: LucidEvolution, ownerPkh: string, nowMs: big
   if (found.length !== 1) {
     return record("greenback", "fail", `thấy ${found.length} beacon GBB ở ${greenback.address} (cần đúng 1) — không gửi gì`);
   }
-  const d = decodeGreenBackBeacon(found[0]!.datum);
+  const beaconUtxo = found[0]!;
+  const d = decodeGreenBackBeacon(beaconUtxo.datum);
   const decision = decideGreenBack({
     beaconEpoch: d.epoch, currentEpoch: epoch, nowMs,
     epochStartMs: windowStartMs(epoch, mspe, wo), epochEndMs: windowStartMs(epoch + 1n, mspe, wo),
@@ -219,15 +220,15 @@ async function stepGreenBack(lucid: LucidEvolution, ownerPkh: string, nowMs: big
   const values = `gb=${d.gb_nanogic} depeg=${d.depeg}`;
   if (DRY) return record("greenback", "skip", `DRY: ${decision.note} · giữ ${values}`);
 
-  const r = runScript("deploy/12_post_greenback.ts", greenbackPostEnv(d, epoch));
+  // Giao kèm out-ref beacon vừa đọc: bước 12 đọc lại beacon, lệch UTxO ⟹ không gửi (TOCTOU —
+  // lý do ở `greenbackPostEnv`). Hai cổng nằm ở bước 12 vì chỉ ở đó lần đọc sát lần gửi nhất.
+  const r = runScript("deploy/12_post_greenback.ts", greenbackPostEnv(d, epoch, beaconUtxo));
   let res;
   try { res = parseGreenBackPostOutput(r.out); }
   catch (e) { return record("greenback", "unverified", `${(e as Error).message} — soi explorer trước khi chạy lại`); }
-  if (!res.tx) return record("greenback", "fail", `bước 12 thoát ${r.code}, không in GREENBACK_BEACON_TX — không có tx nào được gửi`);
-  if (!res.confirmed) {
-    return record("greenback", "unverified", `tx ${res.tx} đã gửi, chưa thấy vào khối (bước 12 thoát ${r.code}) — soi explorer trước khi chạy lại`);
-  }
-  record("greenback", "done", `epoch ${d.epoch} → ${epoch} · giữ ${values} · tx ${res.tx}`);
+  const verdict = classifyGreenBackRun(res, r.code);
+  record("greenback", verdict.outcome,
+    verdict.outcome === "done" ? `epoch ${d.epoch} → ${epoch} · giữ ${values} · ${verdict.note}` : verdict.note);
 }
 
 // ── 2. PostPrice ──────────────────────────────────────────────────────────────

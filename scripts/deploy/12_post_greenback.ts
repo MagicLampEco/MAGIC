@@ -13,20 +13,29 @@
 //   DEPEG       — "1" ⟹ ghi cờ depeg. Mặc định 0.
 //   DRY_RUN     — "1" ⟹ dựng + chạy validator khi dựng, không ký, không gửi.
 //   STATE_BOOK_PATH — xem `scripts/stateBookPath.ts`.
-//   GB_EXPECT_EPOCH — tuỳ chọn, số nguyên ≥ 0. Đặt thì tx ghi epoch KHÁC số này ⟹ NÉM trước khi
-//                 gửi. Keeper đặt nó: keeper tính epoch theo tip Blockfrost, bước này tính theo
+//   GB_EXPECT_EPOCH — tuỳ chọn, số nguyên ≥ 0. Đặt thì KHÔNG gửi khi (a) beacon hiện tại đã ở
+//                 epoch ≥ số này (đã có lượt khác ghi), hoặc (b) tx ghi epoch KHÁC số này. Keeper
+//                 đặt nó: keeper tính epoch theo tip Blockfrost, bước này tính theo
 //                 `Date.now() − 120 s` — hai đồng hồ, và ở đầu epoch chúng ra hai epoch khác nhau.
+//   GB_EXPECT_BEACON_REF — tuỳ chọn, `<txHash>#<chỉ số>` của UTxO beacon mà người gọi đã đọc để
+//                 ra GB_NANOGIC/DEPEG. Đặt thì UTxO beacon đọc lại được KHÁC ⟹ không gửi. Có mặt
+//                 mà sai dạng (kể cả rỗng) ⟹ NÉM. Keeper đặt nó; lý do ở `keeper/greenback.ts` ▸
+//                 `greenbackPostEnv`. Ba cổng (a)(b) và cổng này: `greenbackSubmitGate`.
 //
 // Dòng khoá cho máy đọc (keeper ▸ `keeper/greenback.ts` ▸ `parseGreenBackPostOutput`):
 //   GREENBACK_BEACON_TX=<hash>        in NGAY sau khi gửi, trước khi chờ vào khối.
 //   GREENBACK_BEACON_CONFIRMED=<hash> in sau khi tx vào khối. Hết trần chờ ⟹ không in, thoát 2.
+//   GREENBACK_BEACON_NOT_SENT=<mã>    in khi dừng TRƯỚC lời gọi submit (mã: epoch-reached ·
+//                                     beacon-moved · epoch-mismatch · dry-run · error). Hỏng SAU
+//                                     khi đã gọi submit thì KHÔNG in dòng này — người đọc phải coi
+//                                     là "có thể đã gửi".
 //
 // Sổ phải có `GREENBACK_BEACON_HASH` (bước 11) và `GEN_BEACONS_GREENBACK_SEED_UTXO` — seed one-shot
 // của beacon, cần để dựng lại đúng script (apply-param). Bước dựng lại phải ra ĐÚNG hash trong sổ,
 // lệch thì NÉM: tiêu beacon bằng một script khác là tx không bao giờ qua.
 // Chỉ chạy testnet (cùng lý do với bước 11: CC-GEN-SURPLUS-SHARD còn TẠM).
 
-import { realpathSync } from "node:fs";
+import { realpathSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Blockfrost, getAddressDetails, Lucid } from "@lucid-evolution/lucid";
 import {
@@ -39,6 +48,7 @@ import { awaitTxBounded, chuaDoDuocMessage } from "../awaitTx.js";
 import { parseFlag, parseOutRef } from "../runResult.js";
 import { stateBookPath } from "../stateBookPath.js";
 import { bookToRecord, readBookEntries } from "./11_deploy_gen_beacons.js";
+import { formatBeaconRef, greenbackSubmitGate, parseExpectBeaconRef, type GreenBackNotSentCode } from "../keeper/greenback.js";
 
 export const GREENBACK_SEED_KEY = "GEN_BEACONS_GREENBACK_SEED_UTXO";
 
@@ -59,9 +69,18 @@ export function parseExpectEpoch(raw: string | undefined): bigint | undefined {
   return BigInt(raw);
 }
 
+/** Lỗi dừng-trước-khi-gửi có mã, để dòng NOT_SENT nói đúng lý do. */
+class NotSentError extends Error {
+  constructor(readonly code: GreenBackNotSentCode, message: string) { super(message); }
+}
+
+/** Bật NGAY trước lời gọi submit. Từ đây trở đi không được in NOT_SENT nữa. */
+let submitAttempted = false;
+
 async function main(): Promise<void> {
   const gbNanogic = parseGbNanogic(process.env.GB_NANOGIC);
   const expectEpoch = parseExpectEpoch(process.env.GB_EXPECT_EPOCH);
+  const expectRef = parseExpectBeaconRef(process.env.GB_EXPECT_BEACON_REF);
   const depeg = parseFlag(process.env.DEPEG, "DEPEG");
   const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
 
@@ -96,26 +115,28 @@ async function main(): Promise<void> {
   }
   const beaconUtxo = await lucid.utxoByUnit(greenback.nftUnit);
   const before = decodeGreenBackBeacon(beaconUtxo.datum);
-  console.log(`Beacon GBB: ${beaconUtxo.txHash}#${beaconUtxo.outputIndex}`);
+  const actualRef = formatBeaconRef(beaconUtxo);
+  console.log(`Beacon GBB: ${actualRef}`);
   console.log(`  hiện: gb=${before.gb_nanogic} seq=${before.seq} epoch=${before.epoch} depeg=${before.depeg}`);
 
   const { tx, datum } = postGreenBackTx(lucid, {
     greenback, beaconUtxo, gbNanogic, depeg, nowMs: Date.now() - VALIDITY_BACKOFF_MS,
   });
   console.log(`  mới: gb=${datum.gb_nanogic} seq=${datum.seq} epoch=${datum.epoch} depeg=${datum.depeg}`);
-  if (expectEpoch !== undefined && datum.epoch !== expectEpoch) {
-    throw new Error(
-      `tx sẽ ghi epoch ${datum.epoch} ≠ GB_EXPECT_EPOCH ${expectEpoch} — đồng hồ máy chạy lệch tip, ` +
-        `hoặc đang sát biên epoch. Không gửi gì.`,
-    );
-  }
+  const gate = greenbackSubmitGate({
+    expectEpoch, expectRef, beaconEpoch: before.epoch, actualRef, txEpoch: datum.epoch,
+  });
+  if (!gate.ok) throw new NotSentError(gate.code, gate.message);
 
   const built = await tx.complete();
   if (dryRun) {
     console.log(`\n✔ DRY RUN: tx dựng xong, validator qua khi dựng. Hash thân (chưa gửi): ${built.toHash()}`);
+    console.log("GREENBACK_BEACON_NOT_SENT=dry-run");
     return;
   }
-  const h = await (await built.sign.withWallet().complete()).submit();
+  const signed = await built.sign.withWallet().complete();
+  submitAttempted = true;
+  const h = await signed.submit();
   console.log(`GREENBACK_BEACON_TX=${h}`);
   if (!(await awaitTxBounded(lucid, h))) {
     console.log(chuaDoDuocMessage(h));
@@ -131,6 +152,12 @@ const invokedDirectly =
 if (invokedDirectly) {
   main().catch((e) => {
     console.error(e);
+    // Chỉ khẳng định "chưa gửi" khi CHƯA chạm lời gọi submit. Submit ném (mất kết nối, quá giờ)
+    // thì tx có thể đã vào mempool — im lặng ở đây để người đọc coi là "chưa đo được".
+    // Ghi ĐỒNG BỘ: trên macOS stdout nối ống là bất đồng bộ, và `process.exit` ngay sau
+    // `console.log` có thể cắt mất dòng — mất dòng này thì keeper đọc thành "chưa đo được"
+    // (chiều an toàn), nhưng là một báo động giả mỗi lần.
+    if (!submitAttempted) writeSync(1, `GREENBACK_BEACON_NOT_SENT=${e instanceof NotSentError ? e.code : "error"}\n`);
     process.exit(1);
   });
 }

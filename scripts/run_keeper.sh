@@ -24,6 +24,13 @@
 # giá — lệch thì bước tương ứng báo ✗ và không gửi gì. Hẹn giờ MỖI GIỜ: bước đã đúng epoch thì bỏ
 # qua, và cả hai bước tự bỏ qua 15 phút cuối epoch (greenback còn bỏ 5 phút đầu) — lượt kế bù.
 #
+# `greenback` gọi `deploy/12_post_greenback.ts` với GB_NANOGIC/DEPEG = giá trị đang trên chuỗi,
+# GB_EXPECT_EPOCH = epoch keeper tính, và GB_EXPECT_BEACON_REF = out-ref UTxO beacon keeper đã đọc.
+# Bước 12 KHÔNG gửi khi beacon đọc lại khác out-ref đó (có lượt ghi tay chen giữa — ghi đè sẽ trả
+# GB về giá trị cũ và nạp shard hai lần trong một epoch) hoặc beacon đã ở epoch đích. Không đặt tay
+# ba biến này; chúng do keeper tính mỗi lượt. Bước 12 chết mà không in GREENBACK_BEACON_TX lẫn
+# GREENBACK_BEACON_NOT_SENT thì keeper báo `?` (chưa đo được — có thể đã nộp), không báo ✗.
+#
 # Danh sách price beacon lấy từ KEEPER_PRICE_BEACONS (`<price_nft_policy>:<price_param_hash>`,
 # phẩy). Không đặt thì suy từ state file — thứ tự và lý do ở `keeper_beacons.sh`.
 #

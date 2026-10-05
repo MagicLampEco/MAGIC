@@ -3,11 +3,20 @@
 // Gói này KHÔNG xuất bất cứ thứ gì liên quan tới ký. Nó dựng giao dịch CHƯA KÝ; việc ký
 // xảy ra trong Secure Enclave của máy người dùng, ngoài tầm tiến trình này.
 
-export { loadConfig, parseDeployment, isLoopback, PREPAID_VAULT_TYPE } from "./config.js";
+export {
+  loadConfig, parseDeployment, isLoopback, PREPAID_VAULT_TYPE, loadExtraBlocks, assertCompatibleBlocks,
+} from "./config.js";
 export type {
   AppConfig, Deployment, VaultScope, ConsumeDeployment, OutRefConfig, ChangeAddressStrategy,
-  PrepaidDeployment,
+  PrepaidDeployment, ExtraBlockConfig,
 } from "./config.js";
+
+export { makeBlockServices, blockRoutingOf } from "./blocks.js";
+export type { BlockSpec, SharedServiceDeps } from "./blocks.js";
+export {
+  VaultBlockRouter, parseRequestedVaultType, REQUESTABLE_VAULT_TYPES, FIXED_VAULT_TYPE_OF_ROUTE, OWNER_ROUTED_ROUTES,
+} from "./blockRouter.js";
+export type { RoutableService, RequestableVaultType } from "./blockRouter.js";
 
 export {
   TxApiError, BadRequestError, UnauthorizedError, VaultNotFoundError, VaultAmbiguousError,

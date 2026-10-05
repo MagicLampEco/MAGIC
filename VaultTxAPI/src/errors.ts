@@ -219,7 +219,20 @@ export class OwnerTxInFlightError extends TxApiError {
  * `details.superseded_by` (hash tx đã nộp) và/hoặc `details.conflicting_inputs`.
  */
 export class TxSupersededError extends TxApiError {
-  constructor(txHash: string, details: { superseded_by?: string; conflicting_inputs?: string[] }) {
+  /** `submission`: tiến trình dịch vụ này đã GỬI chính tx đó tới nút chưa — `accepted` (nút nhận),
+   *  `unconfirmed` (đã gửi, không nhận được xác nhận: mất kết nối / quá giờ / nút báo hash khác),
+   *  `none` (tiến trình này chưa gửi). `previously_submitted` = `submission !== "none"`.
+   *
+   *  Cả hai KHÔNG nói gì về trạng thái chuỗi của tx này. `none` chỉ là "TIẾN TRÌNH NÀY chưa gửi":
+   *  tiến trình khởi động lại (sổ trong bộ nhớ), bản sao khác sau bộ cân tải, hay một đường nộp khác
+   *  đều có thể đã đưa nó lên chuỗi. Bên gọi tra chuỗi theo `tx_hash`, đừng suy từ mã lỗi. */
+  constructor(
+    txHash: string,
+    details: {
+      superseded_by?: string; conflicting_inputs?: string[];
+      previously_submitted: boolean; submission: "accepted" | "unconfirmed" | "none";
+    },
+  ) {
     super(
       409,
       "TX_SUPERSEDED",
@@ -227,7 +240,10 @@ export class TxSupersededError extends TxApiError {
       (details.superseded_by !== undefined
         ? `giao dịch ${details.superseded_by.slice(0, 16)}… của cùng chủ đã được nộp sau khi giao dịch này được dựng`
         : `input ${(details.conflicting_inputs ?? []).join(", ")} đã bị một giao dịch khác vừa nộp tiêu`) +
-      `. Không nộp — chuỗi sẽ từ chối. Đợi giao dịch kia vào khối rồi dựng lại nếu còn cần.`,
+      (details.previously_submitted
+        ? `. Không nộp lại. Dịch vụ ĐÃ GỬI giao dịch này trước đó (${details.submission}) — nó có thể đã ` +
+          `vào khối; tra chuỗi theo tx_hash trước khi dựng lại.`
+        : `. Không nộp. Đợi giao dịch kia vào khối rồi dựng lại nếu còn cần.`),
       { tx_hash: txHash, ...details },
     );
   }

@@ -274,8 +274,28 @@ export interface IssuedTxEntry extends IssuedTxMeta {
   /** Hết mốc này thì `/fee/sign` không xin chữ ký nữa: UTxO phí đã hết giờ giữ chỗ ở Feecover. */
   signableUntilMs: number;
   /** Hash thân của tx chung khoá đã được NỘP sau khi tx này phát ra ⟹ `/tx/submit` và
-   *  `/fee/sign` trả 409 `TX_SUPERSEDED`. Vắng ⟹ chưa bị thay. */
+   *  `/fee/sign` trả 409 `TX_SUPERSEDED`. Vắng ⟹ chưa bị thay. Áp CẢ cho tx đã nộp trước đó: tx đã
+   *  nộp mà rơi khỏi mempool, rồi bị một tx chung khoá nộp sau thay, thì nộp lại nó là đúng ca hai
+   *  lượt tạo két từ hai ví (đầu tệp) — két thứ hai cho cùng chủ. */
   supersededBy?: string;
+  /** Mốc nút chuỗi NHẬN tx (trả đúng hash thân). Có mốc ⟹ `/tx/submit` lần sau trả lại kết quả cũ,
+   *  KHÔNG gửi lên chuỗi lần nữa (`submittedResult`). */
+  submittedAtMs?: number;
+  /** Mốc dịch vụ ĐÃ GỬI tx tới nút mà không nhận được xác nhận: mất kết nối / quá giờ, hoặc nút báo
+   *  một hash khác. Tx có thể đang ở mempool. Lượt nộp lại vẫn GỬI (không biết lượt đầu tới chưa),
+   *  nhưng không được đối xử như tx chưa từng gửi: việc thay tx chung khoá đã làm ở lượt đầu. */
+  submitUnconfirmedAtMs?: number;
+  /** Kết quả lượt nộp được nút nhận — trả lại nguyên vẹn cho lượt nộp lại. */
+  submittedResult?: { lockReleasedFor: string | null };
+}
+
+/** Trạng thái gửi của một tx trong sổ, đọc ra cho bên gọi (`details.submission` của 409). */
+export type SubmissionState = "accepted" | "unconfirmed" | "none";
+
+export function submissionStateOf(e: IssuedTxEntry): SubmissionState {
+  if (e.submittedAtMs !== undefined) return "accepted";
+  if (e.submitUnconfirmedAtMs !== undefined) return "unconfirmed";
+  return "none";
 }
 
 export class IssuedTxRegistry {
@@ -322,10 +342,32 @@ export class IssuedTxRegistry {
    *
    * Chỉ tx phát ra TRƯỚC lượt nộp này bị thay (chúng đang có trong sổ lúc gọi). Tx dựng SAU — lượt
    * kế tiếp hợp lệ của chủ — không bị đụng.
+   *
+   * Tx chung khoá đã từng được nộp VẪN bị thay (không có miễn trừ cho nó): miễn trừ đó mở lại đúng
+   * ca hai lượt tạo két từ hai ví — T1 nộp rồi rơi khỏi mempool, T2 nộp và lên chuỗi, nộp lại T1 ⟹
+   * két thứ hai cho cùng chủ, trong khi validator chưa ép mỗi DID một két. 409 cho T1 lúc đó kèm
+   * `details.submission` để bên gọi biết T1 từng được gửi và đi tra chuỗi.
+   *
+   * Việc thay chỉ chạy ở lượt GỬI ĐẦU TIÊN của `txHash` (`outcome` là `accepted` hay `unconfirmed`
+   * đều tính — tx có thể đã ở mempool thì phải coi như đã nộp). NỘP LẠI chính nó (rớt mạng, thử lại)
+   * chỉ nâng trạng thái `unconfirmed` → `accepted`, không thay gì: tx dựng sau lượt gửi đầu là lượt
+   * kế tiếp hợp lệ của chủ.
    */
-  markSubmitted(txHash: string, nowMs: number): number {
+  markSubmitted(
+    txHash: string, nowMs: number,
+    outcome: "accepted" | "unconfirmed" = "accepted",
+    result: { lockReleasedFor: string | null } = { lockReleasedFor: null },
+  ): number {
     const me = this.lookup(txHash, nowMs);
-    const keys = new Set(me?.lockKeys ?? []);
+    if (me === null) return 0;
+    const firstSend = me.submittedAtMs === undefined && me.submitUnconfirmedAtMs === undefined;
+    if (outcome === "accepted") {
+      if (me.submittedAtMs === undefined) this.issued.set(txHash, { ...me, submittedAtMs: nowMs, submittedResult: result });
+    } else if (firstSend) {
+      this.issued.set(txHash, { ...me, submitUnconfirmedAtMs: nowMs });
+    }
+    if (!firstSend) return 0;
+    const keys = new Set(me.lockKeys ?? []);
     if (keys.size === 0) return 0;
     let n = 0;
     for (const [h, e] of this.issued) {

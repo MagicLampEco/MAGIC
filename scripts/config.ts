@@ -184,13 +184,14 @@ export const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
 
 /** Đời đã bị thay mà được CHO QUA khi người chạy xác nhận THEO GIÁ TRỊ. Danh sách ĐÓNG.
  *
- * Chủ dự án quyết 2026-09-27: dựng một cụm TẬP DƯỢT dùng một lần trên Preprod bằng
- * `8169b76c…` — ví deploy chỉ giữ tLAMP của đời đó, và kho LAMP sẽ đổi policy thêm lần
- * nữa. Lần đổi đó đã tới (`493002cc…cfac`, 2026-10-03; genesis chưa gửi). Cụm phục vụ
- * người dùng dựng MỘT lần trên policy cuối, và CHƯA dựng.
+ * TRẠNG THÁI: ĐÓNG từ 2026-10-04 (bảng rỗng). Chủ dự án quyết 2026-09-27 dựng một cụm
+ * TẬP DƯỢT dùng một lần trên Preprod bằng `8169b76c…`; cụm đó đã dừng, cụm phục vụ chạy
+ * trên policy tLAMP Preprod CUỐI `493002cc…cfac`. Phần mô tả dưới giữ lại để người mở lại
+ * lối này biết ba điều kiện.
  *
- * `8169b76c…` VẪN nằm trong `SUPERSEDED_LAMP_POLICIES` ngay trên — sự thật "đã bị thay"
- * không đổi. Bảng này chỉ nói "được cho qua khi có xác nhận", và cho qua khi ĐỦ BA điều:
+ * `8169b76c…` nằm trong `SUPERSEDED_LAMP_POLICIES` ngay trên — sự thật "đã bị thay" không
+ * đổi và nay không còn đường nào cho qua. Bảng này chỉ nói "được cho qua khi có xác nhận",
+ * và (khi có khoá) cho qua khi ĐỦ BA điều:
  *   1. policy nằm trong bảng này;
  *   2. `LAMP_REHEARSAL_ACK` bằng ĐÚNG chuỗi policy đó — không phải `=1`: một cờ `=1`
  *      mở cho mọi khoá của bảng, kể cả khoá thêm về sau mà người bật cờ chưa thấy;
@@ -206,16 +207,11 @@ export const SUPERSEDED_LAMP_POLICIES: Record<string, string> = {
  * `MagicSDK/src/lampPolicy.ts` ▸ `REHEARSAL_LAMP_POLICIES`; hai bảng phải trùng tập
  * khoá — đo bằng `npx tsx test_lamp_policy_gate.ts`.
  *
- * ĐIỀU KIỆN GỠ: policy Preprod cuối đã tới (2026-10-03), nhưng khoá `8169b76c…` CHƯA
- * gỡ vì cụm tập dượt còn một runner đang chạy. Gỡ khi runner đó dừng hẳn. Gỡ xong thì
- * bảng rỗng và lối mở tự đóng.
+ * ĐÃ GỠ 2026-10-04 (cụm tập dượt dừng; cụm phục vụ chạy policy cuối `493002cc…cfac`).
+ * Bảng RỖNG nên lối mở tự đóng — không cần sửa hàm cổng. Thêm lại một khoá là mở lại lối
+ * mở: phải có quyết định mới của chủ dự án và một điều kiện gỡ mới.
  */
-export const REHEARSAL_LAMP_POLICIES: Record<string, string> = {
-  "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd":
-    "cụm TẬP DƯỢT dùng một lần trên Preprod (chủ dự án quyết 2026-09-27): ví deploy chỉ " +
-    "giữ tLAMP của đời này. Gỡ khi runner của cụm tập dượt dừng hẳn (policy Preprod " +
-    "cuối `493002cc…cfac` đã tới 2026-10-03, genesis chưa gửi).",
-};
+export const REHEARSAL_LAMP_POLICIES: Record<string, string> = {};
 
 /** Mạng được phép chạy lối mở tập dượt. Danh sách ĐÓNG. */
 const REHEARSAL_NETWORKS: ReadonlySet<string> = new Set(["Preview", "Preprod"]);

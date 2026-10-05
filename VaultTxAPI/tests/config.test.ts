@@ -197,12 +197,13 @@ describe("parseDeployment — bản chép phải mang nhãn và phải khớp M�
   });
 });
 
-// ── `lamp.policy_id` đi qua cổng policy của SDK lúc khởi động, kèm lối mở tập dượt ──
+// ── `lamp.policy_id` đi qua cổng policy của SDK lúc khởi động; lối mở tập dượt đã ĐÓNG ──
 //
-// Mỗi ca dương có một ca âm chỉ khác ĐÚNG MỘT biến (ack · policy · mạng).
+// Bảng tập dượt của SDK rỗng từ 2026-10-04. Mỗi ca âm có một cực đối chỉ khác ĐÚNG MỘT
+// biến (ack · policy · mạng).
 
-describe("parseDeployment — cổng policy LAMP (assertLampPolicyId) và lối mở tập dượt", () => {
-  /** Đời tập dượt — nằm trong CẢ bảng đã-bị-thay lẫn bảng tập dượt của SDK. */
+describe("parseDeployment — cổng policy LAMP (assertLampPolicyId), lối mở tập dượt đã đóng", () => {
+  /** Đời tập dượt cũ — nằm trong bảng đã-bị-thay của SDK, NGOÀI bảng tập dượt (rỗng). */
   const REHEARSAL = "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd";
   /** Đã bị thay, NGOÀI bảng tập dượt. */
   const SUPERSEDED_ONLY = "d9c09230079b810ab5ed92e8db4c190d42efc42db6aac028656f7e07";
@@ -234,10 +235,19 @@ describe("parseDeployment — cổng policy LAMP (assertLampPolicyId) và lối 
     expect(() => parseDeployment(dep(REHEARSAL), "Preprod")).toThrow(/\[parseDeployment\].*ĐÃ BỊ THAY/);
   });
 
-  it("8169b76c ack = chính nó, Preprod ⟹ qua, ack được giữ trong Deployment", () => {
-    const d = parseDeployment(dep(REHEARSAL, REHEARSAL), "Preprod");
-    expect(d.lampPolicyId).toBe(REHEARSAL);
-    expect(d.lampRehearsalAck).toBe(REHEARSAL);
+  it("8169b76c ack = chính nó, Preprod ⟹ TỪ CHỐI (trước 2026-10-04 là qua)", () => {
+    expect(() => parseDeployment(dep(REHEARSAL, REHEARSAL), "Preprod")).toThrow(/\[parseDeployment\].*ĐÃ BỊ THAY/);
+  });
+
+  it("8169b76c ack = chính nó, Preview ⟹ TỪ CHỐI", () => {
+    expect(() => parseDeployment(dep(REHEARSAL, REHEARSAL), "Preview")).toThrow(/ĐÃ BỊ THAY/);
+  });
+
+  // Cực đối của ca ngay trên: cùng mạng, cùng dạng ack — chỉ đổi policy sang đời CUỐI.
+  it("ACTIVE 493002cc ack = chính nó, Preprod ⟹ qua (ack thừa không làm hỏng đời cuối)", () => {
+    const d = parseDeployment(dep(ACTIVE, ACTIVE), "Preprod");
+    expect(d.lampPolicyId).toBe(ACTIVE);
+    expect(d.lampRehearsalAck).toBe(ACTIVE);
   });
 
   it("8169b76c ack = chính nó, Mainnet ⟹ từ chối ở cổng policy", () => {
@@ -270,11 +280,12 @@ describe("parseDeployment — cổng policy LAMP (assertLampPolicyId) và lối 
   });
 });
 
-describe("createVaultProtocol — ack đi từ tệp deploy tới createVault của SDK", () => {
+describe("createVaultProtocol — ack đi từ tệp deploy tới createVault của SDK; 8169b76c bị chặn dù có ack", () => {
   const REHEARSAL = "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd";
+  const ACTIVE = "493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac";
   const OWNER = { type: "key" as const, hash: OWNER_PKH };
 
-  // `createVault` của SDK gọi cổng policy TRƯỚC phép kiểm `lampDeposit`. Ca dương đưa
+  // `createVault` của SDK gọi cổng policy TRƯỚC phép kiểm `lampDeposit`. Cực đối đưa
   // `lampDeposit = 0` nên vấp ở câu về `lampDeposit` — tức cổng policy đã cho qua.
   const run = (protocol: ReturnType<typeof createVaultProtocol>) => createVault({
     lucid: {} as never,
@@ -283,21 +294,29 @@ describe("createVaultProtocol — ack đi từ tệp deploy tới createVault c�
     vault: { owner: OWNER, lampDeposit: 0n },
   } as never);
 
-  it("deploy có rehearsal_ack ⟹ SDK cho qua cổng policy", async () => {
+  it("cực đối: deploy policy cuối có rehearsal_ack ⟹ ack đi tới giao thức và SDK cho qua cổng policy", async () => {
     const d = parseDeployment(deploymentJson({
-      lamp: { policy_id: REHEARSAL, asset_name_hex: LAMP_ASSET_NAME_HEX, rehearsal_ack: REHEARSAL },
+      lamp: { policy_id: ACTIVE, asset_name_hex: LAMP_ASSET_NAME_HEX, rehearsal_ack: ACTIVE },
     }), "Preprod");
     const p = createVaultProtocol(d, "Preprod");
-    expect(p.lampRehearsalAck).toBe(REHEARSAL);
+    expect(p.lampRehearsalAck).toBe(ACTIVE);
     await expect(run(p)).rejects.toThrow(/lampDeposit must be > 0/);
   });
 
-  it("cùng deploy đó mà rơi ack ⟹ SDK chặn ở cổng policy (ca đối xứng)", async () => {
+  it("cùng giao thức đó mà đổi policy sang 8169b76c, GIỮ ack = chính nó ⟹ SDK chặn ở cổng policy", async () => {
     const d = parseDeployment(deploymentJson({
-      lamp: { policy_id: REHEARSAL, asset_name_hex: LAMP_ASSET_NAME_HEX, rehearsal_ack: REHEARSAL },
+      lamp: { policy_id: ACTIVE, asset_name_hex: LAMP_ASSET_NAME_HEX, rehearsal_ack: ACTIVE },
+    }), "Preprod");
+    const p = { ...createVaultProtocol(d, "Preprod"), lampPolicyId: REHEARSAL, lampRehearsalAck: REHEARSAL };
+    await expect(run(p)).rejects.toThrow(/\[createVault\].*ĐÃ BỊ THAY/);
+  });
+
+  it("cùng giao thức đó mà rơi ack ⟹ policy cuối VẪN qua cổng (ack không phải điều kiện của đời cuối)", async () => {
+    const d = parseDeployment(deploymentJson({
+      lamp: { policy_id: ACTIVE, asset_name_hex: LAMP_ASSET_NAME_HEX, rehearsal_ack: ACTIVE },
     }), "Preprod");
     const { lampRehearsalAck: _bo, ...khongAck } = createVaultProtocol(d, "Preprod");
-    await expect(run(khongAck)).rejects.toThrow(/\[createVault\].*ĐÃ BỊ THAY/);
+    await expect(run(khongAck)).rejects.toThrow(/lampDeposit must be > 0/);
   });
 });
 

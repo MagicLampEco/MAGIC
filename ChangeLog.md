@@ -26,18 +26,24 @@ trên policy cuối từ 2026-10-04. Để khoá lại là để một lệnh c�
 Mã Aiken và hash validator không đổi. Mở lại lối này cần một quyết định mới của chủ dự án và một
 khoá mới trong cả hai bảng (`scripts/test_lamp_policy_gate.ts` bắt hai bảng lệch tập khoá).
 
-## 2026-10-04 — Tx đã nộp không còn bị đánh `TX_SUPERSEDED`
+## 2026-10-05 — Nộp lại tx đã nộp: trả kết quả cũ, không gửi lại; gửi không xác nhận ghi `unconfirmed`
 
-**Đổi gì.** `VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry.markSubmitted` ghi mốc `submittedAtMs` cho
-tx vừa nộp, và không gán `supersededBy` cho dòng nào đã có mốc đó. Nộp lại một tx đã nộp không thay gì.
-`TxSupersededError` thêm `details.previously_submitted`.
+**Đổi gì.** `VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry.markSubmitted` ghi trạng thái gửi của tx
+(`accepted` khi nút nhận, `unconfirmed` khi đã gửi mà không có xác nhận) và chỉ thay tx chung khoá ở
+lượt gửi ĐẦU TIÊN. `VaultTxAPI/src/service.ts` ▸ `submit`: nộp lại tx nút đã nhận ⟹ trả lại kết quả
+lượt đầu, không gửi lên chuỗi lần nữa; `chain.submitTx` mất kết nối / quá giờ, hoặc nút báo hash khác
+⟹ ghi `unconfirmed` (input vào sổ chờ, tx chung khoá dựng trước bị thay). `TxSupersededError` thêm
+`details.submission` (`accepted` · `unconfirmed` · `none`) và `details.previously_submitted`.
 
-**Vì sao.** Bản cũ gán `supersededBy` cho MỌI tx chung khoá còn sống, kể cả tx đã nộp: A nộp, B chung
-khoá nộp sau ⟹ lượt nộp lại A hoặc `/fee/sign` của A trả 409, trong khi A có thể đã vào khối. Nộp lại A
-còn thay luôn tx dựng sau lượt nộp đầu của A — lượt kế tiếp hợp lệ của chủ.
+**Vì sao.** Nộp lại một tx đã nộp từng thay luôn tx chủ dựng sau lượt nộp đầu (lượt kế tiếp hợp lệ của
+chủ), và lượt gửi mất kết nối bị coi như chưa từng gửi. Tx đã nộp VẪN bị thay khi một tx chung khoá
+nộp sau nó: không thay thì ví A nộp tạo két T1 (rơi khỏi mempool), ví B nộp T2 (lên chuỗi), nộp lại
+T1 ⟹ két thứ hai cho cùng chủ — validator chưa ép mỗi DID một két.
 
-**Cái gì gãy nếu bám bản cũ.** Không đường nào đổi hình dạng thành công. Bên gọi đang suy "409
-`TX_SUPERSEDED` ⟹ tx chưa lên chuỗi" thì suy sai ở cả bản cũ lẫn bản mới — tra chuỗi theo `tx_hash`.
+**Cái gì gãy nếu bám bản cũ.** Bên gọi trông vào việc nộp lại một tx đã được nhận để HỒI SINH nó sau
+khi rơi khỏi mempool: nay lượt nộp lại trả 200 mà không gửi gì — tra chuỗi theo `tx_hash`, không thấy
+thì dựng lại. Bên gọi suy "409 `TX_SUPERSEDED` ⟹ tx chưa lên chuỗi" thì suy sai ở mọi bản — đọc
+`details.submission`, rồi tra chuỗi.
 
 ## 2026-10-04 — Cụm Preprod đời 2 theo két Wakeme v5; ví trả phí ứng min-ADA cho shard `gb_shard`
 

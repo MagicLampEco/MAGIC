@@ -1263,7 +1263,8 @@ Nên:
 | thiếu/sai thẻ bài | `401 UNAUTHORIZED` |
 | chủ **chưa có** vault | `404 VAULT_NOT_FOUND` ← **không phải** `200` với tx rỗng |
 | method sai | `405 METHOD_NOT_ALLOWED` |
-| nộp một tx đã bị tx khác chung khoá (đã NỘP) thay, hoặc input đã bị tx vừa nộp tiêu | `409 TX_SUPERSEDED` (`details.superseded_by` / `details.conflicting_inputs`, kèm `details.previously_submitted`) |
+| nộp một tx đã bị tx khác chung khoá (đã NỘP) thay, hoặc input đã bị tx vừa nộp tiêu | `409 TX_SUPERSEDED` (`details.superseded_by` / `details.conflicting_inputs`, kèm `details.submission` + `details.previously_submitted`) — **không** chứng minh tx chưa lên chuỗi (§4) |
+| nộp lại một tx nút đã NHẬN, chưa bị thay | `200` với **đúng** kết quả lượt đầu; **không** gửi lên chuỗi lần nữa (§4) |
 | chủ đã có một tx dựng xong chưa nộp | **không còn lỗi** — lượt dựng mới thay lượt cũ; `OWNER_TX_IN_FLIGHT` đã nghỉ (§4) |
 | hai UTxO cùng một NFT danh-tính | `409 VAULT_IDENTITY_DUPLICATE` |
 | chủ có nhiều vault, yêu cầu không nói cái nào | `409 VAULT_AMBIGUOUS` |
@@ -1305,11 +1306,27 @@ vô thời hạn. Luật hiện hành:
 - `/tx/submit` (và `/fee/sign`) với tx đã bị thay, hoặc tx có input đã bị một tx vừa nộp (chưa vào khối)
   tiêu ⟹ `409 TX_SUPERSEDED` với `details.superseded_by` (hash tx đã nộp) và/hoặc
   `details.conflicting_inputs`. App dựng lại từ đầu;
-- tx **đã được nộp** qua dịch vụ này thì không bao giờ bị thay: tx chung khoá nộp sau không gắn
-  `superseded_by` cho nó, và nộp lại chính nó (rớt mạng) không thay tx đã dựng sau lượt nộp đầu.
-  Lỗi 409 luôn kèm `details.previously_submitted` (dịch vụ này đã từng nộp thành công tx đó chưa).
-  **409 này KHÔNG chứng minh tx chưa lên chuỗi** — nó chỉ nói đừng nộp nữa. Muốn biết tx cũ đã vào
-  khối chưa thì tra chuỗi theo `tx_hash`, đừng suy từ mã lỗi.
+- tx **đã được nộp** vẫn bị thay khi một tx chung khoá được nộp SAU nó. Không có miễn trừ cho tx đã
+  nộp, vì miễn trừ đó mở lại đúng ca mà khoá theo chủ tồn tại để chặn: ví A nộp tx tạo két T1, T1 rơi
+  khỏi mempool; ví B nộp T2, T2 lên chuỗi; app nộp lại T1 ⟹ két thứ hai cho cùng chủ, và mọi đường
+  dựng sau đó trả `409 VAULT_AMBIGUOUS`. Validator chưa ép mỗi DID một két, nên cổng này là cổng duy
+  nhất;
+- **nộp lại một tx nút đã NHẬN** (rớt mạng ở chiều trả lời) mà chưa bị thay ⟹ `200` với đúng kết quả
+  lượt đầu, **không gửi lên chuỗi lần nữa**, và không thay tx nào đã dựng sau lượt nộp đầu. Hệ quả phải
+  biết: tx đã nhận mà rơi khỏi mempool thì **không hồi sinh được** qua đường này — app tra chuỗi theo
+  `tx_hash`, không thấy thì dựng lại;
+- dịch vụ **đã gửi mà không nhận được xác nhận** (mất kết nối / quá giờ ở `chain.submitTx`, hoặc nút
+  báo một hash khác hash thân) ⟹ tx được ghi trạng thái `unconfirmed`: input vào sổ chờ như một lượt
+  nộp, và tx chung khoá dựng TRƯỚC bị thay — tx có thể đã ở mempool. Nộp lại tx đó thì dịch vụ GỬI lại
+  (không biết lượt đầu đã tới chưa); nút nhận thì nó thành `accepted` mà không thay thêm gì. Nút TỪ
+  CHỐI lượt gửi lại đó (`502 SUBMIT_REJECTED`) cũng không chứng minh tx chưa lên chuỗi — lượt đầu có
+  thể đã vào, và chính vì thế mà input của nó không còn;
+- lỗi 409 luôn kèm `details.submission`: `accepted` (nút đã nhận tx này), `unconfirmed` (đã gửi, chưa
+  rõ), `none` (**tiến trình này** chưa gửi); `details.previously_submitted` = `submission ≠ "none"`.
+  **Cả hai KHÔNG nói gì về trạng thái chuỗi.** `none` không có nghĩa là "chưa lên chuỗi": sổ nằm trong
+  bộ nhớ một tiến trình — khởi động lại, bản sao khác sau bộ cân tải, hay một đường nộp khác đều có
+  thể đã đưa tx lên. 409 chỉ nói đừng nộp nữa; muốn biết tx cũ đã vào khối chưa thì tra chuỗi theo
+  `tx_hash`, đừng suy từ mã lỗi.
 
 Mã `OWNER_TX_IN_FLIGHT` đã nghỉ: không đường nào trả nữa, giữ lại trong tài liệu để app đời cũ còn
 nhận ra. Khoá vẫn **giữ tới lúc nộp** để `/tx/submit` biết tx nào chung khoá. Ba đường mở khoá:

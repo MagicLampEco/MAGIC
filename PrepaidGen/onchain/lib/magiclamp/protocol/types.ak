@@ -91,7 +91,7 @@ pub type PaidFundDatum {
   credit_issued      : Natural,     // cộng dồn, chỉ tăng ở Lock
   magic_settled      : Natural,     // nanogic cộng dồn đã chứng minh tiêu thật
   provider_claimed   : Natural,     // carpdrop cộng dồn đã trả provider
-  buffer_bps         : Natural,     // ≥ 1500, bất biến
+  buffer_bps         : Natural,     // ≥ min_buffer_bps (= 0), bất biến
   last_updated_epoch : Natural,
   // ── Đích nhận CARP của FundClaim (thêm 2026-09-26, L1'') ────
   // Ghim tại genesis, bất biến trọn đời quỹ. Trước bản này đích do người dựng tx

@@ -54,14 +54,22 @@ pub const v2_inv_out: List<Int> =
   ]
 
 // ── V3: buffer_floor(outstanding, buffer_bps) ─────────────────
+// Hàng 8–10: `buffer_bps = 0` (sàn genesis từ 2026-10-05) ⟹ sàn == outstanding;
+// hàng 10 > 2^53 (C-OVERFLOW).
 pub const v3_buf_outstanding: List<Int> =
-  [0, 1, 7, 999_999, 1_000_000, 1_000_000, 1_000_000_000_000]
+  [
+    0, 1, 7, 999_999, 1_000_000, 1_000_000, 1_000_000_000_000, 7, 1_000_000,
+    36_000_000_000_000_000_000,
+  ]
 
 pub const v3_buf_bps: List<Int> =
-  [1_500, 1_500, 1_500, 1_500, 1_500, 10_000, 1_500]
+  [1_500, 1_500, 1_500, 1_500, 1_500, 10_000, 1_500, 0, 0, 0]
 
 pub const v3_buf_out: List<Int> =
-  [0, 1, 8, 1_149_998, 1_150_000, 2_000_000, 1_150_000_000_000]
+  [
+    0, 1, 8, 1_149_998, 1_150_000, 2_000_000, 1_150_000_000_000, 7, 1_000_000,
+    36_000_000_000_000_000_000,
+  ]
 
 // ── V4: outstanding_effective(credit_issued, sponsor_reclaimed, magic_settled) ─
 // Lượng `FundReclaim` trả bên tài trợ (`prepaid.ak` ▸ `reclaim_amount`) và vế

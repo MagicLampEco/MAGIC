@@ -37,7 +37,10 @@ export const MAX_PREPAID_CREDITS = 20;
 
 // ── Quỹ Paid (Carpet-CARP-DacTa-Vi.md §5.1 F2) ────────────────
 export const BPS_DENOM = 10_000n;
-export const MIN_BUFFER_BPS = 1_500n; // buffer-Paid ≥ 15%  [Constitutional]
+// Sàn đệm buffer-Paid = 0 (chủ dự án chốt 2026-10-05): `PrepaidLock` đã ép hạn-mức
+// tăng ĐÚNG bằng CARP nạp (1:1, C-PP-2) nên đệm không thêm an toàn. Sàn vẫn chặn
+// `buffer_bps` âm. Gương `min_buffer_bps` (constants.ak) — p8.test.ts so hai bên.
+export const MIN_BUFFER_BPS = 0n; // buffer-Paid ≥ 0%  [Constitutional]
 
 // ── Constructor index (§11) ───────────────────────────────────
 // ConsumeMAGIC ghim `burn_batch_constr` cho từng vault. PrepaidGen = 2, đồng

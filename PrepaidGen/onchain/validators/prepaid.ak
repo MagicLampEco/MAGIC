@@ -1887,7 +1887,7 @@ fn validate_mint_vault_id(
 //   không ai đúc lại được tên cũ.
 //
 // Đồng thời đây là CỔNG GENESIS của sổ quỹ: datum của output mang NFT phải sạch
-// (mọi số cộng dồn = 0) và buffer_bps ≥ 15%. Không có cổng này thì một quỹ có
+// (mọi số cộng dồn = 0) và buffer_bps ≥ min_buffer_bps. Không có cổng này thì một quỹ có
 // thể "sinh ra" với magic_settled khổng lồ, kéo `outstanding` âm, kéo
 // `buffer_floor` âm, và mọi phép so `≥ buffer_floor` thành vô điều kiện ⇒
 // FundClaim rút sạch CARP của người khác.
@@ -1959,13 +1959,23 @@ fn validate_mint_fund_nft(policy_id: PolicyId, tx: Transaction) -> Bool {
   // CARP thu hồi "rót đúng địa chỉ, ngoài sổ" — loại ở đây (`CC-RECLAIM-SCRIPT-SPONSOR`).
   // Genesis KHÔNG đòi bên tài trợ ký: quỹ ghi tên X mà X không nạp thì vô hại;
   // cửa nạp (`validate_fund_lock`) mới đòi chữ ký X.
+  //
+  // Chặn TỰ HƯỞNG (chủ dự án chốt 2026-10-05): CARP của MAGIC đã consume đi về
+  // `beneficiary`; nếu đó là chính khoá tài trợ thì bên tài trợ nạp CARP, cho DID
+  // tiêu, rồi nhận lại đúng số CARP đó qua `FundClaim`. So PAYMENT CREDENTIAL,
+  // không so địa chỉ đầy đủ: `sponsor` là địa chỉ base, `beneficiary` bị ép không
+  // stake, nên phép so địa chỉ không bao giờ bằng — cùng khoá khác phần stake lách
+  // qua được.
   expect
     when fd.sponsorship is {
       None -> True
       Some(s) ->
         when s.sponsor.payment_credential is {
-          VerificationKey(h) ->
-            bytearray.length(h) == 28 && bytearray.length(s.owner_commit) == 32
+          VerificationKey(h) -> and {
+              bytearray.length(h) == 28,
+              bytearray.length(s.owner_commit) == 32,
+              fd.beneficiary.payment_credential != s.sponsor.payment_credential,
+            }
           Script(_) -> False
         }
     }
@@ -1985,24 +1995,30 @@ fn validate_mint_fund_nft(policy_id: PolicyId, tx: Transaction) -> Bool {
   let ben = fd.beneficiary
   // Không stake: cùng lý do với địa chỉ quỹ ở trên, và claim so địa chỉ ĐẦY ĐỦ.
   expect ben.stake_credential == None
-  // Khuôn 28 byte cho hash của payment credential — cùng lớp với hai dòng độ dài
-  // ở trên: một hash sai độ dài không có output nào đỗ được ở đó, nên mọi claim
-  // chết và CARP người dùng kẹt sau buffer vĩnh viễn.
+  // Một `when` cho mọi vế về payment credential của bên hưởng (gộp 2026-10-05 để
+  // lọt trần byte; mỗi vế vẫn đứng riêng một dòng trong `and`):
+  //   · khuôn 28 byte — cùng lớp với hai dòng độ dài ở trên: hash sai độ dài thì
+  //     không output nào đỗ được ở đó, mọi claim chết, CARP kẹt vĩnh viễn;
+  //   · khoá ≠ `platform` — chặn TỰ HƯỞNG (chủ dự án chốt 2026-10-05): `platform`
+  //     nạp thêm được vào dòng đã có (C-PP-9, app khoá hộ người dùng), tức nó cũng
+  //     là một bên tài trợ, và nó ký `FundClaim`. So theo CREDENTIAL (nhánh khoá),
+  //     cùng lý do với vế `sponsor` ở trên;
+  //   · script ≠ chính quỹ (output tới đích lại là output quỹ ⟹ claim không bao giờ
+  //     đúng hình dạng), ≠ vault (output không mang NFT vault ⟹ không nhánh nào tiêu
+  //     lại được, `vault_identity_preserved`) — cả hai là CARP chết;
+  //   · script ⟹ BẮT BUỘC ghim datum (xem khối ĐÍCH ở `validate_fund_claim`).
   expect
     when ben.payment_credential is {
-      VerificationKey(h) -> bytearray.length(h) == 28
-      Script(h) -> bytearray.length(h) == 28
-    }
-  // Đích là quỹ: output tới đích lại là output quỹ ⟹ claim không bao giờ đúng
-  // hình dạng. Đích là vault: output không mang NFT vault ⟹ không nhánh nào tiêu
-  // lại được (`vault_identity_preserved`). Cả hai là CARP chết.
-  expect ben.payment_credential != Script(policy_id)
-  expect ben.payment_credential != Script(fd.vault_hash)
-  // Đích là script ⟹ BẮT BUỘC ghim datum (xem khối ĐÍCH ở `validate_fund_claim`).
-  expect
-    when ben.payment_credential is {
-      Script(_) -> fd.beneficiary_datum != None
-      VerificationKey(_) -> True
+      VerificationKey(h) -> and {
+          bytearray.length(h) == 28,
+          h != fd.platform,
+        }
+      Script(h) -> and {
+          bytearray.length(h) == 28,
+          h != policy_id,
+          h != fd.vault_hash,
+          fd.beneficiary_datum != None,
+        }
     }
   True
 }
@@ -4494,6 +4510,30 @@ test pp_fund_claim_breaks_buffer() fail {
   )
 }
 
+// happy (đệm 0, sàn genesis từ 2026-10-05): quỹ `buffer_bps = 0` rút tới ĐÚNG
+// `outstanding` — sàn `buffer_floor(500e6, 0) = 500e6`, công thức không đổi.
+test pp_fund_claim_zero_buffer_to_outstanding_ok() {
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 500_000_000, 0, 0)
+  let fout = t_fd(500_000_000, 1_000_000_000, 500_000_000, 500_000_000, 0)
+  run_fund(
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 500_000_000, [t_platform]),
+    FundClaim { amount_carpdrop: 500_000_000 },
+  )
+}
+
+// Cặp cực đối của bài trên: cùng số, chỉ khác `buffer_bps = 1500` ở cả hai datum
+// ⟹ sàn 575e6 > 500e6, bị chặn. Ghim rằng `buffer_bps` của quỹ vẫn được đọc.
+test pp_fund_claim_same_amount_buffer_1500_rejected() fail {
+  let fin = t_fd(1_000_000_000, 1_000_000_000, 500_000_000, 0, 1_500)
+  let fout = t_fd(500_000_000, 1_000_000_000, 500_000_000, 500_000_000, 1_500)
+  run_fund(
+    fin, 1_000_000_000,
+    claim_tx(fin, 1_000_000_000, fout, 500_000_000, [t_platform]),
+    FundClaim { amount_carpdrop: 500_000_000 },
+  )
+}
+
 // TẤN CÔNG: rút quá phần MAGIC đã tiêu thật (F2), đệm để 0 để cô lập luật này.
 test pp_fund_claim_over_settled() fail {
   let fin = t_fd(1_000_000_000, 1_000_000_000, 500_000_000, 0, 0)
@@ -6015,9 +6055,15 @@ test fg_mint_dirty_claimed() fail {
   fg_mint_with(fg_datum(fg_name(), 0, 0, 0, 1_000_000, 1_500, 0))
 }
 
-// TẤN CÔNG: đệm buffer-Paid dưới 15%.
-test fg_mint_buffer_too_low() fail {
-  fg_mint_with(fg_datum(fg_name(), 0, 0, 0, 0, 1_499, 0))
+// TẤN CÔNG: `buffer_bps` âm ⟹ `buffer_floor` dưới `outstanding`. Sàn genesis là
+// `min_buffer_bps = 0` (chủ dự án chốt 2026-10-05) nên −1 là giá trị sát sàn.
+test fg_mint_buffer_negative() fail {
+  fg_mint_with(fg_datum(fg_name(), 0, 0, 0, 0, -1, 0))
+}
+
+// Cặp dương cực đối: đệm 0 đúc được (trước 2026-10-05 sàn là 1500 ⟹ bài này đỏ).
+test fg_mint_buffer_zero_ok() {
+  fg_mint_with(fg_datum(fg_name(), 0, 0, 0, 0, 0, 0))
 }
 
 // TẤN CÔNG: bơm last_updated_epoch lúc tạo.
@@ -6104,6 +6150,30 @@ test fg_mint_script_beneficiary_no_datum() fail {
 // happy: bên hưởng là khoá thường, có ghim datum — cho phép (khoá tiêu được bất kể datum).
 test fg_mint_key_beneficiary_with_datum_ok() {
   fg_mint_ben(t_ben_addr(), Some(t_ben_datum()))
+}
+
+// TẤN CÔNG (tự hưởng, 2026-10-05): bên hưởng là chính khoá `platform` — CARP mà
+// platform nạp hộ người dùng quay về platform qua `FundClaim`.
+test fg_mint_beneficiary_is_platform_key() fail {
+  fg_mint_ben(address.from_verification_key(t_platform), None)
+}
+
+// Cặp dương cực đối: chỉ khác hash khoá của bên hưởng.
+test fg_mint_beneficiary_other_key_ok() {
+  fg_mint_ben(address.from_verification_key(t_ben_pkh), None)
+}
+
+// Cùng 28 byte của `platform` nhưng là SCRIPT ⟹ khác credential, không phải tự
+// hưởng — ghim rằng cổng so CREDENTIAL chứ không so riêng hash.
+test fg_mint_beneficiary_script_with_platform_bytes_ok() {
+  fg_mint_ben(address.from_script(t_platform), Some(t_ben_datum()))
+}
+
+// TẤN CÔNG: hash SCRIPT của bên hưởng sai độ dài (datum có, để chỉ vế độ dài đỏ).
+// Cặp dương: `fg_mint_script_beneficiary_with_datum_ok`. Trước 2026-10-05 nhánh
+// Script của vế độ dài không có bài nào canh (đột biến gỡ nó: 0 bài lật).
+test fg_mint_script_beneficiary_bad_hash_length() fail {
+  fg_mint_ben(address.from_script(#"5c5c"), Some(t_ben_datum()))
 }
 
 // TẤN CÔNG: hash của bên hưởng sai độ dài ⟹ không output nào đỗ được ở đó.
@@ -7186,6 +7256,28 @@ test rc_g4_sponsor_key_27() fail {
     },
     rc_owner_commit,
   )
+}
+
+// ── G5: chặn tự hưởng — bên hưởng trùng KHOÁ tài trợ (chủ dự án chốt 2026-10-05) ──
+fn rc_g_ben(sponsor: Address, ben: Address) -> Bool {
+  fg_mint_with(
+    PaidFundDatum {
+      ..fg_clean(),
+      beneficiary: ben,
+      sponsorship: Some(Sponsorship { sponsor, owner_commit: rc_owner_commit }),
+    },
+  )
+}
+
+// G5: bên hưởng = địa chỉ ENTERPRISE của chính khoá tài trợ. `sponsor` là địa chỉ
+// BASE ⟹ phép so địa chỉ đầy đủ không bằng; chỉ phép so payment credential bắt được.
+test rc_g5_beneficiary_is_sponsor_key() fail {
+  rc_g_ben(rc_sponsor_addr(), address.from_verification_key(rc_sponsor_pkh))
+}
+
+// Cặp dương cực đối của G5: chỉ khác hash khoá của bên hưởng.
+test rc_g5_beneficiary_other_key_ok() {
+  rc_g_ben(rc_sponsor_addr(), address.from_verification_key(t_ben_pkh))
 }
 
 // Genesis `sponsorship = None` vẫn đúc được (quỹ thường không đổi hành vi).

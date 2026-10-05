@@ -43,7 +43,7 @@
 //   CARP_ASSET_NAME   — BẮT BUỘC, hex chẵn, không rỗng.
 //   PLATFORM_PKH      — pkh provider giữ quỹ (mặc định: pkh của ví đang chạy).
 //                       On-chain ĐÒI chữ ký này ở genesis (từ 2026-09-26).
-//   BUFFER_BPS        — đệm buffer-Paid, mặc định 1500 (= min_buffer_bps)
+//   BUFFER_BPS        — đệm buffer-Paid, mặc định 0 (= min_buffer_bps, từ 2026-10-05)
 //   BENEFICIARY_ADDRESS — BẮT BUỘC, KHÔNG mặc định. Địa chỉ bech32 ENTERPRISE (không
 //                       stake) nhận CARP mỗi lượt `FundClaim`, ghim trọn đời quỹ.
 //   BENEFICIARY_DATUM — BẮT BUỘC, KHÔNG mặc định: `none` (output không datum) hoặc
@@ -234,8 +234,9 @@ function readBeneficiary(): {
   };
 }
 
-/** `min_buffer_bps` — neo: PrepaidGen/onchain/lib/magiclamp/protocol/constants.ak */
-const MIN_BUFFER_BPS = 1_500n;
+/** `min_buffer_bps` — neo: PrepaidGen/onchain/lib/magiclamp/protocol/constants.ak
+ *  (chép 2026-10-05, sàn hạ 1500 → 0 theo quyết định chủ dự án). */
+const MIN_BUFFER_BPS = 0n;
 const MAX_BUFFER_BPS = 10_000n;
 
 async function main() {
@@ -258,7 +259,7 @@ async function main() {
   const bufferBps = BigInt(process.env.BUFFER_BPS ?? MIN_BUFFER_BPS.toString());
   if (bufferBps < MIN_BUFFER_BPS) {
     throw new Error(
-      `BUFFER_BPS=${bufferBps} dưới sàn hiến định ${MIN_BUFFER_BPS} (15%).\n` +
+      `BUFFER_BPS=${bufferBps} dưới sàn hiến định ${MIN_BUFFER_BPS}.\n` +
       `  · validate_mint_fund_nft ép \`fd.buffer_bps >= min_buffer_bps\`, nên giao ` +
       `dịch sẽ chết trên chuỗi — cổng này chỉ để nó chết trước khi mất phí.`,
     );
@@ -301,6 +302,17 @@ async function main() {
   // rút được) — dòng `addSignerKey(platformPkh)` bên dưới là để giao dịch đáp ứng
   // cổng ấy, không còn là cổng off-chain thuần.
   const platformIsOwner = platformPkh === ownerPkh;
+  // Chặn TỰ HƯỞNG (2026-10-05): `validate_mint_fund_nft` từ chối bên hưởng mang đúng
+  // khoá `platform` (so payment credential). Mặc định `PLATFORM_PKH` = ví đang chạy,
+  // nên `BENEFICIARY_ADDRESS` là địa chỉ enterprise của chính ví này sẽ chết trên chuỗi.
+  if (beneficiary !== null && beneficiary.kind === "Key" && beneficiary.hash === platformPkh) {
+    throw new Error(
+      `BENEFICIARY_ADDRESS mang đúng khoá PLATFORM_PKH (${platformPkh}).\n` +
+      `  · validate_mint_fund_nft ép payment credential của beneficiary ≠ khoá platform ` +
+      `(platform nạp hộ CARP rồi tự nhận lại qua FundClaim = tự hưởng).\n` +
+      `  · Dùng một ví treasury khác cho BENEFICIARY_ADDRESS.`,
+    );
+  }
 
   // ── Apply params THEO TÊN — thứ tự do blueprint quyết định ───────────────
   const bp = await loadBlueprint("PrepaidGen");

@@ -131,12 +131,17 @@ function batch(
   };
 }
 
+// Đệm mặc định của fixture = 1500 (giá trị của vector TV-PP-02 / TV-PP-BUFFER), KHÔNG
+// phải `MIN_BUFFER_BPS`: sàn genesis hạ về 0 ngày 2026-10-05, còn các bài dưới đo công
+// thức sàn đệm ở một quỹ có đệm. Quỹ đệm 0: `fundGenesisSelfDealing.test.ts`.
+const FIXTURE_BUFFER_BPS = 1_500n;
+
 function fund(
   carpLocked: bigint,
   creditIssued: bigint,
   magicSettled = 0n,
   providerClaimed = 0n,
-  bufferBps = MIN_BUFFER_BPS,
+  bufferBps = FIXTURE_BUFFER_BPS,
 ): PaidFundDatum {
   return {
     fund_id: FUND_ID,

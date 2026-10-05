@@ -324,7 +324,7 @@ PaidFundDatum {
   credit_issued      : Int,         // cộng dồn, chỉ tăng ở Lock
   magic_settled      : Int,         // nanogic cộng dồn đã chứng minh tiêu thật
   provider_claimed   : Int,         // carpdrop cộng dồn đã trả provider
-  buffer_bps         : Int,         // ≥ 1500, bất biến
+  buffer_bps         : Int,         // ≥ min_buffer_bps (= 0), bất biến
   last_updated_epoch : Int,
   beneficiary        : Address,     // đích nhận CARP của FundClaim, ghim genesis, bất biến
   beneficiary_datum  : Option<Data>, // None ⟹ output NoDatum · Some(d) ⟹ InlineDatum(d)
@@ -386,7 +386,15 @@ PaidFundRedeemer                             constr
 | **C-PP-12** trần cứng | `MAX_BATCHES_PER_VAULT = 32`, `MAX_PREPAID_CREDITS = 20`, `MIN_LOCK_CARPDROP = 10⁹` (1 CARP), `MIN_DRAW_CARPDROP = 10⁶` | vault |
 | **C-PP-13** không đúc token | MAGIC không phải token; không nhánh nào của module này gọi `tx.mint` cho CARP; token quỹ chỉ đúc đúng một lần ở handler `mint` của `paid_fund`, và số lượng âm bị chặn ở đó (không có đường ĐỐT) | vault + quỹ |
 | **C-PP-14** không chạm backing chung | validator PrepaidGen không có tham số LAMP, không đọc `br`/GreenBack/oracle | cấu trúc — kiểm bằng đọc chữ ký tham số |
-| **C-PP-15** genesis quỹ sạch | NFT quỹ chỉ đúc được khi output mang nó **nằm ở đúng địa chỉ quỹ** (`payment_credential == Script(policy_id)`, `stake_credential == None`, không `reference_script`, chỉ MỘT tên dưới policy quỹ) và có `PaidFundDatum` với `credit_issued = magic_settled = provider_claimed = carp_locked = last_updated_epoch = 0`, `fund_id == asset name`, `buffer_bps ≥ 1500`, `platform`/`vault_hash` dài đúng 28 byte. **Từ 2026-09-26:** `platform` **ký** giao dịch genesis (chặn quỹ mạo danh platform thật); `beneficiary.stake_credential == None`; hash của `beneficiary.payment_credential` dài 28 byte; `beneficiary.payment_credential ∉ {Script(policy_id), Script(vault_hash)}`; `Script(_) ⟹ beneficiary_datum = Some(_)`. Ràng buộc datum là CẦN, chưa ĐỦ: khả năng tiêu lại của cặp `(beneficiary, beneficiary_datum)` phải thử ngoài chuỗi (`DevStatus.md` ▸ Nợ #85) | `paid_fund.mint` ▸ `validate_mint_fund_nft` |
+| **C-PP-15** genesis quỹ sạch | NFT quỹ chỉ đúc được khi output mang nó **nằm ở đúng địa chỉ quỹ** (`payment_credential == Script(policy_id)`, `stake_credential == None`, không `reference_script`, chỉ MỘT tên dưới policy quỹ) và có `PaidFundDatum` với `credit_issued = magic_settled = provider_claimed = carp_locked = last_updated_epoch = 0`, `fund_id == asset name`, `buffer_bps ≥ min_buffer_bps` (= 0 — xem dưới bảng), `platform`/`vault_hash` dài đúng 28 byte. **Từ 2026-09-26:** `platform` **ký** giao dịch genesis (chặn quỹ mạo danh platform thật); `beneficiary.stake_credential == None`; hash của `beneficiary.payment_credential` dài 28 byte; `beneficiary.payment_credential ∉ {Script(policy_id), Script(vault_hash)}`; `Script(_) ⟹ beneficiary_datum = Some(_)`. **Từ 2026-10-05 (chặn tự hưởng, §6.3):** `beneficiary.payment_credential ≠ VerificationKey(platform)`, và khi `sponsorship = Some(s)` thì `beneficiary.payment_credential ≠ s.sponsor.payment_credential` — so payment credential, không so địa chỉ đầy đủ. Ràng buộc datum là CẦN, chưa ĐỦ: khả năng tiêu lại của cặp `(beneficiary, beneficiary_datum)` phải thử ngoài chuỗi (`DevStatus.md` ▸ Nợ #85) | `paid_fund.mint` ▸ `validate_mint_fund_nft` |
+
+**Sàn đệm buffer-Paid = 0** (chủ dự án chốt 2026-10-05). `min_buffer_bps` hạ về 0 ở cả hai phía
+(`constants.ak` ▸ `min_buffer_bps`, `constants.ts` ▸ `MIN_BUFFER_BPS`). Lý do: `PrepaidLock` đã ép
+hạn-mức tăng ĐÚNG bằng CARP nạp (1:1, C-PP-2), nên CARP trong quỹ luôn phủ trọn phần dịch vụ chưa
+giao, và đệm không thêm an toàn. Trường `buffer_bps` và công thức sàn ở C-PP-6 giữ nguyên: với
+`buffer_bps = 0` sàn đúng bằng `outstanding'`. Cổng genesis `buffer_bps ≥ min_buffer_bps` vẫn đứng,
+vì nó còn chặn `buffer_bps` âm (sàn dưới `outstanding'`). Quỹ đã mở với `buffer_bps` khác giữ nguyên
+giá trị của nó (bất biến trọn đời quỹ, §6.1).
 
 ---
 
@@ -396,7 +404,7 @@ PaidFundRedeemer                             constr
 Input: một UTxO bất kỳ của platform (làm nguồn tên duy nhất) → mint 1 NFT tên
 `blake2b_256(tx_id ∥ be8(output_index))` → output **tại chính địa chỉ `paid_fund`** (đây là mệnh
 đề mà bản tách-script không viết được — xem §2.1) mang NFT + `PaidFundDatum` toàn số 0,
-`vault_hash` = hash của `prepaid_vault` đã deploy, `buffer_bps ≥ 1500`, và cặp đích
+`vault_hash` = hash của `prepaid_vault` đã deploy, `buffer_bps ≥ 0`, và cặp đích
 `beneficiary` + `beneficiary_datum` (C-PP-15). `signers: platform` — bắt buộc từ 2026-09-26.
 
 ### 5.2 `PrepaidLock` — 2 script co-spend
@@ -492,7 +500,15 @@ kiến trúc.
 ### 6.3 Chống self-dealing (Forall §"tay trái tạo — tay phải tiêu")
 PrepaidGen **không phát thưởng**, nên `s = 0` trong `Π = V·(s + γ − 1) − …`. Kẻ tự khoá CARP rồi tự
 tiêu chỉ đang mua dịch vụ của chính mình: `Π < 0` với mọi `γ ≤ 1`. Vòng self-dealing tại đây net-âm
-theo cấu trúc.
+theo cấu trúc — **với điều kiện CARP đã tiêu không quay về bên đã nạp nó.** CARP của MAGIC đã tiêu đi
+về `beneficiary` (treasury của app nhận dịch vụ). Nếu `beneficiary` là chính ví tài trợ, bên tài trợ
+nạp CARP, cho DID tiêu, rồi nhận lại đúng số đó qua `FundClaim`: `γ = 1`, chi phí chỉ còn phí giao
+dịch, trong khi MAGIC "đã tiêu" vẫn được đếm. Nên genesis quỹ chặn ca đó (chủ dự án chốt
+2026-10-05, C-PP-15): payment credential của `beneficiary` ≠ `VerificationKey(platform)` (`platform`
+nạp hộ được vào dòng đã có — C-PP-9 — tức cũng là một bên tài trợ), và với quỹ tài trợ ≠ payment
+credential của `sponsorship.sponsor`. So **payment credential**, không so địa chỉ đầy đủ: cùng khoá
+khác phần stake là một địa chỉ khác nhưng vẫn là cùng một người tiêu được. Cổng không chặn được
+một bên tài trợ dùng HAI khoá khác nhau — đó là giới hạn của mọi phép so danh tính bằng khoá.
 
 Cửa gián tiếp còn lại: MAGIC tiêu từ PrepaidGen **có tính** vào cơ-sở-consumed của InstantGen (§6.3),
 mà InstantGen thì có thưởng. Chặn nằm ở phía InstantGen chứ không phải ở đây: `INV-CASHBACK-BOUND`
@@ -545,7 +561,7 @@ bên là đỏ ngay.
 | 3 | `burn_batch_constr` của PrepaidGen | 2 (đồng nhất Instant/Schedule) | đổi thứ tự nhánh redeemer + bảng §11 |
 | 4 | quỹ Paid là cấu trúc CARP-side đã có hay MAGIC tự định nghĩa | MAGIC tự định nghĩa `PaidFundDatum` | có thể phải ghép vào schema CARP |
 | 5 | ranh giới một quỹ | mỗi (platform × dịch vụ) một quỹ | chỉ là quy ước vận hành |
-| 6 | `buffer-Paid ≥ 15%` đo trên gì | trên `outstanding` của chính quỹ | đổi công thức trần ở `validate_claim` |
+| 6 | đệm buffer-Paid đo trên gì | trên `outstanding` của chính quỹ; sàn `min_buffer_bps = 0` (2026-10-05) | đổi công thức trần ở `validate_claim` |
 | 7 | hạn-mức có hạn dùng không (30/90/365) | **không** hết hạn | thêm `expiry_epoch` vào `PrepaidCredit` + luật CARP dư về đâu |
 | 8 | trả lại hạn-mức khi MAGIC hết hạn (§1.3) | **có** | bỏ nhánh restore trong `PrunePrepaid` |
 | 9 | `Migrate` quỹ cũ → mới | chưa có ở v0.1 | thêm redeemer + bất biến bảo toàn tổng |

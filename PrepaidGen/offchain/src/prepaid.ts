@@ -705,6 +705,25 @@ export function assertFundGenesis(
       "beneficiary là script thì BẮT BUỘC ghim beneficiary_datum (rót đúng địa chỉ ≠ rót vào sổ)",
     );
   }
+  // Chặn TỰ HƯỞNG (chủ dự án chốt 2026-10-05) — so PAYMENT CREDENTIAL, không so địa
+  // chỉ đầy đủ (cùng khoá khác phần stake là lách được). Gương hai vế ở
+  // `validate_mint_fund_nft`: nhánh khoá `h != fd.platform`, và trong khối
+  // `sponsorship` `beneficiary.payment_credential != sponsor.payment_credential`.
+  if (kind === "Key" && hash.toLowerCase() === fund.platform.toLowerCase()) {
+    reject(
+      "C-PP-15",
+      "beneficiary trùng khoá platform — platform nạp hộ CARP rồi tự nhận lại qua FundClaim (tự hưởng)",
+    );
+  }
+  if (fund.sponsorship !== null) {
+    const sp = credentialHash(fund.sponsorship.sponsor);
+    if (sp.kind === kind && sp.hash.toLowerCase() === hash.toLowerCase()) {
+      reject(
+        "C-PP-15",
+        "beneficiary trùng payment credential của bên tài trợ — CARP tài trợ quay về chính bên tài trợ (tự hưởng)",
+      );
+    }
+  }
   return [fund.platform];
 }
 

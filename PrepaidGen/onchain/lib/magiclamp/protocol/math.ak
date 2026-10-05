@@ -72,9 +72,10 @@ pub fn reclaim_outstanding(
 
 // buffer_floor = outstanding + ⌊ outstanding × buffer_bps / 10000 ⌋
 //
-// Sàn CARP mà quỹ phải giữ lại SAU khi provider rút. buffer_bps ≥ 1500 ⇒ đệm
-// ≥ 15% trên phần chưa giao (buffer-Paid, F2). Khi quỹ tiêu hết
-// (outstanding = 0) sàn về 0 → provider rút được toàn bộ.
+// Sàn CARP mà quỹ phải giữ lại SAU khi provider rút: phần chưa giao cộng đệm
+// `buffer_bps` (buffer-Paid, F2; sàn genesis `min_buffer_bps`). `buffer_bps = 0`
+// ⟹ sàn đúng bằng `outstanding`. Khi quỹ tiêu hết (outstanding = 0) sàn về 0 →
+// provider rút được toàn bộ.
 pub fn buffer_floor(outstanding: Int, buffer_bps: Int) -> Int {
   outstanding + outstanding * buffer_bps / bps_denom
 }

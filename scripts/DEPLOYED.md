@@ -661,9 +661,9 @@ Những gì mục này **KHÔNG** khai:
   là danh sách TỪ CHỐI: nó chặn các đời đã biết là sai, và một hex 56 ký tự lạ vẫn đi qua.
   Giá trị đúng đi vào qua cấu hình (`LAMP_POLICY_ID`, `lamp.policy_id`).
 
-Cụm tập dượt `8169b76c…` vẫn chạy qua lối mở tập dượt (`REHEARSAL_LAMP_POLICIES` +
-`LAMP_REHEARSAL_ACK` bằng đúng chuỗi policy, chỉ trên mạng thử). Khoá đó gỡ khi runner của
-cụm tập dượt dừng hẳn, không gỡ theo ngày.
+Lối mở tập dượt (`REHEARSAL_LAMP_POLICIES` + `LAMP_REHEARSAL_ACK`) cho cụm tập dượt
+`8169b76c…` ĐÃ ĐÓNG 2026-10-04: cụm đó dừng, bảng rỗng ở cả `scripts/config.ts` lẫn
+`MagicSDK/src/lampPolicy.ts`, và `8169b76c…` kèm ack đúng cũng bị chặn như mọi đời đã bị thay.
 
 Thư LAMP còn nhắc nướng policy vào `lamp_policy_id` của `vault_consolidate.ak` và "consume
 nhiều cặp": **không có trong kho MAGIC** (đo 2026-10-03: `find . -name 'vault_consolidate*'`

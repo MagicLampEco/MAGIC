@@ -1361,7 +1361,7 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `FEECOVER_APP_TOKEN` | khi cấu hình có `feecover.apps.magic` | — **GIÁ TRỊ** token ứng dụng Feecover (token API, không phải khoá ký) |
 
 Cổng fail-closed lúc khởi động: thiếu biến bắt buộc · bind ngoài loopback mà thẻ bài rỗng ·
-policy LAMP nhái hoặc thuộc một đời đã bị thay (`assertLampPolicyId`; lối tập dượt xem dưới) ·
+policy LAMP nhái hoặc thuộc một đời đã bị thay (`assertLampPolicyId`; lối tập dượt đã đóng, xem dưới) ·
 tên tài sản LAMP không khớp mạng (`tLAMP` testnet / `LAMP` mainnet — apply-param #2) · địa
 chỉ sai tiền tố mạng · địa chỉ không phải địa chỉ script · hai mục vault trùng địa chỉ ·
 blueprint không đọc được · khối `feecover` có ứng dụng `magic` mà `FEECOVER_APP_TOKEN` rỗng ·
@@ -1432,17 +1432,18 @@ phí T2 hay không là việc của bảng mục đích, không phải của d�
 dù chúng đúng 56 hex. Mẫu cũ ở đây ghi `28e916…` — đó chính là một policy nhái trong bảng
 chặn, nên nay nó làm dịch vụ từ chối khởi động; đừng chép nó ra.
 
-`lamp.rehearsal_ack` (tuỳ chọn, chuỗi) mở **lối tập dượt** cho một đời đã bị thay: chỉ có
+`lamp.rehearsal_ack` (tuỳ chọn, chuỗi) từng mở **lối tập dượt** cho một đời đã bị thay: chỉ có
 tác dụng khi policy nằm trong `MagicSDK/src/lampPolicy.ts` ▸ `REHEARSAL_LAMP_POLICIES`,
 giá trị bằng **ĐÚNG** `lamp.policy_id`, và `VAULT_TX_API_NETWORK` là `Preview`/`Preprod`.
-Thiếu một điều thì dịch vụ vẫn từ chối khởi động với câu lỗi đời-đã-bị-thay. Khi được cho
-qua, dịch vụ in một dòng `⚠ [config] TẬP DƯỢT` ra stderr, và ack đi tiếp tới `createVault`
-của SDK (cổng chạy lại ở đó). Bảng tập dượt hiện chỉ có `8169b76c…`. Policy tLAMP Preprod
-cuối đã tới (`493002cc…cfac`, 2026-10-03; genesis chưa gửi, nên chưa có tLAMP nào dưới nó),
-và hai đời `53bc12ad…` · `7ecbffe2…` đã vào bảng đã-bị-thay của SDK; khoá `8169b76c…` gỡ khi
-runner của cụm tập dượt dừng hẳn. Policy cuối KHÔNG gõ cứng trong dịch vụ hay SDK — nó đi vào
-qua `lamp.policy_id`. `scripts/gen_vault_tx_api_deployment.ts` phát trường
-này khi lượt sinh chạy với `LAMP_REHEARSAL_ACK` trong môi trường — không lấy từ sổ trạng thái.
+**Lối này ĐÃ ĐÓNG từ 2026-10-04**: cụm tập dượt `8169b76c…` dừng, cụm phục vụ chạy trên
+policy tLAMP Preprod cuối `493002cc…cfac`, và bảng tập dượt của SDK RỖNG. Nên mọi đời đã
+bị thay, kể cả `8169b76c…` kèm ack đúng trên mạng thử, đều bị từ chối khởi động với câu lỗi
+đời-đã-bị-thay. Trường `lamp.rehearsal_ack` vẫn được đọc và giữ trong `Deployment` (một ack
+thừa cạnh policy cuối không làm hỏng gì), nhưng không còn mở được cửa nào. Hai đời `53bc12ad…` ·
+`7ecbffe2…` cũng nằm trong bảng đã-bị-thay của SDK. Policy cuối KHÔNG gõ cứng trong dịch vụ
+hay SDK — nó đi vào qua `lamp.policy_id`. `scripts/gen_vault_tx_api_deployment.ts` vẫn phát
+trường này khi lượt sinh chạy với `LAMP_REHEARSAL_ACK` trong môi trường — không lấy từ sổ
+trạng thái.
 
 `script_hash` **không** cấu hình riêng — nó suy từ chính địa chỉ. Hai trường cho một sự
 thật là hai trường sẽ lệch nhau.
@@ -1580,9 +1581,9 @@ PhoenixKey, nên nó chỉ sống ở cấu hình theo mạng, không ở mã. `
   *"cổng policy LAMP"*). Nó KHÔNG chứng minh policy là chính danh: một policy nhái mới, chưa
   vào bảng, vẫn qua. Mẫu của bộ kiểm dùng một policy id **tổng hợp**
   (`tests/fixtures/preview.ts`), cố ý không phải giá trị có thật trên mạng nào, để không ai
-  chép nhầm từ đó ra. Lối tập dượt (`lamp.rehearsal_ack`) là ngoại lệ **tạm**: policy Preprod
-  cuối đã tới 2026-10-03, nhưng khoá `8169b76c…` còn giữ tới khi runner của cụm tập dượt dừng
-  hẳn — gỡ khoá khỏi bảng của SDK là đủ, không phải sửa dịch vụ.
+  chép nhầm từ đó ra. Lối tập dượt (`lamp.rehearsal_ack`) từng là ngoại lệ **tạm** và đã
+  đóng 2026-10-04: khoá `8169b76c…` gỡ khỏi bảng của SDK (cụm tập dượt dừng), không phải sửa
+  dịch vụ.
 - **Thẻ bài là MỘT bí mật dùng chung, không gắn với `owner_pkh` nào.** Đường `/tx/submit`
   đã chặn việc mượn dịch vụ để nộp giao dịch lạ (chỉ nộp thứ chính nó vừa dựng), nhưng
   người cầm thẻ bài vẫn dựng được giao dịch mang `owner_pkh` của người khác và qua đó giữ

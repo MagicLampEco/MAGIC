@@ -48,6 +48,7 @@ import {
   windowOf, type Network, type OwnerAuth, type DidPaymentPlan,
 } from "@magiclamp/protocol-utils";
 import { resolveOwnerInput } from "./ownerInput.js";
+import { resolveRefScript } from "./refScript.js";
 import {
   didPaymentLucidPorts, DID_PAYMENT_FEE_HEADROOM_LOVELACE, type DidPaymentFundingInput,
 } from "./didPaymentLucid.js";
@@ -102,6 +103,8 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
 
   // ── Validator vault: tự apply, HOẶC nhận bản đã apply kèm hash chờ đợi ──
   const { vaultScript, vaultScriptHash, vaultAddress } = resolveVaultScript(params);
+  // Ref CIP-33 của script vault: kiểm hash TRƯỚC khi chạm ví; `null` = bên gọi chọn inline.
+  const vaultRefUtxo = resolveRefScript(params.vaultRefScriptUtxo, vaultScript, "vault (createVault)");
 
   // ── Current PROTOCOL epoch ────────────────────────────────────
   // Validator computes epoch = (posix_ms − window_origin_ms) / ms_per_epoch (chia sàn).
@@ -295,9 +298,9 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
     // (1) Seed là UTxO did_payment ⟹ nó đã nằm trong `collectFrom(selected, Spend)` dưới đây;
     //     thu thêm một lần nữa (không redeemer) là nhân đôi input.
     if (selfFunded === undefined) body = body.collectFrom([seedUtxo]);
+    body = body.mintAssets({ [vaultIdUnit]: 1n }, mintRedeemer);  // (2)
+    body = vaultRefUtxo === null ? body.attach.MintingPolicy(vaultScript) : body.readFrom([vaultRefUtxo]);
     body = body
-      .mintAssets({ [vaultIdUnit]: 1n }, mintRedeemer)  // (2)
-      .attach.MintingPolicy(vaultScript)
       .pay.ToAddressWithData(                           // (3)
         vaultAddress,
         { kind: "inline", value: vaultDatumCbor },

@@ -650,6 +650,8 @@ export class SdkTxBuilder implements TxBuilderPort {
       vaultType: ctx.scope.vaultType as VaultType,
       protocol: createVaultProtocol(d, this.deps.network),
       appliedVault: { script: vaultScript, expectedScriptHash: ctx.scope.scriptHash },
+      // Đọc script vault qua ref (CIP-33): inline ~14,5 KB + script did_payment + did_stake vượt trần tx.
+      vaultRefScriptUtxo: vaultRef,
       vault: {
         owner: ctx.owner, lampDeposit: p.lampAmount, profile: p.profile,
         ...(p.wakemeLink === undefined ? {} : { wakemeLink: p.wakemeLink }),

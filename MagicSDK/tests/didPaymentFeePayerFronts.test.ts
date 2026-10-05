@@ -20,6 +20,7 @@ import { FundingError, epochStartMs } from "@magiclamp/protocol-utils";
 import { describe, expect, it } from "vitest";
 
 import { createVault } from "../src/createVault.js";
+import { ACCEPT_INLINE_SCRIPT_CEILING } from "../src/refScript.js";
 
 // `validator always_a { spend(..) { True } mint(..) { True } else(_) { fail } }` — plutus v3.
 const ALWAYS_VAULT = "587601010029800aba2aba1aab9eaab9dab9a48888966002646465300130053754003300700398038012444b30013370e9001001c4c8cc892898058009805980600098049baa0048acc004cdc3a40000071324a26eb8c028c024dd5002459007200e18031803800980300098019baa0068a4d13656400401";
@@ -67,6 +68,7 @@ async function build(fundingOver: Record<string, unknown> = {}, walletUtxos: UTx
     lucid, vaultType: "Instant",
     protocol: { network: "Preprod", lampPolicyId: LAMP_POLICY },
     appliedVault: { script: VAULT, expectedScriptHash: VAULT_HASH },
+    vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
     vault: { ownerPkh: PKH, lampDeposit: 1_000_000_000n },
     tipPosixMs: TIP_MS, collateralLovelace: 3_000_000n,
     funding: {

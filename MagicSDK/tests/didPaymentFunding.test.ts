@@ -9,6 +9,7 @@ import { FundingError, OwnerAuthError, msPerEpoch, planDidPaymentFunding } from 
 import { describe, expect, it } from "vitest";
 
 import { createVault } from "../src/createVault.js";
+import { ACCEPT_INLINE_SCRIPT_CEILING } from "../src/refScript.js";
 import { didPaymentLucidPorts } from "../src/didPaymentLucid.js";
 import { didStakeOwnerAuthLucid } from "../src/didStakeLucid.js";
 import { VaultDatumSchema } from "../src/schemas.js";
@@ -65,6 +66,7 @@ const base = {
   // Preview chưa có gốc cửa sổ (`WIN-PREVIEW`) ⟹ truyền gốc TƯỜNG MINH của bài.
   protocol: { network: "Preview" as const, lampPolicyId: LAMP_POLICY, windowOriginMs: 1_000_000_000n },
   appliedVault: { script: VAULT_SCRIPT, expectedScriptHash: validatorToScriptHash(VAULT_SCRIPT) },
+  vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
   tipPosixMs: TIP_MS,
 };
 const scriptAuth = (ctrl = CTRL) => didStakeOwnerAuthLucid({

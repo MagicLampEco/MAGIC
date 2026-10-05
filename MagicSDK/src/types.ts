@@ -3,6 +3,7 @@ import type { LucidEvolution, TxBuilder, TxSignBuilder, UTxO, Validator } from "
 import type { Network, OwnerAuth, OwnerRef } from "@magiclamp/protocol-utils";
 import type { PlutusJson } from "./redeemerIndex.js";
 import type { DidPaymentFundingInput } from "./didPaymentLucid.js";
+import type { AcceptInlineScriptCeiling } from "./refScript.js";
 
 export type Profile = "Ember" | "Flame" | "Lantern";
 
@@ -183,6 +184,12 @@ export interface CreateVaultParams {
    *  bên gọi không giữ blueprint + đủ tham số để tự apply. `expectedScriptHash` BẮT BUỘC:
    *  script băm ra khác nó ⟹ NÉM, không tạo vault ở một địa chỉ ngoài cấu hình. */
   appliedVault?: { script: Validator; expectedScriptHash: string };
+  /** UTxO script tham chiếu (CIP-33) mang script vault: genesis ĐỌC nó (`readFrom`) thay vì
+   *  đính script inline. Script vault InstantGen dài khoảng 14,5 KB; đính inline cùng script
+   *  `did_payment` và `did_stake` của chủ DID là vượt trần 16 384 byte. Đường inline không bị
+   *  cấm, nhưng phải được CHỌN tường minh bằng `ACCEPT_INLINE_SCRIPT_CEILING` (xem `refScript.ts`).
+   *  UTxO mang script khác script vault ⟹ NÉM trước khi dựng. */
+  vaultRefScriptUtxo: UTxO | AcceptInlineScriptCeiling;
   /** Chứng minh quyền chủ ở genesis (`validate_mint_vault_id` ép `owner_authorized`).
    *  Bỏ trống: chủ khoá ⟹ `addSignerKey(pkh)`; chủ script ⟹ NÉM
    *  `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. */

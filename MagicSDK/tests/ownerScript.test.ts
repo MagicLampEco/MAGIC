@@ -206,6 +206,7 @@ describe("createVault — chủ Credential ở genesis", () => {
     vaultType: "Schedule" as const,
     protocol: { network: "Preprod" as const, lampPolicyId: LAMP_POLICY },
     appliedVault: { script: VAULT_SCRIPT, expectedScriptHash: vaultHash },
+    vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
     tipPosixMs: TIP_MS,
   };
   const outDatumOwner = (r: ReturnType<typeof recordingLucid>) => {
@@ -213,6 +214,37 @@ describe("createVault — chủ Credential ở genesis", () => {
     const d = Data.from((out[1] as { value: string }).value, VaultDatumSchema) as unknown as { owner: unknown };
     return d.owner;
   };
+
+  // ── Dây nối CIP-33: script vault InstantGen ~14,5 KB; inline cùng did_payment + did_stake vượt trần
+  //    16 384 byte (đo trên Preprod 2026-10-05: tx 21 385 byte). Genesis phải ĐỌC ref.
+  const refUtxo = (script: Validator) => ({
+    txHash: "ee".repeat(32), outputIndex: 0,
+    address: "addr_test1vqvrwknagm22rwnrus2v0nagyknauff3jztknm3x2d9nahgwq9x0u",
+    assets: { lovelace: 20_000_000n }, datum: null, datumHash: null, scriptRef: script,
+  } as UTxO);
+  const OTHER_VAULT_SCRIPT: Validator = { type: "PlutusV3", script: OTHER_DID_SCRIPT };
+
+  it("🔴 có ref UTxO script vault ⟹ readFrom ĐÚNG UTxO đó, KHÔNG attach.MintingPolicy", async () => {
+    const r = recordingLucid([walletUtxo]);
+    const ref = refUtxo(VAULT_SCRIPT);
+    await createVault({ ...base, vaultRefScriptUtxo: ref, lucid: r.lucid, vault: { ownerPkh: PKH, lampDeposit: 1_000_000_000n } } as never);
+    expect(r.argsOf("readFrom")).toContainEqual([[ref]]);
+    expect(r.names()).not.toContain("attach.MintingPolicy");
+  });
+
+  it("CỰC ĐỐI: chọn inline TƯỜNG MINH ⟹ attach.MintingPolicy, KHÔNG readFrom", async () => {
+    const r = recordingLucid([walletUtxo]);
+    await createVault({ ...base, lucid: r.lucid, vault: { ownerPkh: PKH, lampDeposit: 1_000_000_000n } } as never);
+    expect(r.argsOf("attach.MintingPolicy")).toEqual([[VAULT_SCRIPT]]);
+    expect(r.names()).not.toContain("readFrom");
+  });
+
+  it("🔴 ref UTxO mang script KHÁC ⟹ NÉM trước khi dựng tx", async () => {
+    const r = recordingLucid([walletUtxo]);
+    await expect(createVault({ ...base, vaultRefScriptUtxo: refUtxo(OTHER_VAULT_SCRIPT), lucid: r.lucid, vault: { ownerPkh: PKH, lampDeposit: 1_000_000_000n } } as never))
+      .rejects.toThrow(/vault \(createVault\)/);
+    expect(r.newTxCount()).toBe(0);
+  });
 
   it("bí danh ownerPkh ⟹ datum VerificationKey, ký pkh, mint 1 NFT, KHÔNG mục rút", async () => {
     const r = recordingLucid([walletUtxo]);

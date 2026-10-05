@@ -20,7 +20,7 @@
 
 import { readFile } from "node:fs/promises";
 import { Lucid, Blockfrost, getAddressDetails } from "@lucid-evolution/lucid";
-import { createVault, type VaultType } from "../src/index.js";
+import { createVault, ACCEPT_INLINE_SCRIPT_CEILING, type VaultType } from "../src/index.js";
 
 // ── 1. Pretend this is what PhoenixKey gives us after DID resolution. ────────
 function resolveUserFromDID(did: string): { ownerPkh: string; preferredProfile: "Ember" | "Flame" | "Lantern" } {
@@ -88,6 +88,8 @@ async function main() {
       umNftPolicyId:   UM_NFT_POLICY,
       shardPolicyId:   SHARD_NFT_POLICY,
     },
+    // Ví dụ tự apply validator nên chưa có ref CIP-33; bản thật đọc ref UTxO của lần deploy.
+    vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
     validators: {
       vaultUnappliedCbor: vaultCbor,
       shardUnappliedCbor: shardCbor,

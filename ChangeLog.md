@@ -5,6 +5,23 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-05 — `create-vault` đọc script vault qua ref CIP-33, không đính inline
+
+**Đổi gì.** `MagicSDK/src/createVault.ts` nhận tham số BẮT BUỘC `vaultRefScriptUtxo` (cùng khuôn
+`withdrawLamp`/`updateProfile`, `refScript.ts` ▸ `resolveRefScript`): có UTxO ⟹ kiểm hash rồi
+`readFrom`; đường inline chỉ khi bên gọi truyền `ACCEPT_INLINE_SCRIPT_CEILING`.
+`VaultTxAPI/src/txBuilder.ts` ▸ `createVault` truyền UTxO `ref_script_utxos.vault` vốn đã đọc để
+lấy script.
+
+**Vì sao.** Script vault InstantGen dài 14.520 byte. Create-vault cho chủ DID nạp từ did_payment
+phải mang thêm script did_payment (3.134 byte) và mục rút `did_stake` của chủ: VTA Preprod @
+`85247003` dựng ra tx **21.385 byte**, vượt trần 16.384 ⟹ `422 TX_BUILD_REJECTED`. Mọi create-vault
+chủ DID qua did_payment đều chết ở đây.
+
+**Cái gì gãy nếu bám bản cũ.** Bên gọi `createVault` của SDK không truyền `vaultRefScriptUtxo` sẽ
+không biên dịch được; muốn giữ inline thì truyền `ACCEPT_INLINE_SCRIPT_CEILING`. Tx VTA dựng ra có
+thêm một reference input (UTxO script vault) và không còn script vault trong nhân chứng.
+
 ## 2026-10-05 — `create-vault` nạp từ did_payment: ví trả phí ứng min-ADA của két
 
 **Đổi gì.** Ở chế độ ví trả phí bên thứ ba (`funding.fee_payer`, không đặt `feeSource =

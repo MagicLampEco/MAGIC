@@ -14,6 +14,7 @@ import { epochStartMs } from "@magiclamp/protocol-utils";
 import { describe, expect, it } from "vitest";
 
 import { createVault } from "../src/createVault.js";
+import { ACCEPT_INLINE_SCRIPT_CEILING } from "../src/refScript.js";
 import { buildInitialVaultDatum } from "../src/vaultDatum.js";
 import { InstantVaultDatumSchema } from "../src/schemas.js";
 
@@ -60,6 +61,7 @@ const base = (vaultType: "Instant" | "Schedule") => ({
   vaultType,
   protocol: { network: "Preprod" as const, lampPolicyId: LAMP_POLICY },
   appliedVault: { script: VAULT_SCRIPT, expectedScriptHash: validatorToScriptHash(VAULT_SCRIPT) },
+  vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
   tipPosixMs: TIP_MS,
 });
 

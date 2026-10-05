@@ -17,6 +17,7 @@ import { FundingError } from "@magiclamp/protocol-utils";
 import { describe, expect, it } from "vitest";
 
 import { assertSelfFundedShape, createVault } from "../src/createVault.js";
+import { ACCEPT_INLINE_SCRIPT_CEILING } from "../src/refScript.js";
 import { vaultIdAssetName } from "../src/vaultId.js";
 
 // `validator always_a { spend(..) { True } mint(..) { True } else(_) { fail } }` — plutus v3.
@@ -73,6 +74,7 @@ async function build(fundingOver: Record<string, unknown> = {}, extra: Record<st
     // Preview chưa có gốc cửa sổ (`WIN-PREVIEW`) ⟹ truyền gốc TƯỜNG MINH của bài.
     protocol: { network: "Preview", lampPolicyId: LAMP_POLICY, windowOriginMs: 1_000_000_000n },
     appliedVault: { script: VAULT, expectedScriptHash: VAULT_HASH },
+    vaultRefScriptUtxo: ACCEPT_INLINE_SCRIPT_CEILING,
     vault: { ownerPkh: PKH, lampDeposit: 800_000_000n },
     tipPosixMs: TIP_MS, collateralLovelace: 3_000_000n,
     funding: fundingOf(fundingOver), ...extra,

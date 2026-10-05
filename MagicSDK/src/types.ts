@@ -67,8 +67,10 @@ export interface ProtocolParams {
    *  the vault's LAMP UTxO asset unit. */
   lampPolicyId: string;
   /** Xác nhận lối mở TẬP DƯỢT (`lampPolicy.ts` ▸ `REHEARSAL_LAMP_POLICIES`): phải bằng
-   *  ĐÚNG `lampPolicyId`, và `network` phải là mạng thử. Bỏ trống ⟹ một đời LAMP đã bị
-   *  thay vẫn bị chặn như trước. Không có tác dụng với policy ngoài bảng tập dượt. */
+   *  ĐÚNG `lampPolicyId`, và `network` phải là mạng thử. Lối này ĐÃ ĐÓNG 2026-10-04 (bảng
+   *  rỗng) nên trường này hiện không mở được cửa nào: một đời LAMP đã bị thay vẫn bị chặn
+   *  dù có ack. Giữ trường để mở lại lối mà không đổi chữ ký. Không có tác dụng với policy
+   *  ngoài bảng tập dượt. */
   lampRehearsalAck?: string;
   /** LAMP asset name as hex. Bỏ trống thì DẪN THEO MẠNG qua
    *  `lampAssetName(network)`: Mainnet "4c414d50" = "LAMP", Preview/Preprod

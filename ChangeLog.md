@@ -5,6 +5,27 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-04 — Đóng lối mở tập dượt: `8169b76c…` kèm xác nhận đúng cũng bị chặn
+
+**Đổi gì.** `REHEARSAL_LAMP_POLICIES` rỗng ở cả hai bản chép tay (`MagicSDK/src/lampPolicy.ts`,
+`scripts/config.ts`). Hàm cổng không đổi: bảng rỗng thì `isRehearsalAcknowledged` /
+`checkLampPolicyId` không cho qua khoá nào. `8169b76c…` vẫn nằm trong
+`SUPERSEDED_LAMP_POLICIES`. Ba bộ kiểm đảo dấu (`MagicSDK/tests/lampPolicy.test.ts`,
+`VaultTxAPI/tests/config.test.ts`, `scripts/test_lamp_policy_gate.ts`): ca `8169b76c…` kèm ack
+đúng trên Preprod/Preview nay phải NÉM, mỗi ca âm có cực đối là policy cuối `493002cc…cfac`
+(có hoặc không ack) đi qua. Chú thích điều kiện gỡ, `VaultTxAPI/README.md`, `DevStatus.md`,
+`scripts/DEPLOYED.md`, chú thích `ProtocolParams.lampRehearsalAck` sửa theo.
+
+**Vì sao.** Điều kiện gỡ ghi sẵn trong chú thích đã thoả: cụm tập dượt dừng, cụm phục vụ chạy
+trên policy cuối từ 2026-10-04. Để khoá lại là để một lệnh có `LAMP_REHEARSAL_ACK` đúng vẫn dựng
+được vault trên một đời LAMP đã chết.
+
+**Cái gì gãy nếu đang bám bản cũ.** Lượt sinh cấu hình hay lượt chạy `scripts/` với
+`LAMP_POLICY_ID=8169b76c…` và `LAMP_REHEARSAL_ACK` đúng ⟹ ném câu lỗi đời-đã-bị-thay; tệp
+`VAULT_TX_API_DEPLOYMENT` mang `lamp.policy_id` = `8169b76c…` ⟹ `VaultTxAPI` từ chối khởi động.
+Mã Aiken và hash validator không đổi. Mở lại lối này cần một quyết định mới của chủ dự án và một
+khoá mới trong cả hai bảng (`scripts/test_lamp_policy_gate.ts` bắt hai bảng lệch tập khoá).
+
 ## 2026-10-04 — Tx đã nộp không còn bị đánh `TX_SUPERSEDED`
 
 **Đổi gì.** `VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry.markSubmitted` ghi mốc `submittedAtMs` cho

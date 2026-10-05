@@ -11,6 +11,7 @@ import { Data } from "@lucid-evolution/lucid";
 
 import {
   assertLampPolicyId,
+  isRehearsalAcknowledged,
   NON_LAMP_LOOKALIKE_POLICIES,
   REHEARSAL_LAMP_POLICIES,
   SUPERSEDED_LAMP_POLICIES,
@@ -180,13 +181,14 @@ describe("cổng đứng ở buildParamsList — chỗ policy id nướng vào s
   });
 });
 
-// ── Lối mở TẬP DƯỢT — xác nhận THEO GIÁ TRỊ ──────────────────────────────────
+// ── Lối mở TẬP DƯỢT — ĐÃ ĐÓNG 2026-10-04 ─────────────────────────────────────
 //
-// Mỗi ca dương có một ca âm chỉ khác ĐÚNG MỘT biến (ack · policy · mạng). Ca dương đứng
-// một mình xanh được ở cả bản đúng lẫn bản "cho qua mọi đời đã bị thay".
+// Bảng `REHEARSAL_LAMP_POLICIES` rỗng ⟹ không khoá nào được cho qua, kể cả khi ack bằng
+// ĐÚNG chuỗi policy trên mạng thử. Mỗi ca âm có một cực đối chỉ khác ĐÚNG MỘT biến, để
+// ca âm không xanh vì một lý do rỗng (ví dụ cổng ném với MỌI đầu vào).
 
-describe("assertLampPolicyId — lối mở tập dượt", () => {
-  /** Đời tập dượt: nằm trong CẢ bảng đã-bị-thay lẫn bảng tập dượt. */
+describe("assertLampPolicyId — lối mở tập dượt đã đóng", () => {
+  /** Đời tập dượt cũ: nằm trong bảng đã-bị-thay, NGOÀI bảng tập dượt (rỗng). */
   const REHEARSAL = "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd";
   /** Đã bị thay, NGOÀI bảng tập dượt. */
   const SUPERSEDED_ONLY = "d9c09230079b810ab5ed92e8db4c190d42efc42db6aac028656f7e07";
@@ -197,18 +199,29 @@ describe("assertLampPolicyId — lối mở tập dượt", () => {
   const DROPPED_53BC = "53bc12ade5ee24d43750b9560f152a54b48b804fab34dab810fb8743";
   const DROPPED_7ECB = "7ecbffe2b41f68c917035f52a1053efbd2323dfd85a81cf840089ea2";
 
-  it("bảng tập dượt là TẬP CON của bảng đã-bị-thay — sự thật 'đã bị thay' không đổi", () => {
-    const keys = Object.keys(REHEARSAL_LAMP_POLICIES);
-    expect(keys).toEqual([REHEARSAL]);
-    for (const p of keys) expect(SUPERSEDED_LAMP_POLICIES[p]).toBeDefined();
+  it("bảng tập dượt RỖNG — lối mở đóng, không cần sửa hàm cổng", () => {
+    expect(Object.keys(REHEARSAL_LAMP_POLICIES)).toEqual([]);
+  });
+
+  it("8169b76c VẪN nằm trong bảng đã-bị-thay — sự thật 'đã bị thay' không đổi", () => {
+    expect(SUPERSEDED_LAMP_POLICIES[REHEARSAL]).toBeDefined();
+  });
+
+  it("isRehearsalAcknowledged: ba điều kiện cũ đúng hết mà bảng rỗng ⟹ false", () => {
+    expect(isRehearsalAcknowledged(REHEARSAL, REHEARSAL, "Preprod")).toBe(false);
+    expect(isRehearsalAcknowledged(REHEARSAL, REHEARSAL, "Preview")).toBe(false);
   });
 
   it("8169b76c KHÔNG ack ⟹ ném, câu lỗi cũ nguyên văn", () => {
     expect(() => assertLampPolicyId(REHEARSAL, "t", undefined, "Preprod")).toThrow(/ĐÃ BỊ THAY/);
   });
 
-  it("8169b76c ack = chính nó, mạng Preprod ⟹ qua, trả lại nguyên giá trị", () => {
-    expect(assertLampPolicyId(REHEARSAL, "t", REHEARSAL, "Preprod")).toBe(REHEARSAL);
+  it("8169b76c ack = chính nó, mạng Preprod ⟹ NÉM (trước 2026-10-04 là qua)", () => {
+    expect(() => assertLampPolicyId(REHEARSAL, "t", REHEARSAL, "Preprod")).toThrow(/ĐÃ BỊ THAY/);
+  });
+
+  it("8169b76c ack = chính nó, mạng Preview ⟹ NÉM", () => {
+    expect(() => assertLampPolicyId(REHEARSAL, "t", REHEARSAL, "Preview")).toThrow(/ĐÃ BỊ THAY/);
   });
 
   it("8169b76c ack = chính nó nhưng mạng Mainnet ⟹ ném", () => {
@@ -237,9 +250,14 @@ describe("assertLampPolicyId — lối mở tập dượt", () => {
     expect(() => assertLampPolicyId(REHEARSAL, "t", "1", "Preprod")).toThrow(/ĐÃ BỊ THAY/);
   });
 
+  // Cực đối của cụm ca âm ở trên: cùng mạng, cùng dạng ack — chỉ đổi policy sang ĐỜI CUỐI.
   it("policy ACTIVE 493002cc không ack ⟹ qua", () => {
     expect(assertLampPolicyId(ACTIVE, "t", undefined, "Preprod")).toBe(ACTIVE);
     expect(assertLampPolicyId(ACTIVE, "t")).toBe(ACTIVE);
+  });
+
+  it("policy ACTIVE 493002cc ack = chính nó, Preprod ⟹ qua (ack thừa không làm hỏng đời cuối)", () => {
+    expect(assertLampPolicyId(ACTIVE, "t", ACTIVE, "Preprod")).toBe(ACTIVE);
   });
 
   it("53bc12ad (bỏ 2026-10-03) ⟹ ném, câu lỗi nêu policy thay thế 493002cc", () => {
@@ -269,46 +287,57 @@ describe("assertLampPolicyId — lối mở tập dượt", () => {
   });
 });
 
-describe("lối mở tập dượt đi tới ĐỦ ba chỗ gọi của SDK", () => {
+describe("lối mở tập dượt đã đóng ở ĐỦ ba chỗ gọi của SDK", () => {
   const REHEARSAL = "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd";
-  const protoPreprod = (ack?: string): ProtocolParams => ({
+  /** Policy tLAMP Preprod CUỐI — cực đối: cùng đường gọi, cùng mạng, chỉ đổi policy. */
+  const ACTIVE = "493002cc03004e3e14fd607cfba59312bd946e478e69d6ab431ccfac";
+  const protoPreprod = (policy: string, ack?: string): ProtocolParams => ({
     network: "Preprod",
-    lampPolicyId: REHEARSAL,
+    lampPolicyId: policy,
     shardPolicyId: "b".repeat(56),
     ...V2_BEACONS,
     ...(ack === undefined ? {} : { lampRehearsalAck: ack }),
   });
 
-  it("buildParamsList: có ack ⟹ qua, policy nằm ở slot 0", () => {
-    expect(buildParamsList("Schedule", protoPreprod(REHEARSAL), MS_PER, COMMIT_HASH)[0]).toBe(REHEARSAL);
+  it("buildParamsList: 8169b76c có ack đúng ⟹ NÉM (trước 2026-10-04 là qua)", () => {
+    expect(() => buildParamsList("Schedule", protoPreprod(REHEARSAL, REHEARSAL), MS_PER, COMMIT_HASH))
+      .toThrow(/ĐÃ BỊ THAY/);
   });
 
-  it("buildParamsList: không ack ⟹ ném", () => {
-    expect(() => buildParamsList("Schedule", protoPreprod(), MS_PER, COMMIT_HASH)).toThrow(/ĐÃ BỊ THAY/);
+  it("buildParamsList: 8169b76c không ack ⟹ ném", () => {
+    expect(() => buildParamsList("Schedule", protoPreprod(REHEARSAL), MS_PER, COMMIT_HASH)).toThrow(/ĐÃ BỊ THAY/);
   });
 
-  // `createVault` gọi cổng TRƯỚC phép kiểm `lampDeposit`. Ca dương đưa `lampDeposit = 0`
+  it("buildParamsList: cực đối — policy cuối ⟹ qua, nằm ở slot 0", () => {
+    expect(buildParamsList("Schedule", protoPreprod(ACTIVE), MS_PER, COMMIT_HASH)[0]).toBe(ACTIVE);
+  });
+
+  // `createVault` gọi cổng TRƯỚC phép kiểm `lampDeposit`. Cực đối đưa `lampDeposit = 0`
   // nên nó ném câu về `lampDeposit` — nghĩa là cổng policy đã cho qua; ca âm ném ở cổng.
-  const cv = (ack?: string) => createVault({
+  const cv = (policy: string, ack?: string) => createVault({
     lucid: {} as never,
     vaultType: "Schedule",
-    protocol: protoPreprod(ack),
+    protocol: protoPreprod(policy, ack),
     vault: { ownerPkh: "5b889dfd8fabd0234233dbb2e26b9b8e96ceffe77b0c55aa2e8efc21", lampDeposit: 0n },
   } as never);
 
-  it("createVault: có ack ⟹ đi QUA cổng policy (vấp ở lampDeposit phía sau)", async () => {
-    await expect(cv(REHEARSAL)).rejects.toThrow(/lampDeposit must be > 0/);
+  it("createVault: 8169b76c có ack đúng ⟹ ném ở cổng policy (trước 2026-10-04 vấp ở lampDeposit)", async () => {
+    await expect(cv(REHEARSAL, REHEARSAL)).rejects.toThrow(/\[createVault\].*ĐÃ BỊ THAY/);
   });
 
-  it("createVault: không ack ⟹ ném ở cổng policy", async () => {
-    await expect(cv()).rejects.toThrow(/\[createVault\].*ĐÃ BỊ THAY/);
+  it("createVault: 8169b76c không ack ⟹ ném ở cổng policy", async () => {
+    await expect(cv(REHEARSAL)).rejects.toThrow(/\[createVault\].*ĐÃ BỊ THAY/);
+  });
+
+  it("createVault: cực đối — policy cuối ⟹ đi QUA cổng policy (vấp ở lampDeposit phía sau)", async () => {
+    await expect(cv(ACTIVE)).rejects.toThrow(/lampDeposit must be > 0/);
   });
 
   // `withdrawLamp` gọi cổng SAU khi giải datum; sau cổng là bước tra redeemer trong
-  // `vaultPlutusJson`. Đưa `{}` ⟹ ca dương vấp ở bước đó, ca âm vấp ở cổng.
+  // `vaultPlutusJson`. Đưa `{}` ⟹ cực đối vấp ở bước đó, ca âm vấp ở cổng.
   const STUB_CBOR =
     "5907f5010100332323232323223225333004323232323253323300a3001300b375400226464a666018600260206ea8004540041860226024002601e6ea8c038c03cc03cc03c004526163006375a0024464a66601a600260120022a66601e60106ea800854008458595900cc8c8c8c8c008894ccc008cdc78010008a99980d99baf300c30093754a66601800a266ebcc02ccc00c0040088c8c008008c8c004004008894ccc008cdc78018008a4d2c601866646002446e1ccdc424014002a66601866ebcc01cc004c01cc024c01400454ccc02ccdd79817980180319810800a51005301230080021300700113001001001";
-  const wd = (ack?: string) => {
+  const wd = (policy: string, ack?: string) => {
     const datum = buildInitialVaultDatum({
       ownerPkh: "5b889dfd8fabd0234233dbb2e26b9b8e96ceffe77b0c55aa2e8efc21",
       lampBalanceOildrop: 1_000_000n, profile: "Flame", currentEpoch: 1n,
@@ -325,20 +354,24 @@ describe("lối mở tập dượt đi tới ĐỦ ba chỗ gọi của SDK", ()
       vaultType: "Schedule",
       vaultPlutusJson: {} as never,
       network: "Preprod",
-      lampPolicyId: REHEARSAL,
+      lampPolicyId: policy,
       destinationAddress: "addr_test1vpd9crk9ckgj8vrwxs2azwk3fvxz3gd0x3qfryq6tnmz3wgxxhgsf",
       tipPosixMs: 1_654_041_600_000n + 1_000n,   // gốc cửa sổ Preprod + 1 s — epoch 0, như bản trước tính từ 0
       ...(ack === undefined ? {} : { lampRehearsalAck: ack }),
     });
   };
 
-  it("withdrawLamp: có ack ⟹ đi QUA cổng policy (vấp ở bước tra redeemer phía sau)", async () => {
-    const err = await wd(REHEARSAL).then(() => null, (e: Error) => e);
-    expect(err).not.toBeNull();
-    expect(err!.message).not.toMatch(/ĐÃ BỊ THAY/);
+  it("withdrawLamp: 8169b76c có ack đúng ⟹ ném ở cổng policy (trước 2026-10-04 đi qua)", async () => {
+    await expect(wd(REHEARSAL, REHEARSAL)).rejects.toThrow(/\[withdrawLamp\].*ĐÃ BỊ THAY/);
   });
 
-  it("withdrawLamp: không ack ⟹ ném ở cổng policy", async () => {
-    await expect(wd()).rejects.toThrow(/\[withdrawLamp\].*ĐÃ BỊ THAY/);
+  it("withdrawLamp: 8169b76c không ack ⟹ ném ở cổng policy", async () => {
+    await expect(wd(REHEARSAL)).rejects.toThrow(/\[withdrawLamp\].*ĐÃ BỊ THAY/);
+  });
+
+  it("withdrawLamp: cực đối — policy cuối ⟹ đi QUA cổng policy (vấp ở bước tra redeemer phía sau)", async () => {
+    const err = await wd(ACTIVE).then(() => null, (e: Error) => e);
+    expect(err).not.toBeNull();
+    expect(err!.message).not.toMatch(/ĐÃ BỊ THAY/);
   });
 });

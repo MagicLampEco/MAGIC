@@ -45,7 +45,7 @@ function phaiNem(fn: () => void, chua: string) {
   throw new Error("KHÔNG ném");
 }
 
-/** Đời tập dượt — nằm trong CẢ bảng đã-bị-thay lẫn bảng tập dượt. */
+/** Đời tập dượt cũ — nằm trong bảng đã-bị-thay, NGOÀI bảng tập dượt (rỗng từ 2026-10-04). */
 const REHEARSAL = "8169b76cdaba83cf7c9ae32ebd2bb3a58aa215c7dc0b62c8f5e268dd";
 /** Đã bị thay, NGOÀI bảng tập dượt. */
 const SUPERSEDED_ONLY = "d9c09230079b810ab5ed92e8db4c190d42efc42db6aac028656f7e07";
@@ -60,11 +60,23 @@ const LOOKALIKE = "28e916b097be13ed955330f00710bd93e2ea74bbc89aa5f5cd0f12b4";
 
 const BI_THAY = "ĐÃ BỊ THAY";
 
-console.log("── checkLampPolicyId: lối mở tập dượt");
+console.log("── checkLampPolicyId: lối mở tập dượt đã đóng (bảng rỗng từ 2026-10-04)");
+ca("bảng tập dượt RỖNG — cả hai bản chép tay", () => {
+  bang(Object.keys(cfg.REHEARSAL_LAMP_POLICIES).length, 0, "config.ts");
+  bang(Object.keys(sdk.REHEARSAL_LAMP_POLICIES).length, 0, "lampPolicy.ts");
+});
+ca("8169b76c VẪN nằm trong bảng đã-bị-thay (cả hai bên)", () => {
+  if (!cfg.SUPERSEDED_LAMP_POLICIES[REHEARSAL]) throw new Error("config.ts: thiếu 8169b76c");
+  if (!sdk.SUPERSEDED_LAMP_POLICIES[REHEARSAL]) throw new Error("lampPolicy.ts: thiếu 8169b76c");
+});
 ca("8169b76c không ack ⟹ ném", () =>
   phaiNem(() => cfg.checkLampPolicyId(REHEARSAL, undefined, "Preprod"), BI_THAY));
-ca("8169b76c ack = chính nó, Preprod ⟹ qua", () =>
-  bang(cfg.checkLampPolicyId(REHEARSAL, REHEARSAL, "Preprod"), REHEARSAL, "trả về"));
+ca("8169b76c ack = chính nó, Preprod ⟹ NÉM (trước 2026-10-04 là qua)", () =>
+  phaiNem(() => cfg.checkLampPolicyId(REHEARSAL, REHEARSAL, "Preprod"), BI_THAY));
+ca("8169b76c ack = chính nó, Preview ⟹ NÉM", () =>
+  phaiNem(() => cfg.checkLampPolicyId(REHEARSAL, REHEARSAL, "Preview"), BI_THAY));
+ca("ACTIVE 493002cc ack = chính nó, Preprod ⟹ qua (cực đối: ack thừa không hại đời cuối)", () =>
+  bang(cfg.checkLampPolicyId(ACTIVE, ACTIVE, "Preprod"), ACTIVE, "trả về"));
 ca("8169b76c ack = chính nó, Mainnet ⟹ ném", () =>
   phaiNem(() => cfg.checkLampPolicyId(REHEARSAL, REHEARSAL, "Mainnet"), BI_THAY));
 ca("8169b76c ack = chính nó, mạng lạ ('preprod' thường) ⟹ ném", () =>
@@ -102,10 +114,15 @@ ca("LAMP_POLICY_ID=8169b76c, không LAMP_REHEARSAL_ACK ⟹ ném", () => {
   delete process.env.LAMP_REHEARSAL_ACK;
   phaiNem(() => cfg.POLICY_IDS.lamp, BI_THAY);
 });
-ca("LAMP_POLICY_ID=8169b76c, LAMP_REHEARSAL_ACK=8169b76c ⟹ qua", () => {
+ca("LAMP_POLICY_ID=8169b76c, LAMP_REHEARSAL_ACK=8169b76c ⟹ NÉM (trước 2026-10-04 là qua)", () => {
   process.env.LAMP_POLICY_ID = REHEARSAL;
   process.env.LAMP_REHEARSAL_ACK = REHEARSAL;
-  bang(cfg.POLICY_IDS.lamp, REHEARSAL, "POLICY_IDS.lamp");
+  phaiNem(() => cfg.POLICY_IDS.lamp, BI_THAY);
+});
+ca("LAMP_POLICY_ID=493002cc, LAMP_REHEARSAL_ACK=493002cc ⟹ qua (cực đối)", () => {
+  process.env.LAMP_POLICY_ID = ACTIVE;
+  process.env.LAMP_REHEARSAL_ACK = ACTIVE;
+  bang(cfg.POLICY_IDS.lamp, ACTIVE, "POLICY_IDS.lamp");
 });
 ca("LAMP_POLICY_ID=d9c09230, LAMP_REHEARSAL_ACK=8169b76c ⟹ ném", () => {
   process.env.LAMP_POLICY_ID = SUPERSEDED_ONLY;

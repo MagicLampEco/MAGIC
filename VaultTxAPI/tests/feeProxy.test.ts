@@ -154,8 +154,9 @@ function fundedTx(): string {
         assets: { lovelace: 5_000_000n, [LAMP_UNIT]: DEPOSIT, [VAULT_ID_UNIT]: 1n },
         inlineDatumHex: datumHex({ owner: KEY_OWNER, lampBalanceOildrop: DEPOSIT, lampLockedOildrop: 0n }),
       },
-      { address: DP_ADDRESS, assets: { lovelace: 2_000_000n, [LAMP_UNIT]: 99_000_000n } },
-      { address: FEE_ADDRESS, assets: { lovelace: 10_000_000n - CV_FEE } },
+      // Ví trả phí ứng min-ADA két (5 ADA); did_payment chỉ góp LAMP, lovelace về lại trọn (3 + 4 ADA).
+      { address: DP_ADDRESS, assets: { lovelace: 7_000_000n, [LAMP_UNIT]: 99_000_000n } },
+      { address: FEE_ADDRESS, assets: { lovelace: 10_000_000n - CV_FEE - 5_000_000n } },
     ],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },

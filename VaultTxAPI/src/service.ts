@@ -42,7 +42,7 @@ import {
   ownerLockKey, type OwnerInput, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
 } from "./owner.js";
 import { resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
-import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type IssuedRoute } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable, PendingSpends, submissionStateOf, type IssuedRoute } from "./locks.js";
 import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
   type CreateVaultSummary, type RequestedIntent, type TxSummary,
@@ -1033,6 +1033,9 @@ export class VaultTxService {
           didPaymentUtxos: fundingCtx.input.utxos,
           signers: [fundingSigners!.controllerPkh, fundingSigners!.deviceKeyHash],
           maxCollateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
+          // Ví trả phí ứng min-ADA output vault mới (`funding.ts` khối đầu tệp), cùng trần với đường
+          // `fee_payer` ở gốc.
+          frontingMaxLovelace: this.deps.deployment.feePayerFrontingMaxLovelace,
         });
       }
       if (feePayer !== undefined) {
@@ -1212,13 +1215,28 @@ export class VaultTxService {
     // ── BỊ THAY: xung đột giữa hai lượt dựng bắt Ở ĐÂY, không ở lúc dựng (`locks.ts`) ──────
     // Mốc "bị thay" là một lượt NỘP (cần chữ ký chủ), không phải một lượt DỰNG (ai cũng gọi
     // được) — nên tx người lạ dựng không bao giờ làm tx của chủ rơi vào nhánh này.
+    // Tx đã nộp mà sau đó bị một tx chung khoá nộp sau thay VẪN nhận 409 ở đây (không miễn trừ):
+    // nộp lại nó là đường ra két thứ hai cho cùng chủ (`locks.ts` ▸ `markSubmitted`).
+    const submission = submissionStateOf(issuedEntry);
     if (issuedEntry.supersededBy !== undefined) {
-      throw new TxSupersededError(bodyHashBefore, { superseded_by: issuedEntry.supersededBy });
+      throw new TxSupersededError(bodyHashBefore, {
+        superseded_by: issuedEntry.supersededBy, previously_submitted: submission !== "none", submission,
+      });
     }
     const inputRefs = inputRefsOf(req.txCbor).map(refStr);
     const conflicting = this.deps.pending?.conflicts(inputRefs, this.now(), bodyHashBefore) ?? [];
     if (conflicting.length > 0) {
-      throw new TxSupersededError(bodyHashBefore, { conflicting_inputs: conflicting });
+      throw new TxSupersededError(bodyHashBefore, {
+        conflicting_inputs: conflicting, previously_submitted: submission !== "none", submission,
+      });
+    }
+
+    // ── NỘP LẠI tx nút đã NHẬN: trả lại kết quả cũ, KHÔNG gửi lần nữa ──────────────────
+    // Lượt đầu đã vào mempool; gửi lại không thêm gì nếu nó còn đó, và nếu nó đã rơi khỏi mempool
+    // thì gửi lại là hồi sinh một tx mà sổ này không còn theo dõi xung đột cho nó được nữa (tx chung
+    // khoá dựng sau lượt đầu không bị nó thay). Tx rơi khỏi mempool ⟹ app tra chuỗi rồi dựng lại.
+    if (issuedEntry.submittedAtMs !== undefined) {
+      return { txHash: bodyHashBefore, lockReleasedFor: issuedEntry.submittedResult?.lockReleasedFor ?? null };
     }
 
     const builder = CML.TransactionWitnessSetBuilder.new();
@@ -1235,25 +1253,35 @@ export class VaultTxService {
       );
     }
 
+    // Đã gửi mà không có xác nhận: tx có thể đang ở mempool ⟹ ghi như một lượt nộp (input vào sổ
+    // chờ, tx chung khoá dựng trước bị thay) nhưng ở trạng thái `unconfirmed`. Không ghi thì lượt
+    // nộp lại bị đối xử như tx chưa từng gửi, và tx chung khoá nộp sau không bị chặn.
+    const noteUnconfirmed = (): void => {
+      this.deps.pending?.note(inputRefs, this.now(), bodyHashBefore);
+      this.deps.issued.markSubmitted(bodyHashBefore, this.now(), "unconfirmed");
+    };
     let chainHash: string;
     try {
       chainHash = await this.deps.chain.submitTx(assembled.to_cbor_hex());
     } catch (e) {
       // Nút TỪ CHỐI (không phải mất kết nối) ⟹ giao dịch này không bao giờ lên chuỗi, nên giữ
       // khoá tới hết hạn chỉ chặn chủ dựng lại bản đúng. Mất kết nối / quá giờ thì KHÔNG nhả:
-      // không biết giao dịch đã vào mempool hay chưa.
+      // không biết giao dịch đã vào mempool hay chưa — và ghi `unconfirmed`.
       if (e instanceof SubmitRejectedError) this.deps.locks.releaseByTxHash(bodyHashBefore);
+      else noteUnconfirmed();
       throw e;
     }
     if (chainHash !== bodyHashBefore) {
+      // Tx ĐÃ được gửi; lời "từ chối" này là một báo cáo, không phải một cái chặn.
+      noteUnconfirmed();
       throw new SubmitRejectedError(
         "Nút chuỗi báo một tx hash khác với hash thân giao dịch mà dịch vụ vừa nộp.",
         { submitted_hash: bodyHashBefore, node_hash: chainHash },
       );
     }
     this.deps.pending?.note(inputRefs, this.now(), bodyHashBefore);
-    this.deps.issued.markSubmitted(bodyHashBefore, this.now());
     const lockReleasedFor = this.deps.locks.releaseByTxHash(bodyHashBefore);
+    this.deps.issued.markSubmitted(bodyHashBefore, this.now(), "accepted", { lockReleasedFor });
     return { txHash: bodyHashBefore, lockReleasedFor };
   }
 

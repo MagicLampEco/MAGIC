@@ -8618,3 +8618,97 @@ test fb_g_plain_fund_no_bound_ok() {
     },
   )
 }
+
+// ── Gốc lưới ≠ 0 (cụm Preprod thật có `window_origin_ms` khác 0) ──
+// Gốc = 3 epoch + 12.345 ms (không chia hết `ms_ep`), nên bản QUÊN trừ gốc đọc epoch
+// lệch +3 so với bản đúng: ca genesis "+200 đạt" đỏ dưới đột biến đó.
+const fb_origin: Int = 259_212_345
+
+fn fbo_lo(epoch: Int) -> Int {
+  fb_origin + epoch * ms_ep + 10
+}
+
+fn fbo_g(after: Int) -> Bool {
+  let name = fg_name()
+  let d =
+    PaidFundDatum {
+      ..fg_clean(),
+      sponsorship: Some(
+        Sponsorship {
+          sponsor: rc_sponsor_addr(),
+          owner_commit: rc_owner_commit,
+          reclaim_after_epoch: after,
+        },
+      ),
+    }
+  paid_fund.mint(
+    t_carp_policy, t_carp_name, ms_ep, fb_origin, t_wakeme_hash,
+    Void, t_fund_hash,
+    Transaction {
+      ..placeholder,
+      inputs: [fg_seed_input()],
+      outputs: [fg_carrier(name, d)],
+      mint: assets.from_asset(t_fund_hash, name, 1),
+      extra_signatories: [t_platform],
+      validity_range: interval.between(fbo_lo(t_epoch), fbo_lo(t_epoch) + 10),
+    },
+  )
+}
+
+// Cận trên ở epoch t_epoch THEO GỐC ⟹ mốc tối thiểu t_epoch + 200.
+test fbo_g_plus_200_ok() {
+  fbo_g(t_epoch + 200)
+}
+
+test fbo_g_plus_199() fail {
+  fbo_g(t_epoch + 199)
+}
+
+fn fbo_spend(fin: PaidFundDatum, tx: Transaction) -> Bool {
+  paid_fund.spend(
+    t_carp_policy, t_carp_name, ms_ep, fb_origin, t_wakeme_hash,
+    Some(fin), FundReclaim, t_fund_ref(), tx,
+  )
+}
+
+fn fbo_at(tx: Transaction, epoch: Int) -> Transaction {
+  Transaction {
+    ..tx,
+    validity_range: interval.between(fbo_lo(epoch), fbo_lo(epoch) + 10),
+  }
+}
+
+// Dự phòng, tiếp nối, gốc ≠ 0 (mốc rc_after() = t_epoch + 200).
+fn fbo_cont(epoch: Int) -> Bool {
+  let fin = rc_cont_fin()
+  let fout = PaidFundDatum { ..rc_cont_fout(), last_updated_epoch: epoch }
+  fbo_spend(
+    fin,
+    fbo_at(
+      fb_tx(
+        [t_fund_in(fin, fin.carp_locked), rc_payer_in()],
+        [t_fund_out(fout, 3 * rc_e9), rc_pay(6 * rc_e9)],
+        True, assets.zero, epoch, fb_s_list(),
+      ),
+      epoch,
+    ),
+  )
+}
+
+test fbo_cont_at_mark_ok() {
+  fbo_cont(rc_after())
+}
+
+test fbo_cont_before_mark() fail {
+  fbo_cont(rc_after() - 1)
+}
+
+// Dự phòng, đóng, gốc ≠ 0.
+test fbo_close_at_mark_ok() {
+  fbo_spend(rc_close_fin(), fbo_at(fb_close_tx(rc_after(), fb_s_list(), True), rc_after()))
+}
+
+test fbo_close_before_mark() fail {
+  let e = rc_after() - 1
+  fbo_spend(rc_close_fin(), fbo_at(fb_close_tx(e, fb_s_list(), True), e))
+}

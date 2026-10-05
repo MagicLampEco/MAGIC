@@ -5,6 +5,27 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-05 — `create-vault` nạp từ did_payment: ví trả phí ứng min-ADA của két
+
+**Đổi gì.** Ở chế độ ví trả phí bên thứ ba (`funding.fee_payer`, không đặt `feeSource =
+"did_payment"`), `MagicSDK/src/createVault.ts` chỉ lấy LAMP từ did_payment; min-ADA của output két
+mới do ví trả phí ứng, và trọn lovelace của các UTxO did_payment đã chi về lại did_payment. Két
+Instant 0 LAMP mà chủ không có mục rút thì giao dịch không chi UTxO did_payment nào (quyền chủ vẫn
+ép như cũ). `VaultTxAPI/src/funding.ts` ▸ `checkFundingTx` đổi phương trình bảo toàn theo đúng hình
+dạng đó: ví trả phí góp đúng phí + thối + khoản ứng (= trọn lovelace output két, trần
+`fee_payer_fronting_max_lovelace`, vượt ⟹ `422 FEE_PAYER_FRONTING_ABOVE_MAX`); did_payment không mất
+lovelace. Bản tóm tắt `funding.fee_payer` thêm `fronted_lovelace`, `fronted_max_lovelace`; báo giá
+create-vault tính khoản ứng vào số ví trả phí phải có. Chế độ ví Phoenix tự trả phí không đổi.
+
+**Vì sao.** DID mới thường chỉ có LAMP + khoảng 1,2 ADA ở did_payment, dưới min-ADA của két
+(khoảng 2,1 ADA). Bắt did_payment trả nó thì đúng người dùng cần ví trả phí bị `FUNDING_INSUFFICIENT`
+(đo trên Preprod 2026-10-05 với một DID thật: UTxO 1.000 LAMP + 1.240.954 lovelace).
+
+**Cái gì gãy nếu đang bám bản cũ.** Giao dịch create-vault hình dạng cũ (did_payment trả min-ADA két)
+nay bị `checkFundingTx` từ chối `FUNDING_TX_MISMATCH`, nên bên nào tự dựng giao dịch theo hình dạng
+cũ rồi gửi qua VTA phải dựng lại theo SDK mới. Ví trả phí cần thêm tới
+`fee_payer_fronting_max_lovelace` lovelace cho mỗi két. Mã Aiken và hash validator không đổi.
+
 ## 2026-10-04 — Đóng lối mở tập dượt: `8169b76c…` kèm xác nhận đúng cũng bị chặn
 
 **Đổi gì.** `REHEARSAL_LAMP_POLICIES` rỗng ở cả hai bản chép tay (`MagicSDK/src/lampPolicy.ts`,

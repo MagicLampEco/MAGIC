@@ -132,8 +132,9 @@ function feePayerTx(): string {
         assets: { lovelace: 5_000_000n, [LAMP_UNIT]: DEPOSIT, [VAULT_ID_UNIT]: 1n },
         inlineDatumHex: datumHex({ owner: KEY_OWNER, lampBalanceOildrop: DEPOSIT, lampLockedOildrop: 0n }),
       },
-      { address: DP_ADDRESS, assets: { lovelace: 2_000_000n, [LAMP_UNIT]: 99_000_000n } },
-      { address: FEE_ADDRESS, assets: { lovelace: 10_000_000n - FEE } },
+      // Chế độ ví trả phí: ví trả phí ỨNG 5 ADA min-ADA vault; did_payment nhận lại trọn 7 ADA đã chi.
+      { address: DP_ADDRESS, assets: { lovelace: 7_000_000n, [LAMP_UNIT]: 99_000_000n } },
+      { address: FEE_ADDRESS, assets: { lovelace: 10_000_000n - FEE - 5_000_000n } },
     ],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },

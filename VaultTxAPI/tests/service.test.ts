@@ -532,7 +532,7 @@ describe("Bộ định tuyến", () => {
       owner_pkh: OWNER_PKH, schedule_length: "17", lamp_per_epoch: "7000000",
     }), h.router);
     expect(r.status).toBe(200);
-    expect(Object.keys(r.body).sort()).toEqual(["expires_at", "expires_reason", "ignored", "ignored_other_owner_count", "required_signers", "summary", "tx_cbor", "tx_hash", "witness_notes"]);
+    expect(Object.keys(r.body).sort()).toEqual(["expires_at", "expires_reason", "ignored", "ignored_other_owner_count", "required_signers", "server_time", "summary", "tx_cbor", "tx_hash", "witness_notes"]);
     const summary = r.body.summary as { lamp: { locked_delta_oildrop: string } };
     // Lại một lần nữa, qua trọn đường HTTP: bản tóm tắt đi theo CBOR, không theo thân bài.
     expect(summary.lamp.locked_delta_oildrop).toBe("21000000");

@@ -493,6 +493,12 @@ export class SponsorTxService {
     this.now = deps.now ?? (() => Date.now());
   }
 
+  /** Giờ máy chủ (POSIX ms) mà tầng HTTP đóng dấu thành `server_time` (`http.ts` ▸ `withServerTime`).
+   *  Cùng đồng hồ đã lập cận `validTo` (`planSponsorValidity`). */
+  serverNowMs(): number {
+    return this.now();
+  }
+
   /** Chủ `{type:"did"}` ⟹ `Script(did_stake)` + nhân chứng (`didOwner.ts`); chủ khác trả nguyên. */
   resolveOwner<R extends OwnerRequest>(req: R): Promise<WithResolvedOwner<R>> {
     return resolveOwnerInput(req, this.deps.didOwner);

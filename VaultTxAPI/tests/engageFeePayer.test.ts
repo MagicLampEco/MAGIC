@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { parseDeployment, type Deployment } from "../src/config.js";
-import { handle, type RouterDeps } from "../src/http.js";
+import { handle, withServerTime, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
 import { RecordedTxBuilder, enterpriseAddressOf } from "../src/txBuilder.js";
@@ -240,6 +240,27 @@ describe("fee_payer — hạn kẹp giờ giữ chỗ Feecover (service.ts ▸ v
     expect(note).not.toContain("Feecover");
   });
 
+  it("server_time = đồng hồ của DỊCH VỤ (không phải Date.now của tiến trình), và expires_at − server_time = hạn còn lại", async () => {
+    const h = harness({ cbor: feeTx({ ttlMs: 300_000 }) });
+    h.issued.noteFeeReservation(FEE_REF, NOW + 300_400);
+    const r = await handle(commit({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const b = r.body as { expires_at: string; server_time: string };
+    // NOW là mốc cố định năm 2026 trong bài; Date.now thật của máy chạy bài thì khác ⟹ phân biệt được.
+    expect(b.server_time).toBe(new Date(NOW).toISOString());
+    expect(Date.parse(b.expires_at) - Date.parse(b.server_time)).toBe(300_000);
+  });
+
+  it("CẶP: thân KHÔNG có expires_at ⟹ không thêm server_time và không đọc đồng hồ", () => {
+    let reads = 0;
+    const clock = () => { reads++; return NOW; };
+    expect(withServerTime({ tx_hash: "ab" }, clock)).toEqual({ tx_hash: "ab" });
+    expect(reads).toBe(0);
+    const stamped = withServerTime({ expires_at: "2026-10-06T03:00:00.000Z" }, clock);
+    expect(stamped).toEqual({ expires_at: "2026-10-06T03:00:00.000Z", server_time: new Date(NOW).toISOString() });
+    expect(reads).toBe(1);
+  });
+
   it("giờ giữ chỗ đã qua ⟹ 409 FEE_PAYER_RESERVATION_EXPIRED, bộ dựng không bị gọi", async () => {
     const h = harness();
     h.issued.noteFeeReservation(FEE_REF, NOW - 1);
@@ -450,7 +471,7 @@ describe("/tx/open-thread", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const b = r.body as Record<string, unknown> & { summary: { engage: Record<string, unknown> }; tx_hash: string };
     expect(Object.keys(b).sort()).toEqual([
-      "engage_address", "engage_nft", "expires_at", "expires_reason", "owner", "required_signers", "summary", "tx_cbor", "tx_hash", "witness_notes",
+      "engage_address", "engage_nft", "expires_at", "expires_reason", "owner", "required_signers", "server_time", "summary", "tx_cbor", "tx_hash", "witness_notes",
     ]);
     expect(b.engage_nft).toBe(THREAD_UNIT);
     expect(b.engage_address).toBe(ENGAGE_ADDRESS);

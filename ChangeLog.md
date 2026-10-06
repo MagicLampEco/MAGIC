@@ -21,7 +21,9 @@ hiệu lực ⟹ `409 FEE_PAYER_RESERVATION_EXPIRED`. `VAULT_TX_API_LOCK_TTL_MS`
 mềm theo chủ; sổ input vừa nộp có biến riêng `VAULT_TX_API_PENDING_SPENDS_TTL_MS`. `/tx/submit` kiểm
 chữ ký với `required_signers` trước mọi lần ghi sổ (`witnessCheck.ts`: `400 WITNESS_SIGNATURE_INVALID`
 / `WITNESS_MISSING_SIGNER`). SDK gen/consume/schedule nhận tham số tuỳ chọn `validityMaxAheadMs` /
-`validityTtlMs`; `createVault` của SDK nhận `validToMs` ≤ 1 giờ khi có `funding`.
+`validityTtlMs`; `createVault` của SDK nhận `validToMs` ≤ 1 giờ khi có `funding`. Mọi phản hồi mang
+`expires_at` có thêm `server_time` (giờ dịch vụ lúc trả, ISO 8601 có mili-giây; `http.ts` ▸
+`withServerTime`), đọc từ cùng đồng hồ quyết 410 ở `/tx/submit`.
 
 **Vì sao.** Trước đây `expires_at` = lúc gọi + `lock_ttl` (180 s) — một con số dịch vụ tự khai,
 không nằm trong tx. Sổ cái không biết mốc đó; vài đường (`change_address`) dựng tx không có `validTo`
@@ -33,7 +35,9 @@ nguồn hạn duy nhất nằm trong chính thân tx thì app, dịch vụ và s
 hạn — đọc `expires_at` thay vì tự tính. Client đợi `502 SUBMIT_REJECTED` (ở `/tx/submit`) hoặc `403
 FEE_PROXY_TX_NOT_ISSUED` (ở `/fee/sign`) cho tx hết hạn nay nhận `410 TX_EXPIRED`; nhánh "dựng lại"
 phải bắt mã mới, và với `rebuild_safe: false` thì tra chuỗi theo `tx_hash` trước khi dựng lại.
-Client kiểm lược đồ lời đáp chặt (không cho trường lạ) sẽ gãy ở `expires_reason`. Tx `open-thread` /
+Client so `expires_at` với đồng hồ của máy mình thì lệch theo độ lệch đồng hồ máy — tính hạn trên máy
+= lúc nhận + (`expires_at` − `server_time`). Client kiểm lược đồ lời đáp chặt (không cho trường lạ)
+sẽ gãy ở `expires_reason` và `server_time`. Tx `open-thread` /
 `bind-did` / `create-vault` đường `change_address` nay hết hạn sau 15 phút thay vì sống vô hạn. Ai
 đặt `VAULT_TX_API_LOCK_TTL_MS` để kéo dài hạn nộp thì biến đó không còn tác dụng ấy — dùng
 `VAULT_TX_API_TX_VALIDITY_MS` (khoảng `[60000, 3600000]`). Bộ chứng ký có chữ ký sai hoặc thiếu khoá

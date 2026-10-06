@@ -225,7 +225,8 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
       return { status: 200, body: out as unknown as Record<string, unknown> };
     }
     if (path.startsWith("/tx/sponsor/")) {
-      return { status: 200, body: await sponsorRoute(path, body, deps.sponsor) };
+      const out = await sponsorRoute(path, body, deps.sponsor);
+      return { status: 200, body: withServerTime(out, () => deps.sponsor!.serverNowMs()) };
     }
     const route = BUILD_ROUTE_OF_PATH[path];
     if (route === undefined) {
@@ -235,7 +236,7 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
     const parsed = parseBuildRequest(route, body);
     const service = deps.blocks === undefined ? deps.service : await deps.blocks.serviceFor(route, body);
     const built = await runBuild(service, parsed);
-    return { status: 200, body: buildResultBody(built) };
+    return { status: 200, body: withServerTime(buildResultBody(built), () => deps.service.serverNowMs()) };
   } catch (e) {
     if (e instanceof TxApiError) return { status: e.httpStatus, body: e.toBody() };
     // Lỗi quyền chủ lọt tới đây (không qua tầng dịch vụ) vẫn giữ NGUYÊN mã.
@@ -265,6 +266,21 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
 }
 
 // ── phụ trợ ────────────────────────────────────────────────────────────────────
+
+/**
+ * Thân có `expires_at` ⟹ thêm `server_time` (ISO 8601, mili-giây), đóng dấu lúc trả phản hồi.
+ *
+ * `expires_at` là mốc tuyệt đối (validTo của tx). App so nó với đồng hồ ĐIỆN THOẠI thì một máy để
+ * giờ nhanh vài phút thấy mọi bản dựng "đã quá hạn" ngay lúc nhận. Có `server_time`, app tính hạn
+ * trên máy = lúc nhận + (`expires_at` − `server_time`). Đồng hồ là của chính dịch vụ
+ * (`VaultTxService.serverNowMs`, cùng đồng hồ quyết 410 `TX_EXPIRED` ở `/tx/submit`; route tài trợ
+ * dùng `SponsorTxService.serverNowMs`, cùng đồng hồ đã lập cận `validTo` của nó) — không phải
+ * header `Date` (chỉ tới giây, proxy có thể bỏ hoặc viết lại). Thân không có `expires_at` giữ nguyên
+ * và đồng hồ không bị đọc.
+ */
+export function withServerTime(body: Record<string, unknown>, nowMs: () => number): Record<string, unknown> {
+  return typeof body.expires_at === "string" ? { ...body, server_time: new Date(nowMs()).toISOString() } : body;
+}
 
 function methodNotAllowed(expected: string): HttpResponse {
   return { status: 405, body: err("METHOD_NOT_ALLOWED", `Đường này chỉ nhận ${expected}.`) };

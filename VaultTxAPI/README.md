@@ -166,6 +166,7 @@ Năm đường dựng trên vault có sẵn (`instant-gen`, `refresh-checkpoint`
   "summary": { … },          // §2
   "expires_at": "2026-09-11T16:28:03.000Z", // = validTo của CHÍNH thân tx (ISO 8601) — xem dưới
   "expires_reason": "tx_validity",           // cận nào quyết validTo — xem dưới
+  "server_time": "2026-09-11T16:13:03.412Z", // giờ dịch vụ lúc trả phản hồi (ISO 8601, mili-giây)
   "ignored": [],             // UTxO ở địa chỉ vault cố ý không tính, kèm lý do (trừ vault của chủ khác)
   "ignored_other_owner_count": 0, // vault của CHỦ KHÁC ở cùng địa chỉ — chỉ đếm, không liệt kê
   "required_signers": ["…"], // đọc từ required_signers của CHÍNH tx_cbor
@@ -191,6 +192,12 @@ hạn **duy nhất**: sổ cái từ chối tx sau mốc đó, nên mọi mốc 
   `tx_validity` (hạn ký cấu hình) · `epoch_end` (cuối epoch) · `fee_reservation` (giờ giữ chỗ
   Feecover) · `builder_cap` (`validTo` trong CBOR sớm hơn mọi cận đã lên kế hoạch — bộ dựng tự kẹp
   chặt hơn; suy ở `reasonOfValidTo`). Hoà nhau thì cận khai trước thắng theo đúng thứ tự trên.
+- **`server_time`** — giờ của chính dịch vụ lúc trả phản hồi, ISO 8601 có mili-giây; có ở MỌI
+  phản hồi mang `expires_at` (route dựng và `/tx/sponsor/*`), gắn ở `src/http.ts` ▸ `withServerTime`.
+  Đồng hồ là `VaultTxService.serverNowMs` — cùng đồng hồ quyết `410 TX_EXPIRED` ở `/tx/submit`.
+  App đừng so `expires_at` với đồng hồ điện thoại (máy để giờ nhanh vài phút sẽ thấy mọi bản dựng
+  "đã quá hạn"); hạn trên máy = lúc nhận + (`expires_at` − `server_time`). Header `Date` chỉ tới
+  giây và proxy có thể bỏ hoặc viết lại, nên không dùng làm nguồn.
 - **Hết hạn phía dịch vụ** = `validTo + CLOCK_SKEW_MARGIN_MS` (biên lệch đồng hồ giữa dịch vụ và
   nút, `src/validity.ts`). Trong biên đó dịch vụ vẫn gửi tx và để nút phán. Quá biên, tx dịch vụ đã
   phát nhận `410 TX_EXPIRED` ở cả `/tx/submit` lẫn `/fee/sign`, cùng một hàm dựng

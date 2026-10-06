@@ -125,7 +125,7 @@ describe("/tx/bind-did — dương", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const b = r.body as Record<string, unknown> & { summary: { engage: Record<string, unknown> }; tx_hash: string };
     expect(Object.keys(b).sort()).toEqual([
-      "did_commit", "engage_address", "engage_nft", "expires_at", "expires_reason", "owner", "required_signers", "summary",
+      "did_commit", "engage_address", "engage_nft", "expires_at", "expires_reason", "owner", "required_signers", "server_time", "summary",
       "tx_cbor", "tx_hash", "witness_notes",
     ]);
     expect(b.did_commit).toBe(DID);

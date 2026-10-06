@@ -140,7 +140,7 @@ describe("POST /tx/create-vault", () => {
     expect(r.status).toBe(200);
     const b = r.body as Record<string, unknown> & { summary: { vault: Record<string, unknown> } };
     expect(Object.keys(b).sort()).toEqual([
-      "expires_at", "expires_reason", "owner", "required_signers", "summary", "tx_cbor", "tx_hash",
+      "expires_at", "expires_reason", "owner", "required_signers", "server_time", "summary", "tx_cbor", "tx_hash",
       "vault_address", "vault_nft", "witness_notes",
     ]);
     expect(b.vault_nft).toBe(VAULT_ID_UNIT);

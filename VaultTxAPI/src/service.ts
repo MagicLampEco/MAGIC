@@ -266,6 +266,12 @@ export class VaultTxService {
     this.witnessCheck = deps.witnessCheck ?? assertWitnessesCoverTx;
   }
 
+  /** Giờ máy chủ (POSIX ms) — CÙNG đồng hồ mà `/tx/submit` dùng để quyết 410 `TX_EXPIRED`. Tầng HTTP
+   *  đóng dấu nó thành `server_time` cạnh `expires_at` (`http.ts` ▸ `withServerTime`). */
+  serverNowMs(): number {
+    return this.now();
+  }
+
   get network(): Network {
     return this.deps.network;
   }

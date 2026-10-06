@@ -88,7 +88,7 @@ import { txBodyHash } from "./summary.js";
 import { assertChangeAddress, enterpriseAddressOf } from "./txBuilder.js";
 import { raw } from "./units.js";
 import {
-  DEFAULT_TX_VALIDITY_MS, planValidity, readTxExpiry, type ExpiresReason, type ValidityPlan,
+  DEFAULT_TX_VALIDITY_MS, expiryNote, planValidity, readTxExpiry, type ExpiresReason, type ValidityPlan,
 } from "./validity.js";
 
 // ── Bảng mã lỗi SDK → HTTP ─────────────────────────────────────────────────────
@@ -355,7 +355,7 @@ export function toSponsorBody(r: SponsorBuildResponse): Record<string, unknown> 
     tx_hash: r.txHash,
     required_signers: r.requiredSigners,
     signers: r.signers.map(s => ({ role: s.role, key_hashes: s.keyHashes, how: s.how })),
-    witness_notes: r.witnessNotes,
+    witness_notes: [...r.witnessNotes, expiryNote({ expiresAt: r.expiresAt, reason: r.expiresReason })],
     summary: r.summary,
     expires_at: r.expiresAt,
     expires_reason: r.expiresReason,

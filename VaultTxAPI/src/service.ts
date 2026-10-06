@@ -65,7 +65,7 @@ import {
 import { genLimitsSummary } from "./summary.js";
 import { assertWitnessesCoverTx } from "./witnessCheck.js";
 import {
-  DEFAULT_TX_VALIDITY_MS, planValidity, readTxExpiry, type ExpiresReason, type TxExpiry, type ValidityPlan,
+  DEFAULT_TX_VALIDITY_MS, expiryNote, planValidity, readTxExpiry, type ExpiresReason, type TxExpiry, type ValidityPlan,
 } from "./validity.js";
 import type { ConsumeBuildParams } from "./txBuilder.js";
 import { checkConsumeTx, consumeLineOf, type ConsumePair } from "./consumeLine.js";
@@ -1500,7 +1500,7 @@ export function toCreateVaultBody(r: CreateVaultResponse): Record<string, unknow
     vault_address: r.vaultAddress,
     owner: { type: r.owner.type, hash: r.owner.hash },
     required_signers: r.requiredSigners,
-    witness_notes: r.witnessNotes,
+    witness_notes: [...r.witnessNotes, expiryNote({ expiresAt: r.expiresAt, reason: r.expiresReason })],
     summary: r.summary,
     expires_at: r.expiresAt,
     expires_reason: r.expiresReason,
@@ -1515,7 +1515,7 @@ export function toOpenThreadBody(r: OpenThreadResponse): Record<string, unknown>
     engage_address: r.engageAddress,
     owner: { type: r.owner.type, hash: r.owner.hash },
     required_signers: r.requiredSigners,
-    witness_notes: r.witnessNotes,
+    witness_notes: [...r.witnessNotes, expiryNote({ expiresAt: r.expiresAt, reason: r.expiresReason })],
     summary: r.summary,
     expires_at: r.expiresAt,
     expires_reason: r.expiresReason,
@@ -1531,7 +1531,7 @@ export function toBindDidBody(r: BindDidResponse): Record<string, unknown> {
     owner: { type: r.owner.type, hash: r.owner.hash },
     did_commit: r.didCommit,
     required_signers: r.requiredSigners,
-    witness_notes: r.witnessNotes,
+    witness_notes: [...r.witnessNotes, expiryNote({ expiresAt: r.expiresAt, reason: r.expiresReason })],
     summary: r.summary,
     expires_at: r.expiresAt,
     expires_reason: r.expiresReason,
@@ -1550,7 +1550,7 @@ export function toBuildBody(r: BuildResponse): Record<string, unknown> {
     ignored: r.ignored.filter(x => x.reason !== "OWNER_MISMATCH").map(x => ({ utxo_ref: x.utxoRef, reason: x.reason })),
     ignored_other_owner_count: r.ignored.filter(x => x.reason === "OWNER_MISMATCH").length,
     required_signers: r.requiredSigners,
-    witness_notes: r.witnessNotes,
+    witness_notes: [...r.witnessNotes, expiryNote({ expiresAt: r.expiresAt, reason: r.expiresReason })],
   };
 }
 

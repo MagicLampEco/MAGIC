@@ -219,6 +219,10 @@ describe("fee_payer — hạn kẹp giờ giữ chỗ Feecover (service.ts ▸ v
     const b = r.body as { expires_at: string; expires_reason: string };
     expect(b.expires_reason).toBe("fee_reservation");
     expect(b.expires_at).toBe(new Date(NOW + 300_000).toISOString());
+    // witness_notes nói CÙNG mốc và CÙNG lý do với expires_at/expires_reason (`validity.ts` ▸ `expiryNote`).
+    const note = (r.body as { witness_notes: string[] }).witness_notes.at(-1) ?? "";
+    expect(note).toContain(`trước ${b.expires_at} `);
+    expect(note).toContain("giờ giữ chỗ UTxO ví trả phí ở Feecover");
   });
 
   it("CẶP (b): reserved_until MUỘN hơn tip+15′ ⟹ cận = tip+15′, expires_reason tx_validity", async () => {
@@ -228,6 +232,12 @@ describe("fee_payer — hạn kẹp giờ giữ chỗ Feecover (service.ts ▸ v
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(h.builder.lastCall?.validityMaxAheadMs).toBe(900_000n);
     expect((r.body as { expires_reason: string }).expires_reason).toBe("tx_validity");
+    // Cặp với ca (a): lý do khác ⟹ câu khác, cùng mốc expires_at.
+    const b = r.body as { expires_at: string; witness_notes: string[] };
+    const note = b.witness_notes.at(-1) ?? "";
+    expect(note).toContain(`trước ${b.expires_at} `);
+    expect(note).toContain("hạn ký của dịch vụ");
+    expect(note).not.toContain("Feecover");
   });
 
   it("giờ giữ chỗ đã qua ⟹ 409 FEE_PAYER_RESERVATION_EXPIRED, bộ dựng không bị gọi", async () => {

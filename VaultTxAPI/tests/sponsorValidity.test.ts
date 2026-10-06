@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ChainTip } from "../src/chain.js";
 import { IssuedTxRegistry } from "../src/locks.js";
-import { planSponsorValidity, sponsorValidityArgs, type SponsorStep } from "../src/sponsor.js";
+import { planSponsorValidity, sponsorValidityArgs, toSponsorBody, type SponsorStep } from "../src/sponsor.js";
 import { readTxExpiry, type ValidityPlan } from "../src/validity.js";
 import { buildTxCbor } from "./fixtures/tx.js";
 import { OWNER_PKH } from "./fixtures/preview.js";
@@ -118,5 +118,22 @@ describe("hạn tx tài trợ: MỌI bước có validTo", () => {
       expect(Object.values(args)).toEqual([p.maxAheadMs]);
       expect(Object.keys(args)).toEqual([step === "T4" ? "validityMaxAheadMs" : "validityTtlMs"]);
     }
+  });
+});
+
+describe("toSponsorBody — witness_notes mang dòng hạn khớp expires_at", () => {
+  const base = {
+    step: "T1" as SponsorStep, txCbor: "", txHash: "", requiredSigners: [], signers: [],
+    witnessNotes: ["ghi chú có sẵn"], summary: {}, expiresAt: "2026-10-06T03:00:00.000Z",
+  };
+  it("CẶP: fee_reservation và epoch_end cho hai câu khác nhau, cùng mốc, ghi chú cũ giữ nguyên ở đầu", () => {
+    const a = toSponsorBody({ ...base, expiresReason: "fee_reservation" }) as { witness_notes: string[] };
+    const e = toSponsorBody({ ...base, expiresReason: "epoch_end" }) as { witness_notes: string[] };
+    expect(a.witness_notes[0]).toBe("ghi chú có sẵn");
+    expect(a.witness_notes).toHaveLength(2);
+    for (const n of [a.witness_notes[1], e.witness_notes[1]]) expect(n).toContain(`trước ${base.expiresAt} `);
+    expect(a.witness_notes[1]).toContain("Feecover");
+    expect(e.witness_notes[1]).toContain("cuối epoch");
+    expect(a.witness_notes[1]).not.toBe(e.witness_notes[1]);
   });
 });

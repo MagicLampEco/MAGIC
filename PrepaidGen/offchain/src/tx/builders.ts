@@ -14,6 +14,7 @@
 //   FundReclaim ▸ validate_fund_reclaim (tiếp nối) / validate_fund_close +
 //                 validate_burn_fund_nft (đóng) + validate_close_sponsored_line (vault,
 //                 khi quỹ đã cấp) — phần quỹ + vault; phần két Wakeme do bên Wakeme ghép
+//   SetDidCommit ▸ validate_set_did_commit (gắn PersonDID một lần)
 //   mọi spend vault ▸ vault_identity_preserved (NFT còn nguyên, ADA không giảm,
 //                     ≤ 2 policy, không ref-script)
 
@@ -60,6 +61,7 @@ import {
   mintVaultIdRedeemer,
   readFundUtxo,
   readVaultUtxo,
+  setDidCommitRedeemer,
   settleLineRedeemer,
   vaultIdAssetName,
 } from "./codec.js";
@@ -316,6 +318,64 @@ export function addPrepaidLock(
   p: PrepaidLockParams & { ownerProof: OwnerProof },
 ): PrepaidLockResult & { tx: TxBuilder } {
   const r = planPrepaidLock(p);
+  return { ...r, tx: applyPlan(tx, r.plan, p.ownerProof) };
+}
+
+// ══════════════════════════════════════════════════════════════
+// SetDidCommit — gắn PersonDID cho két, MỘT LẦN
+// ══════════════════════════════════════════════════════════════
+
+export interface SetDidCommitParams {
+  scripts: PrepaidScripts;
+  vaultUtxo: UTxO;
+  /** blake2b-256 của DID — đúng 32 byte (64 ký tự hex thường). */
+  didCommit: string;
+  validity: TxValidity;
+}
+
+export interface SetDidCommitResult {
+  plan: TxPlan;
+  epoch: bigint;
+  vaultDatumOut: PrepaidVaultDatum;
+}
+
+/**
+ * Gương `validate_set_did_commit`: két CHƯA gắn DID (`did_commit == #""`) · chữ ký
+ * của CHÍNH `owner` (không nhận `personal_delegate`) · giá trị mới khác rỗng và đúng
+ * 32 byte · đầu ra vault chỉ đổi `did_commit`, cộng `last_updated_epoch = epoch hiện
+ * hành`; mọi trường khác giữ nguyên · không CARP ở vault. Két đã gắn DID ⟹ NÉM: nhánh
+ * tự khoá sau lần chạy đầu, một cam kết đã ghi không bao giờ đổi được.
+ *
+ * Quỹ tài trợ (`sponsorship = Some`) đòi két mang đúng `owner_commit` ở `PrepaidLock`
+ * (`prepaid.ts` ▸ `assertSponsoredLock`) — nên hành trình tài trợ đi qua bước này
+ * giữa lượt mở két và lượt nạp quỹ.
+ */
+export function planSetDidCommit(p: SetDidCommitParams): SetDidCommitResult {
+  const v = readVaultUtxo(p.scripts, p.vaultUtxo);
+  if (v.datum.did_commit !== "") {
+    fail(
+      "C-PP-DID-ONCE",
+      `két ${p.vaultUtxo.txHash}#${p.vaultUtxo.outputIndex} đã gắn DID ${v.datum.did_commit} — SetDidCommit chỉ chạy một lần`,
+    );
+  }
+  if (!/^[0-9a-f]{64}$/.test(p.didCommit)) {
+    fail("C-PP-DID-LEN", `did_commit phải đúng 32 byte hex thường (64 ký tự), nhận ${p.didCommit.length} ký tự`);
+  }
+  const epoch = epochOf(p.scripts, p.validity);
+  const vaultDatumOut: PrepaidVaultDatum = { ...v.datum, did_commit: p.didCommit, last_updated_epoch: epoch };
+  const plan = emptyPlan();
+  plan.spends.push({ utxo: p.vaultUtxo, redeemerCbor: setDidCommitRedeemer(p.didCommit), script: p.scripts.vault });
+  plan.outputs.push({ address: p.vaultUtxo.address, datumCbor: encodeVaultDatum(vaultDatumOut), assets: sameAssets(p.vaultUtxo) });
+  plan.validity = p.validity;
+  plan.owner = ownerRefOf(v.datum.owner);
+  return { plan, epoch, vaultDatumOut };
+}
+
+export function addSetDidCommit(
+  tx: TxBuilder,
+  p: SetDidCommitParams & { ownerProof: OwnerProof },
+): SetDidCommitResult & { tx: TxBuilder } {
+  const r = planSetDidCommit(p);
   return { ...r, tx: applyPlan(tx, r.plan, p.ownerProof) };
 }
 

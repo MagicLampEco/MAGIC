@@ -68,6 +68,9 @@ export const drawRedeemer = (fundId: string, amount: bigint): string =>
   vaultRedeemer({ PrepaidDraw: { fund_id: fundId, amount_carpdrop: amount } });
 export const burnBatchRedeemer = (burns: readonly (readonly [string, bigint])[]): string =>
   vaultRedeemer({ BurnBatch: { burns: burns.map(([b, a]) => [b, a] as [string, bigint]) } });
+/** `SetDidCommit { did_commit }` — constr 5, gắn PersonDID MỘT LẦN (`validate_set_did_commit`). */
+export const setDidCommitRedeemer = (didCommit: string): string =>
+  vaultRedeemer({ SetDidCommit: { did_commit: didCommit } });
 export const settleLineRedeemer = (fundId: string): string =>
   vaultRedeemer({ SettleLine: { fund_id: fundId } });
 /** `CloseSponsoredLine { fund_id }` — constr 7, thẻ CBOR 1280 ⟹ tiền tố `d90500`. */

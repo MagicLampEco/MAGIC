@@ -1053,7 +1053,6 @@ export class VaultTxService {
         },
         { lampAmount: req.lampAmount, profile: req.profile, ...(req.didCommit === undefined ? {} : { wakemeLink: req.didCommit }) },
       );
-      const expiry = this.expiryOf(built.txCbor, plan, tip);
       const lampUnit = this.deps.deployment.lampPolicyId + this.deps.deployment.lampAssetNameHex;
       const summary = summarizeCreateVaultTx(built.txCbor, {
         vaultAddress: scope.address,
@@ -1100,6 +1099,10 @@ export class VaultTxService {
           fronting: { address: scope.address, nftUnit: built.vaultNftUnit }, otherInputAddresses: [],
         });
       }
+      // Đọc hạn SAU các cổng đọc-lại có mã (funding/fee_payer): tx thiếu validTo hoặc hạn quá trần
+      // ví trả phí phải ra 422 FUNDING_TX_MISMATCH nói rõ trường lệch, không ra 500 bất biến nội bộ.
+      // Cổng hạn vẫn chạy trước mọi lần giữ khoá / ghi sổ bên dưới.
+      const expiry = this.expiryOf(built.txCbor, plan, tip);
       if (!sameOwner(summary.vault.owner, owner)) {
         throw new TxSummaryUndecodableError(
           `datum vault vừa dựng mang chủ ${summary.vault.owner.type}:${summary.vault.owner.hash} ` +

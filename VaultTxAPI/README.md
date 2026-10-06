@@ -164,13 +164,54 @@ Năm đường dựng trên vault có sẵn (`instant-gen`, `refresh-checkpoint`
   "tx_cbor": "84a4…",        // giao dịch CHƯA KÝ
   "tx_hash": "3f1c…",        // hash THÂN giao dịch — app đối chiếu sau khi ký
   "summary": { … },          // §2
-  "expires_at": "2026-09-11T16:28:03.000Z",
+  "expires_at": "2026-09-11T16:28:03.000Z", // = validTo của CHÍNH thân tx (ISO 8601) — xem dưới
+  "expires_reason": "tx_validity",           // cận nào quyết validTo — xem dưới
   "ignored": [],             // UTxO ở địa chỉ vault cố ý không tính, kèm lý do (trừ vault của chủ khác)
   "ignored_other_owner_count": 0, // vault của CHỦ KHÁC ở cùng địa chỉ — chỉ đếm, không liệt kê
   "required_signers": ["…"], // đọc từ required_signers của CHÍNH tx_cbor
-  "witness_notes": ["…"]     // việc phải làm ngoài chữ ký (chủ script: mục rút did_stake…)
+  "witness_notes": ["…"]     // việc phải làm ngoài chữ ký (chủ script: mục rút did_stake…);
+                             // dòng cuối luôn là dòng hạn (`validity.ts` ▸ `expiryNote`)
 }
 ```
+
+### Hạn của tx: một nguồn duy nhất, `validTo` trong thân tx
+
+Từ 2026-10-06 mọi tx dịch vụ phát ra — kể cả `open-thread`, `bind-did`, `create-vault` đi đường
+`change_address`, và các bước `/tx/sponsor/*` — đều mang `validTo` (ttl) trong thân. Đó là nguồn
+hạn **duy nhất**: sổ cái từ chối tx sau mốc đó, nên mọi mốc khác dịch vụ khai ra đều suy từ nó.
+
+- **Cận trên** (`src/validity.ts` ▸ `planValidity`): `validTo` = mốc SỚM nhất trong ba cận, căn
+  xuống slot — `tip + VAULT_TX_API_TX_VALIDITY_MS` (mặc định `DEFAULT_TX_VALIDITY_MS` = 15 phút) ·
+  cuối epoch hiện tại · `reserved_until` của UTxO ví trả phí lấy qua `/fee/utxo` (tra ở sổ
+  phát-hành, `IssuedTxRegistry.feeReservationOf`). Giờ giữ chỗ đó đã qua, hoặc còn dưới một slot
+  ⟹ `409 FEE_PAYER_RESERVATION_EXPIRED` (`details.reserved_until`): xin lại `/fee/utxo` rồi dựng lại.
+- **`expires_at`** — `validTo` đọc NGƯỢC từ chính `tx_cbor` (`readTxExpiry`), dạng ISO 8601.
+  Không còn là "lúc gọi + `VAULT_TX_API_LOCK_TTL_MS`".
+- **`expires_reason`** — cận nào quyết `validTo`, kiểu `ExpiresReason` trong `src/validity.ts`:
+  `tx_validity` (hạn ký cấu hình) · `epoch_end` (cuối epoch) · `fee_reservation` (giờ giữ chỗ
+  Feecover) · `builder_cap` (`validTo` trong CBOR sớm hơn mọi cận đã lên kế hoạch — bộ dựng tự kẹp
+  chặt hơn; suy ở `reasonOfValidTo`). Hoà nhau thì cận khai trước thắng theo đúng thứ tự trên.
+- **Hết hạn phía dịch vụ** = `validTo + CLOCK_SKEW_MARGIN_MS` (biên lệch đồng hồ giữa dịch vụ và
+  nút, `src/validity.ts`). Trong biên đó dịch vụ vẫn gửi tx và để nút phán. Quá biên, tx dịch vụ đã
+  phát nhận `410 TX_EXPIRED` ở cả `/tx/submit` lẫn `/fee/sign`, cùng một hàm dựng
+  (`src/locks.ts` ▸ `expiredErrorFor`):
+
+  ```jsonc
+  { "error": { "code": "TX_EXPIRED", "details": {
+      "tx_hash": "…",
+      "expired_at": "2026-10-06T02:15:00.000Z", // = validTo, cùng khuôn expires_at
+      "rebuild_safe": true,    // tx chưa từng được gửi tới nút ⟹ dựng bản mới không thể ra hai tx
+      "submission": "none"     // "accepted" | "unconfirmed" | "none" — như details.submission của 409
+  } } }
+  ```
+
+  `rebuild_safe: false` ⟹ tx từng được gửi tới nút, có thể đã lên chuỗi trước mốc: tra chuỗi theo
+  `tx_hash` trước khi dựng lại. Sổ phát-hành giữ dòng hết hạn thêm `EXPIRED_RETENTION_MS`
+  (`src/locks.ts`); quá khoảng đó, hoặc tx chưa từng do dịch vụ phát ⟹ mã cũ của đường đó
+  (`502 SUBMIT_REJECTED` ở `/tx/submit`, `403 FEE_PROXY_TX_NOT_ISSUED` ở `/fee/sign`).
+- **`VAULT_TX_API_LOCK_TTL_MS` nay CHỈ là khoá mềm theo chủ** (§4) — không còn quyết `expires_at`,
+  hạn sổ phát-hành hay hạn sổ input vừa nộp. Sổ input vừa nộp (`PendingSpends`) có biến riêng,
+  `VAULT_TX_API_PENDING_SPENDS_TTL_MS`, đo theo độ trễ chỉ mục của nút đọc chứ không theo hạn ký.
 
 ### Gen v2.0: `summary.gen` trên mọi đường dựng vault
 
@@ -949,8 +990,10 @@ thân tự tính; lệch ⟹ `502 FEE_PROXY_UPSTREAM_MISMATCH`, không trả ch�
 
 **Hạn ký.** UTxO lấy qua `/fee/utxo` thì tx tiêu nó chỉ xin ký được tới `reserved_until`; sau
 mốc đó ⟹ `403 FEE_PROXY_TX_NOT_ISSUED` (Feecover có thể đã giao UTxO cho người khác) — xin
-UTxO mới và dựng lại. `fee_payer` app tự đưa (không qua `/fee/utxo`) thì hạn ký là hạn của sổ
-phát-hành.
+UTxO mới và dựng lại. Dịch vụ đã kẹp `validTo` của tx vào mốc này lúc dựng (§3 ▸ *Hạn của tx*).
+`fee_payer` app tự đưa (không qua `/fee/utxo`) thì hạn ký là hạn nộp, `validTo + biên`. Tx dịch vụ
+đã phát mà quá `validTo + biên` ⟹ `410 TX_EXPIRED`, cùng `details` với `/tx/submit`; Feecover
+không bị gọi.
 
 **Ứng dụng khác `magic`.** Không gửi tiêu đề `X-Feecover-Token` ⟹ đi dưới ứng dụng `magic`.
 Ứng dụng khác (ví dụ `orilife`) gửi token Feecover **của chính họ** ở `X-Feecover-Token`;
@@ -1287,7 +1330,10 @@ Nên:
 | `X-Feecover-Token` không khớp ứng dụng nào | `401 FEE_PROXY_APP_UNKNOWN` |
 | ứng dụng chưa có mục đích cho route đó | `400 FEE_PROXY_PURPOSE_UNMAPPED` |
 | mục đích thuộc ứng dụng khác / thiếu tiền tố tên ứng dụng | `403 FEE_PROXY_APP_PURPOSE` |
-| `/fee/sign` cho tx không do dịch vụ phát, hoặc quá hạn ký | `403 FEE_PROXY_TX_NOT_ISSUED` |
+| `/fee/sign` cho tx không do dịch vụ phát, hoặc còn hạn nộp nhưng quá `reserved_until` | `403 FEE_PROXY_TX_NOT_ISSUED` |
+| `/tx/submit` / `/fee/sign` cho tx dịch vụ ĐÃ phát mà quá `validTo + CLOCK_SKEW_MARGIN_MS` | `410 TX_EXPIRED` (`details.tx_hash`, `expired_at`, `rebuild_safe`, `submission`) |
+| UTxO ví trả phí hết giờ giữ chỗ Feecover trước khi tx kịp có khoảng hiệu lực | `409 FEE_PAYER_RESERVATION_EXPIRED` (`details.reserved_until`) |
+| `/tx/submit`: một chữ ký không khớp thân tx / thiếu chữ ký của khoá trong `required_signers` | `400 WITNESS_SIGNATURE_INVALID` / `400 WITNESS_MISSING_SIGNER` |
 | `/fee/sign` cho tx không dùng ví trả phí | `400 FEE_PROXY_NO_FEE_PAYER` |
 | Feecover từ chối (`400`/`403`/`409`/`422`/`429`) | mã đó + `FEE_PROXY_REJECTED` |
 | dịch vụ không cấu hình `feecover` | `501 FEE_PROXY_UNAVAILABLE` |
@@ -1367,13 +1413,14 @@ vô thời hạn. Luật hiện hành:
 
 Mã `OWNER_TX_IN_FLIGHT` đã nghỉ: không đường nào trả nữa, giữ lại trong tài liệu để app đời cũ còn
 nhận ra. Khoá vẫn **giữ tới lúc nộp** để `/tx/submit` biết tx nào chung khoá. Ba đường mở khoá:
-`/tx/submit` đúng giao dịch đó · hết hạn (`VAULT_TX_API_LOCK_TTL_MS`, mặc định 180 s, cũng
-là `expires_at`) · dựng hỏng thì nhả ngay · nút chuỗi TỪ CHỐI giao dịch lúc nộp (mất kết nối
+`/tx/submit` đúng giao dịch đó · hết hạn (`VAULT_TX_API_LOCK_TTL_MS`, mặc định 180 s; từ
+2026-10-06 KHÔNG còn là `expires_at` — hạn tx là `validTo`, §3 ▸ *Hạn của tx*) · dựng hỏng thì nhả ngay · nút chuỗi TỪ CHỐI giao dịch lúc nộp (mất kết nối
 lúc nộp thì KHÔNG nhả — không biết giao dịch đã vào mempool chưa). Khoá mang thẻ thế hệ: một
 lượt dựng chậm quá hạn không nhả, cũng không gắn hash lên khoá của lượt sau.
 
 **Sau khi nộp**, khoá nhả nhưng nút đọc chuỗi chỉ thấy input bị tiêu khi giao dịch vào khối.
-Trong khe đó dịch vụ giữ input của giao dịch vừa nộp (cùng TTL khoá): dựng lại trên đúng UTxO
+Trong khe đó dịch vụ giữ input của giao dịch vừa nộp (`VAULT_TX_API_PENDING_SPENDS_TTL_MS`, tách
+khỏi TTL khoá từ 2026-10-06): dựng lại trên đúng UTxO
 vault ấy ⟹ `409 PREVIOUS_TX_PENDING`; bộ dựng không chọn lại UTxO ví/shard ấy làm input.
 
 **Giới hạn đã biết:** khoá nằm trong bộ nhớ của **một tiến trình**. Chạy hai bản sau một
@@ -1418,7 +1465,9 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `VAULT_TX_API_SPONSOR_TOKEN` | khi phục vụ T2 | rỗng ⟹ `/tx/sponsor/t2-fund` trả `501 CONFIG_MISSING`. **GIÁ TRỊ** thẻ vai sponsor, đưa cho bên vận hành tài trợ; trùng `VAULT_TX_API_TOKEN` ⟹ từ chối khởi động |
 | `VAULT_TX_API_BLOCKFROST_URL` | không | dẫn theo `NETWORK` |
 | `VAULT_TX_API_TIMEOUT_MS` | không | `20000` |
-| `VAULT_TX_API_LOCK_TTL_MS` | không | `180000` |
+| `VAULT_TX_API_LOCK_TTL_MS` | không | `180000` — CHỈ khoá mềm theo chủ (§4), khoảng `[1000, 3600000]` |
+| `VAULT_TX_API_TX_VALIDITY_MS` | không | `900000` (`DEFAULT_TX_VALIDITY_MS`) — hạn ký: cận `tip + giá trị này` của `validTo`, khoảng `[60000, 3600000]` (`src/config.ts` ▸ `loadConfig`) |
+| `VAULT_TX_API_PENDING_SPENDS_TTL_MS` | không | `300000` — sổ input vừa nộp (`PendingSpends`) nhớ một input bao lâu, khoảng `[30000, 3600000]` |
 | `FEECOVER_APP_TOKEN` | khi cấu hình có `feecover.apps.magic` | — **GIÁ TRỊ** token ứng dụng Feecover (token API, không phải khoá ký) |
 
 Cổng fail-closed lúc khởi động: thiếu biến bắt buộc · bind ngoài loopback mà thẻ bài rỗng ·

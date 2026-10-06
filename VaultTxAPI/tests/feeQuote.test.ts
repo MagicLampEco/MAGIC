@@ -303,11 +303,12 @@ const quote = (body: Record<string, unknown>) => post("/tx/quote", body);
 
 interface QuoteBody {
   feecover: {
-    fee_lovelace: string; available: boolean; reason?: string; rule?: string; message?: string; upstream_status?: number;
+    fee_lovelace: string; fronted_lovelace: string; available: boolean; reason?: string; rule?: string; message?: string;
+    upstream_status?: number;
   };
   owner_address: {
-    fee_lovelace: string; available: boolean; needed_lovelace: string; collateral_lovelace: string;
-    fee_payer?: { utxo: string; address: string }; reason?: string;
+    fee_lovelace: string; fronted_lovelace: string; available: boolean; needed_lovelace: string;
+    collateral_lovelace: string; fee_payer?: { utxo: string; address: string }; reason?: string;
   };
   valid_until: string;
 }
@@ -329,7 +330,7 @@ const COLLATERAL_STR = String(COLLATERAL);
 const refOf = (u: UTxO) => `${u.txHash}#${u.outputIndex}`;
 /** `owner_address` khi chọn được `u` (ví enterprise). */
 const ownerPicked = (u: UTxO) => ({
-  fee_lovelace: String(FEE_ENTERPRISE), available: true, needed_lovelace: String(OWNER_NEEDED),
+  fee_lovelace: String(FEE_ENTERPRISE), fronted_lovelace: "0", available: true, needed_lovelace: String(OWNER_NEEDED),
   collateral_lovelace: COLLATERAL_STR, fee_payer: { utxo: refOf(u), address: u.address },
 });
 
@@ -339,7 +340,7 @@ describe("/tx/quote — thân bài", () => {
   it("dương: consume, đủ ba khối, hạn = min(validTo, expires_at)", async () => {
     const h = harness({ feecover: FEECOVER_MAGIC, ownerUtxos: [ownerAda(50_000_000n)] });
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME, owner_fee_addresses: [OWNER_FEE_ADDRESS] }), h.router));
-    expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), available: true });
+    expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), fronted_lovelace: "0", available: true });
     expect(b.owner_address).toEqual(ownerPicked(ownerAda(50_000_000n)));
     // Một nguồn hạn (validity.ts): expires_at nay đọc NGƯỢC từ validTo của chính CBOR, nên
     // min(validTo, expires_at) = validTo (NOW + 10 phút), không còn là NOW + TTL khoá mềm.
@@ -484,7 +485,7 @@ describe("/tx/quote — feecover.available", () => {
   it("bản deploy không khai feecover ⟹ false, FEE_QUOTE_FEECOVER_UNCONFIGURED; phí vẫn có", async () => {
     const h = harness();
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
-    expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), available: false, reason: "FEE_QUOTE_FEECOVER_UNCONFIGURED" });
+    expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_UNCONFIGURED" });
   });
 
   it("app mặc định không có mục đích cho route ⟹ false, FEE_QUOTE_FEECOVER_PURPOSE_UNMAPPED", async () => {
@@ -498,14 +499,14 @@ describe("/tx/quote — feecover.available", () => {
   it("feecover khai mà không có app mặc định ⟹ false, FEE_QUOTE_FEECOVER_NO_DEFAULT_APP", async () => {
     const h = harness({ feecover: FEECOVER_NO_MAGIC });
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
-    expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), available: false, reason: "FEE_QUOTE_FEECOVER_NO_DEFAULT_APP" });
+    expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_NO_DEFAULT_APP" });
     expect(h.fetchCalls).toHaveLength(0);
   });
 
   it("CẶP: app mặc định có mục đích cho consume, Feecover trả true ⟹ true, không reason; hỏi đúng một lượt", async () => {
     const h = harness({ feecover: FEECOVER_MAGIC });
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
-    expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), available: true });
+    expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), fronted_lovelace: "0", available: true });
     expect(h.fetchCalls).toEqual(["https://feecover.example/v1/fee-sources?purpose=consume_magic"]);
   });
 
@@ -535,7 +536,7 @@ describe("/tx/quote — owner_address.available", () => {
     const h = harness();
     const b = bodyOf(await q(h));
     expect(b.owner_address).toEqual({
-      fee_lovelace: String(FEE_BASE), available: false, needed_lovelace: String(OWNER_NEEDED),
+      fee_lovelace: String(FEE_BASE), fronted_lovelace: "0", available: false, needed_lovelace: String(OWNER_NEEDED),
       collateral_lovelace: COLLATERAL_STR, reason: "FEE_QUOTE_OWNER_ADDRESSES_ABSENT",
     });
     expect("fee_payer" in b.owner_address).toBe(false);
@@ -588,7 +589,7 @@ describe("/tx/quote — owner_address.available", () => {
     const h = harness({ ownerUtxos: [tokenOnly] });
     const b = bodyOf(await q(h, [OWNER_FEE_ADDRESS]));
     expect(b.owner_address).toEqual({
-      fee_lovelace: String(FEE_ENTERPRISE), available: false, needed_lovelace: String(OWNER_NEEDED),
+      fee_lovelace: String(FEE_ENTERPRISE), fronted_lovelace: "0", available: false, needed_lovelace: String(OWNER_NEEDED),
       collateral_lovelace: COLLATERAL_STR, reason: "FEE_QUOTE_OWNER_NO_ADA_UTXO",
     });
     expect("fee_payer" in b.owner_address).toBe(false);
@@ -643,7 +644,7 @@ describe("/tx/quote — owner_address.available", () => {
     const h = harness({ ownerUtxos: [ownerAda(OWNER_NEEDED - 1n), ownerAda(1_000_000n, 1)] });
     const b = bodyOf(await q(h, [OWNER_FEE_ADDRESS]));
     expect(b.owner_address).toEqual({
-      fee_lovelace: String(FEE_ENTERPRISE), available: false, needed_lovelace: String(OWNER_NEEDED),
+      fee_lovelace: String(FEE_ENTERPRISE), fronted_lovelace: "0", available: false, needed_lovelace: String(OWNER_NEEDED),
       collateral_lovelace: COLLATERAL_STR, reason: "FEE_QUOTE_OWNER_INSUFFICIENT",
     });
     expect(h.builder.seen.some(u => u.txHash === "0e".repeat(32))).toBe(false);
@@ -682,7 +683,7 @@ describe("/tx/quote — owner_address.available", () => {
     for (const order of [[OWNER_FEE_ADDRESS, OWNER_BASE_FEE_ADDRESS], [OWNER_BASE_FEE_ADDRESS, OWNER_FEE_ADDRESS]]) {
       const b = bodyOf(await q(harness(), order));
       expect(b.owner_address).toEqual({
-        fee_lovelace: String(FEE_BASE), available: false, needed_lovelace: String(OWNER_NEEDED),
+        fee_lovelace: String(FEE_BASE), fronted_lovelace: "0", available: false, needed_lovelace: String(OWNER_NEEDED),
         collateral_lovelace: COLLATERAL_STR, reason: "FEE_QUOTE_OWNER_NO_ADA_UTXO",
       });
     }
@@ -735,6 +736,84 @@ describe("/tx/quote — không ghi sổ phát-hành, không giành khoá, không
   });
 });
 
+// ── fronted_lovelace: khoản ứng min-ADA báo trước ────────────────────────────────
+
+describe("/tx/quote — fronted_lovelace (min-ADA ví trả phí ỨNG cho output két/thread)", () => {
+  const OWNER_FEE_UTXO = ownerAda(50_000_000n);
+  const FP = { utxo: refOf(OWNER_FEE_UTXO), address: OWNER_FEE_ADDRESS };
+  /** `summary.fee_payer.fronted_lovelace` của đường dựng THẬT — cùng hàm (`checkFeePayerTx`) mà báo giá đọc. */
+  const realFronted = (r: { status: number; body: unknown }, funding = false): string => {
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const s = (r.body as { summary: { fee_payer?: { fronted_lovelace: string };
+      funding?: { fee_payer?: { fronted_lovelace: string } } } }).summary;
+    return (funding ? s.funding?.fee_payer : s.fee_payer)!.fronted_lovelace;
+  };
+
+  it("dương: open-thread ⟹ cả hai nguồn báo đúng số đường dựng thật sẽ ứng (> 0), kể cả khi owner_address chọn được UTxO", async () => {
+    const h = harness({ feecover: FEECOVER_MAGIC, ownerUtxos: [OWNER_FEE_UTXO], refUtxos: [OWNER_FEE_UTXO] });
+    const params = { owner_pkh: OTHER_OWNER_PKH };
+    const b = bodyOf(await handle(quote({ route: "open-thread", params, owner_fee_addresses: [OWNER_FEE_ADDRESS] }), h.router));
+    const real = realFronted(await handle(post("/tx/open-thread", { ...params, fee_payer: FP }), h.router));
+    expect(BigInt(real)).toBeGreaterThan(0n);
+    expect(b.owner_address.available).toBe(true);
+    expect(b.owner_address.fronted_lovelace).toBe(real);
+    expect(b.feecover.fronted_lovelace).toBe(real);
+  });
+
+  it("dương: owner_address KHÔNG chọn được (không gửi địa chỉ / không đủ ngưỡng) ⟹ vẫn có fronted_lovelace, khớp đường dựng thật", async () => {
+    const h = harness({ ownerUtxos: [ownerAda(OWNER_NEEDED - 1n)], refUtxos: [OWNER_FEE_UTXO] });
+    const params = { owner_pkh: OTHER_OWNER_PKH };
+    const real = realFronted(await handle(post("/tx/open-thread", { ...params, fee_payer: FP }), h.router));
+    for (const addrs of [undefined, [OWNER_FEE_ADDRESS]]) {
+      const b = bodyOf(await handle(quote({
+        route: "open-thread", params, ...(addrs === undefined ? {} : { owner_fee_addresses: addrs }),
+      }), h.router));
+      expect(b.owner_address.available).toBe(false);
+      expect(b.owner_address.fronted_lovelace).toBe(real);
+      expect(b.feecover.fronted_lovelace).toBe(real);
+    }
+  });
+
+  it("dương: create-vault + funding ⟹ khoản ứng min-ADA két mới, khớp summary.funding.fee_payer của đường dựng thật", async () => {
+    const h = harness({ didPayment: true, ownerUtxos: [OWNER_FEE_UTXO], refUtxos: [OWNER_FEE_UTXO] });
+    const funding = {
+      type: "did_payment", did_payment_script_cbor: DP_SCRIPT, address: DP_ADDRESS,
+      anchor_ref: `${DP_ANCHOR.txHash}#0`, controller_pkh: DP_CTRL, device_key_hash: DP_DEV,
+    };
+    const params = { owner_pkh: OWNER_PKH, kind: "schedule", lamp_amount: "1001000000" };
+    const b = bodyOf(await handle(quote({
+      route: "create-vault", params: { ...params, funding }, owner_fee_addresses: [OWNER_FEE_ADDRESS],
+    }), h.router));
+    const real = realFronted(await handle(post("/tx/create-vault", {
+      ...params, funding: { ...funding, fee_source: "fee_payer", fee_payer: FP },
+    }), h.router), true);
+    expect(BigInt(real)).toBeGreaterThan(0n);
+    expect(b.owner_address.fronted_lovelace).toBe(real);
+    expect(b.feecover.fronted_lovelace).toBe(real);
+  });
+
+  it("CẶP đối: consume (không ứng output nào) ⟹ \"0\" ở cả hai khối, và đường dựng thật cũng \"0\" — số đo, không đệm", async () => {
+    const h = harness({ feecover: FEECOVER_MAGIC, ownerUtxos: [OWNER_FEE_UTXO], refUtxos: [OWNER_FEE_UTXO] });
+    const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME, owner_fee_addresses: [OWNER_FEE_ADDRESS] }), h.router));
+    const real = realFronted(await handle(post("/tx/consume", { ...CONSUME, fee_payer: FP }), h.router));
+    expect(real).toBe("0");
+    expect("fronted_lovelace" in b.feecover).toBe(true);
+    expect("fronted_lovelace" in b.owner_address).toBe(true);
+    expect(b.feecover.fronted_lovelace).toBe("0");
+    expect(b.owner_address.fronted_lovelace).toBe("0");
+  });
+
+  it("nằm trong needed_lovelace: open-thread (thế chấp 1 ADA < phí + ứng) ⟹ needed − phí − ứng = min-ADA như consume", async () => {
+    // Bỏ khoản ứng khỏi `needed` thì hiệu này lệch đúng bằng khoản ứng. Đọc từ chính phản hồi, không từ hằng.
+    const h = harness({ deploymentExtra: { fee_payer_collateral_lovelace: "1000000" } });
+    const b = bodyOf(await handle(quote({
+      route: "open-thread", params: { owner_pkh: OTHER_OWNER_PKH }, owner_fee_addresses: [OWNER_FEE_ADDRESS],
+    }), h.router));
+    const o = b.owner_address;
+    expect(BigInt(o.needed_lovelace) - BigInt(o.fee_lovelace) - BigInt(o.fronted_lovelace)).toBe(OWNER_NEEDED - COLLATERAL);
+  });
+});
+
 // ── nguồn Feecover HỎI Feecover: `GET /v1/fee-sources` ─────────────────────────
 
 /** Hai route có mục đích: phép kiểm query `purpose` đổi đúng một biến (route). */
@@ -759,17 +838,17 @@ const FEE = String(FEE_BASE);
 describe("/tx/quote — feecover.available HỎI Feecover (/v1/fee-sources)", () => {
   it("CẶP: Feecover trả available=true ⟹ true; chỉ đổi available thành false ⟹ false, FEE_QUOTE_FEECOVER_DECLINED", async () => {
     const yes = await askFeecover(200, { purpose: "consume_magic", feecover: { available: true } });
-    expect(yes.fc).toEqual({ fee_lovelace: FEE, available: true });
+    expect(yes.fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: true });
     const no = await askFeecover(200, { purpose: "consume_magic", feecover: { available: false } });
-    expect(no.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_DECLINED" });
+    expect(no.fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_DECLINED" });
   });
 
   it("CẶP: rule + message của Feecover chuyển NGUYÊN (false L14 · và cả khi true)", async () => {
     const message = `ứng dụng "magic" không được trả phí hộ trong cửa sổ đo Catalyst.`;
     const no = await askFeecover(200, { purpose: "consume_magic", feecover: { available: false, rule: "L14", message } });
-    expect(no.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_DECLINED", rule: "L14", message });
+    expect(no.fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_DECLINED", rule: "L14", message });
     const yes = await askFeecover(200, { purpose: "consume_magic", feecover: { available: true, rule: "R", message: "m" } });
-    expect(yes.fc).toEqual({ fee_lovelace: FEE, available: true, rule: "R", message: "m" });
+    expect(yes.fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: true, rule: "R", message: "m" });
   });
 
   it("yêu cầu: GET đúng URL, Authorization = Bearer <token ứng dụng>, không thân bài, có signal", async () => {
@@ -793,7 +872,7 @@ describe("/tx/quote — feecover.available HỎI Feecover (/v1/fee-sources)", ()
 
   it("CẶP purpose phải khớp: Feecover trả lời cho mục đích KHÁC ⟹ false, BAD_RESPONSE", async () => {
     const { fc } = await askFeecover(200, { purpose: "schedule_commit", feecover: { available: true } });
-    expect(fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE" });
+    expect(fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE" });
   });
 
   it("thân sai hình dạng ⟹ false, FEE_QUOTE_FEECOVER_BAD_RESPONSE (mỗi ca lệch đúng một chỗ so với ca đúng)", async () => {
@@ -813,30 +892,30 @@ describe("/tx/quote — feecover.available HỎI Feecover (/v1/fee-sources)", ()
     ];
     for (const body of bad) {
       const { fc } = await askFeecover(200, body);
-      expect(fc, JSON.stringify(body)).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE" });
+      expect(fc, JSON.stringify(body)).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE" });
     }
   });
 
   it("CẶP HTTP: 500 ⟹ HTTP_STATUS + upstream_status, KHÔNG chuyển rule/message; 403 cùng thân ⟹ chuyển rule/message", async () => {
     const body = { rule: "L14", message: "bị chặn" };
     const five = await askFeecover(500, body);
-    expect(five.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 500 });
+    expect(five.fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 500 });
     const four = await askFeecover(403, body);
     expect(four.fc).toEqual({
-      fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 403, rule: "L14", message: "bị chặn",
+      fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 403, rule: "L14", message: "bị chặn",
     });
   });
 
   it("CẶP 200 đúng mã: 201 với thân ĐÚNG hình dạng available=true ⟹ vẫn false, HTTP_STATUS", async () => {
     const good = { purpose: "consume_magic", feecover: { available: true } };
     const c = await askFeecover(201, good);
-    expect(c.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 201 });
+    expect(c.fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 201 });
   });
 
   it("lỗi mạng (fetch ném) ⟹ false, FEE_QUOTE_FEECOVER_UNREACHABLE; câu lỗi thư viện không lọt ra", async () => {
     const h = harness({ feecover: FEECOVER_MAGIC, feecoverReply: async () => { throw new TypeError(`fetch failed ${MAGIC_TOKEN}`); } });
     const r = await handle(quote({ route: "consume", params: CONSUME }), h.router);
-    expect(bodyOf(r).feecover).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_UNREACHABLE" });
+    expect(bodyOf(r).feecover).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_UNREACHABLE" });
     expect(JSON.stringify(r.body)).not.toContain(MAGIC_TOKEN);
     expect(JSON.stringify(r.body)).not.toContain("fetch failed");
   });
@@ -847,7 +926,7 @@ describe("/tx/quote — feecover.available HỎI Feecover (/v1/fee-sources)", ()
     });
     const h = harness({ feecover: FEECOVER_FAST, feecoverReply: hang });
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
-    expect(b.feecover).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_TIMEOUT" });
+    expect(b.feecover).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_TIMEOUT" });
     const ok = harness({ feecover: FEECOVER_FAST });
     expect(bodyOf(await handle(quote({ route: "consume", params: CONSUME }), ok.router)).feecover.available).toBe(true);
   });
@@ -855,7 +934,7 @@ describe("/tx/quote — feecover.available HỎI Feecover (/v1/fee-sources)", ()
   it("CẶP token: app mặc định khai mà proxy không cầm token ⟹ false, TOKEN_ABSENT, Feecover KHÔNG bị hỏi; có token ⟹ true", async () => {
     const none = harness({ feecover: FEECOVER_MAGIC, magicToken: null });
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME }), none.router));
-    expect(b.feecover).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_TOKEN_ABSENT" });
+    expect(b.feecover).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_TOKEN_ABSENT" });
     expect(none.fetchCalls).toHaveLength(0);
     const some = harness({ feecover: FEECOVER_MAGIC });
     expect(bodyOf(await handle(quote({ route: "consume", params: CONSUME }), some.router)).feecover.available).toBe(true);
@@ -863,17 +942,17 @@ describe("/tx/quote — feecover.available HỎI Feecover (/v1/fee-sources)", ()
 
   it("CẶP token không lọt: Feecover dội lại token trong message (200) ⟹ BAD_RESPONSE; message thường ⟹ chuyển nguyên", async () => {
     const echo = await askFeecover(200, { purpose: "consume_magic", feecover: { available: true, message: `token ${MAGIC_TOKEN}` } });
-    expect(echo.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE" });
+    expect(echo.fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE" });
     const plain = await askFeecover(200, { purpose: "consume_magic", feecover: { available: true, message: "token hợp lệ" } });
-    expect(plain.fc).toEqual({ fee_lovelace: FEE, available: true, message: "token hợp lệ" });
+    expect(plain.fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: true, message: "token hợp lệ" });
   });
 
   it("CẶP token không lọt ở 4xx: 401 dội token trong rule/message ⟹ bỏ hai trường đó; 401 câu thường ⟹ chuyển", async () => {
     const echo = await askFeecover(401, { rule: MAGIC_TOKEN, message: `sai token ${MAGIC_TOKEN}` });
-    expect(echo.fc).toEqual({ fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 401 });
+    expect(echo.fc).toEqual({ fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 401 });
     const plain = await askFeecover(401, { rule: "AUTH", message: "thiếu hoặc sai token." });
     expect(plain.fc).toEqual({
-      fee_lovelace: FEE, available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 401,
+      fee_lovelace: FEE, fronted_lovelace: "0", available: false, reason: "FEE_QUOTE_FEECOVER_HTTP_STATUS", upstream_status: 401,
       rule: "AUTH", message: "thiếu hoặc sai token.",
     });
   });

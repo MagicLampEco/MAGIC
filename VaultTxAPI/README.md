@@ -781,8 +781,9 @@ UTxO đó (`owner_address.fee_payer`).
                                                                    // KHÔNG kèm fee_payer / funding.fee_payer
   "owner_fee_addresses": ["addr_test1v…", "addr_test1q…"] }        // tuỳ chọn: 1..10 địa chỉ khoá của chủ
 // ra (số minh hoạ)
-{ "feecover":      { "fee_lovelace": "175016", "available": true },
-  "owner_address": { "fee_lovelace": "172552", "available": true, "needed_lovelace": "3969750",
+{ "feecover":      { "fee_lovelace": "175016", "fronted_lovelace": "0", "available": true },
+  "owner_address": { "fee_lovelace": "172552", "fronted_lovelace": "0", "available": true,
+                     "needed_lovelace": "3969750",
                      "collateral_lovelace": "3000000",
                      "fee_payer": { "utxo": "0e0e…0e#2", "address": "addr_test1v…" } },
   "valid_until": "2026-09-27T10:03:00.000Z" }
@@ -843,6 +844,7 @@ làm cạn kho UTxO của Feecover. Lượt gọi Feecover duy nhất là câu h
     Token không đi vào phản hồi: một `rule`/`message` của Feecover chứa token thì câu trả lời 200
     bị coi là `BAD_RESPONSE`, còn ở 4xx thì hai trường đó bị bỏ.
   - Phí vẫn có khi `available=false`.
+  - `fronted_lovelace` (chuỗi thập phân) — xem mục **`fronted_lovelace`** ngay dưới khối này; cùng số ở hai nguồn.
 - **`owner_address`** — nguồn trả phí là **ví khoá của chính chủ**.
   - `needed_lovelace` là lượng tối thiểu một UTxO thuần ADA phải có để tx dựng được với nó làm
     `fee_payer`: `max(phí + khoản ứng, thế chấp) + min-ADA` (khoản ứng = 0 trừ đường có khoản ứng
@@ -870,6 +872,20 @@ làm cạn kho UTxO của Feecover. Lượt gọi Feecover duy nhất là câu h
     ADA), `FEE_QUOTE_OWNER_INSUFFICIENT` (có UTxO thuần ADA nhưng không cái nào đủ ngưỡng).
   - Dùng UTxO đó làm `fee_payer`: app **tự ký** phần ví trả phí bằng khoá của chủ, **không** gọi
     `/fee/sign`. Báo giá không giữ chỗ UTxO: giữa lúc hỏi và lúc dựng, UTxO có thể đã bị tiêu.
+- **`fronted_lovelace`** — có ở **cả** `feecover` lẫn `owner_address`: min-ADA mà ví trả phí phải
+  **ứng** cho output két / thread mới (và phần shard GreenBack dùng chung dựng lại). Là chi phí
+  chìm của bên trả phí: két không có nhánh nào trả lovelace ra. App cần số này để biết ví trả
+  phí phải có bao nhiêu **ngoài phí** (nó đã nằm trong `needed_lovelace`, vế `phí + khoản ứng`).
+  - Đọc lại **từ CBOR** của lượt dựng báo giá, bằng đúng hàm đường dựng thật dùng
+    (`summary.fee_payer.fronted_lovelace`; create-vault: `summary.funding.fee_payer.fronted_lovelace`)
+    — không có công thức thứ hai.
+  - **Luôn có**, kể cả `available=false` (lượt dựng nào cũng đọc được nó). `"0"` là số đo thật:
+    route không ứng output nào (ví dụ `consume`, `schedule-commit`). Trường không bao giờ vắng
+    để thay cho `"0"`.
+  - `owner_address.available=true` ⟹ số của lượt dựng với UTxO đã chọn; `false` ⟹ số lớn nhất
+    qua các ngưỡng đã đo (hoặc của ví tổng hợp khi không gửi địa chỉ). Khoản ứng không phụ thuộc
+    ví trả phí là ai, nên hai nguồn cùng số.
+  - Cũng như phí, là số **lúc hỏi giá**: số thật là `summary.fee_payer.fronted_lovelace` của lượt dựng.
 - **`valid_until`** — hạn ngắn nhất giữa hạn dùng (`validTo`) của tx trong CBOR và `expires_at`
   mà đường dựng trả, qua mọi lượt dựng của lần hỏi. Báo giá không sống lâu hơn tx nó mô tả.
 

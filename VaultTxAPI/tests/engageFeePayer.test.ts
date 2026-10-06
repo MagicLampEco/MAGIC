@@ -150,7 +150,7 @@ function harness(opts: { threads?: UTxO[]; cbor?: string; openCbor?: string; dec
     undefined,
     opts.declaredUnit ?? THREAD_UNIT,
   );
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
@@ -518,7 +518,7 @@ function instantHarness() {
     [INSTANT_VAULT_UTXO, FEE_UTXO],
   );
   const builder = new RecordedTxBuilder({ instant_gen: instantGenFeeTx() });
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preprod", deployment: INSTANT_DEPLOYMENT, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,

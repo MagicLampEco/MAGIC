@@ -161,7 +161,7 @@ function harness(opts: {
   const builder = opts.builder ?? new RecordedTxBuilder({ instant_gen: instantTxCbor(opts.where ?? "reference") });
   const service = new VaultTxService({
     network: net, deployment, chain, builder,
-    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(TTL * 4),
+    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(),
     lockTtlMs: TTL, now: () => NOW,
   });
   const router: RouterDeps = {

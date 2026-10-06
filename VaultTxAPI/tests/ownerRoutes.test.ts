@@ -117,7 +117,7 @@ function harness(opts: { createCbor?: string; witness?: OwnerWitnessProvider | n
   const witness = opts.witness === null ? undefined : (opts.witness ?? new FakeWitness());
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks,
-    issued: new IssuedTxRegistry(TTL * 4), lockTtlMs: TTL, now: () => NOW, ownerWitness: witness,
+    issued: new IssuedTxRegistry(), lockTtlMs: TTL, now: () => NOW, ownerWitness: witness,
   });
   const router: RouterDeps = {
     service, deploymentSource: DEPLOYMENT.source, vaultScopes: DEPLOYMENT.vaults, network: "Preview",

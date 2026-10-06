@@ -103,7 +103,7 @@ function harness(cbor: string) {
   const builder = new RecordedTxBuilder({ consume: cbor });
   const service = new VaultTxService({
     network: NET, deployment, chain, builder,
-    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(TTL * 4),
+    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(),
     lockTtlMs: TTL, now: () => NOW,
   });
   const router: RouterDeps = {

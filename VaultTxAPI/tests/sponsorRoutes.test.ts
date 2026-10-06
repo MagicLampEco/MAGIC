@@ -109,7 +109,7 @@ function service(net: Net, json: string, over: Partial<SponsorTxServiceDeps> = {
     deployment: parseDeployment(json, net),
     chain,
     locks: new OwnerLockTable(60_000),
-    issued: new IssuedTxRegistry(240_000),
+    issued: new IssuedTxRegistry(),
     lockTtlMs: 60_000,
     prepaidBlueprint: blueprint(),
     lucidForWallet: async () => { lucidCalls++; throw new Error("bộ dựng KHÔNG được chạm trong bài này"); },

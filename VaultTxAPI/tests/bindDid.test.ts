@@ -96,7 +96,7 @@ function harness(opts: { threads?: UTxO[]; cbor?: string; pending?: PendingSpend
   );
   const builder = new RecordedTxBuilder({ bind_did: opts.cbor ?? bindTx() });
   builder.coinsPerUtxoByteValue = 4_310n;
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,

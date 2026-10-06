@@ -145,11 +145,11 @@ describe("PendingSpends — xung đột theo hash tx", () => {
 describe("IssuedTxRegistry.markSubmitted — bị thay khi một tx chung khoá được NỘP", () => {
   const T1 = "a1".repeat(32), T2 = "a2".repeat(32), T3 = "a3".repeat(32), T4 = "a4".repeat(32);
   it("T1, T2 cùng chủ; nộp T2 ⟹ T1 bị thay bởi T2; tx chủ khác + tx không khai khoá không bị đụng", () => {
-    const r = new IssuedTxRegistry(TTL);
-    r.record(T1, 0, { route: "consume", lockKeys: [OWNER] });
-    r.record(T2, 1, { route: "consume", lockKeys: [OWNER] });
-    r.record(T3, 1, { route: "consume", lockKeys: [OTHER] });
-    r.record(T4, 1, { route: "consume" });
+    const r = new IssuedTxRegistry();
+    r.record(T1, 0, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
+    r.record(T2, 1, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
+    r.record(T3, 1, { validToMs: TTL, route: "consume", lockKeys: [OTHER] });
+    r.record(T4, 1, { validToMs: TTL, route: "consume" });
     expect(r.markSubmitted(T2, 2)).toBe(1);
     expect(r.lookup(T1, 2)?.supersededBy).toBe(T2);
     expect(r.lookup(T2, 2)?.supersededBy).toBeUndefined();
@@ -157,73 +157,73 @@ describe("IssuedTxRegistry.markSubmitted — bị thay khi một tx chung khoá 
     expect(r.lookup(T4, 2)?.supersededBy).toBeUndefined();
   });
   it("tx dựng SAU lượt nộp không bị thay; dựng KHÔNG nộp thì không thay gì", () => {
-    const r = new IssuedTxRegistry(TTL);
-    r.record(T1, 0, { route: "consume", lockKeys: [OWNER] });
-    r.record(T2, 1, { route: "consume", lockKeys: [OWNER] });   // T2 chỉ được DỰNG
+    const r = new IssuedTxRegistry();
+    r.record(T1, 0, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
+    r.record(T2, 1, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });   // T2 chỉ được DỰNG
     expect(r.lookup(T1, 2)?.supersededBy).toBeUndefined();
     r.markSubmitted(T1, 3);
-    r.record(T3, 4, { route: "consume", lockKeys: [OWNER] });
+    r.record(T3, 4, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
     expect(r.lookup(T2, 4)?.supersededBy).toBe(T1);
     expect(r.lookup(T3, 4)?.supersededBy).toBeUndefined();
   });
   it("HỒI QUY hai lượt tạo két từ hai ví: T1 (ví A) đã NỘP vẫn bị thay khi T2 (ví B) chung khoá chủ nộp sau; CẶP: T2 khoá chủ KHÁC ⟹ không thay", () => {
     // T1 nộp rồi rơi khỏi mempool; T2 nộp, lên chuỗi. Không bị thay ⟹ nộp lại T1 đi qua ⟹ hai két
     // cùng chủ (validator chưa ép mỗi DID một két). Hai tx KHÔNG chung input — chỉ chung khoá chủ.
-    const r = new IssuedTxRegistry(TTL);
-    r.record(T1, 0, { route: "create-vault", lockKeys: [OWNER], feePayerUtxo: `${"fa".repeat(32)}#0` });
+    const r = new IssuedTxRegistry();
+    r.record(T1, 0, { validToMs: TTL, route: "create-vault", lockKeys: [OWNER], feePayerUtxo: `${"fa".repeat(32)}#0` });
     expect(r.markSubmitted(T1, 1)).toBe(0);
-    r.record(T2, 2, { route: "create-vault", lockKeys: [OWNER], feePayerUtxo: `${"fb".repeat(32)}#0` });
+    r.record(T2, 2, { validToMs: TTL, route: "create-vault", lockKeys: [OWNER], feePayerUtxo: `${"fb".repeat(32)}#0` });
     expect(r.markSubmitted(T2, 3)).toBe(1);
     expect(r.lookup(T1, 3)?.supersededBy).toBe(T2);
     expect(submissionStateOf(r.lookup(T1, 3)!)).toBe("accepted");
 
-    const c = new IssuedTxRegistry(TTL);
-    c.record(T1, 0, { route: "create-vault", lockKeys: [OWNER], feePayerUtxo: `${"fa".repeat(32)}#0` });
+    const c = new IssuedTxRegistry();
+    c.record(T1, 0, { validToMs: TTL, route: "create-vault", lockKeys: [OWNER], feePayerUtxo: `${"fa".repeat(32)}#0` });
     c.markSubmitted(T1, 1);
-    c.record(T2, 2, { route: "create-vault", lockKeys: [OTHER], feePayerUtxo: `${"fb".repeat(32)}#0` });
+    c.record(T2, 2, { validToMs: TTL, route: "create-vault", lockKeys: [OTHER], feePayerUtxo: `${"fb".repeat(32)}#0` });
     expect(c.markSubmitted(T2, 3)).toBe(0);
     expect(c.lookup(T1, 3)?.supersededBy).toBeUndefined();
   });
   it("NỘP LẠI một tx đã nộp không thay tx dựng sau lượt nộp đầu; CẶP: lượt nộp ĐẦU thì có thay", () => {
-    const r = new IssuedTxRegistry(TTL);
-    r.record(T1, 0, { route: "consume", lockKeys: [OWNER] });
+    const r = new IssuedTxRegistry();
+    r.record(T1, 0, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
     r.markSubmitted(T1, 1, "accepted", { lockReleasedFor: "pk" });
-    r.record(T2, 2, { route: "consume", lockKeys: [OWNER] });   // lượt kế tiếp hợp lệ của chủ
+    r.record(T2, 2, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });   // lượt kế tiếp hợp lệ của chủ
     expect(r.markSubmitted(T1, 3)).toBe(0);                       // rớt mạng, nộp lại T1
     expect(r.lookup(T2, 3)?.supersededBy).toBeUndefined();
     expect(r.lookup(T1, 3)?.submittedAtMs).toBe(1);               // mốc nộp đầu không bị ghi đè
     expect(r.lookup(T1, 3)?.submittedResult).toEqual({ lockReleasedFor: "pk" });
 
-    const c = new IssuedTxRegistry(TTL);
-    c.record(T2, 0, { route: "consume", lockKeys: [OWNER] });
-    c.record(T1, 1, { route: "consume", lockKeys: [OWNER] });
+    const c = new IssuedTxRegistry();
+    c.record(T2, 0, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
+    c.record(T1, 1, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
     expect(c.markSubmitted(T1, 3)).toBe(1);
     expect(c.lookup(T2, 3)?.supersededBy).toBe(T1);
   });
   it("gửi CHƯA XÁC NHẬN tính là lượt gửi đầu: thay tx dựng TRƯỚC, nộp lại thành công không thay tx dựng SAU; CẶP: không có lượt chưa-xác-nhận ⟹ lượt nhận đầu thay cả hai", () => {
-    const r = new IssuedTxRegistry(TTL);
-    r.record(T2, 0, { route: "consume", lockKeys: [OWNER] });   // dựng TRƯỚC T1
-    r.record(T1, 1, { route: "consume", lockKeys: [OWNER] });
+    const r = new IssuedTxRegistry();
+    r.record(T2, 0, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });   // dựng TRƯỚC T1
+    r.record(T1, 1, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
     expect(r.markSubmitted(T1, 2, "unconfirmed")).toBe(1);       // mất kết nối khi nộp
     expect(r.lookup(T2, 2)?.supersededBy).toBe(T1);
     expect(submissionStateOf(r.lookup(T1, 2)!)).toBe("unconfirmed");
-    r.record(T3, 3, { route: "consume", lockKeys: [OWNER] });   // dựng SAU lượt gửi đầu
+    r.record(T3, 3, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });   // dựng SAU lượt gửi đầu
     expect(r.markSubmitted(T1, 4, "accepted")).toBe(0);          // nộp lại, nút nhận
     expect(r.lookup(T3, 4)?.supersededBy).toBeUndefined();
     expect(submissionStateOf(r.lookup(T1, 4)!)).toBe("accepted");
     expect(r.markSubmitted(T1, 5, "unconfirmed")).toBe(0);       // không hạ cấp
     expect(submissionStateOf(r.lookup(T1, 5)!)).toBe("accepted");
 
-    const c = new IssuedTxRegistry(TTL);
-    c.record(T2, 0, { route: "consume", lockKeys: [OWNER] });
-    c.record(T1, 1, { route: "consume", lockKeys: [OWNER] });
-    c.record(T3, 3, { route: "consume", lockKeys: [OWNER] });
+    const c = new IssuedTxRegistry();
+    c.record(T2, 0, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
+    c.record(T1, 1, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
+    c.record(T3, 3, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
     expect(c.markSubmitted(T1, 4, "accepted")).toBe(2);
     expect(c.lookup(T3, 4)?.supersededBy).toBe(T1);
   });
   it("submissionStateOf: tx chỉ DỰNG ⟹ none", () => {
-    const r = new IssuedTxRegistry(TTL);
-    r.record(T1, 0, { route: "consume", lockKeys: [OWNER] });
+    const r = new IssuedTxRegistry();
+    r.record(T1, 0, { validToMs: TTL, route: "consume", lockKeys: [OWNER] });
     expect(submissionStateOf(r.lookup(T1, 0)!)).toBe("none");
   });
 });

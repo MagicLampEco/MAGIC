@@ -118,7 +118,7 @@ function harness(opts: { anchors?: UTxO[]; resolver?: boolean; signers?: string[
       };
     },
   }) as unknown as TxBuilderPort;
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks: new OwnerLockTable(TTL),
     issued, lockTtlMs: TTL, now: () => NOW,

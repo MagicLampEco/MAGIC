@@ -155,7 +155,7 @@ function harness(opts: { cbor?: string; anchorReader?: boolean; planning?: boole
   const witness = new FakeWitness();
   const service = new VaultTxService({
     network: "Preview", deployment: opts.deployment ?? DEPLOYMENT, chain, builder, locks,
-    issued: new IssuedTxRegistry(TTL * 4), lockTtlMs: TTL, now: () => NOW, ownerWitness: witness,
+    issued: new IssuedTxRegistry(), lockTtlMs: TTL, now: () => NOW, ownerWitness: witness,
     didPaymentAnchor: opts.anchorReader === false ? undefined
       : new ChainDidPaymentAnchorReader({ chain, anchorNftPolicy: ANCHOR_POLICY }),
   });

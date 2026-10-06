@@ -12,7 +12,17 @@
 // redeemer, không có script data hash). Nó hợp lệ đúng ở mức phép kiểm cần: một
 // `Transaction` giải mã lại được, có phí, có output mang datum inline.
 
-import { CML, assetsToValue } from "@lucid-evolution/lucid";
+import { CML, assetsToValue, unixTimeToSlot } from "@lucid-evolution/lucid";
+
+/**
+ * `ttl` cho CBOR ghi sẵn mà `RecordedTxBuilder` trả về: dịch vụ đọc NGƯỢC `validTo` từ thân tx
+ * (`src/validity.ts` ▸ `readTxExpiry`) và ném khi thân không có, nằm trước đỉnh chuỗi, hoặc vượt cận
+ * nó chọn (hạn ký mặc định 15 phút). 10 phút sau đỉnh chuỗi thoả cả ba.
+ */
+export const PRERECORDED_VALIDITY_MS = 600_000;
+export function prerecordedTtlSlot(tipPosixMs: number, aheadMs = PRERECORDED_VALIDITY_MS): bigint {
+  return BigInt(unixTimeToSlot("Preview", tipPosixMs + aheadMs));
+}
 
 export interface TxOutputSpec {
   address: string;

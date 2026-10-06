@@ -22,6 +22,7 @@ import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
 import { txBodyHash } from "../src/summary.js";
+import { CLOCK_SKEW_MARGIN_MS } from "../src/validity.js";
 import { RecordedTxBuilder, enterpriseAddressOf } from "../src/txBuilder.js";
 import { ENGAGE_ADDRESS, threadUtxo } from "./fixtures/engage.js";
 import {
@@ -33,7 +34,9 @@ import { withConsumeLeg } from "./fixtures/consume.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
-const REGISTRY_TTL = TTL * 4;
+/** Hạn dòng sổ phát-hành = `validTo` của CHÍNH tx (ttl fixture: NOW + 10 phút) + biên lệch đồng hồ
+ *  (`src/validity.ts`), không còn là `4 × lock_ttl`. */
+const REGISTRY_TTL = 600_000 + CLOCK_SKEW_MARGIN_MS;
 const NOW = 1_789_100_703_000;
 const TIP: ChainTip = { blockHeight: 1, blockHash: "14".repeat(32), blockTimePosixMs: BigInt(NOW) };
 const KEY_OWNER = { type: "key" as const, hash: OWNER_PKH };
@@ -120,7 +123,7 @@ function consumeTx(consume = false): string {
     requiredSigners: [OWNER_PKH],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
-    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 1_800_000)),
+    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 600_000)),
   };
   return buildTxCbor(!consume ? spec : withConsumeLeg(spec, {
     thread: threadUtxo(KEY_OWNER, "7e".repeat(32)), vaultRef: ref(VAULT_UTXO),
@@ -161,7 +164,7 @@ function fundedTx(): string {
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
     spendRedeemers: [{ index: 0, dataHex: "d87980" }, { index: 1, dataHex: "d87980" }],
-    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 1_800_000)),
+    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 600_000)),
   });
 }
 
@@ -223,7 +226,7 @@ function harness(opts: { feecover?: ReturnType<typeof fakeFeecover>; proxy?: boo
     [VAULT_UTXO, FEE_UTXO, ANCHOR, threadUtxo(KEY_OWNER, "7e".repeat(32))],
   );
   const builder = new RecordedTxBuilder({ consume: consumeTx(true), schedule_commit: consumeTx(), create_vault: fundedTx() }, VAULT_ID_UNIT);
-  const issued = new IssuedTxRegistry(REGISTRY_TTL);
+  const issued = new IssuedTxRegistry();
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks: new OwnerLockTable(TTL), issued,
     lockTtlMs: TTL, now: () => clock.t,
@@ -417,7 +420,7 @@ describe("POST /fee/sign — cổng trước Feecover", () => {
     expect((await h.call("POST", "/fee/sign", { tx_cbor: cbor })).status).toBe(200);
     const callsBefore = h.fc.calls.length;
     const other = "5e".repeat(32);
-    h.issued.record(other, NOW, { route: "consume", lockKeys: h.issued.lookup(hash, NOW)!.lockKeys });
+    h.issued.record(other, NOW, { route: "consume", validToMs: NOW + TTL, lockKeys: h.issued.lookup(hash, NOW)!.lockKeys });
     expect(h.issued.markSubmitted(other, NOW)).toBe(1);
     const r = await h.call("POST", "/fee/sign", { tx_cbor: cbor });
     expect(r.status).toBe(409);
@@ -584,12 +587,16 @@ describe("sổ phát-hành: hạn ký theo reserved_until", () => {
     expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("FEE_PROXY_TX_NOT_ISSUED");
   });
 
-  it("reserved_until DÀI hơn hạn sổ ⟹ dòng sống tới reserved_until", async () => {
+  // Chính sách LẬT 2026-10-06: bản cũ kéo dòng sống tới reserved_until. Nay dòng hết đúng tại
+  // validTo + biên — sau mốc đó sổ cái chắc chắn từ chối tx, xin Feecover ký là vô ích. Kỳ vọng đảo dấu.
+  it("reserved_until DÀI hơn validTo ⟹ dòng KHÔNG sống quá validTo + biên (CẶP: trước mốc thì ký được)", async () => {
     const h = harness({ feecover: fakeFeecover({ utxo: utxoReply(NOW + REGISTRY_TTL + 60_000) }) });
     await h.call("POST", "/fee/utxo", { route: "consume" });
     const { cbor } = await issueConsume(h);
-    h.clock.t = NOW + REGISTRY_TTL + 30_000;
+    h.clock.t = NOW + REGISTRY_TTL - 1;
     expect((await h.call("POST", "/fee/sign", { tx_cbor: cbor })).status).toBe(200);
+    h.clock.t = NOW + REGISTRY_TTL + 30_000;
+    expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("FEE_PROXY_TX_NOT_ISSUED");
   });
 });
 
@@ -651,7 +658,7 @@ describe("token theo ứng dụng gọi", () => {
 
   it("không có token magic ở dịch vụ ⟹ người gọi không gửi token nhận 401", async () => {
     const fc = fakeFeecover();
-    const proxy = new FeeProxy({ settings: DEPLOYMENT.feecover!, issued: new IssuedTxRegistry(REGISTRY_TTL), fetch: fc.fetch });
+    const proxy = new FeeProxy({ settings: DEPLOYMENT.feecover!, issued: new IssuedTxRegistry(), fetch: fc.fetch });
     await expect(proxy.utxo("consume", undefined)).rejects.toMatchObject({ code: "FEE_PROXY_APP_UNKNOWN", httpStatus: 401 });
     // CẶP: cùng proxy, người gọi orilife vẫn đi được.
     await expect(proxy.utxo("consume", ORILIFE_TOKEN)).resolves.toMatchObject({ purpose: "orilife_consume_magic" });

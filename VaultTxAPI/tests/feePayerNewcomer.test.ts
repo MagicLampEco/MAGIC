@@ -245,7 +245,7 @@ function harness(o: {
     [VAULT_UTXO, FEE_UTXO, OWNER_UTXO, UNBOUND, UNBOUND_SCRIPT, SHARD_3],
   );
   const builder = new RecordedTxBuilder(o.cbor, VAULT_ID_UNIT, THREAD_UNIT);
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preview", deployment, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,

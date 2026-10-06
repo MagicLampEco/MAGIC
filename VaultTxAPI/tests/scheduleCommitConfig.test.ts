@@ -83,7 +83,7 @@ function harness(drop?: RefKey) {
   const builder = new RecordedTxBuilder({ schedule_commit: commitTxCbor() });
   const service = new VaultTxService({
     network: "Preview", deployment: d, chain, builder,
-    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(TTL * 4),
+    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(),
     lockTtlMs: TTL, now: () => NOW,
   });
   const router: RouterDeps = {

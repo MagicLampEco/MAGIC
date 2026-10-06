@@ -150,7 +150,7 @@ function harness(opts: { cbor?: string; nft?: string } = {}) {
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks,
-    issued: new IssuedTxRegistry(TTL * 4), lockTtlMs: TTL, now: () => NOW,
+    issued: new IssuedTxRegistry(), lockTtlMs: TTL, now: () => NOW,
     didPaymentAnchor: new ChainDidPaymentAnchorReader({ chain, anchorNftPolicy: ANCHOR_POLICY }),
   });
   const router: RouterDeps = {

@@ -271,7 +271,7 @@ function harness(o: HarnessOpts = {}) {
     [VAULT_UTXO, threadUtxo(KEY_OWNER, "7e".repeat(32)), ...(o.didPayment ? [DP_ANCHOR] : []), ...(o.refUtxos ?? [])],
   );
   const builder = new FeeModelBuilder();
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const record = vi.spyOn(issued, "record");
   const acquire = vi.spyOn(locks, "acquire");
@@ -901,7 +901,7 @@ describe("FeeProxy.feeSources — hết giờ FEE_SOURCES_TIMEOUT_MS", () => {
         url: "https://feecover.example", timeoutMs,
         apps: new Map([["magic", { purposes: new Map<IssuedRoute, string>([["consume", "consume_magic"]]) }]]),
       },
-      magicToken: MAGIC_TOKEN, issued: new IssuedTxRegistry(TTL), fetch,
+      magicToken: MAGIC_TOKEN, issued: new IssuedTxRegistry(), fetch,
     });
     return { proxy, aborted: () => signal?.aborted };
   };

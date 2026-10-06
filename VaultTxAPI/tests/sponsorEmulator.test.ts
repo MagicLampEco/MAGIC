@@ -383,7 +383,7 @@ beforeAll(async () => {
     deployment: parseDeployment(json, NET),
     chain: emulatorChain(),
     locks: l,
-    issued: new IssuedTxRegistry(240_000),
+    issued: new IssuedTxRegistry(),
     lockTtlMs: 60_000,
     now: () => emulator.now(),
     prepaidBlueprint: pgBp,

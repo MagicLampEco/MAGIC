@@ -32,7 +32,7 @@ import { ENGAGE_ADDRESS, ENGAGE_SCRIPT_HASH, engageDatumHex, threadUtxo } from "
 import {
   LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OWNER_PKH, SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
-import { buildTxCbor, fakeWitnessSetCbor } from "./fixtures/tx.js";
+import { buildTxCbor, fakeWitnessSetCbor, prerecordedTtlSlot } from "./fixtures/tx.js";
 
 // ── cấu hình giả ────────────────────────────────────────────────────────────────
 
@@ -354,6 +354,7 @@ const UNBOUND = threadUtxo(KEY_OWNER, THREAD_TX, 0, "01", engageDatumHex(KEY_OWN
 /** Tx BindDID "đúng" (như `bindDid.test.ts`); `fee` khác nhau ⟹ hash khác nhau giữa hai khối. */
 function bindTx(fee: bigint): string {
   return buildTxCbor({
+    ttlSlot: prerecordedTtlSlot(NOW),
     inputs: [{ txHash: THREAD_TX, outputIndex: 0 }, { txHash: "c0".repeat(32), outputIndex: 0 }],
     feeLovelace: fee,
     outputs: [
@@ -388,7 +389,7 @@ function twoBlocks(opts: { submitResult?: string; vaults?: { instant: boolean; s
   const instantBuilder = new RecordedTxBuilder({ bind_did: T_INSTANT });
   const scheduleBuilder = new RecordedTxBuilder({ bind_did: T_SCHEDULE });
   const locks = new OwnerLockTable(TTL);
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const services = makeBlockServices([
     { deployment: INSTANT_DEPLOYMENT, builder: instantBuilder },
     { deployment: SCHEDULE_DEPLOYMENT, builder: scheduleBuilder },
@@ -419,7 +420,7 @@ describe("/health với hai khối", () => {
   it("CẶP: một khối ⟹ chỉ loại của khối đó, deployment_sources một phần tử", async () => {
     const chain = new RecordedChainReader({}, TIP, []);
     const one = makeBlockServices([{ deployment: INSTANT_DEPLOYMENT, builder: new RecordedTxBuilder({}) }],
-      { network: "Preview", chain, locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(TTL), lockTtlMs: TTL });
+      { network: "Preview", chain, locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(), lockTtlMs: TTL });
     const r = await handle({ method: "GET", url: "/health", headers: {} }, {
       ...blockRoutingOf(one), network: "Preview", chainLabel: "recorded",
       changeAddressStrategy: "enterprise_from_owner_pkh", token: "", logInternal: () => {},
@@ -477,7 +478,7 @@ describe("định tuyến qua HTTP trên dịch vụ thật", () => {
     const locks = new OwnerLockTable(TTL);
     const mk = (d: Deployment, cbor: string) => new VaultTxService({
       network: "Preview", deployment: d, chain, builder: new RecordedTxBuilder({ bind_did: cbor }),
-      locks, issued: new IssuedTxRegistry(TTL * 4), lockTtlMs: TTL, now: () => NOW,
+      locks, issued: new IssuedTxRegistry(), lockTtlMs: TTL, now: () => NOW,
       witnessCheck: PASS_PRERECORDED_WITNESSES,
     });
     const primary = mk(INSTANT_DEPLOYMENT, T_INSTANT);

@@ -186,7 +186,7 @@ function harness(o: { capEpoch: bigint; wakemeLink?: string }) {
 
   const service = new VaultTxService({
     network: NET, deployment, chain, builder,
-    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(TTL * 4),
+    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(),
     lockTtlMs: TTL, now: () => NOW,
   });
   const router: RouterDeps = {

@@ -120,6 +120,7 @@ const sponsor = cfg.deployment.vaults.some(v => v.vaultType === PREPAID_VAULT_TY
       issued,
       pending,
       lockTtlMs: cfg.lockTtlMs,
+      txValidityMs: cfg.txValidityMs,
       ...(ownerWitness === undefined ? {} : { ownerWitness }),
       ...(didOwner === undefined ? {} : { didOwner }),
       prepaidBlueprint: vaultPlutusJson as unknown as PrepaidBlueprint,

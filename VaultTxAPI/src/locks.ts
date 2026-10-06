@@ -343,6 +343,12 @@ export class IssuedTxRegistry {
     this.feeReservations.set(utxoRef, reservedUntilMs);
   }
 
+  /** Giờ giữ chỗ (`reserved_until`, POSIX ms) của một UTxO phí phát qua `/fee/utxo`, hoặc `undefined`
+   *  khi UTxO đó không qua `/fee/utxo` (app tự đưa) hoặc đã bị dọn. Bộ lập hạn dùng nó làm một cận. */
+  feeReservationOf(utxoRef: string): number | undefined {
+    return this.feeReservations.get(utxoRef);
+  }
+
   /** `true` khi dịch vụ này đã phát ra đúng giao dịch đó và dòng chưa hết hạn. */
   wasIssued(txHash: string, nowMs: number): boolean {
     return this.lookup(txHash, nowMs) !== null;

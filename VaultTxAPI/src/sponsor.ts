@@ -53,7 +53,7 @@ import {
   type Assets, type LucidEvolution, type Script, type TxBuilder, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
 import {
-  FUNDING_MAX_VALIDITY_MS, OwnerAuthError, WindowOriginError, msPerEpoch, sameOwner, wakemeVaultHash, windowOriginMs,
+  OwnerAuthError, WindowOriginError, msPerEpoch, sameOwner, wakemeVaultHash, windowOriginMs,
   windowStartMs,
   type Network, type OwnerAuth, type OwnerRef,
 } from "@magiclamp/protocol-utils";
@@ -87,6 +87,9 @@ import type { OwnerRequest } from "./service.js";
 import { txBodyHash } from "./summary.js";
 import { assertChangeAddress, enterpriseAddressOf } from "./txBuilder.js";
 import { raw } from "./units.js";
+import {
+  DEFAULT_TX_VALIDITY_MS, planValidity, readTxExpiry, type ExpiresReason, type ValidityPlan,
+} from "./validity.js";
 
 // ── Bảng mã lỗi SDK → HTTP ─────────────────────────────────────────────────────
 
@@ -167,6 +170,34 @@ export const SPONSOR_STEP_OF_PATH: Readonly<Record<string, SponsorStep>> = {
 const ISSUED_ROUTE_OF_STEP: Readonly<Record<SponsorStep, SponsorRoute>> = {
   T1: "sponsor-t1-open", T2: "sponsor-t2-fund", T3: "sponsor-t3-draw", T4: "sponsor-t4-first-consume",
 };
+
+/**
+ * Cận trên `validTo` cho một bước tài trợ (`validity.ts` ▸ `planValidity`) — cùng nguồn hạn với
+ * `service.ts`. T2–T4: validator đòi hai cận cùng một epoch ⟹ `epochBound`. T1 không có cửa sổ kỳ.
+ * Tx tiêu một UTxO ví trả phí xin qua `/fee/utxo` ⟹ kẹp thêm vào `reserved_until` của nó (sổ
+ * phát-hành ghi lúc phát UTxO, `feeProxy.ts`). UTxO phí app tự đưa ⟹ không có giờ giữ chỗ.
+ */
+export function planSponsorValidity(p: {
+  step: SponsorStep; tipPosixMs: bigint; network: Network; txValidityMs: number;
+  issued: IssuedTxRegistry; feePayerUtxoRef?: string;
+}): ValidityPlan {
+  const reserved = p.feePayerUtxoRef === undefined ? undefined : p.issued.feeReservationOf(p.feePayerUtxoRef);
+  return planValidity({
+    tipPosixMs: p.tipPosixMs, network: p.network, txValidityMs: p.txValidityMs, epochBound: p.step !== "T1",
+    ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved }),
+  });
+}
+
+/**
+ * Phần tham số hạn giao cho bộ dựng SDK của từng bước. MỌI bước đều nhận một cận — kể cả T1 đường
+ * `change_address` (bản trước chỉ đặt `validTo` cho T1 khi có `fee_payer`, nên tx T1 không có hạn).
+ */
+export function sponsorValidityArgs(step: SponsorStep, plan: ValidityPlan):
+  { validToMs: bigint } | { validityTtlMs: bigint } | { validityMaxAheadMs: bigint } {
+  if (step === "T1") return { validToMs: plan.capMs };
+  if (step === "T4") return { validityMaxAheadMs: plan.maxAheadMs };
+  return { validityTtlMs: plan.maxAheadMs };
+}
 
 export interface SponsorT1Request extends OwnerRequest { didCommit: string; threadLovelace?: bigint }
 export interface SponsorT2Request extends OwnerRequest {
@@ -312,7 +343,9 @@ export interface SponsorBuildResponse {
   signers: SponsorSigner[];
   witnessNotes: string[];
   summary: Record<string, unknown>;
+  /** `validTo` của CHÍNH thân tx, ISO 8601 UTC (`validity.ts` ▸ `readTxExpiry`). */
   expiresAt: string;
+  expiresReason: ExpiresReason;
 }
 
 export function toSponsorBody(r: SponsorBuildResponse): Record<string, unknown> {
@@ -325,6 +358,7 @@ export function toSponsorBody(r: SponsorBuildResponse): Record<string, unknown> 
     witness_notes: r.witnessNotes,
     summary: r.summary,
     expires_at: r.expiresAt,
+    expires_reason: r.expiresReason,
   };
 }
 
@@ -383,6 +417,8 @@ export interface SponsorTxServiceDeps {
   issued: IssuedTxRegistry;
   pending?: PendingSpends;
   lockTtlMs: number;
+  /** Hạn ký của tx (ms từ đỉnh chuỗi), `AppConfig.txValidityMs`. Vắng ⟹ `DEFAULT_TX_VALIDITY_MS`. */
+  txValidityMs?: number;
   now?: () => number;
   /** Nhân chứng chủ script (`did_stake`). Vắng ⟹ chủ script nhận 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. */
   ownerWitness?: OwnerWitnessProvider;
@@ -418,8 +454,10 @@ interface StepCtx {
   feeAddress: string;
   feeKeyHash: string;
   tip: ChainTip;
-  /** Có ⟹ ví trả phí bên thứ ba: ví của Lucid mang ĐÚNG `utxo`, thế chấp + hạn dùng tường minh. */
-  feePayer?: { req: FeePayerRequest; utxo: UTxO; collateralLovelace: bigint; validToMs: bigint };
+  /** Cận trên `validTo` của bước này — mọi bộ dựng nhận nó (`sponsorValidityArgs`). */
+  plan: ValidityPlan;
+  /** Có ⟹ ví trả phí bên thứ ba: ví của Lucid mang ĐÚNG `utxo`, thế chấp tường minh. */
+  feePayer?: { req: FeePayerRequest; utxo: UTxO; collateralLovelace: bigint };
 }
 
 /** Địa chỉ mà một bước được chạm, cho phép đọc lại CBOR của đường `fee_payer`. */
@@ -477,8 +515,8 @@ export class SponsorTxService {
         lucid, prepaidScripts: p.scripts, consumeScript: p.consumeScript, consumeRefUtxo: p.consumeRef,
         seedUtxo, owner: ctx.owner, ownerAuth: ctx.ownerAuth, didCommit: req.didCommit, network: this.deps.network,
         ...(req.threadLovelace === undefined ? {} : { threadLovelace: req.threadLovelace }),
-        // T1 không có cửa sổ kỳ; ví trả phí bên thứ ba đòi hạn dùng ≤ 1 giờ ⟹ chỉ khi đó mới đặt.
-        ...(ctx.feePayer === undefined ? {} : { validToMs: ctx.feePayer.validToMs }),
+        // T1 không có cửa sổ kỳ; mọi đường (cả `change_address`) đều có `validTo` = cận đã chọn.
+        ...sponsorValidityArgs("T1", ctx.plan),
         ...collateralOf(ctx),
       });
       const s = r.summary;
@@ -568,6 +606,7 @@ export class SponsorTxService {
         carpAmount: req.carpAmount, sponsorCarpUtxos: sponsorUtxos, sponsorChangeAddress: sponsorAddress,
         newcomerAnchor: { utxo: anchor, anchorNftPolicyId: anchorPolicy, ownerCommit: didCommit },
         ownerAuth: ctx.ownerAuth, network: this.deps.network, nowMs: ctx.tip.blockTimePosixMs,
+        ...sponsorValidityArgs("T2", ctx.plan),
         ...collateralOf(ctx),
       });
       // Đọc lại CBOR (không qua summary của SDK) và so với giá trị ĐÃ GHIM + UTxO đọc từ chuỗi.
@@ -604,6 +643,7 @@ export class SponsorTxService {
       const r = await buildSponsorT3Draw({
         lucid, prepaidScripts: p.scripts, vaultUtxo: vault.utxo, fundId: req.fundId, carpAmount: req.carpAmount,
         ownerAuth: ctx.ownerAuth, network: this.deps.network, nowMs: ctx.tip.blockTimePosixMs,
+        ...sponsorValidityArgs("T3", ctx.plan),
         ...collateralOf(ctx),
       });
       const s = r.summary;
@@ -640,6 +680,7 @@ export class SponsorTxService {
         opType: req.opType, opCount: req.opCount, ownerAuth: ctx.ownerAuth, network: this.deps.network,
         tipPosixMs: ctx.tip.blockTimePosixMs, drawEpoch: req.drawEpoch,
         ...(d.maxPriceStale === undefined ? {} : { maxPriceStale: d.maxPriceStale }),
+        ...sponsorValidityArgs("T4", ctx.plan),
         ...collateralOf(ctx),
       });
       const s = r.summary;
@@ -706,18 +747,22 @@ export class SponsorTxService {
       const tip = await this.deps.chain.tip();
       const witness = owner.type === "key" ? undefined : await this.deps.ownerWitness!.resolve(owner, req.ownerWitness!);
       const ownerAuth: OwnerAuth<TxBuilder> = witness?.auth ?? { kind: "key", pkh: owner.hash };
+      const plan = planSponsorValidity({
+        step, tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
+        txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, issued: this.deps.issued,
+        ...(fpReq === undefined ? {} : { feePayerUtxoRef: refStr(fpReq.utxoRef) }),
+      });
       let feePayer: StepCtx["feePayer"];
       if (fpReq !== undefined) {
         const utxo = await readFeePayerUtxo(this.deps.chain, fpReq, FEE_PAYER_CODES);
         this.assertNotPendingSpent(utxo, "ví trả phí");
         feePayer = {
           req: fpReq, utxo, collateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
-          validToMs: tip.blockTimePosixMs + FUNDING_MAX_VALIDITY_MS,
         };
       }
       const ctx: StepCtx = {
         owner, ownerAuth, ...(witness === undefined ? {} : { witness }),
-        feeAddress, feeKeyHash: getAddressDetails(feeAddress).paymentCredential!.hash, tip,
+        feeAddress, feeKeyHash: getAddressDetails(feeAddress).paymentCredential!.hash, tip, plan,
         ...(feePayer === undefined ? {} : { feePayer }),
       };
       const out = await build(p, ctx);
@@ -733,9 +778,13 @@ export class SponsorTxService {
           feePayerUtxo: feePayer.utxo, maxCollateralLovelace: feePayer.collateralLovelace, otherInputs, ...out.feeFlow,
         });
       }
+      // Hạn đọc NGƯỢC từ chính CBOR, SAU cổng ví trả phí (như create-vault ở `service.ts`): tx thiếu
+      // hạn ở đường `fee_payer` ra 422 của cổng đó, không 500 bất biến.
+      const expiry = readTxExpiry(out.txCbor, this.deps.network, plan, tip.blockTimePosixMs);
       for (const [k, g] of gens) this.deps.locks.bindTxHash(k, txHash, g);
       this.deps.issued.record(txHash, this.now(), {
-        route: ISSUED_ROUTE_OF_STEP[step], lockKeys: keys, ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.req.utxoRef) }),
+        route: ISSUED_ROUTE_OF_STEP[step], lockKeys: keys, validToMs: Number(expiry.validToMs),
+        ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.req.utxoRef) }),
       });
       return {
         step,
@@ -758,7 +807,8 @@ export class SponsorTxService {
             `của thân thì mọi chữ ký đã có mất hiệu lực.`,
         ],
         summary: out.summary,
-        expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
+        expiresAt: expiry.expiresAt,
+        expiresReason: expiry.reason,
       };
     } catch (e) {
       for (const [k, g] of gens) this.deps.locks.release(k, g);

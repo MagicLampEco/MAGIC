@@ -23,7 +23,7 @@ import type { DidOwnerResolverPort } from "./didOwner.js";
 import type { DidPaymentAnchorReader } from "./funding.js";
 import type { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "./locks.js";
 import type { OwnerWitnessProvider } from "./owner.js";
-import { VaultTxService } from "./service.js";
+import { VaultTxService, type WitnessCheck } from "./service.js";
 import type { TxBuilderPort } from "./txBuilder.js";
 
 export interface BlockSpec {
@@ -42,6 +42,8 @@ export interface SharedServiceDeps {
   didOwner?: DidOwnerResolverPort;
   didPaymentAnchor?: DidPaymentAnchorReader;
   now?: () => number;
+  /** Chỉ phép kiểm truyền (`service.ts` ▸ `VaultTxServiceDeps.witnessCheck`); `server.ts` không. */
+  witnessCheck?: WitnessCheck;
 }
 
 /**
@@ -83,5 +85,6 @@ export function makeBlockServices(specs: readonly BlockSpec[], shared: SharedSer
     ...(shared.didOwner === undefined ? {} : { didOwner: shared.didOwner }),
     ...(shared.didPaymentAnchor === undefined ? {} : { didPaymentAnchor: shared.didPaymentAnchor }),
     ...(shared.now === undefined ? {} : { now: shared.now }),
+    ...(shared.witnessCheck === undefined ? {} : { witnessCheck: shared.witnessCheck }),
   }));
 }

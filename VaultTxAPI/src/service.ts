@@ -217,7 +217,15 @@ export interface VaultTxServiceDeps {
   /** Đọc anchor DID cho `funding` did_payment. Vắng ⟹ 501 `FUNDING_UNAVAILABLE`. Cùng tham số
    *  theo mạng `anchor_nft_policy` với nhân chứng did_stake. */
   didPaymentAnchor?: DidPaymentAnchorReader;
+  /** Phép kiểm bộ chứng ký ở `/tx/submit`. Vắng ⟹ `assertWitnessesCoverTx` thật. `server.ts` KHÔNG
+   *  truyền, và không env/cấu hình/cờ dòng lệnh nào chạm tới trường này, nên tiến trình thật không
+   *  tắt được cổng. Chỉ phép kiểm dùng CBOR ghi sẵn (ký bằng khoá không có trong tay) mới tiêm bản
+   *  cho qua, kèm lý do ngay tại chỗ tiêm. */
+  witnessCheck?: WitnessCheck;
 }
+
+/** Hình dạng phép kiểm chứng ký: ném lỗi có mã khi bộ chứng ký không thể làm tx hợp lệ. */
+export type WitnessCheck = (tx: CML.Transaction, witnesses: CML.TransactionWitnessSet) => unknown;
 
 /**
  * Chế độ BÁO GIÁ của một đường dựng (`feeQuote.ts`): dựng + đọc lại CBOR y như đường thật, với
@@ -232,9 +240,11 @@ export interface QuoteMode {
 
 export class VaultTxService {
   private readonly now: () => number;
+  private readonly witnessCheck: WitnessCheck;
 
   constructor(private readonly deps: VaultTxServiceDeps) {
     this.now = deps.now ?? (() => Date.now());
+    this.witnessCheck = deps.witnessCheck ?? assertWitnessesCoverTx;
   }
 
   get network(): Network {
@@ -1194,7 +1204,7 @@ export class VaultTxService {
     }
     // Chữ ký phải đúng trên body hash và phủ đủ `required_signers` TRƯỚC mọi lần ghi sổ hay gửi nút
     // (`witnessCheck.ts`): chữ ký rác không được làm tx thật của chủ rơi vào "bị thay".
-    assertWitnessesCoverTx(tx, witnesses);
+    this.witnessCheck(tx, witnesses);
 
     const bodyHashBefore = CML.hash_transaction(tx.body()).to_hex();
 

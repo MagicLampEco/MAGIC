@@ -339,6 +339,10 @@ describe("VaultBlockRouter — consume / open-thread / bind-did", () => {
 // ── 3 + 4. dịch vụ thật trên hai khối: /health, khoá chung, nộp chung ───────────
 
 const TTL = 180_000;
+/** Cho qua phép kiểm chứng ký: tx ghi sẵn mang `required_signers` khoá Preview thật (không có khoá
+ *  riêng) và `fakeWitnessSetCbor` là byte hằng. Tệp này đo sự DÙNG CHUNG sổ/khoá giữa khối, không đo
+ *  chữ ký — phần đó ở `witnessCheck.test.ts` và `service.test.ts` ▸ khối "chữ ký THẬT". */
+const PASS_PRERECORDED_WITNESSES = (): void => {};
 const NOW = 1_789_100_703_000;
 const TIP: ChainTip = { blockHeight: 1, blockHash: "14".repeat(32), blockTimePosixMs: BigInt(NOW) };
 const CHANGE_ADDRESS = enterpriseAddressOf("Preview", OWNER_PKH);
@@ -388,7 +392,7 @@ function twoBlocks(opts: { submitResult?: string; vaults?: { instant: boolean; s
   const services = makeBlockServices([
     { deployment: INSTANT_DEPLOYMENT, builder: instantBuilder },
     { deployment: SCHEDULE_DEPLOYMENT, builder: scheduleBuilder },
-  ], { network: "Preview", chain, locks, issued, pending: new PendingSpends(TTL), lockTtlMs: TTL, now: () => NOW });
+  ], { network: "Preview", chain, locks, issued, pending: new PendingSpends(TTL), lockTtlMs: TTL, now: () => NOW, witnessCheck: PASS_PRERECORDED_WITNESSES });
   const router: RouterDeps = {
     ...blockRoutingOf(services),
     network: "Preview", chainLabel: "recorded", changeAddressStrategy: "enterprise_from_owner_pkh",
@@ -474,6 +478,7 @@ describe("định tuyến qua HTTP trên dịch vụ thật", () => {
     const mk = (d: Deployment, cbor: string) => new VaultTxService({
       network: "Preview", deployment: d, chain, builder: new RecordedTxBuilder({ bind_did: cbor }),
       locks, issued: new IssuedTxRegistry(TTL * 4), lockTtlMs: TTL, now: () => NOW,
+      witnessCheck: PASS_PRERECORDED_WITNESSES,
     });
     const primary = mk(INSTANT_DEPLOYMENT, T_INSTANT);
     const schedule = mk(SCHEDULE_DEPLOYMENT, T_SCHEDULE);

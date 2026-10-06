@@ -63,6 +63,7 @@ import {
   requireGenV2, requireRefScript, scheduleGenBeaconParamsOf,
 } from "./genV2.js";
 import { genLimitsSummary } from "./summary.js";
+import { assertWitnessesCoverTx } from "./witnessCheck.js";
 import type { ConsumeBuildParams } from "./txBuilder.js";
 import { checkConsumeTx, consumeLineOf, type ConsumePair } from "./consumeLine.js";
 import type { EngageThread } from "./engage.js";
@@ -1191,6 +1192,9 @@ export class VaultTxService {
         "app cần ký thân giao dịch rồi gửi bộ chứng ký thật.",
       );
     }
+    // Chữ ký phải đúng trên body hash và phủ đủ `required_signers` TRƯỚC mọi lần ghi sổ hay gửi nút
+    // (`witnessCheck.ts`): chữ ký rác không được làm tx thật của chủ rơi vào "bị thay".
+    assertWitnessesCoverTx(tx, witnesses);
 
     const bodyHashBefore = CML.hash_transaction(tx.body()).to_hex();
 

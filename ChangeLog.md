@@ -5,6 +5,44 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: hành trình tài trợ theo DID — đổi tên đường, mỗi DID một quỹ, bước `bind-did`, ghim `platform_pkhs`
+
+**Đổi gì.**
+- Đổi tên đường tài trợ: `/tx/sponsor/{t1-open,t2-fund,t3-draw,t4-first-consume}` →
+  `/tx/sponsor/{open-vault,fund-vault,draw-magic,first-consume}`; route sổ phát-hành / `/fee/utxo`
+  `sponsor-t*` → `sponsor-open-vault` … `sponsor-first-consume`. Bảng mục đích Feecover trong cấu
+  hình vẫn nhận bốn khoá tên cũ làm bí danh (`VaultTxAPI/src/config.ts` ▸ `LEGACY_SPONSOR_PURPOSE_KEYS`).
+- fund-vault nạp vào **quỹ tài trợ của DID** (`sponsorship = Some`, `owner_commit` == `did_commit`
+  của thread); `fund_id` thành tuỳ chọn — vắng thì dịch vụ tự tìm (`VaultTxAPI/src/sponsorFund.ts` ▸
+  `resolveSponsorFund`). Quỹ chung `sponsorship = None` bị loại khỏi hành trình. Mã mới:
+  `SPONSOR_FUND_NOT_OPENED` 409, `SPONSOR_FUND_AMBIGUOUS` 409, `SPONSOR_FUND_DID_MISMATCH` 422,
+  `SPONSOR_VAULT_DID_UNSET` 409, `SPONSOR_VAULT_DID_MISMATCH` 422; `SPONSOR_FUND_NOT_ALLOWED` 422 kèm
+  `details.problem`. Đường đọc mới `GET /sponsor/funds`.
+- Bước mới `POST /tx/sponsor/bind-did` (`SetDidCommit`, gắn `did_commit` của thread vào két Prepaid,
+  một lần; `SPONSOR_VAULT_DID_ALREADY_SET` 409), giữa open-vault và fund-vault; `/tx/sponsor/plan` trả
+  năm bước. Bộ dựng ở PrepaidGen SDK: `PrepaidGen/offchain/src/tx/builders.ts` ▸ `planSetDidCommit` /
+  `addSetDidCommit`, redeemer `codec.ts` ▸ `setDidCommitRedeemer`.
+- Khoá cấu hình tuỳ chọn `paid_fund.sponsor.platform_pkhs`: có mặt ⟹ dịch vụ chỉ nhận quỹ có
+  `datum.platform` thuộc tập này; vắng `fund_units` ⟹ quét địa chỉ quỹ thay vì tra tập ghim. Cần ít
+  nhất một trong `fund_units` / `platform_pkhs`.
+- Cổng `reservation_id` (mục cùng ngày bên dưới) áp nguyên cho các bước tài trợ tên mới, gồm cả bind-did: mọi
+  bước đi chung `VaultTxAPI/src/sponsor.ts` ▸ `planSponsorValidity`. Danh sách đóng route kiểm mã ở
+  README ▸ *Proxy phí* ▸ `reservation_id` đổi sang tên mới và thêm `/tx/sponsor/bind-did` (12 → 13 route).
+
+**Vì sao.** Chủ dự án chốt 2026-10-07: mỗi DID một quỹ tài trợ — CARP bên tài trợ góp phải thu hồi
+được, mà validator chỉ cho thu hồi khi quỹ buộc vào đúng một DID (`PrepaidGen/onchain/validators/prepaid.ak`
+▸ `validate_lock`, khối `sponsorship`). Két Prepaid đúc với `did_commit` rỗng, nên hành trình thiếu
+một bước gắn DID trước lượt nạp — trước đây chỉ bài kiểm tự dựng tx `SetDidCommit` thô. Ghim
+`platform` vì lượt đúc quỹ chỉ đòi chữ ký platform, không đòi bên tài trợ: quét địa chỉ quỹ mà chỉ lọc
+theo ví bên tài trợ là nạp CARP vào quỹ kẻ gọi tự đúc. Tên `t1`…`t4` là ký hiệu số của bộ dựng, không
+nói bước làm gì.
+
+**Cái gì gãy nếu bám bản cũ.** Gọi đường tên cũ ⟹ `404 NOT_FOUND`; `/fee/utxo` với `route` tên cũ ⟹
+bị từ chối. fund-vault trên két chưa gắn DID ⟹ `409 SPONSOR_VAULT_DID_UNSET` (gọi bind-did trước). Quỹ
+chung (`sponsorship = None`) trong `fund_units` không còn được nạp (`problem: not_sponsored`). Cấu hình
+`paid_fund.sponsor` thiếu cả `fund_units` lẫn `platform_pkhs` ⟹ từ chối khởi động. Chưa có route tạo
+quỹ cho một DID: quỹ tạo trước bằng công cụ vận hành.
+
 ## 2026-10-07 — VaultTxAPI: `fee_sources` trong báo giá; `source` ở `/fee/utxo` + `/fee/sign`
 
 **Đổi gì.** `POST /tx/quote` trả thêm `fee_sources` = ba khối `owner_address` / `feecover` / `sponsor`

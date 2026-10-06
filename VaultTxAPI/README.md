@@ -700,7 +700,7 @@ FEE_QUOTE_SELF_FUNDED`; phí thật nằm ở `summary.funding.self_funded.fee_l
 
 Năm đường dựng trên vault có sẵn (`instant-gen`, `refresh-checkpoint`, `schedule-commit`,
 `schedule-fire`, `consume`), cùng `open-thread`, `bind-did`, `create-vault` két instant
-`"lamp_amount": "0"` và bốn bước tài trợ `/tx/sponsor/*`, nhận `fee_payer` thay cho
+`"lamp_amount": "0"` và các bước tài trợ `/tx/sponsor/*`, nhận `fee_payer` thay cho
 `change_address`. Người dùng mới chưa có ADA nào đi được trọn đường bằng ví trả phí:
 
 ```jsonc
@@ -1133,11 +1133,12 @@ dựng được trên lượt giữ của B. Hợp đồng:
   tx ghi sổ khi chưa có lượt giữ nào mà nay UTxO đang được giữ ⟹ `409 … "foreign"` (kèm `tx_hash`),
   Feecover không bị gọi. Tx bị thay khi một tx chung khoá được nộp chỉ bỏ ĐÚNG lượt giữ của nó (cùng mã).
 
-**Danh sách ĐÓNG route dựng kiểm mã** — mọi route gọi cổng `IssuedTxRegistry.feeReservationForBuild`
+**Danh sách ĐÓNG route dựng kiểm mã (13 route)** — mọi route gọi cổng `IssuedTxRegistry.feeReservationForBuild`
 (`service.ts` ▸ `validityPlan`, `sponsor.ts` ▸ `planSponsorValidity`), tức mọi route nhận `fee_payer`:
 `/tx/instant-gen` · `/tx/refresh-checkpoint` · `/tx/schedule-commit` · `/tx/schedule-fire` · `/tx/consume` ·
 `/tx/open-thread` · `/tx/bind-did` · `/tx/create-vault` (`fee_payer` và `funding.fee_payer`) ·
-`/tx/sponsor/t1-open` · `/tx/sponsor/t2-fund` · `/tx/sponsor/t3-draw` · `/tx/sponsor/t4-first-consume`.
+`/tx/sponsor/open-vault` · `/tx/sponsor/bind-did` · `/tx/sponsor/fund-vault` · `/tx/sponsor/draw-magic` ·
+`/tx/sponsor/first-consume` (mọi bước tài trợ đi chung `sponsor.ts` ▸ `planSponsorValidity`).
 Lệnh liệt kê lại: `command grep -rn "feeReservationForBuild(" VaultTxAPI/src`.
 
 **BƯỚC 2 (bắt buộc mã) CHƯA bật, và chỉ bật khi đủ HAI điều kiện:** (1) SuperApp báo số bản dựng có gửi
@@ -1190,13 +1191,86 @@ tài trợ và đếm **một lần mỗi DID**, theo anchor DID mà T2 mang ở
 dựng hình dạng giao dịch; nó không giữ sổ đếm nào. (Chặn két thứ hai ở T1 —
 `409 VAULT_ALREADY_EXISTS` — là lưới an toàn cho thao tác bấm lặp, không phải chính sách.)
 
+#### Mỗi DID một quỹ tài trợ
+
+CARP bên tài trợ góp cho một người mới phải **lấy lại được**: tới kỳ thu hồi, phần chưa dùng quay
+về bên tài trợ. Hợp đồng chỉ cho thu hồi khi quỹ được buộc vào ĐÚNG MỘT người — quỹ mang
+`sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }`, và két nạp vào quỹ đó phải
+mang đúng `owner_commit` (`PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_lock`, khối
+`sponsorship`). Nên mỗi DID có một quỹ tài trợ riêng, và fund-vault chỉ nạp vào quỹ của chính DID
+người đang làm hành trình. Quỹ chung (`sponsorship = None`) không có đường trả CARP về bên tài trợ,
+nên hành trình tài trợ **không bao giờ** dùng nó.
+
+Từ đó ra hai việc người gọi phải biết:
+
+- **Két phải gắn DID trước khi nạp.** Két Prepaid mở ra với `did_commit` rỗng (hợp đồng bắt vậy ở
+  lượt đúc). Bước `bind-did` ghi `did_commit` của thread vào két — một lần, không đổi được về sau.
+  Gọi fund-vault khi két chưa gắn ⟹ `409 SPONSOR_VAULT_DID_UNSET`.
+- **Không cần gửi `fund_id`.** Vắng ⟹ dịch vụ tự tìm quỹ tài trợ của DID (DID đọc từ thread của
+  chủ). Gửi ⟹ quỹ đó phải là quỹ của đúng DID này. `summary.fund_selection` nói quỹ được chọn theo
+  cách nào: `"did_lookup"` (dịch vụ tìm) hay `"caller"` (bên gọi chỉ đích danh).
+
+Dịch vụ chỉ nhận quỹ từ một **gốc tin cậy** ghim ở cấu hình, không bao giờ từ thân bài: lượt đúc
+quỹ chỉ đòi chữ ký khoá `platform`, KHÔNG đòi chữ ký bên tài trợ, nên ai cũng đúc được một quỹ ghi
+ví bên tài trợ + DID của người khác + ví nhận tiền của mình. Hai gốc, khai trong
+`paid_fund.sponsor` (§6), cần ít nhất một:
+
+| khoá | dịch vụ làm gì | chặn được gì |
+|---|---|---|
+| `fund_units` | tra đúng từng quỹ trong danh sách | mọi quỹ ngoài danh sách |
+| `platform_pkhs` | vắng `fund_units` ⟹ quét địa chỉ quỹ, chỉ giữ quỹ có `platform` thuộc danh sách | quỹ do khoá platform lạ đúc — kẻ gọi không ký được bằng khoá platform đã ghim |
+
+Có cả hai ⟹ quỹ phải thoả cả hai. Ở cả hai đường, quỹ còn phải ghi `sponsorship.sponsor` thuộc
+`addresses` đã ghim và trỏ đúng script két. Nguồn: `src/sponsorFund.ts` ▸ `classifySponsorFunds`,
+`resolveSponsorFund`; `src/sponsor.ts` ▸ `readSponsorFunds`.
+
+| mã | HTTP | nghĩa / sửa thế nào |
+|---|---|---|
+| `SPONSOR_VAULT_DID_UNSET` | 409 | két chưa gắn DID — gọi `/tx/sponsor/bind-did` trước |
+| `SPONSOR_VAULT_DID_MISMATCH` | 422 | két đã gắn một DID khác DID của thread — két này không đi tiếp được hành trình tài trợ |
+| `SPONSOR_VAULT_DID_ALREADY_SET` | 409 | (bind-did) két đã gắn đúng DID này — bỏ qua bind-did, đi tiếp fund-vault |
+| `SPONSOR_FUND_NOT_OPENED` | 409 | DID chưa có quỹ tài trợ nào trong gốc tin cậy — người vận hành tạo quỹ rồi gọi lại |
+| `SPONSOR_FUND_AMBIGUOUS` | 409 | DID có hơn một quỹ tài trợ — gửi `fund_id`, hoặc báo người vận hành gỡ quỹ thừa |
+| `SPONSOR_FUND_DID_MISMATCH` | 422 | `fund_id` gửi lên là quỹ của DID khác — bỏ `fund_id` để dịch vụ tự tìm |
+| `SPONSOR_FUND_NOT_ALLOWED` | 422 | `fund_id` ngoài gốc tin cậy, hoặc quỹ đó không dùng được (`details.problem`: `missing` · `ambiguous` · `undecodable` · `foreign_platform` · `wrong_vault` · `not_sponsored` · `foreign_sponsor`) |
+
+`GET /sponsor/funds` (thẻ thường, chỉ đọc) trả tình trạng từng quỹ trong gốc tin cậy: DID mà quỹ
+phục vụ (`owner_commit`), lý do không dùng được (`problem`), quỹ có đang bận không, số kế toán, và
+CARP còn ở ví bên tài trợ.
+
+**Tạo quỹ tài trợ cho một DID — chưa có route.** Ràng buộc tạm đang có hiệu lực: quỹ được tạo
+trước bằng công cụ vận hành (ký bằng khoá platform), rồi được dịch vụ nhận qua `fund_units` hoặc
+`platform_pkhs`. DID chưa có quỹ ⟹ fund-vault trả `409 SPONSOR_FUND_NOT_OPENED`.
+
 | đường | bước | dựng gì | ai ký (theo thứ tự) |
 |---|---|---|---|
 | `/tx/sponsor/plan` | — | kế hoạch thuần: ai ký bước nào, đường của bước; không chạm chuỗi | — |
-| `/tx/sponsor/t1-open` | T1 | đúc két Prepaid + thread consume trong MỘT tx; `did_commit` ghi vào **thread** (két genesis giữ `did_commit` rỗng) | ví trả phí · chủ |
-| `/tx/sponsor/t2-fund` | T2 | `PrepaidLock` + `FundLock`: CARP từ UTxO bên tài trợ vào quỹ đã ghim, thối về bên tài trợ; anchor DID ở `reference_inputs` | ví trả phí · **bên tài trợ** · chủ |
-| `/tx/sponsor/t3-draw` | T3 | `PrepaidDraw` ⟹ một lô MAGIC sống đúng kỳ hiện tại | ví trả phí · chủ |
-| `/tx/sponsor/t4-first-consume` | T4 | consume đầu + `BurnBatch` trên két Prepaid | ví trả phí · chủ |
+| `/tx/sponsor/open-vault` | T1 | đúc két Prepaid + thread consume trong MỘT tx; `did_commit` ghi vào **thread** (két genesis giữ `did_commit` rỗng) | ví trả phí · chủ |
+| `/tx/sponsor/bind-did` | — | `SetDidCommit`: gắn `did_commit` của thread vào két Prepaid, MỘT LẦN | ví trả phí · chủ |
+| `/tx/sponsor/fund-vault` | T2 | `PrepaidLock` + `FundLock`: CARP từ UTxO bên tài trợ vào **quỹ tài trợ của DID** đó, thối về bên tài trợ; anchor DID ở `reference_inputs` | ví trả phí · **bên tài trợ** · chủ |
+| `/tx/sponsor/draw-magic` | T3 | `PrepaidDraw` ⟹ một lô MAGIC sống đúng kỳ hiện tại | ví trả phí · chủ |
+| `/tx/sponsor/first-consume` | T4 | consume đầu + `BurnBatch` trên két Prepaid | ví trả phí · chủ |
+
+Thứ tự hành trình: open-vault → bind-did → fund-vault → draw-magic → first-consume. Cột "bước"
+giữ ký hiệu `T1`…`T4` của bộ dựng SDK (`@magiclamp/sdk` ▸ `planSponsorJourney`) cho người đọc mã
+SDK; bind-did là bước của dịch vụ này, SDK chưa có ký hiệu cho nó. `/tx/sponsor/plan` trả đúng
+thứ tự năm bước trên.
+
+**Đổi tên đường (2026-10-07).** Tên cũ không còn nhận ở HTTP lẫn `/fee/utxo` ▸ `route`:
+
+| tên cũ | tên mới |
+|---|---|
+| `/tx/sponsor/t1-open` · route `sponsor-t1-open` | `/tx/sponsor/open-vault` · `sponsor-open-vault` |
+| `/tx/sponsor/t2-fund` · route `sponsor-t2-fund` | `/tx/sponsor/fund-vault` · `sponsor-fund-vault` |
+| `/tx/sponsor/t3-draw` · route `sponsor-t3-draw` | `/tx/sponsor/draw-magic` · `sponsor-draw-magic` |
+| `/tx/sponsor/t4-first-consume` · route `sponsor-t4-first-consume` | `/tx/sponsor/first-consume` · `sponsor-first-consume` |
+| — | `/tx/sponsor/bind-did` · `sponsor-bind-did` (mới) |
+| — | `GET /sponsor/funds` (mới) |
+
+Ngoại lệ duy nhất: bảng mục đích Feecover trong tệp cấu hình (`feecover.apps.*.purposes`) vẫn
+nhận bốn khoá tên cũ làm bí danh, vì tệp cấu hình đang chạy còn dùng chúng; khai cả tên cũ lẫn tên
+mới cho cùng một route ⟹ dịch vụ từ chối khởi động. Nguồn: `src/config.ts` ▸
+`LEGACY_SPONSOR_PURPOSE_KEYS` — gỡ bảng đó khi tệp cấu hình đã đổi sang tên mới.
 
 Nguồn bảng đường → bước: `src/sponsor.ts` ▸ `SPONSOR_STEP_OF_PATH`. Vai ký đọc ở mảng `signers`
 của từng đáp ứng; `required_signers` đọc từ chính CBOR vừa dựng. Ví trả phí và bên tài trợ ký
@@ -1251,7 +1325,8 @@ phí ký vì tx chi UTxO của nó; nó không vào `required_signers`.
 | bước | trường riêng |
 |---|---|
 | T1 | `did_commit` (64 hex thường), `thread_lovelace` (tuỳ chọn) |
-| T2 | `fund_id`, `carp_amount`, `sponsor: { utxo_refs: ["<tx>#<i>", …] (1–20) }`, `vault_ref` (tuỳ chọn) — **không** có `sponsor.change_address` (gửi ⟹ `400 SPONSOR_REQUEST_SHAPE`) |
+| bind-did | `vault_ref` (tuỳ chọn) — **không** có `did_commit` (DID lấy từ thread; gửi ⟹ `400 SPONSOR_REQUEST_SHAPE`) |
+| T2 | `fund_id` (tuỳ chọn — vắng ⟹ dịch vụ tìm quỹ của DID), `carp_amount`, `sponsor: { utxo_refs: ["<tx>#<i>", …] (1–20) }`, `vault_ref` (tuỳ chọn) — **không** có `sponsor.change_address` (gửi ⟹ `400 SPONSOR_REQUEST_SHAPE`) |
 | T3 | `fund_id`, `carp_amount`, `vault_ref` (tuỳ chọn) |
 | T4 | `op_type`, `op_count`, `draw_epoch` (số nguyên), `vault_ref` / `engage_ref` (tuỳ chọn) |
 
@@ -1260,22 +1335,22 @@ phí ký vì tx chi UTxO của nó; nó không vào `required_signers`.
 - **Đích thối không do người gọi viết.** Phần thối của bên tài trợ về lại ĐÚNG địa chỉ chung của
   các UTxO trong `sponsor.utxo_refs`; `summary.sponsor_change_address` trả địa chỉ đó. Bản trước
   nhận `sponsor.change_address` từ thân bài, nên người gọi lái được toàn bộ phần thối về ví mình.
-- **Ghim ở bản deploy** — khối `paid_fund.sponsor` (§6): `fund_units` (tập quỹ được nạp),
-  `addresses` (địa chỉ khoá bên tài trợ, dạng bech32 chính tắc), `max_carp_amount` (trần một lượt,
+- **Ghim ở bản deploy** — khối `paid_fund.sponsor` (§6): `fund_units` (tập quỹ được nạp) và/hoặc
+  `platform_pkhs` (khoá platform được tin — mục "Mỗi DID một quỹ tài trợ" ở trên), `addresses` (địa chỉ khoá bên tài trợ, dạng bech32 chính tắc), `max_carp_amount` (trần một lượt,
   chuỗi chữ số carpdrop). Vắng khối ⟹ T2 trả `501 CONFIG_MISSING`. Cổng: `src/sponsor.ts` ▸
-  `assertT2PinnedInputs` (quỹ + trần, trước khi giữ khoá), `assertSponsorUtxosPinned` (UTxO chung
-  một địa chỉ đã ghim, cái nào cũng mang CARP), `assertT2PinnedOutputs` (đọc lại CBOR: đúng một
+  `assertFundPinnedInputs` (quỹ + trần, trước khi giữ khoá), `assertSponsorUtxosPinned` (UTxO chung
+  một địa chỉ đã ghim, cái nào cũng mang CARP), `assertFundPinnedOutputs` (đọc lại CBOR: đúng một
   output quỹ nhận đúng `carp_amount`; đúng một output thối có giá trị trọn = Σ vào − `carp_amount`;
   không output nào khác mang CARP).
-- **Thẻ vai.** `/tx/sponsor/t2-fund` chỉ mở bằng thẻ `VAULT_TX_API_SPONSOR_TOKEN` (§6) — thẻ
+- **Thẻ vai.** `/tx/sponsor/fund-vault` chỉ mở bằng thẻ `VAULT_TX_API_SPONSOR_TOKEN` (§6) — thẻ
   thường ⟹ `403 SPONSOR_ROLE_REQUIRED`; dịch vụ chưa đặt thẻ vai ⟹ `501 CONFIG_MISSING`, kể cả trên
   loopback. Thẻ vai dùng ở route khác ⟹ `401`. Nguồn: `src/http.ts` ▸ `SPONSOR_ROLE_PATHS`,
   `requireRole`. T1/T3/T4 giữ thẻ thường.
 - **Khoá theo UTxO.** Mỗi T2 giữ khoá `utxo:<ref>` cho từng UTxO bên tài trợ (cùng TTL với khoá
   chủ): hai T2 cùng một UTxO đều dựng được, lượt sau THAY lượt trước; tx nộp sau ⟹ `409 TX_SUPERSEDED` (§4).
-- **Chủ phải là DID.** T1/T2 chỉ nhận chủ `Script(did_stake)` kèm `owner_witness` (chủ khoá ⟹
+- **Chủ phải là DID.** T1/bind-did/T2 chỉ nhận chủ `Script(did_stake)` kèm `owner_witness` (chủ khoá ⟹
   `422 SPONSOR_OWNER_NOT_DID`), và tên anchor trong nhân chứng phải bằng `did_commit` của hành
-  trình (T1: của thân bài; T2: của thread) — lệch ⟹ `422 SPONSOR_OWNER_DID_MISMATCH`. Nguồn:
+  trình (T1: của thân bài; bind-did, T2: của thread) — lệch ⟹ `422 SPONSOR_OWNER_DID_MISMATCH`. Nguồn:
   `src/sponsor.ts` ▸ `assertOwnerDid`. Lối chủ khoá chỉ mở qua tham số hàm dựng `allowKeyOwner`
   của `SponsorTxService`, thứ `server.ts` không truyền — nó chỉ để bài kiểm dùng.
 
@@ -1362,7 +1437,8 @@ của dịch vụ: khối chú thích đầu `src/errors.ts`. Phần người g�
 | `SPONSOR_EPOCH_MISMATCH` | 409 | `draw_epoch` không phải kỳ hiện tại — lô đã hết hạn, rút lại ở T3 |
 | `SPONSOR_VALIDITY_SPANS_EPOCHS` | 422 | đang sát biên kỳ; thử lại sau biên |
 | `SPONSOR_CARP_INSUFFICIENT` · `SPONSOR_FUND_NOT_PINNED` | 422 | UTxO bên tài trợ không đủ CARP / quỹ không đúng quỹ đã ghim |
-| `SPONSOR_FUND_NOT_ALLOWED` · `SPONSOR_CARP_ABOVE_CAP` | 422 | `fund_id` ngoài `paid_fund.sponsor.fund_units` / `carp_amount` vượt `max_carp_amount` |
+| `SPONSOR_FUND_NOT_ALLOWED` · `SPONSOR_CARP_ABOVE_CAP` | 422 | `fund_id` ngoài gốc tin cậy hoặc quỹ không dùng được / `carp_amount` vượt `max_carp_amount` |
+| `SPONSOR_VAULT_DID_*` · `SPONSOR_FUND_NOT_OPENED` · `SPONSOR_FUND_AMBIGUOUS` · `SPONSOR_FUND_DID_MISMATCH` | 409/422 | quỹ / két theo DID — bảng ở mục "Mỗi DID một quỹ tài trợ" |
 | `SPONSOR_UTXO_NOT_ALLOWED` · `SPONSOR_UTXO_NO_CARP` | 422 | `utxo_refs` không chung một địa chỉ đã ghim / có UTxO không mang CARP |
 | `SPONSOR_UTXO_NOT_KEY` | 400 | UTxO bên tài trợ không do khoá giữ |
 | `SPONSOR_UTXO_NOT_FOUND` | 404 | có `utxo_refs` không phải UTxO chưa tiêu |
@@ -1371,7 +1447,7 @@ của dịch vụ: khối chú thích đầu `src/errors.ts`. Phần người g�
 | `FEE_PAYER_SHAPE` · `FEE_PAYER_INVALID` | 400 | `fee_payer` sai khuôn / sai mạng / không phải khoá; UTxO trả phí không phải UTxO chưa tiêu, không ở `fee_payer.address`, hoặc không thuần ADA |
 | `FEE_PAYER_TX_MISMATCH` | 422 | tx vừa dựng lệch một trong năm luật đọc lại ở trên — lỗi phía dịch vụ, báo vận hành |
 | `SPONSOR_BUILD_FAILED` | 422 | bộ dựng không cân được tx — thường là UTxO trả phí không đủ ADA cho phí + thế chấp + min-ADA phải ứng; nạp UTxO lớn hơn |
-| `SPONSOR_OWNER_NOT_DID` · `SPONSOR_OWNER_DID_MISMATCH` | 422 | T1/T2 với chủ khoá / anchor của nhân chứng không mang tên `did_commit` |
+| `SPONSOR_OWNER_NOT_DID` · `SPONSOR_OWNER_DID_MISMATCH` | 422 | T1/bind-did/T2 với chủ khoá / anchor của nhân chứng không mang tên `did_commit` |
 | `SPONSOR_ROLE_REQUIRED` | 403 | T2 gọi bằng thẻ thường — cần thẻ vai sponsor |
 | `TX_SUPERSEDED` | 409 | lúc NỘP: tx đã bị thay — một tx khác chung khoá (chủ, quỹ, UTxO bên tài trợ / ví trả phí) đã được nộp, hoặc input của nó vừa bị tx khác tiêu (§4) |
 | `OWNER_TX_IN_FLIGHT` | 409 | **đã nghỉ** — bản cũ trả ở lúc DỰNG; nay không đường nào trả (§4) |
@@ -1618,7 +1694,7 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `VAULT_TX_API_PORT` | không | `8788` |
 | `VAULT_TX_API_BASE_PATH` | không | rỗng — tiền tố đường khi đứng sau proxy định tuyến theo đường, ví dụ `/vaulttx/preprod`; dịch vụ tự cắt nó (`src/basePath.ts`), vẫn nhận đường không tiền tố từ loopback |
 | `VAULT_TX_API_TOKEN` | ngoài loopback thì **có** | rỗng |
-| `VAULT_TX_API_SPONSOR_TOKEN` | khi phục vụ T2 | rỗng ⟹ `/tx/sponsor/t2-fund` trả `501 CONFIG_MISSING`. **GIÁ TRỊ** thẻ vai sponsor, đưa cho bên vận hành tài trợ; trùng `VAULT_TX_API_TOKEN` ⟹ từ chối khởi động |
+| `VAULT_TX_API_SPONSOR_TOKEN` | khi phục vụ T2 | rỗng ⟹ `/tx/sponsor/fund-vault` trả `501 CONFIG_MISSING`. **GIÁ TRỊ** thẻ vai sponsor, đưa cho bên vận hành tài trợ; trùng `VAULT_TX_API_TOKEN` ⟹ từ chối khởi động |
 | `VAULT_TX_API_BLOCKFROST_URL` | không | dẫn theo `NETWORK` |
 | `VAULT_TX_API_TIMEOUT_MS` | không | `20000` |
 | `VAULT_TX_API_LOCK_TTL_MS` | không | `180000` — CHỈ khoá mềm theo chủ (§4), khoảng `[1000, 3600000]` |
@@ -1690,11 +1766,13 @@ trường `gen_v2` cần khai. Script hash / policy của `gen_v2` suy từ đ�
 `token_sha256` — token của nó vào qua `FEECOVER_APP_TOKEN`; ứng dụng khác khai SHA-256 của
 token của họ, dịch vụ không giữ token đó. Khoá của `purposes` là tên route: tám đường dựng
 (`create-vault`, `instant-gen`, `refresh-checkpoint`, `schedule-commit`, `schedule-fire`,
-`consume`, `open-thread`, `bind-did`) và bốn bước tài trợ (`sponsor-t1-open`, `sponsor-t2-fund`,
-`sponsor-t3-draw`, `sponsor-t4-first-consume`); tên lạ ⟹ dịch vụ từ chối khởi động. Giá trị là
+`consume`, `open-thread`, `bind-did`) và năm bước tài trợ (`sponsor-open-vault`, `sponsor-bind-did`,
+`sponsor-fund-vault`, `sponsor-draw-magic`, `sponsor-first-consume`; bốn tên cũ `sponsor-t1-open` …
+`sponsor-t4-first-consume` còn nhận làm bí danh — mục "Đổi tên đường" ở phần route tài trợ); tên lạ ⟹ dịch vụ từ
+chối khởi động. Giá trị là
 tên mục đích của Feecover và do Feecover đặt (bốn bước tài trợ bên đó dùng `sponsor_open` /
 `sponsor_fund` / `sponsor_draw` / `sponsor_first_consume`). Route vắng khỏi bảng thì proxy trả
-`400 FEE_PROXY_PURPOSE_UNMAPPED` cho tx của route đó. T2 cũng là khoá hợp lệ: `/tx/sponsor/t2-fund`
+`400 FEE_PROXY_PURPOSE_UNMAPPED` cho tx của route đó. T2 cũng là khoá hợp lệ: `/tx/sponsor/fund-vault`
 nhận `fee_payer` như ba bước kia, nhà tài trợ chỉ ký thêm cho UTxO CARP của mình; Feecover có trả
 phí T2 hay không là việc của bảng mục đích, không phải của dịch vụ này.
 
@@ -1728,7 +1806,8 @@ quyết theo `vault_type` chứ không theo khoá nào có mặt:
   "paid_fund": { "address": "addr_test1w…",                            // BẮT BUỘC — Script(paid_fund)
                  "carp_unit": "<policy‖tên CARP>",                     // route /tx/sponsor/* cần; vắng ⟹ 501 CONFIG_MISSING
                  "sponsor": {                                          // ghim của T2; vắng ⟹ T2 trả 501 CONFIG_MISSING
-                   "fund_units": ["<policy paid_fund‖fund_id>"],       // quỹ được nạp; policy phải là script paid_fund
+                   "fund_units": ["<policy paid_fund‖fund_id>"],       // tập quỹ ghim; policy phải là script paid_fund
+                   "platform_pkhs": ["<56 hex>"],                      // khoá platform được tin; cần ÍT NHẤT một trong hai khoá này
                    "addresses": ["addr_test1v…"],                      // địa chỉ KHOÁ bên tài trợ, bech32 chính tắc, đúng mạng
                    "max_carp_amount": "1000000000" } },                // trần một lượt, CHUỖI 1–20 chữ số carpdrop, > 0
   "did_stake": { "anchor_nft_policy": "<56 hex>" },                    // T2 cần để định vị anchor DID

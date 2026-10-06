@@ -50,7 +50,7 @@
 
 import {
   CML, getAddressDetails, validatorToAddress, validatorToScriptHash, valueToAssets,
-  type Assets, type LucidEvolution, type Script, type TxBuilder, type UTxO, type Validator,
+  type Assets, type LucidEvolution, type Network as SlotNetwork, type Script, type TxBuilder, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
 import {
   OwnerAuthError, WindowOriginError, msPerEpoch, sameOwner, wakemeVaultHash, windowOriginMs,
@@ -436,6 +436,13 @@ export interface SponsorTxServiceDeps {
    * vì nhánh chủ script đòi nhân chứng PhoenixKey thật (`did_stake` + anchor Active), thứ Emulator không có.
    */
   allowKeyOwner?: boolean;
+  /**
+   * Lưới slot ↔ POSIX ms của chuỗi mà bộ dựng ghi `ttl` (Lucid đổi `validTo` ms sang slot theo lưới
+   * của CHÍNH nó). Vắng ⟹ `network`. Chỉ bài Emulator khác: Lucid "Custom" lấy gốc giờ = lúc dựng
+   * Emulator, nên đọc `ttl` đó bằng lưới Preprod ra một mốc năm 2022. `server.ts` không truyền.
+   * `network` vẫn là lưới EPOCH (kẹp cuối epoch, `windowOriginMs`) và lưới địa chỉ.
+   */
+  slotNetwork?: SlotNetwork;
 }
 
 interface Prepared {
@@ -774,13 +781,13 @@ export class SponsorTxService {
         const others = inputRefsOf(out.txCbor).filter(r => refStr(r) !== feeKey);
         const otherInputs = others.length === 0 ? [] : await this.deps.chain.utxosByOutRef(others);
         out.summary.fee_payer = checkSponsorFeePayerTx(out.txCbor, {
-          network: this.deps.network, tipPosixMs: tip.blockTimePosixMs, feePayer: feePayer.req,
+          network: this.deps.slotNetwork ?? this.deps.network, tipPosixMs: tip.blockTimePosixMs, feePayer: feePayer.req,
           feePayerUtxo: feePayer.utxo, maxCollateralLovelace: feePayer.collateralLovelace, otherInputs, ...out.feeFlow,
         });
       }
       // Hạn đọc NGƯỢC từ chính CBOR, SAU cổng ví trả phí (như create-vault ở `service.ts`): tx thiếu
       // hạn ở đường `fee_payer` ra 422 của cổng đó, không 500 bất biến.
-      const expiry = readTxExpiry(out.txCbor, this.deps.network, plan, tip.blockTimePosixMs);
+      const expiry = readTxExpiry(out.txCbor, this.deps.slotNetwork ?? this.deps.network, plan, tip.blockTimePosixMs);
       for (const [k, g] of gens) this.deps.locks.bindTxHash(k, txHash, g);
       this.deps.issued.record(txHash, this.now(), {
         route: ISSUED_ROUTE_OF_STEP[step], lockKeys: keys, validToMs: Number(expiry.validToMs),
@@ -1177,7 +1184,8 @@ export function assertT2PinnedOutputs(outs: SponsorTxOutput[], e: T2PinnedOutput
 // ── đọc lại CBOR: đường `fee_payer` của hành trình tài trợ ──────────────────────
 
 export interface SponsorFeePayerCheckContext extends FeeFlow {
-  network: Network;
+  /** Lưới slot đọc `ttl` (`SponsorTxServiceDeps.slotNetwork`) — trường này chỉ dùng cho `checkValidTo`. */
+  network: SlotNetwork;
   tipPosixMs: bigint;
   feePayer: FeePayerRequest;
   feePayerUtxo: UTxO;

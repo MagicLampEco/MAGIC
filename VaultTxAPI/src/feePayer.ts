@@ -44,7 +44,7 @@
 // trên `/tx/consume` thành "phần funding sai" — một trường nó không hề gửi. Mã đi theo TRƯỜNG
 // bị sai: `fee_payer` ⟹ `FEE_PAYER_*`, `funding.fee_payer` ⟹ `FUNDING_*` (giữ nguyên như cũ).
 
-import { CML, getAddressDetails, slotToUnixTime, valueToAssets, type UTxO } from "@lucid-evolution/lucid";
+import { CML, getAddressDetails, slotToUnixTime, valueToAssets, type Network as SlotNetwork, type UTxO } from "@lucid-evolution/lucid";
 import { FUNDING_MAX_VALIDITY_MS, type Network } from "@magiclamp/protocol-utils";
 
 import type { ChainReader } from "./chain.js";
@@ -203,7 +203,7 @@ export function checkCollateral(
 }
 
 /** Hạn dùng phải CÓ và ≤ 1 giờ kể từ đỉnh chuỗi. Trả `validTo` (POSIX ms). */
-export function checkValidTo(body: CML.TransactionBody, network: Network, tipPosixMs: bigint, fail: Fail): bigint {
+export function checkValidTo(body: CML.TransactionBody, network: SlotNetwork, tipPosixMs: bigint, fail: Fail): bigint {
   const ttl = body.ttl();
   if (ttl === undefined) throw fail(`giao dịch không có hạn dùng (validTo) — ví trả phí đòi ≤ 1 giờ`);
   const validTo = BigInt(slotToUnixTime(network, Number(ttl)));

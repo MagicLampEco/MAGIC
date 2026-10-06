@@ -22,7 +22,7 @@
 // được kẹp ≤ 1 giờ ở `config.ts`, nên trần đó không bao giờ thắng NGẶT. Đổi khoảng cho phép của
 // biến môi trường thì phải thêm lại giá trị đó.
 
-import { CML, slotToUnixTime } from "@lucid-evolution/lucid";
+import { CML, slotToUnixTime, type Network as SlotNetwork } from "@lucid-evolution/lucid";
 import {
   SLOT_LENGTH_MS, WindowOriginError, epochStartMs, posixMsToEpoch, slotFloorMs, type Network,
 } from "@magiclamp/protocol-utils";
@@ -114,14 +114,14 @@ export function planValidity(p: PlanValidityInput): ValidityPlan {
 }
 
 /** `validTo` (POSIX ms) đọc từ thân tx, hoặc `undefined` khi thân không có `ttl`. */
-export function validToOfTx(tx: CML.Transaction | string, network: Network): bigint | undefined {
+export function validToOfTx(tx: CML.Transaction | string, network: SlotNetwork): bigint | undefined {
   const t = typeof tx === "string" ? CML.Transaction.from_cbor_hex(tx) : tx;
   const ttl = t.body().ttl();
   return ttl === undefined ? undefined : BigInt(slotToUnixTime(network, Number(ttl)));
 }
 
 /** `validFrom` (POSIX ms) đọc từ thân tx, hoặc `undefined` khi thân không có cận dưới. */
-export function validFromOfTx(tx: CML.Transaction | string, network: Network): bigint | undefined {
+export function validFromOfTx(tx: CML.Transaction | string, network: SlotNetwork): bigint | undefined {
   const t = typeof tx === "string" ? CML.Transaction.from_cbor_hex(tx) : tx;
   const start = t.body().validity_interval_start();
   return start === undefined ? undefined : BigInt(slotToUnixTime(network, Number(start)));
@@ -143,7 +143,7 @@ export interface TxExpiry {
  * biến nội bộ (500): bộ dựng đã bỏ qua cận mà dịch vụ giao, và trả tx đó là trả cho app một mốc
  * `expires_at` không phải hạn thật của nó. Không đệm, không suy hộ.
  */
-export function readTxExpiry(txCbor: string, network: Network, plan: ValidityPlan, tipPosixMs: bigint): TxExpiry {
+export function readTxExpiry(txCbor: string, network: SlotNetwork, plan: ValidityPlan, tipPosixMs: bigint): TxExpiry {
   const validToMs = validToOfTx(txCbor, network);
   if (validToMs === undefined) {
     throw new Error("[bất biến nội bộ] tx vừa dựng không có validTo — mọi đường dựng phải đặt hạn (validity.ts).");

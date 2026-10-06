@@ -176,16 +176,18 @@ const ISSUED_ROUTE_OF_STEP: Readonly<Record<SponsorStep, SponsorRoute>> = {
  * Cận trên `validTo` cho một bước tài trợ (`validity.ts` ▸ `planValidity`) — cùng nguồn hạn với
  * `service.ts`. T2–T4: validator đòi hai cận cùng một epoch ⟹ `epochBound`. T1 không có cửa sổ kỳ.
  * Tx tiêu một UTxO ví trả phí xin qua `/fee/utxo` ⟹ kẹp thêm vào `reserved_until` của nó (sổ
- * phát-hành ghi lúc phát UTxO, `feeProxy.ts`). UTxO phí app tự đưa ⟹ không có giờ giữ chỗ.
+ * phát-hành ghi lúc phát UTxO, `feeProxy.ts`). UTxO ở địa chỉ Feecover mà sổ không còn lượt giữ ⟹
+ * 409 (`locks.ts` ▸ `feeReservationForBuild`). Ví không phải Feecover ⟹ không có giờ giữ chỗ.
  */
 export function planSponsorValidity(p: {
   step: SponsorStep; tipPosixMs: bigint; network: Network; txValidityMs: number;
-  issued: IssuedTxRegistry; feePayerUtxoRef?: string;
+  issued: IssuedTxRegistry; feePayer?: { utxoRef: string; address: string };
 }): ValidityPlan {
-  const reserved = p.feePayerUtxoRef === undefined ? undefined : p.issued.feeReservationOf(p.feePayerUtxoRef);
+  const reserved = p.feePayer === undefined
+    ? undefined : p.issued.feeReservationForBuild(p.feePayer.utxoRef, p.feePayer.address);
   return planValidity({
     tipPosixMs: p.tipPosixMs, network: p.network, txValidityMs: p.txValidityMs, epochBound: p.step !== "T1",
-    ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved }),
+    ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved, feePayerUtxoRef: p.feePayer!.utxoRef }),
   });
 }
 
@@ -763,7 +765,7 @@ export class SponsorTxService {
       const plan = planSponsorValidity({
         step, tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
         txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, issued: this.deps.issued,
-        ...(fpReq === undefined ? {} : { feePayerUtxoRef: refStr(fpReq.utxoRef) }),
+        ...(fpReq === undefined ? {} : { feePayer: { utxoRef: refStr(fpReq.utxoRef), address: fpReq.address } }),
       });
       let feePayer: StepCtx["feePayer"];
       let rewardReturn: OwnerRewardReturn | undefined;

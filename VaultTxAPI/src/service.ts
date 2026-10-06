@@ -752,14 +752,15 @@ export class VaultTxService {
    */
   private validityPlan(tip: ChainTip, epochBound: boolean, feePayer: FeePayerRequest | undefined): ValidityPlan {
     // UTxO ví trả phí xin qua `/fee/utxo` ⟹ kẹp vào `reserved_until` của nó (sổ phát-hành ghi lúc
-    // phát UTxO, `feeProxy.ts`) — cùng luật với `sponsor.ts` ▸ `planSponsorValidity`. UTxO phí app
-    // tự đưa ⟹ sổ không có dòng ⟹ không có giờ giữ chỗ.
+    // phát UTxO, `feeProxy.ts`) — cùng luật với `sponsor.ts` ▸ `planSponsorValidity`. UTxO ở địa chỉ
+    // Feecover mà sổ không còn lượt giữ ⟹ 409 (`locks.ts` ▸ `feeReservationForBuild`), KHÔNG dựng
+    // không kẹp. Ví không phải Feecover (của chính chủ) ⟹ không có giờ giữ chỗ.
     const reserved = feePayer === undefined
-      ? undefined : this.deps.issued.feeReservationOf(refStr(feePayer.utxoRef));
+      ? undefined : this.deps.issued.feeReservationForBuild(refStr(feePayer.utxoRef), feePayer.address);
     return planValidity({
       tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
       txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, epochBound,
-      ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved }),
+      ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved, feePayerUtxoRef: refStr(feePayer!.utxoRef) }),
     });
   }
 

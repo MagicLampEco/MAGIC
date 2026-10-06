@@ -5,6 +5,35 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: UTxO Feecover không còn lượt giữ chỗ ⟹ không dựng, không ký
+
+**Đổi gì.** Sổ phát-hành (`VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry`) nhớ thêm địa chỉ ví trả phí
+mà `/fee/utxo` đã trả. Lượt dựng tiêu một UTxO ở địa chỉ Feecover mà sổ không còn lượt giữ chỗ ⟹
+`409 FEE_PAYER_RESERVATION_EXPIRED` (`feeReservationForBuild`; dùng ở `service.ts` ▸ `validityPlan` và
+`sponsor.ts` ▸ `planSponsorValidity`). `/fee/sign` tra LẠI lượt giữ lúc ký (`feeSignProblem`): không có,
+đã qua, hoặc `validTo` của tx vượt nó ⟹ cùng mã 409, Feecover không bị gọi. `details` của mã này có
+thêm `fee_payer_utxo` và `reservation` (`absent` · `expired` · `exceeded`); `reserved_until` là `null`
+khi sổ không có lượt giữ. Hai lỗi cùng mã vì app làm cùng một việc: xin `/fee/utxo` rồi dựng lại.
+
+**Vì sao.** Thư SuperApp `sa1007mg-fc`: bộ quét 30 s (`server.ts`) xoá lượt giữ khi `reserved_until`
+đã qua, và `feeReservationOf` trả `undefined` — bộ lập hạn đọc thành "ví không giữ chỗ ⟹ không kẹp".
+Dựng lại với `fee_payer` cũ ra tx hạn 15 phút, ghi sổ với hạn ký = hạn nộp, và `/fee/sign` xin Feecover
+ký tới hết hạn đó — trong khi Feecover có thể đã giao UTxO cho người khác. Tx GỐC thì vô hại (`validTo`
+≤ `reserved_until`); hỏng thật là tx DỰNG LẠI sau khi bị quét. Thiếu dữ liệu giữ chỗ nay là từ chối,
+không phải mặc định thoải mái.
+
+**Cái gì gãy nếu bám bản cũ.** App dựng lại với `fee_payer` Feecover cũ sau khi `reserved_until` qua
+nay nhận 409 thay vì một tx — xin UTxO mới qua `/fee/utxo`. `/fee/sign` cho tx tiêu UTxO Feecover
+KHÔNG lấy qua `/fee/utxo` của chính tiến trình này (app tự xin Feecover bằng token riêng, hoặc tiến
+trình vừa khởi động lại) nay nhận `409` thay vì được ký: bản cũ gọi đó là "app tự đưa ⟹ hạn ký = hạn
+sổ". Ví trả phí là ví của chính chủ (app tự ký, không gọi `/fee/sign`) không đổi gì. Client kiểm
+`details` của `FEE_PAYER_RESERVATION_EXPIRED` chặt sẽ gặp hai trường mới.
+
+**Chưa vá, cần quyết hợp đồng.** Sổ giữ chỗ khoá theo UTxO, không theo NGƯỜI được giữ: Feecover phát
+lại cùng UTxO cho B (lượt giữ mới R2) thì A dựng lại với `fee_payer` cũ cũng được kẹp vào R2 và xin
+ký được. Dịch vụ không phân biệt A với B (mọi người dùng app `magic` đi chung một token). Bịt cần
+`/fee/utxo` trả một mã giữ chỗ mà lượt dựng phải gửi kèm, hoặc Feecover tự ràng lượt ký vào lượt giữ.
+
 ## 2026-10-06 — VaultTxAPI: hạn tx một nguồn `validTo`; `expires_reason`; 410 `TX_EXPIRED`
 
 **Đổi gì.** Mọi tx VaultTxAPI phát ra mang `validTo` trong thân, kể cả `open-thread`, `bind-did`,

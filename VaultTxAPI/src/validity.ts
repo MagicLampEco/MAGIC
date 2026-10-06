@@ -71,6 +71,8 @@ export interface PlanValidityInput {
   epochBound: boolean;
   /** `reserved_until` của UTxO ví trả phí xin qua `/fee/utxo` (POSIX ms). Vắng ⟹ không giữ chỗ. */
   feeReservedUntilMs?: number;
+  /** Tham chiếu UTxO ví trả phí (`txhash#idx`) — chỉ để đặt vào `details.fee_payer_utxo` của 409. */
+  feePayerUtxoRef?: string;
 }
 
 /**
@@ -104,13 +106,38 @@ export function planValidity(p: PlanValidityInput): ValidityPlan {
   let best = cands[0]!;
   for (const c of cands) if (c.at < best.at) best = c;
   if (best.reason === "fee_reservation" && best.at - slotFloorMs(tip) < SLOT_LENGTH_MS) {
-    const at = new Date(p.feeReservedUntilMs!).toISOString();
-    throw new CodedApiError(409, "FEE_PAYER_RESERVATION_EXPIRED",
-      `UTxO ví trả phí đã hết giờ giữ chỗ ở Feecover (reserved_until ${at}) trước khi tx kịp có một ` +
-      `khoảng hiệu lực. Gọi lại POST /fee/utxo để xin UTxO mới rồi dựng lại.`,
-      { reserved_until: at });
+    throw feeReservationError(p.feePayerUtxoRef ?? "", "expired", p.feeReservedUntilMs);
   }
   return { capMs: best.at, reason: best.reason, bounds: cands, maxAheadMs: best.at - tip };
+}
+
+/**
+ * Vì sao một UTxO ví trả phí của Feecover KHÔNG có lượt giữ chỗ dùng được (`details.reservation`):
+ *   · `absent`   — sổ không có lượt giữ nào cho UTxO đó: đã bị bộ quét dọn sau `reserved_until`, bị
+ *                  bỏ khi tx dùng nó bị thay, hoặc chưa từng phát qua `/fee/utxo` của tiến trình này;
+ *   · `expired`  — lượt giữ còn trong sổ nhưng `reserved_until` đã qua (bộ quét chưa tới lượt);
+ *   · `exceeded` — chỉ ở `/fee/sign`: `validTo` của tx vượt `reserved_until` hiện có của UTxO.
+ * Cả ba cùng MỘT việc phải làm phía app: xin UTxO mới qua `/fee/utxo` rồi dựng lại — nên cùng mã
+ * `FEE_PAYER_RESERVATION_EXPIRED` (app đang xử mã này đúng như thế), khác nhau ở trường này.
+ */
+export type FeeReservationProblem = "absent" | "expired" | "exceeded";
+
+/** 409 `FEE_PAYER_RESERVATION_EXPIRED` cho một UTxO Feecover không còn lượt giữ dùng được. */
+export function feeReservationError(
+  utxoRef: string, reservation: FeeReservationProblem, reservedUntilMs: number | undefined,
+  extra: Record<string, unknown> = {},
+): CodedApiError {
+  const at = reservedUntilMs === undefined ? null : new Date(reservedUntilMs).toISOString();
+  const which = utxoRef === "" ? "" : ` ${utxoRef.slice(0, 12)}…`;
+  const why = reservation === "absent"
+    ? `không còn lượt giữ chỗ nào ở dịch vụ (đã hết giờ và bị dọn, hoặc chưa từng xin qua POST /fee/utxo)`
+    : reservation === "expired"
+      ? `đã hết giờ giữ chỗ ở Feecover (reserved_until ${at})`
+      : `được giữ chỗ tới ${at}, sớm hơn hạn của giao dịch`;
+  return new CodedApiError(409, "FEE_PAYER_RESERVATION_EXPIRED",
+    `UTxO ví trả phí${which} của Feecover ${why}: Feecover có thể đã giao nó cho ` +
+    `giao dịch khác. Gọi lại POST /fee/utxo để xin UTxO mới rồi dựng lại.`,
+    { ...extra, ...(utxoRef === "" ? {} : { fee_payer_utxo: utxoRef }), reserved_until: at, reservation });
 }
 
 /** `validTo` (POSIX ms) đọc từ thân tx, hoặc `undefined` khi thân không có `ttl`. */

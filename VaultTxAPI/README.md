@@ -184,8 +184,12 @@ hạn **duy nhất**: sổ cái từ chối tx sau mốc đó, nên mọi mốc 
 - **Cận trên** (`src/validity.ts` ▸ `planValidity`): `validTo` = mốc SỚM nhất trong ba cận, căn
   xuống slot — `tip + VAULT_TX_API_TX_VALIDITY_MS` (mặc định `DEFAULT_TX_VALIDITY_MS` = 15 phút) ·
   cuối epoch hiện tại · `reserved_until` của UTxO ví trả phí lấy qua `/fee/utxo` (tra ở sổ
-  phát-hành, `IssuedTxRegistry.feeReservationOf`). Giờ giữ chỗ đó đã qua, hoặc còn dưới một slot
-  ⟹ `409 FEE_PAYER_RESERVATION_EXPIRED` (`details.reserved_until`): xin lại `/fee/utxo` rồi dựng lại.
+  phát-hành, `IssuedTxRegistry.feeReservationForBuild`). Giờ giữ chỗ đó đã qua, hoặc còn dưới một slot
+  ⟹ `409 FEE_PAYER_RESERVATION_EXPIRED` (`details.reservation: "expired"`): xin lại `/fee/utxo` rồi
+  dựng lại. UTxO ở địa chỉ Feecover (sổ nhớ mọi địa chỉ `/fee/utxo` đã trả) mà sổ KHÔNG còn lượt giữ
+  — bộ quét 30 s đã dọn nó sau `reserved_until`, hoặc tx dùng nó đã bị thay — cũng ⟹ cùng mã 409
+  (`reservation: "absent"`, `reserved_until: null`), KHÔNG dựng một tx không kẹp hạn. Ví trả phí không
+  phải của Feecover (ví của chính chủ) không có giờ giữ chỗ.
 - **`expires_at`** — `validTo` đọc NGƯỢC từ chính `tx_cbor` (`readTxExpiry`), dạng ISO 8601.
   Không còn là "lúc gọi + `VAULT_TX_API_LOCK_TTL_MS`".
 - **`expires_reason`** — cận nào quyết `validTo`, kiểu `ExpiresReason` trong `src/validity.ts`:
@@ -1028,12 +1032,23 @@ thread; route khác ⟹ hash thân tx. Lời đáp:
 `witness_set` là bộ chứng ký của ví trả phí. Dịch vụ đối chiếu `txHash` Feecover trả với hash
 thân tự tính; lệch ⟹ `502 FEE_PROXY_UPSTREAM_MISMATCH`, không trả chữ ký.
 
-**Hạn ký.** UTxO lấy qua `/fee/utxo` thì tx tiêu nó chỉ xin ký được tới `reserved_until`; sau
-mốc đó ⟹ `403 FEE_PROXY_TX_NOT_ISSUED` (Feecover có thể đã giao UTxO cho người khác) — xin
+**Hạn ký và giữ chỗ.** UTxO lấy qua `/fee/utxo` thì tx tiêu nó chỉ xin ký được tới `reserved_until`;
+sau mốc đó ⟹ `403 FEE_PROXY_TX_NOT_ISSUED` (Feecover có thể đã giao UTxO cho người khác) — xin
 UTxO mới và dựng lại. Dịch vụ đã kẹp `validTo` của tx vào mốc này lúc dựng (§3 ▸ *Hạn của tx*).
-`fee_payer` app tự đưa (không qua `/fee/utxo`) thì hạn ký là hạn nộp, `validTo + biên`. Tx dịch vụ
-đã phát mà quá `validTo + biên` ⟹ `410 TX_EXPIRED`, cùng `details` với `/tx/submit`; Feecover
-không bị gọi.
+Thời lượng giữ chỗ do **Feecover** đặt: dịch vụ không tự chọn, chỉ chép `reserved_until` Feecover trả
+ở `GET /v1/utxo` (`feeProxy.ts` ▸ `utxo`) vào sổ. Lượt ký **tra lại** lượt giữ ngay lúc ký
+(`locks.ts` ▸ `feeSignProblem`), không chỉ dựa vào mốc chốt lúc dựng: sổ không còn lượt giữ cho UTxO
+phí (bộ quét đã dọn, tiến trình vừa khởi động lại, hoặc UTxO không lấy qua `/fee/utxo` của tiến trình
+này), lượt giữ đã qua, hoặc `validTo` của tx vượt `reserved_until` hiện có ⟹ `409
+FEE_PAYER_RESERVATION_EXPIRED` (`details.tx_hash`, `fee_payer_utxo`, `reserved_until`, `reservation`:
+`absent` · `expired` · `exceeded`), Feecover không bị gọi. Từ 2026-10-07 không còn ngoại lệ "`fee_payer`
+app tự đưa ⟹ hạn ký = hạn nộp": `/fee/sign` chỉ có nghĩa với UTxO của Feecover, nên lấy UTxO qua
+`/fee/utxo`. Tx dịch vụ đã phát mà quá `validTo + biên` ⟹ `410 TX_EXPIRED`, cùng `details` với
+`/tx/submit`; Feecover không bị gọi.
+
+Giới hạn còn lại: lượt giữ khoá theo UTxO, không theo người được giữ. Feecover phát lại cùng UTxO cho
+người khác thì `fee_payer` cũ của người trước vẫn được kẹp vào lượt giữ MỚI — dịch vụ không phân biệt
+hai người dùng chung token ứng dụng.
 
 **Ứng dụng khác `magic`.** Không gửi tiêu đề `X-Feecover-Token` ⟹ đi dưới ứng dụng `magic`.
 Ứng dụng khác (ví dụ `orilife`) gửi token Feecover **của chính họ** ở `X-Feecover-Token`;
@@ -1373,7 +1388,7 @@ Nên:
 | mục đích thuộc ứng dụng khác / thiếu tiền tố tên ứng dụng | `403 FEE_PROXY_APP_PURPOSE` |
 | `/fee/sign` cho tx không do dịch vụ phát, hoặc còn hạn nộp nhưng quá `reserved_until` | `403 FEE_PROXY_TX_NOT_ISSUED` |
 | `/tx/submit` / `/fee/sign` cho tx dịch vụ ĐÃ phát mà quá `validTo + CLOCK_SKEW_MARGIN_MS` | `410 TX_EXPIRED` (`details.tx_hash`, `expired_at`, `rebuild_safe`, `submission`) |
-| UTxO ví trả phí hết giờ giữ chỗ Feecover trước khi tx kịp có khoảng hiệu lực | `409 FEE_PAYER_RESERVATION_EXPIRED` (`details.reserved_until`) |
+| UTxO ví trả phí hết giờ giữ chỗ Feecover trước khi tx kịp có khoảng hiệu lực; UTxO ở địa chỉ Feecover mà sổ không còn lượt giữ (lúc dựng); `/fee/sign` cho tx mà UTxO phí không còn lượt giữ / `validTo` vượt lượt giữ | `409 FEE_PAYER_RESERVATION_EXPIRED` (`details.reserved_until` — `null` khi không có lượt giữ, `fee_payer_utxo`, `reservation`: `absent`·`expired`·`exceeded`; ở `/fee/sign` thêm `tx_hash`) |
 | `/tx/submit`: một chữ ký không khớp thân tx / thiếu chữ ký của khoá trong `required_signers` | `400 WITNESS_SIGNATURE_INVALID` / `400 WITNESS_MISSING_SIGNER` |
 | `/fee/sign` cho tx không dùng ví trả phí | `400 FEE_PROXY_NO_FEE_PAYER` |
 | Feecover từ chối (`400`/`403`/`409`/`422`/`429`) | mã đó + `FEE_PROXY_REJECTED` |

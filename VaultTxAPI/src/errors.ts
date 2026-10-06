@@ -55,7 +55,10 @@
 //   403 FEE_PROXY_TX_NOT_ISSUED  `/fee/sign` cho tx không do dịch vụ phát, hoặc còn hạn nộp nhưng đã quá giờ
 //                                giữ chỗ UTxO phí (`reserved_until`)
 //   409 FEE_PAYER_RESERVATION_EXPIRED  UTxO ví trả phí hết giờ giữ chỗ Feecover trước khi tx kịp có một
-//                                khoảng hiệu lực (`validity.ts`) — `details.reserved_until`; xin lại `/fee/utxo`
+//                                khoảng hiệu lực (`validity.ts`), hoặc UTxO Feecover không còn lượt giữ lúc
+//                                dựng / lúc `/fee/sign` (`locks.ts` ▸ `feeReservationForBuild` / `feeSignProblem`)
+//                                — `details.reserved_until` (null khi vắng), `fee_payer_utxo`, `reservation`;
+//                                xin lại `/fee/utxo`
 //   400 WITNESS_SIGNATURE_INVALID / WITNESS_MISSING_SIGNER  `/tx/submit`: một chữ ký không khớp thân tx /
 //                                thiếu chữ ký của khoá trong `required_signers` (`witnessCheck.ts`)
 //   400 FEE_PROXY_NO_FEE_PAYER   `/fee/sign` cho tx không dùng ví trả phí

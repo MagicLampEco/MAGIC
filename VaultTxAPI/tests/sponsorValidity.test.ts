@@ -33,10 +33,14 @@ function txWithValidTo(validToMs: bigint): string {
   });
 }
 
-function plan(step: SponsorStep, issued: IssuedTxRegistry, feePayerUtxoRef?: string): ValidityPlan {
+/** Địa chỉ ví trả phí Feecover trong các ca dưới (sổ nhớ nó khi `/fee/utxo` phát) và ví của chính chủ. */
+const FEECOVER_ADDR = credentialToAddress(NET, { type: "Key", hash: "fc".repeat(28) });
+const OWN_WALLET_ADDR = OUT_ADDR;
+
+function plan(step: SponsorStep, issued: IssuedTxRegistry, feePayerUtxoRef?: string, address = FEECOVER_ADDR): ValidityPlan {
   return planSponsorValidity({
     step, tipPosixMs: TIP_MS, network: NET, txValidityMs: TX_VALIDITY_MS, issued,
-    ...(feePayerUtxoRef === undefined ? {} : { feePayerUtxoRef }),
+    ...(feePayerUtxoRef === undefined ? {} : { feePayer: { utxoRef: feePayerUtxoRef, address } }),
   });
 }
 
@@ -76,6 +80,20 @@ describe("hạn tx tài trợ: kẹp giờ giữ chỗ Feecover", () => {
     const issued = new IssuedTxRegistry();
     issued.noteFeeReservation(FEE_REF, Number(TIP_MS) - 1);
     expect(() => plan("T1", issued, FEE_REF)).toThrow(expect.objectContaining({ code: "FEE_PAYER_RESERVATION_EXPIRED" }));
+  });
+
+  // Thư SuperApp sa1007mg-fc: bộ quét dọn lượt giữ ⟹ bản trước lập hạn như ví không giữ chỗ (tip+15′).
+  it("CẶP: lượt giữ của UTxO Feecover ĐÃ BỊ QUÉT ⟹ 409 reservation absent; ví của chính chủ không có lượt giữ ⟹ tx_validity", () => {
+    const issued = new IssuedTxRegistry();
+    issued.noteFeeReservation(FEE_REF, Number(TIP_MS) - 1, FEECOVER_ADDR);
+    issued.sweep(Number(TIP_MS));
+    expect(issued.feeReservationOf(FEE_REF)).toBeUndefined();
+    expect(() => plan("T1", issued, FEE_REF)).toThrow(expect.objectContaining({
+      code: "FEE_PAYER_RESERVATION_EXPIRED",
+      details: { fee_payer_utxo: FEE_REF, reserved_until: null, reservation: "absent" },
+    }));
+    // Cực đối, cùng sổ: một UTxO ở ví của chính chủ (địa chỉ Feecover chưa từng phát nó) ⟹ không kẹp.
+    expect(plan("T1", issued, `${"0a".repeat(32)}#0`, OWN_WALLET_ADDR).reason).toBe("tx_validity");
   });
 });
 

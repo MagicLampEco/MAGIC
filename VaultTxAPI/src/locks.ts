@@ -2,7 +2,7 @@
 // ở lúc NỘP, không ở lúc dựng.
 //
 import { TxExpiredError } from "./errors.js";
-import { CLOCK_SKEW_MARGIN_MS } from "./validity.js";
+import { CLOCK_SKEW_MARGIN_MS, feeReservationError } from "./validity.js";
 
 /** Dòng sổ phát-hành quá hạn nộp còn nằm lại bấy lâu để `/tx/submit` trả 410 `TX_EXPIRED` (thay vì
  *  "không do dịch vụ phát"). Một giờ: đủ cho app nộp muộn sau khi người dùng bỏ dở màn ký. */
@@ -329,6 +329,9 @@ export class IssuedTxRegistry {
   private readonly issued = new Map<string, IssuedTxEntry>();
   /** UTxO ví trả phí phát qua `/fee/utxo` → hết giờ giữ chỗ (`reserved_until`) ở Feecover. */
   private readonly feeReservations = new Map<string, number>();
+  /** Địa chỉ ví trả phí Feecover đã trả qua `/fee/utxo`. KHÔNG dọn: nó là thứ cho biết một UTxO là của
+   *  Feecover sau khi lượt giữ của nó đã bị quét (`feeReservationForBuild`). Tập nhỏ, đổi chậm. */
+  private readonly feecoverAddresses = new Set<string>();
 
   /**
    * Ghi một giao dịch vừa phát.
@@ -353,15 +356,56 @@ export class IssuedTxRegistry {
     });
   }
 
-  /** Ghi giờ giữ chỗ của một UTxO phí vừa phát qua `/fee/utxo`. */
-  noteFeeReservation(utxoRef: string, reservedUntilMs: number): void {
+  /** Ghi giờ giữ chỗ của một UTxO phí vừa phát qua `/fee/utxo`. `address` = địa chỉ Feecover trả kèm;
+   *  sổ nhớ nó (không dọn) để nhận ra UTxO của Feecover cả khi lượt giữ đã bị quét (`feeReservationForBuild`). */
+  noteFeeReservation(utxoRef: string, reservedUntilMs: number, address?: string): void {
     this.feeReservations.set(utxoRef, reservedUntilMs);
+    if (address !== undefined) this.feecoverAddresses.add(address);
   }
 
   /** Giờ giữ chỗ (`reserved_until`, POSIX ms) của một UTxO phí phát qua `/fee/utxo`, hoặc `undefined`
-   *  khi UTxO đó không qua `/fee/utxo` (app tự đưa) hoặc đã bị dọn. Bộ lập hạn dùng nó làm một cận. */
+   *  khi sổ không có dòng (app tự đưa, hoặc đã bị dọn). Chỉ để TRA; lập hạn lúc dựng dùng
+   *  `feeReservationForBuild` — `undefined` ở đây KHÔNG có nghĩa "không ràng buộc". */
   feeReservationOf(utxoRef: string): number | undefined {
     return this.feeReservations.get(utxoRef);
+  }
+
+  /**
+   * Giờ giữ chỗ làm cận `validTo` cho một lượt DỰNG tiêu UTxO ví trả phí `utxoRef` ở `address`.
+   *
+   * Sổ có lượt giữ ⟹ trả nó (`planValidity` kẹp vào đó, hoặc 409 `expired` khi nó đã qua).
+   * Sổ KHÔNG có lượt giữ mà `address` là địa chỉ Feecover dịch vụ đã từng phát ⟹ NÉM 409
+   * `FEE_PAYER_RESERVATION_EXPIRED` (`reservation: "absent"`). Trước bản này nhánh đó trả `undefined`
+   * và bộ lập hạn đọc thành "không giữ chỗ ⟹ không kẹp": bộ quét 30 s dọn lượt giữ ở `reserved_until`,
+   * nên một lượt dựng lại với UTxO cũ ra tx hạn 15′ và `/fee/sign` xin ký được tới hết hạn đó — trong
+   * khi Feecover có thể đã giao UTxO cho người khác. Thiếu dữ liệu của bên khác ⟹ từ chối, không lùi
+   * về mặc định thoải mái.
+   * Địa chỉ không phải của Feecover (ví của chính chủ, app tự ký) ⟹ `undefined`: không có giờ giữ chỗ.
+   * Giới hạn: sổ nhớ địa chỉ trong bộ nhớ tiến trình — vừa khởi động lại thì chưa nhớ địa chỉ nào cho
+   * tới lượt `/fee/utxo` đầu; khi đó cổng ở `/fee/sign` (`feeSignProblem`) vẫn chặn lượt xin ký.
+   */
+  feeReservationForBuild(utxoRef: string, address: string): number | undefined {
+    const reserved = this.feeReservations.get(utxoRef);
+    if (reserved !== undefined) return reserved;
+    if (this.feecoverAddresses.has(address)) throw feeReservationError(utxoRef, "absent", undefined);
+    return undefined;
+  }
+
+  /**
+   * Cổng giữ chỗ của `/fee/sign`, tra LẠI ở lúc ký (không dựa vào `signableUntilMs` chốt lúc ghi sổ):
+   * xin Feecover ký một tx tiêu `entry.feePayerUtxo` chỉ khi sổ CÒN lượt giữ cho UTxO đó, lượt giữ
+   * chưa qua, và `validTo` của tx không vượt nó. `/fee/sign` chỉ có nghĩa với UTxO của Feecover, nên
+   * vắng lượt giữ ⟹ từ chối, không coi là "không ràng buộc". `null` ⟹ ký được.
+   */
+  feeSignProblem(entry: IssuedTxEntry, nowMs: number):
+    { utxoRef: string; reservation: "absent" | "expired" | "exceeded"; reservedUntilMs?: number } | null {
+    const utxoRef = entry.feePayerUtxo;
+    if (utxoRef === undefined) return null;
+    const reserved = this.feeReservations.get(utxoRef);
+    if (reserved === undefined) return { utxoRef, reservation: "absent" };
+    if (reserved <= nowMs) return { utxoRef, reservation: "expired", reservedUntilMs: reserved };
+    if (entry.validToMs > reserved) return { utxoRef, reservation: "exceeded", reservedUntilMs: reserved };
+    return null;
   }
 
   /** `true` khi dịch vụ này đã phát ra đúng giao dịch đó và dòng chưa hết hạn. */

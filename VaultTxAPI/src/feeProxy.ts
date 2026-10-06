@@ -38,6 +38,7 @@ import { BadRequestError, CodedApiError, TxSupersededError } from "./errors.js";
 import type { IssuedRoute, IssuedTxRegistry } from "./locks.js";
 import { FEE_PURPOSE_ROUTES, expiredErrorFor, submissionStateOf, type FeePurposeRoute } from "./locks.js";
 import { txBodyHash } from "./summary.js";
+import { feeReservationError } from "./validity.js";
 
 /** Tập con của `fetch` mà proxy dùng — tiêm được để phép kiểm chạy bộ giả, không gọi mạng. */
 export type FetchLike = (url: string, init: {
@@ -145,7 +146,8 @@ export class FeeProxy {
     }
     const utxoRef = `${u.txHash}#${u.outputIndex}`;
     // Sổ phát-hành nhớ giờ giữ chỗ: tx tiêu UTxO này chỉ xin ký được tới mốc đó.
-    this.deps.issued.noteFeeReservation(utxoRef, reservedMs);
+    // Địa chỉ đi kèm để sổ nhận ra UTxO của Feecover cả khi lượt giữ đã bị quét (`feeReservationForBuild`).
+    this.deps.issued.noteFeeReservation(utxoRef, reservedMs, address);
     return {
       fee_payer: { utxo: utxoRef, address },
       reserved_until: reservedUntil,
@@ -198,6 +200,16 @@ export class FeeProxy {
       throw new Error(`Sổ phát-hành thiếu mã ghi sổ NFT cho tx ${hash} (route ${entry.route}).`);
     } else {
       ref = hash;
+    }
+
+    // Lượt giữ chỗ của UTxO phí tra LẠI ở lúc ký, không tin `signableUntilMs` chốt lúc ghi sổ: tx
+    // dựng khi sổ không có lượt giữ (đã bị quét, hoặc tiến trình vừa khởi động lại) mang
+    // `signableUntilMs = expiresAtMs`, và trước bản này đi thẳng tới Feecover. Vắng / đã qua / validTo
+    // vượt lượt giữ ⟹ 409, Feecover KHÔNG bị gọi. Đặt sau cổng cấu hình (mục đích, mã ghi sổ) để
+    // lỗi cấu hình vẫn ra đúng mã của nó.
+    const problem = this.deps.issued.feeSignProblem(entry, this.now());
+    if (problem !== null) {
+      throw feeReservationError(problem.utxoRef, problem.reservation, problem.reservedUntilMs, { tx_hash: hash });
     }
 
     const json = await this.call("POST", "/v1/sign", caller.token,

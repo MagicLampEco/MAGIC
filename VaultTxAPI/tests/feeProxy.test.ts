@@ -259,8 +259,16 @@ const ORILIFE = { "x-feecover-token": ORILIFE_TOKEN };
 const consumeBody = (over: Record<string, unknown> = {}) =>
   ({ owner_pkh: OWNER_PKH, op_type: 1, op_count: "2", fee_payer: FEE_PAYER, ...over });
 
-/** Dựng một tx tiêu MAGIC có ví trả phí, trả CBOR + hash. */
-async function issueConsume(h: ReturnType<typeof harness>, over: Record<string, unknown> = {}) {
+/** Ghi một lượt giữ chỗ cho `FEE_PAYER` như `/fee/utxo` ghi (không gọi Feecover giả, nên không đổi
+ *  `fc.calls`). Đã có lượt giữ thì để yên — ca nào xin `/fee/utxo` với mốc riêng thì mốc đó thắng. */
+function reserve(h: ReturnType<typeof harness>, untilMs = NOW + 600_000) {
+  if (h.issued.feeReservationOf(FEE_PAYER.utxo) === undefined) h.issued.noteFeeReservation(FEE_PAYER.utxo, untilMs, FEE_ADDRESS);
+}
+
+/** Dựng một tx tiêu MAGIC có ví trả phí, trả CBOR + hash. `reserved` (mặc định) ⟹ UTxO phí có lượt
+ *  giữ chỗ như khi app xin qua `/fee/utxo` — `/fee/sign` đòi lượt giữ còn hiệu lực lúc ký. */
+async function issueConsume(h: ReturnType<typeof harness>, over: Record<string, unknown> = {}, reserved = true) {
+  if (reserved) reserve(h);
   const r = await h.call("POST", "/tx/consume", consumeBody(over));
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   const b = r.body as { tx_cbor: string; tx_hash: string };
@@ -441,6 +449,7 @@ describe("POST /fee/sign — cổng trước Feecover", () => {
 describe("POST /fee/sign — dương: mục đích + ref lấy từ sổ, không từ app", () => {
   it("create-vault: purpose create_vault, ref = 64 hex cuối vault_nft", async () => {
     const h = harness();
+    reserve(h);
     const cv = await h.call("POST", "/tx/create-vault",
       { kind: "schedule", owner: KEY_OWNER, lamp_amount: DEPOSIT.toString(), funding: FUNDING });
     expect(cv.status, JSON.stringify(cv.body)).toBe(200);
@@ -580,14 +589,37 @@ describe("sổ phát-hành: hạn ký theo reserved_until", () => {
     expect(h.issued.wasIssued(txBodyHash(cbor), h.clock.t)).toBe(true);
   });
 
-  it("CẶP: app tự đưa fee_payer (không qua /fee/utxo) ⟹ hạn ký = hạn sổ", async () => {
+  // Chính sách LẬT 2026-10-07 (thư SuperApp sa1007mg-fc): bản cũ coi UTxO phí không có lượt giữ là
+  // "app tự đưa" và cho xin ký tới hết hạn sổ. Nhưng `/fee/sign` chỉ có nghĩa với UTxO của Feecover, và
+  // sổ không có lượt giữ cũng là đúng trạng thái SAU khi bộ quét dọn — nên vắng lượt giữ ⟹ 409.
+  it("CẶP: UTxO phí KHÔNG có lượt giữ (chưa từng qua /fee/utxo của tiến trình này) ⟹ dựng được, xin ký 409 absent, Feecover KHÔNG bị gọi; có lượt giữ ⟹ 200", async () => {
     const h = harness();
-    const { cbor } = await issueConsume(h);
-    h.clock.t = NOW + 61_000;
-    expect((await h.call("POST", "/fee/sign", { tx_cbor: cbor })).status).toBe(200);
-    // Quá validTo + biên: tx ĐÃ phát ⟹ 410 TX_EXPIRED (đảo 2026-10-06; bản cũ đợi 403 NOT_ISSUED).
+    const { cbor, hash } = await issueConsume(h, {}, false);
+    const r = await h.call("POST", "/fee/sign", { tx_cbor: cbor });
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(codeOf(r)).toBe("FEE_PAYER_RESERVATION_EXPIRED");
+    expect(detailsOf(r)).toEqual({ tx_hash: hash, fee_payer_utxo: FEE_PAYER.utxo, reserved_until: null, reservation: "absent" });
+    expect(h.fc.calls).toHaveLength(0);
+    // Quá validTo + biên: tx ĐÃ phát ⟹ 410 TX_EXPIRED vẫn thắng (cổng hạn đứng trước cổng giữ chỗ).
     h.clock.t = NOW + REGISTRY_TTL + 1;
     expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("TX_EXPIRED");
+    // Cực đối: cùng tx, cùng giờ dựng, có lượt giữ ⟹ ký được.
+    const h2 = harness();
+    const ok = await issueConsume(h2);
+    expect((await h2.call("POST", "/fee/sign", { tx_cbor: ok.cbor })).status).toBe(200);
+  });
+
+  it("validTo của tx VƯỢT lượt giữ hiện có của UTxO phí ⟹ 409 exceeded, Feecover KHÔNG bị gọi", async () => {
+    // Tx dựng khi chưa có lượt giữ (ttl NOW + 10′); sau đó /fee/utxo phát CHÍNH UTxO đó, giữ tới NOW + 5′.
+    const h = harness({ feecover: fakeFeecover({ utxo: utxoReply(NOW + 300_000) }) });
+    const { cbor, hash } = await issueConsume(h, {}, false);
+    expect((await h.call("POST", "/fee/utxo", { route: "consume" })).status).toBe(200);
+    const r = await h.call("POST", "/fee/sign", { tx_cbor: cbor });
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(detailsOf(r)).toEqual({
+      tx_hash: hash, fee_payer_utxo: FEE_PAYER.utxo, reserved_until: new Date(NOW + 300_000).toISOString(), reservation: "exceeded",
+    });
+    expect(h.fc.calls.map(c => c.url)).toEqual(["https://feecover.example/v1/utxo?purpose=consume_magic"]);
   });
 
   it("tx ĐÃ phát, quá validTo + biên ⟹ 410 TX_EXPIRED cùng details /tx/submit, Feecover KHÔNG bị gọi; CẶP: tx chưa từng phát cùng giờ ⟹ 403", async () => {
@@ -619,6 +651,62 @@ describe("sổ phát-hành: hạn ký theo reserved_until", () => {
     expect((await h.call("POST", "/fee/sign", { tx_cbor: cbor })).status).toBe(200);
     h.clock.t = NOW + REGISTRY_TTL + 30_000;
     expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("TX_EXPIRED");
+  });
+});
+
+// ── thư SuperApp sa1007mg-fc: lượt giữ bị bộ quét dọn ───────────────────────
+
+describe("lượt giữ chỗ Feecover đã bị quét ⟹ không dựng, không ký", () => {
+  // Chuỗi của thư: /fee/utxo giữ tới R ⟹ tx A kẹp validTo ≤ R ⟹ quá R, bộ quét (`server.ts`, 30 s) dọn
+  // lượt giữ ⟹ bản trước: dựng lại với CÙNG fee_payer ra tx hạn 15′ không kẹp, và xin ký được tới hết
+  // hạn đó, trong khi Feecover có thể đã giao UTxO cho người khác.
+  const R = NOW + 60_000;
+
+  it("CẶP: lượt giữ CÒN ⟹ dựng lại 200 + ký 200; ĐÃ BỊ QUÉT ⟹ dựng lại 409 absent, bộ dựng/Feecover không bị gọi", async () => {
+    const h = harness({ feecover: fakeFeecover({ utxo: utxoReply(R) }), consumeTtlMs: 60_000 });
+    const u = await h.call("POST", "/fee/utxo", { route: "consume" });
+    const fp = (u.body as { fee_payer: unknown }).fee_payer;
+    const a = await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp }));
+    expect(a.status, JSON.stringify(a.body)).toBe(200);
+    // Lượt giữ còn: dựng lại và ký được.
+    const again = await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp }));
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect((await h.call("POST", "/fee/sign", { tx_cbor: (again.body as { tx_cbor: string }).tx_cbor })).status).toBe(200);
+    const callsBefore = h.fc.calls.length;
+
+    // Quá R, bộ quét chạy ⟹ sổ không còn lượt giữ.
+    h.clock.t = R + 30_000;
+    h.issued.sweep(h.clock.t);
+    expect(h.issued.feeReservationOf(FEE_PAYER.utxo)).toBeUndefined();
+    const b = await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp }));
+    expect(b.status, JSON.stringify(b.body)).toBe(409);
+    expect(codeOf(b)).toBe("FEE_PAYER_RESERVATION_EXPIRED");
+    expect(detailsOf(b)).toEqual({ fee_payer_utxo: FEE_PAYER.utxo, reserved_until: null, reservation: "absent" });
+    expect(h.fc.calls).toHaveLength(callsBefore);
+  });
+
+  it("CẶP: ví trả phí KHÔNG phải Feecover (địa chỉ Feecover chưa từng phát) vẫn dựng được sau khi sổ đã quét", async () => {
+    const h = harness({ feecover: fakeFeecover({ utxo: utxoReply(R) }), consumeTtlMs: 60_000 });
+    await h.call("POST", "/fee/utxo", { route: "consume" });
+    h.clock.t = R + 30_000;
+    h.issued.sweep(h.clock.t);
+    // Cùng sổ đã nhớ địa chỉ Feecover: tra một địa chỉ khác thì không có lượt giữ nào để đòi.
+    const own = enterpriseAddressOf("Preview", OWNER_PKH);
+    expect(h.issued.feeReservationForBuild(`${"0b".repeat(32)}#0`, own)).toBeUndefined();
+    expect(() => h.issued.feeReservationForBuild(FEE_PAYER.utxo, FEE_ADDRESS))
+      .toThrow(expect.objectContaining({ code: "FEE_PAYER_RESERVATION_EXPIRED" }));
+  });
+
+  it("lượt giữ đã qua nhưng CHƯA bị quét ⟹ /fee/sign vẫn từ chối (403 hạn ký chốt lúc ghi sổ)", async () => {
+    const h = harness({ feecover: fakeFeecover({ utxo: utxoReply(R) }), consumeTtlMs: 60_000 });
+    await h.call("POST", "/fee/utxo", { route: "consume" });
+    const { cbor } = await issueConsume(h);
+    h.clock.t = R + 1;
+    expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("FEE_PROXY_TX_NOT_ISSUED");
+    // Và sau khi quét: vẫn từ chối, không lùi về "không ràng buộc".
+    h.issued.sweep(h.clock.t);
+    expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("FEE_PROXY_TX_NOT_ISSUED");
+    expect(h.fc.calls).toHaveLength(1);
   });
 });
 

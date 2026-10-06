@@ -30,9 +30,9 @@ import {
   type BindDidSummary, type OpenThreadSummary,
 } from "./engage.js";
 import {
-  FEE_PAYER_CODES, assertFeePayerAddress, assertNoOwnerRewardToFeePayer, checkFeePayerTx, inputRefsOf,
-  readFeePayerUtxo as readFeePayerUtxoShared, type FeePayerFronting, type FeePayerSharedFronting,
-  refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike,
+  FEE_PAYER_CODES, assertFeePayerAddress, checkFeePayerTx, inputRefsOf, ownerRewardNote, planOwnerRewardReturn,
+  readFeePayerUtxo as readFeePayerUtxoShared, withOwnerRewardReturn, type FeePayerFronting, type FeePayerSharedFronting,
+  refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike, type OwnerRewardReturn,
 } from "./feePayer.js";
 import {
   BadRequestError, CodedApiError, ConfigMissingError, SubmitRejectedError, TxSummaryUndecodableError,
@@ -41,7 +41,7 @@ import {
 import {
   ownerLockKey, type OwnerInput, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
 } from "./owner.js";
-import { resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
+import { didPaymentAddressFor, resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
 import { IssuedTxRegistry, OwnerLockTable, PendingSpends, expiredErrorFor, submissionStateOf, type IssuedRoute } from "./locks.js";
 import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
@@ -601,9 +601,9 @@ export class VaultTxService {
         ? undefined
         : quote?.feePayerUtxo ?? await readFeePayerUtxoShared(this.deps.chain, feePayer, FEE_PAYER_CODES);
       const witness = await this.witnessFor(req);
-      if (feePayer !== undefined) assertNoOwnerRewardToFeePayer(witness?.ownerReward);
+      const rewardReturn = feePayer === undefined ? undefined : await this.ownerRewardReturnFor(owner, witness);
       const built = await this.deps.builder.openThread({
-        owner, ownerAuth: witness?.auth, tip, changeAddress, validToMs: plan.capMs,
+        owner, ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn), tip, changeAddress, validToMs: plan.capMs,
         ...(feePayerUtxo === undefined ? {} : this.feePayerBuildFields(feePayerUtxo)),
       });
       const expiry = this.expiryOf(built.txCbor, plan, tip);
@@ -616,6 +616,7 @@ export class VaultTxService {
         // Output thread MỚI (NFT đúc trong tx) là output duy nhất được ứng; UTxO trả phí là input duy nhất.
         summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, feePayerUtxo!, tip, {
           fronting: { address: d.engageAddress, nftUnit: summary.engage.nft_unit }, otherInputAddresses: [],
+          ownerRewardReturn: rewardReturn,
         });
       }
       const txHash = txBodyHash(built.txCbor);
@@ -635,7 +636,7 @@ export class VaultTxService {
         engageAddress: d.engageAddress,
         owner,
         requiredSigners: requiredSignersOf(built.txCbor),
-        witnessNotes: this.notesFor(owner, witness, changeAddress, feePayer),
+        witnessNotes: this.notesFor(owner, witness, changeAddress, feePayer, rewardReturn),
         summary,
         expiresAt: expiry.expiresAt,
         expiresReason: expiry.reason,
@@ -694,10 +695,10 @@ export class VaultTxService {
         ? undefined
         : quote?.feePayerUtxo ?? await readFeePayerUtxoShared(this.deps.chain, feePayer, FEE_PAYER_CODES);
       const witness = await this.witnessFor(req);
-      if (feePayer !== undefined) assertNoOwnerRewardToFeePayer(witness?.ownerReward);
+      const rewardReturn = feePayer === undefined ? undefined : await this.ownerRewardReturnFor(owner, witness);
       const built = await this.deps.builder.bindDid(
         {
-          owner, ownerAuth: witness?.auth, tip, changeAddress, validToMs: plan.capMs,
+          owner, ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn), tip, changeAddress, validToMs: plan.capMs,
           ...(feePayerUtxo === undefined ? {} : this.feePayerBuildFields(feePayerUtxo)),
         },
         { engageUtxo: thread.utxo, didCommit },
@@ -711,7 +712,7 @@ export class VaultTxService {
       if (feePayer !== undefined) {
         // Không output nào được ứng (value thread bảo toàn); input khác chỉ là thread ở địa chỉ engage.
         summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, feePayerUtxo!, tip, {
-          otherInputAddresses: [d.engageAddress],
+          otherInputAddresses: [d.engageAddress], ownerRewardReturn: rewardReturn,
         });
       }
       const txHash = txBodyHash(built.txCbor);
@@ -732,7 +733,7 @@ export class VaultTxService {
         didCommit: summary.engage.did_commit,
         requiredSigners: summary.required_signers,
         witnessNotes: [
-          ...this.notesFor(owner, witness, changeAddress, feePayer),
+          ...this.notesFor(owner, witness, changeAddress, feePayer, rewardReturn),
           `BindDID đi một chiều: sau khi giao dịch này vào khối, did_commit của thread khoá vĩnh viễn.`,
         ],
         summary,
@@ -794,7 +795,7 @@ export class VaultTxService {
         ? undefined
         : quote?.feePayerUtxo ?? await readFeePayerUtxoShared(this.deps.chain, feePayer, FEE_PAYER_CODES);
       const witness = await this.witnessFor(req);
-      if (feePayer !== undefined) assertNoOwnerRewardToFeePayer(witness?.ownerReward);
+      const rewardReturn = feePayer === undefined ? undefined : await this.ownerRewardReturnFor(owner, witness);
 
       const found: FoundVault[] = [];
       const ignored: IgnoredUtxo[] = [];
@@ -810,7 +811,7 @@ export class VaultTxService {
       const plan = this.validityPlan(tip, true, feePayer);
       const ctx: BuildContext = {
         owner,
-        ownerAuth: witness?.auth,
+        ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn),
         vault,
         tip,
         changeAddress,
@@ -847,6 +848,7 @@ export class VaultTxService {
         summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, feePayerUtxo!, tip, {
           fronting: { address: vault.scope.address, nftUnit: vault.vaultIdUnit, inputRef: vault.utxo },
           ...(g === undefined ? {} : { sharedFrontings: [{ address: g.gbShardAddress, policyId: g.gbShardPolicyId }] }),
+          ownerRewardReturn: rewardReturn,
         });
       }
       afterSummary?.(built.txCbor, summary);
@@ -870,7 +872,7 @@ export class VaultTxService {
         expiresReason: expiry.reason,
         ignored,
         requiredSigners: requiredSignersOf(built.txCbor),
-        witnessNotes: this.notesFor(owner, witness, changeAddress, feePayer),
+        witnessNotes: this.notesFor(owner, witness, changeAddress, feePayer, rewardReturn),
       };
     } catch (e) {
       if (quote === undefined) this.deps.locks.release(ownerKey, lockGen);
@@ -928,6 +930,7 @@ export class VaultTxService {
       fronting?: Omit<FeePayerFronting, "maxLovelace">;
       sharedFrontings?: readonly Omit<FeePayerSharedFronting, "maxLovelace">[];
       otherInputAddresses?: readonly string[];
+      ownerRewardReturn?: OwnerRewardReturn | undefined;
     } = {},
   ): Promise<FeePayerSummary> {
     const feeKey = refStr(fp.utxoRef);
@@ -947,7 +950,26 @@ export class VaultTxService {
         sharedFrontings: opts.sharedFrontings.map(s => ({ ...s, maxLovelace: this.deps.deployment.feePayerFrontingMaxLovelace })),
       }),
       ...(opts.otherInputAddresses === undefined ? {} : { otherInputAddresses: opts.otherInputAddresses }),
+      ...(opts.ownerRewardReturn === undefined ? {} : { ownerRewardReturn: opts.ownerRewardReturn }),
     });
+  }
+
+  /**
+   * Thưởng `did_stake` khi đi ví trả phí: chốt TRƯỚC khi dựng — về ví Phoenix của chủ, hoặc 422 có mã
+   * (`feePayer.ts` ▸ `planOwnerRewardReturn`). Địa chỉ ví suy từ cấu hình + anchor đã đọc từ chuỗi
+   * (`didOwner.ts` ▸ `didPaymentAddressFor`), không từ thân bài.
+   */
+  private ownerRewardReturnFor(
+    owner: OwnerRef, witness: ResolvedOwnerWitness | undefined,
+  ): Promise<OwnerRewardReturn | undefined> {
+    return planOwnerRewardReturn(
+      witness?.ownerReward,
+      () => didPaymentAddressFor({
+        didStake: this.deps.deployment.didStake, anchorNftName: witness?.anchorNftName,
+        ownerHash: owner.hash, network: this.deps.network,
+      }),
+      () => this.coinsPerUtxoByte(),
+    );
   }
 
   /**
@@ -1037,7 +1059,10 @@ export class VaultTxService {
       const plan = this.validityPlan(tip, false, feePayer ?? funding?.feePayer);
       if (req.kind === "instant") await this.assertNoInstantVaultYet(scope, owner, req.didCommit);
       const witness = await this.witnessFor(req);
-      if (feePayer !== undefined) assertNoOwnerRewardToFeePayer(witness?.ownerReward);
+      // Chỉ `fee_payer` ở gốc. Có `funding` thì thưởng đã về `funding.address` (ví Phoenix do app khai,
+      // `did_payment_script_cbor` băm ra đúng payment credential của nó) cùng phần thối, và
+      // `checkFundingTx` vế bảo toàn cân nó — hai đường không chồng nhau (`fee_payer` gốc cấm `funding`).
+      const rewardReturn = feePayer === undefined ? undefined : await this.ownerRewardReturnFor(owner, witness);
       const rootFeePayerUtxo = feePayer === undefined
         ? undefined
         : quote?.feePayerUtxo ?? await readFeePayerUtxoShared(this.deps.chain, feePayer, FEE_PAYER_CODES);
@@ -1059,7 +1084,7 @@ export class VaultTxService {
       }
       const built = await this.deps.builder.createVault(
         {
-          owner, ownerAuth: witness?.auth, scope, tip, changeAddress, funding: fundingCtx, validToMs: plan.capMs,
+          owner, ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn), scope, tip, changeAddress, funding: fundingCtx, validToMs: plan.capMs,
           ...(fundingCtx === undefined ? {} : { collateralLovelace: this.deps.deployment.feePayerCollateralLovelace }),
           ...(rootFeePayerUtxo === undefined ? {} : this.feePayerBuildFields(rootFeePayerUtxo)),
         },
@@ -1109,6 +1134,7 @@ export class VaultTxService {
         // Output két MỚI (NFT đúc trong tx) là output duy nhất được ứng; UTxO trả phí là input duy nhất.
         summary.fee_payer = await this.checkFeePayer(built.txCbor, feePayer, rootFeePayerUtxo!, tip, {
           fronting: { address: scope.address, nftUnit: built.vaultNftUnit }, otherInputAddresses: [],
+          ownerRewardReturn: rewardReturn,
         });
       }
       // Đọc hạn SAU các cổng đọc-lại có mã (funding/fee_payer): tx thiếu validTo hoặc hạn quá trần
@@ -1154,7 +1180,7 @@ export class VaultTxService {
         owner,
         requiredSigners: summary.required_signers,
         witnessNotes: funding === undefined
-          ? this.notesFor(owner, witness, changeAddress, feePayer)
+          ? this.notesFor(owner, witness, changeAddress, feePayer, rewardReturn)
           : fundingNotes(owner, witness, funding, fundingSigners!),
         summary,
         expiresAt: expiry.expiresAt,
@@ -1204,6 +1230,7 @@ export class VaultTxService {
 
   private notesFor(
     owner: OwnerRef, w: ResolvedOwnerWitness | undefined, changeAddress: string, feePayer?: FeePayerRequest,
+    rewardReturn?: OwnerRewardReturn,
   ): string[] {
     const fee = feePayer !== undefined
       ? `Phí + tài sản thế chấp: UTxO ${refStr(feePayer.utxoRef)} của ${feePayer.address}; tiền thối ADA ` +
@@ -1212,7 +1239,7 @@ export class VaultTxService {
       : `Input trả phí + tài sản thế chấp lấy từ ${changeAddress}: khoá thanh toán của địa chỉ ` +
         `đó cũng phải ký.`;
     if (owner.type === "key") return [`Chủ khoá: ký bằng khoá ${owner.hash}.`, fee];
-    return [...(w?.notes ?? []), fee];
+    return [...(w?.notes ?? []), fee, ...(rewardReturn === undefined ? [] : [ownerRewardNote(rewardReturn)])];
   }
 
   /**

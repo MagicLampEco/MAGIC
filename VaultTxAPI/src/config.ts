@@ -180,6 +180,12 @@ export interface DidStakeDeployment {
    *  `{type:"did"}` nhận 501 `OWNER_SCRIPT_WITNESS_UNAVAILABLE`; chủ script gửi `owner_witness`
    *  tường minh vẫn chạy. */
   unappliedScript?: { cbor: string; hash: string };
+  /** Script `did_payment` CHƯA apply + hash của nó (khoá JSON `did_stake.did_payment_unapplied_script`,
+   *  cùng luật băm-lại-và-so). Cùng hai tham số `(anchor_nft_policy, blake2b_256(utf8(did)))` với
+   *  `did_stake`, nên cùng khối. Dùng DUY NHẤT để suy địa chỉ ví Phoenix của chủ DID, nơi nhận thưởng
+   *  `did_stake` khi giao dịch đi qua ví trả phí (`didOwner.ts` ▸ `didPaymentAddressFor`). Vắng ⟹ chủ
+   *  script có thưởng > 0 đi qua ví trả phí nhận 422 `FEE_PAYER_OWNER_REWARD_NONZERO` như trước. */
+  didPaymentUnappliedScript?: { cbor: string; hash: string };
 }
 
 export interface Deployment {
@@ -589,7 +595,42 @@ export function assertCompatibleBlocks(
 }
 
 function didStakeKey(d: DidStakeDeployment | undefined): string {
-  return d === undefined ? "" : `${d.anchorNftPolicy}|${d.unappliedScript?.hash ?? ""}`;
+  return d === undefined ? "" : `${d.anchorNftPolicy}|${d.unappliedScript?.hash ?? ""}|${d.didPaymentUnappliedScript?.hash ?? ""}`;
+}
+
+/**
+ * Khối `{ "cbor", "hash" }` của một script PhoenixKey CHƯA apply. Hai trường đi CẶP; `cbor` hex
+ * thường số ký tự chẵn; `hash` 56 hex; băm lại `cbor` phải ra ĐÚNG `hash` — lệch ⟹ TỪ CHỐI KHỞI ĐỘNG.
+ */
+function unappliedScriptOf(v: unknown, where: string, validatorName: string): { cbor: string; hash: string } {
+  const u = obj(v, where);
+  const hasCbor = u.cbor !== undefined;
+  const hasHash = u.hash !== undefined;
+  if (hasCbor !== hasHash) {
+    throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where} phải có CẢ HAI trường ` +
+      `"cbor" và "hash" (đang thiếu "${hasCbor ? "hash" : "cbor"}").`);
+  }
+  const cbor = str(u.cbor, `${where}.cbor`);
+  const hash = str(u.hash, `${where}.hash`);
+  if (!/^(?:[0-9a-f]{2})+$/.test(cbor)) {
+    throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where}.cbor phải là hex thường, số ký tự chẵn.`);
+  }
+  if (!/^[0-9a-f]{56}$/.test(hash)) {
+    throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where}.hash phải là 56 hex thường.`);
+  }
+  let actual: string;
+  try {
+    actual = validatorToScriptHash({ type: "PlutusV3", script: cbor });
+  } catch (e) {
+    throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where}.cbor không băm được thành ` +
+      `script PlutusV3: ${(e as Error).message}`);
+  }
+  if (actual !== hash) {
+    throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where}: băm lại cbor ra ` +
+      `${actual}, khác hash khai ${hash}. Từ chối khởi động — cbor và hash phải lấy từ CÙNG một bản ` +
+      `deploy ${validatorName} của PhoenixKey.`);
+  }
+  return { cbor, hash };
 }
 
 /**
@@ -836,40 +877,22 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
     // CẶP: thiếu một là cấu hình hỏng. Băm lại `cbor` mà lệch `hash` ⟹ TỪ CHỐI KHỞI ĐỘNG — mọi
     // chủ DID sẽ được suy ra một script hash không phải của họ, và không gì báo cho tới khi
     // giao dịch chết trên chuỗi (hoặc tệ hơn: dựng cho vault của người khác).
-    let unappliedScript: { cbor: string; hash: string } | undefined;
-    if (d.unapplied_script !== undefined) {
-      const u = obj(d.unapplied_script, "did_stake.unapplied_script");
-      const hasCbor = u.cbor !== undefined;
-      const hasHash = u.hash !== undefined;
-      if (hasCbor !== hasHash) {
-        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script phải có CẢ HAI trường " +
-          `"cbor" và "hash" (đang thiếu "${hasCbor ? "hash" : "cbor"}").`);
-      }
-      const cbor = str(u.cbor, "did_stake.unapplied_script.cbor");
-      const hash = str(u.hash, "did_stake.unapplied_script.hash");
-      if (!/^(?:[0-9a-f]{2})+$/.test(cbor)) {
-        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script.cbor phải là hex thường, số ký tự chẵn.");
-      }
-      if (!/^[0-9a-f]{56}$/.test(hash)) {
-        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script.hash phải là 56 hex thường.");
-      }
-      let actual: string;
-      try {
-        actual = validatorToScriptHash({ type: "PlutusV3", script: cbor });
-      } catch (e) {
-        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script.cbor không băm được thành " +
-          `script PlutusV3: ${(e as Error).message}`);
-      }
-      if (actual !== hash) {
-        throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake.unapplied_script: băm lại cbor ra " +
-          `${actual}, khác hash khai ${hash}. Từ chối khởi động — cbor và hash phải lấy từ CÙNG một bản ` +
-          "deploy did_stake của PhoenixKey.");
-      }
-      unappliedScript = { cbor, hash };
-    } else if (Object.keys(d).some(k => k === "unapplied_cbor" || k === "unapplied_hash")) {
+    const unappliedScript = d.unapplied_script === undefined
+      ? undefined
+      : unappliedScriptOf(d.unapplied_script, "did_stake.unapplied_script", "did_stake");
+    if (unappliedScript === undefined && Object.keys(d).some(k => k === "unapplied_cbor" || k === "unapplied_hash")) {
       throw new Error("[config] VAULT_TX_API_DEPLOYMENT.did_stake: dùng khối \"unapplied_script\": { \"cbor\", \"hash\" }.");
     }
-    didStake = { anchorNftPolicy: p, ...(unappliedScript === undefined ? {} : { unappliedScript }) };
+    // `did_payment_unapplied_script` (tuỳ chọn): cùng luật, cùng lý do — hash lệch là suy ra một địa
+    // chỉ ví Phoenix KHÔNG phải của chủ, rồi chuyển thưởng của chủ tới đó.
+    const didPaymentUnappliedScript = d.did_payment_unapplied_script === undefined
+      ? undefined
+      : unappliedScriptOf(d.did_payment_unapplied_script, "did_stake.did_payment_unapplied_script", "did_payment");
+    didStake = {
+      anchorNftPolicy: p,
+      ...(unappliedScript === undefined ? {} : { unappliedScript }),
+      ...(didPaymentUnappliedScript === undefined ? {} : { didPaymentUnappliedScript }),
+    };
   }
 
   // Chuỗi chữ số, không nhận số JSON — cùng luật với mọi số tiền ở `http.ts`.

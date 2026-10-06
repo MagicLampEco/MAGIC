@@ -76,13 +76,14 @@ import {
   VaultAmbiguousError, VaultDatumUndecodableError, VaultNotFoundError, ownerApiErrorOf,
 } from "./errors.js";
 import {
-  FEE_PAYER_CODES, assertFeePayerAddress, checkCollateral, checkValidTo, inputRefsOf, readFeePayerUtxo, refStr,
-  type FeePayerRequest, type OutRefLike,
+  FEE_PAYER_CODES, assertFeePayerAddress, checkCollateral, checkOwnerRewardReturn, checkValidTo, inputRefsOf,
+  ownerRewardNote, ownerRewardSummaryOf, planOwnerRewardReturn, readFeePayerUtxo, refStr, withOwnerRewardReturn,
+  type FeePayerRequest, type OutRefLike, type OwnerRewardReturn, type OwnerRewardSummary,
 } from "./feePayer.js";
 import { pickByNft } from "./genV2.js";
 import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type SponsorRoute } from "./locks.js";
 import { isDidOwner, ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness } from "./owner.js";
-import { resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
+import { didPaymentAddressFor, resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
 import type { OwnerRequest } from "./service.js";
 import { txBodyHash } from "./summary.js";
 import { assertChangeAddress, enterpriseAddressOf } from "./txBuilder.js";
@@ -759,20 +760,33 @@ export class SponsorTxService {
       const p = await this.prepare();
       const tip = await this.deps.chain.tip();
       const witness = owner.type === "key" ? undefined : await this.deps.ownerWitness!.resolve(owner, req.ownerWitness!);
-      const ownerAuth: OwnerAuth<TxBuilder> = witness?.auth ?? { kind: "key", pkh: owner.hash };
       const plan = planSponsorValidity({
         step, tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
         txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, issued: this.deps.issued,
         ...(fpReq === undefined ? {} : { feePayerUtxoRef: refStr(fpReq.utxoRef) }),
       });
       let feePayer: StepCtx["feePayer"];
+      let rewardReturn: OwnerRewardReturn | undefined;
       if (fpReq !== undefined) {
         const utxo = await readFeePayerUtxo(this.deps.chain, fpReq, FEE_PAYER_CODES);
         this.assertNotPendingSpent(utxo, "ví trả phí");
         feePayer = {
           req: fpReq, utxo, collateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
         };
+        // Thưởng did_stake về ví Phoenix của chủ, không vào tiền thối của ví trả phí — cùng luật với
+        // `service.ts` (`feePayer.ts` ▸ khối "MỤC RÚT did_stake"). Tham số giao thức đọc từ chính lucid
+        // bộ dựng sẽ dùng, và chỉ khi thưởng > 0.
+        rewardReturn = await planOwnerRewardReturn(
+          witness?.ownerReward,
+          () => didPaymentAddressFor({
+            didStake: this.deps.deployment.didStake, anchorNftName: witness?.anchorNftName,
+            ownerHash: owner.hash, network: this.deps.network,
+          }),
+          async () => BigInt((await this.deps.lucidForWallet(feeAddress, [utxo])).config().protocolParameters!.coinsPerUtxoByte),
+        );
       }
+      const ownerAuth: OwnerAuth<TxBuilder> =
+        withOwnerRewardReturn(witness?.auth, rewardReturn) ?? { kind: "key", pkh: owner.hash };
       const ctx: StepCtx = {
         owner, ownerAuth, ...(witness === undefined ? {} : { witness }),
         feeAddress, feeKeyHash: getAddressDetails(feeAddress).paymentCredential!.hash, tip, plan,
@@ -789,6 +803,7 @@ export class SponsorTxService {
         out.summary.fee_payer = checkSponsorFeePayerTx(out.txCbor, {
           network: this.deps.slotNetwork ?? this.deps.network, tipPosixMs: tip.blockTimePosixMs, feePayer: feePayer.req,
           feePayerUtxo: feePayer.utxo, maxCollateralLovelace: feePayer.collateralLovelace, otherInputs, ...out.feeFlow,
+          ...(rewardReturn === undefined ? {} : { ownerRewardReturn: rewardReturn }),
         });
       }
       // Hạn đọc NGƯỢC từ chính CBOR, SAU cổng ví trả phí (như create-vault ở `service.ts`): tx thiếu
@@ -812,6 +827,7 @@ export class SponsorTxService {
             : `Ví trả phí (fee_payer): tx tiêu ĐÚNG UTxO ${refStr(ctx.feePayer.req.utxoRef)} ở ${feeAddress} — phí, ` +
               `thế chấp${step === "T1" ? ", min-ADA của két và thread" : ""}; tiền thối ADA về lại địa chỉ đó; khoá ` +
               `thanh toán ${ctx.feeKeyHash} phải ký. Chủ két không góp UTxO nào cho phí.`,
+          ...(rewardReturn === undefined ? [] : [ownerRewardNote(rewardReturn)]),
           ...(step === "T2"
             ? [`Bên tài trợ ký bằng ${(out.sponsorSigners ?? []).join(", ")} (chi các UTxO CARP đã đưa); phần thối về ${out.sponsorChangeAddress ?? "?"} — đúng địa chỉ của các UTxO đó.`]
             : []),
@@ -1198,6 +1214,9 @@ export interface SponsorFeePayerCheckContext extends FeeFlow {
   maxCollateralLovelace: bigint;
   /** Mọi input KHÁC UTxO trả phí, đọc từ chuỗi theo tham chiếu trong CBOR. */
   otherInputs: UTxO[];
+  /** Thưởng `did_stake` đã chốt trước khi dựng (`feePayer.ts` ▸ `planOwnerRewardReturn`). Có ⟹ output
+   *  thưởng là output DUY NHẤT được nằm ngoài tập đóng ở vế (3), và không vào cân bằng vế (4). */
+  ownerRewardReturn?: OwnerRewardReturn;
 }
 
 export interface SponsorFeePayerSummary {
@@ -1211,6 +1230,8 @@ export interface SponsorFeePayerSummary {
   collateral_at_risk_lovelace: string;
   collateral_return_lovelace: string | null;
   valid_to_posix_ms: string;
+  /** Có ⟺ chủ `did_stake` có thưởng > 0 đã chuyển về ví Phoenix của chủ — đọc lại TỪ CBOR. */
+  owner_reward?: OwnerRewardSummary;
 }
 
 /**
@@ -1223,6 +1244,9 @@ export interface SponsorFeePayerSummary {
  *   (4) `passAddresses` nhận lại ĐÚNG lượng lovelace đã góp; ví trả phí góp = phí + thối + khoản ứng,
  *       với khoản ứng = Σ lovelace output script − Σ lovelace input script, ≥ 0;
  *   (5) hạn dùng ≤ 1 giờ (`checkValidTo`, dùng chung).
+ * Có `ownerRewardReturn` ⟹ thêm vế thưởng dùng chung (`checkOwnerRewardReturn`): mục rút đúng R, ĐÚNG
+ * MỘT output thuần ADA đúng R tới ví Phoenix của chủ; output đó ngoài tập đóng (3) và ngoài cân bằng (4)
+ * — R vào từ mục rút, ra ở output đó, không qua ví trả phí.
  * Lệch ⟹ 422 `FEE_PAYER_TX_MISMATCH` (cùng mã với mọi đường dựng).
  */
 export function checkSponsorFeePayerTx(txCbor: string, ctx: SponsorFeePayerCheckContext): SponsorFeePayerSummary {
@@ -1268,12 +1292,16 @@ export function checkSponsorFeePayerTx(txCbor: string, ctx: SponsorFeePayerCheck
   const { atRisk, collateralReturn } = checkCollateral(
     body, feeKey, ctx.feePayerUtxo, ctx.feePayer.address, ctx.maxCollateralLovelace, fail);
 
-  // (3) output.
+  // (3) output. Output thưởng did_stake (nếu có) đối chiếu riêng, rồi bỏ khỏi tập đóng và khỏi cân bằng.
+  const rewardIndex = ctx.ownerRewardReturn === undefined
+    ? undefined
+    : checkOwnerRewardReturn(body, ctx.ownerRewardReturn, fail);
   const ol = body.outputs();
   let change = 0n;
   let scriptOut = 0n;
   let passOut = 0n;
   for (let i = 0; i < ol.len(); i++) {
+    if (i === rewardIndex) continue;
     const o = ol.get(i);
     const addr = o.address().to_bech32(undefined);
     const a = valueToAssets(o.amount());
@@ -1318,6 +1346,8 @@ export function checkSponsorFeePayerTx(txCbor: string, ctx: SponsorFeePayerCheck
     collateral_at_risk_lovelace: raw(atRisk),
     collateral_return_lovelace: collateralReturn === null ? null : raw(collateralReturn),
     valid_to_posix_ms: raw(validTo),
+    ...(ctx.ownerRewardReturn === undefined || rewardIndex === undefined
+      ? {} : { owner_reward: ownerRewardSummaryOf(ctx.ownerRewardReturn, rewardIndex) }),
   };
 }
 

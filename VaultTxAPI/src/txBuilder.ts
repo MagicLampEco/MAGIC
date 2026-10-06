@@ -872,6 +872,8 @@ export class RecordedTxBuilder implements TxBuilderPort {
     wakeme?: InstantGenBuildParams["wakeme"];
     /** Tham số đầy đủ mà tầng dịch vụ giao xuống (Gen v2.0: UTxO beacon/shard, apply-param). */
     buildParams?: unknown;
+    /** Nhân chứng chủ mà tầng dịch vụ giao xuống — để phép kiểm gọi `attachWithdraw` của nó. */
+    ownerAuth?: OwnerAuth<TxBuilder>;
   } | null = null;
   constructor(
     private readonly txCborByRoute: Record<string, string>,
@@ -882,6 +884,7 @@ export class RecordedTxBuilder implements TxBuilderPort {
   ) {}
   private async serve(route: string, params: unknown, ctx?: { ownerAuth?: OwnerAuth<TxBuilder> }): Promise<BuiltTx> {
     this.lastCall = { route, params, ownerAuthKind: ctx?.ownerAuth?.kind };
+    if (ctx?.ownerAuth !== undefined) this.lastCall.ownerAuth = ctx.ownerAuth;
     const b = ctx as Partial<BuildContext> | undefined;
     if (b?.feePayerUtxo !== undefined) this.lastCall.feePayerUtxo = b.feePayerUtxo;
     if (b?.collateralLovelace !== undefined) this.lastCall.collateralLovelace = b.collateralLovelace;

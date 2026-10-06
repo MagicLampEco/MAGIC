@@ -55,6 +55,8 @@ export interface TxSpec {
   ttlSlot?: bigint;
   /** `reference_inputs` của thân (ca két Wakeme của `instant_gen`). */
   referenceInputs?: { txHash: string; outputIndex: number }[];
+  /** Mục rút thưởng: địa chỉ thưởng bech32 (`stake_test1…`) → lượng (ca chủ `did_stake`). */
+  withdrawals?: { rewardAddress: string; lovelace: bigint }[];
 }
 
 /** Chuỗi byte (hex) → CBOR bytestring hex; đủ cho tên tài sản ≤ 32 byte. */
@@ -122,6 +124,15 @@ export function buildTxCbor(spec: TxSpec): string {
       rl.add(CML.TransactionInput.new(CML.TransactionHash.from_hex(i.txHash), BigInt(i.outputIndex)));
     }
     body.set_reference_inputs(rl);
+  }
+  if (spec.withdrawals !== undefined) {
+    const wd = CML.MapRewardAccountToCoin.new();
+    for (const w of spec.withdrawals) {
+      const ra = CML.RewardAddress.from_address(CML.Address.from_bech32(w.rewardAddress));
+      if (ra === undefined) throw new Error(`fixture: ${w.rewardAddress} không phải địa chỉ thưởng`);
+      wd.insert(ra, w.lovelace);
+    }
+    body.set_withdrawals(wd);
   }
   const ws = CML.TransactionWitnessSet.new();
   if (spec.spendRedeemers !== undefined) {

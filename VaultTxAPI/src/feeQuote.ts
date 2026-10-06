@@ -52,7 +52,7 @@ import { CML, credentialToAddress, getAddressDetails, type UTxO } from "@lucid-e
 import { parseBuildRequest, runBuild, type BuildResult } from "./buildRequest.js";
 import { CodedApiError } from "./errors.js";
 import type { FeeProxy, FeeSourcesFailure } from "./feeProxy.js";
-import { assertFeePayerAddress, isPureAdaFeeUtxo, refStr, type FeePayerCodes } from "./feePayer.js";
+import { assertFeePayerAddress, isPureAdaFeeUtxo, pureAdaMinCoin, refStr, type FeePayerCodes } from "./feePayer.js";
 import { ISSUED_ROUTES, type IssuedRoute } from "./locks.js";
 import type { VaultTxService } from "./service.js";
 import { raw } from "./units.js";
@@ -189,17 +189,6 @@ function baseShapeOf(address: string, network: VaultTxService["network"]): strin
 // UTxO = needed ⟹ dựng được; needed − 1 ⟹ lucid từ chối ("not enough funds to cover required
 // minimum ADA for change output"). Bản cộng dồn cao hơn needed đúng bằng min(phí, thế chấp).
 
-/** min-ADA của một output thuần ADA — cùng phép tính với `calculateMinLovelace` của lucid. */
-function pureAdaMinCoin(address: string, coinsPerUtxoByte: bigint): bigint {
-  return CML.TransactionOutputBuilder.new()
-    .with_address(CML.Address.from_bech32(address))
-    .next()
-    .with_asset_and_min_required_coin(CML.MultiAsset.new(), coinsPerUtxoByte)
-    .build()
-    .output()
-    .amount()
-    .coin();
-}
 
 interface Measured {
   fee: bigint;

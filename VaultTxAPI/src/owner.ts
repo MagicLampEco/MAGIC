@@ -50,8 +50,8 @@ export interface ResolvedOwnerWitness {
    *  `assertOwnerDid`) coi vắng là lệch. */
   anchorNftName?: string;
   /** Chủ `Script(did_stake)`: mục rút mà nhân chứng gắn — TRỌN số dư thưởng lúc dựng. Đường ví trả
-   *  phí đọc nó để dừng trước khi thưởng của chủ thối sang ví trả phí (`feePayer.ts` ▸
-   *  `assertNoOwnerRewardToFeePayer`). */
+   *  phí đọc nó để chuyển thưởng về ví Phoenix của chủ thay vì thối sang ví trả phí (`feePayer.ts` ▸
+   *  `planOwnerRewardReturn`). */
   ownerReward?: { rewardAddress: string; withdrawLovelace: bigint };
 }
 

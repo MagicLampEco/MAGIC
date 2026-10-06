@@ -8,7 +8,9 @@
 // Mỗi ca âm có cực đối dựng Y HỆT, chỉ khác đúng vế đang kiểm. Bộ dựng là `RecordedTxBuilder`: nó
 // trả CBOR ghi sẵn, nên mọi ca âm đỏ vì CỔNG ĐỌC LẠI của dịch vụ, không vì bộ dựng từ chối.
 
-import { credentialToAddress, unixTimeToSlot, type TxBuilder, type UTxO } from "@lucid-evolution/lucid";
+import {
+  credentialToAddress, credentialToRewardAddress, unixTimeToSlot, validatorToScriptHash, type TxBuilder, type UTxO,
+} from "@lucid-evolution/lucid";
 import { encodeBindDidRedeemer } from "@magiclamp/consumemagic";
 import type { OwnerRef } from "@magiclamp/protocol-utils";
 import { describe, expect, it } from "vitest";
@@ -16,7 +18,7 @@ import { describe, expect, it } from "vitest";
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { FEE_PAYER_DEFAULT_FRONTING_MAX_LOVELACE, parseDeployment } from "../src/config.js";
 import { CodedApiError } from "../src/errors.js";
-import { assertNoOwnerRewardToFeePayer } from "../src/feePayer.js";
+import { planOwnerRewardReturn } from "../src/feePayer.js";
 import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import type { OwnerWitnessProvider, ScriptOwnerWitness } from "../src/owner.js";
@@ -28,6 +30,7 @@ import {
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
 import { buildTxCbor, type TxOutputSpec } from "./fixtures/tx.js";
+import { DID_PAYMENT_UNAPPLIED_CBOR, DID_STAKE_UNAPPLIED_CBOR } from "./fixtures/phoenixScripts.js";
 import { GB_SHARD_POLICY, GEN_V2_REF_SCRIPTS, addrOf, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
@@ -95,6 +98,14 @@ function feeLegs(inputs: { txHash: string; outputIndex: number }[]) {
     ttlSlot: TTL_SLOT,
   };
 }
+/** Thưởng did_stake trong tx ghi sẵn: mục rút R ở `rewardAddress`; R đi tới ví Phoenix (`into: "phoenix"`)
+ *  hoặc lọt vào tiền thối ví trả phí (`into: "change"`, ca âm). */
+interface RewardLeg { rewardAddress: string; lovelace: bigint; to: string; into: "phoenix" | "change" }
+const rewardWithdrawals = (r?: RewardLeg) =>
+  r === undefined ? {} : { withdrawals: [{ rewardAddress: r.rewardAddress, lovelace: r.lovelace }] };
+const rewardOut = (r?: RewardLeg): TxOutputSpec[] =>
+  r !== undefined && r.into === "phoenix" ? [{ address: r.to, assets: { lovelace: r.lovelace } }] : [];
+const rewardInChange = (r?: RewardLeg): bigint => r !== undefined && r.into === "change" ? r.lovelace : 0n;
 const ownerLeg = (on: boolean): TxOutputSpec[] => on ? [{ address: OWNER_WALLET, assets: { lovelace: OWNER_UTXO.assets.lovelace! } }] : [];
 
 /** schedule-commit qua ví trả phí; `raise` lovelace từ ví trả phí vào KÉT, `stray` vào một địa chỉ lạ. */
@@ -154,7 +165,7 @@ function shardTx(o: { raise?: bigint; shardRaise: bigint; shardSpent?: boolean }
 }
 
 /** open-thread qua ví trả phí: UTxO trả phí là seed + input duy nhất; ví ứng trọn 2 ADA của thread. */
-function openTx(o: { ownerInput?: boolean; owner?: OwnerRef } = {}): string {
+function openTx(o: { ownerInput?: boolean; owner?: OwnerRef; reward?: RewardLeg } = {}): string {
   const fee = 200_000n;
   return buildTxCbor({
     ...feeLegs([ref(FEE_UTXO), ...(o.ownerInput ? [ref(OWNER_UTXO)] : [])]),
@@ -162,26 +173,30 @@ function openTx(o: { ownerInput?: boolean; owner?: OwnerRef } = {}): string {
     mint: { [THREAD_UNIT]: 1n },
     outputs: [
       { address: ENGAGE_ADDRESS, assets: { lovelace: 2_000_000n, [THREAD_UNIT]: 1n }, inlineDatumHex: engageDatumHex(o.owner ?? KEY_OWNER) },
-      { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee - 2_000_000n } },
+      { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee - 2_000_000n + rewardInChange(o.reward) } },
+      ...rewardOut(o.reward),
       ...ownerLeg(o.ownerInput === true),
     ],
     requiredSigners: [OWNER_PKH],
+    ...rewardWithdrawals(o.reward),
   });
 }
 
 /** bind-did qua ví trả phí: thread giữ nguyên value, ví chỉ mất phí. */
-function bindTx(o: { ownerInput?: boolean; owner?: OwnerRef } = {}): string {
+function bindTx(o: { ownerInput?: boolean; owner?: OwnerRef; thread?: UTxO; reward?: RewardLeg } = {}): string {
   const fee = 190_000n;
-  const thread = o.owner === undefined ? UNBOUND : UNBOUND_SCRIPT;
+  const thread = o.thread ?? (o.owner === undefined ? UNBOUND : UNBOUND_SCRIPT);
   return buildTxCbor({
     ...feeLegs([ref(thread), ref(FEE_UTXO), ...(o.ownerInput ? [ref(OWNER_UTXO)] : [])]),
     feeLovelace: fee,
     outputs: [
       { address: ENGAGE_ADDRESS, assets: { ...thread.assets }, inlineDatumHex: engageDatumHex(o.owner ?? KEY_OWNER, { didCommit: DID }) },
-      { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee } },
+      { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee + rewardInChange(o.reward) } },
+      ...rewardOut(o.reward),
       ...ownerLeg(o.ownerInput === true),
     ],
     requiredSigners: [OWNER_PKH],
+    ...rewardWithdrawals(o.reward),
     // Thread (7e…) đứng đầu danh sách input đã sắp, trước c0… và fa….
     spendRedeemers: [{ index: 0, dataHex: encodeBindDidRedeemer() }],
   });
@@ -189,7 +204,7 @@ function bindTx(o: { ownerInput?: boolean; owner?: OwnerRef } = {}): string {
 
 const NEW_VAULT_LOVELACE = 2_400_000n;
 /** create-vault két instant 0 LAMP qua ví trả phí: ví ứng trọn lovelace output két mới. */
-function createTx(o: { ownerInput?: boolean; owner?: OwnerRef } = {}): string {
+function createTx(o: { ownerInput?: boolean; owner?: OwnerRef; reward?: RewardLeg } = {}): string {
   const fee = 190_000n;
   return buildTxCbor({
     ...feeLegs([ref(FEE_UTXO), ...(o.ownerInput ? [ref(OWNER_UTXO)] : [])]),
@@ -203,22 +218,28 @@ function createTx(o: { ownerInput?: boolean; owner?: OwnerRef } = {}): string {
           owner: o.owner ?? KEY_OWNER, lampBalanceOildrop: 0n, lampLockedOildrop: 0n, instantUnlockMs: 0n, wakemeLink: DID,
         }),
       },
-      { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee - NEW_VAULT_LOVELACE } },
+      { address: FEE_ADDRESS, assets: { lovelace: FEE_IN - fee - NEW_VAULT_LOVELACE + rewardInChange(o.reward) } },
+      ...rewardOut(o.reward),
       ...ownerLeg(o.ownerInput === true),
     ],
     requiredSigners: [OWNER_PKH],
+    ...rewardWithdrawals(o.reward),
   });
 }
 
 /** Nhân chứng chủ script giả, mang số dư thưởng `reward` của tài khoản did_stake. */
 class RewardWitness implements OwnerWitnessProvider {
-  constructor(private readonly reward: bigint) {}
+  constructor(
+    private readonly reward: bigint,
+    private readonly opts: { rewardAddress?: string; anchorNftName?: string } = {},
+  ) {}
   async resolve(owner: OwnerRef, w: ScriptOwnerWitness) {
     return {
       auth: { kind: "script" as const, hash: owner.hash, attachWithdraw: (tx: TxBuilder) => tx },
       requiredSigners: [w.controllerPkh, w.deviceKeyHash],
       notes: ["giả: rút did_stake"],
-      ownerReward: { rewardAddress: "stake_test17gia", withdrawLovelace: this.reward },
+      ownerReward: { rewardAddress: this.opts.rewardAddress ?? "stake_test17gia", withdrawLovelace: this.reward },
+      ...(this.opts.anchorNftName === undefined ? {} : { anchorNftName: this.opts.anchorNftName }),
     };
   }
 }
@@ -231,7 +252,7 @@ const WITNESS_BODY = {
 
 function harness(o: {
   vaultType?: "Schedule" | "Instant"; extra?: Record<string, unknown>; cbor: Record<string, string>;
-  threads?: UTxO[]; vaults?: UTxO[]; witness?: OwnerWitnessProvider;
+  threads?: UTxO[]; vaults?: UTxO[]; witness?: OwnerWitnessProvider; known?: UTxO[]; coinsPerUtxoByte?: bigint;
 }) {
   const deployment = parseDeployment(deploymentJson(o.vaultType ?? "Schedule", o.extra), "Preview");
   const chain = new RecordedChainReader(
@@ -242,9 +263,10 @@ function harness(o: {
       [OWNER_WALLET]: [],
     },
     TIP,
-    [VAULT_UTXO, FEE_UTXO, OWNER_UTXO, UNBOUND, UNBOUND_SCRIPT, SHARD_3],
+    [VAULT_UTXO, FEE_UTXO, OWNER_UTXO, UNBOUND, UNBOUND_SCRIPT, SHARD_3, ...(o.known ?? [])],
   );
   const builder = new RecordedTxBuilder(o.cbor, VAULT_ID_UNIT, THREAD_UNIT);
+  if (o.coinsPerUtxoByte !== undefined) builder.coinsPerUtxoByteValue = o.coinsPerUtxoByte;
   const issued = new IssuedTxRegistry(TTL * 4);
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
@@ -352,13 +374,20 @@ describe("cấu hình fee_payer_fronting_max_lovelace", () => {
 // ── mục rút did_stake ────────────────────────────────────────────────────────
 
 describe("mục rút did_stake qua ví trả phí", () => {
-  it("số dư thưởng > 0 ⟹ 422 FEE_PAYER_OWNER_REWARD_NONZERO; CẶP: 0 hoặc chủ khoá ⟹ không ném", () => {
+  it("số dư thưởng > 0 mà không suy được ví Phoenix ⟹ 422 FEE_PAYER_OWNER_REWARD_NONZERO; CẶP: 0 hoặc chủ khoá ⟹ undefined", async () => {
+    const missing = () => ({ missing: "deployment.did_stake", reason: "giả" });
+    const noParams = () => { throw new Error("ca R = 0 không được tra tham số giao thức"); };
     let caught: unknown;
-    try { assertNoOwnerRewardToFeePayer({ rewardAddress: "stake_test17gia", withdrawLovelace: 1n }); } catch (e) { caught = e; }
+    try {
+      await planOwnerRewardReturn({ rewardAddress: "stake_test17gia", withdrawLovelace: 1n }, missing, noParams);
+    } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(CodedApiError);
     expect((caught as CodedApiError).code).toBe("FEE_PAYER_OWNER_REWARD_NONZERO");
-    expect(() => assertNoOwnerRewardToFeePayer({ rewardAddress: "stake_test17gia", withdrawLovelace: 0n })).not.toThrow();
-    expect(() => assertNoOwnerRewardToFeePayer(undefined)).not.toThrow();
+    expect((caught as CodedApiError).details).toMatchObject({ missing: "deployment.did_stake" });
+    const never = () => { throw new Error("ca R = 0 không được suy địa chỉ"); };
+    await expect(planOwnerRewardReturn({ rewardAddress: "stake_test17gia", withdrawLovelace: 0n }, never, noParams))
+      .resolves.toBeUndefined();
+    await expect(planOwnerRewardReturn(undefined, never, noParams)).resolves.toBeUndefined();
   });
 
   const openScript = () => post("/tx/open-thread", { owner: SCRIPT_OWNER, owner_witness: WITNESS_BODY, fee_payer: FEE_PAYER });
@@ -499,4 +528,116 @@ describe("/tx/create-vault két instant 0 LAMP qua ví trả phí — chủ có 
     expect(r.status, JSON.stringify(r.body)).toBe(400);
     expect(codeOf(r)).toBe("FEE_PAYER_UNSUPPORTED");
   });
+});
+
+// ── thưởng did_stake về ví Phoenix qua route (vector DID #1 của PhoenixKey-Core) ─────────────────
+//
+// Chủ = `Script(did_stake đã apply)` của DID #1; anchor của nhân chứng = anchor DID #1; cấu hình mang
+// cả hai script PhoenixKey chưa apply. Preview và Preprod cùng network id 0 nên địa chỉ ví Phoenix
+// trùng chuỗi bech32 với vector Preprod (`ownerRewardReturn.test.ts` ▸ ADDR_1) — so với chuỗi đó, không
+// tính lại bằng chính hàm đang kiểm.
+
+const R_POLICY = "e97ace3451c5ce54063fdc3f379112c335c39f0379ad6a2766ed6a4c";
+const R_ANCHOR_1 = "9e64482f072657d504b5ef8400372c22b017c18b736303f591ffc1f5dc5f2a4c";
+const R_STAKE_1 = "fbbc90f11088dc8e5ae09df7d5c6563d1828c67c1bf395a47743131b";
+const R_ADDR_1 = "addr_test1xrawpzzrf4fchxrg82yh54gjq5mq7v9k7ezykq52c2wwa3hmhjg0zyygmj894cya7l2uv43arq5vvlqm7w26ga6rzvdscfzeuc";
+const R_REWARD_1 = credentialToRewardAddress("Preview", { type: "Script", hash: R_STAKE_1 });
+const STAKE_OWNER: OwnerRef = { type: "script", hash: R_STAKE_1 };
+const R_COINS_PER_BYTE = 4_310n;
+/** Trên min-ADA output thuần ADA ở ví Phoenix (≈ 1 tADA với 4310/byte). */
+const R_OK = 1_500_000n;
+/** Dưới min-ADA đó. */
+const R_LOW = 500_000n;
+const scriptBlock = (cbor: string) => ({ cbor, hash: validatorToScriptHash({ type: "PlutusV3", script: cbor }) });
+const DID_STAKE_EXTRA = {
+  did_stake: {
+    anchor_nft_policy: R_POLICY,
+    unapplied_script: scriptBlock(DID_STAKE_UNAPPLIED_CBOR),
+    did_payment_unapplied_script: scriptBlock(DID_PAYMENT_UNAPPLIED_CBOR),
+  },
+};
+const UNBOUND_STAKE = threadUtxo(STAKE_OWNER, "70".repeat(32), 0, "01");
+const phoenixLeg = (lovelace: bigint, into: "phoenix" | "change" = "phoenix") =>
+  ({ rewardAddress: R_REWARD_1, lovelace, to: R_ADDR_1, into });
+const stakeWitness = (r: bigint) => new RewardWitness(r, { rewardAddress: R_REWARD_1, anchorNftName: R_ANCHOR_1 });
+type RewardView = { reward_address: string; withdraw_lovelace: string; did_payment_address: string; output_index: number };
+const ownerRewardOf = (r: { body: unknown }) =>
+  (r.body as { summary: { fee_payer: { owner_reward?: RewardView } } }).summary.fee_payer.owner_reward;
+const notesOf = (r: { body: unknown }) => (r.body as { witness_notes: string[] }).witness_notes;
+
+/** Gọi `attachWithdraw` mà dịch vụ trao cho bộ dựng trên một tx giả, ghi lại mọi `pay.ToAddress`. */
+function paysOf(builder: RecordedTxBuilder): { address: string; lovelace: bigint | undefined }[] {
+  const auth = builder.lastCall?.ownerAuth;
+  if (auth === undefined || auth.kind !== "script") throw new Error("bộ dựng không nhận nhân chứng chủ script");
+  const pays: { address: string; lovelace: bigint | undefined }[] = [];
+  const fake = {
+    pay: { ToAddress: (address: string, assets: { lovelace?: bigint }) => { pays.push({ address, lovelace: assets.lovelace }); return fake; } },
+  };
+  auth.attachWithdraw(fake as unknown as TxBuilder);
+  return pays;
+}
+
+const routes = {
+  open: {
+    req: () => post("/tx/open-thread", { owner: STAKE_OWNER, owner_witness: WITNESS_BODY, fee_payer: FEE_PAYER }),
+    h: (r: bigint, leg?: RewardLeg) => harness({
+      extra: DID_STAKE_EXTRA, coinsPerUtxoByte: R_COINS_PER_BYTE, witness: stakeWitness(r),
+      cbor: { open_thread: openTx({ owner: STAKE_OWNER, ...(leg === undefined ? {} : { reward: leg }) }) },
+    }),
+  },
+  bind: {
+    req: () => post("/tx/bind-did", { owner: STAKE_OWNER, owner_witness: WITNESS_BODY, did_commit: DID, fee_payer: FEE_PAYER }),
+    h: (r: bigint, leg?: RewardLeg) => harness({
+      extra: DID_STAKE_EXTRA, coinsPerUtxoByte: R_COINS_PER_BYTE, witness: stakeWitness(r),
+      threads: [UNBOUND_STAKE], known: [UNBOUND_STAKE],
+      cbor: { bind_did: bindTx({ owner: STAKE_OWNER, thread: UNBOUND_STAKE, ...(leg === undefined ? {} : { reward: leg }) }) },
+    }),
+  },
+  create: {
+    req: () => post("/tx/create-vault", {
+      kind: "instant", owner: STAKE_OWNER, owner_witness: WITNESS_BODY, lamp_amount: "0", did_commit: DID, fee_payer: FEE_PAYER,
+    }),
+    h: (r: bigint, leg?: RewardLeg) => harness({
+      vaultType: "Instant", vaults: [], extra: { ...DID_STAKE_EXTRA }, coinsPerUtxoByte: R_COINS_PER_BYTE, witness: stakeWitness(r),
+      cbor: { create_vault: createTx({ owner: STAKE_OWNER, ...(leg === undefined ? {} : { reward: leg }) }) },
+    }),
+  },
+} as const;
+
+describe("thưởng did_stake về ví Phoenix qua route (vector DID #1)", () => {
+  for (const [name, rt] of Object.entries(routes)) {
+    it(`${name}: R=${R_OK} ⟹ 200; output R tới ví Phoenix (đọc từ CBOR), summary.fee_payer.owner_reward, witness_notes nhắc R; bộ dựng nhận pay.ToAddress(ví Phoenix, R)`, async () => {
+      const h = rt.h(R_OK, phoenixLeg(R_OK));
+      const r = await handle(rt.req(), h.router);
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      const ow = ownerRewardOf(r);
+      expect(ow).toMatchObject({ reward_address: R_REWARD_1, withdraw_lovelace: R_OK.toString(), did_payment_address: R_ADDR_1 });
+      expect(typeof ow!.output_index).toBe("number");
+      expect(notesOf(r).some(n => n.includes(`${R_OK} lovelace`) && n.includes(R_ADDR_1))).toBe(true);
+      expect(paysOf(h.builder)).toEqual([{ address: R_ADDR_1, lovelace: R_OK }]);
+    });
+
+    it(`${name} CỰC ĐỐI: cùng R nhưng tx ghi sẵn để R lọt vào tiền thối ví trả phí ⟹ 422 FEE_PAYER_TX_MISMATCH, không vào sổ phát hành`, async () => {
+      const h = rt.h(R_OK, phoenixLeg(R_OK, "change"));
+      const r = await handle(rt.req(), h.router);
+      expect(r.status, JSON.stringify(r.body)).toBe(422);
+      expect(codeOf(r)).toBe("FEE_PAYER_TX_MISMATCH");
+      expect(h.locks.size()).toBe(0);
+    });
+
+    it(`${name}: R=${R_LOW} < min-ADA ⟹ 422 FEE_PAYER_OWNER_REWARD_BELOW_MIN_ADA TRƯỚC khi dựng; CẶP: R=0 ⟹ 200, không output thưởng`, async () => {
+      const low = rt.h(R_LOW, phoenixLeg(R_LOW));
+      const a = await handle(rt.req(), low.router);
+      expect(a.status, JSON.stringify(a.body)).toBe(422);
+      expect(codeOf(a)).toBe("FEE_PAYER_OWNER_REWARD_BELOW_MIN_ADA");
+      expect(detailsOf(a)).toMatchObject({ withdraw_lovelace: R_LOW.toString(), did_payment_address: R_ADDR_1 });
+      expect(low.builder.lastCall).toBeNull();
+      expect(low.locks.size()).toBe(0);
+      const zero = rt.h(0n);
+      const b = await handle(rt.req(), zero.router);
+      expect(b.status, JSON.stringify(b.body)).toBe(200);
+      expect(ownerRewardOf(b)).toBeUndefined();
+      expect(paysOf(zero.builder)).toEqual([]);
+    });
+  }
 });

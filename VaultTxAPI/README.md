@@ -673,10 +673,27 @@ min-ADA** (mục dưới); input khác ngoài UTxO trả phí chỉ được đ�
 - `/tx/open-thread` và `/tx/bind-did` nhận `fee_payer`. Open-thread: UTxO trả phí là input duy
   nhất, ví trả phí ứng trọn lovelace của output thread. Bind-did: input chỉ là UTxO trả phí và
   thread của chủ ở địa chỉ engage; value thread giữ nguyên nên không có khoản ứng.
-- Chủ `Script(did_stake)` mà tài khoản thưởng đang có số dư > 0 ⟹ `422
-  FEE_PAYER_OWNER_REWARD_NONZERO`, trước khi dựng. Nhân chứng chủ rút TRỌN số dư đó, và qua ví
-  trả phí thì tiền thối về ví trả phí, nên thưởng của chủ sẽ chảy sang bên trả phí. Rút thưởng
-  về ví của chủ trước, rồi dựng lại.
+- Chủ `Script(did_stake)` mà tài khoản thưởng đang có số dư R > 0: nhân chứng chủ rút TRỌN R, và qua
+  ví trả phí thì tiền thối về ví trả phí. Nên dịch vụ quyết TRƯỚC khi dựng (`feePayer.ts` ▸
+  `planOwnerRewardReturn`):
+  - suy được ví Phoenix của chủ (địa chỉ BASE: payment = `did_payment` đã apply, stake = chính
+    `did_stake` của chủ; `didOwner.ts` ▸ `didPaymentAddressFor`) và R ≥ min-ADA của một output thuần
+    ADA ở đó ⟹ tx có thêm ĐÚNG MỘT output R lovelace, không datum, tới ví đó; phép đọc lại CBOR đòi
+    mục rút đúng R và output đó đúng R (`checkOwnerRewardReturn`). Phản hồi có
+    `summary.fee_payer.owner_reward` = `{ reward_address, withdraw_lovelace, did_payment_address,
+    output_index }`, và `witness_notes` có một dòng nêu R;
+  - R < min-ADA đó ⟹ `422 FEE_PAYER_OWNER_REWARD_BELOW_MIN_ADA` (`details`: `withdraw_lovelace`,
+    `min_lovelace`, `did_payment_address`). Ví trả phí KHÔNG ứng phần thiếu, vì phần ứng vào ví riêng
+    của chủ tiêu tự do được;
+  - không suy được ví Phoenix (bản deploy thiếu `did_stake.did_payment_unapplied_script` hoặc
+    `did_stake.unapplied_script`, hoặc anchor của nhân chứng không phải anchor của chủ) ⟹ `422
+    FEE_PAYER_OWNER_REWARD_NONZERO`, `details.missing` nêu thiếu gì. Không chuyển thưởng tới một
+    đích đoán.
+
+  Trạng thái kỹ thuật của đường Feecover (2026-10-06): với route khác `create_vault`, luật L9 của
+  Feecover hiện từ chối output thưởng này, nên `open_thread` / `bind_did` có thưởng R > 0 dựng qua
+  Feecover vẫn bị từ chối ở bước Feecover ký, cho tới khi luật đó nhận output về ví Phoenix của chủ.
+  Phần của dịch vụ này (dựng + đọc lại CBOR) không phụ thuộc luật đó.
 
 #### Khoản ứng min-ADA: ví trả phí trả trước tiền ký quỹ của output két/thread
 
@@ -1256,7 +1273,8 @@ Nên:
 | `fee_payer` cùng `change_address` | `400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT` |
 | `fee_payer` ở gốc thân bài của `/tx/create-vault`, trừ két `instant` `"lamp_amount": "0"` không kèm `funding` | `400 FEE_PAYER_UNSUPPORTED` |
 | ví trả phí phải ứng min-ADA vượt `fee_payer_fronting_max_lovelace` | `422 FEE_PAYER_FRONTING_ABOVE_MAX` |
-| chủ `Script(did_stake)` có thưởng > 0, dựng qua `fee_payer` | `422 FEE_PAYER_OWNER_REWARD_NONZERO` |
+| chủ `Script(did_stake)` có thưởng > 0, dựng qua `fee_payer`, không suy được ví Phoenix (`details.missing`) | `422 FEE_PAYER_OWNER_REWARD_NONZERO` |
+| chủ `Script(did_stake)` có thưởng > 0 nhưng dưới min-ADA của output về ví Phoenix | `422 FEE_PAYER_OWNER_REWARD_BELOW_MIN_ADA` |
 | tx vừa dựng lệch luật ví trả phí | `422 FEE_PAYER_TX_MISMATCH` |
 | `engage_ref` sai khuôn / không phải thread của chủ | `400 ENGAGE_REF_SHAPE` / `400 ENGAGE_REF_MISMATCH` |
 | `/tx/instant-gen`: `m` vắng / số JSON / không phải chữ số / `"0"` | `400 INSTANT_GEN_M_INVALID` |
@@ -1480,7 +1498,7 @@ dùng.
   },
   "fee_payer_collateral_lovelace": "3000000",      // tuỳ chọn, CHUỖI; thế chấp khi có ví trả phí
   "fee_payer_fronting_max_lovelace": "5000000",    // tuỳ chọn, CHUỖI; trần khoản ứng min-ADA, "0" tắt
-  "did_stake": { "anchor_nft_policy": "<56 hex>", "unapplied_script": { "cbor": "<hex>", "hash": "<56 hex>" } }, // tuỳ chọn — chủ script + funding did_payment; unapplied_script bật chủ {type:"did"}
+  "did_stake": { "anchor_nft_policy": "<56 hex>", "unapplied_script": { "cbor": "<hex>", "hash": "<56 hex>" }, "did_payment_unapplied_script": { "cbor": "<hex>", "hash": "<56 hex>" } }, // tuỳ chọn — chủ script + funding did_payment; unapplied_script bật chủ {type:"did"}; did_payment_unapplied_script cho thưởng did_stake qua ví trả phí
   "feecover": {                                     // tuỳ chọn — proxy phí, xem §3
     "url": "https://feecover.example",              // https://, hoặc http:// tới loopback
     "timeout_ms": 15000,                            // tuỳ chọn, mặc định 15000
@@ -1602,7 +1620,8 @@ Mục `did_stake` tuỳ chọn của `VAULT_TX_API_DEPLOYMENT`:
 ```jsonc
 "did_stake": {
   "anchor_nft_policy": "<56 hex thường>",                    // tham số theo mạng của did_stake
-  "unapplied_script": { "cbor": "<hex>", "hash": "<56 hex>" } // tuỳ chọn — bật chủ {type:"did"}
+  "unapplied_script": { "cbor": "<hex>", "hash": "<56 hex>" }, // tuỳ chọn — bật chủ {type:"did"}
+  "did_payment_unapplied_script": { "cbor": "<hex>", "hash": "<56 hex>" } // tuỳ chọn — ví Phoenix nhận thưởng did_stake qua ví trả phí
 }
 ```
 
@@ -1612,6 +1631,12 @@ một ⟹ lỗi cấu hình), và lúc khởi động dịch vụ băm lại `cb
 (mọi chủ DID sẽ được suy ra một script không phải của họ). Hash này đổi theo đời validator bên
 PhoenixKey, nên nó chỉ sống ở cấu hình theo mạng, không ở mã. `scripts/gen_vault_tx_api_deployment.ts`
 **chưa** sinh mục này — xem §8.
+
+`did_payment_unapplied_script` là `did_payment` CHƯA apply, cùng nguồn, cùng luật băm-lại-và-so
+(lệch ⟹ từ chối khởi động). Nó là bytecode công khai, không phải bí mật. Cần CẢ nó lẫn
+`unapplied_script` để suy ví Phoenix của chủ: `unapplied_script` apply `(anchor_nft_policy, tên
+anchor)` phải ra đúng hash của chủ — đó là phép nối anchor của nhân chứng với chủ. Vắng ⟹ chủ script
+có thưởng > 0 đi qua ví trả phí nhận `422 FEE_PAYER_OWNER_REWARD_NONZERO`.
 
 ---
 

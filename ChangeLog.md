@@ -5,6 +5,29 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-06 — thưởng `did_stake` qua ví trả phí về ví Phoenix của chủ, thay vì 422
+
+**Đổi gì.** Chủ `Script(did_stake)` có số dư thưởng R > 0 dựng qua ví trả phí (`fee_payer` ở
+`/tx/open-thread`, `/tx/bind-did`, `/tx/create-vault`, và đường sponsor) không còn nhận `422
+FEE_PAYER_OWNER_REWARD_NONZERO` mặc nhiên. Dịch vụ quyết trước khi dựng
+(`VaultTxAPI/src/feePayer.ts` ▸ `planOwnerRewardReturn`): suy ví Phoenix của chủ (địa chỉ BASE
+`did_payment` + `did_stake`, `didOwner.ts` ▸ `didPaymentAddressFor`, khớp vector DID #1 của
+PhoenixKey-Core) rồi thêm đúng một output R lovelace, không datum, tới đó
+(`withOwnerRewardReturn`); phép đọc lại CBOR đòi mục rút và output cùng đúng R
+(`checkOwnerRewardReturn`). Phản hồi thêm `summary.fee_payer.owner_reward` và một dòng
+`witness_notes`. Mã mới `422 FEE_PAYER_OWNER_REWARD_BELOW_MIN_ADA` khi R dưới min-ADA của output đó
+— ví trả phí không ứng phần thiếu. Cấu hình `did_stake` thêm khoá tuỳ chọn
+`did_payment_unapplied_script` (cùng luật băm-lại-và-so).
+
+**Vì sao.** Nhân chứng chủ `did_stake` rút TRỌN số dư thưởng, và qua ví trả phí thì tiền thối về ví
+trả phí: thưởng của chủ chảy sang bên trả phí. Chặn bằng 422 thì người dùng mới (0 ADA, đúng người
+cần ví trả phí) kẹt tới khi tự rút thưởng — mà tự rút thì cần ADA.
+
+**Cái gì gãy nếu bám bản cũ.** `FEE_PAYER_OWNER_REWARD_NONZERO` nay chỉ còn ca không suy được ví
+Phoenix (`details.missing`); bên gọi đang coi mã đó là "mọi thưởng > 0" sẽ thấy 200 khi bản deploy có
+`did_payment_unapplied_script`. Tx dựng ra có thêm một output thuần ADA tới ví Phoenix. Đường
+Feecover cho route khác `create_vault`: luật L9 của Feecover hiện còn từ chối output đó.
+
 ## 2026-10-06 — Báo giá `/tx/quote` trả `fronted_lovelace` ở cả hai nguồn trả phí
 
 **Đổi gì.** `VaultTxAPI/src/feeQuote.ts`: khối `feecover` và `owner_address` thêm

@@ -14,11 +14,14 @@
 // Lược đồ datum anchor thuộc repo danh tính. Đổi số trường bên đó ⟹ 422 `OWNER_ANCHOR_SCHEMA`
 // ở đây (ồn ào), không phải một nhân chứng dựng trên trường đọc nhầm chỗ.
 
-import { Constr, Data, type UTxO } from "@lucid-evolution/lucid";
+import {
+  Constr, Data, applyParamsToScript, credentialToAddress, validatorToScriptHash, type UTxO,
+} from "@lucid-evolution/lucid";
 import { didAnchorNftName, didStakeScriptForDid } from "@magiclamp/sdk";
-import type { OwnerRef } from "@magiclamp/protocol-utils";
+import type { Network, OwnerRef } from "@magiclamp/protocol-utils";
 
 import type { ChainReader } from "./chain.js";
+import type { DidStakeDeployment } from "./config.js";
 import { CodedApiError } from "./errors.js";
 import { isDidOwner, type DidOwnerInput, type OwnerInput, type ScriptOwnerWitness } from "./owner.js";
 
@@ -161,4 +164,65 @@ export function taadFieldsOf(anchor: UTxO, name: string): TaadFields {
       { anchor_ref: ref, status_constructor: status.index });
   }
   return { controllerPkh, devicePkh, auxDevicePkhs: aux as string[] };
+}
+
+// ── địa chỉ ví Phoenix (did_payment) của chủ, suy từ cấu hình + nhân chứng ─────────────────
+
+/** Kết quả suy địa chỉ ví Phoenix: có địa chỉ, hoặc nói rõ THIẾU gì (không đoán). */
+export type DidPaymentAddressResult =
+  | { address: string; didPaymentHash: string }
+  | { missing: string; reason: string };
+
+/**
+ * Địa chỉ ví Phoenix của chủ `Script(did_stake)` — nơi nhận thưởng `did_stake` khi giao dịch đi qua
+ * ví trả phí (`feePayer.ts` ▸ khối "MỤC RÚT did_stake").
+ *
+ * Ví Phoenix = địa chỉ BASE (payment = `Script(did_payment đã apply)`, stake = `Script(did_stake đã
+ * apply)`), hai script apply CÙNG `(anchor_nft_policy, blake2b_256(utf8(did)))` — PhoenixKey-Core
+ * `rust_core/src/phoenix_address.rs` ▸ `derive_phoenix_address` (đổi từ ENTERPRISE sang BASE
+ * 2026-10-04). Phần stake ở đây là CHÍNH `owner.hash`, credential mà mục rút đang rút.
+ *
+ * Nguồn tin được, không có gì từ thân bài:
+ *   · `did_payment` chưa apply + `did_stake` chưa apply — cấu hình theo mạng, băm lại lúc khởi động;
+ *   · `anchorNftName` — tên NFT anchor trên UTxO anchor mà dịch vụ tự đọc từ chuỗi (`owner.ts`).
+ * Ràng buộc nối hai thứ: `did_stake` chưa apply apply `(policy, anchorNftName)` phải băm ra ĐÚNG
+ * `owner.hash`. Lệch ⟹ anchor của nhân chứng không phải anchor của chủ này ⟹ không suy (trả `missing`):
+ * chuyển thưởng của chủ tới ví Phoenix của MỘT DID KHÁC là đúng loại lỗi chặn này sinh ra để chặn.
+ * Chủ `{type:"did"}` luôn thoả ràng buộc đó (`DidOwnerResolver` suy owner theo đúng phép này).
+ */
+export function didPaymentAddressFor(input: {
+  didStake: DidStakeDeployment | undefined;
+  anchorNftName: string | undefined;
+  ownerHash: string;
+  network: Network;
+}): DidPaymentAddressResult {
+  const d = input.didStake;
+  if (d === undefined) return { missing: "deployment.did_stake", reason: "bản deploy không có khối did_stake" };
+  if (d.didPaymentUnappliedScript === undefined) {
+    return { missing: "deployment.did_stake.did_payment_unapplied_script",
+      reason: "bản deploy chưa khai script did_payment chưa apply" };
+  }
+  if (d.unappliedScript === undefined) {
+    return { missing: "deployment.did_stake.unapplied_script",
+      reason: "bản deploy chưa khai script did_stake chưa apply — không đối chiếu được anchor với chủ" };
+  }
+  const name = input.anchorNftName;
+  if (name === undefined || !/^[0-9a-f]{64}$/.test(name)) {
+    return { missing: "owner_witness.anchor_ref", reason: "UTxO anchor của nhân chứng không mang đúng một NFT anchor" };
+  }
+  const stakeHash = validatorToScriptHash({
+    type: "PlutusV3", script: applyParamsToScript(d.unappliedScript.cbor, [d.anchorNftPolicy, name]),
+  });
+  if (stakeHash !== input.ownerHash) {
+    return { missing: "owner_witness.anchor_ref",
+      reason: `anchor ${name.slice(0, 12)}… không phải anchor của chủ script:${input.ownerHash.slice(0, 12)}…` };
+  }
+  const didPaymentHash = validatorToScriptHash({
+    type: "PlutusV3", script: applyParamsToScript(d.didPaymentUnappliedScript.cbor, [d.anchorNftPolicy, name]),
+  });
+  return {
+    address: credentialToAddress(input.network,
+      { type: "Script", hash: didPaymentHash }, { type: "Script", hash: input.ownerHash }),
+    didPaymentHash,
+  };
 }

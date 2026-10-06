@@ -584,7 +584,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
-      const plan = this.validityPlan(tip, false);
+      const plan = this.validityPlan(tip, false, feePayer);
       const existing = threadsOf(await this.deps.chain.utxosAt(d.engageAddress), d.engageScriptHash, owner);
       if (existing.length > 0) {
         throw new CodedApiError(409, "ENGAGE_THREAD_EXISTS",
@@ -673,7 +673,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
-      const plan = this.validityPlan(tip, false);
+      const plan = this.validityPlan(tip, false, feePayer);
       const thread = await pickEngageThread(
         this.deps.chain, d.engageAddress, d.engageScriptHash, owner, req.engageRef, "/tx/bind-did");
       const existing = didCommitOf(thread);
@@ -743,10 +743,16 @@ export class VaultTxService {
    * Cận trên `validTo` cho một lượt dựng (`validity.ts` ▸ `planValidity`). `epochBound` = route mà
    * validator đòi hai cận cùng một epoch giao thức (gen/consume/schedule — mọi đường qua `buildOne`).
    */
-  private validityPlan(tip: ChainTip, epochBound: boolean): ValidityPlan {
+  private validityPlan(tip: ChainTip, epochBound: boolean, feePayer: FeePayerRequest | undefined): ValidityPlan {
+    // UTxO ví trả phí xin qua `/fee/utxo` ⟹ kẹp vào `reserved_until` của nó (sổ phát-hành ghi lúc
+    // phát UTxO, `feeProxy.ts`) — cùng luật với `sponsor.ts` ▸ `planSponsorValidity`. UTxO phí app
+    // tự đưa ⟹ sổ không có dòng ⟹ không có giờ giữ chỗ.
+    const reserved = feePayer === undefined
+      ? undefined : this.deps.issued.feeReservationOf(refStr(feePayer.utxoRef));
     return planValidity({
       tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
       txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, epochBound,
+      ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved }),
     });
   }
 
@@ -795,7 +801,7 @@ export class VaultTxService {
       const vault = pickSingleVault(found, ownerKey, vaultType ?? "bất kỳ", scopes.map(s => s.address));
       this.assertNotPendingSpent(vault.utxo);
 
-      const plan = this.validityPlan(tip, true);
+      const plan = this.validityPlan(tip, true, feePayer);
       const ctx: BuildContext = {
         owner,
         ownerAuth: witness?.auth,
@@ -1022,7 +1028,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
-      const plan = this.validityPlan(tip, false);
+      const plan = this.validityPlan(tip, false, feePayer ?? funding?.feePayer);
       if (req.kind === "instant") await this.assertNoInstantVaultYet(scope, owner, req.didCommit);
       const witness = await this.witnessFor(req);
       if (feePayer !== undefined) assertNoOwnerRewardToFeePayer(witness?.ownerReward);

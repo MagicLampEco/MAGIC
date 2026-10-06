@@ -206,6 +206,40 @@ describe("fee_payer — dương", () => {
   });
 });
 
+// Dịch vụ chính kẹp hạn theo giờ giữ chỗ Feecover của UTxO `fee_payer` — cùng luật với tài trợ
+// (`sponsor.ts` ▸ `planSponsorValidity`, `tests/sponsorValidity.test.ts`), nay ở tầng dịch vụ.
+describe("fee_payer — hạn kẹp giờ giữ chỗ Feecover (service.ts ▸ validityPlan)", () => {
+  const FEE_REF = `${FEE_UTXO.txHash}#0`;
+  it("CẶP (a): reserved_until SỚM hơn tip+15′ ⟹ cận giao bộ dựng = reserved_until căn slot, expires_reason fee_reservation", async () => {
+    const h = harness({ cbor: feeTx({ ttlMs: 300_000 }) });
+    h.issued.noteFeeReservation(FEE_REF, NOW + 300_400); // 5 phút + 400 ms: căn xuống đầu slot
+    const r = await handle(commit({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall?.validityMaxAheadMs).toBe(300_000n);
+    const b = r.body as { expires_at: string; expires_reason: string };
+    expect(b.expires_reason).toBe("fee_reservation");
+    expect(b.expires_at).toBe(new Date(NOW + 300_000).toISOString());
+  });
+
+  it("CẶP (b): reserved_until MUỘN hơn tip+15′ ⟹ cận = tip+15′, expires_reason tx_validity", async () => {
+    const h = harness();
+    h.issued.noteFeeReservation(FEE_REF, NOW + 2_400_000); // 40 phút
+    const r = await handle(commit({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall?.validityMaxAheadMs).toBe(900_000n);
+    expect((r.body as { expires_reason: string }).expires_reason).toBe("tx_validity");
+  });
+
+  it("giờ giữ chỗ đã qua ⟹ 409 FEE_PAYER_RESERVATION_EXPIRED, bộ dựng không bị gọi", async () => {
+    const h = harness();
+    h.issued.noteFeeReservation(FEE_REF, NOW - 1);
+    const r = await handle(commit({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(codeOf(r)).toBe("FEE_PAYER_RESERVATION_EXPIRED");
+    expect(h.builder.lastCall).toBeNull();
+  });
+});
+
 describe("fee_payer — âm ở cổng tĩnh (bộ dựng KHÔNG bị gọi)", () => {
   it("fee_payer cùng change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT", async () => {
     const h = harness();

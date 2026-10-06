@@ -867,6 +867,8 @@ export class RecordedTxBuilder implements TxBuilderPort {
     route: string; params: unknown; ownerAuthKind?: "key" | "script"; changeAddress?: string;
     funding?: CreateVaultContext["funding"]; feePayerUtxo?: UTxO; collateralLovelace?: bigint; engageUtxo?: UTxO;
     validToMs?: bigint;
+    /** Cận `validTo − tip` giao cho bộ dựng tự tính cửa sổ epoch (gen/consume/schedule). */
+    validityMaxAheadMs?: bigint;
     wakeme?: InstantGenBuildParams["wakeme"];
     /** Tham số đầy đủ mà tầng dịch vụ giao xuống (Gen v2.0: UTxO beacon/shard, apply-param). */
     buildParams?: unknown;
@@ -885,6 +887,8 @@ export class RecordedTxBuilder implements TxBuilderPort {
     if (b?.collateralLovelace !== undefined) this.lastCall.collateralLovelace = b.collateralLovelace;
     const validToMs = (ctx as { validToMs?: bigint } | undefined)?.validToMs;
     if (validToMs !== undefined) this.lastCall.validToMs = validToMs;
+    const maxAhead = (ctx as { validityMaxAheadMs?: bigint } | undefined)?.validityMaxAheadMs;
+    if (maxAhead !== undefined) this.lastCall.validityMaxAheadMs = maxAhead;
     const cbor = this.txCborByRoute[route];
     if (cbor === undefined) throw new Error(`[RecordedTxBuilder] không có CBOR ghi sẵn cho "${route}".`);
     return { txCbor: cbor };

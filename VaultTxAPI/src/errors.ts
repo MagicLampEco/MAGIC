@@ -19,7 +19,8 @@
 //   400 FEE_PAYER_UNSUPPORTED    `fee_payer` ở gốc thân bài của `/tx/create-vault`, trừ két instant 0 LAMP không `funding`
 //   422 FEE_PAYER_TX_MISMATCH    giao dịch vừa dựng lệch luật ví trả phí (`feePayer.ts`)
 //   422 FEE_PAYER_FRONTING_ABOVE_MAX  ví trả phí phải ứng min-ADA vượt `fee_payer_fronting_max_lovelace`
-//   422 FEE_PAYER_OWNER_REWARD_NONZERO  chủ did_stake có thưởng > 0: qua ví trả phí thì thưởng chảy sang bên trả phí
+//   422 FEE_PAYER_OWNER_REWARD_NONZERO  chủ did_stake có thưởng > 0 mà không suy được ví Phoenix (did_payment) của chủ (`details.missing`)
+//   422 FEE_PAYER_OWNER_REWARD_BELOW_MIN_ADA  thưởng did_stake > 0 nhưng dưới min-ADA của output về ví Phoenix; ví trả phí không ứng
 //   400 ENGAGE_REF_SHAPE / ENGAGE_REF_MISMATCH  `engage_ref` sai hình dạng / không phải thread của chủ
 //   404 ENGAGE_THREAD_NOT_FOUND  chủ chưa có thread Engage — mở bằng `POST /tx/open-thread`
 //   409 ENGAGE_THREAD_AMBIGUOUS  chủ có nhiều thread, yêu cầu không kèm `engage_ref`

@@ -4860,6 +4860,40 @@ test ig_neg_cumul_over_cap_pp_plus_lent_by_one() fail {
   t_ig_same(t_same_din(t_wakeme_commit, 1_000_000_000_000), 148_000_001, [t_lent_ok(), t_gb_ok()])
 }
 
+// ── (1c) IG-9, kẹp `lent_pp_cap` tại CHỖ GỌI (`compute_cap_lent`, không phải
+// `compute_cap_pp`) ─────────────────────────────────────────────────────────────
+// Cặp (1a) dùng L_lent = 1.2e7 nên `compute_cap_pp(L_lent)` = 4.8e7 nằm DƯỚI
+// `lent_pp_cap` = 1e9: đổi lời gọi IG-9 thành `compute_cap_pp(lent)` vẫn xanh trọn bộ
+// (đo đột biến 2026-10-06: 540/540). Cặp này đặt L_lent = 3e8 (300 LAMP) ⟹
+// `compute_cap_pp` = 1.2e9 bị kẹp về 1e9; trần IG-9 = 4e8 + 1e9 = 1.4e9, két đã sinh
+// 3e8 ⟹ m tối đa 1.1e9. Không cổng nào khác chặn: cap_nanogic 1e12; shard còn 1e10,
+// reset 1e11 ⟹ share 5e9 ≥ 3e8 + m. Bỏ kẹp ⟹ trần 1.6e9 ⟹ ca trượt xanh.
+const lent_clamp_conditional: Int = 200_000_000
+
+const lent_clamp_owned: Int = 100_000_000
+
+const lent_clamp_reset: Int = 100_000_000_000
+
+const lent_clamp_remaining: Int = 10_000_000_000
+
+fn t_ig_lent_clamp(m: Int) -> Bool {
+  let din = t_same_din(t_wakeme_commit, 1_000_000_000_000)
+  t_ig(
+    din, t_ig_out(din, din.wakeme_link, din.cap_nanogic, m), cp_bal, m,
+    [t_lent_ref(lent_clamp_conditional, lent_clamp_owned), t_gb_ok()],
+    t_s(3, lent_clamp_reset, lent_clamp_remaining),
+    t_s(3, lent_clamp_reset, lent_clamp_remaining - m),
+  )
+}
+
+test ig_pos_cumul_lent_at_pp_cap_exact() {
+  t_ig_lent_clamp(1_100_000_000)
+}
+
+test ig_neg_cumul_lent_over_pp_cap_by_one() fail {
+  t_ig_lent_clamp(1_100_000_001)
+}
+
 // ── (1b) IG-6, vế `lamp_balance + L_lent >= min_instant_holding` ────────────────
 // Vế này chỉ tách khỏi vế `avail + L_lent` khi `avail > lamp_balance`, tức
 // `lamp_locked < 0` — trạng thái KHÔNG tới được trên két thật (genesis ghim

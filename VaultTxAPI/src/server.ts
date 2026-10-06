@@ -95,6 +95,7 @@ const blockServices = makeBlockServices([
   issued,
   pending,
   lockTtlMs: cfg.lockTtlMs,
+  txValidityMs: cfg.txValidityMs,
   ...(ownerWitness === undefined ? {} : { ownerWitness }),
   ...(didOwner === undefined ? {} : { didOwner }),
   // `funding` did_payment đọc anchor DID dưới CÙNG tham số theo mạng. Vắng ⟹ 501 FUNDING_UNAVAILABLE.

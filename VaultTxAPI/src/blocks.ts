@@ -38,6 +38,8 @@ export interface SharedServiceDeps {
   issued: IssuedTxRegistry;
   pending?: PendingSpends;
   lockTtlMs: number;
+  /** Hạn ký tx (`AppConfig.txValidityMs`); vắng ⟹ mặc định của `validity.ts`. */
+  txValidityMs?: number;
   ownerWitness?: OwnerWitnessProvider;
   didOwner?: DidOwnerResolverPort;
   didPaymentAnchor?: DidPaymentAnchorReader;
@@ -80,6 +82,7 @@ export function makeBlockServices(specs: readonly BlockSpec[], shared: SharedSer
     locks: shared.locks,
     issued: shared.issued,
     lockTtlMs: shared.lockTtlMs,
+    ...(shared.txValidityMs === undefined ? {} : { txValidityMs: shared.txValidityMs }),
     ...(shared.pending === undefined ? {} : { pending: shared.pending }),
     ...(shared.ownerWitness === undefined ? {} : { ownerWitness: shared.ownerWitness }),
     ...(shared.didOwner === undefined ? {} : { didOwner: shared.didOwner }),

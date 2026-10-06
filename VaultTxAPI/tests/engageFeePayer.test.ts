@@ -415,6 +415,17 @@ describe("/tx/open-thread", () => {
     expect(h.builder.lastCall?.changeAddress).toBe(CHANGE_ADDRESS);
   });
 
+  it("đường change_address: bộ dựng nhận validToMs = cận đã lên kế hoạch (đỉnh + 15′), expires_reason = tx_validity", async () => {
+    // Đỉnh chuỗi = NOW (tròn giây ⟹ căn slot không dời); hạn ký mặc định 15′ (`validity.ts` ▸ DEFAULT_TX_VALIDITY_MS).
+    const h = harness({ threads: [threadUtxo(OTHER_OWNER, "a1".repeat(32))] });
+    const r = await handle(open(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall?.changeAddress).toBe(CHANGE_ADDRESS);
+    expect(h.builder.lastCall?.feePayerUtxo).toBeUndefined();
+    expect(h.builder.lastCall?.validToMs).toBe(BigInt(NOW) + 900_000n);
+    expect((r.body as { expires_reason: string }).expires_reason).toBe("tx_validity");
+  });
+
   it("chủ đã có thread ⟹ 409 ENGAGE_THREAD_EXISTS, bộ dựng không bị gọi", async () => {
     const h = harness();
     const r = await handle(open(), h.router);

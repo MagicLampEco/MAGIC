@@ -242,6 +242,17 @@ describe("POST /tx/create-vault", () => {
     expect(some.builder.lastCall).toBeNull();
   });
 
+  it("đường change_address: bộ dựng nhận validToMs = cận đã lên kế hoạch (đỉnh + 15′), expires_reason = tx_validity", async () => {
+    // Đỉnh chuỗi = NOW (tròn giây ⟹ căn slot không dời); hạn ký mặc định 15′ (`validity.ts` ▸ DEFAULT_TX_VALIDITY_MS).
+    const h = harness();
+    const r = await handle(post("/tx/create-vault", createBody()), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall?.changeAddress).toBe(CHANGE_ADDRESS);
+    expect(h.builder.lastCall?.feePayerUtxo).toBeUndefined();
+    expect(h.builder.lastCall?.validToMs).toBe(BigInt(NOW) + 900_000n);
+    expect((r.body as { expires_reason: string }).expires_reason).toBe("tx_validity");
+  });
+
   it("ÂM thiếu change_address / địa chỉ sai mạng ⟹ 400", async () => {
     const h = harness();
     const body = createBody();

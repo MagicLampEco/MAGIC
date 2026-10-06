@@ -114,7 +114,7 @@ export class OwnerLockTable {
    * dùng nó để ghi nhật ký, không dùng nó để quyết định có nộp hay không.
    */
   releaseByTxHash(txHash: string): string | null {
-    // Nhả MỌI khoá mang hash đó: một tx có thể giữ hơn một khoá (T2 tài trợ giữ khoá chủ + khoá
+    // Nhả MỌI khoá mang hash đó: một tx có thể giữ hơn một khoá (fund-vault tài trợ giữ khoá chủ + khoá
     // UTxO quỹ dùng chung — `sponsor.ts`). Trả khoá giành TRƯỚC (thứ tự chèn của Map) — với tx một
     // khoá thì y như cũ.
     let first: string | null = null;
@@ -254,13 +254,14 @@ export const ISSUED_ROUTES: readonly IssuedRoute[] = [
  */
 /**
  * Route tài trợ (`sponsor.ts`). Tách khỏi `IssuedRoute` có chủ đích: `IssuedRoute`/`ISSUED_ROUTES`
- * là tập đường dựng của `/tx/quote`, còn bốn route này không báo giá. Sổ phát-hành vẫn phải ghi
+ * là tập đường dựng của `/tx/quote`, còn năm route này không báo giá. Sổ phát-hành vẫn phải ghi
  * chúng — không ghi thì `/tx/submit` từ chối nộp tx mà chính dịch vụ vừa dựng.
  */
-export type SponsorRoute = "sponsor-t1-open" | "sponsor-t2-fund" | "sponsor-t3-draw" | "sponsor-t4-first-consume";
+export type SponsorRoute =
+  "sponsor-open-vault" | "sponsor-bind-did" | "sponsor-fund-vault" | "sponsor-draw-magic" | "sponsor-first-consume";
 
 export const SPONSOR_ROUTES: readonly SponsorRoute[] = [
-  "sponsor-t1-open", "sponsor-t2-fund", "sponsor-t3-draw", "sponsor-t4-first-consume",
+  "sponsor-open-vault", "sponsor-bind-did", "sponsor-fund-vault", "sponsor-draw-magic", "sponsor-first-consume",
 ];
 
 /**
@@ -518,9 +519,9 @@ export class IssuedTxRegistry {
    * kế tiếp hợp lệ của chủ — không bị đụng.
    *
    * Tx chung khoá đã từng được nộp VẪN bị thay (không có miễn trừ cho nó): miễn trừ đó mở lại đúng
-   * ca hai lượt tạo két từ hai ví — T1 nộp rồi rơi khỏi mempool, T2 nộp và lên chuỗi, nộp lại T1 ⟹
-   * két thứ hai cho cùng chủ, trong khi validator chưa ép mỗi DID một két. 409 cho T1 lúc đó kèm
-   * `details.submission` để bên gọi biết T1 từng được gửi và đi tra chuỗi.
+   * ca hai lượt tạo két từ hai ví — tx A nộp rồi rơi khỏi mempool, tx B nộp và lên chuỗi, nộp lại A ⟹
+   * két thứ hai cho cùng chủ, trong khi validator chưa ép mỗi DID một két. 409 cho A lúc đó kèm
+   * `details.submission` để bên gọi biết A từng được gửi và đi tra chuỗi.
    *
    * Việc thay chỉ chạy ở lượt GỬI ĐẦU TIÊN của `txHash` (`outcome` là `accepted` hay `unconfirmed`
    * đều tính — tx có thể đã ở mempool thì phải coi như đã nộp). NỘP LẠI chính nó (rớt mạng, thử lại)

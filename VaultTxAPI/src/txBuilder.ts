@@ -263,8 +263,8 @@ export function vaultModuleOf(vaultType: string): VaultModule {
     case PREPAID_VAULT_TYPE:
       throw new CodedApiError(501, "VAULT_KIND_UNSUPPORTED",
         `Két ${PREPAID_VAULT_TYPE} không tiêu MAGIC qua /tx/consume — lượt tiêu đầu của két này là ` +
-        `POST /tx/sponsor/t4-first-consume.`,
-        { vault_type: PREPAID_VAULT_TYPE, route: "/tx/consume", use_instead: "/tx/sponsor/t4-first-consume" });
+        `POST /tx/sponsor/first-consume.`,
+        { vault_type: PREPAID_VAULT_TYPE, route: "/tx/consume", use_instead: "/tx/sponsor/first-consume" });
     default:
       throw new TxBuildRejectedError(
         `vault_type "${vaultType}" không ánh xạ được sang module vault nào. ` +

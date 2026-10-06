@@ -81,7 +81,7 @@ export {
 } from "./sponsor.js";
 export type {
   SponsorTxServiceDeps, SponsorBuildResponse, SponsorSigner, SponsorStep, LucidForWallet,
-  SponsorT1Request, SponsorT2Request, SponsorT3Request, SponsorT4Request,
+  SponsorOpenVaultRequest, SponsorFundVaultRequest, SponsorDrawMagicRequest, SponsorFirstConsumeRequest,
 } from "./sponsor.js";
 export type { SponsorRoute, FeePurposeRoute } from "./locks.js";
 export { SPONSOR_ROUTES, FEE_PURPOSE_ROUTES } from "./locks.js";

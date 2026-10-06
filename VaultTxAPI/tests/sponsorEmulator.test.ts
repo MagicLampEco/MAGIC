@@ -1,4 +1,4 @@
-// VaultTxAPI/tests/sponsorEmulator.test.ts — hành trình tài trợ consume đầu đi trọn T1 → T2 → T3 → T4
+// VaultTxAPI/tests/sponsorEmulator.test.ts — hành trình tài trợ consume đầu đi trọn open-vault → fund-vault → draw-magic → first-consume
 // qua CHÍNH route HTTP (`http.ts` ▸ `handle` → `sponsor.ts` ▸ `SponsorTxService`), trên Lucid
 // Emulator, đánh giá UPLC THẬT (blueprint `ConsumeMAGIC/onchain/plutus.json` +
 // `PrepaidGen/onchain/plutus.json`, do `aiken build` sinh).
@@ -37,12 +37,15 @@ import {
 } from "@lucid-evolution/lucid";
 import { encodePriceParam } from "@magiclamp/consumemagic";
 import {
+  PrepaidVaultRedeemerSchema,
   addMintPaidFund,
   decodeVaultDatum,
   derivePrepaidScripts,
+  encodeVaultDatum,
   parMagicFromCarp,
   withRefScripts,
   type PrepaidBlueprint,
+  type PrepaidVaultRedeemer,
 } from "@magiclamp/prepaidgen-sdk";
 import { msPerEpoch, wakemeVaultHash, windowOriginMs } from "@magiclamp/protocol-utils";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -68,7 +71,10 @@ const CARP_UNIT = CARP_POLICY + CARP_NAME;
 const PREPAID_BURN_CONSTR = 2n;
 const MAX_PRICE_STALE = 2n;
 const PRICE_NFT_NAME = "5052494345";
+// Mỗi DID một quỹ tài trợ (`sponsorFund.ts`) ⟹ mỗi chủ một DID riêng: chủ · chủ thứ hai · người mới.
 const DID_COMMIT = "d1".repeat(32);
+const DID_COMMIT2 = "d2".repeat(32);
+const DID_NEW = "d3".repeat(32);
 const SLOW = 900_000;
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -126,8 +132,13 @@ let locks: OwnerLockTable;
 let fundAddress = "";
 let fundUnit = "";
 let fundId = "";
-let fundId2 = "";       // quỹ thứ hai, ĐÃ ghim (bên tài trợ đúc)
-let attackerFundId = ""; // quỹ do kẻ gọi đúc bằng `addMintPaidFund` — KHÔNG ghim
+let fundId2 = "";       // quỹ tài trợ của DID_COMMIT2 (chủ thứ hai), ĐÃ ghim
+let fundIdNew = "";     // quỹ tài trợ của DID_NEW (người mới của hành trình fee_payer), ĐÃ ghim
+let fundUnitNew = "";
+let fundIdNone = "";    // quỹ CHUNG (sponsorship = None), ĐÃ ghim — hành trình tài trợ không bao giờ dùng
+// Quỹ do kẻ gọi đúc bằng `addMintPaidFund`, KHÔNG ghim: ghi đúng ví bên tài trợ + DID của chủ (genesis
+// chỉ đòi chữ ký platform = kẻ gọi) — đúng ca mà việc quét địa chỉ quỹ theo `sponsor` sẽ nhận nhầm.
+let attackerFundId = "";
 let vaultUnit = "";
 let threadUnit = "";
 let anchorRef = "";
@@ -201,10 +212,10 @@ function routerDeps(s: SponsorTxService): RouterDeps {
 }
 
 type Body = Record<string, unknown>;
-/** T2 chỉ mở bằng thẻ vai sponsor (`http.ts` ▸ `requireRole`); các route khác giữ thẻ thường (rỗng ở đây). */
+/** fund-vault chỉ mở bằng thẻ vai sponsor (`http.ts` ▸ `requireRole`); các route khác giữ thẻ thường (rỗng ở đây). */
 const SPONSOR_ROLE_TOKEN = "vai-sponsor-emu";
 async function post(path: string, body: Body, s: SponsorTxService = svc): Promise<{ status: number; body: Body }> {
-  const headers = path === "/tx/sponsor/t2-fund" ? { authorization: `Bearer ${SPONSOR_ROLE_TOKEN}` } : {};
+  const headers = path === "/tx/sponsor/fund-vault" ? { authorization: `Bearer ${SPONSOR_ROLE_TOKEN}` } : {};
   return handle({ method: "POST", url: path, headers, body }, routerDeps(s));
 }
 const errCode = (r: { body: Body }) => (r.body.error as { code: string } | undefined)?.code;
@@ -279,7 +290,7 @@ beforeAll(async () => {
     // Hành trình `fee_payer`: người mới KHÔNG có tài khoản nào ở đây — 0 ADA.
     acct(feecover.address, { lovelace: 200_000_000n }),
     acct(poorFp.address, { lovelace: 4_000_000n }),
-    acct(poorFp.address, { lovelace: 1_500_000n }), // T4: dưới lượng thế chấp tường minh (3 ADA)
+    acct(poorFp.address, { lovelace: 1_500_000n }), // first-consume: dưới lượng thế chấp tường minh (3 ADA)
     acct(sponsorBaseAddr, { lovelace: 50_000_000n }),
   ], { ...PROTOCOL_PARAMETERS_DEFAULT, maxTxSize: 16_384, maxTxExMem: 16_500_000n, maxTxExSteps: 10_000_000_000n });
   // Lucid đặt lưới slot "Custom" theo `emulator.now()` LÚC KHỞI TẠO ⟹ đặt giờ trước. Đỉnh cách biên kỳ 60 s.
@@ -318,10 +329,12 @@ beforeAll(async () => {
   // Anchor DID của người mới: NFT tên = owner_commit = did_commit của két; policy native đứng thay.
   const anchorNative = scriptFromNative({ type: "all", scripts: [{ type: "sig", keyHash: sponsor.pkh }] });
   const anchorPolicy = validatorToScriptHash(anchorNative);
+  // Ba DID, ba anchor, CHUNG một output ⟹ `anchor_ref` của mọi hành trình là cùng một tham chiếu.
+  const anchors = Object.fromEntries([DID_COMMIT, DID_COMMIT2, DID_NEW].map(d => [anchorPolicy + d, 1n]));
   const ah = await asSponsor(l => l.newTx()
-    .mintAssets({ [anchorPolicy + DID_COMMIT]: 1n })
+    .mintAssets(anchors)
     .attach.MintingPolicy(anchorNative)
-    .pay.ToAddress(lockAddr, { lovelace: 3_000_000n, [anchorPolicy + DID_COMMIT]: 1n }));
+    .pay.ToAddress(lockAddr, { lovelace: 5_000_000n, ...anchors }));
   anchorRef = `${ah}#0`;
 
   const ch = await asSponsor(l => l.newTx().pay.ToAddressWithData(lockAddr, undefined, { lovelace: 30_000_000n }, consumeScript));
@@ -330,8 +343,9 @@ beforeAll(async () => {
   const [vaultRef, fundRef] = await emulator.getUtxosByOutRef([{ txHash: vh, outputIndex: 0 }, { txHash: fh, outputIndex: 0 }]);
   const scripts = withRefScripts(base, { vault: vaultRef!, paidFund: fundRef! });
 
-  // Quỹ do ví `k` đúc (platform = `k`, bên hưởng = chủ — không quan trọng cho hành trình).
-  const mintFund = async (k: TestKey): Promise<{ nftUnit: string; fundId: string }> => {
+  // Quỹ do ví `k` đúc (platform = `k`, bên hưởng = chủ — không quan trọng cho hành trình). `did` có ⟹
+  // quỹ TÀI TRỢ của DID đó, bên tài trợ = ví `sponsor`; vắng ⟹ quỹ chung (sponsorship = None).
+  const mintFund = async (k: TestKey, did?: string): Promise<{ nftUnit: string; fundId: string }> => {
     const seedH = await asWallet(k, l => l.newTx().pay.ToAddress(k.address, { lovelace: 10_000_000n }));
     const seedUtxo = (await emulator.getUtxosByOutRef([{ txHash: seedH, outputIndex: 0 }]))[0]!;
     let minted: { nftUnit: string; fundId: string } | undefined;
@@ -340,19 +354,29 @@ beforeAll(async () => {
         scripts, seedUtxo, platformPkh: k.pkh,
         beneficiary: { payment_credential: { VerificationKey: [owner.pkh] }, stake_credential: null },
         beneficiaryDatum: null, bufferBps: 1_500n, collectSeed: true,
+        ...(did === undefined ? {} : {
+          sponsorship: { sponsor: { payment_credential: { VerificationKey: [sponsor.pkh] }, stake_credential: null }, owner_commit: did },
+          validity: { fromMs: nowMs() - 1_000n, toMs: nowMs() + 600_000n },
+        }),
       });
       minted = f;
       return f.tx;
     });
     return minted!;
   };
-  // Hai quỹ ĐÃ ghim (bên tài trợ đúc) + một quỹ kẻ gọi tự đúc — cùng script quỹ, cùng địa chỉ quỹ.
-  const f1 = await mintFund(sponsor);
+  // Bốn quỹ ĐÃ ghim (bên tài trợ đúc: ba quỹ tài trợ theo DID + một quỹ chung) + một quỹ kẻ gọi tự đúc
+  // — cùng script quỹ, cùng địa chỉ quỹ.
+  const f1 = await mintFund(sponsor, DID_COMMIT);
   fundUnit = f1.nftUnit;
   fundId = f1.fundId;
-  const f2 = await mintFund(sponsor);
+  const f2 = await mintFund(sponsor, DID_COMMIT2);
   fundId2 = f2.fundId;
-  attackerFundId = (await mintFund(attacker)).fundId;
+  const fNew = await mintFund(sponsor, DID_NEW);
+  fundIdNew = fNew.fundId;
+  fundUnitNew = fNew.nftUnit;
+  const fNone = await mintFund(sponsor);
+  fundIdNone = fNone.fundId;
+  attackerFundId = (await mintFund(attacker, DID_COMMIT)).fundId;
   fundAddress = base.paidFund.address;
   // Tách CARP bên tài trợ thành HAI UTxO (ca khoá `utxo:` cần hai bộ ref khác nhau). Lượt CUỐI của bên
   // tài trợ trong dựng nền: lượt sau có thể gộp lại hai UTxO này qua chọn-coin.
@@ -371,8 +395,11 @@ beforeAll(async () => {
     vaults: [{ vault_type: PREPAID_VAULT_TYPE, address: validatorToAddress(NET, base.vault.script) }],
     paid_fund: {
       address: base.paidFund.address, carp_unit: CARP_UNIT,
-      // Ghim của T2: chỉ hai quỹ bên tài trợ đúc, chỉ ví bên tài trợ, trần một lượt = CARP.
-      sponsor: { fund_units: [fundUnit, f2.nftUnit], addresses: [sponsor.address], max_carp_amount: CARP.toString() },
+      // Ghim của fund-vault: chỉ bốn quỹ bên tài trợ đúc, chỉ ví bên tài trợ, trần một lượt = CARP.
+      sponsor: {
+        fund_units: [fundUnit, f2.nftUnit, fNew.nftUnit, fNone.nftUnit], addresses: [sponsor.address],
+        max_carp_amount: CARP.toString(),
+      },
     },
     ref_script_utxos: { vault: `${vh}#0`, paid_fund: `${fh}#0`, consume: `${ch}#0` },
   });
@@ -410,12 +437,29 @@ async function submitStep(b: Body, keys: TestKey[]): Promise<string> {
   return h;
 }
 
+/**
+ * Gắn DID cho két Prepaid qua route `/tx/sponsor/bind-did` (bộ dựng `@magiclamp/prepaidgen-sdk` ▸
+ * `addSetDidCommit`, nhánh `SetDidCommit` constr 5) — bước bắt buộc trước fund-vault: `validate_lock` ▸
+ * khối `sponsorship` đòi `did_commit` của KÉT == `owner_commit`, mà két đúc ra với `did_commit` rỗng.
+ * `payer` trả phí + thế chấp; `who` (chủ) ký. Validator THẬT chấp nhận tx ⟹ datum két mang đúng `did`.
+ */
+async function bindVaultDid(unit: string, did: string, who: TestKey, payer: TestKey): Promise<void> {
+  expect(decodeVaultDatum((await only(unit)).datum!).did_commit).toBe("");
+  const b = await step("/tx/sponsor/bind-did", { owner: { type: "key", hash: who.pkh }, change_address: payer.address });
+  expect(b.step).toBe("bind-did");
+  expect((b.summary as Body).did_commit).toBe(did);
+  expect((b.signers as Array<{ role: string }>).map(s => s.role)).toEqual(["fee-wallet", "owner"]);
+  expect(b.required_signers).toContain(who.pkh);
+  await submitStep(b, [payer, who]);
+  expect(decodeVaultDatum((await only(unit)).datum!).did_commit).toBe(did);
+}
+
 // ── Hành trình qua route ──────────────────────────────────────────────────────
 
 describe("hành trình tài trợ qua route HTTP — script thật trên Emulator", () => {
-  it("T1 XANH: /tx/sponsor/t1-open ⟹ một tx đúc két + thread; vai ký = ví phí · chủ; nộp được", async () => {
-    const b = await step("/tx/sponsor/t1-open", { ...ownerBody(), did_commit: DID_COMMIT });
-    expect(b.step).toBe("T1");
+  it("open-vault XANH: /tx/sponsor/open-vault ⟹ một tx đúc két + thread; vai ký = ví phí · chủ; nộp được", async () => {
+    const b = await step("/tx/sponsor/open-vault", { ...ownerBody(), did_commit: DID_COMMIT });
+    expect(b.step).toBe("open-vault");
     expectSigners(b, ["fee-wallet", "owner"], { "fee-wallet": [fee.pkh], owner: [owner.pkh] });
     const s = b.summary as Body;
     expect(s.did_commit).toBe(DID_COMMIT);
@@ -424,20 +468,20 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     await submitStep(b, [fee, owner]);
     expect(refStr(await only(vaultUnit))).toBe(s.vault_out_ref);
     expect(refStr(await only(threadUnit))).toBe(s.thread_out_ref);
-    // did_commit nằm ở THREAD (trường 3), két genesis giữ rỗng — chỗ T2 phải đọc để định vị anchor.
+    // did_commit nằm ở THREAD (trường 3), két genesis giữ rỗng — chỗ fund-vault phải đọc để định vị anchor.
     expect(decodeVaultDatum((await only(vaultUnit)).datum!).did_commit).toBe("");
     expect((Data.from((await only(threadUnit)).datum!) as Constr<Data>).fields[3]).toBe(DID_COMMIT);
   }, SLOW);
 
-  it("T1 ĐỎ (cực đối): chủ đã có két ⟹ 409 VAULT_ALREADY_EXISTS, không dựng két thứ hai", async () => {
-    const r = await post("/tx/sponsor/t1-open", { ...ownerBody(), did_commit: DID_COMMIT });
+  it("open-vault ĐỎ (cực đối): chủ đã có két ⟹ 409 VAULT_ALREADY_EXISTS, không dựng két thứ hai", async () => {
+    const r = await post("/tx/sponsor/open-vault", { ...ownerBody(), did_commit: DID_COMMIT });
     expect(r.status).toBe(409);
     expect(errCode(r)).toBe("VAULT_ALREADY_EXISTS");
   }, SLOW);
 
-  it("T1 ĐỎ: thread rơi ngoài engage_address đã cấu hình (khác phần stake) ⟹ 422 SPONSOR_TX_MISMATCH, không phát tx", async () => {
+  it("open-vault ĐỎ: thread rơi ngoài engage_address đã cấu hình (khác phần stake) ⟹ 422 SPONSOR_TX_MISMATCH, không phát tx", async () => {
     const other = newKey(); // chủ khác, chưa có két — để không chết sớm ở VAULT_ALREADY_EXISTS
-    const r = await post("/tx/sponsor/t1-open",
+    const r = await post("/tx/sponsor/open-vault",
       { owner: { type: "key", hash: other.pkh }, change_address: fee.address, did_commit: DID_COMMIT }, svcStakeEngage);
     expect(r.status).toBe(422);
     expect(errCode(r)).toBe("SPONSOR_TX_MISMATCH");
@@ -449,73 +493,93 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     .filter(u => (u.assets[CARP_UNIT] ?? 0n) > 0n)
     .sort((a, b) => (a.assets[CARP_UNIT]! < b.assets[CARP_UNIT]! ? -1 : 1))
     .map(refStr);
-  // Thân T2 KHÔNG có `sponsor.change_address`: phần thối suy từ địa chỉ chung của `utxo_refs`.
-  const t2Body = async (o: { refs?: string[]; fund?: string; carp?: bigint; who?: TestKey } = {}): Promise<Body> => ({
+  // Thân fund-vault KHÔNG có `sponsor.change_address`: phần thối suy từ địa chỉ chung của `utxo_refs`.
+  // `fund: null` ⟹ KHÔNG gửi `fund_id` (dịch vụ tìm quỹ của DID).
+  const fundBody = async (o: { refs?: string[]; fund?: string | null; carp?: bigint; who?: TestKey } = {}): Promise<Body> => ({
     owner: { type: "key", hash: (o.who ?? owner).pkh }, change_address: fee.address,
-    fund_id: o.fund ?? fundId, carp_amount: (o.carp ?? CARP).toString(),
+    ...(o.fund === null ? {} : { fund_id: o.fund ?? fundId }), carp_amount: (o.carp ?? CARP).toString(),
     sponsor: { utxo_refs: o.refs ?? await carpRefs(sponsor) },
   });
 
-  it("T2 ĐỎ: bản deploy khớp script mà thiếu did_stake ⟹ 501 CONFIG_MISSING nêu did_stake.anchor_nft_policy", async () => {
-    const r = await post("/tx/sponsor/t2-fund", await t2Body(), svcNoDid);
+  it("fund-vault ĐỎ: bản deploy khớp script mà thiếu did_stake ⟹ 501 CONFIG_MISSING nêu did_stake.anchor_nft_policy", async () => {
+    const r = await post("/tx/sponsor/fund-vault", await fundBody(), svcNoDid);
     expect(r.status).toBe(501);
     expect(errCode(r)).toBe("CONFIG_MISSING");
     expect(JSON.stringify(r.body)).toContain("did_stake.anchor_nft_policy");
   }, SLOW);
 
-  // Ca âm của các ghim T2. Cặp xanh của (a)–(d) là "T2 XANH" ngay dưới: cùng thân bài, khác ĐÚNG một khoá.
-  it("T2 ĐỎ (a): thân bài gửi sponsor.change_address (đích thối của kẻ gọi) ⟹ 400 SPONSOR_REQUEST_SHAPE", async () => {
-    const b = await t2Body();
-    const r = await post("/tx/sponsor/t2-fund",
+  it("fund-vault ĐỎ: két chưa gắn DID ⟹ 409 SPONSOR_VAULT_DID_UNSET, không dựng; CẶP: gắn DID (SetDidCommit) rồi đi tiếp", async () => {
+    const r = await post("/tx/sponsor/fund-vault", await fundBody({ fund: null }));
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(errCode(r)).toBe("SPONSOR_VAULT_DID_UNSET");
+    expect(locks.peek(owner.pkh, emulator.now())).toBeNull();
+    await bindVaultDid(vaultUnit, DID_COMMIT, owner, fee);
+  }, SLOW);
+
+  it("fund-vault ĐỎ: fund_id là quỹ tài trợ của DID KHÁC ⟹ 422 SPONSOR_FUND_DID_MISMATCH; quỹ chung ⟹ 422 SPONSOR_FUND_NOT_ALLOWED", async () => {
+    const other = await post("/tx/sponsor/fund-vault", await fundBody({ fund: fundId2 }));
+    expect(other.status, JSON.stringify(other.body)).toBe(422);
+    expect(errCode(other)).toBe("SPONSOR_FUND_DID_MISMATCH");
+    const pooled = await post("/tx/sponsor/fund-vault", await fundBody({ fund: fundIdNone }));
+    expect(pooled.status).toBe(422);
+    expect(errCode(pooled)).toBe("SPONSOR_FUND_NOT_ALLOWED");
+    expect(JSON.stringify(pooled.body)).toContain("not_sponsored");
+  }, SLOW);
+
+  // Ca âm của các ghim fund-vault. Cặp xanh của (a)–(d) là "fund-vault XANH" ngay dưới: cùng thân bài, khác ĐÚNG một khoá.
+  it("fund-vault ĐỎ (a): thân bài gửi sponsor.change_address (đích thối của kẻ gọi) ⟹ 400 SPONSOR_REQUEST_SHAPE", async () => {
+    const b = await fundBody();
+    const r = await post("/tx/sponsor/fund-vault",
       { ...b, sponsor: { ...(b.sponsor as Body), change_address: attacker.address } });
     expect(r.status).toBe(400);
     expect(errCode(r)).toBe("SPONSOR_REQUEST_SHAPE");
     expect(JSON.stringify(r.body)).toContain("sponsor.change_address");
   }, SLOW);
 
-  it("T2 ĐỎ (b): quỹ do kẻ gọi tự đúc bằng addMintPaidFund (cùng script quỹ) ⟹ 422 SPONSOR_FUND_NOT_ALLOWED", async () => {
+  it("fund-vault ĐỎ (b): quỹ do kẻ gọi tự đúc bằng addMintPaidFund (cùng script quỹ) ⟹ 422 SPONSOR_FUND_NOT_ALLOWED", async () => {
     expect(await only(`${fundUnit.slice(0, 56)}${attackerFundId}`)).toBeDefined(); // quỹ đó CÓ THẬT trên chuỗi
-    const r = await post("/tx/sponsor/t2-fund", await t2Body({ fund: attackerFundId }));
+    const r = await post("/tx/sponsor/fund-vault", await fundBody({ fund: attackerFundId }));
     expect(r.status).toBe(422);
     expect(errCode(r)).toBe("SPONSOR_FUND_NOT_ALLOWED");
   }, SLOW);
 
-  it("T2 ĐỎ (c): utxo_refs là UTxO CARP của ví kẻ gọi ⟹ 422 SPONSOR_UTXO_NOT_ALLOWED", async () => {
+  it("fund-vault ĐỎ (c): utxo_refs là UTxO CARP của ví kẻ gọi ⟹ 422 SPONSOR_UTXO_NOT_ALLOWED", async () => {
     const refs = await carpRefs(attacker);
     expect(refs.length).toBeGreaterThan(0);
-    const r = await post("/tx/sponsor/t2-fund", await t2Body({ refs }));
+    const r = await post("/tx/sponsor/fund-vault", await fundBody({ refs }));
     expect(r.status).toBe(422);
     expect(errCode(r)).toBe("SPONSOR_UTXO_NOT_ALLOWED");
   }, SLOW);
 
-  it("T2 ĐỎ (d): carp_amount = trần + 1 ⟹ 422 SPONSOR_CARP_ABOVE_CAP", async () => {
-    const r = await post("/tx/sponsor/t2-fund", await t2Body({ carp: CARP + 1n }));
+  it("fund-vault ĐỎ (d): carp_amount = trần + 1 ⟹ 422 SPONSOR_CARP_ABOVE_CAP", async () => {
+    const r = await post("/tx/sponsor/fund-vault", await fundBody({ carp: CARP + 1n }));
     expect(r.status).toBe(422);
     expect(errCode(r)).toBe("SPONSOR_CARP_ABOVE_CAP");
   }, SLOW);
 
-  it("T1 XANH (chủ thứ hai): mở két cho owner2 — nền cho ca khoá utxo:", async () => {
-    const b = await step("/tx/sponsor/t1-open",
-      { owner: { type: "key", hash: owner2.pkh }, change_address: fee.address, did_commit: DID_COMMIT });
+  it("open-vault XANH (chủ thứ hai): mở két cho owner2 — nền cho ca khoá utxo:", async () => {
+    const b = await step("/tx/sponsor/open-vault",
+      { owner: { type: "key", hash: owner2.pkh }, change_address: fee.address, did_commit: DID_COMMIT2 });
     await submitStep(b, [fee, owner2]);
+    await bindVaultDid((b.summary as Body).vault_unit as string, DID_COMMIT2, owner2, fee);
   }, SLOW);
 
-  it("T2 (e): hai chủ, hai quỹ ghim, CHUNG utxo_refs ⟹ lượt sau THAY lượt trước, không 409 (đổi từ OWNER_TX_IN_FLIGHT, 2026-10-03); CẶP: đổi bộ ref ⟹ dựng được", async () => {
+  it("fund-vault (e): hai chủ, hai quỹ ghim, CHUNG utxo_refs ⟹ lượt sau THAY lượt trước, không 409 (đổi từ OWNER_TX_IN_FLIGHT, 2026-10-03); CẶP: đổi bộ ref ⟹ dựng được", async () => {
     const [refA, refB] = await carpRefs(sponsor);
     expect(refA).toBeDefined();
     expect(refB).toBeDefined();
     // Lượt 1 dựng xong, KHÔNG nộp — giữ khoá owner · fund:<quỹ 1> · utxo:<refA>.
-    const b1 = await step("/tx/sponsor/t2-fund", await t2Body({ refs: [refA!] }));
+    const b1 = await step("/tx/sponsor/fund-vault", await fundBody({ refs: [refA!] }));
     try {
       // Khác chủ, khác quỹ ⟹ chỉ khoá `utxo:` trùng. Lượt sau giành khoá `utxo:<refA>`, khoá phụ của
       // b1 nhả; b1 KHÔNG bị đánh dấu thay ở sổ — chỉ một lượt NỘP mới thay được nó (`locks.ts`).
-      const r2 = await post("/tx/sponsor/t2-fund", await t2Body({ refs: [refA!], fund: fundId2, who: owner2 }));
+      const r2 = await post("/tx/sponsor/fund-vault", await fundBody({ refs: [refA!], fund: fundId2, who: owner2 }));
       expect(r2.status, JSON.stringify(r2.body)).toBe(200);
       expect(locks.peek(`utxo:${refA!}`, emulator.now())?.txHash).toBe(r2.body.tx_hash);
       expect(locks.peek(owner.pkh, emulator.now())).toBeNull();
       locks.releaseByTxHash(r2.body.tx_hash as string);
       // CẶP: cùng chủ thứ hai + quỹ 2, bộ ref KHÁC ⟹ qua khoá và dựng được.
-      const r3 = await post("/tx/sponsor/t2-fund", await t2Body({ refs: [refB!], fund: fundId2, who: owner2 }));
+      const r3 = await post("/tx/sponsor/fund-vault", await fundBody({ refs: [refB!], fund: fundId2, who: owner2 }));
       expect(r3.status).toBe(200);
       expect((r3.body.summary as Body).sponsor_change_address).toBe(sponsor.address);
       locks.releaseByTxHash(r3.body.tx_hash as string);
@@ -524,12 +588,16 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     }
   }, SLOW);
 
-  it("T2 XANH: CARP chỉ tới quỹ đã ghim + thối bên tài trợ; anchor ở reference_inputs; thiếu chữ ký bên tài trợ ⟹ chuỗi từ chối", async () => {
+  it("fund-vault XANH (không gửi fund_id): dịch vụ tìm quỹ tài trợ CỦA DID; CARP chỉ tới quỹ đó + thối bên tài trợ; anchor ở reference_inputs; thiếu chữ ký bên tài trợ ⟹ chuỗi từ chối", async () => {
     const fundCarpBefore = (await only(fundUnit)).assets[CARP_UNIT] ?? 0n;
     const carpTotal = unspent().reduce((a, u) => a + (u.assets[CARP_UNIT] ?? 0n), 0n);
-    const req2 = await t2Body();
-    const b = await step("/tx/sponsor/t2-fund", req2);
-    expect(b.step).toBe("T2");
+    const req2 = await fundBody({ fund: null });
+    expect(req2.fund_id).toBeUndefined();
+    const b = await step("/tx/sponsor/fund-vault", req2);
+    // Tập ghim có quỹ của DID khác (chủ thứ hai, người mới) và quỹ chung: dịch vụ chọn ĐÚNG quỹ của DID này.
+    expect((b.summary as Body).fund_selection).toBe("did_lookup");
+    expect((b.summary as Body).fund_id).toBe(fundId);
+    expect(b.step).toBe("fund-vault");
     expectSigners(b, ["fee-wallet", "sponsor", "owner"], { "fee-wallet": [fee.pkh], sponsor: [sponsor.pkh], owner: [owner.pkh] });
     const s = b.summary as Body;
     expect(s.anchor_ref).toBe(anchorRef);
@@ -561,8 +629,8 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     expect(refStr(await only(vaultUnit))).toBe(s.vault_out_ref);
   }, SLOW);
 
-  it("T3 XANH: PrepaidDraw ⟹ một lô MAGIC kỳ e; epoch_end_ms là biên kỳ sau", async () => {
-    const b = await step("/tx/sponsor/t3-draw", { ...ownerBody(), fund_id: fundId, carp_amount: CARP.toString() });
+  it("draw-magic XANH: PrepaidDraw ⟹ một lô MAGIC kỳ e; epoch_end_ms là biên kỳ sau", async () => {
+    const b = await step("/tx/sponsor/draw-magic", { ...ownerBody(), fund_id: fundId, carp_amount: CARP.toString() });
     expectSigners(b, ["fee-wallet", "owner"], { "fee-wallet": [fee.pkh], owner: [owner.pkh] });
     const s = b.summary as Body;
     expect(s.magic_nanogic).toBe(parMagicFromCarp(CARP).toString());
@@ -576,18 +644,18 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     expect(vd.magic_batches.at(-1)!.created_epoch).toBe(BigInt(drawEpoch));
   }, SLOW);
 
-  const t4Body = (de: number): Body => ({ ...ownerBody(), op_type: 1, op_count: "1", draw_epoch: de });
+  const firstConsumeBody = (de: number): Body => ({ ...ownerBody(), op_type: 1, op_count: "1", draw_epoch: de });
 
-  it("T4 ĐỎ: draw_epoch lệch kỳ hiện tại ⟹ 409 SPONSOR_EPOCH_MISMATCH; khoá chủ được nhả", async () => {
-    const r = await post("/tx/sponsor/t4-first-consume", t4Body(drawEpoch - 1));
+  it("first-consume ĐỎ: draw_epoch lệch kỳ hiện tại ⟹ 409 SPONSOR_EPOCH_MISMATCH; khoá chủ được nhả", async () => {
+    const r = await post("/tx/sponsor/first-consume", firstConsumeBody(drawEpoch - 1));
     expect(r.status).toBe(409);
     expect(errCode(r)).toBe("SPONSOR_EPOCH_MISMATCH");
     expect(locks.peek(owner.pkh, emulator.now())).toBeNull();
   }, SLOW);
 
-  it("T4 XANH (cực đối, cùng kỳ T3, trước epoch_end_ms): consume đầu + BurnBatch; thread [2,3,4] = [e, did_commit, required]", async () => {
+  it("first-consume XANH (cực đối, cùng kỳ draw-magic, trước epoch_end_ms): consume đầu + BurnBatch; thread [2,3,4] = [e, did_commit, required]", async () => {
     expect(nowMs()).toBeLessThan(epochEndMs);
-    const b = await step("/tx/sponsor/t4-first-consume", t4Body(drawEpoch));
+    const b = await step("/tx/sponsor/first-consume", firstConsumeBody(drawEpoch));
     expectSigners(b, ["fee-wallet", "owner"], { "fee-wallet": [fee.pkh], owner: [owner.pkh] });
     const s = b.summary as Body;
     expect(s.epoch).toBe(drawEpoch);
@@ -655,37 +723,37 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
   let nThread = "";
   let nDrawEpoch = 0;
 
-  it("T1 ĐỎ: fee_payer + change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT; funding ⟹ 400 SPONSOR_REQUEST_SHAPE", async () => {
+  it("open-vault ĐỎ: fee_payer + change_address ⟹ 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT; funding ⟹ 400 SPONSOR_REQUEST_SHAPE", async () => {
     const fp = await fpAt(feecover.address);
-    const a = await post("/tx/sponsor/t1-open", nb({ did_commit: DID_COMMIT, change_address: feecover.address }, fp));
+    const a = await post("/tx/sponsor/open-vault", nb({ did_commit: DID_COMMIT, change_address: feecover.address }, fp));
     expect(a.status).toBe(400);
     expect(errCode(a)).toBe("FEE_PAYER_CHANGE_ADDRESS_CONFLICT");
-    const f = await post("/tx/sponsor/t1-open",
+    const f = await post("/tx/sponsor/open-vault",
       { owner: { type: "key", hash: newcomer.pkh }, did_commit: DID_COMMIT, funding: { fee_payer: fp } });
     expect(f.status).toBe(400);
     expect(errCode(f)).toBe("SPONSOR_REQUEST_SHAPE");
     expect(JSON.stringify(f.body)).toContain("funding");
   }, SLOW);
 
-  it("T1 ĐỎ: fee_payer.utxo không phải UTxO chưa tiêu ⟹ 400 FEE_PAYER_INVALID (không 500)", async () => {
-    const r = await post("/tx/sponsor/t1-open", nb({ did_commit: DID_COMMIT }, { utxo: `${"ee".repeat(32)}#0`, address: feecover.address }));
+  it("open-vault ĐỎ: fee_payer.utxo không phải UTxO chưa tiêu ⟹ 400 FEE_PAYER_INVALID (không 500)", async () => {
+    const r = await post("/tx/sponsor/open-vault", nb({ did_commit: DID_COMMIT }, { utxo: `${"ee".repeat(32)}#0`, address: feecover.address }));
     expect(r.status).toBe(400);
     expect(errCode(r)).toBe("FEE_PAYER_INVALID");
   }, SLOW);
 
-  it("T1 ĐỎ: ví trả phí chỉ có 4 ADA (không đủ ứng min-ADA két + thread + thế chấp) ⟹ 422 có mã, không 500", async () => {
+  it("open-vault ĐỎ: ví trả phí chỉ có 4 ADA (không đủ ứng min-ADA két + thread + thế chấp) ⟹ 422 có mã, không 500", async () => {
     const other = newKey();
-    const r = await post("/tx/sponsor/t1-open",
+    const r = await post("/tx/sponsor/open-vault",
       { owner: { type: "key", hash: other.pkh }, fee_payer: await fpAt(poorFp.address), did_commit: DID_COMMIT });
     expect(r.status).toBe(422);
     expect(errCode(r)).toBe("SPONSOR_BUILD_FAILED");
     expect(locks.peek(other.pkh, emulator.now())).toBeNull();
   }, SLOW);
 
-  it("T1 XANH: người mới 0 ADA; tx tiêu ĐÚNG UTxO Feecover; két + thread do Feecover ứng; thối ADA về Feecover", async () => {
+  it("open-vault XANH: người mới 0 ADA; tx tiêu ĐÚNG UTxO Feecover; két + thread do Feecover ứng; thối ADA về Feecover", async () => {
     expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
     const fp = await fpAt(feecover.address);
-    const b = await step("/tx/sponsor/t1-open", nb({ did_commit: DID_COMMIT }, fp));
+    const b = await step("/tx/sponsor/open-vault", nb({ did_commit: DID_NEW }, fp));
     expectFpSigners(b, ["fee-wallet", "owner"]);
     const fs = await expectFeeFromFeecoverOnly(b, fp);
     const s = b.summary as Body;
@@ -718,11 +786,14 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
 
     await submitStep(b, [feecover, newcomer]);
     expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
-    expect((Data.from((await only(nThread)).datum!) as Constr<Data>).fields[3]).toBe(DID_COMMIT);
+    expect((Data.from((await only(nThread)).datum!) as Constr<Data>).fields[3]).toBe(DID_NEW);
+    // Gắn DID cho két (chưa có route — `bindVaultDid`); ví `fee` trả phí, người mới chỉ KÝ ⟹ vẫn 0 ADA.
+    await bindVaultDid(nVault, DID_NEW, newcomer, fee);
+    expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
   }, SLOW);
 
-  const t2Nb = async (fp: Fp, extra: Body = {}): Promise<Body> => ({
-    ...nb({ fund_id: fundId, carp_amount: CARP.toString(), sponsor: { utxo_refs: await carpRefs(sponsor) } }, fp), ...extra,
+  const fundBodyVia = async (fp: Fp, extra: Body = {}): Promise<Body> => ({
+    ...nb({ fund_id: fundIdNew, carp_amount: CARP.toString(), sponsor: { utxo_refs: await carpRefs(sponsor) } }, fp), ...extra,
   });
   /** UTxO mang CARP của ví `k`, xếp theo lượng CARP tăng dần. */
   const carpRefs = async (k: TestKey): Promise<string[]> => (await emulator.getUtxos(k.address))
@@ -730,25 +801,25 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
     .sort((a, b) => (a.assets[CARP_UNIT]! < b.assets[CARP_UNIT]! ? -1 : 1))
     .map(refStr);
 
-  it("T2 ĐỎ: ví trả phí CÙNG KHOÁ bên tài trợ (khác phần stake) ⟹ 422 SPONSOR_FEE_WALLET_IS_SPONSOR", async () => {
-    const r = await post("/tx/sponsor/t2-fund", await t2Nb(await fpAt(sponsorBaseAddr)));
+  it("fund-vault ĐỎ: ví trả phí CÙNG KHOÁ bên tài trợ (khác phần stake) ⟹ 422 SPONSOR_FEE_WALLET_IS_SPONSOR", async () => {
+    const r = await post("/tx/sponsor/fund-vault", await fundBodyVia(await fpAt(sponsorBaseAddr)));
     expect(r.status).toBe(422);
     expect(errCode(r)).toBe("SPONSOR_FEE_WALLET_IS_SPONSOR");
     expect(JSON.stringify(r.body)).toContain("fee_payer.address");
   }, SLOW);
 
-  it("T2 ĐỎ: change_address = ĐÚNG địa chỉ bên tài trợ ⟹ 422 SPONSOR_FEE_WALLET_IS_SPONSOR", async () => {
-    const b = await t2Nb(await fpAt(feecover.address));
+  it("fund-vault ĐỎ: change_address = ĐÚNG địa chỉ bên tài trợ ⟹ 422 SPONSOR_FEE_WALLET_IS_SPONSOR", async () => {
+    const b = await fundBodyVia(await fpAt(feecover.address));
     delete b.fee_payer;
-    const r = await post("/tx/sponsor/t2-fund", { ...b, change_address: sponsor.address });
+    const r = await post("/tx/sponsor/fund-vault", { ...b, change_address: sponsor.address });
     expect(r.status).toBe(422);
     expect(errCode(r)).toBe("SPONSOR_FEE_WALLET_IS_SPONSOR");
   }, SLOW);
 
-  it("T2 XANH: ghim cũ giữ nguyên; Feecover chỉ trả phí; khoá utxo:<fee_payer>; đọc lại chặn ADA chảy sang bên tài trợ", async () => {
+  it("fund-vault XANH: ghim cũ giữ nguyên; Feecover chỉ trả phí; khoá utxo:<fee_payer>; đọc lại chặn ADA chảy sang bên tài trợ", async () => {
     const fp = await fpAt(feecover.address);
-    const fundCarpBefore = (await only(fundUnit)).assets[CARP_UNIT] ?? 0n;
-    const b = await step("/tx/sponsor/t2-fund", await t2Nb(fp));
+    const fundCarpBefore = (await only(fundUnitNew)).assets[CARP_UNIT] ?? 0n;
+    const b = await step("/tx/sponsor/fund-vault", await fundBodyVia(fp));
     try {
       expectFpSigners(b, ["fee-wallet", "sponsor", "owner"]);
       expect((b.signers as Array<{ key_hashes: string[] }>)[1]!.key_hashes).toEqual([sponsor.pkh]);
@@ -756,13 +827,13 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
       const s = b.summary as Body;
       expect(s.sponsor_change_address).toBe(sponsor.address);
       expect(s.anchor_ref).toBe(anchorRef);
-      // T2 không mở output script mới: két + quỹ đã có min-ADA ⟹ Feecover ứng ≥ 0, đúng bằng phần tăng.
+      // fund-vault không mở output script mới: két + quỹ đã có min-ADA ⟹ Feecover ứng ≥ 0, đúng bằng phần tăng.
       expect(BigInt(fs.fronted_lovelace as string)).toBeGreaterThanOrEqual(0n);
 
       // Khoá `utxo:<fee_payer>`: chủ KHÁC, cùng UTxO trả phí, khi tx kia chưa nộp ⟹ KHÔNG còn 409
       // (đổi từ OWNER_TX_IN_FLIGHT, 2026-10-03): lượt sau giành khoá; tx kia vẫn nộp được (bên dưới)
       // vì lượt sau không được nộp — chỉ lượt NỘP mới thay được một tx (`locks.ts`).
-      const r2 = await post("/tx/sponsor/t3-draw",
+      const r2 = await post("/tx/sponsor/draw-magic",
         { owner: { type: "key", hash: owner2.pkh }, fee_payer: fp, fund_id: fundId2, carp_amount: CARP.toString() });
       expect(errCode(r2)).not.toBe("OWNER_TX_IN_FLIGHT");
       expect(r2.status).not.toBe(409);
@@ -809,14 +880,14 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
       throw e;
     }
     await submitStep(b, [feecover, sponsor, newcomer]);
-    expect((await only(fundUnit)).assets[CARP_UNIT]).toBe(fundCarpBefore + CARP);
+    expect((await only(fundUnitNew)).assets[CARP_UNIT]).toBe(fundCarpBefore + CARP);
     expect(decodeVaultDatum((await only(nVault)).datum!).prepaid_credits.length).toBe(1);
     expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
   }, SLOW);
 
-  it("T3 XANH: PrepaidDraw qua fee_payer; Feecover chỉ trả phí", async () => {
+  it("draw-magic XANH: PrepaidDraw qua fee_payer; Feecover chỉ trả phí", async () => {
     const fp = await fpAt(feecover.address);
-    const b = await step("/tx/sponsor/t3-draw", nb({ fund_id: fundId, carp_amount: CARP.toString() }, fp));
+    const b = await step("/tx/sponsor/draw-magic", nb({ fund_id: fundIdNew, carp_amount: CARP.toString() }, fp));
     expectFpSigners(b, ["fee-wallet", "owner"]);
     await expectFeeFromFeecoverOnly(b, fp);
     nDrawEpoch = (b.summary as Body).epoch as number;
@@ -825,18 +896,18 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
     expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
   }, SLOW);
 
-  it("T4 ĐỎ: UTxO trả phí 1,5 ADA (dưới thế chấp tường minh) ⟹ 422 SPONSOR_BUILD_FAILED, không 500; khoá được nhả", async () => {
+  it("first-consume ĐỎ: UTxO trả phí 1,5 ADA (dưới thế chấp tường minh) ⟹ 422 SPONSOR_BUILD_FAILED, không 500; khoá được nhả", async () => {
     const small = (await emulator.getUtxos(poorFp.address)).find(u => u.assets.lovelace === 1_500_000n)!;
-    const r = await post("/tx/sponsor/t4-first-consume",
+    const r = await post("/tx/sponsor/first-consume",
       nb({ op_type: 1, op_count: "1", draw_epoch: nDrawEpoch }, { utxo: refStr(small), address: poorFp.address }));
     expect(r.status).toBe(422);
     expect(errCode(r)).toBe("SPONSOR_BUILD_FAILED");
     expect(locks.peek(newcomer.pkh, emulator.now())).toBeNull();
   }, SLOW);
 
-  it("T4 XANH: consume đầu qua fee_payer; người mới vẫn 0 ADA sau trọn hành trình", async () => {
+  it("first-consume XANH: consume đầu qua fee_payer; người mới vẫn 0 ADA sau trọn hành trình", async () => {
     const fp = await fpAt(feecover.address);
-    const b = await step("/tx/sponsor/t4-first-consume", nb({ op_type: 1, op_count: "1", draw_epoch: nDrawEpoch }, fp));
+    const b = await step("/tx/sponsor/first-consume", nb({ op_type: 1, op_count: "1", draw_epoch: nDrawEpoch }, fp));
     expectFpSigners(b, ["fee-wallet", "owner"]);
     await expectFeeFromFeecoverOnly(b, fp);
     await submitStep(b, [feecover, newcomer]);
@@ -852,4 +923,4 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
 //   · nhánh chủ SCRIPT (`did_stake`) qua route — cần nhân chứng PhoenixKey; bài SDK phủ phần dựng tx;
 //   · `noSigningMaterial.test.ts` đo theo TÊN: ký bằng ed25519 của `node:crypto` (như ở đây) không
 //     khớp mẫu nào, nên một đường ký kiểu này trong src/ cũng sẽ đi lọt phép quét đó;
-//   · T4 sang kỳ sau với lô đã hết hạn — bài SDK phủ (`goToEpoch`); ở đây chỉ phủ draw_epoch lệch.
+//   · first-consume sang kỳ sau với lô đã hết hạn — bài SDK phủ (`goToEpoch`); ở đây chỉ phủ draw_epoch lệch.

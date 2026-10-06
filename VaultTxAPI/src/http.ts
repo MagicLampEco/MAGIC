@@ -20,6 +20,7 @@
 //                              không dựng tx nào để ký, không giữ chỗ; hỏi Feecover `/v1/fee-sources`)
 //   POST /fee/utxo             { route, [source] }    [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`;
 //   POST /fee/sign             { tx_cbor, [source] }  [X-Feecover-Token]   source = feecover | sponsor)
+//   GET  /sponsor/funds        (thẻ thường; chỉ đọc chuỗi — tình trạng các quỹ tài trợ theo DID, `sponsorFund.ts`)
 //
 // Nhiều khối (một tiến trình phục vụ cả Instant lẫn Schedule — `config.ts` ▸ khối phụ): consume /
 // open-thread / bind-did (và `params` của `/tx/quote` cho ba đường đó) nhận thêm `vault_type`
@@ -96,7 +97,7 @@ export interface RouterDeps {
   /** Đồng hồ máy chủ (POSIX ms) cho khối `epoch` của `/health`. Vắng ⟹ `Date.now`. Chỉ để phép kiểm
    *  cố định mốc; dịch vụ thật không truyền. */
   now?: () => number;
-  /** Hành trình tài trợ consume đầu (`/tx/sponsor/t1-open` … `t4-first-consume`). Vắng ⟹ 501
+  /** Hành trình tài trợ consume đầu (`/tx/sponsor/open-vault` … `first-consume`). Vắng ⟹ 501
    *  `SPONSOR_UNAVAILABLE` (trừ `/tx/sponsor/plan` — thuần, không cần cấu hình). */
   sponsor?: SponsorTxService;
   /** Bộ định tuyến khối (`blockRouter.ts`) khi tiến trình nạp nhiều khối. Vắng ⟹ mọi đường dựng đi
@@ -207,6 +208,17 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
       return { status: 200, body: out };
     }
 
+    if (path === "/sponsor/funds") {
+      // Chỉ đọc, nhưng CHẠM chuỗi (hạn mức nhà cung cấp của người vận hành) ⟹ thẻ thường như `/tx/quote`,
+      // không mở tự do như `/health`. Thẻ vai sponsor KHÔNG mở được nó (`requireRole`: vai hẹp).
+      if (req.method !== "GET") return methodNotAllowed("GET");
+      if (deps.sponsor === undefined) {
+        throw new CodedApiError(501, "SPONSOR_UNAVAILABLE",
+          `Dịch vụ này chưa bật hành trình tài trợ — không có quỹ tài trợ để đọc.`);
+      }
+      return { status: 200, body: await deps.sponsor.fundsStatus() };
+    }
+
     if (!path.startsWith("/tx/")) {
       return { status: 404, body: err("NOT_FOUND", `Không có đường "${path}".`) };
     }
@@ -294,11 +306,11 @@ function err(code: string, message: string, details: Record<string, unknown> = {
 }
 
 /**
- * Đường đòi vai `sponsor`. Chỉ T2: nó là bước chi CARP của bên tài trợ, và khoá mềm `fund:<unit>` mà
- * nó giữ chặn được mọi T2 khác trên cùng quỹ — để thẻ thường gọi được nó là để bất kỳ ai cầm thẻ app
+ * Đường đòi vai `sponsor`. Chỉ fund-vault: nó là bước chi CARP của bên tài trợ, và khoá mềm `fund:<unit>` mà
+ * nó giữ chặn được mọi fund-vault khác trên cùng quỹ — để thẻ thường gọi được nó là để bất kỳ ai cầm thẻ app
  * giữ quỹ của bên tài trợ (mỗi lượt dựng giữ khoá tới hết TTL, lặp vô hạn). Route tài trợ khác giữ thẻ thường.
  */
-export const SPONSOR_ROLE_PATHS: ReadonlySet<string> = new Set(["/tx/sponsor/t2-fund"]);
+export const SPONSOR_ROLE_PATHS: ReadonlySet<string> = new Set(["/tx/sponsor/fund-vault"]);
 
 /**
  * Vai của người gọi theo đường.

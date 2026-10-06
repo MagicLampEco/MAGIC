@@ -152,23 +152,34 @@ export interface PrepaidDeployment {
    */
   carpUnit?: string;
   /**
-   * Ghim bên tài trợ cho T2 (khoá `paid_fund.sponsor`). TUỲ CHỌN để khối cũ vẫn nạp được; vắng ⟹
-   * `/tx/sponsor/t2-fund` trả 501 `CONFIG_MISSING`, KHÔNG mặc định cho qua. Lý do có nó: thân bài T2
+   * Ghim bên tài trợ cho fund-vault (khoá `paid_fund.sponsor`). TUỲ CHỌN để khối cũ vẫn nạp được; vắng ⟹
+   * `/tx/sponsor/fund-vault` trả 501 `CONFIG_MISSING`, KHÔNG mặc định cho qua. Lý do có nó: thân bài fund-vault
    * do người gọi viết, nên mọi thứ quyết TIỀN của bên tài trợ đi đâu phải đối chiếu với một giá trị
-   * mà người gọi không viết được — `sponsor.ts` ▸ `assertT2PinnedInputs` (trước khi dựng) và
-   * `assertT2PinnedOutputs` (đọc lại CBOR sau khi dựng).
+   * mà người gọi không viết được — `sponsor.ts` ▸ `assertFundPinnedInputs` (trước khi dựng) và
+   * `assertFundPinnedOutputs` (đọc lại CBOR sau khi dựng).
    */
   sponsor?: SponsorPins;
 }
 
-/** Khối `paid_fund.sponsor`: `{ fund_units: [...], addresses: [...], max_carp_amount: "<chữ số>" }`. */
+/**
+ * Khối `paid_fund.sponsor`: `{ [fund_units: [...]], [platform_pkhs: [...]], addresses: [...], max_carp_amount: "<chữ số>" }`.
+ * Phải có ÍT NHẤT MỘT trong `fund_units` / `platform_pkhs` — cả hai vắng thì không có gốc tin cậy nào
+ * cho quỹ (`sponsorFund.ts`, đầu tệp).
+ */
 export interface SponsorPins {
-  /** Unit NFT quỹ được phép nạp (`paid_fund hash ‖ fund_id`). Quỹ ngoài tập ⟹ 422. */
-  fundUnits: readonly string[];
+  /** Unit NFT quỹ được phép nạp (`paid_fund hash ‖ fund_id`). Có ⟹ quỹ ngoài tập ⟹ 422. */
+  fundUnits?: readonly string[];
+  /**
+   * Khoá `platform` (pkh 56 hex) được tin. Có ⟹ dịch vụ quét địa chỉ quỹ (khi `fundUnits` vắng) và chỉ
+   * nhận quỹ có `datum.platform` thuộc tập này: genesis quỹ đòi chữ ký `platform`
+   * (`PrepaidGen/offchain/src/prepaid.ts` ▸ `assertFundGenesis`), nên kẻ gọi không đúc được quỹ mang
+   * platform đã ghim. Có cùng `fundUnits` ⟹ quỹ phải thoả CẢ HAI.
+   */
+  platformPkhs?: readonly string[];
   /** Địa chỉ bech32 (NGUYÊN VĂN, cả phần stake) của ví bên tài trợ: mọi UTxO trong
    *  `sponsor.utxo_refs` phải nằm ở đúng một địa chỉ trong tập này, và phần thối về lại đúng nó. */
   addresses: readonly string[];
-  /** Trần carpdrop một lượt T2. */
+  /** Trần carpdrop một lượt fund-vault. */
   maxCarpAmount: bigint;
 }
 
@@ -318,8 +329,8 @@ export interface AppConfig {
   token: string;
   /**
    * Thẻ bài VAI `sponsor` (biến `VAULT_TX_API_SPONSOR_TOKEN`) — thẻ DUY NHẤT mở được
-   * `/tx/sponsor/t2-fund`, và nó KHÔNG mở route nào khác (`http.ts` ▸ `requireRole`). Rỗng ⟹ T2 trả
-   * 501 `CONFIG_MISSING` kể cả trên loopback: T2 là bước chi tiền của bên tài trợ, không có "chế độ
+   * `/tx/sponsor/fund-vault`, và nó KHÔNG mở route nào khác (`http.ts` ▸ `requireRole`). Rỗng ⟹ fund-vault trả
+   * 501 `CONFIG_MISSING` kể cả trên loopback: fund-vault là bước chi tiền của bên tài trợ, không có "chế độ
    * không thẻ" cho nó.
    */
   sponsorToken: string;
@@ -411,7 +422,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const sponsorToken = env.VAULT_TX_API_SPONSOR_TOKEN || "";
   if (sponsorToken !== "" && sponsorToken === token) {
-    // Hai vai một thẻ là không có vai: ai cầm thẻ thường cũng mở được T2.
+    // Hai vai một thẻ là không có vai: ai cầm thẻ thường cũng mở được fund-vault.
     throw new Error(
       "[config] VAULT_TX_API_SPONSOR_TOKEN trùng VAULT_TX_API_TOKEN — thẻ vai sponsor phải là thẻ RIÊNG.",
     );
@@ -931,6 +942,20 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
 }
 
 /**
+ * Khoá CŨ của bảng mục đích cho bốn route tài trợ (đổi tên 2026-10-06, `ChangeLog.md` ▸ "quỹ tài trợ
+ * chung") → khoá mới. Chỉ bảng mục đích nhận tên cũ, và chỉ vì nó nằm trong TỆP CẤU HÌNH đang chạy ở
+ * máy dịch vụ: bỏ thẳng thì lượt khởi động kế tiếp NÉM ở `parseFeecover` dưới đây và dịch vụ không lên.
+ * Đường HTTP và `/fee/utxo` ▸ `route` không nhận tên cũ (đã đo: không bên gọi nào dùng chúng). Gỡ bảng
+ * này khi tệp cấu hình đang chạy đã đổi sang tên mới.
+ */
+const LEGACY_SPONSOR_PURPOSE_KEYS: Readonly<Record<string, FeePurposeRoute>> = {
+  "sponsor-t1-open": "sponsor-open-vault",
+  "sponsor-t2-fund": "sponsor-fund-vault",
+  "sponsor-t3-draw": "sponsor-draw-magic",
+  "sponsor-t4-first-consume": "sponsor-first-consume",
+};
+
+/**
  * Khối `feecover`: `{ url, [timeout_ms], apps: { <app>: { [token_sha256], purposes: { <route>: <mục đích> } } } }`.
  * Mọi chỗ lạ đều NÉM — một bảng mục đích gõ sai route là một route lặng lẽ không xin được phí.
  */
@@ -989,7 +1014,13 @@ function parseFeecover(raw: unknown): FeecoverSettings {
     }
     const pRaw = obj(a.purposes, `feecover.apps.${name}.purposes`);
     const purposes = new Map<FeePurposeRoute, string>();
-    for (const [route, purpose] of Object.entries(pRaw)) {
+    for (const [rawRoute, purpose] of Object.entries(pRaw)) {
+      const route = LEGACY_SPONSOR_PURPOSE_KEYS[rawRoute] ?? rawRoute;
+      if (route !== rawRoute && Object.hasOwn(pRaw, route)) {
+        throw new Error(
+          `[config] feecover.apps.${name}.purposes có cả "${rawRoute}" (tên cũ) lẫn "${route}" (tên mới) — giữ MỘT, tên mới.`,
+        );
+      }
       if (!(FEE_PURPOSE_ROUTES as readonly string[]).includes(route)) {
         throw new Error(
           `[config] feecover.apps.${name}.purposes: route "${route}" không có. Nhận: ${FEE_PURPOSE_ROUTES.join(" | ")}.`,
@@ -1116,7 +1147,20 @@ function parseSponsorPins(v: unknown, prefix: string, network: Network, fundScri
     if (new Set(out).size !== out.length) throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where} có mục trùng.`);
     return out;
   };
-  const fundUnits = list(o.fund_units, "paid_fund.sponsor.fund_units").map((u, i) => {
+  if (o.fund_units === undefined && o.platform_pkhs === undefined) {
+    throw new Error(
+      `[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor phải có "fund_units" (tập quỹ ghim) hoặc ` +
+      `"platform_pkhs" (khoá platform được tin) — thiếu cả hai thì không có gốc tin cậy cho quỹ tài trợ.`,
+    );
+  }
+  const platformPkhs = o.platform_pkhs === undefined ? undefined
+    : list(o.platform_pkhs, "paid_fund.sponsor.platform_pkhs").map((h, i) => {
+      if (!/^[0-9a-f]{56}$/.test(h)) {
+        throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.platform_pkhs[${i}] phải là 56 ký tự hex thường.`);
+      }
+      return h;
+    });
+  const fundUnits = o.fund_units === undefined ? undefined : list(o.fund_units, "paid_fund.sponsor.fund_units").map((u, i) => {
     const where = `paid_fund.sponsor.fund_units[${i}]`;
     unit(u, where);
     const nameLen = (u.length - 56) / 2;
@@ -1160,7 +1204,11 @@ function parseSponsorPins(v: unknown, prefix: string, network: Network, fundScri
   if (maxCarpAmount <= 0n) {
     throw new Error("[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.max_carp_amount phải > 0.");
   }
-  return { fundUnits, addresses, maxCarpAmount };
+  return {
+    ...(fundUnits === undefined ? {} : { fundUnits }),
+    ...(platformPkhs === undefined ? {} : { platformPkhs }),
+    addresses, maxCarpAmount,
+  };
 }
 
 /**

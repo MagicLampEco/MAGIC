@@ -5,6 +5,40 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-06 — VaultTxAPI: hạn tx một nguồn `validTo`; `expires_reason`; 410 `TX_EXPIRED`
+
+**Đổi gì.** Mọi tx VaultTxAPI phát ra mang `validTo` trong thân, kể cả `open-thread`, `bind-did`,
+`create-vault` đường `change_address` và các bước `/tx/sponsor/*`. `validTo` = mốc sớm nhất trong
+ba cận (`VaultTxAPI/src/validity.ts` ▸ `planValidity`): `tip + VAULT_TX_API_TX_VALIDITY_MS` (biến
+mới, mặc định `DEFAULT_TX_VALIDITY_MS` = 15 phút) · cuối epoch · `reserved_until` của UTxO ví trả phí
+lấy qua `/fee/utxo`. `expires_at` nay là `validTo` đọc ngược từ chính `tx_cbor` (`readTxExpiry`),
+kèm trường mới `expires_reason` (kiểu `ExpiresReason`: `tx_validity` · `epoch_end` ·
+`fee_reservation` · `builder_cap`) và một dòng hạn ở cuối `witness_notes` (`expiryNote`). Tx dịch vụ
+đã phát mà quá `validTo + CLOCK_SKEW_MARGIN_MS` ⟹ `410 TX_EXPIRED` ở cả `/tx/submit` lẫn
+`/fee/sign` (`details.tx_hash`, `expired_at`, `rebuild_safe`, `submission`; một hàm dựng chung
+`VaultTxAPI/src/locks.ts` ▸ `expiredErrorFor`). Giờ giữ chỗ phí đã qua trước khi tx kịp có khoảng
+hiệu lực ⟹ `409 FEE_PAYER_RESERVATION_EXPIRED`. `VAULT_TX_API_LOCK_TTL_MS` chỉ còn điều khiển khoá
+mềm theo chủ; sổ input vừa nộp có biến riêng `VAULT_TX_API_PENDING_SPENDS_TTL_MS`. `/tx/submit` kiểm
+chữ ký với `required_signers` trước mọi lần ghi sổ (`witnessCheck.ts`: `400 WITNESS_SIGNATURE_INVALID`
+/ `WITNESS_MISSING_SIGNER`). SDK gen/consume/schedule nhận tham số tuỳ chọn `validityMaxAheadMs` /
+`validityTtlMs`; `createVault` của SDK nhận `validToMs` ≤ 1 giờ khi có `funding`.
+
+**Vì sao.** Trước đây `expires_at` = lúc gọi + `lock_ttl` (180 s) — một con số dịch vụ tự khai,
+không nằm trong tx. Sổ cái không biết mốc đó; vài đường (`change_address`) dựng tx không có `validTo`
+nên tx sống vô hạn trong khi dịch vụ đã quên nó. App không phân biệt được "tx hết hạn, dựng lại an
+toàn" với "tx không do dịch vụ phát", vì cả hai cùng ra 502 ở `/tx/submit` và 403 ở `/fee/sign`. Một
+nguồn hạn duy nhất nằm trong chính thân tx thì app, dịch vụ và sổ cái đọc cùng một mốc.
+
+**Cái gì gãy nếu bám bản cũ.** Client tự tính hạn = lúc gọi + 180 s sẽ chặn sớm tx còn tới 15 phút
+hạn — đọc `expires_at` thay vì tự tính. Client đợi `502 SUBMIT_REJECTED` (ở `/tx/submit`) hoặc `403
+FEE_PROXY_TX_NOT_ISSUED` (ở `/fee/sign`) cho tx hết hạn nay nhận `410 TX_EXPIRED`; nhánh "dựng lại"
+phải bắt mã mới, và với `rebuild_safe: false` thì tra chuỗi theo `tx_hash` trước khi dựng lại.
+Client kiểm lược đồ lời đáp chặt (không cho trường lạ) sẽ gãy ở `expires_reason`. Tx `open-thread` /
+`bind-did` / `create-vault` đường `change_address` nay hết hạn sau 15 phút thay vì sống vô hạn. Ai
+đặt `VAULT_TX_API_LOCK_TTL_MS` để kéo dài hạn nộp thì biến đó không còn tác dụng ấy — dùng
+`VAULT_TX_API_TX_VALIDITY_MS` (khoảng `[60000, 3600000]`). Bộ chứng ký có chữ ký sai hoặc thiếu khoá
+bắt buộc nay bị `400` trước khi tới nút, thay vì để nút từ chối.
+
 ## 2026-10-05 — `create-vault` đọc script vault qua ref CIP-33, không đính inline
 
 **Đổi gì.** `MagicSDK/src/createVault.ts` nhận tham số BẮT BUỘC `vaultRefScriptUtxo` (cùng khuôn

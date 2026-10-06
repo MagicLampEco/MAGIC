@@ -711,6 +711,23 @@ Tx đáng giữ:
 - **Sinh qua ví trả phí** (chủ = ví vận hành, ví trả phí = ví vận hành khác), 0,3 MAGIC; ví trả phí ứng 517.040 lovelace min-ADA cho két và 73.270 cho shard `gb_shard` (datum shard dài ra ở lượt sinh đầu): `cd089778d3263b457c51df984283243c29467c1802f45722b2edfaecf61f112d`.
 - **Tiêu** op 1 × 1 qua ví trả phí: `69e5c923e9f3ba850679aeaff5585958aee3ef9a1e9731a571e781f10e2617ae`.
 
+**Chuỗi chủ DID, 2026-10-06, epoch 317** — lần đầu một két có chủ là `did_stake` của một DID
+(DID thử #1, `did_commit` `9e64482f072657d504b5ef8400372c22b017c18b736303f591ffc1f5dc5f2a4c`) đi
+trọn đường qua VaultTxAPI, ký bằng khoá controller của DID thử. Cả năm tx `valid_contract = true`.
+Khối và epoch đọc lại bằng Koios `tx_info` ngày 2026-10-06.
+
+| bước | tx | khối |
+|---|---|---|
+| `create-vault` (1.000 tLAMP, 3 ADA) | `4b476ad6141a9c5e0a136aa422e2140f463b7ce1f986957167238affb8150002` | 5258522 |
+| `instant-gen` m = 3.000.000.000 nanogic (= `cap_nanogic`) | `c1d6a4ddd01ba2f3115d0cb45bb714d7abf1b650ca672b26092e6ae89c3763fd` | 5258534 |
+| `open-thread` | `2d12ec18e2f6a338d96f0f6cf162d60081f94008a1559a1e1b3f1b71a0a37fbd` | 5258543 |
+| `bind-did` | `cc4b552b3ad8ac91f02f18d7f1b6f8a7dadc07f7bfbed28247a62b45430f890b` | 5258550 |
+| `consume` (đốt 10.000.000 nanogic) | `a3d5e17481262b18953e665a69b572d046ba1d8475c8889f06620008efe45fee` | 5258552 |
+| genesis két Wakeme v5 của DID #1 (dựng ở PhoenixKeyDID/Wakeme), đọc thread `a3d5e174…#0` làm reference input | `8998b953630c49178e51434d0cc319a8e1e7e9cc9d0a6c2885a24f93e2231523` | 5259080 |
+
+Tx cuối là bằng chứng chuỗi KEY → `bind-did` → `consume` → genesis Wakeme v5 chạy trên chuỗi thật.
+Két Wakeme mới: `8998b953…#2`, 1.001 tLAMP + NFT két.
+
 ---
 
 ## Preprod — 2026-10-04 · cụm phục vụ ĐỜI 1 trên tLAMP `493002cc…` · ĐÃ BỊ THAY bởi đời 2 ngay trên

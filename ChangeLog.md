@@ -5,6 +5,29 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-06 — VaultTxAPI: `GET /tx/status/{tx_hash}` (chuỗi rồi mempool, chỉ đọc)
+
+**Đổi gì.** Đường mới `GET /tx/status/{tx_hash}` trả `{ tx_hash, state: "in_chain" | "in_mempool" |
+"not_found", block?, slot?, block_time? }` — tra khối trước (`/txs/{hash}`), rồi mempool của nhà
+cung cấp (`/mempool/{hash}`). Tx do chính dịch vụ phát và sổ phát-hành còn dòng ⟹ kèm `expires_at`
+(= `validTo` của thân tx, cùng nguồn với các route dựng; `IssuedTxRegistry.validToOf`) và
+`server_time` (`withServerTime`). Chỉ đọc: không khoá, không ghi sổ. Thẻ bài như mọi đường `/tx/*`.
+`tx_hash` sai khuôn ⟹ `400 TX_HASH_INVALID` (không gọi chuỗi); nhà cung cấp lỗi / quá giờ / hình dạng
+lạ ⟹ `502 TX_STATUS_PROVIDER_UNAVAILABLE` (`details.stage`). `ChainReader` có thêm phương thức
+`txStatus`; phép giây → mili-giây của giờ khối gom về một hàm có tên, `blockTimeSecondsToPosixMs`,
+dùng chung cho `tip` và `txStatus`.
+
+**Vì sao.** OriLife Core phải biết một tx đã ký và nộp có lên chuỗi hay không để tính nợ, và MAGIC
+đã nhận dựng đường này (thư trả `ol1005mg-b`). Quy tắc kết luận là `not_found` ∧ `now > expires_at`
+⟹ tx không bao giờ lên chuỗi được, nên phản hồi phải mang `expires_at` khi dịch vụ biết nó. Một lượt
+gọi hỏng mà đọc thành `not_found` là ghi nợ cho một tx đang nằm trong khối, nên chỉ hai câu 404 của
+nhà cung cấp mới ra `not_found`; mọi lỗi khác ra 502 mã riêng.
+
+**Cái gì gãy nếu bám bản cũ.** Không đường cũ nào đổi hành vi. Hiện thực `ChainReader` ngoài gói
+(nếu có) phải thêm `txStatus` mới qua kiểm kiểu. `expires_at` chỉ có khi tiến trình đang chạy còn
+dòng trong sổ phát-hành (sổ nằm trong bộ nhớ một tiến trình, giữ dòng quá hạn thêm
+`EXPIRED_RETENTION_MS`); vắng nó thì bên gọi không kết luận được "tx chết" từ `not_found`.
+
 ## 2026-10-06 — VaultTxAPI: hạn tx một nguồn `validTo`; `expires_reason`; 410 `TX_EXPIRED`
 
 **Đổi gì.** Mọi tx VaultTxAPI phát ra mang `validTo` trong thân, kể cả `open-thread`, `bind-did`,

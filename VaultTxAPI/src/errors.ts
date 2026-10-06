@@ -85,6 +85,10 @@
 //   501 SPONSOR_NETWORK_UNSUPPORTED (mạng không có gốc kỳ — Preview) · SPONSOR_PREPAID_UNAVAILABLE ·
 //       SPONSOR_PREPAID_SCRIPTS_MISMATCH · SPONSOR_UNAVAILABLE
 //   500 INTERNAL ⟸ SPONSOR_GRID_MISMATCH · SPONSOR_ANCHOR_REF_MISSING (lỗi dựng của chính dịch vụ)
+//   ── `GET /tx/status/{tx_hash}` (chỉ đọc) ──
+//   400 TX_HASH_INVALID          `tx_hash` không phải đúng 64 hex thường (kể cả vắng)
+//   502 TX_STATUS_PROVIDER_UNAVAILABLE  nhà cung cấp chuỗi lỗi / quá giờ / trả hình dạng lạ ở bước tra
+//                                khối hoặc mempool (`details.stage`) — KHÔNG BAO GIỜ thành `not_found`
 //   400 UTXO_NOT_FOUND / 409 UTXO_SPENT  out-ref do bên gọi đưa không có / đã bị tiêu (`chain.ts`)
 //   409 PREVIOUS_TX_PENDING      tx trước của vault đã nộp nhưng chưa vào khối — UTxO vault đang bị nó tiêu
 //   400 CHANGE_ADDRESS_REQUIRED / CHANGE_ADDRESS_INVALID  thiếu / sai `change_address`

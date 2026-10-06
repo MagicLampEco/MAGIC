@@ -35,7 +35,7 @@ import {
   refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike,
 } from "./feePayer.js";
 import {
-  BadRequestError, CodedApiError, ConfigMissingError, SubmitRejectedError, TxSummaryUndecodableError,
+  BadRequestError, CodedApiError, ConfigMissingError, SubmitRejectedError, TxExpiredError, TxSummaryUndecodableError,
   TxSupersededError, ownerApiErrorOf,
 } from "./errors.js";
 import {
@@ -1273,6 +1273,11 @@ export class VaultTxService {
     // nào (Nợ #78). Nó chỉ chặn việc mượn đường nộp.
     const issuedEntry = this.deps.issued.lookup(bodyHashBefore, this.now());
     if (issuedEntry === null) {
+      // Tx CHÍNH dịch vụ phát nhưng quá validTo + biên ⟹ 410, không phải "không do dịch vụ dựng".
+      const expired = this.deps.issued.expiredEntry(bodyHashBefore, this.now());
+      if (expired !== null) {
+        throw new TxExpiredError(bodyHashBefore, new Date(expired.validToMs).toISOString(), submissionStateOf(expired));
+      }
       throw new SubmitRejectedError(
         "Giao dịch này không do dịch vụ dựng ra, hoặc đã quá hạn nộp. Dịch vụ chỉ nộp " +
         "giao dịch chính nó vừa phát hành — hãy gọi lại một trong các đường /tx/* để " +

@@ -16,7 +16,7 @@ import { parseDeployment, type Deployment } from "../src/config.js";
 import { ChainUnavailableError } from "../src/errors.js";
 import { CML, type UTxO } from "@lucid-evolution/lucid";
 import { handle, type RouterDeps } from "../src/http.js";
-import { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "../src/locks.js";
+import { EXPIRED_RETENTION_MS, IssuedTxRegistry, OwnerLockTable, PendingSpends } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
 import { txBodyHash } from "../src/summary.js";
 import { RecordedTxBuilder, enterpriseAddressOf } from "../src/txBuilder.js";
@@ -462,8 +462,21 @@ describe("/tx/submit — ghép chứng ký của app, dịch vụ không ký gì
     const late = harness({ submitResult: hash, clock: { t: NOW } });
     await late.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
     late.clock!.t = lastOk + 1;
-    await expect(late.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() })).rejects.toThrow();
+    // Tx CHÍNH dịch vụ phát, quá hạn ⟹ 410 TX_EXPIRED (không còn 502 SUBMIT_REJECTED "không do dịch vụ dựng").
+    await expect(late.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() })).rejects.toMatchObject({
+      httpStatus: 410, code: "TX_EXPIRED",
+      details: { tx_hash: hash, rebuild_safe: true, submission: "none",
+        expired_at: new Date(NOW + PRERECORDED_VALIDITY_MS).toISOString() },
+    });
     expect(late.chain.submitted).toEqual([]);
+    // CẶP phân biệt: cùng tx, cùng thời điểm, nhưng dịch vụ CHƯA TỪNG phát ⟹ giữ mã cũ 502 SUBMIT_REJECTED.
+    const never = harness({ submitResult: hash, clock: { t: lastOk + 1 } });
+    await expect(never.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toMatchObject({ httpStatus: 502, code: "SUBMIT_REJECTED" });
+    // Quá khoảng giữ lại dòng hết hạn ⟹ sổ đã quên tx ⟹ trở về mã "không do dịch vụ phát".
+    late.clock!.t = lastOk + 1 + EXPIRED_RETENTION_MS;
+    await expect(late.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toMatchObject({ httpStatus: 502, code: "SUBMIT_REJECTED" });
     // Ca dương: đúng ms cuối còn hạn — vượt NOW + lockTtl (mốc expires_at cũ), vẫn nhận.
     expect(lastOk).toBeGreaterThan(NOW + TTL);
     const ok = harness({ submitResult: hash, clock: { t: NOW } });

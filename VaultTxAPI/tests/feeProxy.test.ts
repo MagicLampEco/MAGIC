@@ -107,7 +107,7 @@ const VAULT_UTXO = utxo(INPUT_TX_HASH, 0, VAULT_ADDRESS,
 const FEE_UTXO = utxo("fa".repeat(32), 0, FEE_ADDRESS, { lovelace: 10_000_000n });
 
 /** `consume` ⟹ tx tiêu MAGIC thật (két đốt + vế thread); không ⟹ cùng khung cho schedule-commit. */
-function consumeTx(consume = false): string {
+function consumeTx(consume = false, ttlMs = 600_000): string {
   const outputs: TxOutputSpec[] = [
     {
       address: VAULT_ADDRESS,
@@ -123,7 +123,7 @@ function consumeTx(consume = false): string {
     requiredSigners: [OWNER_PKH],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
-    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 600_000)),
+    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + ttlMs)),
   };
   return buildTxCbor(!consume ? spec : withConsumeLeg(spec, {
     thread: threadUtxo(KEY_OWNER, "7e".repeat(32)), vaultRef: ref(VAULT_UTXO),
@@ -217,7 +217,7 @@ function fakeFeecover(r: { utxo?: Reply; sign?: Reply | ((b: Record<string, unkn
 
 // ── khung ────────────────────────────────────────────────────────────────────
 
-function harness(opts: { feecover?: ReturnType<typeof fakeFeecover>; proxy?: boolean } = {}) {
+function harness(opts: { feecover?: ReturnType<typeof fakeFeecover>; proxy?: boolean; consumeTtlMs?: number } = {}) {
   const clock = { t: NOW };
   const chain = new RecordedChainReader(
     { [VAULT_ADDRESS]: [VAULT_UTXO], [ENGAGE_ADDRESS]: [threadUtxo(KEY_OWNER, "7e".repeat(32))], [DP_ADDRESS]: [DP1, DP2], ...genV2Chain("Preview", { epoch: 20_707n }) },
@@ -225,7 +225,7 @@ function harness(opts: { feecover?: ReturnType<typeof fakeFeecover>; proxy?: boo
     // Thread của lượt tiêu là INPUT của tx ⟹ phép đọc lại ví trả phí tra nó theo tham chiếu.
     [VAULT_UTXO, FEE_UTXO, ANCHOR, threadUtxo(KEY_OWNER, "7e".repeat(32))],
   );
-  const builder = new RecordedTxBuilder({ consume: consumeTx(true), schedule_commit: consumeTx(), create_vault: fundedTx() }, VAULT_ID_UNIT);
+  const builder = new RecordedTxBuilder({ consume: consumeTx(true, opts.consumeTtlMs), schedule_commit: consumeTx(), create_vault: fundedTx() }, VAULT_ID_UNIT);
   const issued = new IssuedTxRegistry();
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks: new OwnerLockTable(TTL), issued,
@@ -566,7 +566,9 @@ describe("POST /fee/sign — lời đáp Feecover", () => {
 
 describe("sổ phát-hành: hạn ký theo reserved_until", () => {
   it("UTxO qua /fee/utxo: ký được TRƯỚC reserved_until; SAU mốc đó ⟹ 403 (dù hạn sổ còn)", async () => {
-    const h = harness({ feecover: fakeFeecover({ utxo: utxoReply(NOW + 60_000) }) });
+    // Dịch vụ kẹp validTo vào reserved_until (`service.ts` ▸ `validityPlan`) ⟹ CBOR ghi sẵn phải
+    // mang ttl ≤ mốc đó, như bộ dựng thật; ttl 10′ ⟹ 500 bất biến "bộ dựng bỏ qua cận".
+    const h = harness({ feecover: fakeFeecover({ utxo: utxoReply(NOW + 60_000) }), consumeTtlMs: 60_000 });
     expect((await h.call("POST", "/fee/utxo", { route: "consume" })).status).toBe(200);
     const { cbor } = await issueConsume(h);
     h.clock.t = NOW + 59_000;

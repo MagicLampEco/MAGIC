@@ -2,6 +2,10 @@
 // ở lúc NỘP, không ở lúc dựng.
 //
 import { CLOCK_SKEW_MARGIN_MS } from "./validity.js";
+
+/** Dòng sổ phát-hành quá hạn nộp còn nằm lại bấy lâu để `/tx/submit` trả 410 `TX_EXPIRED` (thay vì
+ *  "không do dịch vụ phát"). Một giờ: đủ cho app nộp muộn sau khi người dùng bỏ dở màn ký. */
+export const EXPIRED_RETENTION_MS = 3_600_000;
 //
 // ── VẤN ĐỀ THẬT, KHÔNG PHẢI PHÒNG XA ────────────────────────────────────────────
 // Mỗi chủ có một UTxO vault. Dựng một giao dịch nghĩa là CHỌN đúng UTxO đó làm input.
@@ -403,14 +407,25 @@ export class IssuedTxRegistry {
   lookup(txHash: string, nowMs: number): IssuedTxEntry | null {
     const e = this.issued.get(txHash);
     if (e === undefined) return null;
-    if (e.expiresAtMs <= nowMs) { this.issued.delete(txHash); return null; }
+    if (e.expiresAtMs <= nowMs) {
+      if (e.expiresAtMs + EXPIRED_RETENTION_MS <= nowMs) this.issued.delete(txHash);
+      return null;
+    }
+    return e;
+  }
+
+  /** Dòng của một tx ĐÃ phát mà nay quá hạn nộp, còn trong khoảng giữ lại `EXPIRED_RETENTION_MS` —
+   *  để `/tx/submit` phân biệt "hết hạn" (410 `TX_EXPIRED`) với "không do dịch vụ phát". */
+  expiredEntry(txHash: string, nowMs: number): IssuedTxEntry | null {
+    const e = this.issued.get(txHash);
+    if (e === undefined || e.expiresAtMs > nowMs || e.expiresAtMs + EXPIRED_RETENTION_MS <= nowMs) return null;
     return e;
   }
 
   sweep(nowMs: number): number {
     let n = 0;
     for (const [h, e] of this.issued) {
-      if (e.expiresAtMs <= nowMs) { this.issued.delete(h); n++; }
+      if (e.expiresAtMs + EXPIRED_RETENTION_MS <= nowMs) { this.issued.delete(h); n++; }
     }
     for (const [u, until] of this.feeReservations) {
       if (until <= nowMs) this.feeReservations.delete(u);

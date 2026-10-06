@@ -171,6 +171,11 @@ export interface ConsumeParams {
    *  mà `consume.ak` sẽ bác ở `current_epoch - pp.epoch <= max_price_stale`. Vắng ⟹ không
    *  kiểm ở đây (chuỗi vẫn kiểm). Giá trị là dữ kiện deploy: khoá `MAX_PRICE_STALE` ở sổ. */
   maxPriceStale?: bigint;
+  /** Trần cận trên tính từ tip (ms), thay `VALIDITY_MAX_AHEAD_MS` (1 giờ) của `epochValidityWindow`.
+   *  Cửa sổ vẫn bị kẹp vào cuối epoch như cũ — tham số này chỉ HẠ được cận trên, không nâng quá
+   *  cuối epoch. Bên dựng hộ người dùng (VaultTxAPI) đặt nó bằng hạn ký của mình để `validTo` trong
+   *  thân tx là hạn thật duy nhất. Vắng ⟹ 1 giờ (hành vi cũ). */
+  validityMaxAheadMs?: bigint;
 }
 
 export interface ConsumeResult {
@@ -304,7 +309,7 @@ async function buildConsumeCore(
     vaultBurnRedeemerCbor, vaultOutDatumCbor, vaultOutAssets,
     vaultKind, rateBeaconUtxo, wakemeVaultUtxo,
     ownerSignerKeyHash, sponsoredNoThreadSignature = false, collateralUtxo, ownerAuth,
-    engageNftUnit, consumeRefUtxo, vaultRefUtxo, network, tipPosixMs,
+    engageNftUnit, consumeRefUtxo, vaultRefUtxo, network, tipPosixMs, validityMaxAheadMs,
   } = params;
 
   if (line.kind === "single" && line.opCount < 1n) throw new Error("CONSUME-001: op_count phải ≥ 1");
@@ -358,7 +363,9 @@ async function buildConsumeCore(
   // gốc theo mạng, Preview ném `WIN-PREVIEW`.
   const currentEpoch = posixMsToEpoch(tipPosixMs, network);
   // Cửa sổ nằm trọn trong epoch của tip, cận trên có trần (xem khối VALIDITY RANGE đầu tệp).
-  const win = epochValidityWindow(tipPosixMs, network);
+  const win = validityMaxAheadMs === undefined
+    ? epochValidityWindow(tipPosixMs, network)
+    : epochValidityWindow(tipPosixMs, network, 0n, validityMaxAheadMs);
   const lowerMs = BigInt(win.lowerMs);
   const upperMs = BigInt(win.upperMs);
 

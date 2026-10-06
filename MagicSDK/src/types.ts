@@ -212,9 +212,9 @@ export interface CreateVaultParams {
    *  gánh (mô hình Feecover, trần mất thế chấp 3 tADA). Bỏ trống ⟹ lucid tự đặt (5 ADA).
    *  Hình dạng: `@magiclamp/protocol-utils` ▸ `collateralCompleteOptions`. */
   collateralLovelace?: bigint;
-  /** Cận trên hiệu lực (POSIX ms) cho đường KHÔNG có `funding` khi phí do ví trả phí bên thứ ba
-   *  gánh (két Instant 0 LAMP của người dùng 0 ADA; luật hạn dùng ≤ 1 giờ). Có `funding` ⟹ NÉM:
-   *  đường đó tự đặt hạn dùng. Vắng ⟹ không đặt `validTo` (hành vi cũ). */
+  /** Cận trên hiệu lực (POSIX ms). Không `funding`: đặt đúng mốc này (ví trả phí bên thứ ba ⟹ ≤ 1
+   *  giờ); vắng ⟹ không đặt `validTo` (hành vi cũ). Có `funding`: chỉ HẠ được trần 1 giờ của đường
+   *  nạp từ did_payment — vượt trần ⟹ NÉM `CREATE-VAULT-VALIDITY`; vắng ⟹ tip + 1 giờ (như cũ). */
   validToMs?: bigint;
 }
 

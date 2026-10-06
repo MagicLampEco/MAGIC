@@ -160,13 +160,13 @@ function epochOrThrow(v: TxValidity, P: bigint, O: bigint): bigint {
   }
 }
 
-function validityFor(nowMs: bigint, validity: TxValidity | undefined, P: bigint, O: bigint) {
+function validityFor(nowMs: bigint, validity: TxValidity | undefined, P: bigint, O: bigint, ttlMs?: bigint) {
   let v: TxValidity;
   if (validity !== undefined) {
     v = validity;
   } else {
     try {
-      v = validityInEpoch(nowMs, P, O);
+      v = ttlMs === undefined ? validityInEpoch(nowMs, P, O) : validityInEpoch(nowMs, P, O, ttlMs);
     } catch (e) {
       return fail("SPONSOR_VALIDITY_SPANS_EPOCHS", e instanceof Error ? e.message : String(e));
     }
@@ -344,6 +344,9 @@ export interface SponsorT2Params {
   nowMs: bigint;
   /** Cặp cận tự chọn; vắng ⟹ `validityInEpoch(nowMs)`. Vắt hai kỳ ⟹ NÉM. */
   validity?: TxValidity;
+  /** Hạn cận trên tính từ `nowMs` khi KHÔNG có `validity` (ms; vẫn kẹp vào cuối kỳ). Vắng ⟹ 10 phút
+   *  (mặc định của `validityInEpoch`). Bên dựng hộ người dùng đặt nó bằng hạn ký của mình. */
+  validityTtlMs?: bigint;
   /** Lượng thế chấp tường minh (lovelace). Vắng ⟹ mặc định của Lucid. */
   collateralLovelace?: bigint;
 }
@@ -434,7 +437,7 @@ function sumAssets(us: UTxO[]): Assets {
 export async function buildSponsorT2Fund(p: SponsorT2Params): Promise<SponsorTxResult<SponsorT2Summary>> {
   const anchor = assertAnchor(p.newcomerAnchor);
   const { P, O } = assertGrid(p.prepaidScripts, p.network);
-  const { validity, epoch } = validityFor(p.nowMs, p.validity, P, O);
+  const { validity, epoch } = validityFor(p.nowMs, p.validity, P, O, p.validityTtlMs);
 
   const scripts = p.prepaidScripts;
   const fundUnit = p.pinnedFundUnit.toLowerCase();
@@ -526,6 +529,8 @@ export interface SponsorT3Params {
   network: Network;
   nowMs: bigint;
   validity?: TxValidity;
+  /** Như `SponsorT2Params.validityTtlMs`. */
+  validityTtlMs?: bigint;
   /** Lượng thế chấp tường minh (lovelace). Vắng ⟹ mặc định của Lucid. */
   collateralLovelace?: bigint;
 }
@@ -542,7 +547,7 @@ export interface SponsorT3Summary {
 
 export async function buildSponsorT3Draw(p: SponsorT3Params): Promise<SponsorTxResult<SponsorT3Summary>> {
   const { P, O } = assertGrid(p.prepaidScripts, p.network);
-  const { validity, epoch } = validityFor(p.nowMs, p.validity, P, O);
+  const { validity, epoch } = validityFor(p.nowMs, p.validity, P, O, p.validityTtlMs);
   const r = addPrepaidDraw(p.lucid.newTx(), {
     scripts: p.prepaidScripts, vaultUtxo: p.vaultUtxo, fundId: p.fundId, amount: p.carpAmount, validity,
     ownerProof: { mode: "deferred" },
@@ -584,6 +589,8 @@ export interface SponsorT4Params {
   drawEpoch: bigint;
   maxPriceStale?: bigint;
   collateralLovelace?: bigint;
+  /** Trần cận trên tính từ tip (ms) cho cửa sổ của `buildConsumeTx` (vẫn kẹp cuối epoch). Vắng ⟹ 1 giờ. */
+  validityMaxAheadMs?: bigint;
 }
 
 export interface SponsorT4Summary {
@@ -599,7 +606,9 @@ export interface SponsorT4Summary {
 export async function buildSponsorT4FirstConsume(p: SponsorT4Params): Promise<SponsorTxResult<SponsorT4Summary>> {
   const { P, O } = assertGrid(p.prepaidScripts, p.network);
   // Cùng cửa sổ mà `buildConsumeTx` sẽ ghi (epochValidityWindow trên tip + mạng).
-  const win = epochValidityWindow(p.tipPosixMs, p.network);
+  const win = p.validityMaxAheadMs === undefined
+    ? epochValidityWindow(p.tipPosixMs, p.network)
+    : epochValidityWindow(p.tipPosixMs, p.network, 0n, p.validityMaxAheadMs);
   const epoch = epochOrThrow({ fromMs: BigInt(win.lowerMs), toMs: BigInt(win.upperMs) }, P, O);
   if (epoch !== p.drawEpoch) {
     fail(
@@ -634,6 +643,7 @@ export async function buildSponsorT4FirstConsume(p: SponsorT4Params): Promise<Sp
       vaultRefUtxo: p.vaultRefUtxo ?? p.prepaidScripts.vault.refUtxo,
       network: p.network,
       tipPosixMs: p.tipPosixMs,
+      ...(p.validityMaxAheadMs === undefined ? {} : { validityMaxAheadMs: p.validityMaxAheadMs }),
       ...(p.maxPriceStale === undefined ? {} : { maxPriceStale: p.maxPriceStale }),
       ...(p.collateralLovelace === undefined ? {} : { collateralLovelace: p.collateralLovelace }),
   }).catch((e: unknown) => { throw lucidBuildFailure(e, "T4"); });

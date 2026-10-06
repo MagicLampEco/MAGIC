@@ -19,10 +19,11 @@ import { ENGAGE_ADDRESS, ENGAGE_SCRIPT_HASH, engageDatumHex, threadUtxo, type En
 import {
   LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, OTHER_OWNER_PKH, OWNER_PKH, SHARD_ADDRESS, VAULT_ADDRESS,
 } from "./fixtures/preview.js";
-import { buildTxCbor } from "./fixtures/tx.js";
+import { buildTxCbor, prerecordedTtlSlot } from "./fixtures/tx.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preview");
 const TIP: ChainTip = { blockHeight: 1, blockHash: "14".repeat(32), blockTimePosixMs: BigInt(NOW) };
 const KEY_OWNER = { type: "key" as const, hash: OWNER_PKH };
 const OTHER_OWNER = { type: "key" as const, hash: OTHER_OWNER_PKH };
@@ -71,7 +72,7 @@ interface BindTxOpts {
 
 /** Tx BindDID "đúng": tiêu thread + một UTxO ví, trả thread nguyên value, datum chỉ đổi did_commit. */
 function bindTx(o: BindTxOpts = {}): string {
-  return buildTxCbor({
+  return buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: THREAD_TX, outputIndex: 0 }, WALLET_IN],
     feeLovelace: 190_000n,
     ...(o.mint === undefined ? {} : { mint: o.mint }),
@@ -96,7 +97,7 @@ function harness(opts: { threads?: UTxO[]; cbor?: string; pending?: PendingSpend
   );
   const builder = new RecordedTxBuilder({ bind_did: opts.cbor ?? bindTx() });
   builder.coinsPerUtxoByteValue = 4_310n;
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
@@ -124,7 +125,7 @@ describe("/tx/bind-did — dương", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const b = r.body as Record<string, unknown> & { summary: { engage: Record<string, unknown> }; tx_hash: string };
     expect(Object.keys(b).sort()).toEqual([
-      "did_commit", "engage_address", "engage_nft", "expires_at", "owner", "required_signers", "summary",
+      "did_commit", "engage_address", "engage_nft", "expires_at", "expires_reason", "owner", "required_signers", "server_time", "summary",
       "tx_cbor", "tx_hash", "witness_notes",
     ]);
     expect(b.did_commit).toBe(DID);
@@ -149,6 +150,17 @@ describe("/tx/bind-did — dương", () => {
     const r = await handle(post("/tx/bind-did", { owner_pkh: OWNER_PKH, did_commit: DID, change_address: CHANGE_ADDRESS }), h.router);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(h.builder.lastCall?.changeAddress).toBe(CHANGE_ADDRESS);
+  });
+
+  it("đường change_address: bộ dựng nhận validToMs = cận đã lên kế hoạch (đỉnh + 15′), expires_reason = tx_validity", async () => {
+    // Đỉnh chuỗi = NOW (tròn giây ⟹ căn slot không dời); hạn ký mặc định 15′ (`validity.ts` ▸ DEFAULT_TX_VALIDITY_MS).
+    const h = harness();
+    const r = await handle(post("/tx/bind-did", { owner_pkh: OWNER_PKH, did_commit: DID, change_address: CHANGE_ADDRESS }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall?.changeAddress).toBe(CHANGE_ADDRESS);
+    expect(h.builder.lastCall?.feePayerUtxo).toBeUndefined();
+    expect(h.builder.lastCall?.validToMs).toBe(BigInt(NOW) + 900_000n);
+    expect((r.body as { expires_reason: string }).expires_reason).toBe("tx_validity");
   });
 });
 

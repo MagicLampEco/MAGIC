@@ -383,13 +383,15 @@ beforeAll(async () => {
     deployment: parseDeployment(json, NET),
     chain: emulatorChain(),
     locks: l,
-    issued: new IssuedTxRegistry(240_000),
+    issued: new IssuedTxRegistry(),
     lockTtlMs: 60_000,
     now: () => emulator.now(),
     prepaidBlueprint: pgBp,
     lucidForWallet: async (address, utxos) => { lucid.selectWallet.fromAddress(address, utxos); return lucid; },
     // Chủ KHOÁ cho bài này (nhánh chủ Script cần nhân chứng PhoenixKey thật); `server.ts` không truyền cờ này.
     allowKeyOwner: true,
+    // Lucid ở đây chạy lưới slot "Custom" (gốc = giờ Emulator) ⟹ `ttl` phải đọc trên cùng lưới đó.
+    slotNetwork: "Custom",
   });
   locks = new OwnerLockTable(60_000);
   svc = mk(deployment(true), locks);

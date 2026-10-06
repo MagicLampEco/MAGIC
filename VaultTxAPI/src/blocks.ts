@@ -23,7 +23,7 @@ import type { DidOwnerResolverPort } from "./didOwner.js";
 import type { DidPaymentAnchorReader } from "./funding.js";
 import type { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "./locks.js";
 import type { OwnerWitnessProvider } from "./owner.js";
-import { VaultTxService } from "./service.js";
+import { VaultTxService, type WitnessCheck } from "./service.js";
 import type { TxBuilderPort } from "./txBuilder.js";
 
 export interface BlockSpec {
@@ -38,10 +38,14 @@ export interface SharedServiceDeps {
   issued: IssuedTxRegistry;
   pending?: PendingSpends;
   lockTtlMs: number;
+  /** Hạn ký tx (`AppConfig.txValidityMs`); vắng ⟹ mặc định của `validity.ts`. */
+  txValidityMs?: number;
   ownerWitness?: OwnerWitnessProvider;
   didOwner?: DidOwnerResolverPort;
   didPaymentAnchor?: DidPaymentAnchorReader;
   now?: () => number;
+  /** Chỉ phép kiểm truyền (`service.ts` ▸ `VaultTxServiceDeps.witnessCheck`); `server.ts` không. */
+  witnessCheck?: WitnessCheck;
 }
 
 /**
@@ -78,10 +82,12 @@ export function makeBlockServices(specs: readonly BlockSpec[], shared: SharedSer
     locks: shared.locks,
     issued: shared.issued,
     lockTtlMs: shared.lockTtlMs,
+    ...(shared.txValidityMs === undefined ? {} : { txValidityMs: shared.txValidityMs }),
     ...(shared.pending === undefined ? {} : { pending: shared.pending }),
     ...(shared.ownerWitness === undefined ? {} : { ownerWitness: shared.ownerWitness }),
     ...(shared.didOwner === undefined ? {} : { didOwner: shared.didOwner }),
     ...(shared.didPaymentAnchor === undefined ? {} : { didPaymentAnchor: shared.didPaymentAnchor }),
     ...(shared.now === undefined ? {} : { now: shared.now }),
+    ...(shared.witnessCheck === undefined ? {} : { witnessCheck: shared.witnessCheck }),
   }));
 }

@@ -20,11 +20,12 @@ import {
   INPUT_TX_HASH, LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OWNER_PKH,
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
-import { buildTxCbor } from "./fixtures/tx.js";
+import { buildTxCbor, prerecordedTtlSlot } from "./fixtures/tx.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preview");
 const FEE = 190_000n;
 const DEPOSIT = 1_001_000_000n;
 const CHANGE_ADDRESS = enterpriseAddressOf("Preview", OWNER_PKH);
@@ -61,7 +62,7 @@ const WITNESS_BODY = {
 /** Giao dịch tạo vault: đúc NFT, output vault mang NFT + LAMP + datum chủ `owner`. */
 function createTxCbor(owner: OwnerRef, opts: { lamp?: bigint; mint?: boolean; signers?: string[] } = {}): string {
   const lamp = opts.lamp ?? DEPOSIT;
-  return buildTxCbor({
+  return buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 1 }],
     feeLovelace: FEE,
     mint: opts.mint === false ? undefined : { [VAULT_ID_UNIT]: 1n },
@@ -100,8 +101,8 @@ function harness(opts: { createCbor?: string; witness?: OwnerWitnessProvider | n
   const builder = new RecordedTxBuilder(
     {
       create_vault: opts.createCbor ?? createTxCbor(KEY_OWNER, { signers: [OWNER_PKH] }),
-      instant_gen: buildTxCbor({ feeLovelace: FEE, outputs: [] }),
-      schedule_commit: buildTxCbor({
+      instant_gen: buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT, feeLovelace: FEE, outputs: [] }),
+      schedule_commit: buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
         inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
         feeLovelace: FEE,
         outputs: [{
@@ -117,7 +118,7 @@ function harness(opts: { createCbor?: string; witness?: OwnerWitnessProvider | n
   const witness = opts.witness === null ? undefined : (opts.witness ?? new FakeWitness());
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks,
-    issued: new IssuedTxRegistry(TTL * 4), lockTtlMs: TTL, now: () => NOW, ownerWitness: witness,
+    issued: new IssuedTxRegistry(), lockTtlMs: TTL, now: () => NOW, ownerWitness: witness,
   });
   const router: RouterDeps = {
     service, deploymentSource: DEPLOYMENT.source, vaultScopes: DEPLOYMENT.vaults, network: "Preview",
@@ -139,7 +140,7 @@ describe("POST /tx/create-vault", () => {
     expect(r.status).toBe(200);
     const b = r.body as Record<string, unknown> & { summary: { vault: Record<string, unknown> } };
     expect(Object.keys(b).sort()).toEqual([
-      "expires_at", "owner", "required_signers", "summary", "tx_cbor", "tx_hash",
+      "expires_at", "expires_reason", "owner", "required_signers", "server_time", "summary", "tx_cbor", "tx_hash",
       "vault_address", "vault_nft", "witness_notes",
     ]);
     expect(b.vault_nft).toBe(VAULT_ID_UNIT);
@@ -239,6 +240,17 @@ describe("POST /tx/create-vault", () => {
     expect(r2.status).toBe(400);
     expect((r2.body as { error: { code: string } }).error.code).toBe("OWNER_SCRIPT_WITNESS_UNAVAILABLE");
     expect(some.builder.lastCall).toBeNull();
+  });
+
+  it("đường change_address: bộ dựng nhận validToMs = cận đã lên kế hoạch (đỉnh + 15′), expires_reason = tx_validity", async () => {
+    // Đỉnh chuỗi = NOW (tròn giây ⟹ căn slot không dời); hạn ký mặc định 15′ (`validity.ts` ▸ DEFAULT_TX_VALIDITY_MS).
+    const h = harness();
+    const r = await handle(post("/tx/create-vault", createBody()), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall?.changeAddress).toBe(CHANGE_ADDRESS);
+    expect(h.builder.lastCall?.feePayerUtxo).toBeUndefined();
+    expect(h.builder.lastCall?.validToMs).toBe(BigInt(NOW) + 900_000n);
+    expect((r.body as { expires_reason: string }).expires_reason).toBe("tx_validity");
   });
 
   it("ÂM thiếu change_address / địa chỉ sai mạng ⟹ 400", async () => {

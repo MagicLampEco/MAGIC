@@ -45,12 +45,12 @@ const chain = new BlockfrostChainReader({
 });
 
 const locks = new OwnerLockTable(cfg.lockTtlMs);
-// Sổ phát-hành sống LÂU HƠN khoá mềm: khoá nhả lúc nộp, còn một lần nộp lại vì rớt
-// mạng phải đi qua được. Bốn lần là đủ rộng cho ca người dùng ký chậm, và vẫn hữu hạn.
-const issued = new IssuedTxRegistry(cfg.lockTtlMs * 4);
-// Input của giao dịch vừa nộp, giữ bằng đúng TTL khoá: đủ cho một giao dịch vào khối, và
-// giao dịch rơi khỏi mempool thì UTxO cũ dùng lại được sau mốc đó.
-const pending = new PendingSpends(cfg.lockTtlMs);
+// Sổ phát-hành: mỗi dòng hết hạn theo `validTo` của CHÍNH tx đó + biên lệch đồng hồ
+// (`validity.ts`), không theo một bội số của khoá mềm.
+const issued = new IssuedTxRegistry();
+// Input của giao dịch vừa nộp: chỉ phủ khe giữa lúc nút nhận tx và lúc nút đọc thấy input đã
+// tiêu (`config.ts` ▸ `pendingSpendsTtlMs`), không mượn TTL khoá mềm nữa.
+const pending = new PendingSpends(cfg.pendingSpendsTtlMs);
 // Bộ dựng đọc qua lớp lọc để không chọn lại UTxO ví / shard vừa tiêu; đường tra vault của
 // dịch vụ đọc bản gốc rồi trả 409 PREVIOUS_TX_PENDING có tên.
 const builderChain = new PendingSpendsFilteredChain(chain, pending);
@@ -95,6 +95,7 @@ const blockServices = makeBlockServices([
   issued,
   pending,
   lockTtlMs: cfg.lockTtlMs,
+  txValidityMs: cfg.txValidityMs,
   ...(ownerWitness === undefined ? {} : { ownerWitness }),
   ...(didOwner === undefined ? {} : { didOwner }),
   // `funding` did_payment đọc anchor DID dưới CÙNG tham số theo mạng. Vắng ⟹ 501 FUNDING_UNAVAILABLE.
@@ -119,6 +120,7 @@ const sponsor = cfg.deployment.vaults.some(v => v.vaultType === PREPAID_VAULT_TY
       issued,
       pending,
       lockTtlMs: cfg.lockTtlMs,
+      txValidityMs: cfg.txValidityMs,
       ...(ownerWitness === undefined ? {} : { ownerWitness }),
       ...(didOwner === undefined ? {} : { didOwner }),
       prepaidBlueprint: vaultPlutusJson as unknown as PrepaidBlueprint,

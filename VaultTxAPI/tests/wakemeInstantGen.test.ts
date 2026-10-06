@@ -26,13 +26,14 @@ import {
   INPUT_TX_HASH, LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OTHER_OWNER_PKH, OWNER_PKH,
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, VAULT_SCRIPT_HASH, datumHex,
 } from "./fixtures/preview.js";
-import { buildTxCbor } from "./fixtures/tx.js";
+import { buildTxCbor, prerecordedTtlSlot } from "./fixtures/tx.js";
 import { GB_SHARD_REF, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 type Net = "Preprod" | "Preview";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preprod");
 const TIP: ChainTip = {
   blockHeight: 4_651_976,
   blockHash: "14ae149dd07cd25ce37a6a4336f3939446bd68d9ad4a2e820201a474cc3ad72f",
@@ -94,7 +95,7 @@ type Where = "reference" | "input" | "both" | "absent";
 /** CBOR ghi sẵn: két ở `reference_inputs` (đúng), ở `inputs` (bị tiêu — sai), hoặc vắng. */
 function instantTxCbor(where: Where): string {
   const wk = { txHash: WAKEME_TX, outputIndex: 1 };
-  return buildTxCbor({
+  return buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: where === "input" || where === "both"
       ? [{ txHash: INPUT_TX_HASH, outputIndex: 0 }, wk] : [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
     ...(where === "reference" || where === "both" ? { referenceInputs: [wk] } : {}),
@@ -161,7 +162,7 @@ function harness(opts: {
   const builder = opts.builder ?? new RecordedTxBuilder({ instant_gen: instantTxCbor(opts.where ?? "reference") });
   const service = new VaultTxService({
     network: net, deployment, chain, builder,
-    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(TTL * 4),
+    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(),
     lockTtlMs: TTL, now: () => NOW,
   });
   const router: RouterDeps = {
@@ -469,7 +470,7 @@ class QuoteBuilder extends RecordedTxBuilder {
         requiredSigners: [OWNER_PKH],
         collateralInputs: [{ txHash: fp.txHash, outputIndex: fp.outputIndex }],
         collateralReturn: { address: fp.address, assets: { lovelace: u - ctx.collateralLovelace } },
-        ttlSlot: BigInt(unixTimeToSlot("Preprod", NOW + 1_800_000)),
+        ttlSlot: BigInt(unixTimeToSlot("Preprod", NOW + 600_000)),
       }),
     };
   }
@@ -541,7 +542,7 @@ const DID = "d1".repeat(32);
 /** Tx tạo két instant: đúc NFT, output két mang NFT (+ LAMP nếu `lamp > 0`) + datum genesis. */
 function createInstantCbor(o: { lamp?: bigint; link?: string; owner?: typeof NEW_OWNER } = {}): string {
   const lamp = o.lamp ?? 0n;
-  return buildTxCbor({
+  return buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 1 }],
     feeLovelace: 190_000n,
     mint: { [VAULT_ID_UNIT]: 1n },

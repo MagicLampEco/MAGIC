@@ -27,12 +27,13 @@ import {
 } from "./fixtures/preview.js";
 import { ENGAGE_ADDRESS, threadUtxo } from "./fixtures/engage.js";
 import { GB_SHARD_REF, genV2Chain, genV2Json } from "./fixtures/genV2.js";
-import { buildTxCbor } from "./fixtures/tx.js";
+import { buildTxCbor, prerecordedTtlSlot } from "./fixtures/tx.js";
 import { withConsumeLeg } from "./fixtures/consume.js";
 
 const NET = "Preprod" as const;
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preprod");
 const TIP: ChainTip = {
   blockHeight: 4_651_976,
   blockHash: "14ae149dd07cd25ce37a6a4336f3939446bd68d9ad4a2e820201a474cc3ad72f",
@@ -100,7 +101,7 @@ function wakemeUtxo(): UTxO {
 /** CBOR ghi sẵn của lượt tiêu: két đốt 0,001 MAGIC; két Wakeme (nếu có) ở reference input; vế thread
  *  (`fixtures/consume.ts`) tăng `consumed_nanogic` đúng lượng két đốt. */
 function consumeTxCbor(withWakeme: boolean): string {
-  return buildTxCbor(withConsumeLeg({
+  return buildTxCbor(withConsumeLeg({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
     ...(withWakeme ? { referenceInputs: [{ txHash: WAKEME_TX, outputIndex: 1 }] } : {}),
     feeLovelace: 178_000n,
@@ -133,7 +134,7 @@ function harness(o: HarnessOpts) {
   const builder = new RecordedTxBuilder({ consume: consumeTxCbor(o.withWakeme === true) });
   const service = new VaultTxService({
     network: NET, deployment, chain, builder,
-    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(TTL * 4),
+    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(),
     lockTtlMs: TTL, now: () => NOW,
   });
   const router: RouterDeps = {

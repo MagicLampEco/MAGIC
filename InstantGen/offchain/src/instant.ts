@@ -306,6 +306,12 @@ interface WindowSource {
    * lưới slot không trùng ba mạng thật. Cả hai biên phải cùng một epoch giao thức.
    */
   validity?   : { fromMs: bigint; toMs: bigint };
+  /**
+   * Trần cận trên tính từ tip (ms), thay `VALIDITY_MAX_AHEAD_MS` (1 giờ) của `epochValidityWindow`.
+   * Chỉ HẠ được cận trên; cửa sổ vẫn kẹp vào cuối epoch (trừ phần chừa) như cũ. Bên dựng hộ người
+   * dùng (VaultTxAPI) đặt nó bằng hạn ký của mình. Vắng ⟹ 1 giờ. Bỏ qua khi có `validity`.
+   */
+  validityMaxAheadMs?: bigint;
 }
 
 interface ResolvedWindow { fromMs: bigint; toMs: bigint; epoch: bigint }
@@ -340,7 +346,9 @@ async function resolveWindow(
   }
   const tip = src.tipPosixMs
     ?? BigInt(slotToUnixTime(network, await getTipSlot(src.lucid as never, network)));
-  const { lowerMs, upperMs } = epochValidityWindow(tip, network, reserveTrailingSlots);
+  const { lowerMs, upperMs } = src.validityMaxAheadMs === undefined
+    ? epochValidityWindow(tip, network, reserveTrailingSlots)
+    : epochValidityWindow(tip, network, reserveTrailingSlots, src.validityMaxAheadMs);
   // Cận trên script THẤY là đầu slot (Lucid làm tròn xuống). `epochValidityWindow` đã căn
   // đầu slot nên vòng quy đổi phải là phép đồng nhất — giữ làm phép đối chứng.
   const upperOnChain = BigInt(slotToUnixTime(network, unixTimeToSlot(network, upperMs)));

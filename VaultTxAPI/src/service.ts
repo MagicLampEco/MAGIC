@@ -42,7 +42,7 @@ import {
   ownerLockKey, type OwnerInput, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
 } from "./owner.js";
 import { didPaymentAddressFor, resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
-import { IssuedTxRegistry, OwnerLockTable, PendingSpends, submissionStateOf, type IssuedRoute } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable, PendingSpends, expiredErrorFor, submissionStateOf, type IssuedRoute } from "./locks.js";
 import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
   type CreateVaultSummary, type RequestedIntent, type TxSummary,
@@ -63,6 +63,10 @@ import {
   requireGenV2, requireRefScript, scheduleGenBeaconParamsOf,
 } from "./genV2.js";
 import { genLimitsSummary } from "./summary.js";
+import { assertWitnessesCoverTx } from "./witnessCheck.js";
+import {
+  DEFAULT_TX_VALIDITY_MS, expiryNote, planValidity, readTxExpiry, type ExpiresReason, type TxExpiry, type ValidityPlan,
+} from "./validity.js";
 import type { ConsumeBuildParams } from "./txBuilder.js";
 import { checkConsumeTx, consumeLineOf, type ConsumePair } from "./consumeLine.js";
 import type { EngageThread } from "./engage.js";
@@ -98,7 +102,10 @@ export interface BuildResponse {
   /** Hash THÂN giao dịch — app đối chiếu lại sau khi ký. */
   txHash: string;
   summary: TxSummary;
+  /** `validTo` của CHÍNH thân tx, ISO 8601 UTC (`validity.ts` ▸ `readTxExpiry`). */
   expiresAt: string;
+  /** Cận nào thắng khi chọn `validTo` (`validity.ts` ▸ `ExpiresReason`). */
+  expiresReason: ExpiresReason;
   /** UTxO đậu ở địa chỉ vault mà ta cố ý không tính, kèm lý do. Đếm, không nuốt. */
   ignored: IgnoredUtxo[];
   /** Khoá băm phải ký — đọc từ `required_signers` của CHÍNH CBOR vừa dựng. */
@@ -136,7 +143,10 @@ export interface OpenThreadResponse {
   requiredSigners: string[];
   witnessNotes: string[];
   summary: OpenThreadSummary;
+  /** `validTo` của CHÍNH thân tx, ISO 8601 UTC (`validity.ts` ▸ `readTxExpiry`). */
   expiresAt: string;
+  /** Cận nào thắng khi chọn `validTo` (`validity.ts` ▸ `ExpiresReason`). */
+  expiresReason: ExpiresReason;
 }
 
 export interface BindDidRequest extends OwnerRequest {
@@ -157,7 +167,10 @@ export interface BindDidResponse {
   requiredSigners: string[];
   witnessNotes: string[];
   summary: BindDidSummary;
+  /** `validTo` của CHÍNH thân tx, ISO 8601 UTC (`validity.ts` ▸ `readTxExpiry`). */
   expiresAt: string;
+  /** Cận nào thắng khi chọn `validTo` (`validity.ts` ▸ `ExpiresReason`). */
+  expiresReason: ExpiresReason;
 }
 
 export interface CreateVaultRequest extends OwnerRequest {
@@ -184,7 +197,10 @@ export interface CreateVaultResponse {
   requiredSigners: string[];
   witnessNotes: string[];
   summary: CreateVaultSummary;
+  /** `validTo` của CHÍNH thân tx, ISO 8601 UTC (`validity.ts` ▸ `readTxExpiry`). */
   expiresAt: string;
+  /** Cận nào thắng khi chọn `validTo` (`validity.ts` ▸ `ExpiresReason`). */
+  expiresReason: ExpiresReason;
 }
 
 export interface SubmitResponse {
@@ -201,7 +217,11 @@ export interface VaultTxServiceDeps {
   locks: OwnerLockTable;
   /** Sổ hash thân của giao dịch do CHÍNH dịch vụ này phát ra — `/tx/submit` tra nó. */
   issued: IssuedTxRegistry;
+  /** Hạn khoá mềm theo chủ. KHÔNG còn quyết `expires_at` hay hạn sổ phát-hành (`validity.ts`). */
   lockTtlMs: number;
+  /** Hạn ký của tx (ms từ đỉnh chuỗi), `AppConfig.txValidityMs`. Vắng ⟹ `DEFAULT_TX_VALIDITY_MS` —
+   *  mặc định do chính dịch vụ sở hữu, không phải dữ liệu bên khác. */
+  txValidityMs?: number;
   /** Đồng hồ, tiêm được để phép kiểm dựng ca hết hạn mà không phải chờ thật. */
   now?: () => number;
   /** Nhân chứng chủ script (did_stake). Vắng ⟹ chủ script nhận 501
@@ -216,7 +236,15 @@ export interface VaultTxServiceDeps {
   /** Đọc anchor DID cho `funding` did_payment. Vắng ⟹ 501 `FUNDING_UNAVAILABLE`. Cùng tham số
    *  theo mạng `anchor_nft_policy` với nhân chứng did_stake. */
   didPaymentAnchor?: DidPaymentAnchorReader;
+  /** Phép kiểm bộ chứng ký ở `/tx/submit`. Vắng ⟹ `assertWitnessesCoverTx` thật. `server.ts` KHÔNG
+   *  truyền, và không env/cấu hình/cờ dòng lệnh nào chạm tới trường này, nên tiến trình thật không
+   *  tắt được cổng. Chỉ phép kiểm dùng CBOR ghi sẵn (ký bằng khoá không có trong tay) mới tiêm bản
+   *  cho qua, kèm lý do ngay tại chỗ tiêm. */
+  witnessCheck?: WitnessCheck;
 }
+
+/** Hình dạng phép kiểm chứng ký: ném lỗi có mã khi bộ chứng ký không thể làm tx hợp lệ. */
+export type WitnessCheck = (tx: CML.Transaction, witnesses: CML.TransactionWitnessSet) => unknown;
 
 /**
  * Chế độ BÁO GIÁ của một đường dựng (`feeQuote.ts`): dựng + đọc lại CBOR y như đường thật, với
@@ -231,9 +259,17 @@ export interface QuoteMode {
 
 export class VaultTxService {
   private readonly now: () => number;
+  private readonly witnessCheck: WitnessCheck;
 
   constructor(private readonly deps: VaultTxServiceDeps) {
     this.now = deps.now ?? (() => Date.now());
+    this.witnessCheck = deps.witnessCheck ?? assertWitnessesCoverTx;
+  }
+
+  /** Giờ máy chủ (POSIX ms) — CÙNG đồng hồ mà `/tx/submit` dùng để quyết 410 `TX_EXPIRED`. Tầng HTTP
+   *  đóng dấu nó thành `server_time` cạnh `expires_at` (`http.ts` ▸ `withServerTime`). */
+  serverNowMs(): number {
+    return this.now();
   }
 
   get network(): Network {
@@ -554,6 +590,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
+      const plan = this.validityPlan(tip, false, feePayer);
       const existing = threadsOf(await this.deps.chain.utxosAt(d.engageAddress), d.engageScriptHash, owner);
       if (existing.length > 0) {
         throw new CodedApiError(409, "ENGAGE_THREAD_EXISTS",
@@ -566,9 +603,10 @@ export class VaultTxService {
       const witness = await this.witnessFor(req);
       const rewardReturn = feePayer === undefined ? undefined : await this.ownerRewardReturnFor(owner, witness);
       const built = await this.deps.builder.openThread({
-        owner, ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn), tip, changeAddress,
-        ...(feePayerUtxo === undefined ? {} : this.feePayerBuildFields(feePayerUtxo, tip)),
+        owner, ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn), tip, changeAddress, validToMs: plan.capMs,
+        ...(feePayerUtxo === undefined ? {} : this.feePayerBuildFields(feePayerUtxo)),
       });
+      const expiry = this.expiryOf(built.txCbor, plan, tip);
       const summary = checkOpenThreadTx(built.txCbor, {
         engageAddress: d.engageAddress, engageScriptHash: d.engageScriptHash,
         declaredUnit: built.engageNftUnit, owner, network: this.deps.network,
@@ -587,6 +625,7 @@ export class VaultTxService {
         // Mã ghi sổ Feecover của tx mở thread = tên NFT thread, khi nó đúng khuôn hash 64 hex.
         this.deps.issued.record(txHash, this.now(), {
           route: "open-thread", feeRef: hash64NameOf(summary.engage.nft_unit), lockKeys: [ownerKey],
+          validToMs: Number(expiry.validToMs),
           ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
         });
       }
@@ -599,7 +638,8 @@ export class VaultTxService {
         requiredSigners: requiredSignersOf(built.txCbor),
         witnessNotes: this.notesFor(owner, witness, changeAddress, feePayer, rewardReturn),
         summary,
-        expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
+        expiresAt: expiry.expiresAt,
+        expiresReason: expiry.reason,
       };
     } catch (e) {
       if (quote === undefined) this.deps.locks.release(ownerKey, lockGen);
@@ -640,6 +680,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
+      const plan = this.validityPlan(tip, false, feePayer);
       const thread = await pickEngageThread(
         this.deps.chain, d.engageAddress, d.engageScriptHash, owner, req.engageRef, "/tx/bind-did");
       const existing = didCommitOf(thread);
@@ -657,11 +698,12 @@ export class VaultTxService {
       const rewardReturn = feePayer === undefined ? undefined : await this.ownerRewardReturnFor(owner, witness);
       const built = await this.deps.builder.bindDid(
         {
-          owner, ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn), tip, changeAddress,
-          ...(feePayerUtxo === undefined ? {} : this.feePayerBuildFields(feePayerUtxo, tip)),
+          owner, ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn), tip, changeAddress, validToMs: plan.capMs,
+          ...(feePayerUtxo === undefined ? {} : this.feePayerBuildFields(feePayerUtxo)),
         },
         { engageUtxo: thread.utxo, didCommit },
       );
+      const expiry = this.expiryOf(built.txCbor, plan, tip);
       const summary = checkBindDidTx(built.txCbor, {
         engageAddress: d.engageAddress, engageScriptHash: d.engageScriptHash, thread, owner, didCommit,
         network: this.deps.network,
@@ -678,7 +720,7 @@ export class VaultTxService {
         this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
         // Mã ghi sổ Feecover = hash thân tx (không có NFT mới). Không ví trả phí ⟹ `/fee/sign` từ chối.
         this.deps.issued.record(txHash, this.now(), {
-          route: "bind-did", lockKeys: [ownerKey],
+          route: "bind-did", lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
           ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
         });
       }
@@ -695,12 +737,35 @@ export class VaultTxService {
           `BindDID đi một chiều: sau khi giao dịch này vào khối, did_commit của thread khoá vĩnh viễn.`,
         ],
         summary,
-        expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
+        expiresAt: expiry.expiresAt,
+        expiresReason: expiry.reason,
       };
     } catch (e) {
       if (quote === undefined) this.deps.locks.release(ownerKey, lockGen);
       throw asOwnerApiError(e);
     }
+  }
+
+  /**
+   * Cận trên `validTo` cho một lượt dựng (`validity.ts` ▸ `planValidity`). `epochBound` = route mà
+   * validator đòi hai cận cùng một epoch giao thức (gen/consume/schedule — mọi đường qua `buildOne`).
+   */
+  private validityPlan(tip: ChainTip, epochBound: boolean, feePayer: FeePayerRequest | undefined): ValidityPlan {
+    // UTxO ví trả phí xin qua `/fee/utxo` ⟹ kẹp vào `reserved_until` của nó (sổ phát-hành ghi lúc
+    // phát UTxO, `feeProxy.ts`) — cùng luật với `sponsor.ts` ▸ `planSponsorValidity`. UTxO phí app
+    // tự đưa ⟹ sổ không có dòng ⟹ không có giờ giữ chỗ.
+    const reserved = feePayer === undefined
+      ? undefined : this.deps.issued.feeReservationOf(refStr(feePayer.utxoRef));
+    return planValidity({
+      tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
+      txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, epochBound,
+      ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved }),
+    });
+  }
+
+  /** Hạn đọc NGƯỢC từ chính CBOR vừa dựng — nguồn duy nhất của `expires_at` và hạn dòng sổ phát-hành. */
+  private expiryOf(txCbor: string, plan: ValidityPlan, tip: ChainTip): TxExpiry {
+    return readTxExpiry(txCbor, this.deps.network, plan, tip.blockTimePosixMs);
   }
 
   private async buildOne(
@@ -743,12 +808,14 @@ export class VaultTxService {
       const vault = pickSingleVault(found, ownerKey, vaultType ?? "bất kỳ", scopes.map(s => s.address));
       this.assertNotPendingSpent(vault.utxo);
 
+      const plan = this.validityPlan(tip, true, feePayer);
       const ctx: BuildContext = {
         owner,
         ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn),
         vault,
         tip,
         changeAddress,
+        validityMaxAheadMs: plan.maxAheadMs,
         ...(feePayerUtxo === undefined ? {} : {
           feePayerUtxo, collateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
         }),
@@ -785,13 +852,14 @@ export class VaultTxService {
         });
       }
       afterSummary?.(built.txCbor, summary);
+      const expiry = this.expiryOf(built.txCbor, plan, tip);
       const txHash = txBodyHash(built.txCbor);
       if (quote === undefined) {
         this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
         // Ghi vào sổ phát-hành TRƯỚC khi trả về: `/tx/submit` chỉ nộp thứ có trong sổ, và
         // `/fee/sign` đọc route + UTxO ví trả phí từ đây chứ không nhận từ app.
         this.deps.issued.record(txHash, this.now(), {
-          route: routeOfIntent(intent), lockKeys: [ownerKey],
+          route: routeOfIntent(intent), lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
           ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
         });
       }
@@ -800,7 +868,8 @@ export class VaultTxService {
         txCbor: built.txCbor,
         txHash,
         summary,
-        expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
+        expiresAt: expiry.expiresAt,
+        expiresReason: expiry.reason,
         ignored,
         requiredSigners: requiredSignersOf(built.txCbor),
         witnessNotes: this.notesFor(owner, witness, changeAddress, feePayer, rewardReturn),
@@ -847,14 +916,11 @@ export class VaultTxService {
     return fp;
   }
 
-  /** Ba trường bộ dựng nhận khi đi ví trả phí: UTxO đó (ví lucid + seed), trần thế chấp của bản deploy,
-   *  hạn dùng = đỉnh chuỗi + 1 giờ (`FUNDING_MAX_VALIDITY_MS`, đúng trần `checkValidTo` ép lại). */
-  private feePayerBuildFields(feePayerUtxo: UTxO, tip: ChainTip): { feePayerUtxo: UTxO; collateralLovelace: bigint; validToMs: bigint } {
-    return {
-      feePayerUtxo,
-      collateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
-      validToMs: tip.blockTimePosixMs + FUNDING_MAX_VALIDITY_MS,
-    };
+  /** Hai trường bộ dựng nhận khi đi ví trả phí: UTxO đó (ví lucid + seed) và trần thế chấp của bản
+   *  deploy. Hạn dùng KHÔNG còn ở đây: mọi đường đặt `validToMs = plan.capMs` (`validityPlan`), và
+   *  `txValidityMs` ≤ 1 giờ (`config.ts`) nên vẫn trong trần `checkValidTo` của ví trả phí. */
+  private feePayerBuildFields(feePayerUtxo: UTxO): { feePayerUtxo: UTxO; collateralLovelace: bigint } {
+    return { feePayerUtxo, collateralLovelace: this.deps.deployment.feePayerCollateralLovelace };
   }
 
   /** Đọc lại CBOR theo luật ví trả phí. Input khác UTxO trả phí được tra từ CHUỖI, không từ bộ dựng. */
@@ -990,6 +1056,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
+      const plan = this.validityPlan(tip, false, feePayer ?? funding?.feePayer);
       if (req.kind === "instant") await this.assertNoInstantVaultYet(scope, owner, req.didCommit);
       const witness = await this.witnessFor(req);
       // Chỉ `fee_payer` ở gốc. Có `funding` thì thưởng đã về `funding.address` (ví Phoenix do app khai,
@@ -1017,9 +1084,9 @@ export class VaultTxService {
       }
       const built = await this.deps.builder.createVault(
         {
-          owner, ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn), scope, tip, changeAddress, funding: fundingCtx,
+          owner, ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn), scope, tip, changeAddress, funding: fundingCtx, validToMs: plan.capMs,
           ...(fundingCtx === undefined ? {} : { collateralLovelace: this.deps.deployment.feePayerCollateralLovelace }),
-          ...(rootFeePayerUtxo === undefined ? {} : this.feePayerBuildFields(rootFeePayerUtxo, tip)),
+          ...(rootFeePayerUtxo === undefined ? {} : this.feePayerBuildFields(rootFeePayerUtxo)),
         },
         { lampAmount: req.lampAmount, profile: req.profile, ...(req.didCommit === undefined ? {} : { wakemeLink: req.didCommit }) },
       );
@@ -1070,6 +1137,10 @@ export class VaultTxService {
           ownerRewardReturn: rewardReturn,
         });
       }
+      // Đọc hạn SAU các cổng đọc-lại có mã (funding/fee_payer): tx thiếu validTo hoặc hạn quá trần
+      // ví trả phí phải ra 422 FUNDING_TX_MISMATCH nói rõ trường lệch, không ra 500 bất biến nội bộ.
+      // Cổng hạn vẫn chạy trước mọi lần giữ khoá / ghi sổ bên dưới.
+      const expiry = this.expiryOf(built.txCbor, plan, tip);
       if (!sameOwner(summary.vault.owner, owner)) {
         throw new TxSummaryUndecodableError(
           `datum vault vừa dựng mang chủ ${summary.vault.owner.type}:${summary.vault.owner.hash} ` +
@@ -1097,7 +1168,7 @@ export class VaultTxService {
       if (quote === undefined) {
         this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
         this.deps.issued.record(txHash, this.now(), {
-          route: "create-vault", feeRef: vaultNftName, lockKeys: [ownerKey],
+          route: "create-vault", feeRef: vaultNftName, lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
           ...((feePayer ?? funding?.feePayer) === undefined ? {} : { feePayerUtxo: refStr((feePayer ?? funding!.feePayer!).utxoRef) }),
         });
       }
@@ -1112,7 +1183,8 @@ export class VaultTxService {
           ? this.notesFor(owner, witness, changeAddress, feePayer, rewardReturn)
           : fundingNotes(owner, witness, funding, fundingSigners!),
         summary,
-        expiresAt: new Date(startedAt + this.deps.lockTtlMs).toISOString(),
+        expiresAt: expiry.expiresAt,
+        expiresReason: expiry.reason,
       };
     } catch (e) {
       if (quote === undefined) this.deps.locks.release(ownerKey, lockGen);
@@ -1218,6 +1290,9 @@ export class VaultTxService {
         "app cần ký thân giao dịch rồi gửi bộ chứng ký thật.",
       );
     }
+    // Chữ ký phải đúng trên body hash và phủ đủ `required_signers` TRƯỚC mọi lần ghi sổ hay gửi nút
+    // (`witnessCheck.ts`): chữ ký rác không được làm tx thật của chủ rơi vào "bị thay".
+    this.witnessCheck(tx, witnesses);
 
     const bodyHashBefore = CML.hash_transaction(tx.body()).to_hex();
 
@@ -1231,6 +1306,9 @@ export class VaultTxService {
     // nào (Nợ #78). Nó chỉ chặn việc mượn đường nộp.
     const issuedEntry = this.deps.issued.lookup(bodyHashBefore, this.now());
     if (issuedEntry === null) {
+      // Tx CHÍNH dịch vụ phát nhưng quá validTo + biên ⟹ 410, không phải "không do dịch vụ dựng".
+      const expired = expiredErrorFor(this.deps.issued, bodyHashBefore, this.now());
+      if (expired !== null) throw expired;
       throw new SubmitRejectedError(
         "Giao dịch này không do dịch vụ dựng ra, hoặc đã quá hạn nộp. Dịch vụ chỉ nộp " +
         "giao dịch chính nó vừa phát hành — hãy gọi lại một trong các đường /tx/* để " +
@@ -1453,9 +1531,10 @@ export function toCreateVaultBody(r: CreateVaultResponse): Record<string, unknow
     vault_address: r.vaultAddress,
     owner: { type: r.owner.type, hash: r.owner.hash },
     required_signers: r.requiredSigners,
-    witness_notes: r.witnessNotes,
+    witness_notes: [...r.witnessNotes, expiryNote({ expiresAt: r.expiresAt, reason: r.expiresReason })],
     summary: r.summary,
     expires_at: r.expiresAt,
+    expires_reason: r.expiresReason,
   };
 }
 
@@ -1467,9 +1546,10 @@ export function toOpenThreadBody(r: OpenThreadResponse): Record<string, unknown>
     engage_address: r.engageAddress,
     owner: { type: r.owner.type, hash: r.owner.hash },
     required_signers: r.requiredSigners,
-    witness_notes: r.witnessNotes,
+    witness_notes: [...r.witnessNotes, expiryNote({ expiresAt: r.expiresAt, reason: r.expiresReason })],
     summary: r.summary,
     expires_at: r.expiresAt,
+    expires_reason: r.expiresReason,
   };
 }
 
@@ -1482,9 +1562,10 @@ export function toBindDidBody(r: BindDidResponse): Record<string, unknown> {
     owner: { type: r.owner.type, hash: r.owner.hash },
     did_commit: r.didCommit,
     required_signers: r.requiredSigners,
-    witness_notes: r.witnessNotes,
+    witness_notes: [...r.witnessNotes, expiryNote({ expiresAt: r.expiresAt, reason: r.expiresReason })],
     summary: r.summary,
     expires_at: r.expiresAt,
+    expires_reason: r.expiresReason,
   };
 }
 
@@ -1494,12 +1575,13 @@ export function toBuildBody(r: BuildResponse): Record<string, unknown> {
     tx_hash: r.txHash,
     summary: r.summary,
     expires_at: r.expiresAt,
+    expires_reason: r.expiresReason,
     // UTxO của CHỦ KHÁC chỉ được ĐẾM, không liệt kê: danh sách đó lớn theo số vault của cả hệ
     // (mỗi lượt dựng trả về tham chiếu vault của mọi người khác), không nói gì với chủ đang hỏi.
     ignored: r.ignored.filter(x => x.reason !== "OWNER_MISMATCH").map(x => ({ utxo_ref: x.utxoRef, reason: x.reason })),
     ignored_other_owner_count: r.ignored.filter(x => x.reason === "OWNER_MISMATCH").length,
     required_signers: r.requiredSigners,
-    witness_notes: r.witnessNotes,
+    witness_notes: [...r.witnessNotes, expiryNote({ expiresAt: r.expiresAt, reason: r.expiresReason })],
   };
 }
 

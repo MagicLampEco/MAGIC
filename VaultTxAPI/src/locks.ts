@@ -1,6 +1,13 @@
 // VaultTxAPI/src/locks.ts — khoá mềm theo chủ: lượt dựng MỚI NHẤT thay lượt cũ; xung đột bắt
 // ở lúc NỘP, không ở lúc dựng.
 //
+import { TxExpiredError } from "./errors.js";
+import { CLOCK_SKEW_MARGIN_MS } from "./validity.js";
+
+/** Dòng sổ phát-hành quá hạn nộp còn nằm lại bấy lâu để `/tx/submit` trả 410 `TX_EXPIRED` (thay vì
+ *  "không do dịch vụ phát"). Một giờ: đủ cho app nộp muộn sau khi người dùng bỏ dở màn ký. */
+export const EXPIRED_RETENTION_MS = 3_600_000;
+//
 // ── VẤN ĐỀ THẬT, KHÔNG PHẢI PHÒNG XA ────────────────────────────────────────────
 // Mỗi chủ có một UTxO vault. Dựng một giao dịch nghĩa là CHỌN đúng UTxO đó làm input.
 // Hai giao dịch dựng gần nhau cho cùng chủ sẽ chọn TRÙNG input, và eUTXO chỉ cho một trong
@@ -217,6 +224,14 @@ export const PENDING_TX_HASH = "pending";
  * cổng nào trong dịch vụ, xem `DevStatus.md` ▸ Nợ #78. Nó chỉ trả lời "giao dịch này
  * có phải do tôi dựng không". Và như bảng khoá, nó nằm trong bộ nhớ MỘT tiến trình:
  * chạy hai bản sao sau bộ cân tải thì mỗi bản chỉ nhận lại giao dịch của chính nó.
+ *
+ * ── HẠN CỦA MỘT DÒNG = `validTo` CỦA CHÍNH TX ĐÓ (đổi 2026-10-06) ───────────────
+ * Bản cũ cho mọi dòng sống `4 × lock_ttl_ms` kể từ lúc phát — một con số không dính gì tới hạn
+ * thật của tx (thân tx có thể còn hiệu lực 1 giờ, hoặc đã hết từ cuối epoch). Nay `record` NHẬN
+ * `validToMs` đọc từ thân tx (`validity.ts` ▸ `readTxExpiry`) và dòng hết hạn đúng tại đó, cộng
+ * `CLOCK_SKEW_MARGIN_MS` cho lệch đồng hồ với nút. Quá mốc, dòng chưa bị xoá ngay: nó nằm lại
+ * `EXPIRED_RETENTION_MS` để `/tx/submit` trả 410 `TX_EXPIRED` kèm `rebuild_safe` đúng (tx này đã
+ * từng gửi tới nút chưa), thay vì 502 "không do dịch vụ dựng" — câu đó sai với tx của chính mình.
  */
 /** Tên đường dựng đã phát ra một giao dịch — khoá tra bảng mục đích Feecover (`feeProxy.ts`). */
 export type IssuedRoute =
@@ -266,10 +281,12 @@ export interface IssuedTxMeta {
    *  Một tx chung khoá với tx vừa NỘP thì bị thay (`markSubmitted`). Vắng ⟹ không bị thay theo
    *  khoá, chỉ còn phép xung đột input (`PendingSpends.conflicts`). */
   lockKeys?: readonly string[];
+  /** `validTo` (POSIX ms) đọc từ CHÍNH thân tx — nguồn hạn duy nhất của dòng (`validity.ts`). */
+  validToMs: number;
 }
 
 export interface IssuedTxEntry extends IssuedTxMeta {
-  /** Hết mốc này thì `/tx/submit` không nhận nữa. */
+  /** Hết mốc này thì `/tx/submit` không nhận nữa: `validToMs + CLOCK_SKEW_MARGIN_MS`. */
   expiresAtMs: number;
   /** Hết mốc này thì `/fee/sign` không xin chữ ký nữa: UTxO phí đã hết giờ giữ chỗ ở Feecover. */
   signableUntilMs: number;
@@ -298,12 +315,20 @@ export function submissionStateOf(e: IssuedTxEntry): SubmissionState {
   return "none";
 }
 
+/** 410 `TX_EXPIRED` cho một tx ĐÃ phát mà nay quá hạn nộp (`IssuedTxRegistry.expiredEntry`) — MỘT chỗ
+ *  dựng cho cả `/tx/submit` lẫn `/fee/sign`, để hai đường trả cùng `details` (`expired_at` = `validTo`
+ *  dạng ISO 8601, `rebuild_safe`, `submission`). `null` ⟹ tx chưa từng phát, hoặc dòng đã quá
+ *  `EXPIRED_RETENTION_MS`: bên gọi giữ mã lỗi cũ của đường mình. */
+export function expiredErrorFor(issued: IssuedTxRegistry, txHash: string, nowMs: number): TxExpiredError | null {
+  const e = issued.expiredEntry(txHash, nowMs);
+  if (e === null) return null;
+  return new TxExpiredError(txHash, new Date(e.validToMs).toISOString(), submissionStateOf(e));
+}
+
 export class IssuedTxRegistry {
   private readonly issued = new Map<string, IssuedTxEntry>();
   /** UTxO ví trả phí phát qua `/fee/utxo` → hết giờ giữ chỗ (`reserved_until`) ở Feecover. */
   private readonly feeReservations = new Map<string, number>();
-
-  constructor(private readonly ttlMs: number) {}
 
   /**
    * Ghi một giao dịch vừa phát.
@@ -312,21 +337,31 @@ export class IssuedTxRegistry {
    * `reserved_until` rồi thôi — sau mốc đó Feecover có thể đã giao UTxO ấy cho tx khác, và xin
    * ký tiếp là xin ký một tx tiêu đồ của người khác. Dòng vẫn sống ít nhất tới `reserved_until`
    * (kể cả khi TTL của sổ ngắn hơn), để lượt ký kịp trong giờ giữ chỗ không bị sổ đánh rơi.
-   * UTxO phí không qua `/fee/utxo` (app tự đưa) ⟹ hạn ký = hạn của sổ.
+   * UTxO phí không qua `/fee/utxo` (app tự đưa) ⟹ hạn ký = hạn của dòng.
+   *
+   * Hạn của dòng = `meta.validToMs + CLOCK_SKEW_MARGIN_MS` — đọc từ CHÍNH thân tx, không cộng trên
+   * đồng hồ dịch vụ (`validity.ts`). Hạn xin ký không vượt hạn dòng: sau mốc đó sổ cái chắc chắn
+   * từ chối tx, xin ký nữa là phí một chữ ký của Feecover. `_nowMs` chỉ còn để giữ chữ ký gọi cũ.
    */
-  record(txHash: string, nowMs: number, meta: IssuedTxMeta): void {
-    const ttlExpiry = nowMs + this.ttlMs;
+  record(txHash: string, _nowMs: number, meta: IssuedTxMeta): void {
+    const expiresAtMs = meta.validToMs + CLOCK_SKEW_MARGIN_MS;
     const reserved = meta.feePayerUtxo === undefined ? undefined : this.feeReservations.get(meta.feePayerUtxo);
     this.issued.set(txHash, {
       ...meta,
-      expiresAtMs: reserved === undefined ? ttlExpiry : Math.max(ttlExpiry, reserved),
-      signableUntilMs: reserved === undefined ? ttlExpiry : reserved,
+      expiresAtMs,
+      signableUntilMs: reserved === undefined ? expiresAtMs : Math.min(reserved, expiresAtMs),
     });
   }
 
   /** Ghi giờ giữ chỗ của một UTxO phí vừa phát qua `/fee/utxo`. */
   noteFeeReservation(utxoRef: string, reservedUntilMs: number): void {
     this.feeReservations.set(utxoRef, reservedUntilMs);
+  }
+
+  /** Giờ giữ chỗ (`reserved_until`, POSIX ms) của một UTxO phí phát qua `/fee/utxo`, hoặc `undefined`
+   *  khi UTxO đó không qua `/fee/utxo` (app tự đưa) hoặc đã bị dọn. Bộ lập hạn dùng nó làm một cận. */
+  feeReservationOf(utxoRef: string): number | undefined {
+    return this.feeReservations.get(utxoRef);
   }
 
   /** `true` khi dịch vụ này đã phát ra đúng giao dịch đó và dòng chưa hết hạn. */
@@ -383,14 +418,25 @@ export class IssuedTxRegistry {
   lookup(txHash: string, nowMs: number): IssuedTxEntry | null {
     const e = this.issued.get(txHash);
     if (e === undefined) return null;
-    if (e.expiresAtMs <= nowMs) { this.issued.delete(txHash); return null; }
+    if (e.expiresAtMs <= nowMs) {
+      if (e.expiresAtMs + EXPIRED_RETENTION_MS <= nowMs) this.issued.delete(txHash);
+      return null;
+    }
+    return e;
+  }
+
+  /** Dòng của một tx ĐÃ phát mà nay quá hạn nộp, còn trong khoảng giữ lại `EXPIRED_RETENTION_MS` —
+   *  để `/tx/submit` phân biệt "hết hạn" (410 `TX_EXPIRED`) với "không do dịch vụ phát". */
+  expiredEntry(txHash: string, nowMs: number): IssuedTxEntry | null {
+    const e = this.issued.get(txHash);
+    if (e === undefined || e.expiresAtMs > nowMs || e.expiresAtMs + EXPIRED_RETENTION_MS <= nowMs) return null;
     return e;
   }
 
   sweep(nowMs: number): number {
     let n = 0;
     for (const [h, e] of this.issued) {
-      if (e.expiresAtMs <= nowMs) { this.issued.delete(h); n++; }
+      if (e.expiresAtMs + EXPIRED_RETENTION_MS <= nowMs) { this.issued.delete(h); n++; }
     }
     for (const [u, until] of this.feeReservations) {
       if (until <= nowMs) this.feeReservations.delete(u);

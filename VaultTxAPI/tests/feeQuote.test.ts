@@ -43,7 +43,7 @@ const KEY_OWNER = { type: "key" as const, hash: OWNER_PKH };
 /** Địa chỉ khoá (enterprise) của chính chủ — nguồn `owner_address`. */
 const OWNER_FEE_ADDRESS = enterpriseAddressOf("Preview", OWNER_PKH);
 const COLLATERAL = 3_000_000n;
-const VALID_TO_MS = NOW + 1_800_000;
+const VALID_TO_MS = NOW + 600_000;
 
 const utxo = (txHash: string, outputIndex: number, address: string, assets: Record<string, bigint>, datum?: string): UTxO =>
   ({ txHash, outputIndex, address, assets, datum });
@@ -271,7 +271,7 @@ function harness(o: HarnessOpts = {}) {
     [VAULT_UTXO, threadUtxo(KEY_OWNER, "7e".repeat(32)), ...(o.didPayment ? [DP_ANCHOR] : []), ...(o.refUtxos ?? [])],
   );
   const builder = new FeeModelBuilder();
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const record = vi.spyOn(issued, "record");
   const acquire = vi.spyOn(locks, "acquire");
@@ -342,8 +342,9 @@ describe("/tx/quote — thân bài", () => {
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME, owner_fee_addresses: [OWNER_FEE_ADDRESS] }), h.router));
     expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), fronted_lovelace: "0", available: true });
     expect(b.owner_address).toEqual(ownerPicked(ownerAda(50_000_000n)));
-    // expires_at = NOW + TTL (180 s) < validTo = NOW + 30 phút ⟹ lấy cái NGẮN hơn.
-    expect(b.valid_until).toBe(new Date(NOW + TTL).toISOString());
+    // Một nguồn hạn (validity.ts): expires_at nay đọc NGƯỢC từ validTo của chính CBOR, nên
+    // min(validTo, expires_at) = validTo (NOW + 10 phút), không còn là NOW + TTL khoá mềm.
+    expect(b.valid_until).toBe(new Date(VALID_TO_MS).toISOString());
   });
 
   it("CẶP: route lạ ⟹ 400 FEE_QUOTE_ROUTE_UNKNOWN; trường lạ ⟹ 400 FEE_QUOTE_SHAPE; bộ dựng không bị gọi", async () => {
@@ -980,7 +981,7 @@ describe("FeeProxy.feeSources — hết giờ FEE_SOURCES_TIMEOUT_MS", () => {
         url: "https://feecover.example", timeoutMs,
         apps: new Map([["magic", { purposes: new Map<IssuedRoute, string>([["consume", "consume_magic"]]) }]]),
       },
-      magicToken: MAGIC_TOKEN, issued: new IssuedTxRegistry(TTL), fetch,
+      magicToken: MAGIC_TOKEN, issued: new IssuedTxRegistry(), fetch,
     });
     return { proxy, aborted: () => signal?.aborted };
   };

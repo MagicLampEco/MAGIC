@@ -14,9 +14,9 @@ import { describe, expect, it } from "vitest";
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { parseDeployment, type Deployment } from "../src/config.js";
 import { ChainUnavailableError } from "../src/errors.js";
-import type { UTxO } from "@lucid-evolution/lucid";
+import { CML, type UTxO } from "@lucid-evolution/lucid";
 import { handle, type RouterDeps } from "../src/http.js";
-import { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "../src/locks.js";
+import { EXPIRED_RETENTION_MS, IssuedTxRegistry, OwnerLockTable, PendingSpends } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
 import { txBodyHash } from "../src/summary.js";
 import { RecordedTxBuilder, enterpriseAddressOf } from "../src/txBuilder.js";
@@ -24,9 +24,22 @@ import {
   INPUT_TX_HASH, LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OTHER_OWNER_PKH, OWNER_PKH,
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
-import { buildTxCbor, emptyWitnessSetCbor, fakeWitnessSetCbor } from "./fixtures/tx.js";
+import {
+  PRERECORDED_VALIDITY_MS, buildTxCbor, emptyWitnessSetCbor, fakeWitnessSetCbor, prerecordedTtlSlot,
+} from "./fixtures/tx.js";
+import { CLOCK_SKEW_MARGIN_MS } from "../src/validity.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 import { ENGAGE_ADDRESS, threadUtxo } from "./fixtures/engage.js";
+import { BODY_SERVICE_SUBMIT, VKEY_A_HEX, flipFirstByte } from "./fixtures/witnessVectors.js";
+
+/**
+ * Cho qua phép kiểm chứng ký — CHỈ cho các bài dùng CBOR ghi sẵn. Tx ghi sẵn mang
+ * `required_signers = OWNER_PKH` (khoá Preview thật, không có khoá riêng trong kho) và
+ * `fakeWitnessSetCbor` là byte hằng, nên phép kiểm thật chắc chắn bác; điều các bài đó đo là
+ * đường ghép + sổ phát-hành + khoá mềm, không phải chữ ký. Phép kiểm chữ ký thật được đo ở
+ * `witnessCheck.test.ts` và ở khối "chữ ký thật" cuối tệp này (vector chứng ký ghi sẵn).
+ */
+const PASS_PRERECORDED_WITNESSES = (): void => {};
 
 const LAMBDA = 7_000_000n;
 const FEE = 178_000n;
@@ -63,6 +76,7 @@ const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify({
 /** Giao dịch khoá `L × λ` — ĐÂY là sự thật mà `summary` phải nói theo. */
 function commitTxCbor(scheduleLength: bigint): string {
   return buildTxCbor({
+    ttlSlot: prerecordedTtlSlot(NOW),
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
     feeLovelace: FEE,
     outputs: [
@@ -102,9 +116,12 @@ interface Harness {
   chain: RecordedChainReader;
   router: RouterDeps;
   internalErrors: { ref: string; cause: unknown }[];
+  /** Đồng hồ dịch vụ, chỉ khi bài truyền `clock` (dời được giữa các lượt gọi). */
+  clock?: { t: number };
 }
 
 function harness(opts: {
+  clock?: { t: number };
   utxos?: ReturnType<typeof vaultUtxo>[];
   commitCbor?: string;
   failWith?: ChainUnavailableError;
@@ -112,6 +129,8 @@ function harness(opts: {
   token?: string;
   pending?: PendingSpends;
   chainClass?: typeof RecordedChainReader;
+  /** true ⟹ dùng phép kiểm chữ ký THẬT (mặc định của dịch vụ); vắng ⟹ `PASS_PRERECORDED_WITNESSES`. */
+  realWitnessCheck?: boolean;
 } = {}): Harness {
   const chain = new (opts.chainClass ?? RecordedChainReader)(
     // Thread Engage của chủ: `/tx/consume` chọn thread theo chủ lúc chạy (`engage.ts`).
@@ -127,7 +146,7 @@ function harness(opts: {
     consume: opts.commitCbor ?? commitTxCbor(3n),
   });
   const locks = new OwnerLockTable(TTL);
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const service = new VaultTxService({
     network: "Preview",
     deployment: DEPLOYMENT,
@@ -137,7 +156,8 @@ function harness(opts: {
     issued,
     pending: opts.pending,
     lockTtlMs: TTL,
-    now: () => NOW,
+    now: () => opts.clock?.t ?? NOW,
+    ...(opts.realWitnessCheck === true ? {} : { witnessCheck: PASS_PRERECORDED_WITNESSES }),
   });
   const internalErrors: { ref: string; cause: unknown }[] = [];
   const router: RouterDeps = {
@@ -150,7 +170,7 @@ function harness(opts: {
     token: opts.token ?? "",
     logInternal: (ref, cause) => internalErrors.push({ ref, cause }),
   };
-  return { service, builder, locks, issued, chain, router, internalErrors };
+  return { service, builder, locks, issued, chain, router, internalErrors, ...(opts.clock === undefined ? {} : { clock: opts.clock }) };
 }
 
 function post(url: string, body: unknown, headers: Record<string, string> = {}) {
@@ -198,7 +218,10 @@ describe("VaultTxService — đường dựng", () => {
     });
     expect(out.txCbor).toBe(commitTxCbor(3n));
     expect(out.txHash).toBe(txBodyHash(out.txCbor));
-    expect(out.expiresAt).toBe(new Date(NOW + TTL).toISOString());
+    // `expires_at` = `validTo` đọc từ CHÍNH thân tx (ttl ghi sẵn), không phải NOW + lockTtl.
+    expect(out.expiresAt).toBe(new Date(NOW + PRERECORDED_VALIDITY_MS).toISOString());
+    expect(out.expiresAt).not.toBe(new Date(NOW + TTL).toISOString());
+    expect(out.expiresReason).toBe("tx_validity");
     expect(out.summary.requested_intent).toBe("schedule_commit");
     expect(out.summary.network).toBe("Preview");
     expect(out.ignored).toEqual([]);
@@ -424,9 +447,43 @@ describe("/tx/submit — ghép chứng ký của app, dịch vụ không ký gì
     const h = harness({ submitResult: hash });
     await h.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
     expect(h.issued.wasIssued(hash, NOW)).toBe(true);
-    // Sổ phát hành có hạn dùng riêng, dài hơn khoá của chủ — quá hạn thì tờ giấy phép
+    // Hạn dòng sổ = `validTo` của CHÍNH tx + biên lệch đồng hồ — quá hạn thì tờ giấy phép
     // nộp hết hiệu lực, không phải "còn hiệu lực nhưng chưa dùng".
-    expect(h.issued.wasIssued(hash, NOW + TTL * 4 + 1)).toBe(false);
+    const lastOk = NOW + PRERECORDED_VALIDITY_MS + CLOCK_SKEW_MARGIN_MS - 1;
+    expect(h.issued.wasIssued(hash, lastOk)).toBe(true);
+    expect(h.issued.wasIssued(hash, lastOk + 1)).toBe(false);
+  });
+
+  it("CẶP qua /tx/submit: trước validTo + biên ⟹ nộp được; sau mốc đó ⟹ từ chối, không gì lên chuỗi", async () => {
+    const cbor = commitTxCbor(3n);
+    const hash = txBodyHash(cbor);
+    const lastOk = NOW + PRERECORDED_VALIDITY_MS + CLOCK_SKEW_MARGIN_MS - 1;
+    // Ca âm: đồng hồ dịch vụ vượt validTo + biên một ms.
+    const late = harness({ submitResult: hash, clock: { t: NOW } });
+    await late.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
+    late.clock!.t = lastOk + 1;
+    // Tx CHÍNH dịch vụ phát, quá hạn ⟹ 410 TX_EXPIRED (không còn 502 SUBMIT_REJECTED "không do dịch vụ dựng").
+    await expect(late.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() })).rejects.toMatchObject({
+      httpStatus: 410, code: "TX_EXPIRED",
+      details: { tx_hash: hash, rebuild_safe: true, submission: "none",
+        expired_at: new Date(NOW + PRERECORDED_VALIDITY_MS).toISOString() },
+    });
+    expect(late.chain.submitted).toEqual([]);
+    // CẶP phân biệt: cùng tx, cùng thời điểm, nhưng dịch vụ CHƯA TỪNG phát ⟹ giữ mã cũ 502 SUBMIT_REJECTED.
+    const never = harness({ submitResult: hash, clock: { t: lastOk + 1 } });
+    await expect(never.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toMatchObject({ httpStatus: 502, code: "SUBMIT_REJECTED" });
+    // Quá khoảng giữ lại dòng hết hạn ⟹ sổ đã quên tx ⟹ trở về mã "không do dịch vụ phát".
+    late.clock!.t = lastOk + 1 + EXPIRED_RETENTION_MS;
+    await expect(late.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
+      .rejects.toMatchObject({ httpStatus: 502, code: "SUBMIT_REJECTED" });
+    // Ca dương: đúng ms cuối còn hạn — vượt NOW + lockTtl (mốc expires_at cũ), vẫn nhận.
+    expect(lastOk).toBeGreaterThan(NOW + TTL);
+    const ok = harness({ submitResult: hash, clock: { t: NOW } });
+    await ok.service.scheduleCommit({ owner: { type: "key", hash: OWNER_PKH }, scheduleLength: 3n, lampPerEpoch: LAMBDA });
+    ok.clock!.t = lastOk;
+    await expect(ok.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() })).resolves.toMatchObject({ txHash: hash });
+    expect(ok.chain.submitted).toHaveLength(1);
   });
 
   it("cbor không phải hex ⟹ 400", async () => {
@@ -475,7 +532,7 @@ describe("Bộ định tuyến", () => {
       owner_pkh: OWNER_PKH, schedule_length: "17", lamp_per_epoch: "7000000",
     }), h.router);
     expect(r.status).toBe(200);
-    expect(Object.keys(r.body).sort()).toEqual(["expires_at", "ignored", "ignored_other_owner_count", "required_signers", "summary", "tx_cbor", "tx_hash", "witness_notes"]);
+    expect(Object.keys(r.body).sort()).toEqual(["expires_at", "expires_reason", "ignored", "ignored_other_owner_count", "required_signers", "server_time", "summary", "tx_cbor", "tx_hash", "witness_notes"]);
     const summary = r.body.summary as { lamp: { locked_delta_oildrop: string } };
     // Lại một lần nữa, qua trọn đường HTTP: bản tóm tắt đi theo CBOR, không theo thân bài.
     expect(summary.lamp.locked_delta_oildrop).toBe("21000000");
@@ -664,5 +721,66 @@ describe("thân bài dựng — vault của chủ KHÁC chỉ được đếm", 
     const body = r.body as { ignored: { reason: string }[]; ignored_other_owner_count: number };
     expect(body.ignored.map(x => x.reason)).toEqual(["NO_VAULT_ID_NFT"]);
     expect(body.ignored_other_owner_count).toBe(1);
+  });
+});
+
+describe("/tx/submit — chữ ký THẬT (vector ghi sẵn, cổng không tiêm)", () => {
+  // Tx mang `required_signers` = khoá thử A; dịch vụ dùng `assertWitnessesCoverTx` mặc định. Chữ ký
+  // là vector ghi sẵn cho ĐÚNG thân tx dưới đây (`fixtures/witnessVectors.ts` ▸ `BODY_SERVICE_SUBMIT`).
+  const vkeyA = CML.PublicKey.from_bytes(Buffer.from(VKEY_A_HEX, "hex"));
+  const signerPkh = vkeyA.hash().to_hex();
+  const cbor = buildTxCbor({
+    // ttl 10′ ghim cứng: vector chữ ký đã ký đúng thân này; PRERECORDED_VALIDITY_MS đổi thì thân không được đổi theo.
+    ttlSlot: prerecordedTtlSlot(NOW, 600_000),
+    inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
+    feeLovelace: FEE,
+    outputs: [
+      {
+        address: VAULT_ADDRESS,
+        assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID_UNIT]: 1n },
+        inlineDatumHex: datumHex({ lampLockedOildrop: 2_000_000n + 3n * LAMBDA, batches: [BATCH_LIVE], genScheduleCount: 1 }),
+      },
+      { address: CHANGE_ADDRESS, assets: { lovelace: 9_400_000n } },
+    ],
+    requiredSigners: [signerPkh],
+  });
+  const witnessesWith = (pk: CML.PublicKey, sig: CML.Ed25519Signature): string => {
+    const vkeys = CML.VkeywitnessList.new();
+    vkeys.add(CML.Vkeywitness.new(pk, sig));
+    const ws = CML.TransactionWitnessSet.new();
+    ws.set_vkeywitnesses(vkeys);
+    return ws.to_cbor_hex();
+  };
+  const goodWitness = witnessesWith(vkeyA, CML.Ed25519Signature.from_hex(BODY_SERVICE_SUBMIT.sigA));
+  const junkWitness = witnessesWith(vkeyA, CML.Ed25519Signature.from_hex(flipFirstByte(BODY_SERVICE_SUBMIT.sigA)));
+
+  it("thân tx của khối này trùng đúng thân mà vector đã được ký (lệch ⟹ sinh lại fixtures/witnessVectors.ts)", () => {
+    expect(txBodyHash(cbor)).toBe(BODY_SERVICE_SUBMIT.bodyHash);
+  });
+
+  it("CẶP (âm): chữ ký rác ⟹ 400, KHÔNG ghi PendingSpends, KHÔNG markSubmitted; tx thật vẫn nộp được sau đó", async () => {
+    const pending = new PendingSpends(TTL);
+    const h = harness({ commitCbor: cbor, submitResult: txBodyHash(cbor), pending, realWitnessCheck: true });
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    await expect(h.service.submit({ txCbor: cbor, witnessCbor: junkWitness }))
+      .rejects.toMatchObject({ httpStatus: 400, code: "WITNESS_SIGNATURE_INVALID" });
+    expect(h.chain.submitted).toHaveLength(0);
+    expect(pending.conflicts([`${INPUT_TX_HASH}#0`], NOW, "99".repeat(32))).toEqual([]);
+    const entry = h.issued.lookup(txBodyHash(cbor), NOW);
+    expect(entry?.submittedAtMs).toBeUndefined();
+    expect(entry?.submitUnconfirmedAtMs).toBeUndefined();
+    const out = await h.service.submit({ txCbor: cbor, witnessCbor: goodWitness });
+    expect(out.txHash).toBe(txBodyHash(cbor));
+    expect(h.chain.submitted).toHaveLength(1);
+  });
+
+  it("CẶP (dương): chữ ký đúng phủ đủ required_signers ⟹ qua phép kiểm, nộp và ghi sổ", async () => {
+    const pending = new PendingSpends(TTL);
+    const h = harness({ commitCbor: cbor, submitResult: txBodyHash(cbor), pending, realWitnessCheck: true });
+    await h.service.scheduleCommit({ ...KEY_OWNER_REQ, scheduleLength: 3n });
+    const out = await h.service.submit({ txCbor: cbor, witnessCbor: goodWitness });
+    expect(out.txHash).toBe(txBodyHash(cbor));
+    expect(h.chain.submitted).toHaveLength(1);
+    expect(h.issued.lookup(txBodyHash(cbor), NOW)?.submittedAtMs).toBe(NOW);
   });
 });

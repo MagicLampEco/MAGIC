@@ -20,10 +20,11 @@ import {
 } from "./fixtures/preview.js";
 import { ENGAGE_ADDRESS } from "./fixtures/engage.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
-import { buildTxCbor } from "./fixtures/tx.js";
+import { buildTxCbor, prerecordedTtlSlot } from "./fixtures/tx.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preview");
 const LAMBDA = 7_000_000n;
 const TIP: ChainTip = {
   blockHeight: 4_651_976,
@@ -56,7 +57,7 @@ function deployment(drop?: RefKey) {
 
 /** Giao dịch khoá 3 × λ — datum Schedule 19 trường. */
 function commitTxCbor(): string {
-  return buildTxCbor({
+  return buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
     feeLovelace: 178_000n,
     outputs: [
@@ -83,7 +84,7 @@ function harness(drop?: RefKey) {
   const builder = new RecordedTxBuilder({ schedule_commit: commitTxCbor() });
   const service = new VaultTxService({
     network: "Preview", deployment: d, chain, builder,
-    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(TTL * 4),
+    locks: new OwnerLockTable(TTL), issued: new IssuedTxRegistry(),
     lockTtlMs: TTL, now: () => NOW,
   });
   const router: RouterDeps = {

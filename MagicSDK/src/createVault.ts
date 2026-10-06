@@ -120,10 +120,12 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
   const walletAddress = await lucid.wallet().address();
   const walletUtxos   = await lucid.wallet().getUtxos();
   const funding       = params.funding;
-  if (funding !== undefined && params.validToMs !== undefined) {
+  // Đường nạp từ did_payment ép hạn dùng ≤ 1 giờ kể từ tip (luật bên trả phí, `checkFundingTx`).
+  // `validToMs` chỉ được HẠ hạn đó, không nâng: vượt trần ⟹ NÉM, không kẹp lặng lẽ.
+  if (funding !== undefined && params.validToMs !== undefined && params.validToMs > tipPosixMs + FUNDING_MAX_VALIDITY_MS) {
     throw new Error(
-      "CREATE-VAULT-VALIDITY: `validToMs` chỉ dùng khi không có `funding` — đường nạp từ did_payment " +
-      "tự đặt hạn dùng ≤ 1 giờ.",
+      `CREATE-VAULT-VALIDITY: \`validToMs\` ${params.validToMs} vượt trần 1 giờ của đường nạp từ did_payment ` +
+      `(tip ${tipPosixMs} + ${FUNDING_MAX_VALIDITY_MS}).`,
     );
   }
   // Có `funding` ⟹ LAMP đến từ ví Phoenix, ví đang chọn trả phí và ứng min-ADA két (trừ chế độ
@@ -329,9 +331,10 @@ export async function createVault(params: CreateVaultParams): Promise<CreateVaul
             .addSignerKey(funding.deviceKeyHash);
         }
       }
-      body = body.validTo(Number(tipPosixMs + FUNDING_MAX_VALIDITY_MS));
+      body = body.validTo(Number(params.validToMs ?? tipPosixMs + FUNDING_MAX_VALIDITY_MS));
     }
-    // (6) không `funding` mà có ví trả phí bên thứ ba: hạn dùng do người gọi đặt (≤ 1 giờ).
+    // (6) không `funding`: hạn dùng do người gọi đặt (ví trả phí bên thứ ba ⟹ ≤ 1 giờ; bên dựng hộ
+    // người dùng đặt bằng hạn ký của mình ở MỌI đường). Vắng ⟹ không đặt (hành vi cũ).
     if (funding === undefined && params.validToMs !== undefined) body = body.validTo(Number(params.validToMs));
     return applyOwnerAuth(body, ownerAuth);                    // (4)
   };

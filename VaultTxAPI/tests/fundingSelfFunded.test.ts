@@ -115,7 +115,7 @@ function selfFundedTx(o: SelfFundedOpts = {}): string {
     collateralReturn: { address: o.collateralReturnTo ?? COLL_ADDRESS, assets: { lovelace: 2_000_000n } },
     // Thứ tự đã sắp của ledger: d1… < d2… ⟹ DP1 = 0, DP2 = 1 (input thêm "cc…" nếu có đứng trước).
     spendRedeemers: o.redeemers ?? [{ index: 0, dataHex: SPEND }, { index: 1, dataHex: SPEND }],
-    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 1_800_000)),
+    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 600_000)),
   });
 }
 
@@ -139,7 +139,7 @@ function feePayerTx(): string {
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
     spendRedeemers: [{ index: 0, dataHex: SPEND }, { index: 1, dataHex: SPEND }],
-    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 1_800_000)),
+    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 600_000)),
   });
 }
 
@@ -150,7 +150,7 @@ function harness(opts: { cbor?: string; nft?: string } = {}) {
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks,
-    issued: new IssuedTxRegistry(TTL * 4), lockTtlMs: TTL, now: () => NOW,
+    issued: new IssuedTxRegistry(), lockTtlMs: TTL, now: () => NOW,
     didPaymentAnchor: new ChainDidPaymentAnchorReader({ chain, anchorNftPolicy: ANCHOR_POLICY }),
   });
   const router: RouterDeps = {
@@ -201,7 +201,7 @@ describe("fee_source did_payment — dương, và CẶP với chế độ mặc 
           collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "2000000",
         },
       },
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect("fee_payer" in b.summary.funding).toBe(false);
     // Ví của lucid = ví thế chấp, mang ĐÚNG UTxO thế chấp; SDK nhận chế độ + cùng UTxO đó.

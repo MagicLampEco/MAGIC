@@ -128,6 +128,9 @@ export interface CommitParams {
   lampAssetName?  : string;
   network?        : Network;
   tipPosixMs?     : bigint;
+  /** Trần cận trên tính từ tip (ms), thay 1 giờ mặc định của `epochValidityWindow`. Chỉ HẠ được
+   *  cận trên; cửa sổ vẫn kẹp vào cuối epoch. Vắng ⟹ 1 giờ (hành vi cũ). */
+  validityMaxAheadMs?: bigint;
   tamperOutputDatum?: (d: any) => any;
   /** Cách chứng minh quyền chủ (`VaultDatum.owner` là `Credential`). Bỏ trống: chủ khoá ⟹
    *  `addSignerKey(pkh)` từ datum; chủ script ⟹ NÉM `OWNER_SCRIPT_WITNESS_UNAVAILABLE`. */
@@ -178,6 +181,8 @@ export interface FireParams {
   lampAssetName?  : string;
   network?        : Network;
   tipPosixMs?     : bigint;
+  /** Như `CommitParams.validityMaxAheadMs`. */
+  validityMaxAheadMs?: bigint;
   tamperOutputDatum?: (d: any) => any;
   /** TEST ONLY: move LAMP out of the vault to prove I-ACT-7 rejects it. */
   tamperLampOutOil?: bigint;
@@ -330,7 +335,9 @@ export async function buildScheduleCommitTx(params: CommitParams): Promise<Commi
   const shardRed  = Data.to({ ShardUpdateCommit: { delta_locked: plan.totalLock, delta_committed: plan.totalLock } }, ShardRedeemer);
   const gbDrawRed = Data.to({ amount: plan.gbDraw }, GbShardRedeemer);
   const { lowerMs: lowerTime, upperMs: upperTime } =
-    epochValidityWindow(tipPosixMs, network);
+    params.validityMaxAheadMs === undefined
+      ? epochValidityWindow(tipPosixMs, network)
+      : epochValidityWindow(tipPosixMs, network, 0n, params.validityMaxAheadMs);
 
   let txBuilder = lucid
     .newTx()
@@ -450,7 +457,9 @@ export async function buildScheduleFireTx(params: FireParams): Promise<FireResul
   const redeemer   = Data.to({ ScheduleFire: { schedule_id: scheduleId } }, VaultRedeemer);
   const shardRed   = Data.to({ ShardUpdateFire: { fires_in_tx: BigInt(plan.firesInTx), lambda: sched.lamp_per_epoch } }, ShardRedeemer);
   const { lowerMs: lowerTime, upperMs: upperTime } =
-    epochValidityWindow(tipPosixMs, network);
+    params.validityMaxAheadMs === undefined
+      ? epochValidityWindow(tipPosixMs, network)
+      : epochValidityWindow(tipPosixMs, network, 0n, params.validityMaxAheadMs);
 
   // Value ra của vault, tách thành CÂU LỆNH RIÊNG để chốt bên dưới không biến mất cùng
   // lần viết lại biểu thức value — đó chính là lần viết lại nó sinh ra để bắt.

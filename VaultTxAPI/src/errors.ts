@@ -49,7 +49,15 @@
 //   401 FEE_PROXY_APP_UNKNOWN    `X-Feecover-Token` không khớp ứng dụng nào (hoặc không có ứng dụng mặc định)
 //   400 FEE_PROXY_PURPOSE_UNMAPPED  ứng dụng chưa có mục đích Feecover cho route đó
 //   403 FEE_PROXY_APP_PURPOSE    mục đích mang tiền tố của ứng dụng khác / thiếu tiền tố của chính ứng dụng
-//   403 FEE_PROXY_TX_NOT_ISSUED  `/fee/sign` cho tx không do dịch vụ phát, hoặc quá hạn xin ký
+//   410 TX_EXPIRED               `/tx/submit` và `/fee/sign` cho tx dịch vụ đã phát nhưng quá validTo + biên
+//                                lệch đồng hồ — `details.tx_hash`, `details.expired_at` (ISO 8601 = validTo),
+//                                `details.rebuild_safe`, `details.submission` (`locks.ts` ▸ `expiredErrorFor`)
+//   403 FEE_PROXY_TX_NOT_ISSUED  `/fee/sign` cho tx không do dịch vụ phát, hoặc còn hạn nộp nhưng đã quá giờ
+//                                giữ chỗ UTxO phí (`reserved_until`)
+//   409 FEE_PAYER_RESERVATION_EXPIRED  UTxO ví trả phí hết giờ giữ chỗ Feecover trước khi tx kịp có một
+//                                khoảng hiệu lực (`validity.ts`) — `details.reserved_until`; xin lại `/fee/utxo`
+//   400 WITNESS_SIGNATURE_INVALID / WITNESS_MISSING_SIGNER  `/tx/submit`: một chữ ký không khớp thân tx /
+//                                thiếu chữ ký của khoá trong `required_signers` (`witnessCheck.ts`)
 //   400 FEE_PROXY_NO_FEE_PAYER   `/fee/sign` cho tx không dùng ví trả phí
 //   4xx FEE_PROXY_REJECTED       Feecover từ chối — mã trạng thái + `rule`/`message`/`reasons` chuyển nguyên
 //   501 FEE_PROXY_UNAVAILABLE    bản deploy không khai `feecover`
@@ -313,6 +321,25 @@ export class TxSummaryUndecodableError extends TxApiError {
 export class SubmitRejectedError extends TxApiError {
   constructor(message: string, details: Record<string, unknown> = {}) {
     super(502, "SUBMIT_REJECTED", message, details);
+  }
+}
+
+/**
+ * 410 `TX_EXPIRED` — `/tx/submit` hoặc `/fee/sign` cho một tx dịch vụ ĐÃ phát, nay quá `validTo + CLOCK_SKEW_MARGIN_MS`
+ * (`validity.ts`). Khác `SUBMIT_REJECTED` (tx không do dịch vụ phát): bên gọi biết chắc phải dựng lại.
+ * `details.expired_at` = mốc hết hạn dạng ISO 8601 (`validTo`, cùng khuôn `expires_at`);
+ * `details.rebuild_safe` = `true` khi tx chưa từng được gửi tới nút — sổ cái không còn nhận nó, nên
+ * dựng bản mới không thể ra hai tx cùng lên chuỗi. Tx đã từng gửi ⟹ `false` (có thể đã lên chuỗi
+ * trước mốc): tra chuỗi theo `tx_hash` trước khi dựng lại.
+ */
+export class TxExpiredError extends TxApiError {
+  constructor(txHash: string, expiredAtIso: string, submission: "accepted" | "unconfirmed" | "none") {
+    super(410, "TX_EXPIRED",
+      `Giao dịch ${txHash} đã hết hạn lúc ${expiredAtIso} — sổ cái không nhận nó nữa. ` +
+      (submission === "none"
+        ? `Gọi lại đường /tx/* tương ứng để dựng bản mới rồi ký bản đó.`
+        : `Giao dịch này từng được gửi tới nút: tra chuỗi theo tx_hash trước khi dựng lại.`),
+      { tx_hash: txHash, expired_at: expiredAtIso, rebuild_safe: submission === "none", submission });
   }
 }
 

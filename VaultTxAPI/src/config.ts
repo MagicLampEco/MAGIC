@@ -29,6 +29,7 @@ import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
 
 import { FEE_PURPOSE_ROUTES, type FeePurposeRoute } from "./locks.js";
 import { parseBasePath } from "./basePath.js";
+import { DEFAULT_TX_VALIDITY_MS } from "./validity.js";
 
 /**
  * Trần mặc định của khoản min-ADA ví trả phí ứng (`Deployment.feePayerFrontingMaxLovelace`).
@@ -323,8 +324,16 @@ export interface AppConfig {
    */
   sponsorToken: string;
   requestTimeoutMs: number;
-  /** Khoá mềm theo `owner_pkh` sống bao lâu, cũng là `expires_at` của tx trả về. */
+  /** Khoá mềm theo chủ sống bao lâu (`VAULT_TX_API_LOCK_TTL_MS`). CHỈ điều khiển khoá mềm — từ
+   *  2026-10-06 nó KHÔNG còn là `expires_at`, không còn quyết hạn sổ phát-hành hay sổ input vừa nộp. */
   lockTtlMs: number;
+  /** Hạn ký của mọi tx dịch vụ phát ra (`VAULT_TX_API_TX_VALIDITY_MS`, ms tính từ đỉnh chuỗi lúc
+   *  dựng): cận trên `validTo` trong thân tx = min(tip + hạn này, cuối epoch, reserved_until), và
+   *  `expires_at` đọc ngược từ chính thân đó (`validity.ts`). */
+  txValidityMs: number;
+  /** Sổ input vừa nộp (`PendingSpends`) nhớ một input bao lâu (`VAULT_TX_API_PENDING_SPENDS_TTL_MS`).
+   *  Đo theo độ trễ CHỈ MỤC của nút đọc, không theo hạn ký — xem chú thích ở `loadConfig`. */
+  pendingSpendsTtlMs: number;
   /** Token ứng dụng `magic` ở Feecover. Chỉ có khi bản deploy khai `feecover.apps.magic`. */
   feecoverAppToken?: string;
   /** Khối PHỤ (`loadExtraBlocks`), đã qua `assertCompatibleBlocks`. Rỗng ⟹ một khối, như trước. */
@@ -410,6 +419,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const requestTimeoutMs = intOrThrow(env.VAULT_TX_API_TIMEOUT_MS, "VAULT_TX_API_TIMEOUT_MS", 20_000, 100, 600_000);
   const lockTtlMs = intOrThrow(env.VAULT_TX_API_LOCK_TTL_MS, "VAULT_TX_API_LOCK_TTL_MS", 180_000, 1_000, 3_600_000);
+  // Hạn ký: mặc định 15 phút (chủ dự án chọn). Sàn 1 phút — dưới mức đó người dùng không kịp mở
+  // sinh trắc và ký. Trần 1 giờ = `VALIDITY_MAX_AHEAD_MS` / `FUNDING_MAX_VALIDITY_MS`: xa hơn thì
+  // cận trên có thể vượt chân trời quy đổi slot của nút, và ví trả phí từ chối (`checkValidTo`).
+  const txValidityMs = intOrThrow(
+    env.VAULT_TX_API_TX_VALIDITY_MS, "VAULT_TX_API_TX_VALIDITY_MS", DEFAULT_TX_VALIDITY_MS, 60_000, 3_600_000);
+  // Sổ input vừa nộp chỉ phải phủ khe giữa lúc nút NHẬN tx và lúc nút ĐỌC (Blockfrost) thấy input
+  // đã tiêu: một khối (~20 giây) cộng độ trễ chỉ mục, vài khối khi mempool đầy. Sau khe đó nút đọc
+  // tự không trả UTxO đã tiêu nữa, nên nhớ lâu hơn không chặn thêm gì đúng — chỉ chặn nhầm khi tx
+  // rơi khỏi mempool (UTxO thật sự chưa tiêu mà vẫn bị 409 PREVIOUS_TX_PENDING). 5 phút ≈ 15 khối.
+  const pendingSpendsTtlMs = intOrThrow(
+    env.VAULT_TX_API_PENDING_SPENDS_TTL_MS, "VAULT_TX_API_PENDING_SPENDS_TTL_MS", 300_000, 30_000, 3_600_000);
 
   const feecoverAppToken = resolveFeecoverAppToken(deployment.feecover, env);
 
@@ -421,6 +441,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     network, blockfrostUrl, blockfrostProjectId, deployment,
     changeAddressStrategy: strategyRaw as ChangeAddressStrategy,
     vaultPlutusJsonPath, host, port, basePath, token, sponsorToken, requestTimeoutMs, lockTtlMs,
+    txValidityMs, pendingSpendsTtlMs,
     extraBlocks,
     ...(feecoverAppToken === undefined ? {} : { feecoverAppToken }),
   };

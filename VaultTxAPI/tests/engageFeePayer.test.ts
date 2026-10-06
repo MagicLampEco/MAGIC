@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { parseDeployment, type Deployment } from "../src/config.js";
-import { handle, type RouterDeps } from "../src/http.js";
+import { handle, withServerTime, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
 import { RecordedTxBuilder, enterpriseAddressOf } from "../src/txBuilder.js";
@@ -22,12 +22,13 @@ import {
   INPUT_TX_HASH, LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OTHER_OWNER_PKH, OWNER_PKH,
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
-import { buildTxCbor, type TxOutputSpec } from "./fixtures/tx.js";
+import { buildTxCbor, type TxOutputSpec, prerecordedTtlSlot } from "./fixtures/tx.js";
 import { withConsumeLeg } from "./fixtures/consume.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preview");
 const TIP: ChainTip = { blockHeight: 1, blockHash: "14".repeat(32), blockTimePosixMs: BigInt(NOW) };
 const FEE = 178_000n;
 const KEY_OWNER = { type: "key" as const, hash: OWNER_PKH };
@@ -102,7 +103,7 @@ function feeTx(o: FeeTxOpts = {}): string {
     requiredSigners: [OWNER_PKH],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: o.collateralReturn ?? 7_000_000n } },
-    ttlSlot: o.ttlMs === null ? undefined : BigInt(unixTimeToSlot("Preview", NOW + (o.ttlMs ?? 1_800_000))),
+    ttlSlot: o.ttlMs === null ? undefined : BigInt(unixTimeToSlot("Preview", NOW + (o.ttlMs ?? 600_000))),
   };
   return buildTxCbor(o.consumeThread === undefined ? spec : withConsumeLeg(spec, {
     thread: o.consumeThread, vaultRef: ref(VAULT_UTXO), pairs: [{ opType: 1, opCount: 2n }], requiredNanogic: CONSUME_BURN,
@@ -117,7 +118,7 @@ interface OpenTxOpts {
 
 function openTx(o: OpenTxOpts = {}): string {
   const unit = o.mintUnit ?? THREAD_UNIT;
-  return buildTxCbor({
+  return buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: "c0".repeat(32), outputIndex: 0 }],
     feeLovelace: 200_000n,
     mint: { [unit]: o.mintQty ?? 1n },
@@ -150,7 +151,7 @@ function harness(opts: { threads?: UTxO[]; cbor?: string; openCbor?: string; dec
     undefined,
     opts.declaredUnit ?? THREAD_UNIT,
   );
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
@@ -189,7 +190,7 @@ describe("fee_payer — dương", () => {
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
     expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
@@ -202,6 +203,71 @@ describe("fee_payer — dương", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect((r.body as { summary: Record<string, unknown> }).summary.fee_payer).toBeUndefined();
     expect(h.builder.lastCall?.feePayerUtxo).toBeUndefined();
+  });
+});
+
+// Dịch vụ chính kẹp hạn theo giờ giữ chỗ Feecover của UTxO `fee_payer` — cùng luật với tài trợ
+// (`sponsor.ts` ▸ `planSponsorValidity`, `tests/sponsorValidity.test.ts`), nay ở tầng dịch vụ.
+describe("fee_payer — hạn kẹp giờ giữ chỗ Feecover (service.ts ▸ validityPlan)", () => {
+  const FEE_REF = `${FEE_UTXO.txHash}#0`;
+  it("CẶP (a): reserved_until SỚM hơn tip+15′ ⟹ cận giao bộ dựng = reserved_until căn slot, expires_reason fee_reservation", async () => {
+    const h = harness({ cbor: feeTx({ ttlMs: 300_000 }) });
+    h.issued.noteFeeReservation(FEE_REF, NOW + 300_400); // 5 phút + 400 ms: căn xuống đầu slot
+    const r = await handle(commit({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall?.validityMaxAheadMs).toBe(300_000n);
+    const b = r.body as { expires_at: string; expires_reason: string };
+    expect(b.expires_reason).toBe("fee_reservation");
+    expect(b.expires_at).toBe(new Date(NOW + 300_000).toISOString());
+    // witness_notes nói CÙNG mốc và CÙNG lý do với expires_at/expires_reason (`validity.ts` ▸ `expiryNote`).
+    const note = (r.body as { witness_notes: string[] }).witness_notes.at(-1) ?? "";
+    expect(note).toContain(`trước ${b.expires_at} `);
+    expect(note).toContain("giờ giữ chỗ UTxO ví trả phí ở Feecover");
+  });
+
+  it("CẶP (b): reserved_until MUỘN hơn tip+15′ ⟹ cận = tip+15′, expires_reason tx_validity", async () => {
+    const h = harness({ cbor: feeTx({ ttlMs: 900_000 }) });
+    h.issued.noteFeeReservation(FEE_REF, NOW + 2_400_000); // 40 phút
+    const r = await handle(commit({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall?.validityMaxAheadMs).toBe(900_000n);
+    expect((r.body as { expires_reason: string }).expires_reason).toBe("tx_validity");
+    // Cặp với ca (a): lý do khác ⟹ câu khác, cùng mốc expires_at.
+    const b = r.body as { expires_at: string; witness_notes: string[] };
+    const note = b.witness_notes.at(-1) ?? "";
+    expect(note).toContain(`trước ${b.expires_at} `);
+    expect(note).toContain("hạn ký của dịch vụ");
+    expect(note).not.toContain("Feecover");
+  });
+
+  it("server_time = đồng hồ của DỊCH VỤ (không phải Date.now của tiến trình), và expires_at − server_time = hạn còn lại", async () => {
+    const h = harness({ cbor: feeTx({ ttlMs: 300_000 }) });
+    h.issued.noteFeeReservation(FEE_REF, NOW + 300_400);
+    const r = await handle(commit({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const b = r.body as { expires_at: string; server_time: string };
+    // NOW là mốc cố định năm 2026 trong bài; Date.now thật của máy chạy bài thì khác ⟹ phân biệt được.
+    expect(b.server_time).toBe(new Date(NOW).toISOString());
+    expect(Date.parse(b.expires_at) - Date.parse(b.server_time)).toBe(300_000);
+  });
+
+  it("CẶP: thân KHÔNG có expires_at ⟹ không thêm server_time và không đọc đồng hồ", () => {
+    let reads = 0;
+    const clock = () => { reads++; return NOW; };
+    expect(withServerTime({ tx_hash: "ab" }, clock)).toEqual({ tx_hash: "ab" });
+    expect(reads).toBe(0);
+    const stamped = withServerTime({ expires_at: "2026-10-06T03:00:00.000Z" }, clock);
+    expect(stamped).toEqual({ expires_at: "2026-10-06T03:00:00.000Z", server_time: new Date(NOW).toISOString() });
+    expect(reads).toBe(1);
+  });
+
+  it("giờ giữ chỗ đã qua ⟹ 409 FEE_PAYER_RESERVATION_EXPIRED, bộ dựng không bị gọi", async () => {
+    const h = harness();
+    h.issued.noteFeeReservation(FEE_REF, NOW - 1);
+    const r = await handle(commit({ fee_payer: FEE_PAYER }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(codeOf(r)).toBe("FEE_PAYER_RESERVATION_EXPIRED");
+    expect(h.builder.lastCall).toBeNull();
   });
 });
 
@@ -270,7 +336,7 @@ describe("fee_payer — schedule-fire", () => {
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
     expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
@@ -370,7 +436,7 @@ describe("fee_payer — consume", () => {
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
     expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
@@ -405,13 +471,24 @@ describe("/tx/open-thread", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const b = r.body as Record<string, unknown> & { summary: { engage: Record<string, unknown> }; tx_hash: string };
     expect(Object.keys(b).sort()).toEqual([
-      "engage_address", "engage_nft", "expires_at", "owner", "required_signers", "summary", "tx_cbor", "tx_hash", "witness_notes",
+      "engage_address", "engage_nft", "expires_at", "expires_reason", "owner", "required_signers", "server_time", "summary", "tx_cbor", "tx_hash", "witness_notes",
     ]);
     expect(b.engage_nft).toBe(THREAD_UNIT);
     expect(b.engage_address).toBe(ENGAGE_ADDRESS);
     expect(b.summary.engage).toMatchObject({ owner: KEY_OWNER, consumed_count: "0", lovelace: "2000000" });
     expect(h.issued.wasIssued(b.tx_hash, NOW)).toBe(true);
     expect(h.builder.lastCall?.changeAddress).toBe(CHANGE_ADDRESS);
+  });
+
+  it("đường change_address: bộ dựng nhận validToMs = cận đã lên kế hoạch (đỉnh + 15′), expires_reason = tx_validity", async () => {
+    // Đỉnh chuỗi = NOW (tròn giây ⟹ căn slot không dời); hạn ký mặc định 15′ (`validity.ts` ▸ DEFAULT_TX_VALIDITY_MS).
+    const h = harness({ threads: [threadUtxo(OTHER_OWNER, "a1".repeat(32))] });
+    const r = await handle(open(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(h.builder.lastCall?.changeAddress).toBe(CHANGE_ADDRESS);
+    expect(h.builder.lastCall?.feePayerUtxo).toBeUndefined();
+    expect(h.builder.lastCall?.validToMs).toBe(BigInt(NOW) + 900_000n);
+    expect((r.body as { expires_reason: string }).expires_reason).toBe("tx_validity");
   });
 
   it("chủ đã có thread ⟹ 409 ENGAGE_THREAD_EXISTS, bộ dựng không bị gọi", async () => {
@@ -507,7 +584,7 @@ function instantGenFeeTx(): string {
     requiredSigners: [OWNER_PKH],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
-    ttlSlot: BigInt(unixTimeToSlot("Preprod", NOW + 1_800_000)),
+    ttlSlot: BigInt(unixTimeToSlot("Preprod", NOW + 600_000)),
   });
 }
 
@@ -518,7 +595,7 @@ function instantHarness() {
     [INSTANT_VAULT_UTXO, FEE_UTXO],
   );
   const builder = new RecordedTxBuilder({ instant_gen: instantGenFeeTx() });
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preprod", deployment: INSTANT_DEPLOYMENT, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
@@ -546,7 +623,7 @@ describe("fee_payer — instant-gen", () => {
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
     expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);

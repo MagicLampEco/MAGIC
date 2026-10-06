@@ -53,6 +53,9 @@ export interface BuildContext {
   feePayerUtxo?: UTxO;
   /** Lượng thế chấp tường minh (lovelace) — đặt cùng `feePayerUtxo`. */
   collateralLovelace?: bigint;
+  /** Trần cận trên tính từ tip (ms) giao cho bộ dựng SDK (`validityMaxAheadMs`): SDK vẫn kẹp vào
+   *  cuối epoch. Dịch vụ đặt bằng `validity.ts` ▸ `ValidityPlan.maxAheadMs`. Vắng ⟹ 1 giờ của SDK. */
+  validityMaxAheadMs?: bigint;
 }
 
 /** Ngữ cảnh mở thread Engage — không có vault đầu vào, không có thread đầu vào. */
@@ -361,6 +364,7 @@ export class SdkTxBuilder implements TxBuilderPort {
       lampAssetName: d.lampAssetNameHex,
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
+      ...(ctx.validityMaxAheadMs === undefined ? {} : { validityMaxAheadMs: ctx.validityMaxAheadMs }),
       refScriptUtxos: [...refScriptUtxos, gbShardRef!],
       ownerAuth: ctx.ownerAuth,
       collateralLovelace: ctx.collateralLovelace,
@@ -386,6 +390,7 @@ export class SdkTxBuilder implements TxBuilderPort {
       lampAssetName: this.deps.deployment.lampAssetNameHex,
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
+      ...(ctx.validityMaxAheadMs === undefined ? {} : { validityMaxAheadMs: ctx.validityMaxAheadMs }),
       refScriptUtxos,
       collateralLovelace: ctx.collateralLovelace,
     }));
@@ -428,6 +433,7 @@ export class SdkTxBuilder implements TxBuilderPort {
       gbShardCapNanogic: p.gbShardCapNanogic,
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
+      ...(ctx.validityMaxAheadMs === undefined ? {} : { validityMaxAheadMs: ctx.validityMaxAheadMs }),
       ownerAuth: ctx.ownerAuth,
       collateralLovelace: ctx.collateralLovelace,
       // Két Wakeme vào REFERENCE INPUTS; bộ dựng đọc lại bằng `readWakemeVault` trên chính UTxO
@@ -454,6 +460,7 @@ export class SdkTxBuilder implements TxBuilderPort {
       ...(p.wakemeVaultUtxo === undefined ? {} : { wakemeVaultUtxo: p.wakemeVaultUtxo }),
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
+      ...(ctx.validityMaxAheadMs === undefined ? {} : { validityMaxAheadMs: ctx.validityMaxAheadMs }),
       ownerAuth: ctx.ownerAuth,
       collateralLovelace: ctx.collateralLovelace,
     }));
@@ -533,6 +540,7 @@ export class SdkTxBuilder implements TxBuilderPort {
       vaultRefUtxo: vaultRef,
       network: this.deps.network,
       tipPosixMs: ctx.tip.blockTimePosixMs,
+      ...(ctx.validityMaxAheadMs === undefined ? {} : { validityMaxAheadMs: ctx.validityMaxAheadMs }),
       collateralLovelace: ctx.collateralLovelace,
       // Vắng trong cấu hình ⟹ undefined ⟹ bộ dựng không kiểm, validator vẫn ép.
       maxPriceStale: d.consume.maxPriceStale,
@@ -859,6 +867,8 @@ export class RecordedTxBuilder implements TxBuilderPort {
     route: string; params: unknown; ownerAuthKind?: "key" | "script"; changeAddress?: string;
     funding?: CreateVaultContext["funding"]; feePayerUtxo?: UTxO; collateralLovelace?: bigint; engageUtxo?: UTxO;
     validToMs?: bigint;
+    /** Cận `validTo − tip` giao cho bộ dựng tự tính cửa sổ epoch (gen/consume/schedule). */
+    validityMaxAheadMs?: bigint;
     wakeme?: InstantGenBuildParams["wakeme"];
     /** Tham số đầy đủ mà tầng dịch vụ giao xuống (Gen v2.0: UTxO beacon/shard, apply-param). */
     buildParams?: unknown;
@@ -880,6 +890,8 @@ export class RecordedTxBuilder implements TxBuilderPort {
     if (b?.collateralLovelace !== undefined) this.lastCall.collateralLovelace = b.collateralLovelace;
     const validToMs = (ctx as { validToMs?: bigint } | undefined)?.validToMs;
     if (validToMs !== undefined) this.lastCall.validToMs = validToMs;
+    const maxAhead = (ctx as { validityMaxAheadMs?: bigint } | undefined)?.validityMaxAheadMs;
+    if (maxAhead !== undefined) this.lastCall.validityMaxAheadMs = maxAhead;
     const cbor = this.txCborByRoute[route];
     if (cbor === undefined) throw new Error(`[RecordedTxBuilder] không có CBOR ghi sẵn cho "${route}".`);
     return { txCbor: cbor };

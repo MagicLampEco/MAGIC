@@ -26,11 +26,12 @@ import {
   INPUT_TX_HASH, LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OWNER_PKH,
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
-import { buildTxCbor } from "./fixtures/tx.js";
+import { buildTxCbor, prerecordedTtlSlot } from "./fixtures/tx.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preview");
 const FEE = 190_000n;
 const DEPOSIT = 1_001_000_000n;
 const TIP: ChainTip = { blockHeight: 1, blockHash: "14".repeat(32), blockTimePosixMs: BigInt(NOW) };
@@ -84,7 +85,7 @@ const DEPLOYMENT_JSON = {
 const DEPLOYMENT: Deployment = parseDeployment(JSON.stringify(DEPLOYMENT_JSON), "Preview");
 
 function createTxCbor(owner: OwnerRef, signers: string[]): string {
-  return buildTxCbor({
+  return buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 1 }],
     feeLovelace: FEE,
     mint: { [VAULT_ID_UNIT]: 1n },
@@ -118,7 +119,7 @@ function harness(opts: { anchors?: UTxO[]; resolver?: boolean; signers?: string[
       };
     },
   }) as unknown as TxBuilderPort;
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks: new OwnerLockTable(TTL),
     issued, lockTtlMs: TTL, now: () => NOW,

@@ -36,7 +36,7 @@ import { GB_SHARD_POLICY, GEN_V2_REF_SCRIPTS, addrOf, genV2Chain, genV2Json } fr
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
 const TIP: ChainTip = { blockHeight: 1, blockHash: "14".repeat(32), blockTimePosixMs: BigInt(NOW) };
-const TTL_SLOT = BigInt(unixTimeToSlot("Preview", NOW + 1_800_000));
+const TTL_SLOT = BigInt(unixTimeToSlot("Preview", NOW + 600_000));
 const KEY_OWNER: OwnerRef = { type: "key", hash: OWNER_PKH };
 const SCRIPT_OWNER: OwnerRef = { type: "script", hash: OWNER_PKH };
 const OWNER_WALLET = enterpriseAddressOf("Preview", OWNER_PKH);
@@ -267,7 +267,7 @@ function harness(o: {
   );
   const builder = new RecordedTxBuilder(o.cbor, VAULT_ID_UNIT, THREAD_UNIT);
   if (o.coinsPerUtxoByte !== undefined) builder.coinsPerUtxoByteValue = o.coinsPerUtxoByte;
-  const issued = new IssuedTxRegistry(TTL * 4);
+  const issued = new IssuedTxRegistry();
   const locks = new OwnerLockTable(TTL);
   const service = new VaultTxService({
     network: "Preview", deployment, chain, builder, locks, issued, lockTtlMs: TTL, now: () => NOW,
@@ -445,7 +445,7 @@ describe("/tx/open-thread qua ví trả phí — chủ có 0 UTxO", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(feePayerOf(r)).toMatchObject({ fronted_lovelace: "2000000", fronted_output_index: 0 });
     expect(h.builder.lastCall).toMatchObject({
-      feePayerUtxo: FEE_UTXO, collateralLovelace: 3_000_000n, validToMs: BigInt(NOW) + 3_600_000n, changeAddress: FEE_ADDRESS,
+      feePayerUtxo: FEE_UTXO, collateralLovelace: 3_000_000n, validToMs: BigInt(NOW) + 900_000n, changeAddress: FEE_ADDRESS,
     });
     expect(h.issued.lookup(txHashOf(r), NOW)?.feePayerUtxo).toBe(FEE_PAYER.utxo);
   });
@@ -476,7 +476,7 @@ describe("/tx/bind-did qua ví trả phí — chủ có 0 UTxO", () => {
     const r = await handle(bind(), h.router);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(feePayerOf(r)).toMatchObject({ fronted_lovelace: "0", fronted_output_index: null });
-    expect(h.builder.lastCall).toMatchObject({ feePayerUtxo: FEE_UTXO, validToMs: BigInt(NOW) + 3_600_000n });
+    expect(h.builder.lastCall).toMatchObject({ feePayerUtxo: FEE_UTXO, validToMs: BigInt(NOW) + 900_000n });
     expect(h.issued.lookup(txHashOf(r), NOW)?.feePayerUtxo).toBe(FEE_PAYER.utxo);
   });
 
@@ -501,7 +501,7 @@ describe("/tx/create-vault két instant 0 LAMP qua ví trả phí — chủ có 
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(feePayerOf(r)).toMatchObject({ fronted_lovelace: NEW_VAULT_LOVELACE.toString(), fronted_output_index: 0 });
     expect(h.builder.lastCall).toMatchObject({
-      feePayerUtxo: FEE_UTXO, collateralLovelace: 3_000_000n, validToMs: BigInt(NOW) + 3_600_000n, changeAddress: FEE_ADDRESS,
+      feePayerUtxo: FEE_UTXO, collateralLovelace: 3_000_000n, validToMs: BigInt(NOW) + 900_000n, changeAddress: FEE_ADDRESS,
     });
     expect(h.builder.lastCall?.funding).toBeUndefined();
     expect(h.issued.lookup(txHashOf(r), NOW)?.feePayerUtxo).toBe(FEE_PAYER.utxo);

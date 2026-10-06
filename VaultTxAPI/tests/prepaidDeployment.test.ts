@@ -173,7 +173,7 @@ describe("cổng route — khối Prepaid ⟹ 501 VAULT_KIND_UNSUPPORTED TRƯỚ
       chain,
       builder,
       locks: new OwnerLockTable(180_000),
-      issued: new IssuedTxRegistry(720_000),
+      issued: new IssuedTxRegistry(),
       lockTtlMs: 180_000,
       now: () => 1_789_100_703_000,
     });

@@ -264,6 +264,8 @@ export {
   planBurnBatch,
   isBatchExpired,
   applyPendingProfile,
+  BurnEntriesOverCapError,
+  MAX_BURN_ENTRIES_PER_TX,
   type VaultModule,
   type BuildVaultBurnBatchParams,
   type BuildVaultBurnBatchResult,

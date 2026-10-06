@@ -31,6 +31,9 @@
 //   400 CONSUME_PAIR_COUNT_INVALID / CONSUME_PAIR_TYPE_INVALID  `op_count` không phải chuỗi chữ số ≥ 1
 //                                (≤ 20 chữ số) / `op_type` không phải số nguyên trong [0, 1000000]
 //   422 CONSUME_TX_MISMATCH      tx tiêu vừa dựng lệch lượt tiêu đã yêu cầu (`consumeLine.ts` ▸ `checkConsumeTx`)
+//   422 CONSUME_TOO_MANY_BATCHES lượt tiêu phải đốt từ nhiều lô hơn một tx chở được, kể cả cách ít lô nhất
+//                                (`MagicSDK` ▸ `MAX_BURN_ENTRIES_PER_TX`); `details.burn_entries_needed` ·
+//                                `burn_entries_cap` · `live_batches`. Ném TRƯỚC khi dựng tx (`txBuilder.ts` ▸ `asProtocolError`)
 //   409 ENGAGE_THREAD_EXISTS     `/tx/open-thread` khi chủ đã có thread
 //   422 ENGAGE_THREAD_DATUM_UNDECODABLE  `engage_ref` mang NFT nhưng datum không giải được
 //   422 OPEN_THREAD_TX_MISMATCH  giao dịch mở thread vừa dựng lệch (NFT/output/datum genesis)

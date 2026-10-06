@@ -373,6 +373,16 @@ này phải xét lại. Bên gọi không phải rẽ nhánh: `summary.consume` 
 datum thread giữ chủ, `consumed_count` tăng Σ `op_count`, `consumed_nanogic` tăng `required` > 0
 và bằng `magic.burned_nanogic` của két. Lệch ⟹ `422 CONSUME_TX_MISMATCH`, không có tx nào để ký.
 
+**Trần số lô đốt trong MỘT tx tiêu.** Redeemer `BurnBatch { burns }` có một mục cho mỗi lô bị
+đốt, và `apply_burns` duyệt toàn bộ danh sách lô cho mỗi mục, nên chi phí ExUnit tăng theo tích
+số lô × số mục. Bộ dựng của SDK giới hạn số mục ở `MagicSDK/src/burnBatch.ts` ▸
+`MAX_BURN_ENTRIES_PER_TX` (giá trị, phép đo và phần CHƯA ĐO nằm ở chú thích của chính hằng đó —
+đừng chép số xuống đây). Chọn lô: đốt lô sắp hết hạn trước; cách đó cần quá trần thì đổi sang lô
+lớn trước (ít mục nhất); vẫn quá trần ⟹ `422 CONSUME_TOO_MANY_BATCHES`, ném TRƯỚC khi dựng tx,
+`details` = `{ burn_entries_needed, burn_entries_cap, live_batches }`. App rẽ nhánh theo mã này để
+gợi ý chia lượt tiêu nhỏ hơn. Lô còn sống mà số dư đã về 0 (két Instant giữ lô đốt sạch tới hết
+epoch) không thành mục đốt — validator đòi mỗi mục `amt > 0`.
+
 ### `POST /tx/schedule-commit`: validator `commit`
 
 Nhánh ký của két Schedule v2.0 uỷ cho validator withdraw-zero `commit`, và lượt commit đọc
@@ -1391,6 +1401,7 @@ Nên:
 | `op_type` không tăng ngặt (kể cả trùng) | `400 CONSUME_PAIRS_NOT_INCREASING` |
 | `op_count` không phải chuỗi chữ số ≥ 1, ≤ 20 chữ số / `op_type` ngoài số nguyên [0, 1000000] | `400 CONSUME_PAIR_COUNT_INVALID` / `400 CONSUME_PAIR_TYPE_INVALID` |
 | tx tiêu vừa dựng lệch lượt tiêu đã yêu cầu (thread, redeemer, output, datum, Σburns) | `422 CONSUME_TX_MISMATCH` |
+| lượt tiêu phải đốt từ nhiều lô hơn một tx chở được, kể cả cách ít lô nhất (`MAX_BURN_ENTRIES_PER_TX`) | `422 CONSUME_TOO_MANY_BATCHES` (`details.burn_entries_needed` · `burn_entries_cap` · `live_batches`) |
 | `/tx/open-thread` khi chủ đã có thread | `409 ENGAGE_THREAD_EXISTS` |
 | `engage_ref` mang NFT nhưng datum không giải được | `422 ENGAGE_THREAD_DATUM_UNDECODABLE` |
 | tx mở thread vừa dựng lệch (NFT / output / datum genesis) | `422 OPEN_THREAD_TX_MISMATCH` |

@@ -1,6 +1,7 @@
 // VaultTxAPI/src/locks.ts — khoá mềm theo chủ: lượt dựng MỚI NHẤT thay lượt cũ; xung đột bắt
 // ở lúc NỘP, không ở lúc dựng.
 //
+import { TxExpiredError } from "./errors.js";
 import { CLOCK_SKEW_MARGIN_MS } from "./validity.js";
 
 /** Dòng sổ phát-hành quá hạn nộp còn nằm lại bấy lâu để `/tx/submit` trả 410 `TX_EXPIRED` (thay vì
@@ -312,6 +313,16 @@ export function submissionStateOf(e: IssuedTxEntry): SubmissionState {
   if (e.submittedAtMs !== undefined) return "accepted";
   if (e.submitUnconfirmedAtMs !== undefined) return "unconfirmed";
   return "none";
+}
+
+/** 410 `TX_EXPIRED` cho một tx ĐÃ phát mà nay quá hạn nộp (`IssuedTxRegistry.expiredEntry`) — MỘT chỗ
+ *  dựng cho cả `/tx/submit` lẫn `/fee/sign`, để hai đường trả cùng `details` (`expired_at` = `validTo`
+ *  dạng ISO 8601, `rebuild_safe`, `submission`). `null` ⟹ tx chưa từng phát, hoặc dòng đã quá
+ *  `EXPIRED_RETENTION_MS`: bên gọi giữ mã lỗi cũ của đường mình. */
+export function expiredErrorFor(issued: IssuedTxRegistry, txHash: string, nowMs: number): TxExpiredError | null {
+  const e = issued.expiredEntry(txHash, nowMs);
+  if (e === null) return null;
+  return new TxExpiredError(txHash, new Date(e.validToMs).toISOString(), submissionStateOf(e));
 }
 
 export class IssuedTxRegistry {

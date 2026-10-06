@@ -36,7 +36,7 @@ import type { FeecoverAppSettings, FeecoverSettings } from "./config.js";
 import { FEECOVER_DEFAULT_APP } from "./config.js";
 import { BadRequestError, CodedApiError, TxSupersededError } from "./errors.js";
 import type { IssuedRoute, IssuedTxRegistry } from "./locks.js";
-import { FEE_PURPOSE_ROUTES, submissionStateOf, type FeePurposeRoute } from "./locks.js";
+import { FEE_PURPOSE_ROUTES, expiredErrorFor, submissionStateOf, type FeePurposeRoute } from "./locks.js";
 import { txBodyHash } from "./summary.js";
 
 /** Tập con của `fetch` mà proxy dùng — tiêm được để phép kiểm chạy bộ giả, không gọi mạng. */
@@ -167,6 +167,12 @@ export class FeeProxy {
     }
 
     const entry = this.deps.issued.lookup(hash, this.now());
+    if (entry === null) {
+      // Tx CHÍNH dịch vụ phát nhưng quá validTo + biên ⟹ 410 cùng khuôn `/tx/submit`
+      // (`locks.ts` ▸ `expiredErrorFor`), không phải "không do dịch vụ phát".
+      const expired = expiredErrorFor(this.deps.issued, hash, this.now());
+      if (expired !== null) throw expired;
+    }
     if (entry === null || entry.signableUntilMs <= this.now()) {
       throw new CodedApiError(403, "FEE_PROXY_TX_NOT_ISSUED",
         `Giao dịch ${hash} không do dịch vụ này phát, hoặc đã quá hạn xin ký (hết giờ giữ UTxO phí ` +

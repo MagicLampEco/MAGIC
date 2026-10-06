@@ -585,8 +585,28 @@ describe("sổ phát-hành: hạn ký theo reserved_until", () => {
     const { cbor } = await issueConsume(h);
     h.clock.t = NOW + 61_000;
     expect((await h.call("POST", "/fee/sign", { tx_cbor: cbor })).status).toBe(200);
+    // Quá validTo + biên: tx ĐÃ phát ⟹ 410 TX_EXPIRED (đảo 2026-10-06; bản cũ đợi 403 NOT_ISSUED).
     h.clock.t = NOW + REGISTRY_TTL + 1;
-    expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("FEE_PROXY_TX_NOT_ISSUED");
+    expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("TX_EXPIRED");
+  });
+
+  it("tx ĐÃ phát, quá validTo + biên ⟹ 410 TX_EXPIRED cùng details /tx/submit, Feecover KHÔNG bị gọi; CẶP: tx chưa từng phát cùng giờ ⟹ 403", async () => {
+    const h = harness();
+    const { cbor } = await issueConsume(h);
+    const hash = txBodyHash(cbor);
+    h.clock.t = NOW + REGISTRY_TTL + 1;
+    const r = await h.call("POST", "/fee/sign", { tx_cbor: cbor });
+    expect(r.status).toBe(410);
+    expect(codeOf(r)).toBe("TX_EXPIRED");
+    // expired_at = validTo của thân tx (ttl fixture NOW + 10′), KHÔNG phải mốc sổ (validTo + biên).
+    expect(detailsOf(r)).toEqual({
+      tx_hash: hash, expired_at: new Date(NOW + 600_000).toISOString(), rebuild_safe: true, submission: "none",
+    });
+    expect(h.fc.calls).toHaveLength(0);
+
+    const never = await h.call("POST", "/fee/sign", { tx_cbor: consumeTx() });
+    expect(never.status).toBe(403);
+    expect(codeOf(never)).toBe("FEE_PROXY_TX_NOT_ISSUED");
   });
 
   // Chính sách LẬT 2026-10-06: bản cũ kéo dòng sống tới reserved_until. Nay dòng hết đúng tại
@@ -598,7 +618,7 @@ describe("sổ phát-hành: hạn ký theo reserved_until", () => {
     h.clock.t = NOW + REGISTRY_TTL - 1;
     expect((await h.call("POST", "/fee/sign", { tx_cbor: cbor })).status).toBe(200);
     h.clock.t = NOW + REGISTRY_TTL + 30_000;
-    expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("FEE_PROXY_TX_NOT_ISSUED");
+    expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("TX_EXPIRED");
   });
 });
 

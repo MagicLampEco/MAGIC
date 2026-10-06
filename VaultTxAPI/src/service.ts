@@ -35,14 +35,14 @@ import {
   refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike,
 } from "./feePayer.js";
 import {
-  BadRequestError, CodedApiError, ConfigMissingError, SubmitRejectedError, TxExpiredError, TxSummaryUndecodableError,
+  BadRequestError, CodedApiError, ConfigMissingError, SubmitRejectedError, TxSummaryUndecodableError,
   TxSupersededError, ownerApiErrorOf,
 } from "./errors.js";
 import {
   ownerLockKey, type OwnerInput, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
 } from "./owner.js";
 import { resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
-import { IssuedTxRegistry, OwnerLockTable, PendingSpends, submissionStateOf, type IssuedRoute } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable, PendingSpends, expiredErrorFor, submissionStateOf, type IssuedRoute } from "./locks.js";
 import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
   type CreateVaultSummary, type RequestedIntent, type TxSummary,
@@ -1274,10 +1274,8 @@ export class VaultTxService {
     const issuedEntry = this.deps.issued.lookup(bodyHashBefore, this.now());
     if (issuedEntry === null) {
       // Tx CHÍNH dịch vụ phát nhưng quá validTo + biên ⟹ 410, không phải "không do dịch vụ dựng".
-      const expired = this.deps.issued.expiredEntry(bodyHashBefore, this.now());
-      if (expired !== null) {
-        throw new TxExpiredError(bodyHashBefore, new Date(expired.validToMs).toISOString(), submissionStateOf(expired));
-      }
+      const expired = expiredErrorFor(this.deps.issued, bodyHashBefore, this.now());
+      if (expired !== null) throw expired;
       throw new SubmitRejectedError(
         "Giao dịch này không do dịch vụ dựng ra, hoặc đã quá hạn nộp. Dịch vụ chỉ nộp " +
         "giao dịch chính nó vừa phát hành — hãy gọi lại một trong các đường /tx/* để " +

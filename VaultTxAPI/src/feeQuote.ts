@@ -1,10 +1,22 @@
 // VaultTxAPI/src/feeQuote.ts — `POST /tx/quote`: báo giá phí cho HAI nguồn trả phí, TRƯỚC khi dựng.
 //
 //   { route, params, [owner_fee_addresses] }
-//   → { feecover:      { fee_lovelace, available, [reason], [rule], [message], [upstream_status] },
-//       owner_address: { fee_lovelace, available, needed_lovelace, collateral_lovelace,
-//                        [fee_payer: { utxo, address }], [reason] },
+//   → { feecover:      { fee_lovelace, fronted_lovelace, available, [reason], [rule], [message],
+//                        [upstream_status] },
+//       owner_address: { fee_lovelace, fronted_lovelace, available, needed_lovelace,
+//                        collateral_lovelace, [fee_payer: { utxo, address }], [reason] },
 //       valid_until }
+//
+// `fronted_lovelace` (chuỗi thập phân, như mọi trường tiền) = min-ADA mà ví trả phí phải ỨNG cho
+// output két / thread mới hoặc output dùng chung (shard GreenBack dựng lại) — chi phí CHÌM: két
+// không có nhánh nào trả lovelace ra. ĐỌC LẠI từ CBOR của lượt dựng báo giá, bằng đúng hàm của
+// đường dựng thật (`feePayer.ts` ▸ `checkFeePayerTx`: `summary.fee_payer.fronted_lovelace`, hoặc
+// `summary.funding.fee_payer.fronted_lovelace` với create-vault) — không hằng thứ hai ở tệp này.
+// LUÔN CÓ ở cả hai khối, kể cả `available = false`: lượt dựng nào cũng đọc được nó, nên `"0"` là
+// số đo thật ("route này không ứng output nào"), KHÔNG phải số đệm — và nó đã nằm trong
+// `needed_lovelace` (vế `phí + khoản ứng`). Hai nguồn đi qua cùng đường dựng ⟹ cùng khoản ứng;
+// khối owner lấy từ lượt dựng ĐÚNG UTxO đã chọn khi `available = true`, còn lại là số LỚN NHẤT
+// qua mọi ngưỡng (như `fee_lovelace`).
 //
 // ── HAI NGUỒN, HAI GIAO DỊCH CHỈ KHÁC ĐÚNG MỘT INPUT ──────────────────────────────
 // Cả hai nguồn đi qua ĐÚNG đường dựng của `route` (`buildRequest.ts` ▸ `runBuild`, chế độ
@@ -69,6 +81,9 @@ export type FeeQuoteReason =
 export interface FeeQuoteResponse {
   feecover: {
     fee_lovelace: string;
+    /** Min-ADA ví trả phí ỨNG cho output két/thread/shard (đã gồm phần dùng chung). Luôn có;
+     *  `"0"` = đường dựng đo được không ứng gì. Đọc lại từ CBOR của lượt dựng báo giá. */
+    fronted_lovelace: string;
     /** `true` CHỈ khi Feecover trả lời `/v1/fee-sources` với `available: true`. */
     available: boolean;
     /** Có đúng khi `available = false`. */
@@ -81,6 +96,9 @@ export interface FeeQuoteResponse {
   };
   owner_address: {
     fee_lovelace: string;
+    /** Như `feecover.fronted_lovelace`. `available = true` ⟹ của lượt dựng với UTxO đã chọn;
+     *  ngược lại ⟹ số lớn nhất qua các ngưỡng đã đo (hoặc của ví tổng hợp khi chưa có địa chỉ). */
+    fronted_lovelace: string;
     available: boolean;
     needed_lovelace: string;
     /** Thế chấp tường minh bản deploy đặt (`deployment.feePayerCollateralLovelace`): khoản UTxO
@@ -185,6 +203,8 @@ function pureAdaMinCoin(address: string, coinsPerUtxoByte: bigint): bigint {
 
 interface Measured {
   fee: bigint;
+  /** Khoản ứng min-ADA đọc lại từ CBOR (`feePayerFigures`) — `0n` là số đo thật, không đệm. */
+  fronted: bigint;
   needed: bigint;
   /** min(hạn dùng của tx trong CBOR, `expires_at` đường dựng trả). */
   horizonMs: number;
@@ -239,13 +259,13 @@ export async function quoteFee(body: Record<string, unknown>, deps: FeeQuoteDeps
   const horizons = [generic.horizonMs];
 
   // Hỏi Feecover SAU lượt dựng đầu: `params` hỏng thì báo giá dừng ở trên, Feecover không bị hỏi.
-  const feecover: FeeQuoteResponse["feecover"] = { fee_lovelace: raw(generic.fee), ...await feecoverSource(deps.feeProxy, route) };
+  const feecover: FeeQuoteResponse["feecover"] = { fee_lovelace: raw(generic.fee), fronted_lovelace: raw(generic.fronted), ...await feecoverSource(deps.feeProxy, route) };
 
   let owner: FeeQuoteResponse["owner_address"] | undefined;
   if (ownerFeeAddresses.length === 0) {
     // Không biết địa chỉ ⟹ số của ví tổng hợp: một ƯỚC LƯỢNG chặn trên (README §`/tx/quote`).
-    owner = { fee_lovelace: raw(generic.fee), available: false, needed_lovelace: raw(generic.needed),
-      collateral_lovelace, reason: "FEE_QUOTE_OWNER_ADDRESSES_ABSENT" };
+    owner = { fee_lovelace: raw(generic.fee), fronted_lovelace: raw(generic.fronted), available: false,
+      needed_lovelace: raw(generic.needed), collateral_lovelace, reason: "FEE_QUOTE_OWNER_ADDRESSES_ABSENT" };
   } else {
     // Ngưỡng theo TỪNG địa chỉ, bằng một lượt tổng hợp ở ĐÚNG địa chỉ đó: phí phụ thuộc độ dài
     // địa chỉ và việc khoá ví có trùng khoá chủ không (bảng đo ở trên), nên hai địa chỉ có hai
@@ -265,7 +285,7 @@ export async function quoteFee(body: Record<string, unknown>, deps: FeeQuoteDeps
       // một trục chưa đo — khi đó UTxO kế tiếp (lớn hơn) được thử, không trả một UTxO không đủ.
       if (lovelaceOf(c.utxo) < real.needed) continue;
       owner = {
-        fee_lovelace: raw(real.fee), available: true, needed_lovelace: raw(c.threshold.needed), collateral_lovelace,
+        fee_lovelace: raw(real.fee), fronted_lovelace: raw(real.fronted), available: true, needed_lovelace: raw(c.threshold.needed), collateral_lovelace,
         fee_payer: { utxo: refStr(c.utxo), address: c.utxo.address },
       };
       break;
@@ -275,7 +295,9 @@ export async function quoteFee(body: Record<string, unknown>, deps: FeeQuoteDeps
       // gửi tới địa chỉ nào trong mảng cũng đủ.
       const fee = perAddress.map(a => a.threshold.fee).reduce(maxBig);
       const needed = perAddress.map(a => a.threshold.needed).reduce(maxBig);
-      owner = { fee_lovelace: raw(fee), available: false, needed_lovelace: raw(needed), collateral_lovelace,
+      const fronted = perAddress.map(a => a.threshold.fronted).reduce(maxBig);
+      owner = { fee_lovelace: raw(fee), fronted_lovelace: raw(fronted), available: false,
+        needed_lovelace: raw(needed), collateral_lovelace,
         reason: perAddress.some(a => a.pureAda.length > 0) ? "FEE_QUOTE_OWNER_INSUFFICIENT" : "FEE_QUOTE_OWNER_NO_ADA_UTXO" };
     }
   }
@@ -445,7 +467,7 @@ async function measureOnce(
     };
   }
   return {
-    fee: fp.fee, needed, horizonMs: Math.min(Number(fp.validToMs), Date.parse(fp.expiresAt)),
+    fee: fp.fee, fronted: fp.fronted, needed, horizonMs: Math.min(Number(fp.validToMs), Date.parse(fp.expiresAt)),
     ...(gen === undefined ? {} : { gen }),
   };
 }
@@ -482,7 +504,7 @@ function feePayerFigures(r: BuildResult): { fee: bigint; fronted: bigint; collat
  */
 async function feecoverSource(
   feeProxy: FeeProxy | undefined, route: IssuedRoute,
-): Promise<Omit<FeeQuoteResponse["feecover"], "fee_lovelace">> {
+): Promise<Omit<FeeQuoteResponse["feecover"], "fee_lovelace" | "fronted_lovelace">> {
   if (feeProxy === undefined) return { available: false, reason: "FEE_QUOTE_FEECOVER_UNCONFIGURED" };
   const a = await feeProxy.feeSources(route);
   const words = { ...(a.rule === undefined ? {} : { rule: a.rule }), ...(a.message === undefined ? {} : { message: a.message }) };

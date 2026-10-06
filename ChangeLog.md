@@ -5,6 +5,22 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-06 — Báo giá `/tx/quote` trả `fronted_lovelace` ở cả hai nguồn trả phí
+
+**Đổi gì.** `VaultTxAPI/src/feeQuote.ts`: khối `feecover` và `owner_address` thêm
+`fronted_lovelace` (chuỗi thập phân) = min-ADA ví trả phí phải ỨNG cho output két/thread mới và
+shard dùng chung. Số được đọc lại từ CBOR của lượt dựng báo giá bằng đúng hàm đường dựng thật
+(`feePayer.ts` ▸ `checkFeePayerTx`), không có công thức thứ hai. Luôn có, kể cả `available=false`;
+`"0"` là số đo thật (route không ứng output nào), không phải số đệm. README `VaultTxAPI` ghi hình
+dạng mới.
+
+**Vì sao.** Khoản ứng là chi phí chìm (két không có nhánh nào trả lovelace ra); SuperApp cần biết
+ví trả phí phải có bao nhiêu ngoài phí. Trước đây số này chỉ nằm trong `needed_lovelace` (gộp với
+phí), còn `owner_address` không trả riêng — đo 2026-10-06 trên `origin/main` @ `c7dd1f9e`.
+
+**Cái gì gãy nếu bám bản cũ.** Không gãy: chỉ thêm trường. Bên đọc phản hồi bằng so khớp nguyên
+đối tượng (`toEqual`) phải thêm `fronted_lovelace`.
+
 ## 2026-10-05 — `create-vault` đọc script vault qua ref CIP-33, không đính inline
 
 **Đổi gì.** `MagicSDK/src/createVault.ts` nhận tham số BẮT BUỘC `vaultRefScriptUtxo` (cùng khuôn

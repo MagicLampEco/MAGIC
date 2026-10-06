@@ -29,11 +29,12 @@ import {
   INPUT_TX_HASH, LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OTHER_OWNER_PKH, OWNER_PKH,
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
-import { buildTxCbor, type TxSpec } from "./fixtures/tx.js";
+import { buildTxCbor, type TxSpec, prerecordedTtlSlot } from "./fixtures/tx.js";
 
 const NET = "Preprod" as const;
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preprod");
 const TIP: ChainTip = {
   blockHeight: 4_651_976,
   blockHash: "14ae149dd07cd25ce37a6a4336f3939446bd68d9ad4a2e820201a474cc3ad72f",
@@ -76,7 +77,7 @@ type Pair = { opType: number; opCount: bigint };
 
 /** Vế KÉT: đốt `burned` khỏi lô sống, `consumed_credit` tăng đúng bấy nhiêu. */
 function vaultSide(burned: bigint): TxSpec {
-  return {
+  return { ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [VAULT_REF],
     feeLovelace: 178_000n,
     outputs: [{

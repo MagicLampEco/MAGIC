@@ -20,8 +20,12 @@ import { CML, assetsToValue, unixTimeToSlot } from "@lucid-evolution/lucid";
  * nó chọn (hạn ký mặc định 15 phút). 10 phút sau đỉnh chuỗi thoả cả ba.
  */
 export const PRERECORDED_VALIDITY_MS = 600_000;
-export function prerecordedTtlSlot(tipPosixMs: number, aheadMs = PRERECORDED_VALIDITY_MS): bigint {
-  return BigInt(unixTimeToSlot("Preview", tipPosixMs + aheadMs));
+export function prerecordedTtlSlot(
+  tipPosixMs: number, aheadMs = PRERECORDED_VALIDITY_MS, network: "Preview" | "Preprod" = "Preview",
+): bigint {
+  // Slot là theo MẠNG: cùng một slot đọc dưới Preview và Preprod lệch nhau ~127 ngày, nên CBOR ghi
+  // sẵn phải mang slot của đúng mạng mà dịch vụ trong bài đó chạy.
+  return BigInt(unixTimeToSlot(network, tipPosixMs + aheadMs));
 }
 
 export interface TxOutputSpec {

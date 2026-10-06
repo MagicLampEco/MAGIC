@@ -43,7 +43,7 @@ const KEY_OWNER = { type: "key" as const, hash: OWNER_PKH };
 /** Địa chỉ khoá (enterprise) của chính chủ — nguồn `owner_address`. */
 const OWNER_FEE_ADDRESS = enterpriseAddressOf("Preview", OWNER_PKH);
 const COLLATERAL = 3_000_000n;
-const VALID_TO_MS = NOW + 1_800_000;
+const VALID_TO_MS = NOW + 600_000;
 
 const utxo = (txHash: string, outputIndex: number, address: string, assets: Record<string, bigint>, datum?: string): UTxO =>
   ({ txHash, outputIndex, address, assets, datum });
@@ -341,8 +341,9 @@ describe("/tx/quote — thân bài", () => {
     const b = bodyOf(await handle(quote({ route: "consume", params: CONSUME, owner_fee_addresses: [OWNER_FEE_ADDRESS] }), h.router));
     expect(b.feecover).toEqual({ fee_lovelace: String(FEE_BASE), available: true });
     expect(b.owner_address).toEqual(ownerPicked(ownerAda(50_000_000n)));
-    // expires_at = NOW + TTL (180 s) < validTo = NOW + 30 phút ⟹ lấy cái NGẮN hơn.
-    expect(b.valid_until).toBe(new Date(NOW + TTL).toISOString());
+    // Một nguồn hạn (validity.ts): expires_at nay đọc NGƯỢC từ validTo của chính CBOR, nên
+    // min(validTo, expires_at) = validTo (NOW + 10 phút), không còn là NOW + TTL khoá mềm.
+    expect(b.valid_until).toBe(new Date(VALID_TO_MS).toISOString());
   });
 
   it("CẶP: route lạ ⟹ 400 FEE_QUOTE_ROUTE_UNKNOWN; trường lạ ⟹ 400 FEE_QUOTE_SHAPE; bộ dựng không bị gọi", async () => {

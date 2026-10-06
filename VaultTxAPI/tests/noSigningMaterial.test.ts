@@ -138,6 +138,9 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
       "VAULT_TX_API_EXTRA_DEPLOYMENT_FILES",
       "VAULT_TX_API_EXTRA_VAULT_PLUTUS_JSONS",
       "VAULT_TX_API_CHANGE_ADDRESS_STRATEGY",
+      // Hạn ký của tx (`validity.ts`) và hạn sổ input vừa nộp — hai khoảng thời gian, không phải bí mật.
+      "VAULT_TX_API_TX_VALIDITY_MS",
+      "VAULT_TX_API_PENDING_SPENDS_TTL_MS",
       "VAULT_TX_API_VAULT_PLUTUS_JSON",
       "VAULT_TX_API_BLOCKFROST_URL",
       "VAULT_TX_API_HOST",

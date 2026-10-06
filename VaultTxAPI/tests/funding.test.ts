@@ -117,7 +117,7 @@ function fundedTx(o: FundedOpts & { oldShape?: boolean } = {}): string {
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: o.collateralReturn ?? 7_000_000n } },
     // Thứ tự đã sắp của ledger: d1… < d2… < fa… ⟹ DP1 = 0, DP2 = 1.
     spendRedeemers: o.redeemers ?? [{ index: 0, dataHex: SPEND }, { index: 1, dataHex: SPEND }],
-    ttlSlot: o.ttlMs === null ? undefined : BigInt(unixTimeToSlot("Preview", NOW + (o.ttlMs ?? 1_800_000))),
+    ttlSlot: o.ttlMs === null ? undefined : BigInt(unixTimeToSlot("Preview", NOW + (o.ttlMs ?? 600_000))),
   });
 }
 
@@ -209,7 +209,7 @@ describe("POST /tx/create-vault + funding did_payment — dương", () => {
         fronted_lovelace: "5000000", fronted_max_lovelace: "5000000",
         collateral_at_risk_lovelace: "3000000",
       },
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect(h.builder.lastCall?.changeAddress).toBe(FEE_ADDRESS);
     // Thế chấp tường minh = trần cấu hình (mặc định 3 ADA), không để lucid tự đặt 5 ADA.
@@ -407,7 +407,7 @@ describe("checkFundingTx — ca biên két 0 LAMP: không chi did_payment", () =
     ],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
-    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 1_800_000)),
+    ttlSlot: BigInt(unixTimeToSlot("Preview", NOW + 600_000)),
   });
 
   it("vault 0 LAMP, 0 input did_payment, không chữ ký controller/thiết bị ⟹ qua; did_payment_inputs rỗng, ví trả phí ứng trọn lovelace vault", () => {

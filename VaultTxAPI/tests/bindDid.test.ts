@@ -19,10 +19,11 @@ import { ENGAGE_ADDRESS, ENGAGE_SCRIPT_HASH, engageDatumHex, threadUtxo, type En
 import {
   LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, OTHER_OWNER_PKH, OWNER_PKH, SHARD_ADDRESS, VAULT_ADDRESS,
 } from "./fixtures/preview.js";
-import { buildTxCbor } from "./fixtures/tx.js";
+import { buildTxCbor, prerecordedTtlSlot } from "./fixtures/tx.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preview");
 const TIP: ChainTip = { blockHeight: 1, blockHash: "14".repeat(32), blockTimePosixMs: BigInt(NOW) };
 const KEY_OWNER = { type: "key" as const, hash: OWNER_PKH };
 const OTHER_OWNER = { type: "key" as const, hash: OTHER_OWNER_PKH };
@@ -71,7 +72,7 @@ interface BindTxOpts {
 
 /** Tx BindDID "đúng": tiêu thread + một UTxO ví, trả thread nguyên value, datum chỉ đổi did_commit. */
 function bindTx(o: BindTxOpts = {}): string {
-  return buildTxCbor({
+  return buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: THREAD_TX, outputIndex: 0 }, WALLET_IN],
     feeLovelace: 190_000n,
     ...(o.mint === undefined ? {} : { mint: o.mint }),
@@ -124,7 +125,7 @@ describe("/tx/bind-did — dương", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const b = r.body as Record<string, unknown> & { summary: { engage: Record<string, unknown> }; tx_hash: string };
     expect(Object.keys(b).sort()).toEqual([
-      "did_commit", "engage_address", "engage_nft", "expires_at", "owner", "required_signers", "summary",
+      "did_commit", "engage_address", "engage_nft", "expires_at", "expires_reason", "owner", "required_signers", "summary",
       "tx_cbor", "tx_hash", "witness_notes",
     ]);
     expect(b.did_commit).toBe(DID);

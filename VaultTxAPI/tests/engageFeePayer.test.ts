@@ -22,12 +22,13 @@ import {
   INPUT_TX_HASH, LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, LAMP_UNIT, OTHER_OWNER_PKH, OWNER_PKH,
   SHARD_ADDRESS, VAULT_ADDRESS, VAULT_ID_UNIT, datumHex,
 } from "./fixtures/preview.js";
-import { buildTxCbor, type TxOutputSpec } from "./fixtures/tx.js";
+import { buildTxCbor, type TxOutputSpec, prerecordedTtlSlot } from "./fixtures/tx.js";
 import { withConsumeLeg } from "./fixtures/consume.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 
 const TTL = 180_000;
 const NOW = 1_789_100_703_000;
+const FIXTURE_TTL_SLOT = prerecordedTtlSlot(NOW, undefined, "Preview");
 const TIP: ChainTip = { blockHeight: 1, blockHash: "14".repeat(32), blockTimePosixMs: BigInt(NOW) };
 const FEE = 178_000n;
 const KEY_OWNER = { type: "key" as const, hash: OWNER_PKH };
@@ -102,7 +103,7 @@ function feeTx(o: FeeTxOpts = {}): string {
     requiredSigners: [OWNER_PKH],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: o.collateralReturn ?? 7_000_000n } },
-    ttlSlot: o.ttlMs === null ? undefined : BigInt(unixTimeToSlot("Preview", NOW + (o.ttlMs ?? 1_800_000))),
+    ttlSlot: o.ttlMs === null ? undefined : BigInt(unixTimeToSlot("Preview", NOW + (o.ttlMs ?? 600_000))),
   };
   return buildTxCbor(o.consumeThread === undefined ? spec : withConsumeLeg(spec, {
     thread: o.consumeThread, vaultRef: ref(VAULT_UTXO), pairs: [{ opType: 1, opCount: 2n }], requiredNanogic: CONSUME_BURN,
@@ -117,7 +118,7 @@ interface OpenTxOpts {
 
 function openTx(o: OpenTxOpts = {}): string {
   const unit = o.mintUnit ?? THREAD_UNIT;
-  return buildTxCbor({
+  return buildTxCbor({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: "c0".repeat(32), outputIndex: 0 }],
     feeLovelace: 200_000n,
     mint: { [unit]: o.mintQty ?? 1n },
@@ -189,7 +190,7 @@ describe("fee_payer — dương", () => {
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
     expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
@@ -270,7 +271,7 @@ describe("fee_payer — schedule-fire", () => {
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
     expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
@@ -370,7 +371,7 @@ describe("fee_payer — consume", () => {
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
     expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);
@@ -405,7 +406,7 @@ describe("/tx/open-thread", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const b = r.body as Record<string, unknown> & { summary: { engage: Record<string, unknown> }; tx_hash: string };
     expect(Object.keys(b).sort()).toEqual([
-      "engage_address", "engage_nft", "expires_at", "owner", "required_signers", "summary", "tx_cbor", "tx_hash", "witness_notes",
+      "engage_address", "engage_nft", "expires_at", "expires_reason", "owner", "required_signers", "summary", "tx_cbor", "tx_hash", "witness_notes",
     ]);
     expect(b.engage_nft).toBe(THREAD_UNIT);
     expect(b.engage_address).toBe(ENGAGE_ADDRESS);
@@ -507,7 +508,7 @@ function instantGenFeeTx(): string {
     requiredSigners: [OWNER_PKH],
     collateralInputs: [ref(FEE_UTXO)],
     collateralReturn: { address: FEE_ADDRESS, assets: { lovelace: 7_000_000n } },
-    ttlSlot: BigInt(unixTimeToSlot("Preprod", NOW + 1_800_000)),
+    ttlSlot: BigInt(unixTimeToSlot("Preprod", NOW + 600_000)),
   });
 }
 
@@ -546,7 +547,7 @@ describe("fee_payer — instant-gen", () => {
       fronted_lovelace: "0", fronted_max_lovelace: "5000000", fronted_output_index: 0,
       shared_fronted_lovelace: "0", shared_fronted_outputs: [],
       collateral_at_risk_lovelace: "3000000", collateral_return_lovelace: "7000000",
-      valid_to_posix_ms: String(NOW + 1_800_000),
+      valid_to_posix_ms: String(NOW + 600_000),
     });
     expect(h.builder.lastCall?.feePayerUtxo).toBe(FEE_UTXO);
     expect(h.builder.lastCall?.collateralLovelace).toBe(3_000_000n);

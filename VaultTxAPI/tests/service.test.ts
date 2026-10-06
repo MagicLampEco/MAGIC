@@ -30,13 +30,14 @@ import {
 import { CLOCK_SKEW_MARGIN_MS } from "../src/validity.js";
 import { GEN_V2_REF_SCRIPTS, genV2Chain, genV2Json } from "./fixtures/genV2.js";
 import { ENGAGE_ADDRESS, threadUtxo } from "./fixtures/engage.js";
+import { BODY_SERVICE_SUBMIT, VKEY_A_HEX, flipFirstByte } from "./fixtures/witnessVectors.js";
 
 /**
  * Cho qua phép kiểm chứng ký — CHỈ cho các bài dùng CBOR ghi sẵn. Tx ghi sẵn mang
  * `required_signers = OWNER_PKH` (khoá Preview thật, không có khoá riêng trong kho) và
  * `fakeWitnessSetCbor` là byte hằng, nên phép kiểm thật chắc chắn bác; điều các bài đó đo là
  * đường ghép + sổ phát-hành + khoá mềm, không phải chữ ký. Phép kiểm chữ ký thật được đo ở
- * `witnessCheck.test.ts` và ở khối "chữ ký thật" cuối tệp này (khoá thử sinh trong bài).
+ * `witnessCheck.test.ts` và ở khối "chữ ký thật" cuối tệp này (vector chứng ký ghi sẵn).
  */
 const PASS_PRERECORDED_WITNESSES = (): void => {};
 
@@ -710,10 +711,11 @@ describe("thân bài dựng — vault của chủ KHÁC chỉ được đếm", 
   });
 });
 
-describe("/tx/submit — chữ ký THẬT (khoá thử sinh trong bài, cổng không tiêm)", () => {
-  // Tx mang `required_signers` = khoá thử; dịch vụ dùng `assertWitnessesCoverTx` mặc định.
-  const sk = CML.PrivateKey.generate_ed25519();
-  const signerPkh = sk.to_public().hash().to_hex();
+describe("/tx/submit — chữ ký THẬT (vector ghi sẵn, cổng không tiêm)", () => {
+  // Tx mang `required_signers` = khoá thử A; dịch vụ dùng `assertWitnessesCoverTx` mặc định. Chữ ký
+  // là vector ghi sẵn cho ĐÚNG thân tx dưới đây (`fixtures/witnessVectors.ts` ▸ `BODY_SERVICE_SUBMIT`).
+  const vkeyA = CML.PublicKey.from_bytes(Buffer.from(VKEY_A_HEX, "hex"));
+  const signerPkh = vkeyA.hash().to_hex();
   const cbor = buildTxCbor({
     ttlSlot: prerecordedTtlSlot(NOW),
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
@@ -735,9 +737,12 @@ describe("/tx/submit — chữ ký THẬT (khoá thử sinh trong bài, cổng k
     ws.set_vkeywitnesses(vkeys);
     return ws.to_cbor_hex();
   };
-  const bodyHashBytes = CML.hash_transaction(CML.Transaction.from_cbor_hex(cbor).body()).to_raw_bytes();
-  const goodWitness = witnessesWith(sk.to_public(), sk.sign(bodyHashBytes));
-  const junkWitness = witnessesWith(sk.to_public(), CML.Ed25519Signature.from_raw_bytes(new Uint8Array(64).fill(0xcd)));
+  const goodWitness = witnessesWith(vkeyA, CML.Ed25519Signature.from_hex(BODY_SERVICE_SUBMIT.sigA));
+  const junkWitness = witnessesWith(vkeyA, CML.Ed25519Signature.from_hex(flipFirstByte(BODY_SERVICE_SUBMIT.sigA)));
+
+  it("thân tx của khối này trùng đúng thân mà vector đã được ký (lệch ⟹ sinh lại fixtures/witnessVectors.ts)", () => {
+    expect(txBodyHash(cbor)).toBe(BODY_SERVICE_SUBMIT.bodyHash);
+  });
 
   it("CẶP (âm): chữ ký rác ⟹ 400, KHÔNG ghi PendingSpends, KHÔNG markSubmitted; tx thật vẫn nộp được sau đó", async () => {
     const pending = new PendingSpends(TTL);

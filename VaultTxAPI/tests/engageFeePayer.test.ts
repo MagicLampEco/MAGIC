@@ -222,7 +222,7 @@ describe("fee_payer — hạn kẹp giờ giữ chỗ Feecover (service.ts ▸ v
   });
 
   it("CẶP (b): reserved_until MUỘN hơn tip+15′ ⟹ cận = tip+15′, expires_reason tx_validity", async () => {
-    const h = harness();
+    const h = harness({ cbor: feeTx({ ttlMs: 900_000 }) });
     h.issued.noteFeeReservation(FEE_REF, NOW + 2_400_000); // 40 phút
     const r = await handle(commit({ fee_payer: FEE_PAYER }), h.router);
     expect(r.status, JSON.stringify(r.body)).toBe(200);

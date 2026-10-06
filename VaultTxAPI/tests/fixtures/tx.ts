@@ -17,9 +17,11 @@ import { CML, assetsToValue, unixTimeToSlot } from "@lucid-evolution/lucid";
 /**
  * `ttl` cho CBOR ghi sẵn mà `RecordedTxBuilder` trả về: dịch vụ đọc NGƯỢC `validTo` từ thân tx
  * (`src/validity.ts` ▸ `readTxExpiry`) và ném khi thân không có, nằm trước đỉnh chuỗi, hoặc vượt cận
- * nó chọn (hạn ký mặc định 15 phút). 10 phút sau đỉnh chuỗi thoả cả ba.
+ * nó chọn (hạn ký mặc định 15 phút). ĐÚNG 15 phút sau đỉnh chuỗi (đỉnh tròn giây ⟹ trùng đầu slot):
+ * dịch vụ suy `expires_reason` từ ttl thật (`reasonOfValidTo`), nên ttl phải trùng cận `tx_validity`
+ * như bộ dựng thật đặt; ttl sớm hơn ⟹ `builder_cap`.
  */
-export const PRERECORDED_VALIDITY_MS = 600_000;
+export const PRERECORDED_VALIDITY_MS = 900_000;
 export function prerecordedTtlSlot(
   tipPosixMs: number, aheadMs = PRERECORDED_VALIDITY_MS, network: "Preview" | "Preprod" = "Preview",
 ): bigint {

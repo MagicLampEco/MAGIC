@@ -730,7 +730,8 @@ describe("/tx/submit — chữ ký THẬT (vector ghi sẵn, cổng không tiêm
   const vkeyA = CML.PublicKey.from_bytes(Buffer.from(VKEY_A_HEX, "hex"));
   const signerPkh = vkeyA.hash().to_hex();
   const cbor = buildTxCbor({
-    ttlSlot: prerecordedTtlSlot(NOW),
+    // ttl 10′ ghim cứng: vector chữ ký đã ký đúng thân này; PRERECORDED_VALIDITY_MS đổi thì thân không được đổi theo.
+    ttlSlot: prerecordedTtlSlot(NOW, 600_000),
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
     feeLovelace: FEE,
     outputs: [

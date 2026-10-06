@@ -94,6 +94,20 @@ describe("hạn tx tài trợ: MỌI bước có validTo", () => {
     expect(() => readTxExpiry(noTtl, NET, p, TIP_MS)).toThrow(/không có validTo/);
   });
 
+  it("CẶP: expires_reason suy từ ttl CỦA CBOR — ttl sớm hơn mọi cận kế hoạch ⟹ builder_cap, không phải tx_validity", () => {
+    const issued = new IssuedTxRegistry();
+    issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000);
+    const p = plan("T1", issued, FEE_REF); // kế hoạch: fee_reservation thắng ở tip+5′
+    expect(p.reason).toBe("fee_reservation");
+    // Bộ dựng tự kẹp ở tip+2′: sớm hơn cả hai cận ⟹ không cận nào của kế hoạch giải thích được.
+    expect(readTxExpiry(txWithValidTo(TIP_MS + 120_000n), NET, p, TIP_MS).reason).toBe("builder_cap");
+    // Cực đối: ttl trùng đúng cận đã thắng ⟹ lý do của cận đó.
+    expect(readTxExpiry(txWithValidTo(TIP_MS + 300_000n), NET, p, TIP_MS).reason).toBe("fee_reservation");
+    // Kế hoạch không có giữ chỗ: ttl sớm hơn tip+15′ ⟹ vẫn không gán tx_validity.
+    const q = plan("T1", new IssuedTxRegistry());
+    expect(readTxExpiry(txWithValidTo(TIP_MS + 600_000n), NET, q, TIP_MS).reason).toBe("builder_cap");
+  });
+
   it("T2/T3/T4 nhận cận dưới dạng tham số của bộ dựng SDK (maxAheadMs = cap − tip), kẹp cuối epoch", () => {
     const issued = new IssuedTxRegistry();
     for (const step of ["T2", "T3", "T4"] as const) {

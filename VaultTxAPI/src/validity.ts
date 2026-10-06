@@ -42,14 +42,21 @@ export const DEFAULT_TX_VALIDITY_MS = 900_000;
  */
 export const CLOCK_SKEW_MARGIN_MS = 30_000;
 
-export type ExpiresReason = "tx_validity" | "epoch_end" | "fee_reservation";
-export const EXPIRES_REASONS: readonly ExpiresReason[] = ["tx_validity", "epoch_end", "fee_reservation"];
+// `builder_cap` — giá trị thứ tư, CHỈ sinh ở `readTxExpiry`: `validTo` đọc từ CBOR SỚM hơn mọi cận
+// đã lên kế hoạch (bộ dựng tự kẹp chặt hơn). Dịch vụ không biết cận nào của bộ dựng thắng, nên khai
+// đúng điều đó thay vì gán một lý do của kế hoạch mà tx không mang.
+export type ExpiresReason = "tx_validity" | "epoch_end" | "fee_reservation" | "builder_cap";
+export const EXPIRES_REASONS: readonly ExpiresReason[] = ["tx_validity", "epoch_end", "fee_reservation", "builder_cap"];
+
+export interface ValidityBound { at: bigint; reason: Exclude<ExpiresReason, "builder_cap"> }
 
 export interface ValidityPlan {
   /** Cận trên đã chọn (POSIX ms, căn đầu slot). Bộ dựng KHÔNG được đặt `validTo` vượt mốc này. */
   capMs: bigint;
   /** Cận nào thắng phép `min`. */
-  reason: ExpiresReason;
+  reason: ValidityBound["reason"];
+  /** Mọi cận ứng viên (đã căn slot), theo thứ tự khai — `readTxExpiry` đối chiếu ttl thật với chúng. */
+  bounds: readonly ValidityBound[];
   /** `capMs − tip` cho các bộ dựng tự tính cửa sổ epoch (`epochValidityWindow(…, maxAheadMs)`):
    *  chúng kẹp tiếp vào cuối epoch, nên với route có epoch thì `capMs` chỉ là trần, không phải đích. */
   maxAheadMs: bigint;
@@ -77,7 +84,7 @@ export interface PlanValidityInput {
  */
 export function planValidity(p: PlanValidityInput): ValidityPlan {
   const tip = p.tipPosixMs;
-  const cands: Array<{ at: bigint; reason: ExpiresReason }> = [
+  const cands: ValidityBound[] = [
     { at: slotFloorMs(tip + BigInt(p.txValidityMs)), reason: "tx_validity" },
   ];
   if (p.epochBound) {
@@ -103,7 +110,7 @@ export function planValidity(p: PlanValidityInput): ValidityPlan {
       `khoảng hiệu lực. Gọi lại POST /fee/utxo để xin UTxO mới rồi dựng lại.`,
       { reserved_until: at });
   }
-  return { capMs: best.at, reason: best.reason, maxAheadMs: best.at - tip };
+  return { capMs: best.at, reason: best.reason, bounds: cands, maxAheadMs: best.at - tip };
 }
 
 /** `validTo` (POSIX ms) đọc từ thân tx, hoặc `undefined` khi thân không có `ttl`. */
@@ -149,7 +156,17 @@ export function readTxExpiry(txCbor: string, network: Network, plan: ValidityPla
   if (validToMs <= tipPosixMs) {
     throw new Error(`[bất biến nội bộ] validTo ${validToMs} của tx vừa dựng không đứng sau đỉnh chuỗi ${tipPosixMs}.`);
   }
-  return { validToMs, expiresAt: new Date(Number(validToMs)).toISOString(), reason: plan.reason };
+  return { validToMs, expiresAt: new Date(Number(validToMs)).toISOString(), reason: reasonOfValidTo(validToMs, plan) };
+}
+
+/**
+ * Lý do hạn suy từ `validTo` ĐỌC TỪ CBOR, không từ kế hoạch: ttl trùng cận nào (đã căn slot) thì lấy
+ * lý do của cận đó (hoà ⟹ cận khai trước, như phép `min`); ttl sớm hơn mọi cận ⟹ `builder_cap`.
+ * Không gán `tx_validity` cho một tx mà bộ dựng đã tự kẹp sớm hơn hạn ký.
+ */
+export function reasonOfValidTo(validToMs: bigint, plan: Pick<ValidityPlan, "bounds">): ExpiresReason {
+  const hit = plan.bounds.find(b => b.at === validToMs);
+  return hit === undefined ? "builder_cap" : hit.reason;
 }
 
 /** Câu hạn cho `witness_notes`, sinh từ `expires_at` thật — không còn chuỗi "≤ 1 giờ" cứng. */
@@ -158,7 +175,9 @@ export function expiryNote(e: Pick<TxExpiry, "expiresAt" | "reason">): string {
     ? "cuối epoch giao thức tới trước hạn ký"
     : e.reason === "fee_reservation"
       ? "giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký"
-      : "hạn ký của dịch vụ";
+      : e.reason === "builder_cap"
+        ? "bộ dựng giao dịch đặt cận sớm hơn hạn ký"
+        : "hạn ký của dịch vụ";
   return `Hạn dùng: giao dịch này chỉ lên chuỗi được trước ${e.expiresAt} (${why}). Ký và nộp trước mốc đó; ` +
     `quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại.`;
 }

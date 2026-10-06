@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { FEE_PAYER_DEFAULT_FRONTING_MAX_LOVELACE, parseDeployment } from "../src/config.js";
 import { CodedApiError } from "../src/errors.js";
-import { assertNoOwnerRewardToFeePayer } from "../src/feePayer.js";
+import { planOwnerRewardReturn } from "../src/feePayer.js";
 import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import type { OwnerWitnessProvider, ScriptOwnerWitness } from "../src/owner.js";
@@ -352,13 +352,20 @@ describe("cấu hình fee_payer_fronting_max_lovelace", () => {
 // ── mục rút did_stake ────────────────────────────────────────────────────────
 
 describe("mục rút did_stake qua ví trả phí", () => {
-  it("số dư thưởng > 0 ⟹ 422 FEE_PAYER_OWNER_REWARD_NONZERO; CẶP: 0 hoặc chủ khoá ⟹ không ném", () => {
+  it("số dư thưởng > 0 mà không suy được ví Phoenix ⟹ 422 FEE_PAYER_OWNER_REWARD_NONZERO; CẶP: 0 hoặc chủ khoá ⟹ undefined", async () => {
+    const missing = () => ({ missing: "deployment.did_stake", reason: "giả" });
+    const noParams = () => { throw new Error("ca R = 0 không được tra tham số giao thức"); };
     let caught: unknown;
-    try { assertNoOwnerRewardToFeePayer({ rewardAddress: "stake_test17gia", withdrawLovelace: 1n }); } catch (e) { caught = e; }
+    try {
+      await planOwnerRewardReturn({ rewardAddress: "stake_test17gia", withdrawLovelace: 1n }, missing, noParams);
+    } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(CodedApiError);
     expect((caught as CodedApiError).code).toBe("FEE_PAYER_OWNER_REWARD_NONZERO");
-    expect(() => assertNoOwnerRewardToFeePayer({ rewardAddress: "stake_test17gia", withdrawLovelace: 0n })).not.toThrow();
-    expect(() => assertNoOwnerRewardToFeePayer(undefined)).not.toThrow();
+    expect((caught as CodedApiError).details).toMatchObject({ missing: "deployment.did_stake" });
+    const never = () => { throw new Error("ca R = 0 không được suy địa chỉ"); };
+    await expect(planOwnerRewardReturn({ rewardAddress: "stake_test17gia", withdrawLovelace: 0n }, never, noParams))
+      .resolves.toBeUndefined();
+    await expect(planOwnerRewardReturn(undefined, never, noParams)).resolves.toBeUndefined();
   });
 
   const openScript = () => post("/tx/open-thread", { owner: SCRIPT_OWNER, owner_witness: WITNESS_BODY, fee_payer: FEE_PAYER });

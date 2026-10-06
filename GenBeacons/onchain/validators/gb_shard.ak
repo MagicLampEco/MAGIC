@@ -876,3 +876,71 @@ test shard_genesis_one_ref_script_fail() fail {
     )
   sh_mint(sh_genesis_tx(outs, True))
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Hai két cùng tiêu MỘT shard (issue #128, 2026-10-06).
+//
+// Trong MỘT tx: không được — `exactly_one_vault` đếm mọi input tại script két được phép,
+// kể cả hai két CÙNG script (ca cũ `shard_two_vaults_fail` chỉ phủ hai script khác nhau).
+// Hai tx LIÊN TIẾP: mô phỏng bằng cách nối datum ra của lượt 1 làm datum vào của lượt 2
+// (thứ sổ cái ép thật — UTxO shard bị tiêu một lần — nằm ngoài tầm bài kiểm Aiken). Chốt
+// ghim: tổng hai lượt rút ≤ `remaining` hiệu lực của lần đặt lại (trần shard), đo ở biên.
+// Trần mỗi-két `gb_vault_share` KHÔNG ở đây: shard không thấy két nào ứng với lượt nào —
+// két ép nó (`InstantGen` ▸ `validate_instant_gen` IG-12, bài `ig_neg_over_share_by_one`).
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Két tại script `h`, NFT vault-id tên `name` (hai két cùng script khác tên).
+fn sh_vault_named(h: ByteArray, name: ByteArray, ix: Int) -> Input {
+  util.mk_input(
+    util.mk_ref(#"0a", ix),
+    util.mk_output(
+      util.script_address(h),
+      assets.add(assets.from_lovelace(5_000_000), h, name, 1),
+      Void,
+    ),
+  )
+}
+
+/// Lượt 1: két A rút `a` từ `sh_in` (còn 1000). Lượt 2: két B (cùng script, khác NFT)
+/// rút `b` từ đúng datum ra của lượt 1. Cùng beacon seq 5 ⟹ không đặt lại giữa hai lượt.
+fn sh_two_vaults_seq(a: Int, b: Int) -> Bool {
+  let mid = GbShard { ..sh_in, remaining: sh_in.remaining - a }
+  let end = GbShard { ..mid, remaining: mid.remaining - b }
+  and {
+    sh_spend(
+      sh_in,
+      a,
+      sh_tx(sh_ok_refs(), [sh_vault_named(sh_vault_a, #"a1", 1)], sh_in, mid),
+    ),
+    sh_spend(
+      mid,
+      b,
+      sh_tx(sh_ok_refs(), [sh_vault_named(sh_vault_a, #"b2", 2)], mid, end),
+    ),
+  }
+}
+
+// Tổng đúng bằng `remaining` (400 + 600 = 1000) ⟹ qua.
+test shard_two_vaults_sequential_exact_total_happy() {
+  sh_two_vaults_seq(400, 600)
+}
+
+// Tổng vượt `remaining` một đơn vị (400 + 601) ⟹ lượt 2 trượt. Lượt 1 giống hệt ca qua.
+test shard_two_vaults_sequential_over_total_fail() fail {
+  sh_two_vaults_seq(400, 601)
+}
+
+// Hai két CÙNG script trong một tx ⟹ trượt, dù lượng rút hợp lệ (ca qua tương ứng:
+// `shard_draw_happy`, cùng lượng, một két).
+test shard_two_vaults_same_script_one_tx_fail() fail {
+  sh_spend(
+    sh_in,
+    400,
+    sh_tx(
+      sh_ok_refs(),
+      [sh_vault_named(sh_vault_a, #"a1", 1), sh_vault_named(sh_vault_a, #"b2", 2)],
+      sh_in,
+      sh_out_ok,
+    ),
+  )
+}

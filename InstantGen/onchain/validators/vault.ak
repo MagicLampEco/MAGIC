@@ -4212,8 +4212,10 @@ test ig_neg_g2_without_lent() fail {
 // G2 vế `avail + L_lent`: chỉ tách được khỏi vế `lamp_balance + L_lent` khi
 // `lamp_locked > 0`. Két InstantGen thật luôn có `lamp_locked = 0` (genesis ghim, mọi
 // nhánh giữ) nên ca này dựng trạng thái không tới được — nó chỉ để gỡ vế avail ra là
-// có bài đỏ. Vế `lamp_balance + L_lent` thì BẤT KHẢ GHIM: `avail ≤ lamp_balance` khi
-// `lamp_locked ≥ 0`, nên nó luôn bị vế avail che; giữ làm phòng thủ, không có bài canh.
+// có bài đỏ. Vế `lamp_balance + L_lent` thì không ghim được trên trạng thái tới được:
+// `avail ≤ lamp_balance` khi `lamp_locked ≥ 0`, nên nó luôn bị vế avail che; giữ làm
+// phòng thủ. Bài canh duy nhất của nó dựng `lamp_locked < 0` (không tới được):
+// `ig_neg_g2_balance_below_min_masked_by_avail`.
 fn t_g2_locked(bal: Int, locked: Int) -> Bool {
   let din =
     VaultDatum {
@@ -4839,4 +4841,184 @@ test g16_ig_rc_ref_script_rejected() fail {
 
 test g16_ig_rc_wallet_ref_script_ok() {
   t_g16_rc(t_g16_keep, [t_g16_wallet_ref_output()])
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Ca kiểm bổ sung cho bốn chỗ hở khai ở issue #128 (2026-10-06). Mỗi cặp: ca qua và
+// ca trượt chỉ khác ở ĐÚNG đại lượng của chốt mang tên, mọi cổng khác giữ ở trạng
+// thái qua — nên gỡ chốt đó ra thì ca trượt đổi màu.
+// ═══════════════════════════════════════════════════════════════
+
+// ── (1a) IG-9, vế `compute_cap_lent(L_lent)` quyết định một mình ─────────────────
+// Ca qua là `ig_pos_same_epoch_linked_lent` (m = 1.48e8: 3e8 + m == 4e8 + 4.8e7).
+// Cặp đối cũ (`ig_neg_same_epoch_linked_absent`) đổi TẬP reference input (bỏ két
+// Wakeme ⟹ L_lent = 0) nên nó đo "có/không có két", cách biên 4.8e7. Ca này giữ NGUYÊN
+// tập reference input, chỉ thêm 1 nanogic ⟹ ghim đúng biên của vế lent: cap_nanogic
+// 1e12 không chặn, GB còn 1e9 và share 5e8 ≥ 3e8 + m không chặn. Đo đột biến
+// 2026-10-06: gỡ dòng IG-9 ⟹ ca này (và cả hai ca cũ kể trên) đổi màu.
+test ig_neg_cumul_over_cap_pp_plus_lent_by_one() fail {
+  t_ig_same(t_same_din(t_wakeme_commit, 1_000_000_000_000), 148_000_001, [t_lent_ok(), t_gb_ok()])
+}
+
+// ── (1b) IG-6, vế `lamp_balance + L_lent >= min_instant_holding` ────────────────
+// Vế này chỉ tách khỏi vế `avail + L_lent` khi `avail > lamp_balance`, tức
+// `lamp_locked < 0` — trạng thái KHÔNG tới được trên két thật (genesis ghim
+// `lamp_locked = 0`, mọi nhánh giữ nguyên). Cặp dưới dựng đúng trạng thái đó để vế
+// balance là vế DUY NHẤT quyết: cả hai ca có avail = 10_000_001 ≥ min, chỉ balance
+// khác (10_000_000 vs 9_999_999). Gỡ vế balance ⟹ ca trượt xanh.
+test ig_pos_g2_balance_exact_with_negative_lock() {
+  t_g2_locked(10_000_000, -1)
+}
+
+test ig_neg_g2_balance_below_min_masked_by_avail() fail {
+  t_g2_locked(9_999_999, -2)
+}
+
+// ── (2) ADA-không-giảm ở bốn nhánh spend chưa có bài canh ───────────────────────
+// `validate_vault_value` ▸ `lovelace_not_decreased`. Prune/BurnBatch/Refresh đã có
+// (`val_neg_pe_ada_drained`, `val_neg_burn_ada_drained`, `rc_neg_ada_minus_one`).
+// Mỗi cặp: lovelace vào 2_000_000, ra 2_000_000 (qua) / 1_999_999 (trượt); datum,
+// LAMP, NFT, chữ ký giống hệt nhau.
+const ada_in: Int = 2_000_000
+
+// InstantGen: rút m = 1 khỏi két nền (như `ig_pos_partial`), lovelace ra tuỳ chọn.
+fn t_ig_ada(lovelace_out: Int) -> Bool {
+  let din = t_cp_din(#"")
+  let m = 1
+  let dout = t_ig_out(din, #"", cp_cap_no_lent, m)
+  validate_instant_gen(
+    din, m, 10, t_own_ref(), t_params(),
+    Transaction {
+      ..placeholder,
+      inputs: [
+        t_vault_input_ada(din, ada_in, cp_bal),
+        t_shard_in(0, ig_shard_id(), t_s(3, ig_reset, ig_remaining)),
+      ],
+      reference_inputs: t_refs_base(),
+      outputs: [
+        t_vault_output_ada(dout, lovelace_out, cp_bal),
+        t_shard_out(ig_shard_id(), t_s(3, ig_reset, ig_remaining - m)),
+      ],
+      extra_signatories: [t_owner_pkh],
+      validity_range: interval.between(ig_lo, ig_hi),
+    },
+  )
+}
+
+test ada_pos_instant_gen_preserved() {
+  t_ig_ada(ada_in)
+}
+
+test ada_neg_instant_gen_drained_by_one() fail {
+  t_ig_ada(ada_in - 1)
+}
+
+// WithdrawLamp: rút 5 LAMP (như `w_positive_partial`).
+fn t_wd_ada(lovelace_out: Int) -> Bool {
+  let din = t_datum(100, 0, [t_holding(100, 5, False)])
+  let dout = t_datum(95, 0, [t_holding(95, 5, False)])
+  let tx =
+    t_tx(
+      [t_vault_input_ada(din, ada_in, 100)],
+      [t_vault_output_ada(dout, lovelace_out, 95)],
+      [t_owner_pkh],
+    )
+  validate_withdraw_lamp(din, 5, 0, t_own_ref(), t_params(), tx)
+}
+
+test ada_pos_withdraw_lamp_preserved() {
+  t_wd_ada(ada_in)
+}
+
+test ada_neg_withdraw_lamp_drained_by_one() fail {
+  t_wd_ada(ada_in - 1)
+}
+
+// SetDelegate: xoá delegate Some → None (như `sd_positive_clear`).
+fn t_sd_ada(lovelace_out: Int) -> Bool {
+  let din = t_burn_din([t_burn_batch(bid_a, 1000)], Some(t_delegate))
+  let dout = VaultDatum { ..din, personal_delegate: None, last_updated_epoch: 10 }
+  let tx =
+    t_tx(
+      [t_vault_input_ada(din, ada_in, 100)],
+      [t_vault_output_ada(dout, lovelace_out, 100)],
+      [t_owner_pkh],
+    )
+  validate_set_delegate(din, None, 10, t_own_ref(), t_params(), tx)
+}
+
+test ada_pos_set_delegate_preserved() {
+  t_sd_ada(ada_in)
+}
+
+test ada_neg_set_delegate_drained_by_one() fail {
+  t_sd_ada(ada_in - 1)
+}
+
+// UpdateProfile: Flame → Ember (như `up_positive`).
+fn t_up_ada(lovelace_out: Int) -> Bool {
+  let din = t_datum_e10()
+  let dout = up_output(din, Ember, 10)
+  let tx =
+    t_tx(
+      [t_vault_input_ada(din, ada_in, 100)],
+      [t_vault_output_ada(dout, lovelace_out, 100)],
+      [t_owner_pkh],
+    )
+  validate_update_profile(din, Ember, 10, t_own_ref(), t_params(), tx)
+}
+
+test ada_pos_update_profile_preserved() {
+  t_up_ada(ada_in)
+}
+
+test ada_neg_update_profile_drained_by_one() fail {
+  t_up_ada(ada_in - 1)
+}
+
+// ── (3) RefreshCheckpoint GIỮA epoch khi L_lent của két Wakeme tăng ─────────────
+// Két đã ghim link, checkpoint đã chốt ở epoch 10 với L_lent cũ = 12e6 (7e6 + 5e6).
+// Cũng trong epoch 10, két Wakeme nay báo owned 15e6 ⟹ L_lent = 22e6. Làm mới phải ghi
+// `amount_by_lamp` với L_lent MỚI; ghi lại cap cũ (đúng thứ một nhánh "cùng epoch thì
+// bỏ qua" sẽ để nguyên) ⟹ trượt.
+const rc_lent_owned_grown: Int = 15_000_000
+
+fn t_rc_mid_din() -> VaultDatum {
+  let base = t_cp_din(t_wakeme_commit)
+  VaultDatum {
+    ..base,
+    cap_epoch: 10,
+    usage_window_epoch: 10,
+    cap_nanogic: rc_mid_cap_old(),
+  }
+}
+
+fn rc_mid_cap_old() -> Int {
+  amount_by_lamp(cp_bal, cp_lent_c + cp_lent_o, t_win_a(), 2_000_000_000, 6)
+}
+
+fn rc_mid_cap_new() -> Int {
+  amount_by_lamp(cp_bal, cp_lent_c + rc_lent_owned_grown, t_win_a(), 2_000_000_000, 6)
+}
+
+fn t_rc_mid(cap_out: Int) -> Bool {
+  let din = t_rc_mid_din()
+  t_rc(
+    VaultDatum { ..din, cap_nanogic: cap_out },
+    din,
+    [t_rate_ok(), t_lent_ref(cp_lent_c, rc_lent_owned_grown)],
+  )
+}
+
+// Neo: hai cap phải KHÁC nhau, nếu không cặp dưới không phân biệt được gì.
+test rc_mid_epoch_lent_caps_differ() {
+  rc_mid_cap_new() > rc_mid_cap_old()
+}
+
+test rc_pos_mid_epoch_lent_grown_recomputes() {
+  t_rc_mid(rc_mid_cap_new())
+}
+
+test rc_neg_mid_epoch_lent_grown_keeps_old_cap() fail {
+  t_rc_mid(rc_mid_cap_old())
 }

@@ -31,6 +31,9 @@
 //   400 CONSUME_PAIR_COUNT_INVALID / CONSUME_PAIR_TYPE_INVALID  `op_count` không phải chuỗi chữ số ≥ 1
 //                                (≤ 20 chữ số) / `op_type` không phải số nguyên trong [0, 1000000]
 //   422 CONSUME_TX_MISMATCH      tx tiêu vừa dựng lệch lượt tiêu đã yêu cầu (`consumeLine.ts` ▸ `checkConsumeTx`)
+//   422 CONSUME_TOO_MANY_BATCHES lượt tiêu phải đốt từ nhiều lô hơn một tx chở được, kể cả cách ít lô nhất
+//                                (`MagicSDK` ▸ `MAX_BURN_ENTRIES_PER_TX`); `details.burn_entries_needed` ·
+//                                `burn_entries_cap` · `live_batches`. Ném TRƯỚC khi dựng tx (`txBuilder.ts` ▸ `asProtocolError`)
 //   409 ENGAGE_THREAD_EXISTS     `/tx/open-thread` khi chủ đã có thread
 //   422 ENGAGE_THREAD_DATUM_UNDECODABLE  `engage_ref` mang NFT nhưng datum không giải được
 //   422 OPEN_THREAD_TX_MISMATCH  giao dịch mở thread vừa dựng lệch (NFT/output/datum genesis)
@@ -66,6 +69,11 @@
 //   501 FEE_PROXY_UNAVAILABLE    bản deploy không khai `feecover`
 //   502 FEE_PROXY_UPSTREAM       Feecover không trả lời / trả 5xx / trả sai hình dạng
 //   502 FEE_PROXY_UPSTREAM_MISMATCH  Feecover ký một tx có hash khác tx đã gửi
+//   400 FEE_PROXY_SOURCE_INVALID `/fee/utxo` / `/fee/sign`: `source` khác "feecover" / "sponsor"
+//   400 FEE_PROXY_SOURCE_MISMATCH  `/fee/sign`: `source` (vắng = feecover) khác nguồn của lượt giữ UTxO phí
+//   502 FEE_SOURCE_NOT_CONFIRMED Feecover không xác nhận ĐÚNG nguồn đã xin: xin sponsor mà câu trả lời
+//                                vắng `source`, hoặc câu trả lời mang `source` khác nguồn đã xin —
+//                                `details.source`, `details.confirmed_source`; không ghi lượt giữ, không giao chữ ký
 //   400 WAKEME_VAULT_REF_REQUIRED  `/tx/consume` làm mới checkpoint của két đang ghim két Wakeme
 //                                (`wakeme_link` khác "") mà thân bài không kèm `wakeme_vault_ref`
 //   400 INSTANT_GEN_M_INVALID    `m` của `/tx/instant-gen` vắng / không phải chuỗi chữ số / bằng 0
@@ -88,6 +96,10 @@
 //   501 SPONSOR_NETWORK_UNSUPPORTED (mạng không có gốc kỳ — Preview) · SPONSOR_PREPAID_UNAVAILABLE ·
 //       SPONSOR_PREPAID_SCRIPTS_MISMATCH · SPONSOR_UNAVAILABLE
 //   500 INTERNAL ⟸ SPONSOR_GRID_MISMATCH · SPONSOR_ANCHOR_REF_MISSING (lỗi dựng của chính dịch vụ)
+//   ── `GET /tx/status/{tx_hash}` (chỉ đọc) ──
+//   400 TX_HASH_INVALID          `tx_hash` không phải đúng 64 hex thường (kể cả vắng)
+//   502 TX_STATUS_PROVIDER_UNAVAILABLE  nhà cung cấp chuỗi lỗi / quá giờ / trả hình dạng lạ ở bước tra
+//                                khối hoặc mempool (`details.stage`) — KHÔNG BAO GIỜ thành `not_found`
 //   400 UTXO_NOT_FOUND / 409 UTXO_SPENT  out-ref do bên gọi đưa không có / đã bị tiêu (`chain.ts`)
 //   409 PREVIOUS_TX_PENDING      tx trước của vault đã nộp nhưng chưa vào khối — UTxO vault đang bị nó tiêu
 //   400 CHANGE_ADDRESS_REQUIRED / CHANGE_ADDRESS_INVALID  thiếu / sai `change_address`

@@ -69,6 +69,8 @@ export interface FeeQuoteDeps {
   service: VaultTxService;
   /** Proxy Feecover. Vắng ⟹ bản deploy không khai `feecover` ⟹ nguồn Feecover không có. */
   feeProxy?: FeeProxy;
+  /** Tiêu đề `X-Feecover-Token` của yêu cầu báo giá — cùng cách `/fee/*` đọc. Vắng ⟹ ứng dụng mặc định. */
+  feecoverToken?: string;
 }
 
 export type FeeQuoteReason =
@@ -264,7 +266,7 @@ export async function quoteFee(body: Record<string, unknown>, deps: FeeQuoteDeps
   const horizons = [generic.horizonMs];
 
   // Hỏi Feecover SAU lượt dựng đầu: `params` hỏng thì báo giá dừng ở trên, Feecover không bị hỏi.
-  const answer = deps.feeProxy === undefined ? undefined : await deps.feeProxy.feeSources(route, ownerCommitOf(params));
+  const answer = deps.feeProxy === undefined ? undefined : await deps.feeProxy.feeSources(route, ownerCommitOf(params), deps.feecoverToken);
   const feecover: FeeQuoteResponse["feecover"] = { fee_lovelace: raw(generic.fee), fronted_lovelace: raw(generic.fronted), ...feecoverSource(answer) };
   const fee_sources = feeSourcesOf(answer);
 

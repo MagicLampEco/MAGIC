@@ -10,6 +10,7 @@ import { Data } from "@lucid-evolution/lucid";
 
 import {
   planBurnBatch, buildVaultBurnBatch, applyPendingProfile, isBatchExpired,
+  BurnEntriesOverCapError, MAX_BURN_ENTRIES_PER_TX,
   type MagicBatchLike,
 } from "../src/burnBatch.js";
 import { InstantVaultDatumSchema, VaultDatumSchema } from "../src/schemas.js";
@@ -273,6 +274,62 @@ describe("planBurnBatch — từ chối sớm với lý do đúng", () => {
   it("vượt trần 32 batch ở output ⟹ báo trước, không để vault.ak:583 từ chối", () => {
     const many = Array.from({ length: 34 }, (_, i) => batch(`b${i}`, 100n, 5n, 9n));
     expect(() => planSG(datumWith(many), 50n, 5n)).toThrow(/> trần 32/);
+  });
+});
+
+// ── Trần số mục đốt mỗi tx (`MAX_BURN_ENTRIES_PER_TX`) ─────────────────────────────
+// `apply_burns` duyệt mọi lô cho mỗi mục ⟹ quá trần là `complete()` trượt vì ExUnit, lỗi không
+// đọc được. CẶP ở đúng trần / trần + 1, mỗi lô đúng 1 MAGIC nên KHÔNG có cách chọn nào ít mục
+// hơn: số mục cần = số lô phải đốt, đầu vào phân biệt được hai bên của cổng.
+describe("planBurnBatch — trần số mục đốt mỗi tx", () => {
+  const MAGIC = 1_000_000_000n;
+  const equal = (n: number) => Array.from({ length: n }, (_, i) => batch(`e${i}`, MAGIC, 5n, 3n));
+
+  it("hằng trần = 28 (thư mg1006lamp-a: ~28 lô với 8 cặp) và nhỏ hơn trần lô của két", () => {
+    expect(MAX_BURN_ENTRIES_PER_TX).toBe(28);
+    expect(MAX_BURN_ENTRIES_PER_TX).toBeLessThan(32);
+  });
+
+  for (const mod of ["ScheduleGen", "InstantGen"] as const) {
+    it(`${mod}: ĐÚNG trần — 28 lô × 1 MAGIC, đốt 28 MAGIC ⟹ qua, 28 mục, Σ == required`, () => {
+      const p = planBurnBatch(datumWith(equal(28)), 28n * MAGIC, 5n, mod);
+      expect(p.burns).toHaveLength(MAX_BURN_ENTRIES_PER_TX);
+      expect(p.burns.reduce((s, [, a]) => s + a, 0n)).toBe(28n * MAGIC);
+    });
+
+    it(`${mod}: trần + 1 — 29 lô × 1 MAGIC, đốt 29 MAGIC ⟹ NÉM BurnEntriesOverCapError (cần 29, trần 28)`, () => {
+      let caught: unknown;
+      try { planBurnBatch(datumWith(equal(29)), 29n * MAGIC, 5n, mod); } catch (e) { caught = e; }
+      expect(caught).toBeInstanceOf(BurnEntriesOverCapError);
+      const e = caught as BurnEntriesOverCapError;
+      expect(e.code).toBe("CONSUME_TOO_MANY_BATCHES");
+      expect(e.needed).toBe(29);
+      expect(e.cap).toBe(28);
+      expect(e.liveBatches).toBe(29);
+      expect(e.message).toMatch(/29 lô.*tối đa 28 lô/);
+    });
+  }
+
+  it("thứ tự chết cần quá trần mà cách ít mục nhất vừa ⟹ đổi sang lô lớn trước, KHÔNG ném", () => {
+    // 29 lô nhỏ chết ở epoch 6 + 1 lô lớn chết ở epoch 7. Thứ tự chết đốt 29 lô nhỏ (> trần);
+    // lô lớn một mình phủ đủ ⟹ 1 mục.
+    const small = Array.from({ length: 29 }, (_, i) => batch(`s${i}`, MAGIC, 5n, 1n));
+    const big = batch("big", 100n * MAGIC, 5n, 2n);
+    const p = planSG(datumWith([...small, big]), 29n * MAGIC, 5n);
+    expect(p.burns).toEqual([["big", 29n * MAGIC]]);
+  });
+
+  it("CỰC ĐỐI: thứ tự chết vừa trần ⟹ GIỮ thứ tự chết, không đổi sang lô lớn", () => {
+    const small = Array.from({ length: 28 }, (_, i) => batch(`s${i}`, MAGIC, 5n, 1n));
+    const big = batch("big", 100n * MAGIC, 5n, 2n);
+    const p = planSG(datumWith([...small, big]), 28n * MAGIC, 5n);
+    expect(p.burns).toHaveLength(28);
+    expect(p.burns.map(([id]) => id)).not.toContain("big");
+  });
+
+  it("InstantGen: lô đã đốt sạch (0) còn sống trong epoch KHÔNG thành mục 0 (vault.ak ▸ apply_burns `expect amt > 0`)", () => {
+    const p = planBurnBatch(datumWith([batch("z0", 0n, 5n), batch("b1", 500n, 5n)]), 100n, 5n, "InstantGen");
+    expect(p.burns).toEqual([["b1", 100n]]);
   });
 });
 

@@ -69,6 +69,73 @@ const VAULT_VALIDATOR_TITLE = "vault.vault.spend";
  *  BOUNDARIES §2 liệt hằng này vào nhóm "phải giữ đồng bộ hai bên". */
 const MAX_BATCHES_PER_VAULT = 32;
 
+/**
+ * Trần SỐ MỤC trong redeemer `BurnBatch { burns }` của MỘT tx tiêu — hằng của BỘ DỰNG, không phải
+ * hằng on-chain (validator không đếm số mục; nó chỉ hết ngân sách ExUnit).
+ *
+ * `apply_burns` (`InstantGen/onchain/validators/vault.ak` ▸ `apply_burns`) duyệt TOÀN BỘ danh sách
+ * lô cho MỖI mục đốt (`list.count` + `list.filter_map`) ⟹ chi phí ~ O(số lô × số mục). Phép đo
+ * (`aiken check` cấp hàm, két InstantGen đốt N lô, MAGIC @ `56deb5c2`, trần Preprod epoch 317
+ * mem 17.500.000): N=28 → 13,43M mem; 30 → 15,09M; 31 → 15,96M; 32 → 16,85M — cộng phần consume
+ * (8 cặp `ConsumeMany` ≈ 3,85M) thì 28 là số lô lớn nhất còn dưới trần. Nguồn: thư MAGIC → LAMP
+ * `mg1006lamp-a` (2026-10-06, "Số op tối đa một tx ConsumeMAGIC"), mục "ƯỚC LƯỢNG": ~30 lô với 1 op,
+ * ~28 lô với 8 cặp. Lấy số NHỎ hơn để một hằng đúng cho cả `Consume` lẫn `ConsumeMany`.
+ *
+ * CHƯA ĐO: một tx két InstantGen nhiều lô dựng trọn trên Emulator; và ca két có NHIỀU lô hơn số mục
+ * đốt (vd 32 lô, đốt 28) — chi phí đi theo tích hai số, phép đo trên chỉ có ca bằng nhau.
+ */
+export const MAX_BURN_ENTRIES_PER_TX = 28;
+
+/**
+ * Lượt tiêu phải đốt nhiều lô hơn một tx chở được (`MAX_BURN_ENTRIES_PER_TX`), KỂ CẢ khi đã chọn
+ * cách đốt ít lô nhất. Ném trước khi dựng tx: không có nó, `complete()` của lucid trượt ở bước đánh
+ * giá script với một lỗi ExUnit không nói được người dùng phải làm gì.
+ */
+export class BurnEntriesOverCapError extends Error {
+  readonly code = "CONSUME_TOO_MANY_BATCHES" as const;
+  constructor(readonly needed: number, readonly cap: number, readonly liveBatches: number) {
+    super(
+      `Lượt tiêu này phải đốt MAGIC từ ${needed} lô, mà một giao dịch chỉ đốt được tối đa ${cap} lô. ` +
+      `Hãy tiêu một lượng nhỏ hơn (chia thành nhiều lượt), mỗi lượt cần ít lô hơn.`,
+    );
+    this.name = "BurnEntriesOverCapError";
+  }
+}
+
+/** Thứ tự đốt mặc định: epoch CHẾT tăng dần (xem `planBurnBatch`), hoà thì epoch tạo tăng dần. */
+function byDeathEpoch(a: MagicBatchLike, b: MagicBatchLike): number {
+  const da = a.created_epoch + a.decay_window;
+  const db = b.created_epoch + b.decay_window;
+  if (da !== db) return da < db ? -1 : 1;
+  return a.created_epoch < b.created_epoch ? -1 : a.created_epoch > b.created_epoch ? 1 : 0;
+}
+
+/** Thứ tự ÍT MỤC NHẤT: lô lớn trước — k lô lớn nhất là tập nhỏ nhất phủ được `required`.
+ *  Hoà số dư thì về thứ tự chết để vẫn ưu tiên lô sắp mất. */
+function byAmountDesc(a: MagicBatchLike, b: MagicBatchLike): number {
+  if (a.current_amount !== b.current_amount) return a.current_amount > b.current_amount ? -1 : 1;
+  return byDeathEpoch(a, b);
+}
+
+/** Đốt tham lam theo `order` tới khi đủ `required`. Mỗi lô một mục, mục cuối có thể đốt một phần. */
+function takeInOrder(order: readonly MagicBatchLike[], required: bigint): BurnEntry[] {
+  const burns: BurnEntry[] = [];
+  let remain = required;
+  for (const b of order) {
+    if (remain === 0n) break;
+    const take = b.current_amount < remain ? b.current_amount : remain;
+    if (take === 0n) continue;               // lô InstantGen đã đốt sạch ở lại với 0 — không mục 0
+    burns.push([b.batch_id, take]);          // take > 0 luôn — vault.ak ▸ apply_burns `expect amt > 0`
+    remain -= take;
+  }
+  // Bất khả theo `liveTotal >= required` ở nơi gọi; giữ lại vì nó là bất biến nội bộ, và im lặng ở
+  // đây nghĩa là đốt thiếu → `Σburns == required` vỡ → tx bị từ chối không rõ lý do.
+  if (remain !== 0n) {
+    throw new Error(`[burnBatch] BUG nội bộ: còn thiếu ${remain} nanogic sau khi duyệt hết batch sống.`);
+  }
+  return burns;
+}
+
 /** Một MagicBatch như nó nằm trong datum. Chỉ khai các trường mã này ĐỌC — phần còn lại
  *  đi qua nguyên vẹn bằng spread, đúng ràng buộc "mọi trường khác bất biến" của
  *  `apply_burns`. */
@@ -196,28 +263,21 @@ export function planBurnBatch(
 
   // Sắp theo epoch CHẾT tăng dần. Bản sao — thứ tự gốc của `magic_batches` phải giữ
   // nguyên ở output (`apply_burns` giữ thứ tự các batch không đụng tới).
-  const order = [...live].sort((a, b) => {
-    const da = a.created_epoch + a.decay_window;
-    const db = b.created_epoch + b.decay_window;
-    if (da !== db) return da < db ? -1 : 1;
-    return a.created_epoch < b.created_epoch ? -1 : a.created_epoch > b.created_epoch ? 1 : 0;
-  });
-
-  const burns:  BurnEntry[] = [];
-  const burnBy = new Map<string, bigint>();
-  let remain = required;
-  for (const b of order) {
-    if (remain === 0n) break;
-    const take = b.current_amount < remain ? b.current_amount : remain;
-    burns.push([b.batch_id, take]);          // take > 0 luôn — vault.ak:600 expect amt > 0
-    burnBy.set(b.batch_id, take);
-    remain -= take;
+  //
+  // ── TRẦN SỐ MỤC MỖI TX (`MAX_BURN_ENTRIES_PER_TX`) ─────────────────────────────
+  // Validator KHÔNG ép thứ tự mục đốt hay lô nào phải đốt trước: `apply_burns` chỉ đòi mỗi
+  // `batch_id` khớp đúng một lô, `0 < amt <= current_amount`, lô chưa chết; `sum_burns` cộng cả
+  // danh sách. Nên chọn lại lô là hợp lệ. Thứ tự chết vẫn là lựa chọn đầu (không bao giờ làm người
+  // dùng thiệt); chỉ khi nó cần quá trần mới đổi sang cách ÍT MỤC NHẤT (lô lớn trước). Cách ít mục
+  // nhất mà vẫn quá trần ⟹ không tx nào chở nổi lượt tiêu này ⟹ NÉM có kiểu.
+  let burns = takeInOrder([...live].sort(byDeathEpoch), required);
+  if (burns.length > MAX_BURN_ENTRIES_PER_TX) {
+    burns = takeInOrder([...live].sort(byAmountDesc), required);
+    if (burns.length > MAX_BURN_ENTRIES_PER_TX) {
+      throw new BurnEntriesOverCapError(burns.length, MAX_BURN_ENTRIES_PER_TX, live.length);
+    }
   }
-  // Bất khả theo `liveTotal >= required` ở trên; giữ lại vì nó là bất biến nội bộ, và im
-  // lặng ở đây nghĩa là đốt thiếu → `Σburns == required` vỡ → tx bị từ chối không rõ lý do.
-  if (remain !== 0n) {
-    throw new Error(`[burnBatch] BUG nội bộ: còn thiếu ${remain} nanogic sau khi duyệt hết batch sống.`);
-  }
+  const burnBy = new Map<string, bigint>(burns);
 
   // Gương của `apply_burns` + `prune_expired`: trừ theo từng batch, rồi bỏ mọi batch đã
   // chết — kể cả batch không ai đụng tới.

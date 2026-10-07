@@ -245,7 +245,7 @@ export const VaultDatumSchema = Data.Object({
   activity_state        : ActivityStateSchema,
   // Trường 14 — `amount_by_lamp` tại `cap_epoch`, nanogic. Validator tự tính.
   cap_nanogic           : Data.Integer(),
-  // Trường 15 — bia mộ (Nợ #14); Paymaster đọc `list.at(fields, 15)`.
+  // Trường 15 — bia mộ (Nợ #14), trường ở lại; két Wakeme đọc datum InstantGen theo vị trí, chỉ số ≤ 15.
   personal_delegate     : Data.Nullable(Data.Bytes()),
   attribution           : VaultAttributionSchema,
   // Trường 17 — mốc POSIX ms LAMP được rời két. Chỉ nhánh sinh ghi nó.

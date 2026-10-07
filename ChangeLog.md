@@ -295,6 +295,28 @@ lại cùng UTxO cho B (lượt giữ mới R2) thì A dựng lại với `fee_p
 ký được. Dịch vụ không phân biệt A với B (mọi người dùng app `magic` đi chung một token). Bịt cần
 `/fee/utxo` trả một mã giữ chỗ mà lượt dựng phải gửi kèm, hoặc Feecover tự ràng lượt ký vào lượt giữ.
 
+## 2026-10-07 — Xoá module `Paymaster/`
+
+**Đổi gì.** `git rm -r Paymaster` (21 tệp: `onchain/`, `offchain/`, `tests/`, bốn tệp tài liệu).
+`scripts/deployParams.ts` bỏ `PaymasterParamInputs` + `paymasterParams`; `scripts/check_param_names.ts`
+bỏ ca `paymaster.paymaster.spend`, hai ca âm/dương của chốt stake Treasury gọi thẳng
+`assertTreasuryStakeDecided` (chốt giữ lại, gác D14). `scripts/BUILD-RECORD.md` sinh lại, mất khối
+`Paymaster/onchain`. README bỏ dòng cây thư mục. `DevStatus.md` bỏ dòng bảng module, đóng Nợ #17,
+#73, #74, #77, nửa `Paymaster/` của D11 và D16, thêm mục `## Đã xoá khỏi kho — 2026-10-07`. Dòng
+D16 ở `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §7.6 và `ConsumeMAGIC/CONTRACT.md` ghi trạng thái
+mới. Chú thích nêu `Paymaster` là bên đọc thô trường 15 của `VaultDatum` nay nêu bên đọc theo vị trí
+còn lại, két Wakeme (datum InstantGen, chỉ số ≤ 15); chỉ chú thích đổi, không định danh on-chain
+nào đổi. Spec `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` lên v2.4.5 (D16 đánh dấu đã đóng, bỏ dòng
+lộ trình "Paymaster runner"). `DevStatus.md` ghi hai con trỏ ở kho anh em còn trỏ vào module đã xoá.
+
+**Vì sao.** Cơ chế uỷ quyền mà đường Sponsor dựa vào đã bị bỏ khỏi mô hình 2026-09-16 (Nợ #14):
+cổng PM-1.5 không thoả được, `buildSponsorTx` ném `PM-000`. Module chưa từng deploy
+(`scripts/DEPLOYED.md` nhắc nó 0 lần). Yêu cầu "app trả phí hộ" do Feecover (kho
+`PhoenixKeyDID/Feecover`) đảm nhận.
+
+**Cái gì gãy nếu bám bản cũ.** Mã import `paymasterParams` / `PaymasterParamInputs` từ
+`scripts/deployParams.ts` không biên dịch nữa. Không UTxO nào mất đường giải mã.
+
 ## 2026-10-06 — MagicSDK + VaultTxAPI: trần số lô đốt mỗi tx tiêu; bỏ mục đốt 0
 
 **Đổi gì.** `MagicSDK/src/burnBatch.ts` ▸ `planBurnBatch` giới hạn số mục trong redeemer

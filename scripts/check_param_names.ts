@@ -17,8 +17,8 @@ import {
 } from "./applyParams.js";
 import {
   instantVaultParams, scheduleVaultParams, scheduleCommitParams, umDatumParams, shardSpendParams,
-  oneShotGenesisParams, priceParamParams, consumeParams, paymasterParams,
-  addressData,
+  oneShotGenesisParams, priceParamParams, consumeParams,
+  addressData, assertTreasuryStakeDecided,
   paidFundParams, prepaidVaultParams,
 } from "./deployParams.js";
 import { windowOriginMs } from "@magiclamp/protocol-utils";
@@ -146,28 +146,9 @@ const CASES: Case[] = [
       maxPriceStale: 1n, msPerEpoch: MS, windowOriginMs: ORIGIN, priceParamScriptHash: P28,
     }),
   },
-  {
-    // Paymaster CHƯA có deploy script — case này có mặt TRƯỚC cái nó gác.
-    // Lý do: module này từng nằm ngoài mọi cổng, và `paymaster.ts` mô tả
-    // "đã apply 9 param" trong khi validator nhận 11. Hai cái thiếu là hai bản
-    // vá SEC-01 (`treasury_addr`, `lamp_asset_name`) — đúng thứ mà truyền sót
-    // sẽ dựng ra một Paymaster gửi LAMP đi đâu cũng được.
-    module: "Paymaster", title: "paymaster.paymaster.spend",
-    usedBy: "(chưa có deploy script — cổng dựng trước)",
-    params: paymasterParams({
-      vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
-      policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
-      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS, windowOriginMs: ORIGIN,
-      // Địa chỉ giữ chỗ phải mang stake part: chốt 2026-09-06 là kho Treasury CÓ
-      // uỷ quyền stake, và `assertTreasuryStakeDecided` nay từ chối enterprise
-      // address không có cửa bỏ qua. Ca enterprise được đo riêng ở cuối tệp.
-      treasuryAddr: addressData(
-        { hash: P28, isScript: true },
-        { hash: P28, isScript: false },
-      ),
-      lampAssetName: "744c414d50",
-    }),
-  },
+  // Ca `Paymaster` đã gỡ 2026-10-07 cùng lúc với việc xoá module khỏi kho — xem
+  // `DevStatus.md ▸ ## Đã xoá khỏi kho — 2026-10-07`. Cùng lý do HẠ ĐỘ PHỦ có khai
+  // như hai ca bên dưới: blueprint đó không còn nguồn nào trong kho sinh ra.
   // Hai ca `Consolidate` và `ProfileChange` đã gỡ 2026-09-21 cùng lúc với việc
   // xoá hai module khỏi kho — xem `DevStatus.md ▸ ## Đã xoá khỏi kho — 2026-09-21`.
   // Gỡ một ca khỏi cổng là HẠ ĐỘ PHỦ, nên nó phải tự khai: ở đây tập được phủ
@@ -270,14 +251,9 @@ async function main() {
   // dựng đúng địa chỉ enterprise mà `_reserve_layer2.ts` sinh ra và đòi nó ném.
   let guardOk = true;
   try {
-    paymasterParams({
-      vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
-      policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
-      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS, windowOriginMs: ORIGIN,
-      treasuryAddr: addressData({ hash: P28, isScript: true }),   // stake part None
-      lampAssetName: "744c414d50",
-      // Không còn cờ nào để đặt — cổng phải ném ở đây, không có đường vòng.
-    });
+    // Gọi thẳng chốt: người gọi cũ (`paymasterParams`) đã xoá 2026-10-07 cùng module.
+    // Không còn cờ nào để đặt — cổng phải ném ở đây, không có đường vòng.
+    assertTreasuryStakeDecided(addressData({ hash: P28, isScript: true }));   // stake part None
     guardOk = false;
     console.log("   ❌ chốt stake Treasury KHÔNG cắn: enterprise address đi lọt\n");
   } catch { /* đúng như mong đợi */ }
@@ -287,14 +263,10 @@ async function main() {
   // biến đó sống sót khi chỉ có ca âm. Một cổng chặn cả địa chỉ đúng thì vô dụng y như
   // cổng không chặn gì, chỉ khác là nó hỏng ồn ào hơn.
   try {
-    paymasterParams({
-      vaultScriptHash: P28, burnBatchConstr: 2n, lampPolicyId: P28,
-      policyNftPolicy: P28, meterNftPolicy: P28, protocolNftPolicy: P28,
-      maxPolicyStale: 1n, maxDidEntries: 8n, msPerEpoch: MS, windowOriginMs: ORIGIN,
-      treasuryAddr: addressData({ hash: P28, isScript: true }, { hash: P28, isScript: false }),
-      lampAssetName: "744c414d50",
-      // Địa chỉ có stake part — đây là hình dạng duy nhất cổng chấp nhận.
-    });
+    // Địa chỉ có stake part — đây là hình dạng duy nhất cổng chấp nhận.
+    assertTreasuryStakeDecided(
+      addressData({ hash: P28, isScript: true }, { hash: P28, isScript: false }),
+    );
   } catch (e) {
     guardOk = false;
     console.log(`   ❌ chốt stake Treasury ném NHẦM ca hợp lệ (địa chỉ CÓ stake): ${e}\n`);

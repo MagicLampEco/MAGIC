@@ -516,7 +516,7 @@ tích luỹ; pin cứng về `#""` sẽ khoá chết đường liên kết DID s
 
   | mã | trạng thái | ràng buộc đang có hiệu lực (fail-closed) | khai ở |
   |---|---|---|---|
-  | D16 | cơ chế uỷ quyền thay thế để ngỏ | cổng PM-1.5 đứng ở trạng thái không thoả được; `buildSponsorTx` ném `PM-000`; Paymaster chưa deploy ở mạng nào | `DevStatus.md` ▸ D16 · Nợ #74 |
+  | D16 | đóng 2026-10-07 — module `Paymaster/` đã xoá (cổng PM-1.5 và `buildSponsorTx` đi cùng module) | yêu cầu "app trả phí hộ" do Feecover (kho `PhoenixKeyDID/Feecover`) đảm nhận | `DevStatus.md` ▸ D16 · Nợ #74 · `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §7.6 |
 
   Đừng hiện thực hoá hình dạng cũ từ dòng này.
 

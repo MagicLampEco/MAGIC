@@ -899,8 +899,7 @@ Mô phỏng ví dụ vùng-xám (chị Oanh) + cơ sở pháp lý đầy đủ: 
 2. Compile Aiken (`aiken build` mỗi module) → deploy Preview theo thứ tự (thứ tự ở `scripts/README.md`).
 3. Test Preview 3 cửa gen → tx thật.
 4. Xây lõi CARP (MintingPolicy + ổn định).
-5. Paymaster runner + fee-abstraction.
-6. **Merkle-verify `so_lieu` (bỏ hẳn oracle `engine_key`)** — lộ trình sau-Preview; hiện dùng oracle anchor ở trên.
+5. **Merkle-verify `so_lieu` (bỏ hẳn oracle `engine_key`)** — lộ trình sau-Preview; hiện dùng oracle anchor ở trên.
 
 ---
 

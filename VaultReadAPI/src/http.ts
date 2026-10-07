@@ -33,7 +33,8 @@ export interface RouterDeps {
   scopes: VaultScope[];
   network: string;
   chainLabel: string;
-  /** Thẻ bài chia sẻ. Chuỗi rỗng ⇒ không kiểm (chỉ hợp lệ khi bind loopback — `config.ts` ép). */
+  /** Thẻ bài chia sẻ. Chuỗi rỗng ⇒ chỉ nhận yêu cầu KHÔNG mang header chuyển tiếp (`requireToken`);
+   *  chỉ hợp lệ khi bind loopback và không có tiền tố đường — `config.ts` ép. */
   token: string;
   /** Chỉ mục DID ⟹ thread. Vắng ⟹ `/threads/*` trả 503 `THREAD_INDEX_DISABLED`. */
   threads?: ThreadIndex;
@@ -179,8 +180,31 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
   }
 }
 
+/**
+ * Header mà proxy và đường hầm thêm vào yêu cầu chúng chuyển tiếp. Mặt tiền chạy không thẻ chỉ an
+ * toàn khi mọi người gọi đều ở trên chính máy đó; yêu cầu mang một trong các header này đã đi qua
+ * proxy, tức có thể tới từ bất kỳ đâu. Cùng danh sách với `VaultTxAPI/src/http.ts` ▸ `FORWARDING_HEADERS`.
+ */
+const FORWARDING_HEADERS: readonly string[] = ["forwarded", "x-forwarded-for", "x-real-ip", "cf-connecting-ip"];
+
+function forwardedBy(req: HttpRequest): string | undefined {
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (value !== undefined && FORWARDING_HEADERS.includes(name.toLowerCase())) return name.toLowerCase();
+  }
+  return undefined;
+}
+
 function requireToken(req: HttpRequest, token: string): void {
-  if (token === "") return;
+  if (token === "") {
+    // Không thẻ chỉ dành cho người gọi trên cùng máy. Yêu cầu đã qua proxy ⟹ 401, kể cả khi tiến
+    // trình bind loopback và chưa đặt tiền tố đường (`config.ts` chỉ bắt được ca có tiền tố).
+    const via = forwardedBy(req);
+    if (via !== undefined) {
+      throw new UnauthorizedError(
+        `Mặt tiền chạy không thẻ bài chỉ nhận yêu cầu trên chính máy này; yêu cầu này đã qua proxy (header "${via}").`);
+    }
+    return;
+  }
   const auth = req.headers["authorization"] ?? req.headers["Authorization"];
   if (typeof auth !== "string" || !auth.startsWith("Bearer ")) throw new UnauthorizedError();
   const given = auth.slice("Bearer ".length);

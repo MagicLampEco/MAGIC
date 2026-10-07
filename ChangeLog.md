@@ -5,6 +5,18 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultReadAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy (cùng cổng với VaultTxAPI)
+
+**Đổi gì.** (1) Đặt `VAULT_READ_API_BASE_PATH` mà `VAULT_READ_API_TOKEN` rỗng ⟹ từ chối khởi động, kể cả khi bind
+loopback. (2) Thẻ rỗng mà yêu cầu mang `Forwarded` / `X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP` (không
+phân biệt hoa thường) ⟹ `401 UNAUTHORIZED`; `/health` vẫn mở. Nguồn: `VaultReadAPI/src/config.ts` ▸ `loadConfig`
+(khối sau `parseBasePath`); `VaultReadAPI/src/http.ts` ▸ `requireToken`, `forwardedBy`.
+**Vì sao.** Mặt tiền đọc có đúng lỗ đã vá ở VaultTxAPI cùng ngày: cổng cũ chỉ đòi thẻ khi host không phải loopback,
+mà đứng sau proxy hay đường hầm thì loopback là cổng mở ra ngoài. Ở mặt tiền đọc, cái mất là khoá Blockfrost của
+người vận hành và một phép tra `PKH → số dư` hàng loạt giá rẻ.
+**Cái gì gãy.** Triển khai VaultReadAPI đang đặt tiền tố đường mà chưa có thẻ sẽ KHÔNG khởi động sau bản này: đặt
+thẻ, trao thẻ cho bên gọi trước. Bên gọi đi qua proxy tới một mặt tiền không thẻ nhận 401.
+
 ## 2026-10-07 — VaultTxAPI: `/tx/sponsor/plan` nói ai GỌI từng bước (`actor`), lọc được theo vai
 
 **Đổi gì.** Mỗi bước trong `steps` / `fallback_steps` mang `actor`: `app` (open-vault, bind-did, draw-magic, Wakeme,

@@ -224,6 +224,21 @@ describe("mặt tiền ĐỌC-THÔI + ranh giới uỷ quyền", () => {
     expect((await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`, d)).status).toBe(200);
   });
 
+  it("mặt tiền không thẻ: yêu cầu đã qua proxy ⟹ 401, mọi header chuyển tiếp. CẶP: yêu cầu trên máy ⟹ 200; /health vẫn mở", async () => {
+    const d = depsWith(okReader(), "");
+    const forwarded: Record<string, string>[] = [
+      { "x-forwarded-for": "203.0.113.7" }, { "X-Forwarded-For": "203.0.113.7" }, { forwarded: "for=203.0.113.7" },
+      { "x-real-ip": "203.0.113.7" }, { "cf-connecting-ip": "203.0.113.7" },
+    ];
+    for (const hdr of forwarded) {
+      const r = await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`, d, hdr);
+      expect(r.status).toBe(401);
+      expect((r.body as { error: { code: string } }).error.code).toBe("UNAUTHORIZED");
+    }
+    expect((await get(`/vault/by-owner/${PREVIEW_OWNER_PKH}`, d, {})).status).toBe(200);
+    expect((await get("/health", d, { "cf-connecting-ip": "203.0.113.7" })).status).toBe(200);
+  });
+
   it("POST/PUT/DELETE → 405. Không có đường ghi nào, kể cả đường sai.", async () => {
     const d = depsWith(okReader());
     for (const m of ["POST", "PUT", "DELETE", "PATCH"]) {

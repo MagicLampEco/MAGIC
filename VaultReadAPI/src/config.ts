@@ -156,6 +156,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const basePath = parseBasePath(env.VAULT_READ_API_BASE_PATH, "VAULT_READ_API_BASE_PATH");
+  if (token === "" && basePath !== "") {
+    // FAIL-CLOSED. Tiền tố đường chỉ có nghĩa khi đứng sau một proxy định tuyến theo đường, và
+    // proxy biến loopback thành cổng mở ra ngoài: nhánh loopback ngay trên không bắt được ca đó.
+    // Cùng lỗ đã đo trên VaultTxAPI ngày 2026-10-07 (bind 127.0.0.1 sau đường hầm, có tiền tố,
+    // không thẻ ⟹ trả 200 cho yêu cầu từ internet không kèm `Authorization`).
+    throw new Error(
+      `[config] VAULT_READ_API_BASE_PATH="${basePath}" (dịch vụ đứng sau proxy) mà VAULT_READ_API_TOKEN rỗng. ` +
+      `Từ chối khởi động: proxy mở cổng loopback ra ngoài, nên phải đặt thẻ bài.`,
+    );
+  }
 
   const requestTimeoutMs = Number(env.VAULT_READ_API_TIMEOUT_MS || "15000");
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 100) {

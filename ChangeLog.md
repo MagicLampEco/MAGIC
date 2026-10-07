@@ -5,6 +5,18 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: `/fee/sign` gửi `ref` = owner_commit cho tx genesis quỹ tài trợ và claim
+
+**Đổi gì.** Tx genesis quỹ tài trợ (open-vault chở quỹ, open-fund) ghi `feeRef` = owner_commit của DID vào sổ
+phát-hành; claim trên quỹ có DID ghi `feeRef` = owner_commit trong datum quỹ. `/fee/sign` gửi `feeRef` đó làm `ref`
+cho Feecover. Tx tài trợ còn lại (open-vault không chở quỹ, bind-did, fund-vault, draw-magic, first-consume, claim
+quỹ `sponsorship = None`) vẫn gửi hash thân tx. Nguồn: `VaultTxAPI/src/sponsor.ts` ▸ `genesisDids` trong lượt dựng
+bước, khối ghi sổ của claim; `VaultTxAPI/src/feeProxy.ts` ▸ nhánh `entry.feeRef`.
+**Vì sao.** Feecover đếm "mỗi DID một quỹ trọn đời" theo `ref` của `sponsor_open` / `open_sponsor_fund`, và đòi
+`ref` là owner_commit 64 hex. Bản cũ gửi hash thân tx ⟹ Feecover từ chối ký open-fund.
+**Cái gì gãy.** Bên đọc nhật ký Feecover theo `ref` = hash thân tx sẽ không thấy hash ở ba loại tx trên nữa; tra theo
+owner_commit. Không đổi gì ở thân yêu cầu hay lời đáp của VaultTxAPI.
+
 ## 2026-10-07 — VaultTxAPI: `/tx/sponsor/plan` nói ai GỌI từng bước (`actor`), lọc được theo vai
 
 **Đổi gì.** Mỗi bước trong `steps` / `fallback_steps` mang `actor`: `app` (open-vault, bind-did, draw-magic, Wakeme,

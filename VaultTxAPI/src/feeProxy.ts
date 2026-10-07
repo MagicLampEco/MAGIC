@@ -118,8 +118,10 @@ const FEE_SOURCES_FAILURE_OF_CODE: Readonly<Record<string, FeeSourcesFailure>> =
 };
 
 /** Route mà mã ghi sổ Feecover là tên NFT, không phải hash thân tx. `bind-did` cố ý VẮNG: nó không
- *  đúc NFT nào, nên mã ghi sổ của nó là hash thân tx (nó nhận ví trả phí từ 2026-10-04). Bốn route
- *  tài trợ cũng vắng vì cùng lý do: sổ ghi `feePayerUtxo`, không ghi `feeRef`. */
+ *  đúc NFT nào, nên mã ghi sổ của nó là hash thân tx (nó nhận ví trả phí từ 2026-10-04). Route tài trợ
+ *  cũng vắng: mã ghi sổ của chúng KHÔNG phải tên NFT. Tx genesis quỹ (open-vault chở quỹ, open-fund) và
+ *  claim của quỹ có DID ghi `feeRef` = owner_commit lúc dựng (`sponsor.ts`, Feecover đếm một-quỹ-mỗi-DID
+ *  theo mã này); tx tài trợ còn lại không ghi `feeRef` ⟹ hash thân tx. */
 // Khoá là `string` vì sổ phát-hành còn ghi route tài trợ (`locks.ts` ▸ `SponsorRoute`), không chỉ `IssuedRoute`.
 const NFT_REF_ROUTES: ReadonlySet<string> = new Set<IssuedRoute>(["create-vault", "open-thread"]);
 

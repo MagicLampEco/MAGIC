@@ -8,7 +8,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { IssuedTxRegistry, OwnerLockTable, PENDING_TX_HASH, PendingSpends, submissionStateOf } from "../src/locks.js";
+import { DidGenesisHolds, IssuedTxRegistry, OwnerLockTable, PENDING_TX_HASH, PendingSpends, submissionStateOf } from "../src/locks.js";
+import { CLOCK_SKEW_MARGIN_MS } from "../src/validity.js";
 
 const OWNER = "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4";
 const OTHER = "11".repeat(28);
@@ -235,5 +236,55 @@ describe("PendingSpends", () => {
     expect(p.has(`${"ab".repeat(32)}#0`, 1_000 + TTL - 1)).toBe(true);
     expect(p.has(`${"ab".repeat(32)}#1`, 1_000)).toBe(false);
     expect(p.has(`${"ab".repeat(32)}#0`, 1_000 + TTL)).toBe(false);
+  });
+});
+
+describe("DidGenesisHolds — giữ did:<did_commit> tới HẾT HẠN tx, không thay, không nhả ở nộp", () => {
+  it("CẶP: lượt hai cùng DID khi lượt một còn hạn ⟹ từ chối, trả hash lượt một; DID khác ⟹ giữ được", () => {
+    const h = new DidGenesisHolds();
+    const a = h.claim("did:aa", 1_000, 60_000);
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    h.bind("did:aa", a.gen, "tx1", 900_000);
+    expect(h.claim("did:aa", 2_000, 60_000)).toEqual({ ok: false, txHash: "tx1", untilMs: 900_000 + CLOCK_SKEW_MARGIN_MS });
+    expect(h.claim("did:bb", 2_000, 60_000).ok).toBe(true);
+  });
+
+  it("CẶP: đúng mốc validTo + biên ⟹ hết giữ; một ms trước đó ⟹ còn giữ", () => {
+    const h = new DidGenesisHolds();
+    const a = h.claim("did:aa", 0, 60_000);
+    if (!a.ok) throw new Error("claim");
+    h.bind("did:aa", a.gen, "tx1", 100_000);
+    const end = 100_000 + CLOCK_SKEW_MARGIN_MS;
+    expect(h.claim("did:aa", end - 1, 60_000).ok).toBe(false);
+    expect(h.claim("did:aa", end, 60_000).ok).toBe(true);
+  });
+
+  it("L5 CẶP: cùng khoá + CÙNG tag ⟹ lượt sau THAY lượt trước (thẻ cũ không bind được nữa); tag KHÁC hoặc vắng ⟹ từ chối", () => {
+    const h = new DidGenesisHolds();
+    const a = h.claim("did-fund:aa", 0, 60_000, "fund:f1");
+    if (!a.ok) throw new Error("claim");
+    h.bind("did-fund:aa", a.gen, "tx1", 900_000);
+    expect(h.claim("did-fund:aa", 200_000, 60_000, "fund:f2")).toEqual({ ok: false, txHash: "tx1", untilMs: 900_000 + CLOCK_SKEW_MARGIN_MS });
+    expect(h.claim("did-fund:aa", 200_000, 60_000).ok).toBe(false);
+    const b = h.claim("did-fund:aa", 200_000, 60_000, "fund:f1");
+    expect(b.ok).toBe(true);
+    if (!b.ok) return;
+    h.bind("did-fund:aa", a.gen, "tx1", 900_000);
+    expect(h.peek("did-fund:aa", 200_001)?.txHash).toBe(PENDING_TX_HASH);
+    h.bind("did-fund:aa", b.gen, "tx2", 950_000);
+    expect(h.claim("did-fund:aa", 300_000, 60_000, "fund:f2")).toEqual({ ok: false, txHash: "tx2", untilMs: 950_000 + CLOCK_SKEW_MARGIN_MS });
+  });
+
+  it("dựng hỏng ⟹ release nhả ngay; release với thẻ cũ không nhả lượt mới", () => {
+    const h = new DidGenesisHolds();
+    const a = h.claim("did:aa", 0, 60_000);
+    if (!a.ok) throw new Error("claim");
+    h.release("did:aa", a.gen);
+    const b = h.claim("did:aa", 1, 60_000);
+    if (!b.ok) throw new Error("claim b");
+    h.release("did:aa", a.gen);
+    expect(h.peek("did:aa", 2)?.txHash).toBe(PENDING_TX_HASH);
+    expect(h.sweep(61_002)).toBe(1);
   });
 });

@@ -320,3 +320,14 @@ function req(env: NodeJS.ProcessEnv, name: string): string {
 export function isLoopback(host: string): boolean {
   return LOOPBACK_HOSTS.has(host);
 }
+
+/**
+ * Môi trường cho tiến trình con (`buildInfo` gọi `git`). Bản đối ứng của `VaultTxAPI/src/config.ts` ▸
+ * `childProcessEnv`, để `buildInfo.ts` của hai gói giữ thân giống hệt nhau. Gói này không đọc khoá
+ * platform; dòng xoá chỉ giữ cho hai bản cùng một hành vi.
+ */
+export function childProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env };
+  delete out.VAULT_TX_API_PLATFORM_KEY;
+  return out;
+}

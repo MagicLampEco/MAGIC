@@ -28,6 +28,7 @@ import {
   assertFundPinnedOutputs, parseSponsorRequest, sponsorApiErrorOf, type SponsorTxServiceDeps, type FundPinnedOutputsExpect,
 } from "../src/sponsor.js";
 import { parseBuildRequest } from "../src/buildRequest.js";
+import { parseSponsorRequest as parseSponsorReq162, platformAddressFundedWarning, serviceKeyStatusLine } from "../src/sponsor.js";
 import type { ResolvedOwnerWitness } from "../src/owner.js";
 import { vaultModuleOf } from "../src/txBuilder.js";
 import { LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, OWNER_PKH } from "./fixtures/preview.js";
@@ -325,16 +326,46 @@ describe("bộ định tuyến /tx/sponsor/*", () => {
     expect(r.body.same_epoch).toEqual(expect.arrayContaining(["draw-magic", "first-consume"]));
   });
 
-  it("plan: open-fund đứng SAU bind-did, TRƯỚC fund-vault; vai ký = ví trả phí · platform (chủ KHÔNG ký); fund-vault đòi open-fund", async () => {
+  it("plan: mỗi bước mang actor (ai GỌI route); actor trong thân ⟹ chỉ bước của vai đó. CẶP: vắng ⟹ đủ bước; lạ ⟹ 400", async () => {
+    type Row = { step: string; actor: string };
+    const all = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH }, undefined);
+    expect(all.status).toBe(200);
+    const actorOf = Object.fromEntries((all.body.steps as Row[]).map(r => [r.step, r.actor]));
+    expect(actorOf).toMatchObject({
+      "open-vault": "app", "bind-did": "app", "fund-vault": "sponsor", "draw-magic": "app",
+      "first-consume": "module", "claim": "sponsor",
+    });
+    expect((all.body.fallback_steps as Row[]).map(r => r.actor)).toEqual(["app"]);
+    const app = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH, actor: "app" }, undefined);
+    expect(app.status).toBe(200);
+    expect((app.body.steps as Row[]).map(r => r.step).filter(x => x !== "wakeme-genesis"))
+      .toEqual(["open-vault", "bind-did", "draw-magic"]);
+    expect((app.body.fallback_steps as Row[]).map(r => r.step)).toEqual(["open-fund"]);
+    const mod = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH, actor: "module" }, undefined);
+    expect((mod.body.steps as Row[]).map(r => r.step)).toEqual(["first-consume"]);
+    expect(mod.body.fallback_steps).toEqual([]);
+    expect(mod.body.same_epoch).toEqual(all.body.same_epoch);
+    const bad = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH, actor: "wallet" }, undefined);
+    expect(bad.status).toBe(400);
+  });
+
+  it("plan: open-vault chở genesis quỹ (vai platform = service) → bind-did → fund-vault → draw-magic → first-consume; open-fund chỉ là bước BÙ", async () => {
     const r = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH }, undefined);
     expect(r.status).toBe(200);
-    const steps = r.body.steps as Array<{ step: string; path?: string; signers: Array<{ role: string }>; requires: string[] }>;
+    type Row = { step: string; path?: string; signers: Array<{ role: string; how: string }>; requires: string[]; when?: string };
+    const steps = r.body.steps as Row[];
     const order = steps.map(x => x.step).filter(s => s !== "wakeme-genesis");
-    expect(order).toEqual(["open-vault", "bind-did", "open-fund", "fund-vault", "draw-magic", "first-consume"]);
-    const open = steps.find(x => x.step === "open-fund")!;
-    expect(open.path).toBe("/tx/sponsor/open-fund");
-    expect(open.signers.map(x => x.role)).toEqual(["fee-wallet", "platform"]);
-    expect(steps.find(x => x.step === "fund-vault")!.requires.some(q => q.startsWith("open-fund"))).toBe(true);
+    expect(order).toEqual(["open-vault", "bind-did", "fund-vault", "draw-magic", "first-consume", "claim"]);
+    const ov = steps.find(x => x.step === "open-vault")!;
+    expect(ov.signers.map(x => x.role)).toEqual(["fee-wallet", "owner", "platform"]);
+    expect(ov.signers.find(x => x.role === "platform")!.how).toBe("service");
+    // open-fund KHÔNG nằm trong hành trình chính; chỉ ở danh sách bước bù.
+    const fb = r.body.fallback_steps as Row[];
+    expect(fb.map(x => x.step)).toEqual(["open-fund"]);
+    expect(fb[0]!.path).toBe("/tx/sponsor/open-fund");
+    expect(fb[0]!.signers).toEqual([expect.objectContaining({ role: "fee-wallet" }), { role: "platform", how: "service" }]);
+    expect(fb[0]!.when).toMatch(/trước/);
+    expect(steps.find(x => x.step === "fund-vault")!.requires.some(q => q.startsWith("quỹ tài trợ của DID"))).toBe(true);
   });
 
   it("open-fund: thân bài mang did_commit / owner_commit / sponsor / beneficiary / fund_id ⟹ 400 SPONSOR_REQUEST_SHAPE; CẶP: chỉ owner ⟹ qua", () => {
@@ -804,5 +835,52 @@ describe("trần chữ số của lượng trong thân bài", () => {
   it("qua route fund-vault: 20 chữ số qua tầng hình dạng rồi chết ở trần CARP (cổng SAU, mã khác)", async () => {
     const r = await post("/tx/sponsor/fund-vault", { ...FUND_BASE, carp_amount: "9".repeat(20) }, service("Preprod", deploymentJson("Preprod")).svc);
     expect(errCode(r)).toBe("SPONSOR_CARP_ABOVE_CAP");
+  });
+});
+
+describe("#162: claim — hình dạng thân bài; cảnh báo khởi động khi khoá platform giữ UTxO", () => {
+  it("claim: fund_id bắt buộc; amount vắng ⟹ mặc định; amount ≤ 0 ⟹ 400; trường định đích/chủ ⟹ 400", () => {
+    expect(parseSponsorReq162("claim", { fund_id: "ab".repeat(32), change_address: "addr_test1x" }))
+      .toEqual({ fundId: "ab".repeat(32), changeAddress: "addr_test1x" });
+    expect(parseSponsorReq162("claim", { fund_id: "ab".repeat(32), amount: "5" }).amount).toBe(5n);
+    for (const bad of [{}, { fund_id: "ab".repeat(32), amount: "0" }, { fund_id: "ab".repeat(32), beneficiary: "x" },
+      { fund_id: "ab".repeat(32), owner: { type: "key", hash: "aa".repeat(28) } }]) {
+      let code = "";
+      try { parseSponsorReq162("claim", bad); } catch (e) { code = (e as CodedApiError).code ?? String(e); }
+      expect(code === "SPONSOR_REQUEST_SHAPE" || code === "BAD_REQUEST").toBe(true);
+    }
+  });
+
+  it("L3 CẶP: fee_payer + amount ⟹ 400 SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER; fee_payer không amount ⟹ nhận (rút trọn); change_address + amount ⟹ nhận", () => {
+    const fp = { utxo: `${"ee".repeat(32)}#0`, address: "addr_test1x" };
+    let code = "";
+    let status = 0;
+    try { parseSponsorReq162("claim", { fund_id: "ab".repeat(32), fee_payer: fp, amount: "5" }); } catch (e) {
+      code = (e as CodedApiError).code; status = (e as CodedApiError).httpStatus;
+    }
+    expect([status, code]).toEqual([400, "SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER"]);
+    const all = parseSponsorReq162("claim", { fund_id: "ab".repeat(32), fee_payer: fp });
+    expect(all.amount).toBeUndefined();
+    expect(all.feePayer).toBeDefined();
+    expect(parseSponsorReq162("claim", { fund_id: "ab".repeat(32), change_address: "addr_test1x", amount: "5" }).amount).toBe(5n);
+  });
+
+  it("L2 CẶP: hàm ký platform bật ⟹ dòng khởi động nêu pkh và KHÔNG nói 'KHÔNG giữ khoá'; tắt ⟹ câu cũ", () => {
+    const pkh = "ab".repeat(28);
+    const on = serviceKeyStatusLine(pkh);
+    expect(on).toContain(pkh);
+    expect(on).toMatch(/giữ MỘT khoá/);
+    expect(on).not.toMatch(/KHÔNG giữ khoá/);
+    expect(serviceKeyStatusLine(undefined)).toMatch(/KHÔNG giữ khoá riêng/);
+  });
+
+  it("ba trạng thái: 0 UTxO ⟹ null; có UTxO ⟹ cảnh báo nêu số; đọc chuỗi hỏng ⟹ KHÔNG ĐO ĐƯỢC", async () => {
+    const pkh = "ab".repeat(28);
+    const chainOf = (f: () => Promise<UTxO[]>) => ({ utxosAt: f }) as unknown as ChainReader;
+    expect(await platformAddressFundedWarning(chainOf(async () => []), "Preprod", pkh)).toBeNull();
+    const one = { txHash: "11".repeat(32), outputIndex: 0, address: "x", assets: { lovelace: 1n } } as UTxO;
+    expect(await platformAddressFundedWarning(chainOf(async () => [one]), "Preprod", pkh)).toMatch(/đang giữ 1 UTxO/);
+    expect(await platformAddressFundedWarning(chainOf(async () => { throw new Error("502"); }), "Preprod", pkh))
+      .toMatch(/KHÔNG ĐO ĐƯỢC/);
   });
 });

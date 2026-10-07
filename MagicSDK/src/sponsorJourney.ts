@@ -271,6 +271,12 @@ export interface SponsorT1Params {
   validToMs?: bigint;
   /** Lượng thế chấp tường minh (lovelace). Vắng ⟹ mặc định của Lucid. */
   collateralLovelace?: bigint;
+  /**
+   * Thêm phần dựng vào CÙNG tx trước khi hoàn tất (sau nhân chứng chủ, trước `validTo`). Dùng để chở genesis
+   * quỹ tài trợ của DID trong tx mở két (`@magiclamp/prepaidgen-sdk` ▸ `planMintPaidFund` + `applyPlan`, cùng
+   * `seedUtxo` với `collectSeed: false`). Vắng ⟹ tx như cũ.
+   */
+  extend?: (tx: TxBuilder) => TxBuilder;
 }
 
 export interface SponsorT1Summary {
@@ -301,6 +307,7 @@ export async function buildSponsorT1OpenPrepaid(p: SponsorT1Params): Promise<Spo
     ...(p.threadLovelace === undefined ? {} : { lovelace: p.threadLovelace }),
   });
   let t1 = applyOwnerAuth(th.tx, auth);
+  if (p.extend !== undefined) t1 = p.extend(t1);
   if (p.validToMs !== undefined) t1 = t1.validTo(Number(p.validToMs));
   const built = await completeOrThrow(t1, "T1", p.collateralLovelace);
   const withdrawals = assertWithdrawals(built.txCbor, p.owner, "T1");

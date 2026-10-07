@@ -259,11 +259,11 @@ export const ISSUED_ROUTES: readonly IssuedRoute[] = [
  */
 export type SponsorRoute =
   | "sponsor-open-vault" | "sponsor-bind-did" | "sponsor-open-fund" | "sponsor-fund-vault" | "sponsor-draw-magic"
-  | "sponsor-first-consume";
+  | "sponsor-first-consume" | "sponsor-claim";
 
 export const SPONSOR_ROUTES: readonly SponsorRoute[] = [
   "sponsor-open-vault", "sponsor-bind-did", "sponsor-open-fund", "sponsor-fund-vault", "sponsor-draw-magic",
-  "sponsor-first-consume",
+  "sponsor-first-consume", "sponsor-claim",
 ];
 
 /**
@@ -614,5 +614,63 @@ export class IssuedTxRegistry {
 
   size(): number {
     return this.issued.size;
+  }
+}
+
+/**
+ * Giữ `did:<did_commit>` cho genesis quỹ tài trợ (open-vault chở quỹ, open-fund) tới HẾT HẠN của tx
+ * (`validTo` + `CLOCK_SKEW_MARGIN_MS`), không tới lúc nộp.
+ *
+ * Vì sao không dùng `OwnerLockTable`: bảng đó có hai tính chất đúng cho khoá chủ mà sai ở đây — (1) lượt dựng
+ * mới THAY lượt cũ chứ không từ chối, nên tx cũ chỉ bị chặn ở `/tx/submit`; tx đã có đủ chữ ký (qua `/fee/sign`)
+ * nộp thẳng lên nút vẫn vào khối; (2) `/tx/submit` nhả khoá theo hash, đúng lúc khe nộp → vào khối bắt đầu,
+ * khi dịch vụ còn chưa thấy quỹ trên chuỗi. Kết quả của cả hai: hai tx genesis cho cùng một DID, cả hai hợp lệ.
+ * Ở đây lượt thứ hai trong khe nhận 409; giữ tới hết hạn vì sau mốc đó tx đầu không vào khối được nữa, còn
+ * nếu nó đã vào khối thì lượt đọc chuỗi thấy quỹ.
+ *
+ * Giá: một tx genesis bị bỏ dở (không ai ký) chặn DID đó tới hết hạn của nó — `details.held_until` nói tới khi nào.
+ */
+export class DidGenesisHolds {
+  private readonly held = new Map<string, { txHash: string; untilMs: number; gen: number; tag?: string }>();
+  private nextGen = 1;
+
+  /**
+   * Giữ cho một lượt dựng. Đang có người giữ còn hạn ⟹ trả người đó, không giữ. `pendingTtlMs`: hạn của lượt chưa
+   * dựng xong. `tag` có và TRÙNG `tag` của người đang giữ ⟹ lượt này THAY lượt trước (thẻ mới, lượt trước không `bind`
+   * được nữa) — dành cho hai tx loại trừ nhau trên chuỗi (fund-vault: cùng một UTxO quỹ, chỉ một tx vào khối được).
+   */
+  claim(key: string, nowMs: number, pendingTtlMs: number, tag?: string):
+    { ok: true; gen: number } | { ok: false; txHash: string; untilMs: number } {
+    const cur = this.held.get(key);
+    if (cur !== undefined && cur.untilMs > nowMs && !(tag !== undefined && cur.tag === tag)) {
+      return { ok: false, txHash: cur.txHash, untilMs: cur.untilMs };
+    }
+    const gen = this.nextGen++;
+    this.held.set(key, { txHash: PENDING_TX_HASH, untilMs: nowMs + pendingTtlMs, gen, ...(tag === undefined ? {} : { tag }) });
+    return { ok: true, gen };
+  }
+
+  /** Dựng xong: giữ tới `validToMs + CLOCK_SKEW_MARGIN_MS`. Thẻ lệch ⟹ không làm gì. */
+  bind(key: string, gen: number, txHash: string, validToMs: number): void {
+    const cur = this.held.get(key);
+    if (cur === undefined || cur.gen !== gen) return;
+    this.held.set(key, { ...cur, txHash, untilMs: validToMs + CLOCK_SKEW_MARGIN_MS });
+  }
+
+  /** Dựng HỎNG ⟹ nhả. Thẻ lệch ⟹ không làm gì. */
+  release(key: string, gen: number): void {
+    const cur = this.held.get(key);
+    if (cur !== undefined && cur.gen === gen) this.held.delete(key);
+  }
+
+  peek(key: string, nowMs: number): { txHash: string; untilMs: number } | null {
+    const cur = this.held.get(key);
+    return cur === undefined || cur.untilMs <= nowMs ? null : { txHash: cur.txHash, untilMs: cur.untilMs };
+  }
+
+  sweep(nowMs: number): number {
+    let n = 0;
+    for (const [k, v] of this.held) if (v.untilMs <= nowMs) { this.held.delete(k); n++; }
+    return n;
   }
 }

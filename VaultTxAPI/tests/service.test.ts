@@ -503,6 +503,23 @@ describe("Bộ định tuyến", () => {
     expect(r.body.change_address_strategy).toBe("enterprise_from_owner_pkh");
   });
 
+  it("dịch vụ không thẻ: yêu cầu đã qua proxy ⟹ 401, mọi header chuyển tiếp. CẶP: yêu cầu trên máy ⟹ qua cổng thẻ", async () => {
+    const h = harness({ token: "" });
+    const body = { owner_pkh: OWNER_PKH, schedule_length: "3", lamp_per_epoch: "7000000" };
+    const forwarded: Record<string, string>[] = [
+      { "x-forwarded-for": "203.0.113.7" }, { "X-Forwarded-For": "203.0.113.7" }, { forwarded: "for=203.0.113.7" },
+      { "x-real-ip": "203.0.113.7" }, { "cf-connecting-ip": "203.0.113.7" },
+    ];
+    for (const hdr of forwarded) {
+      const r = await handle(post("/tx/schedule-commit", body, hdr), h.router);
+      expect(r.status).toBe(401);
+      expect((r.body as { error: { code: string } }).error.code).toBe("UNAUTHORIZED");
+    }
+    expect((await handle(post("/tx/schedule-commit", body), h.router)).status).not.toBe(401);
+    expect((await handle({ method: "GET", url: "/health", headers: { "cf-connecting-ip": "203.0.113.7" } }, h.router)).status)
+      .toBe(200);
+  });
+
   it("thiếu/sai thẻ bài ⟹ 401", async () => {
     const h = harness({ token: "x".repeat(32) });
     const body = { owner_pkh: OWNER_PKH, schedule_length: "3", lamp_per_epoch: "7000000" };

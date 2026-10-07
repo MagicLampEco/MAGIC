@@ -5,6 +5,23 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: nguồn Feecover xác nhận phải khớp nguồn đã xin; `/tx/quote` đọc `X-Feecover-Token`
+
+**Đổi gì.** `/fee/utxo` và `/fee/sign`: Feecover trả `source` khác nguồn đã xin (vắng = `feecover`) ⟹
+`502 FEE_SOURCE_NOT_CONFIRMED` (`details.confirmed_source` = giá trị Feecover trả); `/fee/utxo` không ghi
+lượt giữ, `/fee/sign` không giao chữ ký. `/fee/sign` kiểm `source` của Feecover theo enum
+(`feecover` | `sponsor`) như `/fee/utxo`; giá trị khác ⟹ `502 FEE_PROXY_UPSTREAM`. `/tx/quote` đọc tiêu đề
+`X-Feecover-Token` như `/fee/*` và hỏi `/v1/fee-sources` dưới đúng ứng dụng đó (`FeeProxy.feeSources` nhận
+thêm `callerToken`); token không khớp ⟹ `401 FEE_PROXY_APP_UNKNOWN`. README sửa câu L38: Feecover từ chối
+chủ không DID lúc ký, không phải lúc xin UTxO.
+
+**Vì sao.** Review #159: thân trả vọng nguyên `source` lệch với 200, nên app có thể nhận chữ ký dưới nguồn
+khác nguồn nó xin (tưởng tài trợ mà bị trừ CARP); báo giá hỏi Feecover dưới ứng dụng mặc định trong khi
+`/fee/*` dùng ứng dụng của token, nên `fee_sources` có thể lệch ứng dụng thật.
+
+**Cái gì gãy nếu bám bản cũ.** Client dựa vào việc thân 200 vọng `source` khác yêu cầu (để tự từ chối) nay
+nhận 502. Client gửi `X-Feecover-Token` sai tới `/tx/quote` (trước đây bị bỏ qua) nay nhận 401.
+
 ## 2026-10-07 — VaultTxAPI: `fee_sources` trong báo giá; `source` ở `/fee/utxo` + `/fee/sign`
 
 **Đổi gì.** `POST /tx/quote` trả thêm `fee_sources` = ba khối `owner_address` / `feecover` / `sponsor`

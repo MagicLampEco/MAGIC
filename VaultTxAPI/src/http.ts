@@ -19,7 +19,7 @@
 //   GET  /tx/status/{tx_hash}  chỉ đọc: { tx_hash, state: in_chain|in_mempool|not_found, block?, slot?,
 //                              block_time?, expires_at?, server_time? } — hash sai khuôn ⟹ 400
 //                              `TX_HASH_INVALID`; nhà cung cấp hỏng ⟹ 502 `TX_STATUS_PROVIDER_UNAVAILABLE`
-//   POST /tx/quote             { route, params, [owner_fee_addresses] } (báo giá phí — `feeQuote.ts`;
+//   POST /tx/quote             { route, params, [owner_fee_addresses] } [X-Feecover-Token] (báo giá phí — `feeQuote.ts`;
 //                              không dựng tx nào để ký, không giữ chỗ; hỏi Feecover `/v1/fee-sources`)
 //   POST /fee/utxo             { route, [source] }    [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`;
 //   POST /fee/sign             { tx_cbor, [source] }  [X-Feecover-Token]   source = feecover | sponsor)
@@ -232,7 +232,11 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
     if (path === "/tx/quote") {
       // Báo giá đi ĐÚNG khối mà đường dựng sẽ đi (`vault_type` nằm trong `params`).
       const service = deps.blocks === undefined ? deps.service : await deps.blocks.serviceForQuote(body);
-      const out = await quoteFee(body, { service, feeProxy: deps.feeProxy });
+      // Cùng tiêu đề, cùng cách đọc với `/fee/*`: báo giá hỏi Feecover dưới đúng ứng dụng sẽ xin UTxO.
+      const feecoverToken = req.headers["x-feecover-token"] ?? req.headers["X-Feecover-Token"];
+      const out = await quoteFee(body, {
+        service, feeProxy: deps.feeProxy, ...(feecoverToken === undefined ? {} : { feecoverToken }),
+      });
       return { status: 200, body: out as unknown as Record<string, unknown> };
     }
     if (path.startsWith("/tx/sponsor/")) {

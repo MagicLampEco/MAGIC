@@ -13,6 +13,7 @@ import {
   PROTOCOL_PARAMETERS_DEFAULT, credentialToAddress, getAddressDetails, scriptHashToCredential, unixTimeToSlot,
   validatorToScriptHash, type UTxO,
 } from "@lucid-evolution/lucid";
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
@@ -1045,6 +1046,59 @@ const askSources = async (feecoverReply?: FeecoverReply, o: HarnessOpts = {}) =>
   const r = await handle(quote({ route: "consume", params: CONSUME }), h.router);
   return { h, r, fs: sourcesOf(r) };
 };
+
+// Review #159 mục 4: báo giá hỏi Feecover dưới ĐÚNG ứng dụng mà `/fee/utxo` sẽ dùng.
+const QUOTE_ORILIFE_TOKEN = "orilife-app-token-for-tests-" + "z".repeat(20);
+const FEECOVER_TWO_APPS = {
+  url: "https://feecover.example",
+  apps: {
+    magic: { purposes: { consume: "consume_magic" } },
+    orilife: {
+      token_sha256: createHash("sha256").update(QUOTE_ORILIFE_TOKEN, "utf8").digest("hex"),
+      purposes: { consume: "orilife_consume_magic" },
+    },
+  },
+};
+const quoteWith = (headers: Record<string, string>) =>
+  ({ method: "POST", url: "/tx/quote", headers, body: { route: "consume", params: CONSUME } });
+
+describe("/tx/quote — X-Feecover-Token", () => {
+  it("CẶP: gửi token orilife ⟹ /v1/fee-sources hỏi bằng token + mục đích của orilife (như /fee/utxo); không gửi ⟹ magic", async () => {
+    const h = harness({ feecover: FEECOVER_TWO_APPS });
+    const a = await handle(quoteWith({ "x-feecover-token": QUOTE_ORILIFE_TOKEN }), h.router);
+    expect(bodyOf(a).feecover.available).toBe(true);
+    const b = await handle(quoteWith({}), h.router);
+    expect(bodyOf(b).feecover.available).toBe(true);
+    expect(h.fetchLog.map(c => [purposeOf(c.url), c.init.headers])).toEqual([
+      ["orilife_consume_magic", { authorization: `Bearer ${QUOTE_ORILIFE_TOKEN}` }],
+      ["consume_magic", { authorization: `Bearer ${MAGIC_TOKEN}` }],
+    ]);
+    expect(JSON.stringify(a.body)).not.toContain(QUOTE_ORILIFE_TOKEN);
+  });
+
+  it("CẶP: proxy KHÔNG cầm token magic ⟹ không gửi tiêu đề thì TOKEN_ABSENT; gửi token orilife thì vẫn hỏi được", async () => {
+    const h = harness({ feecover: FEECOVER_TWO_APPS, magicToken: null });
+    const none = bodyOf(await handle(quoteWith({}), h.router));
+    expect(none.feecover).toMatchObject({ available: false, reason: "FEE_QUOTE_FEECOVER_TOKEN_ABSENT" });
+    expect(h.fetchLog).toHaveLength(0);
+    const ori = bodyOf(await handle(quoteWith({ "x-feecover-token": QUOTE_ORILIFE_TOKEN }), h.router));
+    expect(ori.feecover.available).toBe(true);
+    expect(h.fetchLog.map(c => purposeOf(c.url))).toEqual(["orilife_consume_magic"]);
+  });
+
+  it("CẶP: token không khớp ứng dụng nào (kể cả token magic, chuỗi rỗng) ⟹ 401 FEE_PROXY_APP_UNKNOWN như /fee/*, Feecover KHÔNG bị hỏi; token đúng ⟹ 200", async () => {
+    const h = harness({ feecover: FEECOVER_TWO_APPS });
+    for (const t of ["not-a-known-token", MAGIC_TOKEN, ""]) {
+      const r = await handle(quoteWith({ "x-feecover-token": t }), h.router);
+      expect(r.status, JSON.stringify(t)).toBe(401);
+      expect(codeOf(r)).toBe("FEE_PROXY_APP_UNKNOWN");
+      expect(JSON.stringify(r.body)).not.toContain(MAGIC_TOKEN);
+    }
+    expect(h.fetchLog).toHaveLength(0);
+    const ok = await handle(quoteWith({ "x-feecover-token": QUOTE_ORILIFE_TOKEN }), h.router);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+  });
+});
 
 describe("/tx/quote — fee_sources", () => {
   it("CẶP Feecover ba nguồn ⟹ ba khối NGUYÊN (kể cả trường lạ như giá CARP); Feecover cũ chỉ feecover ⟹ feecover nguyên, sponsor SPONSOR_NOT_REPORTED, owner_address do dịch vụ dựng", async () => {

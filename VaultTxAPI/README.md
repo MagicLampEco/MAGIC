@@ -78,7 +78,7 @@ POST /tx/bind-did          { owner, [owner_witness], [change_address], did_commi
 POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile], [did_commit] }
 POST /tx/submit            { tx_cbor, witness_cbor }
 GET  /tx/status/{tx_hash}  — chỉ đọc: tx đã vào khối / ở mempool / chưa thấy, xem dưới
-POST /tx/quote             { route, params, [owner_fee_addresses] } — báo giá phí, xem dưới
+POST /tx/quote             { route, params, [owner_fee_addresses] } [X-Feecover-Token] — báo giá phí, xem dưới
 POST /fee/utxo             { route }        [X-Feecover-Token]   — proxy ví trả phí, xem dưới
 POST /fee/sign             { tx_cbor }      [X-Feecover-Token]
 GET  /health
@@ -976,9 +976,15 @@ làm cạn kho UTxO của Feecover. Lượt gọi Feecover duy nhất là câu h
     trong khối — không bao giờ thành `null`, không đệm. Trường Feecover thêm sau này đi qua nguyên.
   - **Chủ khai bằng DID** (`params.owner = { "type": "did", … }`) ⟹ dịch vụ hỏi kèm
     `owner_commit` = tên anchor của DID (`blake2b_256(utf8(did))`), Feecover báo thêm
-    `sponsor.did` (suất sponsor 24 giờ còn lại của DID đó). Chủ khoá thường không gửi `owner_commit`;
-    chủ khoá thường không có DID nên Feecover từ chối nguồn sponsor theo luật L38 lúc xin UTxO / ký —
-    dịch vụ không thêm cổng riêng.
+    `sponsor.did` (suất sponsor 24 giờ còn lại của DID đó). Chủ khoá thường không gửi `owner_commit`.
+    Chủ không có DID: Feecover từ chối nguồn sponsor theo luật L38 **lúc ký** (`/fee/sign` ⟹ `/v1/sign`,
+    nơi Feecover thấy chủ trong tx). `/fee/utxo` không gửi chủ nào nên lúc xin UTxO Feecover chưa biết
+    chủ là ai — dịch vụ không thêm cổng riêng.
+  - **Ứng dụng hỏi Feecover = ứng dụng của `/fee/*`.** Báo giá đọc tiêu đề `X-Feecover-Token` đúng như
+    `/fee/utxo` / `/fee/sign`: vắng ⟹ ứng dụng mặc định `magic`; có ⟹ ứng dụng khai `token_sha256` đó,
+    mục đích tra trong bảng của ứng dụng đó, token chuyển tiếp nguyên. Token không khớp ứng dụng nào
+    (kể cả chuỗi rỗng, kể cả token `magic` gửi qua tiêu đề) ⟹ `401 FEE_PROXY_APP_UNKNOWN`, Feecover
+    không bị hỏi — cùng mã với `/fee/*`, vì đó là lỗi của người gọi chứ không phải "nguồn không có".
   - **Không hỏi được Feecover** (bản deploy không khai, hết giờ, lỗi mạng, mã khác 200, thân sai) ⟹
     `feecover` và `sponsor` = `{ "available": false, "reason": "<FEE_QUOTE_FEECOVER_*>", "message": "…" }`
     (4xx của Feecover có `rule` thì kèm `rule`), báo giá **vẫn** trả 200 với số phí. `owner_address`
@@ -1135,8 +1141,13 @@ người dùng không trả gì). Vắng = `"feecover"`. Nguồn `owner_address`
   Feecover không bị gọi.
 - `source` có mặt thì chuyển tiếp: `GET /v1/utxo?…&source=…`, thân `POST /v1/sign` có `source`. Vắng thì
   không gửi trường đó (bản Feecover trước nguồn sponsor không biết nó).
-- **`source` ở thân trả LẤY TỪ câu trả lời của Feecover**, không từ yêu cầu. Feecover trả `source` ⟹ thân
-  trả mang đúng giá trị đó, kể cả khi khác giá trị đã xin (app tự từ chối). Feecover không trả `source`:
+- **`source` ở thân trả LẤY TỪ câu trả lời của Feecover**, không từ yêu cầu, và phải **khớp** nguồn đã xin
+  (vắng = `feecover`). Feecover trả `source` KHÁC nguồn đã xin ⟹ `502 FEE_SOURCE_NOT_CONFIRMED`
+  (`details.source` = nguồn đã xin, `details.confirmed_source` = nguồn Feecover trả; ở `/fee/sign` có thêm
+  `tx_hash`): ở `/fee/utxo` lượt giữ **không** được ghi, ở `/fee/sign` chữ ký **không** được giao — dùng nó
+  là để app tưởng tx được tài trợ trong khi bị trừ CARP, hoặc ngược lại. `/fee/sign` nhận `source` ngoài
+  `"feecover"` / `"sponsor"` từ Feecover ⟹ `502 FEE_PROXY_UPSTREAM` (thân sai hình dạng), cùng phép kiểm với
+  `/fee/utxo`. Feecover không trả `source`:
   - đã xin `"sponsor"` ⟹ `502 FEE_SOURCE_NOT_CONFIRMED` (`details.source: "sponsor"`; ở `/fee/sign` có
     thêm `tx_hash`) — bản Feecover đó ký bằng ví Feecover, nên chữ ký / UTxO KHÔNG được giao như thể
     sponsor đã trả; ở `/fee/utxo` lượt giữ cũng không được ghi;
@@ -1534,7 +1545,7 @@ Nên:
 | `/tx/quote`: một phần tử `owner_fee_addresses` không phải địa chỉ khoá / sai mạng | `400 FEE_QUOTE_OWNER_ADDRESS_INVALID` |
 | `/tx/quote`: `owner_fee_addresses` quá 10 phần tử | `400 FEE_QUOTE_OWNER_ADDRESSES_TOO_MANY` |
 | `/tx/quote`: `owner_fee_addresses` có địa chỉ trùng | `400 FEE_QUOTE_OWNER_ADDRESSES_DUPLICATE` |
-| `X-Feecover-Token` không khớp ứng dụng nào | `401 FEE_PROXY_APP_UNKNOWN` |
+| `X-Feecover-Token` (ở `/fee/*` hoặc `/tx/quote`) không khớp ứng dụng nào | `401 FEE_PROXY_APP_UNKNOWN` |
 | ứng dụng chưa có mục đích cho route đó | `400 FEE_PROXY_PURPOSE_UNMAPPED` |
 | mục đích thuộc ứng dụng khác / thiếu tiền tố tên ứng dụng | `403 FEE_PROXY_APP_PURPOSE` |
 | `/fee/sign` cho tx không do dịch vụ phát, hoặc còn hạn nộp nhưng quá `reserved_until` | `403 FEE_PROXY_TX_NOT_ISSUED` |
@@ -1555,7 +1566,7 @@ Nên:
 | Feecover ký một tx có hash khác | `502 FEE_PROXY_UPSTREAM_MISMATCH` |
 | `/fee/utxo` / `/fee/sign`: `source` khác `"feecover"` / `"sponsor"` | `400 FEE_PROXY_SOURCE_INVALID` |
 | `/fee/sign`: `source` (vắng = `feecover`) khác nguồn của lượt giữ UTxO phí | `400 FEE_PROXY_SOURCE_MISMATCH` |
-| xin `source: "sponsor"` mà Feecover trả lời không kèm `source` | `502 FEE_SOURCE_NOT_CONFIRMED` |
+| xin `source: "sponsor"` mà Feecover trả lời không kèm `source`; hoặc Feecover trả `source` khác nguồn đã xin (vắng = `feecover`) ở `/fee/utxo` / `/fee/sign` | `502 FEE_SOURCE_NOT_CONFIRMED` (`details.source`, `details.confirmed_source` khi Feecover có trả) |
 | thiếu/sai thẻ bài | `401 UNAUTHORIZED` |
 | chủ **chưa có** vault | `404 VAULT_NOT_FOUND` ← **không phải** `200` với tx rỗng |
 | method sai | `405 METHOD_NOT_ALLOWED` |

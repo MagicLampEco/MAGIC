@@ -1116,24 +1116,30 @@ dựng được trên lượt giữ của B. Hợp đồng:
   - sai kiểu (không phải chuỗi 32 hex thường) ⟹ `400 FEE_PAYER_SHAPE` / `FUNDING_SHAPE`,
     `details.field: "<trường>.reservation_id"`, trước mọi lượt đọc chuỗi;
   - **vắng** ⟹ hành vi trước bản này (BƯỚC 1), và được ĐẾM: một dòng nhật ký JSON
-    `{"event":"fee_reservation_id_missing","route","fee_payer_utxo","without_id","with_id"}` ở stderr,
-    cộng bộ đếm theo route ở `/health` ▸ `fee_reservation_id: { with_id: {route: n}, without_id: {route: n} }`
-    (từ lúc tiến trình khởi động; chỉ đếm lượt dựng thật, tiêu UTxO Feecover đang được giữ — báo giá không đếm).
-- **`/fee/sign` kiểm mã, app KHÔNG gửi gì thêm.** Sổ phát-hành ghi mã lúc dựng (mã app gửi, hoặc — app
-  chưa gửi — mã lượt giữ đang sống lúc ghi sổ); lúc ký so với mã lượt giữ đang sống của UTxO. Lệch, hoặc
-  tx ghi sổ khi chưa có lượt giữ nào mà nay UTxO đang được giữ ⟹ `409 … "foreign"` (kèm `tx_hash`),
-  Feecover không bị gọi. Tx bị thay khi một tx chung khoá được nộp chỉ bỏ ĐÚNG lượt giữ của nó (cùng mã).
+    `{"event":"fee_reservation_id_missing","route","fee_payer_utxo","without_id","with_id"}` ở stderr;
+    `without_id` / `with_id` là số đếm LUỸ KẾ của route đó từ lúc tiến trình khởi động, tính tới lúc dòng
+    đó in (lượt CÓ mã không in dòng nào, nên `with_id` của dòng mới nhất là cận dưới). Bộ đếm KHÔNG lộ ra HTTP (kể cả `/health`, vốn không cần thẻ). Chỉ đếm lượt dựng
+    ĐÃ GHI SỔ (`IssuedTxRegistry.record`) trên một lượt giữ Feecover đang sống — báo giá, và lượt dựng
+    hỏng sau cổng, không đếm.
+- **`/fee/sign` kiểm mã, app KHÔNG gửi gì thêm.** Sổ phát-hành ghi mã của lượt giữ mà cổng dựng ĐÃ THẤY
+  (chụp lúc qua cổng, không tra lại lúc ghi sổ — giữa hai mốc lượt dựng còn đọc chuỗi, lượt giữ có thể bị
+  quét và UTxO giao cho người khác); lúc ký so với mã lượt giữ đang sống của UTxO. Lệch, hoặc tx dựng khi
+  chưa có lượt giữ nào mà nay UTxO đang được giữ ⟹ `409 … "foreign"` (kèm `tx_hash`), Feecover không bị
+  gọi. Tx bị thay khi một tx chung khoá được nộp chỉ bỏ ĐÚNG lượt giữ của nó (cùng mã).
 
 **Danh sách ĐÓNG route dựng kiểm mã** — mọi route gọi cổng `IssuedTxRegistry.feeReservationForBuild`
 (`service.ts` ▸ `validityPlan`, `sponsor.ts` ▸ `planSponsorValidity`), tức mọi route nhận `fee_payer`:
 `/tx/instant-gen` · `/tx/refresh-checkpoint` · `/tx/schedule-commit` · `/tx/schedule-fire` · `/tx/consume` ·
 `/tx/open-thread` · `/tx/bind-did` · `/tx/create-vault` (`fee_payer` và `funding.fee_payer`) ·
 `/tx/sponsor/t1-open` · `/tx/sponsor/t2-fund` · `/tx/sponsor/t3-draw` · `/tx/sponsor/t4-first-consume`.
-Lệnh liệt kê lại: `command grep -rn "feeReservationForBuild(" VaultTxAPI/src`.
+Lệnh liệt kê lại — cổng chỉ có hai nơi gọi, nên phải đếm nơi gọi CỦA HAI HÀM bọc nó, cộng bảng ý định
+của `buildOne` (mỗi khoá là một route gen/consume/schedule):
+`command grep -rn 'this.validityPlan(\|planSponsorValidity(' VaultTxAPI/src` và
+`command grep -n -A10 '^const ROUTE_OF_INTENT' VaultTxAPI/src/service.ts`.
 
 **BƯỚC 2 (bắt buộc mã) CHƯA bật, và chỉ bật khi đủ HAI điều kiện:** (1) SuperApp báo số bản dựng có gửi
-`reservation_id` ở cả hai app (Aladin, CheckFarm); (2) bộ đếm `/health` ▸ `fee_reservation_id` cùng dòng
-nhật ký `fee_reservation_id_missing` của VTA Preprod cho thấy tỉ lệ lượt dựng Feecover thiếu mã đủ thấp.
+`reservation_id` ở cả hai app (Aladin, CheckFarm); (2) dòng nhật ký `fee_reservation_id_missing` của VTA
+Preprod (số đếm luỹ kế `without_id` / `with_id`) cho thấy tỉ lệ lượt dựng Feecover thiếu mã đủ thấp.
 Lý do: bản app cũ đã nằm trên máy người dùng không bao giờ gửi mã; bắt buộc sớm ⟹ mọi lượt dựng Feecover
 của các bản đó ra 409 vĩnh viễn. Bật bước 2 = nhánh "vắng" đổi thành `409 … "absent"` ở cổng dựng.
 

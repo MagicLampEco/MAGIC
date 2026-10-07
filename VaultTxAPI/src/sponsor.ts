@@ -81,7 +81,7 @@ import {
   type FeePayerRequest, type OutRefLike, type OwnerRewardReturn, type OwnerRewardSummary,
 } from "./feePayer.js";
 import { pickByNft } from "./genV2.js";
-import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type SponsorRoute } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type FeeReservation, type SponsorRoute } from "./locks.js";
 import { isDidOwner, ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness } from "./owner.js";
 import { didPaymentAddressFor, resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
 import type { OwnerRequest } from "./service.js";
@@ -182,18 +182,19 @@ const ISSUED_ROUTE_OF_STEP: Readonly<Record<SponsorStep, SponsorRoute>> = {
 export function planSponsorValidity(p: {
   step: SponsorStep; tipPosixMs: bigint; network: Network; txValidityMs: number;
   issued: IssuedTxRegistry; feePayer?: { utxoRef: string; address: string; reservationId?: string };
-  /** Route sổ phát-hành của bước — để đếm lượt dựng thiếu `reservation_id` (`locks.ts`). */
-  route?: string;
-}): ValidityPlan {
+}): ValidityPlan & { feeReservation?: FeeReservation } {
+  // Lượt giữ cổng đã thấy đi kèm kế hoạch tới `record` (`feePayer.ts` ▸ `feePayerRecordFields`) — cùng
+  // luật với `service.ts` ▸ `validityPlan`: sổ ghi ĐÚNG lượt đã qua cổng, không tra lại sau các `await`.
   const reserved = p.feePayer === undefined
-    ? undefined : p.issued.feeReservationForBuild(p.feePayer.utxoRef, p.feePayer.address, {
-      ...(p.feePayer.reservationId === undefined ? {} : { reservationId: p.feePayer.reservationId }),
-      ...(p.route === undefined ? {} : { route: p.route }),
-    });
-  return planValidity({
-    tipPosixMs: p.tipPosixMs, network: p.network, txValidityMs: p.txValidityMs, epochBound: p.step !== "T1",
-    ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved, feePayerUtxoRef: p.feePayer!.utxoRef }),
-  });
+    ? undefined : p.issued.feeReservationForBuild(p.feePayer.utxoRef, p.feePayer.address,
+      p.feePayer.reservationId === undefined ? {} : { reservationId: p.feePayer.reservationId });
+  return {
+    ...planValidity({
+      tipPosixMs: p.tipPosixMs, network: p.network, txValidityMs: p.txValidityMs, epochBound: p.step !== "T1",
+      ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved.untilMs, feePayerUtxoRef: p.feePayer!.utxoRef }),
+    }),
+    ...(reserved === undefined ? {} : { feeReservation: reserved }),
+  };
 }
 
 /**
@@ -770,7 +771,6 @@ export class SponsorTxService {
       const plan = planSponsorValidity({
         step, tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
         txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, issued: this.deps.issued,
-        route: ISSUED_ROUTE_OF_STEP[step],
         ...(fpReq === undefined ? {} : { feePayer: {
           utxoRef: refStr(fpReq.utxoRef), address: fpReq.address,
           ...(fpReq.reservationId === undefined ? {} : { reservationId: fpReq.reservationId }),
@@ -823,7 +823,7 @@ export class SponsorTxService {
       for (const [k, g] of gens) this.deps.locks.bindTxHash(k, txHash, g);
       this.deps.issued.record(txHash, this.now(), {
         route: ISSUED_ROUTE_OF_STEP[step], lockKeys: keys, validToMs: Number(expiry.validToMs),
-        ...feePayerRecordFields(feePayer?.req),
+        ...feePayerRecordFields(feePayer?.req, plan.feeReservation),
       });
       return {
         step,

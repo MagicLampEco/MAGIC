@@ -12,9 +12,10 @@ lượt giữ, lưu cạnh lượt giữ ở `VaultTxAPI/src/locks.ts` ▸ `Issu
 (danh sách đóng 12 route ở README ▸ *Proxy phí* ▸ `reservation_id`) nhận `fee_payer.reservation_id` /
 `funding.fee_payer.reservation_id` tuỳ chọn: lệch mã lượt giữ đang sống ⟹ `409
 FEE_PAYER_RESERVATION_EXPIRED` với `reservation: "foreign"`; sai khuôn ⟹ `400 FEE_PAYER_SHAPE` /
-`FUNDING_SHAPE`; vắng ⟹ như cũ, và được đếm (`/health` ▸ `fee_reservation_id`, một dòng nhật ký JSON
-`fee_reservation_id_missing`). Sổ phát-hành ghi mã lúc dựng; `/fee/sign` so với mã đang sống, lệch ⟹ 409
-`foreign`, Feecover không bị gọi. Tx bị thay chỉ bỏ đúng lượt giữ cùng mã.
+`FUNDING_SHAPE`; vắng ⟹ như cũ, và được đếm (một dòng nhật ký JSON `fee_reservation_id_missing` mang số
+đếm luỹ kế theo route; KHÔNG lộ ra HTTP, `/health` không cần thẻ). Chỉ lượt dựng đã ghi sổ mới đếm. Sổ
+phát-hành ghi mã của lượt giữ mà cổng dựng ĐÃ THẤY (chụp lúc qua cổng, không tra lại lúc ghi sổ); `/fee/sign`
+so với mã đang sống, lệch ⟹ 409 `foreign`, Feecover không bị gọi. Tx bị thay chỉ bỏ đúng lượt giữ cùng mã.
 
 **Vì sao.** Thư `mg1007sa-b` / `sa1007mg-rid`: sổ giữ chỗ khoá theo UTxO; mọi bản app đi chung thẻ dịch
 vụ, nên khi Feecover giao lại cùng UTxO cho B, A còn cầm `fee_payer` cũ vẫn dựng được trên lượt giữ của B.
@@ -23,7 +24,8 @@ Bước 2 (bắt buộc mã) chỉ bật sau khi đo tỉ lệ thiếu mã và S
 **Cái gì gãy nếu bám bản cũ.** Client so `fee_payer` của `/fee/utxo` bằng phép bằng chặt gặp thêm
 `reservation_id`. `/fee/sign` cho tx dựng khi CHƯA có lượt giữ nào mà nay UTxO đang được giữ: trước ra
 `exceeded`/được ký, nay `foreign`. `details.reservation` có thêm giá trị `foreign`. `IssuedTxRegistry`
-nhận một hàm ghi nhật ký tuỳ chọn ở hàm dựng; `noteFeeReservation` trả mã lượt giữ.
+nhận một hàm ghi nhật ký tuỳ chọn ở hàm dựng; `noteFeeReservation` trả mã lượt giữ;
+`feeReservationForBuild` trả `{ untilMs, id }` thay vì một số, và không còn nhận `route`.
 
 ## 2026-10-07 — VaultTxAPI: UTxO Feecover không còn lượt giữ chỗ ⟹ không dựng, không ký
 

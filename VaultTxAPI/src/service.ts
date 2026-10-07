@@ -42,7 +42,7 @@ import {
   ownerLockKey, type OwnerInput, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
 } from "./owner.js";
 import { didPaymentAddressFor, resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
-import { IssuedTxRegistry, OwnerLockTable, PendingSpends, expiredErrorFor, submissionStateOf, type IssuedRoute } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable, PendingSpends, expiredErrorFor, submissionStateOf, type FeeReservation, type IssuedRoute } from "./locks.js";
 import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
   type CreateVaultSummary, type RequestedIntent, type TxSummary,
@@ -623,7 +623,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
-      const plan = this.validityPlan(tip, false, feePayer, "open-thread", quote);
+      const plan = this.validityPlan(tip, false, feePayer);
       const existing = threadsOf(await this.deps.chain.utxosAt(d.engageAddress), d.engageScriptHash, owner);
       if (existing.length > 0) {
         throw new CodedApiError(409, "ENGAGE_THREAD_EXISTS",
@@ -659,7 +659,7 @@ export class VaultTxService {
         this.deps.issued.record(txHash, this.now(), {
           route: "open-thread", feeRef: hash64NameOf(summary.engage.nft_unit), lockKeys: [ownerKey],
           validToMs: Number(expiry.validToMs),
-          ...feePayerRecordFields(feePayer),
+          ...feePayerRecordFields(feePayer, plan.feeReservation),
         });
       }
       return {
@@ -713,7 +713,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
-      const plan = this.validityPlan(tip, false, feePayer, "bind-did", quote);
+      const plan = this.validityPlan(tip, false, feePayer);
       const thread = await pickEngageThread(
         this.deps.chain, d.engageAddress, d.engageScriptHash, owner, req.engageRef, "/tx/bind-did");
       const existing = didCommitOf(thread);
@@ -754,7 +754,7 @@ export class VaultTxService {
         // Mã ghi sổ Feecover = hash thân tx (không có NFT mới). Không ví trả phí ⟹ `/fee/sign` từ chối.
         this.deps.issued.record(txHash, this.now(), {
           route: "bind-did", lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
-          ...feePayerRecordFields(feePayer),
+          ...feePayerRecordFields(feePayer, plan.feeReservation),
         });
       }
       return {
@@ -784,23 +784,26 @@ export class VaultTxService {
    * validator đòi hai cận cùng một epoch giao thức (gen/consume/schedule — mọi đường qua `buildOne`).
    */
   private validityPlan(
-    tip: ChainTip, epochBound: boolean, feePayer: FeePayerRequest | undefined, route: IssuedRoute, quote: QuoteMode | undefined,
-  ): ValidityPlan {
+    tip: ChainTip, epochBound: boolean, feePayer: FeePayerRequest | undefined,
+  ): ValidityPlan & { feeReservation?: FeeReservation } {
     // UTxO ví trả phí xin qua `/fee/utxo` ⟹ kẹp vào `reserved_until` của nó (sổ phát-hành ghi lúc
     // phát UTxO, `feeProxy.ts`) — cùng luật với `sponsor.ts` ▸ `planSponsorValidity`. UTxO ở địa chỉ
     // Feecover mà sổ không còn lượt giữ ⟹ 409 (`locks.ts` ▸ `feeReservationForBuild`), KHÔNG dựng
     // không kẹp. Ví không phải Feecover (của chính chủ) ⟹ không có giờ giữ chỗ.
-    // `reservation_id` (tuỳ chọn, bước 1): lệch mã lượt giữ đang sống ⟹ 409 `foreign`. Báo giá không đếm.
+    // `reservation_id` (tuỳ chọn, bước 1): lệch mã lượt giữ đang sống ⟹ 409 `foreign`.
+    // Lượt giữ cổng đã thấy đi kèm kế hoạch (`feeReservation`) tới `record` — sổ ghi ĐÚNG lượt đó, không
+    // tra lại sổ sau các `await` của lượt dựng. Đếm có/thiếu mã ở `record`, nên báo giá (không ghi sổ) không đếm.
     const reserved = feePayer === undefined
-      ? undefined : this.deps.issued.feeReservationForBuild(refStr(feePayer.utxoRef), feePayer.address, {
-        ...(feePayer.reservationId === undefined ? {} : { reservationId: feePayer.reservationId }),
-        ...(quote === undefined ? { route } : {}),
-      });
-    return planValidity({
-      tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
-      txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, epochBound,
-      ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved, feePayerUtxoRef: refStr(feePayer!.utxoRef) }),
-    });
+      ? undefined : this.deps.issued.feeReservationForBuild(refStr(feePayer.utxoRef), feePayer.address,
+        feePayer.reservationId === undefined ? {} : { reservationId: feePayer.reservationId });
+    return {
+      ...planValidity({
+        tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
+        txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, epochBound,
+        ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved.untilMs, feePayerUtxoRef: refStr(feePayer!.utxoRef) }),
+      }),
+      ...(reserved === undefined ? {} : { feeReservation: reserved }),
+    };
   }
 
   /** Hạn đọc NGƯỢC từ chính CBOR vừa dựng — nguồn duy nhất của `expires_at` và hạn dòng sổ phát-hành. */
@@ -848,7 +851,7 @@ export class VaultTxService {
       const vault = pickSingleVault(found, ownerKey, vaultType ?? "bất kỳ", scopes.map(s => s.address));
       this.assertNotPendingSpent(vault.utxo);
 
-      const plan = this.validityPlan(tip, true, feePayer, routeOfIntent(intent), quote);
+      const plan = this.validityPlan(tip, true, feePayer);
       const ctx: BuildContext = {
         owner,
         ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn),
@@ -900,7 +903,7 @@ export class VaultTxService {
         // `/fee/sign` đọc route + UTxO ví trả phí từ đây chứ không nhận từ app.
         this.deps.issued.record(txHash, this.now(), {
           route: routeOfIntent(intent), lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
-          ...feePayerRecordFields(feePayer),
+          ...feePayerRecordFields(feePayer, plan.feeReservation),
         });
       }
 
@@ -1096,7 +1099,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
-      const plan = this.validityPlan(tip, false, feePayer ?? funding?.feePayer, "create-vault", quote);
+      const plan = this.validityPlan(tip, false, feePayer ?? funding?.feePayer);
       if (req.kind === "instant") await this.assertNoInstantVaultYet(scope, owner, req.didCommit);
       const witness = await this.witnessFor(req);
       // Chỉ `fee_payer` ở gốc. Có `funding` thì thưởng đã về `funding.address` (ví Phoenix do app khai,
@@ -1209,7 +1212,7 @@ export class VaultTxService {
         this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
         this.deps.issued.record(txHash, this.now(), {
           route: "create-vault", feeRef: vaultNftName, lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
-          ...feePayerRecordFields(feePayer ?? funding?.feePayer),
+          ...feePayerRecordFields(feePayer ?? funding?.feePayer, plan.feeReservation),
         });
       }
       return {

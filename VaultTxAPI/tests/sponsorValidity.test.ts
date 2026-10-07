@@ -161,22 +161,26 @@ describe("hạn tx tài trợ: mã lượt giữ (reservation_id)", () => {
   const ID_OLD = "0a".repeat(16);
   const ID_NEW = "0b".repeat(16);
 
-  it("CẶP: mã khớp lượt giữ đang sống ⟹ lập hạn được và đếm with_id; mã của lượt giữ CŨ ⟹ 409 foreign", () => {
+  it("CẶP: mã khớp lượt giữ đang sống ⟹ lập hạn được và kế hoạch mang ĐÚNG lượt giữ đó; mã của lượt giữ CŨ ⟹ 409 foreign", () => {
     const logs: string[] = [];
     const issued = new IssuedTxRegistry(l => logs.push(l));
     issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_OLD);
     // Feecover giao lại UTxO ⟹ lượt giữ mới, mã mới.
     issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_NEW);
     const run = (reservationId: string) => planSponsorValidity({
-      step: "T2", tipPosixMs: TIP_MS, network: NET, txValidityMs: TX_VALIDITY_MS, issued, route: "sponsor-t2-fund",
+      step: "T2", tipPosixMs: TIP_MS, network: NET, txValidityMs: TX_VALIDITY_MS, issued,
       feePayer: { utxoRef: FEE_REF, address: FEECOVER_ADDR, reservationId },
     });
-    expect(run(ID_NEW).reason).toBe("fee_reservation");
+    const ok = run(ID_NEW);
+    expect(ok.reason).toBe("fee_reservation");
+    // Lượt giữ cổng đã thấy đi theo kế hoạch tới `record` (`feePayerRecordFields`), không tra lại sổ.
+    expect(ok.feeReservation).toEqual({ untilMs: Number(TIP_MS) + 300_000, id: ID_NEW });
     expect(() => run(ID_OLD)).toThrow(expect.objectContaining({
       code: "FEE_PAYER_RESERVATION_EXPIRED",
       details: { fee_payer_utxo: FEE_REF, reserved_until: null, reservation: "foreign" },
     }));
-    expect(issued.reservationIdStats()).toEqual({ with_id: { "sponsor-t2-fund": 1 }, without_id: {} });
+    // Cổng KHÔNG đếm: chỉ lượt dựng đã ghi sổ mới đếm (`IssuedTxRegistry.record`).
+    expect(issued.reservationIdStats()).toEqual({ with_id: {}, without_id: {} });
     expect(logs).toEqual([]);
   });
 });

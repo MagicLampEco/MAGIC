@@ -177,9 +177,6 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         holds_signing_material: false,
         // Chỉ trạng thái, không bao giờ token hay băm của nó.
         feecover: deps.feeProxy === undefined ? "absent" : "configured",
-        // Lượt dựng tiêu UTxO Feecover đang giữ chỗ, có / thiếu `fee_payer.reservation_id`, theo route, từ
-        // lúc tiến trình khởi động — số đo để quyết bật BƯỚC 2 (bắt buộc id), README ▸ "reservation_id".
-        ...(deps.feeProxy === undefined ? {} : { fee_reservation_id: deps.feeProxy.reservationIdStats() }),
         // Bên gọi so commit này với commit họ dựa vào, khỏi phải hỏi người vận hành.
         commit: deps.build?.commit ?? null,
         commit_dirty: deps.build?.dirty ?? null,

@@ -11,7 +11,8 @@ import { describe, expect, it } from "vitest";
 
 import { CodedApiError } from "../src/errors.js";
 import {
-  canonicalDatumCbor, classifySponsorFunds, resolveSponsorFund, sponsorFundsStatusBody, type SponsorFundEntry,
+  assertDidNotFundedElsewhere, canonicalDatumCbor, classifySponsorFunds, fundsBlockingOpen, resolveSponsorFund,
+  SPONSOR_RECLAIM_EPOCH_SLACK, sponsorFundsStatusBody, type SponsorFundEntry,
 } from "../src/sponsorFund.js";
 
 const NET = "Preprod" as const;
@@ -43,7 +44,7 @@ function fundDatum(
   fundId: string,
   o: {
     did?: string; sponsorPkh?: string; none?: boolean; credit?: bigint; platform?: string;
-    benPkh?: string; benDatum?: Data | null;
+    benPkh?: string; benDatum?: Data | null; bufferBps?: bigint; reclaimAfter?: bigint; reclaimed?: bigint;
   } = {},
 ): PaidFundDatum {
   return {
@@ -54,14 +55,14 @@ function fundDatum(
     credit_issued: o.credit ?? 0n,
     magic_settled: 0n,
     provider_claimed: 0n,
-    buffer_bps: 1_500n,
+    buffer_bps: o.bufferBps ?? 1_500n,
     last_updated_epoch: 0n,
     beneficiary: keyAddr(o.benPkh ?? BEN_PKH),
     beneficiary_datum: o.benDatum ?? null,
     sponsorship: o.none === true ? null : {
-      sponsor: keyAddr(o.sponsorPkh ?? SPONSOR_PKH), owner_commit: o.did ?? DID_A, reclaim_after_epoch: 530n,
+      sponsor: keyAddr(o.sponsorPkh ?? SPONSOR_PKH), owner_commit: o.did ?? DID_A, reclaim_after_epoch: o.reclaimAfter ?? 530n,
     },
-    sponsor_reclaimed: 0n,
+    sponsor_reclaimed: o.reclaimed ?? 0n,
   };
 }
 
@@ -78,6 +79,7 @@ function fundUtxo(fundId: string, d: PaidFundDatum, carp = 0n): UTxO {
 function classify(
   funds: Array<[string, PaidFundDatum | null]>, platformPkhs?: string[],
   beneficiary?: { address: string; datumCbor?: string },
+  pins: { bufferBps?: bigint; currentEpoch?: bigint } = {},
 ): SponsorFundEntry[] {
   const units = funds.map(([id]) => FUND_HASH + id);
   const map = new Map<string, UTxO[]>(funds.map(([id, d]) => [FUND_HASH + id, d === null ? [] : [fundUtxo(id, d)]]));
@@ -86,6 +88,9 @@ function classify(
     sponsorAddresses: [SPONSOR_ADDR], network: NET, utxosOfUnit: map,
     ...(platformPkhs === undefined ? {} : { platformPkhs }),
     ...(beneficiary === undefined ? {} : { beneficiary }),
+    // Mặc định khớp `fundDatum`: đệm 1500, mốc thu hồi 530 = 330 + 200 (cách trần 531 đúng một biên).
+    bufferBps: pins.bufferBps ?? 1_500n,
+    reclaimHorizon: { currentEpoch: pins.currentEpoch ?? 330n, delayEpochs: 200n },
   });
 }
 
@@ -290,5 +295,60 @@ describe("sponsorFundsStatusBody — bảng GET /sponsor/funds", () => {
     expect((body.totals as Record<string, unknown>).credit_issued).toBe("7");
     expect(body.sponsor_carp_total).toBe("40");
     expect(body.max_carp_amount).toBe("9");
+  });
+});
+
+// ── #161-3 / #161-4 / red-team 4: quỹ đã thu hồi, ghim đệm + mốc thu hồi, nạp lần hai cho cùng DID ─────────────
+
+describe("classifySponsorFunds — ghim đệm, trần mốc thu hồi, quỹ đã thu hồi", () => {
+  it("đệm = cấu hình ⟹ dùng được; CỰC ĐỐI: cùng quỹ, cấu hình đệm khác ⟹ buffer_mismatch (vẫn mang owner_commit)", () => {
+    expect(classify([["c0", fundDatum("c0")]])[0]!.problem).toBeUndefined();
+    const e = classify([["c0", fundDatum("c0")]], undefined, undefined, { bufferBps: 1_000n })[0]!;
+    expect(e.problem).toBe("buffer_mismatch");
+    expect(e.ownerCommit).toBe(DID_A);
+  });
+
+  it("mốc thu hồi = epoch + delay + biên ⟹ dùng được; CỰC ĐỐI: thêm 1 epoch ⟹ reclaim_too_far", () => {
+    const edge = 330n + 200n + SPONSOR_RECLAIM_EPOCH_SLACK;
+    expect(classify([["c1", fundDatum("c1", { reclaimAfter: edge })]])[0]!.problem).toBeUndefined();
+    expect(classify([["c1", fundDatum("c1", { reclaimAfter: edge + 1n })]])[0]!.problem).toBe("reclaim_too_far");
+    // Epoch hiện tại tăng ⟹ trần nới: cùng quỹ đọc ở epoch sau thì dùng được (không phải trần tuyệt đối).
+    expect(classify([["c1", fundDatum("c1", { reclaimAfter: edge + 1n })]], undefined, undefined, { currentEpoch: 331n })[0]!.problem)
+      .toBeUndefined();
+  });
+
+  it("sponsor_reclaimed = 0 ⟹ dùng được; CỰC ĐỐI: sponsor_reclaimed > 0 ⟹ reclaimed, fund-vault theo DID ⟹ 409 NOT_OPENED", () => {
+    expect(classify([["c2", fundDatum("c2", { credit: 9n })]])[0]!.problem).toBeUndefined();
+    const e = classify([["c2", fundDatum("c2", { credit: 9n, reclaimed: 9n })]]);
+    expect(e[0]!.problem).toBe("reclaimed");
+    expect(codeOf(() => resolveSponsorFund(e, DID_A)).code).toBe("SPONSOR_FUND_NOT_OPENED");
+    expect(codeOf(() => resolveSponsorFund(e, DID_A, "c2"))).toMatchObject({ status: 422, code: "SPONSOR_FUND_NOT_ALLOWED" });
+  });
+
+  it("fundsBlockingOpen: quỹ đã thu hồi VẪN chặn open-fund; CỰC ĐỐI: quỹ lệch đích (foreign_beneficiary) không chặn", () => {
+    const reclaimed = classify([["c3", fundDatum("c3", { credit: 9n, reclaimed: 9n })]]);
+    expect(fundsBlockingOpen(reclaimed, DID_A).map(e => e.fundId)).toEqual(["c3"]);
+    const rogue = classify([["c4", fundDatum("c4", { benPkh: ROGUE_BEN_PKH })]], undefined, { address: BEN_ADDR });
+    expect(rogue[0]!.problem).toBe("foreign_beneficiary");
+    expect(fundsBlockingOpen(rogue, DID_A)).toEqual([]);
+  });
+});
+
+describe("assertDidNotFundedElsewhere — mỗi DID một lần tài trợ (red-team 4)", () => {
+  it("quỹ khác của CÙNG DID có credit_issued > 0 ⟹ 409 SPONSOR_DID_FUNDED_ELSEWHERE", () => {
+    const e = classify([["d0", fundDatum("d0")], ["d1", fundDatum("d1", { credit: 5n })]]);
+    expect(codeOf(() => assertDidNotFundedElsewhere(e, DID_A, FUND_HASH + "d0")))
+      .toMatchObject({ status: 409, code: "SPONSOR_DID_FUNDED_ELSEWHERE", details: { funded_fund_ids: ["d1"] } });
+  });
+  it("CỰC ĐỐI: quỹ khác cùng DID credit 0 ⟹ qua; quỹ credit > 0 của DID KHÁC ⟹ qua; chính quỹ đã chọn credit > 0 ⟹ qua", () => {
+    const e = classify([["d0", fundDatum("d0", { credit: 5n })], ["d1", fundDatum("d1")], ["d2", fundDatum("d2", { did: DID_B, credit: 5n })]]);
+    expect(() => assertDidNotFundedElsewhere(e, DID_A, FUND_HASH + "d0")).not.toThrow();
+  });
+  it("quỹ đã thu hồi của cùng DID (credit > 0) ⟹ 409; CỰC ĐỐI: quỹ platform lạ cùng DID credit > 0 ⟹ không chặn", () => {
+    const e = classify([["d0", fundDatum("d0")], ["d3", fundDatum("d3", { credit: 5n, reclaimed: 5n })]]);
+    expect(codeOf(() => assertDidNotFundedElsewhere(e, DID_A, FUND_HASH + "d0")).code).toBe("SPONSOR_DID_FUNDED_ELSEWHERE");
+    const f = classify([["d0", fundDatum("d0")], ["d4", fundDatum("d4", { credit: 5n, platform: ROGUE_PLATFORM })]], [PLATFORM]);
+    expect(f[1]!.problem).toBe("foreign_platform");
+    expect(() => assertDidNotFundedElsewhere(f, DID_A, FUND_HASH + "d0")).not.toThrow();
   });
 });

@@ -5,6 +5,35 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: vá review #161 — trần khoản ứng, chủ ký open-fund, ghim quỹ chặt hơn
+
+**Đổi gì.** (1) Hành trình tài trợ: `thread_lovelace` đi cùng `fee_payer` ⟹ `400
+SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER`; `checkSponsorFeePayerTx` kẹp khoản ứng ≤ Σ min-UTxO output script +
+`SPONSOR_FRONTING_SLACK_LOVELACE` (1 ADA) ⟹ `422 FEE_PAYER_FRONTING_ABOVE_MAX`. Lỗ có từ `main` (sponsor
+open-vault nhận `thread_lovelace` không trần, khoản ứng không trần; CloseThread không ràng output nên chủ lấy
+lại ADA ví trả phí ứng). (2) open-fund: chủ KÝ (mục rút did_stake / khoá chủ), bảng `signers` thêm vai `owner`,
+`summary.withdrawals`. (3) `assertOwnerDid` (mọi bước tài trợ): ngoài tên anchor, `did_stake` chưa apply apply
+`(anchor_nft_policy, tên anchor)` phải băm ra `owner.hash` — lệch ⟹ `422 SPONSOR_OWNER_DID_MISMATCH`; thiếu
+`did_stake.unapplied_script` ⟹ `501 SPONSOR_OWNER_DID_UNVERIFIABLE`. (4) fund-vault: UTxO CARP phải do khoá
+trong `sponsorship.sponsor` của quỹ ⟹ `422 SPONSOR_UTXO_NOT_FUND_SPONSOR`; vai `sponsor` ký bằng khoá trong
+datum; DID đã nhận tài trợ ở quỹ khác (`credit_issued > 0`) ⟹ `409 SPONSOR_DID_FUNDED_ELSEWHERE`.
+(5) `classifySponsorFunds`: `buffer_mismatch` (đệm ≠ cấu hình), `reclaim_too_far` (`reclaim_after_epoch` > epoch
+đỉnh chuỗi + 200 + `SPONSOR_RECLAIM_EPOCH_SLACK`), `reclaimed` (`sponsor_reclaimed > 0`); open-fund vẫn coi
+quỹ đã thu hồi là "đã có quỹ". `GET /sponsor/funds` đọc đỉnh chuỗi để tính epoch. Nguồn: `VaultTxAPI/src/sponsor.ts`
+▸ `parseSponsorRequest`, `checkSponsorFeePayerTx`, `openFund`, `assertOwnerDid`, `assertSponsorUtxosOfFundSponsor`;
+`VaultTxAPI/src/sponsorFund.ts` ▸ `classifySponsorFunds`, `fundsBlockingOpen`, `assertDidNotFundedElsewhere`.
+
+**Vì sao.** Review PR #161 + red-team hành trình tài trợ (2026-10-07): ví trả phí bên thứ ba bị rút ADA qua
+lovelace người gọi tự khai; CBOR did_stake và `anchor_ref` đều do người gọi đưa nên phép so tên anchor một mình
+không buộc chủ vào DID; `addresses` nhiều ví làm tx đòi khoá A mà bảng ký kê khoá B; người giữ khoá platform
+đúc được quỹ đệm/mốc thu hồi lạ; nạp lần hai cho cùng DID qua `fund_id` hoặc quỹ đã thu hồi.
+
+**Gãy gì nếu bám bản cũ.** Bên gọi gửi `thread_lovelace` cùng `fee_payer` nhận 400. open-fund nay cần chữ ký
+chủ (bên ký phải thêm chữ ký did_stake). Bản deploy có chủ script mà thiếu `did_stake.unapplied_script` nhận 501
+ở mọi bước tài trợ. Cấu hình `paid_fund.sponsor` phải khai `buffer_bps` đúng đệm của các quỹ đang có (vắng ⟹
+`MIN_BUFFER_BPS`), không thì quỹ cũ thành `buffer_mismatch`. `classifySponsorFunds` và
+`checkSponsorFeePayerTx` nhận thêm trường bắt buộc (`bufferBps`, `reclaimHorizon`, `coinsPerUtxoByte`).
+
 ## 2026-10-07 — VaultTxAPI: `POST /tx/sponsor/open-fund` — tạo quỹ tài trợ cho một DID, platform ký
 
 **Đổi gì.** Route mới `/tx/sponsor/open-fund` (route sổ phát-hành / `/fee/utxo` `sponsor-open-fund`;

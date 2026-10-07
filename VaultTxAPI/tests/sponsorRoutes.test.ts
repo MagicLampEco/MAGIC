@@ -8,7 +8,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { credentialToAddress } from "@lucid-evolution/lucid";
+import { applyParamsToScript, credentialToAddress, validatorToScriptHash } from "@lucid-evolution/lucid";
 import {
   PrepaidRuleError, PrepaidTxError, encodeFundDatum, type PaidFundDatum, type PrepaidBlueprint,
 } from "@magiclamp/prepaidgen-sdk";
@@ -350,6 +350,16 @@ describe("bộ định tuyến /tx/sponsor/*", () => {
     expect(parseSponsorRequest("open-fund", { ...KEY_OWNER }).owner).toEqual(KEY_OWNER.owner);
   });
 
+  it("red-team 1: open-vault thread_lovelace + fee_payer ⟹ 400 SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER; CỰC ĐỐI: cùng lượng với change_address ⟹ nhận", () => {
+    const fp = { utxo: `${"ab".repeat(32)}#0`, address: SPONSOR_ADDR };
+    expect(() => parseSponsorRequest("open-vault", { ...KEY_OWNER, did_commit: "d1".repeat(32), thread_lovelace: "50000000", fee_payer: fp }))
+      .toThrow(expect.objectContaining({ httpStatus: 400, code: "SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER" }));
+    expect(parseSponsorRequest("open-vault", { ...KEY_OWNER, did_commit: "d1".repeat(32), thread_lovelace: "50000000", change_address: SPONSOR_ADDR })
+      .threadLovelace).toBe(50_000_000n);
+    // fee_payer KHÔNG kèm thread_lovelace vẫn nhận (sàn mặc định của thread).
+    expect(parseSponsorRequest("open-vault", { ...KEY_OWNER, did_commit: "d1".repeat(32), fee_payer: fp }).threadLovelace).toBeUndefined();
+  });
+
   it("CẶP: plan với sponsor_pkh sai ⟹ 400 SPONSOR_REQUEST_SHAPE", async () => {
     const r = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: "XYZ" }, undefined);
     expect(r.status).toBe(400);
@@ -389,7 +399,7 @@ describe("bộ định tuyến /tx/sponsor/*", () => {
 });
 
 describe("GET /sponsor/funds — tình trạng quỹ tài trợ theo DID", () => {
-  const PINNED = { ...PINS, fund_units: [`${FUND_HASH}f0`, `${FUND_HASH}f1`] };
+  const PINNED = { ...PINS, fund_units: [`${FUND_HASH}f0`, `${FUND_HASH}f1`], buffer_bps: "1500" };
   const vaultHash = "c1".repeat(28);
   const fundAddr = scriptAddr("Preprod", FUND_HASH);
   const keyAddr = (pkh: string) => ({ payment_credential: { VerificationKey: [pkh] as [string] }, stake_credential: null });
@@ -412,7 +422,7 @@ describe("GET /sponsor/funds — tình trạng quỹ tài trợ theo DID", () =>
     utxosByOutRef: async () => [],
     utxosByUnit: async u => {
       if (fail) throw new Error("nhà cung cấp sập");
-      if (u === `${FUND_HASH}f0`) return [utxo("f0", datum("f0", { sponsor: keyAddr(SPONSOR_PKH), owner_commit: DID, reclaim_after_epoch: 530n }, 7n), 0)];
+      if (u === `${FUND_HASH}f0`) return [utxo("f0", datum("f0", { sponsor: keyAddr(SPONSOR_PKH), owner_commit: DID, reclaim_after_epoch: 510n }, 7n), 0)];
       if (u === `${FUND_HASH}f1`) return [utxo("f1", datum("f1", null, 100n), 1)];
       return [];
     },
@@ -428,7 +438,7 @@ describe("GET /sponsor/funds — tình trạng quỹ tài trợ theo DID", () =>
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const funds = r.body.funds as Array<Record<string, unknown>>;
     expect(funds.map(f => [f.fund_id, f.owner_commit, f.problem, f.busy])).toEqual([["f0", DID, null, false], ["f1", null, "not_sponsored", false]]);
-    expect(funds[0]!.reclaim_after_epoch).toBe("530");
+    expect(funds[0]!.reclaim_after_epoch).toBe("510");
     expect((r.body.totals as Record<string, unknown>).carp_locked).toBe("7");
     expect(r.body.sponsor_carp_total).toBe("40");
   });
@@ -643,23 +653,39 @@ describe("loại chủ — open-vault/fund-vault chỉ nhận chủ Script(did_s
   });
 });
 
-describe("assertOwnerDid — tên anchor trong nhân chứng = did_commit", () => {
-  const SCRIPT = { type: "script" as const, hash: "5c".repeat(28) };
+describe("assertOwnerDid — tên anchor trong nhân chứng = did_commit, và script chủ = did_stake apply anchor đó", () => {
   const DID = "d1".repeat(32);
+  const POLICY = "ad".repeat(28);
+  // Script did_stake CHƯA apply nhỏ nhất của bài `didOwner.test.ts` — đủ để apply + băm.
+  const UNAPPLIED = "49480100002221200101";
+  const DS = { anchorNftPolicy: POLICY, unappliedScript: { cbor: UNAPPLIED, hash: validatorToScriptHash({ type: "PlutusV3", script: UNAPPLIED }) } };
+  const SCRIPT = { type: "script" as const, hash: validatorToScriptHash({ type: "PlutusV3", script: applyParamsToScript(UNAPPLIED, [POLICY, DID]) }) };
+  const FORGED = { type: "script" as const, hash: "5c".repeat(28) };
   const w = (name?: string): ResolvedOwnerWitness =>
     ({ auth: { kind: "script", hash: SCRIPT.hash, attachWithdraw: (t: unknown) => t }, requiredSigners: [], notes: [],
       ...(name === undefined ? {} : { anchorNftName: name }) }) as unknown as ResolvedOwnerWitness;
 
-  it("tên anchor = did_commit ⟹ qua", () => {
-    expect(() => assertOwnerDid("open-vault", SCRIPT, w(DID), DID)).not.toThrow();
+  it("tên anchor = did_commit, script = did_stake(policy, anchor) ⟹ qua", () => {
+    expect(() => assertOwnerDid("open-vault", SCRIPT, w(DID), DID, DS)).not.toThrow();
+    expect(() => assertOwnerDid("open-fund", SCRIPT, w(DID), DID, DS)).not.toThrow();
+  });
+  it("CỰC ĐỐI (red-team 3): script tự chế + anchor của DID nạn nhân (tên khớp) ⟹ 422 SPONSOR_OWNER_DID_MISMATCH", () => {
+    expect(() => assertOwnerDid("open-fund", FORGED, w(DID), DID, DS))
+      .toThrow(expect.objectContaining({ httpStatus: 422, code: "SPONSOR_OWNER_DID_MISMATCH" }));
+  });
+  it("CỰC ĐỐI: bản deploy thiếu did_stake.unapplied_script ⟹ 501 SPONSOR_OWNER_DID_UNVERIFIABLE (không coi là khớp)", () => {
+    expect(() => assertOwnerDid("open-fund", SCRIPT, w(DID), DID, { anchorNftPolicy: POLICY }))
+      .toThrow(expect.objectContaining({ httpStatus: 501, code: "SPONSOR_OWNER_DID_UNVERIFIABLE" }));
+    expect(() => assertOwnerDid("open-fund", SCRIPT, w(DID), DID, undefined))
+      .toThrow(expect.objectContaining({ code: "SPONSOR_OWNER_DID_UNVERIFIABLE" }));
   });
   it("CỰC ĐỐI: anchor của DID KHÁC ⟹ 422 SPONSOR_OWNER_DID_MISMATCH", () => {
-    expect(() => assertOwnerDid("fund-vault", SCRIPT, w("d2".repeat(32)), DID))
+    expect(() => assertOwnerDid("fund-vault", SCRIPT, w("d2".repeat(32)), DID, DS))
       .toThrow(expect.objectContaining({ httpStatus: 422, code: "SPONSOR_OWNER_DID_MISMATCH" }));
   });
   it("CỰC ĐỐI: nhân chứng không báo tên anchor ⟹ coi là lệch (fail-closed)", () => {
-    expect(() => assertOwnerDid("open-vault", SCRIPT, w(), DID)).toThrow(expect.objectContaining({ code: "SPONSOR_OWNER_DID_MISMATCH" }));
-    expect(() => assertOwnerDid("open-vault", SCRIPT, undefined, DID)).toThrow(expect.objectContaining({ code: "SPONSOR_OWNER_DID_MISMATCH" }));
+    expect(() => assertOwnerDid("open-vault", SCRIPT, w(), DID, DS)).toThrow(expect.objectContaining({ code: "SPONSOR_OWNER_DID_MISMATCH" }));
+    expect(() => assertOwnerDid("open-vault", SCRIPT, undefined, DID, DS)).toThrow(expect.objectContaining({ code: "SPONSOR_OWNER_DID_MISMATCH" }));
   });
 });
 

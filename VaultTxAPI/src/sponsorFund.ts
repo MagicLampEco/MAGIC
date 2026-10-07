@@ -50,10 +50,27 @@ import { refStr } from "./feePayer.js";
  *   foreign_sponsor  `sponsorship.sponsor` không thuộc tập địa chỉ bên tài trợ đã ghim
  *   foreign_beneficiary `beneficiary` khác địa chỉ đã ghim, hoặc `beneficiary_datum` khác datum đã ghim (vắng ⟺
  *                    vắng; có thì CBOR chuẩn hoá khớp từng byte) — chỉ khi `beneficiary` có mặt ở cấu hình
+ *   buffer_mismatch  `buffer_bps` khác đệm mà open-fund ghi (`paid_fund.sponsor.buffer_bps`, vắng ⟹ `MIN_BUFFER_BPS`)
+ *   reclaim_too_far  `reclaim_after_epoch` > epoch hiện tại + `SPONSOR_RECLAIM_DELAY_EPOCHS` + `SPONSOR_RECLAIM_EPOCH_SLACK`
+ *                    — quỹ đặt mốc thu hồi xa hơn mọi quỹ open-fund dựng được ⟹ đường thu hồi về bên tài trợ bị khoá
+ *   reclaimed        `sponsor_reclaimed > 0` — bên tài trợ đã thu hồi; quỹ không nhận khoản nạp mới
+ *
+ * Ba vế cuối chỉ chặn được người GIỮ khoá platform (người khác không đúc nổi quỹ qua ghim platform): khoá đó lộ
+ * hoặc dùng sai thì quỹ đúc ra vẫn đúng bên tài trợ + đúng DID + đúng đích, nhưng mang đệm hoặc mốc thu hồi lạ.
  */
 export type SponsorFundProblem =
   "missing" | "ambiguous" | "undecodable" | "foreign_platform" | "wrong_vault" | "not_sponsored" | "foreign_sponsor"
-  | "foreign_beneficiary";
+  | "foreign_beneficiary" | "buffer_mismatch" | "reclaim_too_far" | "reclaimed";
+
+/**
+ * Biên (epoch) của trần `reclaim_after_epoch`. Genesis quỹ ghi `reclaim_after_epoch = epoch(validTo) + delay`
+ * (`prepaid.ak` ▸ `validate_mint_fund_nft` ép cận DƯỚI đó), với `validTo` = cận trên của tx open-fund. open-fund
+ * KHÔNG kẹp validity vào một epoch (`planSponsorValidity`, `epochBound` tắt cho bước này), nên `validTo` có thể rơi
+ * sang epoch KẾ TIẾP lúc dựng — đúng một epoch, vì hạn tx (≤ 1 giờ ở đường `fee_payer`, `txValidityMs` ở đường còn
+ * lại) ngắn hơn hẳn một epoch Prepaid (5 ngày trên Preprod). Epoch hiện tại chỉ tăng ⟹ quỹ open-fund thật luôn
+ * thoả `reclaim_after_epoch ≤ epoch hiện tại + delay + 1`; vượt ⟹ quỹ không do open-fund dựng.
+ */
+export const SPONSOR_RECLAIM_EPOCH_SLACK = 1n;
 
 /**
  * CBOR chuẩn hoá của một datum Plutus: giải mã rồi mã hoá lại bằng đúng bộ mã hoá mà open-fund dùng khi ghi
@@ -94,7 +111,12 @@ export function classifySponsorFunds(p: {
   utxosOfUnit: ReadonlyMap<string, readonly UTxO[]>;
   platformPkhs?: readonly string[];
   beneficiary?: { address: string; datumCbor?: string };
+  /** Đệm open-fund ghi vào quỹ (`paid_fund.sponsor.buffer_bps ?? MIN_BUFFER_BPS`). BẮT BUỘC: không có "không ghim". */
+  bufferBps: bigint;
+  /** Trần mốc thu hồi: `currentEpoch` = epoch Prepaid lúc đọc; `delayEpochs` = `SPONSOR_RECLAIM_DELAY_EPOCHS`. */
+  reclaimHorizon: { currentEpoch: bigint; delayEpochs: bigint };
 }): SponsorFundEntry[] {
+  const reclaimMax = p.reclaimHorizon.currentEpoch + p.reclaimHorizon.delayEpochs + SPONSOR_RECLAIM_EPOCH_SLACK;
   // Chuẩn hoá MỘT lần; `config.ts` đã kiểm datum giải mã được lúc khởi động.
   const ben = p.beneficiary === undefined ? undefined : {
     address: p.beneficiary.address,
@@ -136,6 +158,17 @@ export function classifySponsorFunds(p: {
     // đủ cho người vận hành biết quỹ nào, của DID nào, đang hút CARP của bên tài trợ nào.
     if (ben !== undefined && !beneficiaryMatches(p.network, datum, ben)) {
       return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "foreign_beneficiary" as const };
+    }
+    // Ghim đệm + mốc thu hồi: open-fund ghi đúng hai giá trị này; lệch ⟹ quỹ không do open-fund của bản deploy này dựng.
+    if (datum.buffer_bps !== p.bufferBps) {
+      return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "buffer_mismatch" as const };
+    }
+    if (s.reclaim_after_epoch > reclaimMax) {
+      return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "reclaim_too_far" as const };
+    }
+    // Đã thu hồi: CARP đã về bên tài trợ; nạp thêm vào quỹ này là việc của một quyết định khác, không của hành trình.
+    if (datum.sponsor_reclaimed > 0n) {
+      return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "reclaimed" as const };
     }
     return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress };
   });
@@ -220,6 +253,36 @@ export function resolveSponsorFund(
       { did_commit: didCommit, fund_ids: mine.map(e => e.fundId) });
   }
   return { entry: mine[0]!, selection: "did_lookup" };
+}
+
+/**
+ * Quỹ của DID mà open-fund coi là "đã có": dùng được, HOẶC đã thu hồi. Quỹ đã thu hồi vẫn là quỹ của DID — mỗi DID
+ * một quỹ trọn đời; để `reclaimed` lọt khỏi phép đếm này thì open-fund mở quỹ thứ hai cho đúng DID vừa được tài trợ.
+ */
+export function fundsBlockingOpen(entries: readonly SponsorFundEntry[], didCommit: string): SponsorFundEntry[] {
+  return entries.filter(e => e.ownerCommit === didCommit && (e.problem === undefined || e.problem === "reclaimed"));
+}
+
+/**
+ * fund-vault: DID đã nhận tài trợ ở một quỹ KHÁC (`credit_issued > 0`) ⟹ 409 `SPONSOR_DID_FUNDED_ELSEWHERE`.
+ *
+ * Mỗi DID một quỹ là quy ước của dịch vụ; trên chuỗi không gì chặn quỹ thứ hai (genesis quỹ chỉ đòi platform, và
+ * một tx open-fund nộp thẳng lên nút không qua sổ của dịch vụ). Phép đếm 409 `SPONSOR_FUND_AMBIGUOUS` chỉ phủ
+ * đường KHÔNG có `fund_id`, và chỉ trên quỹ dùng được: gửi `fund_id` của quỹ thứ hai, hoặc để quỹ đầu đã thu hồi
+ * (`reclaimed`), là nạp lần hai cho cùng DID. Đếm trên MỌI quỹ có `owner_commit` = DID và datum giải mã được,
+ * trừ `foreign_platform` (ai cũng đúc được — để nó chặn là cho kẻ lạ khoá hành trình của một DID).
+ */
+export function assertDidNotFundedElsewhere(
+  entries: readonly SponsorFundEntry[], didCommit: string, chosenUnit: string,
+): void {
+  const other = entries.filter(e => e.ownerCommit === didCommit && e.unit !== chosenUnit && e.problem !== "foreign_platform"
+    && e.datum !== undefined && e.datum.credit_issued > 0n);
+  if (other.length > 0) {
+    throw new CodedApiError(409, "SPONSOR_DID_FUNDED_ELSEWHERE",
+      `DID ${didCommit.slice(0, 16)}… đã nhận tài trợ ở quỹ khác (credit_issued > 0) — mỗi DID một lần tài trợ, ` +
+      `fund-vault không nạp quỹ thứ hai.`,
+      { did_commit: didCommit, funded_fund_ids: other.map(e => e.fundId) });
+  }
 }
 
 // ── bảng tình trạng (GET /sponsor/funds) ────────────────────────────────────────

@@ -1631,7 +1631,7 @@ function assertScopesSupported(scopes: VaultScope[], route: string): void {
   if (prepaid.length > 0) {
     throw new CodedApiError(501, "VAULT_KIND_UNSUPPORTED",
       `Loại két ${PREPAID_VAULT_TYPE} không đi qua route ${route} — két Prepaid chỉ được dựng qua ` +
-      `hành trình tài trợ "/tx/sponsor/*" (open-vault · bind-did · fund-vault · draw-magic · first-consume).`,
+      `hành trình tài trợ "/tx/sponsor/*" (open-vault · bind-did · open-fund · fund-vault · draw-magic · first-consume).`,
       { vault_type: PREPAID_VAULT_TYPE, route, addresses: prepaid.map(s => s.address), use_instead: "/tx/sponsor/*" });
   }
 }

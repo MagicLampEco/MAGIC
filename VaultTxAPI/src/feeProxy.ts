@@ -35,7 +35,7 @@ import { createHash } from "node:crypto";
 import type { FeecoverAppSettings, FeecoverSettings } from "./config.js";
 import { FEECOVER_DEFAULT_APP } from "./config.js";
 import { BadRequestError, CodedApiError, TxSupersededError } from "./errors.js";
-import type { IssuedRoute, IssuedTxRegistry, ReservationIdStats } from "./locks.js";
+import type { IssuedRoute, IssuedTxRegistry } from "./locks.js";
 import { FEE_PURPOSE_ROUTES, FEE_SOURCES, expiredErrorFor, submissionStateOf, type FeePurposeRoute, type FeeSource } from "./locks.js";
 import { txBodyHash } from "./summary.js";
 import { feeReservationError } from "./validity.js";
@@ -176,11 +176,6 @@ export class FeeProxy {
       purpose,
       ...(confirmed === undefined ? {} : { source: confirmed }),
     };
-  }
-
-  /** Bộ đếm có / thiếu `reservation_id` của sổ phát-hành (`/health` ▸ `fee_reservation_id`). */
-  reservationIdStats(): ReservationIdStats {
-    return this.deps.issued.reservationIdStats();
   }
 
   /** `POST /fee/sign {tx_cbor}` — chỉ cho tx dịch vụ này đã phát, có ví trả phí, còn hạn ký. */

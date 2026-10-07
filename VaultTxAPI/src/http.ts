@@ -16,6 +16,9 @@
 //                              (`fee_payer` ⟹ 501; thread đã gắn DID ⟹ 409 `DID_ALREADY_BOUND`)
 //   POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile] }
 //   POST /tx/submit            { tx_cbor, witness_cbor }
+//   GET  /tx/status/{tx_hash}  chỉ đọc: { tx_hash, state: in_chain|in_mempool|not_found, block?, slot?,
+//                              block_time?, expires_at?, server_time? } — hash sai khuôn ⟹ 400
+//                              `TX_HASH_INVALID`; nhà cung cấp hỏng ⟹ 502 `TX_STATUS_PROVIDER_UNAVAILABLE`
 //   POST /tx/quote             { route, params, [owner_fee_addresses] } (báo giá phí — `feeQuote.ts`;
 //                              không dựng tx nào để ký, không giữ chỗ; hỏi Feecover `/v1/fee-sources`)
 //   POST /fee/utxo             { route, [source] }    [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`;
@@ -42,7 +45,7 @@
 import {
   BadRequestError, ConfigMissingError, TxApiError, UnauthorizedError, newReferenceCode,
 } from "./errors.js";
-import { toSubmitBody, type VaultTxService } from "./service.js";
+import { toSubmitBody, toTxStatusBody, type VaultTxService } from "./service.js";
 import { BUILD_ROUTE_OF_PATH, buildResultBody, parseBuildRequest, reqString, runBuild } from "./buildRequest.js";
 import { CodedApiError } from "./errors.js";
 import type { BuildInfo } from "./buildInfo.js";
@@ -174,9 +177,6 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
         holds_signing_material: false,
         // Chỉ trạng thái, không bao giờ token hay băm của nó.
         feecover: deps.feeProxy === undefined ? "absent" : "configured",
-        // Lượt dựng tiêu UTxO Feecover đang giữ chỗ, có / thiếu `fee_payer.reservation_id`, theo route, từ
-        // lúc tiến trình khởi động — số đo để quyết bật BƯỚC 2 (bắt buộc id), README ▸ "reservation_id".
-        ...(deps.feeProxy === undefined ? {} : { fee_reservation_id: deps.feeProxy.reservationIdStats() }),
         // Bên gọi so commit này với commit họ dựa vào, khỏi phải hỏi người vận hành.
         commit: deps.build?.commit ?? null,
         commit_dirty: deps.build?.dirty ?? null,
@@ -209,6 +209,14 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
 
     if (!path.startsWith("/tx/")) {
       return { status: 404, body: err("NOT_FOUND", `Không có đường "${path}".`) };
+    }
+    // Đường CHỈ ĐỌC duy nhất dưới `/tx/`: thẻ bài như `/tx/quote` (chạm nhà cung cấp chuỗi bằng hạn
+    // mức của người vận hành), không khoá, không ghi sổ. Thiếu hash (`/tx/status`, `/tx/status/`)
+    // cũng là hash sai khuôn ⟹ 400 `TX_HASH_INVALID`, không phải 404.
+    if (path === "/tx/status" || path.startsWith("/tx/status/")) {
+      if (req.method !== "GET") return methodNotAllowed("GET");
+      const out = await deps.service.txStatus(path.slice("/tx/status/".length));
+      return { status: 200, body: withServerTime(toTxStatusBody(out), () => deps.service.serverNowMs()) };
     }
     if (req.method !== "POST") return methodNotAllowed("POST");
 

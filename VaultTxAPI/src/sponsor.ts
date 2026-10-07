@@ -644,9 +644,10 @@ export interface SponsorTxServiceDeps {
    */
   slotNetwork?: SlotNetwork;
   /**
-   * Hàm ký vai platform của genesis quỹ tài trợ (`platformSigner.ts` ▸ `createPlatformSigner`, `server.ts` dựng
-   * lúc khởi động). Chỉ open-vault (khi chở genesis quỹ) và open-fund gọi nó, trên tx chính dịch vụ VỪA dựng.
-   * Vắng ⟹ hai route đó trả 501 `CONFIG_MISSING` khi cần tạo quỹ (`details.missing` nêu tên biến môi trường).
+   * Hàm ký vai platform (`platformSigner.ts` ▸ `createPlatformSigner`, `server.ts` dựng lúc khởi động). Chỉ
+   * open-vault (khi chở genesis quỹ), open-fund (`kind: "fund-genesis"`) và claim (`kind: "fund-claim"`) gọi nó,
+   * trên tx chính dịch vụ VỪA dựng. Vắng ⟹ ba route đó trả 501 `CONFIG_MISSING` khi cần chữ ký platform
+   * (`details.missing` nêu tên biến môi trường).
    */
   platformSign?: (r: {
     kind: "fund-genesis" | "fund-claim";

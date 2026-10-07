@@ -24,6 +24,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { getAddressDetails, validatorToScriptHash } from "@lucid-evolution/lucid";
+import { plutusDataFromCbor } from "@magiclamp/prepaidgen-sdk";
 import { FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE, type Network } from "@magiclamp/protocol-utils";
 import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
 
@@ -185,6 +186,8 @@ export interface SponsorPins {
   /**
    * Đích nhận CARP (`PaidFundDatum.beneficiary`) ghi vào quỹ mà `/tx/sponsor/open-fund` tạo cho một DID —
    * bất biến trọn đời quỹ (`prepaid.ak` ▸ `fund_common_checks`). Vắng ⟹ open-fund trả 501 `CONFIG_MISSING`.
+   * Cũng là GHIM khi đọc quỹ: có ⟹ quỹ có đích khác (địa chỉ hoặc datum) mang `foreign_beneficiary`
+   * (`sponsorFund.ts`). BẮT BUỘC khi quét theo `platformPkhs` mà không có `fundUnits` (khởi động ném).
    * Kiểm lúc khởi động đúng các vế genesis ép (`validate_mint_fund_nft`): không stake; khoá ≠ mọi
    * `platform_pkhs`; payment ≠ payment của mọi `addresses` (chặn tự hưởng); script ⟹ phải có datum.
    */
@@ -1219,6 +1222,17 @@ function parseSponsorPins(v: unknown, prefix: string, network: Network, fundScri
   if (beneficiary === undefined && o.beneficiary_datum !== undefined) {
     throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum đi kèm "beneficiary"; thiếu "beneficiary".`);
   }
+  // Đường QUÉT (platform_pkhs, không fund_units) tin MỌI quỹ do khoá platform đúc. Khoá đó lộ ⟹ kẻ giữ nó đúc quỹ
+  // mang đúng ví bên tài trợ + đúng DID nạn nhân, đích nhận CARP = ví mình, và fund-vault chi CARP vào đó. Ghim
+  // `beneficiary` là vế duy nhất kẻ đó không viết được (`sponsorFund.ts` ▸ `foreign_beneficiary`) ⟹ bắt buộc.
+  // Có `fund_units` (tập đóng, người vận hành duyệt từng quỹ) ⟹ tuỳ chọn; có thì vẫn kiểm.
+  if (fundUnits === undefined && platformPkhs !== undefined && beneficiary === undefined) {
+    throw new Error(
+      `[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor quét quỹ theo "platform_pkhs" (không có "fund_units") thì ` +
+      `BẮT BUỘC có "beneficiary" (+ "beneficiary_datum" nếu đích là script) — thiếu nó, quỹ do khoá platform đúc với ` +
+      `đích nhận CARP lạ vẫn được tin.`,
+    );
+  }
   let bufferBps: bigint | undefined;
   if (o.buffer_bps !== undefined) {
     if (typeof o.buffer_bps !== "string" || !/^[0-9]{1,5}$/.test(o.buffer_bps) || BigInt(o.buffer_bps) > 10_000n) {
@@ -1275,6 +1289,13 @@ function parseFundBeneficiary(
     const c = str(datum, "paid_fund.sponsor.beneficiary_datum");
     if (!/^(?:[0-9a-f]{2})+$/.test(c)) {
       throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum phải là CBOR hex thường.`);
+    }
+    // open-fund ghi `Data.from(c)` vào quỹ và phép phân loại so CBOR chuẩn hoá của nó: hex không phải Plutus Data
+    // thì chết ở đây, không phải ở yêu cầu đầu tiên.
+    try {
+      plutusDataFromCbor(c);
+    } catch (e) {
+      throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum không giải mã được thành Plutus Data: ${(e as Error).message}`);
     }
     return { address: a, datumCbor: c };
   }

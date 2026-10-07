@@ -20,10 +20,20 @@
 //   · `platform_pkhs` — khoá platform được tin; vắng `fund_units` ⟹ dịch vụ QUÉT địa chỉ quỹ và chỉ giữ quỹ
 //     có `datum.platform` thuộc tập này (quỹ platform lạ bị bỏ ngay ở bước quét, không hiện ở bảng tình trạng).
 // Có cả hai ⟹ quỹ phải thoả cả hai (quỹ ghim mà platform lạ ⟹ `foreign_platform`).
+//
+// ── ĐÍCH NHẬN CARP: GHIM `beneficiary` ──────────────────────────────────────────
+// Ghim platform chặn kẻ KHÔNG giữ khoá platform. Nó không chặn người GIỮ khoá đó (hoặc kẻ lấy được khoá):
+// người đó đúc được quỹ mang đúng ví bên tài trợ + đúng DID nạn nhân, nhưng `beneficiary` = ví của mình;
+// fund-vault chi CARP bên tài trợ vào quỹ, rồi `FundClaim` (platform ký) đưa CARP tới ví đó. Đích thật
+// của MỌI quỹ tài trợ là một địa chỉ cố định ở cấu hình (`paid_fund.sponsor.beneficiary` + `beneficiary_datum`)
+// — đúng thứ `/tx/sponsor/open-fund` ghi vào quỹ. Có ghim ⟹ quỹ lệch địa chỉ HOẶC lệch datum mang
+// `foreign_beneficiary`. Quét theo `platform_pkhs` mà không có `fund_units` thì ghim này BẮT BUỘC
+// (`config.ts` ▸ `parseSponsorPins` từ chối khởi động): ở đường quét, mọi quỹ do khoá platform đúc đều được tin.
 
 import type { UTxO } from "@lucid-evolution/lucid";
 import {
-  bufferFloor, decodeFundDatum, maxClaimable, outstandingEffective, plutusAddressToBech32, type PaidFundDatum,
+  bufferFloor, decodeFundDatum, maxClaimable, outstandingEffective, plutusAddressToBech32, plutusDataFromCbor,
+  plutusDataToCbor, type PaidFundDatum,
 } from "@magiclamp/prepaidgen-sdk";
 
 import { CodedApiError } from "./errors.js";
@@ -38,9 +48,22 @@ import { refStr } from "./feePayer.js";
  *   wrong_vault      datum trỏ script két khác két mà bản deploy phục vụ
  *   not_sponsored    `sponsorship = None` — quỹ chung, không thu hồi được về bên tài trợ
  *   foreign_sponsor  `sponsorship.sponsor` không thuộc tập địa chỉ bên tài trợ đã ghim
+ *   foreign_beneficiary `beneficiary` khác địa chỉ đã ghim, hoặc `beneficiary_datum` khác datum đã ghim (vắng ⟺
+ *                    vắng; có thì CBOR chuẩn hoá khớp từng byte) — chỉ khi `beneficiary` có mặt ở cấu hình
  */
 export type SponsorFundProblem =
-  "missing" | "ambiguous" | "undecodable" | "foreign_platform" | "wrong_vault" | "not_sponsored" | "foreign_sponsor";
+  "missing" | "ambiguous" | "undecodable" | "foreign_platform" | "wrong_vault" | "not_sponsored" | "foreign_sponsor"
+  | "foreign_beneficiary";
+
+/**
+ * CBOR chuẩn hoá của một datum Plutus: giải mã rồi mã hoá lại bằng đúng bộ mã hoá mà open-fund dùng khi ghi
+ * quỹ (`plutusDataFromCbor` cấu hình → `encodeFundDatum`). Hai cách viết CBOR khác nhau của cùng một giá trị
+ * Plutus Data cho cùng chuỗi ở đây — validator so GIÁ TRỊ, nên phép so ở dịch vụ cũng phải so giá trị. Đi qua
+ * codec của PrepaidGen SDK, không qua `Data` của gói này: datum đọc từ quỹ là `Constr` của bản lucid bên SDK.
+ */
+export function canonicalDatumCbor(cbor: string): string {
+  return plutusDataToCbor(plutusDataFromCbor(cbor));
+}
 
 /** Vì sao một quỹ đang bận: khoá mềm của một lượt dựng còn sống · input vừa nộp chưa vào khối. */
 export type SponsorFundBusyReason = "in_flight" | "pending_submit";
@@ -63,13 +86,20 @@ export interface SponsorFundEntry {
  * Tập quỹ ứng viên → mỗi quỹ một dòng, theo ĐÚNG thứ tự `units`.
  * `utxosOfUnit` = mọi UTxO chưa tiêu mang `unit` (ở mọi địa chỉ); lọc theo `fundAddress` ở đây.
  * `platformPkhs` có ⟹ quỹ có `datum.platform` ngoài tập này mang `foreign_platform`.
+ * `beneficiary` có ⟹ quỹ có đích nhận CARP khác (địa chỉ hoặc datum) mang `foreign_beneficiary`.
  */
 export function classifySponsorFunds(p: {
   units: readonly string[]; fundScriptHash: string; fundAddress: string; vaultScriptHash: string;
   sponsorAddresses: readonly string[]; network: Parameters<typeof plutusAddressToBech32>[0];
   utxosOfUnit: ReadonlyMap<string, readonly UTxO[]>;
   platformPkhs?: readonly string[];
+  beneficiary?: { address: string; datumCbor?: string };
 }): SponsorFundEntry[] {
+  // Chuẩn hoá MỘT lần; `config.ts` đã kiểm datum giải mã được lúc khởi động.
+  const ben = p.beneficiary === undefined ? undefined : {
+    address: p.beneficiary.address,
+    datum: p.beneficiary.datumCbor === undefined ? null : canonicalDatumCbor(p.beneficiary.datumCbor),
+  };
   return p.units.map(unit => {
     const fundId = unit.slice(p.fundScriptHash.length);
     const hits = (p.utxosOfUnit.get(unit) ?? []).filter(u => u.address === p.fundAddress && (u.assets[unit] ?? 0n) === 1n);
@@ -102,8 +132,35 @@ export function classifySponsorFunds(p: {
     if (!p.sponsorAddresses.includes(sponsorAddress)) {
       return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "foreign_sponsor" as const };
     }
+    // Ghim đích nhận CARP: đặt SAU `foreign_sponsor` để dòng lệch vẫn mang owner_commit + sponsor_address —
+    // đủ cho người vận hành biết quỹ nào, của DID nào, đang hút CARP của bên tài trợ nào.
+    if (ben !== undefined && !beneficiaryMatches(p.network, datum, ben)) {
+      return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "foreign_beneficiary" as const };
+    }
     return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress };
   });
+}
+
+/**
+ * Đích nhận CARP của quỹ có đúng đích đã ghim không — HAI vế, cả hai phải khớp:
+ *   · địa chỉ: `datum.beneficiary` đổi ra bech32 trên mạng dịch vụ == địa chỉ ghim (dạng chính tắc, `config.ts`);
+ *     không đổi được (Stake Pointer) ⟹ không khớp;
+ *   · datum: vắng ⟺ ghim vắng; có ⟹ CBOR chuẩn hoá bằng nhau.
+ * Cùng địa chỉ mà khác datum vẫn là đích khác: với beneficiary là script (`fee_inbox`), datum là dòng sổ bên
+ * nhận dùng để nhận ra khoản tiền (`InboxDatum.refund`), nên datum lạ = CARP vào sổ của người khác.
+ */
+function beneficiaryMatches(
+  network: Parameters<typeof plutusAddressToBech32>[0], d: PaidFundDatum, ben: { address: string; datum: string | null },
+): boolean {
+  let addr: string;
+  try {
+    addr = plutusAddressToBech32(network, d.beneficiary);
+  } catch {
+    return false;
+  }
+  if (addr !== ben.address) return false;
+  const got = d.beneficiary_datum === null ? null : plutusDataToCbor(d.beneficiary_datum);
+  return got === ben.datum;
 }
 
 /** Một quỹ có thuộc DID `didCommit` không: quỹ tài trợ dùng được VÀ `owner_commit` khớp. */
@@ -135,7 +192,10 @@ export function resolveSponsorFund(
     if (e.problem !== undefined) {
       throw new CodedApiError(422, "SPONSOR_FUND_NOT_ALLOWED",
         `Quỹ ${callerFundId} không dùng được cho hành trình tài trợ (${e.problem}).` +
-        (e.problem === "not_sponsored" ? ` Quỹ chung (sponsorship = None) không thu hồi được CARP về bên tài trợ.` : ""),
+        (e.problem === "not_sponsored" ? ` Quỹ chung (sponsorship = None) không thu hồi được CARP về bên tài trợ.` : "") +
+        (e.problem === "foreign_beneficiary"
+          ? ` Đích nhận CARP của quỹ khác đích đã ghim (paid_fund.sponsor.beneficiary) — quỹ đúc bằng khoá platform nhưng ` +
+            `trả CARP đi nơi khác; báo người vận hành.` : ""),
         { fund_id: callerFundId, problem: e.problem });
     }
     if (!servesDid(e, didCommit)) {

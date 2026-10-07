@@ -44,6 +44,21 @@ export function decodeVaultDatum(cbor: string): PrepaidVaultDatum {
   return Data.from(cbor, PrepaidVaultDatumSchema as unknown as PrepaidVaultDatum);
 }
 
+/**
+ * Plutus Data ↔ CBOR bằng ĐÚNG bản `@lucid-evolution/lucid` của gói này. Bên gọi nạp gói qua `file:` thì giữ
+ * `node_modules` riêng, tức một bản lucid KHÁC: `Constr` dựng ở bên gọi không phải `Constr` ở đây, và `Data.to`
+ * của gói này ném "Unsupported type" khi gặp nó (đo 2026-10-07, VaultTxAPI). Datum tự do đi VÀO bộ dựng (vd.
+ * `beneficiaryDatum` của `planMintPaidFund`) phải dựng bằng `plutusDataFromCbor`; datum đọc RA từ `decodeFundDatum`
+ * phải mã hoá lại bằng `plutusDataToCbor`.
+ */
+export function plutusDataFromCbor(cbor: string): Data {
+  return Data.from(cbor);
+}
+
+export function plutusDataToCbor(d: Data): string {
+  return Data.to(d);
+}
+
 export function encodeFundDatum(d: PaidFundDatum): string {
   return Data.to(d, PaidFundDatumSchema as unknown as PaidFundDatum);
 }

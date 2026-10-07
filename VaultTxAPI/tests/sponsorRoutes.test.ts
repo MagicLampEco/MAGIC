@@ -594,6 +594,21 @@ describe("ghim cấu hình của fund-vault — trước khi giữ khoá, 0 lư�
     expect(bad({ ...PINS, max_carp_amount: 100 })).toThrow(/max_carp_amount/);
     expect(bad({ ...PINS, max_carp_amount: "0" })).toThrow(/> 0/);
     expect(bad({ ...PINS, max_carp_amount: "1".repeat(21) })).toThrow(/max_carp_amount/);
+    // Quét theo platform_pkhs (không fund_units) mà thiếu beneficiary ⟹ khởi động ném: ở đường quét mọi quỹ do
+    // khoá platform đúc đều được tin, beneficiary là vế duy nhất người giữ khoá không viết được.
+    const PLAT = "11".repeat(28);
+    const BEN = credentialToAddress("Preprod", { type: "Key", hash: "33".repeat(28) });
+    const scan = { addresses: PINS.addresses, max_carp_amount: "100", platform_pkhs: [PLAT] };
+    expect(bad(scan)).toThrow(/BẮT BUỘC có "beneficiary"/);
+    // CẶP: cùng khối + beneficiary ⟹ nạp được; tập đóng fund_units + platform_pkhs, thiếu beneficiary ⟹ vẫn nạp được.
+    expect(parseDeployment(deploymentJson("Preprod", { pins: { ...scan, beneficiary: BEN } }), "Preprod").prepaid!.sponsor!.beneficiary)
+      .toEqual({ address: BEN });
+    expect(parseDeployment(deploymentJson("Preprod", { pins: { ...PINS, platform_pkhs: [PLAT] } }), "Preprod").prepaid!.sponsor!.beneficiary)
+      .toBeUndefined();
+    // beneficiary_datum là hex nhưng không phải Plutus Data ⟹ ném lúc khởi động; CẶP: Plutus Data hợp lệ ⟹ nạp được.
+    expect(bad({ ...scan, beneficiary: BEN, beneficiary_datum: "ff" })).toThrow(/Plutus Data/);
+    expect(parseDeployment(deploymentJson("Preprod", { pins: { ...scan, beneficiary: BEN, beneficiary_datum: "d87980" } }), "Preprod")
+      .prepaid!.sponsor!.beneficiary).toEqual({ address: BEN, datumCbor: "d87980" });
     // CẶP: khối mặc định nạp được và giữ đúng giá trị.
     const d = parseDeployment(deploymentJson("Preprod"), "Preprod");
     expect(d.prepaid!.sponsor).toEqual({ fundUnits: PINS.fund_units, addresses: PINS.addresses, maxCarpAmount: 100n });

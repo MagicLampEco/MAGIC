@@ -68,7 +68,7 @@
 // ở fund-vault; khoản ứng = đúng phần lovelace tăng ở output script, bên tài trợ không được nhận thêm ADA.
 
 import {
-  CML, Data, getAddressDetails, validatorToAddress, validatorToScriptHash, valueToAssets,
+  CML, getAddressDetails, validatorToAddress, validatorToScriptHash, valueToAssets,
   type Assets, type LucidEvolution, type Network as SlotNetwork, type Script, type TxBuilder, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
 import {
@@ -83,7 +83,7 @@ import {
 } from "@magiclamp/sdk";
 import {
   MIN_BUFFER_BPS, PrepaidRuleError, PrepaidTxError, addSetDidCommit, applyPlan, derivePrepaidScripts, planMintPaidFund,
-  readVaultUtxo, validityInEpoch, withRefScripts,
+  plutusDataFromCbor, readVaultUtxo, validityInEpoch, withRefScripts,
   type PlutusAddress, type PrepaidBlueprint, type PrepaidScripts, type TxValidity,
 } from "@magiclamp/prepaidgen-sdk";
 
@@ -813,7 +813,8 @@ export class SponsorTxService {
       const r = planMintPaidFund({
         scripts: p.scripts, seedUtxo, platformPkh: platform!,
         beneficiary: plutusAddressOf(ben.address),
-        beneficiaryDatum: ben.datumCbor === undefined ? null : Data.from(ben.datumCbor),
+        // Codec của SDK, không `Data` của gói này: hai bản lucid ⟹ `Constr` bên này làm `encodeFundDatum` ném.
+        beneficiaryDatum: ben.datumCbor === undefined ? null : plutusDataFromCbor(ben.datumCbor),
         bufferBps: sp.bufferBps ?? MIN_BUFFER_BPS, collectSeed: true,
         sponsorship: { sponsor: plutusAddressOf(sp.addresses[0]!), owner_commit: didCommit },
         validity,
@@ -1225,6 +1226,9 @@ export class SponsorTxService {
       vaultScriptHash: this.deps.deployment.vaults[0]!.scriptHash, sponsorAddresses: pins.addresses,
       network: this.deps.network,
       ...(pins.platformPkhs === undefined ? {} : { platformPkhs: pins.platformPkhs }),
+      // Ghim đích nhận CARP: quỹ do khoá platform đúc mà trả CARP đi nơi khác ⟹ `foreign_beneficiary`. Ở đường
+      // quét dưới đây pin này luôn có (`config.ts` ▸ `parseSponsorPins` ép).
+      ...(pins.beneficiary === undefined ? {} : { beneficiary: pins.beneficiary }),
     };
     if (pins.fundUnits !== undefined) {
       const lists = await Promise.all(pins.fundUnits.map(async u =>
@@ -1233,6 +1237,9 @@ export class SponsorTxService {
     }
     if (pins.platformPkhs === undefined) {
       throw new Error("[bất biến nội bộ] paid_fund.sponsor thiếu cả fund_units lẫn platform_pkhs — config.ts phải chặn.");
+    }
+    if (pins.beneficiary === undefined) {
+      throw new Error("[bất biến nội bộ] paid_fund.sponsor quét theo platform_pkhs mà thiếu beneficiary — config.ts phải chặn.");
     }
     const atFund = await chainRead(() => this.deps.chain.utxosAt(prepaid.fundAddress), "địa chỉ quỹ tài trợ");
     const byUnit = new Map<string, UTxO[]>();
@@ -1243,6 +1250,9 @@ export class SponsorTxService {
       }
     }
     const units = [...byUnit.keys()].sort();
+    // `foreign_beneficiary` KHÔNG bị lọc: quỹ đó do khoá platform ĐÃ GHIM đúc (ai cũng đúc được quỹ platform
+    // lạ, không ai ngoài người giữ khoá đúc được quỹ này) ⟹ nó là tín hiệu khoá platform lộ hoặc dùng sai, phải
+    // hiện ở `GET /sponsor/funds`.
     return classifySponsorFunds({ ...common, units, utxosOfUnit: byUnit })
       .filter(e => e.problem !== "foreign_platform" && e.problem !== "undecodable");
   }

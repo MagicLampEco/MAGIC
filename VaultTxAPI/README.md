@@ -1220,6 +1220,7 @@ ví bên tài trợ + DID của người khác + ví nhận tiền của mình. 
 |---|---|---|
 | `fund_units` | tra đúng từng quỹ trong danh sách | mọi quỹ ngoài danh sách |
 | `platform_pkhs` | vắng `fund_units` ⟹ quét địa chỉ quỹ, chỉ giữ quỹ có `platform` thuộc danh sách | quỹ do khoá platform lạ đúc — kẻ gọi không ký được bằng khoá platform đã ghim |
+| `beneficiary` (+ `beneficiary_datum`) | quỹ phải ghi đúng đích nhận CARP này: địa chỉ bech32 khớp, datum vắng ⟺ vắng, có thì CBOR chuẩn hoá khớp; lệch ⟹ `problem: foreign_beneficiary`. **Bắt buộc** khi quét theo `platform_pkhs` mà không có `fund_units` (thiếu ⟹ từ chối khởi động); với `fund_units` thì tuỳ chọn | quỹ do chính khoá platform đã ghim đúc (khoá lộ hoặc dùng sai) mà trả CARP về ví khác — vế duy nhất người giữ khoá platform không viết được |
 
 Có cả hai ⟹ quỹ phải thoả cả hai. Ở cả hai đường, quỹ còn phải ghi `sponsorship.sponsor` thuộc
 `addresses` đã ghim và trỏ đúng script két. Nguồn: `src/sponsorFund.ts` ▸ `classifySponsorFunds`,
@@ -1236,11 +1237,12 @@ Có cả hai ⟹ quỹ phải thoả cả hai. Ở cả hai đường, quỹ cò
 | `CONFIG_MISSING` | 501 | (open-fund) thiếu `paid_fund.sponsor.platform_pkhs` và/hoặc `paid_fund.sponsor.beneficiary` (`details.missing`) |
 | `SPONSOR_FUND_AMBIGUOUS` | 409 | DID có hơn một quỹ tài trợ — gửi `fund_id`, hoặc báo người vận hành gỡ quỹ thừa |
 | `SPONSOR_FUND_DID_MISMATCH` | 422 | `fund_id` gửi lên là quỹ của DID khác — bỏ `fund_id` để dịch vụ tự tìm |
-| `SPONSOR_FUND_NOT_ALLOWED` | 422 | `fund_id` ngoài gốc tin cậy, hoặc quỹ đó không dùng được (`details.problem`: `missing` · `ambiguous` · `undecodable` · `foreign_platform` · `wrong_vault` · `not_sponsored` · `foreign_sponsor`) |
+| `SPONSOR_FUND_NOT_ALLOWED` | 422 | `fund_id` ngoài gốc tin cậy, hoặc quỹ đó không dùng được (`details.problem`: `missing` · `ambiguous` · `undecodable` · `foreign_platform` · `wrong_vault` · `not_sponsored` · `foreign_sponsor` · `foreign_beneficiary`) |
 
 `GET /sponsor/funds` (thẻ thường, chỉ đọc) trả tình trạng từng quỹ trong gốc tin cậy: DID mà quỹ
 phục vụ (`owner_commit`), lý do không dùng được (`problem`), quỹ có đang bận không, số kế toán, và
-CARP còn ở ví bên tài trợ.
+CARP còn ở ví bên tài trợ. Ở đường quét, quỹ platform lạ không được liệt kê; quỹ `foreign_beneficiary`
+thì CÓ (nó do khoá platform đã ghim đúc — tín hiệu khoá đó lộ hoặc bị dùng sai).
 
 #### Tạo quỹ tài trợ cho một DID: `POST /tx/sponsor/open-fund`
 
@@ -1401,7 +1403,9 @@ phí ký vì tx chi UTxO của nó; nó không vào `required_signers`.
   `platform_pkhs` (khoá platform được tin — mục "Mỗi DID một quỹ tài trợ" ở trên), `addresses` (địa chỉ khoá bên tài trợ, dạng bech32 chính tắc), `max_carp_amount` (trần một lượt,
   chuỗi chữ số carpdrop); thêm cho open-fund: `beneficiary` (bech32 không stake; khoá ≠ mọi
   `platform_pkhs`, payment ≠ ví bên tài trợ — kiểm lúc khởi động), `beneficiary_datum` (CBOR hex,
-  bắt buộc khi `beneficiary` là script), `buffer_bps` (chuỗi 0–10000, tuỳ chọn). Vắng khối ⟹ T2 trả `501 CONFIG_MISSING`. Cổng: `src/sponsor.ts` ▸
+  bắt buộc khi `beneficiary` là script; phải giải mã được thành Plutus Data), `buffer_bps` (chuỗi 0–10000, tuỳ chọn).
+  `beneficiary` cũng là ghim khi ĐỌC quỹ (`foreign_beneficiary`) và **bắt buộc** khi có `platform_pkhs`
+  mà không có `fund_units` — thiếu ⟹ từ chối khởi động (`src/config.ts` ▸ `parseSponsorPins`). Vắng khối ⟹ T2 trả `501 CONFIG_MISSING`. Cổng: `src/sponsor.ts` ▸
   `assertFundPinnedInputs` (quỹ + trần, trước khi giữ khoá), `assertSponsorUtxosPinned` (UTxO chung
   một địa chỉ đã ghim, cái nào cũng mang CARP), `assertFundPinnedOutputs` (đọc lại CBOR: đúng một
   output quỹ nhận đúng `carp_amount`; đúng một output thối có giá trị trọn = Σ vào − `carp_amount`;
@@ -1873,6 +1877,8 @@ quyết theo `vault_type` chứ không theo khoá nào có mặt:
                    "fund_units": ["<policy paid_fund‖fund_id>"],       // tập quỹ ghim; policy phải là script paid_fund
                    "platform_pkhs": ["<56 hex>"],                      // khoá platform được tin; cần ÍT NHẤT một trong hai khoá này
                    "addresses": ["addr_test1v…"],                      // địa chỉ KHOÁ bên tài trợ, bech32 chính tắc, đúng mạng
+                   "beneficiary": "addr_test1w…",                      // đích nhận CARP của mọi quỹ; BẮT BUỘC khi có platform_pkhs mà không có fund_units
+                   "beneficiary_datum": "<cbor hex>",                  // datum đích (bắt buộc khi beneficiary là script)
                    "max_carp_amount": "1000000000" } },                // trần một lượt, CHUỖI 1–20 chữ số carpdrop, > 0
   "did_stake": { "anchor_nft_policy": "<56 hex>" },                    // T2 cần để định vị anchor DID
   "ref_script_utxos": {

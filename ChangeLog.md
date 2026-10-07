@@ -17,6 +17,14 @@ hình tuỳ chọn mới: `paid_fund.sponsor.beneficiary`, `beneficiary_datum`, 
 `VaultTxAPI/src/sponsor.ts` ▸ `openFund`; bộ dựng `PrepaidGen/offchain/src/tx/builders.ts` ▸ `planMintPaidFund`.
 open-fund nhận `fee_payer` và đi qua cổng `reservation_id` như mọi bước tài trợ; danh sách đóng route kiểm
 mã ở README thêm `/tx/sponsor/open-fund` (13 → 14 route).
+Ghim đích nhận CARP khi đọc quỹ: có `paid_fund.sponsor.beneficiary` ⟹ quỹ có `beneficiary` (bech32) hoặc
+`beneficiary_datum` (CBOR chuẩn hoá; vắng ⟺ vắng) khác ghim mang `problem: foreign_beneficiary`, fund-vault không
+chọn (`VaultTxAPI/src/sponsorFund.ts` ▸ `classifySponsorFunds`); quét theo `platform_pkhs` mà không có `fund_units`
+thì `beneficiary` bắt buộc. Lý do: ở đường quét mọi quỹ do khoá platform đúc đều được tin, nên người giữ khoá đó
+(khoá lộ) đúc được quỹ đúng ví bên tài trợ + đúng DID nạn nhân mà trả CARP về ví mình qua `FundClaim`.
+PrepaidGen SDK thêm `plutusDataFromCbor` / `plutusDataToCbor` (`PrepaidGen/offchain/src/tx/codec.ts`): VaultTxAPI và SDK
+giữ hai bản `@lucid-evolution/lucid`, nên `Constr` dựng bằng `Data` của VaultTxAPI làm `encodeFundDatum` ném
+"Unsupported type" — open-fund với `beneficiary_datum` nay dựng datum bằng codec của SDK.
 
 **Vì sao.** Chủ dự án chốt 2026-10-07: mỗi DID một quỹ, và Feecover ký vai `platform` cùng lượt trả
 phí tx tạo quỹ. Genesis quỹ (`PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_mint_fund_nft`) chỉ
@@ -25,7 +33,9 @@ giữ khoá nào — chỉ đặt pkh platform vào `required_signers`.
 
 **Cái gì gãy nếu bám bản cũ.** Bên đọc `/tx/sponsor/plan` theo chỉ số mảng: open-fund chèn ở vị trí 3.
 Cấu hình có `fund_units` không dùng được open-fund (501 `SPONSOR_FUND_SET_CLOSED`) — quỹ mới không nằm
-trong tập đóng; chuyển sang `platform_pkhs`. `SPONSOR_FUND_NOT_OPENED` nay trỏ tới open-fund.
+trong tập đóng; chuyển sang `platform_pkhs`. `SPONSOR_FUND_NOT_OPENED` nay trỏ tới open-fund. Cấu hình có
+`platform_pkhs`, không `fund_units`, thiếu `beneficiary` ⟹ từ chối khởi động; `beneficiary_datum` không giải mã
+được thành Plutus Data ⟹ từ chối khởi động.
 
 ## 2026-10-07 — VaultTxAPI: hành trình tài trợ theo DID — đổi tên đường, mỗi DID một quỹ, bước `bind-did`, ghim `platform_pkhs`
 

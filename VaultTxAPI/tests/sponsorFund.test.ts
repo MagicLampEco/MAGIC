@@ -5,13 +5,13 @@
 // "quỹ DID khác bị bỏ qua" là bài canh của phép so `owner_commit` — gỡ phép so đó thì nó đỏ vì HÀNH VI
 // (dịch vụ chọn quỹ của DID khác), không vì một chuỗi biến mất.
 
-import { credentialToAddress, type UTxO } from "@lucid-evolution/lucid";
-import { encodeFundDatum, type PaidFundDatum } from "@magiclamp/prepaidgen-sdk";
+import { Constr, credentialToAddress, Data, type UTxO } from "@lucid-evolution/lucid";
+import { encodeFundDatum, plutusDataFromCbor, plutusDataToCbor, type PaidFundDatum } from "@magiclamp/prepaidgen-sdk";
 import { describe, expect, it } from "vitest";
 
 import { CodedApiError } from "../src/errors.js";
 import {
-  classifySponsorFunds, resolveSponsorFund, sponsorFundsStatusBody, type SponsorFundEntry,
+  canonicalDatumCbor, classifySponsorFunds, resolveSponsorFund, sponsorFundsStatusBody, type SponsorFundEntry,
 } from "../src/sponsorFund.js";
 
 const NET = "Preprod" as const;
@@ -29,9 +29,22 @@ const keyAddr = (pkh: string) => ({ payment_credential: { VerificationKey: [pkh]
 
 const PLATFORM = "11".repeat(28);
 const ROGUE_PLATFORM = "99".repeat(28);
+/** Đích nhận CARP ghim ở cấu hình (vai `fee_inbox`) và đích của kẻ giữ khoá platform. */
+const BEN_PKH = "33".repeat(28);
+const BEN_ADDR = credentialToAddress(NET, { type: "Key", hash: BEN_PKH });
+const ROGUE_BEN_PKH = "44".repeat(28);
+/** `InboxDatum { refund }` = Constr0[Constr0[key28]] — hình dạng datum đích của `fee_inbox`, dạng CBOR (bản lucid của gói này). */
+const inboxCbor = (refundPkh: string): string => Data.to(new Constr(0, [new Constr(0, [refundPkh])]));
+/** Cùng datum, dựng bằng codec của PrepaidGen SDK — datum đọc từ quỹ luôn là `Constr` của bản lucid bên SDK. */
+const inboxDatum = (refundPkh: string): Data => plutusDataFromCbor(inboxCbor(refundPkh));
+const REFUND_PKH = "7a".repeat(28);
 
 function fundDatum(
-  fundId: string, o: { did?: string; sponsorPkh?: string; none?: boolean; credit?: bigint; platform?: string } = {},
+  fundId: string,
+  o: {
+    did?: string; sponsorPkh?: string; none?: boolean; credit?: bigint; platform?: string;
+    benPkh?: string; benDatum?: Data | null;
+  } = {},
 ): PaidFundDatum {
   return {
     fund_id: fundId,
@@ -43,8 +56,8 @@ function fundDatum(
     provider_claimed: 0n,
     buffer_bps: 1_500n,
     last_updated_epoch: 0n,
-    beneficiary: keyAddr("33".repeat(28)),
-    beneficiary_datum: null,
+    beneficiary: keyAddr(o.benPkh ?? BEN_PKH),
+    beneficiary_datum: o.benDatum ?? null,
     sponsorship: o.none === true ? null : {
       sponsor: keyAddr(o.sponsorPkh ?? SPONSOR_PKH), owner_commit: o.did ?? DID_A, reclaim_after_epoch: 530n,
     },
@@ -62,13 +75,17 @@ function fundUtxo(fundId: string, d: PaidFundDatum, carp = 0n): UTxO {
 }
 
 /** Tập quỹ ghim `[fundId, datum]` → các dòng đã phân loại, đúng đường mà dịch vụ dùng. */
-function classify(funds: Array<[string, PaidFundDatum | null]>, platformPkhs?: string[]): SponsorFundEntry[] {
+function classify(
+  funds: Array<[string, PaidFundDatum | null]>, platformPkhs?: string[],
+  beneficiary?: { address: string; datumCbor?: string },
+): SponsorFundEntry[] {
   const units = funds.map(([id]) => FUND_HASH + id);
   const map = new Map<string, UTxO[]>(funds.map(([id, d]) => [FUND_HASH + id, d === null ? [] : [fundUtxo(id, d)]]));
   return classifySponsorFunds({
     units, fundScriptHash: FUND_HASH, fundAddress: FUND_ADDR, vaultScriptHash: VAULT_HASH,
     sponsorAddresses: [SPONSOR_ADDR], network: NET, utxosOfUnit: map,
     ...(platformPkhs === undefined ? {} : { platformPkhs }),
+    ...(beneficiary === undefined ? {} : { beneficiary }),
   });
 }
 
@@ -130,6 +147,78 @@ describe("ghim platform_pkhs — quỹ do khoá platform lạ đúc không đư�
   it("vắng platform_pkhs ⟹ không lọc theo platform (đường tập ghim fund_units giữ nguyên hành vi cũ)", () => {
     const e = classify([["e0", fundDatum("e0", { platform: ROGUE_PLATFORM })]]);
     expect(e[0]!.problem).toBeUndefined();
+  });
+});
+
+describe("ghim beneficiary — quỹ do khoá platform ĐÃ GHIM đúc mà trả CARP đi nơi khác không được nhận", () => {
+  // Kẻ giữ khoá platform (khoá lộ) đúc quỹ: đúng platform, đúng ví bên tài trợ, đúng DID nạn nhân — chỉ đích
+  // nhận CARP là của kẻ đó. Mọi vế khác của phép phân loại đều khớp. Đột biến gỡ phép so địa chỉ ⟹ bài cực đối
+  // đỏ vì dịch vụ CHỌN quỹ đó (did_lookup), không vì một chuỗi biến mất.
+  const PIN = { address: BEN_ADDR };
+
+  it("CỰC ĐỐI: platform đã ghim + đúng ví bên tài trợ + đúng DID, beneficiary khác địa chỉ ⟹ foreign_beneficiary; DID chỉ có quỹ đó ⟹ 409 NOT_OPENED", () => {
+    const e = classify([["b0", fundDatum("b0", { benPkh: ROGUE_BEN_PKH })]], [PLATFORM], PIN);
+    expect(e.map(x => x.problem)).toEqual(["foreign_beneficiary"]);
+    // Dòng lệch vẫn mang DID + ví bên tài trợ — người vận hành biết quỹ nào đang hút CARP của ai.
+    expect([e[0]!.ownerCommit, e[0]!.sponsorAddress]).toEqual([DID_A, SPONSOR_ADDR]);
+    const c = codeOf(() => resolveSponsorFund(e, DID_A));
+    expect([c.status, c.code]).toEqual([409, "SPONSOR_FUND_NOT_OPENED"]);
+    const d = codeOf(() => resolveSponsorFund(e, DID_A, "b0"));
+    expect([d.status, d.code, d.details.problem]).toEqual([422, "SPONSOR_FUND_NOT_ALLOWED", "foreign_beneficiary"]);
+  });
+
+  it("CẶP: cùng tập, beneficiary đúng địa chỉ ghim ⟹ dùng được; quỹ lệch đứng cạnh thì vẫn chọn đúng quỹ ghim", () => {
+    const e = classify([
+      ["b0", fundDatum("b0", { benPkh: ROGUE_BEN_PKH })],
+      ["b1", fundDatum("b1")],
+    ], [PLATFORM], PIN);
+    expect(e.map(x => x.problem ?? null)).toEqual(["foreign_beneficiary", null]);
+    const r = resolveSponsorFund(e, DID_A);
+    expect([r.entry.fundId, r.selection]).toEqual(["b1", "did_lookup"]);
+  });
+
+  it("CỰC ĐỐI: cùng địa chỉ, datum khác (refund lạ) ⟹ foreign_beneficiary; CẶP: datum khớp ⟹ dùng được", () => {
+    const pin = { address: BEN_ADDR, datumCbor: inboxCbor(REFUND_PKH) };
+    const e = classify([
+      ["c0", fundDatum("c0", { benDatum: inboxDatum(ROGUE_BEN_PKH) })],
+      ["c1", fundDatum("c1", { benDatum: inboxDatum(REFUND_PKH) })],
+    ], [PLATFORM], pin);
+    expect(e.map(x => x.problem ?? null)).toEqual(["foreign_beneficiary", null]);
+    expect(resolveSponsorFund(e, DID_A).entry.fundId).toBe("c1");
+  });
+
+  it("datum vắng ⟺ vắng: ghim có datum mà quỹ vắng ⟹ foreign_beneficiary; ghim vắng mà quỹ có ⟹ foreign_beneficiary", () => {
+    const withDatum = { address: BEN_ADDR, datumCbor: inboxCbor(REFUND_PKH) };
+    expect(classify([["d0", fundDatum("d0")]], [PLATFORM], withDatum)[0]!.problem).toBe("foreign_beneficiary");
+    expect(classify([["d1", fundDatum("d1", { benDatum: inboxDatum(REFUND_PKH) })]], [PLATFORM], PIN)[0]!.problem)
+      .toBe("foreign_beneficiary");
+    // CẶP của cả hai: cùng vắng, cùng có.
+    expect(classify([["d2", fundDatum("d2")]], [PLATFORM], PIN)[0]!.problem).toBeUndefined();
+    expect(classify([["d3", fundDatum("d3", { benDatum: inboxDatum(REFUND_PKH) })]], [PLATFORM], withDatum)[0]!.problem)
+      .toBeUndefined();
+  });
+
+  it("chuẩn hoá: ghim viết CBOR mảng ĐỊNH-ĐỘ-DÀI (khác cách Lucid viết) cho cùng giá trị ⟹ vẫn khớp", () => {
+    // Constr0[Constr0[bytes28]] viết tay bằng mảng định-độ-dài: d879 81 d879 81 581c <28 byte>.
+    const definite = `d87981d87981581c${REFUND_PKH}`;
+    expect(definite).not.toBe(inboxCbor(REFUND_PKH));
+    expect(canonicalDatumCbor(definite)).toBe(plutusDataToCbor(inboxDatum(REFUND_PKH)));
+    const e = classify([["d4", fundDatum("d4", { benDatum: inboxDatum(REFUND_PKH) })]], [PLATFORM],
+      { address: BEN_ADDR, datumCbor: definite });
+    expect(e[0]!.problem).toBeUndefined();
+  });
+
+  it("vắng ghim beneficiary (đường tập đóng fund_units) ⟹ không lọc theo đích", () => {
+    expect(classify([["d5", fundDatum("d5", { benPkh: ROGUE_BEN_PKH })]], [PLATFORM])[0]!.problem).toBeUndefined();
+  });
+
+  it("GET /sponsor/funds: quỹ lệch đích hiện ra với problem foreign_beneficiary, tính vào unusable, không cộng tổng", () => {
+    const e = classify([["d6", fundDatum("d6", { benPkh: ROGUE_BEN_PKH, credit: 5n })], ["d7", fundDatum("d7", { credit: 2n })]],
+      [PLATFORM], PIN);
+    const body = sponsorFundsStatusBody({ entries: e, carpUnit: CARP_UNIT, busyOf: () => null, wallets: [], maxCarpAmount: 1n, nowMs: 0 });
+    expect([body.usable, body.unusable]).toEqual([1, 1]);
+    expect((body.funds as Array<Record<string, unknown>>)[0]).toMatchObject({ fund_id: "d6", problem: "foreign_beneficiary", owner_commit: DID_A });
+    expect((body.totals as Record<string, unknown>).credit_issued).toBe("2");
   });
 });
 

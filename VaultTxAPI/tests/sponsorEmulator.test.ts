@@ -40,6 +40,7 @@ import {
   PrepaidVaultRedeemerSchema,
   addMintPaidFund,
   decodeFundDatum,
+  plutusDataToCbor,
   decodeVaultDatum,
   derivePrepaidScripts,
   encodeVaultDatum,
@@ -77,6 +78,8 @@ const DID_COMMIT = "d1".repeat(32);
 const DID_COMMIT2 = "d2".repeat(32);
 const DID_NEW = "d3".repeat(32);
 const DID_OPEN = "d4".repeat(32); // người mới của hành trình open-fund: CHƯA có quỹ nào lúc dựng nền
+/** `beneficiary_datum` ghim ở cấu hình open-fund: `InboxDatum { refund = Key(7a…) }`, CBOR mảng không-định-độ-dài. */
+const OPEN_BEN_DATUM = `d8799fd8799f581c${"7a".repeat(28)}ffff`;
 const SLOW = 900_000;
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -132,6 +135,7 @@ let beneficiaryKey: TestKey; // đích nhận CARP ghim ở cấu hình open-fun
 let feecover2: TestKey;      // ví trả phí bên thứ ba của tx open-fund
 let svcOpen: SponsorTxService;     // cấu hình open-fund: platform_pkhs + beneficiary, KHÔNG fund_units
 let svcSetClosed: SponsorTxService; // cấu hình có cả fund_units ⟹ open-fund 501 SPONSOR_FUND_SET_CLOSED
+let svcOtherBen: SponsorTxService;  // cùng cấu hình open-fund, beneficiary ghim KHÁC ⟹ quỹ open-fund tạo thành foreign_beneficiary
 let openLocks: OwnerLockTable;
 let deploymentNoDid = "";
 let svc: SponsorTxService;
@@ -447,10 +451,14 @@ beforeAll(async () => {
   const openPins = {
     platform_pkhs: [platformKey.pkh], addresses: [sponsor.address], max_carp_amount: CARP.toString(),
     beneficiary: beneficiaryKey.address,
+    // Datum đích dạng `InboxDatum { refund }` (Constr0[Constr0[key28]]): đi qua đường `plutusDataFromCbor` của open-fund
+    // và phép so datum của ghim beneficiary ở fund-vault.
+    beneficiary_datum: OPEN_BEN_DATUM,
   };
   openLocks = new OwnerLockTable(60_000);
   svcOpen = mk(deployment(true, undefined, openPins), openLocks);
   svcSetClosed = mk(deployment(true, undefined, { ...openPins, fund_units: [fundUnit] }), new OwnerLockTable(60_000));
+  svcOtherBen = mk(deployment(true, undefined, { ...openPins, beneficiary: opener.address }), new OwnerLockTable(60_000));
   // Cùng script consume, địa chỉ engage KHÁC (thêm phần stake): cổng script chỉ so HASH nên cho qua;
   // tx do SDK dựng gửi thread tới địa chỉ không-stake ⟹ chỉ phép đọc-lại output (`nftOutput`) chặn được.
   svcStakeEngage = mk(deployment(true, credentialToAddress(NET,
@@ -1030,6 +1038,7 @@ describe("open-fund — genesis quỹ tài trợ theo DID; platform ký; rồi f
     expect(d.sponsorship!.owner_commit).toBe(DID_OPEN);
     expect(d.sponsorship!.sponsor).toEqual({ payment_credential: { VerificationKey: [sponsor.pkh] }, stake_credential: null });
     expect(d.beneficiary).toEqual({ payment_credential: { VerificationKey: [beneficiaryKey.pkh] }, stake_credential: null });
+    expect(plutusDataToCbor(d.beneficiary_datum!)).toBe(OPEN_BEN_DATUM);
     const epochNow = (nowMs() - O) / P;
     expect(d.sponsorship!.reclaim_after_epoch).toBeGreaterThanOrEqual(epochNow + 200n);
     expect(d.sponsorship!.reclaim_after_epoch.toString()).toBe(s.reclaim_after_epoch);
@@ -1064,6 +1073,18 @@ describe("open-fund — genesis quỹ tài trợ theo DID; platform ký; rồi f
     const again = await post("/tx/sponsor/open-fund", ob({ fee_payer: await fpOf(feecover2) }), svcOpen);
     expect(again.status).toBe(409);
     expect(errCode(again)).toBe("SPONSOR_FUND_ALREADY_OPEN");
+  }, SLOW);
+
+  it("ghim beneficiary qua route: CÙNG quỹ trên chuỗi, cấu hình ghim đích KHÁC ⟹ GET thấy foreign_beneficiary, fund-vault 409 NOT_OPENED", async () => {
+    // Quỹ open-fund vừa tạo do khoá platform ĐÃ GHIM ký — chỉ đích nhận CARP lệch với ghim của dịch vụ này.
+    const st = await handle({ method: "GET", url: "/sponsor/funds", headers: {}, body: undefined }, routerDeps(svcOtherBen));
+    const funds = st.body.funds as Array<{ fund_unit: string; owner_commit: string | null; problem: string | null }>;
+    expect(funds).toEqual([expect.objectContaining({ fund_unit: oFundUnit, owner_commit: DID_OPEN, problem: "foreign_beneficiary" })]);
+    const refs = (await emulator.getUtxos(sponsor.address)).filter(u => (u.assets[CARP_UNIT] ?? 0n) >= CARP).map(refStr).slice(0, 1);
+    const r = await post("/tx/sponsor/fund-vault",
+      ob({ change_address: fee.address, carp_amount: CARP.toString(), sponsor: { utxo_refs: refs } }), svcOtherBen);
+    expect(r.status).toBe(409);
+    expect(errCode(r)).toBe("SPONSOR_FUND_NOT_OPENED");
   }, SLOW);
 
   it("fund-vault XANH (không fund_id) qua cấu hình open-fund: tìm đúng quỹ vừa tạo, nạp CARP, chuỗi nhận", async () => {

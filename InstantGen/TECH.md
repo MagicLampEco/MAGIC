@@ -73,8 +73,8 @@ TypeScript mirror: `MagicBatchSchema` (`types.ts:31`). Thứ tự field = thứ 
 
 > Danh sách dưới đây là **17 trường đầu**, chung cho mọi loại két. InstantGen có thêm
 > trường thứ 18 `instant_unlock_ms` (`Natural`) ở CUỐI — thêm ở cuối nên chỉ số 0..16
-> không dịch, và bên nào đọc theo VỊ TRÍ (ConsumeMAGIC đọc trường 0; `Paymaster` từng
-> đọc trường 15, module đã xoá 2026-10-07) không phải đụng gì. Nhưng giải mã Plutus Data nghiêm ngặt về SỐ trường ở
+> không dịch, và bên nào đọc theo VỊ TRÍ (ConsumeMAGIC đọc trường 0; két Wakeme
+> đọc datum InstantGen theo vị trí, chỉ số ≤ 15) không phải đụng gì. Nhưng giải mã Plutus Data nghiêm ngặt về SỐ trường ở
 > cả hai chiều, nên một bên đọc TRỌN datum phải chọn đúng hình dạng theo loại két.
 
 Thứ tự field on-chain:

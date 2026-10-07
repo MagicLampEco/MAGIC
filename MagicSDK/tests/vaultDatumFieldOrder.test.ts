@@ -18,8 +18,8 @@ import { VaultDatumSchema, InstantVaultDatumSchema } from "../src/schemas.js";
 // Thứ tự ấy là **hợp đồng nhị phân**: Plutus Data mã hoá theo vị trí, nên lệch một ô
 // là mọi UTxO thật bị đọc sai — `attribution` ra làm một ngày, mốc khoá ra làm một
 // cấu trúc — và không phép kiểm kiểu nào đỏ. Có bên còn đọc theo VỊ TRÍ chứ không
-// qua lược đồ (`ConsumeMAGIC` ▸ `consume.ak` lấy thẳng trường 0; `Paymaster` từng lấy
-// trường 15, module đã xoá 2026-10-07), nên bên đó lấy nhầm trường mà KHÔNG kêu.
+// qua lược đồ (`ConsumeMAGIC` ▸ `consume.ak` lấy thẳng trường 0; két Wakeme lấy theo vị trí
+// các trường InstantGen, chỉ số ≤ 15), nên bên đó lấy nhầm trường mà KHÔNG kêu.
 //
 // ── PHẠM VI — đọc kỹ trước khi tin màu xanh của tệp này ──────────────────────────
 //

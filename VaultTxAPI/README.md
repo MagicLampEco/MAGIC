@@ -2008,7 +2008,7 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `VAULT_TX_API_HOST` | không | `127.0.0.1` |
 | `VAULT_TX_API_PORT` | không | `8788` |
 | `VAULT_TX_API_BASE_PATH` | không | rỗng — tiền tố đường khi đứng sau proxy định tuyến theo đường, ví dụ `/vaulttx/preprod`; dịch vụ tự cắt nó (`src/basePath.ts`), vẫn nhận đường không tiền tố từ loopback |
-| `VAULT_TX_API_TOKEN` | ngoài loopback thì **có** | rỗng |
+| `VAULT_TX_API_TOKEN` | ngoài loopback, hoặc khi đặt `VAULT_TX_API_BASE_PATH`, thì **có** | rỗng — chỉ dành cho người gọi trên chính máy chạy dịch vụ. Có tiền tố đường mà thẻ rỗng ⟹ từ chối khởi động (proxy mở cổng loopback ra ngoài). Thẻ rỗng mà yêu cầu mang `Forwarded` / `X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP` ⟹ `401 UNAUTHORIZED` (`/health` vẫn mở) |
 | `VAULT_TX_API_SPONSOR_TOKEN` | khi phục vụ T2 | rỗng ⟹ `/tx/sponsor/fund-vault` trả `501 CONFIG_MISSING`. **GIÁ TRỊ** thẻ vai sponsor, đưa cho bên vận hành tài trợ; trùng `VAULT_TX_API_TOKEN` ⟹ từ chối khởi động |
 | `VAULT_TX_API_BLOCKFROST_URL` | không | dẫn theo `NETWORK` |
 | `VAULT_TX_API_TIMEOUT_MS` | không | `20000` |

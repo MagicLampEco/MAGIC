@@ -5,6 +5,18 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy
+
+**Đổi gì.** (1) Đặt `VAULT_TX_API_BASE_PATH` mà `VAULT_TX_API_TOKEN` rỗng ⟹ từ chối khởi động, kể cả khi bind
+loopback. (2) Thẻ rỗng mà yêu cầu mang `Forwarded` / `X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP` ⟹
+`401 UNAUTHORIZED`; `/health` vẫn mở. Nguồn: `VaultTxAPI/src/config.ts` ▸ `loadConfig` (khối thẻ bài);
+`VaultTxAPI/src/http.ts` ▸ `requireToken`, `forwardedBy`.
+**Vì sao.** Cổng cũ chỉ đòi thẻ khi host không phải loopback. Đứng sau proxy hay đường hầm thì loopback là cổng mở ra
+ngoài: đo 2026-10-07, tiến trình bind `127.0.0.1` sau đường hầm, tiền tố `/vaulttx/preprod`, không thẻ, trả 200 cho
+`POST /tx/consume` gửi từ internet không kèm `Authorization`, dựng tx và giữ khoá két chủ.
+**Cái gì gãy.** Triển khai đang đặt tiền tố đường mà chưa có thẻ sẽ KHÔNG khởi động sau bản này: đặt thẻ, trao thẻ
+cho bên gọi trước. Bên gọi đi qua proxy tới một dịch vụ không thẻ nhận 401.
+
 ## 2026-10-07 — VaultTxAPI: vá audit chồng #157→#162 @5274b8c8 — claim không kẹt vì mã hoá datum / đổi cấu hình; giữ DID ở fund-vault; VaultReadAPI buildInfo
 
 **Đổi gì.** (1) `paid_fund.sponsor.beneficiary_datum` được chuẩn hoá MỘT lần lúc nạp cấu hình (giải mã rồi mã hoá

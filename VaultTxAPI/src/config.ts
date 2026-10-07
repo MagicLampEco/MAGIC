@@ -440,6 +440,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       `Từ chối khởi động: đặt thẻ bài, hoặc bind về 127.0.0.1.`,
     );
   }
+  if (token === "" && basePath !== "") {
+    // FAIL-CLOSED. Tiền tố đường chỉ có nghĩa khi đứng sau một proxy định tuyến theo đường, và proxy
+    // biến loopback thành cổng mở ra ngoài: nhánh loopback ngay trên không bắt được ca đó. Đo 2026-10-07:
+    // một tiến trình bind 127.0.0.1 sau đường hầm, tiền tố "/vaulttx/preprod", không thẻ, trả 200 cho
+    // `POST /tx/consume` gửi từ internet không kèm `Authorization`.
+    throw new Error(
+      `[config] VAULT_TX_API_BASE_PATH="${basePath}" (dịch vụ đứng sau proxy) mà VAULT_TX_API_TOKEN rỗng. ` +
+      `Từ chối khởi động: proxy mở cổng loopback ra ngoài, nên phải đặt thẻ bài.`,
+    );
+  }
 
   const sponsorToken = env.VAULT_TX_API_SPONSOR_TOKEN || "";
   if (sponsorToken !== "" && sponsorToken === token) {

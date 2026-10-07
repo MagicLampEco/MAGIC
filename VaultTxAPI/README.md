@@ -1148,7 +1148,9 @@ Feecover, và trả đúng hình dạng mà `fee_payer` / `funding.fee_payer` nh
 phí, và còn hạn ký. App **không** gửi `purpose` hay `ref`: dịch vụ lấy route (⟹ mục đích) và
 mã ghi sổ từ sổ phát-hành của mình, nên app không giả được cả hai. Mã ghi sổ (`ref`) gửi
 Feecover: `create-vault` ⟹ tên NFT vault (64 hex cuối `vault_nft`); `open-thread` ⟹ tên NFT
-thread; route khác ⟹ hash thân tx. Lời đáp:
+thread; `/tx/sponsor/open-vault` và `/tx/sponsor/open-fund` ⟹ owner_commit của DID (open-vault: cả khi DID đã có
+quỹ và tx không chở genesis); `/tx/sponsor/claim` trên quỹ có DID ⟹ owner_commit trong datum quỹ; route khác ⟹
+hash thân tx. Lời đáp:
 
 ```jsonc
 { "tx_hash": "…", "witness_set": "<CBOR hex>", "net_lovelace": "…", "fee_lovelace": "…" }

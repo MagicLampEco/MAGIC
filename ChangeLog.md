@@ -17,6 +17,18 @@ người vận hành và một phép tra `PKH → số dư` hàng loạt giá r�
 **Cái gì gãy.** Triển khai VaultReadAPI đang đặt tiền tố đường mà chưa có thẻ sẽ KHÔNG khởi động sau bản này: đặt
 thẻ, trao thẻ cho bên gọi trước. Bên gọi đi qua proxy tới một mặt tiền không thẻ nhận 401.
 
+## 2026-10-07 — VaultTxAPI: open-vault tài trợ gửi `ref` = owner_commit cả khi không chở genesis quỹ
+
+**Đổi gì.** Mọi tx `/tx/sponsor/open-vault` ghi `feeRef` = owner_commit của DID, kể cả khi DID đã có quỹ nên tx
+không chở genesis. Bước dựng khai mã ghi sổ qua `ctx.noteFeeRef` (open-vault, open-fund), tách khỏi `holdDid`.
+Nguồn: `VaultTxAPI/src/sponsor.ts` ▸ `noteFeeRef`.
+**Vì sao.** Feecover đòi `ref` = tên anchor DID cho MỌI `sponsor_open` (luật L29), có quỹ hay không. Bản trước chỉ
+gửi owner_commit khi tx chở genesis, nên open-vault cho chủ thứ hai của một DID đã có quỹ bị từ chối ký. Feecover
+đếm một-quỹ-mỗi-DID chỉ trên `open_sponsor_fund` và `sponsor_open` có genesis, nên tx không chở quỹ mang
+owner_commit không xung đột.
+**Cái gì gãy.** Không gì ở thân yêu cầu hay lời đáp. Nhật ký Feecover tra open-vault theo owner_commit, không theo
+hash thân tx.
+
 ## 2026-10-07 — VaultTxAPI: `/fee/sign` gửi `ref` = owner_commit cho tx genesis quỹ tài trợ và claim
 
 **Đổi gì.** Tx genesis quỹ tài trợ (open-vault chở quỹ, open-fund) ghi `feeRef` = owner_commit của DID vào sổ

@@ -1418,8 +1418,8 @@ describe("open-vault kèm quỹ — VTA ký platform; chủ + ví trả phí ký
     const b = await ok("/tx/sponsor/open-vault", cb(coOwner2, { change_address: fee.address, did_commit: DID_CO }));
     try {
       expect(platformSignCalls).toBe(before);
-      // CẶP của ca trên: không genesis quỹ ⟹ không feeRef ⟹ `/fee/sign` gửi hash thân tx.
-      expect(issuedFeeRef(svcOpen, b.tx_hash as string)).toBeUndefined();
+      // Không genesis quỹ mà vẫn là `sponsor_open`: Feecover đòi ref = owner_commit cho MỌI `sponsor_open`.
+      expect(issuedFeeRef(svcOpen, b.tx_hash as string)).toBe(DID_CO);
       expect((b.signers as Array<{ role: string }>).map(x => x.role)).toEqual(["fee-wallet", "owner"]);
       const tx = CML.Transaction.from_cbor_hex(b.tx_cbor as string);
       expect(tx.body().mint()?.get_assets(CML.ScriptHash.from_hex(coFundUnit.slice(0, 56)))).toBeUndefined();

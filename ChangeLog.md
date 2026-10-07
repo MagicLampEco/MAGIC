@@ -5,6 +5,26 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: mã lượt giữ `reservation_id` (bước 1, tuỳ chọn)
+
+**Đổi gì.** `POST /fee/utxo` trả thêm `fee_payer.reservation_id` (32 hex = 128 bit ngẫu nhiên, sinh mỗi
+lượt giữ, lưu cạnh lượt giữ ở `VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry`). Mọi route nhận `fee_payer`
+(danh sách đóng 12 route ở README ▸ *Proxy phí* ▸ `reservation_id`) nhận `fee_payer.reservation_id` /
+`funding.fee_payer.reservation_id` tuỳ chọn: lệch mã lượt giữ đang sống ⟹ `409
+FEE_PAYER_RESERVATION_EXPIRED` với `reservation: "foreign"`; sai khuôn ⟹ `400 FEE_PAYER_SHAPE` /
+`FUNDING_SHAPE`; vắng ⟹ như cũ, và được đếm (`/health` ▸ `fee_reservation_id`, một dòng nhật ký JSON
+`fee_reservation_id_missing`). Sổ phát-hành ghi mã lúc dựng; `/fee/sign` so với mã đang sống, lệch ⟹ 409
+`foreign`, Feecover không bị gọi. Tx bị thay chỉ bỏ đúng lượt giữ cùng mã.
+
+**Vì sao.** Thư `mg1007sa-b` / `sa1007mg-rid`: sổ giữ chỗ khoá theo UTxO; mọi bản app đi chung thẻ dịch
+vụ, nên khi Feecover giao lại cùng UTxO cho B, A còn cầm `fee_payer` cũ vẫn dựng được trên lượt giữ của B.
+Bước 2 (bắt buộc mã) chỉ bật sau khi đo tỉ lệ thiếu mã và SuperApp báo số bản app gửi mã.
+
+**Cái gì gãy nếu bám bản cũ.** Client so `fee_payer` của `/fee/utxo` bằng phép bằng chặt gặp thêm
+`reservation_id`. `/fee/sign` cho tx dựng khi CHƯA có lượt giữ nào mà nay UTxO đang được giữ: trước ra
+`exceeded`/được ký, nay `foreign`. `details.reservation` có thêm giá trị `foreign`. `IssuedTxRegistry`
+nhận một hàm ghi nhật ký tuỳ chọn ở hàm dựng; `noteFeeReservation` trả mã lượt giữ.
+
 ## 2026-10-07 — VaultTxAPI: UTxO Feecover không còn lượt giữ chỗ ⟹ không dựng, không ký
 
 **Đổi gì.** Sổ phát-hành (`VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry`) nhớ thêm địa chỉ ví trả phí

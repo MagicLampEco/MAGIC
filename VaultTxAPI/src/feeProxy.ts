@@ -35,7 +35,7 @@ import { createHash } from "node:crypto";
 import type { FeecoverAppSettings, FeecoverSettings } from "./config.js";
 import { FEECOVER_DEFAULT_APP } from "./config.js";
 import { BadRequestError, CodedApiError, TxSupersededError } from "./errors.js";
-import type { IssuedRoute, IssuedTxRegistry } from "./locks.js";
+import type { IssuedRoute, IssuedTxRegistry, ReservationIdStats } from "./locks.js";
 import { FEE_PURPOSE_ROUTES, expiredErrorFor, submissionStateOf, type FeePurposeRoute } from "./locks.js";
 import { txBodyHash } from "./summary.js";
 import { feeReservationError } from "./validity.js";
@@ -147,12 +147,18 @@ export class FeeProxy {
     const utxoRef = `${u.txHash}#${u.outputIndex}`;
     // Sổ phát-hành nhớ giờ giữ chỗ: tx tiêu UTxO này chỉ xin ký được tới mốc đó.
     // Địa chỉ đi kèm để sổ nhận ra UTxO của Feecover cả khi lượt giữ đã bị quét (`feeReservationForBuild`).
-    this.deps.issued.noteFeeReservation(utxoRef, reservedMs, address);
+    // Mã lượt giữ (`locks.ts` ▸ khối "MÃ LƯỢT GIỮ"): mới mỗi lượt, kể cả khi Feecover trả lại đúng UTxO cũ.
+    const reservationId = this.deps.issued.noteFeeReservation(utxoRef, reservedMs, address);
     return {
-      fee_payer: { utxo: utxoRef, address },
+      fee_payer: { utxo: utxoRef, address, reservation_id: reservationId },
       reserved_until: reservedUntil,
       purpose,
     };
+  }
+
+  /** Bộ đếm có / thiếu `reservation_id` của sổ phát-hành (`/health` ▸ `fee_reservation_id`). */
+  reservationIdStats(): ReservationIdStats {
+    return this.deps.issued.reservationIdStats();
   }
 
   /** `POST /fee/sign {tx_cbor}` — chỉ cho tx dịch vụ này đã phát, có ví trả phí, còn hạn ký. */

@@ -17,7 +17,8 @@ import { describe, expect, it } from "vitest";
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { loadConfig, parseDeployment, resolveFeecoverAppToken, type Deployment } from "../src/config.js";
 import { FeeProxy, type FetchLike } from "../src/feeProxy.js";
-import { ChainDidPaymentAnchorReader } from "../src/funding.js";
+import { FUNDING_FEE_PAYER_CODES, parseFeePayerShape } from "../src/feePayer.js";
+import { ChainDidPaymentAnchorReader, FUNDING_COLLATERAL_CODES } from "../src/funding.js";
 import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
@@ -226,7 +227,8 @@ function harness(opts: { feecover?: ReturnType<typeof fakeFeecover>; proxy?: boo
     [VAULT_UTXO, FEE_UTXO, ANCHOR, threadUtxo(KEY_OWNER, "7e".repeat(32))],
   );
   const builder = new RecordedTxBuilder({ consume: consumeTx(true, opts.consumeTtlMs), schedule_commit: consumeTx(), create_vault: fundedTx() }, VAULT_ID_UNIT);
-  const issued = new IssuedTxRegistry();
+  const ridLogs: string[] = [];
+  const issued = new IssuedTxRegistry(l => ridLogs.push(l));
   const service = new VaultTxService({
     network: "Preview", deployment: DEPLOYMENT, chain, builder, locks: new OwnerLockTable(TTL), issued,
     lockTtlMs: TTL, now: () => clock.t,
@@ -250,7 +252,7 @@ function harness(opts: { feecover?: ReturnType<typeof fakeFeecover>; proxy?: boo
     responses.push(r.body);
     return r;
   };
-  return { clock, fc, call, responses, logs, issued };
+  return { clock, fc, call, responses, logs, issued, ridLogs };
 }
 
 const codeOf = (r: { body: unknown }) => (r.body as { error: { code: string } }).error.code;
@@ -283,7 +285,7 @@ describe("POST /fee/utxo", () => {
     const r = await h.call("POST", "/fee/utxo", { route: "consume" });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body).toEqual({
-      fee_payer: { utxo: `${"fa".repeat(32)}#0`, address: FEE_ADDRESS },
+      fee_payer: { utxo: `${"fa".repeat(32)}#0`, address: FEE_ADDRESS, reservation_id: expect.stringMatching(/^[0-9a-f]{32}$/) },
       reserved_until: new Date(NOW + 600_000).toISOString(),
       purpose: "consume_magic",
     });
@@ -609,17 +611,31 @@ describe("sổ phát-hành: hạn ký theo reserved_until", () => {
     expect((await h2.call("POST", "/fee/sign", { tx_cbor: ok.cbor })).status).toBe(200);
   });
 
-  it("validTo của tx VƯỢT lượt giữ hiện có của UTxO phí ⟹ 409 exceeded, Feecover KHÔNG bị gọi", async () => {
-    // Tx dựng khi chưa có lượt giữ (ttl NOW + 10′); sau đó /fee/utxo phát CHÍNH UTxO đó, giữ tới NOW + 5′.
+  // Chính sách LẬT 2026-10-07 (reservation_id): bản trước ra `exceeded` cho ca này. Tx dựng khi CHƯA có
+  // lượt giữ nào thì lượt giữ xuất hiện SAU nó là của một lượt `/fee/utxo` khác ⟹ `foreign`.
+  it("tx dựng khi chưa có lượt giữ; sau đó /fee/utxo phát CHÍNH UTxO đó ⟹ 409 foreign, Feecover KHÔNG bị gọi", async () => {
     const h = harness({ feecover: fakeFeecover({ utxo: utxoReply(NOW + 300_000) }) });
     const { cbor, hash } = await issueConsume(h, {}, false);
     expect((await h.call("POST", "/fee/utxo", { route: "consume" })).status).toBe(200);
     const r = await h.call("POST", "/fee/sign", { tx_cbor: cbor });
     expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(detailsOf(r)).toEqual({ tx_hash: hash, fee_payer_utxo: FEE_PAYER.utxo, reserved_until: null, reservation: "foreign" });
+    expect(h.fc.calls.map(c => c.url)).toEqual(["https://feecover.example/v1/utxo?purpose=consume_magic"]);
+  });
+
+  it("validTo của tx VƯỢT lượt giữ CÙNG mã (lượt giữ bị rút ngắn) ⟹ 409 exceeded, Feecover KHÔNG bị gọi", async () => {
+    // Đường mã thường không tới ca này (cổng dựng kẹp validTo ≤ lượt giữ, lượt giữ mới luôn mang mã mới);
+    // ghim nó bằng cách rút ngắn lượt giữ mà GIỮ mã — phép canh phòng thủ của `feeSignProblem`.
+    const h = harness();
+    const { cbor, hash } = await issueConsume(h);
+    const id = h.issued.feeReservationIdOf(FEE_PAYER.utxo)!;
+    h.issued.noteFeeReservation(FEE_PAYER.utxo, NOW + 300_000, FEE_ADDRESS, id);
+    const r = await h.call("POST", "/fee/sign", { tx_cbor: cbor });
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
     expect(detailsOf(r)).toEqual({
       tx_hash: hash, fee_payer_utxo: FEE_PAYER.utxo, reserved_until: new Date(NOW + 300_000).toISOString(), reservation: "exceeded",
     });
-    expect(h.fc.calls.map(c => c.url)).toEqual(["https://feecover.example/v1/utxo?purpose=consume_magic"]);
+    expect(h.fc.calls).toHaveLength(0);
   });
 
   it("tx ĐÃ phát, quá validTo + biên ⟹ 410 TX_EXPIRED cùng details /tx/submit, Feecover KHÔNG bị gọi; CẶP: tx chưa từng phát cùng giờ ⟹ 403", async () => {
@@ -707,6 +723,107 @@ describe("lượt giữ chỗ Feecover đã bị quét ⟹ không dựng, không
     h.issued.sweep(h.clock.t);
     expect(codeOf(await h.call("POST", "/fee/sign", { tx_cbor: cbor }))).toBe("FEE_PROXY_TX_NOT_ISSUED");
     expect(h.fc.calls).toHaveLength(1);
+  });
+});
+
+// ── thư SuperApp sa1007mg-rid: mã lượt giữ ───────────────────────────────────
+
+describe("reservation_id — mã lượt giữ UTxO Feecover", () => {
+  // Lỗ của thư mg1007sa-b: sổ giữ chỗ khoá theo UTxO; Feecover giao lại cùng UTxO cho B thì A, còn cầm
+  // `fee_payer` cũ, vẫn dựng được trên lượt giữ của B. Bộ Feecover giả trả CÙNG UTxO mỗi lượt /fee/utxo.
+  const fpOf = (r: { body: unknown }) => (r.body as { fee_payer: { utxo: string; address: string; reservation_id: string } }).fee_payer;
+
+  it("CẶP: id khớp ⟹ dựng 200 + ký 200; id của lượt giữ CŨ sau khi UTxO giao lại ⟹ 409 foreign, Feecover không bị gọi", async () => {
+    const h = harness();
+    const fp1 = fpOf(await h.call("POST", "/fee/utxo", { route: "consume" }));
+    const a = await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp1 }));
+    expect(a.status, JSON.stringify(a.body)).toBe(200);
+    expect((await h.call("POST", "/fee/sign", { tx_cbor: (a.body as { tx_cbor: string }).tx_cbor })).status).toBe(200);
+
+    // Feecover giao lại ĐÚNG UTxO đó (cho B) ⟹ lượt giữ mới, mã mới.
+    const fp2 = fpOf(await h.call("POST", "/fee/utxo", { route: "consume" }));
+    expect(fp2.utxo).toBe(fp1.utxo);
+    expect(fp2.reservation_id).not.toBe(fp1.reservation_id);
+    const callsBefore = h.fc.calls.length;
+    const stale = await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp1 }));
+    expect(stale.status, JSON.stringify(stale.body)).toBe(409);
+    expect(codeOf(stale)).toBe("FEE_PAYER_RESERVATION_EXPIRED");
+    expect(detailsOf(stale)).toEqual({ fee_payer_utxo: fp1.utxo, reserved_until: null, reservation: "foreign" });
+    expect(h.fc.calls).toHaveLength(callsBefore);
+    // Cực đối, cùng thời điểm: người cầm lượt giữ MỚI dựng được.
+    expect((await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp2 }))).status).toBe(200);
+  });
+
+  it("CẶP: vắng id ⟹ 200 (bước 1), without_id[consume] tăng + một dòng nhật ký JSON; có id ⟹ with_id tăng, không dòng nào", async () => {
+    const h = harness();
+    const fp = fpOf(await h.call("POST", "/fee/utxo", { route: "consume" }));
+    const bare = { utxo: fp.utxo, address: fp.address };
+    expect((await h.call("POST", "/tx/consume", consumeBody({ fee_payer: bare }))).status).toBe(200);
+    expect(h.issued.reservationIdStats()).toEqual({ with_id: {}, without_id: { consume: 1 } });
+    expect(h.ridLogs).toHaveLength(1);
+    expect(JSON.parse(h.ridLogs[0]!)).toEqual({
+      event: "fee_reservation_id_missing", route: "consume", fee_payer_utxo: fp.utxo, without_id: 1, with_id: 0,
+    });
+    expect((await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp }))).status).toBe(200);
+    expect(h.issued.reservationIdStats()).toEqual({ with_id: { consume: 1 }, without_id: { consume: 1 } });
+    expect(h.ridLogs).toHaveLength(1);
+    // Số đo lộ ở /health cho người vận hành.
+    const health = await h.call("GET", "/health");
+    expect((health.body as { fee_reservation_id: unknown }).fee_reservation_id)
+      .toEqual({ with_id: { consume: 1 }, without_id: { consume: 1 } });
+  });
+
+  it("sai kiểu ⟹ 400 FEE_PAYER_SHAPE trước mọi lượt dựng (CẶP: đúng khuôn ⟹ 200)", async () => {
+    const h = harness();
+    const fp = fpOf(await h.call("POST", "/fee/utxo", { route: "consume" }));
+    for (const bad of [5, null, "", fp.reservation_id.toUpperCase(), fp.reservation_id.slice(1), `${fp.reservation_id}00`]) {
+      const r = await h.call("POST", "/tx/consume", consumeBody({ fee_payer: { ...fp, reservation_id: bad } }));
+      expect(r.status, `${JSON.stringify(bad)} → ${JSON.stringify(r.body)}`).toBe(400);
+      expect(codeOf(r)).toBe("FEE_PAYER_SHAPE");
+      expect(detailsOf(r)).toEqual({ field: "fee_payer.reservation_id" });
+    }
+    expect(h.issued.reservationIdStats()).toEqual({ with_id: {}, without_id: {} });
+    expect((await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp }))).status).toBe(200);
+  });
+
+  it("/fee/sign: tx dựng trên lượt giữ cũ, UTxO đã giao lại ⟹ 409 foreign, Feecover KHÔNG bị gọi (CẶP: dựng lại trên lượt mới ⟹ 200)", async () => {
+    const h = harness();
+    const fp1 = fpOf(await h.call("POST", "/fee/utxo", { route: "consume" }));
+    // App gửi id: sổ ghi đúng id đó.
+    const a = await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp1 }));
+    const cbor = (a.body as { tx_cbor: string }).tx_cbor;
+    const fp2 = fpOf(await h.call("POST", "/fee/utxo", { route: "consume" }));
+    const callsBefore = h.fc.calls.length;
+    const s = await h.call("POST", "/fee/sign", { tx_cbor: cbor });
+    expect(s.status, JSON.stringify(s.body)).toBe(409);
+    expect(codeOf(s)).toBe("FEE_PAYER_RESERVATION_EXPIRED");
+    expect(detailsOf(s)).toEqual({
+      tx_hash: (a.body as { tx_hash: string }).tx_hash, fee_payer_utxo: fp1.utxo, reserved_until: null, reservation: "foreign",
+    });
+    expect(h.fc.calls).toHaveLength(callsBefore);
+    // Cực đối: cùng tx (bộ dựng ghi sẵn trả CÙNG CBOR) dựng lại trên lượt giữ MỚI ⟹ sổ ghi mã mới ⟹ ký được.
+    expect((await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp2 }))).status).toBe(200);
+    expect((await h.call("POST", "/fee/sign", { tx_cbor: cbor })).status).toBe(200);
+    expect(h.fc.calls).toHaveLength(callsBefore + 1);
+  });
+
+  it("/fee/sign: app KHÔNG gửi id lúc dựng ⟹ sổ ghi mã lượt giữ đang sống lúc dựng, nên giao lại UTxO vẫn ra 409 foreign", async () => {
+    const h = harness();
+    const fp1 = fpOf(await h.call("POST", "/fee/utxo", { route: "consume" }));
+    const a = await h.call("POST", "/tx/consume", consumeBody({ fee_payer: { utxo: fp1.utxo, address: fp1.address } }));
+    expect(a.status, JSON.stringify(a.body)).toBe(200);
+    expect(h.issued.lookup((a.body as { tx_hash: string }).tx_hash, NOW)!.feeReservationId).toBe(fp1.reservation_id);
+    await h.call("POST", "/fee/utxo", { route: "consume" });
+    const s = await h.call("POST", "/fee/sign", { tx_cbor: (a.body as { tx_cbor: string }).tx_cbor });
+    expect(s.status, JSON.stringify(s.body)).toBe(409);
+    expect((detailsOf(s) as { reservation: string }).reservation).toBe("foreign");
+  });
+
+  it("funding.fee_payer nhận reservation_id; funding.collateral (UTxO của chính chủ) KHÔNG nhận — trường lạ", () => {
+    const fp = { utxo: FEE_PAYER.utxo, address: FEE_ADDRESS, reservation_id: "ab".repeat(16) };
+    expect(parseFeePayerShape(fp, FUNDING_FEE_PAYER_CODES).reservationId).toBe("ab".repeat(16));
+    expect(() => parseFeePayerShape(fp, FUNDING_COLLATERAL_CODES))
+      .toThrow(expect.objectContaining({ code: FUNDING_COLLATERAL_CODES.shape, details: { extra_fields: ["reservation_id"] } }));
   });
 });
 

@@ -155,3 +155,28 @@ describe("toSponsorBody — witness_notes mang dòng hạn khớp expires_at", (
     expect(a.witness_notes[1]).not.toBe(e.witness_notes[1]);
   });
 });
+
+// Thư SuperApp sa1007mg-rid: bốn bước tài trợ đi qua CÙNG cổng mã lượt giữ với `service.ts`.
+describe("hạn tx tài trợ: mã lượt giữ (reservation_id)", () => {
+  const ID_OLD = "0a".repeat(16);
+  const ID_NEW = "0b".repeat(16);
+
+  it("CẶP: mã khớp lượt giữ đang sống ⟹ lập hạn được và đếm with_id; mã của lượt giữ CŨ ⟹ 409 foreign", () => {
+    const logs: string[] = [];
+    const issued = new IssuedTxRegistry(l => logs.push(l));
+    issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_OLD);
+    // Feecover giao lại UTxO ⟹ lượt giữ mới, mã mới.
+    issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_NEW);
+    const run = (reservationId: string) => planSponsorValidity({
+      step: "T2", tipPosixMs: TIP_MS, network: NET, txValidityMs: TX_VALIDITY_MS, issued, route: "sponsor-t2-fund",
+      feePayer: { utxoRef: FEE_REF, address: FEECOVER_ADDR, reservationId },
+    });
+    expect(run(ID_NEW).reason).toBe("fee_reservation");
+    expect(() => run(ID_OLD)).toThrow(expect.objectContaining({
+      code: "FEE_PAYER_RESERVATION_EXPIRED",
+      details: { fee_payer_utxo: FEE_REF, reserved_until: null, reservation: "foreign" },
+    }));
+    expect(issued.reservationIdStats()).toEqual({ with_id: { "sponsor-t2-fund": 1 }, without_id: {} });
+    expect(logs).toEqual([]);
+  });
+});

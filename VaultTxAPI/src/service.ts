@@ -30,7 +30,7 @@ import {
   type BindDidSummary, type OpenThreadSummary,
 } from "./engage.js";
 import {
-  FEE_PAYER_CODES, assertFeePayerAddress, checkFeePayerTx, inputRefsOf, ownerRewardNote, planOwnerRewardReturn,
+  FEE_PAYER_CODES, assertFeePayerAddress, checkFeePayerTx, feePayerRecordFields, inputRefsOf, ownerRewardNote, planOwnerRewardReturn,
   readFeePayerUtxo as readFeePayerUtxoShared, withOwnerRewardReturn, type FeePayerFronting, type FeePayerSharedFronting,
   refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike, type OwnerRewardReturn,
 } from "./feePayer.js";
@@ -590,7 +590,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
-      const plan = this.validityPlan(tip, false, feePayer);
+      const plan = this.validityPlan(tip, false, feePayer, "open-thread", quote);
       const existing = threadsOf(await this.deps.chain.utxosAt(d.engageAddress), d.engageScriptHash, owner);
       if (existing.length > 0) {
         throw new CodedApiError(409, "ENGAGE_THREAD_EXISTS",
@@ -626,7 +626,7 @@ export class VaultTxService {
         this.deps.issued.record(txHash, this.now(), {
           route: "open-thread", feeRef: hash64NameOf(summary.engage.nft_unit), lockKeys: [ownerKey],
           validToMs: Number(expiry.validToMs),
-          ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
+          ...feePayerRecordFields(feePayer),
         });
       }
       return {
@@ -680,7 +680,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
-      const plan = this.validityPlan(tip, false, feePayer);
+      const plan = this.validityPlan(tip, false, feePayer, "bind-did", quote);
       const thread = await pickEngageThread(
         this.deps.chain, d.engageAddress, d.engageScriptHash, owner, req.engageRef, "/tx/bind-did");
       const existing = didCommitOf(thread);
@@ -721,7 +721,7 @@ export class VaultTxService {
         // Mã ghi sổ Feecover = hash thân tx (không có NFT mới). Không ví trả phí ⟹ `/fee/sign` từ chối.
         this.deps.issued.record(txHash, this.now(), {
           route: "bind-did", lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
-          ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
+          ...feePayerRecordFields(feePayer),
         });
       }
       return {
@@ -750,13 +750,19 @@ export class VaultTxService {
    * Cận trên `validTo` cho một lượt dựng (`validity.ts` ▸ `planValidity`). `epochBound` = route mà
    * validator đòi hai cận cùng một epoch giao thức (gen/consume/schedule — mọi đường qua `buildOne`).
    */
-  private validityPlan(tip: ChainTip, epochBound: boolean, feePayer: FeePayerRequest | undefined): ValidityPlan {
+  private validityPlan(
+    tip: ChainTip, epochBound: boolean, feePayer: FeePayerRequest | undefined, route: IssuedRoute, quote: QuoteMode | undefined,
+  ): ValidityPlan {
     // UTxO ví trả phí xin qua `/fee/utxo` ⟹ kẹp vào `reserved_until` của nó (sổ phát-hành ghi lúc
     // phát UTxO, `feeProxy.ts`) — cùng luật với `sponsor.ts` ▸ `planSponsorValidity`. UTxO ở địa chỉ
     // Feecover mà sổ không còn lượt giữ ⟹ 409 (`locks.ts` ▸ `feeReservationForBuild`), KHÔNG dựng
     // không kẹp. Ví không phải Feecover (của chính chủ) ⟹ không có giờ giữ chỗ.
+    // `reservation_id` (tuỳ chọn, bước 1): lệch mã lượt giữ đang sống ⟹ 409 `foreign`. Báo giá không đếm.
     const reserved = feePayer === undefined
-      ? undefined : this.deps.issued.feeReservationForBuild(refStr(feePayer.utxoRef), feePayer.address);
+      ? undefined : this.deps.issued.feeReservationForBuild(refStr(feePayer.utxoRef), feePayer.address, {
+        ...(feePayer.reservationId === undefined ? {} : { reservationId: feePayer.reservationId }),
+        ...(quote === undefined ? { route } : {}),
+      });
     return planValidity({
       tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
       txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, epochBound,
@@ -809,7 +815,7 @@ export class VaultTxService {
       const vault = pickSingleVault(found, ownerKey, vaultType ?? "bất kỳ", scopes.map(s => s.address));
       this.assertNotPendingSpent(vault.utxo);
 
-      const plan = this.validityPlan(tip, true, feePayer);
+      const plan = this.validityPlan(tip, true, feePayer, routeOfIntent(intent), quote);
       const ctx: BuildContext = {
         owner,
         ownerAuth: withOwnerRewardReturn(witness?.auth, rewardReturn),
@@ -861,7 +867,7 @@ export class VaultTxService {
         // `/fee/sign` đọc route + UTxO ví trả phí từ đây chứ không nhận từ app.
         this.deps.issued.record(txHash, this.now(), {
           route: routeOfIntent(intent), lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
-          ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
+          ...feePayerRecordFields(feePayer),
         });
       }
 
@@ -1057,7 +1063,7 @@ export class VaultTxService {
     const lockGen = quote === undefined ? this.deps.locks.acquire(ownerKey, startedAt) : undefined;
     try {
       const tip = await this.deps.chain.tip();
-      const plan = this.validityPlan(tip, false, feePayer ?? funding?.feePayer);
+      const plan = this.validityPlan(tip, false, feePayer ?? funding?.feePayer, "create-vault", quote);
       if (req.kind === "instant") await this.assertNoInstantVaultYet(scope, owner, req.didCommit);
       const witness = await this.witnessFor(req);
       // Chỉ `fee_payer` ở gốc. Có `funding` thì thưởng đã về `funding.address` (ví Phoenix do app khai,
@@ -1170,7 +1176,7 @@ export class VaultTxService {
         this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
         this.deps.issued.record(txHash, this.now(), {
           route: "create-vault", feeRef: vaultNftName, lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
-          ...((feePayer ?? funding?.feePayer) === undefined ? {} : { feePayerUtxo: refStr((feePayer ?? funding!.feePayer!).utxoRef) }),
+          ...feePayerRecordFields(feePayer ?? funding?.feePayer),
         });
       }
       return {

@@ -706,7 +706,8 @@ Năm đường dựng trên vault có sẵn (`instant-gen`, `refresh-checkpoint`
 ```jsonc
 "fee_payer": {
   "utxo": "<tx_hash 64 hex>#<i>",   // ĐÚNG MỘT UTxO thuần ADA của ví trả phí
-  "address": "addr_test1v…"         // địa chỉ khoá ký chứa UTxO đó
+  "address": "addr_test1v…",        // địa chỉ khoá ký chứa UTxO đó
+  "reservation_id": "<32 hex>"      // tuỳ chọn: mã lượt giữ /fee/utxo trả (§3 ▸ Proxy phí ▸ reservation_id)
 }
 ```
 
@@ -1013,7 +1014,10 @@ Feecover, và trả đúng hình dạng mà `fee_payer` / `funding.fee_payer` nh
 
 ```jsonc
 {
-  "fee_payer": { "utxo": "<tx_hash>#<i>", "address": "addr_test1v…" },
+  "fee_payer": {
+    "utxo": "<tx_hash>#<i>", "address": "addr_test1v…",
+    "reservation_id": "<32 hex>"                  // mã lượt giữ — mới mỗi lượt /fee/utxo, xem dưới
+  },
   "reserved_until": "2026-09-26T12:10:00.000Z",   // Feecover giữ UTxO này cho ứng dụng tới mốc đó
   "purpose": "consume_magic"
 }
@@ -1046,9 +1050,44 @@ app tự đưa ⟹ hạn ký = hạn nộp": `/fee/sign` chỉ có nghĩa với 
 `/fee/utxo`. Tx dịch vụ đã phát mà quá `validTo + biên` ⟹ `410 TX_EXPIRED`, cùng `details` với
 `/tx/submit`; Feecover không bị gọi.
 
-Giới hạn còn lại: lượt giữ khoá theo UTxO, không theo người được giữ. Feecover phát lại cùng UTxO cho
-người khác thì `fee_payer` cũ của người trước vẫn được kẹp vào lượt giữ MỚI — dịch vụ không phân biệt
-hai người dùng chung token ứng dụng.
+#### `reservation_id` — mã lượt giữ (từ 2026-10-07, BƯỚC 1: tuỳ chọn)
+
+Lượt giữ khoá theo UTxO, và mọi bản app đi chung một thẻ dịch vụ, nên dịch vụ không phân biệt được
+hai người dùng. Feecover phát lại cùng UTxO cho B thì A, còn cầm `fee_payer` cũ, trước bản này vẫn
+dựng được trên lượt giữ của B. Hợp đồng:
+
+- **`/fee/utxo` trả `fee_payer.reservation_id`**: 32 chữ hex thường = 128 bit ngẫu nhiên mật mã
+  (`locks.ts` ▸ `newReservationId`), sinh MỖI lượt giữ và lưu cạnh lượt giữ. Feecover giao lại UTxO ⟹
+  lượt giữ mới ⟹ mã mới. App chép nguyên khối `fee_payer` vào route dựng.
+- **Route dựng nhận `fee_payer.reservation_id`** (và `funding.fee_payer.reservation_id` ở
+  `/tx/create-vault`; `funding.collateral` thì KHÔNG — đó là UTxO của chính chủ, gửi ⟹ `400` trường lạ):
+  - có mặt, khớp mã lượt giữ đang sống ⟹ dựng bình thường;
+  - có mặt, KHÁC mã lượt giữ đang sống ⟹ `409 FEE_PAYER_RESERVATION_EXPIRED`, `details.reservation:
+    "foreign"`, `reserved_until: null` (giờ giữ của lượt kia là của người khác, không trả ra);
+  - có mặt mà sổ không có lượt giữ nào cho UTxO đó ⟹ `409 … "absent"`;
+  - sai kiểu (không phải chuỗi 32 hex thường) ⟹ `400 FEE_PAYER_SHAPE` / `FUNDING_SHAPE`,
+    `details.field: "<trường>.reservation_id"`, trước mọi lượt đọc chuỗi;
+  - **vắng** ⟹ hành vi trước bản này (BƯỚC 1), và được ĐẾM: một dòng nhật ký JSON
+    `{"event":"fee_reservation_id_missing","route","fee_payer_utxo","without_id","with_id"}` ở stderr,
+    cộng bộ đếm theo route ở `/health` ▸ `fee_reservation_id: { with_id: {route: n}, without_id: {route: n} }`
+    (từ lúc tiến trình khởi động; chỉ đếm lượt dựng thật, tiêu UTxO Feecover đang được giữ — báo giá không đếm).
+- **`/fee/sign` kiểm mã, app KHÔNG gửi gì thêm.** Sổ phát-hành ghi mã lúc dựng (mã app gửi, hoặc — app
+  chưa gửi — mã lượt giữ đang sống lúc ghi sổ); lúc ký so với mã lượt giữ đang sống của UTxO. Lệch, hoặc
+  tx ghi sổ khi chưa có lượt giữ nào mà nay UTxO đang được giữ ⟹ `409 … "foreign"` (kèm `tx_hash`),
+  Feecover không bị gọi. Tx bị thay khi một tx chung khoá được nộp chỉ bỏ ĐÚNG lượt giữ của nó (cùng mã).
+
+**Danh sách ĐÓNG route dựng kiểm mã** — mọi route gọi cổng `IssuedTxRegistry.feeReservationForBuild`
+(`service.ts` ▸ `validityPlan`, `sponsor.ts` ▸ `planSponsorValidity`), tức mọi route nhận `fee_payer`:
+`/tx/instant-gen` · `/tx/refresh-checkpoint` · `/tx/schedule-commit` · `/tx/schedule-fire` · `/tx/consume` ·
+`/tx/open-thread` · `/tx/bind-did` · `/tx/create-vault` (`fee_payer` và `funding.fee_payer`) ·
+`/tx/sponsor/t1-open` · `/tx/sponsor/t2-fund` · `/tx/sponsor/t3-draw` · `/tx/sponsor/t4-first-consume`.
+Lệnh liệt kê lại: `command grep -rn "feeReservationForBuild(" VaultTxAPI/src`.
+
+**BƯỚC 2 (bắt buộc mã) CHƯA bật, và chỉ bật khi đủ HAI điều kiện:** (1) SuperApp báo số bản dựng có gửi
+`reservation_id` ở cả hai app (Aladin, CheckFarm); (2) bộ đếm `/health` ▸ `fee_reservation_id` cùng dòng
+nhật ký `fee_reservation_id_missing` của VTA Preprod cho thấy tỉ lệ lượt dựng Feecover thiếu mã đủ thấp.
+Lý do: bản app cũ đã nằm trên máy người dùng không bao giờ gửi mã; bắt buộc sớm ⟹ mọi lượt dựng Feecover
+của các bản đó ra 409 vĩnh viễn. Bật bước 2 = nhánh "vắng" đổi thành `409 … "absent"` ở cổng dựng.
 
 **Ứng dụng khác `magic`.** Không gửi tiêu đề `X-Feecover-Token` ⟹ đi dưới ứng dụng `magic`.
 Ứng dụng khác (ví dụ `orilife`) gửi token Feecover **của chính họ** ở `X-Feecover-Token`;
@@ -1388,7 +1427,8 @@ Nên:
 | mục đích thuộc ứng dụng khác / thiếu tiền tố tên ứng dụng | `403 FEE_PROXY_APP_PURPOSE` |
 | `/fee/sign` cho tx không do dịch vụ phát, hoặc còn hạn nộp nhưng quá `reserved_until` | `403 FEE_PROXY_TX_NOT_ISSUED` |
 | `/tx/submit` / `/fee/sign` cho tx dịch vụ ĐÃ phát mà quá `validTo + CLOCK_SKEW_MARGIN_MS` | `410 TX_EXPIRED` (`details.tx_hash`, `expired_at`, `rebuild_safe`, `submission`) |
-| UTxO ví trả phí hết giờ giữ chỗ Feecover trước khi tx kịp có khoảng hiệu lực; UTxO ở địa chỉ Feecover mà sổ không còn lượt giữ (lúc dựng); `/fee/sign` cho tx mà UTxO phí không còn lượt giữ / `validTo` vượt lượt giữ | `409 FEE_PAYER_RESERVATION_EXPIRED` (`details.reserved_until` — `null` khi không có lượt giữ, `fee_payer_utxo`, `reservation`: `absent`·`expired`·`exceeded`; ở `/fee/sign` thêm `tx_hash`) |
+| UTxO ví trả phí hết giờ giữ chỗ Feecover trước khi tx kịp có khoảng hiệu lực; UTxO ở địa chỉ Feecover mà sổ không còn lượt giữ (lúc dựng); `fee_payer.reservation_id` khác mã lượt giữ đang sống (lúc dựng); `/fee/sign` cho tx mà UTxO phí không còn lượt giữ / lượt giữ đang sống không phải lượt tx được dựng trên / `validTo` vượt lượt giữ | `409 FEE_PAYER_RESERVATION_EXPIRED` (`details.reserved_until` — `null` khi không có lượt giữ hoặc `foreign`, `fee_payer_utxo`, `reservation`: `absent`·`expired`·`exceeded`·`foreign`; ở `/fee/sign` thêm `tx_hash`) |
+| `fee_payer.reservation_id` / `funding.fee_payer.reservation_id` không phải chuỗi 32 hex thường | `400 FEE_PAYER_SHAPE` / `400 FUNDING_SHAPE` (`details.field`) |
 | `/tx/submit`: một chữ ký không khớp thân tx / thiếu chữ ký của khoá trong `required_signers` | `400 WITNESS_SIGNATURE_INVALID` / `400 WITNESS_MISSING_SIGNER` |
 | `/fee/sign` cho tx không dùng ví trả phí | `400 FEE_PROXY_NO_FEE_PAYER` |
 | Feecover từ chối (`400`/`403`/`409`/`422`/`429`) | mã đó + `FEE_PROXY_REJECTED` |

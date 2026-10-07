@@ -1,6 +1,8 @@
 // VaultTxAPI/src/locks.ts — khoá mềm theo chủ: lượt dựng MỚI NHẤT thay lượt cũ; xung đột bắt
 // ở lúc NỘP, không ở lúc dựng.
 //
+import { randomBytes } from "node:crypto";
+
 import { TxExpiredError } from "./errors.js";
 import { CLOCK_SKEW_MARGIN_MS, feeReservationError } from "./validity.js";
 
@@ -277,6 +279,10 @@ export interface IssuedTxMeta {
   feeRef?: string;
   /** UTxO ví trả phí (`txhash#idx`) mà tx tiêu. Vắng ⟹ tx không có ví trả phí bên thứ ba. */
   feePayerUtxo?: string;
+  /** Mã lượt giữ mà app gửi kèm `fee_payer.reservation_id` lúc dựng. Vắng ⟹ `record` ghi mã của lượt
+   *  giữ ĐANG SỐNG của `feePayerUtxo` lúc ghi sổ (bước 1, app chưa gửi). `/fee/sign` so mã này với mã
+   *  lượt giữ đang sống lúc ký (`feeSignProblem`). */
+  feeReservationId?: string;
   /** Khoá mềm mà lượt dựng đã giữ (`ownerLockKey(owner)`, khoá UTxO quỹ/phí của `sponsor.ts`).
    *  Một tx chung khoá với tx vừa NỘP thì bị thay (`markSubmitted`). Vắng ⟹ không bị thay theo
    *  khoá, chỉ còn phép xung đột input (`PendingSpends.conflicts`). */
@@ -325,10 +331,38 @@ export function expiredErrorFor(issued: IssuedTxRegistry, txHash: string, nowMs:
   return new TxExpiredError(txHash, new Date(e.validToMs).toISOString(), submissionStateOf(e));
 }
 
+// ── MÃ LƯỢT GIỮ (`reservation_id`, 2026-10-07, thư SuperApp `sa1007mg-rid`) ─────────────────────
+// Sổ giữ chỗ khoá theo UTxO, không theo NGƯỜI giữ — và mọi bản app đi chung một thẻ dịch vụ, nên dịch
+// vụ không có "người gọi" nào để phân biệt. Feecover giao lại cùng UTxO cho B thì A, còn cầm `fee_payer`
+// cũ, vẫn dựng được trên lượt giữ của B và `/fee/sign` vẫn xin ký cho A. Vá: mỗi lượt `/fee/utxo` sinh
+// một mã ngẫu nhiên 128 bit, lưu cạnh lượt giữ và trả ở `fee_payer.reservation_id`. Feecover giao lại
+// UTxO ⟹ lượt giữ mới ⟹ mã mới. Người không qua lượt `/fee/utxo` đó không biết mã.
+//   · route dựng: `fee_payer.reservation_id` có mặt mà khác mã lượt giữ đang sống ⟹ 409 `foreign`;
+//     vắng ⟹ hành vi cũ (BƯỚC 1) và được ĐẾM (`reservationIdStats`) để đo tỉ lệ thiếu trước BƯỚC 2;
+//   · `/fee/sign`: app không gửi gì thêm — sổ phát-hành đã ghi mã lúc dựng, so với mã đang sống.
+// Mã KHÔNG phải bí mật dài hạn: nó chỉ có nghĩa trong đời một lượt giữ (vài phút).
+
+/** Một lượt giữ UTxO phí: hết giờ (`reserved_until`, POSIX ms) + mã lượt giữ. */
+interface FeeReservation { untilMs: number; id: string }
+
+/** Mã lượt giữ mới: 16 byte ngẫu nhiên mật mã ⟹ 32 hex (`feePayer.ts` ▸ `RESERVATION_ID`). */
+export function newReservationId(): string {
+  return randomBytes(16).toString("hex");
+}
+
+/** Bộ đếm lượt dựng tiêu UTxO Feecover đang giữ chỗ, theo route: có / thiếu `reservation_id`. */
+export interface ReservationIdStats { with_id: Record<string, number>; without_id: Record<string, number> }
+
 export class IssuedTxRegistry {
   private readonly issued = new Map<string, IssuedTxEntry>();
-  /** UTxO ví trả phí phát qua `/fee/utxo` → hết giờ giữ chỗ (`reserved_until`) ở Feecover. */
-  private readonly feeReservations = new Map<string, number>();
+  /** UTxO ví trả phí phát qua `/fee/utxo` → lượt giữ (hết giờ ở Feecover + mã lượt giữ). */
+  private readonly feeReservations = new Map<string, FeeReservation>();
+  private readonly ridWith = new Map<string, number>();
+  private readonly ridWithout = new Map<string, number>();
+
+  /** `log` nhận MỘT dòng JSON cho mỗi lượt dựng Feecover thiếu `reservation_id`. Vắng ⟹ `console.error`
+   *  (cùng luồng với nhật ký yêu cầu của `server.ts`). */
+  constructor(private readonly log: (line: string) => void = l => console.error(l)) {}
   /** Địa chỉ ví trả phí Feecover đã trả qua `/fee/utxo`. KHÔNG dọn: nó là thứ cho biết một UTxO là của
    *  Feecover sau khi lượt giữ của nó đã bị quét (`feeReservationForBuild`). Tập nhỏ, đổi chậm. */
   private readonly feecoverAddresses = new Set<string>();
@@ -349,25 +383,42 @@ export class IssuedTxRegistry {
   record(txHash: string, _nowMs: number, meta: IssuedTxMeta): void {
     const expiresAtMs = meta.validToMs + CLOCK_SKEW_MARGIN_MS;
     const reserved = meta.feePayerUtxo === undefined ? undefined : this.feeReservations.get(meta.feePayerUtxo);
+    // Mã lượt giữ của tx: mã app gửi (đã qua cổng dựng, nên khớp lượt giữ lúc dựng), hoặc — app chưa
+    // gửi — mã của lượt giữ đang sống lúc ghi. Không có lượt giữ ⟹ vắng.
+    const feeReservationId = meta.feeReservationId ?? reserved?.id;
     this.issued.set(txHash, {
       ...meta,
+      ...(feeReservationId === undefined ? {} : { feeReservationId }),
       expiresAtMs,
-      signableUntilMs: reserved === undefined ? expiresAtMs : Math.min(reserved, expiresAtMs),
+      signableUntilMs: reserved === undefined ? expiresAtMs : Math.min(reserved.untilMs, expiresAtMs),
     });
   }
 
-  /** Ghi giờ giữ chỗ của một UTxO phí vừa phát qua `/fee/utxo`. `address` = địa chỉ Feecover trả kèm;
-   *  sổ nhớ nó (không dọn) để nhận ra UTxO của Feecover cả khi lượt giữ đã bị quét (`feeReservationForBuild`). */
-  noteFeeReservation(utxoRef: string, reservedUntilMs: number, address?: string): void {
-    this.feeReservations.set(utxoRef, reservedUntilMs);
+  /** Ghi một lượt giữ UTxO phí vừa phát qua `/fee/utxo` và trả MÃ lượt giữ (mới mỗi lượt — Feecover
+   *  giao lại cùng UTxO thì lượt sau có mã khác). `address` = địa chỉ Feecover trả kèm; sổ nhớ nó (không
+   *  dọn) để nhận ra UTxO của Feecover cả khi lượt giữ đã bị quét (`feeReservationForBuild`). `id` chỉ để
+   *  phép kiểm ghim một mã biết trước; dịch vụ không truyền. */
+  noteFeeReservation(utxoRef: string, reservedUntilMs: number, address?: string, id: string = newReservationId()): string {
+    this.feeReservations.set(utxoRef, { untilMs: reservedUntilMs, id });
     if (address !== undefined) this.feecoverAddresses.add(address);
+    return id;
   }
 
   /** Giờ giữ chỗ (`reserved_until`, POSIX ms) của một UTxO phí phát qua `/fee/utxo`, hoặc `undefined`
    *  khi sổ không có dòng (app tự đưa, hoặc đã bị dọn). Chỉ để TRA; lập hạn lúc dựng dùng
    *  `feeReservationForBuild` — `undefined` ở đây KHÔNG có nghĩa "không ràng buộc". */
   feeReservationOf(utxoRef: string): number | undefined {
-    return this.feeReservations.get(utxoRef);
+    return this.feeReservations.get(utxoRef)?.untilMs;
+  }
+
+  /** Mã lượt giữ đang có trong sổ cho `utxoRef`, hoặc `undefined`. Chỉ để TRA. */
+  feeReservationIdOf(utxoRef: string): string | undefined {
+    return this.feeReservations.get(utxoRef)?.id;
+  }
+
+  /** Bộ đếm có / thiếu `reservation_id` theo route, từ lúc tiến trình khởi động (`/health`). */
+  reservationIdStats(): ReservationIdStats {
+    return { with_id: Object.fromEntries(this.ridWith), without_id: Object.fromEntries(this.ridWithout) };
   }
 
   /**
@@ -384,11 +435,38 @@ export class IssuedTxRegistry {
    * Giới hạn: sổ nhớ địa chỉ trong bộ nhớ tiến trình — vừa khởi động lại thì chưa nhớ địa chỉ nào cho
    * tới lượt `/fee/utxo` đầu; khi đó cổng ở `/fee/sign` (`feeSignProblem`) vẫn chặn lượt xin ký.
    */
-  feeReservationForBuild(utxoRef: string, address: string): number | undefined {
+  /**
+   * Cổng mã lượt giữ (`opts.reservationId` = `fee_payer.reservation_id` app gửi): có mặt mà khác mã
+   * lượt giữ đang sống ⟹ 409 `foreign`; có mặt mà sổ không có lượt giữ ⟹ 409 `absent` (mã chỉ sinh ở
+   * `/fee/utxo`, nên đây là UTxO Feecover dù địa chỉ chưa được nhớ). Vắng mà UTxO đang được giữ ⟹ đi
+   * tiếp (BƯỚC 1) và ĐẾM theo `opts.route` + một dòng nhật ký JSON. `opts.route` vắng (báo giá) ⟹ không đếm.
+   */
+  feeReservationForBuild(
+    utxoRef: string, address: string, opts: { reservationId?: string; route?: string } = {},
+  ): number | undefined {
     const reserved = this.feeReservations.get(utxoRef);
-    if (reserved !== undefined) return reserved;
-    if (this.feecoverAddresses.has(address)) throw feeReservationError(utxoRef, "absent", undefined);
+    if (reserved !== undefined) {
+      if (opts.reservationId !== undefined && opts.reservationId !== reserved.id) {
+        throw feeReservationError(utxoRef, "foreign", undefined);
+      }
+      if (opts.route !== undefined) this.countReservationId(opts.route, utxoRef, opts.reservationId !== undefined);
+      return reserved.untilMs;
+    }
+    if (opts.reservationId !== undefined || this.feecoverAddresses.has(address)) {
+      throw feeReservationError(utxoRef, "absent", undefined);
+    }
     return undefined;
+  }
+
+  private countReservationId(route: string, utxoRef: string, present: boolean): void {
+    const m = present ? this.ridWith : this.ridWithout;
+    m.set(route, (m.get(route) ?? 0) + 1);
+    if (!present) {
+      this.log(JSON.stringify({
+        event: "fee_reservation_id_missing", route, fee_payer_utxo: utxoRef,
+        without_id: this.ridWithout.get(route), with_id: this.ridWith.get(route) ?? 0,
+      }));
+    }
   }
 
   /**
@@ -398,13 +476,16 @@ export class IssuedTxRegistry {
    * vắng lượt giữ ⟹ từ chối, không coi là "không ràng buộc". `null` ⟹ ký được.
    */
   feeSignProblem(entry: IssuedTxEntry, nowMs: number):
-    { utxoRef: string; reservation: "absent" | "expired" | "exceeded"; reservedUntilMs?: number } | null {
+    { utxoRef: string; reservation: "absent" | "expired" | "exceeded" | "foreign"; reservedUntilMs?: number } | null {
     const utxoRef = entry.feePayerUtxo;
     if (utxoRef === undefined) return null;
     const reserved = this.feeReservations.get(utxoRef);
     if (reserved === undefined) return { utxoRef, reservation: "absent" };
-    if (reserved <= nowMs) return { utxoRef, reservation: "expired", reservedUntilMs: reserved };
-    if (entry.validToMs > reserved) return { utxoRef, reservation: "exceeded", reservedUntilMs: reserved };
+    // Lượt giữ đang sống phải là ĐÚNG lượt tx được dựng trên. Tx ghi sổ khi chưa có lượt giữ nào (mã
+    // vắng) mà nay UTxO đang được giữ ⟹ lượt giữ đó sinh SAU tx, cũng là của người khác.
+    if (entry.feeReservationId !== reserved.id) return { utxoRef, reservation: "foreign" };
+    if (reserved.untilMs <= nowMs) return { utxoRef, reservation: "expired", reservedUntilMs: reserved.untilMs };
+    if (entry.validToMs > reserved.untilMs) return { utxoRef, reservation: "exceeded", reservedUntilMs: reserved.untilMs };
     return null;
   }
 
@@ -453,7 +534,12 @@ export class IssuedTxRegistry {
       if (h === txHash || e.supersededBy !== undefined || e.expiresAtMs <= nowMs) continue;
       if (!(e.lockKeys ?? []).some(k => keys.has(k))) continue;
       this.issued.set(h, { ...e, supersededBy: txHash });
-      if (e.feePayerUtxo !== undefined) this.feeReservations.delete(e.feePayerUtxo);
+      // Chỉ bỏ ĐÚNG lượt giữ tx đó được dựng trên: UTxO đã được Feecover giao lại (mã khác) thì lượt
+      // giữ đang sống là của người khác, tx bị thay của A không được xoá nó.
+      if (e.feePayerUtxo !== undefined && e.feeReservationId !== undefined
+        && this.feeReservations.get(e.feePayerUtxo)?.id === e.feeReservationId) {
+        this.feeReservations.delete(e.feePayerUtxo);
+      }
       n++;
     }
     return n;
@@ -482,8 +568,8 @@ export class IssuedTxRegistry {
     for (const [h, e] of this.issued) {
       if (e.expiresAtMs + EXPIRED_RETENTION_MS <= nowMs) { this.issued.delete(h); n++; }
     }
-    for (const [u, until] of this.feeReservations) {
-      if (until <= nowMs) this.feeReservations.delete(u);
+    for (const [u, r] of this.feeReservations) {
+      if (r.untilMs <= nowMs) this.feeReservations.delete(u);
     }
     return n;
   }

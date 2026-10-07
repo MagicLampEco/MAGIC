@@ -57,7 +57,7 @@
 import { CML } from "@lucid-evolution/lucid";
 import { decodeFundDatum, fundClaimRedeemer, plutusAddressToBech32 } from "@magiclamp/prepaidgen-sdk";
 
-import { fundBeneficiaryIs } from "./sponsorFund.js";
+import { canonicalDatumCbor, fundBeneficiaryIs } from "./sponsorFund.js";
 
 export type PlatformSignKind = "fund-genesis" | "fund-claim";
 
@@ -96,7 +96,10 @@ export interface PlatformSignerOptions {
   network: AddressNetwork;
   /** `paid_fund.carp_unit`. Absent ⟹ `fund-claim` is refused. */
   carpUnit?: string;
-  /** `paid_fund.sponsor.beneficiary` (+ datum). Absent ⟹ `fund-claim` is refused. */
+  /**
+   * `paid_fund.sponsor.beneficiary` (+ datum). Absent ⟹ `fund-claim` is refused. `datumCbor` must already be in the
+   * canonical encoding (`config.ts` normalises it once at load); a non-canonical value refuses to start.
+   */
   beneficiary?: { address: string; datumCbor?: string };
 }
 
@@ -160,6 +163,16 @@ export function createPlatformSigner(o: PlatformSignerOptions): PlatformSign {
     throw new Error("[platform] VAULT_TX_API_PLATFORM_KEY is not a valid bech32 ed25519_sk… value — refusing to start.");
   }
   const pkh = sk.to_public().hash().to_hex();
+  // The pinned beneficiary datum is compared on its canonical encoding; normalising it is `config.ts`'s job, done once.
+  // A raw operator string here (e.g. a definite-length list) would refuse every claim, so refuse to start instead.
+  const pinnedDatum = o.beneficiary?.datumCbor;
+  if (pinnedDatum !== undefined) {
+    let canon: string | undefined;
+    try { canon = canonicalDatumCbor(pinnedDatum); } catch { canon = undefined; }
+    if (canon !== pinnedDatum) {
+      throw new Error("[platform] paid_fund.sponsor.beneficiary_datum is not in canonical encoding (config.ts normalises it at load) — refusing to start.");
+    }
+  }
   const expected = o.expectedPkh?.toLowerCase();
   if (expected === undefined) {
     throw new Error(
@@ -260,7 +273,10 @@ export function createPlatformSigner(o: PlatformSignerOptions): PlatformSign {
     if (nfts.length !== 1) refuse("the fund input does not carry exactly one fund NFT.");
     const nftUnit = nfts[0]!;
     // Outputs: CARP only to the pinned beneficiary (exactly one output, pinned datum) or back to the fund.
-    const benDatum = ben.datumCbor === undefined ? null : CML.PlutusData.from_cbor_hex(ben.datumCbor).to_cbor_hex();
+    // Both sides on the canonical encoding: the pin was normalised at load (checked at startup above), the output is
+    // normalised here. Validator `beneficiary_paid` compares the datum by VALUE, so an encoding difference alone is
+    // not a different beneficiary; only a different structure is.
+    const benDatum = ben.datumCbor ?? null;
     const outs = body.outputs();
     let benHits = 0;
     let continued = false;
@@ -273,8 +289,18 @@ export function createPlatformSigner(o: PlatformSignerOptions): PlatformSign {
       if (paymentScriptOf(addr) === policy && nft === 1n) { continued = true; continue; }
       if (addr === ben.address) {
         const d = out.datum()?.as_datum();
-        const got = d === undefined ? null : CML.PlutusData.from_cbor_hex(d.to_cbor_hex()).to_cbor_hex();
-        if (got !== benDatum) refuse(`output #${i} to the beneficiary carries a datum other than the pinned one.`);
+        let got: string | null = null;
+        if (d !== undefined) {
+          try {
+            got = canonicalDatumCbor(d.to_cbor_hex());
+          } catch {
+            refuse(`output #${i} to the beneficiary carries a datum that does not decode as Plutus Data.`);
+          }
+        }
+        if (got !== benDatum) {
+          refuse(`output #${i} to the beneficiary carries a datum that differs STRUCTURALLY from the pinned one ` +
+            `(compared on the canonical encoding, so an encoding difference alone is accepted).`);
+        }
         if (carp > 0n) benHits += 1;
         continue;
       }

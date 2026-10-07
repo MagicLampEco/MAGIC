@@ -1348,7 +1348,7 @@ nhận tài trợ ở một quỹ KHÁC (`credit_issued > 0`, kể cả quỹ đ
 | `SPONSOR_VAULT_DID_MISMATCH` | 422 | két đã gắn một DID khác DID của thread — két này không đi tiếp được hành trình tài trợ |
 | `SPONSOR_VAULT_DID_ALREADY_SET` | 409 | (bind-did) két đã gắn đúng DID này — bỏ qua bind-did, đi tiếp fund-vault |
 | `SPONSOR_FUND_NOT_OPENED` | 409 | DID chưa có quỹ tài trợ nào trong gốc tin cậy — gọi `/tx/sponsor/open-fund` trước |
-| `SPONSOR_FUND_ALREADY_OPEN` | 409 | (open-fund) DID đã có quỹ tài trợ dùng được — bỏ qua open-fund, đi tiếp fund-vault (`details.fund_ids`) |
+| `SPONSOR_FUND_ALREADY_OPEN` | 409 | (open-fund) DID đã có quỹ tài trợ do khoá platform đã ghim ký — dùng được, đã thu hồi, hoặc LỆCH cấu hình hiện tại (`details.labels`: đệm, két, ví bên tài trợ, mốc thu hồi) — bỏ qua open-fund, đi tiếp fund-vault (`details.fund_ids`) |
 | `SPONSOR_FUND_SET_CLOSED` | 501 | (open-vault khi DID chưa có quỹ, open-fund) cấu hình ghim `fund_units` (tập đóng) — quỹ mới sẽ không nằm trong tập fund-vault đọc; bỏ `fund_units`, giữ `platform_pkhs` |
 | `CONFIG_MISSING` | 501 | (open-vault khi DID chưa có quỹ, open-fund) thiếu `paid_fund.sponsor.platform_pkhs`, `paid_fund.sponsor.beneficiary` và/hoặc biến `VAULT_TX_API_PLATFORM_KEY` (`details.missing` nêu đủ) |
 | `SPONSOR_FUND_AMBIGUOUS` | 409 | DID có hơn một quỹ tài trợ — gửi `fund_id`, hoặc báo người vận hành gỡ quỹ thừa |
@@ -1357,10 +1357,12 @@ nhận tài trợ ở một quỹ KHÁC (`credit_issued > 0`, kể cả quỹ đ
 | `SPONSOR_UTXO_NOT_FUND_SPONSOR` | 422 | (fund-vault) UTxO CARP không thuộc ví bên tài trợ ghi trong datum quỹ — dùng UTxO của đúng ví đó |
 | `SPONSOR_DID_FUNDED_ELSEWHERE` | 409 | (fund-vault) DID đã nhận tài trợ ở quỹ khác (`details.funded_fund_ids`) — mỗi DID một lần |
 | `SPONSOR_FEE_WALLET_IS_PLATFORM` | 422 | (mọi bước + claim) ví trả phí (`change_address`, `fee_payer.address`, hoặc ví khoá của chủ khoá) mang khoá thanh toán là một khoá trong `platform_pkhs` — dùng một ví khác |
+| `SPONSOR_DID_FUND_IN_FLIGHT` | 409 | (fund-vault) DID đang có một tx fund-vault khác chưa hết hạn trên một QUỸ khác (`details.tx_hash`, `details.held_until`) — chờ tx đó vào khối hoặc hết hạn; dựng lại trên CÙNG quỹ thì không bị chặn |
 | `SPONSOR_DID_GENESIS_IN_FLIGHT` | 409 | (open-vault chở quỹ, open-fund) DID đang có một tx genesis quỹ khác chưa hết hạn (`details.tx_hash`, `details.held_until`) — chờ tx đó vào khối hoặc hết hạn |
 | `SPONSOR_FEE_WALLET_IS_BENEFICIARY` | 422 | (claim) ví trả phí là đúng địa chỉ nhận CARP — validator cấm input ở đó; trả phí từ địa chỉ khác (vd. base cùng khoá) |
 | `SPONSOR_FUND_NOT_FOUND` | 404 | (claim) không có quỹ mang `fund_id` này trên chuỗi |
-| `SPONSOR_FUND_NOT_CLAIMABLE` | 422 | (claim) quỹ ngoài gốc tin cậy hoặc lệch cấu hình (`details.problem`) — dịch vụ không ký claim cho nó |
+| `SPONSOR_FUND_NOT_CLAIMABLE` | 422 | (claim) quỹ dịch vụ không tin: `details.problem` ∈ `missing` · `ambiguous` · `undecodable` · `foreign_platform` · `foreign_beneficiary` (đúng thứ hàm ký kiểm). Quỹ chỉ LỆCH cấu hình hiện tại vẫn claim được |
+| `SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER` | 400 | (claim) `amount` gửi kèm `fee_payer` — qua ví trả phí, claim rút TOÀN BỘ phần claim được; bỏ `amount`, hoặc tự trả phí bằng `change_address` để rút một phần |
 | `SPONSOR_FUND_NOTHING_TO_CLAIM` | 409 | (claim) E = 0: chưa có MAGIC đã tiêu nào được quyết toán vào quỹ (SettleLine), hoặc đã rút hết |
 | `SPONSOR_CLAIM_ABOVE_MAX` | 422 | (claim) `amount` vượt phần claim được (`details.max_claimable`) |
 
@@ -1379,9 +1381,20 @@ route này thì phần CARP đã tiêu thật (E) kẹt trong quỹ vĩnh viễn
 ```
 
 hoặc `change_address` thay cho `fee_payer`. `amount` vắng ⟹ toàn bộ phần claim được (`PrepaidGen` ▸
-`maxClaimable`). Thẻ: vai sponsor (như fund-vault). Không có chủ két. Mọi trường định CARP đi đâu (`beneficiary`,
+`maxClaimable`). **`amount` chỉ đi với `change_address`** (từ 2026-10-07, audit L3): có `fee_payer` mà gửi `amount`
+⟹ `400 SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER`. Lý do: mỗi lượt claim bắt ví trả phí ứng min-ADA (~1,2 ADA) cho output
+tới bên hưởng; cho rút lẻ qua đường đó là cho người cầm thẻ sponsor rút 1 carpdrop mỗi lượt, lặp lại, rút ADA của ví
+phí sang địa chỉ bên hưởng. Người gọi tự trả phí thì tự chịu khoản đó, nên vẫn rút một phần được. Thẻ: vai sponsor (như fund-vault). Không có chủ két. Mọi trường định CARP đi đâu (`beneficiary`,
 `platform`, `owner`, …) ⟹ `400 SPONSOR_REQUEST_SHAPE`: đích là `beneficiary` trong datum quỹ, và quỹ chỉ được
 nhận khi đích đó khớp `paid_fund.sponsor.beneficiary` (cùng phép so `foreign_beneficiary`).
+
+**Quỹ nào claim được** (từ 2026-10-07, audit T2): claim chỉ từ chối đúng thứ hàm ký kiểm — quỹ không có
+(`missing`, `ambiguous`, `undecodable`), platform lạ (`foreign_platform`), đích lạ (`foreign_beneficiary`). Quỹ chỉ
+LỆCH cấu hình hiện tại (`buffer_mismatch`, `foreign_sponsor`, `wrong_vault`, `reclaim_too_far`, `reclaimed`,
+`not_sponsored`) vẫn do khoá platform này ký và vẫn trả CARP tới đúng đích ghim, nên vẫn claim được. Bản trước chặn
+cả nhóm đó: đổi `buffer_bps`, xoay ví bên tài trợ hay deploy lại két là CARP bên hưởng đã kiếm kẹt vĩnh viễn, kể cả
+lượt rút cuối đóng quỹ sau `FundReclaim`. Phép phân loại trả một nhãn (nhãn đầu tiên khớp), nên claim so lại platform
++ đích cho mọi quỹ có datum. Nguồn: `src/sponsorFund.ts` ▸ `claimRefusal`.
 
 Dịch vụ dựng tx (`planFundClaim`), đọc lại CBOR (CARP chỉ tới beneficiary ghim — đúng một output, đúng lượng — hoặc
 về lại quỹ), rồi ký platform; ví trả phí ký thêm. Hàm ký kiểm lại độc lập trên chính tx (bảng §1). Hai hình dạng:
@@ -1472,7 +1485,10 @@ blake2b_256(tx_hash ∥ index)` của nó); mint = +1 NFT quỹ qua ref-script `
 did_stake, như mọi bước khác; chủ khoá: khoá chủ); cận trên hữu hạn (`expires_at`), không kẹp theo kỳ. min-ADA của quỹ
 do ví trả phí ứng (đường `fee_payer`: khoản ứng = đúng lovelace của output quỹ, `summary.fee_payer`).
 
-DID đã có quỹ dùng được, hoặc quỹ đã thu hồi ⟹ `409 SPONSOR_FUND_ALREADY_OPEN`. Feecover dùng purpose
+DID đã có quỹ do khoá platform đã ghim ký — dùng được, đã thu hồi, hoặc LỆCH cấu hình hiện tại (đổi đệm, xoay ví
+bên tài trợ, deploy lại két) ⟹ `409 SPONSOR_FUND_ALREADY_OPEN` (`details.labels` nêu nhãn của quỹ lệch). Mỗi DID một
+quỹ trọn đời: đổi cấu hình không làm DID "chưa có quỹ" (audit L4; open-vault chở quỹ dùng cùng phép đếm). Quỹ
+`foreign_platform` / `foreign_beneficiary` không chặn. Nguồn: `src/sponsorFund.ts` ▸ `fundsBlockingOpen`. Feecover dùng purpose
 `open_sponsor_fund` cho route `sponsor-open-fund` (khai ở `feecover.apps.*.purposes`).
 
 **Vì sao đứng sau bind-did.** DID của quỹ phải là DID của chính chủ, mà nguồn đã được chứng minh
@@ -1493,6 +1509,14 @@ dở chặn DID đó tới hết hạn của nó (`details.held_until`). Sổ gi
 trình dịch vụ, hoặc tx dựng ngoài dịch vụ, không thấy nhau — Feecover vẫn từ chối ký lần hai theo luật
 một-lần-mỗi-DID, và quỹ thứ hai đã nhận tài trợ thì fund-vault trả `409 SPONSOR_DID_FUNDED_ELSEWHERE`.
 
+**fund-vault cũng giữ DID tới hết hạn tx** (từ 2026-10-07, audit L5). `SPONSOR_DID_FUNDED_ELSEWHERE` chỉ thấy
+`credit_issued` đã VÀO KHỐI, còn khoá `fund:<unit>` giữ theo QUỸ và khoá chủ chỉ sống tới TTL khoá mềm (180 s mặc
+định) trong khi tx sống 15 phút. Nên DID có hai quỹ dùng được thì hai fund-vault trên HAI quỹ, cách nhau quá TTL,
+lượt đầu chưa vào khối, đều dựng được — bên tài trợ ký cả hai là DID được tài trợ hai lần. Nay fund-vault giữ
+`did-fund:<did_commit>` (cùng `DidGenesisHolds`, khoá tách khỏi khoá genesis) tới `validTo` + biên lệch đồng hồ:
+fund-vault trên quỹ KHÁC trong khe ⟹ `409 SPONSOR_DID_FUND_IN_FLIGHT`. Dựng lại trên CÙNG quỹ thì lượt mới THAY lượt
+cũ (hai tx tiêu một UTxO quỹ, chỉ một vào khối được), nên ký hỏng hay đổi UTxO bên tài trợ không bị kẹt 15 phút.
+
 Cấu hình: open-fund cần `platform_pkhs` + `beneficiary` và KHÔNG có `fund_units` (tập đóng: quỹ mới
 không nằm trong đó, nên fund-vault không thấy nó). Nguồn: `src/sponsor.ts` ▸ `openFund`.
 
@@ -1503,6 +1527,12 @@ Ví dụ `beneficiary_datum` khi đích CARP là một hộp nhận phí dạng 
 |---|---|---|
 | khoá | `Constr 0 [ Constr 0 [<28 byte key hash>] ]` | `d8799fd8799f581c<56 hex>ffff` |
 | script | `Constr 0 [ Constr 1 [<28 byte script hash>] ]` | `d8799fd87a9f581c<56 hex>ffff` |
+
+Viết dạng nào cũng được: dịch vụ chuẩn hoá `beneficiary_datum` MỘT lần lúc nạp cấu hình (giải mã rồi mã hoá lại như
+`Data.to` của Lucid — mảng không định độ dài), vì output claim do Lucid dựng luôn mang dạng đó và hàm ký so trên dạng
+chuẩn hoá. Bản trước giữ nguyên chuỗi người vận hành gõ: viết `d8798142abcd` (mảng định độ dài, cùng giá trị với
+`d8799f42abcdff`) là mọi claim bị hàm ký từ chối (audit T1). Hàm ký tự kiểm lúc khởi động rằng datum ghim đã ở dạng
+chuẩn. Nguồn: `src/config.ts` ▸ `parseFundBeneficiary`.
 
 Datum này nằm trong quỹ **suốt đời quỹ** (`fund_common_checks` giữ `beneficiary_datum` bất biến), nên
 credential `refund` phải là thứ bên nhận ADA hoàn lại còn dùng được sau mọi lần dựng lại ví của họ.
@@ -1986,7 +2016,7 @@ nhắc tới — nên `409 VAULT_AMBIGUOUS`, kèm danh sách để bên gọi ch
 | `VAULT_TX_API_TX_VALIDITY_MS` | không | `900000` (`DEFAULT_TX_VALIDITY_MS`) — hạn ký: cận `tip + giá trị này` của `validTo`, khoảng `[60000, 3600000]` (`src/config.ts` ▸ `loadConfig`) |
 | `VAULT_TX_API_PENDING_SPENDS_TTL_MS` | không | `300000` — sổ input vừa nộp (`PendingSpends`) nhớ một input bao lâu, khoảng `[30000, 3600000]` |
 | `FEECOVER_APP_TOKEN` | khi cấu hình có `feecover.apps.magic` | — **GIÁ TRỊ** token ứng dụng Feecover (token API, không phải khoá ký) |
-| `VAULT_TX_API_PLATFORM_KEY` | khi open-vault/open-fund phải tạo quỹ | rỗng ⟹ hai route đó trả `501 CONFIG_MISSING` khi cần tạo quỹ. **GIÁ TRỊ** bech32 `ed25519_sk…` của khoá platform genesis quỹ — khoá DUY NHẤT dịch vụ giữ (§1). pkh suy ra ≠ `paid_fund.sponsor.platform_pkhs[0]`, trùng một thẻ bài, hoặc bản deploy không có khối `paid_fund` ⟹ từ chối khởi động. Dịch vụ gỡ biến này khỏi môi trường của tiến trình ngay sau khi đọc (`config.ts` ▸ `scrubPlatformKey`); tiến trình con (`git` của `buildInfo.ts`) chạy với môi trường tường minh không có nó |
+| `VAULT_TX_API_PLATFORM_KEY` | khi open-vault/open-fund phải tạo quỹ | rỗng ⟹ hai route đó trả `501 CONFIG_MISSING` khi cần tạo quỹ. **GIÁ TRỊ** bech32 `ed25519_sk…` của khoá platform genesis quỹ — khoá DUY NHẤT dịch vụ giữ (§1). pkh suy ra ≠ `paid_fund.sponsor.platform_pkhs[0]`, trùng một thẻ bài, hoặc bản deploy không có khối `paid_fund` ⟹ từ chối khởi động. Dịch vụ gỡ biến này khỏi `process.env` ngay sau khi đọc (`config.ts` ▸ `scrubPlatformKey`); tiến trình con (`git` của `buildInfo.ts`) chạy với môi trường tường minh không có nó. Phạm vi: chặn tiến trình CON — KHÔNG chặn `ps eww <pid>` (macOS) hay `/proc/<pid>/environ` (Linux), hai chỗ đó vẫn đọc được giá trị ban đầu, bởi cùng uid hoặc root. Chạy dịch vụ dưới uid riêng, không chia uid với tiến trình khác |
 
 Cổng fail-closed lúc khởi động: thiếu biến bắt buộc · bind ngoài loopback mà thẻ bài rỗng ·
 policy LAMP nhái hoặc thuộc một đời đã bị thay (`assertLampPolicyId`; lối tập dượt đã đóng, xem dưới) ·

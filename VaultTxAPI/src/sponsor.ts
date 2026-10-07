@@ -108,7 +108,7 @@ import {
 } from "./feePayer.js";
 import { pickByNft } from "./genV2.js";
 import {
-  assertDidNotFundedElsewhere, classifySponsorFunds, fundsBlockingOpen, resolveSponsorFund, sponsorFundsStatusBody,
+  assertDidNotFundedElsewhere, claimRefusal, classifySponsorFunds, fundsBlockingOpen, resolveSponsorFund, sponsorFundsStatusBody,
   type SponsorFundBusyReason, type SponsorFundEntry,
 } from "./sponsorFund.js";
 import {
@@ -457,6 +457,15 @@ function parseClaimRequest(body: Record<string, unknown>): SponsorClaimRequest {
   const amount = body.amount === undefined ? undefined : reqBigint(body, "amount");
   if (amount !== undefined && amount <= 0n) throw shape(`"amount" phải > 0 (CARP, đơn vị nhỏ nhất).`, { field: "amount" });
   const feePayer = parseFeePayer(body);
+  // Ví trả phí bên thứ ba ứng min-ADA cho output tới bên hưởng ở MỖI lượt claim. Cho rút lẻ qua đường đó là cho người
+  // cầm thẻ sponsor rút 1 carpdrop mỗi lượt, lặp lại, bắt ví phí ứng ~1,2 ADA mỗi lượt. Nên `fee_payer` ⟹ rút TOÀN BỘ
+  // phần claim được; muốn rút lẻ thì tự trả phí (`change_address`).
+  if (feePayer !== undefined && amount !== undefined) {
+    throw new CodedApiError(400, "SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER",
+      `"amount" không đi cùng "fee_payer": qua ví trả phí, claim rút TOÀN BỘ phần claim được (mỗi lượt claim bắt ví phí ` +
+      `ứng min-ADA cho output tới bên hưởng). Bỏ "amount", hoặc tự trả phí bằng "change_address" để rút một phần.`,
+      { field: "amount" });
+  }
   return {
     fundId: fundIdOf(body),
     ...(amount === undefined ? {} : { amount }),
@@ -684,10 +693,17 @@ interface StepCtx {
    */
   claimLock: (key: string) => void;
   /**
-   * Giữ `did:<did_commit>` cho genesis quỹ tới hết hạn của tx (`DidGenesisHolds`). Đang có tx genesis khác cho DID
-   * đó còn hạn ⟹ 409 `SPONSOR_DID_GENESIS_IN_FLIGHT`.
+   * Giữ DID tới hết hạn của tx (`DidGenesisHolds`), KHÔNG chỉ tới TTL khoá mềm (180 s mặc định, tx sống 15 phút):
+   *   - `genesis` (mặc định): khoá `did:<did_commit>`; đang có tx genesis khác cho DID còn hạn ⟹ 409
+   *     `SPONSOR_DID_GENESIS_IN_FLIGHT`;
+   *   - `fund-vault`: khoá `did-fund:<did_commit>`; đang có tx fund-vault khác cho DID còn hạn (kể cả trên QUỸ khác)
+   *     ⟹ 409 `SPONSOR_DID_FUND_IN_FLIGHT`. Khoá `fund:<unit>` giữ theo QUỸ, và `SPONSOR_DID_FUNDED_ELSEWHERE` chỉ
+   *     thấy `credit_issued` đã vào khối — khe giữa hai thứ đó là khe nạp hai quỹ cho một DID.
+   * Hai khoá tách nhau: open-vault vừa chở genesis xong thì fund-vault của cùng DID vẫn phải chạy được.
+   * `sameTxTag` (fund-vault: `fund:<unit>`): lượt mới cùng thẻ THAY lượt cũ thay vì 409 — hai tx cùng tiêu MỘT UTxO quỹ
+   * loại trừ nhau trên chuỗi, nên dựng lại trên cùng quỹ (ký hỏng, đổi UTxO bên tài trợ) không phải đường nạp hai lần.
    */
-  holdDid: (didCommit: string) => void;
+  holdDid: (didCommit: string, purpose?: "genesis" | "fund-vault", sameTxTag?: string) => void;
 }
 
 /** Địa chỉ mà một bước được chạm, cho phép đọc lại CBOR của đường `fee_payer`. */
@@ -1004,7 +1020,9 @@ export class SponsorTxService {
         throw new CodedApiError(409, "SPONSOR_FUND_ALREADY_OPEN",
           `DID ${didCommit.slice(0, 16)}… đã có quỹ tài trợ (mỗi DID một quỹ, kể cả quỹ đã thu hồi) — bỏ qua open-fund.`,
           { did_commit: didCommit, fund_ids: mine.map(e => e.fundId), fund_refs: mine.map(e => refStr(e.utxo!)),
-            reclaimed: mine.filter(e => e.problem === "reclaimed").map(e => e.fundId) });
+            reclaimed: mine.filter(e => e.problem === "reclaimed").map(e => e.fundId),
+            // Quỹ lệch cấu hình HIỆN TẠI vẫn là quỹ của DID (`fundsBlockingOpen`): nêu nhãn để người vận hành thấy vì sao.
+            labels: Object.fromEntries(mine.filter(e => e.problem !== undefined).map(e => [e.fundId, e.problem])) });
       }
       const wallet = await feeWallet(ctx, () => this.walletUtxos(ctx.feeAddress));
       const sorted = [...wallet].sort((a, b) =>
@@ -1117,6 +1135,9 @@ export class SponsorTxService {
               `này không nạp vào két đó được.`,
           { vault_ref: refStr(vault.utxo), vault_did_commit: vault.datum.did_commit, did_commit: didCommit });
       }
+      // Giữ DID (không chỉ quỹ) tới hết hạn tx: hai fund-vault cho cùng DID trên HAI quỹ, cách nhau quá TTL khoá chủ,
+      // lượt đầu chưa vào khối ⟹ `credit_issued` của quỹ đầu trên chuỗi vẫn 0, `assertDidNotFundedElsewhere` không thấy.
+      ctx.holdDid(didCommit, "fund-vault", `fund:${fundUnit}`);
       ctx.claimLock(`fund:${fundUnit}`);
       this.assertNotPendingSpent(fund, "quỹ tài trợ này");
       const sponsorUtxos = await this.deps.chain.utxosByOutRef(req.sponsorUtxoRefs);
@@ -1346,15 +1367,20 @@ export class SponsorTxService {
         feeAddress, feeKeyHash: getAddressDetails(feeAddress).paymentCredential!.hash, tip, plan,
         ...(feePayer === undefined ? {} : { feePayer }),
         claimLock,
-        holdDid: (didCommit: string): void => {
-          const key = `did:${didCommit}`;
+        holdDid: (didCommit: string, purpose: "genesis" | "fund-vault" = "genesis", sameTxTag?: string): void => {
+          const key = purpose === "genesis" ? `did:${didCommit}` : `did-fund:${didCommit}`;
           if (didGens.some(([k]) => k === key)) return;
-          const h = this.didHolds.claim(key, this.now(), this.deps.lockTtlMs);
+          const h = this.didHolds.claim(key, this.now(), this.deps.lockTtlMs, sameTxTag);
           if (!h.ok) {
+            const details = { did_commit: didCommit, tx_hash: h.txHash, held_until: new Date(h.untilMs).toISOString() };
+            if (purpose === "fund-vault") {
+              throw new CodedApiError(409, "SPONSOR_DID_FUND_IN_FLIGHT",
+                `DID ${didCommit.slice(0, 16)}… đang có một tx fund-vault khác chưa hết hạn (có thể trên quỹ khác) — mỗi ` +
+                `DID một lần tài trợ. Chờ nó vào khối hoặc hết hạn rồi gọi lại.`, details);
+            }
             throw new CodedApiError(409, "SPONSOR_DID_GENESIS_IN_FLIGHT",
               `DID ${didCommit.slice(0, 16)}… đang có một tx genesis quỹ tài trợ khác chưa hết hạn — chờ nó vào khối ` +
-              `(khi đó DID đã có quỹ) hoặc hết hạn rồi gọi lại.`,
-              { did_commit: didCommit, tx_hash: h.txHash, held_until: new Date(h.untilMs).toISOString() });
+              `(khi đó DID đã có quỹ) hoặc hết hạn rồi gọi lại.`, details);
           }
           didGens.push([key, h.gen]);
         },
@@ -1497,10 +1523,16 @@ export class SponsorTxService {
         throw new CodedApiError(404, "SPONSOR_FUND_NOT_FOUND", `Không có quỹ tài trợ ${req.fundId} trên chuỗi.`,
           { fund_id: req.fundId, fund_unit: fundUnit });
       }
-      if (entry.problem !== undefined && entry.problem !== "reclaimed") {
+      // Chỉ chặn đúng thứ hàm ký kiểm (platform + đích); quỹ lệch cấu hình HIỆN TẠI vẫn claim được
+      // (`sponsorFund.ts` ▸ `claimRefusal`). Chặn rộng hơn là CARP bên hưởng đã kiếm kẹt sau mỗi lần đổi cấu hình.
+      const refusal = claimRefusal(entry, {
+        network: this.deps.network, ...(pins!.platformPkhs === undefined ? {} : { platformPkhs: pins!.platformPkhs }),
+        beneficiary: ben,
+      });
+      if (refusal !== undefined) {
         throw new CodedApiError(422, "SPONSOR_FUND_NOT_CLAIMABLE",
-          `Quỹ ${req.fundId} không phải quỹ dịch vụ này tin (problem: ${entry.problem}) — không ký claim cho nó.`,
-          { fund_id: req.fundId, problem: entry.problem });
+          `Quỹ ${req.fundId} không phải quỹ dịch vụ này tin (problem: ${refusal}) — không ký claim cho nó.`,
+          { fund_id: req.fundId, problem: refusal, ...(entry.problem === undefined || entry.problem === refusal ? {} : { label: entry.problem }) });
       }
       const fund = entry.utxo;
       this.assertNotPendingSpent(fund, "quỹ tài trợ này");
@@ -2337,6 +2369,18 @@ function plutusAddressOf(bech32: string): PlutusAddress {
     payment_credential: cred(d.paymentCredential),
     stake_credential: d.stakeCredential === undefined ? null : { Inline: [cred(d.stakeCredential)] },
   };
+}
+
+/**
+ * Dòng nhật ký khởi động nói dịch vụ giữ khoá gì (`server.ts`). `platformPkh` có ⟹ hàm ký platform ĐANG bật: nói rõ
+ * dịch vụ giữ MỘT khoá và ký gì, để người vận hành áp quy trình cách ly/xoay khoá cho nó. Vắng ⟹ câu không giữ khoá.
+ */
+export function serviceKeyStatusLine(platformPkh: string | undefined): string {
+  return platformPkh === undefined
+    ? "[vault-tx-api] dịch vụ này KHÔNG giữ khoá riêng — chỉ trả giao dịch CHƯA KÝ."
+    : `[vault-tx-api] dịch vụ này giữ MỘT khoá: platform ${platformPkh} — chỉ ký genesis quỹ tài trợ (open-vault, ` +
+      `open-fund) và FundClaim (claim); mọi giao dịch khác trả CHƯA KÝ. Khoá còn đọc được qua ps eww / ` +
+      `/proc/<pid>/environ của tiến trình này: chạy dưới uid riêng.`;
 }
 
 /**

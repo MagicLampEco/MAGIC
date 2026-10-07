@@ -7,12 +7,16 @@
 import { generateKeyPairSync, type KeyObject } from "node:crypto";
 
 import { CML, Constr, Data, credentialToAddress } from "@lucid-evolution/lucid";
-import { encodeFundDatum, fundClaimRedeemer, type PaidFundDatum } from "@magiclamp/prepaidgen-sdk";
+import {
+  claimBeneficiaryOutput, decodeFundDatum, encodeFundDatum, fundClaimRedeemer, type PaidFundDatum,
+} from "@magiclamp/prepaidgen-sdk";
 import { bech32 } from "bech32";
 import { describe, expect, it } from "vitest";
 
+import { parseDeployment, PREPAID_VAULT_TYPE } from "../src/config.js";
 import * as signerModule from "../src/platformSigner.js";
 import { createPlatformSigner, type PlatformSignInput, type PlatformSignKind } from "../src/platformSigner.js";
+import { LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID } from "./fixtures/preview.js";
 
 const POLICY = "ab".repeat(28);
 const OTHER_POLICY = "cd".repeat(28);
@@ -142,6 +146,34 @@ function claimTx(over: Partial<TxSpec> = {}): CML.Transaction {
 }
 const claimReq = (tx: CML.Transaction, f: PlatformSignInput = fundIn()) => req("fund-claim", tx, [feeIn(), f]);
 
+// ── T1: the pinned beneficiary datum goes through configuration exactly as in production ─────────────────────
+/** `Constr 0 [h'abcd']` written as a DEFINITE-length list — valid CBOR that some tools emit; Lucid writes `9f…ff`. */
+const DEF_DATUM = "d8798142abcd";
+/** The beneficiary pin as `config.ts` ▸ `parseDeployment` hands it to the signer (same shape as `server.ts`). */
+function configuredBeneficiary(datum: string): { address: string; datumCbor?: string } {
+  const sAddr = (h: string) => credentialToAddress(NET, { type: "Script", hash: h });
+  const json = JSON.stringify({
+    source: "Preprod, test deployment block — not a real deployment",
+    lamp: { policy_id: LAMP_POLICY_ID, asset_name_hex: LAMP_ASSET_NAME_HEX },
+    consume: { engage_address: sAddr("e0".repeat(28)), price_beacon_address: sAddr("77".repeat(28)), price_beacon_nft_unit: `${"55".repeat(28)}cafe` },
+    did_stake: { anchor_nft_policy: "ad".repeat(28) },
+    vaults: [{ vault_type: PREPAID_VAULT_TYPE, address: sAddr("c1".repeat(28)) }],
+    paid_fund: {
+      address: FUND_ADDR, carp_unit: CARP_UNIT,
+      sponsor: {
+        platform_pkhs: [platform.pkh], addresses: [credentialToAddress(NET, { type: "Key", hash: "5b".repeat(28) })],
+        max_carp_amount: "100", beneficiary: BEN_ADDR, beneficiary_datum: datum,
+      },
+    },
+    ref_script_utxos: { vault: `${"11".repeat(32)}#0`, paid_fund: `${"12".repeat(32)}#0`, consume: `${"33".repeat(32)}#2` },
+  });
+  return parseDeployment(json, NET).prepaid!.sponsor!.beneficiary!;
+}
+/** Fund input whose datum carries `benDatumCbor` as `beneficiary_datum` (as the chain holds it: Lucid-encoded). */
+const fundInWithBenDatum = (benDatumCbor: string): PlatformSignInput => ({
+  ...fundIn(), datumCbor: encodeFundDatum(fundDatum()).replace(`5820${BEN_DATUM_SLOT}`, benDatumCbor),
+});
+
 describe("platformSigner — the only key the service holds", () => {
   it("module exports exactly one runtime symbol: createPlatformSigner", () => {
     expect(Object.keys(signerModule).sort()).toEqual(["createPlatformSigner"]);
@@ -262,12 +294,39 @@ describe("platformSigner — the only key the service holds", () => {
   it("PAIR claim: beneficiary output with another datum ⟹ throws; two CARP outputs to the beneficiary ⟹ throws", () => {
     const sign = createPlatformSigner(opts());
     expect(() => sign(claimReq(claimTx({ outputs: [contOut(), benOut(BEN_ADDR, null), { address: FEE_ADDR }] }))))
-      .toThrow(/datum other than the pinned one/);
+      .toThrow(/differs STRUCTURALLY/);
     expect(() => sign(claimReq(claimTx({ outputs: [contOut(), benOut(BEN_ADDR, "d87980"), { address: FEE_ADDR }] }))))
-      .toThrow(/datum other than the pinned one/);
+      .toThrow(/differs STRUCTURALLY/);
     // Pair: the pinned datum ⟹ signs.
     expect(() => sign(claimReq(claimTx({ outputs: [contOut(), benOut(), { address: FEE_ADDR }] })))).not.toThrow();
     expect(() => sign(claimReq(claimTx({ outputs: [contOut(), benOut(), benOut()] })))).toThrow(/exactly one is required/);
+  });
+
+  it("T1 PAIR: config pin written definite-length + beneficiary output from the REAL builder ⟹ signs; CẶP structurally different datum (both encodings) ⟹ throws", () => {
+    const ben = configuredBeneficiary(DEF_DATUM);
+    const lucidForm = Data.to(Data.from(DEF_DATUM));
+    expect(lucidForm).not.toBe(DEF_DATUM);
+    // Normalised once at load: the pin the signer receives is already the canonical (Lucid) encoding.
+    expect(ben).toEqual({ address: BEN_ADDR, datumCbor: lucidForm });
+    const sign = createPlatformSigner(opts({ beneficiary: ben }));
+    // The fund holds the beneficiary datum as open-fund wrote it; the claim output datum comes from the builder.
+    const fund = fundInWithBenDatum(lucidForm);
+    const built = claimBeneficiaryOutput(decodeFundDatum(fund.datumCbor!), 10n).inlineDatumCbor!;
+    expect(built).toBe(lucidForm);
+    const withBen = (d: string | null) => claimTx({ outputs: [contOut(), benOut(BEN_ADDR, d), { address: FEE_ADDR }] });
+    expect(() => sign(claimReq(withBen(built), fund))).not.toThrow();
+    // Same VALUE in the operator's definite-length encoding ⟹ also signs (the validator compares by value).
+    expect(() => sign(claimReq(withBen(DEF_DATUM), fund))).not.toThrow();
+    // CẶP: Constr 0 [h'abce'] — another structure — in both encodings ⟹ refused, and the message says structure.
+    expect(() => sign(claimReq(withBen("d8798142abce"), fund))).toThrow(/differs STRUCTURALLY/);
+    expect(() => sign(claimReq(withBen("d8799f42abceff"), fund))).toThrow(/differs STRUCTURALLY/);
+  });
+
+  it("T1: a pin that is NOT canonical refuses to start (normalising is config.ts's job; the signer checks it was done)", () => {
+    expect(() => createPlatformSigner(opts({ beneficiary: { address: BEN_ADDR, datumCbor: DEF_DATUM } })))
+      .toThrow(/not in canonical encoding/);
+    expect(() => createPlatformSigner(opts({ beneficiary: { address: BEN_ADDR, datumCbor: Data.to(Data.from(DEF_DATUM)) } })))
+      .not.toThrow();
   });
 
   it("PAIR claim: fund datum names ANOTHER beneficiary (config pin unchanged) ⟹ throws; another platform ⟹ throws", () => {

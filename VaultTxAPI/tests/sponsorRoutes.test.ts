@@ -28,7 +28,7 @@ import {
   assertFundPinnedOutputs, parseSponsorRequest, sponsorApiErrorOf, type SponsorTxServiceDeps, type FundPinnedOutputsExpect,
 } from "../src/sponsor.js";
 import { parseBuildRequest } from "../src/buildRequest.js";
-import { parseSponsorRequest as parseSponsorReq162, platformAddressFundedWarning } from "../src/sponsor.js";
+import { parseSponsorRequest as parseSponsorReq162, platformAddressFundedWarning, serviceKeyStatusLine } from "../src/sponsor.js";
 import type { ResolvedOwnerWitness } from "../src/owner.js";
 import { vaultModuleOf } from "../src/txBuilder.js";
 import { LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, OWNER_PKH } from "./fixtures/preview.js";
@@ -826,6 +826,29 @@ describe("#162: claim — hình dạng thân bài; cảnh báo khởi động kh
       try { parseSponsorReq162("claim", bad); } catch (e) { code = (e as CodedApiError).code ?? String(e); }
       expect(code === "SPONSOR_REQUEST_SHAPE" || code === "BAD_REQUEST").toBe(true);
     }
+  });
+
+  it("L3 CẶP: fee_payer + amount ⟹ 400 SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER; fee_payer không amount ⟹ nhận (rút trọn); change_address + amount ⟹ nhận", () => {
+    const fp = { utxo: `${"ee".repeat(32)}#0`, address: "addr_test1x" };
+    let code = "";
+    let status = 0;
+    try { parseSponsorReq162("claim", { fund_id: "ab".repeat(32), fee_payer: fp, amount: "5" }); } catch (e) {
+      code = (e as CodedApiError).code; status = (e as CodedApiError).httpStatus;
+    }
+    expect([status, code]).toEqual([400, "SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER"]);
+    const all = parseSponsorReq162("claim", { fund_id: "ab".repeat(32), fee_payer: fp });
+    expect(all.amount).toBeUndefined();
+    expect(all.feePayer).toBeDefined();
+    expect(parseSponsorReq162("claim", { fund_id: "ab".repeat(32), change_address: "addr_test1x", amount: "5" }).amount).toBe(5n);
+  });
+
+  it("L2 CẶP: hàm ký platform bật ⟹ dòng khởi động nêu pkh và KHÔNG nói 'KHÔNG giữ khoá'; tắt ⟹ câu cũ", () => {
+    const pkh = "ab".repeat(28);
+    const on = serviceKeyStatusLine(pkh);
+    expect(on).toContain(pkh);
+    expect(on).toMatch(/giữ MỘT khoá/);
+    expect(on).not.toMatch(/KHÔNG giữ khoá/);
+    expect(serviceKeyStatusLine(undefined)).toMatch(/KHÔNG giữ khoá riêng/);
   });
 
   it("ba trạng thái: 0 UTxO ⟹ null; có UTxO ⟹ cảnh báo nêu số; đọc chuỗi hỏng ⟹ KHÔNG ĐO ĐƯỢC", async () => {

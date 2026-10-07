@@ -24,9 +24,10 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { getAddressDetails, validatorToScriptHash } from "@lucid-evolution/lucid";
-import { plutusDataFromCbor } from "@magiclamp/prepaidgen-sdk";
 import { FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE, type Network } from "@magiclamp/protocol-utils";
 import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
+
+import { canonicalDatumCbor } from "./sponsorFund.js";
 
 import { FEE_PURPOSE_ROUTES, type FeePurposeRoute } from "./locks.js";
 import { parseBasePath } from "./basePath.js";
@@ -1301,14 +1302,20 @@ function parseFundBeneficiary(
     if (!/^(?:[0-9a-f]{2})+$/.test(c)) {
       throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum phải là CBOR hex thường.`);
     }
-    // open-fund ghi `Data.from(c)` vào quỹ và phép phân loại so CBOR chuẩn hoá của nó: hex không phải Plutus Data
-    // thì chết ở đây, không phải ở yêu cầu đầu tiên.
+    // CHUẨN HOÁ MỘT LẦN, ở đây: giải mã rồi mã hoá lại bằng đúng codec bộ dựng claim dùng
+    // (`sponsorFund.ts` ▸ `canonicalDatumCbor` = `Data.to(Data.from(c))`). Cùng một giá trị Plutus Data có nhiều cách
+    // viết CBOR (mảng định độ dài `d8798142abcd` và không định độ dài `d8799f42abcdff`); validator so GIÁ TRỊ, còn
+    // output claim do Lucid mã hoá luôn ra dạng thứ hai. Giữ nguyên chuỗi người vận hành gõ thì hàm ký platform
+    // (`platformSigner.ts`, nhánh `fund-claim`) từ chối MỌI claim của quỹ — CARP của bên hưởng kẹt. Hàm ký tự kiểm
+    // lúc khởi động rằng datum ghim đã ở dạng chuẩn, nên gỡ bước này là dịch vụ không khởi động được.
+    // Hex không phải Plutus Data thì chết ở đây, không phải ở yêu cầu đầu tiên.
+    let canonical: string;
     try {
-      plutusDataFromCbor(c);
+      canonical = canonicalDatumCbor(c);
     } catch (e) {
       throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum không giải mã được thành Plutus Data: ${(e as Error).message}`);
     }
-    return { address: a, datumCbor: c };
+    return { address: a, datumCbor: canonical };
   }
   if (pay.type === "Script") {
     throw new Error(`[config] ${where} là script thì BẮT BUỘC có "beneficiary_datum" (genesis quỹ ép).`);
@@ -1345,8 +1352,10 @@ function assertReadableBlueprint(path: string, label = "VAULT_TX_API_VAULT_PLUTU
 }
 
 /**
- * Gỡ khoá platform khỏi môi trường của tiến trình SAU khi `loadConfig` đã đọc nó (`server.ts` gọi ngay sau
- * `loadConfig`). Tiến trình con thừa hưởng môi trường, và `ps eww <pid>` đọc được nó.
+ * Gỡ khoá platform khỏi `process.env` SAU khi `loadConfig` đã đọc nó (`server.ts` gọi ngay sau `loadConfig`), để
+ * tiến trình con không thừa hưởng. Phạm vi: `delete` gọi `unsetenv`, nên chỉ đóng đường tiến trình CON. Vùng môi
+ * trường ban đầu của tiến trình (macOS KERN_PROCARGS2 — thứ `ps eww <pid>` đọc; Linux `/proc/<pid>/environ`) vẫn
+ * giữ nguyên giá trị, đọc được bởi cùng uid hoặc root. Đóng hẳn đường đó cần đổi kênh nhận khoá — ngoài phạm vi ở đây.
  */
 export function scrubPlatformKey(env: NodeJS.ProcessEnv = process.env): void {
   delete env.VAULT_TX_API_PLATFORM_KEY;

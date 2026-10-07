@@ -631,16 +631,22 @@ export class IssuedTxRegistry {
  * Giá: một tx genesis bị bỏ dở (không ai ký) chặn DID đó tới hết hạn của nó — `details.held_until` nói tới khi nào.
  */
 export class DidGenesisHolds {
-  private readonly held = new Map<string, { txHash: string; untilMs: number; gen: number }>();
+  private readonly held = new Map<string, { txHash: string; untilMs: number; gen: number; tag?: string }>();
   private nextGen = 1;
 
-  /** Giữ cho một lượt dựng. Đang có người giữ còn hạn ⟹ trả người đó, không giữ. `pendingTtlMs`: hạn của lượt chưa dựng xong. */
-  claim(key: string, nowMs: number, pendingTtlMs: number):
+  /**
+   * Giữ cho một lượt dựng. Đang có người giữ còn hạn ⟹ trả người đó, không giữ. `pendingTtlMs`: hạn của lượt chưa
+   * dựng xong. `tag` có và TRÙNG `tag` của người đang giữ ⟹ lượt này THAY lượt trước (thẻ mới, lượt trước không `bind`
+   * được nữa) — dành cho hai tx loại trừ nhau trên chuỗi (fund-vault: cùng một UTxO quỹ, chỉ một tx vào khối được).
+   */
+  claim(key: string, nowMs: number, pendingTtlMs: number, tag?: string):
     { ok: true; gen: number } | { ok: false; txHash: string; untilMs: number } {
     const cur = this.held.get(key);
-    if (cur !== undefined && cur.untilMs > nowMs) return { ok: false, txHash: cur.txHash, untilMs: cur.untilMs };
+    if (cur !== undefined && cur.untilMs > nowMs && !(tag !== undefined && cur.tag === tag)) {
+      return { ok: false, txHash: cur.txHash, untilMs: cur.untilMs };
+    }
     const gen = this.nextGen++;
-    this.held.set(key, { txHash: PENDING_TX_HASH, untilMs: nowMs + pendingTtlMs, gen });
+    this.held.set(key, { txHash: PENDING_TX_HASH, untilMs: nowMs + pendingTtlMs, gen, ...(tag === undefined ? {} : { tag }) });
     return { ok: true, gen };
   }
 
@@ -648,7 +654,7 @@ export class DidGenesisHolds {
   bind(key: string, gen: number, txHash: string, validToMs: number): void {
     const cur = this.held.get(key);
     if (cur === undefined || cur.gen !== gen) return;
-    this.held.set(key, { txHash, untilMs: validToMs + CLOCK_SKEW_MARGIN_MS, gen });
+    this.held.set(key, { ...cur, txHash, untilMs: validToMs + CLOCK_SKEW_MARGIN_MS });
   }
 
   /** Dựng HỎNG ⟹ nhả. Thẻ lệch ⟹ không làm gì. */

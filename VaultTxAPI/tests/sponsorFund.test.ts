@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { CodedApiError } from "../src/errors.js";
 import {
-  assertDidNotFundedElsewhere, canonicalDatumCbor, classifySponsorFunds, fundsBlockingOpen, resolveSponsorFund,
+  assertDidNotFundedElsewhere, canonicalDatumCbor, claimRefusal, classifySponsorFunds, fundsBlockingOpen, resolveSponsorFund,
   SPONSOR_RECLAIM_EPOCH_SLACK, sponsorFundsStatusBody, type SponsorFundEntry,
 } from "../src/sponsorFund.js";
 
@@ -331,6 +331,71 @@ describe("classifySponsorFunds — ghim đệm, trần mốc thu hồi, quỹ đ
     const rogue = classify([["c4", fundDatum("c4", { benPkh: ROGUE_BEN_PKH })]], undefined, { address: BEN_ADDR });
     expect(rogue[0]!.problem).toBe("foreign_beneficiary");
     expect(fundsBlockingOpen(rogue, DID_A)).toEqual([]);
+  });
+});
+
+// ── T2 / L4 (audit @5274b8c8): nhãn LỆCH cấu hình hiện tại ≠ nhãn KHÔNG TIN ─────────────────────────────────
+
+describe("T2 claimRefusal — claim chỉ chặn đúng thứ hàm ký kiểm (platform + đích)", () => {
+  const BEN = { address: BEN_ADDR };
+  const gate = { network: NET, platformPkhs: [PLATFORM], beneficiary: BEN };
+  const one = (id: string, d: PaidFundDatum | null, pins: { bufferBps?: bigint } = {}) =>
+    classify([[id, d]], [PLATFORM], BEN, pins)[0]!;
+  const otherVault = (d: PaidFundDatum): PaidFundDatum => ({ ...d, vault_hash: "ee".repeat(28) });
+
+  it("quỹ LỆCH cấu hình hiện tại (đệm · ví bên tài trợ · két · mốc thu hồi · đã thu hồi · quỹ chung), platform + đích đúng ⟹ cho claim", () => {
+    const rows: Array<[SponsorFundEntry, string]> = [
+      [one("e0", fundDatum("e0"), { bufferBps: 1_000n }), "buffer_mismatch"],
+      [one("e1", fundDatum("e1", { sponsorPkh: STRANGER_PKH })), "foreign_sponsor"],
+      [one("e2", otherVault(fundDatum("e2"))), "wrong_vault"],
+      [one("e3", fundDatum("e3", { reclaimAfter: 999n })), "reclaim_too_far"],
+      [one("e4", fundDatum("e4", { credit: 9n, reclaimed: 9n })), "reclaimed"],
+      // Đã thu hồi VÀ lệch đệm: nhãn là buffer_mismatch (đứng trước) — vẫn phải claim được (lượt rút cuối đóng quỹ).
+      [one("e5", fundDatum("e5", { credit: 9n, reclaimed: 9n }), { bufferBps: 1_000n }), "buffer_mismatch"],
+      [one("e6", fundDatum("e6", { none: true })), "not_sponsored"],
+    ];
+    for (const [e, label] of rows) {
+      expect(e.problem).toBe(label);
+      expect(claimRefusal(e, gate)).toBeUndefined();
+    }
+  });
+
+  it("CỰC ĐỐI: đích lạ / platform lạ / không có quỹ ⟹ chặn — kể cả khi nhãn phân loại che phép so đích (wrong_vault, quỹ chung, ví lạ)", () => {
+    expect(claimRefusal(one("f0", fundDatum("f0", { benPkh: ROGUE_BEN_PKH })), gate)).toBe("foreign_beneficiary");
+    expect(claimRefusal(one("f1", fundDatum("f1", { platform: ROGUE_PLATFORM })), gate)).toBe("foreign_platform");
+    expect(claimRefusal(one("f2", null), gate)).toBe("missing");
+    // Nhãn đứng TRƯỚC phép so đích: phân loại chưa so đích, claimRefusal so lại.
+    const masked: Array<[SponsorFundEntry, string]> = [
+      [one("f3", otherVault(fundDatum("f3", { benPkh: ROGUE_BEN_PKH }))), "wrong_vault"],
+      [one("f4", fundDatum("f4", { none: true, benPkh: ROGUE_BEN_PKH })), "not_sponsored"],
+      [one("f5", fundDatum("f5", { sponsorPkh: STRANGER_PKH, benPkh: ROGUE_BEN_PKH })), "foreign_sponsor"],
+    ];
+    for (const [e, label] of masked) {
+      expect(e.problem).toBe(label);
+      expect(claimRefusal(e, gate)).toBe("foreign_beneficiary");
+    }
+    // Cấu hình không có beneficiary ⟹ không có đích để so ⟹ chặn (fail closed).
+    expect(claimRefusal(one("f6", fundDatum("f6")), { network: NET, platformPkhs: [PLATFORM] })).toBe("foreign_beneficiary");
+  });
+});
+
+describe("L4 fundsBlockingOpen — mọi quỹ của DID do platform này ký chặn genesis quỹ thứ hai", () => {
+  it("quỹ lệch đệm / két khác / ví bên tài trợ khác của DID ⟹ chặn; CỰC ĐỐI: chỉ có quỹ foreign_platform ⟹ không chặn; DID khác ⟹ không chặn", () => {
+    const buf = classify([["b0", fundDatum("b0")]], [PLATFORM], { address: BEN_ADDR }, { bufferBps: 1_000n });
+    expect(buf[0]!.problem).toBe("buffer_mismatch");
+    expect(fundsBlockingOpen(buf, DID_A).map(e => e.fundId)).toEqual(["b0"]);
+    expect(fundsBlockingOpen(buf, DID_B)).toEqual([]);
+    const wrongVault = classify([["b1", { ...fundDatum("b1"), vault_hash: "ee".repeat(28) }]], [PLATFORM], { address: BEN_ADDR });
+    expect(wrongVault[0]!.problem).toBe("wrong_vault");
+    expect(wrongVault[0]!.ownerCommit).toBe(DID_A);
+    expect(fundsBlockingOpen(wrongVault, DID_A).map(e => e.fundId)).toEqual(["b1"]);
+    const sponsorRotated = classify([["b2", fundDatum("b2", { sponsorPkh: STRANGER_PKH })]], [PLATFORM], { address: BEN_ADDR });
+    expect(sponsorRotated[0]!.problem).toBe("foreign_sponsor");
+    expect(fundsBlockingOpen(sponsorRotated, DID_A).map(e => e.fundId)).toEqual(["b2"]);
+    // CỰC ĐỐI: quỹ của DID nhưng platform lạ — ai cũng đúc được ⟹ không chặn.
+    const foreign = classify([["b3", fundDatum("b3", { platform: ROGUE_PLATFORM })]], [PLATFORM], { address: BEN_ADDR });
+    expect(foreign[0]!.problem).toBe("foreign_platform");
+    expect(fundsBlockingOpen(foreign, DID_A)).toEqual([]);
   });
 });
 

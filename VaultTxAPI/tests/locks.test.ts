@@ -260,6 +260,22 @@ describe("DidGenesisHolds — giữ did:<did_commit> tới HẾT HẠN tx, khôn
     expect(h.claim("did:aa", end, 60_000).ok).toBe(true);
   });
 
+  it("L5 CẶP: cùng khoá + CÙNG tag ⟹ lượt sau THAY lượt trước (thẻ cũ không bind được nữa); tag KHÁC hoặc vắng ⟹ từ chối", () => {
+    const h = new DidGenesisHolds();
+    const a = h.claim("did-fund:aa", 0, 60_000, "fund:f1");
+    if (!a.ok) throw new Error("claim");
+    h.bind("did-fund:aa", a.gen, "tx1", 900_000);
+    expect(h.claim("did-fund:aa", 200_000, 60_000, "fund:f2")).toEqual({ ok: false, txHash: "tx1", untilMs: 900_000 + CLOCK_SKEW_MARGIN_MS });
+    expect(h.claim("did-fund:aa", 200_000, 60_000).ok).toBe(false);
+    const b = h.claim("did-fund:aa", 200_000, 60_000, "fund:f1");
+    expect(b.ok).toBe(true);
+    if (!b.ok) return;
+    h.bind("did-fund:aa", a.gen, "tx1", 900_000);
+    expect(h.peek("did-fund:aa", 200_001)?.txHash).toBe(PENDING_TX_HASH);
+    h.bind("did-fund:aa", b.gen, "tx2", 950_000);
+    expect(h.claim("did-fund:aa", 300_000, 60_000, "fund:f2")).toEqual({ ok: false, txHash: "tx2", untilMs: 950_000 + CLOCK_SKEW_MARGIN_MS });
+  });
+
   it("dựng hỏng ⟹ release nhả ngay; release với thẻ cũ không nhả lượt mới", () => {
     const h = new DidGenesisHolds();
     const a = h.claim("did:aa", 0, 60_000);

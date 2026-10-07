@@ -318,9 +318,12 @@ function err(code: string, message: string, details: Record<string, unknown> = {
 }
 
 /**
- * Đường đòi vai `sponsor`. Chỉ fund-vault: nó là bước chi CARP của bên tài trợ, và khoá mềm `fund:<unit>` mà
- * nó giữ chặn được mọi fund-vault khác trên cùng quỹ — để thẻ thường gọi được nó là để bất kỳ ai cầm thẻ app
- * giữ quỹ của bên tài trợ (mỗi lượt dựng giữ khoá tới hết TTL, lặp vô hạn). Route tài trợ khác giữ thẻ thường.
+ * Đường đòi vai `sponsor` — đúng hai đường:
+ *   · `/tx/sponsor/fund-vault`: bước chi CARP của bên tài trợ, và khoá mềm `fund:<unit>` mà nó giữ chặn được mọi
+ *     fund-vault khác trên cùng quỹ — để thẻ thường gọi được nó là để bất kỳ ai cầm thẻ app giữ quỹ của bên tài trợ
+ *     (mỗi lượt dựng giữ khoá tới hết TTL, lặp vô hạn);
+ *   · `/tx/sponsor/claim`: dịch vụ KÝ platform lên tx claim, và claim cũng giữ `fund:<unit>`.
+ * Route tài trợ khác giữ thẻ thường.
  */
 export const SPONSOR_ROLE_PATHS: ReadonlySet<string> = new Set(["/tx/sponsor/fund-vault", "/tx/sponsor/claim"]);
 

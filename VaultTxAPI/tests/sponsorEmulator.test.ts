@@ -191,6 +191,10 @@ let platformSignCalls = 0;
 /** Mở két "kiểu cũ" (trước khi open-vault chở quỹ): dựng thẳng bằng SDK, không qua route. Trả NFT két. */
 let legacyOpenVault: (did: string, who: TestKey, payer: TestKey) => Promise<string>;
 let svcOpenTwo: SponsorTxService;   // cấu hình open-fund với HAI ví bên tài trợ ghim [sponsor, attacker] — quỹ ghi addresses[0]
+let svcOpenBuf: SponsorTxService;   // cấu hình open-fund (CÓ khoá platform), đệm ĐỔI ⟹ mọi quỹ open-fund đã tạo thành buffer_mismatch
+let svcOpenBenSigned: SponsorTxService; // cấu hình open-fund (CÓ khoá platform), beneficiary ghim KHÁC ⟹ foreign_beneficiary
+let svcDup: SponsorTxService;       // ghim tập đóng có HAI quỹ của DID_COMMIT (L5: hai fund-vault cùng DID, khác quỹ)
+let fundIdDup = "";                 // quỹ thứ hai của DID_COMMIT, chỉ svcDup ghim
 let CPB = 0n;                       // coinsPerUtxoByte của Emulator — trần khoản ứng ở checkSponsorFeePayerTx
 let openLocks: OwnerLockTable;
 let deploymentNoDid = "";
@@ -471,6 +475,9 @@ beforeAll(async () => {
   const fNone = await mintFund(sponsor);
   fundIdNone = fNone.fundId;
   attackerFundId = (await mintFund(attacker, DID_COMMIT)).fundId;
+  // L5: quỹ THỨ HAI của DID_COMMIT, cùng bên tài trợ — chỉ ghim ở svcDup (svc giữ nguyên tập bốn quỹ).
+  const fDup = await mintFund(sponsor, DID_COMMIT);
+  fundIdDup = fDup.fundId;
   fundAddress = base.paidFund.address;
   // Tách CARP bên tài trợ thành HAI UTxO (ca khoá `utxo:` cần hai bộ ref khác nhau). Lượt CUỐI của bên
   // tài trợ trong dựng nền: lượt sau có thể gộp lại hai UTxO này qua chọn-coin.
@@ -560,6 +567,10 @@ beforeAll(async () => {
   svcOtherBen = mk(deployment(true, undefined, { ...openPins, beneficiary: opener.address }), new OwnerLockTable(60_000));
   // #161-1: hai ví bên tài trợ ghim; quỹ open-fund ghi addresses[0] = sponsor. Chung khoá với svcOpen.
   svcOpenTwo = mk(deployment(true, undefined, { ...openPins, addresses: [sponsor.address, attacker.address] }), openLocks);
+  // T2/L4: cùng ghim open-fund, CÓ hàm ký platform, chỉ đổi đệm / đổi đích — mỗi dịch vụ một bảng khoá riêng.
+  svcOpenBuf = mk(deployment(true, undefined, { ...openPins, buffer_bps: "9999" }), new OwnerLockTable(60_000), platformSign);
+  svcOpenBenSigned = mk(deployment(true, undefined, { ...openPins, beneficiary: opener.address }), new OwnerLockTable(60_000), platformSign);
+  svcDup = mk(deployment(true, undefined, { ...pinnedSponsor, fund_units: [fundUnit, fDup.nftUnit] }), new OwnerLockTable(60_000));
   CPB = BigInt(lucid.config().protocolParameters!.coinsPerUtxoByte);
   // Cùng script consume, địa chỉ engage KHÁC (thêm phần stake): cổng script chỉ so HASH nên cho qua;
   // tx do SDK dựng gửi thread tới địa chỉ không-stake ⟹ chỉ phép đọc-lại output (`nftOutput`) chặn được.
@@ -723,6 +734,28 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
       locks.releaseByTxHash(r3.body.tx_hash as string);
     } finally {
       locks.releaseByTxHash(b1.tx_hash as string);
+    }
+  }, SLOW);
+
+  it("L5 ĐỎ: hai fund-vault CÙNG DID trên HAI quỹ, lượt đầu chưa vào khối và khoá chủ đã nhả ⟹ lượt hai 409 SPONSOR_DID_FUND_IN_FLIGHT; CẶP: dựng lại trên CÙNG quỹ ⟹ 200", async () => {
+    const dupLocks = (svcDup as unknown as { deps: { locks: OwnerLockTable } }).deps.locks;
+    const first = await post("/tx/sponsor/fund-vault", await fundBody({ fund: fundId }), svcDup);
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    const issued: string[] = [first.body.tx_hash as string];
+    try {
+      // Mô phỏng khoá chủ hết TTL (180 s mặc định) / nhả ở /tx/submit — tx đầu vẫn sống 15 phút, chưa vào khối.
+      dupLocks.releaseByTxHash(first.body.tx_hash as string);
+      expect(decodeFundDatum((await only(fundUnit)).datum!).credit_issued).toBe(0n);
+      const second = await post("/tx/sponsor/fund-vault", await fundBody({ fund: fundIdDup }), svcDup);
+      expect(second.status, JSON.stringify(second.body)).toBe(409);
+      expect(errCode(second)).toBe("SPONSOR_DID_FUND_IN_FLIGHT");
+      expect((second.body.error as { details: Body }).details.tx_hash).toBe(first.body.tx_hash);
+      // CẶP: cùng DID, CÙNG quỹ ⟹ hai tx tiêu một UTxO quỹ, loại trừ nhau trên chuỗi ⟹ dựng lại được.
+      const again = await post("/tx/sponsor/fund-vault", await fundBody({ fund: fundId }), svcDup);
+      expect(again.status, JSON.stringify(again.body)).toBe(200);
+      issued.push(again.body.tx_hash as string);
+    } finally {
+      for (const h of issued) dupLocks.releaseByTxHash(h);
     }
   }, SLOW);
 
@@ -1192,6 +1225,20 @@ describe("open-fund — bước bù: genesis quỹ tài trợ theo DID; VTA ký 
     expect(errCode(again)).toBe("SPONSOR_FUND_ALREADY_OPEN");
   }, SLOW);
 
+  it("L4 ĐỎ: cấu hình đổi đệm ⟹ quỹ của DID_OPEN thành buffer_mismatch, open-fund VẪN 409 SPONSOR_FUND_ALREADY_OPEN (không ký genesis quỹ thứ hai); CỰC ĐỐI: DID chỉ có quỹ platform lạ ⟹ open-fund dựng", async () => {
+    const before = platformSignCalls;
+    const r = await post("/tx/sponsor/open-fund", ob({ change_address: fee.address }), svcOpenBuf);
+    expect(r.status, JSON.stringify(r.body)).toBe(409);
+    expect(errCode(r)).toBe("SPONSOR_FUND_ALREADY_OPEN");
+    const det = (r.body.error as { details: Body }).details;
+    expect(det.labels).toEqual({ [oFundUnit.slice(56)]: "buffer_mismatch" });
+    expect(platformSignCalls).toBe(before);
+    // CỰC ĐỐI: DID_COMMIT chỉ có quỹ do ví khác khoá platform đúc (dựng nền) ⟹ foreign_platform, không chặn.
+    const ok2 = await post("/tx/sponsor/open-fund", { owner: { type: "key", hash: owner.pkh }, change_address: fee.address }, svcOpenBuf);
+    expect(ok2.status, JSON.stringify(ok2.body)).toBe(200);
+    expect(platformSignCalls).toBe(before + 1);
+  }, SLOW);
+
   it("ghim beneficiary qua route: CÙNG quỹ trên chuỗi, cấu hình ghim đích KHÁC ⟹ GET thấy foreign_beneficiary, fund-vault 409 NOT_OPENED", async () => {
     // Quỹ open-fund vừa tạo do khoá platform ĐÃ GHIM ký — chỉ đích nhận CARP lệch với ghim của dịch vụ này.
     const st = await handle({ method: "GET", url: "/sponsor/funds", headers: {}, body: undefined }, routerDeps(svcOtherBen));
@@ -1431,6 +1478,31 @@ describe("open-vault kèm quỹ — VTA ký platform; chủ + ví trả phí ký
       const r = await post("/tx/sponsor/claim", body, svcOpen);
       expect([r.status, errCode(r)]).toEqual([status, code]);
     }
+    expect(platformSignCalls).toBe(before);
+  }, SLOW);
+
+  it("T2 CẶP: cấu hình đổi đệm ⟹ quỹ buffer_mismatch, platform + đích đúng ⟹ claim 200, có witness platform; cấu hình đổi đích ⟹ foreign_beneficiary 422", async () => {
+    const before = platformSignCalls;
+    const st = await handle({ method: "GET", url: "/sponsor/funds", headers: {}, body: undefined }, routerDeps(svcOpenBuf));
+    const funds = st.body.funds as Array<{ fund_unit: string; problem: string | null }>;
+    expect(funds.find(f => f.fund_unit === coFundUnit)?.problem).toBe("buffer_mismatch");
+    // Không nộp: bài XANH ngay dưới rút trọn E trên cùng quỹ; mỗi dịch vụ một bảng khoá riêng.
+    const b = await post("/tx/sponsor/claim", { fund_id: coFundId, change_address: fee.address, amount: "1" }, svcOpenBuf);
+    expect(b.status, JSON.stringify(b.body)).toBe(200);
+    expect(platformSignCalls).toBe(before + 1);
+    expectPlatformWitnessOnly(b.body.tx_cbor as string);
+    expect((b.body.summary as Body).amount).toBe("1");
+    const r = await post("/tx/sponsor/claim", { fund_id: coFundId, change_address: fee.address }, svcOpenBenSigned);
+    expect(r.status).toBe(422);
+    expect(errCode(r)).toBe("SPONSOR_FUND_NOT_CLAIMABLE");
+    expect((r.body.error as { details: Body }).details.problem).toBe("foreign_beneficiary");
+    expect(platformSignCalls).toBe(before + 1);
+  }, SLOW);
+
+  it("L3: claim qua fee_payer kèm amount ⟹ 400 SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER, hàm ký không được gọi", async () => {
+    const before = platformSignCalls;
+    const r = await post("/tx/sponsor/claim", { fund_id: coFundId, fee_payer: await fpOf(feecover2), amount: "1" }, svcOpen);
+    expect([r.status, errCode(r)]).toEqual([400, "SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER"]);
     expect(platformSignCalls).toBe(before);
   }, SLOW);
 

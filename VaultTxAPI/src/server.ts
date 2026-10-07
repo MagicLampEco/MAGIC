@@ -26,7 +26,7 @@ import { DidStakeWitnessProvider } from "./owner.js";
 import { DidOwnerResolver } from "./didOwner.js";
 import { ChainDidPaymentAnchorReader } from "./funding.js";
 import { FeeProxy } from "./feeProxy.js";
-import { SponsorTxService, platformAddressFundedWarning } from "./sponsor.js";
+import { SponsorTxService, platformAddressFundedWarning, serviceKeyStatusLine } from "./sponsor.js";
 import { createPlatformSigner } from "./platformSigner.js";
 import { PREPAID_VAULT_TYPE } from "./config.js";
 import type { PrepaidBlueprint } from "@magiclamp/prepaidgen-sdk";
@@ -34,7 +34,9 @@ import { readBuildInfo } from "./buildInfo.js";
 import { readJsonBody, shellErrorResponse } from "./shell.js";
 
 const cfg = loadConfig();
-// Khoá platform đã nằm trong `cfg`; gỡ khỏi môi trường của tiến trình (tiến trình con, `ps eww`).
+// Khoá platform đã nằm trong `cfg`; gỡ biến khỏi môi trường (`unsetenv`) để tiến trình CON không thừa hưởng. KHÔNG gỡ được khỏi vùng
+// môi trường ban đầu của tiến trình: `ps eww <pid>` (macOS) và `/proc/<pid>/environ` (Linux) vẫn đọc được giá trị,
+// bởi cùng uid hoặc root. Chạy dịch vụ dưới uid riêng, không chia uid với tiến trình khác (README ▸ biến môi trường).
 scrubPlatformKey();
 // Đo MỘT lần lúc khởi động, ở chính cây mã đang chạy: `git pull` sau đó mà không khởi động
 // lại thì mã đang chạy vẫn là mã cũ, và commit in ra phải là commit cũ.
@@ -233,7 +235,7 @@ server.listen(cfg.port, cfg.host, () => {
     `thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"} · ` +
     `khoá mềm ${cfg.lockTtlMs}ms · tiền tố ${cfg.basePath === "" ? "không" : cfg.basePath}`,
   );
-  console.error("[vault-tx-api] dịch vụ này KHÔNG giữ khoá riêng — chỉ trả giao dịch CHƯA KÝ.");
+  console.error(serviceKeyStatusLine(platformSign === undefined ? undefined : cfg.deployment.prepaid?.sponsor?.platformPkhs?.[0]));
   if (cfg.token === "" && isLoopback(cfg.host)) {
     console.error(
       "[vault-tx-api] ⚠ không có thẻ bài. Chỉ an toàn chừng nào cổng này còn ở loopback. " +

@@ -114,7 +114,7 @@ export class OwnerLockTable {
    * dùng nó để ghi nhật ký, không dùng nó để quyết định có nộp hay không.
    */
   releaseByTxHash(txHash: string): string | null {
-    // Nhả MỌI khoá mang hash đó: một tx có thể giữ hơn một khoá (T2 tài trợ giữ khoá chủ + khoá
+    // Nhả MỌI khoá mang hash đó: một tx có thể giữ hơn một khoá (fund-vault tài trợ giữ khoá chủ + khoá
     // UTxO quỹ dùng chung — `sponsor.ts`). Trả khoá giành TRƯỚC (thứ tự chèn của Map) — với tx một
     // khoá thì y như cũ.
     let first: string | null = null;
@@ -254,13 +254,16 @@ export const ISSUED_ROUTES: readonly IssuedRoute[] = [
  */
 /**
  * Route tài trợ (`sponsor.ts`). Tách khỏi `IssuedRoute` có chủ đích: `IssuedRoute`/`ISSUED_ROUTES`
- * là tập đường dựng của `/tx/quote`, còn bốn route này không báo giá. Sổ phát-hành vẫn phải ghi
+ * là tập đường dựng của `/tx/quote`, còn sáu route này không báo giá. Sổ phát-hành vẫn phải ghi
  * chúng — không ghi thì `/tx/submit` từ chối nộp tx mà chính dịch vụ vừa dựng.
  */
-export type SponsorRoute = "sponsor-t1-open" | "sponsor-t2-fund" | "sponsor-t3-draw" | "sponsor-t4-first-consume";
+export type SponsorRoute =
+  | "sponsor-open-vault" | "sponsor-bind-did" | "sponsor-open-fund" | "sponsor-fund-vault" | "sponsor-draw-magic"
+  | "sponsor-first-consume" | "sponsor-claim";
 
 export const SPONSOR_ROUTES: readonly SponsorRoute[] = [
-  "sponsor-t1-open", "sponsor-t2-fund", "sponsor-t3-draw", "sponsor-t4-first-consume",
+  "sponsor-open-vault", "sponsor-bind-did", "sponsor-open-fund", "sponsor-fund-vault", "sponsor-draw-magic",
+  "sponsor-first-consume", "sponsor-claim",
 ];
 
 /**
@@ -347,9 +350,18 @@ export function expiredErrorFor(issued: IssuedTxRegistry, txHash: string, nowMs:
 //   · `/fee/sign`: app không gửi gì thêm — sổ phát-hành đã ghi mã lúc dựng, so với mã đang sống.
 // Mã KHÔNG phải bí mật dài hạn: nó chỉ có nghĩa trong đời một lượt giữ (vài phút).
 
+/** Nguồn trả phí Feecover ký (`/v1/utxo` + `/v1/sign` ▸ `source`): ví Feecover (app trả CARP) hoặc
+ *  ngân sách tài trợ L38 (người dùng không trả gì). `owner_address` KHÔNG ở đây — ví của chủ tự ký,
+ *  không qua Feecover. */
+export const FEE_SOURCES = ["feecover", "sponsor"] as const;
+export type FeeSource = typeof FEE_SOURCES[number];
+
 /** Một lượt giữ UTxO phí: hết giờ (`reserved_until`, POSIX ms) + mã lượt giữ. Cổng dựng
  *  (`feeReservationForBuild`) trả ĐÚNG lượt giữ nó đã thấy, để `record` ghi lượt đó chứ không tra lại sổ. */
 export interface FeeReservation { untilMs: number; id: string }
+
+/** Lượt giữ trong sổ: thêm nguồn Feecover xác nhận lúc phát (`/fee/sign` từ chối một `source` khác nguồn này). */
+interface HeldFeeReservation extends FeeReservation { source: FeeSource }
 
 /** Mã lượt giữ mới: 16 byte ngẫu nhiên mật mã ⟹ 32 hex (`feePayer.ts` ▸ `RESERVATION_ID`). */
 export function newReservationId(): string {
@@ -362,7 +374,7 @@ export interface ReservationIdStats { with_id: Record<string, number>; without_i
 export class IssuedTxRegistry {
   private readonly issued = new Map<string, IssuedTxEntry>();
   /** UTxO ví trả phí phát qua `/fee/utxo` → lượt giữ (hết giờ ở Feecover + mã lượt giữ). */
-  private readonly feeReservations = new Map<string, FeeReservation>();
+  private readonly feeReservations = new Map<string, HeldFeeReservation>();
   private readonly ridWith = new Map<string, number>();
   private readonly ridWithout = new Map<string, number>();
 
@@ -406,8 +418,10 @@ export class IssuedTxRegistry {
    *  giao lại cùng UTxO thì lượt sau có mã khác). `address` = địa chỉ Feecover trả kèm; sổ nhớ nó (không
    *  dọn) để nhận ra UTxO của Feecover cả khi lượt giữ đã bị quét (`feeReservationForBuild`). `id` chỉ để
    *  phép kiểm ghim một mã biết trước; dịch vụ không truyền. */
-  noteFeeReservation(utxoRef: string, reservedUntilMs: number, address?: string, id: string = newReservationId()): string {
-    this.feeReservations.set(utxoRef, { untilMs: reservedUntilMs, id });
+  noteFeeReservation(
+    utxoRef: string, reservedUntilMs: number, address?: string, id: string = newReservationId(), source: FeeSource = "feecover",
+  ): string {
+    this.feeReservations.set(utxoRef, { untilMs: reservedUntilMs, id, source });
     if (address !== undefined) this.feecoverAddresses.add(address);
     return id;
   }
@@ -417,6 +431,11 @@ export class IssuedTxRegistry {
    *  `feeReservationForBuild` — `undefined` ở đây KHÔNG có nghĩa "không ràng buộc". */
   feeReservationOf(utxoRef: string): number | undefined {
     return this.feeReservations.get(utxoRef)?.untilMs;
+  }
+
+  /** Nguồn của lượt giữ đang có trong sổ cho `utxoRef`, hoặc `undefined`. Chỉ để TRA. */
+  feeReservationSourceOf(utxoRef: string): FeeSource | undefined {
+    return this.feeReservations.get(utxoRef)?.source;
   }
 
   /** Mã lượt giữ đang có trong sổ cho `utxoRef`, hoặc `undefined`. Chỉ để TRA. */
@@ -514,9 +533,9 @@ export class IssuedTxRegistry {
    * kế tiếp hợp lệ của chủ — không bị đụng.
    *
    * Tx chung khoá đã từng được nộp VẪN bị thay (không có miễn trừ cho nó): miễn trừ đó mở lại đúng
-   * ca hai lượt tạo két từ hai ví — T1 nộp rồi rơi khỏi mempool, T2 nộp và lên chuỗi, nộp lại T1 ⟹
-   * két thứ hai cho cùng chủ, trong khi validator chưa ép mỗi DID một két. 409 cho T1 lúc đó kèm
-   * `details.submission` để bên gọi biết T1 từng được gửi và đi tra chuỗi.
+   * ca hai lượt tạo két từ hai ví — tx A nộp rồi rơi khỏi mempool, tx B nộp và lên chuỗi, nộp lại A ⟹
+   * két thứ hai cho cùng chủ, trong khi validator chưa ép mỗi DID một két. 409 cho A lúc đó kèm
+   * `details.submission` để bên gọi biết A từng được gửi và đi tra chuỗi.
    *
    * Việc thay chỉ chạy ở lượt GỬI ĐẦU TIÊN của `txHash` (`outcome` là `accepted` hay `unconfirmed`
    * đều tính — tx có thể đã ở mempool thì phải coi như đã nộp). NỘP LẠI chính nó (rớt mạng, thử lại)
@@ -595,5 +614,63 @@ export class IssuedTxRegistry {
 
   size(): number {
     return this.issued.size;
+  }
+}
+
+/**
+ * Giữ `did:<did_commit>` cho genesis quỹ tài trợ (open-vault chở quỹ, open-fund) tới HẾT HẠN của tx
+ * (`validTo` + `CLOCK_SKEW_MARGIN_MS`), không tới lúc nộp.
+ *
+ * Vì sao không dùng `OwnerLockTable`: bảng đó có hai tính chất đúng cho khoá chủ mà sai ở đây — (1) lượt dựng
+ * mới THAY lượt cũ chứ không từ chối, nên tx cũ chỉ bị chặn ở `/tx/submit`; tx đã có đủ chữ ký (qua `/fee/sign`)
+ * nộp thẳng lên nút vẫn vào khối; (2) `/tx/submit` nhả khoá theo hash, đúng lúc khe nộp → vào khối bắt đầu,
+ * khi dịch vụ còn chưa thấy quỹ trên chuỗi. Kết quả của cả hai: hai tx genesis cho cùng một DID, cả hai hợp lệ.
+ * Ở đây lượt thứ hai trong khe nhận 409; giữ tới hết hạn vì sau mốc đó tx đầu không vào khối được nữa, còn
+ * nếu nó đã vào khối thì lượt đọc chuỗi thấy quỹ.
+ *
+ * Giá: một tx genesis bị bỏ dở (không ai ký) chặn DID đó tới hết hạn của nó — `details.held_until` nói tới khi nào.
+ */
+export class DidGenesisHolds {
+  private readonly held = new Map<string, { txHash: string; untilMs: number; gen: number; tag?: string }>();
+  private nextGen = 1;
+
+  /**
+   * Giữ cho một lượt dựng. Đang có người giữ còn hạn ⟹ trả người đó, không giữ. `pendingTtlMs`: hạn của lượt chưa
+   * dựng xong. `tag` có và TRÙNG `tag` của người đang giữ ⟹ lượt này THAY lượt trước (thẻ mới, lượt trước không `bind`
+   * được nữa) — dành cho hai tx loại trừ nhau trên chuỗi (fund-vault: cùng một UTxO quỹ, chỉ một tx vào khối được).
+   */
+  claim(key: string, nowMs: number, pendingTtlMs: number, tag?: string):
+    { ok: true; gen: number } | { ok: false; txHash: string; untilMs: number } {
+    const cur = this.held.get(key);
+    if (cur !== undefined && cur.untilMs > nowMs && !(tag !== undefined && cur.tag === tag)) {
+      return { ok: false, txHash: cur.txHash, untilMs: cur.untilMs };
+    }
+    const gen = this.nextGen++;
+    this.held.set(key, { txHash: PENDING_TX_HASH, untilMs: nowMs + pendingTtlMs, gen, ...(tag === undefined ? {} : { tag }) });
+    return { ok: true, gen };
+  }
+
+  /** Dựng xong: giữ tới `validToMs + CLOCK_SKEW_MARGIN_MS`. Thẻ lệch ⟹ không làm gì. */
+  bind(key: string, gen: number, txHash: string, validToMs: number): void {
+    const cur = this.held.get(key);
+    if (cur === undefined || cur.gen !== gen) return;
+    this.held.set(key, { ...cur, txHash, untilMs: validToMs + CLOCK_SKEW_MARGIN_MS });
+  }
+
+  /** Dựng HỎNG ⟹ nhả. Thẻ lệch ⟹ không làm gì. */
+  release(key: string, gen: number): void {
+    const cur = this.held.get(key);
+    if (cur !== undefined && cur.gen === gen) this.held.delete(key);
+  }
+
+  peek(key: string, nowMs: number): { txHash: string; untilMs: number } | null {
+    const cur = this.held.get(key);
+    return cur === undefined || cur.untilMs <= nowMs ? null : { txHash: cur.txHash, untilMs: cur.untilMs };
+  }
+
+  sweep(nowMs: number): number {
+    let n = 0;
+    for (const [k, v] of this.held) if (v.untilMs <= nowMs) { this.held.delete(k); n++; }
+    return n;
   }
 }

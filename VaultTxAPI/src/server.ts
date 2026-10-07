@@ -17,7 +17,7 @@ import { createServer } from "node:http";
 import type { PlutusJson } from "@magiclamp/sdk";
 
 import { BlockfrostChainReader, PendingSpendsFilteredChain } from "./chain.js";
-import { loadConfig, isLoopback, type Deployment } from "./config.js";
+import { loadConfig, isLoopback, scrubPlatformKey, type Deployment } from "./config.js";
 import { handle } from "./http.js";
 import { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "./locks.js";
 import { blockRoutingOf, makeBlockServices } from "./blocks.js";
@@ -26,13 +26,18 @@ import { DidStakeWitnessProvider } from "./owner.js";
 import { DidOwnerResolver } from "./didOwner.js";
 import { ChainDidPaymentAnchorReader } from "./funding.js";
 import { FeeProxy } from "./feeProxy.js";
-import { SponsorTxService } from "./sponsor.js";
+import { SponsorTxService, platformAddressFundedWarning, serviceKeyStatusLine } from "./sponsor.js";
+import { createPlatformSigner } from "./platformSigner.js";
 import { PREPAID_VAULT_TYPE } from "./config.js";
 import type { PrepaidBlueprint } from "@magiclamp/prepaidgen-sdk";
 import { readBuildInfo } from "./buildInfo.js";
 import { readJsonBody, shellErrorResponse } from "./shell.js";
 
 const cfg = loadConfig();
+// Khoá platform đã nằm trong `cfg`; gỡ biến khỏi môi trường (`unsetenv`) để tiến trình CON không thừa hưởng. KHÔNG gỡ được khỏi vùng
+// môi trường ban đầu của tiến trình: `ps eww <pid>` (macOS) và `/proc/<pid>/environ` (Linux) vẫn đọc được giá trị,
+// bởi cùng uid hoặc root. Chạy dịch vụ dưới uid riêng, không chia uid với tiến trình khác (README ▸ biến môi trường).
+scrubPlatformKey();
 // Đo MỘT lần lúc khởi động, ở chính cây mã đang chạy: `git pull` sau đó mà không khởi động
 // lại thì mã đang chạy vẫn là mã cũ, và commit in ra phải là commit cũ.
 const build = readBuildInfo(dirname(fileURLToPath(import.meta.url)));
@@ -108,6 +113,33 @@ const routing = blockRoutingOf(blockServices);
 const { blocks } = routing;
 
 
+// Platform key of the sponsor fund genesis (the ONLY key this service holds): taken over by the signer
+// closure at startup, then dropped from `cfg`. Mismatching key hash, a key equal to a bearer token, or a key
+// without a `paid_fund` block ⟹ refuse to start (`platformSigner.ts`).
+if (cfg.platformKey !== undefined && cfg.deployment.prepaid === undefined) {
+  throw new Error("[platform] VAULT_TX_API_PLATFORM_KEY is set but the deployment has no paid_fund block — refusing to start.");
+}
+const platformSign = cfg.platformKey === undefined || cfg.deployment.prepaid === undefined
+  ? undefined
+  : createPlatformSigner({
+      keyBech32: cfg.platformKey,
+      expectedPkh: cfg.deployment.prepaid.sponsor?.platformPkhs?.[0],
+      paidFundPolicy: cfg.deployment.prepaid.fundScriptHash,
+      tokenValues: [cfg.token, cfg.sponsorToken, cfg.feecoverAppToken ?? ""],
+      network: cfg.network,
+      ...(cfg.deployment.prepaid.carpUnit === undefined ? {} : { carpUnit: cfg.deployment.prepaid.carpUnit }),
+      ...(cfg.deployment.prepaid.sponsor?.beneficiary === undefined
+        ? {} : { beneficiary: cfg.deployment.prepaid.sponsor.beneficiary }),
+    });
+delete cfg.platformKey;
+// Địa chỉ enterprise của khoá platform giữ UTxO ⟹ CẢNH BÁO, không từ chối khởi động: ai cũng gửi được một UTxO
+// tới địa chỉ bất kỳ, nên từ chối khởi động là trao cho người ngoài một nút tắt dịch vụ. Chặn thật nằm ở hai chỗ
+// không phụ thuộc số dư: 422 SPONSOR_FEE_WALLET_IS_PLATFORM ở mọi route và hàm ký từ chối input của khoá đó.
+if (platformSign !== undefined) {
+  void platformAddressFundedWarning(chain, cfg.network, cfg.deployment.prepaid!.sponsor!.platformPkhs![0]!)
+    .then(w => { if (w !== null) console.error(w); });
+}
+
 // Hành trình tài trợ: chỉ khi bản deploy phục vụ két Prepaid — khi đó `vaultPlutusJson` CHÍNH LÀ blueprint
 // PrepaidGen. Bản deploy khác ⟹ `/tx/sponsor/t*` trả 501 `SPONSOR_UNAVAILABLE`.
 const sponsor = cfg.deployment.vaults.some(v => v.vaultType === PREPAID_VAULT_TYPE)
@@ -125,6 +157,7 @@ const sponsor = cfg.deployment.vaults.some(v => v.vaultType === PREPAID_VAULT_TY
       ...(didOwner === undefined ? {} : { didOwner }),
       prepaidBlueprint: vaultPlutusJson as unknown as PrepaidBlueprint,
       lucidForWallet: (a, u) => sdkBuilder.lucidForWallet(a, u),
+      ...(platformSign === undefined ? {} : { platformSign }),
     })
   : undefined;
 
@@ -202,7 +235,7 @@ server.listen(cfg.port, cfg.host, () => {
     `thẻ bài ${cfg.token === "" ? "TẮT (loopback)" : "bật"} · ` +
     `khoá mềm ${cfg.lockTtlMs}ms · tiền tố ${cfg.basePath === "" ? "không" : cfg.basePath}`,
   );
-  console.error("[vault-tx-api] dịch vụ này KHÔNG giữ khoá riêng — chỉ trả giao dịch CHƯA KÝ.");
+  console.error(serviceKeyStatusLine(platformSign === undefined ? undefined : cfg.deployment.prepaid?.sponsor?.platformPkhs?.[0]));
   if (cfg.token === "" && isLoopback(cfg.host)) {
     console.error(
       "[vault-tx-api] ⚠ không có thẻ bài. Chỉ an toàn chừng nào cổng này còn ở loopback. " +

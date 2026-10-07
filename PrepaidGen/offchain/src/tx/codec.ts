@@ -44,6 +44,21 @@ export function decodeVaultDatum(cbor: string): PrepaidVaultDatum {
   return Data.from(cbor, PrepaidVaultDatumSchema as unknown as PrepaidVaultDatum);
 }
 
+/**
+ * Plutus Data ↔ CBOR bằng ĐÚNG bản `@lucid-evolution/lucid` của gói này. Bên gọi nạp gói qua `file:` thì giữ
+ * `node_modules` riêng, tức một bản lucid KHÁC: `Constr` dựng ở bên gọi không phải `Constr` ở đây, và `Data.to`
+ * của gói này ném "Unsupported type" khi gặp nó (đo 2026-10-07, VaultTxAPI). Datum tự do đi VÀO bộ dựng (vd.
+ * `beneficiaryDatum` của `planMintPaidFund`) phải dựng bằng `plutusDataFromCbor`; datum đọc RA từ `decodeFundDatum`
+ * phải mã hoá lại bằng `plutusDataToCbor`.
+ */
+export function plutusDataFromCbor(cbor: string): Data {
+  return Data.from(cbor);
+}
+
+export function plutusDataToCbor(d: Data): string {
+  return Data.to(d);
+}
+
 export function encodeFundDatum(d: PaidFundDatum): string {
   return Data.to(d, PaidFundDatumSchema as unknown as PaidFundDatum);
 }
@@ -68,6 +83,9 @@ export const drawRedeemer = (fundId: string, amount: bigint): string =>
   vaultRedeemer({ PrepaidDraw: { fund_id: fundId, amount_carpdrop: amount } });
 export const burnBatchRedeemer = (burns: readonly (readonly [string, bigint])[]): string =>
   vaultRedeemer({ BurnBatch: { burns: burns.map(([b, a]) => [b, a] as [string, bigint]) } });
+/** `SetDidCommit { did_commit }` — constr 5, gắn PersonDID MỘT LẦN (`validate_set_did_commit`). */
+export const setDidCommitRedeemer = (didCommit: string): string =>
+  vaultRedeemer({ SetDidCommit: { did_commit: didCommit } });
 export const settleLineRedeemer = (fundId: string): string =>
   vaultRedeemer({ SettleLine: { fund_id: fundId } });
 /** `CloseSponsoredLine { fund_id }` — constr 7, thẻ CBOR 1280 ⟹ tiền tố `d90500`. */

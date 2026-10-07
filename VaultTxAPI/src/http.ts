@@ -19,10 +19,11 @@
 //   GET  /tx/status/{tx_hash}  chỉ đọc: { tx_hash, state: in_chain|in_mempool|not_found, block?, slot?,
 //                              block_time?, expires_at?, server_time? } — hash sai khuôn ⟹ 400
 //                              `TX_HASH_INVALID`; nhà cung cấp hỏng ⟹ 502 `TX_STATUS_PROVIDER_UNAVAILABLE`
-//   POST /tx/quote             { route, params, [owner_fee_addresses] } (báo giá phí — `feeQuote.ts`;
+//   POST /tx/quote             { route, params, [owner_fee_addresses] } [X-Feecover-Token] (báo giá phí — `feeQuote.ts`;
 //                              không dựng tx nào để ký, không giữ chỗ; hỏi Feecover `/v1/fee-sources`)
-//   POST /fee/utxo             { route }       [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`)
-//   POST /fee/sign             { tx_cbor }     [X-Feecover-Token]
+//   POST /fee/utxo             { route, [source] }    [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`;
+//   POST /fee/sign             { tx_cbor, [source] }  [X-Feecover-Token]   source = feecover | sponsor)
+//   GET  /sponsor/funds        (thẻ thường; chỉ đọc chuỗi — tình trạng các quỹ tài trợ theo DID, `sponsorFund.ts`)
 //
 // Nhiều khối (một tiến trình phục vụ cả Instant lẫn Schedule — `config.ts` ▸ khối phụ): consume /
 // open-thread / bind-did (và `params` của `/tx/quote` cho ba đường đó) nhận thêm `vault_type`
@@ -99,7 +100,7 @@ export interface RouterDeps {
   /** Đồng hồ máy chủ (POSIX ms) cho khối `epoch` của `/health`. Vắng ⟹ `Date.now`. Chỉ để phép kiểm
    *  cố định mốc; dịch vụ thật không truyền. */
   now?: () => number;
-  /** Hành trình tài trợ consume đầu (`/tx/sponsor/t1-open` … `t4-first-consume`). Vắng ⟹ 501
+  /** Hành trình tài trợ consume đầu (`/tx/sponsor/open-vault` … `first-consume`). Vắng ⟹ 501
    *  `SPONSOR_UNAVAILABLE` (trừ `/tx/sponsor/plan` — thuần, không cần cấu hình). */
   sponsor?: SponsorTxService;
   /** Bộ định tuyến khối (`blockRouter.ts`) khi tiến trình nạp nhiều khối. Vắng ⟹ mọi đường dựng đi
@@ -202,9 +203,20 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
       const body = asObject(req.body);
       const callerToken = req.headers["x-feecover-token"] ?? req.headers["X-Feecover-Token"];
       const out = path === "/fee/utxo"
-        ? await deps.feeProxy.utxo(body.route, callerToken)
-        : await deps.feeProxy.sign(body.tx_cbor, callerToken);
+        ? await deps.feeProxy.utxo(body.route, callerToken, body.source)
+        : await deps.feeProxy.sign(body.tx_cbor, callerToken, body.source);
       return { status: 200, body: out };
+    }
+
+    if (path === "/sponsor/funds") {
+      // Chỉ đọc, nhưng CHẠM chuỗi (hạn mức nhà cung cấp của người vận hành) ⟹ thẻ thường như `/tx/quote`,
+      // không mở tự do như `/health`. Thẻ vai sponsor KHÔNG mở được nó (`requireRole`: vai hẹp).
+      if (req.method !== "GET") return methodNotAllowed("GET");
+      if (deps.sponsor === undefined) {
+        throw new CodedApiError(501, "SPONSOR_UNAVAILABLE",
+          `Dịch vụ này chưa bật hành trình tài trợ — không có quỹ tài trợ để đọc.`);
+      }
+      return { status: 200, body: await deps.sponsor.fundsStatus() };
     }
 
     if (!path.startsWith("/tx/")) {
@@ -232,7 +244,11 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
     if (path === "/tx/quote") {
       // Báo giá đi ĐÚNG khối mà đường dựng sẽ đi (`vault_type` nằm trong `params`).
       const service = deps.blocks === undefined ? deps.service : await deps.blocks.serviceForQuote(body);
-      const out = await quoteFee(body, { service, feeProxy: deps.feeProxy });
+      // Cùng tiêu đề, cùng cách đọc với `/fee/*`: báo giá hỏi Feecover dưới đúng ứng dụng sẽ xin UTxO.
+      const feecoverToken = req.headers["x-feecover-token"] ?? req.headers["X-Feecover-Token"];
+      const out = await quoteFee(body, {
+        service, feeProxy: deps.feeProxy, ...(feecoverToken === undefined ? {} : { feecoverToken }),
+      });
       return { status: 200, body: out as unknown as Record<string, unknown> };
     }
     if (path.startsWith("/tx/sponsor/")) {
@@ -302,11 +318,14 @@ function err(code: string, message: string, details: Record<string, unknown> = {
 }
 
 /**
- * Đường đòi vai `sponsor`. Chỉ T2: nó là bước chi CARP của bên tài trợ, và khoá mềm `fund:<unit>` mà
- * nó giữ chặn được mọi T2 khác trên cùng quỹ — để thẻ thường gọi được nó là để bất kỳ ai cầm thẻ app
- * giữ quỹ của bên tài trợ (mỗi lượt dựng giữ khoá tới hết TTL, lặp vô hạn). Route tài trợ khác giữ thẻ thường.
+ * Đường đòi vai `sponsor` — đúng hai đường:
+ *   · `/tx/sponsor/fund-vault`: bước chi CARP của bên tài trợ, và khoá mềm `fund:<unit>` mà nó giữ chặn được mọi
+ *     fund-vault khác trên cùng quỹ — để thẻ thường gọi được nó là để bất kỳ ai cầm thẻ app giữ quỹ của bên tài trợ
+ *     (mỗi lượt dựng giữ khoá tới hết TTL, lặp vô hạn);
+ *   · `/tx/sponsor/claim`: dịch vụ KÝ platform lên tx claim, và claim cũng giữ `fund:<unit>`.
+ * Route tài trợ khác giữ thẻ thường.
  */
-export const SPONSOR_ROLE_PATHS: ReadonlySet<string> = new Set(["/tx/sponsor/t2-fund"]);
+export const SPONSOR_ROLE_PATHS: ReadonlySet<string> = new Set(["/tx/sponsor/fund-vault", "/tx/sponsor/claim"]);
 
 /**
  * Vai của người gọi theo đường.
@@ -341,8 +360,31 @@ function bearerOf(req: HttpRequest): string | undefined {
   return typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : undefined;
 }
 
+/**
+ * Header mà proxy và đường hầm thêm vào yêu cầu chúng chuyển tiếp. Dịch vụ chạy không thẻ chỉ an toàn khi
+ * mọi người gọi đều ở trên chính máy đó; yêu cầu mang một trong các header này đã đi qua proxy, tức có thể
+ * tới từ bất kỳ đâu.
+ */
+const FORWARDING_HEADERS: readonly string[] = ["forwarded", "x-forwarded-for", "x-real-ip", "cf-connecting-ip"];
+
+function forwardedBy(req: HttpRequest): string | undefined {
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (value !== undefined && FORWARDING_HEADERS.includes(name.toLowerCase())) return name.toLowerCase();
+  }
+  return undefined;
+}
+
 function requireToken(req: HttpRequest, token: string): void {
-  if (token === "") return;
+  if (token === "") {
+    // Không thẻ chỉ dành cho người gọi trên cùng máy. Yêu cầu đã qua proxy ⟹ 401, kể cả khi tiến trình bind
+    // loopback và chưa đặt tiền tố đường (`config.ts` chỉ bắt được ca có tiền tố).
+    const via = forwardedBy(req);
+    if (via !== undefined) {
+      throw new UnauthorizedError(
+        `Dịch vụ chạy không thẻ bài chỉ nhận yêu cầu trên chính máy này; yêu cầu này đã qua proxy (header "${via}").`);
+    }
+    return;
+  }
   const auth = req.headers["authorization"] ?? req.headers["Authorization"];
   if (typeof auth !== "string" || !auth.startsWith("Bearer ")) throw new UnauthorizedError();
   if (!timingSafeEqual(auth.slice("Bearer ".length), token)) throw new UnauthorizedError();

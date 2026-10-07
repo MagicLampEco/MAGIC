@@ -18,8 +18,8 @@ import { VaultDatumSchema, InstantVaultDatumSchema } from "../src/schemas.js";
 // Thứ tự ấy là **hợp đồng nhị phân**: Plutus Data mã hoá theo vị trí, nên lệch một ô
 // là mọi UTxO thật bị đọc sai — `attribution` ra làm một ngày, mốc khoá ra làm một
 // cấu trúc — và không phép kiểm kiểu nào đỏ. Có bên còn đọc theo VỊ TRÍ chứ không
-// qua lược đồ (`Paymaster` ▸ `vault_delegate_is` lấy thẳng trường 15), nên bên đó
-// lấy nhầm trường mà KHÔNG kêu.
+// qua lược đồ (`ConsumeMAGIC` ▸ `consume.ak` lấy thẳng trường 0; két Wakeme lấy theo vị trí
+// các trường InstantGen, chỉ số ≤ 15), nên bên đó lấy nhầm trường mà KHÔNG kêu.
 //
 // ── PHẠM VI — đọc kỹ trước khi tin màu xanh của tệp này ──────────────────────────
 //
@@ -55,7 +55,7 @@ const SCHEDULE_FIELDS_IN_ORDER = [
   "delegation_cert",       // 12
   "activity_state",        // 13
   "streak_state",          // 14
-  "personal_delegate",     // 15  🪦 quyền chết, trường ở lại (Paymaster đọc VỊ TRÍ này)
+  "personal_delegate",     // 15  🪦 quyền chết, trường ở lại
   "attribution",           // 16
   "usage_window",          // 17  Gen v2.0 — ĐÚNG 7 ô
   "usage_window_epoch",    // 18  Gen v2.0
@@ -79,7 +79,7 @@ const INSTANT_FIELDS_IN_ORDER = [
   "cap_epoch",             // 12  (Schedule: delegation_cert)
   "activity_state",        // 13
   "cap_nanogic",           // 14  (Schedule: streak_state)
-  "personal_delegate",     // 15  Paymaster đọc VỊ TRÍ này ở cả hai loại két
+  "personal_delegate",     // 15  🪦 bia mộ, cùng VỊ TRÍ ở cả hai loại két
   "attribution",           // 16
   "instant_unlock_ms",     // 17
   "usage_window",          // 18
@@ -126,7 +126,7 @@ describe("VaultDatum ▸ thứ tự trường là HỢP ĐỒNG NHỊ PHÂN", ()
     // hình dạng đó (tái dụng ô giữa, mốc khoá chen trước cửa sổ), nên ý định giữ lại là:
     // hai ca trên còn xanh được khi ai đó sửa cả lược đồ lẫn danh sách cho khớp nhau;
     // ca này so HAI LƯỢC ĐỒ với nhau, nên một trường bị dời ở một bên — kể cả
-    // `personal_delegate` mà Paymaster đọc theo vị trí — đỏ mà không sửa danh sách nào cứu.
+    // ô bia mộ `personal_delegate` — đỏ mà không sửa danh sách nào cứu.
     const sched = fieldOrderOf(VaultDatumSchema);
     const inst  = fieldOrderOf(InstantVaultDatumSchema);
 

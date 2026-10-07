@@ -49,14 +49,6 @@ trình biên dịch `v1.1.21+42babe5`
 |---|---|
 | `vault.vault` | `7bc836c50d365440b3c76c036e4eda2a42b231eb4f2be50dd5f386ef` |
 
-### `Paymaster/onchain`
-
-trình biên dịch `v1.1.21+42babe5`
-
-| validator | hash (CHƯA apply-param) |
-|---|---|
-| `paymaster.paymaster` | `94fcfa10e0e97859061e84b3279fbec58284b3a0e658bd514ef2d6b2` |
-
 ### `PrepaidGen/onchain`
 
 trình biên dịch `v1.1.21+42babe5`

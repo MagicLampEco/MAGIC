@@ -5,6 +5,34 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: vá review #162 — ví trả phí ≠ khoá platform, route claim, giữ DID khi genesis
+
+**Đổi gì.** (1) Ví trả phí mang khoá thanh toán nằm trong `platform_pkhs` ⟹ `422 SPONSOR_FEE_WALLET_IS_PLATFORM`
+ở mọi bước tài trợ và ở claim; hàm ký platform nay nhận kèm MỌI input + thế chấp đã giải và từ chối input/thế
+chấp ở địa chỉ khoá platform, mục rút từ tài khoản thưởng của khoá đó, chứng chỉ, biểu quyết; lúc khởi động
+dịch vụ CẢNH BÁO (không từ chối) khi địa chỉ enterprise của khoá giữ UTxO. (2) Route mới `POST
+/tx/sponsor/claim` (thẻ vai sponsor; `fund_id`, `amount` tuỳ chọn): dịch vụ dựng `FundClaim` hoặc lượt rút cuối
+đóng quỹ đã thu hồi rồi ký platform; CARP chỉ tới beneficiary ghim trong datum, quỹ chỉ được nhận khi beneficiary
+đó khớp cấu hình. Hàm ký có nhánh thứ hai, hẹp: đúng một input `paid_fund` tiêu bằng `FundClaim`, CARP chỉ tới
+beneficiary ghim hoặc về lại quỹ, mint rỗng hoặc chỉ đốt NFT của chính quỹ, `required_signers` ∋ platform. Khoá
+route `sponsor-claim`, purpose Feecover `sponsor_claim`; `/tx/sponsor/plan` thêm bước claim sau first-consume.
+(3) Genesis quỹ (open-vault chở quỹ, open-fund) giữ `did:<did_commit>` tới hết hạn tx ⟹ lượt thứ hai trong khe
+`409 SPONSOR_DID_GENESIS_IN_FLIGHT`. (4) `VAULT_TX_API_PLATFORM_KEY` bị gỡ khỏi môi trường tiến trình ngay sau khi
+đọc; `git` của `buildInfo.ts` chạy với môi trường tường minh. (5) README: hệ quả khi khoá lộ viết lại đủ ba điều,
+quy trình xoay khoá, bảng lỗi. Nguồn: `VaultTxAPI/src/platformSigner.ts` ▸ `createPlatformSigner`;
+`VaultTxAPI/src/sponsor.ts` ▸ `claimFund`, `assertFeeWalletNotPlatform`, `platformAddressFundedWarning`;
+`VaultTxAPI/src/locks.ts` ▸ `DidGenesisHolds`; `VaultTxAPI/src/config.ts` ▸ `scrubPlatformKey`, `childProcessEnv`.
+
+**Vì sao.** Review PR #162: witness platform thoả mọi chữ ký khoá đó đòi trong thân tx, nên ví trả phí đặt ở
+địa chỉ khoá platform được "dịch vụ trả hộ"; `FundClaim` đòi chữ ký platform mà chỉ dịch vụ giữ khoá, không có
+route thì E kẹt trong quỹ; hai genesis cho cùng DID dựng được trước khi tx đầu vào khối.
+
+**Cái gì gãy nếu bám bản cũ.** `createPlatformSigner(...)` trả hàm nhận `{ kind, tx, inputs }` thay cho một
+`CML.Transaction`; tuỳ chọn thêm `network`, `carpUnit`, `beneficiary`. `SPONSOR_ROUTES` thêm `sponsor-claim` —
+bảng purpose Feecover không có khoá đó thì `/tx/sponsor/claim` qua `fee_payer` trả `400 FEE_PROXY_PURPOSE_UNMAPPED`.
+`/tx/sponsor/plan` có thêm một dòng `claim`. Quỹ đúc bằng khoá platform cũ không claim được qua dịch vụ chạy khoá
+mới (README ▸ "Xoay khoá platform").
+
 ## 2026-10-07 — VaultTxAPI: vá review #161 — trần khoản ứng, chủ ký open-fund, ghim quỹ chặt hơn
 
 **Đổi gì.** (1) Hành trình tài trợ: `thread_lovelace` đi cùng `fee_payer` ⟹ `400

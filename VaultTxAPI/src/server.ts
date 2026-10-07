@@ -27,6 +27,7 @@ import { DidOwnerResolver } from "./didOwner.js";
 import { ChainDidPaymentAnchorReader } from "./funding.js";
 import { FeeProxy } from "./feeProxy.js";
 import { SponsorTxService } from "./sponsor.js";
+import { createPlatformSigner } from "./platformSigner.js";
 import { PREPAID_VAULT_TYPE } from "./config.js";
 import type { PrepaidBlueprint } from "@magiclamp/prepaidgen-sdk";
 import { readBuildInfo } from "./buildInfo.js";
@@ -108,6 +109,22 @@ const routing = blockRoutingOf(blockServices);
 const { blocks } = routing;
 
 
+// Platform key of the sponsor fund genesis (the ONLY key this service holds): taken over by the signer
+// closure at startup, then dropped from `cfg`. Mismatching key hash, a key equal to a bearer token, or a key
+// without a `paid_fund` block ⟹ refuse to start (`platformSigner.ts`).
+if (cfg.platformKey !== undefined && cfg.deployment.prepaid === undefined) {
+  throw new Error("[platform] VAULT_TX_API_PLATFORM_KEY is set but the deployment has no paid_fund block — refusing to start.");
+}
+const platformSign = cfg.platformKey === undefined || cfg.deployment.prepaid === undefined
+  ? undefined
+  : createPlatformSigner({
+      keyBech32: cfg.platformKey,
+      expectedPkh: cfg.deployment.prepaid.sponsor?.platformPkhs?.[0],
+      paidFundPolicy: cfg.deployment.prepaid.fundScriptHash,
+      tokenValues: [cfg.token, cfg.sponsorToken, cfg.feecoverAppToken ?? ""],
+    });
+delete cfg.platformKey;
+
 // Hành trình tài trợ: chỉ khi bản deploy phục vụ két Prepaid — khi đó `vaultPlutusJson` CHÍNH LÀ blueprint
 // PrepaidGen. Bản deploy khác ⟹ `/tx/sponsor/t*` trả 501 `SPONSOR_UNAVAILABLE`.
 const sponsor = cfg.deployment.vaults.some(v => v.vaultType === PREPAID_VAULT_TYPE)
@@ -125,6 +142,7 @@ const sponsor = cfg.deployment.vaults.some(v => v.vaultType === PREPAID_VAULT_TY
       ...(didOwner === undefined ? {} : { didOwner }),
       prepaidBlueprint: vaultPlutusJson as unknown as PrepaidBlueprint,
       lucidForWallet: (a, u) => sdkBuilder.lucidForWallet(a, u),
+      ...(platformSign === undefined ? {} : { platformSign }),
     })
   : undefined;
 

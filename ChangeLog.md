@@ -5,6 +5,29 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: open-vault chở genesis quỹ tài trợ của DID; dịch vụ giữ MỘT khoá, ký vai platform
+
+**Đổi gì.** `POST /tx/sponsor/open-vault` dựng MỘT tx: két Prepaid + thread consume + genesis quỹ `paid_fund`
+của DID (`owner_commit` = `did_commit` của thread trong chính tx đó; seed quỹ = seed két). Dịch vụ gắn vkey
+witness platform vào `tx_cbor`; `signers` thêm `{ role: "platform", how: "service" }`; `summary.fund` mới
+(`created` | `existing`). DID đã có quỹ dùng được ⟹ không genesis quỹ thứ hai. `open-fund` thành bước BÙ (két mở
+trước bản này), cũng do dịch vụ ký platform; `/tx/sponsor/plan` đưa nó sang `fallback_steps`. Khoá ở biến mới
+`VAULT_TX_API_PLATFORM_KEY` (GIÁ TRỊ bech32 `ed25519_sk…`), chỉ nằm trong `VaultTxAPI/src/platformSigner.ts`
+▸ `createPlatformSigner`: lúc khởi động suy pkh, đòi `== paid_fund.sponsor.platform_pkhs[0]`, đòi khác mọi thẻ
+bài; hàm ký chỉ nhận đối tượng tx dịch vụ vừa dựng, có đúng một mint +1 NFT `paid_fund` và `required_signers`
+chứa pkh platform. Vắng khoá ⟹ route cần tạo quỹ trả `501 CONFIG_MISSING` (`details.missing` nêu tên biến).
+`MagicSDK` ▸ `buildSponsorT1OpenPrepaid` nhận thêm `extend` (tuỳ chọn) để chở phần dựng thêm vào cùng tx.
+
+**Vì sao.** Chủ dự án chốt 2026-10-07: bớt một bước của người mới, bên trả phí không phải giữ khoá platform.
+Thay quyết định sáng cùng ngày ("Feecover ký platform"). Bất biến số một của VaultTxAPI viết lại theo nghĩa mới
+(README §1); `tests/noSigningMaterial.test.ts` đo nó: đúng một mô-đun mang vật liệu ký, đúng một biến mang khoá.
+
+**Cái gì gãy nếu bám bản cũ.** (1) Tx open-vault (DID chưa có quỹ) có thêm một output quỹ, một mint, một
+required signer và một vkey witness sẵn: bên ký phải GIỮ witness đã có khi ghép chữ ký (`assemble` của Lucid giữ).
+Ví trả phí ứng thêm min-ADA quỹ (đo Emulator: output quỹ 2.366.190 lovelace; tổng khoản ứng két + thread + quỹ 5.775.560 lovelace). (2) Cấu hình có `fund_units` (tập đóng) hoặc thiếu khoá: open-vault cho DID chưa có
+quỹ nay trả 501 thay vì dựng két không quỹ. (3) Thứ tự kế hoạch: open-fund không còn trong `steps`.
+(4) open-fund: `CONFIG_MISSING` nay nêu thêm `VAULT_TX_API_PLATFORM_KEY`; tx trả về mang witness platform.
+
 ## 2026-10-07 — VaultTxAPI: `POST /tx/sponsor/open-fund` — tạo quỹ tài trợ cho một DID, platform ký
 
 **Đổi gì.** Route mới `/tx/sponsor/open-fund` (route sổ phát-hành / `/fee/utxo` `sponsor-open-fund`;

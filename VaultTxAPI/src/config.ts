@@ -347,6 +347,13 @@ export interface AppConfig {
    * không thẻ" cho nó.
    */
   sponsorToken: string;
+  /**
+   * Platform key of the sponsor fund genesis (`VAULT_TX_API_PLATFORM_KEY`, bech32 `ed25519_sk…` VALUE, never a
+   * path). The only key this service holds: `server.ts` hands it to the signer module (`platformSigner.ts`)
+   * at startup (key hash must equal `paid_fund.sponsor.platform_pkhs[0]`, value must differ from every bearer
+   * token) and drops it from this object. Absent ⟹ routes that create a fund answer 501 `CONFIG_MISSING`.
+   */
+  platformKey?: string;
   requestTimeoutMs: number;
   /** Khoá mềm theo chủ sống bao lâu (`VAULT_TX_API_LOCK_TTL_MS`). CHỈ điều khiển khoá mềm — từ
    *  2026-10-06 nó KHÔNG còn là `expires_at`, không còn quyết hạn sổ phát-hành hay sổ input vừa nộp. */
@@ -441,6 +448,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
 
+  // Platform key of the sponsor fund genesis: read as a VALUE here, checked and taken over by `platformSigner.ts`.
+  const platformKey = env.VAULT_TX_API_PLATFORM_KEY || undefined;
+
   const requestTimeoutMs = intOrThrow(env.VAULT_TX_API_TIMEOUT_MS, "VAULT_TX_API_TIMEOUT_MS", 20_000, 100, 600_000);
   const lockTtlMs = intOrThrow(env.VAULT_TX_API_LOCK_TTL_MS, "VAULT_TX_API_LOCK_TTL_MS", 180_000, 1_000, 3_600_000);
   // Hạn ký: mặc định 15 phút (chủ dự án chọn). Sàn 1 phút — dưới mức đó người dùng không kịp mở
@@ -468,6 +478,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     txValidityMs, pendingSpendsTtlMs,
     extraBlocks,
     ...(feecoverAppToken === undefined ? {} : { feecoverAppToken }),
+    ...(platformKey === undefined ? {} : { platformKey }),
   };
 }
 

@@ -324,16 +324,23 @@ describe("bộ định tuyến /tx/sponsor/*", () => {
     expect(r.body.same_epoch).toEqual(expect.arrayContaining(["draw-magic", "first-consume"]));
   });
 
-  it("plan: open-fund đứng SAU bind-did, TRƯỚC fund-vault; vai ký = ví trả phí · platform (chủ KHÔNG ký); fund-vault đòi open-fund", async () => {
+  it("plan: open-vault chở genesis quỹ (vai platform = service) → bind-did → fund-vault → draw-magic → first-consume; open-fund chỉ là bước BÙ", async () => {
     const r = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH }, undefined);
     expect(r.status).toBe(200);
-    const steps = r.body.steps as Array<{ step: string; path?: string; signers: Array<{ role: string }>; requires: string[] }>;
+    type Row = { step: string; path?: string; signers: Array<{ role: string; how: string }>; requires: string[]; when?: string };
+    const steps = r.body.steps as Row[];
     const order = steps.map(x => x.step).filter(s => s !== "wakeme-genesis");
-    expect(order).toEqual(["open-vault", "bind-did", "open-fund", "fund-vault", "draw-magic", "first-consume"]);
-    const open = steps.find(x => x.step === "open-fund")!;
-    expect(open.path).toBe("/tx/sponsor/open-fund");
-    expect(open.signers.map(x => x.role)).toEqual(["fee-wallet", "platform"]);
-    expect(steps.find(x => x.step === "fund-vault")!.requires.some(q => q.startsWith("open-fund"))).toBe(true);
+    expect(order).toEqual(["open-vault", "bind-did", "fund-vault", "draw-magic", "first-consume"]);
+    const ov = steps.find(x => x.step === "open-vault")!;
+    expect(ov.signers.map(x => x.role)).toEqual(["fee-wallet", "owner", "platform"]);
+    expect(ov.signers.find(x => x.role === "platform")!.how).toBe("service");
+    // open-fund KHÔNG nằm trong hành trình chính; chỉ ở danh sách bước bù.
+    const fb = r.body.fallback_steps as Row[];
+    expect(fb.map(x => x.step)).toEqual(["open-fund"]);
+    expect(fb[0]!.path).toBe("/tx/sponsor/open-fund");
+    expect(fb[0]!.signers).toEqual([expect.objectContaining({ role: "fee-wallet" }), { role: "platform", how: "service" }]);
+    expect(fb[0]!.when).toMatch(/trước/);
+    expect(steps.find(x => x.step === "fund-vault")!.requires.some(q => q.startsWith("quỹ tài trợ của DID"))).toBe(true);
   });
 
   it("open-fund: thân bài mang did_commit / owner_commit / sponsor / beneficiary / fund_id ⟹ 400 SPONSOR_REQUEST_SHAPE; CẶP: chỉ owner ⟹ qua", () => {

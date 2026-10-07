@@ -21,6 +21,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { childProcessEnv, scrubPlatformKey } from "../src/config.js";
 import { describe, expect, it } from "vitest";
 
 const PKG_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -143,10 +144,32 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
       expect(src.map(rel)).toContain(f);
       expect(touch.test(readFileSync(join(PKG_ROOT, f), "utf8"))).toBe(false);
     }
-    // Trong sponsor.ts, lời gọi ký nằm ở ĐÚNG hai route tạo quỹ: hai lời gọi `cosignPlatform`, một lời gọi hàm ký.
+    // Trong sponsor.ts, lời gọi ký nằm ở ĐÚNG ba chỗ: hai route tạo quỹ (`fund-genesis`) + claim (`fund-claim`), cùng
+    // đi qua `cosignPlatform`; một lời gọi hàm ký.
     const sp = readFileSync(join(PKG_ROOT, "src/sponsor.ts"), "utf8");
-    expect(sp.match(/this\.cosignPlatform\(/g)?.length).toBe(2);
-    expect(sp.match(/\bsign\(tx\)/g)?.length).toBe(1);
+    expect(sp.match(/this\.cosignPlatform\(/g)?.length).toBe(3);
+    expect(sp.match(/this\.cosignPlatform\([^;]*"fund-genesis"/g)?.length).toBe(2);
+    expect(sp.match(/this\.cosignPlatform\([^;]*"fund-claim"/g)?.length).toBe(1);
+    expect(sp.match(/\bsign\(\{ kind, tx, inputs \}\)/g)?.length).toBe(1);
+    expect(sp.match(/\bsign\(/g)?.length).toBe(1);
+  });
+
+  it("hàm ký chỉ được gọi từ sponsor.ts: server.ts chỉ DỰNG nó (createPlatformSigner) và chuyển cho SponsorTxService", () => {
+    const sv = readFileSync(join(PKG_ROOT, "src/server.ts"), "utf8");
+    expect(sv).not.toMatch(/platformSign\s*\(/);
+    expect(sv.match(/createPlatformSigner\(/g)?.length).toBe(1);
+  });
+
+  it("khoá platform không đi vào tiến trình con: gỡ khỏi môi trường sau khi đọc; git chạy với env tường minh không có khoá", () => {
+    const name = j("VAULT_TX_API_", "PLATFORM_KEY");
+    const env: Record<string, string | undefined> = { [name]: "giá-trị-thử", PATH: "/bin" };
+    expect(childProcessEnv(env)).toEqual({ PATH: "/bin" });
+    expect(env[name]).toBe("giá-trị-thử"); // bản sao, không sửa nguồn
+    scrubPlatformKey(env);
+    expect(env).toEqual({ PATH: "/bin" });
+    const sv = readFileSync(join(PKG_ROOT, "src/server.ts"), "utf8");
+    expect(sv.indexOf("scrubPlatformKey();")).toBeGreaterThan(sv.indexOf("const cfg = loadConfig();"));
+    expect(readFileSync(join(PKG_ROOT, "src/buildInfo.ts"), "utf8")).toMatch(/env: childProcessEnv\(\)/);
   });
 
   it("phép quét CẮN được: một chuỗi cấm nhân tạo bị bắt", () => {
@@ -160,7 +183,14 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
     const readers = SOURCE_FILES
       .filter(f => envAccess.test(readFileSync(f, "utf8")))
       .map(f => f.slice(PKG_ROOT.length));
-    expect(readers.sort()).toEqual(["src/config.ts"]);
+    // Một ngoại lệ, chỉ ở tầng test: `sponsorEmulator.test.ts` ▸ `dumpSampleTx` đọc ĐÚNG MỘT tên,
+    // `VTA_SAMPLE_TX_DIR` (thư mục ghi tx mẫu, tắt mặc định). Mã dịch vụ (`src/`) vẫn chỉ có `config.ts`.
+    expect(readers.sort()).toEqual(["src/config.ts", "tests/sponsorEmulator.test.ts"]);
+    const emu = readFileSync(join(PKG_ROOT, "tests/sponsorEmulator.test.ts"), "utf8");
+    const names = [...emu.matchAll(new RegExp(j("process", "\\s*\\.\\s*", "env"), "g"))]
+      .map(m => emu.slice(m.index! + m[0].length).match(/^\.([A-Z0-9_]+)/)?.[1] ?? "<không phải truy cập theo tên>");
+    expect(names).toEqual(["VTA_SAMPLE_TX_DIR"]);
+    expect(readFileSync(join(PKG_ROOT, "src/config.ts"), "utf8")).not.toContain("VTA_SAMPLE_TX_DIR");
   });
 
   it("tập biến môi trường là danh sách ĐÓNG, và bí mật duy nhất là GIÁ TRỊ khoá chuỗi", () => {
@@ -192,6 +222,8 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
       // Token ứng dụng Feecover (proxy phí, `feeProxy.ts`): token API dạng GIÁ TRỊ như khoá
       // Blockfrost, không phải khoá ký — chữ ký ví trả phí do Feecover tạo, dịch vụ chỉ chuyển tiếp.
       "FEECOVER_APP_TOKEN",
+      // Chỉ tầng test (`sponsorEmulator.test.ts` ▸ `dumpSampleTx`): thư mục ghi tx mẫu Emulator, không phải bí mật.
+      "VTA_SAMPLE_TX_DIR",
     ]);
     // Chỉ tính hai hình dạng ĐỌC thật: truy cập thuộc tính trên `env`, và chuỗi tên
     // truyền vào bộ đọc.

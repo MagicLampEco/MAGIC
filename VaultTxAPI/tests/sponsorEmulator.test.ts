@@ -16,7 +16,7 @@
 
 import { generateKeyPairSync, sign as edSign, type KeyObject } from "node:crypto";
 import { bech32 } from "bech32";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   CML,
@@ -49,9 +49,9 @@ import {
   encodeVaultDatum,
   parMagicFromCarp,
   withRefScripts,
+  type PrepaidScripts,
   type PrepaidBlueprint,
-  type PrepaidVaultRedeemer,
-} from "@magiclamp/prepaidgen-sdk";
+  type PrepaidVaultRedeemer, addSettleLine, maxClaimable } from "@magiclamp/prepaidgen-sdk";
 import { msPerEpoch, wakemeVaultHash, windowOriginMs } from "@magiclamp/protocol-utils";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -183,6 +183,7 @@ let svcOpen: SponsorTxService;     // cấu hình open-fund: platform_pkhs + ben
 let svcSetClosed: SponsorTxService; // cấu hình có cả fund_units ⟹ open-fund 501 SPONSOR_FUND_SET_CLOSED
 let svcOtherBen: SponsorTxService;  // cùng cấu hình open-fund, beneficiary ghim KHÁC ⟹ quỹ open-fund tạo thành foreign_beneficiary
 let svcOpenNoKey: SponsorTxService; // cùng ghim với svcOpen, KHÔNG hàm ký platform ⟹ route cần tạo quỹ trả 501
+let pgScripts: PrepaidScripts; // bộ script Prepaid có ref-script (SettleLine dựng bằng SDK ở bài claim)
 let coOwner: TestKey;  // chủ của hành trình open-vault chở genesis quỹ (DID_CO)
 let coOwner2: TestKey; // chủ thứ hai cùng DID_CO: open-vault khi DID đã có quỹ ⟹ không genesis thứ hai
 /** Số lần hàm ký platform được gọi (bọc quanh `createPlatformSigner` của svcOpen/svcSetClosed). */
@@ -282,8 +283,22 @@ function routerDeps(s: SponsorTxService): RouterDeps {
 type Body = Record<string, unknown>;
 /** fund-vault chỉ mở bằng thẻ vai sponsor (`http.ts` ▸ `requireRole`); các route khác giữ thẻ thường (rỗng ở đây). */
 const SPONSOR_ROLE_TOKEN = "vai-sponsor-emu";
+/**
+ * Sample transactions for fee-payer integrators. OFF in a default run: only when `VTA_SAMPLE_TX_DIR` is set by
+ * hand does this write `<name>.cbor.hex` (the tx exactly as the route returns it, platform witness attached) and
+ * `<name>.tx_hash`. The files are Emulator transactions, not chain records; do not commit them.
+ */
+function dumpSampleTx(name: string, b: Body): void {
+  const dir = process.env.VTA_SAMPLE_TX_DIR;
+  if (dir === undefined || dir === "") return;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(`${dir}/${name}.cbor.hex`, `${b.tx_cbor as string}\n`);
+  writeFileSync(`${dir}/${name}.tx_hash`, `${b.tx_hash as string}\n`);
+}
+
 async function post(path: string, body: Body, s: SponsorTxService = svc): Promise<{ status: number; body: Body }> {
-  const headers = path === "/tx/sponsor/fund-vault" ? { authorization: `Bearer ${SPONSOR_ROLE_TOKEN}` } : {};
+  const headers = path === "/tx/sponsor/fund-vault" || path === "/tx/sponsor/claim"
+    ? { authorization: `Bearer ${SPONSOR_ROLE_TOKEN}` } : {};
   return handle({ method: "POST", url: path, headers, body }, routerDeps(s));
 }
 const errCode = (r: { body: Body }) => (r.body.error as { code: string } | undefined)?.code;
@@ -419,6 +434,7 @@ beforeAll(async () => {
   const fh = await asSponsor(l => l.newTx().pay.ToAddressWithData(lockAddr, undefined, { lovelace: 40_000_000n }, base.paidFund.script));
   const [vaultRef, fundRef] = await emulator.getUtxosByOutRef([{ txHash: vh, outputIndex: 0 }, { txHash: fh, outputIndex: 0 }]);
   const scripts = withRefScripts(base, { vault: vaultRef!, paidFund: fundRef! });
+  pgScripts = scripts;
 
   // Quỹ do ví `k` đúc (platform = `k`, bên hưởng = chủ — không quan trọng cho hành trình). `did` có ⟹
   // quỹ TÀI TRỢ của DID đó, bên tài trợ = ví `sponsor`; vắng ⟹ quỹ chung (sponsorship = None).
@@ -491,8 +507,9 @@ beforeAll(async () => {
   const platformSignRaw = createPlatformSigner({
     keyBech32: skBech32(platformKey), expectedPkh: platformKey.pkh, paidFundPolicy: base.paidFund.hash,
     tokenValues: [SPONSOR_ROLE_TOKEN],
+    network: NET, carpUnit: CARP_UNIT, beneficiary: { address: beneficiaryKey.address, datumCbor: OPEN_BEN_DATUM },
   });
-  const platformSign = (tx: CML.Transaction): CML.Vkeywitness => { platformSignCalls += 1; return platformSignRaw(tx); };
+  const platformSign: typeof platformSignRaw = r => { platformSignCalls += 1; return platformSignRaw(r); };
   // Két mở TRƯỚC bản open-vault chở quỹ: chỉ két + thread, dựng thẳng bằng SDK (bước bù open-fund phủ ca này).
   const consumeRefUtxo = (await emulator.getUtxosByOutRef([{ txHash: ch, outputIndex: 0 }]))[0]!;
   legacyOpenVault = async (did, who, payer) => {
@@ -507,7 +524,7 @@ beforeAll(async () => {
     return r.summary.vaultUnit;
   };
 
-  const mk = (json: string, l: OwnerLockTable, sign?: (tx: CML.Transaction) => CML.Vkeywitness) => new SponsorTxService({
+  const mk = (json: string, l: OwnerLockTable, sign?: ReturnType<typeof createPlatformSigner>) => new SponsorTxService({
     network: NET,
     deployment: parseDeployment(json, NET),
     chain: emulatorChain(),
@@ -1101,6 +1118,7 @@ describe("open-fund — bước bù: genesis quỹ tài trợ theo DID; VTA ký 
       return r.body;
     })();
     openFundTxCbor = b.tx_cbor as string;
+    dumpSampleTx("open-fund", b);
     // NỘP TRƯỚC mọi phép so hình dạng: đột biến gỡ platform khỏi required_signers phải đỏ ở VALIDATOR (hành vi),
     // không ở một expect hình dạng. Bên ngoài ký ví trả phí + chủ (#161-5) — witness platform do dịch vụ gắn sẵn.
     const h = await signAndSubmit(b.tx_cbor as string, [feecover2, opener]);
@@ -1254,10 +1272,26 @@ describe("open-vault kèm quỹ — VTA ký platform; chủ + ví trả phí ký
     expect(platformSignCalls).toBe(before);
   }, SLOW);
 
+  it("#162-1 ĐỎ: ví trả phí = địa chỉ khoá platform (change_address · fee_payer · base cùng khoá) ⟹ 422 SPONSOR_FEE_WALLET_IS_PLATFORM, hàm ký không được gọi; CẶP: ca XANH ngay dưới (ví khác) ⟹ 200", async () => {
+    const before = platformSignCalls;
+    const platformBase = credentialToAddress(NET, { type: "Key", hash: platformKey.pkh }, { type: "Key", hash: sponsor.pkh });
+    for (const extra of [
+      { change_address: platformKey.address },
+      { change_address: platformBase },
+      { fee_payer: { utxo: `${"ee".repeat(32)}#0`, address: platformKey.address } },
+    ]) {
+      const r = await post("/tx/sponsor/open-vault", cb(coOwner, { ...extra, did_commit: DID_CO }), svcOpen);
+      expect(r.status).toBe(422);
+      expect(errCode(r)).toBe("SPONSOR_FEE_WALLET_IS_PLATFORM");
+    }
+    expect(platformSignCalls).toBe(before);
+  }, SLOW);
+
   it("open-vault XANH kèm quỹ: fee_payer Feecover; MỘT tx đúc két + thread + quỹ; VTA đã ký platform; Feecover + chủ ký ⟹ chuỗi nhận; datum quỹ đúng DID", async () => {
     const before = platformSignCalls;
     const fp = await fpOf(feecover2);
     const b = await ok("/tx/sponsor/open-vault", cb(coOwner, { fee_payer: fp, did_commit: DID_CO }));
+    dumpSampleTx("open-vault", b);
     // NỘP TRƯỚC mọi phép so hình dạng: bỏ witness platform phải đỏ ở Emulator (hành vi), không ở một expect.
     await submitOpen(b, [feecover2, coOwner]);
     expect(platformSignCalls).toBe(before + 1);
@@ -1362,6 +1396,95 @@ describe("open-vault kèm quỹ — VTA ký platform; chủ + ví trả phí ký
     expect(td.fields[4]).toBe(10_000_000n);
     expect(decodeVaultDatum((await only(coVault)).datum!).magic_batches[0]!.current_amount).toBe(parMagicFromCarp(CARP) - 10_000_000n);
     expect(platformSignCalls).toBe(before);
+  }, SLOW);
+
+  it("claim ĐỎ (E = 0, trước SettleLine) ⟹ 409 SPONSOR_FUND_NOTHING_TO_CLAIM, hàm ký không được gọi", async () => {
+    const before = platformSignCalls;
+    const r = await post("/tx/sponsor/claim", { fund_id: coFundId, change_address: fee.address }, svcOpen);
+    expect(r.status).toBe(409);
+    expect(errCode(r)).toBe("SPONSOR_FUND_NOTHING_TO_CLAIM");
+    expect(platformSignCalls).toBe(before);
+  }, SLOW);
+
+  it("SettleLine (SDK, không phải route): MAGIC đã tiêu của két vào magic_settled của quỹ ⟹ E > 0", async () => {
+    const validity = { fromMs: nowMs(), toMs: nowMs() + 300_000n };
+    const vaultUtxo = await only(coVault);
+    const fundUtxo = await only(coFundUnit);
+    await asWallet(fee, l => addSettleLine(l.newTx(), { scripts: pgScripts, vaultUtxo, fundUtxo, validity }).tx);
+    const d = decodeFundDatum((await only(coFundUnit)).datum!);
+    expect(d.magic_settled).toBe(10_000_000n);
+    expect(maxClaimable(d)).toBeGreaterThan(0n);
+  }, SLOW);
+
+  it("claim ĐỎ: fee_payer ở địa chỉ khoá platform ⟹ 422 SPONSOR_FEE_WALLET_IS_PLATFORM; change_address = beneficiary ⟹ 422 SPONSOR_FEE_WALLET_IS_BENEFICIARY; amount > E ⟹ 422; owner trong thân ⟹ 400", async () => {
+    const before = platformSignCalls;
+    const max = maxClaimable(decodeFundDatum((await only(coFundUnit)).datum!));
+    const cases: Array<[Body, number, string]> = [
+      [{ fund_id: coFundId, fee_payer: { utxo: `${"ee".repeat(32)}#0`, address: platformKey.address } }, 422, "SPONSOR_FEE_WALLET_IS_PLATFORM"],
+      [{ fund_id: coFundId, change_address: platformKey.address }, 422, "SPONSOR_FEE_WALLET_IS_PLATFORM"],
+      [{ fund_id: coFundId, change_address: beneficiaryKey.address }, 422, "SPONSOR_FEE_WALLET_IS_BENEFICIARY"],
+      [{ fund_id: coFundId, change_address: fee.address, amount: (max + 1n).toString() }, 422, "SPONSOR_CLAIM_ABOVE_MAX"],
+      [{ fund_id: coFundId, change_address: fee.address, beneficiary: fee.address }, 400, "SPONSOR_REQUEST_SHAPE"],
+    ];
+    for (const [body, status, code] of cases) {
+      const r = await post("/tx/sponsor/claim", body, svcOpen);
+      expect([r.status, errCode(r)]).toEqual([status, code]);
+    }
+    expect(platformSignCalls).toBe(before);
+  }, SLOW);
+
+  it("claim XANH: fee_payer Feecover; VTA đã ký platform; Feecover ký ⟹ chuỗi nhận; CARP = E tới ĐÚNG beneficiary (datum ghim); datum quỹ đọc lại", async () => {
+    const before = platformSignCalls;
+    const fundBefore = decodeFundDatum((await only(coFundUnit)).datum!);
+    const max = maxClaimable(fundBefore);
+    const benBefore = (await emulator.getUtxos(beneficiaryKey.address)).length;
+    const fp = await fpOf(feecover2);
+    const b = await ok("/tx/sponsor/claim", { fund_id: coFundId, fee_payer: fp });
+    dumpSampleTx("claim", b);
+    expect(platformSignCalls).toBe(before + 1);
+    expect((b.signers as Array<{ role: string; key_hashes: string[] }>).map(x => [x.role, x.key_hashes]))
+      .toEqual([["fee-wallet", [feecover2.pkh]], ["platform", [platformKey.pkh]]]);
+    expect(b.required_signers).toEqual([platformKey.pkh]);
+    expectPlatformWitnessOnly(b.tx_cbor as string);
+    const s = b.summary as Body;
+    expect(s.amount).toBe(max.toString());
+    expect(s.closing).toBe(false);
+    await submitOpen(b, [feecover2]);
+    // CARP tới đúng địa chỉ ghim, đúng datum ghim — đọc thẳng từ chuỗi.
+    const benUtxos = await emulator.getUtxos(beneficiaryKey.address);
+    expect(benUtxos.length).toBe(benBefore + 1);
+    const paid = benUtxos.find(u => (u.assets[CARP_UNIT] ?? 0n) > 0n && refStr(u).startsWith(b.tx_hash as string))!;
+    expect(paid.assets[CARP_UNIT]).toBe(max);
+    expect(paid.datum).toBe(OPEN_BEN_DATUM);
+    const after = decodeFundDatum((await only(coFundUnit)).datum!);
+    expect(after.provider_claimed).toBe(fundBefore.provider_claimed + max);
+    expect(after.carp_locked).toBe(fundBefore.carp_locked - max);
+    expect(after.beneficiary).toEqual(fundBefore.beneficiary);
+    expect(maxClaimable(after)).toBe(0n);
+  }, SLOW);
+
+  it("#162-3 ĐỎ: hai open-vault chở genesis cho CÙNG DID trong khe chưa vào khối ⟹ lượt hai 409 SPONSOR_DID_GENESIS_IN_FLIGHT; CẶP: DID khác ⟹ 200", async () => {
+    const DID_HOLD = "d7".repeat(32);
+    const DID_HOLD2 = "d8".repeat(32);
+    const o1 = newKey();
+    const o2 = newKey();
+    const o3 = newKey();
+    const first = await ok("/tx/sponsor/open-vault", cb(o1, { change_address: fee.address, did_commit: DID_HOLD }));
+    try {
+      expect(((first.summary as Body).fund as Body).status).toBe("created");
+      const second = await post("/tx/sponsor/open-vault", cb(o2, { change_address: fee.address, did_commit: DID_HOLD }), svcOpen);
+      expect(second.status).toBe(409);
+      expect(errCode(second)).toBe("SPONSOR_DID_GENESIS_IN_FLIGHT");
+      expect((second.body.error as { details: Body }).details.tx_hash).toBe(first.tx_hash);
+      // /tx/submit nhả khoá CHỦ theo hash (mô phỏng ở đây); khoá DID vẫn giữ tới hết hạn tx.
+      openLocks.releaseByTxHash(first.tx_hash as string);
+      const third = await post("/tx/sponsor/open-vault", cb(o2, { change_address: fee.address, did_commit: DID_HOLD }), svcOpen);
+      expect(errCode(third)).toBe("SPONSOR_DID_GENESIS_IN_FLIGHT");
+      const other = await ok("/tx/sponsor/open-vault", cb(o3, { change_address: fee.address, did_commit: DID_HOLD2 }));
+      openLocks.releaseByTxHash(other.tx_hash as string);
+    } finally {
+      openLocks.releaseByTxHash(first.tx_hash as string);
+    }
   }, SLOW);
 
   it("/fee/sign không chạm hàm ký platform (router mang dịch vụ tài trợ CÓ khoá)", async () => {

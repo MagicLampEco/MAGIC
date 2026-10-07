@@ -88,6 +88,7 @@ import {
 } from "@magiclamp/sdk";
 import {
   MIN_BUFFER_BPS, PrepaidRuleError, PrepaidTxError, SPONSOR_RECLAIM_DELAY_EPOCHS, addSetDidCommit, applyPlan, derivePrepaidScripts, planMintPaidFund,
+  maxClaimable, planFundClaim,
   plutusDataFromCbor, readVaultUtxo, validityInEpoch, withRefScripts,
   type PlutusAddress, type PrepaidBlueprint, type PrepaidScripts, type TxValidity,
 } from "@magiclamp/prepaidgen-sdk";
@@ -101,7 +102,7 @@ import {
   VaultAmbiguousError, VaultDatumUndecodableError, VaultNotFoundError, ownerApiErrorOf,
 } from "./errors.js";
 import {
-  FEE_PAYER_CODES, assertFeePayerAddress, checkCollateral, feePayerRecordFields, checkOwnerRewardReturn, checkValidTo, inputRefsOf,
+  FEE_PAYER_CODES, assertFeePayerAddress, parseFeePayer, checkCollateral, feePayerRecordFields, checkOwnerRewardReturn, checkValidTo, inputRefsOf,
   ownerRewardNote, ownerRewardSummaryOf, planOwnerRewardReturn, readFeePayerUtxo, refStr, withOwnerRewardReturn,
   type FeePayerRequest, type OutRefLike, type OwnerRewardReturn, type OwnerRewardSummary,
 } from "./feePayer.js";
@@ -110,7 +111,7 @@ import {
   assertDidNotFundedElsewhere, classifySponsorFunds, fundsBlockingOpen, resolveSponsorFund, sponsorFundsStatusBody,
   type SponsorFundBusyReason, type SponsorFundEntry,
 } from "./sponsorFund.js";
-import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type SponsorRoute } from "./locks.js";
+import { DidGenesisHolds, IssuedTxRegistry, OwnerLockTable, PendingSpends, type SponsorRoute } from "./locks.js";
 import { isDidOwner, ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness } from "./owner.js";
 import { didPaymentAddressFor, resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
 import type { OwnerRequest } from "./service.js";
@@ -190,7 +191,7 @@ function networkUnsupported(causeCode: string): CodedApiError {
 
 // ── Yêu cầu ───────────────────────────────────────────────────────────────────
 
-export type SponsorStep = "open-vault" | "bind-did" | "open-fund" | "fund-vault" | "draw-magic" | "first-consume";
+export type SponsorStep = "open-vault" | "bind-did" | "open-fund" | "fund-vault" | "draw-magic" | "first-consume" | "claim";
 
 /** Đường → bước, theo THỨ TỰ hành trình. Một bảng, đọc ở router và ở README. */
 export const SPONSOR_STEP_OF_PATH: Readonly<Record<string, SponsorStep>> = {
@@ -200,11 +201,13 @@ export const SPONSOR_STEP_OF_PATH: Readonly<Record<string, SponsorStep>> = {
   "/tx/sponsor/fund-vault": "fund-vault",
   "/tx/sponsor/draw-magic": "draw-magic",
   "/tx/sponsor/first-consume": "first-consume",
+  "/tx/sponsor/claim": "claim",
 };
 
 const ISSUED_ROUTE_OF_STEP: Readonly<Record<SponsorStep, SponsorRoute>> = {
   "open-vault": "sponsor-open-vault", "bind-did": "sponsor-bind-did", "open-fund": "sponsor-open-fund",
   "fund-vault": "sponsor-fund-vault", "draw-magic": "sponsor-draw-magic", "first-consume": "sponsor-first-consume",
+  "claim": "sponsor-claim",
 };
 
 /**
@@ -286,6 +289,12 @@ export interface SponsorFirstConsumeRequest extends OwnerRequest {
   drawEpoch: bigint;
 }
 
+/**
+ * claim: không có chủ két. `fund_id` chỉ đích danh quỹ; `amount` vắng ⟹ toàn bộ phần claim được (`maxClaimable`).
+ * Đích CARP, platform và bên tài trợ KHÔNG lấy từ thân bài — đích là beneficiary ghim ở datum quỹ và cấu hình.
+ */
+export interface SponsorClaimRequest { fundId: string; amount?: bigint; changeAddress?: string; feePayer?: FeePayerRequest }
+
 const OUTREF = /^([0-9a-f]{64})#(0|[1-9][0-9]{0,4})$/;
 const HEX28 = /^[0-9a-f]{56}$/;
 const FUND_ID = /^(?:[0-9a-f]{2}){1,32}$/;
@@ -321,16 +330,18 @@ export function parseSponsorRequest(step: "open-fund", body: Record<string, unkn
 export function parseSponsorRequest(step: "fund-vault", body: Record<string, unknown>): SponsorFundVaultRequest;
 export function parseSponsorRequest(step: "draw-magic", body: Record<string, unknown>): SponsorDrawMagicRequest;
 export function parseSponsorRequest(step: "first-consume", body: Record<string, unknown>): SponsorFirstConsumeRequest;
+export function parseSponsorRequest(step: "claim", body: Record<string, unknown>): SponsorClaimRequest;
 export function parseSponsorRequest(
   step: SponsorStep, body: Record<string, unknown>,
 ): SponsorOpenVaultRequest | SponsorBindDidRequest | SponsorOpenFundRequest | SponsorFundVaultRequest
-  | SponsorDrawMagicRequest | SponsorFirstConsumeRequest {
+  | SponsorDrawMagicRequest | SponsorFirstConsumeRequest | SponsorClaimRequest {
   // `funding` là khối nạp LAMP từ ví Phoenix của `/tx/create-vault`; ở đây không có gì để nạp. Gửi nó
   // (kể cả chỉ để mang `funding.fee_payer`) ⟹ 400, không lặng lẽ bỏ qua rồi dựng bằng ví khác.
   if (body.funding !== undefined) {
     throw shape(`"funding" không dùng ở hành trình tài trợ. Ví trả phí bên thứ ba đi qua "fee_payer" ` +
       `{ "utxo", "address" } ở gốc thân bài.`, { field: "funding" });
   }
+  if (step === "claim") return parseClaimRequest(body);
   const base = ownerReq(body);
   const vaultRef = optOutRef(body, "vault_ref");
   const withVaultRef = vaultRef === undefined ? {} : { vaultRef };
@@ -427,6 +438,30 @@ export function parseSponsorRequest(
   }
 }
 
+function parseClaimRequest(body: Record<string, unknown>): SponsorClaimRequest {
+  // Mọi trường định CARP đi đâu, quỹ thuộc ai, ai là chủ bị từ chối, không lặng lẽ bỏ qua.
+  for (const f of ["owner", "owner_pkh", "owner_did", "owner_witness", "beneficiary", "beneficiary_datum", "platform",
+    "platform_pkh", "sponsor", "destination", "to", "did_commit", "vault_ref"]) {
+    if (body[f] !== undefined) {
+      throw shape(`"${f}" không nhận ở claim: CARP chỉ đi tới beneficiary đã ghim trong datum quỹ và cấu hình dịch vụ; ` +
+        `claim không có chủ két. Bỏ trường này.`, { field: f });
+    }
+  }
+  const changeAddress = body.change_address;
+  if (changeAddress !== undefined && (typeof changeAddress !== "string" || changeAddress === "")) {
+    throw shape(`"change_address" phải là chuỗi địa chỉ bech32 khác rỗng.`, { field: "change_address" });
+  }
+  const amount = body.amount === undefined ? undefined : reqBigint(body, "amount");
+  if (amount !== undefined && amount <= 0n) throw shape(`"amount" phải > 0 (CARP, đơn vị nhỏ nhất).`, { field: "amount" });
+  const feePayer = parseFeePayer(body);
+  return {
+    fundId: fundIdOf(body),
+    ...(amount === undefined ? {} : { amount }),
+    ...(changeAddress === undefined ? {} : { changeAddress: changeAddress as string }),
+    ...(feePayer === undefined ? {} : { feePayer }),
+  };
+}
+
 // ── Đáp ứng ───────────────────────────────────────────────────────────────────
 
 export interface SponsorSigner {
@@ -511,6 +546,22 @@ export function sponsorPlanBody(
             : []),
         ],
       };
+      if (step === "first-consume") {
+        // claim: bước sau first-consume, chạy được khi quỹ có E > 0 (phần CARP bên hưởng rút được).
+        return [row, {
+          step: "claim" as const, path: pathOf["claim"],
+          action: "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+          signers: [
+            { role: "fee-wallet", how: "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng" },
+            { role: "platform", how: "service" },
+          ],
+          requires: [
+            "first-consume đã vào khối",
+            "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+            "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)",
+          ],
+        }];
+      }
       if (step !== "open-vault") return [row];
       const owner = row.signers.find(x => x.role === "owner");
       // open-vault chở thêm genesis quỹ tài trợ của DID; dịch vụ đồng ký vai platform.
@@ -594,7 +645,13 @@ export interface SponsorTxServiceDeps {
    * lúc khởi động). Chỉ open-vault (khi chở genesis quỹ) và open-fund gọi nó, trên tx chính dịch vụ VỪA dựng.
    * Vắng ⟹ hai route đó trả 501 `CONFIG_MISSING` khi cần tạo quỹ (`details.missing` nêu tên biến môi trường).
    */
-  platformSign?: (tx: CML.Transaction) => CML.Vkeywitness;
+  platformSign?: (r: {
+    kind: "fund-genesis" | "fund-claim";
+    tx: CML.Transaction;
+    inputs: Array<{ ref: string; address: string; datumCbor?: string; assets?: Record<string, bigint> }>;
+  }) => CML.Vkeywitness;
+  /** Giữ `did:<did_commit>` của genesis quỹ tới hết hạn tx (`locks.ts` ▸ `DidGenesisHolds`). Vắng ⟹ bảng riêng của dịch vụ. */
+  didHolds?: DidGenesisHolds;
 }
 
 interface Prepared {
@@ -622,6 +679,11 @@ interface StepCtx {
    * (fund-vault: `fund:<unit>` của quỹ tìm theo DID). Khoá đó nhả cùng mọi khoá khác của lượt dựng.
    */
   claimLock: (key: string) => void;
+  /**
+   * Giữ `did:<did_commit>` cho genesis quỹ tới hết hạn của tx (`DidGenesisHolds`). Đang có tx genesis khác cho DID
+   * đó còn hạn ⟹ 409 `SPONSOR_DID_GENESIS_IN_FLIGHT`.
+   */
+  holdDid: (didCommit: string) => void;
 }
 
 /** Địa chỉ mà một bước được chạm, cho phép đọc lại CBOR của đường `fee_payer`. */
@@ -645,9 +707,11 @@ function collateralOf(ctx: StepCtx): { collateralLovelace: bigint } | Record<str
 export class SponsorTxService {
   private readonly now: () => number;
   private derived: PrepaidScripts | undefined;
+  private readonly didHolds: DidGenesisHolds;
 
   constructor(private readonly deps: SponsorTxServiceDeps) {
     this.now = deps.now ?? (() => Date.now());
+    this.didHolds = deps.didHolds ?? new DidGenesisHolds();
   }
 
   /** Giờ máy chủ (POSIX ms) mà tầng HTTP đóng dấu thành `server_time` (`http.ts` ▸ `withServerTime`).
@@ -686,6 +750,8 @@ export class SponsorTxService {
       const mine = prepaid.sponsor === undefined ? [] : fundsBlockingOpen(
         await this.readSponsorFunds(prepaid, prepaid.sponsor, epochAt(ctx.tip.blockTimePosixMs, p)), req.didCommit);
       const genesis = mine.length === 0 ? this.fundGenesisPins("open-vault") : undefined;
+      // Hai open-vault chở genesis cho cùng DID trong khe nộp → vào khối ⟹ hai quỹ. Giữ DID tới hết hạn tx.
+      if (genesis !== undefined) ctx.holdDid(req.didCommit);
       const wallet = await feeWallet(ctx, () => this.walletUtxos(ctx.feeAddress));
       const sorted = [...wallet].sort((a, b) =>
         a.txHash === b.txHash ? a.outputIndex - b.outputIndex : a.txHash < b.txHash ? -1 : 1);
@@ -721,7 +787,7 @@ export class SponsorTxService {
       if (fund !== undefined) {
         const fundOut = this.nftOutput(s.outputs, fund.nftUnit, prepaid.fundAddress, "quỹ tài trợ", "open-vault");
         // Ký vai platform trên ĐỐI TƯỢNG tx vừa dựng (không qua CBOR của thân bài).
-        txCbor = this.cosignPlatform(r.tx.toTransaction());
+        txCbor = await this.cosignPlatform(r.tx.toTransaction(), "fund-genesis", wallet);
         const sponsorship = fund.datum.sponsorship!;
         fundSummary = {
           status: "created",
@@ -792,13 +858,32 @@ export class SponsorTxService {
    * (`platformSigner.ts`) tự kiểm tx có đúng một mint +1 NFT quỹ và `required_signers` ∋ platform, không thì ném.
    * Thân tx không đổi: các bên ký sau vẫn ký đúng `tx_hash` trả về.
    */
-  private cosignPlatform(tx: CML.Transaction): string {
+  private async cosignPlatform(tx: CML.Transaction, kind: "fund-genesis" | "fund-claim", known: readonly UTxO[]): Promise<string> {
     const sign = this.deps.platformSign;
     if (sign === undefined) {
       throw new Error("[bất biến nội bộ] cosignPlatform gọi khi không có hàm ký platform — fundGenesisPins phải chặn.");
     }
     const bodyHash = CML.hash_transaction(tx.body()).to_hex();
-    const witness = sign(tx);
+    // Hàm ký đòi MỌI input + thế chấp đã giải (`platformSigner.ts` vế (a)): UTxO bộ dựng đã có, phần còn lại đọc chuỗi.
+    // Thiếu một ⟹ hàm ký từ chối (không ký mù).
+    const b = tx.body();
+    const refs: Array<{ txHash: string; outputIndex: number }> = [];
+    const ins = b.inputs();
+    const col = b.collateral_inputs();
+    for (let i = 0; i < ins.len(); i++) refs.push({ txHash: ins.get(i).transaction_id().to_hex(), outputIndex: Number(ins.get(i).index()) });
+    for (let i = 0; col !== undefined && i < col.len(); i++) {
+      refs.push({ txHash: col.get(i).transaction_id().to_hex(), outputIndex: Number(col.get(i).index()) });
+    }
+    const byRef = new Map(known.map(u => [refStr(u), u] as const));
+    const missing = refs.filter(r => !byRef.has(refStr(r)));
+    if (missing.length > 0) for (const u of await this.deps.chain.utxosByOutRef(missing)) byRef.set(refStr(u), u);
+    const inputs = [...new Set(refs.map(refStr))].flatMap(r => {
+      const u = byRef.get(r);
+      return u === undefined ? [] : [{
+        ref: r, address: u.address, assets: u.assets, ...(typeof u.datum === "string" ? { datumCbor: u.datum } : {}),
+      }];
+    });
+    const witness = sign({ kind, tx, inputs });
     const wsb = CML.TransactionWitnessSetBuilder.new();
     wsb.add_existing(tx.witness_set());
     wsb.add_vkey(witness);
@@ -922,6 +1007,7 @@ export class SponsorTxService {
         a.txHash === b.txHash ? a.outputIndex - b.outputIndex : a.txHash < b.txHash ? -1 : 1);
       const seedUtxo = sorted.find(u => Object.keys(u.assets).every(k => k === "lovelace")) ?? sorted[0];
       if (seedUtxo === undefined) throw noWalletUtxo(ctx.feeAddress, "");
+      ctx.holdDid(didCommit);
       const lucid = await this.deps.lucidForWallet(ctx.feeAddress, wallet);
       // Cận TRÊN = cận đã chọn (`planSponsorValidity`, không kẹp kỳ); mốc thu hồi suy từ đó (`sponsorReclaimAfterEpoch`).
       const validity: TxValidity = { fromMs: ctx.tip.blockTimePosixMs, toMs: ctx.plan.capMs };
@@ -954,7 +1040,7 @@ export class SponsorTxService {
       const outs = sponsorTxOutputsOf(unsigned);
       const fundOut = this.nftOutput(outs, r.nftUnit, prepaid.fundAddress, "quỹ tài trợ", "open-fund");
       // Ký vai platform trên ĐỐI TƯỢNG tx vừa dựng (không qua CBOR của thân bài).
-      const txCbor = this.cosignPlatform(c.right.toTransaction());
+      const txCbor = await this.cosignPlatform(c.right.toTransaction(), "fund-genesis", wallet);
       const txHash = txBodyHash(txCbor);
       const sponsorship = r.datum.sponsorship!;
       return {
@@ -1197,12 +1283,15 @@ export class SponsorTxService {
       assertFeePayerAddress(this.deps.network, fpReq, FEE_PAYER_CODES);
     }
     const feeAddress = fpReq?.address ?? this.feeAddressFor(req);
+    this.assertFeeWalletNotPlatform(step, feeAddress,
+      fpReq !== undefined ? "fee_payer.address" : req.changeAddress !== undefined ? "change_address" : "owner");
     this.assertWitnessShape(req);
     const ownerKey = ownerLockKey(owner);
     // `utxo:<UTxO trả phí>`: hai tx đang chờ ký không được tiêu cùng một UTxO của ví trả phí.
     const restKeys = [...extraLockKeys, ...(fpReq === undefined ? [] : [`utxo:${refStr(fpReq.utxoRef)}`])];
     const keys: string[] = [ownerKey];
     const gens: Array<[string, number]> = [];
+    const didGens: Array<[string, number]> = [];
     try {
       const startedAt = this.now();
       keys.push(...restKeys);
@@ -1254,6 +1343,18 @@ export class SponsorTxService {
         feeAddress, feeKeyHash: getAddressDetails(feeAddress).paymentCredential!.hash, tip, plan,
         ...(feePayer === undefined ? {} : { feePayer }),
         claimLock,
+        holdDid: (didCommit: string): void => {
+          const key = `did:${didCommit}`;
+          if (didGens.some(([k]) => k === key)) return;
+          const h = this.didHolds.claim(key, this.now(), this.deps.lockTtlMs);
+          if (!h.ok) {
+            throw new CodedApiError(409, "SPONSOR_DID_GENESIS_IN_FLIGHT",
+              `DID ${didCommit.slice(0, 16)}… đang có một tx genesis quỹ tài trợ khác chưa hết hạn — chờ nó vào khối ` +
+              `(khi đó DID đã có quỹ) hoặc hết hạn rồi gọi lại.`,
+              { did_commit: didCommit, tx_hash: h.txHash, held_until: new Date(h.untilMs).toISOString() });
+          }
+          didGens.push([key, h.gen]);
+        },
       };
       const out = await build(p, ctx);
       if (req.ownerDid !== undefined) out.summary.owner_did = req.ownerDid;
@@ -1274,6 +1375,7 @@ export class SponsorTxService {
       // hạn ở đường `fee_payer` ra 422 của cổng đó, không 500 bất biến.
       const expiry = readTxExpiry(out.txCbor, this.deps.slotNetwork ?? this.deps.network, plan, tip.blockTimePosixMs);
       for (const [k, g] of gens) this.deps.locks.bindTxHash(k, txHash, g);
+      for (const [k, g] of didGens) this.didHolds.bind(k, g, txHash, Number(expiry.validToMs));
       this.deps.issued.record(txHash, this.now(), {
         route: ISSUED_ROUTE_OF_STEP[step], lockKeys: keys, validToMs: Number(expiry.validToMs),
         ...feePayerRecordFields(feePayer?.req),
@@ -1306,6 +1408,192 @@ export class SponsorTxService {
             `của thân thì mọi chữ ký đã có mất hiệu lực.`,
         ],
         summary: out.summary,
+        expiresAt: expiry.expiresAt,
+        expiresReason: expiry.reason,
+      };
+    } catch (e) {
+      for (const [k, g] of gens) this.deps.locks.release(k, g);
+      for (const [k, g] of didGens) this.didHolds.release(k, g);
+      throw asSponsorApiError(e);
+    }
+  }
+
+  /** Ví trả phí (input + thế chấp) có khoá thanh toán là một khoá platform đã ghim ⟹ 422, ở MỌI bước. */
+  private assertFeeWalletNotPlatform(step: SponsorStep, feeAddress: string, field: string): void {
+    const pkhs = this.deps.deployment.prepaid?.sponsor?.platformPkhs ?? [];
+    const c = getAddressDetails(feeAddress).paymentCredential;
+    if (c?.type === "Key" && pkhs.includes(c.hash)) {
+      // Witness platform mà dịch vụ gắn vào tx cũng thoả chữ ký tiêu input của ví đó: kẻ gọi được ví trả phí
+      // "do khoá platform trả". Hàm ký tự từ chối input của khoá này; đây là lớp sớm, có mã rõ nghĩa.
+      throw new CodedApiError(422, "SPONSOR_FEE_WALLET_IS_PLATFORM",
+        `"${field}" (ví trả phí) mang khoá thanh toán là khoá platform đã ghim (paid_fund.sponsor.platform_pkhs). ` +
+        `Khoá platform không phải ví: dùng một ví khoá khác để trả phí.`, { [field]: feeAddress, step });
+    }
+  }
+
+  /**
+   * claim — `FundClaim` (hoặc lượt rút cuối đóng quỹ đã thu hồi): CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM;
+   * dịch vụ ký vai platform (`prepaid.ak` ▸ `validate_fund_claim` / `validate_fund_claim_close`). Không có chủ két:
+   * khoá mềm là `fund:<unit>` (+ `utxo:<UTxO trả phí>`). Không ký thì CARP đã tiêu thật kẹt trong quỹ vĩnh viễn.
+   */
+  async claimFund(req: SponsorClaimRequest): Promise<SponsorBuildResponse> {
+    const route = "/tx/sponsor/claim";
+    this.requireNetworkGrid();
+    const prepaid = this.requirePrepaid("claim");
+    const pins = prepaid.sponsor;
+    const platform = pins?.platformPkhs?.[0];
+    const missing = [
+      ...(pins === undefined ? ["paid_fund.sponsor"] : []),
+      ...(pins !== undefined && platform === undefined ? ["paid_fund.sponsor.platform_pkhs"] : []),
+      ...(pins !== undefined && pins.beneficiary === undefined ? ["paid_fund.sponsor.beneficiary"] : []),
+      ...(this.deps.platformSign === undefined ? [PLATFORM_KEY_ENV] : []),
+    ];
+    if (missing.length > 0) {
+      throw new ConfigMissingError(`claim cần khoá platform đã ghim (platform_pkhs), đích nhận CARP đã ghim ` +
+        `(beneficiary) và khoá platform của dịch vụ (${PLATFORM_KEY_ENV}).`, { missing, route });
+    }
+    const ben = pins!.beneficiary!;
+    const fpReq = req.feePayer;
+    if (fpReq !== undefined) {
+      if (req.changeAddress !== undefined) {
+        throw new CodedApiError(400, "FEE_PAYER_CHANGE_ADDRESS_CONFLICT",
+          `"change_address" và "fee_payer" không đi cùng nhau. Bỏ "change_address".`);
+      }
+      assertFeePayerAddress(this.deps.network, fpReq, FEE_PAYER_CODES);
+    } else if (req.changeAddress === undefined) {
+      throw new CodedApiError(400, "CHANGE_ADDRESS_REQUIRED",
+        `claim không có chủ két để suy ví trả phí — gửi "fee_payer" { utxo, address } hoặc "change_address".`);
+    }
+    const feeAddress = fpReq?.address ?? assertChangeAddress(this.deps.network, req.changeAddress!);
+    const field = fpReq !== undefined ? "fee_payer.address" : "change_address";
+    this.assertFeeWalletNotPlatform("claim", feeAddress, field);
+    if (feeAddress === ben.address) {
+      throw new CodedApiError(422, "SPONSOR_FEE_WALLET_IS_BENEFICIARY",
+        `"${field}" là đúng địa chỉ nhận CARP của quỹ; validator cấm mọi input ở địa chỉ đó — phí và tiền thừa phải đi ` +
+        `từ một địa chỉ khác (vd. địa chỉ base của cùng khoá).`, { [field]: feeAddress });
+    }
+    const feeKeyHash = getAddressDetails(feeAddress).paymentCredential!.hash;
+    const fundUnit = prepaid.fundScriptHash + req.fundId;
+    const keys = [`fund:${fundUnit}`, ...(fpReq === undefined ? [] : [`utxo:${refStr(fpReq.utxoRef)}`])];
+    const gens: Array<[string, number]> = [];
+    try {
+      for (const k of keys) gens.push([k, this.deps.locks.acquire(k, this.now())]);
+      const p = await this.prepare();
+      const tip = await this.deps.chain.tip();
+      const plan = planSponsorValidity({
+        step: "claim", tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
+        txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, issued: this.deps.issued,
+        route: ISSUED_ROUTE_OF_STEP.claim,
+        ...(fpReq === undefined ? {} : { feePayer: {
+          utxoRef: refStr(fpReq.utxoRef), address: fpReq.address,
+          ...(fpReq.reservationId === undefined ? {} : { reservationId: fpReq.reservationId }),
+        } }),
+      });
+      // Quỹ: tra đúng NFT của nó (không quét địa chỉ quỹ), cùng phép phân loại với fund-vault.
+      const [entry] = await this.readSponsorFunds(prepaid, pins!, epochAt(tip.blockTimePosixMs, p), [fundUnit]);
+      if (entry?.utxo === undefined || entry.datum === undefined) {
+        throw new CodedApiError(404, "SPONSOR_FUND_NOT_FOUND", `Không có quỹ tài trợ ${req.fundId} trên chuỗi.`,
+          { fund_id: req.fundId, fund_unit: fundUnit });
+      }
+      if (entry.problem !== undefined && entry.problem !== "reclaimed") {
+        throw new CodedApiError(422, "SPONSOR_FUND_NOT_CLAIMABLE",
+          `Quỹ ${req.fundId} không phải quỹ dịch vụ này tin (problem: ${entry.problem}) — không ký claim cho nó.`,
+          { fund_id: req.fundId, problem: entry.problem });
+      }
+      const fund = entry.utxo;
+      this.assertNotPendingSpent(fund, "quỹ tài trợ này");
+      const max = maxClaimable(entry.datum);
+      if (max === 0n) {
+        throw new CodedApiError(409, "SPONSOR_FUND_NOTHING_TO_CLAIM",
+          `Quỹ ${req.fundId} chưa có CARP nào claim được (E = 0): MAGIC đã tiêu phải được quyết toán vào quỹ ` +
+          `(SettleLine) trước.`, {
+            fund_id: req.fundId, carp_locked: raw(entry.datum.carp_locked), magic_settled: raw(entry.datum.magic_settled),
+            provider_claimed: raw(entry.datum.provider_claimed),
+          });
+      }
+      const amount = req.amount ?? max;
+      if (amount > max) {
+        throw new CodedApiError(422, "SPONSOR_CLAIM_ABOVE_MAX",
+          `"amount" ${amount} vượt phần claim được ${max}.`, { amount: raw(amount), max_claimable: raw(max) });
+      }
+      let feePayer: StepCtx["feePayer"];
+      let coinsPerUtxoByte = 0n;
+      if (fpReq !== undefined) {
+        const utxo = await readFeePayerUtxo(this.deps.chain, fpReq, FEE_PAYER_CODES);
+        this.assertNotPendingSpent(utxo, "ví trả phí");
+        coinsPerUtxoByte = BigInt((await this.deps.lucidForWallet(fpReq.address, [utxo])).config().protocolParameters!.coinsPerUtxoByte);
+        feePayer = { req: fpReq, utxo, collateralLovelace: this.deps.deployment.feePayerCollateralLovelace };
+      }
+      // Ví trả phí không góp CARP: CARP thối về ví đó là output CARP ngoài đích, hàm ký từ chối.
+      const wallet = (feePayer !== undefined ? [feePayer.utxo] : await this.walletUtxos(feeAddress))
+        .filter(u => (u.assets[p.scripts.carpUnit] ?? 0n) === 0n);
+      if (wallet.length === 0) throw noWalletUtxo(feeAddress, "không giữ CARP");
+      const lucid = await this.deps.lucidForWallet(feeAddress, wallet);
+      const r = planFundClaim({
+        scripts: p.scripts, fundUtxo: fund, amount, validity: { fromMs: tip.blockTimePosixMs, toMs: plan.capMs },
+      });
+      if (r.beneficiaryAddress !== ben.address) {
+        throw txMismatch("claim", `đích CARP của quỹ khác beneficiary đã ghim.`, { fund_beneficiary: r.beneficiaryAddress, pinned: ben.address });
+      }
+      const c = await applyPlan(lucid.newTx(), r.plan, { mode: "deferred" })
+        .completeSafe(collateralCompleteOptions(feePayer?.collateralLovelace));
+      if (c._tag === "Left") {
+        const err = c.left as { message?: unknown };
+        throw new SponsorJourneyError("SPONSOR_BUILD_FAILED", `claim: Lucid không dựng được tx — ${String(err?.message ?? c.left)}`);
+      }
+      const unsigned = c.right.toCBOR();
+      // Đọc lại CBOR: CARP chỉ tới beneficiary đã ghim (ĐÚNG một output, đúng lượng) hoặc về lại quỹ.
+      const outs = sponsorTxOutputsOf(unsigned);
+      const carpOuts = outs.filter(o => (o.assets[p.scripts.carpUnit] ?? 0n) > 0n);
+      const stray = carpOuts.filter(o => o.address !== ben.address && o.address !== prepaid.fundAddress);
+      const toBen = carpOuts.filter(o => o.address === ben.address);
+      if (stray.length > 0 || toBen.length !== 1 || toBen[0]!.assets[p.scripts.carpUnit] !== amount) {
+        throw txMismatch("claim", `output CARP lệch đích đã ghim.`, { outputs: outputsJson(outs) });
+      }
+      const txCbor = await this.cosignPlatform(c.right.toTransaction(), "fund-claim", [fund, ...wallet]);
+      const txHash = txBodyHash(txCbor);
+      let feeSummary: SponsorFeePayerSummary | undefined;
+      if (feePayer !== undefined) {
+        const feeKey = refStr(feePayer.req.utxoRef);
+        const others = inputRefsOf(txCbor).filter(x => refStr(x) !== feeKey);
+        const otherInputs = others.length === 0 ? [] : await this.deps.chain.utxosByOutRef(others);
+        feeSummary = checkSponsorFeePayerTx(txCbor, {
+          network: this.deps.slotNetwork ?? this.deps.network, tipPosixMs: tip.blockTimePosixMs, feePayer: feePayer.req,
+          feePayerUtxo: feePayer.utxo, maxCollateralLovelace: feePayer.collateralLovelace, otherInputs, coinsPerUtxoByte,
+          // Bên hưởng (min-ADA của output CARP do ví trả phí ứng) và, ở nhánh đóng, bên tài trợ (nhận lại ADA của quỹ).
+          scriptAddresses: [prepaid.fundAddress, ben.address, ...(r.sponsorAddress === null ? [] : [r.sponsorAddress])],
+          passAddresses: [],
+        });
+      }
+      const expiry = readTxExpiry(txCbor, this.deps.slotNetwork ?? this.deps.network, plan, tip.blockTimePosixMs);
+      for (const [k, g] of gens) this.deps.locks.bindTxHash(k, txHash, g);
+      this.deps.issued.record(txHash, this.now(), {
+        route: ISSUED_ROUTE_OF_STEP.claim, lockKeys: keys, validToMs: Number(expiry.validToMs),
+        ...feePayerRecordFields(feePayer?.req),
+      });
+      const fundOut = r.closing ? undefined : outs.findIndex(o => o.address === prepaid.fundAddress && (o.assets[fundUnit] ?? 0n) === 1n);
+      return {
+        step: "claim", txCbor, txHash, requiredSigners: requiredSignersOf(txCbor),
+        signers: [
+          { role: "fee-wallet", keyHashes: [feeKeyHash], how: feePayer === undefined
+            ? `ví khoá ${feeAddress}: phí + thế chấp + min-ADA output tới bên hưởng + tiền thừa`
+            : `fee_payer ${feeAddress}: chi đúng UTxO ${refStr(feePayer.req.utxoRef)} — phí + thế chấp + min-ADA output tới bên hưởng; tiền thối ADA về lại địa chỉ đó` },
+          { role: "platform", keyHashes: [platform!], how: "service" },
+        ],
+        witnessNotes: [
+          `Vai platform (${platform}): dịch vụ ĐÃ ký — vkey witness nằm sẵn trong tx_cbor (FundClaim đòi chữ ký platform).`,
+          `Ví trả phí: khoá thanh toán ${feeKeyHash} ký thêm trên đúng tx_hash này, giữ nguyên witness đã có.`,
+          `Thứ tự: thân giao dịch này là bản CHỐT — đổi bất kỳ byte nào của thân thì mọi chữ ký đã có mất hiệu lực.`,
+        ],
+        summary: {
+          step: "claim", fund_id: req.fundId, fund_unit: fundUnit, fund_ref: refStr(fund), amount: raw(amount),
+          max_claimable: raw(max), closing: r.closing, beneficiary: ben.address, epoch: Number(r.epoch),
+          ...(r.fundDatumOut === null ? {} : { carp_locked_after: raw(r.fundDatumOut.carp_locked) }),
+          ...(fundOut === undefined || fundOut < 0 ? {} : { fund_out_ref: `${txHash}#${fundOut}` }),
+          ...(r.sponsorAddress === null ? {} : { sponsor_address: r.sponsorAddress }),
+          outputs: outputsJson(outs),
+          ...(feeSummary === undefined ? {} : { fee_payer: feeSummary }),
+        },
         expiresAt: expiry.expiresAt,
         expiresReason: expiry.reason,
       };
@@ -1360,6 +1648,8 @@ export class SponsorTxService {
    */
   private async readSponsorFunds(
     prepaid: NonNullable<Deployment["prepaid"]>, pins: SponsorPins, currentEpoch: bigint,
+    /** Có ⟹ chỉ tra đúng các NFT này (claim), không quét địa chỉ quỹ. */
+    onlyUnits?: string[],
   ): Promise<SponsorFundEntry[]> {
     const common = {
       // Cùng hai giá trị open-fund ghi vào quỹ (`openFund` ▸ `planMintPaidFund`).
@@ -1373,10 +1663,11 @@ export class SponsorTxService {
       // quét dưới đây pin này luôn có (`config.ts` ▸ `parseSponsorPins` ép).
       ...(pins.beneficiary === undefined ? {} : { beneficiary: pins.beneficiary }),
     };
-    if (pins.fundUnits !== undefined) {
-      const lists = await Promise.all(pins.fundUnits.map(async u =>
+    const pinnedUnits = onlyUnits ?? pins.fundUnits;
+    if (pinnedUnits !== undefined) {
+      const lists = await Promise.all(pinnedUnits.map(async u =>
         [u, await chainRead(() => this.deps.chain.utxosByUnit(u), "quỹ tài trợ")] as const));
-      return classifySponsorFunds({ ...common, units: pins.fundUnits, utxosOfUnit: new Map(lists) });
+      return classifySponsorFunds({ ...common, units: pinnedUnits, utxosOfUnit: new Map(lists) });
     }
     if (pins.platformPkhs === undefined) {
       throw new Error("[bất biến nội bộ] paid_fund.sponsor thiếu cả fund_units lẫn platform_pkhs — config.ts phải chặn.");
@@ -1959,11 +2250,13 @@ export function checkSponsorFeePayerTx(txCbor: string, ctx: SponsorFeePayerCheck
         throw fail(`output #${i} về ví trả phí mang token — tài sản của chủ két hay bên tài trợ không được thối sang đó`, { output_index: i });
       }
       change += a.lovelace ?? 0n;
-    } else if (keyOf(addr) === feeHash) {
-      throw fail(`output #${i} về ${addr}: cùng khoá với ví trả phí nhưng KHÔNG phải fee_payer.address`, { output_index: i });
     } else if (scripts.has(addr)) {
+      // Trước phép "cùng khoá khác địa chỉ": địa chỉ của luồng do DỊCH VỤ ghim (claim: beneficiary là địa chỉ enterprise
+      // của ví phí Feecover, cùng khoá với UTxO trả phí ở địa chỉ base). Ở các bước khác các địa chỉ này là script.
       scriptOut += a.lovelace ?? 0n;
       scriptMin += CML.min_ada_required(o, ctx.coinsPerUtxoByte);
+    } else if (keyOf(addr) === feeHash) {
+      throw fail(`output #${i} về ${addr}: cùng khoá với ví trả phí nhưng KHÔNG phải fee_payer.address`, { output_index: i });
     } else if (pass.has(addr)) {
       passOut += a.lovelace ?? 0n;
     } else {
@@ -2044,6 +2337,25 @@ function plutusAddressOf(bech32: string): PlutusAddress {
   };
 }
 
+/**
+ * Lúc khởi động (`server.ts`): địa chỉ enterprise của khoá platform có giữ UTxO không. Ba trạng thái: `null` = 0 UTxO;
+ * chuỗi cảnh báo = có UTxO; chuỗi "KHÔNG ĐO ĐƯỢC" = đọc chuỗi hỏng. Không từ chối khởi động (lý do ở `server.ts`).
+ */
+export async function platformAddressFundedWarning(chain: ChainReader, network: Network, pkh: string): Promise<string | null> {
+  const address = enterpriseAddressOf(network, pkh);
+  let n: number;
+  try {
+    n = (await chain.utxosAt(address)).length;
+  } catch (e) {
+    return `[platform] ⚠ KHÔNG ĐO ĐƯỢC số UTxO ở địa chỉ enterprise của khoá platform ${address}: ` +
+      `${e instanceof Error ? e.message : String(e)} — kiểm tay; khoá platform không được giữ UTxO.`;
+  }
+  if (n === 0) return null;
+  return `[platform] ⚠ địa chỉ enterprise của khoá platform ${address} đang giữ ${n} UTxO. Khoá platform không phải ví: ` +
+    `chuyển chúng đi. Dịch vụ không tiêu chúng (422 SPONSOR_FEE_WALLET_IS_PLATFORM; hàm ký từ chối input của khoá này), ` +
+    `nhưng người giữ khoá thì tiêu được. Địa chỉ base mang cùng khoá không đo được từ đây.`;
+}
+
 function requiredSignersOf(txCbor: string): string[] {
   const rs = CML.Transaction.from_cbor_hex(txCbor).body().required_signers();
   const out: string[] = [];
@@ -2114,5 +2426,6 @@ export async function sponsorRoute(
     case "fund-vault": return toSponsorBody(await svc.fundVault(parseSponsorRequest("fund-vault", body)));
     case "draw-magic": return toSponsorBody(await svc.drawMagic(parseSponsorRequest("draw-magic", body)));
     case "first-consume": return toSponsorBody(await svc.firstConsume(parseSponsorRequest("first-consume", body)));
+    case "claim": return toSponsorBody(await svc.claimFund(parseSponsorRequest("claim", body)));
   }
 }

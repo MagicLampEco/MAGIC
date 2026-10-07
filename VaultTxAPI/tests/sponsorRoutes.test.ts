@@ -28,6 +28,7 @@ import {
   assertFundPinnedOutputs, parseSponsorRequest, sponsorApiErrorOf, type SponsorTxServiceDeps, type FundPinnedOutputsExpect,
 } from "../src/sponsor.js";
 import { parseBuildRequest } from "../src/buildRequest.js";
+import { parseSponsorRequest as parseSponsorReq162, platformAddressFundedWarning } from "../src/sponsor.js";
 import type { ResolvedOwnerWitness } from "../src/owner.js";
 import { vaultModuleOf } from "../src/txBuilder.js";
 import { LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID, OWNER_PKH } from "./fixtures/preview.js";
@@ -330,7 +331,7 @@ describe("bộ định tuyến /tx/sponsor/*", () => {
     type Row = { step: string; path?: string; signers: Array<{ role: string; how: string }>; requires: string[]; when?: string };
     const steps = r.body.steps as Row[];
     const order = steps.map(x => x.step).filter(s => s !== "wakeme-genesis");
-    expect(order).toEqual(["open-vault", "bind-did", "fund-vault", "draw-magic", "first-consume"]);
+    expect(order).toEqual(["open-vault", "bind-did", "fund-vault", "draw-magic", "first-consume", "claim"]);
     const ov = steps.find(x => x.step === "open-vault")!;
     expect(ov.signers.map(x => x.role)).toEqual(["fee-wallet", "owner", "platform"]);
     expect(ov.signers.find(x => x.role === "platform")!.how).toBe("service");
@@ -809,5 +810,29 @@ describe("trần chữ số của lượng trong thân bài", () => {
   it("qua route fund-vault: 20 chữ số qua tầng hình dạng rồi chết ở trần CARP (cổng SAU, mã khác)", async () => {
     const r = await post("/tx/sponsor/fund-vault", { ...FUND_BASE, carp_amount: "9".repeat(20) }, service("Preprod", deploymentJson("Preprod")).svc);
     expect(errCode(r)).toBe("SPONSOR_CARP_ABOVE_CAP");
+  });
+});
+
+describe("#162: claim — hình dạng thân bài; cảnh báo khởi động khi khoá platform giữ UTxO", () => {
+  it("claim: fund_id bắt buộc; amount vắng ⟹ mặc định; amount ≤ 0 ⟹ 400; trường định đích/chủ ⟹ 400", () => {
+    expect(parseSponsorReq162("claim", { fund_id: "ab".repeat(32), change_address: "addr_test1x" }))
+      .toEqual({ fundId: "ab".repeat(32), changeAddress: "addr_test1x" });
+    expect(parseSponsorReq162("claim", { fund_id: "ab".repeat(32), amount: "5" }).amount).toBe(5n);
+    for (const bad of [{}, { fund_id: "ab".repeat(32), amount: "0" }, { fund_id: "ab".repeat(32), beneficiary: "x" },
+      { fund_id: "ab".repeat(32), owner: { type: "key", hash: "aa".repeat(28) } }]) {
+      let code = "";
+      try { parseSponsorReq162("claim", bad); } catch (e) { code = (e as CodedApiError).code ?? String(e); }
+      expect(code === "SPONSOR_REQUEST_SHAPE" || code === "BAD_REQUEST").toBe(true);
+    }
+  });
+
+  it("ba trạng thái: 0 UTxO ⟹ null; có UTxO ⟹ cảnh báo nêu số; đọc chuỗi hỏng ⟹ KHÔNG ĐO ĐƯỢC", async () => {
+    const pkh = "ab".repeat(28);
+    const chainOf = (f: () => Promise<UTxO[]>) => ({ utxosAt: f }) as unknown as ChainReader;
+    expect(await platformAddressFundedWarning(chainOf(async () => []), "Preprod", pkh)).toBeNull();
+    const one = { txHash: "11".repeat(32), outputIndex: 0, address: "x", assets: { lovelace: 1n } } as UTxO;
+    expect(await platformAddressFundedWarning(chainOf(async () => [one]), "Preprod", pkh)).toMatch(/đang giữ 1 UTxO/);
+    expect(await platformAddressFundedWarning(chainOf(async () => { throw new Error("502"); }), "Preprod", pkh))
+      .toMatch(/KHÔNG ĐO ĐƯỢC/);
   });
 });

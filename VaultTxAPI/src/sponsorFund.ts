@@ -196,6 +196,18 @@ function beneficiaryMatches(
   return got === ben.datum;
 }
 
+/**
+ * Đích nhận CARP của quỹ có đúng đích GHIM ở cấu hình không (cùng phép so với `foreign_beneficiary`). Dùng cho
+ * hàm ký platform (`platformSigner.ts`, nhánh `fund-claim`): ghim nhận dạng cấu hình `{ address, datumCbor? }`.
+ */
+export function fundBeneficiaryIs(
+  network: Parameters<typeof plutusAddressToBech32>[0], d: PaidFundDatum, pin: { address: string; datumCbor?: string },
+): boolean {
+  return beneficiaryMatches(network, d, {
+    address: pin.address, datum: pin.datumCbor === undefined ? null : canonicalDatumCbor(pin.datumCbor),
+  });
+}
+
 /** Một quỹ có thuộc DID `didCommit` không: quỹ tài trợ dùng được VÀ `owner_commit` khớp. */
 function servesDid(e: SponsorFundEntry, didCommit: string): boolean {
   return e.problem === undefined && e.ownerCommit === didCommit;

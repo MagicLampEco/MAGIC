@@ -310,7 +310,7 @@ function err(code: string, message: string, details: Record<string, unknown> = {
  * nó giữ chặn được mọi fund-vault khác trên cùng quỹ — để thẻ thường gọi được nó là để bất kỳ ai cầm thẻ app
  * giữ quỹ của bên tài trợ (mỗi lượt dựng giữ khoá tới hết TTL, lặp vô hạn). Route tài trợ khác giữ thẻ thường.
  */
-export const SPONSOR_ROLE_PATHS: ReadonlySet<string> = new Set(["/tx/sponsor/fund-vault"]);
+export const SPONSOR_ROLE_PATHS: ReadonlySet<string> = new Set(["/tx/sponsor/fund-vault", "/tx/sponsor/claim"]);
 
 /**
  * Vai của người gọi theo đường.

@@ -1343,3 +1343,18 @@ function assertReadableBlueprint(path: string, label = "VAULT_TX_API_VAULT_PLUTU
     throw new Error(`[config] ${label} thiếu mảng \`validators\` — không phải blueprint Aiken.`);
   }
 }
+
+/**
+ * Gỡ khoá platform khỏi môi trường của tiến trình SAU khi `loadConfig` đã đọc nó (`server.ts` gọi ngay sau
+ * `loadConfig`). Tiến trình con thừa hưởng môi trường, và `ps eww <pid>` đọc được nó.
+ */
+export function scrubPlatformKey(env: NodeJS.ProcessEnv = process.env): void {
+  delete env.VAULT_TX_API_PLATFORM_KEY;
+}
+
+/** Môi trường TƯỜNG MINH cho tiến trình con (`buildInfo.ts` gọi `git`): bản sao không có khoá platform. */
+export function childProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env };
+  delete out.VAULT_TX_API_PLATFORM_KEY;
+  return out;
+}

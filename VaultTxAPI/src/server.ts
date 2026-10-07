@@ -17,7 +17,7 @@ import { createServer } from "node:http";
 import type { PlutusJson } from "@magiclamp/sdk";
 
 import { BlockfrostChainReader, PendingSpendsFilteredChain } from "./chain.js";
-import { loadConfig, isLoopback, type Deployment } from "./config.js";
+import { loadConfig, isLoopback, scrubPlatformKey, type Deployment } from "./config.js";
 import { handle } from "./http.js";
 import { IssuedTxRegistry, OwnerLockTable, PendingSpends } from "./locks.js";
 import { blockRoutingOf, makeBlockServices } from "./blocks.js";
@@ -26,7 +26,7 @@ import { DidStakeWitnessProvider } from "./owner.js";
 import { DidOwnerResolver } from "./didOwner.js";
 import { ChainDidPaymentAnchorReader } from "./funding.js";
 import { FeeProxy } from "./feeProxy.js";
-import { SponsorTxService } from "./sponsor.js";
+import { SponsorTxService, platformAddressFundedWarning } from "./sponsor.js";
 import { createPlatformSigner } from "./platformSigner.js";
 import { PREPAID_VAULT_TYPE } from "./config.js";
 import type { PrepaidBlueprint } from "@magiclamp/prepaidgen-sdk";
@@ -34,6 +34,8 @@ import { readBuildInfo } from "./buildInfo.js";
 import { readJsonBody, shellErrorResponse } from "./shell.js";
 
 const cfg = loadConfig();
+// Khoá platform đã nằm trong `cfg`; gỡ khỏi môi trường của tiến trình (tiến trình con, `ps eww`).
+scrubPlatformKey();
 // Đo MỘT lần lúc khởi động, ở chính cây mã đang chạy: `git pull` sau đó mà không khởi động
 // lại thì mã đang chạy vẫn là mã cũ, và commit in ra phải là commit cũ.
 const build = readBuildInfo(dirname(fileURLToPath(import.meta.url)));
@@ -122,8 +124,19 @@ const platformSign = cfg.platformKey === undefined || cfg.deployment.prepaid ===
       expectedPkh: cfg.deployment.prepaid.sponsor?.platformPkhs?.[0],
       paidFundPolicy: cfg.deployment.prepaid.fundScriptHash,
       tokenValues: [cfg.token, cfg.sponsorToken, cfg.feecoverAppToken ?? ""],
+      network: cfg.network,
+      ...(cfg.deployment.prepaid.carpUnit === undefined ? {} : { carpUnit: cfg.deployment.prepaid.carpUnit }),
+      ...(cfg.deployment.prepaid.sponsor?.beneficiary === undefined
+        ? {} : { beneficiary: cfg.deployment.prepaid.sponsor.beneficiary }),
     });
 delete cfg.platformKey;
+// Địa chỉ enterprise của khoá platform giữ UTxO ⟹ CẢNH BÁO, không từ chối khởi động: ai cũng gửi được một UTxO
+// tới địa chỉ bất kỳ, nên từ chối khởi động là trao cho người ngoài một nút tắt dịch vụ. Chặn thật nằm ở hai chỗ
+// không phụ thuộc số dư: 422 SPONSOR_FEE_WALLET_IS_PLATFORM ở mọi route và hàm ký từ chối input của khoá đó.
+if (platformSign !== undefined) {
+  void platformAddressFundedWarning(chain, cfg.network, cfg.deployment.prepaid!.sponsor!.platformPkhs![0]!)
+    .then(w => { if (w !== null) console.error(w); });
+}
 
 // Hành trình tài trợ: chỉ khi bản deploy phục vụ két Prepaid — khi đó `vaultPlutusJson` CHÍNH LÀ blueprint
 // PrepaidGen. Bản deploy khác ⟹ `/tx/sponsor/t*` trả 501 `SPONSOR_UNAVAILABLE`.

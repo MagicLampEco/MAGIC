@@ -14,8 +14,10 @@ bỏ ca `paymaster.paymaster.spend`, hai ca âm/dương của chốt stake Treas
 `Paymaster/onchain`. README bỏ dòng cây thư mục. `DevStatus.md` bỏ dòng bảng module, đóng Nợ #17,
 #73, #74, #77, nửa `Paymaster/` của D11 và D16, thêm mục `## Đã xoá khỏi kho — 2026-10-07`. Dòng
 D16 ở `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` §7.6 và `ConsumeMAGIC/CONTRACT.md` ghi trạng thái
-mới. Chú thích nêu `Paymaster` là bên đọc thô trường 15 của `VaultDatum` nay tự khai bên đó đã xoá;
-chỉ chú thích đổi, không định danh on-chain nào đổi.
+mới. Chú thích nêu `Paymaster` là bên đọc thô trường 15 của `VaultDatum` nay nêu bên đọc theo vị trí
+còn lại, két Wakeme (datum InstantGen, chỉ số ≤ 15); chỉ chú thích đổi, không định danh on-chain
+nào đổi. Spec `Specs/MagicLamp-Tripletoken-Feat-(Vi).md` lên v2.4.5 (D16 đánh dấu đã đóng, bỏ dòng
+lộ trình "Paymaster runner"). `DevStatus.md` ghi hai con trỏ ở kho anh em còn trỏ vào module đã xoá.
 
 **Vì sao.** Cơ chế uỷ quyền mà đường Sponsor dựa vào đã bị bỏ khỏi mô hình 2026-09-16 (Nợ #14):
 cổng PM-1.5 không thoả được, `buildSponsorTx` ném `PM-000`. Module chưa từng deploy

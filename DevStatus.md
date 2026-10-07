@@ -310,7 +310,16 @@ không gác riêng module này), và hai ca âm/dương của nó nay gọi th�
 Ô `personal_delegate` (trường 15 của `VaultDatum`) **KHÔNG đổi** — thứ tự trường là hợp đồng
 nhị phân. Chú thích ở `InstantGen`/`ScheduleGen` `types.ak`, `InstantGen/offchain/src/types.ts`,
 `InstantGen/TECH.md` và `MagicSDK/tests/vaultDatumFieldOrder.test.ts` từng nêu `Paymaster` là
-bên đọc thô trường đó; nay tự khai bên đó đã xoá.
+bên đọc thô trường đó; nay nêu bên đọc theo vị trí còn lại, két Wakeme (đọc datum InstantGen,
+chỉ số ≤ 15), và không nhắc `Paymaster` ở chỗ nó được nêu là bên đọc.
+
+**2026-10-07 — con trỏ ở kho anh em còn trỏ vào module đã xoá** (đối chiếu từng dòng ở đúng sha ghi
+kèm):
+- `LAMP/Treasury/Exec-Spec.md:74@5386cc7` — đường LAMP→Treasury "đổi chỗ" sang `paymaster.ak:122-137`.
+- `PhoenixKeyDID/Feecover/Specs/PhoenixKey-Feecover-Tech.md:14,111@8e13c5d` — dòng 14 nêu `Paymaster/onchain/lib/magiclamp/paymaster/types.ak` là nguồn engine tái dùng; dòng 111 nêu kỷ luật `types.ak` của Paymaster làm mẫu.
+
+Cả hai là con trỏ ở kho anh em; chủ kho đó sửa. Tới khi sửa, hai dòng này trỏ vào mã không còn trong
+`MAGIC@HEAD` (bản cuối còn module: `git show d56bd880:Paymaster/<đường>`).
 
 **Còn lại trên đĩa, KHÔNG trong git:** `Paymaster/onchain/{plutus.json,build}` và
 `Paymaster/offchain/node_modules` — bị `.gitignore` chặn. Không xoá trong lượt này

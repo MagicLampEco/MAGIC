@@ -477,6 +477,15 @@ export class IssuedTxRegistry {
     return e;
   }
 
+  /** `validTo` (POSIX ms) của một tx dịch vụ đã phát — còn hạn HOẶC đã quá hạn mà còn trong
+   *  `EXPIRED_RETENTION_MS` — cho `GET /tx/status` trả `expires_at`. CHỈ ĐỌC: không xoá dòng, không
+   *  đổi trạng thái nộp. `null` ⟹ tx không do tiến trình này phát, hoặc dòng đã quá khoảng giữ lại. */
+  validToOf(txHash: string, nowMs: number): number | null {
+    const e = this.issued.get(txHash);
+    if (e === undefined || e.expiresAtMs + EXPIRED_RETENTION_MS <= nowMs) return null;
+    return e.validToMs;
+  }
+
   sweep(nowMs: number): number {
     let n = 0;
     for (const [h, e] of this.issued) {

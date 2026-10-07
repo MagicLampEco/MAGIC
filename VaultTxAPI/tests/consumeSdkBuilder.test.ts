@@ -29,6 +29,7 @@ import {
 } from "@lucid-evolution/lucid";
 import { posixMsToEpoch, wakemeVaultHash } from "@magiclamp/protocol-utils";
 import {
+  MAX_BURN_ENTRIES_PER_TX,
   buildConsumeManyTx, buildConsumeTx, buildVaultBurnBatch, requiredFromBeacon, requiredFromBeaconPairs, type PlutusJson,
 } from "@magiclamp/sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -102,9 +103,11 @@ const VAULT_BLUEPRINT = {
 
 const LIVE_BATCH = { id: "b0".repeat(16), createdEpoch: EPOCH, amountNanogic: 5_000_000_000n };
 
-function vaultDatum(capEpoch: bigint, wakemeLink: string): string {
+type BatchFixture = typeof LIVE_BATCH;
+
+function vaultDatum(capEpoch: bigint, wakemeLink: string, batches: BatchFixture[] = [LIVE_BATCH]): string {
   return datumHex({
-    lampLockedOildrop: 0n, batches: [LIVE_BATCH], instantUnlockMs: 0n,
+    lampLockedOildrop: 0n, batches, instantUnlockMs: 0n,
     lastUpdatedEpoch: EPOCH - 1n, capEpoch, wakemeLink,
   });
 }
@@ -120,7 +123,15 @@ function wakemeUtxo(): UTxO {
   };
 }
 
-function consumeTxCbor(withWakeme: boolean, thread: UTxO, pairs = [{ opType: 1, opCount: 1n }]): string {
+/** Vế két ra của CBOR ghi sẵn: mặc định lô sống 5 MAGIC còn 4 sau khi đốt 1 MAGIC. */
+interface VaultOutLeg { batches: BatchFixture[]; requiredNanogic: bigint }
+const ONE_BATCH_OUT: VaultOutLeg = {
+  batches: [{ ...LIVE_BATCH, amountNanogic: 4_000_000_000n }], requiredNanogic: 1_000_000_000n,
+};
+
+function consumeTxCbor(
+  withWakeme: boolean, thread: UTxO, pairs = [{ opType: 1, opCount: 1n }], out: VaultOutLeg = ONE_BATCH_OUT,
+): string {
   return buildTxCbor(withConsumeLeg({ ttlSlot: FIXTURE_TTL_SLOT,
     inputs: [{ txHash: INPUT_TX_HASH, outputIndex: 0 }],
     ...(withWakeme ? { referenceInputs: [{ txHash: WAKEME_TX, outputIndex: 1 }] } : {}),
@@ -129,20 +140,20 @@ function consumeTxCbor(withWakeme: boolean, thread: UTxO, pairs = [{ opType: 1, 
       address: VAULT_ADDR,
       assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID]: 1n },
       inlineDatumHex: datumHex({
-        lampLockedOildrop: 0n, batches: [{ ...LIVE_BATCH, amountNanogic: 4_000_000_000n }], instantUnlockMs: 0n,
-        lastUpdatedEpoch: EPOCH, capEpoch: EPOCH, usageWindowEpoch: EPOCH, consumedCreditNanogic: 1_000_000_000n,
+        lampLockedOildrop: 0n, batches: out.batches, instantUnlockMs: 0n,
+        lastUpdatedEpoch: EPOCH, capEpoch: EPOCH, usageWindowEpoch: EPOCH, consumedCreditNanogic: out.requiredNanogic,
       }),
     }],
   }, {
     // `requiredFromBeacon` giả = 1 MAGIC (khối `vi.mock` đầu tệp) — cùng lượng két đốt ở trên.
     thread, vaultRef: { txHash: INPUT_TX_HASH, outputIndex: 0 }, pairs,
-    requiredNanogic: 1_000_000_000n,
+    requiredNanogic: out.requiredNanogic,
   }));
 }
 
 const outRef = (s: string) => { const [txHash, i] = s.split("#"); return { txHash: txHash!, outputIndex: Number(i) }; };
 
-function harness(o: { capEpoch: bigint; wakemeLink?: string }) {
+function harness(o: { capEpoch: bigint; wakemeLink?: string; batches?: BatchFixture[]; out?: VaultOutLeg }) {
   const withWakeme = (o.wakemeLink ?? "") !== "";
   const deployment = parseDeployment(JSON.stringify({
     source: "bản dựng thử của phép kiểm — không phải một lần deploy thật",
@@ -157,7 +168,7 @@ function harness(o: { capEpoch: bigint; wakemeLink?: string }) {
   const vault: UTxO = {
     txHash: INPUT_TX_HASH, outputIndex: 0, address: VAULT_ADDR,
     assets: { lovelace: 5_659_030n, [LAMP_UNIT]: 1_001_000_000n, [VAULT_ID]: 1n },
-    datum: vaultDatum(o.capEpoch, o.wakemeLink ?? ""),
+    datum: vaultDatum(o.capEpoch, o.wakemeLink ?? "", o.batches),
   };
   const priceBeacon: UTxO = {
     txHash: "56".repeat(32), outputIndex: 0, address: VAULT_ADDR,
@@ -183,7 +194,7 @@ function harness(o: { capEpoch: bigint; wakemeLink?: string }) {
   // Không gọi Blockfrost: Lucid chỉ đi vào `buildConsumeTx` đã giả.
   (builder as unknown as { lucidFor: () => Promise<unknown> }).lucidFor = async () => ({});
   vi.mocked(buildConsumeTx).mockResolvedValue(
-    { tx: { toCBOR: () => consumeTxCbor(withWakeme, thread) } } as unknown as Awaited<ReturnType<typeof buildConsumeTx>>);
+    { tx: { toCBOR: () => consumeTxCbor(withWakeme, thread, undefined, o.out) } } as unknown as Awaited<ReturnType<typeof buildConsumeTx>>);
 
   const service = new VaultTxService({
     network: NET, deployment, chain, builder,
@@ -277,5 +288,45 @@ describe("SdkTxBuilder.consume — `pairs` đi `requiredFromBeaconPairs` + `buil
     expect(vi.mocked(requiredFromBeacon)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(requiredFromBeaconPairs)).not.toHaveBeenCalled();
     expect(vi.mocked(buildConsumeManyTx)).not.toHaveBeenCalled();
+  });
+});
+
+// ── Trần số mục đốt mỗi tx (`MagicSDK` ▸ `MAX_BURN_ENTRIES_PER_TX`) qua tới mã lỗi HTTP ─────────────
+// CẶP ở đúng biên: N lô mỗi lô 1 MAGIC, lượt tiêu đòi N MAGIC ⟹ cách nào cũng phải đốt đủ N lô.
+// Bộ chọn lô của SDK chạy THẬT (`buildVaultBurnBatch` bọc bản gốc); chỉ `buildConsumeTx` là giả.
+describe("SdkTxBuilder.consume — trần số mục đốt mỗi tx", () => {
+  const MAGIC = 1_000_000_000n;
+  const nBatches = (n: number): BatchFixture[] => Array.from({ length: n }, (_, i) => ({
+    id: i.toString(16).padStart(32, "0"), createdEpoch: EPOCH, amountNanogic: MAGIC,
+  }));
+  const spentDown = (bs: BatchFixture[]): BatchFixture[] => bs.map(b => ({ ...b, amountNanogic: 0n }));
+
+  it(`CẶP (a): ${MAX_BURN_ENTRIES_PER_TX} lô × 1 MAGIC, tiêu ${MAX_BURN_ENTRIES_PER_TX} MAGIC ⟹ 200, buildConsumeTx được gọi`, async () => {
+    const n = MAX_BURN_ENTRIES_PER_TX;
+    const batches = nBatches(n);
+    const required = BigInt(n) * MAGIC;
+    vi.mocked(requiredFromBeacon).mockReturnValueOnce(required);
+    const h = harness({ capEpoch: EPOCH, batches, out: { batches: spentDown(batches), requiredNanogic: required } });
+    const r = await handle(post(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(vi.mocked(buildConsumeTx)).toHaveBeenCalledTimes(1);
+    expect((r.body as { summary: { consume: { required_nanogic: string } } }).summary.consume.required_nanogic)
+      .toBe(required.toString());
+  });
+
+  it(`CẶP (b): ${MAX_BURN_ENTRIES_PER_TX + 1} lô × 1 MAGIC, tiêu ${MAX_BURN_ENTRIES_PER_TX + 1} MAGIC ⟹ 422 CONSUME_TOO_MANY_BATCHES, KHÔNG dựng tx`, async () => {
+    const n = MAX_BURN_ENTRIES_PER_TX + 1;
+    const batches = nBatches(n);
+    const required = BigInt(n) * MAGIC;
+    vi.mocked(requiredFromBeacon).mockReturnValueOnce(required);
+    const h = harness({ capEpoch: EPOCH, batches, out: { batches: spentDown(batches), requiredNanogic: required } });
+    const r = await handle(post(), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    const body = r.body as { error: { code: string; details: Record<string, unknown> } };
+    expect(body.error.code).toBe("CONSUME_TOO_MANY_BATCHES");
+    expect(body.error.details.burn_entries_needed).toBe(n);
+    expect(body.error.details.burn_entries_cap).toBe(MAX_BURN_ENTRIES_PER_TX);
+    expect(body.error.details.live_batches).toBe(n);
+    expect(vi.mocked(buildConsumeTx)).not.toHaveBeenCalled();
   });
 });

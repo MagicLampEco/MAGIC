@@ -92,6 +92,7 @@ function countingChain(): { chain: ChainReader; reads: () => number } {
     tip: () => { n++; return inner.tip(); },
     submitTx: c => inner.submitTx(c),
     rewardAccount: a => inner.rewardAccount(a),
+    txStatus: h => { n++; return inner.txStatus(h); },
   };
   return { chain, reads: () => n };
 }

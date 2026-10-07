@@ -77,6 +77,7 @@ POST /tx/open-thread       { owner, [owner_witness], change_address }
 POST /tx/bind-did          { owner, [owner_witness], [change_address], did_commit, [engage_ref] }
 POST /tx/create-vault      { kind, owner, [owner_witness], lamp_amount, change_address | funding, [profile], [did_commit] }
 POST /tx/submit            { tx_cbor, witness_cbor }
+GET  /tx/status/{tx_hash}  — chỉ đọc: tx đã vào khối / ở mempool / chưa thấy, xem dưới
 POST /tx/quote             { route, params, [owner_fee_addresses] } — báo giá phí, xem dưới
 POST /fee/utxo             { route }        [X-Feecover-Token]   — proxy ví trả phí, xem dưới
 POST /fee/sign             { tx_cbor }      [X-Feecover-Token]
@@ -220,9 +221,46 @@ hạn **duy nhất**: sổ cái từ chối tx sau mốc đó, nên mọi mốc 
   `tx_hash` trước khi dựng lại. Sổ phát-hành giữ dòng hết hạn thêm `EXPIRED_RETENTION_MS`
   (`src/locks.ts`); quá khoảng đó, hoặc tx chưa từng do dịch vụ phát ⟹ mã cũ của đường đó
   (`502 SUBMIT_REJECTED` ở `/tx/submit`, `403 FEE_PROXY_TX_NOT_ISSUED` ở `/fee/sign`).
+- **Tx đã nộp mà không biết số phận** — tra `GET /tx/status/{tx_hash}` (mục ngay dưới). Quy tắc
+  kết luận "tx không bao giờ lên chuỗi được": `state = "not_found"` **và** giờ hiện tại (tính theo
+  `server_time` của chính phản hồi đó) > `expires_at`, cộng biên an toàn vài phút cho lệch đồng hồ.
 - **`VAULT_TX_API_LOCK_TTL_MS` nay CHỈ là khoá mềm theo chủ** (§4) — không còn quyết `expires_at`,
   hạn sổ phát-hành hay hạn sổ input vừa nộp. Sổ input vừa nộp (`PendingSpends`) có biến riêng,
   `VAULT_TX_API_PENDING_SPENDS_TTL_MS`, đo theo độ trễ chỉ mục của nút đọc chứ không theo hạn ký.
+
+### `GET /tx/status/{tx_hash}`: tx đã lên chuỗi chưa
+
+Chỉ đọc: không khoá, không ghi sổ, không chạm `PendingSpends`. Cùng thẻ bài như các đường `/tx/*`
+khác (nó tiêu hạn mức nhà cung cấp chuỗi của người vận hành, như `/tx/quote`). Tra **chuỗi trước,
+rồi mempool** (`src/chain.ts` ▸ `BlockfrostChainReader.txStatus`: `/txs/{hash}` rồi `/mempool/{hash}`).
+
+```jsonc
+// 200 — tx đã vào khối
+{ "tx_hash": "…", "state": "in_chain",
+  "block": "<hash khối>", "slot": 108806400, "block_time": "2026-09-11T03:46:40.000Z" }
+// 200 — đang ở mempool của nhà cung cấp
+{ "tx_hash": "…", "state": "in_mempool" }
+// 200 — chưa thấy ở đâu; tx do CHÍNH dịch vụ này phát ⟹ kèm expires_at + server_time
+{ "tx_hash": "…", "state": "not_found",
+  "expires_at": "2026-10-06T02:15:00.000Z", "server_time": "2026-10-06T02:20:01.123Z" }
+```
+
+- **`expires_at`** = `validTo` của thân tx, cùng nguồn với `expires_at` của các route dựng (sổ
+  phát-hành `src/locks.ts` ▸ `IssuedTxRegistry.validToOf`). Có khi tx do tiến trình này phát và sổ
+  còn dòng — kể cả khi đã quá hạn, trong `EXPIRED_RETENTION_MS`. Vắng ⟹ dịch vụ không biết hạn của
+  tx này (không do nó phát, dòng đã quá khoảng giữ lại, hoặc tiến trình đã khởi động lại — sổ nằm
+  trong bộ nhớ). Vắng `expires_at` thì **không** kết luận được "tx chết" từ `not_found`.
+- **`server_time`** đi kèm `expires_at` (`http.ts` ▸ `withServerTime`), như mọi phản hồi khác.
+- **`block_time`** ISO 8601 (Blockfrost trả giây POSIX; đổi đơn vị ở `blockTimeSecondsToPosixMs`).
+- **Mempool là của nhà cung cấp.** Blockfrost chỉ thấy tx nộp qua chính nó; dịch vụ nộp qua đúng
+  nhà cung cấp đó, nên tx nộp qua `/tx/submit` hiện ra. Tx nộp qua đường khác có thể ra `not_found`
+  cho tới khi vào khối — lại là lý do quy tắc kết luận phải chờ qua `expires_at`.
+- `tx_hash` không phải đúng 64 hex thường (kể cả vắng: `/tx/status`, `/tx/status/`) ⟹
+  `400 TX_HASH_INVALID`, không gọi chuỗi.
+- Nhà cung cấp lỗi / quá giờ / hết hạn mức / trả hình dạng lạ ở bước nào ⟹
+  `502 TX_STATUS_PROVIDER_UNAVAILABLE` (`details.stage` = `chain` | `mempool`, kèm
+  `node_http_status` / `transport`). **Không bao giờ** thành `not_found`: chỉ hai câu 404 của nhà
+  cung cấp (`/txs` rồi `/mempool`) mới ra `not_found`.
 
 ### Gen v2.0: `summary.gen` trên mọi đường dựng vault
 
@@ -338,6 +376,16 @@ này phải xét lại. Bên gọi không phải rẽ nhánh: `summary.consume` 
 `reference_inputs`; đúng một output ở địa chỉ engage, mang NFT thread, value bảo toàn tuyệt đối;
 datum thread giữ chủ, `consumed_count` tăng Σ `op_count`, `consumed_nanogic` tăng `required` > 0
 và bằng `magic.burned_nanogic` của két. Lệch ⟹ `422 CONSUME_TX_MISMATCH`, không có tx nào để ký.
+
+**Trần số lô đốt trong MỘT tx tiêu.** Redeemer `BurnBatch { burns }` có một mục cho mỗi lô bị
+đốt, và `apply_burns` duyệt toàn bộ danh sách lô cho mỗi mục, nên chi phí ExUnit tăng theo tích
+số lô × số mục. Bộ dựng của SDK giới hạn số mục ở `MagicSDK/src/burnBatch.ts` ▸
+`MAX_BURN_ENTRIES_PER_TX` (giá trị, phép đo và phần CHƯA ĐO nằm ở chú thích của chính hằng đó —
+đừng chép số xuống đây). Chọn lô: đốt lô sắp hết hạn trước; cách đó cần quá trần thì đổi sang lô
+lớn trước (ít mục nhất); vẫn quá trần ⟹ `422 CONSUME_TOO_MANY_BATCHES`, ném TRƯỚC khi dựng tx,
+`details` = `{ burn_entries_needed, burn_entries_cap, live_batches }`. App rẽ nhánh theo mã này để
+gợi ý chia lượt tiêu nhỏ hơn. Lô còn sống mà số dư đã về 0 (két Instant giữ lô đốt sạch tới hết
+epoch) không thành mục đốt — validator đòi mỗi mục `amt > 0`.
 
 ### `POST /tx/schedule-commit`: validator `commit`
 
@@ -1368,6 +1416,7 @@ Nên:
 | `op_type` không tăng ngặt (kể cả trùng) | `400 CONSUME_PAIRS_NOT_INCREASING` |
 | `op_count` không phải chuỗi chữ số ≥ 1, ≤ 20 chữ số / `op_type` ngoài số nguyên [0, 1000000] | `400 CONSUME_PAIR_COUNT_INVALID` / `400 CONSUME_PAIR_TYPE_INVALID` |
 | tx tiêu vừa dựng lệch lượt tiêu đã yêu cầu (thread, redeemer, output, datum, Σburns) | `422 CONSUME_TX_MISMATCH` |
+| lượt tiêu phải đốt từ nhiều lô hơn một tx chở được, kể cả cách ít lô nhất (`MAX_BURN_ENTRIES_PER_TX`) | `422 CONSUME_TOO_MANY_BATCHES` (`details.burn_entries_needed` · `burn_entries_cap` · `live_batches`) |
 | `/tx/open-thread` khi chủ đã có thread | `409 ENGAGE_THREAD_EXISTS` |
 | `engage_ref` mang NFT nhưng datum không giải được | `422 ENGAGE_THREAD_DATUM_UNDECODABLE` |
 | tx mở thread vừa dựng lệch (NFT / output / datum genesis) | `422 OPEN_THREAD_TX_MISMATCH` |
@@ -1394,6 +1443,8 @@ Nên:
 | Feecover từ chối (`400`/`403`/`409`/`422`/`429`) | mã đó + `FEE_PROXY_REJECTED` |
 | dịch vụ không cấu hình `feecover` | `501 FEE_PROXY_UNAVAILABLE` |
 | Feecover không trả lời / 5xx / `401` / `404` / thân sai hình dạng | `502 FEE_PROXY_UPSTREAM` |
+| `GET /tx/status`: `tx_hash` không phải đúng 64 hex thường (kể cả vắng) | `400 TX_HASH_INVALID` |
+| `GET /tx/status`: nhà cung cấp chuỗi lỗi / quá giờ / hình dạng lạ (`details.stage` = `chain` \| `mempool`) — **không** phải `not_found` | `502 TX_STATUS_PROVIDER_UNAVAILABLE` |
 | tham chiếu UTxO (ví trả phí, anchor) không có trên chuỗi / sai số output | `400 UTXO_NOT_FOUND` |
 | tham chiếu UTxO đã bị tiêu | `409 UTXO_SPENT` (`details.consumed_by_tx`) |
 | UTxO vault là input của một tx vừa nộp qua dịch vụ mà chưa vào khối | `409 PREVIOUS_TX_PENDING` — thử lại sau khi tx đó vào khối |

@@ -1,12 +1,16 @@
 // VaultTxAPI/tests/noSigningMaterial.test.ts — ghim BẤT BIẾN SỐ MỘT bằng một phép đo.
 //
-// Câu "dịch vụ này không bao giờ chạm khoá riêng" là một lời hứa cho tới khi có thứ kiểm
-// được nó. Bài này quét MÃ NGUỒN của gói và đòi ba điều:
+// Bất biến (chủ dự án chốt 2026-10-07): dịch vụ giữ ĐÚNG MỘT khoá, chỉ cho vai platform của genesis quỹ
+// tài trợ, chỉ ký tx chính nó vừa dựng; không giữ khoá chi tiền. Bài này quét MÃ NGUỒN của gói và đòi:
 //
-//   1. không mẫu nào của vật liệu ký xuất hiện — kể cả trong chú thích và chuỗi lỗi;
+//   1. mẫu vật liệu ký chỉ xuất hiện ở ĐÚNG MỘT mô-đun, `src/platformSigner.ts`, và ở đó chỉ đúng mẫu
+//      đã kê; mọi tệp khác (kể cả tests/) — 0, kể cả trong chú thích và chuỗi lỗi;
 //   2. không có đường ký nào của lucid được gọi;
-//   3. tập biến môi trường gói này đọc là một danh sách ĐÓNG, và bí mật duy nhất trong
-//      đó là GIÁ TRỊ khoá Blockfrost — không có tên biến nào trỏ tới một kho khoá.
+//   3. tập biến môi trường gói này đọc là một danh sách ĐÓNG; đúng MỘT biến mang khoá
+//      (`VAULT_TX_API_PLATFORM_KEY`), không tên biến nào trỏ tới một kho khoá;
+//   4. trong src/, chỉ `server.ts` import mô-đun ký, và chỉ `sponsor.ts` + `server.ts` chạm hàm ký —
+//      `/fee/sign` (`feeProxy.ts`), `http.ts`, `service.ts` thì không. Phép đo HÀNH VI của vế này (đếm lượt
+//      gọi hàm ký qua route) nằm ở `sponsorEmulator.test.ts`.
 //
 // ── VÌ SAO MẪU ĐƯỢC GHÉP TỪ MẢNH ───────────────────────────────────────────────
 // Nếu bài kiểm viết thẳng chuỗi cấm thì chính tệp này vi phạm phép quét của nó, và lối
@@ -17,6 +21,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { childProcessEnv, scrubPlatformKey } from "../src/config.js";
 import { describe, expect, it } from "vitest";
 
 const PKG_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -104,7 +109,7 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
     expect(SOURCE_FILES.some(f => f.endsWith("noSigningMaterial.test.ts"))).toBe(true);
   });
 
-  it("không mẫu vật liệu ký nào xuất hiện trong mã nguồn của gói", () => {
+  it("mẫu vật liệu ký chỉ có ở src/platformSigner.ts, và ở đó chỉ đúng mẫu đã kê; mọi tệp khác 0", () => {
     const hits: string[] = [];
     for (const file of SOURCE_FILES) {
       const text = readFileSync(file, "utf8");
@@ -112,7 +117,59 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
         if (f.re.test(text)) hits.push(`${file.slice(PKG_ROOT.length)} ▸ ${f.label}`);
       }
     }
-    expect(hits).toEqual([]);
+    // Đo, không nới: mô-đun ký khớp ĐÚNG một mẫu (lớp khoá của CML), không mẫu nào khác — và không tệp nào khác.
+    expect(hits).toEqual([`src/platformSigner.ts ▸ ${j("private", "Key")}`]);
+  });
+
+  it("trong src/, API vật liệu ký (lớp khoá CML, tạo witness, sinh/nạp khoá node:crypto) chỉ ở src/platformSigner.ts", () => {
+    const keyApi = new RegExp(j("Private", "Key", "|", "make_vkey", "_witness", "|", "generateKey", "Pair", "|", "create", "Private", "Key"));
+    const users = SOURCE_FILES
+      .filter(f => f.slice(PKG_ROOT.length).startsWith("src/"))
+      .filter(f => keyApi.test(readFileSync(f, "utf8")))
+      .map(f => f.slice(PKG_ROOT.length));
+    expect(users).toEqual(["src/platformSigner.ts"]);
+    // Phép đo CẮN được: một dòng tạo witness trồng thử bị bắt.
+    expect(keyApi.test(`CML.${j("make_vkey", "_witness")}(h, k)`)).toBe(true);
+  });
+
+  it("trong src/, chỉ server.ts import mô-đun ký; chỉ sponsor.ts + server.ts chạm hàm ký; /fee/sign, http, service thì không", () => {
+    const src = SOURCE_FILES.filter(f => f.slice(PKG_ROOT.length).startsWith("src/"));
+    const rel = (f: string) => f.slice(PKG_ROOT.length);
+    const importers = src.filter(f => /from\s+["']\.\/platformSigner(\.js)?["']/.test(readFileSync(f, "utf8"))).map(rel);
+    expect(importers).toEqual(["src/server.ts"]);
+    const touch = /\bplatformSign\b|\bcosignPlatform\b|\bcreatePlatformSigner\b/;
+    const touching = src.filter(f => touch.test(readFileSync(f, "utf8"))).map(rel).sort();
+    expect(touching).toEqual(["src/platformSigner.ts", "src/server.ts", "src/sponsor.ts"]);
+    for (const f of ["src/feeProxy.ts", "src/http.ts", "src/service.ts", "src/witnessCheck.ts"]) {
+      expect(src.map(rel)).toContain(f);
+      expect(touch.test(readFileSync(join(PKG_ROOT, f), "utf8"))).toBe(false);
+    }
+    // Trong sponsor.ts, lời gọi ký nằm ở ĐÚNG ba chỗ: hai route tạo quỹ (`fund-genesis`) + claim (`fund-claim`), cùng
+    // đi qua `cosignPlatform`; một lời gọi hàm ký.
+    const sp = readFileSync(join(PKG_ROOT, "src/sponsor.ts"), "utf8");
+    expect(sp.match(/this\.cosignPlatform\(/g)?.length).toBe(3);
+    expect(sp.match(/this\.cosignPlatform\([^;]*"fund-genesis"/g)?.length).toBe(2);
+    expect(sp.match(/this\.cosignPlatform\([^;]*"fund-claim"/g)?.length).toBe(1);
+    expect(sp.match(/\bsign\(\{ kind, tx, inputs \}\)/g)?.length).toBe(1);
+    expect(sp.match(/\bsign\(/g)?.length).toBe(1);
+  });
+
+  it("hàm ký chỉ được gọi từ sponsor.ts: server.ts chỉ DỰNG nó (createPlatformSigner) và chuyển cho SponsorTxService", () => {
+    const sv = readFileSync(join(PKG_ROOT, "src/server.ts"), "utf8");
+    expect(sv).not.toMatch(/platformSign\s*\(/);
+    expect(sv.match(/createPlatformSigner\(/g)?.length).toBe(1);
+  });
+
+  it("khoá platform không đi vào tiến trình con: gỡ khỏi môi trường sau khi đọc; git chạy với env tường minh không có khoá", () => {
+    const name = j("VAULT_TX_API_", "PLATFORM_KEY");
+    const env: Record<string, string | undefined> = { [name]: "giá-trị-thử", PATH: "/bin" };
+    expect(childProcessEnv(env)).toEqual({ PATH: "/bin" });
+    expect(env[name]).toBe("giá-trị-thử"); // bản sao, không sửa nguồn
+    scrubPlatformKey(env);
+    expect(env).toEqual({ PATH: "/bin" });
+    const sv = readFileSync(join(PKG_ROOT, "src/server.ts"), "utf8");
+    expect(sv.indexOf("scrubPlatformKey();")).toBeGreaterThan(sv.indexOf("const cfg = loadConfig();"));
+    expect(readFileSync(join(PKG_ROOT, "src/buildInfo.ts"), "utf8")).toMatch(/env: childProcessEnv\(\)/);
   });
 
   it("phép quét CẮN được: một chuỗi cấm nhân tạo bị bắt", () => {
@@ -126,7 +183,14 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
     const readers = SOURCE_FILES
       .filter(f => envAccess.test(readFileSync(f, "utf8")))
       .map(f => f.slice(PKG_ROOT.length));
-    expect(readers.sort()).toEqual(["src/config.ts"]);
+    // Một ngoại lệ, chỉ ở tầng test: `sponsorEmulator.test.ts` ▸ `dumpSampleTx` đọc ĐÚNG MỘT tên,
+    // `VTA_SAMPLE_TX_DIR` (thư mục ghi tx mẫu, tắt mặc định). Mã dịch vụ (`src/`) vẫn chỉ có `config.ts`.
+    expect(readers.sort()).toEqual(["src/config.ts", "tests/sponsorEmulator.test.ts"]);
+    const emu = readFileSync(join(PKG_ROOT, "tests/sponsorEmulator.test.ts"), "utf8");
+    const names = [...emu.matchAll(new RegExp(j("process", "\\s*\\.\\s*", "env"), "g"))]
+      .map(m => emu.slice(m.index! + m[0].length).match(/^\.([A-Z0-9_]+)/)?.[1] ?? "<không phải truy cập theo tên>");
+    expect(names).toEqual(["VTA_SAMPLE_TX_DIR"]);
+    expect(readFileSync(join(PKG_ROOT, "src/config.ts"), "utf8")).not.toContain("VTA_SAMPLE_TX_DIR");
   });
 
   it("tập biến môi trường là danh sách ĐÓNG, và bí mật duy nhất là GIÁ TRỊ khoá chuỗi", () => {
@@ -147,14 +211,19 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
       "VAULT_TX_API_PORT",
       "VAULT_TX_API_BASE_PATH",
       "VAULT_TX_API_TOKEN",
-      // Thẻ vai sponsor (chỉ mở T2) — GIÁ TRỊ thẻ bài, cùng loại với VAULT_TX_API_TOKEN (`config.ts` ▸ sponsorToken).
+      // Thẻ vai sponsor (chỉ mở fund-vault) — GIÁ TRỊ thẻ bài, cùng loại với VAULT_TX_API_TOKEN (`config.ts` ▸ sponsorToken).
       "VAULT_TX_API_SPONSOR_TOKEN",
+      // Khoá platform của genesis quỹ tài trợ — GIÁ TRỊ bech32 `ed25519_sk…`, khoá DUY NHẤT dịch vụ giữ
+      // (`platformSigner.ts`). Ca dưới đo: đúng một biến mang khoá.
+      "VAULT_TX_API_PLATFORM_KEY",
       "VAULT_TX_API_TIMEOUT_MS",
       "VAULT_TX_API_LOCK_TTL_MS",
       "BLOCKFROST_PROJECT_ID",
       // Token ứng dụng Feecover (proxy phí, `feeProxy.ts`): token API dạng GIÁ TRỊ như khoá
       // Blockfrost, không phải khoá ký — chữ ký ví trả phí do Feecover tạo, dịch vụ chỉ chuyển tiếp.
       "FEECOVER_APP_TOKEN",
+      // Chỉ tầng test (`sponsorEmulator.test.ts` ▸ `dumpSampleTx`): thư mục ghi tx mẫu Emulator, không phải bí mật.
+      "VTA_SAMPLE_TX_DIR",
     ]);
     // Chỉ tính hai hình dạng ĐỌC thật: truy cập thuộc tính trên `env`, và chuỗi tên
     // truyền vào bộ đọc.
@@ -167,6 +236,9 @@ describe("BẤT BIẾN SỐ MỘT — dịch vụ không chạm vật liệu ký
       for (const m of text.matchAll(/"(VAULT_TX_API_[A-Z0-9_]+|BLOCKFROST_[A-Z0-9_]+)"/g)) found.add(m[1]!);
     }
     expect([...found].filter(n => !allowed.has(n))).toEqual([]);
+    // Đúng MỘT biến mang khoá — đo trên tập tên ĐỌC THẬT, không chỉ trên danh sách cho phép.
+    expect([...found].filter(n => /_KEY$/.test(n))).toEqual(["VAULT_TX_API_PLATFORM_KEY"]);
+    expect([...allowed].filter(n => /_KEY$/.test(n))).toEqual(["VAULT_TX_API_PLATFORM_KEY"]);
     // Và tên nào trong danh sách cũng KHÔNG được là một đường dẫn tới kho khoá: mã nhận
     // GIÁ TRỊ, không nhận sơ đồ kho. `VAULT_PLUTUS_JSON` là blueprint công khai của
     // `aiken build`, không phải kho bí mật.

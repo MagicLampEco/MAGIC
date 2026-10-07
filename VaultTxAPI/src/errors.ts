@@ -58,7 +58,10 @@
 //   403 FEE_PROXY_TX_NOT_ISSUED  `/fee/sign` cho tx không do dịch vụ phát, hoặc còn hạn nộp nhưng đã quá giờ
 //                                giữ chỗ UTxO phí (`reserved_until`)
 //   409 FEE_PAYER_RESERVATION_EXPIRED  UTxO ví trả phí hết giờ giữ chỗ Feecover trước khi tx kịp có một
-//                                khoảng hiệu lực (`validity.ts`) — `details.reserved_until`; xin lại `/fee/utxo`
+//                                khoảng hiệu lực (`validity.ts`), hoặc UTxO Feecover không còn lượt giữ lúc
+//                                dựng / lúc `/fee/sign` (`locks.ts` ▸ `feeReservationForBuild` / `feeSignProblem`)
+//                                — `details.reserved_until` (null khi vắng), `fee_payer_utxo`, `reservation`;
+//                                xin lại `/fee/utxo`
 //   400 WITNESS_SIGNATURE_INVALID / WITNESS_MISSING_SIGNER  `/tx/submit`: một chữ ký không khớp thân tx /
 //                                thiếu chữ ký của khoá trong `required_signers` (`witnessCheck.ts`)
 //   400 FEE_PROXY_NO_FEE_PAYER   `/fee/sign` cho tx không dùng ví trả phí
@@ -66,6 +69,11 @@
 //   501 FEE_PROXY_UNAVAILABLE    bản deploy không khai `feecover`
 //   502 FEE_PROXY_UPSTREAM       Feecover không trả lời / trả 5xx / trả sai hình dạng
 //   502 FEE_PROXY_UPSTREAM_MISMATCH  Feecover ký một tx có hash khác tx đã gửi
+//   400 FEE_PROXY_SOURCE_INVALID `/fee/utxo` / `/fee/sign`: `source` khác "feecover" / "sponsor"
+//   400 FEE_PROXY_SOURCE_MISMATCH  `/fee/sign`: `source` (vắng = feecover) khác nguồn của lượt giữ UTxO phí
+//   502 FEE_SOURCE_NOT_CONFIRMED Feecover không xác nhận ĐÚNG nguồn đã xin: xin sponsor mà câu trả lời
+//                                vắng `source`, hoặc câu trả lời mang `source` khác nguồn đã xin —
+//                                `details.source`, `details.confirmed_source`; không ghi lượt giữ, không giao chữ ký
 //   400 WAKEME_VAULT_REF_REQUIRED  `/tx/consume` làm mới checkpoint của két đang ghim két Wakeme
 //                                (`wakeme_link` khác "") mà thân bài không kèm `wakeme_vault_ref`
 //   400 INSTANT_GEN_M_INVALID    `m` của `/tx/instant-gen` vắng / không phải chuỗi chữ số / bằng 0

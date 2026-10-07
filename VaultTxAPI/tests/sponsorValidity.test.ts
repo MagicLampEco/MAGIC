@@ -33,10 +33,14 @@ function txWithValidTo(validToMs: bigint): string {
   });
 }
 
-function plan(step: SponsorStep, issued: IssuedTxRegistry, feePayerUtxoRef?: string): ValidityPlan {
+/** Địa chỉ ví trả phí Feecover trong các ca dưới (sổ nhớ nó khi `/fee/utxo` phát) và ví của chính chủ. */
+const FEECOVER_ADDR = credentialToAddress(NET, { type: "Key", hash: "fc".repeat(28) });
+const OWN_WALLET_ADDR = OUT_ADDR;
+
+function plan(step: SponsorStep, issued: IssuedTxRegistry, feePayerUtxoRef?: string, address = FEECOVER_ADDR): ValidityPlan {
   return planSponsorValidity({
     step, tipPosixMs: TIP_MS, network: NET, txValidityMs: TX_VALIDITY_MS, issued,
-    ...(feePayerUtxoRef === undefined ? {} : { feePayerUtxoRef }),
+    ...(feePayerUtxoRef === undefined ? {} : { feePayer: { utxoRef: feePayerUtxoRef, address } }),
   });
 }
 
@@ -45,10 +49,10 @@ describe("hạn tx tài trợ: kẹp giờ giữ chỗ Feecover", () => {
     const issued = new IssuedTxRegistry();
     const reserved = Number(TIP_MS) + 300_000 + 400; // 5 phút + 400 ms: căn xuống đầu slot
     issued.noteFeeReservation(FEE_REF, reserved);
-    const p = plan("T1", issued, FEE_REF);
+    const p = plan("open-vault", issued, FEE_REF);
     expect(p.reason).toBe("fee_reservation");
     expect(p.capMs).toBe(TIP_MS + 300_000n);
-    const args = sponsorValidityArgs("T1", p);
+    const args = sponsorValidityArgs("open-vault", p);
     expect(args).toEqual({ validToMs: TIP_MS + 300_000n });
     const e = readTxExpiry(txWithValidTo(TIP_MS + 300_000n), NET, p, TIP_MS);
     expect(e.reason).toBe("fee_reservation");
@@ -58,7 +62,7 @@ describe("hạn tx tài trợ: kẹp giờ giữ chỗ Feecover", () => {
   it("CẶP (b): reserved_until MUỘN hơn tip+15′ ⟹ validTo = tip+15′, expires_reason tx_validity", () => {
     const issued = new IssuedTxRegistry();
     issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 2_400_000); // 40 phút
-    const p = plan("T1", issued, FEE_REF);
+    const p = plan("open-vault", issued, FEE_REF);
     expect(p.reason).toBe("tx_validity");
     expect(p.capMs).toBe(TIP_MS + 900_000n);
     const e = readTxExpiry(txWithValidTo(TIP_MS + 900_000n), NET, p, TIP_MS);
@@ -69,22 +73,36 @@ describe("hạn tx tài trợ: kẹp giờ giữ chỗ Feecover", () => {
   it("giờ giữ chỗ của UTxO KHÁC không kẹp tx này (khoá tra theo đúng tham chiếu UTxO phí)", () => {
     const issued = new IssuedTxRegistry();
     issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000);
-    expect(plan("T1", issued, `${"fe".repeat(32)}#1`).reason).toBe("tx_validity");
+    expect(plan("open-vault", issued, `${"fe".repeat(32)}#1`).reason).toBe("tx_validity");
   });
 
   it("giờ giữ chỗ đã qua ⟹ 409 FEE_PAYER_RESERVATION_EXPIRED trước khi dựng", () => {
     const issued = new IssuedTxRegistry();
     issued.noteFeeReservation(FEE_REF, Number(TIP_MS) - 1);
-    expect(() => plan("T1", issued, FEE_REF)).toThrow(expect.objectContaining({ code: "FEE_PAYER_RESERVATION_EXPIRED" }));
+    expect(() => plan("open-vault", issued, FEE_REF)).toThrow(expect.objectContaining({ code: "FEE_PAYER_RESERVATION_EXPIRED" }));
+  });
+
+  // Thư SuperApp sa1007mg-fc: bộ quét dọn lượt giữ ⟹ bản trước lập hạn như ví không giữ chỗ (tip+15′).
+  it("CẶP: lượt giữ của UTxO Feecover ĐÃ BỊ QUÉT ⟹ 409 reservation absent; ví của chính chủ không có lượt giữ ⟹ tx_validity", () => {
+    const issued = new IssuedTxRegistry();
+    issued.noteFeeReservation(FEE_REF, Number(TIP_MS) - 1, FEECOVER_ADDR);
+    issued.sweep(Number(TIP_MS));
+    expect(issued.feeReservationOf(FEE_REF)).toBeUndefined();
+    expect(() => plan("open-vault", issued, FEE_REF)).toThrow(expect.objectContaining({
+      code: "FEE_PAYER_RESERVATION_EXPIRED",
+      details: { fee_payer_utxo: FEE_REF, reserved_until: null, reservation: "absent" },
+    }));
+    // Cực đối, cùng sổ: một UTxO ở ví của chính chủ (địa chỉ Feecover chưa từng phát nó) ⟹ không kẹp.
+    expect(plan("open-vault", issued, `${"0a".repeat(32)}#0`, OWN_WALLET_ADDR).reason).toBe("tx_validity");
   });
 });
 
 describe("hạn tx tài trợ: MỌI bước có validTo", () => {
-  it("T1 đường change_address (không fee_payer) vẫn giao validToMs = tip+15′; tx không ttl ⟹ ném bất biến", () => {
+  it("open-vault đường change_address (không fee_payer) vẫn giao validToMs = tip+15′; tx không ttl ⟹ ném bất biến", () => {
     const issued = new IssuedTxRegistry();
     issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000); // có trong sổ nhưng bước này không tiêu nó
-    const p = plan("T1", issued);
-    expect(sponsorValidityArgs("T1", p)).toEqual({ validToMs: TIP_MS + 900_000n });
+    const p = plan("open-vault", issued);
+    expect(sponsorValidityArgs("open-vault", p)).toEqual({ validToMs: TIP_MS + 900_000n });
     expect(readTxExpiry(txWithValidTo(TIP_MS + 900_000n), NET, p, TIP_MS).reason).toBe("tx_validity");
     const noTtl = buildTxCbor({
       inputs: [{ txHash: "ab".repeat(32), outputIndex: 0 }],
@@ -97,33 +115,33 @@ describe("hạn tx tài trợ: MỌI bước có validTo", () => {
   it("CẶP: expires_reason suy từ ttl CỦA CBOR — ttl sớm hơn mọi cận kế hoạch ⟹ builder_cap, không phải tx_validity", () => {
     const issued = new IssuedTxRegistry();
     issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000);
-    const p = plan("T1", issued, FEE_REF); // kế hoạch: fee_reservation thắng ở tip+5′
+    const p = plan("open-vault", issued, FEE_REF); // kế hoạch: fee_reservation thắng ở tip+5′
     expect(p.reason).toBe("fee_reservation");
     // Bộ dựng tự kẹp ở tip+2′: sớm hơn cả hai cận ⟹ không cận nào của kế hoạch giải thích được.
     expect(readTxExpiry(txWithValidTo(TIP_MS + 120_000n), NET, p, TIP_MS).reason).toBe("builder_cap");
     // Cực đối: ttl trùng đúng cận đã thắng ⟹ lý do của cận đó.
     expect(readTxExpiry(txWithValidTo(TIP_MS + 300_000n), NET, p, TIP_MS).reason).toBe("fee_reservation");
     // Kế hoạch không có giữ chỗ: ttl sớm hơn tip+15′ ⟹ vẫn không gán tx_validity.
-    const q = plan("T1", new IssuedTxRegistry());
+    const q = plan("open-vault", new IssuedTxRegistry());
     expect(readTxExpiry(txWithValidTo(TIP_MS + 600_000n), NET, q, TIP_MS).reason).toBe("builder_cap");
   });
 
-  it("T2/T3/T4 nhận cận dưới dạng tham số của bộ dựng SDK (maxAheadMs = cap − tip), kẹp cuối epoch", () => {
+  it("fund-vault/draw-magic/first-consume nhận cận dưới dạng tham số của bộ dựng SDK (maxAheadMs = cap − tip), kẹp cuối epoch", () => {
     const issued = new IssuedTxRegistry();
-    for (const step of ["T2", "T3", "T4"] as const) {
+    for (const step of ["fund-vault", "draw-magic", "first-consume"] as const) {
       const p = plan(step, issued);
       expect(p.maxAheadMs).toBe(p.capMs - TIP_MS);
       expect(p.maxAheadMs > 0n && p.maxAheadMs <= 900_000n).toBe(true);
       const args = sponsorValidityArgs(step, p) as Record<string, bigint>;
       expect(Object.values(args)).toEqual([p.maxAheadMs]);
-      expect(Object.keys(args)).toEqual([step === "T4" ? "validityMaxAheadMs" : "validityTtlMs"]);
+      expect(Object.keys(args)).toEqual([step === "first-consume" ? "validityMaxAheadMs" : "validityTtlMs"]);
     }
   });
 });
 
 describe("toSponsorBody — witness_notes mang dòng hạn khớp expires_at", () => {
   const base = {
-    step: "T1" as SponsorStep, txCbor: "", txHash: "", requiredSigners: [], signers: [],
+    step: "open-vault" as SponsorStep, txCbor: "", txHash: "", requiredSigners: [], signers: [],
     witnessNotes: ["ghi chú có sẵn"], summary: {}, expiresAt: "2026-10-06T03:00:00.000Z",
   };
   it("CẶP: fee_reservation và epoch_end cho hai câu khác nhau, cùng mốc, ghi chú cũ giữ nguyên ở đầu", () => {
@@ -136,4 +154,59 @@ describe("toSponsorBody — witness_notes mang dòng hạn khớp expires_at", (
     expect(e.witness_notes[1]).toContain("cuối epoch");
     expect(a.witness_notes[1]).not.toBe(e.witness_notes[1]);
   });
+});
+
+// Thư SuperApp sa1007mg-rid: bốn bước tài trợ đi qua CÙNG cổng mã lượt giữ với `service.ts`.
+describe("hạn tx tài trợ: mã lượt giữ (reservation_id)", () => {
+  const ID_OLD = "0a".repeat(16);
+  const ID_NEW = "0b".repeat(16);
+
+  it("CẶP: mã khớp lượt giữ đang sống ⟹ lập hạn được và kế hoạch mang ĐÚNG lượt giữ đó; mã của lượt giữ CŨ ⟹ 409 foreign", () => {
+    const logs: string[] = [];
+    const issued = new IssuedTxRegistry(l => logs.push(l));
+    issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_OLD);
+    // Feecover giao lại UTxO ⟹ lượt giữ mới, mã mới.
+    issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_NEW);
+    const run = (reservationId: string) => planSponsorValidity({
+      step: "fund-vault", tipPosixMs: TIP_MS, network: NET, txValidityMs: TX_VALIDITY_MS, issued,
+      feePayer: { utxoRef: FEE_REF, address: FEECOVER_ADDR, reservationId },
+    });
+    const ok = run(ID_NEW);
+    expect(ok.reason).toBe("fee_reservation");
+    // Lượt giữ cổng đã thấy đi theo kế hoạch tới `record` (`feePayerRecordFields`), không tra lại sổ.
+    expect(ok.feeReservation).toEqual({ untilMs: Number(TIP_MS) + 300_000, id: ID_NEW });
+    expect(() => run(ID_OLD)).toThrow(expect.objectContaining({
+      code: "FEE_PAYER_RESERVATION_EXPIRED",
+      details: { fee_payer_utxo: FEE_REF, reserved_until: null, reservation: "foreign" },
+    }));
+    // Cổng KHÔNG đếm: chỉ lượt dựng đã ghi sổ mới đếm (`IssuedTxRegistry.record`).
+    expect(issued.reservationIdStats()).toEqual({ with_id: {}, without_id: {} });
+    expect(logs).toEqual([]);
+  });
+});
+
+describe("hạn tx tài trợ: cổng reservation_id phủ hai bước mới (bind-did, open-fund)", () => {
+  const ID_OLD = "0c".repeat(16);
+  const ID_NEW = "0d".repeat(16);
+
+  for (const step of ["bind-did", "open-fund"] as const) {
+    it(`CẶP ${step}: mã khớp lượt giữ đang sống ⟹ kẹp vào lượt giữ; mã cũ ⟹ 409 foreign; cổng không đếm`, () => {
+      const issued = new IssuedTxRegistry(() => {});
+      issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_OLD);
+      issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_NEW);
+      const run = (reservationId: string) => planSponsorValidity({
+        step, tipPosixMs: TIP_MS, network: NET, txValidityMs: TX_VALIDITY_MS, issued,
+        feePayer: { utxoRef: FEE_REF, address: FEECOVER_ADDR, reservationId },
+      });
+      const ok = run(ID_NEW);
+      expect(ok.reason).toBe("fee_reservation");
+      expect(ok.feeReservation).toEqual({ untilMs: Number(TIP_MS) + 300_000, id: ID_NEW });
+      expect(() => run(ID_OLD)).toThrow(expect.objectContaining({
+        code: "FEE_PAYER_RESERVATION_EXPIRED",
+        details: { fee_payer_utxo: FEE_REF, reserved_until: null, reservation: "foreign" },
+      }));
+      // Cổng KHÔNG đếm: chỉ lượt dựng đã ghi sổ mới đếm (`IssuedTxRegistry.record`).
+      expect(issued.reservationIdStats()).toEqual({ with_id: {}, without_id: {} });
+    });
+  }
 });

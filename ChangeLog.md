@@ -5,6 +5,296 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: `/tx/sponsor/plan` nói ai GỌI từng bước (`actor`), lọc được theo vai
+
+**Đổi gì.** Mỗi bước trong `steps` / `fallback_steps` mang `actor`: `app` (open-vault, bind-did, draw-magic, Wakeme,
+open-fund), `sponsor` (fund-vault, claim), `module` (first-consume). Thân có `actor` ⟹ chỉ trả bước của vai đó;
+giá trị lạ ⟹ 400. Nguồn: `VaultTxAPI/src/sponsor.ts` ▸ `ACTOR_OF_STEP`, `sponsorPlanBody`.
+**Vì sao.** Consume do backend module làm, app không làm; app và module cùng đọc một kế hoạch, và lọc theo tên bước
+là bắt bên gọi giữ danh sách tên phải bỏ.
+**Cái gì gãy.** Không gì: thân không có `actor` trả đủ bước như trước, chỉ thêm một trường.
+
+## 2026-10-07 — VaultTxAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy
+
+**Đổi gì.** (1) Đặt `VAULT_TX_API_BASE_PATH` mà `VAULT_TX_API_TOKEN` rỗng ⟹ từ chối khởi động, kể cả khi bind
+loopback. (2) Thẻ rỗng mà yêu cầu mang `Forwarded` / `X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP` ⟹
+`401 UNAUTHORIZED`; `/health` vẫn mở. Nguồn: `VaultTxAPI/src/config.ts` ▸ `loadConfig` (khối thẻ bài);
+`VaultTxAPI/src/http.ts` ▸ `requireToken`, `forwardedBy`.
+**Vì sao.** Cổng cũ chỉ đòi thẻ khi host không phải loopback. Đứng sau proxy hay đường hầm thì loopback là cổng mở ra
+ngoài: đo 2026-10-07, tiến trình bind `127.0.0.1` sau đường hầm, tiền tố `/vaulttx/preprod`, không thẻ, trả 200 cho
+`POST /tx/consume` gửi từ internet không kèm `Authorization`, dựng tx và giữ khoá két chủ.
+**Cái gì gãy.** Triển khai đang đặt tiền tố đường mà chưa có thẻ sẽ KHÔNG khởi động sau bản này: đặt thẻ, trao thẻ
+cho bên gọi trước. Bên gọi đi qua proxy tới một dịch vụ không thẻ nhận 401.
+
+## 2026-10-07 — VaultTxAPI: vá audit chồng #157→#162 @5274b8c8 — claim không kẹt vì mã hoá datum / đổi cấu hình; giữ DID ở fund-vault; VaultReadAPI buildInfo
+
+**Đổi gì.** (1) `paid_fund.sponsor.beneficiary_datum` được chuẩn hoá MỘT lần lúc nạp cấu hình (giải mã rồi mã hoá
+lại như `Data.to` của Lucid); hàm ký platform so datum output claim trên dạng chuẩn hoá và từ chối khởi động nếu
+datum ghim chưa chuẩn; lời từ chối nói rõ là lệch CẤU TRÚC. (2) claim chỉ từ chối `missing` / `ambiguous` /
+`undecodable` / `foreign_platform` / `foreign_beneficiary` — đúng thứ hàm ký kiểm; quỹ lệch đệm, ví bên tài trợ,
+két, mốc thu hồi, đã thu hồi vẫn claim được; claim so lại platform + đích cho mọi quỹ có datum. (3) open-vault /
+open-fund coi MỌI quỹ của DID do platform đã ghim ký (trừ `foreign_platform`, `foreign_beneficiary`) là "đã có quỹ"
+⟹ không ký genesis quỹ thứ hai sau một lần đổi cấu hình; `wrong_vault` nay mang `owner_commit`; 409 kèm
+`details.labels`. (4) fund-vault giữ `did-fund:<did_commit>` tới hết hạn tx; fund-vault trên quỹ khác của cùng DID
+trong khe ⟹ `409 SPONSOR_DID_FUND_IN_FLIGHT`; dựng lại trên cùng quỹ thay lượt cũ. (5) claim kèm `fee_payer` không
+nhận `amount` ⟹ `400 SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER`; `change_address` vẫn nhận. (6) Lời khai về
+`scrubPlatformKey` sửa: chỉ chặn tiến trình con, không chặn `ps eww` / `/proc/<pid>/environ`; dòng nhật ký khởi
+động nêu pkh platform khi hàm ký bật thay vì "KHÔNG giữ khoá riêng". (7) `VaultReadAPI/src/buildInfo.ts` lấy lại thân
+của bản `VaultTxAPI` (môi trường tường minh cho `git`), thêm `childProcessEnv` ở `VaultReadAPI/src/config.ts` — CI
+`npm · VaultReadAPI` đỏ vì bài so thân hai bản. Nguồn: `VaultTxAPI/src/config.ts` ▸ `parseFundBeneficiary`;
+`VaultTxAPI/src/platformSigner.ts` ▸ `createPlatformSigner`; `VaultTxAPI/src/sponsorFund.ts` ▸ `claimRefusal`,
+`fundsBlockingOpen`, `classifySponsorFunds`; `VaultTxAPI/src/sponsor.ts` ▸ `claimFund`, `fundVault`,
+`parseClaimRequest`, `serviceKeyStatusLine`; `VaultTxAPI/src/locks.ts` ▸ `DidGenesisHolds`.
+
+**Vì sao.** Audit chồng PR #157→#162 trên `5274b8c8`: cấu hình datum dạng định độ dài làm hàm ký từ chối MỌI claim
+(Lucid dựng output dạng không định độ dài); đổi một tham số cấu hình làm mọi quỹ cũ không claim được và mở đường ký
+genesis quỹ thứ hai cho cùng DID; khoá chủ của fund-vault hết trước tx; rút lẻ qua `fee_payer` bắt ví phí ứng
+min-ADA mỗi lượt.
+
+**Cái gì gãy nếu bám bản cũ.** `parseDeployment(...).prepaid.sponsor.beneficiary.datumCbor` nay là dạng chuẩn hoá,
+không phải chuỗi gõ vào. `createPlatformSigner` ném lúc khởi động nếu `beneficiary.datumCbor` chưa chuẩn. claim
+`fee_payer` + `amount` từ 200 thành 400. open-fund cho DID có quỹ lệch cấu hình từ 200 thành 409. fund-vault thứ hai
+của cùng DID trên quỹ khác trong khe từ 200 thành 409. `fundsBlockingOpen` đếm cả quỹ lệch cấu hình.
+`DidGenesisHolds.claim` nhận thêm tham số `tag` (tuỳ chọn).
+
+## 2026-10-07 — VaultTxAPI: vá review #162 — ví trả phí ≠ khoá platform, route claim, giữ DID khi genesis
+
+**Đổi gì.** (1) Ví trả phí mang khoá thanh toán nằm trong `platform_pkhs` ⟹ `422 SPONSOR_FEE_WALLET_IS_PLATFORM`
+ở mọi bước tài trợ và ở claim; hàm ký platform nay nhận kèm MỌI input + thế chấp đã giải và từ chối input/thế
+chấp ở địa chỉ khoá platform, mục rút từ tài khoản thưởng của khoá đó, chứng chỉ, biểu quyết; lúc khởi động
+dịch vụ CẢNH BÁO (không từ chối) khi địa chỉ enterprise của khoá giữ UTxO. (2) Route mới `POST
+/tx/sponsor/claim` (thẻ vai sponsor; `fund_id`, `amount` tuỳ chọn): dịch vụ dựng `FundClaim` hoặc lượt rút cuối
+đóng quỹ đã thu hồi rồi ký platform; CARP chỉ tới beneficiary ghim trong datum, quỹ chỉ được nhận khi beneficiary
+đó khớp cấu hình. Hàm ký có nhánh thứ hai, hẹp: đúng một input `paid_fund` tiêu bằng `FundClaim`, CARP chỉ tới
+beneficiary ghim hoặc về lại quỹ, mint rỗng hoặc chỉ đốt NFT của chính quỹ, `required_signers` ∋ platform. Khoá
+route `sponsor-claim`, purpose Feecover `sponsor_claim`; `/tx/sponsor/plan` thêm bước claim sau first-consume.
+(3) Genesis quỹ (open-vault chở quỹ, open-fund) giữ `did:<did_commit>` tới hết hạn tx ⟹ lượt thứ hai trong khe
+`409 SPONSOR_DID_GENESIS_IN_FLIGHT`. (4) `VAULT_TX_API_PLATFORM_KEY` bị gỡ khỏi môi trường tiến trình ngay sau khi
+đọc; `git` của `buildInfo.ts` chạy với môi trường tường minh. (5) README: hệ quả khi khoá lộ viết lại đủ ba điều,
+quy trình xoay khoá, bảng lỗi. Nguồn: `VaultTxAPI/src/platformSigner.ts` ▸ `createPlatformSigner`;
+`VaultTxAPI/src/sponsor.ts` ▸ `claimFund`, `assertFeeWalletNotPlatform`, `platformAddressFundedWarning`;
+`VaultTxAPI/src/locks.ts` ▸ `DidGenesisHolds`; `VaultTxAPI/src/config.ts` ▸ `scrubPlatformKey`, `childProcessEnv`.
+
+**Vì sao.** Review PR #162: witness platform thoả mọi chữ ký khoá đó đòi trong thân tx, nên ví trả phí đặt ở
+địa chỉ khoá platform được "dịch vụ trả hộ"; `FundClaim` đòi chữ ký platform mà chỉ dịch vụ giữ khoá, không có
+route thì E kẹt trong quỹ; hai genesis cho cùng DID dựng được trước khi tx đầu vào khối.
+
+**Cái gì gãy nếu bám bản cũ.** `createPlatformSigner(...)` trả hàm nhận `{ kind, tx, inputs }` thay cho một
+`CML.Transaction`; tuỳ chọn thêm `network`, `carpUnit`, `beneficiary`. `SPONSOR_ROUTES` thêm `sponsor-claim` —
+bảng purpose Feecover không có khoá đó thì `/tx/sponsor/claim` qua `fee_payer` trả `400 FEE_PROXY_PURPOSE_UNMAPPED`.
+`/tx/sponsor/plan` có thêm một dòng `claim`. Quỹ đúc bằng khoá platform cũ không claim được qua dịch vụ chạy khoá
+mới (README ▸ "Xoay khoá platform").
+
+## 2026-10-07 — VaultTxAPI: vá review #161 — trần khoản ứng, chủ ký open-fund, ghim quỹ chặt hơn
+
+**Đổi gì.** (1) Hành trình tài trợ: `thread_lovelace` đi cùng `fee_payer` ⟹ `400
+SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER`; `checkSponsorFeePayerTx` kẹp khoản ứng ≤ Σ min-UTxO output script +
+`SPONSOR_FRONTING_SLACK_LOVELACE` (1 ADA) ⟹ `422 FEE_PAYER_FRONTING_ABOVE_MAX`. Lỗ có từ `main` (sponsor
+open-vault nhận `thread_lovelace` không trần, khoản ứng không trần; CloseThread không ràng output nên chủ lấy
+lại ADA ví trả phí ứng). (2) open-fund: chủ KÝ (mục rút did_stake / khoá chủ), bảng `signers` thêm vai `owner`,
+`summary.withdrawals`. (3) `assertOwnerDid` (mọi bước tài trợ): ngoài tên anchor, `did_stake` chưa apply apply
+`(anchor_nft_policy, tên anchor)` phải băm ra `owner.hash` — lệch ⟹ `422 SPONSOR_OWNER_DID_MISMATCH`; thiếu
+`did_stake.unapplied_script` ⟹ `501 SPONSOR_OWNER_DID_UNVERIFIABLE`. (4) fund-vault: UTxO CARP phải do khoá
+trong `sponsorship.sponsor` của quỹ ⟹ `422 SPONSOR_UTXO_NOT_FUND_SPONSOR`; vai `sponsor` ký bằng khoá trong
+datum; DID đã nhận tài trợ ở quỹ khác (`credit_issued > 0`) ⟹ `409 SPONSOR_DID_FUNDED_ELSEWHERE`.
+(5) `classifySponsorFunds`: `buffer_mismatch` (đệm ≠ cấu hình), `reclaim_too_far` (`reclaim_after_epoch` > epoch
+đỉnh chuỗi + 200 + `SPONSOR_RECLAIM_EPOCH_SLACK`), `reclaimed` (`sponsor_reclaimed > 0`); open-fund vẫn coi
+quỹ đã thu hồi là "đã có quỹ". `GET /sponsor/funds` đọc đỉnh chuỗi để tính epoch. Nguồn: `VaultTxAPI/src/sponsor.ts`
+▸ `parseSponsorRequest`, `checkSponsorFeePayerTx`, `openFund`, `assertOwnerDid`, `assertSponsorUtxosOfFundSponsor`;
+`VaultTxAPI/src/sponsorFund.ts` ▸ `classifySponsorFunds`, `fundsBlockingOpen`, `assertDidNotFundedElsewhere`.
+
+**Vì sao.** Review PR #161 + red-team hành trình tài trợ (2026-10-07): ví trả phí bên thứ ba bị rút ADA qua
+lovelace người gọi tự khai; CBOR did_stake và `anchor_ref` đều do người gọi đưa nên phép so tên anchor một mình
+không buộc chủ vào DID; `addresses` nhiều ví làm tx đòi khoá A mà bảng ký kê khoá B; người giữ khoá platform
+đúc được quỹ đệm/mốc thu hồi lạ; nạp lần hai cho cùng DID qua `fund_id` hoặc quỹ đã thu hồi.
+
+**Gãy gì nếu bám bản cũ.** Bên gọi gửi `thread_lovelace` cùng `fee_payer` nhận 400. open-fund nay cần chữ ký
+chủ (bên ký phải thêm chữ ký did_stake). Bản deploy có chủ script mà thiếu `did_stake.unapplied_script` nhận 501
+ở mọi bước tài trợ. Cấu hình `paid_fund.sponsor` phải khai `buffer_bps` đúng đệm của các quỹ đang có (vắng ⟹
+`MIN_BUFFER_BPS`), không thì quỹ cũ thành `buffer_mismatch`. `classifySponsorFunds` và
+`checkSponsorFeePayerTx` nhận thêm trường bắt buộc (`bufferBps`, `reclaimHorizon`, `coinsPerUtxoByte`).
+
+## 2026-10-07 — VaultTxAPI: open-vault chở genesis quỹ tài trợ của DID; dịch vụ giữ MỘT khoá, ký vai platform
+
+**Đổi gì.** `POST /tx/sponsor/open-vault` dựng MỘT tx: két Prepaid + thread consume + genesis quỹ `paid_fund`
+của DID (`owner_commit` = `did_commit` của thread trong chính tx đó; seed quỹ = seed két). Dịch vụ gắn vkey
+witness platform vào `tx_cbor`; `signers` thêm `{ role: "platform", how: "service" }`; `summary.fund` mới
+(`created` | `existing`). DID đã có quỹ dùng được ⟹ không genesis quỹ thứ hai. `open-fund` thành bước BÙ (két mở
+trước bản này), cũng do dịch vụ ký platform; `/tx/sponsor/plan` đưa nó sang `fallback_steps`. Khoá ở biến mới
+`VAULT_TX_API_PLATFORM_KEY` (GIÁ TRỊ bech32 `ed25519_sk…`), chỉ nằm trong `VaultTxAPI/src/platformSigner.ts`
+▸ `createPlatformSigner`: lúc khởi động suy pkh, đòi `== paid_fund.sponsor.platform_pkhs[0]`, đòi khác mọi thẻ
+bài; hàm ký chỉ nhận đối tượng tx dịch vụ vừa dựng, có đúng một mint +1 NFT `paid_fund` và `required_signers`
+chứa pkh platform. Vắng khoá ⟹ route cần tạo quỹ trả `501 CONFIG_MISSING` (`details.missing` nêu tên biến).
+`MagicSDK` ▸ `buildSponsorT1OpenPrepaid` nhận thêm `extend` (tuỳ chọn) để chở phần dựng thêm vào cùng tx.
+
+**Vì sao.** Chủ dự án chốt 2026-10-07: bớt một bước của người mới, bên trả phí không phải giữ khoá platform.
+Thay quyết định sáng cùng ngày ("Feecover ký platform"). Bất biến số một của VaultTxAPI viết lại theo nghĩa mới
+(README §1); `tests/noSigningMaterial.test.ts` đo nó: đúng một mô-đun mang vật liệu ký, đúng một biến mang khoá.
+
+**Cái gì gãy nếu bám bản cũ.** (1) Tx open-vault (DID chưa có quỹ) có thêm một output quỹ, một mint, một
+required signer và một vkey witness sẵn: bên ký phải GIỮ witness đã có khi ghép chữ ký (`assemble` của Lucid giữ).
+Ví trả phí ứng thêm min-ADA quỹ (đo Emulator: output quỹ 2.366.190 lovelace; tổng khoản ứng két + thread + quỹ 5.775.560 lovelace). (2) Cấu hình có `fund_units` (tập đóng) hoặc thiếu khoá: open-vault cho DID chưa có
+quỹ nay trả 501 thay vì dựng két không quỹ. (3) Thứ tự kế hoạch: open-fund không còn trong `steps`.
+(4) open-fund: `CONFIG_MISSING` nay nêu thêm `VAULT_TX_API_PLATFORM_KEY`; tx trả về mang witness platform.
+
+## 2026-10-07 — VaultTxAPI: `POST /tx/sponsor/open-fund` — tạo quỹ tài trợ cho một DID, platform ký
+
+**Đổi gì.** Route mới `/tx/sponsor/open-fund` (route sổ phát-hành / `/fee/utxo` `sponsor-open-fund`;
+purpose Feecover đề xuất `open_sponsor_fund`) dựng tx genesis `paid_fund` với `sponsorship = Some {
+sponsor = addresses[0], owner_commit = did_commit của thread, reclaim_after_epoch = epoch(validTo) + 200 }`,
+`platform = platform_pkhs[0]`, 0 CARP. `required_signers = [platform]`; chủ két không ký. Đứng sau
+bind-did, trước fund-vault; `/tx/sponsor/plan` trả sáu bước. Mã mới: `SPONSOR_FUND_ALREADY_OPEN` 409,
+`SPONSOR_FUND_SET_CLOSED` 501; thiếu `platform_pkhs`/`beneficiary` ⟹ `CONFIG_MISSING` 501. Khoá cấu
+hình tuỳ chọn mới: `paid_fund.sponsor.beneficiary`, `beneficiary_datum`, `buffer_bps`. Nguồn:
+`VaultTxAPI/src/sponsor.ts` ▸ `openFund`; bộ dựng `PrepaidGen/offchain/src/tx/builders.ts` ▸ `planMintPaidFund`.
+open-fund nhận `fee_payer` và đi qua cổng `reservation_id` như mọi bước tài trợ; danh sách đóng route kiểm
+mã ở README thêm `/tx/sponsor/open-fund` (13 → 14 route).
+Ghim đích nhận CARP khi đọc quỹ: có `paid_fund.sponsor.beneficiary` ⟹ quỹ có `beneficiary` (bech32) hoặc
+`beneficiary_datum` (CBOR chuẩn hoá; vắng ⟺ vắng) khác ghim mang `problem: foreign_beneficiary`, fund-vault không
+chọn (`VaultTxAPI/src/sponsorFund.ts` ▸ `classifySponsorFunds`); quét theo `platform_pkhs` mà không có `fund_units`
+thì `beneficiary` bắt buộc. Lý do: ở đường quét mọi quỹ do khoá platform đúc đều được tin, nên người giữ khoá đó
+(khoá lộ) đúc được quỹ đúng ví bên tài trợ + đúng DID nạn nhân mà trả CARP về ví mình qua `FundClaim`.
+PrepaidGen SDK thêm `plutusDataFromCbor` / `plutusDataToCbor` (`PrepaidGen/offchain/src/tx/codec.ts`): VaultTxAPI và SDK
+giữ hai bản `@lucid-evolution/lucid`, nên `Constr` dựng bằng `Data` của VaultTxAPI làm `encodeFundDatum` ném
+"Unsupported type" — open-fund với `beneficiary_datum` nay dựng datum bằng codec của SDK.
+
+**Vì sao.** Chủ dự án chốt 2026-10-07: mỗi DID một quỹ, và Feecover ký vai `platform` cùng lượt trả
+phí tx tạo quỹ. Genesis quỹ (`PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_mint_fund_nft`) chỉ
+đòi chữ ký platform; CARP không vào lúc genesis (`carp_locked == 0`) mà ở fund-vault. Dịch vụ vẫn không
+giữ khoá nào — chỉ đặt pkh platform vào `required_signers`.
+
+**Cái gì gãy nếu bám bản cũ.** Bên đọc `/tx/sponsor/plan` theo chỉ số mảng: open-fund chèn ở vị trí 3.
+Cấu hình có `fund_units` không dùng được open-fund (501 `SPONSOR_FUND_SET_CLOSED`) — quỹ mới không nằm
+trong tập đóng; chuyển sang `platform_pkhs`. `SPONSOR_FUND_NOT_OPENED` nay trỏ tới open-fund. Cấu hình có
+`platform_pkhs`, không `fund_units`, thiếu `beneficiary` ⟹ từ chối khởi động; `beneficiary_datum` không giải mã
+được thành Plutus Data ⟹ từ chối khởi động.
+
+## 2026-10-07 — VaultTxAPI: hành trình tài trợ theo DID — đổi tên đường, mỗi DID một quỹ, bước `bind-did`, ghim `platform_pkhs`
+
+**Đổi gì.**
+- Đổi tên đường tài trợ: `/tx/sponsor/{t1-open,t2-fund,t3-draw,t4-first-consume}` →
+  `/tx/sponsor/{open-vault,fund-vault,draw-magic,first-consume}`; route sổ phát-hành / `/fee/utxo`
+  `sponsor-t*` → `sponsor-open-vault` … `sponsor-first-consume`. Bảng mục đích Feecover trong cấu
+  hình vẫn nhận bốn khoá tên cũ làm bí danh (`VaultTxAPI/src/config.ts` ▸ `LEGACY_SPONSOR_PURPOSE_KEYS`).
+- fund-vault nạp vào **quỹ tài trợ của DID** (`sponsorship = Some`, `owner_commit` == `did_commit`
+  của thread); `fund_id` thành tuỳ chọn — vắng thì dịch vụ tự tìm (`VaultTxAPI/src/sponsorFund.ts` ▸
+  `resolveSponsorFund`). Quỹ chung `sponsorship = None` bị loại khỏi hành trình. Mã mới:
+  `SPONSOR_FUND_NOT_OPENED` 409, `SPONSOR_FUND_AMBIGUOUS` 409, `SPONSOR_FUND_DID_MISMATCH` 422,
+  `SPONSOR_VAULT_DID_UNSET` 409, `SPONSOR_VAULT_DID_MISMATCH` 422; `SPONSOR_FUND_NOT_ALLOWED` 422 kèm
+  `details.problem`. Đường đọc mới `GET /sponsor/funds`.
+- Bước mới `POST /tx/sponsor/bind-did` (`SetDidCommit`, gắn `did_commit` của thread vào két Prepaid,
+  một lần; `SPONSOR_VAULT_DID_ALREADY_SET` 409), giữa open-vault và fund-vault; `/tx/sponsor/plan` trả
+  năm bước. Bộ dựng ở PrepaidGen SDK: `PrepaidGen/offchain/src/tx/builders.ts` ▸ `planSetDidCommit` /
+  `addSetDidCommit`, redeemer `codec.ts` ▸ `setDidCommitRedeemer`.
+- Khoá cấu hình tuỳ chọn `paid_fund.sponsor.platform_pkhs`: có mặt ⟹ dịch vụ chỉ nhận quỹ có
+  `datum.platform` thuộc tập này; vắng `fund_units` ⟹ quét địa chỉ quỹ thay vì tra tập ghim. Cần ít
+  nhất một trong `fund_units` / `platform_pkhs`.
+- Cổng `reservation_id` (mục cùng ngày bên dưới) áp nguyên cho các bước tài trợ tên mới, gồm cả bind-did: mọi
+  bước đi chung `VaultTxAPI/src/sponsor.ts` ▸ `planSponsorValidity`. Danh sách đóng route kiểm mã ở
+  README ▸ *Proxy phí* ▸ `reservation_id` đổi sang tên mới và thêm `/tx/sponsor/bind-did` (12 → 13 route).
+
+**Vì sao.** Chủ dự án chốt 2026-10-07: mỗi DID một quỹ tài trợ — CARP bên tài trợ góp phải thu hồi
+được, mà validator chỉ cho thu hồi khi quỹ buộc vào đúng một DID (`PrepaidGen/onchain/validators/prepaid.ak`
+▸ `validate_lock`, khối `sponsorship`). Két Prepaid đúc với `did_commit` rỗng, nên hành trình thiếu
+một bước gắn DID trước lượt nạp — trước đây chỉ bài kiểm tự dựng tx `SetDidCommit` thô. Ghim
+`platform` vì lượt đúc quỹ chỉ đòi chữ ký platform, không đòi bên tài trợ: quét địa chỉ quỹ mà chỉ lọc
+theo ví bên tài trợ là nạp CARP vào quỹ kẻ gọi tự đúc. Tên `t1`…`t4` là ký hiệu số của bộ dựng, không
+nói bước làm gì.
+
+**Cái gì gãy nếu bám bản cũ.** Gọi đường tên cũ ⟹ `404 NOT_FOUND`; `/fee/utxo` với `route` tên cũ ⟹
+bị từ chối. fund-vault trên két chưa gắn DID ⟹ `409 SPONSOR_VAULT_DID_UNSET` (gọi bind-did trước). Quỹ
+chung (`sponsorship = None`) trong `fund_units` không còn được nạp (`problem: not_sponsored`). Cấu hình
+`paid_fund.sponsor` thiếu cả `fund_units` lẫn `platform_pkhs` ⟹ từ chối khởi động. Chưa có route tạo
+quỹ cho một DID: quỹ tạo trước bằng công cụ vận hành.
+
+## 2026-10-07 — VaultTxAPI: nguồn Feecover xác nhận phải khớp nguồn đã xin; `/tx/quote` đọc `X-Feecover-Token`
+
+**Đổi gì.** `/fee/utxo` và `/fee/sign`: Feecover trả `source` khác nguồn đã xin (vắng = `feecover`) ⟹
+`502 FEE_SOURCE_NOT_CONFIRMED` (`details.confirmed_source` = giá trị Feecover trả); `/fee/utxo` không ghi
+lượt giữ, `/fee/sign` không giao chữ ký. `/fee/sign` kiểm `source` của Feecover theo enum
+(`feecover` | `sponsor`) như `/fee/utxo`; giá trị khác ⟹ `502 FEE_PROXY_UPSTREAM`. `/tx/quote` đọc tiêu đề
+`X-Feecover-Token` như `/fee/*` và hỏi `/v1/fee-sources` dưới đúng ứng dụng đó (`FeeProxy.feeSources` nhận
+thêm `callerToken`); token không khớp ⟹ `401 FEE_PROXY_APP_UNKNOWN`. README sửa câu L38: Feecover từ chối
+chủ không DID lúc ký, không phải lúc xin UTxO.
+
+**Vì sao.** Review #159: thân trả vọng nguyên `source` lệch với 200, nên app có thể nhận chữ ký dưới nguồn
+khác nguồn nó xin (tưởng tài trợ mà bị trừ CARP); báo giá hỏi Feecover dưới ứng dụng mặc định trong khi
+`/fee/*` dùng ứng dụng của token, nên `fee_sources` có thể lệch ứng dụng thật.
+
+**Cái gì gãy nếu bám bản cũ.** Client dựa vào việc thân 200 vọng `source` khác yêu cầu (để tự từ chối) nay
+nhận 502. Client gửi `X-Feecover-Token` sai tới `/tx/quote` (trước đây bị bỏ qua) nay nhận 401.
+
+## 2026-10-07 — VaultTxAPI: `fee_sources` trong báo giá; `source` ở `/fee/utxo` + `/fee/sign`
+
+**Đổi gì.** `POST /tx/quote` trả thêm `fee_sources` = ba khối `owner_address` / `feecover` / `sponsor`
+NGUYÊN như Feecover trả ở `GET /v1/fee-sources` (trường vắng giữ vắng); chủ là DID ⟹ hỏi kèm
+`owner_commit` = tên anchor của DID. Không hỏi được Feecover ⟹ `feecover` + `sponsor` =
+`{available:false, reason, message}`, báo giá vẫn 200; `owner_address` do dịch vụ dựng khi Feecover không
+gửi (`feeQuote.ts` ▸ `OWNER_ADDRESS_SOURCE`). `/fee/utxo` và `/fee/sign` nhận `source` (`feecover` |
+`sponsor`, vắng = `feecover`; khác ⟹ `400 FEE_PROXY_SOURCE_INVALID`), chuyển tiếp sang `/v1/utxo` +
+`/v1/sign`; nguồn Feecover xác nhận ghi vào lượt giữ, `/fee/sign` lệch nguồn ⟹ `400
+FEE_PROXY_SOURCE_MISMATCH`. Thân trả vọng `source` LẤY TỪ câu trả lời Feecover; xin `sponsor` mà Feecover
+không trả `source` ⟹ `502 FEE_SOURCE_NOT_CONFIRMED`. Không có giá CARP nào do dịch vụ đặt ra.
+
+**Vì sao.** Thư SuperApp `sa1007mg-fs` / `sa1007mg-fs2` (cửa sổ ba nguồn phí) và OriLife `ol1007mg-a`
+(chuyển `source` ở `/fee/sign`), theo hợp đồng Feecover nhánh nguồn sponsor (L38).
+
+**Cái gì gãy nếu bám bản cũ.** Client so thân `/tx/quote` bằng phép bằng chặt gặp thêm `fee_sources`.
+Client gửi `source` khác hai giá trị trên (kể cả `null`) trước đây bị bỏ qua, nay 400.
+`IssuedTxRegistry.noteFeeReservation` có thêm tham số thứ năm `source` (mặc định `feecover`).
+`FeeProxy.feeSources` nhận thêm `ownerCommit`, kết quả `answered: true` có thêm `blocks`.
+
+## 2026-10-07 — VaultTxAPI: mã lượt giữ `reservation_id` (bước 1, tuỳ chọn)
+
+**Đổi gì.** `POST /fee/utxo` trả thêm `fee_payer.reservation_id` (32 hex = 128 bit ngẫu nhiên, sinh mỗi
+lượt giữ, lưu cạnh lượt giữ ở `VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry`). Mọi route nhận `fee_payer`
+(danh sách đóng 12 route ở README ▸ *Proxy phí* ▸ `reservation_id`) nhận `fee_payer.reservation_id` /
+`funding.fee_payer.reservation_id` tuỳ chọn: lệch mã lượt giữ đang sống ⟹ `409
+FEE_PAYER_RESERVATION_EXPIRED` với `reservation: "foreign"`; sai khuôn ⟹ `400 FEE_PAYER_SHAPE` /
+`FUNDING_SHAPE`; vắng ⟹ như cũ, và được đếm (một dòng nhật ký JSON `fee_reservation_id_missing` mang số
+đếm luỹ kế theo route; KHÔNG lộ ra HTTP, `/health` không cần thẻ). Chỉ lượt dựng đã ghi sổ mới đếm. Sổ
+phát-hành ghi mã của lượt giữ mà cổng dựng ĐÃ THẤY (chụp lúc qua cổng, không tra lại lúc ghi sổ); `/fee/sign`
+so với mã đang sống, lệch ⟹ 409 `foreign`, Feecover không bị gọi. Tx bị thay chỉ bỏ đúng lượt giữ cùng mã.
+
+**Vì sao.** Thư `mg1007sa-b` / `sa1007mg-rid`: sổ giữ chỗ khoá theo UTxO; mọi bản app đi chung thẻ dịch
+vụ, nên khi Feecover giao lại cùng UTxO cho B, A còn cầm `fee_payer` cũ vẫn dựng được trên lượt giữ của B.
+Bước 2 (bắt buộc mã) chỉ bật sau khi đo tỉ lệ thiếu mã và SuperApp báo số bản app gửi mã.
+
+**Cái gì gãy nếu bám bản cũ.** Client so `fee_payer` của `/fee/utxo` bằng phép bằng chặt gặp thêm
+`reservation_id`. `/fee/sign` cho tx dựng khi CHƯA có lượt giữ nào mà nay UTxO đang được giữ: trước ra
+`exceeded`/được ký, nay `foreign`. `details.reservation` có thêm giá trị `foreign`. `IssuedTxRegistry`
+nhận một hàm ghi nhật ký tuỳ chọn ở hàm dựng; `noteFeeReservation` trả mã lượt giữ;
+`feeReservationForBuild` trả `{ untilMs, id }` thay vì một số, và không còn nhận `route`.
+
+## 2026-10-07 — VaultTxAPI: UTxO Feecover không còn lượt giữ chỗ ⟹ không dựng, không ký
+
+**Đổi gì.** Sổ phát-hành (`VaultTxAPI/src/locks.ts` ▸ `IssuedTxRegistry`) nhớ thêm địa chỉ ví trả phí
+mà `/fee/utxo` đã trả. Lượt dựng tiêu một UTxO ở địa chỉ Feecover mà sổ không còn lượt giữ chỗ ⟹
+`409 FEE_PAYER_RESERVATION_EXPIRED` (`feeReservationForBuild`; dùng ở `service.ts` ▸ `validityPlan` và
+`sponsor.ts` ▸ `planSponsorValidity`). `/fee/sign` tra LẠI lượt giữ lúc ký (`feeSignProblem`): không có,
+đã qua, hoặc `validTo` của tx vượt nó ⟹ cùng mã 409, Feecover không bị gọi. `details` của mã này có
+thêm `fee_payer_utxo` và `reservation` (`absent` · `expired` · `exceeded`); `reserved_until` là `null`
+khi sổ không có lượt giữ. Hai lỗi cùng mã vì app làm cùng một việc: xin `/fee/utxo` rồi dựng lại.
+
+**Vì sao.** Thư SuperApp `sa1007mg-fc`: bộ quét 30 s (`server.ts`) xoá lượt giữ khi `reserved_until`
+đã qua, và `feeReservationOf` trả `undefined` — bộ lập hạn đọc thành "ví không giữ chỗ ⟹ không kẹp".
+Dựng lại với `fee_payer` cũ ra tx hạn 15 phút, ghi sổ với hạn ký = hạn nộp, và `/fee/sign` xin Feecover
+ký tới hết hạn đó — trong khi Feecover có thể đã giao UTxO cho người khác. Tx GỐC thì vô hại (`validTo`
+≤ `reserved_until`); hỏng thật là tx DỰNG LẠI sau khi bị quét. Thiếu dữ liệu giữ chỗ nay là từ chối,
+không phải mặc định thoải mái.
+
+**Cái gì gãy nếu bám bản cũ.** App dựng lại với `fee_payer` Feecover cũ sau khi `reserved_until` qua
+nay nhận 409 thay vì một tx — xin UTxO mới qua `/fee/utxo`. `/fee/sign` cho tx tiêu UTxO Feecover
+KHÔNG lấy qua `/fee/utxo` của chính tiến trình này (app tự xin Feecover bằng token riêng, hoặc tiến
+trình vừa khởi động lại) nay nhận `409` thay vì được ký: bản cũ gọi đó là "app tự đưa ⟹ hạn ký = hạn
+sổ". Ví trả phí là ví của chính chủ (app tự ký, không gọi `/fee/sign`) không đổi gì. Client kiểm
+`details` của `FEE_PAYER_RESERVATION_EXPIRED` chặt sẽ gặp hai trường mới.
+
+**Chưa vá, cần quyết hợp đồng.** Sổ giữ chỗ khoá theo UTxO, không theo NGƯỜI được giữ: Feecover phát
+lại cùng UTxO cho B (lượt giữ mới R2) thì A dựng lại với `fee_payer` cũ cũng được kẹp vào R2 và xin
+ký được. Dịch vụ không phân biệt A với B (mọi người dùng app `magic` đi chung một token). Bịt cần
+`/fee/utxo` trả một mã giữ chỗ mà lượt dựng phải gửi kèm, hoặc Feecover tự ràng lượt ký vào lượt giữ.
+
 ## 2026-10-07 — Xoá module `Paymaster/`
 
 **Đổi gì.** `git rm -r Paymaster` (21 tệp: `onchain/`, `offchain/`, `tests/`, bốn tệp tài liệu).

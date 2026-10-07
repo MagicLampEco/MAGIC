@@ -1353,6 +1353,10 @@ export class SponsorTxService {
     const keys: string[] = [ownerKey];
     const gens: Array<[string, number]> = [];
     const didGens: Array<[string, number]> = [];
+    // DID mà tx này genesis quỹ tài trợ cho (open-vault chở quỹ, open-fund). Feecover đếm "một quỹ trọn đời mỗi
+    // owner_commit" theo mã ghi sổ `ref` (`sponsor_open`, `open_sponsor_fund`), nên tx genesis quỹ gửi `ref` =
+    // owner_commit, không gửi hash thân tx.
+    const genesisDids: string[] = [];
     try {
       const startedAt = this.now();
       keys.push(...restKeys);
@@ -1419,6 +1423,7 @@ export class SponsorTxService {
               `(khi đó DID đã có quỹ) hoặc hết hạn rồi gọi lại.`, details);
           }
           didGens.push([key, h.gen]);
+          if (purpose === "genesis") genesisDids.push(didCommit);
         },
       };
       const out = await build(p, ctx);
@@ -1439,11 +1444,15 @@ export class SponsorTxService {
       // Hạn đọc NGƯỢC từ chính CBOR, SAU cổng ví trả phí (như create-vault ở `service.ts`): tx thiếu
       // hạn ở đường `fee_payer` ra 422 của cổng đó, không 500 bất biến.
       const expiry = readTxExpiry(out.txCbor, this.deps.slotNetwork ?? this.deps.network, plan, tip.blockTimePosixMs);
+      if (genesisDids.length > 1) {
+        throw new Error(`[bất biến nội bộ] tx ${txHash} genesis quỹ cho ${genesisDids.length} DID — mỗi tx đúng một.`);
+      }
       for (const [k, g] of gens) this.deps.locks.bindTxHash(k, txHash, g);
       for (const [k, g] of didGens) this.didHolds.bind(k, g, txHash, Number(expiry.validToMs));
       this.deps.issued.record(txHash, this.now(), {
         route: ISSUED_ROUTE_OF_STEP[step], lockKeys: keys, validToMs: Number(expiry.validToMs),
         ...feePayerRecordFields(feePayer?.req, plan.feeReservation),
+        ...(genesisDids.length === 1 ? { feeRef: genesisDids[0] } : {}),
       });
       return {
         step,
@@ -1640,6 +1649,9 @@ export class SponsorTxService {
       this.deps.issued.record(txHash, this.now(), {
         route: ISSUED_ROUTE_OF_STEP.claim, lockKeys: keys, validToMs: Number(expiry.validToMs),
         ...feePayerRecordFields(feePayer?.req, plan.feeReservation),
+        // `sponsor_claim`: mã ghi sổ = owner_commit của quỹ tài trợ (claim lặp được nhiều lần trên một quỹ);
+        // quỹ `sponsorship = None` không có DID ⟹ hash thân tx như mọi route khác.
+        ...(entry.ownerCommit === undefined ? {} : { feeRef: entry.ownerCommit }),
       });
       const fundOut = r.closing ? undefined : outs.findIndex(o => o.address === prepaid.fundAddress && (o.assets[fundUnit] ?? 0n) === 1n);
       return {

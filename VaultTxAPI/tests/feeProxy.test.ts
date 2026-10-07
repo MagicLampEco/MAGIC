@@ -487,6 +487,26 @@ describe("POST /fee/sign — dương: mục đích + ref lấy từ sổ, không
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(h.fc.calls[0]!.body).toEqual({ tx_cbor_hex: cbor, purpose: "consume_magic", ref: hash });
   });
+
+  // Feecover đếm một-quỹ-mỗi-DID theo `ref` của `sponsor_open`: dòng sổ mang `feeRef` (owner_commit, ghi lúc
+  // dựng ở `sponsor.ts`) thì ref = owner_commit; CẶP: cùng route, dòng không mang `feeRef` ⟹ ref = hash thân tx.
+  it("route tài trợ: dòng sổ có feeRef (owner_commit) ⟹ ref = owner_commit; CẶP: không có ⟹ ref = hash thân tx", async () => {
+    const did = "d4".repeat(32);
+    const h = harness();
+    const { cbor, hash } = await issueConsume(h);
+    const base = h.issued.lookup(hash, NOW)!;
+    h.issued.record(hash, NOW, { ...base, route: "sponsor-open-vault", feeRef: did });
+    expect((await h.call("POST", "/fee/sign", { tx_cbor: cbor })).status).toBe(200);
+    expect(h.fc.calls[0]!.body).toEqual({ tx_cbor_hex: cbor, purpose: "sponsor_open", ref: did });
+
+    const h2 = harness();
+    const two = await issueConsume(h2);
+    const base2 = h2.issued.lookup(two.hash, NOW)!;
+    expect(base2.feeRef).toBeUndefined();
+    h2.issued.record(two.hash, NOW, { ...base2, route: "sponsor-open-vault" });
+    expect((await h2.call("POST", "/fee/sign", { tx_cbor: two.cbor })).status).toBe(200);
+    expect(h2.fc.calls[0]!.body).toEqual({ tx_cbor_hex: two.cbor, purpose: "sponsor_open", ref: two.hash });
+  });
 });
 
 describe("POST /fee/sign — lời đáp Feecover", () => {

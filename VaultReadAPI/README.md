@@ -393,7 +393,9 @@ Ranh giới đúng, hai vế:
 
 1. **Mặt tiền** — mặc định bind `127.0.0.1`. Muốn bind ra ngoài loopback thì **bắt buộc**
    có `VAULT_READ_API_TOKEN`; thiếu là **từ chối khởi động** (fail-closed, không cảnh báo
-   rồi chạy tiếp).
+   rồi chạy tiếp). Đứng sau proxy cũng vậy, kể cả khi bind loopback: proxy biến loopback
+   thành cổng mở ra ngoài, nên có `VAULT_READ_API_BASE_PATH` mà thiếu thẻ là từ chối khởi
+   động, và không thẻ thì mọi yêu cầu mang header chuyển tiếp nhận `401`.
 2. **Backend Java** — nó đã biết phiên thuộc PersonDID nào, nên **nó** tự tra `DID → PKH`
    và **không bao giờ** chuyển tiếp một PKH do người gọi đưa vào.
 
@@ -412,7 +414,7 @@ in khoá; `/health` không lộ URL đầy đủ của nút chuỗi, chỉ lộ 
 | `VAULT_READ_API_HOST` | không | `127.0.0.1` |
 | `VAULT_READ_API_PORT` | không | `8787` |
 | `VAULT_READ_API_BASE_PATH` | không | rỗng — tiền tố đường khi đứng sau proxy định tuyến theo đường, ví dụ `/vaultread/preprod`; dịch vụ tự cắt nó (`src/basePath.ts`) |
-| `VAULT_READ_API_TOKEN` | ngoài loopback thì **có** | rỗng |
+| `VAULT_READ_API_TOKEN` | ngoài loopback, hoặc khi đặt `VAULT_READ_API_BASE_PATH`, thì **có** | rỗng — chỉ dành cho người gọi trên chính máy chạy mặt tiền. Có tiền tố đường mà thẻ rỗng ⟹ từ chối khởi động (proxy mở cổng loopback ra ngoài). Thẻ rỗng mà yêu cầu mang `Forwarded` / `X-Forwarded-For` / `X-Real-IP` / `CF-Connecting-IP` ⟹ `401 UNAUTHORIZED` (`/health` vẫn mở) |
 | `VAULT_READ_API_BLOCKFROST_URL` | không | dẫn theo `NETWORK` |
 | `VAULT_READ_API_TIMEOUT_MS` | không | `15000` |
 | `VAULT_READ_API_CONSUME_SCOPES` | không (vắng ⟹ `/threads/*` trả 503 `THREAD_INDEX_DISABLED`) | — JSON `[{ "address", "source" }]`, cùng các cổng như `VAULT_READ_API_VAULTS` |

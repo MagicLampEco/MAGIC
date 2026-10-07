@@ -141,7 +141,19 @@ describe("ra ngoài loopback thì BẮT BUỘC có thẻ bài", () => {
 describe("VAULT_READ_API_BASE_PATH — tiền tố đường sau proxy", () => {
   it("vắng ⟹ basePath rỗng. CẶP: đặt ⟹ đọc đúng; sai dạng ⟹ từ chối khởi động", () => {
     expect(loadConfig(baseEnv()).basePath).toBe("");
-    expect(loadConfig({ ...baseEnv(), VAULT_READ_API_BASE_PATH: "/vaultread/preprod" }).basePath).toBe("/vaultread/preprod");
-    expect(() => loadConfig({ ...baseEnv(), VAULT_READ_API_BASE_PATH: "vaultread" })).toThrow(/VAULT_READ_API_BASE_PATH/);
+    expect(loadConfig({ ...baseEnv(), VAULT_READ_API_BASE_PATH: "/vaultread/preprod", VAULT_READ_API_TOKEN: "x".repeat(32) }).basePath)
+      .toBe("/vaultread/preprod");
+    expect(() => loadConfig({ ...baseEnv(), VAULT_READ_API_BASE_PATH: "vaultread", VAULT_READ_API_TOKEN: "x".repeat(32) }))
+      .toThrow(/VAULT_READ_API_BASE_PATH/);
+  });
+
+  it("tiền tố đường mà thẻ bài rỗng ⟹ từ chối khởi động, kể cả trên loopback. CẶP: có thẻ ⟹ khởi động", () => {
+    expect(() => loadConfig({ ...baseEnv(), VAULT_READ_API_BASE_PATH: "/vaultread/preprod" })).toThrow(/sau proxy/);
+    expect(() => loadConfig({ ...baseEnv(), VAULT_READ_API_HOST: "127.0.0.1", VAULT_READ_API_BASE_PATH: "/vaultread/preprod" }))
+      .toThrow(/VAULT_READ_API_TOKEN rỗng/);
+    expect(() => loadConfig({ ...baseEnv(), VAULT_READ_API_BASE_PATH: "/vaultread/preprod", VAULT_READ_API_TOKEN: "x".repeat(32) }))
+      .not.toThrow();
+    // Cực đối của vế "tiền tố": loopback không tiền tố, không thẻ ⟹ vẫn khởi động (cổng mới không nuốt ca cũ).
+    expect(() => loadConfig(baseEnv())).not.toThrow();
   });
 });

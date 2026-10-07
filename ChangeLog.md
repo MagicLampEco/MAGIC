@@ -104,6 +104,23 @@ chung (`sponsorship = None`) trong `fund_units` không còn được nạp (`pro
 `paid_fund.sponsor` thiếu cả `fund_units` lẫn `platform_pkhs` ⟹ từ chối khởi động. Chưa có route tạo
 quỹ cho một DID: quỹ tạo trước bằng công cụ vận hành.
 
+## 2026-10-07 — VaultTxAPI: nguồn Feecover xác nhận phải khớp nguồn đã xin; `/tx/quote` đọc `X-Feecover-Token`
+
+**Đổi gì.** `/fee/utxo` và `/fee/sign`: Feecover trả `source` khác nguồn đã xin (vắng = `feecover`) ⟹
+`502 FEE_SOURCE_NOT_CONFIRMED` (`details.confirmed_source` = giá trị Feecover trả); `/fee/utxo` không ghi
+lượt giữ, `/fee/sign` không giao chữ ký. `/fee/sign` kiểm `source` của Feecover theo enum
+(`feecover` | `sponsor`) như `/fee/utxo`; giá trị khác ⟹ `502 FEE_PROXY_UPSTREAM`. `/tx/quote` đọc tiêu đề
+`X-Feecover-Token` như `/fee/*` và hỏi `/v1/fee-sources` dưới đúng ứng dụng đó (`FeeProxy.feeSources` nhận
+thêm `callerToken`); token không khớp ⟹ `401 FEE_PROXY_APP_UNKNOWN`. README sửa câu L38: Feecover từ chối
+chủ không DID lúc ký, không phải lúc xin UTxO.
+
+**Vì sao.** Review #159: thân trả vọng nguyên `source` lệch với 200, nên app có thể nhận chữ ký dưới nguồn
+khác nguồn nó xin (tưởng tài trợ mà bị trừ CARP); báo giá hỏi Feecover dưới ứng dụng mặc định trong khi
+`/fee/*` dùng ứng dụng của token, nên `fee_sources` có thể lệch ứng dụng thật.
+
+**Cái gì gãy nếu bám bản cũ.** Client dựa vào việc thân 200 vọng `source` khác yêu cầu (để tự từ chối) nay
+nhận 502. Client gửi `X-Feecover-Token` sai tới `/tx/quote` (trước đây bị bỏ qua) nay nhận 401.
+
 ## 2026-10-07 — VaultTxAPI: `fee_sources` trong báo giá; `source` ở `/fee/utxo` + `/fee/sign`
 
 **Đổi gì.** `POST /tx/quote` trả thêm `fee_sources` = ba khối `owner_address` / `feecover` / `sponsor`
@@ -131,9 +148,10 @@ lượt giữ, lưu cạnh lượt giữ ở `VaultTxAPI/src/locks.ts` ▸ `Issu
 (danh sách đóng 12 route ở README ▸ *Proxy phí* ▸ `reservation_id`) nhận `fee_payer.reservation_id` /
 `funding.fee_payer.reservation_id` tuỳ chọn: lệch mã lượt giữ đang sống ⟹ `409
 FEE_PAYER_RESERVATION_EXPIRED` với `reservation: "foreign"`; sai khuôn ⟹ `400 FEE_PAYER_SHAPE` /
-`FUNDING_SHAPE`; vắng ⟹ như cũ, và được đếm (`/health` ▸ `fee_reservation_id`, một dòng nhật ký JSON
-`fee_reservation_id_missing`). Sổ phát-hành ghi mã lúc dựng; `/fee/sign` so với mã đang sống, lệch ⟹ 409
-`foreign`, Feecover không bị gọi. Tx bị thay chỉ bỏ đúng lượt giữ cùng mã.
+`FUNDING_SHAPE`; vắng ⟹ như cũ, và được đếm (một dòng nhật ký JSON `fee_reservation_id_missing` mang số
+đếm luỹ kế theo route; KHÔNG lộ ra HTTP, `/health` không cần thẻ). Chỉ lượt dựng đã ghi sổ mới đếm. Sổ
+phát-hành ghi mã của lượt giữ mà cổng dựng ĐÃ THẤY (chụp lúc qua cổng, không tra lại lúc ghi sổ); `/fee/sign`
+so với mã đang sống, lệch ⟹ 409 `foreign`, Feecover không bị gọi. Tx bị thay chỉ bỏ đúng lượt giữ cùng mã.
 
 **Vì sao.** Thư `mg1007sa-b` / `sa1007mg-rid`: sổ giữ chỗ khoá theo UTxO; mọi bản app đi chung thẻ dịch
 vụ, nên khi Feecover giao lại cùng UTxO cho B, A còn cầm `fee_payer` cũ vẫn dựng được trên lượt giữ của B.
@@ -142,7 +160,8 @@ Bước 2 (bắt buộc mã) chỉ bật sau khi đo tỉ lệ thiếu mã và S
 **Cái gì gãy nếu bám bản cũ.** Client so `fee_payer` của `/fee/utxo` bằng phép bằng chặt gặp thêm
 `reservation_id`. `/fee/sign` cho tx dựng khi CHƯA có lượt giữ nào mà nay UTxO đang được giữ: trước ra
 `exceeded`/được ký, nay `foreign`. `details.reservation` có thêm giá trị `foreign`. `IssuedTxRegistry`
-nhận một hàm ghi nhật ký tuỳ chọn ở hàm dựng; `noteFeeReservation` trả mã lượt giữ.
+nhận một hàm ghi nhật ký tuỳ chọn ở hàm dựng; `noteFeeReservation` trả mã lượt giữ;
+`feeReservationForBuild` trả `{ untilMs, id }` thay vì một số, và không còn nhận `route`.
 
 ## 2026-10-07 — VaultTxAPI: UTxO Feecover không còn lượt giữ chỗ ⟹ không dựng, không ký
 
@@ -172,6 +191,52 @@ sổ". Ví trả phí là ví của chính chủ (app tự ký, không gọi `/f
 lại cùng UTxO cho B (lượt giữ mới R2) thì A dựng lại với `fee_payer` cũ cũng được kẹp vào R2 và xin
 ký được. Dịch vụ không phân biệt A với B (mọi người dùng app `magic` đi chung một token). Bịt cần
 `/fee/utxo` trả một mã giữ chỗ mà lượt dựng phải gửi kèm, hoặc Feecover tự ràng lượt ký vào lượt giữ.
+
+## 2026-10-06 — MagicSDK + VaultTxAPI: trần số lô đốt mỗi tx tiêu; bỏ mục đốt 0
+
+**Đổi gì.** `MagicSDK/src/burnBatch.ts` ▸ `planBurnBatch` giới hạn số mục trong redeemer
+`BurnBatch { burns }` ở `MAX_BURN_ENTRIES_PER_TX` (hằng của bộ dựng, không phải hằng on-chain).
+Chọn lô: thứ tự chết tăng dần như cũ; cần quá trần thì đổi sang lô lớn trước (tập ít mục nhất);
+vẫn quá trần ⟹ ném `BurnEntriesOverCapError` (mã `CONSUME_TOO_MANY_BATCHES`). Hai tên mới xuất ở
+`MagicSDK/src/index.ts`. VaultTxAPI (`txBuilder.ts` ▸ `asProtocolError`) ánh xạ lỗi đó thành
+`422 CONSUME_TOO_MANY_BATCHES` kèm `details.burn_entries_needed` · `burn_entries_cap` ·
+`live_batches`, trước khi dựng tx. Cùng đợt: lô còn sống mà số dư 0 không còn thành mục đốt.
+
+**Vì sao.** `apply_burns` duyệt toàn bộ danh sách lô cho mỗi mục đốt, nên một lượt tiêu đốt nhiều lô
+vượt ngân sách ExUnit của tx; trước bản này lỗi chỉ lộ ở bước đánh giá script của lucid, với một
+thông báo ExUnit không nói người dùng phải làm gì. Phép đo và phần chưa đo nằm ở chú thích của
+`MAX_BURN_ENTRIES_PER_TX`. Lỗi mục 0: két Instant giữ lô đã đốt sạch (số dư 0) tới hết epoch, bản cũ
+đưa lô đó vào `burns` với lượng 0, mà validator đòi mỗi mục `amt > 0` (`InstantGen/onchain/validators/vault.ak`
+▸ `apply_burns`) ⟹ tx tiêu bị từ chối. Tái hiện: đặt bản `burnBatch.ts` trước sửa vào chỗ, ca
+"lô đã đốt sạch" của `MagicSDK/tests/burnBatch.test.ts` ra `[['z0', 0n], ['b1', 100n]]`.
+
+**Cái gì gãy nếu bám bản cũ.** Lượt tiêu cần đốt quá trần nay nhận `422 CONSUME_TOO_MANY_BATCHES`
+thay vì `422 TX_BUILD_REJECTED` (hoặc một tx không lên được chuỗi) — app rẽ nhánh theo mã cũ cần
+thêm mã mới. Thứ tự lô bị đốt có thể khác bản cũ đúng ở ca thứ tự chết cần quá trần. Bên gọi
+`planBurnBatch` trực tiếp phải bắt `BurnEntriesOverCapError`.
+
+## 2026-10-06 — VaultTxAPI: `GET /tx/status/{tx_hash}` (chuỗi rồi mempool, chỉ đọc)
+
+**Đổi gì.** Đường mới `GET /tx/status/{tx_hash}` trả `{ tx_hash, state: "in_chain" | "in_mempool" |
+"not_found", block?, slot?, block_time? }` — tra khối trước (`/txs/{hash}`), rồi mempool của nhà
+cung cấp (`/mempool/{hash}`). Tx do chính dịch vụ phát và sổ phát-hành còn dòng ⟹ kèm `expires_at`
+(= `validTo` của thân tx, cùng nguồn với các route dựng; `IssuedTxRegistry.validToOf`) và
+`server_time` (`withServerTime`). Chỉ đọc: không khoá, không ghi sổ. Thẻ bài như mọi đường `/tx/*`.
+`tx_hash` sai khuôn ⟹ `400 TX_HASH_INVALID` (không gọi chuỗi); nhà cung cấp lỗi / quá giờ / hình dạng
+lạ ⟹ `502 TX_STATUS_PROVIDER_UNAVAILABLE` (`details.stage`). `ChainReader` có thêm phương thức
+`txStatus`; phép giây → mili-giây của giờ khối gom về một hàm có tên, `blockTimeSecondsToPosixMs`,
+dùng chung cho `tip` và `txStatus`.
+
+**Vì sao.** OriLife Core phải biết một tx đã ký và nộp có lên chuỗi hay không để tính nợ, và MAGIC
+đã nhận dựng đường này (thư trả `ol1005mg-b`). Quy tắc kết luận là `not_found` ∧ `now > expires_at`
+⟹ tx không bao giờ lên chuỗi được, nên phản hồi phải mang `expires_at` khi dịch vụ biết nó. Một lượt
+gọi hỏng mà đọc thành `not_found` là ghi nợ cho một tx đang nằm trong khối, nên chỉ hai câu 404 của
+nhà cung cấp mới ra `not_found`; mọi lỗi khác ra 502 mã riêng.
+
+**Cái gì gãy nếu bám bản cũ.** Không đường cũ nào đổi hành vi. Hiện thực `ChainReader` ngoài gói
+(nếu có) phải thêm `txStatus` mới qua kiểm kiểu. `expires_at` chỉ có khi tiến trình đang chạy còn
+dòng trong sổ phát-hành (sổ nằm trong bộ nhớ một tiến trình, giữ dòng quá hạn thêm
+`EXPIRED_RETENTION_MS`); vắng nó thì bên gọi không kết luận được "tx chết" từ `not_found`.
 
 ## 2026-10-06 — VaultTxAPI: hạn tx một nguồn `validTo`; `expires_reason`; 410 `TX_EXPIRED`
 

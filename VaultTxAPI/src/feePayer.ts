@@ -66,6 +66,7 @@ import { FUNDING_MAX_VALIDITY_MS, type Network, type OwnerAuth } from "@magiclam
 import type { ChainReader } from "./chain.js";
 import type { DidPaymentAddressResult } from "./didOwner.js";
 import { CodedApiError } from "./errors.js";
+import type { FeeReservation, IssuedTxMeta } from "./locks.js";
 import { raw } from "./units.js";
 
 export const OUTREF = /^([0-9a-f]{64})#(0|[1-9][0-9]{0,4})$/;
@@ -121,11 +122,19 @@ export function parseFeePayerShape(fp: unknown, c: FeePayerCodes): FeePayerReque
   };
 }
 
-/** Trường sổ phát-hành (`locks.ts` ▸ `IssuedTxMeta`) cho ví trả phí của một lượt dựng: UTxO + mã lượt
- *  giữ app gửi (vắng ⟹ sổ tự ghi mã lượt giữ đang sống). MỘT chỗ cho mọi route ghi sổ. */
-export function feePayerRecordFields(fp: FeePayerRequest | undefined): { feePayerUtxo?: string; feeReservationId?: string } {
+/** Trường sổ phát-hành (`locks.ts` ▸ `IssuedTxMeta`) cho ví trả phí của một lượt dựng: UTxO + lượt
+ *  giữ mà CỔNG DỰNG đã thấy (`reservation` = giá trị `feeReservationForBuild` trả, chụp lúc qua cổng,
+ *  KHÔNG tra lại sổ lúc ghi). MỘT chỗ cho mọi route ghi sổ. */
+export function feePayerRecordFields(
+  fp: FeePayerRequest | undefined, reservation: FeeReservation | undefined,
+): Pick<IssuedTxMeta, "feePayerUtxo" | "feeReservationId" | "feeReservedUntilMs" | "feeReservationIdSent"> {
   if (fp === undefined) return {};
-  return { feePayerUtxo: refStr(fp.utxoRef), ...(fp.reservationId === undefined ? {} : { feeReservationId: fp.reservationId }) };
+  return {
+    feePayerUtxo: refStr(fp.utxoRef),
+    ...(reservation === undefined ? {} : {
+      feeReservationId: reservation.id, feeReservedUntilMs: reservation.untilMs, feeReservationIdSent: fp.reservationId !== undefined,
+    }),
+  };
 }
 
 /** `fee_payer` ở gốc thân bài — tuỳ chọn, mọi đường dựng trừ `/tx/create-vault`. */

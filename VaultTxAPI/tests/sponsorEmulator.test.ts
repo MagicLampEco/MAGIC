@@ -208,6 +208,7 @@ function emulatorChain(): ChainReader {
     tip: async () => ({ blockHeight: emulator.blockHeight, blockHash: "00".repeat(32), blockTimePosixMs: nowMs() }),
     submitTx: c => emulator.submitTx(c),
     rewardAccount: async () => { throw new Error("bài chủ khoá không đọc tài khoản thưởng"); },
+    txStatus: async () => { throw new Error("hành trình tài trợ không tra trạng thái tx"); },
   };
 }
 

@@ -23,7 +23,7 @@ import {
 } from "@lucid-evolution/lucid";
 import {
   buildConsumeTx, buildConsumeManyTx, buildInstantGenTx, buildMintEngageTx, buildRefreshCheckpointTx, buildScheduleCommitTx,
-  buildScheduleFireTx, buildVaultBurnBatch,
+  buildScheduleFireTx, buildVaultBurnBatch, BurnEntriesOverCapError,
   createVault, decodePriceParam, requiredFromBeacon, requiredFromBeaconPairs,
   type DidPaymentFundingInput, type GenBeaconParams, type InstantVaultParams, type PlutusJson, type Profile,
   type VaultModule, type VaultType,
@@ -850,6 +850,13 @@ function asProtocolError(e: unknown): unknown {
   // `FundingError` (luật `funding` của SDK) cũng đi tiếp NGUYÊN MÃ: `service.ts` ▸ `asOwnerApiError`
   // ánh xạ nó sang mã `FUNDING_*`; gộp vào 422 `TX_BUILD_REJECTED` là mất mã người gọi rẽ nhánh theo.
   if (e instanceof FundingError) return e;
+  // Lượt tiêu cần đốt nhiều lô hơn một tx chở được (`MagicSDK` ▸ `MAX_BURN_ENTRIES_PER_TX`): mã RIÊNG,
+  // vì app rẽ nhánh được (gợi ý tiêu ít hơn) — gộp vào `TX_BUILD_REJECTED` là bắt app đoán từ câu chữ.
+  if (e instanceof BurnEntriesOverCapError) {
+    return new CodedApiError(422, e.code, e.message, {
+      burn_entries_needed: e.needed, burn_entries_cap: e.cap, live_batches: e.liveBatches,
+    });
+  }
   if (e instanceof Error) return new TxBuildRejectedError(e.message, { thrown_by: e.name });
   return e;
 }

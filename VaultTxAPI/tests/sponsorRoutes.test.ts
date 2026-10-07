@@ -94,6 +94,7 @@ function countingChain(): { chain: ChainReader; reads: () => number } {
     tip: () => { n++; return inner.tip(); },
     submitTx: c => inner.submitTx(c),
     rewardAccount: a => inner.rewardAccount(a),
+    txStatus: h => { n++; return inner.txStatus(h); },
   };
   return { chain, reads: () => n };
 }
@@ -415,6 +416,7 @@ describe("GET /sponsor/funds — tình trạng quỹ tài trợ theo DID", () =>
   const DID = "d1".repeat(32);
   const chainWith = (fail: boolean): ChainReader => ({
     label: "stub",
+    txStatus: async () => { throw new Error("hành trình tài trợ không tra trạng thái tx"); },
     utxosAt: async a => {
       if (fail) throw new Error("nhà cung cấp sập");
       return a === SPONSOR_ADDR ? [{ txHash: "aa".repeat(32), outputIndex: 0, address: a, assets: { lovelace: 5n, [CARP_UNIT]: 40n } } as UTxO] : [];

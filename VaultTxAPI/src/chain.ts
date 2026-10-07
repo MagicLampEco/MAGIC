@@ -56,11 +56,34 @@ export interface ChainReader {
    *  ledger đòi mục rút bằng ĐÚNG số dư, và từ chối mọi mục rút của tài khoản chưa đăng ký.
    *  Đọc không được thì NÉM; không bao giờ trả một trạng thái đoán. */
   rewardAccount(rewardAddress: string): Promise<RewardAccountState>;
+  /** Một tx đã vào khối, đang ở mempool của nút, hay chưa thấy ở đâu. `not_found` CHỈ khi nút trả
+   *  lời "không có" ở cả hai nơi; đọc không được ⟹ NÉM `ChainUnavailableError`, không bao giờ trả
+   *  `not_found` thay. Nhận hash 64 hex thường — kiểm khuôn là việc của tầng gọi. */
+  txStatus(txHash: string): Promise<TxChainStatus>;
 }
+
+/** Trạng thái một tx theo nút chuỗi — `ChainReader.txStatus`. */
+export type TxChainStatus =
+  | { state: "in_chain"; blockHash: string; slot: number; blockTimePosixMs: bigint }
+  | { state: "in_mempool" }
+  | { state: "not_found" };
 
 /** Mốc tỉnh táo: 2020-01-01T00:00:00Z tính bằng giây. Nhỏ hơn mốc này gần như chắc chắn
  *  là đang đọc nhầm trường (slot, chiều cao khối, ms-đọc-thành-giây). */
 const SANE_MIN_BLOCK_TIME_SECONDS = 1_577_836_800n;
+
+/** Giờ khối của Blockfrost (GIÂY POSIX) → mili-giây, qua mốc tỉnh táo. Phép nhân 1000 của cả gói
+ *  nằm ở đây — đỉnh chuỗi (`tip`) và giờ khối của một tx (`txStatus`) cùng đi qua. */
+function blockTimeSecondsToPosixMs(seconds: bigint, node: string): bigint {
+  if (seconds < SANE_MIN_BLOCK_TIME_SECONDS) {
+    throw new ChainUnavailableError(
+      `Thời gian khối ${seconds} nhỏ hơn mốc tỉnh táo — nhiều khả năng đang đọc nhầm trường ` +
+      `(slot hay chiều cao khối) thay vì GIÂY POSIX. Từ chối suy mốc thời gian từ nó.`,
+      { transport: "http", node_block_time: String(seconds), node },
+    );
+  }
+  return seconds * 1000n;   // GIÂY → MILI-GIÂY. Đúng một chỗ trong gói này.
+}
 
 export interface BlockfrostReaderOptions {
   /** Gốc API, ví dụ "https://cardano-preview.blockfrost.io/api/v0". */
@@ -309,19 +332,64 @@ export class BlockfrostChainReader implements ChainReader {
         { transport: "http", node_http_status: status, node: this.label },
       );
     }
-    const seconds = BigInt(b.time);
-    if (seconds < SANE_MIN_BLOCK_TIME_SECONDS) {
-      throw new ChainUnavailableError(
-        `Thời gian khối ${seconds} nhỏ hơn mốc tỉnh táo — nhiều khả năng đang đọc nhầm trường ` +
-        `(slot hay chiều cao khối) thay vì GIÂY POSIX. Từ chối suy epoch từ nó.`,
-        { transport: "http", node_block_time: String(seconds), node: this.label },
-      );
-    }
     return {
       blockHeight: typeof b.height === "number" ? b.height : -1,
       blockHash: b.hash,
-      blockTimePosixMs: seconds * 1000n,   // GIÂY → MILI-GIÂY. Đúng một chỗ trong gói này.
+      blockTimePosixMs: blockTimeSecondsToPosixMs(BigInt(b.time), this.label),
     };
+  }
+
+  /**
+   * Blockfrost `/txs/{hash}` rồi `/mempool/{hash}` — CHỈ ĐỌC (`GET /tx/status/{tx_hash}`).
+   *   `/txs` 200      ⟹ `in_chain` (khối, slot, giờ khối). Hình dạng lạ ⟹ NÉM, không đệm.
+   *   `/txs` 404      ⟹ chưa có trong khối nào ⟹ tra mempool.
+   *   `/mempool` 200  ⟹ `in_mempool`; 404 ⟹ `not_found` — câu trả lời THẬT của nút.
+   *   mã khác / quá giờ / mất kết nối ở BẤT KỲ bước nào ⟹ `ChainUnavailableError` (`details.stage`).
+   * Hai bước 404 là ca DUY NHẤT ra `not_found`: một lượt gọi hỏng mà đọc thành "không có" là để bên
+   * gọi kết luận tx đã chết trong khi nó có thể đang ở khối.
+   *
+   * Mempool ở đây là mempool của NHÀ CUNG CẤP (Blockfrost chỉ thấy tx nộp qua chính nó). Dịch vụ nộp
+   * qua đúng nhà cung cấp này, nên tx do dịch vụ nộp hiện ra; tx nộp qua đường khác có thể ra
+   * `not_found` cho tới khi vào khối.
+   */
+  async txStatus(txHash: string): Promise<TxChainStatus> {
+    if (!/^[0-9a-f]{64}$/.test(txHash)) {
+      throw new Error(`[bất biến nội bộ] tx hash "${txHash.slice(0, 20)}…" không phải 64 hex thường.`);
+    }
+    const onChain = await this.getJson(`/txs/${txHash}`);
+    if (onChain.status === 200) {
+      const b = onChain.body as { block?: unknown; slot?: unknown; block_time?: unknown } | null;
+      if (
+        b === null || typeof b !== "object" || typeof b.block !== "string" ||
+        !Number.isSafeInteger(b.slot) || !Number.isSafeInteger(b.block_time)
+      ) {
+        throw new ChainUnavailableError(
+          "Nút chuỗi trả HTTP 200 cho giao dịch nhưng thiếu `block`/`slot`/`block_time`.",
+          { transport: "http", node_http_status: 200, node: this.label, stage: "chain" },
+        );
+      }
+      return {
+        state: "in_chain",
+        blockHash: b.block,
+        slot: b.slot as number,
+        blockTimePosixMs: blockTimeSecondsToPosixMs(BigInt(b.block_time as number), this.label),
+      };
+    }
+    if (onChain.status !== 404) {
+      throw new ChainUnavailableError(
+        `Nút chuỗi trả HTTP ${onChain.status} khi tra giao dịch trên chuỗi.`,
+        { transport: "http", node_http_status: onChain.status, node: this.label, stage: "chain" },
+      );
+    }
+    const mempool = await this.getJson(`/mempool/${txHash}`);
+    if (mempool.status === 404) return { state: "not_found" };
+    if (mempool.status !== 200 || mempool.body === null || typeof mempool.body !== "object") {
+      throw new ChainUnavailableError(
+        `Nút chuỗi trả HTTP ${mempool.status} khi tra mempool.`,
+        { transport: "http", node_http_status: mempool.status, node: this.label, stage: "mempool" },
+      );
+    }
+    return { state: "in_mempool" };
   }
 
   async submitTx(signedCborHex: string): Promise<string> {
@@ -484,6 +552,7 @@ export class PendingSpendsFilteredChain implements ChainReader {
   tip(): Promise<ChainTip> { return this.inner.tip(); }
   submitTx(signedCborHex: string): Promise<string> { return this.inner.submitTx(signedCborHex); }
   rewardAccount(rewardAddress: string): Promise<RewardAccountState> { return this.inner.rewardAccount(rewardAddress); }
+  txStatus(txHash: string): Promise<TxChainStatus> { return this.inner.txStatus(txHash); }
 }
 
 function truncate(s: string, n: number): string {
@@ -562,5 +631,13 @@ export class RecordedChainReader implements ChainReader {
       throw new ChainUnavailableError(`Bản ghi không có tài khoản thưởng ${rewardAddress}.`, { node: this.label });
     }
     return hit;
+  }
+
+  /** Trạng thái tx ghi sẵn. Hash không có trong bảng ⟹ `not_found` (cùng ngữ nghĩa "không có gì ở
+   *  đó" như `utxosAt`); `failWith` ⟹ NÉM như mọi lời gọi khác. */
+  txStatuses: Record<string, TxChainStatus> = {};
+  async txStatus(txHash: string): Promise<TxChainStatus> {
+    if (this.failWith) throw this.failWith;
+    return this.txStatuses[txHash] ?? { state: "not_found" };
   }
 }

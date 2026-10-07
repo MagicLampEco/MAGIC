@@ -23,7 +23,7 @@ import {
   type DidPaymentAnchorReader, type FundingRequest,
 } from "./funding.js";
 
-import type { ChainReader, ChainTip } from "./chain.js";
+import type { ChainReader, ChainTip, TxChainStatus } from "./chain.js";
 import { PREPAID_VAULT_TYPE, type Deployment, type VaultScope } from "./config.js";
 import {
   checkBindDidTx, checkOpenThreadTx, didCommitOf, parseDidCommit, pickEngageThread, threadsOf,
@@ -35,8 +35,8 @@ import {
   refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike, type OwnerRewardReturn,
 } from "./feePayer.js";
 import {
-  BadRequestError, CodedApiError, ConfigMissingError, SubmitRejectedError, TxSummaryUndecodableError,
-  TxSupersededError, ownerApiErrorOf,
+  BadRequestError, ChainUnavailableError, CodedApiError, ConfigMissingError, SubmitRejectedError,
+  TxSummaryUndecodableError, TxSupersededError, ownerApiErrorOf,
 } from "./errors.js";
 import {
   ownerLockKey, type OwnerInput, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
@@ -270,6 +270,39 @@ export class VaultTxService {
    *  đóng dấu nó thành `server_time` cạnh `expires_at` (`http.ts` ▸ `withServerTime`). */
   serverNowMs(): number {
     return this.now();
+  }
+
+  /**
+   * `GET /tx/status/{tx_hash}` — CHỈ ĐỌC: không khoá, không ghi sổ, không chạm `PendingSpends`.
+   * Tra chuỗi trước rồi mempool (`ChainReader.txStatus`). Tx do CHÍNH dịch vụ phát (sổ phát-hành còn
+   * dòng) ⟹ kèm `expiresAt` = `validTo` của thân tx, cùng nguồn `expires_at` của các route dựng —
+   * để bên gọi áp được `not_found` ∧ `now > expires_at` ⟹ tx không bao giờ lên chuỗi được.
+   *
+   *   hash không phải 64 hex thường            ⟹ 400 `TX_HASH_INVALID`
+   *   nhà cung cấp lỗi / quá giờ / hình dạng lạ ⟹ 502 `TX_STATUS_PROVIDER_UNAVAILABLE` — KHÔNG BAO GIỜ
+   *                                               thành `not_found`: lần gọi hỏng và kết quả rỗng là
+   *                                               hai trạng thái khác nhau.
+   */
+  async txStatus(txHash: string): Promise<TxStatusResponse> {
+    if (!TX_HASH_RE.test(txHash)) {
+      throw new CodedApiError(400, "TX_HASH_INVALID",
+        "tx_hash phải là đúng 64 ký tự hex thường (hash thân giao dịch 32 byte).",
+        { received_length: txHash.length });
+    }
+    let s: TxChainStatus;
+    try {
+      s = await this.deps.chain.txStatus(txHash);
+    } catch (e) {
+      if (e instanceof ChainUnavailableError) {
+        throw new CodedApiError(502, "TX_STATUS_PROVIDER_UNAVAILABLE",
+          "Không tra được trạng thái giao dịch ở nút chuỗi lúc này — đây KHÔNG phải kết luận " +
+          "\"không có giao dịch\". Thử lại sau.",
+          { ...e.details, tx_hash: txHash });
+      }
+      throw e;
+    }
+    const validToMs = this.deps.issued.validToOf(txHash, this.now());
+    return { txHash, status: s, ...(validToMs === null ? {} : { expiresAt: new Date(validToMs).toISOString() }) };
   }
 
   get network(): Network {
@@ -1594,6 +1627,30 @@ export function toBuildBody(r: BuildResponse): Record<string, unknown> {
 
 export function toSubmitBody(r: SubmitResponse): Record<string, unknown> {
   return { tx_hash: r.txHash, lock_released_for: r.lockReleasedFor };
+}
+
+/** Hash thân giao dịch: đúng 64 hex THƯỜNG — cùng khuôn mọi `tx_hash` dịch vụ trả ra. */
+const TX_HASH_RE = /^[0-9a-f]{64}$/;
+
+export interface TxStatusResponse {
+  txHash: string;
+  status: TxChainStatus;
+  /** `validTo` ISO 8601 — CHỈ khi tx do dịch vụ này phát và sổ phát-hành còn dòng. */
+  expiresAt?: string;
+}
+
+/** Thân `GET /tx/status`: `{ tx_hash, state, block?, slot?, block_time?, expires_at? }`. `block` = hash
+ *  khối, `block_time` = giờ khối ISO 8601 (cùng khuôn `expires_at`). `server_time` do `http.ts` gắn. */
+export function toTxStatusBody(r: TxStatusResponse): Record<string, unknown> {
+  const s = r.status;
+  return {
+    tx_hash: r.txHash,
+    state: s.state,
+    ...(s.state === "in_chain"
+      ? { block: s.blockHash, slot: s.slot, block_time: new Date(Number(s.blockTimePosixMs)).toISOString() }
+      : {}),
+    ...(r.expiresAt === undefined ? {} : { expires_at: r.expiresAt }),
+  };
 }
 
 // ── sổ phát-hành: route + mã ghi sổ Feecover ─────────────────────────────────

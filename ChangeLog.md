@@ -54,6 +54,52 @@ lại cùng UTxO cho B (lượt giữ mới R2) thì A dựng lại với `fee_p
 ký được. Dịch vụ không phân biệt A với B (mọi người dùng app `magic` đi chung một token). Bịt cần
 `/fee/utxo` trả một mã giữ chỗ mà lượt dựng phải gửi kèm, hoặc Feecover tự ràng lượt ký vào lượt giữ.
 
+## 2026-10-06 — MagicSDK + VaultTxAPI: trần số lô đốt mỗi tx tiêu; bỏ mục đốt 0
+
+**Đổi gì.** `MagicSDK/src/burnBatch.ts` ▸ `planBurnBatch` giới hạn số mục trong redeemer
+`BurnBatch { burns }` ở `MAX_BURN_ENTRIES_PER_TX` (hằng của bộ dựng, không phải hằng on-chain).
+Chọn lô: thứ tự chết tăng dần như cũ; cần quá trần thì đổi sang lô lớn trước (tập ít mục nhất);
+vẫn quá trần ⟹ ném `BurnEntriesOverCapError` (mã `CONSUME_TOO_MANY_BATCHES`). Hai tên mới xuất ở
+`MagicSDK/src/index.ts`. VaultTxAPI (`txBuilder.ts` ▸ `asProtocolError`) ánh xạ lỗi đó thành
+`422 CONSUME_TOO_MANY_BATCHES` kèm `details.burn_entries_needed` · `burn_entries_cap` ·
+`live_batches`, trước khi dựng tx. Cùng đợt: lô còn sống mà số dư 0 không còn thành mục đốt.
+
+**Vì sao.** `apply_burns` duyệt toàn bộ danh sách lô cho mỗi mục đốt, nên một lượt tiêu đốt nhiều lô
+vượt ngân sách ExUnit của tx; trước bản này lỗi chỉ lộ ở bước đánh giá script của lucid, với một
+thông báo ExUnit không nói người dùng phải làm gì. Phép đo và phần chưa đo nằm ở chú thích của
+`MAX_BURN_ENTRIES_PER_TX`. Lỗi mục 0: két Instant giữ lô đã đốt sạch (số dư 0) tới hết epoch, bản cũ
+đưa lô đó vào `burns` với lượng 0, mà validator đòi mỗi mục `amt > 0` (`InstantGen/onchain/validators/vault.ak`
+▸ `apply_burns`) ⟹ tx tiêu bị từ chối. Tái hiện: đặt bản `burnBatch.ts` trước sửa vào chỗ, ca
+"lô đã đốt sạch" của `MagicSDK/tests/burnBatch.test.ts` ra `[['z0', 0n], ['b1', 100n]]`.
+
+**Cái gì gãy nếu bám bản cũ.** Lượt tiêu cần đốt quá trần nay nhận `422 CONSUME_TOO_MANY_BATCHES`
+thay vì `422 TX_BUILD_REJECTED` (hoặc một tx không lên được chuỗi) — app rẽ nhánh theo mã cũ cần
+thêm mã mới. Thứ tự lô bị đốt có thể khác bản cũ đúng ở ca thứ tự chết cần quá trần. Bên gọi
+`planBurnBatch` trực tiếp phải bắt `BurnEntriesOverCapError`.
+
+## 2026-10-06 — VaultTxAPI: `GET /tx/status/{tx_hash}` (chuỗi rồi mempool, chỉ đọc)
+
+**Đổi gì.** Đường mới `GET /tx/status/{tx_hash}` trả `{ tx_hash, state: "in_chain" | "in_mempool" |
+"not_found", block?, slot?, block_time? }` — tra khối trước (`/txs/{hash}`), rồi mempool của nhà
+cung cấp (`/mempool/{hash}`). Tx do chính dịch vụ phát và sổ phát-hành còn dòng ⟹ kèm `expires_at`
+(= `validTo` của thân tx, cùng nguồn với các route dựng; `IssuedTxRegistry.validToOf`) và
+`server_time` (`withServerTime`). Chỉ đọc: không khoá, không ghi sổ. Thẻ bài như mọi đường `/tx/*`.
+`tx_hash` sai khuôn ⟹ `400 TX_HASH_INVALID` (không gọi chuỗi); nhà cung cấp lỗi / quá giờ / hình dạng
+lạ ⟹ `502 TX_STATUS_PROVIDER_UNAVAILABLE` (`details.stage`). `ChainReader` có thêm phương thức
+`txStatus`; phép giây → mili-giây của giờ khối gom về một hàm có tên, `blockTimeSecondsToPosixMs`,
+dùng chung cho `tip` và `txStatus`.
+
+**Vì sao.** OriLife Core phải biết một tx đã ký và nộp có lên chuỗi hay không để tính nợ, và MAGIC
+đã nhận dựng đường này (thư trả `ol1005mg-b`). Quy tắc kết luận là `not_found` ∧ `now > expires_at`
+⟹ tx không bao giờ lên chuỗi được, nên phản hồi phải mang `expires_at` khi dịch vụ biết nó. Một lượt
+gọi hỏng mà đọc thành `not_found` là ghi nợ cho một tx đang nằm trong khối, nên chỉ hai câu 404 của
+nhà cung cấp mới ra `not_found`; mọi lỗi khác ra 502 mã riêng.
+
+**Cái gì gãy nếu bám bản cũ.** Không đường cũ nào đổi hành vi. Hiện thực `ChainReader` ngoài gói
+(nếu có) phải thêm `txStatus` mới qua kiểm kiểu. `expires_at` chỉ có khi tiến trình đang chạy còn
+dòng trong sổ phát-hành (sổ nằm trong bộ nhớ một tiến trình, giữ dòng quá hạn thêm
+`EXPIRED_RETENTION_MS`); vắng nó thì bên gọi không kết luận được "tx chết" từ `not_found`.
+
 ## 2026-10-06 — VaultTxAPI: hạn tx một nguồn `validTo`; `expires_reason`; 410 `TX_EXPIRED`
 
 **Đổi gì.** Mọi tx VaultTxAPI phát ra mang `validTo` trong thân, kể cả `open-thread`, `bind-did`,

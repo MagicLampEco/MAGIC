@@ -149,8 +149,8 @@ export function resolveSponsorFund(
   const mine = entries.filter(e => servesDid(e, didCommit));
   if (mine.length === 0) {
     throw new CodedApiError(409, "SPONSOR_FUND_NOT_OPENED",
-      `DID ${didCommit.slice(0, 16)}… chưa có quỹ tài trợ trong tập quỹ đã ghim. Người vận hành phải tạo quỹ tài ` +
-      `trợ cho DID này (và ghim nó vào cấu hình dịch vụ) trước bước fund-vault.`,
+      `DID ${didCommit.slice(0, 16)}… chưa có quỹ tài trợ trong gốc tin cậy. Tạo quỹ tài trợ cho DID này ` +
+      `(/tx/sponsor/open-fund) trước bước fund-vault.`,
       { did_commit: didCommit, pinned_funds: entries.length });
   }
   if (mine.length > 1) {

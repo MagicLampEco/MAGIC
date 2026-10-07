@@ -25,7 +25,7 @@ import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import type { VaultTxService } from "../src/service.js";
 import {
   SPONSOR_ERROR_STATUS, SponsorTxService, asSponsorApiError, assertOwnerDid, assertSponsorUtxosPinned,
-  assertFundPinnedOutputs, sponsorApiErrorOf, type SponsorTxServiceDeps, type FundPinnedOutputsExpect,
+  assertFundPinnedOutputs, parseSponsorRequest, sponsorApiErrorOf, type SponsorTxServiceDeps, type FundPinnedOutputsExpect,
 } from "../src/sponsor.js";
 import { parseBuildRequest } from "../src/buildRequest.js";
 import type { ResolvedOwnerWitness } from "../src/owner.js";
@@ -322,6 +322,32 @@ describe("bộ định tuyến /tx/sponsor/*", () => {
     expect(fundStep.signers.map(x => x.role)).toEqual(["fee-wallet", "sponsor", "owner"]);
     expect(steps.find(x => x.step === "draw-magic")!.signers.map(x => x.role)).toEqual(["fee-wallet", "owner"]);
     expect(r.body.same_epoch).toEqual(expect.arrayContaining(["draw-magic", "first-consume"]));
+  });
+
+  it("plan: open-fund đứng SAU bind-did, TRƯỚC fund-vault; vai ký = ví trả phí · platform (chủ KHÔNG ký); fund-vault đòi open-fund", async () => {
+    const r = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH }, undefined);
+    expect(r.status).toBe(200);
+    const steps = r.body.steps as Array<{ step: string; path?: string; signers: Array<{ role: string }>; requires: string[] }>;
+    const order = steps.map(x => x.step).filter(s => s !== "wakeme-genesis");
+    expect(order).toEqual(["open-vault", "bind-did", "open-fund", "fund-vault", "draw-magic", "first-consume"]);
+    const open = steps.find(x => x.step === "open-fund")!;
+    expect(open.path).toBe("/tx/sponsor/open-fund");
+    expect(open.signers.map(x => x.role)).toEqual(["fee-wallet", "platform"]);
+    expect(steps.find(x => x.step === "fund-vault")!.requires.some(q => q.startsWith("open-fund"))).toBe(true);
+  });
+
+  it("open-fund: thân bài mang did_commit / owner_commit / sponsor / beneficiary / fund_id ⟹ 400 SPONSOR_REQUEST_SHAPE; CẶP: chỉ owner ⟹ qua", () => {
+    for (const f of ["did_commit", "owner_commit", "sponsor", "beneficiary", "fund_id", "platform_pkh"]) {
+      let caught: unknown;
+      try {
+        parseSponsorRequest("open-fund", { ...KEY_OWNER, [f]: "d1".repeat(32) });
+      } catch (e) { caught = e; }
+      expect(caught).toBeInstanceOf(CodedApiError);
+      expect((caught as CodedApiError).httpStatus).toBe(400);
+      expect((caught as CodedApiError).code).toBe("SPONSOR_REQUEST_SHAPE");
+      expect((caught as CodedApiError).details).toMatchObject({ field: f });
+    }
+    expect(parseSponsorRequest("open-fund", { ...KEY_OWNER }).owner).toEqual(KEY_OWNER.owner);
   });
 
   it("CẶP: plan với sponsor_pkh sai ⟹ 400 SPONSOR_REQUEST_SHAPE", async () => {

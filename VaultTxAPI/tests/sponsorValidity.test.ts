@@ -180,3 +180,26 @@ describe("hạn tx tài trợ: mã lượt giữ (reservation_id)", () => {
     expect(logs).toEqual([]);
   });
 });
+
+describe("hạn tx tài trợ: cổng reservation_id phủ hai bước mới (bind-did, open-fund)", () => {
+  const ID_OLD = "0c".repeat(16);
+  const ID_NEW = "0d".repeat(16);
+
+  for (const [step, route] of [["bind-did", "sponsor-bind-did"], ["open-fund", "sponsor-open-fund"]] as const) {
+    it(`CẶP ${step}: mã khớp lượt giữ đang sống ⟹ kẹp vào lượt giữ, đếm with_id; mã cũ ⟹ 409 foreign`, () => {
+      const issued = new IssuedTxRegistry(() => {});
+      issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_OLD);
+      issued.noteFeeReservation(FEE_REF, Number(TIP_MS) + 300_000, FEECOVER_ADDR, ID_NEW);
+      const run = (reservationId: string) => planSponsorValidity({
+        step, tipPosixMs: TIP_MS, network: NET, txValidityMs: TX_VALIDITY_MS, issued, route,
+        feePayer: { utxoRef: FEE_REF, address: FEECOVER_ADDR, reservationId },
+      });
+      expect(run(ID_NEW).reason).toBe("fee_reservation");
+      expect(() => run(ID_OLD)).toThrow(expect.objectContaining({
+        code: "FEE_PAYER_RESERVATION_EXPIRED",
+        details: { fee_payer_utxo: FEE_REF, reserved_until: null, reservation: "foreign" },
+      }));
+      expect(issued.reservationIdStats()).toEqual({ with_id: { [route]: 1 }, without_id: {} });
+    });
+  }
+});

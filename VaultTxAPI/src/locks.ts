@@ -254,14 +254,16 @@ export const ISSUED_ROUTES: readonly IssuedRoute[] = [
  */
 /**
  * Route tài trợ (`sponsor.ts`). Tách khỏi `IssuedRoute` có chủ đích: `IssuedRoute`/`ISSUED_ROUTES`
- * là tập đường dựng của `/tx/quote`, còn năm route này không báo giá. Sổ phát-hành vẫn phải ghi
+ * là tập đường dựng của `/tx/quote`, còn sáu route này không báo giá. Sổ phát-hành vẫn phải ghi
  * chúng — không ghi thì `/tx/submit` từ chối nộp tx mà chính dịch vụ vừa dựng.
  */
 export type SponsorRoute =
-  "sponsor-open-vault" | "sponsor-bind-did" | "sponsor-fund-vault" | "sponsor-draw-magic" | "sponsor-first-consume";
+  | "sponsor-open-vault" | "sponsor-bind-did" | "sponsor-open-fund" | "sponsor-fund-vault" | "sponsor-draw-magic"
+  | "sponsor-first-consume";
 
 export const SPONSOR_ROUTES: readonly SponsorRoute[] = [
-  "sponsor-open-vault", "sponsor-bind-did", "sponsor-fund-vault", "sponsor-draw-magic", "sponsor-first-consume",
+  "sponsor-open-vault", "sponsor-bind-did", "sponsor-open-fund", "sponsor-fund-vault", "sponsor-draw-magic",
+  "sponsor-first-consume",
 ];
 
 /**

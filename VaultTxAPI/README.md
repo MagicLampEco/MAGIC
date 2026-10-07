@@ -1133,12 +1133,13 @@ dựng được trên lượt giữ của B. Hợp đồng:
   tx ghi sổ khi chưa có lượt giữ nào mà nay UTxO đang được giữ ⟹ `409 … "foreign"` (kèm `tx_hash`),
   Feecover không bị gọi. Tx bị thay khi một tx chung khoá được nộp chỉ bỏ ĐÚNG lượt giữ của nó (cùng mã).
 
-**Danh sách ĐÓNG route dựng kiểm mã (13 route)** — mọi route gọi cổng `IssuedTxRegistry.feeReservationForBuild`
+**Danh sách ĐÓNG route dựng kiểm mã (14 route)** — mọi route gọi cổng `IssuedTxRegistry.feeReservationForBuild`
 (`service.ts` ▸ `validityPlan`, `sponsor.ts` ▸ `planSponsorValidity`), tức mọi route nhận `fee_payer`:
 `/tx/instant-gen` · `/tx/refresh-checkpoint` · `/tx/schedule-commit` · `/tx/schedule-fire` · `/tx/consume` ·
 `/tx/open-thread` · `/tx/bind-did` · `/tx/create-vault` (`fee_payer` và `funding.fee_payer`) ·
-`/tx/sponsor/open-vault` · `/tx/sponsor/bind-did` · `/tx/sponsor/fund-vault` · `/tx/sponsor/draw-magic` ·
-`/tx/sponsor/first-consume` (mọi bước tài trợ đi chung `sponsor.ts` ▸ `planSponsorValidity`).
+`/tx/sponsor/open-vault` · `/tx/sponsor/bind-did` · `/tx/sponsor/open-fund` · `/tx/sponsor/fund-vault` ·
+`/tx/sponsor/draw-magic` · `/tx/sponsor/first-consume` (mọi bước tài trợ đi chung `sponsor.ts` ▸
+`planSponsorValidity`).
 Lệnh liệt kê lại: `command grep -rn "feeReservationForBuild(" VaultTxAPI/src`.
 
 **BƯỚC 2 (bắt buộc mã) CHƯA bật, và chỉ bật khi đủ HAI điều kiện:** (1) SuperApp báo số bản dựng có gửi
@@ -1229,7 +1230,10 @@ Có cả hai ⟹ quỹ phải thoả cả hai. Ở cả hai đường, quỹ cò
 | `SPONSOR_VAULT_DID_UNSET` | 409 | két chưa gắn DID — gọi `/tx/sponsor/bind-did` trước |
 | `SPONSOR_VAULT_DID_MISMATCH` | 422 | két đã gắn một DID khác DID của thread — két này không đi tiếp được hành trình tài trợ |
 | `SPONSOR_VAULT_DID_ALREADY_SET` | 409 | (bind-did) két đã gắn đúng DID này — bỏ qua bind-did, đi tiếp fund-vault |
-| `SPONSOR_FUND_NOT_OPENED` | 409 | DID chưa có quỹ tài trợ nào trong gốc tin cậy — người vận hành tạo quỹ rồi gọi lại |
+| `SPONSOR_FUND_NOT_OPENED` | 409 | DID chưa có quỹ tài trợ nào trong gốc tin cậy — gọi `/tx/sponsor/open-fund` trước |
+| `SPONSOR_FUND_ALREADY_OPEN` | 409 | (open-fund) DID đã có quỹ tài trợ dùng được — bỏ qua open-fund, đi tiếp fund-vault (`details.fund_ids`) |
+| `SPONSOR_FUND_SET_CLOSED` | 501 | (open-fund) cấu hình ghim `fund_units` (tập đóng) — quỹ mới sẽ không nằm trong tập fund-vault đọc; bỏ `fund_units`, giữ `platform_pkhs` |
+| `CONFIG_MISSING` | 501 | (open-fund) thiếu `paid_fund.sponsor.platform_pkhs` và/hoặc `paid_fund.sponsor.beneficiary` (`details.missing`) |
 | `SPONSOR_FUND_AMBIGUOUS` | 409 | DID có hơn một quỹ tài trợ — gửi `fund_id`, hoặc báo người vận hành gỡ quỹ thừa |
 | `SPONSOR_FUND_DID_MISMATCH` | 422 | `fund_id` gửi lên là quỹ của DID khác — bỏ `fund_id` để dịch vụ tự tìm |
 | `SPONSOR_FUND_NOT_ALLOWED` | 422 | `fund_id` ngoài gốc tin cậy, hoặc quỹ đó không dùng được (`details.problem`: `missing` · `ambiguous` · `undecodable` · `foreign_platform` · `wrong_vault` · `not_sponsored` · `foreign_sponsor`) |
@@ -1238,23 +1242,79 @@ Có cả hai ⟹ quỹ phải thoả cả hai. Ở cả hai đường, quỹ cò
 phục vụ (`owner_commit`), lý do không dùng được (`problem`), quỹ có đang bận không, số kế toán, và
 CARP còn ở ví bên tài trợ.
 
-**Tạo quỹ tài trợ cho một DID — chưa có route.** Ràng buộc tạm đang có hiệu lực: quỹ được tạo
-trước bằng công cụ vận hành (ký bằng khoá platform), rồi được dịch vụ nhận qua `fund_units` hoặc
-`platform_pkhs`. DID chưa có quỹ ⟹ fund-vault trả `409 SPONSOR_FUND_NOT_OPENED`.
+#### Tạo quỹ tài trợ cho một DID: `POST /tx/sponsor/open-fund`
+
+Thân bài: `{ owner, [owner_witness], [change_address | fee_payer] }` — **không** nhận DID, platform,
+bên tài trợ, bên hưởng hay đệm (gửi một trong `did_commit` · `owner_commit` · `platform` ·
+`platform_pkh` · `sponsor` · `beneficiary` · `buffer_bps` · `fund_id` · `vault_ref` ⟹
+`400 SPONSOR_REQUEST_SHAPE`). Dịch vụ dựng tx genesis quỹ (`paid_fund`, nhánh mint
+`validate_mint_fund_nft`) với:
+
+| trường datum | lấy từ |
+|---|---|
+| `platform` | phần tử đầu của `paid_fund.sponsor.platform_pkhs` |
+| `sponsorship.sponsor` | phần tử đầu của `paid_fund.sponsor.addresses` |
+| `sponsorship.owner_commit` | `did_commit` của **thread** consume mà open-vault đã đúc (cùng cổng chủ là DID với bind-did) |
+| `sponsorship.reclaim_after_epoch` | `epoch(validTo) + 200` — validator ép `≥ epoch(cận TRÊN) + sponsor_reclaim_delay_epochs` |
+| `beneficiary` (+ `beneficiary_datum`) | `paid_fund.sponsor.beneficiary` (+ `beneficiary_datum`) |
+| `buffer_bps` | `paid_fund.sponsor.buffer_bps`, vắng ⟹ `MIN_BUFFER_BPS` |
+| số kế toán | đều 0 — **0 CARP vào lúc genesis** (`carp_locked == 0` bị ép); CARP vào ở fund-vault |
+
+Hình dạng tx: input = UTxO ví trả phí (vừa trả phí, vừa là seed one-shot: `fund_id =
+blake2b_256(tx_hash ∥ index)` của nó); mint = +1 NFT quỹ qua ref-script `paid_fund`; output = quỹ ở
+địa chỉ `paid_fund` (không stake, không ref-script, đúng một NFT) + tiền thối ADA về ví trả phí;
+`required_signers` = `[platform]`; cận trên hữu hạn (`expires_at`), không kẹp theo kỳ. min-ADA của quỹ
+do ví trả phí ứng (đường `fee_payer`: khoản ứng = đúng lovelace của output quỹ, `summary.fee_payer`).
+
+DID đã có quỹ dùng được ⟹ `409 SPONSOR_FUND_ALREADY_OPEN`. Feecover dùng purpose
+`open_sponsor_fund` cho route `sponsor-open-fund` (khai ở `feecover.apps.*.purposes`).
+
+**Vì sao đứng sau bind-did.** DID của quỹ phải là DID của chính chủ, mà nguồn đã được chứng minh
+trên chuỗi là thread open-vault đã đúc (did_stake ký tx đó). Lấy DID từ thread ⟹ tx tạo quỹ không
+cần mục rút did_stake, và chủ két không ký gì. open-fund và bind-did độc lập nhau; fund-vault cần cả hai.
+
+**Ai ký.** Hai vai, cả hai thuộc Feecover: **ví trả phí** (UTxO `fee_payer`) và **platform**
+(khoá có pkh = `platform_pkhs[0]`). Feecover ký cả hai trong cùng một lượt `/fee/sign`. Chủ két
+KHÔNG ký. Bên tài trợ KHÔNG ký ở đây — chữ ký bên tài trợ chỉ cần ở fund-vault (`validate_fund_lock`
+đòi nó vì fund-vault chi UTxO CARP của bên tài trợ). **Dịch vụ không ký và không giữ khoá nào** (§1,
+`tests/noSigningMaterial.test.ts`): nó chỉ đặt pkh platform vào `required_signers` và trả CBOR chưa ký.
+
+**Điều route này KHÔNG chặn.** Cổng chủ là DID của dịch vụ đọc thông tin công khai (thread + anchor),
+nên một bên gọi có thẻ thường xin dựng được tx tạo quỹ cho DID của người đã open-vault. Hệ quả chỉ là
+một quỹ đúng DID đó (0 CARP); chặn tốn phí là việc của Feecover (một lần mỗi DID theo purpose
+`open_sponsor_fund`). Nộp xong mà chưa vào khối rồi gọi lại ⟹ dịch vụ chưa thấy quỹ, dựng được tx thứ
+hai; Feecover từ chối ký lần hai theo cùng luật một-lần-mỗi-DID, nếu không fund-vault sẽ trả
+`409 SPONSOR_FUND_AMBIGUOUS`.
+
+Cấu hình: open-fund cần `platform_pkhs` + `beneficiary` và KHÔNG có `fund_units` (tập đóng: quỹ mới
+không nằm trong đó, nên fund-vault không thấy nó). Nguồn: `src/sponsor.ts` ▸ `openFund`.
+
+Ví dụ `beneficiary_datum` khi đích CARP là một hộp nhận phí dạng script với datum `InboxDatum { refund }`
+(hình dạng do bên giữ script đó quy định, không phải của kho này; CBOR theo `Data.to` của Lucid):
+
+| `refund` là | Plutus Data | CBOR hex |
+|---|---|---|
+| khoá | `Constr 0 [ Constr 0 [<28 byte key hash>] ]` | `d8799fd8799f581c<56 hex>ffff` |
+| script | `Constr 0 [ Constr 1 [<28 byte script hash>] ]` | `d8799fd87a9f581c<56 hex>ffff` |
+
+Datum này nằm trong quỹ **suốt đời quỹ** (`fund_common_checks` giữ `beneficiary_datum` bất biến), nên
+credential `refund` phải là thứ bên nhận ADA hoàn lại còn dùng được sau mọi lần dựng lại ví của họ.
+Giá trị theo mạng chỉ nằm ở cấu hình triển khai, không nằm trong mã hay test.
 
 | đường | bước | dựng gì | ai ký (theo thứ tự) |
 |---|---|---|---|
 | `/tx/sponsor/plan` | — | kế hoạch thuần: ai ký bước nào, đường của bước; không chạm chuỗi | — |
 | `/tx/sponsor/open-vault` | T1 | đúc két Prepaid + thread consume trong MỘT tx; `did_commit` ghi vào **thread** (két genesis giữ `did_commit` rỗng) | ví trả phí · chủ |
 | `/tx/sponsor/bind-did` | — | `SetDidCommit`: gắn `did_commit` của thread vào két Prepaid, MỘT LẦN | ví trả phí · chủ |
+| `/tx/sponsor/open-fund` | — | genesis quỹ tài trợ CỦA DID (`sponsorship = Some`, 0 CARP) | ví trả phí · **platform** (chủ không ký) |
 | `/tx/sponsor/fund-vault` | T2 | `PrepaidLock` + `FundLock`: CARP từ UTxO bên tài trợ vào **quỹ tài trợ của DID** đó, thối về bên tài trợ; anchor DID ở `reference_inputs` | ví trả phí · **bên tài trợ** · chủ |
 | `/tx/sponsor/draw-magic` | T3 | `PrepaidDraw` ⟹ một lô MAGIC sống đúng kỳ hiện tại | ví trả phí · chủ |
 | `/tx/sponsor/first-consume` | T4 | consume đầu + `BurnBatch` trên két Prepaid | ví trả phí · chủ |
 
-Thứ tự hành trình: open-vault → bind-did → fund-vault → draw-magic → first-consume. Cột "bước"
-giữ ký hiệu `T1`…`T4` của bộ dựng SDK (`@magiclamp/sdk` ▸ `planSponsorJourney`) cho người đọc mã
-SDK; bind-did là bước của dịch vụ này, SDK chưa có ký hiệu cho nó. `/tx/sponsor/plan` trả đúng
-thứ tự năm bước trên.
+Thứ tự hành trình: open-vault → bind-did → open-fund → fund-vault → draw-magic → first-consume.
+Cột "bước" giữ ký hiệu `T1`…`T4` của bộ dựng SDK (`@magiclamp/sdk` ▸ `planSponsorJourney`) cho người
+đọc mã SDK; bind-did và open-fund là bước của dịch vụ này, SDK chưa có ký hiệu cho chúng.
+`/tx/sponsor/plan` trả đúng thứ tự sáu bước trên.
 
 **Đổi tên đường (2026-10-07).** Tên cũ không còn nhận ở HTTP lẫn `/fee/utxo` ▸ `route`:
 
@@ -1265,6 +1325,7 @@ thứ tự năm bước trên.
 | `/tx/sponsor/t3-draw` · route `sponsor-t3-draw` | `/tx/sponsor/draw-magic` · `sponsor-draw-magic` |
 | `/tx/sponsor/t4-first-consume` · route `sponsor-t4-first-consume` | `/tx/sponsor/first-consume` · `sponsor-first-consume` |
 | — | `/tx/sponsor/bind-did` · `sponsor-bind-did` (mới) |
+| — | `/tx/sponsor/open-fund` · `sponsor-open-fund` (mới; purpose Feecover `open_sponsor_fund`) |
 | — | `GET /sponsor/funds` (mới) |
 
 Ngoại lệ duy nhất: bảng mục đích Feecover trong tệp cấu hình (`feecover.apps.*.purposes`) vẫn
@@ -1326,6 +1387,7 @@ phí ký vì tx chi UTxO của nó; nó không vào `required_signers`.
 |---|---|
 | T1 | `did_commit` (64 hex thường), `thread_lovelace` (tuỳ chọn) |
 | bind-did | `vault_ref` (tuỳ chọn) — **không** có `did_commit` (DID lấy từ thread; gửi ⟹ `400 SPONSOR_REQUEST_SHAPE`) |
+| open-fund | không trường riêng nào — DID từ thread, phần còn lại từ cấu hình (mục "Tạo quỹ tài trợ cho một DID") |
 | T2 | `fund_id` (tuỳ chọn — vắng ⟹ dịch vụ tìm quỹ của DID), `carp_amount`, `sponsor: { utxo_refs: ["<tx>#<i>", …] (1–20) }`, `vault_ref` (tuỳ chọn) — **không** có `sponsor.change_address` (gửi ⟹ `400 SPONSOR_REQUEST_SHAPE`) |
 | T3 | `fund_id`, `carp_amount`, `vault_ref` (tuỳ chọn) |
 | T4 | `op_type`, `op_count`, `draw_epoch` (số nguyên), `vault_ref` / `engage_ref` (tuỳ chọn) |
@@ -1337,7 +1399,9 @@ phí ký vì tx chi UTxO của nó; nó không vào `required_signers`.
   nhận `sponsor.change_address` từ thân bài, nên người gọi lái được toàn bộ phần thối về ví mình.
 - **Ghim ở bản deploy** — khối `paid_fund.sponsor` (§6): `fund_units` (tập quỹ được nạp) và/hoặc
   `platform_pkhs` (khoá platform được tin — mục "Mỗi DID một quỹ tài trợ" ở trên), `addresses` (địa chỉ khoá bên tài trợ, dạng bech32 chính tắc), `max_carp_amount` (trần một lượt,
-  chuỗi chữ số carpdrop). Vắng khối ⟹ T2 trả `501 CONFIG_MISSING`. Cổng: `src/sponsor.ts` ▸
+  chuỗi chữ số carpdrop); thêm cho open-fund: `beneficiary` (bech32 không stake; khoá ≠ mọi
+  `platform_pkhs`, payment ≠ ví bên tài trợ — kiểm lúc khởi động), `beneficiary_datum` (CBOR hex,
+  bắt buộc khi `beneficiary` là script), `buffer_bps` (chuỗi 0–10000, tuỳ chọn). Vắng khối ⟹ T2 trả `501 CONFIG_MISSING`. Cổng: `src/sponsor.ts` ▸
   `assertFundPinnedInputs` (quỹ + trần, trước khi giữ khoá), `assertSponsorUtxosPinned` (UTxO chung
   một địa chỉ đã ghim, cái nào cũng mang CARP), `assertFundPinnedOutputs` (đọc lại CBOR: đúng một
   output quỹ nhận đúng `carp_amount`; đúng một output thối có giá trị trọn = Σ vào − `carp_amount`;

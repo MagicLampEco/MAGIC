@@ -162,7 +162,8 @@ export interface PrepaidDeployment {
 }
 
 /**
- * Khối `paid_fund.sponsor`: `{ [fund_units: [...]], [platform_pkhs: [...]], addresses: [...], max_carp_amount: "<chữ số>" }`.
+ * Khối `paid_fund.sponsor`: `{ [fund_units: [...]], [platform_pkhs: [...]], addresses: [...], max_carp_amount: "<chữ số>",
+ *   [beneficiary: "<bech32>"], [beneficiary_datum: "<cbor hex>"], [buffer_bps: "<chữ số>"] }`.
  * Phải có ÍT NHẤT MỘT trong `fund_units` / `platform_pkhs` — cả hai vắng thì không có gốc tin cậy nào
  * cho quỹ (`sponsorFund.ts`, đầu tệp).
  */
@@ -181,6 +182,15 @@ export interface SponsorPins {
   addresses: readonly string[];
   /** Trần carpdrop một lượt fund-vault. */
   maxCarpAmount: bigint;
+  /**
+   * Đích nhận CARP (`PaidFundDatum.beneficiary`) ghi vào quỹ mà `/tx/sponsor/open-fund` tạo cho một DID —
+   * bất biến trọn đời quỹ (`prepaid.ak` ▸ `fund_common_checks`). Vắng ⟹ open-fund trả 501 `CONFIG_MISSING`.
+   * Kiểm lúc khởi động đúng các vế genesis ép (`validate_mint_fund_nft`): không stake; khoá ≠ mọi
+   * `platform_pkhs`; payment ≠ payment của mọi `addresses` (chặn tự hưởng); script ⟹ phải có datum.
+   */
+  beneficiary?: { address: string; datumCbor?: string };
+  /** `buffer_bps` của quỹ open-fund tạo. Vắng ⟹ `MIN_BUFFER_BPS` của PrepaidGen. Bất biến trọn đời quỹ. */
+  bufferBps?: bigint;
 }
 
 /** Mục `did_stake` của cấu hình triển khai. */
@@ -1204,11 +1214,74 @@ function parseSponsorPins(v: unknown, prefix: string, network: Network, fundScri
   if (maxCarpAmount <= 0n) {
     throw new Error("[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.max_carp_amount phải > 0.");
   }
+  const beneficiary = o.beneficiary === undefined ? undefined
+    : parseFundBeneficiary(o.beneficiary, o.beneficiary_datum, prefix, network, fundScriptHash, platformPkhs ?? [], addresses);
+  if (beneficiary === undefined && o.beneficiary_datum !== undefined) {
+    throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum đi kèm "beneficiary"; thiếu "beneficiary".`);
+  }
+  let bufferBps: bigint | undefined;
+  if (o.buffer_bps !== undefined) {
+    if (typeof o.buffer_bps !== "string" || !/^[0-9]{1,5}$/.test(o.buffer_bps) || BigInt(o.buffer_bps) > 10_000n) {
+      throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.buffer_bps phải là CHUỖI chữ số 0–10000.`);
+    }
+    bufferBps = BigInt(o.buffer_bps);
+  }
   return {
     ...(fundUnits === undefined ? {} : { fundUnits }),
     ...(platformPkhs === undefined ? {} : { platformPkhs }),
     addresses, maxCarpAmount,
+    ...(beneficiary === undefined ? {} : { beneficiary }),
+    ...(bufferBps === undefined ? {} : { bufferBps }),
   };
+}
+
+/**
+ * `paid_fund.sponsor.beneficiary` (+ `beneficiary_datum`, CBOR hex) — đích nhận CARP của quỹ open-fund tạo.
+ * Các vế ở đây là gương của `validate_mint_fund_nft` (`PrepaidGen/onchain/validators/prepaid.ak`): sai một vế
+ * thì mọi tx open-fund chết trên chuỗi sau khi Feecover đã ký, nên chặn lúc khởi động.
+ */
+function parseFundBeneficiary(
+  v: unknown, datum: unknown, prefix: string, network: Network, fundScriptHash: string,
+  platformPkhs: readonly string[], sponsorAddresses: readonly string[],
+): { address: string; datumCbor?: string } {
+  const where = "paid_fund.sponsor.beneficiary";
+  const a = str(v, where);
+  let d;
+  try {
+    d = getAddressDetails(a);
+  } catch (e) {
+    throw new Error(`[config] ${where} không giải mã được: ${(e as Error).message}`);
+  }
+  if (d.address.bech32 !== a) throw new Error(`[config] ${where} không ở dạng bech32 chính tắc (chữ thường).`);
+  if (!a.startsWith(prefix)) throw new Error(`[config] ${where} không mang tiền tố "${prefix}" của mạng ${network}.`);
+  if (d.stakeCredential !== undefined) {
+    throw new Error(`[config] ${where} không được mang phần stake (genesis quỹ ép beneficiary.stake_credential == None).`);
+  }
+  const pay = d.paymentCredential;
+  if (pay === undefined) throw new Error(`[config] ${where} không có phần thanh toán.`);
+  if (pay.type === "Key" && platformPkhs.includes(pay.hash)) {
+    throw new Error(`[config] ${where} trùng khoá platform đã ghim — genesis quỹ chặn tự hưởng (khoá ≠ platform).`);
+  }
+  for (const s of sponsorAddresses) {
+    const sp = getAddressDetails(s).paymentCredential;
+    if (sp !== undefined && sp.type === pay.type && sp.hash === pay.hash) {
+      throw new Error(`[config] ${where} cùng phần thanh toán với ví bên tài trợ ${s} — genesis quỹ chặn tự hưởng.`);
+    }
+  }
+  if (pay.type === "Script" && pay.hash === fundScriptHash) {
+    throw new Error(`[config] ${where} trùng script quỹ — mọi FundClaim chết, CARP kẹt.`);
+  }
+  if (datum !== undefined) {
+    const c = str(datum, "paid_fund.sponsor.beneficiary_datum");
+    if (!/^(?:[0-9a-f]{2})+$/.test(c)) {
+      throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum phải là CBOR hex thường.`);
+    }
+    return { address: a, datumCbor: c };
+  }
+  if (pay.type === "Script") {
+    throw new Error(`[config] ${where} là script thì BẮT BUỘC có "beneficiary_datum" (genesis quỹ ép).`);
+  }
+  return { address: a };
 }
 
 /**

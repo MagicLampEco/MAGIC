@@ -5,6 +5,28 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: `POST /tx/sponsor/open-fund` — tạo quỹ tài trợ cho một DID, platform ký
+
+**Đổi gì.** Route mới `/tx/sponsor/open-fund` (route sổ phát-hành / `/fee/utxo` `sponsor-open-fund`;
+purpose Feecover đề xuất `open_sponsor_fund`) dựng tx genesis `paid_fund` với `sponsorship = Some {
+sponsor = addresses[0], owner_commit = did_commit của thread, reclaim_after_epoch = epoch(validTo) + 200 }`,
+`platform = platform_pkhs[0]`, 0 CARP. `required_signers = [platform]`; chủ két không ký. Đứng sau
+bind-did, trước fund-vault; `/tx/sponsor/plan` trả sáu bước. Mã mới: `SPONSOR_FUND_ALREADY_OPEN` 409,
+`SPONSOR_FUND_SET_CLOSED` 501; thiếu `platform_pkhs`/`beneficiary` ⟹ `CONFIG_MISSING` 501. Khoá cấu
+hình tuỳ chọn mới: `paid_fund.sponsor.beneficiary`, `beneficiary_datum`, `buffer_bps`. Nguồn:
+`VaultTxAPI/src/sponsor.ts` ▸ `openFund`; bộ dựng `PrepaidGen/offchain/src/tx/builders.ts` ▸ `planMintPaidFund`.
+open-fund nhận `fee_payer` và đi qua cổng `reservation_id` như mọi bước tài trợ; danh sách đóng route kiểm
+mã ở README thêm `/tx/sponsor/open-fund` (13 → 14 route).
+
+**Vì sao.** Chủ dự án chốt 2026-10-07: mỗi DID một quỹ, và Feecover ký vai `platform` cùng lượt trả
+phí tx tạo quỹ. Genesis quỹ (`PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_mint_fund_nft`) chỉ
+đòi chữ ký platform; CARP không vào lúc genesis (`carp_locked == 0`) mà ở fund-vault. Dịch vụ vẫn không
+giữ khoá nào — chỉ đặt pkh platform vào `required_signers`.
+
+**Cái gì gãy nếu bám bản cũ.** Bên đọc `/tx/sponsor/plan` theo chỉ số mảng: open-fund chèn ở vị trí 3.
+Cấu hình có `fund_units` không dùng được open-fund (501 `SPONSOR_FUND_SET_CLOSED`) — quỹ mới không nằm
+trong tập đóng; chuyển sang `platform_pkhs`. `SPONSOR_FUND_NOT_OPENED` nay trỏ tới open-fund.
+
 ## 2026-10-07 — VaultTxAPI: hành trình tài trợ theo DID — đổi tên đường, mỗi DID một quỹ, bước `bind-did`, ghim `platform_pkhs`
 
 **Đổi gì.**

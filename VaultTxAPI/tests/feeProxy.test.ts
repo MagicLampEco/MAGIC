@@ -921,3 +921,151 @@ describe("token không xuất hiện trong lời đáp hay nhật ký", () => {
     expect(text).toContain("FEE_PROXY_REJECTED");
   });
 });
+
+// ── source: nguồn trả phí Feecover ký (feecover | sponsor) ──────────────────────
+
+/** `/v1/utxo` trả kèm `source` (Feecover có nguồn sponsor). `undefined` ⟹ không gửi trường đó. */
+const utxoReplySource = (source: unknown): Reply => {
+  const base = utxoReply(NOW + 600_000) as { status: number; body: Record<string, unknown> };
+  return { status: 200, body: source === undefined ? base.body : { ...base.body, source } };
+};
+/** `/v1/sign` ký đúng tx được gửi, trả `source` theo hàm `pick` (nhận thân yêu cầu). */
+const signWithSource = (pick: (b: Record<string, unknown>) => unknown) => (b: Record<string, unknown>): Reply => {
+  const r = echoSign(b) as { status: number; body: Record<string, unknown> };
+  const s = pick(b);
+  return { status: 200, body: s === undefined ? r.body : { ...r.body, source: s } };
+};
+/** Ghi lượt giữ cho `FEE_PAYER` với nguồn `source` (như `/fee/utxo` ghi sau khi Feecover xác nhận). */
+const reserveAs = (h: ReturnType<typeof harness>, source: "feecover" | "sponsor") =>
+  h.issued.noteFeeReservation(FEE_PAYER.utxo, NOW + 600_000, FEE_ADDRESS, undefined, source);
+
+describe("source — /fee/utxo + /fee/sign", () => {
+  it("CẶP source lạ ⟹ 400 FEE_PROXY_SOURCE_INVALID, Feecover KHÔNG bị gọi (utxo + sign); source hợp lệ ⟹ chuyển tiếp", async () => {
+    const h = harness({ feecover: fakeFeecover({ utxo: utxoReplySource("sponsor") }) });
+    for (const source of ["owner_address", "SPONSOR", 1, null, ""]) {
+      const r = await h.call("POST", "/fee/utxo", { route: "consume", source });
+      expect(r.status, JSON.stringify(source)).toBe(400);
+      expect(codeOf(r)).toBe("FEE_PROXY_SOURCE_INVALID");
+    }
+    const { cbor } = await issueConsume(h);
+    const s = await h.call("POST", "/fee/sign", { tx_cbor: cbor, source: "bogus" });
+    expect(s.status).toBe(400);
+    expect(codeOf(s)).toBe("FEE_PROXY_SOURCE_INVALID");
+    expect(h.fc.calls).toHaveLength(0);
+    const ok = await harness({ feecover: fakeFeecover({ utxo: utxoReplySource("sponsor") }) }).call("POST", "/fee/utxo", { route: "consume", source: "sponsor" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+  });
+
+  it("sponsor vọng sponsor: /fee/utxo gửi &source=sponsor, ghi nguồn vào lượt giữ; /fee/sign chuyển source, thân trả source của Feecover", async () => {
+    const h = harness({ feecover: fakeFeecover({ utxo: utxoReplySource("sponsor"), sign: signWithSource(b => b.source) }) });
+    const u = await h.call("POST", "/fee/utxo", { route: "consume", source: "sponsor" });
+    expect(u.status, JSON.stringify(u.body)).toBe(200);
+    expect(h.fc.calls[0]!.url).toBe("https://feecover.example/v1/utxo?purpose=consume_magic&source=sponsor");
+    expect((u.body as { source?: unknown }).source).toBe("sponsor");
+    expect(h.issued.feeReservationSourceOf(FEE_PAYER.utxo)).toBe("sponsor");
+    const fp = (u.body as { fee_payer: unknown }).fee_payer;
+    const c = await h.call("POST", "/tx/consume", consumeBody({ fee_payer: fp }));
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    const { tx_cbor, tx_hash } = c.body as { tx_cbor: string; tx_hash: string };
+    const s = await h.call("POST", "/fee/sign", { tx_cbor, source: "sponsor" });
+    expect(s.status, JSON.stringify(s.body)).toBe(200);
+    expect(h.fc.calls[1]!.body).toEqual({ tx_cbor_hex: tx_cbor, purpose: "consume_magic", ref: tx_hash, source: "sponsor" });
+    expect(s.body).toEqual({ tx_hash, witness_set: "a100", net_lovelace: "178000", fee_lovelace: "178000", source: "sponsor" });
+  });
+
+  it("CẶP xin sponsor mà Feecover KHÔNG trả source ⟹ 502 FEE_SOURCE_NOT_CONFIRMED (utxo: không ghi lượt giữ; sign: không giao chữ ký); Feecover trả source ⟹ 200", async () => {
+    const hu = harness({ feecover: fakeFeecover({ utxo: utxoReplySource(undefined) }) });
+    const u = await hu.call("POST", "/fee/utxo", { route: "consume", source: "sponsor" });
+    expect(u.status).toBe(502);
+    expect(codeOf(u)).toBe("FEE_SOURCE_NOT_CONFIRMED");
+    expect(hu.issued.feeReservationOf(FEE_PAYER.utxo)).toBeUndefined();
+
+    const hs = harness({ feecover: fakeFeecover({ sign: signWithSource(() => undefined) }) });
+    reserveAs(hs, "sponsor");
+    const { cbor, hash } = await issueConsume(hs);
+    const s = await hs.call("POST", "/fee/sign", { tx_cbor: cbor, source: "sponsor" });
+    expect(s.status).toBe(502);
+    expect(codeOf(s)).toBe("FEE_SOURCE_NOT_CONFIRMED");
+    expect(detailsOf(s)).toEqual({ tx_hash: hash, source: "sponsor" });
+    expect(JSON.stringify(s.body)).not.toContain("a100");
+
+    const ok = harness({ feecover: fakeFeecover({ sign: signWithSource(() => "sponsor") }) });
+    reserveAs(ok, "sponsor");
+    const r = await ok.call("POST", "/fee/sign", { tx_cbor: (await issueConsume(ok)).cbor, source: "sponsor" });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+  });
+
+  it("CẶP feecover / vắng mà Feecover KHÔNG trả source ⟹ thân KHÔNG có source (bản Feecover cũ); Feecover trả source feecover ⟹ có", async () => {
+    const old = harness();
+    const u = await old.call("POST", "/fee/utxo", { route: "consume" });
+    expect(u.status).toBe(200);
+    expect("source" in (u.body as object)).toBe(false);
+    const { cbor } = await issueConsume(old);
+    const s = await old.call("POST", "/fee/sign", { tx_cbor: cbor });
+    expect(s.status).toBe(200);
+    expect("source" in (s.body as object)).toBe(false);
+    expect("source" in old.fc.calls[1]!.body!).toBe(false);
+    const explicit = await old.call("POST", "/fee/sign", { tx_cbor: cbor, source: "feecover" });
+    expect(explicit.status).toBe(200);
+    expect("source" in (explicit.body as object)).toBe(false);
+
+    const neu = harness({ feecover: fakeFeecover({ utxo: utxoReplySource("feecover"), sign: signWithSource(() => "feecover") }) });
+    const u2 = await neu.call("POST", "/fee/utxo", { route: "consume" });
+    expect((u2.body as { source?: unknown }).source).toBe("feecover");
+    const s2 = await neu.call("POST", "/fee/sign", { tx_cbor: (await issueConsume(neu)).cbor });
+    expect((s2.body as { source?: unknown }).source).toBe("feecover");
+  });
+
+  it("Feecover trả source KHÁC yêu cầu ⟹ vọng ĐÚNG giá trị của Feecover (app tự từ chối), không giá trị đã xin", async () => {
+    const hs = harness({ feecover: fakeFeecover({ sign: signWithSource(() => "feecover") }) });
+    reserveAs(hs, "sponsor");
+    const s = await hs.call("POST", "/fee/sign", { tx_cbor: (await issueConsume(hs)).cbor, source: "sponsor" });
+    expect(s.status, JSON.stringify(s.body)).toBe(200);
+    expect((s.body as { source?: unknown }).source).toBe("feecover");
+
+    // /fee/utxo: xin sponsor, Feecover phát UTxO nguồn feecover ⟹ vọng feecover và lượt giữ ghi feecover.
+    const hu = harness({ feecover: fakeFeecover({ utxo: utxoReplySource("feecover") }) });
+    const u = await hu.call("POST", "/fee/utxo", { route: "consume", source: "sponsor" });
+    expect(u.status).toBe(200);
+    expect((u.body as { source?: unknown }).source).toBe("feecover");
+    expect(hu.issued.feeReservationSourceOf(FEE_PAYER.utxo)).toBe("feecover");
+  });
+
+  it("CẶP L38: Feecover 422 / 403 cho nguồn sponsor ⟹ chuyển nguyên mã + rule + message dưới FEE_PROXY_REJECTED", async () => {
+    const h422 = harness({ feecover: fakeFeecover({
+      sign: { status: 422, body: { rule: "L38", message: "ngân sách sponsor 24 giờ đã dùng hết.", reasons: ["ngân sách sponsor 24 giờ đã dùng hết."] } },
+    }) });
+    reserveAs(h422, "sponsor");
+    const s = await h422.call("POST", "/fee/sign", { tx_cbor: (await issueConsume(h422)).cbor, source: "sponsor" });
+    expect(s.status).toBe(422);
+    expect(codeOf(s)).toBe("FEE_PROXY_REJECTED");
+    expect(detailsOf(s)).toMatchObject({ upstream_status: 422, rule: "L38", message: "ngân sách sponsor 24 giờ đã dùng hết." });
+
+    const h403 = harness({ feecover: fakeFeecover({ utxo: { status: 403, body: { rule: "L38", message: "chủ không có DID." } } }) });
+    const u = await h403.call("POST", "/fee/utxo", { route: "consume", source: "sponsor" });
+    expect(u.status).toBe(403);
+    expect(codeOf(u)).toBe("FEE_PROXY_REJECTED");
+    expect(detailsOf(u)).toEqual({ upstream_status: 403, rule: "L38", message: "chủ không có DID." });
+  });
+
+  it("CẶP /fee/sign source KHÁC nguồn lượt giữ ⟹ 400 FEE_PROXY_SOURCE_MISMATCH, Feecover KHÔNG bị gọi; cùng nguồn ⟹ 200", async () => {
+    const hf = harness();
+    const { cbor } = await issueConsume(hf); // lượt giữ nguồn feecover
+    const a = await hf.call("POST", "/fee/sign", { tx_cbor: cbor, source: "sponsor" });
+    expect(a.status).toBe(400);
+    expect(codeOf(a)).toBe("FEE_PROXY_SOURCE_MISMATCH");
+    expect(detailsOf(a)).toMatchObject({ source: "sponsor", reserved_source: "feecover" });
+
+    const hs = harness({ feecover: fakeFeecover({ sign: signWithSource(b => b.source) }) });
+    reserveAs(hs, "sponsor");
+    const t = await issueConsume(hs);
+    const b = await hs.call("POST", "/fee/sign", { tx_cbor: t.cbor }); // vắng = feecover
+    expect(b.status).toBe(400);
+    expect(codeOf(b)).toBe("FEE_PROXY_SOURCE_MISMATCH");
+    expect(hf.fc.calls).toHaveLength(0);
+    expect(hs.fc.calls).toHaveLength(0);
+
+    expect((await hf.call("POST", "/fee/sign", { tx_cbor: cbor, source: "feecover" })).status).toBe(200);
+    expect((await hs.call("POST", "/fee/sign", { tx_cbor: t.cbor, source: "sponsor" })).status).toBe(200);
+  });
+});

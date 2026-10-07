@@ -342,8 +342,15 @@ export function expiredErrorFor(issued: IssuedTxRegistry, txHash: string, nowMs:
 //   · `/fee/sign`: app không gửi gì thêm — sổ phát-hành đã ghi mã lúc dựng, so với mã đang sống.
 // Mã KHÔNG phải bí mật dài hạn: nó chỉ có nghĩa trong đời một lượt giữ (vài phút).
 
-/** Một lượt giữ UTxO phí: hết giờ (`reserved_until`, POSIX ms) + mã lượt giữ. */
-interface FeeReservation { untilMs: number; id: string }
+/** Nguồn trả phí Feecover ký (`/v1/utxo` + `/v1/sign` ▸ `source`): ví Feecover (app trả CARP) hoặc
+ *  ngân sách tài trợ L38 (người dùng không trả gì). `owner_address` KHÔNG ở đây — ví của chủ tự ký,
+ *  không qua Feecover. */
+export const FEE_SOURCES = ["feecover", "sponsor"] as const;
+export type FeeSource = typeof FEE_SOURCES[number];
+
+/** Một lượt giữ UTxO phí: hết giờ (`reserved_until`, POSIX ms) + mã lượt giữ + nguồn Feecover xác nhận
+ *  lúc phát (`/fee/sign` từ chối một `source` khác nguồn này). */
+interface FeeReservation { untilMs: number; id: string; source: FeeSource }
 
 /** Mã lượt giữ mới: 16 byte ngẫu nhiên mật mã ⟹ 32 hex (`feePayer.ts` ▸ `RESERVATION_ID`). */
 export function newReservationId(): string {
@@ -398,8 +405,10 @@ export class IssuedTxRegistry {
    *  giao lại cùng UTxO thì lượt sau có mã khác). `address` = địa chỉ Feecover trả kèm; sổ nhớ nó (không
    *  dọn) để nhận ra UTxO của Feecover cả khi lượt giữ đã bị quét (`feeReservationForBuild`). `id` chỉ để
    *  phép kiểm ghim một mã biết trước; dịch vụ không truyền. */
-  noteFeeReservation(utxoRef: string, reservedUntilMs: number, address?: string, id: string = newReservationId()): string {
-    this.feeReservations.set(utxoRef, { untilMs: reservedUntilMs, id });
+  noteFeeReservation(
+    utxoRef: string, reservedUntilMs: number, address?: string, id: string = newReservationId(), source: FeeSource = "feecover",
+  ): string {
+    this.feeReservations.set(utxoRef, { untilMs: reservedUntilMs, id, source });
     if (address !== undefined) this.feecoverAddresses.add(address);
     return id;
   }
@@ -409,6 +418,11 @@ export class IssuedTxRegistry {
    *  `feeReservationForBuild` — `undefined` ở đây KHÔNG có nghĩa "không ràng buộc". */
   feeReservationOf(utxoRef: string): number | undefined {
     return this.feeReservations.get(utxoRef)?.untilMs;
+  }
+
+  /** Nguồn của lượt giữ đang có trong sổ cho `utxoRef`, hoặc `undefined`. Chỉ để TRA. */
+  feeReservationSourceOf(utxoRef: string): FeeSource | undefined {
+    return this.feeReservations.get(utxoRef)?.source;
   }
 
   /** Mã lượt giữ đang có trong sổ cho `utxoRef`, hoặc `undefined`. Chỉ để TRA. */

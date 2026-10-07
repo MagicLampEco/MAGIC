@@ -18,8 +18,8 @@
 //   POST /tx/submit            { tx_cbor, witness_cbor }
 //   POST /tx/quote             { route, params, [owner_fee_addresses] } (báo giá phí — `feeQuote.ts`;
 //                              không dựng tx nào để ký, không giữ chỗ; hỏi Feecover `/v1/fee-sources`)
-//   POST /fee/utxo             { route }       [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`)
-//   POST /fee/sign             { tx_cbor }     [X-Feecover-Token]
+//   POST /fee/utxo             { route, [source] }    [X-Feecover-Token]  (proxy Feecover — `feeProxy.ts`;
+//   POST /fee/sign             { tx_cbor, [source] }  [X-Feecover-Token]   source = feecover | sponsor)
 //
 // Nhiều khối (một tiến trình phục vụ cả Instant lẫn Schedule — `config.ts` ▸ khối phụ): consume /
 // open-thread / bind-did (và `params` của `/tx/quote` cho ba đường đó) nhận thêm `vault_type`
@@ -202,8 +202,8 @@ export async function handle(req: HttpRequest, deps: RouterDeps): Promise<HttpRe
       const body = asObject(req.body);
       const callerToken = req.headers["x-feecover-token"] ?? req.headers["X-Feecover-Token"];
       const out = path === "/fee/utxo"
-        ? await deps.feeProxy.utxo(body.route, callerToken)
-        : await deps.feeProxy.sign(body.tx_cbor, callerToken);
+        ? await deps.feeProxy.utxo(body.route, callerToken, body.source)
+        : await deps.feeProxy.sign(body.tx_cbor, callerToken, body.source);
       return { status: 200, body: out };
     }
 

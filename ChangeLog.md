@@ -5,6 +5,26 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: `fee_sources` trong báo giá; `source` ở `/fee/utxo` + `/fee/sign`
+
+**Đổi gì.** `POST /tx/quote` trả thêm `fee_sources` = ba khối `owner_address` / `feecover` / `sponsor`
+NGUYÊN như Feecover trả ở `GET /v1/fee-sources` (trường vắng giữ vắng); chủ là DID ⟹ hỏi kèm
+`owner_commit` = tên anchor của DID. Không hỏi được Feecover ⟹ `feecover` + `sponsor` =
+`{available:false, reason, message}`, báo giá vẫn 200; `owner_address` do dịch vụ dựng khi Feecover không
+gửi (`feeQuote.ts` ▸ `OWNER_ADDRESS_SOURCE`). `/fee/utxo` và `/fee/sign` nhận `source` (`feecover` |
+`sponsor`, vắng = `feecover`; khác ⟹ `400 FEE_PROXY_SOURCE_INVALID`), chuyển tiếp sang `/v1/utxo` +
+`/v1/sign`; nguồn Feecover xác nhận ghi vào lượt giữ, `/fee/sign` lệch nguồn ⟹ `400
+FEE_PROXY_SOURCE_MISMATCH`. Thân trả vọng `source` LẤY TỪ câu trả lời Feecover; xin `sponsor` mà Feecover
+không trả `source` ⟹ `502 FEE_SOURCE_NOT_CONFIRMED`. Không có giá CARP nào do dịch vụ đặt ra.
+
+**Vì sao.** Thư SuperApp `sa1007mg-fs` / `sa1007mg-fs2` (cửa sổ ba nguồn phí) và OriLife `ol1007mg-a`
+(chuyển `source` ở `/fee/sign`), theo hợp đồng Feecover nhánh nguồn sponsor (L38).
+
+**Cái gì gãy nếu bám bản cũ.** Client so thân `/tx/quote` bằng phép bằng chặt gặp thêm `fee_sources`.
+Client gửi `source` khác hai giá trị trên (kể cả `null`) trước đây bị bỏ qua, nay 400.
+`IssuedTxRegistry.noteFeeReservation` có thêm tham số thứ năm `source` (mặc định `feecover`).
+`FeeProxy.feeSources` nhận thêm `ownerCommit`, kết quả `answered: true` có thêm `blocks`.
+
 ## 2026-10-07 — VaultTxAPI: mã lượt giữ `reservation_id` (bước 1, tuỳ chọn)
 
 **Đổi gì.** `POST /fee/utxo` trả thêm `fee_payer.reservation_id` (32 hex = 128 bit ngẫu nhiên, sinh mỗi

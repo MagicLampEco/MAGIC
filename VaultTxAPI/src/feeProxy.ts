@@ -36,7 +36,7 @@ import type { FeecoverAppSettings, FeecoverSettings } from "./config.js";
 import { FEECOVER_DEFAULT_APP } from "./config.js";
 import { BadRequestError, CodedApiError, TxSupersededError } from "./errors.js";
 import type { IssuedRoute, IssuedTxRegistry, ReservationIdStats } from "./locks.js";
-import { FEE_PURPOSE_ROUTES, expiredErrorFor, submissionStateOf, type FeePurposeRoute } from "./locks.js";
+import { FEE_PURPOSE_ROUTES, FEE_SOURCES, expiredErrorFor, submissionStateOf, type FeePurposeRoute, type FeeSource } from "./locks.js";
 import { txBodyHash } from "./summary.js";
 import { feeReservationError } from "./validity.js";
 
@@ -89,8 +89,20 @@ export type FeeSourcesFailure =
  * là không hỏi được — người dùng kết quả PHẢI coi nguồn Feecover là không có (fail-closed).
  */
 export type FeeSourcesAnswer =
-  | { answered: true; purpose: string; available: boolean; rule?: string; message?: string }
+  | { answered: true; purpose: string; available: boolean; rule?: string; message?: string; blocks: FeeSourceBlocks }
   | { answered: false; failure: FeeSourcesFailure; upstreamStatus?: number; rule?: string; message?: string };
+
+/**
+ * Ba khối của câu trả lời `/v1/fee-sources`, NGUYÊN như Feecover gửi (trường vắng giữ vắng). `feecover`
+ * luôn là khối đã qua phép kiểm của `feeSources` (sai thì cả câu là `bad_response`). Hai khối kia kiểm
+ * RIÊNG để bản Feecover trước nguồn sponsor (không trả hai khối đó) vẫn cho báo giá dùng được khối
+ * `feecover`: `"absent"` = Feecover không gửi khối; `"bad"` = gửi mà sai hình dạng hoặc chứa token.
+ */
+export interface FeeSourceBlocks {
+  feecover: Record<string, unknown>;
+  sponsor: Record<string, unknown> | "absent" | "bad";
+  owner_address: Record<string, unknown> | "absent" | "bad";
+}
 
 /** Lượt gọi Feecover chưa diễn giải: có mã trạng thái, hoặc hết giờ, hoặc không tới được. */
 type Sent =
@@ -121,13 +133,16 @@ export class FeeProxy {
   }
 
   /** `POST /fee/utxo {route}` — trả đúng hình dạng trường `fee_payer` của các route dựng. */
-  async utxo(route: unknown, callerToken: string | undefined): Promise<Record<string, unknown>> {
+  async utxo(route: unknown, callerToken: string | undefined, source?: unknown): Promise<Record<string, unknown>> {
     const caller = this.resolveApp(callerToken);
     if (typeof route !== "string" || route === "") {
       throw new BadRequestError(`"route" phải là tên route dựng tx (ví dụ "consume").`);
     }
+    const wanted = parseFeeSource(source);
     const purpose = this.purposeFor(caller, route);
-    const json = await this.call("GET", `/v1/utxo?purpose=${encodeURIComponent(purpose)}`, caller.token);
+    // `source` vắng giữ vắng: bản Feecover trước nguồn sponsor không biết tham số này.
+    const json = await this.call("GET",
+      `/v1/utxo?purpose=${encodeURIComponent(purpose)}${wanted === undefined ? "" : `&source=${wanted}`}`, caller.token);
 
     const o = asRecord(json);
     const u = o === undefined ? undefined : asRecord(o.utxo);
@@ -141,18 +156,25 @@ export class FeeProxy {
       || typeof u.outputIndex !== "number" || !Number.isSafeInteger(u.outputIndex) || u.outputIndex < 0
       || !isLovelace(u.lovelace)
       || !Number.isFinite(reservedMs)
+      || (o.source !== undefined && !(FEE_SOURCES as readonly unknown[]).includes(o.source))
     ) {
       throw upstreamError("Feecover trả lời /v1/utxo sai hình dạng.");
     }
+    // Nguồn LẤY TỪ câu trả lời của Feecover, không từ yêu cầu: bản Feecover không biết `source` trả một
+    // UTxO của ví Feecover mà không nói gì — xin sponsor mà nhận im lặng thì không giao UTxO đó.
+    const confirmed = o.source as FeeSource | undefined;
+    if (wanted === "sponsor" && confirmed === undefined) throw sourceNotConfirmed("/v1/utxo");
     const utxoRef = `${u.txHash}#${u.outputIndex}`;
     // Sổ phát-hành nhớ giờ giữ chỗ: tx tiêu UTxO này chỉ xin ký được tới mốc đó.
     // Địa chỉ đi kèm để sổ nhận ra UTxO của Feecover cả khi lượt giữ đã bị quét (`feeReservationForBuild`).
     // Mã lượt giữ (`locks.ts` ▸ khối "MÃ LƯỢT GIỮ"): mới mỗi lượt, kể cả khi Feecover trả lại đúng UTxO cũ.
-    const reservationId = this.deps.issued.noteFeeReservation(utxoRef, reservedMs, address);
+    // Nguồn ghi vào lượt giữ: `/fee/sign` với `source` khác nguồn này ⟹ 400 `FEE_PROXY_SOURCE_MISMATCH`.
+    const reservationId = this.deps.issued.noteFeeReservation(utxoRef, reservedMs, address, undefined, confirmed ?? "feecover");
     return {
       fee_payer: { utxo: utxoRef, address, reservation_id: reservationId },
       reserved_until: reservedUntil,
       purpose,
+      ...(confirmed === undefined ? {} : { source: confirmed }),
     };
   }
 
@@ -162,11 +184,12 @@ export class FeeProxy {
   }
 
   /** `POST /fee/sign {tx_cbor}` — chỉ cho tx dịch vụ này đã phát, có ví trả phí, còn hạn ký. */
-  async sign(txCbor: unknown, callerToken: string | undefined): Promise<Record<string, unknown>> {
+  async sign(txCbor: unknown, callerToken: string | undefined, source?: unknown): Promise<Record<string, unknown>> {
     const caller = this.resolveApp(callerToken);
     if (typeof txCbor !== "string" || !/^[0-9a-f]+$/.test(txCbor) || txCbor.length % 2 !== 0) {
       throw new BadRequestError(`"tx_cbor" phải là CBOR hex thường của giao dịch.`);
     }
+    const wanted = parseFeeSource(source);
     let hash: string;
     try {
       hash = txBodyHash(txCbor);
@@ -217,18 +240,31 @@ export class FeeProxy {
     if (problem !== null) {
       throw feeReservationError(problem.utxoRef, problem.reservation, problem.reservedUntilMs, { tx_hash: hash });
     }
+    // Nguồn của lượt ký phải là nguồn Feecover xác nhận lúc phát UTxO (`/fee/utxo`): UTxO ví Feecover
+    // không ký dưới ngân sách sponsor và ngược lại. `source` vắng = `feecover`, như ở Feecover.
+    const held = this.deps.issued.feeReservationSourceOf(entry.feePayerUtxo) ?? "feecover";
+    if ((wanted ?? "feecover") !== held) {
+      throw new CodedApiError(400, "FEE_PROXY_SOURCE_MISMATCH",
+        `"source" = "${wanted ?? "feecover"}" khác nguồn của lượt giữ UTxO phí ("${held}"). Gửi đúng "source" ` +
+        `đã dùng ở /fee/utxo, hoặc xin lại UTxO và dựng lại giao dịch.`,
+        { tx_hash: hash, source: wanted ?? "feecover", reserved_source: held });
+    }
 
     const json = await this.call("POST", "/v1/sign", caller.token,
-      JSON.stringify({ tx_cbor_hex: txCbor, purpose, ref }));
+      JSON.stringify({ tx_cbor_hex: txCbor, purpose, ref, ...(wanted === undefined ? {} : { source: wanted }) }));
     const o = asRecord(json);
     if (
       o === undefined
       || typeof o.txHash !== "string" || !/^[0-9a-f]{64}$/.test(o.txHash)
       || typeof o.witnessSet !== "string" || !/^[0-9a-f]+$/.test(o.witnessSet) || o.witnessSet.length % 2 !== 0
       || !isLovelace(o.netLovelace) || !isLovelace(o.feeLovelace)
+      || (o.source !== undefined && typeof o.source !== "string")
     ) {
       throw upstreamError("Feecover trả lời /v1/sign sai hình dạng.");
     }
+    // Bản Feecover trước nguồn sponsor không trả `source` và ký bằng ví Feecover: xin sponsor mà nhận im
+    // lặng thì KHÔNG giao chữ ký đó như thể sponsor đã trả.
+    if (wanted === "sponsor" && o.source === undefined) throw sourceNotConfirmed("/v1/sign", { tx_hash: hash });
     if (o.txHash !== hash) {
       throw new CodedApiError(502, "FEE_PROXY_UPSTREAM_MISMATCH",
         `Feecover ký một giao dịch khác (${o.txHash}) với giao dịch đã gửi (${hash}). Không ghép chữ ký này.`,
@@ -239,6 +275,8 @@ export class FeeProxy {
       witness_set: o.witnessSet,
       net_lovelace: String(o.netLovelace),
       fee_lovelace: String(o.feeLovelace),
+      // Vọng ĐÚNG giá trị Feecover trả, kể cả khi khác yêu cầu — app tự từ chối. Vắng giữ vắng.
+      ...(typeof o.source === "string" ? { source: o.source } : {}),
     };
   }
 
@@ -255,7 +293,7 @@ export class FeeProxy {
    * Token không đi vào kết quả: kết quả chỉ có các trường liệt kê ở `FeeSourcesAnswer`, và một câu
    * chữ của Feecover có chứa token thì cả câu trả lời bị coi là sai hình dạng.
    */
-  async feeSources(route: IssuedRoute): Promise<FeeSourcesAnswer> {
+  async feeSources(route: IssuedRoute, ownerCommit?: string): Promise<FeeSourcesAnswer> {
     if (this.deps.settings.apps.has(FEECOVER_DEFAULT_APP) && this.deps.magicToken === undefined) {
       return { answered: false, failure: "token_absent" };
     }
@@ -270,7 +308,9 @@ export class FeeProxy {
       return { answered: false, failure };
     }
 
-    const sent = await this.send("GET", `/v1/fee-sources?purpose=${encodeURIComponent(purpose)}`, caller.token,
+    // `owner_commit` (tên anchor của DID chủ) ⟹ Feecover báo thêm suất sponsor còn lại của DID đó (`sponsor.did`).
+    const query = `purpose=${encodeURIComponent(purpose)}${ownerCommit === undefined ? "" : `&owner_commit=${encodeURIComponent(ownerCommit)}`}`;
+    const sent = await this.send("GET", `/v1/fee-sources?${query}`, caller.token,
       undefined, Math.min(this.deps.settings.timeoutMs, FEE_SOURCES_TIMEOUT_MS));
     if (sent.kind === "timeout") return { answered: false, failure: "timeout" };
     if (sent.kind === "unreachable") return { answered: false, failure: "unreachable" };
@@ -293,14 +333,26 @@ export class FeeProxy {
       || typeof fc.available !== "boolean"
       || (fc.rule !== undefined && typeof fc.rule !== "string")
       || (fc.message !== undefined && typeof fc.message !== "string")
-      || leaks(fc.rule) || leaks(fc.message)
+      || leaks(fc.rule) || leaks(fc.message) || JSON.stringify(fc).includes(caller.token)
     ) {
       return { answered: false, failure: "bad_response" };
     }
+    const side = (v: unknown): Record<string, unknown> | "absent" | "bad" => {
+      if (v === undefined) return "absent";
+      const b = asRecord(v);
+      if (
+        b === undefined || typeof b.available !== "boolean"
+        || (b.rule !== undefined && typeof b.rule !== "string")
+        || (b.message !== undefined && typeof b.message !== "string")
+        || JSON.stringify(b).includes(caller.token)
+      ) return "bad";
+      return b;
+    };
     return {
       answered: true, purpose, available: fc.available,
       ...(typeof fc.rule === "string" ? { rule: fc.rule } : {}),
       ...(typeof fc.message === "string" ? { message: fc.message } : {}),
+      blocks: { feecover: fc, sponsor: side(o.sponsor), owner_address: side(o.owner_address) },
     };
   }
 
@@ -423,6 +475,25 @@ function appPurposeError(app: string, route: string, purpose: string, why: strin
 /** Mã 4xx của Feecover được chuyển nguyên cho app: chúng nói về chính giao dịch / lượt xin
  *  (thân yêu cầu hỏng, luật chặn ứng dụng, UTxO đang giữ cho bên khác, luật phí từ chối, hết suất). */
 const PASS_THROUGH_UPSTREAM_STATUS: ReadonlySet<number> = new Set([400, 403, 409, 422, 429]);
+
+/** `source` app gửi ở `/fee/utxo` / `/fee/sign`: vắng ⟹ `undefined` (= `feecover`, và KHÔNG chuyển tiếp);
+ *  `feecover` | `sponsor` ⟹ chính nó; khác ⟹ 400, Feecover không bị gọi. */
+export function parseFeeSource(v: unknown): FeeSource | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v === "string" && (FEE_SOURCES as readonly string[]).includes(v)) return v as FeeSource;
+  throw new CodedApiError(400, "FEE_PROXY_SOURCE_INVALID",
+    `"source" phải là ${FEE_SOURCES.map(x => `"${x}"`).join(" hoặc ")} (vắng = "feecover"). Nguồn ` +
+    `"owner_address" do ví của chủ tự trả — không qua proxy phí.`,
+    { allowed: [...FEE_SOURCES] });
+}
+
+/** Xin `sponsor` mà Feecover trả lời không kèm `source`: bản Feecover đang chạy không biết nguồn sponsor. */
+function sourceNotConfirmed(path: string, details: Record<string, unknown> = {}): CodedApiError {
+  return new CodedApiError(502, "FEE_SOURCE_NOT_CONFIRMED",
+    `Đã xin nguồn "sponsor" nhưng Feecover trả lời ${path} không xác nhận nguồn ("source" vắng) — bản ` +
+    `Feecover đang chạy chưa hỗ trợ nguồn sponsor. Không dùng câu trả lời này; chọn nguồn khác.`,
+    { ...details, source: "sponsor" });
+}
 
 function upstreamError(message: string, details: Record<string, unknown> = {}): CodedApiError {
   return new CodedApiError(502, "FEE_PROXY_UPSTREAM", message, details);

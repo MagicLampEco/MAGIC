@@ -5,7 +5,14 @@
 //                        [upstream_status] },
 //       owner_address: { fee_lovelace, fronted_lovelace, available, needed_lovelace,
 //                        collateral_lovelace, [fee_payer: { utxo, address }], [reason] },
+//       fee_sources:   { owner_address: {…}, feecover: {…}, sponsor: {…} },
 //       valid_until }
+//
+// `fee_sources` = ba khối của `GET /v1/fee-sources` (Feecover), chuyển NGUYÊN — trường Feecover không
+// gửi thì VẮNG ở đây, không thành `null`, không đệm (không có giá CARP nào do tệp này đặt ra). Chủ
+// khai bằng DID ⟹ hỏi kèm `owner_commit` = tên anchor của DID, Feecover báo thêm `sponsor.did`.
+// Không hỏi được Feecover ⟹ `feecover` + `sponsor` = `{ available: false, reason, message }`, báo
+// giá VẪN trả; `owner_address` khi Feecover không gửi thì dịch vụ tự dựng (`OWNER_ADDRESS_SOURCE`).
 //
 // `fronted_lovelace` (chuỗi thập phân, như mọi trường tiền) = min-ADA mà ví trả phí phải ỨNG cho
 // output két / thread mới hoặc output dùng chung (shard GreenBack dựng lại) — chi phí CHÌM: két
@@ -48,10 +55,11 @@
 // `params` đi qua cùng hàm đọc và cùng đường dựng, không bị bọc lại.
 
 import { CML, credentialToAddress, getAddressDetails, type UTxO } from "@lucid-evolution/lucid";
+import { didAnchorNftName } from "@magiclamp/sdk";
 
 import { parseBuildRequest, runBuild, type BuildResult } from "./buildRequest.js";
 import { CodedApiError } from "./errors.js";
-import type { FeeProxy, FeeSourcesFailure } from "./feeProxy.js";
+import type { FeeProxy, FeeSourcesAnswer, FeeSourcesFailure } from "./feeProxy.js";
 import { assertFeePayerAddress, isPureAdaFeeUtxo, pureAdaMinCoin, refStr, type FeePayerCodes } from "./feePayer.js";
 import { ISSUED_ROUTES, type IssuedRoute } from "./locks.js";
 import type { VaultTxService } from "./service.js";
@@ -74,6 +82,8 @@ export type FeeQuoteReason =
   | "FEE_QUOTE_FEECOVER_HTTP_STATUS"
   | "FEE_QUOTE_FEECOVER_BAD_RESPONSE"
   | "FEE_QUOTE_FEECOVER_DECLINED"
+  /** Feecover trả lời `/v1/fee-sources` mà không có khối `sponsor` (bản trước nguồn sponsor). */
+  | "FEE_QUOTE_SPONSOR_NOT_REPORTED"
   | "FEE_QUOTE_OWNER_ADDRESSES_ABSENT"
   | "FEE_QUOTE_OWNER_NO_ADA_UTXO"
   | "FEE_QUOTE_OWNER_INSUFFICIENT";
@@ -107,6 +117,12 @@ export interface FeeQuoteResponse {
     /** CHỈ khi `available = true`: UTxO đã chọn, đúng hình dạng thân `fee_payer` của đường dựng. */
     fee_payer?: { utxo: string; address: string };
     reason?: FeeQuoteReason;
+  };
+  /** Ba nguồn trả phí như Feecover báo (`GET /v1/fee-sources`), khối NGUYÊN — xem đầu tệp. */
+  fee_sources: {
+    owner_address: Record<string, unknown>;
+    feecover: Record<string, unknown>;
+    sponsor: Record<string, unknown>;
   };
   valid_until: string;
   /** CHỈ route `instant-gen`, lấy từ lượt dựng ĐẦU (ví tổng hợp) — mọi lượt dựng của cùng báo
@@ -248,7 +264,9 @@ export async function quoteFee(body: Record<string, unknown>, deps: FeeQuoteDeps
   const horizons = [generic.horizonMs];
 
   // Hỏi Feecover SAU lượt dựng đầu: `params` hỏng thì báo giá dừng ở trên, Feecover không bị hỏi.
-  const feecover: FeeQuoteResponse["feecover"] = { fee_lovelace: raw(generic.fee), fronted_lovelace: raw(generic.fronted), ...await feecoverSource(deps.feeProxy, route) };
+  const answer = deps.feeProxy === undefined ? undefined : await deps.feeProxy.feeSources(route, ownerCommitOf(params));
+  const feecover: FeeQuoteResponse["feecover"] = { fee_lovelace: raw(generic.fee), fronted_lovelace: raw(generic.fronted), ...feecoverSource(answer) };
+  const fee_sources = feeSourcesOf(answer);
 
   let owner: FeeQuoteResponse["owner_address"] | undefined;
   if (ownerFeeAddresses.length === 0) {
@@ -295,7 +313,7 @@ export async function quoteFee(body: Record<string, unknown>, deps: FeeQuoteDeps
   // tx được mô tả không còn nộp được, và sau `expires_at` đường dựng trả thì app phải dựng lại
   // (thân mới, phí mới) — báo giá không được sống lâu hơn thứ nó mô tả.
   return {
-    feecover, owner_address: owner, valid_until: new Date(Math.min(...horizons)).toISOString(),
+    feecover, owner_address: owner, fee_sources, valid_until: new Date(Math.min(...horizons)).toISOString(),
     ...(generic.gen === undefined ? {} : { summary: generic.gen }),
   };
 }
@@ -491,11 +509,10 @@ function feePayerFigures(r: BuildResult): { fee: bigint; fronted: bigint; collat
  * `available` + `rule` + `message`. FAIL-CLOSED: `available: true` chỉ đi ra từ một câu trả lời 200
  * đúng hình dạng mang `available: true`; mọi lối khác là `false` kèm `reason` có tên.
  */
-async function feecoverSource(
-  feeProxy: FeeProxy | undefined, route: IssuedRoute,
-): Promise<Omit<FeeQuoteResponse["feecover"], "fee_lovelace" | "fronted_lovelace">> {
-  if (feeProxy === undefined) return { available: false, reason: "FEE_QUOTE_FEECOVER_UNCONFIGURED" };
-  const a = await feeProxy.feeSources(route);
+function feecoverSource(
+  a: FeeSourcesAnswer | undefined,
+): Omit<FeeQuoteResponse["feecover"], "fee_lovelace" | "fronted_lovelace"> {
+  if (a === undefined) return { available: false, reason: "FEE_QUOTE_FEECOVER_UNCONFIGURED" };
   const words = { ...(a.rule === undefined ? {} : { rule: a.rule }), ...(a.message === undefined ? {} : { message: a.message }) };
   if (a.answered) {
     return a.available ? { available: true, ...words } : { available: false, reason: "FEE_QUOTE_FEECOVER_DECLINED", ...words };
@@ -503,6 +520,58 @@ async function feecoverSource(
   return {
     available: false, reason: FEECOVER_REASON_OF_FAILURE[a.failure], ...words,
     ...(a.upstreamStatus === undefined ? {} : { upstream_status: a.upstreamStatus }),
+  };
+}
+
+/**
+ * Khối `owner_address` của `fee_sources` khi Feecover không gửi (bản Feecover trước ba nguồn, hoặc không
+ * hỏi được). Cùng hình dạng khối Feecover dựng: nguồn này là ví của chủ, không qua Feecover, nên nó có
+ * mặt bất kể Feecover sống hay chết — số đo cụ thể ở khối `owner_address` (trên) của báo giá.
+ */
+export const OWNER_ADDRESS_SOURCE: Readonly<Record<string, unknown>> = Object.freeze({
+  available: true,
+  requires_app_check: true,
+  user_pays: "network_fee_ada",
+  message: "Ví của người dùng tự trả phí mạng; Feecover không ký phần này — ứng dụng tự kiểm ADA và thế chấp.",
+});
+
+/** `owner_commit` gửi Feecover: tên anchor của DID khi `params.owner` là chủ DID, ngược lại vắng. `params`
+ *  đã qua lượt dựng đầu (`parseBuildRequest`) nên DID đúng hình dạng. */
+export function ownerCommitOf(params: Record<string, unknown>): string | undefined {
+  const o = params.owner;
+  if (o === null || typeof o !== "object" || Array.isArray(o)) return undefined;
+  const r = o as Record<string, unknown>;
+  return r.type === "did" && typeof r.did === "string" ? didAnchorNftName(r.did) : undefined;
+}
+
+/** Khối "không có" do dịch vụ dựng (không phải câu của Feecover): `reason` máy đọc + câu cho người. */
+function unavailable(reason: FeeQuoteReason, message: string, rule?: string): Record<string, unknown> {
+  return { available: false, reason, message, ...(rule === undefined ? {} : { rule }) };
+}
+
+/** `fee_sources` của báo giá. Khối Feecover gửi đúng hình dạng ⟹ NGUYÊN; còn lại ⟹ khối "không có". */
+function feeSourcesOf(a: FeeSourcesAnswer | undefined): FeeQuoteResponse["fee_sources"] {
+  if (a === undefined || !a.answered) {
+    const reason = a === undefined ? "FEE_QUOTE_FEECOVER_UNCONFIGURED" : FEECOVER_REASON_OF_FAILURE[a.failure];
+    const message = a?.message ?? (a === undefined
+      ? "Bản deploy không khai Feecover — dịch vụ không hỏi được nguồn này."
+      : "Không hỏi được Feecover lúc báo giá — coi nguồn này là không có.");
+    const rule = a?.rule;
+    return {
+      owner_address: { ...OWNER_ADDRESS_SOURCE },
+      feecover: unavailable(reason, message, rule),
+      sponsor: unavailable(reason, message, rule),
+    };
+  }
+  const { sponsor, owner_address } = a.blocks;
+  return {
+    owner_address: typeof owner_address === "string" ? { ...OWNER_ADDRESS_SOURCE } : owner_address,
+    feecover: a.blocks.feecover,
+    sponsor: sponsor === "absent"
+      ? unavailable("FEE_QUOTE_SPONSOR_NOT_REPORTED", "Feecover không báo nguồn sponsor — bản Feecover đang chạy chưa có nguồn này.")
+      : sponsor === "bad"
+        ? unavailable("FEE_QUOTE_FEECOVER_BAD_RESPONSE", "Feecover trả khối sponsor sai hình dạng — coi nguồn này là không có.")
+        : sponsor,
   };
 }
 

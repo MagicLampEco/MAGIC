@@ -197,6 +197,13 @@ let svcDup: SponsorTxService;       // ghim tập đóng có HAI quỹ của DID
 let fundIdDup = "";                 // quỹ thứ hai của DID_COMMIT, chỉ svcDup ghim
 let CPB = 0n;                       // coinsPerUtxoByte của Emulator — trần khoản ứng ở checkSponsorFeePayerTx
 let openLocks: OwnerLockTable;
+/** `feeRef` mà dịch vụ ghi vào sổ phát-hành cho `txHash` — thứ `/fee/sign` gửi làm `ref` cho Feecover. Dòng vắng ⟹ ném
+ *  (để "không có feeRef" và "không có dòng" ra hai kết quả khác nhau). */
+const issuedFeeRef = (s: SponsorTxService, txHash: string): string | undefined => {
+  const e = (s as unknown as { deps: { issued: IssuedTxRegistry } }).deps.issued.lookup(txHash, emulator.now());
+  if (e === null) throw new Error(`sổ phát-hành không có dòng cho ${txHash}`);
+  return e.feeRef;
+};
 let deploymentNoDid = "";
 let svc: SponsorTxService;
 let svcNoDid: SponsorTxService;
@@ -1158,6 +1165,8 @@ describe("open-fund — bước bù: genesis quỹ tài trợ theo DID; VTA ký 
     const h = await signAndSubmit(b.tx_cbor as string, [feecover2, opener]);
     expect(h).toBe(b.tx_hash);
     openLocks.releaseByTxHash(h);
+    // Feecover đếm một-quỹ-mỗi-DID theo `ref` của `open_sponsor_fund` ⟹ ref = owner_commit, không phải hash thân tx.
+    expect(issuedFeeRef(svcOpen, h)).toBe(DID_OPEN);
 
     expect(b.step).toBe("open-fund");
     const signers = b.signers as Array<{ role: string; key_hashes: string[] }>;
@@ -1343,6 +1352,8 @@ describe("open-vault kèm quỹ — VTA ký platform; chủ + ví trả phí ký
     // NỘP TRƯỚC mọi phép so hình dạng: bỏ witness platform phải đỏ ở Emulator (hành vi), không ở một expect.
     await submitOpen(b, [feecover2, coOwner]);
     expect(platformSignCalls).toBe(before + 1);
+    // tx chở genesis quỹ ⟹ `sponsor_open` gửi ref = owner_commit (Feecover đếm một quỹ mỗi DID theo mã này).
+    expect(issuedFeeRef(svcOpen, b.tx_hash as string)).toBe(DID_CO);
 
     const signers = b.signers as Array<{ role: string; key_hashes: string[]; how: string }>;
     expect(signers.map(x => x.role)).toEqual(["fee-wallet", "owner", "platform"]);
@@ -1407,6 +1418,8 @@ describe("open-vault kèm quỹ — VTA ký platform; chủ + ví trả phí ký
     const b = await ok("/tx/sponsor/open-vault", cb(coOwner2, { change_address: fee.address, did_commit: DID_CO }));
     try {
       expect(platformSignCalls).toBe(before);
+      // CẶP của ca trên: không genesis quỹ ⟹ không feeRef ⟹ `/fee/sign` gửi hash thân tx.
+      expect(issuedFeeRef(svcOpen, b.tx_hash as string)).toBeUndefined();
       expect((b.signers as Array<{ role: string }>).map(x => x.role)).toEqual(["fee-wallet", "owner"]);
       const tx = CML.Transaction.from_cbor_hex(b.tx_cbor as string);
       expect(tx.body().mint()?.get_assets(CML.ScriptHash.from_hex(coFundUnit.slice(0, 56)))).toBeUndefined();
@@ -1429,6 +1442,7 @@ describe("open-vault kèm quỹ — VTA ký platform; chủ + ví trả phí ký
     const refs = (await emulator.getUtxos(sponsor.address)).filter(u => (u.assets[CARP_UNIT] ?? 0n) >= CARP).map(refStr).slice(0, 1);
     const fv = await ok("/tx/sponsor/fund-vault",
       cb(coOwner, { change_address: fee.address, carp_amount: CARP.toString(), sponsor: { utxo_refs: refs } }));
+    expect(issuedFeeRef(svcOpen, fv.tx_hash as string)).toBeUndefined(); // giữ DID kiểu fund-vault không phải genesis quỹ
     await submitOpen(fv, [fee, sponsor, coOwner]);
     expect(decodeFundDatum((await only(coFundUnit)).datum!).carp_locked).toBe(CARP);
 
@@ -1515,6 +1529,8 @@ describe("open-vault kèm quỹ — VTA ký platform; chủ + ví trả phí ký
     const b = await ok("/tx/sponsor/claim", { fund_id: coFundId, fee_payer: fp });
     dumpSampleTx("claim", b);
     expect(platformSignCalls).toBe(before + 1);
+    // `sponsor_claim` ⟹ ref = owner_commit ghi trong datum quỹ (claim lặp được trên cùng quỹ).
+    expect(issuedFeeRef(svcOpen, b.tx_hash as string)).toBe(DID_CO);
     expect((b.signers as Array<{ role: string; key_hashes: string[] }>).map(x => [x.role, x.key_hashes]))
       .toEqual([["fee-wallet", [feecover2.pkh]], ["platform", [platformKey.pkh]]]);
     expect(b.required_signers).toEqual([platformKey.pkh]);

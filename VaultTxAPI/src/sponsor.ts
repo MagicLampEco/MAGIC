@@ -740,6 +740,12 @@ interface StepCtx {
    * loại trừ nhau trên chuỗi, nên dựng lại trên cùng quỹ (ký hỏng, đổi UTxO bên tài trợ) không phải đường nạp hai lần.
    */
   holdDid: (didCommit: string, purpose?: "genesis" | "fund-vault", sameTxTag?: string) => void;
+  /**
+   * Mã ghi sổ (`ref`) mà `/fee/sign` gửi Feecover cho tx của bước này, thay hash thân tx. Feecover đòi owner_commit
+   * cho MỌI `sponsor_open` (kể cả open-vault không chở quỹ) và cho `open_sponsor_fund`; nó đếm một-quỹ-mỗi-DID theo
+   * mã này. Bước nào không gọi ⟹ hash thân tx.
+   */
+  noteFeeRef: (ref: string) => void;
 }
 
 /** Địa chỉ mà một bước được chạm, cho phép đọc lại CBOR của đường `fee_payer`. */
@@ -808,6 +814,7 @@ export class SponsorTxService {
       const genesis = mine.length === 0 ? this.fundGenesisPins("open-vault") : undefined;
       // Hai open-vault chở genesis cho cùng DID trong khe nộp → vào khối ⟹ hai quỹ. Giữ DID tới hết hạn tx.
       if (genesis !== undefined) ctx.holdDid(req.didCommit);
+      ctx.noteFeeRef(req.didCommit); // `sponsor_open`: owner_commit dù tx có chở genesis quỹ hay không
       const wallet = await feeWallet(ctx, () => this.walletUtxos(ctx.feeAddress));
       const sorted = [...wallet].sort((a, b) =>
         a.txHash === b.txHash ? a.outputIndex - b.outputIndex : a.txHash < b.txHash ? -1 : 1);
@@ -1066,6 +1073,7 @@ export class SponsorTxService {
       const seedUtxo = sorted.find(u => Object.keys(u.assets).every(k => k === "lovelace")) ?? sorted[0];
       if (seedUtxo === undefined) throw noWalletUtxo(ctx.feeAddress, "");
       ctx.holdDid(didCommit);
+      ctx.noteFeeRef(didCommit); // `open_sponsor_fund`
       const lucid = await this.deps.lucidForWallet(ctx.feeAddress, wallet);
       // Cận TRÊN = cận đã chọn (`planSponsorValidity`, không kẹp kỳ); mốc thu hồi suy từ đó (`sponsorReclaimAfterEpoch`).
       const validity: TxValidity = { fromMs: ctx.tip.blockTimePosixMs, toMs: ctx.plan.capMs };
@@ -1353,10 +1361,8 @@ export class SponsorTxService {
     const keys: string[] = [ownerKey];
     const gens: Array<[string, number]> = [];
     const didGens: Array<[string, number]> = [];
-    // DID mà tx này genesis quỹ tài trợ cho (open-vault chở quỹ, open-fund). Feecover đếm "một quỹ trọn đời mỗi
-    // owner_commit" theo mã ghi sổ `ref` (`sponsor_open`, `open_sponsor_fund`), nên tx genesis quỹ gửi `ref` =
-    // owner_commit, không gửi hash thân tx.
-    const genesisDids: string[] = [];
+    // Mã ghi sổ Feecover mà bước khai qua `ctx.noteFeeRef` (open-vault, open-fund: owner_commit). Vắng ⟹ hash thân tx.
+    const feeRefs = new Set<string>();
     try {
       const startedAt = this.now();
       keys.push(...restKeys);
@@ -1423,8 +1429,8 @@ export class SponsorTxService {
               `(khi đó DID đã có quỹ) hoặc hết hạn rồi gọi lại.`, details);
           }
           didGens.push([key, h.gen]);
-          if (purpose === "genesis") genesisDids.push(didCommit);
         },
+        noteFeeRef: (ref: string): void => { feeRefs.add(ref); },
       };
       const out = await build(p, ctx);
       if (req.ownerDid !== undefined) out.summary.owner_did = req.ownerDid;
@@ -1444,15 +1450,15 @@ export class SponsorTxService {
       // Hạn đọc NGƯỢC từ chính CBOR, SAU cổng ví trả phí (như create-vault ở `service.ts`): tx thiếu
       // hạn ở đường `fee_payer` ra 422 của cổng đó, không 500 bất biến.
       const expiry = readTxExpiry(out.txCbor, this.deps.slotNetwork ?? this.deps.network, plan, tip.blockTimePosixMs);
-      if (genesisDids.length > 1) {
-        throw new Error(`[bất biến nội bộ] tx ${txHash} genesis quỹ cho ${genesisDids.length} DID — mỗi tx đúng một.`);
+      if (feeRefs.size > 1) {
+        throw new Error(`[bất biến nội bộ] tx ${txHash} khai ${feeRefs.size} mã ghi sổ Feecover — mỗi tx đúng một.`);
       }
       for (const [k, g] of gens) this.deps.locks.bindTxHash(k, txHash, g);
       for (const [k, g] of didGens) this.didHolds.bind(k, g, txHash, Number(expiry.validToMs));
       this.deps.issued.record(txHash, this.now(), {
         route: ISSUED_ROUTE_OF_STEP[step], lockKeys: keys, validToMs: Number(expiry.validToMs),
         ...feePayerRecordFields(feePayer?.req, plan.feeReservation),
-        ...(genesisDids.length === 1 ? { feeRef: genesisDids[0] } : {}),
+        ...(feeRefs.size === 1 ? { feeRef: [...feeRefs][0]! } : {}),
       });
       return {
         step,

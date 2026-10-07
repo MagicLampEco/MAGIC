@@ -228,6 +228,27 @@ function stepOfSdk(sdkStep: string): SponsorStep | "wakeme-genesis" {
   return s;
 }
 
+/**
+ * Ai GỌI route của từng bước (`actor` trong `/tx/sponsor/plan`) — khác `signers` (ai KÝ):
+ *   · `app`: dựng tài khoản trên máy người dùng — mở két, gắn DID, rút MAGIC, nhận Wakeme, quỹ bù;
+ *   · `sponsor`: bên vận hành tài trợ, cầm thẻ vai sponsor (`http.ts` ▸ `SPONSOR_ROLE_PATHS`) — nạp quỹ, claim;
+ *   · `module`: backend module tiêu MAGIC cho một tác vụ — consume do module làm, app không làm.
+ * Bước không có trong bảng ⟹ NÉM: bên gọi lọc theo trường này, đoán vai cho một bước mới là giao bước đó sai người.
+ */
+export const SPONSOR_PLAN_ACTORS = ["app", "sponsor", "module"] as const;
+export type SponsorPlanActor = typeof SPONSOR_PLAN_ACTORS[number];
+const ACTOR_OF_STEP: Readonly<Record<string, SponsorPlanActor>> = {
+  "open-vault": "app", "bind-did": "app", "draw-magic": "app", "wakeme-genesis": "app", "open-fund": "app",
+  "fund-vault": "sponsor", "claim": "sponsor",
+  "first-consume": "module",
+};
+
+function actorOf(step: string): SponsorPlanActor {
+  const a = ACTOR_OF_STEP[step];
+  if (a === undefined) throw new Error(`[bất biến nội bộ] bước "${step}" chưa có vai ở ACTOR_OF_STEP.`);
+  return a;
+}
+
 /** Ký hiệu bước SDK (`T1`…`T5`) lọt trong câu chữ của SDK (`requires`) → tên bước của dịch vụ. */
 function renameSdkSteps(text: string): string {
   return text.replace(/(?<![A-Za-z0-9_])T([1-5])(?![0-9A-Za-z_])/g, (_m, d: string) => stepOfSdk(`T${d}`));
@@ -539,9 +560,14 @@ export function sponsorPlanBody(
   if (typeof sponsorPkh !== "string" || !HEX28.test(sponsorPkh)) {
     throw shape(`"sponsor_pkh" phải là 56 ký tự hex thường (khoá băm của bên tài trợ ký fund-vault).`, { field: "sponsor_pkh" });
   }
+  const actorFilter = body.actor;
+  if (actorFilter !== undefined &&
+      (typeof actorFilter !== "string" || !(SPONSOR_PLAN_ACTORS as readonly string[]).includes(actorFilter))) {
+    throw shape(`"actor" (tuỳ chọn) phải là một trong: ${SPONSOR_PLAN_ACTORS.join(", ")}.`, { field: "actor" });
+  }
   const plan = planSponsorJourney({ owner, sponsorPkh });
   const pathOf = Object.fromEntries(Object.entries(SPONSOR_STEP_OF_PATH).map(([p, s]) => [s, p]));
-  return {
+  const full = {
     // bind-did là bước của DỊCH VỤ, không của bộ lập kế hoạch SDK (SDK chưa có SetDidCommit trong hành
     // trình): chèn ngay sau open-vault, và fund-vault đòi thêm nó — quỹ tài trợ chỉ nạp vào két đã mang
     // đúng DID (`PrepaidGen/onchain/validators/prepaid.ak` ▸ `validate_lock`, khối `sponsorship`).
@@ -606,6 +632,16 @@ export function sponsorPlanBody(
       requires: ["open-vault đã vào khối (thread mang did_commit)"],
     }],
     same_epoch: plan.sameEpoch.map(stepOfSdk),
+  };
+  // Mỗi bước mang `actor`; có `actor` trong thân ⟹ chỉ trả bước của vai đó (thứ tự giữ nguyên). `same_epoch`
+  // không lọc: nó là ràng buộc giữa các bước, kể cả bước của vai khác.
+  const tag = <T extends { step: string }>(rows: T[]) => rows
+    .map(r => ({ ...r, actor: actorOf(r.step) }))
+    .filter(r => actorFilter === undefined || r.actor === actorFilter);
+  return {
+    ...full,
+    steps: tag(full.steps),
+    fallback_steps: tag(full.fallback_steps),
     ...(resolved?.ownerDid === undefined ? {} : { owner_did: resolved.ownerDid }),
   };
 }

@@ -326,6 +326,29 @@ describe("bộ định tuyến /tx/sponsor/*", () => {
     expect(r.body.same_epoch).toEqual(expect.arrayContaining(["draw-magic", "first-consume"]));
   });
 
+  it("plan: mỗi bước mang actor (ai GỌI route); actor trong thân ⟹ chỉ bước của vai đó. CẶP: vắng ⟹ đủ bước; lạ ⟹ 400", async () => {
+    type Row = { step: string; actor: string };
+    const all = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH }, undefined);
+    expect(all.status).toBe(200);
+    const actorOf = Object.fromEntries((all.body.steps as Row[]).map(r => [r.step, r.actor]));
+    expect(actorOf).toMatchObject({
+      "open-vault": "app", "bind-did": "app", "fund-vault": "sponsor", "draw-magic": "app",
+      "first-consume": "module", "claim": "sponsor",
+    });
+    expect((all.body.fallback_steps as Row[]).map(r => r.actor)).toEqual(["app"]);
+    const app = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH, actor: "app" }, undefined);
+    expect(app.status).toBe(200);
+    expect((app.body.steps as Row[]).map(r => r.step).filter(x => x !== "wakeme-genesis"))
+      .toEqual(["open-vault", "bind-did", "draw-magic"]);
+    expect((app.body.fallback_steps as Row[]).map(r => r.step)).toEqual(["open-fund"]);
+    const mod = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH, actor: "module" }, undefined);
+    expect((mod.body.steps as Row[]).map(r => r.step)).toEqual(["first-consume"]);
+    expect(mod.body.fallback_steps).toEqual([]);
+    expect(mod.body.same_epoch).toEqual(all.body.same_epoch);
+    const bad = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH, actor: "wallet" }, undefined);
+    expect(bad.status).toBe(400);
+  });
+
   it("plan: open-vault chở genesis quỹ (vai platform = service) → bind-did → fund-vault → draw-magic → first-consume; open-fund chỉ là bước BÙ", async () => {
     const r = await post("/tx/sponsor/plan", { ...KEY_OWNER, sponsor_pkh: SPONSOR_PKH }, undefined);
     expect(r.status).toBe(200);

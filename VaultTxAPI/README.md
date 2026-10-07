@@ -1554,6 +1554,10 @@ là bước bù, chỉ dùng khi két mở trước bản này.
 Cột "bước" giữ ký hiệu `T1`…`T4` của bộ dựng SDK (`@magiclamp/sdk` ▸ `planSponsorJourney`) cho người
 đọc mã SDK; bind-did và open-fund là bước của dịch vụ này, SDK chưa có ký hiệu cho chúng.
 `/tx/sponsor/plan` trả đúng thứ tự năm bước trên ở `steps`, và open-fund ở `fallback_steps`.
+Mỗi bước mang `actor` — ai GỌI route của bước đó (khác `signers`, là ai KÝ): `app` (open-vault, bind-did,
+draw-magic, Wakeme, open-fund), `sponsor` (fund-vault, claim — thẻ vai sponsor), `module` (first-consume: consume do
+backend module làm, app không làm). Thân có `"actor": "app" | "sponsor" | "module"` ⟹ `steps` và `fallback_steps`
+chỉ còn bước của vai đó, thứ tự giữ nguyên; `same_epoch` không lọc. Giá trị khác ⟹ `400` (`details.field: "actor"`).
 
 **Đổi tên đường (2026-10-07).** Tên cũ không còn nhận ở HTTP lẫn `/fee/utxo` ▸ `route`:
 

@@ -5,6 +5,15 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-07 — VaultTxAPI: `/tx/sponsor/plan` nói ai GỌI từng bước (`actor`), lọc được theo vai
+
+**Đổi gì.** Mỗi bước trong `steps` / `fallback_steps` mang `actor`: `app` (open-vault, bind-did, draw-magic, Wakeme,
+open-fund), `sponsor` (fund-vault, claim), `module` (first-consume). Thân có `actor` ⟹ chỉ trả bước của vai đó;
+giá trị lạ ⟹ 400. Nguồn: `VaultTxAPI/src/sponsor.ts` ▸ `ACTOR_OF_STEP`, `sponsorPlanBody`.
+**Vì sao.** Consume do backend module làm, app không làm; app và module cùng đọc một kế hoạch, và lọc theo tên bước
+là bắt bên gọi giữ danh sách tên phải bỏ.
+**Cái gì gãy.** Không gì: thân không có `actor` trả đủ bước như trước, chỉ thêm một trường.
+
 ## 2026-10-07 — VaultTxAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy
 
 **Đổi gì.** (1) Đặt `VAULT_TX_API_BASE_PATH` mà `VAULT_TX_API_TOKEN` rỗng ⟹ từ chối khởi động, kể cả khi bind

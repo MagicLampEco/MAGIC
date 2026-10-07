@@ -30,7 +30,7 @@ import {
   type BindDidSummary, type OpenThreadSummary,
 } from "./engage.js";
 import {
-  FEE_PAYER_CODES, assertFeePayerAddress, checkFeePayerTx, inputRefsOf, ownerRewardNote, planOwnerRewardReturn,
+  FEE_PAYER_CODES, assertFeePayerAddress, checkFeePayerTx, feePayerRecordFields, inputRefsOf, ownerRewardNote, planOwnerRewardReturn,
   readFeePayerUtxo as readFeePayerUtxoShared, withOwnerRewardReturn, type FeePayerFronting, type FeePayerSharedFronting,
   refStr, type FeePayerRequest, type FeePayerSummary, type OutRefLike, type OwnerRewardReturn,
 } from "./feePayer.js";
@@ -42,7 +42,7 @@ import {
   ownerLockKey, type OwnerInput, type OwnerWitnessProvider, type ResolvedOwnerWitness, type ScriptOwnerWitness,
 } from "./owner.js";
 import { didPaymentAddressFor, resolveOwnerInput, type DidOwnerResolverPort, type WithResolvedOwner } from "./didOwner.js";
-import { IssuedTxRegistry, OwnerLockTable, PendingSpends, expiredErrorFor, submissionStateOf, type IssuedRoute } from "./locks.js";
+import { IssuedTxRegistry, OwnerLockTable, PendingSpends, expiredErrorFor, submissionStateOf, type FeeReservation, type IssuedRoute } from "./locks.js";
 import {
   summarizeCreateVaultTx, summarizeTx, txBodyHash,
   type CreateVaultSummary, type RequestedIntent, type TxSummary,
@@ -659,7 +659,7 @@ export class VaultTxService {
         this.deps.issued.record(txHash, this.now(), {
           route: "open-thread", feeRef: hash64NameOf(summary.engage.nft_unit), lockKeys: [ownerKey],
           validToMs: Number(expiry.validToMs),
-          ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
+          ...feePayerRecordFields(feePayer, plan.feeReservation),
         });
       }
       return {
@@ -754,7 +754,7 @@ export class VaultTxService {
         // Mã ghi sổ Feecover = hash thân tx (không có NFT mới). Không ví trả phí ⟹ `/fee/sign` từ chối.
         this.deps.issued.record(txHash, this.now(), {
           route: "bind-did", lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
-          ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
+          ...feePayerRecordFields(feePayer, plan.feeReservation),
         });
       }
       return {
@@ -783,18 +783,27 @@ export class VaultTxService {
    * Cận trên `validTo` cho một lượt dựng (`validity.ts` ▸ `planValidity`). `epochBound` = route mà
    * validator đòi hai cận cùng một epoch giao thức (gen/consume/schedule — mọi đường qua `buildOne`).
    */
-  private validityPlan(tip: ChainTip, epochBound: boolean, feePayer: FeePayerRequest | undefined): ValidityPlan {
+  private validityPlan(
+    tip: ChainTip, epochBound: boolean, feePayer: FeePayerRequest | undefined,
+  ): ValidityPlan & { feeReservation?: FeeReservation } {
     // UTxO ví trả phí xin qua `/fee/utxo` ⟹ kẹp vào `reserved_until` của nó (sổ phát-hành ghi lúc
     // phát UTxO, `feeProxy.ts`) — cùng luật với `sponsor.ts` ▸ `planSponsorValidity`. UTxO ở địa chỉ
     // Feecover mà sổ không còn lượt giữ ⟹ 409 (`locks.ts` ▸ `feeReservationForBuild`), KHÔNG dựng
     // không kẹp. Ví không phải Feecover (của chính chủ) ⟹ không có giờ giữ chỗ.
+    // `reservation_id` (tuỳ chọn, bước 1): lệch mã lượt giữ đang sống ⟹ 409 `foreign`.
+    // Lượt giữ cổng đã thấy đi kèm kế hoạch (`feeReservation`) tới `record` — sổ ghi ĐÚNG lượt đó, không
+    // tra lại sổ sau các `await` của lượt dựng. Đếm có/thiếu mã ở `record`, nên báo giá (không ghi sổ) không đếm.
     const reserved = feePayer === undefined
-      ? undefined : this.deps.issued.feeReservationForBuild(refStr(feePayer.utxoRef), feePayer.address);
-    return planValidity({
-      tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
-      txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, epochBound,
-      ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved, feePayerUtxoRef: refStr(feePayer!.utxoRef) }),
-    });
+      ? undefined : this.deps.issued.feeReservationForBuild(refStr(feePayer.utxoRef), feePayer.address,
+        feePayer.reservationId === undefined ? {} : { reservationId: feePayer.reservationId });
+    return {
+      ...planValidity({
+        tipPosixMs: tip.blockTimePosixMs, network: this.deps.network,
+        txValidityMs: this.deps.txValidityMs ?? DEFAULT_TX_VALIDITY_MS, epochBound,
+        ...(reserved === undefined ? {} : { feeReservedUntilMs: reserved.untilMs, feePayerUtxoRef: refStr(feePayer!.utxoRef) }),
+      }),
+      ...(reserved === undefined ? {} : { feeReservation: reserved }),
+    };
   }
 
   /** Hạn đọc NGƯỢC từ chính CBOR vừa dựng — nguồn duy nhất của `expires_at` và hạn dòng sổ phát-hành. */
@@ -894,7 +903,7 @@ export class VaultTxService {
         // `/fee/sign` đọc route + UTxO ví trả phí từ đây chứ không nhận từ app.
         this.deps.issued.record(txHash, this.now(), {
           route: routeOfIntent(intent), lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
-          ...(feePayer === undefined ? {} : { feePayerUtxo: refStr(feePayer.utxoRef) }),
+          ...feePayerRecordFields(feePayer, plan.feeReservation),
         });
       }
 
@@ -1203,7 +1212,7 @@ export class VaultTxService {
         this.deps.locks.bindTxHash(ownerKey, txHash, lockGen);
         this.deps.issued.record(txHash, this.now(), {
           route: "create-vault", feeRef: vaultNftName, lockKeys: [ownerKey], validToMs: Number(expiry.validToMs),
-          ...((feePayer ?? funding?.feePayer) === undefined ? {} : { feePayerUtxo: refStr((feePayer ?? funding!.feePayer!).utxoRef) }),
+          ...feePayerRecordFields(feePayer ?? funding?.feePayer, plan.feeReservation),
         });
       }
       return {
@@ -1682,7 +1691,7 @@ function assertScopesSupported(scopes: VaultScope[], route: string): void {
   if (prepaid.length > 0) {
     throw new CodedApiError(501, "VAULT_KIND_UNSUPPORTED",
       `Loại két ${PREPAID_VAULT_TYPE} không đi qua route ${route} — két Prepaid chỉ được dựng qua ` +
-      `hành trình tài trợ "/tx/sponsor/*" (t1-open · t2-fund · t3-draw · t4-first-consume).`,
+      `hành trình tài trợ "/tx/sponsor/*" (open-vault · bind-did · open-fund · fund-vault · draw-magic · first-consume).`,
       { vault_type: PREPAID_VAULT_TYPE, route, addresses: prepaid.map(s => s.address), use_instead: "/tx/sponsor/*" });
   }
 }

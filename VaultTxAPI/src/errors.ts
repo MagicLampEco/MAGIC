@@ -69,6 +69,11 @@
 //   501 FEE_PROXY_UNAVAILABLE    bản deploy không khai `feecover`
 //   502 FEE_PROXY_UPSTREAM       Feecover không trả lời / trả 5xx / trả sai hình dạng
 //   502 FEE_PROXY_UPSTREAM_MISMATCH  Feecover ký một tx có hash khác tx đã gửi
+//   400 FEE_PROXY_SOURCE_INVALID `/fee/utxo` / `/fee/sign`: `source` khác "feecover" / "sponsor"
+//   400 FEE_PROXY_SOURCE_MISMATCH  `/fee/sign`: `source` (vắng = feecover) khác nguồn của lượt giữ UTxO phí
+//   502 FEE_SOURCE_NOT_CONFIRMED Feecover không xác nhận ĐÚNG nguồn đã xin: xin sponsor mà câu trả lời
+//                                vắng `source`, hoặc câu trả lời mang `source` khác nguồn đã xin —
+//                                `details.source`, `details.confirmed_source`; không ghi lượt giữ, không giao chữ ký
 //   400 WAKEME_VAULT_REF_REQUIRED  `/tx/consume` làm mới checkpoint của két đang ghim két Wakeme
 //                                (`wakeme_link` khác "") mà thân bài không kèm `wakeme_vault_ref`
 //   400 INSTANT_GEN_M_INVALID    `m` của `/tx/instant-gen` vắng / không phải chuỗi chữ số / bằng 0

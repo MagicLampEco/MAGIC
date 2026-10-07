@@ -27,6 +27,8 @@ import { getAddressDetails, validatorToScriptHash } from "@lucid-evolution/lucid
 import { FEE_PAYER_DEFAULT_COLLATERAL_LOVELACE, type Network } from "@magiclamp/protocol-utils";
 import { assertLampPolicyId, SUPERSEDED_LAMP_POLICIES } from "@magiclamp/sdk";
 
+import { canonicalDatumCbor } from "./sponsorFund.js";
+
 import { FEE_PURPOSE_ROUTES, type FeePurposeRoute } from "./locks.js";
 import { parseBasePath } from "./basePath.js";
 import { DEFAULT_TX_VALIDITY_MS } from "./validity.js";
@@ -152,24 +154,47 @@ export interface PrepaidDeployment {
    */
   carpUnit?: string;
   /**
-   * Ghim bên tài trợ cho T2 (khoá `paid_fund.sponsor`). TUỲ CHỌN để khối cũ vẫn nạp được; vắng ⟹
-   * `/tx/sponsor/t2-fund` trả 501 `CONFIG_MISSING`, KHÔNG mặc định cho qua. Lý do có nó: thân bài T2
+   * Ghim bên tài trợ cho fund-vault (khoá `paid_fund.sponsor`). TUỲ CHỌN để khối cũ vẫn nạp được; vắng ⟹
+   * `/tx/sponsor/fund-vault` trả 501 `CONFIG_MISSING`, KHÔNG mặc định cho qua. Lý do có nó: thân bài fund-vault
    * do người gọi viết, nên mọi thứ quyết TIỀN của bên tài trợ đi đâu phải đối chiếu với một giá trị
-   * mà người gọi không viết được — `sponsor.ts` ▸ `assertT2PinnedInputs` (trước khi dựng) và
-   * `assertT2PinnedOutputs` (đọc lại CBOR sau khi dựng).
+   * mà người gọi không viết được — `sponsor.ts` ▸ `assertFundPinnedInputs` (trước khi dựng) và
+   * `assertFundPinnedOutputs` (đọc lại CBOR sau khi dựng).
    */
   sponsor?: SponsorPins;
 }
 
-/** Khối `paid_fund.sponsor`: `{ fund_units: [...], addresses: [...], max_carp_amount: "<chữ số>" }`. */
+/**
+ * Khối `paid_fund.sponsor`: `{ [fund_units: [...]], [platform_pkhs: [...]], addresses: [...], max_carp_amount: "<chữ số>",
+ *   [beneficiary: "<bech32>"], [beneficiary_datum: "<cbor hex>"], [buffer_bps: "<chữ số>"] }`.
+ * Phải có ÍT NHẤT MỘT trong `fund_units` / `platform_pkhs` — cả hai vắng thì không có gốc tin cậy nào
+ * cho quỹ (`sponsorFund.ts`, đầu tệp).
+ */
 export interface SponsorPins {
-  /** Unit NFT quỹ được phép nạp (`paid_fund hash ‖ fund_id`). Quỹ ngoài tập ⟹ 422. */
-  fundUnits: readonly string[];
+  /** Unit NFT quỹ được phép nạp (`paid_fund hash ‖ fund_id`). Có ⟹ quỹ ngoài tập ⟹ 422. */
+  fundUnits?: readonly string[];
+  /**
+   * Khoá `platform` (pkh 56 hex) được tin. Có ⟹ dịch vụ quét địa chỉ quỹ (khi `fundUnits` vắng) và chỉ
+   * nhận quỹ có `datum.platform` thuộc tập này: genesis quỹ đòi chữ ký `platform`
+   * (`PrepaidGen/offchain/src/prepaid.ts` ▸ `assertFundGenesis`), nên kẻ gọi không đúc được quỹ mang
+   * platform đã ghim. Có cùng `fundUnits` ⟹ quỹ phải thoả CẢ HAI.
+   */
+  platformPkhs?: readonly string[];
   /** Địa chỉ bech32 (NGUYÊN VĂN, cả phần stake) của ví bên tài trợ: mọi UTxO trong
    *  `sponsor.utxo_refs` phải nằm ở đúng một địa chỉ trong tập này, và phần thối về lại đúng nó. */
   addresses: readonly string[];
-  /** Trần carpdrop một lượt T2. */
+  /** Trần carpdrop một lượt fund-vault. */
   maxCarpAmount: bigint;
+  /**
+   * Đích nhận CARP (`PaidFundDatum.beneficiary`) ghi vào quỹ mà `/tx/sponsor/open-fund` tạo cho một DID —
+   * bất biến trọn đời quỹ (`prepaid.ak` ▸ `fund_common_checks`). Vắng ⟹ open-fund trả 501 `CONFIG_MISSING`.
+   * Cũng là GHIM khi đọc quỹ: có ⟹ quỹ có đích khác (địa chỉ hoặc datum) mang `foreign_beneficiary`
+   * (`sponsorFund.ts`). BẮT BUỘC khi quét theo `platformPkhs` mà không có `fundUnits` (khởi động ném).
+   * Kiểm lúc khởi động đúng các vế genesis ép (`validate_mint_fund_nft`): không stake; khoá ≠ mọi
+   * `platform_pkhs`; payment ≠ payment của mọi `addresses` (chặn tự hưởng); script ⟹ phải có datum.
+   */
+  beneficiary?: { address: string; datumCbor?: string };
+  /** `buffer_bps` của quỹ open-fund tạo. Vắng ⟹ `MIN_BUFFER_BPS` của PrepaidGen. Bất biến trọn đời quỹ. */
+  bufferBps?: bigint;
 }
 
 /** Mục `did_stake` của cấu hình triển khai. */
@@ -318,11 +343,18 @@ export interface AppConfig {
   token: string;
   /**
    * Thẻ bài VAI `sponsor` (biến `VAULT_TX_API_SPONSOR_TOKEN`) — thẻ DUY NHẤT mở được
-   * `/tx/sponsor/t2-fund`, và nó KHÔNG mở route nào khác (`http.ts` ▸ `requireRole`). Rỗng ⟹ T2 trả
-   * 501 `CONFIG_MISSING` kể cả trên loopback: T2 là bước chi tiền của bên tài trợ, không có "chế độ
+   * `/tx/sponsor/fund-vault`, và nó KHÔNG mở route nào khác (`http.ts` ▸ `requireRole`). Rỗng ⟹ fund-vault trả
+   * 501 `CONFIG_MISSING` kể cả trên loopback: fund-vault là bước chi tiền của bên tài trợ, không có "chế độ
    * không thẻ" cho nó.
    */
   sponsorToken: string;
+  /**
+   * Platform key of the sponsor fund genesis (`VAULT_TX_API_PLATFORM_KEY`, bech32 `ed25519_sk…` VALUE, never a
+   * path). The only key this service holds: `server.ts` hands it to the signer module (`platformSigner.ts`)
+   * at startup (key hash must equal `paid_fund.sponsor.platform_pkhs[0]`, value must differ from every bearer
+   * token) and drops it from this object. Absent ⟹ routes that create a fund answer 501 `CONFIG_MISSING`.
+   */
+  platformKey?: string;
   requestTimeoutMs: number;
   /** Khoá mềm theo chủ sống bao lâu (`VAULT_TX_API_LOCK_TTL_MS`). CHỈ điều khiển khoá mềm — từ
    *  2026-10-06 nó KHÔNG còn là `expires_at`, không còn quyết hạn sổ phát-hành hay sổ input vừa nộp. */
@@ -408,14 +440,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       `Từ chối khởi động: đặt thẻ bài, hoặc bind về 127.0.0.1.`,
     );
   }
+  if (token === "" && basePath !== "") {
+    // FAIL-CLOSED. Tiền tố đường chỉ có nghĩa khi đứng sau một proxy định tuyến theo đường, và proxy
+    // biến loopback thành cổng mở ra ngoài: nhánh loopback ngay trên không bắt được ca đó. Đo 2026-10-07:
+    // một tiến trình bind 127.0.0.1 sau đường hầm, tiền tố "/vaulttx/preprod", không thẻ, trả 200 cho
+    // `POST /tx/consume` gửi từ internet không kèm `Authorization`.
+    throw new Error(
+      `[config] VAULT_TX_API_BASE_PATH="${basePath}" (dịch vụ đứng sau proxy) mà VAULT_TX_API_TOKEN rỗng. ` +
+      `Từ chối khởi động: proxy mở cổng loopback ra ngoài, nên phải đặt thẻ bài.`,
+    );
+  }
 
   const sponsorToken = env.VAULT_TX_API_SPONSOR_TOKEN || "";
   if (sponsorToken !== "" && sponsorToken === token) {
-    // Hai vai một thẻ là không có vai: ai cầm thẻ thường cũng mở được T2.
+    // Hai vai một thẻ là không có vai: ai cầm thẻ thường cũng mở được fund-vault.
     throw new Error(
       "[config] VAULT_TX_API_SPONSOR_TOKEN trùng VAULT_TX_API_TOKEN — thẻ vai sponsor phải là thẻ RIÊNG.",
     );
   }
+
+  // Platform key of the sponsor fund genesis: read as a VALUE here, checked and taken over by `platformSigner.ts`.
+  const platformKey = env.VAULT_TX_API_PLATFORM_KEY || undefined;
 
   const requestTimeoutMs = intOrThrow(env.VAULT_TX_API_TIMEOUT_MS, "VAULT_TX_API_TIMEOUT_MS", 20_000, 100, 600_000);
   const lockTtlMs = intOrThrow(env.VAULT_TX_API_LOCK_TTL_MS, "VAULT_TX_API_LOCK_TTL_MS", 180_000, 1_000, 3_600_000);
@@ -444,6 +489,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     txValidityMs, pendingSpendsTtlMs,
     extraBlocks,
     ...(feecoverAppToken === undefined ? {} : { feecoverAppToken }),
+    ...(platformKey === undefined ? {} : { platformKey }),
   };
 }
 
@@ -931,6 +977,20 @@ export function parseDeployment(rawJson: string, network: Network): Deployment {
 }
 
 /**
+ * Khoá CŨ của bảng mục đích cho bốn route tài trợ (đổi tên 2026-10-06, `ChangeLog.md` ▸ "quỹ tài trợ
+ * chung") → khoá mới. Chỉ bảng mục đích nhận tên cũ, và chỉ vì nó nằm trong TỆP CẤU HÌNH đang chạy ở
+ * máy dịch vụ: bỏ thẳng thì lượt khởi động kế tiếp NÉM ở `parseFeecover` dưới đây và dịch vụ không lên.
+ * Đường HTTP và `/fee/utxo` ▸ `route` không nhận tên cũ (đã đo: không bên gọi nào dùng chúng). Gỡ bảng
+ * này khi tệp cấu hình đang chạy đã đổi sang tên mới.
+ */
+const LEGACY_SPONSOR_PURPOSE_KEYS: Readonly<Record<string, FeePurposeRoute>> = {
+  "sponsor-t1-open": "sponsor-open-vault",
+  "sponsor-t2-fund": "sponsor-fund-vault",
+  "sponsor-t3-draw": "sponsor-draw-magic",
+  "sponsor-t4-first-consume": "sponsor-first-consume",
+};
+
+/**
  * Khối `feecover`: `{ url, [timeout_ms], apps: { <app>: { [token_sha256], purposes: { <route>: <mục đích> } } } }`.
  * Mọi chỗ lạ đều NÉM — một bảng mục đích gõ sai route là một route lặng lẽ không xin được phí.
  */
@@ -989,7 +1049,13 @@ function parseFeecover(raw: unknown): FeecoverSettings {
     }
     const pRaw = obj(a.purposes, `feecover.apps.${name}.purposes`);
     const purposes = new Map<FeePurposeRoute, string>();
-    for (const [route, purpose] of Object.entries(pRaw)) {
+    for (const [rawRoute, purpose] of Object.entries(pRaw)) {
+      const route = LEGACY_SPONSOR_PURPOSE_KEYS[rawRoute] ?? rawRoute;
+      if (route !== rawRoute && Object.hasOwn(pRaw, route)) {
+        throw new Error(
+          `[config] feecover.apps.${name}.purposes có cả "${rawRoute}" (tên cũ) lẫn "${route}" (tên mới) — giữ MỘT, tên mới.`,
+        );
+      }
       if (!(FEE_PURPOSE_ROUTES as readonly string[]).includes(route)) {
         throw new Error(
           `[config] feecover.apps.${name}.purposes: route "${route}" không có. Nhận: ${FEE_PURPOSE_ROUTES.join(" | ")}.`,
@@ -1116,7 +1182,20 @@ function parseSponsorPins(v: unknown, prefix: string, network: Network, fundScri
     if (new Set(out).size !== out.length) throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.${where} có mục trùng.`);
     return out;
   };
-  const fundUnits = list(o.fund_units, "paid_fund.sponsor.fund_units").map((u, i) => {
+  if (o.fund_units === undefined && o.platform_pkhs === undefined) {
+    throw new Error(
+      `[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor phải có "fund_units" (tập quỹ ghim) hoặc ` +
+      `"platform_pkhs" (khoá platform được tin) — thiếu cả hai thì không có gốc tin cậy cho quỹ tài trợ.`,
+    );
+  }
+  const platformPkhs = o.platform_pkhs === undefined ? undefined
+    : list(o.platform_pkhs, "paid_fund.sponsor.platform_pkhs").map((h, i) => {
+      if (!/^[0-9a-f]{56}$/.test(h)) {
+        throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.platform_pkhs[${i}] phải là 56 ký tự hex thường.`);
+      }
+      return h;
+    });
+  const fundUnits = o.fund_units === undefined ? undefined : list(o.fund_units, "paid_fund.sponsor.fund_units").map((u, i) => {
     const where = `paid_fund.sponsor.fund_units[${i}]`;
     unit(u, where);
     const nameLen = (u.length - 56) / 2;
@@ -1160,7 +1239,98 @@ function parseSponsorPins(v: unknown, prefix: string, network: Network, fundScri
   if (maxCarpAmount <= 0n) {
     throw new Error("[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.max_carp_amount phải > 0.");
   }
-  return { fundUnits, addresses, maxCarpAmount };
+  const beneficiary = o.beneficiary === undefined ? undefined
+    : parseFundBeneficiary(o.beneficiary, o.beneficiary_datum, prefix, network, fundScriptHash, platformPkhs ?? [], addresses);
+  if (beneficiary === undefined && o.beneficiary_datum !== undefined) {
+    throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum đi kèm "beneficiary"; thiếu "beneficiary".`);
+  }
+  // Đường QUÉT (platform_pkhs, không fund_units) tin MỌI quỹ do khoá platform đúc. Khoá đó lộ ⟹ kẻ giữ nó đúc quỹ
+  // mang đúng ví bên tài trợ + đúng DID nạn nhân, đích nhận CARP = ví mình, và fund-vault chi CARP vào đó. Ghim
+  // `beneficiary` là vế duy nhất kẻ đó không viết được (`sponsorFund.ts` ▸ `foreign_beneficiary`) ⟹ bắt buộc.
+  // Có `fund_units` (tập đóng, người vận hành duyệt từng quỹ) ⟹ tuỳ chọn; có thì vẫn kiểm.
+  if (fundUnits === undefined && platformPkhs !== undefined && beneficiary === undefined) {
+    throw new Error(
+      `[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor quét quỹ theo "platform_pkhs" (không có "fund_units") thì ` +
+      `BẮT BUỘC có "beneficiary" (+ "beneficiary_datum" nếu đích là script) — thiếu nó, quỹ do khoá platform đúc với ` +
+      `đích nhận CARP lạ vẫn được tin.`,
+    );
+  }
+  let bufferBps: bigint | undefined;
+  if (o.buffer_bps !== undefined) {
+    if (typeof o.buffer_bps !== "string" || !/^[0-9]{1,5}$/.test(o.buffer_bps) || BigInt(o.buffer_bps) > 10_000n) {
+      throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.buffer_bps phải là CHUỖI chữ số 0–10000.`);
+    }
+    bufferBps = BigInt(o.buffer_bps);
+  }
+  return {
+    ...(fundUnits === undefined ? {} : { fundUnits }),
+    ...(platformPkhs === undefined ? {} : { platformPkhs }),
+    addresses, maxCarpAmount,
+    ...(beneficiary === undefined ? {} : { beneficiary }),
+    ...(bufferBps === undefined ? {} : { bufferBps }),
+  };
+}
+
+/**
+ * `paid_fund.sponsor.beneficiary` (+ `beneficiary_datum`, CBOR hex) — đích nhận CARP của quỹ open-fund tạo.
+ * Các vế ở đây là gương của `validate_mint_fund_nft` (`PrepaidGen/onchain/validators/prepaid.ak`): sai một vế
+ * thì mọi tx open-fund chết trên chuỗi sau khi Feecover đã ký, nên chặn lúc khởi động.
+ */
+function parseFundBeneficiary(
+  v: unknown, datum: unknown, prefix: string, network: Network, fundScriptHash: string,
+  platformPkhs: readonly string[], sponsorAddresses: readonly string[],
+): { address: string; datumCbor?: string } {
+  const where = "paid_fund.sponsor.beneficiary";
+  const a = str(v, where);
+  let d;
+  try {
+    d = getAddressDetails(a);
+  } catch (e) {
+    throw new Error(`[config] ${where} không giải mã được: ${(e as Error).message}`);
+  }
+  if (d.address.bech32 !== a) throw new Error(`[config] ${where} không ở dạng bech32 chính tắc (chữ thường).`);
+  if (!a.startsWith(prefix)) throw new Error(`[config] ${where} không mang tiền tố "${prefix}" của mạng ${network}.`);
+  if (d.stakeCredential !== undefined) {
+    throw new Error(`[config] ${where} không được mang phần stake (genesis quỹ ép beneficiary.stake_credential == None).`);
+  }
+  const pay = d.paymentCredential;
+  if (pay === undefined) throw new Error(`[config] ${where} không có phần thanh toán.`);
+  if (pay.type === "Key" && platformPkhs.includes(pay.hash)) {
+    throw new Error(`[config] ${where} trùng khoá platform đã ghim — genesis quỹ chặn tự hưởng (khoá ≠ platform).`);
+  }
+  for (const s of sponsorAddresses) {
+    const sp = getAddressDetails(s).paymentCredential;
+    if (sp !== undefined && sp.type === pay.type && sp.hash === pay.hash) {
+      throw new Error(`[config] ${where} cùng phần thanh toán với ví bên tài trợ ${s} — genesis quỹ chặn tự hưởng.`);
+    }
+  }
+  if (pay.type === "Script" && pay.hash === fundScriptHash) {
+    throw new Error(`[config] ${where} trùng script quỹ — mọi FundClaim chết, CARP kẹt.`);
+  }
+  if (datum !== undefined) {
+    const c = str(datum, "paid_fund.sponsor.beneficiary_datum");
+    if (!/^(?:[0-9a-f]{2})+$/.test(c)) {
+      throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum phải là CBOR hex thường.`);
+    }
+    // CHUẨN HOÁ MỘT LẦN, ở đây: giải mã rồi mã hoá lại bằng đúng codec bộ dựng claim dùng
+    // (`sponsorFund.ts` ▸ `canonicalDatumCbor` = `Data.to(Data.from(c))`). Cùng một giá trị Plutus Data có nhiều cách
+    // viết CBOR (mảng định độ dài `d8798142abcd` và không định độ dài `d8799f42abcdff`); validator so GIÁ TRỊ, còn
+    // output claim do Lucid mã hoá luôn ra dạng thứ hai. Giữ nguyên chuỗi người vận hành gõ thì hàm ký platform
+    // (`platformSigner.ts`, nhánh `fund-claim`) từ chối MỌI claim của quỹ — CARP của bên hưởng kẹt. Hàm ký tự kiểm
+    // lúc khởi động rằng datum ghim đã ở dạng chuẩn, nên gỡ bước này là dịch vụ không khởi động được.
+    // Hex không phải Plutus Data thì chết ở đây, không phải ở yêu cầu đầu tiên.
+    let canonical: string;
+    try {
+      canonical = canonicalDatumCbor(c);
+    } catch (e) {
+      throw new Error(`[config] VAULT_TX_API_DEPLOYMENT.paid_fund.sponsor.beneficiary_datum không giải mã được thành Plutus Data: ${(e as Error).message}`);
+    }
+    return { address: a, datumCbor: canonical };
+  }
+  if (pay.type === "Script") {
+    throw new Error(`[config] ${where} là script thì BẮT BUỘC có "beneficiary_datum" (genesis quỹ ép).`);
+  }
+  return { address: a };
 }
 
 /**
@@ -1189,4 +1359,21 @@ function assertReadableBlueprint(path: string, label = "VAULT_TX_API_VAULT_PLUTU
   if (!Array.isArray(validators) || validators.length === 0) {
     throw new Error(`[config] ${label} thiếu mảng \`validators\` — không phải blueprint Aiken.`);
   }
+}
+
+/**
+ * Gỡ khoá platform khỏi `process.env` SAU khi `loadConfig` đã đọc nó (`server.ts` gọi ngay sau `loadConfig`), để
+ * tiến trình con không thừa hưởng. Phạm vi: `delete` gọi `unsetenv`, nên chỉ đóng đường tiến trình CON. Vùng môi
+ * trường ban đầu của tiến trình (macOS KERN_PROCARGS2 — thứ `ps eww <pid>` đọc; Linux `/proc/<pid>/environ`) vẫn
+ * giữ nguyên giá trị, đọc được bởi cùng uid hoặc root. Đóng hẳn đường đó cần đổi kênh nhận khoá — ngoài phạm vi ở đây.
+ */
+export function scrubPlatformKey(env: NodeJS.ProcessEnv = process.env): void {
+  delete env.VAULT_TX_API_PLATFORM_KEY;
+}
+
+/** Môi trường TƯỜNG MINH cho tiến trình con (`buildInfo.ts` gọi `git`): bản sao không có khoá platform. */
+export function childProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env };
+  delete out.VAULT_TX_API_PLATFORM_KEY;
+  return out;
 }

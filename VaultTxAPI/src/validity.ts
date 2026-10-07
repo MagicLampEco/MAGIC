@@ -4,7 +4,7 @@
 // Trước bản này dịch vụ có BỐN đồng hồ cùng mượn một con số `lock_ttl_ms`: khoá mềm, `expires_at`
 // trả app, sổ phát-hành (`× 4`) và sổ input vừa nộp. Còn hạn THẬT — thứ sổ cái ép — là `validTo`
 // trong thân tx, và nó khác theo route: 1 giờ (ví trả phí), cuối epoch (gen/consume/schedule),
-// 10 phút (tài trợ T2/T3), hoặc KHÔNG CÓ (create-vault/open-thread/bind-did đường `change_address`).
+// 10 phút (tài trợ fund-vault/draw-magic), hoặc KHÔNG CÓ (create-vault/open-thread/bind-did đường `change_address`).
 // App hiện `expires_at` cho người dùng, nên người dùng đọc một mốc không nói gì về tx họ ký.
 //
 // Luật mới, một câu: dịch vụ CHỌN cận trên (`planValidity`), bộ dựng ghi nó vào thân, rồi dịch vụ
@@ -15,7 +15,7 @@
 // Ba giá trị, mỗi giá trị là MỘT cận đã thắng phép `min`:
 //   · `tx_validity`     — hạn ký cấu hình (`VAULT_TX_API_TX_VALIDITY_MS`, mặc định 15 phút);
 //   · `epoch_end`       — route mà validator đòi hai cận validity CÙNG một epoch giao thức
-//                         (gen, consume, schedule, tài trợ T2–T4): cuối epoch tới trước;
+//                         (gen, consume, schedule, tài trợ fund-vault, draw-magic, first-consume): cuối epoch tới trước;
 //   · `fee_reservation` — UTxO ví trả phí xin qua `/fee/utxo` hết giờ giữ chỗ ở Feecover
 //                         (`reserved_until`) trước: sau mốc đó UTxO đó có thể đã giao cho tx khác.
 // Không có `funding_cap` (trần 1 giờ của ví trả phí, `FUNDING_MAX_VALIDITY_MS`): hạn ký cấu hình
@@ -116,11 +116,15 @@ export function planValidity(p: PlanValidityInput): ValidityPlan {
  *   · `absent`   — sổ không có lượt giữ nào cho UTxO đó: đã bị bộ quét dọn sau `reserved_until`, bị
  *                  bỏ khi tx dùng nó bị thay, hoặc chưa từng phát qua `/fee/utxo` của tiến trình này;
  *   · `expired`  — lượt giữ còn trong sổ nhưng `reserved_until` đã qua (bộ quét chưa tới lượt);
- *   · `exceeded` — chỉ ở `/fee/sign`: `validTo` của tx vượt `reserved_until` hiện có của UTxO.
- * Cả ba cùng MỘT việc phải làm phía app: xin UTxO mới qua `/fee/utxo` rồi dựng lại — nên cùng mã
+ *   · `exceeded` — chỉ ở `/fee/sign`: `validTo` của tx vượt `reserved_until` hiện có của UTxO;
+ *   · `foreign`  — lượt giữ đang sống của UTxO là lượt KHÁC lượt mà yêu cầu / tx mang theo
+ *                  (`fee_payer.reservation_id` lệch, hoặc tx dựng trên một lượt giữ đã được thay):
+ *                  Feecover đã giao lại UTxO đó, có thể cho người khác (`locks.ts` ▸ khối "MÃ LƯỢT
+ *                  GIỮ"). `reserved_until` của lượt giữ kia KHÔNG trả ra (`null`): nó là của người khác.
+ * Cả bốn cùng MỘT việc phải làm phía app: xin UTxO mới qua `/fee/utxo` rồi dựng lại — nên cùng mã
  * `FEE_PAYER_RESERVATION_EXPIRED` (app đang xử mã này đúng như thế), khác nhau ở trường này.
  */
-export type FeeReservationProblem = "absent" | "expired" | "exceeded";
+export type FeeReservationProblem = "absent" | "expired" | "exceeded" | "foreign";
 
 /** 409 `FEE_PAYER_RESERVATION_EXPIRED` cho một UTxO Feecover không còn lượt giữ dùng được. */
 export function feeReservationError(
@@ -133,7 +137,9 @@ export function feeReservationError(
     ? `không còn lượt giữ chỗ nào ở dịch vụ (đã hết giờ và bị dọn, hoặc chưa từng xin qua POST /fee/utxo)`
     : reservation === "expired"
       ? `đã hết giờ giữ chỗ ở Feecover (reserved_until ${at})`
-      : `được giữ chỗ tới ${at}, sớm hơn hạn của giao dịch`;
+      : reservation === "foreign"
+        ? `đang thuộc một lượt giữ chỗ KHÁC lượt mà yêu cầu mang theo (reservation_id lệch)`
+        : `được giữ chỗ tới ${at}, sớm hơn hạn của giao dịch`;
   return new CodedApiError(409, "FEE_PAYER_RESERVATION_EXPIRED",
     `UTxO ví trả phí${which} của Feecover ${why}: Feecover có thể đã giao nó cho ` +
     `giao dịch khác. Gọi lại POST /fee/utxo để xin UTxO mới rồi dựng lại.`,

@@ -17,6 +17,8 @@
 
 import { execFileSync } from "node:child_process";
 
+import { childProcessEnv } from "./config.js";
+
 export interface BuildInfo {
   commit: string | null;
   dirty: boolean | null;
@@ -29,7 +31,11 @@ export interface BuildInfo {
 export type GitRunner = (args: string[], cwd: string) => string;
 
 const defaultRunner: GitRunner = (args, cwd) =>
-  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("git", args, {
+    cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 5000,
+    // Môi trường tường minh, không có khoá platform (`config.ts` ▸ `childProcessEnv`).
+    env: childProcessEnv(),
+  });
 
 export function readBuildInfo(cwd: string, run: GitRunner = defaultRunner): BuildInfo {
   let commit: string;

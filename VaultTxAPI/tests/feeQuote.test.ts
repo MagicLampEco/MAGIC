@@ -13,11 +13,13 @@ import {
   PROTOCOL_PARAMETERS_DEFAULT, credentialToAddress, getAddressDetails, scriptHashToCredential, unixTimeToSlot,
   validatorToScriptHash, type UTxO,
 } from "@lucid-evolution/lucid";
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 import { RecordedChainReader, type ChainTip } from "../src/chain.js";
 import { parseDeployment, type Deployment } from "../src/config.js";
 import { FEE_SOURCES_TIMEOUT_MS, FeeProxy, type FetchLike } from "../src/feeProxy.js";
+import { OWNER_ADDRESS_SOURCE, ownerCommitOf } from "../src/feeQuote.js";
 import { ChainDidPaymentAnchorReader } from "../src/funding.js";
 import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable, type IssuedRoute } from "../src/locks.js";
@@ -1014,5 +1016,174 @@ describe("FeeProxy.feeSources — hết giờ FEE_SOURCES_TIMEOUT_MS", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ── fee_sources: ba khối của /v1/fee-sources, chuyển NGUYÊN ───────────────────────
+
+/** Khối `owner_address` như Feecover (nhánh nguồn sponsor) dựng. */
+const FC_OWNER_BLOCK = {
+  available: true, requires_app_check: true, user_pays: "network_fee_ada",
+  message: "Ví Phoenix của người dùng tự trả phí mạng; Feecover không ký và không thấy số dư — ứng dụng tự kiểm ADA và thế chấp.",
+};
+/** Feecover ba nguồn: trả `extra` đè lên thân 200 (khối vắng = `undefined` ⟹ không gửi). */
+const feecoverThree = (extra: Record<string, unknown> = {}): FeecoverReply => async (url) => {
+  if (new URL(url).pathname !== "/v1/fee-sources") return reply(500, "");
+  const body: Record<string, unknown> = {
+    purpose: purposeOf(url),
+    owner_address: FC_OWNER_BLOCK,
+    feecover: { available: true, user_pays: "carp", payer_proof_required: false },
+    sponsor: { available: true, user_pays: "nothing", budget_remaining_24h_lovelace: "5000000" },
+    ...extra,
+  };
+  for (const k of Object.keys(body)) if (body[k] === undefined) delete body[k];
+  return reply(200, body);
+};
+type Sources = { owner_address: Record<string, unknown>; feecover: Record<string, unknown>; sponsor: Record<string, unknown> };
+const sourcesOf = (r: { status: number; body: unknown }) => (bodyOf(r) as unknown as { fee_sources: Sources }).fee_sources;
+const askSources = async (feecoverReply?: FeecoverReply, o: HarnessOpts = {}) => {
+  const h = harness({ feecover: FEECOVER_MAGIC, ...(feecoverReply === undefined ? {} : { feecoverReply }), ...o });
+  const r = await handle(quote({ route: "consume", params: CONSUME }), h.router);
+  return { h, r, fs: sourcesOf(r) };
+};
+
+// Review #159 mục 4: báo giá hỏi Feecover dưới ĐÚNG ứng dụng mà `/fee/utxo` sẽ dùng.
+const QUOTE_ORILIFE_TOKEN = "orilife-app-token-for-tests-" + "z".repeat(20);
+const FEECOVER_TWO_APPS = {
+  url: "https://feecover.example",
+  apps: {
+    magic: { purposes: { consume: "consume_magic" } },
+    orilife: {
+      token_sha256: createHash("sha256").update(QUOTE_ORILIFE_TOKEN, "utf8").digest("hex"),
+      purposes: { consume: "orilife_consume_magic" },
+    },
+  },
+};
+const quoteWith = (headers: Record<string, string>) =>
+  ({ method: "POST", url: "/tx/quote", headers, body: { route: "consume", params: CONSUME } });
+
+describe("/tx/quote — X-Feecover-Token", () => {
+  it("CẶP: gửi token orilife ⟹ /v1/fee-sources hỏi bằng token + mục đích của orilife (như /fee/utxo); không gửi ⟹ magic", async () => {
+    const h = harness({ feecover: FEECOVER_TWO_APPS });
+    const a = await handle(quoteWith({ "x-feecover-token": QUOTE_ORILIFE_TOKEN }), h.router);
+    expect(bodyOf(a).feecover.available).toBe(true);
+    const b = await handle(quoteWith({}), h.router);
+    expect(bodyOf(b).feecover.available).toBe(true);
+    expect(h.fetchLog.map(c => [purposeOf(c.url), c.init.headers])).toEqual([
+      ["orilife_consume_magic", { authorization: `Bearer ${QUOTE_ORILIFE_TOKEN}` }],
+      ["consume_magic", { authorization: `Bearer ${MAGIC_TOKEN}` }],
+    ]);
+    expect(JSON.stringify(a.body)).not.toContain(QUOTE_ORILIFE_TOKEN);
+  });
+
+  it("CẶP: proxy KHÔNG cầm token magic ⟹ không gửi tiêu đề thì TOKEN_ABSENT; gửi token orilife thì vẫn hỏi được", async () => {
+    const h = harness({ feecover: FEECOVER_TWO_APPS, magicToken: null });
+    const none = bodyOf(await handle(quoteWith({}), h.router));
+    expect(none.feecover).toMatchObject({ available: false, reason: "FEE_QUOTE_FEECOVER_TOKEN_ABSENT" });
+    expect(h.fetchLog).toHaveLength(0);
+    const ori = bodyOf(await handle(quoteWith({ "x-feecover-token": QUOTE_ORILIFE_TOKEN }), h.router));
+    expect(ori.feecover.available).toBe(true);
+    expect(h.fetchLog.map(c => purposeOf(c.url))).toEqual(["orilife_consume_magic"]);
+  });
+
+  it("CẶP: token không khớp ứng dụng nào (kể cả token magic, chuỗi rỗng) ⟹ 401 FEE_PROXY_APP_UNKNOWN như /fee/*, Feecover KHÔNG bị hỏi; token đúng ⟹ 200", async () => {
+    const h = harness({ feecover: FEECOVER_TWO_APPS });
+    for (const t of ["not-a-known-token", MAGIC_TOKEN, ""]) {
+      const r = await handle(quoteWith({ "x-feecover-token": t }), h.router);
+      expect(r.status, JSON.stringify(t)).toBe(401);
+      expect(codeOf(r)).toBe("FEE_PROXY_APP_UNKNOWN");
+      expect(JSON.stringify(r.body)).not.toContain(MAGIC_TOKEN);
+    }
+    expect(h.fetchLog).toHaveLength(0);
+    const ok = await handle(quoteWith({ "x-feecover-token": QUOTE_ORILIFE_TOKEN }), h.router);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+  });
+});
+
+describe("/tx/quote — fee_sources", () => {
+  it("CẶP Feecover ba nguồn ⟹ ba khối NGUYÊN (kể cả trường lạ như giá CARP); Feecover cũ chỉ feecover ⟹ feecover nguyên, sponsor SPONSOR_NOT_REPORTED, owner_address do dịch vụ dựng", async () => {
+    const carp = { available: true, user_pays: "carp", payer_proof_required: false, repay_tcarp: "1200000" };
+    const three = await askSources(feecoverThree({ feecover: carp }));
+    expect(three.fs).toEqual({
+      owner_address: FC_OWNER_BLOCK,
+      feecover: carp,
+      sponsor: { available: true, user_pays: "nothing", budget_remaining_24h_lovelace: "5000000" },
+    });
+    const old = await askSources();
+    expect(old.fs).toEqual({
+      owner_address: { ...OWNER_ADDRESS_SOURCE },
+      feecover: { available: true },
+      sponsor: { available: false, reason: "FEE_QUOTE_SPONSOR_NOT_REPORTED", message: expect.any(String) },
+    });
+  });
+
+  it("CẶP trường vắng giữ VẮNG, không thành null: Feecover không gửi rule/did ⟹ không có khoá đó; gửi ⟹ có, đúng giá trị", async () => {
+    const bare = await askSources(feecoverThree());
+    expect("rule" in bare.fs.feecover).toBe(false);
+    expect("did" in bare.fs.sponsor).toBe(false);
+    expect(JSON.stringify(bare.r.body)).not.toContain("null");
+    const did = { owner_commit: "9000b767ee33c6ddf6b5fd558fff37c5fa082d3a584ae4f39d581234df24d94a", remaining_24h_lovelace: "0", remaining_txs_24h: 0 };
+    const full = await askSources(feecoverThree({
+      feecover: { available: false, rule: "L14", message: "ngoài cửa sổ", user_pays: "carp" },
+      sponsor: { available: false, rule: "L38", message: "DID này đã dùng hết suất sponsor 24 giờ.", user_pays: "nothing", did },
+    }));
+    expect(full.fs.feecover).toEqual({ available: false, rule: "L14", message: "ngoài cửa sổ", user_pays: "carp" });
+    expect(full.fs.sponsor.did).toEqual(did);
+    expect(full.fs.sponsor.rule).toBe("L38");
+  });
+
+  it("CẶP Feecover sập (fetch ném) ⟹ 200, feecover + sponsor available:false UNREACHABLE có message, owner_address vẫn có; Feecover sống ⟹ true", async () => {
+    const down = await askSources(async () => { throw new TypeError(`fetch failed ${MAGIC_TOKEN}`); });
+    expect(down.r.status).toBe(200);
+    for (const k of ["feecover", "sponsor"] as const) {
+      expect(down.fs[k]).toEqual({ available: false, reason: "FEE_QUOTE_FEECOVER_UNREACHABLE", message: expect.any(String) });
+    }
+    expect(down.fs.owner_address).toEqual({ ...OWNER_ADDRESS_SOURCE });
+    expect(JSON.stringify(down.r.body)).not.toContain(MAGIC_TOKEN);
+    const up = await askSources(feecoverThree());
+    expect(up.fs.feecover.available).toBe(true);
+    expect(up.fs.sponsor.available).toBe(true);
+  });
+
+  it("bản deploy không khai feecover ⟹ feecover + sponsor UNCONFIGURED, owner_address do dịch vụ dựng, báo giá vẫn 200", async () => {
+    const h = harness();
+    const fs = sourcesOf(await handle(quote({ route: "consume", params: CONSUME }), h.router));
+    expect(fs.feecover).toEqual({ available: false, reason: "FEE_QUOTE_FEECOVER_UNCONFIGURED", message: expect.any(String) });
+    expect(fs.sponsor).toEqual(fs.feecover);
+    expect(fs.owner_address).toEqual({ ...OWNER_ADDRESS_SOURCE });
+  });
+
+  it("CẶP khối sponsor sai hình dạng / chứa token ⟹ chỉ sponsor BAD_RESPONSE, feecover vẫn nguyên; sponsor đúng ⟹ nguyên", async () => {
+    for (const sponsor of [{ available: "yes" }, null, { available: true, message: `t ${MAGIC_TOKEN}` }]) {
+      const { fs, r } = await askSources(feecoverThree({ sponsor }));
+      expect(fs.sponsor, JSON.stringify(sponsor)).toEqual({ available: false, reason: "FEE_QUOTE_FEECOVER_BAD_RESPONSE", message: expect.any(String) });
+      expect(fs.feecover.available).toBe(true);
+      expect(JSON.stringify(r.body)).not.toContain(MAGIC_TOKEN);
+    }
+    const ok = await askSources(feecoverThree({ sponsor: { available: true } }));
+    expect(ok.fs.sponsor).toEqual({ available: true });
+  });
+
+  it("CẶP owner_commit: chủ khoá ⟹ Feecover KHÔNG nhận owner_commit; feeSources(route, commit) ⟹ URL mang đúng commit", async () => {
+    const plain = await askSources(feecoverThree());
+    expect(plain.h.fetchCalls).toEqual(["https://feecover.example/v1/fee-sources?purpose=consume_magic"]);
+    const calls: string[] = [];
+    const deployment = parseDeployment(JSON.stringify({ ...BASE_DEPLOYMENT, feecover: FEECOVER_MAGIC }), "Preview");
+    const proxy = new FeeProxy({
+      settings: deployment.feecover!, magicToken: MAGIC_TOKEN, issued: new IssuedTxRegistry(), now: () => NOW,
+      fetch: async (url, init) => { calls.push(url); return feecoverThree()(url, init); },
+    });
+    const commit = "9000b767ee33c6ddf6b5fd558fff37c5fa082d3a584ae4f39d581234df24d94a";
+    const a = await proxy.feeSources("consume", commit);
+    expect(calls).toEqual([`https://feecover.example/v1/fee-sources?purpose=consume_magic&owner_commit=${commit}`]);
+    expect(a.answered).toBe(true);
+  });
+
+  it("CẶP ownerCommitOf: chủ DID ⟹ blake2b_256(DID) (vector tính độc lập bằng Python hashlib); chủ khoá / chủ script ⟹ vắng", () => {
+    // Cùng vector với tests/didOwner.test.ts ▸ ANCHOR_NAME.
+    expect(ownerCommitOf({ owner: { type: "did", did: "did:phoenix:preprod:abc123" } }))
+      .toBe("9000b767ee33c6ddf6b5fd558fff37c5fa082d3a584ae4f39d581234df24d94a");
+    expect(ownerCommitOf({ owner_pkh: OWNER_PKH })).toBeUndefined();
+    expect(ownerCommitOf({ owner: { type: "key", hash: OWNER_PKH } })).toBeUndefined();
   });
 });

@@ -66,6 +66,7 @@ import { FUNDING_MAX_VALIDITY_MS, type Network, type OwnerAuth } from "@magiclam
 import type { ChainReader } from "./chain.js";
 import type { DidPaymentAddressResult } from "./didOwner.js";
 import { CodedApiError } from "./errors.js";
+import type { FeeReservation, IssuedTxMeta } from "./locks.js";
 import { raw } from "./units.js";
 
 export const OUTREF = /^([0-9a-f]{64})#(0|[1-9][0-9]{0,4})$/;
@@ -74,19 +75,25 @@ export interface OutRefLike { txHash: string; outputIndex: number }
 
 export const refStr = (r: OutRefLike): string => `${r.txHash}#${r.outputIndex}`;
 
-/** `{ utxo: "<txhash>#<idx>", address }` — cùng hình dạng ở `fee_payer` và `funding.fee_payer`. */
-export interface FeePayerRequest { utxoRef: OutRefLike; address: string }
+/** `{ utxo: "<txhash>#<idx>", address, [reservation_id] }` — cùng hình dạng ở `fee_payer` và
+ *  `funding.fee_payer`. `reservationId` = mã lượt giữ `/fee/utxo` trả (`locks.ts` ▸ khối "MÃ LƯỢT GIỮ"). */
+export interface FeePayerRequest { utxoRef: OutRefLike; address: string; reservationId?: string }
 
 /** Tên trường + mã lỗi theo CHỖ trường nằm (xem khối đầu tệp). `addressField` vắng ⟹
- *  `<field>.address`; báo giá (`feeQuote.ts`) kiểm một địa chỉ trần nên khai tên riêng. */
-export interface FeePayerCodes { field: string; shape: string; invalid: string; addressField?: string }
+ *  `<field>.address`; báo giá (`feeQuote.ts`) kiểm một địa chỉ trần nên khai tên riêng.
+ *  `reservationId` = trường nhận `reservation_id` (chỉ hai chỗ đặt UTxO Feecover; `funding.collateral`
+ *  là UTxO của chính chủ nên không nhận). */
+export interface FeePayerCodes { field: string; shape: string; invalid: string; addressField?: string; reservationId?: boolean }
 
 export const FUNDING_FEE_PAYER_CODES: FeePayerCodes = {
-  field: "funding.fee_payer", shape: "FUNDING_SHAPE", invalid: "FUNDING_FEE_PAYER_INVALID",
+  field: "funding.fee_payer", shape: "FUNDING_SHAPE", invalid: "FUNDING_FEE_PAYER_INVALID", reservationId: true,
 };
 export const FEE_PAYER_CODES: FeePayerCodes = {
-  field: "fee_payer", shape: "FEE_PAYER_SHAPE", invalid: "FEE_PAYER_INVALID",
+  field: "fee_payer", shape: "FEE_PAYER_SHAPE", invalid: "FEE_PAYER_INVALID", reservationId: true,
 };
+
+/** `reservation_id` đúng khuôn: 32 chữ hex thường = 128 bit ngẫu nhiên (`locks.ts` ▸ `newReservationId`). */
+export const RESERVATION_ID = /^[0-9a-f]{32}$/;
 
 // ── đọc thân bài ─────────────────────────────────────────────────────────────
 
@@ -96,14 +103,38 @@ export function parseFeePayerShape(fp: unknown, c: FeePayerCodes): FeePayerReque
     new CodedApiError(400, c.shape, `"${c.field}${sub}" phải là ${want}.`, { field: `${c.field}${sub}` });
   if (fp === null || typeof fp !== "object" || Array.isArray(fp)) throw bad("", `đối tượng { "utxo", "address" }`);
   const o = fp as Record<string, unknown>;
-  const extra = Object.keys(o).filter(k => k !== "utxo" && k !== "address");
+  const extra = Object.keys(o).filter(k => k !== "utxo" && k !== "address" && !(c.reservationId === true && k === "reservation_id"));
   if (extra.length > 0) {
     throw new CodedApiError(400, c.shape, `"${c.field}" có trường lạ: ${extra.join(", ")}.`, { extra_fields: extra });
   }
   const m = typeof o.utxo === "string" ? OUTREF.exec(o.utxo) : null;
   if (m === null) throw bad(".utxo", `chuỗi "<tx_hash 64 hex>#<index>"`);
   if (typeof o.address !== "string" || o.address === "") throw bad(".address", "chuỗi địa chỉ bech32 khác rỗng");
-  return { utxoRef: { txHash: m[1]!, outputIndex: Number(m[2]!) }, address: o.address };
+  // Vắng ⟹ hành vi trước bản này (bước 1). Có mặt mà sai khuôn ⟹ 400, KHÔNG coi như vắng: app gửi
+  // một id hỏng thì lượt dựng không được lặng lẽ rơi về đường không kiểm id.
+  const rid = o.reservation_id;
+  if (rid !== undefined && (typeof rid !== "string" || !RESERVATION_ID.test(rid))) {
+    throw bad(".reservation_id", "chuỗi 32 chữ hex thường, đúng như POST /fee/utxo trả ở fee_payer.reservation_id");
+  }
+  return {
+    utxoRef: { txHash: m[1]!, outputIndex: Number(m[2]!) }, address: o.address,
+    ...(rid === undefined ? {} : { reservationId: rid as string }),
+  };
+}
+
+/** Trường sổ phát-hành (`locks.ts` ▸ `IssuedTxMeta`) cho ví trả phí của một lượt dựng: UTxO + lượt
+ *  giữ mà CỔNG DỰNG đã thấy (`reservation` = giá trị `feeReservationForBuild` trả, chụp lúc qua cổng,
+ *  KHÔNG tra lại sổ lúc ghi). MỘT chỗ cho mọi route ghi sổ. */
+export function feePayerRecordFields(
+  fp: FeePayerRequest | undefined, reservation: FeeReservation | undefined,
+): Pick<IssuedTxMeta, "feePayerUtxo" | "feeReservationId" | "feeReservedUntilMs" | "feeReservationIdSent"> {
+  if (fp === undefined) return {};
+  return {
+    feePayerUtxo: refStr(fp.utxoRef),
+    ...(reservation === undefined ? {} : {
+      feeReservationId: reservation.id, feeReservedUntilMs: reservation.untilMs, feeReservationIdSent: fp.reservationId !== undefined,
+    }),
+  };
 }
 
 /** `fee_payer` ở gốc thân bài — tuỳ chọn, mọi đường dựng trừ `/tx/create-vault`. */

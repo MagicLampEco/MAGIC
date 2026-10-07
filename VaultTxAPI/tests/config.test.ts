@@ -323,7 +323,17 @@ describe("createVaultProtocol — ack đi từ tệp deploy tới createVault c�
 describe("VAULT_TX_API_BASE_PATH — tiền tố đường sau proxy", () => {
   it("vắng ⟹ basePath rỗng. CẶP: đặt ⟹ đọc đúng; sai dạng ⟹ từ chối khởi động", () => {
     expect(loadConfig(env()).basePath).toBe("");
-    expect(loadConfig(env({ VAULT_TX_API_BASE_PATH: "/vaulttx/preprod" })).basePath).toBe("/vaulttx/preprod");
-    expect(() => loadConfig(env({ VAULT_TX_API_BASE_PATH: "/vaulttx/preprod/" }))).toThrow(/VAULT_TX_API_BASE_PATH/);
+    expect(loadConfig(env({ VAULT_TX_API_BASE_PATH: "/vaulttx/preprod", VAULT_TX_API_TOKEN: "x".repeat(32) })).basePath)
+      .toBe("/vaulttx/preprod");
+    expect(() => loadConfig(env({ VAULT_TX_API_BASE_PATH: "/vaulttx/preprod/", VAULT_TX_API_TOKEN: "x".repeat(32) })))
+      .toThrow(/VAULT_TX_API_BASE_PATH/);
+  });
+
+  it("tiền tố đường mà thẻ bài rỗng ⟹ từ chối khởi động, kể cả trên loopback. CẶP: có thẻ ⟹ khởi động", () => {
+    expect(() => loadConfig(env({ VAULT_TX_API_BASE_PATH: "/vaulttx/preprod" }))).toThrow(/sau proxy/);
+    expect(() => loadConfig(env({ VAULT_TX_API_HOST: "127.0.0.1", VAULT_TX_API_BASE_PATH: "/vaulttx/preprod" })))
+      .toThrow(/VAULT_TX_API_TOKEN rỗng/);
+    expect(() => loadConfig(env({ VAULT_TX_API_BASE_PATH: "/vaulttx/preprod", VAULT_TX_API_TOKEN: "x".repeat(32) })))
+      .not.toThrow();
   });
 });

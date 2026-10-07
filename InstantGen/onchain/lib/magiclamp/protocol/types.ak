@@ -245,9 +245,10 @@ pub type VaultDatum {
   // 🪦 BIA MỘ trường 15 — quyền chết 2026-09-16 (Nợ #14), trường ở lại. Lý do
   // KHÔNG phải "gỡ ra thì vỡ decode mọi UTxO đã tạo": hash đã đổi nên UTxO đời
   // trước nằm ở địa chỉ khác, ngoài tầm với của validator này dù có gỡ hay không.
-  // Lý do thật: gỡ trường 15 đẩy mọi trường sau nó lên một chỉ số, và có bên đọc
-  // theo VỊ TRÍ — `Paymaster` ▸ `vault_delegate_is` gọi thẳng `list.at(fields, 15)`.
-  // Bên đó lấy nhầm trường và KHÔNG kêu; các bên đọc qua lược đồ thì hỏng ồn ào.
+  // Lý do thật: gỡ trường 15 đẩy mọi trường sau nó lên một chỉ số, mà thứ tự trường
+  // là hợp đồng nhị phân (`BOUNDARIES.md §2`): bên đọc theo VỊ TRÍ lấy nhầm trường và
+  // KHÔNG kêu; các bên đọc qua lược đồ thì hỏng ồn ào. Bên đọc thô trường 15 từng nêu
+  // ở đây, `Paymaster` ▸ `vault_delegate_is`, đã xoá cùng module ngày 2026-10-07.
   personal_delegate     : Option<ByteArray>,
   attribution           : VaultAttribution,
   // ── Trường 17: khoá LAMP sau một lượt sinh (`CC-GEN-L-TIMING`) ───────────────
@@ -323,9 +324,9 @@ pub type VaultDatum {
   // nhất. Ràng buộc TẠM đang có hiệu lực, fail-closed: CHỈ CHẠY TESTNET.
   //
   // ĐẶT Ở CUỐI vì có bên đọc theo VỊ TRÍ — xem bia mộ trường 15 ngay trên. Thêm ở
-  // cuối giữ nguyên chỉ số 0..16, nên `Paymaster` ▸ `vault_delegate_is`
-  // (`list.at(fields, 15)`) và `ConsumeMAGIC` ▸ `consume.ak` (đọc trường 0) không
-  // phải đụng gì.
+  // cuối giữ nguyên chỉ số 0..16, nên `ConsumeMAGIC` ▸ `consume.ak` (đọc trường 0)
+  // không phải đụng gì. (Bên đọc trường 15 từng nêu ở đây, `Paymaster` ▸
+  // `vault_delegate_is`, đã xoá cùng module ngày 2026-10-07.)
   //
   // KHÔNG có ở `ScheduleGen`: két bên đó không có nhánh sinh Instant, nên trường
   // này ở đó sẽ là một ô KHÔNG CÓ NGƯỜI GHI — phải trả bằng một cổng đông-cứng ở

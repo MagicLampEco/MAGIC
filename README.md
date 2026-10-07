@@ -47,7 +47,6 @@ MAGIC/
 ├── MagicSDK/             # Mặt tiền cho bên tích hợp
 ├── VaultReadAPI/         # Mặt tiền ĐỌC vault qua HTTP
 ├── VaultTxAPI/           # Mặt tiền DỰNG giao dịch qua HTTP
-├── Paymaster/            # Trả phí hộ (SponsorMeter)
 ├── FlowRate/             # Điều tiết nhịp
 ├── AppEconomics/         # Lớp thưởng app          (chưa hội tụ ba-token)
 ├── TestSupport/          # Bộ giả dùng chung cho test off-chain

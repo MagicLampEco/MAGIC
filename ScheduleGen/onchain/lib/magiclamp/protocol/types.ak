@@ -178,11 +178,12 @@ pub type VaultDatum {
   // của validator này dù ta có gỡ trường hay không.
   //
   // Lý do THẬT là ở đây và bây giờ: gỡ trường 15 đẩy MỌI trường sau nó lên một
-  // chỉ số. Ba bên đọc theo VỊ TRÍ chứ không theo tên — lược đồ `MagicSDK` ▸
-  // `src/schemas.ts`, bộ dựng datum off-chain, và `Paymaster` ▸
-  // `vault_delegate_is` đọc thẳng `list.at(fields, 15)`. Cả ba lệch một ô cùng
-  // lúc, và Aiken nghiêm ngặt về SỐ trường theo CẢ HAI chiều nên bên nào cũng
-  // hỏng ồn ào — trừ bên đọc thô, bên đó lấy nhầm trường và im.
+  // chỉ số. Hai bên đọc theo VỊ TRÍ chứ không theo tên — lược đồ `MagicSDK` ▸
+  // `src/schemas.ts` và bộ dựng datum off-chain. (Bên thứ ba từng nêu ở đây,
+  // `Paymaster` ▸ `vault_delegate_is`, đọc thô `list.at(fields, 15)` và đã xoá
+  // cùng module ngày 2026-10-07.) Cả hai lệch một ô cùng lúc, và Aiken nghiêm
+  // ngặt về SỐ trường theo CẢ HAI chiều nên bên nào cũng hỏng ồn ào — trừ bên đọc
+  // thô, bên đó lấy nhầm trường và im.
   personal_delegate     : Option<ByteArray>,
   attribution           : VaultAttribution,
   // ── Gen v2.0 (SPEC §6.1.2) — NỐI CUỐI: trường 17, 18 ⟹ 19 trường ──────────

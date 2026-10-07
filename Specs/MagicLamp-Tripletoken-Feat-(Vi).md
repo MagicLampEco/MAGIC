@@ -724,7 +724,7 @@ biến on-chain vẫn thoả, mà bên bán thiếu 10×. `consumed_nanogic` đ�
 
 | mã | trạng thái | ràng buộc đang có hiệu lực (fail-closed) | khai ở |
 |---|---|---|---|
-| D16 | cơ chế uỷ quyền thay thế để ngỏ | cổng PM-1.5 (`all_vaults_delegate_app`) đứng ở trạng thái không thoả được · `buildSponsorTx` ném `PM-000` thay vì dựng · Paymaster chưa deploy ở mạng nào | `DevStatus.md` ▸ D16 · Nợ #74 |
+| D16 | đóng 2026-10-07 — module `Paymaster/` đã xoá (cổng PM-1.5 `all_vaults_delegate_app` và `buildSponsorTx` đi cùng module) | yêu cầu "app trả phí hộ" do Feecover (kho `PhoenixKeyDID/Feecover`) đảm nhận; kho này không giữ cơ chế trả phí hộ nào | `DevStatus.md` ▸ D16 · Nợ #74 · `## Đã xoá khỏi kho — 2026-10-07` |
 
 ---
 

@@ -73,7 +73,7 @@
 // ở fund-vault; khoản ứng = đúng phần lovelace tăng ở output script, bên tài trợ không được nhận thêm ADA.
 
 import {
-  CML, getAddressDetails, validatorToAddress, validatorToScriptHash, valueToAssets,
+  CML, applyParamsToScript, getAddressDetails, validatorToAddress, validatorToScriptHash, valueToAssets,
   type Assets, type LucidEvolution, type Network as SlotNetwork, type Script, type TxBuilder, type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
 import {
@@ -87,14 +87,14 @@ import {
   type SponsorJourneyErrorCode, type SponsorTxOutput,
 } from "@magiclamp/sdk";
 import {
-  MIN_BUFFER_BPS, PrepaidRuleError, PrepaidTxError, addSetDidCommit, applyPlan, derivePrepaidScripts, planMintPaidFund,
+  MIN_BUFFER_BPS, PrepaidRuleError, PrepaidTxError, SPONSOR_RECLAIM_DELAY_EPOCHS, addSetDidCommit, applyPlan, derivePrepaidScripts, planMintPaidFund,
   plutusDataFromCbor, readVaultUtxo, validityInEpoch, withRefScripts,
   type PlutusAddress, type PrepaidBlueprint, type PrepaidScripts, type TxValidity,
 } from "@magiclamp/prepaidgen-sdk";
 
 import { ownerReq, reqBigint, reqSmallInt } from "./buildRequest.js";
 import type { ChainReader, ChainTip } from "./chain.js";
-import { PREPAID_VAULT_TYPE, type Deployment, type SponsorPins, type VaultScope } from "./config.js";
+import { PREPAID_VAULT_TYPE, type Deployment, type DidStakeDeployment, type SponsorPins, type VaultScope } from "./config.js";
 import { didCommitOf, parseDidCommit, parseEngageRef, pickEngageThread } from "./engage.js";
 import {
   ChainUnavailableError, CodedApiError, ConfigMissingError, TxApiError, TxBuildRejectedError,
@@ -107,7 +107,8 @@ import {
 } from "./feePayer.js";
 import { pickByNft } from "./genV2.js";
 import {
-  classifySponsorFunds, resolveSponsorFund, sponsorFundsStatusBody, type SponsorFundBusyReason, type SponsorFundEntry,
+  assertDidNotFundedElsewhere, classifySponsorFunds, fundsBlockingOpen, resolveSponsorFund, sponsorFundsStatusBody,
+  type SponsorFundBusyReason, type SponsorFundEntry,
 } from "./sponsorFund.js";
 import { IssuedTxRegistry, OwnerLockTable, PendingSpends, type SponsorRoute } from "./locks.js";
 import { isDidOwner, ownerLockKey, type OwnerWitnessProvider, type ResolvedOwnerWitness } from "./owner.js";
@@ -335,6 +336,15 @@ export function parseSponsorRequest(
   const withVaultRef = vaultRef === undefined ? {} : { vaultRef };
   switch (step) {
     case "open-vault":
+      // `thread_lovelace` là lovelace người gọi tự khai cho output SCRIPT (thread). Có `fee_payer` thì chính ví trả
+      // phí bên thứ ba ứng khoản đó, rồi chủ đóng thread (CloseThread không ràng output) lấy lại ⟹ rút ADA của bên
+      // trả phí. Đường `fee_payer` dùng sàn mặc định của bộ dựng thread; trường này chỉ còn ở đường `change_address`
+      // (chủ tự trả). Từ chối, không lặng lẽ bỏ qua: bên gọi cần biết lượng họ khai không được dùng.
+      if (body.thread_lovelace !== undefined && base.feePayer !== undefined) {
+        throw new CodedApiError(400, "SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER",
+          `"thread_lovelace" không đi cùng "fee_payer": lovelace của thread do ví trả phí ứng, nên dịch vụ dùng sàn ` +
+          `mặc định của thread. Bỏ "thread_lovelace", hoặc tự trả bằng "change_address".`, { field: "thread_lovelace" });
+      }
       return {
         ...base,
         didCommit: parseDidCommit(body.did_commit),
@@ -660,7 +670,7 @@ export class SponsorTxService {
     const prepaid = this.requirePrepaid("open-vault");
     return this.run("open-vault", req, [], async (p, ctx) => {
       // TRƯỚC mọi lượt đọc két: `did_commit` của thread mới phải là DID của chính chủ ký.
-      assertOwnerDid("open-vault", ctx.owner, ctx.witness, req.didCommit);
+      assertOwnerDid("open-vault", ctx.owner, ctx.witness, req.didCommit, this.deps.deployment.didStake);
       const scope = p.scope;
       // Lưới an toàn của DỊCH VỤ (bấm hai lần, app gửi lại) — KHÔNG phải chính sách một-lần-mỗi-DID:
       // việc đó Feecover đếm. Két thứ hai cùng chủ làm mọi bước sau rơi vào 409 `VAULT_AMBIGUOUS`.
@@ -672,8 +682,9 @@ export class SponsorTxService {
           { vault_type: PREPAID_VAULT_TYPE, existing: existing.map(v => ({ vault_ref: refStr(v.utxo), vault_nft: v.nftUnit })) });
       }
       // Mỗi DID một quỹ: DID đã có quỹ dùng được ⟹ không genesis. Không có ghim ⟹ `fundGenesisPins` ném 501.
-      const mine = prepaid.sponsor === undefined ? [] : (await this.readSponsorFunds(prepaid, prepaid.sponsor))
-        .filter(e => e.problem === undefined && e.ownerCommit === req.didCommit);
+      // Quỹ đã thu hồi vẫn là quỹ của DID (`fundsBlockingOpen`): không genesis quỹ thứ hai cho DID đã được tài trợ.
+      const mine = prepaid.sponsor === undefined ? [] : fundsBlockingOpen(
+        await this.readSponsorFunds(prepaid, prepaid.sponsor, epochAt(ctx.tip.blockTimePosixMs, p)), req.didCommit);
       const genesis = mine.length === 0 ? this.fundGenesisPins("open-vault") : undefined;
       const wallet = await feeWallet(ctx, () => this.walletUtxos(ctx.feeAddress));
       const sorted = [...wallet].sort((a, b) =>
@@ -821,7 +832,7 @@ export class SponsorTxService {
           `Thread ${refStr(thread.utxo)} mang did_commit dài ${didCommit.length / 2} byte; bind-did cần đúng 32 byte. ` +
           `Thread này không mở bằng open-vault.`, { engage_ref: refStr(thread.utxo) });
       }
-      assertOwnerDid("bind-did", ctx.owner, ctx.witness, didCommit);
+      assertOwnerDid("bind-did", ctx.owner, ctx.witness, didCommit, this.deps.deployment.didStake);
       if (vault.datum.did_commit !== "") {
         // Nhánh on-chain tự khoá sau lần chạy đầu: két đã gắn thì không có tx nào để dựng.
         const same = vault.datum.did_commit === didCommit;
@@ -897,12 +908,14 @@ export class SponsorTxService {
           `Thread ${refStr(thread.utxo)} mang did_commit dài ${didCommit.length / 2} byte; open-fund cần đúng 32 byte ` +
           `(owner_commit của quỹ). Thread này không mở bằng open-vault.`, { engage_ref: refStr(thread.utxo) });
       }
-      assertOwnerDid("open-fund", ctx.owner, ctx.witness, didCommit);
-      const mine = (await this.readSponsorFunds(prepaid, sp)).filter(e => e.problem === undefined && e.ownerCommit === didCommit);
+      assertOwnerDid("open-fund", ctx.owner, ctx.witness, didCommit, this.deps.deployment.didStake);
+      const mine = fundsBlockingOpen(
+        await this.readSponsorFunds(prepaid, sp, epochAt(ctx.tip.blockTimePosixMs, p)), didCommit);
       if (mine.length > 0) {
         throw new CodedApiError(409, "SPONSOR_FUND_ALREADY_OPEN",
-          `DID ${didCommit.slice(0, 16)}… đã có quỹ tài trợ (mỗi DID một quỹ) — bỏ qua open-fund, đi tiếp fund-vault.`,
-          { did_commit: didCommit, fund_ids: mine.map(e => e.fundId), fund_refs: mine.map(e => refStr(e.utxo!)) });
+          `DID ${didCommit.slice(0, 16)}… đã có quỹ tài trợ (mỗi DID một quỹ, kể cả quỹ đã thu hồi) — bỏ qua open-fund.`,
+          { did_commit: didCommit, fund_ids: mine.map(e => e.fundId), fund_refs: mine.map(e => refStr(e.utxo!)),
+            reclaimed: mine.filter(e => e.problem === "reclaimed").map(e => e.fundId) });
       }
       const wallet = await feeWallet(ctx, () => this.walletUtxos(ctx.feeAddress));
       const sorted = [...wallet].sort((a, b) =>
@@ -922,13 +935,23 @@ export class SponsorTxService {
         sponsorship: { sponsor: plutusAddressOf(sp.addresses[0]!), owner_commit: didCommit },
         validity,
       });
-      const c = await applyPlan(lucid.newTx(), r.plan, { mode: "deferred" })
+      // Chủ KÝ open-fund (mục rút did_stake như mọi bước khác; chủ khoá: chữ ký khoá). Genesis quỹ không đòi chủ,
+      // nhưng dịch vụ đòi: không có chữ ký này thì ai biết owner của một thread cũng xin được quỹ cho DID đó.
+      const c = await applyOwnerAuth(applyPlan(lucid.newTx(), r.plan, { mode: "deferred" }),
+        resolveOwnerAuth(ctx.owner, ctx.ownerAuth))
         .completeSafe(collateralCompleteOptions(ctx.feePayer?.collateralLovelace));
       if (c._tag === "Left") {
         const err = c.left as { message?: unknown };
         throw new SponsorJourneyError("SPONSOR_BUILD_FAILED", `open-fund: Lucid không dựng được tx — ${String(err?.message ?? c.left)}`);
       }
-      const outs = sponsorTxOutputsOf(c.right.toCBOR());
+      const unsigned = c.right.toCBOR();
+      const withdrawals = sponsorTxWithdrawalCountOf(unsigned);
+      const wantW = ctx.owner.type === "script" ? 1 : 0;
+      if (withdrawals !== wantW) {
+        throw new SponsorJourneyError("SPONSOR_WITHDRAW_COUNT",
+          `open-fund: tx có ${withdrawals} mục rút, chủ ${ctx.owner.type} đòi ĐÚNG ${wantW}.`);
+      }
+      const outs = sponsorTxOutputsOf(unsigned);
       const fundOut = this.nftOutput(outs, r.nftUnit, prepaid.fundAddress, "quỹ tài trợ", "open-fund");
       // Ký vai platform trên ĐỐI TƯỢNG tx vừa dựng (không qua CBOR của thân bài).
       const txCbor = this.cosignPlatform(c.right.toTransaction());
@@ -945,7 +968,7 @@ export class SponsorTxService {
           platform_pkh: platform, sponsor_address: sp.addresses[0], beneficiary: ben.address,
           buffer_bps: r.datum.buffer_bps.toString(),
           reclaim_after_epoch: sponsorship.reclaim_after_epoch.toString(),
-          seed_ref: refStr(seedUtxo), outputs: outputsJson(outs),
+          seed_ref: refStr(seedUtxo), withdrawals, outputs: outputsJson(outs),
         },
       };
     });
@@ -981,13 +1004,15 @@ export class SponsorTxService {
           `vị anchor DID của người mới. Thread này không mở bằng open-vault.`, { engage_ref: refStr(thread.utxo) });
       }
       // Suất tài trợ đếm theo `did_commit` này ⟹ nó phải là DID của chính chủ ký, không phải của ai khác.
-      assertOwnerDid("fund-vault", ctx.owner, ctx.witness, didCommit);
+      assertOwnerDid("fund-vault", ctx.owner, ctx.witness, didCommit, this.deps.deployment.didStake);
       const anchor = await this.uniqueByUnit(anchorPolicy + didCommit, undefined, "SPONSOR_ANCHOR",
         `anchor DID của người mới (owner_commit ${didCommit.slice(0, 16)}…)`);
       // Quỹ tài trợ CỦA DID này (mỗi DID một quỹ — `sponsorFund.ts`). Tìm SAU khi biết `did_commit` của
       // thread; khoá chủ đã giữ, và quỹ của một DID chỉ chủ của DID đó chạm tới, nên không có cuộc đua
       // giữa lượt đọc này và lượt giữ `fund:<unit>` ngay dưới.
-      const { entry, selection } = resolveSponsorFund(await this.readSponsorFunds(prepaid, pins), didCommit, req.fundId);
+      const funds = await this.readSponsorFunds(prepaid, pins, epochAt(ctx.tip.blockTimePosixMs, p));
+      const { entry, selection } = resolveSponsorFund(funds, didCommit, req.fundId);
+      assertDidNotFundedElsewhere(funds, didCommit, entry.unit);
       const fundUnit = entry.unit;
       const fund = entry.utxo!;
       // PrepaidLock trên quỹ tài trợ đòi két mang ĐÚNG `owner_commit` (prepaid.ak ▸ `validate_lock`,
@@ -1013,6 +1038,9 @@ export class SponsorTxService {
       }
       for (const u of sponsorUtxos) this.assertNotPendingSpent(u, "UTxO bên tài trợ này");
       const sponsorAddress = assertSponsorUtxosPinned(sponsorUtxos, pins, p.scripts.carpUnit);
+      // UTxO CARP phải thuộc ĐÚNG bên tài trợ ghi trong datum quỹ (FundLock đòi chữ ký khoá đó; thu hồi trả CARP về
+      // địa chỉ đó). Ghim `addresses` nhiều phần tử ⟹ "thuộc tập ghim" chưa đủ.
+      const fundSponsorKey = assertSponsorUtxosOfFundSponsor(sponsorAddress, entry);
       if (ctx.feeAddress === sponsorAddress || ctx.feeKeyHash === getAddressDetails(sponsorAddress).paymentCredential!.hash) {
         // Ví trả phí trùng ví bên tài trợ ⟹ tiền thừa của phí cũng về địa chỉ đó, và phép ghim "thối
         // = vào − carp_amount" phải trừ thêm phí. Không mở đường đó: ví trả phí là một ví khác. So cả
@@ -1048,7 +1076,8 @@ export class SponsorTxService {
       const vaultOut = this.nftOutput(s.outputs, vault.nftUnit, p.scope.address, "két Prepaid", "fund-vault");
       return {
         txCbor: r.txCbor,
-        sponsorSigners: s.sponsorSigners,
+        // Khoá bên tài trợ lấy từ DATUM quỹ (thứ validator đòi), không từ input.
+        sponsorSigners: [fundSponsorKey],
         sponsorChangeAddress: sponsorAddress,
         feeFlow: { scriptAddresses: [p.scope.address, prepaid.fundAddress], passAddresses: [sponsorAddress] },
         summary: {
@@ -1057,7 +1086,7 @@ export class SponsorTxService {
           // "caller": bên gọi gửi `fund_id` (đã đối chiếu DID); "did_lookup": dịch vụ tìm quỹ của DID.
           fund_selection: selection,
           carp_amount: s.carpAmount.toString(), opens_new_line: s.opensNewLine,
-          anchor_ref: refStr(s.anchorRef), owner_commit: didCommit, sponsor_signers: s.sponsorSigners,
+          anchor_ref: refStr(s.anchorRef), owner_commit: didCommit, sponsor_signers: [fundSponsorKey],
           sponsor_change_address: sponsorAddress,
           withdrawals: s.withdrawals, outputs: outputsJson(s.outputs),
         },
@@ -1148,8 +1177,6 @@ export class SponsorTxService {
     // Suy chủ DID TRƯỚC mọi khoá: khoá chủ là `script:<hash>` như chủ script tường minh.
     const req = await this.resolveOwner(reqIn);
     const owner = assertOwner(req.owner);
-    // open-fund: tx không mang mục rút did_stake (genesis quỹ không đòi chủ), nên chủ không ký gì ở đó.
-    const ownerSigns = step !== "open-fund";
     if ((step === "open-vault" || step === "bind-did" || step === "open-fund" || step === "fund-vault") && owner.type === "key"
       && this.deps.allowKeyOwner !== true) {
       // 422 chứ không 409: không có trạng thái nào để chờ đổi — yêu cầu sai loại chủ từ gốc.
@@ -1199,9 +1226,12 @@ export class SponsorTxService {
       });
       let feePayer: StepCtx["feePayer"];
       let rewardReturn: OwnerRewardReturn | undefined;
+      let coinsPerUtxoByte = 0n;
       if (fpReq !== undefined) {
         const utxo = await readFeePayerUtxo(this.deps.chain, fpReq, FEE_PAYER_CODES);
         this.assertNotPendingSpent(utxo, "ví trả phí");
+        // Tham số giao thức của chính lucid bộ dựng dùng — trần khoản ứng ở `checkSponsorFeePayerTx`.
+        coinsPerUtxoByte = BigInt((await this.deps.lucidForWallet(fpReq.address, [utxo])).config().protocolParameters!.coinsPerUtxoByte);
         feePayer = {
           req: fpReq, utxo, collateralLovelace: this.deps.deployment.feePayerCollateralLovelace,
         };
@@ -1209,7 +1239,7 @@ export class SponsorTxService {
         // `service.ts` (`feePayer.ts` ▸ khối "MỤC RÚT did_stake"). Tham số giao thức đọc từ chính lucid
         // bộ dựng sẽ dùng, và chỉ khi thưởng > 0.
         rewardReturn = await planOwnerRewardReturn(
-          ownerSigns ? witness?.ownerReward : undefined,
+          witness?.ownerReward,
           () => didPaymentAddressFor({
             didStake: this.deps.deployment.didStake, anchorNftName: witness?.anchorNftName,
             ownerHash: owner.hash, network: this.deps.network,
@@ -1236,6 +1266,7 @@ export class SponsorTxService {
         out.summary.fee_payer = checkSponsorFeePayerTx(out.txCbor, {
           network: this.deps.slotNetwork ?? this.deps.network, tipPosixMs: tip.blockTimePosixMs, feePayer: feePayer.req,
           feePayerUtxo: feePayer.utxo, maxCollateralLovelace: feePayer.collateralLovelace, otherInputs, ...out.feeFlow,
+          coinsPerUtxoByte,
           ...(rewardReturn === undefined ? {} : { ownerRewardReturn: rewardReturn }),
         });
       }
@@ -1254,9 +1285,7 @@ export class SponsorTxService {
         requiredSigners: requiredSignersOf(out.txCbor),
         signers: signersFor(step, ctx, out.sponsorSigners ?? [], out.platformSigners ?? []),
         witnessNotes: [
-          ...(!ownerSigns
-            ? [`Chủ két KHÔNG ký tx này: genesis quỹ chỉ đòi chữ ký platform; DID của quỹ đọc từ thread đã ghim.`]
-            : owner.type === "key" ? [`Chủ khoá: ký bằng khoá ${owner.hash}.`] : (witness?.notes ?? [])),
+          ...(owner.type === "key" ? [`Chủ khoá: ký bằng khoá ${owner.hash}.`] : (witness?.notes ?? [])),
           ctx.feePayer === undefined
             ? `Ví trả phí: input phí + tài sản thế chấp lấy từ ${feeAddress}; khoá thanh toán ${ctx.feeKeyHash} phải ký.`
             : `Ví trả phí (fee_payer): tx tiêu ĐÚNG UTxO ${refStr(ctx.feePayer.req.utxoRef)} ở ${feeAddress} — phí, ` +
@@ -1308,7 +1337,11 @@ export class SponsorTxService {
       throw new ConfigMissingError(`Bản deploy chưa ghim quỹ tài trợ.`, { missing, route: "/sponsor/funds" });
     }
     const pins = prepaid.sponsor!;
-    const entries = await this.readSponsorFunds(prepaid, pins);
+    this.requireNetworkGrid();
+    // Epoch hiện tại theo ĐỈNH CHUỖI (cùng nguồn với các bước dựng) — trần mốc thu hồi ở `classifySponsorFunds`.
+    const tip = await chainRead(() => this.deps.chain.tip(), "đỉnh chuỗi");
+    const entries = await this.readSponsorFunds(prepaid, pins,
+      epochAt(tip.blockTimePosixMs, { P: msPerEpoch(this.deps.network), O: windowOriginMs(this.deps.network) }));
     const wallets = await Promise.all(pins.addresses.map(async address => ({
       address, utxos: await chainRead(() => this.deps.chain.utxosAt(address), "ví bên tài trợ"),
     })));
@@ -1325,8 +1358,13 @@ export class SponsorTxService {
    * giải mã được và mang platform đã ghim: quỹ platform lạ là thứ ai cũng đúc được, bảng tình trạng không
    * liệt kê chúng (không để kẻ đúc rác làm phình `GET /sponsor/funds`).
    */
-  private async readSponsorFunds(prepaid: NonNullable<Deployment["prepaid"]>, pins: SponsorPins): Promise<SponsorFundEntry[]> {
+  private async readSponsorFunds(
+    prepaid: NonNullable<Deployment["prepaid"]>, pins: SponsorPins, currentEpoch: bigint,
+  ): Promise<SponsorFundEntry[]> {
     const common = {
+      // Cùng hai giá trị open-fund ghi vào quỹ (`openFund` ▸ `planMintPaidFund`).
+      bufferBps: pins.bufferBps ?? MIN_BUFFER_BPS,
+      reclaimHorizon: { currentEpoch, delayEpochs: SPONSOR_RECLAIM_DELAY_EPOCHS },
       fundScriptHash: prepaid.fundScriptHash, fundAddress: prepaid.fundAddress,
       vaultScriptHash: this.deps.deployment.vaults[0]!.scriptHash, sponsorAddresses: pins.addresses,
       network: this.deps.network,
@@ -1623,6 +1661,7 @@ function assertOwner(o: OwnerRef): OwnerRef {
  */
 export function assertOwnerDid(
   step: SponsorStep, owner: OwnerRef, witness: ResolvedOwnerWitness | undefined, didCommit: string,
+  didStake: DidStakeDeployment | undefined,
 ): void {
   if (owner.type === "key") return;
   const name = witness?.anchorNftName;
@@ -1632,6 +1671,31 @@ export function assertOwnerDid(
       `hành trình — chủ này không phải DID đó.`,
       { step, did_commit: didCommit, ...(name === undefined ? { anchor_nft_name: null } : { anchor_nft_name: name }) });
   }
+  // Tên anchor khớp CHƯA đủ: `anchor_ref` và CBOR `did_stake` đều do người gọi đưa (`owner.ts` chỉ so hash CBOR với
+  // `owner.hash`). Một script tự chế (luôn đúng) + anchor của người khác qua được phép so tên, và chữ ký "chủ" khi
+  // đó là chữ ký của chính kẻ gọi. Ràng buộc thật: `did_stake` CHƯA apply, apply `(anchor_nft_policy, tên anchor)`,
+  // phải băm ra ĐÚNG `owner.hash` — cùng phép với `didOwner.ts` ▸ `didPaymentAddressFor`.
+  const u = didStake?.unappliedScript;
+  if (didStake === undefined || u === undefined) {
+    throw new CodedApiError(501, "SPONSOR_OWNER_DID_UNVERIFIABLE",
+      `${step}: bản deploy chưa khai script did_stake CHƯA apply ("did_stake.unapplied_script") — dịch vụ không ` +
+      `đối chiếu được chủ script với DID, nên không dựng bước tài trợ cho chủ script.`,
+      { step, missing: "did_stake.unapplied_script" });
+  }
+  const applied = validatorToScriptHash({
+    type: "PlutusV3", script: applyParamsToScript(u.cbor, [didStake.anchorNftPolicy, name]),
+  });
+  if (applied !== owner.hash) {
+    throw new CodedApiError(422, "SPONSOR_OWNER_DID_MISMATCH",
+      `${step}: script chủ ${owner.hash.slice(0, 12)}… không phải did_stake của DID ${didCommit.slice(0, 16)}… ` +
+      `(did_stake apply anchor đó băm ra ${applied.slice(0, 12)}…).`,
+      { step, did_commit: didCommit, anchor_nft_name: name, owner_hash: owner.hash, did_stake_hash: applied });
+  }
+}
+
+/** Epoch Prepaid chứa mốc `ms` (lưới `P`, `O` của mạng). */
+function epochAt(ms: bigint, g: { P: bigint; O: bigint }): bigint {
+  return ms < g.O ? 0n : (ms - g.O) / g.P;
 }
 
 // ── ghim của fund-vault (lỗ: thân bài quyết tiền bên tài trợ) ─────────────────────────────
@@ -1689,6 +1753,30 @@ export function assertSponsorUtxosPinned(utxos: UTxO[], pins: SponsorPins, carpU
     }
   }
   return address;
+}
+
+/**
+ * #fund-sponsor: các UTxO CARP (đã qua `assertSponsorUtxosPinned`, chung `sponsorAddress`) phải do ĐÚNG khoá thanh
+ * toán ghi ở `sponsorship.sponsor` của quỹ. Trả khoá đó — vai `sponsor` ở bảng `signers` lấy từ đây.
+ * Lệch ⟹ 422 `SPONSOR_UTXO_NOT_FUND_SPONSOR`: dựng tiếp thì tx đòi chữ ký khoá trong datum mà bảng ký kê khoá
+ * của input (tx chết sau khi bên kia đã ký), hoặc — ký đủ — CARP ví này vào quỹ còn thu hồi trả về ví kia.
+ */
+export function assertSponsorUtxosOfFundSponsor(sponsorAddress: string, fund: SponsorFundEntry): string {
+  const keyOf = (a: string | undefined): string | null => {
+    if (a === undefined) return null;
+    try {
+      const c = getAddressDetails(a).paymentCredential;
+      return c?.type === "Key" ? c.hash : null;
+    } catch { return null; }
+  };
+  const fundKey = keyOf(fund.sponsorAddress);
+  if (fundKey === null || keyOf(sponsorAddress) !== fundKey) {
+    throw new CodedApiError(422, "SPONSOR_UTXO_NOT_FUND_SPONSOR",
+      `UTxO trong "sponsor.utxo_refs" không thuộc ví bên tài trợ của quỹ ${fund.fundId} (khoá thanh toán trong datum ` +
+      `quỹ khác khoá của ${sponsorAddress}). Dùng UTxO CARP của đúng ví đó.`,
+      { fund_id: fund.fundId, fund_sponsor_address: fund.sponsorAddress ?? null, sponsor_utxo_address: sponsorAddress });
+  }
+  return fundKey;
 }
 
 export interface FundPinnedOutputsExpect {
@@ -1754,6 +1842,15 @@ export function assertFundPinnedOutputs(outs: SponsorTxOutput[], e: FundPinnedOu
 
 // ── đọc lại CBOR: đường `fee_payer` của hành trình tài trợ ──────────────────────
 
+/**
+ * Biên trên Σ min-UTxO của output script mà ví trả phí được ứng. Chỉ một chỗ đặt lovelace CAO hơn min-UTxO có chủ
+ * đích: thread consume lúc đúc nhận sàn cố định 2 ADA (`ConsumeMAGIC/offchain/src/consume.ts` ▸
+ * `assertEngageLovelace`, MINT-ENGAGE-004), trong khi min-UTxO của thread đo ≈1,2–1,56 ADA. Mọi output script mang
+ * NFT + datum nội tuyến có min-UTxO > 1 ADA ⟹ phần vượt của thread < 1 ADA; mỗi tx tài trợ đúc nhiều nhất MỘT
+ * thread (open-vault) ⟹ 1 ADA phủ trọn, và là phần ADA tối đa một lượt có thể rời ví trả phí ngoài min-UTxO.
+ */
+export const SPONSOR_FRONTING_SLACK_LOVELACE = 1_000_000n;
+
 export interface SponsorFeePayerCheckContext extends FeeFlow {
   /** Lưới slot đọc `ttl` (`SponsorTxServiceDeps.slotNetwork`) — trường này chỉ dùng cho `checkValidTo`. */
   network: SlotNetwork;
@@ -1763,6 +1860,8 @@ export interface SponsorFeePayerCheckContext extends FeeFlow {
   maxCollateralLovelace: bigint;
   /** Mọi input KHÁC UTxO trả phí, đọc từ chuỗi theo tham chiếu trong CBOR. */
   otherInputs: UTxO[];
+  /** `coinsPerUtxoByte` của tham số giao thức — trần khoản ứng = Σ min-UTxO output script + `SPONSOR_FRONTING_SLACK_LOVELACE`. */
+  coinsPerUtxoByte: bigint;
   /** Thưởng `did_stake` đã chốt trước khi dựng (`feePayer.ts` ▸ `planOwnerRewardReturn`). Có ⟹ output
    *  thưởng là output DUY NHẤT được nằm ngoài tập đóng ở vế (3), và không vào cân bằng vế (4). */
   ownerRewardReturn?: OwnerRewardReturn;
@@ -1848,6 +1947,7 @@ export function checkSponsorFeePayerTx(txCbor: string, ctx: SponsorFeePayerCheck
   const ol = body.outputs();
   let change = 0n;
   let scriptOut = 0n;
+  let scriptMin = 0n;
   let passOut = 0n;
   for (let i = 0; i < ol.len(); i++) {
     if (i === rewardIndex) continue;
@@ -1863,6 +1963,7 @@ export function checkSponsorFeePayerTx(txCbor: string, ctx: SponsorFeePayerCheck
       throw fail(`output #${i} về ${addr}: cùng khoá với ví trả phí nhưng KHÔNG phải fee_payer.address`, { output_index: i });
     } else if (scripts.has(addr)) {
       scriptOut += a.lovelace ?? 0n;
+      scriptMin += CML.min_ada_required(o, ctx.coinsPerUtxoByte);
     } else if (pass.has(addr)) {
       passOut += a.lovelace ?? 0n;
     } else {
@@ -1880,6 +1981,15 @@ export function checkSponsorFeePayerTx(txCbor: string, ctx: SponsorFeePayerCheck
   if (fronted < 0n || feeIn !== fee + change + fronted) {
     throw fail(`ví trả phí góp ${feeIn} lovelace nhưng phí ${fee} + thối ${change} + ứng min-ADA ${fronted} ` +
       `(Σ output script ${scriptOut} − Σ input script ${scriptIn}) không khớp — có lượng ADA đi chỗ khác hoặc từ chỗ khác tới`);
+  }
+  // Trần khoản ứng: chỉ min-UTxO của output script (+ biên). Không trần thì bất kỳ lovelace nào bộ dựng đặt vào
+  // output script (vd. thread mà chủ đóng lại được) là ADA của ví trả phí chuyển sang tay chủ.
+  const frontedCap = scriptMin + SPONSOR_FRONTING_SLACK_LOVELACE;
+  if (fronted > frontedCap) {
+    throw new CodedApiError(422, "FEE_PAYER_FRONTING_ABOVE_MAX",
+      `Ví trả phí phải ứng ${fronted} lovelace cho output script, vượt Σ min-UTxO ${scriptMin} + biên ` +
+      `${SPONSOR_FRONTING_SLACK_LOVELACE} — bên trả phí chỉ ứng min-ADA.`,
+      { fronted_lovelace: raw(fronted), fronted_max_lovelace: raw(frontedCap), script_min_utxo_lovelace: raw(scriptMin) });
   }
 
   // (5) hạn dùng.
@@ -1942,9 +2052,9 @@ function requiredSignersOf(txCbor: string): string[] {
 }
 
 /**
- * Vai ký theo thứ tự `planSponsorJourney`: fund-vault = ví trả phí · bên tài trợ · chủ; open-fund = ví trả phí ·
- * platform (chủ KHÔNG ký); open-vault chở genesis quỹ = ví trả phí · chủ · platform; còn lại = ví trả phí · chủ.
- * Vai platform luôn `how: "service"`: dịch vụ đã ký, witness nằm sẵn trong `tx_cbor`.
+ * Vai ký theo thứ tự `planSponsorJourney`: fund-vault = ví trả phí · bên tài trợ (khoá trong datum quỹ) · chủ;
+ * open-fund = ví trả phí · platform · chủ; open-vault chở genesis quỹ = ví trả phí · chủ · platform; còn lại = ví
+ * trả phí · chủ. Vai platform luôn `how: "service"`: dịch vụ đã ký, witness nằm sẵn trong `tx_cbor`.
  */
 function signersFor(step: SponsorStep, ctx: StepCtx, sponsorSigners: string[], platformSigners: string[]): SponsorSigner[] {
   const fee: SponsorSigner = ctx.feePayer === undefined
@@ -1956,13 +2066,14 @@ function signersFor(step: SponsorStep, ctx: StepCtx, sponsorSigners: string[], p
           `; tiền thối ADA về lại địa chỉ đó`,
       };
   const platform: SponsorSigner = { role: "platform", keyHashes: platformSigners, how: "service" };
-  if (step === "open-fund") return [fee, platform];
   const owner: SponsorSigner = ctx.owner.type === "key"
     ? { role: "owner", keyHashes: [ctx.owner.hash], how: `chữ ký khoá ${ctx.owner.hash}` }
     : {
         role: "owner", keyHashes: ctx.witness?.requiredSigners ?? [],
         how: `một mục rút Script(${ctx.owner.hash}) (did_stake: controller + thiết bị ký)`,
       };
+  // Chủ KÝ open-fund (#161): vai platform do dịch vụ ký sẵn, chủ ký thêm như mọi bước khác.
+  if (step === "open-fund") return [fee, platform, owner];
   if (step === "open-vault" && platformSigners.length > 0) return [fee, owner, platform];
   if (step !== "fund-vault") return [fee, owner];
   return [fee, { role: "sponsor", keyHashes: sponsorSigners, how: "chi các UTxO CARP đã đưa trong sponsor.utxo_refs" }, owner];

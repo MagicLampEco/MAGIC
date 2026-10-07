@@ -189,6 +189,8 @@ let coOwner2: TestKey; // chủ thứ hai cùng DID_CO: open-vault khi DID đã 
 let platformSignCalls = 0;
 /** Mở két "kiểu cũ" (trước khi open-vault chở quỹ): dựng thẳng bằng SDK, không qua route. Trả NFT két. */
 let legacyOpenVault: (did: string, who: TestKey, payer: TestKey) => Promise<string>;
+let svcOpenTwo: SponsorTxService;   // cấu hình open-fund với HAI ví bên tài trợ ghim [sponsor, attacker] — quỹ ghi addresses[0]
+let CPB = 0n;                       // coinsPerUtxoByte của Emulator — trần khoản ứng ở checkSponsorFeePayerTx
 let openLocks: OwnerLockTable;
 let deploymentNoDid = "";
 let svc: SponsorTxService;
@@ -460,6 +462,8 @@ beforeAll(async () => {
   const pinnedSponsor = {
     fund_units: [fundUnit, f2.nftUnit, fNew.nftUnit, fNone.nftUnit], addresses: [sponsor.address],
     max_carp_amount: CARP.toString(),
+    // Đệm của các quỹ dựng nền (`mintFund`) — fund-vault ghim đệm = cấu hình (#161-4).
+    buffer_bps: "1500",
   };
   const deployment = (
     withDid: boolean, engageAddress = validatorToAddress(NET, consumeScript), sponsorPins: Record<string, unknown> = pinnedSponsor,
@@ -536,6 +540,9 @@ beforeAll(async () => {
   svcOpenNoKey = mk(deployment(true, undefined, openPins), new OwnerLockTable(60_000));
   svcSetClosed = mk(deployment(true, undefined, { ...openPins, fund_units: [fundUnit] }), new OwnerLockTable(60_000), platformSign);
   svcOtherBen = mk(deployment(true, undefined, { ...openPins, beneficiary: opener.address }), new OwnerLockTable(60_000));
+  // #161-1: hai ví bên tài trợ ghim; quỹ open-fund ghi addresses[0] = sponsor. Chung khoá với svcOpen.
+  svcOpenTwo = mk(deployment(true, undefined, { ...openPins, addresses: [sponsor.address, attacker.address] }), openLocks);
+  CPB = BigInt(lucid.config().protocolParameters!.coinsPerUtxoByte);
   // Cùng script consume, địa chỉ engage KHÁC (thêm phần stake): cổng script chỉ so HASH nên cho qua;
   // tx do SDK dựng gửi thread tới địa chỉ không-stake ⟹ chỉ phép đọc-lại output (`nftOutput`) chặn được.
   svcStakeEngage = mk(deployment(true, credentialToAddress(NET,
@@ -889,13 +896,24 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
     const ctx: SponsorFeePayerCheckContext = {
       network: NET, tipPosixMs: nowMs(), feePayer: { utxoRef: outRef(fp.utxo), address: feecover.address },
       feePayerUtxo: await utxoOf(fp.utxo), maxCollateralLovelace: 3_000_000n, otherInputs: [],
-      scriptAddresses: [...scriptAddrs], passAddresses: [],
+      scriptAddresses: [...scriptAddrs], passAddresses: [], coinsPerUtxoByte: CPB,
     };
     expect(checkSponsorFeePayerTx(b.tx_cbor as string, ctx).fronted_lovelace).toBe(fs.fronted_lovelace);
     for (const drop of scriptAddrs) {
       expect(() => checkSponsorFeePayerTx(b.tx_cbor as string, { ...ctx, scriptAddresses: [...scriptAddrs].filter(a => a !== drop) }))
         .toThrow(/ngoài ví trả phí và các địa chỉ của luồng/);
     }
+    // Red-team 1 — trần khoản ứng. Tx thật ở trên (két + thread sàn 2 ADA) qua trần (cực đối ngay dưới). Tx tổng hợp
+    // (KHÔNG nộp): cùng UTxO Feecover đặt 50 ADA vào địa chỉ thread — đúng hình dạng thread_lovelace lớn — ⟹ 422.
+    lucid.selectWallet.fromAddress(feecover.address, [ctx.feePayerUtxo]);
+    const fatC = await lucid.newTx().collectFrom([ctx.feePayerUtxo])
+      .pay.ToAddress(s.thread_address as string, { lovelace: 50_000_000n }).completeSafe();
+    if (fatC._tag === "Left") throw new Error(describeError(fatC.left));
+    expect(() => checkSponsorFeePayerTx(fatC.right.toCBOR(), ctx))
+      .toThrow(expect.objectContaining({ httpStatus: 422, code: "FEE_PAYER_FRONTING_ABOVE_MAX" }));
+    // Thân bài: thread_lovelace đi cùng fee_payer ⟹ 400 trước mọi lượt dựng.
+    const tl = await post("/tx/sponsor/open-vault", nb({ did_commit: DID_NEW, thread_lovelace: "50000000" }, fp));
+    expect([tl.status, errCode(tl)]).toEqual([400, "SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER"]);
 
     await submitStep(b, [feecover, newcomer]);
     expect(await emulator.getUtxos(newcomer.address)).toEqual([]);
@@ -959,6 +977,7 @@ describe("hành trình fee_payer — người mới 0 ADA, ví trả phí bên t
         feePayerUtxo: await utxoOf(fp.utxo), maxCollateralLovelace: 3_000_000n,
         otherInputs: ins.filter(u => refStr(u) !== fp.utxo),
         scriptAddresses: [(await only(vaultUnit)).address, fundAddress], passAddresses: [sponsor.address],
+        coinsPerUtxoByte: CPB,
       };
       expect(() => checkSponsorFeePayerTx(b.tx_cbor as string, ctx)).not.toThrow();
       expect(() => checkSponsorFeePayerTx(b.tx_cbor as string, { ...ctx, passAddresses: [] }))
@@ -1071,7 +1090,7 @@ describe("open-fund — bước bù: genesis quỹ tài trợ theo DID; VTA ký 
     expect(errCode(r)).toBe("SPONSOR_REQUEST_SHAPE");
   });
 
-  it("open-fund XANH: fee_payer Feecover; required_signers ∋ platform, ∌ chủ; VTA ĐÃ ký platform; Feecover ký ví trả phí ⟹ validator nhận; datum đúng DID", async () => {
+  it("open-fund XANH: fee_payer Feecover; required_signers ∋ platform, ∋ chủ; VTA ĐÃ ký platform; Feecover ký ví trả phí, chủ ký ⟹ validator nhận; datum đúng DID", async () => {
     // Trước open-fund: DID_OPEN chưa có quỹ nào dưới platform đã ghim (quỹ dựng nền mang platform khác ⟹ bị loại).
     expect((await handle({ method: "GET", url: "/sponsor/funds", headers: {}, body: undefined }, routerDeps(svcOpen)))
       .body.pinned_funds).toBe(0);
@@ -1083,18 +1102,21 @@ describe("open-fund — bước bù: genesis quỹ tài trợ theo DID; VTA ký 
     })();
     openFundTxCbor = b.tx_cbor as string;
     // NỘP TRƯỚC mọi phép so hình dạng: đột biến gỡ platform khỏi required_signers phải đỏ ở VALIDATOR (hành vi),
-    // không ở một expect hình dạng. Bên ngoài chỉ ký ví trả phí — witness platform do dịch vụ gắn sẵn.
-    const h = await signAndSubmit(b.tx_cbor as string, [feecover2]);
+    // không ở một expect hình dạng. Bên ngoài ký ví trả phí + chủ (#161-5) — witness platform do dịch vụ gắn sẵn.
+    const h = await signAndSubmit(b.tx_cbor as string, [feecover2, opener]);
     expect(h).toBe(b.tx_hash);
     openLocks.releaseByTxHash(h);
 
     expect(b.step).toBe("open-fund");
     const signers = b.signers as Array<{ role: string; key_hashes: string[] }>;
-    expect(signers.map(s => s.role)).toEqual(["fee-wallet", "platform"]);
+    expect(signers.map(s => s.role)).toEqual(["fee-wallet", "platform", "owner"]);
     expect(signers[0]!.key_hashes).toEqual([feecover2.pkh]);
     expect(signers[1]!.key_hashes).toEqual([platformKey.pkh]);
+    expect(signers[2]!.key_hashes).toEqual([opener.pkh]);
     expect(b.required_signers).toContain(platformKey.pkh);
-    expect(b.required_signers).not.toContain(opener.pkh);
+    // #161-5: chủ KÝ open-fund (chủ khoá ⟹ khoá trong required_signers; chủ script ⟹ một mục rút did_stake).
+    expect(b.required_signers).toContain(opener.pkh);
+    expect((b.summary as Body).withdrawals).toBe(0);
     expect((b.signers as Array<{ how: string }>)[1]!.how).toBe("service");
     // Dịch vụ trả tx mang ĐÚNG MỘT vkey: platform, chữ ký đúng trên thân tx.
     expectPlatformWitnessOnly(b.tx_cbor as string);
@@ -1124,7 +1146,7 @@ describe("open-fund — bước bù: genesis quỹ tài trợ theo DID; VTA ký 
 
   // Vector in ra ĐÚNG MỘT dòng có tiền tố `OPENFUND_VECTOR ` (JSON). Không đọc biến môi trường: tập biến môi
   // trường của gói là danh sách đóng (`noSigningMaterial.test.ts`).
-  it("vector open-fund: CBOR tx — 1 vkey (platform, dịch vụ ký), required_signers ∋ platform ∌ chủ, có mint quỹ; in một dòng OPENFUND_VECTOR", () => {
+  it("vector open-fund: CBOR tx — 1 vkey (platform, dịch vụ ký), required_signers ∋ platform ∋ chủ, có mint quỹ; in một dòng OPENFUND_VECTOR", () => {
     expect(openFundTxCbor).not.toBe("");
     const tx = CML.Transaction.from_cbor_hex(openFundTxCbor);
     expect(tx.witness_set().vkeywitnesses()!.len()).toBe(1);
@@ -1132,7 +1154,7 @@ describe("open-fund — bước bù: genesis quỹ tài trợ theo DID; VTA ký 
     const req: string[] = [];
     for (let i = 0; i < (rs?.len() ?? 0); i++) req.push(rs!.get(i).to_hex());
     expect(req).toContain(platformKey.pkh);
-    expect(req).not.toContain(opener.pkh);
+    expect(req).toContain(opener.pkh);
     expect(tx.body().mint()).toBeDefined();
     console.log("OPENFUND_VECTOR " + JSON.stringify({
       what: "open-fund tx with the service platform witness (Emulator, test keys)", platform_pkh: platformKey.pkh, fee_payer_pkh: feecover2.pkh,
@@ -1161,6 +1183,29 @@ describe("open-fund — bước bù: genesis quỹ tài trợ theo DID; VTA ký 
       ob({ change_address: fee.address, carp_amount: CARP.toString(), sponsor: { utxo_refs: refs } }), svcOtherBen);
     expect(r.status).toBe(409);
     expect(errCode(r)).toBe("SPONSOR_FUND_NOT_OPENED");
+  }, SLOW);
+
+  it("#161-1 ĐỎ: hai ví bên tài trợ ghim, quỹ ghi ví thứ nhất, UTxO CARP ở ví thứ hai ⟹ 422 SPONSOR_UTXO_NOT_FUND_SPONSOR", async () => {
+    const refs = (await emulator.getUtxos(attacker.address)).filter(u => (u.assets[CARP_UNIT] ?? 0n) > 0n).map(refStr).slice(0, 1);
+    expect(refs.length).toBe(1);
+    const r = await post("/tx/sponsor/fund-vault",
+      ob({ change_address: fee.address, carp_amount: "1", sponsor: { utxo_refs: refs } }), svcOpenTwo);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(errCode(r)).toBe("SPONSOR_UTXO_NOT_FUND_SPONSOR");
+    expect(openLocks.peek(opener.pkh, emulator.now())).toBeNull();
+  }, SLOW);
+
+  it("#161-1 CỰC ĐỐI: cùng cấu hình hai ví, UTxO ở ví ghi trong datum ⟹ 200; vai sponsor ký bằng khoá TRONG DATUM", async () => {
+    const refs = (await emulator.getUtxos(sponsor.address)).filter(u => (u.assets[CARP_UNIT] ?? 0n) >= CARP).map(refStr).slice(0, 1);
+    const r = await post("/tx/sponsor/fund-vault",
+      ob({ change_address: fee.address, carp_amount: CARP.toString(), sponsor: { utxo_refs: refs } }), svcOpenTwo);
+    if (r.status !== 200) throw new Error(`fund-vault ⟹ ${r.status} ${JSON.stringify(r.body)}`);
+    const signers = r.body.signers as Array<{ role: string; key_hashes: string[] }>;
+    expect(signers.find(x => x.role === "sponsor")!.key_hashes).toEqual([sponsor.pkh]);
+    expect((r.body.summary as Body).sponsor_signers).toEqual([sponsor.pkh]);
+    expect(r.body.required_signers).toContain(sponsor.pkh);
+    // Không nộp: nhả khoá để bài kế tiếp dựng lại trên cùng quỹ.
+    openLocks.releaseByTxHash(r.body.tx_hash as string);
   }, SLOW);
 
   it("fund-vault XANH (không fund_id) qua cấu hình open-fund: tìm đúng quỹ vừa tạo, nạp CARP, chuỗi nhận", async () => {

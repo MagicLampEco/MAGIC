@@ -1,0 +1,437 @@
+// VaultTxAPI/src/sponsorFund.ts — quỹ tài trợ của MỘT DID: đọc tập quỹ đã ghim, tìm quỹ của DID cho
+// `/tx/sponsor/fund-vault`, và bảng tình trạng cho `GET /sponsor/funds`.
+//
+// ── MỖI DID MỘT QUỸ TÀI TRỢ ─────────────────────────────────────────────────────
+// CARP bên tài trợ nạp cho một người mới được THU HỒI về bên tài trợ cùng đợt `ReclaimEpoch` của két
+// Wakeme của người đó. Validator chỉ cho thu hồi khi quỹ gắn đúng MỘT DID: quỹ mang
+// `sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }`, và `PrepaidLock` đòi két mang
+// đúng `owner_commit` đó (`PrepaidGen/onchain/validators/prepaid.ak` ▸ khối
+// `when fund_in.sponsorship is { Some(s) -> … }` trong `validate_lock`). Quỹ `sponsorship = None`
+// (quỹ chung) không có đường thu hồi nào về bên tài trợ ⟹ hành trình tài trợ KHÔNG BAO GIỜ dùng nó.
+// Hệ quả phụ: hai DID không bao giờ tranh nhau một UTxO quỹ.
+//
+// ── GỐC TIN CẬY CỦA QUỸ: TẬP GHIM, HOẶC KHOÁ PLATFORM GHIM ──────────────────────
+// Genesis quỹ chỉ đòi chữ ký `platform` (`PrepaidGen/offchain/src/prepaid.ts` ▸ `assertFundGenesis`
+// trả `[fund.platform]`), KHÔNG đòi chữ ký bên tài trợ. Ai cũng đúc được một quỹ ghi
+// `sponsorship.sponsor` = ví bên tài trợ, `owner_commit` = DID nạn nhân, bên hưởng = ví mình — với
+// `platform` = khoá CỦA KẺ ĐÓ. Quét địa chỉ quỹ rồi chỉ lọc theo `sponsor` là chi CARP bên tài trợ vào
+// quỹ đó. Hai gốc tin cậy, đều là thứ người gọi không viết được (cấu hình `paid_fund.sponsor`):
+//   · `fund_units` — tập quỹ ghim nguyên văn; dịch vụ tra từng NFT.
+//   · `platform_pkhs` — khoá platform được tin; vắng `fund_units` ⟹ dịch vụ QUÉT địa chỉ quỹ và chỉ giữ quỹ
+//     có `datum.platform` thuộc tập này (quỹ platform lạ bị bỏ ngay ở bước quét, không hiện ở bảng tình trạng).
+// Có cả hai ⟹ quỹ phải thoả cả hai (quỹ ghim mà platform lạ ⟹ `foreign_platform`).
+//
+// ── ĐÍCH NHẬN CARP: GHIM `beneficiary` ──────────────────────────────────────────
+// Ghim platform chặn kẻ KHÔNG giữ khoá platform. Nó không chặn người GIỮ khoá đó (hoặc kẻ lấy được khoá):
+// người đó đúc được quỹ mang đúng ví bên tài trợ + đúng DID nạn nhân, nhưng `beneficiary` = ví của mình;
+// fund-vault chi CARP bên tài trợ vào quỹ, rồi `FundClaim` (platform ký) đưa CARP tới ví đó. Đích thật
+// của MỌI quỹ tài trợ là một địa chỉ cố định ở cấu hình (`paid_fund.sponsor.beneficiary` + `beneficiary_datum`)
+// — đúng thứ `/tx/sponsor/open-fund` ghi vào quỹ. Có ghim ⟹ quỹ lệch địa chỉ HOẶC lệch datum mang
+// `foreign_beneficiary`. Quét theo `platform_pkhs` mà không có `fund_units` thì ghim này BẮT BUỘC
+// (`config.ts` ▸ `parseSponsorPins` từ chối khởi động): ở đường quét, mọi quỹ do khoá platform đúc đều được tin.
+
+import type { UTxO } from "@lucid-evolution/lucid";
+import {
+  bufferFloor, decodeFundDatum, maxClaimable, outstandingEffective, plutusAddressToBech32, plutusDataFromCbor,
+  plutusDataToCbor, type PaidFundDatum,
+} from "@magiclamp/prepaidgen-sdk";
+
+import { CodedApiError } from "./errors.js";
+import { refStr } from "./feePayer.js";
+
+/**
+ * Vì sao một quỹ trong tập ghim KHÔNG dùng được cho hành trình tài trợ:
+ *   missing          không có UTxO chưa tiêu nào mang NFT quỹ ở địa chỉ `paid_fund`
+ *   ambiguous        hơn một UTxO mang NFT đó — bất khả trên sổ cái đã lắng, không chọn đại
+ *   undecodable      datum không giải mã được bằng lược đồ hiện hành, hoặc `fund_id` trong datum ≠ tên NFT
+ *   foreign_platform `datum.platform` không thuộc `platform_pkhs` đã ghim (chỉ khi khoá đó có mặt)
+ *   wrong_vault      datum trỏ script két khác két mà bản deploy phục vụ
+ *   not_sponsored    `sponsorship = None` — quỹ chung, không thu hồi được về bên tài trợ
+ *   foreign_sponsor  `sponsorship.sponsor` không thuộc tập địa chỉ bên tài trợ đã ghim
+ *   foreign_beneficiary `beneficiary` khác địa chỉ đã ghim, hoặc `beneficiary_datum` khác datum đã ghim (vắng ⟺
+ *                    vắng; có thì CBOR chuẩn hoá khớp từng byte) — chỉ khi `beneficiary` có mặt ở cấu hình
+ *   buffer_mismatch  `buffer_bps` khác đệm mà open-fund ghi (`paid_fund.sponsor.buffer_bps`, vắng ⟹ `MIN_BUFFER_BPS`)
+ *   reclaim_too_far  `reclaim_after_epoch` > epoch hiện tại + `SPONSOR_RECLAIM_DELAY_EPOCHS` + `SPONSOR_RECLAIM_EPOCH_SLACK`
+ *                    — quỹ đặt mốc thu hồi xa hơn mọi quỹ open-fund dựng được ⟹ đường thu hồi về bên tài trợ bị khoá
+ *   reclaimed        `sponsor_reclaimed > 0` — bên tài trợ đã thu hồi; quỹ không nhận khoản nạp mới
+ *
+ * Ba vế cuối chỉ chặn được người GIỮ khoá platform (người khác không đúc nổi quỹ qua ghim platform): khoá đó lộ
+ * hoặc dùng sai thì quỹ đúc ra vẫn đúng bên tài trợ + đúng DID + đúng đích, nhưng mang đệm hoặc mốc thu hồi lạ.
+ */
+export type SponsorFundProblem =
+  "missing" | "ambiguous" | "undecodable" | "foreign_platform" | "wrong_vault" | "not_sponsored" | "foreign_sponsor"
+  | "foreign_beneficiary" | "buffer_mismatch" | "reclaim_too_far" | "reclaimed";
+
+/**
+ * Biên (epoch) của trần `reclaim_after_epoch`. Genesis quỹ ghi `reclaim_after_epoch = epoch(validTo) + delay`
+ * (`prepaid.ak` ▸ `validate_mint_fund_nft` ép cận DƯỚI đó), với `validTo` = cận trên của tx open-fund. open-fund
+ * KHÔNG kẹp validity vào một epoch (`planSponsorValidity`, `epochBound` tắt cho bước này), nên `validTo` có thể rơi
+ * sang epoch KẾ TIẾP lúc dựng — đúng một epoch, vì hạn tx (≤ 1 giờ ở đường `fee_payer`, `txValidityMs` ở đường còn
+ * lại) ngắn hơn hẳn một epoch Prepaid (5 ngày trên Preprod). Epoch hiện tại chỉ tăng ⟹ quỹ open-fund thật luôn
+ * thoả `reclaim_after_epoch ≤ epoch hiện tại + delay + 1`; vượt ⟹ quỹ không do open-fund dựng.
+ */
+export const SPONSOR_RECLAIM_EPOCH_SLACK = 1n;
+
+/**
+ * CBOR chuẩn hoá của một datum Plutus: giải mã rồi mã hoá lại bằng đúng bộ mã hoá mà open-fund dùng khi ghi
+ * quỹ (`plutusDataFromCbor` cấu hình → `encodeFundDatum`). Hai cách viết CBOR khác nhau của cùng một giá trị
+ * Plutus Data cho cùng chuỗi ở đây — validator so GIÁ TRỊ, nên phép so ở dịch vụ cũng phải so giá trị. Đi qua
+ * codec của PrepaidGen SDK, không qua `Data` của gói này: datum đọc từ quỹ là `Constr` của bản lucid bên SDK.
+ */
+export function canonicalDatumCbor(cbor: string): string {
+  return plutusDataToCbor(plutusDataFromCbor(cbor));
+}
+
+/** Vì sao một quỹ đang bận: khoá mềm của một lượt dựng còn sống · input vừa nộp chưa vào khối. */
+export type SponsorFundBusyReason = "in_flight" | "pending_submit";
+
+export interface SponsorFundEntry {
+  unit: string;
+  fundId: string;
+  /** Có ⟹ đúng MỘT UTxO mang NFT quỹ ở địa chỉ quỹ. */
+  utxo?: UTxO;
+  /** Có ⟹ datum giải mã được (kể cả khi `problem` là `wrong_vault`/`not_sponsored`/`foreign_sponsor`). */
+  datum?: PaidFundDatum;
+  /** `sponsorship.owner_commit` — DID mà quỹ phục vụ. Vắng ⟹ quỹ không phải quỹ tài trợ. */
+  ownerCommit?: string;
+  /** `sponsorship.sponsor` dạng bech32 trên mạng của dịch vụ. */
+  sponsorAddress?: string;
+  problem?: SponsorFundProblem;
+}
+
+/**
+ * Tập quỹ ứng viên → mỗi quỹ một dòng, theo ĐÚNG thứ tự `units`.
+ * `utxosOfUnit` = mọi UTxO chưa tiêu mang `unit` (ở mọi địa chỉ); lọc theo `fundAddress` ở đây.
+ * `platformPkhs` có ⟹ quỹ có `datum.platform` ngoài tập này mang `foreign_platform`.
+ * `beneficiary` có ⟹ quỹ có đích nhận CARP khác (địa chỉ hoặc datum) mang `foreign_beneficiary`.
+ */
+export function classifySponsorFunds(p: {
+  units: readonly string[]; fundScriptHash: string; fundAddress: string; vaultScriptHash: string;
+  sponsorAddresses: readonly string[]; network: Parameters<typeof plutusAddressToBech32>[0];
+  utxosOfUnit: ReadonlyMap<string, readonly UTxO[]>;
+  platformPkhs?: readonly string[];
+  beneficiary?: { address: string; datumCbor?: string };
+  /** Đệm open-fund ghi vào quỹ (`paid_fund.sponsor.buffer_bps ?? MIN_BUFFER_BPS`). BẮT BUỘC: không có "không ghim". */
+  bufferBps: bigint;
+  /** Trần mốc thu hồi: `currentEpoch` = epoch Prepaid lúc đọc; `delayEpochs` = `SPONSOR_RECLAIM_DELAY_EPOCHS`. */
+  reclaimHorizon: { currentEpoch: bigint; delayEpochs: bigint };
+}): SponsorFundEntry[] {
+  const reclaimMax = p.reclaimHorizon.currentEpoch + p.reclaimHorizon.delayEpochs + SPONSOR_RECLAIM_EPOCH_SLACK;
+  // Chuẩn hoá MỘT lần; `config.ts` đã kiểm datum giải mã được lúc khởi động.
+  const ben = p.beneficiary === undefined ? undefined : {
+    address: p.beneficiary.address,
+    datum: p.beneficiary.datumCbor === undefined ? null : canonicalDatumCbor(p.beneficiary.datumCbor),
+  };
+  return p.units.map(unit => {
+    const fundId = unit.slice(p.fundScriptHash.length);
+    const hits = (p.utxosOfUnit.get(unit) ?? []).filter(u => u.address === p.fundAddress && (u.assets[unit] ?? 0n) === 1n);
+    if (hits.length === 0) return { unit, fundId, problem: "missing" as const };
+    if (hits.length > 1) return { unit, fundId, problem: "ambiguous" as const };
+    const utxo = hits[0]!;
+    let datum: PaidFundDatum;
+    try {
+      if (typeof utxo.datum !== "string") throw new Error("không có datum nội tuyến");
+      datum = decodeFundDatum(utxo.datum);
+    } catch {
+      return { unit, fundId, utxo, problem: "undecodable" as const };
+    }
+    if (datum.fund_id !== fundId) return { unit, fundId, utxo, problem: "undecodable" as const };
+    // Ghim platform: gỡ vế này ⟹ quỹ do platform lạ đúc lọt qua (bài "platform lạ" ở sponsorFund.test.ts đỏ).
+    if (p.platformPkhs !== undefined && !p.platformPkhs.includes(datum.platform.toLowerCase())) {
+      return { unit, fundId, utxo, datum, problem: "foreign_platform" as const };
+    }
+    // `wrong_vault` vẫn mang `owner_commit` (khi có): quỹ do khoá platform này ký cho DID đó vẫn là quỹ của DID —
+    // `fundsBlockingOpen` / `assertDidNotFundedElsewhere` phải đếm được nó sau một lần deploy lại két.
+    if (datum.vault_hash !== p.vaultScriptHash) {
+      return {
+        unit, fundId, utxo, datum, ...(datum.sponsorship === null ? {} : { ownerCommit: datum.sponsorship.owner_commit }),
+        problem: "wrong_vault" as const,
+      };
+    }
+    const s = datum.sponsorship;
+    if (s === null) return { unit, fundId, utxo, datum, problem: "not_sponsored" as const };
+    const ownerCommit = s.owner_commit;
+    let sponsorAddress: string | undefined;
+    try {
+      sponsorAddress = plutusAddressToBech32(p.network, s.sponsor);
+    } catch {
+      // Stake Pointer: không đổi được ra bech32 ⟹ không khớp được địa chỉ ghim nào.
+      return { unit, fundId, utxo, datum, ownerCommit, problem: "foreign_sponsor" as const };
+    }
+    if (!p.sponsorAddresses.includes(sponsorAddress)) {
+      return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "foreign_sponsor" as const };
+    }
+    // Ghim đích nhận CARP: đặt SAU `foreign_sponsor` để dòng lệch vẫn mang owner_commit + sponsor_address —
+    // đủ cho người vận hành biết quỹ nào, của DID nào, đang hút CARP của bên tài trợ nào.
+    if (ben !== undefined && !beneficiaryMatches(p.network, datum, ben)) {
+      return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "foreign_beneficiary" as const };
+    }
+    // Ghim đệm + mốc thu hồi: open-fund ghi đúng hai giá trị này; lệch ⟹ quỹ không do open-fund của bản deploy này dựng.
+    if (datum.buffer_bps !== p.bufferBps) {
+      return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "buffer_mismatch" as const };
+    }
+    if (s.reclaim_after_epoch > reclaimMax) {
+      return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "reclaim_too_far" as const };
+    }
+    // Đã thu hồi: CARP đã về bên tài trợ; nạp thêm vào quỹ này là việc của một quyết định khác, không của hành trình.
+    if (datum.sponsor_reclaimed > 0n) {
+      return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress, problem: "reclaimed" as const };
+    }
+    return { unit, fundId, utxo, datum, ownerCommit, sponsorAddress };
+  });
+}
+
+/**
+ * Đích nhận CARP của quỹ có đúng đích đã ghim không — HAI vế, cả hai phải khớp:
+ *   · địa chỉ: `datum.beneficiary` đổi ra bech32 trên mạng dịch vụ == địa chỉ ghim (dạng chính tắc, `config.ts`);
+ *     không đổi được (Stake Pointer) ⟹ không khớp;
+ *   · datum: vắng ⟺ ghim vắng; có ⟹ CBOR chuẩn hoá bằng nhau.
+ * Cùng địa chỉ mà khác datum vẫn là đích khác: với beneficiary là script (`fee_inbox`), datum là dòng sổ bên
+ * nhận dùng để nhận ra khoản tiền (`InboxDatum.refund`), nên datum lạ = CARP vào sổ của người khác.
+ */
+function beneficiaryMatches(
+  network: Parameters<typeof plutusAddressToBech32>[0], d: PaidFundDatum, ben: { address: string; datum: string | null },
+): boolean {
+  let addr: string;
+  try {
+    addr = plutusAddressToBech32(network, d.beneficiary);
+  } catch {
+    return false;
+  }
+  if (addr !== ben.address) return false;
+  const got = d.beneficiary_datum === null ? null : plutusDataToCbor(d.beneficiary_datum);
+  return got === ben.datum;
+}
+
+/**
+ * Đích nhận CARP của quỹ có đúng đích GHIM ở cấu hình không (cùng phép so với `foreign_beneficiary`). Dùng cho
+ * hàm ký platform (`platformSigner.ts`, nhánh `fund-claim`): ghim nhận dạng cấu hình `{ address, datumCbor? }`.
+ */
+export function fundBeneficiaryIs(
+  network: Parameters<typeof plutusAddressToBech32>[0], d: PaidFundDatum, pin: { address: string; datumCbor?: string },
+): boolean {
+  return beneficiaryMatches(network, d, {
+    address: pin.address, datum: pin.datumCbor === undefined ? null : canonicalDatumCbor(pin.datumCbor),
+  });
+}
+
+/** Một quỹ có thuộc DID `didCommit` không: quỹ tài trợ dùng được VÀ `owner_commit` khớp. */
+function servesDid(e: SponsorFundEntry, didCommit: string): boolean {
+  return e.problem === undefined && e.ownerCommit === didCommit;
+}
+
+/**
+ * Quỹ tài trợ của DID `didCommit` cho fund-vault.
+ *
+ * `callerFundId` có ⟹ quỹ đó phải dùng được VÀ thuộc đúng DID, không thì NÉM trước khi dựng:
+ *   - không nằm trong tập ghim ⟹ đã chặn sớm hơn (`sponsor.ts` ▸ `assertFundPinnedInputs`, 422);
+ *   - có `problem` ⟹ 422 `SPONSOR_FUND_NOT_ALLOWED` kèm `problem`;
+ *   - thuộc DID khác ⟹ 422 `SPONSOR_FUND_DID_MISMATCH`.
+ * Vắng ⟹ dịch vụ tìm trong tập ghim:
+ *   - 0 quỹ ⟹ 409 `SPONSOR_FUND_NOT_OPENED` (DID chưa có quỹ tài trợ; người vận hành tạo rồi gọi lại);
+ *   - >1 quỹ ⟹ 409 `SPONSOR_FUND_AMBIGUOUS` (không chọn đại: mỗi DID MỘT quỹ là quy ước, lệch là việc của
+ *     người vận hành).
+ */
+export function resolveSponsorFund(
+  entries: readonly SponsorFundEntry[], didCommit: string, callerFundId?: string,
+): { entry: SponsorFundEntry; selection: "caller" | "did_lookup" } {
+  if (callerFundId !== undefined) {
+    const e = entries.find(x => x.fundId === callerFundId);
+    if (e === undefined) {
+      throw new CodedApiError(422, "SPONSOR_FUND_NOT_ALLOWED",
+        `"fund_id" không thuộc tập quỹ bên tài trợ đã ghim ở cấu hình dịch vụ.`, { fund_id: callerFundId });
+    }
+    if (e.problem !== undefined) {
+      throw new CodedApiError(422, "SPONSOR_FUND_NOT_ALLOWED",
+        `Quỹ ${callerFundId} không dùng được cho hành trình tài trợ (${e.problem}).` +
+        (e.problem === "not_sponsored" ? ` Quỹ chung (sponsorship = None) không thu hồi được CARP về bên tài trợ.` : "") +
+        (e.problem === "foreign_beneficiary"
+          ? ` Đích nhận CARP của quỹ khác đích đã ghim (paid_fund.sponsor.beneficiary) — quỹ đúc bằng khoá platform nhưng ` +
+            `trả CARP đi nơi khác; báo người vận hành.` : ""),
+        { fund_id: callerFundId, problem: e.problem });
+    }
+    if (!servesDid(e, didCommit)) {
+      throw new CodedApiError(422, "SPONSOR_FUND_DID_MISMATCH",
+        `Quỹ ${callerFundId} là quỹ tài trợ của DID khác (owner_commit ${e.ownerCommit!.slice(0, 16)}…), không phải ` +
+        `DID của két này (${didCommit.slice(0, 16)}…). Bỏ "fund_id" để dịch vụ tìm quỹ của DID.`,
+        { fund_id: callerFundId, owner_commit: e.ownerCommit, did_commit: didCommit });
+    }
+    return { entry: e, selection: "caller" };
+  }
+  const mine = entries.filter(e => servesDid(e, didCommit));
+  if (mine.length === 0) {
+    throw new CodedApiError(409, "SPONSOR_FUND_NOT_OPENED",
+      `DID ${didCommit.slice(0, 16)}… chưa có quỹ tài trợ trong gốc tin cậy. Tạo quỹ tài trợ cho DID này ` +
+      `(/tx/sponsor/open-fund) trước bước fund-vault.`,
+      { did_commit: didCommit, pinned_funds: entries.length });
+  }
+  if (mine.length > 1) {
+    throw new CodedApiError(409, "SPONSOR_FUND_AMBIGUOUS",
+      `DID ${didCommit.slice(0, 16)}… có ${mine.length} quỹ tài trợ trong tập ghim; mỗi DID MỘT quỹ. Gửi "fund_id" ` +
+      `để chỉ đích danh, hoặc báo người vận hành gỡ quỹ thừa khỏi cấu hình.`,
+      { did_commit: didCommit, fund_ids: mine.map(e => e.fundId) });
+  }
+  return { entry: mine[0]!, selection: "did_lookup" };
+}
+
+/**
+ * Nhãn mà `/tx/sponsor/claim` TỪ CHỐI — đúng các nhãn mà hàm ký platform cũng từ chối (`platformSigner.ts` ▸ nhánh
+ * `fund-claim` kiểm hai điều: datum quỹ mang khoá platform này, và đích nhận CARP đúng đích ghim), cộng các nhãn không
+ * có quỹ nào để ký. Các nhãn còn lại (`wrong_vault`, `not_sponsored`, `foreign_sponsor`, `buffer_mismatch`,
+ * `reclaim_too_far`, `reclaimed`) chỉ nói quỹ LỆCH cấu hình HIỆN TẠI: quỹ vẫn do khoá platform này ký và vẫn trả CARP
+ * tới đúng đích ghim. Chặn claim ở đó là để CARP bên hưởng đã kiếm kẹt vĩnh viễn sau mỗi lần đổi đệm, xoay ví bên
+ * tài trợ hay deploy lại két — kể cả lượt rút cuối đóng quỹ sau `FundReclaim`.
+ */
+export const CLAIM_BLOCKING_PROBLEMS: ReadonlySet<SponsorFundProblem> = new Set<SponsorFundProblem>([
+  "missing", "ambiguous", "undecodable", "foreign_platform", "foreign_beneficiary",
+]);
+
+/**
+ * claim có từ chối quỹ này không, và vì nhãn nào. Vắng ⟹ cho claim.
+ *
+ * Phép phân loại trả MỘT nhãn, nhãn đầu tiên khớp; `wrong_vault`, `not_sponsored`, `foreign_sponsor` đứng TRƯỚC phép
+ * so đích, nên một quỹ mang các nhãn đó chưa được so đích. Ở đây so lại platform + đích cho mọi quỹ có datum, để
+ * "cho claim" luôn nghĩa là đúng hai điều hàm ký sẽ kiểm — không để hàm ký là lưới duy nhất (lỗi 500 thay vì 422).
+ */
+export function claimRefusal(
+  e: SponsorFundEntry,
+  p: {
+    network: Parameters<typeof plutusAddressToBech32>[0]; platformPkhs?: readonly string[];
+    beneficiary?: { address: string; datumCbor?: string };
+  },
+): SponsorFundProblem | undefined {
+  if (e.problem !== undefined && CLAIM_BLOCKING_PROBLEMS.has(e.problem)) return e.problem;
+  if (e.datum === undefined) return "undecodable";
+  if (p.platformPkhs !== undefined && !p.platformPkhs.includes(e.datum.platform.toLowerCase())) return "foreign_platform";
+  if (p.beneficiary === undefined || !fundBeneficiaryIs(p.network, e.datum, p.beneficiary)) return "foreign_beneficiary";
+  return undefined;
+}
+
+/**
+ * Quỹ của DID mà open-vault/open-fund coi là "đã có" ⟹ KHÔNG ký genesis quỹ thứ hai: MỌI quỹ giải mã được mang
+ * `owner_commit` = DID, kể cả quỹ LỆCH cấu hình hiện tại (`wrong_vault`, `foreign_sponsor`, `buffer_mismatch`,
+ * `reclaim_too_far`) và quỹ đã thu hồi (`reclaimed`). Mỗi DID một quỹ trọn đời: đổi đệm, xoay ví bên tài trợ hay deploy
+ * lại két không làm DID "chưa có quỹ".
+ *
+ * Trừ hai nhãn KHÔNG TIN — cùng hai nhãn claim từ chối:
+ *   - `foreign_platform`: ai cũng đúc được; để nó chặn là trao cho kẻ lạ nút khoá hành trình của một DID;
+ *   - `foreign_beneficiary`: quỹ trả CARP đi nơi khác; dịch vụ không nạp, không claim nó, nên nó không phải "quỹ của
+ *     DID" theo nghĩa dịch vụ phục vụ được.
+ */
+export function fundsBlockingOpen(entries: readonly SponsorFundEntry[], didCommit: string): SponsorFundEntry[] {
+  return entries.filter(e => e.ownerCommit === didCommit && e.datum !== undefined
+    && e.problem !== "foreign_platform" && e.problem !== "foreign_beneficiary");
+}
+
+/**
+ * fund-vault: DID đã nhận tài trợ ở một quỹ KHÁC (`credit_issued > 0`) ⟹ 409 `SPONSOR_DID_FUNDED_ELSEWHERE`.
+ *
+ * Mỗi DID một quỹ là quy ước của dịch vụ; trên chuỗi không gì chặn quỹ thứ hai (genesis quỹ chỉ đòi platform, và
+ * một tx open-fund nộp thẳng lên nút không qua sổ của dịch vụ). Phép đếm 409 `SPONSOR_FUND_AMBIGUOUS` chỉ phủ
+ * đường KHÔNG có `fund_id`, và chỉ trên quỹ dùng được: gửi `fund_id` của quỹ thứ hai, hoặc để quỹ đầu đã thu hồi
+ * (`reclaimed`), là nạp lần hai cho cùng DID. Đếm trên MỌI quỹ có `owner_commit` = DID và datum giải mã được,
+ * trừ `foreign_platform` (ai cũng đúc được — để nó chặn là cho kẻ lạ khoá hành trình của một DID).
+ */
+export function assertDidNotFundedElsewhere(
+  entries: readonly SponsorFundEntry[], didCommit: string, chosenUnit: string,
+): void {
+  const other = entries.filter(e => e.ownerCommit === didCommit && e.unit !== chosenUnit && e.problem !== "foreign_platform"
+    && e.datum !== undefined && e.datum.credit_issued > 0n);
+  if (other.length > 0) {
+    throw new CodedApiError(409, "SPONSOR_DID_FUNDED_ELSEWHERE",
+      `DID ${didCommit.slice(0, 16)}… đã nhận tài trợ ở quỹ khác (credit_issued > 0) — mỗi DID một lần tài trợ, ` +
+      `fund-vault không nạp quỹ thứ hai.`,
+      { did_commit: didCommit, funded_fund_ids: other.map(e => e.fundId) });
+  }
+}
+
+// ── bảng tình trạng (GET /sponsor/funds) ────────────────────────────────────────
+
+/** Số kế toán của một quỹ, đọc từ datum. Số lớn là CHUỖI chữ số như mọi số tiền của API. */
+export function fundAccountingJson(d: PaidFundDatum, carpHeld: bigint): Record<string, unknown> {
+  const outstanding = outstandingEffective(d.credit_issued, d.sponsor_reclaimed, d.magic_settled);
+  // `outstanding < 0` là trạng thái validator không cho tạo (kế toán quyết toán quá hạn-mức). Báo
+  // thẳng, không tính sàn đệm trên một số âm (`bufferFloor` từ chối số âm).
+  const ok = outstanding >= 0n && d.buffer_bps >= 0n;
+  return {
+    credit_issued: d.credit_issued.toString(),
+    magic_settled: d.magic_settled.toString(),
+    sponsor_reclaimed: d.sponsor_reclaimed.toString(),
+    provider_claimed: d.provider_claimed.toString(),
+    carp_locked: d.carp_locked.toString(),
+    carp_held: carpHeld.toString(),
+    buffer_bps: d.buffer_bps.toString(),
+    outstanding: outstanding.toString(),
+    buffer_floor: ok ? bufferFloor(outstanding, d.buffer_bps).toString() : null,
+    claimable_carp: ok ? maxClaimable(d).toString() : null,
+    ...(ok ? {} : { accounting_anomaly: outstanding < 0n ? "outstanding_negative" : "buffer_bps_negative" }),
+  };
+}
+
+export interface SponsorWalletView { address: string; utxos: readonly UTxO[] }
+
+/** Thân `GET /sponsor/funds`. Cộng tổng chỉ trên quỹ tài trợ dùng được (`problem` vắng). */
+export function sponsorFundsStatusBody(p: {
+  entries: readonly SponsorFundEntry[]; carpUnit: string; busyOf: (e: SponsorFundEntry) => SponsorFundBusyReason | null;
+  wallets: readonly SponsorWalletView[]; maxCarpAmount: bigint; nowMs: number;
+}): Record<string, unknown> {
+  const sum = { credit_issued: 0n, magic_settled: 0n, carp_locked: 0n, sponsor_reclaimed: 0n };
+  let busy = 0;
+  let usable = 0;
+  let unusable = 0;
+  const funds = p.entries.map(e => {
+    const reason = e.utxo === undefined ? null : p.busyOf(e);
+    if (e.problem !== undefined) unusable++;
+    else usable++;
+    if (reason !== null) busy++;
+    if (e.problem === undefined && e.datum !== undefined) {
+      sum.credit_issued += e.datum.credit_issued;
+      sum.magic_settled += e.datum.magic_settled;
+      sum.carp_locked += e.datum.carp_locked;
+      sum.sponsor_reclaimed += e.datum.sponsor_reclaimed;
+    }
+    const s = e.datum?.sponsorship ?? null;
+    return {
+      fund_id: e.fundId,
+      fund_unit: e.unit,
+      utxo_ref: e.utxo === undefined ? null : refStr(e.utxo),
+      problem: e.problem ?? null,
+      owner_commit: e.ownerCommit ?? null,
+      sponsor_address: e.sponsorAddress ?? null,
+      reclaim_after_epoch: s === null ? null : s.reclaim_after_epoch.toString(),
+      busy: reason !== null,
+      busy_reason: reason,
+      accounting: e.datum === undefined ? null : fundAccountingJson(e.datum, e.utxo!.assets[p.carpUnit] ?? 0n),
+    };
+  });
+  let walletCarp = 0n;
+  const wallets = p.wallets.map(w => {
+    const carp = w.utxos.reduce((a, u) => a + (u.assets[p.carpUnit] ?? 0n), 0n);
+    walletCarp += carp;
+    return {
+      address: w.address,
+      carp: carp.toString(),
+      utxo_count: w.utxos.length,
+      carp_utxo_count: w.utxos.filter(u => (u.assets[p.carpUnit] ?? 0n) > 0n).length,
+    };
+  });
+  return {
+    as_of: new Date(p.nowMs).toISOString(),
+    pinned_funds: p.entries.length,
+    usable,
+    unusable,
+    busy,
+    funds,
+    totals: {
+      credit_issued: sum.credit_issued.toString(),
+      magic_settled: sum.magic_settled.toString(),
+      carp_locked: sum.carp_locked.toString(),
+      sponsor_reclaimed: sum.sponsor_reclaimed.toString(),
+    },
+    // CARP còn ở ví bên tài trợ — thứ cạn được của hành trình. `max_carp_amount` là trần một lượt
+    // fund-vault đã ghim.
+    sponsor_wallets: wallets,
+    sponsor_carp_total: walletCarp.toString(),
+    max_carp_amount: p.maxCarpAmount.toString(),
+  };
+}

@@ -62,7 +62,7 @@ const FEECOVER_BLOCK = {
       "create-vault": "create_vault", consume: "consume_magic",
       // Cố ý SAI: mục đích của ứng dụng khác — ca 403 FEE_PROXY_APP_PURPOSE.
       "schedule-commit": "orilife_consume_magic",
-      "sponsor-t1-open": "sponsor_open",
+      "sponsor-open-vault": "sponsor_open",
     } },
     orilife: { token_sha256: sha(ORILIFE_TOKEN), purposes: { consume: "orilife_consume_magic" } },
     // Cố ý SAI: ứng dụng khác `magic` mà mục đích không mang tiền tố tên mình.
@@ -299,13 +299,13 @@ describe("POST /fee/utxo", () => {
   });
 
   it("route tài trợ có khai mục đích ⟹ 200, Feecover nhận đúng mục đích; route tài trợ chưa khai ⟹ 400 UNMAPPED", async () => {
-    // Cặp đối xứng: cùng harness, cùng app, chỉ khác route. Bảng mục đích chỉ có `sponsor-t1-open`.
+    // Cặp đối xứng: cùng harness, cùng app, chỉ khác route. Bảng mục đích chỉ có `sponsor-open-vault`.
     const h = harness();
-    const r = await h.call("POST", "/fee/utxo", { route: "sponsor-t1-open" });
+    const r = await h.call("POST", "/fee/utxo", { route: "sponsor-open-vault" });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect((r.body as { purpose: string }).purpose).toBe("sponsor_open");
     expect(h.fc.calls[0]!.url).toBe("https://feecover.example/v1/utxo?purpose=sponsor_open");
-    const u = await h.call("POST", "/fee/utxo", { route: "sponsor-t3-draw" });
+    const u = await h.call("POST", "/fee/utxo", { route: "sponsor-draw-magic" });
     expect(u.status).toBe(400);
     expect(codeOf(u)).toBe("FEE_PROXY_PURPOSE_UNMAPPED");
     expect(h.fc.calls).toHaveLength(1);
@@ -402,11 +402,22 @@ describe("cấu hình feecover", () => {
     expect(withFc({ apps: { magic: { purposes: { "consume-magic": "consume_magic" } } } })).toThrow(/route/);
     // Bốn route tài trợ là khoá hợp lệ; tên gần đúng thì vẫn NÉM.
     const sponsorPurposes = {
-      "sponsor-t1-open": "sponsor_open", "sponsor-t2-fund": "sponsor_fund",
-      "sponsor-t3-draw": "sponsor_draw", "sponsor-t4-first-consume": "sponsor_first_consume",
+      "sponsor-open-vault": "sponsor_open", "sponsor-fund-vault": "sponsor_fund",
+      "sponsor-draw-magic": "sponsor_draw", "sponsor-first-consume": "sponsor_first_consume",
     };
     expect(withFc({ apps: { magic: { purposes: sponsorPurposes } } })).not.toThrow();
     expect(withFc({ apps: { magic: { purposes: { "sponsor-t2": "sponsor_fund" } } } })).toThrow(/route/);
+    // Khoá CŨ của bảng mục đích (tệp cấu hình đang chạy trước đợt đổi tên 2026-10-06) vẫn nạp được và
+    // quy về tên mới — bỏ thẳng thì dịch vụ không khởi động được. Có cả cũ lẫn mới cho cùng route ⟹ NÉM.
+    const legacy = {
+      "sponsor-t1-open": "sponsor_open", "sponsor-t2-fund": "sponsor_fund",
+      "sponsor-t3-draw": "sponsor_draw", "sponsor-t4-first-consume": "sponsor_first_consume",
+    };
+    const d = parseDeployment(JSON.stringify(deploymentObj({
+      feecover: { ...FEECOVER_BLOCK, apps: { magic: { purposes: legacy } } },
+    })), "Preview");
+    expect(Object.fromEntries(d.feecover!.apps.get("magic")!.purposes)).toEqual(sponsorPurposes);
+    expect(withFc({ apps: { magic: { purposes: { ...legacy, "sponsor-fund-vault": "sponsor_fund" } } } })).toThrow(/tên cũ/);
     expect(withFc({ apps: { magic: { token_sha256: "ab".repeat(32), purposes: {} } } })).toThrow(/token_sha256/);
   });
 });

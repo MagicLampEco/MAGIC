@@ -1,0 +1,307 @@
+{
+  "contract_version": "1.0.0",
+  "operation": "POST /fee/utxo",
+  "requests": {
+    "valid": [
+      {
+        "name": "route-only",
+        "body": {
+          "route": "consume"
+        }
+      },
+      {
+        "name": "route-and-source",
+        "body": {
+          "route": "consume",
+          "source": "sponsor"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "route-missing",
+        "why": "route is required.",
+        "body": {}
+      },
+      {
+        "name": "source-outside-closed-set",
+        "why": "source is feecover or sponsor.",
+        "body": {
+          "route": "consume",
+          "source": "owner_address"
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "typical",
+        "status": 200,
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "with-source-confirmed",
+        "status": 200,
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic",
+          "source": "sponsor"
+        }
+      },
+      {
+        "name": "reserved-until-without-milliseconds",
+        "status": 200,
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "reserved_until": "2026-09-11T04:35:03Z",
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "additive-key-inside-fee-payer",
+        "status": 200,
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14",
+            "lease_epoch": 318
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic"
+        },
+        "note": "THE CASE THAT BROKE A MODULE: reservation_id itself was added to fee_payer without a major bump, and a reader that rejected unknown keys answered 502 to its own users. A reader accepts unknown keys and forwards the fee_payer object to /tx/consume unchanged."
+      },
+      {
+        "name": "additive-key-at-top-level",
+        "status": 200,
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic",
+          "quota": {
+            "left": 3
+          }
+        },
+        "note": "Unknown top-level keys are additive."
+      },
+      {
+        "name": "feecover-refused",
+        "status": 429,
+        "body": {
+          "error": {
+            "code": "FEE_PROXY_REJECTED",
+            "message": "Feecover refused.",
+            "details": {
+              "upstream_status": 429,
+              "rule": "RATE"
+            }
+          }
+        },
+        "note": "FEE_PROXY_REJECTED carries Feecover's own status (400, 403, 409, 422 or 429)."
+      },
+      {
+        "name": "upstream-down",
+        "status": 502,
+        "body": {
+          "error": {
+            "code": "FEE_PROXY_UPSTREAM",
+            "message": "Feecover did not answer.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "proxy-not-configured",
+        "status": 501,
+        "body": {
+          "error": {
+            "code": "FEE_PROXY_UNAVAILABLE",
+            "message": "No feecover block in this deployment.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "unknown-application-token",
+        "status": 401,
+        "body": {
+          "error": {
+            "code": "FEE_PROXY_APP_UNKNOWN",
+            "message": "X-Feecover-Token matches no application.",
+            "details": {}
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "reservation-id-missing",
+        "status": 200,
+        "why": "reservation_id is guaranteed since #158; a response without it is from a server older than this contract, and the module must fail closed rather than build on an unreserved UTxO.",
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "reservation-id-uppercase",
+        "status": 200,
+        "why": "reservation_id is 32 lowercase hex characters; the service compares it byte for byte.",
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "D99AE79544373073EF10B0AE0F38CF14"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "reservation-id-31-hex",
+        "status": 200,
+        "why": "reservation_id is exactly 16 bytes.",
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf1"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "utxo-without-output-index",
+        "status": 200,
+        "why": "utxo is <tx_hash>#<index>.",
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "address-not-bech32",
+        "status": 200,
+        "why": "address is a Cardano bech32 payment address.",
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "not-an-address",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "fee-payer-missing",
+        "status": 200,
+        "why": "fee_payer is the point of the route.",
+        "body": {
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "reserved-until-as-epoch-number",
+        "status": 200,
+        "why": "reserved_until is an ISO 8601 string.",
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "reserved_until": 1789101303000,
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "reserved-until-missing",
+        "status": 200,
+        "why": "reserved_until bounds how long the UTxO can be used.",
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "purpose": "consume_magic"
+        }
+      },
+      {
+        "name": "purpose-missing",
+        "status": 200,
+        "why": "purpose is part of the answer.",
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z"
+        }
+      },
+      {
+        "name": "source-outside-closed-set",
+        "status": 200,
+        "why": "source is feecover or sponsor; any other value means the reader cannot tell who pays.",
+        "body": {
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "reserved_until": "2026-09-11T04:35:03.000Z",
+          "purpose": "consume_magic",
+          "source": "owner_address"
+        }
+      },
+      {
+        "name": "error-envelope-with-200",
+        "status": 200,
+        "why": "A 200 carrying an error body is not a FeeUtxoResponse.",
+        "body": {
+          "error": {
+            "code": "FEE_PROXY_UPSTREAM",
+            "message": "x",
+            "details": {}
+          }
+        }
+      }
+    ]
+  }
+}

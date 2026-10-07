@@ -1,0 +1,1192 @@
+{
+  "contract_version": "1.0.0",
+  "description": "Error codes of the routes in openapi.json. Every non-2xx body is the ErrorResponse envelope. status lists the HTTP statuses the code is returned with. routes lists the path ids the code can appear on; '*' means every route except /health. The table is what the server documents today, not a promise of exhaustiveness: a reader must handle an unknown code by its HTTP status (see compatibility.md).",
+  "codes": [
+    {
+      "code": "BAD_REQUEST",
+      "status": [
+        400
+      ],
+      "routes": [
+        "*"
+      ],
+      "meaning": "Request body is not a JSON object, or a field is missing or malformed. Read error.message."
+    },
+    {
+      "code": "UNAUTHORIZED",
+      "status": [
+        401
+      ],
+      "routes": [
+        "*"
+      ],
+      "meaning": "Missing or wrong Authorization bearer token."
+    },
+    {
+      "code": "NOT_FOUND",
+      "status": [
+        404
+      ],
+      "routes": [
+        "*"
+      ],
+      "meaning": "Unknown path."
+    },
+    {
+      "code": "METHOD_NOT_ALLOWED",
+      "status": [
+        405
+      ],
+      "routes": [
+        "*"
+      ],
+      "meaning": "Wrong HTTP method for the path."
+    },
+    {
+      "code": "INTERNAL",
+      "status": [
+        500
+      ],
+      "routes": [
+        "*"
+      ],
+      "meaning": "Unexpected server error. error.details.reference_code (ref_<12 hex>) is the handle to quote to the operator; never retry blindly."
+    },
+    {
+      "code": "CONFIG_MISSING",
+      "status": [
+        501
+      ],
+      "routes": [
+        "*"
+      ],
+      "meaning": "The deployment lacks configuration this route needs; error.details.missing names it. Not retryable."
+    },
+    {
+      "code": "CHAIN_UNAVAILABLE",
+      "status": [
+        502
+      ],
+      "routes": [
+        "*"
+      ],
+      "meaning": "The chain data provider failed or returned an inconsistent snapshot. Retryable; do not read it as 'not found'."
+    },
+    {
+      "code": "FEE_PROXY_UNAVAILABLE",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/fee/utxo",
+        "/fee/sign"
+      ],
+      "meaning": "The deployment has no feecover block."
+    },
+    {
+      "code": "FEE_PROXY_APP_UNKNOWN",
+      "status": [
+        401
+      ],
+      "routes": [
+        "/fee/utxo",
+        "/fee/sign",
+        "/tx/quote"
+      ],
+      "meaning": "X-Feecover-Token matches no configured application, or no default application exists."
+    },
+    {
+      "code": "FEE_PROXY_PURPOSE_UNMAPPED",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/fee/utxo",
+        "/fee/sign"
+      ],
+      "meaning": "The application has no Feecover purpose for this route."
+    },
+    {
+      "code": "FEE_PROXY_APP_PURPOSE",
+      "status": [
+        403
+      ],
+      "routes": [
+        "/fee/utxo",
+        "/fee/sign"
+      ],
+      "meaning": "The purpose belongs to another application or lacks the application prefix."
+    },
+    {
+      "code": "FEE_PROXY_SOURCE_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/fee/utxo",
+        "/fee/sign"
+      ],
+      "meaning": "source is neither feecover nor sponsor."
+    },
+    {
+      "code": "FEE_PROXY_REJECTED",
+      "status": [
+        400,
+        403,
+        409,
+        422,
+        429
+      ],
+      "routes": [
+        "/fee/utxo",
+        "/fee/sign"
+      ],
+      "meaning": "Feecover refused the request; the HTTP status is Feecover's. error.details may carry rule, message, reasons, upstream_status."
+    },
+    {
+      "code": "FEE_PROXY_UPSTREAM",
+      "status": [
+        502
+      ],
+      "routes": [
+        "/fee/utxo",
+        "/fee/sign"
+      ],
+      "meaning": "Feecover did not answer, answered 5xx/401/404, or answered with a malformed body. Retryable."
+    },
+    {
+      "code": "FEE_SOURCE_NOT_CONFIRMED",
+      "status": [
+        502
+      ],
+      "routes": [
+        "/fee/utxo",
+        "/fee/sign"
+      ],
+      "meaning": "Feecover did not confirm the requested fee source. Do not use the answer; request again or pick another source."
+    },
+    {
+      "code": "FEE_PROXY_TX_NOT_ISSUED",
+      "status": [
+        403
+      ],
+      "routes": [
+        "/fee/sign"
+      ],
+      "meaning": "The transaction was not issued by this service, or its signing window has passed. Rebuild the transaction."
+    },
+    {
+      "code": "FEE_PROXY_NO_FEE_PAYER",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/fee/sign"
+      ],
+      "meaning": "The transaction does not use a fee payer; there is nothing for Feecover to sign."
+    },
+    {
+      "code": "FEE_PROXY_SOURCE_MISMATCH",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/fee/sign"
+      ],
+      "meaning": "source differs from the source held when /fee/utxo reserved the UTxO."
+    },
+    {
+      "code": "FEE_PROXY_UPSTREAM_MISMATCH",
+      "status": [
+        502
+      ],
+      "routes": [
+        "/fee/sign"
+      ],
+      "meaning": "Feecover signed a different transaction than the one sent. Do not assemble that signature."
+    },
+    {
+      "code": "FEE_PAYER_RESERVATION_EXPIRED",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/fee/sign",
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The fee-payer UTxO reservation is absent, expired, exceeded by the transaction validity, or reservation_id is not the live one (details.reservation: absent|expired|exceeded|foreign). Request a new UTxO and rebuild."
+    },
+    {
+      "code": "TX_SUPERSEDED",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/fee/sign",
+        "/tx/submit"
+      ],
+      "meaning": "Another transaction sharing the owner lock or inputs was submitted after this one was built. Check the chain by tx_hash before rebuilding (details.submission, details.previously_submitted)."
+    },
+    {
+      "code": "TX_EXPIRED",
+      "status": [
+        410
+      ],
+      "routes": [
+        "/fee/sign",
+        "/tx/submit"
+      ],
+      "meaning": "The transaction passed validTo plus the clock margin. details.rebuild_safe=true means it was never sent to a node."
+    },
+    {
+      "code": "WITNESS_SIGNATURE_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/submit"
+      ],
+      "meaning": "A witness signature does not match the transaction body."
+    },
+    {
+      "code": "WITNESS_MISSING_SIGNER",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/submit"
+      ],
+      "meaning": "A key in required_signers has no witness."
+    },
+    {
+      "code": "SUBMIT_REJECTED",
+      "status": [
+        502
+      ],
+      "routes": [
+        "/tx/submit"
+      ],
+      "meaning": "The chain node rejected the transaction, or the transaction was not issued by this service. The node's own message is kept in error.message."
+    },
+    {
+      "code": "TX_HASH_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/status/{tx_hash}"
+      ],
+      "meaning": "tx_hash is not exactly 64 lowercase hex characters (a missing hash is also this error)."
+    },
+    {
+      "code": "TX_STATUS_PROVIDER_UNAVAILABLE",
+      "status": [
+        502
+      ],
+      "routes": [
+        "/tx/status/{tx_hash}"
+      ],
+      "meaning": "The chain or mempool provider failed (details.stage: chain|mempool). This is NOT not_found."
+    },
+    {
+      "code": "FEE_QUOTE_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "Quote body is malformed (including the retired owner_fee_address field)."
+    },
+    {
+      "code": "FEE_QUOTE_ROUTE_UNKNOWN",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "route is not a quotable route."
+    },
+    {
+      "code": "FEE_QUOTE_FEE_PAYER_IN_PARAMS",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "params carries fee_payer or funding.fee_payer; the quote chooses the fee payer itself."
+    },
+    {
+      "code": "FEE_QUOTE_FUNDING_REQUIRED",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "create-vault quote without params.funding."
+    },
+    {
+      "code": "FEE_QUOTE_SELF_FUNDED",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "create-vault quote with funding.fee_source = did_payment."
+    },
+    {
+      "code": "FEE_QUOTE_OWNER_ADDRESS_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "An owner_fee_addresses entry is not a key address or is on the wrong network."
+    },
+    {
+      "code": "FEE_QUOTE_OWNER_ADDRESSES_TOO_MANY",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "owner_fee_addresses has more than 10 entries."
+    },
+    {
+      "code": "FEE_QUOTE_OWNER_ADDRESSES_DUPLICATE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/quote"
+      ],
+      "meaning": "owner_fee_addresses has a duplicate address."
+    },
+    {
+      "code": "OWNER_HASH_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "owner.hash is not 56 lowercase hex characters."
+    },
+    {
+      "code": "OWNER_CREDENTIAL_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "owner is not a { type, hash } credential of a supported type."
+    },
+    {
+      "code": "OWNER_ALIAS_MISMATCH",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "owner and the owner_pkh alias are both present and disagree."
+    },
+    {
+      "code": "OWNER_DID_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
+      ],
+      "meaning": "owner.did is malformed."
+    },
+    {
+      "code": "OWNER_DID_CONFLICT",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
+      ],
+      "meaning": "owner carries a DID and a credential that disagree."
+    },
+    {
+      "code": "OWNER_WITNESS_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "owner_witness is malformed."
+    },
+    {
+      "code": "OWNER_WITNESS_UNEXPECTED",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "owner_witness was sent for an owner that needs none."
+    },
+    {
+      "code": "OWNER_SCRIPT_WITNESS_UNAVAILABLE",
+      "status": [
+        400,
+        501
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
+      ],
+      "meaning": "A script owner needs a witness the caller did not send (400), or the deployment cannot derive it (501)."
+    },
+    {
+      "code": "OWNER_STAKE_NOT_REGISTERED",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The script owner's reward account is not registered."
+    },
+    {
+      "code": "OWNER_ANCHOR_NOT_FOUND",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
+      ],
+      "meaning": "The DID anchor was not found on chain."
+    },
+    {
+      "code": "OWNER_ANCHOR_NOT_ACTIVE",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
+      ],
+      "meaning": "The DID anchor is not Active."
+    },
+    {
+      "code": "OWNER_ANCHOR_AMBIGUOUS",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
+      ],
+      "meaning": "More than one anchor matches the DID."
+    },
+    {
+      "code": "OWNER_ANCHOR_SCHEMA",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
+      ],
+      "meaning": "The DID anchor datum does not decode."
+    },
+    {
+      "code": "OWNER_DEVICE_NOT_LISTED",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
+      ],
+      "meaning": "The device key is not listed in the DID anchor."
+    },
+    {
+      "code": "VAULT_NOT_FOUND",
+      "status": [
+        404
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The owner has no vault. Not the same as CHAIN_UNAVAILABLE; do not offer to create a second vault on a read failure."
+    },
+    {
+      "code": "VAULT_AMBIGUOUS",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The owner has several valid vaults and the request did not say which (details.utxo_refs)."
+    },
+    {
+      "code": "VAULT_IDENTITY_DUPLICATE",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "Two UTxOs carry the same vault identity NFT; the provider snapshot is inconsistent. Retry later."
+    },
+    {
+      "code": "VAULT_DATUM_UNDECODABLE",
+      "status": [
+        502
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The vault datum does not match the schema this deployment knows."
+    },
+    {
+      "code": "VAULT_TYPE_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "vault_type is not Instant or Schedule."
+    },
+    {
+      "code": "VAULT_TYPE_AMBIGUOUS",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The owner has vaults of several types and vault_type was absent."
+    },
+    {
+      "code": "VAULT_TYPE_NOT_SERVED",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "This process does not serve the requested vault_type."
+    },
+    {
+      "code": "VAULT_TYPE_ROUTE_CONFLICT",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "vault_type contradicts what the route builds."
+    },
+    {
+      "code": "VAULT_KIND_UNSUPPORTED",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "This deployment block serves a vault kind that the route has no builder for."
+    },
+    {
+      "code": "ENGAGE_THREAD_NOT_FOUND",
+      "status": [
+        404
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The owner has no Engage thread."
+    },
+    {
+      "code": "ENGAGE_THREAD_AMBIGUOUS",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The owner has several Engage threads and engage_ref was absent."
+    },
+    {
+      "code": "ENGAGE_REF_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "engage_ref is malformed."
+    },
+    {
+      "code": "ENGAGE_REF_MISMATCH",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "engage_ref is not a thread of this owner."
+    },
+    {
+      "code": "ENGAGE_THREAD_DATUM_UNDECODABLE",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The selected thread carries a datum that does not decode."
+    },
+    {
+      "code": "FEE_PAYER_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "fee_payer is malformed (details.field names the key, including a reservation_id that is not 32 lowercase hex)."
+    },
+    {
+      "code": "FEE_PAYER_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "fee_payer address is the wrong network or not a key address, or the UTxO is absent or not pure ADA."
+    },
+    {
+      "code": "FEE_PAYER_CHANGE_ADDRESS_CONFLICT",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "fee_payer and change_address were both sent."
+    },
+    {
+      "code": "CHANGE_ADDRESS_REQUIRED",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "Neither change_address nor fee_payer was sent and the owner is a script."
+    },
+    {
+      "code": "CHANGE_ADDRESS_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "change_address is not a valid address for this network."
+    },
+    {
+      "code": "FEE_PAYER_FRONTING_ABOVE_MAX",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The fee-payer wallet would have to advance more min-ADA than the deployment allows."
+    },
+    {
+      "code": "FEE_PAYER_OWNER_REWARD_NONZERO",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "A did_stake owner has a non-zero reward and no Phoenix wallet could be derived to return it to."
+    },
+    {
+      "code": "FEE_PAYER_OWNER_REWARD_BELOW_MIN_ADA",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "A did_stake owner's reward is below the min-ADA of the return output."
+    },
+    {
+      "code": "FEE_PAYER_TX_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The built transaction does not obey the fee-payer rules. No transaction is returned."
+    },
+    {
+      "code": "UTXO_NOT_FOUND",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "A referenced UTxO is not on chain."
+    },
+    {
+      "code": "UTXO_SPENT",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "A referenced UTxO is already spent (details.consumed_by_tx)."
+    },
+    {
+      "code": "PREVIOUS_TX_PENDING",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote",
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The vault UTxO is an input of a transaction submitted through this service that is not yet in a block. Retry after it lands."
+    },
+    {
+      "code": "TX_BUILD_REJECTED",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The protocol refuses the request before any transaction exists (insufficient LAMP, MAGIC below required, stale price beacon, ...). error.message says why."
+    },
+    {
+      "code": "TX_SUMMARY_UNDECODABLE",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The built CBOR could not be read back into a summary; no transaction is returned."
+    },
+    {
+      "code": "CONSUME_PAIRS_CONFLICT",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "pairs was sent together with op_type/op_count."
+    },
+    {
+      "code": "CONSUME_PAIRS_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "pairs is not an array of { op_type, op_count } objects."
+    },
+    {
+      "code": "CONSUME_PAIRS_EMPTY",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "pairs is empty."
+    },
+    {
+      "code": "CONSUME_PAIRS_TOO_MANY",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "pairs has more than 8 entries."
+    },
+    {
+      "code": "CONSUME_PAIRS_NOT_INCREASING",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "pairs op_type values are not strictly increasing."
+    },
+    {
+      "code": "CONSUME_PAIR_COUNT_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "op_count is not a digit string of at least 1 with at most 20 digits."
+    },
+    {
+      "code": "CONSUME_PAIR_TYPE_INVALID",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "op_type is outside the integers 0..1000000."
+    },
+    {
+      "code": "CONSUME_TX_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The built transaction does not match the requested consume (thread, redeemer, output, datum, sum of burns). No transaction is returned."
+    },
+    {
+      "code": "CONSUME_TOO_MANY_BATCHES",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The consume needs more MAGIC batches than one transaction can carry (details.burn_entries_needed, burn_entries_cap, live_batches)."
+    },
+    {
+      "code": "WAKEME_VAULT_REF_REQUIRED",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The vault is linked to a Wakeme vault, wakeme_vault_ref was not sent and could not be located."
+    },
+    {
+      "code": "WAKEME_VAULT_REF_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "wakeme_vault_ref is malformed."
+    },
+    {
+      "code": "WAKEME_VAULT_AMBIGUOUS",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "More than one UTxO carries the linked Wakeme vault NFT."
+    },
+    {
+      "code": "WAKEME_VAULT_UNAVAILABLE",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "This network has no Wakeme vault."
+    },
+    {
+      "code": "WAKEME_VAULT_NOT_FOUND",
+      "status": [
+        404
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "wakeme_vault_ref is not on chain."
+    },
+    {
+      "code": "WAKEME_VAULT_SPENT",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "wakeme_vault_ref was already spent."
+    },
+    {
+      "code": "WAKEME_VAULT_SCRIPT_MISMATCH",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "wakeme_vault_ref is not at the Wakeme vault script."
+    },
+    {
+      "code": "WAKEME_VAULT_UNREADABLE",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The Wakeme vault datum or NFT does not satisfy the L_lent reading rule."
+    },
+    {
+      "code": "WAKEME_VAULT_TX_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "The built transaction spends the Wakeme vault or lacks it in reference_inputs."
+    },
+    {
+      "code": "WAKEME_LINK_CHANGE_REJECTED",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/consume",
+        "/tx/quote"
+      ],
+      "meaning": "wakeme_vault_ref is not the linked vault and this transaction cannot change the link; run /tx/refresh-checkpoint first (details.next_route)."
+    },
+    {
+      "code": "SPONSOR_UNAVAILABLE",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The deployment has not enabled the sponsor journey."
+    },
+    {
+      "code": "SPONSOR_NETWORK_UNSUPPORTED",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The network has no epoch window origin, so the journey cannot be built there (details.cause_code)."
+    },
+    {
+      "code": "SPONSOR_PREPAID_UNAVAILABLE",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The deployment block does not serve the Prepaid vault kind."
+    },
+    {
+      "code": "SPONSOR_PREPAID_SCRIPTS_MISMATCH",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "Configured Prepaid script hashes differ from the ones derived from the blueprint."
+    },
+    {
+      "code": "SPONSOR_REQUEST_SHAPE",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The request body is malformed for this step (details.field)."
+    },
+    {
+      "code": "SPONSOR_VAULT_REF_MISMATCH",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "vault_ref is not the owner's Prepaid vault."
+    },
+    {
+      "code": "SPONSOR_EPOCH_MISMATCH",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "draw_epoch is not the current protocol epoch; nothing was built."
+    },
+    {
+      "code": "SPONSOR_VALIDITY_SPANS_EPOCHS",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The transaction validity would span two epochs."
+    },
+    {
+      "code": "SPONSOR_BUILD_FAILED",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The builder rejected the request (for example a fee-payer UTxO below the collateral amount)."
+    },
+    {
+      "code": "SPONSOR_TX_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume"
+      ],
+      "meaning": "The built transaction does not match the step. No transaction is returned."
+    },
+    {
+      "code": "SPONSOR_OWNER_DID_UNVERIFIABLE",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/plan"
+      ],
+      "meaning": "The deployment cannot verify the DID owner."
+    }
+  ]
+}

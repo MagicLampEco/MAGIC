@@ -1,0 +1,248 @@
+{
+  "contract_version": "1.0.0",
+  "operation": "POST /fee/sign",
+  "requests": {
+    "valid": [
+      {
+        "name": "cbor-only",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6"
+        }
+      },
+      {
+        "name": "cbor-and-source",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "source": "feecover"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "cbor-uppercase",
+        "why": "tx_cbor is lowercase hex.",
+        "body": {
+          "tx_cbor": "84A800D9010283825820E5FD34B1B58E291437D419B8A7DBD8F0D508A911E722D91DAE76A38CF22EBD7600825820FAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFA008258207E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E7E000183A300581D7076A5AAA67A89EFD80E8A4E427462A48F5A98FD8C850315D81B2857BF01821A00565996A2581CF1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1A145744C414D501A3BAA0C40581C76A5AAA67A89EFD80E8A4E427462A48F5A98FD8C850315D81B2857BFA15820F45CFAE55AC7F579420D5758CCEB15A35F178486D003C31AAA9391A466F181A601028201D81859012BD8799FD8799F581C2E5E1418AFD402E48232B143876104CAC6188A44B867FFB7538318F4FF1A3BAA0C401A015EF3C09FD8799F1A3BAA0C401950DCD87980FFFF9FD8799F50FBFBFBFBFBFBFBFBFBFBFBFBFBFBFBFBD87C801950E31AEE6B28001AEE6B280001D87A80D87A80D87980FFFF00809FD8799F5820A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A01950DC1950DE1950E70A1A006ACFC01B00000001DCD650001B00000001DCD650001A3B9ACA0000D87A801A3B9ACA001A3B9ACA00FFFFD87A8000D87A801950DCD8799F80D87A800000FFD8799F801A3B9ACA00FFD8799F0000FFD87A80D8799F400000FF9FD8799F0000FFD8799F0000FFD8799F0000FFD8799F0000FFD8799F0000FFD8799F0000FFD8799F0000FFFF00FF82581D60FEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFE1A0095DF30A300581D70E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E001821A001E8480A1581CE0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0E0A1410101028201D818582ED8799FD8799F581C2E5E1418AFD402E48232B143876104CAC6188A44B867FFB7538318F4FF0200401A3B9ACA00FF021A0002B750031A074C5DF70DD9010281825820FAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFAFA000ED9010281581C2E5E1418AFD402E48232B143876104CAC6188A44B867FFB7538318F41082581D60FEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFEFE1A006ACFC012D90102818258209E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E00A10581840000D8799F0102D8799F58209E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E9E00FFD8799F5820E5FD34B1B58E291437D419B8A7DBD8F0D508A911E722D91DAE76A38CF22EBD7600FFFF820000F5F6"
+        }
+      },
+      {
+        "name": "cbor-missing",
+        "why": "tx_cbor is required.",
+        "body": {}
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "typical",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "witness_set": "a100",
+          "net_lovelace": "178000",
+          "fee_lovelace": "178000"
+        }
+      },
+      {
+        "name": "with-source",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "witness_set": "a100",
+          "net_lovelace": "178000",
+          "fee_lovelace": "178000",
+          "source": "feecover"
+        }
+      },
+      {
+        "name": "net-lovelace-negative",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "witness_set": "a100",
+          "net_lovelace": "-250000",
+          "fee_lovelace": "178000"
+        },
+        "note": "net_lovelace is signed: Feecover may be reimbursed."
+      },
+      {
+        "name": "additive-key",
+        "status": 200,
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "witness_set": "a100",
+          "net_lovelace": "178000",
+          "fee_lovelace": "178000",
+          "ledger_ref": "x"
+        },
+        "note": "Unknown keys are additive."
+      },
+      {
+        "name": "tx-not-issued",
+        "status": 403,
+        "body": {
+          "error": {
+            "code": "FEE_PROXY_TX_NOT_ISSUED",
+            "message": "Not issued by this service or past its signing window.",
+            "details": {
+              "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff"
+            }
+          }
+        }
+      },
+      {
+        "name": "tx-expired",
+        "status": 410,
+        "body": {
+          "error": {
+            "code": "TX_EXPIRED",
+            "message": "Expired.",
+            "details": {
+              "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+              "expired_at": "2026-09-11T04:35:03.000Z",
+              "rebuild_safe": true,
+              "submission": "none"
+            }
+          }
+        }
+      },
+      {
+        "name": "tx-superseded",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "TX_SUPERSEDED",
+            "message": "Superseded.",
+            "details": {
+              "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+              "superseded_by": "abababababababababababababababababababababababababababababababab",
+              "previously_submitted": false,
+              "submission": "none"
+            }
+          }
+        }
+      },
+      {
+        "name": "reservation-gone",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "FEE_PAYER_RESERVATION_EXPIRED",
+            "message": "Reservation expired.",
+            "details": {
+              "reserved_until": null,
+              "fee_payer_utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "reservation": "absent",
+              "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff"
+            }
+          }
+        }
+      },
+      {
+        "name": "feecover-signed-another-tx",
+        "status": 502,
+        "body": {
+          "error": {
+            "code": "FEE_PROXY_UPSTREAM_MISMATCH",
+            "message": "Feecover signed a different transaction.",
+            "details": {
+              "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+              "upstream_tx_hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+            }
+          }
+        }
+      },
+      {
+        "name": "source-mismatch",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "FEE_PROXY_SOURCE_MISMATCH",
+            "message": "source differs from the reservation's.",
+            "details": {
+              "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff"
+            }
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "tx-hash-missing",
+        "status": 200,
+        "why": "tx_hash lets the module check it is the transaction it sent.",
+        "body": {
+          "witness_set": "a100",
+          "net_lovelace": "178000",
+          "fee_lovelace": "178000"
+        }
+      },
+      {
+        "name": "witness-set-missing",
+        "status": 200,
+        "why": "witness_set is the point of the route.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "net_lovelace": "178000",
+          "fee_lovelace": "178000"
+        }
+      },
+      {
+        "name": "witness-set-uppercase",
+        "status": 200,
+        "why": "witness_set is lowercase hex.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "witness_set": "A100",
+          "net_lovelace": "178000",
+          "fee_lovelace": "178000"
+        }
+      },
+      {
+        "name": "witness-set-empty",
+        "status": 200,
+        "why": "witness_set is at least one byte.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "witness_set": "",
+          "net_lovelace": "178000",
+          "fee_lovelace": "178000"
+        }
+      },
+      {
+        "name": "net-lovelace-as-json-number",
+        "status": 200,
+        "why": "Amounts are digit strings.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "witness_set": "a100",
+          "net_lovelace": 178000,
+          "fee_lovelace": "178000"
+        }
+      },
+      {
+        "name": "fee-lovelace-missing",
+        "status": 200,
+        "why": "fee_lovelace is guaranteed.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "witness_set": "a100",
+          "net_lovelace": "178000"
+        }
+      },
+      {
+        "name": "source-outside-closed-set",
+        "status": 200,
+        "why": "source is feecover or sponsor.",
+        "body": {
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "witness_set": "a100",
+          "net_lovelace": "178000",
+          "fee_lovelace": "178000",
+          "source": "owner_address"
+        }
+      }
+    ]
+  }
+}

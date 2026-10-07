@@ -1,0 +1,1588 @@
+{
+  "contract_version": "1.0.0",
+  "operation": "POST /tx/sponsor/plan",
+  "requests": {
+    "valid": [
+      {
+        "name": "key-owner",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "sponsor_pkh": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b"
+        }
+      },
+      {
+        "name": "module-steps-only",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "sponsor_pkh": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b",
+          "actor": "module"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "actor-outside-closed-set",
+        "why": "actor is app, sponsor or module.",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "sponsor_pkh": "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b",
+          "actor": "admin"
+        }
+      },
+      {
+        "name": "sponsor-pkh-short",
+        "why": "sponsor_pkh is 56 hex.",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "sponsor_pkh": "5b"
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "full-plan",
+        "status": 200,
+        "body": {
+          "steps": [
+            {
+              "step": "open-vault",
+              "path": "/tx/sponsor/open-vault",
+              "action": "đúc két Prepaid + thread consume (một tx) + genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }, 0 CARP) — bỏ qua khi DID đã có quỹ dùng được",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "did_commit đúng 32 byte",
+                "chủ script ⟹ đúng một mục rút"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "bind-did",
+              "path": "/tx/sponsor/bind-did",
+              "action": "SetDidCommit: gắn did_commit của thread vào két Prepaid — MỘT LẦN, không đổi được về sau",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "fund-vault",
+              "path": "/tx/sponsor/fund-vault",
+              "action": "PrepaidLock + FundLock: CARP bên tài trợ vào quỹ đã ghim",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "sponsor",
+                  "how": "chữ ký khoá 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b (chi UTxO CARP)"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "reference input anchor DID của người mới (tên NFT = owner_commit)",
+                "CARP ra chỉ ở UTxO quỹ đã ghim hoặc phần thối bên tài trợ",
+                "validity gọn trong một kỳ",
+                "bind-did đã vào khối (két mang did_commit của thread)",
+                "quỹ tài trợ của DID đã có (open-vault tạo; két mở trước bản này: open-fund)"
+              ],
+              "actor": "sponsor"
+            },
+            {
+              "step": "draw-magic",
+              "path": "/tx/sponsor/draw-magic",
+              "action": "PrepaidDraw ⟹ lô MAGIC kỳ e",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "validity gọn trong một kỳ"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            },
+            {
+              "step": "claim",
+              "path": "/tx/sponsor/claim",
+              "action": "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "first-consume đã vào khối",
+                "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+                "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)"
+              ],
+              "actor": "sponsor"
+            }
+          ],
+          "fallback_steps": [
+            {
+              "step": "open-fund",
+              "path": "/tx/sponsor/open-fund",
+              "when": "chỉ khi két của DID mở trước bản open-vault chở quỹ, và DID chưa có quỹ tài trợ dùng được",
+              "action": "Genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }); 0 CARP — CARP vào ở fund-vault",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA của quỹ"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối (thread mang did_commit)"
+              ],
+              "actor": "app"
+            }
+          ],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ]
+        }
+      },
+      {
+        "name": "module-only",
+        "status": 200,
+        "body": {
+          "steps": [
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            }
+          ],
+          "fallback_steps": [],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ]
+        },
+        "note": "With actor=module the steps are filtered; same_epoch is not."
+      },
+      {
+        "name": "with-owner-did",
+        "status": 200,
+        "body": {
+          "steps": [
+            {
+              "step": "open-vault",
+              "path": "/tx/sponsor/open-vault",
+              "action": "đúc két Prepaid + thread consume (một tx) + genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }, 0 CARP) — bỏ qua khi DID đã có quỹ dùng được",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "did_commit đúng 32 byte",
+                "chủ script ⟹ đúng một mục rút"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "bind-did",
+              "path": "/tx/sponsor/bind-did",
+              "action": "SetDidCommit: gắn did_commit của thread vào két Prepaid — MỘT LẦN, không đổi được về sau",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "fund-vault",
+              "path": "/tx/sponsor/fund-vault",
+              "action": "PrepaidLock + FundLock: CARP bên tài trợ vào quỹ đã ghim",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "sponsor",
+                  "how": "chữ ký khoá 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b (chi UTxO CARP)"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "reference input anchor DID của người mới (tên NFT = owner_commit)",
+                "CARP ra chỉ ở UTxO quỹ đã ghim hoặc phần thối bên tài trợ",
+                "validity gọn trong một kỳ",
+                "bind-did đã vào khối (két mang did_commit của thread)",
+                "quỹ tài trợ của DID đã có (open-vault tạo; két mở trước bản này: open-fund)"
+              ],
+              "actor": "sponsor"
+            },
+            {
+              "step": "draw-magic",
+              "path": "/tx/sponsor/draw-magic",
+              "action": "PrepaidDraw ⟹ lô MAGIC kỳ e",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "validity gọn trong một kỳ"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            },
+            {
+              "step": "claim",
+              "path": "/tx/sponsor/claim",
+              "action": "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "first-consume đã vào khối",
+                "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+                "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)"
+              ],
+              "actor": "sponsor"
+            }
+          ],
+          "fallback_steps": [
+            {
+              "step": "open-fund",
+              "path": "/tx/sponsor/open-fund",
+              "when": "chỉ khi két của DID mở trước bản open-vault chở quỹ, và DID chưa có quỹ tài trợ dùng được",
+              "action": "Genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }); 0 CARP — CARP vào ở fund-vault",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA của quỹ"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối (thread mang did_commit)"
+              ],
+              "actor": "app"
+            }
+          ],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ],
+          "owner_did": "abababababababababababababababababababababababababababababababab"
+        },
+        "note": "owner_did appears when the owner was given as a DID."
+      },
+      {
+        "name": "additive-key-in-step",
+        "status": 200,
+        "body": {
+          "steps": [
+            {
+              "step": "open-vault",
+              "path": "/tx/sponsor/open-vault",
+              "action": "đúc két Prepaid + thread consume (một tx) + genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }, 0 CARP) — bỏ qua khi DID đã có quỹ dùng được",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "did_commit đúng 32 byte",
+                "chủ script ⟹ đúng một mục rút"
+              ],
+              "actor": "app",
+              "estimated_ms": 1200
+            },
+            {
+              "step": "bind-did",
+              "path": "/tx/sponsor/bind-did",
+              "action": "SetDidCommit: gắn did_commit của thread vào két Prepaid — MỘT LẦN, không đổi được về sau",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "fund-vault",
+              "path": "/tx/sponsor/fund-vault",
+              "action": "PrepaidLock + FundLock: CARP bên tài trợ vào quỹ đã ghim",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "sponsor",
+                  "how": "chữ ký khoá 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b (chi UTxO CARP)"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "reference input anchor DID của người mới (tên NFT = owner_commit)",
+                "CARP ra chỉ ở UTxO quỹ đã ghim hoặc phần thối bên tài trợ",
+                "validity gọn trong một kỳ",
+                "bind-did đã vào khối (két mang did_commit của thread)",
+                "quỹ tài trợ của DID đã có (open-vault tạo; két mở trước bản này: open-fund)"
+              ],
+              "actor": "sponsor"
+            },
+            {
+              "step": "draw-magic",
+              "path": "/tx/sponsor/draw-magic",
+              "action": "PrepaidDraw ⟹ lô MAGIC kỳ e",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "validity gọn trong một kỳ"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            },
+            {
+              "step": "claim",
+              "path": "/tx/sponsor/claim",
+              "action": "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "first-consume đã vào khối",
+                "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+                "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)"
+              ],
+              "actor": "sponsor"
+            }
+          ],
+          "fallback_steps": [
+            {
+              "step": "open-fund",
+              "path": "/tx/sponsor/open-fund",
+              "when": "chỉ khi két của DID mở trước bản open-vault chở quỹ, và DID chưa có quỹ tài trợ dùng được",
+              "action": "Genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }); 0 CARP — CARP vào ở fund-vault",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA của quỹ"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối (thread mang did_commit)"
+              ],
+              "actor": "app"
+            }
+          ],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ]
+        },
+        "note": "Unknown keys inside a step are additive."
+      },
+      {
+        "name": "actor-invalid",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "BAD_REQUEST",
+            "message": "actor must be one of app, sponsor, module.",
+            "details": {
+              "field": "actor"
+            }
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "steps-missing",
+        "status": 200,
+        "why": "steps is the plan.",
+        "body": {
+          "fallback_steps": [
+            {
+              "step": "open-fund",
+              "path": "/tx/sponsor/open-fund",
+              "when": "chỉ khi két của DID mở trước bản open-vault chở quỹ, và DID chưa có quỹ tài trợ dùng được",
+              "action": "Genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }); 0 CARP — CARP vào ở fund-vault",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA của quỹ"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối (thread mang did_commit)"
+              ],
+              "actor": "app"
+            }
+          ],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ]
+        }
+      },
+      {
+        "name": "step-without-path",
+        "status": 200,
+        "why": "Each step names the route that builds it; route by path.",
+        "body": {
+          "steps": [
+            {
+              "step": "open-vault",
+              "action": "đúc két Prepaid + thread consume (một tx) + genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }, 0 CARP) — bỏ qua khi DID đã có quỹ dùng được",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "did_commit đúng 32 byte",
+                "chủ script ⟹ đúng một mục rút"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "bind-did",
+              "path": "/tx/sponsor/bind-did",
+              "action": "SetDidCommit: gắn did_commit của thread vào két Prepaid — MỘT LẦN, không đổi được về sau",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "fund-vault",
+              "path": "/tx/sponsor/fund-vault",
+              "action": "PrepaidLock + FundLock: CARP bên tài trợ vào quỹ đã ghim",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "sponsor",
+                  "how": "chữ ký khoá 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b (chi UTxO CARP)"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "reference input anchor DID của người mới (tên NFT = owner_commit)",
+                "CARP ra chỉ ở UTxO quỹ đã ghim hoặc phần thối bên tài trợ",
+                "validity gọn trong một kỳ",
+                "bind-did đã vào khối (két mang did_commit của thread)",
+                "quỹ tài trợ của DID đã có (open-vault tạo; két mở trước bản này: open-fund)"
+              ],
+              "actor": "sponsor"
+            },
+            {
+              "step": "draw-magic",
+              "path": "/tx/sponsor/draw-magic",
+              "action": "PrepaidDraw ⟹ lô MAGIC kỳ e",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "validity gọn trong một kỳ"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            },
+            {
+              "step": "claim",
+              "path": "/tx/sponsor/claim",
+              "action": "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "first-consume đã vào khối",
+                "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+                "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)"
+              ],
+              "actor": "sponsor"
+            }
+          ],
+          "fallback_steps": [
+            {
+              "step": "open-fund",
+              "path": "/tx/sponsor/open-fund",
+              "when": "chỉ khi két của DID mở trước bản open-vault chở quỹ, và DID chưa có quỹ tài trợ dùng được",
+              "action": "Genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }); 0 CARP — CARP vào ở fund-vault",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA của quỹ"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối (thread mang did_commit)"
+              ],
+              "actor": "app"
+            }
+          ],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ]
+        }
+      },
+      {
+        "name": "step-path-outside-sponsor-prefix",
+        "status": 200,
+        "why": "path is under /tx/sponsor/.",
+        "body": {
+          "steps": [
+            {
+              "step": "open-vault",
+              "path": "/tx/consume",
+              "action": "đúc két Prepaid + thread consume (một tx) + genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }, 0 CARP) — bỏ qua khi DID đã có quỹ dùng được",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "did_commit đúng 32 byte",
+                "chủ script ⟹ đúng một mục rút"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "bind-did",
+              "path": "/tx/sponsor/bind-did",
+              "action": "SetDidCommit: gắn did_commit của thread vào két Prepaid — MỘT LẦN, không đổi được về sau",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "fund-vault",
+              "path": "/tx/sponsor/fund-vault",
+              "action": "PrepaidLock + FundLock: CARP bên tài trợ vào quỹ đã ghim",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "sponsor",
+                  "how": "chữ ký khoá 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b (chi UTxO CARP)"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "reference input anchor DID của người mới (tên NFT = owner_commit)",
+                "CARP ra chỉ ở UTxO quỹ đã ghim hoặc phần thối bên tài trợ",
+                "validity gọn trong một kỳ",
+                "bind-did đã vào khối (két mang did_commit của thread)",
+                "quỹ tài trợ của DID đã có (open-vault tạo; két mở trước bản này: open-fund)"
+              ],
+              "actor": "sponsor"
+            },
+            {
+              "step": "draw-magic",
+              "path": "/tx/sponsor/draw-magic",
+              "action": "PrepaidDraw ⟹ lô MAGIC kỳ e",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "validity gọn trong một kỳ"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            },
+            {
+              "step": "claim",
+              "path": "/tx/sponsor/claim",
+              "action": "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "first-consume đã vào khối",
+                "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+                "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)"
+              ],
+              "actor": "sponsor"
+            }
+          ],
+          "fallback_steps": [
+            {
+              "step": "open-fund",
+              "path": "/tx/sponsor/open-fund",
+              "when": "chỉ khi két của DID mở trước bản open-vault chở quỹ, và DID chưa có quỹ tài trợ dùng được",
+              "action": "Genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }); 0 CARP — CARP vào ở fund-vault",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA của quỹ"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối (thread mang did_commit)"
+              ],
+              "actor": "app"
+            }
+          ],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ]
+        }
+      },
+      {
+        "name": "actor-outside-closed-set",
+        "status": 200,
+        "why": "actor is app, sponsor or module: it decides who may call the route.",
+        "body": {
+          "steps": [
+            {
+              "step": "open-vault",
+              "path": "/tx/sponsor/open-vault",
+              "action": "đúc két Prepaid + thread consume (một tx) + genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }, 0 CARP) — bỏ qua khi DID đã có quỹ dùng được",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "did_commit đúng 32 byte",
+                "chủ script ⟹ đúng một mục rút"
+              ],
+              "actor": "admin"
+            },
+            {
+              "step": "bind-did",
+              "path": "/tx/sponsor/bind-did",
+              "action": "SetDidCommit: gắn did_commit của thread vào két Prepaid — MỘT LẦN, không đổi được về sau",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "fund-vault",
+              "path": "/tx/sponsor/fund-vault",
+              "action": "PrepaidLock + FundLock: CARP bên tài trợ vào quỹ đã ghim",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "sponsor",
+                  "how": "chữ ký khoá 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b (chi UTxO CARP)"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "reference input anchor DID của người mới (tên NFT = owner_commit)",
+                "CARP ra chỉ ở UTxO quỹ đã ghim hoặc phần thối bên tài trợ",
+                "validity gọn trong một kỳ",
+                "bind-did đã vào khối (két mang did_commit của thread)",
+                "quỹ tài trợ của DID đã có (open-vault tạo; két mở trước bản này: open-fund)"
+              ],
+              "actor": "sponsor"
+            },
+            {
+              "step": "draw-magic",
+              "path": "/tx/sponsor/draw-magic",
+              "action": "PrepaidDraw ⟹ lô MAGIC kỳ e",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "validity gọn trong một kỳ"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            },
+            {
+              "step": "claim",
+              "path": "/tx/sponsor/claim",
+              "action": "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "first-consume đã vào khối",
+                "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+                "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)"
+              ],
+              "actor": "sponsor"
+            }
+          ],
+          "fallback_steps": [
+            {
+              "step": "open-fund",
+              "path": "/tx/sponsor/open-fund",
+              "when": "chỉ khi két của DID mở trước bản open-vault chở quỹ, và DID chưa có quỹ tài trợ dùng được",
+              "action": "Genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }); 0 CARP — CARP vào ở fund-vault",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA của quỹ"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối (thread mang did_commit)"
+              ],
+              "actor": "app"
+            }
+          ],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ]
+        }
+      },
+      {
+        "name": "signers-as-strings",
+        "status": 200,
+        "why": "signers are { role, how } objects.",
+        "body": {
+          "steps": [
+            {
+              "step": "open-vault",
+              "path": "/tx/sponsor/open-vault",
+              "action": "đúc két Prepaid + thread consume (một tx) + genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }, 0 CARP) — bỏ qua khi DID đã có quỹ dùng được",
+              "signers": [
+                "owner"
+              ],
+              "requires": [
+                "did_commit đúng 32 byte",
+                "chủ script ⟹ đúng một mục rút"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "bind-did",
+              "path": "/tx/sponsor/bind-did",
+              "action": "SetDidCommit: gắn did_commit của thread vào két Prepaid — MỘT LẦN, không đổi được về sau",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "fund-vault",
+              "path": "/tx/sponsor/fund-vault",
+              "action": "PrepaidLock + FundLock: CARP bên tài trợ vào quỹ đã ghim",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "sponsor",
+                  "how": "chữ ký khoá 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b (chi UTxO CARP)"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "reference input anchor DID của người mới (tên NFT = owner_commit)",
+                "CARP ra chỉ ở UTxO quỹ đã ghim hoặc phần thối bên tài trợ",
+                "validity gọn trong một kỳ",
+                "bind-did đã vào khối (két mang did_commit của thread)",
+                "quỹ tài trợ của DID đã có (open-vault tạo; két mở trước bản này: open-fund)"
+              ],
+              "actor": "sponsor"
+            },
+            {
+              "step": "draw-magic",
+              "path": "/tx/sponsor/draw-magic",
+              "action": "PrepaidDraw ⟹ lô MAGIC kỳ e",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "validity gọn trong một kỳ"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            },
+            {
+              "step": "claim",
+              "path": "/tx/sponsor/claim",
+              "action": "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "first-consume đã vào khối",
+                "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+                "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)"
+              ],
+              "actor": "sponsor"
+            }
+          ],
+          "fallback_steps": [
+            {
+              "step": "open-fund",
+              "path": "/tx/sponsor/open-fund",
+              "when": "chỉ khi két của DID mở trước bản open-vault chở quỹ, và DID chưa có quỹ tài trợ dùng được",
+              "action": "Genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }); 0 CARP — CARP vào ở fund-vault",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA của quỹ"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối (thread mang did_commit)"
+              ],
+              "actor": "app"
+            }
+          ],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ]
+        }
+      },
+      {
+        "name": "same-epoch-missing",
+        "status": 200,
+        "why": "same_epoch is part of the plan: it is the ordering constraint between steps.",
+        "body": {
+          "steps": [
+            {
+              "step": "open-vault",
+              "path": "/tx/sponsor/open-vault",
+              "action": "đúc két Prepaid + thread consume (một tx) + genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }, 0 CARP) — bỏ qua khi DID đã có quỹ dùng được",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "did_commit đúng 32 byte",
+                "chủ script ⟹ đúng một mục rút"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "bind-did",
+              "path": "/tx/sponsor/bind-did",
+              "action": "SetDidCommit: gắn did_commit của thread vào két Prepaid — MỘT LẦN, không đổi được về sau",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "fund-vault",
+              "path": "/tx/sponsor/fund-vault",
+              "action": "PrepaidLock + FundLock: CARP bên tài trợ vào quỹ đã ghim",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "sponsor",
+                  "how": "chữ ký khoá 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b (chi UTxO CARP)"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "reference input anchor DID của người mới (tên NFT = owner_commit)",
+                "CARP ra chỉ ở UTxO quỹ đã ghim hoặc phần thối bên tài trợ",
+                "validity gọn trong một kỳ",
+                "bind-did đã vào khối (két mang did_commit của thread)",
+                "quỹ tài trợ của DID đã có (open-vault tạo; két mở trước bản này: open-fund)"
+              ],
+              "actor": "sponsor"
+            },
+            {
+              "step": "draw-magic",
+              "path": "/tx/sponsor/draw-magic",
+              "action": "PrepaidDraw ⟹ lô MAGIC kỳ e",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "validity gọn trong một kỳ"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            },
+            {
+              "step": "claim",
+              "path": "/tx/sponsor/claim",
+              "action": "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "first-consume đã vào khối",
+                "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+                "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)"
+              ],
+              "actor": "sponsor"
+            }
+          ],
+          "fallback_steps": [
+            {
+              "step": "open-fund",
+              "path": "/tx/sponsor/open-fund",
+              "when": "chỉ khi két của DID mở trước bản open-vault chở quỹ, và DID chưa có quỹ tài trợ dùng được",
+              "action": "Genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }); 0 CARP — CARP vào ở fund-vault",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA của quỹ"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối (thread mang did_commit)"
+              ],
+              "actor": "app"
+            }
+          ]
+        }
+      },
+      {
+        "name": "fallback-steps-missing",
+        "status": 200,
+        "why": "fallback_steps is always present (possibly empty).",
+        "body": {
+          "steps": [
+            {
+              "step": "open-vault",
+              "path": "/tx/sponsor/open-vault",
+              "action": "đúc két Prepaid + thread consume (một tx) + genesis quỹ tài trợ CỦA DID (paid_fund, sponsorship = Some { sponsor, owner_commit, reclaim_after_epoch }, 0 CARP) — bỏ qua khi DID đã có quỹ dùng được",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "did_commit đúng 32 byte",
+                "chủ script ⟹ đúng một mục rút"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "bind-did",
+              "path": "/tx/sponsor/bind-did",
+              "action": "SetDidCommit: gắn did_commit của thread vào két Prepaid — MỘT LẦN, không đổi được về sau",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "open-vault đã vào khối"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "fund-vault",
+              "path": "/tx/sponsor/fund-vault",
+              "action": "PrepaidLock + FundLock: CARP bên tài trợ vào quỹ đã ghim",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "sponsor",
+                  "how": "chữ ký khoá 5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b (chi UTxO CARP)"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "reference input anchor DID của người mới (tên NFT = owner_commit)",
+                "CARP ra chỉ ở UTxO quỹ đã ghim hoặc phần thối bên tài trợ",
+                "validity gọn trong một kỳ",
+                "bind-did đã vào khối (két mang did_commit của thread)",
+                "quỹ tài trợ của DID đã có (open-vault tạo; két mở trước bản này: open-fund)"
+              ],
+              "actor": "sponsor"
+            },
+            {
+              "step": "draw-magic",
+              "path": "/tx/sponsor/draw-magic",
+              "action": "PrepaidDraw ⟹ lô MAGIC kỳ e",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "validity gọn trong một kỳ"
+              ],
+              "actor": "app"
+            },
+            {
+              "step": "first-consume",
+              "path": "/tx/sponsor/first-consume",
+              "action": "consume đầu + BurnBatch trên két Prepaid",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví khoá đang chọn trong lucid: phí + thế chấp"
+                },
+                {
+                  "role": "owner",
+                  "how": "chữ ký khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+                }
+              ],
+              "requires": [
+                "cùng kỳ với draw-magic"
+              ],
+              "actor": "module"
+            },
+            {
+              "step": "claim",
+              "path": "/tx/sponsor/claim",
+              "action": "FundClaim: CARP từ quỹ tài trợ tới beneficiary ĐÃ GHIM (datum quỹ + cấu hình); dịch vụ ký vai platform",
+              "signers": [
+                {
+                  "role": "fee-wallet",
+                  "how": "ví trả phí: phí + thế chấp + min-ADA output tới bên hưởng"
+                },
+                {
+                  "role": "platform",
+                  "how": "service"
+                }
+              ],
+              "requires": [
+                "first-consume đã vào khối",
+                "SettleLine đã đưa MAGIC đã tiêu của két vào magic_settled của quỹ",
+                "khi quỹ có E > 0 (E = phần claim được, PrepaidGen ▸ maxClaimable)"
+              ],
+              "actor": "sponsor"
+            }
+          ],
+          "same_epoch": [
+            "draw-magic",
+            "first-consume",
+            "wakeme-genesis"
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -24,6 +24,7 @@ import { ChainDidPaymentAnchorReader } from "../src/funding.js";
 import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable, type IssuedRoute } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
+import { expectMatchesContract } from "./support/contract.js";
 import {
   enterpriseAddressOf,
   type BuildContext, type BuiltCreateVault, type BuiltOpenThread, type BuiltTx, type TxBuilderPort,
@@ -316,6 +317,8 @@ interface QuoteBody {
 }
 const bodyOf = (r: { status: number; body: unknown }): QuoteBody => {
   expect(r.status, JSON.stringify(r.body)).toBe(200);
+  // Hợp đồng module: mọi lời đáp 200 THẬT của `/tx/quote` trong bộ bài này khớp `contract/openapi.json`.
+  expectMatchesContract("POST /tx/quote", r.status, r.body);
   return r.body as QuoteBody;
 };
 

@@ -1,0 +1,612 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "VaultTxAPI module contract",
+    "version": "1.0.0",
+    "description": "Machine-readable contract for the VaultTxAPI routes a backend module calls to consume MAGIC. Compatibility rules: compatibility.md. Error codes: error-codes.json. Response vectors: vectors/. Only the keywords the in-repo checker supports are used (tests/support/schemaSubset.ts): $ref, type, required, properties, additionalProperties, enum, const, pattern, items, oneOf."
+  },
+  "servers": [{ "url": "/", "description": "The service may sit behind a base path (GET /health reports base_path)." }],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Liveness and deployment facts. No token, no chain access.",
+        "security": [],
+        "responses": {
+          "200": { "description": "Service is up.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/fee/utxo": {
+      "post": {
+        "operationId": "feeUtxo",
+        "summary": "Reserve a Feecover fee-payer UTxO for the route about to be built.",
+        "parameters": [{ "$ref": "#/components/parameters/FeecoverToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FeeUtxoRequest" } } } },
+        "responses": {
+          "200": { "description": "UTxO reserved.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FeeUtxoResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/consume": {
+      "post": {
+        "operationId": "txConsume",
+        "summary": "Build an unsigned consume transaction. The summary is read back from the CBOR, not echoed from the request.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConsumeRequest" } } } },
+        "responses": {
+          "200": { "description": "Unsigned transaction built.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConsumeResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/fee/sign": {
+      "post": {
+        "operationId": "feeSign",
+        "summary": "Ask Feecover for the fee-payer witness of a transaction this service issued.",
+        "parameters": [{ "$ref": "#/components/parameters/FeecoverToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FeeSignRequest" } } } },
+        "responses": {
+          "200": { "description": "Fee-payer witness set.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FeeSignResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/submit": {
+      "post": {
+        "operationId": "txSubmit",
+        "summary": "Merge witnesses into a transaction this service issued and send it to the chain node. Idempotent for a transaction the node already accepted.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SubmitRequest" } } } },
+        "responses": {
+          "200": { "description": "The node accepted the transaction.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SubmitResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/status/{tx_hash}": {
+      "get": {
+        "operationId": "txStatus",
+        "summary": "Read-only: is the transaction in a block, in the mempool, or neither. not_found is a real answer, not an error.",
+        "parameters": [{ "name": "tx_hash", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Hex64" } }],
+        "responses": {
+          "200": { "description": "Status read.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TxStatusResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/quote": {
+      "post": {
+        "operationId": "txQuote",
+        "summary": "Quote the fee for each fee source before building. Builds nothing to sign, reserves nothing.",
+        "parameters": [{ "$ref": "#/components/parameters/FeecoverToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuoteRequest" } } } },
+        "responses": {
+          "200": { "description": "Quote.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuoteResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/sponsor/first-consume": {
+      "post": {
+        "operationId": "sponsorFirstConsume",
+        "summary": "Build the first consume of the sponsor journey (consume plus BurnBatch on the Prepaid vault). Called by the backend module, never by the app.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FirstConsumeRequest" } } } },
+        "responses": {
+          "200": { "description": "Unsigned transaction built.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FirstConsumeResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/sponsor/plan": {
+      "post": {
+        "operationId": "sponsorPlan",
+        "summary": "Pure plan of the sponsor journey: who signs each step and which route builds it. Touches no chain data.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlanRequest" } } } },
+        "responses": {
+          "200": { "description": "Plan.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlanResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "Shared token of the service. The service rejects requests without it on every route except /health." }
+    },
+    "parameters": {
+      "FeecoverToken": {
+        "name": "X-Feecover-Token", "in": "header", "required": false,
+        "description": "Feecover application token. Absent: the service uses its default application.",
+        "schema": { "type": "string" }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Every non-2xx answer. Branch on the HTTP status class first and on error.code second; an unknown code is not an error of the reader (compatibility.md).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      }
+    },
+    "schemas": {
+      "Hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "32 bytes, lowercase hex. Always lowercase; uppercase is a malformed value." },
+      "Hex56": { "type": "string", "pattern": "^[0-9a-f]{56}$", "description": "28 bytes, lowercase hex (key hash, policy id, script hash)." },
+      "Hex32": { "type": "string", "pattern": "^[0-9a-f]{32}$", "description": "16 bytes, lowercase hex (reservation_id)." },
+      "HexBytes": { "type": "string", "pattern": "^([0-9a-f]{2})+$", "description": "Non-empty lowercase hex of whole bytes (CBOR)." },
+      "Digits": { "type": "string", "pattern": "^[0-9]+$", "description": "Non-negative integer as a decimal string. Amounts are never JSON numbers." },
+      "SignedDigits": { "type": "string", "pattern": "^-?[0-9]+$", "description": "Integer as a decimal string; may be negative." },
+      "Decimal": { "type": "string", "pattern": "^-?[0-9]+\\.[0-9]+$", "description": "Display decimal as a string (for people, not for arithmetic)." },
+      "UtxoRef": { "type": "string", "pattern": "^[0-9a-f]{64}#[0-9]+$", "description": "<tx_hash>#<output_index>." },
+      "Address": { "type": "string", "pattern": "^addr(_test)?1[0-9a-z]+$", "description": "Bech32 payment address." },
+      "Timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$", "description": "ISO 8601 date-time with an explicit offset." },
+      "FeeSource": { "type": "string", "enum": ["feecover", "sponsor"], "description": "CLOSED set: a new member is a major version bump." },
+      "Owner": {
+        "type": "object", "required": ["type", "hash"],
+        "properties": { "type": { "type": "string", "enum": ["key", "script"] }, "hash": { "$ref": "#/components/schemas/Hex56" } }
+      },
+      "ErrorResponse": {
+        "type": "object", "required": ["error"],
+        "x-error-codes": "error-codes.json",
+        "properties": {
+          "error": {
+            "type": "object", "required": ["code", "message", "details"],
+            "properties": {
+              "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$", "description": "Machine code. Open set: new codes may appear without a major bump." },
+              "message": { "type": "string", "description": "Human-readable. May be shown to a user; never parse it." },
+              "details": { "type": "object", "description": "Code-specific structured facts. Open: keys may be added." }
+            }
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "ok", "network", "chain", "deployment_source", "deployment_sources", "lamp", "change_address_strategy",
+          "vault_scopes", "holds_signing_material", "feecover", "commit", "commit_dirty", "commit_source", "base_path", "epoch"
+        ],
+        "properties": {
+          "ok": { "const": true },
+          "network": { "type": "string" },
+          "chain": { "type": "string" },
+          "deployment_source": { "type": "string" },
+          "deployment_sources": { "type": "array", "items": { "type": "string" } },
+          "lamp": {
+            "type": "object", "required": ["policy_id", "asset_name_hex"],
+            "properties": { "policy_id": { "$ref": "#/components/schemas/Hex56" }, "asset_name_hex": { "type": "string", "pattern": "^([0-9a-f]{2})*$" } }
+          },
+          "change_address_strategy": { "type": "string" },
+          "vault_scopes": {
+            "type": "array",
+            "items": {
+              "type": "object", "required": ["vault_type", "address", "script_hash"],
+              "properties": { "vault_type": { "type": "string" }, "address": { "$ref": "#/components/schemas/Address" }, "script_hash": { "$ref": "#/components/schemas/Hex56" } }
+            }
+          },
+          "holds_signing_material": { "const": false },
+          "feecover": { "type": "string", "enum": ["absent", "configured"] },
+          "commit": { "type": ["string", "null"] },
+          "commit_dirty": { "type": ["boolean", "null"] },
+          "commit_source": { "type": "string" },
+          "commit_unavailable_reason": { "type": "string" },
+          "base_path": { "type": "string" },
+          "epoch": {
+            "type": ["object", "null"],
+            "required": ["origin_ms", "ms_per_epoch", "current", "start_ms", "end_ms"],
+            "description": "Protocol epoch origin. null on a network without an origin (then epoch_unavailable_reason is present); null is a configuration state, not an outage.",
+            "properties": {
+              "origin_ms": { "$ref": "#/components/schemas/Digits" },
+              "ms_per_epoch": { "$ref": "#/components/schemas/Digits" },
+              "current": { "type": "integer" },
+              "start_ms": { "$ref": "#/components/schemas/Digits" },
+              "end_ms": { "$ref": "#/components/schemas/Digits" }
+            }
+          },
+          "epoch_unavailable_reason": { "type": "string" }
+        }
+      },
+      "FeePayerRequest": {
+        "type": "object", "required": ["utxo", "address"], "additionalProperties": false,
+        "description": "The fee_payer object of a REQUEST is CLOSED: a key other than utxo, address, reservation_id is refused with 400 FEE_PAYER_SHAPE (details.extra_fields) (src/feePayer.ts parseFeePayerShape). Forward the object exactly as /fee/utxo returned it, never a re-picked subset: when the service adds a key to that object it ships a build-route release that accepts the key (compatibility.md, fee_payer echo rule).",
+        "properties": {
+          "utxo": { "$ref": "#/components/schemas/UtxoRef" },
+          "address": { "$ref": "#/components/schemas/Address" },
+          "reservation_id": { "$ref": "#/components/schemas/Hex32" }
+        }
+      },
+      "FeeUtxoRequest": {
+        "type": "object", "required": ["route"],
+        "properties": { "route": { "type": "string", "description": "Build route name, e.g. consume." }, "source": { "$ref": "#/components/schemas/FeeSource" } }
+      },
+      "FeeUtxoResponse": {
+        "type": "object", "required": ["fee_payer", "reserved_until", "purpose"],
+        "properties": {
+          "fee_payer": {
+            "type": "object", "required": ["utxo", "address", "reservation_id"],
+            "description": "Send this object, unchanged, as fee_payer in the build request.",
+            "properties": {
+              "utxo": { "$ref": "#/components/schemas/UtxoRef" },
+              "address": { "$ref": "#/components/schemas/Address" },
+              "reservation_id": { "$ref": "#/components/schemas/Hex32" }
+            }
+          },
+          "reserved_until": { "$ref": "#/components/schemas/Timestamp" },
+          "purpose": { "type": "string" },
+          "source": { "$ref": "#/components/schemas/FeeSource" }
+        }
+      },
+      "OwnerRequest": {
+        "type": "object",
+        "description": "Owner of the vault: { type: key|script, hash } or { type: did, ... }. owner_pkh is the legacy alias of { type: key }.",
+        "required": ["type"],
+        "properties": { "type": { "type": "string" }, "hash": { "$ref": "#/components/schemas/Hex56" }, "did": { "type": "string" } }
+      },
+      "ConsumeRequest": {
+        "type": "object",
+        "description": "Either owner or owner_pkh; either op_type with op_count, or pairs. Amounts are digit strings.",
+        "properties": {
+          "owner": { "$ref": "#/components/schemas/OwnerRequest" },
+          "owner_pkh": { "$ref": "#/components/schemas/Hex56" },
+          "owner_witness": { "type": "object" },
+          "change_address": { "$ref": "#/components/schemas/Address" },
+          "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
+          "op_type": { "type": "integer" },
+          "op_count": { "$ref": "#/components/schemas/Digits" },
+          "pairs": {
+            "type": "array",
+            "items": {
+              "type": "object", "required": ["op_type", "op_count"], "additionalProperties": false,
+              "properties": { "op_type": { "type": "integer" }, "op_count": { "$ref": "#/components/schemas/Digits" } }
+            }
+          },
+          "engage_ref": { "$ref": "#/components/schemas/UtxoRef" },
+          "wakeme_vault_ref": { "$ref": "#/components/schemas/UtxoRef" },
+          "vault_type": { "type": "string", "enum": ["Instant", "Schedule"] }
+        }
+      },
+      "BuildSummary": {
+        "type": "object",
+        "description": "Read back from the transaction CBOR. A client that shows it to a person must still treat it as a convenience: a party about to sign reads the CBOR itself.",
+        "required": ["requested_intent", "network", "fee_lovelace", "fee_ada", "lamp", "magic", "vault", "outputs", "gen", "consume"],
+        "properties": {
+          "requested_intent": { "const": "consume" },
+          "network": { "type": "string" },
+          "fee_lovelace": { "$ref": "#/components/schemas/Digits" },
+          "fee_ada": { "$ref": "#/components/schemas/Decimal" },
+          "lamp": {
+            "type": "object",
+            "required": ["locked_delta_oildrop", "locked_delta_lamp", "balance_delta_oildrop", "balance_delta_lamp", "in_vault_output_oildrop", "in_vault_output_lamp"],
+            "properties": {
+              "locked_delta_oildrop": { "$ref": "#/components/schemas/SignedDigits" },
+              "locked_delta_lamp": { "$ref": "#/components/schemas/Decimal" },
+              "balance_delta_oildrop": { "$ref": "#/components/schemas/SignedDigits" },
+              "balance_delta_lamp": { "$ref": "#/components/schemas/Decimal" },
+              "in_vault_output_oildrop": { "$ref": "#/components/schemas/Digits" },
+              "in_vault_output_lamp": { "$ref": "#/components/schemas/Decimal" }
+            }
+          },
+          "magic": {
+            "type": "object",
+            "required": [
+              "minted_nanogic", "minted_magic", "burned_nanogic", "burned_magic",
+              "expired_dropped_nanogic", "expired_dropped_magic", "total_after_nanogic", "total_after_magic"
+            ],
+            "properties": {
+              "minted_nanogic": { "$ref": "#/components/schemas/Digits" },
+              "minted_magic": { "$ref": "#/components/schemas/Decimal" },
+              "burned_nanogic": { "$ref": "#/components/schemas/Digits" },
+              "burned_magic": { "$ref": "#/components/schemas/Decimal" },
+              "expired_dropped_nanogic": { "$ref": "#/components/schemas/Digits" },
+              "expired_dropped_magic": { "$ref": "#/components/schemas/Decimal" },
+              "total_after_nanogic": { "$ref": "#/components/schemas/Digits" },
+              "total_after_magic": { "$ref": "#/components/schemas/Decimal" }
+            }
+          },
+          "vault": {
+            "type": "object",
+            "required": [
+              "address", "output_index", "owner", "owner_pkh", "last_updated_epoch", "instant_unlock_ms", "instant_unlock_ms_before",
+              "batch_count_before", "batch_count_after", "gen_schedule_count_before", "gen_schedule_count_after"
+            ],
+            "properties": {
+              "address": { "$ref": "#/components/schemas/Address" },
+              "output_index": { "type": "integer" },
+              "owner": { "$ref": "#/components/schemas/Owner" },
+              "owner_pkh": { "type": ["string", "null"], "pattern": "^[0-9a-f]{56}$" },
+              "last_updated_epoch": { "$ref": "#/components/schemas/Digits" },
+              "instant_unlock_ms": { "type": ["string", "null"], "pattern": "^[0-9]+$", "description": "null: Schedule vault (field does not exist). \"0\": Instant vault never generated. Otherwise an absolute POSIX ms mark." },
+              "instant_unlock_ms_before": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+              "batch_count_before": { "type": "integer" },
+              "batch_count_after": { "type": "integer" },
+              "gen_schedule_count_before": { "type": "integer" },
+              "gen_schedule_count_after": { "type": "integer" }
+            }
+          },
+          "gen": {
+            "type": "object", "required": ["cap_epoch", "cap_nanogic", "wakeme_link", "usage_window_epoch", "usage_factor_q"],
+            "properties": {
+              "cap_epoch": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+              "cap_nanogic": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+              "wakeme_link": { "type": ["string", "null"] },
+              "usage_window_epoch": { "$ref": "#/components/schemas/Digits" },
+              "usage_factor_q": { "$ref": "#/components/schemas/Digits" }
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "object", "required": ["index", "address", "lovelace", "ada", "assets", "has_inline_datum"],
+              "properties": {
+                "index": { "type": "integer" },
+                "address": { "$ref": "#/components/schemas/Address" },
+                "lovelace": { "$ref": "#/components/schemas/Digits" },
+                "ada": { "$ref": "#/components/schemas/Decimal" },
+                "assets": {
+                  "type": "array",
+                  "items": {
+                    "type": "object", "required": ["unit", "quantity"],
+                    "properties": { "unit": { "type": "string", "pattern": "^[0-9a-f]+$" }, "quantity": { "$ref": "#/components/schemas/Digits" } }
+                  }
+                },
+                "has_inline_datum": { "type": "boolean" }
+              }
+            }
+          },
+          "consume": {
+            "type": "object", "required": ["redeemer", "pairs", "required_nanogic", "required_magic", "engage_input_ref"],
+            "properties": {
+              "redeemer": { "type": "string", "enum": ["Consume", "ConsumeMany"], "description": "CLOSED set." },
+              "pairs": {
+                "type": "array",
+                "items": {
+                  "type": "object", "required": ["op_type", "op_count"],
+                  "properties": { "op_type": { "type": "integer" }, "op_count": { "$ref": "#/components/schemas/Digits" } }
+                }
+              },
+              "required_nanogic": { "$ref": "#/components/schemas/Digits" },
+              "required_magic": { "$ref": "#/components/schemas/Decimal" },
+              "engage_input_ref": { "$ref": "#/components/schemas/UtxoRef" }
+            }
+          },
+          "fee_payer": {
+            "type": "object",
+            "description": "Present only when the request carried a fee_payer.",
+            "required": [
+              "address", "utxo", "input_lovelace", "fee_lovelace", "change_lovelace", "fronted_lovelace", "fronted_max_lovelace",
+              "fronted_output_index", "shared_fronted_lovelace", "shared_fronted_outputs", "collateral_at_risk_lovelace",
+              "collateral_return_lovelace", "valid_to_posix_ms"
+            ],
+            "properties": {
+              "address": { "$ref": "#/components/schemas/Address" },
+              "utxo": { "$ref": "#/components/schemas/UtxoRef" },
+              "input_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "fee_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "change_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "fronted_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "fronted_max_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "fronted_output_index": { "type": ["integer", "null"] },
+              "shared_fronted_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "shared_fronted_outputs": {
+                "type": "array",
+                "items": { "type": "object", "required": ["output_index", "lovelace"], "properties": { "output_index": { "type": "integer" }, "lovelace": { "$ref": "#/components/schemas/Digits" } } }
+              },
+              "collateral_at_risk_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "collateral_return_lovelace": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+              "valid_to_posix_ms": { "$ref": "#/components/schemas/Digits" }
+            }
+          }
+        }
+      },
+      "ConsumeResponse": {
+        "type": "object",
+        "required": [
+          "tx_cbor", "tx_hash", "summary", "expires_at", "expires_reason", "ignored", "ignored_other_owner_count",
+          "required_signers", "witness_notes", "server_time"
+        ],
+        "properties": {
+          "tx_cbor": { "$ref": "#/components/schemas/HexBytes" },
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "summary": { "$ref": "#/components/schemas/BuildSummary" },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_reason": { "type": "string", "description": "Open set (e.g. fee_reservation, builder_cap)." },
+          "server_time": { "$ref": "#/components/schemas/Timestamp", "description": "The service clock at reply time. Compute the local deadline as receive time + (expires_at - server_time); do not compare expires_at with the device clock." },
+          "ignored": {
+            "type": "array",
+            "items": { "type": "object", "required": ["utxo_ref", "reason"], "properties": { "utxo_ref": { "type": "string" }, "reason": { "type": "string" } } }
+          },
+          "ignored_other_owner_count": { "type": "integer" },
+          "required_signers": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+          "witness_notes": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "FeeSignRequest": {
+        "type": "object", "required": ["tx_cbor"],
+        "properties": { "tx_cbor": { "$ref": "#/components/schemas/HexBytes" }, "source": { "$ref": "#/components/schemas/FeeSource" } }
+      },
+      "FeeSignResponse": {
+        "type": "object", "required": ["tx_hash", "witness_set", "net_lovelace", "fee_lovelace"],
+        "properties": {
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "witness_set": { "$ref": "#/components/schemas/HexBytes" },
+          "net_lovelace": { "$ref": "#/components/schemas/SignedDigits" },
+          "fee_lovelace": { "$ref": "#/components/schemas/SignedDigits" },
+          "source": { "$ref": "#/components/schemas/FeeSource" }
+        }
+      },
+      "SubmitRequest": {
+        "type": "object", "required": ["tx_cbor", "witness_cbor"],
+        "properties": { "tx_cbor": { "$ref": "#/components/schemas/HexBytes" }, "witness_cbor": { "$ref": "#/components/schemas/HexBytes" } }
+      },
+      "SubmitResponse": {
+        "type": "object", "required": ["tx_hash", "lock_released_for"],
+        "properties": {
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "lock_released_for": { "type": ["string", "null"], "description": "Owner lock released by this submit; null when none carried the hash." }
+        }
+      },
+      "TxStatusResponse": {
+        "type": "object", "required": ["tx_hash", "state"],
+        "description": "in_chain carries block, slot, block_time. expires_at and server_time appear only for a transaction this service issued and still remembers.",
+        "properties": {
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "state": { "type": "string", "enum": ["in_chain", "in_mempool", "not_found"], "description": "CLOSED set: a new member is a major version bump." },
+          "block": { "$ref": "#/components/schemas/Hex64" },
+          "slot": { "type": "integer" },
+          "block_time": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "server_time": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "QuoteRequest": {
+        "type": "object", "required": ["route", "params"],
+        "properties": {
+          "route": { "type": "string" },
+          "params": { "type": "object", "description": "The body of the build route being quoted, without fee_payer." },
+          "owner_fee_addresses": { "type": "array", "items": { "$ref": "#/components/schemas/Address" } }
+        }
+      },
+      "QuoteResponse": {
+        "type": "object", "required": ["feecover", "owner_address", "fee_sources", "valid_until"],
+        "properties": {
+          "feecover": {
+            "type": "object", "required": ["fee_lovelace", "fronted_lovelace", "available"],
+            "properties": {
+              "fee_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "fronted_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "available": { "type": "boolean" },
+              "reason": { "type": "string" },
+              "rule": { "type": "string" },
+              "message": { "type": "string" },
+              "upstream_status": { "type": "integer" }
+            }
+          },
+          "owner_address": {
+            "type": "object", "required": ["fee_lovelace", "fronted_lovelace", "available", "needed_lovelace", "collateral_lovelace"],
+            "properties": {
+              "fee_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "fronted_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "available": { "type": "boolean" },
+              "needed_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "collateral_lovelace": { "$ref": "#/components/schemas/Digits" },
+              "fee_payer": {
+                "type": "object", "required": ["utxo", "address"],
+                "properties": { "utxo": { "$ref": "#/components/schemas/UtxoRef" }, "address": { "$ref": "#/components/schemas/Address" } }
+              },
+              "reason": { "type": "string" }
+            }
+          },
+          "fee_sources": {
+            "type": "object", "required": ["owner_address", "feecover", "sponsor"],
+            "description": "Each block is Feecover's answer relayed as received. A key Feecover did not send is absent here, never null.",
+            "properties": {
+              "owner_address": { "$ref": "#/components/schemas/FeeSourceBlock" },
+              "feecover": { "$ref": "#/components/schemas/FeeSourceBlock" },
+              "sponsor": { "$ref": "#/components/schemas/FeeSourceBlock" }
+            }
+          },
+          "valid_until": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "FeeSourceBlock": {
+        "type": "object", "required": ["available"],
+        "properties": { "available": { "type": "boolean" }, "reason": { "type": "string" }, "rule": { "type": "string" }, "message": { "type": "string" } }
+      },
+      "FirstConsumeRequest": {
+        "type": "object", "required": ["owner", "op_type", "op_count", "draw_epoch"],
+        "description": "Plus exactly one of change_address or fee_payer, and owner_witness for a script owner. draw_epoch is the summary.epoch of the preceding draw-magic answer.",
+        "properties": {
+          "owner": { "$ref": "#/components/schemas/OwnerRequest" },
+          "owner_witness": { "type": "object" },
+          "change_address": { "$ref": "#/components/schemas/Address" },
+          "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
+          "op_type": { "type": "integer" },
+          "op_count": { "$ref": "#/components/schemas/Digits" },
+          "draw_epoch": { "type": "integer" },
+          "vault_ref": { "$ref": "#/components/schemas/UtxoRef" },
+          "engage_ref": { "$ref": "#/components/schemas/UtxoRef" }
+        }
+      },
+      "FirstConsumeResponse": {
+        "type": "object",
+        "required": ["step", "tx_cbor", "tx_hash", "required_signers", "signers", "witness_notes", "summary", "expires_at", "expires_reason", "server_time"],
+        "properties": {
+          "step": { "const": "first-consume" },
+          "tx_cbor": { "$ref": "#/components/schemas/HexBytes" },
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "required_signers": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+          "signers": {
+            "type": "array",
+            "items": {
+              "type": "object", "required": ["role", "key_hashes", "how"],
+              "properties": {
+                "role": { "type": "string", "description": "Open set (fee-wallet, owner, ...)." },
+                "key_hashes": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+                "how": { "type": "string" }
+              }
+            }
+          },
+          "witness_notes": { "type": "array", "items": { "type": "string" } },
+          "summary": {
+            "type": "object", "required": ["step", "epoch", "required_nanogic", "burns", "thread_unit", "withdrawals", "outputs"],
+            "properties": {
+              "step": { "const": "first-consume" },
+              "epoch": { "type": "integer" },
+              "required_nanogic": { "$ref": "#/components/schemas/Digits" },
+              "burns": {
+                "type": "array",
+                "items": { "type": "object", "required": ["batch_id", "nanogic"], "properties": { "batch_id": { "type": "string" }, "nanogic": { "$ref": "#/components/schemas/Digits" } } }
+              },
+              "thread_unit": { "type": "string", "pattern": "^[0-9a-f]+$" },
+              "withdrawals": { "type": "integer" },
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "object", "required": ["index", "address", "assets"],
+                  "properties": {
+                    "index": { "type": "integer" },
+                    "address": { "$ref": "#/components/schemas/Address" },
+                    "assets": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/Digits" } }
+                  }
+                }
+              }
+            }
+          },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_reason": { "type": "string" },
+          "server_time": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "PlanRequest": {
+        "type": "object", "required": ["owner", "sponsor_pkh"],
+        "properties": {
+          "owner": { "$ref": "#/components/schemas/OwnerRequest" },
+          "sponsor_pkh": { "$ref": "#/components/schemas/Hex56" },
+          "actor": { "type": "string", "enum": ["app", "sponsor", "module"] }
+        }
+      },
+      "PlanStep": {
+        "type": "object", "required": ["step", "path", "action", "signers", "requires", "actor"],
+        "properties": {
+          "step": { "type": "string", "description": "Open set of step names (open-vault, bind-did, fund-vault, draw-magic, first-consume, claim, open-fund, ...). Route to the step by path, not by a hard-coded list." },
+          "path": { "type": "string", "pattern": "^/tx/sponsor/[a-z-]+$" },
+          "action": { "type": "string" },
+          "when": { "type": "string" },
+          "signers": {
+            "type": "array",
+            "items": { "type": "object", "required": ["role", "how"], "properties": { "role": { "type": "string" }, "how": { "type": "string" } } }
+          },
+          "requires": { "type": "array", "items": { "type": "string" } },
+          "actor": { "type": "string", "enum": ["app", "sponsor", "module"], "description": "Who CALLS the step's route (not who signs). CLOSED set." }
+        }
+      },
+      "PlanResponse": {
+        "type": "object", "required": ["steps", "fallback_steps", "same_epoch"],
+        "properties": {
+          "steps": { "type": "array", "items": { "$ref": "#/components/schemas/PlanStep" } },
+          "fallback_steps": { "type": "array", "items": { "$ref": "#/components/schemas/PlanStep" } },
+          "same_epoch": { "type": "array", "items": { "type": "string" } },
+          "owner_did": { "type": "string" }
+        }
+      }
+    }
+  }
+}

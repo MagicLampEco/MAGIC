@@ -1,0 +1,895 @@
+{
+  "contract_version": "1.0.0",
+  "operation": "POST /tx/sponsor/first-consume",
+  "requests": {
+    "valid": [
+      {
+        "name": "key-owner-with-fee-payer",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "op_type": 1,
+          "op_count": "1",
+          "draw_epoch": 318
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "draw-epoch-as-string",
+        "why": "draw_epoch is the JSON integer summary.epoch of draw-magic.",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "op_type": 1,
+          "op_count": "1",
+          "draw_epoch": "318"
+        }
+      },
+      {
+        "name": "op-count-as-number",
+        "why": "Amounts are digit strings.",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "op_type": 1,
+          "op_count": 1,
+          "draw_epoch": 318
+        }
+      },
+      {
+        "name": "draw-epoch-missing",
+        "why": "draw_epoch is required: it is how a consume in the wrong epoch is refused.",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "op_type": 1,
+          "op_count": "1"
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "typical",
+        "status": 200,
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "additive-keys",
+        "status": 200,
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ],
+            "fund_selection": "did_lookup"
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z",
+          "trace_id": "t-1"
+        },
+        "note": "Unknown keys at any level are additive."
+      },
+      {
+        "name": "epoch-mismatch",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "SPONSOR_EPOCH_MISMATCH",
+            "message": "draw_epoch is not the current epoch.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "build-failed",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "SPONSOR_BUILD_FAILED",
+            "message": "Builder rejected the request.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "network-unsupported",
+        "status": 501,
+        "body": {
+          "error": {
+            "code": "SPONSOR_NETWORK_UNSUPPORTED",
+            "message": "No epoch origin on this network.",
+            "details": {
+              "cause_code": "WIN-PREVIEW"
+            }
+          }
+        }
+      },
+      {
+        "name": "journey-not-enabled",
+        "status": 501,
+        "body": {
+          "error": {
+            "code": "SPONSOR_UNAVAILABLE",
+            "message": "Sponsor journey not enabled.",
+            "details": {
+              "step": "first-consume"
+            }
+          }
+        }
+      },
+      {
+        "name": "request-shape",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "SPONSOR_REQUEST_SHAPE",
+            "message": "draw_epoch must be an integer.",
+            "details": {
+              "field": "draw_epoch"
+            }
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "step-other-route",
+        "status": 200,
+        "why": "step is first-consume on this route.",
+        "body": {
+          "step": "draw-magic",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "summary-epoch-as-string",
+        "status": 200,
+        "why": "summary.epoch is a JSON integer; the module sends it back as draw_epoch.",
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": "318",
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "required-nanogic-as-number",
+        "status": 200,
+        "why": "Amounts are digit strings.",
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": 10000000,
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "burn-nanogic-as-number",
+        "status": 200,
+        "why": "Amounts are digit strings.",
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": 10000000
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "output-asset-quantity-as-number",
+        "status": 200,
+        "why": "Asset quantities are digit strings.",
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": 5659030,
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "signers-missing",
+        "status": 200,
+        "why": "signers says who signs what.",
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "signer-key-hash-short",
+        "status": 200,
+        "why": "key_hashes are 56 hex.",
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "expires-at-missing",
+        "status": 200,
+        "why": "expires_at is guaranteed.",
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "server-time-missing",
+        "status": 200,
+        "why": "server_time is guaranteed.",
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end"
+        }
+      },
+      {
+        "name": "tx-hash-uppercase",
+        "status": 200,
+        "why": "tx_hash is lowercase hex.",
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4F27C87C6488ADFCE6A63AFE9BCFA68AF02A3E72188D8013FBC6E175284456FF",
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "owner key signature"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the owner key."
+          ],
+          "summary": {
+            "step": "first-consume",
+            "epoch": 318,
+            "required_nanogic": "10000000",
+            "burns": [
+              {
+                "batch_id": "abababababababababababababababab",
+                "nanogic": "10000000"
+              }
+            ],
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "withdrawals": 0,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9822000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      }
+    ]
+  }
+}

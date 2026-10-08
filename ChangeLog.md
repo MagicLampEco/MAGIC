@@ -5,6 +5,21 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-08 — Két và quỹ: mọi output ở script két/quỹ phải là một dòng sổ (InstantGen, ScheduleGen, PrepaidGen)
+
+**Đổi gì.** (1) `PrepaidGen` ▸ `find_vault_output_raw` và phép đếm input ở `prepaid_vault.spend` đếm theo payment
+credential, output tiếp nối vẫn ghim địa chỉ đầy đủ. (2) `validate_mint_vault_id` ở cả ba module và
+`validate_mint_fund_nft` lọc output theo SCRIPT trước (đúng một), rồi mới đòi NFT trên output đó. (3) `paid_fund`:
+`fund_common_checks` ép đúng một output ở script quỹ; `validate_fund_close` và `validate_fund_claim_close` ép không
+output nào ở script quỹ. (4) `validate_vault_value` ở `InstantGen`/`ScheduleGen` đòi đúng một tên dưới policy két
+(`single_nft_name`), đóng phần policy-két của Nợ #57. Ca kiểm tiền tố `g3v_` trong ba tệp validator.
+**Vì sao.** Mỗi lỗ để một giao dịch chạy script két/quỹ đẻ ra một UTxO ở script đó mà không nhánh nào tiêu lại được
+(tài sản rót vào địa chỉ, không vào dòng sổ), hoặc (4) làm két mang hai tên NFT và chết vĩnh viễn. Cả bốn đã dựng
+được bằng ca kiểm trên mã cũ (giao dịch được nhận). Chi tiết: `DevStatus.md` Nợ #57, #94–#96.
+**Cái gì gãy.** Script hash ĐỔI: `prepaid_vault`, `paid_fund`, `vault` (InstantGen), `vault` và `commit`
+(ScheduleGen); `shard`/`shard_nft` của ScheduleGen giữ nguyên. Hiệu lực từ lần deploy kế, không hồi tố UTxO đang
+sống. Bộ dựng giao dịch nào đặt thêm output ở địa chỉ két/quỹ (kể cả khác stake) trong cùng giao dịch sẽ bị từ chối.
+
 ## 2026-10-07 — VaultReadAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy (cùng cổng với VaultTxAPI)
 
 **Đổi gì.** (1) Đặt `VAULT_READ_API_BASE_PATH` mà `VAULT_READ_API_TOKEN` rỗng ⟹ từ chối khởi động, kể cả khi bind

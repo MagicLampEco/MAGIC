@@ -34,10 +34,12 @@
 //
 // SEED CHO TRƯỚC (env tuỳ chọn, `scripts/deploySeeds.ts`):
 //   DEPLOY_SEED_PRICE_NFT_<INSTANT|SCHEDULE|PREPAID> — seed g1 của price_nft cho loại két đang
-//     dựng, `<tx>#<ix>`, ở ví hoặc bãi đỗ của ví. Đã tiêu / chỗ khác / mang token ⟹ ném, không lùi
+//     dựng, `<tx>#<ix>`, ở bãi đỗ của ví (ở ví thì chỉ nhận khi KHÔNG có DEPLOY_EXPECT_HASHES).
+//     Đã tiêu / chỗ khác / mang token / trùng seed vai khác / trùng seed sổ két ⟹ ném, không lùi
 //     về chọn tự động. Vắng ⟹ như cũ (UTxO thuần ADA đầu tiên).
 //   DEPLOY_EXPECT_HASHES — tệp JSON hash kỳ vọng (`clusterHashes.ts --out`); so price_nft_<loại> ·
 //     price_param_<loại> · consume_<loại>, lệch ⟹ ném trước khi nộp. Chỉ nhận cùng seed cho trước.
+//     Có seed cho trước mà vắng tệp ⟹ ném, trừ DEPLOY_EXPECT_NONE=1.
 //
 // ⚠  DANH SÁCH THAM SỐ KHÔNG khai tay ở file này nữa — đọc thẳng
 //     `parameters[].title` từ ConsumeMAGIC/onchain/plutus.json qua
@@ -58,12 +60,16 @@ import {
 } from "../config.js";
 import { loadBlueprint, findValidator } from "../applyParams.js";
 import {
-  consumeScriptChain, prepaidScriptPair, PRICE_NFT_NAME,
+  prepaidScriptPair, PRICE_NFT_NAME,
 } from "../deployParams.js";
+import { consumeChainChecked } from "../deployHashChecks.js";
 import {
-  checkExpectedHashes, loadExpectedHashes, parkFor, priceNftSeedRole, readPresetSeed,
-  requirePresetForExpect, resolvePresetSeed, SEED_ENV, type Park,
+  assertDistinctPresetSeeds, loadExpectedHashes, parkFor, presetSeedAllowWallet, priceNftSeedRole,
+  readPresetSeed, REGISTRY_SEED_BOOK_KEY, requireExpectInPresetMode, requirePresetForExpect,
+  resolvePresetSeed, SEED_ENV, type Park,
 } from "../deploySeeds.js";
+import { readBookEntries } from "./11_deploy_gen_beacons.js";
+import { stateBookPath } from "../stateBookPath.js";
 import {
   encodePriceParam, EngageDatumSchema, type PriceParamT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
@@ -132,6 +138,13 @@ async function main() {
   const presetSeed   = readPresetSeed(process.env, seedRole);
   const expectHashes = loadExpectedHashes(process.env);
   requirePresetForExpect("bước 09", expectHashes, presetSeed !== undefined, [SEED_ENV[seedRole]]);
+  requireExpectInPresetMode("bước 09", process.env, expectHashes);
+  // Seed khác vai phải khác outref, và seed `price_nft` không được là seed sổ két đang chờ pha
+  // registry (đọc cả sổ lẫn env) — tiêu nó ở đây là sổ két không bao giờ đúc được nữa.
+  assertDistinctPresetSeeds(process.env, [
+    ...readBookEntries(stateBookPath(NETWORK)).filter((e) => e.key === REGISTRY_SEED_BOOK_KEY).map((e) => e.value),
+    ...(process.env[REGISTRY_SEED_BOOK_KEY] ? [process.env[REGISTRY_SEED_BOOK_KEY]!] : []),
+  ]);
 
   // Load ConsumeMAGIC validators. Ba lệnh tra dưới đây chỉ để hỏng SỚM khi blueprint thiếu
   // validator — chuỗi apply thật ở `deployParams.ts` ▸ `consumeScriptChain`.
@@ -166,7 +179,7 @@ async function main() {
   let adaSeeds: UTxO[];
   if (presetSeed) {
     const park = parkFor(NETWORK, address);
-    const r = await resolvePresetSeed(lucid, park, seedRole, presetSeed, { allowWallet: true });
+    const r = await resolvePresetSeed(lucid, park, seedRole, presetSeed, { allowWallet: presetSeedAllowWallet(expectHashes) });
     g1 = r.utxo;
     if (r.atPark) g1Parked = park;
     adaSeeds = walletUtxos.filter((u) =>
@@ -191,7 +204,9 @@ async function main() {
   const g2 = adaSeeds[0]!; // seed thread token Engage (đặt TÊN asset, không đặt policy)
 
   // ── Chuỗi bake price_nft(g1) → price_param → consume (`deployParams.ts`) ──────
-  const { priceNftScript, priceNftPolicy, priceParamHash, consumeScript, consumeHash } = consumeScriptChain(blueprint, {
+  // `consumeChainChecked` so ba hash với tệp kỳ vọng — lệch ⟹ ném ở đây, trước khi dựng và nộp
+  // tx đúc.
+  const { priceNftScript, priceNftPolicy, priceParamHash, consumeScript, consumeHash } = consumeChainChecked(blueprint, vaultKind, {
     priceNftSeed:   { txHash: g1.txHash, outputIndex: g1.outputIndex },
     committee,
     threshold:      priceThreshold,
@@ -199,16 +214,10 @@ async function main() {
     maxPriceStale,
     msPerEpoch:     PROTOCOL.MS_PER_EPOCH,
     windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
-  });
+  }, expectHashes);
   const priceNftUnit   = priceNftPolicy + PRICE_NFT_NAME;
   const priceParamAddr = credentialToAddress(NETWORK, scriptHashToCredential(priceParamHash));
   const consumeAddr = credentialToAddress(NETWORK, scriptHashToCredential(consumeHash));
-  // So ba hash với tệp kỳ vọng — lệch ⟹ ném ở đây, trước khi dựng và nộp tx đúc.
-  checkExpectedHashes(`bước 09 (${vaultKind})`, {
-    [`price_nft_${vaultKind}`]: priceNftPolicy,
-    [`price_param_${vaultKind}`]: priceParamHash,
-    [`consume_${vaultKind}`]: consumeHash,
-  }, expectHashes);
 
   // ── Thread token Engage: policy = CHÍNH consume script hash ──────────────────
   // `validate_mint_engage_id` đòi: seed nằm trong inputs, đúng 1 asset dưới policy

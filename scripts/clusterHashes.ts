@@ -4,11 +4,16 @@
 // chuỗi price_nft → price_param → consume cho mỗi loại két. Không đọc mạng, không đọc khoá.
 //
 // Chạy (từ scripts/):
-//   npx tsx clusterHashes.ts <input.json> [--out <hashes.json>] [--build]
+//   npx tsx clusterHashes.ts <input.json> [--out <hashes.json>] [--build] [--wakeme-ahead-of-code]
 //     --out    ghi tệp hash kỳ vọng (JSON phẳng tên → hash) — đúng thứ mà các bước deploy đọc qua
 //              `DEPLOY_EXPECT_HASHES` (`deploySeeds.ts`).
 //     --build  chạy `aiken build` cho năm module trước khi tính (plutus.json đã gitignore,
 //              BOUNDARIES.md §4) — thiếu cờ này thì hash tính trên blueprint ĐANG CÓ trên đĩa.
+//     --wakeme-ahead-of-code
+//              cho phép `wakemeVaultHash` đầu vào KHÁC hằng `wakemeVaultHash(network)` của
+//              ProtocolUtils. Vắng cờ mà khác ⟹ NÉM: bước 05/10 (và 09 prepaid) apply bằng hằng
+//              mã, nên sẽ ra hash khác bản tính trước. Có cờ ⟹ tính tiếp và in rõ các bước đó sẽ
+//              ném tới khi hằng mã được cập nhật.
 //   Đầu vào có khối `expected` ⟹ so từng tên, mã thoát 1 khi LỆCH hoặc KHÔNG ĐO ĐƯỢC.
 //
 // ── MỘT đường apply, không phải đường thứ hai ──────────────────────────────────────
@@ -121,6 +126,17 @@ export function parseClusterHashInput(raw: unknown, source: string): ClusterHash
   if (typeof r.seeds !== "object" || r.seeds === null) throw new Error(`${source}: thiếu khối seeds.`);
   const unknownSeeds = Object.keys(r.seeds).filter((k) => !(SEED_ROLES as string[]).includes(k));
   if (unknownSeeds.length > 0) throw new Error(`${source}: seeds có vai lạ ${unknownSeeds.join(", ")} (vai hợp lệ: ${SEED_ROLES.join(", ")}).`);
+  // Hai vai cùng một outref ⟹ bước chạy trước tiêu seed của vai kia (vd. seed sổ két dán làm
+  // `shardNft`: bước 03 tiêu nó, pha registry không bao giờ đúc được sổ) — ném ngay ở bản tính trước.
+  const byRef = new Map<string, string[]>();
+  for (const [role, ref] of Object.entries(r.seeds as Record<string, unknown>)) {
+    if (typeof ref !== "string") throw new Error(`${source}: seeds.${role} phải là chuỗi "<tx>#<ix>".`);
+    byRef.set(ref, [...(byRef.get(ref) ?? []), role]);
+  }
+  const dupSeeds = [...byRef.entries()].filter(([, roles]) => roles.length > 1);
+  if (dupSeeds.length > 0) {
+    throw new Error(`${source}: seeds trùng outref giữa các vai: ${dupSeeds.map(([ref, roles]) => `${roles.join(" = ")} = ${ref}`).join("; ")}.`);
+  }
   return {
     network: r.network,
     deployWalletAddress: r.deployWalletAddress as string | undefined,
@@ -332,33 +348,70 @@ export function expectedHashesFile(r: ClusterHashResult): Record<string, string>
   return out;
 }
 
+/**
+ * Đối chiếu `wakemeVaultHash` đầu vào với hằng `wakemeVaultHash(network)` của ProtocolUtils — nguồn
+ * mà bước 05/10 (và 09 prepaid) apply. Khác ⟹ ném, trừ khi `aheadOfCode` (cờ
+ * `--wakeme-ahead-of-code`): khi đó in rõ các bước đó sẽ NÉM (`DEPLOY_EXPECT_HASHES` lệch) tới khi
+ * hằng mã được cập nhật. Đầu vào `null` ⟹ không đối chiếu (các hash phụ thuộc Wakeme ra
+ * "CHƯA TÍNH ĐƯỢC").
+ */
+export function checkWakemeAgainstCode(
+  inp: Pick<ClusterHashInput, "network" | "wakemeVaultHash">,
+  aheadOfCode: boolean,
+  codeOf: (net: ClusterHashInput["network"]) => string = codeWakemeVaultHash,
+  log: (line: string) => void = console.log,
+): void {
+  let code: string | undefined;
+  try { code = codeOf(inp.network); } catch { code = undefined; }
+  const codeShown = code ?? "(mã chưa có cho mạng này)";
+  if (inp.wakemeVaultHash === null) {
+    log(`wakeme:     (chưa biết) · mã hiện tại ghi ${codeShown}`);
+    return;
+  }
+  if (inp.wakemeVaultHash === code) {
+    log(`wakeme:     ${inp.wakemeVaultHash} · TRÙNG hằng mã`);
+    return;
+  }
+  if (!aheadOfCode) {
+    throw new Error(
+      `wakemeVaultHash đầu vào ${inp.wakemeVaultHash} ≠ hằng mã wakemeVaultHash(${inp.network}) = ${codeShown}. ` +
+        `Bước 05/10 (và 09 prepaid) apply bằng hằng mã nên sẽ ra hash KHÁC bản tính trước. Cập nhật hằng ` +
+        `ProtocolUtils trước, hoặc thêm --wakeme-ahead-of-code nếu cố ý tính trước cho hằng sắp đổi.`,
+    );
+  }
+  log(`wakeme:     ${inp.wakemeVaultHash} · KHÁC hằng mã ${codeShown} (--wakeme-ahead-of-code)`);
+  log(`⚠  Bước 05 (vault_instant), 10 (paid_fund · vault_prepaid) và 09 VAULT_KIND=prepaid sẽ NÉM khi so ` +
+    `DEPLOY_EXPECT_HASHES cho tới khi wakemeVaultHash(${inp.network}) trong ProtocolUtils được cập nhật thành ` +
+    `${inp.wakemeVaultHash}.`);
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // CLI
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  let inputPath: string | undefined, outPath: string | undefined, build = false;
+  let inputPath: string | undefined, outPath: string | undefined, build = false, wakemeAhead = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--out") outPath = args[++i];
     else if (a === "--build") build = true;
+    else if (a === "--wakeme-ahead-of-code") wakemeAhead = true;
     else if (a.startsWith("--")) throw new Error(`Cờ lạ: ${a}`);
     else if (inputPath === undefined) inputPath = a;
     else throw new Error(`Thừa đối số: ${a}`);
   }
-  if (!inputPath) throw new Error("Dùng: npx tsx clusterHashes.ts <input.json> [--out <hashes.json>] [--build]");
+  if (!inputPath) throw new Error("Dùng: npx tsx clusterHashes.ts <input.json> [--out <hashes.json>] [--build] [--wakeme-ahead-of-code]");
   if (outPath === undefined && args.includes("--out")) throw new Error("--out cần đường dẫn tệp.");
 
   const inp = parseClusterHashInput(JSON.parse(readFileSync(inputPath, "utf8")), inputPath);
+  // Đối chiếu Wakeme TRƯỚC khi dựng/tính: lệch mà không có cờ ⟹ ném, không ghi tệp kỳ vọng nào.
+  checkWakemeAgainstCode(inp, wakemeAhead);
   if (build) buildClusterBlueprints();
   const r = computeClusterHashes(await loadClusterBlueprints(), inp);
 
   console.log(`input:      ${inputPath}`);
   console.log(`network:    ${inp.network} · operatorPkh ${r.operatorPkh}`);
-  let codeWakeme: string;
-  try { codeWakeme = codeWakemeVaultHash(inp.network); } catch { codeWakeme = "(mã chưa có cho mạng này)"; }
-  console.log(`wakeme:     ${inp.wakemeVaultHash ?? "(chưa biết)"} · mã hiện tại ghi ${codeWakeme}${inp.wakemeVaultHash === codeWakeme ? " (TRÙNG)" : " (KHÁC)"}`);
   console.log(`blueprint:  ${blueprintProvenance()}${build ? " · vừa aiken build" : " · dùng plutus.json đang có trên đĩa (thêm --build để dựng lại)"}\n`);
   const exp = inp.expected;
   for (const [k, v] of Object.entries(r.hashes)) {

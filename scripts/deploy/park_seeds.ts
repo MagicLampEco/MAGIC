@@ -62,13 +62,24 @@ export async function parkSeeds(chain: Chain, roles: readonly SeedRole[]): Promi
   return { txHash: done.report.hash, seeds: seedsFromBody(done.signed, park.parkAddress, roles) };
 }
 
-export function printSeeds(seeds: Partial<Record<SeedRole, OutRef>>, log: (l: string) => void = console.log): void {
-  log(`\n📋 Biến môi trường cho bước deploy:`);
-  for (const r of SEED_ROLES) if (seeds[r]) log(`   ${SEED_ENV[r]}=${outRefString(seeds[r]!)}`);
+/** Tiền tố của MỌI dòng dán-được khi DRY_RUN: outref lúc đó KHÔNG có trên chuỗi, nên dòng
+ *  `DEPLOY_SEED_*=` và khối JSON không được trông giống bản thật — dán nhầm vào env hay vào đầu
+ *  vào `clusterHashes.ts` là tính trước hash của một cụm không bao giờ tồn tại. Có tiền tố `#`
+ *  thì shell coi là chú thích, JSON thì hỏng cú pháp: cả hai đường dán nhầm đều chết ồn. */
+export const DRY_RUN_PREFIX = "# DRY_RUN ";
+
+export function printSeeds(
+  seeds: Partial<Record<SeedRole, OutRef>>,
+  log: (l: string) => void = console.log,
+  dryRun = false,
+): void {
+  const p = dryRun ? DRY_RUN_PREFIX : "";
+  log(`\n📋 Biến môi trường cho bước deploy${dryRun ? " (DRY_RUN — KHÔNG có thật trên chuỗi)" : ""}:`);
+  for (const r of SEED_ROLES) if (seeds[r]) log(`   ${p}${SEED_ENV[r]}=${outRefString(seeds[r]!)}`);
   const json: Record<string, string> = {};
   for (const r of SEED_ROLES) if (seeds[r]) json[r] = outRefString(seeds[r]!);
-  log(`\n📋 Khối "seeds" cho đầu vào clusterHashes.ts:`);
-  log(`"seeds": ${JSON.stringify(json, null, 2)}`);
+  log(`\n📋 Khối "seeds" cho đầu vào clusterHashes.ts${dryRun ? " (DRY_RUN — KHÔNG có thật trên chuỗi)" : ""}:`);
+  for (const line of `"seeds": ${JSON.stringify(json, null, 2)}`.split("\n")) log(`${p}${line}`);
 }
 
 async function main(): Promise<void> {
@@ -93,7 +104,7 @@ async function main(): Promise<void> {
       }
     : live;
   const r = await parkSeeds(chain, roles);
-  printSeeds(r.seeds);
+  printSeeds(r.seeds, console.log, dryRun);
   if (dryRun) {
     console.log(`\nDRY RUN: KHÔNG nộp — các outref trên KHÔNG có thật trên chuỗi, đừng dùng để tính hash.`);
   } else {

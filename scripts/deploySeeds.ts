@@ -28,7 +28,7 @@ import {
   type LucidEvolution, type Network, type Script, type TxBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
 import { parkAddressFor } from "./refScripts.js";
-import { parseOutRef, type OutRef } from "./runResult.js";
+import { parseFlag, parseOutRef, type OutRef } from "./runResult.js";
 import type { VaultKind } from "./consumeBook.js";
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -149,6 +149,8 @@ export interface ResolvedSeed {
  *
  * `allowWallet = false` cho bước 11: seed sổ két phải nằm chờ ở bãi đỗ tới pha `registry`
  * (đầu tệp `deploy/11_deploy_gen_beacons.ts` nói vì sao), và pha đó chỉ tiêu được từ bãi đỗ.
+ * Bước 03/09 cũng `false` khi có `DEPLOY_EXPECT_HASHES`: hash đã tính trước và đã gửi đi thì seed
+ * nằm ở ví là để bộ chọn UTxO của bất kỳ giao dịch nào giữa lúc tính và lúc đúc tiêu mất được.
  */
 export async function resolvePresetSeed(
   lucid: LucidEvolution,
@@ -187,6 +189,11 @@ export type ClusterHashName =
   | `price_nft_${VaultKind}` | `price_param_${VaultKind}` | `consume_${VaultKind}`;
 
 export const EXPECT_HASHES_ENV = "DEPLOY_EXPECT_HASHES";
+
+/** Có tệp kỳ vọng ⟹ seed cho trước chỉ được nằm ở BÃI ĐỖ (`resolvePresetSeed` nói vì sao). */
+export function presetSeedAllowWallet(expected: ExpectedHashes | undefined): boolean {
+  return expected === undefined;
+}
 
 export type ExpectedHashes = Readonly<Record<string, string>>;
 
@@ -259,6 +266,79 @@ export function requirePresetForExpect(step: string, expected: ExpectedHashes | 
     throw new Error(
       `${step}: có ${EXPECT_HASHES_ENV} nhưng không có seed cho trước (${seedVars.join(", ")}). Seed tự chọn ` +
         `cho hash khác bản tính trước — đặt seed, hoặc bỏ ${EXPECT_HASHES_ENV}.`,
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Chế độ seed cho trước: seed khác vai phải khác outref, và phải có tệp kỳ vọng
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** Khoá sổ giữ seed sổ két đang chờ pha `registry`. Tên khai Ở ĐÂY; bước 11
+ *  (`PHASE_KEYS.REGISTRY_SEED_UTXO`) trỏ về, để bước 03/09 kiểm được mà không nạp bước 11. */
+export const REGISTRY_SEED_BOOK_KEY = "GEN_BEACONS_REGISTRY_SEED_UTXO";
+
+/** Cờ bỏ phép so TƯỜNG MINH. Chỉ "1" mới bỏ; xem `requireExpectInPresetMode`. */
+export const EXPECT_NONE_ENV = "DEPLOY_EXPECT_NONE";
+
+/** Môi trường đang ở chế độ seed cho trước ⟺ có ít nhất một biến `DEPLOY_SEED_*` được ĐẶT
+ *  (kể cả đặt rỗng — `readPresetSeed` ném ở ca đó). */
+export function presetModeOn(env: Env): boolean {
+  return SEED_ROLES.some((r) => env[SEED_ENV[r]] !== undefined);
+}
+
+/**
+ * Mọi biến `DEPLOY_SEED_*` đang đặt phải trỏ tới outref KHÁC NHAU đôi một, và không vai nào
+ * ngoài `registry` được trỏ vào seed sổ két đã ghi (`reservedRegistrySeeds` — mọi giá trị
+ * `REGISTRY_SEED_BOOK_KEY` của sổ, cộng giá trị trong env nếu có).
+ *
+ * Vì sao chặn: hai vai cùng một outref ⟹ bước chạy trước tiêu seed của vai kia. Ca đắt nhất:
+ * dán seed sổ két vào `DEPLOY_SEED_SHARD_NFT` ⟹ bước 03 tiêu seed sổ, mà hash sổ đã nướng vào
+ * gb_shard và mọi két ⟹ pha `registry` không bao giờ đúc được nữa, cả cụm chết.
+ */
+export function assertDistinctPresetSeeds(env: Env, reservedRegistrySeeds: readonly string[] = []): void {
+  const byRef = new Map<string, SeedRole[]>();
+  for (const r of SEED_ROLES) {
+    const ref = readPresetSeed(env, r);
+    if (!ref) continue;
+    const k = outRefString(ref);
+    byRef.set(k, [...(byRef.get(k) ?? []), r]);
+  }
+  const dup = [...byRef.entries()].filter(([, roles]) => roles.length > 1);
+  if (dup.length > 0) {
+    throw new Error(
+      `Seed cho trước trùng vai: ${dup.map(([ref, roles]) => `${roles.map((r) => SEED_ENV[r]).join(" = ")} = ${ref}`).join("; ")}. ` +
+        `Mỗi vai một outref riêng — bước chạy trước sẽ tiêu seed của vai kia.`,
+    );
+  }
+  const reserved = new Set(reservedRegistrySeeds);
+  const onRegistry = [...byRef.entries()].filter(([ref, roles]) => reserved.has(ref) && roles.some((r) => r !== "registry"));
+  if (onRegistry.length > 0) {
+    throw new Error(
+      `Seed cho trước trùng seed SỔ KÉT đã ghi ở sổ (${REGISTRY_SEED_BOOK_KEY}): ` +
+        `${onRegistry.map(([ref, roles]) => `${roles.map((r) => SEED_ENV[r]).join(", ")} = ${ref}`).join("; ")}. ` +
+        `Tiêu seed đó ở bước này là pha registry không bao giờ đúc được sổ nữa.`,
+    );
+  }
+}
+
+/**
+ * Chế độ seed cho trước mà KHÔNG có `DEPLOY_EXPECT_HASHES` ⟹ ném, trừ khi `DEPLOY_EXPECT_NONE=1`.
+ * Lý do: seed cho trước chỉ có nghĩa khi hash đã được tính trước và gửi đi; deploy trên seed đó
+ * mà không so là đúc ra một cụm mà không ai biết có trùng bản đã gửi hay không — bước in hash ra
+ * màn hình không phải phép so. Đặt cả hai biến là tự mâu thuẫn ⟹ cũng ném.
+ */
+export function requireExpectInPresetMode(step: string, env: Env, expected: ExpectedHashes | undefined): void {
+  const none = parseFlag(env[EXPECT_NONE_ENV], EXPECT_NONE_ENV);
+  if (none && expected) {
+    throw new Error(`${step}: đặt cả ${EXPECT_HASHES_ENV} lẫn ${EXPECT_NONE_ENV}=1 — chọn một.`);
+  }
+  if (!expected && !none && presetModeOn(env)) {
+    const set = SEED_ROLES.filter((r) => env[SEED_ENV[r]] !== undefined).map((r) => SEED_ENV[r]);
+    throw new Error(
+      `${step}: có seed cho trước (${set.join(", ")}) mà không có ${EXPECT_HASHES_ENV} — hash thực sẽ chỉ được IN, ` +
+        `không được SO với bản đã tính trước. Đặt ${EXPECT_HASHES_ENV}=<tệp clusterHashes.ts --out>, hoặc ` +
+        `${EXPECT_NONE_ENV}=1 nếu cố ý deploy không so.`,
     );
   }
 }

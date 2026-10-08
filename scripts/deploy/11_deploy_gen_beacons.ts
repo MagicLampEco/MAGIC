@@ -38,8 +38,12 @@
 //                        — (pha beacons) bốn seed CHO TRƯỚC `<tx>#<ix>`, đã đỗ ở bãi đỗ bằng
 //                          `deploy/park_seeds.ts`. Đủ cả bốn hoặc không cái nào. Vắng ⟹ tự tạo
 //                          seed như cũ. Có ⟹ không tạo seed; seed đã tiêu / không ở bãi đỗ ⟹ ném.
-//   DEPLOY_EXPECT_HASHES — (pha beacons, chỉ cùng seed cho trước) tệp JSON hash kỳ vọng do
-//                          `clusterHashes.ts --out` ghi; hash lệch ⟹ ném TRƯỚC khi đúc.
+//                          Pha registry: chỉ `DEPLOY_SEED_REGISTRY` có nghĩa, và chỉ để ĐỐI CHIẾU —
+//                          phải trùng seed sổ đã ghi ở sổ trạng thái, lệch ⟹ ném.
+//   DEPLOY_EXPECT_HASHES — tệp JSON hash kỳ vọng do `clusterHashes.ts --out` ghi. Pha beacons (chỉ
+//                          cùng seed cho trước) so bốn hash GenBeacons; pha registry so
+//                          vault_registry · vault_instant · vault_schedule. Lệch ⟹ ném TRƯỚC khi đúc.
+//                          Có biến DEPLOY_SEED_* nào mà vắng tệp ⟹ ném, trừ DEPLOY_EXPECT_NONE=1.
 //   DRY_RUN=1            — chạy trọn luồng trên một Emulator soi gương số dư ví: dựng, ký CỤC
 //                          BỘ, đo kích thước, in hash — KHÔNG gửi gì lên mạng, KHÔNG ghi sổ.
 //   WRITE_STATE_BOOK     — "1"/"0"; vắng thì quyết theo ví ký (`runResult.ts ▸ decideStateBook`).
@@ -105,14 +109,18 @@ import {
 import { GEN_V2_STATE_KEYS, type StateBook } from "../gen_vault_tx_api_deployment.js";
 import { vaultHashKey } from "../consumeBook.js";
 import {
+  assertDistinctPresetSeeds,
   BEACON_SEED_ROLES,
   checkExpectedHashes,
-  EXPECT_HASHES_ENV,
   loadExpectedHashes,
   outRefString,
   parkFor,
   readBeaconPresetSeeds,
+  readPresetSeed,
+  REGISTRY_SEED_BOOK_KEY,
+  requireExpectInPresetMode,
   resolvePresetSeed,
+  SEED_ENV,
   SEED_LOVELACE,
   spendsParkedSeed,
   type BeaconPresetSeeds,
@@ -140,7 +148,7 @@ export const KEY = Object.fromEntries(
  */
 export const PHASE_KEYS = {
   /** `<tx>#<ix>` của seed sổ két, nằm chờ ở bãi đỗ tới pha `registry`. */
-  REGISTRY_SEED_UTXO: "GEN_BEACONS_REGISTRY_SEED_UTXO",
+  REGISTRY_SEED_UTXO: REGISTRY_SEED_BOOK_KEY,   // tên khai ở `deploySeeds.ts` (bước 03/09 cũng đọc)
   /** Hash sổ mà pha `beacons` đã nướng vào `gb_shard`. Pha `registry` dựng lại sổ từ seed và
    *  phải ra ĐÚNG hash này — lệch nghĩa là blueprint `vault_registry` đã đổi giữa hai pha, và
    *  sổ đúc ra sẽ không phải sổ mà shard tra. */
@@ -149,7 +157,8 @@ export const PHASE_KEYS = {
 
 /** Két được ghi vào sổ, theo ĐÚNG thứ tự này. Sổ bất biến sau khi đúc (spend luôn từ chối),
  *  nên thiếu một loại két là loại đó không bao giờ rút shard được — cả hai là BẮT BUỘC. */
-export const REGISTRY_VAULT_KEYS = [vaultHashKey("instant"), vaultHashKey("schedule")] as const;
+export const REGISTRY_VAULT_KINDS = ["instant", "schedule"] as const;
+export const REGISTRY_VAULT_KEYS = [vaultHashKey(REGISTRY_VAULT_KINDS[0]), vaultHashKey(REGISTRY_VAULT_KINDS[1])] as const;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Sổ trạng thái — đọc có THỨ TỰ, ghi bằng nối đuôi
@@ -600,9 +609,31 @@ export interface RegistryPhaseResult {
   tx: TxReport;
 }
 
+/** So hash sổ két + các hash két SẼ được ghi vào sổ (theo `REGISTRY_VAULT_KINDS`) với tệp kỳ
+ *  vọng. Sổ bất biến sau khi đúc, nên đây là lượt so CUỐI trước một thao tác không sửa được:
+ *  một hash két lệch bản đã gửi mà vào sổ là két đó không bao giờ rút shard GB được. */
+export function registryHashesChecked(
+  registryHash: string,
+  vaultScriptHashes: readonly string[],
+  expected: ExpectedHashes | undefined,
+  log: (line: string) => void,
+): void {
+  if (vaultScriptHashes.length !== REGISTRY_VAULT_KINDS.length) {
+    throw new Error(`Sổ két cần đúng ${REGISTRY_VAULT_KINDS.length} hash két (${REGISTRY_VAULT_KINDS.join(", ")}), nhận ${vaultScriptHashes.length}.`);
+  }
+  const actual: Record<string, string> = { vault_registry: registryHash };
+  REGISTRY_VAULT_KINDS.forEach((k, i) => { actual[`vault_${k}`] = vaultScriptHashes[i]!; });
+  checkExpectedHashes("bước 11 pha registry", actual, expected, log);
+}
+
 export async function runRegistryPhase(
   chain: Chain,
-  p: { blueprint: Blueprint; seed: OutRef; pendingHash: string; vaultScriptHashes: string[] },
+  p: {
+    blueprint: Blueprint; seed: OutRef; pendingHash: string; vaultScriptHashes: string[];
+    /** Hash kỳ vọng (`clusterHashes.ts --out`). Có ⟹ so vault_registry · vault_instant ·
+     *  vault_schedule, lệch ⟹ ném TRƯỚC khi ký/nộp tx đúc sổ. */
+    expectHashes?: ExpectedHashes;
+  },
 ): Promise<RegistryPhaseResult> {
   const { lucid, network } = chain;
   const park = await parkOf(lucid, network);
@@ -613,6 +644,7 @@ export async function runRegistryPhase(
         `vault_registry đã đổi giữa hai pha. Đúc tiếp là đúc một sổ mà shard không tra.`,
     );
   }
+  registryHashesChecked(registry.hash, p.vaultScriptHashes, p.expectHashes, chain.log);
   const [seedUtxo] = await lucid.utxosByOutRef([p.seed]);
   if (!seedUtxo) throw new Error(`Seed sổ ${p.seed.txHash}#${p.seed.outputIndex} không còn trên chuỗi — sổ này không đúc được nữa.`);
   if (seedUtxo.address !== park.parkAddress) {
@@ -658,15 +690,15 @@ async function main(): Promise<void> {
   const rhoQ = phase === "beacons" ? parseRhoQ(process.env.RHO_Q) : undefined;
   const redeploy = parseFlag(process.env.GEN_BEACONS_REDEPLOY, "GEN_BEACONS_REDEPLOY");
   const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
-  // Seed cho trước + hash kỳ vọng (`deploySeeds.ts`) — chỉ pha beacons đúc thứ phụ thuộc seed.
+  // Seed cho trước + hash kỳ vọng (`deploySeeds.ts`). Pha beacons đúc trên bốn seed; pha registry
+  // dựng sổ từ seed đã GHI ở sổ trạng thái, nên ở pha đó `DEPLOY_SEED_REGISTRY` (nếu đặt) chỉ là
+  // phép đối chiếu: phải trùng seed trong sổ, lệch ⟹ ném. Tệp kỳ vọng dùng ở CẢ HAI pha — pha
+  // registry so vault_registry · vault_instant · vault_schedule trước khi đúc sổ (bất biến).
+  // Cùng một bộ env dùng được cho cả chuỗi deploy, không phải gỡ biến giữa hai pha.
   const presetSeeds = phase === "beacons" ? readBeaconPresetSeeds(process.env) : undefined;
-  const expectHashes = phase === "beacons" ? loadExpectedHashes(process.env) : undefined;
-  if (phase === "registry" && (readBeaconPresetSeeds(process.env) || process.env[EXPECT_HASHES_ENV] !== undefined)) {
-    throw new Error(
-      `Pha registry dựng sổ từ seed đã ghi ở sổ trạng thái (${PHASE_KEYS.REGISTRY_SEED_UTXO}); DEPLOY_SEED_* và ` +
-        `${EXPECT_HASHES_ENV} chỉ dành cho pha beacons — bỏ chúng đi để khỏi tưởng chúng có tác dụng.`,
-    );
-  }
+  const presetRegistrySeed = phase === "registry" ? readPresetSeed(process.env, "registry") : undefined;
+  const expectHashes = loadExpectedHashes(process.env);
+  requireExpectInPresetMode(`bước 11 pha ${phase}`, process.env, expectHashes);
 
   const config = await import("../config.js");
   const { NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, PRIVATE_KEY, PROTOCOL, selectWallet } = config;
@@ -678,6 +710,11 @@ async function main(): Promise<void> {
   // bằng `appendFileSync`, và đường mặc định có thể là symlink tới sổ của cụm đang phục vụ.
   const bookPath = stateBookPath(NETWORK);
   const entries = readBookEntries(bookPath);
+  // Seed khác vai phải khác outref; không vai nào ngoài `registry` trỏ vào seed sổ két đã ghi.
+  assertDistinctPresetSeeds(process.env, [
+    ...entries.filter((e) => e.key === PHASE_KEYS.REGISTRY_SEED_UTXO).map((e) => e.value),
+    ...(process.env[PHASE_KEYS.REGISTRY_SEED_UTXO] ? [process.env[PHASE_KEYS.REGISTRY_SEED_UTXO]!] : []),
+  ]);
 
   console.log(`=== Step 11: GenBeacons · pha ${phase}${dryRun ? " · DRY RUN" : ""} ===\n`);
   console.log(`Network: ${NETWORK} · sổ: ${bookPath}`);
@@ -750,10 +787,16 @@ async function main(): Promise<void> {
     lines = beaconsBookEntries(r);
   } else {
     const input = registryInputsFromBook(entries);
+    if (presetRegistrySeed && outRefString(presetRegistrySeed) !== outRefString(input.seed)) {
+      throw new Error(
+        `${SEED_ENV.registry}=${outRefString(presetRegistrySeed)} nhưng sổ ghi ${PHASE_KEYS.REGISTRY_SEED_UTXO}=` +
+          `${outRefString(input.seed)} — hash sổ tính trước là của seed thứ nhất, pha registry đúc trên seed thứ hai.`,
+      );
+    }
     if (lastLine(entries, KEY.VAULT_REGISTRY_HASH)?.value === input.pendingHash) {
       throw new Error(`Sổ két ${input.pendingHash} đã đúc (sổ có ${KEY.VAULT_REGISTRY_HASH} trùng) — không có gì để làm.`);
     }
-    const r = await runRegistryPhase(chain, { blueprint, ...input });
+    const r = await runRegistryPhase(chain, { blueprint, ...input, expectHashes });
     console.log(`\nSổ két: ${r.registryUtxo} · két: ${r.vaultScriptHashes.join(", ")} · ${r.tx.bytes} B`);
     lines = registryBookEntries(r);
   }

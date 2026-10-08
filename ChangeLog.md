@@ -11,14 +11,26 @@
 `DEPLOY_SEED_<VAI>=<tx>#<ix>`. (2) `scripts/clusterHashes.ts` mới: tính 20 hash của cụm phục vụ từ outref seed,
 ghi tệp hash kỳ vọng (`--out`); gọi đúng các hàm apply mà bước deploy gọi — chuỗi bake `price_nft → price_param →
 consume` dời sang `deployParams.ts` ▸ `consumeScriptChain`, policy `shard_nft` sang `03_deploy_shards.ts` ▸
-`shardNftPolicyFor`. (3) Bước 11 (pha `beacons`), 03 và 09 nhận seed qua tám biến `DEPLOY_SEED_*` và so hash thực
-với `DEPLOY_EXPECT_HASHES`, lệch ⟹ ném trước khi nộp. Nguồn luật: `scripts/deploySeeds.ts`. Vector
-`scripts/vectors/cluster_hashes.gen2-preprod.json` ghim 20 hash cụm đời 2 Preprod.
+`shardNftPolicyFor`. (3) Bước 11 (pha `beacons`), 03 và 09 nhận seed qua tám biến `DEPLOY_SEED_*`. (4) Cả 20 hash
+được so với `DEPLOY_EXPECT_HASHES` trước giao dịch đầu tiên phụ thuộc chúng: 11 pha `beacons` (4), 03 (4), 05
+(`vault_instant`), 07 (`shard_nft` · `commit` · `vault_schedule`), 11 pha `registry` (`vault_registry` ·
+`vault_instant` · `vault_schedule`, trước khi đúc sổ bất biến), 10 (`paid_fund` · `vault_prepaid`), 09 (3 mỗi loại
+két); lệch hoặc tệp thiếu tên ⟹ ném. Mỗi phép so nằm trong một hàm thuần "tính + so" (`scripts/deployHashChecks.ts`,
+`03` ▸ `shardStepChecked`, `11` ▸ `registryHashesChecked`) mà bộ kiểm gọi thẳng. (5) Chế độ seed cho trước siết:
+seed trùng vai (hoặc trùng seed sổ két đã ghi) ⟹ ném ở 03/09/11 (`assertDistinctPresetSeeds`) và ở đầu vào
+`clusterHashes.ts`; có `DEPLOY_SEED_*` mà vắng tệp kỳ vọng ⟹ mọi bước ném, trừ `DEPLOY_EXPECT_NONE=1`; có tệp kỳ
+vọng ⟹ bước 03/09 chỉ nhận seed ở bãi đỗ; `clusterHashes.ts` ném khi `wakemeVaultHash` đầu vào khác hằng
+ProtocolUtils, trừ cờ `--wakeme-ahead-of-code`; `park_seeds.ts` DRY_RUN in mọi dòng dán-được kèm tiền tố
+`# DRY_RUN `. Nguồn luật: `scripts/deploySeeds.ts`. Vector `scripts/vectors/cluster_hashes.gen2-preprod.json` ghim
+20 hash cụm đời 2 Preprod.
 **Vì sao.** Bên tiêu thụ (app ghim policy lúc build) cần hash cụm TRƯỚC khi cụm được đúc; trước bản này mỗi bước tự
-chọn seed lúc chạy nên hash chỉ biết sau khi nộp.
-**Cái gì gãy.** Không gì khi vắng mọi biến `DEPLOY_SEED_*`: hành vi cũ giữ nguyên. Đặt biến sai hình dạng, seed đã
-tiêu hay không thuộc ví ⟹ bước deploy ném thay vì tự chọn seed khác. Tái dùng beacon GenBeacons đã có CHƯA hỗ trợ:
-bước 11 pha `beacons` luôn đúc mới.
+chọn seed lúc chạy nên hash chỉ biết sau khi nộp. Một hash deploy ra lệch bản đã ghim là hành trình người dùng gãy,
+và đúc sổ két là thao tác một lần — nên mọi hash phải được so, không chỉ được in.
+**Cái gì gãy.** Không gì khi vắng mọi biến `DEPLOY_SEED_*` và `DEPLOY_EXPECT_HASHES`: hành vi cũ giữ nguyên. Đặt biến
+sai hình dạng, seed đã tiêu, không thuộc ví hay trùng vai ⟹ bước deploy ném thay vì tự chọn seed khác. Pha `registry`
+không còn từ chối `DEPLOY_EXPECT_HASHES`/`DEPLOY_SEED_*`: nó so tệp kỳ vọng và đối chiếu `DEPLOY_SEED_REGISTRY` với
+seed trong sổ, để một bộ env dùng được cho cả chuỗi. Tái dùng beacon GenBeacons đã có CHƯA hỗ trợ: bước 11 pha
+`beacons` luôn đúc mới.
 
 ## 2026-10-07 — VaultReadAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy (cùng cổng với VaultTxAPI)
 

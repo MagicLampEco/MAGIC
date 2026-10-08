@@ -1,5 +1,6 @@
-// scripts/test_deploy_preset_seeds.ts — bộ ca cho đường SEED CHO TRƯỚC của bước 11 pha `beacons`
-// (`deploySeeds.ts` + `deploy/park_seeds.ts` + `deploy/11_deploy_gen_beacons.ts ▸ runBeaconsPhase`),
+// scripts/test_deploy_preset_seeds.ts — bộ ca cho đường SEED CHO TRƯỚC của bước 11 pha `beacons` và
+// phép so hash kỳ vọng của pha `registry` (`deploySeeds.ts` + `deploy/park_seeds.ts` +
+// `deploy/11_deploy_gen_beacons.ts ▸ runBeaconsPhase / runRegistryPhase`),
 // chạy trên Lucid Emulator (UPLC đánh giá thật trong `complete()`). Không gọi mạng, không đọc khoá.
 // Chạy từ scripts/:  npx tsx test_deploy_preset_seeds.ts
 // Dòng cuối: `=== ĐẠT ===` hoặc `=== HỎNG: n ca sai ===` (mã thoát 1).
@@ -21,6 +22,7 @@ import {
   compiledGbShardCap,
   compiledRhoMaxQ,
   runBeaconsPhase,
+  runRegistryPhase,
   beaconScriptsChecked,
   type BeaconsPhaseInput,
   type Chain,
@@ -30,6 +32,7 @@ import {
   BEACON_SEED_ROLES,
   outRefString,
   parkFor,
+  presetSeedAllowWallet,
   readBeaconPresetSeeds,
   resolvePresetSeed,
   SEED_ENV,
@@ -154,6 +157,12 @@ await testCase("seed nằm ở VÍ (không ở bãi đỗ) ⟹ bước 11 ném; 
   await mustThrow(() => runBeaconsPhase(chain, base(atWallet)), [SEED_ENV.greenback, "không phải bãi đỗ"]);
   const r = await resolvePresetSeed(lucid, park, "shardNft", { txHash: w.txHash, outputIndex: w.outputIndex }, { allowWallet: true });
   assertEq(r.atPark, false, "atPark");
+  // Có tệp kỳ vọng ⟹ bước 03/09 cũng KHÔNG nhận seed ở ví (bộ chọn UTxO tiêu mất được giữa lúc
+  // tính trước và lúc đúc).
+  await mustThrow(
+    () => resolvePresetSeed(lucid, park, "shardNft", { txHash: w.txHash, outputIndex: w.outputIndex }, { allowWallet: presetSeedAllowWallet(expectRight) }),
+    [SEED_ENV.shardNft, "không phải bãi đỗ"],
+  );
   assertEq(await unspent(seedRefs(seeds)), 4, "seed thật còn chưa tiêu");
 });
 await testCase("seed ở bãi đỗ nhưng KHÔNG trơn (mang datum) ⟹ ném 'output trơn'", async () => {
@@ -201,6 +210,31 @@ await testCase("pha beacons KHÔNG tạo seed, hash = kỳ vọng, 3 seed beacon
 await testCase("chạy lại với cùng bốn seed (ba seed đã tiêu) ⟹ ném 'không còn trên chuỗi', không đúc lần hai", async () => {
   if (!ok) throw new Error("ca dương trên không chạy được — không đo");
   await mustThrow(() => runBeaconsPhase(chain, base(seeds, expectRight)), ["không còn trên chuỗi"]);
+});
+
+console.log("── Pha registry: so hash kỳ vọng TRƯỚC khi ký tx đúc sổ (sổ bất biến sau khi đúc)");
+const VI = "d1".repeat(28), VS = "d2".repeat(28);
+const regExpect: ExpectedHashes = { ...expectRight, vault_instant: VI, vault_schedule: VS };
+const regInput = (expectHashes: ExpectedHashes) => ({
+  blueprint, seed: seeds.registry, pendingHash: right.vaultRegistry.hash, vaultScriptHashes: [VI, VS], expectHashes,
+});
+await testCase("vault_schedule LỆCH ⟹ ném 'KHÔNG nộp', seed sổ còn chờ", async () => {
+  if (!ok) throw new Error("pha beacons không chạy được — không đo");
+  await mustThrow(() => runRegistryPhase(chain, regInput({ ...regExpect, vault_schedule: "00".repeat(28) })), ["bước 11 pha registry", "vault_schedule", "KHÔNG nộp"]);
+  assertEq(await unspent([seeds.registry]), 1, "seed sổ còn chờ");
+});
+await testCase("tệp THIẾU vault_instant ⟹ ném 'không có', seed sổ còn chờ", async () => {
+  if (!ok) throw new Error("pha beacons không chạy được — không đo");
+  const { vault_instant: _drop, ...missing } = regExpect;
+  await mustThrow(() => runRegistryPhase(chain, regInput(missing)), ["vault_instant", "không có"]);
+  assertEq(await unspent([seeds.registry]), 1, "seed sổ còn chờ");
+});
+await testCase("(cặp) kỳ vọng đúng ⟹ đúc sổ trên seed cho trước, seed sổ đã tiêu", async () => {
+  if (!ok) throw new Error("pha beacons không chạy được — không đo");
+  const rr = await runRegistryPhase(chain, regInput(regExpect));
+  assertEq(rr.registryHash, expectRight.vault_registry, "vault_registry");
+  assertEq(rr.vaultScriptHashes.join(","), `${VI},${VS}`, "két trong sổ");
+  assertEq(await unspent([seeds.registry]), 0, "seed sổ đã tiêu");
 });
 
 console.log(failures === 0 ? "=== ĐẠT ===" : `=== HỎNG: ${failures} ca sai ===`);

@@ -188,39 +188,74 @@ thụ cần hash TRƯỚC (ví dụ app ghim policy lúc build), đi theo bốn 
 
 ```bash
 # 1. Đỗ seed ở bãi đỗ của ví deploy (script native sig(ví)); KHÔNG đúc gì. In các dòng
-#    DEPLOY_SEED_<VAI>=<tx>#<ix> và khối "seeds" cho bước 2. DRY_RUN=1 ⟹ không nộp.
+#    DEPLOY_SEED_<VAI>=<tx>#<ix> và khối "seeds" cho bước 2. DRY_RUN=1 ⟹ không nộp, và mọi dòng
+#    dán-được mang tiền tố "# DRY_RUN " (outref đó KHÔNG có thật trên chuỗi).
 npx tsx deploy/park_seeds.ts                                   # đủ 8 vai
 PARK_SEEDS=registry,greenback,gbShard,rate npx tsx deploy/park_seeds.ts
 
 # 2. Tính trước mọi hash từ outref đó (không đọc mạng, không đọc khoá). Hình dạng đầu vào:
 #    đầu tệp clusterHashes.ts; mẫu: vectors/cluster_hashes.gen2-preprod.json.
+#    wakemeVaultHash đầu vào khác hằng ProtocolUtils ⟹ NÉM; --wakeme-ahead-of-code cho tính tiếp
+#    (bước 05/10 và 09 prepaid sẽ ném tới khi hằng mã được cập nhật).
 npx tsx clusterHashes.ts input.json --build --out hashes.json
 
 # 3. Gửi hashes.json cho bên tiêu thụ.
 
-# 4. Deploy với đúng các seed đó; mỗi bước so hash thực với tệp, LỆCH ⟹ ném TRƯỚC khi nộp.
-DEPLOY_SEED_REGISTRY=… DEPLOY_SEED_GREENBACK=… DEPLOY_SEED_GB_SHARD=… DEPLOY_SEED_RATE=… \
-  DEPLOY_EXPECT_HASHES=hashes.json GEN_BEACONS_PHASE=beacons RHO_Q=… npx tsx deploy/11_deploy_gen_beacons.ts
-DEPLOY_SEED_SHARD_NFT=… DEPLOY_EXPECT_HASHES=hashes.json npm run deploy:shards
-DEPLOY_SEED_PRICE_NFT_INSTANT=… DEPLOY_EXPECT_HASHES=hashes.json VAULT_KIND=instant npm run deploy:consume
+# 4. Deploy với đúng các seed đó, CÙNG MỘT bộ env cho cả chuỗi; mỗi bước so hash thực với tệp,
+#    LỆCH hoặc tệp thiếu tên ⟹ ném TRƯỚC khi nộp.
+export DEPLOY_EXPECT_HASHES=hashes.json
+export DEPLOY_SEED_REGISTRY=… DEPLOY_SEED_GREENBACK=… DEPLOY_SEED_GB_SHARD=… DEPLOY_SEED_RATE=…
+export DEPLOY_SEED_SHARD_NFT=… DEPLOY_SEED_PRICE_NFT_INSTANT=… DEPLOY_SEED_PRICE_NFT_SCHEDULE=… DEPLOY_SEED_PRICE_NFT_PREPAID=…
+GEN_BEACONS_PHASE=beacons RHO_Q=… npx tsx deploy/11_deploy_gen_beacons.ts
+npm run deploy:shards                                   # bước 03
+npx tsx deploy/05_create_instant_vault.ts
+npx tsx deploy/07_create_schedule_vault.ts
+GEN_BEACONS_PHASE=registry npx tsx deploy/11_deploy_gen_beacons.ts
+npx tsx deploy/10_deploy_prepaid.ts
+VAULT_KIND=instant npm run deploy:consume                # bước 09, mỗi loại két một lượt
 ```
+
+Bước nào so tên nào (tổng 20 tên = đủ tệp `--out`; mỗi tên được so ít nhất một lần TRƯỚC giao dịch
+đầu tiên phụ thuộc nó):
+
+| Bước | Tên được so |
+|---|---|
+| 11 pha `beacons` | `vault_registry` · `greenback_beacon` · `gb_shard` · `rate_param` |
+| 03 | `shard_nft` · `commit` · `vault_schedule` · `shard_schedule` |
+| 05 | `vault_instant` |
+| 07 | `shard_nft` (đọc từ sổ) · `commit` · `vault_schedule` |
+| 11 pha `registry` | `vault_registry` · `vault_instant` · `vault_schedule` (thứ tự ghi vào sổ két) |
+| 10 | `paid_fund` · `vault_prepaid` |
+| 09 (`VAULT_KIND=<loại>`) | `price_nft_<loại>` · `price_param_<loại>` · `consume_<loại>` |
 
 Luật (nguồn: `deploySeeds.ts`):
 
-- Vắng mọi biến `DEPLOY_SEED_*` ⟹ hành vi CŨ của từng bước, không đổi gì.
+- Vắng mọi biến `DEPLOY_SEED_*` và `DEPLOY_EXPECT_HASHES` ⟹ hành vi CŨ của từng bước, không đổi gì.
 - Có biến mà seed không dùng được (đã tiêu, không thuộc ví deploy, không phải output trơn) ⟹
   NÉM, không lùi về tự chọn. Bước 11 chỉ nhận seed ở BÃI ĐỖ (seed sổ két phải nằm chờ tới pha
-  `registry`); bước 03/09 nhận seed ở ví hoặc bãi đỗ.
-- Bốn seed GenBeacons: đủ cả bốn hoặc không cái nào, khác nhau đôi một.
-- Có `DEPLOY_EXPECT_HASHES` mà không có seed cho trước ⟹ ném trước mọi giao dịch. Tệp thiếu
-  một tên mà bước cần so ⟹ ném (KHÔNG ĐO ĐƯỢC không đi qua như KHỚP).
+  `registry`). Bước 03/09: có `DEPLOY_EXPECT_HASHES` ⟹ cũng chỉ nhận ở BÃI ĐỖ (seed ở ví thì bộ
+  chọn UTxO của một giao dịch bất kỳ giữa lúc tính và lúc đúc tiêu mất được); vắng tệp ⟹ nhận ở
+  ví hoặc bãi đỗ.
+- Mọi biến `DEPLOY_SEED_*` đang đặt phải khác outref đôi một, và không vai nào ngoài `registry`
+  được trỏ vào seed sổ két đã ghi ở sổ trạng thái (`GEN_BEACONS_REGISTRY_SEED_UTXO`) — trùng ⟹ ném
+  ở bước 03/09/11. Lý do: dán seed sổ két làm `DEPLOY_SEED_SHARD_NFT` thì bước 03 tiêu nó và pha
+  `registry` không bao giờ đúc được sổ nữa. Đầu vào `clusterHashes.ts` có hai vai cùng outref ⟹ ném.
+- Bốn seed GenBeacons: đủ cả bốn hoặc không cái nào.
+- Có bất kỳ biến `DEPLOY_SEED_*` nào mà vắng `DEPLOY_EXPECT_HASHES` ⟹ MỌI bước trong bảng trên
+  ném, trừ khi đặt `DEPLOY_EXPECT_NONE=1` (cố ý deploy không so). Đặt cả hai ⟹ ném.
+- Có `DEPLOY_EXPECT_HASHES` mà bước 03/09/11-beacons không có seed cho trước ⟹ ném trước mọi giao
+  dịch. Tệp thiếu một tên mà bước cần so ⟹ ném (KHÔNG ĐO ĐƯỢC không đi qua như KHỚP).
+- Pha `registry` dựng sổ từ seed đã GHI ở sổ trạng thái; `DEPLOY_SEED_REGISTRY` ở pha này chỉ để
+  đối chiếu — khác seed trong sổ ⟹ ném. Ba biến seed beacon còn lại bị bỏ qua ở pha này.
 - `DRY_RUN=1` ở bước 11 cùng seed cho trước: kiểm seed trên mạng + so hash, KHÔNG dựng tx đúc.
 
 **Chưa hỗ trợ: tái dùng beacon GenBeacons đã có.** Bước 11 pha `beacons` luôn đúc MỚI trên bốn
 seed; muốn giữ beacon cũ thì không chạy lại pha đó.
 
 Ca kiểm: `npx tsx test_cluster_hashes.ts` (20 hash đời 2 Preprod + phép so hash) ·
-`npx tsx test_deploy_preset_seeds.ts` (bước 11 có seed cho trước, trên Emulator).
+`npx tsx test_deploy_hash_checks.ts` (phép so của từng bước trong bảng trên, seed trùng vai, có
+seed mà vắng tệp kỳ vọng, cờ Wakeme, DRY_RUN của `park_seeds.ts`) ·
+`npx tsx test_deploy_preset_seeds.ts` (bước 11 có seed cho trước + phép so pha registry, trên Emulator).
 
 ---
 

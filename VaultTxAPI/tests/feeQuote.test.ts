@@ -24,6 +24,7 @@ import { ChainDidPaymentAnchorReader } from "../src/funding.js";
 import { handle, type RouterDeps } from "../src/http.js";
 import { IssuedTxRegistry, OwnerLockTable, type IssuedRoute } from "../src/locks.js";
 import { VaultTxService } from "../src/service.js";
+import { errorCodes, expectMatchesContract } from "./support/contract.js";
 import {
   enterpriseAddressOf,
   type BuildContext, type BuiltCreateVault, type BuiltOpenThread, type BuiltTx, type TxBuilderPort,
@@ -316,6 +317,8 @@ interface QuoteBody {
 }
 const bodyOf = (r: { status: number; body: unknown }): QuoteBody => {
   expect(r.status, JSON.stringify(r.body)).toBe(200);
+  // Hợp đồng module: mọi lời đáp 200 THẬT của `/tx/quote` trong bộ bài này khớp `contract/openapi.json`.
+  expectMatchesContract("POST /tx/quote", r.status, r.body);
   return r.body as QuoteBody;
 };
 
@@ -1185,5 +1188,33 @@ describe("/tx/quote — fee_sources", () => {
       .toBe("9000b767ee33c6ddf6b5fd558fff37c5fa082d3a584ae4f39d581234df24d94a");
     expect(ownerCommitOf({ owner_pkh: OWNER_PKH })).toBeUndefined();
     expect(ownerCommitOf({ owner: { type: "key", hash: OWNER_PKH } })).toBeUndefined();
+  });
+});
+
+describe("/tx/quote: params sai của đường dựng ⟹ 4xx có mã trong bảng, không 500", () => {
+  // Mỗi ca: 400, mã có hàng trong `contract/error-codes.json`, hàng đó khai `/tx/quote` hoặc `*`.
+  // Lỗi phải tới từ bộ đọc params của đường dựng (trước bộ dựng), không phải một 500 có mã tham chiếu.
+  const CASES: Array<[string, Record<string, unknown>, string]> = [
+    ["instant-gen", { owner_pkh: OWNER_PKH, m: "abc" }, "INSTANT_GEN_M_INVALID"],
+    ["instant-gen", { owner_pkh: OWNER_PKH, m: 5 }, "INSTANT_GEN_M_INVALID"],
+    ["bind-did", { owner_pkh: OWNER_PKH, did_commit: "zz" }, "DID_COMMIT_INVALID"],
+    ["bind-did", { owner_pkh: OWNER_PKH, did_commit: "AB".repeat(32) }, "DID_COMMIT_INVALID"],
+    ["create-vault", { owner_pkh: OWNER_PKH, kind: "instant", lamp_amount: "0", did_commit: "zz" }, "DID_COMMIT_INVALID"],
+    ["create-vault", { owner_pkh: OWNER_PKH, kind: "instant", lamp_amount: "-1" }, "FEE_QUOTE_FUNDING_REQUIRED"],
+    ["consume", { owner_pkh: OWNER_PKH, op_type: 1 }, "BAD_REQUEST"],
+  ];
+  it.each(CASES)("%s %j ⟹ 400 %s", async (route, params, want) => {
+    const h = harness();
+    const r = await handle(quote({ route, params }), h.router);
+    expect(r.status, JSON.stringify(r.body)).toBe(400);
+    expectMatchesContract("POST /tx/quote", r.status, r.body);
+    const code = codeOf(r);
+    expect(code).toBe(want);
+    const row = errorCodes.codes.find(x => x.code === code);
+    expect(row, `${code} không có trong bảng`).toBeDefined();
+    expect(row!.status).toContain(400);
+    expect(row!.routes.includes("*") || row!.routes.includes("/tx/quote"), `${code} không khai /tx/quote`).toBe(true);
+    // Lỗi hình dạng params bị chặn TRƯỚC bộ dựng: bộ dựng giả không được gọi, không khoá nào bị giành.
+    expect(h.acquire).not.toHaveBeenCalled();
   });
 });

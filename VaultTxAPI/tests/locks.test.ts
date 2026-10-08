@@ -141,6 +141,16 @@ describe("PendingSpends — xung đột theo hash tx", () => {
     expect(p.conflicts([REF], 1, "11".repeat(32))).toEqual([REF]);
     expect(p.conflicts([REF], TTL, "11".repeat(32))).toEqual([]);
   });
+  it("spenderOf: hash đã ghi · null khi ghi không kèm hash · undefined khi không có hoặc đã hết hạn", () => {
+    const p = new PendingSpends(TTL);
+    const other = `${"ab".repeat(32)}#1`;
+    p.note([REF], 0, "11".repeat(32));
+    p.note([other], 0);
+    expect(p.spenderOf(REF, 1)).toBe("11".repeat(32));
+    expect(p.spenderOf(other, 1)).toBeNull();
+    expect(p.spenderOf(`${"cd".repeat(32)}#0`, 1)).toBeUndefined();
+    expect(p.spenderOf(REF, TTL)).toBeUndefined();
+  });
 });
 
 describe("IssuedTxRegistry.markSubmitted — bị thay khi một tx chung khoá được NỘP", () => {

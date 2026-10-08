@@ -5,7 +5,7 @@ App là React Native trên Hermes. **Hermes không có WebAssembly**, mà bộ d
 là lớp trung gian: nó dựng, app ký, app nộp lại qua đây.
 
 > **Hợp đồng cho module backend ngoài (gọi VaultTxAPI để consume MAGIC):** `contract/`. `openapi.json` là lược đồ
-> chín route; `error-codes.json` là bảng mã lỗi; `vectors/` là mẫu lời đáp hợp lệ và bị bác; `compatibility.md` là
+> mười lăm route (chín của hành trình consume và báo giá, cộng sáu route tài trợ `/tx/sponsor/{open-vault,bind-did,open-fund,fund-vault,draw-magic,claim}`; `/tx/sponsor/first-consume` đã nằm trong chín); `error-codes.json` là bảng mã lỗi; `vectors/` là mẫu lời đáp hợp lệ và bị bác; `compatibility.md` là
 > luật tương thích (lời đáp mở, yêu cầu đóng ở `fee_payer` và `pairs`, khi nào tăng bản chính). Bài
 > `tests/moduleContract.test.ts` chạy cả ba trên router thật. README này KHÔNG chép lại chúng.
 
@@ -1553,7 +1553,7 @@ Giá trị theo mạng chỉ nằm ở cấu hình triển khai, không nằm tr
 | `/tx/sponsor/open-fund` | — | BƯỚC BÙ: genesis quỹ tài trợ CỦA DID (`sponsorship = Some`, 0 CARP) cho két mở trước bản này | ví trả phí · **platform** (dịch vụ đã ký) · chủ |
 | `/tx/sponsor/fund-vault` | T2 | `PrepaidLock` + `FundLock`: CARP từ UTxO bên tài trợ vào **quỹ tài trợ của DID** đó, thối về bên tài trợ; anchor DID ở `reference_inputs` | ví trả phí · **bên tài trợ** · chủ |
 | `/tx/sponsor/draw-magic` | T3 | `PrepaidDraw` ⟹ một lô MAGIC sống đúng kỳ hiện tại | ví trả phí · chủ |
-| `/tx/sponsor/first-consume` | T4 | consume đầu + `BurnBatch` trên két Prepaid | ví trả phí · chủ |
+| `/tx/sponsor/first-consume` | T4 | consume đầu + `BurnBatch` trên két Prepaid; thân nhận `op_type`+`op_count` HOẶC `pairs` (1..8 cặp, cùng luật và cùng mã lỗi `CONSUME_PAIRS_*` với `/tx/consume`; `pairs` một cặp ⟹ `Consume` đơn, tx y hệt dạng cũ; cả hai dạng ⟹ 400 `CONSUME_PAIRS_CONFLICT`) | ví trả phí · chủ |
 | `/tx/sponsor/claim` | — | `FundClaim` (hoặc rút cuối đóng quỹ đã thu hồi): CARP từ quỹ tài trợ tới **beneficiary đã ghim**; thẻ vai sponsor; khi quỹ có E > 0 | ví trả phí · **platform** (dịch vụ đã ký) |
 
 Thứ tự hành trình: open-vault (kèm quỹ) → bind-did → fund-vault → draw-magic → first-consume → (SettleLine) → claim. open-fund
@@ -1641,7 +1641,7 @@ phí ký vì tx chi UTxO của nó; nó không vào `required_signers`.
 | open-fund | không trường riêng nào — DID từ thread, phần còn lại từ cấu hình (mục "Tạo quỹ tài trợ cho một DID") |
 | T2 | `fund_id` (tuỳ chọn — vắng ⟹ dịch vụ tìm quỹ của DID), `carp_amount`, `sponsor: { utxo_refs: ["<tx>#<i>", …] (1–20) }`, `vault_ref` (tuỳ chọn) — **không** có `sponsor.change_address` (gửi ⟹ `400 SPONSOR_REQUEST_SHAPE`) |
 | T3 | `fund_id`, `carp_amount`, `vault_ref` (tuỳ chọn) |
-| T4 | `op_type`, `op_count`, `draw_epoch` (số nguyên), `vault_ref` / `engage_ref` (tuỳ chọn) |
+| T4 | `op_type`+`op_count` HOẶC `pairs` (1..8 cặp, như `/tx/consume`), `draw_epoch` (số nguyên), `vault_ref` / `engage_ref` (tuỳ chọn) |
 
 **T2 chi tiền bên tài trợ ⟹ mọi thứ quyết tiền lấy từ CẤU HÌNH, không từ thân bài.**
 
@@ -1858,7 +1858,7 @@ Nên:
 | `wakeme_vault_ref` không phải két đã nối (`wakeme_link` rỗng hoặc khác) và lượt này không nối/đổi link được, luật 6 (`details.wakeme_link`, `details.owner_commit`, `details.next_route`) — chạy `/tx/refresh-checkpoint` trước | `422 WAKEME_LINK_CHANGE_REJECTED` |
 | chủ chưa có thread Engage | `404 ENGAGE_THREAD_NOT_FOUND` |
 | chủ có nhiều thread, không kèm `engage_ref` | `409 ENGAGE_THREAD_AMBIGUOUS` |
-| `/tx/consume`: `pairs` đi cùng `op_type`/`op_count` | `400 CONSUME_PAIRS_CONFLICT` |
+| `/tx/consume` và `/tx/sponsor/first-consume`: `pairs` đi cùng `op_type`/`op_count` | `400 CONSUME_PAIRS_CONFLICT` |
 | `pairs` không phải mảng / phần tử sai hình (null, mảng, khoá lạ) | `400 CONSUME_PAIRS_SHAPE` |
 | `pairs` rỗng / quá 8 cặp | `400 CONSUME_PAIRS_EMPTY` / `400 CONSUME_PAIRS_TOO_MANY` |
 | `op_type` không tăng ngặt (kể cả trùng) | `400 CONSUME_PAIRS_NOT_INCREASING` |

@@ -23,6 +23,57 @@ tiền tố `g3v_` trong ba tệp validator, `r169_` cho shard; thêm ca âm ghi
 `shard` vì chúng nhận `shard_policy_id`, không nhận hash script shard. Hiệu lực từ lần deploy kế, không hồi tố UTxO đang
 sống. Bộ dựng giao dịch nào đặt thêm output ở địa chỉ két/quỹ/shard (kể cả khác stake) trong cùng giao dịch sẽ bị từ chối.
 
+## 2026-10-08 — VaultTxAPI: `/tx/sponsor/first-consume` nhận `pairs` như `/tx/consume`
+
+**Đổi gì.** Thân first-consume nhận `pairs` (1..8 cặp) thay cho `op_type`+`op_count`; hai dạng loại trừ nhau, gửi cả
+hai ⟹ 400 `CONSUME_PAIRS_CONFLICT`. Cùng MỘT bộ đọc (`VaultTxAPI/src/buildRequest.ts` ▸ `consumeLineFields`, dùng cho
+cả `/tx/consume`) và cùng bộ kiểm (`consumeLine.ts` ▸ `consumeLineOf`) nên cùng mã lỗi; `pairs` một phần tử dựng
+`Consume` đơn, tx y hệt dạng cũ. `MagicSDK/src/sponsorJourney.ts` ▸ `buildSponsorT4FirstConsume` nhận thêm `pairs`
+(`ConsumeMany`; `required` = Σ sàn từng cặp, khác quy tắc gộp-rồi-sàn của `Consume` đơn).
+**Vì sao.** Bên gọi (dịch vụ OriLife theo hợp đồng module) luôn gửi `pairs`. Không có ràng buộc on-chain hay Feecover
+cho một cặp: `ConsumeMany` đã chạy trên két Prepaid ở `MagicSDK/tests/sponsorJourney.test.ts`; giới hạn cũ chỉ là chữ
+ký của bộ dựng SDK.
+**Cái gì gãy.** Không gì ở dạng cũ. `required` của first-consume nhiều cặp khác `required` của một cặp gộp: `draw-magic`
+phải rút đủ theo `required` của dạng được gửi. Hợp đồng module nay khớp: `contract/openapi.json` ▸ `FirstConsumeRequest` nhận
+`op_type`+`op_count` HOẶC `pairs` (`oneOf`, lược đồ `ConsumePairs` dùng chung với `ConsumeRequest`), bảng mã lỗi thêm
+route `/tx/sponsor/first-consume` cho các mã `CONSUME_PAIR*`, vector first-consume có ca `pairs` hợp lệ và bốn ca bị
+bác. `info.version` 1.0.0 → 1.1.0 (khoá yêu cầu tuỳ chọn mới = minor, `contract/compatibility.md` §4). Module chỉ gửi
+`op_type`+`op_count` không bị ảnh hưởng.
+**Cùng nhánh: sáu route tài trợ vào hợp đồng** (yêu cầu của Feecover: ghim `fund-vault` theo commit). Đổi gì: `contract/openapi.json` thêm `/tx/sponsor/{open-vault,bind-did,open-fund,fund-vault,draw-magic,claim}` (mười lăm operation; thân yêu cầu MỞ ở gốc, đóng ở `owner` và `fee_payer`, khoá mà mã từ chối khai bằng lược đồ `false`; lời đáp 200 bắt buộc `tx_cbor`; thẻ `sponsorBearerAuth` cho `fund-vault` và `claim`); `error-codes.json` thêm 34 mã tài trợ và route tài trợ vào các mã dùng chung; sáu tệp `vectors/sponsor-*.json`. Bài kiểm: `moduleContract.test.ts` đòi mười lăm operation, danh sách loại trừ chỉ còn ba mã SDK không với tới qua HTTP (`SPONSOR_DID_COMMIT_LENGTH`, `SPONSOR_ANCHOR_REF_WRONG`, `SPONSOR_FUND_NOT_PINNED`) cộng ba mã của `/tx/create-vault`; `sponsorEmulator.test.ts` đối chiếu MỌI lời đáp (200 và lỗi) của bảy route tài trợ với lược đồ và với bảng mã lỗi (mã có hàng, đúng trạng thái, hàng khai route đó). Vì sao: bên tiêu thụ chỉ ghim được thứ nằm trong hợp đồng. Cái gì gãy: không gì ở thời chạy (không đổi `src/`); `info.version` giữ 1.1.0. Từ nay đổi lời đáp hay mã lỗi của một route tài trợ mà không sửa `contract/` làm đỏ hai bài trên.
+
+## 2026-10-08 — Keeper: thế chấp (collateral) luôn chỉ-ADA
+
+**Đổi gì.** Mọi tx có script mà keeper dựng (`stepPrice`, `stepFire` ▸ `buildScheduleFireTx`, `deploy/12_post_greenback.ts`) chỉ cho Lucid thấy UTxO thuần ADA của ví (`scripts/keeper/collateral.ts` ▸ `pureAdaCompleteOptions`, đưa vào `complete({ presetWalletInputs })`). Ví không có UTxO thuần ADA ≥ 6 ADA thì NÉM kèm gợi ý `prepare_wallet.ts` và lượt keeper báo "hỏng". `FireParams` có thêm trường tuỳ chọn `walletInputs`. Bài kiểm: `scripts/keeper/test_collateral.ts`.
+**Vì sao.** Lucid 0.4.30 chọn thế chấp theo lovelace giảm dần trên mọi UTxO ví; UTxO lớn nhất mang token ⟹ node từ chối `CollateralContainsNonADA`. Preprod 2026-10-08: hai lượt ghi beacon giá trễ 1–2 giờ.
+**Gãy gì.** Không gì cho người gọi cũ (`walletInputs` bỏ trống giữ nguyên hành vi). Bước `instant` của keeper (`deploy/05`, `test/instant_only.ts`) chưa đổi vì cần LAMP từ UTxO có token.
+
+## 2026-10-08 — scripts: deploy nhận seed one-shot CHO TRƯỚC, hash cụm tính được trước khi đúc
+
+**Đổi gì.** (1) `scripts/deploy/park_seeds.ts` mới: đỗ các output seed ở bãi đỗ của ví deploy, không đúc gì, in
+`DEPLOY_SEED_<VAI>=<tx>#<ix>`. (2) `scripts/clusterHashes.ts` mới: tính 20 hash của cụm phục vụ từ outref seed,
+ghi tệp hash kỳ vọng (`--out`); gọi đúng các hàm apply mà bước deploy gọi — chuỗi bake `price_nft → price_param →
+consume` dời sang `deployParams.ts` ▸ `consumeScriptChain`, policy `shard_nft` sang `03_deploy_shards.ts` ▸
+`shardNftPolicyFor`. (3) Bước 11 (pha `beacons`), 03 và 09 nhận seed qua tám biến `DEPLOY_SEED_*`. (4) Cả 20 hash
+được so với `DEPLOY_EXPECT_HASHES` trước giao dịch đầu tiên phụ thuộc chúng: 11 pha `beacons` (4), 03 (4), 05
+(`vault_instant`), 07 (`shard_nft` · `commit` · `vault_schedule`), 11 pha `registry` (`vault_registry` ·
+`vault_instant` · `vault_schedule`, trước khi đúc sổ bất biến), 10 (`paid_fund` · `vault_prepaid`), 09 (3 mỗi loại
+két); lệch hoặc tệp thiếu tên ⟹ ném. Mỗi phép so nằm trong một hàm thuần "tính + so" (`scripts/deployHashChecks.ts`,
+`03` ▸ `shardStepChecked`, `11` ▸ `registryHashesChecked`) mà bộ kiểm gọi thẳng. (5) Chế độ seed cho trước siết:
+seed trùng vai (hoặc trùng seed sổ két đã ghi) ⟹ ném ở 03/09/11 (`assertDistinctPresetSeeds`) và ở đầu vào
+`clusterHashes.ts`; có `DEPLOY_SEED_*` mà vắng tệp kỳ vọng ⟹ mọi bước ném, trừ `DEPLOY_EXPECT_NONE=1`; có tệp kỳ
+vọng ⟹ bước 03/09 chỉ nhận seed ở bãi đỗ; `clusterHashes.ts` ném khi `wakemeVaultHash` đầu vào khác hằng
+ProtocolUtils, trừ cờ `--wakeme-ahead-of-code`; `park_seeds.ts` DRY_RUN in mọi dòng dán-được kèm tiền tố
+`# DRY_RUN `. Nguồn luật: `scripts/deploySeeds.ts`. Vector `scripts/vectors/cluster_hashes.gen2-preprod.json` ghim
+20 hash cụm đời 2 Preprod.
+**Vì sao.** Bên tiêu thụ (app ghim policy lúc build) cần hash cụm TRƯỚC khi cụm được đúc; trước bản này mỗi bước tự
+chọn seed lúc chạy nên hash chỉ biết sau khi nộp. Một hash deploy ra lệch bản đã ghim là hành trình người dùng gãy,
+và đúc sổ két là thao tác một lần — nên mọi hash phải được so, không chỉ được in.
+**Cái gì gãy.** Không gì khi vắng mọi biến `DEPLOY_SEED_*` và `DEPLOY_EXPECT_HASHES`: hành vi cũ giữ nguyên. Đặt biến
+sai hình dạng, seed đã tiêu, không thuộc ví hay trùng vai ⟹ bước deploy ném thay vì tự chọn seed khác. Pha `registry`
+không còn từ chối `DEPLOY_EXPECT_HASHES`/`DEPLOY_SEED_*`: nó so tệp kỳ vọng và đối chiếu `DEPLOY_SEED_REGISTRY` với
+seed trong sổ, để một bộ env dùng được cho cả chuỗi. Tái dùng beacon GenBeacons đã có CHƯA hỗ trợ: bước 11 pha
+`beacons` luôn đúc mới.
+
 ## 2026-10-07 — VaultTxAPI: hợp đồng cho module backend (`VaultTxAPI/contract/`) và bài kiểm ghim nó vào mã
 
 **Đổi gì.** Thêm `VaultTxAPI/contract/`: `openapi.json` (OpenAPI 3.1, chín route module gọi), `error-codes.json`

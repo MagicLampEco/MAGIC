@@ -104,9 +104,7 @@ export function parseBuildRequest(route: IssuedRoute, body: Record<string, unkno
         route,
         req: {
           ...ownerReq(body),
-          ...(body.pairs === undefined
-            ? { opType: reqSmallInt(body, "op_type"), opCount: reqBigint(body, "op_count") }
-            : consumePairsReq(body)),
+          ...consumeLineFields(body),
           engageRef: parseEngageRef(body.engage_ref),
           // Két Instant tiêu lần đầu trong epoch mới đang ghim két Wakeme ⟹ dịch vụ đòi trường này.
           ...optWakeme(body),
@@ -244,6 +242,19 @@ function tooManyDigits<E>(name: string, digits: number, mk: (m: string, d: Recor
 /** Như `reqBigint` nhưng nhận `"0"` — CHỈ cho `lamp_amount` của két instant. */
 function reqBigintAllowZero(body: Record<string, unknown>, name: string): bigint {
   return body[name] === "0" ? 0n : reqBigint(body, name);
+}
+
+/**
+ * Phần "lượt tiêu" của thân bài — MỘT bộ đọc cho `/tx/consume` VÀ `/tx/sponsor/first-consume`, để hai route
+ * không có hai bộ luật: `{ op_type, op_count }` HOẶC `pairs`. Có `pairs` thì KHÔNG đọc `op_type`/`op_count`
+ * (gửi kèm ⟹ 400 `CONSUME_PAIRS_CONFLICT`, không "bỏ qua cái thừa"). Luật cả danh sách ở `consumeLine.ts`.
+ */
+export function consumeLineFields(
+  body: Record<string, unknown>,
+): { opType: number; opCount: bigint } | { pairs: ConsumePair[] } {
+  return body.pairs === undefined
+    ? { opType: reqSmallInt(body, "op_type"), opCount: reqBigint(body, "op_count") }
+    : consumePairsReq(body);
 }
 
 /**

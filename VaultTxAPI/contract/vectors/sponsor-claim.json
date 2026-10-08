@@ -1,0 +1,628 @@
+{
+  "contract_version": "1.1.0",
+  "operation": "POST /tx/sponsor/claim",
+  "requests": {
+    "valid": [
+      {
+        "name": "claim-everything-change-address",
+        "body": {
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+        }
+      },
+      {
+        "name": "claim-part-change-address",
+        "body": {
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "amount": "1000000"
+        }
+      },
+      {
+        "name": "fee-payer-takes-everything",
+        "body": {
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          }
+        }
+      },
+      {
+        "name": "top-level-key-ignored",
+        "why": "The request body is open at the top level: a key the parser does not read is ignored, not refused.",
+        "body": {
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "x_client_trace": "abc"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "fund-id-missing",
+        "why": "fund_id is required: it names the fund to claim from.",
+        "body": {
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+        }
+      },
+      {
+        "name": "amount-as-number",
+        "why": "amount is a digit string.",
+        "body": {
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "amount": 1000000
+        }
+      },
+      {
+        "name": "beneficiary-refused",
+        "why": "The destination of a claim is the fund's pinned beneficiary; a caller-chosen beneficiary is refused (400 SPONSOR_REQUEST_SHAPE) and declared false.",
+        "body": {
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "beneficiary": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+        }
+      },
+      {
+        "name": "owner-refused",
+        "why": "A claim has no vault owner: owner is refused and declared false.",
+        "body": {
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          }
+        }
+      },
+      {
+        "name": "fee-payer-extra-key",
+        "why": "fee_payer is closed: only utxo, address and reservation_id (400 FEE_PAYER_SHAPE).",
+        "body": {
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14",
+            "note": "x"
+          }
+        }
+      },
+      {
+        "name": "funding-refused",
+        "why": "funding belongs to /tx/create-vault; here it is refused with 400 SPONSOR_REQUEST_SHAPE, and the schema declares it false.",
+        "body": {
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "funding": {}
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "typical",
+        "status": 200,
+        "body": {
+          "step": "claim",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "platform",
+              "key_hashes": [
+                "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+              ],
+              "how": "platform witness, already inside tx_cbor"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "claim",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_ref": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc#0",
+            "amount": "120000000",
+            "max_claimable": "120000000",
+            "closing": false,
+            "beneficiary": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "epoch": 318,
+            "carp_locked_after": "130000000",
+            "fund_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "note": "tx_cbor here is a hex placeholder, not a decodable transaction: the schema pins the form of tx_cbor (hex), not its content."
+      },
+      {
+        "name": "additive-keys",
+        "status": 200,
+        "body": {
+          "step": "claim",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "platform",
+              "key_hashes": [
+                "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+              ],
+              "how": "platform witness, already inside tx_cbor"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "claim",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_ref": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc#0",
+            "amount": "120000000",
+            "max_claimable": "120000000",
+            "closing": false,
+            "beneficiary": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "epoch": 318,
+            "carp_locked_after": "130000000",
+            "fund_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ],
+            "added_in_a_later_minor": "x"
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z",
+          "added_in_a_later_minor": "x"
+        },
+        "note": "Keys added by a later minor release stay valid (compatibility.md)."
+      },
+      {
+        "name": "role-required",
+        "status": 403,
+        "body": {
+          "error": {
+            "code": "SPONSOR_ROLE_REQUIRED",
+            "message": "This route opens with the sponsor-role token only.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "fund-not-found",
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "SPONSOR_FUND_NOT_FOUND",
+            "message": "No fund with this fund_id exists on chain.",
+            "details": {
+              "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+            }
+          }
+        }
+      },
+      {
+        "name": "nothing-to-claim",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "SPONSOR_FUND_NOTHING_TO_CLAIM",
+            "message": "The fund has nothing claimable yet.",
+            "details": {
+              "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+            }
+          }
+        }
+      },
+      {
+        "name": "claim-above-max",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "SPONSOR_CLAIM_ABOVE_MAX",
+            "message": "amount is above the claimable part of the fund.",
+            "details": {
+              "max_claimable": "120000000"
+            }
+          }
+        }
+      },
+      {
+        "name": "fund-not-claimable",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "SPONSOR_FUND_NOT_CLAIMABLE",
+            "message": "The service does not trust this fund to sign a claim for.",
+            "details": {
+              "problem": "foreign_platform"
+            }
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "step-other-route",
+        "status": 200,
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "platform",
+              "key_hashes": [
+                "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+              ],
+              "how": "platform witness, already inside tx_cbor"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "claim",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_ref": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc#0",
+            "amount": "120000000",
+            "max_claimable": "120000000",
+            "closing": false,
+            "beneficiary": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "epoch": 318,
+            "carp_locked_after": "130000000",
+            "fund_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "step is claim on this route."
+      },
+      {
+        "name": "tx-hash-uppercase",
+        "status": 200,
+        "body": {
+          "step": "claim",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "platform",
+              "key_hashes": [
+                "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+              ],
+              "how": "platform witness, already inside tx_cbor"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "claim",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_ref": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc#0",
+            "amount": "120000000",
+            "max_claimable": "120000000",
+            "closing": false,
+            "beneficiary": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "epoch": 318,
+            "carp_locked_after": "130000000",
+            "fund_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "Hashes are lowercase hex."
+      },
+      {
+        "name": "expires-at-missing",
+        "status": 200,
+        "body": {
+          "step": "claim",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "platform",
+              "key_hashes": [
+                "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+              ],
+              "how": "platform witness, already inside tx_cbor"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "claim",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_ref": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc#0",
+            "amount": "120000000",
+            "max_claimable": "120000000",
+            "closing": false,
+            "beneficiary": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "epoch": 318,
+            "carp_locked_after": "130000000",
+            "fund_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "expires_at is on every build answer: it tells when the transaction dies."
+      },
+      {
+        "name": "amount-as-number",
+        "status": 200,
+        "body": {
+          "step": "claim",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "platform",
+              "key_hashes": [
+                "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+              ],
+              "how": "platform witness, already inside tx_cbor"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "claim",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_ref": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc#0",
+            "amount": 120000000,
+            "max_claimable": "120000000",
+            "closing": false,
+            "beneficiary": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "epoch": 318,
+            "carp_locked_after": "130000000",
+            "fund_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "Amounts are digit strings."
+      },
+      {
+        "name": "closing-missing",
+        "status": 200,
+        "body": {
+          "step": "claim",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "platform",
+              "key_hashes": [
+                "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+              ],
+              "how": "platform witness, already inside tx_cbor"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "claim",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_ref": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc#0",
+            "amount": "120000000",
+            "max_claimable": "120000000",
+            "beneficiary": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "epoch": 318,
+            "carp_locked_after": "130000000",
+            "fund_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "closing says whether this claim closes the fund."
+      }
+    ]
+  }
+}

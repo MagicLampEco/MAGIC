@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "schema": "ErrorResponse",
   "description": "Every non-2xx answer of every route.",
   "responses": {

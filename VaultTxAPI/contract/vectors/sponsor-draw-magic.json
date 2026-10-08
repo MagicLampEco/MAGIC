@@ -1,0 +1,612 @@
+{
+  "contract_version": "1.1.0",
+  "operation": "POST /tx/sponsor/draw-magic",
+  "requests": {
+    "valid": [
+      {
+        "name": "did-owner-change-address",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "carp_amount": "250000000"
+        }
+      },
+      {
+        "name": "key-owner-fee-payer",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "carp_amount": "1"
+        }
+      },
+      {
+        "name": "top-level-key-ignored",
+        "why": "The request body is open at the top level: a key the parser does not read is ignored, not refused.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "carp_amount": "250000000",
+          "x_client_trace": "abc"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "fund-id-missing",
+        "why": "fund_id is required on draw-magic: it names the fund the draw belongs to.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000"
+        }
+      },
+      {
+        "name": "carp-amount-missing",
+        "why": "carp_amount is required on draw-magic.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+        }
+      },
+      {
+        "name": "carp-amount-as-number",
+        "why": "Amounts are digit strings.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "carp_amount": 1
+        }
+      },
+      {
+        "name": "owner-missing",
+        "why": "owner is required.",
+        "body": {
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "carp_amount": "250000000"
+        }
+      },
+      {
+        "name": "owner-extra-key",
+        "why": "The owner object is closed: a key other than type, did and device_key_hash is 400 OWNER_CREDENTIAL_SHAPE.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001",
+            "note": "x"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "carp_amount": "250000000"
+        }
+      },
+      {
+        "name": "fee-payer-extra-key",
+        "why": "fee_payer is closed: only utxo, address and reservation_id (400 FEE_PAYER_SHAPE).",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "carp_amount": "250000000",
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14",
+            "note": "x"
+          }
+        }
+      },
+      {
+        "name": "funding-refused",
+        "why": "funding belongs to /tx/create-vault; here it is refused with 400 SPONSOR_REQUEST_SHAPE, and the schema declares it false.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "carp_amount": "250000000",
+          "funding": {}
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "typical",
+        "status": 200,
+        "body": {
+          "step": "draw-magic",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "draw-magic",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "batch_id": "abababababababababababababababab",
+            "magic_nanogic": "10000000000",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "note": "tx_cbor here is a hex placeholder, not a decodable transaction: the schema pins the form of tx_cbor (hex), not its content."
+      },
+      {
+        "name": "additive-keys",
+        "status": 200,
+        "body": {
+          "step": "draw-magic",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "draw-magic",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "batch_id": "abababababababababababababababab",
+            "magic_nanogic": "10000000000",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ],
+            "added_in_a_later_minor": "x"
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z",
+          "added_in_a_later_minor": "x"
+        },
+        "note": "Keys added by a later minor release stay valid (compatibility.md)."
+      },
+      {
+        "name": "vault-not-found",
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "VAULT_NOT_FOUND",
+            "message": "The owner has no Prepaid vault.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "validity-spans-epochs",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "SPONSOR_VALIDITY_SPANS_EPOCHS",
+            "message": "The transaction validity would span two epochs.",
+            "details": {
+              "step": "draw-magic"
+            }
+          }
+        }
+      },
+      {
+        "name": "sponsor-unavailable",
+        "status": 501,
+        "body": {
+          "error": {
+            "code": "SPONSOR_UNAVAILABLE",
+            "message": "The deployment has not enabled the sponsor journey.",
+            "details": {}
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "step-other-route",
+        "status": 200,
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "draw-magic",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "batch_id": "abababababababababababababababab",
+            "magic_nanogic": "10000000000",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "step is draw-magic on this route."
+      },
+      {
+        "name": "tx-hash-uppercase",
+        "status": 200,
+        "body": {
+          "step": "draw-magic",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "draw-magic",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "batch_id": "abababababababababababababababab",
+            "magic_nanogic": "10000000000",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "Hashes are lowercase hex."
+      },
+      {
+        "name": "expires-at-missing",
+        "status": 200,
+        "body": {
+          "step": "draw-magic",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "draw-magic",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "batch_id": "abababababababababababababababab",
+            "magic_nanogic": "10000000000",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "expires_at is on every build answer: it tells when the transaction dies."
+      },
+      {
+        "name": "magic-nanogic-as-number",
+        "status": 200,
+        "body": {
+          "step": "draw-magic",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "draw-magic",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "batch_id": "abababababababababababababababab",
+            "magic_nanogic": 10000000000,
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "Amounts are digit strings."
+      },
+      {
+        "name": "batch-id-missing",
+        "status": 200,
+        "body": {
+          "step": "draw-magic",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "draw-magic",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "magic_nanogic": "10000000000",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "batch_id names the MAGIC batch first-consume burns from."
+      }
+    ]
+  }
+}

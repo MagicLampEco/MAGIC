@@ -114,3 +114,21 @@ export const contractFile = (name: string): string => {
   if (!existsSync(p)) throw new Error(`thiếu ${p}`);
   return p;
 };
+
+/**
+ * Kiểm một lời đáp LỖI thật của router với BẢNG mã lỗi: mã có hàng, trạng thái nằm trong `status` của hàng, và
+ * route của lời gọi nằm trong `routes` của hàng (hoặc hàng khai `*`). Lời đáp 2xx bỏ qua.
+ */
+export function expectErrorInTable(op: string, status: number, body: unknown): void {
+  if (status < 400) return;
+  const path = splitOperation(op).path;
+  const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+  const row = errorCodes.codes.find(r => r.code === code);
+  if (row === undefined) throw new Error(`lời đáp ${op} (HTTP ${status}) mang mã "${String(code)}" không có trong error-codes.json`);
+  if (!row.status.includes(status)) {
+    throw new Error(`lời đáp ${op}: ${row.code} trả ${status}, bảng khai ${row.status.join("/")}`);
+  }
+  if (!row.routes.includes("*") && !row.routes.includes(path)) {
+    throw new Error(`lời đáp ${op}: ${row.code} không khai route ${path} trong error-codes.json (khai: ${row.routes.join(", ")})`);
+  }
+}

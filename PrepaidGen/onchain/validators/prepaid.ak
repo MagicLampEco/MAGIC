@@ -160,8 +160,13 @@ validator prepaid_vault(
     let current_epoch = get_epoch(tx, ms_per_epoch, window_origin_ms)
     let vault_addr = own_addr(own_ref, tx.inputs)
 
-    // C-PP-10: đúng một vault input tại địa chỉ này
-    expect list.count(tx.inputs, fn(i) { i.output.address == vault_addr }) == 1
+    // C-PP-10: đúng một vault input ở SCRIPT này — đếm theo payment credential
+    // (G3V 2026-10-08): `Script(h)` kèm stake lạ là địa chỉ khác nhưng cùng script.
+    expect
+      list.count(
+        tx.inputs,
+        fn(i) { i.output.address.payment_credential == vault_addr.payment_credential },
+      ) == 1
 
     // INV-VAULT-IDENTITY — ĐIỂM NGHẼN DUY NHẤT, ép cho MỌI nhánh redeemer (tám nhánh
     // từ 2026-10-04, kể cả `CloseSponsoredLine`).
@@ -370,6 +375,11 @@ fn fund_common_checks(
   let fund_out_utxo =
     find_fund_output_utxo(tx.outputs, fund_nft_policy, fund_in.fund_id)
   expect fund_out_utxo.address == fund_addr
+  // G3V (2026-10-08): output tiếp nối là output DUY NHẤT ở script quỹ (đếm theo
+  // payment credential). `find_fund_output_utxo` chỉ đếm output MANG NFT, nên bản
+  // trước để lọt output thứ hai ở script quỹ không NFT — UTxO chết.
+  expect
+    list.count(tx.outputs, fn(o) { is_at_script(o.address, fund_nft_policy) }) == 1
   let fund_out = decode_fund(fund_out_utxo)
 
   // ── UTxO quỹ tiếp nối phải giữ đúng HÌNH DẠNG của quỹ ────────────────────
@@ -1421,6 +1431,10 @@ fn validate_fund_claim_close(
       tx.outputs,
       fn(o) { assets.quantity_of(o.value, fund_nft_policy, fund_in.fund_id) != 0 },
     )
+  // G3V (2026-10-08): đóng là đóng — KHÔNG output nào ở script quỹ (đếm theo
+  // payment credential). Thiếu vế này thì giao dịch đóng đẻ được một UTxO ở
+  // script quỹ mà không nhánh nào tiêu lại được.
+  expect !list.any(tx.outputs, fn(o) { is_at_script(o.address, fund_nft_policy) })
   // min-ADA về bên tài trợ.
   let back = sponsor_payout(s.sponsor, fund_in.fund_id, tx)
   // MUT-C-ADA
@@ -1695,6 +1709,10 @@ fn validate_fund_close(
       tx.outputs,
       fn(o) { assets.quantity_of(o.value, fund_nft_policy, fund_in.fund_id) != 0 },
     )
+  // G3V (2026-10-08): đóng là đóng — KHÔNG output nào ở script quỹ (đếm theo
+  // payment credential). Thiếu vế này thì giao dịch đóng đẻ được một UTxO ở
+  // script quỹ mà không nhánh nào tiêu lại được.
+  expect !list.any(tx.outputs, fn(o) { is_at_script(o.address, fund_nft_policy) })
 
   // Đích: CARP == R và ADA ≥ toàn bộ ADA của UTxO quỹ (min-ADA về bên tài trợ).
   let paid = sponsor_payout(s.sponsor, fund_in.fund_id, tx)
@@ -1826,21 +1844,15 @@ fn validate_mint_vault_id(
   // ── Đúng MỘT output tại chính script vault này, và nó mang NFT ───────────
   // policy_id == script hash của chính validator ⇒ `Script(policy_id)` là địa chỉ
   // tiêu của vault. Ràng ở đây chặn mẫu "đúc sạch rồi dời sang chỗ khác".
-  let carriers =
-    list.filter(
-      tx.outputs,
-      fn(o) {
-        o.address.payment_credential == Script(policy_id) && assets.quantity_of(
-          o.value,
-          policy_id,
-          nft_name,
-        ) == 1
-      },
-    )
-  expect [vault_out] = carriers
+  // Lọc theo SCRIPT trước, rồi mới đòi NFT trên output DUY NHẤT đó (G3V
+  // 2026-10-08): bản lọc "ở script VÀ mang NFT" để lọt một output thứ hai ở
+  // script này không mang NFT — UTxO không nhánh nào tiêu lại được.
+  expect [vault_out] =
+    list.filter(tx.outputs, fn(o) { o.address.payment_credential == Script(policy_id) })
+  expect assets.quantity_of(vault_out.value, policy_id, nft_name) == 1
 
   // ── CHỈ NFT đó dưới policy vault, không tên thứ hai ──────────────────────
-  // Xem lý do ở chú thích của `vault_identity_preserved`: bộ lọc `carriers` bên
+  // Xem lý do ở chú thích của `vault_identity_preserved`: phép kiểm NFT bên
   // trên dùng `quantity_of` nên nó không loại được một tên thứ hai đi kèm.
   expect single_nft_name(vault_out.value, policy_id) == nft_name
 
@@ -1964,18 +1976,12 @@ fn validate_mint_fund_nft(
   // ── Đúng MỘT output mang NFT, VÀ nó phải nằm ở địa chỉ quỹ ───────────────
   // `policy_id == script hash của chính validator này` ⇒ `Script(policy_id)` là
   // địa chỉ tiêu của quỹ. Đây là mệnh đề mà bản tách-script không viết được.
-  let carriers =
-    list.filter(
-      tx.outputs,
-      fn(o) {
-        o.address.payment_credential == Script(policy_id) && assets.quantity_of(
-          o.value,
-          policy_id,
-          name,
-        ) == 1
-      },
-    )
-  expect [fund_utxo] = carriers
+  // Lọc theo SCRIPT trước, rồi mới đòi NFT trên output DUY NHẤT đó (G3V
+  // 2026-10-08): bản lọc "ở script VÀ mang NFT" để lọt một output thứ hai ở
+  // script này không mang NFT — UTxO không nhánh nào tiêu lại được.
+  expect [fund_utxo] =
+    list.filter(tx.outputs, fn(o) { o.address.payment_credential == Script(policy_id) })
+  expect assets.quantity_of(fund_utxo.value, policy_id, name) == 1
 
   // Cùng ba cổng hình-dạng-địa-chỉ với genesis vault, cùng lý do — xem
   // `validate_mint_vault_id`. Ba dòng này ở đây là bản đối chứng của ba dòng ở
@@ -2122,9 +2128,14 @@ fn is_at_script(addr: Address, hash: ByteArray) -> Bool {
 }
 
 fn find_vault_output_raw(outputs: List<Output>, vault_addr: Address) -> Output {
-  // C-PP-10: đúng một output vault tiếp nối.
-  expect list.count(outputs, fn(x) { x.address == vault_addr }) == 1
-  expect Some(o) = list.find(outputs, fn(x) { x.address == vault_addr })
+  // C-PP-10: đúng một output ở SCRIPT két, đếm theo payment credential (G3V
+  // 2026-10-08 — bản đếm theo địa chỉ đầy đủ để lọt một output cùng script khác
+  // stake: UTxO ở script két mà không nhánh nào tiêu lại được), và output đó phải
+  // mang ĐÚNG địa chỉ đầy đủ của input (stake credential không trôi).
+  let vault_cred = vault_addr.payment_credential
+  expect [o] =
+    list.filter(outputs, fn(x) { x.address.payment_credential == vault_cred })
+  expect o.address == vault_addr
   o
 }
 
@@ -8711,4 +8722,166 @@ test fbo_close_at_mark_ok() {
 test fbo_close_before_mark() fail {
   let e = rc_after() - 1
   fbo_spend(rc_close_fin(), fbo_at(fb_close_tx(e, fb_s_list(), True), e))
+}
+
+// ═══ G3V (2026-10-08): mọi output ở script két/quỹ phải là một DÒNG SỔ ════════
+// Nguyên tắc: giao dịch chạy script két/quỹ không được đẻ ra output ở chính
+// script đó mà không nhánh nào tiêu lại được (không NFT, không datum sổ). Đếm
+// theo PAYMENT CREDENTIAL, không theo địa chỉ đầy đủ — `Script(h)` kèm stake
+// credential lạ là một địa chỉ KHÁC nhưng cùng chạy validator này.
+// Mỗi ca âm dưới đây XANH (= giao dịch được nhận) trên mã trước bản vá
+// fix/vault-output-uniqueness; ca đối chứng gọi cùng hàm dựng, chỉ bỏ output rác.
+
+const g3v_stranger_stake: ByteArray =
+  #"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+fn g3v_junk_at(hash: ByteArray, staked: Bool) -> Output {
+  let base = address.from_script(hash)
+  Output {
+    address: if staked {
+      address.with_delegation_key(base, g3v_stranger_stake)
+    } else {
+      base
+    },
+    value: assets.from_lovelace(5_000_000),
+    datum: NoDatum,
+    reference_script: None,
+  }
+}
+
+fn g3v_add_out(tx: Transaction, o: Output) -> Transaction {
+  Transaction { ..tx, outputs: list.concat(tx.outputs, [o]) }
+}
+
+// ── Lỗ 1: nhánh spend két đếm output theo địa chỉ đầy đủ ──────────────────────
+
+fn g3v_setdel_tx(more_ins: List<Input>, more_outs: List<Output>) -> Transaction {
+  branch_tx(
+    t_vault_in(sp_setdel_din()),
+    t_vault_out(sp_setdel_dout()),
+    more_ins,
+    more_outs,
+    [t_owner],
+  )
+}
+
+fn g3v_setdel(tx: Transaction) -> Bool {
+  run_spend(sp_setdel_din(), SetDelegate { new_delegate: None }, tx)
+}
+
+test g3v_spend_control_ok() {
+  g3v_setdel(g3v_setdel_tx([], []))
+}
+
+test g3v_spend_junk_output_staked_twin_rejected() fail {
+  g3v_setdel(g3v_setdel_tx([], [g3v_junk_at(t_vault_hash, True)]))
+}
+
+test g3v_spend_junk_output_canonical_rejected() fail {
+  g3v_setdel(g3v_setdel_tx([], [g3v_junk_at(t_vault_hash, False)]))
+}
+
+// Đồng dạng phía input (phòng thủ chiều sâu): input thứ hai ở cùng script, khác
+// stake. Tự nó không tiêu được (không NFT), nhưng phép đếm C-PP-10 phải thấy nó.
+test g3v_spend_staked_twin_input_rejected() fail {
+  let twin =
+    Input { output_reference: t_seed_ref(), output: g3v_junk_at(t_vault_hash, True) }
+  g3v_setdel(g3v_setdel_tx([twin], []))
+}
+
+// Ghim địa chỉ đầy đủ của output tiếp nối (R169): bộ lọc theo payment credential
+// ra đúng một output, nên dòng `expect o.address == vault_addr` ở
+// `find_vault_output_raw` là thứ DUY NHẤT chặn két tiếp nối trôi sang stake
+// credential lạ (cùng script, khác địa chỉ). Hai ca chỉ khác stake credential của
+// output tiếp nối; không output nào khác ở script két.
+
+fn g3v_setdel_cont_tx(restaked: Bool) -> Transaction {
+  let out0 = t_vault_out(sp_setdel_dout())
+  let out =
+    if restaked {
+      Output {
+        ..out0,
+        address: address.with_delegation_key(out0.address, g3v_stranger_stake),
+      }
+    } else {
+      out0
+    }
+  branch_tx(t_vault_in(sp_setdel_din()), out, [], [], [t_owner])
+}
+
+test g3v_spend_continuation_canonical_address_ok() {
+  g3v_setdel(g3v_setdel_cont_tx(False))
+}
+
+test g3v_spend_continuation_restaked_rejected() fail {
+  g3v_setdel(g3v_setdel_cont_tx(True))
+}
+
+// ── Lỗ 2: genesis két/quỹ chỉ lọc output MANG NFT ─────────────────────────────
+
+fn g3v_vault_mint(extra: List<Output>) -> Bool {
+  let tx0 = mint_tx_with(t_genesis_vd())
+  run_mint(t_seed_ref(), Transaction { ..tx0, outputs: list.concat(tx0.outputs, extra) })
+}
+
+test g3v_mint_control_ok() {
+  g3v_vault_mint([])
+}
+
+test g3v_mint_junk_output_at_vault_rejected() fail {
+  g3v_vault_mint([g3v_junk_at(t_vault_hash, False)])
+}
+
+test g3v_mint_junk_output_staked_twin_rejected() fail {
+  g3v_vault_mint([g3v_junk_at(t_vault_hash, True)])
+}
+
+fn g3v_fund_mint(extra: List<Output>) -> Bool {
+  let name = fg_name()
+  run_fund_mint(
+    list.concat([fg_carrier(name, fg_clean())], extra),
+    assets.from_asset(t_fund_hash, name, 1),
+  )
+}
+
+test g3v_fund_mint_control_ok() {
+  g3v_fund_mint([])
+}
+
+test g3v_fund_mint_junk_output_at_fund_rejected() fail {
+  g3v_fund_mint([g3v_junk_at(t_fund_hash, False)])
+}
+
+test g3v_fund_mint_junk_output_staked_twin_rejected() fail {
+  g3v_fund_mint([g3v_junk_at(t_fund_hash, True)])
+}
+
+// ── Lỗ 3: nhánh spend quỹ — tiếp nối đúng 1 output ở script quỹ, đóng thì 0 ──
+
+test g3v_fund_cont_control_ok() {
+  rc_spend(rc_cont_fin(), rc_cont_ok_tx())
+}
+
+test g3v_fund_cont_junk_output_rejected() fail {
+  rc_spend(rc_cont_fin(), g3v_add_out(rc_cont_ok_tx(), g3v_junk_at(t_fund_hash, False)))
+}
+
+test g3v_fund_cont_junk_output_staked_twin_rejected() fail {
+  rc_spend(rc_cont_fin(), g3v_add_out(rc_cont_ok_tx(), g3v_junk_at(t_fund_hash, True)))
+}
+
+test g3v_fund_close_control_ok() {
+  rc_spend(rc_close_fin(), rc_close_ok_tx())
+}
+
+test g3v_fund_close_junk_output_rejected() fail {
+  rc_spend(rc_close_fin(), g3v_add_out(rc_close_ok_tx(), g3v_junk_at(t_fund_hash, True)))
+}
+
+test g3v_fund_claim_close_control_ok() {
+  cc_spend(cc_fin(), 3 * rc_e9, cc_ok_tx())
+}
+
+test g3v_fund_claim_close_junk_output_rejected() fail {
+  cc_spend(cc_fin(), 3 * rc_e9, g3v_add_out(cc_ok_tx(), g3v_junk_at(t_fund_hash, False)))
 }

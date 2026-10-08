@@ -424,6 +424,16 @@ validator shard(shard_policy_id_param: PolicyId, vault_script_hash: ByteArray) {
       list.count(tx.outputs, fn(o) {
         assets.quantity_of(o.value, shard_policy_id_param, name) == 1
       }) == 1
+    // SHARD-OUT-0 (R169, 2026-10-08): đúng MỘT output ở SCRIPT shard, đếm theo
+    // payment credential. SHARD-DS-1 đã ép đúng một input shard mỗi giao dịch
+    // (mười sáu shard dùng chung một script), nên giao dịch tiếp nối đúng một
+    // shard — đếm `== 1` là khớp số shard input, không phải ép mù. Thiếu dòng này,
+    // commit/fire thêm được một output ở `Script(shard)` không NFT (kể cả khác
+    // stake): UTxO đó không nhánh nào tiêu lại được (SHARD-NFT đòi NFT ở chính
+    // input), tài sản kèm theo chết vĩnh viễn. Output được đếm phải là output mang
+    // NFT: `find_shard_output_by_policy` ghim output đó ở `shard_addr`.
+    expect
+      list.count(tx.outputs, fn(o) { same_script(o.address, shard_addr) }) == 1
     // SHARD-RETURN (Nợ #35): quay về ĐÚNG địa chỉ đang tiêu, không chỉ "có NFT".
     let output_shard =
       find_shard_output_by_policy(
@@ -1347,7 +1357,13 @@ fn vault_output_lamp_with(
 fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
   expect Script(vault_id_policy) = vault_input.output.address.payment_credential
   let nft_name = single_nft_name(vault_input.output.value, vault_id_policy)
-  expect assets.quantity_of(vault_output.value, vault_id_policy, nft_name) == 1
+  // Nợ #57 (G3V 2026-10-08): ONLY that (policy, name) under the vault policy — no
+  // second name. `quantity_of` answers "carries that NFT", not "carries only that
+  // NFT", and `|policies| <= 3` counts POLICIES so a second name is invisible to
+  // it. `MintVaultId` + `WithdrawLamp` on a never-generated vault builds exactly
+  // that output (`g3v_withdraw_second_vault_nft_rejected`); the next spend then
+  // dies at `single_nft_name` on the input ⟹ the vault is bricked for good.
+  expect single_nft_name(vault_output.value, vault_id_policy) == nft_name
   expect assets.lovelace_of(vault_output.value) >= assets.lovelace_of(vault_input.output.value)
   expect list.length(assets.policies(vault_output.value)) <= 3
   // G16: không gắn reference script vào output két — nhánh PruneExpired không chữ ký
@@ -1389,15 +1405,12 @@ fn validate_mint_vault_id(
   // ── EXACTLY one output at THIS vault script address carrying the NFT ─────
   // policy_id == this validator's own script hash ⟹ Script(policy_id) is the
   // vault spend address. Binding the NFT here stops "mint clean → re-home dirty".
-  let carriers =
-    list.filter(tx.outputs, fn(o) {
-      o.address.payment_credential == Script(policy_id) && assets.quantity_of(
-        o.value,
-        policy_id,
-        nft_name,
-      ) == 1
-    })
-  expect [vault_out] = carriers
+  // Filter by SCRIPT first, then demand the NFT on that ONE output (G3V
+  // 2026-10-08): filtering on "at script AND carries the NFT" let a second
+  // output sit at the vault script without the NFT — a UTxO no branch can spend.
+  expect [vault_out] =
+    list.filter(tx.outputs, fn(o) { o.address.payment_credential == Script(policy_id) })
+  expect assets.quantity_of(vault_out.value, policy_id, nft_name) == 1
 
   // ── Genesis datum must be inline + decode as a VaultDatum ────────────────
   expect InlineDatum(datum_data) = vault_out.datum
@@ -3789,6 +3802,61 @@ test shard_in_from_wallet_rejected() fail {
   find_shard_input_raw([inp], t_shard_policy, 6).output.address == wallet
 }
 
+// ── SHARD-OUT-0 (R169): output ở script shard phải là đúng shard tiếp nối ─────
+// Chạy TRỌN handler `shard.spend`: một két thật đồng tiêu dưới ScheduleCommit,
+// shard đi ra đúng địa chỉ, cộng `extra` output. Ca đối chứng `extra = []`; ca âm
+// thêm một output rác (không NFT, không datum) ở script shard — địa chỉ chuẩn hoặc
+// khác stake. Trước bản vá cả hai ca âm được nhận.
+
+fn r169_shard_junk(staked: Bool) -> Output {
+  Output {
+    address: if staked {
+      t_shard_addr() |> address.with_delegation_key(t_owner_pkh)
+    } else {
+      t_shard_addr()
+    },
+    value: assets.from_lovelace(2_000_000),
+    datum: NoDatum,
+    reference_script: None,
+  }
+}
+
+fn r169_shard_spend(extra: List<Output>) -> Bool {
+  let vd = t_datum(100, 0, [t_holding(100, 5, False)])
+  let sid = compute_shard_id(vd.owner)
+  let shard_ref = OutputReference { transaction_id: t_tx_id, output_index: 9 }
+  let shard_in =
+    Input { output_reference: shard_ref, output: t_shard_out_at(t_shard_addr(), sid, 1000) }
+  let rd: Data = ScheduleCommit { schedule_length: 10, lamp_per_epoch: 1 }
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: [t_vault_input(vd, 100), shard_in],
+      outputs: list.concat([t_shard_out_at(t_shard_addr(), sid, 1000)], extra),
+      redeemers: [Pair(Spend(t_own_ref()), rd)],
+    }
+  shard.spend(
+    t_shard_policy,
+    t_vault_hash,
+    Some(t_shard_datum(sid, 1000)),
+    ShardRedeemer.ShardUpdateCommit { delta_locked: 0, delta_committed: 0 },
+    shard_ref,
+    tx,
+  )
+}
+
+test r169_shard_spend_control_ok() {
+  r169_shard_spend([])
+}
+
+test r169_shard_spend_junk_output_at_shard_rejected() fail {
+  r169_shard_spend([r169_shard_junk(False)])
+}
+
+test r169_shard_spend_junk_output_staked_twin_rejected() fail {
+  r169_shard_spend([r169_shard_junk(True)])
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Tests — VAULT-IDENTITY STATE-THREAD NFT (MAINNET-BLOCK)
 //
@@ -5008,4 +5076,137 @@ test g16_sg_shard_out_ref_script_rejected() fail {
 test g16_sg_shard_out_wallet_ref_script_ok() {
   let out = t_shard_out_at(t_shard_addr(), 6, 1000)
   find_shard_output_by_policy([out, t_g16_wallet_ref_output()], t_shard_policy, 6, t_shard_addr()).shard_locked_lamp == 1000
+}
+
+// ═══ G3V (2026-10-08): mọi output ở script két phải là một DÒNG SỔ ═══════════
+// Ca âm XANH (= được nhận) trên mã trước bản vá fix/vault-output-uniqueness; ca
+// đối chứng gọi cùng hàm dựng, chỉ bỏ phần rác.
+
+fn g3v_junk_at_vault(staked: Bool) -> Output {
+  let base = address.from_script(t_vault_hash)
+  Output {
+    address: if staked {
+      address.with_delegation_key(base, t_owner_pkh)
+    } else {
+      base
+    },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.add(t_lamp_policy, t_lamp_name, 50),
+    datum: NoDatum,
+    reference_script: None,
+  }
+}
+
+// ── Lỗ 2: genesis chỉ lọc output MANG NFT ─────────────────────────────────────
+
+fn g3v_genesis(extra: List<Output>) -> Bool {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let out = t_genesis_output(t_clean_genesis(100), 100, t_vault_hash, name)
+  let tx0 = t_mint_tx(seed, out, assets.from_asset(t_vault_hash, name, 1), [t_owner_pkh])
+  t_mint_call(seed, t_vault_hash, Transaction { ..tx0, outputs: list.concat(tx0.outputs, extra) })
+}
+
+test g3v_mint_control_ok() {
+  g3v_genesis([])
+}
+
+test g3v_mint_junk_output_at_vault_rejected() fail {
+  g3v_genesis([g3v_junk_at_vault(False)])
+}
+
+test g3v_mint_junk_output_staked_twin_rejected() fail {
+  g3v_genesis([g3v_junk_at_vault(True)])
+}
+
+// ── Chốt NFT trên output ở script két (R169) ─────────────────────────────────
+// Bộ lọc genesis chỉ chọn output theo SCRIPT; dòng `expect quantity_of(vault_out,
+// policy, nft_name) == 1` là thứ DUY NHẤT đòi output đó mang NFT. Ca âm: NFT đúc
+// ra VÍ, output ở script két sạch nhưng không NFT — két không dòng sổ, LAMP kẹt.
+// Ca đối chứng: cùng hai output, NFT nằm ở script két. Hai ca chỉ khác chỗ NFT.
+
+fn g3v_genesis_nft_placement(nft_to_wallet: Bool) -> Bool {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let out0 = t_genesis_output(t_clean_genesis(100), 100, t_vault_hash, name)
+  let at_vault =
+    if nft_to_wallet {
+      Output { ..out0, value: assets.add(out0.value, t_vault_hash, name, -1) }
+    } else {
+      out0
+    }
+  let wallet_value = assets.from_lovelace(2_000_000)
+  let wallet =
+    Output {
+      address: address.from_verification_key(t_owner_pkh),
+      value: if nft_to_wallet {
+        assets.add(wallet_value, t_vault_hash, name, 1)
+      } else {
+        wallet_value
+      },
+      datum: NoDatum,
+      reference_script: None,
+    }
+  let tx0 =
+    t_mint_tx(seed, at_vault, assets.from_asset(t_vault_hash, name, 1), [t_owner_pkh])
+  t_mint_call(
+    seed,
+    t_vault_hash,
+    Transaction { ..tx0, outputs: list.concat(tx0.outputs, [wallet]) },
+  )
+}
+
+test g3v_mint_nft_at_vault_with_wallet_output_ok() {
+  g3v_genesis_nft_placement(False)
+}
+
+test g3v_mint_nft_to_wallet_rejected() fail {
+  g3v_genesis_nft_placement(True)
+}
+
+// ── Lỗ 4 (Nợ #57): output tiếp nối mang HAI tên NFT dưới policy két ──────────
+// Xem khối cùng tên ở InstantGen: gộp `MintVaultId` với `WithdrawLamp` trên két
+// chưa sinh ⟹ két ra khỏi giao dịch mang hai tên ⟹ chết vĩnh viễn.
+
+fn g3v_withdraw_tx(second_nft: Bool) -> Transaction {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let base_out = t_vault_output(t_clean_genesis(95), 95)
+  let out =
+    if second_nft {
+      Output { ..base_out, value: assets.add(base_out.value, t_vault_hash, name, 1) }
+    } else {
+      base_out
+    }
+  let tx0 =
+    t_tx(
+      [t_vault_input(t_clean_genesis(100), 100), t_seed_input(seed)],
+      [out],
+      [t_owner_pkh],
+    )
+  if second_nft {
+    Transaction { ..tx0, mint: assets.from_asset(t_vault_hash, name, 1) }
+  } else {
+    tx0
+  }
+}
+
+fn g3v_withdraw(tx: Transaction) -> Bool {
+  validate_withdraw_lamp(
+    t_clean_genesis(100), 5, 0, t_vault_addr(), t_lamp_policy, t_lamp_name, tx,
+  )
+}
+
+test g3v_withdraw_control_ok() {
+  g3v_withdraw(g3v_withdraw_tx(False))
+}
+
+test g3v_withdraw_second_vault_nft_rejected() fail {
+  g3v_withdraw(g3v_withdraw_tx(True))
+}
+
+// Handler mint KHÔNG thấy tổ hợp này; khoá duy nhất là `validate_vault_value`.
+// Ai thêm cổng phía mint thì đổi bài này thành `fail`.
+test g3v_mint_side_accepts_existing_vault_as_carrier() {
+  t_mint_call(t_mint_seed(), t_vault_hash, g3v_withdraw_tx(True))
 }

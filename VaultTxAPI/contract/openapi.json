@@ -3,7 +3,7 @@
   "info": {
     "title": "VaultTxAPI module contract",
     "version": "1.1.0",
-    "description": "Machine-readable contract for the VaultTxAPI routes a backend module calls to consume MAGIC. Compatibility rules: compatibility.md. Error codes: error-codes.json. Response vectors: vectors/. Only the keywords the in-repo checker supports are used (tests/support/schemaSubset.ts): $ref, type, required, properties, additionalProperties, enum, const, pattern, items, oneOf."
+    "description": "Machine-readable contract for the VaultTxAPI routes a backend module calls to consume MAGIC, and for the sponsor-journey routes (open-vault, bind-did, open-fund, fund-vault, draw-magic, first-consume, claim) that the app, the sponsor side and the module call. Compatibility rules: compatibility.md. Error codes: error-codes.json. Response vectors: vectors/. Only the keywords the in-repo checker supports are used (tests/support/schemaSubset.ts): $ref, type, required, properties, additionalProperties, enum, const, pattern, items, oneOf."
   },
   "servers": [{ "url": "/", "description": "The service may sit behind a base path (GET /health reports base_path)." }],
   "security": [{ "bearerAuth": [] }],
@@ -88,6 +88,77 @@
         }
       }
     },
+    "/tx/sponsor/open-vault": {
+      "post": {
+        "operationId": "sponsorOpenVault",
+        "summary": "Sponsor journey, step open-vault: build the Prepaid vault and consume thread of a new DID, plus the DID's sponsor fund when it has none. Called by the app (token: the shared token).",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorOpenVaultRequest" } } } },
+        "responses": {
+          "200": {
+            "description": "Unsigned transaction built.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorOpenVaultResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/sponsor/bind-did": {
+      "post": {
+        "operationId": "sponsorBindDid",
+        "summary": "Sponsor journey, step bind-did: attach the thread's did_commit to the Prepaid vault. Called by the app (token: the shared token).",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorBindDidRequest" } } } },
+        "responses": {
+          "200": {
+            "description": "Unsigned transaction built.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorBindDidResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/sponsor/open-fund": {
+      "post": {
+        "operationId": "sponsorOpenFund",
+        "summary": "Sponsor journey, fallback step open-fund: mint the sponsor fund of a DID whose vault was opened before open-vault carried the fund. Called by the app (token: the shared token).",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorOpenFundRequest" } } } },
+        "responses": {
+          "200": {
+            "description": "Unsigned transaction built.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorOpenFundResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/sponsor/fund-vault": {
+      "post": {
+        "operationId": "sponsorFundVault",
+        "summary": "Sponsor journey, step fund-vault: move CARP from the sponsor's UTxOs into the DID's fund. Called by the sponsor side with the SPONSOR ROLE token only (a shared token gets 403 SPONSOR_ROLE_REQUIRED).",
+        "security": [{ "sponsorBearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorFundVaultRequest" } } } },
+        "responses": {
+          "200": {
+            "description": "Unsigned transaction built.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorFundVaultResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/sponsor/draw-magic": {
+      "post": {
+        "operationId": "sponsorDrawMagic",
+        "summary": "Sponsor journey, step draw-magic: draw one MAGIC batch from the DID's fund into the vault. Called by the app (token: the shared token).",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorDrawMagicRequest" } } } },
+        "responses": {
+          "200": {
+            "description": "Unsigned transaction built.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorDrawMagicResponse" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/tx/sponsor/first-consume": {
       "post": {
         "operationId": "sponsorFirstConsume",
@@ -95,6 +166,21 @@
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FirstConsumeRequest" } } } },
         "responses": {
           "200": { "description": "Unsigned transaction built.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FirstConsumeResponse" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/tx/sponsor/claim": {
+      "post": {
+        "operationId": "sponsorClaim",
+        "summary": "Sponsor journey, step claim: CARP from a fund to its pinned beneficiary. Called by the sponsor side with the SPONSOR ROLE token only (a shared token gets 403 SPONSOR_ROLE_REQUIRED).",
+        "security": [{ "sponsorBearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorClaimRequest" } } } },
+        "responses": {
+          "200": {
+            "description": "Unsigned transaction built.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SponsorClaimResponse" } } }
+          },
           "default": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -113,7 +199,8 @@
   },
   "components": {
     "securitySchemes": {
-      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "Shared token of the service. The service rejects requests without it on every route except /health." }
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "Shared token of the service. The service rejects requests without it on every route except /health. It does not open the two sponsor-role routes (fund-vault, claim): they answer 403 SPONSOR_ROLE_REQUIRED." },
+      "sponsorBearerAuth": { "type": "http", "scheme": "bearer", "description": "Token of the sponsor ROLE, a different secret from the shared token. It opens exactly POST /tx/sponsor/fund-vault and POST /tx/sponsor/claim and nothing else (any other route answers it 401). A service started without a sponsor-role token answers these two routes 501 CONFIG_MISSING, even on loopback; a known shared token on them is 403 SPONSOR_ROLE_REQUIRED, an unknown token 401 UNAUTHORIZED (src/http.ts requireRole)." }
     },
     "parameters": {
       "FeecoverToken": {
@@ -591,6 +678,585 @@
                 "type": "array",
                 "items": {
                   "type": "object", "required": ["index", "address", "assets"],
+                  "properties": {
+                    "index": { "type": "integer" },
+                    "address": { "$ref": "#/components/schemas/Address" },
+                    "assets": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/Digits" } }
+                  }
+                }
+              }
+            }
+          },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_reason": { "type": "string" },
+          "server_time": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "SponsorOutRef": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}#(0|[1-9][0-9]{0,4})$",
+        "description": "<tx_hash>#<output_index>, index without leading zeros, at most 5 digits (src/sponsor.ts OUTREF)."
+      },
+      "FundId": {
+        "type": "string",
+        "pattern": "^([0-9a-f]{2}){1,32}$",
+        "description": "Sponsor fund id: lowercase hex of 1 to 32 bytes (the NFT name of the fund under the paid_fund policy)."
+      },
+      "SponsorOpenVaultRequest": {
+        "type": "object",
+        "required": ["owner", "did_commit"],
+        "description": "Body of POST /tx/sponsor/open-vault (src/sponsor.ts parseSponsorRequest, step open-vault). The body is OPEN: a top-level key the parser does not read is ignored, not refused. The keys the parser names and refuses are declared here with the schema false. owner and fee_payer are CLOSED (400 OWNER_CREDENTIAL_SHAPE, 400 FEE_PAYER_SHAPE). funding is refused with 400 SPONSOR_REQUEST_SHAPE (it belongs to /tx/create-vault; a fee_payer goes at the root of the body).",
+        "properties": {
+          "owner": {
+            "$ref": "#/components/schemas/OwnerRequest",
+            "description": "Owner of the Prepaid vault, as in OwnerRequest (CLOSED). On this route the service accepts only an owner that proves a DID: { type: did, did } (the service derives the did_stake script and the proof from the anchor), or { type: script, hash } with owner_witness. A { type: key } owner parses but is refused with 422 SPONSOR_OWNER_NOT_DID (the sponsor quota is counted per DID, and a key owner can claim any did_commit)."
+          },
+          "owner_pkh": {
+            "$ref": "#/components/schemas/Hex56",
+            "description": "Legacy ALIAS of owner { type: key, hash }. Beside owner it must name the same key (400 OWNER_ALIAS_MISMATCH) and it does not go with a did owner (400 OWNER_DID_CONFLICT). Send owner."
+          },
+          "owner_witness": { "$ref": "#/components/schemas/OwnerWitness" },
+          "change_address": {
+            "$ref": "#/components/schemas/Address",
+            "description": "Fee wallet (fees, collateral, change). Exactly one of change_address and fee_payer for a script or did owner: neither is 400 CHANGE_ADDRESS_REQUIRED, both is 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT."
+          },
+          "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
+          "did_commit": {
+            "$ref": "#/components/schemas/Hex64",
+            "description": "blake2b_256(utf8(did)) of the new user, exactly 64 lowercase hex (400 DID_COMMIT_INVALID otherwise). With a script owner it must equal the anchor NFT name of owner_witness (422 SPONSOR_OWNER_DID_MISMATCH)."
+          },
+          "thread_lovelace": {
+            "$ref": "#/components/schemas/Digits",
+            "description": "Optional. Lovelace of the thread output, a digit string above 0. Refused beside fee_payer (400 SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER): with a fee_payer the service uses the builder floor."
+          },
+          "funding": false
+        }
+      },
+      "SponsorOpenVaultResponse": {
+        "type": "object",
+        "description": "Unsigned open-vault transaction: mints the Prepaid vault and the consume thread, and the DID's sponsor fund when the DID has none. Called by the app. The fee wallet, the owner and (when a fund is minted) the platform sign; summary.fund.status tells whether the platform witness is already inside tx_cbor. The body is OPEN (keys may be added). summary also carries owner_did when the owner was sent as a DID, and fee_payer (the service's reading of the fee-payer rules from the CBOR) when a fee_payer was sent; both are optional.",
+        "required": ["step", "tx_cbor", "tx_hash", "required_signers", "signers", "witness_notes", "summary", "expires_at", "expires_reason", "server_time"],
+        "properties": {
+          "step": { "const": "open-vault" },
+          "tx_cbor": { "$ref": "#/components/schemas/HexBytes" },
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "required_signers": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+          "signers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "key_hashes", "how"],
+              "properties": {
+                "role": { "type": "string", "description": "Open set (fee-wallet, owner, sponsor, platform, ...)." },
+                "key_hashes": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+                "how": { "type": "string" }
+              }
+            }
+          },
+          "witness_notes": { "type": "array", "items": { "type": "string" } },
+          "summary": {
+            "type": "object",
+            "required": [
+              "step",
+              "vault_unit",
+              "vault_address",
+              "vault_out_ref",
+              "thread_unit",
+              "thread_address",
+              "thread_out_ref",
+              "did_commit",
+              "owner",
+              "fund",
+              "withdrawals",
+              "outputs"
+            ],
+            "properties": {
+              "step": { "const": "open-vault" },
+              "vault_unit": { "type": "string", "pattern": "^[0-9a-f]+$" },
+              "vault_address": { "$ref": "#/components/schemas/Address" },
+              "vault_out_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "thread_unit": { "type": "string", "pattern": "^[0-9a-f]+$" },
+              "thread_address": { "$ref": "#/components/schemas/Address" },
+              "thread_out_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "did_commit": { "$ref": "#/components/schemas/Hex64" },
+              "owner": { "$ref": "#/components/schemas/Owner" },
+              "fund": {
+                "type": "object",
+                "required": ["status"],
+                "description": "The DID's sponsor fund. status created: this transaction also mints the fund (fund_id, fund_unit, fund_address, fund_out_ref, owner_commit, platform_pkh, sponsor_address, beneficiary, buffer_bps, reclaim_after_epoch, seed_ref) and the service has already attached the platform witness. status existing: the DID already had a usable fund and nothing is minted (funds lists them). Values of status: created, existing (a later value is not a breach).",
+                "properties": { "status": { "type": "string" } }
+              },
+              "withdrawals": { "type": "integer" },
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["index", "address", "assets"],
+                  "properties": {
+                    "index": { "type": "integer" },
+                    "address": { "$ref": "#/components/schemas/Address" },
+                    "assets": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/Digits" } }
+                  }
+                }
+              }
+            }
+          },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_reason": { "type": "string" },
+          "server_time": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "SponsorBindDidRequest": {
+        "type": "object",
+        "required": ["owner"],
+        "description": "Body of POST /tx/sponsor/bind-did (parseSponsorRequest, step bind-did). The DID comes from the owner's Engage thread, never from the body: did_commit is refused with 400 SPONSOR_REQUEST_SHAPE. The body is OPEN: a top-level key the parser does not read is ignored, not refused. The keys the parser names and refuses are declared here with the schema false. owner and fee_payer are CLOSED (400 OWNER_CREDENTIAL_SHAPE, 400 FEE_PAYER_SHAPE). funding is refused with 400 SPONSOR_REQUEST_SHAPE (it belongs to /tx/create-vault; a fee_payer goes at the root of the body).",
+        "properties": {
+          "owner": {
+            "$ref": "#/components/schemas/OwnerRequest",
+            "description": "Owner of the Prepaid vault, as in OwnerRequest (CLOSED). On this route the service accepts only an owner that proves a DID: { type: did, did } (the service derives the did_stake script and the proof from the anchor), or { type: script, hash } with owner_witness. A { type: key } owner parses but is refused with 422 SPONSOR_OWNER_NOT_DID (the sponsor quota is counted per DID, and a key owner can claim any did_commit)."
+          },
+          "owner_pkh": {
+            "$ref": "#/components/schemas/Hex56",
+            "description": "Legacy ALIAS of owner { type: key, hash }. Beside owner it must name the same key (400 OWNER_ALIAS_MISMATCH) and it does not go with a did owner (400 OWNER_DID_CONFLICT). Send owner."
+          },
+          "owner_witness": { "$ref": "#/components/schemas/OwnerWitness" },
+          "change_address": {
+            "$ref": "#/components/schemas/Address",
+            "description": "Fee wallet (fees, collateral, change). Exactly one of change_address and fee_payer for a script or did owner: neither is 400 CHANGE_ADDRESS_REQUIRED, both is 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT."
+          },
+          "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
+          "vault_ref": {
+            "$ref": "#/components/schemas/SponsorOutRef",
+            "description": "Optional. Names the Prepaid vault when the owner has several (400 SPONSOR_VAULT_REF_MISMATCH when it is not the owner's unspent Prepaid vault)."
+          },
+          "did_commit": false,
+          "funding": false
+        }
+      },
+      "SponsorBindDidResponse": {
+        "type": "object",
+        "description": "Unsigned bind-did transaction (SetDidCommit): attaches the thread's did_commit to the Prepaid vault, once and for good. Called by the app. The body is OPEN (keys may be added). summary also carries owner_did when the owner was sent as a DID, and fee_payer (the service's reading of the fee-payer rules from the CBOR) when a fee_payer was sent; both are optional.",
+        "required": ["step", "tx_cbor", "tx_hash", "required_signers", "signers", "witness_notes", "summary", "expires_at", "expires_reason", "server_time"],
+        "properties": {
+          "step": { "const": "bind-did" },
+          "tx_cbor": { "$ref": "#/components/schemas/HexBytes" },
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "required_signers": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+          "signers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "key_hashes", "how"],
+              "properties": {
+                "role": { "type": "string", "description": "Open set (fee-wallet, owner, sponsor, platform, ...)." },
+                "key_hashes": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+                "how": { "type": "string" }
+              }
+            }
+          },
+          "witness_notes": { "type": "array", "items": { "type": "string" } },
+          "summary": {
+            "type": "object",
+            "required": ["step", "epoch", "epoch_end_ms", "vault_out_ref", "did_commit", "engage_ref", "withdrawals", "outputs"],
+            "properties": {
+              "step": { "const": "bind-did" },
+              "epoch": { "type": "integer" },
+              "epoch_end_ms": { "$ref": "#/components/schemas/Digits" },
+              "vault_out_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "did_commit": { "$ref": "#/components/schemas/Hex64" },
+              "engage_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "withdrawals": { "type": "integer" },
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["index", "address", "assets"],
+                  "properties": {
+                    "index": { "type": "integer" },
+                    "address": { "$ref": "#/components/schemas/Address" },
+                    "assets": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/Digits" } }
+                  }
+                }
+              }
+            }
+          },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_reason": { "type": "string" },
+          "server_time": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "SponsorOpenFundRequest": {
+        "type": "object",
+        "required": ["owner"],
+        "description": "Body of POST /tx/sponsor/open-fund (parseSponsorRequest, step open-fund). Everything that decides whose fund it is and where CARP goes is refused with 400 SPONSOR_REQUEST_SHAPE (the keys declared false): the DID comes from the owner's Engage thread, platform, sponsor, beneficiary and buffer from the deployment config. The body is OPEN: a top-level key the parser does not read is ignored, not refused. The keys the parser names and refuses are declared here with the schema false. owner and fee_payer are CLOSED (400 OWNER_CREDENTIAL_SHAPE, 400 FEE_PAYER_SHAPE). funding is refused with 400 SPONSOR_REQUEST_SHAPE (it belongs to /tx/create-vault; a fee_payer goes at the root of the body).",
+        "properties": {
+          "owner": {
+            "$ref": "#/components/schemas/OwnerRequest",
+            "description": "Owner of the Prepaid vault, as in OwnerRequest (CLOSED). On this route the service accepts only an owner that proves a DID: { type: did, did } (the service derives the did_stake script and the proof from the anchor), or { type: script, hash } with owner_witness. A { type: key } owner parses but is refused with 422 SPONSOR_OWNER_NOT_DID (the sponsor quota is counted per DID, and a key owner can claim any did_commit)."
+          },
+          "owner_pkh": {
+            "$ref": "#/components/schemas/Hex56",
+            "description": "Legacy ALIAS of owner { type: key, hash }. Beside owner it must name the same key (400 OWNER_ALIAS_MISMATCH) and it does not go with a did owner (400 OWNER_DID_CONFLICT). Send owner."
+          },
+          "owner_witness": { "$ref": "#/components/schemas/OwnerWitness" },
+          "change_address": {
+            "$ref": "#/components/schemas/Address",
+            "description": "Fee wallet (fees, collateral, change). Exactly one of change_address and fee_payer for a script or did owner: neither is 400 CHANGE_ADDRESS_REQUIRED, both is 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT."
+          },
+          "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
+          "did_commit": false,
+          "owner_commit": false,
+          "platform": false,
+          "platform_pkh": false,
+          "sponsor": false,
+          "beneficiary": false,
+          "buffer_bps": false,
+          "fund_id": false,
+          "vault_ref": false,
+          "funding": false
+        }
+      },
+      "SponsorOpenFundResponse": {
+        "type": "object",
+        "description": "Unsigned open-fund transaction: mints the sponsor fund of the DID (0 CARP) for a vault opened before open-vault carried the fund. The service has already attached the platform witness to tx_cbor. Called by the app. The body is OPEN (keys may be added). summary also carries owner_did when the owner was sent as a DID, and fee_payer (the service's reading of the fee-payer rules from the CBOR) when a fee_payer was sent; both are optional.",
+        "required": ["step", "tx_cbor", "tx_hash", "required_signers", "signers", "witness_notes", "summary", "expires_at", "expires_reason", "server_time"],
+        "properties": {
+          "step": { "const": "open-fund" },
+          "tx_cbor": { "$ref": "#/components/schemas/HexBytes" },
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "required_signers": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+          "signers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "key_hashes", "how"],
+              "properties": {
+                "role": { "type": "string", "description": "Open set (fee-wallet, owner, sponsor, platform, ...)." },
+                "key_hashes": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+                "how": { "type": "string" }
+              }
+            }
+          },
+          "witness_notes": { "type": "array", "items": { "type": "string" } },
+          "summary": {
+            "type": "object",
+            "required": [
+              "step",
+              "fund_id",
+              "fund_unit",
+              "fund_address",
+              "fund_out_ref",
+              "owner_commit",
+              "engage_ref",
+              "platform_pkh",
+              "reclaim_after_epoch",
+              "withdrawals",
+              "outputs"
+            ],
+            "properties": {
+              "step": { "const": "open-fund" },
+              "fund_id": { "type": "string", "pattern": "^[0-9a-f]+$" },
+              "fund_unit": { "type": "string", "pattern": "^[0-9a-f]+$" },
+              "fund_address": { "$ref": "#/components/schemas/Address" },
+              "fund_out_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "owner_commit": { "$ref": "#/components/schemas/Hex64" },
+              "engage_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "platform_pkh": { "$ref": "#/components/schemas/Hex56" },
+              "sponsor_address": { "$ref": "#/components/schemas/Address" },
+              "beneficiary": { "$ref": "#/components/schemas/Address" },
+              "buffer_bps": { "$ref": "#/components/schemas/Digits" },
+              "reclaim_after_epoch": { "$ref": "#/components/schemas/Digits" },
+              "seed_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "withdrawals": { "type": "integer" },
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["index", "address", "assets"],
+                  "properties": {
+                    "index": { "type": "integer" },
+                    "address": { "$ref": "#/components/schemas/Address" },
+                    "assets": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/Digits" } }
+                  }
+                }
+              }
+            }
+          },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_reason": { "type": "string" },
+          "server_time": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "SponsorFundVaultRequest": {
+        "type": "object",
+        "required": ["owner", "carp_amount", "sponsor"],
+        "description": "Body of POST /tx/sponsor/fund-vault (parseSponsorRequest, step fund-vault). Sponsor role token only. The owner is the NEW USER (the vault being funded), not the sponsor. The body is OPEN: a top-level key the parser does not read is ignored, not refused. The keys the parser names and refuses are declared here with the schema false. owner and fee_payer are CLOSED (400 OWNER_CREDENTIAL_SHAPE, 400 FEE_PAYER_SHAPE). funding is refused with 400 SPONSOR_REQUEST_SHAPE (it belongs to /tx/create-vault; a fee_payer goes at the root of the body).",
+        "properties": {
+          "owner": {
+            "$ref": "#/components/schemas/OwnerRequest",
+            "description": "Owner of the Prepaid vault, as in OwnerRequest (CLOSED). On this route the service accepts only an owner that proves a DID: { type: did, did } (the service derives the did_stake script and the proof from the anchor), or { type: script, hash } with owner_witness. A { type: key } owner parses but is refused with 422 SPONSOR_OWNER_NOT_DID (the sponsor quota is counted per DID, and a key owner can claim any did_commit)."
+          },
+          "owner_pkh": {
+            "$ref": "#/components/schemas/Hex56",
+            "description": "Legacy ALIAS of owner { type: key, hash }. Beside owner it must name the same key (400 OWNER_ALIAS_MISMATCH) and it does not go with a did owner (400 OWNER_DID_CONFLICT). Send owner."
+          },
+          "owner_witness": { "$ref": "#/components/schemas/OwnerWitness" },
+          "change_address": {
+            "$ref": "#/components/schemas/Address",
+            "description": "Fee wallet (fees, collateral, change). Exactly one of change_address and fee_payer for a script or did owner: neither is 400 CHANGE_ADDRESS_REQUIRED, both is 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT."
+          },
+          "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
+          "vault_ref": { "$ref": "#/components/schemas/SponsorOutRef", "description": "Optional. Names the Prepaid vault when the owner has several." },
+          "fund_id": {
+            "$ref": "#/components/schemas/FundId",
+            "description": "Optional. Absent: the service finds the fund of the vault's DID among the pinned funds. Present: it must be that DID's fund (422 SPONSOR_FUND_DID_MISMATCH, 422 SPONSOR_FUND_NOT_ALLOWED)."
+          },
+          "carp_amount": {
+            "$ref": "#/components/schemas/Digits",
+            "description": "CARP to move into the fund, smallest unit, a digit string above 0 and at most 20 digits. A JSON number is 400 BAD_REQUEST. Above the pinned cap: 422 SPONSOR_CARP_ABOVE_CAP."
+          },
+          "sponsor": {
+            "type": "object",
+            "required": ["utxo_refs"],
+            "description": "The sponsor's CARP inputs. utxo_refs is an array of 1 to 20 distinct UTxO references (outside 1..20 or a duplicate: 400 SPONSOR_REQUEST_SHAPE, details.field sponsor.utxo_refs). Other keys are ignored, except change_address, which is refused (400 SPONSOR_REQUEST_SHAPE): the change goes back to the address of the UTxOs, which the deployment pins.",
+            "properties": { "utxo_refs": { "type": "array", "items": { "$ref": "#/components/schemas/SponsorOutRef" } }, "change_address": false }
+          },
+          "funding": false
+        }
+      },
+      "SponsorFundVaultResponse": {
+        "type": "object",
+        "description": "Unsigned fund-vault transaction (PrepaidLock plus FundLock): moves CARP from the sponsor's UTxOs into the DID's fund. Called by the sponsor side with the sponsor role token. The sponsor key in sponsor_signers (also a signers entry with role sponsor) signs the CARP inputs; the change goes back to sponsor_change_address. The body is OPEN (keys may be added). summary also carries owner_did when the owner was sent as a DID, and fee_payer (the service's reading of the fee-payer rules from the CBOR) when a fee_payer was sent; both are optional.",
+        "required": ["step", "tx_cbor", "tx_hash", "required_signers", "signers", "witness_notes", "summary", "expires_at", "expires_reason", "server_time"],
+        "properties": {
+          "step": { "const": "fund-vault" },
+          "tx_cbor": { "$ref": "#/components/schemas/HexBytes" },
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "required_signers": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+          "signers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "key_hashes", "how"],
+              "properties": {
+                "role": { "type": "string", "description": "Open set (fee-wallet, owner, sponsor, platform, ...)." },
+                "key_hashes": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+                "how": { "type": "string" }
+              }
+            }
+          },
+          "witness_notes": { "type": "array", "items": { "type": "string" } },
+          "summary": {
+            "type": "object",
+            "required": [
+              "step",
+              "epoch",
+              "epoch_end_ms",
+              "vault_out_ref",
+              "fund_id",
+              "fund_unit",
+              "carp_amount",
+              "anchor_ref",
+              "owner_commit",
+              "sponsor_signers",
+              "sponsor_change_address",
+              "withdrawals",
+              "outputs"
+            ],
+            "properties": {
+              "step": { "const": "fund-vault" },
+              "epoch": { "type": "integer" },
+              "epoch_end_ms": { "$ref": "#/components/schemas/Digits" },
+              "vault_out_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "fund_id": { "type": "string", "pattern": "^[0-9a-f]+$" },
+              "fund_unit": { "type": "string", "pattern": "^[0-9a-f]+$" },
+              "fund_selection": {
+                "type": "string",
+                "description": "How the fund was chosen: caller (fund_id sent and checked against the DID) or did_lookup (the service found it). Open set."
+              },
+              "carp_amount": { "$ref": "#/components/schemas/Digits" },
+              "opens_new_line": { "type": "boolean" },
+              "anchor_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "owner_commit": { "$ref": "#/components/schemas/Hex64" },
+              "sponsor_signers": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+              "sponsor_change_address": { "$ref": "#/components/schemas/Address" },
+              "withdrawals": { "type": "integer" },
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["index", "address", "assets"],
+                  "properties": {
+                    "index": { "type": "integer" },
+                    "address": { "$ref": "#/components/schemas/Address" },
+                    "assets": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/Digits" } }
+                  }
+                }
+              }
+            }
+          },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_reason": { "type": "string" },
+          "server_time": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "SponsorDrawMagicRequest": {
+        "type": "object",
+        "required": ["owner", "fund_id", "carp_amount"],
+        "description": "Body of POST /tx/sponsor/draw-magic (parseSponsorRequest, step draw-magic). The answer's summary.epoch is the draw_epoch of the next first-consume. The body is OPEN: a top-level key the parser does not read is ignored, not refused. The keys the parser names and refuses are declared here with the schema false. owner and fee_payer are CLOSED (400 OWNER_CREDENTIAL_SHAPE, 400 FEE_PAYER_SHAPE). funding is refused with 400 SPONSOR_REQUEST_SHAPE (it belongs to /tx/create-vault; a fee_payer goes at the root of the body).",
+        "properties": {
+          "owner": {
+            "$ref": "#/components/schemas/OwnerRequest",
+            "description": "Owner of the Prepaid vault, as in OwnerRequest (CLOSED): key, script (with owner_witness) or did."
+          },
+          "owner_pkh": {
+            "$ref": "#/components/schemas/Hex56",
+            "description": "Legacy ALIAS of owner { type: key, hash }. Beside owner it must name the same key (400 OWNER_ALIAS_MISMATCH) and it does not go with a did owner (400 OWNER_DID_CONFLICT). Send owner."
+          },
+          "owner_witness": { "$ref": "#/components/schemas/OwnerWitness" },
+          "change_address": {
+            "$ref": "#/components/schemas/Address",
+            "description": "Fee wallet (fees, collateral, change). Exactly one of change_address and fee_payer for a script or did owner: neither is 400 CHANGE_ADDRESS_REQUIRED, both is 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT."
+          },
+          "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
+          "vault_ref": { "$ref": "#/components/schemas/SponsorOutRef", "description": "Optional. Names the Prepaid vault when the owner has several." },
+          "fund_id": { "$ref": "#/components/schemas/FundId", "description": "Required. The fund to draw from." },
+          "carp_amount": {
+            "$ref": "#/components/schemas/Digits",
+            "description": "CARP to draw, smallest unit, a digit string above 0 and at most 20 digits. A JSON number is 400 BAD_REQUEST."
+          },
+          "funding": false
+        }
+      },
+      "SponsorDrawMagicResponse": {
+        "type": "object",
+        "description": "Unsigned draw-magic transaction (PrepaidDraw): turns CARP of the fund into one MAGIC batch that lives only in epoch summary.epoch. Called by the app. The body is OPEN (keys may be added). summary also carries owner_did when the owner was sent as a DID, and fee_payer (the service's reading of the fee-payer rules from the CBOR) when a fee_payer was sent; both are optional.",
+        "required": ["step", "tx_cbor", "tx_hash", "required_signers", "signers", "witness_notes", "summary", "expires_at", "expires_reason", "server_time"],
+        "properties": {
+          "step": { "const": "draw-magic" },
+          "tx_cbor": { "$ref": "#/components/schemas/HexBytes" },
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "required_signers": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+          "signers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "key_hashes", "how"],
+              "properties": {
+                "role": { "type": "string", "description": "Open set (fee-wallet, owner, sponsor, platform, ...)." },
+                "key_hashes": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+                "how": { "type": "string" }
+              }
+            }
+          },
+          "witness_notes": { "type": "array", "items": { "type": "string" } },
+          "summary": {
+            "type": "object",
+            "required": ["step", "epoch", "epoch_end_ms", "vault_out_ref", "batch_id", "magic_nanogic", "withdrawals", "outputs"],
+            "properties": {
+              "step": { "const": "draw-magic" },
+              "epoch": {
+                "type": "integer",
+                "description": "The protocol epoch of the draw. The next first-consume must send it as draw_epoch and be built before epoch_end_ms."
+              },
+              "epoch_end_ms": { "$ref": "#/components/schemas/Digits" },
+              "vault_out_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "batch_id": { "type": "string" },
+              "magic_nanogic": { "$ref": "#/components/schemas/Digits" },
+              "withdrawals": { "type": "integer" },
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["index", "address", "assets"],
+                  "properties": {
+                    "index": { "type": "integer" },
+                    "address": { "$ref": "#/components/schemas/Address" },
+                    "assets": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/Digits" } }
+                  }
+                }
+              }
+            }
+          },
+          "expires_at": { "$ref": "#/components/schemas/Timestamp" },
+          "expires_reason": { "type": "string" },
+          "server_time": { "$ref": "#/components/schemas/Timestamp" }
+        }
+      },
+      "SponsorClaimRequest": {
+        "type": "object",
+        "required": ["fund_id"],
+        "description": "Body of POST /tx/sponsor/claim (src/sponsor.ts parseClaimRequest). Sponsor role token only. A claim has no vault owner; CARP goes only to the beneficiary pinned in the fund datum and the deployment config, so every key that could name an owner or a destination is refused with 400 SPONSOR_REQUEST_SHAPE (declared false). Other top-level keys are ignored. fee_payer is CLOSED (400 FEE_PAYER_SHAPE).",
+        "properties": {
+          "fund_id": { "$ref": "#/components/schemas/FundId", "description": "Required. The fund to claim from." },
+          "amount": {
+            "$ref": "#/components/schemas/Digits",
+            "description": "Optional. CARP to claim, a digit string above 0. Absent: everything claimable. Above the claimable part: 422 SPONSOR_CLAIM_ABOVE_MAX. Not beside fee_payer (400 SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER): through a fee_payer the claim takes everything claimable."
+          },
+          "change_address": {
+            "$ref": "#/components/schemas/Address",
+            "description": "Fee wallet. A claim has no vault owner to derive it from, so exactly one of change_address and fee_payer is required (neither: 400 CHANGE_ADDRESS_REQUIRED; both: 400 FEE_PAYER_CHANGE_ADDRESS_CONFLICT)."
+          },
+          "fee_payer": { "$ref": "#/components/schemas/FeePayerRequest" },
+          "owner": false,
+          "owner_pkh": false,
+          "owner_did": false,
+          "owner_witness": false,
+          "beneficiary": false,
+          "beneficiary_datum": false,
+          "platform": false,
+          "platform_pkh": false,
+          "sponsor": false,
+          "destination": false,
+          "to": false,
+          "did_commit": false,
+          "vault_ref": false,
+          "funding": false
+        }
+      },
+      "SponsorClaimResponse": {
+        "type": "object",
+        "description": "Unsigned claim transaction (FundClaim, or the last claim that closes a reclaimed fund): CARP from the fund to the beneficiary pinned in the fund datum and the config. Called by the sponsor side with the sponsor role token. The service has already attached the platform witness to tx_cbor; the fee wallet signs. The body is OPEN (keys may be added). summary also carries owner_did when the owner was sent as a DID, and fee_payer (the service's reading of the fee-payer rules from the CBOR) when a fee_payer was sent; both are optional.",
+        "required": ["step", "tx_cbor", "tx_hash", "required_signers", "signers", "witness_notes", "summary", "expires_at", "expires_reason", "server_time"],
+        "properties": {
+          "step": { "const": "claim" },
+          "tx_cbor": { "$ref": "#/components/schemas/HexBytes" },
+          "tx_hash": { "$ref": "#/components/schemas/Hex64" },
+          "required_signers": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+          "signers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "key_hashes", "how"],
+              "properties": {
+                "role": { "type": "string", "description": "Open set (fee-wallet, owner, sponsor, platform, ...)." },
+                "key_hashes": { "type": "array", "items": { "$ref": "#/components/schemas/Hex56" } },
+                "how": { "type": "string" }
+              }
+            }
+          },
+          "witness_notes": { "type": "array", "items": { "type": "string" } },
+          "summary": {
+            "type": "object",
+            "required": ["step", "fund_id", "fund_unit", "fund_ref", "amount", "max_claimable", "closing", "beneficiary", "epoch", "outputs"],
+            "properties": {
+              "step": { "const": "claim" },
+              "fund_id": { "type": "string", "pattern": "^[0-9a-f]+$" },
+              "fund_unit": { "type": "string", "pattern": "^[0-9a-f]+$" },
+              "fund_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "amount": { "$ref": "#/components/schemas/Digits" },
+              "max_claimable": { "$ref": "#/components/schemas/Digits" },
+              "closing": { "type": "boolean" },
+              "beneficiary": { "$ref": "#/components/schemas/Address" },
+              "epoch": { "type": "integer" },
+              "carp_locked_after": { "$ref": "#/components/schemas/Digits" },
+              "fund_out_ref": { "$ref": "#/components/schemas/UtxoRef" },
+              "sponsor_address": { "$ref": "#/components/schemas/Address" },
+              "outputs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["index", "address", "assets"],
                   "properties": {
                     "index": { "type": "integer" },
                     "address": { "$ref": "#/components/schemas/Address" },

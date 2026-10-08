@@ -9,8 +9,9 @@
 //   4. Bảng mã lỗi, hai chiều: mỗi mã trong bảng còn được `src/` phát ra; mỗi mã `src/` phát ra (quét chỗ ném +
 //      bảng ánh xạ mã) có hàng đúng trạng thái, trừ danh sách loại trừ có lý do (khối 5); lời đáp lỗi thật khớp bảng.
 //
-// Lời đáp của `/tx/quote` và `/tx/sponsor/first-consume` trên mã thật được kiểm bằng móc trong `feeQuote.test.ts`
-// (`bodyOf`) và `sponsorEmulator.test.ts` (`step`): hai khung đó nặng, không dựng lại ở đây.
+// Lời đáp của `/tx/quote` trên mã thật được kiểm bằng móc trong `feeQuote.test.ts` (`bodyOf`); lời đáp của BẢY route
+// `/tx/sponsor/*` (tx dựng trên script thật) bằng móc trong `sponsorEmulator.test.ts` (`post`: lời đáp 200 và phong bì
+// lỗi khớp openapi.json, mã lỗi có hàng trong bảng với đúng trạng thái VÀ đúng route). Hai khung đó nặng, không dựng lại ở đây.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -39,6 +40,8 @@ const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 const EXPECTED_OPERATIONS = [
   "GET /health", "POST /fee/utxo", "POST /tx/consume", "POST /fee/sign", "POST /tx/submit",
   "GET /tx/status/{tx_hash}", "POST /tx/quote", "POST /tx/sponsor/first-consume", "POST /tx/sponsor/plan",
+  "POST /tx/sponsor/open-vault", "POST /tx/sponsor/bind-did", "POST /tx/sponsor/open-fund",
+  "POST /tx/sponsor/fund-vault", "POST /tx/sponsor/draw-magic", "POST /tx/sponsor/claim",
 ];
 
 const VECTORS = loadVectors();
@@ -92,7 +95,7 @@ function withUnknownKeys(value: unknown, schema: unknown, key = "added_in_a_late
 // ── 1. Hợp đồng tự nhất quán ─────────────────────────────────────────────────────────────────
 
 describe("hợp đồng module: tự nhất quán", () => {
-  it("OpenAPI 3.1 có đúng chín operation của bước 1", () => {
+  it("OpenAPI 3.1 có đúng mười lăm operation (chín của bước 1, cộng sáu route tài trợ)", () => {
     expect(openapi.openapi).toMatch(/^3\.1\./);
     expect(allOperations().sort()).toEqual([...EXPECTED_OPERATIONS].sort());
   });
@@ -509,52 +512,22 @@ const FUNDING_CODES: Record<FundingErrorCode, true> = {
   FUNDING_WITNESS_MISMATCH: true, FUNDING_FEE_PAYER_INVALID: true,
 };
 
-const ONLY_SPONSOR = (steps: string, where: string) =>
-  `chỉ phát ở /tx/sponsor/{${steps}} (${where}) — các route đó nằm ngoài openapi.json`;
+/** Mã SDK mà dịch vụ chặn trước bằng một bước kiểm khác: nằm trong `SPONSOR_ERROR_STATUS` (để ánh xạ lỗi của bộ dựng) nhưng KHÔNG với tới qua HTTP. */
+const UNREACHABLE_VIA_HTTP = (guard: string) => `không với tới qua HTTP — bước kiểm trước chặn: ${guard}`;
 /** Mã `src/` phát ra mà KHÔNG có hàng trong bảng, mỗi mã một lý do. Lập bằng cách quét hàm bao quanh chỗ ném. */
 const NOT_ON_CONTRACT_ROUTES: Readonly<Record<string, string>> = {
   OWNER_TX_IN_FLIGHT: "đã nghỉ 2026-10-03: lớp OwnerTxInFlightError giữ lại cho app đời cũ, không chỗ nào khởi tạo",
   FEE_PAYER_UNSUPPORTED: "chỉ /tx/create-vault (ngoài openapi.json); /tx/quote chỉ chèn fee_payer ở dạng đường dựng nhận",
   FUNDING_COLLATERAL_INVALID: "chỉ đường did_payment của /tx/create-vault; trên /tx/quote 400 FEE_QUOTE_SELF_FUNDED chặn trước",
-  SPONSOR_ROLE_REQUIRED: "http.ts ▸ requireRole: chỉ route mở bằng thẻ vai sponsor, ngoài openapi.json",
-  SPONSOR_OWNER_DID_UNVERIFIABLE: ONLY_SPONSOR("open-vault,bind-did,open-fund,fund-vault", "assertOwnerDid"),
-  SPONSOR_OWNER_DID_MISMATCH: ONLY_SPONSOR("open-vault,bind-did,open-fund,fund-vault", "assertOwnerDid"),
-  SPONSOR_OWNER_NOT_DID: ONLY_SPONSOR("open-vault,bind-did,open-fund,fund-vault", "run, rào theo step"),
-  SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER: ONLY_SPONSOR("open-vault", "parseSponsorRequest"),
-  SPONSOR_DID_GENESIS_IN_FLIGHT: ONLY_SPONSOR("open-vault,open-fund", "holdDid genesis"),
-  SPONSOR_FUND_SET_CLOSED: ONLY_SPONSOR("open-vault,open-fund", "fundGenesisPins"),
-  SPONSOR_FUND_ALREADY_OPEN: ONLY_SPONSOR("open-fund", "openFund"),
-  SPONSOR_THREAD_DID_INVALID: ONLY_SPONSOR("bind-did,open-fund,fund-vault", "bindDid/openFund/fundVault"),
-  SPONSOR_VAULT_DID_ALREADY_SET: ONLY_SPONSOR("bind-did", "bindDid"),
-  SPONSOR_VAULT_DID_MISMATCH: ONLY_SPONSOR("bind-did,fund-vault", "bindDid/fundVault"),
-  SPONSOR_VAULT_DID_UNSET: ONLY_SPONSOR("fund-vault", "fundVault"),
-  SPONSOR_ANCHOR_NOT_FOUND: ONLY_SPONSOR("fund-vault", "fundVault ▸ uniqueByUnit"),
-  SPONSOR_ANCHOR_AMBIGUOUS: ONLY_SPONSOR("fund-vault", "fundVault ▸ uniqueByUnit"),
-  SPONSOR_DID_FUND_IN_FLIGHT: ONLY_SPONSOR("fund-vault", "holdDid fund-vault"),
-  SPONSOR_DID_FUNDED_ELSEWHERE: ONLY_SPONSOR("fund-vault", "assertDidNotFundedElsewhere"),
-  SPONSOR_FUND_AMBIGUOUS: ONLY_SPONSOR("fund-vault", "resolveSponsorFund"),
-  SPONSOR_FUND_DID_MISMATCH: ONLY_SPONSOR("fund-vault", "resolveSponsorFund"),
-  SPONSOR_FUND_NOT_OPENED: ONLY_SPONSOR("fund-vault", "resolveSponsorFund"),
-  SPONSOR_FUND_NOT_ALLOWED: ONLY_SPONSOR("fund-vault", "resolveSponsorFund, assertFundPinnedInputs"),
-  SPONSOR_CARP_ABOVE_CAP: ONLY_SPONSOR("fund-vault", "assertFundPinnedInputs"),
-  SPONSOR_FEE_WALLET_IS_SPONSOR: ONLY_SPONSOR("fund-vault", "fundVault"),
-  SPONSOR_UTXO_NOT_FOUND: ONLY_SPONSOR("fund-vault", "fundVault"),
-  SPONSOR_UTXO_NOT_ALLOWED: ONLY_SPONSOR("fund-vault", "assertSponsorUtxosPinned"),
-  SPONSOR_UTXO_NOT_KEY: ONLY_SPONSOR("fund-vault", "assertSponsorUtxosPinned"),
-  SPONSOR_UTXO_NO_CARP: ONLY_SPONSOR("fund-vault", "assertSponsorUtxosPinned"),
-  SPONSOR_UTXO_NOT_FUND_SPONSOR: ONLY_SPONSOR("fund-vault", "assertSponsorUtxosOfFundSponsor"),
-  // Mã của bộ dựng SDK (`MagicSDK/src/sponsorJourney.ts`) qua SPONSOR_ERROR_STATUS: chỉ bước T1/T2 ném chúng.
-  SPONSOR_DID_COMMIT_LENGTH: ONLY_SPONSOR("open-vault,fund-vault", "SDK assertSponsorDidCommit: buildSponsorT1OpenPrepaid, assertAnchor của T2"),
-  SPONSOR_ANCHOR_REF_WRONG: ONLY_SPONSOR("fund-vault", "SDK assertAnchor của buildSponsorT2Fund"),
-  SPONSOR_FUND_NOT_PINNED: ONLY_SPONSOR("fund-vault", "SDK buildSponsorT2Fund"),
-  SPONSOR_CARP_INSUFFICIENT: ONLY_SPONSOR("fund-vault", "SDK buildSponsorT2Fund"),
-  SPONSOR_CARP_OUTPUT_UNPINNED: ONLY_SPONSOR("fund-vault", "SDK assertSponsorCarpOutputs của buildSponsorT2Fund"),
-  SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER: ONLY_SPONSOR("claim", "parseClaimRequest"),
-  SPONSOR_CLAIM_ABOVE_MAX: ONLY_SPONSOR("claim", "claimFund"),
-  SPONSOR_FEE_WALLET_IS_BENEFICIARY: ONLY_SPONSOR("claim", "claimFund"),
-  SPONSOR_FUND_NOT_FOUND: ONLY_SPONSOR("claim", "claimFund"),
-  SPONSOR_FUND_NOT_CLAIMABLE: ONLY_SPONSOR("claim", "claimFund"),
-  SPONSOR_FUND_NOTHING_TO_CLAIM: ONLY_SPONSOR("claim", "claimFund"),
+  // Ba mã của bộ dựng SDK (`MagicSDK/src/sponsorJourney.ts`) qua SPONSOR_ERROR_STATUS. Dịch vụ đã kiểm điều đó ở bước TRƯỚC
+  // khi gọi bộ dựng, nên không route nào trả được chúng; gỡ khỏi bảng chứ không khai một route không có thật.
+  SPONSOR_DID_COMMIT_LENGTH: UNREACHABLE_VIA_HTTP(
+    "open-vault bác did_commit sai độ dài bằng 400 DID_COMMIT_INVALID (parseSponsorRequest) trước T1; fund-vault bác thread có did_commit " +
+    "không đúng 32 byte hex bằng 422 SPONSOR_THREAD_DID_INVALID (fundVault) trước T2"),
+  SPONSOR_ANCHOR_REF_WRONG: UNREACHABLE_VIA_HTTP(
+    "fundVault tự tìm UTxO anchor bằng uniqueByUnit(anchorPolicy + did_commit) rồi mới đưa cho T2, nên chính sách và tên anchor luôn khớp"),
+  SPONSOR_FUND_NOT_PINNED: UNREACHABLE_VIA_HTTP(
+    "fundVault đưa cho T2 đúng đơn vị quỹ đã qua resolveSponsorFund trong tập ghim (assertFundPinnedInputs, SPONSOR_FUND_NOT_ALLOWED)"),
 };
 
 type Emitted = Map<string, { statuses: Set<number>; relayed: boolean; files: Set<string> }>;
@@ -636,22 +609,23 @@ describe("bảng mã lỗi: chiều mã → bảng", () => {
     expect(problems).toEqual([]);
   });
 
-  it("mỗi mã loại trừ còn được phát, vắng trong bảng, có lý do; mã tài trợ loại trừ không nằm trong first-consume/plan", () => {
+  it("mỗi mã loại trừ còn được phát, vắng trong bảng, có lý do; mã tài trợ loại trừ chỉ có mặt ở bảng SPONSOR_ERROR_STATUS", () => {
+    // Một mã tài trợ loại trừ là mã mà KHÔNG route nào ném: chuỗi chữ của nó xuất hiện đúng một lần trong `src/`, là khoá
+    // (không nháy) của bảng `SPONSOR_ERROR_STATUS`; không có chỗ ném nào mang nháy quanh mã. Xuất hiện thêm ở chỗ ném ⟹
+    // route đó trả được nó ⟹ phải vào bảng, không được ở lại danh sách loại trừ.
     const sponsorText = SRC_FILES.find(f => f.file === "sponsor.ts")!.text;
-    const bodyOf = (start: string, end: RegExp): string => {
-      const i = sponsorText.indexOf(start);
-      expect(i, start).toBeGreaterThanOrEqual(0);
-      const rest = sponsorText.slice(i + start.length);
-      const j = rest.search(end);
-      return j < 0 ? rest : rest.slice(0, j);
-    };
-    const contractBodies = bodyOf("async firstConsume(", /\n {2}(?:private |async )/) +
-      bodyOf("export function sponsorPlanBody(", /\n}\n/);
+    const tableAt = sponsorText.indexOf("SPONSOR_ERROR_STATUS");
+    expect(tableAt, "không còn thấy bảng SPONSOR_ERROR_STATUS").toBeGreaterThanOrEqual(0);
     for (const [code, why] of Object.entries(NOT_ON_CONTRACT_ROUTES)) {
       expect(scan.emitted.has(code), `${code} không còn được phát ⟹ gỡ khỏi danh sách loại trừ`).toBe(true);
       expect(byCode.has(code), `${code} có trong bảng ⟹ gỡ khỏi danh sách loại trừ`).toBe(false);
       expect(why.length, code).toBeGreaterThan(10);
-      if (code.startsWith("SPONSOR_")) expect(contractBodies.includes(`"${code}"`), `${code} nằm trong first-consume/plan`).toBe(false);
+      if (code.startsWith("SPONSOR_")) {
+        const quoted = SRC_FILES.filter(f => f.text.includes(`"${code}"`)).map(f => f.file);
+        expect(quoted, `${code} có chỗ ném mang mã chữ ⟹ một route trả được nó ⟹ đưa vào bảng`).toEqual([]);
+        const keyed = SRC_FILES.flatMap(f => [...f.text.matchAll(new RegExp(`^\\s*${code}:\\s*\\d{3},`, "gm"))].map(() => f.file));
+        expect(keyed, `${code} phải là khoá của SPONSOR_ERROR_STATUS và chỉ ở đó`).toEqual(["sponsor.ts"]);
+      }
     }
     expect(SRC_TEXT.includes("new OwnerTxInFlightError(")).toBe(false);
   });

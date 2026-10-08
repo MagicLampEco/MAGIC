@@ -62,7 +62,7 @@ import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import type { VaultTxService } from "../src/service.js";
 import { createPlatformSigner } from "../src/platformSigner.js";
 import { SponsorTxService, checkSponsorFeePayerTx, type SponsorFeePayerCheckContext } from "../src/sponsor.js";
-import { expectMatchesContract } from "./support/contract.js";
+import { expectErrorInTable, expectMatchesContract } from "./support/contract.js";
 import { LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID } from "./fixtures/preview.js";
 
 // ── Lưới + hằng ───────────────────────────────────────────────────────────────
@@ -294,6 +294,11 @@ function routerDeps(s: SponsorTxService): RouterDeps {
 }
 
 type Body = Record<string, unknown>;
+/** Các route tài trợ đã nằm trong hợp đồng module (`contract/openapi.json`); `post` đối chiếu mọi lời đáp của chúng. */
+const SPONSOR_CONTRACT_PATHS = new Set([
+  "/tx/sponsor/open-vault", "/tx/sponsor/bind-did", "/tx/sponsor/open-fund", "/tx/sponsor/fund-vault",
+  "/tx/sponsor/draw-magic", "/tx/sponsor/first-consume", "/tx/sponsor/claim",
+]);
 /** fund-vault chỉ mở bằng thẻ vai sponsor (`http.ts` ▸ `requireRole`); các route khác giữ thẻ thường (rỗng ở đây). */
 const SPONSOR_ROLE_TOKEN = "vai-sponsor-emu";
 /**
@@ -312,7 +317,15 @@ function dumpSampleTx(name: string, b: Body): void {
 async function post(path: string, body: Body, s: SponsorTxService = svc): Promise<{ status: number; body: Body }> {
   const headers = path === "/tx/sponsor/fund-vault" || path === "/tx/sponsor/claim"
     ? { authorization: `Bearer ${SPONSOR_ROLE_TOKEN}` } : {};
-  return handle({ method: "POST", url: path, headers, body }, routerDeps(s));
+  const r = await handle({ method: "POST", url: path, headers, body }, routerDeps(s));
+  // Hợp đồng module: MỌI lời đáp THẬT của một route đã có trong `contract/openapi.json` (200 và phong bì lỗi)
+  // phải khớp lược đồ đã ghim. Route chưa vào hợp đồng (plan) bỏ qua.
+  if (SPONSOR_CONTRACT_PATHS.has(path)) {
+    expectMatchesContract(`POST ${path}`, r.status, r.body);
+    // Lời đáp lỗi: mã phải có hàng trong `contract/error-codes.json`, đúng trạng thái, và hàng phải khai route này.
+    expectErrorInTable(`POST ${path}`, r.status, r.body);
+  }
+  return r;
 }
 const errCode = (r: { body: Body }) => (r.body.error as { code: string } | undefined)?.code;
 const ownerBody = () => ({ owner: { type: "key", hash: owner.pkh }, change_address: fee.address });
@@ -321,8 +334,6 @@ const ownerBody = () => ({ owner: { type: "key", hash: owner.pkh }, change_addre
 async function step(path: string, body: Body): Promise<Body> {
   const r = await post(path, body);
   if (r.status !== 200) throw new Error(`${path} ⟹ ${r.status} ${JSON.stringify(r.body)}`);
-  // Hợp đồng module: lời đáp THẬT của first-consume (trên script thật) khớp `contract/openapi.json`.
-  if (path === "/tx/sponsor/first-consume") expectMatchesContract("POST /tx/sponsor/first-consume", r.status, r.body);
   return r.body;
 }
 

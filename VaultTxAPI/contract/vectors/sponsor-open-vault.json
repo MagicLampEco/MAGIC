@@ -1,0 +1,759 @@
+{
+  "contract_version": "1.1.0",
+  "operation": "POST /tx/sponsor/open-vault",
+  "requests": {
+    "valid": [
+      {
+        "name": "did-owner-change-address",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+        }
+      },
+      {
+        "name": "did-owner-fee-payer",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          }
+        }
+      },
+      {
+        "name": "top-level-key-ignored",
+        "why": "The request body is open at the top level: a key the parser does not read is ignored, not refused.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "x_client_trace": "abc"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "did-commit-short",
+        "why": "did_commit is exactly 64 lowercase hex (the service answers 400 DID_COMMIT_INVALID); the schema refuses any other form.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+        }
+      },
+      {
+        "name": "did-commit-missing",
+        "why": "did_commit is required on open-vault.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+        }
+      },
+      {
+        "name": "owner-missing",
+        "why": "owner is required.",
+        "body": {
+          "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+        }
+      },
+      {
+        "name": "owner-extra-key",
+        "why": "The owner object is closed: a key other than type, did and device_key_hash is 400 OWNER_CREDENTIAL_SHAPE.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001",
+            "note": "x"
+          },
+          "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+        }
+      },
+      {
+        "name": "fee-payer-extra-key",
+        "why": "fee_payer is closed: only utxo, address and reservation_id (400 FEE_PAYER_SHAPE).",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14",
+            "note": "x"
+          }
+        }
+      },
+      {
+        "name": "funding-refused",
+        "why": "funding belongs to /tx/create-vault; here it is refused with 400 SPONSOR_REQUEST_SHAPE, and the schema declares it false.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "funding": {}
+        }
+      },
+      {
+        "name": "thread-lovelace-as-number",
+        "why": "Amounts are digit strings.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "thread_lovelace": 2000000
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "typical-fund-existing",
+        "status": 200,
+        "body": {
+          "step": "open-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "open-vault",
+            "vault_unit": "76767676767676767676767676767676767676767676767676767676aa",
+            "vault_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "thread_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "thread_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#1",
+            "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "owner": {
+              "type": "script",
+              "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+            },
+            "fund": {
+              "status": "existing"
+            },
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "note": "tx_cbor here is a hex placeholder, not a decodable transaction: the schema pins the form of tx_cbor (hex), not its content."
+      },
+      {
+        "name": "fund-created-with-platform-witness",
+        "status": 200,
+        "body": {
+          "step": "open-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "platform",
+              "key_hashes": [
+                "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+              ],
+              "how": "platform witness, already inside tx_cbor"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "open-vault",
+            "vault_unit": "76767676767676767676767676767676767676767676767676767676aa",
+            "vault_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "thread_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "thread_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#1",
+            "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "owner": {
+              "type": "script",
+              "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+            },
+            "fund": {
+              "status": "created",
+              "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+              "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+              "fund_address": "addr_test1wq0q0q0q0q0q0q0q0q0q0q0q0q0q0q0q0q0q0q0q0q0q0qq8k3hae",
+              "fund_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#2",
+              "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+              "platform_pkh": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+            },
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "note": "status created: the service has already attached the platform witness; fund_id and the other fund keys are present."
+      },
+      {
+        "name": "additive-keys",
+        "status": 200,
+        "body": {
+          "step": "open-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "open-vault",
+            "vault_unit": "76767676767676767676767676767676767676767676767676767676aa",
+            "vault_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "thread_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "thread_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#1",
+            "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "owner": {
+              "type": "script",
+              "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+            },
+            "fund": {
+              "status": "existing"
+            },
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ],
+            "added_in_a_later_minor": "x"
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z",
+          "added_in_a_later_minor": "x"
+        },
+        "note": "Keys added by a later minor release stay valid (compatibility.md)."
+      },
+      {
+        "name": "vault-already-exists",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "VAULT_ALREADY_EXISTS",
+            "message": "The owner already has a Prepaid vault.",
+            "details": {
+              "existing": [
+                "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "owner-not-did",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "SPONSOR_OWNER_NOT_DID",
+            "message": "open-vault accepts only an owner that proves a DID.",
+            "details": {
+              "step": "open-vault",
+              "owner_type": "key"
+            }
+          }
+        }
+      },
+      {
+        "name": "did-genesis-in-flight",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "SPONSOR_DID_GENESIS_IN_FLIGHT",
+            "message": "The DID already has a fund genesis in flight.",
+            "details": {
+              "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+              "held_until": "2026-10-08T04:35:03.000Z"
+            }
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "step-other-route",
+        "status": 200,
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "open-vault",
+            "vault_unit": "76767676767676767676767676767676767676767676767676767676aa",
+            "vault_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "thread_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "thread_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#1",
+            "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "owner": {
+              "type": "script",
+              "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+            },
+            "fund": {
+              "status": "existing"
+            },
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "step is open-vault on this route."
+      },
+      {
+        "name": "tx-hash-uppercase",
+        "status": 200,
+        "body": {
+          "step": "open-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "open-vault",
+            "vault_unit": "76767676767676767676767676767676767676767676767676767676aa",
+            "vault_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "thread_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "thread_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#1",
+            "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "owner": {
+              "type": "script",
+              "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+            },
+            "fund": {
+              "status": "existing"
+            },
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "Hashes are lowercase hex."
+      },
+      {
+        "name": "expires-at-missing",
+        "status": 200,
+        "body": {
+          "step": "open-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "open-vault",
+            "vault_unit": "76767676767676767676767676767676767676767676767676767676aa",
+            "vault_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "thread_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "thread_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#1",
+            "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "owner": {
+              "type": "script",
+              "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+            },
+            "fund": {
+              "status": "existing"
+            },
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "expires_at is on every build answer: it tells when the transaction dies."
+      },
+      {
+        "name": "vault-unit-not-hex",
+        "status": 200,
+        "body": {
+          "step": "open-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "open-vault",
+            "vault_unit": "NOT-HEX",
+            "vault_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "thread_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "thread_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#1",
+            "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "owner": {
+              "type": "script",
+              "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+            },
+            "fund": {
+              "status": "existing"
+            },
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "vault_unit is lowercase hex."
+      },
+      {
+        "name": "withdrawals-as-string",
+        "status": 200,
+        "body": {
+          "step": "open-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "open-vault",
+            "vault_unit": "76767676767676767676767676767676767676767676767676767676aa",
+            "vault_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "thread_unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+            "thread_address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+            "thread_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#1",
+            "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "owner": {
+              "type": "script",
+              "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+            },
+            "fund": {
+              "status": "existing"
+            },
+            "withdrawals": "1",
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "withdrawals is a JSON integer."
+      }
+    ]
+  }
+}

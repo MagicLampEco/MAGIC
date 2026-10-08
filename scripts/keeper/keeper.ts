@@ -65,6 +65,7 @@ import { priceParamParams, scheduleScriptPair, shardSpendParams, genV2BeaconRefs
 import { beaconEpochState, aheadMessage } from "./beaconEpoch.js";
 import { classifyGreenBackRun, decideGreenBack, greenbackPostEnv, parseGreenBackPostOutput } from "./greenback.js";
 import { stateBookPath } from "../stateBookPath.js";
+import { pureAdaCompleteOptions } from "./collateral.js";
 import { bookToRecord, readBookEntries } from "../deploy/11_deploy_gen_beacons.js";
 import { GREENBACK_SEED_KEY } from "../deploy/12_post_greenback.js";
 import { parseOutRef } from "../runResult.js";
@@ -312,6 +313,9 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
     const { next, tableNote: pushTableNote } = resolved;
     if (DRY) { record(tag, "skip", `DRY: sẽ PostPrice ${pp.epoch} → ${epoch}${pushTableNote}`); continue; }
     try {
+      // Thế chấp chỉ-ADA (`keeper/collateral.ts`): ví không có UTxO thuần ADA đủ lớn ⟹ NÉM, rơi vào
+      // catch dưới đây và thành dòng "hỏng" — không thử may rủi trên UTxO có token.
+      const completeOpts = await pureAdaCompleteOptions(lucid);
       const tx = await lucid.newTx()
         .collectFrom([beacon], Data.to(new Constr(0, [])) /* PostPrice = constr 0 (price_param.ak ▸ PriceParamRedeemer) */)
         .attach.SpendingValidator(script)
@@ -319,7 +323,7 @@ async function stepPrice(lucid: LucidEvolution, ownerPkh: string, nowMs: bigint)
         .addSignerKey(ownerPkh)
         .validFrom(Number(lowerMs))
         .validTo(Number(upperMs))
-        .complete();
+        .complete(completeOpts);
       const signed = await tx.sign.withWallet().complete();
       const txHash = await signed.submit();
       if (!(await awaitTxBounded(lucid, txHash))) {
@@ -423,6 +427,8 @@ async function stepFire(lucid: LucidEvolution, nowMs: bigint) {
       const shardUtxos = (await lucid.utxosAt(shardAddr)).filter((u) =>
         Object.keys(u.assets).some((k) => k.startsWith(POLICY_IDS.shard_nft) && u.assets[k]! > 0n));
       const result = await buildScheduleFireTx({
+        // Thế chấp chỉ-ADA: ném (⟹ dòng "hỏng") khi ví không có UTxO thuần ADA đủ lớn.
+        walletInputs: (await pureAdaCompleteOptions(lucid)).presetWalletInputs,
         refScriptUtxos: refUtxos, lucid, vaultUtxo, shardUtxos, scheduleId: job.scheduleId,
         vaultScript, shardScript, lampPolicyId: POLICY_IDS.lamp, lampAssetName: ASSET_NAMES.lamp,
         network: NETWORK, tipPosixMs: await tipMs(),

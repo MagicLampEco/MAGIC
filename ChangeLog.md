@@ -20,6 +20,22 @@ output nào ở script quỹ. (4) `validate_vault_value` ở `InstantGen`/`Sched
 (ScheduleGen); `shard`/`shard_nft` của ScheduleGen giữ nguyên. Hiệu lực từ lần deploy kế, không hồi tố UTxO đang
 sống. Bộ dựng giao dịch nào đặt thêm output ở địa chỉ két/quỹ (kể cả khác stake) trong cùng giao dịch sẽ bị từ chối.
 
+## 2026-10-07 — VaultTxAPI: hợp đồng cho module backend (`VaultTxAPI/contract/`) và bài kiểm ghim nó vào mã
+
+**Đổi gì.** Thêm `VaultTxAPI/contract/`: `openapi.json` (OpenAPI 3.1, chín route module gọi), `error-codes.json`
+(bảng mã lỗi, mỗi mã một trạng thái + route), `vectors/*.json` (mẫu lời đáp hợp lệ và mẫu bị bác kèm lý do, mười tệp),
+`compatibility.md` (luật tương thích). Thêm `tests/moduleContract.test.ts` (đối chiếu vector với lược đồ, lời đáp của
+router thật với lược đồ, mã lỗi trong `src/` với bảng), `tests/schemaSubset.test.ts` + `tests/support/schemaSubset.ts`
+(bộ kiểm lược đồ nhỏ tự viết, không thêm dependency), và móc một dòng ở `feeQuote.test.ts` (lời đáp `/tx/quote`) và
+`sponsorEmulator.test.ts` (lời đáp `/tx/sponsor/first-consume`). README VaultTxAPI trỏ tới `contract/` và bổ sung hai
+mã còn thiếu trong bảng lỗi (`404 NOT_FOUND`, `400 SPONSOR_VAULT_REF_MISMATCH`). Không đổi hành vi route nào.
+**Vì sao.** Module backend ngoài đang đọc lời đáp theo trí nhớ của người viết nó; một bản phát hành thêm
+`fee_payer.reservation_id` mà bộ đọc từ chối khoá lạ đã làm module trả 502 cho chính người dùng của nó. Luật phải nằm ở
+một chỗ chạy được: lời đáp MỞ, yêu cầu ĐÓNG ở `fee_payer` và `pairs`, đổi hợp đồng + vector + bài kiểm trong cùng PR.
+**Cái gì gãy.** Không gãy gì ở thời chạy. Từ nay PR nào đổi hình dạng một lời đáp hay một mã lỗi mà module thấy sẽ đỏ
+`moduleContract.test.ts` cho tới khi sửa `contract/` cùng lúc. Module nào chọn lại từng khoá của `fee_payer` thay vì
+chuyển nguyên khối sẽ nhận `400 FEE_PAYER_SHAPE` khi dịch vụ thêm khoá mới: luật ở `contract/compatibility.md` §3.
+
 ## 2026-10-07 — VaultReadAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy (cùng cổng với VaultTxAPI)
 
 **Đổi gì.** (1) Đặt `VAULT_READ_API_BASE_PATH` mà `VAULT_READ_API_TOKEN` rỗng ⟹ từ chối khởi động, kể cả khi bind

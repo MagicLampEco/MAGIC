@@ -283,6 +283,9 @@ describe("/tx/bind-did — tranh chấp thread", () => {
     const r = await handle(bind(), h.router);
     expect(r.status).toBe(409);
     expect(codeOf(r)).toBe("PREVIOUS_TX_PENDING");
+    // Sổ ghi không kèm hash ⟹ `pending_tx_hash: null` (khoá có mặt, không bịa hash).
+    expect((r.body as { error: { details: Record<string, unknown> } }).error.details)
+      .toEqual({ utxo_ref: `${THREAD_TX}#0`, pending_tx_hash: null });
     expect(h.builder.lastCall).toBeNull();
   });
 });

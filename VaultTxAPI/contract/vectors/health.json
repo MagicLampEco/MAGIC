@@ -1,0 +1,442 @@
+{
+  "contract_version": "1.0.0",
+  "operation": "GET /health",
+  "responses": {
+    "valid": [
+      {
+        "name": "network-without-epoch-origin",
+        "status": 200,
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        },
+        "note": "epoch is null with epoch_unavailable_reason: a configuration state of the network, still HTTP 200."
+      },
+      {
+        "name": "network-with-epoch-origin",
+        "status": 200,
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": "abababababababababababababababababababab",
+          "commit_dirty": false,
+          "commit_source": "git",
+          "base_path": "",
+          "epoch": {
+            "origin_ms": "1666656000000",
+            "ms_per_epoch": "432000000",
+            "current": 318,
+            "start_ms": "1791072000000",
+            "end_ms": "1791504000000"
+          }
+        }
+      },
+      {
+        "name": "additive-unknown-keys",
+        "status": 200,
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50",
+            "ticker": "LAMP"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE",
+          "build_hint": "new top-level key"
+        },
+        "note": "Unknown keys at any level are additive: a reader accepts them."
+      },
+      {
+        "name": "method-not-allowed",
+        "status": 405,
+        "body": {
+          "error": {
+            "code": "METHOD_NOT_ALLOWED",
+            "message": "This route only accepts GET.",
+            "details": {}
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "holds-signing-material-true",
+        "status": 200,
+        "why": "The service never holds signing material; true is a contract violation, not a value to display.",
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": true,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        }
+      },
+      {
+        "name": "missing-holds-signing-material",
+        "status": 200,
+        "why": "holds_signing_material is guaranteed.",
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        }
+      },
+      {
+        "name": "ok-as-string",
+        "status": 200,
+        "why": "ok is the boolean true.",
+        "body": {
+          "ok": "true",
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        }
+      },
+      {
+        "name": "feecover-outside-closed-set",
+        "status": 200,
+        "why": "feecover is absent or configured.",
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "enabled",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        }
+      },
+      {
+        "name": "lamp-policy-uppercase",
+        "status": 200,
+        "why": "policy_id is lowercase hex.",
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1F1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        }
+      },
+      {
+        "name": "epoch-missing",
+        "status": 200,
+        "why": "epoch is always present (object or null).",
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        }
+      },
+      {
+        "name": "epoch-current-as-string",
+        "status": 200,
+        "why": "epoch.current is a JSON integer (the epoch index), not an amount string.",
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": "abababababababababababababababababababab",
+          "commit_dirty": false,
+          "commit_source": "git",
+          "base_path": "",
+          "epoch": {
+            "origin_ms": "1666656000000",
+            "ms_per_epoch": "432000000",
+            "current": "318",
+            "start_ms": "1791072000000",
+            "end_ms": "1791504000000"
+          }
+        }
+      },
+      {
+        "name": "epoch-bounds-as-numbers",
+        "status": 200,
+        "why": "Epoch boundaries are digit strings.",
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "script_hash": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": "abababababababababababababababababababab",
+          "commit_dirty": false,
+          "commit_source": "git",
+          "base_path": "",
+          "epoch": {
+            "origin_ms": "1666656000000",
+            "ms_per_epoch": "432000000",
+            "current": 318,
+            "start_ms": 1791072000000,
+            "end_ms": "1791504000000"
+          }
+        }
+      },
+      {
+        "name": "vault-scope-without-script-hash",
+        "status": 200,
+        "why": "Each vault scope carries script_hash.",
+        "body": {
+          "ok": true,
+          "network": "Preview",
+          "chain": "recorded",
+          "deployment_source": "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật",
+          "deployment_sources": [
+            "Preview, bản dựng thử của phép kiểm — không phải một lần deploy thật"
+          ],
+          "lamp": {
+            "policy_id": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "asset_name_hex": "744c414d50"
+          },
+          "change_address_strategy": "enterprise_from_owner_pkh",
+          "vault_scopes": [
+            {
+              "vault_type": "Schedule",
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x"
+            }
+          ],
+          "holds_signing_material": false,
+          "feecover": "configured",
+          "commit": null,
+          "commit_dirty": null,
+          "commit_source": "not_measured",
+          "base_path": "",
+          "epoch": null,
+          "epoch_unavailable_reason": "WINDOW_ORIGIN_UNAVAILABLE"
+        }
+      }
+    ]
+  }
+}

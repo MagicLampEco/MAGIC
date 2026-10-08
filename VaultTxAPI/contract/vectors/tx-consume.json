@@ -1,0 +1,2987 @@
+{
+  "contract_version": "1.0.0",
+  "operation": "POST /tx/consume",
+  "requests": {
+    "valid": [
+      {
+        "name": "single-op-with-fee-payer",
+        "body": {
+          "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+          "op_type": 1,
+          "op_count": "2",
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          }
+        }
+      },
+      {
+        "name": "pairs",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "pairs": [
+            {
+              "op_type": 1,
+              "op_count": "2"
+            },
+            {
+              "op_type": 2,
+              "op_count": "1"
+            }
+          ],
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "fee-payer-with-unknown-key",
+        "why": "The fee_payer of a REQUEST is closed: a key other than utxo, address, reservation_id is answered 400 FEE_PAYER_SHAPE (details.extra_fields). Forward the object exactly as /fee/utxo returned it; a module that re-picks keys loses the ones added later.",
+        "body": {
+          "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+          "op_type": 1,
+          "op_count": "2",
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14",
+            "lease_epoch": 318
+          }
+        }
+      },
+      {
+        "name": "pair-with-unknown-key",
+        "why": "A pairs element is closed: only op_type and op_count (400 CONSUME_PAIRS_SHAPE).",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "pairs": [
+            {
+              "op_type": 1,
+              "op_count": "2",
+              "note": "x"
+            }
+          ],
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          }
+        }
+      },
+      {
+        "name": "op-count-as-json-number",
+        "why": "Amounts are digit strings. A JSON number is a float: past 2^53 it rounds silently.",
+        "body": {
+          "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+          "op_type": 1,
+          "op_count": 2
+        }
+      },
+      {
+        "name": "reservation-id-wrong-shape",
+        "why": "reservation_id is 32 lowercase hex.",
+        "body": {
+          "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+          "op_type": 1,
+          "op_count": "2",
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "XYZ"
+          }
+        }
+      },
+      {
+        "name": "fee-payer-without-address",
+        "why": "fee_payer needs utxo and address (copy the object from /fee/utxo whole).",
+        "body": {
+          "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+          "op_type": 1,
+          "op_count": "2",
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0"
+          }
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "with-fee-payer",
+        "status": 200,
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "without-fee-payer-summary",
+        "status": 200,
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        },
+        "note": "summary.fee_payer is present only when the request carried a fee_payer."
+      },
+      {
+        "name": "additive-keys-everywhere",
+        "status": 200,
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1,
+              "tier": "gold"
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0",
+              "line_id": 7
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z",
+          "trace_id": "t-1"
+        },
+        "note": "Unknown keys at any level are additive. A reader that rejects them breaks on the next minor release."
+      },
+      {
+        "name": "vault-not-found",
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "VAULT_NOT_FOUND",
+            "message": "The owner has no vault.",
+            "details": {
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "addresses_searched": [
+                "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "previous-tx-pending",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "PREVIOUS_TX_PENDING",
+            "message": "Vault input is in a pending transaction.",
+            "details": {
+              "utxo_ref": "e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd76#0",
+              "pending_tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff"
+            }
+          }
+        },
+        "note": "If pending_tx_hash is the transaction you submitted for this operation, the operation is in flight: poll GET /tx/status/{pending_tx_hash}, do not build again."
+      },
+      {
+        "name": "reservation-expired",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "FEE_PAYER_RESERVATION_EXPIRED",
+            "message": "Reservation expired.",
+            "details": {
+              "reserved_until": null,
+              "fee_payer_utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "reservation": "foreign"
+            }
+          }
+        }
+      },
+      {
+        "name": "protocol-rejects",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "TX_BUILD_REJECTED",
+            "message": "MAGIC alive is below required.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "too-many-batches",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "CONSUME_TOO_MANY_BATCHES",
+            "message": "Too many batches.",
+            "details": {
+              "burn_entries_needed": 40,
+              "burn_entries_cap": 32,
+              "live_batches": 40
+            }
+          }
+        }
+      },
+      {
+        "name": "fee-payer-shape",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "FEE_PAYER_SHAPE",
+            "message": "reservation_id must be 32 lowercase hex.",
+            "details": {
+              "field": "fee_payer.reservation_id"
+            }
+          }
+        }
+      },
+      {
+        "name": "fee-payer-shape-unknown-key",
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "FEE_PAYER_SHAPE",
+            "message": "\"fee_payer\" has unknown keys: lease_epoch.",
+            "details": {
+              "extra_fields": [
+                "lease_epoch"
+              ]
+            }
+          }
+        },
+        "note": "The request fee_payer is closed. extra_fields lists the keys the service did not recognise."
+      },
+      {
+        "name": "chain-unavailable",
+        "status": 502,
+        "body": {
+          "error": {
+            "code": "CHAIN_UNAVAILABLE",
+            "message": "Chain provider failed.",
+            "details": {
+              "node": "blockfrost"
+            }
+          }
+        }
+      },
+      {
+        "name": "unknown-code-in-known-class",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "A_CODE_FROM_A_LATER_RELEASE",
+            "message": "Unknown to this reader.",
+            "details": {}
+          }
+        },
+        "note": "A reader treats an unknown code by its HTTP status class (409: conflict; do not rebuild automatically) and does not fail the parse."
+      }
+    ],
+    "invalid": [
+      {
+        "name": "tx-hash-uppercase",
+        "status": 200,
+        "why": "tx_hash is lowercase hex; hashes are compared as strings.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4F27C87C6488ADFCE6A63AFE9BCFA68AF02A3E72188D8013FBC6E175284456FF",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "tx-hash-63-hex",
+        "status": 200,
+        "why": "tx_hash is exactly 64 hex characters.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456f",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "tx-cbor-odd-length",
+        "status": 200,
+        "why": "tx_cbor is whole bytes of lowercase hex.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "fee-lovelace-as-json-number",
+        "status": 200,
+        "why": "Amounts are digit strings in responses too.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": 178000,
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "burned-nanogic-as-json-number",
+        "status": 200,
+        "why": "nanogic amounts are digit strings.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": 1000000000,
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "required-nanogic-negative",
+        "status": 200,
+        "why": "required_nanogic is a non-negative digit string.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "-1",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "summary-missing",
+        "status": 200,
+        "why": "summary is what a person reads before signing; a transaction without it is not offered.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "summary-consume-missing",
+        "status": 200,
+        "why": "summary.consume proves what the CBOR consumes.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "redeemer-outside-closed-set",
+        "status": 200,
+        "why": "redeemer is Consume or ConsumeMany; an unknown redeemer means the reader cannot interpret the transaction.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Burn",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "requested-intent-other-route",
+        "status": 200,
+        "why": "requested_intent for this route is consume.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "instant_gen",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "expires-at-missing",
+        "status": 200,
+        "why": "expires_at is guaranteed on every build route.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "server-time-missing",
+        "status": 200,
+        "why": "server_time lets the client compute the deadline without trusting its own clock.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ]
+        }
+      },
+      {
+        "name": "expires-at-as-epoch-number",
+        "status": 200,
+        "why": "expires_at is ISO 8601.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": 1789101303000,
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "required-signers-not-hex",
+        "status": 200,
+        "why": "required_signers are 56-hex key hashes.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "owner"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "engage-input-ref-without-index",
+        "status": 200,
+        "why": "engage_input_ref is <tx_hash>#<index>.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "output-lovelace-as-number",
+        "status": 200,
+        "why": "Output lovelace is a digit string.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": 5659030,
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "fee-payer-valid-to-as-number",
+        "status": 200,
+        "why": "valid_to_posix_ms is a digit string.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "key",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": 1789101303000
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "vault-owner-type-unknown",
+        "status": 200,
+        "why": "summary.vault.owner.type is key or script.",
+        "body": {
+          "tx_cbor": "84a800d9010283825820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa008258207e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e000183a300581d7076a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bf01821a00565996a2581cf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a145744c414d501a3baa0c40581c76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bfa15820f45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a601028201d81859012bd8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff1a3baa0c401a015ef3c09fd8799f1a3baa0c401950dcd87980ffff9fd8799f50fbfbfbfbfbfbfbfbfbfbfbfbfbfbfbfbd87c801950e31aee6b28001aee6b280001d87a80d87a80d87980ffff00809fd8799f5820a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a01950dc1950de1950e70a1a006acfc01b00000001dcd650001b00000001dcd650001a3b9aca0000d87a801a3b9aca001a3b9aca00ffffd87a8000d87a801950dcd8799f80d87a800000ffd8799f801a3b9aca00ffd8799f0000ffd87a80d8799f400000ff9fd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffd8799f0000ffff00ff82581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a0095df30a300581d70e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001821a001e8480a1581ce0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0a1410101028201d818582ed8799fd8799f581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4ff0200401a3b9aca00ff021a0002b750031a074c5df70dd9010281825820fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa000ed9010281581c2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f41082581d60fefefefefefefefefefefefefefefefefefefefefefefefefefefefe1a006acfc012d90102818258209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00a10581840000d8799f0102d8799f58209e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e00ffd8799f5820e5fd34b1b58e291437d419b8a7dbd8f0d508a911e722d91dae76a38cf22ebd7600ffff820000f5f6",
+          "tx_hash": "4f27c87c6488adfce6a63afe9bcfa68af02a3e72188d8013fbc6e175284456ff",
+          "summary": {
+            "requested_intent": "consume",
+            "network": "Preview",
+            "fee_lovelace": "178000",
+            "fee_ada": "0.178000",
+            "lamp": {
+              "locked_delta_oildrop": "21000000",
+              "locked_delta_lamp": "21.000000",
+              "balance_delta_oildrop": "0",
+              "balance_delta_lamp": "0.000000",
+              "in_vault_output_oildrop": "1001000000",
+              "in_vault_output_lamp": "1001.000000"
+            },
+            "magic": {
+              "minted_nanogic": "0",
+              "minted_magic": "0.000000000",
+              "burned_nanogic": "1000000000",
+              "burned_magic": "1.000000000",
+              "expired_dropped_nanogic": "0",
+              "expired_dropped_magic": "0.000000000",
+              "total_after_nanogic": "4000000000",
+              "total_after_magic": "4.000000000"
+            },
+            "vault": {
+              "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+              "output_index": 0,
+              "owner": {
+                "type": "did",
+                "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              },
+              "owner_pkh": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4",
+              "last_updated_epoch": "20700",
+              "instant_unlock_ms": null,
+              "instant_unlock_ms_before": null,
+              "batch_count_before": 1,
+              "batch_count_after": 1,
+              "gen_schedule_count_before": 0,
+              "gen_schedule_count_after": 1
+            },
+            "gen": {
+              "cap_epoch": null,
+              "cap_nanogic": null,
+              "wakeme_link": null,
+              "usage_window_epoch": "0",
+              "usage_factor_q": "750000000"
+            },
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "lovelace": "5659030",
+                "ada": "5.659030",
+                "assets": [
+                  {
+                    "unit": "76a5aaa67a89efd80e8a4e427462a48f5a98fd8c850315d81b2857bff45cfae55ac7f579420d5758cceb15a35f178486d003c31aaa9391a466f181a6",
+                    "quantity": "1"
+                  },
+                  {
+                    "unit": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1744c414d50",
+                    "quantity": "1001000000"
+                  }
+                ],
+                "has_inline_datum": true
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "lovelace": "9822000",
+                "ada": "9.822000",
+                "assets": [],
+                "has_inline_datum": false
+              },
+              {
+                "index": 2,
+                "address": "addr_test1wrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcq97pnlq",
+                "lovelace": "2000000",
+                "ada": "2.000000",
+                "assets": [
+                  {
+                    "unit": "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e001",
+                    "quantity": "1"
+                  }
+                ],
+                "has_inline_datum": true
+              }
+            ],
+            "fee_payer": {
+              "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+              "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+              "input_lovelace": "10000000",
+              "fee_lovelace": "178000",
+              "change_lovelace": "9822000",
+              "fronted_lovelace": "0",
+              "fronted_max_lovelace": "5000000",
+              "fronted_output_index": 0,
+              "shared_fronted_lovelace": "0",
+              "shared_fronted_outputs": [],
+              "collateral_at_risk_lovelace": "3000000",
+              "collateral_return_lovelace": "7000000",
+              "valid_to_posix_ms": "1789101303000"
+            },
+            "consume": {
+              "redeemer": "Consume",
+              "pairs": [
+                {
+                  "op_type": 1,
+                  "op_count": "2"
+                }
+              ],
+              "required_nanogic": "1000000000",
+              "required_magic": "1.000000000",
+              "engage_input_ref": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e#0"
+            }
+          },
+          "expires_at": "2026-09-11T04:35:03.000Z",
+          "expires_reason": "fee_reservation",
+          "ignored": [],
+          "ignored_other_owner_count": 0,
+          "required_signers": [
+            "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          ],
+          "witness_notes": [
+            "Chủ khoá: ký bằng khoá 2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4.",
+            "Phí + tài sản thế chấp: UTxO fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0 của addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s; tiền thối ADA và collateral_return về đúng địa chỉ đó. Bên trả phí ký bằng khoá thanh toán của địa chỉ đó; hạn dùng ≤ 1 giờ kể từ lúc dựng.",
+            "Hạn dùng: giao dịch này chỉ lên chuỗi được trước 2026-09-11T04:35:03.000Z (giờ giữ chỗ UTxO ví trả phí ở Feecover hết trước hạn ký). Ký và nộp trước mốc đó; quá mốc thì /tx/submit trả 410 TX_EXPIRED và phải dựng lại."
+          ],
+          "server_time": "2026-09-11T04:25:03.000Z"
+        }
+      },
+      {
+        "name": "error-envelope-with-200",
+        "status": 200,
+        "why": "A 200 carrying an error body is not a ConsumeResponse.",
+        "body": {
+          "error": {
+            "code": "TX_BUILD_REJECTED",
+            "message": "x",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "error-without-details",
+        "status": 404,
+        "why": "Error responses keep the envelope.",
+        "body": {
+          "error": {
+            "code": "VAULT_NOT_FOUND",
+            "message": "x"
+          }
+        }
+      }
+    ]
+  }
+}

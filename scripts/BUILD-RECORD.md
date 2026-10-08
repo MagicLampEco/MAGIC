@@ -47,7 +47,7 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `vault.vault` | `7bc836c50d365440b3c76c036e4eda2a42b231eb4f2be50dd5f386ef` |
+| `vault.vault` | `00a1e618f4a7bfdbcd1cd69a6bc6feed3382bf3c3066e9b5f85dfa84` |
 
 ### `PrepaidGen/onchain`
 
@@ -55,8 +55,8 @@ trình biên dịch `v1.1.21+42babe5`
 
 | validator | hash (CHƯA apply-param) |
 |---|---|
-| `prepaid.paid_fund` | `dce086963b50bee18904bc35ece008dd2a686f6013745ceb1473167b` |
-| `prepaid.prepaid_vault` | `6476592e4fd896fc0f848038ebfee9c52a7f91a857ccc9f8291abbae` |
+| `prepaid.paid_fund` | `fbd65aa31886b849f7a52a36c17f8f0b355dbd87c8e9ddd470f4baaf` |
+| `prepaid.prepaid_vault` | `3ac0b4dc4a0ff6918e2af2d39c5d439e6d245d87c8488c975a8f4477` |
 
 ### `ScheduleGen/onchain`
 
@@ -65,9 +65,9 @@ trình biên dịch `v1.1.21+42babe5`
 | validator | hash (CHƯA apply-param) |
 |---|---|
 | `shard_nft.shard_nft` | `9553132b54fce178732fdae7f95b9f1833349c087277e939c22a12ef` |
-| `vault.commit` | `0baf478f7f997a3f2f1c61a2912dbc5cb5eed2d54d026ec7e39a6b17` |
-| `vault.shard` | `409e4f4b614a3dab7de5cd97d15f5c18820e2c335092e9e9d6e82d7c` |
-| `vault.vault` | `65536efc8e57076c583c2648a24051866498883308e665510ddff4cb` |
+| `vault.commit` | `f61a920cd8f53f3e9e0962c2070c62df74092f1ab1bb51d94c7faa76` |
+| `vault.shard` | `b49a34d9cb69fe97ac4a4c81bcb035ff765beefe4dc7c226da1a1270` |
+| `vault.vault` | `b5a3ef89dafedddef657f56b9f1836d900f6826de0057c68385cc6a6` |
 
 ### `UMKeeper/onchain`
 

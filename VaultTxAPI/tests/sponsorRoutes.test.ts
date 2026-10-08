@@ -301,10 +301,25 @@ describe("hình dạng thân bài", () => {
     ["/tx/sponsor/draw-magic", { ...KEY_OWNER, fund_id: "f0", carp_amount: "x" }, "BAD_REQUEST"],
     ["/tx/sponsor/first-consume", { ...KEY_OWNER, op_type: 1, op_count: "1", draw_epoch: -1 }, "SPONSOR_REQUEST_SHAPE"],
     ["/tx/sponsor/first-consume", { ...KEY_OWNER, op_type: 1, op_count: "1", draw_epoch: 330, vault_ref: "nope" }, "SPONSOR_REQUEST_SHAPE"],
+    // `pairs` của first-consume dùng CHUNG bộ đọc + bộ kiểm với /tx/consume (cùng mã `CONSUME_PAIRS_*`); đối chiếu
+    // từng mã với /tx/consume ở `sponsorFirstConsumePairs.test.ts`.
+    ["/tx/sponsor/first-consume", { ...KEY_OWNER, draw_epoch: 330, op_type: 1, op_count: "1", pairs: [{ op_type: 1, op_count: "1" }] }, "CONSUME_PAIRS_CONFLICT"],
+    ["/tx/sponsor/first-consume", { ...KEY_OWNER, draw_epoch: 330, pairs: [] }, "CONSUME_PAIRS_EMPTY"],
+    ["/tx/sponsor/first-consume", { ...KEY_OWNER, draw_epoch: 330, pairs: { op_type: 1, op_count: "1" } }, "CONSUME_PAIRS_SHAPE"],
+    ["/tx/sponsor/first-consume", { ...KEY_OWNER, draw_epoch: 330, pairs: [{ op_type: 2, op_count: "1" }, { op_type: 1, op_count: "1" }] }, "CONSUME_PAIRS_NOT_INCREASING"],
+    ["/tx/sponsor/first-consume", { ...KEY_OWNER, draw_epoch: 330, pairs: [{ op_type: 1, op_count: "0" }] }, "CONSUME_PAIR_COUNT_INVALID"],
   ])("%s %j ⟹ 400 %s", async (path, body, code) => {
     const r = await post(path, body, s());
     expect(r.status).toBe(400);
     expect(errCode(r)).toBe(code);
+  });
+
+  it("CẶP của first-consume `pairs`: thân hợp lệ (một cặp, hai cặp) ⟹ qua tầng hình dạng (chết ở cổng script, 501)", async () => {
+    for (const pairs of [[{ op_type: 1, op_count: "1" }], [{ op_type: 1, op_count: "1" }, { op_type: 2, op_count: "3" }]]) {
+      const r = await post("/tx/sponsor/first-consume", { ...KEY_OWNER, draw_epoch: 330, pairs }, s());
+      expect(r.status).toBe(501);
+      expect(errCode(r)).toBe("SPONSOR_PREPAID_SCRIPTS_MISMATCH");
+    }
   });
 
   it("CẶP: thân fund-vault hợp lệ ⟹ qua tầng hình dạng (chết ở cổng script, 501)", async () => {

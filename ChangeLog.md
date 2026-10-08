@@ -5,6 +5,20 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-08 — VaultTxAPI: `/tx/sponsor/first-consume` nhận `pairs` như `/tx/consume`
+
+**Đổi gì.** Thân first-consume nhận `pairs` (1..8 cặp) thay cho `op_type`+`op_count`; hai dạng loại trừ nhau, gửi cả
+hai ⟹ 400 `CONSUME_PAIRS_CONFLICT`. Cùng MỘT bộ đọc (`VaultTxAPI/src/buildRequest.ts` ▸ `consumeLineFields`, dùng cho
+cả `/tx/consume`) và cùng bộ kiểm (`consumeLine.ts` ▸ `consumeLineOf`) nên cùng mã lỗi; `pairs` một phần tử dựng
+`Consume` đơn, tx y hệt dạng cũ. `MagicSDK/src/sponsorJourney.ts` ▸ `buildSponsorT4FirstConsume` nhận thêm `pairs`
+(`ConsumeMany`; `required` = Σ sàn từng cặp, khác quy tắc gộp-rồi-sàn của `Consume` đơn).
+**Vì sao.** Bên gọi (dịch vụ OriLife theo hợp đồng module) luôn gửi `pairs`. Không có ràng buộc on-chain hay Feecover
+cho một cặp: `ConsumeMany` đã chạy trên két Prepaid ở `MagicSDK/tests/sponsorJourney.test.ts`; giới hạn cũ chỉ là chữ
+ký của bộ dựng SDK.
+**Cái gì gãy.** Không gì ở dạng cũ. `required` của first-consume nhiều cặp khác `required` của một cặp gộp: `draw-magic`
+phải rút đủ theo `required` của dạng được gửi. Hợp đồng module (`contract/openapi.json`, PR chưa gộp) còn khai
+`FirstConsumeRequest` bắt buộc `op_type`/`op_count` — cần sửa khi PR đó gộp.
+
 ## 2026-10-07 — VaultReadAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy (cùng cổng với VaultTxAPI)
 
 **Đổi gì.** (1) Đặt `VAULT_READ_API_BASE_PATH` mà `VAULT_READ_API_TOKEN` rỗng ⟹ từ chối khởi động, kể cả khi bind

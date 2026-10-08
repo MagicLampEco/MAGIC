@@ -1548,7 +1548,7 @@ Giá trị theo mạng chỉ nằm ở cấu hình triển khai, không nằm tr
 | `/tx/sponsor/open-fund` | — | BƯỚC BÙ: genesis quỹ tài trợ CỦA DID (`sponsorship = Some`, 0 CARP) cho két mở trước bản này | ví trả phí · **platform** (dịch vụ đã ký) · chủ |
 | `/tx/sponsor/fund-vault` | T2 | `PrepaidLock` + `FundLock`: CARP từ UTxO bên tài trợ vào **quỹ tài trợ của DID** đó, thối về bên tài trợ; anchor DID ở `reference_inputs` | ví trả phí · **bên tài trợ** · chủ |
 | `/tx/sponsor/draw-magic` | T3 | `PrepaidDraw` ⟹ một lô MAGIC sống đúng kỳ hiện tại | ví trả phí · chủ |
-| `/tx/sponsor/first-consume` | T4 | consume đầu + `BurnBatch` trên két Prepaid | ví trả phí · chủ |
+| `/tx/sponsor/first-consume` | T4 | consume đầu + `BurnBatch` trên két Prepaid; thân nhận `op_type`+`op_count` HOẶC `pairs` (1..8 cặp, cùng luật và cùng mã lỗi `CONSUME_PAIRS_*` với `/tx/consume`; `pairs` một cặp ⟹ `Consume` đơn, tx y hệt dạng cũ; cả hai dạng ⟹ 400 `CONSUME_PAIRS_CONFLICT`) | ví trả phí · chủ |
 | `/tx/sponsor/claim` | — | `FundClaim` (hoặc rút cuối đóng quỹ đã thu hồi): CARP từ quỹ tài trợ tới **beneficiary đã ghim**; thẻ vai sponsor; khi quỹ có E > 0 | ví trả phí · **platform** (dịch vụ đã ký) |
 
 Thứ tự hành trình: open-vault (kèm quỹ) → bind-did → fund-vault → draw-magic → first-consume → (SettleLine) → claim. open-fund

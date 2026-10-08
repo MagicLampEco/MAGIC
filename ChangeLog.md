@@ -11,6 +11,33 @@
 **Vì sao.** Lucid 0.4.30 chọn thế chấp theo lovelace giảm dần trên mọi UTxO ví; UTxO lớn nhất mang token ⟹ node từ chối `CollateralContainsNonADA`. Preprod 2026-10-08: hai lượt ghi beacon giá trễ 1–2 giờ.
 **Gãy gì.** Không gì cho người gọi cũ (`walletInputs` bỏ trống giữ nguyên hành vi). Bước `instant` của keeper (`deploy/05`, `test/instant_only.ts`) chưa đổi vì cần LAMP từ UTxO có token.
 
+## 2026-10-08 — scripts: deploy nhận seed one-shot CHO TRƯỚC, hash cụm tính được trước khi đúc
+
+**Đổi gì.** (1) `scripts/deploy/park_seeds.ts` mới: đỗ các output seed ở bãi đỗ của ví deploy, không đúc gì, in
+`DEPLOY_SEED_<VAI>=<tx>#<ix>`. (2) `scripts/clusterHashes.ts` mới: tính 20 hash của cụm phục vụ từ outref seed,
+ghi tệp hash kỳ vọng (`--out`); gọi đúng các hàm apply mà bước deploy gọi — chuỗi bake `price_nft → price_param →
+consume` dời sang `deployParams.ts` ▸ `consumeScriptChain`, policy `shard_nft` sang `03_deploy_shards.ts` ▸
+`shardNftPolicyFor`. (3) Bước 11 (pha `beacons`), 03 và 09 nhận seed qua tám biến `DEPLOY_SEED_*`. (4) Cả 20 hash
+được so với `DEPLOY_EXPECT_HASHES` trước giao dịch đầu tiên phụ thuộc chúng: 11 pha `beacons` (4), 03 (4), 05
+(`vault_instant`), 07 (`shard_nft` · `commit` · `vault_schedule`), 11 pha `registry` (`vault_registry` ·
+`vault_instant` · `vault_schedule`, trước khi đúc sổ bất biến), 10 (`paid_fund` · `vault_prepaid`), 09 (3 mỗi loại
+két); lệch hoặc tệp thiếu tên ⟹ ném. Mỗi phép so nằm trong một hàm thuần "tính + so" (`scripts/deployHashChecks.ts`,
+`03` ▸ `shardStepChecked`, `11` ▸ `registryHashesChecked`) mà bộ kiểm gọi thẳng. (5) Chế độ seed cho trước siết:
+seed trùng vai (hoặc trùng seed sổ két đã ghi) ⟹ ném ở 03/09/11 (`assertDistinctPresetSeeds`) và ở đầu vào
+`clusterHashes.ts`; có `DEPLOY_SEED_*` mà vắng tệp kỳ vọng ⟹ mọi bước ném, trừ `DEPLOY_EXPECT_NONE=1`; có tệp kỳ
+vọng ⟹ bước 03/09 chỉ nhận seed ở bãi đỗ; `clusterHashes.ts` ném khi `wakemeVaultHash` đầu vào khác hằng
+ProtocolUtils, trừ cờ `--wakeme-ahead-of-code`; `park_seeds.ts` DRY_RUN in mọi dòng dán-được kèm tiền tố
+`# DRY_RUN `. Nguồn luật: `scripts/deploySeeds.ts`. Vector `scripts/vectors/cluster_hashes.gen2-preprod.json` ghim
+20 hash cụm đời 2 Preprod.
+**Vì sao.** Bên tiêu thụ (app ghim policy lúc build) cần hash cụm TRƯỚC khi cụm được đúc; trước bản này mỗi bước tự
+chọn seed lúc chạy nên hash chỉ biết sau khi nộp. Một hash deploy ra lệch bản đã ghim là hành trình người dùng gãy,
+và đúc sổ két là thao tác một lần — nên mọi hash phải được so, không chỉ được in.
+**Cái gì gãy.** Không gì khi vắng mọi biến `DEPLOY_SEED_*` và `DEPLOY_EXPECT_HASHES`: hành vi cũ giữ nguyên. Đặt biến
+sai hình dạng, seed đã tiêu, không thuộc ví hay trùng vai ⟹ bước deploy ném thay vì tự chọn seed khác. Pha `registry`
+không còn từ chối `DEPLOY_EXPECT_HASHES`/`DEPLOY_SEED_*`: nó so tệp kỳ vọng và đối chiếu `DEPLOY_SEED_REGISTRY` với
+seed trong sổ, để một bộ env dùng được cho cả chuỗi. Tái dùng beacon GenBeacons đã có CHƯA hỗ trợ: bước 11 pha
+`beacons` luôn đúc mới.
+
 ## 2026-10-07 — VaultTxAPI: hợp đồng cho module backend (`VaultTxAPI/contract/`) và bài kiểm ghim nó vào mã
 
 **Đổi gì.** Thêm `VaultTxAPI/contract/`: `openapi.json` (OpenAPI 3.1, chín route module gọi), `error-codes.json`

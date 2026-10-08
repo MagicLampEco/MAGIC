@@ -3,7 +3,7 @@
 //
 // Vì sao không có nhánh riêng cho Prepaid, và vì sao đó là đúng chứ không phải thiếu:
 //  - Mỗi loại két có một bản `consume` riêng, nhưng là CÙNG một validator
-//    (`scripts/deploy/09_deploy_consume.ts` ▸ `findValidator(blueprint, "consume.consume.spend")`)
+//    (`scripts/deployParams.ts` ▸ `consumeScriptChain`, bước 09 gọi)
 //    chỉ khác apply-param `vault_script_hash` (`scripts/consumeBook.ts` ▸ `vaultHashKey`).
 //    Nên datum thread là MỘT lược đồ cho cả ba loại:
 //    `ConsumeMAGIC/onchain/lib/magiclamp/consume/types.ak` ▸ `EngageDatum`.

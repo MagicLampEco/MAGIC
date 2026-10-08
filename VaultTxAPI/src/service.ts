@@ -929,11 +929,13 @@ export class VaultTxService {
    */
   private assertNotPendingSpent(u: UTxO, subject = "vault này"): void {
     const ref = `${u.txHash}#${u.outputIndex}`;
-    if (this.deps.pending?.has(ref, this.now())) {
+    const spender = this.deps.pending?.spenderOf(ref, this.now());
+    if (spender !== undefined) {
       throw new CodedApiError(409, "PREVIOUS_TX_PENDING",
         `Giao dịch trước của ${subject} đã nộp nhưng chưa vào khối — UTxO ${ref} đang bị nó tiêu. ` +
-        `Thử lại sau khi giao dịch đó vào khối (thường dưới một phút).`,
-        { utxo_ref: ref });
+        `Nếu đó là giao dịch bạn đã nộp cho cùng thao tác thì thao tác đang chạy: tra GET /tx/status/<hash>, ` +
+        `đừng dựng lại. Nếu không, thử lại sau khi giao dịch đó vào khối (thường dưới một phút).`,
+        { utxo_ref: ref, pending_tx_hash: spender });
     }
   }
 
@@ -1352,11 +1354,15 @@ export class VaultTxService {
       // Tx CHÍNH dịch vụ phát nhưng quá validTo + biên ⟹ 410, không phải "không do dịch vụ dựng".
       const expired = expiredErrorFor(this.deps.issued, bodyHashBefore, this.now());
       if (expired !== null) throw expired;
+      // Sổ phát-hành nằm trong bộ nhớ MỘT tiến trình: dịch vụ khởi động lại, hoặc một bản sao khác sau bộ
+      // cân tải, cũng rơi vào đây với chính tx nó đã phát — và tx đó có thể đã lên chuỗi. Nên câu trả lời
+      // không bảo "dựng lại": bảo tra chuỗi trước (`contract/compatibility.md` ▸ "Before rebuilding").
       throw new SubmitRejectedError(
-        "Giao dịch này không do dịch vụ dựng ra, hoặc đã quá hạn nộp. Dịch vụ chỉ nộp " +
-        "giao dịch chính nó vừa phát hành — hãy gọi lại một trong các đường /tx/* để " +
-        "dựng bản mới rồi ký bản đó.",
-        { body_hash: bodyHashBefore },
+        "Dịch vụ không nhận ra giao dịch này: nó không do dịch vụ dựng ra, đã quá hạn nộp, hoặc dịch vụ " +
+        `đã khởi động lại / bản sao khác đang trả lời. Tra GET /tx/status/${bodyHashBefore} trước: ` +
+        "in_chain hoặc in_mempool ⟹ thao tác đã xong / đang chạy, đừng dựng lại; not_found và đã quá " +
+        "hạn (expires_at, hoặc cận trên khoảng hiệu lực trong CBOR) mới dựng bản mới.",
+        { body_hash: bodyHashBefore, tx_hash: bodyHashBefore },
       );
     }
 

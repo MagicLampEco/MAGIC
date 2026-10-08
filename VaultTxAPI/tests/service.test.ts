@@ -471,8 +471,13 @@ describe("/tx/submit — ghép chứng ký của app, dịch vụ không ký gì
     expect(late.chain.submitted).toEqual([]);
     // CẶP phân biệt: cùng tx, cùng thời điểm, nhưng dịch vụ CHƯA TỪNG phát ⟹ giữ mã cũ 502 SUBMIT_REJECTED.
     const never = harness({ submitResult: hash, clock: { t: lastOk + 1 } });
-    await expect(never.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
-      .rejects.toMatchObject({ httpStatus: 502, code: "SUBMIT_REJECTED" });
+    // Tiến trình không nhận ra tx có thể chỉ vì nó khởi động lại / là bản sao khác — tx có thể đã lên
+    // chuỗi. Câu trả lời mang `tx_hash` và bảo tra /tx/status trước, KHÔNG bảo dựng lại ngay.
+    const unknown = await never.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() })
+      .then(() => { throw new Error("submit phải bị từ chối"); }, (e: unknown) => e);
+    expect(unknown).toMatchObject({ httpStatus: 502, code: "SUBMIT_REJECTED", details: { tx_hash: hash, body_hash: hash } });
+    expect((unknown as Error).message).toContain(`GET /tx/status/${hash}`);
+    expect((unknown as Error).message).not.toMatch(/gọi lại một trong các đường \/tx\//);
     // Quá khoảng giữ lại dòng hết hạn ⟹ sổ đã quên tx ⟹ trở về mã "không do dịch vụ phát".
     late.clock!.t = lastOk + 1 + EXPIRED_RETENTION_MS;
     await expect(late.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() }))
@@ -592,7 +597,12 @@ describe("/tx/submit xong ⟹ UTxO vault vừa tiêu không được dựng lạ
     await COMMIT(h);
     await h.service.submit({ txCbor: cbor, witnessCbor: fakeWitnessSetCbor() });
     // Nút đọc (bản ghi) vẫn trả UTxO cũ — đúng như Blockfrost trước khi giao dịch vào khối.
-    await expect(COMMIT(h)).rejects.toMatchObject({ httpStatus: 409, code: "PREVIOUS_TX_PENDING" });
+    // `details.pending_tx_hash` = hash của CHÍNH tx vừa nộp: bên gọi nhận ra thao tác của mình đang bay
+    // và tra /tx/status thay vì dựng lại (dựng lại = tiêu hai lần).
+    await expect(COMMIT(h)).rejects.toMatchObject({
+      httpStatus: 409, code: "PREVIOUS_TX_PENDING",
+      details: { utxo_ref: `${INPUT_TX_HASH}#0`, pending_tx_hash: txBodyHash(cbor) },
+    });
   });
   it("CỰC ĐỐI: UTxO vault KHÁC (giao dịch trước đã vào khối) ⟹ dựng được", async () => {
     const cbor = commitTxCbor(3n);

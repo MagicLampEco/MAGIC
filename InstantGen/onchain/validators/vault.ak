@@ -285,15 +285,12 @@ fn validate_mint_vault_id(
   // vault spend address. Binding the NFT to it here is what stops the "mint
   // clean → re-home dirty" reopening: the NFT is born at the vault address and
   // can never leave it (spend always preserves it to the continuing output).
-  let carriers =
-    list.filter(tx.outputs, fn(o) {
-      o.address.payment_credential == Script(policy_id) && assets.quantity_of(
-        o.value,
-        policy_id,
-        nft_name,
-      ) == 1
-    })
-  expect [vault_out] = carriers
+  // Filter by SCRIPT first, then demand the NFT on that ONE output (G3V
+  // 2026-10-08): filtering on "at script AND carries the NFT" let a second
+  // output sit at the vault script without the NFT — a UTxO no branch can spend.
+  expect [vault_out] =
+    list.filter(tx.outputs, fn(o) { o.address.payment_credential == Script(policy_id) })
+  expect assets.quantity_of(vault_out.value, policy_id, nft_name) == 1
 
   // ── Genesis datum must be inline + decode as a VaultDatum ────────────────
   expect InlineDatum(datum_data) = vault_out.datum
@@ -788,7 +785,13 @@ fn validate_vault_value(vault_input: Input, vault_output: Output) -> Bool {
   // vault_id policy = own script hash, read from the input being spent.
   expect Script(vault_id_policy) = vault_input.output.address.payment_credential
   let nft_name = single_nft_name(vault_input.output.value, vault_id_policy)
-  expect assets.quantity_of(vault_output.value, vault_id_policy, nft_name) == 1
+  // Nợ #57 (G3V 2026-10-08): ONLY that (policy, name) under the vault policy — no
+  // second name. `quantity_of` answers "carries that NFT", not "carries only that
+  // NFT", and `|policies| <= 3` counts POLICIES so a second name is invisible to
+  // it. `MintVaultId` + `WithdrawLamp` on a never-generated vault builds exactly
+  // that output (`g3v_withdraw_second_vault_nft_rejected`); the next spend then
+  // dies at `single_nft_name` on the input ⟹ the vault is bricked for good.
+  expect single_nft_name(vault_output.value, vault_id_policy) == nft_name
 
   expect lovelace_not_decreased(vault_input, vault_output)
   expect list.length(assets.policies(vault_output.value)) <= 3
@@ -5055,4 +5058,93 @@ test rc_pos_mid_epoch_lent_grown_recomputes() {
 
 test rc_neg_mid_epoch_lent_grown_keeps_old_cap() fail {
   t_rc_mid(rc_mid_cap_old())
+}
+
+// ═══ G3V (2026-10-08): mọi output ở script két phải là một DÒNG SỔ ═══════════
+// Ca âm XANH (= được nhận) trên mã trước bản vá fix/vault-output-uniqueness; ca
+// đối chứng gọi cùng hàm dựng, chỉ bỏ phần rác.
+
+fn g3v_junk_at_vault(staked: Bool) -> Output {
+  let base = address.from_script(t_vault_hash)
+  Output {
+    address: if staked {
+      address.with_delegation_key(base, t_owner_pkh)
+    } else {
+      base
+    },
+    value: assets.from_lovelace(2_000_000)
+      |> assets.add(t_lamp_policy, #"744c414d50", 50),
+    datum: NoDatum,
+    reference_script: None,
+  }
+}
+
+// ── Lỗ 2: genesis chỉ lọc output MANG NFT ─────────────────────────────────────
+
+fn g3v_genesis(extra: List<Output>) -> Bool {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let out = t_genesis_output_ada(t_clean_genesis(100), 100, t_vault_hash, name, False)
+  let tx0 = t_mint_tx(seed, out, assets.from_asset(t_vault_hash, name, 1), [t_owner_pkh])
+  t_mint_call(seed, t_vault_hash, Transaction { ..tx0, outputs: list.concat(tx0.outputs, extra) })
+}
+
+test g3v_mint_control_ok() {
+  g3v_genesis([])
+}
+
+test g3v_mint_junk_output_at_vault_rejected() fail {
+  g3v_genesis([g3v_junk_at_vault(False)])
+}
+
+test g3v_mint_junk_output_staked_twin_rejected() fail {
+  g3v_genesis([g3v_junk_at_vault(True)])
+}
+
+// ── Lỗ 4 (Nợ #57): output tiếp nối mang HAI tên NFT dưới policy két ──────────
+// Gộp `MintVaultId` (seed mới) với `WithdrawLamp` trên két chưa sinh: datum két
+// sau rút vẫn có dạng genesis sạch, nên handler mint nhận output tiếp nối làm
+// "két mới". Két ra khỏi giao dịch mang hai tên ⟹ `single_nft_name` ở lượt chi
+// sau nổ ⟹ két chết vĩnh viễn.
+
+fn g3v_withdraw_tx(second_nft: Bool) -> Transaction {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let base_out = t_vault_output(t_clean_genesis(95), 95)
+  let out =
+    if second_nft {
+      Output { ..base_out, value: assets.add(base_out.value, t_vault_hash, name, 1) }
+    } else {
+      base_out
+    }
+  let tx0 =
+    t_tx(
+      [t_vault_input(t_clean_genesis(100), 100), t_seed_input(seed)],
+      [out],
+      [t_owner_pkh],
+    )
+  if second_nft {
+    Transaction { ..tx0, mint: assets.from_asset(t_vault_hash, name, 1) }
+  } else {
+    tx0
+  }
+}
+
+fn g3v_withdraw(tx: Transaction) -> Bool {
+  validate_withdraw_lamp(t_clean_genesis(100), 5, 0, t_own_ref(), t_params(), tx)
+}
+
+test g3v_withdraw_control_ok() {
+  g3v_withdraw(g3v_withdraw_tx(False))
+}
+
+test g3v_withdraw_second_vault_nft_rejected() fail {
+  g3v_withdraw(g3v_withdraw_tx(True))
+}
+
+// Handler mint KHÔNG thấy tổ hợp này (output tiếp nối có datum dạng genesis);
+// khoá duy nhất là `validate_vault_value` phía spend. Bài này ghi lại sự thật
+// đó: ai thêm cổng phía mint thì đổi bài này thành `fail`.
+test g3v_mint_side_accepts_existing_vault_as_carrier() {
+  t_mint_call(t_mint_seed(), t_vault_hash, g3v_withdraw_tx(True))
 }

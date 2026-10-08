@@ -182,6 +182,16 @@ export class PendingSpends {
   }
 
   /**
+   * Hash thân của tx vừa nộp đang tiêu `ref`: `null` khi bên ghi không khai hash, `undefined` khi `ref`
+   * không còn trong sổ. Lời đáp 409 `PREVIOUS_TX_PENDING` mang nó (`details.pending_tx_hash`) để bên gọi
+   * biết tx đang bay có phải chính tx mình đã nộp cho cùng thao tác không — nếu phải, dựng lại là tiêu hai lần.
+   */
+  spenderOf(ref: string, nowMs: number): string | null | undefined {
+    if (!this.has(ref, nowMs)) return undefined;
+    return this.spent.get(ref)!.txHash ?? null;
+  }
+
+  /**
    * Những input trong `refs` đang bị một tx KHÁC `txHash` vừa nộp tiêu. Dòng ghi không kèm hash
    * (bên ghi không khai) tính là KHÁC — không biết thì coi là xung đột, đừng đoán là chính nó.
    */

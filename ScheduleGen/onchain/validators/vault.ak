@@ -424,6 +424,16 @@ validator shard(shard_policy_id_param: PolicyId, vault_script_hash: ByteArray) {
       list.count(tx.outputs, fn(o) {
         assets.quantity_of(o.value, shard_policy_id_param, name) == 1
       }) == 1
+    // SHARD-OUT-0 (R169, 2026-10-08): đúng MỘT output ở SCRIPT shard, đếm theo
+    // payment credential. SHARD-DS-1 đã ép đúng một input shard mỗi giao dịch
+    // (mười sáu shard dùng chung một script), nên giao dịch tiếp nối đúng một
+    // shard — đếm `== 1` là khớp số shard input, không phải ép mù. Thiếu dòng này,
+    // commit/fire thêm được một output ở `Script(shard)` không NFT (kể cả khác
+    // stake): UTxO đó không nhánh nào tiêu lại được (SHARD-NFT đòi NFT ở chính
+    // input), tài sản kèm theo chết vĩnh viễn. Output được đếm phải là output mang
+    // NFT: `find_shard_output_by_policy` ghim output đó ở `shard_addr`.
+    expect
+      list.count(tx.outputs, fn(o) { same_script(o.address, shard_addr) }) == 1
     // SHARD-RETURN (Nợ #35): quay về ĐÚNG địa chỉ đang tiêu, không chỉ "có NFT".
     let output_shard =
       find_shard_output_by_policy(
@@ -3790,6 +3800,61 @@ test shard_in_from_wallet_rejected() fail {
       output: t_shard_out_at(wallet, 6, 1000),
     }
   find_shard_input_raw([inp], t_shard_policy, 6).output.address == wallet
+}
+
+// ── SHARD-OUT-0 (R169): output ở script shard phải là đúng shard tiếp nối ─────
+// Chạy TRỌN handler `shard.spend`: một két thật đồng tiêu dưới ScheduleCommit,
+// shard đi ra đúng địa chỉ, cộng `extra` output. Ca đối chứng `extra = []`; ca âm
+// thêm một output rác (không NFT, không datum) ở script shard — địa chỉ chuẩn hoặc
+// khác stake. Trước bản vá cả hai ca âm được nhận.
+
+fn r169_shard_junk(staked: Bool) -> Output {
+  Output {
+    address: if staked {
+      t_shard_addr() |> address.with_delegation_key(t_owner_pkh)
+    } else {
+      t_shard_addr()
+    },
+    value: assets.from_lovelace(2_000_000),
+    datum: NoDatum,
+    reference_script: None,
+  }
+}
+
+fn r169_shard_spend(extra: List<Output>) -> Bool {
+  let vd = t_datum(100, 0, [t_holding(100, 5, False)])
+  let sid = compute_shard_id(vd.owner)
+  let shard_ref = OutputReference { transaction_id: t_tx_id, output_index: 9 }
+  let shard_in =
+    Input { output_reference: shard_ref, output: t_shard_out_at(t_shard_addr(), sid, 1000) }
+  let rd: Data = ScheduleCommit { schedule_length: 10, lamp_per_epoch: 1 }
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: [t_vault_input(vd, 100), shard_in],
+      outputs: list.concat([t_shard_out_at(t_shard_addr(), sid, 1000)], extra),
+      redeemers: [Pair(Spend(t_own_ref()), rd)],
+    }
+  shard.spend(
+    t_shard_policy,
+    t_vault_hash,
+    Some(t_shard_datum(sid, 1000)),
+    ShardRedeemer.ShardUpdateCommit { delta_locked: 0, delta_committed: 0 },
+    shard_ref,
+    tx,
+  )
+}
+
+test r169_shard_spend_control_ok() {
+  r169_shard_spend([])
+}
+
+test r169_shard_spend_junk_output_at_shard_rejected() fail {
+  r169_shard_spend([r169_shard_junk(False)])
+}
+
+test r169_shard_spend_junk_output_staked_twin_rejected() fail {
+  r169_shard_spend([r169_shard_junk(True)])
 }
 
 // ═══════════════════════════════════════════════════════════════

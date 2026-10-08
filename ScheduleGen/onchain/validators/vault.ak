@@ -5054,6 +5054,51 @@ test g3v_mint_junk_output_staked_twin_rejected() fail {
   g3v_genesis([g3v_junk_at_vault(True)])
 }
 
+// ── Chốt NFT trên output ở script két (R169) ─────────────────────────────────
+// Bộ lọc genesis chỉ chọn output theo SCRIPT; dòng `expect quantity_of(vault_out,
+// policy, nft_name) == 1` là thứ DUY NHẤT đòi output đó mang NFT. Ca âm: NFT đúc
+// ra VÍ, output ở script két sạch nhưng không NFT — két không dòng sổ, LAMP kẹt.
+// Ca đối chứng: cùng hai output, NFT nằm ở script két. Hai ca chỉ khác chỗ NFT.
+
+fn g3v_genesis_nft_placement(nft_to_wallet: Bool) -> Bool {
+  let seed = t_mint_seed()
+  let name = t_mint_name(seed)
+  let out0 = t_genesis_output(t_clean_genesis(100), 100, t_vault_hash, name)
+  let at_vault =
+    if nft_to_wallet {
+      Output { ..out0, value: assets.add(out0.value, t_vault_hash, name, -1) }
+    } else {
+      out0
+    }
+  let wallet_value = assets.from_lovelace(2_000_000)
+  let wallet =
+    Output {
+      address: address.from_verification_key(t_owner_pkh),
+      value: if nft_to_wallet {
+        assets.add(wallet_value, t_vault_hash, name, 1)
+      } else {
+        wallet_value
+      },
+      datum: NoDatum,
+      reference_script: None,
+    }
+  let tx0 =
+    t_mint_tx(seed, at_vault, assets.from_asset(t_vault_hash, name, 1), [t_owner_pkh])
+  t_mint_call(
+    seed,
+    t_vault_hash,
+    Transaction { ..tx0, outputs: list.concat(tx0.outputs, [wallet]) },
+  )
+}
+
+test g3v_mint_nft_at_vault_with_wallet_output_ok() {
+  g3v_genesis_nft_placement(False)
+}
+
+test g3v_mint_nft_to_wallet_rejected() fail {
+  g3v_genesis_nft_placement(True)
+}
+
 // ── Lỗ 4 (Nợ #57): output tiếp nối mang HAI tên NFT dưới policy két ──────────
 // Xem khối cùng tên ở InstantGen: gộp `MintVaultId` với `WithdrawLamp` trên két
 // chưa sinh ⟹ két ra khỏi giao dịch mang hai tên ⟹ chết vĩnh viễn.

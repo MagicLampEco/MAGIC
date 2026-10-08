@@ -32,6 +32,15 @@
 //   (PRICE_DEMAND_MULT đã BỎ: demand_mult nay nằm trên từng dòng OpPrice — CC-LOAD-COUNT-UNIT.
 //    Đặt biến đó thì kịch bản ném lỗi, không lặng lẽ bỏ qua.)
 //
+// SEED CHO TRƯỚC (env tuỳ chọn, `scripts/deploySeeds.ts`):
+//   DEPLOY_SEED_PRICE_NFT_<INSTANT|SCHEDULE|PREPAID> — seed g1 của price_nft cho loại két đang
+//     dựng, `<tx>#<ix>`, ở bãi đỗ của ví (ở ví thì chỉ nhận khi KHÔNG có DEPLOY_EXPECT_HASHES).
+//     Đã tiêu / chỗ khác / mang token / trùng seed vai khác / trùng seed sổ két ⟹ ném, không lùi
+//     về chọn tự động. Vắng ⟹ như cũ (UTxO thuần ADA đầu tiên).
+//   DEPLOY_EXPECT_HASHES — tệp JSON hash kỳ vọng (`clusterHashes.ts --out`); so price_nft_<loại> ·
+//     price_param_<loại> · consume_<loại>, lệch ⟹ ném trước khi nộp. Chỉ nhận cùng seed cho trước.
+//     Có seed cho trước mà vắng tệp ⟹ ném, trừ DEPLOY_EXPECT_NONE=1.
+//
 // ⚠  DANH SÁCH THAM SỐ KHÔNG khai tay ở file này nữa — đọc thẳng
 //     `parameters[].title` từ ConsumeMAGIC/onchain/plutus.json qua
 //     scripts/applyParams.ts. Chuỗi bake TUYẾN TÍNH, đổi thứ tự là sai hash:
@@ -43,18 +52,24 @@ import { wakemeVaultHash, windowOf } from "@magiclamp/protocol-utils";
 import {
   Lucid, Blockfrost, Data,
   credentialToAddress, scriptHashToCredential,
-  mintingPolicyToId, getAddressDetails,
+  getAddressDetails,
   type UTxO,
 } from "@lucid-evolution/lucid";
 import {
   NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet, PROTOCOL, requireCarpIdentity,
 } from "../config.js";
+import { loadBlueprint, findValidator } from "../applyParams.js";
 import {
-  loadBlueprint, findValidator, appliedScript, appliedValidator,
-} from "../applyParams.js";
-import {
-  oneShotGenesisParams, priceParamParams, consumeParams, prepaidScriptPair,
+  prepaidScriptPair, PRICE_NFT_NAME,
 } from "../deployParams.js";
+import { consumeChainChecked } from "../deployHashChecks.js";
+import {
+  assertDistinctPresetSeeds, loadExpectedHashes, parkFor, presetSeedAllowWallet, priceNftSeedRole,
+  readPresetSeed, REGISTRY_SEED_BOOK_KEY, requireExpectInPresetMode, requirePresetForExpect,
+  resolvePresetSeed, SEED_ENV, type Park,
+} from "../deploySeeds.js";
+import { readBookEntries } from "./11_deploy_gen_beacons.js";
+import { stateBookPath } from "../stateBookPath.js";
 import {
   encodePriceParam, EngageDatumSchema, type PriceParamT,
 } from "../../ConsumeMAGIC/offchain/src/types.js";
@@ -70,14 +85,9 @@ import {
 // TẠI CHỖ ở đây khi codec offchain còn trễ một trường — đã xoá: hai bản schema cho
 // cùng một datum là đúng thứ sẽ trôi khỏi nhau trong im lặng.
 
-// Asset name const đọc từ validator (.ak `pub const ...`).
-const PRICE_NFT_NAME  = "5052494345"; // "PRICE" — price_nft.ak
-// BurnBatch = constr 2 trong VaultRedeemer của CẢ HAI vault sinh MAGIC:
-//   InstantGen  — InstantGen/onchain/lib/magiclamp/protocol/types.ak ▸ VaultRedeemer ▸ BurnBatch (constr 2)
-//   ScheduleGen — ScheduleGen/onchain/lib/magiclamp/protocol/types.ak:160-163
-// Nên một giá trị dùng chung được. (Bản cũ của `scripts/README.md` nói hai module
-// khác constr — SAI, và cái sai đó làm việc dễ trông như việc khó.)
-const BURN_BATCH_CONSTR = 2n;
+// `PRICE_NFT_NAME` ("PRICE") và `BURN_BATCH_CONSTR` (= 2, BurnBatch của cả hai vault sinh MAGIC)
+// nay ở `deployParams.ts`, cạnh `consumeScriptChain` — chuỗi bake mà bước này và
+// `clusterHashes.ts` cùng gọi.
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function isPureAda(u: UTxO): boolean {
@@ -122,11 +132,26 @@ async function main() {
   }
   const Q = PROTOCOL.Q;
 
-  // Load ConsumeMAGIC validators.
+  // Seed `price_nft` cho trước (`DEPLOY_SEED_PRICE_NFT_<LOẠI>`) + hash kỳ vọng
+  // (`DEPLOY_EXPECT_HASHES`) — `deploySeeds.ts`. Đọc + kiểm hình dạng TRƯỚC mọi lệnh gọi mạng.
+  const seedRole     = priceNftSeedRole(vaultKind);
+  const presetSeed   = readPresetSeed(process.env, seedRole);
+  const expectHashes = loadExpectedHashes(process.env);
+  requirePresetForExpect("bước 09", expectHashes, presetSeed !== undefined, [SEED_ENV[seedRole]]);
+  requireExpectInPresetMode("bước 09", process.env, expectHashes);
+  // Seed khác vai phải khác outref, và seed `price_nft` không được là seed sổ két đang chờ pha
+  // registry (đọc cả sổ lẫn env) — tiêu nó ở đây là sổ két không bao giờ đúc được nữa.
+  assertDistinctPresetSeeds(process.env, [
+    ...readBookEntries(stateBookPath(NETWORK)).filter((e) => e.key === REGISTRY_SEED_BOOK_KEY).map((e) => e.value),
+    ...(process.env[REGISTRY_SEED_BOOK_KEY] ? [process.env[REGISTRY_SEED_BOOK_KEY]!] : []),
+  ]);
+
+  // Load ConsumeMAGIC validators. Ba lệnh tra dưới đây chỉ để hỏng SỚM khi blueprint thiếu
+  // validator — chuỗi apply thật ở `deployParams.ts` ▸ `consumeScriptChain`.
   const blueprint   = await loadBlueprint("ConsumeMAGIC");
-  const priceNftV   = findValidator(blueprint, "price_nft.price_nft.mint");
-  const priceParamV = findValidator(blueprint, "price_param.price_param.spend");
-  const consumeV    = findValidator(blueprint, "consume.consume.spend");
+  for (const t of ["price_nft.price_nft.mint", "price_param.price_param.spend", "consume.consume.spend"]) {
+    findValidator(blueprint, t);
+  }
 
   // Lucid + wallet
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
@@ -145,53 +170,53 @@ async function main() {
   const currentEpoch = windowOf(BigInt(tip.time) * 1000n, PROTOCOL.MS_PER_EPOCH, PROTOCOL.WINDOW_ORIGIN_MS);
 
   // ── Chọn 2 genesis UTxO pure-ADA phân biệt (2 one-shot policy) ────────────────
+  // g1 = seed one-shot price_nft (quyết hash cả chuỗi); g2 = seed thread token Engage (đặt TÊN
+  // asset, không đặt policy — nên không cần cho trước). Seed g1 cho trước: kiểm còn chưa tiêu, ở
+  // ví hoặc bãi đỗ của ví, output trơn — không thì NÉM, không lùi về chọn tự động.
   const walletUtxos = await lucid.wallet().getUtxos();
-  const adaSeeds = walletUtxos.filter((u) => isPureAda(u) && (u.assets.lovelace ?? 0n) >= 5_000_000n);
-  if (adaSeeds.length < 2) {
-    throw new Error(
-      `Cần ≥2 UTxO thuần ADA (≥5 ADA) làm genesis one-shot (price + engage). Hiện có ${adaSeeds.length}. ` +
-      `Tách bớt UTxO trước khi chạy.`,
-    );
+  let g1: UTxO;
+  let g1Parked: Park | undefined;   // có ⟹ g1 nằm ở bãi đỗ này, tx phải gắn witness
+  let adaSeeds: UTxO[];
+  if (presetSeed) {
+    const park = parkFor(NETWORK, address);
+    const r = await resolvePresetSeed(lucid, park, seedRole, presetSeed, { allowWallet: presetSeedAllowWallet(expectHashes) });
+    g1 = r.utxo;
+    if (r.atPark) g1Parked = park;
+    adaSeeds = walletUtxos.filter((u) =>
+      isPureAda(u) && (u.assets.lovelace ?? 0n) >= 5_000_000n &&
+      !(u.txHash === g1.txHash && u.outputIndex === g1.outputIndex));
+    if (adaSeeds.length < 1) {
+      throw new Error(
+        `Cần ≥1 UTxO thuần ADA (≥5 ADA) ngoài seed price_nft cho trước để làm seed Engage. Hiện có 0. ` +
+        `Tách bớt UTxO trước khi chạy.`,
+      );
+    }
+  } else {
+    adaSeeds = walletUtxos.filter((u) => isPureAda(u) && (u.assets.lovelace ?? 0n) >= 5_000_000n);
+    if (adaSeeds.length < 2) {
+      throw new Error(
+        `Cần ≥2 UTxO thuần ADA (≥5 ADA) làm genesis one-shot (price + engage). Hiện có ${adaSeeds.length}. ` +
+        `Tách bớt UTxO trước khi chạy.`,
+      );
+    }
+    g1 = adaSeeds.shift()!;
   }
-  const g1 = adaSeeds[0]!; // seed one-shot price_nft
-  const g2 = adaSeeds[1]!; // seed thread token Engage (đặt TÊN asset, không đặt policy)
+  const g2 = adaSeeds[0]!; // seed thread token Engage (đặt TÊN asset, không đặt policy)
 
-  // ── price_nft one-shot: apply genesis_ref = Constr(0,[txHash, idx]) ───────────
-  const priceNftScript = appliedValidator(
-    priceNftV,
-    oneShotGenesisParams({ txHash: g1.txHash, outputIndex: g1.outputIndex }),
-  );
-  const priceNftPolicy = mintingPolicyToId(priceNftScript);
+  // ── Chuỗi bake price_nft(g1) → price_param → consume (`deployParams.ts`) ──────
+  // `consumeChainChecked` so ba hash với tệp kỳ vọng — lệch ⟹ ném ở đây, trước khi dựng và nộp
+  // tx đúc.
+  const { priceNftScript, priceNftPolicy, priceParamHash, consumeScript, consumeHash } = consumeChainChecked(blueprint, vaultKind, {
+    priceNftSeed:   { txHash: g1.txHash, outputIndex: g1.outputIndex },
+    committee,
+    threshold:      priceThreshold,
+    vaultScriptHash,
+    maxPriceStale,
+    msPerEpoch:     PROTOCOL.MS_PER_EPOCH,
+    windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
+  }, expectHashes);
   const priceNftUnit   = priceNftPolicy + PRICE_NFT_NAME;
-
-  // ── price_param (mắt xích 2 của chuỗi bake) ──────────────────────────────────
-  const { hash: priceParamHash } = appliedScript(
-    priceParamV,
-    priceParamParams({
-      committee,
-      threshold:      priceThreshold,
-      priceNftPolicy,
-      priceNftName:   PRICE_NFT_NAME,
-      msPerEpoch:     PROTOCOL.MS_PER_EPOCH,
-      windowOriginMs:     PROTOCOL.WINDOW_ORIGIN_MS,
-    }),
-  );
   const priceParamAddr = credentialToAddress(NETWORK, scriptHashToCredential(priceParamHash));
-
-  // ── consume (mắt xích 3) → hash + address ────────────────────────────────────
-  const { script: consumeScript, hash: consumeHash } = appliedScript(
-    consumeV,
-    consumeParams({
-      priceNftPolicy,
-      priceNftName:         PRICE_NFT_NAME,
-      vaultScriptHash,
-      burnBatchConstr:      BURN_BATCH_CONSTR,
-      maxPriceStale,
-      msPerEpoch:           PROTOCOL.MS_PER_EPOCH,
-      windowOriginMs:           PROTOCOL.WINDOW_ORIGIN_MS,
-      priceParamScriptHash: priceParamHash,   // neo beacon giá vào đúng script
-    }),
-  );
   const consumeAddr = credentialToAddress(NETWORK, scriptHashToCredential(consumeHash));
 
   // ── Thread token Engage: policy = CHÍNH consume script hash ──────────────────
@@ -266,9 +291,11 @@ async function main() {
   console.log(`Bảng giá khởi tạo:    ${priceParam.op_prices.map((r) => `${r.op_type}=${r.base_price}×${r.demand_mult}`).join(" ")}\n`);
 
   // ── 1 tx: consume g1+g2, mint 2 NFT, tạo beacon + Engage ─────────────────────
-  const tx = await lucid
-    .newTx()
-    .collectFrom([g1, g2])
+  //    g1 ở bãi đỗ ⟹ gắn script native `sig(ví)`; chữ ký ví đã có sẵn qua `addSignerKey(ownerPkh)`
+  //    (ownerPkh = khoá payment của chính ví đó — `parkFor` dựng script trên đúng khoá này).
+  let builder = lucid.newTx().collectFrom([g1, g2]);
+  if (g1Parked) builder = builder.attach.SpendingValidator(g1Parked.parkScript);
+  const tx = await builder
     .mintAssets({ [priceNftUnit]: 1n }, Data.void())
     .mintAssets({ [engageNftUnit]: 1n }, engageMintRedeemer)
     .attach.MintingPolicy(priceNftScript)

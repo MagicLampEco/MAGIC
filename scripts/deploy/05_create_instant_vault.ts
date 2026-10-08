@@ -23,6 +23,9 @@
 //                       ref-script, KHÔNG in dòng cho sổ. Vẫn in RESULT (dry_run:true).
 //   WRITE_STATE_BOOK  — "1"/"0": có in khối dòng cho sổ + công bố ref-script hay không.
 //                       Vắng thì quyết theo ví ký — xem `runResult.ts ▸ decideStateBook`.
+//   DEPLOY_EXPECT_HASHES — tệp JSON hash kỳ vọng (`clusterHashes.ts --out`, `deploySeeds.ts`); so
+//                       vault_instant ngay sau khi apply, lệch ⟹ ném trước mọi tx. Có biến
+//                       DEPLOY_SEED_* nào mà vắng tệp ⟹ ném, trừ DEPLOY_EXPECT_NONE=1.
 //
 // Chủ vault LUÔN là khoá của ví ký (PRIVATE_KEY, hoặc WALLET_SEED khi không có
 // PRIVATE_KEY — `config.ts ▸ selectWallet`).
@@ -46,8 +49,10 @@ import {
   parsePositiveInteger, parseFlag, decideStateBook, resultLine, assertTxHash,
 } from "../runResult.js";
 import { outputIndexWithUnit } from "../txOutputIndex.js";
-import { loadBlueprint, findValidator, appliedScript } from "../applyParams.js";
-import { instantVaultParams, genV2BeaconRefsFromBook } from "../deployParams.js";
+import { loadBlueprint } from "../applyParams.js";
+import { genV2BeaconRefsFromBook } from "../deployParams.js";
+import { instantVaultChecked } from "../deployHashChecks.js";
+import { loadExpectedHashes, requireExpectInPresetMode } from "../deploySeeds.js";
 import { vaultIdAssetName, mintVaultIdRedeemer, pickSeedUtxo } from "../vaultId.js";
 import { parkAddressFor, publishRefScript } from "../refScripts.js";
 import { minAdaForRefScriptWithMargin } from "../minAda.js";
@@ -170,6 +175,10 @@ async function main() {
   const wakemeVault = SCRIPT_HASHES.wakeme_vault;
   // Ba hash GenBeacons (bước 11 pha `beacons`). Thiếu ⟹ ném nêu tên khoá, không đệm.
   const beacons = genV2BeaconRefsFromBook(process.env);
+  // Hash kỳ vọng (`DEPLOY_EXPECT_HASHES`, `deploySeeds.ts`): so `vault_instant` TRƯỚC mọi tx. Chế
+  // độ seed cho trước mà vắng tệp ⟹ ném (trừ `DEPLOY_EXPECT_NONE=1`).
+  const expectHashes = loadExpectedHashes(process.env);
+  requireExpectInPresetMode("bước 05", process.env, expectHashes);
 
   console.log(`=== Step 5: Create InstantGen Vault UTxO (Gen v2.0)${dryRun ? " · DRY RUN" : ""} ===\n`);
 
@@ -180,17 +189,19 @@ async function main() {
   if (!paymentCredential) throw new Error("Cannot get payment credential");
   const ownerPkh = paymentCredential.hash;
 
-  // Apply params THEO TÊN — thứ tự do blueprint quyết định, không do file này.
-  const { script: vaultScript, hash: vaultScriptHash } = appliedScript(
-    findValidator(await loadBlueprint("InstantGen"), "vault.vault.spend"),
-    instantVaultParams({
+  // Apply params THEO TÊN — thứ tự do blueprint quyết định, không do file này. `instantVaultChecked`
+  // so `vault_instant` với tệp kỳ vọng ngay sau khi apply: lệch ⟹ ném ở đây, trước mọi tx.
+  const { script: vaultScript, hash: vaultScriptHash } = instantVaultChecked(
+    await loadBlueprint("InstantGen"),
+    {
       lampPolicyId:    POLICY_IDS.lamp,
       lampAssetName:   ASSET_NAMES.lamp,        // PARAM theo mạng, không hardcode
       ...beacons,
       wakemeVaultHash: wakemeVault,             // #8 — két Wakeme (CC-GEN-LENT-READ)
       msPerEpoch:      PROTOCOL.MS_PER_EPOCH,
       windowOriginMs:      PROTOCOL.WINDOW_ORIGIN_MS,
-    }),
+    },
+    expectHashes,
   );
 
   console.log(`Network:            ${NETWORK}`);

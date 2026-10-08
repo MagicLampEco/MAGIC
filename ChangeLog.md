@@ -5,6 +5,21 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-08 — scripts: deploy nhận seed one-shot CHO TRƯỚC, hash cụm tính được trước khi đúc
+
+**Đổi gì.** (1) `scripts/deploy/park_seeds.ts` mới: đỗ các output seed ở bãi đỗ của ví deploy, không đúc gì, in
+`DEPLOY_SEED_<VAI>=<tx>#<ix>`. (2) `scripts/clusterHashes.ts` mới: tính 20 hash của cụm phục vụ từ outref seed,
+ghi tệp hash kỳ vọng (`--out`); gọi đúng các hàm apply mà bước deploy gọi — chuỗi bake `price_nft → price_param →
+consume` dời sang `deployParams.ts` ▸ `consumeScriptChain`, policy `shard_nft` sang `03_deploy_shards.ts` ▸
+`shardNftPolicyFor`. (3) Bước 11 (pha `beacons`), 03 và 09 nhận seed qua tám biến `DEPLOY_SEED_*` và so hash thực
+với `DEPLOY_EXPECT_HASHES`, lệch ⟹ ném trước khi nộp. Nguồn luật: `scripts/deploySeeds.ts`. Vector
+`scripts/vectors/cluster_hashes.gen2-preprod.json` ghim 20 hash cụm đời 2 Preprod.
+**Vì sao.** Bên tiêu thụ (app ghim policy lúc build) cần hash cụm TRƯỚC khi cụm được đúc; trước bản này mỗi bước tự
+chọn seed lúc chạy nên hash chỉ biết sau khi nộp.
+**Cái gì gãy.** Không gì khi vắng mọi biến `DEPLOY_SEED_*`: hành vi cũ giữ nguyên. Đặt biến sai hình dạng, seed đã
+tiêu hay không thuộc ví ⟹ bước deploy ném thay vì tự chọn seed khác. Tái dùng beacon GenBeacons đã có CHƯA hỗ trợ:
+bước 11 pha `beacons` luôn đúc mới.
+
 ## 2026-10-07 — VaultReadAPI: không thẻ bài thì không nhận yêu cầu đã qua proxy (cùng cổng với VaultTxAPI)
 
 **Đổi gì.** (1) Đặt `VAULT_READ_API_BASE_PATH` mà `VAULT_READ_API_TOKEN` rỗng ⟹ từ chối khởi động, kể cả khi bind

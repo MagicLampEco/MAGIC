@@ -1,6 +1,9 @@
 // scripts/deploy/03_deploy_shards.ts — Deploy 16 Shard UTxOs for ScheduleGen.
 // Run: npx tsx deploy/03_deploy_shards.ts
 // Prereq: 01 LAMP · 11 pha `beacons` (RATE_PARAM_HASH, GREENBACK_BEACON_HASH, GB_SHARD_HASH).
+// Env tuỳ chọn (`deploySeeds.ts`): DEPLOY_SEED_SHARD_NFT=<tx>#<ix> — seed `shard_nft` cho trước
+// (ở ví hoặc bãi đỗ của ví; đã tiêu / chỗ khác ⟹ ném). DEPLOY_EXPECT_HASHES=<tệp JSON> — so
+// shard_nft · commit · vault_schedule · shard_schedule, lệch ⟹ ném trước khi nộp. Vắng ⟹ như cũ.
 //
 // ── Gen v2.0 ──────────────────────────────────────────────────────────────
 // `shard.spend` nhận `vault_script_hash` của két ScheduleGen, và két v2.0 nhận hash của
@@ -30,7 +33,7 @@ import { fileURLToPath } from "node:url";
 import {
   Lucid, Blockfrost, Data,
   credentialToAddress, scriptHashToCredential, mintingPolicyToId,
-  type Validator,
+  type UTxO, type Validator,
 } from "@lucid-evolution/lucid";
 import {
   loadBlueprint, findValidator, appliedScript, appliedValidator, type Blueprint,
@@ -39,6 +42,10 @@ import {
   oneShotGenesisParams, shardSpendParams, scheduleScriptPair, genV2BeaconRefsFromBook,
   type ScheduleScriptParamInputs,
 } from "../deployParams.js";
+import {
+  checkExpectedHashes, loadExpectedHashes, parkFor, readPresetSeed, requirePresetForExpect,
+  resolvePresetSeed, SEED_ENV, spendsParkedSeed, type Park,
+} from "../deploySeeds.js";
 
 // Lược đồ datum shard lấy từ gói ScheduleGen, KHÔNG chép tại chỗ. Bản chép cũ ở đây dừng ở 7
 // trường khi Gen v2.0 nối `shard_obligation_nanogic` (8 trường), và nó hỏng ồn ở `shard_nft`
@@ -54,6 +61,7 @@ function shardAssetName(shardId: number): string {
 export interface ScheduleShardScript {
   shardScript: Validator; shardHash: string;
   vaultHash:   string;    // két ScheduleGen v2.0 mà shard này ghim (tham số #2)
+  commitHash:  string;    // `commit` ĐÃ apply mà két trên nướng vào — để so với hash tính trước
 }
 
 /** `shard.spend` applied cho một bộ tham số ScheduleGen v2.0. Thuần: blueprint đã nạp
@@ -63,18 +71,32 @@ export interface ScheduleShardScript {
  *  dùng — chứ không tự apply `vault.vault.spend`: nửa két cần hash `commit` ĐÃ apply, và tự
  *  dựng lại chuỗi đó ở đây là mở một đường thứ hai lệch được với 06. */
 export function scheduleShardScript(bp: Blueprint, i: ScheduleScriptParamInputs): ScheduleShardScript {
-  const { vaultHash } = scheduleScriptPair(bp, i);
+  const { vaultHash, commitHash } = scheduleScriptPair(bp, i);
   const { script, hash } = appliedScript(
     findValidator(bp, "vault.shard.spend"),
     shardSpendParams({ shardPolicyId: i.shardPolicyId, vaultScriptHash: vaultHash }),
   );
-  return { shardScript: script, shardHash: hash, vaultHash };
+  return { shardScript: script, shardHash: hash, vaultHash, commitHash };
+}
+
+/** Policy `shard_nft` one-shot cho một seed. Thuần — dùng chung với `clusterHashes.ts`. */
+export function shardNftPolicyFor(bp: Blueprint, seed: { txHash: string; outputIndex: number }): { policy: Validator; policyId: string } {
+  const policy = appliedValidator(
+    findValidator(bp, "shard_nft.shard_nft.mint"),
+    oneShotGenesisParams({ txHash: seed.txHash, outputIndex: seed.outputIndex }),
+  );
+  return { policy, policyId: mintingPolicyToId(policy) };
 }
 
 async function main() {
   // Đọc sổ TRƯỚC khi nạp cấu hình mạng: thiếu khoá GenBeacons ⟹ ném nêu tên khoá, không
   // tiêu seed nào (bước này đúc policy one-shot — chạy hỏng giữa chừng là mất seed).
   const beacons = genV2BeaconRefsFromBook(process.env);
+  // Seed cho trước (`DEPLOY_SEED_SHARD_NFT`) + hash kỳ vọng (`DEPLOY_EXPECT_HASHES`) —
+  // `deploySeeds.ts`. Vắng seed ⟹ hành vi cũ: `utxos[0]` của ví.
+  const presetSeed   = readPresetSeed(process.env, "shardNft");
+  const expectHashes = loadExpectedHashes(process.env);
+  requirePresetForExpect("bước 03", expectHashes, presetSeed !== undefined, [SEED_ENV.shardNft]);
   const {
     NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, selectWallet, PROTOCOL, POLICY_IDS, ASSET_NAMES,
   } = await import("../config.js");
@@ -82,27 +104,33 @@ async function main() {
 
   // Load ScheduleGen blueprint: shard NFT minting policy + shard spend validator.
   const blueprint         = await loadBlueprint("ScheduleGen");
-  const shardNftUnapplied = findValidator(blueprint, "shard_nft.shard_nft.mint");
 
   const lucid = await Lucid(new Blockfrost(BLOCKFROST_URL, BLOCKFROST_KEY), NETWORK);
   selectWallet(lucid);
   const address = await lucid.wallet().address();
 
   // ── Pick a genesis UTxO to consume (one-shot seed) ──────────────────────
-  const utxos = await lucid.wallet().getUtxos();
-  if (utxos.length === 0) throw new Error("Wallet has no UTxOs to seed the one-shot policy");
-  const genesis = utxos[0]!;
+  // Seed cho trước: phải còn chưa tiêu, ở ví hoặc bãi đỗ của ví, output trơn — không thì NÉM,
+  // không lùi về `utxos[0]` (lùi là ra policy khác policy đã tính trước).
+  let genesis: UTxO;
+  let parkedSeed: Park | undefined;   // có ⟹ seed nằm ở bãi đỗ này, tx phải gắn witness
+  if (presetSeed) {
+    const park = parkFor(NETWORK, address);
+    const r = await resolvePresetSeed(lucid, park, "shardNft", presetSeed, { allowWallet: true });
+    genesis = r.utxo;
+    if (r.atPark) parkedSeed = park;
+  } else {
+    const utxos = await lucid.wallet().getUtxos();
+    if (utxos.length === 0) throw new Error("Wallet has no UTxOs to seed the one-shot policy");
+    genesis = utxos[0]!;
+  }
 
   // Apply genesis ref to the minting policy → fixed policy id.
   // LƯU Ý: tham số phải là Plutus Data DẠNG CẤU TRÚC (Constr 0 [bytes, int]).
   // Bản cũ truyền `Data.to(genesisRef, OutRefSchema)` — tức một CHUỖI HEX CBOR —
   // nên tham số vào script là một ByteArray, không phải OutputReference: mint
   // luôn fail ở `i.output_reference == genesis_ref`.
-  const shardNftPolicy = appliedValidator(
-    shardNftUnapplied,
-    oneShotGenesisParams({ txHash: genesis.txHash, outputIndex: genesis.outputIndex }),
-  );
-  const shardNftPolicyId = mintingPolicyToId(shardNftPolicy);
+  const { policy: shardNftPolicy, policyId: shardNftPolicyId } = shardNftPolicyFor(blueprint, genesis);
 
   // ── THỨ TỰ APPLY: vault TRƯỚC shard, và đây là thứ tự BẮT BUỘC ────────────
   //
@@ -117,7 +145,7 @@ async function main() {
   // `shard_policy_id` của vault phải là policy VỪA sinh ở trên, KHÔNG phải
   // `POLICY_IDS.shard_nft` trong cấu hình — cái đó là của lần deploy trước. Ba hash
   // GenBeacons thì lấy từ SỔ (`genV2BeaconRefsFromBook`), đúng nguồn mà 06/07 đọc.
-  const { shardScript, shardHash: shardScriptHash, vaultHash: vaultScriptHash } = scheduleShardScript(blueprint, {
+  const { shardScript, shardHash: shardScriptHash, vaultHash: vaultScriptHash, commitHash } = scheduleShardScript(blueprint, {
     lampPolicyId:  POLICY_IDS.lamp,
     lampAssetName: ASSET_NAMES.lamp,
     shardPolicyId: shardNftPolicyId,
@@ -133,6 +161,13 @@ async function main() {
   console.log(`Vault (SG v2.0) hash: ${vaultScriptHash}  (đầu vào #2 của shard)`);
   console.log(`Shard script hash:    ${shardScriptHash}  (NFT-policy + vault hash applied)`);
   console.log(`Shard script address: ${shardScriptAddress}`);
+  // So bốn hash với tệp kỳ vọng — lệch ⟹ ném ở đây, trước khi dựng và nộp tx đúc.
+  checkExpectedHashes("bước 03", {
+    shard_nft: shardNftPolicyId,
+    commit: commitHash,
+    vault_schedule: vaultScriptHash,
+    shard_schedule: shardScriptHash,
+  }, expectHashes);
 
   // Tip POSIX ms for current epoch.
   const tipRes = await fetch(`${BLOCKFROST_URL}/blocks/latest`, {
@@ -151,8 +186,10 @@ async function main() {
     shardMints[shardNftPolicyId + shardAssetName(shardId)] = 1n;
   }
 
-  // MUST consume the genesis UTxO so the one-shot policy runs.
+  // MUST consume the genesis UTxO so the one-shot policy runs. Seed ở bãi đỗ ⟹ gắn witness
+  // script native `sig(ví)` (`deploySeeds.ts` ▸ `spendsParkedSeed`).
   let txBuilder = lucid.newTx().collectFrom([genesis]);
+  if (parkedSeed) txBuilder = spendsParkedSeed(txBuilder, parkedSeed);
 
   for (let shardId = 0; shardId < PROTOCOL.SHARD_COUNT; shardId++) {
     // Genesis cap-pin: every shard carries the Constitutional cap. The vault

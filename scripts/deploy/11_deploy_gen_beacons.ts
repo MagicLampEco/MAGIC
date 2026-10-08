@@ -34,6 +34,12 @@
 //                          không mặc định: giá trị là quyết định `CC-GEN-RATE-VALUE`
 //                          (SPEC v2.0 §13), không phải của tệp này.
 //   GEN_BEACONS_REDEPLOY — "1" mới cho pha beacons chạy khi sổ ĐÃ có `GB_SHARD_HASH`.
+//   DEPLOY_SEED_REGISTRY · DEPLOY_SEED_GREENBACK · DEPLOY_SEED_GB_SHARD · DEPLOY_SEED_RATE
+//                        — (pha beacons) bốn seed CHO TRƯỚC `<tx>#<ix>`, đã đỗ ở bãi đỗ bằng
+//                          `deploy/park_seeds.ts`. Đủ cả bốn hoặc không cái nào. Vắng ⟹ tự tạo
+//                          seed như cũ. Có ⟹ không tạo seed; seed đã tiêu / không ở bãi đỗ ⟹ ném.
+//   DEPLOY_EXPECT_HASHES — (pha beacons, chỉ cùng seed cho trước) tệp JSON hash kỳ vọng do
+//                          `clusterHashes.ts --out` ghi; hash lệch ⟹ ném TRƯỚC khi đúc.
 //   DRY_RUN=1            — chạy trọn luồng trên một Emulator soi gương số dư ví: dựng, ký CỤC
 //                          BỘ, đo kích thước, in hash — KHÔNG gửi gì lên mạng, KHÔNG ghi sổ.
 //   WRITE_STATE_BOOK     — "1"/"0"; vắng thì quyết theo ví ký (`runResult.ts ▸ decideStateBook`).
@@ -98,7 +104,21 @@ import {
 } from "../../ScheduleGen/offchain/src/constants.js";
 import { GEN_V2_STATE_KEYS, type StateBook } from "../gen_vault_tx_api_deployment.js";
 import { vaultHashKey } from "../consumeBook.js";
-import { parkAddressFor } from "../refScripts.js";
+import {
+  BEACON_SEED_ROLES,
+  checkExpectedHashes,
+  EXPECT_HASHES_ENV,
+  loadExpectedHashes,
+  outRefString,
+  parkFor,
+  readBeaconPresetSeeds,
+  resolvePresetSeed,
+  SEED_LOVELACE,
+  spendsParkedSeed,
+  type BeaconPresetSeeds,
+  type ExpectedHashes,
+  type Park,
+} from "../deploySeeds.js";
 import { minAdaForRefScriptWithMargin } from "../minAda.js";
 import { decideStateBook, parseFlag, parseOutRef, type OutRef } from "../runResult.js";
 import { stateBookPath } from "../stateBookPath.js";
@@ -227,39 +247,15 @@ export function compiledRhoMaxQ(): bigint {
 // Ví + bãi đỗ
 // ══════════════════════════════════════════════════════════════════════════════
 
-/** Lượng lovelace mỗi seed. Chỉ cần đủ min-ADA của một output trơn; phí + output thật của tx
- *  tiêu seed do bộ chọn UTxO của ví bù. Giá trị do CHÍNH bước này sở hữu. */
-export const SEED_LOVELACE = 2_000_000n;
+/** Lượng lovelace mỗi seed — nguồn ở `deploySeeds.ts` (bãi đỗ seed dùng chung với `park_seeds.ts`). */
+export { SEED_LOVELACE };
 
 /** Lùi cận dưới cửa sổ hiệu lực trên chuỗi thật (xem chỗ dùng trong `main`). */
 const VALIDITY_BACKOFF_MS = 120_000;
 
-interface Park {
-  walletAddress: string;
-  walletPkh: string;
-  parkAddress: string;
-  /** Script native `sig(walletPkh)` — witness để tiêu seed ở bãi đỗ. */
-  parkScript: Script;
-}
-
+/** Bãi đỗ của ví đang chọn trong `lucid` (`deploySeeds.ts` ▸ `parkFor`). */
 async function parkOf(lucid: LucidEvolution, network: Network): Promise<Park> {
-  const walletAddress = await lucid.wallet().address();
-  const cred = getAddressDetails(walletAddress).paymentCredential;
-  if (cred?.type !== "Key") throw new Error(`Ví ký ${walletAddress} không có payment key credential.`);
-  const parkScript = scriptFromNative({ type: "sig", keyHash: cred.hash });
-  const parkAddress = parkAddressFor(network, walletAddress);
-  // Dựng lại script ở đây vì `refScripts.ts` chỉ xuất ĐỊA CHỈ. Hai cách dẫn xuất phải ra cùng
-  // một chỗ — lệch thì seed đỗ ở nơi script này không tiêu được.
-  const parkHash = getAddressDetails(parkAddress).paymentCredential?.hash;
-  if (parkHash !== validatorToScriptHash(parkScript)) {
-    throw new Error(`Script bãi đỗ dựng lại (${validatorToScriptHash(parkScript)}) ≠ bãi đỗ của refScripts.ts (${parkHash}).`);
-  }
-  return { walletAddress, walletPkh: cred.hash, parkAddress, parkScript };
-}
-
-/** Gắn witness tiêu seed ở bãi đỗ: script native + chữ ký khoá ví. */
-function spendsParkedSeed(tx: TxBuilder, park: Park): TxBuilder {
-  return tx.attach.SpendingValidator(park.parkScript).addSignerKey(park.walletPkh);
+  return parkFor(network, await lucid.wallet().address());
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -286,6 +282,33 @@ export interface Chain {
   log: (line: string) => void;
 }
 
+/** Chain trên mạng THẬT: gửi, chờ xác nhận, rồi chờ ví thấy đầu ra đổi. Dùng chung với
+ *  `park_seeds.ts`. */
+export function liveChain(real: LucidEvolution, network: Network): Chain {
+  return {
+    lucid: real,
+    network,
+    // Lùi `validFrom` một khoảng: cận dưới đặt đúng `Date.now()` thì hay đứng TRƯỚC slot của khối
+    // mới nhất (khối ~20 s một lần) và nút từ chối `OutsideValidityIntervalUTxO` — đo 2026-09-30 trên
+    // Preprod: `invalidBefore` 135099710 > tip 135099702. Cửa sổ vẫn nằm trong một epoch vì
+    // `epochValidityWindow` tính cả hai đầu từ cùng mốc đã lùi.
+    nowMs: () => Date.now() - VALIDITY_BACKOFF_MS,
+    log: (l) => console.log(l),
+    submit: async (signed) => {
+      const h = await signed.submit();
+      await real.awaitTx(h);
+      // `awaitTx` xong chưa có nghĩa bộ chỉ mục đã cập nhật UTxO của ví: đo 2026-09-30 trên
+      // Preprod, tx kế tiếp chọn lại đầu ra đổi của tx trước (đã bị tiêu) ⟹ `BadInputsUTxO`.
+      // Chờ tới khi ví THẤY đầu ra đổi của chính tx này (mọi tx ở đây trả đổi về ví), tối đa 90 s.
+      for (let i = 0; i < 18; i++) {
+        if ((await real.wallet().getUtxos()).some((u) => u.txHash === h)) break;
+        await new Promise((r) => setTimeout(r, 5_000));
+      }
+      return h;
+    },
+  };
+}
+
 function maxTxBytes(lucid: LucidEvolution): number {
   const n = lucid.config().protocolParameters?.maxTxSize;
   if (typeof n !== "number" || !(n > 0)) {
@@ -303,7 +326,7 @@ function describe(e: unknown): string {
 }
 
 /** complete → ký ví → đo → (vượt trần ⟹ ném, KHÔNG gửi) → gửi. */
-async function completeSignSubmit(chain: Chain, label: string, tx: TxBuilder): Promise<{ report: TxReport; signed: TxSignBuilder }> {
+export async function completeSignSubmit(chain: Chain, label: string, tx: TxBuilder): Promise<{ report: TxReport; signed: TxSignBuilder }> {
   const built = await tx.completeSafe();
   if (built._tag === "Left") throw new Error(`${label}: dựng tx hỏng — ${describe(built.left)}`);
   const signed = built.right;
@@ -320,7 +343,7 @@ async function completeSignSubmit(chain: Chain, label: string, tx: TxBuilder): P
 
 /** Các output của một tx đã dựng, kèm chỉ số — đọc từ THÂN tx (chữ ký không đổi thân), nên đúng
  *  cả khi chỉ mục của provider chưa kịp thấy tx. */
-function bodyOutputs(signed: TxSignBuilder): UTxO[] {
+export function bodyOutputs(signed: TxSignBuilder): UTxO[] {
   const txHash = signed.toHash();
   const outs = signed.toTransaction().body().outputs();
   const list: UTxO[] = [];
@@ -343,6 +366,12 @@ export interface BeaconsPhaseInput {
   rhoQ: bigint;
   rhoMaxQ: bigint;
   gbShardCapNanogic: bigint;
+  /** Bốn seed CHO TRƯỚC, đã đỗ ở bãi đỗ của ví ký (`deploy/park_seeds.ts`). Vắng ⟹ bước này tự
+   *  tạo bốn seed như cũ. Có ⟹ KHÔNG tạo seed, kiểm từng seed còn chưa tiêu và nằm ở bãi đỗ. */
+  presetSeeds?: BeaconPresetSeeds;
+  /** Hash kỳ vọng (`clusterHashes.ts --out`). Có ⟹ so bốn hash với nó, lệch ⟹ ném TRƯỚC khi đúc.
+   *  Chỉ nhận cùng `presetSeeds`: seed tự tạo không thể ra hash tính trước. */
+  expectHashes?: ExpectedHashes;
 }
 
 export interface BeaconsPhaseResult {
@@ -355,45 +384,97 @@ export interface BeaconsPhaseResult {
   combinedMint: boolean;
 }
 
+/** Bốn script GenBeacons cho bốn seed + khoá ví ký, rồi in (và khi có tệp kỳ vọng thì SO) bốn
+ *  hash. Một hàm cho cả pha beacons lẫn lượt DRY_RUN có seed cho trước, để hai đường không lệch
+ *  nhau ở cách apply. Hash sổ ở đây là của sổ CHƯA đúc. */
+export function beaconScriptsChecked(
+  p: BeaconsPhaseInput,
+  network: Network,
+  walletPkh: string,
+  seeds: BeaconPresetSeeds,
+  log: (line: string) => void,
+): GenBeaconsScripts {
+  const scripts = deriveGenBeaconsScripts(p.blueprint, network, {
+    msPerEpoch: p.msPerEpoch,
+    windowOriginMs: p.windowOriginMs,
+    vaultRegistrySeed: seeds.registry,
+    greenbackWriter: walletPkh,
+    greenbackSeed: seeds.greenback,
+    gbShardCapNanogic: p.gbShardCapNanogic,
+    gbShardSeed: seeds.gbShard,
+    rateKey: walletPkh,
+    rhoMaxQ: p.rhoMaxQ,
+    rateSeed: seeds.rate,
+  });
+  checkExpectedHashes(
+    "bước 11 pha beacons",
+    {
+      vault_registry: scripts.vaultRegistry.hash,
+      greenback_beacon: scripts.greenback.hash,
+      gb_shard: scripts.gbShard.hash,
+      rate_param: scripts.rate.hash,
+    },
+    p.expectHashes,
+    log,
+  );
+  return scripts;
+}
+
+/** Kiểm bốn seed cho trước trên chuỗi (còn chưa tiêu, nằm ở bãi đỗ, output trơn), theo thứ tự
+ *  sổ · beacon GB · gb_shard · beacon ρ. Hỏng ⟹ ném nêu biến và lý do. */
+export async function resolveBeaconPresetSeeds(lucid: LucidEvolution, park: Park, preset: BeaconPresetSeeds): Promise<UTxO[]> {
+  const out: UTxO[] = [];
+  for (const role of BEACON_SEED_ROLES) {
+    out.push((await resolvePresetSeed(lucid, park, role, preset[role], { allowWallet: false })).utxo);
+  }
+  return out;
+}
+
 export async function runBeaconsPhase(chain: Chain, p: BeaconsPhaseInput): Promise<BeaconsPhaseResult> {
   if (!(p.rhoQ > 0n && p.rhoQ <= p.rhoMaxQ)) {
     throw new Error(`RHO_Q phải thoả 0 < RHO_Q ≤ rho_max_q (${p.rhoMaxQ}), nhận ${p.rhoQ}.`);
+  }
+  if (p.expectHashes && !p.presetSeeds) {
+    throw new Error(
+      "Pha beacons: có hash kỳ vọng mà không có seed cho trước — seed tự tạo cho hash khác bản tính trước. " +
+        "Đặt bốn biến DEPLOY_SEED_{REGISTRY,GREENBACK,GB_SHARD,RATE}, hoặc bỏ DEPLOY_EXPECT_HASHES.",
+    );
   }
   const { lucid, network } = chain;
   const park = await parkOf(lucid, network);
   const txs: TxReport[] = [];
 
   // (1) Bốn seed ở bãi đỗ: sổ · beacon GB · gb_shard · beacon ρ.
-  let seedTx = lucid.newTx();
-  for (let i = 0; i < 4; i++) seedTx = seedTx.pay.ToAddress(park.parkAddress, { lovelace: SEED_LOVELACE });
-  const seeded = await completeSignSubmit(chain, "seed ×4 → bãi đỗ", seedTx);
-  txs.push(seeded.report);
-  const seeds = bodyOutputs(seeded.signed).filter(
-    (u) => u.address === park.parkAddress && !u.scriptRef && Object.keys(u.assets).length === 1 && u.assets.lovelace === SEED_LOVELACE,
-  );
-  if (seeds.length !== 4) {
-    throw new Error(`Tx seed phải có đúng 4 output seed ở bãi đỗ, thấy ${seeds.length}.`);
+  let seeds: UTxO[];
+  if (p.presetSeeds) {
+    // Seed cho trước: KHÔNG tạo output nào. Mỗi seed phải còn chưa tiêu và nằm ở BÃI ĐỖ (không
+    // nhận seed ở ví: seed sổ phải nằm chờ tới pha `registry`, mà ở ví thì bộ chọn UTxO của bước
+    // giữa hai pha tiêu mất được). Hỏng ⟹ ném, không lùi về tự tạo.
+    seeds = await resolveBeaconPresetSeeds(lucid, park, p.presetSeeds);
+    chain.log(`   seed cho trước (bãi đỗ): ${seeds.map((u) => outRefString(u)).join(" · ")}`);
+  } else {
+    let seedTx = lucid.newTx();
+    for (let i = 0; i < 4; i++) seedTx = seedTx.pay.ToAddress(park.parkAddress, { lovelace: SEED_LOVELACE });
+    const seeded = await completeSignSubmit(chain, "seed ×4 → bãi đỗ", seedTx);
+    txs.push(seeded.report);
+    seeds = bodyOutputs(seeded.signed).filter(
+      (u) => u.address === park.parkAddress && !u.scriptRef && Object.keys(u.assets).length === 1 && u.assets.lovelace === SEED_LOVELACE,
+    );
+    if (seeds.length !== 4) {
+      throw new Error(`Tx seed phải có đúng 4 output seed ở bãi đỗ, thấy ${seeds.length}.`);
+    }
   }
   const [registrySeedUtxo, gbSeedUtxo, shardSeedUtxo, rateSeedUtxo] = seeds as [UTxO, UTxO, UTxO, UTxO];
   const ref = (u: UTxO): OutRef => ({ txHash: u.txHash, outputIndex: u.outputIndex });
 
   // (2) Apply theo thứ tự: sổ → beacon GB → gb_shard; ρ độc lập (GenBeacons ▸ scripts.ts).
-  const scripts = deriveGenBeaconsScripts(p.blueprint, network, {
-    msPerEpoch: p.msPerEpoch,
-    windowOriginMs: p.windowOriginMs,
-    vaultRegistrySeed: ref(registrySeedUtxo),
-    greenbackWriter: park.walletPkh,
-    greenbackSeed: ref(gbSeedUtxo),
-    gbShardCapNanogic: p.gbShardCapNanogic,
-    gbShardSeed: ref(shardSeedUtxo),
-    rateKey: park.walletPkh,
-    rhoMaxQ: p.rhoMaxQ,
-    rateSeed: ref(rateSeedUtxo),
-  });
-  chain.log(`   hash sổ (chưa đúc)   ${scripts.vaultRegistry.hash}`);
-  chain.log(`   hash beacon GB       ${scripts.greenback.hash}`);
-  chain.log(`   hash gb_shard        ${scripts.gbShard.hash}`);
-  chain.log(`   hash beacon ρ        ${scripts.rate.hash}`);
+  //     In bốn hash; có tệp kỳ vọng thì so, lệch ⟹ ném ở đây — trước mọi tx đúc.
+  const scripts = beaconScriptsChecked(p, network, park.walletPkh, {
+    registry: ref(registrySeedUtxo),
+    greenback: ref(gbSeedUtxo),
+    gbShard: ref(shardSeedUtxo),
+    rate: ref(rateSeedUtxo),
+  }, chain.log);
 
   // (3) Đúc RHO + GBB + 16 GBS. Thử MỘT tx trước (một lần phí, một lần chờ); vượt trần hoặc
   //     dựng chung hỏng thì tách ba. Mỗi lượt gọi dựng builder MỚI: TxBuilder của Lucid tích
@@ -577,6 +658,15 @@ async function main(): Promise<void> {
   const rhoQ = phase === "beacons" ? parseRhoQ(process.env.RHO_Q) : undefined;
   const redeploy = parseFlag(process.env.GEN_BEACONS_REDEPLOY, "GEN_BEACONS_REDEPLOY");
   const dryRun = parseFlag(process.env.DRY_RUN, "DRY_RUN");
+  // Seed cho trước + hash kỳ vọng (`deploySeeds.ts`) — chỉ pha beacons đúc thứ phụ thuộc seed.
+  const presetSeeds = phase === "beacons" ? readBeaconPresetSeeds(process.env) : undefined;
+  const expectHashes = phase === "beacons" ? loadExpectedHashes(process.env) : undefined;
+  if (phase === "registry" && (readBeaconPresetSeeds(process.env) || process.env[EXPECT_HASHES_ENV] !== undefined)) {
+    throw new Error(
+      `Pha registry dựng sổ từ seed đã ghi ở sổ trạng thái (${PHASE_KEYS.REGISTRY_SEED_UTXO}); DEPLOY_SEED_* và ` +
+        `${EXPECT_HASHES_ENV} chỉ dành cho pha beacons — bỏ chúng đi để khỏi tưởng chúng có tác dụng.`,
+    );
+  }
 
   const config = await import("../config.js");
   const { NETWORK, BLOCKFROST_URL, BLOCKFROST_KEY, PRIVATE_KEY, PROTOCOL, selectWallet } = config;
@@ -620,28 +710,7 @@ async function main(): Promise<void> {
     };
     console.log(`DRY RUN: Emulator soi gương ví ${walletAddress} (${lovelace} lovelace). Hash tx in ra là hash trên Emulator.\n`);
   } else {
-    chain = {
-      lucid: real,
-      network: NETWORK,
-      // Lùi `validFrom` một khoảng: cận dưới đặt đúng `Date.now()` thì hay đứng TRƯỚC slot của khối
-      // mới nhất (khối ~20 s một lần) và nút từ chối `OutsideValidityIntervalUTxO` — đo 2026-09-30 trên
-      // Preprod: `invalidBefore` 135099710 > tip 135099702. Cửa sổ vẫn nằm trong một epoch vì
-      // `epochValidityWindow` tính cả hai đầu từ cùng mốc đã lùi.
-      nowMs: () => Date.now() - VALIDITY_BACKOFF_MS,
-      log: (l) => console.log(l),
-      submit: async (signed) => {
-        const h = await signed.submit();
-        await real.awaitTx(h);
-        // `awaitTx` xong chưa có nghĩa bộ chỉ mục đã cập nhật UTxO của ví: đo 2026-09-30 trên
-        // Preprod, tx kế tiếp chọn lại đầu ra đổi của tx trước (đã bị tiêu) ⟹ `BadInputsUTxO`.
-        // Chờ tới khi ví THẤY đầu ra đổi của chính tx này (mọi tx ở đây trả đổi về ví), tối đa 90 s.
-        for (let i = 0; i < 18; i++) {
-          if ((await real.wallet().getUtxos()).some((u) => u.txHash === h)) break;
-          await new Promise((r) => setTimeout(r, 5_000));
-        }
-        return h;
-      },
-    };
+    chain = liveChain(real, NETWORK);
   }
 
   const blueprint = loadBlueprint();
@@ -654,14 +723,28 @@ async function main(): Promise<void> {
           `két đã bake cụm cũ. Chủ đích đúng thế thì đặt GEN_BEACONS_REDEPLOY=1.`,
       );
     }
-    const r = await runBeaconsPhase(chain, {
+    const beaconsInput: BeaconsPhaseInput = {
       blueprint,
       msPerEpoch: PROTOCOL.MS_PER_EPOCH,
       windowOriginMs: PROTOCOL.WINDOW_ORIGIN_MS,
       rhoQ: rhoQ!,
       rhoMaxQ: compiledRhoMaxQ(),
       gbShardCapNanogic: compiledGbShardCap(),
-    });
+      presetSeeds,
+      expectHashes,
+    };
+    if (dryRun && presetSeeds) {
+      // Emulator soi gương chỉ có lovelace của ví, KHÔNG có seed ở bãi đỗ ⟹ không dựng nổi tx đúc
+      // trên nó. Lượt chạy thử với seed cho trước vì thế dừng ở phần đo được thật: seed trên mạng
+      // thật (chưa tiêu, ở bãi đỗ) + bốn hash so với tệp kỳ vọng. Không gửi gì, không ghi sổ.
+      const park = parkFor(NETWORK, await real.wallet().address());
+      const seeds = await resolveBeaconPresetSeeds(real, park, presetSeeds);
+      console.log(`Seed cho trước (bãi đỗ, chưa tiêu): ${seeds.map((u) => outRefString(u)).join(" · ")}`);
+      beaconScriptsChecked(beaconsInput, NETWORK, park.walletPkh, presetSeeds, (l) => console.log(l));
+      console.log(`\nDRY RUN + seed cho trước: đã kiểm seed và hash; KHÔNG dựng tx đúc (Emulator không có seed ở bãi đỗ).`);
+      return;
+    }
+    const r = await runBeaconsPhase(chain, beaconsInput);
     console.log(`\nMint ${r.combinedMint ? "gộp MỘT tx" : "tách ba tx"} · ${r.txs.length} tx:`);
     for (const t of r.txs) console.log(`   ${t.label.padEnd(36)} ${t.bytes} B  ${t.hash}`);
     lines = beaconsBookEntries(r);

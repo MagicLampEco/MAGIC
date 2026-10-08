@@ -179,6 +179,51 @@ công bố ref-script `REF_VAULT_INSTANT_UTXO`) chỉ in khi ký bằng `WALLET_
 
 ---
 
+## Seed cho trước (preset seeds)
+
+Hash của cụm phục vụ phụ thuộc outref của các seed one-shot: bốn seed GenBeacons (bước 11
+pha `beacons`), seed `shard_nft` (bước 03) và seed `price_nft` của mỗi loại két (bước 09).
+Mặc định mỗi bước TỰ CHỌN seed lúc chạy, nên hash chỉ biết được sau khi đúc. Khi bên tiêu
+thụ cần hash TRƯỚC (ví dụ app ghim policy lúc build), đi theo bốn bước:
+
+```bash
+# 1. Đỗ seed ở bãi đỗ của ví deploy (script native sig(ví)); KHÔNG đúc gì. In các dòng
+#    DEPLOY_SEED_<VAI>=<tx>#<ix> và khối "seeds" cho bước 2. DRY_RUN=1 ⟹ không nộp.
+npx tsx deploy/park_seeds.ts                                   # đủ 8 vai
+PARK_SEEDS=registry,greenback,gbShard,rate npx tsx deploy/park_seeds.ts
+
+# 2. Tính trước mọi hash từ outref đó (không đọc mạng, không đọc khoá). Hình dạng đầu vào:
+#    đầu tệp clusterHashes.ts; mẫu: vectors/cluster_hashes.gen2-preprod.json.
+npx tsx clusterHashes.ts input.json --build --out hashes.json
+
+# 3. Gửi hashes.json cho bên tiêu thụ.
+
+# 4. Deploy với đúng các seed đó; mỗi bước so hash thực với tệp, LỆCH ⟹ ném TRƯỚC khi nộp.
+DEPLOY_SEED_REGISTRY=… DEPLOY_SEED_GREENBACK=… DEPLOY_SEED_GB_SHARD=… DEPLOY_SEED_RATE=… \
+  DEPLOY_EXPECT_HASHES=hashes.json GEN_BEACONS_PHASE=beacons RHO_Q=… npx tsx deploy/11_deploy_gen_beacons.ts
+DEPLOY_SEED_SHARD_NFT=… DEPLOY_EXPECT_HASHES=hashes.json npm run deploy:shards
+DEPLOY_SEED_PRICE_NFT_INSTANT=… DEPLOY_EXPECT_HASHES=hashes.json VAULT_KIND=instant npm run deploy:consume
+```
+
+Luật (nguồn: `deploySeeds.ts`):
+
+- Vắng mọi biến `DEPLOY_SEED_*` ⟹ hành vi CŨ của từng bước, không đổi gì.
+- Có biến mà seed không dùng được (đã tiêu, không thuộc ví deploy, không phải output trơn) ⟹
+  NÉM, không lùi về tự chọn. Bước 11 chỉ nhận seed ở BÃI ĐỖ (seed sổ két phải nằm chờ tới pha
+  `registry`); bước 03/09 nhận seed ở ví hoặc bãi đỗ.
+- Bốn seed GenBeacons: đủ cả bốn hoặc không cái nào, khác nhau đôi một.
+- Có `DEPLOY_EXPECT_HASHES` mà không có seed cho trước ⟹ ném trước mọi giao dịch. Tệp thiếu
+  một tên mà bước cần so ⟹ ném (KHÔNG ĐO ĐƯỢC không đi qua như KHỚP).
+- `DRY_RUN=1` ở bước 11 cùng seed cho trước: kiểm seed trên mạng + so hash, KHÔNG dựng tx đúc.
+
+**Chưa hỗ trợ: tái dùng beacon GenBeacons đã có.** Bước 11 pha `beacons` luôn đúc MỚI trên bốn
+seed; muốn giữ beacon cũ thì không chạy lại pha đó.
+
+Ca kiểm: `npx tsx test_cluster_hashes.ts` (20 hash đời 2 Preprod + phép so hash) ·
+`npx tsx test_deploy_preset_seeds.ts` (bước 11 có seed cho trước, trên Emulator).
+
+---
+
 ## Test sau khi deploy
 
 ```bash

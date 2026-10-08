@@ -2,8 +2,8 @@
 // deployment THẬT của cụm Preprod `493002cc` (wk5), và `/tx/schedule-commit` không còn 501 CONFIG_MISSING.
 //
 // Nguồn fixture: `tests/fixtures/books-preprod-493002cc-wk5/deployment.Preprod.{Instant,Schedule}.json` — bản chép
-// NGUYÊN VĂN (sha256 khớp, đo 2026-10-08) từ sổ cụm
-// `MAGIC/_Agents/cluster-books/preprod-serving-493002cc-wk5/vaulttx/` (mtime 2026-10-04 11:02). Đó là ảnh chụp,
+// nguyên văn (trừ trường `source`: bỏ đường dẫn nội bộ của sổ; đo 2026-10-08) từ sổ cụm
+// nội bộ `preprod-serving-493002cc-wk5` (mtime 2026-10-04 11:02). Đó là ảnh chụp,
 // KHÔNG phải nguồn: sổ đổi (cụm đời mới) thì bản chép ở đây cũ đi; bài này chứng minh HÌNH DẠNG hai tệp cùng
 // một cụm nạp được cùng nhau, không chứng minh sổ hôm nay còn đúng.
 //

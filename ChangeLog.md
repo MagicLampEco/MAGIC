@@ -5,6 +5,12 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-08 — Keeper: thế chấp (collateral) luôn chỉ-ADA
+
+**Đổi gì.** Mọi tx có script mà keeper dựng (`stepPrice`, `stepFire` ▸ `buildScheduleFireTx`, `deploy/12_post_greenback.ts`) chỉ cho Lucid thấy UTxO thuần ADA của ví (`scripts/keeper/collateral.ts` ▸ `pureAdaCompleteOptions`, đưa vào `complete({ presetWalletInputs })`). Ví không có UTxO thuần ADA ≥ 6 ADA thì NÉM kèm gợi ý `prepare_wallet.ts` và lượt keeper báo "hỏng". `FireParams` có thêm trường tuỳ chọn `walletInputs`. Bài kiểm: `scripts/keeper/test_collateral.ts`.
+**Vì sao.** Lucid 0.4.30 chọn thế chấp theo lovelace giảm dần trên mọi UTxO ví; UTxO lớn nhất mang token ⟹ node từ chối `CollateralContainsNonADA`. Preprod 2026-10-08: hai lượt ghi beacon giá trễ 1–2 giờ.
+**Gãy gì.** Không gì cho người gọi cũ (`walletInputs` bỏ trống giữ nguyên hành vi). Bước `instant` của keeper (`deploy/05`, `test/instant_only.ts`) chưa đổi vì cần LAMP từ UTxO có token.
+
 ## 2026-10-07 — VaultTxAPI: hợp đồng cho module backend (`VaultTxAPI/contract/`) và bài kiểm ghim nó vào mã
 
 **Đổi gì.** Thêm `VaultTxAPI/contract/`: `openapi.json` (OpenAPI 3.1, chín route module gọi), `error-codes.json`

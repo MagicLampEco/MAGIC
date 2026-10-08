@@ -45,10 +45,13 @@ import {
 } from "@magiclamp/protocol-utils";
 import {
   addMintEngage,
+  buildConsumeManyTx,
   buildConsumeTx,
   decodePriceParam,
   requiredFromBeacon,
+  requiredFromBeaconPairs,
 } from "@magiclamp/consumemagic";
+import type { OpPairLike } from "@magiclamp/consumemagic-pricing";
 import {
   addMintPrepaidVault,
   addPrepaidDraw,
@@ -577,7 +580,19 @@ export async function buildSponsorT3Draw(p: SponsorT3Params): Promise<SponsorTxR
 
 // ── T4 — consume đầu + BurnBatch trên két Prepaid ───────────────────────────
 
-export interface SponsorT4Params {
+/**
+ * Lượt tiêu của T4: MỘT cặp (`Consume`, `required` gộp-rồi-sàn) HOẶC `pairs` (`ConsumeMany`, `required` =
+ * Σ sàn từng cặp). Loại trừ nhau theo kiểu. Hình dạng danh sách do `assertValidPairs` kiểm (trong
+ * `requiredFromBeaconPairs`); việc "`pairs` đúng một phần tử ⟹ `Consume` đơn" là của bên gọi
+ * (`VaultTxAPI/src/consumeLine.ts` ▸ `consumeLineOf`), SDK dựng đúng dạng được đưa.
+ */
+export type SponsorT4Line =
+  | { opType: number; opCount: bigint; pairs?: undefined }
+  | { pairs: ReadonlyArray<OpPairLike>; opType?: undefined; opCount?: undefined };
+
+export type SponsorT4Params = SponsorT4Base & SponsorT4Line;
+
+interface SponsorT4Base {
   lucid: LucidEvolution;
   prepaidScripts: PrepaidScripts;
   consumeScript: Validator;
@@ -587,8 +602,6 @@ export interface SponsorT4Params {
   engageUtxo: UTxO;
   vaultUtxo: UTxO;
   priceBeaconUtxo: UTxO;
-  opType: number;
-  opCount: bigint;
   ownerAuth: OwnerAuth<TxBuilder>;
   network: Network;
   tipPosixMs: bigint;
@@ -625,26 +638,27 @@ export async function buildSponsorT4FirstConsume(p: SponsorT4Params): Promise<Sp
     );
   }
   if (!p.priceBeaconUtxo.datum) fail("SPONSOR_BUILD_FAILED", `beacon giá thiếu inline datum.`);
-  const required = requiredFromBeacon(decodePriceParam(p.priceBeaconUtxo.datum!), p.opType, p.opCount);
+  const pp = decodePriceParam(p.priceBeaconUtxo.datum!);
+  const required = p.pairs === undefined
+    ? requiredFromBeacon(pp, p.opType, p.opCount)
+    : requiredFromBeaconPairs(pp, p.pairs);
   if (!p.vaultUtxo.datum) fail("SPONSOR_BUILD_FAILED", `két Prepaid thiếu inline datum.`);
   const vd = decodeVaultDatum(p.vaultUtxo.datum!);
   const burns = planPrepaidBurns(vd, required, epoch);
   const pb = prepaidBurnFor(p.prepaidScripts, p.vaultUtxo, burns, epoch);
 
   // Lỗi có mã của ConsumeMAGIC (CONSUME-0xx, OWNER_*) đi nguyên.
-  const r = await buildConsumeTx({
+  const common = {
       lucid: p.lucid,
       engageUtxo: p.engageUtxo,
       vaultUtxo: p.vaultUtxo,
       priceBeaconUtxo: p.priceBeaconUtxo,
       consumeScript: p.consumeScript,
       vaultScript: p.prepaidScripts.vault.script as Validator,
-      opType: p.opType,
-      opCount: p.opCount,
       vaultBurnRedeemerCbor: pb.vaultBurnRedeemerCbor,
       vaultOutDatumCbor: pb.vaultOutDatumCbor,
       vaultOutAssets: pb.vaultOutAssets,
-      vaultKind: "prepaid",
+      vaultKind: "prepaid" as const,
       ownerAuth: p.ownerAuth,
       consumeRefUtxo: p.consumeRefUtxo,
       vaultRefUtxo: p.vaultRefUtxo ?? p.prepaidScripts.vault.refUtxo,
@@ -653,7 +667,11 @@ export async function buildSponsorT4FirstConsume(p: SponsorT4Params): Promise<Sp
       ...(p.validityMaxAheadMs === undefined ? {} : { validityMaxAheadMs: p.validityMaxAheadMs }),
       ...(p.maxPriceStale === undefined ? {} : { maxPriceStale: p.maxPriceStale }),
       ...(p.collateralLovelace === undefined ? {} : { collateralLovelace: p.collateralLovelace }),
-  }).catch((e: unknown) => { throw lucidBuildFailure(e, "T4"); });
+  };
+  const r = await (p.pairs === undefined
+    ? buildConsumeTx({ ...common, opType: p.opType, opCount: p.opCount })
+    : buildConsumeManyTx({ ...common, pairs: p.pairs })
+  ).catch((e: unknown) => { throw lucidBuildFailure(e, "T4"); });
   if (r.currentEpoch !== p.drawEpoch) {
     fail("SPONSOR_EPOCH_MISMATCH", `buildConsumeTx ghi kỳ ${r.currentEpoch}, T3 ở kỳ ${p.drawEpoch}.`);
   }

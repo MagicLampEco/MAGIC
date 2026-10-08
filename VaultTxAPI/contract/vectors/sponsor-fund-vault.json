@@ -1,0 +1,1122 @@
+{
+  "contract_version": "1.1.0",
+  "operation": "POST /tx/sponsor/fund-vault",
+  "requests": {
+    "valid": [
+      {
+        "name": "did-owner-one-sponsor-utxo",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          }
+        }
+      },
+      {
+        "name": "named-fund-and-vault-two-utxos",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0",
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#1"
+            ]
+          },
+          "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+          "vault_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0"
+        }
+      },
+      {
+        "name": "fee-payer-instead-of-change-address",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "carp_amount": "250000000",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          }
+        }
+      },
+      {
+        "name": "top-level-key-ignored",
+        "why": "The request body is open at the top level: a key the parser does not read is ignored, not refused.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          },
+          "x_client_trace": "abc"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "sponsor-utxo-refs-missing",
+        "why": "sponsor.utxo_refs is required: 1 to 20 distinct UTxO references the sponsor spends CARP from.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000",
+          "sponsor": {}
+        }
+      },
+      {
+        "name": "sponsor-missing",
+        "why": "sponsor is required on fund-vault.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000"
+        }
+      },
+      {
+        "name": "sponsor-change-address-refused",
+        "why": "The change goes back to the address of the sponsor's UTxOs, which the deployment pins; sponsor.change_address is refused (400 SPONSOR_REQUEST_SHAPE) and declared false.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ],
+            "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s"
+          }
+        }
+      },
+      {
+        "name": "carp-amount-as-number",
+        "why": "carp_amount is a digit string; a JSON number is 400 BAD_REQUEST.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": 250000000,
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          }
+        }
+      },
+      {
+        "name": "carp-amount-missing",
+        "why": "carp_amount is required.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          }
+        }
+      },
+      {
+        "name": "carp-amount-with-sign",
+        "why": "carp_amount is digits only.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "-5",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          }
+        }
+      },
+      {
+        "name": "utxo-ref-leading-zero-index",
+        "why": "An output index has no leading zeros (the parser OUTREF form).",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#00"
+            ]
+          }
+        }
+      },
+      {
+        "name": "fund-id-uppercase",
+        "why": "fund_id is lowercase hex of 1 to 32 bytes.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          },
+          "fund_id": "F0F0"
+        }
+      },
+      {
+        "name": "owner-extra-key",
+        "why": "The owner object is closed: a key other than type, did and device_key_hash is 400 OWNER_CREDENTIAL_SHAPE.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001",
+            "note": "x"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          }
+        }
+      },
+      {
+        "name": "funding-refused",
+        "why": "funding belongs to /tx/create-vault; here it is refused with 400 SPONSOR_REQUEST_SHAPE, and the schema declares it false.",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+          "carp_amount": "250000000",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          },
+          "funding": {}
+        }
+      },
+      {
+        "name": "fee-payer-extra-key",
+        "why": "fee_payer is closed: only utxo, address and reservation_id (400 FEE_PAYER_SHAPE).",
+        "body": {
+          "owner": {
+            "type": "did",
+            "did": "did:cardano:preprod:demo-user-0001"
+          },
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14",
+            "note": "x"
+          },
+          "carp_amount": "1",
+          "sponsor": {
+            "utxo_refs": [
+              "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "responses": {
+    "valid": [
+      {
+        "name": "typical",
+        "status": 200,
+        "body": {
+          "step": "fund-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": "250000000",
+            "opens_new_line": true,
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_signers": [
+              "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+            ],
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "note": "tx_cbor here is a hex placeholder, not a decodable transaction: the schema pins the form of tx_cbor (hex), not its content."
+      },
+      {
+        "name": "additive-keys",
+        "status": 200,
+        "body": {
+          "step": "fund-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": "250000000",
+            "opens_new_line": true,
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_signers": [
+              "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+            ],
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ],
+            "added_in_a_later_minor": "x"
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z",
+          "added_in_a_later_minor": "x"
+        },
+        "note": "Keys added by a later minor release stay valid (compatibility.md)."
+      },
+      {
+        "name": "role-required",
+        "status": 403,
+        "body": {
+          "error": {
+            "code": "SPONSOR_ROLE_REQUIRED",
+            "message": "This route opens with the sponsor-role token only.",
+            "details": {}
+          }
+        }
+      },
+      {
+        "name": "fund-not-opened",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "SPONSOR_FUND_NOT_OPENED",
+            "message": "The DID has no sponsor fund yet; open it and call again.",
+            "details": {
+              "did_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+              "pinned_funds": 1
+            }
+          }
+        }
+      },
+      {
+        "name": "carp-above-cap",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "SPONSOR_CARP_ABOVE_CAP",
+            "message": "carp_amount is above the pinned cap.",
+            "details": {
+              "max_carp_amount": "1000000000"
+            }
+          }
+        }
+      },
+      {
+        "name": "sponsor-utxo-not-found",
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "SPONSOR_UTXO_NOT_FOUND",
+            "message": "A reference in sponsor.utxo_refs is not an unspent UTxO.",
+            "details": {
+              "missing": [
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#0"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "vault-did-unset",
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "SPONSOR_VAULT_DID_UNSET",
+            "message": "The Prepaid vault has no DID yet; run bind-did first.",
+            "details": {
+              "vault_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0"
+            }
+          }
+        }
+      },
+      {
+        "name": "fund-not-allowed",
+        "status": 422,
+        "body": {
+          "error": {
+            "code": "SPONSOR_FUND_NOT_ALLOWED",
+            "message": "The fund is not one this deployment pins.",
+            "details": {
+              "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+              "problem": "not_sponsored"
+            }
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "step-other-route",
+        "status": 200,
+        "body": {
+          "step": "first-consume",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": "250000000",
+            "opens_new_line": true,
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_signers": [
+              "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+            ],
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "step is fund-vault on this route."
+      },
+      {
+        "name": "tx-hash-uppercase",
+        "status": 200,
+        "body": {
+          "step": "fund-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C5C",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": "250000000",
+            "opens_new_line": true,
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_signers": [
+              "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+            ],
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "Hashes are lowercase hex."
+      },
+      {
+        "name": "expires-at-missing",
+        "status": 200,
+        "body": {
+          "step": "fund-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": "250000000",
+            "opens_new_line": true,
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_signers": [
+              "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+            ],
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "expires_at is on every build answer: it tells when the transaction dies."
+      },
+      {
+        "name": "tx-cbor-missing",
+        "status": 200,
+        "body": {
+          "step": "fund-vault",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": "250000000",
+            "opens_new_line": true,
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_signers": [
+              "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+            ],
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "tx_cbor is the unsigned transaction: the reason this route exists."
+      },
+      {
+        "name": "tx-cbor-not-hex",
+        "status": 200,
+        "body": {
+          "step": "fund-vault",
+          "tx_cbor": "not hex",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": "250000000",
+            "opens_new_line": true,
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_signers": [
+              "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+            ],
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "tx_cbor is hex."
+      },
+      {
+        "name": "carp-amount-as-number",
+        "status": 200,
+        "body": {
+          "step": "fund-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": 250000000,
+            "opens_new_line": true,
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_signers": [
+              "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+            ],
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "Amounts are digit strings."
+      },
+      {
+        "name": "sponsor-signers-missing",
+        "status": 200,
+        "body": {
+          "step": "fund-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": "250000000",
+            "opens_new_line": true,
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "sponsor_signers names the keys that sign the sponsor's CARP inputs."
+      },
+      {
+        "name": "opens-new-line-as-string",
+        "status": 200,
+        "body": {
+          "step": "fund-vault",
+          "tx_cbor": "84a400818258205c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c00",
+          "tx_hash": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+          "required_signers": [
+            "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+          ],
+          "signers": [
+            {
+              "role": "fee-wallet",
+              "key_hashes": [
+                "fefefefefefefefefefefefefefefefefefefefefefefefefefefefe"
+              ],
+              "how": "fee wallet: fee + collateral"
+            },
+            {
+              "role": "owner",
+              "key_hashes": [
+                "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+              ],
+              "how": "did_stake script witness"
+            },
+            {
+              "role": "sponsor",
+              "key_hashes": [
+                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+              ],
+              "how": "sponsor key signature over the CARP inputs"
+            }
+          ],
+          "witness_notes": [
+            "Owner: sign with the did_stake script witness."
+          ],
+          "summary": {
+            "step": "fund-vault",
+            "epoch": 318,
+            "epoch_end_ms": "1791475200000",
+            "vault_out_ref": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c#0",
+            "fund_id": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_unit": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+            "fund_selection": "did_lookup",
+            "carp_amount": "250000000",
+            "opens_new_line": "true",
+            "anchor_ref": "adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad#0",
+            "owner_commit": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+            "sponsor_signers": [
+              "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+            ],
+            "sponsor_change_address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "withdrawals": 1,
+            "outputs": [
+              {
+                "index": 0,
+                "address": "addr_test1wpm2t24x02y7lkqw3f8yyarz5j844x8a3jzsx9wcrv5900cv2wj6x",
+                "assets": {
+                  "lovelace": "5659030",
+                  "76767676767676767676767676767676767676767676767676767676aa": "1"
+                }
+              },
+              {
+                "index": 1,
+                "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+                "assets": {
+                  "lovelace": "9000000"
+                }
+              }
+            ]
+          },
+          "expires_at": "2026-10-08T04:35:03.000Z",
+          "expires_reason": "epoch_end",
+          "server_time": "2026-10-08T04:25:03.000Z"
+        },
+        "why": "opens_new_line is a JSON boolean."
+      }
+    ]
+  }
+}

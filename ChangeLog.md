@@ -5,6 +5,24 @@
 > [`DevStatus.md`](DevStatus.md); mô hình chuẩn xem
 > [`Specs/MagicLamp-Tripletoken-Feat-(Vi).md`](Specs/MagicLamp-Tripletoken-Feat-(Vi).md).
 
+## 2026-10-08 — VaultTxAPI: `/tx/sponsor/first-consume` nhận `pairs` như `/tx/consume`
+
+**Đổi gì.** Thân first-consume nhận `pairs` (1..8 cặp) thay cho `op_type`+`op_count`; hai dạng loại trừ nhau, gửi cả
+hai ⟹ 400 `CONSUME_PAIRS_CONFLICT`. Cùng MỘT bộ đọc (`VaultTxAPI/src/buildRequest.ts` ▸ `consumeLineFields`, dùng cho
+cả `/tx/consume`) và cùng bộ kiểm (`consumeLine.ts` ▸ `consumeLineOf`) nên cùng mã lỗi; `pairs` một phần tử dựng
+`Consume` đơn, tx y hệt dạng cũ. `MagicSDK/src/sponsorJourney.ts` ▸ `buildSponsorT4FirstConsume` nhận thêm `pairs`
+(`ConsumeMany`; `required` = Σ sàn từng cặp, khác quy tắc gộp-rồi-sàn của `Consume` đơn).
+**Vì sao.** Bên gọi (dịch vụ OriLife theo hợp đồng module) luôn gửi `pairs`. Không có ràng buộc on-chain hay Feecover
+cho một cặp: `ConsumeMany` đã chạy trên két Prepaid ở `MagicSDK/tests/sponsorJourney.test.ts`; giới hạn cũ chỉ là chữ
+ký của bộ dựng SDK.
+**Cái gì gãy.** Không gì ở dạng cũ. `required` của first-consume nhiều cặp khác `required` của một cặp gộp: `draw-magic`
+phải rút đủ theo `required` của dạng được gửi. Hợp đồng module nay khớp: `contract/openapi.json` ▸ `FirstConsumeRequest` nhận
+`op_type`+`op_count` HOẶC `pairs` (`oneOf`, lược đồ `ConsumePairs` dùng chung với `ConsumeRequest`), bảng mã lỗi thêm
+route `/tx/sponsor/first-consume` cho các mã `CONSUME_PAIR*`, vector first-consume có ca `pairs` hợp lệ và bốn ca bị
+bác. `info.version` 1.0.0 → 1.1.0 (khoá yêu cầu tuỳ chọn mới = minor, `contract/compatibility.md` §4). Module chỉ gửi
+`op_type`+`op_count` không bị ảnh hưởng.
+**Cùng nhánh: sáu route tài trợ vào hợp đồng** (yêu cầu của Feecover: ghim `fund-vault` theo commit). Đổi gì: `contract/openapi.json` thêm `/tx/sponsor/{open-vault,bind-did,open-fund,fund-vault,draw-magic,claim}` (mười lăm operation; thân yêu cầu MỞ ở gốc, đóng ở `owner` và `fee_payer`, khoá mà mã từ chối khai bằng lược đồ `false`; lời đáp 200 bắt buộc `tx_cbor`; thẻ `sponsorBearerAuth` cho `fund-vault` và `claim`); `error-codes.json` thêm 34 mã tài trợ và route tài trợ vào các mã dùng chung; sáu tệp `vectors/sponsor-*.json`. Bài kiểm: `moduleContract.test.ts` đòi mười lăm operation, danh sách loại trừ chỉ còn ba mã SDK không với tới qua HTTP (`SPONSOR_DID_COMMIT_LENGTH`, `SPONSOR_ANCHOR_REF_WRONG`, `SPONSOR_FUND_NOT_PINNED`) cộng ba mã của `/tx/create-vault`; `sponsorEmulator.test.ts` đối chiếu MỌI lời đáp (200 và lỗi) của bảy route tài trợ với lược đồ và với bảng mã lỗi (mã có hàng, đúng trạng thái, hàng khai route đó). Vì sao: bên tiêu thụ chỉ ghim được thứ nằm trong hợp đồng. Cái gì gãy: không gì ở thời chạy (không đổi `src/`); `info.version` giữ 1.1.0. Từ nay đổi lời đáp hay mã lỗi của một route tài trợ mà không sửa `contract/` làm đỏ hai bài trên.
+
 ## 2026-10-08 — Keeper: thế chấp (collateral) luôn chỉ-ADA
 
 **Đổi gì.** Mọi tx có script mà keeper dựng (`stepPrice`, `stepFire` ▸ `buildScheduleFireTx`, `deploy/12_post_greenback.ts`) chỉ cho Lucid thấy UTxO thuần ADA của ví (`scripts/keeper/collateral.ts` ▸ `pureAdaCompleteOptions`, đưa vào `complete({ presetWalletInputs })`). Ví không có UTxO thuần ADA ≥ 6 ADA thì NÉM kèm gợi ý `prepare_wallet.ts` và lượt keeper báo "hỏng". `FireParams` có thêm trường tuỳ chọn `walletInputs`. Bài kiểm: `scripts/keeper/test_collateral.ts`.

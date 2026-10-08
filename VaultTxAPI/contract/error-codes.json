@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "description": "Error codes of the routes in openapi.json. Every non-2xx body is the ErrorResponse envelope. status lists the HTTP statuses the code is returned with. routes lists the path ids the code can appear on; '*' means every route except /health. The table is checked against the server source in both directions: every code listed here is emitted by the server, and every code the server emits on these routes is listed with its status. Codes emitted only on routes outside openapi.json are not listed. A later minor release may add codes, so a reader must still handle an unknown code by its HTTP status (see compatibility.md).",
   "codes": [
     {
@@ -20,7 +20,7 @@
       "routes": [
         "*"
       ],
-      "meaning": "Missing or wrong Authorization bearer token."
+      "meaning": "Missing or wrong Authorization bearer token. On the two sponsor-role routes (POST /tx/sponsor/fund-vault and POST /tx/sponsor/claim) the token checked is the sponsor-role token; the shared token there is 403 SPONSOR_ROLE_REQUIRED."
     },
     {
       "code": "NOT_FOUND",
@@ -214,7 +214,13 @@
         "/fee/sign",
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "The fee-payer UTxO reservation is absent, expired, exceeded by the transaction validity, or reservation_id is not the live one (details.reservation: absent|expired|exceeded|foreign). Request a new UTxO and rebuild."
     },
@@ -386,9 +392,10 @@
         400
       ],
       "routes": [
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/open-vault"
       ],
-      "meaning": "route create-vault or bind-did: did_commit is not exactly 64 lowercase hex characters (32 bytes)."
+      "meaning": "route create-vault, bind-did or sponsor open-vault: did_commit is not exactly 64 lowercase hex characters (32 bytes)."
     },
     {
       "code": "DID_COMMIT_UNEXPECTED",
@@ -406,9 +413,10 @@
         409
       ],
       "routes": [
-        "/tx/quote"
+        "/tx/quote",
+        "/tx/sponsor/open-vault"
       ],
-      "meaning": "route create-vault, kind instant: the owner (or this did_commit) already has an instant vault; a second one is not built. details.existing lists them."
+      "meaning": "route create-vault, kind instant: the owner (or this did_commit) already has an instant vault; a second one is not built. details.existing lists them. On POST /tx/sponsor/open-vault: the owner already has a Prepaid vault, so none is built (details.existing lists them); continue from fund-vault with that vault."
     },
     {
       "code": "FUNDING_SHAPE",
@@ -588,7 +596,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "owner.hash is not 56 lowercase hex characters."
     },
@@ -600,7 +613,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "owner is not a { type, hash } credential of a supported type."
     },
@@ -612,7 +630,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "owner and the owner_pkh alias are both present and disagree."
     },
@@ -625,7 +648,12 @@
         "/tx/consume",
         "/tx/quote",
         "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/plan",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "owner.did is malformed."
     },
@@ -638,7 +666,12 @@
         "/tx/consume",
         "/tx/quote",
         "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/plan",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "owner carries a DID and a credential that disagree."
     },
@@ -650,7 +683,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "owner_witness is malformed."
     },
@@ -662,7 +700,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "owner_witness was sent for an owner that needs none."
     },
@@ -676,7 +719,12 @@
         "/tx/consume",
         "/tx/quote",
         "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/plan",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "A script owner needs a witness the caller did not send (400), or the deployment cannot derive it (501)."
     },
@@ -688,7 +736,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The script owner's reward account is not registered."
     },
@@ -701,7 +754,12 @@
         "/tx/consume",
         "/tx/quote",
         "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/plan",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The DID anchor was not found on chain."
     },
@@ -714,7 +772,12 @@
         "/tx/consume",
         "/tx/quote",
         "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/plan",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The DID anchor is not Active."
     },
@@ -727,7 +790,12 @@
         "/tx/consume",
         "/tx/quote",
         "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/plan",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "More than one anchor matches the DID."
     },
@@ -740,7 +808,12 @@
         "/tx/consume",
         "/tx/quote",
         "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/plan",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The DID anchor datum does not decode."
     },
@@ -753,7 +826,12 @@
         "/tx/consume",
         "/tx/quote",
         "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/plan",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The device key is not listed in the DID anchor."
     },
@@ -765,7 +843,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "owner_witness.anchor_ref is not a DID anchor: the UTxO carries no anchor NFT (32-byte name, quantity 1) under the network's anchor policy. details.anchor_ref."
     },
@@ -777,7 +860,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The owner proof names another owner than the vault's: owner_witness.did_stake_script_cbor does not hash to the owner's script hash, or the proof is for a key owner. Usually the wrong DID or anchor policy."
     },
@@ -789,7 +877,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The service's own owner-witness step failed (the withdrawal it attaches returned nothing). A fault of the service, not of the request: quote the message to the operator; do not retry blindly."
     },
@@ -801,7 +894,10 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The owner has no vault. Not the same as CHAIN_UNAVAILABLE; do not offer to create a second vault on a read failure."
     },
@@ -813,7 +909,10 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The owner has several valid vaults and the request did not say which (details.utxo_refs)."
     },
@@ -836,7 +935,11 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "The vault datum does not match the schema this deployment knows."
     },
@@ -914,9 +1017,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault"
       ],
-      "meaning": "The owner has no Engage thread."
+      "meaning": "The owner has no Engage thread (on the sponsor journey: open-vault was not built and submitted first)."
     },
     {
       "code": "ENGAGE_THREAD_AMBIGUOUS",
@@ -926,9 +1032,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault"
       ],
-      "meaning": "The owner has several Engage threads and engage_ref was absent."
+      "meaning": "The owner has several Engage threads and engage_ref was absent. Only first-consume reads engage_ref; on bind-did, open-fund and fund-vault there is no field to pick a thread, so those routes cannot get past this code until the owner has exactly one thread."
     },
     {
       "code": "ENGAGE_REF_SHAPE",
@@ -974,7 +1083,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "fee_payer is malformed (details.field names the key, including a reservation_id that is not 32 lowercase hex)."
     },
@@ -986,7 +1101,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "fee_payer address is the wrong network or not a key address, or the UTxO is absent or not pure ADA."
     },
@@ -998,7 +1119,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "fee_payer and change_address were both sent."
     },
@@ -1010,7 +1137,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "Neither change_address nor fee_payer was sent and the owner is a script."
     },
@@ -1022,7 +1155,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "change_address is not a valid address for this network."
     },
@@ -1034,7 +1173,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "The fee-payer wallet would have to advance more min-ADA than the deployment allows."
     },
@@ -1046,7 +1191,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "A did_stake owner has a non-zero reward and no Phoenix wallet could be derived to return it to."
     },
@@ -1058,7 +1208,12 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
       "meaning": "A did_stake owner's reward is below the min-ADA of the return output."
     },
@@ -1070,7 +1225,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "The built transaction does not obey the fee-payer rules. No transaction is returned."
     },
@@ -1082,7 +1243,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "A referenced UTxO is not on chain."
     },
@@ -1094,7 +1261,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "A referenced UTxO is already spent (details.consumed_by_tx)."
     },
@@ -1106,7 +1279,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "An input this build needs (details.utxo_ref) is spent by a transaction submitted through this service that is not in a block yet; details.pending_tx_hash is that transaction (null when the service did not record its hash). If it is the transaction you submitted for the same operation, the operation is in flight: poll GET /tx/status/{pending_tx_hash} and do not build again. Otherwise retry after it lands."
     },
@@ -1118,7 +1297,13 @@
       "routes": [
         "/tx/consume",
         "/tx/quote",
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "The protocol refuses the request before any transaction exists (insufficient LAMP, MAGIC below required, stale price beacon, ...). error.message says why."
     },
@@ -1140,6 +1325,7 @@
       ],
       "routes": [
         "/tx/consume",
+        "/tx/sponsor/first-consume",
         "/tx/quote"
       ],
       "meaning": "pairs was sent together with op_type/op_count."
@@ -1151,6 +1337,7 @@
       ],
       "routes": [
         "/tx/consume",
+        "/tx/sponsor/first-consume",
         "/tx/quote"
       ],
       "meaning": "pairs is not an array of { op_type, op_count } objects."
@@ -1162,6 +1349,7 @@
       ],
       "routes": [
         "/tx/consume",
+        "/tx/sponsor/first-consume",
         "/tx/quote"
       ],
       "meaning": "pairs is empty."
@@ -1173,6 +1361,7 @@
       ],
       "routes": [
         "/tx/consume",
+        "/tx/sponsor/first-consume",
         "/tx/quote"
       ],
       "meaning": "pairs has more than 8 entries."
@@ -1184,6 +1373,7 @@
       ],
       "routes": [
         "/tx/consume",
+        "/tx/sponsor/first-consume",
         "/tx/quote"
       ],
       "meaning": "pairs op_type values are not strictly increasing."
@@ -1195,6 +1385,7 @@
       ],
       "routes": [
         "/tx/consume",
+        "/tx/sponsor/first-consume",
         "/tx/quote"
       ],
       "meaning": "op_count is not a digit string of at least 1 with at most 20 digits."
@@ -1206,6 +1397,7 @@
       ],
       "routes": [
         "/tx/consume",
+        "/tx/sponsor/first-consume",
         "/tx/quote"
       ],
       "meaning": "op_type is outside the integers 0..1000000."
@@ -1348,9 +1540,15 @@
         501
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
-      "meaning": "The deployment has not enabled the sponsor journey."
+      "meaning": "The deployment has not enabled the sponsor journey. Every route under /tx/sponsor/ answers it."
     },
     {
       "code": "SPONSOR_NETWORK_UNSUPPORTED",
@@ -1358,7 +1556,13 @@
         501
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "The network has no epoch window origin, so the journey cannot be built there (details.cause_code)."
     },
@@ -1368,7 +1572,13 @@
         501
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "The deployment block does not serve the Prepaid vault kind."
     },
@@ -1378,7 +1588,13 @@
         501
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "Configured Prepaid script hashes differ from the ones derived from the blueprint."
     },
@@ -1389,9 +1605,15 @@
       ],
       "routes": [
         "/tx/sponsor/first-consume",
-        "/tx/sponsor/plan"
+        "/tx/sponsor/plan",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
-      "meaning": "The request body is malformed for this step (details.field)."
+      "meaning": "The request body is malformed for this step (details.field): a field of the wrong form, a field this step refuses (for example funding anywhere, did_commit on bind-did, sponsor.change_address on fund-vault), or sponsor.utxo_refs outside 1 to 20 distinct references."
     },
     {
       "code": "SPONSOR_VAULT_REF_MISMATCH",
@@ -1399,9 +1621,12 @@
         400
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
-      "meaning": "vault_ref is not the owner's Prepaid vault."
+      "meaning": "vault_ref is not the owner's unspent Prepaid vault. Read by bind-did, fund-vault, draw-magic and first-consume."
     },
     {
       "code": "SPONSOR_EPOCH_MISMATCH",
@@ -1411,7 +1636,7 @@
       "routes": [
         "/tx/sponsor/first-consume"
       ],
-      "meaning": "draw_epoch is not the current protocol epoch; nothing was built."
+      "meaning": "draw_epoch is not the current protocol epoch; nothing was built. Only first-consume reads draw_epoch."
     },
     {
       "code": "SPONSOR_VALIDITY_SPANS_EPOCHS",
@@ -1419,9 +1644,12 @@
         422
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
-      "meaning": "The transaction validity would span two epochs."
+      "meaning": "The transaction validity would span two epochs (bind-did, fund-vault, draw-magic, first-consume)."
     },
     {
       "code": "SPONSOR_BUILD_FAILED",
@@ -1429,7 +1657,13 @@
         422
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "The builder rejected the request (for example a fee-payer UTxO below the collateral amount)."
     },
@@ -1439,7 +1673,13 @@
         422
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
       "meaning": "The built transaction does not match the step. No transaction is returned."
     },
@@ -1449,9 +1689,15 @@
         422
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic",
+        "/tx/sponsor/claim"
       ],
-      "meaning": "The fee wallet (fee_payer.address or change_address) is paid by a pinned platform key. A platform key is not a wallet: pay fees from another key wallet. details.step."
+      "meaning": "The fee wallet (fee_payer.address or change_address) is paid by a pinned platform key. A platform key is not a wallet: pay fees from another key wallet. details.step. On every step of the journey, claim included."
     },
     {
       "code": "SPONSOR_WITHDRAW_COUNT",
@@ -1459,9 +1705,379 @@
         422
       ],
       "routes": [
-        "/tx/sponsor/first-consume"
+        "/tx/sponsor/first-consume",
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/draw-magic"
       ],
-      "meaning": "The built transaction does not carry exactly the withdrawal entries the owner needs (one for a script owner, none for a key owner). Nothing was issued."
+      "meaning": "The built transaction does not carry exactly the withdrawal entries the owner needs (one for a script owner, none for a key owner). Nothing was issued. Not on claim: it has no vault owner."
+    },
+    {
+      "code": "SPONSOR_ROLE_REQUIRED",
+      "status": [
+        403
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault",
+        "/tx/sponsor/claim"
+      ],
+      "meaning": "The route is opened by the sponsor-role token only, and the request carried the shared token (or a token of another role). Send the sponsor-role token. An unknown token is 401 UNAUTHORIZED; a service without a sponsor-role token answers 501 CONFIG_MISSING."
+    },
+    {
+      "code": "SPONSOR_OWNER_NOT_DID",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The owner is a key owner. These steps count the sponsor quota per DID, so they accept only an owner that proves a DID (type script with owner_witness, or type did). details.step and details.owner_type."
+    },
+    {
+      "code": "SPONSOR_OWNER_DID_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The did_commit of the request or of the owner's thread is not the DID of the owner's did_stake witness. The quota is counted per DID, so the DID must be the signer's own."
+    },
+    {
+      "code": "SPONSOR_OWNER_DID_UNVERIFIABLE",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The deployment cannot verify that the owner's DID is the did_commit (no did_stake block in the deployment). Not retryable."
+    },
+    {
+      "code": "SPONSOR_THREAD_LOVELACE_WITH_FEE_PAYER",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/sponsor/open-vault"
+      ],
+      "meaning": "thread_lovelace was sent together with fee_payer. With a fee_payer the service uses the builder floor for the thread; drop thread_lovelace or pay with change_address."
+    },
+    {
+      "code": "SPONSOR_DID_GENESIS_IN_FLIGHT",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/open-fund"
+      ],
+      "meaning": "The same DID already has a sponsor fund genesis in a transaction that has not expired. Wait for it to land (the DID then has a fund) or expire, then call again. details.tx_hash and details.held_until."
+    },
+    {
+      "code": "SPONSOR_FUND_SET_CLOSED",
+      "status": [
+        501
+      ],
+      "routes": [
+        "/tx/sponsor/open-vault",
+        "/tx/sponsor/open-fund"
+      ],
+      "meaning": "The deployment pins a closed set of fund units (paid_fund.sponsor.fund_units), so a fund minted by this step would not be found by fund-vault. Operator configuration; not retryable."
+    },
+    {
+      "code": "SPONSOR_FUND_ALREADY_OPEN",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/open-fund"
+      ],
+      "meaning": "The DID already has a sponsor fund (one fund per DID, a reclaimed fund included); skip open-fund. details.fund_ids."
+    },
+    {
+      "code": "SPONSOR_THREAD_DID_INVALID",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/open-fund",
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The owner's Engage thread carries a did_commit that is not exactly 32 bytes, so it was not opened by sponsor open-vault. details.engage_ref."
+    },
+    {
+      "code": "SPONSOR_VAULT_DID_ALREADY_SET",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/bind-did"
+      ],
+      "meaning": "The Prepaid vault already carries this thread's DID; skip bind-did and go on to fund-vault."
+    },
+    {
+      "code": "SPONSOR_VAULT_DID_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/bind-did",
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The Prepaid vault carries a DID other than the thread's. A bound did_commit cannot change, so this vault cannot continue the sponsor journey."
+    },
+    {
+      "code": "SPONSOR_VAULT_DID_UNSET",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The Prepaid vault has no DID yet; run bind-did before fund-vault."
+    },
+    {
+      "code": "SPONSOR_ANCHOR_NOT_FOUND",
+      "status": [
+        404
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "No unspent UTxO carries the DID anchor NFT of the new user (the reference input fund-vault needs)."
+    },
+    {
+      "code": "SPONSOR_ANCHOR_AMBIGUOUS",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "More than one unspent UTxO carries the DID anchor NFT; the service refuses to choose. details.utxo_refs."
+    },
+    {
+      "code": "SPONSOR_DID_FUND_IN_FLIGHT",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The DID already has a fund-vault transaction that has not expired (possibly on another fund): one funding per DID. Wait for it to land or expire."
+    },
+    {
+      "code": "SPONSOR_DID_FUNDED_ELSEWHERE",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The DID has already received sponsorship in a different fund."
+    },
+    {
+      "code": "SPONSOR_FUND_NOT_OPENED",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The DID has no sponsor fund yet; open it (open-vault with a fund, or open-fund) and call again."
+    },
+    {
+      "code": "SPONSOR_FUND_AMBIGUOUS",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The DID has more than one sponsor fund among the pinned funds; the service refuses to choose."
+    },
+    {
+      "code": "SPONSOR_FUND_DID_MISMATCH",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "fund_id names a fund of another DID than the owner's thread."
+    },
+    {
+      "code": "SPONSOR_FUND_NOT_ALLOWED",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The fund is not one this deployment pins, or it carries a problem label (details.problem), or fund_id is outside the pinned set."
+    },
+    {
+      "code": "SPONSOR_CARP_ABOVE_CAP",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "carp_amount is above the cap pinned in the deployment."
+    },
+    {
+      "code": "SPONSOR_FEE_WALLET_IS_SPONSOR",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The fee wallet is the sponsor wallet (same address or same payment key). Pay fees from another key wallet."
+    },
+    {
+      "code": "SPONSOR_UTXO_NOT_FOUND",
+      "status": [
+        404
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "A reference in sponsor.utxo_refs is not an unspent UTxO. details.missing."
+    },
+    {
+      "code": "SPONSOR_UTXO_NOT_ALLOWED",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The UTxOs in sponsor.utxo_refs sit at more than one address, or not at an address the deployment pins as the sponsor's. They must share ONE pinned sponsor address."
+    },
+    {
+      "code": "SPONSOR_UTXO_NOT_KEY",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "A sponsor UTxO is not at a key-credential address."
+    },
+    {
+      "code": "SPONSOR_UTXO_NO_CARP",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "A sponsor UTxO carries no CARP."
+    },
+    {
+      "code": "SPONSOR_UTXO_NOT_FUND_SPONSOR",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The sponsor UTxOs belong to a different address than the sponsor written in the fund datum."
+    },
+    {
+      "code": "SPONSOR_CARP_INSUFFICIENT",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The sponsor UTxOs hold less CARP than carp_amount."
+    },
+    {
+      "code": "SPONSOR_CARP_OUTPUT_UNPINNED",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/fund-vault"
+      ],
+      "meaning": "The built transaction would send CARP to an output the deployment does not pin (the fund, or the sponsor change). Nothing was issued."
+    },
+    {
+      "code": "SPONSOR_CLAIM_AMOUNT_WITH_FEE_PAYER",
+      "status": [
+        400
+      ],
+      "routes": [
+        "/tx/sponsor/claim"
+      ],
+      "meaning": "amount was sent together with fee_payer. Through a fee_payer a claim takes everything claimable; drop amount, or pay with change_address."
+    },
+    {
+      "code": "SPONSOR_CLAIM_ABOVE_MAX",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/claim"
+      ],
+      "meaning": "amount is above the claimable part of the fund. details.max_claimable."
+    },
+    {
+      "code": "SPONSOR_FEE_WALLET_IS_BENEFICIARY",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/claim"
+      ],
+      "meaning": "The fee wallet is the beneficiary address of the fund; the validator forbids inputs there. Pay fees from another address."
+    },
+    {
+      "code": "SPONSOR_FUND_NOT_FOUND",
+      "status": [
+        404
+      ],
+      "routes": [
+        "/tx/sponsor/claim"
+      ],
+      "meaning": "No fund with this fund_id exists on chain."
+    },
+    {
+      "code": "SPONSOR_FUND_NOT_CLAIMABLE",
+      "status": [
+        422
+      ],
+      "routes": [
+        "/tx/sponsor/claim"
+      ],
+      "meaning": "The fund is not one this service trusts to sign a claim for (platform or beneficiary differs from the pinned ones). details.problem."
+    },
+    {
+      "code": "SPONSOR_FUND_NOTHING_TO_CLAIM",
+      "status": [
+        409
+      ],
+      "routes": [
+        "/tx/sponsor/claim"
+      ],
+      "meaning": "The fund has nothing claimable yet (MAGIC spent has not been settled into the fund)."
     }
   ]
 }

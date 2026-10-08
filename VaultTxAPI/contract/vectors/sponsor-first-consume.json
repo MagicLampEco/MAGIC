@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "operation": "POST /tx/sponsor/first-consume",
   "requests": {
     "valid": [
@@ -17,6 +17,31 @@
           },
           "op_type": 1,
           "op_count": "1",
+          "draw_epoch": 318
+        }
+      },
+      {
+        "name": "pairs-two-lines",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "fee_payer": {
+            "utxo": "fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa#0",
+            "address": "addr_test1vrl0alh7lml0alh7lml0alh7lml0alh7lml0alh7lml0alsu6gx0s",
+            "reservation_id": "d99ae79544373073ef10b0ae0f38cf14"
+          },
+          "pairs": [
+            {
+              "op_type": 1,
+              "op_count": "1"
+            },
+            {
+              "op_type": 2,
+              "op_count": "3"
+            }
+          ],
           "draw_epoch": 318
         }
       }
@@ -58,6 +83,72 @@
           },
           "op_type": 1,
           "op_count": "1"
+        }
+      },
+      {
+        "name": "pairs-and-op-type-op-count-together",
+        "why": "The two consume-line forms exclude each other: pairs beside op_type and op_count is 400 CONSUME_PAIRS_CONFLICT.",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "op_type": 1,
+          "op_count": "1",
+          "pairs": [
+            {
+              "op_type": 1,
+              "op_count": "1"
+            }
+          ],
+          "draw_epoch": 318
+        }
+      },
+      {
+        "name": "pairs-beside-op-type-alone",
+        "why": "op_type beside pairs is refused even without op_count (400 CONSUME_PAIRS_CONFLICT); the service does not pick a winner.",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "op_type": 1,
+          "pairs": [
+            {
+              "op_type": 1,
+              "op_count": "1"
+            }
+          ],
+          "draw_epoch": 318
+        }
+      },
+      {
+        "name": "no-consume-line",
+        "why": "One of the two forms is required: op_type with op_count, or pairs.",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "draw_epoch": 318
+        }
+      },
+      {
+        "name": "pairs-element-extra-key",
+        "why": "Each element of pairs is closed: only op_type and op_count (400 CONSUME_PAIRS_SHAPE).",
+        "body": {
+          "owner": {
+            "type": "key",
+            "hash": "2e5e1418afd402e48232b143876104cac6188a44b867ffb7538318f4"
+          },
+          "pairs": [
+            {
+              "op_type": 1,
+              "op_count": "1",
+              "note": "x"
+            }
+          ],
+          "draw_epoch": 318
         }
       }
     ]

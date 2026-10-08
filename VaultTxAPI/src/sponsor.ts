@@ -26,7 +26,8 @@
 // của quỹ = seed của két (UTxO ví trả phí, `collectSeed: false` ở phía quỹ) — `fund_id` vẫn là
 // `computeFundId(seed)`. open-fund còn lại làm bước BÙ cho két mở trước bản này; DID của nó đọc từ thread.
 //   POST /tx/sponsor/draw-magic           { owner, …, fund_id, carp_amount, [vault_ref] }
-//   POST /tx/sponsor/first-consume  { owner, …, op_type, op_count, draw_epoch, [vault_ref], [engage_ref] }
+//   POST /tx/sponsor/first-consume  { owner, …, op_type, op_count | pairs, draw_epoch, [vault_ref], [engage_ref] }
+//                                   (`pairs` = như `/tx/consume`: 1..8 cặp; gửi CẢ HAI dạng ⟹ 400 CONSUME_PAIRS_CONFLICT)
 //
 // ── VÌ SAO MỖI BƯỚC MỘT ROUTE ───────────────────────────────────────────────────
 // Mỗi bước tiêu output của bước trước (két, thread, lô MAGIC), nên tx bước sau chỉ dựng được khi tx
@@ -93,7 +94,8 @@ import {
   type PlutusAddress, type PrepaidBlueprint, type PrepaidScripts, type TxValidity,
 } from "@magiclamp/prepaidgen-sdk";
 
-import { ownerReq, reqBigint, reqSmallInt } from "./buildRequest.js";
+import { consumeLineFields, ownerReq, reqBigint } from "./buildRequest.js";
+import { consumeLineOf, type ConsumePair } from "./consumeLine.js";
 import type { ChainReader, ChainTip } from "./chain.js";
 import { PREPAID_VAULT_TYPE, type Deployment, type DidStakeDeployment, type SponsorPins, type VaultScope } from "./config.js";
 import { didCommitOf, parseDidCommit, parseEngageRef, pickEngageThread } from "./engage.js";
@@ -308,8 +310,21 @@ export interface SponsorDrawMagicRequest extends OwnerRequest { vaultRef?: OutRe
 export interface SponsorFirstConsumeRequest extends OwnerRequest {
   vaultRef?: OutRefLike;
   engageRef?: OutRefLike;
-  opType: number;
-  opCount: bigint;
+  /**
+   * Lượt tiêu: MỘT trong hai dạng loại trừ nhau, y như `/tx/consume` (`consumeLine.ts`) — `opType` + `opCount`,
+   * HOẶC `pairs` (1..8 cặp). Cùng bộ đọc (`buildRequest.ts` ▸ `consumeLineFields`) và cùng bộ kiểm
+   * (`consumeLineOf`) nên cùng mã lỗi `CONSUME_PAIRS_*`. `pairs` một phần tử ⟹ `Consume` đơn, tx y hệt dạng cũ.
+   *
+   * VÌ SAO NHẬN NHIỀU CẶP (đọc 2026-10-08, không có lý do để giới hạn một cặp): first-consume là consume
+   * thường trên két Prepaid + `BurnBatch`. On-chain `ConsumeMany` chạy được trên két Prepaid (validator
+   * `consume` thật, `MagicSDK/tests/sponsorJourney.test.ts`, 2 và 4 cặp); Feecover không ràng số cặp (thư
+   * Feecover `mg1007fc-p`/`g-h`: CARP phí áp cho first-consume như consume thường). Giới hạn cũ chỉ là
+   * `buildSponsorT4FirstConsume` nhận `opType`/`opCount`, nay nhận thêm `pairs`. Số MAGIC đốt =
+   * `required` của dạng được chọn (một cặp gộp-rồi-sàn; nhiều cặp Σ sàn từng cặp); `draw-magic` phải rút đủ.
+   */
+  opType?: number;
+  opCount?: bigint;
+  pairs?: ReadonlyArray<ConsumePair>;
   drawEpoch: bigint;
 }
 
@@ -454,8 +469,7 @@ export function parseSponsorRequest(
         ...base,
         ...withVaultRef,
         ...(engageRef === undefined ? {} : { engageRef }),
-        opType: reqSmallInt(body, "op_type"),
-        opCount: reqBigint(body, "op_count"),
+        ...consumeLineFields(body),
         drawEpoch: BigInt(de),
       } satisfies SponsorFirstConsumeRequest;
     }
@@ -1280,6 +1294,8 @@ export class SponsorTxService {
 
   /** first-consume — consume đầu + BurnBatch trên két Prepaid, CÙNG kỳ với draw-magic. */
   async firstConsume(req: SponsorFirstConsumeRequest): Promise<SponsorBuildResponse> {
+    // Hình dạng lượt tiêu kiểm TRƯỚC khi giữ khoá chủ (như `service.ts` ▸ `consume`): `pairs` sai / cả hai dạng ⟹ 400.
+    const line = consumeLineOf(req);
     return this.run("first-consume", req, [], async (p, ctx) => {
       const d = this.deps.deployment.consume;
       const vault = await this.pickVault(p, ctx.owner, req.vaultRef);
@@ -1292,7 +1308,8 @@ export class SponsorTxService {
       const r = await buildSponsorT4FirstConsume({
         lucid, prepaidScripts: p.scripts, consumeScript: p.consumeScript, consumeRefUtxo: p.consumeRef,
         engageUtxo: thread.utxo, vaultUtxo: vault.utxo, priceBeaconUtxo: beacon,
-        opType: req.opType, opCount: req.opCount, ownerAuth: ctx.ownerAuth, network: this.deps.network,
+        ...(line.kind === "single" ? { opType: line.opType, opCount: line.opCount } : { pairs: line.pairs }),
+        ownerAuth: ctx.ownerAuth, network: this.deps.network,
         tipPosixMs: ctx.tip.blockTimePosixMs, drawEpoch: req.drawEpoch,
         ...(d.maxPriceStale === undefined ? {} : { maxPriceStale: d.maxPriceStale }),
         ...sponsorValidityArgs("first-consume", ctx.plan),

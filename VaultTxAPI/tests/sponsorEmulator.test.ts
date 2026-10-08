@@ -62,7 +62,7 @@ import { IssuedTxRegistry, OwnerLockTable } from "../src/locks.js";
 import type { VaultTxService } from "../src/service.js";
 import { createPlatformSigner } from "../src/platformSigner.js";
 import { SponsorTxService, checkSponsorFeePayerTx, type SponsorFeePayerCheckContext } from "../src/sponsor.js";
-import { expectMatchesContract } from "./support/contract.js";
+import { expectErrorInTable, expectMatchesContract } from "./support/contract.js";
 import { LAMP_ASSET_NAME_HEX, LAMP_POLICY_ID } from "./fixtures/preview.js";
 
 // ── Lưới + hằng ───────────────────────────────────────────────────────────────
@@ -294,6 +294,11 @@ function routerDeps(s: SponsorTxService): RouterDeps {
 }
 
 type Body = Record<string, unknown>;
+/** Các route tài trợ đã nằm trong hợp đồng module (`contract/openapi.json`); `post` đối chiếu mọi lời đáp của chúng. */
+const SPONSOR_CONTRACT_PATHS = new Set([
+  "/tx/sponsor/open-vault", "/tx/sponsor/bind-did", "/tx/sponsor/open-fund", "/tx/sponsor/fund-vault",
+  "/tx/sponsor/draw-magic", "/tx/sponsor/first-consume", "/tx/sponsor/claim",
+]);
 /** fund-vault chỉ mở bằng thẻ vai sponsor (`http.ts` ▸ `requireRole`); các route khác giữ thẻ thường (rỗng ở đây). */
 const SPONSOR_ROLE_TOKEN = "vai-sponsor-emu";
 /**
@@ -312,7 +317,15 @@ function dumpSampleTx(name: string, b: Body): void {
 async function post(path: string, body: Body, s: SponsorTxService = svc): Promise<{ status: number; body: Body }> {
   const headers = path === "/tx/sponsor/fund-vault" || path === "/tx/sponsor/claim"
     ? { authorization: `Bearer ${SPONSOR_ROLE_TOKEN}` } : {};
-  return handle({ method: "POST", url: path, headers, body }, routerDeps(s));
+  const r = await handle({ method: "POST", url: path, headers, body }, routerDeps(s));
+  // Hợp đồng module: MỌI lời đáp THẬT của một route đã có trong `contract/openapi.json` (200 và phong bì lỗi)
+  // phải khớp lược đồ đã ghim. Route chưa vào hợp đồng (plan) bỏ qua.
+  if (SPONSOR_CONTRACT_PATHS.has(path)) {
+    expectMatchesContract(`POST ${path}`, r.status, r.body);
+    // Lời đáp lỗi: mã phải có hàng trong `contract/error-codes.json`, đúng trạng thái, và hàng phải khai route này.
+    expectErrorInTable(`POST ${path}`, r.status, r.body);
+  }
+  return r;
 }
 const errCode = (r: { body: Body }) => (r.body.error as { code: string } | undefined)?.code;
 const ownerBody = () => ({ owner: { type: "key", hash: owner.pkh }, change_address: fee.address });
@@ -321,8 +334,6 @@ const ownerBody = () => ({ owner: { type: "key", hash: owner.pkh }, change_addre
 async function step(path: string, body: Body): Promise<Body> {
   const r = await post(path, body);
   if (r.status !== 200) throw new Error(`${path} ⟹ ${r.status} ${JSON.stringify(r.body)}`);
-  // Hợp đồng module: lời đáp THẬT của first-consume (trên script thật) khớp `contract/openapi.json`.
-  if (path === "/tx/sponsor/first-consume") expectMatchesContract("POST /tx/sponsor/first-consume", r.status, r.body);
   return r.body;
 }
 
@@ -428,7 +439,11 @@ beforeAll(async () => {
     .pay.ToContract(lockAddr, {
       kind: "inline",
       value: encodePriceParam({
-        op_prices: [{ op_type: 1n, base_price: 10_000_000n, demand_mult: 1_000_000_000n }],
+        // op_type 2: chỉ để bài `pairs` của first-consume có hai loại nghiệp vụ; mọi bài khác dùng op_type 1.
+        op_prices: [
+          { op_type: 1n, base_price: 10_000_000n, demand_mult: 1_000_000_000n },
+          { op_type: 2n, base_price: 20_000_000n, demand_mult: 1_000_000_000n },
+        ],
         m_min: 500_000_000n, m_max: 2_000_000_000n, epoch: E0,
       }),
     }, { lovelace: 3_000_000n, [beaconUnit]: 1n }));
@@ -831,6 +846,35 @@ describe("hành trình tài trợ qua route HTTP — script thật trên Emulato
     const r = await post("/tx/sponsor/first-consume", firstConsumeBody(drawEpoch - 1));
     expect(r.status).toBe(409);
     expect(errCode(r)).toBe("SPONSOR_EPOCH_MISMATCH");
+    expect(locks.peek(owner.pkh, emulator.now())).toBeNull();
+  }, SLOW);
+
+  it("first-consume `pairs` (CẶP ca, không nộp): dạng cũ ≡ `pairs` một phần tử (tx_cbor y hệt); 2 cặp dựng được, required = Σ sàn từng cặp; hai dạng cùng lúc ⟹ 400", async () => {
+    // Dựng RỒI nhả khoá chủ theo hash (không nộp): ba lần dựng cùng một trạng thái chuỗi, so byte.
+    const build = async (extra: Body): Promise<Body> => {
+      const b = await step("/tx/sponsor/first-consume", { ...ownerBody(), draw_epoch: drawEpoch, ...extra });
+      locks.releaseByTxHash(b.tx_hash as string);
+      return b;
+    };
+    const legacy = await build({ op_type: 1, op_count: "1" });
+    const one = await build({ pairs: [{ op_type: 1, op_count: "1" }] });
+    expect(one.tx_cbor).toBe(legacy.tx_cbor);
+    expect(one.tx_hash).toBe(legacy.tx_hash);
+    expect((one.summary as Body).required_nanogic).toBe("10000000");
+
+    // 2 cặp ⟹ ConsumeMany + BurnBatch trên két Prepaid: validator `consume` và két chạy THẬT (phép dựng tự chạy script
+    // để đo ExUnit; script từ chối ⟹ 422 chứ không 200).
+    const many = await build({ pairs: [{ op_type: 1, op_count: "1" }, { op_type: 2, op_count: "3" }] });
+    expect((many.summary as Body).required_nanogic).toBe((10_000_000n + 3n * 20_000_000n).toString());
+    expect(many.tx_cbor).not.toBe(legacy.tx_cbor);
+    const burned = ((many.summary as Body).burns as Array<{ nanogic: string }>).reduce((t, x) => t + BigInt(x.nanogic), 0n);
+    expect(burned).toBe(70_000_000n);
+
+    // Cực đối: hai dạng cùng lúc ⟹ 400, không dựng, không giữ khoá chủ.
+    const both = await post("/tx/sponsor/first-consume",
+      { ...ownerBody(), draw_epoch: drawEpoch, op_type: 1, op_count: "1", pairs: [{ op_type: 1, op_count: "1" }] });
+    expect(both.status).toBe(400);
+    expect(errCode(both)).toBe("CONSUME_PAIRS_CONFLICT");
     expect(locks.peek(owner.pkh, emulator.now())).toBeNull();
   }, SLOW);
 

@@ -26,7 +26,7 @@ import {
   loadBlueprint,
   postGreenBackTx,
 } from "../../GenBeacons/offchain/src/index.js";
-import { isPureAda, MIN_COLLATERAL_UTXO_LOVELACE, pureAdaCompleteOptions, selectPureAdaInputs } from "./collateral.js";
+import { MIN_COLLATERAL_UTXO_LOVELACE, pureAdaCompleteOptions, selectPureAdaInputs } from "./collateral.js";
 
 let failures = 0;
 async function testCase(name: string, fn: () => void | Promise<void>) {
@@ -57,6 +57,9 @@ const H = (c: string) => c.repeat(64);
 const utxo = (hash: string, index: number, assets: Record<string, bigint>, extra: Partial<UTxO> = {}): UTxO => ({
   txHash: H(hash), outputIndex: index, address: "addr_test1fake", assets, ...extra,
 });
+// Trọng tài ĐỘC LẬP với `isPureAda` của mã nguồn: nếu dùng chung hàm thì đột biến hàm đó làm cả mã lẫn bài kiểm
+// cùng sai theo và bài kiểm xanh vì lý do rỗng.
+const onlyLovelace = (u: UTxO): boolean => Object.keys(u.assets).every((k) => k === "lovelace");
 const ADA = (n: number) => BigInt(n) * 1_000_000n;
 
 console.log("— hàm chọn thuần —");
@@ -89,7 +92,7 @@ await testCase("ví có cả hai ⟹ chọn UTxO thuần ADA dù UTxO token lớ
   const r = selectPureAdaInputs(wallet, "w");
   eq(r.collateral.txHash, H("b"), "thế chấp");
   eq(r.inputs.length, 1, "số UTxO trong tập");
-  eq(r.inputs.every(isPureAda), true, "mọi UTxO trong tập thuần ADA");
+  eq(r.inputs.every(onlyLovelace), true, "mọi UTxO trong tập thuần ADA");
 });
 
 await testCase("UTxO thuần ADA mang scriptRef không được chọn (Lucid loại nó khỏi thế chấp)", () => {
@@ -157,7 +160,7 @@ async function buildWallet(): Promise<{ lucid: LucidEvolution; emulator: Emulato
 /** Dựng tx ghi beacon (UPLC chạy thật trong complete) — `mode` chọn tham số của `complete()`. */
 async function buildBeaconPostTx(lucid: LucidEvolution, emulator: Emulator, writerPkh: string, mode: "bare" | "pure-ada"): Promise<TxSignBuilder> {
   const wallet = await lucid.wallet().getUtxos();
-  const seeds = wallet.filter(isPureAda).sort((a, b) => refOf(a).localeCompare(refOf(b)));
+  const seeds = wallet.filter(onlyLovelace).sort((a, b) => refOf(a).localeCompare(refOf(b)));
   if (seeds.length < 5) throw new Error(`cần ≥5 UTxO thuần ADA làm seed, có ${seeds.length}`);
   const ref = (u: UTxO) => ({ txHash: u.txHash, outputIndex: u.outputIndex });
   const scripts = deriveGenBeaconsScripts(loadBlueprint(), "Custom", {
@@ -182,7 +185,7 @@ await testCase("ĐỐI CHỨNG (tái hiện lỗi): complete() trần trên ví 
   const wallet = await lucid.wallet().getUtxos();
   const refs = collateralRefs(tx);
   eq(refs.length >= 1, true, "có thế chấp");
-  const withToken = refs.filter((r) => { const u = wallet.find((w) => refOf(w) === r); return u !== undefined && !isPureAda(u); });
+  const withToken = refs.filter((r) => { const u = wallet.find((w) => refOf(w) === r); return u !== undefined && !onlyLovelace(u); });
   eq(withToken.length >= 1, true, `thế chấp mang token (${refs.join(",")})`);
 });
 
@@ -195,14 +198,14 @@ await testCase("complete(pureAdaCompleteOptions) trên cùng ví ⟹ mọi thế
   for (const r of refs) {
     const u = wallet.find((w) => refOf(w) === r);
     if (!u) throw new Error(`thế chấp ${r} không nằm trong ví`);
-    eq(isPureAda(u), true, `thế chấp ${r} thuần ADA`);
+    eq(onlyLovelace(u), true, `thế chấp ${r} thuần ADA`);
   }
   // Input trả phí cũng không chạm UTxO token của ví.
   const inputs = tx.toTransaction().body().inputs();
   for (let i = 0; i < inputs.len(); i++) {
     const r = `${inputs.get(i).transaction_id().to_hex()}#${inputs.get(i).index()}`;
     const u = wallet.find((w) => refOf(w) === r);
-    if (u) eq(isPureAda(u), true, `input ${r} thuần ADA`);
+    if (u) eq(onlyLovelace(u), true, `input ${r} thuần ADA`);
   }
 });
 
